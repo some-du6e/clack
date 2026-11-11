@@ -77,9 +77,10 @@ func formatPlaceholderText(s string) string {
 }
 
 // selectPseudoActive is .c-select_options_list__option--pseudo-active's
-// background, var(--dt_color-surf-pry).
+// background, var(--dt_color-surf-pry), over the list's (both option
+// lists here sit on the popups card background).
 func selectPseudoActive(th *theme.Theme) color.NRGBA {
-	return chipTok{"var(--dt_color-surf-pry)", rgba8(0x1d1c1d, 0x0f), rgba8(0xf8f8f8, 0x0f)}.of(th)
+	return overMenu(th, chipTok{"var(--dt_color-surf-pry)", rgba8(0x1d1c1d, 0x0f), rgba8(0xf8f8f8, 0x0f)}.of(th))
 }
 
 // enterKeyChip draws the pseudo-active row's KeyboardKey "Enter" (HgMH,
@@ -88,7 +89,8 @@ func selectPseudoActive(th *theme.Theme) color.NRGBA {
 // centred in a row h tall; it returns its left edge.
 func enterKeyChip(gtx layout.Context, th *theme.Theme, right, h int) int {
 	bg := chipTok{"var(--dt_color-base-ter)", rgb(0xeaeaea), rgb(0x212428)}.of(th)
-	edge := chipTok{"var(--dt_color-otl-ter)", rgba8(0x5e5d60, 0x21), rgba8(0x797c81, 0x4d)}.of(th)
+	// the border paints over the key's own background (border-box)
+	edge := theme.Over(chipTok{"var(--dt_color-otl-ter)", rgba8(0x5e5d60, 0x21), rgba8(0x797c81, 0x4d)}.of(th), bg)
 	fg := tokContentPry.of(th)
 	const label = "Enter"
 	ch := dp(gtx, 20)

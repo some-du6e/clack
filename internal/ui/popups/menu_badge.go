@@ -141,6 +141,7 @@ func drawMenuTag(gtx layout.Context, th *theme.Theme, t *MenuTag, hl bool, right
 		style = "white"
 	}
 	bg, fg := menuTagColors(th, style)
+	bg = overMenu(th, bg)
 	w, tagH := menuTagWidth(gtx, th, t.Label), dp(gtx, 20)
 	r := image.Rect(right-w, (h-tagH)/2, right, (h-tagH)/2+tagH)
 	rrect(gtx, r, dp(gtx, 4), bg)
@@ -173,6 +174,7 @@ func drawMenuBadge(gtx layout.Context, th *theme.Theme, n int, style string, hl 
 		style = "white"
 	}
 	bg, fg := menuBadgeColors(th, style)
+	bg = overMenu(th, bg)
 	s, _ := badgeText(n)
 	w, bh := menuBadgeWidth(gtx, th, n), dp(gtx, 18)
 	r := image.Rect(right-w, (h-bh)/2, right, (h-bh)/2+bh)
@@ -184,6 +186,16 @@ func drawMenuBadge(gtx layout.Context, th *theme.Theme, n int, style string, hl 
 		})
 	})
 	return r.Min.X
+}
+
+// overMenu composites a translucent chip colour over the menu's
+// background the way the page does (Gio blends in linear light, which
+// would draw it brighter), so a fill matches Slack's.
+func overMenu(th *theme.Theme, c color.NRGBA) color.NRGBA {
+	if c.A == 0xff {
+		return c
+	}
+	return theme.Over(c, colorsOf(th).Bg)
 }
 
 // tagAndBadge draws it's badge (rightmost, margin-left 4) and tag ending

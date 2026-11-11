@@ -84,40 +84,41 @@ func TestExpMenusShots(t *testing.T) {
 		})
 		// a basic select that opened empty, under both session toggles: the
 		// placeholder row first, pseudo-active with its Enter key
-		save("select-"+mode.name+".png", 520, 360, mode.dark, func(gtx layout.Context, th *theme.Theme) {
+		save("select-"+mode.name+".png", 640, 360, mode.dark, func(gtx layout.Context, th *theme.Theme) {
 			h.a.SetExperimentGroup(ExpBasicSelectPlaceholderOption, "on")
 			h.a.SetExperimentGroup(ExpNoAutoHighlightSearchMultiSelect, "on")
 			defer h.a.ClearExperimentGroup(ExpBasicSelectPlaceholderOption)
 			defer h.a.ClearExperimentGroup(ExpNoAutoHighlightSearchMultiSelect)
-			l := NewSelectList(h, image.Rect(40, 20, 400, 56), []string{"Not what I was looking for", "Missing results", "Other"}, 1,
+			l := NewSelectList(h, image.Rect(40, 20, 560, 56), []string{"Not what I was looking for", "Missing results", "Other"}, 1,
 				SelectListOpts{Placeholder: "Select an option"}, func(int) {}).(*dtTimeList)
 			l.focus = true // no focus command outside a router
 			l.Layout(gtx)
 		})
 		// the share dialog's Forward: the v2 Button over the legacy one,
 		// enabled and disabled, then a secondary and an icon-only one
-		save("buttons-"+mode.name+".png", 560, 260, mode.dark, func(gtx layout.Context, th *theme.Theme) {
+		save("buttons-"+mode.name+".png", 560, 520, mode.dark, func(gtx layout.Context, th *theme.Theme) {
 			var cs [8]widget.Clickable
-			row := func(y int, w func(gtx layout.Context) layout.Dimensions) {
-				off := op.Offset(image.Pt(24, y)).Push(gtx.Ops)
+			// row i of the stack, 48dp apart
+			row := func(i int, w func(gtx layout.Context) layout.Dimensions) {
+				off := op.Offset(image.Pt(gtx.Dp(12), gtx.Dp(unit.Dp(8+48*i)))).Push(gtx.Ops)
 				w(gtx)
 				off.Pop()
 			}
 			g := gtx
 			g.Constraints = layout.Constraints{Max: image.Pt(400, 100)}
-			row(16, func(gtx layout.Context) layout.Dimensions {
+			row(0, func(gtx layout.Context) layout.Dimensions {
 				return buttonV2(g, th, &cs[0], BtnPrimary, theme.ButtonV2Medium, "Forward", "", false)
 			})
-			row(16+48, func(gtx layout.Context) layout.Dimensions {
+			row(1, func(gtx layout.Context) layout.Dimensions {
 				return button(g, th, &cs[1], BtnPrimary, BtnMedium, "Forward", "", 80, false)
 			})
-			row(16+96, func(gtx layout.Context) layout.Dimensions {
+			row(2, func(gtx layout.Context) layout.Dimensions {
 				return buttonV2(g, th, &cs[2], BtnDisabled, theme.ButtonV2Medium, "Forward", "", false)
 			})
-			row(16+144, func(gtx layout.Context) layout.Dimensions {
+			row(3, func(gtx layout.Context) layout.Dimensions {
 				return buttonV2(g, th, &cs[3], BtnOutline, theme.ButtonV2Medium, "Save Draft", "", true)
 			})
-			row(16+192, func(gtx layout.Context) layout.Dimensions {
+			row(4, func(gtx layout.Context) layout.Dimensions {
 				return buttonV2(g, th, &cs[4], BtnPrimary, theme.ButtonV2Medium, "", "caret-down", false)
 			})
 		})
