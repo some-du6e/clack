@@ -145,6 +145,9 @@ type Button struct {
 
 // Attachment is a legacy attachment, link unfurl or shared/forwarded message.
 type Attachment struct {
+	// Huddle is a huddle_thread message's huddle (huddle.go): its body is
+	// Text's automated sentence, with a Join Huddle button while Joinable.
+	Huddle       *HuddleRoom
 	Color        string
 	Pretext      []Span
 	ServiceName  string
