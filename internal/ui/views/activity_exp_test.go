@@ -301,11 +301,15 @@ func TestActivityInPickerLikeSlack(t *testing.T) {
 	if txt, _, _ := v.inPillText(); txt != "In: #views-fixtures" {
 		t.Errorf("pill %q", txt)
 	}
-	for _, it := range actPage(v).Items {
-		if it.Channel != fakeslack.ViewsChannel {
-			t.Errorf("%s in %s", it.Key, it.Channel)
+	e.until(t, "the channel's rows", func() bool {
+		p := actPage(v)
+		for _, it := range p.Items {
+			if it.Channel != fakeslack.ViewsChannel {
+				return false
+			}
 		}
-	}
+		return len(p.Items) > 0 && !v.data.busy()
+	})
 	vaShot(t, e, "activity-in-picked", false)
 	// close with a pick: the picker stays; unpick and close: it goes
 	v.in.pick.open = false
@@ -376,7 +380,7 @@ func TestActivityTabsLikeSlack(t *testing.T) {
 	if actTabTip(1, 1) != "1 unread DM" || actTabTip(2, 3) != "3 unread mentions" || actTabTip(3, 0) != "Threads" {
 		t.Error("icon tabs' tooltips")
 	}
-	e.size = image.Pt(400, 900)
+	e.size = image.Pt(360, 900) // the strip: 328 < 366
 	e.frame()
 	e.frame()
 	vaShot(t, e, "activity-tabs-icon-only", false)
@@ -410,9 +414,11 @@ func TestActivityTabsLikeSlack(t *testing.T) {
 	)
 	e.frame()
 	mid := f32.Pt((from.X+to.X)/2, y)
-	e.r.Queue(pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: mid})
+	// a move with the button held is a drag (Gio's router turns it into
+	// pointer.Drag for the pressed handlers)
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: mid})
 	e.frame()
-	e.r.Queue(pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: to})
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: to})
 	e.frame()
 	if !st.dragging {
 		t.Fatal("no drag")
@@ -604,7 +610,7 @@ func TestActivityDayDividersGroups(t *testing.T) {
 	app := v.h.Core()
 	e.frame()
 	if len(v.vis) == 0 || v.vis[0] < 0 {
-		t.Errorf("layout revisions: the list starts with %d", v.vis[0])
+		t.Errorf("layout revisions: the list starts with %v", v.vis[:min(3, len(v.vis))])
 	}
 	app.SetExperimentGroup("activity_entry_layout_revisions_2", "off")
 	v.dirty = true
