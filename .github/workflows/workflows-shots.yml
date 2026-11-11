@@ -1,0 +1,62 @@
+name: workflows-shots
+# Workflows (docs/WORKFLOWS.md) against internal/fakeslack's
+# #workflows-gallery: tripping link triggers, workflow buttons and
+# bookmarks with Slack's contexts, the speedbump, the workflow picker,
+# channel details' Automations tab; then the speedbump, the picker and the
+# Automations tab rendered light and dark (llvmpipe under xvfb), uploaded
+# as the workflows-shots artifact. Synthetic only: nothing here talks to
+# Slack.
+on:
+  push:
+    paths:
+      - "internal/core/workflows*.go"
+      - "internal/fakeslack/workflows.go"
+      - "internal/ui/blockkit/workflow*.go"
+      - "internal/ui/views/details_automations*.go"
+      - "internal/ui/workflows_wire*.go"
+      - "internal/ui/workflows_tab*.go"
+      - "internal/ui/popups/workflows.go"
+      - ".github/workflows/workflows-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: workflow tests (fakeslack)
+        run: |
+          go test -count=1 -v -run 'TestWorkflow|TestTrip|TestTrigger|TestNeedsSpeedbump|TestChannelWorkflows|TestAddWorkflowBookmark' ./internal/core
+          go test -count=1 -v -run 'TestTripWorkflow|TestWorkflowSpeedbump|TestWorkflowPicker' ./internal/ui/blockkit
+          go test -count=1 -v -run 'TestAutomations' ./internal/ui/views
+          xvfb-run -a go test -count=1 -v -run 'TestAddWorkflowChannelMenu$|TestWorkflowBookmarkTrips$' ./internal/ui/
+      - name: screenshots
+        env:
+          WORKFLOWS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$WORKFLOWS_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestWorkflowShots' ./internal/ui/blockkit
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestAutomations' ./internal/ui/views
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestWorkflowsTab$' ./internal/ui/
+          ls -l "$WORKFLOWS_SHOTS_DIR"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: workflows-shots
+          path: dist/shots

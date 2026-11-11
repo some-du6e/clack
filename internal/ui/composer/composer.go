@@ -233,6 +233,8 @@ func (c *Composer) init() {
 	if c.edit == nil { // the conversation's files, kept across composers
 		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
 		c.att.setOnChange(c.attChanged)
+		// the + menu's Workflow row (Slack has none when editing)
+		c.att.insertLink = func(text, url string) { c.ed.SetLink(text, url); c.Focus() }
 	} else {
 		c.att = newAttachments(c.h)
 	}

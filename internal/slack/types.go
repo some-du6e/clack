@@ -42,6 +42,9 @@ type Message struct {
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
 	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	// FunctionExecutionID marks a workflow step's message: its block
+	// actions carry it (Slack's blocks.actions function_execution_id).
+	FunctionExecutionID string `json:"function_execution_id,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
