@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
@@ -644,7 +645,7 @@ func (a *App) openCreateSection(next, edit string) {
 		a.Toast("Sign in first")
 		return
 	}
-	o := popups.CreateSectionOpts{Next: next, Edit: edit, Candidates: a.sidebarConvs()}
+	o := popups.CreateSectionOpts{Next: next, Edit: edit, Candidates: a.sidebarConvs(), Moved: a.bulkMoveToast}
 	switch s := a.Core().Prefs().ChannelSort; s {
 	case "recent", "priority":
 		o.DefaultSort = s
@@ -675,4 +676,69 @@ func (a *App) copySectionLink(name, emoji string, ids []string) {
 			a.Toast("Section link copied")
 		})
 	}()
+}
+
+// bulkMoveToast is performBulkChannelMove's toast (boot-shared eq1K,
+// build 4d0c78085232) once a move went through, with Undo (moveManyChannels'
+// reverse, core.UndoSectionMove).
+func (a *App) bulkMoveToast(m core.SectionMove) {
+	if m.Count == 0 {
+		return
+	}
+	a.ToastUndo(a.bulkMoveText(m), func() {
+		a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error { return c.UndoSectionMove(ctx, m) }, nil)
+	})
+}
+
+// bulkMoveText is the toast's text: for one channel "Moved #x to S." /
+// "Removed #x from S." / "Moved #x."; for several conversations, or a DM,
+// "Moved N conversations to S." (with manage_conversations_strings
+// "Updated conversations in S."), "Removed N conversations from S." or
+// "Moved N conversations.". S counts only when it is the one custom
+// section or Starred moved into (out of).
+func (a *App) bulkMoveText(m core.SectionMove) string {
+	md := a.model()
+	one := func(ids []string) *sbSection {
+		if len(ids) != 1 {
+			return nil
+		}
+		if s := a.sectionByID(ids[0]); s != nil && (s.Type == "standard" || s.Type == "stars") {
+			return s
+		}
+		return nil
+	}
+	name := func(s *sbSection) string {
+		if s.DefaultName {
+			return i18n.T("channel_sidebar", s.Name)
+		}
+		return s.Name
+	}
+	to, from := one(m.InsertSections()), one(m.RemoveSections())
+	var w *convInfo
+	if chs := m.Channels(); len(chs) == 1 {
+		w = md.conv(chs[0])
+	}
+	if w == nil || w.Kind == "im" || w.Kind == "mpim" || w.Kind == "app" {
+		n := "conversation"
+		if m.Count != 1 {
+			n = strconv.Itoa(m.Count) + " conversations"
+		}
+		switch {
+		case to != nil && a.exp("manage_conversations_strings") == "on":
+			return "Updated conversations in " + name(to) + "."
+		case to != nil:
+			return "Moved " + n + " to " + name(to) + "."
+		case from != nil:
+			return "Removed " + n + " from " + name(from) + "."
+		}
+		return "Moved " + n + "."
+	}
+	ent := "#" + w.displayName()
+	switch {
+	case to != nil:
+		return "Moved " + ent + " to " + name(to) + "."
+	case from != nil:
+		return "Removed " + ent + " from " + name(from) + "."
+	}
+	return "Moved " + ent + "."
 }

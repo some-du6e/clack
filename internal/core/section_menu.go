@@ -279,64 +279,10 @@ func (a *App) UndoDeleteSection(ctx context.Context, d DeletedSection) (string, 
 // MoveToSection puts conversations into (insert) and out of (remove) a
 // section. Conversations moved into a custom section leave the other
 // custom sections they were in (moveManyChannels). Starred stars and
-// unstars.
+// unstars. MoveToSectionRecord also says what moved (section_move.go).
 func (a *App) MoveToSection(ctx context.Context, id string, insert, remove []string) error {
-	s, ok := a.rawSection(id)
-	if !ok {
-		return errors.New("core: no such section")
-	}
-	if s.Type == "stars" {
-		for _, ch := range insert {
-			if err := a.Star(ctx, ch, true); err != nil {
-				return err
-			}
-		}
-		for _, ch := range remove {
-			if err := a.Star(ctx, ch, false); err != nil {
-				return err
-			}
-		}
-		a.emit(Event{Type: "sidebar_changed"})
-		return nil
-	}
-	type item struct {
-		Section  string   `json:"channel_section_id"`
-		Channels []string `json:"channel_ids"`
-	}
-	ins, rem := []item{}, []item{}
-	if len(insert) > 0 {
-		ins = append(ins, item{id, insert})
-		moving := map[string]bool{}
-		for _, ch := range insert {
-			moving[ch] = true
-		}
-		a.S.RLock()
-		for _, o := range a.S.Sections {
-			if o.ID == id || o.Type != "standard" {
-				continue
-			}
-			var out []string
-			for _, ch := range o.ChannelIDsPage.ChannelIDs {
-				if moving[ch] {
-					out = append(out, ch)
-				}
-			}
-			if len(out) > 0 {
-				rem = append(rem, item{o.ID, out})
-			}
-		}
-		a.S.RUnlock()
-	}
-	if len(remove) > 0 {
-		rem = append(rem, item{id, remove})
-	}
-	bi, _ := json.Marshal(ins)
-	br, _ := json.Marshal(rem)
-	if err := a.C.Call(ctx, "users.channelSections.channels.bulkUpdate", url.Values{"insert": {string(bi)}, "remove": {string(br)}}, nil); err != nil {
-		return err
-	}
-	a.refreshSections(ctx)
-	return nil
+	_, err := a.MoveToSectionRecord(ctx, id, insert, remove)
+	return err
 }
 
 // OtherSectionOf is the custom section (other than id) ch is filed in, ""

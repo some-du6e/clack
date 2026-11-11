@@ -53,6 +53,15 @@ type secondaryState struct {
 
 func (s *secondaryState) open() bool { return s.kind != secNone && !s.hidden }
 
+// ActiveThread is the thread the side pane shows (messages.ActiveThreadHost:
+// thread_root_selected_state's selected root).
+func (a *App) ActiveThread() (channel, ts string) {
+	if a.secondary.kind == secThread && !a.secondary.hidden {
+		return a.secondary.channel, a.secondary.ts
+	}
+	return "", ""
+}
+
 // OpenThread shows a thread in the secondary pane. Opened from inside the
 // split view, or with Slack's split modifier click (⌘⌥, Ctrl+Alt), it
 // goes in the split view instead (split.go).
