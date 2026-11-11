@@ -84,6 +84,9 @@ type Size struct {
 	// fixtures (unreads.go): unread channels, a muted one, a channel
 	// whose message_input megaphone space holds the join banner.
 	Unreads bool
+	// GroupDMs adds the group DM naming fixtures (groupdms.go) and
+	// answers conversations.rename for them.
+	GroupDMs bool
 	// Workflows adds #workflows-gallery and the Workflow Builder methods
 	// (workflows.go): workflow links, a workflow button, a workflow
 	// step's message, a bookmarked workflow, tripping, triggers.
@@ -483,6 +486,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Unreads {
 		s.addUnreads() // unreads.go
+	}
+	if sz.GroupDMs {
+		s.addGroupDMs() // groupdms.go
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
@@ -993,6 +999,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
 		return out
 	}
+	if out, handled := s.handleGroupDMs(method, f); handled { // groupdms.go
+		return out
+	}
 	// the bench threads' replies: ahead of the switch, whose
 	// conversations.replies answers every other thread with none
 	if method == "conversations.replies" && s.Size.PluginBench {
@@ -1058,6 +1067,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
+			// channel details' Agents & apps / Automations tabs and Settings'
+			// tab permissions (views/details.go, details_more.go)
+			"channel_details_agents_apps_tab": g("on"), "move_channel_tabs_settings": g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
 			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
 			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)

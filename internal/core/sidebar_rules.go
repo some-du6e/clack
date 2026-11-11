@@ -80,6 +80,10 @@ var defaultExperimentGroups = map[string]string{
 	// dialog (ListsTabbingPref returns null without it), and the Lists
 	// grid's Tab navigation follows it (listview/keys.go)
 	"lists_tabbing_navigation": "on",
+	// channel details has "Agents & apps" and "Automations" tabs
+	// (views/details.go setTabs) and keeps who may manage tabs in Settings
+	// (move_channel_tabs_settings), as on the account
+	"channel_details_agents_apps_tab": "on", "move_channel_tabs_settings": "on",
 	// Appearance > "Always use dark color mode when in focus mode." shows in
 	// the live dialog, which ThemeColorModeContainer draws only under
 	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page

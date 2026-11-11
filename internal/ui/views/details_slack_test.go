@@ -45,6 +45,8 @@ type cdTestServer struct {
 	people  int    // users/counts people
 	allowed string // permissions.info allowed (JSON list)
 	props   string // conversations.info properties (JSON)
+	org     string // enterprise.prefs.get org_prefs (JSON)
+	canSet  string // conversations.canSetProperties props (JSON list; "" the default)
 }
 
 func (s *cdTestServer) seen(method string) []cdTestCall {
@@ -74,8 +76,11 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	s.calls = append(s.calls, call)
-	people, allowed, props := s.people, s.allowed, s.props
+	people, allowed, props, org, canSet := s.people, s.allowed, s.props, s.org, s.canSet
 	s.mu.Unlock()
+	if org == "" {
+		org = "{}"
+	}
 	if allowed == "" {
 		allowed = "[]"
 	}
@@ -111,7 +116,13 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 			`{"permission":"INVITE_TO_CHANNEL","is_configurable":false,"is_allowed":false,"localized_permission_display_name":"Add people"}]},` +
 			`{"account_type":"MULTI_CHANNEL_GUEST","permissions":[]}]}`)
 	case "conversations.canSetProperties":
+		if canSet != "" {
+			write(`{"ok":true,"props":` + canSet + `}`)
+			break
+		}
 		write(`{"ok":true,"props":[{"prop":"restrict_guests","can_set":false,"reason":"scg_present"},{"prop":"restrict_message_and_file_sharing","can_set":false,"reason":"disallowed_action"}]}`)
+	case "enterprise.prefs.get":
+		write(`{"ok":true,"org_prefs":` + org + `,"locked_prefs":{},"unlocked_prefs":{}}`)
 	case "conversations.createChild":
 		write(`{"ok":true,"channel":{"id":"G9","is_mpim":true,"members":["USELF","U1","U2"]}}`)
 	default:

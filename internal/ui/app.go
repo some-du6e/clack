@@ -135,7 +135,8 @@ type App struct {
 
 	router          router
 	clicks          clickables
-	joinBannerCh    string // the channel whose join banner was last laid out (joinbanner.go)
+	hdrx            *headerExtra // the channel header's topic card and edit-name tooltip (channel_mpdm.go)
+	joinBannerCh    string       // the channel whose join banner was last laid out (joinbanner.go)
 	grad            gradient
 	sidebar         sidebarState
 	secondary       secondaryState

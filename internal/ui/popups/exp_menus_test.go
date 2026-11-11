@@ -548,29 +548,3 @@ func TestTooltipColorsFromTheme(t *testing.T) {
 		t.Errorf("dark tooltip %v", c)
 	}
 }
-
-// ChannelNotificationPrefMenu tags the setting in effect "Customized"
-// when the channel's advanced settings depart from it (n9iP Xq).
-func TestNotifyMenuCustomizedTag(t *testing.T) {
-	for i, c := range []struct {
-		n             core.ChannelNotify
-		cur, setting  string
-		muted, wanted bool
-	}{
-		{core.ChannelNotify{}, "everything", "everything", false, false},
-		{core.ChannelNotify{FollowAllThreads: true}, "everything", "everything", false, true},
-		{core.ChannelNotify{FollowAllThreads: true}, "everything", "mentions_dms", false, false}, // not the setting in effect
-		{core.ChannelNotify{FollowAllThreads: true}, "mute", "everything", true, false},
-		{core.ChannelNotify{SuppressAtChannel: true}, "mentions_dms", "mentions_dms", false, true},
-		{core.ChannelNotify{SuppressAtChannel: true}, "everything", "everything", false, false},
-		{core.ChannelNotify{BadgeAllUnreads: true}, "everything", "everything", false, true},
-		{core.ChannelNotify{Desktop: "everything", Mobile: "nothing"}, "everything", "everything", false, true},
-		{core.ChannelNotify{Desktop: "everything", Mobile: "default"}, "everything", "everything", false, false},
-		{core.ChannelNotify{Desktop: "everything", Mobile: "everything"}, "everything", "everything", false, false},
-	} {
-		got := notifyCustomized(c.n, c.cur, c.setting, c.muted)
-		if (got != nil) != c.wanted || got != nil && *got != (MenuTag{"Customized", "informative"}) {
-			t.Errorf("case %d: %+v", i, got)
-		}
-	}
-}

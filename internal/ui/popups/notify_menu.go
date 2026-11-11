@@ -14,6 +14,9 @@ package popups
 //     "@you" when @channel is suppressed.
 //   - Mute and hide (improve_mute_pref on; "Mute channel" otherwise):
 //     toggles muted.
+//   - The checked All new posts / Just mentions row carries a
+//     "Customized" tag when the channel's advanced settings differ from
+//     that choice's defaults (notifyCustomized).
 //   - Until tomorrow / 1 hour: temp_mute_expiration_ts at 09:00 tomorrow
 //     (the default work start) or an hour from now, unsynced.
 
@@ -52,6 +55,37 @@ func calcNotify(override, global string) string {
 		return v
 	}
 	return "mentions_dms"
+}
+
+// notifyCustomized is n9iP Xq for one radio (setting everything or
+// mentions_dms): the checked row, not muted, whose channel overrides
+// (getCalculatedChannelNotificationOverrides: all_notifications_prefs
+// .channels[ch], a mobile "nothing" read as mentions_dms) follow every
+// thread, suppress @channel under Just mentions, badge every message
+// under All new posts, or send mobile something other than the desktop
+// setting. The row then carries ChannelNotificationPrefMenu's
+// "Customized" tag.
+func notifyCustomized(n core.ChannelNotify, desktop string, muted bool, setting string) bool {
+	if muted || desktop != setting {
+		return false
+	}
+	mobile := n.Mobile
+	if mobile == "nothing" {
+		mobile = "mentions_dms"
+	}
+	return n.FollowAllThreads ||
+		(desktop == "mentions_dms" && n.SuppressAtChannel) ||
+		(desktop == "everything" && n.BadgeAllUnreads) ||
+		(mobile != "" && mobile != desktop)
+}
+
+// customizedTag is the radio's tag: PND5's {label "Customized", style
+// "informative"} (the menu rows' tag slot, menu_badge.go), or none.
+func customizedTag(n core.ChannelNotify, desktop string, muted bool, setting string) *MenuTag {
+	if notifyCustomized(n, desktop, muted, setting) {
+		return &MenuTag{Label: "Customized", Style: "informative"}
+	}
+	return nil
 }
 
 // NotifyIcon is Slack's notification glyph for a calculated desktop
@@ -95,23 +129,6 @@ func tomorrowAt9(now time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 9, 0, 0, 0, now.Location())
 }
 
-// notifyCustomized is ChannelNotificationPrefMenu's tag (PND5: {label
-// "Customized", style "informative"}) on the setting's row when n9iP Xq
-// holds: the channel isn't muted, the setting is the one in effect, and
-// its advanced settings depart from it (follow every thread, @channel
-// suppressed under Just mentions, badge every message under All new
-// posts, or a mobile level of its own).
-func notifyCustomized(n core.ChannelNotify, cur, setting string, muted bool) *MenuTag {
-	if muted || cur != setting {
-		return nil
-	}
-	mobile := n.Mobile != "" && n.Mobile != "default" && n.Mobile != cur
-	if !n.FollowAllThreads && !(setting == "mentions_dms" && n.SuppressAtChannel) && !(setting == "everything" && n.BadgeAllUnreads) && !mobile {
-		return nil
-	}
-	return &MenuTag{Label: "Customized", Style: "informative"}
-}
-
 // ChannelNotifyItems are the bell menu's rows for ch.
 func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	a := h.Core()
@@ -121,6 +138,7 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	n := a.NotifyPrefs(ch)
 	muted := actIsMuted(h, ch)
 	cur := notifyChoice(n, a.Prefs().GlobalDesktop, muted)
+	desktop := calcNotify(n.Desktop, a.Prefs().GlobalDesktop) // getCalculatedDesktopNotifySetting
 	set := func(level string) func() {
 		return func() {
 			nn := n
@@ -177,9 +195,9 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	return []MenuItem{
 		{Header: "Notify you about…"},
 		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: NotifyIcon("everything", false), Radio: true,
-			Checked: cur == "everything", Tag: notifyCustomized(n, cur, "everything", muted), Do: set("everything")},
+			Checked: cur == "everything", Tag: customizedTag(n, desktop, muted, "everything"), Do: set("everything")},
 		{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: NotifyIcon("mentions_dms", false), Radio: true,
-			Checked: cur == "mentions_dms", Tag: notifyCustomized(n, cur, "mentions_dms", muted), Do: set("mentions_dms")},
+			Checked: cur == "mentions_dms", Tag: customizedTag(n, desktop, muted, "mentions_dms"), Do: set("mentions_dms")},
 		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: NotifyIcon("nothing", true), Radio: true, Checked: muted,
 			Do: func() { actToggleMute(h, ch, "channel") }},
 		Sep(),

@@ -600,6 +600,9 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.pump()
 	go a.prefetch(a.bg)
 	go a.resolveLoop(a.bg) // unresolved channel/user/bot names
+	if a.C.Creds.EnterpriseID != "" {
+		go func() { _ = a.LoadEnterprisePrefs(a.bg) }() // enterprise_prefs.go
+	}
 	// everything boot fetched is in: plugins' state mirror re-reads it
 	a.emit(Event{Type: "booted"})
 	go func() {
