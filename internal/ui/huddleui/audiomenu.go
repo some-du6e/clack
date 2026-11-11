@@ -30,14 +30,14 @@ import (
 func (c *Controller) micCtls(st huddle.State, menuOpen bool) []ctl {
 	denied := c.micDenied(st)
 	enabled := !st.Muted // isMicrophoneEnabled
-	main := ctl{id: "mic", icon: "mic", on: enabled, tip: "Mute mic", seg: segMain}
+	main := ctl{id: "mic", icon: "mic", on: enabled, tip: nsHuddles.T("Mute mic"), seg: segMain}
 	if !enabled {
-		main.icon, main.tip = "mic-off", "Unmute mic"
+		main.icon, main.tip = "mic-off", nsHuddles.T("Unmute mic")
 	}
 	if denied { // micDisabled, the warning badge, "Microphone permission denied"
-		main.icon, main.on, main.warn, main.dim, main.tip = "mic-off", false, true, true, "Microphone permission denied"
+		main.icon, main.on, main.warn, main.dim, main.tip = "mic-off", false, true, true, nsHuddles.T("Microphone permission denied")
 	}
-	caret := ctl{id: "micmenu", icon: "caret-up", on: menuOpen || (enabled && !denied), tip: "Audio settings", seg: segCaret}
+	caret := ctl{id: "micmenu", icon: "caret-up", on: menuOpen || (enabled && !denied), tip: nsHuddles.T("Audio settings"), seg: segCaret}
 	if menuOpen {
 		caret.icon = "caret-down"
 	}
@@ -52,27 +52,27 @@ func (c *Controller) audioMenu(s *huddle.Session) []popups.MenuItem {
 	c.mic.mu.Lock()
 	c.mic.mics = len(mics)
 	c.mic.mu.Unlock()
-	items := []popups.MenuItem{{Header: "Microphone"}}
+	items := []popups.MenuItem{{Header: nsHuddles.T("Microphone")}}
 	for _, d := range mics {
 		id := d.ID
 		items = append(items, popups.MenuItem{Key: "av-microphone-device-menu-item_" + d.Name, Label: d.Name, Radio: true,
 			Checked: inUse(d, micSel), Do: func() { c.switchMic(s, id) }})
 	}
-	items = append(items, popups.Sep(), popups.MenuItem{Header: "Speaker"})
+	items = append(items, popups.Sep(), popups.MenuItem{Header: nsHuddles.T("Speaker")})
 	for _, d := range outs {
 		id := d.ID
 		items = append(items, popups.MenuItem{Key: "av-speaker-device-menu-item_" + d.Name, Label: d.Name, Radio: true,
 			Checked: inUse(d, outSel), Do: func() { c.switchSpeaker(s, id) }})
 	}
-	items = append(items, popups.Sep(), popups.MenuItem{Key: "test-audio", Label: "Test Speaker", Icon: "sound",
+	items = append(items, popups.Sep(), popups.MenuItem{Key: "test-audio", Label: nsHuddles.T("Test Speaker"), Icon: "sound",
 		KeepOpen: true, Do: func() { c.testSpeaker(s) }})
 	if s != nil && c.on(ExpNoiseSuppAwareness) {
 		if _, ns := s.MicProcessing(); !ns { // useShowNoiseSuppressionMenuItem: only while it's off
-			items = append(items, popups.Sep(), popups.MenuItem{Key: "noise-suppression", Label: "Enable noise suppression",
+			items = append(items, popups.Sep(), popups.MenuItem{Key: "noise-suppression", Label: nsHuddles.T("Enable noise suppression"),
 				Checked: ns, KeepOpen: true, Do: func() { c.setNoiseSuppression(s, true) }})
 		}
 	}
-	items = append(items, popups.Sep(), popups.MenuItem{Key: "av-preferences", Label: "Audio & video preferences", External: true, Do: func() {
+	items = append(items, popups.Sep(), popups.MenuItem{Key: "av-preferences", Label: nsHuddles.T("Audio & video preferences"), External: true, Do: func() {
 		if p, ok := c.h.(interface{ OpenPreferences(section string) }); ok {
 			c.post(func() { p.OpenPreferences("video_audio") })
 		}

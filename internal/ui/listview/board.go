@@ -152,7 +152,7 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 				label = CellText(v.h.Core(), gc, groupField(gc, g.Value))
 			}
 		} else {
-			label = "All items"
+			label = nsLists.T("All items")
 		}
 		hh := gtx.Dp(laneHdr)
 		if gc != nil && (gc.Type == lists.Checkbox || gc.Type == lists.TodoCompleted) {
@@ -207,7 +207,7 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 			})
 			at(gtx, image.Pt(fr.Min.X+gtx.Dp(34), fr.Min.Y), image.Pt(fr.Dx()-gtx.Dp(40), fr.Dy()), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, fr.Dy(), func(gtx layout.Context) layout.Dimensions {
-					return th.Label(gtx, 13, theme.Bold, ac, "Add item")
+					return th.Label(gtx, 13, theme.Bold, ac, nsLists.T("Add item"))
 				})
 			})
 			b.hits = append(b.hits, boardHit{r: fr, add: true, group: g.Value})
@@ -244,7 +244,7 @@ func (v *View) drawCard(gtx layout.Context, d *core.ListDoc, cols []*lists.Colum
 	if p := d.Meta.Primary(); p != nil {
 		name := r.Rec.Field(p.Key).PlainText()
 		if name == "" {
-			name = "Untitled item"
+			name = nsLists.T("Untitled item")
 		}
 		tx := x
 		if d.Meta.TodoMode {

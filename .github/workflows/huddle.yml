@@ -38,7 +38,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: vet
         run: go vet ./internal/ui/huddleui/... ./cmd/huddle-demo/...
       - name: test
@@ -48,7 +48,7 @@ jobs:
         # the lounge music; then the X11 grab typed at with xdotool under
         # Xvfb and the logind/ScreenSaver signals on a private dbus-daemon
         run: |
-          sudo apt-get install -y -qq xvfb xdotool dbus
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb xdotool dbus
           go test -count=1 -v -run 'TestJoinPreviewFlow|TestHuddleMicProcessingPrefs|TestHuddleGlobalMute|TestHuddleLeaveOnLock|TestHuddleLoungeMusic' ./internal/ui/huddleui
           xvfb-run -a go test -count=1 -v ./internal/ui/globalkey ./internal/ui/screenlock
       - name: incoming invites and raise hand (race)
@@ -61,7 +61,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
-          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
           # TestHuddleShotsInvite: invite-window-*, invite-card-*, invite-tiles-*, invite-toolbar-hand, invite-sticker-picker
           # TestHuddleShotsJoinPreview: join-preview-{start,camera-talking,mic-menu,no-devices,join,dm}-{light,dark}
           # TestHuddleShotsBlur: blur-self-preview-{off,on}-{light,dark} (the synthetic person, background blur)

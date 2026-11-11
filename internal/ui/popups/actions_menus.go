@@ -10,6 +10,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -100,16 +101,18 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	}
 	link := "https://" + teamDomain(h) + ".slack.com/archives/" + convID
 
+	// the channel context menu's templates (getDetailsTemplate,
+	// getCopyTemplate, getChannelSectionsTemplate, …: the menu I18n)
 	detailsLabel := "Channel details"
 	detailSub := []MenuItem{
-		{Label: "Open channel details", Do: details},
-		{Label: "View members", Do: details},
-		{Label: "Copy channel ID", DoCtx: actCopy(h, convID, "Channel ID copied")},
+		MenuItem{Label: "Open channel details", Do: details}.In(nsMenu),
+		MenuItem{Label: "View members", Do: details}.In(nsMenu),
+		MenuItem{Label: "Copy channel ID", DoCtx: actCopy(h, convID, "Channel ID copied")}.In(nsChDetails),
 	}
 	if dm {
 		detailsLabel = "Conversation details"
 		detailSub = []MenuItem{
-			{Label: "Open conversation details", Do: details},
+			MenuItem{Label: "Open conversation details", Do: details}.In(nsMenu),
 			{Label: "Copy conversation ID", DoCtx: actCopy(h, convID, "Conversation ID copied")},
 		}
 	}
@@ -117,19 +120,23 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	if dm {
 		noun = "conversation"
 	}
-	starLabel, unstarLabel := "Star "+noun, "Unstar "+noun
-	muteLabel, unmuteLabel := "Mute "+noun, "Unmute "+noun
+	starLabel, unstarLabel := "Star channel", "Unstar channel"
+	muteLabel, unmuteLabel := "Mute channel", "Unmute channel"
+	if dm {
+		starLabel, unstarLabel = "Star conversation", "Unstar conversation"
+		muteLabel, unmuteLabel = "Mute conversation", "Unmute conversation"
+	}
 	items := []MenuItem{
-		{Label: detailsLabel, Sub: detailSub},
-		{Label: "Copy", Sub: []MenuItem{
-			{Label: "Copy link", DoCtx: actCopy(h, link, "Link copied")},
-			{Label: "Copy name", DoCtx: actCopy(h, name, "Name copied")},
-		}},
+		MenuItem{Label: detailsLabel, Sub: detailSub}.In(nsMenu),
+		MenuItem{Label: "Copy", Sub: []MenuItem{
+			MenuItem{Label: "Copy link", DoCtx: actCopy(h, link, "Link copied")}.In(nsMenu),
+			MenuItem{Label: "Copy name", DoCtx: actCopy(h, name, "Name copied")}.In(nsMenu),
+		}}.In(nsMenu),
 		{Widget: actLabelRow(h, func() string {
 			if cxStarred(h, convID) {
-				return unstarLabel
+				return nsMenu.T(unstarLabel)
 			}
-			return starLabel
+			return nsMenu.T(starLabel)
 		}), Do: func() { actToggleStar(h, convID, noun) }},
 	}
 	if !dm && !c.Preview {
@@ -137,7 +144,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 			if MoveChannel != nil {
 				MoveChannel(convID, anchor)
 			}
-		}})
+		}}.In(nsMenu))
 	}
 	if c.Preview {
 		// Slack's menu for a channel you aren't in: no Star, Move or Leave
@@ -152,7 +159,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 				return
 			}
 			details()
-		}},
+		}}.In(nsMenu),
 		Sep(),
 		channelSplitItem(h, convID, c.Kind), // getTilesTemplate (split.go)
 		Sep(),
@@ -160,18 +167,18 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 	if dm { // Slack's channel menu has no mute row (that's the header bell)
 		items = append(items, MenuItem{Widget: actLabelRow(h, func() string {
 			if actIsMuted(h, convID) {
-				return unmuteLabel
+				return nsMenuMute.T(unmuteLabel)
 			}
-			return muteLabel
+			return nsMenuMute.T(muteLabel)
 		}), Do: func() { actToggleMute(h, convID, noun) }})
 	}
 	switch {
 	case c.Preview:
 		items = items[:len(items)-1] // the trailing separator: no Leave
 	case dm:
-		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }})
+		items = append(items, MenuItem{Label: "Close conversation", Do: func() { actLeave(h, convID, "Conversation closed") }}.In(nsMenu))
 	default:
-		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }})
+		items = append(items, MenuItem{Label: "Leave channel", Danger: true, Do: func() { leaveChannel(h, convID, c.Kind, name, c.IsGeneral) }}.In(nsMenu))
 	}
 	m := NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), AlignRight: alignRight, Wraps: []MenuWrap{
 		// Slack's channel context menu: ChatTabs marks the channel, then
@@ -179,7 +186,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 		{Name: "ChannelContextMenu", Props: slackc.Props{"id": convID}},
 		{Name: "ContextMenuTriggerWithKeyboardFocus", Props: slackc.Props{
 			"desktopAppOnly": false, "showSlackKitContextMenuOnDesktop": true, "overrideDefaultMenu": true,
-			"menuAriaLabel": "Channel options", "width": "300px",
+			"menuAriaLabel": nsMenu.T("Channel options"), "width": "300px",
 		}},
 	}})
 	tautMenu(h, m, "getContextMenuTemplate", convID) // QuickJoin et al.; free without plugins
@@ -253,42 +260,49 @@ func (c ChannelMenuInfo) dm() bool { return c.Kind == "im" || c.Kind == "mpim" |
 // "Move channel" (or "conversation") ▸ instead of the star. The ▸ rows
 // are c.Move.
 func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem {
-	noun := "channel"
-	if c.dm() {
-		noun = "conversation"
-	}
-	star, mute := "Star "+noun, "Mute "+noun
+	// the channel context menu's templates (the menu I18n)
+	details, star, mute, move := "View channel details", "Star channel", "Mute channel", "Move channel"
 	if c.Starred {
-		star = "Unstar " + noun
+		star = "Unstar channel"
 	}
 	if c.Muted {
-		mute = "Unmute " + noun
+		mute = "Unmute channel"
 	}
+	if c.dm() {
+		details, star, mute, move = "View conversation details", "Star conversation", "Mute conversation", "Move conversation"
+		if c.Starred {
+			star = "Unstar conversation"
+		}
+		if c.Muted {
+			mute = "Unmute conversation"
+		}
+	}
+	t := nsMenu.T
 	items := []MenuItem{
-		{Key: "view_details", Label: "View " + noun + " details"},
-		{Key: "copy_link", Label: "Copy link"},
-		{Key: "copy_name", Label: "Copy name"},
+		{Key: "view_details", Label: t(details)},
+		{Key: "copy_link", Label: t("Copy link")},
+		{Key: "copy_name", Label: t("Copy name")},
 		{Key: "separator_1", Separator: true},
 	}
 	switch {
 	case c.NoSections:
 	case c.MoveToSection:
-		items = append(items, MenuItem{Key: "move_to_section", Label: "Move to section", Sub: c.Move})
+		items = append(items, MenuItem{Key: "move_to_section", Label: t("Move to section"), Sub: c.Move})
 	case c.Custom:
-		items = append(items, MenuItem{Key: "move", Label: "Move " + noun, Sub: c.Move})
+		items = append(items, MenuItem{Key: "move", Label: t(move), Sub: c.Move})
 	default:
-		items = append(items, MenuItem{Key: "toggle_star", Label: star},
-			MenuItem{Key: "move_to_new_section", Label: "Move to new section"})
+		items = append(items, MenuItem{Key: "toggle_star", Label: t(star)},
+			MenuItem{Key: "move_to_new_section", Label: t("Move to new section")})
 	}
 	items = append(items,
-		MenuItem{Key: "toggle_mute", Label: mute},
-		MenuItem{Key: "mark_read", Label: "Mark as read"},
+		MenuItem{Key: "toggle_mute", Label: nsMenuMute.T(mute)},
+		MenuItem{Key: "mark_read", Label: t("Mark as read")},
 		MenuItem{Key: "separator_2", Separator: true},
 	)
 	if c.dm() {
-		items = append(items, MenuItem{Key: "close", Label: "Close conversation"})
+		items = append(items, MenuItem{Key: "close", Label: t("Close conversation")})
 	} else {
-		items = append(items, MenuItem{Key: "leave", Label: "Leave channel", Danger: true})
+		items = append(items, MenuItem{Key: "leave", Label: t("Leave channel"), Danger: true})
 	}
 	if do != nil {
 		for i := range items {
@@ -407,13 +421,14 @@ func leaveChannel(h Host, convID, kind, name string, general bool) {
 // Leave button runs it too (useChannelExplorer onClickLeave).
 func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 	if general {
-		m := NewModal(h, ModalOpts{Title: "Membership is required in #" + name, EnterSubmits: true,
+		// LeaveChannelError (the channels I18n) in a DeprecatedAlertDialog
+		m := NewModal(h, ModalOpts{Title: nsChannels.T("Membership is required in {channelName}", "channelName", "#"+name), EnterSubmits: true,
 			Body: func(gtx layout.Context) layout.Dimensions {
 				th := h.Theme()
 				return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
-					"Every workspace has one channel that contains all the members of this workspace — this is that channel for you.", 0)
+					nsChannels.T("Every workspace has one channel that contains all the members of this workspace — this is that channel for you."), 0)
 			},
-			Buttons: []*ModalButton{{Label: "OK", Kind: BtnPrimary, Do: func() bool { return true }}}})
+			Buttons: []*ModalButton{{Label: nsDialog.T("OK"), Kind: BtnPrimary, Do: func() bool { return true }}}})
 		h.ShowOverlay(m)
 		return
 	}
@@ -421,8 +436,9 @@ func MaybeLeaveChannel(h Host, name, kind string, general bool, leave func()) {
 		leave()
 		return
 	}
-	Confirm(h, "Leave "+name, "When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited.",
-		"Leave Channel", true, nil, leave)
+	// LeaveChannel (the groups I18n)
+	Confirm(h, nsGroups.T("Leave {group}", "group", name), nsGroups.T("When you leave a private channel, you’ll no longer be able to see any of its messages. To rejoin this channel later, you’ll need to be invited."),
+		nsGroups.T("Leave Channel"), true, nil, leave)
 }
 
 func actLeave(h Host, convID, okMsg string) {
@@ -482,12 +498,13 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 		})
 		return layout.Dimensions{Size: sz}
 	}
+	// the workspace menu's strings (makeMenuItemIcon, useSwitchWorkspaceMenu)
 	items := []MenuItem{
 		{Widget: header, Do: actToast(h, team.Name+" is the only workspace you're signed in to")},
 		Sep(),
-		{Label: "Invite people to " + team.Name, Do: actToast(h, "Invites aren't supported in yoloslack")},
+		{Key: LabelKey("Invite people to " + team.Name), Label: nsIa4.T("Invite people to {teamDisplayName}", "teamDisplayName", team.Name), Do: actToast(h, "Invites aren't supported in yoloslack")},
 		Sep(),
-		{Label: "Preferences", Do: actPreferences(h)},
+		MenuItem{Label: "Preferences", Do: actPreferences(h)}.In(nsIa4),
 	}
 	if f := CheckForUpdates; f != nil {
 		label, ok := "Check for Updates…", true
@@ -497,15 +514,15 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 		items = append(items, MenuItem{Key: "check-for-updates", Label: label, Disabled: !ok, Do: f})
 	}
 	items = append(items, []MenuItem{
-		{Label: "Tools", Sub: []MenuItem{
-			{Label: "Workflows", Do: actToast(h, "Workflows aren't supported in yoloslack")},
-			{Label: "Analytics", Do: actToast(h, "Analytics aren't supported in yoloslack")},
-		}},
+		MenuItem{Label: "Tools", Sub: []MenuItem{
+			{Key: LabelKey("Workflows"), Label: nsTeamMenu.T("Workflows"), Do: actToast(h, "Workflows aren't supported in yoloslack")},
+			MenuItem{Label: "Analytics", Do: actToast(h, "Analytics aren't supported in yoloslack")}.In(nsIa4),
+		}}.In(nsIa4),
 		Sep(),
-		{Label: "Sign in on mobile", Do: actToast(h, "Use the Slack mobile app to sign in on your phone")},
-		{Label: "Join or leave workspaces", External: true, Do: actToast(h, "Manage workspaces at app.slack.com")},
-		{Label: "Sign out", Do: actSignOut(h)},
-		{Label: "Open the Slack App", Do: actToast(h, "You're already in a Slack app")},
+		MenuItem{Label: "Sign in on mobile", Do: actToast(h, "Use the Slack mobile app to sign in on your phone")}.In(nsClassicNav),
+		MenuItem{Label: "Join or leave workspaces", External: true, Do: actToast(h, "Manage workspaces at app.slack.com")}.In(nsIa4),
+		MenuItem{Label: "Sign out", Do: actSignOut(h)}.In(nsIa4),
+		MenuItem{Label: "Open the Slack App", Do: actToast(h, "You're already in a Slack app")}.In(nsNativeApps),
 	}...)
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), Width: 320})
 }
@@ -533,7 +550,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 	cleared := false
 	clearStatus := func() {
 		cleared = true
-		actDo(h, "Status cleared", func(ctx context.Context, a *core.App) error { return a.SetStatus(ctx, "", "", 0) })
+		actDo(h, nsClassicNav.T("Status cleared"), func(ctx context.Context, a *core.App) error { return a.SetStatus(ctx, "", "", 0) })
 	}
 
 	header := func(gtx layout.Context, _ bool) layout.Dimensions {
@@ -550,9 +567,9 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 22))}
 			return text(gtx, th, 15, theme.Black, cl.Fg, userName(self))
 		})
-		label := "Active"
+		label := nsClassicNav.T("Active")
 		if away {
-			label = "Away"
+			label = nsClassicNav.T("Away")
 		}
 		at(gtx, image.Pt(x, dp(gtx, 30)), func(gtx layout.Context) layout.Dimensions {
 			h20 := dp(gtx, 18)
@@ -607,7 +624,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			})
 		}
 		x += dp(gtx, 28)
-		label, col := "Update your status", cl.Fg3
+		label, col := nsClassicNav.T("Update your status"), cl.Fg3
 		if hasStatus {
 			label, col = self.StatusText, cl.Fg
 			if label == "" {
@@ -623,11 +640,15 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 		return layout.Dimensions{Size: sz}
 	}
 
-	presence := MenuItem{Widget: actRichRow(h, "Set yourself as ", "away"), Do: func() {
+	// PresenceToggle (classic_nav): "Set yourself as <strong>{presenceLabel}</strong>"
+	setAs := func(label string) func(gtx layout.Context, hl bool) layout.Dimensions {
+		return actRichRow(h, nsClassicNav.RT("Set yourself as <strong>{presenceLabel}</strong>", "presenceLabel", nsClassicNav.T(label)))
+	}
+	presence := MenuItem{Widget: setAs("away"), Do: func() {
 		actDo(h, "You're set to away", func(ctx context.Context, a *core.App) error { return a.SetPresence(ctx, "away") })
 	}}
 	if away {
-		presence = MenuItem{Widget: actRichRow(h, "Set yourself as ", "active"), Do: func() {
+		presence = MenuItem{Widget: setAs("active"), Do: func() {
 			actDo(h, "You're set to active", func(ctx context.Context, a *core.App) error { return a.SetPresence(ctx, "auto") })
 		}}
 	}
@@ -638,7 +659,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 	fixed := func(n int) func(time.Time) int { return func(time.Time) int { return n } }
 	var notif []MenuItem
 	if paused {
-		notif = append(notif, MenuItem{Label: "Resume notifications", Do: func() {
+		notif = append(notif, MenuItem{Key: LabelKey("Resume notifications"), Label: nsDND.T("Resume notifications"), Do: func() {
 			a := h.Core()
 			if a == nil {
 				h.Toast("Not connected yet")
@@ -654,21 +675,25 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			})
 		}}, Sep())
 	}
-	notif = append(notif,
-		MenuItem{Header: "Pause notifications for…"},
-		MenuItem{Label: "30 minutes", Do: snooze(fixed(30))},
-		MenuItem{Label: "1 hour", Do: snooze(fixed(60))},
-		MenuItem{Label: "2 hours", Do: snooze(fixed(120))},
-		MenuItem{Label: "Until tomorrow", Do: snooze(func(now time.Time) int { return actMinutesUntil(now, actTomorrow9(now)) })},
-		MenuItem{Label: "Until next week", Do: snooze(func(now time.Time) int { return actMinutesUntil(now, actNextMonday9(now)) })},
-		MenuItem{Label: "Custom…", Do: func() { h.ShowOverlay(actNewPauseModal(h)) }},
+	// the do_not_disturb menu's strings
+	notif = append(notif, inAll(nsDND, []MenuItem{
+		{Header: "Pause notifications for…"},
+		{Label: "30 minutes", Do: snooze(fixed(30))},
+		{Label: "1 hour", Do: snooze(fixed(60))},
+		{Label: "2 hours", Do: snooze(fixed(120))},
+		{Label: "Until tomorrow", Do: snooze(func(now time.Time) int { return actMinutesUntil(now, actTomorrow9(now)) })},
+		{Label: "Until next week", Do: snooze(func(now time.Time) int { return actMinutesUntil(now, actNextMonday9(now)) })},
+		{Label: "Custom…", Do: func() { h.ShowOverlay(actNewPauseModal(h)) }},
 		Sep(),
-		MenuItem{Label: "Edit your working hours", Do: func() { openPreferences(h, "availability") }},
-		MenuItem{Note: "You can choose to always allow notifications from VIPs in preferences."},
-	)
-	notifState := "On"
+		{Label: "Edit your working hours", Do: func() { openPreferences(h, "availability") }},
+	})...)
+	// "You can choose to always allow notifications from VIPs <Link>in
+	// preferences.</Link>", as the menu's footnote
+	notif = append(notif, MenuItem{Key: LabelKey("You can choose to always allow notifications from VIPs in preferences."),
+		Note: i18n.Plain(nsDND.RT("You can choose to always allow notifications from VIPs <Link>in preferences.</Link>"))})
+	notifState := nsClassicNav.T("On")
 	if paused {
-		notifState = "Paused"
+		notifState = nsClassicNav.T("Paused")
 	}
 
 	items := []MenuItem{
@@ -683,9 +708,9 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			h.ShowOverlay(NewSetStatusModal(h))
 		}},
 		presence,
-		{Label: "Notifications", Right: notifState, Sub: notif},
+		MenuItem{Label: "Notifications", Right: notifState, Sub: notif}.In(nsClassicNav),
 		Sep(),
-		{Label: "Profile", Do: func() {
+		MenuItem{Label: "Profile", Do: func() {
 			if OpenOwnProfile != nil {
 				OpenOwnProfile()
 				return
@@ -693,11 +718,11 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			// a host without the ui root's hooks (OpenOwnProfile unset):
 			// the same full profile, through the host's pane
 			pfOpenFull(h, actSelfID(h))
-		}},
-		{Label: "Preferences", Do: actPreferences(h)},
-		{Label: "Account settings", External: true, Do: actToast(h, "Account settings live at app.slack.com")},
+		}}.In(nsClassicNav),
+		MenuItem{Label: "Preferences", Do: actPreferences(h)}.In(nsClassicNav),
+		MenuItem{Label: "Account settings", External: true, Do: actToast(h, "Account settings live at app.slack.com")}.In(nsClassicNav),
 		Sep(),
-		{Key: "sign-out", Label: "Sign out of " + teamName, Do: actSignOut(h)},
+		{Key: "sign-out", Label: nsClassicNav.T("Sign out of {teamDisplayName}", "teamDisplayName", teamName), Do: actSignOut(h)},
 	}
 	menu = NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), Side: Above})
 	return menu
@@ -748,20 +773,20 @@ func actNewPauseModal(h Host) *Modal {
 				})
 			})
 		}
-		lbl(dp(gtx, 2), "Pause notifications until…")
+		lbl(dp(gtx, 2), nsDND.T("Pause notifications until…"))
 		y := dp(gtx, 34)
 		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			return day.Layout(gtx, h, org.Add(image.Pt(0, y)), w, dtLarge)
 		})
-		lbl(dp(gtx, 90), "Time")
+		lbl(dp(gtx, 90), nsDND.T("Time"))
 		y = dp(gtx, 120)
 		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			return tm.Layout(gtx, h, org.Add(image.Pt(0, y)), w, dtLarge)
 		})
 		return layout.Dimensions{Size: image.Pt(w, dp(gtx, 176))}
 	}
-	m = NewModal(h, ModalOpts{Title: "Pause Notifications", PadX: 24, HeadH: 66, Body: body, Buttons: []*ModalButton{
-		{Label: "Save", Kind: BtnPrimary, Do: func() bool {
+	m = NewModal(h, ModalOpts{Title: nsDND.T("Pause Notifications"), PadX: 24, HeadH: 66, Body: body, Buttons: []*ModalButton{
+		{Label: nsDND.T("Save"), Kind: BtnPrimary, Do: func() bool {
 			until, n := dtAt(day.Day, tm.Mins), time.Now()
 			if !until.After(n) {
 				h.Toast("Choose a time in the future")
@@ -774,8 +799,9 @@ func actNewPauseModal(h Host) *Modal {
 	return m
 }
 
-// actRichRow is a 28px menu row "plain **bold**" with Slack's highlight.
-func actRichRow(h Host, plain, bold string) func(gtx layout.Context, hl bool) layout.Dimensions {
+// actRichRow is a 28px menu row of an rt() string's parts, its <strong>
+// and <b> runs bold, with Slack's highlight.
+func actRichRow(h Host, parts []i18n.Part) func(gtx layout.Context, hl bool) layout.Dimensions {
 	return func(gtx layout.Context, hl bool) layout.Dimensions {
 		th := h.Theme()
 		cl := colorsOf(th)
@@ -786,17 +812,18 @@ func actRichRow(h Host, plain, bold string) func(gtx layout.Context, hl bool) la
 			fg = cl.HighText
 		}
 		x := dp(gtx, 24)
-		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, fg, plain)
+		for _, p := range parts {
+			w, s := theme.Regular, p.Text
+			if p.Tag == "strong" || p.Tag == "b" {
+				w = theme.Bold
+			}
+			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, w, fg, s)
+				})
 			})
-		})
-		x += textW(gtx, th, 15, theme.Regular, plain)
-		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Bold, fg, bold)
-			})
-		})
+			x += textW(gtx, th, 15, w, s)
+		}
 		return layout.Dimensions{Size: sz}
 	}
 }

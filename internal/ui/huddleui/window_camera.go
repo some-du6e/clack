@@ -107,7 +107,7 @@ func (w *window) cameraNotice(gtx C, st huddle.State, stage image.Rectangle) {
 	url := avperm.SettingsURL(avperm.Camera)
 	pad := gtx.Dp(10)
 	bh := gtx.Dp(28)
-	btn := "Open Settings"
+	btn := nsHuddles.T("Open Settings")
 	bw := labelSize(gtx, w.th, 13, theme.Bold, btn).X + 2*gtx.Dp(12)
 	if url == "" {
 		bw = 0

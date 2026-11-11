@@ -289,7 +289,7 @@ func (v *View) richDoc(d *core.CanvasDoc, b *canvas.Block) (richtext.Doc, bool) 
 		}
 		return one(richtext.Block{Kind: richtext.ImageBlock, Image: im})
 	case canvas.File:
-		f := &richtext.File{ID: b.FileID, Name: b.Title, Title: b.Title, PrettyType: "File"}
+		f := &richtext.File{ID: b.FileID, Name: b.Title, Title: b.Title, PrettyType: nsCanvas.T("File")}
 		if cf, ok := d.Files[b.FileID]; ok {
 			f.Name, f.Title, f.Mime, f.PrettyType, f.Permalink = cf.Name, cf.Title, cf.Mime, cf.PrettyType, cf.Permalink
 			f.IsImage = cf.IsImage

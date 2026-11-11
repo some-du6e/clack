@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -247,8 +248,8 @@ func TestLoginMagicErrors(t *testing.T) {
 	f.exchange = func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"ok":false,"error":"invalid_magic_token"}`))
 	}
-	if _, err := LoginMagic(ctx, sets, MagicConfig{}); err == nil || !strings.Contains(err.Error(), "expired or was already used") {
-		t.Errorf("used link: %v", err)
+	if _, err := LoginMagic(ctx, sets, MagicConfig{}); err == nil || !strings.Contains(err.Error(), "expired or was already used") || !errors.Is(err, ErrMagicLinkUsed) {
+		t.Errorf("used link: %v (the sign-in card's short words need ErrMagicLinkUsed)", err)
 	}
 
 	f.exchange = func(w http.ResponseWriter, r *http.Request) {
@@ -374,5 +375,26 @@ func TestParseIncomingConfig(t *testing.T) {
 		if got := parseIncomingConfig([]byte(bad), "T1"); len(got.Team) != 0 || got.Org != "" {
 			t.Errorf("%q: %+v", bad, got)
 		}
+	}
+}
+
+// The kinds the sign-in card has short words for match with errors.Is and
+// leave the error's own text alone (clack login prints it).
+func TestSignInErrorKinds(t *testing.T) {
+	used := magicError("invalid_magic_token")
+	if !errors.Is(used, ErrMagicLinkUsed) || errors.Is(used, ErrSlackUnreachable) {
+		t.Errorf("%v: Is(ErrMagicLinkUsed) %v", used, errors.Is(used, ErrMagicLinkUsed))
+	}
+	if want := "that sign-in link has expired or was already used (invalid_magic_token). Links work once and only for a few minutes: get a new one"; used.Error() != want {
+		t.Errorf("text changed: %q", used.Error())
+	}
+	if other := magicError("team_not_found_x"); errors.Is(other, ErrMagicLinkUsed) {
+		t.Errorf("%v matched ErrMagicLinkUsed", other)
+	}
+	inner := &MagicRedirectError{URL: "https://hackclub.slack.com/sso"}
+	k := &kindError{fmt.Errorf("wrapped: %w", inner), ErrSlackUnreachable}
+	var re *MagicRedirectError
+	if !errors.Is(k, ErrSlackUnreachable) || !errors.As(k, &re) || re != inner || k.Error() != "wrapped: "+inner.Error() {
+		t.Errorf("kindError: Is %v, As %v, %q", errors.Is(k, ErrSlackUnreachable), re == inner, k.Error())
 	}
 }

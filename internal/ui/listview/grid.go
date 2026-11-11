@@ -258,7 +258,7 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 	case lineAdd:
 		defer op.Offset(image.Pt(0, ty)).Push(gtx.Ops).Pop()
 		ac := shade(th, "gray-70")
-		lw := th.Measure(gtx, 13, theme.Bold, "Add item")
+		lw := th.Measure(gtx, 13, theme.Bold, nsLists.T("Add item"))
 		bw := gtx.Dp(8+16+6+8) + lw
 		bx := g.x0 + gtx.Dp(4)
 		if g.hover == idx {
@@ -269,7 +269,7 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 		})
 		at(gtx, image.Pt(bx+gtx.Dp(30), 0), image.Pt(lw+2, ln.h), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, ln.h, func(gtx layout.Context) layout.Dimensions {
-				return th.Label(gtx, 13, theme.Bold, ac, "Add item")
+				return th.Label(gtx, 13, theme.Bold, ac, nsLists.T("Add item"))
 			})
 		})
 		return
@@ -433,7 +433,7 @@ func hglColor(th *theme.Theme) color.NRGBA {
 func (v *View) openButton(gtx layout.Context, x, h int) {
 	th := v.h.Theme()
 	c := &th.C
-	lw := th.Measure(gtx, 13, theme.Bold, "Open")
+	lw := th.Measure(gtx, 13, theme.Bold, nsLists.T("Open"))
 	w := lw + gtx.Dp(16)
 	bh := gtx.Dp(26)
 	at(gtx, image.Pt(x, (h-bh)/2), image.Pt(w, bh), func(gtx layout.Context) layout.Dimensions {
@@ -442,17 +442,14 @@ func (v *View) openButton(gtx layout.Context, x, h int) {
 		theme.Border(gtx, r, gtx.Dp(6), gtx.Dp(1), c.Border)
 		return at(gtx, image.Pt(gtx.Dp(8), 0), image.Pt(lw+2, bh), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-				return th.Label(gtx, 13, theme.Bold, c.Fg, "Open")
+				return th.Label(gtx, 13, theme.Bold, c.Fg, nsLists.T("Open"))
 			})
 		})
 	})
 }
 
 func itemsLabel(n int) string {
-	if n == 1 {
-		return "1 item"
-	}
-	return itoa(n) + " items"
+	return nsLists.T("{count} {count, plural, =1 {item} other {items}}", "count", n)
 }
 
 // groupField is a group's value as a cell (for its label).

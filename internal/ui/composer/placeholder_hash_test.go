@@ -38,7 +38,12 @@ func TestPlaceholderHashMatchesText(t *testing.T) {
 			f(gtx)
 			return pixeltest.Render(t, w, h, &ops)
 		}
-		st := &chromeState{Mode: modeChannel, ChannelName: "clack", Placeholder: "Message clack", ShowPlaceholder: true}
+		ph, pre, post := placeholderText("clack")
+		st := &chromeState{Mode: modeChannel, ChannelName: "clack", Placeholder: ph, ShowPlaceholder: true,
+			PlaceholderMsg: true, PlaceholderPre: pre, PlaceholderPost: post}
+		if ph != "Message clack" || pre != "Message " || post != "" {
+			t.Fatalf("placeholder %q = %q + {msg} + %q", ph, pre, post)
+		}
 		img := draw(func(gtx layout.Context) { c.placeholder(gtx, th, p, st, image.Point{}, w) })
 		if dir := os.Getenv("ICON_SHOTS_DIR"); dir != "" { // the icon-shots workflow's artifact
 			name := "placeholder-hash-light.png"

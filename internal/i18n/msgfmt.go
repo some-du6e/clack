@@ -277,17 +277,37 @@ func (m *Message) Format(loc string, args Args) string {
 		return m.nodes[0].text
 	}
 	var b strings.Builder
-	formatNodes(&b, m.nodes, loc, args, nil)
+	formatNodes(&b, m.nodes, loc, args, nil, false)
 	return b.String()
 }
 
-func formatNodes(b *strings.Builder, nodes []node, loc string, args Args, plural *node) {
+// argOpen and argClose bracket a {placeholder}'s name in formatMarked's
+// output (private-use code points: no translation has them).
+const (
+	argOpen  = "\ue000"
+	argClose = "\ue001"
+)
+
+// formatMarked is Format with each {x} written as argOpen x argClose
+// instead of its value: rt() parses the tags of the formatted text
+// first and puts the values in after, so a value is never read as a tag.
+func (m *Message) formatMarked(loc string, args Args) string {
+	var b strings.Builder
+	formatNodes(&b, m.nodes, loc, args, nil, true)
+	return b.String()
+}
+
+func formatNodes(b *strings.Builder, nodes []node, loc string, args Args, plural *node, mark bool) {
 	for i := range nodes {
 		n := &nodes[i]
 		switch n.kind {
 		case 0:
 			b.WriteString(n.text)
 		case 1:
+			if mark {
+				b.WriteString(argOpen + n.arg + argClose)
+				continue
+			}
 			b.WriteString(jsString(args[n.arg], args != nil && hasKey(args, n.arg)))
 		case 2:
 			v, _ := toFloat(args[n.arg])
@@ -313,13 +333,13 @@ func formatNodes(b *strings.Builder, nodes []node, loc string, args Args, plural
 					sub = n.cases["other"]
 				}
 			}
-			formatNodes(b, sub, loc, args, n)
+			formatNodes(b, sub, loc, args, n, mark)
 		case 5:
 			sub, ok := n.cases[jsString(args[n.arg], true)]
 			if !ok {
 				sub = n.cases["other"]
 			}
-			formatNodes(b, sub, loc, args, plural)
+			formatNodes(b, sub, loc, args, plural, mark)
 		case 7, 8:
 			if t, ok := args[n.arg].(time.Time); ok {
 				b.WriteString(intlDate(loc, t, n.kind == 8, n.style))

@@ -51,9 +51,10 @@ func NewTopicDialog(h Host, ch, kind, name, topic string) *TopicDialog {
 	d.ed.SetText(topic)
 	d.ed.SetCaret(len([]rune(topic)), len([]rune(topic)))
 	d.ed.MaxLen = 250
-	save := &ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: func() bool { return !d.pending }, Do: func() bool { return d.Save() }}
-	d.modal = NewModal(h, ModalOpts{Title: "Edit topic", Body: d.layout, PadX: 24, HeadH: 68,
-		Buttons:    []*ModalButton{{Label: "Cancel", Kind: BtnOutline}, save},
+	// useChannelTopicInput's modal (the channel_details I18n)
+	save := &ModalButton{Label: nsChDetails.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return !d.pending }, Do: func() bool { return d.Save() }}
+	d.modal = NewModal(h, ModalOpts{Title: nsChDetails.T("Edit topic"), Body: d.layout, PadX: 24, HeadH: 68,
+		Buttons:    []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, save},
 		FocusStops: func() []event.Tag { return []event.Tag{&d.ed} }}).OldDialog()
 	return d
 }
@@ -114,16 +115,14 @@ func TopicErrorText(err error) string {
 
 // hint is useChannelTopicInput's hint for the conversation's kind.
 func (d *TopicDialog) hint() []cnRun {
+	// one string each, {channelName} drawn bold (rtRuns)
 	switch d.kind {
 	case "im", "app":
-		return []cnRun{{s: "Add a topic to your conversation with "}, {s: d.name, bold: true},
-			{s: ". This will be visible to both of you at the top of your DM."}}
+		return rtRuns(nsChDetails.RT("Add a topic to your conversation with {channelName}. This will be visible to both of you at the top of your DM.", "channelName", d.name), "")
 	case "mpim":
-		return []cnRun{{s: "Add a topic to your conversation with "}, {s: d.name, bold: true},
-			{s: ". This will be visible to all participants at the top of your conversation."}}
+		return rtRuns(nsChDetails.RT("Add a topic to your conversation with {channelName}. This will be visible to all participants at the top of your conversation.", "channelName", d.name), "")
 	}
-	return []cnRun{{s: "Let people know what "}, {s: d.name, bold: true},
-		{s: " is focused on right now (ex. a project milestone). Topics are always visible in the header."}}
+	return rtRuns(nsChDetails.RT("Let people know what {channelName} is focused on right now (ex. a project milestone). Topics are always visible in the header.", "channelName", d.name), "")
 }
 
 // layout is the input (15/22, padding 8 12, radius 8, the focus ring)

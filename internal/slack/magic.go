@@ -161,6 +161,24 @@ type MagicConfig struct {
 	DPoPDir string
 }
 
+// Sign-in failures the sign-in card has a few words for (errors.Is). The
+// errors themselves keep their whole text, for clack login and the log.
+var (
+	// ErrMagicLinkUsed: Slack refused the link as expired or already used.
+	ErrMagicLinkUsed = errors.New("sign-in link expired or already used")
+	// ErrSlackUnreachable: the sign-in request got no answer from Slack.
+	ErrSlackUnreachable = errors.New("couldn't reach Slack")
+	// ErrSessionRejected: Slack answered that the pasted token and cookie
+	// aren't a session.
+	ErrSessionRejected = errors.New("Slack rejected the token and cookie")
+)
+
+// kindError is err, also matching kind with errors.Is; its text is err's.
+type kindError struct{ err, kind error }
+
+func (e *kindError) Error() string   { return e.err.Error() }
+func (e *kindError) Unwrap() []error { return []error{e.err, e.kind} }
+
 // MagicRedirectError means a workspace wants the browser to finish signing in
 // (SSO/SAML): Slack answered with auth_redir instead of a session.
 type MagicRedirectError struct {
@@ -341,7 +359,7 @@ func magicExchange(ctx context.Context, hc *http.Client, s MagicTokenSet, key *d
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("couldn't reach Slack to finish signing in: %w", scrubErr(err))
+		return nil, &kindError{fmt.Errorf("couldn't reach Slack to finish signing in: %w", scrubErr(err)), ErrSlackUnreachable}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
@@ -404,7 +422,7 @@ func magicError(code string) error {
 	case code == "":
 		return errors.New("Slack didn't accept the sign-in link; get a new one and try again")
 	case strings.Contains(code, "expired"), strings.Contains(code, "invalid"), strings.Contains(code, "used"), code == "not_found":
-		return fmt.Errorf("that sign-in link has expired or was already used (%s). Links work once and only for a few minutes: get a new one", code)
+		return &kindError{fmt.Errorf("that sign-in link has expired or was already used (%s). Links work once and only for a few minutes: get a new one", code), ErrMagicLinkUsed}
 	}
 	return fmt.Errorf("Slack didn't accept the sign-in link (%s); get a new one and try again", code)
 }

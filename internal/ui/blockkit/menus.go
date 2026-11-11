@@ -120,7 +120,7 @@ func (x *watch) Dismiss() {
 func showConfirm(h Host, c *Confirm, ok, deny func()) {
 	title := textOf(c.Title)
 	if title == "" {
-		title = "Are you sure?"
+		title = appViewNS.T("Are you sure?")
 	}
 	body := ""
 	if c.Text != nil {
@@ -129,13 +129,13 @@ func showConfirm(h Host, c *Confirm, ok, deny func()) {
 	// openConfirm's defaults: "OK", "Cancel", body "Are you sure?"
 	yes, no := textOf(c.Confirm), textOf(c.Deny)
 	if yes == "" {
-		yes = "OK"
+		yes = appViewNS.T("OK")
 	}
 	if no == "" {
-		no = "Cancel"
+		no = appViewNS.T("Cancel")
 	}
 	if c.Text == nil {
-		body = "Are you sure?"
+		body = appViewNS.T("Are you sure?")
 	}
 	kind := popups.BtnPrimary
 	if c.Style == "danger" {

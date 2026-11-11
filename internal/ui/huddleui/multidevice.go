@@ -69,12 +69,12 @@ func (c *Controller) multiDeviceModal(devices int, others []string, pick func(mu
 	if len(faces) > 6 {
 		faces = faces[:6]
 	}
-	title := "You’re in this huddle on multiple devices"
+	title := nsHuddles.T("You’re in this huddle on multiple devices")
 	if devices == 1 {
-		title = "You’re in this huddle on a different device"
+		title = nsHuddles.T("You’re in this huddle on a different device")
 	}
-	both := &popups.ModalButton{Label: "Use both devices", Kind: popups.BtnOutline, Do: func() bool { pick(true); return true }}
-	sw := &popups.ModalButton{Label: "Switch to this device", Kind: popups.BtnPrimary, Do: func() bool { pick(false); return true }}
+	both := &popups.ModalButton{Label: nsHuddles.T("Use both devices"), Kind: popups.BtnOutline, Do: func() bool { pick(true); return true }}
+	sw := &popups.ModalButton{Label: nsHuddles.T("Switch to this device"), Kind: popups.BtnPrimary, Do: func() bool { pick(false); return true }}
 	c.post(func() {
 		th := ph.Theme()
 		ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{

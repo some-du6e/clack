@@ -3,6 +3,8 @@ package popups
 import (
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/i18n"
 )
 
 var actTestLoc = time.FixedZone("test", -5*3600)
@@ -200,6 +202,13 @@ func TestDtMonthGrid(t *testing.T) {
 	}
 	if n != 29 {
 		t.Errorf("Feb 2028 has %d days", n)
+	}
+	// es-ES weeks start on Monday (dayjs es weekStart 1): Sunday the 1st
+	// ends the first row
+	i18n.Use("es-ES", nil)
+	t.Cleanup(func() { i18n.Use(i18n.EnUS, nil) })
+	if es := dtMonthGrid(actAt(2026, time.November, 17, 10, 0)); es[6] != 1 || es[7] != 2 || es[0] != 0 {
+		t.Errorf("es-ES November: %v", es)
 	}
 }
 

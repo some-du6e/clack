@@ -89,9 +89,9 @@ include:
 - Filters on the Channels and People tabs (channel_type, profile fields);
   Files, Canvases and DMs have Slack's pills since exp-search, and every
   tab but DMs its Sort select.
-- The suggestion action toolbar (Tab), the date picker that
-  `omni_date_quick_filters` opens for before:/after:/on:, the filter
-  pills' icons, and in:'s group DMs, sections and workspaces.
+- in:'s group DMs, sections and workspaces; the toolbar's Open in new
+  window (Clack has one window); an emoji filter value's image (it reads
+  as ":name:").
 
 ## The box's completers
 
@@ -101,3 +101,20 @@ completers; `search_filter_menu.go` draws the menu and keeps the tokens.
 A pick puts a token's label in the box ("from:@Karim") and the search
 gets its request form ("from:<@U…>"); queries with refs open as tokens
 (`SearchDisplayText` is the top bar's plainTextQuery).
+
+## Quick filters, dates, pills and the toolbar (search-dates)
+
+- `search_quick_filters.go`: the filter button toggles QuickFilterRow
+  (In this channel, From me, Includes me, Has a link, Threads only, In
+  Activity, Last 7 days) and its + menu; `search_box.go` is
+  onFilterInsert over the box's text and tokens.
+- `search_date_picker.go`: before:, after: and on: get Fc3Y's calendar;
+  Date > Range gets agO0's range calendar. Both are popups' calendar
+  (`datetime.go` dtCalendar, drawn inline). A pick completes the token
+  ("before:2026-11-05"); the search gets it as typed.
+- `search_token_pills.go`: Slack's pills (icon, 23px gap, bold value,
+  the close icon on hover) over an editor laid out with Gio patch 6's
+  `widget.TextSpan`.
+- `search_toolbar.go`: a picked row's secondary actions and Tab;
+  Delete on a recent search calls `search.delete` (`core/search_delete.go`:
+  searchDelete, and lwKM's forget for the recents pref).

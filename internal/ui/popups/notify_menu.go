@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 )
 
 // notifyChoice is the menu's checked row.
@@ -93,7 +94,7 @@ func notifyCustomized(n core.ChannelNotify, desktop string, muted bool, setting 
 // "informative"} (the menu rows' tag slot, menu_badge.go), or none.
 func customizedTag(n core.ChannelNotify, desktop string, muted bool, setting string) *MenuTag {
 	if notifyCustomized(n, desktop, muted, setting) {
-		return &MenuTag{Label: "Customized", Style: "informative"}
+		return &MenuTag{Label: nsMenu.T("Customized"), Style: "informative"}
 	}
 	return nil
 }
@@ -156,13 +157,16 @@ func untilTomorrow(now time.Time, hhmm string) int64 {
 // description when the channel's desktop push or mobile override is off.
 func pushStatus(n core.ChannelNotify) string {
 	desktopOff, mobileOff := n.DesktopPush == "false", n.Mobile == "nothing"
+	// the prefs I18n's "… are <strong>off</strong>" (the row's description
+	// is plain text)
+	plain := func(src string) string { return i18n.Plain(nsPrefs.RT(src)) }
 	switch {
 	case desktopOff && mobileOff:
-		return "Push notifications are off"
+		return plain("Push notifications are <strong>off</strong>")
 	case desktopOff:
-		return "Desktop push notifications are off"
+		return plain("Desktop push notifications are <strong>off</strong>")
 	case mobileOff:
-		return "Mobile push notifications are off"
+		return plain("Mobile push notifications are <strong>off</strong>")
 	}
 	return ""
 }
@@ -171,7 +175,7 @@ func pushStatus(n core.ChannelNotify) string {
 func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	a := h.Core()
 	if a == nil {
-		return []MenuItem{{Header: "Notify you about…"}}
+		return []MenuItem{MenuItem{Header: "Notify you about…"}.In(nsMenu)}
 	}
 	n := a.NotifyPrefs(ch)
 	muted := actIsMuted(h, ch)
@@ -194,14 +198,16 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 				})
 		}
 	}
-	mentions := "@you, @channel, @here"
+	// the option labels are n9iP's (channel_sidebar), the rest PND5's (menu)
+	mentions := nsSidebar.T("@you, @channel, @here")
 	if n.SuppressAtChannel {
-		mentions = "@you"
+		mentions = nsSidebar.T("@you")
 	}
 	muteLabel, muteDesc := "Mute channel", "Only get notified if someone @mentions you personally"
 	if a.Experiment("improve_mute_pref") == "on" {
 		muteLabel, muteDesc = "Mute and hide", "Only badge the channel when someone @mentions you"
 	}
+	muteDesc = nsMenu.T(muteDesc)
 	tomorrowEnd := a.DNDEndHour(time.Now().AddDate(0, 0, 1).Weekday())
 	temp := tempMuteChoice(muted, n.TempMuteExp, time.Now(), tomorrowEnd)
 	tempMute := func(until func() int64, duration string) func() {
@@ -230,7 +236,8 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	editDefaults := MenuItem{Key: "channel_ctx_menu_edit_default_prefs", Label: "Edit default preferences", Do: func() { openPreferences(h, "notifications") }}
 	var tail []MenuItem
 	if a.TempMuteOn() {
-		more := []MenuItem{
+		// MoreOptionsSubmenu (laNq, channel_sidebar)
+		more := inAll(nsSidebar, []MenuItem{
 			{Header: "Temporarily mute…"},
 			{Key: "channel_mute_until_tomorrow", Label: "Until tomorrow", Radio: true, Checked: temp == "tomorrow",
 				Do: tempMute(func() int64 {
@@ -240,26 +247,26 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 				Do: tempMute(func() int64 { return time.Now().Add(time.Hour).Unix() }, "one_hour")},
 			Sep(),
 			editDefaults,
-		}
+		})
 		if advanced {
-			more = append(more, MenuItem{Key: "channel_ctx_menu_advanced_options", Label: "Advanced settings", Do: openAdvanced})
+			more = append(more, MenuItem{Key: "channel_ctx_menu_advanced_options", Label: "Advanced settings", Do: openAdvanced}.In(nsSidebar))
 		}
-		tail = []MenuItem{Sep(), {Key: "more_options", Label: "More options", Sub: more}}
+		tail = []MenuItem{Sep(), MenuItem{Key: "more_options", Label: "More options", Sub: more}.In(nsMenu)}
 	} else {
 		if advanced {
 			tail = append(tail, Sep(), MenuItem{Key: "more_options", Label: "Advanced options", Icon: "filter-sliders",
-				Subtitle: pushStatus(n), Do: openAdvanced})
+				Subtitle: pushStatus(n), Do: openAdvanced}.In(nsMenu))
 		}
-		tail = append(tail, Sep(), editDefaults)
+		tail = append(tail, Sep(), editDefaults.In(nsMenu))
 	}
 	return append([]MenuItem{
-		{Header: "Notify you about…"},
-		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: NotifyIcon("everything", false), Radio: true,
-			Checked: cur == "everything", Tag: customizedTag(n, desktop, muted, "everything"), Do: set("everything")},
-		{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: NotifyIcon("mentions_dms", false), Radio: true,
-			Checked: cur == "mentions_dms", Tag: customizedTag(n, desktop, muted, "mentions_dms"), Do: set("mentions_dms")},
-		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: NotifyIcon("nothing", true), Radio: true, Checked: muted,
-			Do: func() { actToggleMute(h, ch, "channel") }},
+		MenuItem{Header: "Notify you about…"}.In(nsMenu),
+		MenuItem{Key: "everything", Label: "All new posts", Subtitle: nsSidebar.T("Messages and threads you follow"), Icon: NotifyIcon("everything", false), Radio: true,
+			Checked: cur == "everything", Tag: customizedTag(n, desktop, muted, "everything"), Do: set("everything")}.In(nsSidebar),
+		MenuItem{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: NotifyIcon("mentions_dms", false), Radio: true,
+			Checked: cur == "mentions_dms", Tag: customizedTag(n, desktop, muted, "mentions_dms"), Do: set("mentions_dms")}.In(nsSidebar),
+		MenuItem{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: NotifyIcon("nothing", true), Radio: true, Checked: muted,
+			Do: func() { actToggleMute(h, ch, "channel") }}.In(nsMenu),
 	}, tail...)
 }
 
@@ -279,13 +286,16 @@ func tempMuteToast(h Host, ch, duration string, err error) {
 	if c, ok := a.Conv(ch); ok {
 		name = channelEntityName(c)
 	}
-	msg := name + " muted."
+	// enqueueMuteChannelToast's "<strong>{channelEntity} muted.</strong>"
+	// (channel_sidebar; the toast's text is bold already)
+	src := "<strong>{channelEntity} muted.</strong>"
 	switch duration {
 	case "one_hour":
-		msg = name + " muted for 1 hour."
+		src = "<strong>{channelEntity} muted for 1 hour.</strong>"
 	case "until_tomorrow":
-		msg = name + " muted until tomorrow."
+		src = "<strong>{channelEntity} muted until tomorrow.</strong>"
 	}
+	msg := i18n.Plain(nsSidebar.RT(src, "channelEntity", name))
 	undo := func() {
 		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.Mute(ctx, ch, false) },
 			func(_ struct{}, err error) {

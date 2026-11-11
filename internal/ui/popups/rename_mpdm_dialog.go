@@ -76,9 +76,10 @@ func NewRenameMpdmDialog(h Host, ch, members string) *RenameMpdmDialog {
 	d.ed.SetText(d.start)
 	d.ed.SetCaret(len([]rune(d.start)), len([]rune(d.start)))
 	d.last = d.start
-	save := &ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: d.canSave, Do: func() bool { return d.Save() }}
-	d.modal = NewModal(h, ModalOpts{Title: "Edit conversation name", Body: d.layout, PadX: 24, HeadH: 68,
-		Buttons:    []*ModalButton{{Label: "Cancel", Kind: BtnOutline}, save},
+	// the channel_details I18n's rename modal
+	save := &ModalButton{Label: nsChDetails.T("Save"), Kind: BtnPrimary, Enabled: d.canSave, Do: func() bool { return d.Save() }}
+	d.modal = NewModal(h, ModalOpts{Title: nsChDetails.T("Edit conversation name"), Body: d.layout, PadX: 24, HeadH: 68,
+		Buttons:    []*ModalButton{{Label: nsChDetails.T("Cancel"), Kind: BtnOutline}, save},
 		FocusStops: func() []event.Tag { return []event.Tag{&d.ed} }}).OldDialog()
 	return d
 }
@@ -96,14 +97,17 @@ func (d *RenameMpdmDialog) Error() string { return renameMpdmErrorText(d.errID) 
 
 // Hints are the hint lines' texts, the duplicate warning last.
 func (d *RenameMpdmDialog) Hints() []string {
-	out := []string{"Name your conversation with " + d.members + ". This will be visible to all participants."}
+	out := []string{nsChDetails.T(renameMpdmHint, "channelName", d.members)}
 	if d.duplicate() {
-		out = append(out, renameMpdmDuplicate)
+		out = append(out, nsChDetails.T(renameMpdmDuplicate))
 	}
 	return out
 }
 
-const renameMpdmDuplicate = "You already have a conversation with this name. Consider using a unique name to tell them apart."
+const (
+	renameMpdmDuplicate = "You already have a conversation with this name. Consider using a unique name to tell them apart."
+	renameMpdmHint      = "Name your conversation with {channelName}. This will be visible to all participants."
+)
 
 func (d *RenameMpdmDialog) duplicate() bool {
 	a := d.h.Core()
@@ -160,11 +164,11 @@ func renameMpdmErrorText(id string) string {
 	case "":
 		return ""
 	case "invalid_name", "invalid_name_specials":
-		return "Conversation names can’t contain the punctuation you included."
+		return nsChDetails.T("Conversation names can’t contain the punctuation you included.")
 	case "restricted_action", "not_authorized":
-		return "You don’t have permission to rename."
+		return nsChDetails.T("You don’t have permission to rename.")
 	}
-	return "For some weird reason, that didn’t work. Please try again to continue."
+	return nsChDetails.T("For some weird reason, that didn’t work. Please try again to continue.")
 }
 
 // GraphemeLen counts user-perceived characters the way Slack's
@@ -227,7 +231,7 @@ func (d *RenameMpdmDialog) layout(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		gtx.Constraints.Min.Y = gtx.Sp(22)
 		if d.ed.Len() == 0 {
-			text(gtx, th, 15, theme.Regular, cl.Muted, "Add a name")
+			text(gtx, th, 15, theme.Regular, cl.Muted, nsChDetails.T("Add a name"))
 		}
 		return th.Editor(gtx, &d.ed, 15, cl.Fg, theme.WithAlpha(cl.Link, 0x40))
 	})
@@ -267,15 +271,14 @@ func (d *RenameMpdmDialog) layout(gtx layout.Context) layout.Dimensions {
 	}
 	y += dp(gtx, 8)
 	hd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-		return cnRuns(gtx, th, cl, []cnRun{{s: "Name your conversation with "}, {s: d.members, bold: true},
-			{s: ". This will be visible to all participants."}}, 13, 18, cl.Fg3, w)
+		return cnRuns(gtx, th, cl, rtRuns(nsChDetails.RT(renameMpdmHint, "channelName", d.members), ""), 13, 18, cl.Fg3, w)
 	})
 	y += hd.Size.Y
 	if d.duplicate() {
 		y += dp(gtx, 8)
 		dd := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-			return para(gtx, th, 13, 18, theme.Regular, renameWarnColor(th), renameMpdmDuplicate, 0)
+			return para(gtx, th, 13, 18, theme.Regular, renameWarnColor(th), nsChDetails.T(renameMpdmDuplicate), 0)
 		})
 		y += dd.Size.Y
 	}

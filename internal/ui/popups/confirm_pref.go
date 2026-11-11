@@ -61,7 +61,9 @@ func ConfirmUnsend(h Host, m core.Message, onOK func()) *Modal {
 	var dontShow bool
 	var box, learn widget.Clickable
 	note := unsendFileNote(m)
-	return Confirm(h, "Unsend message", "", "Unsend", true, func(gtx layout.Context) layout.Dimensions {
+	// "… for you. <link>Learn more</link>": the link on its own line
+	about, learnMore := linkSplit(nsMsgEdit.RT("After sending a message, you have a few moments to cancel it. This will delete your original message and drop it back in the composer for you. <link>Learn more</link>"), "link")
+	return Confirm(h, nsMsgEdit.T("Unsend message"), "", nsMsgEdit.T("Unsend"), true, func(gtx layout.Context) layout.Dimensions {
 		cl := colorsOf(th)
 		if box.Clicked(gtx) {
 			dontShow = !dontShow
@@ -74,11 +76,11 @@ func ConfirmUnsend(h Host, m core.Message, onOK func()) *Modal {
 		}
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return para(gtx, th, 15, 22, theme.Regular, cl.Fg, "After sending a message, you have a few moments to cancel it. This will delete your original message and drop it back in the composer for you.", 0)
+				return para(gtx, th, 15, 22, theme.Regular, cl.Fg, about, 0)
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				return learn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					d := text(gtx, th, 15, theme.Regular, cl.Link, "Learn more")
+					d := text(gtx, th, 15, theme.Regular, cl.Link, learnMore)
 					pointerCursor(gtx, d.Size)
 					return d
 				})
@@ -97,7 +99,7 @@ func ConfirmUnsend(h Host, m core.Message, onOK func()) *Modal {
 				})
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				return layout.Inset{Top: 16}.Layout(gtx, prefCheckRow(h, &box, "Don’t show me this again", func() bool { return dontShow }))
+				return layout.Inset{Top: 16}.Layout(gtx, prefCheckRow(h, &box, nsMsgEdit.T("Don’t show me this again"), func() bool { return dontShow }))
 			}),
 		)
 	}, onOK)
@@ -108,11 +110,11 @@ func ConfirmUnsend(h Host, m core.Message, onOK func()) *Modal {
 func unsendFileNote(m core.Message) string {
 	switch m.Subtype {
 	case "file_upload":
-		return "Note that deleting this message will not delete the file that was uploaded."
+		return nsMsgEdit.T("Note that deleting this message will not delete the file that was uploaded.")
 	case "file_share":
-		return "Note that deleting this message will not unshare the file."
+		return nsMsgEdit.T("Note that deleting this message will not unshare the file.")
 	case "file_comment":
-		return "Note that deleting this message will not delete the comment."
+		return nsMsgEdit.T("Note that deleting this message will not delete the comment.")
 	}
 	return ""
 }
@@ -124,13 +126,14 @@ func unsendFileNote(m core.Message) string {
 func ConfirmAway(h Host, setActive func()) *Modal {
 	var dontAsk bool
 	var box widget.Clickable
-	return confirm2(h, "Set yourself to active?", "You’re currently set to away, but it looks like you’re back. Want to update your availability?",
-		"No Thanks", "Set to Active", func(gtx layout.Context) layout.Dimensions {
+	t := nsPresence.T // PresencePromptDialog's strings
+	return confirm2(h, t("Set yourself to active?"), t("You’re currently set to away, but it looks like you’re back. Want to update your availability?"),
+		t("No Thanks"), t("Set to Active"), func(gtx layout.Context) layout.Dimensions {
 			if box.Clicked(gtx) {
 				dontAsk = !dontAsk
 				setPrefAsync(h, "confirm_user_marked_away", !dontAsk)
 			}
-			return prefCheckRow(h, &box, "Don’t ask again", func() bool { return dontAsk })(gtx)
+			return prefCheckRow(h, &box, t("Don’t ask again"), func() bool { return dontAsk })(gtx)
 		}, setActive)
 }
 

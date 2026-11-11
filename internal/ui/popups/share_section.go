@@ -36,7 +36,6 @@ import (
 	"image"
 	"image/color"
 	"sort"
-	"strconv"
 	"strings"
 
 	"gioui.org/io/event"
@@ -126,12 +125,13 @@ func NewShareSectionModal(h Host, o ShareSectionOpts) *ShareSectionModal {
 	if snap, ok := actSnapshot(h); ok {
 		m.workspace = strings.TrimSpace(snap.Team.Name)
 	}
-	m.share = &ModalButton{Label: "Share", Kind: BtnPrimary, Enabled: m.CanShare, Do: func() bool { m.Share(); return false }}
-	m.cancel = &ModalButton{Label: "Cancel", Kind: BtnOutline, Do: func() bool { return true }}
-	m.editCh = &ModalButton{Label: "Edit Channels", Kind: BtnOutline, Do: func() bool { m.confirm = false; return false }}
-	m.confirmShare = &ModalButton{Label: "Confirm and Share Section", Kind: BtnPrimary,
+	// ShareChannelSectionMultiPaneDialog's strings (IEmj, share-dialog)
+	m.share = &ModalButton{Label: nsShare.T("Share"), Kind: BtnPrimary, Enabled: m.CanShare, Do: func() bool { m.Share(); return false }}
+	m.cancel = &ModalButton{Label: nsShare.T("Cancel"), Kind: BtnOutline, Do: func() bool { return true }}
+	m.editCh = &ModalButton{Label: nsShare.T("Edit Channels"), Kind: BtnOutline, Do: func() bool { m.confirm = false; return false }}
+	m.confirmShare = &ModalButton{Label: nsShare.T("Confirm and Share Section"), Kind: BtnPrimary,
 		Enabled: func() bool { return !m.sending }, Do: func() bool { m.send(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: "Share " + o.Name, Body: m.layout, Width: 600,
+	m.modal = NewModal(h, ModalOpts{Title: nsShare.T("Share {channelSectionName}", "channelSectionName", o.Name), Body: m.layout, Width: 600,
 		Buttons:    []*ModalButton{m.cancel, m.share},
 		FocusStops: func() []event.Tag { return []event.Tag{&m.to, &m.note} }})
 	return m
@@ -255,9 +255,9 @@ func (m *ShareSectionModal) DestinationError() string {
 	case "":
 		return ""
 	case "too_many_users":
-		return "Only 9 people can be in a direct message."
+		return nsShare.T("Only 9 people can be in a direct message.")
 	}
-	return "An unknown error occurred."
+	return nsShare.T("An unknown error occurred.")
 }
 
 // Failed reports the "Something went wrong" alert.
@@ -707,7 +707,7 @@ func (m *ShareSectionModal) layout(gtx layout.Context) layout.Dimensions {
 		gtx.Execute(key.FocusCmd{Tag: &m.to})
 		m.focusTo = false
 	}
-	m.modal.o.FooterNote = strconv.Itoa(len(m.Selected())) + " selected"
+	m.modal.o.FooterNote = nsShare.T("{count} selected", "count", len(m.Selected()))
 	if m.confirm {
 		m.modal.o.Buttons = []*ModalButton{m.editCh, m.confirmShare}
 	} else {
@@ -728,10 +728,10 @@ func (m *ShareSectionModal) layout(gtx layout.Context) layout.Dimensions {
 		y += dp(gtx, 16)
 	}
 	put(func(gtx layout.Context) layout.Dimensions {
-		return para(gtx, th, 15, 22, theme.Regular, cl.Fg, "People will be invited to join channels you share. You’ll get a chance to review any private channels before sending.", 0)
+		return para(gtx, th, 15, 22, theme.Regular, cl.Fg, nsShare.T("People will be invited to join channels you share. You’ll get a chance to review any private channels before sending."), 0)
 	})
 	y += dp(gtx, 20)
-	label("People")
+	label(nsShare.T("People"))
 	put(func(gtx layout.Context) layout.Dimensions { return m.picker(gtx, th, cl) })
 	pickerBottom := y
 	if e := m.DestinationError(); e != "" {
@@ -739,29 +739,36 @@ func (m *ShareSectionModal) layout(gtx layout.Context) layout.Dimensions {
 		put(func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 13, theme.Regular, cl.Danger, e) })
 	}
 	y += dp(gtx, 20)
-	label("Add a message")
+	label(nsShare.T("Add a message"))
 	put(func(gtx layout.Context) layout.Dimensions { return m.noteField(gtx, th, cl) })
 	y += dp(gtx, 20)
-	label("Channels")
+	label(nsShare.T("Channels"))
 	put(func(gtx layout.Context) layout.Dimensions { return m.channelList(gtx, th, cl, w) })
 	if m.removed {
 		y += dp(gtx, 8)
 		put(func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 13, 18, theme.Regular, cl.Fg2, "Only channels in your organization can be shared. Apps and other objects will be removed.", 0)
+			return para(gtx, th, 13, 18, theme.Regular, cl.Fg2, nsShare.T("Only channels in your organization can be shared. Apps and other objects will be removed."), 0)
 		})
 	}
 	if m.confirm {
 		y += dp(gtx, 16)
-		n := m.privateSelected()
-		noun := "private channels"
-		if n == 1 {
-			noun = "private channel"
+		// one string: the <strong> question, then the rest (Clack draws
+		// them as two paragraphs, as before)
+		var ask, rest string
+		for _, p := range nsShare.RT("<strong>Are you sure you want to include {numPrivateChannels, plural, =1 {# private channel} other {# private channels}}?</strong> Recipients will have {numDaysToJoin} days to join and see channel history, including files.",
+			"numPrivateChannels", m.privateSelected(), "numDaysToJoin", 14) {
+			if p.Tag == "strong" {
+				ask += p.Text
+			} else {
+				rest += p.Text
+			}
 		}
+		ask, rest = strings.TrimSpace(ask), strings.TrimSpace(rest)
 		put(func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Bold, cl.Fg, "Are you sure you want to include "+strconv.Itoa(n)+" "+noun+"?", 0)
+			return para(gtx, th, 15, 22, theme.Bold, cl.Fg, ask, 0)
 		})
 		put(func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, "Recipients will have 14 days to join and see channel history, including files.", 0)
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, rest, 0)
 		})
 	}
 	if gtx.Focused(&m.to) && len(m.match) > 0 {
@@ -775,12 +782,12 @@ func (m *ShareSectionModal) layout(gtx layout.Context) layout.Dimensions {
 func (m *ShareSectionModal) layoutEmpty(gtx layout.Context, th *theme.Theme, cl *Colors, w int) layout.Dimensions {
 	y := dp(gtx, 24)
 	call, d := record(loose(gtx, image.Pt(w, 1<<20)), func(gtx layout.Context) layout.Dimensions {
-		return text(gtx, th, 18, theme.Bold, cl.Fg, "This section can’t be shared")
+		return text(gtx, th, 18, theme.Bold, cl.Fg, nsShare.T("This section can’t be shared"))
 	})
 	macroAt(gtx, call, image.Pt((w-d.Size.X)/2, y))
 	y += d.Size.Y + dp(gtx, 8)
 	call, d = record(loose(gtx, image.Pt(w-dp(gtx, 48), 1<<20)), func(gtx layout.Context) layout.Dimensions {
-		return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, "It’s likely because only apps or external channels are included and right now you can only share channels in your organization.", 0)
+		return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, nsShare.T("It’s likely because only apps or external channels are included and right now you can only share channels in your organization."), 0)
 	})
 	macroAt(gtx, call, image.Pt(dp(gtx, 24), y))
 	y += d.Size.Y + dp(gtx, 24)
@@ -791,7 +798,7 @@ func (m *ShareSectionModal) layoutEmpty(gtx layout.Context, th *theme.Theme, cl 
 func (m *ShareSectionModal) alert(gtx layout.Context, th *theme.Theme, cl *Colors, w int) layout.Dimensions {
 	pad := dp(gtx, 12)
 	call, d := record(loose(gtx, image.Pt(w-2*pad-dp(gtx, 28), 1<<20)), func(gtx layout.Context) layout.Dimensions {
-		return para(gtx, th, 15, 22, theme.Regular, cl.Fg, "Something went wrong and that didn’t work right. Give it another try.", 0)
+		return para(gtx, th, 15, 22, theme.Regular, cl.Fg, nsShare.T("Something went wrong and that didn’t work right. Give it another try."), 0)
 	})
 	r := image.Rect(0, 0, w, d.Size.Y+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Danger)
@@ -829,7 +836,7 @@ func (m *ShareSectionModal) picker(gtx layout.Context, th *theme.Theme, cl *Colo
 				gtx.Constraints = layout.Constraints{Min: image.Pt(ew, 0), Max: image.Pt(ew, lineH)}
 				if m.to.Len() == 0 && len(m.chips) == 0 {
 					call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Please select an option")
+						return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsShare.T("Please select an option"))
 					})
 					call.Add(gtx.Ops)
 				}
@@ -925,7 +932,7 @@ func (m *ShareSectionModal) noteField(gtx layout.Context, th *theme.Theme, cl *C
 		gtx.Constraints = layout.Constraints{Min: image.Pt(tw, 0), Max: image.Pt(tw, dp(gtx, 66))}
 		if m.note.Len() == 0 {
 			call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Here’s a shared section to keep all our channels organized.")
+				return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsShare.T("Here’s a shared section to keep all our channels organized."))
 			})
 			call.Add(gtx.Ops)
 		}
@@ -950,16 +957,16 @@ func shareErrorText(errs []string, destKind, workspace string) string {
 		case "target_user_not_in_workspace":
 			switch {
 			case destKind == "im" && workspace != "":
-				out = append(out, "This person needs to be in "+workspace+" workspace for the channel to be shared.")
+				out = append(out, nsShare.T("This person needs to be in {workspaceName} workspace for the channel to be shared.", "workspaceName", workspace))
 			case destKind == "im":
-				out = append(out, "This person needs to be in the workspace before the channel can be shared.")
+				out = append(out, nsShare.T("This person needs to be in the workspace before the channel can be shared."))
 			case workspace != "":
-				out = append(out, "At least one person is not in the "+workspace+" workspace so this channel can’t be shared.")
+				out = append(out, nsShare.T("At least one person is not in the {workspaceName} workspace so this channel can’t be shared.", "workspaceName", workspace))
 			default:
-				out = append(out, "At least one person is not in the workspace so this channel can’t be shared.")
+				out = append(out, nsShare.T("At least one person is not in the workspace so this channel can’t be shared."))
 			}
 		case "actor_cannot_invite_member":
-			out = append(out, "Permission required to add people to this channel.")
+			out = append(out, nsShare.T("Permission required to add people to this channel."))
 		}
 	}
 	return strings.Join(out, "\n\n")
@@ -987,7 +994,7 @@ func (m *ShareSectionModal) channelList(gtx layout.Context, th *theme.Theme, cl 
 	at(gtx, image.Point{}, func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &m.allBtn, nil, func(gtx layout.Context) layout.Dimensions {
 			at(gtx, image.Pt(0, (hh-dp(gtx, 18))/2), func(gtx layout.Context) layout.Dimensions { return Checkbox(gtx, th, checked, indet, false) })
-			s := "Select all shareable channels"
+			s := nsShare.T("Select all shareable channels")
 			at(gtx, image.Pt(dp(gtx, 26), 0), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 15, theme.Regular, cl.Fg, s) })
 			})
