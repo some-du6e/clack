@@ -60,7 +60,10 @@ func TestSlickViewHcaStatus(t *testing.T) {
 			frame()
 		}
 		img := pixeltest.Render(t, size.X, size.Y, ops)
-		return pixeltest.Count(img, img.Bounds(), red, 40), pixeltest.Count(img, img.Bounds(), amber, 40), img
+		// a 1px wavy line is antialiased: count the pixels at least half
+		// its colour over the list's background
+		bg := e.h.th.C.Bg
+		return pixeltest.Ink(img, img.Bounds(), red, bg), pixeltest.Ink(img, img.Bounds(), amber, bg), img
 	}
 	red0, amber0, _ := count() // the list before the plugin: its own reds (if any)
 
