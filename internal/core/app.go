@@ -1520,14 +1520,20 @@ func hasSectionType(secs []slack.Section, typ string) bool {
 // (/ly8 hh) that isn't an Agentforce bot; with it on, the member's
 // agent_status.
 func (a *App) AgentInDMSidebar(ch string) bool {
-	if a.experiment("agents_in_dm_sidebar") != "on" || a.HideAgentsInDMs() {
-		return false
-	}
 	c, ok := a.S.Conv(ch)
 	if !ok || !c.IsIM {
 		return false
 	}
-	u, ok := a.User(c.User)
+	return a.agentInDMSidebarUser(c.User)
+}
+
+// agentInDMSidebarUser is uXg5 oK by the IM's member (the DMs tab asks it
+// for DMs core may not hold, closed ones from client.dms).
+func (a *App) agentInDMSidebarUser(uid string) bool {
+	if a.experiment("agents_in_dm_sidebar") != "on" || a.HideAgentsInDMs() {
+		return false
+	}
+	u, ok := a.User(uid)
 	if !ok || u.Agentforce {
 		return false
 	}

@@ -849,10 +849,18 @@ func (a *App) Saved(ctx context.Context, filter, cursor string) (SavedPage, erro
 // ---- DMs tab ----
 
 // DMs lists direct messages newest first with their latest message
-// (client.dms). Closed DMs are included but not added to the sidebar.
+// (client.dms), filtered as Slack's DMs tab filters them (dmsTabShows).
+// Closed DMs are included but not added to the sidebar.
+//
+// DmsListAll (gantry dms-list-view eLDn) asks client.dms for {count: 250,
+// include_closed, include_channel, exclude_bots: !agents_in_dm_sidebar}.
 func (a *App) DMs(ctx context.Context, cursor string) (DMPage, error) {
 	t0 := time.Now()
-	p := url.Values{"count": {"50"}, "include_closed": {"true"}, "include_channel": {"true"}, "exclude_bots": {"false"}}
+	excludeBots := "true"
+	if a.experiment("agents_in_dm_sidebar") == "on" { // O2By Mq
+		excludeBots = "false"
+	}
+	p := url.Values{"count": {"250"}, "include_closed": {"true"}, "include_channel": {"true"}, "exclude_bots": {excludeBots}}
 	if cursor != "" {
 		p.Set("cursor", cursor)
 	}
@@ -902,6 +910,9 @@ func (a *App) DMs(ctx context.Context, cursor string) (DMPage, error) {
 		if v.Count.Latest == "" && d.Message != nil {
 			v.Count.Latest = d.Message.TS
 		}
+		if !a.dmsTabShows(c, v.Count.Latest) {
+			continue
+		}
 		out.DMs = append(out.DMs, v)
 	}
 	sort.SliceStable(out.DMs, func(i, j int) bool {
@@ -917,6 +928,39 @@ func (a *App) DMs(ctx context.Context, cursor string) (DMPage, error) {
 	a.SubscribePresence(ids)
 	log.Printf("dms: %d conversations in %s", len(out.DMs), time.Since(t0).Round(time.Millisecond))
 	return out, nil
+}
+
+// dmsTabShows is the DMs tab's row filter for one IM or group DM
+// (gantry dms-list-view uV3r useChannelIds, upCu useSortedChannels). An IM
+// goes when its member is deleted, when it's frozen or a pending Slack
+// Connect IM, when the member is the security bot (USLACKSECURITY),
+// USEARCH or UCHANNELEXPERT, and when it's a bot DM (DUy0: Slackbot's IM,
+// USLACK, or a member Slack counts as a bot: is_bot, is_slackbot) unless
+// the bot is an agent shown with the DMs (uXg5 isAgentInDmSidebar). Any
+// DM without a message goes too (no latest ts), except the self-DM and
+// for a new account (shouldShowAllDms: onboarding not complete).
+func (a *App) dmsTabShows(c *slack.Conversation, latest string) bool {
+	if c.IsIM {
+		switch c.User {
+		case "USLACKSECURITY", "USEARCH", "UCHANNELEXPERT":
+			return false
+		}
+		if c.IsFrozen || c.IsPendingExtShared {
+			return false
+		}
+		u, known := a.S.User(c.User)
+		if known && u.Deleted {
+			return false
+		}
+		bot := c.User == "USLACKBOT" || c.User == "USLACK" || known && (u.IsBot || u.IsSlackbot)
+		if bot && !a.agentInDMSidebarUser(c.User) {
+			return false
+		}
+	}
+	if latest == "" || strings.Trim(latest, "0.") == "" {
+		return c.IsIM && c.User == a.S.SelfID() || !a.PrefBool("onboarding_complete", true)
+	}
+	return true
 }
 
 // ---- commands & DND ----
