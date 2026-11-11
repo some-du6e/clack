@@ -76,15 +76,12 @@ var lightColors = colors{
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
 	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.3), ScrollThumbHover: rgba(0x1d1c1d, 0.5), Selection: rgba(0x1d9bd1, 0.3),
 	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
-<<<<<<< HEAD
 	HuddleLive: rgb(0x007a5a), HuddleJoin: rgb(0x007a5a), HuddleJoinHover: rgba(0x0a4032, 0x21/255.0),
 	HuddleTile: rgba(0x1d1c1d, 0.13), HuddleTileLive: rgb(0x178f65), HuddleMissedBg: rgb(0xffe8ef),
 	HuddleLiveBadge: rgb(0x0c5340), HuddleLiveBadgeText: rgb(0xffffff),
-=======
 
 	// --dt_color-base-hgl-3 (slack-kit-gantry-v2-styles): the selected thread root (active_thread.go)
 	ActiveThread: rgb(0xfffae0),
->>>>>>> origin/ui
 }
 
 var darkColors = colors{
@@ -105,15 +102,12 @@ var darkColors = colors{
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
 	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xe8e8e8, 0.3), ScrollThumbHover: rgba(0xe8e8e8, 0.5), Selection: rgba(0x1d9bd1, 0.4),
 	SystemText: rgb(0xababad), HeaderBorder: rgba(0xe8e8e8, 0.13), CloseHover: rgba(0xe8e8e8, 0.06),
-<<<<<<< HEAD
 	HuddleLive: rgb(0x3daa7c), HuddleJoin: rgb(0x177e56), HuddleJoinHover: rgba(0xd8f5e9, 0x14/255.0),
 	HuddleTile: rgba(0xe8e8e8, 0.13), HuddleTileLive: rgb(0x3daa7c), HuddleMissedBg: rgb(0x300005),
 	HuddleLiveBadge: rgb(0x8dd2b5), HuddleLiveBadgeText: rgb(0x05241b),
-=======
 
 	// --dt_color-base-hgl-3, dark
 	ActiveThread: rgb(0x2f1e00),
->>>>>>> origin/ui
 }
 
 func colorsFor(th *theme.Theme) *colors {

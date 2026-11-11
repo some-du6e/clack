@@ -90,7 +90,6 @@ type Palette struct {
 	MentionHoverBg                 color.NRGBA
 	SlugHoverText                  color.NRGBA // a hovered message_mention pill's text (0: unchanged)
 	SelfMentionText, SelfMentionBg color.NRGBA
-<<<<<<< HEAD
 	// SelfLinkText is a mention of the viewer or of a group they're in
 	// (c-member_slug--link / c-mrkdwn__user_group--link with --mention):
 	// the link's content-hgl-1, content-hgl-3 in dark
@@ -110,30 +109,10 @@ type Palette struct {
 	FileIconBg, FileIconPDF      color.NRGBA
 	FileIconZip, FileIconText    color.NRGBA
 	PlayBg, PlayFg               color.NRGBA
-	TooltipBg, TooltipText       color.NRGBA // emoji :name: tooltips
+	TooltipBg, TooltipText       color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
+	TooltipGlow                  color.NRGBA // the dark mode tooltip outline (none in light)
 	FooterSep                    color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
 	HuddleJoinBorder             color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
-=======
-	CodeText, CodeBg, CodeBorder   color.NRGBA
-	PreBg, PreBorder               color.NRGBA
-	QuoteBar                       color.NRGBA
-	Border, BorderHover            color.NRGBA // cards
-	Panel                          color.NRGBA // card background
-	Placeholder                    color.NRGBA // image loading background
-	Selection                      color.NRGBA
-	Highlight                      color.NRGBA // Style Highlight
-	Divider                        color.NRGBA
-	ButtonBorder, ButtonHoverBg    color.NRGBA
-	Primary, PrimaryText           color.NRGBA
-	Danger, DangerText             color.NRGBA
-	FileIconBg, FileIconPDF        color.NRGBA
-	FileIconZip, FileIconText      color.NRGBA
-	PlayBg, PlayFg                 color.NRGBA
-	TooltipBg, TooltipText         color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
-	TooltipGlow                    color.NRGBA // the dark mode tooltip outline (none in light)
-	FooterSep                      color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
-	HuddleJoinBorder               color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
->>>>>>> origin/ui
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
