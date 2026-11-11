@@ -381,6 +381,23 @@ type dtCalendar struct {
 	nav    [4]widget.Clickable // « ‹ › »
 	rect   image.Rectangle
 	focus  bool
+
+	// inline is a calendar another popover draws (the search box's date
+	// pickers, search_date_picker.go): drawBody only, no scrim, no focus
+	// grab, the header at the top of the padding as Slack's CSS has it.
+	inline bool
+	// rng is the range calendar (DateRangePickerCalendar): picks go to
+	// its onStart and onEnd instead of onPick.
+	rng      *dtRange
+	today    time.Time // today's day (zero: now), for tests
+	hoverDay time.Time // the day under the pointer last frame
+}
+
+// dtRange is a range calendar's picks: the start, then the end.
+type dtRange struct {
+	start, end time.Time
+	// onStart and onEnd are onStartDateChange and onEndDateChange.
+	onStart, onEnd func(day time.Time)
 }
 
 func dtNewCalendar(h Host, anchor image.Rectangle, sel, lo time.Time, onPick func(time.Time)) *dtCalendar {
@@ -419,9 +436,53 @@ func (c *dtCalendar) pick(day time.Time) {
 	if c.disabled(day) {
 		return
 	}
-	c.Dismiss()
+	if c.rng != nil {
+		c.rangePick(day)
+		return
+	}
+	if !c.inline {
+		c.Dismiss()
+	}
 	if c.onPick != nil {
 		c.onPick(day)
+	}
+}
+
+// rangePick is DateRangePickerCalendar's onDateClick: the first pick is
+// the start; the next is the end, or, before the start, the new start
+// with the old one as the end; a pick after both starts again.
+func (c *dtCalendar) rangePick(day time.Time) {
+	rg := c.rng
+	switch {
+	case rg.start.IsZero():
+		rg.start = day
+		if rg.onStart != nil {
+			rg.onStart(day)
+		}
+	case rg.end.IsZero():
+		if day.Before(rg.start) {
+			old := rg.start
+			rg.start, rg.end = day, old
+			if rg.onStart != nil {
+				rg.onStart(day)
+			}
+			if rg.onEnd != nil {
+				rg.onEnd(old)
+			}
+			return
+		}
+		rg.end = day
+		if rg.onEnd != nil {
+			rg.onEnd(day)
+		}
+	default:
+		rg.start, rg.end = day, time.Time{}
+		if rg.onStart != nil {
+			rg.onStart(day)
+		}
+		if rg.onEnd != nil {
+			rg.onEnd(time.Time{})
+		}
 	}
 }
 
@@ -505,26 +566,13 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 		c.Dismiss()
 		return layout.Dimensions{}
 	}
-	for i := range c.nav {
-		if c.nav[i].Clicked(gtx) {
-			c.month = c.month.AddDate([4]int{-1, 0, 0, 1}[i], [4]int{0, -1, 1, 0}[i], 0)
-			c.kbd = false
-		}
-	}
-	grid := dtMonthGrid(c.month)
-	for i := range c.cells {
-		if grid[i] > 0 && c.cells[i].Clicked(gtx) {
-			c.pick(c.dayN(grid[i]))
-			if c.done {
-				return layout.Dimensions{}
-			}
-		}
+	if c.clicks(gtx) {
+		return layout.Dimensions{}
 	}
 	th := c.h.Theme()
 	cl := colorsOf(th)
-	pad, cw, ch := dp(gtx, 24), dp(gtx, 43), dp(gtx, 41)
-	headH, wkH := dp(gtx, 48), dp(gtx, 30)
-	sz := image.Pt(maxInt(dp(gtx, 350), 2*pad+7*cw), 2*pad+headH+wkH+6*ch)
+	pad := dp(gtx, 24)
+	sz := c.size(gtx, pad)
 	a := c.anchor
 	if c.center {
 		a.Min.X = a.Min.X + (a.Dx()-sz.X)/2
@@ -538,125 +586,297 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 	defer st.Leave()
 	if !st.Hidden() {
 		styledCard(gtx, st, cl, pos, sz, dp(gtx, 8), false, func(gtx layout.Context) {
-			pos := image.Point{}
-			local := image.Rectangle{Max: sz}
-			c.block.Layout(gtx, local)
-
-			// header: « ‹ Month Year › »
-			bs := dp(gtx, 32)
-			by := pos.Y + pad + (headH-bs)/2
-			bx := [4]int{pos.X + pad, pos.X + pad + bs, pos.X + sz.X - pad - 2*bs, pos.X + sz.X - pad - bs}
-			for i := range c.nav {
-				at(gtx, image.Pt(bx[i], by), func(gtx layout.Context) layout.Dimensions {
-					return clickBox(gtx, &c.nav[i], func(gtx layout.Context, s image.Point, hovered bool) {
-						if hovered {
-							rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.BgHover)
-						}
-					}, func(gtx layout.Context) layout.Dimensions {
-						name := "chevron-left"
-						if i >= 2 {
-							name = "chevron-right"
-						}
-						// Slack's glyphs are ~16px tall chevrons (a 26px icon box);
-						// the doubles are two of them 6px apart.
-						const gs = 26
-						is := dp(gtx, gs)
-						o := (bs - is) / 2
-						if i == 0 || i == 3 { // double chevron
-							at(gtx, image.Pt(o-dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
-							at(gtx, image.Pt(o+dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
-						} else {
-							at(gtx, image.Pt(o, o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
-						}
-						return layout.Dimensions{Size: image.Pt(bs, bs)}
-					})
-				})
-			}
-			title := c.month.Format("January 2006")
-			tw := textW(gtx, th, 15, theme.Bold, title)
-			at(gtx, image.Pt(pos.X+(sz.X-tw)/2, pos.Y+pad), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, headH, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Bold, cl.Fg, title)
-				})
-			})
-
-			// weekdays
-			gx := pos.X + (sz.X-7*cw)/2
-			wy := pos.Y + pad + headH
-			for i, wd := range [...]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"} {
-				w := textW(gtx, th, 13, theme.Bold, wd)
-				at(gtx, image.Pt(gx+i*cw+(cw-w)/2, wy), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, wkH, func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 13, theme.Bold, cl.Fg2, wd)
-					})
-				})
-			}
-
-			// grid
-			gy := wy + wkH
-			line := cl.Tab
-			for i, n := range grid {
-				if n == 0 {
-					continue
-				}
-				day := c.dayN(n)
-				r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
-				off := c.disabled(day)
-				sel := day.Equal(c.sel)
-				curs := c.kbd && day.Equal(c.cur)
-				cell := func(gtx layout.Context) layout.Dimensions {
-					s := r.Size()
-					box := image.Rectangle{Max: s}
-					if off || (!sel && (curs || c.cells[i].Hovered())) {
-						fill(gtx, box, cl.BgAlt)
-					}
-					fg := cl.Fg
-					if off {
-						fg = cl.Muted
-					}
-					if sel {
-						rrect(gtx, box, dp(gtx, 4), cl.Highlight)
-						d := dp(gtx, 34)
-						ctr := image.Pt(s.X/2, s.Y/2)
-						theme.Circle(gtx, ctr, d, cl.HighText)
-						theme.Circle(gtx, ctr, d-2*maxInt(1, dp(gtx, 1)), cl.Highlight)
-						fg = cl.HighText
-					} else if curs {
-						stroke(gtx, box, dp(gtx, 4), maxInt(1, dp(gtx, 2)), cl.Focus)
-					}
-					num := dtNum(n)
-					nw := textW(gtx, th, 15, theme.Regular, num)
-					at(gtx, image.Pt((s.X-nw)/2, 0), func(gtx layout.Context) layout.Dimensions {
-						return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
-							return text(gtx, th, 15, theme.Regular, fg, num)
-						})
-					})
-					return layout.Dimensions{Size: s}
-				}
-				at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints = layout.Exact(r.Size())
-					if off {
-						return cell(gtx)
-					}
-					return clickBox(gtx, &c.cells[i], nil, cell)
-				})
-			}
-			// grid lines in one pass over the cells (every day cell gets all four
-			// edges, so the last row is closed like Slack's).
-			lw := maxInt(1, dp(gtx, 1))
-			for i, n := range grid {
-				if n == 0 {
-					continue
-				}
-				r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
-				fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X+lw, r.Min.Y+lw), line)
-				fill(gtx, image.Rect(r.Min.X, r.Max.Y, r.Max.X+lw, r.Max.Y+lw), line)
-				fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Min.X+lw, r.Max.Y+lw), line)
-				fill(gtx, image.Rect(r.Max.X, r.Min.Y, r.Max.X+lw, r.Max.Y+lw), line)
-			}
+			c.block.Layout(gtx, image.Rectangle{Max: sz})
+			c.drawBody(gtx, th, cl, sz, pad)
 		})
 	}
 	return layout.Dimensions{Size: win}
+}
+
+// size is the calendar's size with pad around the month (the 7×6 grid of
+// 43×41 cells under the 48px header and the 30px weekday row; at least 350
+// wide in the dropdown).
+func (c *dtCalendar) size(gtx layout.Context, pad int) image.Point {
+	cw, ch := dp(gtx, 43), dp(gtx, 41)
+	headH, wkH := dp(gtx, 48), dp(gtx, 30)
+	w := 2*pad + 7*cw
+	if !c.inline {
+		w = maxInt(dp(gtx, 350), w)
+	}
+	return image.Pt(w, 2*pad+headH+wkH+6*ch)
+}
+
+// clicks applies last frame's header and day clicks; it reports that a
+// pick closed the calendar.
+func (c *dtCalendar) clicks(gtx layout.Context) bool {
+	for i := range c.nav {
+		if c.nav[i].Clicked(gtx) {
+			c.month = c.month.AddDate([4]int{-1, 0, 0, 1}[i], [4]int{0, -1, 1, 0}[i], 0)
+			c.kbd = false
+		}
+	}
+	grid := dtMonthGrid(c.month)
+	c.hoverDay = time.Time{}
+	for i := range c.cells {
+		if grid[i] == 0 {
+			continue
+		}
+		if c.cells[i].Hovered() {
+			c.hoverDay = c.dayN(grid[i])
+		}
+		if c.cells[i].Clicked(gtx) {
+			c.pick(c.dayN(grid[i]))
+			if c.done {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// drawBody draws the header, the weekday row and the month's days in an
+// sz box at the origin, pad from its edges. The range calendar
+// (DateRangePickerCalendar in singleMonthMode) has only the month
+// buttons, the previous at the left and the next 16px in from the right,
+// and Slack's range cells.
+func (c *dtCalendar) drawBody(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point, pad int) {
+	cw, ch := dp(gtx, 43), dp(gtx, 41)
+	headH, wkH := dp(gtx, 48), dp(gtx, 30)
+	if c.rng != nil {
+		cw = dp(gtx, 300) / 7
+		ch = dp(gtx, 42)
+	}
+
+	// header: « ‹ Month Year › » (the range calendar: ‹ Month Year ›)
+	bs := dp(gtx, 32)
+	by, ty, tyH := pad+(headH-bs)/2, pad, headH
+	if c.inline { // .c-calendar_view_header: 32 tall, 16 below it
+		by, tyH = pad, bs
+	}
+	bx := [4]int{pad, pad + bs, sz.X - pad - 2*bs, sz.X - pad - bs}
+	if c.rng != nil {
+		bx = [4]int{-1, pad, sz.X - pad - dp(gtx, 16) - bs, -1}
+	}
+	for i := range c.nav {
+		if bx[i] < 0 {
+			continue
+		}
+		at(gtx, image.Pt(bx[i], by), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &c.nav[i], func(gtx layout.Context, s image.Point, hovered bool) {
+				if hovered {
+					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 4), cl.BgHover)
+				}
+			}, func(gtx layout.Context) layout.Dimensions {
+				name := "chevron-left"
+				if i >= 2 {
+					name = "chevron-right"
+				}
+				// Slack's glyphs are ~16px tall chevrons (a 26px icon box);
+				// the doubles are two of them 6px apart.
+				const gs = 26
+				is := dp(gtx, gs)
+				o := (bs - is) / 2
+				if i == 0 || i == 3 { // double chevron
+					at(gtx, image.Pt(o-dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
+					at(gtx, image.Pt(o+dp(gtx, 4), o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
+				} else {
+					at(gtx, image.Pt(o, o), func(gtx layout.Context) layout.Dimensions { return icon(gtx, name, gs, cl.Fg2) })
+				}
+				return layout.Dimensions{Size: image.Pt(bs, bs)}
+			})
+		})
+	}
+	title := c.month.Format("January 2006")
+	tw := textW(gtx, th, 15, theme.Bold, title)
+	at(gtx, image.Pt((sz.X-tw)/2, ty), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, tyH, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Bold, cl.Fg, title)
+		})
+	})
+
+	// weekdays
+	gx := (sz.X - 7*cw) / 2
+	wy := pad + headH
+	for i, wd := range [...]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"} {
+		w := textW(gtx, th, 13, theme.Bold, wd)
+		at(gtx, image.Pt(gx+i*cw+(cw-w)/2, wy), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, wkH, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Bold, cl.Fg2, wd)
+			})
+		})
+	}
+
+	// grid
+	grid := dtMonthGrid(c.month)
+	gy := wy + wkH
+	line := cl.Tab
+	if c.inline { // the days' 1px otl-ter borders in Slack's current CSS
+		line = theme.Over(tokOtlTer.of(th), cl.Bg)
+	}
+	today := dtDay(time.Now())
+	if !c.today.IsZero() {
+		today = c.today
+	}
+	for i, n := range grid {
+		if n == 0 {
+			continue
+		}
+		day := c.dayN(n)
+		r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
+		cell := func(gtx layout.Context) layout.Dimensions {
+			if c.rng != nil {
+				return c.rangeCell(gtx, th, cl, i, n, day, today, r.Size())
+			}
+			off := c.disabled(day)
+			sel := day.Equal(c.sel)
+			curs := c.kbd && day.Equal(c.cur)
+			isToday := day.Equal(today)
+			s := r.Size()
+			box := image.Rectangle{Max: s}
+			hot := !off && (curs || c.cells[i].Hovered())
+			switch {
+			case c.inline && hot && !sel:
+				// .c-date_picker_calendar__date:hover, --is_active:focus:
+				// #1d9bd133 under an otl-hgl-1-sec border
+				fill(gtx, box, rgba(0x1d9bd1, .2))
+			case off || (!sel && hot):
+				fill(gtx, box, cl.BgAlt)
+			}
+			fg := cl.Fg
+			switch {
+			case off:
+				fg = cl.Muted
+			case isToday:
+				fg = cl.Link // --is_today: content-hgl-1
+			}
+			d := dp(gtx, 34)
+			ctr := image.Pt(s.X/2, s.Y/2)
+			lw := maxInt(1, dp(gtx, 1))
+			if sel {
+				rrect(gtx, box, dp(gtx, 4), cl.Highlight)
+				if isToday { // --is_today.--is_selected:after: a white ring
+					theme.Circle(gtx, ctr, d, cl.HighText)
+					theme.Circle(gtx, ctr, d-2*lw, cl.Highlight)
+				}
+				fg = cl.HighText
+			} else {
+				if isToday { // --is_today:after: an otl-hgl-1 ring
+					bg := cl.Bg
+					switch {
+					case c.inline && hot:
+						bg = theme.Over(rgba(0x1d9bd1, .2), cl.Bg)
+					case off || hot:
+						bg = cl.BgAlt
+					}
+					theme.Circle(gtx, ctr, d, cl.Focus)
+					theme.Circle(gtx, ctr, d-2*lw, bg)
+				}
+				switch {
+				case c.inline && hot:
+					stroke(gtx, box, 0, lw, chipTok{"var(--dt_color-otl-hgl-1-sec)", rgba8(0x0e9dd3, 0x33), rgba8(0x307ec0, 0x33)}.of(th))
+				case curs:
+					stroke(gtx, box, dp(gtx, 4), maxInt(1, dp(gtx, 2)), cl.Focus)
+				}
+			}
+			num := dtNum(n)
+			nw := textW(gtx, th, 15, theme.Regular, num)
+			at(gtx, image.Pt((s.X-nw)/2, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Regular, fg, num)
+				})
+			})
+			return layout.Dimensions{Size: s}
+		}
+		at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(r.Size())
+			if c.disabled(day) {
+				return cell(gtx)
+			}
+			return clickBox(gtx, &c.cells[i], nil, cell)
+		})
+	}
+	// grid lines in one pass over the cells (every day cell gets all four
+	// edges, so the last row is closed like Slack's).
+	lw := maxInt(1, dp(gtx, 1))
+	for i, n := range grid {
+		if n == 0 {
+			continue
+		}
+		r := image.Rect(gx+(i%7)*cw, gy+(i/7)*ch, gx+(i%7+1)*cw, gy+(i/7+1)*ch)
+		fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X+lw, r.Min.Y+lw), line)
+		fill(gtx, image.Rect(r.Min.X, r.Max.Y, r.Max.X+lw, r.Max.Y+lw), line)
+		fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Min.X+lw, r.Max.Y+lw), line)
+		fill(gtx, image.Rect(r.Max.X, r.Min.Y, r.Max.X+lw, r.Max.Y+lw), line)
+	}
+}
+
+// The range calendar's tokens (slack-kit-gantry-v2-styles: light, dark).
+var (
+	dtTokBaseInvHgl1 = chipTok{"var(--dt_color-base-inv-hgl-1)", rgb(0x1264a3), rgb(0x0a77a7)}
+	dtTokOtlHgl1     = chipTok{"var(--dt_color-otl-hgl-1)", rgb(0x1264a3), rgb(0x2ba5ce)}
+	dtTokOcean80     = chipTok{"", rgb(0x0b4c8c), rgb(0x88bbe2)} // rgb(var(--dt_color-plt-ocean-80))
+)
+
+// rangeCell draws a range calendar day (.c-date_range_picker_calendar__date):
+// the picked start and end #1264a3 with white numbers, the days between
+// them, or between the start and the hovered day, and a hovered or focused
+// day #1d9bd133 (#1d9bd180 inside the range), a disabled day base-sec with
+// content-sec numbers, today content-hgl-1 with a 32px ring 5px in.
+func (c *dtCalendar) rangeCell(gtx layout.Context, th *theme.Theme, cl *Colors, i, n int, day, today time.Time, s image.Point) layout.Dimensions {
+	box := image.Rectangle{Max: s}
+	rg := c.rng
+	off := c.disabled(day)
+	hov := (c.cells[i].Hovered() || c.kbd && day.Equal(c.cur)) && !off
+	start := !rg.start.IsZero() && day.Equal(rg.start)
+	end := !rg.end.IsZero() && day.Equal(rg.end)
+	in := false
+	if !rg.start.IsZero() && !start && !end {
+		other := rg.end
+		if other.IsZero() {
+			other = c.hoverDay
+		}
+		if !other.IsZero() {
+			lo, hi := rg.start, other
+			if hi.Before(lo) {
+				lo, hi = hi, lo
+			}
+			in = day.After(lo) && day.Before(hi)
+		}
+	}
+	fg := tokContentPry.of(th)
+	switch {
+	case off: // --disabled: content-sec on base-sec
+		fill(gtx, box, tokBaseSec.of(th))
+		fg = tokContentSec.of(th)
+	case start || end: // --select_range_start/end: white on base-inv-hgl-1
+		bg := dtTokBaseInvHgl1.of(th)
+		if hov {
+			bg = dtTokOcean80.of(th)
+		}
+		fill(gtx, box, bg)
+		fg = tokWhite.of(th)
+	case in && hov:
+		fill(gtx, box, theme.Over(rgba(0x1d9bd1, .5), cl.Bg))
+	case in || hov:
+		fill(gtx, box, theme.Over(rgba(0x1d9bd1, .2), cl.Bg))
+	}
+	if day.Equal(today) {
+		// --is_today: content-hgl-1, and a 32px otl-hgl-1 ring 5px in
+		if !start && !end && !off {
+			fg = tokContentHgl1.of(th)
+		}
+		d, lw := dp(gtx, 32), maxInt(1, dp(gtx, 1))
+		r := image.Rect(dp(gtx, 5), dp(gtx, 5), dp(gtx, 5)+d, dp(gtx, 5)+d)
+		stroke(gtx, r, d/2, lw, dtTokOtlHgl1.of(th))
+	}
+	num := dtNum(n)
+	nw := textW(gtx, th, 15, theme.Regular, num)
+	at(gtx, image.Pt((s.X-nw)/2, 0), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Regular, fg, num)
+		})
+	})
+	return layout.Dimensions{Size: s}
 }
 
 // dtNums are the day-of-month labels (no per-frame formatting).

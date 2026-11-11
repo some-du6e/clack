@@ -1411,8 +1411,9 @@ func TestSearchMoreMenuDetails(t *testing.T) {
 }
 
 // Screenshots for CI (SEARCH_SHOTS_DIR): the popover blank and typing,
-// the results page, its source and More menus, no results, the Files
-// tab and search in channel, light and dark.
+// its quick filter row and + menu, tokens, date pickers and the picked
+// row's toolbar, the results page, its source and More menus, no
+// results, the Files tab and search in channel, light and dark.
 func TestSearchShots(t *testing.T) {
 	dir := os.Getenv("SEARCH_SHOTS_DIR")
 	if dir == "" {
@@ -1475,6 +1476,73 @@ func TestSearchShots(t *testing.T) {
 		shot(d, "search-popover-from-menu-"+mode)
 		d.press(key.NameReturn)
 		shot(d, "search-popover-from-token-"+mode)
+
+		// the quick filter row (search-dates): the filter button on, From
+		// me and Has a link on; then its + menu
+		qf := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: qf, dark: dark}
+		d.until(t, "the filters switcher", func() bool { return qf.snapOK })
+		qf.qfToggleRow()
+		qfs := qf.quickFilters()
+		qf.qfToggle(qfs[0])
+		qf.qfToggle(qfs[2])
+		d.until(t, "the filtered suggestions", func() bool { return qf.dirFired })
+		shot(d, "search-popover-filters-"+mode)
+		qf.qfOpenMenu(qfs)
+		qm := srMenu(e.h)
+		d.over = func(gtx layout.Context) { qm.Layout(gtx) }
+		shot(d, "search-popover-filters-menu-"+mode)
+		d.over = nil
+
+		// tokens as pills (the top bar's 1000px box): a person, a channel,
+		// a date and you (the mention look); then one hovered (close icon)
+		who := srTestPerson(t, e)
+		tch := chs[1]
+		tcn := e.h.a.ConvRef(tch).Name
+		self := e.h.a.Self()
+		tk := NewSearchPopover(e.h, "", image.Rect(132, 20, 1132, 46))
+		d = &srDrv{size: image.Pt(1280, 800), w: tk, dark: dark}
+		d.frame()
+		tk.setBox(srJoin([]srPiece{srText(fakeslack.SearchWord + " "),
+			srTokPiece(srToken{label: "from:@" + who.DisplayName, req: "from:<@" + who.ID + ">", icon: "user", mod: "from", entity: who.ID}), srSpace(),
+			srTokPiece(srToken{label: "in:" + tcn, req: "in:<#" + tch + "|" + tcn + ">", icon: "channel", mod: "in", entity: tch}), srSpace(),
+			srTokPiece(srDateToken("after", "2026-11-04", false)), srSpace(),
+			srTokPiece(srToken{label: "with:" + srMentionName(self), req: "with:<@" + self.ID + ">", icon: "user", mod: "with", entity: self.ID, self: true}), srSpace(),
+		}), -1)
+		d.frame()
+		shot(d, "search-popover-tokens-"+mode)
+		tk.pills.hover = 2
+		shot(d, "search-popover-tokens-hover-"+mode)
+
+		// the date picker for a typed before:, then ↓ into its grid
+		dpp := NewSearchPopover(e.h, "", image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: dpp, dark: dark}
+		d.frame()
+		d.frame()
+		srType(d, dpp, fakeslack.SearchWord+" before:")
+		d.until(t, "the date picker", func() bool { return dpp.dpk.open && !dpp.dpk.rect.Empty() })
+		shot(d, "search-popover-date-picker-"+mode)
+		d.press(key.NameDownArrow)
+		shot(d, "search-popover-date-picker-grid-"+mode)
+
+		// Date > Range after its first pick
+		rg := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: rg, dark: dark}
+		d.frame()
+		rg.enterRange()
+		d.until(t, "the range picker", func() bool { return rg.dpk.leftSet && !rg.dpk.rect.Empty() })
+		rg.dpk.rcal.pick(dtDay(time.Now()).AddDate(0, 0, -5))
+		shot(d, "search-popover-date-range-"+mode)
+
+		// a picked channel row's toolbar, its first button focused (Tab)
+		tbch := chs[3]
+		tbp := NewSearchPopover(&srSplitHost{tzHost: e.h}, e.h.a.ConvRef(tbch).Name, image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: tbp, dark: dark}
+		d.until(t, "the toolbar row", func() bool { return tbp.snapOK && len(tbp.rows) > 0 && tbp.rows[0].id == tbch })
+		d.press(key.NameDownArrow)
+		shot(d, "search-popover-toolbar-"+mode)
+		d.press(key.NameTab)
+		shot(d, "search-popover-toolbar-focus-"+mode)
 
 		fm := openSearchFeedback(e.h, srFeedbackOpts{feedbackType: "omniswitcher", query: fakeslack.SearchWord})
 		fm.Pick(1)
