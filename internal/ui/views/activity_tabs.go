@@ -315,13 +315,29 @@ func (v *Activity) tabBody(gtx C, slot int, label string, fg color.NRGBA, count 
 	})
 }
 
+// actTabBadgeKind is GuYW O's choice: "dot" (All, layout revisions),
+// "pill" (All), "count" (a default view without them), "" for none.
+func actTabBadgeKind(slot, count int, xi bool) string {
+	switch {
+	case count <= 0 || slot >= actSlotN:
+		return ""
+	case slot == 0 && xi:
+		return "dot"
+	case slot == 0:
+		return "pill"
+	case xi:
+		return ""
+	}
+	return "count"
+}
+
 // tabBadge is GuYW O.
 func (v *Activity) tabBadge(gtx C, slot, count int, xi, iconOnly bool) D {
-	if count <= 0 || slot >= actSlotN {
-		return D{}
-	}
+	kind := actTabBadgeKind(slot, count, xi)
 	switch {
-	case slot == 0 && xi:
+	case kind == "":
+		return D{}
+	case kind == "dot":
 		// c-badge--dot: 16px wide, the circle scaled to .4445
 		return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
 			s := gtx.Dp(16)
@@ -331,7 +347,7 @@ func (v *Activity) tabBadge(gtx C, slot, count int, xi, iconOnly bool) D {
 			v.dot(gtx, unit.Dp(float32(dd)/gtx.Metric.PxPerDp), v.p.Accent)
 			return D{Size: image.Pt(s, s)}
 		})
-	case slot == 0:
+	case kind == "pill":
 		// the themed pill: 18px, padding 0 9px, 12px bold
 		return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
 			txt := strconv.Itoa(count)
@@ -345,8 +361,6 @@ func (v *Activity) tabBadge(gtx C, slot, count int, xi, iconOnly bool) D {
 			})
 			return D{Size: sz}
 		})
-	case xi:
-		return D{} // the default views get no badge
 	}
 	// p-activity_ia4_page__unread_badge__default
 	left := unit.Dp(8)
