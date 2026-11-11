@@ -929,14 +929,14 @@ func (d *DMs) layoutRows(gtx C, p slackc.Props) D {
 	case len(d.items) == 0 && !loaded:
 		return d.dmsSkeleton(gtx, 8)
 	case len(d.items) == 0 && err != nil:
-		return d.notice(gtx, "Couldn’t load your direct messages", friendlyErr(err), &d.retry, "Try again")
+		return d.notice(gtx, "Couldn’t load your direct messages", friendlyErr(err), &d.retry, nsSearch.T("Try again"))
 	case len(view) == 0 && q != "":
 		if d.people.busy() || d.deb.q != d.deb.sent {
 			return d.dmsSkeleton(gtx, 2)
 		}
-		return d.notice(gtx, "No results", "Nothing matches “"+q+"”.", nil, "")
+		return d.notice(gtx, nsSearch.T("No results"), "Nothing matches “"+q+"”.", nil, "")
 	case len(view) == 0 && d.unreads.Value:
-		return d.notice(gtx, "You’re all caught up", "There are no unread direct messages.", nil, "")
+		return d.notice(gtx, nsActivity.T("You’re all caught up"), "There are no unread direct messages.", nil, "") // ConversationsEmpty
 	case len(view) == 0:
 		return d.notice(gtx, "No direct messages yet", "Use Find a DM to start a conversation.", nil, "")
 	}
