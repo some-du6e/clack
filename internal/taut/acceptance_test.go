@@ -66,7 +66,25 @@ var before = map[string]func(h *harness){
 	},
 }
 
+func init() {
+	// flaron knows a private channel Slack can't show you (synthetic)
+	before["PrivateChannel"] = func(h *harness) {
+		h.fetchMu.Lock()
+		h.fetches["https://flaron.halceon.dev/cid/"+chSecret] = `{"id":"` + chSecret + `","name":"secret-club"}`
+		h.fetchMu.Unlock()
+	}
+	// a long thread (ThreadJump's button needs 50 replies or more)
+	before["ThreadJump"] = func(h *harness) {
+		h.app.S.PutConv(slack.Conversation{ID: chThread, Name: "long-thread", IsChannel: true, IsMember: true, NumMembers: 12})
+		h.app.S.SetLatest(chThread, []slack.Message{{Type: "message", TS: jumpTS, User: "UALICE", Text: "a long synthetic thread",
+			ThreadTS: jumpTS, ReplyCount: 60, LatestReply: "1700000099.000100", ReplyUsers: []string{"UBOB"}}}, false)
+	}
+}
+
 const (
+	chSecret = "C0SECRETCLUB"
+	chThread = "C0LONGTHREAD"
+	jumpTS   = "1700000030.000100"
 	// HaikuWarning's dictionary commit (its DICTIONARY_COMMIT) + "-compact"
 	haikuDictionaryKey = "aece7f5fcc873b8e71ecccfa5216849fafd959e1-compact"
 	chOwl              = "C0CONFESS"
@@ -417,6 +435,78 @@ var checks = map[string]pluginCheck{
 		}
 		if !strings.Contains(submitted, "k-123") || !strings.Contains(submitted, "an anonymous reply") {
 			t.Errorf("submitted %q, want the confession key and the reply", submitted)
+		}
+	},
+	"PrivateChannel": func(t *testing.T, h *harness) {
+		// Slack can't load the channel (you're not in it): fetchAndUpsertChannelsById
+		// goes through fetchRawChannelsById, whose missing ids the plugin
+		// names from flaron, and the channel reads under that name
+		h.api.set("conversations.info", map[string]any{"ok": false, "error": "channel_not_found"})
+		var res struct {
+			Missing  []string `json:"missing"`
+			Resolved []string `json:"resolved"`
+		}
+		h.jsInto(`return await T.redux.dispatchThunk('fetchAndUpsertChannelsById', {ids: ['`+chSecret+`']})`, &res)
+		if len(res.Missing) != 1 || res.Missing[0] != chSecret || len(res.Resolved) != 0 {
+			t.Fatalf("fetchAndUpsertChannelsById: %+v", res)
+		}
+		var name any
+		eventually(t, 5*time.Second, "the channel named from flaron", func() bool {
+			h.jsInto(`return T.redux.getStore().getState().channels?.["`+chSecret+`"]?.name ?? null`, &name)
+			return name == "secret-club"
+		})
+		var private any
+		h.jsInto(`return T.redux.getStore().getState().channels?.["`+chSecret+`"]?.is_private ?? null`, &private)
+		if private != true {
+			t.Errorf("the named channel isn't private: %v", private)
+		}
+	},
+	"ThreadJump": func(t *testing.T, h *harness) {
+		// the thread pane's ThreadSearchButton: its Jump in thread button
+		// for a long thread, its panel, and Top jumping the pane
+		const root = 9
+		pane := map[string]any{"channelId": chThread, "threadTs": jumpTS, "windowId": "main"}
+		h.render(root, "ThreadSearchButton", map[string]any{"$pane": pane, "threadKey": chThread + "-" + jumpTS})
+		var btn map[string]any
+		eventually(t, renderWait(), "the Jump in thread button", func() bool {
+			btn = findHost(h.tree(root), func(n map[string]any) bool {
+				p, _ := n["p"].(map[string]any)
+				return n["t"] == "button" && p["aria-label"] == "Jump in thread"
+			})
+			return btn != nil
+		})
+		k, _ := btn["k"].(float64)
+		h.tt.Bridge().Dispatch(int64(k), []byte(`{"type":"click","button":0,"buttons":0,"clientX":0,"clientY":0}`))
+		var top map[string]any
+		eventually(t, renderWait(), "its panel (Top, Bottom, -100, +100, Jump to date)", func() bool {
+			nodes := h.tree(root)
+			top = findHost(nodes, func(n map[string]any) bool {
+				return n["t"] == "@" && n["n"] == "Button" && treeText([]any{n}) == "Top"
+			})
+			return top != nil && strings.Contains(treeText(nodes), "Jump to date")
+		})
+		p, _ := top["p"].(map[string]any)
+		click, _ := p["onClick"].(map[string]any)
+		fn, _ := click["$fn"].(float64)
+		if fn == 0 {
+			t.Fatalf("Top has no onClick: %v", p)
+		}
+		h.tt.Bridge().Call(int64(fn), []byte("[]"), nil)
+		eventually(t, 5*time.Second, "the pane jumped to the root", func() bool {
+			h.ui.mu.Lock()
+			defer h.ui.mu.Unlock()
+			for _, x := range h.ui.panes {
+				if x == "jumpToReply:"+chThread+"/"+jumpTS+":"+jumpTS {
+					return true
+				}
+			}
+			return false
+		})
+		// a short thread gets no button
+		h.render(root+1, "ThreadSearchButton", map[string]any{"$pane": map[string]any{"channelId": chGen, "threadTs": "1700000001.000100", "windowId": "main"}})
+		time.Sleep(300 * time.Millisecond)
+		if strings.Contains(string(h.rawTree(root+1)), "Jump in thread") {
+			t.Error("a short thread got the jump button")
 		}
 	},
 	"OfficeHours": func(t *testing.T, h *harness) {
