@@ -214,8 +214,11 @@ func (u Unsupported) Error() string { return "it has " + u.What }
 // attachment, canvas and reference cells need pickers Clack doesn't have;
 // text is editable only while it is plain text and links (no formatting,
 // mentions, emoji, lists, quotes or code), so writing it back as plain
-// text loses nothing; date ranges and links with several URLs stay
-// read-only.
+// text loses nothing; date ranges stay read-only. A link cell is Slack's
+// LinkColumn: the grid reads its first link (getTypedFieldValue:
+// link[0]) and writes one back (the cells update: link: [the edited
+// link]), so a cell holding several links edits like one that holds the
+// first.
 func Editable(c *Column, f *Field) error {
 	if c == nil {
 		return Unsupported{"no column"}
@@ -249,11 +252,7 @@ func Editable(c *Column, f *Field) error {
 		if c.Options.Format == "range" || (f != nil && len(f.Date) > 1) {
 			return Unsupported{"a date range"}
 		}
-	case Link:
-		if f != nil && len(f.Link) > 1 {
-			return Unsupported{"several links"}
-		}
-	case Number, Currency, Select, MultiSelect, User, Assignee, TodoAssignee, Vote, Channel,
+	case Number, Currency, Link, Select, MultiSelect, User, Assignee, TodoAssignee, Vote, Channel,
 		Checkbox, Completed, TodoCompleted, Email, Phone, Rating:
 	default:
 		return Unsupported{"a " + c.Type + " field"}

@@ -339,10 +339,13 @@ func (k *ctl) commit(d *core.ListDoc) {
 			if !strings.Contains(txt, "://") {
 				txt = "https://" + txt
 			}
-			ed.Link = &lists.LinkValue{OriginalURL: txt, DisplayAsURL: true}
+			// the typed link (I6yI d: {originalUrl, displayName, attachment:
+			// null}, so display_as_url is false); unchanged when the cell's
+			// first link already has this URL
+			ed.Link = &lists.LinkValue{OriginalURL: txt}
 			if d != nil {
 				if r := d.Record(e.rec); r != nil {
-					if f := r.Field(c.Key); f != nil && len(f.Link) == 1 && f.Link[0].OriginalURL == txt {
+					if f := r.Field(c.Key); f != nil && len(f.Link) > 0 && f.Link[0].OriginalURL == txt {
 						return // unchanged
 					}
 				}
