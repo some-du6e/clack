@@ -457,7 +457,8 @@ func (d *editFileDialog) preview(gtx layout.Context, th *theme.Theme, i int, r i
 	if sz.X <= 0 || sz.Y <= 0 {
 		return
 	}
-	sc := min(float32(r.Dx())/float32(sz.X), float32(r.Dy())/float32(sz.Y), 1)
+	// an image's pixels are CSS px: at most the window's dp scale
+	sc := min(float32(r.Dx())/float32(sz.X), float32(r.Dy())/float32(sz.Y), float32(gtx.Dp(100))/100)
 	dw, dh := float32(sz.X)*sc, float32(sz.Y)*sc
 	o := f32.Pt(float32(r.Min.X)+(float32(r.Dx())-dw)/2, float32(r.Min.Y)+(float32(r.Dy())-dh)/2)
 	st := clip.Rect(r).Push(gtx.Ops)

@@ -499,15 +499,17 @@ func snippetTitleCount(gtx layout.Context, th *theme.Theme, ed *widget.Editor, h
 		col = th.C.Danger
 	}
 	st := textStyle{Size: 13, LineHeight: 18, Color: col}
-	m := op.Record(gtx.Ops)
-	dd := label(gtx, th.Shaper, st, s)
-	m.Stop()
 	w := gtx.Constraints.Max.X
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(w, h)} // the field's are exact
+	m := op.Record(gtx.Ops)
+	dd := label(g, th.Shaper, st, s)
+	call := m.Stop()
 	bw := dd.Size.X + gtx.Dp(24)
 	r := image.Rect(w-bw, 1, w-1, h-1)
 	paint.FillShape(gtx.Ops, th.C.Bg, clip.Rect(r).Op())
 	off := op.Offset(image.Pt(w-bw+gtx.Dp(12), (h-dd.Size.Y)/2)).Push(gtx.Ops)
-	label(gtx, th.Shaper, st, s)
+	call.Add(gtx.Ops)
 	off.Pop()
 }
 

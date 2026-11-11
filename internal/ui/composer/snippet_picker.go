@@ -307,10 +307,13 @@ func (p *convPicker) Layout(gtx layout.Context) layout.Dimensions {
 			io := op.Offset(image.Pt(gtx.Dp(16), (rowH-gtx.Dp(16))/2)).Push(gtx.Ops)
 			icons.Get(ic)(gtx, unit.Dp(16), fg)
 			io.Pop()
-			to := op.Offset(image.Pt(gtx.Dp(40), 0)).Push(gtx.Ops)
 			g := gtx
 			g.Constraints = layout.Constraints{Max: image.Pt(w-gtx.Dp(56), rowH)}
-			label(g, th.Shaper, textStyle{Size: 15, LineHeight: unit.Sp(convPickRowH), Color: fg, MaxLines: 1}, cv.Name)
+			m := op.Record(gtx.Ops)
+			ld := label(g, th.Shaper, textStyle{Size: 15, LineHeight: 22, Color: fg, MaxLines: 1}, cv.Name)
+			call := m.Stop()
+			to := op.Offset(image.Pt(gtx.Dp(40), (rowH-ld.Size.Y)/2)).Push(gtx.Ops)
+			call.Add(gtx.Ops)
 			to.Pop()
 			pointer.CursorPointer.Add(gtx.Ops)
 			return layout.Dimensions{Size: sz}

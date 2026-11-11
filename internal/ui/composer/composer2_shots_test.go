@@ -28,6 +28,15 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
+// forgetDraft drops ch's in-memory draft: its text and its attachments
+// (attStore keeps those across composers, with the first one's host).
+func forgetDraft(ch string) {
+	clearDraft(ch, "")
+	attStore.Lock()
+	delete(attStore.m, draftKey(ch, ""))
+	attStore.Unlock()
+}
+
 // c2ShotHost is the GIF test host with a real image cache (the fake's
 // images; the attached files' own bytes through localimg).
 type c2ShotHost struct {
@@ -126,6 +135,7 @@ func TestComposer2Shots(t *testing.T) {
 		h := c2ShotHost{gifTestHost: gh, img: images}
 
 		t.Run("gif-tiles-"+mode, func(t *testing.T) {
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			c.att.Add("crit.png", imgSynthPNG(t, 120, 80))
@@ -134,12 +144,14 @@ func TestComposer2Shots(t *testing.T) {
 			composerShot(t, th, "c2-gif-tiles-"+mode, c, 760, 300, nil)
 		})
 		t.Run("plus-menu-gif-"+mode, func(t *testing.T) {
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			c.att.Menu(image.Rect(40*scale, 600*scale, 68*scale, 628*scale), c.plusMenu())
 			overlay(t, th, "c2-plus-menu-gif-"+mode, h.last(), nil)
 		})
 		t.Run("edit-file-"+mode, func(t *testing.T) {
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			c.att.Add("aerial.png", imgSynthPNG(t, 320, 200))
@@ -149,6 +161,7 @@ func TestComposer2Shots(t *testing.T) {
 			overlay(t, th, "c2-edit-file-"+mode, d.m, nil)
 		})
 		t.Run("edit-alt-text-"+mode, func(t *testing.T) {
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			c.att.Add("one.png", imgSynthPNG(t, 200, 200))
@@ -158,6 +171,7 @@ func TestComposer2Shots(t *testing.T) {
 			overlay(t, th, "c2-edit-alt-text-"+mode, d.m, &d.alts[0])
 		})
 		t.Run("pending-viewer-"+mode, func(t *testing.T) {
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			c.att.Add("crit.png", imgSynthPNG(t, 120, 80))
@@ -166,6 +180,7 @@ func TestComposer2Shots(t *testing.T) {
 			overlay(t, th, "c2-pending-viewer-"+mode, h.last(), nil)
 		})
 		t.Run("snippet-counter-warning-"+mode, func(t *testing.T) {
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			d := openSnippetDialog(c, snippetSpec{text: "SELECT id, name\nFROM members\nWHERE team = 'hackclub' -- synthetic\n", ch: ch})
@@ -176,6 +191,7 @@ func TestComposer2Shots(t *testing.T) {
 			overlay(t, th, "c2-snippet-counter-warning-"+mode, d.m, &d.title)
 		})
 		t.Run("snippet-picker-"+mode, func(t *testing.T) {
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			d := openSnippetDialog(c, snippetSpec{text: "x", ch: ch})
@@ -196,6 +212,7 @@ func TestComposer2Shots(t *testing.T) {
 		})
 		t.Run("markdown-convert-"+mode, func(t *testing.T) {
 			for _, after := range []bool{false, true} {
+				forgetDraft(ch)
 				c := New(h, ch, "")
 				t.Cleanup(c.Close)
 				d := NewDoc()
@@ -217,6 +234,7 @@ func TestComposer2Shots(t *testing.T) {
 		t.Run("floating-bar-window-"+mode, func(t *testing.T) {
 			th := theme.New(dark)
 			h := winHost{ovHost: &ovHost{slickHost: &slickHost{app: app, th: th}}, w: 1000 * scale}
+			forgetDraft(ch) // no draft (files, GIFs) left by the shot before
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			old := showFormatting
