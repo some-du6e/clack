@@ -39,6 +39,7 @@ type App struct {
 	presSeen    map[string]time.Time
 	presWaiters []chan struct{}
 	countsTimer *time.Timer
+	actBadges   map[string]int // client.counts activity_v2 (activity_badges.go)
 	cmdCache    []slack.Command
 	cmdAt       time.Time
 	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
@@ -570,6 +571,7 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	if counts != nil {
 		a.S.SetCounts(counts)
+		a.setActivityBadges(counts.ActivityV2)
 	}
 	if errDMs == nil {
 		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
@@ -765,6 +767,7 @@ func (a *App) loadLatest(ctx context.Context, ch string) error {
 func (a *App) refreshCounts(ctx context.Context) {
 	if c, err := a.C.Counts(ctx); err == nil {
 		a.S.SetCounts(c)
+		a.setActivityBadges(c.ActivityV2)
 		a.emit(Event{Type: "counts"})
 		if a.reopenActive() { // a closed DM got a new message
 			a.emit(Event{Type: "sidebar_changed"})

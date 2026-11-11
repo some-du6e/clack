@@ -234,6 +234,9 @@ func (a *App) handle(ev slack.Event) {
 		if ev.Type == "thread_marked" {
 			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it
 		}
+		if ev.Type == "badge_counts_updated" {
+			a.onActivityBadges(ev.Raw) // handleBadgeCountsUpdatedRTMEvent's activity_v2
+		}
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":

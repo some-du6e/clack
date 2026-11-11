@@ -414,6 +414,9 @@ type Counts struct {
 	IMs           []CountEntry    `json:"ims"`
 	ChannelBadges map[string]int  `json:"channel_badges"`
 	Saved         json.RawMessage `json:"saved"`
+	// ActivityV2 is the Activity inbox's unread badge count by entry type
+	// (Slack's transformClientCountsOutput activityV2).
+	ActivityV2 map[string]int `json:"activity_v2"`
 }
 
 // UnmarshalJSON decodes a message and keeps the raw attachments JSON (for
