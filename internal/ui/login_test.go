@@ -531,7 +531,7 @@ func TestSignInWindowsWords(t *testing.T) {
 	l.troubleBtn.Click()
 	s.frame(time.Second / 60)
 	s.run(1500 * time.Millisecond)
-	for _, want := range []string{"Browser didn’t open?", "Copy page link", "Windows asks which app opens the link? Pick Clack, then Just once or Always."} {
+	for _, want := range []string{"Browser didn’t open?", "Copy page link", "If Windows asks for an app, pick Clack, then Just once or Always."} {
 		if !s.drew(want) {
 			t.Errorf("Windows tips: no %q in %q", want, s.strs)
 		}

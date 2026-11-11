@@ -654,7 +654,7 @@ func (l *loginScreen) tips() []loginTip {
 		// for slack:// at every start, so Windows' "Select an app to open
 		// this 'slack' link" box lists it. Slack's page never shows the
 		// link, so no tip about copying it.
-		return []loginTip{page, {icon: "link", text: "Windows asks which app opens the link? Pick Clack, then Just once or Always."}}
+		return []loginTip{page, {icon: "link", text: "If Windows asks for an app, pick Clack, then Just once or Always."}}
 	}
 	// Linux: clack.desktop lists Clack for x-scheme-handler/slack; Clack
 	// becomes the default only when asked

@@ -558,8 +558,8 @@ What Clack does now (`internal/desktop/urlhandler_windows.go`):
   exits. The running Clack logs that a launch handed over a sign-in link (not
   the link), and `App.SignInWithLink` takes it on the sign-in screen.
 - The card on Windows, while waiting: "Continue in your browser. If Windows
-  asks, pick Clack." Having trouble? has only Copy page link and "Windows asks
-  which app opens the link? Pick Clack, then Just once or Always."
+  asks, pick Clack." Having trouble? has only Copy page link and "If Windows
+  asks for an app, pick Clack, then Just once or Always."
 
 Checked on CI's Windows runner (ci.yml `windows-applog`): the registry
 writes and the rules for the legacy key (`TestURLHandlerRegistration`); the
