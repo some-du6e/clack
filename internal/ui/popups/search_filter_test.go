@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"gioui.org/io/key"
 
@@ -190,7 +191,8 @@ func TestSearchPopoverFilterCompleter(t *testing.T) {
 	e := srNewEnv(t, false)
 	var who core.User
 	for _, u := range e.h.a.Snapshot().Users {
-		if u.ID != e.h.a.Self().ID && !u.IsBot && !u.Deleted && u.DisplayName != "" && (who.ID == "" || u.ID < who.ID) {
+		if u.ID != e.h.a.Self().ID && !u.IsBot && !u.Deleted && u.DisplayName != "" && strings.Contains(u.RealName, " ") &&
+			(who.ID == "" || u.ID < who.ID) {
 			who = u
 		}
 	}
@@ -201,11 +203,12 @@ func TestSearchPopoverFilterCompleter(t *testing.T) {
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.frame()
 	d.frame()
-	srType(d, p, "from:"+who.DisplayName)
+	srType(d, p, "from:"+who.RealName)
+	d.until(t, "the from: match", func() bool { return p.ac.m.kind == srACFilter && p.ac.m.typ == "from" })
 	d.until(t, "the people menu", func() bool {
 		return p.ac.open && slices.ContainsFunc(p.ac.items, func(it srACItem) bool { return it.id == who.ID })
 	})
-	if p.ac.m.typ != "from" || p.ac.m.value != who.DisplayName || !p.ac.pseudo || p.ac.sel != 0 {
+	if p.ac.m.value != who.RealName || !p.ac.pseudo || p.ac.sel != 0 {
 		t.Fatalf("match %+v pseudo %v sel %d", p.ac.m, p.ac.pseudo, p.ac.sel)
 	}
 	x := d.scan()
@@ -263,7 +266,8 @@ func TestSearchPopoverFilterCompleter(t *testing.T) {
 	d3 := &srDrv{size: image.Pt(1280, 800), w: p3}
 	d3.frame()
 	d3.frame()
-	srType(d3, p3, "@"+who.DisplayName)
+	srType(d3, p3, "@"+who.RealName)
+	d3.until(t, "the @ match", func() bool { return p3.ac.m.kind == srACMember && p3.ac.m.value == who.RealName })
 	d3.until(t, "the @ menu", func() bool {
 		return p3.ac.open && p3.ac.m.kind == srACMember && slices.ContainsFunc(p3.ac.items, func(it srACItem) bool { return it.id == who.ID })
 	})
@@ -293,10 +297,12 @@ func TestSearchPopoverFilterCompleter(t *testing.T) {
 	}
 }
 
-// srType types s at the end of the popover's box.
+// srType types s at the end of the popover's box: the edit, then the
+// caret after it (the window's EditorInsert sends both).
 func srType(d *srDrv, p *SearchPopover, s string) {
 	n := p.ed.Len()
-	d.r.Queue(key.EditEvent{Range: key.Range{Start: n, End: n}, Text: s})
+	c := n + utf8.RuneCountInString(s)
+	d.r.Queue(key.EditEvent{Range: key.Range{Start: n, End: n}, Text: s}, key.SelectionEvent{Start: c, End: c})
 	d.frame()
 	d.frame()
 }
