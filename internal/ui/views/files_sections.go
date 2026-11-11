@@ -295,12 +295,15 @@ func (f *Files) sidebarUpdate(gtx C) {
 				f.selectNav(r.nav)
 			}
 		case sbCollection:
+			// the ⋮ sits inside the row, and Gio hands a click to the
+			// enclosing row's handler too: a click on it doesn't toggle
+			more := s.more.Clicked(gtx)
 			for {
 				c, ok := s.row.Update(gtx)
 				if !ok {
 					break
 				}
-				if ctxclick.Context(c) {
+				if ctxclick.Context(c) || more {
 					continue
 				}
 				switch {
@@ -310,7 +313,7 @@ func (f *Files) sidebarUpdate(gtx C) {
 					a.ToggleFileCollectionCollapsed(r.coll)
 				}
 			}
-			if s.more.Clicked(gtx) {
+			if more {
 				f.openCollectionMenu(r.coll, f.buttonRect(&s.more, s.moreSize))
 			}
 			f.ctxMenuEvents(gtx, s, func() {
@@ -328,10 +331,11 @@ func (f *Files) sidebarUpdate(gtx C) {
 				}
 				continue
 			}
-			if ctxclick.Clicked(gtx, &s.row) {
+			closed := s.close.Clicked(gtx) // inside the row: its click reaches the row too
+			if ctxclick.Clicked(gtx, &s.row) && !closed {
 				openFile(f.h, fileItem{r.file})
 			}
-			if s.close.Clicked(gtx) {
+			if closed {
 				f.dismissRow(r)
 			}
 			f.ctxMenuEvents(gtx, s, func() { f.showMenuAtPointer(f.fileRowMenu(r), 220) })

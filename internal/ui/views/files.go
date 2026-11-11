@@ -411,20 +411,25 @@ func (f *Files) update(gtx C) {
 		if c == nil {
 			continue
 		}
-		if c.row.Clicked(gtx) {
+		// the star, ⋯ and owner buttons sit inside the row, and Gio hands
+		// their clicks to the row's handler too: the row opens the file
+		// only when none of them took the click (Slack's buttons stop
+		// propagation)
+		star, menu, owner := c.star.Clicked(gtx), c.menu.Clicked(gtx), c.owner.Clicked(gtx)
+		if c.row.Clicked(gtx) && !star && !menu && !owner {
 			f.open(*it)
 		}
-		if c.star.Clicked(gtx) {
+		if star {
 			if f.sectionButtonShown(it) {
 				f.openMoveMenu(*it, f.buttonRect(&c.star, c.starSize)) // FileSectionDropdownButton
 			} else {
 				f.toggleStar(it.File)
 			}
 		}
-		if c.menu.Clicked(gtx) {
+		if menu {
 			f.openMenu(*it, f.buttonRect(&c.menu, c.menuSize))
 		}
-		if c.owner.Clicked(gtx) && it.User != "" {
+		if owner && it.User != "" {
 			// Clack's owner avatar keeps its card: Slack's file rows name
 			// the owner in plain text (boot-shared n+2X FileUserTimestamp)
 			openProfileCard(f.h, image.Point{}, it.User)

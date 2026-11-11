@@ -10,6 +10,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"gioui.org/f32"
+	"gioui.org/io/input"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -361,5 +370,72 @@ func TestFilesViewSectionsShots(t *testing.T) {
 		v.pages, v.page = 7, 3
 		e.frame()
 		vaShot(t, e, "files-pagination", dark)
+	}
+}
+
+// Gio hands a click on a button laid out inside a row's Clickable to the
+// row's handler too (the router delivers to the hit handler and every
+// enclosing one), so the Files rows ignore their own click when one of
+// their buttons took it.
+func TestFilesViewNestedClicks(t *testing.T) {
+	var outer, inner widget.Clickable
+	var r input.Router
+	var ops op.Ops
+	gtxOf := func() layout.Context {
+		return layout.Context{Ops: &ops, Source: r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(200, 40)), Now: time.Now()}
+	}
+	draw := func() {
+		ops.Reset()
+		gtx := gtxOf()
+		outer.Layout(gtx, func(gtx C) D {
+			func() {
+				defer op.Offset(image.Pt(160, 6)).Push(gtx.Ops).Pop()
+				g := gtx
+				g.Constraints = layout.Exact(image.Pt(28, 28))
+				inner.Layout(g, func(gtx C) D { return D{Size: image.Pt(28, 28)} })
+			}()
+			return D{Size: image.Pt(200, 40)}
+		})
+		r.Frame(&ops)
+	}
+	draw()
+	at := f32.Pt(170, 20)
+	r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: at},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: at},
+		pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: at})
+	gtx := gtxOf()
+	in, out := inner.Clicked(gtx), outer.Clicked(gtx)
+	if !in || !out {
+		t.Fatalf("inner clicked %v, outer clicked %v: the row double-click guard rests on both", in, out)
+	}
+
+	// the result rows: a star click doesn't open the file
+	v, h, e, _ := filesView(t)
+	e.frame()
+	c := v.clicksOf(fakeslack.CanvasShared)
+	before := len(h.opened)
+	c.star.Click()
+	c.row.Click()
+	e.frame()
+	if len(h.opened) != before {
+		t.Errorf("a star click opened %q", h.last())
+	}
+	c.row.Click()
+	e.frame()
+	if h.last() != "canvas:"+fakeslack.CanvasShared {
+		t.Errorf("a row click opened %q", h.last())
+	}
+	// the sidebar: a × click removes the row and doesn't open the file
+	h.Core().FileOpened(fakeslack.CanvasChannel)
+	e.until(t, "the recent row", func() bool { return hasRow(v, fakeslack.CanvasChannel) })
+	e.frame()
+	s := v.rowState(fakeslack.CanvasChannel)
+	before = len(h.opened)
+	s.close.Click()
+	s.row.Click()
+	e.frame()
+	if len(h.opened) != before || len(h.Core().RecentlyViewedFileIDs()) != 0 {
+		t.Errorf("× click: opened %v, recents %v", h.opened[before:], h.Core().RecentlyViewedFileIDs())
 	}
 }

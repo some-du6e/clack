@@ -7,9 +7,7 @@ package fakeslack
 // is the same set files.favorites.* without a collection_id changes, so
 // both experiment groups see one list. A file sits in at most one
 // collection: adding it to one takes it out of the others. Every write is
-// recorded with the Files view's (FilesViewCalls). Also lists.getMyItems,
-// the list items assigned to the viewer (todo_assignee cells naming
-// SelfID), for the sidebar's "Assigned to you".
+// recorded with the Files view's (FilesViewCalls).
 
 import (
 	"fmt"
@@ -255,40 +253,4 @@ func (s *Server) handleFileSections(fv *filesViewStore, method string, f url.Val
 		return fail("not_in_collection"), true
 	}
 	return nil, false
-}
-
-// handleMyItems answers lists.getMyItems: every record with a
-// todo_assignee cell naming the viewer, and those records' lists.
-func (s *Server) handleMyItems(f url.Values) any {
-	ls := s.listStore()
-	ls.mu.Lock()
-	defer ls.mu.Unlock()
-	listsOut := []map[string]any{}
-	records := []any{}
-	for _, id := range ls.order {
-		l := ls.byID[id]
-		mine := false
-		for _, r := range l.Records {
-			if r.Archived {
-				continue
-			}
-			for _, fl := range r.Fields {
-				if fl.Key != "todo_assignee" {
-					continue
-				}
-				for _, u := range fl.User {
-					if u == SelfID {
-						mine = true
-						rr := r
-						rr.ListID = l.ID
-						records = append(records, rr)
-					}
-				}
-			}
-		}
-		if mine {
-			listsOut = append(listsOut, s.listFile(l))
-		}
-	}
-	return ok("lists", listsOut, "records", records)
 }

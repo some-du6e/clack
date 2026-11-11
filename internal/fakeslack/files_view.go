@@ -107,8 +107,6 @@ func (s *Server) uploaded(id string) bool {
 // handleFilesView answers the Files view's writes; handled=false passes on.
 func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 	switch method {
-	case "lists.getMyItems": // files_sections.go
-		return s.handleMyItems(f), true
 	case "files.favorites.add", "files.favorites.remove", "files.favorites.list", "files.recentlyDeleted", "files.undelete",
 		"files.collections.list", "files.collections.create", "files.collections.update", "files.collections.delete":
 	case "files.delete", "files.edit":
