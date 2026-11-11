@@ -33,6 +33,7 @@ const (
 	sbGap
 	sbNote
 	sbDivider
+	sbNoResults // the text filter's TextFilterNoResultsRow (sidebar_filter.go)
 )
 
 type sbRow struct {
@@ -46,6 +47,7 @@ type sbRow struct {
 	itemKey string            // Slack's data-item-key ("" = untagged spacer)
 	tr      i18n.NS           // label is Slack's string in this namespace ("" = data, drawn as is)
 	btn     *widget.Clickable // resolved once per rebuild (no per-frame key strings)
+	open    bool              // a heading drawn expanded whatever its state (the text filter's isCollapsed: false)
 }
 
 type sidebarState struct {
@@ -76,6 +78,20 @@ type sidebarState struct {
 	shown     []int // rows a plugin left (nil: all), from shownFrom
 	shownFrom []any
 	shownGen  int
+
+	// the text filter (sidebar_filter.go): its input, and what the rows
+	// were built with (fq: the debounced text, "" for none)
+	filter    sbTextFilter
+	filterFor string
+	fq        string
+	fm2, fm3  bool
+
+	// the draft pencils (sidebar_draft.go): each row's tooltip and menu
+	// trigger, and the slot the row being laid out put its pencil in
+	drafts    map[string]*sbDraftUI
+	draftSlot image.Rectangle
+	draftFg   color.NRGBA
+	draftMenu bool
 }
 
 // sbLinks are the page links in Slack's order (client-channel-list-view
@@ -158,6 +174,33 @@ func (s *sidebarState) rebuild(m *model) {
 	}
 	rows := s.rows[:0]
 	s.viewsFor = sbViewsKey()
+	if s.fq != "" {
+		rows = s.rebuildFiltered(m, rows)
+	} else {
+		rows = s.rebuildRows(m, rows)
+	}
+	for i := range rows {
+		r := &rows[i]
+		switch r.kind {
+		case sbHeading:
+			r.itemKey = "sectionHeading-" + r.key
+		case sbLink, sbConv:
+			r.itemKey = r.key
+		case sbAction:
+			r.itemKey = "sectionFooter-" + r.section + "-" + r.key
+		case sbNoResults:
+			r.itemKey = r.key
+		}
+	}
+	s.rows = rows
+	s.gen++
+	s.builtFor = m.version
+	s.rowCount = len(rows)
+}
+
+// rebuildRows is the sidebar without a text filter: the page links, their
+// divider, then every section with its footer.
+func (s *sidebarState) rebuildRows(m *model, rows []sbRow) []sbRow {
 	for _, l := range sbLinks { // Home > "Always show in the sidebar"
 		if !strings.Contains(","+s.viewsFor+",", ","+sbViewPref[l.key]+",") {
 			rows = append(rows, l)
@@ -204,22 +247,21 @@ func (s *sidebarState) rebuild(m *model) {
 			rows = append(rows, sbRow{kind: sbAction, key: "add-apps", label: "Add apps", icon: "plus-small", tr: "channel_sidebar"})
 		}
 	}
-	rows = append(rows, sbRow{kind: sbGap, gap: 16})
-	for i := range rows {
-		r := &rows[i]
-		switch r.kind {
-		case sbHeading:
-			r.itemKey = "sectionHeading-" + r.key
-		case sbLink, sbConv:
-			r.itemKey = r.key
-		case sbAction:
-			r.itemKey = "sectionFooter-" + r.section + "-" + r.key
-		}
+	return append(rows, sbRow{kind: sbGap, gap: 16})
+}
+
+// sbStale reports whether the rows need rebuilding, and records the text
+// filter they are to be built with.
+func (a *App) sbStale(m *model) bool {
+	s := &a.sidebar
+	q, m2, m3 := a.sbFilterKey()
+	key := q
+	if q != "" {
+		key += "\x00" + strconv.FormatBool(m2) + strconv.FormatBool(m3)
 	}
-	s.rows = rows
-	s.gen++
-	s.builtFor = m.version
-	s.rowCount = len(rows)
+	stale := s.rows == nil || s.builtFor != m.version || s.viewsFor != sbViewsKey() || s.filterFor != key
+	s.fq, s.fm2, s.fm3, s.filterFor = q, m2, m3, key
+	return stale
 }
 
 func (a *App) model() *model {
@@ -247,7 +289,8 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	}
 	c := a.sidebarPalette()
 	m := a.model()
-	if a.sidebar.rows == nil || a.sidebar.builtFor != m.version || a.sidebar.viewsFor != sbViewsKey() {
+	a.tickSidebarFilter(gtx)
+	if a.sbStale(m) {
 		a.sidebar.rebuild(m)
 		for i := range a.sidebar.rows {
 			r := &a.sidebar.rows[i]
@@ -300,41 +343,25 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 		a.openPrefs()
 	}
 
-	// "Find a conversation…" box.
-	fy := hh
-	fh := gtx.Dp(28)
-	at(gtx, image.Pt(gtx.Dp(8), fy), image.Pt(sz.X-gtx.Dp(16), fh), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, a.clicks.get("sb.find"), func(gtx layout.Context, s image.Point, hovered bool) {
-			// Slack: rgba(249,237,255,.11) fill, 1px rgba(249,237,255,.22), radius 8.
-			lilac := color.NRGBA{R: 0xf9, G: 0xed, B: 0xff} // Slack's tint in both modes
-			bg := theme.Over(theme.WithAlpha(lilac, 0x1c), a.sbBase)
-			if a.th.Dark {
-				bg = a.sbBase // dark: transparent box, outline only
-			}
-			if hovered {
-				bg = theme.Over(theme.WithAlpha(lilac, 0x2a), a.sbBase)
-			}
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.Over(theme.WithAlpha(lilac, 0x38), a.sbBase))
-		}, func(gtx layout.Context) layout.Dimensions {
-			w := gtx.Constraints.Max.X
-			at(gtx, image.Pt(gtx.Dp(8), (fh-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("find")(gtx, 14, c.SidebarTextUnread)
-			})
-			at(gtx, image.Pt(gtx.Dp(26), 0), image.Pt(w-gtx.Dp(30), fh), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, fh, func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 13, theme.Regular, c.SidebarTextUnread, i18n.T("channel_sidebar", "Find a conversation…"))
-				})
-			})
-			return layout.Dimensions{Size: image.Pt(w, fh)}
+	// SidebarTextFilterInput (sidebar_text_filter): the header slot's
+	// .headerWrapper__pdaIJ (margin 0 8px, padding 0 0 4px under the
+	// header) holds the 28px input; the list's own 6px top spacer follows.
+	// Without the experiment there's no input: the list starts under the
+	// header (sidebar_filter.go).
+	filterOn := a.sbFilterOn()
+	top := hh + gtx.Dp(6)
+	if !filterOn {
+		a.sidebar.filter.focused = false
+	}
+	if filterOn {
+		fh := gtx.Dp(28)
+		at(gtx, image.Pt(gtx.Dp(8), hh), image.Pt(sz.X-gtx.Dp(16), fh), func(gtx layout.Context) layout.Dimensions {
+			return a.layoutSidebarFilter(gtx, gtx.Constraints.Max)
 		})
-	})
-	if clicked(a.clicks.get("sb.find")) {
-		a.openSwitcher()
+		top = hh + fh + gtx.Dp(10)
 	}
 
 	// scrolling list
-	top := fy + fh + gtx.Dp(10)
 	barH := a.huddles().BarHeight(gtx) // the huddle bar sits under the list
 	if barH > 0 {
 		at(gtx, image.Pt(0, sz.Y-barH), image.Pt(sz.X, barH), func(gtx layout.Context) layout.Dimensions {
@@ -355,6 +382,13 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 			return a.layoutSidebarRow(gtx, &a.sidebar.rows[i])
 		})
 	})
+	// the Home header's divider (.p-ia4_home_header--with_divider: box-shadow
+	// 0 1px 0 0 rgba(var(--sk_foreground_low), .13)) shows once the list
+	// leaves the top (--at_scroll_top), and never with the text filter's
+	// input under it (--text_filter_visible)
+	if pos := a.sidebar.list.Position; !filterOn && (pos.First > 0 || pos.Offset > 0) {
+		theme.Fill(gtx, image.Rect(0, hh, sz.X, hh+max(1, gtx.Dp(1))), theme.Over(color.NRGBA{R: 232, G: 232, B: 232, A: 0x21}, a.sbBase))
+	}
 	return layout.Dimensions{Size: sz}
 }
 
@@ -401,6 +435,8 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			})
 		})
 		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(44))}
+	case sbNoResults:
+		return a.layoutSidebarNoResults(gtx, w)
 	}
 
 	route := a.router.Current()
@@ -430,7 +466,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		}
 	case sbHeading:
 		clickPrefix = "sbh."
-		if a.sidebar.collapsed[r.key] {
+		if a.sidebar.collapsed[r.key] && !r.open {
 			icon = "caret-right"
 		}
 	case sbConv:
@@ -468,6 +504,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	if item.Hidden() {
 		return layout.Dimensions{}
 	}
+	a.sidebar.draftSlot = image.Rectangle{}
 	var inner slackc.Styled
 	switch {
 	case conv != nil:
@@ -510,6 +547,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	})
 	if conv != nil {
 		a.sbRowInput(gtx, conv.ID, btn, image.Pt(w, d.Size.Y))
+		if slot := a.sidebar.draftSlot; !slot.Empty() { // the pencil's tooltip and menu, over the row
+			a.layoutSbDraft(gtx, conv.ID, slot.Add(image.Pt(pad, 0)), a.sidebar.draftFg, a.sidebar.draftMenu)
+		}
 	}
 	if r.kind == sbHeading {
 		a.sbHeadingControls(gtx, r, btn.Hovered(), image.Pt(w, d.Size.Y))
@@ -620,6 +660,11 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 	sel, conv := rs.sel, rs.conv
 	box := a.sbBBMBox(r)
 	return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hovered bool) {
+		if conv != nil && !hovered { // the draft menu trigger sits over the row: it keeps the row hovered
+			if d := a.sidebar.drafts[conv.ID]; d != nil && d.btn.Hovered() {
+				hovered = true
+			}
+		}
 		switch {
 		case box:
 			// border 1px theme-otl-inv-pry, radius 4, the
@@ -644,7 +689,7 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			fg = c.SidebarActiveText
 		}
 		icon := rs.icon
-		if r.kind == sbHeading && btn.Hovered() && !a.sidebar.collapsed[r.key] {
+		if r.kind == sbHeading && btn.Hovered() && (!a.sidebar.collapsed[r.key] || r.open) {
 			icon = "caret-down"
 		}
 		ix := pad + rs.indent
@@ -731,9 +776,16 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				if conv.Muted {
 					pc = theme.WithAlpha(pc, uint8(float32(pc.A)*0.64+0.5))
 				}
-				at(gtx, image.Pt(right+(slot-gs)/2, (rowH-gs)/2), image.Pt(gs, gs), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("pencil-glyph")(gtx, 14, pc)
-				})
+				// o && l && _: the menu trigger replaces the glyph (drawn
+				// over the row, sidebar_draft.go)
+				menu := a.sbDraftMenuOn() && a.data != nil && len(a.data.chanDrafts[conv.ID]) > 0
+				if !menu {
+					at(gtx, image.Pt(right+(slot-gs)/2, (rowH-gs)/2), image.Pt(gs, gs), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get("pencil-glyph")(gtx, 14, pc)
+					})
+				}
+				a.sidebar.draftSlot = image.Rect(right, (rowH-slot)/2, right+slot, (rowH+slot)/2)
+				a.sidebar.draftFg, a.sidebar.draftMenu = pc, menu
 				right -= gtx.Dp(6)
 			}
 		}

@@ -20,6 +20,9 @@ type model struct {
 
 	Sections []sbSection
 	Convs    map[string]*convInfo
+	// FilterNames is what the sidebar text filter matches (core
+	// sidebar_filter.go).
+	FilterNames core.FilterNames
 
 	ActivityCount int  // unread mentions/reactions for the Activity tab
 	DMUnread      bool // dot on the DMs tab
