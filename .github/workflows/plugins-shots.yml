@@ -8,6 +8,7 @@ name: plugins-shots
 # the published library.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run plugins-shots.yml --ref <branch>)
     paths:
       - "internal/ui/plugins_prefs*.go"
       - "internal/ui/plugins_shots_test.go"
