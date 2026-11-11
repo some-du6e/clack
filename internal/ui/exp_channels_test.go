@@ -347,11 +347,19 @@ func TestBellMenuCustomizedTag(t *testing.T) {
 	e.settle(150 * time.Millisecond)
 	e.shot("channel-bell-customized")
 	e.a.dismissTop()
-	if err := e.a.Core().Mute(ctx, ch, true); err != nil { // the menu's Mute (actToggleMute → core.Mute)
-		t.Fatal(err)
+	// mute from the menu's own row, as the viewer does (the menu reads its
+	// optimistic mute state, not only core's)
+	row := func(key string) popups.MenuItem {
+		for _, it := range popups.ChannelNotifyItems(e.a, ch) {
+			if it.Key == key {
+				return it
+			}
+		}
+		t.Fatalf("no %q row", key)
+		return popups.MenuItem{}
 	}
-	e.until("muted", 10*time.Second, func() bool { c, ok := e.a.Core().Conv(ch); return ok && c.Muted })
-	e.settle(100 * time.Millisecond)
+	row("mute").Do()
+	e.until("muted", 10*time.Second, func() bool { return row("mute").Checked })
 	if _, tags := checked(); tags["everything"] != "" || tags["mentions_dms"] != "" {
 		t.Errorf("muted: %v", tags)
 	}
