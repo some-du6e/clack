@@ -598,50 +598,62 @@ func TestMediaExperiments(t *testing.T) {
 
 // ---- huddles_multi_device: the multi-device modal ----
 
-func TestMultiDeviceModal(t *testing.T) {
+// elsewhereEnv is an env whose room lists you (another device) while this
+// client isn't in it. Each env's fake Chime serves one meeting.
+func elsewhereEnv(t *testing.T, group string) *expEnv {
 	e := newExpEnv(t, nil)
-	// the room lists you (another device) while this client isn't in it
+	e.set(ExpMultiDevice, group)
 	e.c.mu.Lock()
 	e.c.live[hcChannel] = liveRoom{ID: huddle.FakeRoomID, Channel: hcChannel, Participants: []string{huddle.FakeSelfUser, huddle.FakeRemoteUser}}
 	e.c.mu.Unlock()
 	if n, others := e.c.huddlingElsewhere(hcChannel); n != 1 || len(others) != 1 {
 		t.Fatalf("elsewhere: %d %v", n, others)
 	}
-	e.set(ExpMultiDevice, "control")
+	return e
+}
+
+func (e *expEnv) connectedThenLeave() {
+	e.t.Helper()
+	// leaving mid-negotiation is a fake Chime error
+	waitFor(e.t, "connected", func() bool { s := e.c.Session(); return s != nil && s.State().Phase == huddle.Connected })
+	e.c.Leave()
+	waitFor(e.t, "left", func() bool { return !e.c.Active() })
+}
+
+// control: a plain join, multidevice=false, nothing asked.
+func TestMultiDeviceControl(t *testing.T) {
+	e := elsewhereEnv(t, "control")
 	e.c.Begin(hcChannel, EntryHeaderButton)
-	waitFor(t, "control: a plain join", func() bool { return len(fakeCalls(e.fk, "rooms.join")) == 1 })
+	waitFor(t, "a plain join", func() bool { return len(fakeCalls(e.fk, "rooms.join")) == 1 })
 	if e.oh.modal() != nil {
 		t.Fatal("control asked about devices")
 	}
 	if j := fakeCalls(e.fk, "rooms.join"); j[0].Params.Get("multidevice") != "false" {
 		t.Fatalf("multidevice %q", j[0].Params.Get("multidevice"))
 	}
-	connected := func() bool { s := e.c.Session(); return s != nil && s.State().Phase == huddle.Connected }
-	waitFor(t, "connected", connected) // leaving mid-negotiation is a fake Chime error
-	e.c.Leave()
-	waitFor(t, "left", func() bool { return !e.c.Active() })
+	e.connectedThenLeave()
+}
 
-	e.set(ExpMultiDevice, "treatment")
-	e.c.mu.Lock()
-	e.c.live[hcChannel] = liveRoom{ID: huddle.FakeRoomID, Channel: hcChannel, Participants: []string{huddle.FakeSelfUser, huddle.FakeRemoteUser}}
-	e.c.mu.Unlock()
+// treatment: HuddleMultiDeviceModal first; "Use both devices" joins with
+// multidevice=true.
+func TestMultiDeviceTreatment(t *testing.T) {
+	e := elsewhereEnv(t, "treatment")
 	e.c.Begin(hcChannel, EntryHeaderButton)
 	var m *popups.Modal
 	waitFor(t, "the multi-device modal", func() bool { m = e.oh.modal(); return m != nil })
-	if len(fakeCalls(e.fk, "rooms.join")) != 1 {
+	time.Sleep(100 * time.Millisecond)
+	if len(fakeCalls(e.fk, "rooms.join")) != 0 {
 		t.Fatal("joined before answering")
 	}
-	// "Use both devices" (the modal's pick): rooms.join with multidevice true
 	m.Dismiss()
+	// the modal's "Use both devices" pick
 	e.c.mu.Lock()
 	e.c.multi = &pendingMulti{channel: hcChannel, multi: true}
 	e.c.mu.Unlock()
 	e.c.begin(hcChannel, EntryHeaderButton)
-	waitFor(t, "the multi-device join", func() bool { return len(fakeCalls(e.fk, "rooms.join")) == 2 })
-	if j := fakeCalls(e.fk, "rooms.join"); j[1].Params.Get("multidevice") != "true" {
-		t.Fatalf("Use both devices: multidevice %q", j[1].Params.Get("multidevice"))
+	waitFor(t, "the multi-device join", func() bool { return len(fakeCalls(e.fk, "rooms.join")) == 1 })
+	if j := fakeCalls(e.fk, "rooms.join"); j[0].Params.Get("multidevice") != "true" {
+		t.Fatalf("Use both devices: multidevice %q", j[0].Params.Get("multidevice"))
 	}
-	waitFor(t, "connected again", connected)
-	e.c.Leave()
-	waitFor(t, "left again", func() bool { return !e.c.Active() })
+	e.connectedThenLeave()
 }
