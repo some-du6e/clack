@@ -31,8 +31,8 @@ func drawnStrings(e *perfEnv, d time.Duration) []string {
 
 // mainUnkeyed are strings the main surfaces draw unchanged that are the
 // fake account's own data (its custom section names happen to be Slack
-// keys too), or not wired yet ("Message": TODO, find its draw site).
-var mainUnkeyed = map[string]bool{"Projects": true, "Events": true, "Message": true}
+// keys too).
+var mainUnkeyed = map[string]bool{"Projects": true, "Events": true}
 
 // TestMainNoEnglishLeft: the sidebar, the rail, the top bar and a
 // channel's message rows in es-ES and ja-JP. Only strings Slack
@@ -61,6 +61,7 @@ func TestMainNoEnglishLeft(t *testing.T) {
 			reportLeft(t, loc, u, nil)
 		}
 	}
+	checkSurfaces(t, e, cats, ch) // the menus, dialogs and search (i18n_surfaces_test.go)
 }
 
 // TestLocaleShots: the client and Preferences > Language & region in
@@ -101,6 +102,7 @@ func TestLocaleShots(t *testing.T) {
 			e.a.showPrefs("notifications")
 			e.settle(500 * time.Millisecond)
 			e.shotTo(t, dir, "i18n-"+loc+"-prefs-notifications")
+			shotSurfaces(t, e, dir, loc, ch) // the menus, dialogs and search (i18n_surfaces_test.go)
 		})
 	}
 }
