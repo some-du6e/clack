@@ -195,3 +195,76 @@ func TestCodeChannelCalls(t *testing.T) {
 		t.Errorf("view args %v", v)
 	}
 }
+
+// code_channels_naming and session_channel_views: the section heading,
+// the row tooltip and the details view's label are Slack's in every
+// group (p4Ef, ConnectedChannel, WwBZ).
+func TestCodeChannelNaming(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.PutUsers([]slack.User{{ID: "UAGENT1", Name: "claude", IsBot: true, Profile: slack.Profile{DisplayName: "Claude", RealName: "Claude Code"}}})
+	a.S.PutConv(slack.Conversation{ID: "CCODE1", Name: "fix", IsChannel: true, IsMember: true, Properties: json.RawMessage(liveTestProps)})
+	a.S.PutConv(slack.Conversation{ID: "GCODE2", Name: "secret", IsChannel: true, IsPrivate: true, IsMember: true,
+		Properties: json.RawMessage(`{"record_channel":{"record_id":"AC:1:2:GCODE2","record_type":"agent_channel"},"code_channel":{"repo":"acme/api"},"agent_session":{"status":"active","encoded_agent_bot_user_ids":["UNKNOWN"]}}`)})
+	sec := slack.Section{ID: "S9", Type: "coding_channels", Name: "My agents"}
+	a.S.Sections = []slack.Section{sec, {ID: "L3", Type: "channels"}}
+	close(a.ready)
+	heading := func() string {
+		for _, v := range a.Snapshot().Sections {
+			if v.Type == "coding_channels" {
+				return v.Name
+			}
+		}
+		return "(none)"
+	}
+	tip := func(ch string) string {
+		kind, agent, ok := a.CodeChannelRowTooltip(ch)
+		if !ok {
+			return "(none)"
+		}
+		return strings.TrimSpace(kind + " " + agent)
+	}
+	a.setExperiments(map[string]string{"session_channels": "on", "code_channels_naming": "on", "session_channel_views": "on"})
+	if h := heading(); h != "Code channels" {
+		t.Errorf("heading %q (Slack's static name wins over the persisted one)", h)
+	}
+	if got := tip("CCODE1"); got != "Public code channel @Claude" {
+		t.Errorf("tooltip %q", got)
+	}
+	if got := tip("GCODE2"); got != "Private code channel" { // the agent isn't loaded: no @name
+		t.Errorf("private tooltip %q", got)
+	}
+	if got := tip("C1"); got != "(none)" {
+		t.Errorf("plain channel tooltip %q", got)
+	}
+	if got := a.CodeChannelDetailsLabel(); got != "Code channel details" {
+		t.Errorf("details label %q", got)
+	}
+
+	a.SetExperimentGroup("code_channels_naming", "off")
+	if h := heading(); h != "Session channels" {
+		t.Errorf("naming off: heading %q", h)
+	}
+	if got := tip("CCODE1"); got != "Public session channel @Claude" {
+		t.Errorf("naming off: tooltip %q", got)
+	}
+	if got := tip("GCODE2"); got != "Private session channel" {
+		t.Errorf("naming off: private tooltip %q", got)
+	}
+	if got := a.CodeChannelDetailsLabel(); got != "Session channel details" {
+		t.Errorf("naming off: details label %q", got)
+	}
+
+	a.ClearExperimentGroup("code_channels_naming")
+	a.SetExperimentGroup("session_channel_views", "") // unassigned
+	if got := a.CodeChannelDetailsLabel(); got != "Session channel details" {
+		t.Errorf("session_channel_views unassigned: details label %q", got)
+	}
+
+	a.SetExperimentGroup("session_channels", "off")
+	if h := heading(); h != "My agents" {
+		t.Errorf("session_channels off: heading %q, want the section's own name", h)
+	}
+	if got := tip("CCODE1"); got != "(none)" {
+		t.Errorf("session_channels off: tooltip %q", got)
+	}
+}
