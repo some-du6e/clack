@@ -346,7 +346,9 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 // "(CTRL G)" elsewhere.
 func srcFullLabel() string {
 	if shortcut.Mac() {
-		return nsSearch.T("Go to full search (⌘G)")
+		// Slack's "Go to full search (⌘G)": the key with the glyph from
+		// shortcut.Format, which is ⌘G on macOS
+		return nsSearch.T("Go to full search (" + shortcut.Format("Mod+G") + ")")
 	}
 	return nsSearch.T("Go to full search (CTRL G)")
 }
