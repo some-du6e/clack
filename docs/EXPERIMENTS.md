@@ -243,8 +243,8 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `agents_in_channels_improvements` | `off` | client-boot `M/qt` export `Io` | off: no agents-in-channels improvements | default: in `off` Slack keeps its default, as Clack does |
 | `ai_apps_loading` | `on` | gantry-v2-async-client-boot-shared `BcxC` AiMessageShimmer | the AI loading row shows the loading messages instead of skeleton bars | missing: as agent_ui_loading_state |
 | `app_history_badge` | `on` | client-boot `Db4L` export `a2`; tab-change `GPMo`, ai-app-view `M1gt` AiAppHistoryList | an AI app's History tab gets an unread badge | missing: Clack's app DMs have no History tab |
-| `app_nugget_refinement` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `q`; `P5g9`, `352G`, `v8ac` | the working-agent nuggets' copy ("{app} is working") and the open-thread reply nugget | missing: the agent working nuggets aren't ported |
-| `app_thread_nugget_fe` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `r`; `352G` AppThreadNugget, `v8ac` AppSessionReplyNugget | while an app works in a thread, a "{app} is working…" nugget with Stop in the reply bar and the thread footer | missing: as app_nugget_refinement |
+| `app_nugget_refinement` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `q`; `P5g9` useAppAgentNuggetLabels, `352G` AppThreadNugget, `v8ac` | the working-agent nugget is a chip (avatar, "{app} is working" or the loading messages, a slow spinner; its tooltip says Stop isn’t available); off, a shimmering row reading "{app} is working…" | reads it: `core/agent.go:208` (the thread footer's nugget; the reply bar's open-thread nugget needs agent sessions on messages) |
+| `app_thread_nugget_fe` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `r`; `352G` AppThreadNugget, `G2VO` Ss / ZL, `v8ac` AppSessionReplyNugget | while an app has a status in a thread, a nugget above the thread composer says it's working, and the composer leaves the app out of its typing line; processing agent sessions get one with Stop, also in the reply bar | reads it: `core/agent.go:191` (the status nugget and the typing line; agent-session nuggets and Stop need agent_session on messages, which Clack doesn't keep) |
 | `flexpane_content_parity` | `on` | client-boot `HLQ9` export `X7`; app-details `Qsn3`, client-boot `aXqJ`, boot-shared `+/mf`, `L9wq` | App details flexpane parity: bot DMs open their About tab, the header layout, an agent DM's default tab | missing: Clack has no App details flexpane |
 | `revamp_agent_app_profile` | `on` | client-boot `HLQ9` export `sD`; app-details, about-ai-app, agent browser | the revamped agent and app profile (App details) | missing: as flexpane_content_parity |
 | `a11y_no_auto_highlight_search_multi_select` | `on` | client-boot `MrD9` | search multi-selects do not auto-highlight | missing |
@@ -352,8 +352,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Agents (third-party AI apps) (22)
 
 - Files: internal/core/badge.go, internal/core/agent.go, internal/ui/messages/ (sender identity), internal/core/rail.go
-- To do (15): `agent_about_page`, `agent_auto_thread_opening`, `agent_browser_recent_agents`, `agent_channel_header`, `agent_channel_thread_naming`, `agent_dm_thread_naming`, `agent_peek_view`, `agent_prevent_fake_thread_roots`, `agent_ui_loading_state`, `ai_apps_loading`, `app_history_badge`, `app_nugget_refinement`, `app_thread_nugget_fe`, `flexpane_content_parity`, `revamp_agent_app_profile`
-- Clack reads already (6): `agent_badge`, `agent_tasks`, `agents_landing_page`, `show_as_agent`, `agent_member_channel_count`, `agent_streaming_slimmer_task_cards`
+- To do (13): `agent_about_page`, `agent_auto_thread_opening`, `agent_browser_recent_agents`, `agent_channel_header`, `agent_channel_thread_naming`, `agent_dm_thread_naming`, `agent_peek_view`, `agent_prevent_fake_thread_roots`, `agent_ui_loading_state`, `ai_apps_loading`, `app_history_badge`, `flexpane_content_parity`, `revamp_agent_app_profile`
+- Clack reads already (8): `agent_badge`, `agent_tasks`, `agents_landing_page`, `show_as_agent`, `agent_member_channel_count`, `agent_streaming_slimmer_task_cards`, `app_thread_nugget_fe`, `app_nugget_refinement`
 
 ### Menus, selects and buttons (3)
 
