@@ -76,8 +76,8 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `secondary_view_default_width` | `on` | client-boot `kl02` export `k5` | the secondary view opens at the new default width | missing |
 | `smaller_secondary_headers` | `on` | client-boot `kl02` export `I$` | secondary view headers are smaller | missing |
 | `today_v2` | `on` | client-boot `/Qva` isTodayV2Provisioned | the Today tab (v2) when provisioned | missing |
-| `activity_entry_layout_revisions_2` | `on` | client-boot `5Ns/` export `xi` | activity rows use layout revisions 2 | missing |
-| `activity_inbox_remove_persistent_detail_panel` | `on` | client-boot `5Ns/` isActivityInboxRemovePersistentDetailPanelEnabled | the inbox has no persistent detail panel | missing |
+| `activity_entry_layout_revisions_2` | `on` | client-boot `5Ns/` export `xi` (gantry boot-render Eojr, GuYW, FgHy, svza, oDbF, WbG1; boot-shared QTZf, /ad9, PcpC) | the multi-line and single-line rows with their status slot (off: Pck2's older rows); the All tab's dot badge (off: All's count pill, the default tabs' counts, the icon-only strip when narrow); no day divider over the first row; a 16px spacer between the VIP sections; "Multi-line view" / "Single-line view" tooltips; "Reacted {emoji} to:" (off: "You:"); two-line messages (off: one) | reads it: `core/activity_agent.go:21`; tabs, dividers, tooltips, reactions, lines: `ui/views/activity_tabs.go`, `ui/views/activity.go` (off: Pck2's rows not ported) |
+| `activity_inbox_remove_persistent_detail_panel` | `on` | client-boot `5Ns/` isActivityInboxRemovePersistentDetailPanelEnabled (Bb; VlLO, L1Ms, gantry GMkG, Ezzs) | with nested secondary views: the inbox is the Primary view at the full width and an opened item a secondary view beside it; off: the inbox in the sidebar column and Primary always showing the item or "Select a notification to view the details." | reads it: `core/activity_agent.go:30`, `ui/views/activity_panel.go` |
 | `later_todos` | `on` | client-boot `6owI` isLaterTodosEnabled | Later is Later + to-dos | reads it: `core/rail.go:191`, `ui/views/activity_slack.go:274` |
 | `autocomplete_affinity_ml_model` | `on` | client-boot `y+lP` Sorter.prepSuggestions; features from `1Fxd` AutocompleteFeaturesCache (search.autocomplete.offlineFeatures, 28 h) | `on`: members get userAffinityScore (user_affinity), channels channelPriority90dScore (channel_priority_90d); otherwise both 0 (the USER_AFFINITY_SCORE / CHANNEL_PRIORITY_90D_SCORE features and the +50 bonus stay off) | reads it: `ui/composer/autocomplete_rank.go` (core `AutocompleteAffinity`); `TestAffinityFeaturesFollowExperiment` flips on/off/unassigned |
 | `autocomplete_flannel_fuzzy_match_passthrough` | `treatment` | client-boot `nIFn` makeResultsMatcher | treatment: fuzzy-match passthrough of server (flannel) results | reads it: `ui/composer/autocomplete_rank.go:77` |
@@ -104,10 +104,10 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `desktop_history_recents_read` | `on` | gantry-v2-async-client-boot-shared `Fpm/` isDesktopHistoryRecentsReadEnabled | the history menu reads recents | missing |
 | `keyboard_shortcuts_search` | `on` | client-boot `odUS` | the keyboard shortcuts pane has a search box | missing |
 | `today_todos` | `on` | client-boot `/Qva` isTodayTodosEnabled | Today shows to-dos | missing |
-| `activity_automations_only` | `on` | client-boot `5Ns/` export `LS` | an Automations-only filter | missing |
-| `activity_bot_item_type_reads` | `on` | client-boot `5Ns/` export `zK` | bot items get their own read state | missing |
+| `activity_automations_only` | `on` | client-boot `5Ns/` export `LS` (gantry vQqF, g7lN, sD/F) | the filter menu's "Automations only" (unless exclude_automations_filter turns both automation rows into its select): activity.feed automations_only; people's live entries skip such a view | reads it: `core/activity_agent.go:48`, `ui/views/activity_filters.go`, `ui/views/activity_live.go` |
+| `activity_bot_item_type_reads` | `on` | client-boot `5Ns/` export `zK` (gantry vQqF, g7lN, sD/F) | the filter menu's "Exclude automations" (unless exclude_automations_filter): activity.feed exclude_automations; the automations' live entries (entry.is_bot) skip such a view | reads it: `core/activity_agent.go:41`, `ui/views/activity_filters.go`, `ui/views/activity_live.go` |
 | `activity_global_settings` | `on` | client-boot `5Ns/` export `XW` | Activity settings are global (layout toggle in header) | reads it: `core/manage.go:592`, `core/manage.go:610` |
-| `exclude_automations_filter` | `on` | client-boot `5Ns/` export `UK` | a filter that excludes automations | missing |
+| `exclude_automations_filter` | `on` | client-boot `5Ns/` export `UK` (gantry vQqF, lCwf, m+ho, fNIs) | the filter menu and the new view get "Notifications from": People, apps, and agents / People only / Apps and agents only (exclude_automations / automations_only; People only disables Apps, Apps and agents only DMs and Reminders and closes the mention sub-filters); Unreads moves to the additional filters | reads it: `core/activity_agent.go:56`, `ui/views/activity_filters.go`, `ui/views/activity_views.go` |
 | `slackbot_unread_v2` | `on` | client-boot `I87A` export `m0` | Slackbot DM unreads v2 in Activity | reads it: `ui/views/activity_slack.go:265` |
 | `lists_in_later` | `on` | client-boot `Hm0j` isListsMarkAsDoneForCheckboxEnabled | list items assigned to you appear in Later | missing |
 | `autocomplete_demote_flannel_passthrough_rltv_exact_match` | `on` | client-boot `LRGb` | passthrough results demoted below exact matches | reads it: `ui/composer/autocomplete_rank.go:78` |
@@ -163,7 +163,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `today_pause` | `on` | client-boot `/Qva` isTodayPauseEnabled | Today can be paused | missing |
 | `today_request_calendar_rtm_updates` | `on` | client-boot `vQYI` export `$7` | Today asks for calendar realtime updates | missing |
 | `view_header_overflow_borders` | `on` | client-list-record-details `Y95U` | view headers draw overflow borders | missing |
-| `agent_status_in_activity` | `on` | client-boot `M/qt` export `ji` | agent status in activity rows | missing |
+| `agent_status_in_activity` | `on` | client-boot `M/qt` export `ji` (gantry aEhj useAgentActivityStatus, BZ5B, j9ba) | channel posts, threads, DMs and app DMs of an agent session show its status before the unread badge: Processing the spinner ("Working"), Suspended needs-attention ("Needs attention") | reads it: `core/activity_agent.go:61`, `ui/views/activity_rows.go` |
 | `invite_slash_command_in_threads` | `on` | gantry-v2-async-client-boot-shared `7R+y` isInviteSlashCommandInThreadsEnabled, read by `yX/v` isSlashCommandEnabled | `on`: /invite runs in a thread; off it fails there with "*/invite* is not supported in threads. Sorry!" before the API (the thread rule: the allowed commands, the channel ones outside DMs, is_runnable_from_thread) | reads it: `core/command.go` threadCommandOK (`TestCommandsInThreads`) |
 | `invite_slash_command_multi` | `off` | gantry-v2-async-client-boot-shared `7R+y` export `w` | off: /invite takes one person | default: in `off` Slack keeps its default, as Clack does |
 | `unarchive_channel_banner_polish` | `on` | gantry-v2-async-client-boot-render `bgYM` MessagePaneInputDisabled, `Tq8O` canUserUnarchiveChannel, `6ndL` submitUnarchive | `on`, for a viewer with UNARCHIVE_CHANNEL: "You are viewing #name, an archived channel. Unarchive it to continue the discussion." with an Unarchive link (conversations.unarchive) and no Close Channel button | reads it: `ui/joinpane.go` (core `CanUnarchive`, `Unarchive`; `TestArchivedFooterUnarchive`, `TestCanUnarchive`) |
@@ -282,8 +282,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Activity (9)
 
 - Files: internal/ui/views/activity*.go, internal/core/activity_*.go
-- To do (6): `activity_entry_layout_revisions_2`, `activity_inbox_remove_persistent_detail_panel`, `activity_automations_only`, `activity_bot_item_type_reads`, `exclude_automations_filter`, `agent_status_in_activity`
-- Clack reads already (3): `activity_inbox`, `activity_global_settings`, `slackbot_unread_v2`
+- To do (0); left: the pre-revision rows (Pck2 `ActivityRowContentDense` / `ActivityRowContentDetailed`) for `activity_entry_layout_revisions_2` off (docs/ACTIVITY.md "Experiments")
+- Clack reads already (9): `activity_inbox`, `activity_global_settings`, `slackbot_unread_v2`, `activity_entry_layout_revisions_2`, `activity_inbox_remove_persistent_detail_panel`, `activity_automations_only`, `activity_bot_item_type_reads`, `exclude_automations_filter`, `agent_status_in_activity` (branch exp-activity)
 
 ### Later (2)
 

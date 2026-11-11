@@ -49,6 +49,9 @@ type Message struct {
 	OldName        string `json:"old_name,omitempty"`
 	NewName        string `json:"name,omitempty"`
 	StreamingState string `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	// AgentSession is a thread session's state on its root message
+	// (Slack's iR00 getMessageByTimestamp(…)?.agent_session).
+	AgentSession *MessageAgentSession `json:"agent_session,omitempty"`
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`
@@ -56,6 +59,15 @@ type Message struct {
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
 	UploadStatus string `json:"-"`
+}
+
+// MessageAgentSession is a message's agent_session: the status (active,
+// processing, suspended, closed) and when processing lapses
+// (date_status_processing_expire, unix seconds; iR00
+// readProcessingExpireSeconds).
+type MessageAgentSession struct {
+	Status           string      `json:"status,omitempty"`
+	ProcessingExpire json.Number `json:"date_status_processing_expire,omitempty"`
 }
 
 // PinnedInfo says who pinned a message (history / messages.list).
@@ -424,6 +436,9 @@ type Counts struct {
 	IMs           []CountEntry    `json:"ims"`
 	ChannelBadges map[string]int  `json:"channel_badges"`
 	Saved         json.RawMessage `json:"saved"`
+	// ActivityV2 is the Activity inbox's unread badge count by entry type
+	// (Slack's transformClientCountsOutput activityV2).
+	ActivityV2 map[string]int `json:"activity_v2"`
 }
 
 // UnmarshalJSON decodes a message and keeps the raw attachments JSON (for

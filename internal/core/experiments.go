@@ -211,6 +211,11 @@ var experimentReads = map[string][]string{
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	"agentforce_deprecation": on, "agent_tasks": on, "later_todos": on, "agents_landing_page": on, "agentic_ia": on,
+	// activity (activity_agent.go: 5Ns/, M/qt ji; nested_secondary_view is
+	// the secondary views' below)
+	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,
+	"activity_bot_item_type_reads": on, "activity_automations_only": on, "exclude_automations_filter": on,
+	"agent_status_in_activity": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,

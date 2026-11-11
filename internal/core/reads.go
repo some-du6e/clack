@@ -708,7 +708,7 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {mode},
 		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {strconv.FormatBool(o.Priority)}, "is_activity_inbox": {"true"},
 		"unread_only": {strconv.FormatBool(o.Unread)}, "only_salesforce_channels": {"false"},
-		"exclude_automations": {"false"}, "automations_only": {"false"}}
+		"exclude_automations": {strconv.FormatBool(o.ExcludeAutomations)}, "automations_only": {strconv.FormatBool(o.AutomationsOnly)}}
 	if o.Cursor != "" {
 		p.Set("cursor", o.Cursor)
 	}
