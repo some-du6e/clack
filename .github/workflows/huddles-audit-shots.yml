@@ -1,0 +1,50 @@
+name: huddles-audit-shots
+# The huddles audit (docs/HUDDLES-AUDIT.md) rendered headlessly against the
+# fake Chime (huddle.NewFake) and internal/fakeslack: the huddle window's
+# title, toolbar, closed captions, ⋯ menu, banners and hidden self-view;
+# the docked bar with the window closed and open; the sidebar row's
+# huddle badge; the header button, its menu and the invite window and
+# card. Synthetic only: nothing here joins, starts or rings a real huddle.
+on:
+  push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run huddles-audit-shots.yml --ref <branch>)
+    paths:
+      - "internal/ui/huddleui/**"
+      - "internal/ui/huddle_wire.go"
+      - ".github/workflows/huddles-audit-shots.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  huddles-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: huddle screenshots (Mesa llvmpipe)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_SHOTS: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$CLACK_SHOTS"
+          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic' ./internal/ui/huddleui
+          ls -la "$CLACK_SHOTS"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: huddles-audit-shots
+          path: dist/shots

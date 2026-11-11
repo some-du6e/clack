@@ -311,7 +311,8 @@ func (a *App) splitPointer(pe pointer.Event) {
 }
 
 // splitEscape is Escape while the split view has the focus: a channel with
-// unread messages is marked read first, as Esc does in the main view;
+// unread messages is marked read first, as Esc does in the main view, and
+// a thread with something to mark is marked read (ThreadsFlexpane onEsc);
 // otherwise the view closes (RenderedViewContents' Escape for a closable
 // container).
 func (a *App) splitEscape() bool {
@@ -320,11 +321,22 @@ func (a *App) splitEscape() bool {
 	}
 	r := a.splitTop()
 	ch := r.Channel()
-	if r.Thread() == "" {
-		if c := a.model().conv(ch); c != nil && c.Unread {
-			a.markRead(ch)
+	if ts := r.Thread(); ts != "" {
+		// a thread: ThreadsFlexpane onEsc marks it read first (threadEsc)
+		marked := false
+		a.inPane(paneSplit, func() {
+			if c := a.convos[ch+"/"+ts]; c != nil {
+				if e, ok := c.list.(interface{ Esc() bool }); ok {
+					marked = e.Esc()
+				}
+			}
+		})
+		if marked {
 			return true
 		}
+	} else if c := a.model().conv(ch); c != nil && c.Unread {
+		a.markRead(ch)
+		return true
 	}
 	a.CloseSplit()
 	return true

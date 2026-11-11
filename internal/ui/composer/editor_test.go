@@ -139,12 +139,17 @@ func TestAutoformatBlock(t *testing.T) {
 		kind BlockKind
 		ok   bool
 	}{
-		{"> ", Quote, true},
+		// list autofill's prefix (Slack): 1. and 1) only, after any
+		// spaces; ">" quotes as it is typed (autoformatQuote)
+		{"> ", Para, false},
 		{"- ", Bullet, true},
 		{"* ", Bullet, true},
 		{"• ", Bullet, true},
+		{"  - ", Bullet, true},
 		{"1. ", Ordered, true},
-		{"12. ", Ordered, true},
+		{"1) ", Ordered, true},
+		{"12. ", Para, false},
+		{"2. ", Para, false},
 		{"```", CodeBlock, true},
 		{"x ", Para, false},
 		{"1.", Para, false},
@@ -302,10 +307,12 @@ func TestEnterInLists(t *testing.T) {
 	// Nested empty item outdents first.
 	e = NewEditor()
 	edType(e, "- a")
+	e.SetSelection(0, 0) // Slack's "indent" takes a collapsed caret at the item's start
 	edPress(e, key.NameTab, 0)
 	if e.doc.Lines[0].Indent != 1 {
 		t.Fatalf("tab indent %+v", e.doc.Lines)
 	}
+	e.SetSelection(e.doc.Len(), e.doc.Len())
 	edPress(e, key.NameReturn, 0)
 	edPress(e, key.NameReturn, 0)
 	if l := e.doc.Lines[1]; l.Kind != Bullet || l.Indent != 0 {
@@ -332,7 +339,7 @@ func TestEnterInLists(t *testing.T) {
 
 	// Enter on an empty quote line leaves the quote.
 	e = NewEditor()
-	edType(e, "> q")
+	edType(e, ">q")
 	edPress(e, key.NameReturn, key.ModShift)
 	e.events = nil
 	edPress(e, key.NameReturn, 0)
@@ -343,7 +350,7 @@ func TestEnterInLists(t *testing.T) {
 
 func TestBackspaceRemovesBlockFirst(t *testing.T) {
 	e := NewEditor()
-	edType(e, "x\n> a")
+	edType(e, "x\n>a")
 	if e.doc.Lines[1].Kind != Quote {
 		t.Fatalf("lines %+v", e.doc.Lines)
 	}

@@ -66,6 +66,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), v.Layout)
 		return layout.Dimensions{Size: sz}
 	}
+	if v := a.workflowsTabView(ch); v != nil { // the Workflows tab (workflows_tab.go)
+		atExact(gtx, body.Min, body.Size(), v.Layout)
+		return layout.Dimensions{Size: sz}
+	}
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
 		mp := clsMessagePane.Enter(gtx, 0, 0)
@@ -209,6 +213,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(74), btn)}
 					})
 				})
+				hud.StartTip(gtx, a.th, ch, a.clicks.get("hdr.huddle").Hovered(), image.Pt(gtx.Dp(74), btn))
 				at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
 					return clickArea(gtx, a.clicks.get("hdr.huddlemore"), nil, func(gtx layout.Context) layout.Dimensions {
 						at(gtx, image.Pt(gtx.Dp(1), (btn-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
@@ -216,6 +221,10 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 						})
 						return layout.Dimensions{Size: image.Pt(gtx.Dp(20), btn)}
 					})
+				})
+				at(gtx, image.Pt(gtx.Dp(74), 0), image.Pt(gtx.Dp(20), btn), func(gtx layout.Context) layout.Dimensions {
+					hud.CaretTip(gtx, a.th, ch, a.clicks.get("hdr.huddlemore").Hovered(), image.Pt(gtx.Dp(20), btn))
+					return layout.Dimensions{}
 				})
 				hudOrg.track(gtx, a)
 				return layout.Dimensions{Size: r.Size()}
@@ -693,7 +702,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			}
 			if t.key == "messages" {
 				a.chTab[ch] = 0
-			} else if (t.icon == "canvas" || t.icon == "list-tab") && t.fileID != "" {
+			} else if (t.icon == "canvas" || t.icon == "list-tab") && t.fileID != "" || t.icon == "workflow" { // workflows_tab.go
 				a.chTab[ch] = i // the canvas or list opens in the channel's body
 			} else {
 				a.chTab[ch] = 0

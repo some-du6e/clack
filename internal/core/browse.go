@@ -95,6 +95,9 @@ type PeopleBrowseOpts struct {
 	// profile_location).
 	Team              string
 	Titles, Locations []string
+	// CustomFields filters by profile field: field id → values (Slack's
+	// profileField.<id> browser filter, sent as custom_fields JSON).
+	CustomFields map[string][]string
 }
 
 type PeoplePage struct {
@@ -680,6 +683,10 @@ func peopleBrowseParams(o PeopleBrowseOpts) url.Values {
 	}
 	if len(o.Titles) > 0 {
 		p.Set("profile_title", strings.Join(o.Titles, ","))
+	}
+	if len(o.CustomFields) > 0 {
+		j, _ := json.Marshal(o.CustomFields)
+		p.Set("custom_fields", string(j))
 	}
 	return p
 }

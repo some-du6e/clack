@@ -16,8 +16,10 @@ type Message struct {
 	ParentUser     string          `json:"parent_user_id,omitempty"`
 	ReplyCount     int             `json:"reply_count,omitempty"`
 	ReplyUsers     []string        `json:"reply_users,omitempty"`
+	ReplyUsersN    int             `json:"reply_users_count,omitempty"`
 	LatestReply    string          `json:"latest_reply,omitempty"`
 	Subscribed     bool            `json:"subscribed,omitempty"`
+	LastRead       string          `json:"last_read,omitempty"` // a followed thread's root (conversations.replies): the viewer's last read reply
 	Edited         *Edited         `json:"edited,omitempty"`
 	Reactions      []Reaction      `json:"reactions,omitempty"`
 	Files          []File          `json:"files,omitempty"`
@@ -40,6 +42,9 @@ type Message struct {
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
 	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	// FunctionExecutionID marks a workflow step's message: its block
+	// actions carry it (Slack's blocks.actions function_execution_id).
+	FunctionExecutionID string `json:"function_execution_id,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
@@ -346,6 +351,20 @@ func (c *Conversation) Dormant() bool {
 	}
 	_ = json.Unmarshal(c.Properties, &p)
 	return p.IsDormant
+}
+
+// HasCustomMpdmName reports a group DM renamed by its members
+// (properties.has_custom_mpdm_name): its name is the custom name, not
+// "mpdm-a--b--c-1".
+func (c *Conversation) HasCustomMpdmName() bool {
+	if len(c.Properties) == 0 {
+		return false
+	}
+	var p struct {
+		HasCustomMpdmName bool `json:"has_custom_mpdm_name"`
+	}
+	_ = json.Unmarshal(c.Properties, &p)
+	return p.HasCustomMpdmName
 }
 
 // Section is a sidebar section from users.channelSections.list.

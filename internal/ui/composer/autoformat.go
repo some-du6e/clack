@@ -4,10 +4,15 @@ import (
 	"unicode"
 )
 
-// Live markdown, the way Slack's composer does it: typing the closing
-// marker of *bold*, _italic_, ~strike~ or `code` styles the inner text and
-// drops the markers; typing "> ", "- ", "* ", "• ", "1. " or "```" at the
-// start of a paragraph turns the line into a quote, list or code block.
+// Live markdown, the way Slack's composer does it (boot-shared fffk:
+// SlackMarkdown, the keyboard module's "list autofill", XmNU/OF9+ for the
+// patterns): typing the marker that closes (or opens) *bold*, _italic_,
+// ~strike~ or `code` styles the inner text and drops the markers; ">" at
+// the start of a line makes it a quote at once; "- ", "* ", "• ", "1. "
+// or "1) " at the start of a line (after any spaces) a list; "```" a code
+// block; "# ", "## " or "### " a heading and "--- " a divider (the
+// composer supports portable content, so convertHeaders with
+// maxHeaderLevel 3 and convertHorizontalRule are on).
 //
 // These are pure functions over a *Doc and a caret so they can be tested
 // without a window. The editor pushes an undo step holding the literal
@@ -41,16 +46,21 @@ func edWordRune(r rune) bool {
 }
 
 // autoformatInline applies an inline style after the rune at caret-1 was
-// typed, if that rune closes a marker pair. It returns the new caret (the
-// end of the styled text) and the style it applied.
+// typed, if that rune closes (or opens) a marker pair. It returns the new
+// caret (the end of the styled text) and the style it applied.
 //
-// Rules: the opening marker is the nearest same marker on the line before
-// the closing one; it must start the line or follow whitespace or
-// punctuation; the inner text is non-empty and neither starts nor ends with
-// whitespace. Nothing happens inside code blocks or inside inline code.
+// Slack's buildLocalMarkdownChangeDelta: the pair is the typed marker and
+// the nearest same marker before it on the line, or, when there is none
+// before, the nearest one after it. generateMarkdownRegex decides: the
+// opening marker starts the line or follows whitespace, punctuation
+// (\p{P}), "+", "|" or "="; the inner text is non-empty, starts and ends
+// with neither whitespace nor the marker and holds no marker; the closing
+// marker ends the line or is followed by whitespace, punctuation, "+",
+// "|" or "=" (for ` also a word character). Nothing happens on code block
+// lines or inside inline code.
 func autoformatInline(d *Doc, caret int) (newCaret int, st Style, ok bool) {
 	k := caret - 1
-	if k < 1 || k >= d.Len() || d.Attrs[k].Atom != nil {
+	if k < 0 || k >= d.Len() || d.Attrs[k].Atom != nil {
 		return caret, 0, false
 	}
 	marker := d.Runes[k]
@@ -65,57 +75,100 @@ func autoformatInline(d *Doc, caret int) (newCaret int, st Style, ok bool) {
 	if d.Lines[line].Kind == CodeBlock {
 		return caret, 0, false
 	}
-	ls := d.LineStart(line)
-	if k-1 < ls || edSpace(d.Runes[k-1]) || d.Runes[k-1] == marker {
-		return caret, 0, false
-	}
-	j := -1
-	for i := k - 2; i >= ls; i-- {
+	ls, le := d.LineStart(line), d.LineEnd(line)
+	open, closing := -1, -1
+	for i := k - 1; i >= ls; i-- {
 		if d.Runes[i] == marker && d.Attrs[i].Atom == nil {
-			j = i
+			open, closing = i, k
 			break
 		}
 	}
-	if j < 0 || d.Attrs[j].Style&Code != 0 || edSpace(d.Runes[j+1]) {
-		return caret, 0, false
-	}
-	if j > ls {
-		prev := d.Runes[j-1]
-		if d.Attrs[j-1].Atom == nil && !edSpace(prev) && edWordRune(prev) {
-			return caret, 0, false
-		}
-	}
-	d.Delete(k, k+1)
-	d.Delete(j, j+1)
-	d.SetStyle(j, k-1, st, true)
-	return k - 1, st, true
-}
-
-// afBlockPrefix reports the block kind a typed line prefix stands for.
-func afBlockPrefix(rs []rune) (BlockKind, bool) {
-	switch string(rs) {
-	case "> ":
-		return Quote, true
-	case "- ", "* ", "• ":
-		return Bullet, true
-	case "```":
-		return CodeBlock, true
-	}
-	// "<digits>. "
-	n := len(rs)
-	if n >= 3 && rs[n-1] == ' ' && rs[n-2] == '.' {
-		for _, r := range rs[:n-2] {
-			if r < '0' || r > '9' {
-				return Para, false
+	if open < 0 {
+		for i := k + 1; i < le; i++ {
+			if d.Runes[i] == marker && d.Attrs[i].Atom == nil {
+				open, closing = k, i
+				break
 			}
 		}
+	}
+	if open < 0 || !afPair(d, ls, le, open, closing, marker) {
+		return caret, 0, false
+	}
+	d.Delete(closing, closing+1)
+	d.Delete(open, open+1)
+	d.SetStyle(open, closing-1, st, true)
+	if closing == k {
+		return closing - 1, st, true
+	}
+	return caret - 1, st, true // the opening marker went: the caret moves back with the text
+}
+
+// afPair checks generateMarkdownRegex for markers at open < closing on
+// the line [ls, le).
+func afPair(d *Doc, ls, le, open, closing int, marker rune) bool {
+	if closing-open < 2 {
+		return false // nothing inside
+	}
+	if d.Attrs[open].Style&Code != 0 || d.Attrs[closing].Style&Code != 0 {
+		return false
+	}
+	first, last := d.Runes[open+1], d.Runes[closing-1]
+	if edSpace(first) || first == marker || edSpace(last) || last == marker {
+		return false
+	}
+	if open > ls && !afBoundary(d, open-1, false) {
+		return false
+	}
+	if closing+1 < le && !afBoundary(d, closing+1, marker == '`') {
+		return false
+	}
+	return true
+}
+
+// afBoundary is OF9+'s marker neighbour classes: whitespace, \p{P}, "+",
+// "|", "="; word also takes \w (the character after a closing `). An
+// atom (emoji or mention pill) is none of them.
+func afBoundary(d *Doc, i int, word bool) bool {
+	if d.Attrs[i].Atom != nil {
+		return false
+	}
+	r := d.Runes[i]
+	switch {
+	case unicode.IsSpace(r), unicode.IsPunct(r), r == '+', r == '|', r == '=':
+		return true
+	case word:
+		return r == '_' || r < 0x80 && (unicode.IsLetter(r) || unicode.IsDigit(r))
+	}
+	return false
+}
+
+// afBlockPrefix reports the block kind a typed line prefix stands for:
+// the keyboard module's "list autofill" prefix
+// /^\s*?(1(\.|\)|-|\*|\u2022|\[ ?\]|\[x\])$/ before the typed space
+// (the check-list forms are canvases' only), and "```".
+func afBlockPrefix(rs []rune) (BlockKind, bool) {
+	if string(rs) == "```" {
+		return CodeBlock, true
+	}
+	n := len(rs)
+	if n < 2 || rs[n-1] != ' ' {
+		return Para, false
+	}
+	i := 0
+	for i < n-1 && unicode.IsSpace(rs[i]) {
+		i++
+	}
+	switch string(rs[i : n-1]) {
+	case "-", "*", "•":
+		return Bullet, true
+	case "1.", "1)":
 		return Ordered, true
 	}
 	return Para, false
 }
 
-// autoformatBlock converts the caret's paragraph to a quote, list or code
-// block when the text between the line start and the caret is one of the
+// autoformatBlock converts the caret's paragraph to a list or code block
+// when the text between the line start and the caret is one of the
 // markdown block prefixes. The prefix is removed; it returns the new caret.
 func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 	caret = d.clamp(caret)
@@ -124,7 +177,7 @@ func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 		return caret, Para, false
 	}
 	ls := d.LineStart(line)
-	if caret-ls < 2 || caret-ls > 8 {
+	if caret-ls < 2 || caret-ls > 16 {
 		return caret, Para, false
 	}
 	for i := ls; i < caret; i++ {
@@ -139,6 +192,113 @@ func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 	d.Delete(ls, caret)
 	d.Lines[line] = Line{Kind: k}
 	return ls, k, true
+}
+
+// autoformatQuote is buildLocalBlockQuoteMarkdownChangeDelta: ">" (or
+// "＞") typed at the start of a paragraph turns the line into a quote at
+// once and the marker goes; the rest of the line stays. It returns the
+// new caret.
+func autoformatQuote(d *Doc, caret int) (newCaret int, ok bool) {
+	k := caret - 1
+	if k < 0 || k >= d.Len() || d.Attrs[k].Atom != nil || d.Attrs[k].Style&Code != 0 {
+		return caret, false
+	}
+	if r := d.Runes[k]; r != '>' && r != '＞' {
+		return caret, false
+	}
+	line := d.LineOf(k)
+	if d.LineStart(line) != k || d.Lines[line].Kind != Para {
+		return caret, false
+	}
+	d.Delete(k, caret)
+	d.Lines[line] = Line{Kind: Quote}
+	return k, true
+}
+
+// autoformatHeading is SlackMarkdown's formatHeader: "#", "##" or "###"
+// then a space at the start of a line make it a Big, Medium or Small
+// heading (prefix ^#{1,3}$; not in a heading, a code block or inline
+// code). The marks and the space go. It returns the new caret.
+func autoformatHeading(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
+	caret = d.clamp(caret)
+	line := d.LineOf(caret)
+	switch kind := d.Lines[line].Kind; {
+	case kind == CodeBlock, kind == Divider, isHeading(kind):
+		return caret, Para, false
+	}
+	ls := d.LineStart(line)
+	n := caret - ls - 1 // the #s before the typed space
+	if n < 1 || n > 3 || d.Runes[caret-1] != ' ' {
+		return caret, Para, false
+	}
+	for i := ls; i < caret-1; i++ {
+		if d.Runes[i] != '#' || d.Attrs[i].Atom != nil || d.Attrs[i].Style&Code != 0 {
+			return caret, Para, false
+		}
+	}
+	k = [...]BlockKind{Header1, Header2, Header3}[n-1]
+	d.Delete(ls, caret)
+	d.Lines[line] = Line{Kind: k}
+	return ls, k, true
+}
+
+// afHorizontalRule reports whether the space just typed at caret-1
+// follows "---" at the start of the line (formatHorizontalRule's binding:
+// prefix ^---$, not in code); the editor then puts a divider there.
+func afHorizontalRule(d *Doc, caret int) bool {
+	caret = d.clamp(caret)
+	line := d.LineOf(caret)
+	if k := d.Lines[line].Kind; k == CodeBlock || k == Divider {
+		return false
+	}
+	ls := d.LineStart(line)
+	if caret-ls != 4 || d.Runes[caret-1] != ' ' {
+		return false
+	}
+	for i := ls; i < ls+3; i++ {
+		if d.Runes[i] != '-' || d.Attrs[i].Atom != nil || d.Attrs[i].Style&Code != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// autoLinkBefore is SlackLinkModule.maybeLinkify, run on a typed space or
+// Enter: the word before pos (after the line's last space) becomes a link
+// if it is a URL (or holds one) that isn't already a link, inside inline
+// code or on a code block line. It reports whether it linked.
+func autoLinkBefore(d *Doc, pos int) bool {
+	pos = d.clamp(pos)
+	line := d.LineOf(pos)
+	if d.Lines[line].Kind == CodeBlock {
+		return false
+	}
+	ls := d.LineStart(line)
+	start := pos
+	for start > ls && d.Runes[start-1] != ' ' {
+		start--
+	}
+	if start == pos {
+		return false
+	}
+	for i := start; i < pos; i++ {
+		if d.Attrs[i].Atom != nil {
+			return false
+		}
+	}
+	ms := rtFindURLs(d.Runes[start:pos])
+	if len(ms) == 0 {
+		return false
+	}
+	m := ms[len(ms)-1]
+	a, b := start+m.start, start+m.end
+	for i := a; i < b; i++ {
+		if d.Attrs[i].Link != "" || d.Attrs[i].Style&Code != 0 {
+			return false
+		}
+	}
+	d.SetLink(a, b, m.url)
+	return true
 }
 
 // autoformatFence handles "```" typed after text on a line, as Slack's

@@ -26,7 +26,7 @@ var markupCases = []markupCase{
 	{"bold", "*x* ", "x ", 0, Bold, []BlockKind{Para}},
 	{"italic", "_x_ ", "x ", 0, Italic, []BlockKind{Para}},
 	{"strike", "~x~ ", "x ", 0, Strike, []BlockKind{Para}},
-	{"quote", "> x", "x", 0, 0, []BlockKind{Quote}},
+	{"quote", ">x", "x", 0, 0, []BlockKind{Quote}}, // ">" quotes as it is typed
 	{"bullet", "- x", "x", 0, 0, []BlockKind{Bullet}},
 	{"ordered", "1. x", "x", 0, 0, []BlockKind{Ordered}},
 	{"fence at start", "```x", "x", 0, 0, []BlockKind{CodeBlock}},

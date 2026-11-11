@@ -43,6 +43,38 @@ func (c *Controller) audioPrefs() (agc, ns bool) {
 	return true, false
 }
 
+// VideoPrefsHost is the ui root's camera background effect: Slack's
+// localStorage prefs.video.effect, which Preferences > Audio & video's
+// "Blur your video background…" toggles between unset and "blur".
+type VideoPrefsHost interface {
+	HuddleVideoEffect() huddle.VideoEffect
+}
+
+func (c *Controller) videoEffect() huddle.VideoEffect {
+	if h, ok := c.h.(VideoPrefsHost); ok {
+		return h.HuddleVideoEffect()
+	}
+	return huddle.VideoEffectNone
+}
+
+// SetVideoEffect applies the background effect to the huddle's camera and
+// the open join preview at once (Slack's prefs dialog dispatches it to the
+// client store, and the huddle's camera device follows). Any goroutine.
+func (c *Controller) SetVideoEffect(e huddle.VideoEffect) {
+	if s := c.Session(); s != nil {
+		s.SetVideoEffect(e)
+	}
+	c.mu.Lock()
+	w := c.pwin
+	c.mu.Unlock()
+	if w != nil {
+		w.mu.Lock()
+		w.fx = e
+		w.mu.Unlock()
+		w.invalidate()
+	}
+}
+
 // SetMicProcessing applies the AGC and noise suppression prefs to the
 // huddle you're in (Preferences changed them). Any goroutine.
 func (c *Controller) SetMicProcessing(agc, ns bool) {
@@ -187,6 +219,10 @@ func (c *Controller) onScreenLock(locked bool) {
 	if s := c.Session(); s != nil {
 		log.Printf("huddle: the screen locked, leaving (DeviceLocked)")
 		c.leave(s)
+		// HuddleErrorModal "DeviceLocked" (its "Preferences" is a link in
+		// Slack; here the sentence names the page)
+		c.showErrModal(errModal{title: "You’re no longer in a huddle", button: "OK",
+			body: "When your computer locks, you automatically leave any huddle you’re in. You can change this in Preferences."})
 	}
 }
 

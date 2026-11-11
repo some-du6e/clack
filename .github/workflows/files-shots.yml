@@ -9,6 +9,7 @@ name: files-shots
 # nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run files-shots.yml --ref <branch>)
     paths:
       - "internal/richtext/message.go"
       - "internal/richtext/types.go"

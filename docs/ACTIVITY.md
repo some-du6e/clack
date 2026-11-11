@@ -394,6 +394,139 @@ All, which only changes the page.
 markup under its shipping CSS) and the toast, offline footer, invite
 modals and new menu rows.
 
+## Bulk select, saved views, sort, keys, live updates (2026-11-10, branch `activity-rest`)
+
+Read from the gantry build (`client-boot-render.777e711847af270a`,
+`client-boot-shared.4f8632cd9602d1fa`, `client-boot-vendors.a7070832025a6dd7`,
+`client-boot.bac7c893b49156a7`; public CDN, no cookie) and the shipping CSS
+(`client-boot-styles`, `helper-gantry-v2-styles` for the spacing helpers).
+Nothing was opened in a live Slack client; every write below is tested
+against internal/fakeslack only.
+
+**Triage mode** (3x6A `$Y`: bulk action mode, P0K2 `m1`, or anything in
+`bulkItems`). In it the filter bar is ActivityFilterBulkAction alone
+(m+ho: Unreads, the filters, search and the right side are `!L &&`);
+under it ActivityBulkSelectionBanner (i9bp: margin 0 16px 8px, padding
+8px, radius 8, `light-dark(base-sec, base-ter)`, 13px/22px): "{n} items
+selected on page." and, with no search, at least one row and more
+loadable or not all picked, "Select everything in **{view}**" (or
+"Select everything matching these filters." when the type filters
+differ from the view's saved ones). That link picks every loaded row and
+turns on server-side select-all (`Ro`): "Everything in **{view}** is
+selected.", rows loaded later join it (eP2o), "Mark selected as read" /
+"as unread" go and Clear is "Clear everything": ClearAllFilteredDialog
+("Are you sure you want to clear everything matching this filter?",
+'Use the "Cleared items" filter to access these once cleared.', Cancel /
+Yes) → `activity.clearAll {reason: server-side-select-all-clear,
+filters}` (FtTX `oe` with `read_state: reads_and_unreads`; `PK` drops
+`saved_reminder` while reminders are off in Activity). Each row leads
+with its checkbox (O6z2 RowCheckbox: the triage grid's 22px, the 16px
+checkbox centred, the row card 10px after it and 16px short of the
+right, `activity_row_content_margin_triage`); a checkbox toggles the row,
+Shift toggles the range from the last pick (0lkN onSelectRow; unpicking
+hands "last" to the next picked row below); a click on the row still
+opens it. A picked unread row is `--bulk-selected` (base-hgl-1); a read
+one keeps `--read-fill` (Slack's cascade: `.grouped.read-fill` is the
+more specific rule). The select checkbox is indeterminate while only
+some rows are picked. The buttons write once (`activity.markRead` /
+`archive` with `{reason: bulk_mark_read | bulk_archive, entries: [{type,
+key, feed_ts}]}`, `markUnread` with `bulk_mark_unread` and `ts`), are
+icon-only under 415px (isSmallWidth), 8px apart (`margin_left_50`), and
+disabled base-ter under content-sec without a border. "Mark selected as
+unread" needs `activity_bulk_unread_tool` (5Ns/ Yw); Clear has no toast
+with the activity inbox (`_ ||`); Custom select (BulkActionsSelect,
+inbox only) is bulk action mode with nothing picked.
+
+**Saved views** (GuYW ActivityInboxSavedViewTabs, rsjQ fetchActivityViews,
+birT / +9Gp / r23F / dWbk, RY04). activity.views gives the views, the
+global prefs and, by omission, the hidden default types. The tabs: All,
+the defaults not hidden (DMs while DMs show in Activity, Vn), then the
+custom views by position, each "{emoji or BGxe icon} {name}" (QIkC, 16px,
+4px gap). Each view keeps its own filters while the page is open (P0K2
+views[]); a custom view starts from its saved ones (formatFilterViewState:
+entry_types back to the rows, unread_only, archive_only, priority_only,
+channel_section_ids, channel_ids), and the feed gets them
+(`priority_only`, `channel_ids`, `channel_section_ids`). Switching views
+ends the bulk selection and closes the detail pane (handleViewChange). A
+custom tab's context menu is Rename view / Delete view
+(ActivityFilterSaveViewConfirmationModal: "Are you sure you want to delete
+“{view}”?", "This view will be removed from Activity.", Delete), a
+default one's (not All) Hide view (ActivityHideViewConfirmationModal,
+"This tab will be hidden from Activity.", Hide). The "+"
+(ActivitySuggestedTabsMenu 9av4, 280px) lists Hidden views (unhide),
+Default suggestions (vzS1 cv: Unreads, Mentions, Threads, Reactions,
+VIP with VIPs, minus any a view has by name or filters), Suggestions from
+your sidebar (Starred, the custom sections, up to ten), Create a custom
+view (`plus-filled`); with nothing to suggest it opens the modal straight
+away, and past 15 views it's off. A suggestion is a view
+(`activity.views.create {name, sort: newest, density: compact, filters}`)
+shown at once; the view the user was on loses its unsaved filters
+(`Lr("clearAllTab")`). ActivityFilterSaveViewModal (fNIs, 520px): "Create
+a new view" ("View name (required)", the input container: 38px, 4px
+radius, the emoji picker, placeholder "New view", "Remove emoji"; then
+ActivityAddTabContent: Layout's two 76px cards without
+activity_global_settings, "Only include unreads" with its switch, "Filter
+by" and the rows in two columns, Sort by with VIPs), "Save this view"
+(the filter menu's primary "Create Custom View", enabled with unsaved
+filters; in a custom view "Save as …" ▸ New view / Current view and
+"Delete View") and "Rename this view"; Slack's errors (RY04 `U_`: "There’s
+already a view with this name.", "View name is required.", …) under the
+input; '"{name}" has been saved successfully.' after. Realtime
+`activity_views_updated {views}` replaces the views (sD/F
+activityViewsUpdated).
+
+**VIP and sort.** The filter menu's VIP row is filterVipSelected →
+`priority_only=true`. Sort (1p6b G3): "Newest" and, with VIPs, "VIP
+unreads on top": the header's sort button (KJvs HEADER, with
+activity_global_settings on and the prototype off) and ActivitySettingsMenu's
+"Sort by" and "Density" sections (vzfm, behind `activity_in_home_prototype`,
+6rqO j; Density's "Multi-line rows" / "Single-line rows"). Both write
+`activity.prefs.update {sort | density}` (UykM updateAllActivityViewsByApi,
+every view takes it); VIP unreads on top asks for
+`priority_unreads_first_v1` (TfjX w) and lists the unread VIP rows
+(`entry.priority`, /29I isPriority) under "VIP unreads", then "Everything
+else" (U5s4 ActivityList rows, oDbF ActivitySectionHeader: 42px, the 20px
+tiles mark-as-important-filled on campfire-0/30 and notifications-filled
+on base-ter, 13px/18px bold content-sec), without day dividers in the
+first group or on the first row after the second header.
+
+**Keyboard** (U5s4 ActivityList's virtual list, WbG1
+useActivityItemShortcuts, N8Zu ClientKeyboardShortcutsActivity): a press
+on the list focuses it; Up / Down move the focused row (items only), Enter
+or Right opens it; the focused row shows its actions and, after a key, the
+bordered list's focus ring (4px in, square; the Dense row's bottom 0).
+U read/unread, C clear (restore in Cleared items), X pick, Space pick in
+triage mode, A Save for later / Add to-do, M the custom reminder, F
+forward; in triage mode Alt+U marks the picked rows read and Alt+C marks
+them read and clears them. Alt+Up / Down open the previous / next row,
+Shift+Alt the previous / next unread, ⌘. closes the detail pane, ⌘Z undoes
+the last clear or read change.
+
+**Live updates** (sD/F handleActivityRTMEvent with the inbox,
+activityUpdatedV2 → 46Vh pushActivityItemToStore): `activity_updated`
+replaces a listed entry, or inserts a new one at its feed_ts unless the
+view can't show it (reminders / DMs off in Activity, cleared vs Cleared
+items, a reaction under Unreads, a non-VIP under VIP, another type than
+the view's, a conversation outside its channels and sections); a cleared
+one leaves. `activity_invalidated` fetches the feed again;
+`activity_deleted` drops the entry. A new unread entry while scrolled
+down raises "New activity ↑" (ActivityUnreadsBanner: 28px `#1264a3` pill
+12px from the top). Clack no longer reloads the feed on mention and count
+events (Slack doesn't).
+
+**Tests and screenshots.** `TestActivityViewsRoundTrip`,
+`TestActivityViewsEvent`, `TestActivityBulkAndFilters` (core, fakeslack);
+`TestActivityTriageLikeSlack`, `TestActivityBulkWritesLikeSlack`,
+`TestActivityCustomViewsLikeSlack`, `TestActivityVIPAndSortLikeSlack`,
+`TestActivityKeyboardLikeSlack`, `TestActivityLiveUpdatesLikeSlack`
+(views). The activity-shots artifact adds activity-triage(-dense),
+activity-select-everything, activity-clear-everything,
+activity-plus-menu, activity-custom-tab, activity-create-view,
+activity-filter-create-view, activity-settings-sections,
+activity-vip-sort, activity-keyboard-focus and activity-new-activity.
+The `section` and `mark-as-important-filled` glyphs are Slack's own paths
+(internal/ui/icons/activity.go).
+
 ## Not done
 
 - Reaction bundles ("reaction_bundle" rows), behind an experiment.
@@ -405,3 +538,15 @@ modals and new menu rows.
   importance rows.
 - The subtext is drawn as a column before the message, so a 2-line
   message's second line is indented under it (Slack runs it inline).
+- Specific channel or section ("In" in Create a new view, the filter
+  menu's row): Slack's channel and section picker (IKpm) isn't in Clack;
+  saved views that name sections or channels are applied, not edited.
+- The mention sub-filters (@you, @channel, @user-group, keyword) in the
+  filter menu and the new view's rows; "Discard changes?" when closing
+  Create a new view with changes; dragging tabs to reorder
+  (`next_view_id`); the tab strip's icon-only mode when narrow; the
+  sort button's "new" badge; tooltips on the bulk buttons and the "+".
+- `s` (snooze) and the other keys that act on snoozable items: Clack has
+  no snooze.
+- The rest of activity_in_home_prototype (Activity moved into Home, the
+  settings menu in the filter bar): only its Sort and Density sections.

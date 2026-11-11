@@ -28,7 +28,10 @@ type ModalButton struct {
 	Do func() bool
 	// Left puts the button at the footer's left edge, apart from the
 	// others (Slack's delete-scheduled-message "Save as Draft").
-	Left  bool
+	Left bool
+	// Icon goes before the label (the workflow speedbump's ▶ "Start
+	// Workflow").
+	Icon  string
 	click widget.Clickable
 }
 
@@ -103,6 +106,11 @@ type ModalOpts struct {
 	// it.
 	Hero  func(gtx layout.Context) layout.Dimensions
 	HeroH float32
+	// Over draws on top of the whole card, header and footer included,
+	// in card coordinates with gtx.Constraints exactly the card's size
+	// (Slack's c-modal_speed_bump veils the dialog with its sheet; the
+	// list dialogs' footer access select).
+	Over func(gtx layout.Context)
 }
 
 // Modal is a centered dialog over a dimmed backdrop.
@@ -285,6 +293,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					if m.o.TitleFunc != nil {
 						title = m.o.TitleFunc()
 					}
+					if title == "" && m.o.TitleIcon == "" && m.o.TitleAfter == "" {
+						return layout.Dimensions{} // a header-less dialog (showHeader false): shape nothing
+					}
 					d := para(gtx, th, 22, 30, theme.Black, cl.Fg, title, 1)
 					if m.o.TitleIcon == "" && m.o.TitleAfter == "" {
 						return d
@@ -369,7 +380,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						}
 						ring := kind != BtnDisabled && m.ringOn(gtx, &b.click)
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-							return button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80, ring)
+							return button(gtx, th, &b.click, kind, BtnMedium, b.Label, b.Icon, 80, ring)
 						})
 						if b.Left {
 							macroAt(gtx, call, image.Pt(lx, fy+footPad))
@@ -380,6 +391,11 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						macroAt(gtx, call, image.Pt(x, fy+footPad))
 						x -= dp(gtx, 12)
 					}
+				}
+				if m.o.Over != nil {
+					gtx := gtx
+					gtx.Constraints = layout.Exact(m.rect.Size())
+					m.o.Over(gtx)
 				}
 			}
 		})

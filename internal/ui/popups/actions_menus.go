@@ -144,9 +144,8 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 		// (C08E083LZ9A, 2026-11-08).
 		items = items[:2]
 	}
+	items = append(append(items, Sep()), addWorkflowItems(h, convID, dm, c.Kind == "private", c.Preview)...) // workflows.go
 	items = append(items,
-		Sep(),
-		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in Clack yet")},
 		MenuItem{Label: "Edit settings", Do: func() {
 			if OpenChannelSettings != nil {
 				OpenChannelSettings(convID)
@@ -691,7 +690,9 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 				OpenOwnProfile()
 				return
 			}
-			h.Toast("Profile isn't available yet")
+			// a host without the ui root's hooks (OpenOwnProfile unset):
+			// the same full profile, through the host's pane
+			pfOpenFull(h, actSelfID(h))
 		}},
 		{Label: "Preferences", Do: actPreferences(h)},
 		{Label: "Account settings", External: true, Do: actToast(h, "Account settings live at app.slack.com")},

@@ -120,9 +120,13 @@ type actInvite struct {
 }
 
 type activityRaw struct {
-	IsUnread bool   `json:"is_unread"`
-	FeedTS   string `json:"feed_ts"`
-	Key      string `json:"key"`
+	IsUnread   bool   `json:"is_unread"`
+	IsArchived bool   `json:"is_archived"`
+	FeedTS     string `json:"feed_ts"`
+	Key        string `json:"key"`
+	// Priority is the entry's VIP priority (any truthy value: /29I
+	// isPriority: !!e.priority).
+	Priority json.RawMessage `json:"priority"`
 	Item     struct {
 		Type     string  `json:"type"`
 		Message  *msgRef `json:"message"`
@@ -205,11 +209,22 @@ var activityKnown = map[string]bool{
 
 var activityUnknownSeen sync.Map
 
+// actTruthy is JavaScript's !!v for a raw JSON value: false for a missing
+// value, null, false, 0 and "".
+func actTruthy(v json.RawMessage) bool {
+	switch s := strings.TrimSpace(string(v)); s {
+	case "", "null", "false", "0", `""`:
+		return false
+	}
+	return true
+}
+
 // activityItem converts one feed entry; ref is the message to hydrate
 // (nil for items without one).
 func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 	in := &raw.Item
-	it := ActivityItem{Key: raw.Key, Type: in.Type, FeedTS: raw.FeedTS, Unread: raw.IsUnread, Channel: in.Channel}
+	it := ActivityItem{Key: raw.Key, Type: in.Type, FeedTS: raw.FeedTS, Unread: raw.IsUnread, Channel: in.Channel,
+		Archived: raw.IsArchived, Priority: actTruthy(raw.Priority)}
 	ref := in.Message
 	if bi := in.BundleInfo; bi != nil {
 		it.Count = bi.UnreadCount

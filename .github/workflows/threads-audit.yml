@@ -1,0 +1,79 @@
+name: threads-audit
+# The thread pane against Slack's ThreadsFlexpane (docs/THREADS-AUDIT.md):
+# the "New" marker and its ghost, marking read (350 ms with the user's
+# attention, Esc), the start position, the "N replies" count, the "N new
+# replies" banner, the reply bar's text and faces, the pane's width and
+# the thread notification rules, on internal/fakeslack's thread audit
+# fixtures (#th-audit). Then the pane's states as screenshots, light and
+# dark, rendered headlessly through Gio's GPU renderer (Mesa llvmpipe),
+# and Slack's markup for the same states under Slack's shipping CSS
+# (.github/scripts/threads_ref.py) next to them. Synthetic only: nothing
+# here talks to Slack's API or opens the Slack client.
+on:
+  push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run threads-audit.yml --ref <branch>)
+    paths:
+      - "internal/ui/messages/thread*.go"
+      - "internal/ui/messages/reply_bar.go"
+      - "internal/ui/messages/list.go"
+      - "internal/ui/messages/row.go"
+      - "internal/ui/messages/util.go"
+      - "internal/ui/secondary.go"
+      - "internal/ui/notify_threads.go"
+      - "internal/ui/threads_audit_test.go"
+      - "internal/ui/backend.go"
+      - "internal/ui/keys.go"
+      - "internal/ui/composer/chrome.go"
+      - "internal/ui/popups/actions_thread.go"
+      - "internal/core/manage.go"
+      - "internal/core/thread_read_test.go"
+      - "internal/fakeslack/threads_audit.go"
+      - ".github/scripts/threads_ref.py"
+      - ".github/workflows/threads-audit.yml"
+  workflow_dispatch:
+
+env:
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+
+permissions:
+  contents: read
+
+jobs:
+  threads-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS fonts-lato
+      - name: core, the pane and the reply bar
+        run: |
+          go test -count=1 -v -run 'TestThreadLastRead|TestDesktopNotificationForwarded' ./internal/core
+          go test -count=1 -v -run 'TestThreadsAudit|TestReplyBar|TestThreadHeader' ./internal/ui/messages
+      - name: notifications, width, Escape, with screenshots
+        env:
+          THREADS_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p "$THREADS_AUDIT_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestThreadsAudit' ./internal/ui
+          ls -la "$THREADS_AUDIT_SHOTS_DIR"
+      - name: Slack's markup for the same states (shipping CSS)
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m pip install --quiet pillow
+          mkdir -p /tmp/slack-ref
+          curl -sfL --compressed --retry 5 -o /tmp/slack-ref/client-boot-styles.css https://a.slack-edge.com/bv1-13-br/client-boot-styles.cf726c4f2eaecc74.min.css
+          curl -sfL --retry 5 -o /tmp/slack-ref/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
+          python3 .github/scripts/threads_ref.py dist/shots /tmp/slack-ref/client-boot-styles.css internal/ui/slackc/css/slackvars.go /tmp/slack-ref/icons.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: threads-audit-shots
+          path: dist/shots

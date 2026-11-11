@@ -3,7 +3,6 @@ package huddleui
 import (
 	"image"
 	"image/color"
-	"strings"
 	"sync"
 	"time"
 
@@ -11,10 +10,14 @@ import (
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -40,6 +43,13 @@ type window struct {
 	full   bool
 	cam    camUI        // window_camera.go
 	phase  huddle.Phase // this frame's (tiles: your spinner until connected)
+
+	more    *popups.Menu    // the ⋯ More actions menu (window_menu.go)
+	moreBtn image.Rectangle // its button, in the toolbar
+	barTop  int             // the toolbar's top in the window
+	cc      ccState         // the closed captions' fade (captions.go)
+	banner  banner          // HuddlesInformationalBanner (captions.go)
+	tips    map[string]*popups.TipState
 }
 
 // OpenWindow shows the huddle window (creating it), when you're in a huddle.
@@ -163,7 +173,7 @@ func (w *window) layout(gtx C) {
 	theme.Fill(gtx, image.Rectangle{Max: sz}, hudFrame)
 	s := w.c.Session()
 	if s == nil {
-		centerLabel(gtx, w.th, sz, 14, theme.Bold, hudWhite, "Joining the huddle…")
+		huddleLoading(gtx, w.th, sz)
 		return
 	}
 	st := s.State()
@@ -171,31 +181,36 @@ func (w *window) layout(gtx C) {
 	w.handle(gtx, s, st)
 	w.cameraWatch(st)
 
-	// title: headphones + "Huddle in #channel", centered
-	titleH := gtx.Dp(34)
-	title := "Huddle in " + w.c.channelTitle(st.Channel)
-	switch st.Phase {
-	case huddle.Connecting:
-		title = "Connecting… " + title
-	case huddle.Reconnecting:
-		title = "Reconnecting… " + title
-	}
 	// the title is Slack's HuddleMvaWindowTitle (CallTimer adds its timer
-	// after it): measured, then centered with the headphones before it
+	// after it): .p-multi_view_window_title__huddle, the headphones, 8px,
+	// the title, 8px, the "{n} people" subtitle (regular), all at the
+	// title's .8 opacity; measured, then centered
+	titleH := gtx.Dp(34)
+	title, sub := w.c.windowTitle(st)
+	ink := theme.WithAlpha(hudWhite, 0xcc)
 	tg := gtx
-	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, sz.X-gtx.Dp(22)-gtx.Dp(120)), titleH)}
+	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, sz.X-gtx.Dp(24)-gtx.Dp(120)), titleH)}
 	tm := op.Record(gtx.Ops)
-	td := slackc.Render(tg, "HuddleMvaWindowTitle", w.titleProps(s, st, title), func(gtx C, p slackc.Props) D {
-		return w.th.Label(gtx, 14, theme.Bold, hudWhite, p.StrOr("title", title))
+	td := slackc.Render(tg, "HuddleMvaWindowTitle", w.titleProps(s, st, title, sub), func(gtx C, p slackc.Props) D {
+		t := w.th.Label(gtx, 14, theme.Bold, ink, p.StrOr("title", title))
+		sb := p.StrOr("subtitle", sub)
+		if sb == "" {
+			return t
+		}
+		so := op.Offset(image.Pt(t.Size.X+gtx.Dp(8), 0)).Push(gtx.Ops)
+		gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-t.Size.X-gtx.Dp(8))
+		sd := w.th.Label(gtx, 14, theme.Regular, ink, sb)
+		so.Pop()
+		return D{Size: image.Pt(t.Size.X+gtx.Dp(8)+sd.Size.X, max(t.Size.Y, sd.Size.Y)), Baseline: t.Baseline}
 	})
 	tcall := tm.Stop()
 	ts := td.Size
-	ix := (sz.X - ts.X - gtx.Dp(22)) / 2
+	ix := (sz.X - ts.X - gtx.Dp(24)) / 2
 	at(gtx, image.Pt(ix, (titleH-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx C) D {
-		iconAt(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)), "headphones", 16, hudWhite)
+		iconAt(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)), "headphones", 16, ink)
 		return D{Size: image.Pt(gtx.Dp(16), gtx.Dp(16))}
 	})
-	tt := op.Offset(image.Pt(ix+gtx.Dp(22), (titleH-ts.Y)/2)).Push(gtx.Ops)
+	tt := op.Offset(image.Pt(ix+gtx.Dp(24), (titleH-ts.Y)/2)).Push(gtx.Ops)
 	tcall.Add(gtx.Ops)
 	tt.Pop()
 	// No elapsed time here: Slack's huddle window shows none (its only
@@ -210,12 +225,14 @@ func (w *window) layout(gtx C) {
 		}, func(gtx C) D { iconAt(gtx, image.Pt(bs, bs), "expand", 16, hudWhite); return D{} })
 	})
 
-	barH := gtx.Dp(60)
+	barH := gtx.Dp(56) // .toolbarContainerExpandedMode: height 56px
 	stage := image.Rect(gtx.Dp(8), titleH, sz.X-gtx.Dp(8), sz.Y-barH)
 	if stage.Dx() > 0 && stage.Dy() > 0 {
 		w.stage(gtx, s, st, stage, now)
 	}
+	w.barTop = sz.Y - barH
 	w.bottomBar(gtx, s, st, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
+	w.layoutBanner(gtx, stage, now)
 	if n, ok := w.mic.visible(st); ok && stage.Dx() > gtx.Dp(40) {
 		w.mic.handle(gtx, s, st, n)
 		bw := min(stage.Dx()-gtx.Dp(24), gtx.Dp(480))
@@ -234,6 +251,7 @@ func (w *window) layout(gtx C) {
 	}
 	w.cameraNotice(gtx, st, stage)
 	w.toolbarTip(gtx, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
+	w.layoutMore(gtx)
 }
 
 func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
@@ -241,28 +259,15 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 		s.SetMuted(!st.Muted)
 		w.mic.dismissed = huddle.MicOK // a broken mic: show why again
 	}
-	if w.click("deafen").Clicked(gtx) {
-		s.SetDeafened(!st.Deafened)
-		if !st.Deafened {
-			w.note("You won't hear the huddle until you undeafen")
-		}
-	}
 	if w.click("camera").Clicked(gtx) {
 		w.cameraClick(s, st)
-	}
-	if w.click("screen").Clicked(gtx) {
-		w.note(AppName + " can't share your screen yet")
 	}
 	if w.click("react").Clicked(gtx) {
 		w.picker = !w.picker
 		w.stick = false
 	}
 	if w.click("hand").Clicked(gtx) { // Raise hand / Lower hand / Remove sticker
-		go func() {
-			if err := w.c.ToggleHand(); err != nil {
-				w.note("Couldn't update your sticker")
-			}
-		}()
+		go func() { _ = w.c.ToggleHand() }()
 	}
 	if w.click("stickers").Clicked(gtx) { // Choose sticker
 		w.stick = !w.stick
@@ -275,11 +280,8 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 			go func() { _ = w.c.PickSticker(e) }()
 		}
 	}
-	if w.click("cc").Clicked(gtx) {
-		s.SetCaptions(!st.CaptionsOn)
-		if !st.CaptionsOn {
-			w.note("Captions show when someone in the huddle turns on transcription")
-		}
+	if w.click("more").Clicked(gtx) {
+		w.toggleMore(s, st)
 	}
 	if w.click("thread").Clicked(gtx) {
 		h := w.c.h
@@ -313,9 +315,7 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 	for _, e := range quickEmoji {
 		if w.click("emoji:" + e).Clicked(gtx) {
 			w.picker = false
-			if err := s.React(e, ""); err != nil {
-				w.note("Couldn't send the reaction")
-			}
+			_ = s.React(e, "")
 		}
 	}
 }
@@ -335,6 +335,9 @@ var quickEmoji = []string{"+1", "heart", "joy", "tada", "wave", "clap", "raised_
 func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectangle, now time.Time) {
 	gradient(gtx, r, gtx.Dp(10), hudStageA, hudStageB)
 	ps := orderedParticipants(st)
+	if w.c.hideSelf.Load() && len(ps) > 1 { // "Hide self-view": your tile leaves the gallery
+		ps = withoutSelf(ps)
+	}
 	cams := map[string]string{} // attendee -> video key
 	var share *huddle.Video
 	for i := range st.Videos {
@@ -412,7 +415,7 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 		}
 	}
 	if st.CaptionsOn {
-		w.captions(gtx, st, r)
+		w.captions(gtx, st, r, now)
 	}
 	if w.picker {
 		w.emojiPicker(gtx, r)
@@ -496,60 +499,43 @@ func (w *window) emojiPicker(gtx C, stage image.Rectangle) {
 	}
 }
 
-func (w *window) captions(gtx C, st huddle.State, stage image.Rectangle) {
-	lines := st.Captions
-	if len(lines) > 2 {
-		lines = lines[len(lines)-2:]
-	}
-	if len(lines) == 0 {
-		return
-	}
-	maxW := stage.Dx() * 4 / 5
-	var b strings.Builder
-	for i, l := range lines {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		if n := w.c.userName(l.UserID); n != "" {
-			b.WriteString(n + ": ")
-		}
-		b.WriteString(l.Text)
-	}
-	txt := b.String()
-	m := op.Record(gtx.Ops)
-	g := gtx
-	g.Constraints = layout.Constraints{Max: image.Pt(maxW, stage.Dy()/2)}
-	d := w.th.Para(g, 14, 20, theme.Bold, hudWhite, txt)
-	call := m.Stop()
-	pad := gtx.Dp(10)
-	r := image.Rect((stage.Min.X+stage.Max.X-d.Size.X)/2-pad, stage.Max.Y-d.Size.Y-2*pad-gtx.Dp(10), (stage.Min.X+stage.Max.X+d.Size.X)/2+pad, stage.Max.Y-gtx.Dp(10))
-	theme.RRect(gtx, r, gtx.Dp(8), color.NRGBA{A: 0xcc})
-	defer op.Offset(image.Pt(r.Min.X+pad, r.Min.Y+pad)).Push(gtx.Ops).Pop()
-	call.Add(gtx.Ops)
-}
-
 type ctl struct {
 	id, icon string
-	on       bool // lit (mic on)
+	on       bool // toggled on (.buttonToggledOn: the mic while it's live)
 	wide     int  // dp; 0 = 40
 	label    string
 	warn     bool   // the warning badge (the microphone doesn't work)
 	dim      bool   // unavailable (greyed)
 	tip      string // tooltip on hover
 	emoji    string // an emoji face instead of the icon (the sticker button)
-	narrow   bool   // the 20dp caret half of a segmented button
+	hover    string // the icon while hovered or on (the emoji button's emoji-filled)
+	seg      int    // segMain / segCaret: a half of a segmented button
 }
 
+// The halves of Slack's segmented toolbar buttons (.segmentedButton: a
+// 36px main part and a 28px caret, a 1px otl-inv-pry divider between).
+const (
+	segMain  = 1
+	segCaret = 2
+)
+
+// toolbar is HuddleToolbar in the expanded window: the center buttons
+// (HuddleToolbarMuteButton, HuddleToolbarCameraButton, the segmented
+// sticker button, HuddleToolbarEmojiPickerButton, HuddleToolbarThreadButton,
+// HuddleToolbarMoreActionsButton), each 40px with a 4px margin, centered,
+// and HuddleToolbarLeaveButton at the right (rightButtons, margin-right
+// 2px). Slack's screen share, canvas and Meeting Assistant buttons need
+// what Clack doesn't have (a screen capture, huddle canvases, Slack AI),
+// so they aren't drawn; the device carets are open (docs/HUDDLES-AUDIT.md).
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
-	mic := ctl{id: "mic", icon: "mic", on: true}
+	// useMicrophoneButton: "Mute mic" while it's live, else "Unmute mic"
+	mic := ctl{id: "mic", icon: "mic", on: true, tip: "Mute mic"}
 	if st.Muted || st.Mic.Problem() {
-		mic = ctl{id: "mic", icon: "mic-off", warn: st.Mic.Problem()}
+		mic = ctl{id: "mic", icon: "mic-off", warn: st.Mic.Problem(), tip: "Unmute mic"}
 	}
-	deaf := ctl{id: "deafen", icon: "headphones"}
-	if st.Deafened {
-		deaf = ctl{id: "deafen", icon: "headphones-off", on: true}
+	if st.Mic == huddle.MicDenied {
+		mic.tip = "Microphone permission denied"
 	}
-	cc := ctl{id: "cc", icon: "captions", on: st.CaptionsOn}
 	// HuddleToolbarSegmentedStickerPickerButton: your sticker (or the
 	// raised hand) and the picker's caret
 	mine := ""
@@ -562,31 +548,49 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	if face == "" {
 		face = w.c.handEmoji()
 	}
-	hand := ctl{id: "hand", emoji: w.emojiText(face), on: mine != "", tip: handTip(mine)}
+	hand := ctl{id: "hand", emoji: w.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain}
 	caret := "caret-up"
 	if w.stick {
 		caret = "caret-down"
 	}
-	sticks := ctl{id: "stickers", icon: caret, wide: 20, narrow: true, on: w.stick, tip: "Choose sticker"}
-	ctls := []ctl{mic, deaf, w.cameraCtl(st), {id: "screen", icon: "screen-share"}, hand, sticks,
-		{id: "react", icon: "emoji", on: w.picker}, cc, {id: "thread", icon: "threads"}, {id: "leave", wide: 84, label: "Leave"}}
-	gap := gtx.Dp(8)
+	sticks := ctl{id: "stickers", icon: caret, on: w.stick, tip: "Choose sticker", seg: segCaret}
+	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: "Add reaction"}
+	thread := ctl{id: "thread", icon: "threads", tip: "Open thread"}
+	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: "More actions"}
+	ctls := []ctl{mic, w.cameraCtl(st), hand, sticks, react, thread, more}
+
 	h := gtx.Dp(40)
+	m := gtx.Dp(4) // each button's margin
 	total := 0
 	for _, c := range ctls {
-		total += w.ctlW(gtx, c) + gap
+		total += w.ctlW(gtx, c)
+		if c.seg != segMain {
+			total += 2 * m // a segmented pair shares one margin box
+		}
 	}
-	total -= gap
+	// the leave button: Leave in a c-button--medium (min-width 80px)
+	lw := max(gtx.Dp(80), labelSize(gtx, w.th, 15, theme.Bold, "Leave").X+2*gtx.Dp(12))
+	lx := r.Dx() - gtx.Dp(2) - m - lw
 	x := (r.Dx() - total) / 2
+	if x+total > lx-m { // a narrow window: the center row moves left of Leave
+		x = max(0, lx-m-total)
+	}
 	y := r.Min.Y + (r.Dy()-h)/2
 	for _, c := range ctls {
 		cw := w.ctlW(gtx, c)
+		if c.seg != segCaret {
+			x += m
+		}
 		c := c
-		if c.tip != "" && w.click(c.id).Hovered() {
+		cl := w.click(c.id)
+		if c.tip != "" && cl.Hovered() {
 			w.cam.tip, w.cam.tipAnchor = c.tip, image.Rect(x, y, x+cw, y+h).Sub(r.Min)
 		}
+		if c.id == "more" {
+			w.moreBtn = image.Rect(x, y, x+cw, y+h)
+		}
 		at(gtx, image.Pt(x, y), image.Pt(cw, h), func(gtx C) D {
-			return button(gtx, w.click(c.id), image.Pt(cw, h), func(gtx C, hov bool) {
+			return button(gtx, cl, image.Pt(cw, h), func(gtx C, hov bool) {
 				bg := hudBtn
 				if hov {
 					bg = hudBtnHover
@@ -594,13 +598,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 				if c.on {
 					bg = hudBtnOn
 				}
-				if c.id == "leave" {
-					bg = hudLeave
-					if hov {
-						bg = hudLeaveHov
-					}
-				}
-				theme.RRect(gtx, image.Rectangle{Max: image.Pt(cw, h)}, gtx.Dp(8), bg)
+				segFill(gtx, image.Rectangle{Max: image.Pt(cw, h)}, c.seg, gtx.Dp(8), bg)
 			}, func(gtx C) D {
 				fg := hudWhite
 				if c.on {
@@ -609,15 +607,20 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 				if c.dim {
 					fg.A = 0x66
 				}
+				icon := c.icon
+				if c.hover != "" && (c.on || cl.Hovered()) {
+					icon = c.hover
+				}
 				switch {
 				case c.label != "":
 					centerLabel(gtx, w.th, image.Pt(cw, h), 15, theme.Bold, hudWhite, c.label)
 				case c.emoji != "":
 					centerLabel(gtx, w.th, image.Pt(cw, h), 18, theme.Regular, fg, c.emoji)
-				case c.narrow:
-					iconAt(gtx, image.Pt(cw, h), c.icon, 14, fg)
 				default:
-					iconAt(gtx, image.Pt(cw, h), c.icon, 20, fg)
+					iconAt(gtx, image.Pt(cw, h), icon, 20, fg)
+				}
+				if c.seg == segMain { // .segmentedButtonMain:after, 20px tall
+					theme.Fill(gtx, image.Rect(cw-max(1, gtx.Dp(1)), (h-gtx.Dp(20))/2, cw, (h+gtx.Dp(20))/2), segDivider)
 				}
 				if c.warn {
 					warnBadge(gtx, image.Pt(cw, 0), gtx.Dp(14))
@@ -625,22 +628,76 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 				return D{}
 			})
 		})
-		x += cw + gap
+		x += cw
+		if c.seg != segMain {
+			x += m
+		}
 	}
+	// HuddleToolbarLeaveButton: base-inv-imp, "Leave", tooltip Leave Huddle
+	// with its shortcut
+	cl := w.click("leave")
+	if cl.Hovered() {
+		w.cam.tip, w.cam.tipAnchor = "Leave Huddle  "+leaveShortcut(), image.Rect(lx, y, lx+lw, y+h).Sub(r.Min)
+	}
+	at(gtx, image.Pt(lx, y), image.Pt(lw, h), func(gtx C) D {
+		return button(gtx, cl, image.Pt(lw, h), func(gtx C, hov bool) {
+			bg := hudLeave
+			if hov {
+				bg = hudLeaveHov
+			}
+			theme.RRect(gtx, image.Rectangle{Max: image.Pt(lw, h)}, gtx.Dp(8), bg)
+		}, func(gtx C) D {
+			centerLabel(gtx, w.th, image.Pt(lw, h), 15, theme.Bold, hudWhite, "Leave")
+			return D{}
+		})
+	})
+}
+
+// segFill paints a toolbar button's background: radius 8, or a
+// segmented half's (8px 0 0 8px for the main part, 0 8px 8px 0 for the
+// caret).
+func segFill(gtx C, r image.Rectangle, seg, rad int, bg color.NRGBA) {
+	rr := clip.RRect{Rect: r, NW: rad, SW: rad, NE: rad, SE: rad}
+	switch seg {
+	case segMain:
+		rr.NE, rr.SE = 0, 0
+	case segCaret:
+		rr.NW, rr.SW = 0, 0
+	}
+	defer rr.Push(gtx.Ops).Pop()
+	paint.ColorOp{Color: bg}.Add(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+}
+
+// segDivider is .segmentedButtonMain:after's otl-inv-pry.
+var segDivider = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x33}
+
+// leaveShortcut is addJoinLeaveKeyboardShortcuts' hint: Mod+Shift+H on
+// macOS, Mod+Alt+Shift+H elsewhere.
+func leaveShortcut() string {
+	if shortcut.GOOS == "darwin" {
+		return shortcut.Format("Mod+Shift+H")
+	}
+	return shortcut.Format("Mod+Alt+Shift+H")
 }
 
 func (w *window) ctlW(gtx C, c ctl) int {
-	if c.wide > 0 {
+	switch {
+	case c.wide > 0:
 		return gtx.Dp(unit.Dp(c.wide))
+	case c.seg == segMain:
+		return gtx.Dp(36)
+	case c.seg == segCaret:
+		return gtx.Dp(28)
 	}
 	return gtx.Dp(40)
 }
 
 // ---- Slack's huddle window components (plugin patch points) ----
 
-func (w *window) titleProps(s *huddle.Session, st huddle.State, title string) slackc.Props {
+func (w *window) titleProps(s *huddle.Session, st huddle.State, title, sub string) slackc.Props {
 	return slackc.Props{"$key": "huddle-title", "huddleId": s.RoomID(), "channelId": st.Channel, "title": title,
-		"className": "p-multi_view_window_title__huddle"}
+		"subtitle": sub, "className": "p-multi_view_window_title__huddle"}
 }
 
 // bottomBar is Slack's HuddleBottomBarContent: the call controls, with

@@ -879,7 +879,11 @@ func (v *Activity) clearAllBefore(ph popups.Host, before string) {
 					if err := c.ClearActivityBefore(ctx, before, f); err != nil {
 						return err
 					}
-					v.load(actRefresh)
+					// reload on the UI goroutine
+					v.notes.mu.Lock()
+					v.notes.fns = append(v.notes.fns, func() { v.load(actRefresh) })
+					v.notes.mu.Unlock()
+					v.h.Invalidate()
 					return nil
 				}, func() {})
 				return true

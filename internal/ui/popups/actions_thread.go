@@ -26,7 +26,7 @@ func ThreadFollowLabel(subscribed bool) string {
 // the split view itself (useShouldShowSplitViewButton). Slack's other rows
 // have nothing behind them in Clack (Summarize thread needs Slack AI,
 // Start huddle in thread, Open in new window needs a second window) and
-// are not shown.
+// are not shown (docs/THREADS-AUDIT.md).
 func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subscribed, bell bool, toggle func()) *Menu {
 	var items []MenuItem
 	if !bell && toggle != nil {
@@ -37,8 +37,7 @@ func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subs
 		if link == "" {
 			link = permalink(h, root.Channel, root.TS, "")
 		}
-		copyText(gtx, link)
-		h.Toast("Link copied")
+		copyText(gtx, link) // Slack's copyLink thunk: the clipboard only, no toast
 	}})
 	if sv, ok := h.(SplitViewer); ok && !sv.InSplitView() && root.Channel != "" && root.TS != "" {
 		thread := root.TS

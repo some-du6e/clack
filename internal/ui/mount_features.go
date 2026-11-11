@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"net/url"
 	"strings"
 
 	"gioui.org/layout"
@@ -79,6 +80,12 @@ func init() {
 			// people" open their tab: directories?tab=channels
 			if i, ok := directoriesTab[routeArg(r, "tab")]; ok {
 				d.ShowTab(i)
+			}
+			// a profile field's link (popups.pfSearchPeopleByField):
+			// directories?tab=people&field=<id>&value=<value>
+			if f, _ := url.QueryUnescape(routeArg(r, "field")); f != "" {
+				v, _ := url.QueryUnescape(routeArg(r, "value"))
+				d.FilterByProfileField(f, v)
 			}
 			return d
 		case "search":

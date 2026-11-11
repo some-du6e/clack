@@ -190,9 +190,9 @@ func TestHuddleShotsMicDenied(t *testing.T) {
 		return "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
 	}
 	render(t, "window-mic-denied-macos", 620, 400, func(gtx C) { e.w.layout(gtx) })
-	render(t, "bar-mic-denied-macos", 260, 112+barMicRow, func(gtx C) {
+	render(t, "dock-mic-denied-macos", 900, dockBar+barMicRow+4+dockPad, func(gtx C) {
 		theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)
-		e.c.LayoutBar(gtx, e.h.th)
+		e.c.LayoutDock(gtx, e.h.th)
 	})
 	micGOOS, micSettings = goos, set
 	top := image.Rect(0, 30*shotScale, 620*shotScale, 160*shotScale)
@@ -204,17 +204,17 @@ func TestHuddleShotsMicDenied(t *testing.T) {
 	}
 	gtxH := func() int {
 		var ops op.Ops
-		return e.c.BarHeight(shotCtx(&ops, 260, 200)) / shotScale
+		return e.c.DockHeight(shotCtx(&ops, 900, 200)) / shotScale
 	}()
-	if gtxH != 112+barMicRow {
-		t.Fatalf("bar height %d dp", gtxH)
+	if gtxH != dockBar+barMicRow+4+dockPad {
+		t.Fatalf("dock height %d dp", gtxH)
 	}
-	bar := render(t, "bar-mic-denied", 260, gtxH, func(gtx C) {
+	bar := render(t, "dock-mic-denied", 900, gtxH, func(gtx C) {
 		theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)
-		e.c.LayoutBar(gtx, e.h.th)
+		e.c.LayoutDock(gtx, e.h.th)
 	})
 	if n := pixeltest.Count(bar, bar.Bounds(), hudWarn, 24); n < 20 {
-		t.Fatalf("no warning in the bar (%d px)", n)
+		t.Fatalf("no warning over the dock (%d px)", n)
 	}
 }
 
@@ -228,8 +228,11 @@ func TestHuddleShotsMicOK(t *testing.T) {
 		t.Fatalf("a banner with a working mic (%d px)", n)
 	}
 	var ops op.Ops
-	if h := e.c.BarHeight(shotCtx(&ops, 260, 200)); h != 112*shotScale {
-		t.Fatalf("bar height %d", h)
+	if h := e.c.DockHeight(shotCtx(&ops, 900, 200)); h != (dockBar+dockPad)*shotScale {
+		t.Fatalf("dock height %d", h)
+	}
+	if h := e.c.BarHeight(shotCtx(&ops, 260, 200)); h != 0 {
+		t.Fatalf("a sidebar bar in a huddle (%d): the controls are the dock's", h)
 	}
 }
 

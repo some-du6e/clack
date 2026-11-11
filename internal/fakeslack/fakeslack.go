@@ -73,6 +73,9 @@ type Size struct {
 	// ThreadHeader adds one thread in a conversation of each kind the
 	// thread pane's header names differently (threadheader.go).
 	ThreadHeader bool
+	// ThreadsAudit adds #th-audit: one thread per way the thread pane
+	// marks unread replies, opens and counts (threads_audit.go).
+	ThreadsAudit bool
 	// PluginBench adds the plugin bench's channels (plugin_bench.go):
 	// #plugin-bench (500 messages), #admins-only and a Slackbot DM; the
 	// viewer becomes a workspace admin.
@@ -81,6 +84,10 @@ type Size struct {
 	// fixtures (unreads.go): unread channels, a muted one, a channel
 	// whose message_input megaphone space holds the join banner.
 	Unreads bool
+	// Workflows adds #workflows-gallery and the Workflow Builder methods
+	// (workflows.go): workflow links, a workflow button, a workflow
+	// step's message, a bookmarked workflow, tripping, triggers.
+	Workflows bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -468,11 +475,17 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.ThreadHeader {
 		s.addThreadHeader() // threadheader.go
 	}
+	if sz.ThreadsAudit {
+		s.addThreadsAudit() // threads_audit.go
+	}
 	if sz.PluginBench {
 		s.addPluginBench() // plugin_bench.go
 	}
 	if sz.Unreads {
 		s.addUnreads() // unreads.go
+	}
+	if sz.Workflows {
+		s.addWorkflowsChannel() // workflows.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -488,6 +501,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 func (s *Server) Close() error {
 	searchLogs.Delete(s)
 	viewsStates.Delete(s)
+	threadsAuditStates.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -938,6 +952,11 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if s.Size.Workflows { // first: search.go answers search.autocomplete.triggers with none
+		if out, handled := s.handleWorkflows(method, f, edge); handled { // workflows.go
+			return out
+		}
+	}
 	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
 		return out
 	}
@@ -966,6 +985,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleThreadHeader(method, f); handled { // threadheader.go
+		return out
+	}
+	if out, handled := s.handleThreadsAudit(method, f); handled { // threads_audit.go
 		return out
 	}
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
@@ -1002,6 +1024,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if fx, ok := s.unreadsCount(c.ID); ok { // unreads.go
 				e = fx
 			}
+			if l, ok := s.codeLatest(c.ID); ok { // codechannels.go: read, at its fixture's latest message
+				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
+			}
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1027,11 +1052,17 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
 			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
 			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on"),
-			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
+			"code_channels_auto_close": g("on"), "agent_member_channel_count": g("on"), "plan_block_coding_enhancements": g("on"),
+			"agent_streaming_slimmer_task_cards": g("on"), "composer_smart_symbols": g("on"),
+			"app_thread_nugget_fe": g("on"), "app_nugget_refinement": g("on"),
+			"agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
-			"silent_sidebar": g("on"), "availability_prefs_section": g("on")})
+			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
+			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
+			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
+			"unread_thread_indication_in_replybar": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))

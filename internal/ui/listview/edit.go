@@ -1,6 +1,7 @@
 package listview
 
 import (
+	"encoding/json"
 	"errors"
 	"image"
 	"sort"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -44,6 +46,10 @@ type cellEdit struct {
 	// done hears how the editor closed (doneEnter, doneEscape, doneBlur);
 	// the grid moves its active cell with it.
 	done func(how int)
+	// rich is the rich editor of a formatted text cell (richedit.go; nil:
+	// the plain editor), richOrig the cell's rich_text when it opened.
+	rich     *composer.Editor
+	richOrig json.RawMessage
 }
 
 // errViewOnly is the reason an edit is refused when the viewer can't edit.
@@ -91,7 +97,9 @@ func (k *ctl) cellClickWith(d *core.ListDoc, rec *lists.Record, c *lists.Column,
 	}
 	f := rec.Field(c.Key)
 	if err := canEdit(d, c, f); err != nil {
-		k.refuse(err)
+		if !k.startRich(d, rec, c, f, err, "") { // richedit.go
+			k.refuse(err)
+		}
 		return
 	}
 	self := ""
@@ -173,6 +181,7 @@ func editText(h Host, c *lists.Column, f *lists.Field) string {
 
 func (e *cellEdit) start(rec string, c *lists.Column, text string) {
 	e.active, e.rec, e.col, e.focus, e.focused = true, rec, c, true, false
+	e.rich, e.richOrig = nil, nil
 	e.ed.SingleLine = true
 	e.ed.Submit = true
 	e.ed.SetText(text)
@@ -205,6 +214,9 @@ func (e *cellEdit) editing(rec string, c *lists.Column) bool {
 // cancels.
 func (k *ctl) layoutEditor(gtx layout.Context, d *core.ListDoc, w, h int) layout.Dimensions {
 	e := &k.edit
+	if e.rich != nil {
+		return k.layoutRich(gtx, d, w, h) // richedit.go
+	}
 	th := k.h.Theme()
 	c := &th.C
 	shortcut.OwnEscape(&e.ed)
@@ -280,6 +292,10 @@ func placeholder(c *lists.Column, isNew bool) string {
 func (k *ctl) commit(d *core.ListDoc) {
 	e := &k.edit
 	if !e.active {
+		return
+	}
+	if e.rich != nil {
+		k.commitRich() // richedit.go
 		return
 	}
 	e.active = false

@@ -1106,7 +1106,6 @@ function updateExperiments() {
   const next = combinedExperiments()
   if (deepEqual([...next].sort(), [...forcedExperiments].sort())) return
   forcedExperiments = next
-  goOr(null, 'experiments', Object.fromEntries(next))
   if (next.size && !unpatchExperiments) unpatchExperiments = patchSlice('experiments', (name, a) => experimentAssignment(name, a), () => forcedExperiments.keys())
   else if (!next.size && unpatchExperiments) {
     const u = unpatchExperiments
@@ -1188,11 +1187,27 @@ class ForcedExperiments {
     scheduleExperiments()
   }
 }
+// Slack's experiments selectors (client-boot HWuB): a group, or null when
+// the viewer isn't assigned
 const getAllExperimentAssignments = withMeta('getAllExperimentAssignments', (state) => state?.experiments ?? {})
-const getGroupForUser = named('getGroupForUser', (state, name) => state?.experiments?.[name]?.group)
-const getGroupForTeam = named('getGroupForTeam', (state, name) => state?.experiments?.[name]?.group)
-defineModule('experiments', { getAllExperimentAssignments, getGroupForUser, getGroupForTeam, getExperimentGroup: named('getExperimentGroup', (state, name) => state?.experiments?.[name]?.group) })
+const getAssignmentByName = named('getAssignmentByName', (state, name) => state?.experiments?.[name])
+const groupOf = (state, name) => state?.experiments?.[name]?.group ?? null
+const getGroupForUser = named('getGroupForUser', groupOf)
+const getGroupForUserWithoutExposure = named('getGroupForUserWithoutExposure', (state, name) => groupOf(state, name))
+const getGroupForTeam = named('getGroupForTeam', (state, name) => groupOf(state, name))
+defineModule('experiments', {
+  getAllExperimentAssignments,
+  getAssignmentByName,
+  getGroupForUser,
+  getGroupForUserWithoutExposure,
+  getGroupForTeam,
+  getExperimentGroup: named('getExperimentGroup', (state, name) => groupOf(state, name)),
+})
 nameSelector(getAllExperimentAssignments, 'getAllExperimentAssignments')
+// Clack's own experiment checks as a module's source, the way Slack's
+// bundle shows its checks: plugins that scan sources for experiment reads
+// (the Experiments plugins) find the groups Clack compares
+defineModule('clack-experiment-reads', {}, goOr('', 'experimentReads'))
 
 // ---- composer ----
 

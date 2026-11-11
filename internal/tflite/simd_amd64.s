@@ -1,0 +1,105 @@
+#include "textflag.h"
+
+// func gemvAVX2(dst, a, w, bias *float32, k, co, nblk int)
+TEXT ·gemvAVX2(SB), NOSPLIT, $0-56
+	MOVQ dst+0(FP), DI
+	MOVQ a+8(FP), SI
+	MOVQ w+16(FP), DX
+	MOVQ bias+24(FP), R8
+	MOVQ k+32(FP), CX
+	MOVQ co+40(FP), R9
+	MOVQ nblk+48(FP), R10
+	SHLQ $2, R9 // a row of w, in bytes
+	XORQ R11, R11 // this block's byte offset into dst, w's row and bias
+
+loop4:
+	CMPQ R10, $4
+	JLT loop1
+	TESTQ R8, R8
+	JZ zero4
+	VMOVUPS 0(R8)(R11*1), Y0
+	VMOVUPS 32(R8)(R11*1), Y1
+	VMOVUPS 64(R8)(R11*1), Y2
+	VMOVUPS 96(R8)(R11*1), Y3
+	JMP init4
+
+zero4:
+	VXORPS Y0, Y0, Y0
+	VXORPS Y1, Y1, Y1
+	VXORPS Y2, Y2, Y2
+	VXORPS Y3, Y3, Y3
+
+init4:
+	LEAQ (DX)(R11*1), R12
+	MOVQ SI, R13
+	MOVQ CX, R14
+
+inner4:
+	VBROADCASTSS (R13), Y4
+	VFMADD231PS 0(R12), Y4, Y0
+	VFMADD231PS 32(R12), Y4, Y1
+	VFMADD231PS 64(R12), Y4, Y2
+	VFMADD231PS 96(R12), Y4, Y3
+	ADDQ $4, R13
+	ADDQ R9, R12
+	DECQ R14
+	JNZ inner4
+	VMOVUPS Y0, 0(DI)(R11*1)
+	VMOVUPS Y1, 32(DI)(R11*1)
+	VMOVUPS Y2, 64(DI)(R11*1)
+	VMOVUPS Y3, 96(DI)(R11*1)
+	ADDQ $128, R11
+	SUBQ $4, R10
+	JMP loop4
+
+loop1:
+	TESTQ R10, R10
+	JZ done
+	TESTQ R8, R8
+	JZ zero1
+	VMOVUPS 0(R8)(R11*1), Y0
+	JMP init1
+
+zero1:
+	VXORPS Y0, Y0, Y0
+
+init1:
+	LEAQ (DX)(R11*1), R12
+	MOVQ SI, R13
+	MOVQ CX, R14
+
+inner1:
+	VBROADCASTSS (R13), Y4
+	VFMADD231PS 0(R12), Y4, Y0
+	ADDQ $4, R13
+	ADDQ R9, R12
+	DECQ R14
+	JNZ inner1
+	VMOVUPS Y0, 0(DI)(R11*1)
+	ADDQ $32, R11
+	DECQ R10
+	JMP loop1
+
+done:
+	VZEROUPPER
+	RET
+
+// func maddAVX2(acc, a, b *float32, n int)
+TEXT ·maddAVX2(SB), NOSPLIT, $0-32
+	MOVQ acc+0(FP), DI
+	MOVQ a+8(FP), SI
+	MOVQ b+16(FP), DX
+	MOVQ n+24(FP), CX
+
+mloop:
+	VMOVUPS (DI), Y0
+	VMOVUPS (SI), Y1
+	VFMADD231PS (DX), Y1, Y0
+	VMOVUPS Y0, (DI)
+	ADDQ $32, DI
+	ADDQ $32, SI
+	ADDQ $32, DX
+	DECQ CX
+	JNZ mloop
+	VZEROUPPER
+	RET

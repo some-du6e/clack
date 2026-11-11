@@ -2,6 +2,7 @@ package composer
 
 import (
 	"io"
+	"runtime"
 	"strings"
 	"unicode"
 
@@ -36,6 +37,7 @@ func (e *Editor) keyFilters() []event.Filter {
 		key.Filter{Focus: e, Name: "B", Required: sc},
 		key.Filter{Focus: e, Name: "C", Required: sc, Optional: key.ModShift | key.ModAlt},
 		key.Filter{Focus: e, Name: "I", Required: sc},
+		key.Filter{Focus: e, Name: "O", Required: sc},
 		key.Filter{Focus: e, Name: "U", Required: sc, Optional: key.ModShift},
 		key.Filter{Focus: e, Name: "V", Required: sc, Optional: key.ModShift | key.ModAlt},
 		key.Filter{Focus: e, Name: "X", Required: sc, Optional: key.ModShift},
@@ -53,7 +55,9 @@ func (e *Editor) keyFilters() []event.Filter {
 		key.Filter{Focus: e, Name: key.NameUpArrow, Optional: move},
 		key.Filter{Focus: e, Name: key.NameDownArrow, Optional: move},
 	}
-	for _, n := range []key.Name{"7", "8", "9", "&", "*", "("} {
+	// Mod+Shift+. is the keyboard module's "blockquote-alt" (keyCode
+	// 190): "." or, shifted on X11, ">".
+	for _, n := range []key.Name{"7", "8", "9", "&", "*", "(", ".", ">"} {
 		fs = append(fs, key.Filter{Focus: e, Name: n, Required: sc | key.ModShift})
 	}
 	return fs
@@ -110,6 +114,13 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		}
 		e.enter(mods != 0)
 	case key.NameEscape:
+		if mods == 0 && e.escapeClearsFormat() {
+			// the keyboard module's Escape: an empty quote line, or a code
+			// block line that is empty or has the caret at its start,
+			// loses its block format (removeFormat) instead of going on
+			e.clearLineFormat()
+			return
+		}
 		e.emit(EvCancel)
 	case key.NameTab:
 		e.tab(shift)
@@ -118,8 +129,19 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 	case key.NameDeleteForward:
 		e.deleteForward(word, toLine)
 	case key.NameLeftArrow:
+		if mods == key.ModShortcut && e.doc.Len() == 0 {
+			e.emit(EvNavBack) // onCmdLeftWhenEmpty: triggerNavigateBack
+			return
+		}
 		e.moveH(-1, word, toLine, shift)
 	case key.NameRightArrow:
+		if mods == key.ModShortcut && e.doc.Len() == 0 {
+			e.emit(EvNavForward) // onCmdRightWhenEmpty: triggerNavigateForward
+			return
+		}
+		if mods == 0 && e.leaveInlineCode() {
+			return
+		}
 		e.moveH(1, word, toLine, shift)
 	case key.NameUpArrow:
 		if (mods == 0 || mods == key.ModShortcut) && e.upArrow(mods == key.ModShortcut) {
@@ -132,6 +154,9 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		e.moveV(-1, shift)
 		keepX = true
 	case key.NameDownArrow:
+		if mods == 0 && e.leaveCodeBlockDown() {
+			return
+		}
 		if toLine {
 			e.moveTo(e.doc.Len(), shift)
 			return
@@ -145,13 +170,15 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		e.movePage(1, shift)
 		keepX = true
 	case key.NameHome:
-		if short {
+		// onHome / onEnd: on macOS Home and End go to the start and end
+		// of the whole message; elsewhere the browser's line motion
+		if short || edMacHomeEnd {
 			e.moveTo(0, shift)
 		} else {
 			e.moveTo(e.visualLineStart(e.caret), shift)
 		}
 	case key.NameEnd:
-		if short {
+		if short || edMacHomeEnd {
 			e.moveTo(e.doc.Len(), shift)
 		} else {
 			e.moveTo(e.visualLineEnd(e.caret), shift)
@@ -170,6 +197,11 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		e.ToggleStyle(Bold)
 	case "I":
 		e.ToggleStyle(Italic)
+	case "O":
+		if shift || alt {
+			return false
+		}
+		e.emit(EvPlusMenu) // "file upload": onPlusMenuShortcut (isDesktopApp)
 	case "U":
 		if shift {
 			e.emit(EvLinkDialog)
@@ -204,7 +236,7 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		switch {
 		case shift:
 			e.Redo()
-		case e.doc.Empty():
+		case e.doc.Len() == 0: // quill.getLength() === 1: nothing at all
 			e.emit(EvUndoEmpty) // Slack's onCmdZWhenEmpty: unsend the message just sent
 		default:
 			e.Undo()
@@ -221,11 +253,11 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 			return false
 		}
 		e.ToggleBlock(Bullet)
-	case "9", "(":
+	case "9", "(", ".", ">":
 		if !shift {
 			return false
 		}
-		e.ToggleBlock(Quote)
+		e.ToggleBlock(Quote) // "blockquote", and "blockquote-alt" on Mod+Shift+.
 	default:
 		return false
 	}
@@ -273,6 +305,84 @@ func (e *Editor) inCode() bool {
 	return strings.Count(d.String(0, e.caret), "```")%2 == 1
 }
 
+// edMacHomeEnd is onHome/onEnd's isMac: Home and End go to the start and
+// end of the message.
+var edMacHomeEnd = runtime.GOOS == "darwin"
+
+// leaveInlineCode is "inline code right arrow": Right with the caret at
+// the end of a line that ends in inline code types a space without the
+// code format (keeping the run's other formats) and steps past it.
+func (e *Editor) leaveInlineCode() bool {
+	d := e.doc
+	c := e.caret
+	if e.anchor != c || c == 0 {
+		return false
+	}
+	line := d.LineOf(c)
+	if c != d.LineEnd(line) || c == d.LineStart(line) || d.Lines[line].Kind == CodeBlock {
+		return false
+	}
+	prev := d.Attrs[c-1]
+	if prev.Atom != nil || prev.Style&Code == 0 {
+		return false
+	}
+	e.begin(edOther, true)
+	pos := d.Insert(c, " ", Attr{Style: prev.Style &^ Code})
+	e.anchor, e.caret = pos, pos
+	e.commit()
+	return true
+}
+
+// leaveCodeBlockDown is "block code down arrow": Down at the very end of
+// the message, on a code block line with text, adds a plain line below
+// and moves onto it.
+func (e *Editor) leaveCodeBlockDown() bool {
+	d := e.doc
+	c := e.caret
+	if e.anchor != c || c != d.Len() {
+		return false
+	}
+	line := d.LineOf(c)
+	if d.Lines[line].Kind != CodeBlock || d.LineStart(line) == c {
+		return false
+	}
+	e.begin(edOther, true)
+	pos := d.Insert(c, "\n", Attr{})
+	d.Lines[line+1] = Line{}
+	e.anchor, e.caret = pos, pos
+	e.commit()
+	return true
+}
+
+// escapeClearsFormat is the keyboard module's Escape condition (Escape
+// binding, useWysiwyg): a collapsed caret on an empty quote line, or on a
+// code block line that is empty or has the caret at its start after the
+// block's first line.
+func (e *Editor) escapeClearsFormat() bool {
+	if e.plainText || e.anchor != e.caret {
+		return false
+	}
+	d := e.doc
+	line := d.LineOf(e.caret)
+	ls, le := d.LineStart(line), d.LineEnd(line)
+	switch d.Lines[line].Kind {
+	case Quote:
+		return ls == le
+	case CodeBlock:
+		return ls == le || e.caret == ls && line > 0 && d.Lines[line-1].Kind == CodeBlock
+	}
+	return false
+}
+
+// clearLineFormat is removeFormat at the caret: the line goes back to a
+// paragraph.
+func (e *Editor) clearLineFormat() {
+	line := e.doc.LineOf(e.caret)
+	e.begin(edOther, true)
+	e.doc.Lines[line] = Line{}
+	e.commit()
+}
+
 // newline splits the line at the caret; the new line keeps the block
 // kind. On an empty list item or quote line it leaves the block instead
 // (a nested list item outdents first).
@@ -291,6 +401,9 @@ func (e *Editor) newline() {
 		}
 		e.anchor, e.caret = lo, lo
 	} else {
+		if !e.plainText && lo == hi {
+			autoLinkBefore(d, lo) // SlackLinkModule.onEnter: maybeLinkify
+		}
 		pos := d.Insert(lo, "\n", Attr{})
 		// Headings and dividers don't continue: the new line is a paragraph.
 		if k := d.Lines[line].Kind; isHeading(k) || k == Divider {
@@ -303,7 +416,9 @@ func (e *Editor) newline() {
 }
 
 // tab indents (or with shift outdents) the selected list lines; in a code
-// block it types a tab.
+// block it types a tab. Slack's "indent"/"outdent" bindings only act on a
+// selection or with the caret at the start of the item (a collapsed
+// caret elsewhere falls through to the browser).
 func (e *Editor) tab(shift bool) {
 	d := e.doc
 	l0, l1 := e.selLines()
@@ -313,6 +428,9 @@ func (e *Editor) tab(shift bool) {
 			list = false
 			break
 		}
+	}
+	if lo, hi := e.sel(); list && lo == hi && lo != d.LineStart(d.LineOf(lo)) {
+		return
 	}
 	if list {
 		e.begin(edOther, true)
@@ -355,11 +473,23 @@ func (e *Editor) deleteBackward(word, toLine bool) {
 	c := e.caret
 	line := d.LineOf(c)
 	ls := d.LineStart(line)
-	if c == ls && d.Lines[line].Kind != Para {
-		e.begin(edOther, true)
-		d.Lines[line] = Line{}
-		e.commit()
-		return
+	if ln := &d.Lines[line]; c == ls && ln.Kind != Para {
+		switch {
+		case (ln.Kind == Bullet || ln.Kind == Ordered) && ln.Indent > 0:
+			// "outdent backspace": a nested item outdents a level first
+			e.begin(edOther, true)
+			ln.Indent--
+			e.commit()
+			return
+		case ln.Kind == CodeBlock && ls != d.LineEnd(line):
+			// a code line with text: "backspace empty code block" only
+			// takes empty ones; this one joins the line above
+		default:
+			e.begin(edOther, true)
+			d.Lines[line] = Line{}
+			e.commit()
+			return
+		}
 	}
 	if c == 0 {
 		return
@@ -694,7 +824,12 @@ func edNextStop(d *Doc, pos int) int {
 // up_to_browse; Mod+Up in an empty field always does. It reports whether
 // it handled the key.
 func (e *Editor) upArrow(cmd bool) bool {
-	empty := e.doc.Empty()
+	// Slack's Up binding skips code blocks (format: {"code-block": false})
+	// and "empty" is texty.isEmpty: nothing at all, spaces count
+	if e.doc.Lines[e.doc.LineOf(e.caret)].Kind == CodeBlock {
+		return false
+	}
+	empty := e.doc.Len() == 0
 	start := e.caret == 0 && e.anchor == 0
 	var list bool
 	switch e.upMode {

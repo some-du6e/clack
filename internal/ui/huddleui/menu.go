@@ -234,7 +234,7 @@ func (c *Controller) StartWithFrom(member, entry string) {
 			})
 		if err != nil {
 			log.Printf("huddle: start with %s: %v", member, err)
-			c.toast("Couldn't start the huddle: "+errText(err), "headphones")
+			c.showErrModal(joinErrorModal(err))
 		}
 	}()
 }

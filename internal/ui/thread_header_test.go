@@ -113,7 +113,7 @@ func (e *perfEnv) threadHeaderShot(name string) {
 	}
 	save(name, img)
 	if e.a.secondary.kind == secThread {
-		w := int(e.a.secondary.width)
+		w := e.a.secondary.drawnW // the auto width is 0
 		save(name+"-pane", img.SubImage(image.Rect(e.size.X-w, 0, e.size.X, e.size.Y)))
 	}
 }

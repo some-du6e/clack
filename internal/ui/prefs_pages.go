@@ -668,8 +668,8 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	f.check("huddles_cc_by_default", "Automatically turn on captions when you’re in a huddle", "", false, false)
 	// "Start a huddle in this channel?" over 150 members (huddleui.Controller.shoutyRooster)
 	f.check("huddles_show_shouty_rooster", "Send a warning if you’re starting a huddle in a channel with more than 150 members", "", true, false)
-	f.off("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", false, false)
-	f.na()
+	// prefs.video.effect: "blur" or unset (huddle/bgblur, huddle_av.go)
+	f.option("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", p.a.huddleBlurOn(), false, p.a.toggleHuddleBlur)
 	// HuddleJoinPreviewPref: starting a huddle opens Slack's preview
 	// window first (huddleui/preview.go); unset is off
 	f.check("huddles_show_join_preview", "Show audio and video preview", "", false, false)

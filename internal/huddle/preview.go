@@ -31,6 +31,7 @@ type Preview struct {
 	closed  bool
 
 	preview selfPreview
+	fx      videoFX // the background effect (Slack's join preview applies it too)
 }
 
 // StartPreview opens the preview's microphone (Options.Device,
@@ -41,6 +42,7 @@ func StartPreview(o Options, camera bool) *Preview {
 		o.Logf = func(string, ...any) {}
 	}
 	p := &Preview{o: o, mic: MicStarting}
+	p.fx.set(o.VideoEffect)
 	p.ctx, p.cancel = context.WithCancel(context.Background())
 	go p.openMic()
 	if camera {
@@ -217,7 +219,12 @@ func (p *Preview) SetCamera(on bool) {
 			return
 		}
 		p.preview.start()
-		if err := c.Start(func(f *CameraFrame) { p.preview.offer(f, p.changed) }); err != nil {
+		if err := c.Start(func(f *CameraFrame) {
+			if f != nil && f.W >= 16 && f.H >= 16 {
+				p.fx.apply(f, p.o.Logf)
+			}
+			p.preview.offer(f, p.changed)
+		}); err != nil {
 			p.SetCamera(false)
 			return
 		}
@@ -260,4 +267,5 @@ func (p *Preview) Close() {
 		cam.Close()
 	}
 	p.preview.clear()
+	p.fx.close()
 }

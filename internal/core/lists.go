@@ -528,7 +528,14 @@ func (a *App) guardListEdit(id string, e lists.Edit) error {
 		}
 	}
 	st.mu.Unlock()
-	if err := lists.Editable(e.Column, f); err != nil {
+	err := lists.Editable(e.Column, f)
+	var u lists.Unsupported
+	if len(e.Rich) > 0 && (e.Column.Type == lists.Text || e.Column.Type == lists.RichText) && errors.As(err, &u) {
+		// formatted text from Clack's rich editor, which opens a cell only
+		// when it reads it back unchanged (listview richedit.go)
+		err = nil
+	}
+	if err != nil {
 		return fmt.Errorf("this field can't be edited in Clack yet (%w)", err)
 	}
 	return nil

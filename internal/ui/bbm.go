@@ -277,7 +277,7 @@ func (a *App) layoutBBM(gtx layout.Context) image.Rectangle {
 	a.bbmSyncSecondary()
 	a.grad.draw(gtx, sz, image.Point{}, clip.Rect{Max: sz}.Op(), a.th.C.ChromeA, a.th.C.ChromeB)
 	crumbs := !isBBMRoute(r)
-	panel := bbmPanel(gtx, sz, crumbs)
+	panel := bbmPanel(gtx, image.Pt(sz.X, sz.Y-a.huddles().DockHeight(gtx)), crumbs) // the huddle bar's row
 	a.th.Chrome = true
 	a.layoutBBMTopNav(gtx, sz.X)
 	if crumbs {
@@ -582,8 +582,10 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 		switch a.secondary.kind {
 		case secProfile:
 			label = "Profile"
-		case secDetails, secCode:
+		case secDetails:
 			label = "Details"
+		case secCode: // no breadcrumb label: getAriaLabelForViewContent (session_channel_views)
+			label = a.codeDetailsLabel()
 		case secSearch:
 			label = "Search"
 		case secHelp:

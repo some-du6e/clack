@@ -32,6 +32,7 @@ const (
 	CodeEmptyID       = "C0CODE00006" // active, code_channel {} (as #test): "No branch info"
 	CodeArchivedID    = "C0CODE00007" // archived when the work was done
 	CodePreviewID     = "C0CODE00008" // a code channel the viewer isn't in
+	CodeQuietID       = "C0CODE00009" // active, read and quiet for 9 days: code_channels_auto_close closes it
 	codeChannelRecord = "AC:9991336848048:852294937191:"
 
 	// the working channel's views
@@ -125,6 +126,8 @@ func CodeChannelFixtures(now time.Time) CodeFixtures {
 	add(conv(CodeStaleID, "spike-search", props(CodeStaleID, "active", "Search spike",
 		map[string]any{"repo": "example/app", "branch": "search-spike"}, nil)), ts(5*24*time.Hour, 100), "stale")
 	add(conv(CodeEmptyID, "test", props(CodeEmptyID, "active", "test", map[string]any{}, nil)), ts(30*time.Minute, 100), "active")
+	add(conv(CodeQuietID, "old-prototype", props(CodeQuietID, "active", "Prototype the importer",
+		map[string]any{"repo": "example/app", "branch": "importer"}, nil)), ts(9*24*time.Hour, 100), "stale")
 
 	arch := conv(CodeArchivedID, "ship-onboarding", props(CodeArchivedID, "closed", "Ship onboarding", map[string]any{"repo": "example/app"}, nil))
 	arch.IsArchived, arch.IsMember = true, false
@@ -221,6 +224,28 @@ func (s *Server) addCodeChannels() {
 	cs.mu.Unlock()
 }
 
+// codeLatest is a code channel fixture's latest message ts.
+func (s *Server) codeLatest(ch string) (string, bool) {
+	if s.codeFx == nil {
+		return "", false
+	}
+	l, ok := s.codeFx.Latest[ch]
+	return l, ok
+}
+
+// isCodeFixture reports whether ch is one of the viewer's code channels.
+func (s *Server) isCodeFixture(ch string) bool {
+	if s.codeFx == nil {
+		return false
+	}
+	for _, c := range s.codeFx.Convs {
+		if c.ID == ch {
+			return true
+		}
+	}
+	return false
+}
+
 // CodeDiffFixture is client.codeChannels.getDiff's diff for the working
 // channel: a modified, an added, a renamed and a generated file, and one
 // past the patch renderer's 100-line page.
@@ -268,7 +293,12 @@ func CodePRFixture() map[string]any {
 func (s *Server) handleCodeChannels(method string, f url.Values) (any, bool) {
 	switch method {
 	case "client.codeChannels.action", "agents.sessions.stop", "client.codeChannels.getBlockKitView",
-		"client.codeChannels.getDiff", "client.codeChannels.getPullRequest", "client.codeChannels.getView":
+		"client.codeChannels.getDiff", "client.codeChannels.getPullRequest", "client.codeChannels.getView",
+		"recordChannels.open":
+	case "conversations.close": // closing a code channel (closeChannelApi); DMs fall through
+		if !s.isCodeFixture(f.Get("channel")) {
+			return nil, false
+		}
 	default:
 		return nil, false
 	}
@@ -294,6 +324,17 @@ func (s *Server) handleCodeChannels(method string, f url.Values) (any, bool) {
 		}
 		pr := CodePRFixture()
 		return ok("pull_request", pr["pull_request"], "diff", pr["diff"], "comments", pr["comments"], "revision", pr["revision"]), true
+	case "recordChannels.open": // openRecordChannel: the channel, open again
+		for _, c := range s.codeFx.Convs {
+			if c.ID == f.Get("channel") {
+				ch := map[string]any{}
+				b, _ := json.Marshal(c)
+				_ = json.Unmarshal(b, &ch)
+				ch["is_open"] = true
+				return ok("channel", ch), true
+			}
+		}
+		return map[string]any{"ok": false, "error": "channel_not_found"}, true
 	case "client.codeChannels.getView":
 		if f.Get("view_id") != CodeHTMLViewID {
 			return map[string]any{"ok": false, "error": "view_not_found"}, true

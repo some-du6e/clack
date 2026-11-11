@@ -136,6 +136,10 @@ type Options struct {
 	// control" and "Enable noise suppression" (apm.go); SetMicProcessing
 	// changes them mid-huddle.
 	AGC, NoiseSuppression bool
+	// VideoEffect is the camera's background effect (Slack's
+	// prefs.video.effect: "blur" blurs it, videofx.go); SetVideoEffect
+	// changes it mid-huddle.
+	VideoEffect VideoEffect
 	// OpenCamera replaces the system camera for SetCamera (tests, the demo:
 	// NewTestCamera); nil = the default camera behind the OS permission.
 	OpenCamera func(logf func(string, ...any)) (Camera, error)
@@ -243,6 +247,7 @@ func Join(ctx context.Context, o Options, channel string) (*Session, error) {
 		streamAt: map[uint32]string{}, sources: map[uint32]streamDesc{}, sinks: map[string]*videoSink{},
 		waiters: map[int][]chan *signalFrame{}, doneCh: make(chan struct{}), mic: newMicFramer(),
 		apm: newMicProcessor(o.AGC, o.NoiseSuppression)}
+	s.cam.fx.set(o.VideoEffect)
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if o.SelfID != "" {
 		s.person(o.SelfID).Self = true

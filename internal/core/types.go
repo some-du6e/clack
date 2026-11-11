@@ -52,6 +52,17 @@ type Message struct {
 	// appendStream / stopStream): "in_progress" while open, then
 	// "completed" or "errored" (agent.go).
 	StreamingState string
+	// ThreadLastRead is a followed thread's last read reply (root
+	// messages; the subscription's last_read from conversations.replies,
+	// thread_marked and subscriptions.thread.mark): Slack's
+	// use_thread_subscription lastRead.
+	ThreadLastRead string
+	// ReplyUsersN is reply_users_count: how many people replied (the
+	// reply bar's "+N" when ReplyUsers holds more than five).
+	ReplyUsersN int
+	// FunctionExecutionID is a workflow step message's
+	// function_execution_id: its block actions send it (workflows.go).
+	FunctionExecutionID string
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
@@ -376,6 +387,7 @@ type Pin struct {
 type Bookmark struct {
 	ID, Title, Link, Emoji, EmojiURL, Icon, Type, EntityID, Rank, ParentID string
 	Created                                                                int64
+	ShortcutID                                                             string // a workflow bookmark's trigger (type shortcut)
 }
 
 // ChannelDetails is the channel-details view.
@@ -403,6 +415,15 @@ type ActivityOpts struct {
 	Archived bool // cleared items instead of the inbox
 	Cursor   string
 	Limit    int
+
+	// Priority is the VIP filter (filterVipSelected: priority_only).
+	Priority bool
+	// ChannelIDs and SectionIDs narrow the feed to conversations or
+	// sidebar sections (a saved view's channel_ids / channel_section_ids).
+	ChannelIDs, SectionIDs []string
+	// Mode is activity.feed's mode; "" is chrono_v1 (TfjX w: VIP unreads
+	// on top is priority_unreads_first_v1).
+	Mode string
 }
 
 type ActivityItem struct {
@@ -414,6 +435,10 @@ type ActivityItem struct {
 	Root              *Message // thread parent, for thread items
 	Reaction          *ActivityReaction
 	Count             int // unread replies / bundled messages / posts
+
+	// Priority is the entry's priority (from a VIP; /29I isPriority:
+	// !!priority) and Archived its is_archived (a cleared item).
+	Priority, Archived bool
 
 	// Items that aren't (only) a message: the person behind it when that
 	// isn't the message author (inviter, invitee, assigner), and the

@@ -616,6 +616,7 @@ func (a *App) Bookmarks(ctx context.Context, ch string) ([]Bookmark, error) {
 			DateCreated int64  `json:"date_created"`
 			Rank        string `json:"rank"`
 			ParentID    string `json:"parent_id"`
+			ShortcutID  string `json:"shortcut_id"`
 		} `json:"bookmarks"`
 	}
 	if err := a.C.Call(ctx, "bookmarks.list", url.Values{"channel_id": {ch}, "channel": {ch}, "include_folders": {"true"}}, &res); err != nil {
@@ -624,7 +625,7 @@ func (a *App) Bookmarks(ctx context.Context, ch string) ([]Bookmark, error) {
 	out := make([]Bookmark, 0, len(res.Bookmarks))
 	for _, b := range res.Bookmarks {
 		v := Bookmark{ID: b.ID, Title: b.Title, Link: b.Link, Emoji: b.Emoji, Icon: b.IconURL, Type: b.Type,
-			EntityID: b.EntityID, Created: b.DateCreated, Rank: b.Rank, ParentID: b.ParentID}
+			EntityID: b.EntityID, Created: b.DateCreated, Rank: b.Rank, ParentID: b.ParentID, ShortcutID: b.ShortcutID}
 		if b.Emoji != "" {
 			v.EmojiURL, _, _ = a.S.Emoji(strings.Trim(b.Emoji, ":"))
 		}
@@ -700,12 +701,23 @@ func (a *App) Activity(ctx context.Context, o ActivityOpts) (ActivityPage, error
 		limit = 20
 	}
 	// the web client's params (activity inbox, 2026-11-09)
-	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {"chrono_v1"},
-		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {"false"}, "is_activity_inbox": {"true"},
+	mode := o.Mode
+	if mode == "" {
+		mode = "chrono_v1"
+	}
+	p := url.Values{"limit": {strconv.Itoa(limit)}, "types": {types}, "mode": {mode},
+		"archive_only": {strconv.FormatBool(o.Archived)}, "priority_only": {strconv.FormatBool(o.Priority)}, "is_activity_inbox": {"true"},
 		"unread_only": {strconv.FormatBool(o.Unread)}, "only_salesforce_channels": {"false"},
 		"exclude_automations": {"false"}, "automations_only": {"false"}}
 	if o.Cursor != "" {
 		p.Set("cursor", o.Cursor)
+	}
+	// eP2o fetchActivityFeed: a view's channels and sections, when it has any
+	if len(o.ChannelIDs) > 0 {
+		p.Set("channel_ids", strings.Join(o.ChannelIDs, ","))
+	}
+	if len(o.SectionIDs) > 0 {
+		p.Set("channel_section_ids", strings.Join(o.SectionIDs, ","))
 	}
 	var res struct {
 		Items []activityRaw `json:"items"`
@@ -951,5 +963,6 @@ func (a *App) loadMemberCount(ctx context.Context, ch string) {
 	a.mu.Lock()
 	a.memberN[ch] = mc.People
 	a.memberG[ch] = mc.Guests
+	a.memberA[ch] = mc.Apps
 	a.mu.Unlock()
 }

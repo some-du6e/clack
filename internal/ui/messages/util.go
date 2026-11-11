@@ -148,17 +148,26 @@ func threadTimeIn(l string, t, now time.Time, s, m float64) string {
 	return msgNS.T("{calendarDate} at {time}", "calendarDate", d, "time", tm)
 }
 
-// lastReply is the reply bar's "Last reply today at 3:23 PM" / "Last
-// reply 3 days ago" (getThreadLastReplyText, message namespace).
-func lastReply(t, now time.Time) string {
-	l := i18n.Locale()
-	if l == i18n.EnUS {
-		return "Last reply " + ago(t, now)
+// threadsNS is Slack's "threads" I18n (BZhr's reply bar strings).
+var threadsNS = i18n.NS("threads")
+
+// lastReply is the reply bar's getThreadLatestReplyText (client-boot-shared
+// BZhr): today, "Last reply today at 3:23 PM" ("Today at 3:23 PM" with
+// one reply); else "Last reply" and toTimeAgo ("Last reply 16 hours ago",
+// "Last reply 3 days ago"; the time ago alone with one reply).
+func lastReply(t, now time.Time, count int) string {
+	tm := clock(t)
+	if sameDay(t, now) {
+		if count == 1 {
+			return threadsNS.T("Today at {time}", "time", tm)
+		}
+		return threadsNS.T("Last reply today at {time}", "time", tm)
 	}
-	if sameDay(t, now) || t.After(now) {
-		return msgNS.T("Last reply today at {time}", "time", clock(t))
+	ago := i18n.TimeAgo(i18n.Locale(), t, now, false, false)
+	if count == 1 {
+		return ago
 	}
-	return msgNS.T("Last reply {time_ago}", "time_ago", i18n.TimeAgo(l, t, now, false, true))
+	return threadsNS.T("Last reply {time_ago}", "time_ago", ago)
 }
 
 // repliesLabel is the reply count, Slack's threads string
@@ -171,35 +180,6 @@ func repliesLabel(n int) string {
 		return strconv.Itoa(n) + " replies"
 	}
 	return i18n.T("threads", "{count, plural, =1 {# reply} other {# replies}}", "count", n)
-}
-
-// ago is the "Last reply …" text, as Slack writes it (measured live):
-// "today at 3:23 PM", "yesterday at 9:05 AM", then "N days ago",
-// "N months ago", "N years ago".
-func ago(t, now time.Time) string {
-	if sameDay(t, now) || t.After(now) {
-		return "today at " + clock(t)
-	}
-	if sameDay(t, now.AddDate(0, 0, -1)) {
-		return "yesterday at " + clock(t)
-	}
-	days := int(now.Sub(t) / (24 * time.Hour))
-	if days < 2 {
-		days = 2
-	}
-	plural := func(n int, unit string) string {
-		if n == 1 {
-			return "1 " + unit + " ago"
-		}
-		return strconv.Itoa(n) + " " + unit + "s ago"
-	}
-	switch {
-	case days < 30:
-		return plural(days, "day")
-	case days < 365:
-		return plural(days/30, "month")
-	}
-	return plural(days/365, "year")
 }
 
 // slackLink recognizes links to Slack messages and channels

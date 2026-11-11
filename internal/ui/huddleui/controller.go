@@ -13,11 +13,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"image"
 	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -92,8 +94,12 @@ type Controller struct {
 	hand    handState // auto-lowering your raised hand (hand.go)
 	av      avState   // the lock watcher, global mute and lounge music (avprefs.go)
 	bar     barState
+	dock    dockState // the docked bar (dock.go)
 	hdr     map[string]*headerState
 	last    time.Time
+
+	dockOrigin image.Point // the dock's window position (menus anchor to it)
+	hideSelf   atomic.Bool // the ⋯ menu's "Hide self-view" (isHidingSelf)
 }
 
 // New builds the controller. Call Handle with core events.
@@ -254,7 +260,7 @@ func (c *Controller) Start(channel string) {
 				w.close()
 			}
 			log.Printf("huddle: join %s: %v", channel, err)
-			c.toast("Couldn't join the huddle: "+errText(err), "headphones")
+			c.showErrModal(joinErrorModal(err)) // HuddleErrorModal{isJoinError}
 			c.changed()
 			return
 		}
@@ -374,7 +380,7 @@ func (c *Controller) begin(channel, entry string) {
 			})
 		if err != nil {
 			log.Printf("huddle: startHuddle %s: %v", channel, err)
-			c.toast("Couldn't start the huddle: "+errText(err), "headphones")
+			c.showErrModal(joinErrorModal(err))
 		}
 	}()
 }
@@ -427,20 +433,18 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		Captions: app.PrefBool("huddles_cc_by_default", false),
 		// "Enable automatic gain control" / "Enable noise suppression"
 		AGC: agc, NoiseSuppression: ns,
-		Logf:     log.Printf,
-		OnChange: c.onSession,
+		// "Blur your video background when you’re in a huddle with your
+		// camera on" (prefs.video.effect, huddle/videofx.go)
+		VideoEffect: c.videoEffect(),
+		Logf:        log.Printf,
+		OnChange:    c.onSession,
 		OnPeer: func(ev huddle.PeerEvent) {
 			if tt := c.taut(); tt != nil {
 				tt.HuddlePeerMessage(ev)
 			}
 			if ev.Message != nil && ev.Message.MuteRequest != nil && ev.Message.MuteRequest.PeerID == ev.SelfAttendeeID {
-				name := "Someone"
-				if s := c.Session(); s != nil {
-					if u := c.userName(s.UserOf(ev.SenderAttendeeID)); u != "" {
-						name = u
-					}
-				}
-				c.toast(name+" muted you", "microphone-off")
+				// HuddlesInformationalBanner "user_was_muted" (microphone-slash)
+				c.showBanner("Someone muted you.", "mic-off")
 			}
 		},
 		OnEnd: func(err error) { go c.ended(err) },
@@ -529,11 +533,8 @@ func (c *Controller) ended(err error) {
 		tt.SetActiveHuddle("", "", "", "")
 		tt.SetHuddleReaction(nil)
 	}
-	switch {
-	case errors.Is(err, huddle.ErrEnded):
-		c.toast("The huddle ended", "headphones")
-	case err != nil:
-		c.toast("You were disconnected from the huddle", "headphones")
+	if m, ok := endedModal(err); ok {
+		c.showErrModal(m)
 	}
 	c.changed()
 }

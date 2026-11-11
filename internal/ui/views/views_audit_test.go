@@ -287,9 +287,9 @@ func vaActivity(t *testing.T, dark bool) (*Activity, *vaHost, *vaEnv, *callLog) 
 }
 
 // The select group: the caret opens Slack's "Select options" menu,
-// Select unreads picks exactly the unread items, and "Mark selected as
-// read" marks each (activity.markRead) with Slack's "N items marked as
-// read" toast.
+// Select unreads picks exactly the unread items (triage mode), and "Mark
+// selected as read" marks them in one activity.markRead {reason:
+// bulk_mark_read, entries} with Slack's "N items marked as read" toast.
 func TestActivitySelectOptions(t *testing.T) {
 	v, h, e, log := vaActivity(t, false)
 	// the caret half of the 54x32 group at (16, 87+16)
@@ -309,16 +309,20 @@ func TestActivitySelectOptions(t *testing.T) {
 	}
 	v.selC[2].Click() // Select unreads
 	e.frame()
-	if !v.selMode || len(v.picked) != unread || v.menu != actMenuNone {
-		t.Fatalf("Select unreads: mode %v, %d picked of %d unread, menu %d", v.selMode, len(v.picked), unread, v.menu)
+	if !v.triage() || len(v.picked) != unread || v.menu != actMenuNone {
+		t.Fatalf("Select unreads: triage %v, %d picked of %d unread, menu %d", v.triage(), len(v.picked), unread, v.menu)
 	}
 	vaShot(t, e, "activity-select", v.th.Dark)
 	v.bulkRead.Click()
 	e.frame()
-	if v.selMode || len(v.picked) != 0 {
+	if v.triage() || len(v.picked) != 0 {
 		t.Error("the selection didn't end after the bulk action")
 	}
-	e.until(t, "activity.markRead per item", func() bool { return log.count("activity.markRead", nil) >= unread })
+	e.until(t, "one bulk activity.markRead", func() bool {
+		return log.count("activity.markRead", func(f url.Values) bool {
+			return f.Get("reason") == "bulk_mark_read" && strings.Count(f.Get("entries"), `"key"`) == unread
+		}) == 1
+	})
 	want := plural(unread, "item") + " marked as read"
 	found := false
 	for _, s := range h.toasts() {
@@ -338,8 +342,8 @@ func TestActivitySelectOptions(t *testing.T) {
 		t.Fatalf("checkbox: %d picked of %d shown", len(v.picked), v.shownCount())
 	}
 	e.click(image.Pt(16+12, int(actHeadH+actBarTop)+16))
-	if len(v.picked) != 0 || v.selMode {
-		t.Fatalf("checkbox again: %d picked, mode %v", len(v.picked), v.selMode)
+	if len(v.picked) != 0 || v.triage() {
+		t.Fatalf("checkbox again: %d picked, triage %v", len(v.picked), v.triage())
 	}
 }
 
@@ -576,7 +580,7 @@ func TestViewsAuditShotsDark(t *testing.T) {
 		t.Skip("VIEWS_SHOTS_DIR not set")
 	}
 	v, _, e, _ := vaActivity(t, true)
-	v.pick(func(_ *core.ActivityItem, unread bool) bool { return unread })
+	v.pick(func(_ *core.ActivityItem, unread bool) bool { return unread }, true)
 	e.frame()
 	vaShot(t, e, "activity-select", true)
 	v.endSelect()

@@ -49,8 +49,12 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 		n := d.link.Len()
 		d.link.SetCaret(n, n)
 	}
+	title := "Add link"
+	if url != "" {
+		title = "Edit link" // ComposerLinkModal: initialUrl ? "Edit link" : "Add link"
+	}
 	d.modal = popups.NewModal(h, popups.ModalOpts{
-		Title:        "Add link",
+		Title:        title,
 		Body:         d.slackBody,
 		PadX:         24, // Slack's link dialog: 24px padding, 68px header → 472px fields
 		HeadH:        68,

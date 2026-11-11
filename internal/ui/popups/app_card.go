@@ -352,13 +352,24 @@ func (p *ProfileCard) appMenu(c core.AppCard, self core.User) []appItem {
 		}
 	}
 	if c.AppUserID != "" && c.Active && !self.Guest && !c.Workflow {
+		// channel_invite: openInviteMemberToChannelDialog (profile_app_channel.go)
+		app := c.AppUserID
 		out = append(out, appItem{"Add this app to a channel…", func() {
 			p.Dismiss()
-			h.Toast("Adding apps to channels isn't supported in Clack yet")
+			pfOpenInviteToChannel(h, app)
 		}})
 	}
 	if c.AppUserID != "" && c.Active {
-		out = append(out, appItem{"Add to VIP", func() { p.Dismiss(); h.Toast("VIPs aren't supported yet") }})
+		// toggle_vip: togglePriorityUserById (profile_vip.go)
+		u, ok := lookupUser(h, c.AppUserID)
+		if !ok {
+			u = core.User{ID: c.AppUserID, Name: c.Name, IsBot: true}
+		}
+		label := "Add to VIP"
+		if pfIsVIP(h, u.ID) {
+			label = "Remove from VIP"
+		}
+		out = append(out, appItem{label, func() { p.Dismiss(); pfToggleVIP(h, u) }})
 	}
 	return out
 }

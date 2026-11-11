@@ -19,9 +19,30 @@ func (a *App) huddles() *huddleui.Controller {
 	return a.hud
 }
 
+// layoutHuddleDock draws Slack's docked huddle bar (HuddleBottomBar) in
+// the window's bottom row while you're in a huddle: under the rail and
+// the workspace, which layoutShell and layoutBBM end above it.
+func (a *App) layoutHuddleDock(gtx layout.Context) {
+	hud := a.huddles()
+	h := hud.DockHeight(gtx)
+	if h == 0 {
+		return
+	}
+	sz := gtx.Constraints.Max
+	r := image.Rect(0, sz.Y-h, sz.X, sz.Y)
+	hud.SetDockOrigin(r.Min)
+	a.th.Chrome = true // the client's chrome scope, like the sidebar
+	atExact(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions { return hud.LayoutDock(gtx, a.th) })
+	a.th.Chrome = false
+}
+
 // StartHuddle starts or joins the huddle in a channel or DM (views'
 // Huddles page calls it through its Host).
 func (a *App) StartHuddle(ch string) { a.huddles().Start(ch) }
+
+// HuddleJoinFailed is Slack's HuddleErrorModal for a start or join that
+// can't happen (views' Huddles page).
+func (a *App) HuddleJoinFailed() { a.huddles().JoinFailed(nil) }
 
 // SlashHuddle is the composer's /huddle: start or join the huddle in ch
 // (through Slack's startHuddle thunk, like the header button).

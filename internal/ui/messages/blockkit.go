@@ -7,8 +7,13 @@ package messages
 // eye icon), except in your own DM and Slackbot's.
 
 import (
+	"encoding/json"
+
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 type bkState struct {
@@ -49,4 +54,30 @@ func ephemeral(rc *rowCtx, m *core.Message) bool {
 		}
 	}
 	return true
+}
+
+// hostElements is the element host of a message a plugin drew with
+// Slack's Blocks / MessageBlocks component: the channel row's own
+// (blockkit.MessageElements, one per message), so its buttons and menus
+// send blocks.actions from the message as the row's do. nil when msg
+// isn't a message Slack could act on (no channel or ts) or has nothing
+// interactive.
+func hostElements(h Host, app *core.App, msg slackc.Props) richview.Elements {
+	if h == nil || app == nil {
+		return nil
+	}
+	ch := msg.StrOr("channel", "")
+	raw, err := json.Marshal(jsonable(msg))
+	if err != nil || ch == "" {
+		return nil
+	}
+	var sm slack.Message
+	if json.Unmarshal(raw, &sm) != nil || sm.TS == "" {
+		return nil
+	}
+	m := app.MessageFromSlack(ch, &sm)
+	if el := blockkit.MessageElements(h, &m); el != nil {
+		return el
+	}
+	return nil
 }

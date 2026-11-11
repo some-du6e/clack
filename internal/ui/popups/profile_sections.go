@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -357,12 +358,18 @@ func (v *ProfileView) valueRow(e core.ProfileElement) layout.Widget {
 	switch e.Typename {
 	case "ProfileTextElement", "ProfileLongTextElement":
 		value = e.Text
-		if e.IsFilterable && e.LegacyFieldID != "" {
-			// Slack: a people search filtered by this field value
-			link = func() { v.h.Toast("Searching people by profile field isn't supported yet") }
+		// TextElement: a filterable field is RimetoProfileFieldLink (not
+		// for a deactivated member); ProfileLongTextElement never links.
+		if e.Typename == "ProfileTextElement" && e.IsFilterable && e.LegacyFieldID != "" && !v.memberDeleted() {
+			field, val := e.LegacyFieldID, e.Text
+			link = func() { pfSearchPeopleByField(v.h, field, val) }
 		}
 	case "ProfileDateElement":
 		value = pfProfileDate(e.Date, time.Now())
+		if e.IsFilterable && e.LegacyFieldID != "" { // DateElement: fieldValue [date]
+			field, val := e.LegacyFieldID, e.Date
+			link = func() { pfSearchPeopleByField(v.h, field, val) }
+		}
 	case "ProfileLinkElement":
 		value = e.DisplayText
 		if value == "" {
@@ -379,6 +386,9 @@ func (v *ProfileView) valueRow(e core.ProfileElement) layout.Widget {
 		}
 	case "ProfileTagsElement":
 		value = strings.Join(e.Tags, "   ")
+		if e.IsFilterable && e.LegacyFieldID != "" && len(e.Tags) > 0 {
+			return v.tagsRow(e)
+		}
 	}
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -397,6 +407,60 @@ func (v *ProfileView) valueRow(e core.ProfileElement) layout.Widget {
 			return clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
 				return para(gtx, th, 15, 22, theme.Regular, cl.Link, value, 0)
 			})
+		})
+	}
+}
+
+// memberDeleted reports whether the pane's member is deactivated.
+func (v *ProfileView) memberDeleted() bool {
+	u, ok := lookupUser(v.h, v.id)
+	return ok && u.Deleted
+}
+
+// pfSearchPeopleByField is RimetoProfileFieldLink's click (boot-shared
+// kDid): navigateToBrowserPage({entity: PEOPLE, initialFilter: {filter:
+// "profileField.<fieldId>", value: [value]}}) (WyBE), the people
+// directory filtered to members whose field fieldID has value; the
+// browser sends it as search.modules people's custom_fields (client-boot:
+// {"<fieldId>": ["value"]}).
+func pfSearchPeopleByField(h Host, fieldID, value string) {
+	if fieldID == "" || value == "" {
+		return
+	}
+	h.Navigate("directories?tab=people&field=" + url.QueryEscape(fieldID) + "&value=" + url.QueryEscape(value))
+}
+
+// tagsRow is ProfileTagsElement with a filterable field: each tag is a
+// ProfileTag (boot-shared hg2J), a RimetoProfileFieldLink for that tag
+// (fieldValue [tag]) in the text colour (inheritLinkColor).
+func (v *ProfileView) tagsRow(e core.ProfileElement) layout.Widget {
+	return func(gtx layout.Context) layout.Dimensions {
+		th := v.h.Theme()
+		cl := colorsOf(th)
+		return pfField(gtx, th, e.Label, func(gtx layout.Context) layout.Dimensions {
+			w := gtx.Constraints.Max.X
+			gap := textW(gtx, th, 15, theme.Regular, "   ")
+			lineH := dp(gtx, 22)
+			x, y := 0, 0
+			for i, tag := range e.Tags {
+				tw := minInt(textW(gtx, th, 15, theme.Regular, tag), w)
+				if x > 0 && x+tw > w {
+					x, y = 0, y+lineH
+				}
+				c := v.secs.btn("tag:" + e.ID + ":" + strconv.Itoa(i))
+				if c.Clicked(gtx) {
+					pfSearchPeopleByField(v.h, e.LegacyFieldID, tag)
+				}
+				t := tag
+				at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+					return clickBox(gtx, c, nil, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Constraints{Max: image.Pt(tw, lineH)}
+						return para(gtx, th, 15, 22, theme.Regular, cl.Fg, t, 1)
+					})
+				})
+				x += tw + gap
+			}
+			return layout.Dimensions{Size: image.Pt(w, y+lineH)}
 		})
 	}
 }

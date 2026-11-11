@@ -3,7 +3,8 @@ name: huddle
 # tool; not shipped). The app itself builds in ci.yml.
 on:
   push:
-    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'internal/core/dnd*.go', 'internal/fakeslack/huddles.go', 'internal/ui/notify*.go', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'internal/ui/screenlock/**', 'internal/ui/globalkey/**', 'third_party/rnnoise-go/**', 'internal/ui/prefs_pages.go', 'internal/ui/huddle_av.go', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run huddle.yml --ref <branch>)
+    paths: ['internal/huddle/**', 'internal/ui/huddleui/**', 'internal/core/dnd*.go', 'internal/fakeslack/huddles.go', 'internal/ui/notify*.go', 'internal/ui/openurl/**', 'cmd/huddle-demo/**', 'packaging/macos/**', 'internal/ui/screenlock/**', 'internal/ui/globalkey/**', 'third_party/rnnoise-go/**', 'internal/tflite/**', 'internal/ui/prefs_pages.go', 'internal/ui/huddle_av.go', 'go.mod', 'go.sum', '.github/workflows/huddle.yml']
   workflow_dispatch:
 jobs:
   huddle:
@@ -63,6 +64,7 @@ jobs:
           sudo apt-get install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
           # TestHuddleShotsInvite: invite-window-*, invite-card-*, invite-tiles-*, invite-toolbar-hand, invite-sticker-picker
           # TestHuddleShotsJoinPreview: join-preview-{start,camera-talking,mic-menu,no-devices,join,dm}-{light,dark}
+          # TestHuddleShotsBlur: blur-self-preview-{off,on}-{light,dark} (the synthetic person, background blur)
           xvfb-run -a go test -count=1 -v -run 'TestHuddleShots|TestMicNoteFor|TestHeader' ./internal/ui/huddleui
           ls -la dist/shots
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -143,4 +145,4 @@ jobs:
       - name: test
         run: |
           go test -count=1 -v ./internal/ui/screenlock/... ./internal/ui/globalkey/...
-          go test -count=1 -v -run 'TestMic|TestPreview' ./internal/huddle
+          go test -count=1 -v -run 'TestMic|TestPreview|TestVideoEffect' ./internal/huddle

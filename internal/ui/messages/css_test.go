@@ -210,7 +210,7 @@ func TestCSSReactionTooltip(t *testing.T) {
 		row := rowWrap.EnterClass(gtx, 0, 0, rowClass)
 		labelMu.Lock()
 		labelHook = func(s string, ts textStyle) {
-			if s == txt {
+			if s == "Bob" { // the tooltip flows its runs word by word
 				got = ts.col
 			}
 		}

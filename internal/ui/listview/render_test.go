@@ -362,12 +362,21 @@ func TestEditRoundTrip(t *testing.T) {
 		f := stored("Rec0ITEM003", "Col0VOTE001")
 		return f != nil && len(f.User) == 1 && f.User[0] == fakeslack.SelfID
 	})
-	// the guard: formatted text, a computed field, files
-	n := len(fs.ListCellUpdates())
+	// formatted text opens in the rich editor (richedit.go) and keeps its
+	// bold run and mention
 	v.cellClick(d, d.Record("Rec0ITEM002"), d.Meta.Column("name"), 0, gtx)
-	if v.edit.active || !strings.Contains(h.lastToast(), "can't be edited in Clack yet (it has formatting)") {
-		t.Errorf("formatted text: editor %v, toast %q", v.edit.active, h.lastToast())
+	if !v.edit.active || v.edit.rich == nil {
+		t.Fatalf("formatted text: editor %v, rich %v, toast %q", v.edit.active, v.edit.rich != nil, h.lastToast())
 	}
+	v.edit.rich.InsertText(" today")
+	v.commit(d)
+	wait("the formatted name", func() bool {
+		f := stored("Rec0ITEM002", "name")
+		return f != nil && strings.Contains(string(f.RichText), " today") && strings.Contains(string(f.RichText), `"bold":true`) &&
+			strings.Contains(string(f.RichText), `"user_id":"U0FAKE00002"`)
+	})
+	// the guard: a computed field, files
+	n := len(fs.ListCellUpdates())
 	v.cellClick(d, rec, d.Meta.Column("Col0FILE001"), 0, gtx)
 	if !strings.Contains(h.lastToast(), "it has files") {
 		t.Errorf("files toast %q", h.lastToast())

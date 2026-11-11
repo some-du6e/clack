@@ -211,6 +211,17 @@ type huddleStarter interface{ StartHuddle(channel string) }
 // huddleStartOpener is the ui root's "Start a Huddle" picker.
 type huddleStartOpener interface{ OpenHuddleStart(entry string) }
 
+// huddleJoinFailer is the ui root's HuddleErrorModal ("Can’t join the
+// huddle"), for a start or join that can't happen.
+type huddleJoinFailer interface{ HuddleJoinFailed() }
+
+// joinFailed shows Slack's join error where the host has it.
+func joinFailed(h Host) {
+	if f, ok := h.(huddleJoinFailer); ok {
+		f.HuddleJoinFailed()
+	}
+}
+
 // newHuddle is the Huddles page's New Huddle / Start a Huddle
 // (useStartHuddleClick): with Slack's standalone huddles experiment it's
 // startHuddle {isStandaloneHuddle: true}; without it (Clack has no
@@ -238,7 +249,9 @@ func startHuddle(h Host, tt *taut.Taut, args startHuddleArgs) {
 			huddleAttempt(h, tt, args) // a plugin may take it
 			return
 		}
-		h.Toast("Open a channel or DM and click Huddle in its header to start one")
+		if o, ok := h.(huddleStartOpener); ok { // HuddleInviteStartModal
+			o.OpenHuddleStart("huddles_page_start_huddle")
+		}
 		return
 	}
 	if !tt.ThunkPatched("startHuddle") {
@@ -261,7 +274,7 @@ func startHuddle(h Host, tt *taut.Taut, args startHuddleArgs) {
 			return nil, nil
 		})
 		if err != nil {
-			h.Toast("Couldn't start the huddle: " + err.Error())
+			joinFailed(h)
 		}
 		h.Invalidate()
 	}()
@@ -277,20 +290,20 @@ type startHuddleArgs struct {
 	IsStandaloneHuddle bool   `json:"isStandaloneHuddle,omitempty"`
 }
 
-// huddleAttempt is a start/join click: Slack's startHuddle thunk with
-// args (the conversation, the huddle when joining one; a new huddle from
-// the page header is standalone). Clack can't join (no Chime media), so natively it runs like a
-// huddle that ends at once: startEventLog, stopHuddle and stopEventLog,
-// then enqueueHuddleToast says why. A plugin wrapping startHuddle
-// (BetterHuddles) can take the join over instead. Without a plugin
-// wrapping any of them it's just the toast, inline.
+// huddleAttempt is a start/join click that has no conversation to join
+// (a room the page doesn't know, or a host without native huddles):
+// Slack's startHuddle thunk with args (the huddle when joining one; a new
+// huddle from the page header is standalone), which natively runs like a
+// huddle that ends at once (startEventLog, stopHuddle and stopEventLog),
+// then Slack's HuddleErrorModal ("Can’t join the huddle"). A plugin
+// wrapping startHuddle (BetterHuddles) can take the join over instead.
 func huddleAttempt(h Host, tt *taut.Taut, args startHuddleArgs) {
 	patched := tt.ThunkPatched("startHuddle")
 	for _, n := range huddleThunks {
 		patched = patched || tt.ThunkPatched(n)
 	}
 	if !patched {
-		h.Toast(joinUnsupported)
+		joinFailed(h)
 		return
 	}
 	go func() {
@@ -301,17 +314,11 @@ func huddleAttempt(h Host, tt *taut.Taut, args startHuddleArgs) {
 			for _, n := range huddleThunks[:3] {
 				_, _ = taut.Dispatch(ctx, tt, n, huddleArgs{HuddleID: a.HuddleID}, noop)
 			}
-			return taut.Dispatch(ctx, tt, "enqueueHuddleToast",
-				huddleToastArgs{Content: joinUnsupported, SVGIconProps: map[string]any{"type": "headphones"}, Duration: 5000},
-				func(ctx context.Context, a huddleToastArgs) (any, error) {
-					if a.Content != "" {
-						h.Toast(a.Content)
-					}
-					return nil, nil
-				})
+			joinFailed(h)
+			return nil, nil
 		})
 		if err != nil {
-			h.Toast(joinUnsupported)
+			joinFailed(h)
 		}
 		h.Invalidate()
 	}()

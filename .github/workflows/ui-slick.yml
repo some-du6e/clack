@@ -8,6 +8,7 @@ name: ui-slick
 # committed; screenshots and logs carry synthetic data only.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run ui-slick.yml --ref <branch>)
     paths:
       - "internal/ui/**"
       - "internal/slick/**"

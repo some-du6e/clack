@@ -124,6 +124,9 @@ func (b *base) refTitle(r core.ConvRef) string {
 		}
 		return r.Name
 	case "mpim":
+		if n, ok := b.h.Core().MpdmCustomName(r.ID); ok { // mpdm_naming
+			return n
+		}
 		if c, ok := b.h.Core().Conv(r.ID); ok && len(c.Members) > 0 {
 			return b.groupNames(c.Members)
 		}
@@ -265,12 +268,19 @@ type richCache map[string]*richEntry
 // channel view. compact uses 13px/18px text. maxLines > 0 clips the body to
 // that many lines (Slack's 2-3 line previews).
 func (b *base) msgBody(gtx C, m *core.Message, compact bool, maxLines int) D {
-	return b.msgBodyMuted(gtx, m, compact, false, maxLines)
+	return b.msgBodyLive(gtx, m, compact, false, maxLines, true)
 }
 
 // msgBodyMuted is msgBody with the body in the secondary text color when
-// muted is set (read Activity rows).
+// muted is set (read Activity rows). Activity's Block Kit stays inert
+// (elements.go).
 func (b *base) msgBodyMuted(gtx C, m *core.Message, compact, muted bool, maxLines int) D {
+	return b.msgBodyLive(gtx, m, compact, muted, maxLines, false)
+}
+
+// msgBodyLive draws the body; live gives its Block Kit elements the
+// channel row's element host (elements.go).
+func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines int, live bool) D {
 	if m == nil {
 		return D{}
 	}
@@ -289,8 +299,12 @@ func (b *base) msgBodyMuted(gtx C, m *core.Message, compact, muted bool, maxLine
 	// pills like Slack; Muted is for system messages.
 	// Activity, Threads and Later are Slack's activity / all_threads /
 	// starred_message block contexts: long sections truncate.
-	return b.richDoc(gtx, key, ver, m.Doc, richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System, Secondary: muted && !m.System,
-		Channel: m.Channel, TS: m.TS, Truncate: true}, maxLines)
+	o := richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System, Secondary: muted && !m.System,
+		Channel: m.Channel, TS: m.TS, Truncate: true}
+	if live {
+		o.Elements = b.liveElements(m)
+	}
+	return b.richDoc(gtx, key, ver, m.Doc, o, maxLines)
 }
 
 // richDoc draws any document under a stable key.
@@ -344,7 +358,10 @@ func (hh hostHandler) OpenURL(u string) {
 func (hh hostHandler) OpenUser(id string, at image.Point) { hh.h.OpenProfile(at, id) }
 func (hh hostHandler) OpenChannel(id string)              { hh.h.Navigate("c/" + id) }
 func (hh hostHandler) OpenUsergroup(id string, at image.Point) {
-	hh.h.Toast("User group profiles aren't supported yet")
+	// Slack's user group profile (the ui root's App.OpenUserGroup)
+	if o, ok := hh.h.(interface{ OpenUserGroup(id string) }); ok {
+		o.OpenUserGroup(id)
+	}
 }
 func (hh hostHandler) OpenImage(img richtext.Image) { hh.h.OpenLightbox(img, core.Message{}) }
 func (hh hostHandler) OpenFile(f *richtext.File) {
@@ -356,12 +373,15 @@ func (hh hostHandler) OpenFile(f *richtext.File) {
 		openFile(hh.h, fileFromRich(f)) // files.go
 	}
 }
+
+// Button is a click on a Block Kit element richview drew itself: only a
+// link button does anything. Live views draw their elements through the
+// element host (elements.go), which sends blocks.actions; in Activity
+// Slack disables them (Nc1H.DD).
 func (hh hostHandler) Button(btn richtext.Button) {
 	if btn.URL != "" {
 		hh.OpenURL(btn.URL)
-		return
 	}
-	hh.h.Toast("Interactive buttons aren't supported yet")
 }
 
 // textHash is FNV-1a of s (patched-message cache keys).

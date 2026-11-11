@@ -38,9 +38,26 @@ type glyphSeg struct {
 	p  [3]f32.Point
 }
 
+// jumpGlyph is the broadcast label's icon: MessageLabels maps the
+// "broadcast" label (a thread reply also sent to the channel) to the font
+// Icon "jump", .c-icon--jump:before{content:"\e084"}, glyph icon_jump in
+// the same font (a # with an arrow pointing left), drawn in sk_highlight
+// (.c-message_kit__labels--broadcast .c-message_kit__labels__icon).
+const jumpGlyph = "M934 1025 991 1314C999 1354 966 1400 917 1400C880 1400 850 1373 843 1336L782 1025H545L602 1314C610 1354 577 1400 528 1400C491 1400 461 1373 454 1336L393 1025H168C127 1025 93 991 93 950C93 909 127 875 168 875H364L295 525H70C29 525 -5 491 -5 450C-5 409 29 375 70 375H266L209 86C201 46 234 0 283 0C320 0 350 27 357 64L418 375H655L598 86C590 46 623 0 672 0C709 0 739 27 746 64L807 375H1032C1073 375 1107 409 1107 450C1107 491 1073 525 1032 525H836L905 875H1130C1171 875 1205 909 1205 950C1205 991 1171 1025 1130 1025ZM1454 750 1628 921C1643 936 1650 955 1650 974C1650 994 1643 1012 1628 1027C1613 1042 1594 1050 1575 1050C1556 1050 1537 1042 1522 1027L1222 730C1207 715 1200 696 1200 677C1200 658 1207 639 1222 624L1522 322C1537 307 1556 300 1575 300C1594 300 1613 307 1628 322C1643 337 1650 356 1650 375C1650 394 1642 414 1628 428L1458 600H1924C1968 600 2000 632 2000 675C2000 718 1968 750 1924 750ZM447 525 516 875H753L684 525Z"
+
+// eyeGlyph is the ephemeral label's icon ("Only visible to you"): the
+// font Icon "eye-filled", .c-icon--eye-filled:before{content:"\e584"},
+// glyph icon_eye_filled. No rule colours it, so it takes the label's
+// rgba(29,28,29,.7).
+const eyeGlyph = "M1000 0C1600 0 1900 550 1900 700C1900 850 1600 1400 1000 1400C400 1400 100 850 100 700C100 550 400 0 1000 0ZM1000 250C751 250 550 451 550 700C550 949 751 1150 1000 1150C1249 1150 1450 949 1450 700C1450 451 1249 250 1000 250ZM1246 745C1226 735 1204 730 1180 730C1097 730 1030 797 1030 880C1030 904 1035 926 1045 946C1031 949 1015 950 1000 950C862 950 750 838 750 700C750 562 862 450 1000 450C1138 450 1250 562 1250 700C1250 715 1249 730 1246 745Z"
+
 var (
-	pinOnce sync.Once
-	pinSegs []glyphSeg
+	pinOnce  sync.Once
+	pinSegs  []glyphSeg
+	jumpOnce sync.Once
+	jumpSegs []glyphSeg
+	eyeOnce  sync.Once
+	eyeSegs  []glyphSeg
 )
 
 // parseGlyph reads SVGPathPen output: absolute M/L/C/Z with implicit
@@ -93,13 +110,31 @@ func parseGlyph(d string) []glyphSeg {
 // sits at origin.Y + em*0.85).
 func drawPin(gtx layout.Context, origin image.Point, em int, col color.NRGBA) {
 	pinOnce.Do(func() { pinSegs = parseGlyph(pinGlyph) })
+	drawGlyph(gtx, pinSegs, origin, em, col)
+}
+
+// drawJump fills the jump glyph like drawPin.
+func drawJump(gtx layout.Context, origin image.Point, em int, col color.NRGBA) {
+	jumpOnce.Do(func() { jumpSegs = parseGlyph(jumpGlyph) })
+	drawGlyph(gtx, jumpSegs, origin, em, col)
+}
+
+// drawEye fills the eye-filled glyph like drawPin.
+func drawEye(gtx layout.Context, origin image.Point, em int, col color.NRGBA) {
+	eyeOnce.Do(func() { eyeSegs = parseGlyph(eyeGlyph) })
+	drawGlyph(gtx, eyeSegs, origin, em, col)
+}
+
+// drawGlyph fills a font outline (non-zero winding, as the font's
+// counters are wound against their contours) in an em×em box at origin.
+func drawGlyph(gtx layout.Context, segs []glyphSeg, origin image.Point, em int, col color.NRGBA) {
 	k := float32(em) / glyphUPM
 	tr := func(p f32.Point) f32.Point {
 		return f32.Pt(float32(origin.X)+p.X*k, float32(origin.Y)+(glyphAscent-p.Y)*k)
 	}
 	var path clip.Path
 	path.Begin(gtx.Ops)
-	for _, s := range pinSegs {
+	for _, s := range segs {
 		switch s.op {
 		case 'M':
 			path.MoveTo(tr(s.p[0]))

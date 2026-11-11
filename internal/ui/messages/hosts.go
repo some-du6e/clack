@@ -72,6 +72,7 @@ type docHost struct {
 	v       *richview.View
 	handler richHandler
 	msg     core.Message
+	el      richview.Elements // the message's Block Kit (blockkit.go hostElements)
 }
 
 func docState(h *slackc.Host) *docHost {
@@ -125,7 +126,14 @@ func hostBlocks(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	msg := h.Props.Map("msg")
 	d := docState(h)
 	d.msg.TS, d.msg.Channel = msg.StrOr("ts", ""), msg.StrOr("channel", "")
-	d.set("", propsID(msg), richview.Options{}, func() richtext.Doc { return parseMessage(hostCore(), msg) })
+	d.set("", propsID(msg), richview.Options{}, func() richtext.Doc {
+		d.el = hostElements(lastHost, hostCore(), msg)
+		return parseMessage(hostCore(), msg)
+	})
+	if o := d.v.Options(); d.el != nil && o.Elements != d.el {
+		o.Elements = d.el
+		d.v.SetOptions(o)
+	}
 	st := blocksClass.Enter(gtx, 0, 0)
 	defer st.Leave()
 	if st.Hidden() {

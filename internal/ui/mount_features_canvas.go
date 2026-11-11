@@ -200,10 +200,10 @@ func (a *App) pendingCanvasTab(ch, id string) {
 
 // addTabMenu is the tab bar's "+": Slack offers a canvas, a list and more.
 func (a *App) addTabMenu(ch string) {
-	a.menu(a.PointerPos(), []MenuItem{
+	a.menu(a.PointerPos(), append([]MenuItem{
 		{Label: "Canvas", Icon: "canvas", Do: func() { a.newChannelCanvas(ch) }},
-		{Label: "List", Icon: "list-tab", Do: func() { a.Toast("Adding lists isn't supported yet") }},
-	})
+		{Label: "List", Icon: "list-tab", Do: func() { a.addListTab(ch) }},
+	}, a.addTabWorkflowItems(ch)...)) // workflows_wire.go
 }
 
 // CreateCanvas is Files' "+ New Canvas": a standalone canvas, opened in

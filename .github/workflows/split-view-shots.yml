@@ -6,6 +6,7 @@ name: split-view-shots
 # nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run split-view-shots.yml --ref <branch>)
     paths:
       - "internal/ui/split.go"
       - "internal/ui/split_view_test.go"
