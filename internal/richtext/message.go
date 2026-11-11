@@ -312,6 +312,7 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		att.OriginalURL = SafeURL(a.OriginalURL)
 		att.ServiceURL = SafeURL(a.ServiceURL)
 		att.VideoHTML, att.AudioHTML, att.OtherHTML = a.VideoHTML != "", a.AudioHTML != "", a.OtherHTML != ""
+		att.AudioHTMLCode, att.AudioHTMLHeight = a.AudioHTML, a.AudioHTMLH
 		att.ImageBytes, att.IsAppUnfurl, att.Hidden = a.ImageBytes, a.IsAppUnfurl, a.Hidden
 		att.ServiceName = a.ServiceName
 		att.ServiceIcon = SafeImage(a.ServiceIcon)

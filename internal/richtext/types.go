@@ -205,9 +205,15 @@ type Attachment struct {
 	VideoHTML   bool
 	AudioHTML   bool
 	OtherHTML   bool
-	ImageBytes  int64
-	BotID       string
-	IsAppUnfurl bool
+	// AudioHTMLCode is audio_html itself (the player's iframe markup) and
+	// AudioHTMLHeight audio_html_height: AttachmentMedia's audioHtml and
+	// audioHtmlHeight props (ClickToLoad reads the iframe's src). Kept in
+	// memory only, like the rest of a message.
+	AudioHTMLCode   string
+	AudioHTMLHeight int
+	ImageBytes      int64
+	BotID           string
+	IsAppUnfurl     bool
 	// BotName is BotID's bot name as Slack's getBotById reads it (the
 	// bots store: bots.info, or the message's bot_profile for the same
 	// bot), "" while it is unknown: the "Added by" attribution then says

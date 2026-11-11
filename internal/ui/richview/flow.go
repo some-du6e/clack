@@ -334,6 +334,9 @@ type lay struct {
 	collapsed map[*richtext.Image]bool
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
+	// media is the card's AttachmentMedia part (fixedMedia), for
+	// compBlock to make it its own component
+	media mediaNote
 	// CSS parts (css.go), nil while no CSS is installed: ctr is the
 	// current container's element path, curPart the part new items get.
 	css     *cssParts

@@ -1292,6 +1292,10 @@ func (p *painter) run(b *box, r *run, x, y float32) {
 			if st.Visibility != css.Visible {
 				continue
 			}
+			if name, ok := strings.CutPrefix(it.url, legacyIconURL); ok {
+				p.legacyIcon(name, ox+fr.x, oy+fr.y, it.w-p.v.dp, p.col(st.Color))
+				continue
+			}
 			p.emoji(it.url, ox+fr.x, oy+fr.y, it.w-p.v.dp)
 		case iAtomic:
 			k := it.b

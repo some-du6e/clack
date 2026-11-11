@@ -24,6 +24,7 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -73,6 +74,7 @@ const (
 	compAtt
 	compFile  // a file card (MessageFile)
 	compTitle // a YouTube card's title (AttachmentTitle), drawn by its card
+	compMedia // a fixed-layout card's media (AttachmentMedia), drawn by its card
 )
 
 // compBox is one component in the display list; primitives with comp ==
@@ -87,6 +89,29 @@ type compBox struct {
 	author int
 	// title is a YouTube card's title component (comps index+1).
 	title int16
+	// media is a card's AttachmentMedia component (comps index+1), and a
+	// media component's own corner radii (its box's rounded bottom)
+	media int16
+	radii [4]int
+}
+
+// mediaNote is the media part of the card being laid out: its box and
+// the primitives from f0/b0/i0 on (fixedMedia, read by compBlock).
+type mediaNote struct {
+	set        bool
+	r          image.Rectangle
+	radii      [4]int
+	f0, b0, i0 int
+	f1, b1, i1 int
+}
+
+// noteMedia records the media part fixedMedia just drew (its primitives
+// from f0/b0/i0 to now) while a card lays out as a component.
+func (l *lay) noteMedia(r image.Rectangle, radii [4]int, f0, b0, i0 int) {
+	if !l.inAtt || l.mode&modeAtts == 0 {
+		return
+	}
+	l.media = mediaNote{set: true, r: r, radii: radii, f0: f0, b0: b0, i0: i0, f1: len(l.d.frags), b1: len(l.d.boxes), i1: len(l.d.imgs)}
 }
 
 // compState is what a component's plugin tree told the layout, kept
@@ -147,10 +172,27 @@ func (l *lay) compBlock(b *richtext.Block, x, y, w int) int {
 		b = &bb
 	}
 	f0, b0, i0 := len(l.d.frags), len(l.d.boxes), len(l.d.imgs)
-	l.inAtt, l.authorImg, l.titleFrags = true, 0, [2]int{}
+	l.inAtt, l.authorImg, l.titleFrags, l.media = true, 0, [2]int{}, mediaNote{}
 	h := l.attachment(b, x, y, w)
 	l.inAtt = false
 	l.tagFrom(tag, f0, b0, i0)
+	if m := l.media; m.set {
+		// the card's media: its own component (AttachmentMedia), drawn by
+		// the card inside MessageAttachment's tree, so a plugin's patch
+		// (ClickToLoad's placeholder) covers the media alone
+		mt := l.addComp(compBox{kind: compMedia, att: b, r: m.r, radii: m.radii})
+		for i := m.f0; i < m.f1; i++ {
+			l.d.frags[i].comp = mt
+		}
+		for i := m.b0; i < m.b1; i++ {
+			l.d.boxes[i].comp = mt
+		}
+		for i := m.i0; i < m.i1; i++ {
+			l.d.imgs[i].comp = mt
+		}
+		l.d.comps[tag-1].media = mt
+		l.media = mediaNote{}
+	}
 	if a := l.authorImg; a > 0 {
 		l.d.imgs[a-1].comp = -tag // not painted with the card
 		l.d.comps[tag-1].author = a
@@ -201,7 +243,7 @@ func (d *display) pillRects() {
 	}
 	add := func(tag int16, r image.Rectangle) {
 		c := &d.comps[tag-1]
-		if c.kind == compAtt || c.kind == compFile {
+		if c.kind == compAtt || c.kind == compFile || c.kind == compMedia {
 			return
 		}
 		if c.r.Empty() {
@@ -234,7 +276,7 @@ func (v *View) layoutComps(gtx layout.Context, st *Style) {
 	for i := range v.d.comps {
 		c := &v.d.comps[i]
 		ref := &v.refs[i]
-		if c.kind == compTitle {
+		if c.kind == compTitle || c.kind == compMedia {
 			continue // drawn by its card
 		}
 		t := op.Offset(c.r.Min).Push(gtx.Ops)
@@ -283,6 +325,9 @@ func (c *compRef) paint(gtx layout.Context, s slackc.Styled) layout.Dimensions {
 	t := op.Offset(b.r.Min.Mul(-1)).Push(gtx.Ops)
 	c.v.paint(gtx.Ops, c.st, int16(c.i+1), fg)
 	t.Pop()
+	if b.media > 0 {
+		c.layoutCardMedia(gtx, b)
+	}
 	if b.author > 0 {
 		im := &c.v.d.imgs[b.author-1]
 		t := op.Offset(im.r.Min.Sub(b.r.Min)).Push(gtx.Ops)
@@ -478,8 +523,8 @@ func (c *compRef) layoutAttachment(gtx layout.Context, _ slackc.Props) layout.Di
 		inner = c.layoutShare
 	case isYouTube(a):
 		inner = c.layoutYouTubeBoundary
-	case c.hasMedia():
-		inner = c.layoutMediaBoundary
+	case c.hasMedia() && c.box().media == 0:
+		inner = c.layoutMediaBoundary // a card without its own media part (the old layouts)
 	}
 	if s.Hidden() {
 		return layout.Dimensions{}
@@ -550,6 +595,43 @@ func (c *compRef) layoutMedia(gtx layout.Context, _ slackc.Props) layout.Dimensi
 	s := mediaClass.Enter(gtx, 0, 0)
 	defer s.Leave()
 	return c.styled(gtx, s)
+}
+
+// layoutCardMedia draws card b's media component at its place in the
+// card: Slack's AttachmentMedia inside the card's right box (background
+// size cover, cropHeight, the backup background), at the box's fixed
+// size, so a plugin's replacement takes the media's place without
+// changing the card's height.
+func (c *compRef) layoutCardMedia(gtx layout.Context, b *compBox) {
+	m := &c.v.d.comps[b.media-1]
+	ref := &c.v.refs[b.media-1]
+	off := op.Offset(m.r.Min.Sub(b.r.Min)).Push(gtx.Ops)
+	defer off.Pop()
+	defer clip.RRect{Rect: image.Rectangle{Max: m.r.Size()}, SE: m.radii[2], SW: m.radii[3]}.Push(gtx.Ops).Pop()
+	g := gtx
+	g.Constraints = layout.Exact(m.r.Size())
+	slackc.Component(g, "AttachmentMedia", ref, (*compRef).cardMediaProps, (*compRef).layoutMedia)
+}
+
+// cardMediaProps are AttachmentMedia's props for a card's media part
+// (c is the media component): the attachment's image, thumb, video and
+// audio (audio_html and its height, which ClickToLoad holds back), as
+// the v3 card's right box passes them.
+func (c *compRef) cardMediaProps() slackc.Props {
+	o := &c.v.opts
+	a := c.box().att.Att
+	p := slackc.Props{"$key": o.TS + "/" + strconv.Itoa(c.i) + "/media", "activeChannelId": o.Channel, "messageTs": o.TS,
+		"fromUrl": a.FromURL, "originalUrl": firstNonEmpty(a.OriginalURL, a.FromURL), "titleLink": a.TitleLink,
+		"blocksContainerContext": "message", "backgroundSize": "cover", "cropHeight": true, "useBackupBackground": true,
+		"imageBytes": a.ImageBytes}
+	c.mediaInto(p)
+	if a.AudioHTMLCode != "" {
+		p["audioHtml"] = a.AudioHTMLCode
+		if a.AudioHTMLHeight > 0 {
+			p["audioHtmlHeight"] = a.AudioHTMLHeight
+		}
+	}
+	return p
 }
 
 func (c *compRef) huddleProps() slackc.Props {
@@ -640,7 +722,12 @@ func (c *compRef) layoutYouTube(gtx layout.Context, p slackc.Props) layout.Dimen
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
-	d := c.layoutMediaBoundary(gtx)
+	var d layout.Dimensions
+	if b.media > 0 {
+		d = c.layoutCard(gtx) // the media is its own AttachmentMedia, drawn by the card
+	} else {
+		d = c.layoutMediaBoundary(gtx)
+	}
 	if t := b.title; t > 0 {
 		tb := &c.v.d.comps[t-1]
 		off := op.Offset(tb.r.Min.Sub(b.r.Min)).Push(gtx.Ops)
