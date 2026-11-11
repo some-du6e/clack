@@ -11,8 +11,9 @@ To see the whole diff against the release:
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
-`op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`, `app/clack_gpu.go` and
-these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
+`widget/text.go`, `widget/clack_spans.go`, `op/op.go`,
+`internal/ops/ops.go`, `app/os_x11.go`, `app/clack_gpu.go` and these two
+files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -133,3 +134,36 @@ do, so Slack's inputs behave the same.
 Test: `internal/ui/blockkit` `TestModalTextInputsEdit` (every Block Kit
 text input in a modal; ci runs it on Linux and macOS). Not in
 `UPSTREAM.patch`.
+
+## 6. widget: styled spans in an Editor's text
+
+`widget/clack_spans.go` (new: `TextSpan`, `Editor.SetSpans`,
+`Editor.Spans`, `textView.layoutSpans`) and `widget/text.go` (the
+`textView.spans` field and a hook at the top of `layoutText`). An
+addition: an Editor without spans shapes its text as before.
+
+Slack's search box draws its filter tokens as pills inside the text:
+`from:@Karim` with 23px of padding before it for the modifier's icon,
+4px after it, and the value after the first `:` in bold
+(`.c-member_slug--search-filter`, docs/SEARCH-AUDIT.md). A
+`widget.Editor` shapes its whole text in one font with no room for
+either, so the caret, selections and clicks would not line up with
+pills drawn on top.
+
+`SetSpans` takes rune ranges, each with an optional font and empty space
+(pixels) before and after it. For a single-line, unmasked editor whose
+text has no line break, `layoutText` then shapes the text in segments
+split at the spans' edges, each in its span's font, and moves each
+segment's glyphs right by the width of everything before it (earlier
+segments plus the spans' space). Only the last glyph keeps
+`FlagLineBreak` and only the first `FlagParagraphStart`, so the index
+sees one line; the text's bounds include the space at either end. The
+glyph index builds the caret positions from those glyphs, so `Regions`,
+the caret, selection painting and pointer hits all follow the styled
+layout. Spans are ignored (the text is shaped as usual) for multi-line
+or masked editors.
+
+Test: `internal/ui/popups` `TestSearchTokenPills` (a filter token's
+modifier starts 24px after the text before it, its value is as wide as
+the bold measurement, the text after it starts 4px after the value).
+Not in `UPSTREAM.patch`.

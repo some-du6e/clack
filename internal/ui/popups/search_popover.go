@@ -194,6 +194,15 @@ type SearchPopover struct {
 	tokens  []srToken
 	edX     int  // the editor's x in the card
 	acArmed bool // the user edited the box: Texty's completers follow its text
+
+	// the quick filter row (search_quick_filters.go), the date pickers
+	// (search_date_picker.go), the tokens' pills (search_token_pills.go)
+	// and the picked row's toolbar (search_toolbar.go)
+	qf      srQFState
+	dpk     srDatePick
+	pills   srPillState
+	tb      srTBState
+	listOrg image.Point // the list's window origin, last layout
 }
 
 // NewQuickSwitcher opens the Ctrl+K switcher: empty query, centered at the
@@ -561,7 +570,7 @@ func (p *SearchPopover) historyRows(rows []srRow) []srRow {
 				})
 		}
 		for _, it := range items {
-			if !it.Slackbot {
+			if !it.Slackbot && !p.tb.gone[it.Query] {
 				queries = append(queries, it.Query)
 			}
 		}
@@ -1251,6 +1260,8 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 	}
 	if p.ac.open {
 		fs = append(fs, key.Filter{Focus: &p.ed, Name: key.NameTab, Optional: key.ModShift})
+	} else if len(p.tbFor()) > 0 {
+		fs = append(fs, key.Filter{Focus: &p.ed, Name: key.NameTab}) // Tab: the toolbar
 	}
 	for {
 		e, ok := gtx.Event(fs...)
@@ -1282,6 +1293,20 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 			p.h.Invalidate()
 			continue
 		}
+		if p.dpShown() {
+			// the date picker's surface: ↓ / ↑ move into its grid,
+			// Escape closes it (Popover's onClose)
+			switch ke.Name {
+			case key.NameUpArrow, key.NameDownArrow:
+				if ke.Modifiers == 0 && p.dpFocusGrid(gtx) {
+					continue
+				}
+			case key.NameEscape:
+				p.dpDismiss()
+				p.h.Invalidate()
+				continue
+			}
+		}
 		switch ke.Name {
 		case key.NameUpArrow:
 			p.move(-1)
@@ -1289,6 +1314,8 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 			p.move(1)
 		case key.NameReturn, key.NameEnter:
 			p.enter()
+		case key.NameTab:
+			p.tbFocus(gtx)
 		case key.NameEscape:
 			if isTop(p) {
 				p.Dismiss()
@@ -1367,7 +1394,10 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		p.refocus = true
 		p.onQuery(gtx)
 	}
-	if p.filter.Clicked(gtx) || p.advReq {
+	if p.filter.Clicked(gtx) {
+		p.qfToggleRow() // QuickFilterMenu's onToggleFilters
+	}
+	if p.advReq {
 		q := strings.TrimSpace(p.reqQuery(p.query))
 		srRecordQuery(q)
 		p.Dismiss()
@@ -1384,6 +1414,14 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	p.acUpdate()
+	p.dpPointer(gtx)
+	p.dpUpdate()
+	p.dpKeys(gtx)
+	p.tbKeys(gtx)
+	if p.done {
+		return layout.Dimensions{}
+	}
+	p.qfAutoShow()
 	for i := range p.rows {
 		if p.clicks[i].Clicked(gtx) {
 			p.activate(i)
@@ -1438,7 +1476,8 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	if x < dp(gtx, 4) {
 		x = dp(gtx, 4)
 	}
-	inputH := dp(gtx, 48) + 1
+	// the input row, the quick filter row while it shows, the 1px line
+	inputH := dp(gtx, 48) + p.qfRowH(gtx) + 1
 	padT, padB := dp(gtx, 8), dp(gtx, 8)
 	footH := dp(gtx, 45)
 	content := 0
@@ -1449,9 +1488,10 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	if maxH := win.Y - y - dp(gtx, 8); h > maxH {
 		h = maxH
 	}
-	acOpen := p.ac.open
+	acOpen := p.ac.open || p.dpShown()
 	if acOpen {
-		// isTextyAutocompleteOpen: the suggestions and the footer hide
+		// isTextyAutocompleteOpen or a date picker's onOpenChange: the
+		// suggestions and the footer hide
 		h = inputH
 	}
 	listH := h - inputH - padT - padB - footH
@@ -1463,8 +1503,15 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	card(gtx, cl, p.rect, rad)
 	p.block.Layout(gtx, p.rect)
 	p.layoutCard(gtx, th, cl, w, h, inputH, padT, footH, listH, rad, acOpen)
-	if acOpen {
+	p.tbRunPending(gtx)
+	if p.done {
+		return layout.Dimensions{}
+	}
+	if p.ac.open {
 		p.acLayout(gtx, th, cl, win, inputH)
+	}
+	if p.dpShown() {
+		p.dpLayout(gtx, inputH)
 	}
 	return layout.Dimensions{Size: win}
 }
@@ -1477,9 +1524,13 @@ func (p *SearchPopover) layoutCard(gtx layout.Context, th *theme.Theme, cl *Colo
 	defer op.Offset(p.rect.Min).Push(gtx.Ops).Pop()
 
 	p.layoutInput(gtx, th, cl, w, inputH)
+	if p.qfVisible() {
+		p.qfLayout(gtx, th, cl, dp(gtx, 48), w)
+	}
 	if acOpen {
 		return
 	}
+	p.listOrg = p.rect.Min.Add(image.Pt(0, inputH+padT))
 
 	// list
 	if p.ensure {
@@ -1548,7 +1599,9 @@ func (p *SearchPopover) scrollToSel(gtx layout.Context, viewH int) {
 
 func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors, w int) {
 	rh := dp(gtx, 48)
-	fill(gtx, image.Rect(0, rh, w, rh+1), srLineColor(th, cl))
+	// .c-search__input_wrapper's border-bottom, under the quick filter row
+	ly := rh + p.qfRowH(gtx)
+	fill(gtx, image.Rect(0, ly, w, ly+1), srLineColor(th, cl))
 	at(gtx, image.Pt(dp(gtx, 20), (rh-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 		return icon(gtx, "search", 20, cl.Fg2)
 	})
@@ -1559,9 +1612,7 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 		return iconButton(gtx, &p.history, "clock", 24, 18, cl.Fg2, cl.BgHover, 4)
 	})
 	p.historyRect = image.Rect(hx, (rh-hb)/2, hx+hb, (rh+hb)/2).Add(p.rect.Min)
-	at(gtx, image.Pt(w-dp(gtx, 68), (rh-hb)/2), func(gtx layout.Context) layout.Dimensions {
-		return iconButton(gtx, &p.filter, "filter", 24, 18, cl.Fg2, cl.BgHover, 4)
-	})
+	p.filterButton(gtx, th, w-dp(gtx, 68), (rh-hb)/2)
 	right := w - dp(gtx, 80)
 	if p.ed.Len() > 0 {
 		fill(gtx, image.Rect(right, (rh-dp(gtx, 20))/2, right+1, (rh+dp(gtx, 20))/2), cl.Divider)
@@ -1618,16 +1669,10 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 // paints one color).
 func (p *SearchPopover) layoutEditor(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	sel := theme.WithAlpha(cl.Focus, 0x55)
-	if len(p.tokens) == 0 {
-		return th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, sel)
-	}
+	p.ed.SetSpans(p.tokenSpans(gtx)) // the pills' space and bold values
 	d := th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, sel)
-	for _, pl := range p.acPills(gtx, th, cl) { // after the layout: this frame's regions
-		func() {
-			defer clip.UniformRRect(pl.r, dp(gtx, 3)).Push(gtx.Ops).Pop()
-			fill(gtx, pl.r, pl.bg)
-			th.Editor(gtx, &p.ed, unit.Sp(15), th.C.Mention, sel)
-		}()
+	if len(p.tokens) > 0 {
+		p.drawPills(gtx, th, cl) // after the layout: this frame's regions
 	}
 	return d
 }
@@ -1677,21 +1722,26 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	cy := (sz.Y - ch) / 2
 	x := dp(gtx, 16)
 	if p.picked {
-		// a row is selected: [Enter] Open (Slack adds [Tab] Actions, the
-		// row's action toolbar, which Clack doesn't have)
-		ew := textW(gtx, th, 13, theme.Regular, "Enter") + dp(gtx, 12)
-		rrect(gtx, image.Rect(x, cy, x+ew, cy+ch), dp(gtx, 4), cl.KbdLight)
-		at(gtx, image.Pt(x+dp(gtx, 6), cy), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg, "Enter")
+		// a row is selected: [Enter] Open, [Tab] Actions (the row's
+		// toolbar); keyboardGroup gap 6, keyboardContainer gap 10
+		group := func(chip, hint string) {
+			ew := textW(gtx, th, 13, theme.Regular, chip) + dp(gtx, 12)
+			rrect(gtx, image.Rect(x, cy, x+ew, cy+ch), dp(gtx, 4), cl.KbdLight)
+			at(gtx, image.Pt(x+dp(gtx, 6), cy), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, cl.Fg, chip)
+				})
 			})
-		})
-		x += ew + dp(gtx, 6)
-		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg2, "Open")
+			x += ew + dp(gtx, 6)
+			d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, cl.Fg2, hint)
+				})
 			})
-		})
+			x += d.Size.X + dp(gtx, 10)
+		}
+		group("Enter", "Open")
+		group("Tab", "Actions")
 		p.feedbackLink(gtx, th, cl, sz)
 		return layout.Dimensions{Size: sz}
 	}
@@ -1816,8 +1866,11 @@ func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colo
 		case rst.Has("background-color"):
 			fill(gtx, image.Rectangle{Max: sz}, rst.Background(cl.Bg))
 		}
-		// right side
+		// right side; a picked row's toolbar ends its left part
 		right := sz.X - dp(gtx, 16)
+		if picked {
+			right = p.tbRight(gtx, sz.X)
+		}
 		if pseudo {
 			right -= srEnterChip(gtx, th, cl, right, sz.Y)
 			right -= dp(gtx, 16)
@@ -1835,6 +1888,9 @@ func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colo
 		}
 		lst.Leave()
 		pointerCursor(gtx, sz)
+		if picked {
+			p.tbLayout(gtx, th, sz)
+		}
 		return layout.Dimensions{Size: sz}
 	})
 }

@@ -153,6 +153,10 @@ type recentsState struct {
 	histAt time.Time
 	histOK bool
 
+	// forgotten are the deleted queries (canonicalSearchQuery) later
+	// writes of the pref leave out (4jD3 forgetSearchQuery)
+	forgotten map[string]bool
+
 	ver uint64           // bumped whenever what Recent places / searches read changed
 	now func() time.Time // tests
 }
@@ -598,6 +602,7 @@ func (a *App) RecordRecentSearch(query, typ string) {
 		typ = RecentSearchSlack
 	}
 	a.rec.mu.Lock()
+	delete(a.rec.forgotten, canonicalSearchQuery(query)) // unforgetSearchQuery
 	ev := RecentSearch{Query: query, Type: typ, Timestamp: a.rec.clock().UnixMilli()}
 	a.rec.pendingSearch = append(a.rec.pendingSearch, ev)
 	first := !a.rec.scheduled
@@ -746,6 +751,7 @@ func (a *App) recordVisits(n recentsData) {
 	defer cancel()
 	r := &a.rec
 	writePref := func(d recentsData) {
+		d = a.withoutForgotten(d)
 		if err := a.C.SetPref(ctx, prefRecents, recentsJSON(d, nil)); err != nil {
 			return // Slack logs "recents pref write failed"
 		}
