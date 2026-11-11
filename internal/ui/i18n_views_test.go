@@ -52,6 +52,7 @@ func i18nViewsSize() fakeslack.Size {
 // English. docs/I18N.md lists them.
 var viewsUnkeyed = map[string]bool{
 	"Search for channels": true, // BrowseChannelsView (search): no search key in the bundles
+	"Project tracker":     true, // the fake's list template (lists.templates data, drawn as the API names it)
 }
 
 func unkeyedWith(lists ...map[string]bool) map[string]bool {
