@@ -555,7 +555,8 @@ func (p *SearchPopover) dpAnchorX(prefixLen int) (int, bool) {
 // dpLayout draws the open picker under the input row (window
 // coordinates): useSearchDatePickerPosition's left (the modifier's right
 // edge less 17, kept 8px inside the input row and 333 from its right),
-// the top at the input row's bottom plus Popover's offsetY 1.
+// the top at the input row's bottom (48) plus Popover's offsetY 1: just
+// under the wrapper's 1px line, where inputH ends.
 func (p *SearchPopover) dpLayout(gtx layout.Context, inputH int) {
 	d := &p.dpk
 	d.rect = image.Rectangle{}
@@ -566,8 +567,9 @@ func (p *SearchPopover) dpLayout(gtx layout.Context, inputH int) {
 	if cal == nil || !p.dpShown() {
 		return
 	}
-	if cal.clicks(gtx) || cal != p.dpCal() && !d.ranging {
-		return // a pick: the box changed and the picker closed
+	cal.clicks(gtx)
+	if !p.dpShown() || cal != d.cal && cal != d.rcal {
+		return // a pick closed it
 	}
 	if ax, ok := p.dpAnchorX(prefixLen); ok {
 		d.left, d.leftSet = p.rect.Min.X+p.edX+ax-dp(gtx, 17), true
@@ -590,7 +592,7 @@ func (p *SearchPopover) dpLayout(gtx layout.Context, inputH int) {
 		sz = cal.size(gtx, bodyPad)
 	}
 	left := max(p.rect.Min.X+dp(gtx, 8), min(d.left, p.rect.Max.X-dp(gtx, 8)-dp(gtx, 333)))
-	top := p.rect.Min.Y + inputH + dp(gtx, 1)
+	top := p.rect.Min.Y + inputH
 	r := image.Rectangle{Min: image.Pt(left, top), Max: image.Pt(left, top).Add(sz)}
 	d.rect = r
 

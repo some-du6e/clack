@@ -239,12 +239,18 @@ func (p *SearchPopover) deleteHistory(q string) {
 func (p *SearchPopover) tbFor() []srAction {
 	tb := &p.tb
 	if !p.picked || p.sel < 0 || p.sel >= len(p.rows) {
+		if tb.focus > 0 {
+			p.refocus = true // its button is gone: the box gets the focus
+		}
 		tb.key, tb.acts, tb.focus, tb.active = "", nil, 0, 0
 		return nil
 	}
 	k := p.rows[p.sel].key()
 	if k != tb.key {
 		// a new selection: the active label goes (componentDidUpdate)
+		if tb.focus > 0 {
+			p.refocus = true
+		}
 		tb.key, tb.focus, tb.active = k, 0, 0
 		tb.acts = p.srActionsOf(&p.rows[p.sel])
 		if len(tb.acts) > len(tb.btns) {
@@ -263,8 +269,7 @@ func (p *SearchPopover) tbRight(gtx layout.Context, w int) int {
 	return w - dp(gtx, 16) - n*dp(gtx, 28) - (n-1)*dp(gtx, 8)
 }
 
-// tbLayout draws the toolbar at the right of a row sz big; org is the
-// row's window position.
+// tbLayout draws the toolbar at the right of a picked row sz big.
 func (p *SearchPopover) tbLayout(gtx layout.Context, th *theme.Theme, sz image.Point) {
 	tb := &p.tb
 	acts := p.tbFor()

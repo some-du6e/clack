@@ -86,7 +86,6 @@ func (p *SearchPopover) tokenSpans(gtx layout.Context) []widget.TextSpan {
 // pointer areas (the pill's hover, the icon's click).
 func (p *SearchPopover) drawPills(gtx layout.Context, th *theme.Theme, cl *Colors) {
 	st := &p.pills
-	p.pillPointer(gtx)
 	n := p.ed.Len()
 	var regs []widget.Region
 	for len(st.tags) < len(p.tokens) {
@@ -163,7 +162,8 @@ func (p *SearchPopover) drawPills(gtx layout.Context, th *theme.Theme, cl *Color
 	}
 }
 
-// pillPointer applies last frame's pointer input on the pills.
+// pillPointer applies last frame's pointer input on the pills (before
+// the editor's layout: a click edits the box).
 func (p *SearchPopover) pillPointer(gtx layout.Context) {
 	st := &p.pills
 	for i, tg := range st.tags {

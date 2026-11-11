@@ -279,13 +279,21 @@ func TestSearchQuickFilterRow(t *testing.T) {
 		t.Fatal("the filter button didn't show the row")
 	}
 	x := d.scan()
-	for _, l := range []string{"From me", "Includes me", "Has a link", "Threads only", "In Activity", "Last 7 days"} {
-		if !srHas(x, l) {
-			t.Errorf("no %q pill: %q", l, x)
+	all := []string{"From me", "Includes me", "Has a link", "Threads only", "In Activity", "Last 7 days"}
+	// the 649px switcher holds the first few; the rest are the + menu's
+	if p.qf.shown < 3 || p.qf.shown > len(all) {
+		t.Fatalf("%d pills fit in the 649px switcher", p.qf.shown)
+	}
+	for i, l := range all {
+		if srHas(x, l) != (i < p.qf.shown) {
+			t.Errorf("pill %q drawn %v, %d fit: %q", l, srHas(x, l), p.qf.shown, x)
 		}
 	}
-	if p.qf.shown != 6 {
-		t.Errorf("%d pills fit at 1280, want all 6", p.qf.shown)
+	if p.qf.shown < len(all) {
+		items := p.qfMenuItems(p.quickFilters())
+		if items[0].Header != "Quick filters" || items[1].Label != all[p.qf.shown] {
+			t.Errorf("the + menu's Quick filters %+v", items[:2])
+		}
 	}
 	p.qf.btns[2].Click() // Has a link
 	d.frame()

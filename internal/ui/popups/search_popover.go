@@ -1669,6 +1669,7 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 // paints one color).
 func (p *SearchPopover) layoutEditor(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	sel := theme.WithAlpha(cl.Focus, 0x55)
+	p.pillPointer(gtx)
 	p.ed.SetSpans(p.tokenSpans(gtx)) // the pills' space and bold values
 	d := th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, sel)
 	if len(p.tokens) > 0 {
