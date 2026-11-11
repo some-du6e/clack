@@ -659,6 +659,11 @@ func draftsDay(t time.Time) string {
 
 // draftTime is when a draft was last edited.
 func draftTime(dr *core.Draft) time.Time {
+	// last_updated_ts is in milliseconds (the client_last_updated_ts the
+	// client sends back); read as a ts it lands in the year 58827
+	if ms, err := strconv.ParseInt(dr.LastUpdated, 10, 64); err == nil && ms > 1e11 {
+		return time.UnixMilli(ms)
+	}
 	if t := tsTime(dr.LastUpdated); !t.IsZero() {
 		return t
 	}

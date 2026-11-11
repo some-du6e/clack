@@ -55,10 +55,11 @@ func hudBundle(t *testing.T, loc string) *i18n.Catalog {
 }
 
 // hudUnkeyed are strings the huddle UI draws unchanged that are the fake
-// huddle's data: words of its caption ("Hello from the fake huddle") and
-// of the remote user's name ("Remote Example"), which wrapping text draws
-// word by word.
-var hudUnkeyed = map[string]bool{"huddle": true, "Example": true}
+// huddle's data: words of its caption ("Hello from the fake huddle"), of
+// the remote user's name ("Remote Example") and of the channel's
+// ("#huddle-test", which breaks after its hyphen), which wrapped text draws
+// a piece at a time.
+var hudUnkeyed = map[string]bool{"huddle": true, "Example": true, "Remote": true, "test": true}
 
 var hudWordRE = regexp.MustCompile(`[A-Za-z]{3,}`)
 

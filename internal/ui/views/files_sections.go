@@ -459,7 +459,7 @@ func (f *Files) navRow(gtx C, r sbRow, sc sbColors) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D { return f.icon(gtx, nv.icon, 16, fg) }),
 					hgap(8),
-					layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, nv.label) }),
+					layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, nsFiles.T(nv.label)) }), // UnifiedFilesExplorer
 				)
 			})
 		})
