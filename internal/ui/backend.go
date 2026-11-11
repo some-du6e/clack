@@ -512,10 +512,11 @@ func (b *backend) handle(a *App, ev core.Event) {
 			cur := a.router.Current().Channel()
 			c := m.conv(ev.Channel)
 			direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
-			if b.wantsNotify(ev.Channel, ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) {
+			if b.wantsNotify(ev.Channel, ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) &&
+				replyNotifies(ev, b.selfID) { // a reply only when it mentions the viewer (notify_threads.go)
 				// through Taut's showNotification thunk: plugins may change or
 				// drop it (native: the desktop notification)
-				title, body := b.notifyTitle(ev, c), richtext.PlainText(ev.Msg.Doc)
+				title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
 				msg := notificationMessage(a.Taut(), ev)
 				a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 					func(ctx context.Context, args map[string]any) (any, error) {
@@ -526,6 +527,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 					})
 			}
 		}
+	case "desktop_notification": // a followed thread's reply (notify_threads.go)
+		b.desktopNotification(a, ev)
 	case "marked", "counts":
 		if ev.Count != nil && ev.Channel != "" {
 			changed = b.setCount(ev.Channel, *ev.Count)
@@ -606,15 +609,36 @@ func (b *backend) setCount(id string, cnt core.Count) bool {
 	return true
 }
 
+// notifyTitle is Slack's getNotificationTitle (gaJC) for one signed-in
+// account: "New message from {name}" in a DM, else "New message in
+// {channel}" (notify_threads.go).
 func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
+	if c == nil || c.Kind == "im" || c.Kind == "app" {
+		return "New message from " + b.notifySender(ev)
+	}
+	return "New message in " + notifyChannelName(c)
+}
+
+// notifyBody is getContentForNotification: the text, after "{sender}: "
+// outside DMs.
+func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
+	text := richtext.PlainText(ev.Msg.Doc)
+	if c == nil || c.Kind == "im" || c.Kind == "app" {
+		return text
+	}
+	if name := b.notifySender(ev); name != "" {
+		return name + ": " + text
+	}
+	return text
+}
+
+// notifySender is the sender's name (getMemberName; a bot's username).
+func (b *backend) notifySender(ev core.Event) string {
 	name := ev.Msg.Name
 	if name == "" {
 		if u, ok := b.core.User(ev.Msg.User); ok {
 			name = u.Name
 		}
-	}
-	if c != nil && (c.Kind == "channel" || c.Kind == "private") {
-		return name + " in #" + c.Name
 	}
 	return name
 }

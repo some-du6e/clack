@@ -514,9 +514,13 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.ShowPlaceholder = false
 	case c.ts != "":
 		st.Mode = modeThread
-		// Slack's MessageInput: "Reply to thread…" only under the
-		// nested_secondary_view experiment, else "Reply…".
+		// Slack's MessageInput: "Reply to thread…" under the
+		// nested_secondary_view experiment (isNestedSecondaryViewEnabled,
+		// on for the account: docs/THREADS-AUDIT.md), else "Reply…".
 		st.Placeholder = i18n.T("threads", "Reply…")
+		if a := c.api.a; a != nil && a.Experiment("nested_secondary_view") == "on" {
+			st.Placeholder = i18n.T("threads", "Reply to thread…")
+		}
 	default:
 		st.Mode = modeChannel
 	}
@@ -526,7 +530,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		case "private":
 			st.Private = true
 		case "im", "mpim":
-			st.IsDM = true
+			st.IsDM, st.Group = true, cv.Kind == "mpim"
 		}
 		if st.Mode == modeChannel {
 			if st.IsDM {
@@ -1336,6 +1340,10 @@ func (c *Composer) restoreDroppedFocus(gtx layout.Context) {
 // FocusTag is the key-focus tag of the composer's editor (tests check
 // that nothing takes focus from it).
 func (c *Composer) FocusTag() any { return c.ed }
+
+// PopupOpen reports whether the composer's own popup (autocomplete) is
+// up: Escape is the popup's then, not the thread pane's.
+func (c *Composer) PopupOpen() bool { return c.ac != nil && c.ac.Open() }
 
 // TypingLine is the typing indicator's text under the composer as last
 // laid out ("" none; tests).
