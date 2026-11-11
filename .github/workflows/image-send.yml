@@ -8,6 +8,7 @@ name: image-send
 # against internal/fakeslack. Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run image-send.yml --ref <branch>)
     paths:
       - "internal/core/upload_send.go"
       - "internal/core/writes.go"

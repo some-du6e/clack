@@ -90,8 +90,9 @@ type chromeState struct {
 	SetBroadcast  func(bool)
 	ChannelName   string
 	Private, IsDM bool
+	Group         bool // a group DM (IsDM too): "Also send to the group"
 	// Placeholder is "Message general" (channel: drawn as "Message " + the
-	// hash/lock icon + name), "Message Karim" (DM), "Reply…".
+	// hash/lock icon + name), "Message Karim" (DM), "Reply to thread…".
 	Placeholder     string
 	ShowPlaceholder bool
 	Typing          string // "Karim is typing" for the hint bar, "" none
@@ -1257,8 +1258,13 @@ func (c *chrome) layoutBroadcast(gtx layout.Context, th *theme.Theme, p *crPal, 
 	maxX := x1 - gtx.Dp(12)
 	var end int
 	if st.IsDM || st.ChannelName == "" {
+		// BroadcastControls (63o2): "Also send to the group" in a group
+		// DM, "Also send as direct message" in a DM
 		txt := "Also send to channel"
-		if st.IsDM {
+		switch {
+		case st.Group:
+			txt = "Also send to the group"
+		case st.IsDM:
 			txt = "Also send as direct message"
 		}
 		d := crText(gtx, th.Shaper, x, cy, maxX-x, s, txt)

@@ -222,6 +222,11 @@ var experimentReads = map[string][]string{
 	"lists_grid_todos": on,
 	// drafts (ui/backend.go)
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
+	"channel_details_agents_apps_tab": on,
+	// workflows (ui/blockkit/workflow.go)
+	"enable_wfb_ai_answer_step": on, "workflow_execution_window": on,
+	// the thread pane (secondary views, composer, the reply bar)
+	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
 	// messages and senders
 	"show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
 	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},

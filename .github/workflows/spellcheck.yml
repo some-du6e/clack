@@ -9,6 +9,7 @@ name: spellcheck
 # and dark (spellcheck-shots artifact).
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run spellcheck.yml --ref <branch>)
     paths:
       - "internal/spell/**"
       - "internal/ui/composer/spellcheck*.go"

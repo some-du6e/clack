@@ -8,6 +8,7 @@ name: search
 # only: nothing here talks to Slack).
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run search.yml --ref <branch>)
     paths:
       - "internal/core/search*.go"
       - "internal/core/types.go"

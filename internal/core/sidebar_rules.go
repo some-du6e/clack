@@ -85,6 +85,11 @@ var defaultExperimentGroups = map[string]string{
 	"system_messages_redesign_m1": "on", "flat_message_heading_scale": "on", "portable_content_composer": "treatment",
 	"message_actions_truncate": "on", "unread_thread_indication_in_replybar": "on", "agent_identity_overrides": "on",
 	"forward_message_card": "on", "giphy_fixed_width": "on", "truncated_url_hover_card": "on",
+	// the thread pane (docs/THREADS-AUDIT.md, live 2026-11-10): nested below
+	// the channel header at the 40% default width, the smaller header (15px
+	// title, controls 4px apart), the reply bar's hover-only last reply; no
+	// thread_header_mute_button (no bell in the header)
+	"nested_secondary_view": "on", "secondary_view_default_width": "on", "smaller_secondary_headers": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

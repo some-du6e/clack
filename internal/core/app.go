@@ -1110,6 +1110,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
+	v.FunctionExecutionID = m.FunctionExecutionID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)
 	}
@@ -1123,7 +1124,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		v.PinnedBy = m.PinnedInfo.PinnedBy
 		v.Pinned = true
 	}
-	v.FollowingThread = m.Subscribed
+	v.FollowingThread, v.ThreadLastRead, v.ReplyUsersN = m.Subscribed, m.LastRead, m.ReplyUsersN
 	a.mu.Lock()
 	v.Saved = a.saved[v.Channel+"/"+m.TS]
 	a.mu.Unlock()

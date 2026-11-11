@@ -9,6 +9,7 @@ name: ui-taut
 # the built plugins (GPLv3) are never committed.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run ui-taut.yml --ref <branch>)
     paths:
       - "internal/ui/*.go"
       - "internal/ui/slackc/**"
