@@ -138,6 +138,7 @@ func (a *App) SetExperimentGroups(groups map[string]*string) {
 	a.mu.Unlock()
 	if changed {
 		a.emit(Event{Type: "experiments"})
+		a.recentsAfterExperiments()
 	}
 }
 
@@ -243,4 +244,8 @@ var experimentReads = map[string][]string{
 	"app_thread_nugget_fe": on, "app_nugget_refinement": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	// search and the switcher (search*.go, popups/search_*)
+	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
+	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
+	"search_explore_freshness_signals":               on,
 }

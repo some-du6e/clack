@@ -342,7 +342,10 @@ type SearchOpts struct {
 	Module      string // "messages" (default) | "dms"
 	Context     string // search_context ("" = the module's results tab)
 	ExactOnly   bool   // More > Exact matches only
-	Session     SearchSession
+	// ExcludeArchived is More > Exclude archived (channel_type
+	// exclude_archived; search_explore_freshness_signals)
+	ExcludeArchived bool
+	Session         SearchSession
 	// InChannel is search in channel (⌘F): the query runs as
 	// "in:<#InChannel> …" with count 10.
 	InChannel      string
@@ -355,6 +358,12 @@ type SearchResult struct {
 	Total, Page, Pages   int
 	Convs                map[string]ConvRef
 	FilterIn, FilterFrom []FilterSuggestion // filter_suggestions
+	// Unfiltered is unfiltered_result_count: what the query finds without
+	// its filters (unfiltered_result_filter names them), set when the
+	// filtered search found less. The results page offers "Search without
+	// filters" for it (RelaxationSuggestion).
+	Unfiltered       int
+	UnfilteredFilter map[string]json.RawMessage
 }
 
 // ChannelHit is a channel search / browse result.

@@ -73,6 +73,7 @@ type App struct {
 	icon       teamIconState     // the rail's workspace icon (team_icon.go)
 	rxn        reactState        // the viewer's reactions in flight (reactions.go)
 	frec       frecencyState     // the frecency pref's save throttle and Frequently Used cache (frecency.go)
+	rec        recentsState      // recent searches and places: the recents pref, visits (search_recents.go)
 	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
 	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
 	selected   string            // the open conversation (SetSelected, preview.go)
@@ -603,6 +604,8 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	// everything boot fetched is in: plugins' state mirror re-reads it
 	a.emit(Event{Type: "booted"})
+	// recent searches and places (maybeLoadRecentsPrefs, search_recents.go)
+	go a.MaybeLoadRecents(a.bg)
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()

@@ -648,6 +648,8 @@ func TestSlickViewBetterBlock(t *testing.T) {
 		return nil
 	}
 
+	RecordRecentPlace(slGen, "", "") // the quick messages search your recent conversations
+	t.Cleanup(srResetRecents)
 	p := NewSearchPopover(e.h, "example", image.Rectangle{})
 	f := slFrame(p)
 	slUntil(t, 15*time.Second, "the message suggestions among the search rows", f, func() bool {

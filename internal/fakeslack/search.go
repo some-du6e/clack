@@ -39,6 +39,38 @@ type searchLog struct {
 	mu    sync.Mutex
 	forms map[string][]url.Values
 	saved []string
+	// hist is the search history search.autocomplete answers: search.save
+	// adds to it (or bumps a query's count), search.delete drops a query.
+	hist []savedSearch
+}
+
+// savedSearch is one search history entry.
+type savedSearch struct {
+	terms, typ string
+	ts         float64
+	count      int
+}
+
+// searchHash is the history entry's hash (search.autocomplete use_hash).
+func searchHash(terms string) string {
+	h := uint32(2166136261)
+	for i := 0; i < len(terms); i++ {
+		h = (h ^ uint32(terms[i])) * 16777619
+	}
+	return fmt.Sprintf("%08x", h)
+}
+
+// SetSearchHistory replaces the search history (oldest first); every
+// entry is type "default".
+func (s *Server) SetSearchHistory(terms ...string) {
+	l := s.slog()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.hist = nil
+	base := float64(time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC).Unix())
+	for i, t := range terms {
+		l.hist = append(l.hist, savedSearch{terms: t, typ: "default", ts: base + float64(i)*60, count: 1})
+	}
 }
 
 var searchLogs sync.Map // *Server -> *searchLog
@@ -382,9 +414,52 @@ func (s *Server) searchMessages(f url.Values, dms bool) any {
 	if dms {
 		module = "dms"
 	}
-	return ok("query", f.Get("query"), "module", module, "filters", map[string]any{}, "items", items,
+	out := ok("query", f.Get("query"), "module", module, "filters", map[string]any{}, "items", items,
 		"pagination", pagination(len(hits), page, pages, per, start, end),
 		"filter_suggestions", map[string]any{"in": sugg(inN, o.in), "from": sugg(fromN, o.from)})
+	// nothing with the in:/from: filters, something without them: Slack's
+	// relaxation (unfiltered_result_count, unfiltered_result_filter)
+	if len(hits) == 0 && !dms && (len(o.in) > 0 || len(o.from) > 0) {
+		bare := o
+		bare.in, bare.from = nil, nil
+		n := 0
+		for _, h := range s.searchCorpus(len(s.convs) <= 80) {
+			if len(bare.terms) > 0 && bare.match(h) {
+				n++
+			}
+		}
+		if n > 0 {
+			out["unfiltered_result_count"] = n
+			out["unfiltered_result_filter"] = map[string]any{"in": append([]string{}, o.in...), "from": append([]string{}, o.from...)}
+		}
+	}
+	return out
+}
+
+// sortItems orders the Channels and People tabs' items the way their
+// Sort select asks (name, member_count; asc or desc); relevance keeps
+// the fake's order.
+func sortItems(items []any, by, dir string, key func(any) (string, int)) {
+	less := func(i, j int) bool {
+		ni, ci := key(items[i])
+		nj, cj := key(items[j])
+		switch by {
+		case "name":
+			return ni < nj
+		case "member_count":
+			return ci < cj
+		}
+		return false
+	}
+	if by != "name" && by != "member_count" {
+		return
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if dir == "desc" {
+			return less(j, i)
+		}
+		return less(i, j)
+	})
 }
 
 // searchFile is the file fixture.
@@ -445,6 +520,10 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 					"purpose": map[string]any{"value": c.Purpose.Value, "creator": "", "last_set": 0}, "timestamp": c.Created})
 			}
 		}
+		sortItems(items, f.Get("sort"), f.Get("sort_dir"), func(x any) (string, int) {
+			m := x.(map[string]any)
+			return m["name"].(string), m["member_count"].(int)
+		})
 		page, pages, start, end := pageOf(f, len(items), 20)
 		return ok("module", "channels", "items", append([]any{}, items[start:end]...),
 			"pagination", pagination(len(items), page, pages, 20, start, end)), true
@@ -459,6 +538,7 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 				items = append(items, u)
 			}
 		}
+		sortItems(items, f.Get("sort"), f.Get("sort_dir"), func(x any) (string, int) { return x.(slack.User).Name, 0 })
 		page, pages, start, end := pageOf(f, len(items), 20)
 		return ok("module", "people", "items", append([]any{}, items[start:end]...),
 			"pagination", pagination(len(items), page, pages, 20, start, end)), true
@@ -467,8 +547,16 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 		var items []any
 		n := 0
 		cnt, _ := strconv.Atoi(f.Get("count"))
+		dm := ""
+		if u := f.Get("user"); u != "" { // in:@user: the DM with them
+			for _, c := range s.convs {
+				if c.IsIM && c.User == u {
+					dm = c.ID
+				}
+			}
+		}
 		for _, h := range s.searchCorpus(len(s.convs) <= 80) {
-			if !o.match(h) {
+			if !o.match(h) || (f.Get("channel") != "" && h.ch != f.Get("channel")) || (f.Get("user") != "" && h.ch != dm) {
 				continue
 			}
 			n++
@@ -503,9 +591,62 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 		return ok("files", append([]any{}, files...)), true
 	case "search.save":
 		l.mu.Lock()
-		l.saved = append(l.saved, f.Get("terms"))
+		t := f.Get("terms")
+		l.saved = append(l.saved, t)
+		at := -1
+		for i, h := range l.hist {
+			if h.terms == t {
+				at = i
+			}
+		}
+		now := float64(time.Now().Unix())
+		if at >= 0 {
+			h := l.hist[at]
+			h.count++
+			h.ts = now
+			l.hist = append(append(l.hist[:at:at], l.hist[at+1:]...), h)
+		} else {
+			l.hist = append(l.hist, savedSearch{terms: t, typ: f.Get("type"), ts: now, count: 1})
+		}
 		l.mu.Unlock()
 		return ok(), true
+	case "search.delete":
+		l.mu.Lock()
+		keep := l.hist[:0:0]
+		for _, h := range l.hist {
+			if (f.Get("hash") != "" && searchHash(h.terms) == f.Get("hash")) || (f.Get("terms") != "" && h.terms == f.Get("terms")) {
+				continue
+			}
+			keep = append(keep, h)
+		}
+		l.hist = keep
+		l.mu.Unlock()
+		return ok(), true
+	case "search.autocomplete": // the search history (Slack's searchAutocomplete fetcher)
+		lim, _ := strconv.Atoi(f.Get("limit"))
+		if lim <= 0 {
+			lim = 10
+		}
+		q := strings.ToLower(f.Get("query"))
+		l.mu.Lock()
+		sugg := []any{}
+		for i := len(l.hist) - 1; i >= 0 && len(sugg) < lim; i-- {
+			h := l.hist[i]
+			if q != "" && !strings.HasPrefix(strings.ToLower(h.terms), q) {
+				continue
+			}
+			typ := h.typ
+			if typ == "" {
+				typ = "default"
+			}
+			e := map[string]any{"text": h.terms, "count": h.count, "ts": h.ts, "type": typ}
+			if f.Get("use_hash") == "true" {
+				e["hash"] = searchHash(h.terms)
+			}
+			sugg = append(sugg, e)
+		}
+		l.mu.Unlock()
+		return ok("suggestions", sugg), true
 	case "search.autocomplete.triggers":
 		return ok("triggers", []any{}), true
 	case "feedback.submitEnterpriseSearchFeedback", "search.feedback":

@@ -37,6 +37,13 @@ func (a *App) handle(ev slack.Event) {
 		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" {
 			_ = a.LoadFrecencyPrefs(ctx)
 		}
+	case "search_recents": // handleSearchRecentsPrefsUpdate (search_recents.go)
+		var e struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(ev.Raw, &e) == nil && e.Value == "updated" && a.RecentsReadEnabled() {
+			_ = a.LoadRecentsPrefs(ctx)
+		}
 	case "reaction_added", "reaction_removed":
 		var e struct {
 			User     string `json:"user"`

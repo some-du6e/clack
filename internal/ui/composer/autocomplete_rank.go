@@ -47,6 +47,7 @@ type rankCtx struct {
 	displayRealNames    bool
 	passthrough, demote bool
 	beyond, emojiBoost  bool
+	exactNames          string // search_autocomplete_promote_exact_name_matches' group
 }
 
 // expOn reads a client experiment the way Slack's gates do.
@@ -78,6 +79,7 @@ func rankCtxFrom(api coreAPI, s core.Snapshot, convKind string) rankCtx {
 	r.demote = expOn(a.Experiment("autocomplete_demote_flannel_passthrough_rltv_exact_match"))
 	r.beyond = expOn(a.Experiment("ml_fuzzy_match_beyond_word_boundaries_v2"))
 	r.emojiBoost = a.Experiment("emoji_exact_match_boost") == "on"
+	r.exactNames = a.Experiment("search_autocomplete_promote_exact_name_matches")
 	return r
 }
 
@@ -86,7 +88,7 @@ func (r rankCtx) opts(src string) acrank.Options {
 		Source: src, Limit: acMaxItems, Frecency: r.frec, Weights: r.weights, Now: acNow(),
 		HasChannel: r.convKind != "", ChannelIsIM: r.convKind == "im",
 		Passthrough: r.passthrough, DemotePassthrough: r.demote, BeyondWordBoundaries: r.beyond,
-		EmojiExactBoost: r.emojiBoost, DisplayRealNames: r.displayRealNames,
+		EmojiExactBoost: r.emojiBoost, DisplayRealNames: r.displayRealNames, ExactNameGroup: r.exactNames,
 		EnterpriseID: r.entID, DefaultWorkspace: r.team, SelfTeams: r.selfTeams,
 	}
 }
