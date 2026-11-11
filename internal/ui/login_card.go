@@ -327,24 +327,28 @@ func (a *App) loginLinkView(gtx layout.Context, f *introFrame, enter time.Time, 
 
 	// the primary action, or while waiting a quieter way to open the page again
 	wv := float32(clamp01(l.follow(&l.waitV, springSmooth, l.waiting)))
+	// they fade through: one is gone before the other comes, so their two
+	// labels never overlap (alphas squared, as the header's)
+	pa, ga := clamp01f(1-2*wv), clamp01f(2*wv-1)
+	pa, ga = pa*pa, ga*ga
 	pr := image.Rect(x0, y, x1, y+f.d(loginCtlH))
 	prC, _ := recordOps(gtx, func() int {
-		if wv < 0.996 {
+		if pa > 0.004 {
 			pg := ctl
 			if l.waiting {
 				pg = gtx.Disabled()
 			}
-			o := paint.PushOpacity(gtx.Ops, (1-wv)*dim)
+			o := paint.PushOpacity(gtx.Ops, pa*dim)
 			// the ↵ keycap goes once there's a link: Enter sends it then
 			a.loginPill(pg, f, &l.openSignIn, pr, "Open Slack sign-in", "↵", float32(1-clamp01(send)), false)
 			o.Pop()
 		}
-		if wv > 0.004 {
+		if ga > 0.004 {
 			rg := ctl
 			if !l.waiting {
 				rg = gtx.Disabled()
 			}
-			o := paint.PushOpacity(gtx.Ops, wv*dim)
+			o := paint.PushOpacity(gtx.Ops, ga*dim)
 			a.loginGlassButton(rg, f, &l.reopen, pr, "Open the page again", 15)
 			o.Pop()
 		}
@@ -517,7 +521,7 @@ func (l *loginScreen) fadeLine(f *introFrame, c *loginFade, x, y, w int, size, l
 	}
 	na, dy := float32(1), 0
 	if !c.at.IsZero() {
-		e := l.mc.spring(springSmooth, c.at.Add(90*time.Millisecond))
+		e := l.mc.spring(springSmooth, c.at.Add(60*time.Millisecond))
 		na = float32(clamp01(e))
 		na *= na
 		if !l.reduced {
