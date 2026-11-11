@@ -23,6 +23,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -179,7 +180,7 @@ var fileSorts = [2]string{"Recently viewed", "Last updated"}
 
 // NewFiles builds the Files view (route "files").
 func NewFiles(h Host) *Files {
-	f := &Files{base: newBase(h), search: newSearch(filesNav[0].placeholder), clicks: map[string]*fileClicks{}, reload: true, tplOpen: true,
+	f := &Files{base: newBase(h), search: newSearchIn(nsFiles, filesNav[0].placeholder), clicks: map[string]*fileClicks{}, reload: true, tplOpen: true,
 		starClicks: map[string]*widget.Clickable{}}
 	f.editName.SingleLine, f.editName.Submit = true, true
 	for i := 0; i < 6; i++ {
@@ -509,7 +510,7 @@ func (f *Files) nav_(gtx C) D {
 						return row(gtx, layout.Middle,
 							layout.Rigid(func(gtx C) D { return f.icon(gtx, filesNav[i].icon, 16, fg) }),
 							hgap(8),
-							layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, fg, filesNav[i].label) }),
+							layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, fg, nsFiles.T(filesNav[i].label)) }), // UnifiedFilesExplorer
 						)
 					})
 				})
@@ -533,7 +534,7 @@ func (f *Files) nav_(gtx C) D {
 						// manage files", needs custom_file_sections (file
 						// sections Clack doesn't have): without them there's
 						// no gear.
-						layout.Flexed(1, func(gtx C) D { return f.label(gtx, 18, wBlack, rgb(0xffffff), "Files") }),
+						layout.Flexed(1, func(gtx C) D { return f.label(gtx, 18, wBlack, rgb(0xffffff), nsFiles.T("Files")) }),
 						layout.Rigid(func(gtx C) D { return f.iconButton(gtx, &f.plus, "plus", 28, 20, navText) }),
 					)
 				})
@@ -617,7 +618,7 @@ func (f *Files) starredSubHeader(gtx C, fg color.NRGBA) D {
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D { return f.icon(gtx, "star", 16, fg) }),
 				hgap(8),
-				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, fg, "Starred") }),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, fg, nsFiles.T("Starred")) }),
 			)
 		})
 	})
@@ -653,7 +654,7 @@ func (f *Files) starredHeader(gtx C, fg, hover color.NRGBA) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D { return f.icon(gtx, icon, 16, fg) }),
 					hgap(8),
-					layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, "Starred") }),
+					layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, nsFiles.T("Starred")) }),
 				)
 			})
 		})
@@ -743,7 +744,7 @@ func (f *Files) main(gtx C) D {
 	f.viewH = size.Y
 	fill(gtx, image.Rectangle{Max: size}, f.paneBg())
 	gtx.Constraints = layout.Exact(size)
-	title := filesNav[f.nav].title
+	title := nsFiles.T(filesNav[f.nav].title)
 	if f.kind() == "deleted" { // DeletedFilesPage: its own header and list
 		return col(gtx, layout.Rigid(f.deletedHeader), layout.Flexed(1, f.deletedBody))
 	}
@@ -771,7 +772,8 @@ func (f *Files) main(gtx C) D {
 func (f *Files) newButton(gtx C) D {
 	return f.newBtn.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
-		tw := f.th.Measure(gtx, 13, wBold, "New")
+		newTxt := nsFilesExplorer.T("New") // UnifiedFilesCreateMenu
+		tw := f.th.Measure(gtx, 13, wBold, newTxt)
 		sz := image.Pt(tw+gtx.Dp(12+12+16+4), gtx.Dp(28))
 		bg := f.p.Green
 		if f.newBtn.Hovered() {
@@ -784,7 +786,7 @@ func (f *Files) newButton(gtx C) D {
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D { return f.icon(gtx, "plus", 16, rgb(0xffffff)) }),
 				hgap(4),
-				layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wBold, rgb(0xffffff), "New") }),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wBold, rgb(0xffffff), newTxt) }),
 			)
 		})
 		return D{Size: sz}
@@ -903,7 +905,7 @@ func (f *Files) searchField(gtx C) D {
 						if f.search.ed.Len() > 0 {
 							return D{}
 						}
-						return f.label(gtx, 15, wReg, f.p.Muted, f.search.ph)
+						return f.label(gtx, 15, wReg, f.p.Muted, f.search.placeholder())
 					}),
 					layout.Stacked(func(gtx C) D { return f.th.Editor(gtx, &f.search.ed, 15, f.p.Text, f.p.Mention) }),
 				)
@@ -925,10 +927,11 @@ func (f *Files) templatesHead(gtx C) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D { return f.icon(gtx, caret, 16, f.p.Text) }),
 					hgap(4),
-					layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, "Templates") }),
+					layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, nsDocs.T("Templates")) }), // ExplorerActionsTemplates
 					hgap(8),
 					layout.Rigid(func(gtx C) D {
-						tw := f.th.Measure(gtx, 12, wReg, "New")
+						newTag := i18n.T("education", "New") // EducationTag
+						tw := f.th.Measure(gtx, 12, wReg, newTag)
 						sz := image.Pt(tw+gtx.Dp(8), gtx.Dp(20))
 						tagBg, tagFg := rgb(0xf0f3fc), rgb(0x112377)
 						if f.th.Dark {
@@ -937,7 +940,7 @@ func (f *Files) templatesHead(gtx C) D {
 						rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), tagBg)
 						g := gtx
 						g.Constraints = layout.Exact(sz)
-						layout.Center.Layout(g, func(gtx C) D { return f.label(gtx, 12, wReg, tagFg, "New") })
+						layout.Center.Layout(g, func(gtx C) D { return f.label(gtx, 12, wReg, tagFg, newTag) })
 						return D{Size: sz}
 					}),
 				)
@@ -951,7 +954,7 @@ func (f *Files) templatesHead(gtx C) D {
 			if f.kind() != "lists" {
 				return D{}
 			}
-			return f.linkButton(gtx, &f.seeAll, 15, "See all")
+			return f.linkButton(gtx, &f.seeAll, 15, nsDocs.T("See all"))
 		}),
 	)
 }
@@ -1067,14 +1070,14 @@ func (f *Files) tile(gtx C, t fileTemplate, c *widget.Clickable, sz image.Point)
 
 // filterBar: segment buttons left; Types / sort / Filters right.
 func (f *Files) filterBar(gtx C) D {
-	all := "All"
+	all := nsBrowsers.T("All")
 	switch f.nav {
 	case 1:
-		all = "All Canvases"
+		all = "All Canvases" // no Slack key
 	case 2:
-		all = "All Lists"
+		all = "All Lists" // no Slack key
 	}
-	segs := [3]string{all, "Created by you", "Shared with you"}
+	segs := [3]string{all, nsBrowsers.T("Created by you"), nsBrowsers.T("Shared with you")}
 	ch := make([]layout.FlexChild, 0, 12)
 	for i := range segs {
 		i := i
@@ -1090,7 +1093,7 @@ func (f *Files) filterBar(gtx C) D {
 			// filter_file_types_recents: always "{n} Types" (the selected
 			// count), the refine icon, and the active fill only while the
 			// selection isn't the default one (value !== defaultValue)
-			label := plural(f.typeCount(), "Type")
+			label := nsBrowsers.T("{numberChosen, plural, =1 {# Type} other {# Types}}", "numberChosen", f.typeCount())
 			d := f.segButton(gtx, &f.typesBtn, !f.defaultTypes(), "filter", label, true)
 			f.dropdown(gtx, &f.typesOpen, &f.typesScrim, image.Pt(0, d.Size.Y+gtx.Dp(4)), 280, f.typesMenu)
 			return d
@@ -1099,7 +1102,7 @@ func (f *Files) filterBar(gtx C) D {
 	ch = append(ch,
 		layout.Rigid(func(gtx C) D {
 			// the sort select is active off its default (Recently viewed)
-			d := f.segButton(gtx, &f.sortBtn, f.sortSel != 0, "", fileSorts[f.sortSel], true)
+			d := f.segButton(gtx, &f.sortBtn, f.sortSel != 0, "", nsBrowsers.T(fileSorts[f.sortSel]), true)
 			f.dropdown(gtx, &f.sortOpen, &f.sortScrim, image.Pt(0, d.Size.Y+gtx.Dp(4)), 220, f.sortMenu)
 			return d
 		}),
@@ -1180,14 +1183,14 @@ func (f *Files) segButton(gtx C, c *widget.Clickable, active bool, icon, label s
 func (f *Files) typesMenu(gtx C) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return actStack(gtx, len(fileTypeMenu), func(gtx C, i int) D {
-		return f.menuItem(gtx, &f.typeClicks[i], fileTypeMenu[i].icon, fileTypeMenu[i].label, true, f.typeOn[i])
+		return f.menuItem(gtx, &f.typeClicks[i], fileTypeMenu[i].icon, nsBrowsers.T(fileTypeMenu[i].label), true, f.typeOn[i])
 	})
 }
 
 func (f *Files) sortMenu(gtx C) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	return actStack(gtx, len(fileSorts), func(gtx C, i int) D {
-		return f.menuItem(gtx, &f.sortClicks[i], "", fileSorts[i], true, f.sortSel == i)
+		return f.menuItem(gtx, &f.sortClicks[i], "", nsBrowsers.T(fileSorts[i]), true, f.sortSel == i)
 	})
 }
 
@@ -1216,11 +1219,27 @@ func (f *Files) empty(gtx C) D {
 	case "New Canvas", "New List":
 		btn = &f.emptyNew
 	}
-	return f.filesEmpty(gtx, e.title, e.desc, btn, e.icon, e.button)
+	ns := filesEmptyNS(f.kind(), f.query != "")
+	return f.filesEmpty(gtx, ns.T(e.title), ns.T(e.desc), btn, e.icon, ns.T(e.button))
 }
 
 // filesEmptyState is one of the browser's empty states.
 type filesEmptyState struct{ title, desc, icon, button string }
+
+// filesEmptyNS is the namespace of the component an empty state's copy is
+// from: the canvases explorer's (quip-files-browser), the lists NUX's
+// (lists), else the browser's (browsers).
+func filesEmptyNS(kind string, search bool) i18n.NS {
+	switch {
+	case search:
+		return nsBrowsers
+	case kind == "canvases":
+		return "quip-files-browser"
+	case kind == "lists":
+		return "lists"
+	}
+	return nsBrowsers
+}
 
 // filesEmptyCopy picks Slack's empty state for a section ("" All files,
 // "canvases", "lists"), whether a search is on and whether every file type
@@ -1331,7 +1350,7 @@ func (f *Files) footer(gtx C) D {
 	if f.more.busy() {
 		return layout.Inset{Top: 8, Bottom: 24}.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return f.centered(gtx, 13, wReg, f.p.Muted, "Loading…")
+			return f.centered(gtx, 13, wReg, f.p.Muted, nsFiles.T("Loading…"))
 		})
 	}
 	return D{Size: image.Pt(0, gtx.Dp(24))}
@@ -1437,9 +1456,18 @@ func (f *Files) fileMeta(it *fileItem) string {
 		parts = append(parts, f.userName(it.User))
 	}
 	if t := unixTime(fileUpdated(it)); !t.IsZero() {
-		if sameDay(t, time.Now()) {
+		switch l := i18n.Locale(); {
+		case l != i18n.EnUS:
+			// no Slack string for the line: its "Last updated" and the
+			// locale's date
+			when := listTime(t)
+			if sameDay(t, time.Now()) {
+				when = i18n.RelativeDay(l, t, time.Now(), true)
+			}
+			parts = append(parts, nsFiles.T("Last updated")+" "+when)
+		case sameDay(t, time.Now()):
 			parts = append(parts, "Last updated today")
-		} else {
+		default:
 			parts = append(parts, "Last updated "+listTime(t))
 		}
 	}
@@ -1452,9 +1480,9 @@ func (f *Files) fileMeta(it *fileItem) string {
 func fileKindLabel(it *fileItem) string {
 	switch {
 	case it.isCanvas():
-		return "Canvas"
+		return nsFiles.T("Canvas")
 	case it.isList():
-		return "List"
+		return nsFiles.T("List")
 	case it.PrettyType != "":
 		return it.PrettyType
 	}
@@ -1593,7 +1621,7 @@ func (f *Files) starHint(gtx C) D {
 	if f.h.Core().Experiment("unified_files_3p_primary_custom_sections") == "on" {
 		s = starHintTextFiles
 	}
-	return f.para(gtx, 15, 22, wReg, f.sidebarText(), 0, s)
+	return f.para(gtx, 15, 22, wReg, f.sidebarText(), 0, i18n.T("search", s)) // cNNe's strings
 }
 
 // Slack's strings (cNNe e7).
@@ -1770,13 +1798,13 @@ func (f *Files) createFromTemplate(t fileTemplate) {
 
 // copyLinkLabel is getCopyLinkLabel.
 func copyLinkLabel(it *fileItem) string {
-	switch {
+	switch { // the file namespace's getCopyLinkLabel
 	case it.isList():
-		return "Copy link to list"
+		return nsFile.T("Copy link to list")
 	case it.isCanvas():
-		return "Copy link to canvas"
+		return nsFile.T("Copy link to canvas")
 	}
-	return "Copy link to file"
+	return nsFile.T("Copy link to file")
 }
 
 // fileMenuItems is getFileActionsMenuItems as the Files view's results
@@ -1806,14 +1834,14 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 	id := it.ID
 	saved := a.FileSaved(id)
 	todos := a.Experiment("later_todos") == "on"
-	label, icon := "Save for later", "bookmark"
+	label, icon := nsFile.T("Save for later"), "bookmark" // getFileActionsMenuItems (hYuM)
 	switch {
 	case todos && saved:
-		label, icon = "Remove from Saved", "bookmark-filled"
+		label, icon = nsFile.T("Remove from Saved"), "bookmark-filled"
 	case todos:
-		label = "Add to saved"
+		label = nsFile.T("Add to saved")
 	case saved:
-		label, icon = "Remove from Later", "bookmark-filled"
+		label, icon = nsFile.T("Remove from Later"), "bookmark-filled"
 	}
 	g = append(g, popups.MenuItem{Label: label, Icon: icon, Do: func() {
 		f.write(func(ctx context.Context, a *core.App) error {
@@ -1828,11 +1856,11 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 		})
 	}})
 	if it.isCanvas() || it.isList() {
-		label := "Add to starred"
+		label := nsFile.T("Add to starred")
 		if a.FileStarred(id) {
-			label = "Unstar canvas"
+			label = nsFile.T("Unstar canvas")
 			if it.isList() {
-				label = "Unstar list"
+				label = nsFile.T("Unstar list")
 			}
 		}
 		file := it.File
@@ -1841,15 +1869,15 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 	if link := it.Permalink; link != "" {
 		g = append(g, popups.MenuItem{Label: copyLinkLabel(&it), DoCtx: func(gtx layout.Context) {
 			gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(link))})
-			f.h.Toast("Link copied to clipboard")
+			f.h.Toast(nsFile.T("Link copied to clipboard"))
 		}})
 	}
 	groups = append(groups, g)
 	// edit_file: the uploader's hosted (or email) files
 	if own && (it.Mode == "hosted" || it.Mode == "email") {
-		label := "Edit file details"
+		label := nsFile.T("Edit file details")
 		if it.isImage() {
-			label = "Edit image details"
+			label = nsFile.T("Edit image details")
 		}
 		groups = append(groups, []popups.MenuItem{{Label: label, Do: func() { f.editDetails(it, label) }}})
 	}
@@ -1859,20 +1887,20 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 	if it.isCanvas() || it.isList() {
 		if it.isCanvas() {
 			if co, ok := f.h.(interface{ OpenCanvas(id string) }); ok {
-				groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { co.OpenCanvas(id) }}})
+				groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: nsFile.T("Open in split view"), Icon: "move-to-split-view", Do: func() { co.OpenCanvas(id) }}})
 			}
 		} else if lo, ok := f.h.(interface{ OpenList(id string) }); ok {
-			groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { lo.OpenList(id) }}})
+			groups = append(groups, []popups.MenuItem{{Key: popups.SplitKey, Label: nsFile.T("Open in split view"), Icon: "move-to-split-view", Do: func() { lo.OpenList(id) }}})
 		}
 	}
 	// delete_file: your own files
 	if own && it.Mode != "tombstone" {
-		label := "Delete file"
+		label := nsFile.T("Delete file")
 		switch {
 		case it.isCanvas():
-			label = "Delete canvas"
+			label = nsFile.T("Delete canvas")
 		case it.isList():
-			label = "Delete list"
+			label = nsFile.T("Delete list")
 		}
 		groups = append(groups, []popups.MenuItem{{Label: label, Danger: true, Do: func() { f.confirmDelete(it) }}})
 	}
@@ -1930,12 +1958,13 @@ func (f *Files) confirmDelete(it fileItem) {
 	if !ok {
 		return
 	}
-	title, text, action := "Delete file", "Are you sure you want to delete this file permanently?", "Yes, Delete This File"
+	// DeleteFileDialog's strings (the files namespace)
+	title, text, action := nsFiles.T("Delete file"), nsFiles.T("Are you sure you want to delete this file permanently?"), nsFiles.T("Yes, Delete This File")
 	switch {
 	case it.isCanvas():
-		title, text, action = "Delete canvas", "Are you sure you want to delete this canvas?", "Delete canvas"
+		title, text, action = nsFiles.T("Delete canvas"), nsFiles.T("Are you sure you want to delete this canvas?"), nsFiles.T("Delete canvas")
 	case it.isList():
-		title, text, action = "Delete list", "Are you sure you want to delete this list?", "Delete list"
+		title, text, action = nsFiles.T("Delete list"), nsFiles.T("Are you sure you want to delete this list?"), nsFiles.T("Delete list")
 	}
 	popups.Confirm(ph, title, text, action, true, func(gtx layout.Context) layout.Dimensions {
 		return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return f.deletePreview(gtx, &it) })
@@ -1950,7 +1979,7 @@ func (f *Files) deleteFile(it fileItem) {
 	}
 	f.write(func(ctx context.Context, a *core.App) error { return a.DeleteFile(ctx, id) }, func(err error) {
 		if err != nil {
-			f.h.Toast("Oops! We couldn’t delete that file")
+			f.h.Toast(nsFiles.T("Oops! We couldn’t delete that file"))
 			f.reload = true
 			return
 		}
@@ -1964,7 +1993,7 @@ func (f *Files) deleteFile(it fileItem) {
 
 // deletePreview is the dialog's file (FilePreview with "You • time").
 func (f *Files) deletePreview(gtx C, it *fileItem) D {
-	meta := "You"
+	meta := i18n.T("message_kit", "You")
 	if t := unixTime(it.Created); !t.IsZero() {
 		meta += " • " + listTime(t)
 	}
@@ -2018,7 +2047,7 @@ func (f *Files) editDetails(it fileItem, title string) {
 				gtx.Execute(key.FocusCmd{Tag: &f.editName})
 			}
 			return col(gtx,
-				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, "File name") }),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, nsFileDetails.T("File name")) }), // EditFileDialog
 				layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(8))} }),
 				layout.Rigid(func(gtx C) D {
 					return popups.Field(gtx, th, &f.editName, "big-sur-trip-aerial.png", "", 40, 15)
@@ -2026,7 +2055,7 @@ func (f *Files) editDetails(it fileItem, title string) {
 			)
 		},
 		FocusStops: func() []event.Tag { return []event.Tag{&f.editName} },
-		Buttons: []*popups.ModalButton{{Label: "Done", Kind: popups.BtnPrimary, Enabled: valid, Do: func() bool {
+		Buttons: []*popups.ModalButton{{Label: nsFileDetails.T("Done"), Kind: popups.BtnPrimary, Enabled: valid, Do: func() bool {
 			if !valid() {
 				return false
 			}

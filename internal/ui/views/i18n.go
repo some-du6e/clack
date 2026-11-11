@@ -24,6 +24,12 @@ var (
 	nsSharedInvites = i18n.NS("shared_channel_invites") // SlackConnectConfirmTrustModal
 	nsUnreads       = i18n.NS("all_unreads")            // the Unreads view
 	nsRecent        = i18n.NS("recent_page")            // the DMs view (DmsPage, DmsChannel)
+	nsFiles         = i18n.NS("files")                  // the Files view (UnifiedFilesExplorer, DeleteFileDialog)
+	nsFile          = i18n.NS("file")                   // a file's actions menu (getFileActionsMenuItems)
+	nsFileDetails   = i18n.NS("file-details")           // EditFileDialog
+	nsBrowsers      = i18n.NS("browsers")               // the browsers' filters, sorts and empty states
+	nsFilesExplorer = i18n.NS("files-explorer")         // UnifiedFilesCreateMenu
+	nsDocs          = i18n.NS("slack-docs")             // ExplorerActionsTemplates
 )
 
 // localized reports whether Slack's strings differ from the English
@@ -203,4 +209,27 @@ func tagSegs(s string) []tagSeg {
 		stack = append(stack, name)
 	}
 	return out
+}
+
+// shortPrettyAt is formatDate(t, "{date_short_pretty} at {time}") (tNjd):
+// Today or Tomorrow (FpaR), else the short calendar date, then the time.
+// formatDate substitutes its tokens and leaves the template as it is, so
+// " at " stays English in every locale, as in Slack.
+func shortPrettyAt(l string, t, now time.Time) string {
+	d := i18n.RelativeDay(l, t, now, false)
+	if d == "" {
+		excl := t.Sub(now) < 182*24*time.Hour && now.Sub(t) < 182*24*time.Hour
+		d = i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: excl})
+	}
+	return d + " at " + clock(t)
+}
+
+// dueTodayText is a to-do stamped due "now": "Due today" (en-US), else
+// Slack's "Due {dateString}" with the locale's "today".
+func dueTodayText() string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		now := time.Now()
+		return nsLater.T("Due {dateString}", "dateString", i18n.RelativeDay(l, now, now, true))
+	}
+	return "Due today"
 }

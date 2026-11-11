@@ -1329,6 +1329,14 @@ func dueText(t time.Time) (string, bool) {
 		return "", false
 	}
 	now := time.Now()
+	if l := i18n.Locale(); l != i18n.EnUS {
+		// getDateDuePillString's toTimeAgo in Slack's "Overdue by
+		// {dateString}" / "Due {dateString}" (saved_for_later)
+		if t.Before(now) {
+			return nsLater.T("Overdue by {dateString}", "dateString", i18n.TimeAgo(l, t, now, false, true)), true
+		}
+		return nsLater.T("Due {dateString}", "dateString", i18n.TimeAgo(l, t, now, false, false)), false
+	}
 	if t.Before(now) {
 		d := now.Sub(t)
 		switch {

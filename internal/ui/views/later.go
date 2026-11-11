@@ -40,6 +40,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -108,6 +109,9 @@ func laterIsTodo(it *core.SavedItem) bool {
 // laterWhen formats a reminder time for the confirmation toast.
 func laterWhen(t time.Time) string {
 	now := time.Now()
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return shortPrettyAt(l, t, now)
+	}
 	switch {
 	case sameDay(t, now):
 		return "today at " + clock(t)
@@ -438,11 +442,11 @@ func (s *savedBase) rowActions(gtx C) {
 		case remind:
 			r.pin = !r.pin
 		case toSaved:
-			s.write1(it, true, "Moved to Saved", func(ctx context.Context, c *core.App) error {
+			s.write1(it, true, nsLater.T("To-do moved to Saved"), func(ctx context.Context, c *core.App) error { // LaterTodoToast
 				return c.MoveToSaved(ctx, ch, ts)
 			})
 		case toTodos:
-			s.write1(it, true, "Added to To-dos", func(ctx context.Context, c *core.App) error {
+			s.write1(it, true, nsLater.T("Moved to to-dos"), func(ctx context.Context, c *core.App) error {
 				return c.MoveToTodos(ctx, ch, ts, 0)
 			})
 		case clearDue:
@@ -453,7 +457,7 @@ func (s *savedBase) rowActions(gtx C) {
 				return c.UpdateSaved(ctx, ch, ts, core.SavedUpdate{DateDue: &zero})
 			})
 		case unsave:
-			s.write1(it, true, "Removed from Saved", func(ctx context.Context, c *core.App) error {
+			s.write1(it, true, nsLater.T("Saved item cleared"), func(ctx context.Context, c *core.App) error {
 				return c.Unsave(ctx, ch, ts)
 			})
 		case more:
@@ -466,7 +470,7 @@ func (s *savedBase) rowActions(gtx C) {
 			due := at.Unix()
 			f.items[i].DateDue = due
 			r.pin, s.dirty = false, true
-			s.write1(it, !s.todos, "Reminder set for "+laterWhen(at), func(ctx context.Context, c *core.App) error {
+			s.write1(it, !s.todos, nsLater.T("Reminder set for {dueDate}", "dueDate", laterWhen(at)), func(ctx context.Context, c *core.App) error {
 				return c.MoveToTodos(ctx, ch, ts, due)
 			})
 		}
@@ -479,7 +483,7 @@ func (s *savedBase) toggleDone(f *savedFeed, i int) {
 	ch, ts := it.Channel, it.TS
 	if laterCompleted(&it) {
 		f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "to_do", 0, true
-		s.write1(it, false, "Moved back to in progress", func(ctx context.Context, c *core.App) error {
+		s.write1(it, false, nsLater.T("To-do marked incomplete"), func(ctx context.Context, c *core.App) error {
 			// MoveToTodos alone leaves the item completed (it sends no
 			// mark=uncompleted), so un-complete it first.
 			no := false
@@ -491,7 +495,7 @@ func (s *savedBase) toggleDone(f *savedFeed, i int) {
 		return
 	}
 	f.items[i].TodoState, f.items[i].DateCompleted, s.dirty = "completed", time.Now().Unix(), true
-	s.write1(it, false, "Marked as complete", func(ctx context.Context, c *core.App) error {
+	s.write1(it, false, nsLater.T("To-do marked complete"), func(ctx context.Context, c *core.App) error {
 		return c.CompleteTodo(ctx, ch, ts)
 	})
 }
@@ -588,7 +592,7 @@ func (s *savedBase) remindMenu(gtx C, it *core.SavedItem, r *laterRow) D {
 		}
 		if it.DateDue > 0 && laterIsTodo(it) {
 			ch = append(ch, layout.Rigid(func(gtx C) D {
-				return s.button(gtx, &r.clearDue, btnGhost, true, "Remove reminder")
+				return s.button(gtx, &r.clearDue, btnGhost, true, nsLater.T("Clear reminder")) // ReminderTimeMenu
 			}))
 		}
 		return row(gtx, layout.Middle, ch...)
@@ -639,14 +643,14 @@ func (s *savedBase) contextLine(gtx C, it *core.SavedItem) D {
 			kind = c.Kind
 		}
 		if isDMKind(kind) {
-			ctx = "Direct message"
+			ctx = dmFallbackName()
 		} else {
 			ctx = s.convTitle(it.Channel, s.convs)
 		}
 		if m := it.Msg; m != nil && m.ThreadTS != "" && m.ThreadTS != m.TS {
-			ctx = "Thread in " + ctx
+			ctx = nsLater.T("Thread in {name}", "name", ctx) // useMessageRowRenderer
 			if isDMKind(kind) {
-				ctx = "Thread in a direct message"
+				ctx = nsActivity.T("Thread in a direct message")
 			}
 		}
 	}
@@ -669,7 +673,7 @@ func (s *savedBase) savedChip(gtx C, it *core.SavedItem) D {
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D { return s.icon(gtx, "check", 14, green) }),
 				hgap(4),
-				layout.Rigid(func(gtx C) D { return s.label(gtx, 12, wBold, green, "Completed") }),
+				layout.Rigid(func(gtx C) D { return s.label(gtx, 12, wBold, green, nsLater.T("Completed")) }),
 			)
 		})
 	}
@@ -681,7 +685,7 @@ func (s *savedBase) savedChip(gtx C, it *core.SavedItem) D {
 	if over && !laterOverdue(it) {
 		// Slack stamps a to-do added without a reminder as due "now";
 		// that reads as due today, not overdue.
-		txt, over = "Due today", false
+		txt, over = dueTodayText(), false
 	}
 	fg, bg := s.p.Sec, s.p.ReadFill
 	if over {
@@ -918,7 +922,7 @@ func (l *Later) cleanUp(i int) {
 		for j := range todo {
 			l.remove(laterKey(&todo[j]))
 		}
-		l.write("", "Moved "+plural(len(todo), "to-do")+" to Saved", true, func(ctx context.Context, c *core.App) error {
+		l.write("", nsLater.T("To-dos moved to Saved"), true, func(ctx context.Context, c *core.App) error {
 			return laterEach(ctx, todo, func(it core.SavedItem) error { return c.MoveToSaved(ctx, it.Channel, it.TS) })
 		})
 	case 1: // Complete to-dos
@@ -951,7 +955,7 @@ func (l *Later) cleanUp(i int) {
 		for j := range gone {
 			l.remove(laterKey(&gone[j]))
 		}
-		l.write("", "Removed "+plural(len(gone), "deleted message"), true, func(ctx context.Context, c *core.App) error {
+		l.write("", nsLater.T("To-dos for deleted messages removed"), true, func(ctx context.Context, c *core.App) error {
 			return laterEach(ctx, gone, func(it core.SavedItem) error { return c.Unsave(ctx, it.Channel, it.TS) })
 		})
 	}
@@ -974,19 +978,20 @@ func (l *Later) confirmClear() {
 	if !ok {
 		return
 	}
-	body := "This removes " + plural(len(all), "to-do") + " from To-dos and Saved. The messages themselves stay where they are."
+	// BulkClearTodosSubmenu's All
+	body := nsLater.T("All to-do items, including completed ones, will be removed from your to-do list. This can’t be undone.")
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: "Clear to-dos?",
+		Title: nsLater.T("Clear all to-dos?"),
 		Body: func(gtx C) D {
 			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 0, body) })
 		},
 		Buttons: []*popups.ModalButton{
-			{Label: "Cancel", Kind: popups.BtnOutline},
-			{Label: "Clear to-dos", Kind: popups.BtnDanger, Do: func() bool {
+			{Label: nsLater.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsLater.T("Clear all"), Kind: popups.BtnDanger, Do: func() bool {
 				for j := range all {
 					l.remove(laterKey(&all[j]))
 				}
-				l.write("", "Cleared "+plural(len(all), "to-do"), true, func(ctx context.Context, c *core.App) error {
+				l.write("", nsLater.T("All to-dos cleared"), true, func(ctx context.Context, c *core.App) error {
 					return laterEach(ctx, all, func(it core.SavedItem) error { return c.Unsave(ctx, it.Channel, it.TS) })
 				})
 				return true
@@ -1016,9 +1021,9 @@ func (l *Later) openAdd() {
 		return laterResult{page: p, seq: 1}, err
 	})
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title:   "Add a to-do",
+		Title:   nsLater.T("Add a to-do"),
 		Body:    a.body,
-		Buttons: []*popups.ModalButton{{Label: "Done", Kind: popups.BtnOutline}},
+		Buttons: []*popups.ModalButton{{Label: nsLater.T("Done"), Kind: popups.BtnOutline}},
 	}))
 }
 
@@ -1039,7 +1044,7 @@ func (a *todoAdd) body(gtx C) D {
 			if laterKey(&it) == k {
 				ch, ts := it.Channel, it.TS
 				a.added[k] = true
-				l.write("", "Added to To-dos", true, func(ctx context.Context, c *core.App) error {
+				l.write("", nsLater.T("Moved to to-dos"), true, func(ctx context.Context, c *core.App) error {
 					return c.MoveToTodos(ctx, ch, ts, 0)
 				})
 			}
@@ -1090,7 +1095,7 @@ func (a *todoAdd) body(gtx C) D {
 						if a.added[k] {
 							return l.para(gtx, 13, 18, wBold, l.p.Green, 1, "Added")
 						}
-						return l.button(gtx, c, btnOutline, true, "Add")
+						return l.button(gtx, c, btnOutline, true, nsLater.T("Add"))
 					}),
 				)
 			})
@@ -1195,9 +1200,9 @@ func (l *Later) todoHeader(gtx C) D {
 		return layout.W.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.Y = 0
 			return row(gtx, layout.Middle,
-				layout.Flexed(1, func(gtx C) D { return l.para(gtx, 18, 24, wBlack, l.p.Text, 1, "To-dos") }),
+				layout.Flexed(1, func(gtx C) D { return l.para(gtx, 18, 24, wBlack, l.p.Text, 1, nsLater.T("To-dos")) }),
 				layout.Rigid(func(gtx C) D {
-					return l.todoOutline(gtx, &l.addBtn, "check-circle", "Add To-do", 28, 12, 13, l.p.BorderStr, false)
+					return l.todoOutline(gtx, &l.addBtn, "check-circle", nsLater.T("Add To-do"), 28, 12, 13, l.p.BorderStr, false)
 				}),
 				hgap(8),
 				layout.Rigid(func(gtx C) D {
@@ -1216,7 +1221,7 @@ func (l *Later) toolbar(gtx C) D {
 	w := gtx.Constraints.Max.X
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, gtx.Dp(todoToolH)))
-	label := "Filter"
+	label := nsLater.T("Filter")
 	if n := l.filterCount(); n > 0 {
 		label += " (" + strconv.Itoa(n) + ")"
 	}
@@ -1266,7 +1271,7 @@ func (l *Later) layoutList(gtx C) D {
 	case total == 0 && err != nil:
 		return l.errorState(gtx, err, &l.retry)
 	case total == 0:
-		return l.savedEmpty(gtx, "No to-dos yet", "Add a to-do from any message, or write your own.", &l.emptyAdd, "Add To-do")
+		return l.savedEmpty(gtx, nsLater.T("No to-dos yet"), nsLater.T("Add a to-do from any message, or write your own."), &l.emptyAdd, nsLater.T("Add To-do")) // TodosEmptyState
 	case n == 0:
 		return l.savedEmpty(gtx, "No matching to-dos", "Try changing your filters.", nil, "")
 	}
@@ -1351,17 +1356,19 @@ func (l *Later) filterMenu(gtx C) D {
 	}
 	check := func(on bool) W { return func(gtx C) D { return l.todoCheck(gtx, on) } }
 	ch := []layout.FlexChild{
-		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, "Filter by", 15, wBold, l.p.Text, 32) }),
-		layout.Rigid(func(gtx C) D { return l.menuRow(gtx, &l.selAll, check(all), "Select all", nil) }),
+		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, nsLater.T("Filter by"), 15, wBold, l.p.Text, 32) }),
+		layout.Rigid(func(gtx C) D { return l.menuRow(gtx, &l.selAll, check(all), nsLater.T("Select all"), nil) }),
 		layout.Rigid(l.menuDivider),
-		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, "Status", 13, wReg, l.p.Muted, 24) }),
+		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, nsLater.T("Status"), 13, wReg, l.p.Muted, 24) }),
 	}
 	item := func(i int) layout.FlexChild {
-		return layout.Rigid(func(gtx C) D { return l.menuRow(gtx, &l.fclicks[i], check(l.f[i]), todoFilterLabels[i], nil) })
+		return layout.Rigid(func(gtx C) D {
+			return l.menuRow(gtx, &l.fclicks[i], check(l.f[i]), nsLater.T(todoFilterLabels[i]), nil)
+		})
 	}
 	ch = append(ch, item(todoFInProg), item(todoFDone),
 		layout.Rigid(l.menuDivider),
-		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, "Reminders", 13, wReg, l.p.Muted, 24) }),
+		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, nsLater.T("Reminders"), 13, wReg, l.p.Muted, 24) }),
 		item(todoFOverdue), item(todoFUpcoming), item(todoFNone),
 	)
 	return col(gtx, ch...)
@@ -1369,7 +1376,7 @@ func (l *Later) filterMenu(gtx C) D {
 
 func (l *Later) sortMenu(gtx C) D {
 	ch := []layout.FlexChild{
-		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, "Sort by", 13, wReg, l.p.Muted, 24) }),
+		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, nsLater.T("Sort by"), 13, wReg, l.p.Muted, 24) }),
 	}
 	for i := range todoSortLabels {
 		i := i
@@ -1377,18 +1384,18 @@ func (l *Later) sortMenu(gtx C) D {
 		if i == l.sortBy {
 			trail = func(gtx C) D { return l.icon(gtx, "check", 16, l.p.Text) }
 		}
-		ch = append(ch, layout.Rigid(func(gtx C) D { return l.menuRow(gtx, &l.sclicks[i], nil, todoSortLabels[i], trail) }))
+		ch = append(ch, layout.Rigid(func(gtx C) D { return l.menuRow(gtx, &l.sclicks[i], nil, nsLater.T(todoSortLabels[i]), trail) }))
 	}
 	return col(gtx, ch...)
 }
 
 func (l *Later) cleanMenu(gtx C) D {
 	ch := []layout.FlexChild{
-		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, "Clean up", 13, wReg, l.p.Muted, 24) }),
+		layout.Rigid(func(gtx C) D { return l.menuHeading(gtx, nsLater.T("Clean up"), 13, wReg, l.p.Muted, 24) }),
 	}
 	for i := range todoCleanLabels {
 		i := i
-		ch = append(ch, layout.Rigid(func(gtx C) D { return l.menuRow(gtx, &l.cclicks[i], nil, todoCleanLabels[i], nil) }))
+		ch = append(ch, layout.Rigid(func(gtx C) D { return l.menuRow(gtx, &l.cclicks[i], nil, nsLater.T(todoCleanLabels[i]), nil) }))
 	}
 	return col(gtx, ch...)
 }
@@ -1438,7 +1445,7 @@ func (s *Saved) Layout(gtx C) D {
 			layout.Inset{Left: 18, Right: 12}.Layout(g, func(gtx C) D {
 				return layout.W.Layout(gtx, func(gtx C) D {
 					gtx.Constraints.Min.Y = 0
-					return s.para(gtx, 18, 24, wBlack, s.p.Text, 1, "Saved")
+					return s.para(gtx, 18, 24, wBlack, s.p.Text, 1, nsLater.T("Saved"))
 				})
 			})
 			// Slack's empty Saved page has no line under the header.
@@ -1461,7 +1468,7 @@ func (s *Saved) layoutList(gtx C) D {
 	case n == 0 && err != nil:
 		return s.errorState(gtx, err, &s.retry)
 	case n == 0:
-		return s.savedEmpty(gtx, "Nothing saved yet", "Save a message to keep it here.", nil, "")
+		return s.savedEmpty(gtx, nsLater.T("Nothing saved yet"), nsLater.T("Save a message to keep it here."), nil, "")
 	}
 	extra := 0
 	if s.feed.more.busy() {
@@ -1870,12 +1877,12 @@ func (l *Later) clearTodo(it core.SavedItem) {
 	}
 	tu, ok := l.h.(interface{ ToastUndo(string, func()) })
 	if !ok {
-		l.h.Toast("To-do cleared")
+		l.h.Toast(nsLater.T("To-do cleared"))
 		send()
 		return
 	}
 	var undone atomic.Bool
-	tu.ToastUndo("To-do cleared", func() {
+	tu.ToastUndo(nsLater.T("To-do cleared"), func() {
 		undone.Store(true)
 		delete(l.gone, k)
 		for _, f := range l.feeds {
