@@ -732,7 +732,7 @@ func TestSearchViewResults(t *testing.T) {
 	v.moreMenu(layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}})
 	m = srMenu(e.h)
 	want := []string{"# Saved preferences", "Exclude bot messages", "Only my channels", "--", "# Results", "Exact matches only",
-		"With people", "Message has", "Message is", "Date", "File type", "Reactions"}
+		"--", "With people", "Message has", "Message is", "Date", "File type", "Reactions"}
 	if got := srLabels(m.items); !slices.Equal(got, want) {
 		t.Errorf("More menu %q\nwant %q", got, want)
 	}
@@ -936,6 +936,18 @@ func TestSearchViewTabFilters(t *testing.T) {
 func TestSearchViewTabSorts(t *testing.T) {
 	e := srNewEnv(t, false)
 	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	// the tab's own call (not another tab's count-only one, which Slack
+	// sends newest first)
+	tabCall := func(method, sctx string) url.Values {
+		f := e.fs.SearchForms(method)
+		for i := len(f) - 1; i >= 0; i-- {
+			if f[i].Get("search_context") == sctx && f[i].Get("count") != "0" {
+				return f[i]
+			}
+		}
+		t.Fatalf("no %s call for %s", method, sctx)
+		return nil
+	}
 	for _, c := range []struct {
 		q, method   string
 		labels      []string
@@ -954,8 +966,8 @@ func TestSearchViewTabSorts(t *testing.T) {
 			[]string{"Most relevant (default)", "A to Z", "Z to A", "--", "Edit default"}, "Z to A", "name", "desc", false},
 	} {
 		v, d := srView(t, e, c.q, false)
-		f := e.fs.SearchForms(c.method)
-		if first := f[len(f)-1]; c.method == "search.modules.files" && (first.Get("sort") != "score" || first.Get("sort_dir") != "desc") {
+		sctx := "desktop_" + srTabModules[v.tab] + "_tab"
+		if first := tabCall(c.method, sctx); c.method == "search.modules.files" && (first.Get("sort") != "score" || first.Get("sort_dir") != "desc") {
 			t.Errorf("%s: the tab starts %s %s, want score desc (Most relevant)", c.q, first.Get("sort"), first.Get("sort_dir"))
 		}
 		if x := d.scan(); !srHas(x, "Sorted by ") || !srHas(x, "Most relevant (default)") {
@@ -973,8 +985,7 @@ func TestSearchViewTabSorts(t *testing.T) {
 		}
 		m.Dismiss()
 		d.until(t, c.pick, func() bool { return !v.loading })
-		f = e.fs.SearchForms(c.method)
-		last := f[len(f)-1]
+		last := tabCall(c.method, sctx)
 		if last.Get("sort") != c.sort || last.Get("sort_dir") != c.dir {
 			t.Errorf("%s %s: sort %s %s, want %s %s", c.q, c.pick, last.Get("sort"), last.Get("sort_dir"), c.sort, c.dir)
 		}
