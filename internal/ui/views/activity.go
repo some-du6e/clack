@@ -1779,6 +1779,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		// it); the list's focus moves to it
 		v.focusKey = key
 		switch {
+		case v.splitOpen(it, key): // a split modifier click (activity_split.go)
 		case v.selOK && v.selKey == key:
 			v.selOK = false
 		default:

@@ -272,3 +272,13 @@ func typingLine(names []string) string {
 func typingText(a *core.App, ch, ts, self string) string {
 	return typingLine(typingHub(a).names(ch, ts, self))
 }
+
+// dropTyper removes one typer (by id) from typers' parallel lists.
+func dropTyper(ids, names []string, id string) ([]string, []string) {
+	for i, x := range ids {
+		if x == id && i < len(names) {
+			return append(ids[:i:i], ids[i+1:]...), append(names[:i:i], names[i+1:]...)
+		}
+	}
+	return ids, names
+}
