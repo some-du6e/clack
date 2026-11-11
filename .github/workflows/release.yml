@@ -85,7 +85,7 @@ jobs:
           go-version-file: go.mod
           cache: false # release binaries build from a clean module/build cache
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test
         run: go test ./...
 
@@ -114,7 +114,7 @@ jobs:
           go-version-file: go.mod
           cache: false # release binaries build from a clean module/build cache
       - name: deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS desktop-file-utils rpm >/dev/null
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS desktop-file-utils rpm >/dev/null
       - name: build
         run: |
           mkdir -p build/linux dist
@@ -217,7 +217,7 @@ jobs:
           go-version-file: go.mod
           cache: false # release binaries build from a clean module/build cache
       - name: mingw (cgo for amd64, miniaudio huddle audio)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq gcc-mingw-w64-x86-64
       - name: resources (icon #1, manifest, version info)
         run: |
           go install github.com/tc-hib/go-winres@$GO_WINRES_VERSION
