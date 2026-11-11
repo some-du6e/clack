@@ -77,8 +77,9 @@ var symbolsOutsideLato = map[rune]string{
 
 // Every visible symbol in internal/ui's strings is in Lato or drawn as an
 // emoji image, or listed above with a reason; ↵ in particular is drawn as
-// an icon by every keycap. Invisible format characters (bidi controls, the
-// word joiner) and regular expressions (link_warning's look-alike set,
+// an icon by every keycap. Characters that draw nothing (bidi controls,
+// the word joiner, spaces, line and paragraph separators) and regular
+// expressions (link_warning's look-alike set,
 // matched in input, never drawn) don't count.
 func TestUISymbolsHaveGlyphs(t *testing.T) {
 	seen := map[rune]string{}
@@ -122,7 +123,7 @@ func TestUISymbolsHaveGlyphs(t *testing.T) {
 				return true
 			}
 			for _, r := range s {
-				if r >= 0x2000 && r < 0x3000 && !unicode.Is(unicode.Cf, r) {
+				if r >= 0x2000 && r < 0x3000 && unicode.IsGraphic(r) && !unicode.IsSpace(r) && !unicode.Is(unicode.Cf, r) {
 					if _, ok := seen[r]; !ok {
 						seen[r] = fset.Position(lit.Pos()).String()
 					}
