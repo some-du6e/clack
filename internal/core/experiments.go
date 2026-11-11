@@ -252,5 +252,6 @@ var experimentReads = map[string][]string{
 	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
 	"defer_notification_3p_streaming": on,
 	// files
-	"file_trash_updates": on,
+	"file_trash_updates":   on,
+	"custom_file_sections": on, // the Files sidebar's starred file collection (views/files.go)
 }
