@@ -102,17 +102,21 @@ type Palette struct {
 	Placeholder                  color.NRGBA // image loading background
 	Selection                    color.NRGBA
 	Highlight                    color.NRGBA // Style Highlight
-	Divider                      color.NRGBA
-	ButtonBorder, ButtonHoverBg  color.NRGBA
-	Primary, PrimaryText         color.NRGBA
-	Danger, DangerText           color.NRGBA
-	FileIconBg, FileIconPDF      color.NRGBA
-	FileIconZip, FileIconText    color.NRGBA
-	PlayBg, PlayFg               color.NRGBA
-	TooltipBg, TooltipText       color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
-	TooltipGlow                  color.NRGBA // the dark mode tooltip outline (none in light)
-	FooterSep                    color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
-	HuddleJoinBorder             color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
+	// Style FindHighlight (.p-threads_flexpane
+	// .c-mrkdwn__highlight--find-in-thread), and in the message of the
+	// focused result (.c-message_kit__blocks--focused-result)
+	FindHighlight, FindFocused  color.NRGBA
+	Divider                     color.NRGBA
+	ButtonBorder, ButtonHoverBg color.NRGBA
+	Primary, PrimaryText        color.NRGBA
+	Danger, DangerText          color.NRGBA
+	FileIconBg, FileIconPDF     color.NRGBA
+	FileIconZip, FileIconText   color.NRGBA
+	PlayBg, PlayFg              color.NRGBA
+	TooltipBg, TooltipText      color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
+	TooltipGlow                 color.NRGBA // the dark mode tooltip outline (none in light)
+	FooterSep                   color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
+	HuddleJoinBorder            color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -136,7 +140,7 @@ func Over(c, bg color.NRGBA) color.NRGBA {
 // color (see Over).
 func (p Palette) flat() Palette {
 	for _, c := range []*color.NRGBA{&p.MentionBg, &p.MentionHoverBg, &p.SelfMentionBg, &p.CodeBg, &p.PreBg,
-		&p.Highlight, &p.FileIconBg, &p.Border, &p.BorderHover, &p.QuoteBar, &p.Divider, &p.ButtonBorder,
+		&p.Highlight, &p.FindHighlight, &p.FindFocused, &p.FileIconBg, &p.Border, &p.BorderHover, &p.QuoteBar, &p.Divider, &p.ButtonBorder,
 		&p.CodeBorder, &p.PreBorder} {
 		*c = Over(*c, p.Panel)
 	}
@@ -157,6 +161,7 @@ func LightPalette() Palette {
 		Border:   rgba(94, 93, 96, 0.13), BorderHover: rgba(94, 93, 96, 0.45),
 		Panel: rgb(255, 255, 255), Placeholder: rgb(234, 234, 234),
 		Selection: rgba(29, 155, 209, 0.3), Highlight: rgba(255, 198, 0, 0.18),
+		FindHighlight: rgba(18, 100, 163, 0x59/255.0), FindFocused: rgba(18, 100, 163, 0x8c/255.0),
 		Divider:      rgba(94, 93, 96, 0.45),
 		ButtonBorder: rgba(94, 93, 96, 0.45), ButtonHoverBg: rgb(248, 248, 248),
 		Primary: rgb(0, 122, 90), PrimaryText: rgb(255, 255, 255),
@@ -190,6 +195,10 @@ func DarkPalette() Palette {
 	p.ButtonBorder, p.ButtonHoverBg = rgba(232, 232, 232, 0.3), rgb(34, 37, 41)
 	p.Primary = rgb(0, 122, 90)
 	p.Highlight = rgba(242, 199, 68, 0.3)
+	// .client_dark_theme: #2ba5ce73 / #2ba5ceb3 with mix-blend-mode
+	// lighten, which over the dark pane (every channel below the
+	// colour's) is the plain blend
+	p.FindHighlight, p.FindFocused = rgba(43, 165, 206, 0x73/255.0), rgba(43, 165, 206, 0xb3/255.0)
 	p.TooltipBg, p.TooltipText, p.TooltipGlow = theme.DarkPalette.Tooltip, theme.DarkPalette.TooltipText, theme.DarkPalette.TooltipGlow
 	p.FooterSep = rgb(0xb9, 0xba, 0xbd)
 	p.HuddleJoinBorder = rgb(0, 85, 61)
@@ -330,6 +339,10 @@ type Options struct {
 	// EditedTS is the message's edited.ts: the "(edited)" label's tooltip
 	// (EditedLabel: "{date} at {time}", tooltip.go editedTip).
 	EditedTS string
+	// FindFocused: the message is find in thread's current result
+	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
+	// draw in FindFocused.
+	FindFocused bool
 }
 
 // lightEmbolden is the extra outline (px) for glyph color c at scale pxPerDp.

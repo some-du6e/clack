@@ -16,6 +16,9 @@ const (
 	Code
 	Underline
 	Highlight
+	// FindHighlight is a find in thread match (ThreadSearchBar's query):
+	// c-mrkdwn__highlight--find-in-thread, drawn over a keyword Highlight.
+	FindHighlight
 )
 
 // SpanKind says what an inline span is.

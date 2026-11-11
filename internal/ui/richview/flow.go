@@ -628,6 +628,14 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		if st&richtext.Code != 0 && !fs.pre && dc < 0 {
 			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
 			dc = int16(len(l.decos) - 1)
+		} else if st&richtext.FindHighlight != 0 && dc < 0 {
+			// over a keyword highlight: only the find span draws
+			bg := p.FindHighlight
+			if l.opts.FindFocused {
+				bg = p.FindFocused
+			}
+			l.decos = append(l.decos, deco{kind: 3, bg: bg, face: k, target: -1, part: pt})
+			dc = int16(len(l.decos) - 1)
 		} else if st&richtext.Highlight != 0 && dc < 0 {
 			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)

@@ -215,6 +215,11 @@ type Server struct {
 	// before the first post.
 	OnPost func(f url.Values, msg map[string]any)
 
+	// FindInThreadPage, when above zero, caps search.inline's
+	// find_in_thread pages below the count asked for, so a test can
+	// page through a short thread.
+	FindInThreadPage int
+
 	srv   *http.Server
 	ln    net.Listener
 	users []slack.User

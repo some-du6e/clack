@@ -56,6 +56,10 @@ type colors struct {
 	HuddleLive, HuddleJoin, HuddleJoinHover    color.NRGBA
 	HuddleTile, HuddleTileLive, HuddleMissedBg color.NRGBA
 	HuddleLiveBadge, HuddleLiveBadgeText       color.NRGBA
+	// find in thread's bar (thread_find.go): its match count and the
+	// input's placeholder (--dt_color-content-ter) and its border
+	// (--dt_color-otl-ter)
+	FindMuted, FindBorder color.NRGBA
 }
 
 var lightColors = colors{
@@ -82,6 +86,8 @@ var lightColors = colors{
 
 	// --dt_color-base-hgl-3 (slack-kit-gantry-v2-styles): the selected thread root (active_thread.go)
 	ActiveThread: rgb(0xfffae0),
+
+	FindMuted: rgb(0x5e5d60), FindBorder: rgba(0x5e5d60, 0x21/255.0),
 }
 
 var darkColors = colors{
@@ -108,6 +114,8 @@ var darkColors = colors{
 
 	// --dt_color-base-hgl-3, dark
 	ActiveThread: rgb(0x2f1e00),
+
+	FindMuted: rgb(0x9a9b9e), FindBorder: rgba(0x797c81, 0x4d/255.0),
 }
 
 func colorsFor(th *theme.Theme) *colors {
@@ -136,7 +144,8 @@ func flatten(c colors) colors {
 	bg := c.Bg
 	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing, &c.CustomTint,
 		&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg, &c.ToolbarHoverBg, &c.CloseHover,
-		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70, &c.HuddleTile} {
+		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70, &c.HuddleTile,
+		&c.FindBorder} {
 		*p = richview.Over(*p, bg)
 	}
 	return c

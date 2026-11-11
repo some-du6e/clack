@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -799,4 +800,43 @@ func (a *App) SearchFeedbackDialog(ctx context.Context, payload any) error {
 	}
 	p := url.Values{"client_token": {a.Interactive().ClientToken()}, "type": {"search"}, "payload": {string(b)}}
 	return a.C.Call(ctx, "search.feedback", p, nil)
+}
+
+// SearchInThread is Slack's searchInThread thunk (find in thread,
+// ThreadSearchBar): search.inline with find_in_thread for query in the
+// thread at ch/threadTS, 100 matches a page through next_cursor (at most
+// 500 pages), and the matches' timestamps newest first. The first page's
+// error is returned; a later page's ends the list with what came before
+// (search_in_thread_pagination_failed).
+func (a *App) SearchInThread(ctx context.Context, ch, threadTS, query string) ([]string, error) {
+	var out []string
+	cursor := ""
+	for page := 0; page < 500 && ctx.Err() == nil; page++ {
+		p := url.Values{"query": {query}, "channel": {ch}, "thread_ts": {threadTS}, "find_in_thread": {"true"}, "count": {"100"}}
+		if cursor != "" {
+			p.Set("cursor", cursor)
+		}
+		var res struct {
+			Items []struct {
+				TS string `json:"ts"`
+			} `json:"items"`
+			NextCursor string `json:"next_cursor"`
+		}
+		if err := a.C.Call(ctx, "search.inline", p, &res); err != nil {
+			if page == 0 || ctx.Err() != nil {
+				return nil, err
+			}
+			break
+		}
+		for _, it := range res.Items {
+			if it.TS != "" {
+				out = append(out, it.TS)
+			}
+		}
+		if cursor = res.NextCursor; cursor == "" {
+			break
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return tsFloat(out[i]) > tsFloat(out[j]) })
+	return out, nil
 }

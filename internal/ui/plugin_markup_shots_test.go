@@ -15,11 +15,15 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 	"time"
 
+	"gioui.org/io/key"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -125,6 +129,28 @@ func TestTautViewThreadJumpButton(t *testing.T) {
 		t.Errorf("%d glyph pixels left of More actions in the thread header: Jump in thread isn't drawn there; ThreadSearchButton laid out as %s",
 			n, slackc.LayoutShape("ThreadSearchButton"))
 	}
+	// ThreadJump forces find_in_thread on (its findInThread option), so
+	// Slack's own Search in thread is the patch's next flex item
+	if sh := slackc.LayoutShape("ThreadSearchButton"); !regexp.MustCompile(`@ThreadSearchButton\([a-z-]+ \d+,\d+ 36x36\)`).MatchString(sh) {
+		t.Errorf("Search in thread isn't drawn after Jump in thread: ThreadSearchButton laid out as %s", sh)
+	}
+	// Mod+F with the reply composer focused opens the thread's search bar
+	var tv *messages.ThreadView
+	if c := e.a.convos[ttGen+"/1700000100.000100"]; c != nil {
+		if l, ok := c.list.(threadList); ok {
+			tv = l.ThreadView
+		}
+	}
+	if tv == nil {
+		t.Fatal("no thread view")
+	}
+	e.a.FocusThreadComposer(ttGen, "1700000100.000100")
+	for i := 0; i < 3; i++ {
+		e.frame()
+	}
+	e.rt.Queue(key.Event{Name: "F", Modifiers: key.ModShortcut, State: key.Press}, key.Event{Name: "F", Modifiers: key.ModShortcut, State: key.Release})
+	e.until(5*time.Second, "Mod+F opening the thread's search bar", func() bool { return !tv.FindBar().Empty() })
+	pmShot(t, e, os.Getenv("TAUT_SHOTS_DIR"), "thread-find-bar-taut")
 }
 
 // pmInk counts the pixels in r darker than luma 160 (glyph strokes on the
