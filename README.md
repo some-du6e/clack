@@ -198,7 +198,7 @@ If the window stops responding for more than 2 seconds (a beachball on macOS), C
 - Linux: `~/.config/clack/freeze-reports/`
 - Windows: `%AppData%\clack\freeze-reports\`
 
-Each `freeze-<date>-<time>.txt` holds the Clack version, what the window was doing (layout, posted work or the GPU submit), your `ui.json` settings, and the stack of every goroutine, plus how long the freeze lasted once it ended. It has no message text, and tokens and cookies are redacted. On macOS, **Help → Show Freeze Reports** opens the folder in Finder (Copy Diagnostics names the folder and the newest report). To report a freeze, attach the newest file to a GitHub issue. The log also prints the report's path. Clack keeps the 10 most recent reports.
+Each `freeze-<date>-<time>.txt` holds the Clack version, what the window was doing (layout, posted work or the GPU submit), your `ui.json` settings, and the stack of every goroutine, plus how long the freeze lasted once it ended. It has no message text, and tokens and cookies are redacted. **Help → Troubleshooting → Show Freeze Reports** opens the folder (Copy Diagnostics names it and the newest report). To report a freeze, attach the newest file to a GitHub issue. The log also prints the report's path. Clack keeps the 10 most recent reports.
 
 ### Logs
 
@@ -210,7 +210,7 @@ Clack writes its log to stderr and to a file, even when you start it from the Do
 
 At 5 MB the file becomes `clack.log.1`, and the one before that becomes `clack.log.2`. Older files are deleted. Set `CLACK_LOG_DIR` to keep the logs somewhere else. The file has no message text or search queries. Tokens, cookies and token-carrying URL parameters are redacted, and so is everything after `?` in a `slack://` link. If the folder can't be written, Clack prints one warning and logs to stderr only.
 
-On macOS the Help menu has **Open Logs Folder** and **Copy Diagnostics**. Copy diagnostics puts a short summary on the clipboard for a bug report: version, OS, plugin ids, which components plugins patch, and the last 200 log lines.
+**Help → Troubleshooting** has **Show Logs in File Manager**, **Show Freeze Reports** and **Copy Diagnostics**: in the menu bar on macOS, and on Linux and Windows in the app menu (the ☰ button at the top left of the window). Copy diagnostics puts a short summary on the clipboard for a bug report: version, OS, plugin ids, which components plugins patch, and the last 200 log lines.
 
 ### If Clack won't open
 

@@ -33,6 +33,13 @@ type prefs struct {
 	// NoUpdateDownload turns off "Download updates automatically" (on by
 	// default): a newer release then only shows its release page.
 	NoUpdateDownload bool `json:"no_update_download,omitempty"`
+	// DownloadPath is Preferences > Advanced > Download location (Slack's
+	// desktop setting PrefSSBFileDownloadPath; "": ~/Downloads), and
+	// DownloadAsk its "Choose location for each download" (the path
+	// cleared, in Slack): each download asks where with the system's
+	// save dialog (downloads.go).
+	DownloadPath string `json:"download_path,omitempty"`
+	DownloadAsk  bool   `json:"download_ask,omitempty"`
 	// UpdateCheckedAt is when GitHub last answered an update check, and
 	// UpdateLimitedUntil when its rate limit ends (unix seconds): a
 	// restart waits out both (update_check.go).

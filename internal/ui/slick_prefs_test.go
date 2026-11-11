@@ -195,7 +195,7 @@ func TestSlickPrefsRender(t *testing.T) {
 		t.Error("JS started with every Slick plugin off")
 	}
 	p.close()
-	p.slick, p.plugins, p.settings, p.taut = nil, nil, nil, nil
+	p.slick, p.plugins, p.taut = nil, nil, nil
 	shotTabs("off-light")
 
 	t0 = time.Now()

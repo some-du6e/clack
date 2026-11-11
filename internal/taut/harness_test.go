@@ -324,6 +324,38 @@ func (h *harness) render(root uint64, name string, props any) []any {
 	return nodes
 }
 
+// tree is root's latest host tree.
+func (h *harness) tree(root uint64) []any {
+	var nodes []any
+	_ = json.Unmarshal(h.rawTree(root), &nodes)
+	return nodes
+}
+
+func (h *harness) rawTree(root uint64) []byte {
+	h.ui.mu.Lock()
+	defer h.ui.mu.Unlock()
+	return h.ui.trees[root]
+}
+
+// findHost finds the first node (host or "@") in a tree that ok accepts.
+func findHost(nodes []any, ok func(map[string]any) bool) map[string]any {
+	for _, x := range nodes {
+		m, isMap := x.(map[string]any)
+		if !isMap {
+			continue
+		}
+		if ok(m) {
+			return m
+		}
+		if kids, has := m["c"].([]any); has {
+			if f := findHost(kids, ok); f != nil {
+				return f
+			}
+		}
+	}
+	return nil
+}
+
 // findNative finds the first "@" node named n in a host tree.
 func findNative(nodes []any, n string) map[string]any {
 	for _, x := range nodes {

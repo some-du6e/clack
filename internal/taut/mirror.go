@@ -37,7 +37,7 @@ var wholeSlices = []string{
 	"dndV2", "drafts", "slashCommand", "experiments", "huddleEvents", "allCalls", "peers",
 	"messageEditWindow", "searchResults", "huddlesCanvas", "alert", "unreadCounts",
 	"mutedChannels", "starredChannels", "huddles", "messagesMeta", "threadSub", "userGroupMembership",
-	"clientHuddles",
+	"clientHuddles", "appActions",
 }
 
 type change struct {
@@ -66,11 +66,14 @@ type mirror struct {
 	typing     map[string]typingRec
 	membership map[string]map[string]membershipRec
 	editing    map[string]map[string]any
-	drafts     map[string]json.RawMessage
+	drafts     map[string]core.Draft // server drafts by id (drafts.go)
+	local      map[string]localDraft // the composers' live drafts by client_draft_id (drafts.go)
 	search     json.RawMessage
 	calls      map[string]json.RawMessage
 	commands   json.RawMessage
 	cmdLoading bool
+	actions    json.RawMessage // the appActions store (appactions.go), nil until loaded
+	actLoading bool
 	toasts     []any
 	watched    map[string]map[string]uint64 // slice → key → fingerprint JS last saw
 
@@ -83,7 +86,7 @@ type mirror struct {
 func newMirror(t *Taut) *mirror {
 	return &mirror{
 		t: t, typing: map[string]typingRec{}, membership: map[string]map[string]membershipRec{},
-		editing: map[string]map[string]any{}, drafts: map[string]json.RawMessage{}, calls: map[string]json.RawMessage{},
+		editing: map[string]map[string]any{}, drafts: map[string]core.Draft{}, local: map[string]localDraft{}, calls: map[string]json.RawMessage{},
 		watched: map[string]map[string]uint64{},
 	}
 }
@@ -118,6 +121,7 @@ func (m *mirror) start() {
 				m.onEvent(ev)
 			case ev := <-raws:
 				m.t.onRaw(ev)
+				m.noteRaw(ev)
 			case <-tick.C:
 				m.sweep()
 			}
@@ -381,59 +385,6 @@ func (m *mirror) noteHuddle(ev core.Event) {
 	m.calls[h.ID] = b
 	m.mu.Unlock()
 	m.invalidate("allCalls")
-}
-
-func (m *mirror) noteDraft(ev core.Event) {
-	m.mu.Lock()
-	if ev.Name == "delete" || ev.Name == "send" || ev.Draft == nil {
-		delete(m.drafts, ev.ID)
-	} else {
-		m.drafts[ev.Draft.ID] = draftJSON(ev.Draft)
-	}
-	m.mu.Unlock()
-	m.invalidate("drafts")
-}
-
-// SetDrafts gives the mirror the drafts the UI loaded (core.Drafts), so
-// plugins see `drafts.unifiedDrafts`.
-func (t *Taut) SetDrafts(ds []core.Draft) {
-	t.mirror.mu.Lock()
-	t.mirror.drafts = map[string]json.RawMessage{}
-	for i := range ds {
-		t.mirror.drafts[ds[i].ID] = draftJSON(&ds[i])
-	}
-	t.mirror.mu.Unlock()
-	t.mirror.invalidate("drafts")
-}
-
-func draftJSON(d *core.Draft) json.RawMessage {
-	dest := []map[string]any{}
-	if d.Channel != "" {
-		e := map[string]any{"channel_id": d.Channel}
-		if d.ThreadTS != "" {
-			e["thread_ts"] = d.ThreadTS
-		}
-		if d.Broadcast {
-			e["broadcast"] = true
-		}
-		dest = append(dest, e)
-	} else if len(d.Users) > 0 {
-		dest = append(dest, map[string]any{"user_ids": d.Users})
-	}
-	var blocks any = []any{}
-	if len(d.Blocks) > 0 {
-		blocks = d.Blocks
-	}
-	fileIDs := d.FileIDs
-	if fileIDs == nil {
-		fileIDs = []string{}
-	}
-	b, _ := json.Marshal(map[string]any{
-		"id": d.ID, "client_draft_id": d.ClientMsgID, "destinations": dest, "blocks": blocks,
-		"ops": []map[string]any{{"insert": d.Text + "\n"}}, "file_ids": fileIDs, "date_created": d.DateCreated,
-		"date_scheduled": d.DateScheduled, "last_updated_ts": d.LastUpdated, "is_from_composer": false,
-	})
-	return b
 }
 
 // SetEditing tells plugins a message is open in an editor (Slack's
@@ -743,16 +694,11 @@ func (m *mirror) get(slice, key string) any {
 	case "dndV2":
 		return m.dnd()
 	case "drafts":
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		ids := make([]string, 0, len(m.drafts))
-		for id := range m.drafts {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		return map[string]any{"unifiedDrafts": m.drafts, "channelIds": ids, "withheldDraftIds": []string{}, "isEditingDraftPage": false, "selectedDraftIds": []string{}}
+		return m.draftsSlice()
 	case "slashCommand":
 		return m.slashCommands()
+	case "appActions":
+		return m.appActionsSlice()
 	case "experiments": // Slack's store: experiments.getByUser's records (forced groups are patches over it)
 		if as := m.t.app.ExperimentAssignments(); as != nil {
 			return as

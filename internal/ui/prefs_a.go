@@ -22,7 +22,7 @@ import (
 
 // prefsA is the state of the rows that make Notifications, VIP, Home,
 // Appearance, Messages & media and Language & region real (they used to
-// be greyed with naNote).
+// be greyed).
 type prefsA struct {
 	kw      *widget.Editor // Notifications > Channel keywords
 	kwSent  string         // the global_keywords value last written or read
