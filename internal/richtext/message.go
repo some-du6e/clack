@@ -132,6 +132,7 @@ func convertFile(f *slack.File) *File {
 		Size: f.Size, URL: SafeURL(f.URLPrivate), Download: SafeURL(f.URLPrivateDownload), Permalink: SafeURL(f.Permalink),
 		Lines: f.Lines, DurationMS: f.DurationMS, OrigW: f.OriginalW, OrigH: f.OriginalH,
 		Subtype: f.Subtype, Waveform: f.AudioWaveSamples, User: f.User, Created: f.Created, IsExternal: f.IsExternal,
+		Mode: f.Mode,
 	}
 	if out.Title == out.Name {
 		out.Title = ""

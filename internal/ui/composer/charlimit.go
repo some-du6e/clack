@@ -21,13 +21,16 @@ const composerMaxLength = 12000
 // delta longer than 5e4 is refused).
 const pasteMaxLength = 50000
 
-// pasteLimitTitle and pasteLimitText are PasteLimitDialog's (boot-shared;
-// msg_input): MessageInput's own variant adds "If you’d like you could
-// create a snippet instead." and a "Create a Snippet" button, which opens
-// the snippet dialog Clack doesn't have, so the composer shows this one.
+// pasteLimitTitle and pasteLimitText are MessageInput's
+// renderPasteLimitDialog (boot-shared rs9k, msg_input): the title, "To
+// keep things running smoothly, …  If you’d like you could <b>create a
+// snippet</b> instead.", "Create a Snippet" (its cancel button: the
+// snippet dialog with the paste) and OK.
 const (
 	pasteLimitTitle = "That’s a bit too long to paste"
-	pasteLimitText  = "To keep things running smoothly, there’s a limit on the number of characters you can paste into Slack."
+	pasteLimitText  = "To keep things running smoothly, there’s a limit on the number of characters you can paste into Slack. If you’d like you could "
+	pasteLimitBold  = "create a snippet"
+	pasteLimitAfter = " instead."
 )
 
 // slackLength is getMessageLengthForDelta over the document's delta, in

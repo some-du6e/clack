@@ -120,6 +120,9 @@ type Block struct {
 	// which turns that truncation off.
 	BlockID string
 	Expand  bool
+	// Level is a header block's level (1–4, 0 for none): Slack's Header
+	// (/WQN) classes its text p-header_block--level_1/2/3 (4 draws as 3).
+	Level int
 }
 
 // Image is a remote image reference.
@@ -238,6 +241,7 @@ type File struct {
 	DurationMS                              int
 	OrigW, OrigH                            int    // original_w/h (videos: original, else thumb_video)
 	Subtype                                 string // "slack_audio", "slack_video" (clips)
+	Mode                                    string // files.mode: hosted, snippet, post, quip (canvases), list…
 	Waveform                                []int  // audio_wave_samples (0..100)
 	User                                    string // uploader
 	Created                                 int64  // unix seconds

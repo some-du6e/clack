@@ -106,6 +106,7 @@ const (
 	EvNavBack    // Mod+Left in an empty editor: back in history (onCmdLeftWhenEmpty)
 	EvNavForward // Mod+Right in an empty editor: forward (onCmdRightWhenEmpty)
 	EvPasteLimit // a paste over 50,000 characters was refused (onPasteLimit)
+	EvSnippet    // Mod+Shift+Enter: the snippet dialog with the message (MessageInput.onEnter)
 )
 
 // EditorEvent is reported by Editor.Update.
@@ -220,6 +221,10 @@ type Editor struct {
 	// plainText is Slack's plain_text_mode ("Format messages with
 	// markup"): no live markup, the characters stay as typed.
 	plainText bool
+	// Snippets is MessageInput's enableSnippetCreation: Mod+Shift+Enter
+	// reports EvSnippet instead of adding a line.
+	Snippets bool
+	refused  string // the last paste over the limit
 	// smart is "Enable smart quotes and symbols" (smart_symbols.go).
 	smart bool
 	// upMode is UpArrowShortcut's value and upBrowse
@@ -886,7 +891,9 @@ func (e *Editor) pasteHTML(s, html string) {
 	if jsLen(s) > pasteMaxLength {
 		// TextyInput's onPasteLimit: pasted contents over 5e4 are refused
 		// and the composer says so (the pasted text's length stands in
-		// for the converted delta's)
+		// for the converted delta's); the dialog's "Create a Snippet"
+		// takes the paste (RefusedPaste)
+		e.refused = s
 		e.emit(EvPasteLimit)
 		return
 	}
@@ -1353,3 +1360,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 	t.Pop()
 	return layout.Dimensions{Size: size}
 }
+
+// RefusedPaste is the last paste the editor refused for being over the
+// paste limit (EvPasteLimit).
+func (e *Editor) RefusedPaste() string { return e.refused }

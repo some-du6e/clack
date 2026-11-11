@@ -30,6 +30,9 @@ type Message struct {
 	PinnedBy                 string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned    bool
 	Broadcast, System        bool // System: join/leave/topic… drawn compactly
+	// A system message's own fields: who added the joiner (inviter), the
+	// topic or purpose it set, a rename's old and new names.
+	Inviter, Topic, Purpose, OldName, NewName string
 	// Tombstone: a deleted message kept for its replies (Slack's subtype
 	// "tombstone", user USLACKBOT, hidden): drawn as Slack's
 	// MessageTombstone, never as a Slackbot message.
@@ -40,6 +43,7 @@ type Message struct {
 	FollowingThread bool // the viewer follows this thread (root messages)
 	ReplyCount      int
 	ReplyUsers      []string
+	ReplyUserIcons  []slack.ReplyUserIcon // reply_user_icons (bot repliers' pictures)
 	Reactions       []Reaction
 	Huddle          json.RawMessage
 	Doc             richtext.Doc
@@ -74,9 +78,10 @@ const SubtypeSlackbotResponse = "slackbot_response"
 // of the workspace's custom responses.
 func (m *Message) SlackbotCustomResponse() bool { return m.Subtype == SubtypeSlackbotResponse }
 
-// CustomResponse is Slack's isCustomResponse (REqS ZO): a custom response
-// posted by Slackbot itself, which the reskin_custom_responses experiment
-// shows as the team (App.CustomResponseTeam) with an info badge.
+// CustomResponse is Slack's isCustomResponse (ZO): a custom response
+// posted by Slackbot itself, which Slack shows as the team
+// (App.CustomResponseTeam) with an info badge; build 4d0c78085232 no
+// longer reads reskin_custom_responses for it.
 // SlackbotCustomResponse, the subtype alone, is what MessageLabels and the
 // row's custom_response class check.
 func (m *Message) CustomResponse() bool {
@@ -335,6 +340,13 @@ type PreparedUpload struct {
 type UploadFile struct {
 	Name, Title string
 	Data        []byte
+	// SnippetType is a snippet's type (the snippet dialog's Type: "auto",
+	// "text" or a SnippetFileTypes key), files.getUploadURL's
+	// snippet_type; "" for an ordinary file.
+	SnippetType string
+	// AltText is an image's alt text (the Edit file dialog),
+	// files.getUploadURL's alt_txt.
+	AltText string
 }
 
 type UploadedFile struct {
@@ -619,8 +631,9 @@ type DMPage struct {
 
 type Command struct {
 	Name, Desc, Usage, Type, AppID string
-	AppName                        string // app commands: the app's display name
-	IconURL                        string // app commands: the app's icon (Slack CDN)
+	AppName                        string   // app commands: the app's display name
+	IconURL                        string   // app commands: the app's icon (Slack CDN)
+	Teams                          []string // the workspaces it is installed in
 }
 
 type CommandOpts struct {

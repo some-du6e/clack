@@ -1085,9 +1085,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"fe_nav_first_apply_post_processing_rules": g("treatment"), "omni_date_quick_filters": g("on"),
 			"srp_card_explore": g("on"), "search_file_channel_messages": g("on"),
 			"work_objects_message_search_xp_v2": g("on"),
+			// message rows (see core's defaultExperimentGroups)
+			"system_messages_redesign_m1": g("on"), "flat_message_heading_scale": g("on"), "portable_content_composer": g("treatment"),
+			"message_actions_truncate": g("on"), "unread_thread_indication_in_replybar": g("on"), "agent_identity_overrides": g("on"),
+			"forward_message_card": g("on"), "giphy_fixed_width": g("on"), "truncated_url_hover_card": g("on"),
 			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
-			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
-			"unread_thread_indication_in_replybar": g("on")})
+			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on")})
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))
