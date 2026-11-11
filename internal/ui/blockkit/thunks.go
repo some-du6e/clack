@@ -226,12 +226,15 @@ func registerThunks(t *taut.Taut) {
 		_, err := ix.BlockActionSend(ctx, toBlockAction(a, core.ActionContainer{Type: "message"}))
 		return map[string]any{"ok": err == nil}, err
 	})
+	// a plugin running a shortcut itself (OwlMode, NativeAtChannel): Slack's
+	// fetcher sends its clientToken as is, and the modal comes back to it in
+	// view_opened instead of opening (RunShortcutAs)
 	t.RegisterThunk("executeAppAction", func(ctx context.Context, raw []json.RawMessage) (any, error) {
 		var a executeArgs
 		if err := arg(raw, &a); err != nil {
 			return nil, err
 		}
-		_, err := ix.RunShortcut(ctx, core.AppShortcut{AppID: a.AppID, ActionID: a.ActionID, TeamID: a.ApplicableTeamID}, a.ChannelID, a.MessageTS)
+		err := ix.RunShortcutAs(ctx, core.AppShortcut{AppID: a.AppID, ActionID: a.ActionID, TeamID: a.ApplicableTeamID}, a.ChannelID, a.MessageTS, a.ClientToken)
 		return map[string]any{"ok": err == nil}, err
 	})
 	t.RegisterThunk("submitView", func(ctx context.Context, raw []json.RawMessage) (any, error) {

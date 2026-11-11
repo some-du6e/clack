@@ -16,8 +16,9 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
-// Getting the log out: Help > Open Logs Folder and Help > Copy Diagnostics
-// (macOS menu bar), next to Show Freeze Reports.
+// Getting the log out: Help > Troubleshooting > Show Logs in File Manager,
+// Show Freeze Reports and Copy Diagnostics (the macOS menu bar, the Linux
+// and Windows app menu: appmenu.go).
 
 // diagLogLines is how many log lines Copy Diagnostics includes.
 const diagLogLines = 200

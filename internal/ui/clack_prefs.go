@@ -22,7 +22,7 @@ var clackIntroRow func(p *prefsModal, f *prefsForm)
 // (Karim, 2026-11-10: "keep the settings thing calm, 3 max"). Updates
 // (one row: automatic download, the step, its button), Replay
 // introduction, live updates. Troubleshooting (logs, Copy Diagnostics,
-// freeze reports) stays in the macOS Help menu.
+// freeze reports) is Help > Troubleshooting (appmenu.go).
 func (p *prefsModal) clackPage(f *prefsForm) {
 	a := p.a
 	p.updatesSection(f) // update_check.go

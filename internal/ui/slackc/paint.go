@@ -4,6 +4,8 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strconv"
+	"strings"
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
@@ -865,22 +867,82 @@ func (p *painter) bgImage(b *box, r rectF, rad [4]float32) {
 	case "100% 100%":
 		iw, ih = w, h
 	}
-	x, y := r.x0, r.y0
-	switch bg.Position {
-	case "center", "center center", "50% 50%":
-		x, y = r.x0+(w-iw)/2, r.y0+(h-ih)/2
+	if iw <= 0 || ih <= 0 {
+		return
 	}
+	ox, oy := bgPosition(bg.Position, w, h, iw, ih, p.v.dp)
+	x, y := r.x0+ox, r.y0+oy
 	var cs clip.Stack
 	if hasRadius(rad) {
 		cs = clip.Outline{Path: rrectPath(p.ops, r, rad, false)}.Op().Push(p.ops)
 	} else {
 		cs = clip.Rect(irectSnap(r)).Push(p.ops)
 	}
-	t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(iw/float32(sz.X), ih/float32(sz.Y))).Offset(f32.Pt(x, y))).Push(p.ops)
-	img.Add(p.ops)
-	paint.PaintOp{}.Add(p.ops)
-	t.Pop()
+	if b.st.Pixelated {
+		img.Filter = paint.FilterNearest
+	}
+	// background-repeat (repeat by default): tiles from the positioned one
+	// out to the box's edges, a bounded number of them
+	nx, ny := 1, 1
+	if bg.Repeat {
+		for x > r.x0 {
+			x -= iw
+		}
+		for y > r.y0 {
+			y -= ih
+		}
+		nx = min(int((r.x1-x)/iw)+1, 64)
+		ny = min(int((r.y1-y)/ih)+1, 64)
+	}
+	for j := 0; j < ny; j++ {
+		for i := 0; i < nx; i++ {
+			t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(iw/float32(sz.X), ih/float32(sz.Y))).Offset(f32.Pt(x+float32(i)*iw, y+float32(j)*ih))).Push(p.ops)
+			img.Add(p.ops)
+			paint.PaintOp{}.Add(p.ops)
+			t.Pop()
+		}
+	}
 	cs.Pop()
+}
+
+// bgPosition is background-position's offset of an iw×ih image in a w×h
+// box (device px): one or two values, each a length (px, scaled by dp), a
+// percentage (of the box minus the image) or a keyword (left, center,
+// right, top, bottom; one value centres the other axis).
+func bgPosition(pos string, w, h, iw, ih, dp float32) (x, y float32) {
+	f := strings.Fields(strings.ToLower(pos))
+	if len(f) == 0 {
+		return 0, 0
+	}
+	if len(f) == 1 {
+		f = append(f, "center")
+	}
+	// a vertical keyword first ("top left") swaps the axes
+	if f[0] == "top" || f[0] == "bottom" || (f[1] == "left" || f[1] == "right") {
+		f[0], f[1] = f[1], f[0]
+	}
+	val := func(v string, box, img float32) float32 {
+		switch v {
+		case "left", "top":
+			return 0
+		case "center":
+			return (box - img) / 2
+		case "right", "bottom":
+			return box - img
+		}
+		if n, ok := strings.CutSuffix(v, "%"); ok {
+			if pc, err := strconv.ParseFloat(n, 32); err == nil {
+				return (box - img) * float32(pc) / 100
+			}
+			return 0
+		}
+		n := strings.TrimSuffix(v, "px")
+		if px, err := strconv.ParseFloat(n, 32); err == nil {
+			return float32(px) * dp
+		}
+		return 0
+	}
+	return val(f[0], w, iw), val(f[1], h, ih)
 }
 
 func (p *painter) border(b *box, r rectF, rad [4]float32) {

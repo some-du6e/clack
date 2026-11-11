@@ -87,6 +87,7 @@ func inheritFrom(p *Style, env Env) Style {
 	st.wordBreak, st.overflowWrap = p.wordBreak, p.overflowWrap
 	st.TextShadow = p.TextShadow
 	st.Cursor = p.Cursor
+	st.Pixelated = p.Pixelated
 	st.PointerEvents = p.PointerEvents
 	st.UserSelect = p.UserSelect
 	st.Fill, st.FillNone = p.Fill, p.FillNone
@@ -594,6 +595,8 @@ func copyProp(prop string, cx *cctx, src *Style) {
 		st.TextShadow = src.TextShadow
 	case "cursor":
 		st.Cursor = src.Cursor
+	case "image-rendering":
+		st.Pixelated = src.Pixelated
 	case "pointer-events":
 		st.PointerEvents = src.PointerEvents
 	case "user-select":
@@ -1478,6 +1481,15 @@ func (cx *cctx) apply(prop, v string) bool {
 		}
 	case "cursor":
 		return cx.cursor(cs)
+	case "image-rendering":
+		switch k {
+		case "pixelated", "crisp-edges", "-moz-crisp-edges", "-webkit-optimize-contrast", "optimizespeed":
+			st.Pixelated = true
+		case "auto", "smooth", "high-quality", "optimizequality":
+			st.Pixelated = false
+		default:
+			return false
+		}
 	case "pointer-events":
 		switch k {
 		case "none":

@@ -106,6 +106,9 @@ func (p *painter) img(b *box, r rectF) {
 	} else {
 		cs = clip.Rect(irectSnap(r)).Push(p.ops)
 	}
+	if b.st.Pixelated { // image-rendering: pixelated
+		img.Filter = paint.FilterNearest
+	}
 	t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(sx, sy)).Offset(f32.Pt(ox, oy))).Push(p.ops)
 	img.Add(p.ops)
 	paint.PaintOp{}.Add(p.ops)

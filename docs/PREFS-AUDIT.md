@@ -49,6 +49,48 @@ enable_unread_view and disable_channel_join_banner are done: see "Unreads view a
   "Language" below and docs/I18N.md.
 - ~~**webapp_spellcheck**~~: done 2026-11-10, see "Spellcheck" below.
 
+## No notes (prefs-cleanup, 2026-11-10)
+
+No page says "Not available in Clack yet" any more. Each row that had the
+note is now one of three things.
+
+**Written the way Slack's dialog writes it** (setUserPrefByApi, Slack's
+default and box sense). Slack's other clients act on these. Clack lacks the
+part that reads them:
+
+| Pref | What reads it in Slack | Why Clack doesn't act on it |
+| --- | --- | --- |
+| show_ai_apps | the top nav's AI apps container (boot-render) | Clack's top nav has no AI agents |
+| a11y_show_alt_text_reminders | the upload flow's image description reminder (boot-shared, client-boot) | Clack's uploads have no image description field |
+| a11y_peeks_enabled_on_mouse_enter | only the prefs-dialog chunks name it | Clack's rail has no hover peeks |
+| a11y_dm_read_out | only the prefs-dialog chunks name it | no screen-reader bridge |
+| huddles_reactions_read_out_loud | the screen-reader announcer (boot-shared) | no screen-reader bridge |
+| huddles_reactions_play_sound | the huddle reaction sound (client-boot) | the sound isn't fetched yet |
+| clips_pip_auto_dock | clips' picture-in-picture (boot-render) | Clack plays clips inline |
+| huddles_reaction_explosions ("Allow for reactions & effects"; the old row used the wrong key) | the huddle's reaction effects | Clack's huddles draw none. As in HuddleReactionsPref, the row is greyed and unticked while a11y_animations is off, with Slack's "Animations are turned off in Accessibility preferences." |
+| hide_sc_files_sharing_speed_bump, hide_external_members_canvas_sharing_speed_bump | the send-time Slack Connect speed bumps (boot-shared) | those dialogs aren't ported |
+
+**Implemented:**
+
+- Download location (DownloadLocationPref) has Slack's box, the folder
+  in a read-only field, and Change… (greyed while the box is on), with
+  Slack's note. With the box on, each download opens the system's save
+  dialog (gioui.org/x/explorer: the xdg portal, Windows' and macOS'
+  panels). Off, downloads go to the folder that Change… picked
+  (`download_ask`, `download_path` in ui.json; ~/Downloads by default).
+- Launch app on login (DesktopPref launchOnStartup, Linux and Windows)
+  writes an XDG autostart entry (`$XDG_CONFIG_HOME/autostart/clack.desktop`,
+  starting the AppImage when run from one) or the per-user Run key.
+
+**Greyed the way Slack shows a disabled row, without a note:**
+
+- Leave app running in notification area (runFromTray): Gio's window
+  can't refuse a close, so it can't stay in the tray, and Linux has no
+  tray.
+- Privacy & visibility's Send Verification Email: Slack's
+  VerifyEmailModal flow (a code sent by email, then entered in the
+  modal) isn't ported.
+
 ## Language (locale, 2026-11-10)
 
 Slack's model, with the evidence, is in docs/I18N.md. In short: per-locale
