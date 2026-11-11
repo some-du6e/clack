@@ -83,6 +83,7 @@ type chromeState struct {
 	Block          BlockKind // caret line kind (pressed list/quote/code-block buttons)
 	Link           bool      // caret in a link (link button pressed)
 	InCode         bool      // caret in a code block: B I U S link code divider disabled
+	HintInPre      bool      // caret in code typed with ``` under enter_is_special_in_tbt (the hint bar's Enter)
 	CanSend        bool
 	Broadcast      bool // thread: checkbox checked
 	// ChannelType ("channel", "im", "mpim", …) and SetBroadcast feed the
@@ -1450,7 +1451,7 @@ func placeholderText(name string) (text, pre, post string) {
 // layoutHint draws the 24px bar under the box (.p-notification_bar: 24px,
 // 12px left padding, inside the pane): the typing indicator on the left
 // (.p-notification_bar__section: .7em = 10.5px, 1rem line height,
-// sk_foreground_max_solid), or "Shift + Return to add a new line" on the
+// sk_foreground_max_solid), or "Shift + Enter to add a new line" on the
 // right (bold keys, 70% ink, ending 8px inside) once there's something to
 // send. A plugin's TypingNames (BetterTypingIndicator) is laid out in that
 // section's text style, as it is in Slack's DOM.
@@ -1480,8 +1481,10 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	if !st.CanSend {
 		return
 	}
-	// rt("<b>Shift + Return</b> to add a new line") (SyrM, the
+	// rt("<b>Shift + Enter</b> to add a new line") (SyrM, the
 	// notification_bar I18n): the keys bold, wherever the locale has them
+	pref := uipref.Get()
+	src := hintSource(shortcut.GOOS, pref.SendOnModEnter, pref.EnterIsSpecial, st.HintInPre)
 	type seg struct {
 		call op.CallOp
 		w    int
@@ -1489,7 +1492,7 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	}
 	var segs []seg
 	total, space := 0, false
-	for _, pt := range notificationBarNS.RT("<b>Shift + Return</b> to add a new line") {
+	for _, pt := range notificationBarNS.RT(src) {
 		txt := strings.TrimSpace(pt.Text)
 		gap := space || strings.HasPrefix(pt.Text, " ")
 		space = strings.HasSuffix(pt.Text, " ")
@@ -1519,6 +1522,24 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 		t.Pop()
 		x += sg.w
 	}
+}
+
+// hintSource is NotificationBar's renderFormattingTips (SyrM): Windows
+// says Enter and every other platform, Linux too, says Return (+oeN uF is
+// isWindows, cX isMac). newlinePref is msg_input_send_btn (Enter starts a
+// new line), preNewlines enter_is_special_in_tbt and inPre the caret in
+// code being typed with ```.
+func hintSource(goos string, newlinePref, preNewlines, inPre bool) string {
+	win := goos == "windows"
+	switch {
+	case (newlinePref || preNewlines && inPre) && win:
+		return "<b>Enter</b> to add a new line"
+	case newlinePref || preNewlines && inPre:
+		return "<b>Return</b> to add a new line"
+	case win:
+		return "<b>Shift + Enter</b> to add a new line"
+	}
+	return "<b>Shift + Return</b> to add a new line"
 }
 
 // notificationBarNS is the hint bar's I18n (MessagePaneNotificationBar,
