@@ -538,11 +538,20 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	} else if st.Mode == modeChannel {
 		st.Placeholder = "Message"
 	}
+	// suppressBotTyping: a thread whose app status the footer's nugget shows
+	// (app_thread_nugget_fe) leaves the app out of the typing line
+	var quietBot string
+	if ca := c.h.Core(); ca != nil && c.ts != "" {
+		quietBot, _ = ca.SuppressBotTyping(c.ch, c.ts)
+	}
 	if uipref.Get().ShowTyping { // Messages & media > "Display information about who is currently typing"
 		st.TypingIDs, st.TypingNames = typingHub(c.h.Core()).typers(c.ch, c.ts, c.api.self().ID)
+		if quietBot != "" {
+			st.TypingIDs, st.TypingNames = dropTyper(st.TypingIDs, st.TypingNames, quietBot)
+		}
 	}
 	st.Typing = typingLine(st.TypingNames)
-	if uipref.Get().ShowTyping {
+	if uipref.Get().ShowTyping && quietBot == "" {
 		if name, status := typingHub(c.h.Core()).assistantLine(c.ch, c.ts, c.api.self().ID); status != "" {
 			st.Typing, st.TypingStatus, st.TypingAgent = name+" "+status, status, name // AiAppStatusIndicator
 		}

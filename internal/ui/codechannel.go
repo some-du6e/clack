@@ -156,10 +156,19 @@ func (a *App) codeHeaderTile(gtx layout.Context) layout.Dimensions {
 func init() {
 	composer.ContextBar = func(gtx layout.Context, h composer.Host, ch, ts string) layout.Dimensions {
 		a, ok := h.(*App)
-		if !ok || ts != "" { // shouldDisplayAgentChannelBanner: not in threads
+		if !ok {
+			return layout.Dimensions{}
+		}
+		if ts != "" { // shouldDisplayAgentChannelBanner: not in threads
 			return layout.Dimensions{}
 		}
 		return a.layoutCodeContextBar(gtx, ch)
+	}
+	composer.ThreadNugget = func(gtx layout.Context, h composer.Host, ch, ts string) layout.Dimensions {
+		if a, ok := h.(*App); ok {
+			return a.layoutAppThreadNugget(gtx, ch, ts) // agent_nugget.go
+		}
+		return layout.Dimensions{}
 	}
 }
 

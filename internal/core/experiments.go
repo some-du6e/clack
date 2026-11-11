@@ -228,6 +228,7 @@ var experimentReads = map[string][]string{
 	"code_channels_auto_close": on,
 	// agents (agent.go; plan and task blocks: ui/blockkit/agent.go)
 	"agent_member_channel_count": on, "plan_block_coding_enhancements": on, "agent_streaming_slimmer_task_cards": on,
+	"app_thread_nugget_fe": on, "app_nugget_refinement": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
 	// read by code merged into ui without a listing here (TestExperimentReadsListed failed on ui 3a5a0373)

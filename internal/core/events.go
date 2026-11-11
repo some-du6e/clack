@@ -445,6 +445,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			a.emit(Event{Type: "sidebar_changed"})
 		}
 	}
+	a.clearAssistantStatusOnMessage(ch, m.ThreadTS) // agent.go
 	v := a.message(ch, &m)
 	cv := a.Count(ch)
 	ev2 := Event{Type: "message", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, UserID: m.User, Msg: &v, Count: &cv,
