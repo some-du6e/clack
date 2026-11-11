@@ -358,6 +358,7 @@ type Activity struct {
 	selKey   string
 	selOK    bool
 	selSec   bool // the item opened in the app's secondary column (activity_panel.go)
+	selOut   bool // the app took the item (its column or the split view): no pane in the view
 	selDesc  actDesc
 	open     widget.Clickable
 	nameBtn  widget.Clickable
@@ -2371,8 +2372,8 @@ func (v *Activity) undoBar(gtx C) {
 	}
 	gtx.Execute(op.InvalidateCmd{At: v.undo.until})
 	size := gtx.Constraints.Max
-	listW := size.X
-	if v.selOK {
+	listW := size.X // centred under the list (main's split)
+	if v.paneInView() {
 		listW = size.X / 2
 	}
 	bg, fg, link := rgb(0x1d1c1d), rgb(0xffffff), rgb(0x1d9bd1)

@@ -44,9 +44,9 @@ type ActivitySecondary interface {
 // openSecondary opens the chosen item in the app's secondary column
 // (Bb on, a Host with one, an item with a conversation).
 func (v *Activity) openSecondary() {
+	v.selSec, v.selOut = false, false
 	sh, ok := v.h.(ActivitySecondary)
 	if !ok || !v.selOK || v.sel.Channel == "" || !v.h.Core().ActivityRemovePersistentDetailPanel() {
-		v.selSec = false
 		return
 	}
 	if t := v.selDesc.thread; t != "" {
@@ -54,6 +54,9 @@ func (v *Activity) openSecondary() {
 	} else {
 		sh.OpenChannelSecondary(v.sel.Channel)
 	}
+	// the app shows it: in the column beside the inbox, or in the split
+	// view (opened from there, or with the split modifier click)
+	v.selOut = true
 	v.selSec = sh.SecondaryShows(v.sel.Channel, v.selDesc.thread)
 }
 
@@ -78,9 +81,10 @@ func (v *Activity) followSecondary() {
 }
 
 // paneInView reports whether the opened item shows in the view's own
-// pane beside the list: with the inbox full width, only when the app's
-// column doesn't hold it (no conversation, or a Host without one).
-func (v *Activity) paneInView() bool { return v.selOK && !v.selSec }
+// pane beside the list: with the inbox full width, only when the app
+// didn't take it (no conversation, or a Host without a secondary column).
+// An item the app opened elsewhere never halves the inbox.
+func (v *Activity) paneInView() bool { return v.selOK && !v.selOut }
 
 // pageWidth is the Activity page's width: the view's, or its sidebar
 // column's with the persistent panel.

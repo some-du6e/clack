@@ -5,10 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -65,6 +69,15 @@ func newActShell(t *testing.T) *actShellEnv {
 	if u, ok := s.User(fakeslack.SelfID); ok {
 		ca.S.Self = *u
 	}
+	// the account's Activity: the inbox with an opened item beside it
+	// (core's defaults have these; fakeslack's experiments.getByUser
+	// doesn't list them)
+	on := "on"
+	ca.SetExperimentGroups(map[string]*string{
+		"activity_inbox": &on, "nested_secondary_view": &on, "secondary_view_default_width": &on,
+		"activity_inbox_remove_persistent_detail_panel": &on, "activity_entry_layout_revisions_2": &on,
+		"activity_global_settings": &on,
+	})
 	ca.ServeOffline()
 	images := imgcache.New(func(ctx context.Context, url string) ([]byte, error) { return nil, errors.New("offline") }, "", nil)
 	a := New(Options{ConfigDir: t.TempDir(), NoRealtime: true}, images)
@@ -241,5 +254,92 @@ func TestActivityGlobalShortcutsLikeSlack(t *testing.T) {
 	e.key("[", key.ModShortcut)
 	if got := e.a.router.Current(); got.Page() != "c" {
 		t.Errorf("⌘[ on Activity: %s", got)
+	}
+}
+
+// shot draws a frame into win and saves it as a PNG at path.
+func (e *actShellEnv) shot(win *headless.Window, path string) *image.RGBA {
+	e.t.Helper()
+	e.frame()
+	if err := win.Frame(&e.ops); err != nil {
+		e.t.Fatal(err)
+	}
+	img := image.NewRGBA(image.Rectangle{Max: e.sz})
+	if err := win.Screenshot(img); err != nil {
+		e.t.Fatal(err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		e.t.Fatal(err)
+	}
+	return img
+}
+
+// actShotColors counts the distinct colors in r (4 bits a channel): 1 or
+// 2 for a blank area, dozens wherever text is drawn.
+func actShotColors(img *image.RGBA, r image.Rectangle) int {
+	seen := map[[3]uint8]bool{}
+	r = r.Intersect(img.Bounds())
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			c := img.RGBAAt(x, y)
+			seen[[3]uint8{c.R >> 4, c.G >> 4, c.B >> 4}] = true
+		}
+	}
+	return len(seen)
+}
+
+// With ACTIVITY_SHOTS_DIR set (the activity-shots workflow): the Activity
+// tab in the whole window at Karim's 1347×853, Detailed and Dense, light
+// and dark, with nothing open and with an item open beside the inbox.
+// The column draws the item (alpha.33 left that half of the page blank)
+// and the inbox's rows reach it.
+func TestActivityShellShots(t *testing.T) {
+	dir := os.Getenv("ACTIVITY_SHOTS_DIR")
+	if dir == "" {
+		t.Skip("ACTIVITY_SHOTS_DIR is unset (the activity-shots workflow sets it)")
+	}
+	for _, dark := range []bool{false, true} {
+		for _, dense := range []bool{false, true} {
+			name := map[bool]string{false: "detailed", true: "dense"}[dense] + "-" + map[bool]string{false: "light", true: "dark"}[dark]
+			t.Run(name, func(t *testing.T) {
+				e := newActShell(t)
+				if dark {
+					e.a.setDark(true)
+				}
+				if dense { // the layout toggle's write (activity.prefs.update), before the view loads
+					if err := e.ca.SetActivityPrefs(context.Background(), "", "dense"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				win, err := headless.NewWindow(e.sz.X, e.sz.Y)
+				if err != nil {
+					t.Fatalf("headless window: %v", err)
+				}
+				t.Cleanup(win.Release)
+				e.a.Navigate("activity")
+				e.until("the activity view", func() bool { return e.activity() != nil })
+				e.until("the activity feed", func() bool { return e.fs.CallCount("activity.feed") > 0 })
+				e.frames(30)
+				e.shot(win, filepath.Join(dir, "shell-inbox-"+name+".png"))
+				e.openRow()
+				e.frames(40)
+				img := e.shot(win, filepath.Join(dir, "shell-open-"+name+".png"))
+				o, w := e.a.secondaryOrigin, e.a.secondary.drawnW
+				col := image.Rect(o.X+8, o.Y+8, o.X+w-8, e.sz.Y-16)
+				if n := actShotColors(img, col); n < 12 {
+					t.Errorf("the column beside the inbox (%v) draws %d colors: blank", col, n)
+				}
+				// the rows' right ends (times, locations, dividers) sit by the column
+				edge := image.Rect(o.X-100, 200, o.X-12, 640)
+				if n := actShotColors(img, edge); n < 3 {
+					t.Errorf("nothing drawn in %v, just left of the column: the inbox stops short of it", edge)
+				}
+			})
+		}
 	}
 }
