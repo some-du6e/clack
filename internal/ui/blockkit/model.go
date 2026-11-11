@@ -9,11 +9,16 @@ import (
 
 // Text is a Block Kit text object.
 type Text struct {
-	Type     string `json:"type"` // plain_text | mrkdwn
-	Text     string `json:"text"`
-	Emoji    bool   `json:"emoji,omitempty"`
-	Verbatim bool   `json:"verbatim,omitempty"`
+	Type string `json:"type"` // plain_text | mrkdwn
+	Text string `json:"text"`
+	// Emoji is plain_text's emoji: PlainText (iY3m) draws :shortcodes:
+	// as emoji unless it is false (nil: not given, on)
+	Emoji    *bool `json:"emoji,omitempty"`
+	Verbatim bool  `json:"verbatim,omitempty"`
 }
+
+// emojiOn reports whether t's :shortcodes: draw as emoji.
+func (t *Text) emojiOn() bool { return t == nil || t.Emoji == nil || *t.Emoji }
 
 func (t *Text) str() string {
 	if t == nil {

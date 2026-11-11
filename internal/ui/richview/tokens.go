@@ -26,6 +26,7 @@ var paletteTokens = []struct {
 	{func(p *Palette) *color.NRGBA { return &p.MentionHoverBg }, theme.Both("rgba(var(--sk_highlight_accent),0.2)")},
 	{func(p *Palette) *color.NRGBA { return &p.SelfMentionText }, theme.Tok{Dark: "var(--dt_color-content-hgl-3)"}},
 	{func(p *Palette) *color.NRGBA { return &p.SelfMentionBg }, theme.Both("var(--dt_color-surf-hgl-3)")},
+	{func(p *Palette) *color.NRGBA { return &p.SelfLinkText }, theme.Tok{Light: "var(--dt_color-content-hgl-1)", Dark: "var(--dt_color-content-hgl-3)"}},
 	{func(p *Palette) *color.NRGBA { return &p.CodeText }, theme.Tok{Light: "rgb(var(--dt_color-plt-flamingo-70))"}},
 	{func(p *Palette) *color.NRGBA { return &p.CodeBg }, theme.Both("rgba(var(--sk_foreground_min),0.04)")},
 	{func(p *Palette) *color.NRGBA { return &p.CodeBorder }, theme.Both("rgba(var(--sk_foreground_low),0.13)")},

@@ -156,6 +156,10 @@ type Surface struct {
 	// fixed is the action base of a surface that isn't a Slack view (a
 	// code channel's block_kit view): its container and app ids.
 	fixed *core.BlockAction
+	// org is the window position of the surface's top-left as the modal
+	// last drew it; curY the y of the block being laid out (ModalFields).
+	org  image.Point
+	curY int
 }
 
 // dirty reports whether the user changed any input since the view was
@@ -201,7 +205,24 @@ func (s *Surface) set(v *core.View, keep bool) {
 		s.applyState(v.State)
 	}
 	s.initial = string(s.vals.JSON(false))
+	// a views.update keeps the widgets of elements still there (same
+	// block_id, action_id and type) whose values it kept: a focused input
+	// keeps the focus and what was typed, as in Slack, where React
+	// reconciles the input by its key
+	oldWS := s.ws
 	s.ws = map[string]*ew{}
+	if keep {
+		for i := range s.blocks {
+			b := &s.blocks[i]
+			for _, e := range elementsOf(b) {
+				k := b.BlockID + "\x00" + e.ActionID + "\x00" + e.Type
+				if w := oldWS[k]; w != nil && s.vals.get(b.BlockID, e.ActionID) == old.get(b.BlockID, e.ActionID) {
+					w.rebind(b, e)
+					s.ws[k] = w
+				}
+			}
+		}
+	}
 	s.texts = map[string]*richview.View{}
 	s.errs = map[string]string{}
 	s.blkErr = map[string]string{}
@@ -427,6 +448,7 @@ func (s *Surface) Layout(gtx C) D {
 		}
 		y += gap
 		var bh int
+		s.curY = y
 		at(gtx, image.Pt(0, y), func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 			bh = s.block(gtx, b, i, w, st)
@@ -629,6 +651,7 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 	if b.Element != nil {
 		ew := s.widget(b, b.Element)
 		sz := ew.size(gtx, w, false)
+		ew.pos = image.Pt(0, s.curY+y)
 		at(gtx, image.Pt(0, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
 		y += sz.Y
 	}

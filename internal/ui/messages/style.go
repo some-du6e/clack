@@ -48,6 +48,14 @@ type colors struct {
 	JumpText, FailedText, BorderStrong                color.NRGBA
 	SystemText, HeaderBorder, CloseHover              color.NRGBA
 	Editing, ScrollThumb, ScrollThumbHover, Selection color.NRGBA
+	// huddle messages (huddle_msg.go): the live system icon
+	// (content-hgl-2), Join Huddle (c-button--primary: base-inv-hgl-2 and
+	// its -hover overlay), HuddleMsgAvatar's tile (rgba(fg_low,.13), live
+	// jade-60), the LIVE badge (jade-90 / dark jade-80 under jade-0) and
+	// the missed tile and badge (base-imp under content-imp)
+	HuddleLive, HuddleJoin, HuddleJoinHover    color.NRGBA
+	HuddleTile, HuddleTileLive, HuddleMissedBg color.NRGBA
+	HuddleLiveBadge, HuddleLiveBadgeText       color.NRGBA
 }
 
 var lightColors = colors{
@@ -68,6 +76,9 @@ var lightColors = colors{
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
 	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.3), ScrollThumbHover: rgba(0x1d1c1d, 0.5), Selection: rgba(0x1d9bd1, 0.3),
 	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
+	HuddleLive: rgb(0x007a5a), HuddleJoin: rgb(0x007a5a), HuddleJoinHover: rgba(0x0a4032, 0x21/255.0),
+	HuddleTile: rgba(0x1d1c1d, 0.13), HuddleTileLive: rgb(0x178f65), HuddleMissedBg: rgb(0xffe8ef),
+	HuddleLiveBadge: rgb(0x0c5340), HuddleLiveBadgeText: rgb(0xffffff),
 
 	// --dt_color-base-hgl-3 (slack-kit-gantry-v2-styles): the selected thread root (active_thread.go)
 	ActiveThread: rgb(0xfffae0),
@@ -91,6 +102,9 @@ var darkColors = colors{
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
 	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xe8e8e8, 0.3), ScrollThumbHover: rgba(0xe8e8e8, 0.5), Selection: rgba(0x1d9bd1, 0.4),
 	SystemText: rgb(0xababad), HeaderBorder: rgba(0xe8e8e8, 0.13), CloseHover: rgba(0xe8e8e8, 0.06),
+	HuddleLive: rgb(0x3daa7c), HuddleJoin: rgb(0x177e56), HuddleJoinHover: rgba(0xd8f5e9, 0x14/255.0),
+	HuddleTile: rgba(0xe8e8e8, 0.13), HuddleTileLive: rgb(0x3daa7c), HuddleMissedBg: rgb(0x300005),
+	HuddleLiveBadge: rgb(0x8dd2b5), HuddleLiveBadgeText: rgb(0x05241b),
 
 	// --dt_color-base-hgl-3, dark
 	ActiveThread: rgb(0x2f1e00),
@@ -122,7 +136,7 @@ func flatten(c colors) colors {
 	bg := c.Bg
 	for _, p := range []*color.NRGBA{&c.Hover, &c.Pinned, &c.PinnedHover, &c.Highlight, &c.Editing, &c.CustomTint,
 		&c.BadgeBg, &c.ReactBg, &c.ReactSelfBg, &c.ReactSelfHoverBg, &c.ToolbarHoverBg, &c.CloseHover,
-		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70} {
+		&c.DayLine, &c.PillBorder, &c.ThreadBorder, &c.HeaderBorder, &c.BorderStrong, &c.ReactHoverBorder, &c.Muted70, &c.HuddleTile} {
 		*p = richview.Over(*p, bg)
 	}
 	return c

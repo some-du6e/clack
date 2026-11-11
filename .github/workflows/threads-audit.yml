@@ -14,6 +14,9 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run threads-audit.yml --ref <branch>)
     paths:
       - "internal/ui/messages/thread*.go"
+      - "internal/ui/messages/bk_thread_test.go"
+      - "internal/ui/blockkit/draw.go"
+      - "internal/ui/richview/blocks.go"
       - "internal/ui/messages/reply_bar.go"
       - "internal/ui/messages/list.go"
       - "internal/ui/messages/row.go"
@@ -63,6 +66,8 @@ jobs:
         run: |
           mkdir -p "$THREADS_AUDIT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestThreadsAudit' ./internal/ui
+          # Block Kit in the thread pane next to the channel (bk-vote-*)
+          CLACK_PIXEL_TESTS=1 xvfb-run -a go test -count=1 -v -run 'TestThreadsAuditBlockKit' ./internal/ui/messages
           ls -la "$THREADS_AUDIT_SHOTS_DIR"
       - name: Slack's markup for the same states (shipping CSS)
         if: ${{ !cancelled() }}

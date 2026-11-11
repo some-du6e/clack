@@ -87,6 +87,17 @@ func (s *listState) adjustSystem(h Host, on bool) (missing bool) {
 	app := h.Core()
 	for i := range s.snap.msgs {
 		m := &s.snap.msgs[i].m
+		if huddleSubtype(m.Subtype) && len(m.Huddle) > 2 {
+			// R+b2 kn: a huddle_thread / huddle_message is a redesigned
+			// system message under the experiment, its body
+			// HuddleMsgText's compact line (huddle_msg.go)
+			m.System = on
+			if hm, ok := huddleOf(app, m); ok && on {
+				root := s.thread && (m.ThreadTS == "" || m.ThreadTS == m.TS)
+				m.Doc = huddleSystemDoc(hm, m.Doc, root)
+			}
+			continue
+		}
 		_, redesigned := redesignedIcons[m.Subtype]
 		if !m.System && !redesigned && !isAutomatedSubtype(m.Subtype) {
 			continue

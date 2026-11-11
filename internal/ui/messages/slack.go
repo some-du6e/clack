@@ -428,7 +428,14 @@ func slackAttachment(b *richtext.Block) slackc.Props {
 		p["footer"] = spansMrkdwn(a.Footer)
 	}
 	set("footer_icon", a.FooterIcon)
-	if a.TS > 0 {
+	switch {
+	case (a.IsShare || a.MsgCard) && a.MsgTS != "":
+		// a shared or unfurled message's ts, a string as Slack's message
+		// attachment has it: ShowRealUser looks a forwarded relay post's
+		// sender up by channel_id:ts and compares it with the reply's
+		// ts, so the whole seconds (a number) never matched
+		p["ts"] = a.MsgTS
+	case a.TS > 0:
 		p["ts"] = a.TS
 	}
 	if a.Image != nil {

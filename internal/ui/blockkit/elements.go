@@ -142,25 +142,48 @@ type ew struct {
 	// trailing (useBlockKitInteractiveState's debounce config).
 	charLast    time.Time
 	charPending bool
+
+	// where a surface last drew a text input (its coordinates) and
+	// whether it had the key focus then (ModalFields)
+	pos, box image.Point
+	focusedD bool
 }
 
 func newEW(o owner, b *Block, e *Element, input bool) *ew {
 	w := &ew{o: o, bid: b.BlockID, b: b, e: e, input: input}
 	if isTextInput(e.Type) && e.Type != "rich_text_input" {
-		// Enter dispatches in a dispatch_action block even when multiline
-		// (PlainTextInputElement.handleKeyDown prevents the newline).
-		w.ed = &widget.Editor{SingleLine: !e.Multiline, Submit: !e.Multiline || b.DispatchAction}
-		if e.Type == "number_input" {
-			w.ed.Filter = "0123456789-"
-			if e.IsDecimalAllowed {
-				w.ed.Filter += ".,"
-			}
-		}
-		if e.MaxLength > 0 {
-			w.ed.MaxLen = e.MaxLength
+		w.ed = new(widget.Editor)
+	}
+	w.configure()
+	return w
+}
+
+// rebind points a widget kept across a views.update at the new view's
+// block and element (same block_id, action_id and type), the way React
+// keeps Slack's input mounted: its editor, focus and typed text stay.
+func (w *ew) rebind(b *Block, e *Element) {
+	w.b, w.e, w.bid = b, e, b.BlockID
+	w.views = nil // option labels of the new element
+	w.configure()
+}
+
+// configure sets the text editor up for the element.
+func (w *ew) configure() {
+	if w.ed == nil {
+		return
+	}
+	e := w.e
+	// Enter dispatches in a dispatch_action block even when multiline
+	// (PlainTextInputElement.handleKeyDown prevents the newline).
+	w.ed.SingleLine, w.ed.Submit = !e.Multiline, !e.Multiline || w.b.DispatchAction
+	w.ed.Filter = ""
+	if e.Type == "number_input" {
+		w.ed.Filter = "0123456789-"
+		if e.IsDecimalAllowed {
+			w.ed.Filter += ".,"
 		}
 	}
-	return w
+	w.ed.MaxLen = max(e.MaxLength, 0)
 }
 
 func (w *ew) value() *Value {
@@ -241,8 +264,10 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 	}
 	switch w.e.Type {
 	case "button", "workflow_button":
-		tw := measure(gtx, th, 13, theme.Bold, textOf(w.e.Text))
-		bw := tw + 2*dp(gtx, 8)
+		// .p-block_kit_button_element { padding: 0 8px 1px } in a
+		// c-button--small (min-width 56px); the label's emoji are 16px
+		tw := runsWidth(gtx, th, 13, buttonRuns(w.o.host(), w.e.Text))
+		bw := max(tw+2*dp(gtx, 8), dp(gtx, 56))
 		if accessory && w.o.modal() {
 			bw = max(bw, dp(gtx, 120))
 		}
@@ -386,7 +411,7 @@ func (w *ew) layoutButton(gtx C, sz image.Point) {
 		w.press()
 		off = w.disabled(gtx)
 	}
-	drawButton(gtx, w.th(), sz, w.e.Style, textOf(w.e.Text), 4, 13, w.main.g.Hovered(), false, off)
+	drawButtonRuns(gtx, w.th(), h, sz, w.e.Style, buttonRuns(h, w.e.Text), 4, 13, w.main.g.Hovered(), false, off)
 	w.main.add(gtx, sz)
 }
 
@@ -889,6 +914,7 @@ func (w *ew) layoutText(gtx C, sz image.Point) {
 		}
 	}
 	focused := gtx.Focused(w.ed)
+	w.focusedD, w.box = focused, sz
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 8)
 	bw := max(1, dp(gtx, 1))

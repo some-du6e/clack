@@ -432,7 +432,8 @@ func (s *listState) anchorItem(key string) int {
 // adjacent message (shouldHideSenderAndTimestamp) and draws the pinned
 // label above its body.
 func groupable(a, b *core.Message, ta, tb time.Time) bool {
-	if a.System || b.System || isAutomatedSubtype(a.Subtype) || isAutomatedSubtype(b.Subtype) || a.Tombstone || b.Tombstone || !core.Adjacent(a, b) {
+	if a.System || b.System || isAutomatedSubtype(a.Subtype) || isAutomatedSubtype(b.Subtype) || a.Tombstone || b.Tombstone ||
+		isHuddleMsg(a) || isHuddleMsg(b) || !core.Adjacent(a, b) { // a huddle message never groups (huddle_msg.go)
 		return false
 	}
 	if b.Broadcast || a.ReplyCount > 0 || b.ReplyCount > 0 {

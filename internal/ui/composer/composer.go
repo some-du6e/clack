@@ -1126,7 +1126,10 @@ func (c *Composer) send(o *outgoing) {
 			c.restore(o.doc)
 			return
 		}
-		c.later(func() { c.unsendBy = time.Now().Add(unsendWindow) })
+		c.later(func() {
+			c.unsendBy = time.Now().Add(unsendWindow)
+			c.att.dropPreviews(batch.chips...) // sent: no viewer shows them any more
+		})
 	}()
 }
 

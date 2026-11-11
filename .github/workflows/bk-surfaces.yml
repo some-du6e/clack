@@ -18,6 +18,8 @@ on:
       - "internal/store/convkind.go"
       - "internal/fakeslack/**"
       - "internal/ui/bk_surfaces_test.go"
+      - "internal/ui/bk_inputs_test.go"
+      - "third_party/gioui.org/widget/editor.go"
       - ".github/workflows/bk-surfaces.yml"
   workflow_dispatch:
 
@@ -52,7 +54,7 @@ jobs:
           go test -count=1 -v -run 'TestGallerySurfaces' ./internal/fakeslack
           go test -count=1 -v -run 'TestSubmitView|TestViewEvents|TestShortcutsAndHome' ./internal/core
           go test -count=1 -v ./internal/ui/blockkit
-          xvfb-run -a go test -count=1 -v -run 'TestBlockKitSurfaces$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestBlockKitSurfaces$|TestBlockKitModalFieldsEdit$' ./internal/ui/
           ls -la "$BK_SURFACES_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

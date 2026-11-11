@@ -52,6 +52,10 @@ type Store struct {
 
 	// Groups holds full usergroup records (Usergroups maps id -> handle).
 	Groups []slack.Usergroup
+	// MyGroups are the user groups the viewer is in (Slack's
+	// userGroupMembership: usergroups.membership, subteam_self_added and
+	// subteam_self_removed; memory only)
+	MyGroups map[string]bool
 	// Muted is the set of muted conversation ids (from prefs).
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
@@ -1192,6 +1196,45 @@ func (s *Store) HasCachedPrefs() bool {
 }
 
 // SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
+// SetMyUsergroups replaces the viewer's user groups
+// (bulkSetUserGroupMembership).
+func (s *Store) SetMyUsergroups(ids []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.MyGroups = make(map[string]bool, len(ids))
+	for _, id := range ids {
+		s.MyGroups[id] = true
+	}
+	s.gen.Add(1)
+}
+
+// SetMyUsergroup records the viewer joining or leaving group id
+// (subteam_self_added / subteam_self_removed).
+func (s *Store) SetMyUsergroup(id string, in bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.MyGroups == nil {
+		s.MyGroups = map[string]bool{}
+	}
+	if s.MyGroups[id] == in {
+		return
+	}
+	if in {
+		s.MyGroups[id] = true
+	} else {
+		delete(s.MyGroups, id)
+	}
+	s.gen.Add(1)
+}
+
+// InUsergroup is richtext.UsergroupMember: whether the viewer is in group
+// id (isUserInGroup, client-boot 3HzN nc).
+func (s *Store) InUsergroup(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.MyGroups[id]
+}
+
 func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
