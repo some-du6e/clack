@@ -517,13 +517,9 @@ func (pp *pluginsPage) row(gtx layout.Context, w int, u unifiedPlugin) layout.Di
 			}
 			at(gtx, image.Pt(gtx.Dp(4), gtx.Dp(6)), image.Pt(textW, h-gtx.Dp(12)), func(gtx layout.Context) layout.Dimensions {
 				tp.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 20, Weight: theme.Bold, Color: cl.fg, MaxLines: 1}, u.Name)
-				if desc != "" {
-					col := cl.fg2
-					if u.ProblemErr && u.Problem != "" {
-						col = cl.err
-					}
+				if desc != "" { // .taut-settings__row-description: content-sec, an error too (the icon flags it)
 					at(gtx, image.Pt(0, gtx.Dp(20)), image.Pt(textW, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
-						return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: col, MaxLines: 1}, desc)
+						return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg2, MaxLines: 1}, desc)
 					})
 				}
 				return layout.Dimensions{Size: image.Pt(textW, h-gtx.Dp(12))}
