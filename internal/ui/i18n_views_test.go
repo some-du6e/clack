@@ -10,9 +10,11 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 )
 
-// The rail's list views in the "no English left" checks and the locale
-// screenshots (docs/I18N.md): each view drawn in en-US, then in Slack's
-// es-ES and ja-JP bundles, against the fake's views fixtures.
+// The rail's list views, a canvas and a list in the "no English left"
+// checks and the locale screenshots (docs/I18N.md): each drawn in en-US,
+// then in Slack's es-ES and ja-JP bundles, against the fake's views,
+// canvas and list fixtures. The huddle UI has its own checks
+// (internal/ui/huddleui TestHuddleNoEnglishLeft).
 
 // i18nView is one view, by route.
 type i18nView struct{ name, route string }
@@ -31,6 +33,8 @@ var i18nViews = []i18nView{
 	{"directories-channels", "directories?tab=channels"},
 	{"directories-groups", "directories?tab=groups"},
 	{"huddles", "huddles"},
+	{"canvas", "docs/" + fakeslack.CanvasChannel},
+	{"list", "lists/" + fakeslack.ListKitchen},
 }
 
 // i18nViewsSize is Small with the views' fixtures: followed threads,

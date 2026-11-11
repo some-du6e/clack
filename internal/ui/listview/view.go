@@ -338,7 +338,7 @@ func (v *View) layoutBar(gtx layout.Context, d *core.ListDoc, size image.Point) 
 	th := v.h.Theme()
 	c := &th.C
 	theme.Fill(gtx, image.Rect(0, size.Y-gtx.Dp(1), size.X, size.Y), c.Border)
-	title := "List"
+	title := nsLists.T("List")
 	if d != nil {
 		title = d.Info.Title
 	}
@@ -507,7 +507,7 @@ func (v *View) layoutToolbar(gtx layout.Context, d *core.ListDoc, lv *lists.View
 	top := y + gtx.Dp(12)
 	x := v.pad(gtx) - gtx.Dp(8)
 	// view switcher
-	name, icon := "All items", "spreadsheet"
+	name, icon := nsLists.T("All items"), "spreadsheet"
 	if lv != nil {
 		if lv.Name != "" {
 			name = lv.Name
@@ -546,7 +546,7 @@ func (v *View) layoutToolbar(gtx layout.Context, d *core.ListDoc, lv *lists.View
 	// right-hand refine buttons
 	rx := w - gtx.Dp(16)
 	type rb struct{ key, icon, label string }
-	rbs := []rb{{"filter", "filter-sliders", "Filter"}, {"sort", "sort", "Sort"}}
+	rbs := []rb{{"filter", "filter-sliders", nsLists.T("Filter")}, {"sort", "sort", nsLists.T("Sort")}}
 	for i := len(rbs) - 1; i >= 0; i-- {
 		b := rbs[i]
 		lw := th.Measure(gtx, 13, theme.Bold, b.label)
@@ -573,7 +573,7 @@ func (v *View) layoutToolbar(gtx layout.Context, d *core.ListDoc, lv *lists.View
 			})
 			return at(gtx, image.Pt(gtx.Dp(30), (s.Y-gtx.Dp(20))/2), image.Pt(s.X-gtx.Dp(38), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
 				if v.search.Len() == 0 {
-					th.Label(gtx, 13, theme.Regular, c.FgSubtle, "Search")
+					th.Label(gtx, 13, theme.Regular, c.FgSubtle, nsLists.T("Search"))
 				}
 				return th.Editor(gtx, &v.search, 13, c.Fg, c.Selection)
 			})
@@ -648,16 +648,16 @@ func (v *View) pills(d *core.ListDoc, lv *lists.View) []pillInfo {
 	}
 	for _, s := range lv.Sorts {
 		if c := d.Meta.Column(s.Key); c != nil {
-			dir := "Descending"
+			dir := nsLists.T("Descending")
 			if s.Ascending {
-				dir = "Ascending"
+				dir = nsLists.T("Ascending")
 			}
 			out = append(out, pillInfo{icon: "sort", text: c.Name + ": " + dir})
 		}
 	}
 	if g := lv.GroupBy(); g != "" && lv.Type != lists.ViewBoard {
 		if c := d.Meta.Column(g); c != nil {
-			out = append(out, pillInfo{text: "Group by: " + c.Name})
+			out = append(out, pillInfo{text: nsLists.T("Group by: {group}", "group", c.Name)}) // ListsGroupByPill
 		}
 	}
 	return out
@@ -692,23 +692,23 @@ func (v *View) filterValues(c *lists.Column, f lists.Filter) string {
 func dynamicDateLabel(s string) string {
 	switch s {
 	case lists.DateToday:
-		return "Today"
+		return nsLists.T("Today")
 	case lists.DateYesterday:
-		return "Yesterday"
+		return nsLists.T("Yesterday")
 	case lists.DateTomorrow:
-		return "Tomorrow"
+		return nsLists.T("Tomorrow")
 	case lists.DateThisWeek:
-		return "This week"
+		return nsLists.T("This week")
 	case lists.DateNextWeek:
-		return "Next week"
+		return nsLists.T("Next week")
 	case lists.DateLastWeek:
-		return "Last week"
+		return nsLists.T("Last week")
 	case lists.DateUpcoming:
-		return "Upcoming"
+		return nsLists.T("Upcoming")
 	case lists.DateOverdue:
-		return "Overdue"
+		return nsLists.T("Overdue")
 	case lists.DateLater:
-		return "Later"
+		return nsLists.T("Later")
 	case lists.DateSinceILastViewed:
 		return "Since I last viewed"
 	}
@@ -730,7 +730,7 @@ func (v *View) viewMenu(d *core.ListDoc) {
 		}
 		name := lv.Name
 		if name == "" {
-			name = "All items"
+			name = nsLists.T("All items")
 		}
 		if cur != nil && cur.ID == lv.ID {
 			icon = "check"
@@ -868,11 +868,11 @@ func (v *View) layoutError(gtx layout.Context, err error) layout.Dimensions {
 	at(gtx, image.Pt((sz.X-w)/2, y), image.Pt(w+2, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return th.Label(gtx, 15, theme.Bold, th.C.Fg, msg)
 	})
-	lw := th.Measure(gtx, 13, theme.Bold, "Try again")
+	lw := th.Measure(gtx, 13, theme.Bold, nsLists.T("Try again"))
 	bw := lw + gtx.Dp(24)
 	k := v.btn("retry")
 	at(gtx, image.Pt((sz.X-bw)/2, y+gtx.Dp(36)), image.Pt(bw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-		return refineButton(gtx, th, k, "", "Try again", lw)
+		return refineButton(gtx, th, k, "", nsLists.T("Try again"), lw)
 	})
 	if k.Clicked(gtx) {
 		v.load(false)

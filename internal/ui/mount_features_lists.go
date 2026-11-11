@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/listview"
 )
 
@@ -100,7 +101,7 @@ func (a *App) listActions() listview.Actions {
 		OpenItem: a.OpenListItem,
 		Copy: func(s string) {
 			a.copyText(s)
-			a.Toast("Link copied to clipboard")
+			a.Toast(i18n.T("lists", "Link copied to clipboard"))
 		},
 		Menu: func(items []listview.MenuItem) {
 			a.menu(a.PointerPos(), listMenuItems(items))
@@ -263,7 +264,7 @@ func (a *App) NewListMenu() {
 		a.Post(func() {
 			items := []MenuItem{{Label: "Blank list", Icon: "lists", Do: a.CreateList}}
 			if err == nil && len(tpls) > 0 {
-				items = append(items, MenuItem{Divider: true}, MenuItem{Label: "Templates", Header: true})
+				items = append(items, MenuItem{Divider: true}, MenuItem{Label: i18n.T("tabbed-channel", "Templates"), Header: true})
 				for _, t := range tpls {
 					t := t
 					items = append(items, MenuItem{Label: t.Name, Subtitle: t.Description, Icon: "list-view", Do: func() { a.createList(t.ID) }})

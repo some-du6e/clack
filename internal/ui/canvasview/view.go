@@ -19,6 +19,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/richview"
@@ -350,7 +351,7 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 	th := v.h.Theme()
 	c := &th.C
 	theme.Fill(gtx, image.Rectangle{Max: size}, c.Bg)
-	title := "Canvas"
+	title := nsCanvas.T("Canvas")
 	if d != nil {
 		title = d.Info.Title
 	}
@@ -370,14 +371,14 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 		x -= gap
 	}
 	if v.mode == Side && v.act.Close != nil {
-		icon("close", "close", "Close")
+		icon("close", "close", nsCanvas.T("Close"))
 	}
-	icon("more", "more", "More actions")
+	icon("more", "more", nsCanvas.T("More actions"))
 	if v.mode == Side && v.act.FullView != nil {
-		icon("full", "expand", "Open in full view")
+		icon("full", "expand", nsCanvas.T("Open in full view"))
 	}
 	if v.mode == Full && v.act.Share != nil {
-		lw := th.Measure(gtx, 13, theme.Bold, "Share")
+		lw := th.Measure(gtx, 13, theme.Bold, nsCanvas.T("Share"))
 		w := lw + 2*gtx.Dp(12)
 		x -= w
 		clk := v.btn("bar.share")
@@ -392,7 +393,7 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.WithAlpha(c.Fg, 0x21))
 			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(lw+2, s.Y), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
-					return th.Label(gtx, 13, theme.Bold, c.Fg, "Share")
+					return th.Label(gtx, 13, theme.Bold, c.Fg, nsCanvas.T("Share"))
 				})
 			})
 			return clk.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
@@ -414,6 +415,9 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 	}
 	if v.mode == Full && d != nil && d.Info.Updated > d.Info.Created && d.Info.Updated > 0 {
 		txt := "Edited " + editedAgo(time.Unix(d.Info.Updated, 0))
+		if i18n.Locale() != i18n.EnUS {
+			txt = nsCanvas.T("Edited {timeStr}", "timeStr", editedAgo(time.Unix(d.Info.Updated, 0))) // QuipLastUpdatedReminder
+		}
 		tw := th.Measure(gtx, 13, theme.Regular, txt)
 		if tw < x/2 { // the title keeps the room first
 			x -= tw
@@ -437,6 +441,9 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 // editedAgo is QuipLastUpdatedReminder's time: always relative
 // (alwaysAgo), "just now" under a minute, "minutes" shortened to "min".
 func editedAgo(t time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.TimeAgo(l, t, time.Now(), false, true) // toTimeAgo, alwaysAgo
+	}
 	d := time.Since(t)
 	plural := func(n int, unit string) string {
 		if n == 1 {
@@ -489,19 +496,19 @@ func (v *View) openMore() {
 	var items []MenuItem
 	if d != nil && d.Info.Permalink != "" {
 		link := d.Info.Permalink
-		items = append(items, MenuItem{Label: "Copy link", Icon: "link", Do: func() { copyText(v.h, link) }})
+		items = append(items, MenuItem{Label: nsCanvas.T("Copy link"), Icon: "link", Do: func() { copyText(v.h, link) }})
 	}
 	if v.act.Share != nil {
-		items = append(items, MenuItem{Label: "Share this canvas", Icon: "share-message", Do: func() { v.act.Share(v.id) }})
+		items = append(items, MenuItem{Label: nsCanvas.T("Share this canvas"), Icon: "share-message", Do: func() { v.act.Share(v.id) }})
 	}
 	var view []MenuItem
 	switch {
 	case v.mode == Tab && v.act.SideView != nil:
-		view = append(view, MenuItem{Label: "Open in split view", Icon: "panel-right", Do: v.act.SideView})
+		view = append(view, MenuItem{Label: nsCanvas.T("Open in split view"), Icon: "panel-right", Do: v.act.SideView})
 	case v.mode == Side && v.act.FullView != nil:
-		view = append(view, MenuItem{Label: "Open in full view", Icon: "expand", Do: v.act.FullView})
+		view = append(view, MenuItem{Label: nsCanvas.T("Open in full view"), Icon: "expand", Do: v.act.FullView})
 	case v.mode == Full && v.act.SideView != nil:
-		view = append(view, MenuItem{Label: "Open in side panel", Icon: "panel-right", Do: v.act.SideView})
+		view = append(view, MenuItem{Label: nsCanvas.T("Open in side panel"), Icon: "panel-right", Do: v.act.SideView})
 	}
 	if len(items) > 0 && len(view) > 0 {
 		items = append(items, MenuItem{Divider: true})
@@ -514,7 +521,7 @@ func (v *View) openMore() {
 }
 
 // copyText is set by the shell (clipboard writes need the window).
-var copyText = func(h Host, s string) { h.Toast("Link copied") }
+var copyText = func(h Host, s string) { h.Toast(nsCanvas.T("Link copied")) }
 
 // SetCopy installs the shell's clipboard writer.
 func SetCopy(f func(h Host, s string)) { copyText = f }
@@ -536,14 +543,14 @@ func (v *View) layoutError(gtx layout.Context, err error) (retried bool) {
 		return th.Label(gtx, 15, theme.Bold, th.C.Fg, msg)
 	})
 	retry := v.retry.Clicked(gtx) // before Layout, which drains a Clickable's events
-	lw := th.Measure(gtx, 13, theme.Bold, "Try again")
+	lw := th.Measure(gtx, 13, theme.Bold, nsCanvas.T("Try again"))
 	bw := lw + gtx.Dp(24)
 	at(gtx, image.Pt((sz.X-bw)/2, y+gtx.Dp(36)), image.Pt(bw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
 		s := gtx.Constraints.Max
 		theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(6), gtx.Dp(1), th.C.BorderStrong)
 		at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(lw+2, s.Y), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, s.Y, func(gtx layout.Context) layout.Dimensions {
-				return th.Label(gtx, 13, theme.Bold, th.C.Fg, "Try again")
+				return th.Label(gtx, 13, theme.Bold, th.C.Fg, nsCanvas.T("Try again"))
 			})
 		})
 		return v.retry.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
@@ -725,7 +732,7 @@ func placeholderFor(id string) string {
 	if a < 0 {
 		a = -a
 	}
-	return textPlaceholders[a%len(textPlaceholders)]
+	return nsCanvas.T(textPlaceholders[a%len(textPlaceholders)])
 }
 
 // placeholder is the text Slack overlays on an empty canvas (Quip's
@@ -845,7 +852,7 @@ func (v *View) layoutTitleBlock(gtx layout.Context, b *blk) int {
 		if v.edit.canEdit(v) {
 			if v.tphView == nil {
 				v.tphView = richview.New(richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph,
-					Spans: []richtext.Span{{Kind: richtext.Text, Text: titlePlaceholder, Style: richtext.Bold}}}}}, richview.Options{})
+					Spans: []richtext.Span{{Kind: richtext.Text, Text: nsCanvas.T(titlePlaceholder), Style: richtext.Bold}}}}}, richview.Options{})
 			}
 			h = max(h, v.tphView.Layout(g, v.styles.titlePh, v.handler).Size.Y)
 		}
@@ -963,6 +970,9 @@ func (v *View) layoutViewers(gtx layout.Context, end image.Point, ah int) int {
 
 // ago is Slack's relative time for "Last edited".
 func ago(t time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.TimeAgo(l, t, time.Now(), false, true)
+	}
 	d := time.Since(t)
 	switch {
 	case d < time.Minute:

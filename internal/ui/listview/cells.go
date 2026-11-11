@@ -261,7 +261,7 @@ func CellText(a *core.App, c *lists.Column, f *lists.Field) string {
 		}
 	case lists.Message:
 		if len(f.Message) > 0 {
-			return "Message"
+			return nsLists.T("Message")
 		}
 	}
 	return ""
@@ -464,7 +464,7 @@ func messageLabel(h Host, m lists.MessageValue) string {
 			return "Message in #" + c.Name
 		}
 	}
-	return "Message"
+	return nsLists.T("Message")
 }
 
 // optionPill draws a select option's pill at x; returns its width.
@@ -550,7 +550,7 @@ func fileTitle(h Host, id string) string {
 	fileTitlesMu.Unlock()
 	if ok {
 		if t == "" {
-			return "File"
+			return nsLists.T("File")
 		}
 		return t
 	}
@@ -569,7 +569,7 @@ func fileTitle(h Host, id string) string {
 			}
 		}()
 	}
-	return "File"
+	return nsLists.T("File")
 }
 
 var (

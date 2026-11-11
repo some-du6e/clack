@@ -145,19 +145,19 @@ func newAddToList(h popups.Host, channel, ts string, o AddOpts) *picker {
 		p.def = c.PrefString(core.PrefAddToListDefault)
 		p.sel = p.def
 	}
-	add := &popups.ModalButton{Label: "Add", Kind: popups.BtnPrimary,
+	add := &popups.ModalButton{Label: nsLists.T("Add"), Kind: popups.BtnPrimary,
 		Enabled: func() bool { return p.sel != "" && !p.creating },
 		Do: func() bool {
 			p.addTo(p.sel)
 			return true
 		}}
 	p.modal = popups.NewModal(h, popups.ModalOpts{
-		Title: "Add to list",
+		Title: nsLists.T("Add to list"),
 		Body:  p.layout,
 		Buttons: []*popups.ModalButton{
-			{Label: "Create New List", Kind: popups.BtnOutline, Left: true, Enabled: func() bool { return !p.creating },
+			{Label: nsLists.T("Create New List"), Kind: popups.BtnOutline, Left: true, Enabled: func() bool { return !p.creating },
 				Do: func() bool { p.createAndAdd(); return false }},
-			{Label: "Cancel", Kind: popups.BtnOutline},
+			{Label: nsLists.T("Cancel"), Kind: popups.BtnOutline},
 			add,
 		},
 		Border:     true,
@@ -177,7 +177,7 @@ func NewListPicker(h popups.Host, channel string, o AddOpts) *popups.Modal {
 func newListPicker(h popups.Host, channel string, o AddOpts) *picker {
 	p := newPicker(h, pickTab, o)
 	p.channel = channel
-	insert := &popups.ModalButton{Label: "Insert", Kind: popups.BtnPrimary,
+	insert := &popups.ModalButton{Label: nsLists.T("Insert"), Kind: popups.BtnPrimary,
 		// the list's header decides the tab's view and the share step
 		Enabled: func() bool { return p.sel != "" && !p.bump && p.hdrs[p.sel] != nil },
 		Do: func() bool {
@@ -185,13 +185,13 @@ func newListPicker(h popups.Host, channel string, o AddOpts) *picker {
 			return true
 		}}
 	p.modal = popups.NewModal(h, popups.ModalOpts{
-		Title: "Add a list",
+		Title: nsLists.T("Add a list"),
 		Width: 650,
 		Body:  p.layout,
 		Buttons: []*popups.ModalButton{
-			{Label: "Create New List", Kind: popups.BtnOutline, Left: true, Enabled: func() bool { return !p.bump },
+			{Label: nsLists.T("Create New List"), Kind: popups.BtnOutline, Left: true, Enabled: func() bool { return !p.bump },
 				Do: func() bool { p.newTabList(); return true }},
-			{Label: "Cancel", Kind: popups.BtnOutline, Enabled: func() bool { return !p.bump }},
+			{Label: nsLists.T("Cancel"), Kind: popups.BtnOutline, Enabled: func() bool { return !p.bump }},
 			insert,
 		},
 		Border:     true,
@@ -510,9 +510,9 @@ func addTabNow(ctx context.Context, h popups.Host, o AddOpts, ch, id, viewID, ac
 	o.Post(func() {
 		switch {
 		case err == core.ErrTooManyTabs:
-			h.Toast("Maximum number of tabs added.")
+			h.Toast(nsLists.T("Maximum number of tabs added."))
 		case err != nil:
-			h.Toast("Cannot add tab.")
+			h.Toast(nsLists.T("Cannot add tab."))
 		case o.ShowTab != nil:
 			o.ShowTab(id)
 		}
@@ -594,7 +594,7 @@ func (p *picker) banner() string {
 			return ""
 		}
 	}
-	return "This list doesn’t have a message field. Continuing will automatically create one."
+	return nsLists.T("This list doesn’t have a message field. Continuing will automatically create one.")
 }
 
 // searchField is the explorer's input: 36px, 1px ring, radius 8, the
@@ -622,7 +622,7 @@ func (p *picker) searchField(gtx layout.Context, th *theme.Theme, cl *popups.Col
 					if p.search.Len() > 0 {
 						return layout.Dimensions{}
 					}
-					return th.Label(gtx, 15, theme.Regular, cl.Placeholder, "Search by list name or keyword")
+					return th.Label(gtx, 15, theme.Regular, cl.Placeholder, nsLists.T("Search by list name or keyword"))
 				}),
 				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
 					return th.Editor(gtx, &p.search, 15, th.C.Fg, th.C.Selection)
@@ -689,7 +689,7 @@ func (p *picker) row(gtx layout.Context, th *theme.Theme, cl *popups.Colors, r c
 		tw := w - x - pad
 		at(gtx, image.Pt(x, gtx.Dp(12)), image.Pt(tw, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min = image.Point{}
-			return th.Label(gtx, 15, theme.Bold, title, firstNonEmpty(r.Title, r.Name, "Untitled list"))
+			return th.Label(gtx, 15, theme.Bold, title, firstNonEmpty(r.Title, r.Name, nsLists.T("Untitled list")))
 		})
 		at(gtx, image.Pt(x, gtx.Dp(35)), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min = image.Point{}
@@ -722,7 +722,7 @@ func (p *picker) detail(r core.ListResult) string {
 // it isn't this one).
 func lastViewed(unix int64, now time.Time) string {
 	if unix <= 0 {
-		return "Last viewed"
+		return nsLists.T("Last viewed")
 	}
 	t := time.Unix(unix, 0).In(now.Location())
 	y, m, d := now.Date()
@@ -764,9 +764,9 @@ func skeletonRow(gtx layout.Context, th *theme.Theme) layout.Dimensions {
 // emptyState is the explorer's "No results".
 func emptyState(gtx layout.Context, th *theme.Theme, cl *popups.Colors, failed bool) layout.Dimensions {
 	sz := gtx.Constraints.Max
-	title, desc := "No results", "You may want to try adjusting your filters."
+	title, desc := nsLists.T("No results"), nsLists.T("You may want to try adjusting your filters.")
 	if failed {
-		title, desc = "Something went wrong", "Lists couldn’t be loaded."
+		title, desc = nsLists.T("Something went wrong"), "Lists couldn’t be loaded."
 	}
 	tw := th.Measure(gtx, 15, theme.Bold, title)
 	dw := th.Measure(gtx, 13, theme.Regular, desc)
@@ -858,19 +858,19 @@ func (p *picker) speedBump(gtx layout.Context) {
 	iw := sz.X - 2*px
 	m := op.Record(gtx.Ops)
 	y := 0
-	name := firstNonEmpty(hd.info.Title, "Untitled list")
+	name := firstNonEmpty(hd.info.Title, nsLists.T("Untitled list"))
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(iw, 1<<20)}
-	d := th.Para(g, 18, 24, theme.Bold, th.C.Fg, "Select a view for "+name)
+	d := th.Para(g, 18, 24, theme.Bold, th.C.Fg, nsLists.T("Select a view for {listName}", "listName", name)) // ListViewPickerModal
 	y += d.Size.Y
 	func() {
 		defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
-		d = th.Para(g, 13, 18, theme.Regular, cl.Fg2, "This will be the default view for anyone who opens the list")
+		d = th.Para(g, 13, 18, theme.Regular, cl.Fg2, nsLists.T("This will be the default view for anyone who opens the list"))
 	}()
 	y += d.Size.Y + gtx.Dp(16)
 	func() { // the View select
 		defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
-		d = th.Label(g, 15, theme.Bold, th.C.Fg, "View")
+		d = th.Label(g, 15, theme.Bold, th.C.Fg, nsLists.T("View"))
 	}()
 	y += d.Size.Y + gtx.Dp(8)
 	var cur lists.View
@@ -889,16 +889,16 @@ func (p *picker) speedBump(gtx layout.Context) {
 		})
 	}()
 	y += gtx.Dp(36) + gtx.Dp(24)
-	bw1 := th.Measure(gtx, 15, theme.Bold, "Back") + gtx.Dp(24)
-	bw2 := max(th.Measure(gtx, 15, theme.Bold, "Insert")+gtx.Dp(24), gtx.Dp(80))
+	bw1 := th.Measure(gtx, 15, theme.Bold, nsLists.T("Back")) + gtx.Dp(24)
+	bw2 := max(th.Measure(gtx, 15, theme.Bold, nsLists.T("Insert"))+gtx.Dp(24), gtx.Dp(80))
 	bw1 = max(bw1, gtx.Dp(80))
 	func() {
 		defer op.Offset(image.Pt(iw-bw2-gtx.Dp(12)-bw1, y)).Push(gtx.Ops).Pop()
-		sheetButton(gtx, th, cl, &p.back, "Back", false, bw1)
+		sheetButton(gtx, th, cl, &p.back, nsLists.T("Back"), false, bw1)
 	}()
 	func() {
 		defer op.Offset(image.Pt(iw-bw2, y)).Push(gtx.Ops).Pop()
-		sheetButton(gtx, th, cl, &p.insert, "Insert", true, bw2)
+		sheetButton(gtx, th, cl, &p.insert, nsLists.T("Insert"), true, bw2)
 	}()
 	y += gtx.Dp(36)
 	call := m.Stop()
@@ -1014,13 +1014,13 @@ func newShareListTab(h popups.Host, o AddOpts, ch, id, viewID string, hd *pickHd
 	if hd != nil && hd.err == nil && (hd.info.Access == "owner" || hd.info.Access == "write" || hd.info.Editable) {
 		s.canEdit, s.access = true, "write" // Slack's default: write when the viewer may grant it
 	}
-	share := &popups.ModalButton{Label: "Share", Kind: popups.BtnPrimary, Enabled: func() bool { return !s.busy },
+	share := &popups.ModalButton{Label: nsLists.T("Share"), Kind: popups.BtnPrimary, Enabled: func() bool { return !s.busy },
 		Do: func() bool { s.share(); return false }}
 	s.modal = popups.NewModal(h, popups.ModalOpts{
-		Title: "Share this list?",
+		Title: nsLists.T("Share this list?"),
 		Body:  s.body,
 		Buttons: []*popups.ModalButton{
-			{Label: "Cancel", Kind: popups.BtnOutline},
+			{Label: nsLists.T("Cancel"), Kind: popups.BtnOutline},
 			share,
 		},
 		AutoFocus: share,
@@ -1045,9 +1045,9 @@ func (s *shareTab) body(gtx layout.Context) layout.Dimensions {
 
 func accessLabel(a string) string {
 	if a == "write" {
-		return "Can edit"
+		return nsLists.T("Can edit")
 	}
-	return "Can view"
+	return nsLists.T("Can view")
 }
 
 // footerSelect draws the access select at the footer's left (the
@@ -1057,8 +1057,8 @@ func (s *shareTab) footerSelect(gtx layout.Context) {
 	cl := popups.ColorsOf(th)
 	if s.sel.Clicked(gtx) && s.canEdit && s.o.Menu != nil {
 		s.o.Menu([]MenuItem{
-			{Label: "Can edit", Do: func() { s.access = "write"; s.h.Invalidate() }},
-			{Label: "Can view", Do: func() { s.access = "read"; s.h.Invalidate() }},
+			{Label: nsLists.T("Can edit"), Do: func() { s.access = "write"; s.h.Invalidate() }},
+			{Label: nsLists.T("Can view"), Do: func() { s.access = "read"; s.h.Invalidate() }},
 		})
 	}
 	sz := gtx.Constraints.Max
@@ -1101,9 +1101,9 @@ func (s *shareTab) share() {
 			s.busy = false
 			switch {
 			case err == core.ErrTooManyTabs:
-				h.Toast("Maximum number of tabs added.")
+				h.Toast(nsLists.T("Maximum number of tabs added."))
 			case err != nil:
-				h.Toast("Cannot add tab.")
+				h.Toast(nsLists.T("Cannot add tab."))
 			default:
 				s.modal.Dismiss()
 				if o.ShowTab != nil {

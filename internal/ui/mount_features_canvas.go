@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/canvasview"
 )
 
@@ -47,7 +48,7 @@ var canvasTabs sync.Map // *App -> map[string]*canvasview.View (UI goroutine onl
 func (a *App) newCanvasView(id string, mode canvasview.Mode) *canvasview.View {
 	canvasview.SetCopy(func(h canvasview.Host, s string) {
 		a.copyText(s)
-		a.Toast("Link copied to clipboard")
+		a.Toast(i18n.T("lists", "Link copied to clipboard"))
 	})
 	act := canvasview.Actions{
 		OpenURL: openURL,
@@ -201,8 +202,8 @@ func (a *App) pendingCanvasTab(ch, id string) {
 // addTabMenu is the tab bar's "+": Slack offers a canvas, a list and more.
 func (a *App) addTabMenu(ch string) {
 	a.menu(a.PointerPos(), append([]MenuItem{
-		{Label: "Canvas", Icon: "canvas", Do: func() { a.newChannelCanvas(ch) }},
-		{Label: "List", Icon: "list-tab", Do: func() { a.addListTab(ch) }},
+		{Label: i18n.T("tabbed-channel", "Canvas"), Icon: "canvas", Do: func() { a.newChannelCanvas(ch) }},
+		{Label: i18n.T("tabbed-channel", "List"), Icon: "list-tab", Do: func() { a.addListTab(ch) }},
 	}, a.addTabWorkflowItems(ch)...)) // workflows_wire.go
 }
 
@@ -279,12 +280,12 @@ func (a *App) shareCanvasAccess(id, ch, name string) {
 					a.Toast("Couldn't share the canvas: " + err.Error())
 					return
 				}
-				a.Toast("Canvas shared to " + name)
+				a.Toast("Canvas shared to " + name) // no Slack key (its toast names the people)
 			})
 		}()
 	}
 	a.menu(a.PointerPos(), []MenuItem{
-		{Label: "Can edit", Icon: "edit", Do: func() { share("write") }},
-		{Label: "Can view", Icon: "eye", Do: func() { share("read") }},
+		{Label: i18n.T("file-permissions", "Can edit"), Icon: "edit", Do: func() { share("write") }},
+		{Label: i18n.T("file-permissions", "Can view"), Icon: "eye", Do: func() { share("read") }},
 	})
 }

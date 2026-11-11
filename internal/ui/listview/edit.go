@@ -329,7 +329,7 @@ func (k *ctl) commit(d *core.ListDoc) {
 		if txt != "" {
 			n, err := strconv.ParseFloat(strings.ReplaceAll(txt, ",", ""), 64)
 			if err != nil {
-				k.h.Toast("Enter a number")
+				k.h.Toast(nsLists.T("Enter a number"))
 				return
 			}
 			ed.Number = &n
@@ -460,7 +460,7 @@ func (k *ctl) selectItems(rec *lists.Record, c *lists.Column, f *lists.Field) []
 		}})
 	}
 	if len(vals) > 0 {
-		items = append(items, MenuItem{Label: "Clear", Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
+		items = append(items, MenuItem{Label: nsLists.T("Clear"), Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
 	}
 	return items
 }
@@ -546,7 +546,7 @@ func (k *ctl) peopleItems(d *core.ListDoc, rec *lists.Record, c *lists.Column, f
 		}})
 	}
 	if len(vals) > 0 {
-		items = append(items, MenuItem{Label: "Remove", Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
+		items = append(items, MenuItem{Label: nsLists.T("Remove"), Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
 	}
 	return items
 }
@@ -588,7 +588,7 @@ func (k *ctl) channelItems(d *core.ListDoc, rec *lists.Record, c *lists.Column, 
 		}
 	}
 	if len(cur) > 0 {
-		items = append(items, MenuItem{Label: "Clear", Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
+		items = append(items, MenuItem{Label: nsLists.T("Clear"), Icon: "close", Do: func() { k.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true}) }})
 	}
 	if len(items) == 0 {
 		items = append(items, MenuItem{Label: "No channels to pick from", Disabled: true})

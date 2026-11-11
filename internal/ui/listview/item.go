@@ -239,7 +239,7 @@ func (it *Item) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{Size: sz}
 	case rec == nil:
 		at(gtx, image.Pt(gtx.Dp(20), gtx.Dp(24)), image.Pt(body.X-gtx.Dp(40), gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-			return th.Label(gtx, 15, theme.Bold, c.Fg, "This item was deleted")
+			return th.Label(gtx, 15, theme.Bold, c.Fg, nsLists.T("This item was deleted"))
 		})
 		return layout.Dimensions{Size: sz}
 	}
@@ -281,7 +281,7 @@ func (it *Item) layoutBar(gtx layout.Context, d *core.ListDoc, size image.Point)
 	at(gtx, image.Pt(ix, (size.Y-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 		return icons.Get("list-view")(gtx, 18, c.Fg)
 	})
-	title := "Item"
+	title := nsLists.T("Item")
 	sub := ""
 	if d != nil {
 		sub = d.Info.Title
@@ -342,7 +342,7 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 			name := rec.Field(p.Key).PlainText()
 			col := c.Fg
 			if name == "" {
-				name, col = "Untitled item", c.FgSubtle
+				name, col = nsLists.T("Untitled item"), c.FgSubtle
 			}
 			at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, r.Dy(), func(gtx layout.Context) layout.Dimensions {
@@ -378,7 +378,7 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 			if lists.Flatten(f).Empty && col.Type != lists.Checkbox && col.Type != lists.TodoCompleted {
 				at(gtx, image.Pt(vx, y), image.Pt(vw, rowHt), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, rowHt, func(gtx layout.Context) layout.Dimensions {
-						return th.Label(gtx, 15, theme.Regular, c.FgSubtle, "Empty")
+						return th.Label(gtx, 15, theme.Regular, c.FgSubtle, nsLists.T("Empty"))
 					})
 				})
 			} else {
@@ -396,7 +396,7 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 	theme.Fill(gtx, image.Rect(pad, y, w-pad, y+gtx.Dp(1)), c.Border)
 	y += gtx.Dp(16)
 	at(gtx, image.Pt(pad, y), image.Pt(w-2*pad, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-		return th.Label(gtx, 15, theme.Black, c.Fg, "Comments")
+		return th.Label(gtx, 15, theme.Black, c.Fg, nsLists.T("Comments"))
 	})
 	y += gtx.Dp(30)
 	var replies []core.Message
@@ -416,7 +416,7 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 			return icons.Get("list-view")(gtx, 16, c.Fg)
 		})
 		at(gtx, image.Pt(pad+gtx.Dp(22), y), image.Pt(w-2*pad, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-			return th.Label(gtx, 15, theme.Bold, c.Fg, "Every item has a thread")
+			return th.Label(gtx, 15, theme.Bold, c.Fg, nsLists.T("Every item has a thread"))
 		})
 		y += gtx.Dp(26)
 		dims := at(gtx, image.Pt(pad, y), image.Pt(w-2*pad, gtx.Dp(66)), func(gtx layout.Context) layout.Dimensions {
@@ -508,7 +508,7 @@ func (it *Item) layoutComposer(gtx layout.Context, d *core.ListDoc, body image.P
 	}
 	at(gtx, image.Pt(r.Min.X+gtx.Dp(12), r.Min.Y+(h-gtx.Dp(22))/2), image.Pt(r.Dx()-gtx.Dp(24), gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		if it.composer.Len() == 0 {
-			th.Label(gtx, 15, theme.Regular, c.FgSubtle, "Add a comment…")
+			th.Label(gtx, 15, theme.Regular, c.FgSubtle, nsLists.T("Add a comment…"))
 		}
 		return th.Editor(gtx, &it.composer, 15, c.Fg, c.Selection)
 	})
