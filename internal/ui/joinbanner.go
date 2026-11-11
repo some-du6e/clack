@@ -68,6 +68,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -78,6 +79,11 @@ const (
 	jbMove  = "Move to Section"
 	jbSlide = 300 * time.Millisecond
 )
+
+// clsJoinBanner is the banner's wrapper (CSS module classes from
+// client-boot-styles: channelJoinBannerOuterWrapper, animateSlideDown
+// while it closes).
+var clsJoinBanner = slackc.Class("channelJoinBannerOuterWrapper__TpBQA").Mods("animateSlideDown__Bj5IF")
 
 // jbSpaces are the spaces ChannelJoinBanner requests on mount.
 var jbSpaces = []string{core.SpaceMessageInput, "message_input_invited_glow", "message_input_channel_join_summary_glow"}
@@ -283,18 +289,25 @@ func (a *App) layoutJoinBanner(gtx layout.Context, c *convo, origin image.Point)
 	cardH := y + 2*pad
 	card := image.Rect(mx, mt, w-mx, mt+cardH)
 	total := image.Pt(w, mt+cardH)
-	// the slide-down: opacity 0 and translateY(100%) over .3s
+	// the slide-down: opacity 0 and translateY(100%) (.animateSlideDown)
+	// with the wrapper's transition: transform .3s, opacity .3s, through
+	// the cascade (slackc.NativeTransitionsCSS), so a rule over it (Slick's
+	// Snappy) shortens it
 	var opac paint.OpacityStack
 	var shift int
 	if !b.closing.IsZero() {
-		p := float32(gtx.Now.Sub(b.closing)) / float32(jbSlide)
-		if p >= 1 { // slid away; its place stays until the channel is left
-			b.gone, b.h = true, total.Y
+		ts := slackc.CurrentScope().Child(clsJoinBanner, 1)
+		td, tdl := ts.Transition("transform", jbSlide, 0)
+		od, odl := ts.Transition("opacity", jbSlide, 0)
+		pt, doneT := slackc.TransitionProgress(b.closing, gtx.Now, td, tdl)
+		po, doneO := slackc.TransitionProgress(b.closing, gtx.Now, od, odl)
+		if doneT && doneO {
+			b.gone, b.h = true, total.Y // slid away; its place stays until the channel is left
 			a.Invalidate()
 			return layout.Dimensions{Size: total}
 		}
-		shift = int(p * float32(total.Y))
-		opac = paint.PushOpacity(gtx.Ops, 1-p)
+		shift = int(pt * float32(total.Y))
+		opac = paint.PushOpacity(gtx.Ops, 1-po)
 		gtx.Execute(op.InvalidateCmd{})
 	}
 	st := op.Offset(image.Pt(0, shift)).Push(gtx.Ops)

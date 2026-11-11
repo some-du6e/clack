@@ -2,6 +2,7 @@ package messages
 
 import (
 	"image"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,4 +78,49 @@ func TestSlickViewNicknamesRenamesSender(t *testing.T) {
 		name = r.name
 	}
 	t.Fatalf("row named %q, want the nickname; members patched %v, MemberView %+v %v", name, tt.SlicePatched("members"), mf, ok)
+}
+
+// UserPronouns: a person's pronouns follow the timestamp in a channel
+// row's header (BaseBroadcastPreamble's children, after the Timestamp slot,
+// bulleted), and grouped follow-ups get none.
+func TestSlickViewUserPronouns(t *testing.T) {
+	const ch, uid = "C0PRONOUN1", "U0PRONOUN1"
+	e := newSlickEnv(t, func(s *store.Store) {
+		s.PutUsers([]slack.User{{ID: uid, Name: "pat", RealName: "Pat Example", Profile: slack.Profile{DisplayName: "pat", RealName: "Pat Example", Pronouns: "xe/xem"}}})
+		s.PutConv(slack.Conversation{ID: ch, Name: "pronouns", IsChannel: true, IsMember: true, NumMembers: 2})
+		s.SetLatest(ch, []slack.Message{
+			{Type: "message", TS: "1700000501.000100", User: uid, Text: "synthetic first"},
+			{Type: "message", TS: "1700000502.000100", User: uid, Text: "synthetic follow-up"},
+		}, false)
+	})
+	e.install(t, "UserPronouns", nil)
+	patched(t, "BaseBroadcastPreamble")
+	v := NewChannelView(e.h, ch)
+	v.Preview = true
+	e.waitFor(t, "the pronouns in the row's header", frameFn(v), func() bool {
+		return e.ui.anyTree("slick-pronouns--bulleted") && e.ui.anyTree("xe/xem")
+	})
+	n := 0
+	e.ui.mu.Lock()
+	for _, tr := range e.ui.trees {
+		n += strings.Count(string(tr), `"xe/xem"`)
+	}
+	e.ui.mu.Unlock()
+	if n != 1 {
+		t.Errorf("the pronouns are drawn %d times, want once (the grouped follow-up has no header)", n)
+	}
+}
+
+// CopyReacted: its copy button follows the add-reaction button
+// (ReactionAddButton, a child of ReactionBar's tree, so the bar's
+// reactions reach it through context).
+func TestSlickViewCopyReacted(t *testing.T) {
+	e := newSlickEnv(t, nil)
+	e.install(t, "CopyReacted", nil)
+	patched(t, "ReactionBar", "ReactionAddButton")
+	v := NewChannelView(e.h, tGen)
+	v.Preview = true
+	e.waitFor(t, "the copy button by the add-reaction button", frameFn(v), func() bool {
+		return e.ui.anyTree("slick_copy_reacted")
+	})
 }

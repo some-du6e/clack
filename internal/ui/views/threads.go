@@ -1011,7 +1011,7 @@ func (v *Threads) msg(gtx C, s *thrMsg, m *core.Message, top unit.Dp) D {
 						if len(m.Reactions) == 0 {
 							return D{}
 						}
-						return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return v.actReactions(gtx, m.Reactions) })
+						return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return v.actReactions(gtx, m) })
 					}),
 				)
 			}),

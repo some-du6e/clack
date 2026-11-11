@@ -36,6 +36,8 @@ type crFrame struct {
 	hide                   uint32      // buttons turned off (crBtn bits)
 	minOverflow            int
 	narrow, fold           bool
+	oneLine                bool // the footer sits beside the editor (layoutBox)
+	rowH, textH, attH      int  // layoutBox's editor row, text area and attachments heights
 	toolbarHidden          bool
 	sufX                   int // composer-local x of the send group
 
@@ -472,6 +474,9 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 		}
 	}
 	sx := W - gtx.Dp(6) - tot
+	if !c.f.fold { // a folded row's width would flip a row-flex layout back and forth
+		c.footNat = x + tot + gtx.Dp(6) // the row at its own width
+	}
 	c.f.sufX = c.base.X + sx
 	for _, s := range c.suf {
 		if s.size.X <= 0 {

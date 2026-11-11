@@ -91,6 +91,18 @@ func (s *Slick) installHost(rt *jsrt.Runtime) {
 		return true, nil
 	})
 
+	// Electron's session.setSpellCheckerEnabled / isSpellCheckerEnabled for
+	// main halves: Clack's composer spellcheck (Options.SpellChecker)
+	sync("spellchecker", func(a []json.RawMessage) (any, error) {
+		var on bool
+		if len(a) > 0 && json.Unmarshal(a[0], &on) == nil {
+			if s.spellOff.Swap(!on) != !on && s.opts.SpellChecker != nil {
+				s.opts.SpellChecker(on)
+			}
+		}
+		return !s.spellOff.Load(), nil
+	})
+
 	// api.storedFileUrl for a desktop `file` setting (a path): the file's bytes
 	sync("readFile", func(a []json.RawMessage) (any, error) {
 		path := s.readablePath(s.fileSetting(strArg(a, 0), strArg(a, 1)))
