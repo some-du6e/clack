@@ -21,6 +21,7 @@ package listview
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -175,6 +176,9 @@ func (v *View) download(d *core.ListDoc, o core.ListDownload) {
 	}
 	name := strings.TrimSuffix(firstNonEmptyStr(d.Info.Name, d.Info.Title, "list"), ext) + ext
 	popups.SaveDownload(ph, src, name, func(_ string, err error) {
+		if errors.Is(err, popups.ErrDownloadCanceled) {
+			return // the save dialog was closed
+		}
 		if err != nil {
 			v.h.Toast(kind + " download failed")
 			return

@@ -131,11 +131,12 @@ Window [window]
 Help [help]
   Keyboard Shortcuts||→
   Open Help Center||→
+  Troubleshooting||
+    Show Logs in File Manager||→
+    Show Freeze Reports||→
+    Copy Diagnostics||→
   ---
   Release Notes||→
-  Show Freeze Reports||→
-  Open Logs Folder||→
-  Copy Diagnostics||→
   About Clack||orderFrontStandardAboutPanel:
 `
 

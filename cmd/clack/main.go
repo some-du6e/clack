@@ -270,6 +270,9 @@ func main() {
 		u := newUpdates(filepath.Join(cfg, "cache", "updates"))
 		opts.CheckUpdate, opts.DownloadUpdate, opts.InstallUpdate = u.check, u.download, u.install
 	}
+	if desktop.LaunchOnLoginSupported() {
+		opts.LaunchOnLogin, opts.SetLaunchOnLogin = desktop.LaunchOnLogin, desktop.SetLaunchOnLogin
+	}
 
 	creds, err := slack.ReadCreds(*credsPath)
 	ui.SetVersion(version)

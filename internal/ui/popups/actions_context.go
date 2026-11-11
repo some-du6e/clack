@@ -3,6 +3,7 @@ package popups
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"net/url"
 	"strings"
@@ -383,6 +384,9 @@ func saveDownload(h Host, src, name string, viaCore bool, done func()) {
 	}, func(p string, err error) {
 		if done != nil {
 			done()
+		}
+		if errors.Is(err, ErrDownloadCanceled) {
+			return // the save dialog was closed
 		}
 		if err != nil {
 			h.Toast("Couldn't download: " + errText(err))
