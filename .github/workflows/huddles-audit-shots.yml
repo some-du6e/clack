@@ -4,7 +4,9 @@ name: huddles-audit-shots
 # title, toolbar, closed captions, ⋯ menu, banners and hidden self-view;
 # the docked bar with the window closed and open; the sidebar row's
 # huddle badge; the header button, its menu and the invite window and
-# card. Synthetic only: nothing here joins, starts or rings a real huddle.
+# card; sharing your screen (the picker, the presenter's mini panel, the
+# alerts) with the synthetic test screen. Synthetic only: nothing here
+# joins, starts or rings a real huddle, and no screen is captured.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run huddles-audit-shots.yml --ref <branch>)
@@ -15,7 +17,7 @@ on:
   workflow_dispatch:
 
 env:
-  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+  GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0 x11-utils # x11-utils: xprop for TestMiniPanelShowsInactive
 
 permissions:
   contents: read
@@ -32,7 +34,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: huddle screenshots (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -41,7 +43,9 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CLACK_SHOTS"
-          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$' ./internal/ui/huddleui
+          # TestShareFlow: share-picker-*, share-window-*, share-mini-panel, share-alert-* (the test screen, CLACK_HUDDLE_TESTSCREEN)
+          # TestMiniPanelShowsInactive: the panel's real X11 window maps inactive (Gio's app.Panel)
+          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$|TestShareFlow$|TestShareButtonStates$|TestMiniPanelShowsInactive$' ./internal/ui/huddleui
           ls -la "$CLACK_SHOTS"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

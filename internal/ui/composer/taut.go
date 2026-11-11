@@ -129,6 +129,7 @@ type sendMessageArgs struct {
 	Text           string          `json:"text,omitempty"`
 	ThreadTs       string          `json:"thread_ts,omitempty"`
 	ReplyBroadcast bool            `json:"reply_broadcast,omitempty"`
+	Attachments    json.RawMessage `json:"attachments,omitempty"` // the draft's GIFs (EwsX)
 }
 
 // draftSyncArgs is syncDraftCreate / syncDraftUpdates: the composer's
@@ -144,6 +145,8 @@ type draftSyncArgs struct {
 	Blocks    json.RawMessage `json:"blocks,omitempty"`
 	Text      string          `json:"text,omitempty"`
 	FileIDs   []string        `json:"file_ids,omitempty"`
+	// Attachments are the draft's GIFs (EwsX, status draft)
+	Attachments json.RawMessage `json:"attachments,omitempty"`
 }
 
 // draftResult is what the draft natives return (the saved draft's id).
@@ -227,17 +230,21 @@ func transformBlocks(ctx context.Context, text string, blocks json.RawMessage) (
 
 // postMessage is the send itself (Slack's sendMessage thunk, inside
 // prepareAndSendMessage). It applies the send transforms first.
-func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks json.RawMessage, broadcast bool) error {
+func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks json.RawMessage, broadcast bool, attachments ...json.RawMessage) error {
 	text, blocks = transformBlocks(ctx, text, blocks)
+	var atts json.RawMessage
+	if len(attachments) > 0 {
+		atts = attachments[0]
+	}
 	if t := currentTaut(); t.ThunkPatched(thSendMessage) {
-		_, err := taut.Dispatch(ctx, t, thSendMessage, sendMessageArgs{Channel: ch, Blocks: blocks, Text: text, ThreadTs: ts, ReplyBroadcast: broadcast},
+		_, err := taut.Dispatch(ctx, t, thSendMessage, sendMessageArgs{Channel: ch, Blocks: blocks, Text: text, ThreadTs: ts, ReplyBroadcast: broadcast, Attachments: atts},
 			func(ctx context.Context, a sendMessageArgs) (any, error) {
-				_, err := api.send(ctx, a.Channel, a.ThreadTs, a.Text, a.Blocks, a.ReplyBroadcast)
+				_, err := api.send(ctx, a.Channel, a.ThreadTs, a.Text, a.Blocks, a.ReplyBroadcast, a.Attachments)
 				return nil, err
 			})
 		return err
 	}
-	_, err := api.send(ctx, ch, ts, text, blocks, broadcast)
+	_, err := api.send(ctx, ch, ts, text, blocks, broadcast, atts)
 	return err
 }
 

@@ -17,6 +17,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -137,18 +138,17 @@ func (c *Controller) view(inv *incoming) inviteView {
 		switch len(active) {
 		case 0:
 			v.Text = sender
-		case 1:
-			v.Text = sender + " and " + c.displayName(active[0])
+		case 1: // HuddleInviteWindowText
+			v.Text = nsHuddles.T("{inviteSenderMemberName} and {otherMemberName}", "inviteSenderMemberName", sender, "otherMemberName", c.displayName(active[0]))
 		default:
-			n := len(active) - 1
-			others := itoa(n) + " others"
-			if n == 1 {
-				others = "1 other"
-			}
-			v.Text = sender + ", " + c.displayName(active[0]) + ", and " + others
+			v.Text = nsHuddles.T("{inviteSenderMemberName}, {firstOtherMemberName}, and {numRemaining, plural, =1 {{numRemaining} other} other {{numRemaining} others}}",
+				"inviteSenderMemberName", sender, "firstOtherMemberName", c.displayName(active[0]), "numRemaining", len(active)-1)
 		}
 	default:
 		v.Text = sender + " in " + c.channelTitle(inv.Channel)
+		if i18n.Locale() != i18n.EnUS {
+			v.Text = nsHuddles.T("Huddle in {channelName}", "channelName", c.channelTitle(inv.Channel)) // no "{sender} in {channel}" string: the place
+		}
 	}
 	// the facepile: you (joining soon), the sender, the others in it
 	if v.JoiningSoon && self != "" {
@@ -168,14 +168,14 @@ func (c *Controller) view(inv *incoming) inviteView {
 		v.Overflow = max(0, len(active)+2-len(v.Faces))
 	}
 	// HuddleInvite's sentence (the sidebar card)
-	switch kind {
+	switch kind { // useHuddleInviteProps' strings, the names bold
 	case "im":
-		v.CardText = []span{{"Join huddle with ", false}, {sender, true}}
+		v.CardText = boldSpans("Join huddle with {senderName}", "senderName", sender)
 	case "mpim":
-		v.CardText = []span{{"Join huddle with ", false}, {joinNames(append([]string{sender}, mpimOthers...)), true}}
+		v.CardText = boldSpans("Join huddle with {allMemberNames}", "allMemberNames", joinNames(append([]string{sender}, mpimOthers...)))
 		v.SenderAvatar = len(mpimOthers) + 1
 	default:
-		v.CardText = []span{{sender, true}, {" is inviting you to a huddle in ", false}, {c.channelTitle(inv.Channel), true}}
+		v.CardText = boldSpans("{senderName} is inviting you to a huddle in {channelName}", "senderName", sender, "channelName", c.channelTitle(inv.Channel))
 	}
 	return v
 }
@@ -312,7 +312,7 @@ func layoutInviteWindow(gtx C, th *theme.Theme, c *Controller, v inviteView, dec
 
 	// the title bar
 	tb := gtx.Dp(32)
-	title := "Invite to huddle"
+	title := nsHuddles.T("Invite to huddle")
 	ts := labelSize(gtx, th, 13, theme.Bold, title)
 	is := gtx.Dp(18)
 	tx := (sz.X - (is + gtx.Dp(4) + ts.X)) / 2
@@ -325,14 +325,14 @@ func layoutInviteWindow(gtx C, th *theme.Theme, c *Controller, v inviteView, dec
 		icon, label string
 		join        bool
 	}
-	btns := []btn{{decline, "close", "Decline", false}}
+	btns := []btn{{decline, "close", nsHuddles.T("Decline"), false}}
 	if !v.JoiningSoon {
-		btns = append(btns, btn{soon, "hourglass", "Be there soon", false})
+		btns = append(btns, btn{soon, "hourglass", nsHuddles.T("Be there soon"), false})
 	}
-	btns = append(btns, btn{join, "headphones", "Join", true})
+	btns = append(btns, btn{join, "headphones", nsHuddles.T("Join"), true})
 	bd := gtx.Dp(48)
 	gap := gtx.Dp(24)
-	lh := labelSize(gtx, th, 13, theme.Regular, "Join").Y
+	lh := labelSize(gtx, th, 13, theme.Regular, nsHuddles.T("Join")).Y
 	widths := make([]int, len(btns))
 	total := 0
 	for i, b := range btns {

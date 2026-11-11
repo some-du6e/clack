@@ -1002,7 +1002,7 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 				closeCard()
 			}
 			pfOpenFull(h, id)
-		}}, Sep())
+		}}.In(nsProfile), Sep())
 	}
 	sep := func() {
 		if n := len(items); n > 0 && !items[n-1].Separator {
@@ -1010,7 +1010,7 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 		}
 	}
 	if mention := pfMentionName(u); mention != "" && !u.IsBot {
-		items = append(items, MenuItem{Key: "copy_display_name", Label: "Copy display name: @" + mention, DoCtx: func(gtx layout.Context) {
+		items = append(items, MenuItem{Key: "copy_display_name", Label: nsProfile.T("Copy display name: @{displayName}", "displayName", mention), DoCtx: func(gtx layout.Context) {
 			copyText(gtx, mention)
 			h.Toast("Display name copied")
 		}})
@@ -1021,17 +1021,17 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 				closeCard()
 			}
 			pfViewFiles(h, id)
-		}}
+		}}.In(nsProfile)
 	}
 	if pfIsSelf(h, id) && !preview {
 		sep()
 		items = append(items,
-			MenuItem{Label: "View preferences", Do: actPreferences(h)},
+			MenuItem{Label: "View preferences", Do: actPreferences(h)}.In(nsProfile),
 			MenuItem{Label: "Account settings", External: true, Do: func() {
 				if err := openurl.Open("https://" + teamDomain(h) + ".slack.com/account/settings"); err != nil {
 					h.Toast("Couldn't open the browser: " + errText(err))
 				}
-			}},
+			}}.In(nsProfile),
 			Sep(),
 			files("View your files"),
 		)
@@ -1042,7 +1042,7 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 		} else {
 			items = append(items, MenuItem{Label: "Set yourself away", Do: func() {
 				actDo(h, "You're set to away", func(ctx context.Context, a *core.App) error { return a.SetPresence(ctx, "away") })
-			}})
+			}}.In(nsProfile))
 		}
 	} else if !u.IsBot || pfIsSlackbot(u) {
 		sep()
@@ -1053,11 +1053,11 @@ func pfMoreItemsFor(h Host, u core.User, withFull bool, closeCard func(), previe
 		MenuItem{Label: "Copy member ID", DoCtx: func(gtx layout.Context) {
 			copyText(gtx, id)
 			h.Toast("Member ID copied")
-		}},
+		}}.In(nsProfile),
 		MenuItem{Label: "Copy link to profile", DoCtx: func(gtx layout.Context) {
 			copyText(gtx, "https://"+teamDomain(h)+".slack.com/team/"+id)
 			h.Toast("Link copied")
-		}},
+		}}.In(nsProfile),
 	)
 	return items
 }

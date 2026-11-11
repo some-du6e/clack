@@ -1,17 +1,29 @@
 name: files-view
-# The Files rail tab's file actions, ported from Slack's web client
-# (docs/FILES-AUDIT.md, "Files view"): starring (files.favorites.*), the
-# ⋯ menu, Delete, Edit file details, list templates and the file opener,
-# against internal/fakeslack, plus screenshots of the starred canvas, the
-# menu and both dialogs, the sidebar's empty Starred row (both sidebar
-# layouts) and the browser's empty states, light and dark. Synthetic only:
-# nothing here talks to Slack.
+# The Files rail tab, ported from Slack's web client (docs/FILES-AUDIT.md,
+# "Files view" and "Sections, Recently viewed and the rest"): starring
+# (files.favorites.*), the ⋯ menu, Delete, Edit file details, list
+# templates and the file opener; the sidebar's file sections
+# (files.collections.*, Move to section, the section menu and modals),
+# Recently viewed, Bulk manage, the "+" / "New" menus and paging, against
+# internal/fakeslack, plus screenshots of all of it (the sidebar's both
+# layouts, the menus, the dialogs, the empty states and the pagination
+# row), light and dark. Synthetic only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run files-view.yml --ref <branch>)
     paths:
       - "internal/ui/views/files.go"
       - "internal/ui/views/files_deleted.go"
+      - "internal/ui/views/files_sections.go"
+      - "internal/ui/views/files_create.go"
+      - "internal/ui/views/files_organize.go"
+      - "internal/ui/views/files_pages.go"
+      - "internal/ui/views/files_sections_test.go"
+      - "internal/ui/files_open.go"
+      - "internal/ui/files_open_test.go"
+      - "internal/core/files_sections.go"
+      - "internal/core/files_sections_test.go"
+      - "internal/fakeslack/files_sections.go"
       - "internal/ui/popups/slack_place.go"
       - "internal/ui/views/files_view_test.go"
       - "internal/ui/views/files_empty_test.go"
@@ -40,7 +52,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: tests and screenshots
         env:
           VIEWS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -49,6 +61,7 @@ jobs:
         run: |
           mkdir -p "$VIEWS_SHOTS_DIR"
           go test -count=1 -v -run 'TestFilesView|TestListCreate' ./internal/core
+          go test -count=1 -v -run 'TestFilesRecentlyViewed' ./internal/ui
           xvfb-run -a go test -count=1 -v -run 'TestFilesView|TestFilesEmpty|TestFilesSidebar' ./internal/ui/views
           ls -la "$VIEWS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

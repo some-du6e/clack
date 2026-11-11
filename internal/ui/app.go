@@ -27,6 +27,7 @@ import (
 	"gioui.org/x/explorer"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
@@ -96,6 +97,11 @@ type Options struct {
 	// desktop's autostart entry or Run key). nil: the row is greyed.
 	LaunchOnLogin    func() bool
 	SetLaunchOnLogin func(on bool) error
+	// EnsureLinkHandler, when set, runs as Open Slack sign-in opens the
+	// page, before the browser can hand a link back (cmd/clack, Windows:
+	// registers Clack as a slack:// handler again, as every start does).
+	// It must return at once.
+	EnsureLinkHandler func()
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
@@ -161,6 +167,8 @@ type App struct {
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
+	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
+	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
 	ptrWin          image.Point
 	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
@@ -281,6 +289,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
+	// the composer's floating formatting bar keeps inside the window
+	composer.WindowSize = func() image.Point { return a.winSize }
+
 	a.startSpell()                                // spellcheck_wire.go
 	a.startLocale()                               // locale_wire.go
 	messages.PersistActions = a.bbmPersistActions // Simplified layout mode (bbm.go)
@@ -412,7 +423,8 @@ func (a *App) Run() error {
 			return e.Err
 		case app.ConfigEvent:
 			if e.Config.Focused && !a.focused {
-				a.nudgeUpdates() // back from sleep, often: is a check due?
+				a.nudgeUpdates()       // back from sleep, often: is a check due?
+				a.loginWindowFocused() // a sign-in link copied in the browser (login.go)
 			}
 			a.focused = e.Config.Focused
 		case app.FrameEvent:
@@ -947,7 +959,7 @@ func (a *App) layoutToast(gtx layout.Context) {
 	uw := 0
 	label := a.toast.label
 	if label == "" {
-		label = "Undo"
+		label = i18n.T("channel_sidebar", "Undo") // the sidebar's toasts' (ToastUndo's callers)
 	}
 	if a.toast.undo != nil {
 		uw = a.th.Measure(gtx, 15, theme.Bold, label) + gtx.Dp(16)

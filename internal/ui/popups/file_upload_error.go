@@ -14,20 +14,20 @@ import (
 func FileUploadError(h Host, onDrafts func()) *Modal {
 	th := h.Theme()
 	m := NewModal(h, ModalOpts{
-		Title:        "Couldn’t send message",
+		Title:        nsFileUpload.T("Couldn’t send message"),
 		EnterSubmits: true,
 		Body: func(gtx layout.Context) layout.Dimensions {
 			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg,
-				"Your message, along with any files and attachments, has been saved to your drafts.", 0)
+				nsFileUpload.T("Your message, along with any files and attachments, has been saved to your drafts."), 0)
 		},
 		Buttons: []*ModalButton{
-			{Label: "See Drafts", Kind: BtnOutline, Do: func() bool {
+			{Label: nsFileUpload.T("See Drafts"), Kind: BtnOutline, Do: func() bool {
 				if onDrafts != nil {
 					onDrafts()
 				}
 				return true
 			}},
-			{Label: "Got it", Kind: BtnPrimary, Do: func() bool { return true }},
+			{Label: nsFileUpload.T("Got it"), Kind: BtnPrimary, Do: func() bool { return true }},
 		},
 	})
 	h.ShowOverlay(m)

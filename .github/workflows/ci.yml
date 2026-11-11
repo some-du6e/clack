@@ -22,7 +22,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: gofmt
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - name: vet
@@ -35,7 +35,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
-          sudo apt-get install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0
           # -p 1: test binaries bringing up Mesa's EGL at once is what made
           # eglInitialize fail (0x3001); pixeltest.NewWindow also retries.
           xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages
@@ -77,7 +77,7 @@ jobs:
           go install github.com/tc-hib/go-winres@v0.3.3
           go-winres make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version "0.0.0-dev+${GITHUB_SHA::7}"
       - name: mingw (cgo, for miniaudio huddle audio)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-mingw-w64-x86-64
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq gcc-mingw-w64-x86-64
       - name: build (cross, cgo via mingw)
         run: |
           mkdir -p dist
@@ -87,7 +87,8 @@ jobs:
           name: clack-windows-amd64
           path: dist/clack-windows-amd64.exe
 
-  # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating
+  # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating;
+  # Clack's slack:// registration and the single-instance hand-off
   windows-applog:
     runs-on: windows-latest
     steps:
@@ -103,6 +104,124 @@ jobs:
       - name: huddle OS hooks (WTS lock events, RegisterHotKey Ctrl+Shift+Space)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
+      - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_WINDOWS_ASSOC_TESTS: "1" # TestURLHandlerShell changes the runner user's slack:// association
+        run: go test -count=1 -v -run 'TestURLHandler|TestHandlerCommands|TestForwardOnWindows|TestURLLaunchArgs' ./internal/desktop
+      # The real exe: it registers itself at start (reg query), Windows
+      # routes `start slack://…` to it (nothing else on the runner has
+      # slack://), and the running Clack takes the link from the launch
+      # Windows started. slack://T0FAKE/… fails ParseMagicLink (team ids are
+      # 9+ characters), so the sign-in stops before any request: nothing
+      # here talks to Slack.
+      - name: Clack.exe and slack:// links (registration at start, start slack://… reaching the running Clack, the flags)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go install github.com/tc-hib/go-winres@v0.3.3
+          & (Join-Path (go env GOPATH) 'bin\go-winres.exe') make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version 0.0.0-ci
+          if ($LASTEXITCODE -ne 0) { throw 'go-winres' }
+          $env:CGO_ENABLED = '0'
+          go build -trimpath -ldflags="-s -w -H windowsgui" -o build\Clack.exe .\cmd\clack
+          if ($LASTEXITCODE -ne 0) { throw 'go build' }
+          $exe = (Resolve-Path build\Clack.exe).Path
+          $cmd = "`"$exe`" `"%1`""
+          $log = Join-Path $env:LOCALAPPDATA 'Clack\logs\clack.log'
+          $script:mark = 0
+          function Mark-Log { $script:mark = if (Test-Path $log) { @(Get-Content $log).Count } else { 0 } }
+          function Wait-Log([string]$text, [string]$what, [int]$secs = 90) {
+            for ($i = 0; $i -lt $secs * 4; $i++) {
+              if ((Test-Path $log) -and (@(Get-Content $log | Select-Object -Skip $script:mark) | Where-Object { $_.Contains($text) })) { return }
+              Start-Sleep -Milliseconds 250
+            }
+            if (Test-Path $log) { Get-Content $log | Select-Object -Skip $script:mark | Select-Object -Last 80 }
+            throw "no '$text' in the log after ${secs}s: $what"
+          }
+          function Assert-Reg([string]$key, [string]$value, [string]$want) {
+            $a = if ($value -eq '') { @($key, '/ve') } else { @($key, '/v', $value) }
+            $out = (& reg query @a 2>&1 | Out-String)
+            if ($LASTEXITCODE -ne 0) { throw "reg query $key [$value]: $out" }
+            Write-Host $out.Trim()
+            if (-not $out.Contains($want)) { throw "reg query $key [$value]: want '$want'" }
+          }
+          function Assert-NoReg([string]$key, [string]$value) {
+            $a = if ($value) { @($key, '/v', $value) } else { @($key) }
+            $out = (& reg query @a 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0) { throw "reg query $key [$value] still finds: $out" }
+          }
+          function Stop-Clack($p) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            $p.WaitForExit(15000) | Out-Null
+          }
+
+          # nothing on the runner has slack://
+          Assert-NoReg 'HKCU\Software\Classes\slack'
+          Assert-NoReg 'HKCU\Software\Classes\Clack.slack'
+
+          # 1. A start registers Clack, and takes the legacy key: no other app has slack://
+          Mark-Log
+          $p = Start-Process -PassThru -FilePath $exe
+          try {
+            Wait-Log 'desktop: slack:// handler: Clack is registered and is the default' 'the registration at start'
+            Assert-Reg 'HKCU\Software\Classes\Clack.slack' 'URL Protocol' 'REG_SZ'
+            Assert-Reg 'HKCU\Software\Classes\Clack.slack\shell\open\command' '' $cmd
+            Assert-Reg 'HKCU\Software\Classes\Clack.slack\DefaultIcon' '' "`"$exe`",0"
+            Assert-Reg 'HKCU\Software\Clack\Capabilities' 'ApplicationName' 'Clack'
+            Assert-Reg 'HKCU\Software\Clack\Capabilities' 'ApplicationDescription' 'native Slack client'
+            Assert-Reg 'HKCU\Software\Clack\Capabilities\URLAssociations' 'slack' 'Clack.slack'
+            Assert-Reg 'HKCU\Software\RegisteredApplications' 'Clack' 'Software\Clack\Capabilities'
+            Assert-Reg 'HKCU\Software\Classes\slack' 'URL Protocol' 'REG_SZ'
+            Assert-Reg 'HKCU\Software\Classes\slack\shell\open\command' '' $cmd
+            Assert-Reg 'HKCU\Software\Classes\slack\OpenWithProgids' 'Clack.slack' 'REG_NONE'
+
+            # 2. Windows starts Clack.exe "slack://…"; that launch hands the link to this one and exits
+            Mark-Log
+            cmd /c start "" "slack://T0FAKE/magic-login/xyz"
+            Wait-Log 'desktop: another launch handed over a slack:// sign-in link' 'the running Clack getting the link'
+            Wait-Log 'sign-in: a sign-in link came from outside Clack; signing in with it' 'the sign-in card taking it'
+            Wait-Log "sign-in: couldn't read the team and token from the sign-in link" 'the sign-in attempt (the fake link stops it there)'
+            if ($p.HasExited) { throw "the first Clack exited ($($p.ExitCode))" }
+            for ($i = 0; $i -lt 40 -and @(Get-Process -Name Clack -ErrorAction SilentlyContinue).Count -gt 1; $i++) { Start-Sleep -Milliseconds 250 }
+            $n = @(Get-Process -Name Clack -ErrorAction SilentlyContinue).Count
+            if ($n -ne 1) { throw "$n Clack processes: the launch Windows started didn't hand over and exit" }
+            if (Select-String -Path $log -SimpleMatch -Pattern 'magic-login/xyz' -Quiet) { throw 'the sign-in link is in the log' }
+          } finally { Stop-Clack $p }
+
+          # 3. Another app takes the legacy key (as Slack desktop does at its start): Clack's next start leaves it
+          $other = Join-Path $env:SystemRoot 'System32\cmd.exe'
+          $otherCmd = "`"$other`" /c exit `"%1`""
+          Set-ItemProperty -Path 'HKCU:\Software\Classes\slack\shell\open\command' -Name '(default)' -Value $otherCmd
+          Mark-Log
+          $p = Start-Process -PassThru -FilePath $exe
+          try {
+            Wait-Log 'has the default, so Windows asks which app to use' 'the registration beside another app'
+            Assert-Reg 'HKCU\Software\Classes\slack\shell\open\command' '' $otherCmd
+            Assert-Reg 'HKCU\Software\Classes\Clack.slack\shell\open\command' '' $cmd
+            Assert-Reg 'HKCU\Software\RegisteredApplications' 'Clack' 'Software\Clack\Capabilities'
+          } finally { Stop-Clack $p }
+
+          # 4. -unregister-url-handler removes Clack's keys and leaves the other app's
+          $r = Start-Process -Wait -PassThru -FilePath $exe -ArgumentList '-unregister-url-handler'
+          if ($r.ExitCode -ne 0) { throw "-unregister-url-handler exited $($r.ExitCode)" }
+          Assert-NoReg 'HKCU\Software\Classes\Clack.slack'
+          Assert-NoReg 'HKCU\Software\Clack\Capabilities'
+          Assert-NoReg 'HKCU\Software\RegisteredApplications' 'Clack'
+          Assert-NoReg 'HKCU\Software\Classes\slack\OpenWithProgids' 'Clack.slack'
+          Assert-Reg 'HKCU\Software\Classes\slack\shell\open\command' '' $otherCmd
+
+          # 5. -register-url-handler takes the legacy key on request; unregistering then removes it
+          $r = Start-Process -Wait -PassThru -FilePath $exe -ArgumentList '-register-url-handler'
+          if ($r.ExitCode -ne 0) { throw "-register-url-handler exited $($r.ExitCode)" }
+          Assert-Reg 'HKCU\Software\Classes\slack\shell\open\command' '' $cmd
+          Assert-Reg 'HKCU\Software\Clack\Capabilities\URLAssociations' 'slack' 'Clack.slack'
+          $r = Start-Process -Wait -PassThru -FilePath $exe -ArgumentList '-unregister-url-handler'
+          if ($r.ExitCode -ne 0) { throw "-unregister-url-handler exited $($r.ExitCode)" }
+          Assert-NoReg 'HKCU\Software\Classes\slack\shell\open\command'
+          Assert-NoReg 'HKCU\Software\Classes\Clack.slack'
+          Get-Content $log | Select-String -SimpleMatch 'slack://', 'sign-in:' | ForEach-Object { $_.Line }
+          exit 0 # the last reg query's expected exit 1 would otherwise end the step
 
   macos:
     runs-on: macos-latest

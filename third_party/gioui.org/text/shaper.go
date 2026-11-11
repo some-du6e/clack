@@ -82,6 +82,12 @@ type Parameters struct {
 	// This is desirable for text editors (so that the whitespace can be selected), but is undesirable
 	// for ordinary display text.
 	DisableSpaceTrim bool
+
+	// TabStop, when positive, makes each tab advance to the next multiple
+	// of TabStop space widths, counted in columns from the start of its
+	// paragraph (CodeMirror's tabSize), and draw as a space. Zero shapes a
+	// tab with its font's glyph. Clack patch 7 (CLACK_PATCHES.md).
+	TabStop int
 }
 
 type FontFace = giofont.FontFace

@@ -6,7 +6,7 @@ package huddle
 #cgo CFLAGS: -x objective-c -fobjc-arc
 #cgo LDFLAGS: -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreFoundation -framework Foundation
 #include <stdint.h>
-void *clack_vt_new(int w, int h, int fps, int bps, uintptr_t handle, int *status);
+void *clack_vt_new(int w, int h, int fps, int bps, int screen, uintptr_t handle, int *status);
 int clack_vt_encode(void *p, const uint8_t *y, int ys, const uint8_t *uv, int uvs, int64_t ptsUs, int key);
 void clack_vt_bitrate(void *p, int bps);
 void clack_vt_free(void *p);
@@ -22,7 +22,7 @@ import (
 	"unsafe"
 )
 
-func init() { newHWEncoder = newVTEncoder }
+func init() { newHWEncoders = append(newHWEncoders, newVTEncoder) }
 
 // vtEncoder is a VideoToolbox VTCompressionSession: realtime, constrained
 // baseline, no frame reordering, keyframes on demand.
@@ -40,11 +40,16 @@ type vtOut struct {
 	key bool
 }
 
-func newVTEncoder(w, h, fps, bps int) (videoEncoder, error) {
+func newVTEncoder(o encOpts) (videoEncoder, error) {
+	w, h := o.W, o.H
 	e := &vtEncoder{w: w, hh: h, out: make(chan vtOut, 4), start: time.Now()}
 	e.h = cgo.NewHandle(e)
 	var st C.int
-	p := C.clack_vt_new(C.int(w), C.int(h), C.int(fps), C.int(bps), C.uintptr_t(e.h), &st)
+	screen := C.int(0)
+	if o.Screen {
+		screen = 1
+	}
+	p := C.clack_vt_new(C.int(w), C.int(h), C.int(o.FPS), C.int(o.Bps), screen, C.uintptr_t(e.h), &st)
 	if p == nil {
 		e.h.Delete()
 		return nil, fmt.Errorf("VTCompressionSessionCreate: OSStatus %d", int(st))

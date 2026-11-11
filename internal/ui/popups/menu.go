@@ -795,6 +795,9 @@ func (m *Menu) radioRow(gtx layout.Context, th *theme.Theme, cl *Colors, it *Men
 	at(gtx, image.Pt(x, top), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(lw, dp(gtx, 22))}
 		return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
+			if it.LabelText != nil { // a radio row's children (the Files sections' FileSectionName)
+				return it.LabelText(gtx, fg)
+			}
 			return text(gtx, th, 15, theme.Regular, fg, it.Label)
 		})
 	})

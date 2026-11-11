@@ -380,6 +380,9 @@ func (c *Cache) Prefetch(url string, sizePx int) {
 // Failed reports whether the last fetch of url failed (so callers can show a
 // broken-image state instead of a spinner).
 func (c *Cache) Failed(url string, sizePx int) bool {
+	if c == nil {
+		return false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	_, ok := c.failed[key{url, sizePx}]

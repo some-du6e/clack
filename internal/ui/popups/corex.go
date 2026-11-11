@@ -118,6 +118,38 @@ type Gif struct {
 	Still           string // first-frame gif (fallback)
 	URL             string // full webp
 	W, H            int
+
+	// The formats Slack's picker hands on (xVsA GifListItem): gif and
+	// gifpreview (with giphy_fixed_width), tinygif and tinygifpreview.
+	GifW, GifH                int
+	GifBytes, GifStillBytes   int64
+	GifStill                  string // gifpreview's url
+	TinyW, TinyH              int
+	TinyBytes, TinyStillBytes int64
+
+	// Picked, when set, is a plugin's own onGifSelected payload.
+	Picked *GifSelection
+}
+
+// GifSelection is the GIF picker's onGifSelected payload (xVsA
+// GifListItem): {previewUrl, name, width, height, bytes, previewBytes,
+// originalGifUrl}, from the gif and gifpreview formats with
+// giphy_fixed_width on, else from tinygif and tinygifpreview.
+type GifSelection struct {
+	OriginalGifURL, PreviewURL, Name string
+	Width, Height                    int
+	Bytes, PreviewBytes              int64
+}
+
+// Selected is the payload picking g hands to onGifSelected.
+func (g Gif) Selected(fixedWidth bool) GifSelection {
+	if g.Picked != nil {
+		return *g.Picked
+	}
+	if fixedWidth {
+		return GifSelection{OriginalGifURL: g.URL, PreviewURL: g.GifStill, Name: g.Title, Width: g.GifW, Height: g.GifH, Bytes: g.GifBytes, PreviewBytes: g.GifStillBytes}
+	}
+	return GifSelection{OriginalGifURL: g.Preview, PreviewURL: g.Still, Name: g.Title, Width: g.TinyW, Height: g.TinyH, Bytes: g.TinyBytes, PreviewBytes: g.TinyStillBytes}
 }
 
 type cxGifResp struct {
@@ -128,6 +160,7 @@ type cxGifResp struct {
 		Media map[string]struct {
 			URL  string `json:"url"`
 			Dims []int  `json:"dims"`
+			Size int64  `json:"size"`
 		} `json:"media_formats"`
 	} `json:"gifs"`
 	Meta struct {
@@ -159,19 +192,26 @@ func cxGifs(ctx context.Context, h Host, query, cursor string, limit int) ([]Gif
 	for _, g := range r.Gifs {
 		v := Gif{ID: g.ID, Title: g.Desc, Page: g.URL}
 		if m, ok := g.Media["tinygif"]; ok {
-			v.Preview = m.URL
+			v.Preview, v.TinyBytes = m.URL, m.Size
 			if len(m.Dims) == 2 {
 				v.W, v.H = m.Dims[0], m.Dims[1]
+				v.TinyW, v.TinyH = m.Dims[0], m.Dims[1]
 			}
 		}
 		if m, ok := g.Media["tinygifpreview"]; ok {
-			v.Still = m.URL
+			v.Still, v.TinyStillBytes = m.URL, m.Size
 		}
 		if m, ok := g.Media["gif"]; ok {
-			v.URL = m.URL
-			if v.W == 0 && len(m.Dims) == 2 {
-				v.W, v.H = m.Dims[0], m.Dims[1]
+			v.URL, v.GifBytes = m.URL, m.Size
+			if len(m.Dims) == 2 {
+				v.GifW, v.GifH = m.Dims[0], m.Dims[1]
+				if v.W == 0 {
+					v.W, v.H = m.Dims[0], m.Dims[1]
+				}
 			}
+		}
+		if m, ok := g.Media["gifpreview"]; ok {
+			v.GifStill, v.GifStillBytes = m.URL, m.Size
 		}
 		if v.Preview == "" {
 			v.Preview = v.URL

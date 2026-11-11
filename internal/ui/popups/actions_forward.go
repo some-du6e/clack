@@ -142,9 +142,9 @@ func newForward(h Host, m core.Message) *actForward {
 	}
 	f.all = actFwdTargets(h)
 	v2 := func() bool { return expOn(h, ExpSlackKitV2Button) }
-	label := "Share" // e0: "Forward" with private_message_forwarding
+	label := nsShare.T("Share") // e0: "Forward" with private_message_forwarding
 	if privateForwarding(h.Core()) {
-		label = "Forward"
+		label = nsShare.T("Forward")
 	}
 	f.fwd = &ModalButton{Label: label, Kind: BtnPrimary, Enabled: f.canGo, Do: func() bool {
 		f.send()
@@ -156,14 +156,14 @@ func newForward(h Host, m core.Message) *actForward {
 	}
 	// ShareDialogCopyLinkButton (Zp0h): the legacy outline button
 	// whatever the experiment, labelled "Copy Link", inside a Tooltip
-	f.copy = &ModalButton{Label: "Copy Link", Kind: BtnOutline, Left: true, Do: func() bool {
+	f.copy = &ModalButton{Label: nsShare.T("Copy Link"), Kind: BtnOutline, Left: true, Do: func() bool {
 		f.copyLink = true // copied by the body, which has the frame context
 		return false
 	}, Tip: f.copyTip, TipHidden: func() { f.copied = false }}
 	buttons := []*ModalButton{f.copy}
 	if f.saveDraftShown() {
 		// Save Draft (e5): v2 secondary, or the legacy outline
-		buttons = append(buttons, &ModalButton{Label: "Save Draft", Kind: BtnOutline, V2: v2, Do: func() bool {
+		buttons = append(buttons, &ModalButton{Label: nsShare.T("Save Draft"), Kind: BtnOutline, V2: v2, Do: func() bool {
 			f.saveDraft()
 			return true
 		}})
@@ -198,28 +198,28 @@ func (f *actForward) canGo() bool { return len(f.chips) > 0 }
 // "Forward this private message".
 func (f *actForward) title() string {
 	if !privateForwarding(f.h.Core()) {
-		return "Share this message"
+		return nsShare.T("Share this message")
 	}
 	if a := f.h.Core(); a != nil {
 		if c, ok := a.Conv(f.m.Channel); ok && c.Kind == "channel" {
-			return "Forward this message"
+			return nsShare.T("Forward this message")
 		}
 	} else if actKindOf(f.m.Channel) == "channel" {
-		return "Forward this message"
+		return nsShare.T("Forward this message")
 	}
-	return "Forward this private message"
+	return nsShare.T("Forward this private message")
 }
 
 // copyTip is Copy Link's tooltip: "Copied!" after a click, else what
 // the link is for.
 func (f *actForward) copyTip() string {
 	if f.copied {
-		return "Copied!"
+		return nsShare.T("Copied!")
 	}
 	if privateForwarding(f.h.Core()) {
-		return "You can also copy a link to this message. To forward, paste it in any channel or conversation."
+		return nsShare.T("You can also copy a link to this message. To forward, paste it in any channel or conversation.")
 	}
-	return "You can also copy a link to this message. To share, paste it in any channel or conversation."
+	return nsShare.T("You can also copy a link to this message. To share, paste it in any channel or conversation.")
 }
 
 // saveDraftShown is el: forwarding_save_as_draft (O2By jv), outside the
@@ -358,10 +358,9 @@ func (f *actForward) scheduleDrafts(ids []string, text string, blocks json.RawMe
 		return struct{}{}, nil
 	}, func(_ struct{}, err error) {
 		if err != nil {
-			h.Toast("Couldn't schedule that: " + errText(err))
-			return
+			return // Slack only logs it ("Failed to schedule forward message")
 		}
-		toastIcon(h, "Message scheduled", "schedule-send")
+		toastIcon(h, nsShare.T("Message scheduled"), "schedule-send") // ScheduleForwardToast
 	})
 }
 
@@ -390,8 +389,7 @@ func (f *actForward) scheduleCustom() {
 		return a.SaveDraft(ctx, core.DraftOpts{Channel: ch, Text: text, Blocks: blocks})
 	}, func(d core.Draft, err error) {
 		if err != nil {
-			h.Toast("Couldn't schedule that: " + errText(err))
-			return
+			return // logged only, as scheduleForwardMessage's catch does
 		}
 		OpenScheduleDialog(h, ch, func(at time.Time) {
 			f.modal.Close() // closeAll
@@ -792,7 +790,7 @@ func (f *actForward) picker(gtx layout.Context, th *theme.Theme, cl *Colors) lay
 				gtx.Constraints = layout.Constraints{Min: image.Pt(ew, 0), Max: image.Pt(ew, lineH)}
 				if f.to.Len() == 0 && len(f.chips) == 0 {
 					call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Search for channel or person")
+						return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsShare.T("Search for channel or person"))
 					})
 					call.Add(gtx.Ops)
 				}
@@ -946,7 +944,7 @@ func (f *actForward) noteField(gtx layout.Context, th *theme.Theme, cl *Colors) 
 		gtx.Constraints = layout.Constraints{Min: image.Pt(tw, 0), Max: image.Pt(tw, dp(gtx, 160))}
 		if f.note.Len() == 0 {
 			call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Add a message, if you'd like.")
+				return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsShare.T("Add a message, if you’d like."))
 			})
 			call.Add(gtx.Ops)
 		}

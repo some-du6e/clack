@@ -34,6 +34,9 @@ type File struct {
 	Mode                    string   // hosted | external | quip | list | tombstone | …
 	IsCanvas, IsList        bool
 	IsImage                 bool
+	// LastRead is when the viewer last opened it (last_read: milliseconds
+	// or seconds, 0 never), for the collections' Last viewed sort.
+	LastRead int64
 }
 
 type FilePage struct {
@@ -48,6 +51,14 @@ type FilesOpts struct {
 	Mine         bool // "Created by you"
 	SharedWithMe bool // "Shared with you"
 	Page         int
+	// Types are All files' Types menu picks as the browser's fileType
+	// filter values ("lists", "quip", "documents", "pdfs", …; cX/T $Z),
+	// sent as type: modifiers; nil is the default set.
+	Types []string
+	// Sort is the sort select's value: "" (Recently viewed:
+	// last_engaged, or score with a query), "timestamp" (Last updated)
+	// or "score" (Most relevant).
+	Sort string
 }
 
 // Huddle is an active or past huddle.
@@ -248,6 +259,10 @@ func (r *browseFileRaw) file() File {
 	f.IsCanvas = r.Filetype == "quip" || r.Filetype == "canvas" || r.Mode == "quip" || strings.EqualFold(r.PrettyType, "canvas")
 	f.IsList = !f.IsCanvas && (r.Filetype == "list" || r.Mode == "list" || strings.EqualFold(r.PrettyType, "list"))
 	f.IsImage = strings.HasPrefix(r.Mimetype, "image/")
+	var lr json.Number
+	if len(r.LastRead) > 0 && json.Unmarshal(r.LastRead, &lr) == nil {
+		f.LastRead, _ = lr.Int64()
+	}
 	return f
 }
 
@@ -274,6 +289,12 @@ func filesParams(o FilesOpts, self string) url.Values {
 		types = "type:quip"
 	case o.Kind == "lists":
 		types = "type:lists"
+	case len(o.Types) > 0:
+		ts := make([]string, 0, len(o.Types))
+		for _, t := range o.Types {
+			ts = append(ts, "type:"+t)
+		}
+		types = strings.Join(ts, " ")
 	case o.Mine || o.SharedWithMe:
 		types = fileTypesOwned
 	}
@@ -286,6 +307,9 @@ func filesParams(o FilesOpts, self string) url.Values {
 	if o.Mine {
 		parts = append(parts, "creator:<@"+self+">")
 		sortBy = "timestamp"
+	}
+	if o.Sort != "" {
+		sortBy = o.Sort
 	}
 	if q != "" {
 		parts = append(parts, q)

@@ -34,7 +34,8 @@ type draftRaw struct {
 	IsDeleted     bool            `json:"is_deleted"`
 	FromComposer  bool            `json:"is_from_composer"`
 	FileIDs       []string        `json:"file_ids"`
-	Files         []slack.File    `json:"files"` // the file objects behind FileIDs
+	Files         []slack.File    `json:"files"`       // the file objects behind FileIDs
+	Attachments   json.RawMessage `json:"attachments"` // the composer's GIFs, as saved
 }
 
 type draftDest struct {
@@ -46,7 +47,7 @@ type draftDest struct {
 
 func (a *App) draftOf(d *draftRaw) Draft {
 	v := Draft{ID: d.ID, ClientMsgID: d.ClientMsgID, Blocks: d.Blocks, DateCreated: d.DateCreated, DateScheduled: d.DateScheduled,
-		LastUpdated: d.LastUpdatedTS, Files: len(d.FileIDs), FileIDs: d.FileIDs, FromComposer: d.FromComposer}
+		LastUpdated: d.LastUpdatedTS, Files: len(d.FileIDs), FileIDs: d.FileIDs, FromComposer: d.FromComposer, Attachments: d.Attachments}
 	v.Doc = richtext.FromMessage(a.S, &slack.Message{Blocks: d.Blocks})
 	v.Text = richtext.PlainText(v.Doc)
 	if len(d.Destinations) > 0 {
@@ -232,8 +233,12 @@ func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Dra
 	}
 	dest, _ := json.Marshal(dests)
 	files, _ := json.Marshal(append([]string{}, o.FileIDs...))
+	atts := "[]"
+	if len(o.Attachments) > 0 {
+		atts = string(o.Attachments)
+	}
 	p := url.Values{"blocks": {string(blocks)}, "destinations": {string(dest)}, "file_ids": {string(files)},
-		"attachments": {"[]"}, "is_from_composer": {"false"}}
+		"attachments": {atts}, "is_from_composer": {"false"}}
 	var res struct {
 		Draft draftRaw `json:"draft"`
 	}

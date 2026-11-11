@@ -194,6 +194,15 @@ type SearchPopover struct {
 	tokens  []srToken
 	edX     int  // the editor's x in the card
 	acArmed bool // the user edited the box: Texty's completers follow its text
+
+	// the quick filter row (search_quick_filters.go), the date pickers
+	// (search_date_picker.go), the tokens' pills (search_token_pills.go)
+	// and the picked row's toolbar (search_toolbar.go)
+	qf      srQFState
+	dpk     srDatePick
+	pills   srPillState
+	tb      srTBState
+	listOrg image.Point // the list's window origin, last layout
 }
 
 // NewQuickSwitcher opens the Ctrl+K switcher: empty query, centered at the
@@ -502,7 +511,7 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 		unreads = unreads[:24] // suggestionsForBlankSlateUnreads' cap
 	}
 	if len(unreads) > 0 {
-		rows = append(rows, srRow{kind: srRHeader, title: "Unreads & drafts"})
+		rows = append(rows, srRow{kind: srRHeader, title: nsSearch.T("Unreads & drafts")})
 		for i, id := range unreads {
 			if i == srUnreadsShown && !p.unreadsOpen {
 				break
@@ -510,9 +519,9 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 			rows = append(rows, p.candRow(p.cands[p.byConv[id]], false))
 		}
 		if more := len(unreads) - srUnreadsShown; more > 0 {
-			t := "Show " + strconv.Itoa(more) + " more"
+			t := nsSearch.T("Show {count} more", "count", more)
 			if p.unreadsOpen {
-				t = "Show fewer"
+				t = nsSearch.T("Show fewer")
 			}
 			rows = append(rows, srRow{kind: srRMore, id: "unreads-toggle", title: t})
 		}
@@ -534,7 +543,7 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 		if len(unreads) > 0 {
 			rows = append(rows, srRow{kind: srRDivider})
 		}
-		rows = append(rows, srRow{kind: srRHeader, title: "Recent places"})
+		rows = append(rows, srRow{kind: srRHeader, title: nsSearch.T("Recent places")})
 		rows = append(rows, recent...)
 	}
 	return rows
@@ -561,15 +570,15 @@ func (p *SearchPopover) historyRows(rows []srRow) []srRow {
 				})
 		}
 		for _, it := range items {
-			if !it.Slackbot {
+			if !it.Slackbot && !p.tb.gone[it.Query] {
 				queries = append(queries, it.Query)
 			}
 		}
 	}
 	if len(queries) == 0 {
-		return append(rows, srRow{kind: srRNote, title: "Your recent searches will show up here."})
+		return append(rows, srRow{kind: srRNote, title: nsSearch.T("Your recent searches will show up here.")})
 	}
-	rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
+	rows = append(rows, srRow{kind: srRHeader, title: nsSearch.T("Recent searches")})
 	for _, q := range queries {
 		rows = append(rows, srRow{kind: srRQuery, id: q, title: SearchDisplayText(p.h, q), icon: "clock"})
 	}
@@ -583,11 +592,11 @@ var PageInfo func(page string) (title, icon string)
 // srPageRow is a Recent places page row ("" title: Clack doesn't have it).
 func srPageRow(page string) (srRow, bool) {
 	if pl, ok := srPlaceOf("view:" + page); ok && pl.title != "" {
-		return srRow{kind: srRPlace, id: page, title: pl.title, icon: pl.icon, boxed: true}, true
+		return srRow{kind: srRPlace, id: page, title: nsPage.T(pl.title), icon: pl.icon, boxed: true}, true
 	}
 	if PageInfo != nil {
 		if t, ic := PageInfo(page); t != "" {
-			return srRow{kind: srRPlace, id: page, title: t, icon: ic, boxed: true}, true
+			return srRow{kind: srRPlace, id: page, title: nsPage.T(t), icon: ic, boxed: true}, true
 		}
 	}
 	return srRow{}, false
@@ -805,7 +814,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 		}
 	}
 	if len(p.msgs) > 0 {
-		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: "Recent messages"})
+		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: nsSearch.T("Recent messages")})
 		terms := srParse(q).Highlights()
 		on := p.srQuickOn()
 		for i := range p.msgs {
@@ -844,7 +853,7 @@ func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
 	}
 	switch {
 	case ref.User == self && self != "":
-		w.name = "Direct Message with you"
+		w.name = nsSearch.T("Direct Message with you")
 	case m.BotID != "":
 		if w.pre == "" {
 			w.name = "" // no thread: just the sender
@@ -852,7 +861,7 @@ func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
 			w.name = " " + w.name
 		}
 	default:
-		w.name = "Direct Message with " + w.name
+		w.name = nsSearch.T("Direct Message with {name}", "name", w.name)
 	}
 	return w
 }
@@ -1251,6 +1260,8 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 	}
 	if p.ac.open {
 		fs = append(fs, key.Filter{Focus: &p.ed, Name: key.NameTab, Optional: key.ModShift})
+	} else if len(p.tbFor()) > 0 {
+		fs = append(fs, key.Filter{Focus: &p.ed, Name: key.NameTab}) // Tab: the toolbar
 	}
 	for {
 		e, ok := gtx.Event(fs...)
@@ -1282,6 +1293,20 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 			p.h.Invalidate()
 			continue
 		}
+		if p.dpShown() {
+			// the date picker's surface: ↓ / ↑ move into its grid,
+			// Escape closes it (Popover's onClose)
+			switch ke.Name {
+			case key.NameUpArrow, key.NameDownArrow:
+				if ke.Modifiers == 0 && p.dpFocusGrid(gtx) {
+					continue
+				}
+			case key.NameEscape:
+				p.dpDismiss()
+				p.h.Invalidate()
+				continue
+			}
+		}
 		switch ke.Name {
 		case key.NameUpArrow:
 			p.move(-1)
@@ -1289,6 +1314,8 @@ func (p *SearchPopover) keys(gtx layout.Context) {
 			p.move(1)
 		case key.NameReturn, key.NameEnter:
 			p.enter()
+		case key.NameTab:
+			p.tbFocus(gtx)
 		case key.NameEscape:
 			if isTop(p) {
 				p.Dismiss()
@@ -1367,7 +1394,10 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		p.refocus = true
 		p.onQuery(gtx)
 	}
-	if p.filter.Clicked(gtx) || p.advReq {
+	if p.filter.Clicked(gtx) {
+		p.qfToggleRow() // QuickFilterMenu's onToggleFilters
+	}
+	if p.advReq {
 		q := strings.TrimSpace(p.reqQuery(p.query))
 		srRecordQuery(q)
 		p.Dismiss()
@@ -1384,8 +1414,20 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	p.acUpdate()
+	p.dpPointer(gtx)
+	p.dpUpdate()
+	p.dpKeys(gtx)
+	p.tbKeys(gtx)
+	if p.done {
+		return layout.Dimensions{}
+	}
+	p.qfAutoShow()
+	tbHit := p.tbClicks(gtx) // first: a toolbar button's click reaches its row too
 	for i := range p.rows {
 		if p.clicks[i].Clicked(gtx) {
+			if tbHit && p.picked && i == p.sel {
+				continue // the button took it
+			}
 			p.activate(i)
 			if p.done {
 				return layout.Dimensions{}
@@ -1438,7 +1480,8 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	if x < dp(gtx, 4) {
 		x = dp(gtx, 4)
 	}
-	inputH := dp(gtx, 48) + 1
+	// the input row, the quick filter row while it shows, the 1px line
+	inputH := dp(gtx, 48) + p.qfRowH(gtx) + 1
 	padT, padB := dp(gtx, 8), dp(gtx, 8)
 	footH := dp(gtx, 45)
 	content := 0
@@ -1449,9 +1492,10 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	if maxH := win.Y - y - dp(gtx, 8); h > maxH {
 		h = maxH
 	}
-	acOpen := p.ac.open
+	acOpen := p.ac.open || p.dpShown()
 	if acOpen {
-		// isTextyAutocompleteOpen: the suggestions and the footer hide
+		// isTextyAutocompleteOpen or a date picker's onOpenChange: the
+		// suggestions and the footer hide
 		h = inputH
 	}
 	listH := h - inputH - padT - padB - footH
@@ -1463,8 +1507,15 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	card(gtx, cl, p.rect, rad)
 	p.block.Layout(gtx, p.rect)
 	p.layoutCard(gtx, th, cl, w, h, inputH, padT, footH, listH, rad, acOpen)
-	if acOpen {
+	p.tbRunPending(gtx)
+	if p.done {
+		return layout.Dimensions{}
+	}
+	if p.ac.open {
 		p.acLayout(gtx, th, cl, win, inputH)
+	}
+	if p.dpShown() {
+		p.dpLayout(gtx, inputH)
 	}
 	return layout.Dimensions{Size: win}
 }
@@ -1477,9 +1528,13 @@ func (p *SearchPopover) layoutCard(gtx layout.Context, th *theme.Theme, cl *Colo
 	defer op.Offset(p.rect.Min).Push(gtx.Ops).Pop()
 
 	p.layoutInput(gtx, th, cl, w, inputH)
+	if p.qfVisible() {
+		p.qfLayout(gtx, th, cl, dp(gtx, 48), w)
+	}
 	if acOpen {
 		return
 	}
+	p.listOrg = p.rect.Min.Add(image.Pt(0, inputH+padT))
 
 	// list
 	if p.ensure {
@@ -1548,7 +1603,9 @@ func (p *SearchPopover) scrollToSel(gtx layout.Context, viewH int) {
 
 func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors, w int) {
 	rh := dp(gtx, 48)
-	fill(gtx, image.Rect(0, rh, w, rh+1), srLineColor(th, cl))
+	// .c-search__input_wrapper's border-bottom, under the quick filter row
+	ly := rh + p.qfRowH(gtx)
+	fill(gtx, image.Rect(0, ly, w, ly+1), srLineColor(th, cl))
 	at(gtx, image.Pt(dp(gtx, 20), (rh-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 		return icon(gtx, "search", 20, cl.Fg2)
 	})
@@ -1559,18 +1616,16 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 		return iconButton(gtx, &p.history, "clock", 24, 18, cl.Fg2, cl.BgHover, 4)
 	})
 	p.historyRect = image.Rect(hx, (rh-hb)/2, hx+hb, (rh+hb)/2).Add(p.rect.Min)
-	at(gtx, image.Pt(w-dp(gtx, 68), (rh-hb)/2), func(gtx layout.Context) layout.Dimensions {
-		return iconButton(gtx, &p.filter, "filter", 24, 18, cl.Fg2, cl.BgHover, 4)
-	})
+	p.filterButton(gtx, th, w-dp(gtx, 68), (rh-hb)/2)
 	right := w - dp(gtx, 80)
 	if p.ed.Len() > 0 {
 		fill(gtx, image.Rect(right, (rh-dp(gtx, 20))/2, right+1, (rh+dp(gtx, 20))/2), cl.Divider)
-		cw := textW(gtx, th, 13, theme.Regular, "Clear")
+		cw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Clear"))
 		cx := right - dp(gtx, 17) - cw
 		at(gtx, image.Pt(cx, 0), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &p.clear, nil, func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg2, "Clear")
+					return text(gtx, th, 13, theme.Regular, cl.Fg2, nsSearch.T("Clear"))
 				})
 			})
 		})
@@ -1584,15 +1639,18 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	at(gtx, image.Pt(tx, 0), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Min: image.Pt(tw, 0), Max: image.Pt(tw, rh)}
+			// the editor first (a pill's click may change the box), drawn
+			// over the placeholder and the ghost text
+			edCall, edDims := record(gtx, func(gtx layout.Context) layout.Dimensions { return p.layoutEditor(gtx, th, cl) })
 			if p.ed.Len() == 0 && p.ghostText() == "" {
 				call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min = image.Point{}
-					return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Search across people, channels, files, workflows, and more")
+					return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsSearch.T("Search across people, channels, files, workflows, and more"))
 				})
 				call.Add(gtx.Ops)
 			}
 			if ghost := p.ghostText(); ghost != "" && gtx.Focused(&p.ed) {
-				qw := textW(gtx, th, 15, theme.Regular, p.query)
+				qw := p.textEndX(gtx, th)
 				if gw := textW(gtx, th, 15, theme.Regular, ghost); qw+gw <= tw {
 					call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints.Min = image.Point{}
@@ -1603,7 +1661,8 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 					t.Pop()
 				}
 			}
-			return p.layoutEditor(gtx, th, cl)
+			edCall.Add(gtx.Ops)
+			return edDims
 		})
 	})
 	p.edX = tx
@@ -1613,21 +1672,44 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	st.Pop()
 }
 
+// textEndX is where the box's text ends as the editor laid it out: with
+// tokens, wider than the plain text (the pills' space, the bold values),
+// a pill at the end with its right padding.
+func (p *SearchPopover) textEndX(gtx layout.Context, th *theme.Theme) int {
+	n := p.ed.Len()
+	if len(p.tokens) == 0 || n == 0 {
+		return textW(gtx, th, 15, theme.Regular, p.query)
+	}
+	x := 0
+	for _, r := range p.ed.Regions(0, n, nil) {
+		x = max(x, r.Bounds.Max.X)
+	}
+	for i, t := range p.tokens {
+		if t.end() != n {
+			continue
+		}
+		if b, ok := p.tokenBounds(i); ok {
+			x = max(x, b.Max.X)
+		}
+		if t.mention {
+			x += dp(gtx, 2)
+		} else {
+			x += dp(gtx, 4)
+		}
+	}
+	return x
+}
+
 // layoutEditor draws the box's editor with its tokens: the pills under
 // the text, then the tokens' text again in content-hgl-1 (the editor
 // paints one color).
 func (p *SearchPopover) layoutEditor(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	sel := theme.WithAlpha(cl.Focus, 0x55)
-	if len(p.tokens) == 0 {
-		return th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, sel)
-	}
+	p.pillPointer(gtx)
+	p.ed.SetSpans(p.tokenSpans(gtx)) // the pills' space and bold values
 	d := th.Editor(gtx, &p.ed, unit.Sp(15), cl.Fg, sel)
-	for _, pl := range p.acPills(gtx, th, cl) { // after the layout: this frame's regions
-		func() {
-			defer clip.UniformRRect(pl.r, dp(gtx, 3)).Push(gtx.Ops).Pop()
-			fill(gtx, pl.r, pl.bg)
-			th.Editor(gtx, &p.ed, unit.Sp(15), th.C.Mention, sel)
-		}()
+	if len(p.tokens) > 0 {
+		p.drawPills(gtx, th, cl) // after the layout: this frame's regions
 	}
 	return d
 }
@@ -1653,15 +1735,15 @@ func (p *SearchPopover) ghostText() string {
 		case !p.picked:
 			return ""
 		case r.kind == srRQuery:
-			return r.title + " — Search"
+			return r.title + nsSearch.T(" — Search")
 		case nav && r.title != "":
-			return r.title + " — Open"
+			return r.title + nsSearch.T(" — Open")
 		}
 		return ""
 	}
 	switch {
 	case r.kind == srRQuery, r.kind == srRShow:
-		return " — Search"
+		return nsSearch.T(" — Search")
 	case !nav:
 		return ""
 	}
@@ -1669,7 +1751,7 @@ func (p *SearchPopover) ghostText() string {
 	if len(q) > len(name) || !strings.EqualFold(string(name[:len(q)]), string(q)) {
 		return ""
 	}
-	return string(name[len(q):]) + " — Open"
+	return string(name[len(q):]) + nsSearch.T(" — Open")
 }
 
 func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) layout.Dimensions {
@@ -1677,21 +1759,28 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	cy := (sz.Y - ch) / 2
 	x := dp(gtx, 16)
 	if p.picked {
-		// a row is selected: [Enter] Open (Slack adds [Tab] Actions, the
-		// row's action toolbar, which Clack doesn't have)
-		ew := textW(gtx, th, 13, theme.Regular, "Enter") + dp(gtx, 12)
-		rrect(gtx, image.Rect(x, cy, x+ew, cy+ch), dp(gtx, 4), cl.KbdLight)
-		at(gtx, image.Pt(x+dp(gtx, 6), cy), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg, "Enter")
+		// a row is selected: [Enter] Open, [Tab] Actions (the row's
+		// toolbar); keyboardGroup gap 6, keyboardContainer gap 10. The
+		// Enter chip is the prefs I18n's (ev.t("Enter", {ns: "prefs"}):
+		// "Intro" in es-ES); the Tab chip is a literal "Tab".
+		group := func(chip, hint string) {
+			ew := textW(gtx, th, 13, theme.Regular, chip) + dp(gtx, 12)
+			rrect(gtx, image.Rect(x, cy, x+ew, cy+ch), dp(gtx, 4), cl.KbdLight)
+			at(gtx, image.Pt(x+dp(gtx, 6), cy), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, cl.Fg, chip)
+				})
 			})
-		})
-		x += ew + dp(gtx, 6)
-		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg2, "Open")
+			x += ew + dp(gtx, 6)
+			d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, cl.Fg2, hint)
+				})
 			})
-		})
+			x += d.Size.X + dp(gtx, 10)
+		}
+		group(nsPrefs.T("Enter"), nsSearch.T("Open"))
+		group("Tab", nsSearch.T("Actions"))
 		p.feedbackLink(gtx, th, cl, sz)
 		return layout.Dimensions{Size: sz}
 	}
@@ -1706,7 +1795,7 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	}
 	at(gtx, image.Pt(x+dp(gtx, 1), 0), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Regular, cl.Fg2, "Select")
+			return text(gtx, th, 13, theme.Regular, cl.Fg2, nsSearch.T("Select"))
 		})
 	})
 	p.feedbackLink(gtx, th, cl, sz)
@@ -1716,11 +1805,11 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 // feedbackLink is the footer's FeedbackLink (experimentOmniPolish: just
 // "Give feedback").
 func (p *SearchPopover) feedbackLink(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) {
-	fw := textW(gtx, th, 13, theme.Regular, "Give feedback")
+	fw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Give feedback"))
 	at(gtx, image.Pt(sz.X-dp(gtx, 16)-fw, 0), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &p.feedback, nil, func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Link, "Give feedback")
+				return text(gtx, th, 13, theme.Regular, cl.Link, nsSearch.T("Give feedback"))
 			})
 		})
 	})
@@ -1816,8 +1905,11 @@ func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colo
 		case rst.Has("background-color"):
 			fill(gtx, image.Rectangle{Max: sz}, rst.Background(cl.Bg))
 		}
-		// right side
+		// right side; a picked row's toolbar ends its left part
 		right := sz.X - dp(gtx, 16)
+		if picked {
+			right = p.tbRight(gtx, sz.X)
+		}
 		if pseudo {
 			right -= srEnterChip(gtx, th, cl, right, sz.Y)
 			right -= dp(gtx, 16)
@@ -1835,6 +1927,9 @@ func (p *SearchPopover) suggestion(gtx layout.Context, th *theme.Theme, cl *Colo
 		}
 		lst.Leave()
 		pointerCursor(gtx, sz)
+		if picked {
+			p.tbLayout(gtx, th, sz)
+		}
 		return layout.Dimensions{Size: sz}
 	})
 }
@@ -1914,7 +2009,7 @@ func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, fg color.
 	n := 0
 	switch {
 	case r.kind == srRShow:
-		ps[0] = piece{"Show results for: ", theme.Regular}
+		ps[0] = piece{srShowResultsFor(), theme.Regular}
 		ps[1] = piece{r.title, theme.Bold}
 		n = 2
 	case r.boldAll:
@@ -1949,15 +2044,17 @@ func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, fg color.
 }
 
 // srEnterChip draws the "Enter" hint ending at right; returns its width.
+// Its label is the prefs I18n's, as the row's KeyboardKey has it
+// (t("Enter", {ns: "prefs"}): "Intro" in es-ES).
 func srEnterChip(gtx layout.Context, th *theme.Theme, cl *Colors, right, h int) int {
-	tw := textW(gtx, th, 13, theme.Regular, "Enter")
+	tw := textW(gtx, th, 13, theme.Regular, nsPrefs.T("Enter"))
 	w, ch := tw+dp(gtx, 12), dp(gtx, 20)
 	r := image.Rect(right-w, (h-ch)/2, right, (h+ch)/2)
 	rrect(gtx, r, dp(gtx, 4), cl.Ring)
 	rrect(gtx, r.Inset(1), dp(gtx, 4)-1, cl.BgAlt)
 	at(gtx, image.Pt(r.Min.X+dp(gtx, 6), r.Min.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Regular, cl.Fg, "Enter")
+			return text(gtx, th, 13, theme.Regular, cl.Fg, nsPrefs.T("Enter"))
 		})
 	})
 	return w
@@ -2118,7 +2215,7 @@ func (p *SearchPopover) msgRowPlain(gtx layout.Context, th *theme.Theme, cl *Col
 				})
 				x += is
 			}
-			put(" Reply in a thread")
+			put(" " + nsSearch.T("Reply in a thread"))
 		}
 		bullet()
 		put(r.when)
@@ -2317,10 +2414,11 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 		if u, ok := lookupUser(h, ref.User); ok {
 			w.name = userName(u)
 		} else {
-			w.name = "Direct message"
+			w.name = nsSearch.T("Direct message")
 		}
 	case "mpim":
-		w.name = "Group message"
+		group := nsSidebar.T("Group message")
+		w.name = group
 		raw := ref.Name
 		if a := h.Core(); a != nil {
 			if c, ok := a.Conv(m.Channel); ok {
@@ -2333,7 +2431,7 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 				}
 			}
 		}
-		if w.name == "Group message" {
+		if w.name == group {
 			self := ""
 			if a := h.Core(); a != nil {
 				self = a.Self().Handle
@@ -2350,7 +2448,7 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 		}
 	}
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
-		w.pre = "Thread in "
+		w.pre = nsSearch.T("Thread in ")
 	}
 	return w
 }
@@ -2397,4 +2495,14 @@ func srDrawWhereFg(gtx layout.Context, hst Host, w srWhere, x, y, right, h int, 
 			})
 		})
 	}
+}
+
+// srShowResultsFor is the "Show results for:" row's lead-in (the
+// typeahead's, rs63), with the space before the bold query.
+func srShowResultsFor() string {
+	t := nsSearch.T("Show results for:")
+	if !strings.HasSuffix(t, " ") {
+		t += " "
+	}
+	return t
 }

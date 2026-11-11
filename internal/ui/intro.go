@@ -308,6 +308,10 @@ func (in *intro) prefetch(gtx layout.Context, a *App) {
 			in.sprites.word(spriteKey{text: w, weight: theme.Black, px: f.textPx(titleSize)})
 		}
 	}
+	// the sign-in card's title comes into focus the same way (login_card.go)
+	for _, w := range splitWords(signInTitle) {
+		in.sprites.word(spriteKey{text: w, weight: theme.Black, px: f.textPx(loginTitlePt)})
+	}
 }
 
 // ---- the frame ----
@@ -564,6 +568,7 @@ func splitWords(s string) []string {
 // layoutWelcome is the window while Clack isn't signed in: the backdrop,
 // the introduction on the first launch, then the sign-in card.
 func (a *App) layoutWelcome(gtx layout.Context) {
+	a.loginClipboard(gtx) // a sign-in link copied in the browser (login.go)
 	in := a.intro
 	if in != nil && in.mode != introFirstRun {
 		a.intro, in = nil, nil // signed out mid-replay
@@ -600,7 +605,7 @@ func (a *App) layoutWelcome(gtx layout.Context) {
 	}
 	host.drawDock(f)
 	if in == nil || in.signIn {
-		a.layoutLogin(gtx, enter, f.mc)
+		a.layoutLogin(gtx, enter, f)
 	}
 	if in != nil && in.gone {
 		a.intro = nil

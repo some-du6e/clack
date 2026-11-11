@@ -7,6 +7,10 @@ package icons
 // baseline at its 1700 ascent (x/100, (1700-y)/100). Slack's fonts are not
 // in the repo.
 func init() {
+	// U+E096 icon_stop_screen_sharing (c-icon--stop-screen-sharing): the
+	// presenter's mini panel's Stop Sharing button (HuddleMiniPanel, a y8g2
+	// font icon)
+	reg("stop-screen-sharing", f("M14.26 18C14.7 18 15.02 17.68 15.02 17.25C15.02 16.82 14.69 16.5 14.25 16.5H11V14H17.25C18.22 14 19 13.22 19 12.25V3.75C19 2.78 18.22 2 17.24 2H2.76C1.78 2 1 2.78 1 3.75V12.25C1 13.21 1.79 14 2.75 14H9L9.01 16.5H5.78C5.34 16.5 5.02 16.82 5.02 17.25C5.02 17.68 5.34 18 5.78 18ZM2.75 12.5C2.62 12.5 2.5 12.38 2.5 12.25V3.75C2.5 3.61 2.61 3.5 2.76 3.5H17.24C17.39 3.5 17.5 3.61 17.5 3.75V12.25C17.5 12.39 17.39 12.5 17.25 12.5ZM8 10.02C8 10.51 8.44 10.78 8.88 10.56L12.81 8.59C13.34 8.32 13.34 7.68 12.81 7.41L8.88 5.44C8.44 5.22 8 5.49 8 5.98Z"))
 	// U+E125 icon_hash_small (c-icon--hash-small): the # before the channel
 	// name in the composer's placeholder (MessagePaneInputPlaceholder). Its
 	// strokes are one unit wide, the weight of Lato's own at 15px.

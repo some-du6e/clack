@@ -64,6 +64,8 @@ type textView struct {
 	// DisableSpaceTrim configures whether trailing whitespace on a line will have its
 	// width zeroed. Set to true for editors, but false for non-editable text.
 	DisableSpaceTrim bool
+	// TabStop is text.Parameters' TabStop (Clack patch 7).
+	TabStop int
 	// Mask replaces the visual display of each rune in the contents with the given rune.
 	// Newline characters are not masked. When non-zero, the unmasked contents
 	// are accessed by Len, Text, and SetText.
@@ -89,6 +91,10 @@ type textView struct {
 	offIndex []offEntry
 
 	index glyphIndex
+
+	// spans style parts of the text (Clack patch 6, clack_spans.go).
+	spans []TextSpan
+	span  spanScratch
 
 	caret struct {
 		// xoff is the offset to the current position when moving between lines.
@@ -299,6 +305,10 @@ func (e *textView) Layout(gtx layout.Context, lt *text.Shaper, font font.Font, s
 		e.params.DisableSpaceTrim = e.DisableSpaceTrim
 		e.invalidate()
 	}
+	if e.TabStop != e.params.TabStop { // Clack patch 7
+		e.params.TabStop = e.TabStop
+		e.invalidate()
+	}
 
 	e.makeValid()
 
@@ -493,7 +503,9 @@ func (e *textView) layoutText(lt *text.Shaper) {
 	}
 	e.index.reset()
 	it := textIterator{viewport: image.Rectangle{Max: image.Point{X: math.MaxInt, Y: math.MaxInt}}}
-	if lt != nil {
+	if lt != nil && e.layoutSpans(lt, &it) {
+		// shaped in styled segments (Clack patch 6, clack_spans.go)
+	} else if lt != nil {
 		lt.Layout(e.params, r)
 		for {
 			g, ok := lt.NextGlyph()

@@ -37,6 +37,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -195,9 +196,9 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 			return actMark{}, false
 		}
 		if !v.reminderIncomplete(it) {
-			tip := "You completed this to-do"
+			tip := nsActivity.T("You completed this to-do")
 			if s, _, _ := v.reminderSaved(it); s != nil && s.DateCompleted > 0 {
-				tip += "\nOn " + time.Unix(s.DateCompleted, 0).Format("1/2/2006") // {date_slash}
+				tip += "\n" + nsActivity.T("On {date}", "date", dateSlash(time.Unix(s.DateCompleted, 0)))
 			}
 			return actMark{"check-filled", tip}, true
 		}
@@ -205,15 +206,15 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 	switch it.Type {
 	case "thread_v2", "dm", "channel", "bot_dm_bundle":
 		if d, ok := c.DraftFor(it.Channel, it.ThreadTS); ok && (strings.TrimSpace(d.Text) != "" || d.Files > 0) {
-			tip := "Draft"
+			tip := nsActivity.T("Draft")
 			if t := actTrunc(oneLine(d.Text), 60); t != "" {
-				tip = "Draft: “" + t + "”"
+				tip = nsActivity.T(`Draft: "{message}"`, "message", t)
 			}
 			return actMark{"edit-filled", tip}, true
 		}
 	}
 	if ts := c.YouRepliedTS(it); ts != "" {
-		tip := "You replied"
+		tip := nsActivity.T("You replied") // RepliedBadge
 		if m, ok := c.S.Find(it.Channel, ts); ok {
 			if t := actTrunc(oneLine(m.Text), 60); t != "" {
 				tip += "\n“" + t + "”"
@@ -226,12 +227,12 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 		if len(shown) > 3 {
 			shown = shown[:3]
 		}
-		tip := "You reacted:"
+		tip := nsActivity.T("You reacted:") // ReactedBadge
 		for _, n := range shown {
 			tip += " :" + n + ":"
 		}
 		if more := len(names) - len(shown); more > 0 {
-			tip += " +" + strconv.Itoa(more) + " more"
+			tip += " " + nsActivity.T("+{count} more", "count", more)
 		}
 		return actMark{"check-filled", tip}, true
 	}
@@ -362,24 +363,24 @@ func (v *Activity) rescheduleMenu(ph popups.Host, it *core.ActivityItem) []popup
 		}
 	}
 	var out []popups.MenuItem
-	l30, l1, l3 := "In 30 mins", "In 1 hour", "In 3 hours"
+	l30, l1, l3 := nsLater.T("In 30 mins"), nsLater.T("In 1 hour"), nsLater.T("In 3 hours")
 	if overdue {
-		out = append(out, popups.MenuItem{Header: "Snooze…"})
-		l30, l1, l3 = "30 mins", "1 hour", "3 hours"
+		out = append(out, popups.MenuItem{Header: nsLater.T("Snooze…")})
+		l30, l1, l3 = nsLater.T("30 mins"), nsLater.T("1 hour"), nsLater.T("3 hours")
 	}
 	h, m := actReminderClock(c)
 	out = append(out,
 		popups.MenuItem{Label: l30, Do: set(now.Add(30 * time.Minute).Unix())},
 		popups.MenuItem{Label: l1, Do: set(now.Add(time.Hour).Unix())},
 		popups.MenuItem{Label: l3, Do: set(now.Add(3 * time.Hour).Unix())},
-		popups.MenuItem{Label: "Tomorrow at " + pref, Do: set(actDueTomorrow(now, h, m).Unix())},
-		popups.MenuItem{Label: "Monday at " + pref, Do: set(actDueMonday(now, h, m).Unix())},
-		popups.MenuItem{Label: "Custom…", Do: func() {
+		popups.MenuItem{Label: nsLater.T("Tomorrow at {reminderPref}", "reminderPref", pref), Do: set(actDueTomorrow(now, h, m).Unix())},
+		popups.MenuItem{Label: nsLater.T("Monday at {reminderPref}", "reminderPref", pref), Do: set(actDueMonday(now, h, m).Unix())},
+		popups.MenuItem{Label: nsLater.T("Custom…"), Do: func() {
 			ph.ShowOverlay(popups.NewReminderDueModal(ph, func(due int64) { set(due)() }))
 		}},
 	)
 	if item.DateDue > 0 {
-		out = append(out, popups.Sep(), popups.MenuItem{Label: "Clear reminder", Do: set(0)})
+		out = append(out, popups.Sep(), popups.MenuItem{Label: nsLater.T("Clear reminder"), Do: set(0)})
 	}
 	return out
 }
@@ -418,6 +419,9 @@ func actReminderPref(c *core.App) string {
 		h, m = ph, pm
 	}
 	t := time.Date(2000, 1, 1, h, m, 0, 0, time.Local)
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.Time(l, t, c.PrefBool("time24", false), false) // toTime
+	}
 	if c.PrefBool("time24", false) {
 		return t.Format("15:04")
 	}
@@ -442,7 +446,7 @@ func actDueMonday(now time.Time, h, m int) time.Time {
 // check icon then "Mark Complete", 12px under the reminder's body.
 func (v *Activity) markCompleteButton(gtx C, r *actRow) D {
 	return layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D {
-		return v.smallButton(gtx, &r.complete, btnOutline, "check", "Mark Complete")
+		return v.smallButton(gtx, &r.complete, btnOutline, "check", nsActivity.T("Mark Complete"))
 	})
 }
 
@@ -523,9 +527,9 @@ func (v *Activity) inviteButtons(gtx C, r *actRow, acts []string) D {
 		}
 		ch = append(ch, layout.Rigid(func(gtx C) D {
 			if a == core.InviteActIgnore {
-				return v.smallButton(gtx, &r.invC[i], btnOutline, "", "Ignore")
+				return v.smallButton(gtx, &r.invC[i], btnOutline, "", nsSlackConnect.T("Ignore"))
 			}
-			return v.smallButton(gtx, &r.invC[i], btnPrimary, "", "Accept")
+			return v.smallButton(gtx, &r.invC[i], btnPrimary, "", nsSlackConnect.T("Accept"))
 		}))
 	}
 	return row(gtx, layout.Middle, ch...)
@@ -564,11 +568,11 @@ func (v *Activity) ignoreForked(ph popups.Host, it core.ActivityItem) {
 		icon, text, sub string
 		next            func()
 	}{
-		{"times-circle-medium", "Ignore this invitation",
-			"This invite simply disappears, as if nothing ever happened. But " + name + " can reach out again.",
+		{"times-circle-medium", nsIntro.T("Ignore this invitation"),
+			nsIntro.T("This invite simply disappears, as if nothing ever happened. But {imMember} can reach out again.", "imMember", name),
 			func() { v.ignoreThis(ph, it) }},
-		{"disable-font", "Block invitations from this person",
-			"You’ll no longer receive Slack Connect invitations sent from " + name + ".",
+		{"disable-font", nsIntro.T("Block invitations from this person"),
+			nsIntro.T("You’ll no longer receive Slack Connect invitations sent from {imMember}.", "imMember", name),
 			func() { v.ignoreAll(ph, it) }},
 	}
 	for i := range choices {
@@ -581,7 +585,7 @@ func (v *Activity) ignoreForked(ph popups.Host, it core.ActivityItem) {
 		}
 	}
 	m = popups.NewModal(ph, popups.ModalOpts{
-		Title: "What would you like to do?",
+		Title: nsIntro.T("What would you like to do?"),
 		Body: func(gtx C) D {
 			for i := range rows {
 				if rows[i].Clicked(gtx) {
@@ -656,17 +660,17 @@ func (v *Activity) ignoreThis(ph popups.Host, it core.ActivityItem) {
 		email = " (" + it.Invite.InviterEmail + ")"
 	}
 	channel := it.Invite.Kind == "channel"
-	body := name + email + " won’t be notified you’ve done this."
+	body := nsIntro.T("{imMember}{maybeImMemberEmail} won’t be notified you’ve done this.", "imMember", name, "maybeImMemberEmail", email)
 	if channel {
-		body = name + email + " won’t be notified you’ve done this. If you change your mind, you can search for their name to start the conversation."
+		body = nsIntro.T("{imMember}{maybeImMemberEmail} won’t be notified you’ve done this. If you change your mind, you can search for their name to start the conversation.", "imMember", name, "maybeImMemberEmail", email)
 	}
 	id, key := it.Invite.ID, actKey(&it)
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: "Ignore this invitation from " + name + "?",
+		Title: nsIntro.T("Ignore this invitation from {imMember}?", "imMember", name),
 		Body:  func(gtx C) D { return v.para(gtx, 15, 22, wReg, v.p.Text, 0, body) },
 		Buttons: []*popups.ModalButton{
-			{Label: "Cancel", Kind: popups.BtnOutline},
-			{Label: "Ignore Invitation", Kind: popups.BtnDanger, Do: func() bool {
+			{Label: nsIntro.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsIntro.T("Ignore Invitation"), Kind: popups.BtnDanger, Do: func() bool {
 				v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
 					if err := c.IgnoreConnectInvite(ctx, id, channel); err != nil {
 						return err
@@ -694,27 +698,27 @@ func (v *Activity) ignoreAll(ph popups.Host, it core.ActivityItem) {
 	channel := it.Invite.Kind == "channel"
 	id := it.Invite.ID
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: "Block invitations from " + name + "?",
+		Title: nsIntro.T("Block invitations from {imMember}?", "imMember", name),
 		Body: func(gtx C) D {
 			return col(gtx,
 				layout.Rigid(func(gtx C) D {
-					return v.para(gtx, 15, 22, wReg, v.p.Text, 0, "You’ll no longer receive Slack Connect invitations from "+name+email+".")
+					return v.para(gtx, 15, 22, wReg, v.p.Text, 0, nsIntro.T("You’ll no longer receive Slack Connect invitations from {imMember}{maybeImMemberEmail}.", "imMember", name, "maybeImMemberEmail", email))
 				}),
 				layout.Rigid(func(gtx C) D {
 					return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
-						return v.para(gtx, 15, 22, wReg, v.p.Text, 0, "They won’t be notified you’ve done this.")
+						return v.para(gtx, 15, 22, wReg, v.p.Text, 0, nsIntro.T("They won’t be notified you’ve done this."))
 					})
 				}),
 				layout.Rigid(func(gtx C) D {
 					return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
-						return v.para(gtx, 15, 22, wReg, v.p.Text, 0, "To undo this, you can adjust the setting under privacy & visibility in your preferences.")
+						return v.para(gtx, 15, 22, wReg, v.p.Text, 0, i18n.StripTags(nsIntro.T("To undo this, you can adjust the setting under <strong>privacy & visibility</strong> in your preferences.")))
 					})
 				}),
 			)
 		},
 		Buttons: []*popups.ModalButton{
-			{Label: "Cancel", Kind: popups.BtnOutline},
-			{Label: "Block Invitations", Kind: popups.BtnDanger, Do: func() bool {
+			{Label: nsIntro.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsIntro.T("Block Invitations"), Kind: popups.BtnDanger, Do: func() bool {
 				v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
 					if err := c.BlockConnectInvites(ctx, id, channel); err != nil {
 						return err
@@ -722,11 +726,11 @@ func (v *Activity) ignoreAll(ph popups.Host, it core.ActivityItem) {
 					v.notes.mu.Lock()
 					v.notes.fns = append(v.notes.fns, func() {
 						ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-							Title: "You won\u2019t hear from " + name + " again",
+							Title: nsIntro.T("You won\u2019t hear from {imMember} again", "imMember", name),
 							Body: func(gtx C) D {
-								return v.para(gtx, 15, 22, wReg, v.p.Text, 0, "If you change your mind, you can adjust the setting under privacy & visibility in your preferences.")
+								return v.para(gtx, 15, 22, wReg, v.p.Text, 0, i18n.StripTags(nsIntro.T("If you change your mind, you can adjust the setting under <strong>privacy & visibility</strong> in your preferences.")))
 							},
-							Buttons: []*popups.ModalButton{{Label: "Got It", Kind: popups.BtnOutline}},
+							Buttons: []*popups.ModalButton{{Label: nsIntro.T("Got It"), Kind: popups.BtnOutline}},
 						}))
 					})
 					v.notes.mu.Unlock()
@@ -803,7 +807,7 @@ func (v *Activity) trustModal(ph popups.Host, it core.ActivityItem) {
 	}
 	inviter := it.Actor
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: "Before you accept this invitation…",
+		Title: nsSharedInvites.T("Before you accept this invitation…"), // SlackConnectConfirmTrustModal
 		Body: func(gtx C) D {
 			ln := func(s string, size, lh unit.Sp, w font.Weight, top unit.Dp) layout.FlexChild {
 				return layout.Rigid(func(gtx C) D {
@@ -813,29 +817,29 @@ func (v *Activity) trustModal(ph popups.Host, it core.ActivityItem) {
 				})
 			}
 			ch := []layout.FlexChild{
-				ln("Make sure you recognize the sender’s email address and other info.", 15, 22, wReg, 0),
+				ln(nsSharedInvites.T("Make sure you recognize the sender’s email address and other info."), 15, 22, wReg, 0),
 				layout.Rigid(func(gtx C) D {
 					return layout.Inset{Top: 24}.Layout(gtx, func(gtx C) D {
 						gtx.Constraints.Min.X = gtx.Constraints.Max.X
 						return layout.Center.Layout(gtx, func(gtx C) D { return v.avatar(gtx, av, 50) })
 					})
 				}),
-				ln(name+" from "+it.Team+".", 15, 22, wReg, 8),
+				ln(i18n.StripTags(nsSharedInvites.T("<strong>{invitingUserName}</strong> from {invitingTeamName}.", "invitingUserName", name, "invitingTeamName", it.Team)), 15, 22, wReg, 8),
 			}
 			if inv.InviterEmail != "" {
 				ch = append(ch, ln(inv.InviterEmail, 13, 18, wReg, 0))
 			}
 			if inv.TeamCreated > 0 {
-				ch = append(ch, ln("This organization has used Slack since "+time.Unix(inv.TeamCreated, 0).Format("Jan 2006"), 15, 22, wReg, 4))
+				ch = append(ch, ln(nsSharedInvites.T("This organization has used Slack since {teamDuration}", "teamDuration", monthYear(time.Unix(inv.TeamCreated, 0))), 15, 22, wReg, 4))
 			}
 			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return col(gtx, ch...) })
 		},
 		Buttons: []*popups.ModalButton{
-			{Label: "Ignore", Kind: popups.BtnOutline, Do: func() bool {
+			{Label: nsSharedInvites.T("Ignore"), Kind: popups.BtnOutline, Do: func() bool {
 				v.ignoreForked(ph, it)
 				return true
 			}},
-			{Label: "Accept Invitation", Kind: popups.BtnPrimary, Do: func() bool {
+			{Label: nsSharedInvites.T("Accept Invitation"), Kind: popups.BtnPrimary, Do: func() bool {
 				v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
 					if err := c.AcceptConnectDMInvite(ctx, inv.Sig, inv.ID); err != nil {
 						return err
@@ -883,13 +887,13 @@ func (v *Activity) clearAllToast(gtx C) {
 	gtx.Execute(op.InvalidateCmd{At: t.until})
 	if t.text == "" && t.undo.Clicked(gtx) {
 		key := t.key
-		t.text, t.until = "We brought back your notifications", gtx.Now.Add(actToastLife)
+		t.text, t.until = nsActivity.T("We brought back your notifications"), gtx.Now.Add(actToastLife)
 		v.write("", func(ctx context.Context, c *core.App) error {
 			err := c.UndoClearAll(ctx, key)
 			v.notes.mu.Lock()
 			v.notes.fns = append(v.notes.fns, func() {
 				if err != nil {
-					v.clearAll.text = "There was an issue clearing some notifications"
+					v.clearAll.text = nsActivity.T("There was an issue clearing some notifications")
 				}
 				v.load(actRefresh)
 			})
@@ -910,11 +914,11 @@ func (v *Activity) clearAllToast(gtx C) {
 			return v.label(gtx, 15, wReg, fg, t.text)
 		}
 		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, fg, "Notifications cleared. ") }),
+			layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, fg, nsActivity.T("Notifications cleared.")+" ") }),
 			layout.Rigid(func(gtx C) D {
 				return t.undo.Layout(gtx, func(gtx C) D {
 					pointerCursor(gtx)
-					dd := v.label(gtx, 15, wReg, link, "Undo")
+					dd := v.label(gtx, 15, wReg, link, nsActivity.T("Undo"))
 					rrect(gtx, image.Rect(0, dd.Size.Y-gtx.Dp(2), dd.Size.X, dd.Size.Y-gtx.Dp(1)), 0, link) // underline
 					return dd
 				})
@@ -954,8 +958,10 @@ func (v *Activity) offlineFooter(gtx C) D {
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D { return v.icon(gtx, "cloud-offline", 13, v.p.Text) }),
 				layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Text, " ") }),
-				layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, v.p.Text, "No connection.") }),
-				layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Text, " Go online to load more activity.") }),
+				layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, v.p.Text, i18n.T("offline_mode", "No connection.")) }), // InlineOfflineIndicator
+				layout.Rigid(func(gtx C) D {
+					return v.label(gtx, 13, wReg, v.p.Text, " "+nsMentions.T("Go online to load more activity."))
+				}), // ActivityRowLoader
 			)
 		})
 	})

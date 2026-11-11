@@ -25,6 +25,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -529,6 +530,23 @@ type tabs struct {
 	Labels []string
 	Sel    int
 	clicks []widget.Clickable
+	// Tr gives a label's text in the active locale (nil: drawn as is).
+	// Labels keep the English sources (Slack's keys); a view's own data
+	// (a custom view's name) passes through unchanged.
+	Tr func(i int, s string) string
+}
+
+// label is tab i's text as drawn.
+func (t *tabs) label(i int) string {
+	if t.Tr != nil {
+		return t.Tr(i, t.Labels[i])
+	}
+	return t.Labels[i]
+}
+
+// trIn is a tabs.Tr for labels that are all Slack strings of ns.
+func trIn(ns i18n.NS) func(int, string) string {
+	return func(_ int, s string) string { return ns.T(s) }
 }
 
 func newTabs(labels ...string) *tabs {
@@ -576,7 +594,7 @@ func (b *base) tabStripIcons(gtx C, t *tabs, icons []string, badges []int) D {
 							}
 							return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icons[i], 16, fg) })
 						}),
-						layout.Rigid(func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.Labels[i]) }),
+						layout.Rigid(func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.label(i)) }),
 						layout.Rigid(func(gtx C) D {
 							if i >= len(badges) || badges[i] <= 0 {
 								return D{}
@@ -621,7 +639,7 @@ func (b *base) pillRow(gtx C, p *pills) D {
 				pointerCursor(gtx)
 				sel := i == p.Sel
 				fg := b.p.Text
-				tw := b.th.Measure(gtx, 13, wBold, p.Labels[i])
+				tw := b.th.Measure(gtx, 13, wBold, p.label(i))
 				sz := image.Pt(tw+gtx.Dp(16), gtx.Dp(32))
 				r := image.Rectangle{Max: sz}
 				rad := gtx.Dp(8)
@@ -638,7 +656,7 @@ func (b *base) pillRow(gtx C, p *pills) D {
 				}
 				g := gtx
 				g.Constraints = layout.Exact(sz)
-				layout.Center.Layout(g, func(gtx C) D { return b.label(gtx, 13, wBold, fg, p.Labels[i]) })
+				layout.Center.Layout(g, func(gtx C) D { return b.label(gtx, 13, wBold, fg, p.label(i)) })
 				return D{Size: sz}
 			})
 		}))
@@ -686,10 +704,27 @@ type search struct {
 	ed   widget.Editor
 	last string
 	ph   string
+	ns   i18n.NS // ph is Slack's string in ns ("": drawn as is)
 }
 
 func newSearch(placeholder string) *search {
 	return &search{ed: widget.Editor{SingleLine: true, Submit: true}, ph: placeholder}
+}
+
+// newSearchIn is newSearch with a placeholder that is Slack's string in
+// ns (drawn in the active locale).
+func newSearchIn(ns i18n.NS, placeholder string) *search {
+	s := newSearch(placeholder)
+	s.ns = ns
+	return s
+}
+
+// placeholder is the placeholder as drawn.
+func (s *search) placeholder() string {
+	if s.ns != "" {
+		return s.ns.T(s.ph)
+	}
+	return s.ph
 }
 
 // update returns (text, changed, submitted).
@@ -740,7 +775,7 @@ func (b *base) searchBox(gtx C, s *search, height unit.Dp) D {
 						if s.ed.Len() > 0 {
 							return D{}
 						}
-						return b.label(gtx, 15, wReg, b.p.Faint, s.ph)
+						return b.label(gtx, 15, wReg, b.p.Faint, s.placeholder())
 					}),
 					layout.Stacked(func(gtx C) D {
 						return b.th.Editor(gtx, &s.ed, 15, b.p.Text, b.p.Mention)
@@ -1073,7 +1108,9 @@ func (b *base) skeleton(gtx C, rows int, avatar unit.Dp) D {
 
 // errorLine draws a muted error with a retry button.
 func (b *base) errorState(gtx C, err error, retry *widget.Clickable) D {
-	return b.emptyState(gtx, "", "Something went wrong", friendlyErr(err), retry, "Try again")
+	// the views' shared error state: the files namespace's words, which
+	// Slack's own views use for theirs
+	return b.emptyState(gtx, "", i18n.T("files", "Something went wrong"), friendlyErr(err), retry, i18n.T("files", "Try again"))
 }
 
 func friendlyErr(err error) string {
@@ -1234,6 +1271,18 @@ func listTime(t time.Time) string {
 		return ""
 	}
 	now := time.Now()
+	if l := i18n.Locale(); l != i18n.EnUS {
+		// the same steps in the locale's dayjs formats
+		switch {
+		case sameDay(t, now):
+			return clock(t)
+		case sameDay(t, now.AddDate(0, 0, -1)):
+			return i18n.RelativeDay(l, t, now, false)
+		case now.Sub(t) < 6*24*time.Hour && t.Before(now):
+			return i18n.Weekday(l, t, false)
+		}
+		return i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: t.Year() == now.Year()})
+	}
 	switch {
 	case sameDay(t, now):
 		return clock(t)
@@ -1282,6 +1331,14 @@ func dueText(t time.Time) (string, bool) {
 		return "", false
 	}
 	now := time.Now()
+	if l := i18n.Locale(); l != i18n.EnUS {
+		// getDateDuePillString's toTimeAgo in Slack's "Overdue by
+		// {dateString}" / "Due {dateString}" (saved_for_later)
+		if t.Before(now) {
+			return nsLater.T("Overdue by {dateString}", "dateString", i18n.TimeAgo(l, t, now, false, true)), true
+		}
+		return nsLater.T("Due {dateString}", "dateString", i18n.TimeAgo(l, t, now, false, false)), false
+	}
 	if t.Before(now) {
 		d := now.Sub(t)
 		switch {

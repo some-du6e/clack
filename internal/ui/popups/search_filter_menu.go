@@ -14,10 +14,7 @@ package popups
 // Escape closes the menu until the match changes, and a press and release
 // on a row takes it.
 //
-// Tokens are drawn as Slack's .c-member_slug--search-filter (surf-hgl-1
-// under content-hgl-1 text, radius 3, 1px above and below, 4px right) or
-// a mention slug. The box is a plain editor, so the pill's 14px modifier
-// icon and its 23px gap aren't drawn and the value isn't bold.
+// The tokens' pills are search_token_pills.go.
 
 import (
 	"context"
@@ -33,7 +30,6 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
@@ -349,49 +345,10 @@ func (p *SearchPopover) reqQuery(text string) string { return srRequestQuery(tex
 
 // ---- drawing ----
 
-// srPill is a token's pill: its rect in the editor and its color.
-type srPill struct {
-	r  image.Rectangle
-	bg color.NRGBA
-}
-
-// acPills are the tokens' pills, from this frame's text layout.
-func (p *SearchPopover) acPills(gtx layout.Context, th *theme.Theme, cl *Colors) []srPill {
-	var out []srPill
-	var regs []widget.Region
-	n := p.ed.Len()
-	for _, t := range p.tokens {
-		if t.end() > n {
-			continue
-		}
-		bg := th.C.MentionBg
-		if t.mention && p.acSelfMention(t) {
-			bg = th.C.SelfMention
-		}
-		regs = p.ed.Regions(t.start, t.end(), regs[:0])
-		for _, r := range regs {
-			b := r.Bounds
-			b.Min.X -= dp(gtx, 2)
-			b.Max.X += dp(gtx, 4)
-			b.Min.Y -= dp(gtx, 1)
-			b.Max.Y += dp(gtx, 1)
-			out = append(out, srPill{r: b, bg: srOver(cl.Bg, bg)})
-		}
-	}
-	return out
-}
-
 // acSelfMention reports a mention of the viewer (c-member_slug--mention).
 func (p *SearchPopover) acSelfMention(t srToken) bool {
 	c := p.h.Core()
 	return c != nil && t.req == "<@"+c.Self().ID+">"
-}
-
-// srOver is c composited over an opaque bg.
-func srOver(bg, c color.NRGBA) color.NRGBA {
-	a := uint32(c.A)
-	mix := func(b, f uint8) uint8 { return uint8((uint32(f)*a + uint32(b)*(255-a) + 127) / 255) }
-	return color.NRGBA{R: mix(bg.R, c.R), G: mix(bg.G, c.G), B: mix(bg.B, c.B), A: 0xff}
 }
 
 // acAnchorX is the x of the match's anchor in the editor.

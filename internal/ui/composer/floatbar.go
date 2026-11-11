@@ -26,7 +26,10 @@ import (
 // than the bar (unless it spans the whole editor, then from its left);
 // narrower, centred while it sits in the editor's middle half, else
 // ending at its end when there is room, else from its start; never past
-// 10px from the right edge. Escape hides it until the selection changes.
+// 10px from the window's right edge (the bar is portaled to the
+// document's body and 7LIu's viewportWidth is documentElement.clientWidth,
+// so it may stick out of the composer). Escape hides it until the
+// selection changes.
 // Look (.p-texty_floating_formatting_bar, .p-composer__body--floating,
 // .p-composer__button--floating): #1a1d21, radius 8, padding 2, a 1px
 // rgba(232,232,232,.25) ring and 0 1px 3px rgba(0,0,0,.08); 28px buttons
@@ -97,28 +100,51 @@ func (c *Composer) floatEscape() bool {
 	return true
 }
 
-// floatBarPos is calculateToolbarPosition (top placement) in composer
-// coordinates: sel is the selection's box, edLeft/edW the editor's, maxX
-// the right edge the bar keeps 10px from.
-func floatBarPos(sel image.Rectangle, edLeft, edW, tw, th, maxX int) image.Point {
-	m := sel.Min.X
-	top := sel.Min.Y - th - 5
+// floatBarPos is calculateToolbarPosition (cj0/, top placement) over
+// toolbarPositionDataForRect (7LIu). sel is the selection's box relative
+// to the editor (rect), edW the editor's width (editorWidth), ed the
+// editor's top-left in the window (containerLeftBound, containerTopBound),
+// viewW the window's width (viewportWidth), tw×th the bar, gap and edge
+// the 5px above the selection and the 10px kept from the window's edge
+// (in pixels at the window's scale). It returns the bar's top-left in
+// window coordinates. Like Slack it compares the selection's left edge in
+// the window (m) with fractions of the editor's width, while the
+// selection's right edge stays editor-relative.
+func floatBarPos(sel image.Rectangle, edW int, ed image.Point, tw, th, viewW, gap, edge int) image.Point {
+	m := sel.Min.X + ed.X
+	top := sel.Min.Y + ed.Y - th - gap
 	x := m
-	rel := m - edLeft
+	o := float64(edW)
 	switch sw := sel.Dx(); {
 	case sw >= tw:
 		if sw != edW {
 			x = m + (sw-tw)/2
 		}
-	case rel > edW/4 && sel.Max.X-edLeft < edW*3/4:
+	case float64(m) > o/2-o/4 && float64(sel.Max.X) < o/2+o/4:
 		x = m - (tw-sw)/2
-	case rel > tw:
+	case m > tw:
 		x = m - (tw - sw)
 	}
-	if over := maxX - 10 - x - tw; over < 0 {
+	if over := viewW - edge - x - tw; over < 0 {
 		x += over
 	}
 	return image.Pt(x, top)
+}
+
+// WindowSize, when set (the ui root), is the window's size in pixels as
+// of the last frame: the floating bar's viewportWidth.
+var WindowSize func() image.Point
+
+// windowWidth is the window's width in pixels: the host's when it knows
+// it, else WindowSize's, else 0.
+func (c *Composer) windowWidth() int {
+	if ws, ok := c.h.(interface{ WindowSize() image.Point }); ok {
+		return ws.WindowSize().X
+	}
+	if WindowSize != nil {
+		return WindowSize().X
+	}
+	return 0
 }
 
 // layoutFloatBar draws the bar (deferred, over the message list) when it
@@ -147,9 +173,14 @@ func (c *Composer) layoutFloatBar(gtx layout.Context, org image.Point) {
 	if r2.Min.Y > r1.Min.Y { // more than one line: the lines' full width
 		sel = image.Rect(0, r1.Min.Y, edW, r2.Max.Y)
 	}
-	sel = sel.Add(org)
 	tw, th := c.fbar.size(gtx)
-	at := floatBarPos(sel, org.X, edW, tw, th, gtx.Constraints.Max.X)
+	// Slack works in the window's frame; the composer's origin there is
+	// Origin (the bar is drawn in composer coordinates, so subtract it)
+	viewW := c.windowWidth()
+	if viewW <= 0 { // no window size (tests): the composer's own width
+		viewW = c.Origin.X + gtx.Constraints.Max.X
+	}
+	at := floatBarPos(sel, edW, org.Add(c.Origin), tw, th, viewW, gtx.Dp(5), gtx.Dp(10)).Sub(c.Origin)
 	m := op.Record(gtx.Ops)
 	off := op.Offset(at).Push(gtx.Ops)
 	c.fbar.draw(gtx, &c.cs, c)

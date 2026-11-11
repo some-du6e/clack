@@ -36,6 +36,9 @@ type ModalButton struct {
 	// Icon goes before the label (the workflow speedbump's ▶ "Start
 	// Workflow").
 	Icon string
+	// Hidden, when it says so, leaves the button out of the footer (the
+	// Edit file dialog's Next on its last page, its Send before it).
+	Hidden func() bool
 	// Joined puts the button flush against the one before it, the two
 	// drawn as one group (Slack Kit's ButtonGroup, or the share dialog's
 	// legacy Forward with its schedule caret): the inner corners square.
@@ -171,6 +174,10 @@ type ModalOpts struct {
 	// it.
 	Hero  func(gtx layout.Context) layout.Dimensions
 	HeroH float32
+	// Header draws the header's own content in place of a title, with
+	// gtx.Constraints exactly the header's size (Slack's ModalHeader with
+	// other children: the screen picker's source tabs).
+	Header func(gtx layout.Context) layout.Dimensions
 	// Over draws on top of the whole card, header and footer included,
 	// in card coordinates with gtx.Constraints exactly the card's size
 	// (Slack's c-modal_speed_bump veils the dialog with its sheet; the
@@ -211,7 +218,9 @@ func NewModal(h Host, o ModalOpts) *Modal {
 	return m
 }
 
-func (b *ModalButton) enabled() bool { return b.Enabled == nil || b.Enabled() }
+func (b *ModalButton) enabled() bool { return !b.hidden() && (b.Enabled == nil || b.Enabled()) }
+
+func (b *ModalButton) hidden() bool { return b.Hidden != nil && b.Hidden() }
 
 func (m *Modal) press(b *ModalButton) {
 	if !b.enabled() {
@@ -369,6 +378,12 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 
 				// header
+				if m.o.Header != nil {
+					at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Exact(image.Pt(w, headH))
+						return m.o.Header(gtx)
+					})
+				}
 				ty := (headH - subH - dp(gtx, titleLH)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
@@ -461,6 +476,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					x, lx := pos.X+w-padX, pos.X+padX
 					for i := len(m.o.Buttons) - 1; i >= 0; i-- {
 						b := m.o.Buttons[i]
+						if b.hidden() {
+							continue
+						}
 						kind := b.Kind
 						if !b.enabled() {
 							kind = BtnDisabled
@@ -548,7 +566,7 @@ func Confirm(h Host, title, textBody, action string, danger bool, body layout.Wi
 				}),
 			)
 		},
-		Buttons: []*ModalButton{{Label: "Cancel", Kind: BtnOutline}, ok},
+		Buttons: []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, ok}, // DeprecatedBaseDialog's (generic_dialog)
 	})
 	h.ShowOverlay(m)
 	return m

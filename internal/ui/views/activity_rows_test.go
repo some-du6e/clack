@@ -86,7 +86,7 @@ func TestActivityReadMarksLikeSlack(t *testing.T) {
 		{"fa-at-channel", "check-filled", "You replied"},
 		{"fa-keyword", "check-filled", "You replied"},
 		{"fa-dm-reacted", "check-filled", "You reacted: :eyes:"},
-		{"fa-channel", "edit-filled", "Draft: “a synthetic draft about the plan”"},
+		{"fa-channel", "edit-filled", `Draft: "a synthetic draft about the plan"`}, // Slack's 'Draft: "{message}"' (straight quotes)
 		{"fa-reminder-done", "check-filled", "You completed this to-do"},
 	}
 	for _, c := range cases {

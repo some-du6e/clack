@@ -56,6 +56,8 @@ type window struct {
 	overlays []popups.Overlay // modals over the window (winHost.ShowOverlay; under mu)
 	posts    []func()         // winHost.post (under mu)
 
+	shareAlert alertState // the screen share alert's link and close (share.go)
+
 	// popout is the video key of the screen share this window pops out
 	// ("" = the huddle window; popout.go), popoutUser its presenter.
 	popout, popoutUser string
@@ -262,11 +264,18 @@ func (w *window) layout(gtx C) {
 			return w.layoutNoAudio(gtx, s, bw)
 		})
 	}
-	if n, ok := w.mic.visible(st); ok && stage.Dx() > gtx.Dp(40) {
+	n, micShown := w.mic.visible(st)
+	if micShown && stage.Dx() > gtx.Dp(40) {
 		w.mic.handle(gtx, s, st, n)
 		bw := min(stage.Dx()-gtx.Dp(24), gtx.Dp(480))
 		at(gtx, image.Pt((sz.X-bw)/2, stage.Min.Y+gtx.Dp(12)), image.Pt(bw, stage.Dy()), func(gtx C) D {
 			return layoutMicBanner(gtx, w.th, &w.mic, n, bw)
+		})
+	}
+	if !micShown && !w.c.noAudioAlert() && stage.Dx() > gtx.Dp(40) { // the alerts show one at a time
+		bw := min(stage.Dx()-gtx.Dp(24), gtx.Dp(480))
+		at(gtx, image.Pt((sz.X-bw)/2, stage.Min.Y+gtx.Dp(12)), image.Pt(bw, stage.Dy()), func(gtx C) D {
+			return w.c.layoutShareAlert(gtx, w.th, &w.shareAlert, bw)
 		})
 	}
 	if w.notice != "" && now.Sub(w.noteAt) < 4*time.Second {
@@ -294,6 +303,10 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 	}
 	if w.click("camera").Clicked(gtx) {
 		w.cameraClick(s, st)
+	}
+	if w.click("share").Clicked(gtx) { // HuddleToolbarScreenshareButton
+		h := winHost{w}
+		w.c.shareClick(s, st, h, h.post)
 	}
 	if w.click("react").Clicked(gtx) {
 		w.picker = !w.picker
@@ -397,7 +410,7 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 			at(gtx, sr.Min, sr.Size(), func(gtx C) D { fit(gtx, img, sr.Size(), gtx.Dp(8)); return D{} })
 		} else {
 			at(gtx, sr.Min, sr.Size(), func(gtx C) D {
-				centerLabel(gtx, w.th, sr.Size(), 13, theme.Bold, hudWhite, "Loading screen share…")
+				centerLabel(gtx, w.th, sr.Size(), 13, theme.Bold, hudWhite, "Loading screen share…") // no Slack key
 				return D{}
 			})
 		}
@@ -480,7 +493,7 @@ func (w *window) stickerPicker(gtx C, stage image.Rectangle) {
 		on := mine == st.Emoji
 		cl := w.click("pick:" + st.Emoji)
 		if cl.Hovered() {
-			hover = st.Label
+			hover = nsHuddles.T(st.Label)
 		}
 		at(gtx, p, image.Pt(bs, bs), func(gtx C) D {
 			return button(gtx, cl, image.Pt(bs, bs), func(gtx C, hov bool) {
@@ -556,13 +569,14 @@ const (
 )
 
 // toolbar is HuddleToolbar in the expanded window: the center buttons
-// (HuddleToolbarMuteButton, HuddleToolbarCameraButton, the segmented
-// sticker button, HuddleToolbarEmojiPickerButton, HuddleToolbarThreadButton,
+// (HuddleToolbarMuteButton, HuddleToolbarCameraButton,
+// HuddleToolbarScreenshareButton, the segmented sticker button,
+// HuddleToolbarEmojiPickerButton, HuddleToolbarThreadButton,
 // HuddleToolbarMoreActionsButton), each 40px with a 4px margin, centered,
 // and HuddleToolbarLeaveButton at the right (rightButtons, margin-right
-// 2px). Slack's screen share, canvas and Meeting Assistant buttons need
-// what Clack doesn't have (a screen capture, huddle canvases, Slack AI),
-// so they aren't drawn; the device carets are open (docs/HUDDLES-AUDIT.md).
+// 2px). Slack's canvas and Meeting Assistant buttons need what Clack
+// doesn't have (huddle canvases, Slack AI), so they aren't drawn; the
+// device carets are open (docs/HUDDLES-AUDIT.md).
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	// HuddleToolbarMuteButton, segmented in the window (audiomenu.go)
 	mics := w.c.micCtls(st, w.audio != nil)
@@ -583,11 +597,11 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	if w.stick {
 		caret = "caret-down"
 	}
-	sticks := ctl{id: "stickers", icon: caret, on: w.stick, tip: "Choose sticker", seg: segCaret}
-	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: "Add reaction"}
-	thread := ctl{id: "thread", icon: "threads", tip: "Open thread"}
-	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: "More actions"}
-	ctls := append(mics, w.cameraCtl(st), hand, sticks, react, thread, more)
+	sticks := ctl{id: "stickers", icon: caret, on: w.stick, tip: nsHuddles.T("Choose sticker"), seg: segCaret}
+	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: nsHuddles.T("Add reaction")}
+	thread := ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")}
+	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: nsHuddles.T("More actions")}
+	ctls := append(mics, w.cameraCtl(st), w.c.shareCtl(st), hand, sticks, react, thread, more)
 
 	h := gtx.Dp(40)
 	m := gtx.Dp(4) // each button's margin
@@ -599,7 +613,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 		}
 	}
 	// the leave button: Leave in a c-button--medium (min-width 80px)
-	lw := max(gtx.Dp(80), labelSize(gtx, w.th, 15, theme.Bold, "Leave").X+2*gtx.Dp(12))
+	lw := max(gtx.Dp(80), labelSize(gtx, w.th, 15, theme.Bold, nsHuddles.T("Leave")).X+2*gtx.Dp(12))
 	lx := r.Dx() - gtx.Dp(2) - m - lw
 	x := (r.Dx() - total) / 2
 	if x+total > lx-m { // a narrow window: the center row moves left of Leave
@@ -670,7 +684,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	// with its shortcut
 	cl := w.click("leave")
 	if cl.Hovered() {
-		w.cam.tip, w.cam.tipAnchor = "Leave Huddle  "+leaveShortcut(), image.Rect(lx, y, lx+lw, y+h).Sub(r.Min)
+		w.cam.tip, w.cam.tipAnchor = nsHuddles.T("Leave Huddle")+"  "+leaveShortcut(), image.Rect(lx, y, lx+lw, y+h).Sub(r.Min)
 	}
 	at(gtx, image.Pt(lx, y), image.Pt(lw, h), func(gtx C) D {
 		return button(gtx, cl, image.Pt(lw, h), func(gtx C, hov bool) {
@@ -680,7 +694,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 			}
 			theme.RRect(gtx, image.Rectangle{Max: image.Pt(lw, h)}, gtx.Dp(8), bg)
 		}, func(gtx C) D {
-			centerLabel(gtx, w.th, image.Pt(lw, h), 15, theme.Bold, hudWhite, "Leave")
+			centerLabel(gtx, w.th, image.Pt(lw, h), 15, theme.Bold, hudWhite, nsHuddles.T("Leave"))
 			return D{}
 		})
 	})

@@ -224,6 +224,7 @@ func (v *Activity) syncTabs() {
 	cur := v.slotKey(prev)
 	v.slots = want
 	t := newTabs(labels...)
+	t.Tr = v.tabTr
 	found := false
 	for i, s := range want {
 		if v.slotKey(s) == cur {
@@ -237,6 +238,19 @@ func (v *Activity) syncTabs() {
 		v.switchView(prev, false)
 		v.load(actFresh)
 	}
+}
+
+// tabTr is the tabs' Tr: a default view's name is Slack's string (the
+// activity namespace's RY04/x8u8 names), a custom view's its own.
+func (v *Activity) tabTr(i int, s string) string {
+	slot := i
+	if i < len(v.slots) {
+		slot = v.slots[i]
+	}
+	if slot < actSlotN {
+		return nsActivity.T(s)
+	}
+	return s
 }
 
 // slotLabel is GuYW F's text: the default views' names (x8u8 dr), a
@@ -380,12 +394,12 @@ func (v *Activity) tabMenus(gtx C) {
 			case slot >= actSlotN:
 				vw := v.slotView(slot)
 				items = []popups.MenuItem{
-					{Key: "rename", Label: "Rename view", Do: func() { v.openViewModal(actRenameView, vw) }},
-					{Key: "delete", Label: "Delete view", Danger: true, Do: func() { v.confirmDeleteView(vw) }},
+					{Key: "rename", Label: nsActivity.T("Rename view"), Do: func() { v.openViewModal(actRenameView, vw) }},
+					{Key: "delete", Label: nsActivity.T("Delete view"), Danger: true, Do: func() { v.confirmDeleteView(vw) }},
 				}
 			case slot > 0:
 				typ := actTabIDs[slot]
-				items = []popups.MenuItem{{Key: "hide", Label: "Hide view", Danger: true, Do: func() { v.confirmHideView(typ) }}}
+				items = []popups.MenuItem{{Key: "hide", Label: nsActivity.T("Hide view"), Danger: true, Do: func() { v.confirmHideView(typ) }}}
 			}
 			if len(items) > 0 {
 				at := v.pointerAt()
@@ -546,19 +560,19 @@ func actViewErrText(code string) string {
 	case "":
 		return ""
 	case "over_view_maximum":
-		return "You’ve reached the maximum number of saved views."
+		return nsActivity.T("You’ve reached the maximum number of saved views.")
 	case "cannot_use_default_view_name", "duplicate_name":
-		return "There’s already a view with this name."
+		return nsActivity.T("There’s already a view with this name.")
 	case "cannot_change_default_view_name":
-		return "This is a default view, so the name can’t be changed."
+		return nsActivity.T("This is a default view, so the name can’t be changed.")
 	case "name_too_long":
-		return "You can’t enter more than 80 characters."
+		return nsActivity.T("You can’t enter more than {maxCharLimit} characters.", "maxCharLimit", 80)
 	case "cannot_delete_default_view":
-		return "Default views can’t be deleted."
+		return nsActivity.T("Default views can’t be deleted.")
 	case "view_not_found":
-		return "This view can’t be found."
+		return nsActivity.T("This view can’t be found.")
 	}
-	return "Something went wrong. Please try again."
+	return nsActivity.T("Something went wrong. Please try again.")
 }
 
 // replaceCustom swaps a custom view for its updated copy.
@@ -585,7 +599,7 @@ func (v *Activity) confirmDeleteView(vw core.ActivityView) {
 		return
 	}
 	c := v.h.Core()
-	popups.Confirm(ph, "Are you sure you want to delete “"+vw.Name+"”?", "This view will be removed from Activity.", "Delete", true, nil, func() {
+	popups.Confirm(ph, nsActivity.T(`Are you sure you want to delete "{viewName}"?`, "viewName", vw.Name), nsActivity.T("This view will be removed from Activity."), nsActivity.T("Delete"), true, nil, func() {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
@@ -593,13 +607,13 @@ func (v *Activity) confirmDeleteView(vw core.ActivityView) {
 			v.notes.mu.Lock()
 			v.notes.fns = append(v.notes.fns, func() {
 				if err != nil {
-					v.h.Toast("There was an error deleting the view.")
+					v.h.Toast(nsActivity.T("There was an error deleting the view."))
 					return
 				}
 				v.customs = slices.DeleteFunc(v.customs, func(x core.ActivityView) bool { return x.ID == vw.ID })
 				delete(v.stateOf, vw.ID)
 				v.syncTabs()
-				v.h.Toast(`"` + vw.Name + `" has been deleted successfully.`)
+				v.h.Toast(nsActivity.T(`"{viewName}" has been deleted successfully.`, "viewName", vw.Name))
 			})
 			v.notes.mu.Unlock()
 			v.h.Invalidate()
@@ -619,10 +633,10 @@ func (v *Activity) confirmHideView(typ string) {
 	name := ""
 	for i, id := range actTabIDs {
 		if id == typ {
-			name = actTabLabels[i]
+			name = nsActivity.T(actTabLabels[i])
 		}
 	}
-	popups.Confirm(ph, "Are you sure you want to hide “"+name+"”?", "This tab will be hidden from Activity.", "Hide", true, nil, func() {
+	popups.Confirm(ph, nsActivity.T(`Are you sure you want to hide "{viewName}"?`, "viewName", name), nsActivity.T("This tab will be hidden from Activity."), nsActivity.T("Hide"), true, nil, func() {
 		v.setHidden(typ, true)
 	})
 }
@@ -673,11 +687,11 @@ func (v *Activity) suggestions() (activity, sections []actSuggestion) {
 	type sug = actSuggestion
 	var mentions, threads, reactions actState
 	mentions.filters[1], threads.filters[2], reactions.filters[actFilterReactions] = true, true, true
-	acts := []sug{{name: "Unreads", icon: "mark-as-unread", st: actState{unread: true}},
-		{name: "Mentions", icon: "mentions", st: mentions}, {name: "Threads", icon: "threads", st: threads},
-		{name: "Reactions", icon: "emoji", st: reactions}}
+	acts := []sug{{name: nsActivity.T("Unreads"), icon: "mark-as-unread", st: actState{unread: true}},
+		{name: nsActivity.T("Mentions"), icon: "mentions", st: mentions}, {name: nsActivity.T("Threads"), icon: "threads", st: threads},
+		{name: nsActivity.T("Reactions"), icon: "emoji", st: reactions}}
 	if len(c.VIPs()) > 0 {
-		acts = append(acts, sug{name: "VIP", icon: "vip", st: actState{vip: true}})
+		acts = append(acts, sug{name: nsActivity.T("VIP"), icon: "vip", st: actState{vip: true}})
 	}
 	var secs []sug
 	for _, s := range c.Snapshot().Sections {
@@ -686,7 +700,7 @@ func (v *Activity) suggestions() (activity, sections []actSuggestion) {
 		}
 		g := sug{name: s.Name, icon: "section", st: actState{sections: []string{s.ID}}}
 		if s.Type == "stars" {
-			g.name, g.icon = "Starred", "star"
+			g.name, g.icon = nsSidebar.T("Starred"), "star"
 		}
 		if s.Emoji != "" {
 			g.emoji = ":" + strings.Trim(s.Emoji, ":") + ":"
@@ -734,19 +748,19 @@ func (v *Activity) plusItems() []actPlusItem {
 		}
 	}
 	if len(hidden) > 0 {
-		out = append(out, actPlusItem{header: "Hidden views"})
+		out = append(out, actPlusItem{header: nsActivity.T("Hidden views")})
 		for _, t := range hidden {
 			t := t
 			i := slices.Index(actTabIDs[:], t)
-			out = append(out, actPlusItem{icon: actHiddenIcons[i], label: actTabLabels[i], do: func() { v.setHidden(t, false) }})
+			out = append(out, actPlusItem{icon: actHiddenIcons[i], label: nsActivity.T(actTabLabels[i]), do: func() { v.setHidden(t, false) }})
 		}
 		out = append(out, actPlusItem{sep: true})
 	}
 	acts, secs := v.suggestions()
 	if len(acts) > 0 {
-		h := "Suggested views"
+		h := nsActivity.T("Suggested views")
 		if len(secs) > 0 {
-			h = "Default suggestions"
+			h = nsActivity.T("Default suggestions")
 		}
 		out = append(out, actPlusItem{header: h})
 		for _, g := range acts {
@@ -758,14 +772,14 @@ func (v *Activity) plusItems() []actPlusItem {
 		out = append(out, actPlusItem{sep: true})
 	}
 	if len(secs) > 0 {
-		out = append(out, actPlusItem{header: "Suggestions from your sidebar"})
+		out = append(out, actPlusItem{header: nsActivity.T("Suggestions from your sidebar")})
 		for _, g := range secs {
 			g := g
 			out = append(out, actPlusItem{icon: g.icon, emoji: g.emoji, label: g.name, do: func() { v.createSuggested(g) }})
 		}
 	}
 	out = append(out, actPlusItem{sep: true},
-		actPlusItem{icon: "plus-filled", label: "Create a custom view", createCustom: true, do: func() { v.openViewModal(actCreateTab, core.ActivityView{}) }})
+		actPlusItem{icon: "plus-filled", label: nsActivity.T("Create a custom view"), createCustom: true, do: func() { v.openViewModal(actCreateTab, core.ActivityView{}) }})
 	return out
 }
 
@@ -968,8 +982,8 @@ func (v *Activity) sortMenu(at image.Point) {
 	}
 	vip := v.sortVIP()
 	items := []popups.MenuItem{
-		{Key: "activity-sort-newest", Label: "Newest", Radio: true, Checked: !vip, Do: func() { v.setSort(false) }},
-		{Key: "activity-sort-vip", Label: "VIP unreads on top", Radio: true, Checked: vip, Do: func() { v.setSort(true) }},
+		{Key: "activity-sort-newest", Label: nsActivity.T("Newest"), Radio: true, Checked: !vip, Do: func() { v.setSort(false) }},
+		{Key: "activity-sort-vip", Label: nsActivity.T("VIP unreads on top"), Radio: true, Checked: vip, Do: func() { v.setSort(true) }},
 	}
 	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, AlignRight: true, Width: 240}))
 }
@@ -1009,10 +1023,10 @@ func (v *Activity) sectionHeader(gtx C, vip bool) D {
 	w, h := gtx.Constraints.Max.X, gtx.Dp(42)
 	fill(gtx, image.Rect(0, 0, w, h), v.p.Bg)
 	fill(gtx, image.Rect(0, h-max(1, gtx.Dp(1)), w, h), v.p.Border)
-	label, icon := "Everything else", "notifications-filled"
+	label, icon := nsActivity.T("Everything else"), "notifications-filled"
 	bg, fg := v.p.Track, v.p.Sec
 	if vip {
-		label, icon = "VIP unreads", "mark-as-important-filled"
+		label, icon = nsActivity.T("VIP unreads"), "mark-as-important-filled"
 		bg, fg = rgb(0xfff2e0), rgb(0xed9027) // plt-campfire-0 / plt-campfire-30
 		if v.th.Dark {
 			bg, fg = rgb(0x321600), rgb(0x954700)
@@ -1078,15 +1092,15 @@ func (v *Activity) settingsSections() []layout.FlexChild {
 	})
 	if v.settingsSortOn() {
 		vip := v.sortVIP()
-		out = append(out, header("Sort by"),
-			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setSortC[0], "Newest", !vip) }),
-			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setSortC[1], "VIP unreads on top", vip) }),
+		out = append(out, header(nsActivity.T("Sort by")),
+			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setSortC[0], nsActivity.T("Newest"), !vip) }),
+			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setSortC[1], nsActivity.T("VIP unreads on top"), vip) }),
 			sep)
 	}
 	if v.inHomePrototype() {
-		out = append(out, header("Density"),
-			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setDenseC[0], "Multi-line rows", !v.dense) }),
-			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setDenseC[1], "Single-line rows", v.dense) }),
+		out = append(out, header(nsActivity.T("Density")),
+			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setDenseC[0], nsActivity.T("Multi-line rows"), !v.dense) }),
+			layout.Rigid(func(gtx C) D { return v.radioRow(gtx, &v.setDenseC[1], nsActivity.T("Single-line rows"), v.dense) }),
 			sep)
 	}
 	return out
@@ -1155,9 +1169,9 @@ func (v *Activity) filterActions(gtx C) D {
 			v.confirmDeleteView(vw)
 		}
 	}
-	label := "Create Custom View"
+	label := nsActivity.T("Create Custom View")
 	if custom {
-		label = "Save as …"
+		label = nsActivity.T("Save as …")
 	}
 	return layout.Inset{Top: 8, Bottom: 8, Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Middle,
@@ -1166,7 +1180,7 @@ func (v *Activity) filterActions(gtx C) D {
 				if !custom {
 					return D{}
 				}
-				return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.button(gtx, &v.deleteViewBtn, btnDanger, true, "Delete View") })
+				return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.button(gtx, &v.deleteViewBtn, btnDanger, true, nsActivity.T("Delete View")) })
 			}),
 		)
 	})
@@ -1215,8 +1229,8 @@ func (v *Activity) saveAsMenu() {
 	}
 	at := v.pointerAt()
 	items := []popups.MenuItem{
-		{Key: "new-view", Label: "New view", Do: func() { v.openViewModal(actSaveView, core.ActivityView{}) }},
-		{Key: "current-view", Label: "Current view", Do: v.saveCurrentView},
+		{Key: "new-view", Label: nsActivity.T("New view"), Do: func() { v.openViewModal(actSaveView, core.ActivityView{}) }},
+		{Key: "current-view", Label: nsActivity.T("Current view"), Do: v.saveCurrentView},
 	}
 	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, Width: 0}))
 }
@@ -1235,14 +1249,14 @@ func (v *Activity) saveCurrentView() {
 		v.notes.mu.Lock()
 		v.notes.fns = append(v.notes.fns, func() {
 			if err != nil {
-				v.h.Toast("There was an error saving the view.")
+				v.h.Toast(nsActivity.T("There was an error saving the view."))
 				return
 			}
 			if got.ID == "" {
 				got = vw
 			}
 			v.replaceCustom(got)
-			v.h.Toast(`"` + vw.Name + `" has been saved successfully.`)
+			v.h.Toast(nsActivity.T(`"{name}" has been saved successfully.`, "name", vw.Name))
 		})
 		v.notes.mu.Unlock()
 		v.h.Invalidate()
@@ -1304,16 +1318,16 @@ func (v *Activity) openViewModal(kind int, vw core.ActivityView) {
 		n := len([]rune(vw.Name))
 		m.ed.SetCaret(n, n)
 	}
-	title, sub := "Save this view", "Name it something you’ll remember - your future self will thank you"
+	title, sub := nsActivity.T("Save this view"), nsActivity.T("Name it something you’ll remember - your future self will thank you")
 	switch kind {
 	case actCreateTab:
-		title, sub = "Create a new view", ""
+		title, sub = nsActivity.T("Create a new view"), ""
 	case actRenameView:
-		title = "Rename this view"
+		title = nsActivity.T("Rename this view")
 	}
-	save := &popups.ModalButton{Label: "Save", Kind: popups.BtnPrimary, Enabled: m.canSave, Do: func() bool { m.save(); return false }}
+	save := &popups.ModalButton{Label: nsActivity.T("Save"), Kind: popups.BtnPrimary, Enabled: m.canSave, Do: func() bool { m.save(); return false }}
 	m.modal = popups.NewModal(ph, popups.ModalOpts{Title: title, Subtitle: sub, Width: 520, Body: m.layout,
-		Buttons:    []*popups.ModalButton{{Label: "Cancel", Kind: popups.BtnOutline}, save},
+		Buttons:    []*popups.ModalButton{{Label: nsActivity.T("Cancel"), Kind: popups.BtnOutline}, save},
 		FocusStops: func() []event.Tag { return []event.Tag{&m.ed} }})
 	v.lastViewModal = m
 	ph.ShowOverlay(m.modal)
@@ -1345,7 +1359,7 @@ func (m *actViewModal) alert() string {
 		}
 	}
 	if m.kind == actCreateTab && m.changed() && m.name() == "" && m.emoji == "" {
-		return "View name is required."
+		return nsActivity.T("View name is required.")
 	}
 	return ""
 }
@@ -1375,7 +1389,7 @@ func (m *actViewModal) save() {
 			return
 		}
 		m.modal.Dismiss()
-		v.h.Toast(`"` + name + `" has been saved successfully.`)
+		v.h.Toast(nsActivity.T(`"{name}" has been saved successfully.`, "name", name))
 	}
 	switch m.kind {
 	case actRenameView:
@@ -1473,8 +1487,8 @@ func (m *actViewModal) layout(gtx C) D {
 				}
 				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
 					return row(gtx, layout.Baseline,
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "View name") }),
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Text, " (required)") }),
+						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("View name")) }),
+						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, v.p.Text, " "+nsActivity.T("(required)")) }),
 					)
 				})
 			}),
@@ -1578,7 +1592,7 @@ func (m *actViewModal) nameField(gtx C) D {
 					if m.ed.Len() > 0 {
 						return D{}
 					}
-					return v.label(gtx, 15, wReg, v.p.Faint, "New view")
+					return v.label(gtx, 15, wReg, v.p.Faint, nsActivity.T("New view"))
 				}),
 				layout.Stacked(func(gtx C) D { return v.th.Editor(gtx, &m.ed, 15, v.p.Text, v.p.Mention) }),
 			)
@@ -1682,7 +1696,7 @@ func (m *actViewModal) addTabClicks(gtx C) {
 
 func (m *actViewModal) syncSource() {
 	if !m.srcInit {
-		m.src = dirDropdown{labels: actSrcLabels}
+		m.src = dirDropdown{labels: actSrcLabels, ns: nsActivity}
 		m.srcInit = true
 	}
 	if i := actSrcIndex(m.st.source()); i != m.src.sel && !m.src.open {
@@ -1702,7 +1716,7 @@ func (m *actViewModal) addTab(gtx C) D {
 	if !v.globalSettings() {
 		ch = append(ch,
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "Layout") })
+				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("Layout")) })
 			}),
 			layout.Rigid(m.layoutCards),
 			layout.Rigid(func(gtx C) D { return hline(gtx, v.p.Border) }),
@@ -1715,7 +1729,7 @@ func (m *actViewModal) addTab(gtx C) D {
 					pointerCursor(gtx)
 					gtx.Constraints.Min.X = gtx.Constraints.Max.X
 					return row(gtx, layout.Middle,
-						layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "Only include unreads") }),
+						layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("Only include unreads")) }),
 						layout.Rigid(func(gtx C) D { return v.switchKnob(gtx, m.st.unread) }),
 					)
 				})
@@ -1734,7 +1748,7 @@ func (m *actViewModal) addTab(gtx C) D {
 							return col(gtx,
 								layout.Rigid(func(gtx C) D {
 									return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
-										return v.label(gtx, 15, wBold, v.p.Text, "Notifications from")
+										return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("Notifications from"))
 									})
 								}),
 								layout.Rigid(func(gtx C) D {
@@ -1746,7 +1760,7 @@ func (m *actViewModal) addTab(gtx C) D {
 						})
 					}),
 					layout.Rigid(func(gtx C) D {
-						return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "Filter by") })
+						return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("Filter by")) })
 					}),
 					layout.Rigid(m.rowGrid),
 				)
@@ -1762,10 +1776,10 @@ func (m *actViewModal) addTab(gtx C) D {
 			return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D {
 				return col(gtx,
 					layout.Rigid(func(gtx C) D {
-						return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "Sort by") })
+						return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("Sort by")) })
 					}),
-					layout.Rigid(func(gtx C) D { return m.radio(gtx, &m.sortC[0], "Newest", !m.vipSort) }),
-					layout.Rigid(func(gtx C) D { return m.radio(gtx, &m.sortC[1], "VIP unreads on top", m.vipSort) }),
+					layout.Rigid(func(gtx C) D { return m.radio(gtx, &m.sortC[0], nsActivity.T("Newest"), !m.vipSort) }),
+					layout.Rigid(func(gtx C) D { return m.radio(gtx, &m.sortC[1], nsActivity.T("VIP unreads on top"), m.vipSort) }),
 				)
 			})
 		}))
@@ -1853,7 +1867,7 @@ func (m *actViewModal) layoutCards(gtx C) D {
 	w := gtx.Constraints.Max.X
 	cw := (w - gtx.Dp(8)) / 2
 	h := gtx.Dp(76)
-	for i, c := range [2]struct{ icon, label string }{{"table", "Detailed"}, {"menu", "Dense"}} {
+	for i, c := range [2]struct{ icon, label string }{{"table", nsActivity.T("Detailed")}, {"menu", nsActivity.T("Dense")}} {
 		on := m.dense == (i == 1)
 		func() {
 			defer op.Offset(image.Pt(i*(cw+gtx.Dp(8)), gtx.Dp(4))).Push(gtx.Ops).Pop()

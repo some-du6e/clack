@@ -1,7 +1,6 @@
 package huddleui
 
 import (
-	"strconv"
 	"sync"
 	"time"
 
@@ -225,11 +224,7 @@ func (c *Controller) leaveAlone(s *huddle.Session) {
 
 // stillHereText is the modal's body for the seconds left.
 func stillHereText(sec int) string {
-	unit := "seconds"
-	if sec == 1 {
-		unit = "second"
-	}
-	return "You’ve been in this huddle by yourself for a while. You’ll leave it in " + strconv.Itoa(sec) + " " + unit + " unless you’re still here."
+	return nsHuddles.T("You’ve been in this huddle by yourself for a while. You’ll leave it in {seconds, plural, =1 {# second} other {# seconds}} unless you’re still here.", "seconds", sec) // HuddleStillHereModal
 }
 
 // showStillHere opens HuddleStillHereModal in win's window (the huddle
@@ -267,7 +262,7 @@ func (c *Controller) showStillHere(win string) {
 	}
 	var m *popups.Modal
 	left, auto := false, false // closed by Leave Huddle, or because the deadline went away
-	leave := &popups.ModalButton{Label: "Leave Huddle", Kind: popups.BtnOutline, Do: func() bool {
+	leave := &popups.ModalButton{Label: nsHuddles.T("Leave Huddle"), Kind: popups.BtnOutline, Do: func() bool {
 		left = true
 		a.mu.Lock()
 		s := a.s
@@ -277,7 +272,7 @@ func (c *Controller) showStillHere(win string) {
 	}}
 	// I’m Still Here, Escape, the close button and the backdrop are all
 	// Slack's onSubmit / onClose: the alone time starts again
-	here := &popups.ModalButton{Label: "I’m Still Here", Kind: popups.BtnPrimary, Do: func() bool { return true }}
+	here := &popups.ModalButton{Label: nsHuddles.T("I’m Still Here"), Kind: popups.BtnPrimary, Do: func() bool { return true }}
 	a.mu.Lock()
 	a.modal = win
 	a.closer = func() {
@@ -295,7 +290,7 @@ func (c *Controller) showStillHere(win string) {
 		a.shown = true // isPromptShown: set as the modal mounts (ni)
 		a.mu.Unlock()
 		m = popups.NewModal(ph, popups.ModalOpts{
-			Title:     "Are you still there?",
+			Title:     nsHuddles.T("Are you still there?"),
 			Class:     "huddle_still_here_modal",
 			AutoFocus: here,
 			OnClose: func() {

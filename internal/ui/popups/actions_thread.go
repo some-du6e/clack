@@ -12,10 +12,10 @@ import (
 // message action module ojBT, the thread header bell's tooltip and the
 // header ⋮ menu row).
 func ThreadFollowLabel(subscribed bool) string {
-	if subscribed {
-		return "Turn off notifications for replies"
+	if subscribed { // the message I18n's (ojBT)
+		return nsMessage.T("Turn off notifications for replies")
 	}
-	return "Get notified about new replies"
+	return nsMessage.T("Get notified about new replies")
 }
 
 // NewThreadHeaderMenu is the thread pane header's ⋮ (Slack's
@@ -32,7 +32,7 @@ func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subs
 	if !bell && toggle != nil {
 		items = append(items, MenuItem{Key: "notifications", Label: ThreadFollowLabel(subscribed), Do: toggle})
 	}
-	items = append(items, MenuItem{Key: "copy_link", Label: "Copy link", Hint: "L", DoCtx: func(gtx layout.Context) {
+	items = append(items, MenuItem{Key: "copy_link", Label: nsMenu.T("Copy link"), Hint: "L", DoCtx: func(gtx layout.Context) { // SecondaryHeaderMore (IO7k)
 		link := root.Permalink
 		if link == "" {
 			link = permalink(h, root.Channel, root.TS, "")
