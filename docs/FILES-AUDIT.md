@@ -139,8 +139,14 @@ against fakeslack (`TestFilesViewRestore` in core and views,
 | Empty | "Nothing to see here" / "You haven’t deleted any canvases or lists recently." | an invented "No deleted files" | the same |
 | Deleted in the sidebar (file_trash_updates) | the sidebar loads files.recentlyDeleted when it mounts; the divider and Deleted show while that has rows, or always with file_trash_updates on | always shown | the same |
 
-Not done: under file_trash_updates Slack also refetches the deleted list on
-file_deleted and drops rows on file_undeleted, and Slackbot's trash
-notification gets FileTrashNotificationButtons ("Restore file", "View all
-deleted files", "Restored"); the realtime refetch and those buttons aren't
-ported.
+Under file_trash_updates the list also follows the socket (boot-render
+filesDeleted / filesUndeleted): file_deleted refetches it
+(invalidateDeletedFiles) and file_undeleted drops the rows
+(removeRecentlyDeletedFilesByIds); core emits them as `file_trash` events
+(`TestFileTrashEvents`, `TestFilesViewTrashEvents`).
+
+Not done: Slackbot's trash notification (attachment type
+`slackbot_file_trash_notification`) gets FileTrashNotificationButtons
+("Restore file" through files.undelete, "View all deleted files",
+"Restored"). Those buttons live in the legacy attachment renderer, which is
+the messages area's, so they aren't ported here.

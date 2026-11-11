@@ -6,6 +6,7 @@ name: spacing-shots
 # core. Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run spacing-shots.yml --ref <branch>)
     paths:
       - "internal/ui/messages/**"
       - "internal/ui/composer/chrome*.go"

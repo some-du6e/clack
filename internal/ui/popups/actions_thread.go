@@ -24,7 +24,7 @@ func ThreadFollowLabel(subscribed bool) string {
 // thread_header_mute_button is on and the root is loaded), then Copy link
 // (L) to the root. Slack's other rows have nothing behind them in Clack
 // (Summarize thread needs Slack AI, Start huddle in thread, Open in split
-// view / new window) and are not shown.
+// view / new window) and are not shown (docs/THREADS-AUDIT.md).
 func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subscribed, bell bool, toggle func()) *Menu {
 	var items []MenuItem
 	if !bell && toggle != nil {
@@ -35,8 +35,7 @@ func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subs
 		if link == "" {
 			link = permalink(h, root.Channel, root.TS, "")
 		}
-		copyText(gtx, link)
-		h.Toast("Link copied")
+		copyText(gtx, link) // Slack's copyLink thunk: the clipboard only, no toast
 	}})
 	return NewMenuOpts(h, items, MenuOpts{Anchor: anchor, AlignRight: true})
 }

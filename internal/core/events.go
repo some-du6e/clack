@@ -232,6 +232,9 @@ func (a *App) handle(ev slack.Event) {
 		if ev.Type == "dnd_updated" {
 			a.onDNDUpdated(ev.Raw) // before the UI hears of it
 		}
+		if ev.Type == "thread_marked" {
+			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it
+		}
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
@@ -303,6 +306,11 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: "tabs", Channel: ch, Name: ev.Type, Raw: ev.Raw})
 	case "thread_subscribed", "thread_unsubscribed":
 		a.onThreadSubscription(ev.Raw, ev.Type == "thread_subscribed")
+	case "desktop_notification":
+		// the server's notification for a followed thread's reply (the
+		// client's message path skips replies that don't mention the
+		// viewer): the UI decides and shows it (ui/notify_threads.go)
+		a.emit(Event{Type: ev.Type, Channel: ch, Raw: ev.Raw})
 	case "star_added", "star_removed":
 		a.onStarEvent(ev.Raw, ev.Type == "star_added")
 	case "file_change", "file_shared", "file_public":
@@ -455,6 +463,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		a.EnsureUsers(ctx, m.ReplyUsers)
 		if upd, ok := a.S.Mutate(ch, m.TS, func(x *slack.Message) {
 			x.ReplyCount, x.ReplyUsers, x.LatestReply = m.ReplyCount, m.ReplyUsers, m.LatestReply
+			if m.ReplyUsersN > 0 {
+				x.ReplyUsersN = m.ReplyUsersN
+			}
 		}); ok {
 			a.emitUpdate(ch, &upd)
 		}

@@ -7,6 +7,7 @@ name: composer-emoji
 # Slack's API.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run composer-emoji.yml --ref <branch>)
     paths:
       - "internal/emoji/**"
       - "internal/ui/theme/editoremoji*"
