@@ -5,10 +5,12 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 
 	"golang.org/x/image/font/sfnt"
 
@@ -31,6 +33,23 @@ func latoHas(t *testing.T, r rune) bool {
 		}
 	}
 	return true
+}
+
+// emojiSlotHas reports whether the emoji slot face maps r: those are drawn
+// as emoji images (theme/emojislot.go), not from a font.
+func emojiSlotHas(t *testing.T, r rune) bool {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("theme", "emojislot.ttf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := sfnt.Parse(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf sfnt.Buffer
+	gi, err := f.GlyphIndex(&buf, r)
+	return err == nil && gi != 0
 }
 
 // symbolsOutsideLato are the symbol runes (U+2000–U+2FFF) that appear in
@@ -56,8 +75,11 @@ var symbolsOutsideLato = map[rune]string{
 	'✕': "follow-up: slick_prefs' remove-rule button",
 }
 
-// Every symbol in internal/ui's strings is in Lato, or listed above with
-// a reason; ↵ in particular is drawn as an icon by every keycap.
+// Every visible symbol in internal/ui's strings is in Lato or drawn as an
+// emoji image, or listed above with a reason; ↵ in particular is drawn as
+// an icon by every keycap. Invisible format characters (bidi controls, the
+// word joiner) and regular expressions (link_warning's look-alike set,
+// matched in input, never drawn) don't count.
 func TestUISymbolsHaveGlyphs(t *testing.T) {
 	seen := map[rune]string{}
 	fset := token.NewFileSet()
@@ -72,8 +94,26 @@ func TestUISymbolsHaveGlyphs(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		patterns := map[*ast.BasicLit]bool{}
+		ast.Inspect(f, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "regexp" {
+						for _, a := range c.Args {
+							if l, ok := a.(*ast.BasicLit); ok {
+								patterns[l] = true
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
 		ast.Inspect(f, func(n ast.Node) bool {
 			lit, ok := n.(*ast.BasicLit)
+			if ok && patterns[lit] {
+				return true
+			}
 			if !ok || (lit.Kind != token.STRING && lit.Kind != token.CHAR) {
 				return true
 			}
@@ -82,7 +122,7 @@ func TestUISymbolsHaveGlyphs(t *testing.T) {
 				return true
 			}
 			for _, r := range s {
-				if r >= 0x2000 && r < 0x3000 {
+				if r >= 0x2000 && r < 0x3000 && !unicode.Is(unicode.Cf, r) {
 					if _, ok := seen[r]; !ok {
 						seen[r] = fset.Position(lit.Pos()).String()
 					}
@@ -96,7 +136,7 @@ func TestUISymbolsHaveGlyphs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for r, at := range seen {
-		if latoHas(t, r) {
+		if latoHas(t, r) || emojiSlotHas(t, r) {
 			continue
 		}
 		why, ok := symbolsOutsideLato[r]

@@ -20,6 +20,7 @@ import (
 	"golang.org/x/image/vector"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -790,11 +791,8 @@ func (a *App) loginAdvView(gtx layout.Context, f *introFrame) (op.CallOp, int) {
 func (a *App) loginTokenForm(gtx layout.Context, f *introFrame, x0, y, cw int) int {
 	l := a.login
 	y0 := y
-	pasteKey := "Ctrl+V"
-	if loginOS == "darwin" {
-		pasteKey = "Cmd+V"
-	}
-	y += l.block(f, image.Pt(x0, y), cw, 14, 20, theme.Regular, alphaMul(introWhite, 0.80), text.Start, "In Slack in your browser, press F12 and run this in the Console. Then press "+pasteKey+" here.") + f.d(10)
+	pasteKey := shortcut.Format("Mod+V") // Ctrl+V, or ⌘V on a Mac
+	y += l.block(f, image.Pt(x0, y), cw, 14, 20, theme.Regular, alphaMul(introWhite, 0.80), text.Start, "Run this in the Console of your Slack tab (F12), then press "+pasteKey+" here.") + f.d(10)
 	y += a.loginSnippet(gtx, f, x0, y, cw) + f.d(20)
 	// the fields, side by side
 	gap := f.d(12)
