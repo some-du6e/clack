@@ -54,6 +54,7 @@ var (
 	nsEmoji       = i18n.NS("emoji")
 	nsGifPicker   = i18n.NS("gif-picker")
 	nsStatus      = i18n.NS("current_status") // the status modal (D72a), its expiration (yU++)
+	nsSearch      = i18n.NS("search")         // the search switcher (rs63, SidebarSearchCmdKResults), the results page and its filters
 )
 
 // In is it as a row of Slack's own text in the I18n namespace ns: the

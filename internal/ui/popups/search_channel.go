@@ -29,6 +29,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -127,12 +128,12 @@ func (v *SearchInChannel) channelLabel() string {
 // srcTitle is SearchInChannelView's header.
 func srcTitle(query, channel string) string {
 	if channel == "" {
-		return "Search in channel"
+		return nsSearch.T("Search in channel")
 	}
 	if query != "" {
-		return `Search "` + query + `" in ` + channel
+		return `Search "` + query + `" in ` + channel // no Slack string has the query
 	}
-	return "Search in " + channel
+	return nsSearch.T("Search in {channelName}", "channelName", channel)
 }
 
 func (v *SearchInChannel) fullSearch() {
@@ -211,6 +212,7 @@ func (v *SearchInChannel) sortMenu() {
 			OpenPreferencesSection("advanced")
 		}
 	}})
+	items = inAll(nsSearch, items) // MessageEntity's options (the search I18n)
 	v.h.ShowOverlay(NewMenuOpts(v.h, items, MenuOpts{Anchor: srClickAnchor(v.h, &v.sortBtn, v.sortR.Add(v.origin)), Width: 240}))
 }
 
@@ -344,9 +346,9 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 // "(CTRL G)" elsewhere.
 func srcFullLabel() string {
 	if shortcut.Mac() {
-		return "Go to full search (" + shortcut.Format("Mod+G") + ")"
+		return nsSearch.T("Go to full search (⌘G)")
 	}
-	return "Go to full search (CTRL G)"
+	return nsSearch.T("Go to full search (CTRL G)")
 }
 
 func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, w, top int) layout.Dimensions {
@@ -375,7 +377,7 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		d := at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, lh)}
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, sec, "Not searching in this channel?")
+				return text(gtx, th, 13, theme.Regular, sec, nsSearch.T("Not searching in this channel?"))
 			})
 		})
 		at(gtx, image.Pt(pad+d.Size.X+dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
@@ -386,7 +388,7 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			})
 		})
 		y := lh + dp(gtx, 16) + dp(gtx, 28)
-		title := "Nothing to show yet."
+		title := nsSearch.T("Nothing to show yet.")
 		tw := textW(gtx, th, 15, theme.Bold, title)
 		at(gtx, image.Pt((w-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 15, theme.Bold, cl.Fg, title)
@@ -394,7 +396,7 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		y += dp(gtx, 26)
 		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return paraCentered(gtx, th, 13, 18, cl.Fg2,
-				"Type a keyword or from: @name to find that message you’re looking for.", inner)
+				i18n.Plain(nsSearch.RT("Type a keyword or <strong>from: @name</strong> to find that message you’re looking for.")), inner)
 		})
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
@@ -422,7 +424,7 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 				return v.row(gtx, th, cl, i, w)
 			}
 			// "View all N results" (search-escape-hatch), centred
-			label := "View all " + srCountGrouped(v.total) + " results"
+			label := nsSearch.T("View all {totalCountStr} results", "totalCountStr", srCountGrouped(v.total))
 			lw := textW(gtx, th, 15, theme.Bold, label)
 			bw, bh := lw+dp(gtx, 24), dp(gtx, 36)
 			return at(gtx, image.Pt((w-bw)/2, dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
@@ -446,26 +448,45 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 func (v *SearchInChannel) resultsHeader(gtx layout.Context, th *theme.Theme, cl *Colors, w, pad, lh, top int) {
 	sec := linearAlpha(theme.WithAlpha(cl.Fg, 0xb3), cl.Bg)
 	x := pad
-	d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Bold, sec, srCountGrouped(v.total))
+	var d layout.Dimensions
+	if i18n.Locale() == i18n.EnUS {
+		d = at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Bold, sec, srCountGrouped(v.total))
+			})
 		})
-	})
-	x += d.Size.X
-	unit := " results found"
-	if v.total == 1 {
-		unit = " result found"
+		x += d.Size.X
+		unit := " results found"
+		if v.total == 1 {
+			unit = " result found"
+		}
+		d = at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, sec, unit)
+			})
+		})
+		x += d.Size.X
+	} else {
+		// "<strong>{count}</strong> results found" (0qtz) in the locale's order
+		for _, p := range nsSearch.RT("<strong>{count}</strong> results found", "count", i18n.FormatNumber(i18n.Locale(), float64(v.total))) {
+			wt := theme.Regular
+			if p.Tag == "strong" {
+				wt = theme.Bold
+			}
+			txt := p.Text
+			d = at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, wt, sec, txt)
+				})
+			})
+			x += d.Size.X
+		}
 	}
-	d = at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Regular, sec, unit)
-		})
-	})
-	x += d.Size.X + dp(gtx, 6) // title-label margin-right 4 + padding-right 2
+	x += dp(gtx, 6) // title-label margin-right 4 + padding-right 2
 	at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &v.fullBtn, nil, func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Link, "View full search")
+				return text(gtx, th, 13, theme.Regular, cl.Link, nsSearch.T("View full search"))
 			})
 		})
 	})
@@ -473,7 +494,7 @@ func (v *SearchInChannel) resultsHeader(gtx layout.Context, th *theme.Theme, cl 
 	// least 350 wide (FilterSortSelectedOptionContent inChannel)
 	label := ""
 	if w >= dp(gtx, 350) {
-		label = srcSortLabel(v.h.Core(), v.sortBy)
+		label = nsSearch.T(srcSortLabel(v.h.Core(), v.sortBy))
 	}
 	call, pd := record(gtx, func(gtx layout.Context) layout.Dimensions {
 		return Pill(gtx, th, &v.sortBtn, "sort", label, true, v.sortBy != "score")
@@ -494,11 +515,11 @@ func (v *SearchInChannel) footer(gtx layout.Context, th *theme.Theme, cl *Colors
 		bg = rgb(0x212428)
 	}
 	fill(gtx, image.Rect(0, 0, w, fh), bg)
-	fw := textW(gtx, th, 13, theme.Regular, "Give feedback")
+	fw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Give feedback"))
 	at(gtx, image.Pt(w-dp(gtx, 16)-fw, 0), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &v.feedback, nil, func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, fh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg3, "Give feedback")
+				return text(gtx, th, 13, theme.Regular, cl.Fg3, nsSearch.T("Give feedback"))
 			})
 		})
 	})

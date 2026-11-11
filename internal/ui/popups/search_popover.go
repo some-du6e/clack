@@ -502,7 +502,7 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 		unreads = unreads[:24] // suggestionsForBlankSlateUnreads' cap
 	}
 	if len(unreads) > 0 {
-		rows = append(rows, srRow{kind: srRHeader, title: "Unreads & drafts"})
+		rows = append(rows, srRow{kind: srRHeader, title: nsSearch.T("Unreads & drafts")})
 		for i, id := range unreads {
 			if i == srUnreadsShown && !p.unreadsOpen {
 				break
@@ -510,9 +510,9 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 			rows = append(rows, p.candRow(p.cands[p.byConv[id]], false))
 		}
 		if more := len(unreads) - srUnreadsShown; more > 0 {
-			t := "Show " + strconv.Itoa(more) + " more"
+			t := nsSearch.T("Show {count} more", "count", more)
 			if p.unreadsOpen {
-				t = "Show fewer"
+				t = nsSearch.T("Show fewer")
 			}
 			rows = append(rows, srRow{kind: srRMore, id: "unreads-toggle", title: t})
 		}
@@ -534,7 +534,7 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 		if len(unreads) > 0 {
 			rows = append(rows, srRow{kind: srRDivider})
 		}
-		rows = append(rows, srRow{kind: srRHeader, title: "Recent places"})
+		rows = append(rows, srRow{kind: srRHeader, title: nsSearch.T("Recent places")})
 		rows = append(rows, recent...)
 	}
 	return rows
@@ -567,9 +567,9 @@ func (p *SearchPopover) historyRows(rows []srRow) []srRow {
 		}
 	}
 	if len(queries) == 0 {
-		return append(rows, srRow{kind: srRNote, title: "Your recent searches will show up here."})
+		return append(rows, srRow{kind: srRNote, title: nsSearch.T("Your recent searches will show up here.")})
 	}
-	rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
+	rows = append(rows, srRow{kind: srRHeader, title: nsSearch.T("Recent searches")})
 	for _, q := range queries {
 		rows = append(rows, srRow{kind: srRQuery, id: q, title: SearchDisplayText(p.h, q), icon: "clock"})
 	}
@@ -805,7 +805,7 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 		}
 	}
 	if len(p.msgs) > 0 {
-		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: "Recent messages"})
+		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: nsSearch.T("Recent messages")})
 		terms := srParse(q).Highlights()
 		on := p.srQuickOn()
 		for i := range p.msgs {
@@ -844,7 +844,7 @@ func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
 	}
 	switch {
 	case ref.User == self && self != "":
-		w.name = "Direct Message with you"
+		w.name = nsSearch.T("Direct Message with you")
 	case m.BotID != "":
 		if w.pre == "" {
 			w.name = "" // no thread: just the sender
@@ -852,7 +852,7 @@ func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
 			w.name = " " + w.name
 		}
 	default:
-		w.name = "Direct Message with " + w.name
+		w.name = nsSearch.T("Direct Message with {name}", "name", w.name)
 	}
 	return w
 }
@@ -1565,12 +1565,12 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	right := w - dp(gtx, 80)
 	if p.ed.Len() > 0 {
 		fill(gtx, image.Rect(right, (rh-dp(gtx, 20))/2, right+1, (rh+dp(gtx, 20))/2), cl.Divider)
-		cw := textW(gtx, th, 13, theme.Regular, "Clear")
+		cw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Clear"))
 		cx := right - dp(gtx, 17) - cw
 		at(gtx, image.Pt(cx, 0), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &p.clear, nil, func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg2, "Clear")
+					return text(gtx, th, 13, theme.Regular, cl.Fg2, nsSearch.T("Clear"))
 				})
 			})
 		})
@@ -1587,7 +1587,7 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 			if p.ed.Len() == 0 && p.ghostText() == "" {
 				call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min = image.Point{}
-					return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Search across people, channels, files, workflows, and more")
+					return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsSearch.T("Search across people, channels, files, workflows, and more"))
 				})
 				call.Add(gtx.Ops)
 			}
@@ -1653,15 +1653,15 @@ func (p *SearchPopover) ghostText() string {
 		case !p.picked:
 			return ""
 		case r.kind == srRQuery:
-			return r.title + " — Search"
+			return r.title + nsSearch.T(" — Search")
 		case nav && r.title != "":
-			return r.title + " — Open"
+			return r.title + nsSearch.T(" — Open")
 		}
 		return ""
 	}
 	switch {
 	case r.kind == srRQuery, r.kind == srRShow:
-		return " — Search"
+		return nsSearch.T(" — Search")
 	case !nav:
 		return ""
 	}
@@ -1669,7 +1669,7 @@ func (p *SearchPopover) ghostText() string {
 	if len(q) > len(name) || !strings.EqualFold(string(name[:len(q)]), string(q)) {
 		return ""
 	}
-	return string(name[len(q):]) + " — Open"
+	return string(name[len(q):]) + nsSearch.T(" — Open")
 }
 
 func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) layout.Dimensions {
@@ -1679,17 +1679,17 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	if p.picked {
 		// a row is selected: [Enter] Open (Slack adds [Tab] Actions, the
 		// row's action toolbar, which Clack doesn't have)
-		ew := textW(gtx, th, 13, theme.Regular, "Enter") + dp(gtx, 12)
+		ew := textW(gtx, th, 13, theme.Regular, nsSearch.T("Enter")) + dp(gtx, 12)
 		rrect(gtx, image.Rect(x, cy, x+ew, cy+ch), dp(gtx, 4), cl.KbdLight)
 		at(gtx, image.Pt(x+dp(gtx, 6), cy), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg, "Enter")
+				return text(gtx, th, 13, theme.Regular, cl.Fg, nsSearch.T("Enter"))
 			})
 		})
 		x += ew + dp(gtx, 6)
 		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg2, "Open")
+				return text(gtx, th, 13, theme.Regular, cl.Fg2, nsSearch.T("Open"))
 			})
 		})
 		p.feedbackLink(gtx, th, cl, sz)
@@ -1706,7 +1706,7 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	}
 	at(gtx, image.Pt(x+dp(gtx, 1), 0), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Regular, cl.Fg2, "Select")
+			return text(gtx, th, 13, theme.Regular, cl.Fg2, nsSearch.T("Select"))
 		})
 	})
 	p.feedbackLink(gtx, th, cl, sz)
@@ -1716,11 +1716,11 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 // feedbackLink is the footer's FeedbackLink (experimentOmniPolish: just
 // "Give feedback").
 func (p *SearchPopover) feedbackLink(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) {
-	fw := textW(gtx, th, 13, theme.Regular, "Give feedback")
+	fw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Give feedback"))
 	at(gtx, image.Pt(sz.X-dp(gtx, 16)-fw, 0), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &p.feedback, nil, func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Link, "Give feedback")
+				return text(gtx, th, 13, theme.Regular, cl.Link, nsSearch.T("Give feedback"))
 			})
 		})
 	})
@@ -1914,7 +1914,7 @@ func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, fg color.
 	n := 0
 	switch {
 	case r.kind == srRShow:
-		ps[0] = piece{"Show results for: ", theme.Regular}
+		ps[0] = piece{srShowResultsFor(), theme.Regular}
 		ps[1] = piece{r.title, theme.Bold}
 		n = 2
 	case r.boldAll:
@@ -1950,14 +1950,14 @@ func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, fg color.
 
 // srEnterChip draws the "Enter" hint ending at right; returns its width.
 func srEnterChip(gtx layout.Context, th *theme.Theme, cl *Colors, right, h int) int {
-	tw := textW(gtx, th, 13, theme.Regular, "Enter")
+	tw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Enter"))
 	w, ch := tw+dp(gtx, 12), dp(gtx, 20)
 	r := image.Rect(right-w, (h-ch)/2, right, (h+ch)/2)
 	rrect(gtx, r, dp(gtx, 4), cl.Ring)
 	rrect(gtx, r.Inset(1), dp(gtx, 4)-1, cl.BgAlt)
 	at(gtx, image.Pt(r.Min.X+dp(gtx, 6), r.Min.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Regular, cl.Fg, "Enter")
+			return text(gtx, th, 13, theme.Regular, cl.Fg, nsSearch.T("Enter"))
 		})
 	})
 	return w
@@ -2118,7 +2118,7 @@ func (p *SearchPopover) msgRowPlain(gtx layout.Context, th *theme.Theme, cl *Col
 				})
 				x += is
 			}
-			put(" Reply in a thread")
+			put(" " + nsSearch.T("Reply in a thread"))
 		}
 		bullet()
 		put(r.when)
@@ -2317,10 +2317,11 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 		if u, ok := lookupUser(h, ref.User); ok {
 			w.name = userName(u)
 		} else {
-			w.name = "Direct message"
+			w.name = nsSearch.T("Direct message")
 		}
 	case "mpim":
-		w.name = "Group message"
+		group := nsSidebar.T("Group message")
+		w.name = group
 		raw := ref.Name
 		if a := h.Core(); a != nil {
 			if c, ok := a.Conv(m.Channel); ok {
@@ -2333,7 +2334,7 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 				}
 			}
 		}
-		if w.name == "Group message" {
+		if w.name == group {
 			self := ""
 			if a := h.Core(); a != nil {
 				self = a.Self().Handle
@@ -2350,7 +2351,7 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 		}
 	}
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
-		w.pre = "Thread in "
+		w.pre = nsSearch.T("Thread in ")
 	}
 	return w
 }
@@ -2397,4 +2398,14 @@ func srDrawWhereFg(gtx layout.Context, hst Host, w srWhere, x, y, right, h int, 
 			})
 		})
 	}
+}
+
+// srShowResultsFor is the "Show results for:" row's lead-in (the
+// typeahead's, rs63), with the space before the bold query.
+func srShowResultsFor() string {
+	t := nsSearch.T("Show results for:")
+	if !strings.HasSuffix(t, " ") {
+		t += " "
+	}
+	return t
 }
