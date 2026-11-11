@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -50,75 +51,96 @@ import (
 // warnCopy is the dialog's text for one case.
 type warnCopy struct {
 	// Title is the whole title, or with Channel the part before the
-	// channel entity (Slack's InlineChannelEntity: icon and name), which
-	// "?" then ends.
+	// channel entity (Slack's InlineChannelEntity: icon and name), with
+	// After after it ("?"; the locale's order: "{channelName}" may come
+	// first).
 	Title   string
 	Channel bool
+	After   string
 	// Body is mrkdwn with the keyword as a broadcast mention (<!here>),
 	// which draws like Slack's highlighted keyword span.
 	Body   string
 	Button string
 }
 
+// messageInputNS is MessagePaneInputBroadcastWarning's I18n (NrP6,
+// message-input).
+var messageInputNS = i18n.NS("message-input")
+
 // broadcastWarningCopy is the dialog's render(): kw is the keyword shown,
 // mpim a group DM, people the member count minus the sender, timezones
 // conversations.info's timezone_count (0: not known yet).
 func broadcastWarningCopy(kw string, mpim bool, people, timezones int, scheduled bool) warnCopy {
+	t := messageInputNS.T
 	keyword := "<!" + kw + ">"
-	n := plural(people, "person", "people")
 	var c warnCopy
-	c.Button = "Send"
+	// a title around {channelName}: the text before it and after it
+	inChannel := func(src string) {
+		seen := false
+		for _, p := range messageInputNS.RT(src, "channelName", "#") {
+			switch {
+			case p.Arg == "channelName":
+				seen = true
+			case seen:
+				c.After += p.Text
+			default:
+				c.Title += p.Text
+			}
+		}
+		c.Channel = true
+	}
+	c.Button = t("Send")
 	if !scheduled {
 		switch {
 		case kw == core.KeywordHere && mpim:
-			c.Title = "Notify everyone currently online?"
+			c.Title = t("Notify everyone currently online?")
 		case kw == core.KeywordHere:
-			c.Title, c.Channel = "Notify everyone currently online in ", true
+			inChannel("Notify everyone currently online in {channelName}?")
 		case timezones < 2:
-			c.Title = "Notify " + n + "?"
+			c.Title = t("Notify {member_count, plural, =1 {# person} other {# people}}?", "member_count", people)
 		default:
-			c.Title = "Notify " + n + " across " + strconv.Itoa(timezones) + " time zones?"
+			c.Title = t("Notify {member_count, plural, =1 {# person} other {# people}} across {timezone_count} time zones?", "member_count", people, "timezone_count", timezones)
 		}
 		if kw == core.KeywordHere {
-			c.Body = "Using " + keyword + " pings everyone in the channel who’s currently online. It’s a bit noisy! Are you sure you want to send this?"
+			c.Body = t("Using {keyword} pings everyone in the channel who’s currently online. It’s a bit noisy! Are you sure you want to send this?", "keyword", keyword)
 		} else {
-			c.Body = "Using " + keyword + " pings everyone in the channel. It’s rather noisy! Are you sure you want to send this?"
+			c.Body = t("Using {keyword} pings everyone in the channel. It’s rather noisy! Are you sure you want to send this?", "keyword", keyword)
 		}
 		return c
 	}
-	c.Button = "Schedule Message"
+	c.Button = t("Schedule Message")
 	switch {
 	case kw == core.KeywordHere && mpim:
-		c.Title = "Notify everyone who’ll be online?"
+		c.Title = t("Notify everyone who’ll be online?")
 	case kw == core.KeywordHere:
-		c.Title, c.Channel = "Notify everyone who’ll be online in ", true
+		inChannel("Notify everyone who’ll be online in {channelName}?")
 	case timezones < 2 && mpim:
-		c.Title = "Notify everyone?"
+		c.Title = t("Notify everyone?")
 	case timezones < 2:
-		c.Title, c.Channel = "Notify everyone in ", true
+		inChannel("Notify everyone in {channelName}?")
 	default:
-		c.Title = "Notify everyone in this channel across " + strconv.Itoa(timezones) + " timezones?"
+		c.Title = t("Notify everyone in this channel across {timezone_count} timezones?", "timezone_count", timezones)
 	}
 	switch {
 	case kw == core.KeywordHere && mpim:
-		c.Body = "Using " + keyword + " will notify everyone who’s online at the time this message is sent. It can be a bit noisy — please confirm that this is what you’d like to do."
+		c.Body = t("Using {keyword} will notify everyone who’s online at the time this message is sent. It can be a bit noisy — please confirm that this is what you’d like to do.", "keyword", keyword)
 	case kw == core.KeywordHere:
-		c.Body = "Using " + keyword + " will notify everyone in the channel who’s online at the time this message is sent. It can be a bit noisy — please confirm that this is what you’d like to do."
+		c.Body = t("Using {keyword} will notify everyone in the channel who’s online at the time this message is sent. It can be a bit noisy — please confirm that this is what you’d like to do.", "keyword", keyword)
 	case mpim:
-		c.Body = "Using " + keyword + " will notify " + n + " when this message sends. This type of mention can be a bit noisy — please confirm that this is what you’d like to do."
+		c.Body = t("Using {keyword} will notify {member_count, plural, =1 {# person} other {# people}} when this message sends. This type of mention can be a bit noisy — please confirm that this is what you’d like to do.", "keyword", keyword, "member_count", people)
 	default:
-		c.Body = "Using " + keyword + " will notify about " + n + " when this message sends (the number of members can change day by day). This type of mention can be a bit noisy — please confirm that this is what you’d like to do."
+		c.Body = t("Using {keyword} will notify about {member_count, plural, =1 {# person} other {# people}} when this message sends (the number of members can change day by day). This type of mention can be a bit noisy — please confirm that this is what you’d like to do.", "keyword", keyword, "member_count", people)
 	}
 	return c
 }
 
 // adminNote is the admins' line, with the settings link as mrkdwn.
 func adminNote(settingsURL string) string {
-	link := "Workspace settings"
+	link := messageInputNS.T("Workspace settings")
 	if settingsURL != "" {
-		link = "<" + settingsURL + "|Workspace settings>"
+		link = "<" + settingsURL + "|" + link + ">"
 	}
-	return "Pssst, admins… You can control this warning in " + link + "."
+	return messageInputNS.T("Pssst, admins… You can control this warning in {workspace_settings_link}.", "workspace_settings_link", link)
 }
 
 // plural is ICU's {n, plural, =1 {# one} other {# other}} with en-US
@@ -193,7 +215,7 @@ func openBroadcastWarning(h Host, api coreAPI, ask broadcastAsk, done func(ok bo
 	if d.conv.Kind == "private" {
 		icon = "lock"
 	}
-	edit := &popups.ModalButton{Label: "Edit Message", Kind: popups.BtnOutline}
+	edit := &popups.ModalButton{Label: messageInputNS.T("Edit Message"), Kind: popups.BtnOutline}
 	opts := popups.ModalOpts{
 		TitleFunc: func() string { return d.copy().Title },
 		Body:      d.layoutBody,
@@ -215,7 +237,7 @@ func openBroadcastWarning(h Host, api coreAPI, ask broadcastAsk, done func(ok bo
 		},
 	}
 	if cp.Channel {
-		opts.TitleIcon, opts.TitleAfter = icon, d.conv.Name+"?"
+		opts.TitleIcon, opts.TitleAfter = icon, d.conv.Name+cp.After
 	}
 	d.modal = popups.NewModal(h, opts)
 	h.ShowOverlay(d.modal)

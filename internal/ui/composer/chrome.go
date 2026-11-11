@@ -1267,10 +1267,10 @@ func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState) layou
 		if uipref.Get().SendOnModEnter {
 			keys = "Mod+Enter"
 		}
-		popups.Tooltip(gtx, th, &c.tip[crSend], hs, rs.Size(), popups.Above, "Send now", keys)
+		popups.Tooltip(gtx, th, &c.tip[crSend], hs, rs.Size(), popups.Above, draftsNS.T("Send now"), keys) // ScheduleSendMenu's
 		if sched {
 			t := op.Offset(rc.Min).Push(gtx.Ops)
-			popups.Tooltip(gtx, th, &c.tip[crSchedule], hc, rc.Size(), popups.Above, "Schedule for later", "")
+			popups.Tooltip(gtx, th, &c.tip[crSchedule], hc, rc.Size(), popups.Above, draftsNS.T("Schedule for later"), "")
 			t.Pop()
 		}
 	}

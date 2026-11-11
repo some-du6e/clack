@@ -837,11 +837,11 @@ func (c *Composer) scheduleMenu(anchor image.Rectangle) {
 	now, m := time.Now(), c.scheduleMember()
 	h24 := uipref.Get().Time24
 	exp := c.api.a != nil && c.api.a.Experiment("updated_scheduled_sends_desktop") == "on"
-	items := []popups.MenuItem{{Header: "Schedule message"}}
+	items := []popups.MenuItem{{Key: popups.LabelKey("Schedule message"), Header: draftsNS.T("Schedule message")}}
 	for _, r := range scheduleRows(now, h24, exp, m) {
 		r := r
 		if r.opt == schedCustom {
-			items = append(items, popups.Sep(), popups.MenuItem{Label: r.label, Do: func() {
+			items = append(items, popups.Sep(), popups.MenuItem{Key: r.key, Label: r.label, Do: func() {
 				// openScheduleMessageDialog
 				m := c.scheduleMember()
 				openSchedulePicker(c.h, schedCustomDefault(time.Now(), m), m, func(t time.Time) {
@@ -851,7 +851,7 @@ func (c *Composer) scheduleMenu(anchor image.Rectangle) {
 			}})
 			continue
 		}
-		items = append(items, popups.MenuItem{Label: r.label, Subtitle: r.desc, Do: func() {
+		items = append(items, popups.MenuItem{Key: r.key, Label: r.label, Subtitle: r.desc, Do: func() {
 			at := r.at
 			if r.opt < schedMember { // the time for the option when it is picked
 				at = schedStandardTime(r.opt, time.Now())
