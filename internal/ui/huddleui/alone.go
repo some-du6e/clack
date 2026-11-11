@@ -279,7 +279,7 @@ func (c *Controller) showStillHere(win string) {
 	// Slack's onSubmit / onClose: the alone time starts again
 	here := &popups.ModalButton{Label: "I’m Still Here", Kind: popups.BtnPrimary, Do: func() bool { return true }}
 	a.mu.Lock()
-	a.shown, a.modal = true, win
+	a.modal = win
 	a.closer = func() {
 		run(func() {
 			auto = true
@@ -291,6 +291,9 @@ func (c *Controller) showStillHere(win string) {
 	a.mu.Unlock()
 	run(func() {
 		th := ph.Theme()
+		a.mu.Lock()
+		a.shown = true // isPromptShown: set as the modal mounts (ni)
+		a.mu.Unlock()
 		m = popups.NewModal(ph, popups.ModalOpts{
 			Title:     "Are you still there?",
 			Class:     "huddle_still_here_modal",

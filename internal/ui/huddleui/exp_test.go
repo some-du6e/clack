@@ -616,6 +616,8 @@ func TestMultiDeviceModal(t *testing.T) {
 	if j := fakeCalls(e.fk, "rooms.join"); j[0].Params.Get("multidevice") != "false" {
 		t.Fatalf("multidevice %q", j[0].Params.Get("multidevice"))
 	}
+	connected := func() bool { s := e.c.Session(); return s != nil && s.State().Phase == huddle.Connected }
+	waitFor(t, "connected", connected) // leaving mid-negotiation is a fake Chime error
 	e.c.Leave()
 	waitFor(t, "left", func() bool { return !e.c.Active() })
 
@@ -639,5 +641,7 @@ func TestMultiDeviceModal(t *testing.T) {
 	if j := fakeCalls(e.fk, "rooms.join"); j[1].Params.Get("multidevice") != "true" {
 		t.Fatalf("Use both devices: multidevice %q", j[1].Params.Get("multidevice"))
 	}
+	waitFor(t, "connected again", connected)
 	e.c.Leave()
+	waitFor(t, "left again", func() bool { return !e.c.Active() })
 }
