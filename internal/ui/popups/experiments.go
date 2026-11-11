@@ -92,7 +92,7 @@ func enterKeyChip(gtx layout.Context, th *theme.Theme, right, h int) int {
 	// the border paints over the key's own background (border-box)
 	edge := theme.Over(chipTok{"var(--dt_color-otl-ter)", rgba8(0x5e5d60, 0x21), rgba8(0x797c81, 0x4d)}.of(th), bg)
 	fg := tokContentPry.of(th)
-	const label = "Enter"
+	const label = "Enter" // Slack's option list passes the literal (label: "Enter")
 	ch := dp(gtx, 20)
 	w := max(ch, textW(gtx, th, 13, theme.Regular, label)+2*dp(gtx, 4))
 	r := image.Rect(right-w, (h-ch)/2, right, (h-ch)/2+ch)

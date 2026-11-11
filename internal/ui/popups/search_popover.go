@@ -2044,15 +2044,17 @@ func (p *SearchPopover) drawTitle(gtx layout.Context, th *theme.Theme, fg color.
 }
 
 // srEnterChip draws the "Enter" hint ending at right; returns its width.
+// Its label is the prefs I18n's, as the row's KeyboardKey has it
+// (t("Enter", {ns: "prefs"}): "Intro" in es-ES).
 func srEnterChip(gtx layout.Context, th *theme.Theme, cl *Colors, right, h int) int {
-	tw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Enter"))
+	tw := textW(gtx, th, 13, theme.Regular, nsPrefs.T("Enter"))
 	w, ch := tw+dp(gtx, 12), dp(gtx, 20)
 	r := image.Rect(right-w, (h-ch)/2, right, (h+ch)/2)
 	rrect(gtx, r, dp(gtx, 4), cl.Ring)
 	rrect(gtx, r.Inset(1), dp(gtx, 4)-1, cl.BgAlt)
 	at(gtx, image.Pt(r.Min.X+dp(gtx, 6), r.Min.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 13, theme.Regular, cl.Fg, nsSearch.T("Enter"))
+			return text(gtx, th, 13, theme.Regular, cl.Fg, nsPrefs.T("Enter"))
 		})
 	})
 	return w
