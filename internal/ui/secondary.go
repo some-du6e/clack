@@ -66,6 +66,9 @@ func (a *App) OpenThread(channel, ts string) {
 	}
 	a.secondary = secondaryState{kind: secThread, channel: channel, ts: ts, width: a.secondary.width}
 	a.secondary.view = a.mountThread(channel, ts)
+	if a.data != nil && a.data.core != nil {
+		a.data.core.RecordRecentNavigation(channel, ts) // a thread visit (desktop_search_recents_write)
+	}
 	if c := a.convos[channel+"/"+ts]; c != nil { // a cached thread: Slack mounts a new pane
 		if r, ok := c.list.(interface{ Reopen() }); ok {
 			r.Reopen()

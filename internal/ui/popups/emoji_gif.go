@@ -80,7 +80,7 @@ func (p *EmojiPicker) setGifMode(on bool) {
 	}
 	p.gifMode = on
 	p.hover, p.press, p.pressed, p.ptrIn = epNoCell, epNoCell, false, false
-	p.toneOpen = false
+	p.toneUI.open = false
 	p.prevID = -1
 	if on {
 		g := &p.gif

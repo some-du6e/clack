@@ -76,6 +76,7 @@ type bk struct {
 	FileID     string   `json:"file_id"`
 	Source     string   `json:"source"`
 	Expand     bool     `json:"expand"` // section: never truncate
+	Level      int      `json:"level"`  // header: 1–4 (Slack's Header: p-header_block--level_N)
 	CallID     string   `json:"call_id"`
 	Call       *struct {
 		V1 struct {
@@ -454,7 +455,7 @@ func (c *builder) block(out []Block, b *bk) []Block {
 		if len(ss) == 0 {
 			return out
 		}
-		return append(out, Block{Kind: Header, Spans: ss})
+		return append(out, Block{Kind: Header, Spans: ss, Level: b.Level})
 	case "divider":
 		return append(out, Block{Kind: Divider})
 	case "image":

@@ -2,6 +2,7 @@ package acrank
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -104,6 +105,9 @@ type Options struct {
 	BeyondWordBoundaries           bool // ml_fuzzy_match_beyond_word_boundaries_v2
 	EmojiExactBoost                bool // emoji_exact_match_boost: exact emoji +300, not +100
 	DisplayRealNames               bool // the display_real_names pref (tie-break name)
+	// ExactNameGroup is search_autocomplete_promote_exact_name_matches'
+	// group: its sort rules (sortrules.go) for SourceTexty.
+	ExactNameGroup string
 
 	// the viewer's Grid membership (MEMBER_OF_SEARCHER_DEFAULT_TEAM…)
 	EnterpriseID, DefaultWorkspace string
@@ -279,7 +283,13 @@ func Rank(query string, cands []Cand, o Options) []Result {
 		})
 	}
 	if len(list) > cut {
-		list = list[:cut]
+		// exposeAndRetainExactNameMatches: exact name matches stay in the
+		// model's input
+		pool := list
+		list = list[:cut:cut]
+		if slices.Contains(RetainSources, o.Source) {
+			list = RetainExactNames(list, pool, o.ExactNameGroup, cut, exactFacts(m), func(a, b *entry) bool { return a == b })
+		}
 	}
 
 	// the model
@@ -290,7 +300,10 @@ func Rank(query string, cands []Cand, o Options) []Result {
 	}
 	sort.SliceStable(list, func(i, j int) bool { return list[i].model > list[j].model })
 
-	// postProcess: boostExactMatches(2), demoteFlannelPassthroughResults
+	// postProcess: applySortRules, boostExactMatches(2), demoteFlannelPassthroughResults
+	if slices.Contains(ExactNameSources, o.Source) {
+		list = ApplyExactNameRules(list, o.ExactNameGroup, exactFacts(m))
+	}
 	if len(list) > 2 {
 		head := list[:2:2]
 		rest := partition(append([]*entry(nil), list[2:]...), func(e *entry) bool { return e.exact || e.bestExact })
@@ -307,6 +320,27 @@ func Rank(query string, cands []Cand, o Options) []Result {
 		out[i] = Result{Index: e.idx, Score: e.score, FrecencyScore: e.fs.score, ModelScore: e.model, Exact: e.exact, Passthrough: e.passthrough, BestName: e.emojiBest}
 	}
 	return out
+}
+
+// exactFacts are the exact name rules' predicates over entries for the
+// Searcher's query m: a member (U/W id) who is an active human of the org
+// (not deleted, suspended, external, a bot or Slackbot) whose real or
+// display name normalized is the normalized query; in context when a
+// member of the current conversation or thread.
+func exactFacts(m string) func(*entry) ExactFacts {
+	nq := Normalize(FormatQuery(m))
+	return func(e *entry) ExactFacts {
+		c := e.c
+		if c.Kind != Member || c.ID == "" || (c.ID[0] != 'U' && c.ID[0] != 'W') {
+			return ExactFacts{}
+		}
+		f := ExactFacts{User: true}
+		human := !c.Deleted && !c.Suspended && !c.External && !c.Bot && c.ID != "USLACKBOT"
+		exact := nq != "" && (Normalize(c.RealName) == nq || (c.DisplayName != "" && Normalize(c.DisplayName) == nq))
+		f.Eligible = human && exact
+		f.InContext = f.Eligible && (c.InChannel || c.InThread)
+		return f
+	}
 }
 
 func kindOrder(k Kind) int {

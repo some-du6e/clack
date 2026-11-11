@@ -202,3 +202,19 @@ func TestPlainTextEmojiFalse(t *testing.T) {
 	eq(t, "emoji false", d.Blocks[0].Spans, []Span{tx("hi :smile:")})
 	eq(t, "emoji unset", d.Blocks[1].Spans, []Span{tx("hi "), em("smile")})
 }
+
+// A header block keeps its level (Slack's Header classes the text
+// p-header_block--level_1/2/3, level 4 as 3); no level is 0.
+func TestHeaderLevel(t *testing.T) {
+	d := blocksMsg(t, `[{"type":"header","text":{"type":"plain_text","text":"Big"},"level":1},
+		{"type":"header","text":{"type":"plain_text","text":"Medium"},"level":2},
+		{"type":"header","text":{"type":"plain_text","text":"Plain"}}]`)
+	if len(d.Blocks) != 3 {
+		t.Fatalf("blocks: %s", dump(d.Blocks))
+	}
+	for i, want := range []int{1, 2, 0} {
+		if b := d.Blocks[i]; b.Kind != Header || b.Level != want {
+			t.Errorf("block %d: kind %v level %d, want a header at level %d", i, b.Kind, b.Level, want)
+		}
+	}
+}

@@ -93,14 +93,59 @@ The Files rail tab's last "not supported yet" toasts, replaced with what Slack d
 | Templates | `ExplorerActionsTemplates`: on All files the canvas templates (search `type:canvas_template from:<@USLACKBOT>`) interleaved with the list templates ProjectTracker, FeedbackTracker and QuarterlyPlan (`PTs7.op` ids from `lists.templates`). Canvases shows 3 canvas templates, Lists the 3 list templates. "See all" isn't on All files. A canvas tile opens `openCanvasTemplateGalleryModal`, a list tile `ListTemplatePreviewModal` | six hard-coded tiles that toasted | the three list templates from `lists.templates` by Slack's ids. A tile makes the list (`lists.create {template_id}`) and opens it. "See all" shows on Lists only and opens Clack's `lists.templates` menu |
 | Opening | `handleFileContainerClick` by `getMainFileAction`: `open` (canvases in the main view, lists), `view` (the media viewer), `remote` / `external` (the link), `detail` (snippets, posts and emails go to file details), or a download | canvases and lists opened; images went to the viewer; anything shared in a channel opened that channel; the rest toasted | canvases and lists open in full view and images in the viewer. Everything else opens its permalink in the browser, as message files already did. Message attachments (`views/adapt.go`) use the same opener |
 
-Not done, and why:
+Not done, and why (updated by exp-media, 2026-11-10; see the next section
+for what it built):
 
-- **Canvas templates:** the gallery modal and its create call are in a lazily loaded chunk that hasn't been ported, so Clack draws no canvas template tiles, and Canvases has no "See all".
-- **List template preview:** Slack previews a list template before "Use template". Clack makes the list straight away. Lists' "See all" opens Clack's existing `lists.templates` menu, not Slack's templates modal.
-- **Menu items Clack has no screen for:** Ask Slackbot, Add to-do, Share canvas / Share list, View file details, Open in new window and Report to Slack. "Open in split view" also shows in the simplified layout, where Slack hides it, because the views Host doesn't expose that mode.
-- **custom_file_sections:** with it on, Slack swaps the star for a section picker and adds Bulk manage files. Clack follows the experiment-off path.
+- **Canvas templates:** the strip's canvas tiles and Canvases' "See all" open
+  `openCanvasTemplateGalleryModal`, whose gallery and create call are in a
+  lazily loaded chunk that hasn't been ported, so Clack still draws no canvas
+  template tiles.
+- **List template preview:** Slack's tile opens ListTemplatePreviewModal
+  (boot-shared iRq6 → djIA ListTemplatePreview): a 1280-wide modal with the
+  template's sample records in a read-only list grid, the name, description,
+  "By Slack" and "Use Template" (lists.create from the template, then the
+  list opens). Clack's `lists.templates` read keeps only id, name and
+  description, and the read-only grid belongs to the Lists view, so Clack
+  still makes the list straight away. Lists' "See all" opens Clack's
+  `lists.templates` menu, not Slack's templates modal.
+- **Menu items Clack has no screen for:** Ask Slackbot, Add to-do, Share canvas / Share list, View file details, Open in new window and Report to Slack. ("Open in split view" now has Slack's icon and leaves the simplified layout, from the split-view branch.)
+- **custom_file_sections:** with it on, Slack swaps the star for a section picker and adds Bulk manage files, Move to section and the sections in the sidebar (file collections). Not ported; Clack follows the experiment-off path.
 - **Image alt text:** Slack's image dialog adds a preview and an alt text field. Clack edits the name only.
-- **PDFs, video, audio, snippets, posts:** Slack opens these in its viewer or the file details view. Clack's viewer shows images only, so they open in the browser.
-- **Deleted rows:** Slack's deleted view has its own rows with "Restore canvas/list". Clack shows the rows without the star or ⋯ and has no Restore yet.
-- **Split view icon:** Slack draws `move-to-split-view` before "Open in split view". That glyph isn't in Clack's icon set, so the row has no icon.
-- **Menu position:** Slack opens the menu beside the button (right-bottom). Clack anchors it at the pointer.
+- **PDFs, video, audio, snippets, posts:** getMainFileAction (boot-shared
+  C5YW) sends video, audio and PDFs to Slack's media viewer (pdf.js,
+  `<video>`, `<audio>`), Markdown and HTML files there too under
+  native_markdown_rendering / native_html_rendering, and snippets, posts and
+  emails to the file details view. Clack's viewer shows images only; it has
+  no PDF renderer, no MP4/AAC decoder and no file details view, and it never
+  renders untrusted HTML in-process. They still open in the browser.
+
+## Deleted, the menu and the Files experiments (exp-media, 2026-11-10)
+
+Sources: CDN build 4d0c78085232 without a cookie:
+`gantry-v2-async-client-deleted-unified-files-view`,
+`gantry-v2-async-client-unified-files-sidebar-view`, `client-boot` (L1PI
+Popover), `gantry-v2-async-client-boot-shared` (gaA3 FileActions, 6e8N
+UndeleteFileDialog, afR1 undeleteFile) and `client-boot-styles.css`. Tested
+against fakeslack (`TestFilesViewRestore` in core and views,
+`TestFilesViewDeletedNav`, `TestSlackPlace`).
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| ⋯ menu position | FileActions' trigger is a Popover at `right-bottom`, offsetX 4, tryOppositePosition (gaA3). L1PI's getInitialPosition puts the menu's top-left at the button's top-right; keepInBounds shifts it 16px (x) / 10px (y) inside the window instead of flipping, and takes `right-top` when the top had to move and that fits | anchored at the pointer | the same (popups `MenuOpts.Popover`, slack_place.go); the button's rect comes from the press position |
+| Deleted page | DeletedFilesPage: "Deleted" (18px, 900) and, with rows, "You can restore deleted canvases or lists within 24 hours of deletion." (13px, 12px after it); no search or filters | the general Files page with a search field | the same |
+| Deleted rows | DeletedFilesList: files.recentlyDeleted, isDeletedFile's canvases ("quip") and lists, the latest deletion first; DeletedFileEntity: the trash icon in c-file_entity__view_only_icon (32px, radius 4), title, "Deleted {ago}" (toTimeAgo), the always-shown MessageActionButton (undo 18, tooltip "Restore canvas" / "Restore list") at top 12, right 12 | rows without the star or ⋯ and no Restore | the same |
+| Restore | UndeleteFileDialog: "Restore canvas" / "Are you sure you want to restore this canvas?", the row with the canvas or lists icon, Cancel and "Restore canvas"; files.undelete {file_id}; the row goes and the toast says "{title} restored." with View; a failure: "Oops! We couldn’t restore that canvas" | none | the same (App.ToastAction for View) |
+| Empty | "Nothing to see here" / "You haven’t deleted any canvases or lists recently." | an invented "No deleted files" | the same |
+| Deleted in the sidebar (file_trash_updates) | the sidebar loads files.recentlyDeleted when it mounts; the divider and Deleted show while that has rows, or always with file_trash_updates on | always shown | the same |
+
+Under file_trash_updates the list also follows the socket (boot-render
+filesDeleted / filesUndeleted): file_deleted refetches it
+(invalidateDeletedFiles) and file_undeleted drops the rows
+(removeRecentlyDeletedFilesByIds); core emits them as `file_trash` events
+(`TestFileTrashEvents`, `TestFilesViewTrashEvents`).
+
+Not done: Slackbot's trash notification (attachment type
+`slackbot_file_trash_notification`) gets FileTrashNotificationButtons
+("Restore file" through files.undelete, "View all deleted files",
+"Restored"). Those buttons live in the legacy attachment renderer, which is
+the messages area's, so they aren't ported here.

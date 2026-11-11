@@ -70,6 +70,11 @@ type CreateListOpts struct {
 	// ContextChannelID is the channel a list made from its tab bar
 	// belongs to.
 	ContextChannelID string
+	// CopyFromListID makes a copy of that list (More actions > Make a
+	// copy), with its icon and description blocks.
+	CopyFromListID    string
+	Icon              string
+	DescriptionBlocks json.RawMessage
 }
 
 // CreateListWith makes a list with Slack's full lists.create arguments
@@ -91,6 +96,15 @@ func (a *App) CreateListWith(ctx context.Context, o CreateListOpts) (string, err
 	}
 	if o.ContextChannelID != "" {
 		v.Set("context_channel_id", o.ContextChannelID)
+	}
+	if o.CopyFromListID != "" {
+		v.Set("copy_from_list_id", o.CopyFromListID)
+	}
+	if o.Icon != "" {
+		v.Set("icon", o.Icon)
+	}
+	if len(o.DescriptionBlocks) > 0 && string(o.DescriptionBlocks) != "null" {
+		v.Set("description_blocks", string(o.DescriptionBlocks))
 	}
 	var r struct {
 		List struct {

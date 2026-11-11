@@ -39,11 +39,14 @@ type App struct {
 	presSeen    map[string]time.Time
 	presWaiters []chan struct{}
 	countsTimer *time.Timer
+	actBadges   map[string]int // client.counts activity_v2 (activity_badges.go)
 	cmdCache    []slack.Command
 	cmdAt       time.Time
 	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
 
 	files *fileCache
+
+	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
 
 	saves sync.WaitGroup // background disk saves (loadEmoji's meta.json)
 
@@ -73,6 +76,7 @@ type App struct {
 	icon       teamIconState     // the rail's workspace icon (team_icon.go)
 	rxn        reactState        // the viewer's reactions in flight (reactions.go)
 	frec       frecencyState     // the frecency pref's save throttle and Frequently Used cache (frecency.go)
+	rec        recentsState      // recent searches and places: the recents pref, visits (search_recents.go)
 	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
 	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
 	selected   string            // the open conversation (SetSelected, preview.go)
@@ -572,6 +576,7 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	if counts != nil {
 		a.S.SetCounts(counts)
+		a.setActivityBadges(counts.ActivityV2)
 	}
 	if errDMs == nil {
 		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
@@ -603,6 +608,8 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	// everything boot fetched is in: plugins' state mirror re-reads it
 	a.emit(Event{Type: "booted"})
+	// recent searches and places (maybeLoadRecentsPrefs, search_recents.go)
+	go a.MaybeLoadRecents(a.bg)
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -771,6 +778,7 @@ func (a *App) loadLatest(ctx context.Context, ch string) error {
 func (a *App) refreshCounts(ctx context.Context) {
 	if c, err := a.C.Counts(ctx); err == nil {
 		a.S.SetCounts(c)
+		a.setActivityBadges(c.ActivityV2)
 		a.emit(Event{Type: "counts"})
 		if a.reopenActive() { // a closed DM got a new message
 			a.emit(Event{Type: "sidebar_changed"})
@@ -1114,9 +1122,12 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	if m.Edited != nil {
 		v.EditedTS = m.Edited.TS
 	}
+	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
+	v.ReplyUserIcons = m.ReplyUserIcons
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
+	v.AgentSession = m.AgentSession
 	v.FunctionExecutionID = m.FunctionExecutionID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)

@@ -43,7 +43,9 @@ import (
 //	y 458..518  footer #f8f8f8, 1px rgba(0,0,0,.15) top border: idle
 //	            "Add Emoji" (85×28 at 14,16) or the hovered emoji (32px at
 //	            13,14, name 14.4/700 and aliases 12.8/400 #616061 at x 57);
-//	            "Skin Tone" toggle (22px hand + 14.4/700 #454447) at right.
+//	            the skin tone toggle (22px hand, "Skin Tone" 14.4/700 #454447
+//	            while no tone is set) at right, its popover above it
+//	            (emoji_tone.go).
 const (
 	epW, epH       = 361, 518
 	epTopH         = 50
@@ -178,14 +180,13 @@ type EmojiPicker struct {
 	lockPos  [2]int
 	drawnTab int
 
-	topTabs  [2]widget.Clickable
-	cats     [epNumGroups]widget.Clickable
-	catTips  [epNumGroups]TipState
-	addBtn   widget.Clickable
-	toneBtn  widget.Clickable
-	toneBtns [6]widget.Clickable
-	toneOpen bool
-	tone     int
+	topTabs [2]widget.Clickable
+	cats    [epNumGroups]widget.Clickable
+	catTips [epNumGroups]TipState
+	addBtn  widget.Clickable
+	toneBtn widget.Clickable
+	toneUI  epToneUI // the skin tone popover (emoji_tone.go)
+	tone    int
 
 	prevID    int32
 	prevName  string
@@ -610,7 +611,7 @@ func (p *EmojiPicker) Layout(gtx layout.Context) layout.Dimensions {
 	p.refreshIndex()
 	p.scale = gtx.Metric.PxPerDp
 
-	if isTop(p) && escape(gtx, nil) {
+	if isTop(p) && !p.toneUI.open && escape(gtx, nil) { // the open skin tone popover takes its own Escape
 		p.Dismiss()
 		return layout.Dimensions{}
 	}
@@ -734,7 +735,7 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	if p.done {
 		return
 	}
-	if !p.focused || (isTop(p) && !gtx.Focused(&p.ed)) {
+	if !p.toneUI.open && (!p.focused || (isTop(p) && !gtx.Focused(&p.ed))) {
 		gtx.Execute(key.FocusCmd{Tag: &p.ed})
 		p.focused = true
 	}
@@ -750,6 +751,7 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	foot := dp(gtx, epFootH)
 	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, epListY), sz.X, sz.Y-foot))
 	p.layoutFooter(gtx, th, cl, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
+	p.layoutTonePopover(gtx, th, cl, sz, sz.Y-foot)
 	cs.Pop()
 	if tab := p.activeTab(); tab != p.drawnTab {
 		gtx.Execute(op.InvalidateCmd{}) // the tab row was drawn before the list scrolled
@@ -1138,71 +1140,3 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 
 // handID is the hand emoji used by the skin tone controls.
 func (p *EmojiPicker) handID() (int32, bool) { return p.idx.lookup("hand") }
-
-// layoutTone draws the skin tone toggle (or the open row of six hands) at
-// the footer's right and returns the width it used.
-func (p *EmojiPicker) layoutTone(gtx layout.Context, th *theme.Theme, cl *Colors, w, h int) int {
-	hand, okHand := p.handID()
-	if !p.toneOpen {
-		if p.toneBtn.Clicked(gtx) {
-			p.toneOpen = true
-		}
-	}
-	if !p.toneOpen {
-		// .p-emoji_picker_skintone (padding 3px; bottom 14.5px, right
-		// 16px) > toggle_btn (1px clear border, padding 2px 3px): the 22px
-		// hand, then the label (14.4/700, margin 0 3px); no hover style
-		const label = "Skin Tone"
-		lw := textW(gtx, th, 14.4, theme.Bold, label)
-		bh, ig, in, gap := dp(gtx, 28), dp(gtx, 22), dp(gtx, 4), dp(gtx, 3)
-		bw := in + ig + gap + lw + gap + in
-		x := w - dp(gtx, 19) - bw
-		at(gtx, image.Pt(x, h-dp(gtx, 14.5)-bh), func(gtx layout.Context) layout.Dimensions {
-			return clickBox(gtx, &p.toneBtn, nil, func(gtx layout.Context) layout.Dimensions {
-				if okHand {
-					at(gtx, image.Pt(in, (bh-ig)/2), func(gtx layout.Context) layout.Dimensions {
-						return p.drawEmoji(gtx, hand, p.tone, epImgSz)
-					})
-				}
-				at(gtx, image.Pt(in+ig+gap, 0), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(loose(gtx, image.Pt(lw+1, bh)), bh, func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 14.4, theme.Bold, cl.Fg2, label)
-					})
-				})
-				return layout.Dimensions{Size: image.Pt(bw, bh)}
-			})
-		})
-		return bw + dp(gtx, 19)
-	}
-	cell := dp(gtx, 30)
-	ig := dp(gtx, epImgSz)
-	x0 := w - dp(gtx, 14) - 6*cell
-	for t := 1; t <= 6; t++ {
-		if p.toneBtns[t-1].Clicked(gtx) {
-			p.tone = t
-			p.toneOpen = false
-			p.prevID = -1
-			epSetTone(p.h, t)
-		}
-	}
-	for t := 1; t <= 6; t++ {
-		at(gtx, image.Pt(x0+(t-1)*cell, (h-cell)/2), func(gtx layout.Context) layout.Dimensions {
-			return clickBox(gtx, &p.toneBtns[t-1], func(gtx layout.Context, s image.Point, hovered bool) {
-				switch {
-				case hovered:
-					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 6), cl.EmojiHover)
-				case t == p.tone:
-					rrect(gtx, image.Rectangle{Max: s}, dp(gtx, 6), cl.Tab)
-				}
-			}, func(gtx layout.Context) layout.Dimensions {
-				if okHand {
-					at(gtx, image.Pt((cell-ig)/2, (cell-ig)/2), func(gtx layout.Context) layout.Dimensions {
-						return p.drawEmoji(gtx, hand, t, epImgSz)
-					})
-				}
-				return layout.Dimensions{Size: image.Pt(cell, cell)}
-			})
-		})
-	}
-	return 6*cell + dp(gtx, 14)
-}

@@ -46,6 +46,10 @@ type FakeCanvas struct {
 	Creator            string
 	Access             map[string]string // channel -> level (canvases.access.set)
 	Opened             int               // files.open calls
+	// ViewerAccess is the viewer's own access ("" = owner): "read" or
+	// "comment" make a canvas the viewer can't edit (QuipAccessIndicator)
+	ViewerAccess    string
+	AccessRequested bool // files.requestPermission was sent (most_recent_access_request_ts)
 }
 
 type canvasStore struct {
@@ -54,6 +58,7 @@ type canvasStore struct {
 	order   []string
 	next    int
 	edits   []url.Values // canvases.edit calls, as sent
+	asks    []url.Values // files.requestPermission calls, as sent
 	sockets map[*websocket.Conn]bool
 	shared  bool // the shared canvas's message is in the history
 }
@@ -114,6 +119,14 @@ func (s *Server) CanvasEdits() []url.Values {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 	return append([]url.Values(nil), cs.edits...)
+}
+
+// AccessRequests returns the files.requestPermission calls received (tests).
+func (s *Server) AccessRequests() []url.Values {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return append([]url.Values(nil), cs.asks...)
 }
 
 // EditCanvasAsOther changes a canvas as another user would in Slack and
@@ -199,13 +212,20 @@ func (s *Server) canvasFile(c *FakeCanvas) map[string]any {
 	f := map[string]any{"id": c.ID, "name": c.Title, "title": c.Title, "mimetype": "application/vnd.slack-docs",
 		"filetype": "quip", "pretty_type": "Canvas", "mode": "quip", "user": c.Creator, "canvas_creator_id": c.Creator,
 		"created": c.Created, "timestamp": c.Created, "updated": c.Updated, "edit_timestamp": c.Updated,
-		"editable": true, "access": "owner", "editors": []string{c.Creator, SelfID},
+		"editable": c.ViewerAccess == "" || c.ViewerAccess == "write", "access": "owner",
+		"editors":              []string{c.Creator, SelfID},
 		"url_private":          s.URL + "files-pri/" + TeamID + "-" + c.ID + "/canvas",
 		"url_private_download": s.URL + "files-pri/" + TeamID + "-" + c.ID + "/download/canvas",
 		"permalink":            "https://fake.slack.com/docs/" + TeamID + "/" + c.ID,
 		"is_public":            true, "comments_count": 0, "show_badge": false, "size": len(c.Title),
 		"title_blocks": []any{}, "quip_thread_id": "FAKE" + c.ID[len(c.ID)-4:],
 		"channels": []string{}, "groups": []string{}, "ims": []string{}}
+	if c.ViewerAccess != "" {
+		f["access"] = c.ViewerAccess
+	}
+	if c.AccessRequested {
+		f["most_recent_access_request_ts"] = c.Updated
+	}
 	if c.Channel != "" {
 		if strings.HasPrefix(c.Channel, "D") {
 			f["ims"] = []string{c.Channel}
@@ -221,7 +241,7 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 	switch method {
 	case "files.info", "files.open", "files.close", "canvases.edit", "canvases.create", "conversations.canvases.create",
 		"canvases.access.set", "canvases.delete", "canvases.sections.lookup", "conversations.info", "conversations.history",
-		"search.modules.files":
+		"search.modules.files", "files.requestPermission":
 	default:
 		return nil, false
 	}
@@ -349,6 +369,19 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 				break
 			}
 		}
+		return ok(), true
+	case "files.requestPermission": // QuipAccessIndicator's Request … Access
+		cs.mu.Lock()
+		defer cs.mu.Unlock()
+		c, okc := cs.byID[f.Get("file_id")]
+		if !okc {
+			return nil, false // not a canvas: files.go's
+		}
+		if rt := f.Get("request_type"); rt != "upgrade" && rt != "comment_upgrade" {
+			return map[string]any{"ok": false, "error": "invalid_arguments"}, true
+		}
+		cs.asks = append(cs.asks, f)
+		c.AccessRequested = true
 		return ok(), true
 	case "canvases.access.set":
 		cs.mu.Lock()
@@ -627,8 +660,13 @@ func (s *Server) seedCanvasShare() {
 func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 	s.count("files-pri")
 	rest := strings.TrimPrefix(r.URL.Path, "/files-pri/")
-	key, _, _ := strings.Cut(rest, "/")
+	key, tail, _ := strings.Cut(rest, "/")
 	_, id, _ := strings.Cut(key, "-")
+	if kind, _, _ := strings.Cut(tail, "/"); kind == "csv" || kind == "json" {
+		if s.serveListDownload(w, r, id, kind) { // lists.go
+			return
+		}
+	}
 	if id == CanvasFile {
 		w.Header().Set("Content-Type", "application/pdf")
 		w.Write([]byte("%PDF-1.4\n% fake\n"))

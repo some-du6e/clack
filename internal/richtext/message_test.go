@@ -71,7 +71,7 @@ func TestFiles(t *testing.T) {
 			Thumb: &Image{URL: "https://files.slack.com/files-tmb/T1-F4-x/v_thumb.jpg", Alt: "v.mp4", W: 1280, H: 720, Proxy: true}}},
 		{Kind: FileBlock, File: &File{ID: "F5", Name: "clip", Mime: "audio/webm", URL: "https://files.slack.com/files-pri/T1-F5/clip", IsAudio: true, DurationMS: 5000, Subtype: "slack_audio"}},
 		{Kind: FileBlock, File: &File{ID: "F6", Name: "s.txt", Title: "Snippet", Mime: "text/plain", Type: "text", URL: "https://files.slack.com/files-pri/T1-F6/s.txt",
-			IsSnippet: true, Preview: "line1\nline2", Lines: 2}},
+			IsSnippet: true, Preview: "line1\nline2", Lines: 2, Mode: "snippet"}},
 		{Kind: FileBlock, File: &File{ID: "F7", Name: "doc.pdf", Mime: "application/pdf", Type: "pdf", PrettyType: "PDF", Size: 2048, URL: "https://files.slack.com/files-pri/T1-F7/doc.pdf"}},
 		tombstone("This file was deleted."),
 		tombstone("This file is hidden because it is older than the workspace's visible history."),

@@ -149,6 +149,8 @@ var slackRef = map[string]string{
 	"keyboard":                    "keyboard",
 	"keyboard-filled":             "keyboard-filled",
 	"laptop":                      "laptop",
+	"text-snippet":                "text-snippet",
+	"gif":                         "gif",
 	"later":                       "bookmark",
 	"later-filled":                "bookmark-filled",
 	"life-ring":                   "life-ring",
