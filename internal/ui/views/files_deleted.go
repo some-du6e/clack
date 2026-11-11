@@ -26,10 +26,12 @@ package views
 //     canvases or lists recently."
 //   - The Files sidebar loads files.recentlyDeleted when it mounts; its
 //     Deleted item shows while that has rows, or always under
-//     file_trash_updates "on".
+//     file_trash_updates "on", which also refetches the list on
+//     file_deleted and drops rows on file_undeleted.
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"strconv"
 	"time"
@@ -51,6 +53,60 @@ type filesDeleted struct {
 	gone    map[string]bool // restored this load
 	restore map[string]*widget.Clickable
 	tips    map[string]*popups.TipState
+	sub     bool // following file_deleted / file_undeleted
+}
+
+// trashEventIDs is getFileIdsFromMsg: file_ids, else [file_id].
+func trashEventIDs(raw json.RawMessage) []string {
+	var e struct {
+		FileID  string   `json:"file_id"`
+		FileIDs []string `json:"file_ids"`
+	}
+	_ = json.Unmarshal(raw, &e)
+	if e.FileIDs != nil {
+		return e.FileIDs
+	}
+	if e.FileID != "" {
+		return []string{e.FileID}
+	}
+	return nil
+}
+
+// followTrash subscribes to core's file_trash events (once).
+func (f *Files) followTrash() {
+	if f.del.sub || f.h.Core() == nil {
+		return
+	}
+	f.del.sub = true
+	ch, _ := f.h.Core().Subscribe()
+	go func() {
+		for ev := range ch {
+			if ev.Type != "file_trash" {
+				continue
+			}
+			name, ids := ev.Name, trashEventIDs(ev.Raw)
+			f.post(func() { f.onTrashEvent(name, ids) })
+		}
+	}()
+}
+
+// onTrashEvent is filesDeleted / filesUndeleted under file_trash_updates
+// (boot-render zuQH): a deletion invalidates the deleted list
+// (invalidateDeletedFiles: DeletedFilesList fetches it again), a restore
+// drops the rows (removeRecentlyDeletedFilesByIds). Without the
+// experiment the list waits for the next load.
+func (f *Files) onTrashEvent(name string, ids []string) {
+	if c := f.h.Core(); c == nil || c.Experiment("file_trash_updates") != "on" || len(ids) == 0 {
+		return
+	}
+	switch name {
+	case "file_deleted":
+		f.startDeleted()
+	case "file_undeleted":
+		for _, id := range ids {
+			f.del.gone[id] = true
+		}
+	}
 }
 
 func (d *filesDeleted) btn(id string) (*widget.Clickable, *popups.TipState) {
@@ -91,6 +147,7 @@ func (f *Files) deletedNavShown() bool {
 // startDeleted loads files.recentlyDeleted (pageFileType none: both).
 func (f *Files) startDeleted() {
 	a := f.h.Core()
+	f.followTrash()
 	f.del.gone = map[string]bool{}
 	f.del.data.load(f.h, false, func(ctx context.Context) ([]core.DeletedFile, error) { return a.RecentlyDeleted(ctx, "") })
 }

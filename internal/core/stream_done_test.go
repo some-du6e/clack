@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,5 +80,23 @@ func TestOpenStreams(t *testing.T) {
 	}
 	if len(o.open) != maxOpenStreams || len(o.q) != maxOpenStreams {
 		t.Errorf("open %d q %d", len(o.open), len(o.q))
+	}
+}
+
+// file_deleted / file_undeleted reach subscribers as file_trash events
+// with the raw event (the Files view's deleted list follows them).
+func TestFileTrashEvents(t *testing.T) {
+	a := New(slack.New(slack.Creds{}), store.New(""))
+	defer a.Shutdown()
+	evs, stop := a.Subscribe()
+	defer stop()
+	a.handle(rtm("file_deleted", map[string]any{"file_id": "F0DEL1", "event_ts": "1.2"}))
+	ev := next(t, evs, "file_trash")
+	if ev.Name != "file_deleted" || !strings.Contains(string(ev.Raw), "F0DEL1") {
+		t.Errorf("deleted: %+v", ev)
+	}
+	a.handle(rtm("file_undeleted", map[string]any{"file_ids": []string{"F0DEL1", "F0DEL2"}}))
+	if ev := next(t, evs, "file_trash"); ev.Name != "file_undeleted" || !strings.Contains(string(ev.Raw), "F0DEL2") {
+		t.Errorf("undeleted: %+v", ev)
 	}
 }

@@ -327,3 +327,33 @@ func TestFilesViewDeletedNav(t *testing.T) {
 		t.Error("Deleted hidden with a deleted canvas")
 	}
 }
+
+// Under file_trash_updates the deleted list follows the socket: a
+// file_deleted refetches it, a file_undeleted drops the row. Off, neither.
+func TestFilesViewTrashEvents(t *testing.T) {
+	v, h, e, _ := filesView(t)
+	a := h.Core()
+	e.until(t, "the sidebar's deleted load", func() bool { _, ok, _ := v.del.data.get(); return ok })
+	if err := a.DeleteFile(t.Context(), fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	a.SetExperimentGroup("file_trash_updates", "off")
+	v.onTrashEvent("file_deleted", []string{fakeslack.CanvasShared})
+	e.frame()
+	if r, _, _ := v.del.rows(); len(r) != 0 {
+		t.Fatalf("off: the list refetched: %+v", r)
+	}
+	a.SetExperimentGroup("file_trash_updates", "on")
+	v.onTrashEvent("file_deleted", []string{fakeslack.CanvasShared})
+	e.until(t, "the refetch", func() bool { r, ok, _ := v.del.rows(); return ok && len(r) == 1 })
+	v.onTrashEvent("file_undeleted", []string{fakeslack.CanvasShared})
+	if r, _, _ := v.del.rows(); len(r) != 0 {
+		t.Errorf("file_undeleted kept the row: %+v", r)
+	}
+	if got := trashEventIDs([]byte(`{"type":"file_undeleted","file_ids":["F1","F2"]}`)); len(got) != 2 || got[1] != "F2" {
+		t.Errorf("file_ids %v", got)
+	}
+	if got := trashEventIDs([]byte(`{"type":"file_deleted","file_id":"F3"}`)); len(got) != 1 || got[0] != "F3" {
+		t.Errorf("file_id %v", got)
+	}
+}
