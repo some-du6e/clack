@@ -28,6 +28,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -374,7 +375,7 @@ func (v *View) layoutBar(gtx layout.Context, d *core.ListDoc, size image.Point) 
 		x -= gtx.Dp(8)
 	}
 	if d != nil && d.Info.Updated > 0 && v.mode == Full {
-		s := "Last edited " + relTime(d.Info.Updated)
+		s := listEditedTime(d.Info.Updated, time.Now())
 		w := th.Measure(gtx, 13, theme.Regular, s)
 		x -= w + gtx.Dp(8)
 		at(gtx, image.Pt(x, 0), image.Pt(w+2, size.Y), func(gtx layout.Context) layout.Dimensions {
@@ -1067,23 +1068,10 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
-func relTime(unix int64) string {
-	d := time.Since(time.Unix(unix, 0))
-	switch {
-	case d < time.Minute:
-		return "just now"
-	case d < time.Hour:
-		n := int(d / time.Minute)
-		if n == 1 {
-			return "1 minute ago"
-		}
-		return itoa(n) + " minutes ago"
-	case d < 24*time.Hour:
-		n := int(d / time.Hour)
-		if n == 1 {
-			return "1 hour ago"
-		}
-		return itoa(n) + " hours ago"
-	}
-	return time.Unix(unix, 0).Format("Jan 2")
+// listEditedTime is ListEditedTime's text (YALQ): "Edited {timeStr}", the
+// time toTimeAgo's (alwaysAgo) with its "< 1 minute ago" as "just now".
+func listEditedTime(unix int64, now time.Time) string {
+	ago := i18n.TimeAgo(i18n.Locale(), time.Unix(unix, 0), now, false, true)
+	ago = strings.Replace(ago, "< 1 minute ago", nsLists.T("just now"), 1)
+	return nsLists.T("Edited {timeStr}", "timeStr", ago)
 }

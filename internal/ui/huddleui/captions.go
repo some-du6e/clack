@@ -186,27 +186,25 @@ func (w *window) ccEvent(gtx C, name, text string, maxW int) image.Point {
 		x = put(0, dy, theme.Bold, name) + gtx.Dp(8)
 	}
 	width := x
-	space := th.Measure(gtx, 15, theme.Regular, " ")
-	var line []string
+	var line strings.Builder
 	lx, y := x, 0
 	flush := func() {
-		if len(line) > 0 {
-			width = max(width, lx+put(lx, y+dy, theme.Regular, strings.Join(line, " ")))
+		if line.Len() > 0 {
+			width = max(width, lx+put(lx, y+dy, theme.Regular, strings.TrimRight(line.String(), " ")))
 		}
 	}
 	cur := 0 // the line's width so far
-	for _, word := range strings.Fields(text) {
-		ww := th.Measure(gtx, 15, theme.Regular, word)
-		add := ww
-		if len(line) > 0 {
-			add += space
-		}
-		if (len(line) > 0 || lx > 0) && lx+cur+add > maxW { // wrap to the box's left edge
+	// at the text's line break opportunities (kit.go breakUnits): after
+	// spaces, and between CJK characters, so ja-JP's text wraps too
+	for _, u := range breakUnits(strings.Join(strings.Fields(text), " ")) {
+		fit := th.Measure(gtx, 15, theme.Regular, strings.TrimRight(u, " "))
+		if (line.Len() > 0 || lx > 0) && lx+cur+fit > maxW { // wrap to the box's left edge
 			flush()
-			line, lx, y, cur, add = nil, 0, y+lineH, 0, ww
+			line.Reset()
+			lx, y, cur = 0, y+lineH, 0
 		}
-		line = append(line, word)
-		cur += add
+		line.WriteString(u)
+		cur += th.Measure(gtx, 15, theme.Regular, u)
 	}
 	flush()
 	return image.Pt(min(width, max(maxW, x)), y+lineH)

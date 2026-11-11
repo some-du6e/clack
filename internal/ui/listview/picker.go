@@ -50,6 +50,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -724,18 +725,21 @@ func lastViewed(unix int64, now time.Time) string {
 	if unix <= 0 {
 		return nsLists.T("Last viewed")
 	}
+	// getFileMetaForSyntheticView (JpdH): the time is
+	// toCalendarDateOrNameDay's ("today", "yesterday", else the calendar
+	// date, its year another year's), "Last viewed {time}" for today and
+	// yesterday
+	l := i18n.Locale()
 	t := time.Unix(unix, 0).In(now.Location())
 	y, m, d := now.Date()
 	today := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
-	switch {
-	case !t.Before(today):
-		return "Last viewed today"
-	case !t.Before(today.AddDate(0, 0, -1)):
-		return "Last viewed yesterday"
-	case t.Year() == now.Year():
-		return "Last viewed on " + t.Format("Jan 2")
+	day := i18n.RelativeDay(l, t, now, true)
+	if day == "" {
+		day = i18n.CalendarDate(l, t, i18n.CalendarOpts{ExcludeYear: t.Year() == now.Year()})
+	} else if !t.Before(today.AddDate(0, 0, -1)) && t.Before(today.AddDate(0, 0, 1)) {
+		return nsLists.T("Last viewed {time}", "time", day)
 	}
-	return "Last viewed on " + t.Format("Jan 2, 2006")
+	return nsLists.T("Last viewed on {time}", "time", day)
 }
 
 // listTile is Slack's list file tile: honeycomb-40 with the list glyph in

@@ -18,6 +18,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/richview"
@@ -477,6 +478,13 @@ func tsTime(ts string) string {
 		n = n*10 + int64(r-'0')
 	}
 	t := time.Unix(n, 0)
+	if l := i18n.Locale(); l != i18n.EnUS { // Slack's time and "{date} at {time}"
+		tm := i18n.Time(l, t, i18n.Default24h(l), false)
+		if time.Since(t) < 24*time.Hour {
+			return tm
+		}
+		return nsLists.T("{date} at {time}", "date", i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ExcludeYear: true}), "time", tm)
+	}
 	if time.Since(t) < 24*time.Hour {
 		return t.Format("3:04 PM")
 	}

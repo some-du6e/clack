@@ -211,42 +211,67 @@ func layoutCard(gtx C, th *theme.Theme, c *Controller, v inviteView, st *cardSta
 	return D{Size: image.Pt(w, total)}
 }
 
-// wrapSpans breaks spans into lines of at most w px at spaces.
+// wrapSpans breaks spans into lines of at most w px at the text's line
+// break opportunities (kit.go lineBreaks: after spaces, and between CJK
+// characters, so ja-JP's space-less sentences wrap too). They come from
+// the whole text, so a bold name and the word after it break as one text.
 func wrapSpans(gtx C, th *theme.Theme, size unit.Sp, spans []span, w int) [][]span {
-	type word struct {
-		text string
-		bold bool
-	}
-	var words []word
+	var all []rune
 	for _, s := range spans {
-		parts := strings.SplitAfter(s.Text, " ")
-		for _, p := range parts {
-			if p != "" {
-				words = append(words, word{p, s.Bold})
+		all = append(all, []rune(s.Text)...)
+	}
+	breaks := lineBreaks(all)
+	// units: the text between two opportunities, as pieces of the spans
+	var units [][]span
+	var unit []span
+	var b strings.Builder
+	n := 0
+	for _, s := range spans {
+		for _, r := range s.Text {
+			b.WriteRune(r)
+			if n++; breaks[n] {
+				unit = append(unit, span{b.String(), s.Bold})
+				b.Reset()
+				units, unit = append(units, unit), nil
 			}
 		}
+		if b.Len() > 0 {
+			unit = append(unit, span{b.String(), s.Bold})
+			b.Reset()
+		}
 	}
-	var lines [][]span
-	var cur []span
-	cw := 0
+	if len(unit) > 0 {
+		units = append(units, unit)
+	}
 	weight := func(b bool) font.Weight {
 		if b {
 			return theme.Bold
 		}
 		return theme.Regular
 	}
-	for _, wd := range words {
-		ww := labelSize(gtx, th, size, weight(wd.bold), wd.text).X
-		if cw > 0 && cw+labelSize(gtx, th, size, weight(wd.bold), strings.TrimRight(wd.text, " ")).X > w {
+	var lines [][]span
+	var cur []span
+	cw := 0
+	for _, u := range units {
+		uw, fit := 0, 0 // the unit's width, and without its trailing spaces
+		for i, p := range u {
+			if i == len(u)-1 {
+				fit = uw + labelSize(gtx, th, size, weight(p.Bold), strings.TrimRight(p.Text, " ")).X
+			}
+			uw += labelSize(gtx, th, size, weight(p.Bold), p.Text).X
+		}
+		if cw > 0 && cw+fit > w {
 			lines = append(lines, cur)
 			cur, cw = nil, 0
 		}
-		if n := len(cur); n > 0 && cur[n-1].Bold == wd.bold {
-			cur[n-1].Text += wd.text
-		} else {
-			cur = append(cur, span{wd.text, wd.bold})
+		for _, p := range u {
+			if k := len(cur); k > 0 && cur[k-1].Bold == p.Bold {
+				cur[k-1].Text += p.Text
+			} else {
+				cur = append(cur, p)
+			}
 		}
-		cw += ww
+		cw += uw
 	}
 	if len(cur) > 0 {
 		lines = append(lines, cur)
