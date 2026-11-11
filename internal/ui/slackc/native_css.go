@@ -49,8 +49,25 @@ const nativeCSS = `
 .c-tooltip__tip { color: N; background-color: N }
 `
 
+// pluginElementCSS is Slack's own rules (client-boot-styles, 2026-11) for
+// Slack classes that plugins put on elements they render themselves and no
+// native widget carries, so a plugin's banner looks like Slack's: the
+// context bar above the composer (HaikuWarning's and OwlMode's,
+// BaseContextBarV2). Only classes no native has: a native's own look comes
+// from its drawing, and these would style it twice.
+const pluginElementCSS = `
+.p-context_bar_v2{background:rgba(var(--sk_foreground_soft_solid,243, 243, 243), 1);border-top-left-radius:8px;border-top-right-radius:8px;padding:12px;display:flex;position:relative}
+.p-context_bar_v2--horchata{background-color:rgb(var(--dt_color-plt-horchata-0))}
+.p-context_bar_v2--teal{background:light-dark(#e7f6f3,#44ccbb1f)}
+.p-context_bar_v2--yellow{background:light-dark(#e8912d1a,#e8912d1f)}
+.p-context_bar_v2--highlight-1{background-color:var(--dt_color-base-hgl-1)}
+.p-context_bar_v2__filler{background:inherit;width:100%;height:6px;position:absolute;bottom:-6px;left:0}
+.p-context_bar_v2__icon{min-width:16px;height:16px;color:rgba(var(--sk_foreground_max_solid,97, 96, 97), 1);flex-shrink:0;justify-content:center;align-self:flex-start;align-items:center;margin-top:1px;margin-right:12px;font-size:16px;display:flex}
+.p-context_bar_v2__content{font-size:13px;line-height:1.38463;font-weight:initial;letter-spacing:var(--custom-font-tracking-caption,inherit);flex:auto}
+`
+
 func init() {
-	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue))
+	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue) + pluginElementCSS)
 }
 
 // stripNative drops the base sheet's NativeValue winners from a host

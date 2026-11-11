@@ -1338,7 +1338,7 @@ func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 
 	p.legend(f, "Installation")
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		return p.para(gtx, 15, 22, cl.fg2, AppName+" v"+appVersion())
+		return p.para(gtx, 15, 22, cl.fg2, AppName+" "+appVersion()) // the release tag (v0.1.0-…) or dev
 	})
 	f.gap(8)
 	dir := "Config directory: `" + t.Dir() + "`"
@@ -1441,7 +1441,7 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	p.subScreen(f, "About", "Plugins")
 	p.legend(f, "Taut")
 	about := tautMrkdwnHere("A client mod for Slack, made by <@U06UYA5GMB5>. Come say hi in <#C0A057686SF>, and find the code on <https://github.com/jeremy46231/taut|GitHub> (GPLv3 or later). "+
-		AppName+" runs its plugins on its own implementation of Taut's API; no Taut code is included.", hc)
+		AppName+" runs Taut plugins on its own implementation of Taut's API; no Taut code is included.", hc)
 	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "about", about, false, cl.fg) })
 	p.fieldGap(f)
 	p.legend(f, "Plugins")

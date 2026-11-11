@@ -633,10 +633,14 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 	e := g.first()
 	x := gtx.Dp(4+theme.NativeCheckSize+8) + gtx.Dp(4) // .taut-settings__row-spacer, then row-main's padding
 	act := v.action(g)
+	kind := act.kind
+	if kind != popups.BtnDisabled {
+		kind = popups.BtnOutline // Taut's small outline buttons, quieter than the library's
+	}
 	b := v.s.k.btn("suggest." + libKey(e))
 	hit := b.Clicked(gtx)
 	m := op.Record(gtx.Ops)
-	bd := popups.Button(gtx, pp.a.th, b, act.kind, popups.BtnSmall, act.label, "", 0)
+	bd := popups.Button(gtx, pp.a.th, b, kind, popups.BtnSmall, act.label, "", 0)
 	bcall := m.Stop()
 	tw := w - x - bd.Size.X - gtx.Dp(12)
 	status, failed := "", false

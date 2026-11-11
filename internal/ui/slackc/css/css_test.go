@@ -1470,3 +1470,25 @@ func TestHasPluginForms(t *testing.T) {
 		}
 	}
 }
+
+// image-rendering: pixelated (Oneko's sprite) is computed, inherited, and
+// auto turns it back off.
+func TestImageRendering(t *testing.T) {
+	e := NewEngine()
+	e.Set("p", `#oneko { image-rendering: pixelated } .smooth { image-rendering: auto } .bad { image-rendering: blurry }`)
+	cat := n("div#oneko")
+	kid := n("span")
+	kid.parent = cat
+	if !styleOf(e, cat, testEnv).Pixelated || !styleOf(e, kid, testEnv).Pixelated {
+		t.Error("pixelated isn't computed or inherited")
+	}
+	smooth := n("span.smooth")
+	smooth.parent = cat
+	if styleOf(e, smooth, testEnv).Pixelated {
+		t.Error("auto kept pixelated")
+	}
+	bad := n("div.bad")
+	if styleOf(e, bad, testEnv).Pixelated {
+		t.Error("an unknown value turned pixelated on")
+	}
+}
