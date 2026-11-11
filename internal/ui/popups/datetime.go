@@ -710,6 +710,9 @@ func (c *dtCalendar) drawBody(gtx layout.Context, th *theme.Theme, cl *Colors, s
 	grid := dtMonthGrid(c.month)
 	gy := wy + wkH
 	line := cl.Tab
+	if c.inline { // the days' 1px otl-ter borders in Slack's current CSS
+		line = theme.Over(tokOtlTer.of(th), cl.Bg)
+	}
 	today := dtDay(time.Now())
 	if !c.today.IsZero() {
 		today = c.today
@@ -807,6 +810,13 @@ func (c *dtCalendar) drawBody(gtx layout.Context, th *theme.Theme, cl *Colors, s
 	}
 }
 
+// The range calendar's tokens (slack-kit-gantry-v2-styles: light, dark).
+var (
+	dtTokBaseInvHgl1 = chipTok{"var(--dt_color-base-inv-hgl-1)", rgb(0x1264a3), rgb(0x0a77a7)}
+	dtTokOtlHgl1     = chipTok{"var(--dt_color-otl-hgl-1)", rgb(0x1264a3), rgb(0x2ba5ce)}
+	dtTokOcean80     = chipTok{"", rgb(0x0b4c8c), rgb(0x88bbe2)} // rgb(var(--dt_color-plt-ocean-80))
+)
+
 // rangeCell draws a range calendar day (.c-date_range_picker_calendar__date):
 // the picked start and end #1264a3 with white numbers, the days between
 // them, or between the start and the hovered day, and a hovered or focused
@@ -833,30 +843,31 @@ func (c *dtCalendar) rangeCell(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			in = day.After(lo) && day.Before(hi)
 		}
 	}
-	fg := cl.Fg
+	fg := tokContentPry.of(th)
 	switch {
-	case off:
-		fill(gtx, box, cl.BgAlt)
-		fg = cl.Fg2
-	case start || end:
-		bg := cl.Highlight
+	case off: // --disabled: content-sec on base-sec
+		fill(gtx, box, tokBaseSec.of(th))
+		fg = tokContentSec.of(th)
+	case start || end: // --select_range_start/end: white on base-inv-hgl-1
+		bg := dtTokBaseInvHgl1.of(th)
 		if hov {
-			bg = rgb(0x0b4c8c) // ocean-80
+			bg = dtTokOcean80.of(th)
 		}
 		fill(gtx, box, bg)
-		fg = cl.HighText
+		fg = tokWhite.of(th)
 	case in && hov:
-		fill(gtx, box, rgba(0x1d9bd1, .5))
+		fill(gtx, box, theme.Over(rgba(0x1d9bd1, .5), cl.Bg))
 	case in || hov:
-		fill(gtx, box, rgba(0x1d9bd1, .2))
+		fill(gtx, box, theme.Over(rgba(0x1d9bd1, .2), cl.Bg))
 	}
 	if day.Equal(today) {
+		// --is_today: content-hgl-1, and a 32px otl-hgl-1 ring 5px in
 		if !start && !end && !off {
-			fg = cl.Link
+			fg = tokContentHgl1.of(th)
 		}
 		d, lw := dp(gtx, 32), maxInt(1, dp(gtx, 1))
 		r := image.Rect(dp(gtx, 5), dp(gtx, 5), dp(gtx, 5)+d, dp(gtx, 5)+d)
-		stroke(gtx, r, d/2, lw, cl.Focus)
+		stroke(gtx, r, d/2, lw, dtTokOtlHgl1.of(th))
 	}
 	num := dtNum(n)
 	nw := textW(gtx, th, 15, theme.Regular, num)
