@@ -1,6 +1,9 @@
 package huddle
 
-import "image"
+import (
+	"image"
+	"math"
+)
 
 // Pixel helpers for the screen share: thumbnails for the picker, the
 // capture backends' RGB(A)/BGRA to NV12, and scaling NV12 down.
@@ -26,12 +29,14 @@ func fitArea(w, h, pixels int) (int, int) {
 	if w*h <= pixels {
 		return w &^ 1, h &^ 1
 	}
-	sw, sh := w, h
-	for sw*sh > pixels {
-		sw = sw * 15 / 16
-		sh = h * sw / w
+	s := math.Sqrt(float64(pixels) / float64(w*h))
+	sw := int(float64(w)*s+0.5) &^ 1
+	sh := (sw * h / w) &^ 1
+	for sw*sh > pixels && sw > 16 {
+		sw -= 2
+		sh = (sw * h / w) &^ 1
 	}
-	return max(16, sw&^1), max(16, sh&^1)
+	return max(16, sw), max(16, sh)
 }
 
 // thumbOf scales img into box (area average), aspect kept.
