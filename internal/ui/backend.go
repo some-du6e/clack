@@ -589,6 +589,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		changed = true
 	case "permissions": // permissions/info answered (core.ChannelGrant): the topic's Edit reads it
 		a.Invalidate()
+	case "megaphone": // a megaphone space changed: the join banner's gate reads them (joinbanner.go)
+		a.Invalidate()
 	}
 	if changed {
 		b.recount()

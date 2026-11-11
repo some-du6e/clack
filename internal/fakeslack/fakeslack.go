@@ -81,8 +81,9 @@ type Size struct {
 	// viewer becomes a workspace admin.
 	PluginBench bool
 	// Unreads adds the Unreads view's and the channel join banner's
-	// fixtures (unreads.go): unread channels, a muted one, a channel
-	// whose message_input megaphone space holds the join banner.
+	// fixtures (unreads.go): unread channels, a muted one, a channel just
+	// joined whose banner the megaphone boot load queues, and a
+	// long-standing one.
 	Unreads bool
 	// GroupDMs adds the group DM naming fixtures (groupdms.go) and
 	// answers conversations.rename for them.

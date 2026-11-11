@@ -67,7 +67,7 @@ const pluginElementCSS = `
 `
 
 func init() {
-	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue) + pluginElementCSS)
+	Styles.SetBase(strings.ReplaceAll(nativeCSS, ": N", ": "+css.NativeValue) + NativeTransitionsCSS + pluginElementCSS)
 }
 
 // stripNative drops the base sheet's NativeValue winners from a host

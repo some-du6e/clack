@@ -180,6 +180,7 @@ type tlMetrics struct {
 	bulletR                int
 	quoteBar               int
 	quoteLeft              int
+	quoteMargin            int
 	prePad                 int
 	preMargin              int
 	preRadius              int
@@ -231,6 +232,7 @@ func tlMakeMetrics(m unit.Metric, st *EditorStyle) tlMetrics {
 		bulletR:      max(m.Dp(3), 2),
 		quoteBar:     m.Dp(4),
 		quoteLeft:    m.Dp(16),
+		quoteMargin:  m.Dp(4),
 		prePad:       m.Dp(8),
 		preMargin:    m.Dp(4),
 		preRadius:    m.Dp(4),
@@ -685,17 +687,34 @@ func (l *tlLayout) vertical() {
 	m := &l.m
 	y := 0
 	groupTop := 0
+	// pending is a bottom margin already in y (a code block's, a
+	// heading's or a quote's), which the next block's top margin collapses
+	// with
+	pending := 0
 	for i := range l.paras {
 		p := &l.paras[i]
 		prevCode := i > 0 && l.paras[i-1].kind == CodeBlock
 		nextCode := i+1 < len(l.paras) && l.paras[i+1].kind == CodeBlock
 		if p.kind == CodeBlock && !prevCode {
 			if i > 0 {
-				y += m.preMargin
+				y += max(0, m.preMargin-pending)
 			}
 			groupTop = y
 			y += m.border + m.prePad
 		}
+		// Slack's composer quote (each line a blockquote: .ql-editor
+		// blockquote margin 4px 0, padding-left 16px; blockquote+blockquote
+		// margin-top -3px, padding-top 3px): 4px above a quote run (inside
+		// the editor too, a block formatting context), the margins between
+		// two quote lines collapsing to 1px plus the 3px padding
+		if p.kind == Quote {
+			if i > 0 && l.paras[i-1].kind == Quote {
+				y += m.border + m.Dp3
+			} else {
+				y += max(0, m.quoteMargin-pending)
+			}
+		}
+		pending = 0
 		p.top = y
 		for li := p.l0; li < p.l1; li++ {
 			ln := &l.lines[li]
@@ -753,6 +772,7 @@ func (l *tlLayout) vertical() {
 		}
 		if isHeading(p.kind) {
 			y += m.headMargin // 4px bottom margin below the heading
+			pending = m.headMargin
 		}
 		p.bot = y
 		if p.kind == CodeBlock && !nextCode {
@@ -760,7 +780,12 @@ func (l *tlLayout) vertical() {
 			p.boxTop, p.boxBot = groupTop, y
 			if i+1 < len(l.paras) {
 				y += m.preMargin
+				pending = m.preMargin
 			}
+		}
+		if p.kind == Quote && (i+1 == len(l.paras) || l.paras[i+1].kind != Quote) {
+			y += m.quoteMargin
+			pending = m.quoteMargin
 		}
 	}
 	l.height = y
@@ -944,8 +969,15 @@ func (l *tlLayout) paintBG(gtx layout.Context, c tlColors) {
 			fillRRect(gtx, r, m.preRadius, c.preBg)
 			strokeRRect(gtx, r, m.preRadius, m.border, c.preBorder)
 		}
-		if p.kind == Quote {
-			fillRect(gtx, image.Rect(0, p.top, m.quoteBar, p.bot), c.quoteBar)
+		// one bar down a quote run (blockquote:before, 4px wide, radius 8
+		// clamped to 2 by its width; the next line's bar starts 6px up and
+		// covers the gap)
+		if p.kind == Quote && (pi == 0 || l.paras[pi-1].kind != Quote) {
+			last := pi
+			for last+1 < len(l.paras) && l.paras[last+1].kind == Quote {
+				last++
+			}
+			fillRRect(gtx, image.Rect(0, p.top, m.quoteBar, l.paras[last].bot), m.quoteBar/2, c.quoteBar)
 		}
 		if p.kind == Divider {
 			y := p.top + (p.bot-p.top-m.dividerThick)/2

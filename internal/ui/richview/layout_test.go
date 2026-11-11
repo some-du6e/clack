@@ -22,6 +22,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
+	"golang.org/x/image/math/fixed"
 
 	rt "github.com/some-du6e/clack/internal/richtext"
 )
@@ -576,6 +577,7 @@ func TestListOrderedLabels(t *testing.T) {
 		{2, 0, []string{"i.", "ii.", "iii."}},
 		{0, 4, []string{"5.", "6.", "7."}},
 		{3, 0, []string{"1.", "2.", "3."}},
+		{0, 8, []string{"9.", "10.", "11."}},
 	}
 	for _, c := range cases {
 		st := newTestStyle()
@@ -599,12 +601,32 @@ func TestListOrderedLabels(t *testing.T) {
 			if f.x+f.w > textX {
 				t.Errorf("label %q ends at %.1f past text at %.1f", f.sh.str, f.x+f.w, textX)
 			}
+			// Slack's ::marker "N. " ends at the li's border box, its
+			// padding-inline-start (8px) before the text: the period is a
+			// space short of that, every label right-aligned there
+			sp := st.spaceOf(faceKey{f: font.Font{Typeface: st.Face}, size: fixed.I(f.size)}).adv
+			if end, want := f.x+f.w, textX-8-sp; end < want-0.01 || end > want+0.01 {
+				t.Errorf("indent %d: label %q ends at %.2f, want %.2f (text at %.1f - 8 - a %.2f space)", c.indent, f.sh.str, end, want, textX, sp)
+			}
 			if f.p0 != -1 || f.p1 != -1 {
 				t.Errorf("label %q is part of plain text (%d..%d)", f.sh.str, f.p0, f.p1)
 			}
 		}
 		if string(v.d.plain) != "one\ntwo\nthree" {
 			t.Errorf("plain %q", v.d.plain)
+		}
+		// A label wider than the li's 20px margin ("10. ") starts left of
+		// the list, where Slack's message column doesn't clip it: the
+		// View paints that far left of its box.
+		minX := float32(0)
+		for _, f := range labelFrags {
+			minX = min(minX, f.x)
+		}
+		if want := -int(math.Floor(float64(minX))); v.d.overhang != want {
+			t.Errorf("indent %d offset %d: overhang %d, want %d (leftmost label at %.2f)", c.indent, c.offset, v.d.overhang, want, minX)
+		}
+		if c.offset == 8 && labelFrags[1].x >= 0 {
+			t.Errorf("label %q starts at %.2f, inside the list's 20px margin", labelFrags[1].sh.str, labelFrags[1].x)
 		}
 	}
 }

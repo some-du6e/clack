@@ -80,6 +80,16 @@ type Options struct {
 	// MainCtx.dialog.openFile: accept is a comma-separated extension list;
 	// "" means cancelled.
 	OpenFile func(title, accept string) (string, error)
+	// SlackCSS is Slack's own stylesheet for the parts Clack draws
+	// natively (slackc.NativeTransitionsCSS), from SlackCSSHref: the page
+	// gets it as a <link rel=stylesheet>, so plugins reading Slack's CSSOM
+	// (Snappy collapses its transitions) see the rules the natives follow.
+	SlackCSS, SlackCSSHref string
+	// SpellChecker is Electron's session.setSpellCheckerEnabled for main
+	// halves (Snappy's "Disable composer spellcheck"): false turns the
+	// composer's spellcheck off whatever the webapp_spellcheck pref says,
+	// true leaves it to the pref. nil: main halves' calls change nothing.
+	SpellChecker func(enabled bool)
 	// LifecycleTimeout bounds start/stop (Slick: 5 s; JS enforces it too).
 	LifecycleTimeout time.Duration
 	// NoAutoStart keeps New from starting enabled plugins (tests).
@@ -114,6 +124,8 @@ type Slick struct {
 	openLimit rateLimit   // shell.openExternal
 	picking   atomic.Bool // a native file picker is open
 	styleMu   sync.Mutex  // serializes applyStyles' UI calls (sheet order)
+	switchMu  sync.Mutex  // switches.json (switches.go)
+	spellOff  atomic.Bool // a main half turned the session's spellchecker off
 
 	changeMu sync.Mutex
 	changeCh map[chan struct{}]struct{}
@@ -256,6 +268,7 @@ func (s *Slick) js() (*jsrt.Runtime, error) {
 		}
 		team, ch := s.route[0], s.route[1]
 		s.mu.Unlock()
+		s.setPage(rt)
 		if team != "" {
 			s.post(rt, "setRoute", team, ch)
 		}
@@ -263,6 +276,17 @@ func (s *Slick) js() (*jsrt.Runtime, error) {
 	}
 	s.mu.Unlock()
 	return rt, nil
+}
+
+// setPage gives a fresh runtime Slack's page around the plugins: Slack's
+// linked stylesheet (Options.SlackCSS) and the client's shell elements
+// Clack draws natively, mirrored for DOM queries (js/10_plugin.js).
+func (s *Slick) setPage(rt *jsrt.Runtime) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.call(ctx, rt, "setPage", nil, s.opts.SlackCSSHref, s.opts.SlackCSS); err != nil {
+		log.Printf("slick: setPage: %v", err)
+	}
 }
 
 // ready is the extension's Ready: after a crash, bring back what ran.

@@ -569,3 +569,87 @@ func TestSlickViewBetterHuddles(t *testing.T) {
 		t.Logf("startHuddle was taken over by BetterHuddles (no native toast)")
 	}
 }
+
+// WhoReacted in the Threads, Unreads and Activity views: their reaction
+// pills are Slack's Reaction with the pill button (UnstyledButton
+// data-qa="reactji") in its tree, as in a channel, so the reactors' avatars
+// the plugin adds inside the button are drawn (they weren't: the views drew
+// a native pill with no boundary).
+func TestSlickViewWhoReactedInViews(t *testing.T) {
+	e := newSlickEnv(t)
+	alice, bob := sUser(sAlice, "alice", "Alice Example"), sUser(sBob, "bob", "Bob Example")
+	alice.Profile.Image24, alice.Profile.Image48 = "https://avatars.invalid/alice-24.png", "https://avatars.invalid/alice-48.png"
+	bob.Profile.Image24, bob.Profile.Image48 = "https://avatars.invalid/bob-24.png", "https://avatars.invalid/bob-48.png"
+	e.app.S.PutUsers([]slack.User{alice, bob})
+	e.install("WhoReacted", nil)
+	e.patched("Reaction", "UnstyledButton")
+	v := NewActivity(e.h)
+	e.frame(v.Layout) // the view's theme and palette
+	m := &core.Message{Channel: sGen, TS: tsMine, User: sSelf, Text: "my synthetic message",
+		Reactions: []core.Reaction{{Name: "tada", Count: 2, Users: []string{sAlice, sBob}}}}
+	var d D
+	pills := func(gtx C) D {
+		gtx.Constraints.Min = image.Point{}
+		d = v.actReactions(gtx, m)
+		return d
+	}
+	has := func(sub string) bool {
+		e.ui.mu.Lock()
+		defer e.ui.mu.Unlock()
+		for _, tr := range e.ui.trees {
+			if strings.Contains(string(tr), sub) {
+				return true
+			}
+		}
+		return false
+	}
+	e.until("the reactors' avatars in the tada pill", pills, func() bool {
+		return has("slick-wr__av") && has("alice-24.png") && has(`"data-qa":"reactji"`)
+	})
+	if d.Size.X <= 0 || d.Size.Y < 24 || d.Size.Y > 32 {
+		t.Errorf("the pill row is %v, want one pill row", d.Size)
+	}
+}
+
+// Censorship in the Activity feed: ActivityItem hands its native a masked
+// copy of the message (msg, its text and blocks), and the row previews
+// that copy, as Slack does (it previewed the store's message).
+func TestSlickViewCensorshipActivity(t *testing.T) {
+	e := newSlickEnv(t)
+	e.install("Censorship", map[string]any{"terms": "mention"})
+	e.patched("ActivityItem")
+	v := NewActivity(e.h)
+	e.until("the feed", v.Layout, func() bool { return len(actPage(v).Items) == 6 })
+	var text string
+	masked := func() bool {
+		if e.actRowH(v, "k-bob") <= 0 {
+			return false
+		}
+		r := v.rows["k-bob"]
+		if r == nil || r.msg() == nil {
+			return false
+		}
+		text = richtext.PlainText(r.msg().Doc) + " / " + r.msg().Text
+		return !strings.Contains(text, "mention") && strings.Contains(text, "made-up") && strings.Contains(text, "*******")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !masked() {
+		if time.Now().After(deadline) {
+			r := v.rows["k-bob"]
+			e.ui.mu.Lock()
+			inTree := false
+			for _, tr := range e.ui.trees {
+				inTree = inTree || strings.Contains(string(tr), "made-up *******")
+			}
+			e.ui.mu.Unlock()
+			ov := ""
+			if r != nil {
+				ov = r.ovText
+			}
+			t.Fatalf("bob's mention previewed %q (row %v, override %v, last override text %q), masked copy in a delivered tree: %v", text, r != nil, r != nil && r.om != nil, ov, inTree)
+		}
+		e.frame(v.Layout)
+		time.Sleep(15 * time.Millisecond)
+	}
+	t.Logf("previewed: %q", text)
+}

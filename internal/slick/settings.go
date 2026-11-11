@@ -183,7 +183,7 @@ func (s *Slick) infoLocked(p *plugin, ws string) PluginInfo {
 	resolved := s.settingsFor(p)
 	enabled, _ := resolved["enabled"].(bool)
 	info := PluginInfo{
-		ID: p.id, Name: m.Name, Description: m.Description, Authors: m.Authors,
+		ID: p.id, Name: m.Name, Description: withClackNote(m.Description, p.id, ""), Authors: m.Authors,
 		User: true, Source: s.sources[p.id], DefaultEnabled: m.DefaultEnabled,
 		Enabled: enabled, Active: s.activeLocked(p), Running: p.running,
 		StartError: p.startError, AppWideReason: appWide[p.id],
@@ -224,7 +224,7 @@ func (s *Slick) infoLocked(p *plugin, ws string) PluginInfo {
 		set := m.Settings.Settings[k]
 		_, isStored := stored[k]
 		info.Options = append(info.Options, OptionInfo{
-			Key: k, Type: set.Type, Label: set.Label, Description: set.Description,
+			Key: k, Type: set.Type, Label: set.Label, Description: withClackNote(set.Description, p.id, k),
 			Value: resolved[k], Default: set.defaultValue(), Stored: isStored,
 			Min: set.Min, Max: set.Max, MaxLength: set.MaxLength, Accept: set.Accept,
 			Options: set.Options, Statuses: set.Statuses,

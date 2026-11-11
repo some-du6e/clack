@@ -108,7 +108,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 
 | Shortcut | Slack (evidence: fffk SlackKeyboard and the formatting bindings) | Clack before | Status |
 |---|---|---|---|
-| Enter / Shift+Enter | send; Shift+Enter, lists and an empty quote line add lines; "Enter starts a new line" swaps in Mod+Enter | same | **matched** |
+| Enter / Shift+Enter | Quill's "list empty enter" first (an empty list item leaves the list, indent and all), then on_enter_onEnter: a newline only when shouldInsertNewline (xrjr: Shift or Alt; Ctrl on macOS; anything under "Start a new line"; in code under enter_is_special_in_tbt all but Shift), else MessageInput.onEnter sends: Enter in a list item with text and on an empty quote line sends; Shift+Enter adds the next item or quote/code line, two empty quote or code lines in a row end the block | lists and an empty quote line added lines | **fixed** (Karim 2026-11-10: "making new lines instead of sending") |
 | Ctrl+Shift+Enter (⌘⇧Enter) | MessageInput.onEnter (enableSnippetCreation) opens the snippet dialog (wc+S SnippetDialog, lYxy editor) with the message and empties the composer | a new line | **fixed** (exp-composer: the dialog with Title (optional), Type, Content with line numbers, Wrap, Share this file and the conversation select, the message, Create Snippet; uploads with snippet_type) |
 | Mod+B, I, U | bold, italic, underline | same | **matched** |
 | Mod+Shift+X, C, U | strikethrough, code, link dialog | same | **matched** |

@@ -132,7 +132,7 @@ const vulkanBuggy = true
 
 func (w *x11Window) NewContext() (context, error) {
 	var firstErr error
-	if f := newX11VulkanContext; f != nil && !vulkanBuggy {
+	if f := newX11VulkanContext; f != nil && (!vulkanBuggy || gpuBlocklistIgnored.Load()) {
 		c, err := f(w)
 		if err == nil {
 			return c, nil

@@ -431,6 +431,15 @@ type Style struct {
 
 	ObjectFit ObjectFit
 
+	// Transitions (not inherited): the transition-property, -duration
+	// and -delay lists, durations and delays in seconds. nil is the
+	// initial value (all, 0s, 0s). Clack's natives that animate a
+	// property the way Slack's CSS transitions it read them through
+	// TransitionFor (slackc.Styled.Transition); host trees don't animate.
+	TransitionProperty []string
+	TransitionDuration []float32
+	TransitionDelay    []float32
+
 	// Vars are the custom properties in scope (inherited). Shared with the
 	// parent when the element declares none; never mutate in place.
 	// Env.RootVars (Slack's design tokens) sit underneath: a name missing

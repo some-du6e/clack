@@ -129,6 +129,7 @@ func (a *App) Forward() {
 var onPlace func(id, title, icon string)
 
 func (a *App) afterRoute(prev, r Route) {
+	a.leaveJoinBanner(prev, r) // maybeHideChannelJoinBanner (joinbanner.go)
 	a.slickRoute(r)
 	a.bbmAfterRoute(prev, r) // Simplified layout mode's container (bbm.go)
 	if onPlace != nil {
