@@ -290,7 +290,10 @@ func TestSearchPopoverRecentsGroups(t *testing.T) {
 		fakeslack.Visit{EntityID: "Psaved", EntityType: "view", LastMS: 200})
 	e.fs.SetSearchHistory("from search.autocomplete")
 	a.SetExperimentGroup("desktop_search_recents_read", "on")
-	a.MaybeLoadRecents(ctx)
+	// loaded now, whichever trigger claimed the load (the forced group's
+	// runs on its own goroutine)
+	_ = a.LoadRecentsPrefs(ctx)
+	_ = a.LoadVisits(ctx)
 
 	p := NewQuickSwitcher(e.h)
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
