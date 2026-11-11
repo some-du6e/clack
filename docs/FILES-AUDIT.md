@@ -108,7 +108,7 @@ for what it built):
   description, and the read-only grid belongs to the Lists view, so Clack
   still makes the list straight away. Lists' "See all" opens Clack's
   `lists.templates` menu, not Slack's templates modal.
-- **Menu items Clack has no screen for:** Ask Slackbot, Add to-do, Share canvas / Share list, View file details, Open in new window and Report to Slack. "Open in split view" also shows in the simplified layout, where Slack hides it, because the views Host doesn't expose that mode.
+- **Menu items Clack has no screen for:** Ask Slackbot, Add to-do, Share canvas / Share list, View file details, Open in new window and Report to Slack. ("Open in split view" now has Slack's icon and leaves the simplified layout, from the split-view branch.)
 - **custom_file_sections:** with it on, Slack swaps the star for a section picker and adds Bulk manage files, Move to section and the sections in the sidebar (file collections). Not ported; Clack follows the experiment-off path.
 - **Image alt text:** Slack's image dialog adds a preview and an alt text field. Clack edits the name only.
 - **PDFs, video, audio, snippets, posts:** getMainFileAction (boot-shared
@@ -118,7 +118,6 @@ for what it built):
   emails to the file details view. Clack's viewer shows images only; it has
   no PDF renderer, no MP4/AAC decoder and no file details view, and it never
   renders untrusted HTML in-process. They still open in the browser.
-- **Split view icon:** Slack draws `move-to-split-view` before "Open in split view". That glyph isn't in Clack's icon set, so the row has no icon.
 
 ## Deleted, the menu and the Files experiments (exp-media, 2026-11-10)
 
