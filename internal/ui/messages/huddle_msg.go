@@ -206,11 +206,15 @@ func (r *row) huddleJoinButton(gtx layout.Context, rc *rowCtx, hm huddleMsg, p i
 	if r.hmJoin.Clicked(gtx) && hm.room.Channel != "" {
 		r.handler.JoinHuddle(hm.room.Channel)
 	}
-	ts := textStyle{size: 13, weight: theme.Bold, col: rgb(0xffffff), lineH: 27}
+	ts := textStyle{size: 13, weight: theme.Bold, col: rgb(0xffffff)}
 	txt := "Join Huddle"
-	tw := measure(gtx, rc.th, ts, txt).X
+	tsz := measure(gtx, rc.th, ts, txt)
+	tw := tsz.X
 	bw := max(dp(gtx, 56), tw+2*dp(gtx, 12))
 	bh := dp(gtx, 28)
+	// inline-flex, align-items center over padding-bottom 1px: the
+	// label centred in the top 27px
+	ty := (bh - dp(gtx, 1) - tsz.Y) / 2
 	at(gtx, p.X, p.Y, func(gtx layout.Context) layout.Dimensions {
 		return r.hmJoin.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			bg := c.HuddleJoin
@@ -218,7 +222,7 @@ func (r *row) huddleJoinButton(gtx layout.Context, rc *rowCtx, hm huddleMsg, p i
 				bg = richview.Over(c.HuddleJoinHover, bg)
 			}
 			rrect(gtx.Ops, image.Rect(0, 0, bw, bh), dp(gtx, 4), bg)
-			at(gtx, (bw-tw)/2, 0, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
+			at(gtx, (bw-tw)/2, ty, func(gtx layout.Context) layout.Dimensions { return label(gtx, rc.th, ts, txt) })
 			pointer.CursorPointer.Add(gtx.Ops)
 			return layout.Dimensions{Size: image.Pt(bw, bh)}
 		})

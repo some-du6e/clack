@@ -269,9 +269,15 @@ func (a *App) handle(ev slack.Event) {
 		}
 	case "subteam_created", "subteam_updated", "subteam_members_changed", "subteam_self_added", "subteam_self_removed":
 		var e struct {
-			Subteam slack.Usergroup `json:"subteam"`
+			Subteam   slack.Usergroup `json:"subteam"`
+			SubteamID string          `json:"subteam_id"`
 		}
 		_ = json.Unmarshal(ev.Raw, &e)
+		if e.SubteamID != "" && (ev.Type == "subteam_self_added" || ev.Type == "subteam_self_removed") {
+			// subteamSelfAdded / subteamSelfRemoved: userGroupMembership
+			a.S.SetMyUsergroup(e.SubteamID, ev.Type == "subteam_self_added")
+			a.emit(Event{Type: "names"})
+		}
 		if e.Subteam.ID != "" && e.Subteam.Handle != "" {
 			a.S.Lock()
 			a.S.Usergroups[e.Subteam.ID] = e.Subteam.Handle

@@ -702,6 +702,12 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 		return err
 	}
 	a.S.SetUsergroups(gs)
+	// updateUserGroups: the viewer's groups (usergroups.membership), what
+	// a group mention's highlight follows (UserGroup fg3x isUserInGroup)
+	if mine, err := a.C.UsergroupMembership(ctx); err == nil {
+		a.S.SetMyUsergroups(mine)
+		a.emit(Event{Type: "names"}) // the visible messages re-read their mentions
+	}
 	return nil
 }
 
