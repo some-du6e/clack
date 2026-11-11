@@ -8,6 +8,7 @@ name: workflows-shots
 # Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run workflows-shots.yml --ref <branch>)
     paths:
       - "internal/core/workflows*.go"
       - "internal/fakeslack/workflows.go"

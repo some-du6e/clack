@@ -11,6 +11,7 @@ name: threads-audit
 # here talks to Slack's API or opens the Slack client.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run threads-audit.yml --ref <branch>)
     paths:
       - "internal/ui/messages/thread*.go"
       - "internal/ui/messages/reply_bar.go"
