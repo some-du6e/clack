@@ -91,3 +91,72 @@ func TestMessageUnfurlCard(t *testing.T) {
 		t.Errorf("no channel: %+v", a.Context)
 	}
 }
+
+// memberRes adds Slack's member names (MemberNamer) to kindRes: U1's
+// display name is "ally" and its real name a lone zero-width space, as
+// some people set theirs; U404 isn't loaded.
+type memberRes struct{ kindRes }
+
+func (memberRes) MemberName(id string) (string, bool) {
+	if id == "U1" {
+		return "ally", true
+	}
+	return "", false
+}
+
+func (memberRes) MemberAvatar(id string) string {
+	if id == "U1" {
+		return "https://avatars.test/U1-72.png"
+	}
+	return ""
+}
+
+// The slug's author is getMessageSenderNameFromState's member name
+// (MemberNamer), not the resolver's plain UserName.
+func TestMessageMentionLabelMemberName(t *testing.T) {
+	if label, _, _, _ := MessageMentionLabel(memberRes{}, "C1", "U1"); label != "ally in #general" {
+		t.Errorf("label %q, want the member's name", label)
+	}
+	if label, _, _, _ := MessageMentionLabel(memberRes{}, "C1", "U404"); label != "Unknown author in #general" {
+		t.Errorf("unknown member: %q", label)
+	}
+	if label, _, _, _ := MessageMentionLabel(kindRes{}, "C1", "U1"); label != "alice in #general" {
+		t.Errorf("without MemberNamer: %q", label)
+	}
+}
+
+// A message unfurl with an author_id draws the member: their name and
+// picture (CardMember), while author_name / author_icon (the server's
+// real name, a zero-width space here, and a 48px picture) stay as the
+// attachment had them for plugins.
+func TestMessageUnfurlCardMember(t *testing.T) {
+	card := func(r Resolver, author string) *Attachment {
+		var m slack.Message
+		raw := `{"ts":"2.0","text":"x","attachments":[{"id":1,"is_msg_unfurl":true,"author_id":"` + author + `","author_name":"​",
+			"author_subname":"​","author_icon":"https://avatars.test/U1-48.png","channel_id":"C1",
+			"from_url":"https://ws.slack.com/archives/C1/p1700000000000100","ts":"1700000000.000100","text":"hi"}]}`
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		for _, b := range FromMessage(r, &m).Blocks {
+			if b.Att != nil {
+				return b.Att
+			}
+		}
+		t.Fatal("no attachment block")
+		return nil
+	}
+	a := card(memberRes{}, "U1")
+	if !a.MsgCard || !a.CardMember || a.CardAuthor != "ally" || a.CardAvatar != "https://avatars.test/U1-72.png" {
+		t.Errorf("member card: member %v author %q avatar %q", a.CardMember, a.CardAuthor, a.CardAvatar)
+	}
+	if a.AuthorName != "​" || a.AuthorIcon != "https://avatars.test/U1-48.png" {
+		t.Errorf("the attachment's own author fields changed: %q %q", a.AuthorName, a.AuthorIcon)
+	}
+	if a := card(memberRes{}, "U404"); a.CardMember || a.CardAuthor != "" {
+		t.Errorf("unknown member: %+v", a)
+	}
+	if a := card(kindRes{}, "U1"); a.CardMember {
+		t.Error("a resolver without MemberNamer marked the card's member")
+	}
+}

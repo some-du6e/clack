@@ -255,19 +255,19 @@ func avatar(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	interactive := !p.Has("isInteractive") || p.Bool("isInteractive")
 
 	st.ptr.update(gtx, &st.org)
-	open := func() {
-		if userID == "" {
-			return
-		}
-		if f := envOf().OpenProfile; f != nil {
+	open := func(f func(image.Point, string)) {
+		if userID != "" && f != nil {
 			f(st.org.toWin(image.Pt(px+dp(gtx, 8), 0)), userID)
 		}
 	}
+	// BaseAvatar (client-boot xc3R): a click calls openProfile (the
+	// profile pane); the card is the hover card, with showCard on an
+	// interactive avatar of 36px or more
 	if interactive && st.ptr.clicked {
-		open()
+		open(envOf().OpenProfile)
 	}
-	if p.Bool("showCard") && st.ptr.hoverDue(gtx, hoverDelay) {
-		open()
+	if interactive && size >= 36 && p.Bool("showCard") && st.ptr.hoverDue(gtx, hoverDelay) {
+		open(envOf().OpenProfileCard)
 	}
 
 	r := image.Rectangle{Max: sz}
@@ -305,7 +305,7 @@ func profileHoverTrigger(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if id != "" {
 		side, _ := position(h.Props.StrOr("position", ""), popups.Below)
 		open := func() {
-			f := envOf().OpenProfile
+			f := envOf().OpenProfileCard
 			if f == nil {
 				return
 			}
@@ -320,7 +320,9 @@ func profileHoverTrigger(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			}
 			f(st.org.toWin(a), id)
 		}
-		if st.ptr.clicked || st.ptr.hoverDue(gtx, hoverDelay) {
+		// HoverCardTrigger (boot-shared 0oEe) opens on hover only; a click
+		// goes to the children's own handlers (openOnClick is off)
+		if st.ptr.hoverDue(gtx, hoverDelay) {
 			open()
 		}
 	}

@@ -7,7 +7,6 @@ import (
 	"log"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -918,41 +917,10 @@ func (a *App) BootErr() error {
 
 // ---- conversions ----
 
+// avatarURL is store.AvatarURL (message unfurl cards draw the same
+// picture, richtext.MemberNamer).
 func avatarURL(u *slack.User, size int, viewerTeam string) string {
-	p := u.Profile
-	switch {
-	case size <= 72 && p.Image72 != "":
-		return p.Image72
-	case size > 72 && size <= 192 && p.Image192 != "":
-		return p.Image192
-	case size > 192 && p.Image512 != "":
-		return p.Image512
-	}
-	if p.AvatarHash != "" {
-		return "https://ca.slack-edge.com/" + avatarTeam(u, viewerTeam) + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
-	}
-	if p.Image48 != "" {
-		return p.Image48
-	}
-	return "https://a.slack-edge.com/80588/img/avatars/ava_0001-" + strconv.Itoa(size) + ".png"
-}
-
-// avatarTeam is the team in Slack's avatar URLs (client-boot ppn0
-// computeImages, which builds every member's image_24…image_1024 as
-// <avatar base><team>-<id>-<avatar_hash>-<size>): an app or bot's
-// profile.team, else computeTeamId: team_id, else the org's id when the
-// user is the enterprise user itself, else the viewer's team.
-func avatarTeam(u *slack.User, viewerTeam string) string {
-	if (u.IsAppUser || u.IsBot) && u.Profile.Team != "" {
-		return u.Profile.Team
-	}
-	if u.TeamID != "" {
-		return u.TeamID
-	}
-	if eu := u.EnterpriseUser; eu != nil && eu.ID == u.ID && eu.EnterpriseID != "" {
-		return eu.EnterpriseID
-	}
-	return firstNonEmpty(viewerTeam, u.Profile.Team)
+	return store.AvatarURL(u, size, viewerTeam)
 }
 
 func (a *App) userOf(u *slack.User) User {

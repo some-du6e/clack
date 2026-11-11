@@ -434,8 +434,37 @@ func (a *App) OpenEmojiPicker(anchor image.Point, onPick func(name string)) {
 	a.Toast("Emoji picker arrives with ui-popups")
 }
 
-// OpenProfile opens a user's profile card.
+// OpenProfile is a click on a person: an @mention, a message sender's
+// name or avatar, a member row. Slack opens the member's profile in the
+// secondary pane, not a card (web client, 2026-11): MemberSlug's onClick
+// (boot-shared ld4x) navigates to toProfile; the sender's name (TwxH) and
+// avatars (client-boot xc3R BaseAvatar) call openProfile (rLTI, "Shows
+// the flexpane profile for humans"); Activity names, search's people,
+// the People directory, list cells, canvases and channel details call
+// showMemberProfile (boot-shared Pyak). Every one navigates to the
+// Profile view, which goes in the secondary container (client-boot +zKh
+// aK, L1Ms getTargetContainer). The profile card is the hover card only
+// (HoverCardTrigger 0oEe: openOnClick off, and a click closes it).
+//
+// A bot user (not Slackbot) keeps the app card: Slack's openProfile opens
+// the app's App details view (toAppDetails), which Clack doesn't have.
 func (a *App) OpenProfile(anchor image.Point, userID string) {
+	if userID == "" {
+		return
+	}
+	if c := a.Core(); c != nil {
+		if u, ok := c.User(userID); ok && u.IsBot && userID != "USLACKBOT" {
+			a.OpenProfileCard(anchor, userID)
+			return
+		}
+	}
+	a.OpenUserProfile(userID)
+}
+
+// OpenProfileCard opens the profile card as a click popover: Slack's
+// ProfileCardTrigger (boot-shared 4WSP), which the channel details' apps
+// rows use (By70 AppsSectionItem), and Clack's app card for bot users.
+func (a *App) OpenProfileCard(anchor image.Point, userID string) {
 	if mkProfileCard != nil {
 		a.ShowOverlay(mkProfileCard(a, anchor, userID))
 		return

@@ -39,7 +39,7 @@ type ProfileView struct {
 	asked   bool
 	missing bool
 
-	closeBtn                     widget.Clickable
+	closeBtn, backBtn            widget.Clickable // backBtn: FlexpaneBackButton (SecondaryBacker)
 	btn1, btn2, btn3, moreBtn    widget.Clickable // Message|Set a status, Huddle|View as, VIP, ⋮
 	editBtn, pronBtn, nameSndBtn widget.Clickable
 
@@ -58,6 +58,15 @@ type ProfileView struct {
 	viewingBox          image.Rectangle // the "Viewing As" button, pane coords
 	shieldTag           int
 	lastFrame           time.Time // gtx.Now of the last Layout (the overlay's liveness)
+}
+
+// SecondaryBacker is a Host whose secondary pane has a back stack: the
+// view a profile opened over (the ui root's App.SecondaryBack, Slack's
+// view.prev). ProfileView draws Slack's FlexpaneBackButton while
+// SecondaryBack reports true.
+type SecondaryBacker interface {
+	SecondaryBack() bool
+	GoSecondaryBack()
 }
 
 // NewProfileView builds the full profile pane for userID.
@@ -96,8 +105,18 @@ func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 	// header
 	hh := dp(gtx, 49)
 	pad := dp(gtx, 16)
-	at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, sz.X-pad-dp(gtx, 52)), hh)}
+	tx := pad
+	if b, ok := v.h.(SecondaryBacker); ok && b.SecondaryBack() {
+		// FlexpaneBackButton (DG1E) while the pane has a back stack, as
+		// in the thread header: 28px caret-left-full, margin-right 6 plus
+		// the header's 6px gap before the title
+		at(gtx, image.Pt(pad, (hh-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
+			return iconButton(gtx, &v.backBtn, "caret-left-full", 28, 20, cl.Fg2, cl.BgHover, 8)
+		})
+		tx += dp(gtx, 28) + dp(gtx, 6) + dp(gtx, 6)
+	}
+	at(gtx, image.Pt(tx, 0), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, sz.X-tx-dp(gtx, 52)), hh)}
 		return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 18, theme.Black, cl.Fg, "Profile")
 		})
@@ -127,6 +146,12 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 	if v.closeBtn.Clicked(gtx) {
 		v.setPreview(pfPreviewNone)
 		h.CloseSecondary()
+	}
+	if v.backBtn.Clicked(gtx) {
+		if b, isB := h.(SecondaryBacker); isB && b.SecondaryBack() {
+			v.setPreview(pfPreviewNone)
+			b.GoSecondaryBack()
+		}
 	}
 	if !ok {
 		return

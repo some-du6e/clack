@@ -37,8 +37,11 @@
 //     card starts the same 250ms close.
 //   - Moving from one trigger to another schedules the first card's close
 //     (250ms) and the second card's open (350ms) independently.
-//   - A click on the trigger closes the card (handleClick → close). Clack's
-//     click then opens the sticky click card.
+//   - A click on the trigger closes the card (handleClick → close), and
+//     the click goes on to the trigger's own handler: Slack's member
+//     links, names and avatars open the profile in the secondary pane
+//     (openProfile, showMemberProfile; Clack's App.OpenProfile), never a
+//     card (openOnClick is off).
 //   - Escape closes it from a document-level capture listener, before any
 //     focused element sees the key. The card never takes focus
 //     (shouldFocusAfterRender: false) and focusing a trigger doesn't open

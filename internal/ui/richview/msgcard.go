@@ -132,7 +132,19 @@ func cardTime(ts string) string {
 // padding and 4px gaps: the header row (36px avatar, 8px radius, then
 // author 15/900 and the compact time 12px ter on one baseline, and the
 // context line 13px ter), the message, its files (8px above). The whole
-// card opens the message.
+// card opens the message; hovering it (not its files) turns its border
+// otl-sec (.clickable__IV1j0:hover:not(:has(.media__H3NAK:hover))).
+//
+// With an author_id the avatar and name are the member's (CardMember):
+// AttachmentAuthorAvatar's ConnectedBaseAvatar (their own picture,
+// interactive, with the hover card) and AttachmentAuthorName's MemberLink
+// (their name under Slack's display-name rule in MemberName, whose
+// .c-member_name margin-right 4px adds to the byline's 4px), never the
+// attachment's author_name (the server's real name, a lone zero-width
+// space for some) or its 48px author_icon. The name, the time and the
+// context are underlined only on hover, as links in Slack (the
+// "underline links" preference doesn't reach them); the context line's
+// hover is .context__pPPwj a:hover's box-shadow: inset 0 -1px.
 func (l *lay) msgCard(b *richtext.Block, x, y, w int) int {
 	a := b.Att
 	p := &l.st.Palette
@@ -148,6 +160,7 @@ func (l *lay) msgCard(b *richtext.Block, x, y, w int) int {
 		cardTg = l.d.addTarget(target{kind: tLink, url: a.FromURL})
 		hi = len(l.d.hits)
 		l.d.hits = append(l.d.hits, hit{t: cardTg}) // rect set below; inner hits come later (on top)
+		l.d.boxes[bi].target, l.d.boxes[bi].hover = cardTg, p.BorderHover
 	}
 	cx, cw := x+bw+pad, w-2*(bw+pad)
 	cy := y + bw + pad
@@ -155,14 +168,18 @@ func (l *lay) msgCard(b *richtext.Block, x, y, w int) int {
 	// header row
 	tx := cx
 	headH := 0
-	if a.AuthorIcon != "" {
+	icon, name := a.AuthorIcon, a.AuthorName
+	if a.CardMember {
+		icon, name = a.CardAvatar, a.CardAuthor
+	}
+	if icon != "" {
 		s := l.dp(36)
 		var tg int16 = -1
 		if a.AuthorID != "" {
 			tg = l.d.addTarget(target{kind: tUser, id: a.AuthorID})
 			l.d.hits = append(l.d.hits, hit{r: image.Rect(cx, cy, cx+s, cy+s), t: tg})
 		}
-		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(cx, cy, cx+s, cy+s), url: a.AuthorIcon,
+		l.d.imgs = append(l.d.imgs, imgPrim{r: image.Rect(cx, cy, cx+s, cy+s), url: icon,
 			radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: s})
 		tx += s + l.dp(4) + gap
 		headH = s
@@ -183,15 +200,30 @@ func (l *lay) msgCard(b *richtext.Block, x, y, w int) int {
 		} else if a.AuthorLink != "" {
 			tg = l.d.addTarget(target{kind: tLink, url: a.AuthorLink, underline: true})
 		}
-		l.addText(a.AuthorName, &fs, nk, p.Text, 0, -1, tg)
+		l.addText(name, &fs, nk, p.Text, 0, -1, tg)
 		if t := cardTime(a.MsgTS); t != "" {
-			l.addPad(l.dpf(4), -1, nk)
+			if name != "" {
+				m := l.dpf(4) // .authorName__Z7I7M margin-right
+				if a.CardMember {
+					m += l.dpf(4) // MemberName's .c-member_name margin-right
+				}
+				l.addPad(m, -1, nk)
+			}
 			tk := l.faceFor(font.Font{Typeface: l.st.Face}, l.sp(12), 0)
 			var ttg int16 = -1
 			if a.FromURL != "" {
 				ttg = l.d.addTarget(target{kind: tLink, url: a.FromURL, underline: true})
 			}
+			i0 := len(l.items)
 			l.addText(t, &fs, tk, p.CardFooter, 0, -1, ttg)
+			// the full date and time after 300ms (AttachmentFooterTimestamp's
+			// compactTime tooltip, getFullTimestamp)
+			if full := fullTimestamp(a.MsgTS, time.Now()); full != "" {
+				l.d.tips = append(l.d.tips, full)
+				for i := i0; i < len(l.items); i++ {
+					l.items[i].tip = int16(len(l.d.tips))
+				}
+			}
 		}
 		h, _ := l.flow(tx, by, tw, &fs)
 		l.leave(ct)
@@ -206,17 +238,17 @@ func (l *lay) msgCard(b *richtext.Block, x, y, w int) int {
 		cs.maxLines, cs.ellipsis = 1, true
 		var tg int16 = -1
 		if a.ContextLink != "" {
-			tg = l.d.addTarget(target{kind: tLink, url: a.ContextLink, underline: true})
+			tg = l.d.addTarget(target{kind: tLink, url: a.ContextLink, inset: true})
 		}
 		k := l.faceFor(cs.face, cs.size, 0)
 		for _, sp := range a.Context {
 			switch sp.Kind {
 			case richtext.Channel:
-				icon := "hash"
+				ic := "hash"
 				if a.ContextLock {
-					icon = "lock"
+					ic = "lock"
 				}
-				l.addIcon(icon, l.dp(13), k, p.CardFooter, -1, tg)
+				l.addIcon(ic, l.dp(13), k, p.CardFooter, -1, tg)
 				l.addPad(l.dpf(2), -1, k)
 				l.addText(strings.TrimPrefix(sp.Text, "#"), &cs, k, p.CardFooter, 0, -1, tg)
 			default:
@@ -248,6 +280,9 @@ func (l *lay) msgCard(b *richtext.Block, x, y, w int) int {
 		l.leave(ct)
 		l.expandAt = nil
 		l.plainAdd("\n")
+	}
+	if cardTg >= 0 { // the card's own links hover it too; its files don't
+		l.d.boxes[bi].tgTo = int16(len(l.d.targets) - 1)
 	}
 	// media: the message's files
 	if len(b.Children) > 0 {

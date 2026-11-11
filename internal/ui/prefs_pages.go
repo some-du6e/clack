@@ -441,7 +441,9 @@ func (p *prefsModal) messagesPage(f *prefsForm) {
 	p.messageExample(f, dense, who, exampleMeg, parts)
 	f.y += f.gtx.Dp(16) // p.margin_top_100
 	f.para(prefsChain.T("To change your full or display name, head to {profileLink}.", "profileLink", pt("your profile")))
-	f.linkDo("own_profile", "your profile", func() { p.a.OpenProfile(p.a.PointerPos(), p.a.model().SelfID) })
+	// Clack keeps its card: Slack's link closes the dialog and opens the
+	// edit profile modal (prefs-dialog MessageNamesPref), which Clack lacks
+	f.linkDo("own_profile", "your profile", func() { p.a.OpenProfileCard(p.a.PointerPos(), p.a.model().SelfID) })
 	f.hr()
 	f.subheading("Additional options")
 	f.check("show_typing", "Display information about who is currently typing a message", "", true, false)

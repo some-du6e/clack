@@ -2,9 +2,10 @@ name: hover-card
 # The profile hover card: timing/placement unit tests, the router tests
 # per trigger location (messages, mentions, search results, channel
 # details members, Activity reactions), the member/app/external fixture
-# render tests on internal/fakeslack, and screenshots of the cards over
-# the whole client (GPU, synthetic fakeslack data only: nothing
-# here talks to Slack).
+# render tests on internal/fakeslack, a click on a person opening the
+# profile pane (from the channel, and over the thread with its back
+# button), and screenshots of the cards and panes over the whole client
+# (GPU, synthetic fakeslack data only: nothing here talks to Slack).
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run hover-card.yml --ref <branch>)
@@ -23,6 +24,9 @@ on:
       - "internal/core/app.go"
       - "internal/ui/richview/view.go"
       - "internal/ui/messages/row.go"
+      - "internal/ui/host.go"
+      - "internal/ui/secondary.go"
+      - "internal/ui/profile_click_test.go"
       - "internal/fakeslack/**"
       - ".github/workflows/hover-card.yml"
   workflow_dispatch:
@@ -59,7 +63,7 @@ jobs:
           go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views
           go test -count=1 -v -run 'TestRowHoverTarget' ./internal/ui/messages
           go test -count=1 -v -run 'TestMentionHoverCard' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane' ./internal/ui/
           ls -la "$HOVER_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

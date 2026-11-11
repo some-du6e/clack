@@ -253,6 +253,7 @@ type App struct {
 
 	split       splitState    // Slack's split view (split.go)
 	pane        string        // the view container being drawn or acted on: "" main, paneSplit
+	navSrc      navSource     // the main window's container being laid out (secondary.go)
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 }
@@ -869,6 +870,9 @@ func (a *App) layoutOverlays(gtx layout.Context) {
 		a.overlays[i] = nil
 	}
 	a.overlays, a.overlayPane = live, panes
+	src := a.navSrc
+	a.navSrc = srcOverlay // a click in a modal or menu navigates from it
+	defer func() { a.navSrc = src }()
 	for i, o := range a.overlays {
 		g := gtx
 		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}

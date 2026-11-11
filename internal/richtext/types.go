@@ -227,6 +227,16 @@ type Attachment struct {
 	Context     []Span
 	ContextLock bool
 	ContextLink string
+	// CardMember: a MsgCard whose AuthorID the Resolver knew (MemberNamer).
+	// Slack draws such a card's author as the member, not the attachment's
+	// author_name / author_icon (which the server fills from the real name
+	// and a 48px picture): CardAuthor is the member's name under Slack's
+	// display-name rule (AttachmentAuthorName's MemberLink, boot-shared
+	// jnrm/25Rg) and CardAvatar their own picture (AttachmentAuthorAvatar's
+	// ConnectedBaseAvatar, SMrF).
+	CardMember bool
+	CardAuthor string
+	CardAvatar string
 }
 
 // File is a file shared in a message.
@@ -257,6 +267,17 @@ type File struct {
 type Doc struct {
 	Blocks []Block
 	Jumbo  bool // emoji-only, render emoji 32px
+}
+
+// MemberNamer is an optional Resolver extension: a member's name as
+// Slack prints it for messages (getPrefCompliantMemberName, client-boot
+// vUCu: the display name, the real name under display_real_names, "Name
+// hidden" for someone the viewer hid; never the username) and their
+// picture for a 36px avatar. ok is false while the member isn't known
+// (the resolver asks for them and the Doc is rebuilt when they arrive).
+type MemberNamer interface {
+	MemberName(id string) (name string, ok bool)
+	MemberAvatar(id string) string
 }
 
 // BotNamer is an optional Resolver extension: a bot's name from the
