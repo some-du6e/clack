@@ -224,7 +224,16 @@ var experimentReads = map[string][]string{
 	"emoji_exact_match_boost":                                  on,
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
-	"session_channels_inline_diff": on,
+	"session_channels_inline_diff": on, "code_channels_naming": on, "session_channel_views": on,
+	"code_channels_auto_close": on,
+	// agents (agent.go; plan and task blocks: ui/blockkit/agent.go)
+	"agent_member_channel_count": on, "plan_block_coding_enhancements": on, "agent_streaming_slimmer_task_cards": on,
+	"app_thread_nugget_fe": on, "app_nugget_refinement": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	// read by code merged into ui without a listing here (TestExperimentReadsListed failed on ui 3a5a0373)
+	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on,
+	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
+	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
+	"lists_grid_todos": on, "rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
 }

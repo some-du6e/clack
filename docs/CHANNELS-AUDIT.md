@@ -124,7 +124,7 @@ Status: **matched** (no change needed), **fixed** (on branch `channels-e2e`), **
 #test (C0BUVSNLEA3) is a Slack Code channel (`properties.code_channel`, `agent_session`, `record_channel`). Viewed read-only on 2026-11-08 as a non-member:
 
 - Header: a `</>` tile where the star would be, the name, **no topic, no tab bar, no Huddle, no search**: only the facepile (9) and ⋮. Clack draws the normal channel header (now without star/bell/+ since it's a preview, but still Huddle, search and a Messages tab).
-- Sidebar: a "Code channels" section above Starred with the channel as "— test  Hack Club" (a dash glyph, then the workspace name in grey) while it's previewed. Clack shows no such section.
+- Sidebar: a "Code channels" section above Starred with the channel as "— test  Hack Club" (a dash glyph, then the workspace name in grey) while it's previewed. **Fixed** since (docs/CODE-CHANNELS.md "Sidebar"): Clack makes the section, names it as `code_channels_naming` says ("Code channels" / "Session channels"), draws the status dot and the row's "Public code channel · @agent" tooltip, and drops closed code channels (`code_channels_auto_close`, which also closes ones quiet for a week). The member count follows `agent_member_channel_count` (people only, or people and apps).
 - The join pane is the ordinary one (Details, Join Channel ▾).
 - Slack's tab label switch has cases Clack doesn't know: a PR-link tab (`prUrl`), "Resources" instead of "Files & links" (record channels), "Summary", "Record details", "Skills". Channel details render `RecordChannelDetails` first on About for record channels and hide "Created by".
 
