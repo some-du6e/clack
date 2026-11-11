@@ -227,7 +227,9 @@ var experimentReads = map[string][]string{
 	// drafts (backend.go: the sidebar's draft pencil)
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
-	"reskin_custom_responses": on, "show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
+	"show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
+	"system_messages_redesign_m1": on, "flat_message_heading_scale": on, "portable_content_composer": {"treatment"},
+	"message_actions_truncate": on, "agent_identity_overrides": on,
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
 	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,

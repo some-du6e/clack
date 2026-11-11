@@ -1,7 +1,6 @@
 package messages
 
 import (
-	"encoding/json"
 	"image"
 	"image/color"
 	"strings"
@@ -23,12 +22,17 @@ import (
 )
 
 // Slackbot custom responses (Customize Slack > Slackbot) as Slack's
-// reskin_custom_responses experiment draws them (modern.vendor, 2026-11):
+// client draws them. Build 4d0c78085232 no longer reads the
+// reskin_custom_responses experiment: every check below is unconditional
+// (BaseMessageAvatar, ffJE's isCustomResponse for the sender, t6PO's badge,
+// MessageLabels), so a group forced by Slack's overrides or a plugin's
+// patch of the experiments slice (BringBackSlackbot) changes nothing, here
+// as in Slack.
 //
 //   - REqS ZO isCustomResponse: subtype "slackbot_response" from
 //     USLACKBOT (core.Message.CustomResponse). Hack Club's arrive with no
 //     bot_profile, icons or username, so the client supplies the sender.
-//   - BaseMessageAvatar: `if (isCustomResponse(msg) && reskin) return
+//   - BaseMessageAvatar (vXN3): `if (isCustomResponse(msg)) return
 //     <TeamIcon id={selfTeamIds.enterpriseId || teamId} size className>`,
 //     a plain picture: no profile card, no click.
 //   - MessageSender: with Slackbot AI on, a Slackbot message is not
@@ -43,7 +47,12 @@ import (
 //     message was set up by a workspace admin." for workspace admins
 //     (Xfgd Zo), else "…by someone in your workspace.".
 //     .customResponseInfoBadgeIcon__mN56C{color:var(--dt_color-content-pry);margin-left:4px}
-//   - MessageLabels: the "Custom response" label line is dropped.
+//   - MessageLabels (meLQ): the custom_response label type renders no
+//     label line; the row gets c-message_kit__background--labels--
+//     custom_response, the #1d9bd11a tint (row.go).
+//   - ReplyBarAvatar (v8ac): Slackbot's avatar in the reply bar is the
+//     team icon (data-qa reply_bar_team_avatar) when the thread holds one
+//     of its custom responses (hasSlackbotCustomResponseInThread).
 //
 // Slackbot AI is an entitlement (ACCESS_SLACK_AI_SLACKBOT) Clack can't
 // read; Hack Club's client shows the team's name, so it is on there and
@@ -59,42 +68,12 @@ var (
 	teamAvatarClass = slackc.Class("c-team_icon c-message_kit__avatar").Tag("i")
 )
 
-// customReskin reports whether reskin_custom_responses is on: core's
-// group (experiments.getByUser), unless a plugin forces it through Taut's
-// experiments slice (BringBackSlackbot sets it "off").
-func customReskin(h Host) bool {
-	if t := tautOf(); t != nil && t.SlicePatched("experiments") {
-		if raw, ok := t.View("experiments", "reskin_custom_responses"); ok {
-			if g, ok := experimentGroup(raw); ok {
-				return g == "on"
-			}
-		}
-	}
-	return h.Core() != nil && h.Core().CustomResponseReskin()
-}
-
-// experimentGroup reads Slack's experiments-slice entry ({group: "on"})
-// or a bare group string.
-func experimentGroup(raw json.RawMessage) (string, bool) {
-	var e struct {
-		Group *string `json:"group"`
-	}
-	if json.Unmarshal(raw, &e) == nil && e.Group != nil {
-		return *e.Group, true
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil && s != "" {
-		return s, true
-	}
-	return "", false
-}
-
 // customResponse decides, every frame, whether the row is drawn as the
 // team (the experiment and the team icon can change at any time; Hack
 // Club's icon rotates).
 func (r *row) customResponse(rc *rowCtx) {
 	r.custom = false
-	if !r.m.CustomResponse() || rc.h.Core() == nil || !customReskin(rc.h) {
+	if !r.m.CustomResponse() || rc.h.Core() == nil {
 		return
 	}
 	r.custom = true
