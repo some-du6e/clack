@@ -24,7 +24,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The plugin Library is Preferences > Plugins > Browse: every official
+// The plugin Library is Preferences > Plugins > Plugin library: every official
 // Taut and Slick plugin from the Clack repo's `plugins` release
 // (internal/pluginlib), each built unmodified by its project's own build,
 // with one-click install and update. A plugin both systems have under one
@@ -89,7 +89,7 @@ type libraryHost struct {
 	open func(id string)
 }
 
-// libraryPage is Preferences > Plugins > Browse.
+// libraryPage is Preferences > Plugins > Plugin library (mode "browse").
 type libraryPage struct {
 	a       *App
 	s       *slickPage // drawing parts (cards, chips, badges, inputs) and its toolbar state
@@ -268,7 +268,7 @@ func (v *libraryPage) installEntry(e pluginlib.Entry, update bool) {
 			case update:
 				v.status[k] = "Updated."
 			default:
-				v.status[k] = "Installed. Turn it on under Installed."
+				v.status[k] = "Installed. Turn it on under Plugins."
 			}
 			a.Invalidate()
 		})
@@ -446,9 +446,9 @@ func (v *libraryPage) sourceLine() string {
 	return strings.Join(parts, " and ")
 }
 
-// body draws the Library under Plugins > Browse (the search box and chips
-// are the Plugins toolbar's): its head (Refresh, Update all), the intro,
-// and the rows by category. words is the shared search.
+// body draws the Library under Plugins > Plugin library (libraryScreen
+// draws its search box and chips above): its head (Refresh, Update all),
+// the intro, and the rows by category. words is the shared search.
 func (v *libraryPage) body(f *flow, words []string) {
 	p := v.s
 	k := p.k

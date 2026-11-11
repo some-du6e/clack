@@ -101,8 +101,9 @@ func testSettings() (*taut.Settings, *slick.Settings) {
 	return ts, ss
 }
 
-// Installed is one list of both systems' plugins: by shared category, by
-// name, each tagged with its system, with Slick's chips over both.
+// Preferences > Plugins is Taut's list over both systems' plugins: under
+// Taut's groups (a Slick plugin in a category Taut doesn't have is one of
+// the User plugins, as Taut lists any), by name, with Taut's pills.
 func TestUnifiedPlugins(t *testing.T) {
 	ts, ss := testSettings()
 	ps := unifiedPlugins(ts, ss, nil)
@@ -110,7 +111,7 @@ func TestUnifiedPlugins(t *testing.T) {
 	for _, u := range ps {
 		got = append(got, u.System+":"+u.ID+"@"+u.Category.Label)
 	}
-	want := "slick:restrictedChannelWarning@Message box taut:SilentTyping@Message box taut:Broken@People slick:quickJoin@Channels & sidebar slick:loose@Other"
+	want := "slick:restrictedChannelWarning@Message Box taut:SilentTyping@Message Box taut:Broken@People slick:loose@User plugins slick:quickJoin@User plugins"
 	if strings.Join(got, " ") != want {
 		t.Errorf("merged\n got %v\nwant %s", got, want)
 	}
@@ -118,15 +119,25 @@ func TestUnifiedPlugins(t *testing.T) {
 	for _, s := range unifiedSections(ps) {
 		secs = append(secs, s.Category.Label+"="+string(rune('0'+len(s.Plugins)))+"/"+string(rune('0'+s.On)))
 	}
-	if strings.Join(secs, " ") != "Message box=2/1 People=1/1 Channels & sidebar=1/1 Other=1/0" {
+	if strings.Join(secs, " ") != "Message Box=2/1 People=1/1 User plugins=2/1" {
 		t.Errorf("sections %v", secs)
 	}
+	// Taut's pills: All, Enabled, Disabled, Hack Club only (in the Hack
+	// Club Slack), User plugins
 	counts := map[string]int{}
-	for _, f := range unifiedFilters(ps) {
+	var order []string
+	for _, f := range unifiedFilters(ps, false) {
 		counts[f.ID] = f.Count
+		order = append(order, f.Label)
 	}
-	if counts["all"] != 5 || counts["on"] != 3 || counts["off"] != 2 || counts["user"] != 5 || counts["problems"] != 2 {
+	if counts["all"] != 5 || counts["enabled"] != 3 || counts["disabled"] != 2 || counts["user"] != 5 || len(counts) != 4 {
 		t.Errorf("filters %v", counts)
+	}
+	if got := strings.Join(order, ", "); got != "All, Enabled, Disabled, User plugins" {
+		t.Errorf("pills %q", got)
+	}
+	if fs := unifiedFilters(ps, true); len(fs) != 5 || fs[3].ID != "hack-club" || fs[3].Label != "Hack Club only" {
+		t.Errorf("Hack Club pills %v", fs)
 	}
 	ids := func(filter string, words ...string) string {
 		var out []string
@@ -138,12 +149,12 @@ func TestUnifiedPlugins(t *testing.T) {
 		return strings.Join(out, " ")
 	}
 	for _, c := range []struct{ filter, words, want string }{
-		{"problems", "", "Broken quickJoin"},
-		{"off", "", "restrictedChannelWarning loose"},
+		{"disabled", "", "restrictedChannelWarning loose"},
 		{"all", "taut", "SilentTyping Broken"},
 		{"all", "slick message", "restrictedChannelWarning"},
 		{"all", "jeremy", "Broken"},
-		{"on", "typing", "SilentTyping"},
+		{"enabled", "typing", "SilentTyping"},
+		{"hack-club", "", ""},
 	} {
 		if got := ids(c.filter, strings.Fields(c.words)...); got != c.want {
 			t.Errorf("%s %q: %q, want %q", c.filter, c.words, got, c.want)
@@ -250,9 +261,9 @@ func TestLibraryGroups(t *testing.T) {
 	}
 }
 
-// After Slack's tabs: a divider, Plugins, Themes (while Slick runs) and
-// Plugin settings, then the plugins' own tabs. The old ids land on their
-// new homes.
+// After Slack's tabs: a divider, Plugins and Themes (while Slick runs),
+// then the plugins' own tabs. The old ids land on their new homes: the
+// plugin library, or Plugins > Advanced for Plugin settings.
 func TestPluginNav(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
 	a.data.startTaut(a)
@@ -272,9 +283,9 @@ func TestPluginNav(t *testing.T) {
 		}
 		return strings.Join(ids, " ")
 	}
-	want := "plugins slick_themes plugin_settings"
+	want := "plugins slick_themes"
 	if a.Slick() == nil {
-		want = "plugins plugin_settings"
+		want = "plugins"
 	}
 	if got := nav(); got != want {
 		t.Errorf("tabs %q, want %q", got, want)
@@ -284,22 +295,26 @@ func TestPluginNav(t *testing.T) {
 		t.Errorf("with a plugin tab: %q", got)
 	}
 	a.tautTabs = nil
-	for _, c := range []struct{ target, section, mode string }{
-		{"library", pluginsTabID, "browse"},
-		{"slick_install", pluginsTabID, "browse"},
-		{"taut", pluginsTabID, "installed"},
-		{"slick_plugins", pluginsTabID, "installed"},
-		{"slick", pluginSettingsTabID, ""},
-		{"slick_themes", themesTabID, ""},
-		{"themes", "appearance", ""},
-		{"notifications", "notifications", ""},
+	for _, c := range []struct{ target, section, mode, screen string }{
+		{"library", pluginsTabID, "browse", "main"},
+		{"slick_install", pluginsTabID, "browse", "main"},
+		{"taut", pluginsTabID, "installed", "main"},
+		{"slick_plugins", pluginsTabID, "installed", "main"},
+		{pluginSettingsTabID, pluginsTabID, "installed", "advanced"},
+		{"slick", pluginsTabID, "installed", "advanced"},
+		{"slick_themes", themesTabID, "", ""},
+		{"themes", "appearance", "", ""},
+		{"notifications", "notifications", "", ""},
 	} {
+		if pm.plugins != nil {
+			pm.plugins.taut.go_("main", "")
+		}
 		pm.selectTab(c.target)
-		if pm.section != c.section || c.mode != "" && pm.plugins.mode != c.mode {
-			t.Errorf("%s: section %q mode %q, want %q %q", c.target, pm.section, pm.plugins.mode, c.section, c.mode)
+		if pm.section != c.section || c.mode != "" && pm.plugins.mode != c.mode || c.screen != "" && pm.plugins.taut.screen != c.screen {
+			t.Errorf("%s: section %q mode %q screen %q, want %q %q %q", c.target, pm.section, pm.plugins.mode, pm.plugins.taut.screen, c.section, c.mode, c.screen)
 		}
 	}
-	if !pm.ownSection(pluginsTabID) || !pm.ownSection(pluginSettingsTabID) || pm.ownSection("library") {
+	if !pm.ownSection(pluginsTabID) || pm.ownSection(pluginSettingsTabID) || pm.ownSection("library") {
 		t.Error("ownSection")
 	}
 }
@@ -311,5 +326,76 @@ func TestPluginKind(t *testing.T) {
 	}
 	if pluginKind(libTestPlugin("x")) != pluginlib.Taut {
 		t.Error("a Taut file isn't Taut's")
+	}
+}
+
+// Taut's groups, as its pluginGroup names them, for both systems.
+func TestTautGroups(t *testing.T) {
+	for _, c := range []struct {
+		sys, key string
+		user     bool
+		want     string
+	}{
+		{pluginlib.Taut, "messageBox", true, "Message Box"}, {pluginlib.Taut, "fun", false, "Fun"},
+		{pluginlib.Taut, "", true, "User plugins"}, {pluginlib.Taut, "", false, "Other"},
+		{pluginlib.Slick, "composer", true, "Message Box"}, {pluginlib.Slick, "channels", true, "User plugins"},
+		{pluginlib.Slick, "hackclub", true, "User plugins"}, {pluginlib.Slick, "privacy", true, "Privacy"},
+	} {
+		if got := tautGroup(c.sys, c.key, c.user).Label; got != c.want {
+			t.Errorf("%s %q user=%v: %q, want %q", c.sys, c.key, c.user, got, c.want)
+		}
+	}
+	var labels []string
+	for _, g := range tautGroups {
+		labels = append(labels, g.Label)
+	}
+	if got := strings.Join(labels, ", "); got != "Messages, Message Box, People, Privacy, App, Fun, User plugins, Other" {
+		t.Errorf("groups %q", got)
+	}
+}
+
+// A search that finds nothing installed suggests the library's plugins
+// that match it, leaving out what's installed already.
+func TestLibrarySuggestions(t *testing.T) {
+	a, _ := ttApp(t, t.TempDir())
+	ix := &pluginlib.Index{Schema: 1, Plugins: []pluginlib.Entry{
+		{System: pluginlib.Taut, ID: "OwlMode", Name: "Owl Mode", Description: "Lets you reply and react anonymously as the author of your owl confessions", Category: "messages", File: pluginlib.File{SHA256: "x"}},
+		{System: pluginlib.Taut, ID: "SilentTyping", Name: "Silent Typing", Description: "Hide your typing indicator", Category: "messageBox", File: pluginlib.File{SHA256: "x"}},
+		{System: pluginlib.Slick, ID: "silentTyping", Name: "SilentTyping", Description: "Hide typing", Category: "composer", File: pluginlib.File{SHA256: "x"}},
+		{System: pluginlib.Slick, ID: "oneko", Name: "Oneko", Description: "A cat that follows the cursor", Category: "appearance", File: pluginlib.File{SHA256: "x"}},
+	}}
+	installed := map[string]bool{pluginlib.Slick + "/silentTyping": true}
+	v := newLibraryPage(a, nil)
+	defer v.close()
+	if v.suggest([]string{"owl"}) != nil {
+		t.Error("suggestions before the library's index is there")
+	}
+	v.ix = ix
+	v.hosts = func(sys string) (libraryHost, bool) {
+		return libraryHost{installed: func(id string) (string, string) {
+			if installed[sys+"/"+id] {
+				return "x", ""
+			}
+			return "", ""
+		}}, true
+	}
+	names := func(words ...string) string {
+		var out []string
+		for _, g := range v.suggest(words) {
+			out = append(out, g.first().Name)
+		}
+		return strings.Join(out, ", ")
+	}
+	if got := names("owl"); got != "Owl Mode" {
+		t.Errorf("owl: %q", got)
+	}
+	if got := names("anonymously", "confessions"); got != "Owl Mode" {
+		t.Errorf("by description: %q", got)
+	}
+	if got := names("typing"); got != "" { // installed in Slick: the list has it
+		t.Errorf("typing suggests an installed plugin: %q", got)
+	}
+	if got := names("zzz"); got != "" {
+		t.Errorf("zzz: %q", got)
 	}
 }

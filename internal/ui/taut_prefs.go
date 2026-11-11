@@ -20,6 +20,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -28,14 +29,16 @@ import (
 )
 
 // Taut's settings screens, drawn natively from taut.Settings with the
-// metrics of Taut's own settings tab (its README and source). Clack shows
-// Taut and Slick as one plugin system (plugins_prefs.go): a Taut plugin's
-// row in Preferences > Plugins opens its page here (description, meta
-// line, "Turn on", errors, Settings with one control per option kind, a
-// reset button, React editors through Bridge.RenderEditor, and Data: the
-// plugin's data panel through Bridge.RenderDataPanel, clear data/cache,
-// update code, delete), and Preferences > Plugin settings opens the custom
-// CSS box, config.json and About.
+// metrics of Taut's own settings tab (its app/settings source). Clack shows
+// Taut and Slick as one plugin system (plugins_prefs.go), laid out like
+// Taut's tab: a Taut plugin's row in Preferences > Plugins opens its page
+// here (description, meta line, "Turn on", errors, Settings with one
+// control per option kind, a reset button, React editors through
+// Bridge.RenderEditor, and Data: the plugin's data panel through
+// Bridge.RenderDataPanel, clear data/cache, update code, delete), and the
+// rows above the list open Appearance (custom CSS), Advanced (installing,
+// the config folders, Slick's switch and URL updates, config.json) and
+// About (credits), for both systems.
 
 type tautPage struct {
 	a       *App
@@ -62,7 +65,9 @@ type tautPage struct {
 	cfgEd    widget.Editor
 	cfgInit  bool
 	cfgSaved string
-	cfgErr   string // config.json parse error (Not saved: …)
+	cfgStat  time.Time // when config.json's modification time was last looked at
+	cfgMod   time.Time // its modification time as last read
+	cfgErr   string    // config.json parse error (Not saved: …)
 	jsonEdit bool
 	jsonEd   widget.Editor
 	replace  bool
@@ -71,6 +76,10 @@ type tautPage struct {
 
 	gtxNow   layout.Context // this frame's context (editor events)
 	focusWas map[*widget.Editor]bool
+
+	slick   *slickPage              // Slick's state for Advanced (the Plugins tab's)
+	install *pluginInstaller        // Advanced > Install a plugin, for both systems
+	open    func(system, id string) // a plugin's own page, in its system (pluginsPage.openPlugin)
 }
 
 func newTautPage(a *App) *tautPage {
@@ -366,7 +375,9 @@ func (p *tautPage) layout(gtx layout.Context) layout.Dimensions {
 	})
 }
 
-// subScreen draws the back link and title.
+// subScreen is Taut's SubScreen: the back link (.taut-settings__back,
+// margin-bottom 12px), the title (.taut-settings__title: 18px 700) and
+// 16px above the content.
 func (p *tautPage) subScreen(f *flow, title, back string) {
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
 		d, c := p.linkButton(gtx, "back", back, "back")
@@ -410,7 +421,7 @@ func (p *tautPage) pluginScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	}
 	// Taut's PluginHeader: one small mrkdwn line, "Messages · by <authors> ·
 	// user plugin `Id`" (authors are mentions in the Hack Club Slack)
-	meta := []string{mrkdwnEscape(sharedCategory(pluginlib.Taut, pl.Category).Label)}
+	meta := []string{mrkdwnEscape(tautGroup(pluginlib.Taut, pl.Category, pl.IsUser).Label)}
 	if a := tautAuthorsMrkdwn(pl, t.IsHackClub()); a != "" {
 		meta = append(meta, "by "+a)
 	}
@@ -1023,7 +1034,11 @@ func (p *tautPage) importControls(f *flow, replacing string) {
 			return p.input(gtx, &p.urlEd, f.w-x-bw-gtx.Dp(8), gtx.Dp(28), "or paste a URL to a .js file", false)
 		})
 		at(gtx, image.Pt(f.w-bw, 0), image.Pt(bw, gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-			d, c := p.button(gtx, "importurl", p.busyLabel("import", "Import URL", "Importing..."), popups.BtnOutline)
+			label := p.busyLabel("import", "Import URL", "Importing...")
+			if replacing == "" && p.install != nil && p.install.busy {
+				label = "Importing..."
+			}
+			d, c := p.button(gtx, "importurl", label, popups.BtnOutline)
 			if c && strings.TrimSpace(p.urlEd.Text()) != "" {
 				p.importURL(replacing, done)
 			}
@@ -1033,8 +1048,31 @@ func (p *tautPage) importControls(f *flow, replacing string) {
 	})
 }
 
+// installed is a new install's end (Advanced > Install a plugin, either
+// system): its page, or why it failed under the controls.
+func (p *tautPage) installed(system, id string, err error) {
+	if err != nil {
+		p.errText, p.errFor = installErr(err), "import"
+		p.a.Invalidate()
+		return
+	}
+	p.urlEd.SetText("")
+	p.errText, p.errFor = "", ""
+	if id != "" && p.open != nil {
+		p.open(system, id)
+	} else if id != "" && system == pluginlib.Taut {
+		p.go_("plugin", id)
+	}
+	p.a.Invalidate()
+}
+
 func (p *tautPage) importURL(replacing string, done func(string)) {
 	u := strings.TrimSpace(p.urlEd.Text())
+	if replacing == "" && p.install != nil {
+		p.errText, p.errFor = "", "import"
+		p.install.installURL(u, p.installed)
+		return
+	}
 	var id string
 	p.run("import", func(ctx context.Context, t *taut.Taut) error {
 		var err error
@@ -1052,6 +1090,11 @@ func (p *tautPage) importURL(replacing string, done func(string)) {
 }
 
 func (p *tautPage) importFile(replacing string, done func(string)) {
+	if replacing == "" && p.install != nil {
+		p.errText, p.errFor = "", "import"
+		p.install.installFile(p.installed)
+		return
+	}
 	a := p.a
 	go func() {
 		files, err := a.pickFiles(".js,.mjs", false)
@@ -1130,23 +1173,130 @@ func (p *tautPage) editorBar(f *flow, k, saveLabel string, dirty bool, save, dis
 	})
 }
 
+// navRow is one of Taut's .taut-settings__nav rows: a 16px icon in the
+// 17px lead column (content-sec), the name (700, 20px line) with its
+// description on the same baseline after an 8px gap (13px/18,
+// content-sec, clipped), and a caret at the right (content-ter); the row
+// button pads 6px 4px, gap 8, radius 6, surf-ter on hover.
+func (p *tautPage) navRow(gtx layout.Context, k, icon, label, desc string) (layout.Dimensions, bool) {
+	cl := p.colors()
+	b := p.btn(k)
+	w := gtx.Constraints.Max.X
+	h := gtx.Dp(6 + 20 + 6)
+	d := clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
+		if hov {
+			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), cl.hover)
+		}
+	}, func(gtx layout.Context) layout.Dimensions {
+		i16 := gtx.Dp(16)
+		x := gtx.Dp(4)
+		at(gtx, image.Pt(x, (h-i16)/2), image.Pt(i16, i16), func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(icon)(gtx, 16, cl.fg2)
+		})
+		x += gtx.Dp(17 + 8)
+		right := w - gtx.Dp(4) - i16
+		nw := min(p.a.th.Measure(gtx, 15, theme.Bold, label), right-gtx.Dp(8)-x)
+		at(gtx, image.Pt(x, gtx.Dp(6)), image.Pt(nw+2, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
+			return p.label(gtx, 15, theme.Bold, cl.fg, label)
+		})
+		// a 13/18 line on the 15/20 name's baseline sits 2px lower
+		if dx := x + nw + gtx.Dp(8); desc != "" && right-gtx.Dp(8) > dx {
+			at(gtx, image.Pt(dx, gtx.Dp(6+2)), image.Pt(right-gtx.Dp(8)-dx, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg2, MaxLines: 1}, desc)
+			})
+		}
+		at(gtx, image.Pt(right, (h-i16)/2), image.Pt(i16, i16), func(gtx layout.Context) layout.Dimensions {
+			return icons.Get("caret-right")(gtx, 16, cl.fg3)
+		})
+		return layout.Dimensions{Size: image.Pt(w, h)}
+	})
+	return d, clicked(b)
+}
+
+// filterPill is Slack's FilterPill (api.elements.FilterPill): 28px, fully
+// round, 12px sides, 13px bold; outlined, or filled and blue while
+// active.
+func (p *tautPage) filterPill(gtx layout.Context, k, label string, active bool) (layout.Dimensions, bool) {
+	cl := p.colors()
+	b := p.btn(k)
+	h := gtx.Dp(28)
+	lw := p.a.th.Measure(gtx, 13, theme.Bold, label)
+	w := lw + 2*gtx.Dp(12)
+	d := clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
+		r := image.Rect(0, 0, w, h)
+		bg, fg, bd := cl.bg, cl.fg, cl.border
+		switch {
+		case active:
+			bg, fg, bd = cl.pillBg, cl.pillFg, cl.focus
+		case b.Hovered():
+			bg = p.a.th.C.BgHover
+		}
+		theme.RRect(gtx, r, h/2, bg)
+		theme.Border(gtx, r, h/2, gtx.Dp(1), bd)
+		at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(lw+2, h), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return p.label(gtx, 13, theme.Bold, fg, label) })
+		})
+		return layout.Dimensions{Size: r.Max}
+	})
+	return d, clicked(b)
+}
+
+// checkRow is a Slack prefs checkbox row (Taut's ConfigCheckbox:
+// Label type=inline around a Checkbox): the browser's 13px box, 12px, the
+// 15/22 label and its subtext under it (15/22, c-label__subtext).
+func (p *tautPage) checkRow(f *flow, k, label, subtext string, on, enabled bool, do func()) {
+	cl := p.colors()
+	b := p.btn(k)
+	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		w := f.w
+		lx := gtx.Dp(theme.NativeCheckSize + 12)
+		d := clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
+			fg, sub := cl.fg, cl.fg2
+			st := theme.NativeCheckState{On: on, Hover: enabled && b.Hovered()}
+			if !enabled {
+				st.Opacity, fg = .38, cl.fg3
+			}
+			at(gtx, image.Pt(0, gtx.Dp(4)), image.Pt(gtx.Dp(theme.NativeCheckSize), gtx.Dp(theme.NativeCheckSize)), func(gtx layout.Context) layout.Dimensions {
+				return theme.NativeCheck(gtx, p.a.th.Dark, st)
+			})
+			ld := at(gtx, image.Pt(lx, 0), image.Pt(w-lx, 1<<20), func(gtx layout.Context) layout.Dimensions {
+				return p.para(gtx, 15, 22, fg, label)
+			})
+			y := ld.Size.Y
+			if subtext != "" {
+				y += at(gtx, image.Pt(lx, y), image.Pt(w-lx, 1<<20), func(gtx layout.Context) layout.Dimensions {
+					return p.para(gtx, 15, 22, sub, subtext)
+				}).Size.Y
+			}
+			return layout.Dimensions{Size: image.Pt(w, max(y, gtx.Dp(22)))}
+		})
+		if clicked(b) && enabled {
+			do()
+			p.a.Invalidate()
+		}
+		return d
+	})
+	f.gap(4)
+}
+
 func (p *tautPage) appearanceScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
-	p.subScreen(f, "Taut custom CSS", "Plugin settings")
+	p.subScreen(f, "Appearance", "Plugins")
 	p.legend(f, "Custom CSS")
-	note := "Saved to `" + filepath.Join(t.Dir(), "user.css") + "`. It styles " + AppName + "'s Slack class names, like Taut's custom CSS."
+	// Taut's storageNote
+	note := "Saved to `" + filepath.Join(t.Dir(), "user.css") + "`."
 	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "css.note", note, false, cl.fg2) })
-	f.gap(20)
+	f.gap(20) // .taut-settings__field
 	if !p.cssInit {
 		p.cssEd.SetText(s.UserCSS)
 		p.cssSaved = s.UserCSS
 		p.cssInit = true
 	}
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
-		return p.input(gtx, &p.cssEd, f.w, gtx.Dp(420), "/* your CSS */", true)
+		return p.input(gtx, &p.cssEd, f.w, gtx.Dp(420), "", true)
 	})
 	f.gap(8)
-	if p.errText != "" {
+	if p.errText != "" && p.errFor == "css" {
 		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.alert(gtx, p.errText) })
 		f.gap(8)
 	}
@@ -1156,13 +1306,70 @@ func (p *tautPage) appearanceScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	}, func() { p.cssEd.SetText(p.cssSaved); p.errText = "" })
 }
 
+// advancedScreen is Taut's Advanced screen (screens.tsx AdvancedScreen):
+// Installation, the loader's own settings (Clack's: one row, Slick's
+// switch, while Slick is there), Install a plugin and config.json, in
+// Taut's words. Taut's Safe mode, What's new and Usage statistics sets
+// aren't here: Clack has none of them.
 func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
-	// installing is Preferences > Plugins' "Install from file or URL"
-	p.subScreen(f, "Taut config.json", "Plugin settings")
+	a := p.a
+	sl := a.Slick()
+	var ss slick.Settings
+	if sl != nil {
+		ss = sl.Settings()
+	}
+	p.subScreen(f, "Advanced", "Plugins")
+	// why nothing runs, when that's the case (InlineAlerts)
+	var alerts []string
+	if s.RuntimeError != "" {
+		alerts = append(alerts, "Plugins can't run: "+s.RuntimeError)
+	}
+	if ss.ConfigError != "" {
+		alerts = append(alerts, "Can't read Slick's settings.json: "+ss.ConfigError)
+	}
+	for _, m := range alerts {
+		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.alert(gtx, m) })
+		f.gap(8)
+	}
+	if len(alerts) > 0 {
+		f.gap(12)
+	}
+
+	p.legend(f, "Installation")
+	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		return p.para(gtx, 15, 22, cl.fg2, AppName+" v"+appVersion())
+	})
+	f.gap(8)
+	dir := "Config directory: `" + t.Dir() + "`"
+	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "adv.dir", dir, false, cl.fg) })
+	p.fieldGap(f)
+
+	if sl != nil && p.slick != nil { // Taut's LoaderSettings: the loader's checkboxes under its name
+		sp := p.slick
+		p.legend(f, AppName)
+		p.checkRow(f, "adv.slick.on", "Run Slick plugins", "", ss.Enabled, true, func() {
+			on := !ss.Enabled
+			sp.write(func(ctx context.Context, s *slick.Slick) error { return s.SetGlobalEnabled(ctx, on) })
+		})
+		p.fieldGap(f)
+	}
+
+	p.legend(f, "Install a plugin")
+	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		return p.para(gtx, 15, 22, cl.fg2, "Add a pre-built plugin from a .js file or a link. Only install code you trust! Plugins can do anything you can do in Slack.")
+	})
+	f.gap(14) // the <p>'s margin-bottom
+	p.importControls(f, "")
+	if p.errFor == "import" && p.errText != "" {
+		f.gap(8)
+		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.alert(gtx, p.errText) })
+	}
+	p.fieldGap(f)
+
 	p.legend(f, "config.json")
 	path := filepath.Join(t.Dir(), "config.json")
-	note := "Saved to `" + path + "`. Edits made here or in a text editor apply right away."
+	note := "Saved to `" + path + "`."
 	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "cfg.note", note, false, cl.fg2) })
 	f.gap(20)
 	if s.ConfigError != "" {
@@ -1171,15 +1378,7 @@ func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		})
 		f.gap(8)
 	}
-	if !p.cfgInit {
-		b, err := os.ReadFile(path)
-		if err != nil {
-			b = []byte("{}\n")
-		}
-		p.cfgEd.SetText(string(b))
-		p.cfgSaved = string(b)
-		p.cfgInit = true
-	}
+	p.followConfig(path)
 	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.input(gtx, &p.cfgEd, f.w, gtx.Dp(420), "", true) })
 	f.gap(8)
 	if e := p.cfgErr; e != "" || p.errFor == "cfg" && p.errText != "" {
@@ -1204,37 +1403,72 @@ func (p *tautPage) advancedScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		p.run("cfg", func(ctx context.Context, t *taut.Taut) error {
 			return t.WriteConfig(ctx, []byte(text))
 		}, func() { p.cfgSaved = text })
-	}, func() { p.cfgEd.SetText(p.cfgSaved); p.cfgErr = "" }, struct {
-		k, label string
-		do       func()
-	}{"reloadcfg", "Reload from disk", func() {
-		p.cfgInit, p.cfgErr = false, ""
-		p.run("cfg", func(ctx context.Context, t *taut.Taut) error { return t.ReloadConfig(ctx) }, nil)
-	}})
+	}, func() { p.cfgEd.SetText(p.cfgSaved); p.cfgErr = "" })
 }
 
+// followConfig keeps the editor on config.json as it is on disk until it's
+// edited, like Taut's DocumentEditor (it follows the outside text while it
+// isn't dirty).
+func (p *tautPage) followConfig(path string) {
+	now := time.Now()
+	if p.cfgInit && (p.cfgEd.Text() != p.cfgSaved || now.Sub(p.cfgStat) < 500*time.Millisecond) {
+		return
+	}
+	p.cfgStat = now
+	fi, err := os.Stat(path)
+	if p.cfgInit && err == nil && fi.ModTime().Equal(p.cfgMod) {
+		return
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		b = []byte("{}\n")
+	}
+	if fi != nil {
+		p.cfgMod = fi.ModTime()
+	}
+	if !p.cfgInit || string(b) != p.cfgSaved {
+		p.cfgEd.SetText(string(b))
+		p.cfgSaved = string(b)
+	}
+	p.cfgInit = true
+}
+
+// aboutScreen is Taut's About screen: Taut, then every installed plugin
+// with its authors (Slick's among them).
 func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
 	hc := t.IsHackClub()
-	p.subScreen(f, "About Taut", "Plugin settings")
+	p.subScreen(f, "About", "Plugins")
 	p.legend(f, "Taut")
-	about := tautMrkdwnHere("<https://github.com/jeremy46231/taut|Taut> is a client mod for Slack, made by <@U06UYA5GMB5> (GPLv3 or later). "+
-		AppName+" runs Taut plugins unmodified on its own native implementation of the Taut API; no Taut code is included. Come say hi in <#C0A057686SF>.", hc)
+	about := tautMrkdwnHere("A client mod for Slack, made by <@U06UYA5GMB5>. Come say hi in <#C0A057686SF>, and find the code on <https://github.com/jeremy46231/taut|GitHub> (GPLv3 or later). "+
+		AppName+" runs its plugins on its own implementation of Taut's API; no Taut code is included.", hc)
 	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "about", about, false, cl.fg) })
 	p.fieldGap(f)
 	p.legend(f, "Plugins")
 	n := 0
+	line := func(key, s string) {
+		if n > 0 {
+			f.gap(6) // .taut-settings__credits gap
+		}
+		n++
+		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, key, s, false, cl.fg) })
+	}
 	for _, c := range s.Categories {
 		for _, pl := range c.Plugins {
-			line := "*" + mrkdwnEscape(pl.Name) + "*"
+			l := "*" + mrkdwnEscape(pl.Name) + "*"
 			if a := tautAuthorsMrkdwn(pl, hc); a != "" {
-				line += " by " + a
+				l += " by " + a
 			}
-			if n > 0 {
-				f.gap(6)
+			line("credit."+pl.ID, l)
+		}
+	}
+	if sl := p.a.Slick(); sl != nil {
+		for _, pl := range sl.Settings().Plugins {
+			l := "*" + mrkdwnEscape(pl.Name) + "*"
+			if pl.Authors != "" {
+				l += " by " + tautMrkdwnHere(pl.Authors, hc)
 			}
-			n++
-			f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "credit."+pl.ID, line, false, cl.fg) })
+			line("credit.slick."+pl.ID, l)
 		}
 	}
 	if n == 0 {

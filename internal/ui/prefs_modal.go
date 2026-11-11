@@ -22,18 +22,17 @@ import (
 // prefs_sections.go and prefs_appearance.go). Changes apply immediately,
 // like Slack.
 type prefsModal struct {
-	a        *App
-	ra       prefsA // part A's editors and state (prefs_a.go)
-	clicks   map[string]*widget.Clickable
-	section  string
-	avail    pagePositioned // popups.AvailabilityPage when linked
-	org      originTracker
-	taut     *tautPage              // Taut's plugin pages and its custom CSS / config.json / About screens
-	slick    *slickPage             // Themes (Slick's page) and Plugin settings' Slick state
-	plugins  *pluginsPage           // Preferences > Plugins: installed (both systems) and Browse (the library)
-	settings *pluginSettingsPage    // Preferences > Plugin settings
-	tabSubs  map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
-	tabGen   int                    // App.tautGen the tab subs belong to
+	a       *App
+	ra      prefsA // part A's editors and state (prefs_a.go)
+	clicks  map[string]*widget.Clickable
+	section string
+	avail   pagePositioned // popups.AvailabilityPage when linked
+	org     originTracker
+	taut    *tautPage              // Taut's plugin pages and its custom CSS / config.json / About screens
+	slick   *slickPage             // Themes (Slick's page)
+	plugins *pluginsPage           // Preferences > Plugins: installed (both systems) and Browse (the library)
+	tabSubs map[string]*slackc.Sub // plugin Preferences tabs (RenderPreferencesTab)
+	tabGen  int                    // App.tautGen the tab subs belong to
 
 	pend      map[string]any // values just written, shown until the write lands
 	scroll    prefsScroll    // the page
@@ -176,8 +175,8 @@ func (p *prefsModal) close() {
 	}
 }
 
-// extraNav is Clack's plugin tabs (Plugins, Themes, Plugin settings: Taut
-// and Slick as one system, plugins_prefs.go) below a divider, then the
+// extraNav is Clack's plugin tabs (Plugins, Themes: Taut and Slick as one
+// system, plugins_prefs.go) below a divider, then the
 // plugins' own Preferences tabs, drawn after Slack's tabs[] (kept out of
 // tabsProps: plugins patching Tabs expect "advanced" last). Themes is
 // Slick's and only shows while Slick runs.
@@ -421,8 +420,6 @@ func (p *prefsModal) section1(gtx layout.Context, id string, org image.Point) la
 	switch prefsSection(id) {
 	case pluginsTabID:
 		return p.pluginsPage().layout(gtx)
-	case pluginSettingsTabID:
-		return p.settingsPage().layout(gtx)
 	case themesTabID:
 		return p.slickPage().layout(gtx, themesTabID)
 	}
@@ -453,17 +450,11 @@ func (p *prefsModal) pluginsPage() *pluginsPage {
 	return p.plugins
 }
 
-func (p *prefsModal) settingsPage() *pluginSettingsPage {
-	if p.settings == nil {
-		p.settings = &pluginSettingsPage{a: p.a, s: p.slickPage(), taut: p.tautPage()}
-	}
-	return p.settings
-}
-
 // selectTab switches the dialog to a tab, as a click on it would. Old
 // plugin tab ids land on their new home: "library" and "slick_install" on
-// Plugins > Browse; "taut:ID" and "slick_plugins:ID" open a plugin's own
-// page under Plugins (the Library's Settings button).
+// the plugin library; "taut:ID" and "slick_plugins:ID" open a plugin's own
+// page under Plugins (the Library's Settings button); Plugin settings and
+// Slick's settings tab open Plugins > Advanced.
 func (p *prefsModal) selectTab(target string) {
 	id, plugin, _ := strings.Cut(target, ":")
 	switch {
@@ -475,6 +466,8 @@ func (p *prefsModal) selectTab(target string) {
 		p.pluginsPage().setMode("browse")
 	case id == "taut" || id == "slick_plugins":
 		p.pluginsPage().setMode("installed")
+	case id == pluginSettingsTabID || id == "slick":
+		p.pluginsPage().openScreen("advanced")
 	}
 	p.section = prefsSection(id)
 	p.a.Invalidate()
