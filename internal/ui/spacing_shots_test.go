@@ -107,7 +107,7 @@ func TestSpacingShots(t *testing.T) {
 				}
 				save(name, img)
 				if e.a.secondary.kind == secThread { // the pane alone, like Karim's crop
-					w := int(e.a.secondary.width)
+					w := e.a.secondary.drawnW // the auto width is 0
 					save(name+"-pane", img.SubImage(image.Rect(e.sz.X-w, 0, e.sz.X, e.sz.Y)))
 				}
 			}

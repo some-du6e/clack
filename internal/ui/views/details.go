@@ -1310,7 +1310,7 @@ func (d *ChannelDetails) bodyArea(gtx C) D {
 	case cdApps:
 		items = d.appsItems()
 	case cdAutomations:
-		items = d.sectionItems("Workflows", "Automate routine tasks in this channel with workflows.", "Add a Workflow", &d.addWorkflow)
+		items = d.automationsItems() // details_automations.go
 	case cdTabs:
 		items = d.tabsItems()
 	case cdSettings:

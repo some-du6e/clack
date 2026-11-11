@@ -1060,7 +1060,7 @@ func (ix *Interactive) AppProfileOf(ctx context.Context, botID, appID string) (A
 // MessageContainer builds the blocks.actions container and service ids
 // of message m (attachment > 0: an attachment's blocks, attachment id).
 func (ix *Interactive) MessageContainer(m *Message, attachmentID int) BlockAction {
-	b := BlockAction{ServiceID: m.BotID}
+	b := BlockAction{ServiceID: m.BotID, FunctionExecutionID: m.FunctionExecutionID} // a workflow step's message (o9iI)
 	if m.BotProfile != nil {
 		b.AppID, b.ServiceTeamID = m.BotProfile.AppID, m.BotProfile.TeamID
 		if b.ServiceID == "" {
@@ -1096,53 +1096,6 @@ func (ix *Interactive) ViewContainer(v *View) BlockAction {
 // String is for logs (ids only, never contents).
 func (c ActionContainer) String() string {
 	return fmt.Sprintf("%s ch=%s ts=%s view=%s eph=%v", c.Type, c.ChannelID, c.MessageTS, c.ViewID, c.IsEphemeral)
-}
-
-// ---- workflow links ----
-
-// WorkflowTriggerID returns the trigger id of a workflow link
-// (https://slack.com/shortcuts/Ft…/…), or "".
-func WorkflowTriggerID(link string) string {
-	u, err := url.Parse(link)
-	if err != nil || !strings.HasSuffix(u.Hostname(), "slack.com") || !strings.Contains(u.Path, "/shortcuts/") {
-		return ""
-	}
-	for _, part := range strings.Split(u.Path, "/") {
-		if len(part) >= 10 && strings.HasPrefix(part, "Ft") {
-			return part
-		}
-	}
-	return ""
-}
-
-// ErrPretripAck means the workflow wants the user to confirm first
-// (Slack's speedbump); trip again with precheck false.
-var ErrPretripAck = errors.New("pretrip_ack_required")
-
-// TripWorkflow starts a link trigger (workflows.triggers.trip), like
-// Slack's workflowsTriggersTrip: context says where the link was
-// (message: channel and ts). With precheck, a workflow that needs
-// confirmation answers ErrPretripAck.
-func (ix *Interactive) TripWorkflow(ctx context.Context, link, channelID, messageTS string, precheck bool, inputs json.RawMessage) error {
-	c := map[string]string{"location": "markdown_link"}
-	if channelID != "" {
-		c = map[string]string{"location": "message", "channel_id": channelID, "message_ts": messageTS}
-	}
-	cb, _ := json.Marshal(c)
-	p := url.Values{"url": {link}, "context": {string(cb)}, "client_token": {ix.ClientToken()}, "run_precheck": {strconv.FormatBool(precheck)}}
-	if len(inputs) > 0 && string(inputs) != "null" {
-		p.Set("customizable_input_parameters", string(inputs))
-	}
-	err := ix.call(ctx, "workflows.triggers.trip", p, nil)
-	var se *slack.Error
-	if errors.As(err, &se) && se.Code == "pretrip_ack_required" {
-		err = ErrPretripAck
-	}
-	logCall("workflows.triggers.trip", "trigger="+WorkflowTriggerID(link), err)
-	if err == ErrPretripAck {
-		return err
-	}
-	return actionErr(err)
 }
 
 // ---- file_input ----

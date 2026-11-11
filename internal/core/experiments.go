@@ -220,6 +220,9 @@ var experimentReads = map[string][]string{
 	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
 	"channel_topic_purpose_setting_restrict_to_channel_managers": on, "channel_details_agents_apps_tab": on,
 	"list_channel_tab_show_view_name_fe": on, "lists_channel_tabs_default_view": on,
+	// secondary views, messages and workflows (merged from their branches)
+	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
+	"workflow_execution_window": on, "enable_wfb_ai_answer_step": on,
 	// drafts (backend.go: the sidebar's draft pencil)
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
