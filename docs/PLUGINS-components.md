@@ -756,7 +756,7 @@ Clack: popups/modal.go:`NewModal` (`ModalOpts{Title, Body, Buttons, EnterSubmits
 - `prepareAndSendMessage` (NativeAtChannel, OwlMode).
 - `getContextMenuTemplate` / `getMemberContextMenuTemplate` (§3.3).
 - `setUserPrefFetcher` / `setUserPrefByApi` / `initializeUserPrefs` for `msg_input_sticky_composer` (SlimMessageBox, the formatting-bar toggle → composer `SetShowFormatting`).
-- Experiments forced on/off: `reskin_custom_responses` (BringBackSlackbot), `find_in_thread` and `fe_long_threads_jump_to_latest` (ThreadJump). These gate whether Slack draws ThreadSearchButton and jump banners, so Clack must read them.
+- Experiments forced on/off: `reskin_custom_responses` (BringBackSlackbot), `find_in_thread` and `fe_long_threads_jump_to_latest` (ThreadJump). Slack's client no longer reads `reskin_custom_responses` and neither does Clack, so that override changes nothing; the other two gate whether Slack draws ThreadSearchButton and jump banners, so Clack must read them.
 - Slices patched: `messages` (ShowRealUser, Censorship), `members` (Nicknames → every name label), `channels` (PrivateChannel → sidebar, mentions, switcher), `readOnlyChannels` and `threadOnlyChannels` (RestrictedChannelWarning → roadblock), `searchResults` (Censorship), `huddleEvents` (HuddleActivity). Every native widget must read names, channels and messages **through** the patched store view, never straight from core.
 
 ---

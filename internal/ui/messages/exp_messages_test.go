@@ -347,7 +347,7 @@ func TestUnreadBannerLikeSlack(t *testing.T) {
 	if ub.closeR.Dx() != 4+20+8 {
 		t.Errorf("✕ is %dpx wide, want 32 (padding 0 8 0 4 round the 20px icon)", ub.closeR.Dx())
 	}
-	rt.press(centre(ub.msgR), false)
+	rt.press(centre(ub.msgR), true)
 	until(t, 3*time.Second, "conversations.mark", rt.frame, func() bool { return fs.CallCount("conversations.mark") > 0 })
 	if ub.text != "" {
 		t.Errorf("the banner still shows %q after marking read", ub.text)
@@ -369,7 +369,7 @@ func TestUnreadBannerLikeSlack(t *testing.T) {
 	if ub.icon != "arrow-up" || ui < 0 || ui >= v.s.visible[0] {
 		t.Fatalf("banner icon %s, New line item %d, visible from %d: want arrow-up with the line above", ub.icon, ui, v.s.visible[0])
 	}
-	rt.press(centre(ub.msgR), false)
+	rt.press(centre(ub.msgR), true)
 	for k := 0; k < 3; k++ {
 		rt.frame()
 	}
@@ -392,7 +392,7 @@ func TestLatestMessagesBanner(t *testing.T) {
 	v := NewChannelView(coreHost{app: app, th: theme.New(false)}, tExp)
 	v.Preview = true
 	rt := newRouted(v, 900, 130)
-	until(t, 5*time.Second, "the rows", rt.frame, func() bool { return len(v.s.rows) >= 7 })
+	until(t, 5*time.Second, "the messages", rt.frame, func() bool { return v.s.snap.loaded && len(v.s.snap.msgs) >= 7 })
 	v.s.list.Position = layout.Position{BeforeEnd: true, First: 0} // scrolled to the top
 	for k := 0; k < 3; k++ {
 		rt.frame()

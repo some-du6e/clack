@@ -282,15 +282,12 @@ func tsPositive(ts string) bool {
 }
 
 // pressedNow reports a pointer press on btn this frame (Slack acts on
-// mouse-down there): its newest press started now and hasn't ended.
+// mouse-down there): its newest press started now, whether or not the
+// release came in the same frame. The click that follows does nothing.
 func pressedNow(btn *widget.Clickable, gtx layout.Context) bool {
 	btn.Clicked(gtx) // run its events: History records the press
 	hs := btn.History()
-	if len(hs) == 0 {
-		return false
-	}
-	p := hs[len(hs)-1]
-	return p.Start.Equal(gtx.Now) && p.End.IsZero()
+	return len(hs) > 0 && hs[len(hs)-1].Start.Equal(gtx.Now)
 }
 
 // softShadow is a blurred rounded shadow under r (blur px): a few
