@@ -31,14 +31,14 @@ type i18nSurface struct {
 //     by one (Slack keys too: emoji keywords and the like);
 //   - "banner", a word of Slack's own es-ES "Verás un banner…" (the
 //     Advanced settings modal draws its descriptions word by word);
-//   - "Enter", the switcher footer's key chip: search's t("Enter") has no
-//     entry in the pinned bundles, so Slack shows the source too.
+//   - "Tab", the switcher footer's key chip: Slack's label is the
+//     literal "Tab" (es-ES translates the word only in other components).
 //
 // mainUnkeyed (the account's custom section names) counts as well.
 var surfacesUnkeyed = map[string]bool{
 	"build": true, "everyone": true, "from": true, "has": true, "new": true, "notes": true, "sync": true, "thanks": true,
 	"banner": true,
-	"Enter":  true,
+	"Tab":    true,
 }
 
 // surfaceMessage is ch's first loaded message (the menus and dialogs

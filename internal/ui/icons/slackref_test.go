@@ -5,6 +5,11 @@ package icons
 // them). The redrawn ones say so in redrawn.go; the formatting bar and
 // section-menu glyphs are in icons.go and slack.go.
 var slackRef = map[string]string{
+	// the search switcher's toolbar (search.go)
+	"quick-switch":       "quick-switch",
+	"posts":              "posts",
+	"app-directory":      "app-directory",
+	"surface":            "surface",
 	"cloud-offline":      "cloud-offline",
 	"spreadsheet":        "spreadsheet",
 	"kanban":             "kanban",

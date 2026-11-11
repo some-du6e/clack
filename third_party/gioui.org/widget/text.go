@@ -90,6 +90,10 @@ type textView struct {
 
 	index glyphIndex
 
+	// spans style parts of the text (Clack patch 6, clack_spans.go).
+	spans []TextSpan
+	span  spanScratch
+
 	caret struct {
 		// xoff is the offset to the current position when moving between lines.
 		xoff fixed.Int26_6
@@ -493,7 +497,9 @@ func (e *textView) layoutText(lt *text.Shaper) {
 	}
 	e.index.reset()
 	it := textIterator{viewport: image.Rectangle{Max: image.Point{X: math.MaxInt, Y: math.MaxInt}}}
-	if lt != nil {
+	if lt != nil && e.layoutSpans(lt, &it) {
+		// shaped in styled segments (Clack patch 6, clack_spans.go)
+	} else if lt != nil {
 		lt.Layout(e.params, r)
 		for {
 			g, ok := lt.NextGlyph()

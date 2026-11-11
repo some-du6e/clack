@@ -1,9 +1,11 @@
 name: login-shots
-# Renders the sign-in card headlessly at 1440x900 (link sign-in, Advanced,
-# each with an error showing) and uploads the screenshots; intro-video
-# renders the introduction (intro.go) frame by frame at 60 fps and encodes
-# it with ffmpeg: MP4s, a GIF, key frames and contact sheets. Synthetic
-# only: nothing here talks to Slack.
+# Renders the sign-in card headlessly in each of its states (default,
+# waiting, signing in, errors, Having trouble?, Advanced) at 1440x900,
+# 1280x720 and the 800x500 minimum, and uploads the screenshots;
+# intro-video renders the introduction (intro.go) and the sign-in card's
+# states (login_card.go) frame by frame at 60 fps and encodes them with
+# ffmpeg: MP4s, GIFs, key frames and contact sheets. Synthetic only:
+# nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run login-shots.yml --ref <branch>)
@@ -12,6 +14,8 @@ on:
       - "internal/ui/intro*.go"
       - "internal/ui/motion*.go"
       - "internal/ui/osmotion*"
+      - "internal/slack/magic*.go"
+      - "internal/slack/login*.go"
       - ".github/workflows/login-shots.yml"
   workflow_dispatch:
 
@@ -40,7 +44,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$LOGIN_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestLoginCardFits|TestSignInWithLink|TestStartLoginSuccess|TestIntro|TestSprings|TestClackPrefsTab' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestLoginCardFits|TestSignIn|TestStartLoginSuccess|TestIntro|TestSprings|TestClackPrefsTab' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -60,28 +64,31 @@ jobs:
           cache: true
       - name: gio deps, Mesa, ffmpeg
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS libgl1-mesa-dri libegl-mesa0 ffmpeg
-      - name: render the introduction (headless, 60 fps)
+      - name: render the introduction and the sign-in card (headless, 60 fps)
         env:
           INTRO_VIDEO_DIR: ${{ github.workspace }}/dist/intro
           LIBGL_ALWAYS_SOFTWARE: "1"
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$INTRO_VIDEO_DIR"
-          xvfb-run -a -s "-screen 0 1440x900x24" go test -count=1 -v -timeout 50m -run 'TestIntroVideo$' ./internal/ui/
+          xvfb-run -a -s "-screen 0 1440x900x24" go test -count=1 -v -timeout 50m -run 'TestIntroVideo$|TestSignInVideo$' ./internal/ui/
       - name: GIF, contact sheets
         if: ${{ !cancelled() }}
         working-directory: dist/intro
         run: |
           set -euo pipefail
           ls -la
-          for v in intro intro-replay intro-reduced; do
+          for v in intro intro-replay intro-reduced signin signin-reduced; do
             [ -f "$v.mp4" ] || continue
             ffprobe -v error -show_entries stream=width,height,r_frame_rate,nb_frames -of compact "$v.mp4"
             # four frames a second, eight across: the whole motion at a glance
             ffmpeg -y -loglevel error -i "$v.mp4" -vf "fps=4,scale=360:-1,tile=8x8" -frames:v 1 "$v-contact.png"
           done
           # a GIF small enough to share: 15 fps, 640 wide
-          ffmpeg -y -loglevel error -i intro.mp4 -vf "fps=15,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" intro.gif
+          for v in intro signin; do
+            [ -f "$v.mp4" ] || continue
+            ffmpeg -y -loglevel error -i "$v.mp4" -vf "fps=15,scale=640:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" "$v.gif"
+          done
           ls -la
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

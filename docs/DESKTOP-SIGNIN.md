@@ -437,6 +437,25 @@ Differences from the plan:
   below). The plan in §6 assumed a consistent desktop identity was safe, and
   that was wrong.
 
+Added 2026-11-11 (branch `signin-polish`, the sign-in card's redesign):
+
+- **The card waits.** "Open Slack sign-in" opens the page above in the
+  browser, and the card says "Waiting for Slack…" until a link arrives
+  from the OS (`App.SignInWithLink`), the clipboard or its field. A whole
+  link pasted into the empty field signs in without Enter.
+- **Clipboard on focus.** Like Slack desktop's `magicLoginOnFocusEpic`
+  (main.bundle.cjs @954278), Clack reads the clipboard when its window
+  comes to the front. If the text is a whole magic-login or login-v2 link
+  (Slack's `c4`/`c7`), Clack clears the clipboard (`c8`, @935978) and
+  signs in with it. Slack desktop does this whenever its main window is
+  focused. Clack does it on the sign-in screen only, the rule links from
+  the OS already follow. Slack's `isClipboardReadDisabled` setting
+  (default false, @1104280) has no Clack equivalent.
+- **Single sign-on.** An `auth_redir` that is https on a Slack host opens
+  in the browser and the card waits for the next link, as Slack desktop
+  does (`MAGIC_LOGIN_REDIRECT`, @952867). Clack used to show the URL in an
+  error. An `auth_redir` anywhere else is still refused.
+
 Still unverified (needs a live test, with consent, on a throwaway account):
 
 - whether `/ssb/first` really carries `api_token` for a fresh SSB session;
@@ -448,10 +467,11 @@ Still unverified (needs a live test, with consent, on a throwaway account):
   websocket and `/ssb/first`; not file downloads), whether Slack sends
   `DPoP-Nonce`, and what a rejection looks like (Clack stops on a 401 with
   a DPoP `WWW-Authenticate` or an error code containing `dpop`);
-- the sign-in page: Clack's "Open sign-in page" opens
+- the sign-in page: Clack's "Open Slack sign-in" opens
   `https://slack.com/ssb/add?s=1&v=4.53.276`, the URL Slack desktop's
-  "Sign in to Another Workspace" opens. Whether a first sign-in from there
-  ends in a copyable `slack://…/magic-login/…` link is unverified.
+  "Sign in to Another Workspace" opens (main.bundle.cjs @1033352). Whether
+  a first sign-in from there ends in a copyable `slack://…/magic-login/…`
+  link is unverified.
 
 ## Live test, 2026-11-08 (meclod, Hack Club Grid)
 
