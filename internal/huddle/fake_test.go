@@ -37,6 +37,17 @@ func TestFakeChime(t *testing.T) {
 	if st := s.State(); st.RoomID != "R0FAKEROOM" || st.ThreadTS != "1700000000.000100" || len(st.Participants) != 2 {
 		t.Fatalf("after join: %+v", st)
 	}
+	// captions on: startEventLog's rooms.startTranscription, then the
+	// "Captions have been turned on." event ahead of the transcripts
+	if err := s.StartEventLog(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if on, _ := s.EventLog(); !on {
+		t.Fatal("the event log isn't on after startEventLog")
+	}
+	if c := s.State().Captions; len(c) != 1 || !c[0].Start {
+		t.Fatalf("no START_TRANSCRIPTION first: %+v", c)
+	}
 
 	// wait for everything the fake sends to arrive
 	deadline := time.Now().Add(25 * time.Second)
@@ -55,7 +66,7 @@ func TestFakeChime(t *testing.T) {
 			}
 		}
 		_, gotPeer := peers.Load("reacji")
-		captioned := len(st.Captions) == 1 && st.Captions[0].UserID == fakeRemote && st.Captions[0].Text == "Hello from the fake huddle"
+		captioned := len(st.Captions) == 2 && st.Captions[0].Start && st.Captions[1].UserID == fakeRemote && st.Captions[1].Text == "Hello from the fake huddle"
 		return captioned && remote != nil && remote.InMedia && remote.Speaking(time.Now()) && remote.Reaction == "tada" &&
 			gotPeer && frame.Img != nil && frame.Seq >= 3 && f.peak.Load() > 50 && s.audioInCount() > 20
 	}

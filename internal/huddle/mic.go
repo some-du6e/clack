@@ -160,6 +160,7 @@ func (s *Session) openMic() {
 	}
 	old := s.micDev
 	s.micDev = dev
+	s.selfAudio = false // a new microphone: detect its sound afresh
 	s.mu.Unlock()
 	if old != nil {
 		old.Close()

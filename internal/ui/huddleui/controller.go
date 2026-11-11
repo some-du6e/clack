@@ -4,9 +4,11 @@
 // HuddlePeerTile (tile.go), screen shares and video, captions and the call
 // controls). The media session itself is internal/huddle.
 //
-// Like Slack, a start or join runs the startEventLog thunk, leaving runs
-// stopHuddle and stopEventLog, and notices go through enqueueHuddleToast,
-// so Taut plugins that patch them (HuddleActivity) see the same calls.
+// Like Slack, a start or join runs the startHuddle thunk, leaving runs
+// stopHuddle (which runs stopEventLog first), turning captions on and off
+// runs startEventLog / stopEventLog (the transcription), and notices go
+// through enqueueHuddleToast, so Taut plugins that patch them
+// (BetterHuddles, HuddleActivity) see the same calls.
 package huddleui
 
 import (
@@ -15,6 +17,7 @@ import (
 	"errors"
 	"image"
 	"log"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -89,10 +92,11 @@ type Controller struct {
 	pwin *previewWindow // the join preview (preview.go)
 	// pending is the preview's Join: the mic and camera to start with
 	pending *pendingJoin
-	card    cardState // its sidebar card (invitecard.go)
-	ring    ringState // the invite sound (ring.go)
-	hand    handState // auto-lowering your raised hand (hand.go)
-	av      avState   // the lock watcher, global mute and lounge music (avprefs.go)
+	multi   *pendingMulti // HuddleMultiDeviceModal's answer (multidevice.go)
+	card    cardState     // its sidebar card (invitecard.go)
+	ring    ringState     // the invite sound (ring.go)
+	hand    handState     // auto-lowering your raised hand (hand.go)
+	av      avState       // the lock watcher, global mute and lounge music (avprefs.go)
 	bar     barState
 	dock    dockState // the docked bar (dock.go)
 	hdr     map[string]*headerState
@@ -100,6 +104,18 @@ type Controller struct {
 
 	dockOrigin image.Point // the dock's window position (menus anchor to it)
 	hideSelf   atomic.Bool // the ⋯ menu's "Hide self-view" (isHidingSelf)
+
+	alone  aloneTimer // huddles_alone_timeout (alone.go)
+	tick   sessionTick
+	mic    micAlerts   // the mic button's permission, NoAudioDetected, "You’re muted." (micalerts.go)
+	popout popoutState // huddles_screenshare_popout (popout.go)
+}
+
+// sessionTick is what onSession compares between changes.
+type sessionTick struct {
+	s         *huddle.Session
+	connected bool
+	remote    int
 }
 
 // New builds the controller. Call Handle with core events.
@@ -160,6 +176,20 @@ func (c *Controller) changed() {
 	c.mu.Unlock()
 	c.h.Invalidate()
 	if w != nil {
+		w.invalidate()
+	}
+	c.invalidatePopouts()
+}
+
+// invalidatePopouts redraws the screen share popouts (popout.go).
+func (c *Controller) invalidatePopouts() {
+	c.popout.mu.Lock()
+	ws := make([]*window, 0, len(c.popout.wins))
+	for _, w := range c.popout.wins {
+		ws = append(ws, w)
+	}
+	c.popout.mu.Unlock()
+	for _, w := range ws {
 		w.invalidate()
 	}
 }
@@ -236,13 +266,16 @@ func (c *Controller) Start(channel string) {
 		if pj != nil { // the join preview's mic toggle
 			o.Muted = pj.muted
 		}
-		_, err := taut.Dispatch(ctx, tt, "startEventLog", huddleArgs{ChannelID: channel},
-			func(ctx context.Context, _ huddleArgs) (any, error) {
-				var err error
-				s, err = huddle.Join(ctx, o, channel)
-				return nil, err
-			})
-		if err == nil && s == nil { // a plugin swallowed the start
+		c.mu.Lock()
+		if pm := c.multi; pm != nil && pm.channel == channel { // "Use both devices"
+			o.MultiDevice = pm.multi
+		}
+		c.multi = nil
+		c.mu.Unlock()
+		// startHuddle's media start (its thunk is Begin's, for plugins);
+		// Slack's startEventLog is the captions' transcription, not this
+		s, err := huddle.Join(ctx, o, channel)
+		if err == nil && s == nil {
 			err = errors.New("the huddle didn't start")
 		}
 		c.mu.Lock()
@@ -291,9 +324,10 @@ const (
 // startArgs is Slack's startHuddle thunk argument (what BetterHuddles
 // reads: channelId, muted, entryPoint).
 type startArgs struct {
-	ChannelID  string `json:"channelId,omitempty"`
-	Muted      bool   `json:"muted"`
-	EntryPoint string `json:"entryPoint,omitempty"`
+	ChannelID     string `json:"channelId,omitempty"`
+	Muted         bool   `json:"muted"`
+	EntryPoint    string `json:"entryPoint,omitempty"`
+	IsMultiDevice bool   `json:"isMultiDevice,omitempty"`
 }
 
 // Begin is a start or join click (or shortcut, or /huddle) in channel:
@@ -301,7 +335,7 @@ type startArgs struct {
 // sees every start, with Start as the native. Without a wrapper it's
 // Start. Any goroutine.
 func (c *Controller) Begin(channel, entry string) {
-	if channel == "" {
+	if channel == "" || !c.SupportsHuddles(channel) {
 		return
 	}
 	// startHuddleWithShoutyRooster: the warning first, then the join
@@ -312,6 +346,21 @@ func (c *Controller) Begin(channel, entry string) {
 			return
 		}
 		c.begin(channel, entry)
+	}
+	// startHuddleWithConfirmation: in a huddle you're in on another device,
+	// huddles_multi_device asks first, and its answer skips the preview
+	// (overrideJoinPreview) and sets isMultiDevice
+	if devices, others := c.huddlingElsewhere(channel); devices > 0 && c.group(ExpMultiDevice, "treatment") {
+		c.multiDeviceModal(devices, others, func(multi bool) {
+			c.mu.Lock()
+			c.multi = &pendingMulti{channel: channel, multi: multi}
+			c.mu.Unlock()
+			join := func() { c.begin(channel, entry) }
+			if !c.shoutyRooster(channel, join) {
+				join()
+			}
+		})
+		return
 	}
 	if c.shoutyRooster(channel, start) {
 		return
@@ -371,7 +420,10 @@ func (c *Controller) begin(channel, entry string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_, err := taut.Dispatch(ctx, tt, "startHuddle", startArgs{ChannelID: channel, EntryPoint: entry},
+		c.mu.Lock()
+		multi := c.multi != nil && c.multi.channel == channel && c.multi.multi
+		c.mu.Unlock()
+		_, err := taut.Dispatch(ctx, tt, "startHuddle", startArgs{ChannelID: channel, EntryPoint: entry, IsMultiDevice: multi},
 			func(ctx context.Context, a startArgs) (any, error) {
 				if a.ChannelID != "" {
 					c.post(func() { c.Start(a.ChannelID) })
@@ -460,6 +512,8 @@ func (c *Controller) onSession() {
 	s := c.Session()
 	if s != nil {
 		st := s.State()
+		c.syncExperiments(s)
+		c.peersTick(s, st)
 		c.autoLowerHand(s, st)
 		c.musicTick(s, st)
 		if tt := c.taut(); tt != nil {
@@ -484,8 +538,35 @@ func (c *Controller) onSession() {
 	if w != nil {
 		w.invalidate()
 	}
+	c.invalidatePopouts()
 	if main {
 		c.h.Invalidate()
+	}
+}
+
+// peersTick runs what Slack's HuddleActionDispatcher does on
+// onSelfJoined (the alone timer starts; huddles_cc_by_default turns
+// captions on) and on onPeerJoined / onPeerLeft (the alone check).
+func (c *Controller) peersTick(s *huddle.Session, st huddle.State) {
+	c.mu.Lock()
+	t := &c.tick
+	if t.s != s {
+		*t = sessionTick{s: s}
+	}
+	joined := !t.connected && st.Phase == huddle.Connected
+	if joined {
+		t.connected = true
+	}
+	n := remotePeers(st)
+	peers := n != t.remote
+	t.remote = n
+	c.mu.Unlock()
+	if joined {
+		c.startAloneTimer(s)
+		c.startMicChecks(s)
+		c.captionsByDefault(s)
+	} else if peers {
+		go c.checkAlone()
 	}
 }
 
@@ -496,12 +577,16 @@ func (c *Controller) Leave() {
 	}
 }
 
+// leave is Slack's stopHuddle ("Stop the active huddle"): its first step
+// is stopEventLog (the captions' transcription, when on), then the
+// media leave.
 func (c *Controller) leave(s *huddle.Session) {
 	tt := c.taut()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_, _ = taut.Dispatch(ctx, tt, "stopHuddle", huddleArgs{HuddleID: s.RoomID()},
 		func(ctx context.Context, _ huddleArgs) (any, error) {
+			c.stopEventLog(ctx, s)
 			s.Leave()
 			return nil, nil
 		})
@@ -521,14 +606,13 @@ func (c *Controller) ended(err error) {
 		return
 	}
 	c.sessionEnded()
+	c.stopAloneTimer()
+	c.stopMicChecks()
+	c.closePopouts()
 	if w != nil {
 		w.close()
 	}
 	tt := c.taut()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, _ = taut.Dispatch(ctx, tt, "stopEventLog", huddleArgs{HuddleID: s.RoomID()},
-		func(ctx context.Context, _ huddleArgs) (any, error) { return nil, nil })
 	if tt != nil {
 		tt.SetActiveHuddle("", "", "", "")
 		tt.SetHuddleReaction(nil)
@@ -779,9 +863,68 @@ func (c *Controller) channelTitle(ch string) string {
 	return ch
 }
 
-// orderedParticipants is the state's list with speakers and you stable.
+// orderedParticipants is the state's list with you first.
 func orderedParticipants(st huddle.State) []huddle.Participant {
 	ps := append([]huddle.Participant(nil), st.Participants...)
 	sort.SliceStable(ps, func(i, j int) bool { return ps[i].Self && !ps[j].Self })
 	return ps
+}
+
+// galleryOrder is the order Slack's huddle grid takes its tiles in
+// (gantry-v2-async-client-boot-shared S5fM): you, then raised hands,
+// people sharing their screen, cameras on, then everyone else (each once,
+// at its first place). Raised hands go by when they went up: the
+// stickyEmoji entries sorted by field_timestamp_ms (OGIR xP: an entry
+// without one, from a client without huddles_awareness_timestamp, sorts
+// last), or under huddles_raised_hand_queue by the queue (R6cm:
+// field_timestamp_ms, else when Clack received it).
+func galleryOrder(st huddle.State, queue bool) []huddle.Participant {
+	ps := orderedParticipants(st)
+	raisedKey := func(p huddle.Participant) int64 {
+		switch {
+		case p.StickerTS != 0:
+			return p.StickerTS
+		case queue && !p.StickerAt.IsZero():
+			return p.StickerAt.UnixMilli()
+		}
+		return math.MaxInt64
+	}
+	var hands []huddle.Participant
+	for _, p := range ps {
+		if !p.Self && isHand(p.Sticker) {
+			hands = append(hands, p)
+		}
+	}
+	sort.SliceStable(hands, func(i, j int) bool { return raisedKey(hands[i]) < raisedKey(hands[j]) })
+	var out []huddle.Participant
+	seen := map[string]bool{}
+	add := func(p huddle.Participant) {
+		k := p.UserID + "/" + p.AttendeeID
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, p)
+		}
+	}
+	for _, p := range ps {
+		if p.Self {
+			add(p)
+		}
+	}
+	for _, p := range hands {
+		add(p)
+	}
+	for _, p := range ps {
+		if p.Sharing {
+			add(p)
+		}
+	}
+	for _, p := range ps {
+		if p.Camera {
+			add(p)
+		}
+	}
+	for _, p := range ps {
+		add(p)
+	}
+	return out
 }
