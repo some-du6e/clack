@@ -350,6 +350,7 @@ type Activity struct {
 	sel      core.ActivityItem
 	selKey   string
 	selOK    bool
+	selSec   bool // the item opened in the app's secondary column (activity_panel.go)
 	selDesc  actDesc
 	open     widget.Clickable
 	nameBtn  widget.Clickable
@@ -585,6 +586,7 @@ func (v *Activity) update(gtx C) {
 	if v.closeBtn.Clicked(gtx) {
 		v.selOK = false
 	}
+	v.followSecondary() // activity_panel.go
 	if v.selOK && v.sel.Channel != "" && (v.open.Clicked(gtx) || v.nameBtn.Clicked(gtx)) {
 		if v.selDesc.thread != "" {
 			v.h.OpenThread(v.sel.Channel, v.selDesc.thread)
@@ -1310,7 +1312,7 @@ func (v *Activity) head(gtx C) D {
 func (v *Activity) main(gtx C) D {
 	size := gtx.Constraints.Max
 	listW := size.X
-	if v.selOK {
+	if v.paneInView() {
 		listW = size.X / 2
 	}
 	func() {
@@ -1319,7 +1321,7 @@ func (v *Activity) main(gtx C) D {
 		defer clipMax(g).Pop()
 		v.listArea(g)
 	}()
-	if v.selOK {
+	if v.paneInView() {
 		pr := image.Rect(listW, 0, size.X, size.Y)
 		func() {
 			defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
@@ -1828,6 +1830,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		case v.splitOpen(it, key): // a split modifier click (activity_split.go)
 		case v.selOK && v.selKey == key:
 			v.selOK = false
+			v.closeSecondary()
 		default:
 			v.choose(it, key, r)
 		}
@@ -2189,6 +2192,7 @@ func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
 			lo.OpenListItem(it.ListID, it.ListRecord)
 		}
 	}
+	v.openSecondary() // activity_panel.go: beside the inbox, in the app's column
 	v.prevList.Position = layout.Position{}
 	v.dirty = true
 }
@@ -2642,6 +2646,12 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 							}
 							return layout.Inset{Left: centreGap}.Layout(gtx, func(gtx C) D {
 								gtx.Constraints = layout.Exact(image.Pt(locW, gtx.Dp(18)))
+								if hov || r.key == v.focusKey && v.kbFocused {
+									// __locationReserved (hovered or focused):
+									// padding-inline-end 32px under the actions
+									gtx.Constraints.Max.X = max(0, locW-gtx.Dp(32))
+									gtx.Constraints.Min.X = gtx.Constraints.Max.X
+								}
 								w := wReg
 								if unread {
 									w = wBold

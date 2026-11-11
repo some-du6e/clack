@@ -72,7 +72,14 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Mod+N", "Compose", func(a *App) { a.compose() })
 	add("Mod+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
 	add("Mod+,", "Preferences", func(a *App) { a.openPrefs() })
-	add("Mod+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
+	add("Mod+.", "Toggle the right pane", func(a *App) {
+		if a.activityTab() && a.secondary.open() {
+			// the Activity tab's mod+. (N8Zu): close the item beside the inbox
+			a.CloseSecondary()
+			return
+		}
+		a.toggleSecondary()
+	})
 	add("Mod+/", "Keyboard shortcuts", func(a *App) { a.toggleKeyboardShortcuts() }) // shortcuts_pane.go
 	// Slack's zoom (View > Actual Size, Zoom In, Zoom Out): Cmd/Ctrl with
 	// 0, = or + (shifted or not, by keyboard), -.
@@ -110,6 +117,12 @@ func (a *App) defaultShortcuts() *shortcuts {
 		if a.threadEsc() { // the thread pane's: mark it read, else close it (secondary.go)
 			return
 		}
+		if a.activityTab() && a.secondary.open() && !a.secondary.keyFocus {
+			// the Activity tab's esc (N8Zu ClientKeyboardShortcutsActivity):
+			// the item beside the inbox closes
+			a.CloseSecondary()
+			return
+		}
 		// the Unreads page's Esc (UnreadsList onMarkReadKeyCommand, a
 		// global key command there)
 		if v, ok := a.views[a.router.Current()].(interface{ MarkActiveRead() bool }); ok && v.MarkActiveRead() {
@@ -142,15 +155,22 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 		}
 	}
 	if !slackc.ModalOpen() { // a modal dialog makes the page inert: its keys go to it
+		activity := a.activityTab()
 		for _, sc := range s.list {
 			if escOwned && sc.name == key.NameEscape && sc.mods == 0 {
+				continue
+			}
+			if activity && sc.mods&key.ModAlt != 0 && (sc.name == key.NameUpArrow || sc.name == key.NameDownArrow) {
+				// Slack's global keymap (PG1Q) has no option+up/down: on the
+				// Activity tab they're the inbox's previous / next item
+				// (N8Zu), which the Activity view takes
 				continue
 			}
 			filters = append(filters, key.Filter{Name: sc.name, Required: sc.mods, Optional: 0})
 		}
 	}
 	globalKeys := slackc.WantsGlobal("keydown") || slackc.WantsGlobal("keyup")
-	a.secondary.keyFocus = a.threadPaneFocused(gtx) // for the thread pane's Escape
+	a.secondary.keyFocus = a.threadPaneFocused(gtx) || a.secChannelFocused(gtx) // for the pane's Escape
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {
