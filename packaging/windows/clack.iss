@@ -69,7 +69,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; is rude. Clack doesn't need it: the registration below always puts Clack
 ; in Windows' "Select an app to open this 'slack' link" box, and Clack.exe
 ; takes the legacy key by itself when no other app has slack://.
-Name: "slackurl"; Description: "Make Clack the default for slack:// links (Windows keeps an app you picked with Always)"; GroupDescription: "Links:"; Flags: unchecked
+Name: "slackurl"; Description: "Make Clack the default for slack:// links"; GroupDescription: "Links:"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
