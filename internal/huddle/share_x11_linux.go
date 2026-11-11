@@ -15,6 +15,8 @@ void *clack_x11_cap_new(unsigned long win, int x, int y, int w, int h, int curso
 int clack_x11_cap_grab(void *p, uint8_t *y, uint8_t *uv, int dw, int dh, int *nw, int *nh);
 void clack_x11_cap_free(void *p);
 void clack_x11_panel(void *display, unsigned long win, int x, int y, int w, int h);
+unsigned long clack_x11_test_window(int x, int y, int w, int h, unsigned long pixel);
+void clack_x11_test_window_close(unsigned long win);
 */
 import "C"
 
@@ -242,4 +244,20 @@ func setupPanel(h PanelHandle, r image.Rectangle) {
 		return
 	}
 	C.clack_x11_panel(h.Display, C.ulong(h.View), C.int(r.Min.X), C.int(r.Min.Y), C.int(r.Dx()), C.int(r.Dy()))
+}
+
+// x11TestWindow maps a window painted rgb (0xRRGGBB) at r on the
+// backend's connection and returns its closer (TestX11ScreenCapture).
+func (b *x11Shares) x11TestWindow(r image.Rectangle, rgb uint32) (func(), error) {
+	x11Mu.Lock()
+	defer x11Mu.Unlock()
+	if err := b.open(); err != nil {
+		return nil, err
+	}
+	w := C.clack_x11_test_window(C.int(r.Min.X), C.int(r.Min.Y), C.int(r.Dx()), C.int(r.Dy()), C.ulong(rgb))
+	return func() {
+		x11Mu.Lock()
+		C.clack_x11_test_window_close(w)
+		x11Mu.Unlock()
+	}, nil
 }

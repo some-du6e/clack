@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/color"
 	"os"
-	"os/exec"
 	"testing"
 	"time"
 
@@ -75,17 +74,20 @@ func TestOpenH264Encode(t *testing.T) {
 	}
 }
 
-// TestX11ScreenCapture runs under Xvfb: the root is painted one colour
-// (xsetroot), the picker lists the screen with a thumbnail of it, and
-// capture delivers NV12 frames of it.
+// TestX11ScreenCapture runs under Xvfb: a window painted one colour
+// covers the screen, the picker lists the screen with a thumbnail of it,
+// and capture delivers NV12 frames of it.
 func TestX11ScreenCapture(t *testing.T) {
 	if os.Getenv("DISPLAY") == "" || waylandSession() {
 		t.Skip("no X11 display")
 	}
-	if err := exec.Command("xsetroot", "-solid", "#1264a3").Run(); err != nil {
-		t.Skipf("xsetroot: %v", err)
-	}
 	b := &x11Shares{}
+	closeWin, err := b.x11TestWindow(image.Rect(0, 0, 4000, 4000), 0x1264a3)
+	if err != nil {
+		t.Skipf("X display: %v", err)
+	}
+	defer closeWin()
+	time.Sleep(200 * time.Millisecond)
 	l, err := b.List(ShareScreen, ShareThumbSize)
 	if err != nil || len(l) == 0 {
 		t.Fatalf("screens: %v %+v", err, l)

@@ -530,3 +530,23 @@ void clack_x11_panel(void *display, unsigned long win, int x, int y, int w, int 
 	XMoveResizeWindow(d, win, x, y, w, h);
 	XFlush(d);
 }
+
+// clack_x11_test_window maps an override-redirect window painted pixel at
+// x, y w×h on this backend's connection (tests: something known to grab).
+unsigned long clack_x11_test_window(int x, int y, int w, int h, unsigned long pixel) {
+	XSetWindowAttributes a;
+	memset(&a, 0, sizeof a);
+	a.override_redirect = True;
+	a.background_pixel = pixel;
+	Window win = XCreateWindow(dpy, DefaultRootWindow(dpy), x, y, w, h, 0, CopyFromParent, InputOutput, CopyFromParent,
+	                           CWOverrideRedirect | CWBackPixel, &a);
+	XMapRaised(dpy, win);
+	XClearWindow(dpy, win);
+	XSync(dpy, False);
+	return win;
+}
+
+void clack_x11_test_window_close(unsigned long win) {
+	XDestroyWindow(dpy, win);
+	XSync(dpy, False);
+}
