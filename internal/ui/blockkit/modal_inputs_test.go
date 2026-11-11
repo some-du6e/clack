@@ -4,8 +4,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"gioui.org/f32"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -64,6 +67,7 @@ func TestModalTextInputsEdit(t *testing.T) {
 	}
 	focus := func(s *Stack, bid string) {
 		t.Helper()
+		reveal(e, func() FieldInfo { return field(s, bid) })
 		f := field(s, bid)
 		if f.R.Empty() {
 			t.Fatalf("%s wasn't drawn: %+v", bid, f)
@@ -91,13 +95,13 @@ func TestModalTextInputsEdit(t *testing.T) {
 	e.keyMods(key.NameDeleteBackward, mod)
 	if onMac {
 		check(s, "note", "Cmd+Backspace", "")
-		e.typeText("pinned tes")
+		typeIn(e, "pinned tes")
 		e.keyMods(key.NameDeleteBackward, key.ModShortcutAlt)
 		check(s, "note", "Option+Backspace", "pinned ")
 	} else {
 		check(s, "note", "Ctrl+Backspace", "pinned ")
 	}
-	e.typeText("abc")
+	typeIn(e, "abc")
 	check(s, "note", "typing", "pinned abc")
 	e.keyMods(key.NameHome, 0)
 	e.keyMods(key.NameDeleteForward, 0)
@@ -108,11 +112,11 @@ func TestModalTextInputsEdit(t *testing.T) {
 	} else {
 		check(s, "note", "Ctrl+Delete", " abc")
 	}
-	e.typeText("x")
+	typeIn(e, "x")
 	e.keyMods("A", mod)
 	e.keyMods(key.NameDeleteBackward, 0)
 	check(s, "note", "select all, Backspace", "")
-	e.typeText("new note")
+	typeIn(e, "new note")
 	check(s, "note", "typing", "new note")
 	// the app's views.update of the same view: same block, same field
 	s.update(v)
@@ -153,10 +157,47 @@ func TestModalTextInputsEdit(t *testing.T) {
 		e.keyMods("A", mod)
 		e.keyMods(key.NameDeleteBackward, 0)
 		check(s, c.bid, "select all, Backspace", "")
-		e.typeText(c.typed)
+		typeIn(e, c.typed)
 		check(s, c.bid, "typing", c.typed)
 	}
 	e.closeOverlays()
+}
+
+// typeIn types s the way the platform's input method does (Gio's
+// Window.EditorInsert): the edit at the selection, then the caret after
+// the inserted text. bkEnv.typeText sends the edit alone, which leaves
+// Gio's caret before the text.
+func typeIn(e *bkEnv, s string) {
+	sel := e.r.EditorState().Selection.Range
+	start := min(sel.Start, sel.End)
+	pos := start + utf8.RuneCountInString(s)
+	e.r.Queue(key.EditEvent{Range: sel, Text: s}, key.SelectionEvent{Start: pos, End: pos})
+	e.frame()
+	e.frame()
+}
+
+// reveal scrolls the modal's body until the field is inside it (a modal
+// is at most 640px tall: the every-field view scrolls).
+func reveal(e *bkEnv, field func() FieldInfo) {
+	for range 12 {
+		f := field()
+		dy := 0
+		switch {
+		case f.R.Max.Y > f.Body.Max.Y:
+			dy = f.R.Max.Y - f.Body.Max.Y + 8
+		case f.R.Min.Y < f.Body.Min.Y:
+			dy = f.R.Min.Y - f.Body.Min.Y - 8
+		}
+		if dy == 0 || f.Body.Empty() {
+			return
+		}
+		c := center(f.Body)
+		pt := f32.Pt(float32(c.X), float32(c.Y))
+		e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: pt},
+			pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: pt, Scroll: f32.Pt(0, float32(dy))})
+		e.frame()
+		e.frame()
+	}
 }
 
 // submittedState is the state param of every views.submit the fake app got.

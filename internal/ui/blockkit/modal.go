@@ -63,6 +63,9 @@ type Stack struct {
 	prev  event.Tag
 	ptr   int
 	wasUp bool
+	// bodyR is the body's visible box in window coordinates as last
+	// drawn (ModalFields)
+	bodyR image.Rectangle
 }
 
 func newStack(h Host, v *core.View) *Stack {
@@ -557,6 +560,7 @@ func (s *Stack) Layout(gtx C) D {
 			// the surface's window origin as drawn (ModalFields; a
 			// theme's card border isn't counted)
 			sf.org = pos.Add(image.Pt(dp(gtx, 24), y+dp(gtx, 8)-s.list.Position.Offset))
+			s.bodyR = image.Rectangle{Min: pos.Add(image.Pt(0, y)), Max: pos.Add(image.Pt(mw, y+bodyH))}
 			if s.busy {
 				rrect(gtx, image.Rect(0, 0, mw, bodyH), 0, theme.WithAlpha(cl.Bg, 0xb0))
 				sp := dp(gtx, 32)

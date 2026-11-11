@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gioui.org/io/key"
 
@@ -64,6 +65,24 @@ func TestBlockKitModalFieldsEdit(t *testing.T) {
 	}
 	focus := func(bid string) {
 		t.Helper()
+		// the every-field modal scrolls: Slack's caps at 640px
+		for range 12 {
+			f := field(bid)
+			dy := 0
+			switch {
+			case f.R.Max.Y > f.Body.Max.Y:
+				dy = f.R.Max.Y - f.Body.Max.Y + 8
+			case f.R.Min.Y < f.Body.Min.Y:
+				dy = f.R.Min.Y - f.Body.Min.Y - 8
+			}
+			if dy == 0 || f.Body.Empty() {
+				break
+			}
+			e.scroll(center2(f.Body), float32(dy))
+			for range 3 {
+				e.frame()
+			}
+		}
 		f := field(bid)
 		e.click(center2(f.R))
 		for range 4 {
@@ -83,8 +102,10 @@ func TestBlockKitModalFieldsEdit(t *testing.T) {
 			t.Errorf("%s, %s: the field holds %q, want %q", bid, step, got, want)
 		}
 	}
-	typ := func(s string) {
-		e.typeText(s)
+	typ := func(s string) { // as Gio's Window.EditorInsert: the edit, then the caret after it
+		sel := e.r.EditorState().Selection.Range
+		pos := min(sel.Start, sel.End) + utf8.RuneCountInString(s)
+		e.r.Queue(key.EditEvent{Range: sel, Text: s}, key.SelectionEvent{Start: pos, End: pos})
 		for range 3 {
 			e.frame()
 		}

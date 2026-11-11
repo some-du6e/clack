@@ -52,6 +52,7 @@ type FieldInfo struct {
 	Value                   string          // its state value as views.submit sends it ("" for null)
 	Focused                 bool            // it had the key focus in the last frame
 	R                       image.Rectangle // window coordinates, as last drawn
+	Body                    image.Rectangle // the modal body's visible box (R may be scrolled out of it)
 }
 
 // ModalFields lists the text inputs of the open modal's top view, in
@@ -97,6 +98,7 @@ func (s *Stack) fields() []FieldInfo {
 		}
 		org := sf.org.Add(w.pos)
 		fi.R = image.Rectangle{Min: org, Max: org.Add(w.box)}
+		fi.Body = s.bodyR
 		out = append(out, fi)
 	}
 	return out
