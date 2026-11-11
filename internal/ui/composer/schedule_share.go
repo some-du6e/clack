@@ -38,18 +38,18 @@ func ShareScheduleMenu(h Host, anchor image.Rectangle, ch string, pick func(time
 	if exp {
 		desc = shareChannelMember(h, ch, true)
 	}
-	items := []popups.MenuItem{{Header: "Schedule message"}}
+	items := []popups.MenuItem{{Key: popups.LabelKey("Schedule message"), Header: draftsNS.T("Schedule message")}}
 	for _, r := range scheduleRows(now, h24, exp, nil) {
 		r := r
 		if r.opt == schedCustom {
-			items = append(items, popups.Sep(), popups.MenuItem{Label: r.label, Do: custom})
+			items = append(items, popups.Sep(), popups.MenuItem{Key: r.key, Label: r.label, Do: custom})
 			continue
 		}
 		sub := ""
 		if desc != nil && !desc.sameTZ {
-			sub = schedClock(r.at.In(desc.loc), h24) + " for " + desc.name
+			sub = draftsNS.T("{memberTime} for {memberName}", "memberTime", schedClock(r.at.In(desc.loc), h24), "memberName", desc.name)
 		}
-		items = append(items, popups.MenuItem{Label: r.label, Subtitle: sub, Do: func() {
+		items = append(items, popups.MenuItem{Key: r.key, Label: r.label, Subtitle: sub, Do: func() {
 			at := r.at
 			if r.opt < schedMember { // the time for the option when it is picked
 				at = schedStandardTime(r.opt, time.Now())

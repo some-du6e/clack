@@ -66,12 +66,38 @@ var fakeTriggers = []fakeTrigger{
 	{TriggerStandup, "scheduled", "Weekly standup", "Posts the standup thread every Monday", "Wf0FAKE03", "Standup"},
 }
 
+// WorkflowManagers are the fixture workflows' collaborators (the
+// workflow details view's "Managed by").
+var WorkflowManagers = []string{ProfileID, AdminID}
+
+// workflowSteps are Run deploy's steps (workflow_details.steps and
+// functions.workflows.get): a form, a branch on its answer (a coloured
+// branch and the fallback) and a pin; made-up titles.
+func workflowSteps() []map[string]any {
+	fn := func(cb, title string) map[string]any {
+		return map[string]any{"callback_id": cb, "title": title, "type": "builtin"}
+	}
+	return []map[string]any{
+		{"id": "s1", "function": fn("open_form", "Collect deploy details")},
+		{"id": "s2", "type": "switch", "function": fn("switch_step", "Check the environment"), "steps": []map[string]any{
+			{"id": "s2a", "expression": map[string]any{"op": "eq"}, "display_config": map[string]any{"color": "jade"},
+				"steps": []map[string]any{{"id": "s2a1", "function": fn("send_message", "Announce the deploy")}}},
+			{"id": "s2b", "steps": []map[string]any{{"id": "s2b1", "function": fn("send_dm", "Ask for approval")}}},
+		}},
+		{"id": "s3", "function": fn("add_pin", "Pin the deploy note")},
+	}
+}
+
 func (t fakeTrigger) json(base string) map[string]any {
+	details := map[string]any{"is_published": true, "bot_user_id": "U" + t.wf[2:]}
+	if t.id == TriggerDeploy {
+		details["collaborators"], details["steps"] = WorkflowManagers, workflowSteps()
+	}
 	m := map[string]any{"id": t.id, "type": t.typ, "name": t.name, "description": t.desc, "owning_team_id": TeamID,
 		"workflow": map[string]any{"id": "Fn" + t.wf[2:], "workflow_id": t.wf, "app_id": "A" + t.wf[2:], "title": t.title,
 			"app": map[string]any{"id": "A" + t.wf[2:], "name": t.title, "is_workflow_app": true,
 				"icons": map[string]string{"image_36": base + "img/wf-" + t.id + "-36.png", "image_72": base + "img/wf-" + t.id + "-72.png"}}},
-		"workflow_details": map[string]any{"is_published": true, "bot_user_id": "U" + t.wf[2:]}}
+		"workflow_details": details}
 	if t.typ == "shortcut" {
 		m["shortcut_url"] = WorkflowLink(t.id)
 		m["share_url"] = WorkflowShareURL(t.id)
@@ -322,6 +348,19 @@ func (s *Server) handleWorkflows(method string, f url.Values, edge map[string]js
 			return map[string]any{"ok": false, "error": "invalid_url"}, true
 		}
 		return ok(), true
+	case "functions.workflows.get":
+		for _, t := range fakeTriggers {
+			if t.wf != f.Get("workflow_id") {
+				continue
+			}
+			w := map[string]any{"id": t.wf, "title": t.title, "description": t.desc, "is_published": true, "bot_user_id": "U" + t.wf[2:],
+				"icons": map[string]string{"image_96": s.URL + "img/wf-" + t.id + "-96.png"}}
+			if t.id == TriggerDeploy {
+				w["collaborators"], w["steps"] = WorkflowManagers, workflowSteps()
+			}
+			return ok("workflow", w), true
+		}
+		return map[string]any{"ok": false, "error": "workflow_not_found"}, true
 	case "workflows.triggers.info":
 		for _, t := range fakeTriggers {
 			if t.id == f.Get("trigger_id") {

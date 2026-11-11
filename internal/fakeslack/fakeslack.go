@@ -976,6 +976,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
 		return out
 	}
+	if out, handled := s.handleModeration(method, f); handled { // moderation.go
+		return out
+	}
 	if out, handled := s.handleGallery(method, f); handled { // bkgallery*.go
 		return out
 	}

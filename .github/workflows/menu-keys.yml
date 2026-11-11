@@ -26,6 +26,13 @@ on:
       - "internal/ui/theme/tooltip*.go"
       - "internal/ui/theme/button*.go"
       - "internal/core/message_menu.go"
+      - "internal/ui/popups/message_actions*_test.go"
+      - "internal/ui/popups/button_group.go"
+      - "internal/ui/popups/modal.go"
+      - "internal/ui/workflow_details*.go"
+      - "internal/ui/toast_slack.go"
+      - "internal/ui/composer/schedule_share*.go"
+      - "internal/fakeslack/moderation.go"
       - ".github/workflows/menu-keys.yml"
   workflow_dispatch:
 
@@ -80,6 +87,25 @@ jobs:
           xvfb-run -a go test -count=1 -v -run 'TestTooltip|TestButtonV2' ./internal/ui/theme
           xvfb-run -a go test -count=1 -v -run 'TestEmojiTooltip|TestCSSEmojiTooltip' ./internal/ui/richview
           xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMessageMenuSlack|TestClientExtras|TestSessionToggleGroups|TestSlackKitV2Button|TestForwardPicker|TestSelectListToggles|TestMenuTagAndBadge|TestTooltipColorsFromTheme|TestNotifyCustomized|TestMenuTagTemplate|TestExpMenusShots' ./internal/ui/popups
+          ls -l "$EXP_MENUS_SHOTS_DIR"
+      # message actions (branch message-actions-2): the right-click menu's
+      # share row, the share dialog (title, Copy Link's Copied!, 32px rows,
+      # Save Draft, the schedule caret and scheduled forwards), the Flag
+      # row and FlagMessageDialog, the workflow rows and the workflow
+      # details view, over internal/fakeslack; shots light and dark
+      - name: message actions (share, flag, workflow details)
+        env:
+          EXP_MENUS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          WORKFLOWS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$EXP_MENUS_SHOTS_DIR"
+          go test -count=1 -v -run 'TestFlagContentCall|TestContentReviewEnabled|TestTriggerPreviewsStore|TestWorkflowDetailsData|TestSaveDraftNoDestination|TestExperimentReadsListed' ./internal/core
+          go test -count=1 -v -run 'TestShareScheduleMenuLikeSlack' ./internal/ui/composer
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestContextMenuShareRowLikeSlack|TestForwardDialogChromeLikeSlack|TestForwardSaveDraftLikeSlack|TestForwardScheduleLikeSlack|TestMessageMenuFlagRowLikeSlack|TestFlagMessageDialogLikeSlack|TestMessageMenuWorkflowRowsLikeSlack|TestMessageContextMenuThreadAction|TestMessageActionsShots' ./internal/ui/popups
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMessageActionsHooksWired|TestWorkflowDetailsPaneLikeSlack' ./internal/ui/
           ls -l "$EXP_MENUS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

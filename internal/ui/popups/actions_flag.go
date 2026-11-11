@@ -154,7 +154,7 @@ func flagRow(h Host, m core.Message, conv core.Conv) (MenuItem, bool) {
 			label = "Flag channel description"
 		}
 	}
-	return MenuItem{Key: "flag_message", Label: label, Icon: "warning", DangerHighlight: true, Do: func() { OpenFlagMessageDialog(h, m) }}, true
+	return MenuItem{Key: "flag_message", Label: label, Icon: "warning", DangerHighlight: true, Do: func() { OpenFlagMessageDialog(h, m) }}.In(nsMsgActionItems), true
 }
 
 // flagExternal is ed's n: the message comes from another org. With
@@ -215,6 +215,13 @@ type flagDialog struct {
 // OpenFlagMessageDialog opens FlagMessageDialog for m (flagMessage), when
 // the org has content review.
 func OpenFlagMessageDialog(h Host, m core.Message) *Modal {
+	if f := openFlagDialog(h, m); f != nil {
+		return f.modal
+	}
+	return nil
+}
+
+func openFlagDialog(h Host, m core.Message) *flagDialog {
 	a := h.Core()
 	if a == nil || !a.ContentReviewEnabled() {
 		return nil
@@ -224,11 +231,11 @@ func OpenFlagMessageDialog(h Host, m core.Message) *Modal {
 		conv.ID, conv.Kind = m.Channel, actKindOf(m.Channel)
 	}
 	f := &flagDialog{h: h, m: m, conv: conv, kind: flagContentType(h, m, conv), focusIn: true}
-	f.bumpCancel = &ModalButton{Label: "Cancel", Kind: BtnOutline}
-	f.bumpGo = &ModalButton{Label: "Submit", Kind: BtnPrimary}
+	f.bumpCancel = &ModalButton{Label: nsMessage.T("Cancel"), Kind: BtnOutline}
+	f.bumpGo = &ModalButton{Label: nsMessage.T("Submit"), Kind: BtnPrimary}
 	// Submit (oG6i): off without a reason or while the call is out; under
 	// the speed bump the footer is inert (the veil takes the pointer)
-	f.submit = &ModalButton{Label: "Submit", Kind: BtnPrimary, Enabled: func() bool { return f.valid() && !f.sending },
+	f.submit = &ModalButton{Label: nsMessage.T("Submit"), Kind: BtnPrimary, Enabled: func() bool { return f.valid() && !f.sending },
 		Do: func() bool {
 			if f.valid() {
 				f.bump = true // showSpeedBump(true)
@@ -256,7 +263,7 @@ func OpenFlagMessageDialog(h Host, m core.Message) *Modal {
 		},
 	})
 	h.ShowOverlay(f.modal)
-	return f.modal
+	return f
 }
 
 // valid is V: a reason, at most 560 characters, once trimmed.
@@ -273,57 +280,57 @@ func (f *flagDialog) customMpdm() bool { return expOn(f.h, ExpFlagCustomMpdmName
 func (f *flagDialog) title() string {
 	if f.done {
 		if f.kind != "" {
-			return "Channel content has been flagged"
+			return nsMessage.T("Channel content has been flagged")
 		}
-		return "Message has been flagged"
+		return nsMessage.T("Message has been flagged")
 	}
 	switch f.kind {
 	case "channel_name":
-		return "Flag channel name"
+		return nsMessage.T("Flag channel name")
 	case "channel_topic":
 		if f.dm() {
-			return "Flag conversation topic"
+			return nsMessage.T("Flag conversation topic")
 		}
-		return "Flag channel topic"
+		return nsMessage.T("Flag channel topic")
 	case "channel_description":
-		return "Flag channel description"
+		return nsMessage.T("Flag channel description")
 	case "mpdm_name":
 		if f.customMpdm() {
-			return "Flag conversation name"
+			return nsMessage.T("Flag conversation name")
 		}
 		return ""
 	}
-	return "Flag this message"
+	return nsMessage.T("Flag this message")
 }
 
 // info is the dialog's first paragraph (O).
 func (f *flagDialog) info() string {
 	switch f.kind {
 	case "channel_name":
-		return "Report the channel name to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the name."
+		return nsMessage.T("Report the channel name to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the name.")
 	case "channel_topic":
 		if f.dm() {
-			return "Report the conversation topic to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the topic."
+			return nsMessage.T("Report the conversation topic to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the topic.")
 		}
-		return "Report the channel topic to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the topic."
+		return nsMessage.T("Report the channel topic to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the topic.")
 	case "channel_description":
-		return "Report the channel description to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the description."
+		return nsMessage.T("Report the channel description to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the description.")
 	case "mpdm_name":
 		if f.customMpdm() {
-			return "Report the conversation name to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the name."
+			return nsMessage.T("Report the conversation name to your organization’s Content Admins. Content Admins can see your name and your reason for flagging. Others won’t know you’ve flagged the name.")
 		}
 		return ""
 	}
-	return "Report this message to your organization’s Content Admins. Content Admins can see your name and the details you add. Others won’t know you’ve flagged this message."
+	return nsMessage.T("Report this message to your organization’s Content Admins. Content Admins can see your name and the details you add. Others won’t know you’ve flagged this message.")
 }
 
 // bumpText is the speed bump's two paragraphs (E).
 func (f *flagDialog) bumpText() []string {
-	const review = "Your organization’s Content Admins will review your report and have the option to take action based on your organization’s policies."
-	const topic = "Are you sure you want to flag this conversation topic as inappropriate?"
+	review := nsMessage.T("Your organization’s Content Admins will review your report and have the option to take action based on your organization’s policies.")
+	topic := nsMessage.T("Are you sure you want to flag this conversation topic as inappropriate?")
 	if f.kind == "" {
-		return []string{"Your organization’s Content Admins will review your report and have the option to hide this message based on your organization’s policies. ",
-			"Are you sure you want to flag this message as inappropriate?"}
+		return []string{nsMessage.T("Your organization’s Content Admins will review your report and have the option to hide this message based on your organization’s policies. "),
+			nsMessage.T("Are you sure you want to flag this message as inappropriate?")}
 	}
 	if !f.customMpdm() {
 		return []string{review, topic}
@@ -331,25 +338,25 @@ func (f *flagDialog) bumpText() []string {
 	q := ""
 	switch f.kind {
 	case "channel_name":
-		q = "Are you sure you want to flag this channel name as inappropriate?"
+		q = nsMessage.T("Are you sure you want to flag this channel name as inappropriate?")
 	case "channel_topic":
-		q = "Are you sure you want to flag this channel topic as inappropriate?"
+		q = nsMessage.T("Are you sure you want to flag this channel topic as inappropriate?")
 		if mpdmCustomName(f.h, f.conv) { // c: a custom group DM name
 			q = topic
 		}
 	case "channel_description":
-		q = "Are you sure you want to flag this channel description as inappropriate?"
+		q = nsMessage.T("Are you sure you want to flag this channel description as inappropriate?")
 	case "mpdm_name":
-		q = "Are you sure you want to flag this conversation name as inappropriate?"
+		q = nsMessage.T("Are you sure you want to flag this conversation name as inappropriate?")
 	}
 	return []string{review, q}
 }
 
 func (f *flagDialog) placeholder() string {
 	if f.kind != "" {
-		return "Please provide details"
+		return nsMessage.T("Please provide details")
 	}
-	return "I’d like you to review this inappropriate message because…"
+	return nsMessage.T("I’d like you to review this inappropriate message because…")
 }
 
 // customLink is b: the org's flag_message_custom_link, for messages.
@@ -441,7 +448,7 @@ func (f *flagDialog) body(gtx layout.Context) layout.Dimensions {
 		y += dp(gtx, 16) // p: margin-bottom 16px (sk.base)
 		y += put(func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &f.policy, nil, func(gtx layout.Context) layout.Dimensions {
-				return linkWithNewWindow(gtx, th, cl, "View your organization’s policies.")
+				return linkWithNewWindow(gtx, th, cl, nsMessage.T("View your organization’s policies."))
 			})
 		})
 	}
@@ -454,7 +461,7 @@ func (f *flagDialog) body(gtx layout.Context) layout.Dimensions {
 		// the legend ("Why are you flagging this?"), margin_top_150
 		y += dp(gtx, 24)
 		y += put(func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Bold, cl.Fg, "Why are you flagging this?", 0)
+			return para(gtx, th, 15, 22, theme.Bold, cl.Fg, nsMessage.T("Why are you flagging this?"), 0)
 		})
 		y += dp(gtx, 4) + dp(gtx, 8) // c-legend margin-bottom 4, then margin_top_50
 	} else {
@@ -464,7 +471,7 @@ func (f *flagDialog) body(gtx layout.Context) layout.Dimensions {
 	y += dp(gtx, 20) // c-input_textarea__wrapper margin-bottom 20
 	if f.failed {
 		y += put(func(gtx layout.Context) layout.Dimensions {
-			return srAlert(gtx, th, cl, "Sorry, something went wrong. Try again?", w)
+			return srAlert(gtx, th, cl, nsMessage.T("Sorry, something went wrong. Try again?"), w)
 		})
 	}
 	return layout.Dimensions{Size: image.Pt(w, y)}
@@ -572,7 +579,7 @@ func (f *flagDialog) reportLink(gtx layout.Context) layout.Dimensions {
 	}
 	th := f.h.Theme()
 	return clickBox(gtx, &f.report, nil, func(gtx layout.Context) layout.Dimensions {
-		return linkWithNewWindow(gtx, th, colorsOf(th), "Report to Slack")
+		return linkWithNewWindow(gtx, th, colorsOf(th), nsMessage.T("Report to Slack"))
 	})
 }
 
@@ -629,7 +636,7 @@ func (f *flagDialog) submitted(gtx layout.Context, th *theme.Theme, cl *Colors) 
 	}
 	y += put(func(gtx layout.Context) layout.Dimensions {
 		return para(gtx, th, 15, 22, theme.Regular, cl.Fg,
-			"Thanks for reaching out to your organization. Someone may be in touch if they have any questions.", 0)
+			nsMessage.T("Thanks for reaching out to your organization. Someone may be in touch if they have any questions."), 0)
 	})
 	y += dp(gtx, 16) // p margin-bottom 16 (sk.base)
 	type opt struct {
@@ -640,15 +647,15 @@ func (f *flagDialog) submitted(gtx layout.Context, th *theme.Theme, cl *Colors) 
 	var opts []opt
 	if member {
 		if !muted {
-			opts = append(opts, opt{&f.mute, "notifications-off", "Mute channel", "Take a break from getting notified about new messages", f.muting})
+			opts = append(opts, opt{&f.mute, "notifications-off", nsMessage.T("Mute channel"), nsMessage.T("Take a break from getting notified about new messages"), f.muting})
 		}
 		if !f.dm() {
-			opts = append(opts, opt{&f.leave, "sign-out", "Leave channel", "", f.leaving})
+			opts = append(opts, opt{&f.leave, "sign-out", nsMessage.T("Leave channel"), "", f.leaving})
 		}
 	}
 	y += dp(gtx, 24) - dp(gtx, 16) // the subhead's margin-top 24 (collapsing with the p's 16)
 	y += put(func(gtx layout.Context) layout.Dimensions {
-		return para(gtx, th, 13, 18, theme.Bold, cl.Muted, "Other steps you can take:", 0)
+		return para(gtx, th, 13, 18, theme.Bold, cl.Muted, nsMessage.T("Other steps you can take:"), 0)
 	})
 	for _, o := range opts {
 		o := o
