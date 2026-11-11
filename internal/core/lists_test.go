@@ -212,3 +212,36 @@ func TestListCreate(t *testing.T) {
 		t.Fatalf("template list %+v %v", d2, err)
 	}
 }
+
+// lists_file_backed_templates: fetchTemplates (o9il) takes the file-backed
+// templates, the sales tracker in the contact tracker's place; without it
+// the plain ones.
+func TestListTemplatesFileBacked(t *testing.T) {
+	a, _ := canvasApp(t)
+	ctx := context.Background()
+	ids := func() string {
+		tpls, err := a.ListTemplates(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var s []string
+		for _, tp := range tpls {
+			if tp.Starter {
+				s = append(s, "*"+tp.ID)
+			} else {
+				s = append(s, tp.ID)
+			}
+		}
+		return strings.Join(s, ",")
+	}
+	if a.Experiment("lists_file_backed_templates") != "on" {
+		t.Fatal("lists_file_backed_templates isn't on for the account")
+	}
+	if got := ids(); got != "*F08C8VB1DN3,F07QP7D3TC5,F07QS06GTNX,F07QRV73FNF,sales_tracker" {
+		t.Errorf("file-backed: %s", got)
+	}
+	a.SetExperimentGroup("lists_file_backed_templates", "off")
+	if got := ids(); got != "*Ttodo,F07QP7D3TC5,F07QS06GTNX,F07QRV73FNF,sales_tracker" {
+		t.Errorf("plain: %s", got)
+	}
+}

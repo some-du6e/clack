@@ -16,6 +16,7 @@ type Message struct {
 	ParentUser     string          `json:"parent_user_id,omitempty"`
 	ReplyCount     int             `json:"reply_count,omitempty"`
 	ReplyUsers     []string        `json:"reply_users,omitempty"`
+	ReplyUserIcons []ReplyUserIcon `json:"reply_user_icons,omitempty"` // a bot replier's identity in the reply bar
 	ReplyUsersN    int             `json:"reply_users_count,omitempty"`
 	LatestReply    string          `json:"latest_reply,omitempty"`
 	Subscribed     bool            `json:"subscribed,omitempty"`
@@ -41,7 +42,13 @@ type Message struct {
 	Room           json.RawMessage `json:"room,omitempty"` // huddles
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
-	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	// System messages' own fields: channel_topic's topic, channel_purpose's
+	// purpose, channel_name's old_name and name (the new one).
+	Topic          string `json:"topic,omitempty"`
+	Purpose        string `json:"purpose,omitempty"`
+	OldName        string `json:"old_name,omitempty"`
+	NewName        string `json:"name,omitempty"`
+	StreamingState string `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`
@@ -68,6 +75,14 @@ type Reaction struct {
 	Count int      `json:"count"`
 	Users []string `json:"users"`
 	URL   string   `json:"url,omitempty"`
+}
+
+// ReplyUserIcon is one reply_user_icons entry: the picture the reply bar
+// shows for a bot replier (an emoji or an image).
+type ReplyUserIcon struct {
+	ID        string `json:"id"`
+	IconEmoji string `json:"icon_emoji,omitempty"`
+	IconURL   string `json:"icon_url,omitempty"`
 }
 
 type Icons struct {
@@ -400,6 +415,9 @@ type Counts struct {
 	Threads struct {
 		HasUnreads   bool `json:"has_unreads"`
 		MentionCount int  `json:"mention_count"`
+		// UnreadCountByChannel is unread_count_by_channel: unread threads
+		// per conversation (Slack's threadsUnreadCountByChannel).
+		UnreadCountByChannel map[string]int `json:"unread_count_by_channel,omitempty"`
 	} `json:"threads"`
 	Channels      []CountEntry    `json:"channels"`
 	MPIMs         []CountEntry    `json:"mpims"`

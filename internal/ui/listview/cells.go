@@ -2,6 +2,7 @@ package listview
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"strconv"
@@ -245,12 +246,11 @@ func CellText(a *core.App, c *lists.Column, f *lists.Field) string {
 		return strings.Join(f.Email, ", ")
 	case lists.Phone:
 		return strings.Join(f.Phone, ", ")
-	case lists.Link:
-		var out []string
-		for _, l := range f.Link {
-			out = append(out, firstNonEmpty(l.DisplayName, l.OriginalURL))
+	case lists.Link: // LinkColumn: the first link only (getTypedFieldValue: link[0])
+		if len(f.Link) == 0 {
+			return ""
 		}
-		return strings.Join(out, ", ")
+		return linkText(f.Link[0])
 	case lists.Rating:
 		if len(f.Rating) > 0 {
 			return strconv.Itoa(int(f.Rating[0]))
@@ -579,4 +579,28 @@ var (
 
 func ctxTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
+}
+
+// linkText is what LinkColumn shows for a link: the URL when it displays
+// as one, else its name, else its unfurl's title (attachment[url].title,
+// else fallback), else the URL.
+func linkText(l lists.LinkValue) string {
+	if l.DisplayAsURL {
+		return l.OriginalURL
+	}
+	if l.DisplayName != "" {
+		return l.DisplayName
+	}
+	var unfurls map[string]struct {
+		Title    string `json:"title"`
+		Fallback string `json:"fallback"`
+	}
+	if len(l.Attachment) > 0 && json.Unmarshal(l.Attachment, &unfurls) == nil {
+		if u, ok := unfurls[l.OriginalURL]; ok {
+			if t := firstNonEmpty(u.Title, u.Fallback); t != "" {
+				return t
+			}
+		}
+	}
+	return l.OriginalURL
 }

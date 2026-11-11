@@ -26,7 +26,14 @@ type ChannelView struct {
 // loaded history and scroll position are cached per channel, so creating a
 // view for a channel seen before is instant.
 func NewChannelView(h Host, channelID string) *ChannelView {
-	v := &ChannelView{h: h, ch: channelID, s: stateFor(h, channelID, "")}
+	return NewChannelViewIn(h, channelID, "")
+}
+
+// NewChannelViewIn is NewChannelView for the list in view container pane
+// ("split": Slack's split view; "" is NewChannelView): its rows, scroll
+// position and inline editors are its own.
+func NewChannelViewIn(h Host, channelID, pane string) *ChannelView {
+	v := &ChannelView{h: h, ch: channelID, s: stateIn(h, channelID, "", pane)}
 	v.s.hb.ensureLoaded(v.s.m)
 	v.s.closeEdits() // an editor left open when you navigated away is gone, like Slack
 	// Each open places the "New" line at the read cursor as it is now.
@@ -66,7 +73,22 @@ func (v *ChannelView) Leave() { v.s.closeEdits() }
 // discarded, like Slack (views themselves are cached by the ui root).
 var lastChannel, lastThread *listState
 
+// paneLast holds lastChannel/lastThread for the other view containers
+// (stateIn's pane), so the split view's lists don't close the main
+// views' editors every frame.
+var paneLast = map[string]**listState{}
+
 func shown(last **listState, s *listState) {
+	if s.container != "" {
+		k := s.container
+		if last == &lastThread {
+			k += "/thread"
+		}
+		if paneLast[k] == nil {
+			paneLast[k] = new(*listState)
+		}
+		last = paneLast[k]
+	}
 	if *last != s {
 		if *last != nil {
 			(*last).closeEdits()

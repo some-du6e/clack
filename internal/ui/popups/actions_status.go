@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -257,18 +258,18 @@ func actDurKey(d actDur) string {
 const actBodyMax = 379
 
 type actStatus struct {
-	h        Host
-	modal    *Modal
-	ed       widget.Editor
-	emoji    string
-	dur      actDur
-	keepExp  int64
-	pause    bool
-	had      bool
-	forTeam  string // "For Hack Club"
-	focus    bool   // focus the input on the next layout
-	fromMenu bool
-	pill     *actTipPill
+	h       Host
+	modal   *Modal
+	ed      widget.Editor
+	emoji   string
+	dur     actDur
+	keepExp int64
+	pause   bool
+	had     bool
+	forTeam string // "For Hack Club"
+	focus   bool   // focus the input on the next layout
+	showTip bool   // showKeyboardHint: the "Tip:" pill under the modal
+	pill    *actTipPill
 
 	presets   []actPreset // nil while loading
 	presetBtn []widget.Clickable
@@ -299,24 +300,38 @@ type actStatus struct {
 
 	list layout.List // the scrolling body
 
-	emojiBtn, clearBtn, selBtn, pauseBtn, oooBtn, calBtn widget.Clickable
+	emojiBtn, clearBtn, selBtn, pauseBtn, oooBtn widget.Clickable
+
+	btns []*ModalButton // the form's footer
+	cal  actCalState    // "Automatically updates" and the calendar step
+
+	// semantic_emoji_matching (status_semantic.go): emojiPicked is the
+	// modal's tl ref (an emoji chosen by hand), semAt when the debounced
+	// match runs
+	emojiPicked bool
+	semAt       time.Time
+	semSeen     string // the text a5 last saw (SetText's change isn't typing)
 
 	emojiRect, selRect image.Rectangle // content coords, last layout
 }
 
-// NewSetStatusModal builds the "Set a status" modal, prefilled with the
-// viewer's current status. Show it with h.ShowOverlay.
+// NewSetStatusModal builds the "Set a status" modal (Slack's
+// openCustomStatusDialog), prefilled with the viewer's current status.
+// Show it with h.ShowOverlay. While the account pref
+// used_custom_status_kb_shortcut is unset it shows Slack's "Tip: Open this
+// faster with Ctrl + Shift + Y" pill under the modal (showKeyboardHint).
 func NewSetStatusModal(h Host) *Modal { return actNewStatus(h, false) }
 
-// NewSetStatusModalFromMenu is NewSetStatusModal as opened from the user
-// menu: it also shows Slack's "Tip: Open this faster with Ctrl + Shift + Y"
-// pill near the bottom of the window for about 4 s.
-func NewSetStatusModalFromMenu(h Host) *Modal { return actNewStatus(h, true) }
+// NewSetStatusModalFromShortcut is the modal as Mod+Shift+Y opens it
+// (fromKeyboardShortcut): the caller saves used_custom_status_kb_shortcut,
+// which Slack sets locally before the modal renders, so it has no tip.
+func NewSetStatusModalFromShortcut(h Host) *Modal { return actNewStatus(h, true) }
 
-func actNewStatus(h Host, fromMenu bool) *Modal { return actNewStatusState(h, fromMenu).modal }
+func actNewStatus(h Host, fromShortcut bool) *Modal { return actNewStatusState(h, fromShortcut).modal }
 
-func actNewStatusState(h Host, fromMenu bool) *actStatus {
-	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: "For Hack Club", fromMenu: fromMenu}
+func actNewStatusState(h Host, fromShortcut bool) *actStatus {
+	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: "For Hack Club"}
+	s.showTip = !fromShortcut && (h.Core() == nil || !h.Core().PrefBool("used_custom_status_kb_shortcut", false))
 	s.ed.SingleLine = true
 	s.ed.Submit = true
 	s.list.Axis = layout.Vertical
@@ -328,6 +343,8 @@ func actNewStatusState(h Host, fromMenu bool) *actStatus {
 			s.had = true
 			s.ed.SetText(me.StatusText)
 			s.emoji = strings.Trim(me.StatusEmoji, ":")
+			s.emojiPicked = s.emoji != "" // tl = useRef(!!emoji)
+			s.semSeen = s.ed.Text()
 			if me.StatusExp == 0 {
 				s.dur = actDurNone
 			} else {
@@ -363,7 +380,9 @@ func actNewStatusState(h Host, fromMenu bool) *actStatus {
 		}
 		return "Set a status"
 	}
-	s.modal = NewModal(h, ModalOpts{TitleFunc: title, Body: s.layout, Buttons: btns, Border: true})
+	s.btns = btns
+	s.modal = NewModal(h, ModalOpts{TitleFunc: title, Body: s.layout, Buttons: btns, Border: true, Over: s.calFooter})
+	actFetchCalendars(h) // useMountEffect: getCurrentCalendarAndUser
 	if s.ooo {
 		s.fillReply()
 	}
@@ -679,7 +698,11 @@ func (s *actStatus) events(gtx layout.Context) {
 			}
 			return
 		}
+		if _, ok := e.(widget.ChangeEvent); ok {
+			s.semanticTyped(gtx.Now)
+		}
 	}
+	s.semanticTick(gtx)
 	for {
 		e, ok := s.reply.Update(gtx)
 		if !ok {
@@ -693,6 +716,7 @@ func (s *actStatus) events(gtx layout.Context) {
 		r := s.emojiRect
 		h.OpenEmojiPicker(s.win(gtx, image.Pt(r.Min.X, r.Max.Y+dp(gtx, 4))), func(name string) {
 			s.emoji = strings.Trim(name, ":")
+			s.emojiPicked, s.semAt = true, time.Time{}
 			s.focus = true
 			h.Invalidate()
 		})
@@ -700,6 +724,7 @@ func (s *actStatus) events(gtx layout.Context) {
 	if s.clearBtn.Clicked(gtx) { // handleReset
 		s.ed.SetText("")
 		s.emoji = ""
+		s.emojiPicked, s.semAt = false, time.Time{}
 		if s.dur == actDurKeep || s.dur == actDurCustom {
 			s.dur = actDurToday
 		}
@@ -723,9 +748,7 @@ func (s *actStatus) events(gtx layout.Context) {
 			s.editScheduled(s.sched[i])
 		}
 	}
-	if s.calBtn.Clicked(gtx) {
-		h.Toast("Calendar sync isn't available in yoloslack")
-	}
+	s.calEvents(gtx)
 	if s.pauseBtn.Clicked(gtx) {
 		s.pause = !s.pause
 	}
@@ -742,6 +765,7 @@ func (s *actStatus) pickPreset(emoji, text, canonical string, d actDur) {
 	n := s.ed.Len()
 	s.ed.SetCaret(n, n)
 	s.emoji, s.dur, s.canonical = emoji, d, canonical
+	s.emojiPicked, s.semAt = true, time.Time{}
 	s.setEditing(nil)
 	s.picked, s.presetDnd = true, canonical == "Vacationing"
 	s.ooo = canonical == actOOOCanonical
@@ -765,6 +789,10 @@ func (s *actStatus) editScheduled(st actScheduled) {
 	n := s.ed.Len()
 	s.ed.SetCaret(n, n)
 	s.emoji, s.canonical = strings.Trim(st.Emoji, ":"), st.TextCanonical
+	if s.emoji != "" {
+		s.emojiPicked = true
+	}
+	s.semAt = time.Time{}
 	s.dur, s.pause = actDurCustom, st.IsDnd
 	s.picked, s.presetDnd = false, false
 	cp := st
@@ -872,11 +900,11 @@ func (s *actStatus) layout(gtx layout.Context) layout.Dimensions {
 	if s.modal.done {
 		return layout.Dimensions{}
 	}
-	if s.fromMenu && s.pill == nil {
+	if s.showTip && s.pill == nil {
 		s.pill = &actTipPill{h: s.h, modal: s.modal}
 		s.h.ShowOverlay(s.pill)
 	}
-	if s.focus {
+	if s.focus && !s.cal.on {
 		gtx.Execute(key.FocusCmd{Tag: &s.ed})
 		s.focus = false
 	}
@@ -884,9 +912,13 @@ func (s *actStatus) layout(gtx layout.Context) layout.Dimensions {
 	if s.modal.done {
 		return layout.Dimensions{}
 	}
+	s.syncButtons()
 	s.takePresets()
 	th := s.h.Theme()
 	cl := colorsOf(th)
+	if s.cal.on { // the calendar step replaces the form
+		return s.calContent(gtx, th, cl)
+	}
 	padX := dp(gtx, 28)
 	bw := gtx.Constraints.Max.X
 	fw := bw + 2*padX // the list spans the full modal width (row hover)
@@ -955,8 +987,12 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 				y += s.preset(gtx, th, cl, fw, padX, y, &s.presetBtn[i], p.emoji, p.text, actDurNotes[p.dur])
 			}
 		}
-		y += s.legend(gtx, th, cl, padX, y, "Automatically updates")
-		y += s.preset(gtx, th, cl, fw, padX, y, &s.calBtn, "calendar", "In a meeting", " — Based on your Google Calendar")
+		if cals := s.calPresets(); len(cals) > 0 {
+			y += s.legend(gtx, th, cl, padX, y, "Automatically updates")
+			for i, c := range cals {
+				y += s.calRow(gtx, th, cl, fw, padX, y, &s.cal.btns[i], c)
+			}
+		}
 		return layout.Dimensions{Size: image.Pt(fw, y+dp(gtx, 4))}
 	}
 	// duration
@@ -1250,6 +1286,13 @@ func (s *actStatus) legend(gtx layout.Context, th *theme.Theme, cl *Colors, padX
 // preset draws one full-width "emoji **text** — note" row at y; returns
 // its height. note includes the leading " — ".
 func (s *actStatus) preset(gtx layout.Context, th *theme.Theme, cl *Colors, fw, padX, y int, btn *widget.Clickable, emoji, label, note string) int {
+	return s.presetRow(gtx, th, cl, fw, padX, y, btn, func(gtx layout.Context) layout.Dimensions {
+		return emojiImage(gtx, s.h, emoji, 22)
+	}, label, note)
+}
+
+// presetRow is a preset row with img (22px) at the left.
+func (s *actStatus) presetRow(gtx layout.Context, th *theme.Theme, cl *Colors, fw, padX, y int, btn *widget.Clickable, img layout.Widget, label, note string) int {
 	rh := dp(gtx, 28)
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(fw, rh))
@@ -1259,9 +1302,7 @@ func (s *actStatus) preset(gtx layout.Context, th *theme.Theme, cl *Colors, fw, 
 				fill(gtx, image.Rect(0, 0, fw, rh), cl.Highlight)
 				fg, muted = cl.HighText, cl.HighText
 			}
-			at(gtx, image.Pt(padX+dp(gtx, 8), (rh-dp(gtx, 22))/2), func(gtx layout.Context) layout.Dimensions {
-				return emojiImage(gtx, s.h, emoji, 22)
-			})
+			at(gtx, image.Pt(padX+dp(gtx, 8), (rh-dp(gtx, 22))/2), img)
 			x := padX + dp(gtx, 40)
 			right := fw - padX
 			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
@@ -1375,24 +1416,33 @@ func actCheckbox(gtx layout.Context, cl *Colors, p image.Point, on bool) {
 
 // ---- "Tip:" hint pill ----
 //
-// Slack's keyboard hint (c-tip): bg rgba(0,0,0,.7), radius 1000, padding
-// 6 16, 15px white with bold segments, centered near the bottom of the
-// window. It is drawn above the modal without taking input and goes away
-// after 4 s or when the modal closes. It never calls stacked(), so the
-// modal under it keeps Escape; if the root dismisses the pill as its
-// topmost overlay (Escape routing), the modal closes with it.
+// Slack's keyboard hint (D72a): while showKeyboardHint, the modal ends
+// with .p-custom_status_modal__keyboard_hint_container (absolute, bottom
+// -50px, full modal width, centered; the modal is overflow: visible)
+// holding a Pill (.p-pill: 15px/1.46668 white on rgba(0,0,0,.7), radius
+// 1000, padding 6 16, centered): "<strong>Tip:</strong> Open this faster
+// with <strong>{commandKey} + Shift + Y</strong>", commandKey ⌘ on macOS
+// and Ctrl elsewhere. It stays while the modal is open. It is drawn above
+// the modal without taking input and never calls stacked(), so the modal
+// under it keeps Escape; if the root dismisses the pill as its topmost
+// overlay (Escape routing), the modal closes with it.
 
 type actTipSeg struct {
 	s string
 	w font.Weight
 }
 
-var actTipSegs = [...]actTipSeg{{"Tip:", theme.Bold}, {"Open this faster with", theme.Regular}, {"Ctrl + Shift + Y", theme.Bold}}
+// actTipSegs is the tip's text: bold, regular, bold. The keys are the
+// shortcut's chips joined by " + " (commandKey: ⌘ on macOS, Ctrl
+// elsewhere).
+func actTipSegs() [3]actTipSeg {
+	keys := strings.Join(shortcut.Chips("Mod+Shift+Y"), " + ")
+	return [3]actTipSeg{{"Tip:", theme.Bold}, {"Open this faster with", theme.Regular}, {keys, theme.Bold}}
+}
 
 type actTipPill struct {
 	h     Host
 	modal *Modal
-	until time.Time
 	done  bool
 }
 
@@ -1409,41 +1459,38 @@ func (p *actTipPill) Dismiss() {
 	}
 }
 
+// actTipRect is the pill's box for a modal at mr (window coordinates)
+// and a text tw wide: its bottom 50px below the modal's, centered on it.
+func actTipRect(gtx layout.Context, mr image.Rectangle, tw int) image.Rectangle {
+	px, py := dp(gtx, 16), dp(gtx, 6)
+	hh := dp(gtx, 22) + 2*py
+	w := minInt(tw+2*px, mr.Dx())
+	bottom := mr.Max.Y + dp(gtx, 50)
+	x := mr.Min.X + (mr.Dx()-w)/2
+	return image.Rect(x, bottom-hh, x+w, bottom)
+}
+
 func (p *actTipPill) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
-	if p.Dismissed() {
+	if p.Dismissed() || p.modal.rect.Empty() {
 		return layout.Dimensions{}
 	}
-	if p.until.IsZero() {
-		p.until = gtx.Now.Add(4 * time.Second)
-	}
-	if !gtx.Now.Before(p.until) {
-		p.done = true
-		return layout.Dimensions{}
-	}
-	gtx.Execute(op.InvalidateCmd{At: p.until})
 	th := p.h.Theme()
-	win := gtx.Constraints.Max
+	segs := actTipSegs()
 	gap := dp(gtx, 4) // a 15px space
 	tw := 0
-	for i, sg := range actTipSegs {
+	for i, sg := range segs {
 		if i > 0 {
 			tw += gap
 		}
 		tw += textW(gtx, th, 15, sg.w, sg.s)
 	}
-	px, py := dp(gtx, 16), dp(gtx, 6)
-	hh := dp(gtx, 22) + 2*py
-	w := tw + 2*px
-	// Slack: the pill's top sits 266px above the window bottom (y=634 in a
-	// 900px window), just above the composer; keep it on screen when short.
-	top := maxInt(dp(gtx, 8), win.Y-dp(gtx, 266))
-	r := image.Rect((win.X-w)/2, top, (win.X-w)/2+w, top+hh)
-	rrect(gtx, r, hh/2, rgba(0x000000, .7))
-	x := r.Min.X + px
-	for _, sg := range actTipSegs {
+	r := actTipRect(gtx, p.modal.rect, tw)
+	rrect(gtx, r, r.Dy()/2, rgba(0x000000, .7))
+	x := r.Min.X + (r.Dx()-tw)/2
+	for _, sg := range segs {
 		at(gtx, image.Pt(x, r.Min.Y), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, r.Dy(), func(gtx layout.Context) layout.Dimensions {
 				return text(gtx, th, 15, sg.w, rgb(0xffffff), sg.s)
 			})
 		})

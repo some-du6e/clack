@@ -45,6 +45,8 @@ type App struct {
 
 	files *fileCache
 
+	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
+
 	saves sync.WaitGroup // background disk saves (loadEmoji's meta.json)
 
 	// bg scopes all background work (realtime, prefetch, resolvers); it is
@@ -73,6 +75,7 @@ type App struct {
 	icon       teamIconState     // the rail's workspace icon (team_icon.go)
 	rxn        reactState        // the viewer's reactions in flight (reactions.go)
 	frec       frecencyState     // the frecency pref's save throttle and Frequently Used cache (frecency.go)
+	rec        recentsState      // recent searches and places: the recents pref, visits (search_recents.go)
 	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
 	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
 	mega       megaphoneState    // megaphone spaces, global and per channel (megaphone.go)
@@ -604,6 +607,8 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	// everything boot fetched is in: plugins' state mirror re-reads it
 	a.emit(Event{Type: "booted"})
+	// recent searches and places (maybeLoadRecentsPrefs, search_recents.go)
+	go a.MaybeLoadRecents(a.bg)
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -1115,6 +1120,8 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	if m.Edited != nil {
 		v.EditedTS = m.Edited.TS
 	}
+	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
+	v.ReplyUserIcons = m.ReplyUserIcons
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState

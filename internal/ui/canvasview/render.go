@@ -604,13 +604,22 @@ func (v *View) drawMarker(gtx layout.Context, b *blk, x, lineH int) int {
 	case canvas.Check:
 		// li.slackified-checkbox label: 14px, 5px in, radius 2, a 1px
 		// #7c7a7f border (#bbbabb dark) on --dt_color-base-sec; checked:
-		// --dt_color-base-inv-hgl-2 with a 2px check in --dt_color-base-pry
-		bs := gtx.Dp(14)
-		r := image.Rect(x+gtx.Dp(5), gtx.Dp(5), x+gtx.Dp(5)+bs, gtx.Dp(5)+bs)
+		// --dt_color-base-inv-hgl-2 with a 2px check in --dt_color-base-pry.
+		// Without slackified_checkbox (Quip's useSlackCheckboxes off) the
+		// item has no label: the checkbox is the browser's own input.
+		slack := v.exp("slackified_checkbox")
+		r := v.checkRect(gtx, x)
 		toggled := b.check.Clicked(gtx) // before Layout, which drains a Clickable's events
 		at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
 			s := gtx.Constraints.Max
 			editable := v.edit.canEdit(v) && !b.inCell // a table's checklist isn't edited in Clack
+			if !slack {
+				nativeCheckbox(gtx, th.Dark, b.b.Checked, editable && b.check.Hovered())
+				if !editable {
+					return layout.Dimensions{Size: s}
+				}
+				return b.check.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: s} })
+			}
 			if b.b.Checked {
 				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(2), c.Link)
 				checkMark(gtx, c.Bg)
@@ -649,6 +658,71 @@ func checkMark(gtx layout.Context, col color.NRGBA) {
 	p.LineTo(pt(4.9, 9.4))
 	p.LineTo(pt(11.6, 2.9))
 	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: 2 * k}.Op())
+}
+
+// checkRect is the checkbox of an item whose marker container is at x:
+// Slack's label (slackified_checkbox), else the browser's input.
+func (v *View) checkRect(gtx layout.Context, x int) image.Rectangle {
+	if !v.exp("slackified_checkbox") {
+		return nativeCheckRect(gtx, x)
+	}
+	bs := gtx.Dp(14)
+	return image.Rect(x+gtx.Dp(5), gtx.Dp(5), x+gtx.Dp(5)+bs, gtx.Dp(5)+bs)
+}
+
+// nativeCheckRect is where Quip's own checkbox sits without
+// slackified_checkbox: the list's <input class="checkbox"> (display:
+// block, min-width 24px, margin-top 2px, the UA's 4px margin-left) in the
+// marker container at x, which Chromium paints as a 13px square centred
+// in the input's box.
+func nativeCheckRect(gtx layout.Context, x int) image.Rectangle {
+	bs := gtx.Dp(13)
+	cx := x + gtx.Dp(4) + gtx.Dp(12)
+	return image.Rect(cx-bs/2, gtx.Dp(2), cx-bs/2+bs, gtx.Dp(2)+bs)
+}
+
+// nativeCheckbox paints Chromium's checkbox (the form-controls refresh,
+// NativeThemeBase::PaintCheckbox) filling gtx.Constraints.Max: radius 2,
+// a 1px #767676 border on white (hovered #4f4f4f); checked, the default
+// accent #0075ff (hovered #005cc8) with a white tick. Quip's document
+// sets color-scheme: dark under its dark theme, where Chromium uses
+// #3b3b3b, a #858585 border (hovered #acacac) and an #99c8ff accent
+// (hovered #d1e6ff) with a #3b3b3b tick.
+func nativeCheckbox(gtx layout.Context, dark, checked, hovered bool) {
+	s := gtx.Constraints.Max
+	rgb := func(v uint32) color.NRGBA {
+		return color.NRGBA{R: uint8(v >> 16), G: uint8(v >> 8), B: uint8(v), A: 0xff}
+	}
+	bg, edge, edgeHover := rgb(0xffffff), rgb(0x767676), rgb(0x4f4f4f)
+	accent, accentHover, tick := rgb(0x0075ff), rgb(0x005cc8), rgb(0xffffff)
+	if dark {
+		bg, edge, edgeHover = rgb(0x3b3b3b), rgb(0x858585), rgb(0xacacac)
+		accent, accentHover, tick = rgb(0x99c8ff), rgb(0xd1e6ff), rgb(0x3b3b3b)
+	}
+	r := image.Rectangle{Max: s}
+	if checked {
+		fill := accent
+		if hovered {
+			fill = accentHover
+		}
+		theme.RRect(gtx, r, gtx.Dp(2), fill)
+		// the tick: from (.2, .5) down to (.4, .7), then up to (.8, .2) of
+		// the box, stroked at .16 of the inset box's height
+		w, h := float32(s.X), float32(s.Y)
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(f32.Pt(w*0.2, h*0.5))
+		p.LineTo(f32.Pt(w*0.4, h*0.7))
+		p.LineTo(f32.Pt(w*0.8, h*0.2))
+		paint.FillShape(gtx.Ops, tick, clip.Stroke{Path: p.End(), Width: max(1, h*0.6*0.16)}.Op())
+		return
+	}
+	theme.RRect(gtx, r, gtx.Dp(2), bg)
+	b := edge
+	if hovered {
+		b = edgeHover
+	}
+	theme.Border(gtx, r, gtx.Dp(2), gtx.Dp(1), b)
 }
 
 // ordinal numbers an item the way Quip does per level: 1. a. i.

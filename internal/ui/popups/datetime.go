@@ -159,8 +159,18 @@ func dtModalOrigin(gtx layout.Context, m *Modal) image.Point {
 	if m.o.PadX > 0 {
 		px = m.o.PadX
 	}
-	if m.o.HeadH > 0 {
+	switch {
+	case m.o.HeadH > 0:
 		hh = m.o.HeadH
+	case m.o.Subtitle != "" && m.o.SubtitleCaption:
+		hh = 20 + 24 + 20
+	}
+	if m.o.Subtitle != "" { // the subtitle line under the title (Modal.Layout's subH)
+		if m.o.SubtitleCaption {
+			hh += 18
+		} else {
+			hh += 22
+		}
 	}
 	return m.rect.Min.Add(image.Pt(dp(gtx, px), dp(gtx, hh)-m.list.Position.Offset))
 }
@@ -360,6 +370,8 @@ type dtCalendar struct {
 	month  time.Time // first of the shown month
 	sel    time.Time
 	min    time.Time // zero: none
+	max    time.Time // last pickable day (zero: none)
+	center bool      // centered under the anchor (position "bottom"), not right-aligned
 	cur    time.Time // keyboard cursor
 	kbd    bool
 	onPick func(time.Time)
@@ -380,7 +392,24 @@ func dtNewCalendar(h Host, anchor image.Rectangle, sel, lo time.Time, onPick fun
 	return c
 }
 
-func (c *dtCalendar) disabled(day time.Time) bool { return !c.min.IsZero() && day.Before(c.min) }
+func (c *dtCalendar) disabled(day time.Time) bool {
+	return !c.min.IsZero() && day.Before(c.min) || !c.max.IsZero() && day.After(c.max)
+}
+
+// NewDatePickerRange is NewDatePicker for a DatePicker at position
+// "bottom" (centered under anchor) with disableDatesAfter: days after
+// latest (zero: none) can't be picked either.
+func NewDatePickerRange(h Host, anchor image.Rectangle, selected, earliest, latest time.Time, onPick func(day time.Time)) Overlay {
+	if selected.IsZero() {
+		selected = time.Now()
+	}
+	c := dtNewCalendar(h, anchor, selected, earliest, onPick)
+	if !latest.IsZero() {
+		c.max = dtDay(latest)
+	}
+	c.center = true
+	return c
+}
 
 func (c *dtCalendar) dayN(n int) time.Time {
 	return time.Date(c.month.Year(), c.month.Month(), n, 0, 0, 0, 0, c.month.Location())
@@ -399,7 +428,11 @@ func (c *dtCalendar) pick(day time.Time) {
 func (c *dtCalendar) moveCur(days, months int) {
 	n := c.cur.AddDate(0, months, days)
 	if c.disabled(n) {
-		n = c.min
+		if !c.max.IsZero() && n.After(c.max) {
+			n = c.max
+		} else {
+			n = c.min
+		}
 	}
 	c.cur, c.kbd = n, true
 	c.month = dtMonthStart(n)
@@ -493,7 +526,11 @@ func (c *dtCalendar) Layout(gtx layout.Context) layout.Dimensions {
 	headH, wkH := dp(gtx, 48), dp(gtx, 30)
 	sz := image.Pt(maxInt(dp(gtx, 350), 2*pad+7*cw), 2*pad+headH+wkH+6*ch)
 	a := c.anchor
-	a.Min.X = a.Max.X - sz.X // right-aligned with the field, like Slack
+	if c.center {
+		a.Min.X = a.Min.X + (a.Dx()-sz.X)/2
+	} else {
+		a.Min.X = a.Max.X - sz.X // right-aligned with the field, like Slack
+	}
 	pos := place(a, sz, win, dp(gtx, 8), Below)
 	c.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	keyTarget(gtx, c, c.rect)

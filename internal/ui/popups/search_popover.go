@@ -36,6 +36,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -87,6 +88,9 @@ type srRow struct {
 	segs  []srSeg
 	toks  []srTok
 	tokW  int
+	// plain is the quick message row omni_quick_message_results off draws
+	// (the text first, then "name • date"); else the card.
+	plain bool
 }
 
 func (r *srRow) selectable() bool {
@@ -108,6 +112,9 @@ func (r *srRow) heightDp() float32 {
 	case srRDivider:
 		return 17
 	case srRMsg:
+		if r.plain {
+			return 54 // --multiline: padding 4, two 1.5 lines
+		}
 		return 76
 	case srRMore:
 		return 32
@@ -167,6 +174,9 @@ type SearchPopover struct {
 	histMode    bool // the clock button: the list shows Recent searches
 	unreadsOpen bool // "Show N more" expanded the unreads
 	sess        core.SearchSession
+	recVer      uint64 // core.RecentsVersion the rows were built with
+	recRead     string // desktop_search_recents_read's group the rows were built with
+	histLoading bool   // Recent searches are being fetched (search.autocomplete)
 
 	// Slick boundaries (slick_search.go)
 	full     []srRow         // every row; rows are full minus plugin-hidden ones
@@ -462,25 +472,20 @@ func (p *SearchPopover) setSel(i int) {
 	}
 }
 
-// srUnreadsShown is how many unreads show before "Show N more".
-const srUnreadsShown = 5
+// srUnreadsShown is how many unreads show before "Show N more" (the
+// zero state's unreads.slice(0, 10), with "Show {count} more" for the
+// rest).
+const srUnreadsShown = 10
 
-// emptyRows is Slack's blank slate (renderBlankSlateSuggestions):
-// "Unreads & drafts" (with Show N more / Show fewer), a divider, then
-// "Recent places": the last five places you went (conversations and
-// pages), without the one you're on. The clock button switches the list
-// to Recent searches.
+// emptyRows is Slack's blank slate (the omniswitcher's merged zero state,
+// rendered by renderBlankSlateSuggestions): "Unreads & drafts" (ten, then
+// Show N more / Show fewer), a divider, then "Recent places": three when
+// there are unreads, else five, without the one you're on and without the
+// conversations already listed as unreads. The clock button switches the
+// list to Recent searches.
 func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 	if p.histMode {
-		_, queries := srRecents()
-		if len(queries) == 0 {
-			return append(rows, srRow{kind: srRNote, title: "Your recent searches will show up here."})
-		}
-		rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
-		for _, q := range queries {
-			rows = append(rows, srRow{kind: srRQuery, id: q, title: q, icon: "clock"})
-		}
-		return rows
+		return p.historyRows(rows)
 	}
 	unreads := p.unreads
 	if len(unreads) > 24 {
@@ -502,31 +507,19 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 			rows = append(rows, srRow{kind: srRMore, id: "unreads-toggle", title: t})
 		}
 	}
-	places, _ := srRecents()
-	cur := srCurrentPlace()
-	var recent []srRow
-	for _, id := range places {
-		if len(recent) == 5 {
-			break
-		}
-		if id == cur {
-			continue
-		}
-		if pl, ok := srPlaceOf(id); ok {
-			recent = append(recent, srRow{kind: srRPlace, id: strings.TrimPrefix(id, "view:"), title: pl.title, icon: pl.icon, boxed: true})
-			continue
-		}
+	// excludeIds: the unreads' conversations (and a DM's person)
+	seen := map[string]bool{}
+	for _, id := range p.unreads {
+		seen[id] = true
 		if i, ok := p.byConv[id]; ok {
-			recent = append(recent, p.candRow(p.cands[i], false))
-			continue
-		}
-		if c := p.h.Core(); c != nil && p.snapOK {
-			ref := c.ConvRef(id)
-			if ref.Name != "" && ref.Kind != "im" && ref.Kind != "mpim" {
-				recent = append(recent, srRow{kind: srRConv, id: id, title: ref.Name, icon: convIcon(ref.Kind)})
-			}
+			seen[p.cands[i].ID] = true
 		}
 	}
+	limit := 5
+	if len(unreads) > 0 {
+		limit = 3
+	}
+	recent := p.recentPlaces(seen, limit)
 	if len(recent) > 0 {
 		if len(unreads) > 0 {
 			rows = append(rows, srRow{kind: srRDivider})
@@ -537,8 +530,203 @@ func (p *SearchPopover) emptyRows(rows []srRow) []srRow {
 	return rows
 }
 
+// historyRows is history mode's Recent searches
+// (suggestionsBlankSlateQueryHistory, ten): Slack's server history
+// (core.RecentSearches: the recents pref with desktop_search_recents_read
+// on, else search.autocomplete), fetched once and redrawn when it lands.
+// Slackbot conversations are left out: Clack has no Slackbot to reopen
+// them in.
+func (p *SearchPopover) historyRows(rows []srRow) []srRow {
+	var queries []string
+	if c := p.h.Core(); c != nil {
+		items, ok := c.CachedRecentSearches(10)
+		if !ok && !p.histLoading {
+			p.histLoading = true
+			run(p.h, func(ctx context.Context) ([]core.QueryHistoryItem, error) { return c.RecentSearches(ctx, 10) },
+				func(_ []core.QueryHistoryItem, _ error) {
+					p.histLoading = false
+					if !p.done && p.histMode {
+						p.rebuild(time.Now(), false)
+					}
+				})
+		}
+		for _, it := range items {
+			if !it.Slackbot {
+				queries = append(queries, it.Query)
+			}
+		}
+	}
+	if len(queries) == 0 {
+		return append(rows, srRow{kind: srRNote, title: "Your recent searches will show up here."})
+	}
+	rows = append(rows, srRow{kind: srRHeader, title: "Recent searches"})
+	for _, q := range queries {
+		rows = append(rows, srRow{kind: srRQuery, id: q, title: q, icon: "clock"})
+	}
+	return rows
+}
+
+// PageInfo, set by the ui root, is a page route's title and icon (the
+// rows Recent places shows for pages Slack's visits.list returns).
+var PageInfo func(page string) (title, icon string)
+
+// srPageRow is a Recent places page row ("" title: Clack doesn't have it).
+func srPageRow(page string) (srRow, bool) {
+	if pl, ok := srPlaceOf("view:" + page); ok && pl.title != "" {
+		return srRow{kind: srRPlace, id: page, title: pl.title, icon: pl.icon, boxed: true}, true
+	}
+	if PageInfo != nil {
+		if t, ic := PageInfo(page); t != "" {
+			return srRow{kind: srRPlace, id: page, title: t, icon: ic, boxed: true}, true
+		}
+	}
+	return srRow{}, false
+}
+
+// recentPlaces is the zero state's Recent places: with
+// desktop_search_recents_read on, navigationEventsToSuggestions over
+// Slack's visits (visits.list, else the recents pref, with this session's
+// navigation merged in); else historyEntriesToSuggestions over this
+// session's history. seen holds the ids already listed (the unreads).
+func (p *SearchPopover) recentPlaces(seen map[string]bool, limit int) []srRow {
+	c := p.h.Core()
+	cur := srCurrentPlace()
+	var out []srRow
+	conv := func(id string) {
+		if i, ok := p.byConv[id]; ok {
+			cd := p.cands[i]
+			if seen[id] || seen[cd.ID] {
+				return
+			}
+			seen[id], seen[cd.ID] = true, true
+			out = append(out, p.candRow(cd, false))
+			return
+		}
+		if c != nil && p.snapOK && !seen[id] {
+			ref := c.ConvRef(id)
+			if ref.Name != "" && ref.Kind != "im" && ref.Kind != "mpim" {
+				seen[id] = true
+				out = append(out, srRow{kind: srRConv, id: id, title: ref.Name, icon: convIcon(ref.Kind)})
+			}
+		}
+	}
+	if c != nil {
+		if evs, ok := c.RecentPlacesEvents(); ok {
+			curPage := core.SlackPageIDs[strings.TrimPrefix(cur, "view:")]
+			for _, ev := range evs {
+				if len(out) >= limit {
+					break
+				}
+				switch ev.ObjectType {
+				case core.NavChannel, core.NavDM:
+					if ev.ID != cur {
+						conv(ev.ID)
+					}
+				case core.NavPage:
+					// canvases and lists (FILE) show only when their file is
+					// loaded in Slack; Clack's popover has no file store, and
+					// record channels don't exist on Hack Club
+					page := core.SlackPageRoute(ev.ID)
+					if page == "" || ev.ID == curPage || seen["view:"+page] {
+						continue
+					}
+					if r, ok := srPageRow(page); ok {
+						seen["view:"+page] = true
+						out = append(out, r)
+					}
+				}
+			}
+			return out
+		}
+	}
+	places, _ := srRecents()
+	for _, id := range places {
+		if len(out) >= limit {
+			break
+		}
+		if id == cur {
+			continue
+		}
+		if page, ok := strings.CutPrefix(id, "view:"); ok {
+			if r, ok := srPageRow(page); ok && !seen[id] {
+				seen[id] = true
+				out = append(out, r)
+			}
+			continue
+		}
+		conv(id)
+	}
+	return out
+}
+
+// srExactGroup is search_autocomplete_promote_exact_name_matches' group
+// ("" when not assigned).
+func (p *SearchPopover) srExactGroup() string {
+	if c := p.h.Core(); c != nil {
+		return c.Experiment("search_autocomplete_promote_exact_name_matches")
+	}
+	return ""
+}
+
+// srExactFactsFor is the exact name rules' predicates for the query q:
+// isUser (a person), isEligibleExactMatch (an active human of the org,
+// not a bot, app, Slackbot, deleted or external member, whose real or
+// display name normalized is the normalized query) and in context (a
+// member of the open conversation).
+func (p *SearchPopover) srExactFactsFor(q string) func(srCand) srExactFacts {
+	nq := acrank.Normalize(acrank.FormatQuery(q))
+	in := map[string]bool{}
+	if c := p.h.Core(); c != nil {
+		if cv, ok := c.Conv(srCurrentPlace()); ok {
+			for _, m := range cv.Members {
+				in[m] = true
+			}
+		}
+	}
+	// a name can only normalize to nq if its length is near nq's (the
+	// pool is every cached person, scanned per keystroke)
+	near := func(n string) bool { return len(n) >= len(nq)/2 && len(n) <= 2*len(nq)+4 }
+	return func(cd srCand) srExactFacts {
+		if cd.Kind != srKUser || cd.ID == "" || (cd.ID[0] != 'U' && cd.ID[0] != 'W') {
+			return srExactFacts{}
+		}
+		f := srExactFacts{user: true}
+		if nq == "" || (!near(cd.Name) && !near(cd.Alt) && !near(cd.Handle)) {
+			return f
+		}
+		u, ok := lookupUser(p.h, cd.ID)
+		if !ok {
+			return f
+		}
+		human := !u.Deleted && !u.IsBot && !u.AppUser && !u.Workflow && !u.External && u.ID != "USLACKBOT"
+		exact := acrank.Normalize(u.RealName) == nq || (u.DisplayName != "" && acrank.Normalize(u.DisplayName) == nq)
+		f.eligible = human && exact
+		f.inContext = f.eligible && in[cd.ID]
+		return f
+	}
+}
+
+// srQuickOn is omni_quick_message_results "on".
+func (p *SearchPopover) srQuickOn() bool {
+	c := p.h.Core()
+	return c != nil && c.Experiment("omni_quick_message_results") == "on"
+}
+
 func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRow {
-	local := srRank(p.cands, q, 8, false)
+	// reorderSuggestionsForActiveQuery: with quick messages the places are
+	// cut to 5 (omni_quick_message_results on) or 8, else to 15
+	total := 15
+	if len(p.msgs) > 0 {
+		total = 8
+		if p.srQuickOn() {
+			total = 5
+		}
+	}
+	all := srRank(p.cands, q, 0, false)
+	local := all
+	if len(local) > total {
+		local = local[:total]
+	}
 	var remote []srCand
 	if len(p.rUsers) > 0 || len(p.rChans) > 0 {
 		rc := make([]srCand, 0, len(p.rUsers))
@@ -583,7 +771,14 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 	if len(remote) > 0 {
 		sort.SliceStable(remote, func(i, j int) bool { return remote[i].Tier > remote[j].Tier })
 	}
-	sug := srMerge(local, remote, 5, 2) // Slack: top hit, "Show results", then 4
+	sug := srMerge(local, remote, total, 2) // Slack: top hit, "Show results", then the rest
+	if g := p.srExactGroup(); g != "" {
+		// search_autocomplete_promote_exact_name_matches: exact name
+		// matches kept past the cut, then lifted among the people
+		facts := p.srExactFactsFor(q)
+		pool := append(append([]srCand(nil), all...), remote...)
+		sug = srApplyExactNameRules(srRetainExactNames(sug, pool, g, total, facts), g, facts)
+	}
 	show := srRow{kind: srRShow, id: q, title: q, icon: "search"}
 	if len(sug) == 0 {
 		rows = append(rows, show)
@@ -597,18 +792,148 @@ func (p *SearchPopover) typingRows(rows []srRow, q string, now time.Time) []srRo
 	if len(p.msgs) > 0 {
 		rows = append(rows, srRow{kind: srRDivider}, srRow{kind: srRHeader, title: "Recent messages"})
 		terms := srParse(q).Highlights()
+		on := p.srQuickOn()
 		for i := range p.msgs {
 			if i == 3 {
 				break
 			}
 			m := &p.msgs[i]
 			name, av := srAuthor(p.h, m)
-			rows = append(rows, srRow{kind: srRMsg, id: m.Channel + "/" + m.TS, msg: m, name: name, avatar: av,
-				where: srWhereOf(p.h, p.msgConvs, m), when: srShortDay(tsTime(m.TS), now),
-				segs: srHighlight(srFlatten(srBody(m)), terms)})
+			r := srRow{kind: srRMsg, id: m.Channel + "/" + m.TS, msg: m, name: name, avatar: av,
+				when: srShortDay(tsTime(m.TS), now), segs: srHighlight(srFlatten(srBody(m)), terms), plain: !on}
+			if on {
+				r.where = p.srQuickWhere(m)
+			}
+			rows = append(rows, r)
 		}
 	}
 	return rows
+}
+
+// srQuickWhere is the quick message card's location (SuggestionQuickMessage
+// with omni_quick_message_results on): a DM reads "Direct Message with
+// {name}" ("Direct Message with you" in your own; an app's DM message only
+// names the app in a thread), else the conversation.
+func (p *SearchPopover) srQuickWhere(m *core.Message) srWhere {
+	w := srWhereOf(p.h, p.msgConvs, m)
+	ref, ok := p.msgConvs[m.Channel]
+	if c := p.h.Core(); !ok && c != nil {
+		ref = c.ConvRef(m.Channel)
+	}
+	if ref.Kind != "im" {
+		return w
+	}
+	self := ""
+	if c := p.h.Core(); c != nil {
+		self = c.Self().ID
+	}
+	switch {
+	case ref.User == self && self != "":
+		w.name = "Direct Message with you"
+	case m.BotID != "":
+		if w.pre == "" {
+			w.name = "" // no thread: just the sender
+		} else {
+			w.name = " " + w.name
+		}
+	default:
+		w.name = "Direct Message with " + w.name
+	}
+	return w
+}
+
+// srQuickArgs is suggestionsQuickMessages' search.inline call for the
+// typed text, ok=false when Slack shows no quick messages: the text must
+// be words only (one STRING token), or words and one in: filter, and the
+// words at least 3 characters. With omni_quick_message_results on the
+// search covers your recent conversations (from_me, with_me), an in:
+// filter its conversation; off, only the channel you're in.
+func (p *SearchPopover) srQuickArgs(text string) (core.InlineOpts, bool) {
+	toks := srQueryTokens(text)
+	o := core.InlineOpts{Count: 3}
+	on := p.srQuickOn()
+	switch {
+	case len(toks) == 2 && (toks[0].kind == srQTWord) != (toks[1].kind == srQTWord) &&
+		(toks[0].mod == "in" || toks[1].mod == "in"):
+		w, f := toks[0], toks[1]
+		if f.kind == srQTWord {
+			w, f = f, w
+		}
+		o.Query = w.text
+		if ch := p.srInChannel(f.val); ch != "" {
+			if on {
+				o.RecentChannels, o.WithMe = []string{}, true // its recent threads (none kept)
+			}
+			o.Channel = ch
+		} else if u := p.srInMember(f.val); u != "" {
+			if on {
+				o.RecentChannels, o.WithMe = []string{}, true
+			}
+			o.User = u
+		}
+	case len(toks) == 1 && toks[0].kind == srQTWord:
+		if on {
+			o.RecentChannels = srRecentChannels() // recent channels; Clack keeps no thread history
+			if o.RecentChannels == nil {
+				o.RecentChannels = []string{}
+			}
+			o.FromMe, o.WithMe = true, true
+		} else if cur := srCurrentPlace(); srLooksLikeChannelID(cur) {
+			o.Channel = cur
+		}
+		o.Query = toks[0].text
+	default:
+		return o, false
+	}
+	if len([]rune(o.Query)) < 3 || (o.Channel == "" && len(o.RecentChannels) == 0 && o.User == "") {
+		return o, false
+	}
+	return o, true
+}
+
+// srLooksLikeChannelID is looksLikeChannelId.
+func srLooksLikeChannelID(id string) bool {
+	if len(id) < 9 || !strings.ContainsRune("CGDZ", rune(id[0])) {
+		return false
+	}
+	for _, r := range id[1:] {
+		if !(r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// srInChannel resolves an in: value to a conversation (InQuerySuggestionToken:
+// <#C…|name>, #name or name).
+func (p *SearchPopover) srInChannel(v string) string {
+	if id := srRefID(v); id != "" && v[1] == '#' {
+		return id
+	}
+	name := strings.TrimPrefix(v, "#")
+	for _, cd := range p.cands {
+		if cd.Kind == srKConv && (cd.ConvK == "channel" || cd.ConvK == "private") && strings.EqualFold(cd.Name, name) {
+			return cd.ID
+		}
+	}
+	return ""
+}
+
+// srInMember resolves an in: value to a person (<@U…> or @handle).
+func (p *SearchPopover) srInMember(v string) string {
+	if id := srRefID(v); id != "" && v[1] == '@' {
+		return id
+	}
+	h, ok := strings.CutPrefix(v, "@")
+	if !ok {
+		return ""
+	}
+	for _, cd := range p.cands {
+		if cd.Kind == srKUser && (strings.EqualFold(cd.Handle, h) || strings.EqualFold(cd.Name, h)) {
+			return cd.ID
+		}
+	}
+	return ""
 }
 
 // ---- async ----
@@ -621,6 +946,8 @@ func (p *SearchPopover) onQuery(gtx layout.Context) {
 	if q == "" {
 		p.rUsers, p.rChans, p.rUQ, p.rCQ = nil, nil, "", ""
 		p.msgs, p.msgConvs, p.msgQ = nil, nil, ""
+	} else if _, ok := p.srQuickArgs(q); !ok {
+		p.msgs, p.msgConvs, p.msgQ = nil, nil, "" // eZ = []: none for this text
 	} else if p.msgQ != "" && !strings.HasPrefix(strings.ToLower(q), strings.ToLower(p.msgQ)) {
 		p.msgs, p.msgConvs, p.msgQ = nil, nil, ""
 	}
@@ -668,21 +995,34 @@ func (p *SearchPopover) tick(gtx layout.Context) {
 			gtx.Execute(op.InvalidateCmd{At: due})
 		} else {
 			p.msgFired = true
-			sess := p.sess
-			recent := srRecentChannels()
-			run(p.h, func(ctx context.Context) (core.SearchResult, error) {
-				res, err := c.SearchInline(ctx, core.InlineOpts{Query: q, RecentChannels: recent, Session: sess})
-				if err == nil {
-					res.Messages = tautSearchInline(ctx, p.h, q, res.Messages) // free without plugins
-				}
-				return res, err
-			}, func(res core.SearchResult, err error) {
-				if p.done || seq != p.seq || err != nil {
-					return
-				}
-				p.msgs, p.msgConvs, p.msgQ = res.Messages, res.Convs, q
-				p.rebuild(time.Now(), false)
-			})
+			if o, ok := p.srQuickArgs(q); ok {
+				o.Session = p.sess
+				on := p.srQuickOn()
+				dm := p.dmOf[o.User]
+				run(p.h, func(ctx context.Context) (core.SearchResult, error) {
+					res, err := c.SearchInline(ctx, o)
+					if err == nil {
+						res.Messages = tautSearchInline(ctx, p.h, q, res.Messages) // free without plugins
+					}
+					return res, err
+				}, func(res core.SearchResult, err error) {
+					if p.done || seq != p.seq || err != nil {
+						return
+					}
+					if on && (o.Channel != "" || o.User != "") {
+						// the hits in the in: conversation only
+						keep := res.Messages[:0:0]
+						for _, m := range res.Messages {
+							if (o.Channel != "" && m.Channel == o.Channel) || (o.User != "" && dm != "" && m.Channel == dm) {
+								keep = append(keep, m)
+							}
+						}
+						res.Messages = keep
+					}
+					p.msgs, p.msgConvs, p.msgQ = res.Messages, res.Convs, q
+					p.rebuild(time.Now(), false)
+				})
+			}
 			run(p.h, func(ctx context.Context) ([]core.File, error) { return c.AutocompleteFiles(ctx, q) },
 				func(fs []core.File, err error) {
 					if p.done || seq != p.seq || err != nil {
@@ -733,6 +1073,7 @@ func (p *SearchPopover) submit(q string) {
 	q = strings.TrimSpace(q)
 	srRecordQuery(q)
 	if c := p.h.Core(); c != nil && q != "" {
+		c.RecordRecentSearch(q, core.RecentSearchSlack) // maybeRecordRecentSearchEvent
 		run(p.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SaveSearch(ctx, q) },
 			func(struct{}, error) {})
 	}
@@ -924,6 +1265,15 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{}
 	p.loadSnap(gtx.Now)
+	if c := p.h.Core(); c != nil && strings.TrimSpace(p.query) == "" {
+		// the history and Recent places follow the recents' arrival and
+		// the read experiment's group (an Experiments plugin flips it live)
+		v, g := c.RecentsVersion(), c.Experiment("desktop_search_recents_read")
+		if v != p.recVer || g != p.recRead {
+			p.recVer, p.recRead = v, g
+			p.rebuild(gtx.Now, false)
+		}
+	}
 	if !p.focus || p.refocus {
 		gtx.Execute(key.FocusCmd{Tag: &p.ed})
 		p.focus, p.refocus = true, false
@@ -1543,17 +1893,26 @@ func srBadge(gtx layout.Context, th *theme.Theme, cl *Colors, n, right, h int) i
 
 func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point, name, av string, rp slackc.Props) layout.Dimensions {
 	r := &p.rows[i]
+	if r.plain {
+		return p.msgRowPlain(gtx, th, cl, i, sz, name, av, rp)
+	}
+	// the card (--quick_message_item--card: 1px otl-ter, radius 12,
+	// padding 12/14/12/12) turns --selected when picked (#1264a3, white
+	// text); the pseudo-selected row is base-ter around and inside it
 	sel := i == p.sel && p.picked
+	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
 	gtx.Constraints = layout.Exact(sz)
 	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = image.Point{}
 		cr := image.Rect(dp(gtx, 16), dp(gtx, 6), sz.X-dp(gtx, 16), sz.Y-dp(gtx, 6))
-		rad := dp(gtx, 8)
-		bg := cl.Bg
-		if sel {
+		rad := dp(gtx, 12)
+		bg, fg, fg3 := cl.Bg, cl.Fg, cl.Fg3
+		switch {
+		case sel:
+			bg, fg, fg3 = cl.Highlight, cl.HighText, cl.HighText
+		case pseudo:
+			fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
 			bg = cl.Selected
-		} else if p.clicks[i].Hovered() {
-			bg = cl.BgHover
 		}
 		rrect(gtx, cr, rad, cl.Ring)
 		rrect(gtx, cr.Inset(1), rad-1, bg)
@@ -1569,7 +1928,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			ww := textW(gtx, th, 13, theme.Regular, r.when)
 			at(gtx, image.Pt(right-ww, ly), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg3, r.when)
+					return text(gtx, th, 13, theme.Regular, fg3, r.when)
 				})
 			})
 			right -= ww + dp(gtx, 12)
@@ -1578,11 +1937,11 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		d := at(gtx, image.Pt(x, ly), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-x), lh)}
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Black, cl.Fg, name)
+				return text(gtx, th, 15, theme.Black, fg, name)
 			})
 		})
 		x += d.Size.X + dp(gtx, 6)
-		srDrawWhere(gtx, p.h, r.where, x, ly, right, lh, bg)
+		srDrawWhereFg(gtx, p.h, r.where, x, ly, right, lh, bg, fg3)
 		bw := cr.Max.X - dp(gtx, 16) - tx
 		if r.tokW != bw {
 			ell := textW(gtx, th, 15, theme.Regular, " …")
@@ -1593,9 +1952,88 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			r.toks, r.tokW = toks, bw
 		}
 		at(gtx, image.Pt(tx, ly+lh), func(gtx layout.Context) layout.Dimensions {
-			srDrawToks(gtx, th, cl, r.toks, dp(gtx, 22), cl.Fg)
+			srDrawToks(gtx, th, cl, r.toks, dp(gtx, 22), fg)
 			return layout.Dimensions{}
 		})
+		pointerCursor(gtx, sz)
+		return layout.Dimensions{Size: sz}
+	})
+}
+
+// msgRowPlain is SuggestionQuickMessage with omni_quick_message_results
+// off: a --multiline suggestion item (padding 4px 16px, the 36px avatar
+// 12px before the text) with the extract on top (15px, one line, …
+// where Slack cut it) and the metadata under it (13px at 70%: the
+// sender, "• " or "⟳ Reply in a thread • ", the date). The picked row is
+// --selected (#1264a3, white).
+func (p *SearchPopover) msgRowPlain(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point, name, av string, rp slackc.Props) layout.Dimensions {
+	r := &p.rows[i]
+	picked := i == p.sel && p.picked
+	pseudo := i == p.sel && !p.picked && gtx.Focused(&p.ed)
+	gtx.Constraints = layout.Exact(sz)
+	return p.clicks[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints.Min = image.Point{}
+		fg, meta := cl.Fg, cl.Fg2
+		switch {
+		case picked:
+			fill(gtx, image.Rectangle{Max: sz}, cl.Highlight)
+			fg, meta = cl.HighText, cl.HighText
+		case pseudo:
+			fill(gtx, image.Rectangle{Max: sz}, cl.Selected)
+		}
+		ax := dp(gtx, 16)
+		at(gtx, image.Pt(ax, (sz.Y-dp(gtx, 36))/2), func(gtx layout.Context) layout.Dimensions {
+			return srAvatar(gtx, p.h, r.msg, av, 36, rp)
+		})
+		tx := ax + dp(gtx, 36) + dp(gtx, 12)
+		right := sz.X - dp(gtx, 16)
+		lh := dp(gtx, 22)
+		y1 := dp(gtx, 2) // padding 4, the top line's margin -2
+		bw := maxInt(1, right-tx)
+		if r.tokW != bw {
+			ell := textW(gtx, th, 15, theme.Regular, "…")
+			toks, _, over := srWrapFit(gtx, th, r.segs, bw, 1, ell)
+			if over {
+				toks = append(toks, srTok{s: "…", x: srEndX(toks, 0), w: ell})
+			}
+			r.toks, r.tokW = toks, bw
+		}
+		at(gtx, image.Pt(tx, y1), func(gtx layout.Context) layout.Dimensions {
+			srDrawToks(gtx, th, cl, r.toks, lh, fg)
+			return layout.Dimensions{}
+		})
+		y2 := y1 + lh + dp(gtx, 2)
+		x := tx
+		put := func(s string) {
+			if x >= right || s == "" {
+				return
+			}
+			d := at(gtx, image.Pt(x, y2), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(right-x, lh)}
+				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 13, theme.Regular, meta, s)
+				})
+			})
+			x += d.Size.X
+		}
+		bullet := func() {
+			x += dp(gtx, 6)
+			put("\u2022")
+			x += dp(gtx, 6)
+		}
+		put(name)
+		if r.msg != nil && r.msg.ThreadTS != "" && r.msg.ThreadTS != r.msg.TS {
+			x += dp(gtx, 6)
+			if is := dp(gtx, 13); x+is < right {
+				at(gtx, image.Pt(x, y2+(lh-is)/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, "threads", 13, meta)
+				})
+				x += is
+			}
+			put(" Reply in a thread")
+		}
+		bullet()
+		put(r.when)
 		pointerCursor(gtx, sz)
 		return layout.Dimensions{Size: sz}
 	})
@@ -1832,8 +2270,14 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 // srDrawWhere draws a location label at (x, y) in a band of height h,
 // clipped at right. bg is the background behind it (facepile rings).
 func srDrawWhere(gtx layout.Context, hst Host, w srWhere, x, y, right, h int, bg color.NRGBA) {
+	srDrawWhereFg(gtx, hst, w, x, y, right, h, bg, colorsOf(hst.Theme()).Fg3)
+}
+
+// srDrawWhereFg is srDrawWhere in fg (a picked card's white).
+func srDrawWhereFg(gtx layout.Context, hst Host, w srWhere, x, y, right, h int, bg, fg color.NRGBA) {
 	th := hst.Theme()
 	cl := colorsOf(th)
+	cl.Fg3 = fg
 	if w.pre != "" && x < right {
 		d := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(right-x, h)}

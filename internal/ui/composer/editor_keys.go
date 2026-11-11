@@ -87,6 +87,12 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 	if short && e.shortcut(gtx, k.Name, shift, mods.Contain(key.ModAlt)) {
 		return
 	}
+	if (k.Name == key.NameReturn || k.Name == key.NameEnter) && short && shift && e.Snippets {
+		// MessageInput.onEnter: ⌘⇧Enter (Ctrl+Shift+Enter) with
+		// enableSnippetCreation opens the snippet dialog with the message
+		e.emit(EvSnippet)
+		return
+	}
 	switch k.Name {
 	case key.NameReturn, key.NameEnter:
 		if e.anchor == e.caret {
@@ -271,8 +277,8 @@ func (e *Editor) copySel(gtx layout.Context) bool {
 //     There is no list case: Enter in a list item with text sends, and
 //     so does Enter on an empty quote line.
 //
-// Ctrl+Shift+Enter (⌘⇧Enter on macOS) is MessageInput.onEnter's snippet
-// dialog in Slack; Clack has no snippet dialog and adds a line there.
+// Mod+Shift+Enter with snippets on (the snippet dialog) is caught before
+// this, in command.
 func (e *Editor) enter(mods key.Modifiers) {
 	meta := mods.Contain(key.ModCommand) || mods.Contain(key.ModSuper)
 	ctrl := mods.Contain(key.ModCtrl)
@@ -287,10 +293,6 @@ func (e *Editor) enter(mods key.Modifiers) {
 			e.commit()
 			return
 		}
-	}
-	if shift && (edMac && meta || !edMac && ctrl) {
-		e.newline() // Slack: openSnippetDialog
-		return
 	}
 	p := uipref.Get()
 	if insertsNewline(meta, ctrl, shift, alt, edMac, p.SendOnModEnter, p.EnterIsSpecial, e.inCode()) {

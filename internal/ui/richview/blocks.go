@@ -41,6 +41,24 @@ func (l *lay) bodyStyle() flowStyle {
 	return fs
 }
 
+// headerScale is .p-header_block__text by level (client-boot-styles):
+// 15px/1.46668 black with no level (and at level 3 or 4, which Header
+// classes level_3), level_1 22px/1.36365, level_2 18px/1.33334, all
+// black. The flat scale (p-header_block--flat_scale) moves each level
+// down one step: level_1 18px/1.33334, level_2 15px/1.46668 black,
+// level_3 15px/1.46668 bold. Sizes in Sp, line heights in Dp.
+func headerScale(level int, flat bool) (size, lineH float32, w font.Weight) {
+	switch {
+	case flat && level == 1, !flat && level == 2:
+		return 18, 24, font.Black
+	case !flat && level == 1:
+		return 22, 30, font.Black
+	case flat && (level == 3 || level == 4):
+		return 15, 22, font.Bold
+	}
+	return 15, 22, font.Black
+}
+
 func isTextual(k richtext.BlockKind) bool {
 	switch k {
 	case richtext.Paragraph, richtext.Quote, richtext.List, richtext.Tombstone:
@@ -439,6 +457,10 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	case richtext.Header:
 		fs := l.bodyStyle()
 		fs.face.Weight = font.Black
+		if !l.opts.Compact {
+			size, lh, wt := headerScale(b.Level, l.st.flatHeadings)
+			fs.size, fs.lineH, fs.face.Weight = l.sp(size), l.dp(lh), wt
+		}
 		l.addSpans(b.Spans, &fs)
 		if edited {
 			l.addEdited()

@@ -10,12 +10,16 @@ package core
 //     come from createApiMethodFetcher, which snake-cases its arguments
 //     (fileId → file_id) and keeps reason out of them.
 //   - editing: editFile (files.edit {file, title, is_canvas_template: false}).
+//   - Deleted (client-deleted-unified-files-view, build 4d0c78085232):
+//     files.recentlyDeleted {file_type} and undeleteFile's files.undelete
+//     {file_id}.
 //
 // The starred set lives in memory per App, like Slack's redux store.
 
 import (
 	"context"
 	"net/url"
+	"sort"
 	"sync"
 )
 
@@ -127,4 +131,48 @@ func (a *App) FileInfo(ctx context.Context, id string) (File, error) {
 // is_canvas_template: false} (Slack always sends is_canvas_template).
 func (a *App) RenameFile(ctx context.Context, id, title string) error {
 	return a.C.Call(ctx, "files.edit", url.Values{"file": {id}, "title": {title}, "is_canvas_template": {"false"}}, nil)
+}
+
+// DeletedFile is one of DeletedFilesList's rows (files.recentlyDeleted):
+// a canvas (FileType "quip") or list ("list") deleted in the last day.
+type DeletedFile struct {
+	ID, Title  string
+	DateDelete int64  // unix seconds
+	FileType   string // "quip" | "list"
+}
+
+// RecentlyDeleted is DeletedFilesList's load: files.recentlyDeleted
+// {file_type} (pageFileType, "" for both), the rows isDeletedFile keeps,
+// the latest deletion first.
+func (a *App) RecentlyDeleted(ctx context.Context, fileType string) ([]DeletedFile, error) {
+	v := url.Values{}
+	if fileType != "" {
+		v.Set("file_type", fileType)
+	}
+	var r struct {
+		Files []struct {
+			ID         string  `json:"id"`
+			Title      *string `json:"title"`
+			DateDelete *int64  `json:"date_delete"`
+			FileType   string  `json:"file_type"`
+		} `json:"files"`
+	}
+	if err := a.C.Call(ctx, "files.recentlyDeleted", v, &r); err != nil {
+		return nil, err
+	}
+	out := []DeletedFile{}
+	for _, f := range r.Files {
+		if f.ID == "" || f.Title == nil || f.DateDelete == nil || (f.FileType != "quip" && f.FileType != "list") {
+			continue // isDeletedFile
+		}
+		out = append(out, DeletedFile{ID: f.ID, Title: *f.Title, DateDelete: *f.DateDelete, FileType: f.FileType})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].DateDelete > out[j].DateDelete })
+	return out, nil
+}
+
+// UndeleteFile is undeleteFile: files.undelete {file_id} (createApiMethodFetcher's
+// fileId, snake-cased).
+func (a *App) UndeleteFile(ctx context.Context, id string) error {
+	return a.C.Call(ctx, "files.undelete", url.Values{"file_id": {id}}, nil)
 }

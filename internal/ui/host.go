@@ -53,6 +53,12 @@ func (a *App) Navigate(route string) {
 	if r == "" {
 		return
 	}
+	// a conversation opened from inside the split view stays there, as one
+	// opened with Slack's split modifier click goes there (split.go)
+	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
+		a.OpenSplit(route)
+		return
+	}
 	if r.Page() == "search" {
 		a.searchQuery = r.Query() // routes carry it URL-escaped (popups' search)
 		if q, err := url.QueryUnescape(a.searchQuery); err == nil {
@@ -138,6 +144,13 @@ func (a *App) afterRoute(prev, r Route) {
 	a.trackPreviewRoute(prev, r)
 	if a.data != nil && a.data.core != nil {
 		a.data.core.SetSelected(ch) // Slack's currentlySelectedId: a previewed channel gets a sidebar row
+		// maybeRecordRecentNavigationEvent (desktop_search_recents_write)
+		if id := ch; id != "" || core.SlackPageIDs[r.Page()] != "" {
+			if id == "" {
+				id = core.SlackPageIDs[r.Page()]
+			}
+			a.data.core.RecordRecentNavigation(id, "")
+		}
 	}
 	if prev.Channel() != ch {
 		// leaving a channel closes its thread/details pane (Slack keeps the

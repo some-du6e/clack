@@ -64,7 +64,9 @@ func (a *App) defaultShortcuts() *shortcuts {
 			a.toggleSidebar()
 		}
 	})
-	add("Mod+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
+	// Slack's mod+shift+y (PG1Q): openCustomStatusDialog({fromKeyboardShortcut:
+	// true}), the "Set a status" dialog. Slack has no dark mode shortcut.
+	add("Mod+Shift+Y", "Set a status", func(a *App) { a.openStatusFromShortcut() })
 	// Slack's mod+shift+h (menuitem-huddle-action): "Toggle huddles start / stop"
 	add("Mod+Shift+H", "Toggle huddle", func(a *App) { a.toggleHuddle() })
 	add("Mod+N", "Compose", func(a *App) { a.compose() })
@@ -99,6 +101,9 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Alt+Shift+Down", "Next unread", func(a *App) { a.stepConv(1, true) })
 	add("Esc", "Close / mark as read", func(a *App) {
 		if a.dismissTop() {
+			return
+		}
+		if a.splitEscape() { // the split view has the focus (split.go)
 			return
 		}
 		if a.threadEsc() { // the thread pane's: mark it read, else close it (secondary.go)
