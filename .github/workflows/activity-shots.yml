@@ -47,7 +47,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS fonts-lato
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS fonts-lato
       - name: activity feed screenshots
         env:
           ACTIVITY_SHOTS_DIR: ${{ github.workspace }}/dist/shots
