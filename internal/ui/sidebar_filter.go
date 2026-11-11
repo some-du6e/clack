@@ -127,6 +127,7 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		}
 		if k, ok := ev.(key.Event); ok && k.State == key.Press {
 			f.clear()
+			gtx.Execute(op.InvalidateCmd{}) // the rows follow on the next frame
 		}
 	}
 	for {
@@ -137,6 +138,7 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		if _, ok := ev.(widget.ChangeEvent); ok {
 			if t := f.ed.Text(); t != f.text {
 				f.setText(t, gtx.Now)
+				gtx.Execute(op.InvalidateCmd{At: f.due}) // the debounce's frame, typing or not
 			}
 		}
 	}
@@ -148,6 +150,7 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 	if f.reset.Clicked(gtx) { // handleResetButtonClick + onReset: clear, keep the focus
 		f.clear()
 		gtx.Execute(key.FocusCmd{Tag: &f.ed})
+		gtx.Execute(op.InvalidateCmd{})
 	}
 
 	r := image.Rectangle{Max: sz}
@@ -305,6 +308,7 @@ func (a *App) layoutSidebarNoResults(gtx layout.Context, w int) layout.Dimension
 		q := f.debounced
 		f.clear()
 		popups.CommitSearch(a, q)
+		gtx.Execute(op.InvalidateCmd{})
 	}
 	txt := i18n.T("channel_sidebar", "No conversations to show…")
 	lh := gtx.Dp(23) // 15px at line-height 1.5

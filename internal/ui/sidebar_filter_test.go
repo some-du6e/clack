@@ -157,7 +157,7 @@ func TestSidebarTextFilter(t *testing.T) {
 
 	// Escape empties the input (FilterInputBase + the keydown's clear)
 	e.key(key.NameEscape, 0)
-	e.settle(50 * time.Millisecond)
+	e.until("Escape cleared the rows", 3*time.Second, func() bool { return a.sidebar.fq == "" })
 	if a.sidebar.filter.text != "" || a.sidebar.filter.ed.Text() != "" || a.sidebar.fq != "" {
 		t.Errorf("Escape left %q / %q / rows %q", a.sidebar.filter.text, a.sidebar.filter.ed.Text(), a.sidebar.fq)
 	}
