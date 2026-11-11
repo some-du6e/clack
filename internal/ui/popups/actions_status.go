@@ -1369,15 +1369,18 @@ func (s *actStatus) presetRow(gtx layout.Context, th *theme.Theme, cl *Colors, f
 	return rh
 }
 
-// actScheduledRange is formatScheduledDateRange: "Today, 3:00 PM – 5:00 PM",
-// "Tomorrow 9:00 AM – Fri, Nov 14 5:00 PM".
+// actScheduledRange is formatScheduledDateRange (current_status): each end
+// as {date_short_pretty} and {time}, in "{startDate}, {startTime} –
+// {endTime}" ("Today, 3:00 PM – 5:00 PM") or "{startDate} {startTime} –
+// {endDate} {endTime}" ("Tomorrow 9:00 AM – Nov 14 5:00 PM").
 func actScheduledRange(start, end int64, now time.Time) string {
 	st, en := time.Unix(start, 0).In(now.Location()), time.Unix(end, 0).In(now.Location())
-	sd, ed := dtDateLabel(dtDay(st), now, dtRelative), dtDateLabel(dtDay(en), now, dtRelative)
+	loc := i18n.Locale()
+	sd, ed := i18n.ShortDatePretty(loc, st, now, false), i18n.ShortDatePretty(loc, en, now, false)
 	if sd == ed {
-		return sd + ", " + clock(st) + " – " + clock(en)
+		return nsStatus.T("{startDate}, {startTime} – {endTime}", "startDate", sd, "startTime", clock(st), "endTime", clock(en))
 	}
-	return sd + " " + clock(st) + " – " + ed + " " + clock(en)
+	return nsStatus.T("{startDate} {startTime} – {endDate} {endTime}", "startDate", sd, "startTime", clock(st), "endDate", ed, "endTime", clock(en))
 }
 
 // schedRow draws a "Scheduled" row: emoji, **text** — range, and on hover

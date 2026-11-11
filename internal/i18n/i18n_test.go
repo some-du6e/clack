@@ -205,10 +205,30 @@ func TestDates(t *testing.T) {
 		{LongDatePretty("en-US", mon, now, false), "Monday, November 2nd"},
 		{CalendarDate("en-US", mon, CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: true}), "Nov 2"},
 		{CalendarDate("es-ES", time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC), CalendarOpts{ExcludeYear: true}), "uno de marzo"},
+		// {calendar_header}
+		{CalendarDate("en-US", mon, CalendarOpts{ExcludeDay: true}), "November 2026"},
+		{CalendarDate("es-ES", mon, CalendarOpts{ExcludeDay: true}), "noviembre de 2026"},
+		{CalendarDate("ja-JP", mon, CalendarOpts{ExcludeDay: true}), "2026年11月"},
+		// DaysOfWeek's "dd"
+		{WeekdayMin("en-US", time.Sunday), "Su"},
+		{WeekdayMin("es-ES", time.Monday), "lu"},
+		{WeekdayMin("ja-JP", time.Saturday), "土"},
+		// the date fields and {date_short_pretty}
+		{WeekdayDate("en-US", time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC), false), "Mon, Nov 9"},
+		{WeekdayDate("en-US", time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC), true), "Fri, Jan 1, 2027"},
+		{WeekdayDate("ja-JP", time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC), false), "11月9日 (月)"},
+		{ShortDatePretty("en-US", time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC), now, false), "Nov 14"},
+		{ShortDatePretty("es-ES", now.AddDate(0, 0, 1), now, false), "Mañana"},
 	}
 	for i, c := range cases {
 		if c.got != c.want {
 			t.Errorf("%d: %q, want %q", i, c.got, c.want)
+		}
+	}
+	// weeks start on Monday where dayjs's locale says so
+	for loc, want := range map[string]time.Weekday{"en-US": time.Sunday, "en-GB": time.Monday, "es-ES": time.Monday, "ja-JP": time.Sunday, "zh-CN": time.Monday, "pt-BR": time.Sunday} {
+		if got := WeekStart(loc); got != want {
+			t.Errorf("WeekStart(%s) = %v, want %v", loc, got, want)
 		}
 	}
 }

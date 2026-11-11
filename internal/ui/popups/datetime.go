@@ -10,6 +10,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -23,7 +24,9 @@ import (
 //     ("November 6th, 2026").
 //   - calendar (datepick.png): card 350 wide, padding 24; header 48px
 //     «  ‹  "November 2026" 15/700  ›  » (« » = year, ‹ › = month);
-//     weekday row Su…Sa 13/700 #454447, 30px; 7×6 grid of 43×41 cells with
+//     weekday row Su…Sa 13/700 #454447, 30px (dayjs "dd" from the locale's
+//     week start: lu…do in es-ES, 日…土 in ja-JP; the title is
+//     {calendar_header}, "noviembre de 2026"); 7×6 grid of 43×41 cells with
 //     1px #dddddd lines, numbers 15px. Days before the minimum: bg #f8f8f8,
 //     #616061, disabled. Selected: #1264a3 cell, 34px white 1px ring, white
 //     number. Hover: #f8f8f8. Arrows move, Enter picks, Escape closes.
@@ -104,7 +107,8 @@ func dtMonthGrid(month time.Time) [42]int {
 	var g [42]int
 	first := dtMonthStart(month)
 	n := time.Date(first.Year(), first.Month()+1, 0, 0, 0, 0, 0, first.Location()).Day()
-	off := int(first.Weekday())
+	// rows start on the locale's first weekday (Month: startOf("week"))
+	off := (int(first.Weekday()) - int(i18n.WeekStart(i18n.Locale())) + 7) % 7
 	for i := 0; i < n; i++ {
 		g[off+i] = i + 1
 	}
@@ -125,21 +129,25 @@ func dtTimeSlots(from, step int) []int {
 	return out
 }
 
-// dtDateLabel formats a field's date.
+// dtDateLabel formats a field's date. The long style is DatePickerInput's
+// full value, toCalendarDate ("November 6th, 2026"; es-ES and es-LA
+// shorten it); the relative one is "Today" / "Tomorrow" (date_picker) or
+// the weekday and short date ("Mon, Nov 9", the year when it isn't this
+// one's).
 func dtDateLabel(day, now time.Time, style dtStyle) string {
+	loc := i18n.Locale()
 	if style == dtLong {
-		return day.Format("January ") + ordinal(day.Day()) + day.Format(", 2006")
+		es := loc == "es-ES" || loc == "es-LA"
+		return i18n.CalendarDate(loc, day, i18n.CalendarOpts{ShortenMonth: es, ShortenDay: es})
 	}
 	today := dtDay(now)
 	switch {
 	case dtSameDay(day, today):
-		return "Today"
+		return i18n.T("date_picker", "Today")
 	case dtSameDay(day, today.AddDate(0, 0, 1)):
-		return "Tomorrow"
-	case day.Year() == now.Year():
-		return day.Format("Mon, Jan 2")
+		return i18n.T("date_picker", "Tomorrow")
 	}
-	return day.Format("Mon, Jan 2, 2006")
+	return i18n.WeekdayDate(loc, day, day.Year() != now.Year())
 }
 
 // dtTimeLabel formats minutes after midnight as "3:30 PM".
@@ -686,7 +694,9 @@ func (c *dtCalendar) drawBody(gtx layout.Context, th *theme.Theme, cl *Colors, s
 			})
 		})
 	}
-	title := c.month.Format("January 2006")
+	// DatePickerCalendar's title: formatDate(view, "{calendar_header}"),
+	// toCalendarDate without the day
+	title := i18n.CalendarDate(i18n.Locale(), c.month, i18n.CalendarOpts{ExcludeDay: true})
 	tw := textW(gtx, th, 15, theme.Bold, title)
 	at(gtx, image.Pt((sz.X-tw)/2, ty), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, tyH, func(gtx layout.Context) layout.Dimensions {
@@ -694,10 +704,13 @@ func (c *dtCalendar) drawBody(gtx layout.Context, th *theme.Theme, cl *Colors, s
 		})
 	})
 
-	// weekdays
+	// weekdays: DaysOfWeek, dayjs().weekday(i).format("dd") from the
+	// locale's week start
 	gx := (sz.X - 7*cw) / 2
 	wy := pad + headH
-	for i, wd := range [...]string{"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"} {
+	loc := i18n.Locale()
+	for i := range 7 {
+		wd := i18n.WeekdayMin(loc, (i18n.WeekStart(loc)+time.Weekday(i))%7)
 		w := textW(gtx, th, 13, theme.Bold, wd)
 		at(gtx, image.Pt(gx+i*cw+(cw-w)/2, wy), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, wkH, func(gtx layout.Context) layout.Dimensions {

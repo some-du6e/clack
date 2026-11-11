@@ -375,7 +375,7 @@ func (p *SearchPopover) qfLayout(gtx layout.Context, th *theme.Theme, cl *Colors
 	shown := 0
 	widths := make([]int, len(fs))
 	for i, f := range fs {
-		widths[i] = srQFPillW(gtx, th, f.label, true)
+		widths[i] = srQFPillW(gtx, th, nsSearch.T(f.label), true)
 		if used+widths[i]+gap > w {
 			break
 		}
@@ -388,7 +388,7 @@ func (p *SearchPopover) qfLayout(gtx layout.Context, th *theme.Theme, cl *Colors
 	for i := 0; i < shown; i++ {
 		f := fs[i]
 		at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
-			return p.qfPill(gtx, th, &p.qf.btns[i], image.Pt(widths[i], h), f.icon, f.label, p.qfActive(f, now))
+			return p.qfPill(gtx, th, &p.qf.btns[i], image.Pt(widths[i], h), f.icon, nsSearch.T(f.label), p.qfActive(f, now))
 		})
 		x += widths[i] + gap
 	}
@@ -449,17 +449,18 @@ func (p *SearchPopover) qfMenuItems(fs []srQF) []MenuItem {
 	for i := p.qf.shown; i < len(fs); i++ {
 		f := fs[i]
 		if f.date {
-			quick = append(quick, MenuItem{Label: f.label, Icon: "calendar", Do: func() {
+			quick = append(quick, MenuItem{Label: nsSearch.T(f.label), Key: LabelKey(f.label), Icon: "calendar", Do: func() {
 				p.filterInsert(srWeekTokens(time.Now()), false, false, -1)
 			}})
 			continue
 		}
-		quick = append(quick, MenuItem{Label: f.label, Icon: f.icon, Do: func() { p.qfInsertValue(f) }})
+		quick = append(quick, MenuItem{Label: f.label, Icon: f.icon, Do: func() { p.qfInsertValue(f) }}.In(nsSearch))
 	}
 	incomplete := func(label, ic, mod string) MenuItem {
+		// the hint is the modifier, which stays English (docs/I18N.md)
 		return MenuItem{Label: label, Icon: ic, Hint: mod + ":", Do: func() {
 			p.filterInsert([]srPiece{srText(mod + ":")}, false, true, -1)
-		}}
+		}}.In(nsSearch)
 	}
 	more := []MenuItem{
 		incomplete("From someone", "user", "from"),
@@ -480,14 +481,14 @@ func (p *SearchPopover) qfMenuItems(fs []srQF) []MenuItem {
 		}
 		more = append(more, MenuItem{Label: "Date", Icon: "calendar", Sub: []MenuItem{
 			sub("On", "on"), sub("Before", "before"), sub("After", "after"),
-			{Label: "Range", Hint: "after: before:", Do: p.enterRange},
-		}})
+			MenuItem{Label: "Range", Hint: "after: before:", Do: p.enterRange}.In(nsSearch),
+		}}.In(nsSearch))
 	}
 	if len(quick) == 0 {
 		return more
 	}
-	out := append([]MenuItem{{Header: "Quick filters"}}, quick...)
-	out = append(out, Sep(), MenuItem{Header: "More options"})
+	out := append([]MenuItem{MenuItem{Header: "Quick filters"}.In(nsSearch)}, quick...)
+	out = append(out, Sep(), MenuItem{Header: "More options"}.In(nsSearch))
 	return append(out, more...)
 }
 
@@ -534,9 +535,9 @@ func (p *SearchPopover) filterButton(gtx layout.Context, th *theme.Theme, x, y i
 			pointer.CursorPointer.Add(gtx.Ops)
 			return layout.Dimensions{Size: box.Max}
 		})
-		label := "Show filters"
+		label := nsSearch.T("Show filters")
 		if on {
-			label = "Hide filters"
+			label = nsSearch.T("Hide filters")
 		}
 		p.qf.tip.Delay = 300 * time.Millisecond
 		Tooltip(gtx, th, &p.qf.tip, p.filter.Hovered(), d.Size, Below, label, "")

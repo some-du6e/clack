@@ -80,9 +80,9 @@ func (p *SearchPopover) srActionsOf(r *srRow) []srAction {
 		if u, ok := lookupUser(h, id); ok {
 			app = u.IsBot || u.AppUser
 		}
-		a := srAction{label: "View profile", desc: "View the profile of " + name, icon: "user-directory", kind: "view_profile"}
+		a := srAction{label: nsSearch.T("View profile"), desc: nsSearch.T("View the profile of {user}", "user", name), icon: "user-directory", kind: "view_profile"}
 		if app {
-			a = srAction{label: "View app details", desc: "View the details of the " + name + " app", icon: "app-directory", kind: "open_details"}
+			a = srAction{label: nsSearch.T("View app details"), desc: nsSearch.T("View the details of the {app} app", "app", name), icon: "app-directory", kind: "open_details"}
 		}
 		a.do = func(layout.Context) {
 			pfOpenFull(h, id)
@@ -95,9 +95,10 @@ func (p *SearchPopover) srActionsOf(r *srRow) []srAction {
 		return acts
 	case srRConv, srRChan:
 		id := r.id
-		a := srAction{label: "Search in channel", desc: "Search in the " + r.title + " channel", icon: "quick-switch", kind: "search_in_channel"}
+		a := srAction{label: nsSearch.T("Search in channel"), desc: nsSearch.T("Search in the {channel} channel", "channel", r.title), icon: "quick-switch", kind: "search_in_channel"}
 		if r.mpim {
-			a.label, a.desc = "Search in conversation", "Search in the group message with you, "+srMpimMembers(h, r.members)
+			a.label = nsSearch.T("Search in conversation")
+			a.desc = nsSearch.T("Search in the group message with you, {members}", "members", srMpimMembers(h, r.members))
 		}
 		a.do = func(layout.Context) { p.searchInConv(id) }
 		acts := []srAction{a}
@@ -109,9 +110,9 @@ func (p *SearchPopover) srActionsOf(r *srRow) []srAction {
 		q := r.id
 		shown := SearchDisplayText(h, q)
 		return []srAction{
-			{label: "Copy search query", desc: "Copy the search query " + shown, icon: "posts", kind: "copy_to_clipboard",
-				activeLabel: "Query copied!", do: func(gtx layout.Context) { copyText(gtx, shown) }},
-			{label: "Delete", desc: "Delete the search query " + shown + " from your query history", icon: "close",
+			{label: nsSearch.T("Copy search query"), desc: nsSearch.T("Copy the search query {query}", "query", shown), icon: "posts", kind: "copy_to_clipboard",
+				activeLabel: nsSearch.T("Query copied!"), do: func(gtx layout.Context) { copyText(gtx, shown) }},
+			{label: nsSearch.T("Delete"), desc: nsSearch.T("Delete the search query {query} from your query history", "query", shown), icon: "close",
 				kind: "delete_query_history", do: func(layout.Context) { p.deleteHistory(q) }},
 		}
 	case srRFile:
@@ -124,15 +125,16 @@ func (p *SearchPopover) srActionsOf(r *srRow) []srAction {
 			kind = "file"
 		}
 		link := f.Permalink
-		return []srAction{{label: "Copy link", desc: "Copy the link to the " + r.title + " " + kind, icon: "link",
-			kind: "copy_to_clipboard", activeLabel: "Link copied!", do: func(gtx layout.Context) { copyText(gtx, link) }}}
+		return []srAction{{label: nsSearch.T("Copy link"), desc: nsSearch.T("Copy the link to the {file} {fileType}", "file", r.title, "fileType", kind), icon: "link",
+			kind: "copy_to_clipboard", activeLabel: nsSearch.T("Link copied!"), do: func(gtx layout.Context) { copyText(gtx, link) }}}
 	}
 	return nil
 }
 
 // srOpenIn is the "Open in…" button (open_in_surface_menu) holding it.
 func srOpenIn(it MenuItem) srAction {
-	return srAction{label: "Open in…", desc: "Open in…", icon: "surface", kind: "open_in_surface_menu", surface: []MenuItem{it}}
+	l := nsSearch.T("Open in…")
+	return srAction{label: l, desc: l, icon: "surface", kind: "open_in_surface_menu", surface: []MenuItem{it}}
 }
 
 // srSplitItem is the surface menu's "Open in split view" for a row
