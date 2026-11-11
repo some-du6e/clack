@@ -160,7 +160,7 @@ func hudSurfaces(t *testing.T) []hudSurface {
 		}},
 		{name: "share-picker", w: 900, h: 560, draw: func(gtx C) {
 			// ScreenPickerModal's header, grid and footer, sources already listed
-			p := &screenPicker{c: c, s: s, ph: winHost{e.w}, kind: huddle.ShareScreen, loaded: true,
+			p := &screenPicker{c: c, s: s, ph: winHost{e.w}, kind: huddle.ShareScreen, loaded: true, audioOK: true,
 				screens: []*pickTile{{src: huddle.ShareSource{ID: "screen:1:0", Name: "Screen 1"}}},
 				windows: []*pickTile{{src: huddle.ShareSource{ID: "window:9:0", Name: "zsh"}}}}
 			hg := gtx

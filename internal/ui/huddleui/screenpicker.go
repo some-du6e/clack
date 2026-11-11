@@ -95,6 +95,7 @@ type screenPicker struct {
 	loaded  bool
 	sel     string // the selected source's id
 	audio   bool   // Share system audio
+	audioOK bool   // the checkbox is offered (known once the sources load)
 	shared  bool   // closed by Share (shouldSkipBorderCleanup)
 
 	tabs  [2]widget.Clickable
@@ -140,9 +141,7 @@ func (c *Controller) openScreenPicker(s *huddle.Session, ph popups.Host) {
 			c.changed()
 		},
 	}
-	if c.shareAudioOffered() {
-		o.FooterLeft = p.audioBox
-	}
+	o.FooterLeft = p.audioBox // drawn once the sources say the OS can (load)
 	p.m = popups.NewModal(ph, o)
 	c.share.mu.Lock()
 	c.share.picker = p
@@ -161,7 +160,7 @@ func (p *screenPicker) share() bool {
 	}
 	p.mu.Lock()
 	p.shared = true
-	audio := p.audio && p.c.shareAudioOffered()
+	audio := p.audio && p.audioOK
 	p.mu.Unlock()
 	p.c.startShare(p.s, *src, audio)
 	return true
@@ -175,8 +174,10 @@ func (p *screenPicker) load() {
 		p.close()
 		return
 	}
+	ok := p.c.shareAudioOffered() // may ask the OS (Windows' loopback probe): off the UI goroutine
 	p.mu.Lock()
 	p.screens = tilesOf(screens)
+	p.audioOK = ok
 	p.mu.Unlock()
 	p.ph.Invalidate()
 	windows, _ := huddle.ListShareSources(huddle.ShareWindow)
@@ -412,8 +413,11 @@ func (p *screenPicker) audioBox(gtx C) D {
 		p.mu.Unlock()
 	}
 	p.mu.Lock()
-	on := p.audio
+	on, offered := p.audio, p.audioOK
 	p.mu.Unlock()
+	if !offered {
+		return D{}
+	}
 	label := nsHuddles.T("Share system audio")
 	ls := labelSize(gtx, th, 15, theme.Regular, label)
 	bh := gtx.Dp(36)

@@ -62,7 +62,7 @@ var (
 	pGetMessageW               = user32.NewProc("GetMessageW")
 	pTranslateMessage          = user32.NewProc("TranslateMessage")
 	pDispatchMessageW          = user32.NewProc("DispatchMessageW")
-	pShowWindow                = user32.NewProc("ShowWindow")
+	pShowWindow                = user32.NewProc("ShowWindowAsync") // never waits on the border's thread
 	pSetLayeredWindowAttribute = user32.NewProc("SetLayeredWindowAttributes")
 	pBeginPaint                = user32.NewProc("BeginPaint")
 	pEndPaint                  = user32.NewProc("EndPaint")
@@ -260,7 +260,15 @@ func pickable(h uintptr) bool {
 
 type gdiShares struct{}
 
-func (gdiShares) SystemAudio() bool { return false }
+// The system audio capture, when this build has one (sysaudio_windows.go,
+// cgo): process loopback without Clack's own sound, Windows 10 build
+// 20348 and later.
+var (
+	loopbackSupported func() bool
+	startLoopback     func(onAudio func([]int16)) (stop func(), err error)
+)
+
+func (gdiShares) SystemAudio() bool { return loopbackSupported != nil && loopbackSupported() }
 
 func (gdiShares) List(kind ShareKind, thumb image.Point) ([]ShareSource, error) {
 	runtime.LockOSThread()
@@ -300,7 +308,7 @@ func (gdiShares) List(kind ShareKind, thumb image.Point) ([]ShareSource, error) 
 }
 
 func (gdiShares) Open(src ShareSource, audio bool, logf func(string, ...any)) (ScreenCapture, error) {
-	c := &gdiCapture{stop: make(chan struct{}), logf: logf}
+	c := &gdiCapture{stop: make(chan struct{}), logf: logf, audio: audio}
 	if src.Kind() == ShareWindow {
 		c.win = uintptr(src.nativeID())
 		if ok, _, _ := pIsWindow.Call(c.win); ok == 0 {
@@ -455,15 +463,25 @@ func (g *gdiGrab) rgba() *image.RGBA {
 // gdiCapture grabs a monitor or a window at shareFPS on its own locked
 // OS thread (GDI objects belong to their thread).
 type gdiCapture struct {
-	win  uintptr
-	area image.Rectangle
-	logf func(string, ...any)
-	stop chan struct{}
-	once sync.Once
-	done chan struct{}
+	win       uintptr
+	area      image.Rectangle
+	audio     bool
+	stopAudio func()
+	logf      func(string, ...any)
+	stop      chan struct{}
+	once      sync.Once
+	done      chan struct{}
 }
 
-func (c *gdiCapture) Start(onFrame func(*CameraFrame), _ func([]int16), onEnd func(error)) error {
+func (c *gdiCapture) Start(onFrame func(*CameraFrame), onAudio func([]int16), onEnd func(error)) error {
+	if c.audio && onAudio != nil && startLoopback != nil {
+		stop, err := startLoopback(onAudio)
+		if err != nil {
+			c.logf("huddle: screen share: %v", err)
+		} else {
+			c.stopAudio = stop
+		}
+	}
 	c.done = make(chan struct{})
 	started := make(chan error, 1)
 	go func() {
@@ -540,6 +558,9 @@ func (c *gdiCapture) Close() {
 		close(c.stop)
 		if c.done != nil {
 			<-c.done
+		}
+		if c.stopAudio != nil {
+			c.stopAudio()
 		}
 	})
 }

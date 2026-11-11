@@ -165,11 +165,11 @@ The account's huddle experiments (docs/EXPERIMENTS.md), against Slack build `4d0
 | huddles_link_v2 | `YCI0`: the sidebar Huddles link's count badge of unviewed huddle invites, cleared 600 ms after the page opens | none | **open**: Clack's sidebar link has no facepile and Clack keeps no huddle invite notifications |
 | huddles_discovery_calls | `GPML` CallMenu's `New: Try a huddle for quick informal discussions with your team.` (treatment) | none | **open**: no call apps menu |
 | huddles_mva_window | the huddle window as a multi-view window (secondary views) vs the legacy window's flexpanes (~30 modules) | MVA only | **open**: Clack's window has neither secondary views nor flexpanes, so off and on look the same |
-| huddles_screenshare_share_audio | `0S5z` ScreenPickerModal's `Share system audio` (shown when on, in the desktop app on macOS or Windows) | none | **fixed** (screenpicker.go): the checkbox when it's on and the capture can take system audio (macOS 13+ through ScreenCaptureKit, without Clack's own sound); the share's content attendee then sends it as stereo Opus. **open** on Windows: Clack's capture there has no system audio yet |
+| huddles_screenshare_share_audio | `0S5z` ScreenPickerModal's `Share system audio` (shown when on, in the desktop app on macOS or Windows) | none | **fixed** (screenpicker.go): the checkbox when it's on and the capture can take system audio without Clack's own sound (macOS 13+: ScreenCaptureKit's excludesCurrentProcessAudio; Windows 10 build 20348+: WASAPI process loopback leaving Clack's process tree out); the share's content attendee then sends it as stereo Opus. Older Windows gets no checkbox (Slack captures all system audio there and cancels the echo) |
 
 ## Counts
 
-105 rows: 17 matched, 68 fixed, 20 open. Fixed rows that still name an open remainder: the caret's `More call options` wording, the facepile inside the live tooltip, sharing system audio on Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
+105 rows: 17 matched, 68 fixed, 20 open. Fixed rows that still name an open remainder: the caret's `More call options` wording, the facepile inside the live tooltip, system audio on older Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
 
 The open rows and why:
 

@@ -146,7 +146,7 @@ int clack_sc_list(int kind, int tw, int th, clackSCSource **out, int *n, char **
 			if (kind == 0) {
 				[items addObjectsFromArray:c.displays];
 			} else {
-				pid_t self = getpid();
+				pid_t me = getpid();
 				[excludedLock lock];
 				NSSet *ex = [excluded copy];
 				[excludedLock unlock];
@@ -154,7 +154,7 @@ int clack_sc_list(int kind, int tw, int th, clackSCSource **out, int *n, char **
 					if (w.windowLayer != 0 || !w.onScreen || w.frame.size.width < 50 || w.frame.size.height < 50) {
 						continue;
 					}
-					if ([ex containsObject:@(w.windowID)] || (w.owningApplication.processID == self && w.title.length == 0)) {
+					if ([ex containsObject:@(w.windowID)] || (w.owningApplication.processID == me && w.title.length == 0)) {
 						continue;
 					}
 					if (w.title.length == 0 && w.owningApplication.applicationName.length == 0) {
@@ -205,7 +205,17 @@ int clack_sc_list(int kind, int tw, int th, clackSCSource **out, int *n, char **
 					                                                   }];
 				}
 			}
-			dispatch_group_wait(g, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+			if (dispatch_group_wait(g, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) != 0) {
+				// a screenshot is late: its handler still writes into l, so
+				// hand back a copy and leave l to it (thumbnails done by now
+				// move to the copy; the late ones are lost)
+				clackSCSource *cp = calloc(items.count ? items.count : 1, sizeof *cp);
+				memcpy(cp, l, items.count * sizeof *cp);
+				for (NSUInteger i = 0; i < items.count; i++) {
+					l[i].thumb = NULL;
+				}
+				l = cp;
+			}
 			*out = l;
 			*n = (int)items.count;
 			return 0;
