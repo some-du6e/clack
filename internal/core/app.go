@@ -888,7 +888,7 @@ func (a *App) BootErr() error {
 
 // ---- conversions ----
 
-func avatarURL(u *slack.User, size int) string {
+func avatarURL(u *slack.User, size int, viewerTeam string) string {
 	p := u.Profile
 	switch {
 	case size <= 72 && p.Image72 != "":
@@ -899,8 +899,7 @@ func avatarURL(u *slack.User, size int) string {
 		return p.Image512
 	}
 	if p.AvatarHash != "" {
-		team := firstNonEmpty(u.TeamID, p.Team, "T0266FRGM")
-		return "https://ca.slack-edge.com/" + team + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
+		return "https://ca.slack-edge.com/" + avatarTeam(u, viewerTeam) + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
 	}
 	if p.Image48 != "" {
 		return p.Image48
@@ -908,11 +907,30 @@ func avatarURL(u *slack.User, size int) string {
 	return "https://a.slack-edge.com/80588/img/avatars/ava_0001-" + strconv.Itoa(size) + ".png"
 }
 
+// avatarTeam is the team in Slack's avatar URLs (client-boot ppn0
+// computeImages, which builds every member's image_24…image_1024 as
+// <avatar base><team>-<id>-<avatar_hash>-<size>): an app or bot's
+// profile.team, else computeTeamId: team_id, else the org's id when the
+// user is the enterprise user itself, else the viewer's team.
+func avatarTeam(u *slack.User, viewerTeam string) string {
+	if (u.IsAppUser || u.IsBot) && u.Profile.Team != "" {
+		return u.Profile.Team
+	}
+	if u.TeamID != "" {
+		return u.TeamID
+	}
+	if eu := u.EnterpriseUser; eu != nil && eu.ID == u.ID && eu.EnterpriseID != "" {
+		return eu.EnterpriseID
+	}
+	return firstNonEmpty(viewerTeam, u.Profile.Team)
+}
+
 func (a *App) userOf(u *slack.User) User {
+	viewer := firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
 	v := User{
 		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(u.Profile.RealName), Handle: u.Name,
 		DisplaySet: strings.TrimSpace(u.Profile.DisplayName) != "",
-		Avatar:     avatarURL(u, 72), Avatar192: avatarURL(u, 192), Avatar512: avatarURL(u, 512),
+		Avatar:     avatarURL(u, 72, viewer), Avatar192: avatarURL(u, 192, viewer), Avatar512: avatarURL(u, 512, viewer),
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
 		StatusEmoji: u.Profile.StatusEmoji, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,

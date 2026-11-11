@@ -54,10 +54,16 @@ type backend struct {
 	pluginsOnce  sync.Once
 	bookmarks    map[string][]core.Bookmark
 	fetched      map[string]time.Time
+	// side is what opened() read for a conversation's header (facepile,
+	// member count, topic), kept here so it lands whenever the
+	// conversation's row exists: the restored channel's read usually
+	// finishes before boot's first snapshot, and a channel outside the
+	// sidebar lives in ext. UI goroutine only.
+	side map[string]*chSide
 
 	avMu    sync.Mutex
 	avatars map[string]string
-	asked   map[string]bool
+	asked   map[string]time.Time // when backend.avatar may ask core for the user again
 
 	snapMu      sync.Mutex
 	snapPending bool
@@ -71,7 +77,7 @@ type backend struct {
 // directory is the store's.
 func newBackend(c *core.App, cacheDir string) *backend {
 	b := &backend{core: c, pluginsReady: make(chan struct{}), tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
-		fetched: map[string]time.Time{}, avatars: map[string]string{}, asked: map[string]bool{}}
+		fetched: map[string]time.Time{}, side: map[string]*chSide{}, avatars: map[string]string{}, asked: map[string]time.Time{}}
 	b.m.Convs = map[string]*convInfo{}
 	return b
 }
@@ -320,6 +326,10 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 				ci.Members = old.Members
 			}
 		}
+		// and what it read before this conversation had a row (the
+		// restored channel's header reads finish before boot's first
+		// snapshot)
+		b.applySide(ci, true)
 		if c.Kind == "im" {
 			if u, ok := s.Users[c.User]; ok {
 				ci.Avatar = u.Avatar
@@ -779,21 +789,99 @@ func (b *backend) opened(ch string) {
 				b.tabsDone = map[string]bool{}
 			}
 			b.tabsDone[ch] = true
-			if c := b.m.conv(ch); c != nil {
-				if ierr == nil && info.Conv.NumMembers > 0 {
-					c.NumMembers = info.Conv.NumMembers
-				}
-				if len(members) > 0 {
-					c.Members = members
-				}
-				if ierr == nil && info.Conv.Topic != "" {
-					c.Topic = info.Conv.Topic
-					c.TopicSpans = firstSpans(info.Conv.TopicDoc)
-				}
+			sd := b.sideOf(ch)
+			if ierr == nil && info.Conv.NumMembers > 0 {
+				sd.num = info.Conv.NumMembers
 			}
+			if ierr == nil && info.Conv.Topic != "" {
+				sd.topic, sd.spans = info.Conv.Topic, firstSpans(info.Conv.TopicDoc)
+			}
+			if len(members) > 0 {
+				sd.members = members
+			}
+			if tried && merr != nil {
+				// the facepile stays the loading tiles until a read works:
+				// try again while the channel is open (2 s doubling to 1 min)
+				sd.fails++
+				delete(b.fetched, ch)
+				b.retryOpened(ch, sd.fails)
+			} else {
+				sd.fails = 0
+			}
+			b.applySide(b.m.conv(ch), false)
+			b.applySide(b.ext[ch], false)
 			a.Invalidate()
 		})
 	}()
+}
+
+// chSide is what opened() read for a conversation's header.
+type chSide struct {
+	members []string        // the facepile's first three people
+	num     int             // conversations.info num_members (0: not read)
+	topic   string          // conversations.info topic ("": not read)
+	spans   []richtext.Span // its first line
+	fails   int             // members reads that failed in a row
+}
+
+func (b *backend) sideOf(ch string) *chSide {
+	if b.side == nil {
+		b.side = map[string]*chSide{}
+	}
+	sd := b.side[ch]
+	if sd == nil {
+		sd = &chSide{}
+		b.side[ch] = sd
+	}
+	return sd
+}
+
+// applySide puts what opened() read into a conversation's row (nil: no row
+// yet; apply and resolved call it again when there is one). With
+// onlyMissing, a snapshot's own count and topic stay (they follow
+// member_joined and topic events) and only empty fields are filled.
+func (b *backend) applySide(c *convInfo, onlyMissing bool) {
+	if c == nil {
+		return
+	}
+	sd := b.side[c.ID]
+	if sd == nil {
+		return
+	}
+	if sd.num > 0 && (!onlyMissing || c.NumMembers == 0) {
+		c.NumMembers = sd.num
+	}
+	if len(sd.members) > 0 && (!onlyMissing || len(c.Members) == 0) {
+		c.Members = sd.members
+	}
+	if sd.topic != "" && (!onlyMissing || c.Topic == "") {
+		c.Topic, c.TopicSpans = sd.topic, sd.spans
+	}
+}
+
+// retryOpened reads the channel's header again after a failed members
+// read, if it's still the open conversation by then.
+func (b *backend) retryOpened(ch string, fails int) {
+	a := b.app
+	if a == nil || b.ctx == nil {
+		return
+	}
+	d := 2 * time.Second
+	for i := 1; i < fails && d < time.Minute; i++ {
+		d *= 2
+	}
+	d = min(d, time.Minute)
+	ctx := b.ctx
+	time.AfterFunc(d, func() {
+		if ctx.Err() != nil {
+			return
+		}
+		a.Post(func() {
+			if a.router.Current().Channel() == ch {
+				b.opened(ch)
+			}
+		})
+	})
 }
 
 func (b *backend) tabs(ch string) []chTab { return b.tabCache[ch] }
@@ -828,6 +916,7 @@ func (b *backend) resolved(ch string) *convInfo {
 			ci.Self = c.User == b.selfID
 		}
 		a.Post(func() {
+			b.applySide(ci, true) // opened()'s facepile, if it came first
 			b.ext[ch] = ci
 			a.Invalidate()
 		})
@@ -896,16 +985,28 @@ func (b *backend) avatar(id string) string {
 		b.avMu.Unlock()
 		return u.Avatar
 	}
-	// unknown, or known only partially (edge-API members carry no avatar):
-	// fetch the full profile once; the next frame picks it up from core.
+	// unknown: fetch the profile (users.info); the next frame picks it up
+	// from core. A read that fails (the user is still unknown after it) is
+	// asked again after avatarAskAgain, as long as something still draws
+	// this avatar, instead of leaving a placeholder for the session.
+	now := time.Now()
 	b.avMu.Lock()
-	ask := !b.asked[id]
-	b.asked[id] = true
+	if b.asked == nil {
+		b.asked = map[string]time.Time{}
+	}
+	ask := now.After(b.asked[id])
+	if ask {
+		b.asked[id] = now.Add(avatarAskAgain)
+	}
 	b.avMu.Unlock()
 	if ask && b.ctx != nil {
-		a := b.app
+		a, ctx := b.app, b.ctx
 		go func() {
-			b.core.EnsureUsers(b.ctx, []string{id})
+			b.core.EnsureUsers(ctx, []string{id})
+			if _, ok := b.core.User(id); !ok && ctx.Err() == nil && a != nil {
+				// still unknown: repaint when another ask is due
+				time.AfterFunc(avatarAskAgain, a.Invalidate)
+			}
 			if a != nil {
 				a.Invalidate()
 			}
@@ -913,6 +1014,10 @@ func (b *backend) avatar(id string) string {
 	}
 	return ""
 }
+
+// avatarAskAgain is how long backend.avatar waits before asking core for a
+// user whose last users.info failed.
+const avatarAskAgain = 15 * time.Second
 
 // ---- writes ----
 

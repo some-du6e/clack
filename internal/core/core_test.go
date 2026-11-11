@@ -155,7 +155,8 @@ func TestMessageConversion(t *testing.T) {
 func TestUsersAndConvs(t *testing.T) {
 	a, _ := testApp(t)
 	u, ok := a.User("USELF")
-	if !ok || u.Name != "Me" || u.Avatar != "https://ca.slack-edge.com/T0266FRGM-USELF-h1-72" || u.Avatar512 == u.Avatar {
+	// no team_id: Slack's computeTeamId falls back to the viewer's team (T1)
+	if !ok || u.Name != "Me" || u.Avatar != "https://ca.slack-edge.com/T1-USELF-h1-72" || u.Avatar512 == u.Avatar {
 		t.Errorf("user: %+v", u)
 	}
 	if b, _ := a.User("UB"); !b.IsBot {

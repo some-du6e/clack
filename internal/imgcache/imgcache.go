@@ -8,7 +8,11 @@
 //
 // Get never blocks: it returns (op, true) when the image is ready and
 // otherwise starts a fetch, returns false, and calls invalidate when the
-// image arrives so the window repaints.
+// image arrives so the window repaints. Callers draw Slack's placeholder
+// (the base-ter tile) meanwhile. A failed fetch is tried again with
+// backoff (retryAfter), and the window repaints when the retry is due, so
+// a visible avatar that hit a timeout or a dropped connection loads by
+// itself.
 package imgcache
 
 import (
@@ -58,13 +62,59 @@ type Cache struct {
 	bytes    int
 	maxBytes int
 	inflight map[key]bool
-	failed   map[key]time.Time
+	failed   map[key]failure
 
-	sem chan struct{}
-	ctx context.Context
+	// Two fetch lanes: avatars and emoji (DiskOK URLs, a few KB each) never
+	// wait behind message images, files and unfurls, which can take the
+	// whole 45 s timeout each.
+	sem      chan struct{}
+	smallSem chan struct{}
+	ctx      context.Context
 
-	wakeAt time.Time // the next animation frame's repaint (anim.go)
+	wakeAt time.Time // the next repaint: an animation frame (anim.go) or a retry
 	wakeT  *time.Timer
+}
+
+// failure is a key's failed load: how many in a row, and when Get may try
+// again. Each retry repaints the window when it's due (wakeLocked), so an
+// image on screen comes back on its own after a dropped connection, a
+// timeout or a 5xx, instead of staying a placeholder until something else
+// redraws the window.
+type failure struct {
+	at    time.Time
+	n     int
+	retry time.Time
+}
+
+// Retry backoff: RetryMin doubling up to RetryMax for errors that may pass
+// (network, timeouts, HTTP 429 and 5xx); RetryPermanent for bytes that
+// aren't an image or are too big, and URLs that are refused outright.
+const (
+	RetryMin       = time.Second
+	RetryMax       = time.Minute
+	RetryPermanent = 10 * time.Minute
+)
+
+// retryAfter is the wait before the n-th retry (n ≥ 1) after err.
+func retryAfter(n int, err error) time.Duration {
+	if permanent(err) {
+		return RetryPermanent
+	}
+	d := RetryMin
+	for i := 1; i < n && d < RetryMax; i++ {
+		d *= 2
+	}
+	return min(d, RetryMax)
+}
+
+// permanent reports errors a retry can't fix: undecodable or oversized
+// bytes and URLs the fetchers refuse.
+func permanent(err error) bool {
+	if errors.Is(err, ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, ErrBlockedAddr) {
+		return true
+	}
+	s := err.Error()
+	return strings.Contains(s, "refusing") || strings.Contains(s, "not an http(s) URL") || strings.Contains(s, "local image gone")
 }
 
 type key struct {
@@ -114,8 +164,9 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		lru:        list.New(),
 		maxBytes:   DefaultLimit,
 		inflight:   map[key]bool{},
-		failed:     map[key]time.Time{},
+		failed:     map[key]failure{},
 		sem:        make(chan struct{}, 8),
+		smallSem:   make(chan struct{}, 8),
 		ctx:        context.Background(),
 		diskLimit:  DiskLimit,
 	}
@@ -137,7 +188,7 @@ func (c *Cache) SetDir(dir string) {
 	c.entries = map[key]*list.Element{}
 	c.lru.Init()
 	c.bytes = 0
-	c.failed = map[key]time.Time{}
+	c.failed = map[key]failure{}
 	c.written = 0
 	c.mu.Unlock()
 	if dir != "" {
@@ -243,8 +294,10 @@ func (c *Cache) sweep(cutoff int64) {
 		}
 		el = prev
 	}
-	for k, t := range c.failed {
-		if t.Unix() < cutoff {
+	for k, f := range c.failed {
+		// a failure nobody asked about since (its retry is long due) goes;
+		// one still backing off stays, or the backoff would start over
+		if f.retry.Unix() < cutoff {
 			delete(c.failed, k)
 		}
 	}
@@ -337,7 +390,7 @@ func (c *Cache) startLocked(k key) {
 	if c.inflight[k] {
 		return
 	}
-	if t, ok := c.failed[k]; ok && time.Since(t) < 30*time.Second {
+	if f, ok := c.failed[k]; ok && time.Now().Before(f.retry) {
 		return
 	}
 	c.inflight[k] = true
@@ -345,13 +398,23 @@ func (c *Cache) startLocked(k key) {
 }
 
 func (c *Cache) load(k key) {
-	c.sem <- struct{}{}
+	sem := c.sem
+	if DiskOK(k.url) {
+		sem = c.smallSem
+	}
+	sem <- struct{}{}
 	op, sz, n, an, err := c.loadImage(k)
-	<-c.sem
+	<-sem
 	c.mu.Lock()
 	delete(c.inflight, k)
 	if err != nil {
-		c.failed[k] = time.Now()
+		now := time.Now()
+		f := c.failed[k]
+		f.n++
+		f.at = now
+		f.retry = now.Add(retryAfter(f.n, err))
+		c.failed[k] = f
+		c.wakeLocked(f.retry) // the surface asks again when the retry is due
 	} else {
 		delete(c.failed, k)
 		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix(), anim: an}

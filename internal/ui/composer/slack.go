@@ -383,15 +383,29 @@ func (c *Composer) layoutPaneBody(gtx layout.Context) layout.Dimensions {
 	}
 	cg := gtx
 	cg.Constraints = layout.Constraints{Max: image.Pt(max(W-2*m, 0), gtx.Constraints.Max.Y)}
-	t := op.Offset(image.Pt(m, nug)).Push(gtx.Ops)
+	cbm := op.Record(gtx.Ops)
 	var cb layout.Dimensions
 	if e, patched := kid(p, "BaseContextBarV2"); patched {
 		cb = slackc.LayoutElement(cg, e)
 	} else {
 		cb = slackc.Component(cg, "BaseContextBarV2", c, (*Composer).contextBarProps, (*Composer).layoutContextBar)
 	}
+	cbCall := cbm.Stop()
+	// The thread pane's .p-threads_footer__input_container: margin 12px
+	// 16px 0, 4px under the app's working nugget ([data-thread-agent-
+	// controls]:has(>[data-app-thread-nugget]) + …), none while the context
+	// bar shows (--context_bar_showing) or in the Threads view.
+	mt := 0
+	if c.ts != "" && !c.InThreadsView && cb.Size.Y <= 0 {
+		mt = gtx.Dp(12)
+		if nug > 0 {
+			mt = gtx.Dp(4)
+		}
+	}
+	t := op.Offset(image.Pt(m, nug+mt)).Push(gtx.Ops)
+	cbCall.Add(gtx.Ops)
 	t.Pop()
-	c.top = nug + max(cb.Size.Y, 0)
+	c.top = nug + mt + max(cb.Size.Y, 0)
 	c.cs.SquareTop = cb.Size.Y > 0
 
 	rg := gtx
@@ -434,6 +448,12 @@ func (c *Composer) layoutContextBar(gtx layout.Context, p slackc.Props) layout.D
 	}
 	return layout.Dimensions{}
 }
+
+// ContextBarShown reports whether the composer drew a context bar over its
+// box last frame (BaseContextBarV2: the code channel's bar, or a plugin's
+// that said so through onIsContextBarShowing). The message list above
+// shortens its bottom spacer then (getBottomSpacerHeight).
+func (c *Composer) ContextBarShown() bool { return c.cs.SquareTop || c.ctxShowing }
 
 func (c *Composer) setContextBarShowing(on bool) {
 	if c.ctxShowing != on {

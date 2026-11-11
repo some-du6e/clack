@@ -40,6 +40,11 @@ const (
 	itLoading
 	itReplies // thread: "N replies" divider
 	itThreadHead
+	// itBottom is BaseMessageList's bottomSpacer row (boot-render bU1n):
+	// once the newest messages are loaded (reachedEnd) the channel list
+	// ends with space.150 (24px) above the composer, space.100 (16px)
+	// while the channel's context bar shows (getBottomSpacerHeight).
+	itBottom
 )
 
 type item struct {
@@ -479,6 +484,9 @@ func (s *listState) build(h Host, now time.Time) {
 		s.items = append(s.items, item{kind: itMsg, idx: i, header: header, key: m.TS})
 		prev, prevT = m, t
 	}
+	if !s.thread && s.snap.loaded { // reachedEnd: Clack always holds the newest page
+		s.items = append(s.items, item{kind: itBottom, key: "bottomSpacer"})
+	}
 	if cap(s.heights) < len(s.items) {
 		s.heights = make([]int, len(s.items), len(s.items)+64)
 		s.pos = make([]int, len(s.items), len(s.items)+64)
@@ -486,6 +494,33 @@ func (s *listState) build(h Host, now time.Time) {
 		s.heights = s.heights[:len(s.items)]
 		s.pos = s.pos[:len(s.items)]
 	}
+}
+
+// ContextBarShower is optional: whether a conversation's composer shows a
+// context bar (Slack's getContextBarTypeForChannel), which shortens the
+// list's bottom spacer.
+type ContextBarShower interface {
+	ContextBarShowing(ch string) bool
+}
+
+// bottomSpacerH is getBottomSpacerHeight: space.100 (16) with a context
+// bar, else space.150 (24).
+func (s *listState) bottomSpacerH(h Host) float32 {
+	if cb, ok := h.(ContextBarShower); ok && cb.ContextBarShowing(s.ch) {
+		return 16
+	}
+	return 24
+}
+
+// newestItem is the item index of the newest message (the bottom spacer
+// comes after it), or -1.
+func (s *listState) newestItem() int {
+	for i := len(s.items) - 1; i >= 0; i-- {
+		if s.items[i].kind == itMsg {
+			return i
+		}
+	}
+	return -1
 }
 
 // unreadIndex returns the item index of the "New" line, or -1.
@@ -873,6 +908,8 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		return s.intro(gtx, h, c, w)
 	case itReplies:
 		return s.threadSeparator(gtx, h, c, it, w, rc.now)
+	case itBottom:
+		return layout.Dimensions{Size: image.Pt(w, dp(gtx, s.bottomSpacerH(h)))}
 	}
 	e := &s.snap.msgs[it.idx]
 	if len(it.group) > 0 {
@@ -1478,7 +1515,7 @@ func (s *listState) editLast(h Host) bool {
 func (s *listState) scrollTo(ts string) {
 	for i, it := range s.items {
 		if it.kind == itMsg && it.key == ts {
-			if i == len(s.items)-1 {
+			if i == s.newestItem() {
 				s.list.Position = layout.Position{} // newest: stay anchored at the bottom
 				return
 			}
