@@ -690,3 +690,163 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 	}
 	v.openMenu(gtx, v.pillR[srPMore], items, 240) // MoreFiltersMenu width 240
 }
+
+// ---- the other tabs' sorts (search-filter-sort FileEntity, CanvasEntity,
+// ChannelEntity, PeopleEntity) ----
+
+// srTabSortOpt is a Sort select option.
+type srTabSortOpt struct{ label, val string }
+
+// srTabHasSort: the tabs BaseSearchFilterSort draws a Sort select for
+// (not DMs).
+func srTabHasSort(tab int) bool {
+	switch tab {
+	case srTabMessages, srTabFiles, srTabCanvases, srTabChannels, srTabPeople:
+		return true
+	}
+	return false
+}
+
+// srTabSorts are a tab's options before the divider and Edit default;
+// relevant is "Most relevant", with " (default)" unless stick_user_sort.
+func srTabSorts(tab int) []srTabSortOpt {
+	switch tab {
+	case srTabFiles, srTabCanvases:
+		o := []srTabSortOpt{{"Most relevant", "score"}, {"Oldest", "timestamp_asc"}, {"Newest", "created"},
+			{"A to Z", "name"}, {"Z to A", "name_desc"}}
+		if tab == srTabCanvases {
+			o = append(o, srTabSortOpt{"Last updated", "timestamp"})
+		}
+		return o
+	case srTabChannels:
+		return []srTabSortOpt{{"Most relevant", "relevant"}, {"Newest", "created"}, {"Oldest", "created_asc"},
+			{"Most members", "member_count"}, {"Fewest members", "member_count_asc"}, {"A to Z", "name"}, {"Z to A", "name_desc"}}
+	case srTabPeople:
+		return []srTabSortOpt{{"Most relevant", "relevant"}, {"A to Z", "name"}, {"Z to A", "name_desc"}}
+	}
+	return nil
+}
+
+// srTabSortPref is the pref a sticky sort is kept in (setFileSearchSort
+// for files and canvases; search_channel_sort, search_people_sort).
+func srTabSortPref(tab int) string {
+	switch tab {
+	case srTabFiles, srTabCanvases:
+		return "search_file_sort"
+	case srTabChannels:
+		return "search_channel_sort"
+	case srTabPeople:
+		return "search_people_sort"
+	}
+	return ""
+}
+
+// srTabSortValues are the values a tab's sort pref may hold (cX/T: VU
+// for files and canvases, aJ for channels, iO for people).
+func srTabSortValues(tab int) []string {
+	switch tab {
+	case srTabFiles, srTabCanvases:
+		return []string{"score", "timestamp", "timestamp_asc", "name", "name_desc", "last_read", "last_engaged", "created"}
+	case srTabChannels:
+		return []string{"relevant", "name", "created", "created_asc", "member_count", "member_count_asc", "name_desc"}
+	case srTabPeople:
+		return []string{"relevant", "name", "name_desc"}
+	}
+	return nil
+}
+
+// srDefaultTabSort is a tab's sort when a search starts: with
+// stick_user_sort its pref when it holds one of the tab's values (kwsV r,
+// mfHU Kn / y6), else Most relevant. Files take any file sort, Last
+// updated too, though their select only names it Most relevant.
+func srDefaultTabSort(c interface {
+	PrefBool(string, bool) bool
+	PrefString(string) string
+}, tab int) string {
+	opts := srTabSorts(tab)
+	if len(opts) == 0 {
+		return ""
+	}
+	if c != nil && c.PrefBool("stick_user_sort", false) {
+		if p := c.PrefString(srTabSortPref(tab)); slices.Contains(srTabSortValues(tab), p) {
+			return p
+		}
+	}
+	return opts[0].val
+}
+
+// tabSortLabel is the selected option's label (Most relevant when the
+// value isn't one of the tab's, as FileEntity falls back).
+func (v *SearchView) tabSortLabel() string {
+	c := v.h.Core()
+	sticky := c != nil && c.PrefBool("stick_user_sort", false)
+	opts := srTabSorts(v.tab)
+	for i, o := range opts {
+		if o.val == v.tabSort[v.tab] {
+			if i == 0 && !sticky {
+				return o.label + " (default)"
+			}
+			return o.label
+		}
+	}
+	if !sticky {
+		return "Most relevant (default)"
+	}
+	return "Most relevant"
+}
+
+// tabSortMenu is a non-message tab's Sort select: its options, a
+// divider, Edit default. With stick_user_sort the choice is also saved in
+// the tab's pref.
+func (v *SearchView) tabSortMenu(gtx layout.Context) {
+	c := v.h.Core()
+	sticky := c != nil && c.PrefBool("stick_user_sort", false)
+	tab := v.tab
+	var items []MenuItem
+	for i, o := range srTabSorts(tab) {
+		label, val := o.label, o.val
+		if i == 0 && !sticky {
+			label += " (default)"
+		}
+		items = append(items, MenuItem{Label: label, Checked: v.tabSort[tab] == val, Do: func() {
+			if v.tabSort[tab] != val {
+				v.tabSort[tab] = val
+				if sticky && (tab == srTabFiles || tab == srTabCanvases) {
+					// both read search_file_sort (kwsV r)
+					v.tabSort[srTabFiles], v.tabSort[srTabCanvases] = val, val
+				}
+				v.search(1)
+			}
+			if sticky {
+				pref := srTabSortPref(tab)
+				run(v.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, c.SetPref(ctx, pref, val) },
+					func(_ struct{}, err error) {
+						if err != nil {
+							v.h.Toast("Couldn't save that preference: " + errText(err))
+						}
+					})
+			}
+		}})
+	}
+	items = append(items, Sep(), MenuItem{Label: "Edit default", Do: func() {
+		if OpenPreferencesSection != nil {
+			OpenPreferencesSection("advanced")
+		}
+	}})
+	v.openMenu(gtx, v.sortR, items, 240)
+}
+
+// srWithoutFilters is RelaxationSuggestion's click: the query with every
+// filter Slack clears (in, from, with, creator, mentions, has, is, my
+// reactions, file type, before, after, on) taken out; the words stay.
+func srWithoutFilters(q srQuery) srQuery {
+	clear := map[string]bool{"in": true, "from": true, "with": true, "creator": true, "to": true, "has": true, "is": true,
+		"hasmy": true, "type": true, "before": true, "after": true, "on": true, "during": true}
+	var mods []srMod
+	for _, m := range q.Mods {
+		if !clear[m.Key] {
+			mods = append(mods, m)
+		}
+	}
+	return q.withMods(mods)
+}

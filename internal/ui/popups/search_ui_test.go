@@ -726,7 +726,9 @@ func TestSearchViewResults(t *testing.T) {
 		}
 	}
 
-	// More: Slack's rows
+	// More: Slack's rows (To-dos under later_todos, on for the account;
+	// no Exclude archived without search_explore_freshness_signals)
+	e.h.a.SetExperimentGroup("later_todos", "on")
 	v.moreMenu(layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}})
 	m = srMenu(e.h)
 	want := []string{"# Saved preferences", "Exclude bot messages", "Only my channels", "--", "# Results", "Exact matches only",
@@ -818,6 +820,228 @@ func TestSearchViewResults(t *testing.T) {
 	d.frame()
 	if !v.q.Has("with", "<@"+fakeslack.SelfID+">") {
 		t.Errorf("Includes me: %q", v.q.String())
+	}
+}
+
+// The other tabs' filter rows are Slack's _p: Files From, In, File type,
+// Date, Only my channels; Canvases Created By, From, In, Date; DMs With.
+// More offers the tab's other filters (With people on Files and
+// Canvases) and isn't drawn on DMs; Reset shows once a filter is on and
+// clears it. Narrow, the pills that don't fit move into More.
+func TestSearchViewTabFilters(t *testing.T) {
+	e := srNewEnv(t, false)
+	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	for _, c := range []struct {
+		q          string
+		pills      []string
+		more       []string // nil: no More
+		notDrawn   []string
+		wantModule string
+	}{
+		{fakeslack.SearchWord + "&module=files", []string{"Files", "From", "In", "File type", "Date", "Only my channels", "More"},
+			[]string{"With people"}, []string{"Includes me", "Threads only"}, "files"},
+		{fakeslack.SearchWord + "&module=canvases", []string{"Canvases", "Created By", "From", "In", "Date", "More"},
+			[]string{"With people"}, []string{"File type", "Includes me"}, "canvases"},
+		{fakeslack.SearchWord + "&module=dms", []string{"DMs", "With"}, nil, []string{"More", "From", "Includes me"}, "dms"},
+	} {
+		v, d := srView(t, e, c.q, false)
+		x := d.scan()
+		for _, p := range c.pills {
+			if !srHas(x, p) {
+				t.Errorf("%s: pill %q not drawn: %q", c.wantModule, p, x)
+			}
+		}
+		for _, p := range c.notDrawn {
+			if srHas(x, p) {
+				t.Errorf("%s: %q drawn", c.wantModule, p)
+			}
+		}
+		if c.more == nil {
+			if !v.pillR[srPMore].Empty() {
+				t.Errorf("%s: More drawn", c.wantModule)
+			}
+			continue
+		}
+		v.moreMenu(gtx)
+		m := srMenu(e.h)
+		if got := srLabels(m.items); !slices.Equal(got, c.more) {
+			t.Errorf("%s: More %q, want %q", c.wantModule, got, c.more)
+		}
+		m.Dismiss()
+	}
+
+	// File type, Date and Only my channels on Files
+	v, d := srView(t, e, fakeslack.SearchWord+"&module=files", false)
+	v.pillClicked(gtx, srPFileType)
+	m := srMenu(e.h)
+	for _, it := range m.items {
+		if it.Label == "PDFs" {
+			it.Do()
+		}
+	}
+	m.Dismiss()
+	d.until(t, "the PDFs search", func() bool { return !v.loading })
+	if !v.q.Has("type", "pdfs") {
+		t.Errorf("File type > PDFs: %q", v.q.String())
+	}
+	x := d.scan()
+	if !srHas(x, "PDFs") || !srHas(x, "Reset") {
+		t.Errorf("the File type pill names PDFs and Reset shows: %q", x)
+	}
+	f := e.fs.SearchForms("search.modules.files")
+	if q := f[len(f)-1].Get("query"); !strings.Contains(q, "type:pdfs") {
+		t.Errorf("files query %q", q)
+	}
+	v.pillClicked(gtx, srPOnlyMine)
+	slUntil(t, 10*time.Second, "Only my channels", d.frame, func() bool {
+		f := e.fs.SearchForms("search.modules.files")
+		return e.h.a.PrefBool("search_only_my_channels", false) && f[len(f)-1].Get("search_only_my_channels") == "true"
+	})
+	// Reset: filters and the two prefs off
+	v.pillClicked(gtx, srPReset)
+	slUntil(t, 10*time.Second, "Reset", d.frame, func() bool {
+		return len(v.q.Mods) == 0 && !e.h.a.PrefBool("search_only_my_channels", false) && !v.loading
+	})
+	if x := d.scan(); srHas(x, "Reset") {
+		t.Error("Reset still drawn with no filter on")
+	}
+
+	// narrow: the row keeps the pills that fit; the rest are in More
+	nv := NewSearchView(e.h, fakeslack.SearchWord+"&module=files")
+	nv.SetOrigin(image.Pt(0, 0))
+	nd := &srDrv{size: image.Pt(560, 700), w: nv}
+	nd.until(t, "the narrow results", func() bool { return nv.started && !nv.loading })
+	nd.frame()
+	if len(nv.visible) >= 6 || len(nv.visible) < 1 {
+		t.Fatalf("narrow row shows %q", nv.visible)
+	}
+	nv.moreMenu(gtx)
+	labels := srLabels(srMenu(e.h).items)
+	hidden := srFiltersShown(srTabFiles)[len(nv.visible)-1:]
+	for _, f := range hidden {
+		want := map[string]string{srFFrom: "From", srFIn: "In", srFFileType: "File type", srFDate: "Date", srFOnlyMine: "Only my channels"}[f]
+		if !slices.Contains(labels, want) {
+			t.Errorf("overflowed %s missing from More %q", f, labels)
+		}
+	}
+}
+
+// The other tabs' Sort selects (search-filter-sort): Files Most relevant
+// (default), Oldest, Newest, A to Z, Z to A; Canvases add Last updated;
+// Channels Most relevant, Newest, Oldest, Most members, Fewest members, A
+// to Z, Z to A; People Most relevant, A to Z, Z to A; each then Edit
+// default. A choice is getSortParams' sort and sort_dir; with
+// stick_user_sort it is kept in the tab's pref and the next search starts
+// from it.
+func TestSearchViewTabSorts(t *testing.T) {
+	e := srNewEnv(t, false)
+	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	for _, c := range []struct {
+		q, method   string
+		labels      []string
+		pick        string
+		sort, dir   string
+		wantMembers bool
+	}{
+		{fakeslack.SearchWord + "&module=files", "search.modules.files",
+			[]string{"Most relevant (default)", "Oldest", "Newest", "A to Z", "Z to A", "--", "Edit default"}, "A to Z", "name", "asc", false},
+		{fakeslack.SearchWord + "&module=canvases", "search.modules.files",
+			[]string{"Most relevant (default)", "Oldest", "Newest", "A to Z", "Z to A", "Last updated", "--", "Edit default"}, "Last updated", "timestamp", "desc", false},
+		{"e&module=channels", "search.modules.channels",
+			[]string{"Most relevant (default)", "Newest", "Oldest", "Most members", "Fewest members", "A to Z", "Z to A", "--", "Edit default"},
+			"Most members", "member_count", "desc", true},
+		{"e&module=people", "search.modules.people",
+			[]string{"Most relevant (default)", "A to Z", "Z to A", "--", "Edit default"}, "Z to A", "name", "desc", false},
+	} {
+		v, d := srView(t, e, c.q, false)
+		f := e.fs.SearchForms(c.method)
+		if first := f[len(f)-1]; c.method == "search.modules.files" && (first.Get("sort") != "score" || first.Get("sort_dir") != "desc") {
+			t.Errorf("%s: the tab starts %s %s, want score desc (Most relevant)", c.q, first.Get("sort"), first.Get("sort_dir"))
+		}
+		if x := d.scan(); !srHas(x, "Sorted by ") || !srHas(x, "Most relevant (default)") {
+			t.Errorf("%s: no Sort select: %q", c.q, x)
+		}
+		v.sortMenu(gtx)
+		m := srMenu(e.h)
+		if got := srLabels(m.items); !slices.Equal(got, c.labels) {
+			t.Errorf("%s: sort menu %q, want %q", c.q, got, c.labels)
+		}
+		for _, it := range m.items {
+			if it.Label == c.pick {
+				it.Do()
+			}
+		}
+		m.Dismiss()
+		d.until(t, c.pick, func() bool { return !v.loading })
+		f = e.fs.SearchForms(c.method)
+		last := f[len(f)-1]
+		if last.Get("sort") != c.sort || last.Get("sort_dir") != c.dir {
+			t.Errorf("%s %s: sort %s %s, want %s %s", c.q, c.pick, last.Get("sort"), last.Get("sort_dir"), c.sort, c.dir)
+		}
+		if x := d.scan(); !srHas(x, c.pick) {
+			t.Errorf("%s: the select doesn't name %q", c.q, c.pick)
+		}
+		if c.wantMembers {
+			for i := 1; i < len(v.chans); i++ {
+				if v.chans[i-1].NumMembers < v.chans[i].NumMembers {
+					t.Errorf("Most members: %d before %d", v.chans[i-1].NumMembers, v.chans[i].NumMembers)
+				}
+			}
+		}
+	}
+
+	// stick_user_sort: kept in search_file_sort, the next search starts there
+	if err := e.h.a.SetPref(context.Background(), "stick_user_sort", true); err != nil {
+		t.Fatal(err)
+	}
+	v, d := srView(t, e, fakeslack.SearchWord+"&module=files", false)
+	v.sortMenu(gtx)
+	m := srMenu(e.h)
+	if got := srLabels(m.items); got[0] != "Most relevant" {
+		t.Errorf("sticky: first option %q, want Most relevant (no default suffix)", got[0])
+	}
+	for _, it := range m.items {
+		if it.Label == "Newest" {
+			it.Do()
+		}
+	}
+	m.Dismiss()
+	slUntil(t, 10*time.Second, "search_file_sort", d.frame, func() bool { return e.h.a.PrefString("search_file_sort") == "created" })
+	v2, _ := srView(t, e, fakeslack.SearchWord+"&module=files", false)
+	if v2.tabSort[srTabFiles] != "created" {
+		t.Errorf("the next search starts at %q, want created", v2.tabSort[srTabFiles])
+	}
+}
+
+// RelaxationSuggestion: a filtered search that finds nothing, when the
+// words alone find something, offers "Search without filters", which
+// drops the filters and searches again.
+func TestSearchViewRelaxation(t *testing.T) {
+	e := srNewEnv(t, false)
+	var empty string
+	for _, id := range e.fs.ChannelIDs() {
+		r, err := e.h.a.SearchMessages(context.Background(), core.SearchOpts{Query: fakeslack.SearchWord + " in:<#" + id + ">"})
+		if err == nil && r.Total == 0 && r.Unfiltered > 0 {
+			empty = id
+			break
+		}
+	}
+	if empty == "" {
+		t.Fatal("no channel without the fixture word")
+	}
+	v, d := srView(t, e, fakeslack.SearchWord+" in:<#"+empty+">", false)
+	x := d.scan()
+	if !srHas(x, srNothingTitle) || !srHas(x, "Search without filters") {
+		t.Fatalf("no relaxation: %q", x)
+	}
+	v.relaxBtn.Click()
+	d.frame()
+	d.until(t, "the unfiltered search", func() bool { return !v.loading && v.total > 0 })
+	if v.q.String() != fakeslack.SearchWord {
+		t.Errorf("after Search without filters: %q", v.q.String())
+	}
+	if x := d.scan(); srHas(x, "Search without filters") {
+		t.Error("the button stays once results show")
 	}
 }
 

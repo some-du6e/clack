@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -299,6 +300,13 @@ type SearchView struct {
 	// shown with search_explore_freshness_signals on
 	exclArch bool
 	visible  []string // the filters the row shows as pills (srFSources first), last frame
+	// tabSort is the Files, Canvases, Channels and People tabs' Sort
+	// select value (Slack's: score, name, relevant, …; srTabSorts)
+	tabSort [srTabN]string
+	// unfiltered is the messages response's unfiltered_result_count
+	// (RelaxationSuggestion's "Search without filters")
+	unfiltered int
+	relaxBtn   widget.Clickable
 
 	// the source menu's per-tab totals for the query in countQ
 	counts  [srTabN]int
@@ -350,6 +358,9 @@ func NewSearchView(h Host, query string) *SearchView {
 	}
 	srRecordQuery(query)
 	v := &SearchView{h: h, q: srParse(query), tab: tab, sortBy: DefaultSearchSort(h.Core()), menuCard: -1, sess: core.NewSearchSession()}
+	for t := range v.tabSort {
+		v.tabSort[t] = srDefaultTabSort(h.Core(), t)
+	}
 	v.list.Axis = layout.Vertical
 	return v
 }
@@ -393,6 +404,7 @@ func (v *SearchView) setTab(t int) {
 func (v *SearchView) reset() {
 	v.msgs, v.cards, v.convs = nil, nil, nil
 	v.total, v.page, v.pages = 0, 0, 0
+	v.unfiltered = 0
 	v.chans, v.people, v.files = nil, nil, nil
 	v.err = ""
 	v.menuCard = -1
@@ -468,8 +480,8 @@ func (v *SearchView) search(page int) {
 		if strings.TrimSpace(q) == "" {
 			return
 		}
-		o := core.SearchOpts{Query: q, Page: page, Sort: v.sortBy, ExactOnly: v.exact, Session: sess,
-			RecentChannels: srRecentChannels(), Module: srTabModules[v.tab]}
+		o := core.SearchOpts{Query: q, Page: page, Sort: v.sortBy, ExactOnly: v.exact, ExcludeArchived: v.exclArch,
+			Session: sess, RecentChannels: srRecentChannels(), Module: srTabModules[v.tab]}
 		v.loading = true
 		run(v.h, func(ctx context.Context) (core.SearchResult, error) { return c.SearchMessages(ctx, o) },
 			func(res core.SearchResult, err error) {
@@ -484,6 +496,7 @@ func (v *SearchView) search(page int) {
 				v.addMessages(res, page)
 				if v.tab == srTabMessages {
 					v.fromSugg = res.FilterFrom
+					v.unfiltered = res.Unfiltered
 				}
 				done(res.Total)
 			})
@@ -491,7 +504,7 @@ func (v *SearchView) search(page int) {
 		if strings.TrimSpace(q) == "" {
 			return
 		}
-		o := core.FileSearchOpts{Query: q, Canvases: v.tab == srTabCanvases, Page: page, Session: sess}
+		o := core.FileSearchOpts{Query: q, Canvases: v.tab == srTabCanvases, Page: page, Sort: v.tabSort[v.tab], Session: sess}
 		v.loading = true
 		run(v.h, func(ctx context.Context) (core.FilePage, error) { return c.SearchFiles(ctx, o) },
 			func(fp core.FilePage, err error) {
@@ -512,8 +525,9 @@ func (v *SearchView) search(page int) {
 			return
 		}
 		v.loading = true
+		sortBy := v.tabSort[srTabChannels]
 		run(v.h, func(ctx context.Context) (core.ChannelPage, error) {
-			return c.SearchChannelsTab(ctx, words, page, sess)
+			return c.SearchChannelsTabSort(ctx, words, sortBy, page, sess)
 		},
 			func(cp core.ChannelPage, err error) {
 				if seq != v.seq {
@@ -533,7 +547,10 @@ func (v *SearchView) search(page int) {
 			return
 		}
 		v.loading = true
-		run(v.h, func(ctx context.Context) (core.PeoplePage, error) { return c.SearchPeopleTab(ctx, words, page, sess) },
+		sortBy := v.tabSort[srTabPeople]
+		run(v.h, func(ctx context.Context) (core.PeoplePage, error) {
+			return c.SearchPeopleTabSort(ctx, words, sortBy, page, sess)
+		},
 			func(pp core.PeoplePage, err error) {
 				if seq != v.seq {
 					return
@@ -788,6 +805,10 @@ var srTopReactions = [...]string{"thumbs-up", "slightly_smiling_face", "heart"}
 // With stick_user_sort a choice is also kept in users.prefs search_sort
 // (the next search starts from it, mfHU WJ).
 func (v *SearchView) sortMenu(gtx layout.Context) {
+	if v.tab != srTabMessages {
+		v.tabSortMenu(gtx)
+		return
+	}
 	c := v.h.Core()
 	sticky := c != nil && c.PrefBool("stick_user_sort", false)
 	relevant := "Most relevant (default)"
@@ -916,6 +937,9 @@ func (v *SearchView) handle(gtx layout.Context) {
 	if v.sortBtn.Clicked(gtx) {
 		v.sortMenu(gtx)
 	}
+	if v.relaxBtn.Clicked(gtx) && v.unfiltered > 0 {
+		v.setQuery(srWithoutFilters(v.q))
+	}
 	if v.feedback.Clicked(gtx) || v.emptyFb.Clicked(gtx) {
 		v.openFeedback()
 	}
@@ -990,7 +1014,7 @@ func (v *SearchView) handle(gtx layout.Context) {
 // state's): CombinedSearchFeedbackModal for the active tab's module.
 func (v *SearchView) openFeedback() {
 	q, sess, tab := v.q.String(), v.sess, v.tab
-	sortBy := v.sortBy
+	sortBy, tabSort := v.sortBy, v.tabSort[v.tab]
 	counts := map[string]int{}
 	for t := 0; t < srTabN; t++ {
 		if v.countOK[t] {
@@ -999,6 +1023,9 @@ func (v *SearchView) openFeedback() {
 	}
 	c := v.h.Core()
 	openSearchFeedback(v.h, srFeedbackOpts{feedbackType: "search", query: q, payload: func() any {
+		if tab != srTabMessages {
+			sortBy = tabSort
+		}
 		sort, dir := srActiveSort(tab, sortBy)
 		return srSearchFeedbackPayload{SearchSessionID: sess.ID, QuerySessionID: sess.QueryID, Query: q,
 			Module: srTabModules[tab], ActiveSort: sort, ActiveSortDir: dir, ActiveFilters: srActiveFilters(c, tab),
@@ -1034,10 +1061,8 @@ func srActiveSort(tab int, sortBy string) (string, string) {
 			return "timestamp", "asc"
 		}
 		return "score", "desc"
-	case srTabFiles, srTabCanvases:
-		return "timestamp", "desc"
-	case srTabChannels, srTabPeople:
-		return "relevant", "desc"
+	case srTabFiles, srTabCanvases, srTabChannels, srTabPeople:
+		return core.SearchSortParams(sortBy)
 	}
 	return "", ""
 }
@@ -1095,7 +1120,8 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 	// sort + count + feedback
 	ry := dp(gtx, 96)
 	lh := dp(gtx, 20)
-	if v.tab == srTabMessages {
+	sorted := srTabHasSort(v.tab)
+	if sorted {
 		x := px
 		d := at(gtx, image.Pt(x, ry), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
@@ -1109,6 +1135,9 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 			label = "Newest"
 		case "oldest":
 			label = "Oldest"
+		}
+		if v.tab != srTabMessages {
+			label = v.tabSortLabel()
 		}
 		tw := textW(gtx, th, 13, theme.Bold, label)
 		bw := tw + dp(gtx, 4) + dp(gtx, 12)
@@ -1135,7 +1164,7 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 		})
 	})
 	cy := ry + dp(gtx, 21)
-	if v.tab != srTabMessages {
+	if !sorted {
 		cy = ry
 	}
 	count := ""
@@ -1158,7 +1187,7 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 
 	// results
 	top := dp(gtx, 146)
-	if v.tab != srTabMessages {
+	if !sorted {
 		top = dp(gtx, 126)
 	}
 	v.listY = top
@@ -1296,7 +1325,18 @@ func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px
 		if strings.TrimSpace(v.q.String()) == "" {
 			return layout.Dimensions{Size: sz}
 		}
-		srNothing(gtx, th, cl, px, dp(gtx, 72), cw, &v.emptyFb)
+		y := srNothing(gtx, th, cl, px, dp(gtx, 72), cw, &v.emptyFb)
+		if v.tab == srTabMessages && v.unfiltered > 0 {
+			// RelaxationSuggestion: container__LKaiN (column, centred,
+			// min-height 84, margin-top 16) holding the outline medium
+			// "Search without filters"
+			call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+				return Button(gtx, th, &v.relaxBtn, BtnOutline, BtnMedium, "Search without filters", "", 0)
+			})
+			t := op.Offset(image.Pt(px+(cw-d.Size.X)/2, y+dp(gtx, 16))).Push(gtx.Ops)
+			call.Add(gtx.Ops)
+			t.Pop()
+		}
 		return layout.Dimensions{Size: sz}
 	}
 	pager := v.pages > 1
