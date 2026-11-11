@@ -110,3 +110,17 @@ func TestSlickViewUserPronouns(t *testing.T) {
 		t.Errorf("the pronouns are drawn %d times, want once (the grouped follow-up has no header)", n)
 	}
 }
+
+// CopyReacted: its copy button follows the add-reaction button
+// (ReactionAddButton, a child of ReactionBar's tree, so the bar's
+// reactions reach it through context).
+func TestSlickViewCopyReacted(t *testing.T) {
+	e := newSlickEnv(t, nil)
+	e.install(t, "CopyReacted", nil)
+	patched(t, "ReactionBar", "ReactionAddButton")
+	v := NewChannelView(e.h, tGen)
+	v.Preview = true
+	e.waitFor(t, "the copy button by the add-reaction button", frameFn(v), func() bool {
+		return e.ui.anyTree("slick_copy_reacted")
+	})
+}
