@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -56,8 +57,15 @@ type rtSpan struct {
 }
 
 // rtLines splits d into lines by scanning runes (robust even if d.Lines is
-// out of sync), with leading and trailing blank lines removed.
-func rtLines(d *Doc) []rtSpan {
+// out of sync), with leading and trailing blank lines removed. keepLists
+// keeps blank list items at either end, as Slack's send does: trimDelta
+// (ASJc trimOps) never drops a newline carrying a block format
+// (doesAttributesContainBlockFormatting: code-block, blockquote, list),
+// and processDeltaAsList makes an empty line {type: rich_text_section,
+// elements: []} (VxMM, from prepareAndSendMessage's
+// message_send_attempt:blocks), which Slack's RichTextList renders as an
+// item with its marker.
+func rtLines(d *Doc, keepLists bool) []rtSpan {
 	var ls []rtSpan
 	start := 0
 	for i := 0; i <= len(d.Runes); i++ {
@@ -76,10 +84,11 @@ func rtLines(d *Doc) []rtSpan {
 		ls = append(ls, rtSpan{start: start, end: i, line: l})
 		start = i + 1
 	}
-	for len(ls) > 0 && rtBlank(d, ls[0]) {
+	trim := func(s rtSpan) bool { return rtBlank(d, s) && !(keepLists && rtIsList(s.line.Kind)) }
+	for len(ls) > 0 && trim(ls[0]) {
 		ls = ls[1:]
 	}
-	for len(ls) > 0 && rtBlank(d, ls[len(ls)-1]) {
+	for len(ls) > 0 && trim(ls[len(ls)-1]) {
 		ls = ls[:len(ls)-1]
 	}
 	return ls
@@ -286,9 +295,9 @@ func rtStyleOut(s Style) *rtOutStyle {
 // header blocks (one per heading line) and divider blocks. It returns nil
 // for a document with no content.
 func (d *Doc) RichTextBlocks() json.RawMessage {
-	ls := rtLines(d)
-	if len(ls) == 0 {
-		return nil
+	ls := rtLines(d, true)
+	if !slices.ContainsFunc(ls, func(s rtSpan) bool { return !rtBlank(d, s) }) {
+		return nil // nothing but blank list items
 	}
 	var out []any
 	var run []rtSpan // the current run of rich_text (non-heading/divider) lines
@@ -670,7 +679,7 @@ const rtDividerMrkdwn = "──────────"
 // Mrkdwn returns the fallback `text` of the message in Slack mrkdwn.
 // Underline has no mrkdwn form and is dropped.
 func (d *Doc) Mrkdwn() string {
-	ls := rtLines(d)
+	ls := rtLines(d, false)
 	var out []string
 	var cnt rtCounter
 	prevList := false

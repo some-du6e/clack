@@ -283,20 +283,30 @@ func TestUndoCoalescing(t *testing.T) {
 	}
 }
 
+// Enter in lists, quotes and code, as Slack's composer takes it (Texty's
+// keyboard module: Quill's "list empty enter" binding first, then Slack's
+// enter bindings, on_enter_onEnter with shouldInsertNewline, xrjr, and
+// MessageInput.onEnter): Enter in a list item with text sends, Enter on an
+// empty item leaves the list without sending, Shift+Enter makes the next
+// item and on an empty one leaves the list, indent and all. Enter on an
+// empty quote line sends; Shift+Enter adds quote (or code) lines until
+// the second empty one in a row, where the two become a plain line.
 func TestEnterInLists(t *testing.T) {
 	e := NewEditor()
 	edType(e, "- a")
 	e.events = nil
 	edPress(e, key.NameReturn, 0)
-	if edHas(e, EvSubmit) {
-		t.Fatal("Enter in a list submitted")
+	if !edHas(e, EvSubmit) || e.doc.Text() != "a" || len(e.doc.Lines) != 1 {
+		t.Fatalf("Enter in a list item: submit %v, %q %+v", edHas(e, EvSubmit), e.doc.Text(), e.doc.Lines)
 	}
-	if e.doc.Text() != "a\n" || len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != Bullet {
-		t.Fatalf("new item: %q %+v", e.doc.Text(), e.doc.Lines)
+	e.events = nil
+	edPress(e, key.NameReturn, key.ModShift)
+	if edHas(e, EvSubmit) || e.doc.Text() != "a\n" || len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != Bullet {
+		t.Fatalf("Shift+Enter, the next item: %q %+v", e.doc.Text(), e.doc.Lines)
 	}
-	edPress(e, key.NameReturn, 0) // empty item: leave the list
-	if e.doc.Text() != "a\n" || e.doc.Lines[1].Kind != Para || e.doc.Lines[0].Kind != Bullet {
-		t.Fatalf("leave list: %q %+v", e.doc.Text(), e.doc.Lines)
+	edPress(e, key.NameReturn, 0) // empty item: leave the list, no send
+	if edHas(e, EvSubmit) || e.doc.Text() != "a\n" || e.doc.Lines[1].Kind != Para || e.doc.Lines[0].Kind != Bullet {
+		t.Fatalf("Enter on an empty item: %q %+v %v", e.doc.Text(), e.doc.Lines, e.events)
 	}
 	edType(e, "b")
 	edPress(e, key.NameReturn, 0)
@@ -304,27 +314,31 @@ func TestEnterInLists(t *testing.T) {
 		t.Fatal("Enter in a paragraph did not submit")
 	}
 
-	// Nested empty item outdents first.
-	e = NewEditor()
-	edType(e, "- a")
-	e.SetSelection(0, 0) // Slack's "indent" takes a collapsed caret at the item's start
-	edPress(e, key.NameTab, 0)
-	if e.doc.Lines[0].Indent != 1 {
-		t.Fatalf("tab indent %+v", e.doc.Lines)
-	}
-	e.SetSelection(e.doc.Len(), e.doc.Len())
-	edPress(e, key.NameReturn, 0)
-	edPress(e, key.NameReturn, 0)
-	if l := e.doc.Lines[1]; l.Kind != Bullet || l.Indent != 0 {
-		t.Fatalf("outdent %+v", e.doc.Lines)
-	}
-	edPress(e, key.NameTab, key.ModShift)
-	edPress(e, key.NameReturn, 0)
-	if e.doc.Lines[1].Kind != Para {
-		t.Fatalf("leave %+v", e.doc.Lines)
+	// a nested empty item leaves the list at once: "list empty enter"
+	// formats list and indent off, the newline branch formatLine({list:
+	// false, indent: 0})
+	for _, mods := range []key.Modifiers{0, key.ModShift} {
+		e = NewEditor()
+		edType(e, "- a")
+		e.SetSelection(0, 0) // Slack's "indent" takes a collapsed caret at the item's start
+		edPress(e, key.NameTab, 0)
+		if e.doc.Lines[0].Indent != 1 {
+			t.Fatalf("tab indent %+v", e.doc.Lines)
+		}
+		e.SetSelection(e.doc.Len(), e.doc.Len())
+		edPress(e, key.NameReturn, key.ModShift)
+		if l := e.doc.Lines[1]; l.Kind != Bullet || l.Indent != 1 {
+			t.Fatalf("the next nested item %+v", e.doc.Lines)
+		}
+		e.events = nil
+		edPress(e, key.NameReturn, mods)
+		if l := e.doc.Lines[1]; l.Kind != Para || l.Indent != 0 || edHas(e, EvSubmit) {
+			t.Fatalf("mods %v on the empty nested item: %+v %v", mods, e.doc.Lines, e.events)
+		}
 	}
 
-	// Shift+Enter in a code block adds a code line; Enter still submits.
+	// Shift+Enter in a code block adds code lines and leaves on the second
+	// empty one; Enter submits.
 	e = NewEditor()
 	edType(e, "```x")
 	e.events = nil
@@ -332,19 +346,63 @@ func TestEnterInLists(t *testing.T) {
 	if len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != CodeBlock {
 		t.Fatalf("code line %+v", e.doc.Lines)
 	}
+	edPress(e, key.NameReturn, key.ModShift)
+	if len(e.doc.Lines) != 3 || e.doc.Lines[2].Kind != CodeBlock {
+		t.Fatalf("second empty code line %+v", e.doc.Lines)
+	}
+	edPress(e, key.NameReturn, key.ModShift)
+	if e.doc.Text() != "x\n" || len(e.doc.Lines) != 2 || e.doc.Lines[0].Kind != CodeBlock || e.doc.Lines[1].Kind != Para {
+		t.Fatalf("leaving the code block: %q %+v", e.doc.Text(), e.doc.Lines)
+	}
+	e = NewEditor()
+	edType(e, "```x")
 	edPress(e, key.NameReturn, 0)
 	if !edHas(e, EvSubmit) {
 		t.Fatal("Enter in a code block did not submit")
 	}
 
-	// Enter on an empty quote line leaves the quote.
+	// quotes: Enter sends, an empty quote line included
 	e = NewEditor()
 	edType(e, ">q")
 	edPress(e, key.NameReturn, key.ModShift)
 	e.events = nil
 	edPress(e, key.NameReturn, 0)
-	if edHas(e, EvSubmit) || e.doc.Lines[1].Kind != Para {
-		t.Fatalf("empty quote: %+v %v", e.doc.Lines, e.events)
+	if !edHas(e, EvSubmit) || len(e.doc.Lines) != 2 || e.doc.Lines[1].Kind != Quote {
+		t.Fatalf("Enter on an empty quote line: %+v %v", e.doc.Lines, e.events)
+	}
+	edPress(e, key.NameReturn, key.ModShift) // a second empty quote line
+	if len(e.doc.Lines) != 3 || e.doc.Lines[2].Kind != Quote {
+		t.Fatalf("second empty quote line %+v", e.doc.Lines)
+	}
+	edPress(e, key.NameReturn, key.ModShift)
+	if e.doc.Text() != "q\n" || len(e.doc.Lines) != 2 || e.doc.Lines[0].Kind != Quote || e.doc.Lines[1].Kind != Para {
+		t.Fatalf("leaving the quote: %q %+v", e.doc.Text(), e.doc.Lines)
+	}
+
+	// Slack's shouldInsertNewline table (xrjr): meta never, Ctrl on macOS
+	// always, Ctrl elsewhere unless Shift or "Start a new line"; with that
+	// pref anything; in code under enter_is_special_in_tbt all but Shift;
+	// else Shift or Alt
+	cases := []struct {
+		meta, ctrl, shift, alt, mac, pref, pre, in, want bool
+	}{
+		{want: false},
+		{shift: true, want: true},
+		{alt: true, want: true},
+		{meta: true, shift: true, want: false},
+		{ctrl: true, want: true},
+		{ctrl: true, shift: true, want: false},
+		{ctrl: true, pref: true, want: false},
+		{ctrl: true, pref: true, mac: true, want: true},
+		{pref: true, want: true},
+		{pre: true, in: true, want: true},
+		{pre: true, in: true, shift: true, want: false},
+		{pre: true, want: false},
+	}
+	for _, c := range cases {
+		if got := insertsNewline(c.meta, c.ctrl, c.shift, c.alt, c.mac, c.pref, c.pre, c.in); got != c.want {
+			t.Errorf("insertsNewline%+v = %v", c, got)
+		}
 	}
 }
 

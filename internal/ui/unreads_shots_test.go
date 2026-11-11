@@ -118,10 +118,15 @@ func TestUnreadsSidebarLink(t *testing.T) {
 	e2.until("Esc's conversations.mark", 10*time.Second, func() bool { return e2.fs.Marked(first) != "" })
 }
 
-// The join banner: megaphone.notifications.list answers
-// education_channel_join_banner for #new-joiners' message_input space, so
-// the banner shows over its composer (not over other channels'); the pref
-// hides it; the close button slides it away and records the dismissal.
+// The join banner, as Slack's megaphone flow shows it (joinbanner.go,
+// core/megaphone.go): the boot load (megaphone.notifications.list
+// request_spaces for the boot chunk, event.channel the open channel)
+// queues education_channel_join_banner in the global message_input
+// space; with it the banner mounts in a channel and asks that channel's
+// spaces, and shows in #new-joiners (not over other channels); the pref
+// hides it; the close button slides it away and records the dismissal,
+// its place staying until the channel is left; leaving the channel
+// records an impression; after the dismissal it doesn't come back.
 func TestJoinBanner(t *testing.T) {
 	e, fs := unreadsAppEnv(t, nil)
 	ch := fakeslack.JoinBannerID
@@ -129,15 +134,25 @@ func TestJoinBanner(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		e.setDark(dark)
 		e.openChannel(ch)
-		e.until("the join banner", 20*time.Second, func() bool { return c.banner != nil && c.banner.show && c.bannerH > 0 })
+		e.until("the join banner", 20*time.Second, func() bool { return c.banner != nil && c.bannerH > 0 })
 		e.unreadsShot("join-banner")
 	}
-	asked := false
+	boot, asked := false, false
 	for _, call := range fs.UnreadsCalls() {
-		if call.Method == "megaphone.notifications.list" && call.Form.Get("channel_id") == ch &&
-			strings.Contains(call.Form.Get("event"), `"request_spaces"`) && strings.Contains(call.Form.Get("event"), `"message_input"`) {
-			asked = true
+		if call.Method != "megaphone.notifications.list" {
+			continue
 		}
+		ev := call.Form.Get("event")
+		switch call.Form.Get("channel_id") {
+		case "":
+			boot = boot || strings.Contains(ev, `"message_input"`) && strings.Contains(ev, `"launch_modal"`) && strings.Contains(ev, `"ia_version":4`) &&
+				strings.Contains(ev, `"channel":"C`) && call.Form.Get("reason") == "nav-boot"
+		case ch:
+			asked = asked || strings.Contains(ev, `"request_spaces"`) && strings.Contains(ev, `"message_input"`) && strings.Contains(ev, `"message_input_invited_glow"`)
+		}
+	}
+	if !boot {
+		t.Error("no boot load (request_spaces for the boot chunk with event.channel, reason nav-boot)")
 	}
 	if !asked {
 		t.Error("no megaphone.notifications.list request_spaces for the channel")
@@ -161,16 +176,22 @@ func TestJoinBanner(t *testing.T) {
 	}
 	impression := false
 	for _, call := range fs.UnreadsCalls() {
-		impression = impression || call.Method == "megaphone.setNotificationAsSeen" && call.Form.Get("action") == core.MegaphoneImpression
+		impression = impression || call.Method == "megaphone.setNotificationAsSeen" && call.Form.Get("action") == core.MegaphoneImpression &&
+			call.Form.Get("channel_id") == ch
 	}
 	if !impression {
 		t.Error("leaving the channel recorded no impression")
 	}
-	// close: slide away, record the dismissal
+	// close: slide away, record the dismissal; the place stays until the
+	// channel is left (the slide is a transform), then it's gone for good
 	e.openChannel(ch)
 	e.until("the banner again", 10*time.Second, func() bool { return c.bannerH > 0 })
+	h := c.bannerH
 	c.banner.closeBtn.Click()
-	e.until("the banner gone", 10*time.Second, func() bool { return c.bannerH == 0 && c.banner.gone })
+	e.until("the banner slid away", 10*time.Second, func() bool { return c.banner.gone })
+	if c.bannerH != h {
+		t.Errorf("the dismissed banner's place is %d, want its %d until the channel is left", c.bannerH, h)
+	}
 	e.until("the dismissal", 10*time.Second, func() bool {
 		for _, call := range fs.UnreadsCalls() {
 			if call.Method == "megaphone.setNotificationAsSeen" && call.Form.Get("action") == "dismiss" &&
@@ -181,6 +202,60 @@ func TestJoinBanner(t *testing.T) {
 		return false
 	})
 	e.unreadsShot("join-banner-dismissed")
+	e.openChannel(fakeslack.UnreadsDesignID)
+	e.settle(400 * time.Millisecond)
+	e.openChannel(ch)
+	e.settle(800 * time.Millisecond)
+	if c.bannerH != 0 {
+		t.Errorf("the dismissed banner came back (%dpx)", c.bannerH)
+	}
+}
+
+// Karim (2026-11-10): "why is the welcome to ___ there?? i have been in
+// that channel for a while". Slack's server answers a load for a
+// long-standing channel with the banner too, but Slack's client only
+// mounts the banner (and asks) once the boot load or a push put it in
+// message_input. With no banner queued, a long-standing channel shows
+// none and gets no request of its own.
+func TestJoinBannerLongStandingChannel(t *testing.T) {
+	sz := fakeslack.Small
+	sz.Unreads = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	fs.QueueJoinBanner(false)
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	ch := fakeslack.JoinBannerOldID
+	c := e.a.convoFor(ch, "")
+	e.openChannel(ch)
+	e.until("history", 10*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+	e.until("the boot load", 10*time.Second, func() bool {
+		for _, call := range fs.UnreadsCalls() {
+			if call.Method == "megaphone.notifications.list" && call.Form.Get("channel_id") == "" {
+				return true
+			}
+		}
+		return false
+	})
+	e.settle(800 * time.Millisecond)
+	if c.bannerH != 0 {
+		t.Errorf("a join banner over the long-standing #old-hangout (%dpx)", c.bannerH)
+	}
+	for _, call := range fs.UnreadsCalls() {
+		if call.Method == "megaphone.notifications.list" && call.Form.Get("channel_id") == ch {
+			t.Errorf("asked #old-hangout's spaces with no banner in the global space: %v", call.Form)
+		}
+	}
+	// #new-joiners, also without the queued banner: none either
+	nj := e.a.convoFor(fakeslack.JoinBannerID, "")
+	e.openChannel(fakeslack.JoinBannerID)
+	e.settle(800 * time.Millisecond)
+	if nj.bannerH != 0 {
+		t.Errorf("a join banner with none queued (%dpx)", nj.bannerH)
+	}
 }
 
 // The pref gate: under the auto-sort rollout disable_channel_join_banner

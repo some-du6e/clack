@@ -22,6 +22,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
+	"golang.org/x/image/math/fixed"
 
 	rt "github.com/some-du6e/clack/internal/richtext"
 )
@@ -598,6 +599,13 @@ func TestListOrderedLabels(t *testing.T) {
 		for _, f := range labelFrags {
 			if f.x+f.w > textX {
 				t.Errorf("label %q ends at %.1f past text at %.1f", f.sh.str, f.x+f.w, textX)
+			}
+			// Slack's ::marker "N. " ends at the li's border box, its
+			// padding-inline-start (8px) before the text: the period is a
+			// space short of that, every label right-aligned there
+			sp := st.spaceOf(faceKey{f: font.Font{Typeface: st.Face}, size: fixed.I(f.size)}).adv
+			if end, want := f.x+f.w, textX-8-sp; end < want-0.01 || end > want+0.01 {
+				t.Errorf("indent %d: label %q ends at %.2f, want %.2f (text at %.1f - 8 - a %.2f space)", c.indent, f.sh.str, end, want, textX, sp)
 			}
 			if f.p0 != -1 || f.p1 != -1 {
 				t.Errorf("label %q is part of plain text (%d..%d)", f.sh.str, f.p0, f.p1)

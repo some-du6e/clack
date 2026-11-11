@@ -6,14 +6,23 @@ package ui
 // chunk mzyA / QwCw, CSS megaphone-message-pane-input-channel-join-banner,
 // CDN build bv1-13).
 //
-//   - When: Slack's megaphone service decides. Opening a channel (not a
-//     DM or group DM) asks megaphone.notifications.list for the
-//     message_input spaces; the banner shows while message_input's
-//     notification is education_channel_join_banner. It never shows for
-//     a preview (isPreview), an agent record channel or a meeting
-//     channel, and the pref hides it: with isAutoSortRolloutActive
-//     (suggested_sections_auto_sort_v2 on, its killswitch off)
-//     disable_channel_join_banner true, otherwise unless
+//   - When (Slack's megaphone flow, core/megaphone.go): the message list's
+//     megaphone container exists only while message_input holds one of
+//     its notifications (GyIg G5), the channel's own (channelSpaces) or,
+//     with none of them for the channel, the global one the boot load and
+//     the RTM pushes keep (bU1n isGloballyScoped/
+//     isChannelScopedMegaphoneNotificationVisible); MegaphoneContainer
+//     (J3pY) draws ChannelJoinBanner when that notification is
+//     education_channel_join_banner. Only then does the banner ask
+//     megaphone.notifications.list for the channel's message_input spaces
+//     (its REQUEST_SPACES on mount), and it shows while the channel's
+//     message_input notification is education_channel_join_banner. So
+//     Clack no longer asks for every channel it opens: a channel the
+//     server never put the banner in the boot load or a push for gets
+//     none. It never shows for a preview (isPreview), an agent record
+//     channel or a meeting channel, and the pref hides it: with
+//     isAutoSortRolloutActive (suggested_sections_auto_sort_v2 on, its
+//     killswitch off) disable_channel_join_banner true, otherwise unless
 //     channel_join_experience_enabled is true.
 //   - What (the default variant; the auto-sort and Slackbot AI variants
 //     need server state and AI features Clack doesn't have): the card
@@ -21,23 +30,27 @@ package ui
 //     close button at top 20 right 40, ":wave: Welcome to #name" (15px
 //     900), "Group this channel with similar conversations in your
 //     sidebar and choose when you want to be notified about new
-//     messages." (13px/18px) and two 28px outline buttons 4px apart: the
-//     section selector ("★ Move to Section" for a channel in no section,
-//     else the section's emoji or icon and name, with a chevron) opening
-//     the Move to… menu, and the notifications control (its level's icon
-//     and "All new posts" / "Just mentions" / "Nothing" / "Muted", a
-//     chevron) opening ChannelNotificationPrefMenu above.
+//     messages." (13px/18px) and the two outline buttons 4px apart
+//     (jbButton): the section selector ("★ Move to Section" for a channel
+//     in no section, else the section's emoji or icon and name, with a
+//     chevron) opening the Move to… menu, and the notifications control
+//     (its level's icon and "All new posts" / "Just mentions" / "Nothing"
+//     / "Muted", a caret) opening ChannelNotificationPrefMenu above.
 //   - Dismissal: the close button or Delete on the banner slides it down
-//     (.3s) and records megaphone.setNotificationAsSeen dismiss. Moving
-//     the channel to another section or changing its notifications from
-//     elsewhere (not through the banner) closes it without the record.
-//     Leaving the channel records an impression and asks the spaces
-//     again (maybeHideChannelJoinBanner).
+//     (.3s: opacity 0, translateY(100%)) and records
+//     megaphone.setNotificationAsSeen dismiss; the slid-away banner keeps
+//     its place until the channel is left (the transform doesn't change
+//     layout). The container doesn't pass ChannelJoinBanner an onClose, so
+//     its useHasSectionOrNotificationChanged close does nothing. Leaving a
+//     channel whose message_input holds the banner records an impression
+//     and asks the space again (maybeHideChannelJoinBanner): the server
+//     remembers the dismissal and answers null from then on.
 
 import (
 	"context"
 	"image"
 	"image/color"
+	"slices"
 	"strings"
 	"time"
 
@@ -67,19 +80,15 @@ const (
 var jbSpaces = []string{core.SpaceMessageInput, "message_input_invited_glow", "message_input_channel_join_summary_glow"}
 
 type joinBanner struct {
-	asked, show bool
-	closing     time.Time
-	gone        bool
-	touched     bool // the banner was clicked (eK): changes don't auto-close it
-	initSection string
-	initNotify  string
-	initMuted   bool
-	seeded      bool
-	closeBtn    widget.Clickable
-	moveBtn     widget.Clickable
-	notifyBtn   widget.Clickable
-	moveR       image.Rectangle // window coordinates, for the menus
-	notifyR     image.Rectangle
+	mounted   bool // the megaphone container holds it (its REQUEST_SPACES went out)
+	closing   time.Time
+	gone      bool // slid away: invisible, still taking its height (h)
+	h         int
+	closeBtn  widget.Clickable
+	moveBtn   widget.Clickable
+	notifyBtn widget.Clickable
+	moveR     image.Rectangle // window coordinates, for the menus
+	notifyR   image.Rectangle
 }
 
 // joinBannerHidden is the pref gate E.
@@ -102,52 +111,97 @@ func joinBannerEligible(conv *convInfo, cv core.Conv) bool {
 	return cv.Code == nil && !strings.HasPrefix(cv.Name, "mc:")
 }
 
+// joinBannerProTrial is the one G5 notification the global space only
+// holds the container with five unread messages or more
+// (isGloballyScopedMegaphoneNotificationVisible).
+const joinBannerProTrial = "pro_trial_slack_ai_offer_in_channel_summary_banner"
+
+// joinBannerMounted is the message list's megaphone container for ch
+// holding ChannelJoinBanner (bU1n, J3pY): the global message_input
+// notification is one of the container's (with the pro-trial banner, only
+// at five unread or more), else the channel's is; whichever it is must be
+// education_channel_join_banner. unread is getUnreadBannerDisplayCount.
+func joinBannerMounted(c *core.App, ch string, unread func() int) bool {
+	inG5 := func(n string) bool { return n != "" && slices.Contains(core.MegaphoneMessageInputNotifications, n) }
+	global := c.MegaphoneNotification(core.SpaceMessageInput, "")
+	if inG5(global) && (global != joinBannerProTrial || unread() >= 5) {
+		return global == core.NotificationChannelJoinBanner
+	}
+	scoped := c.MegaphoneNotification(core.SpaceMessageInput, ch)
+	return inG5(scoped) && scoped == core.NotificationChannelJoinBanner
+}
+
+// joinBannerUnread is getUnreadBannerDisplayCount for ch: the loaded
+// messages after its read cursor.
+func joinBannerUnread(c *core.App, ch string) int {
+	lr := c.Count(ch).LastRead
+	tl := c.S.Timeline(ch)
+	if tl == nil || lr == "" {
+		return 0
+	}
+	n := 0
+	for i := range tl.Msgs {
+		if tl.Msgs[i].TS > lr {
+			n++
+		}
+	}
+	return n
+}
+
 // layoutJoinBanner draws c's banner (when Slack's megaphone says so) and
 // returns its size; origin is its window position.
 func (a *App) layoutJoinBanner(gtx layout.Context, c *convo, origin image.Point) layout.Dimensions {
-	core := a.Core()
-	if c.ts != "" || core == nil {
+	ca := a.Core()
+	if c.ts != "" || ca == nil {
 		return layout.Dimensions{}
 	}
 	conv := a.model().conv(c.ch)
-	cv, _ := core.Conv(c.ch)
+	cv, _ := ca.Conv(c.ch)
 	if !joinBannerEligible(conv, cv) {
 		return layout.Dimensions{}
 	}
-	if a.joinBannerCh != c.ch { // maybeHideChannelJoinBanner for the one left
-		a.leaveJoinBanner()
+	a.megaphoneBoot(c.ch)
+	if a.joinBannerCh != c.ch { // a channel view opened: channelOpenedEvent
 		a.joinBannerCh = c.ch
+		ch := c.ch
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			_ = ca.MegaphoneChannelOpened(ctx, ch)
+		}()
 	}
 	b := c.banner
 	if b == nil {
 		b = &joinBanner{}
 		c.banner = b
 	}
-	if !b.asked {
-		b.asked = true
-		a.askJoinBanner(c.ch, b)
-	}
-	if !b.show || b.gone || joinBannerHidden(core) {
+	if !joinBannerMounted(ca, c.ch, func() int { return joinBannerUnread(ca, c.ch) }) {
+		b.mounted = false
 		return layout.Dimensions{}
 	}
-	a.joinBannerAutoClose(c.ch, b)
+	if !b.mounted { // mounted: a fresh ChannelJoinBanner asks for the channel's spaces
+		*b = joinBanner{mounted: true}
+		a.askJoinBanner(c.ch)
+	}
+	show := strings.Contains(ca.MegaphoneNotification(core.SpaceMessageInput, c.ch), core.NotificationChannelJoinBanner)
+	if !show || joinBannerHidden(ca) {
+		return layout.Dimensions{}
+	}
 	if b.gone {
-		return layout.Dimensions{}
+		return layout.Dimensions{Size: image.Pt(gtx.Constraints.Max.X, b.h)}
 	}
 	if b.closeBtn.Clicked(gtx) {
 		a.dismissJoinBanner(c.ch, b)
 	}
 	if b.moveBtn.Clicked(gtx) {
-		b.touched = true
 		st := a.channelSections(c.ch)
 		a.menuAt(b.moveR, int(popups.Above), 280, a.moveToItems(c.ch, st))
 	}
 	if b.notifyBtn.Clicked(gtx) {
-		b.touched = true
 		a.ShowOverlay(popups.NewMenuOpts(a, popups.ChannelNotifyItems(a, c.ch), popups.MenuOpts{Anchor: b.notifyR, Side: popups.Above, Width: 300}))
 	}
-	// Delete on the focused banner dismisses it; a click focuses it (and
-	// marks it touched)
+	// Delete on the focused banner dismisses it; a click focuses it (the
+	// wrapper's tabIndex 0)
 	for {
 		ev, ok := gtx.Event(key.FocusFilter{Target: b}, key.Filter{Focus: b, Name: key.NameDeleteForward})
 		if !ok {
@@ -163,7 +217,6 @@ func (a *App) layoutJoinBanner(gtx layout.Context, c *convo, origin image.Point)
 			break
 		}
 		if _, ok := ev.(pointer.Event); ok {
-			b.touched = true
 			gtx.Execute(key.FocusCmd{Tag: b})
 		}
 	}
@@ -221,10 +274,10 @@ func (a *App) layoutJoinBanner(gtx layout.Context, c *convo, origin image.Point)
 	var shift int
 	if !b.closing.IsZero() {
 		p := float32(gtx.Now.Sub(b.closing)) / float32(jbSlide)
-		if p >= 1 {
-			b.gone = true
+		if p >= 1 { // slid away; its place stays until the channel is left
+			b.gone, b.h = true, total.Y
 			a.Invalidate()
-			return layout.Dimensions{}
+			return layout.Dimensions{Size: total}
 		}
 		shift = int(p * float32(total.Y))
 		opac = paint.PushOpacity(gtx.Ops, 1-p)
@@ -406,52 +459,35 @@ func (a *App) jbNotifyButton(gtx layout.Context, ch string, b *joinBanner) layou
 	}, label, true)
 }
 
-// joinBannerAutoClose is useHasSectionOrNotificationChanged: a change
-// made elsewhere closes the banner (without recording a dismissal).
-func (a *App) joinBannerAutoClose(ch string, b *joinBanner) {
-	st := a.channelSections(ch)
-	sec := ""
-	switch {
-	case st.custom != nil:
-		sec = st.custom.ID
-	case st.starred && st.stars != nil:
-		sec = st.stars.ID
-	case st.starred:
-		sec = "stars"
-	}
-	level, _, _, muted := a.jbNotify(ch)
-	if !b.seeded {
-		b.seeded = true
-		b.initSection, b.initNotify, b.initMuted = sec, level, muted
+// megaphoneBoot starts the boot load (maybeFetchMegaphoneOnBootEvent)
+// once, with the channel on screen as event.channel; core repeats it at
+// most hourly.
+func (a *App) megaphoneBoot(ch string) {
+	if a.megaBooted {
 		return
 	}
-	if b.touched {
-		return
-	}
-	if sec != b.initSection || level != b.initNotify || muted != b.initMuted {
-		b.gone = true
-	}
-}
-
-// askJoinBanner is the REQUEST_SPACES load for ch.
-func (a *App) askJoinBanner(ch string, b *joinBanner) {
+	a.megaBooted = true
 	c := a.Core()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		sp, err := c.MegaphoneSpaces(ctx, ch, jbSpaces)
-		if err != nil {
-			return
-		}
-		show := sp[core.SpaceMessageInput] == core.NotificationChannelJoinBanner
-		a.Post(func() {
-			b.show = show
-			a.Invalidate()
-		})
+		_ = c.MegaphoneBoot(ctx, ch)
 	}()
 }
 
-// dismissJoinBanner is the close button: slide down, record the dismissal.
+// askJoinBanner is ChannelJoinBanner's REQUEST_SPACES on mount: the
+// answers land in core's spaces for ch (a "megaphone" event redraws).
+func (a *App) askJoinBanner(ch string) {
+	c := a.Core()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_, _ = c.MegaphoneSpaces(ctx, ch, jbSpaces)
+	}()
+}
+
+// dismissJoinBanner is the close button (and Delete): slide down, record
+// the dismissal.
 func (a *App) dismissJoinBanner(ch string, b *joinBanner) {
 	if !b.closing.IsZero() {
 		return
@@ -466,29 +502,27 @@ func (a *App) dismissJoinBanner(ch string, b *joinBanner) {
 	a.Invalidate()
 }
 
-// leaveJoinBanner is maybeHideChannelJoinBanner: leaving a channel whose
-// banner showed records an impression and asks its spaces again.
-func (a *App) leaveJoinBanner() {
-	ch := a.joinBannerCh
-	if ch == "" || a.convos == nil {
+// leaveJoinBanner is maybeHideChannelJoinBanner, on every navigation
+// (afterRoute): leaving a channel view unmounts its banner, and when the
+// channel's message_input holds the banner it records an impression and
+// asks that space again.
+func (a *App) leaveJoinBanner(prev, next Route) {
+	ch := prev.Channel()
+	if ch == "" || ch == next.Channel() {
 		return
 	}
-	cv := a.convos[ch+"/"]
-	if cv == nil || cv.banner == nil || !cv.banner.show || cv.banner.gone {
-		return
+	if cv := a.convos[ch+"/"]; cv != nil && cv.banner != nil {
+		cv.banner.mounted = false
 	}
-	b := cv.banner
 	c := a.Core()
+	if c == nil || !core.LooksLikeChannelID(ch) || c.MegaphoneNotification(core.SpaceMessageInput, ch) != core.NotificationChannelJoinBanner {
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		_ = c.RecordMegaphone(ctx, core.NotificationChannelJoinBanner, core.MegaphoneImpression, ch)
-		sp, err := c.MegaphoneSpaces(ctx, ch, []string{core.SpaceMessageInput})
-		if err != nil {
-			return
-		}
-		show := sp[core.SpaceMessageInput] == core.NotificationChannelJoinBanner
-		a.Post(func() { b.show = show })
+		_, _ = c.MegaphoneSpaces(ctx, ch, []string{core.SpaceMessageInput})
 	}()
 }
 
