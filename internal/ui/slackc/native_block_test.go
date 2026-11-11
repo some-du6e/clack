@@ -76,3 +76,24 @@ func TestEmptyNativeTakesNoSpace(t *testing.T) {
 		t.Errorf("the view is %d tall around an empty native", d.Size.Y)
 	}
 }
+
+// A native that draws nothing in a flex row stands for a Slack component
+// that rendered null (ThreadSearchButton beside ThreadJump's button with
+// find_in_thread off): it's no item, so it adds no gap of its own.
+func TestEmptyNativeIsNoFlexItem(t *testing.T) {
+	SetStyle("test:wrap", `.row { display: flex; gap: 8px } .btn { display: block; width: 36px; height: 36px }`)
+	defer RemoveStyle("test:wrap")
+	empty := func(gtx layout.Context, _ Props) layout.Dimensions { return layout.Dimensions{} }
+	v := NewView(961)
+	tree := `{"t":"div","k":1,"p":{"className":"row"},"c":[{"t":"div","k":2,"p":{"className":"btn"}},{"t":"@","n":"TestNull","k":3},{"t":"div","k":4,"p":{"className":"btn"}}]}`
+	for i := 0; i < 3; i++ {
+		v.Layout(testGtx(600, 400), mustTree(t, tree), "TestNull", nil, empty)
+	}
+	a, b := v.byK[2], v.byK[4]
+	if a == nil || b == nil {
+		t.Fatal("the row's items have no boxes")
+	}
+	if got := b.rect.x0 - a.rect.x1; got != 8 {
+		t.Errorf("the buttons either side of an empty native are %vpx apart, want the row's one 8px gap", got)
+	}
+}

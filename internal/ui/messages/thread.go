@@ -432,9 +432,14 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	if bell {
 		left = mx - gap - bs
 	}
+	// a ThreadSearchButton patch's items are as wide as they are, in the
+	// header row's height, in what the title leaves them (Slack's title
+	// column shrinks first)
+	bgtx := gtx
+	bgtx.Constraints = layout.Constraints{Max: image.Pt(max(left-gap-px-d.Size.X, 0), hh)}
 	rec := op.Record(gtx.Ops)
-	hs := flexPrimaryClass.Enter(gtx, 0, 0)
-	sd := slackc.Component(gtx, "ThreadSearchButton", v, (*ThreadView).searchButtonProps, (*ThreadView).layoutEmpty)
+	hs := flexPrimaryClass.Enter(bgtx, 0, 0)
+	sd := slackc.Component(bgtx, "ThreadSearchButton", v, (*ThreadView).searchButtonProps, (*ThreadView).layoutEmpty)
 	hs.Leave()
 	call := rec.Stop()
 	end := left // where the title column ends

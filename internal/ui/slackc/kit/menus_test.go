@@ -131,6 +131,8 @@ func TestClackIcon(t *testing.T) {
 		"user-add":                 "user-add", // Slack's own glyph now (icons)
 		"file-upload":              "file-upload",
 		"glasses-filled":           "glasses-filled",
+		"eye-open":                 "eye", // StreamerMode's toggle, through icons' Slack table
+		"eye-closed":               "eye-closed",
 		"Close":                    "close",
 		"":                         fallbackIcon,
 		"no-such-icon-anywhere":    fallbackIcon,

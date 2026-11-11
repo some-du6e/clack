@@ -18,6 +18,7 @@ type fitem struct {
 	grow, shrinkF  float32
 	autoM0, autoM1 bool // auto main margins
 	line           int
+	none           bool // a native that drew nothing: no item (see layoutFlex)
 }
 
 type fline struct {
@@ -105,6 +106,7 @@ func (v *View) layoutFlex(b *box, cw, ch, avail, lo, hi, hlo, hhi float32, c lc)
 	}
 
 	pctBase := cwBase
+	dropped := false
 	for i := range items {
 		it := &items[i]
 		k := it.b
@@ -159,6 +161,13 @@ func (v *View) layoutFlex(b *box, cw, ch, avail, lo, hi, hlo, hhi float32, c lc)
 				v.layout(k, kc)
 				fb = k.h - it.mainExtra
 			}
+			// A native that drew nothing stands for a Slack component
+			// that rendered null (ThreadSearchButton with find_in_thread
+			// off, beside ThreadJump's button): the browser has no box
+			// there, so it's no item and takes no gap.
+			if k.native && k.w == 0 && k.h == 0 && it.mainExtra == 0 && it.mm0 == 0 && it.mm1 == 0 {
+				it.none, dropped = true, true
+			}
 		}
 		it.base = fb
 		// automatic minimum size
@@ -190,6 +199,19 @@ func (v *View) layoutFlex(b *box, cw, ch, avail, lo, hi, hlo, hhi float32, c lc)
 			}
 		}
 		it.hyp = clampF(fb, it.lo, it.hi)
+	}
+	if dropped {
+		n := 0
+		for _, it := range items {
+			if it.none {
+				k := it.b
+				k.x, k.y, k.w, k.h = cx, cy, 0, 0
+				continue
+			}
+			items[n] = it
+			n++
+		}
+		items = items[:n]
 	}
 
 	// container main size when not definite
