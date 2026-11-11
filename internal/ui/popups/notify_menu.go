@@ -175,6 +175,9 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 			changed := n.TempMuteExp != ts
 			run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, a.TempMute(ctx, ch, ts) },
 				func(_ struct{}, err error) {
+					if err == nil {
+						delete(actMuteSet, ch) // muted now comes from the prefs (core temp_mute.go), not the last toggle
+					}
 					if changed {
 						tempMuteToast(h, ch, duration, err)
 					}
@@ -253,7 +256,9 @@ func tempMuteToast(h Host, ch, duration string, err error) {
 			func(_ struct{}, err error) {
 				if err != nil {
 					h.Toast("Something went wrong. Reloading Slack might clear things up. If it doesn’t, drop us a line.")
+					return
 				}
+				delete(actMuteSet, ch)
 			})
 	}
 	if u, ok := h.(interface{ ToastUndo(string, func()) }); ok {

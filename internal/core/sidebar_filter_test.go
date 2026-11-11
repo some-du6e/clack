@@ -1,8 +1,13 @@
 package core
 
 import (
+	"context"
 	"reflect"
 	"testing"
+
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 func filterIDs(out []FilterSection) map[string][]string {
@@ -139,5 +144,44 @@ func TestSidebarTextFilterM2ClosedDMs(t *testing.T) {
 	got = FilterSidebar(secs, "rob", true, false, n)
 	if !reflect.DeepEqual(got[0].Rows, []string{"G9", "D3", "D1"}) {
 		t.Errorf("by name: %v", got[0].Rows)
+	}
+}
+
+// sidebar_text_filter_m2 against the fake: a closed DM is in FilterNames'
+// Closed list once sidebar.dms says so, and FetchSidebarDMs (the input's
+// onFocus) loads sidebar.dms when boot's call failed.
+func TestSidebarTextFilterClosedDMsFake(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	const closed, user = "D0CLOSED0001", "U0FAKE00050"
+	fs.AddClosedDM(closed, user)
+	fs.SetFault("sidebar.dms", fakeslack.Fault{Error: "fatal_error", Times: 1})
+	a := New(slack.New(fs.Creds()), store.New(""))
+	ctx := context.Background()
+	if err := a.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if a.SidebarDMsKnown() {
+		t.Fatal("known after a failed boot call")
+	}
+	if !a.SidebarTextFilterM2() || !a.SidebarTextFilterM3() {
+		t.Errorf("the fake account's groups: m2 %v m3 %v", a.SidebarTextFilterM2(), a.SidebarTextFilterM3())
+	}
+	if err := a.FetchSidebarDMs(ctx); err != nil {
+		t.Fatal(err) // the boot failure's backoff doesn't hold a user's retry
+	}
+	if !a.SidebarDMsKnown() {
+		t.Fatal("FetchSidebarDMs didn't record sidebar.dms")
+	}
+	n := a.Snapshot().FilterNames
+	found := false
+	for _, id := range n.Closed {
+		found = found || id == closed
+	}
+	if !found || n.ClosedNames[closed] == "" {
+		t.Errorf("closed DM not offered: closed %v names %q", n.Closed, n.ClosedNames[closed])
 	}
 }

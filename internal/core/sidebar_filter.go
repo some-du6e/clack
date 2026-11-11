@@ -448,9 +448,11 @@ func (a *App) SidebarDMsKnown() bool {
 
 // FetchSidebarDMs is createThunkFetchSidebarDms (reason
 // "sidebar-text-filter-dms"): sidebar.dms, recorded the way boot records
-// it, then the sidebar is rebuilt.
+// it, then the sidebar is rebuilt. It runs when the user focuses the
+// filter while sidebar.dms hasn't answered (Slack: "will retry" on the next
+// focus), so it is a user's retry and skips the failure backoff.
 func (a *App) FetchSidebarDMs(ctx context.Context) error {
-	dms, err := a.C.SidebarDMs(ctx)
+	dms, err := a.C.SidebarDMs(slack.NoBackoff(ctx))
 	if err != nil {
 		return err
 	}
