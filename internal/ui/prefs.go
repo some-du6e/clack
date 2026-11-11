@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uifont"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -60,11 +61,6 @@ type prefs struct {
 	HuddleVideoEffect string `json:"huddle_video_effect,omitempty"`
 	// Zoom is View > Zoom's level, -3…5 (Slack's zoomLevel; macmenu.go).
 	Zoom int `json:"zoom,omitempty"`
-	// SecondaryWMode is Slack's secondaryWidthMode for SecondaryW
-	// (localStorage viewLayoutSecondaryWidthMode): "manual" once the
-	// column was dragged away from its default, else "" (auto: Slack's
-	// default width; secondary_width.go).
-	SecondaryWMode string `json:"secondary_w_mode,omitempty"`
 	// Simplified layout mode (bbm.go). Slack keeps all of it on the
 	// device, none of it in users.prefs: BBM is the client store "bbm"
 	// {enabled} (persisted, plus localConfig bbmEnabled per team);
@@ -129,10 +125,11 @@ func (a *App) loadPrefs() {
 	if w := a.prefs.SidebarW; w >= 160 && w <= 480 {
 		a.sidebar.width = w
 	}
-	if w := a.prefs.SecondaryW; w >= 300 {
+	// a width the user dragged to ("manual"); builds before the auto
+	// width saved their fixed 400 default, which is auto now
+	if w := a.prefs.SecondaryW; w >= 300 && w != theme.SecondaryW {
 		a.secondary.width = w
 	}
-	a.secCol.manual = a.prefs.SecondaryWMode == secWidthManual
 	if len(a.prefs.Collapsed) > 0 {
 		a.sidebar.collapsed = map[string]bool{}
 		for _, id := range a.prefs.Collapsed {
@@ -169,10 +166,6 @@ func (a *App) savePrefs() {
 	a.prefs.Dark = &d
 	a.prefs.SidebarW = a.sidebar.width
 	a.prefs.SecondaryW = a.secondary.width
-	a.prefs.SecondaryWMode = ""
-	if a.secCol.manual {
-		a.prefs.SecondaryWMode = secWidthManual
-	}
 	if r := a.router.Current(); r.Page() != "search" { // search queries stay in memory
 		a.prefs.Route = string(r)
 	}

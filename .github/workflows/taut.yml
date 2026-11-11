@@ -5,6 +5,7 @@ name: taut
 # The built plugins are Taut's (GPLv3) and are never committed here.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run taut.yml --ref <branch>)
     paths:
       - "internal/taut/**"
       - "internal/jsrt/**"

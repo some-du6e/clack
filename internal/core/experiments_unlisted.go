@@ -16,6 +16,10 @@ var unlistedExperimentReads = map[string][]string{
 	"rich_text_headers_and_dividers":                    on, // ui/composer/composer.go
 	"sidebar_draft_indicator_menu_and_thread_inclusion": on, // ui/backend.go
 	"updated_scheduled_sends_desktop":                   on,
+	"unread_thread_indication_in_replybar":              on, // ui/messages/row.go
+	"channel_details_agents_apps_tab":                   on, // ui/views/details_automations.go
+	"enable_wfb_ai_answer_step":                         on, // ui/blockkit/workflow.go
+	"workflow_execution_window":                         on,
 }
 
 func init() {

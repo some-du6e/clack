@@ -2,6 +2,7 @@ package messages
 
 import (
 	"image"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -82,19 +83,45 @@ func TestJoinRollup(t *testing.T) {
 	}
 }
 
-func TestAgo(t *testing.T) {
+// The reply bar's last reply (getThreadLatestReplyText over Slack's
+// toTimeAgo, en-US): today by the clock, else rounded relative times;
+// one reply drops "Last reply".
+func TestReplyBarLastReply(t *testing.T) {
 	now := time.Date(2026, 11, 6, 15, 30, 0, 0, time.Local)
-	cases := map[time.Time]string{
-		time.Date(2026, 11, 6, 15, 23, 0, 0, time.Local): "today at 3:23 PM",
-		time.Date(2026, 11, 5, 9, 5, 0, 0, time.Local):   "yesterday at 9:05 AM",
-		time.Date(2026, 11, 1, 9, 5, 0, 0, time.Local):   "5 days ago",
-		time.Date(2026, 8, 1, 9, 5, 0, 0, time.Local):    "3 months ago",
-		time.Date(2024, 8, 1, 9, 5, 0, 0, time.Local):    "2 years ago",
+	ts := func(t time.Time) string { return strconv.FormatInt(t.Unix(), 10) + ".000100" }
+	cases := []struct {
+		at    time.Time
+		count int
+		want  string
+	}{
+		{time.Date(2026, 11, 6, 15, 23, 0, 0, time.Local), 4, "Last reply today at 3:23 PM"},
+		{time.Date(2026, 11, 6, 9, 5, 0, 0, time.Local), 1, "Today at 9:05 AM"},
+		{time.Date(2026, 11, 5, 23, 5, 0, 0, time.Local), 2, "Last reply 16 hours ago"},
+		{time.Date(2026, 11, 5, 9, 5, 0, 0, time.Local), 2, "Last reply 1 day ago"},
+		{time.Date(2026, 11, 5, 9, 5, 0, 0, time.Local), 1, "1 day ago"},
+		{time.Date(2026, 11, 1, 9, 5, 0, 0, time.Local), 3, "Last reply 5 days ago"},
+		{time.Date(2026, 10, 20, 9, 5, 0, 0, time.Local), 3, "Last reply 17 days ago"},
+		{time.Date(2026, 10, 1, 9, 5, 0, 0, time.Local), 3, "Last reply 1 month ago"},
+		{time.Date(2026, 8, 1, 9, 5, 0, 0, time.Local), 3, "Last reply 3 months ago"},
+		{time.Date(2025, 8, 1, 9, 5, 0, 0, time.Local), 3, "Last reply 1 year ago"},
+		{time.Date(2024, 8, 1, 9, 5, 0, 0, time.Local), 3, "Last reply 2 years ago"},
 	}
-	for in, want := range cases {
-		if got := ago(in, now); got != want {
-			t.Errorf("ago(%v) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := lastReply(tsTime(ts(c.at)), now, c.count); got != c.want {
+			t.Errorf("%v, %d replies: %q, want %q", c.at, c.count, got, c.want)
 		}
+	}
+}
+
+// renderFaces: up to five faces; past five, four and a fifth with "+N".
+func TestReplyBarFaces(t *testing.T) {
+	f, n := replyBarFaces([]string{"U1", "B00", "U2", "U3"}, 0)
+	if len(f) != 3 || n != 0 {
+		t.Errorf("faces %v +%d, want three, no overlay", f, n)
+	}
+	f, n = replyBarFaces([]string{"U1", "U2", "U3", "U4", "U5", "U6", "U7"}, 9)
+	if len(f) != 5 || f[4] != "U5" || n != 4 {
+		t.Errorf("faces %v +%d, want five with +4", f, n)
 	}
 }
 

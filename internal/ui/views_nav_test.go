@@ -17,7 +17,6 @@ import (
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
-	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
 
@@ -37,84 +36,48 @@ func expNavApp(t *testing.T, groups map[string]string) (*App, *core.App) {
 	return a, ca
 }
 
-// aTtQ hW and the squish (xeD9), at 1px per dp: a 1100px region beside a
-// 260px sidebar.
+// aTtQ hW and the squish (xeD9) in secondaryWidth, at 1px per dp: an
+// 1100px panel beside a 260px sidebar.
 func TestSecondaryColumnGroups(t *testing.T) {
 	gtx := layout.Context{}
 	gtx.Metric.PxPerDp = 1
 	cases := []struct {
 		name   string
 		groups map[string]string
-		region int
+		route  Route
+		panel  int
+		manual int
 		want   int
 	}{
 		// nested + secondary_view_default_width: 40% of the region
-		{"default width", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on"}, 1100, 440},
+		{"default width", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on"}, "c/C1", 1100, 0, 440},
 		// nested alone: 30% of the space beside the rail (1360)
-		{"nested", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": ""}, 1100, 408},
+		{"nested", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": ""}, "c/C1", 1100, 0, 408},
 		// k5 needs the nested view
-		{"width without nested", map[string]string{"nested_secondary_view": "control", "secondary_view_default_width": "on"}, 1100, 408},
+		{"width without nested", map[string]string{"nested_secondary_view": "control", "secondary_view_default_width": "on"}, "c/C1", 1100, 0, 408},
 		// neither: still 30%, and at least 300
-		{"neither", map[string]string{"nested_secondary_view": "", "secondary_view_default_width": ""}, 700, 300},
+		{"neither", map[string]string{"nested_secondary_view": "", "secondary_view_default_width": ""}, "c/C1", 700, 0, 300},
 		// agentic_ia turns the nested view off (kl02 W7)
-		{"agentic", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on", "agentic_ia": "on"}, 1100, 408},
+		{"agentic", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on", "agentic_ia": "on"}, "c/C1", 1100, 0, 408},
 		// the squish: a nested column gives way down to 260 beside a 300 primary
-		{"nested squish", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on"}, 560, 260},
+		{"nested squish", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on"}, "c/C1", 560, 0, 260},
 		// a plain one takes what is left beside 300
-		{"plain squish", map[string]string{"nested_secondary_view": ""}, 580, 280},
+		{"plain squish", map[string]string{"nested_secondary_view": ""}, "c/C1", 580, 0, 280},
+		// the Activity tab: half the region (Activity has no sidebar)
+		{"activity", map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on"}, "activity", 1100, 0, 550},
+		// a dragged width past the region: nested, the region less the primary's 300
+		{"manual nested", map[string]string{"nested_secondary_view": "on"}, "c/C1", 1100, 1400, 800},
+		// plain: at most 1000, then the squish
+		{"manual plain", map[string]string{"nested_secondary_view": ""}, "c/C1", 1500, 1400, 1000},
 	}
 	for _, c := range cases {
 		a, _ := expNavApp(t, c.groups)
-		if got := a.secondaryColumnWidth(gtx, c.region, 260); got != c.want {
+		a.sidebar.width = 260
+		a.router.Push(c.route)
+		a.secondary.width = c.manual
+		if got := a.secondaryWidth(gtx, c.panel); got != c.want {
 			t.Errorf("%s: width %d, want %d", c.name, got, c.want)
 		}
-	}
-
-	// a dragged width is manual (clamped to the nested maximum: the space
-	// less 100), one within 15 of the default snaps back to auto, and a
-	// second press within 500ms resets it
-	a, _ := expNavApp(t, map[string]string{"nested_secondary_view": "on", "secondary_view_default_width": "on"})
-	now := time.Now()
-	if a.secondaryColumnWidth(gtx, 1100, 260) != 440 {
-		t.Fatal("default")
-	}
-	a.secondaryResizePress(gtx, now)
-	if a.secondary.width != 440 || !a.secCol.dragging {
-		t.Fatalf("press: width %d dragging %v", a.secondary.width, a.secCol.dragging)
-	}
-	a.secondary.width = 600
-	if got := a.secondaryColumnWidth(gtx, 1100, 260); got != 600 {
-		t.Errorf("while dragging: %d", got)
-	}
-	a.secondaryResizeEnd(gtx)
-	if !a.secCol.manual {
-		t.Error("a drag 160 from the default isn't manual")
-	}
-	a.secondary.width = 1400
-	if got := a.secondaryColumnWidth(gtx, 1100, 260); got != 800 { // the region less the primary's 300
-		t.Errorf("manual width past the region: %d", got)
-	}
-	a.secondaryResizePress(gtx, now.Add(2*time.Second))
-	a.secondary.width = 450
-	a.secondaryResizeEnd(gtx)
-	if a.secCol.manual {
-		t.Error("a drag ending 10 from the default stayed manual")
-	}
-	a.secondaryResizePress(gtx, now.Add(4*time.Second))
-	a.secondaryResizeEnd(gtx)
-	a.secCol.manual = true
-	if !a.secondaryResizePress(gtx, now.Add(4*time.Second+300*time.Millisecond)) || a.secCol.manual {
-		t.Error("a second press within 500ms didn't reset the width")
-	}
-	// the mode persists (ui.json secondary_w_mode)
-	dir := t.TempDir()
-	a.th, a.opts.ConfigDir = theme.New(false), dir
-	a.secCol.manual = true
-	a.savePrefs()
-	b := &App{th: theme.New(false), opts: Options{ConfigDir: dir}}
-	b.loadPrefs()
-	if !b.secCol.manual || b.prefs.SecondaryWMode != secWidthManual {
-		t.Errorf("loaded mode %q (manual %v)", b.prefs.SecondaryWMode, b.secCol.manual)
 	}
 }
 

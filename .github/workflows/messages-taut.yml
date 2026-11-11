@@ -5,6 +5,7 @@ name: messages-taut
 # UserPronouns, WhoReacted, ShowSendingBot, IdvStatus) plus the zero-cost benchmark, on synthetic state.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run messages-taut.yml --ref <branch>)
     paths:
       - "internal/ui/messages/**"
       - "internal/ui/richview/**"

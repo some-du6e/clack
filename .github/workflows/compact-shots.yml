@@ -11,6 +11,7 @@ name: compact-shots
 # Slack's API or opens the Slack client.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run compact-shots.yml --ref <branch>)
     paths:
       - "internal/ui/messages/**"
       - "internal/ui/richview/view.go"

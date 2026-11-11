@@ -11,6 +11,7 @@ name: activity-shots
 # Nothing here talks to Slack's API or opens the Slack client.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run activity-shots.yml --ref <branch>)
     paths:
       - "internal/ui/views/activity*.go"
       - "internal/core/activity*.go"

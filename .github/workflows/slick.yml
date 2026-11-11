@@ -8,6 +8,7 @@ name: slick
 # run too, since Slick shares Taut's runtime.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run slick.yml --ref <branch>)
     paths:
       - "internal/slick/**"
       - "internal/taut/**"

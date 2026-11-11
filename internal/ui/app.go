@@ -139,7 +139,6 @@ type App struct {
 	grad            gradient
 	sidebar         sidebarState
 	secondary       secondaryState
-	secCol          secondaryColumn // Slack's secondary column width and mode (secondary_width.go)
 	searchQuery     string
 	searchPill      image.Rectangle // window coords, for anchoring the search popover
 	primaryOrigin   image.Point     // window position of the primary panel
@@ -254,7 +253,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	}
 	go a.invalidator()
 	a.sidebar.width = theme.SidebarW
-	a.secondary.width = theme.SecondaryW
+	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
@@ -665,8 +664,8 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	secW := 0
 	if a.secondary.open() && !a.bbmOn() { // the mode shows one container (bbm.go)
-		// Slack's column width (aTtQ hW and the squish xeD9; secondary_width.go)
-		secW = a.secondaryColumnWidth(gtx, sz.X, a.primaryOrigin.X-gtx.Dp(theme.RailW))
+		secW = a.secondaryWidth(gtx, sz.X) // secondary.go
+		a.secondary.drawnW = secW
 		if a.secondary.expanded && a.secondary.kind == secCode {
 			secW = sz.X // the code channel pane's single-column mode
 		}

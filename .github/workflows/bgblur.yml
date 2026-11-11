@@ -6,6 +6,7 @@ name: bgblur
 # compares against (committed under internal/tflite/testdata).
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run bgblur.yml --ref <branch>)
     paths: ['internal/tflite/**', 'internal/huddle/bgblur/**', 'internal/huddle/videofx*.go', '.github/workflows/bgblur.yml', 'go.mod']
   workflow_dispatch:
 

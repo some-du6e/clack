@@ -6,6 +6,7 @@ name: menu-keys
 # internal/fakeslack, nothing talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run menu-keys.yml --ref <branch>)
     paths:
       - "internal/ui/shortcut/**"
       - "internal/ui/popups/menu*.go"

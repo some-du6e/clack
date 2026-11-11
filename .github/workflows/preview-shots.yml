@@ -5,6 +5,7 @@ name: preview-shots
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run preview-shots.yml --ref <branch>)
     paths:
       - "internal/ui/joinpane.go"
       - "internal/ui/channel_preview_test.go"

@@ -2552,6 +2552,9 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 	bx := x - dp(gtx, 5)
 	if r.threadBtn.Clicked(gtx) {
 		rc.h.OpenThread(m.Channel, m.TS)
+		if f, ok := rc.h.(ThreadComposerFocuser); ok { // openThread's setFocusInput (reply_bar.go)
+			f.FocusThreadComposer(m.Channel, m.TS)
+		}
 	}
 	bs := replyBarClass.Enter(gtx, btnState(gtx, &r.threadBtn), 0)
 	defer bs.Leave()
@@ -2570,9 +2573,7 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			pad := dp(gtx, 5)
 			as := dp(gtx, mt.threadAvatar)
 			ax := pad
-			if len(users) > 5 {
-				users = users[:5]
-			}
+			users, over := replyBarFaces(users, m.ReplyUsersN) // renderFaces (reply_bar.go)
 			if len(r.replyAvs) < len(users) {
 				r.replyAvs = append(r.replyAvs, make([]replyAv, len(users)-len(r.replyAvs))...)
 			}
@@ -2584,6 +2585,9 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 				g.Constraints = layout.Constraints{Max: image.Pt(max(bw-ax, as), as)}
 				t := op.Offset(image.Pt(ax, (bh-as)/2)).Push(gtx.Ops)
 				d := slackc.Component(g, "ReplyBarAvatar", av, (*replyAv).props, (*replyAv).layout)
+				if i == 4 && over > 0 && d.Size.X > 0 {
+					replyOverlay(gtx, rc.th, over, as)
+				}
 				t.Pop()
 				av.w = d.Size.X
 				if d.Size.X > 0 {
@@ -2599,11 +2603,22 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 			})
 			cs.Leave()
 			ax += nd.Size.X + dp(gtx, 8)
+			// ReplyBar's description: under
+			// unread_thread_indication_in_replybar (on for the account) only
+			// the last reply (getThreadLatestReplyText, util.go), in the
+			// span that shows on hover (reply_bar_hover_last_reply); without
+			// it the last reply at rest and "View thread" on hover. (Its
+			// "Unread" mark needs Activity's channel lists: not drawn.)
 			desc := ""
-			if hov {
-				desc = msgNS.T("View thread")
-			} else if latest != "" {
-				desc = lastReply(tsTime(latest), rc.now)
+			switch app := rc.h.Core(); {
+			case app != nil && app.Experiment("unread_thread_indication_in_replybar") == "on":
+				if hov && latest != "" {
+					desc = lastReply(tsTime(latest), rc.now, count)
+				}
+			case hov:
+				desc = threadsNS.T("View thread") // the threads I18n
+			case latest != "":
+				desc = lastReply(tsTime(latest), rc.now, count)
 			}
 			ds := replyDescClass.Enter(gtx, 0, 0)
 			at(gtx, ax, ty, func(gtx layout.Context) layout.Dimensions {
