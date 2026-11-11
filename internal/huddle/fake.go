@@ -140,8 +140,11 @@ type fakeChime struct {
 	audioIn  atomic.Int64
 	peak     atomic.Int64 // level * 1000
 	reacji   atomic.Value // string
+	peerMu   sync.Mutex
+	peerSeen []PeerMessage // your data-channel peer messages
 	sending  atomic.Bool
 	cam      fakeCamIn
+	content  fakeContentIn // your screen share's "#content" attendee (fake_content.go)
 	aware    fakeAware
 	solo     atomic.Bool // SoloRoom: nobody else in the meeting
 }
@@ -190,7 +193,12 @@ func (f *fakeChime) send(ctx context.Context, c *websocket.Conn, typ int, body f
 }
 
 func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Header.Get("Sec-WebSocket-Protocol"), fakeToken) {
+	proto := r.Header.Get("Sec-WebSocket-Protocol")
+	if strings.Contains(proto, fakeToken+"#content") { // a screen share's content attendee
+		f.serveContent(w, r, fakeToken+"#content")
+		return
+	}
+	if strings.Contains(proto, fakeToken) {
 		f.gotToken.Store(true)
 	}
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"_aws_wt_session"}, OriginPatterns: []string{"app.slack.com"}})
@@ -274,7 +282,13 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		case ftDataMessage:
 			for _, m := range fr.Data {
-				if pm, err := DecodePeerMessage(m.Data); err == nil && pm.Reacji != nil && m.Topic == TopicData {
+				pm, err := DecodePeerMessage(m.Data)
+				if err == nil && m.Topic == TopicData {
+					f.peerMu.Lock()
+					f.peerSeen = append(f.peerSeen, *pm)
+					f.peerMu.Unlock()
+				}
+				if err == nil && pm.Reacji != nil && m.Topic == TopicData {
 					f.reacji.Store(pm.Reacji.Emoji + "/" + pm.FromPeerIDString)
 				} else if err == nil && m.Topic == TopicAwareness {
 					f.onAwareness(pm)
@@ -308,6 +322,14 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 				w.str(4, "E1-R0FAKEROOM-"+fakeRemote)
 				w.boolean(3, false)
 			})
+			if len(f.clip) > 0 { // their screen share's content attendee, as Chime lists it
+				w.msg(1, func(w *pbw) {
+					w.uint(1, 4)
+					w.str(2, fakeRemoteAtt+"#content")
+					w.str(4, "E1-R0FAKEROOM-"+fakeRemote)
+					w.boolean(3, false)
+				})
+			}
 		})
 	})
 	if solo { // nobody to hear, react or caption
@@ -384,7 +406,7 @@ func (f *fakeChime) index(w *pbw, mine []streamDesc) {
 				w.uint(12, 180)
 			})
 		}
-		for _, v := range mine {
+		for _, v := range append(append([]streamDesc(nil), mine...), f.contentStreams()...) {
 			w.msg(2, func(w *pbw) {
 				w.uint(1, uint64(v.StreamID))
 				w.uint(2, uint64(v.Framerate))
@@ -782,6 +804,11 @@ func (x *Fake) Close() {
 		_ = x.f.pc.Close()
 	}
 	x.f.mu.Unlock()
+	x.f.content.mu.Lock()
+	if x.f.content.pc != nil {
+		_ = x.f.content.pc.Close()
+	}
+	x.f.content.mu.Unlock()
 	testSettings = nil
 }
 
@@ -851,6 +878,13 @@ func (x *Fake) RemoteSticker(emoji string) error {
 	x.f.aware.sticker = emoji
 	x.f.aware.mu.Unlock()
 	return x.f.remoteAwareness(&PeerMessage{AwarenessBroadcast: x.f.remoteState()})
+}
+
+// PeerMessages is every data-channel peer message you sent, in order.
+func (x *Fake) PeerMessages() []PeerMessage {
+	x.f.peerMu.Lock()
+	defer x.f.peerMu.Unlock()
+	return append([]PeerMessage(nil), x.f.peerSeen...)
 }
 
 // lastSub is the last SUBSCRIBE the fake got.
