@@ -69,6 +69,7 @@ const (
 	cdDlgPerms
 	cdDlgHide
 	cdDlgAddPeople
+	cdDlgSharing
 )
 
 // cdExtra is the dialog state behind the Slack parts above.
@@ -79,9 +80,11 @@ type cdExtra struct {
 	emails   async[cdMemberList] // the members Copy reads (CopyMembers' fetch)
 
 	aiRow, guestRow, huddleRow    widget.Clickable
+	sharingRow                    widget.Clickable // Sharing & file downloads
 	memPermRow, guestPermRow      widget.Clickable
 	suggest, huddleLearn, aiLearn widget.Clickable
 	copyNames, copyEmails         widget.Clickable
+	mpdmName                      widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
 	helpTips                      map[string]*cdTip
 
 	suggestOp      async[bool]
@@ -340,6 +343,9 @@ func (d *ChannelDetails) permissionsRows(inf core.ChannelDetails) []W {
 	if st, show := d.guestAccessState(); show {
 		rows = append(rows, func(gtx C) D { return d.guestAccessField(gtx, inf, st) })
 	}
+	if st, show := d.sharingState(); show {
+		rows = append(rows, func(gtx C) D { return d.sharingField(gtx, inf, st) })
+	}
 	rows = append(rows, d.huddlesField)
 	return rows
 }
@@ -501,6 +507,16 @@ func (d *ChannelDetails) aiUseField(gtx C, inf core.ChannelDetails) D {
 // restrict_guests: shown when settable, or when not with a reason other
 // than disallowed_action (then read-only, reason kept).
 func (d *ChannelDetails) guestAccessState() (core.PropCan, bool) {
+	return d.propState("restrict_guests")
+}
+
+// sharingState is the same answer for restrict_message_and_file_sharing
+// (AdminChannelModal's ei / en).
+func (d *ChannelDetails) sharingState() (core.PropCan, bool) {
+	return d.propState("restrict_message_and_file_sharing")
+}
+
+func (d *ChannelDetails) propState(prop string) (core.PropCan, bool) {
 	if d.h.Core().Experiment("enable_new_channel_settings") != "on" {
 		return core.PropCan{}, false
 	}
@@ -508,11 +524,36 @@ func (d *ChannelDetails) guestAccessState() (core.PropCan, bool) {
 	if !ok || err != nil {
 		return core.PropCan{}, false
 	}
-	p, has := m["restrict_guests"]
+	p, has := m[prop]
 	if !has || (!p.CanSet && (p.Reason == "" || p.Reason == "disallowed_action")) {
 		return core.PropCan{}, false
 	}
 	return p, true
+}
+
+// sharingField is MessageAndFileSharingRestrictionsField (admin channel
+// modal oWlM, enable_new_channel_settings): "Sharing & file downloads",
+// properties.restrict_message_and_file_sharing with a check-filled or
+// close-filled line, Restrict / Allow; read-only (70%, the help icon "You
+// don’t have permission to change this setting.") when it can't be set or
+// another org hosts the channel.
+func (d *ChannelDetails) sharingField(gtx C, inf core.ChannelDetails, st core.PropCan) D {
+	if d.x.sharingRow.Clicked(gtx) {
+		d.openDialog(cdDlgSharing)
+	}
+	restricted := inf.Props.RestrictSharing
+	text, edit := "Sharing and downloading are allowed in this channel.", "Restrict"
+	if restricted {
+		text, edit = "Sharing and downloading are not allowed in this channel.", "Allow"
+	}
+	disabled := !st.CanSet || d.hostedElsewhere(inf)
+	col := d.p.Text
+	if disabled {
+		col = cdDim(col)
+	}
+	return d.cdFieldOf(gtx, &d.x.sharingRow, cdFieldSpec{titleText: "Sharing & file downloads", edit: edit, disabled: disabled,
+		disabledText: "You don’t have permission to change this setting.",
+		text:         func(gtx C) D { return d.cdIconText(gtx, !restricted, text, col) }})
 }
 
 // guestAccessField is GuestRestrictionsField (properties.restrict_guests).
@@ -1137,6 +1178,19 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 			body = append(body, d.cdAlert(dl.err, false), cdSpace(12))
 		}
 		d.skModal(gtx, full, title, true, append(body, text), []W{cancel, d.cdDlgButton(&dl.ok, kind, btn, dl.pending)})
+	case cdDlgSharing: // MessageAndFileSharingRestrictionsModal
+		restricted := inf.Props.RestrictSharing
+		title, btn, kind := "Restrict sharing & file downloads", "Restrict", btnDanger
+		text := d.cdPara("s1", "Messages and files posted in ", name, " can’t be shared to another channel or in a DM.")
+		if restricted {
+			title, btn, kind = "Allow sharing & file downloads", "Allow", btnPrimary
+			text = d.cdPara("s2", "Messages and files posted in ", name, " can be shared to another channel or in a DM.")
+		}
+		var body []W
+		if dl.err != "" {
+			body = append(body, d.cdAlert(dl.err, false), cdSpace(12))
+		}
+		d.skModal(gtx, full, title, true, append(body, text), []W{cancel, d.cdDlgButton(&dl.ok, kind, btn, dl.pending)})
 	case cdDlgPerms:
 		d.permsDialog(gtx, full, cancel)
 	case cdDlgHide:
@@ -1266,6 +1320,12 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 			start(func(ctx context.Context) error {
 				return c.SetChannelProperties(ctx, id, "set_guest_restriction_from_channel_settings", map[string]any{"restrict_guests": v})
 			})
+		case cdDlgSharing:
+			v := !inf.Props.RestrictSharing
+			start(func(ctx context.Context) error {
+				return c.SetChannelProperties(ctx, id, "set_message_and_file_sharing_restriction_from_channel_settings",
+					map[string]any{"restrict_message_and_file_sharing": v})
+			})
 		case cdDlgPerms:
 			all, _, _ := d.x.acct.get()
 			orig := map[string]bool{}
@@ -1313,21 +1373,27 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 		d.closeDialog()
 		d.closed = true
 		d.h.Navigate("activity")
-	case cdDlgAIUse, cdDlgGuests:
+	case cdDlgAIUse, cdDlgGuests, cdDlgSharing:
 		if err != nil {
-			dl.err = "Unable to update AI settings. Please try again later."
-			if dl.kind == cdDlgGuests {
+			switch dl.kind {
+			case cdDlgGuests:
 				dl.err = "Unable to update guest access. Please try again later."
+			case cdDlgSharing:
+				dl.err = "Unable to update sharing restriction. Please try again later."
+			default:
+				dl.err = "Unable to update AI settings. Please try again later."
 			}
 			return
 		}
-		ai, guests := dl.kind == cdDlgAIUse, dl.kind == cdDlgGuests
+		kind := dl.kind
 		d.info.mutate(func(v *core.ChannelDetails) {
-			if ai {
+			switch kind {
+			case cdDlgAIUse:
 				v.Props.ExcludeFromAI = !v.Props.ExcludeFromAI
-			}
-			if guests {
+			case cdDlgGuests:
 				v.Props.RestrictGuests = !v.Props.RestrictGuests
+			case cdDlgSharing:
+				v.Props.RestrictSharing = !v.Props.RestrictSharing
 			}
 		})
 		d.closeDialog()
@@ -1572,8 +1638,8 @@ func (d *ChannelDetails) openAddPeople(inf core.ChannelDetails) {
 		a.members[uid] = true
 	}
 	c := d.h.Core()
-	a.hist = cdHistToday // useDefaultExcludeHistory
-	if c.Experiment("mpdm_default_exclude_history_clients_webapp") == "on" && c.PrefBool("mpdm_add_people_default_exclude_history", false) {
+	a.hist = cdHistToday // useDefaultExcludeHistory (boot-shared J1Xx): the org pref, under the experiment
+	if c.Experiment("mpdm_default_exclude_history_clients_webapp") == "on" && c.EnterpriseOrgPrefTrue("mpdm_add_people_default_exclude_history") {
 		a.hist = cdHistNone
 	}
 	d.x.dlg.add = a
@@ -2023,12 +2089,14 @@ func (d *ChannelDetails) updateSlackParts(gtx C, inf core.ChannelDetails, loaded
 
 // Press clicks a control by name: leave, add-people (About in a DM, the
 // Members row in a group DM), vip, hide, ai-use, guests, member-perms,
-// suggest, new-tab, ok, cancel, back.
+// suggest, new-tab, ok, cancel, back, conversation-name (a group DM's
+// "Conversation name" Edit).
 func (d *ChannelDetails) Press(name string) {
 	cs := map[string]*widget.Clickable{
 		"leave": &d.leaveRow, "vip": &d.vip, "hide": &d.hide, "ai-use": &d.x.aiRow, "guests": &d.x.guestRow,
 		"member-perms": &d.x.memPermRow, "suggest": &d.x.suggest, "new-tab": &d.newTab,
 		"ok": &d.x.dlg.ok, "cancel": &d.x.dlg.cancel, "back": &d.x.dlg.back,
+		"conversation-name": &d.x.mpdmName, "sharing": &d.x.sharingRow,
 	}
 	if name == "add-people" {
 		if cdGroup(d.kind) == "im" {
@@ -2065,6 +2133,8 @@ func (d *ChannelDetails) Dialog() string {
 		return "ai-use"
 	case cdDlgGuests:
 		return "guests"
+	case cdDlgSharing:
+		return "sharing"
 	case cdDlgPerms:
 		return "perms"
 	case cdDlgHide:

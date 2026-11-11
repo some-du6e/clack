@@ -67,6 +67,7 @@ type sidebarState struct {
 	// ("N Drafts" / "N Scheduled", to the right).
 	outboxHover gesture.Hover
 	outboxTip   popups.TipState
+	codeTips    map[string]*codeRowTip // code channel rows' name tooltips (codechannel.go)
 
 	// ChannelSidebar (slick_shell.go)
 	gen       int   // bumped by every rebuild

@@ -20,7 +20,6 @@ const (
 	secThread
 	secDetails
 	secProfile
-	secSplit
 	secHelp   // the Help flexpane (update_ui.go)
 	secSearch // search in channel (⌘F, popups.SearchInChannel)
 	secCode   // a code channel's details pane (codechannel_pane.go)
@@ -54,8 +53,14 @@ type secondaryState struct {
 
 func (s *secondaryState) open() bool { return s.kind != secNone && !s.hidden }
 
-// OpenThread shows a thread in the secondary pane.
+// OpenThread shows a thread in the secondary pane. Opened from inside the
+// split view, or with Slack's split modifier click (⌘⌥, Ctrl+Alt), it
+// goes in the split view instead (split.go).
 func (a *App) OpenThread(channel, ts string) {
+	if a.pane == paneSplit || a.splitClick() {
+		a.OpenSplit("c/" + channel + "/t/" + ts)
+		return
+	}
 	if a.secondary.kind == secThread && a.secondary.channel == channel && a.secondary.ts == ts && !a.secondary.hidden {
 		return
 	}
@@ -145,33 +150,14 @@ func (a *App) searchInChannel(ch string) {
 	a.openSearch("in:<#" + ch + ">")
 }
 
-// OpenSplit opens a conversation route ("c/<id>" or "c/<id>/t/<ts>") in the
-// right-hand pane next to the current one (Slack's "Open in split view").
-func (a *App) OpenSplit(route string) {
-	r := Route(route)
-	ch := r.Channel()
-	if ch == "" {
-		a.Navigate(route)
-		return
-	}
-	if ts := r.Thread(); ts != "" {
-		a.OpenThread(ch, ts)
-		return
-	}
-	a.secondary = secondaryState{kind: secSplit, channel: ch, width: a.secondary.width}
-	a.secondary.view = &splitPane{a: a, ch: ch}
-	a.Invalidate()
-}
-
-type splitPane struct {
-	a  *App
-	ch string
-}
-
-func (p *splitPane) Layout(gtx layout.Context) layout.Dimensions { return p.a.layoutChannel(gtx, p.ch) }
-
-// CloseSecondary closes the secondary pane.
+// CloseSecondary closes the secondary pane. In the split view it is the
+// thread header's close, which closes the split view (Slack's
+// FlexpaneHeader in the Split container).
 func (a *App) CloseSecondary() {
+	if a.pane == paneSplit {
+		a.CloseSplit()
+		return
+	}
 	if a.secondary.kind == secThread {
 		if ch := a.router.Current().Channel(); ch != "" {
 			a.router.Replace(Route("c/" + ch))

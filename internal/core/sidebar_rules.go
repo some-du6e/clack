@@ -66,6 +66,10 @@ var defaultExperimentGroups = map[string]string{
 	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
 	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08
 	"session_channels": "on", "session_channel_views": "on", "code_channels_naming": "on",
+	// agents and code channels (exp-agents-code, the account on 2026-11-10): the
+	// member count, plan and task blocks, auto-closing stale code channels
+	"agent_member_channel_count": "on", "plan_block_coding_enhancements": "on", "code_channels_auto_close": "on",
+	"agent_streaming_slimmer_task_cards": "on", "app_thread_nugget_fe": "on", "app_nugget_refinement": "on",
 	// Advanced > "Enable smart quotes and symbols" shows in the live dialog
 	// (iZ.w gates it), so composer_smart_symbols is on
 	"composer_smart_symbols": "on",
@@ -80,6 +84,10 @@ var defaultExperimentGroups = map[string]string{
 	// dialog (ListsTabbingPref returns null without it), and the Lists
 	// grid's Tab navigation follows it (listview/keys.go)
 	"lists_tabbing_navigation": "on",
+	// channel details has "Agents & apps" and "Automations" tabs
+	// (views/details.go setTabs) and keeps who may manage tabs in Settings
+	// (move_channel_tabs_settings), as on the account
+	"channel_details_agents_apps_tab": "on", "move_channel_tabs_settings": "on",
 	// Appearance > "Always use dark color mode when in focus mode." shows in
 	// the live dialog, which ThemeColorModeContainer draws only under
 	// silent_sidebar (focus mode, ui/focus_mode.go); the Availability page

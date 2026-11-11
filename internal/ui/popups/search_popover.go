@@ -276,7 +276,11 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 			p.dmOf[cv.User] = cv.ID
 		case "mpim":
 			cd.Name = convTitle(p.h, cv)
-			if cd.Name == cv.Name {
+			named := false
+			if a := p.h.Core(); a != nil {
+				_, named = a.MpdmCustomName(cv.ID)
+			}
+			if cd.Name == cv.Name && !named {
 				// members unknown to the user cache: use the handles in
 				// the internal name ("mpdm-a--b-1")
 				if hs := srMpdmNames(cv.Name, snap.Self.Handle); len(hs) > 0 {
@@ -284,12 +288,17 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 				}
 			}
 			cd.Members = cv.Members
-			// members' real names and handles also find the group DM
+			// members' real names and handles also find the group DM; a
+			// named one (filterMpims: its custom name first, then its
+			// members) by their display names too
 			for _, m := range cv.Members {
 				if m == snap.Self.ID {
 					continue
 				}
 				if u, ok := user(m); ok {
+					if named && userName(u) != "" {
+						cd.Keys = append(cd.Keys, userName(u))
+					}
 					if u.RealName != "" && u.RealName != userName(u) {
 						cd.Keys = append(cd.Keys, u.RealName)
 					}
