@@ -15,6 +15,10 @@ name: flake-check
 #   TestImageOnlySendFlow (composer)         an attached file's tile marked
 #                                            uploading only once its upload
 #                                            goroutine ran
+#   TestSearchRecentsReadGroups (core)       boot's recents load and a forced
+#                                            group's both loading (the flag
+#                                            set inside the goroutine);
+#                                            TestRecentsLoadOnce pins it
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -31,6 +35,8 @@ on:
       - "internal/ui/composer/draft_files_test.go"
       - "internal/ui/composer/attach.go"
       - "internal/ui/composer/image_send_test.go"
+      - "internal/core/search_recents.go"
+      - "internal/core/search_recents_test.go"
       - "internal/core/manage.go"
       - "internal/core/create_test.go"
       - "internal/ui/create_channel_test.go"
@@ -97,6 +103,27 @@ jobs:
       - name: composer, slow runner (one CPU)
         if: ${{ !cancelled() }}
         run: go test -cpu 1 -count=$COUNT -run 'TestImageOnlySendFlow$' ./internal/ui/composer
+
+  search-recents:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - name: core (recents loaded once, whichever trigger comes first)
+        run: go test -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
+      - name: core, race detector
+        if: ${{ !cancelled() }}
+        run: go test -race -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
+      - name: core, slow runner (one CPU)
+        if: ${{ !cancelled() }}
+        run: go test -cpu 1 -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
 
   huddle:
     runs-on: ubuntu-latest

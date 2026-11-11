@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -201,6 +204,42 @@ func TestSearchRecentsWriteGroups(t *testing.T) {
 // search.autocomplete's history (cached, refetched after search.save) and
 // Recent places stay local; on, both come from the recents pref and
 // visits.list, with this session's navigation merged in.
+// Boot's recents load and a forced group's load them once between them.
+// Boot's MaybeLoadRecents runs on its own goroutine, which can start after
+// a forced group turned recents read on and started that load: both
+// loading made TestSearchRecentsReadGroups see two visits.list calls.
+func TestRecentsLoadOnce(t *testing.T) {
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	fs.SetVisits(fakeslack.Visit{EntityID: "C0FAKE00001", EntityType: "channel", LastMS: 300})
+	// the forced group's visits.list waits until boot's trigger has run
+	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(release)
+	var calls atomic.Int32
+	fs.SetHook(func(method string, _ url.Values) (any, bool) {
+		if method == "visits.list" && calls.Add(1) == 1 {
+			<-gate
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
+	a.SetExperimentGroup("desktop_search_recents_read", "on") // loads the recents
+	waitForms(t, "the forced group's visits.list", 1, func() int { return int(calls.Load()) })
+	a.MaybeLoadRecents(ctx) // boot's trigger, running late
+	if n := calls.Load(); n != 1 {
+		t.Errorf("visits.list called %d times: boot's load ran after the forced group's", n)
+	}
+	release()
+	waitForms(t, "the visits", 1, func() int {
+		if evs, _ := a.RecentPlacesEvents(); len(evs) > 0 {
+			return 1
+		}
+		return 0
+	})
+}
+
 func TestSearchRecentsReadGroups(t *testing.T) {
 	a, fs := canvasApp(t)
 	ctx := context.Background()
