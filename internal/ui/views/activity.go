@@ -187,6 +187,13 @@ type actRow struct {
 	markTipState popups.TipState
 	complete     widget.Clickable
 	invC         [3]widget.Clickable
+
+	// The agent's status (agent_status_in_activity): processing or
+	// suspended, until when processing holds; its tooltip.
+	agent      string
+	agentUntil time.Time
+	agentHov   gesture.Hover
+	agentTip   popups.TipState
 }
 
 // Activity is the Activity view.
@@ -194,7 +201,7 @@ type Activity struct {
 	base
 
 	tabs  *tabs
-	dots  [4]int
+	strip actTabStrip // the tab strip's drag and badges (activity_tabs.go)
 	plus  widget.Clickable
 	plusX int
 	seg   [2]widget.Clickable
@@ -227,6 +234,7 @@ type Activity struct {
 	customs                    []core.ActivityView
 	hidden                     map[string]bool
 	stateOf                    map[string]actState
+	viewIdx                    map[string]int // a view's place in activity.views' answer
 	slots                      []int
 	tabCtx                     []actTabCtx
 	viewsLoaded                bool
@@ -383,6 +391,15 @@ func (v *Activity) watchItems() {
 	ch, _ := v.h.Core().Subscribe()
 	go func() {
 		for ev := range ch {
+			if ev.Type == "conv" {
+				// channel_updated: an agent session's status (the rows'
+				// agent status) may have changed
+				v.notes.mu.Lock()
+				v.notes.fns = append(v.notes.fns, func() { v.dirty = true })
+				v.notes.mu.Unlock()
+				v.h.Invalidate()
+				continue
+			}
 			if ev.Type != "activity" {
 				continue
 			}
@@ -1142,10 +1159,8 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 	// plugins' member/channel/message patches land asynchronously: re-derive
 	// row text while any is active (otherwise rows stay cached).
 	patchedViews := v.viewsPatched()
-	dots := v.slot() == 0 && v.filterCount() == 0
-	if dots {
-		v.dots = [4]int{}
-	}
+	c := v.h.Core()
+	xi, inbox := c.ActivityLayoutRevisions(), c.ActivityInbox()
 	var lastDay time.Time
 	now := time.Now()
 	v.ensureLists(page)
@@ -1167,6 +1182,11 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 			case split > 0 && n == 0:
 				v.vis = append(v.vis, actVisVIP)
 			case split > 0 && n == split:
+				if xi {
+					// e0: a section_spacer before every header but the
+					// first (16px in the bordered-separators list)
+					v.vis = append(v.vis, actVisSpacer)
+				}
 				v.vis = append(v.vis, actVisElse)
 			}
 		}
@@ -1180,6 +1200,7 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		// the store-backed marks (drafts, your replies and reactions,
 		// the reminder's saved item) follow every rebuild
 		r.mark, r.markOK = v.readMark(it)
+		r.agent, r.agentUntil = c.ActivityAgentStatus(it, now) // activity_rows.go agentStatus
 		// cleared: true = cleared here (hide from the inbox), false =
 		// restored here (hide from the archive).
 		if c, ok := v.cleared[key]; ok && c != v.showCleared {
@@ -1188,34 +1209,28 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		if v.unread.Value && v.hideRead[key] {
 			continue
 		}
-		if dots && v.isUnread(it, key) {
-			v.dots[0] = 1
-			if r.d.dm {
-				v.dots[1] = 1
-			}
-			switch {
-			case actIsMention(it.Type):
-				v.dots[2] = 1
-			case it.Type == "thread_v2":
-				v.dots[3] = 1
-			}
-		}
 		if dm && !r.d.dm {
 			continue
 		}
 		if q != "" && !strings.Contains(r.d.hay, q) {
 			continue
 		}
-		// Slack groups the feed by day: no divider for today, then
-		// "Yesterday", "Monday, November 3rd", … before each day's first row.
-		if t := tsTime(it.FeedTS); !t.IsZero() {
+		// Slack groups the feed by day (U5s4 ActivityList's items): a
+		// divider ("Yesterday", "Monday, November 3rd", …) where the day
+		// changes, but none over a first row from today (f), in the VIP
+		// group (c) or on the first row after it when that's today or
+		// with layout revisions (u), and with layout revisions none over
+		// the first row at all (v).
+		if t := tsTime(it.FeedTS); !t.IsZero() && (lastDay.IsZero() || !sameDay(t, lastDay)) {
+			today, first := sameDay(t, now), shown == 0
 			boundary := split > 0 && n == split
-			if !inVIP && !boundary && !sameDay(t, now) && (lastDay.IsZero() || !sameDay(t, lastDay)) {
+			f := inbox && first && today
+			g := inVIP || boundary && (today || xi)
+			vv := xi && first && len(v.vis) == 0 && !today
+			if !(f || g || vv) {
 				v.vis = append(v.vis, -1-i)
 			}
-			if !inVIP {
-				lastDay = t
-			}
+			lastDay = t
 		}
 		v.vis = append(v.vis, i)
 		shown++
@@ -1229,8 +1244,9 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 // actVisVIP and actVisElse mark ActivitySectionHeader's "VIP unreads" and
 // "Everything else" rows in v.vis (below every day divider's -1-i).
 const (
-	actVisVIP  = -1 << 30
-	actVisElse = actVisVIP + 1
+	actVisVIP    = -1 << 30
+	actVisElse   = actVisVIP + 1
+	actVisSpacer = actVisVIP + 2 // p-activity_ia4_list__section_spacer
 )
 
 // ---- header ----
@@ -1393,6 +1409,26 @@ func (v *Activity) layoutToggle(gtx C) D {
 	d, c := v.segmented(gtx, v.seg[:], actSegIcons, sel)
 	if c >= 0 && v.dense != (c == 1) {
 		v.setDense(c == 1)
+	}
+	// FgHy's tooltips: above with the layout revisions, else below
+	core := v.h.Core()
+	tips := [2]string{"View as detailed", "View as dense"}
+	switch {
+	case core.ActivityLayoutRevisions():
+		tips = [2]string{"Multi-line view", "Single-line view"}
+	case v.globalSettings():
+		tips = [2]string{"Detailed view", "Dense view"}
+	}
+	side := popups.Below
+	if core.ActivityLayoutRevisions() {
+		side = popups.Above
+	}
+	sw := d.Size.X / len(v.seg)
+	for i := range v.seg {
+		func() {
+			defer op.Offset(image.Pt(i*sw, 0)).Push(gtx.Ops).Pop()
+			popups.Tooltip(gtx, v.th, &v.fl.segTips[i], v.seg[i].Hovered(), image.Pt(sw, d.Size.Y), side, tips[i], "")
+		}()
 	}
 	return d
 }
@@ -1631,6 +1667,8 @@ func (v *Activity) items(gtx C) D {
 		switch {
 		case idx == actVisVIP || idx == actVisElse:
 			return v.sectionHeader(gtx, idx == actVisVIP)
+		case idx == actVisSpacer:
+			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(16))}
 		case idx < 0:
 			if j := -1 - idx; j < len(page.Items) {
 				return v.dayDivider(gtx, tsTime(page.Items[j].FeedTS))
@@ -2484,6 +2522,8 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 			hgap(8),
 			layout.Rigid(func(gtx C) D {
 				switch {
+				case r.agentOn(gtx):
+					return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.agentStatus(gtx, r) })
 				case unread:
 					return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
 				case r.markOK: // read rows: the completed to-do, Draft, replied, reacted
@@ -2557,6 +2597,8 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 						}),
 						layout.Rigid(func(gtx C) D {
 							switch {
+							case r.agentOn(gtx):
+								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.agentStatus(gtx, r) })
 							case unread:
 								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
 							case r.markOK:
@@ -2714,6 +2756,9 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 	if d.lines > 0 {
 		lines = d.lines
 	}
+	if !v.h.Core().ActivityLayoutRevisions() {
+		lines = 1 // /ad9 ActivityMessage: L = R ? S : 1
+	}
 	if lb := d.list; lb != nil {
 		// ListContent: the sentence around ListItemName (its list-item icon
 		// before the title), one line
@@ -2742,6 +2787,19 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 			return D{}
 		}
 		return v.shimmerLine(gtx, 240)
+	}
+	if d.subReact && !v.h.Core().ActivityLayoutRevisions() {
+		// QTZf ReactionContent without the layout revisions: "You:"
+		// (margin_right_25) before your message
+		return row(gtx, layout.Middle,
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, "You:") })
+			}),
+			layout.Flexed(1, func(gtx C) D {
+				gtx.Constraints.Min.X = 0
+				return r.preview(gtx, 1)
+			}),
+		)
 	}
 	if d.subReact {
 		pre := []layout.FlexChild{layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, "Reacted ") })}

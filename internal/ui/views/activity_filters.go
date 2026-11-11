@@ -47,6 +47,8 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
+
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // actSubN is the mention sub-filters (sTqq o$): mention_at_user,
@@ -120,8 +122,9 @@ type actFilterUI struct {
 	autoC     [2]widget.Clickable // Exclude automations, Automations only
 	src       dirDropdown         // "Notifications from"
 	srcInit   bool
-	srcShown  int // the source the select shows
-	menuRowsN int // rows the menu listed last (tests)
+	srcShown  int                // the source the select shows
+	menuRowsN int                // rows the menu listed last (tests)
+	segTips   [2]popups.TipState // the layout toggle's tooltips (FgHy)
 }
 
 // source is lCwf ep: "Apps and agents only" with filterAutomationsOnlySelected,

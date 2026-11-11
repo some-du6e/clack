@@ -45,8 +45,6 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -211,22 +209,6 @@ func (v *Activity) customView() (core.ActivityView, bool) {
 // off).
 func (v *Activity) dmsInActivity() bool { return !v.h.Core().PrefBool("activity_dms_opt_out", false) }
 
-// wantSlots is GuYW R: All, the default views not hidden (DMs while DMs
-// show in Activity), then the custom views.
-func (v *Activity) wantSlots() []int {
-	out := []int{0}
-	for i := 1; i < actSlotN; i++ {
-		if v.hidden[actTabIDs[i]] || i == 1 && !v.dmsInActivity() {
-			continue
-		}
-		out = append(out, i)
-	}
-	for k := range v.customs {
-		out = append(out, actSlotN+k)
-	}
-	return out
-}
-
 // syncTabs rebuilds the tab strip when its views changed, keeping the one
 // shown (All when it went away).
 func (v *Activity) syncTabs() {
@@ -306,66 +288,6 @@ func (v *Activity) slotDense(slot int) bool {
 // actTabCtx is a tab's context-menu press target (not zero-sized: each
 // needs its own address).
 type actTabCtx struct{ _ byte }
-
-// viewTabs is ActivityInboxSavedViewTabs drawn like the other tab strips
-// (tabStripIcons): 13px bold labels, 9px 8px padding, the 2px underline;
-// a custom tab leads with its emoji or icon (16px, 4px gap), the default
-// ones with theirs; unread dots after the default tabs' labels.
-func (v *Activity) viewTabs(gtx C) D {
-	t := v.tabs
-	ch := make([]layout.FlexChild, 0, len(t.Labels))
-	for i := range t.Labels {
-		i := i
-		slot := i
-		if i < len(v.slots) {
-			slot = v.slots[i]
-		}
-		ch = append(ch, layout.Rigid(func(gtx C) D {
-			return t.clicks[i].Layout(gtx, func(gtx C) D {
-				pointerCursor(gtx)
-				sel := i == t.Sel
-				fg := v.p.Sec
-				if sel {
-					fg = v.p.Text
-				}
-				m := op.Record(gtx.Ops)
-				d := layout.Inset{Top: 9, Bottom: 8, Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
-					return row(gtx, layout.Middle,
-						layout.Rigid(func(gtx C) D { return v.tabLead(gtx, slot, fg) }),
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, fg, t.Labels[i]) }),
-						layout.Rigid(func(gtx C) D {
-							if slot >= len(v.dots) || v.dots[slot] <= 0 {
-								return D{}
-							}
-							return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.dot(gtx, 8, v.p.Accent) })
-						}),
-					)
-				})
-				call := m.Stop()
-				if t.clicks[i].Hovered() {
-					r := gtx.Dp(8)
-					rr := clip.RRect{Rect: image.Rectangle{Max: d.Size}, NE: r, NW: r}
-					paint.FillShape(gtx.Ops, v.p.TabHover, rr.Op(gtx.Ops))
-				}
-				call.Add(gtx.Ops)
-				if sel {
-					h := gtx.Dp(2)
-					fill(gtx, image.Rect(0, d.Size.Y-h, d.Size.X, d.Size.Y), v.p.TabLine)
-				}
-				if i < len(v.tabCtx) {
-					// the tab's context menu (GuYW contextMenuTemplate)
-					cl := clip.Rect(image.Rectangle{Max: d.Size}).Push(gtx.Ops)
-					pass := pointer.PassOp{}.Push(gtx.Ops)
-					event.Op(gtx.Ops, &v.tabCtx[i])
-					pass.Pop()
-					cl.Pop()
-				}
-				return d
-			})
-		}))
-	}
-	return row(gtx, layout.End, ch...)
-}
 
 // tabLead is the icon (or emoji) before a tab's name: the default
 // views' icons (actTabIcons), a custom view's emoji or its BGxe icon.
@@ -501,7 +423,13 @@ func (v *Activity) applyViews(st core.ActivityViewsState, prefs bool) {
 		v.globalSort = st.Sort
 	}
 	v.customs = v.customs[:0:0]
-	for _, vw := range st.Views {
+	v.viewIdx = map[string]int{}
+	for i, vw := range st.Views {
+		if vw.Type == "custom" {
+			v.viewIdx[vw.ID] = i
+		} else {
+			v.viewIdx[vw.Type] = i
+		}
 		if vw.Type == "custom" {
 			v.customs = append(v.customs, vw)
 			continue
