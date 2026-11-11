@@ -626,7 +626,7 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0
 	}
-	demoH := a.demoBannerHeight(gtx) // `clack demo` (demo_banner.go)
+	demoH := a.demoBannerHeight(gtx)     // `clack demo` (demo_banner.go)
 	dockH := a.huddles().DockHeight(gtx) // the huddle bar's row (huddle_wire.go)
 	ws := image.Rect(railW, navH+demoH, sz.X-inset, sz.Y-inset-dockH)
 	wsFull := ws
