@@ -489,17 +489,18 @@ func TestSearchTokenPills(t *testing.T) {
 	p := NewSearchPopover(e.h, "", image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.frame()
-	tok := srToken{label: "from:@Ann", req: "from:<@U0FAKE0001>", icon: "user", mod: "from", entity: "U0FAKE0001"}
+	// a value long enough that its bold and regular widths differ
+	tok := srToken{label: "from:@Wonderwoman", req: "from:<@U0FAKE0001>", icon: "user", mod: "from", entity: "U0FAKE0001"}
 	p.setBox(srJoin([]srPiece{srText("zephyr "), srTokPiece(tok), srText(" more")}), -1)
 	d.frame()
 	d.frame()
 	sp := p.ed.Spans()
-	if len(sp) != 2 || sp[0].Start != 7 || sp[0].End != 12 || sp[0].Before != 24 || sp[1].Start != 12 || sp[1].End != 16 ||
+	if len(sp) != 2 || sp[0].Start != 7 || sp[0].End != 12 || sp[0].Before != 24 || sp[1].Start != 12 || sp[1].End != 24 ||
 		sp[1].Font == nil || sp[1].Font.Weight != srBoldEditorFont.Weight || sp[1].After != 4 {
 		t.Fatalf("spans %+v", sp)
 	}
 	space := p.ed.Regions(6, 7, nil)
-	more := p.ed.Regions(17, 18, nil) // the "m" after the pill's space
+	more := p.ed.Regions(25, 26, nil) // the "m" after the pill's space
 	mod, ok1 := p.ed.SpanBounds(0)
 	val, ok2 := p.ed.SpanBounds(1)
 	if len(space) == 0 || len(more) == 0 || !ok1 || !ok2 {
@@ -508,13 +509,14 @@ func TestSearchTokenPills(t *testing.T) {
 	if gap := mod.Min.X - space[0].Bounds.Max.X; gap != 24 {
 		t.Errorf("the modifier starts %dpx after the text, want 24", gap)
 	}
-	if val.Min.X != mod.Max.X {
+	// the bounds are whole pixels around fractional positions
+	if d := val.Min.X - mod.Max.X; d < -1 || d > 1 {
 		t.Errorf("the value starts at %d, the modifier ends at %d", val.Min.X, mod.Max.X)
 	}
 	g := d.gtx()
 	th := p.h.Theme()
-	bold, reg := textW(g, th, 15, theme.Bold, "@Ann"), textW(g, th, 15, theme.Regular, "@Ann")
-	if w := val.Dx(); bold <= reg || w < bold-1 || w > bold+1 {
+	bold, reg := textW(g, th, 15, theme.Bold, "@Wonderwoman"), textW(g, th, 15, theme.Regular, "@Wonderwoman")
+	if w := val.Dx(); bold < reg+3 || w < bold-1 || w > bold+2 {
 		t.Errorf("value %dpx wide, bold %d, regular %d", w, bold, reg)
 	}
 	// 4px after the value, then the space
