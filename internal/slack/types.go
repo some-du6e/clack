@@ -41,7 +41,13 @@ type Message struct {
 	Room           json.RawMessage `json:"room,omitempty"` // huddles
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
-	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	// System messages' own fields: channel_topic's topic, channel_purpose's
+	// purpose, channel_name's old_name and name (the new one).
+	Topic          string `json:"topic,omitempty"`
+	Purpose        string `json:"purpose,omitempty"`
+	OldName        string `json:"old_name,omitempty"`
+	NewName        string `json:"name,omitempty"`
+	StreamingState string `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`

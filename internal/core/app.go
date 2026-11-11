@@ -1114,6 +1114,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	if m.Edited != nil {
 		v.EditedTS = m.Edited.TS
 	}
+	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState

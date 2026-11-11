@@ -163,6 +163,10 @@ type listState struct {
 	stickyDay   widget.Clickable             // the sticky pill
 	latestR     image.Rectangle              // the "Latest messages" pill drawn last frame (tests)
 	unreadTh    unreadThreads                // the reply bars' "Unread" marks (unread_threads.go)
+
+	// system messages under system_messages_redesign_m1 (system.go)
+	sysOn, sysInit, sysMissing bool
+	sysUsers                   uint64
 }
 
 var listCache = map[string]*listState{}
@@ -259,7 +263,32 @@ func (s *listState) sync(h Host, now time.Time) {
 		}
 	}
 	s.viewsOn = views
+	// system messages follow system_messages_redesign_m1 (system.go): a new
+	// group re-reads the snapshot and rebuilds the rows; an actor's name
+	// arriving rebuilds the system rows
+	sysOn := systemRedesign(h)
+	switch {
+	case !s.sysInit || sysOn != s.sysOn:
+		if s.sysInit {
+			for k := range s.rows {
+				delete(s.rows, k)
+			}
+		}
+		s.sysOn, s.sysInit = sysOn, true
+		s.snap.rev = 0
+	case s.sysMissing && s.hb.usersRev() != s.sysUsers:
+		for i := range s.snap.msgs {
+			if m := &s.snap.msgs[i].m; m.System || isAutomatedSubtype(m.Subtype) {
+				delete(s.rows, m.TS)
+			}
+		}
+		s.snap.rev = 0
+	}
 	changed := s.m.snapshot(&s.snap)
+	if changed {
+		s.sysUsers = s.hb.usersRev()
+		s.sysMissing = s.adjustSystem(h, sysOn)
+	}
 	if changed && len(s.inj.msgs) > 0 {
 		s.mergeInjected()
 	}
@@ -389,11 +418,13 @@ func (s *listState) anchorItem(key string) int {
 // groupable is Slack's isAdjacentMessage (boot-shared Ag38): b continues
 // a's group. Senders compare as core.Adjacent does (same user; a user-less
 // bot by bot_id, username and msg.icons); a thread parent (reply_count)
-// on either side starts a new group. Pinning doesn't: Slack's Message
-// hides the sender of any adjacent message (shouldHideSenderAndTimestamp)
-// and draws the pinned label above its body.
+// on either side starts a new group, and so does an automated subtype
+// (KC8h: joins, topics, pins…), whatever system_messages_redesign_m1
+// draws it as. Pinning doesn't: Slack's Message hides the sender of any
+// adjacent message (shouldHideSenderAndTimestamp) and draws the pinned
+// label above its body.
 func groupable(a, b *core.Message, ta, tb time.Time) bool {
-	if a.System || b.System || a.Tombstone || b.Tombstone || !core.Adjacent(a, b) {
+	if a.System || b.System || isAutomatedSubtype(a.Subtype) || isAutomatedSubtype(b.Subtype) || a.Tombstone || b.Tombstone || !core.Adjacent(a, b) {
 		return false
 	}
 	if b.Broadcast || a.ReplyCount > 0 || b.ReplyCount > 0 {

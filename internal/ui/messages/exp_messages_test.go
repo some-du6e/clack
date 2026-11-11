@@ -19,6 +19,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -560,4 +561,76 @@ func TestReplyBarUnreadMark(t *testing.T) {
 			t.Errorf("experiment off: mark %v, %d activity.feed calls; want neither", r.unreadMark, feeds.Load())
 		}
 	}
+}
+
+// system_messages_redesign_m1: on (the account's group) a registered
+// subtype is Slack's SystemMessage with the actor first ("bob joined
+// #sysexp", "alice set the channel topic: …", "bob archived #sysexp. …")
+// and the registry's glyph, while an unregistered automated subtype
+// (pinned_item) is an ordinary row; off or unassigned, every one is an
+// ordinary row with getMessageAutomatedSubtypeText (the message's text for
+// a join; "set the channel topic: …" without the actor).
+func TestSystemMessagesRedesign(t *testing.T) {
+	const ch = "C0EXPSYS1"
+	app, _ := expApp(t, nil)
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "sysexp", IsChannel: true, IsMember: true, NumMembers: 3})
+	const join, topic, pin, archive = "1700001001.000100", "1700002001.000100", "1700003001.000100", "1700004001.000100"
+	app.S.SetLatest(ch, []slack.Message{
+		{Type: "message", TS: join, User: "UEXPBOB01", Subtype: "channel_join", Text: "<@UEXPBOB01> has joined the channel"},
+		{Type: "message", TS: topic, User: "UEXPALICE", Subtype: "channel_topic", Topic: "synthetic plans", Text: "<@UEXPALICE> set the channel topic: synthetic plans"},
+		{Type: "message", TS: pin, User: "UEXPALICE", Subtype: "pinned_item", Text: "<@UEXPALICE> pinned a message to this channel."},
+		{Type: "message", TS: archive, User: "UEXPBOB01", Subtype: "channel_archive", Text: "<@UEXPBOB01> archived the channel"},
+	}, false)
+	v := NewChannelView(coreHost{app: app, th: theme.New(false)}, ch)
+	v.Preview = true
+	f := expFrame(v, 900)
+	type want struct {
+		system bool
+		text   string
+		icon   string
+	}
+	check := func(group string, w map[string]want) {
+		t.Helper()
+		until(t, 5*time.Second, "the rows ("+group+")", f, func() bool {
+			for ts := range w {
+				if v.s.rows[ts] == nil {
+					return false
+				}
+			}
+			return true
+		})
+		for ts, x := range w {
+			r := v.s.rows[ts]
+			if got := richtext.PlainText(r.m.Doc); r.m.System != x.system || got != x.text {
+				t.Errorf("%s, %s: system %v %q; want %v %q", group, r.m.Subtype, r.m.System, got, x.system, x.text)
+			}
+			if x.icon != "" {
+				if ic := redesignedIcon(app, &r.m); ic != x.icon {
+					t.Errorf("%s, %s: glyph %s, want %s", group, r.m.Subtype, ic, x.icon)
+				}
+			}
+		}
+	}
+	check("on", map[string]want{
+		join:    {true, "bob joined #sysexp", "user-add"},
+		topic:   {true, "alice set the channel topic: synthetic plans", "channel"},
+		pin:     {false, "@alice pinned a message to this channel.", ""},
+		archive: {true, "bob archived #sysexp. The contents will still be browsable and available in search.", "archive"},
+	})
+	off := map[string]want{
+		join:    {false, "@bob has joined the channel", ""},
+		topic:   {false, "set the channel topic: synthetic plans", ""},
+		pin:     {false, "@alice pinned a message to this channel.", ""},
+		archive: {false, "archived #sysexp. The contents will still be browsable and available in search.", ""},
+	}
+	app.SetExperimentGroup("system_messages_redesign_m1", "off")
+	for k := 0; k < 3; k++ {
+		f()
+	}
+	check("off", off)
+	app.SetExperimentGroup("system_messages_redesign_m1", "") // unassigned: Slack's null
+	for k := 0; k < 3; k++ {
+		f()
+	}
+	check("unassigned", off)
 }

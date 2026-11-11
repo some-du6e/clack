@@ -30,6 +30,9 @@ type Message struct {
 	PinnedBy                 string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned    bool
 	Broadcast, System        bool // System: join/leave/topic… drawn compactly
+	// A system message's own fields: who added the joiner (inviter), the
+	// topic or purpose it set, a rename's old and new names.
+	Inviter, Topic, Purpose, OldName, NewName string
 	// Tombstone: a deleted message kept for its replies (Slack's subtype
 	// "tombstone", user USLACKBOT, hidden): drawn as Slack's
 	// MessageTombstone, never as a Slackbot message.

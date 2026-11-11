@@ -2332,18 +2332,7 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	cx := dp(gtx, rc.contentX())
 	cw := w - cx - padX - dp(gtx, 20) - rc.actionsPad(gtx)
 	rec := op.Record(gtx.Ops)
-	icon := "info"
-	switch m.Subtype {
-	case "channel_join", "group_join":
-		icon = "user-plus"
-	case "channel_leave", "group_leave":
-		icon = "user"
-	case "channel_topic", "channel_purpose", "group_topic", "group_purpose", "channel_name",
-		"channel_archive", "channel_unarchive", "channel_convert_to_private", "channel_convert_to_public":
-		icon = "hash" // Slack's channel-event glyph
-	case "pinned_item":
-		icon = "pin"
-	}
+	icon := redesignedIcon(rc.h.Core(), m) // getRedesignedSystemMessageIcon (system.go)
 	// .systemIcon__mZbDL: a 36px box (the avatar's), the 16px glyph
 	// centred, padding-top 2px
 	is := dp(gtx, 16)
