@@ -169,7 +169,7 @@ func (a *App) chromeBase(p image.Point) color.NRGBA {
 func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	c := &a.th.C
 	h := gtx.Dp(theme.TopNavH)
-	tn := clsTopNav.Enter(gtx, 0, 0)
+	tn := clsTopNav.Enter(gtx, 0, a.scopeMod())
 	defer tn.Leave()
 	if tn.Hidden() {
 		return

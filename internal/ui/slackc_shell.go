@@ -27,7 +27,7 @@ import (
 var (
 	clsClient      = slackc.Class("p-client_container")
 	clsIA          = slackc.Class("p-ia4_client_container p-ia4_client p-ia")
-	clsTopNav      = slackc.Class("p-ia4_top_nav p-top_nav")
+	clsTopNav      = slackc.Class("p-ia4_top_nav p-top_nav").Mods(invertedScope)
 	clsTopNavLeft  = slackc.Class("p-ia4_top_nav__left_container")
 	clsTopNavRight = slackc.Class("p-ia4_top_nav__right_container p-top_nav__right").FlexItems() // a flex row: a HelpButton patch's buttons sit beside it
 	clsHelp        = slackc.Class("c-button-unstyled p-top_nav__button p-top_nav__help", "data-qa", "top-nav-help-button", "aria-label", "Help").Tag("button")
@@ -38,7 +38,7 @@ var (
 	clsAvatarStack = slackc.Class("c-button-unstyled p-avatar_stack--details", "data-qa", "avatar_stack").Tag("button")
 	clsAvatarCount = slackc.Class("p-avatar_stack--details__count").Tag("span")
 
-	clsSidebar = slackc.Class("p-channel_sidebar p-channel_sidebar--classic-nav")
+	clsSidebar = slackc.Class("p-channel_sidebar p-channel_sidebar--classic-nav").Mods(invertedScope)
 	clsSbList  = slackc.Class("p-channel_sidebar__list p-channel_sidebar__static_list", "role", "tree")
 	// every sidebar row; data-item-key is the dynamic attribute.
 	clsSbItem = slackc.Class("p-channel_sidebar__static_list__item", "role", "treeitem")

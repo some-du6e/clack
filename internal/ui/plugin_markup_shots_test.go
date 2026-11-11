@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -45,8 +47,8 @@ func pmEnv(t *testing.T) *svEnv {
 	})
 }
 
-// pmShot saves the window and its primary view.
-func pmShot(t *testing.T, e *svEnv, dir, name string) {
+// pmShot saves the window and its primary view, and returns the window.
+func pmShot(t *testing.T, e *svEnv, dir, name string) *image.RGBA {
 	sh := newSVShooter(t, e)
 	sh.dir = dir
 	for i := 0; i < 5; i++ {
@@ -58,6 +60,7 @@ func pmShot(t *testing.T, e *svEnv, dir, name string) {
 		x := int(theme.RailW) + e.a.sidebar.width
 		sh.save(name+"-pane", img.SubImage(image.Rect(x, int(theme.TopNavH), e.sz.X, e.sz.Y)).(*image.RGBA))
 	}
+	return img
 }
 
 // tautInstall imports and enables a Taut plugin from TAUT_PLUGINS_DIR.
@@ -114,5 +117,28 @@ func TestTautViewThreadJumpButton(t *testing.T) {
 	e.until(15*time.Second, "Jump in thread in the thread header", func() bool {
 		return e.tree("Jump in thread", "c-icon_button--size_medium") != ""
 	})
-	pmShot(t, e, os.Getenv("TAUT_SHOTS_DIR"), "thread-jump-button-taut")
+	img := pmShot(t, e, os.Getenv("TAUT_SHOTS_DIR"), "thread-jump-button-taut")
+	// its caret-up-down glyph sits in the header row, left of More actions
+	// (the header's flex row: .p-flexpane_header__primary)
+	r := image.Rect(e.sz.X-260, int(theme.TopNavH)+80, e.sz.X-84, int(theme.TopNavH)+140)
+	if n := pmInk(img, r); n < 25 {
+		t.Errorf("%d glyph pixels left of More actions in the thread header: Jump in thread isn't drawn there; ThreadSearchButton laid out as %s",
+			n, slackc.LayoutShape("ThreadSearchButton"))
+	}
+}
+
+// pmInk counts the pixels in r darker than luma 160 (glyph strokes on the
+// light pane).
+func pmInk(img *image.RGBA, r image.Rectangle) int {
+	r = r.Intersect(img.Bounds())
+	n := 0
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			p := img.RGBAAt(x, y)
+			if svLuma(color.NRGBA{p.R, p.G, p.B, 0xff}) < 160 {
+				n++
+			}
+		}
+	}
+	return n
 }

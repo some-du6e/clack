@@ -433,7 +433,9 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		left = mx - gap - bs
 	}
 	rec := op.Record(gtx.Ops)
+	hs := flexPrimaryClass.Enter(gtx, 0, 0)
 	sd := slackc.Component(gtx, "ThreadSearchButton", v, (*ThreadView).searchButtonProps, (*ThreadView).layoutEmpty)
+	hs.Leave()
 	call := rec.Stop()
 	end := left // where the title column ends
 	if sd.Size.X > 0 {

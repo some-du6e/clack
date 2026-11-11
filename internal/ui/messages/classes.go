@@ -64,6 +64,11 @@ var (
 	memberLinkClass    = slackc.Class("c-link c-member_slug c-member_slug--link").Tag("button")
 	channelEntityClass = slackc.Class("c-inline_channel_entity").Tag("span")
 
+	// the header's row (XVla: .p-flexpane_header__primary, a flex row):
+	// what a ThreadSearchButton patch renders (ThreadJump's button) is
+	// one of its items
+	flexPrimaryClass = slackc.Class("p-flexpane_header__primary").FlexItems()
+
 	// the thread header's channel name (Slack's threads Header NCqL:
 	// InlineChannelEntity className p-threads_flexpane__header_channel_name,
 	// truncate)

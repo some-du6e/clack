@@ -474,8 +474,11 @@ func (s *scope) layout() {
 	}
 	// A tree of inline-level content (a patched sender name, a badge)
 	// is as wide as its content; block-level roots fill the width like
-	// they would in their DOM parent.
-	if s.exact || !s.inlineRoot() && maxW < inf/2 {
+	// they would in their DOM parent. The flex items of a FlexItems
+	// native are as wide as their content too: the native places the
+	// tree as one more item (the help button's caller right-aligns it).
+	flexItems := v.topFlex && v.topStyle != nil && (v.topStyle.Display == css.DisplayFlex || v.topStyle.Display == css.DisplayInlineFlex)
+	if s.exact || !flexItems && !s.inlineRoot() && maxW < inf/2 {
 		c.fixedW, c.fixW = true, maxW
 	} else {
 		c.shrink = true
@@ -484,7 +487,7 @@ func (s *scope) layout() {
 		s.root.st = css.Initial(cssEnv().Fg)
 	}
 	root.st.Display = css.DisplayBlock
-	if ps := v.topStyle; v.topFlex && ps != nil && (ps.Display == css.DisplayFlex || ps.Display == css.DisplayInlineFlex) {
+	if ps := v.topStyle; flexItems {
 		// the parent native's flex items (ClassDef.FlexItems)
 		root.st.Display = css.DisplayFlex
 		root.st.FlexDirection, root.st.FlexWrap = ps.FlexDirection, ps.FlexWrap

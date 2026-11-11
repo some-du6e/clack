@@ -48,6 +48,8 @@ const nativeCSS = `
 .c-message_kit__labels__text { color: N }
 .c-tooltip__tip { color: N; background-color: N }
 .p-ia4_client .p-ia4_top_nav__right_container{flex:1 0 auto;justify-content:flex-end;align-items:center;margin-right:4px;display:flex}
+.p-flexpane_header__primary{font-size:18px;line-height:1.33334;font-weight:var(--custom-font-weight-black,900);letter-spacing:var(--custom-font-tracking-subtitle,inherit);align-items:center;gap:8px;display:flex}
+.p-flexpane--ia_details_popover .p-flexpane_header.p-flexpane_header--smaller .p-flexpane_header__primary{gap:4px}
 `
 
 // pluginElementCSS is Slack's own rules (client-boot-styles, 2026-11:

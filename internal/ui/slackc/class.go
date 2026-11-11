@@ -509,6 +509,9 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 	el := ns.element()
 	c := Styles.Cascade(el, css.PseudoNone, nil, e)
 	ns.style = css.Compute(&c, ps, e)
+	if vs := scopeVarsOf(&ns.el, ns.style.Vars); vs != nil {
+		ns.style.Vars = vs // a theme scope's tokens (scopevars.go)
+	}
 	ns.set, ns.native = propsOf(&c), nativesOf(&c)
 	ns.trans = hasTransition(&c)
 	// An inherited property Slack's own rule gives the widget (its link

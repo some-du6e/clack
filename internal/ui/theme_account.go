@@ -44,6 +44,7 @@ func (a *App) restyle(t *theme.Theme, p *theme.Palette) {
 		}
 	}
 	restyleFromSheets(t, p)
+	a.scopeTokens(t, p) // the chrome's inverted scope for plugin elements (theme_scope.go)
 }
 
 // acctThemeWait bounds how long a palette rebuild waits for the account

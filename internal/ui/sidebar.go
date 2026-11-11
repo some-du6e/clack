@@ -282,7 +282,7 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 // list. Under a patch it draws only the rows p's rows still list.
 func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	sz := gtx.Constraints.Max
-	sbst := clsSidebar.Enter(gtx, hoverState(a.sidebar.hover), 0)
+	sbst := clsSidebar.Enter(gtx, hoverState(a.sidebar.hover), a.scopeMod())
 	defer sbst.Leave()
 	if sbst.Hidden() {
 		return layout.Dimensions{Size: sz}

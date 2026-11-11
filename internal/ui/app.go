@@ -210,6 +210,8 @@ type App struct {
 	sbPal            theme.Palette
 	styleVer         uint64    // slackc.Styles.Version the palette was derived at
 	acct             acctTheme // the Slack account's theme (theme_account.go)
+	scopeInv         bool      // the chrome is in Slack's inverted theme scope (theme_scope.go)
+	scopeVars        map[string]string
 	shaperCh         chan [2]*text.Shaper
 	font             fontState             // Appearance > Font (prefs_font.go)
 	explorer         *explorer.Explorer    // native file chooser (set in onWindow)
