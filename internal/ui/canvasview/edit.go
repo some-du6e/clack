@@ -420,10 +420,10 @@ func (e *editState) finish(v *View) bool {
 	}
 	s := e.cur
 	bs := fromDoc(s.ed.Doc(), s)
-	check := bs
-	if s.quoted { // "> " around text canvas markdown carries
-		check = unquote(bs)
-	}
+	// "> " around text canvas markdown carries: what has to round-trip is
+	// the quote's paragraph (a block quoted from the toolbar, or by typing
+	// "> ", saves the same way as a quote's own paragraph)
+	check := unquote(bs)
 	for _, b := range check {
 		if ok, why := canvas.Editable(b); !ok {
 			if why == "" {
@@ -1116,15 +1116,34 @@ var (
 	fmtDivider   = blockFormat{}
 )
 
-// selectionMenu is the floating bar's block-style menu (menuItems:
+// selectionMenu is the floating bar's block-style menu (zk's menuItems:
 // paragraph, h1, h2, h3, ─, check-list, ordered-list, bullet-list, ─,
-// code-block, blockquote).
+// code-block, then blockquote unless canvas_blockquote_layout is on,
+// when the blockquote is a button of its own).
 var selectionMenu = []blockFormat{fmtParagraph, fmtH1, fmtH2, fmtH3, fmtDivider, fmtCheck, fmtOrdered, fmtBullet, fmtDivider, fmtCodeBlock, fmtQuote}
 
 // formattingMenu is the bottom toolbar's Aa menu
 // (InsertionToolbarFormattingMenu, which opens upwards: blockquote, code
 // block, ─, bulleted, ordered, check list, ─, h3, h2, h1, paragraph).
+// Under canvas_blockquote_layout the menu drops the blockquote and the
+// separator after code block; the blockquote moves to the insert menu.
 var formattingMenu = []blockFormat{fmtQuote, fmtCodeBlock, fmtDivider, fmtBullet, fmtOrdered, fmtCheck, fmtDivider, fmtH3, fmtH2, fmtH1, fmtParagraph}
+
+// selectionMenuFor and formattingMenuFor are the two menus in the
+// viewer's canvas_blockquote_layout group (bq: on).
+func selectionMenuFor(bq bool) []blockFormat {
+	if !bq {
+		return selectionMenu
+	}
+	return selectionMenu[:len(selectionMenu)-1]
+}
+
+func formattingMenuFor(bq bool) []blockFormat {
+	if !bq {
+		return formattingMenu
+	}
+	return append([]blockFormat{fmtCodeBlock}, formattingMenu[3:]...)
+}
 
 // current is the session's block format key.
 func (s *session) current() string {
@@ -1187,7 +1206,10 @@ func (e *editState) openFormatMenu(v *View, formats []blockFormat) {
 // "![name](permalink)") and a file ("![](permalink)", a file unfurl).
 // Date and Callout have no canvas markdown, and Slack's Canvas item is a
 // canvas search Clack doesn't have yet: those three are drawn in Slack's
-// disabled state (.c-menu_item__button--disabled, opacity .5).
+// disabled state (.c-menu_item__button--disabled, opacity .5). Under
+// canvas_blockquote_layout the menu has Blockquote after Callout
+// (BLOCKQUOTE_LAYOUT, hidden otherwise): a new quote after the insert
+// point (insertSection("blockquote-layout")).
 func (e *editState) openInsertMenu(v *View) {
 	if v.act.Menu == nil {
 		return
@@ -1198,10 +1220,15 @@ func (e *editState) openInsertMenu(v *View) {
 		{Label: "Date", Icon: "calendar", Disabled: true},
 		{Label: "Profile", Icon: "user", Do: func() { v.post(func() { e.insertProfile(v) }) }},
 		{Label: "Callout", Icon: "callout", Disabled: true},
-		{Label: "Canvas", Icon: "canvas", Disabled: true},
-		{Label: "Image", Icon: "image", Do: func() { v.post(func() { e.insertUpload(v, true) }) }},
-		{Label: "File", Icon: "attach", Do: func() { v.post(func() { e.insertUpload(v, false) }) }},
 	}
+	if v.exp("canvas_blockquote_layout") {
+		items = append(items, MenuItem{Label: "Blockquote", Icon: "quote", Do: func() { v.post(func() { e.insertQuote(v) }) }})
+	}
+	items = append(items,
+		MenuItem{Label: "Canvas", Icon: "canvas", Disabled: true},
+		MenuItem{Label: "Image", Icon: "image", Do: func() { v.post(func() { e.insertUpload(v, true) }) }},
+		MenuItem{Label: "File", Icon: "attach", Do: func() { v.post(func() { e.insertUpload(v, false) }) }},
+	)
 	v.act.Menu(items)
 }
 
@@ -1316,7 +1343,7 @@ func (e *editState) insertion(v *View, k string, anchor image.Point) {
 	case "insert":
 		e.openInsertMenu(v)
 	case "formatting":
-		e.openFormatMenu(v, formattingMenu)
+		e.openFormatMenu(v, formattingMenuFor(v.exp("canvas_blockquote_layout")))
 	case "file":
 		e.insertUpload(v, false)
 	case "table":
@@ -1350,6 +1377,18 @@ var selGroups = [][]selButton{
 	{{key: "link", icon: "link"}, {key: "callout", icon: "callout"}},
 }
 
+// selGroupsFor is the bar in the viewer's canvas_blockquote_layout group:
+// on, zk adds [blockquote-layout] between the text styles and [code]
+// (the "quote" icon, getDerivedFormatSvgIcon's BLOCKQUOTE_LAYOUT).
+func selGroupsFor(bq bool) [][]selButton {
+	if !bq {
+		return selGroups
+	}
+	out := append([][]selButton{}, selGroups[:2]...)
+	out = append(out, []selButton{{key: "bqlayout", icon: "quote"}})
+	return append(out, selGroups[2:]...)
+}
+
 // selEnabled: canvases.edit's markdown has no underline, and Clack can't
 // make callouts yet; those two are drawn disabled.
 func selEnabled(k string) bool { return k != "underline" && k != "callout" }
@@ -1375,9 +1414,11 @@ func (e *editState) layoutSelectionBar(gtx layout.Context, v *View, s *session, 
 	}
 	lo, hi := min(a, b), max(a, b)
 	r1, r2 := s.ed.PosRect(lo), s.ed.PosRect(hi)
+	bq := v.exp("canvas_blockquote_layout")
+	groups := selGroupsFor(bq)
 	bh := gtx.Dp(28) + 2*gtx.Dp(2) + 2*gtx.Dp(2) // buttons, their margins, the body's padding
 	bw := 2 * gtx.Dp(2)
-	for gi, g := range selGroups {
+	for gi, g := range groups {
 		if gi > 0 {
 			bw += gtx.Dp(9) // separator: 1px, 4px each side
 		}
@@ -1407,7 +1448,7 @@ func (e *editState) layoutSelectionBar(gtx layout.Context, v *View, s *session, 
 		active := s.ed.ActiveStyle()
 		bx := gtx.Dp(2)
 		by := gtx.Dp(2) + gtx.Dp(2)
-		for gi, g := range selGroups {
+		for gi, g := range groups {
 			if gi > 0 {
 				theme.Fill(gtx, image.Rect(bx+gtx.Dp(4), (bh-gtx.Dp(20))/2, bx+gtx.Dp(5), (bh+gtx.Dp(20))/2), floatSep)
 				bx += gtx.Dp(9)
@@ -1432,6 +1473,8 @@ func (e *editState) layoutSelectionBar(gtx layout.Context, v *View, s *session, 
 					pressed = active&composer.Code != 0
 				case "link":
 					pressed = s.ed.ActiveLink()
+				case "bqlayout": // activeFormats has blockquote-layout in a quote
+					pressed = s.current() == "quote"
 				}
 				clk := e.btn("sel." + sb.key)
 				hit := clk.Clicked(gtx) // before Layout, which drains a Clickable's events
@@ -1472,7 +1515,7 @@ func (e *editState) layoutSelectionBar(gtx layout.Context, v *View, s *session, 
 				})
 				if hit && on {
 					if sb.menu {
-						e.openFormatMenu(v, selectionMenu)
+						e.openFormatMenu(v, selectionMenuFor(bq))
 					} else {
 						e.apply(v, sb.key, image.Point{})
 					}
@@ -1559,6 +1602,14 @@ func (e *editState) apply(v *View, k string, anchor image.Point) {
 		if ed.ActiveBlock() != composer.Quote {
 			ed.ToggleBlock(composer.Quote)
 		}
+	case "bqlayout": // performBlockquoteConversion(!activeFormat): in or out of the quote
+		if ed.ActiveBlock() == composer.Quote {
+			ed.ToggleBlock(composer.Quote)
+			break
+		}
+		s.kind, s.level = canvas.Paragraph, 0
+		plain()
+		ed.ToggleBlock(composer.Quote)
 	case "codeblock":
 		s.kind, s.level = canvas.Paragraph, 0
 		if ed.ActiveBlock() != composer.CodeBlock {

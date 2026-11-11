@@ -4,12 +4,16 @@ package fakeslack
 // remove / list (starring), files.delete, and files.edit on files that
 // weren't uploaded through files.getUploadURL (those are drafts.go's).
 // Deleting a canvas or a list takes it out of canvas.go's / lists.go's
-// store, so search.modules.files stops returning it. Every call is
-// recorded (FilesViewCalls).
+// store, so search.modules.files stops returning it, and keeps it for
+// 24 hours: files.recentlyDeleted lists it ({id, title, date_delete,
+// file_type: quip | list}, filtered by file_type) and files.undelete
+// {file_id} puts it back. Every write is recorded (FilesViewCalls).
 
 import (
 	"net/url"
+	"sort"
 	"sync"
+	"time"
 )
 
 type filesViewStore struct {
@@ -17,7 +21,26 @@ type filesViewStore struct {
 	starred []string          // files.favorites.add order, oldest first (as Slack's file_ids)
 	deleted map[string]bool   // files.delete
 	titles  map[string]string // files.edit titles
+	trash   map[string]trashed
 	calls   []FilesViewCall
+}
+
+// trashed is a deleted canvas or list (files.recentlyDeleted).
+type trashed struct {
+	canvas *FakeCanvas
+	list   *FakeList
+	at     int64
+}
+
+// TrashFile marks a canvas or list deleted at (tests: an old deletion).
+func (s *Server) TrashFile(id string, at time.Time) {
+	fv := s.filesView()
+	fv.mu.Lock()
+	defer fv.mu.Unlock()
+	if t, ok := fv.trash[id]; ok {
+		t.at = at.Unix()
+		fv.trash[id] = t
+	}
 }
 
 // FilesViewCall is one recorded Files view write.
@@ -32,7 +55,7 @@ func (s *Server) filesView() *filesViewStore {
 	if v, ok := filesViewStores.Load(s); ok {
 		return v.(*filesViewStore)
 	}
-	v, _ := filesViewStores.LoadOrStore(s, &filesViewStore{deleted: map[string]bool{}, titles: map[string]string{}})
+	v, _ := filesViewStores.LoadOrStore(s, &filesViewStore{deleted: map[string]bool{}, titles: map[string]string{}, trash: map[string]trashed{}})
 	return v.(*filesViewStore)
 }
 
@@ -78,7 +101,7 @@ func (s *Server) uploaded(id string) bool {
 // handleFilesView answers the Files view's writes; handled=false passes on.
 func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 	switch method {
-	case "files.favorites.add", "files.favorites.remove", "files.favorites.list":
+	case "files.favorites.add", "files.favorites.remove", "files.favorites.list", "files.recentlyDeleted", "files.undelete":
 	case "files.delete", "files.edit":
 		if s.uploaded(f.Get("file")) {
 			return nil, false
@@ -89,10 +112,55 @@ func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 	fv := s.filesView()
 	fv.mu.Lock()
 	defer fv.mu.Unlock()
-	if method != "files.favorites.list" {
+	if method != "files.favorites.list" && method != "files.recentlyDeleted" {
 		fv.calls = append(fv.calls, FilesViewCall{Method: method, Args: f})
 	}
 	switch method {
+	case "files.recentlyDeleted":
+		type del struct {
+			ID         string `json:"id"`
+			Title      string `json:"title"`
+			DateDelete int64  `json:"date_delete"`
+			FileType   string `json:"file_type"`
+		}
+		out := []del{}
+		cut := time.Now().Add(-24 * time.Hour).Unix()
+		for id, t := range fv.trash {
+			d := del{ID: id, DateDelete: t.at, FileType: "quip"}
+			if t.canvas != nil {
+				d.Title = t.canvas.Title
+			} else {
+				d.Title, d.FileType = t.list.Title, "list"
+			}
+			if t.at < cut || f.Get("file_type") != "" && f.Get("file_type") != d.FileType {
+				continue
+			}
+			out = append(out, d)
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		return ok("files", out), true
+	case "files.undelete":
+		id := f.Get("file_id")
+		t, found := fv.trash[id]
+		if !found || t.at < time.Now().Add(-24*time.Hour).Unix() {
+			return fail("file_not_found"), true
+		}
+		delete(fv.trash, id)
+		delete(fv.deleted, id)
+		if t.canvas != nil {
+			cs := s.canvasStore()
+			cs.mu.Lock()
+			cs.byID[id] = t.canvas
+			cs.order = append(cs.order, id)
+			cs.mu.Unlock()
+		} else {
+			ls := s.listStore()
+			ls.mu.Lock()
+			ls.byID[id] = t.list
+			ls.order = append(ls.order, id)
+			ls.mu.Unlock()
+		}
+		return ok(), true
 	case "files.favorites.list":
 		return ok("file_ids", append([]string{}, fv.starred...)), true
 	case "files.favorites.add":
@@ -127,16 +195,18 @@ func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 		fv.deleted[id] = true
 		cs := s.canvasStore()
 		cs.mu.Lock()
-		if _, found := cs.byID[id]; found {
+		if c, found := cs.byID[id]; found {
 			delete(cs.byID, id)
 			cs.order = dropID(cs.order, id)
+			fv.trash[id] = trashed{canvas: c, at: time.Now().Unix()}
 		}
 		cs.mu.Unlock()
 		ls := s.listStore()
 		ls.mu.Lock()
-		if _, found := ls.byID[id]; found {
+		if l, found := ls.byID[id]; found {
 			delete(ls.byID, id)
 			ls.order = dropID(ls.order, id)
+			fv.trash[id] = trashed{list: l, at: time.Now().Unix()}
 		}
 		ls.mu.Unlock()
 		return ok(), true

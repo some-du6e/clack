@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"strings"
 
@@ -26,7 +27,7 @@ func (a *App) openTeamMenu(anchor image.Point) {
 		items = append(items, MenuItem{Label: label, Disabled: !ok, Do: f})
 	}
 	a.menu(anchor, append(items, []MenuItem{
-		{Label: "Toggle dark mode", Icon: "moon", Hint: shortcut.Format("Mod+Shift+Y"), Do: a.ToggleDark},
+		{Label: "Toggle dark mode", Icon: "moon", Do: a.ToggleDark},
 		{Divider: true},
 		{Label: "All unreads", Icon: "unreads", Hint: shortcut.Format("Mod+Shift+A"), Do: func() { a.Navigate("unreads") }},
 		{Label: "Browse channels", Icon: "hash", Do: func() { a.Navigate("directories?tab=channels") }},
@@ -71,56 +72,6 @@ func (a *App) openMoreMenu(anchor image.Point) {
 		{Label: "Directories", Icon: "directories", Do: func() { a.Navigate("directories") }},
 		{Label: "All unreads", Icon: "unreads", Hint: shortcut.Format("Mod+Shift+A"), Do: func() { a.Navigate("unreads") }},
 	})
-}
-
-func (a *App) openHistoryMenu() {
-	var items []MenuItem
-	for _, r := range a.router.Recent(12) {
-		r := r
-		items = append(items, MenuItem{Label: a.routeLabel(r), Icon: a.routeIcon(r), Do: func() { a.Navigate(string(r)) }})
-	}
-	if len(items) == 0 {
-		items = []MenuItem{{Label: "No recent history", Disabled: true}}
-	}
-	a.menu(image.Pt(a.px(theme0RailW()), a.px(40)), items)
-}
-
-func theme0RailW() int { return 70 }
-
-func (a *App) routeLabel(r Route) string {
-	if c := a.model().conv(r.Channel()); c != nil {
-		if c.Kind == "channel" || c.Kind == "private" {
-			return "#" + c.displayName()
-		}
-		return c.displayName()
-	}
-	if t := pageTitle(r); t != "" {
-		return t
-	}
-	return string(r)
-}
-
-func (a *App) routeIcon(r Route) string {
-	if c := a.model().conv(r.Channel()); c != nil {
-		switch c.Kind {
-		case "private":
-			return "lock"
-		case "im", "mpim", "app":
-			return "dms"
-		}
-		return "hash"
-	}
-	switch r.Page() {
-	case "activity":
-		return "activity"
-	case "later":
-		return "later"
-	case "files":
-		return "files"
-	case "search":
-		return "search"
-	}
-	return "history"
 }
 
 func (a *App) openChannelMenu(ch string, anchor image.Point) {
@@ -218,10 +169,26 @@ func (a *App) copyChannelLink(ch string) {
 
 func (a *App) setStatusPrompt() {
 	if mkStatusModal != nil {
-		a.ShowOverlay(mkStatusModal(a))
+		a.ShowOverlay(mkStatusModal(a, false))
 		return
 	}
-	a.ShowOverlay(popups.NewSetStatusModalFromMenu(a)) // the user menu's "Update your status"
+	a.ShowOverlay(popups.NewSetStatusModal(a)) // the user menu's "Update your status"
+}
+
+// openStatusFromShortcut is Slack's mod+shift+y (PG1Q):
+// openCustomStatusDialog({fromKeyboardShortcut: true}) first saves
+// used_custom_status_kb_shortcut (setUserPrefByApi, which updates the
+// local pref before the call, so the dialog it opens has no "Tip:" pill),
+// unless it's set, then opens "Set a status".
+func (a *App) openStatusFromShortcut() {
+	if c := a.Core(); c != nil && !c.PrefBool("used_custom_status_kb_shortcut", false) {
+		go func() { _ = a.writePref(context.Background(), "used_custom_status_kb_shortcut", true) }()
+	}
+	if mkStatusModal != nil {
+		a.ShowOverlay(mkStatusModal(a, true))
+		return
+	}
+	a.ShowOverlay(popups.NewSetStatusModalFromShortcut(a))
 }
 
 func (a *App) signOut() {

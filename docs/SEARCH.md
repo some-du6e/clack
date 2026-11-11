@@ -15,14 +15,17 @@ calls; no content was kept.
 |---|---|---|
 | Popover: people | edge `users/search` | query, count 30, fuzz 1, enable_workspace_ranking, search_email, include_profile_only_users, top_users (frecency), default_workspace |
 | Popover: channels | edge `channels/search` | query, count 30, fuzz 1, filter `xws`, include_record_channels, check_membership, top_channels, default_workspace |
-| Popover: Recent messages | `search.inline` (enterprise host) | search_session_id, client_req_id, max_ts (now), count 3, page 1, query, thread_replies "", extract_len 110, recent_channels, from_me, with_me |
+| Popover: Recent messages | `search.inline` (enterprise host) | search_session_id, client_req_id, max_ts (now), count 3, page 1, query, thread_replies "", extract_len 110, from_me, with_me; `omni_quick_message_results` on: recent_channels (your recent conversations), from_me and with_me true, or for words + in: the channel (or user) with with_me; off: channel = the open channel, from_me/with_me false. Only for plain words (or words and one in:) of 3+ characters (suggestionsQuickMessages) |
 | Popover: files and canvases | `search.autocomplete.files` | query, include_shares |
 | Submitting a search | `search.save` | terms, type `default` |
-| Results: Messages | `search.modules.messages` | the base args\* + search_exclude_bots and search_only_my_channels (the user prefs), spell_correction FUZZY_MATCH, search_only_team "", facets_result_count 5, query_refinement_suggestions_version 1, recent_channels, sort score/timestamp, sort_dir desc/asc, max_filter_suggestions 10, request_context `{"active_cid","recent_filter_in","recent_filter_from"}`, search_tab_filter, search_tab_sort; Exact matches only adds search_exact_matches_only |
+| Recent searches | `search.autocomplete` | query "", limit 100, use_hash true (`desktop_search_recents_read` off; kept 5 minutes, dropped after search.save) |
+| Recent searches and places (`desktop_search_recents_read` on) | `users.prefs.get`, `visits.list` | prefs `recents` (a JSON {navigation, search}); visits.list limit 40, checksum (the last one) |
+| Recording (`desktop_search_recents_write` on) | `visits.record`, `users.prefs.set` | visits (JSON [{entity_id, entity_type, thread_ts, client_event_time_ms}]), client_now_ms; name `recents`, value the record's searches (or the whole record when visits.record can't take it); at most once a minute |
+| Results: Messages | `search.modules.messages` | the base args\* + search_exclude_bots and search_only_my_channels (the user prefs), spell_correction FUZZY_MATCH, search_only_team "", facets_result_count 5, query_refinement_suggestions_version 1, recent_channels, sort score/timestamp, sort_dir desc/asc, max_filter_suggestions 10, request_context `{"active_cid","recent_filter_in","recent_filter_from"}`, search_tab_filter, search_tab_sort; Exact matches only adds search_exact_matches_only; Exclude archived (search_explore_freshness_signals) channel_type exclude_archived. The answer's unfiltered_result_count / unfiltered_result_filter drive "Search without filters" |
 | Results: DMs | `search.modules.dms` | the base args, count 40 |
-| Results: Files / Canvases | `search.modules.files` | the base args (count 0 when only counting), the two prefs, search_only_team, facets_result_count, sort timestamp desc, max_filter_suggestions, request_context, search_tab_*; Canvases queries `type:quip <q>` |
-| Results: Channels | `search.modules.channels` | the base args, count 20, search_only_my_channels, channel_type all, external_shared_team_ids, exclude_my_channels 0, request_context, spell_correction, sort relevant desc, search_only_team |
-| Results: People | `search.modules.people` | the base args, count 20, tz, external_shared_team_ids, custom_fields `{}`, hide_deactivated_users 0, request_context, spell_correction, sort relevant desc, search_only_team, profile_* "" |
+| Results: Files / Canvases | `search.modules.files` | the base args (count 0 when only counting), the two prefs, search_only_team, facets_result_count, sort: the Sort select (getSortParams; Most relevant score desc by default), timestamp desc when only counting, max_filter_suggestions, request_context, search_tab_*; Canvases queries `type:quip <q>` |
+| Results: Channels | `search.modules.channels` | the base args, count 20, search_only_my_channels, channel_type all, external_shared_team_ids, exclude_my_channels 0, request_context, spell_correction, sort: the Sort select (relevant desc by default; name, created, member_count asc/desc), search_only_team |
+| Results: People | `search.modules.people` | the base args, count 20, tz, external_shared_team_ids, custom_fields `{}`, hide_deactivated_users 0, request_context, spell_correction, sort: the Sort select (relevant desc by default; name asc/desc), search_only_team, profile_* "" |
 | ⌘F search in channel | `search.modules.messages` | query `in:<#C> <q>`, count 10, search_context search_in_channel, search_exclude_bots false, sort score/desc, timestamp/desc or timestamp/asc |
 | Give feedback (popover, results page, no-results state) | `feedback.submitEnterpriseSearchFeedback` | type `feedback`, feedback_type `omniswitcher` or `search`, text, contact, category, query, payload (JSON), is_test false |
 | Give feedback (search in channel) | `search.feedback` | client_token, type `search`, payload (JSON); Slack opens its dialog for the token |
@@ -83,6 +86,8 @@ include:
 - Help Center rows in the blank slate, and the setup tip card.
 - The Messages pill's four-colour Slack logo (icons are owned elsewhere;
   it uses the monochrome slack-logo).
-- Filters and sorts on the Files, Canvases, Channels, People and DMs tabs.
+- Filters on the Channels and People tabs (channel_type, profile fields);
+  Files, Canvases and DMs have Slack's pills since exp-search, and every
+  tab but DMs its Sort select.
 - The Texty input (from:@ / in:# completion and filter tokens) and the
   suggestion action toolbar (Tab).

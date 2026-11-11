@@ -24,6 +24,19 @@ package ui
 //     paused" / "…until {time}"), the Duration select (writes the pref at
 //     once) and "Continue to get notifications from VIPs"
 //     (priority_dnd_override).
+//   - Under focus_mode_custom_duration "treatment" (CDN build 4d0c78085232,
+//     boot-render FocusModePopoverContent) the Duration select also offers
+//     "Custom". Picking it writes the pref for today's next half hour an
+//     hour on (set minute 30, add an hour) and opens the row under the
+//     select (customDateTimeCollapsible, 8px gap): a date button (36px,
+//     radius 8, 1px otl-pry border, padding 4 12, "MMM Do, YYYY") that opens
+//     the DatePicker (position bottom, today to a year from now), and a time
+//     select of 30-minute steps (later than now on today; the chosen time
+//     added when it isn't a step). Each change writes the pref at once (a
+//     date that would put today's time in the past takes the default time).
+//     deactivateFocusMode clears the custom date and time and puts a Custom
+//     duration back to "Don’t turn off"; activating with Custom (unreachable
+//     after that) never ends (getFocusModeExpirationTimestamp).
 //   - The sidebar goes quiet (shouldSuppressUnreadEmphasis): unread rows
 //     aren't bold and mention badges shrink to dots (Link, BaseChannelSuffix
 //     shape "dot"); and the theme becomes the monochrome Silent Sidebar Gray
@@ -36,6 +49,8 @@ import (
 	"image/color"
 	"math"
 	"math/rand"
+	"sort"
+	"strconv"
 	"time"
 
 	"gioui.org/f32"
@@ -54,12 +69,100 @@ import (
 // focusForever is "Don’t turn off" (xG++ r: 0x2540be3ff).
 const focusForever = 9999999999
 
-// focusOptions are the popover's durations (1Zjz Z) and labels.
-var focusOptions = [...]struct{ key, label string }{
+// focusOption is one Duration choice (1Zjz Z) and its label.
+type focusOption struct{ key, label string }
+
+// focusOptions are the popover's durations.
+var focusOptions = [...]focusOption{
 	{"half_hour", "30 minutes"},
 	{"one_hour", "1 hour"},
 	{"two_hours", "2 hours"},
 	{"no_expiration", "Don’t turn off"},
+}
+
+// focusCustom is Z.CUSTOM.
+const focusCustom = "custom"
+
+// focusCustomOn reports focus_mode_custom_duration "treatment".
+func (a *App) focusCustomOn() bool {
+	c := a.Core()
+	return c != nil && c.Experiment("focus_mode_custom_duration") == "treatment"
+}
+
+// focusOptionList is the select's options (N): the four, and Custom in
+// the treatment.
+func (a *App) focusOptionList() []focusOption {
+	l := append([]focusOption(nil), focusOptions[:]...)
+	if a.focusCustomOn() {
+		l = append(l, focusOption{focusCustom, "Custom"})
+	}
+	return l
+}
+
+// focusCustomDefault is the Custom default: now with minute 30, plus an
+// hour (b), to the minute.
+func focusCustomDefault(now time.Time) time.Time {
+	return time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 30, 0, 0, now.Location()).Add(time.Hour)
+}
+
+// focusAt is getUnixTimestampFromDateTime: "YYYY-MM-DD" and "HH:mm" in
+// local time.
+func focusAt(date, clock string, loc *time.Location) time.Time {
+	t, err := time.ParseInLocation("2006-01-02 15:04", date+" "+clock, loc)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// focusTimeOption is one 30-minute step: "HH:mm" and its label.
+type focusTimeOption struct{ value, label string }
+
+// focusTimeOptions is the time select's options (I): getTimePickerHourOptions
+// every 30 minutes, later than now when date is today, with the chosen
+// time added (sorted) when it isn't a step.
+func focusTimeOptions(date, chosen string, now time.Time, label func(time.Time) string) []focusTimeOption {
+	var out []focusTimeOption
+	today := now.Format("2006-01-02")
+	cur := now.Format("15:04")
+	have := false
+	for m := 0; m < 24*60; m += 30 {
+		t := time.Date(2020, 1, 1, m/60, m%60, 0, 0, now.Location())
+		v := t.Format("15:04")
+		if date == today && v <= cur {
+			continue
+		}
+		have = have || v == chosen
+		out = append(out, focusTimeOption{v, label(t)})
+	}
+	if !have && chosen != "" {
+		if t, err := time.ParseInLocation("15:04", chosen, now.Location()); err == nil {
+			out = append(out, focusTimeOption{chosen, label(t)})
+			sort.SliceStable(out, func(i, j int) bool { return out[i].value < out[j].value })
+		}
+	}
+	return out
+}
+
+// focusDateLabel is toCalendarDate(ts, {shortenMonth: true}) for en-US:
+// "MMM Do, YYYY".
+func focusDateLabel(t time.Time) string {
+	return t.Format("Jan ") + strconv.Itoa(t.Day()) + ordinalSuffix(t.Day()) + t.Format(", 2006")
+}
+
+func ordinalSuffix(n int) string {
+	if n%100 >= 11 && n%100 <= 13 {
+		return "th"
+	}
+	switch n % 10 {
+	case 1:
+		return "st"
+	case 2:
+		return "nd"
+	case 3:
+		return "rd"
+	}
+	return "th"
 }
 
 // focusExpiration is getFocusModeExpirationTimestamp.
@@ -87,19 +190,23 @@ type focusMode struct {
 	wasActive  bool // last frame's state (theme refresh on change)
 	wasInv     bool // and focus_mode_force_dark_mode_enabled
 
-	btn       widget.Clickable
-	tip       popups.TipState
-	hoverAt   time.Time
-	pop       *popups.Popover
-	opened    bool // the popover was opened since focus mode started
-	subtitle  string
-	durBtn    widget.Clickable
-	durRect   image.Rectangle // card coords
-	durList   popups.Overlay
-	vipBtn    widget.Clickable
-	gearBtn   widget.Clickable
-	gearTip   popups.TipState
-	btnOrigin image.Point
+	btn      widget.Clickable
+	tip      popups.TipState
+	hoverAt  time.Time
+	pop      *popups.Popover
+	opened   bool // the popover was opened since focus mode started
+	subtitle string
+	durBtn   widget.Clickable
+	durRect  image.Rectangle // card coords
+	durList  popups.Overlay
+	vipBtn   widget.Clickable
+	gearBtn  widget.Clickable
+	// Custom (focus_mode_custom_duration): customExpirationDate / Time
+	customDate, customTime string // "YYYY-MM-DD", "HH:mm"; "" unset
+	dateBtn, timeBtn       widget.Clickable
+	dateRect, timeRect     image.Rectangle // card coords
+	gearTip                popups.TipState
+	btnOrigin              image.Point
 }
 
 var focusModes = map[*App]*focusMode{} // UI goroutine only
@@ -170,6 +277,12 @@ func (a *App) toggleFocusMode() {
 			f.pop.Dismiss()
 		}
 		a.setFocusExp(0)
+		// deactivateFocusMode: setCustomExpiration(null) and Custom back to
+		// "Don’t turn off"
+		f.customDate, f.customTime = "", ""
+		if f.option == focusCustom {
+			f.option = "no_expiration"
+		}
 		return
 	}
 	f.opened = false
@@ -345,6 +458,12 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 	if clicked(&f.durBtn) {
 		a.openFocusDurations()
 	}
+	if clicked(&f.dateBtn) {
+		a.openFocusDate()
+	}
+	if clicked(&f.timeBtn) {
+		a.openFocusTimes()
+	}
 	if clicked(&f.vipBtn) {
 		if cr := a.Core(); cr != nil {
 			v := !cr.PrefBool("priority_dnd_override", false)
@@ -418,7 +537,7 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 			theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(8), bc)
 			theme.RRect(gtx, image.Rectangle{Max: sz}.Inset(max(1, gtx.Dp(1))), gtx.Dp(8)-1, c.Bg)
 			label := ""
-			for _, o := range focusOptions {
+			for _, o := range a.focusOptionList() {
 				if o.key == f.option {
 					label = o.label
 				}
@@ -435,6 +554,10 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 		})
 	})
 	y += gtx.Dp(36)
+	if a.focusCustomOn() && f.option == focusCustom { // customDateTimeExpanded
+		y += gtx.Dp(8)
+		y += a.focusCustomRow(gtx, image.Pt(gtx.Dp(16), y), sw)
+	}
 	// vipCheckbox (13px, content-sec): Continue to get notifications from VIPs
 	y += gtx.Dp(8)
 	vip := false
@@ -467,9 +590,10 @@ func (a *App) openFocusDurations() {
 	if f.pop == nil {
 		return
 	}
-	labels := make([]string, len(focusOptions))
+	opts := a.focusOptionList()
+	labels := make([]string, len(opts))
 	sel := 0
-	for i, o := range focusOptions {
+	for i, o := range opts {
 		labels[i] = o.label
 		if o.key == f.option {
 			sel = i
@@ -477,13 +601,161 @@ func (a *App) openFocusDurations() {
 	}
 	r := f.durRect.Add(f.pop.Rect().Min)
 	f.durList = popups.NewOptionList(a, r, labels, sel, func(i int) {
-		if i < 0 || i >= len(focusOptions) || focusOptions[i].key == f.option {
-			return
+		if i >= 0 && i < len(opts) {
+			a.pickFocusOption(opts[i].key, time.Now())
 		}
-		f.option = focusOptions[i].key
-		a.setFocusExp(focusExpiration(f.option, time.Now()))
 	})
 	a.ShowOverlay(f.durList)
+}
+
+// pickFocusOption is the select's onSelectionChange (M): the pref (Custom:
+// the default date and time), then the option and the custom date.
+func (a *App) pickFocusOption(key string, now time.Time) {
+	f := a.fm()
+	if key == f.option {
+		return
+	}
+	def := focusCustomDefault(now)
+	exp := focusExpiration(key, now)
+	if key == focusCustom {
+		exp = def.Unix()
+	}
+	a.setFocusExp(exp)
+	f.option = key
+	if key == focusCustom {
+		f.customDate, f.customTime = def.Format("2006-01-02"), def.Format("15:04")
+	} else {
+		f.customDate, f.customTime = "", ""
+	}
+}
+
+// focusCustomValue is the chosen custom date and time (k, C), the default
+// where unset.
+func (a *App) focusCustomValue(now time.Time) (date, clock string) {
+	f := a.fm()
+	def := focusCustomDefault(now)
+	date, clock = f.customDate, f.customTime
+	if date == "" {
+		date = def.Format("2006-01-02")
+	}
+	if clock == "" {
+		clock = def.Format("15:04")
+	}
+	return date, clock
+}
+
+// setFocusCustomDate is the date picker's onDateChange (R).
+func (a *App) setFocusCustomDate(day time.Time, now time.Time) {
+	f := a.fm()
+	_, clock := a.focusCustomValue(now)
+	def := focusCustomDefault(now)
+	date := day.Format("2006-01-02")
+	if date == def.Format("2006-01-02") && focusAt(date, clock, now.Location()).Unix() < now.Unix() {
+		clock = def.Format("15:04")
+	}
+	f.customDate, f.customTime = date, clock
+	a.setFocusExp(focusAt(date, clock, now.Location()).Unix())
+}
+
+// setFocusCustomTime is the time select's onSelectionChange (P).
+func (a *App) setFocusCustomTime(clock string, now time.Time) {
+	f := a.fm()
+	date, _ := a.focusCustomValue(now)
+	f.customDate, f.customTime = date, clock
+	a.setFocusExp(focusAt(date, clock, now.Location()).Unix())
+}
+
+// focusCustomRow draws customDateTimeRow at org (card coords) w wide: the
+// date button and the time select, flex auto with an 8px gap; it returns
+// the height (36).
+func (a *App) focusCustomRow(gtx layout.Context, org image.Point, w int) int {
+	f := a.fm()
+	th := a.th
+	c := &th.C
+	now := time.Now()
+	date, clock := a.focusCustomValue(now)
+	gap, h := gtx.Dp(8), gtx.Dp(36)
+	dw := (w - gap) / 2
+	f.dateRect = image.Rect(org.X, org.Y, org.X+dw, org.Y+h)
+	f.timeRect = image.Rect(org.X+dw+gap, org.Y, org.X+w, org.Y+h)
+	field := func(btn *widget.Clickable, r image.Rectangle, label string, chevron bool) {
+		at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
+			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
+				sz := r.Size()
+				bc := c.BorderStrong
+				if btn.Hovered() {
+					bc = c.Fg
+				}
+				theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(8), bc)
+				theme.RRect(gtx, image.Rectangle{Max: sz}.Inset(max(1, gtx.Dp(1))), gtx.Dp(8)-1, c.Bg)
+				tw := sz.X - gtx.Dp(24)
+				if chevron {
+					tw -= gtx.Dp(20)
+				}
+				at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(max(1, tw), sz.Y), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
+						return th.Label(gtx, 15, theme.Regular, c.Fg, label)
+					})
+				})
+				if chevron {
+					at(gtx, image.Pt(sz.X-gtx.Dp(12+16), (sz.Y-gtx.Dp(16))/2), sz, func(gtx layout.Context) layout.Dimensions {
+						return icons.Get("chevron-down")(gtx, 16, c.Fg)
+					})
+				}
+				return layout.Dimensions{Size: sz}
+			})
+		})
+	}
+	field(&f.dateBtn, f.dateRect, focusDateLabel(focusAt(date, clock, now.Location())), false)
+	tl := ""
+	for _, o := range focusTimeOptions(date, clock, now, uipref.Clock) {
+		if o.value == clock {
+			tl = o.label
+		}
+	}
+	field(&f.timeBtn, f.timeRect, tl, true)
+	return h
+}
+
+// openFocusDate opens the DatePicker under the date button: today to a
+// year from now.
+func (a *App) openFocusDate() {
+	f := a.fm()
+	if f.pop == nil {
+		return
+	}
+	now := time.Now()
+	date, clock := a.focusCustomValue(now)
+	sel := focusAt(date, clock, now.Location())
+	r := f.dateRect.Add(f.pop.Rect().Min)
+	a.ShowOverlay(popups.NewDatePickerRange(a, r, sel, now, now.AddDate(1, 0, 0), func(day time.Time) {
+		a.setFocusCustomDate(day, time.Now())
+	}))
+}
+
+// openFocusTimes opens the time select's options.
+func (a *App) openFocusTimes() {
+	f := a.fm()
+	if f.pop == nil {
+		return
+	}
+	now := time.Now()
+	date, clock := a.focusCustomValue(now)
+	opts := focusTimeOptions(date, clock, now, uipref.Clock)
+	labels := make([]string, len(opts))
+	sel := 0
+	for i, o := range opts {
+		labels[i] = o.label
+		if o.value == clock {
+			sel = i
+		}
+	}
+	r := f.timeRect.Add(f.pop.Rect().Min)
+	a.ShowOverlay(popups.NewOptionList(a, r, labels, sel, func(i int) {
+		if i >= 0 && i < len(opts) {
+			a.setFocusCustomTime(opts[i].value, time.Now())
+		}
+	}))
 }
 
 // focusTelescope draws Slack's focus illustration (focus-d8ca34d.svg, a

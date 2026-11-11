@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +20,10 @@ import (
 //     when the workspace has none, the bundled autocompleteFallback.
 //   - the navigation history (when each conversation was last open) for
 //     HISTORY_AGE_DECAY_*.
+//   - search.autocomplete.offlineFeatures' priority features (1Fxd
+//     AutocompleteFeaturesCache), which the Searcher's sort reads with the
+//     autocomplete_affinity_ml_model experiment on (client-boot y+lP
+//     prepSuggestions: userAffinityScore, channelPriority90dScore).
 type acState struct {
 	mu sync.Mutex
 
@@ -26,6 +32,18 @@ type acState struct {
 	modelIn bool
 
 	history map[string]float64 // conversation id → unix seconds last opened
+
+	// search.autocomplete.offlineFeatures (AutocompleteFeatures)
+	feat   acFeatures
+	featAt time.Time
+	featIn bool
+}
+
+// acFeatures is what Clack keeps of AutocompleteFeatures (client-boot
+// 1Fxd createAutocompleteFeatures): the priority features, user_affinity
+// and channel_priority_90d (id → score).
+type acFeatures struct {
+	userAffinity, channelPriority90D map[string]float64
 }
 
 // acModelTTL is AutocompleteCache's timeout (1008e5 ms).
@@ -75,6 +93,64 @@ func (a *App) fetchAutocompleteModel() {
 	if w, ok := acrank.ParseModel(raw); ok {
 		st.model = w
 	}
+}
+
+// AutocompleteAffinity returns search.autocomplete.offlineFeatures'
+// priority features, user_affinity (member id → score) and
+// channel_priority_90d (channel id → score): getUserAffinityScore and
+// getChannelPriority90DScore read them (0 for ids not listed). The cache
+// is AutocompleteFeaturesCache, an AutocompleteCache like the model's
+// (28 h, stale-while-revalidate): the first call starts the fetch and
+// gets empty maps until it answers. The maps are shared; don't modify
+// them.
+func (a *App) AutocompleteAffinity() (users, channels map[string]float64) {
+	st := a.ac()
+	st.mu.Lock()
+	f, fresh, busy := st.feat, time.Since(st.featAt) < acModelTTL, st.featIn
+	if !fresh && !busy && a.C != nil {
+		st.featIn = true
+		go a.fetchAutocompleteFeatures()
+	}
+	st.mu.Unlock()
+	return f.userAffinity, f.channelPriority90D
+}
+
+func (a *App) fetchAutocompleteFeatures() {
+	ctx, cancel := context.WithTimeout(a.bgCtx(), 30*time.Second)
+	defer cancel()
+	var raw json.RawMessage
+	err := a.C.Call(ctx, "search.autocomplete.offlineFeatures", nil, &raw)
+	st := a.ac()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.featIn = false
+	st.featAt = time.Now()
+	if err != nil {
+		st.featAt = time.Now().Add(-acModelTTL + 10*time.Minute) // retry in 10 min
+		return
+	}
+	st.feat = parseAutocompleteFeatures(raw)
+}
+
+// parseAutocompleteFeatures reads the answer's user_affinity and
+// channel_priority_90d ({id: score}; a score may come as a string).
+func parseAutocompleteFeatures(raw []byte) acFeatures {
+	var r struct {
+		UserAffinity       map[string]json.RawMessage `json:"user_affinity"`
+		ChannelPriority90D map[string]json.RawMessage `json:"channel_priority_90d"`
+	}
+	_ = json.Unmarshal(raw, &r)
+	num := func(m map[string]json.RawMessage) map[string]float64 {
+		out := make(map[string]float64, len(m))
+		for k, v := range m {
+			s := strings.Trim(string(v), "\" ")
+			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				out[k] = f
+			}
+		}
+		return out
+	}
+	return acFeatures{userAffinity: num(r.UserAffinity), channelPriority90D: num(r.ChannelPriority90D)}
 }
 
 // noteView records that conversation id was opened (the history store).

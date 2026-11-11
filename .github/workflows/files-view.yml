@@ -10,6 +10,8 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run files-view.yml --ref <branch>)
     paths:
       - "internal/ui/views/files.go"
+      - "internal/ui/views/files_deleted.go"
+      - "internal/ui/popups/slack_place.go"
       - "internal/ui/views/files_view_test.go"
       - "internal/ui/views/adapt.go"
       - "internal/core/files_view.go"

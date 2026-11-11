@@ -42,11 +42,16 @@ const (
 	ccFade  = 5 * time.Second // HuddleClosedCaptionBaseEvent's timeout
 )
 
-// ccEvent is one grouped caption event.
+// ccEvent is one grouped caption event; begin is the event log's
+// START_TRANSCRIPTION ("Captions have been turned on.").
 type ccEvent struct {
 	user, text string
 	start, end time.Time
+	begin      bool
 }
+
+// ccStarted is HuddleClosedCaptionStartEvent's text.
+const ccStarted = "Captions have been turned on."
 
 // ccState tracks when each event's text last changed (for the fade).
 type ccState struct {
@@ -64,11 +69,15 @@ type ccSeen struct {
 func captionEvents(lines []huddle.Caption) []ccEvent {
 	var out []ccEvent
 	for _, l := range lines {
+		if l.Start { // a non-TRANSCRIBE event: its own, ending the one before
+			out = append(out, ccEvent{user: l.UserID, text: ccStarted, start: l.At, end: l.At, begin: true})
+			continue
+		}
 		t := strings.TrimSpace(l.Text)
 		if t == "" {
 			continue
 		}
-		if n := len(out); n > 0 && out[n-1].user == l.UserID && l.At.Sub(out[n-1].end) < ccJoin {
+		if n := len(out); n > 0 && !out[n-1].begin && out[n-1].user == l.UserID && l.At.Sub(out[n-1].end) < ccJoin {
 			out[n-1].text += " " + t
 			out[n-1].end = l.At
 			continue
@@ -101,6 +110,9 @@ func (w *window) captions(gtx C, st huddle.State, stage image.Rectangle, now tim
 	visible := false
 	for _, e := range evs {
 		k := e.user + "/" + strconv.FormatInt(e.start.UnixNano(), 10)
+		if e.begin {
+			k = "start-event"
+		}
 		s, ok := w.cc.seen[k]
 		if !ok || s.text != e.text {
 			s = ccSeen{text: e.text, at: now}
@@ -116,7 +128,11 @@ func (w *window) captions(gtx C, st huddle.State, stage image.Rectangle, now tim
 			visible = true
 		}
 		m := op.Record(gtx.Ops)
-		sz := w.ccEvent(gtx, w.c.displayName(e.user)+":", e.text, max(0, maxW-2*pad))
+		name := w.c.displayName(e.user) + ":"
+		if e.begin { // no member name: just the words
+			name = ""
+		}
+		sz := w.ccEvent(gtx, name, e.text, max(0, maxW-2*pad))
 		call := m.Stop()
 		boxes = append(boxes, box{call: call, sz: sz.Add(image.Pt(2*pad, 2*padY)), alpha: alpha})
 	}
@@ -165,7 +181,10 @@ func (w *window) ccEvent(gtx C, name, text string, maxW int) image.Point {
 	}
 	lh := labelSize(gtx, th, 15, theme.Regular, "Hg").Y
 	dy := (lineH - lh) / 2
-	x := put(0, dy, theme.Bold, name) + gtx.Dp(8)
+	x := 0
+	if name != "" {
+		x = put(0, dy, theme.Bold, name) + gtx.Dp(8)
+	}
 	width := x
 	space := th.Measure(gtx, 15, theme.Regular, " ")
 	var line []string
@@ -231,14 +250,25 @@ func (c *Controller) showBannerLink(text, icon, link string, do func()) {
 
 var bannerBg = color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff} // base-inv-pry
 
-func (w *window) layoutBanner(gtx C, stage image.Rectangle, now time.Time) {
+func (w *window) layoutBanner(gtx C, s *huddle.Session, stage image.Rectangle, now time.Time) {
 	w.mu.Lock()
 	b := w.banner
 	w.mu.Unlock()
+	// the banner's first choice is SpeakingWhenMuted: "You’re muted."
+	// (micalerts.go), then the event-driven ones (Someone muted you.,
+	// Self-view is hidden.)
+	muted := w.c.mutedBanner(s)
+	if muted {
+		b = banner{text: "You’re muted.", icon: "mic-off"}
+	}
 	if b.text == "" {
 		return
 	}
 	if w.click("banner-close").Clicked(gtx) {
+		if muted {
+			w.c.closeMutedBanner(s)
+			return
+		}
 		w.mu.Lock()
 		w.banner = banner{}
 		w.mu.Unlock()
@@ -305,15 +335,20 @@ func huddleLoading(gtx C, th *theme.Theme, sz image.Point) {
 	})
 }
 
-// windowTitle is HuddleMvaWindowTitle's text: "Huddle with {name}" in a DM
-// or group DM (the members' names, no @), "Huddle in {channel}" (no #
-// sign: publicChannelIncludeHashSign false) elsewhere; and the subtitle
-// "{n} people" / "{n} person", which DMs don't get.
+// windowTitle is HuddleMvaWindowTitle's text: the huddle's topic when it
+// has one, else "Huddle with {name}" in a DM or group DM (the members'
+// names, no @), "Huddle in {channel}" (no # sign:
+// publicChannelIncludeHashSign false) elsewhere; and the subtitle "{n}
+// people" / "{n} person", which DMs don't get.
 func (c *Controller) windowTitle(st huddle.State) (title, sub string) {
 	n := max(1, len(st.Participants))
 	sub = strconv.Itoa(n) + " people"
 	if n == 1 {
 		sub = "1 person"
+	}
+	if t := strings.TrimSpace(st.Name); t != "" { // the huddle's topic (topic.go) is the title
+		sub = c.titleSub(st, sub)
+		return t, sub
 	}
 	app := c.h.Core()
 	if app == nil {
@@ -348,6 +383,16 @@ func (c *Controller) windowTitle(st huddle.State) (title, sub string) {
 		return "Huddle", sub
 	}
 	return "Huddle in " + conv.Name, sub
+}
+
+// titleSub is the subtitle under a topic: none in a DM or group DM.
+func (c *Controller) titleSub(st huddle.State, sub string) string {
+	if app := c.h.Core(); app != nil {
+		if conv, ok := app.Conv(st.Channel); ok && (conv.Kind == "im" || conv.Kind == "mpim") {
+			return ""
+		}
+	}
+	return sub
 }
 
 // withoutSelf drops your own tile (Hide self-view).

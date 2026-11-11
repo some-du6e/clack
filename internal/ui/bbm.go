@@ -379,6 +379,7 @@ func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 	}
 	x += -gtx.Dp(4) - gtx.Dp(1) + gtx.Dp(8) - gtx.Dp(4) + gtx.Dp(1)
 	hd := a.bbmNavButton(gtx, image.Pt(x, y), "nav.history", "clock", false)
+	histBtn := image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(hd)}
 	x += hd.X + gtx.Dp(1)
 	if clicked(a.clicks.get("nav.back")) {
 		a.Back()
@@ -387,7 +388,7 @@ func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 		a.Forward()
 	}
 	if clicked(a.clicks.get("nav.history")) {
-		a.openHistoryMenu()
+		a.openHistoryMenu(histBtn)
 	}
 
 	// right, from the right edge (margin-right 4px): Exit, Help, Create,
@@ -480,7 +481,7 @@ func (a *App) layoutSearchPill(gtx layout.Context, sorg image.Point, sw, sh int)
 	c := &a.th.C
 	a.searchPill = image.Rectangle{Min: sorg, Max: sorg.Add(image.Pt(sw, sh))}
 	at(gtx, sorg, image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
+		d := clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
 			bg := c.SearchBg
 			if hovered {
 				bg = c.SearchHover
@@ -489,23 +490,28 @@ func (a *App) layoutSearchPill(gtx layout.Context, sorg image.Point, sw, sh int)
 			a.chrome(gtx, sorg, image.Rectangle{Max: sz}, gtx.Dp(4), bg, theme.SearchTint)
 		}, func(gtx layout.Context) layout.Dimensions {
 			sz := image.Pt(sw, sh)
-			at(gtx, image.Pt(gtx.Dp(10), (sh-gtx.Dp(16))/2), sz, func(gtx layout.Context) layout.Dimensions {
-				return icons.Search(gtx, 16, c.SearchText)
-			})
-			label := "Search " + a.teamName()
-			if q := a.searchQuery; q != "" {
-				label = q
+			if a.searchBoxIcon() {
+				at(gtx, image.Pt(gtx.Dp(10), (sh-gtx.Dp(16))/2), sz, func(gtx layout.Context) layout.Dimensions {
+					return icons.Search(gtx, 16, c.SearchText)
+				})
 			}
-			at(gtx, image.Pt(gtx.Dp(34), 0), image.Pt(sw-gtx.Dp(44), sh), func(gtx layout.Context) layout.Dimensions {
+			tx, tw := a.searchBoxTextX(gtx), sw-gtx.Dp(44)
+			if a.searchQuery != "" {
+				tw = sw - gtx.Dp(26) - tx // the clear button's 26px
+			}
+			at(gtx, image.Pt(tx, 0), image.Pt(tw, sh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, sh, func(gtx layout.Context) layout.Dimensions {
-					return a.th.Label(gtx, 13, theme.Regular, c.SearchText, label)
+					return a.th.Label(gtx, 13, theme.Regular, c.SearchText, a.searchBoxText())
 				})
 			})
 			return layout.Dimensions{Size: sz}
 		})
+		a.searchBoxPress(gtx, d.Size) // BaseSearch onMouseDown
+		a.searchBoxClear(gtx, sw, sh)
+		return d
 	})
 	if clicked(a.clicks.get("nav.search")) {
-		a.openSearch("")
+		a.searchBoxClicked()
 	}
 }
 

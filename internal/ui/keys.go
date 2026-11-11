@@ -64,13 +64,16 @@ func (a *App) defaultShortcuts() *shortcuts {
 			a.toggleSidebar()
 		}
 	})
-	add("Mod+Shift+Y", "Toggle dark mode", func(a *App) { a.ToggleDark() })
+	// Slack's mod+shift+y (PG1Q): openCustomStatusDialog({fromKeyboardShortcut:
+	// true}), the "Set a status" dialog. Slack has no dark mode shortcut.
+	add("Mod+Shift+Y", "Set a status", func(a *App) { a.openStatusFromShortcut() })
 	// Slack's mod+shift+h (menuitem-huddle-action): "Toggle huddles start / stop"
 	add("Mod+Shift+H", "Toggle huddle", func(a *App) { a.toggleHuddle() })
 	add("Mod+N", "Compose", func(a *App) { a.compose() })
 	add("Mod+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
 	add("Mod+,", "Preferences", func(a *App) { a.openPrefs() })
 	add("Mod+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
+	add("Mod+/", "Keyboard shortcuts", func(a *App) { a.toggleKeyboardShortcuts() }) // shortcuts_pane.go
 	// Slack's zoom (View > Actual Size, Zoom In, Zoom Out): Cmd/Ctrl with
 	// 0, = or + (shifted or not, by keyboard), -.
 	mod := shortcut.Mod()

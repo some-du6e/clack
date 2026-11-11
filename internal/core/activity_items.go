@@ -122,6 +122,7 @@ type actInvite struct {
 type activityRaw struct {
 	IsUnread   bool   `json:"is_unread"`
 	IsArchived bool   `json:"is_archived"`
+	IsBot      bool   `json:"is_bot"`
 	FeedTS     string `json:"feed_ts"`
 	Key        string `json:"key"`
 	// Priority is the entry's VIP priority (any truthy value: /29I
@@ -224,7 +225,7 @@ func actTruthy(v json.RawMessage) bool {
 func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 	in := &raw.Item
 	it := ActivityItem{Key: raw.Key, Type: in.Type, FeedTS: raw.FeedTS, Unread: raw.IsUnread, Channel: in.Channel,
-		Archived: raw.IsArchived, Priority: actTruthy(raw.Priority)}
+		Archived: raw.IsArchived, Priority: actTruthy(raw.Priority), IsBot: raw.IsBot}
 	ref := in.Message
 	if bi := in.BundleInfo; bi != nil {
 		it.Count = bi.UnreadCount

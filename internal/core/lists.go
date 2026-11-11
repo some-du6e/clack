@@ -44,6 +44,11 @@ type ListInfo struct {
 	IsPublic    bool
 	LastEditor  string
 	Description []richtext.Block // description_blocks
+	// Name is the file's name (the download's file name); DownloadURL and
+	// CSVURL are url_private_download and list_csv_download_url.
+	Name                string
+	DownloadURL, CSVURL string
+	Template            bool // a list template (list_template_mode)
 }
 
 // ListDoc is one loaded list: its file, schema, views and items.
@@ -119,6 +124,9 @@ type listFileJSON struct {
 	IsPublic      bool            `json:"is_public"`
 	ListMetadata  json.RawMessage `json:"list_metadata"`
 	ListLimits    lists.Limits    `json:"list_limits"`
+	DownloadURL   string          `json:"url_private_download"`
+	CSVURL        string          `json:"list_csv_download_url"`
+	TemplateMode  string          `json:"list_template_mode"`
 }
 
 var errNotList = errors.New("core: not a list")
@@ -134,7 +142,7 @@ func (a *App) listInfo(f *listFileJSON) (ListInfo, lists.Meta, error) {
 	}
 	in := ListInfo{ID: f.ID, Title: title, Creator: f.User, Created: f.Created, Updated: f.EditTimestamp,
 		Editable: f.Editable, Access: f.Access, Editors: f.Editors, Permalink: f.Permalink, IsPublic: f.IsPublic,
-		LastEditor: f.LastEditor}
+		LastEditor: f.LastEditor, Name: f.Name, DownloadURL: f.DownloadURL, CSVURL: f.CSVURL, Template: f.TemplateMode != ""}
 	if in.Updated == 0 {
 		in.Updated = f.Updated
 	}
@@ -714,7 +722,58 @@ type ListTemplate struct {
 	Starter                     bool
 }
 
-// ListTemplates reads Slack's list templates (lists.templates).
+// ListDownload is what a list download asks for (Slack's downloadFile
+// for a list: listsFormat, listsIncludeArchived, listsIncludeThreads,
+// listsIncludeAttachments).
+type ListDownload struct {
+	JSON                           bool
+	Archived, Threads, Attachments bool
+}
+
+// ListDownloadURL is getFileDownloadUrl (client-boot pEESC) for a list:
+// JSON is url_private_download with "download" made "json", CSV is
+// list_csv_download_url (else "download" made "csv"); then origin_team
+// and the lists_include_* flags that are on. "" when the list has no
+// download URL.
+func (a *App) ListDownloadURL(in ListInfo, o ListDownload) string {
+	d := in.DownloadURL
+	if d == "" {
+		return ""
+	}
+	switch {
+	case o.JSON:
+		d = strings.Replace(d, "download", "json", 1)
+	case in.CSVURL != "":
+		d = in.CSVURL
+	default:
+		d = strings.Replace(d, "download", "csv", 1)
+	}
+	if strings.HasPrefix(d, "blob:") {
+		return d
+	}
+	u, err := url.Parse(d)
+	if err != nil {
+		return d
+	}
+	q := u.Query()
+	q.Set("origin_team", a.C.Creds.Team)
+	for k, on := range map[string]bool{"lists_include_archived": o.Archived, "lists_include_threads": o.Threads,
+		"lists_include_attachments": o.Attachments} {
+		if on {
+			q.Set(k, "true")
+		}
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// ListTemplates reads Slack's list templates (lists.templates), the way
+// fetchTemplates (client-boot-shared o9il) picks them: under
+// lists_file_backed_templates the file-backed ones (template_files,
+// starter_template_files); when the plain templates include the sales
+// tracker, it takes the contact trackers' place (both of their file ids
+// and contact_tracker are dropped, the sales tracker goes last).
+// Otherwise templates and starter_templates.
 func (a *App) ListTemplates(ctx context.Context) ([]ListTemplate, error) {
 	type tpl struct {
 		ID          string `json:"id"`
@@ -723,17 +782,37 @@ func (a *App) ListTemplates(ctx context.Context) ([]ListTemplate, error) {
 		Icon        string `json:"icon"`
 	}
 	var r struct {
-		Templates        []tpl `json:"templates"`
-		StarterTemplates []tpl `json:"starter_templates"`
+		Templates            []tpl `json:"templates"`
+		StarterTemplates     []tpl `json:"starter_templates"`
+		TemplateFiles        []tpl `json:"template_files"`
+		StarterTemplateFiles []tpl `json:"starter_template_files"`
 	}
-	if err := a.C.Call(ctx, "lists.templates", url.Values{}, &r); err != nil {
+	if err := a.C.Call(ctx, "lists.templates", url.Values{"reason": {"get-templates"}}, &r); err != nil {
 		return nil, err
 	}
+	tpls, starters := r.Templates, r.StarterTemplates
+	if a.Experiment("lists_file_backed_templates") == "on" {
+		tpls, starters = r.TemplateFiles, r.StarterTemplateFiles
+		for _, t := range r.Templates {
+			if t.ID != "sales_tracker" { // KC9L SalesTracker
+				continue
+			}
+			var kept []tpl
+			for _, f := range tpls {
+				// PTs7 YD/op ContactTracker, KC9L ContactTracker
+				if f.ID != "F017C9UG85R" && f.ID != "F07QKDVNEK1" && f.ID != "contact_tracker" {
+					kept = append(kept, f)
+				}
+			}
+			tpls = append(kept, t)
+			break
+		}
+	}
 	var out []ListTemplate
-	for _, t := range r.StarterTemplates {
+	for _, t := range starters {
 		out = append(out, ListTemplate{ID: t.ID, Name: t.Name, Description: t.Description, Icon: t.Icon, Starter: true})
 	}
-	for _, t := range r.Templates {
+	for _, t := range tpls {
 		out = append(out, ListTemplate{ID: t.ID, Name: t.Name, Description: t.Description, Icon: t.Icon})
 	}
 	return out, nil

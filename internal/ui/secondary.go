@@ -66,6 +66,9 @@ func (a *App) OpenThread(channel, ts string) {
 	}
 	a.secondary = secondaryState{kind: secThread, channel: channel, ts: ts, width: a.secondary.width}
 	a.secondary.view = a.mountThread(channel, ts)
+	if a.data != nil && a.data.core != nil {
+		a.data.core.RecordRecentNavigation(channel, ts) // a thread visit (desktop_search_recents_write)
+	}
 	if c := a.convos[channel+"/"+ts]; c != nil { // a cached thread: Slack mounts a new pane
 		if r, ok := c.list.(interface{ Reopen() }); ok {
 			r.Reopen()
@@ -229,28 +232,53 @@ func (a *App) layoutSecondary(gtx layout.Context) layout.Dimensions {
 // account has them) is 40% of the region by default ("auto", width 0),
 // the dragged width once resized ("manual"), never under 300 and leaving
 // the primary view its 300 (secondary maxWidth: region - 300).
+//
+// By group (aTtQ hW, then the squish xeD9): the column is clamped to 300
+// … 1000, or with the nested view (canSecondaryGrowToFillRegion) to the
+// space beside the rail less 100; then, when the primary view would keep
+// 300 or less, a nested column gives way down to 260 and a plain one
+// takes what is left beside 300 (never under 260).
 func (a *App) secondaryWidth(gtx layout.Context, panel int) int {
 	w := a.secondaryDefault(gtx, panel)
 	if a.secondary.width > 0 {
 		w = gtx.Dp(unit.Dp(a.secondary.width))
 	}
-	if hi := panel - gtx.Dp(300); w > hi {
-		w = hi
+	nested := a.nestedSecondary()
+	hi := gtx.Dp(1000)
+	if nested {
+		hi = panel + a.sidebarPx(gtx) - gtx.Dp(100)
 	}
-	return max(w, gtx.Dp(theme.SecondaryMin))
+	w = max(gtx.Dp(theme.SecondaryMin), min(w, hi))
+	if panel-w <= gtx.Dp(300) {
+		if nested {
+			w = max(min(w, panel-gtx.Dp(300)), gtx.Dp(260))
+		} else {
+			w = max(panel-gtx.Dp(300), gtx.Dp(260))
+		}
+	}
+	return w
+}
+
+// sidebarPx is the sidebar's width beside the primary panel, px.
+func (a *App) sidebarPx(gtx layout.Context) int {
+	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
+		return 0
+	}
+	return gtx.Dp(unit.Dp(a.sidebar.width))
 }
 
 // secondaryDefault is getIdealSecondaryWidth: (region - sidebar) * .4
 // under secondary_view_default_width (on for the account), the region
 // minus the sidebar being the primary panel the pane shares; without it
-// .3 of the region, the sidebar included.
+// .3 of the region, the sidebar included. kl02 k5 only counts under the
+// nested view (isNestedSecondaryViewEnabled), and the Activity tab
+// (wrZz isActivityTab) takes half the region in every group.
 func (a *App) secondaryDefault(gtx layout.Context, panel int) int {
-	if c := a.Core(); c != nil && c.Experiment("secondary_view_default_width") != "on" {
-		sb := 0
-		if !a.sidebar.hidden {
-			sb = gtx.Dp(unit.Dp(a.sidebar.width))
-		}
-		return int(float32(panel+sb)*.3 + .5)
+	if a.router.Current().Page() == "activity" {
+		return int(float32(panel)*.5 + .5)
+	}
+	if c := a.Core(); c != nil && (!a.nestedSecondary() || c.Experiment("secondary_view_default_width") != "on") {
+		return int(float32(panel+a.sidebarPx(gtx))*.3 + .5)
 	}
 	return int(float32(panel)*.4 + .5)
 }

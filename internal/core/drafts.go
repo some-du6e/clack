@@ -411,6 +411,32 @@ func (a *App) ScheduledMessages(ctx context.Context, ch string) ([]ScheduledMess
 	return out, nil
 }
 
+// ScheduledFor is the scheduled messages of a conversation (threadTS "":
+// those not in a thread) or of a thread, from the drafts as last seen,
+// soonest first: Slack's getScheduledDraftsForChannel (QV8V), a draft
+// addressed to the channel, or to a DM's member by user id. loaded is
+// false until the drafts were first seen. It doesn't block.
+func (a *App) ScheduledFor(ch, threadTS string) (out []ScheduledMessage, loaded bool) {
+	dmUser := ""
+	if c, ok := a.S.Conv(ch); ok && c.IsIM {
+		dmUser = c.User
+	}
+	a.mu.Lock()
+	loaded = a.drafts.byID != nil
+	for _, d := range a.drafts.byID {
+		if d.DateScheduled == 0 || d.ThreadTS != threadTS {
+			continue
+		}
+		if d.Channel != ch && !(d.Channel == "" && dmUser != "" && len(d.Users) == 1 && d.Users[0] == dmUser) {
+			continue
+		}
+		out = append(out, scheduledOf(d))
+	}
+	a.mu.Unlock()
+	sort.SliceStable(out, func(i, j int) bool { return out[i].PostAt < out[j].PostAt })
+	return out, loaded
+}
+
 // DeleteScheduled cancels a scheduled message.
 func (a *App) DeleteScheduled(ctx context.Context, ch, id string) error {
 	return a.DeleteDraft(ctx, id)

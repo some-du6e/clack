@@ -50,6 +50,7 @@ type dockState struct {
 	clicks            map[string]*widget.Clickable
 	tips              map[string]*popups.TipState
 	stick             *popups.Menu
+	audio             *popups.Menu // the mic's Audio settings menu
 }
 
 func (d *dockState) click(id string) *widget.Clickable {
@@ -421,10 +422,8 @@ func (c *Controller) dockTiles(st huddle.State, now time.Time) []huddle.Particip
 // dockCtls is HuddleToolbarCenterButtons with the bar's state (the mute
 // button, the camera, the sticker pair, reactions, the thread and ⋯).
 func (c *Controller) dockCtls(st huddle.State) []ctl {
-	mic := ctl{id: "mic", icon: "mic", on: true, tip: "Mute mic"}
-	if st.Muted || st.Mic.Problem() {
-		mic = ctl{id: "mic", icon: "mic-off", warn: st.Mic.Problem(), tip: "Unmute mic"}
-	}
+	// HuddleToolbarMuteButton inBottomBar: segmented, like the window's
+	mics := c.micCtls(st, c.dock.audio != nil && !c.dock.audio.Dismissed())
 	cam := ctl{id: "camera", icon: "video-off", tip: "Turn on camera"}
 	switch st.Camera.State {
 	case huddle.CameraOn:
@@ -450,13 +449,13 @@ func (c *Controller) dockCtls(st huddle.State) []ctl {
 	if stick {
 		caret = "caret-down"
 	}
-	return []ctl{mic, cam,
-		{id: "hand", emoji: c.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain},
-		{id: "stickers", icon: caret, on: stick, tip: "Choose sticker", seg: segCaret},
-		{id: "react", icon: "emoji", hover: "emoji-filled", tip: "Add reaction"},
-		{id: "thread", icon: "threads", tip: "Open thread"},
-		{id: "more", icon: "ellipsis-vertical-filled", tip: "More actions"},
-	}
+	return append(mics, cam,
+		ctl{id: "hand", emoji: c.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain},
+		ctl{id: "stickers", icon: caret, on: stick, tip: "Choose sticker", seg: segCaret},
+		ctl{id: "react", icon: "emoji", hover: "emoji-filled", tip: "Add reaction"},
+		ctl{id: "thread", icon: "threads", tip: "Open thread"},
+		ctl{id: "more", icon: "ellipsis-vertical-filled", tip: "More actions"},
+	)
 }
 
 func dockCtlW(gtx C, k ctl) int {
@@ -479,7 +478,19 @@ func (c *Controller) dockClick(gtx C, id string, s *huddle.Session, st huddle.St
 	r = r.Add(c.dockOrigin)
 	switch id {
 	case "mic":
-		s.SetMuted(!st.Muted)
+		c.micClick(s, st, ph)
+	case "micmenu":
+		if ph == nil {
+			return
+		}
+		if c.dock.audio != nil && !c.dock.audio.Dismissed() {
+			c.dock.audio.Dismiss()
+			c.dock.audio = nil
+			break
+		}
+		c.dock.audio = popups.NewMenuOpts(ph, c.audioMenu(s), popups.MenuOpts{Anchor: r, Side: popups.Above,
+			MenuClass: "p-huddle_more_actions_menu"})
+		ph.ShowOverlay(c.dock.audio)
 	case "camera":
 		if st.Camera.State == huddle.CameraOn || st.Camera.State == huddle.CameraStarting {
 			s.SetCamera(false)
