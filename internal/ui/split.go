@@ -138,6 +138,7 @@ type paneState struct {
 	hudOrigin    map[string]*originTracker
 	starOrigin   map[string]*originTracker
 	joinBannerCh string
+	hdrx         *headerExtra
 }
 
 // swapPane exchanges the App's view-container fields with p's.
@@ -153,6 +154,7 @@ func (a *App) swapPane(p *paneState) {
 	a.hudOrigin, p.hudOrigin = p.hudOrigin, a.hudOrigin
 	a.starOrigin, p.starOrigin = p.starOrigin, a.starOrigin
 	a.joinBannerCh, p.joinBannerCh = p.joinBannerCh, a.joinBannerCh
+	a.hdrx, p.hdrx = p.hdrx, a.hdrx
 }
 
 // inPane runs f in view container pane ("" the main window's views,

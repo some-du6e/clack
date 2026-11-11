@@ -213,11 +213,23 @@ var experimentReads = map[string][]string{
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
-	"availability_prefs_section": on, "status_improvements": on,
+	"availability_prefs_section": on, "status_improvements": on, "activity_bulk_unread_tool": on,
+	"lists_grid_todos": on,
+	// channel header, tabs and details (channel.go, views/details*.go)
+	"ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on, "enable_new_channel_settings": on,
+	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
+	"channel_topic_purpose_setting_restrict_to_channel_managers": on, "channel_details_agents_apps_tab": on,
+	"list_channel_tab_show_view_name_fe": on, "lists_channel_tabs_default_view": on,
+	// secondary views, messages and workflows (merged from their branches)
+	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
+	"workflow_execution_window": on, "enable_wfb_ai_answer_step": on,
+	// drafts (backend.go: the sidebar's draft pencil)
+	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
 	// messages and senders
 	"reskin_custom_responses": on, "show_as_agent": on, "agent_badge": on, "support_lots_of_agents": on,
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
+	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
 	"autocomplete_flannel_fuzzy_match_passthrough":             {"treatment"},
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
@@ -231,9 +243,4 @@ var experimentReads = map[string][]string{
 	"app_thread_nugget_fe": on, "app_nugget_refinement": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
-	// read by code merged into ui without a listing here (TestExperimentReadsListed failed on ui 3a5a0373)
-	"activity_bulk_unread_tool": on, "ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on,
-	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
-	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
-	"lists_grid_todos": on, "rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
 }

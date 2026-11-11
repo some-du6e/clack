@@ -119,6 +119,10 @@ type ChannelDetails struct {
 	tabKinds []int
 	lists    map[int]*widget.List
 
+	// tabsAgentsApps is the channel_details_agents_apps_tab group the tabs
+	// were built for (a plugin's override rebuilds them)
+	tabsAgentsApps bool
+
 	scrim, dlg, closeBtn            widget.Clickable
 	star, notif, call, vip, hide    widget.Clickable
 	retry                           widget.Clickable
@@ -251,15 +255,27 @@ func cdGroup(kind string) string {
 	return "channel"
 }
 
+// setTabs is BaseAboutChannelModal's tab list (vWNA aZ). Under
+// channel_details_agents_apps_tab (M/qt _2) a channel has "Agents &
+// apps" and, right after it, "Automations" (IntegrationsSection);
+// otherwise the agents tab is "Agents", shown only for Agentforce,
+// channel experts or Slackbot in channels (aO: LxPK TI / pj, RW6b _u,
+// AkZ1 PN: data Clack doesn't load, so it stays hidden), and the same
+// IntegrationsSection is "Integrations" after Tabs.
 func (d *ChannelDetails) setTabs() {
 	var kinds []int
+	agentsApps := d.h.Core().Experiment("channel_details_agents_apps_tab") == "on"
 	switch cdGroup(d.kind) {
 	case "im":
 		kinds = []int{cdAbout, cdTabs}
 	case "mpim":
 		kinds = []int{cdAbout, cdMembers, cdTabs}
 	default:
-		kinds = []int{cdAbout, cdMembers, cdApps, cdAutomations, cdTabs}
+		if agentsApps {
+			kinds = []int{cdAbout, cdMembers, cdApps, cdAutomations, cdTabs}
+		} else {
+			kinds = []int{cdAbout, cdMembers, cdTabs, cdAutomations}
+		}
 	}
 	// BaseAboutChannelModal shows Settings when the settings sections
 	// (jf5b) aren't empty, never to guests
@@ -269,9 +285,13 @@ func (d *ChannelDetails) setTabs() {
 	labels := make([]string, len(kinds))
 	for i, k := range kinds {
 		labels[i] = cdTabLabels[k]
+		if k == cdAutomations && !agentsApps {
+			labels[i] = "Integrations"
+		}
 	}
 	d.tab = newTabs(labels...)
 	d.tabKinds = kinds
+	d.tabsAgentsApps = agentsApps
 }
 
 func (d *ChannelDetails) list(k int) *widget.List {
@@ -684,6 +704,9 @@ func (d *ChannelDetails) update(gtx C) {
 			d.setTabs()
 		}
 	}
+	if (d.h.Core().Experiment("channel_details_agents_apps_tab") == "on") != d.tabsAgentsApps {
+		d.setTabs() // the group changed under the open dialog
+	}
 
 	for _, c := range []*widget.Clickable{&d.call, &d.emails, &d.addApp, &d.addWorkflow} {
 		if c.Clicked(gtx) {
@@ -705,6 +728,9 @@ func (d *ChannelDetails) update(gtx C) {
 	// Topic / description / name editing.
 	if d.editTopic.Clicked(gtx) && loaded {
 		d.startEdit(cdEditTopic, inf.Conv.Topic)
+	}
+	if d.x.mpdmName.Clicked(gtx) && loaded {
+		d.openRenameMpdm(d.conv(inf, true))
 	}
 	if d.editPurpose.Clicked(gtx) && loaded {
 		d.startEdit(cdEditPurpose, inf.Conv.Purpose)
@@ -1064,16 +1090,32 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 		})
 	} else {
 		title, ic := d.title(cv)
+		named, small := false, false
+		if cdGroup(d.kind) == "mpim" {
+			_, named, small = d.mpdmTitle(cv)
+		}
 		dirAt(gtx, image.Pt(gtx.Dp(cdPadX), gtx.Dp(20)), func(gtx C) D {
 			gtx.Constraints.Max.X = max(0, w-gtx.Dp(cdPadX+64))
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D {
+					if named { // BaseChannelPrefixMpim: margin 0 8px 0 -4px, then MPDMInfo's gap 8px
+						return layout.Inset{Left: -4, Right: 16}.Layout(gtx, func(gtx C) D {
+							gtx.Constraints = layout.Exact(image.Pt(gtx.Dp(20), gtx.Dp(20)))
+							d.mpdmPrefix(gtx, cv)
+							return D{Size: gtx.Constraints.Min}
+						})
+					}
 					if ic == "" {
 						return D{}
 					}
 					return layout.Inset{Right: 2}.Layout(gtx, func(gtx C) D { return d.icon(gtx, ic, 22, d.p.Text) })
 				}),
-				layout.Rigid(func(gtx C) D { return d.para(gtx, 22, 30, wBlack, d.p.Text, 1, title) }),
+				layout.Rigid(func(gtx C) D {
+					if small { // .p-view_header__channel_title--small: 18px/1.33334
+						return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, title)
+					}
+					return d.para(gtx, 22, 30, wBlack, d.p.Text, 1, title)
+				}),
 			)
 		})
 	}
@@ -1164,12 +1206,9 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 
 // title returns the channel/group title and its leading glyph.
 func (d *ChannelDetails) title(cv core.Conv) (string, string) {
-	if cdGroup(d.kind) == "mpim" {
-		if len(cv.Members) > 0 {
-			return d.groupNames(cv.Members), ""
-		}
-		if cv.Name != "" {
-			return mpimName(cv.Name), ""
+	if cdGroup(d.kind) == "mpim" { // MPDMTitle (details_mpdm.go)
+		if t, _, _ := d.mpdmTitle(cv); t != "" {
+			return t, ""
 		}
 		return d.convTitle(d.id, nil), ""
 	}
@@ -1419,7 +1458,11 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 		}
 		items = append(items, cdGap(16), d.cdCard(d.emailsField))
 	case "mpim":
-		items = []W{cdGap(16), d.cdCard(topic), cdGap(16), d.cdCard(d.emailsField)}
+		items = []W{cdGap(16)}
+		if d.h.Core().CanNameMpdm(d.id) { // MpdmConversationNameField
+			items = append(items, d.cdCard(d.mpdmNameField), cdGap(16))
+		}
+		items = append(items, d.cdCard(topic), cdGap(16), d.cdCard(d.emailsField))
 	default:
 		rows := []W{topic, func(gtx C) D { return d.purposeField(gtx, cv) }}
 		if d.showOrgAccess(inf) {
@@ -1439,16 +1482,25 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 	return append(items, d.idLine)
 }
 
+// topicField is ChannelTopicField: an EditableField, disabled without
+// canUserSetTopicForChannelWithReasonById.
 func (d *ChannelDetails) topicField(gtx C, cv core.Conv) D {
-	return d.cdField(gtx, "Topic", &d.editTopic, func(gtx C) D {
-		return d.richText(gtx, "topic/"+d.id, cv.Topic, cv.TopicDoc, "Add a topic")
-	})
+	value := func(gtx C) D { return d.richText(gtx, "topic/"+d.id, cv.Topic, cv.TopicDoc, "Add a topic") }
+	if !d.h.Core().CanSetTopic(d.id) {
+		return d.cdFieldDisabled(gtx, "Topic", value)
+	}
+	return d.cdField(gtx, "Topic", &d.editTopic, value)
 }
 
+// purposeField is ChannelPurposeField: disabled without canUserSetPurpose.
 func (d *ChannelDetails) purposeField(gtx C, cv core.Conv) D {
-	return d.cdField(gtx, "Description", &d.editPurpose, func(gtx C) D {
+	value := func(gtx C) D {
 		return d.richText(gtx, "purpose/"+d.id, cv.Purpose, cv.PurposeDoc, "Add a description")
-	})
+	}
+	if !d.h.Core().CanSetPurpose(d.id) {
+		return d.cdFieldDisabled(gtx, "Description", value)
+	}
+	return d.cdField(gtx, "Description", &d.editPurpose, value)
 }
 
 // richText draws a topic/description with richview (mentions and links
@@ -2153,7 +2205,17 @@ func (d *ChannelDetails) tabsItems() []W {
 			})
 		})
 	}
-	return []W{cdGap(16), card, cdGap(24)}
+	out := []W{cdGap(16), card, cdGap(24)}
+	// ManageChannelTabs (Wg5J): without move_channel_tabs_settings the
+	// "who can manage tabs" field (ManageChannelTabsPermissions, z92f)
+	// heads the Tabs tab instead of Settings (not for app channels)
+	if cdGroup(d.kind) == "channel" && d.kind != "app" && d.h.Core().Experiment("move_channel_tabs_settings") != "on" {
+		if inf, ok, err := d.info.get(); ok && err == nil {
+			perms := d.cdCard(func(gtx C) D { return d.tabPermsField(gtx, inf) })
+			out = append([]W{cdGap(16), perms}, out...)
+		}
+	}
+	return out
 }
 
 func (d *ChannelDetails) bookmarkRow(gtx C, b core.Bookmark) D {

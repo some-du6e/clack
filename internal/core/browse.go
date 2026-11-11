@@ -135,6 +135,11 @@ type Tab struct {
 	Deleted      bool   // the tab's file is gone
 	Unread       bool   // a canvas the viewer never opened (no last_read): Slack's blue tab dot
 	Bookmarks    []Bookmark
+	// DefaultView is a list tab's data.lists_channel_tab_default_refine_view_id
+	// (Slack's listsChannelTabDefaultRefineViewId), ViewName that view's
+	// name in the list's list_metadata.views (getListViewById), "" when
+	// the list has no such view.
+	DefaultView, ViewName string
 }
 
 // MemberCounts is edge users/counts. Slack's channel header shows People.
@@ -787,7 +792,8 @@ type tabRaw struct {
 	Label      string `json:"label"`
 	IsDisabled bool   `json:"is_disabled"`
 	Data       struct {
-		FileID string `json:"file_id"`
+		FileID      string `json:"file_id"`
+		DefaultView string `json:"lists_channel_tab_default_refine_view_id"`
 	} `json:"data"`
 }
 
@@ -812,7 +818,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 		if r.IsDisabled {
 			continue
 		}
-		t := Tab{ID: r.ID, Type: r.Type, Label: r.Label, Title: r.Label, FileID: r.Data.FileID}
+		t := Tab{ID: r.ID, Type: r.Type, Label: r.Label, Title: r.Label, FileID: r.Data.FileID, DefaultView: r.Data.DefaultView}
 		if n, ok := builtinTabIDTitles[r.ID]; ok {
 			t.Title = n
 		}
@@ -857,7 +863,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			title, deleted, unread, err := a.tabFileTitle(ctx, t.FileID)
+			title, deleted, unread, views, err := a.tabFileTitle(ctx, t.FileID)
 			if err != nil {
 				log.Printf("tabs %s: files.info %s: %v", ch, t.FileID, err)
 				return
@@ -866,6 +872,9 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 				t.Title, t.Deleted = "Deleted file", true
 			} else if title != "" {
 				t.Title = title
+			}
+			if t.Type == "list" && t.DefaultView != "" {
+				t.ViewName = views[t.DefaultView]
 			}
 			t.Unread = unread && !deleted && t.Type == "canvas"
 		}(&out[i])
@@ -876,23 +885,38 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 }
 
 // tabFileTitle returns a tab file's title, or deleted when it is gone, and
-// unread when the viewer never opened it (files.info has no last_read).
-func (a *App) tabFileTitle(ctx context.Context, fileID string) (title string, deleted, unread bool, err error) {
+// unread when the viewer never opened it (files.info has no last_read);
+// for a list, its views' names by id (list_metadata.views).
+func (a *App) tabFileTitle(ctx context.Context, fileID string) (title string, deleted, unread bool, views map[string]string, err error) {
 	var r struct {
-		File browseFileRaw `json:"file"`
+		File struct {
+			browseFileRaw
+			ListMetadata struct {
+				Views []struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"views"`
+			} `json:"list_metadata"`
+		} `json:"file"`
 	}
 	err = a.C.Call(ctx, "files.info", url.Values{"file": {fileID}}, &r)
 	if isCode(err, "file_not_found", "file_deleted") {
-		return "", true, false, nil
+		return "", true, false, nil, nil
 	}
 	if err != nil {
-		return "", false, false, err
+		return "", false, false, nil, err
 	}
 	if r.File.Mode == "tombstone" || r.File.IsDeleted {
-		return "", true, false, nil
+		return "", true, false, nil, nil
+	}
+	if vs := r.File.ListMetadata.Views; len(vs) > 0 {
+		views = make(map[string]string, len(vs))
+		for _, v := range vs {
+			views[v.ID] = v.Name
+		}
 	}
 	lr := strings.TrimSpace(string(r.File.LastRead))
-	return firstNonEmpty(r.File.Title, r.File.Name), false, lr == "" || lr == "null" || lr == "0", nil
+	return firstNonEmpty(r.File.Title, r.File.Name), false, lr == "" || lr == "null" || lr == "0", views, nil
 }
 
 // RemoveTab deletes a tab from a channel's tab bar (conversations.removeTab;
