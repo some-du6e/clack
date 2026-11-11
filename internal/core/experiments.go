@@ -240,7 +240,7 @@ var experimentReads = map[string][]string{
 	"message_actions_truncate": on, "agent_identity_overrides": on,
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
-	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
+	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
 	"autocomplete_flannel_fuzzy_match_passthrough":             {"treatment"},
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},

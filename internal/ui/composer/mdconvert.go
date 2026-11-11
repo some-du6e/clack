@@ -1933,7 +1933,7 @@ func mdStripCode(doc qDelta) qDelta {
 		codeLine := truthy(at["code-block"])
 		for _, op := range ops {
 			c := op.length()
-			if (op.k == qIns && truthy(op.attrs["code"])) || codeLine {
+			if (op.isInsert() && truthy(op.attrs["code"])) || codeLine {
 				t := op.attrs.clone()
 				if codeLine {
 					t = nil

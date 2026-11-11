@@ -248,6 +248,9 @@ func (it lbItem) windowURL() string {
 
 func (lb *Lightbox) cur() lbItem { return lb.items[lb.idx] }
 
+// Image is the image the viewer shows now.
+func (lb *Lightbox) Image() richtext.Image { return lb.cur().img }
+
 func (lb *Lightbox) go2(i int) {
 	if i < 0 || i >= len(lb.items) || i == lb.idx {
 		return

@@ -213,16 +213,14 @@ func (d *snippetDialog) conv() (core.Conv, bool) {
 	if d.ch == "" || d.c.api.a == nil {
 		return core.Conv{}, false
 	}
-	if cv, ok := d.c.api.conv(d.ch); ok {
-		if d.picked.ID == cv.ID && d.picked.Preview && cv.Kind == "channel" {
-			cv.Preview = true // searched, not joined
+	if d.picked.ID == d.ch && d.picked.ID != "" {
+		// a searched channel: the store's copy when it has one
+		if cv, ok := d.c.api.a.Conv(d.ch); ok {
+			return cv, true
 		}
-		return cv, true
-	}
-	if d.picked.ID == d.ch {
 		return d.picked, true
 	}
-	return core.Conv{}, false
+	return d.c.api.conv(d.ch)
 }
 
 // canPost is canPostInSelectedChannel as far as Clack knows it: a known

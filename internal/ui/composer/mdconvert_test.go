@@ -114,13 +114,13 @@ func TestConvertMarkdownLikeSlack(t *testing.T) {
 		{"lone gt first", ">\n*bold*", 8, 8, "para|\npara|{b}*bo{/}d*", 6, 6},
 		{"triple quote", ">>> all\nof this\nis quoted", 25, 25, "quote|all\nquote|of this\nquote|is quoted", 21, 21},
 		{"triple quote alone", ">>>\nquoted\nlines", 16, 16, "quote|quoted\nquote|lines", 12, 12},
-		{"fence", "```code```", 10, 10, "code|code", 5, 5},
-		{"fence multi", "```\nline one\nline two\n```", 25, 25, "code|line one\ncode|line two", 18, 18},
+		{"fence", "```code```", 10, 10, "code|code", 4, 4},
+		{"fence multi", "```\nline one\nline two\n```", 25, 25, "code|line one\ncode|line two", 17, 17},
 		{"fence inline", "see ```x = 1``` here", 20, 20, "para|see\ncode|x = 1\npara|here", 14, 14},
-		{"fence with markdown", "```*not bold*```", 16, 16, "code|*not bold*", 11, 11},
+		{"fence with markdown", "```*not bold*```", 16, 16, "code|*not bold*", 10, 10},
 		{"fence after text", "text\n```\ncode\n```\nmore", 22, 22, "para|text\ncode|code\npara|more", 14, 14},
-		{"two fences", "```a``` and ```b```", 19, 19, "code|a\npara|and\ncode|b", 8, 8},
-		{"fullwidth fence", "｀｀｀code｀｀｀", 10, 10, "code|code", 5, 5},
+		{"two fences", "```a``` and ```b```", 19, 19, "code|a\npara|and\ncode|b", 7, 7},
+		{"fullwidth fence", "｀｀｀code｀｀｀", 10, 10, "code|code", 4, 4},
 		{"link", "see [docs](https://example.com) now", 35, 35, "para|see {a=https://example.com}docs{/} now", 12, 12},
 		{"link www", "[home](www.example.com)", 23, 23, "para|{a=http://www.example.com}home{/}", 4, 4},
 		{"link mailto", "[mail](mailto:a@b.com)", 22, 22, "para|{a=mailto:a@b.com}mail{/}", 4, 4},
@@ -146,8 +146,8 @@ func TestConvertMarkdownLikeSlack(t *testing.T) {
 		{"nested ordered", "1. a\n    1. b\n    2. c\n2. d", 27, 27, "ordered0|a\nordered1|b\nordered1|c\nordered0|d", 7, 7},
 		{"ordered back out", "1. a\n    - b\n2. c", 17, 17, "para|1. a\nbullet1|b\npara|2. c", 11, 11},
 		{"underscore list", ">_x\n- a", 7, 7, "para|>_x\nbullet0|a", 5, 5},
-		{"quote then fence", "> q\n```c```", 11, 11, "quote|q\ncode|c", 4, 4},
-		{"triple then fence", ">>> q\n```c```", 13, 13, "quote|q\ncode|c", 4, 4},
+		{"quote then fence", "> q\n```c```", 11, 11, "quote|q\ncode|c", 3, 3},
+		{"triple then fence", ">>> q\n```c```", 13, 13, "quote|q\ncode|c", 3, 3},
 		{"empty", "", 0, 0, "para|", 0, 0},
 		{"only markers", "** __ ~~ ``", 11, 11, "para|** __ ~~ ``", 11, 11},
 		{"adjacent", "*a**b*", 6, 6, "para|{b}a{/}*b*", 4, 4},
@@ -236,7 +236,9 @@ func TestConvertMarkdownKeepsWhatIsThere(t *testing.T) {
 // such binding; Mod+F alone isn't it.
 func TestConvertMarkdownKey(t *testing.T) {
 	e := NewEditor()
-	edType(e, "make *this* bold")
+	d := NewDoc()
+	d.Insert(0, "make *this* bold", Attr{}) // as pasted: typing would format it live
+	e.SetDoc(d)
 	edPress(e, "F", key.ModShortcut)
 	if e.Doc().Text() != "make *this* bold" {
 		t.Fatal("Mod+F converted")
