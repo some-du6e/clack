@@ -642,7 +642,11 @@ func TestSlickViewCensorshipActivity(t *testing.T) {
 				inTree = inTree || strings.Contains(string(tr), "made-up *******")
 			}
 			e.ui.mu.Unlock()
-			t.Fatalf("bob's mention previewed %q (row %v, override %v), masked copy in a delivered tree: %v", text, r != nil, r != nil && r.pm != nil, inTree)
+			ov := ""
+			if r != nil {
+				ov = r.ovText
+			}
+			t.Fatalf("bob's mention previewed %q (row %v, override %v, last override text %q), masked copy in a delivered tree: %v", text, r != nil, r != nil && r.om != nil, ov, inTree)
 		}
 		e.frame(v.Layout)
 		time.Sleep(15 * time.Millisecond)

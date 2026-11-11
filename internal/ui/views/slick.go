@@ -26,11 +26,14 @@ import (
 //	    └ ActivityRowContentDetailed | ActivityRowContentDense
 //	      └ ActivityRowContentSenderAvatarLayout, ActivityPrivacyBlurredName, …
 
-// msg is the message the row previews: an ActivityThread override, or the
-// item's own.
+// msg is the message the row previews: an ActivityThread override, a
+// plugin's text for it (ActivityItem's msg), or the item's own.
 func (r *actRow) msg() *core.Message {
 	if r.pm != nil {
 		return r.pm
+	}
+	if r.om != nil {
+		return r.om
 	}
 	return r.it.Msg
 }

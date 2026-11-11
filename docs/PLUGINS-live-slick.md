@@ -16,67 +16,84 @@ Live verification of every Slick plugin (https://github.com/3kh0/slick at `f52d5
   These rely on the `slick` acceptance suite (CI) and source review.
 - **Source review:** each plugin's source was read against Clack's API, patch points, CSS engine and mirror before testing, to know what to look for.
 
-Legend: ✅ works as in Slick on real Slack · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why).
+Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why). **Verified** says how: *live* is the 2026-11-07 run on real Slack; *CI* is the `slick` acceptance suite (internal/slick) or the `ui-slick` view tests (`TestSlickView*`, the real native views over a synthetic workspace) on `plugins-slick-pass` (2026-11-11), with no live run since.
 
-**Status (2026-11-07, `live-slick` at `b28043a`):** live testing is paused. ui-shell is investigating Slack revoking whole sessions of an Enterprise Grid account that uses Clack (suspected: the realtime websocket's client identification). Rows marked *pending live* are verified in CI and by source review only.
+**Status:** live testing stopped on 2026-11-07 (Slack revoked sessions of an Enterprise Grid account using Clack). The 2026-11-11 pass (`plugins-slick-pass`) re-checked every ⚠️/❌ row against its source and Clack's code and marks what CI now proves; nothing below was re-run live.
 
 ## Plugins
 
-| Plugin | Result | Live in Clack | Notes |
+| Plugin | Result | Verified | Notes |
 |---|---|---|---|
-| AccountSwitcher | ⚠️ | not run (switching moves session cookies) | Menu entry registers. Clack has one session, so switching goes through Clack's sign-in. |
-| AdminBackend | ✅ | "Open in Identity / Telescreen / Fire Engine / Attend" in the profile ⋮ menu | |
-| AnonymiseFileNames | ❌ | — | Clack uploads from Go, never as JS `File`s. Its 3 components have no patch point. |
-| bChannel | ❌ | not run (it posts and invites) | The composer drops a patched send's replaced delta (`prepareAndSend` honours only `shouldBroadcast`). |
-| BetterBlock | ⚠️ | "Block karim" in the profile ⋮ menu | Messages, threads, reactions and the profile card follow the block (CI). Search hits, typing, notifications and sidebar DMs still show the user. |
-| BetterGifs | ⚠️ | pending live | Source filter fixed (`94efea3`). The GIF picker patch points come from taut-ui. |
-| BetterHuddles | ❌ | — | Clack has no huddle media, so its surfaces never render. |
-| BetterTypingIndicator | ⚠️ | pending live (needs a second person typing) | Its `<Original firstTyper>` slot was fixed on live-taut (`550dd92`). |
-| CallTimer | ❌ | — | No huddles. |
-| Censorship | ⚠️ | pending live | Channel and thread bodies are masked (CI). Search cards and Activity rows aren't. Notifications go through live-taut's `02c9fbb`. |
-| ChannelListTyping | ⚠️ | pending live | Source filter fixed (`94efea3`). The sidebar row has no `Channel` patch point. |
-| CharacterCounter | ✅ | "43/40,000" beside the send button, following the text | |
-| ChatTabs | ⚠️ | blocked every send while HaikuWarning was on (bisected live) | Fixed in `815933f`: its main half's `before-input-event` added window key listeners, and Clack fed them the composer's Enter. Plugins' window key listeners now get only the keys no widget took, as on Slack's page. Its main half no longer throws (`ac3ef8a`). Since Slick `f52f03a` (2026-11-08) its tab bar goes first inside `RenderedViewContents` (the `.p-view_contents--primary` element), padded by a `:has(> .slick-chat-tabs)` rule; Clack draws that component and the bar in CI (`TestSlickViewChatTabs`). Live re-check pending. |
-| ClearURLs | ⚠️ | pending live (the one test send was cut short by the pause) | Strips tracking parameters on send in CI. Paste-time cleaning needs a Quill-style composer. |
-| Click2Load | ❌ | — | Clack never creates iframes. It now starts past its prototype check (`6451875`). |
-| CopyReacted | ⚠️ | not seen in the Threads view; channel view pending | |
-| CustomFonts | ❌ | — | The stylesheet installs, but Clack renders only its bundled Lato (no `@font-face`). |
-| CustomNameRecording | ⚠️ | pending live | Button on your own profile. `decodeAudioData` isn't supported, so nothing uploads. |
-| CustomSlackbot | ❌ | — | Needs `hasSlackbotCustomResponseInThread` and the custom-response classes. |
-| CustomSounds | ❌ | — | Clack plays no notification sounds through JS. It starts now, then `load()` returns for `loader === 'electron'`. |
-| DeArrow | ⚠️ | pending live | Works through taut-ui's YouTube card patch points (CI `TestSlickViewDeArrow`). |
-| Experiments | ⚠️ | its Preferences tab renders and saves | Empty catalogue: Clack has no Slack experiments. |
-| HaikuWarning | ✅ (live alone; combined with ChatTabs in CI) | "Found a haiku in your message!", Keep editing returns the text, nothing sent | The dialog was drawn top-left. `showModal()` is now a real modal (`da3c2d4`): top layer, centred over a `::backdrop` that blocks the page, focus inside, Escape fires `cancel` then `close`. The ChatTabs combination is fixed (`815933f`). Needed native Compression Streams, `pipeTo` and `atob`. Centred-dialog look: live re-check pending. |
-| HcaStatus | ⚠️ | pending live | The auth.hackclub.com lookup works and its class reaches the sender. The name underline (`text-decoration`) isn't drawn. |
-| HuddleMuteDetector | ❌ | — | No huddles. |
-| HumanCount | ✅ | header count shows (17, same as Slack) | Guest exclusion fixed (`8086322`). |
-| IgnoreTime | ❌ | — | Clack's copy writes times itself; no native `.c-timestamp__label`. |
-| InstalledApps | ❌ | — | No `Content`/`AboutPage` patch points. Its main half runs now (`ac3ef8a`), but `session.fetch` sends no Slack cookie (security policy), so the marketplace page needs sign-in. |
-| LastSeen | ⚠️ | inconclusive (the user was online) | Hover-card line works. The profile pane draws `BasePresence`, not `Presence`. |
-| LetMeSee | ❌ | — | No huddle media. |
-| LocalTime | ✅ in messages | "3:56 PM • 4:37 PM": the sender's current local time, ticking each minute | Name-to-time gap fixed (`8316a3a`). Profiles have no `LocalTimeRow` patch point (⚠️). |
-| MentionProfiles | ❌ | — | Mention pills are `MemberLink`; there's no `MemberSlug` patch point. |
-| MessageLogger | — | not run (it stores message contents on disk, against the scraping policy) | CI acceptance passes. |
-| Nicknames | ✅ | "Set nickname…" → dialog → the row's sender shows the nickname; profile popups too | Fixed in `a4c04df`. Mentions keep the real name (they're resolved when the message is parsed). |
-| NoTrack | ✅ | nothing visible by design | Telemetry fetch blocked (CI). |
-| NotShitMarkdown | ✅ (CI) | not distinguishable by typing: Clack's composer formats `**x**` itself | Applies on send to pasted Markdown (CI). |
-| NoUpsell | ✅ | nothing to hide: Clack draws no upsells | |
-| OfficeHours | — | not run (it changes your own presence) | `status_text_canonical` added (`51b8338`). JS local time is now the host zone (`7dbe2c1`). |
-| oneko | ⚠️ | broke every mouse click until `7362936`; the cat isn't drawn | Its sprite is a `data:` URL, and pixel `background-position` isn't supported. |
-| OnlineCount | ❌ | — | Needs Slack's flannel `query` export and presence subscriptions for up to 950 users. Not enabled on the shared account. |
-| PrivateChannelMapper | ⚠️ | pending live | Autocomplete rows now keep their `.promise` tier (`d69711c`). The missing-channel pill never triggers. |
-| QuickJoin | ⚠️ | pending live | The Join button comes from taut-ui. Its fallback no longer hangs (30 s thunk timeout, `5aac9fb`). |
-| QuietSpotify | ❌ | — | No frames or Spotify embeds (by design). |
-| RestrictedChannelWarning | ⚠️ | not testable (needs an admin-only channel) | |
-| ShowRealUser | ⚠️ | pending live | Direct relay posts work. Forwarded copies carry a numeric `ts`. |
-| ShowSendingBot | ⚠️ | pending live | Badge on header rows (CI). |
-| ShutUpSlackbot | ✅ (CI) | needs a real Slackbot notice | |
-| SilentTyping | ✅ | composer button toggles ("Disable silent typing") | |
-| SlimMessageBox | ⚠️ | Hide emoji, mention, video, audio: buttons gone | Emoji fixed in `38afc61` + `b985c8d` (children of a patched component's Original now see its ancestors in CSS). The Discord-style one-line layout does nothing. |
-| Snappy | ✅ | nothing visible by design | |
-| StreamerMode | ⚠️ | pending live | Its main half no longer throws (`ac3ef8a`). |
-| UserPronouns | ⚠️ | pending live | Channel headers work (CI). Name gap fixed. |
-| WhoReacted | ⚠️ | not seen in the Threads view; channel view pending | CI `TestSlickViewWhoReacted` draws the reactors' avatars. |
+| AccountSwitcher | ⚠️ | CI (`TestSlickViewAccountSwitcher`) | "Switch account" and "Add another account" sit before Sign out in the user menu. Switching moves Slack session cookies between accounts; Clack has one session, so it goes through Clack's sign-in. |
+| AdminBackend | ✅ | live | "Open in Identity / Telescreen / Fire Engine / Attend" in the profile ⋮ menu. |
+| AnonymiseFileNames | ⚠️ | CI (`TestSlickViewAnonymiseFileNames`) | A file attached in the composer uploads under a random name (extension kept), and the chip's toggle switches it between its original and anonymous name. Its `FileFieldset` and `EditFileDialogTitle` patches have nothing to wrap: Clack has no edit-file dialog. |
+| bChannel | ✅ | CI (`TestSlickViewbChannel*`) | Its /bchannel relay, the @ rows offering every broadcast keyword, its confirm step and the relayed send. Not run live (it posts and invites). |
+| BetterBlock | ✅ | CI (messages, popups, composer, views, shell `TestSlickViewBetterBlock*`) | Blocked people's messages, thread replies, reply-bar avatars, mentions, reactions, profile card, search, @ rows, Activity, DMs, People and sidebar DMs. Notifications go through its `showNotification` patch. |
+| BetterGifs | ✅ | CI (`TestSlickViewBetterGifs`) | Favourite stars on Giphy items in the GIF grid (GifListItem inside the GifPicker boundary). |
+| BetterHuddles | ❌ | — | Out of scope (huddle media): it replaces Slack's call with its own Chime/WebRTC client, which jsrt can't run. Its join-preview wrapper applies (`TestSlickViewBetterHuddles`). |
+| BetterTypingIndicator | ✅ | CI (`TestSlickViewBetterTypingIndicator`) | Names on one 10.5px line in the typing bar. |
+| CallTimer | ✅ | CI (`TestSlickViewCallTimer`) | The timer in the huddle window's title and the bottom bar. Not run live (no live huddles). |
+| Censorship | ✅ | CI (acceptance check; `TestSlickViewCensorshipActivity`) | Masked in channels, threads and the Activity feed. Search cards now show its masked copy too (`MessageListItem`'s result, `search_view.go` `overText`), not yet covered by a view test. Notifications go through its `showNotification` patch. |
+| ChannelListTyping | ✅ | CI (`TestSlickViewChannelListTyping`) | The typing dots at the right of a sidebar row while someone types there. |
+| CharacterCounter | ✅ | live | "43/40,000" beside the send button, following the text. |
+| ChatTabs | ✅ | CI (`TestSlickViewChatTabs`, `TestSlickViewHaikuWarningWithChatTabs`, `TestSlickViewMissedFrameChatTabs`) | Its tab bar inside the primary view, "Open in new Slick tab" in the channel menu, Ctrl+W through its main half. The send it blocked with HaikuWarning on is fixed (`815933f`). |
+| ClearURLs | ⚠️ | CI (acceptance check) | Tracking parameters go on send (its main half fetches the rules). Its paste-time cleaning patches Quill's Clipboard module, which Clack's native composer doesn't have. |
+| Click2Load | ❌ | — | It gates iframes; Clack never creates any. |
+| CopyReacted | ⚠️ | CI (acceptance registers `ReactionBar`, `ReactionAddButton`) | In channels both boundaries exist (messages/row.go), with no view test yet. The Threads, Unreads and Activity views have Slack's Reaction boundary now but no ReactionBar or ReactionAddButton, so its button isn't there. |
+| CustomFonts | ❌ | — | Its stylesheet installs, but Clack draws its bundled Lato and doesn't load `@font-face` fonts. |
+| CustomNameRecording | ⚠️ | — | Its button shows on your own profile; `decodeAudioData` isn't supported, so nothing uploads. |
+| CustomSlackbot | ✅ | CI (`TestSlickViewCustomSlackbot`) | Its avatar and name on Slackbot's custom responses (`subtype: slackbot_response`) and in the reply bar. Clack draws no custom-response label, so its rule hiding that badge has nothing to hide. |
+| CustomSounds | ❌ | — | Clack plays no notification sounds through JS; its `load()` returns for `loader === 'electron'`. |
+| DeArrow | ✅ | CI (`TestSlickViewDeArrow`) | Crowdsourced title and thumbnail on YouTube unfurls, with its toggle. |
+| Experiments | ✅ | CI (`experiments` workflow `TestExperimentsPluginsDriveClack`, acceptance check) | A group forced in its tab drives Clack (sidebar_section_search gates the section menu's "Search in this section"); turning it off gives the server's group back. Never set on the real account. |
+| HaikuWarning | ✅ | live (alone), CI (with ChatTabs) | "Found a haiku in your message!"; Keep editing returns the text. |
+| HcaStatus | ⚠️ | CI (acceptance check) | The auth.hackclub.com lookup works and its class reaches the sender. Whether its name underline draws on Clack's native sender isn't covered by a test. |
+| HuddleMuteDetector | ❌ | — | Out of scope (huddle media). |
+| HumanCount | ✅ | live | The header count (17, same as Slack). |
+| IgnoreTime | ✅ | CI (`TestIgnoreTimeLeavesTimesOutOfCopies`) | Its `.c-timestamp__label {user-select: none}` now keeps the times out of a multi-message copy's header lines, as in Slack. |
+| InstalledApps | ⚠️ | CI (`TestSlickViewInstalledApps`) | Its block sits in a person's full profile and around an app's AboutPage. Its main half's `session.fetch` sends no Slack cookie (security policy), so the marketplace page asks to sign in. |
+| LastSeen | ✅ | CI (`TestSlickViewLastSeen`) | "Last seen …" on the profile card and in the full profile's presence row. |
+| LetMeSee | ⚠️ | CI (`TestSlickViewLetMeSee`) | Out of scope for live (huddles). Its points render; "Hide drawings" clones Slack's mini-panel DOM, which a native panel doesn't have. |
+| LocalTime | ✅ | live (messages), CI (`TestSlickViewLocalTime`) | The sender's local time after the timestamp; the profile card and the full profile's clock row. |
+| MentionProfiles | ✅ | CI (`TestSlickViewMentionProfiles`) | Pictures in @mention pills (MemberSlug); without the @ when its setting says so. |
+| MessageLogger | ✅ | CI (`TestSlickViewMessageLogger*`) | Deleted messages stay, marked; edits are marked; "Accept deletion" in the ⋮ menu. Not run live (it keeps message contents on disk). |
+| Nicknames | ✅ | live | "Set nickname…" → the row's sender and popups show the nickname. |
+| NoTrack | ✅ | CI | Telemetry fetches are blocked. Nothing visible, as in Slack. |
+| NotShitMarkdown | ✅ | CI | Pasted Markdown is converted on send. |
+| NoUpsell | ✅ | live | Clack draws no upsells. |
+| OfficeHours | — | CI (acceptance check) | Not run live (it changes your presence). |
+| oneko | ⚠️ | CI (acceptance check) | The cat element and its mousemove listener work; the cat isn't drawn (its sprite is a `data:` URL moved with pixel `background-position`). |
+| OnlineCount | ❌ | — | Needs Slack's flannel `query` export and presence subscriptions for up to 950 users. |
+| PrivateChannelMapper | ⚠️ | — | Autocomplete rows keep their `.promise` tier (`d69711c`); the missing-channel pill never triggers. |
+| QuickJoin | ✅ | CI (`TestSlickViewQuickJoin`) | A Join button under a channel you can join. |
+| QuietSpotify | ❌ | — | No Spotify embeds or frames in Clack. |
+| RestrictedChannelWarning | ✅ | CI (acceptance check) | "Post anyway" in the roadblock of an admin-only channel. Not testable live (needs such a channel). |
+| SelfCare | — | — | New upstream (`2896741`), after the pinned Slick; not reviewed in this pass. |
+| ShowRealUser | ⚠️ | — | Direct relay posts work; forwarded copies carry a numeric `ts`. |
+| ShowSendingBot | ✅ | CI (`TestSlickViewShowSendingBot`, messages and shell) | The bot's badge on the avatar of a message a bot posted for a person. |
+| ShutUpSlackbot | ✅ | CI | Slash-command notices are dropped, other notifications shown. |
+| SilentTyping | ✅ | live | Its composer toggle. |
+| SlimMessageBox | ✅ | CI (`TestSlickViewSlimMessageBoxOneLine`, `…HidesEmoji`) | The hide toggles, and now the Discord-style one-line layout: its row-flex `.c-basic_container__body` puts the footer beside the editor (composer `layoutBox`). Unlike Slack, pending attachments don't stack it again (Clack's natives answer `:has()` with false), and the editor's 450px min-width alone decides when it wraps (`@container` queries always apply). |
+| Snappy | ✅ | CI (`TestSnappyInClack`, `TestSlickViewSnappy`) | See [Snappy in Clack](#snappy-in-clack). |
+| StreamerMode | ⚠️ | CI (acceptance check) | Notifications are silenced and its redaction stylesheet installs. Its blur (`filter: blur`) applies to natives that wrap their CSS, but no view test checks the sidebar, Activity or DM rows yet. |
+| UserPronouns | ✅ | CI (`TestSlickViewUserPronouns`, acceptance check) | Pronouns after the timestamp in channel rows (BaseBroadcastPreamble), once per run of grouped messages, and in thread headers. |
+| WhoReacted | ✅ | CI (`TestSlickViewWhoReacted`, `TestSlickViewWhoReactedInViews`) | Reactors' avatars in reaction pills, in channels and now in the Threads, Unreads and Activity views (their pills are Slack's Reaction → UnstyledButton). |
+
+## Snappy in Clack
+
+Snappy (src/plugins/Snappy) makes Slack feel faster by collapsing CSS transitions and turning off slow features. Each part does the same in Clack (CI: `TestSnappyInClack`, `TestSlickViewSnappy`):
+
+| Snappy does in Slack | Clack does |
+|---|---|
+| **Always:** scans `document.styleSheets` and overrides every rule that declares a transition with `transition-duration: .01ms; transition-delay: 0s` (transitions.ts). Keyframe animations aren't touched. | The page has Slack's stylesheet for the transitions Clack draws natively (`slackc.NativeTransitionsCSS`, Slack's own rules, also in the CSS engine's base sheet), with a real CSSOM (jsrt). Snappy's override reaches the CSS engine, and the natives read their timing from the cascade (`Styled.Transition`): the thread pane's read lines dim at once instead of 3 s later, the channel join banner and agent plan/task blocks stop animating. |
+| `optimizeSelectors`: rewrites rightmost `:is()` selectors so Chromium can index them. | Nothing to do: Clack's engine already indexes a rightmost `:is()` of classes under each class. Said in its Preferences description. |
+| `optimizeDuplicateStyles`: disables duplicate `<link>` stylesheets. | Nothing to do: the page has one copy of Slack's stylesheet. Said in Preferences. |
+| `optimizeResize`: holds Slack's `resize` listeners and ResizeObservers while a window edge is dragged, then replays once. | Slick's `deferResizeWork` now holds ResizeObservers too, not only `resize` events. Clack's own layout is native and follows the window every frame. |
+| `optimizeStateTracking`: opts Slack's Redux code into two fast paths at boot. | Nothing to do: Clack's views never run Slack's Redux code. Said in Preferences. |
+| `disableSpellcheck` (main half): `session.setSpellCheckerEnabled(false)`, live. | The composer stops spellchecking (Electron's session spellchecker is Clack's), and checks again when it's off or Snappy stops. |
+| `disableCrashReporter` (default on, main half): Chromium's `disable-crashpad` and `disable-crash-reporter` at boot. | Clack's main halves' switches are kept for the next start (`slick/switches.json`); with these, Clack doesn't capture crashes into crash.log. |
+| `ignoreGpuBlocklist` (main half): Chromium's `ignore-gpu-blocklist`. | Gio's one GPU blocklist is X11's Vulkan (NVIDIA drivers): at the next start an X11 window tries Vulkan first (`app.IgnoreGPUBlocklist`, CLACK_PATCHES §4). |
+
 
 ## Themes and custom CSS
 

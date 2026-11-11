@@ -175,7 +175,9 @@ type actRow struct {
 	tm    *core.Message // the last thread message pm was looked up as
 	count int
 
-	// a plugin's text for the item's message (textOverride), parsed
+	// a plugin's text for the item's message (ActivityItem's msg,
+	// textOverride), parsed: the preview after pm
+	om     *core.Message
 	ovSrc  *core.Message
 	ovText string
 	ovMsg  core.Message
@@ -1915,11 +1917,14 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	sel := v.selOK && v.selKey == r.key
 	hov := r.click.Hovered()
 	var mods uint64
-	r.pm = nil // an ActivityThread override sets it again inside
+	if !slackc.Patched("ActivityItem") {
+		r.om = nil
+	}
 	if p != nil {
 		mods = classMods(p.StrOr("className", ""), actItemMods)
+		r.om = nil
 		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
-			r.pm = r.textOverride(it.Msg, mp)
+			r.om = r.textOverride(it.Msg, mp)
 			om := msgOverride(it.Msg, mp)
 			r.pd = r.d
 			if n, av := v.authorOf(&om); n != "" {
