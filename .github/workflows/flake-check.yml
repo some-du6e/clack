@@ -68,7 +68,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (create channel, stars/saved kept across the boot fetch)
         run: go test -race -count=$COUNT -run 'TestCreateChannel$|TestExtrasKeepEditsMadeMeanwhile$' ./internal/core
       - name: composer (files-only drafts)
@@ -94,7 +94,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: composer (an image sent on its own; its tile uploading from the first frame)
         run: go test -count=$COUNT -run 'TestImageOnlySendFlow$' ./internal/ui/composer
       - name: composer, race detector
@@ -115,7 +115,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core (recents loaded once, whichever trigger comes first)
         run: go test -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
       - name: core, race detector
@@ -149,7 +149,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
       - name: GPU tests (Mesa llvmpipe; packages in parallel, as in ci.yml before -p 1)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -198,7 +198,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: MessageLogger threads (and the logger next to it)
         env:
           SLICK_PLUGINS_DIR: ${{ github.workspace }}/dist/slick-plugins
