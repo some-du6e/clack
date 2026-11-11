@@ -46,6 +46,7 @@ type srPillState struct {
 	tags    []*srPillTag
 	icons   []*srPillTag
 	spans   []widget.TextSpan
+	of      [][2]int // each token's first and last span (-1: none)
 }
 
 type srPillTag struct{ i int }
@@ -55,11 +56,15 @@ type srPillTag struct{ i int }
 // after it; a mention's padding on both sides.
 func (p *SearchPopover) tokenSpans(gtx layout.Context) []widget.TextSpan {
 	out := p.pills.spans[:0]
+	of := p.pills.of[:0]
 	n := p.ed.Len()
 	for _, t := range p.tokens {
 		if t.end() > n || t.label == "" {
+			of = append(of, [2]int{-1, -1})
 			continue
 		}
+		first := len(out)
+		of = append(of, [2]int{first, first})
 		if t.mention {
 			out = append(out, widget.TextSpan{Start: t.start, End: t.end(), Before: dp(gtx, 2), After: dp(gtx, 2)})
 			continue
@@ -76,9 +81,26 @@ func (p *SearchPopover) tokenSpans(gtx layout.Context) []widget.TextSpan {
 		}
 		out = append(out, widget.TextSpan{Start: t.start, End: vs, Before: before},
 			widget.TextSpan{Start: vs, End: t.end(), Font: &srBoldEditorFont, After: after})
+		of[len(of)-1][1] = first + 1
 	}
-	p.pills.spans = out
+	p.pills.spans, p.pills.of = out, of
 	return out
+}
+
+// tokenBounds is token i's text as laid out (SpanBounds of its spans).
+func (p *SearchPopover) tokenBounds(i int) (image.Rectangle, bool) {
+	if i < 0 || i >= len(p.pills.of) || p.pills.of[i][0] < 0 {
+		return image.Rectangle{}, false
+	}
+	a, ok := p.ed.SpanBounds(p.pills.of[i][0])
+	if !ok {
+		return image.Rectangle{}, false
+	}
+	b, ok := p.ed.SpanBounds(p.pills.of[i][1])
+	if !ok {
+		return image.Rectangle{}, false
+	}
+	return a.Union(b), true
 }
 
 // drawPills draws the tokens' pills from this frame's layout: the pill,
@@ -87,7 +109,6 @@ func (p *SearchPopover) tokenSpans(gtx layout.Context) []widget.TextSpan {
 func (p *SearchPopover) drawPills(gtx layout.Context, th *theme.Theme, cl *Colors) {
 	st := &p.pills
 	n := p.ed.Len()
-	var regs []widget.Region
 	for len(st.tags) < len(p.tokens) {
 		st.tags = append(st.tags, &srPillTag{i: len(st.tags)})
 		st.icons = append(st.icons, &srPillTag{i: len(st.icons)})
@@ -96,13 +117,9 @@ func (p *SearchPopover) drawPills(gtx layout.Context, th *theme.Theme, cl *Color
 		if t.end() > n {
 			continue
 		}
-		regs = p.ed.Regions(t.start, t.end(), regs[:0])
-		if len(regs) == 0 {
+		b, ok := p.tokenBounds(i)
+		if !ok {
 			continue
-		}
-		b := regs[0].Bounds
-		for _, r := range regs[1:] {
-			b = b.Union(r.Bounds)
 		}
 		left, right := dp(gtx, 2), dp(gtx, 2)
 		if !t.mention {

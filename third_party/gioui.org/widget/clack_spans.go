@@ -7,6 +7,7 @@ package widget
 // regular modifier, a bold value, padding around the pill).
 
 import (
+	"image"
 	"io"
 	"math"
 	"unicode/utf8"
@@ -45,6 +46,20 @@ func (e *Editor) SetSpans(spans []TextSpan) {
 // Spans are the editor's spans (SetSpans).
 func (e *Editor) Spans() []TextSpan { return e.text.spans }
 
+// SpanBounds is span i's text as the editor last laid it out, in the
+// coordinates Regions uses: from its first glyph to the end of its last,
+// the line's height, without the span's Before and After. (Regions can't
+// say where a span's text starts: the caret position before its first
+// rune is the one before the Before space.) ok is false when the last
+// layout didn't use the spans or span i isn't in the text.
+func (e *Editor) SpanBounds(i int) (image.Rectangle, bool) {
+	sc := &e.text.span
+	if !sc.laid || i < 0 || i >= len(sc.bounds) || !sc.has[i] {
+		return image.Rectangle{}, false
+	}
+	return sc.bounds[i].Sub(e.text.scrollOff), true
+}
+
 func spansEqual(a, b []TextSpan) bool {
 	if len(a) != len(b) {
 		return false
@@ -67,6 +82,7 @@ type spanSegment struct {
 	start, end    int // runes
 	font          font.Font
 	before, after int
+	span          int // the span it is, -1 for the text between spans
 }
 
 // spanScratch holds layoutSpans' buffers between layouts.
@@ -75,6 +91,11 @@ type spanScratch struct {
 	offs   []int // byte offset of each rune, and of the end
 	segs   []spanSegment
 	glyphs []text.Glyph
+	// laid reports that the last layout used the spans; bounds are each
+	// span's text then (document coordinates), has which were laid out
+	laid   bool
+	bounds []image.Rectangle
+	has    []bool
 }
 
 // layoutSpans is layoutText for a text with spans: the text shaped in
@@ -83,10 +104,11 @@ type spanScratch struct {
 // and the spans' space). It returns false, having shaped nothing and left
 // the text's read position at the start, when the spans don't apply.
 func (e *textView) layoutSpans(lt *text.Shaper, it *textIterator) bool {
+	sc := &e.span
+	sc.laid = false
 	if len(e.spans) == 0 || !e.SingleLine || e.Mask != 0 {
 		return false
 	}
-	sc := &e.span
 	sc.text = e.Text(sc.text[:0])
 	e.Seek(0, io.SeekStart)
 	txt := sc.text
@@ -109,32 +131,36 @@ func (e *textView) layoutSpans(lt *text.Shaper, it *textIterator) bool {
 	base := e.params.Font
 	segs := sc.segs[:0]
 	pos := 0
-	for _, sp := range e.spans {
+	for k, sp := range e.spans {
 		s, t := min(max(sp.Start, pos), nr), min(max(sp.End, 0), nr)
 		if t < s {
 			continue
 		}
 		if s > pos {
-			segs = append(segs, spanSegment{start: pos, end: s, font: base})
+			segs = append(segs, spanSegment{start: pos, end: s, font: base, span: -1})
 		}
 		f := base
 		if sp.Font != nil {
 			f = *sp.Font
 		}
-		segs = append(segs, spanSegment{start: s, end: t, font: f, before: sp.Before, after: sp.After})
+		segs = append(segs, spanSegment{start: s, end: t, font: f, before: sp.Before, after: sp.After, span: k})
 		pos = t
 	}
 	if pos < nr {
-		segs = append(segs, spanSegment{start: pos, end: nr, font: base})
+		segs = append(segs, spanSegment{start: pos, end: nr, font: base, span: -1})
 	}
 	sc.segs = segs
+	sc.bounds = append(sc.bounds[:0], make([]image.Rectangle, len(e.spans))...)
+	sc.has = append(sc.has[:0], make([]bool, len(e.spans))...)
 
 	p := e.params
 	p.MaxWidth, p.MinWidth, p.Alignment, p.MaxLines = math.MaxInt, 0, text.Start, 0
 	glyphs := sc.glyphs[:0]
 	var x fixed.Int26_6
+	top, bottom := math.MaxInt32, math.MinInt32
 	for _, sg := range segs {
 		x += fixed.I(sg.before)
+		x0 := x
 		if sg.start < sg.end {
 			p.Font = sg.font
 			lt.LayoutString(p, string(txt[sc.offs[sg.start]:sc.offs[sg.end]]))
@@ -142,13 +168,26 @@ func (e *textView) layoutSpans(lt *text.Shaper, it *textIterator) bool {
 			for g, ok := lt.NextGlyph(); ok; g, ok = lt.NextGlyph() {
 				g.X += x
 				end = max(end, g.X+g.Advance)
+				top = min(top, int(g.Y)-g.Ascent.Ceil())
+				bottom = max(bottom, int(g.Y)+g.Descent.Ceil())
 				glyphs = append(glyphs, g)
 			}
 			x = end
 		}
+		if sg.span >= 0 {
+			sc.bounds[sg.span] = image.Rect(x0.Floor(), 0, x.Ceil(), 0)
+			sc.has[sg.span] = true
+		}
 		x += fixed.I(sg.after)
 	}
 	sc.glyphs = glyphs
+	if top > bottom {
+		top, bottom = 0, 0
+	}
+	for k := range sc.bounds {
+		sc.bounds[k].Min.Y, sc.bounds[k].Max.Y = top, bottom
+	}
+	sc.laid = true
 	// one line: only the last glyph ends it, only the first starts the
 	// paragraph
 	for i := range glyphs {

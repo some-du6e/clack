@@ -20,6 +20,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // gtx is a context at the drivers' metric, for measuring.
@@ -29,8 +30,10 @@ func (d *srDrv) gtx() layout.Context {
 
 // matchIncompleteDateFilter and getDateModifierAtCaret: before:, after:
 // or on: (a "-" kept, any case) at the start or after whitespace, its
-// value a partial date; the date runs on through the word after the
-// caret; a token ending the text before the caret matches nothing.
+// value a partial date (isPartialDateValue takes one digit of the day:
+// a whole date isn't partial any more); the date runs on through the
+// word after the caret; a token ending the text before the caret matches
+// nothing.
 func TestSearchDateMatch(t *testing.T) {
 	cases := []struct {
 		text               string
@@ -40,7 +43,8 @@ func TestSearchDateMatch(t *testing.T) {
 		{"before:", true, "before", "before:", ""},
 		{"zephyr after:2026-1", true, "after", "after:", "2026-1"},
 		{"-On:2026-11-0", true, "on", "-On:", "2026-11-0"},
-		{"before:2026-11-05", true, "before", "before:", "2026-11-05"},
+		{"before:2026-11-0", true, "before", "before:", "2026-11-0"},
+		{"before:2026-11-05", false, "", "", ""},
 		{"before:2026-111", false, "", "", ""},
 		{"before:today", false, "", "", ""},
 		{"during:", false, "", "", ""},
@@ -495,25 +499,30 @@ func TestSearchTokenPills(t *testing.T) {
 		t.Fatalf("spans %+v", sp)
 	}
 	space := p.ed.Regions(6, 7, nil)
-	mod := p.ed.Regions(7, 12, nil)
-	val := p.ed.Regions(12, 16, nil)
-	if len(space) == 0 || len(mod) == 0 || len(val) == 0 {
-		t.Fatal("no regions")
+	more := p.ed.Regions(17, 18, nil) // the "m" after the pill's space
+	mod, ok1 := p.ed.SpanBounds(0)
+	val, ok2 := p.ed.SpanBounds(1)
+	if len(space) == 0 || len(more) == 0 || !ok1 || !ok2 {
+		t.Fatalf("no regions or span bounds: %v %v %v %v", space, more, ok1, ok2)
 	}
-	if gap := mod[0].Bounds.Min.X - space[0].Bounds.Max.X; gap != 24 {
+	if gap := mod.Min.X - space[0].Bounds.Max.X; gap != 24 {
 		t.Errorf("the modifier starts %dpx after the text, want 24", gap)
 	}
+	if val.Min.X != mod.Max.X {
+		t.Errorf("the value starts at %d, the modifier ends at %d", val.Min.X, mod.Max.X)
+	}
 	g := d.gtx()
-	bold, reg := textW(g, p.h.Theme(), 15, srBoldEditorFont.Weight, "@Ann"), textW(g, p.h.Theme(), 15, 400, "@Ann")
-	if w := val[0].Bounds.Dx(); bold <= reg || w < bold-1 || w > bold+1 {
+	th := p.h.Theme()
+	bold, reg := textW(g, th, 15, theme.Bold, "@Ann"), textW(g, th, 15, theme.Regular, "@Ann")
+	if w := val.Dx(); bold <= reg || w < bold-1 || w > bold+1 {
 		t.Errorf("value %dpx wide, bold %d, regular %d", w, bold, reg)
 	}
-	after := p.ed.Regions(16, 17, nil)
-	if len(after) == 0 || after[0].Bounds.Min.X-val[0].Bounds.Max.X != 4 {
-		t.Errorf("text after the pill at %v, value ends %d", after, val[0].Bounds.Max.X)
+	// 4px after the value, then the space
+	if sp, got := textW(g, th, 15, theme.Regular, " "), more[0].Bounds.Min.X-val.Max.X; got < sp+3 || got > sp+5 {
+		t.Errorf("the text after the pill starts %dpx after the value (a space is %d), want the space and 4", got, sp)
 	}
 	// the icon's click (7.5 to 25.5px into the pill)
-	pill := mod[0].Bounds.Min.X - 23
+	pill := mod.Min.X - 23
 	pt := f32.Pt(float32(p.rect.Min.X+p.edX+pill+12), float32(p.rect.Min.Y+24))
 	d.r.Queue(pointer.Event{Kind: pointer.Move, Position: pt, Source: pointer.Mouse})
 	d.frame()

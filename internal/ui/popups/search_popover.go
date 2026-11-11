@@ -1635,6 +1635,9 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	at(gtx, image.Pt(tx, 0), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Min: image.Pt(tw, 0), Max: image.Pt(tw, rh)}
+			// the editor first (a pill's click may change the box), drawn
+			// over the placeholder and the ghost text
+			edCall, edDims := record(gtx, func(gtx layout.Context) layout.Dimensions { return p.layoutEditor(gtx, th, cl) })
 			if p.ed.Len() == 0 && p.ghostText() == "" {
 				call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints.Min = image.Point{}
@@ -1643,7 +1646,7 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 				call.Add(gtx.Ops)
 			}
 			if ghost := p.ghostText(); ghost != "" && gtx.Focused(&p.ed) {
-				qw := textW(gtx, th, 15, theme.Regular, p.query)
+				qw := p.textEndX(gtx, th)
 				if gw := textW(gtx, th, 15, theme.Regular, ghost); qw+gw <= tw {
 					call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 						gtx.Constraints.Min = image.Point{}
@@ -1654,7 +1657,8 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 					t.Pop()
 				}
 			}
-			return p.layoutEditor(gtx, th, cl)
+			edCall.Add(gtx.Ops)
+			return edDims
 		})
 	})
 	p.edX = tx
@@ -1662,6 +1666,34 @@ func (p *SearchPopover) inputRow(gtx layout.Context, th *theme.Theme, cl *Colors
 	st := clip.Rect(r).Push(gtx.Ops)
 	pointer.CursorText.Add(gtx.Ops)
 	st.Pop()
+}
+
+// textEndX is where the box's text ends as the editor laid it out: with
+// tokens, wider than the plain text (the pills' space, the bold values),
+// a pill at the end with its right padding.
+func (p *SearchPopover) textEndX(gtx layout.Context, th *theme.Theme) int {
+	n := p.ed.Len()
+	if len(p.tokens) == 0 || n == 0 {
+		return textW(gtx, th, 15, theme.Regular, p.query)
+	}
+	x := 0
+	for _, r := range p.ed.Regions(0, n, nil) {
+		x = max(x, r.Bounds.Max.X)
+	}
+	for i, t := range p.tokens {
+		if t.end() != n {
+			continue
+		}
+		if b, ok := p.tokenBounds(i); ok {
+			x = max(x, b.Max.X)
+		}
+		if t.mention {
+			x += dp(gtx, 2)
+		} else {
+			x += dp(gtx, 4)
+		}
+	}
+	return x
 }
 
 // layoutEditor draws the box's editor with its tokens: the pills under

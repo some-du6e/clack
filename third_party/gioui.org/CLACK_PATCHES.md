@@ -138,7 +138,8 @@ text input in a modal; ci runs it on Linux and macOS). Not in
 ## 6. widget: styled spans in an Editor's text
 
 `widget/clack_spans.go` (new: `TextSpan`, `Editor.SetSpans`,
-`Editor.Spans`, `textView.layoutSpans`) and `widget/text.go` (the
+`Editor.Spans`, `Editor.SpanBounds`, `textView.layoutSpans`) and
+`widget/text.go` (the
 `textView.spans` field and a hook at the top of `layoutText`). An
 addition: an Editor without spans shapes its text as before.
 
@@ -160,8 +161,12 @@ segments plus the spans' space). Only the last glyph keeps
 sees one line; the text's bounds include the space at either end. The
 glyph index builds the caret positions from those glyphs, so `Regions`,
 the caret, selection painting and pointer hits all follow the styled
-layout. Spans are ignored (the text is shaped as usual) for multi-line
-or masked editors.
+layout. At a span's edge the index keeps two caret positions for one
+rune (before and after the space), and `Regions` starts from the first,
+so a pill can't be placed from `Regions`: `SpanBounds` gives each span's
+text as laid out (from its first glyph to the end of its last, in
+`Regions`' coordinates). Spans are ignored (the text is shaped as usual)
+for multi-line or masked editors.
 
 Test: `internal/ui/popups` `TestSearchTokenPills` (a filter token's
 modifier starts 24px after the text before it, its value is as wide as
