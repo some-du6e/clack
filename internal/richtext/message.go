@@ -286,6 +286,11 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 		c.msgCard(a, att)
 	} else if a.IsShare {
 		att.IsShare = true
+		// the shared message's ts as Slack's API sends it, a string
+		// ("1794369255.504199"); TS above is only its whole seconds
+		if t := strings.TrimSpace(string(a.TS)); strings.HasPrefix(t, `"`) {
+			att.MsgTS = strings.Trim(t, `"`)
+		}
 		if att.AuthorName == "" {
 			att.AuthorName, att.AuthorSubname = a.AuthorSubname, ""
 		}

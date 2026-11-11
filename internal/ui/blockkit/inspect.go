@@ -1,5 +1,7 @@
 package blockkit
 
+import "image"
+
 // Read-only views of blockkit's state and the user's modal actions, for
 // tests and debugging (UI goroutine only).
 
@@ -41,6 +43,65 @@ func OpenModal(h Host) (ModalInfo, bool) {
 		mi.Errors[k] = m
 	}
 	return mi, true
+}
+
+// FieldInfo is one text input of the open modal's top view.
+type FieldInfo struct {
+	BlockID, ActionID, Type string
+	Text                    string          // what the field holds
+	Value                   string          // its state value as views.submit sends it ("" for null)
+	Focused                 bool            // it had the key focus in the last frame
+	R                       image.Rectangle // window coordinates, as last drawn
+	Body                    image.Rectangle // the modal body's visible box (R may be scrolled out of it)
+}
+
+// ModalFields lists the text inputs of the open modal's top view, in
+// block order, as of the last frame.
+func ModalFields(h Host) []FieldInfo {
+	s := openStack(h)
+	if s == nil {
+		return nil
+	}
+	return s.fields()
+}
+
+func (s *Stack) fields() []FieldInfo {
+	if len(s.views) == 0 {
+		return nil
+	}
+	sf := s.top()
+	var out []FieldInfo
+	for i := range sf.blocks {
+		b := &sf.blocks[i]
+		if b.Type != "input" || b.Element == nil || !isTextInput(b.Element.Type) {
+			continue
+		}
+		e := b.Element
+		w := sf.ws[b.BlockID+"\x00"+e.ActionID+"\x00"+e.Type]
+		if w == nil {
+			continue
+		}
+		fi := FieldInfo{BlockID: b.BlockID, ActionID: e.ActionID, Type: e.Type, Focused: w.focusedD}
+		v := sf.vals.get(b.BlockID, e.ActionID)
+		switch {
+		case w.ed != nil:
+			fi.Text = w.ed.Text()
+		case w.red != nil:
+			fi.Text = w.red.Doc().Text()
+		}
+		if v != nil {
+			if e.Type == "rich_text_input" {
+				fi.Value = richPlain(v.Rich)
+			} else {
+				fi.Value = textValue(e.Type, v.Text)
+			}
+		}
+		org := sf.org.Add(w.pos)
+		fi.R = image.Rectangle{Min: org, Max: org.Add(w.box)}
+		fi.Body = s.bodyR
+		out = append(out, fi)
+	}
+	return out
 }
 
 // SubmitModal is the user pressing the modal's submit button.

@@ -264,6 +264,7 @@ type User struct {
 	IsOwner           bool    `json:"is_owner,omitempty"`
 	IsBot             bool    `json:"is_bot,omitempty"`
 	IsAppUser         bool    `json:"is_app_user,omitempty"`
+	IsSlackbot        bool    `json:"is_slackbot,omitempty"` // gmjA: Slackbot (with id USLACKBOT)
 	IsRestricted      bool    `json:"is_restricted,omitempty"`
 	IsUltraRestricted bool    `json:"is_ultra_restricted,omitempty"`
 	AgentStatus       string  `json:"agent_status,omitempty"`      // not_an_agent | consistently_an_agent | check_required (bot users)
@@ -354,6 +355,10 @@ type Conversation struct {
 	Priority      float64         `json:"priority,omitempty"`
 	IsOpen        bool            `json:"is_open,omitempty"`
 	ContextTeamID string          `json:"context_team_id,omitempty"`
+	// IsFrozen and IsPendingExtShared keep a DM off Slack's DMs tab
+	// (isFrozen, the pending Slack Connect IM check).
+	IsFrozen           bool `json:"is_frozen,omitempty"`
+	IsPendingExtShared bool `json:"is_pending_ext_shared,omitempty"`
 	// InternalTeamIDs are the org's workspaces with access to the channel
 	// (Enterprise Grid; the details "Workspaces with access" field).
 	InternalTeamIDs []string `json:"internal_team_ids,omitempty"`

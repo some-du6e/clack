@@ -52,6 +52,10 @@ type Store struct {
 
 	// Groups holds full usergroup records (Usergroups maps id -> handle).
 	Groups []slack.Usergroup
+	// MyGroups are the user groups the viewer is in (Slack's
+	// userGroupMembership: usergroups.membership, subteam_self_added and
+	// subteam_self_removed; memory only)
+	MyGroups map[string]bool
 	// Muted is the set of muted conversation ids (from prefs).
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
@@ -616,9 +620,9 @@ func PrefName(u *slack.User, displayRealNames bool) string {
 }
 
 // AvatarURL is u's picture for a slot of size px: the profile image that
-// covers it, else the ca.slack-edge.com picture of avatar_hash, else
-// Slack's default.
-func AvatarURL(u *slack.User, size int) string {
+// covers it, else the ca.slack-edge.com picture of avatar_hash under
+// avatarTeam, else Slack's default. viewerTeam is the viewer's team.
+func AvatarURL(u *slack.User, size int, viewerTeam string) string {
 	p := u.Profile
 	switch {
 	case size <= 72 && p.Image72 != "":
@@ -629,19 +633,33 @@ func AvatarURL(u *slack.User, size int) string {
 		return p.Image512
 	}
 	if p.AvatarHash != "" {
-		team := u.TeamID
-		if team == "" {
-			team = p.Team
-		}
-		if team == "" {
-			team = "T0266FRGM"
-		}
-		return "https://ca.slack-edge.com/" + team + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
+		return "https://ca.slack-edge.com/" + avatarTeam(u, viewerTeam) + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
 	}
 	if p.Image48 != "" {
 		return p.Image48
 	}
 	return "https://a.slack-edge.com/80588/img/avatars/ava_0001-" + strconv.Itoa(size) + ".png"
+}
+
+// avatarTeam is the team in Slack's avatar URLs (client-boot ppn0
+// computeImages, which builds every member's image_24…image_1024 as
+// <avatar base><team>-<id>-<avatar_hash>-<size>): an app or bot's
+// profile.team, else computeTeamId: team_id, else the org's id when the
+// user is the enterprise user itself, else the viewer's team.
+func avatarTeam(u *slack.User, viewerTeam string) string {
+	if (u.IsAppUser || u.IsBot) && u.Profile.Team != "" {
+		return u.Profile.Team
+	}
+	if u.TeamID != "" {
+		return u.TeamID
+	}
+	if eu := u.EnterpriseUser; eu != nil && eu.ID == u.ID && eu.EnterpriseID != "" {
+		return eu.EnterpriseID
+	}
+	if viewerTeam != "" {
+		return viewerTeam
+	}
+	return u.Profile.Team
 }
 
 // ---- richtext.Resolver ----
@@ -683,7 +701,10 @@ func (s *Store) MemberAvatar(id string) string {
 	if !ok || u == nil {
 		return ""
 	}
-	return AvatarURL(u, 72)
+	s.mu.RLock()
+	team := s.TeamID
+	s.mu.RUnlock()
+	return AvatarURL(u, 72, team)
 }
 
 // hiddenUser reports whether the hidden_users pref (a comma-separated
@@ -1290,6 +1311,45 @@ func (s *Store) HasCachedPrefs() bool {
 }
 
 // SetUsergroups installs usergroups (for <!subteam^> names and autocomplete).
+// SetMyUsergroups replaces the viewer's user groups
+// (bulkSetUserGroupMembership).
+func (s *Store) SetMyUsergroups(ids []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.MyGroups = make(map[string]bool, len(ids))
+	for _, id := range ids {
+		s.MyGroups[id] = true
+	}
+	s.gen.Add(1)
+}
+
+// SetMyUsergroup records the viewer joining or leaving group id
+// (subteam_self_added / subteam_self_removed).
+func (s *Store) SetMyUsergroup(id string, in bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.MyGroups == nil {
+		s.MyGroups = map[string]bool{}
+	}
+	if s.MyGroups[id] == in {
+		return
+	}
+	if in {
+		s.MyGroups[id] = true
+	} else {
+		delete(s.MyGroups, id)
+	}
+	s.gen.Add(1)
+}
+
+// InUsergroup is richtext.UsergroupMember: whether the viewer is in group
+// id (isUserInGroup, client-boot 3HzN nc).
+func (s *Store) InUsergroup(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.MyGroups[id]
+}
+
 func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

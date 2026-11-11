@@ -1,7 +1,9 @@
 name: preview-shots
 # Renders the channel-preview footers headlessly at 1440x900 against
 # internal/fakeslack (join pane, its Join… menu, after Join, the archived
-# bar, the posting-restricted roadblock) and uploads the screenshots.
+# bar, the posting-restricted roadblock), the rail's More hover peek and
+# the header facepile after a failed members read, and uploads the
+# screenshots.
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
@@ -10,6 +12,9 @@ on:
       - "internal/ui/joinpane.go"
       - "internal/ui/channel_preview_test.go"
       - "internal/ui/conversation.go"
+      - "internal/ui/rail_peek.go"
+      - "internal/ui/rail_peek_test.go"
+      - "internal/ui/facepile_load_test.go"
       - "internal/core/preview.go"
       - "internal/core/posting.go"
       - ".github/workflows/preview-shots.yml"
@@ -40,7 +45,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelPreviewJoin$|TestPostingRestrictedRoadblock$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelPreviewJoin$|TestPostingRestrictedRoadblock$|TestRailMorePeek$|TestHeaderFacepile' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

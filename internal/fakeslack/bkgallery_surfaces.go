@@ -212,6 +212,52 @@ func surfTicket() map[string]any {
 	})
 }
 
+// SurfNoteView is a settings modal shaped like the one Karim couldn't edit
+// (2026-11-10): an italic context line naming the channel, a divider, a
+// context line with an icon, and one multiline plain_text_input with an
+// initial_value, submit "Edit" and close "Cancel". Global shortcut SURFA3.
+const SurfNoteView = "VSURF00003"
+
+// SurfNoteInitial is the note field's initial_value.
+const SurfNoteInitial = "pinned test"
+
+// SurfNote is that view (also the blockkit package's fixture).
+func SurfNote(s *Server) map[string]any {
+	return surfView(SurfNoteView, SurfNoteView, "", "Note settings", "Edit", "Cancel", "n1", []any{
+		map[string]any{"type": "context", "block_id": "where", "elements": []any{md("_You are editing the pinned note for <#" + GalleryChannelID + ">._")}},
+		map[string]any{"type": "divider", "block_id": "div"},
+		map[string]any{"type": "context", "block_id": "state", "elements": []any{
+			map[string]any{"type": "image", "image_url": s.imgURL(32, 32, "note"), "alt_text": "note"},
+			md("Notes are on for this channel!"),
+		}},
+		map[string]any{"type": "input", "block_id": "note", "label": pt("Pinned note content"),
+			"element": map[string]any{"type": "plain_text_input", "action_id": "v", "multiline": true, "initial_value": SurfNoteInitial}},
+	})
+}
+
+// SurfInputsView has one input block of every text element, each with an
+// initial value (global shortcut SURFA4).
+const SurfInputsView = "VSURF00004"
+
+// SurfInputs is that view: block ids are the element types' short names.
+func SurfInputs() map[string]any {
+	in := func(bid, label string, el map[string]any) map[string]any {
+		el["action_id"] = "v"
+		return map[string]any{"type": "input", "block_id": bid, "optional": true, "label": pt(label), "element": el}
+	}
+	rich := map[string]any{"type": "rich_text", "elements": []any{
+		map[string]any{"type": "rich_text_section", "elements": []any{map[string]any{"type": "text", "text": "rich start"}}},
+	}}
+	return surfView(SurfInputsView, SurfInputsView, "", "Every field", "Save", "Cancel", "i1", []any{
+		in("single", "Single line", map[string]any{"type": "plain_text_input", "initial_value": "one line"}),
+		in("multi", "Multiline", map[string]any{"type": "plain_text_input", "multiline": true, "initial_value": "two\nlines"}),
+		in("number", "Number", map[string]any{"type": "number_input", "is_decimal_allowed": false, "initial_value": "4242"}),
+		in("email", "Email", map[string]any{"type": "email_text_input", "initial_value": "ada@example.com"}),
+		in("url", "URL", map[string]any{"type": "url_text_input", "initial_value": "https://example.com/path"}),
+		in("rich", "Rich text", map[string]any{"type": "rich_text_input", "initial_value": rich}),
+	})
+}
+
 func surfConfirm(updated bool) map[string]any {
 	if updated {
 		return surfView("VSURF00002", SurfTicketView, SurfTicketView, "Ticket created", "Finish", "Back", "h3", []any{
@@ -288,7 +334,20 @@ func surfAPI(s *Server, method string, f url.Values) (any, bool) {
 		app.mu.Lock()
 		app.Executes = append(app.Executes, f)
 		app.mu.Unlock()
-		s.openSurfView(f.Get("client_token"), surfTicket())
+		switch f.Get("action_id") {
+		case "SURFA3":
+			// Slack follows view_opened with view_updated carrying the
+			// same view (core/interactive.go)
+			v := SurfNote(s)
+			s.openSurfView(f.Get("client_token"), v)
+			s.emit(map[string]any{"type": "view_updated", "view_id": SurfNoteView, "app_id": AppAppID, "view": v})
+		case "SURFA4":
+			v := SurfInputs()
+			s.openSurfView(f.Get("client_token"), v)
+			s.emit(map[string]any{"type": "view_updated", "view_id": SurfInputsView, "app_id": AppAppID, "view": v})
+		default:
+			s.openSurfView(f.Get("client_token"), surfTicket())
+		}
 		return ok(), true
 	case "blocks.actions":
 		if !strings.Contains(f.Get("actions"), `"surf_open_modal"`) {
@@ -307,6 +366,8 @@ func surfAPI(s *Server, method string, f url.Values) (any, bool) {
 		app.Submitted = append(app.Submitted, f)
 		app.mu.Unlock()
 		switch {
+		case id == SurfNoteView || id == SurfInputsView:
+			return ok(), true // no response_action: the modal closes
 		case id == SurfTicketView && n == 1:
 			return map[string]any{"ok": false, "error": "validation_failed",
 				"errors": map[string]string{"title": "Give the ticket a title of at least 3 characters"}}, true

@@ -156,6 +156,41 @@ func lastTextual(bs []richtext.Block) int {
 	return -1
 }
 
+// editedPlace is where a message's "(edited)" goes. Text without Block
+// Kit layout blocks (mrkdwn, rich_text) takes it after its last text
+// block (lastTextual). With Block Kit blocks Slack's
+// insertMessageLabelIntoBlocks (boot-shared bhnT) puts it inside the last
+// block only when that one is rich_text, and otherwise appends it as a
+// block of its own after the message's blocks: after is that line's
+// place, the last block before the files and attachments that follow.
+func editedPlace(bs []richtext.Block) (in, after int) {
+	kit := false
+	for i := range bs {
+		if bs[i].Kit {
+			kit = true
+			break
+		}
+	}
+	if !kit {
+		return lastTextual(bs), -1
+	}
+	last := len(bs) - 1
+	for last >= 0 && (bs[last].Kind == richtext.FileBlock || bs[last].Kind == richtext.FileStatus || bs[last].Kind == richtext.AttachmentBlock) {
+		last--
+	}
+	if last < 0 {
+		return -1, -1
+	}
+	switch b := &bs[last]; {
+	case b.Kit:
+	case b.Kind == richtext.Paragraph || b.Kind == richtext.Quote || b.Kind == richtext.List || b.Kind == richtext.Preformatted:
+		if len(b.Children) == 0 {
+			return last, -1
+		}
+	}
+	return -1, last
+}
+
 func (l *lay) addEdited() {
 	p := &l.st.Palette
 	k := faceKey{f: font.Font{Typeface: l.st.Face}, size: fixedPx(l.sp(13))}
@@ -241,10 +276,11 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 // blocks lays out bs at (x, y) in width w and returns the height.
 func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
-	edited := -1
+	edited, editedAfter := -1, -1
 	if top && l.opts.Edited {
-		edited = lastTextual(bs)
+		edited, editedAfter = editedPlace(bs)
 	}
+	editedDone := false
 	var gal []*richtext.File
 	if top && len(bs) > 0 && bs[0].Kit {
 		_, first, _ := l.margins(&bs[0])
@@ -332,8 +368,26 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 			continue
 		}
 		y += l.block(b, x, y, w, i == edited)
+		if i == editedAfter {
+			// insertMessageLabelIntoBlocks' standalone label block (a
+			// rich_text after the block's own bottom margin, no leading
+			// space: omitWhitespace)
+			if b.Kit {
+				_, _, bottom := l.margins(b)
+				y += bottom
+			}
+			if n := len(l.d.plain); n > 0 && l.d.plain[n-1] != '\n' {
+				l.plainAdd("\n")
+			}
+			fs := l.bodyStyle()
+			l.addEdited()
+			l.items = l.items[1:]
+			h, _ := l.flow(x, y, w, &fs)
+			y += h
+			editedDone = true
+		}
 	}
-	if edited < 0 && top && l.opts.Edited {
+	if edited < 0 && !editedDone && top && l.opts.Edited {
 		// No text block to attach to: a line of its own.
 		fs := l.bodyStyle()
 		l.addEdited()
@@ -341,7 +395,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		h, _ := l.flow(x, y, w, &fs)
 		y += h
 	}
-	if top && len(bs) > 0 && bs[len(bs)-1].Kit {
+	if top && len(bs) > 0 && bs[len(bs)-1].Kit && !(editedDone && editedAfter == len(bs)-1) {
 		_, _, bottom := l.margins(&bs[len(bs)-1])
 		y += bottom
 	}

@@ -21,6 +21,7 @@ import (
 // HuddleRoom is the huddle a huddle_thread message is about.
 type HuddleRoom struct {
 	ID                 string
+	Name               string // the huddle's topic (getHuddleNameByCallId)
 	Channel            string // the conversation (the message's, or the room's first)
 	DateStart, DateEnd int64
 	HasEnded           bool
@@ -65,6 +66,7 @@ type HuddleResolver interface {
 func ParseHuddleRoom(raw json.RawMessage) (*HuddleRoom, bool) {
 	var room struct {
 		ID                 string          `json:"id"`
+		Name               string          `json:"name"`
 		Channels           []string        `json:"channels"`
 		ChannelID          string          `json:"channel_id"`
 		DateStart          json.Number     `json:"date_start"`
@@ -77,7 +79,7 @@ func ParseHuddleRoom(raw json.RawMessage) (*HuddleRoom, bool) {
 	if len(raw) <= 2 || json.Unmarshal(raw, &room) != nil {
 		return nil, false
 	}
-	h := &HuddleRoom{ID: room.ID, HasEnded: room.HasEnded, Active: room.Participants, All: room.ParticipantHistory, Channel: room.ChannelID}
+	h := &HuddleRoom{ID: room.ID, Name: room.Name, HasEnded: room.HasEnded, Active: room.Participants, All: room.ParticipantHistory, Channel: room.ChannelID}
 	if len(room.Channels) > 0 {
 		h.Channel = room.Channels[0]
 	}

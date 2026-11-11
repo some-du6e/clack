@@ -69,6 +69,15 @@ type row struct {
 	handler richHandler
 	drawn   time.Time // last frame the row was laid out (sweepRows)
 
+	// a huddle message's room, status and activity (huddle_msg.go),
+	// read once per message revision and users generation; hmName: the
+	// sender line is the status (system_messages_redesign_m1 off)
+	hm     huddleMsg
+	hmOK   bool
+	hmKey  [2]uint64
+	hmName bool
+	hmJoin widget.Clickable // the compact Join Huddle (system row)
+
 	// inline edit composer (nil when not editing)
 	edit                 *composer.Composer
 	editFrames           int
@@ -387,6 +396,26 @@ func (r *row) resolve(rc *rowCtx) {
 			r.name = "Unknown"
 		}
 	}
+	// getMsgSenderEntity's huddle sender: the status line, no badge, no
+	// profile, no custom status (huddle_msg.go)
+	r.hmName = false
+	if hm, ok := r.huddleInfo(rc); ok && !m.System {
+		r.name, r.avatar, r.badge, r.statusURL, r.huddle, r.hmName = hm.status, "", "", "", "", true
+	}
+}
+
+// huddleInfo is the row's huddle message state (huddle_msg.go), cached
+// per message revision and users generation.
+func (r *row) huddleInfo(rc *rowCtx) (huddleMsg, bool) {
+	if !isHuddleMsg(&r.m) {
+		return huddleMsg{}, false
+	}
+	k := [2]uint64{uint64(r.rev), rc.usersRev}
+	if k != r.hmKey || !r.hmOK {
+		r.hm, r.hmOK = huddleOf(rc.h.Core(), &r.m)
+		r.hmKey = k
+	}
+	return r.hm, r.hmOK
 }
 
 var askedUsers = map[string]bool{}
@@ -739,7 +768,9 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 	if r.m.Tombstone {
 		return r.tombstoneLayout(gtx, rc)
 	}
-	if r.m.System && !rc.parent {
+	if r.m.System && (!rc.parent || huddleSubtype(r.m.Subtype)) {
+		// ThreadRootGeneric draws a huddle root as a redesigned system
+		// message too (huddle_msg.go)
 		return r.systemLayout(gtx, rc)
 	}
 	return slackc.Component(gtx, "MessageBackground", r, (*row).backgroundProps, (*row).layoutBackground)
@@ -959,6 +990,9 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 	}
 	if r.custom { // BaseMessageAvatar: the TeamIcon, no profile card
 		return r.layoutTeamAvatar(gtx, p, s)
+	}
+	if r.hmName { // BaseMessageAvatar: HuddleMsgAvatar, no profile card
+		return r.layoutHuddleAvatar(gtx, rc, s)
 	}
 	st := avatarClass.EnterClass(gtx, btnState(gtx, &r.avatarBtn), 0, slackc.ExtraClass(p))
 	defer st.Leave()
@@ -1506,11 +1540,12 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	if st.Hidden() {
 		return layout.Dimensions{}
 	}
-	if ctxclick.Clicked(gtx, &r.nameBtn) && r.m.User != "" && !r.custom {
+	span := r.custom || r.hmName // not interactive: a span, no button (custom_response.go, huddle_msg.go)
+	if ctxclick.Clicked(gtx, &r.nameBtn) && r.m.User != "" && !span {
 		rc.h.OpenProfile(rc.origin(image.Point{}), r.m.User)
 	}
 	var bs slackc.Styled
-	if r.custom { // not interactive: a span, no button (custom_response.go)
+	if span {
 		bs = senderNameClass.Enter(gtx, 0, 0)
 	} else {
 		bs = senderBtnClass.Enter(gtx, btnState(gtx, &r.nameBtn), 0)
@@ -1518,11 +1553,11 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	var nd layout.Dimensions
 	if !bs.Hidden() {
 		switch active := bs.Active(); {
-		case active && r.custom:
+		case active && span:
 			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameSpan(gtx, bs) })
 		case active:
 			nd = bs.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return r.nameButton(gtx, bs) })
-		case r.custom:
+		case span:
 			nd = r.nameSpan(gtx, bs)
 		default:
 			nd = r.nameButton(gtx, bs)
@@ -1544,6 +1579,9 @@ func (r *row) layoutBaseSender(gtx layout.Context, p slackc.Props) layout.Dimens
 	xx := nd.Size.X
 	if r.custom {
 		xx += r.customBadge(gtx, xx, nd.Size.Y)
+	}
+	if r.hmName { // renderStatusBadge: LIVE / MISSED
+		xx += r.huddleBadge(gtx, rc, xx, baseline)
 	}
 	if badge := r.badge; badge != "" && !r.custom { // renderBotLabel: none for people, Slackbot, custom responses
 		xx += dp(gtx, mt.badgeGap)
@@ -2341,11 +2379,21 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	cw := w - cx - padX - dp(gtx, 20) - rc.actionsPad(gtx)
 	rec := op.Record(gtx.Ops)
 	icon := redesignedIcon(rc.h.Core(), m) // getRedesignedSystemMessageIcon (system.go)
+	iconCol := c.Text3
+	hm, huddle := r.huddleInfo(rc)
+	if huddle {
+		// HuddleSystemMessageIcon: headphones, content-hgl-2 while live
+		// (.systemIconHuddleLive__sh4y9)
+		icon = icons.Slack("headphones")
+		if hm.room.Live {
+			iconCol = c.HuddleLive
+		}
+	}
 	// .systemIcon__mZbDL: a 36px box (the avatar's), the 16px glyph
 	// centred, padding-top 2px
 	is := dp(gtx, 16)
 	at(gtx, padX+(dp(gtx, mt.avatar)-is)/2, dp(gtx, mt.padTop)+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(16), c.Text3)
+		return icons.Get(icon)(gtx, unit.Dp(16), iconCol)
 	})
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
 	// the column's first line (4px under the row top) and .container__OsSxI
@@ -2378,6 +2426,12 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 		y += tsz.Y
 	}
 	tst.Leave()
+	if huddle && hm.room.Joinable {
+		// .contentWithHugAttachment__sm2TO { gap: 4px }, then the button
+		// (.attachment__e73SZ: align-self flex-start)
+		y += dp(gtx, 4)
+		y += r.huddleJoinButton(gtx, rc, hm, image.Pt(cx, y))
+	}
 	if len(m.Reactions) > 0 {
 		y += dp(gtx, 4)
 		y += r.reactionBar(gtx, image.Pt(cx, y), image.Point{}, cw)

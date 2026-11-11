@@ -60,6 +60,11 @@ type Composer struct {
 	// field to: Move focus to the message list").
 	OnFocusList func()
 
+	// InThreadsView marks the Threads view's inline reply composer:
+	// .p-threads_view .p-threads_footer__input_container has margin 0 20px,
+	// so none of the flexpane's 12px over the box.
+	InThreadsView bool
+
 	// SaveEdit, when set, saves an inline edit instead of core.Edit
 	// (ui/messages routes it through taut.Dispatch("commitMessageEdit")).
 	// The blocks are the composer's own; plugin send transforms are the
@@ -1121,7 +1126,10 @@ func (c *Composer) send(o *outgoing) {
 			c.restore(o.doc)
 			return
 		}
-		c.later(func() { c.unsendBy = time.Now().Add(unsendWindow) })
+		c.later(func() {
+			c.unsendBy = time.Now().Add(unsendWindow)
+			c.att.dropPreviews(batch.chips...) // sent: no viewer shows them any more
+		})
 	}()
 }
 

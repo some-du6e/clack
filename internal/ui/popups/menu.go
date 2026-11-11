@@ -93,6 +93,16 @@ type MenuOpts struct {
 	Popover          string
 	OffsetX, OffsetY float32
 	TryOpposite      bool
+	// AllowanceX / AllowanceY (dp) are keepInBounds' margins from the
+	// window edges for Popover placement; 0 means Slack's defaults (16 /
+	// 10). The rail's More peek passes allowanceY 4.
+	AllowanceX, AllowanceY float32
+	// Peek opens the menu as Slack's PeekTrigger does on hover (boot-shared
+	// 20Sq): the overlay is only as big as the card (.p-peek_trigger__overlay
+	// has no size until it's --clickable), so there is no scrim and the
+	// window under it keeps its pointer, and it doesn't take the keyboard
+	// focus. Pin makes it an ordinary menu (a click on the trigger).
+	Peek bool
 	// AlignRight right-aligns the menu with the anchor's right edge
 	// (header kebab menus).
 	AlignRight bool
@@ -172,6 +182,24 @@ func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
 		m.wraps = append(m.wraps[:len(m.wraps):len(m.wraps)], MenuWrap{Name: o.Within, Props: o.WithinProps})
 	}
 	return m
+}
+
+// Rect is the root card's window rectangle as last laid out (empty before
+// the first frame).
+func (m *Menu) Rect() image.Rectangle { return m.root().rect }
+
+// Peeking reports whether the menu is still a hover peek (MenuOpts.Peek,
+// not pinned).
+func (m *Menu) Peeking() bool { return m.root().opts.Peek }
+
+// Pin turns a hover peek into an ordinary menu, as Slack's PeekTrigger does
+// when its trigger is clicked (forceOpenOnClick): from the next frame it
+// has the window-wide scrim (a click outside closes it) and the keyboard
+// focus.
+func (m *Menu) Pin() {
+	r := m.root()
+	r.opts.Peek = false
+	r.focus = false
 }
 
 func (m *Menu) root() *Menu {
@@ -275,13 +303,16 @@ func (m *Menu) activate(gtx layout.Context, i int) {
 }
 
 func (m *Menu) closeAll() {
-	for s := m; s != nil; s = s.sub {
+	for s := m.sub; s != nil; s = s.sub {
 		s.done = true
 	}
 	if m.ctxH != nil {
 		m.ctxH.Release()
 		m.ctxH = nil
 	}
+	// m itself goes through Dismiss so OnClose runs (it used to be marked
+	// done first, which made Dismiss return before calling it: a row or a
+	// click outside closed the menu without OnClose)
 	m.Dismiss()
 }
 
@@ -408,7 +439,7 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
 	if m.parent == nil {
 		stacked(gtx, m)
-		if !m.focus {
+		if !m.focus && !m.opts.Peek {
 			gtx.Execute(key.FocusCmd{Tag: m})
 			m.focus = true
 		}
@@ -416,7 +447,7 @@ func (m *Menu) Layout(gtx layout.Context) layout.Dimensions {
 		if m.done {
 			return layout.Dimensions{}
 		}
-		if m.scrim.Layout(gtx) {
+		if !m.opts.Peek && m.scrim.Layout(gtx) {
 			m.closeAll()
 			return layout.Dimensions{}
 		}
@@ -468,7 +499,14 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 			a.Min.X = a.Max.X - w
 		}
 		if m.opts.Popover != "" {
-			pos = slackPlace(m.opts.Anchor, sz, win, m.opts.Popover, dp(gtx, m.opts.OffsetX), dp(gtx, m.opts.OffsetY), dp(gtx, 16), dp(gtx, 10), m.opts.TryOpposite)
+			ax, ay := m.opts.AllowanceX, m.opts.AllowanceY
+			if ax == 0 {
+				ax = 16
+			}
+			if ay == 0 {
+				ay = 10
+			}
+			pos = slackPlace(m.opts.Anchor, sz, win, m.opts.Popover, dp(gtx, m.opts.OffsetX), dp(gtx, m.opts.OffsetY), dp(gtx, ax), dp(gtx, ay), m.opts.TryOpposite)
 		} else {
 			pos = place(a, sz, win, dp(gtx, 8), m.opts.Side)
 		}

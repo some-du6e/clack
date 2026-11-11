@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,6 +17,8 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -402,4 +405,157 @@ func drawRadio(gtx C, th *theme.Theme, on, hovered bool) {
 	}
 	theme.Circle(gtx, ctr, s, border)
 	theme.Circle(gtx, ctr, s-2*max(1, dp(gtx, 1)), cl.Bg)
+}
+
+// ---- button labels ----
+
+// btnRun is one run of a button label: text, or a workspace emoji's image.
+type btnRun struct{ text, url string }
+
+// btnEmoji is the label's emoji size (emojiSize small: c-emoji__small, an
+// inline 16px image centred on the line).
+const btnEmoji = 16
+
+// btnMaxChars is ButtonElement's maxCharacters.
+const btnMaxChars = 40
+
+// buttonRuns is ButtonElement's label as PlainText draws it (boot-shared
+// iY3m through the formatter in NOMRKDWN mode, emoji on unless the text
+// says emoji: false): runs of white space are one space (c-button's
+// white-space: nowrap), a standard :shortcode: is its emoji, a workspace
+// one its image, and the label stops at 40 characters with "…".
+func buttonRuns(h Host, t *Text) []btnRun {
+	if t == nil {
+		return nil
+	}
+	s := strings.Join(strings.Fields(unescape(t.Text)), " ")
+	if t.Type == "mrkdwn" {
+		s = stripMrkdwn(s)
+	}
+	var app *core.App
+	if h != nil {
+		app = h.Core()
+	}
+	var out []btnRun
+	n := 0 // characters so far; an emoji is one
+	text := func(x string) bool {
+		if x == "" {
+			return true
+		}
+		rs := []rune(x)
+		if n+len(rs) > btnMaxChars {
+			x = string(rs[:max(btnMaxChars-n, 0)]) + "…"
+			out = append(out, btnRun{text: x})
+			return false
+		}
+		n += len(rs)
+		if k := len(out); k > 0 && out[k-1].url == "" {
+			out[k-1].text += x
+		} else {
+			out = append(out, btnRun{text: x})
+		}
+		return true
+	}
+	for s != "" {
+		i := strings.IndexByte(s, ':')
+		j := -1
+		if i >= 0 {
+			j = strings.IndexByte(s[i+1:], ':')
+		}
+		if i < 0 || j < 0 || !t.emojiOn() {
+			text(s)
+			break
+		}
+		name := s[i+1 : i+1+j]
+		url, uni, ok := "", "", false
+		if name != "" && !strings.ContainsAny(name, " \t") {
+			if app != nil {
+				url, uni, ok = app.S.Emoji(name)
+			} else if _, u, std := emoji.Standard(name); std {
+				uni, ok = u, true
+			}
+		}
+		if !ok {
+			if !text(s[:i+1]) {
+				return out
+			}
+			s = s[i+1:]
+			continue
+		}
+		if !text(s[:i]) {
+			return out
+		}
+		switch {
+		case uni != "": // a standard emoji: its character
+			if !text(uni) {
+				return out
+			}
+		case n+1 > btnMaxChars:
+			text("…")
+			return out
+		default:
+			n++
+			out = append(out, btnRun{url: url})
+		}
+		s = s[i+j+2:]
+	}
+	return out
+}
+
+// runsWidth is the label's width at fs sp bold.
+func runsWidth(gtx C, th *theme.Theme, fs float32, runs []btnRun) int {
+	w := 0
+	for _, r := range runs {
+		if r.url != "" {
+			w += dp(gtx, btnEmoji)
+			continue
+		}
+		w += measure(gtx, th, fs, theme.Bold, r.text)
+	}
+	return w
+}
+
+// drawRuns draws the label in a line of height lh at x (text vertically
+// centred, emoji images centred on the line).
+func drawRuns(gtx C, th *theme.Theme, h Host, fs float32, col color.NRGBA, runs []btnRun, x, lh, maxW int) {
+	for _, r := range runs {
+		if x >= maxW {
+			return
+		}
+		if r.url != "" {
+			es := dp(gtx, btnEmoji)
+			if h != nil && h.Images() != nil {
+				if img, ok := h.Images().Get(r.url, es*2); ok {
+					at(gtx, image.Pt(x, (lh-es)/2), func(gtx C) D { return theme.Image(gtx, img, image.Pt(es, es), 0) })
+				}
+			}
+			x += es
+			continue
+		}
+		t := r.text
+		at(gtx, image.Pt(x, 0), func(gtx C) D {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(maxW-x, 0), lh)}
+			return vcenter(gtx, lh, func(gtx C) D { return label(gtx, th, fs, theme.Bold, col, t) })
+		})
+		x += measure(gtx, th, fs, theme.Bold, t)
+	}
+}
+
+// drawButtonRuns is drawButton with a label of runs (Block Kit buttons).
+func drawButtonRuns(gtx C, th *theme.Theme, h Host, sz image.Point, style string, runs []btnRun, radius, fs float32, hovered, busy, disabled bool) {
+	drawButton(gtx, th, sz, style, "", radius, fs, hovered, busy, disabled)
+	if busy {
+		return
+	}
+	cl := colorsOf(th)
+	_, fg, _ := buttonColors(cl, style, hovered)
+	if disabled {
+		fg = cl.DisText
+	}
+	pad := dp(gtx, 8)
+	tw := runsWidth(gtx, th, fs, runs)
+	x := (sz.X - min(tw, sz.X-2*pad)) / 2
+	// .p-block_kit_button_element { padding: 0 8px 1px }: the line is 1px
+	// shorter than the button
+	drawRuns(gtx, th, h, fs, fg, runs, x, sz.Y-dp(gtx, 1), sz.X-pad)
 }

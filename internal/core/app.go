@@ -707,6 +707,12 @@ func (a *App) loadUsergroups(ctx context.Context) error {
 		return err
 	}
 	a.S.SetUsergroups(gs)
+	// updateUserGroups: the viewer's groups (usergroups.membership), what
+	// a group mention's highlight follows (UserGroup fg3x isUserInGroup)
+	if mine, err := a.C.UsergroupMembership(ctx); err == nil {
+		a.S.SetMyUsergroups(mine)
+		a.emit(Event{Type: "names"}) // the visible messages re-read their mentions
+	}
 	return nil
 }
 
@@ -913,13 +919,16 @@ func (a *App) BootErr() error {
 
 // avatarURL is store.AvatarURL (message unfurl cards draw the same
 // picture, richtext.MemberNamer).
-func avatarURL(u *slack.User, size int) string { return store.AvatarURL(u, size) }
+func avatarURL(u *slack.User, size int, viewerTeam string) string {
+	return store.AvatarURL(u, size, viewerTeam)
+}
 
 func (a *App) userOf(u *slack.User) User {
+	viewer := firstNonEmpty(a.C.Creds.Team, a.S.TeamID)
 	v := User{
 		ID: u.ID, Name: store.DisplayName(u), RealName: strings.TrimSpace(u.Profile.RealName), Handle: u.Name,
 		DisplaySet: strings.TrimSpace(u.Profile.DisplayName) != "",
-		Avatar:     avatarURL(u, 72), Avatar192: avatarURL(u, 192), Avatar512: avatarURL(u, 512),
+		Avatar:     avatarURL(u, 72, viewer), Avatar192: avatarURL(u, 192, viewer), Avatar512: avatarURL(u, 512, viewer),
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
 		StatusEmoji: u.Profile.StatusEmoji, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,
@@ -1513,14 +1522,20 @@ func hasSectionType(secs []slack.Section, typ string) bool {
 // (/ly8 hh) that isn't an Agentforce bot; with it on, the member's
 // agent_status.
 func (a *App) AgentInDMSidebar(ch string) bool {
-	if a.experiment("agents_in_dm_sidebar") != "on" || a.HideAgentsInDMs() {
-		return false
-	}
 	c, ok := a.S.Conv(ch)
 	if !ok || !c.IsIM {
 		return false
 	}
-	u, ok := a.User(c.User)
+	return a.agentInDMSidebarUser(c.User)
+}
+
+// agentInDMSidebarUser is uXg5 oK by the IM's member (the DMs tab asks it
+// for DMs core may not hold, closed ones from client.dms).
+func (a *App) agentInDMSidebarUser(uid string) bool {
+	if a.experiment("agents_in_dm_sidebar") != "on" || a.HideAgentsInDMs() {
+		return false
+	}
+	u, ok := a.User(uid)
 	if !ok || u.Agentforce {
 		return false
 	}

@@ -18,6 +18,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -61,6 +62,9 @@ type Files struct {
 	plus      widget.Clickable
 	newBtn    widget.Clickable
 	emptyNew  widget.Clickable
+	// the empty state's Clear Filters (every file type back on)
+	clearFilters widget.Clickable
+	viewH        int // the primary pane's height last frame (the empty state's 16vh)
 
 	search *search
 	deb    debounce
@@ -105,6 +109,11 @@ type Files struct {
 	starred    async[[]core.File]
 	starAsked  bool
 	starClicks map[string]*widget.Clickable
+	// the starred file collection's header (custom_file_sections):
+	// collapsing it is the client store's (toggleFileCollectionCollapsed;
+	// custom_file_sections_collapsed_persist would save it)
+	starHead      widget.Clickable
+	starCollapsed bool
 
 	// results of writes (star, rename, delete, create from a template),
 	// run on the UI goroutine by update
@@ -232,6 +241,17 @@ func (f *Files) visible(it *fileItem) bool {
 	return true
 }
 
+// defaultTypes reports whether the Types selection is the default one
+// (the first six on: effectiveDefaultFileTypes).
+func (f *Files) defaultTypes() bool {
+	for i, on := range f.typeOn {
+		if on != (i < 6) {
+			return false
+		}
+	}
+	return true
+}
+
 func (f *Files) typeCount() int {
 	n := 0
 	for _, on := range f.typeOn {
@@ -281,6 +301,9 @@ func (f *Files) update(gtx C) {
 	if f.tplToggle.Clicked(gtx) {
 		f.tplOpen = !f.tplOpen
 	}
+	if f.starHead.Clicked(gtx) {
+		f.starCollapsed = !f.starCollapsed
+	}
 	// "See all" (Lists only here, see templatesHead): Slack's list
 	// templates modal; Clack's lists.templates menu.
 	if f.seeAll.Clicked(gtx) && f.kind() == "lists" {
@@ -316,6 +339,11 @@ func (f *Files) update(gtx C) {
 	}
 	if f.retry.Clicked(gtx) {
 		f.reload = true
+	}
+	if f.clearFilters.Clicked(gtx) { // clearAdvancedFiltersAndShowAllFileTypes
+		for i := range f.typeOn {
+			f.typeOn[i] = true
+		}
 	}
 	if t, changed, submit := f.search.update(gtx); changed || submit {
 		f.deb.set(t, gtx.Now)
@@ -489,9 +517,9 @@ func (f *Files) nav_(gtx C) D {
 			})
 		})
 	}
-	rule := layout.Rigid(func(gtx C) D {
-		return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D { return hline(gtx, navRule) })
-	})
+	// BrowseSidebarDivider: .p-browse_sidebar__divider, margin 12px from
+	// the list's edges (the column is already 8px in)
+	rule := layout.Rigid(func(gtx C) D { return f.sidebarDivider(gtx, navRule) })
 	return layout.Inset{Left: 8, Right: 8}.Layout(gtx, func(gtx C) D {
 		return col(gtx,
 			layout.Rigid(func(gtx C) D {
@@ -519,33 +547,151 @@ func (f *Files) nav_(gtx C) D {
 				}
 				return col(gtx, rule, navItem(3))
 			}),
-			rule,
-			layout.Rigid(func(gtx C) D {
-				g := gtx
-				g.Constraints.Min.Y = gtx.Dp(28)
-				return layout.Inset{Left: 8}.Layout(g, func(gtx C) D {
-					return layout.W.Layout(gtx, func(gtx C) D {
-						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return f.icon(gtx, "star", 16, navText) }),
-							hgap(8),
-							layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, navText, "Starred") }),
-						)
-					})
-				})
-			}),
-			layout.Rigid(func(gtx C) D {
-				st, ok, _ := f.starred.get()
-				if ok && len(st) > 0 {
-					return f.starredRows(gtx, st, navText, navHover)
-				}
-				return layout.Inset{Left: 32, Right: 8, Top: 2}.Layout(gtx, f.starHint)
-			}),
+			layout.Rigid(func(gtx C) D { return f.starredSection(gtx, navText, navHover, navRule) }),
 		)
 	})
 }
 
+// sidebarDivider is BrowseSidebarDivider (.p-browse_sidebar__divider: a
+// 1px line, margin 12px all round). The column sits 8px in, so 4 more.
+func (f *Files) sidebarDivider(gtx C, c color.NRGBA) D {
+	return layout.Inset{Top: 12, Bottom: 12, Left: 4, Right: 4}.Layout(gtx, func(gtx C) D { return hline(gtx, c) })
+}
+
+// fileCollections is custom_file_sections: the sidebar lists file
+// collections (files.collections.list), the starred one among them,
+// instead of the "Starred" sub-header.
+func (f *Files) fileCollections() bool {
+	return f.h.Core() != nil && f.h.Core().Experiment("custom_file_sections") == "on"
+}
+
+// starredSection is UnifiedFilesSidebarView's starred rows. With
+// custom_file_sections: the "file-collections-divider" and the starred
+// collection's FileCollectionHeaderRow, then (unless collapsed) its files
+// or the empty row. Without: spacer-2 (12px), the "Starred" sub-header,
+// then the files, the empty row, or five shimmer rows while
+// files.favorites.list is out. (Recently viewed, which comes first when
+// it has files, isn't ported: Clack keeps no filesOpenInSessionStore.)
+func (f *Files) starredSection(gtx C, fg, hover, rule color.NRGBA) D {
+	st, ok, _ := f.starred.get()
+	rows := func(gtx C) D {
+		switch {
+		case !ok:
+			return f.sidebarShimmer(gtx, 5, fg)
+		case len(st) > 0:
+			return f.starredRows(gtx, st, fg, hover)
+		}
+		// the "empty" row: EmptyState (isExtended) in the 8px item
+		// container with padding_left_150 (24) padding_right_50 (8)
+		// padding_top_0; the description's 8px margin and --extended's
+		// 20px bottom padding under it
+		return layout.Inset{Left: 24, Right: 8, Bottom: 8 + 20}.Layout(gtx, f.starHint)
+	}
+	if f.fileCollections() {
+		return col(gtx,
+			layout.Rigid(func(gtx C) D { return f.sidebarDivider(gtx, rule) }),
+			layout.Rigid(func(gtx C) D { return f.starredHeader(gtx, fg, hover) }),
+			layout.Rigid(func(gtx C) D {
+				if f.starCollapsed {
+					return D{}
+				}
+				return rows(gtx)
+			}),
+		)
+	}
+	return col(gtx,
+		layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(12))} }), // .p-browse_sidebar__spacer
+		layout.Rigid(func(gtx C) D { return f.starredSubHeader(gtx, fg) }),
+		layout.Rigid(rows),
+	)
+}
+
+// starredSubHeader is browse_sidebar_sub_header: 28px, padding 0 8px 0
+// 20px from the list's edge, .p-browse_sidebar's override (15px, weight
+// 400, the sidebar's text colour), the 16px icon 8px before the label.
+func (f *Files) starredSubHeader(gtx C, fg color.NRGBA) D {
+	g := gtx
+	g.Constraints.Min.Y = gtx.Dp(28)
+	return layout.Inset{Left: 12, Right: 0}.Layout(g, func(gtx C) D {
+		return layout.W.Layout(gtx, func(gtx C) D {
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D { return f.icon(gtx, "star", 16, fg) }),
+				hgap(8),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, fg, "Starred") }),
+			)
+		})
+	})
+}
+
+// starredHeader is FileCollectionHeaderRow for the starred collection:
+// .container (radius 4, the theme-surf-inv-ter hover fill) holding the
+// 28px .fileCollectionRow button (padding 0 8px, 15px) with the star
+// (.emoji, hidden on hover) or, on hover, the collapse caret (.caret:
+// caret-down-filled open, caret-right-filled collapsed), 8px before the
+// label. A click collapses or opens it. Its "More actions" ⋮ (Create…,
+// Sort by…) isn't drawn: those write through files.collections.*, which
+// Clack doesn't have.
+func (f *Files) starredHeader(gtx C, fg, hover color.NRGBA) D {
+	return f.starHead.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		w, h := gtx.Constraints.Max.X, gtx.Dp(28)
+		hov := f.starHead.Hovered()
+		if hov {
+			rrect(gtx, image.Rect(0, 0, w, h), gtx.Dp(4), hover)
+		}
+		icon := "star"
+		if hov {
+			icon = "caret-down-filled"
+			if f.starCollapsed {
+				icon = "caret-right-filled"
+			}
+		}
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(w, h))
+		layout.Inset{Left: 8, Right: 8}.Layout(g, func(gtx C) D {
+			return layout.W.Layout(gtx, func(gtx C) D {
+				return row(gtx, layout.Middle,
+					layout.Rigid(func(gtx C) D { return f.icon(gtx, icon, 16, fg) }),
+					hgap(8),
+					layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, "Starred") }),
+				)
+			})
+		})
+		return D{Size: image.Pt(w, h)}
+	})
+}
+
+// sidebarShimmer is the sidebar's placeholder rows (type "shimmer":
+// p-more_files_sidebar__item--shimmer, 28px, the list / canvas icon in a
+// 20px .c-file_entity__icon box, 8px, then a Shimmer bar of random width).
+func (f *Files) sidebarShimmer(gtx C, n int, fg color.NRGBA) D {
+	ch := make([]layout.FlexChild, 0, n)
+	widths := [...]int{62, 48, 70, 54, 40}
+	for i := 0; i < n; i++ {
+		i := i
+		ch = append(ch, layout.Rigid(func(gtx C) D {
+			w, h := gtx.Constraints.Max.X, gtx.Dp(28)
+			icon := "lists"
+			if i%2 == 1 {
+				icon = "canvas"
+			}
+			x := gtx.Dp(8)
+			at := op.Offset(image.Pt(x+(gtx.Dp(20)-gtx.Dp(16))/2, (h-gtx.Dp(16))/2)).Push(gtx.Ops)
+			f.icon(gtx, icon, 16, theme.WithAlpha(fg, fg.A/2))
+			at.Pop()
+			bx := x + gtx.Dp(20) + gtx.Dp(8)
+			bw := (w - bx - gtx.Dp(8)) * widths[i%len(widths)] / 100
+			rrect(gtx, image.Rect(bx, (h-gtx.Dp(10))/2, bx+bw, (h+gtx.Dp(10))/2), gtx.Dp(5), theme.WithAlpha(fg, 0x26))
+			return D{Size: image.Pt(w, h)}
+		}))
+	}
+	return col(gtx, ch...)
+}
+
 // starredRows lists the starred files under Starred (Slack's
-// browse-sidebar-item rows: the file's type icon and title, 28px).
+// browse-sidebar-item rows of type canvas / list: 28px, radius 4,
+// p-browse_sidebar__item--collection_indent's 24px left padding, the
+// file's icon and title).
 func (f *Files) starredRows(gtx C, st []core.File, fg, hover color.NRGBA) D {
 	ch := make([]layout.FlexChild, 0, len(st))
 	for i := range st {
@@ -572,7 +718,7 @@ func (f *Files) starredRows(gtx C, st []core.File, fg, hover color.NRGBA) D {
 				case it.isList():
 					icon = "list-view"
 				}
-				layout.Inset{Left: 8, Right: 8}.Layout(g, func(gtx C) D {
+				layout.Inset{Left: 24, Right: 8}.Layout(g, func(gtx C) D {
 					return layout.W.Layout(gtx, func(gtx C) D {
 						return row(gtx, layout.Middle,
 							layout.Rigid(func(gtx C) D { return f.icon(gtx, icon, 16, fg) }),
@@ -594,6 +740,7 @@ func (f *Files) paneBg() color.NRGBA { return f.p.Page }
 
 func (f *Files) main(gtx C) D {
 	size := gtx.Constraints.Max
+	f.viewH = size.Y
 	fill(gtx, image.Rectangle{Max: size}, f.paneBg())
 	gtx.Constraints = layout.Exact(size)
 	title := filesNav[f.nav].title
@@ -708,9 +855,7 @@ func (f *Files) body(gtx C) D {
 			g.Constraints.Min.Y = gtx.Dp(300)
 			return f.errorState(g, err, &f.retry)
 		case 3:
-			g := gtx
-			g.Constraints.Min.Y = gtx.Dp(300)
-			return f.empty(g)
+			return f.empty(gtx)
 		}
 		k := i - rFirst
 		if k >= len(vis) {
@@ -942,18 +1087,19 @@ func (f *Files) filterBar(gtx C) D {
 	ch = append(ch, layout.Flexed(1, func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Min.X, 0)} }))
 	if f.nav == 0 {
 		ch = append(ch, layout.Rigid(func(gtx C) D {
-			label := "All types"
-			if n := f.typeCount(); n < len(fileTypeMenu) {
-				label = plural(n, "Type")
-			}
-			d := f.segButton(gtx, &f.typesBtn, true, "filter", label, true)
+			// filter_file_types_recents: always "{n} Types" (the selected
+			// count), the refine icon, and the active fill only while the
+			// selection isn't the default one (value !== defaultValue)
+			label := plural(f.typeCount(), "Type")
+			d := f.segButton(gtx, &f.typesBtn, !f.defaultTypes(), "filter", label, true)
 			f.dropdown(gtx, &f.typesOpen, &f.typesScrim, image.Pt(0, d.Size.Y+gtx.Dp(4)), 280, f.typesMenu)
 			return d
 		}), hgap(8))
 	}
 	ch = append(ch,
 		layout.Rigid(func(gtx C) D {
-			d := f.segButton(gtx, &f.sortBtn, true, "", fileSorts[f.sortSel], true)
+			// the sort select is active off its default (Recently viewed)
+			d := f.segButton(gtx, &f.sortBtn, f.sortSel != 0, "", fileSorts[f.sortSel], true)
 			f.dropdown(gtx, &f.sortOpen, &f.sortScrim, image.Pt(0, d.Size.Y+gtx.Dp(4)), 220, f.sortMenu)
 			return d
 		}),
@@ -1045,16 +1191,140 @@ func (f *Files) sortMenu(gtx C) D {
 	})
 }
 
+// empty is the unified files browser's empty list (gantry
+// browse-unified-files-view useUnifiedFilesExplorer; jnm4
+// useUnifiedFilesFilters for the file types).
+//
+// All files: with every file type on (isAllFileTypesSelected) "No files
+// yet" / "Your recently viewed or updated files will be shown here.", or
+// with a search "No results" and the same line; with fewer types "No files
+// found" / "It may be that you don’t have any files yet, or that there
+// aren’t any that fit your current filters.", or with a search "No
+// results" / "You may want to try adjusting your filters.", both with an
+// outline "Clear Filters" that turns every type back on
+// (clearAdvancedFiltersAndShowAllFileTypes). Canvases and Lists without a
+// search: "No canvases yet" (the canvases explorer's own empty state) and
+// the lists NUX header "No lists yet", each with an outline + New Canvas /
+// New List; with one: "No results" / "You may want to try adjusting your
+// filters.".
 func (f *Files) empty(gtx C) D {
-	switch {
-	case f.query != "":
-		return f.emptyState(gtx, "search", "No results", "Try different keywords or remove filters.", nil, "")
-	case f.nav == 1:
-		return f.emptyState(gtx, "", "No canvases yet", "Your recently viewed or updated canvases will show up here.", &f.emptyNew, "+ New Canvas")
-	case f.nav == 2:
-		return f.emptyState(gtx, "", "No lists yet", "Your recently viewed or updated lists will show up here.", &f.emptyNew, "+ New List")
+	e := filesEmptyCopy(f.kind(), f.query != "", f.typeCount() == len(fileTypeMenu))
+	var btn *widget.Clickable
+	switch e.button {
+	case "Clear Filters":
+		btn = &f.clearFilters
+	case "New Canvas", "New List":
+		btn = &f.emptyNew
 	}
-	return f.emptyState(gtx, "", "No files yet", "Files you share or view will show up here.", nil, "")
+	return f.filesEmpty(gtx, e.title, e.desc, btn, e.icon, e.button)
+}
+
+// filesEmptyState is one of the browser's empty states.
+type filesEmptyState struct{ title, desc, icon, button string }
+
+// filesEmptyCopy picks Slack's empty state for a section ("" All files,
+// "canvases", "lists"), whether a search is on and whether every file type
+// is (see empty).
+func filesEmptyCopy(kind string, search, allTypes bool) filesEmptyState {
+	const (
+		noResults = "No results"
+		recents   = "Your recently viewed or updated files will be shown here."
+		adjust    = "You may want to try adjusting your filters."
+	)
+	switch kind {
+	case "canvases":
+		if search {
+			return filesEmptyState{noResults, adjust, "", ""}
+		}
+		return filesEmptyState{"No canvases yet", "Your recently viewed or updated canvases will show up here.", "plus", "New Canvas"}
+	case "lists":
+		if search {
+			return filesEmptyState{noResults, adjust, "", ""}
+		}
+		return filesEmptyState{"No lists yet", "Your recently viewed or updated lists will be shown here.", "plus", "New List"}
+	}
+	switch {
+	case allTypes && search:
+		return filesEmptyState{noResults, recents, "", ""}
+	case allTypes:
+		return filesEmptyState{"No files yet", recents, "", ""}
+	case search:
+		return filesEmptyState{noResults, adjust, "", "Clear Filters"}
+	}
+	return filesEmptyState{"No files found", "It may be that you don’t have any files yet, or that there aren’t any that fit your current filters.", "", "Clear Filters"}
+}
+
+// filesEmpty draws the explorer's EmptyState row: .p-explorer_empty_state
+// holding EmptyState (centred, max-width 380px) under
+// .p-unified_files_browser_empty_state's padding-top 16vh (the canvases
+// state's large-top-padding is the same 16vh); the title 18px/24 Black,
+// 8px, the description 15px/22, 8px, then the primary action, an outline
+// button (36px, 15px Bold, the icon 4px before the text) 8px down.
+func (f *Files) filesEmpty(gtx C, title, desc string, btn *widget.Clickable, icon, label string) D {
+	vh := gtx.Constraints.Max.Y + gtx.Dp(theme.TopNavH) // the window under the pane's top bar
+	if v := f.viewH; v > 0 {
+		vh = v + gtx.Dp(theme.TopNavH)
+	}
+	return layout.Inset{Top: unit.Dp(float32(vh*16/100) / gtx.Metric.PxPerDp), Bottom: 100}.Layout(gtx, func(gtx C) D {
+		gtx.Constraints.Min.X = gtx.Constraints.Max.X
+		return layout.N.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(380))
+			gtx.Constraints.Min.X = 0
+			return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+				layout.Rigid(func(gtx C) D {
+					return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+						return f.th.Layout(gtx, theme.TextStyle{Size: 18, LineHeight: 24, Weight: wBlack, Color: f.p.Text, Align: text.Middle}, title)
+					})
+				}),
+				layout.Rigid(func(gtx C) D {
+					return f.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: f.p.Text, Align: text.Middle}, desc)
+				}),
+				layout.Rigid(func(gtx C) D {
+					if btn == nil {
+						return D{}
+					}
+					return layout.Inset{Top: 8 + 8}.Layout(gtx, func(gtx C) D { return f.emptyButton(gtx, btn, icon, label) })
+				}),
+			)
+		})
+	})
+}
+
+// emptyButton is EmptyState's outline primary action (c-button--outline,
+// medium: 36px, padding 0 12px, radius 8, 15px Bold) with
+// c-empty_state__primary_action_text_with_icon's 20px icon 4px before the
+// label.
+func (f *Files) emptyButton(gtx C, c *widget.Clickable, icon, label string) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		tw := f.th.Measure(gtx, 15, wBold, label)
+		w := tw + 2*gtx.Dp(12)
+		if icon != "" {
+			w += gtx.Dp(20) + gtx.Dp(4)
+		}
+		sz := image.Pt(w, gtx.Dp(36))
+		r := image.Rectangle{Max: sz}
+		rad := gtx.Dp(8)
+		rrect(gtx, r, rad, f.p.Bg)
+		if c.Hovered() {
+			rrect(gtx, r, rad, f.p.Hover)
+		}
+		border(gtx, r, rad, max(1, gtx.Dp(1)), f.p.BorderStr)
+		g := gtx
+		g.Constraints = layout.Exact(sz)
+		layout.Center.Layout(g, func(gtx C) D {
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D {
+					if icon == "" {
+						return D{}
+					}
+					return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return f.icon(gtx, icon, 20, f.p.Text) })
+				}),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, label) }),
+			)
+		})
+		return D{Size: sz}
+	})
 }
 
 func (f *Files) footer(gtx C) D {
@@ -1311,34 +1581,42 @@ func (f *Files) cleanTitles(in []core.File) []fileItem {
 	return out
 }
 
-// starHint is Starred's empty row: "Click the ⭐ star on any canvas or
-// list to add it here for later." ("on any file" with
-// unified_files_3p_primary_custom_sections), the star drawn as Slack's
-// emoji image (Lato has no emoji glyphs).
+// starHint is Starred's empty row, the EmptyState description (15px/22,
+// the sidebar's theme-content-inv-sec text, left-aligned): "Click the ⭐
+// star on any canvas or list to add it here for later.", or "… on any
+// file …" with unified_files_3p_primary_custom_sections. The ⭐ is a
+// character of the sentence with a space on each side; the theme draws
+// it as Slack's emoji image in an emoji slot (1.2em, 1px apart), so the
+// words keep their spacing around it.
 func (f *Files) starHint(gtx C) D {
-	const lead = "Click the "
-	tail := "star on any canvas or list to add it here for later."
+	s := starHintText
 	if f.h.Core().Experiment("unified_files_3p_primary_custom_sections") == "on" {
-		tail = "star on any file to add it here for later."
+		s = starHintTextFiles
 	}
-	w := f.th.Measure(gtx, 15, wReg, lead)
-	url, _, ok := f.h.Core().Emoji("star")
-	if !ok {
-		return f.para(gtx, 15, 22, wReg, filesNavText, 0, "Click the "+tail)
+	return f.para(gtx, 15, 22, wReg, f.sidebarText(), 0, s)
+}
+
+// Slack's strings (cNNe e7).
+const (
+	starHintText      = "Click the \u2B50 star on any canvas or list to add it here for later."
+	starHintTextFiles = "Click the \u2B50 star on any file to add it here for later."
+)
+
+// sidebarText is the Files sidebar's text colour (theme-content-inv-sec,
+// flattened over the chrome like nav_'s).
+func (f *Files) sidebarText() color.NRGBA {
+	c := &f.th.C
+	chrome := filesChrome
+	if c.ChromeA.A > 0 {
+		chrome = theme.Mix(c.ChromeA, c.ChromeB, 0.5)
 	}
-	// Lay the sentence with spaces reserving the emoji's width, then draw
-	// the emoji over the gap (it sits on the first line).
-	sp := f.th.Measure(gtx, 15, wReg, " ")
-	n := 1
-	if sp > 0 {
-		n = (gtx.Dp(18) + sp - 1) / sp
+	if c.SidebarBg.A > 0 {
+		chrome = flatten(c.SidebarBg, chrome)
 	}
-	d := f.para(gtx, 15, 22, wReg, filesNavText, 0, lead+strings.Repeat(" ", n)+tail)
-	func() {
-		defer opOffset(gtx, image.Pt(w+gtx.Dp(1), gtx.Dp(3))).Pop()
-		f.emojiImg(gtx, url, 16)
-	}()
-	return d
+	if c.SidebarText.A > 0 {
+		return flatten(c.SidebarText, chrome)
+	}
+	return flatten(filesNavText, chrome)
 }
 
 // ---- file actions ----

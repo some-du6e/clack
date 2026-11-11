@@ -520,6 +520,21 @@ func (c *Client) Usergroups(ctx context.Context) ([]Usergroup, error) {
 	return r.Usergroups, err
 }
 
+// UsergroupMembership lists the user groups the viewer is in: Slack's
+// fetchUserGroupMembership (usergroups.membership, no arguments; a guest
+// gets user_is_restricted, which means none).
+func (c *Client) UsergroupMembership(ctx context.Context) ([]string, error) {
+	var r struct {
+		Usergroups []string `json:"usergroups"`
+	}
+	err := c.Call(ctx, "usergroups.membership", nil, &r)
+	var se *Error
+	if errors.As(err, &se) && se.Code == "user_is_restricted" {
+		return nil, nil
+	}
+	return r.Usergroups, err
+}
+
 // Prefs returns the user's client prefs (users.prefs.get).
 func (c *Client) Prefs(ctx context.Context) (map[string]json.RawMessage, error) {
 	var r struct {

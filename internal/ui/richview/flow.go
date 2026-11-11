@@ -570,7 +570,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			bg, fg := p.MentionBg, p.MentionText
 			if sp.Self {
-				bg = p.SelfMentionBg
+				// c-member_slug--mention / c-mrkdwn__user_group--mention
+				// over the --link look: surf-hgl-3, the link color (content-
+				// hgl-3 in dark)
+				bg, fg = p.SelfMentionBg, p.SelfLinkText
 			}
 			if sp.Kind == richtext.Broadcast {
 				bg, fg = p.SelfMentionBg, p.SelfMentionText
