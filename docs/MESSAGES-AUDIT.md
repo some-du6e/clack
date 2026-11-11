@@ -26,7 +26,7 @@ Slack's MessageActions (L2dv) draws the HOVER list of the actions selector kctM,
 | Reply button in the thread pane | t8wB returns nothing for THREAD, MEDIA_VIEWER_THREAD and SAVED_FOR_LATER_PAGE containers | shown | **open**: list.go |
 | Forward button | 6bWJ: "Forward message…" when private-message forwarding is allowed (Db0x), else "Share message…"; "Forward file…" / "Share file…" for file messages, "Share canvas…", "Share list…"; none for system messages (with system_messages_redesign_m1), unshareable messages (canBeShared) or document comment roots | always "Forward message…" | **open**: list.go; Clack doesn't read the forwarding setting |
 | Add to-do on a to-do | Yoyn: a message whose `saved.todo_state` is `to_do` gets "Complete to-do" with check-circle-filled (`c-message_actions__button--complete_todo`); a saved bookmark still gets "Add to-do" | any saved item gets "Remove from to-dos", and the click removes it | **open**: `core.Message.Saved` merges the saved and to-do lists (`loadSaved` reads both filters), so a row can't tell a to-do from a bookmark. Needs core to keep `todo_state`, then list.go |
-| Add to list… | dispatches `add_to_list`, Slack's add-to-list flow (thunk t9) | toast "Lists aren't supported yet" | **open**: a stub. Clack has no list picker; it needs one plus a `slackLists` record write. list.go |
+| Add to list… | dispatches `add_to_list`, Slack's add-to-list flow (thunk t9); 6r+G's shortcut is V (EtVr P2.ADD_TO_LIST). It moves into More actions > Organize only when the hover toolbar can't have it (CJ isListsAddToListQuickActionEnabled = !isChannelThreadSummariesEnabledRule: Slack AI thread summaries), and never shows in the right-click menu | toast "Lists aren't supported yet" | **fixed**: Slack's AddToListDialog from the toolbar (branch lists-edit), and V on the keyboard-selected message (branch exp-canvas-lists, ui/messages/kbnav.go). Hack Club has no Slack AI, so Organize doesn't get it |
 | More actions button and menu anchor | "More actions", tooltip top-right, the menu's top 32px above the button's centre | same | **matched** (FIDELITY #26) |
 | When the toolbar shows | `shouldRenderActions`: not while editing, and not on temp messages (isTempMsg, so pending and failed sends), unknown, hidden, `thread_hidden`, DLP-tombstone or restricted messages | not while editing, nor on tombstones, pending or failed sends | **matched** |
 
@@ -131,7 +131,7 @@ docs/EMBEDS.md has the full rules, read from build a84662d2d135. I didn't re-rea
 
 - Another agent's files (14). list.go and host.go have 7: the reply tooltip, the reply button in the thread pane, the forward label, the day pill menu, the back-to-newest pill, the unread banner and the Block Kit button fallback. popups has 6: report and flag, the workflow rows, the follow label, mark unread in a thread, the broadcast reply items and the DM pin label. custom_response.go has the custom response label.
 - Data Clack doesn't keep (4). Each message's saved metadata is behind Complete to-do, Edit reminder and the saved label, and the editor's id is behind "by {name}".
-- Not built yet (4): the add-to-list picker, skin-tone groups, the member link in "Pinned by", and the theme-wide dark tooltip.
+- Not built yet (3): skin-tone groups, the member link in "Pinned by", and the theme-wide dark tooltip. (The add-to-list picker is built: branch lists-edit.)
 - Not visible to the test account (1): the admin preview options.
 
 ## Tests

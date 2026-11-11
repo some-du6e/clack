@@ -53,6 +53,10 @@ var defaultSidebarExp = sidebarExp{filterDormant: true, improveMute: true, dmRec
 // experiments (rail.go).
 var defaultExperimentGroups = map[string]string{
 	"filter_dormant_channels": "on", "improve_mute_pref": "on", "dm_recency_sort_rollout": "without_edu",
+	// search and the switcher, as experiments.getByUser had them on
+	// 2026-11-10 (docs/EXPERIMENTS.md); the recents experiments only
+	// matter once Slack's own answer is in
+	"omni_quick_message_results": "on", "search_autocomplete_promote_exact_name_matches": "treatment_5",
 	"activity_inbox": "on", "agent_tasks": "on", "agents_landing_page": "on", "later_todos": "on",
 	// the Activity page's layout toggle sits in its header (5Ns/ XW; the
 	// live audit, docs/VIEWS-AUDIT.md): its density is the global pref

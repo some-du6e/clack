@@ -266,23 +266,29 @@ type Page struct {
 // passthroughs (thread_marked, update_thread_state, dnd_updated,
 // dnd_updated_user, pref_change, badge_counts_updated) in Raw.
 type Event struct {
-	Type      string
-	Channel   string
-	TS        string
-	ThreadTS  string
-	UserID    string
-	Name      string // typing: display name
-	Msg       *Message
-	User      *User
-	Conv      *Conv
-	Count     *Count // message, marked: the conversation's new unread state
-	Reply     bool   // message: a thread reply
-	Mention   bool   // message: mentions the viewer
-	ConvKind  string // message: kind of the conversation
-	Connected bool   // connection: socket up; realtime: live updates on
-	Presence  string // presence: active | away
-	Users     []string
-	Prefs     *Prefs
+	Type     string
+	Channel  string
+	TS       string
+	ThreadTS string
+	UserID   string
+	Name     string // typing: display name
+	Msg      *Message
+	User     *User
+	Conv     *Conv
+	Count    *Count // message, marked: the conversation's new unread state
+	Reply    bool   // message: a thread reply
+	Mention  bool   // message: mentions the viewer
+	ConvKind string // message: kind of the conversation
+	// StreamDone marks the update (message_changed) that ends an app's chat
+	// stream: the stored copy was streaming_state in_progress and this one
+	// isn't. It carries UserID, User, Reply, Mention and ConvKind like a
+	// message event (Slack's messageChanged shows the deferred
+	// notification then, under defer_notification_3p_streaming).
+	StreamDone bool
+	Connected  bool   // connection: socket up; realtime: live updates on
+	Presence   string // presence: active | away
+	Users      []string
+	Prefs      *Prefs
 	// sent: the confirmed message replaces the local pending row whose TS
 	// is ReplacesTS. message/sent/update/delete of own sends carry ClientMsgID.
 	ReplacesTS  string
@@ -342,7 +348,10 @@ type SearchOpts struct {
 	Module      string // "messages" (default) | "dms"
 	Context     string // search_context ("" = the module's results tab)
 	ExactOnly   bool   // More > Exact matches only
-	Session     SearchSession
+	// ExcludeArchived is More > Exclude archived (channel_type
+	// exclude_archived; search_explore_freshness_signals)
+	ExcludeArchived bool
+	Session         SearchSession
 	// InChannel is search in channel (⌘F): the query runs as
 	// "in:<#InChannel> …" with count 10.
 	InChannel      string
@@ -355,6 +364,12 @@ type SearchResult struct {
 	Total, Page, Pages   int
 	Convs                map[string]ConvRef
 	FilterIn, FilterFrom []FilterSuggestion // filter_suggestions
+	// Unfiltered is unfiltered_result_count: what the query finds without
+	// its filters (unfiltered_result_filter names them), set when the
+	// filtered search found less. The results page offers "Search without
+	// filters" for it (RelaxationSuggestion).
+	Unfiltered       int
+	UnfilteredFilter map[string]json.RawMessage
 }
 
 // ChannelHit is a channel search / browse result.

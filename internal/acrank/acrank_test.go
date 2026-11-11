@@ -2,8 +2,10 @@ package acrank
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -332,4 +334,47 @@ func TestParseModel(t *testing.T) {
 	}
 	var x map[string]any
 	_ = json.Unmarshal([]byte(`{}`), &x)
+}
+
+// search_autocomplete_promote_exact_name_matches in the composer's
+// autocomplete: in treatment_5 a member whose name is exactly the query
+// ends up in the first five people; in context, first; other groups keep
+// the model's order.
+func TestExactNameRulesTexty(t *testing.T) {
+	var cs []Cand
+	for i, n := range []string{"Annabel Lee", "Annie Hall", "Anna Karenina", "Annika Larsson", "Annette Bening",
+		"Anneliese Michel", "Annalise Keating", "Annemarie Smith", "Annora Brown", "Annis Grey"} {
+		// people you talk to: in the channel, recent DMs
+		cs = append(cs, Cand{Kind: Member, ID: fmt.Sprintf("U0000000%02d", i), Name: strings.ToLower(strings.Fields(n)[0]),
+			RealName: n, Active: true, SameTeam: true, HasPresence: true, InChannel: true,
+			IM: true, IMLatest: ts(time.Duration(i+1) * time.Hour), History: ts(time.Duration(i+1) * time.Minute)})
+	}
+	cs = append(cs, Cand{Kind: Member, ID: "U0000000AN", Name: "zz", RealName: "Ann", Active: true, SameTeam: true})
+	pos := func(group string, inChannel bool) int {
+		c := append([]Cand(nil), cs...)
+		c[len(c)-1].InChannel = inChannel
+		rs := Rank("ann", c, Options{Source: SourceTexty, Limit: 25, Now: t0, ExactNameGroup: group})
+		for i, r := range rs {
+			if c[r.Index].ID == "U0000000AN" {
+				return i
+			}
+		}
+		return -1
+	}
+	base := pos("", false)
+	if base < 5 {
+		t.Fatalf("the exact match is at %d without the rules; the fixture should rank it lower", base)
+	}
+	if got := pos("control", false); got != base {
+		t.Errorf("control moved the exact match: %d → %d", base, got)
+	}
+	if got := pos("treatment_5", false); got < 0 || got > 4 {
+		t.Errorf("treatment_5: the exact match at %d, want in the first five (base %d)", got, base)
+	}
+	if got := pos("treatment_5", true); got != 0 {
+		t.Errorf("treatment_5 in context: at %d, want first", got)
+	}
+	if got := pos("treatment_3", false); got < 0 || got > 2 {
+		t.Errorf("treatment_3: at %d, want in the first three", got)
+	}
 }

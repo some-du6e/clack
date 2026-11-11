@@ -138,6 +138,7 @@ func (a *App) SetExperimentGroups(groups map[string]*string) {
 	a.mu.Unlock()
 	if changed {
 		a.emit(Event{Type: "experiments"})
+		a.recentsAfterExperiments()
 	}
 }
 
@@ -247,4 +248,13 @@ var experimentReads = map[string][]string{
 	"huddles_av_button_permission_handling": on, "huddles_awareness_timestamp": on, "huddles_miles_davis": on,
 	"huddles_missed_notification": on, "huddles_multi_device": {"treatment"}, "huddles_screenshare_popout": on,
 	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on,
+	// search and the switcher (search*.go, popups/search_*)
+	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
+	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
+	"search_explore_freshness_signals":               on,
+	// prefs, status, focus, notifications, emoji picker
+	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
+	"defer_notification_3p_streaming": on,
+	// files
+	"file_trash_updates": on,
 }

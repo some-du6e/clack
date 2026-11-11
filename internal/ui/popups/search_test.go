@@ -527,3 +527,69 @@ func TestSearchDateLabel(t *testing.T) {
 		}
 	}
 }
+
+// search_autocomplete_promote_exact_name_matches' sort rules (J3WV):
+// treatment_5 lifts up to two in-context exact name matches to the first
+// people slots and other exact matches to people slot 4 (plus those);
+// treatment_3 to slot 2; other groups keep the order. Only people move,
+// within the slots people hold.
+func TestSearchExactNameRules(t *testing.T) {
+	mk := func(spec string) []srCand {
+		var out []srCand
+		for _, id := range strings.Fields(spec) {
+			k := srKUser
+			if id[0] == 'C' {
+				k = srKConv
+			}
+			out = append(out, srCand{Kind: k, ID: id})
+		}
+		return out
+	}
+	ids := func(cs []srCand) string {
+		var b []string
+		for _, c := range cs {
+			b = append(b, c.ID)
+		}
+		return strings.Join(b, " ")
+	}
+	exact := map[string]bool{"U7": true, "U9": true, "U3": true}
+	inCtx := map[string]bool{"U3": true}
+	facts := func(c srCand) srExactFacts {
+		if c.Kind != srKUser {
+			return srExactFacts{}
+		}
+		return srExactFacts{user: true, eligible: exact[c.ID], inContext: inCtx[c.ID]}
+	}
+	list := mk("U1 C1 U2 U3 C2 U4 U5 U6 U7 U8 U9")
+	for _, c := range []struct{ group, want string }{
+		// people slots: U1 U2 U3 U4 U5 U6 U7 U8 U9; U3 in context goes
+		// first (n=1), then up to one stranger lifted to people slot 5
+		{"treatment_5", "U3 C1 U1 U2 C2 U4 U5 U7 U6 U8 U9"},
+		{"treatment_3", "U3 C1 U1 U2 C2 U7 U4 U5 U6 U8 U9"},
+		{"control", ids(list)},
+		{"", ids(list)},
+	} {
+		if got := ids(srApplyExactNameRules(list, c.group, facts)); got != c.want {
+			t.Errorf("%s: %s, want %s", c.group, got, c.want)
+		}
+	}
+	// no in-context match: two strangers lifted to people slot 4
+	inCtx = map[string]bool{}
+	if got, want := ids(srApplyExactNameRules(list, "treatment_5", facts)), "U1 C1 U2 U3 C2 U4 U7 U9 U5 U6 U8"; got != want {
+		t.Errorf("strangers: %s, want %s", got, want)
+	}
+
+	// retained past the cut: the first five exact matches in pool order
+	// replace the last others
+	kept := mk("U1 U2 C1 U4")
+	pool := mk("U1 U2 C1 U4 U5 U6 U7 U8 U9")
+	if got, want := ids(srRetainExactNames(kept, pool, "treatment_5", 4, facts)), "U1 U2 U9 U7"; got != want {
+		t.Errorf("retained: %s, want %s", got, want)
+	}
+	if got := ids(srRetainExactNames(kept, pool, "control", 4, facts)); got != ids(kept) {
+		t.Errorf("control retained %s", got)
+	}
+	if got, want := ids(srRetainExactNames(mk("U1"), pool, "treatment_3", 4, facts)), "U1 U7 U9"; got != want {
+		t.Errorf("short list: %s, want %s", got, want)
+	}
+}

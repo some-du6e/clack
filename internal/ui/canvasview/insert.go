@@ -136,6 +136,20 @@ func (e *editState) insertProfile(v *View) {
 	}
 }
 
+// insertQuote is Insert > Blockquote (canvas_blockquote_layout's
+// BLOCKQUOTE_LAYOUT, Quip's insertSection("blockquote-layout")): a new
+// quote line after the insert point, saved as canvas markdown's "> ".
+func (e *editState) insertQuote(v *View) {
+	after, ok := e.insertPoint(v)
+	if !ok {
+		return
+	}
+	v.startNewAfter(after)
+	if s := e.cur; s != nil && s.ed.ActiveBlock() != composer.Quote {
+		s.ed.ToggleBlock(composer.Quote)
+	}
+}
+
 // startNewAfter begins typing a new paragraph after section after ("" or
 // unknown: after the document's last block).
 func (v *View) startNewAfter(after string) {

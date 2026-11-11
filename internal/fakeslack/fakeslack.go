@@ -934,6 +934,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hooked {
 		out = s.handle(method, form, edge)
+		if method == "experiments.getByUser" {
+			out = withAccountExperiments(out) // experiments.go
+		}
 	}
 	if out == nil {
 		out = map[string]any{"ok": true}
@@ -976,6 +979,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleSearch(method, f); handled { // search.go
+		return out
+	}
+	if out, handled := s.handleVisits(method, f); handled { // visits.go
 		return out
 	}
 	if out, handled := s.handleSections(method, f); handled { // sections.go
@@ -1072,6 +1078,13 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"channel_details_agents_apps_tab": g("on"), "move_channel_tabs_settings": g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
 			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
+			// search and the switcher (2026-11-10). desktop_search_recents_read
+			// and _write (on for the account) stay unassigned here so other
+			// tests' calls don't change; the recents tests force them.
+			"omni_quick_message_results": g("on"), "search_autocomplete_promote_exact_name_matches": g("treatment_5"),
+			"fe_nav_first_apply_post_processing_rules": g("treatment"), "omni_date_quick_filters": g("on"),
+			"srp_card_explore": g("on"), "search_file_channel_messages": g("on"),
+			"work_objects_message_search_xp_v2": g("on"),
 			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
 			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
 			"unread_thread_indication_in_replybar": g("on")})
