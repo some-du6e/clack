@@ -108,6 +108,10 @@ type prefs struct {
 	// keeps viewLayoutSplitWidthIntent / Mode in localStorage (split.go).
 	SplitW     int    `json:"split_w,omitempty"`
 	SplitWMode string `json:"split_w_mode,omitempty"`
+	// IntroSeen: the first launch's introduction ran to the sign-in card
+	// (or was skipped there), so later launches go straight to sign-in.
+	// Preferences > Clack > Replay introduction plays it again.
+	IntroSeen bool `json:"intro_seen,omitempty"`
 }
 
 func (a *App) prefsPath() string {

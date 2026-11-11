@@ -4,12 +4,17 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"strings"
+	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/widget"
 
@@ -46,6 +51,19 @@ type loginScreen struct {
 	focused   bool
 
 	card image.Rectangle // where the card was last drawn (tests)
+
+	// motion (motion.go): the card comes in after the introduction,
+	// shakes once at a new error, fields ring when focused, buttons
+	// press in
+	now      time.Time // this frame's
+	mc       *motionClock
+	reduced  bool
+	shownErr string             // the error the card last showed
+	errAt    time.Time          // when it appeared (zero: it was there from the start)
+	busyAt   time.Time          // when "Signing in…" started
+	drawn    bool               // the card has been on screen
+	rings    map[any]*springVal // focus rings, by editor or button
+	presses  map[*widget.Clickable]*pressAnim
 }
 
 // desktopSignInURL is the page Slack desktop opens in the browser for
@@ -77,11 +95,15 @@ func newLoginScreen() *loginScreen {
 	return l
 }
 
-func (a *App) layoutLogin(gtx layout.Context) {
+// layoutLogin draws the sign-in card over the welcome backdrop
+// (layoutWelcome). enter is when the introduction handed over to it (zero:
+// it is simply there); mc collects whether anything on it still moves.
+func (a *App) layoutLogin(gtx layout.Context, enter time.Time, mc *motionClock) {
 	l := a.login
 	sz := gtx.Constraints.Max
 	th := a.th
 	lc := theme.LightPalette // the card is always light, like Slack's sign-in page
+	l.now, l.mc, l.reduced = mc.now, mc, a.reduceMotion()
 	if !l.focused {
 		if l.advanced {
 			gtx.Execute(key.FocusCmd{Tag: &l.token})
@@ -146,19 +168,33 @@ func (a *App) layoutLogin(gtx layout.Context) {
 			a.startLogin(in)
 		}
 	}
+	if l.err != l.shownErr {
+		// a new error fades in, and the card shakes its head once; one it
+		// opened with ("Your Slack session ended") just shows
+		l.shownErr, l.errAt = l.err, time.Time{}
+		if l.drawn {
+			l.errAt = l.now
+		}
+	}
+	l.drawn = true
+	if l.busy && l.busyAt.IsZero() {
+		l.busyAt = l.now
+	} else if !l.busy {
+		l.busyAt = time.Time{}
+	}
 
 	// Two columns so everything fits the default 900px-tall window: how to
 	// get the values on the left, the fields on the right. The contents are
 	// recorded first, so the card can be sized to them before it is painted.
-	pad, gap := gtx.Dp(32), gtx.Dp(32)
+	pad, gap := gtx.Dp(36), gtx.Dp(36)
 	w := min(gtx.Dp(900), sz.X-gtx.Dp(16))
 	colW := (w - 2*pad - gap) / 2
 	rec := op.Record(gtx.Ops)
 	x, y := pad, pad
-	at(gtx, image.Pt(x, y), image.Pt(w-2*pad, gtx.Dp(40)), func(gtx layout.Context) layout.Dimensions {
-		return th.Label(gtx, 28, theme.Black, lc.Fg, "Sign in to Slack")
+	at(gtx, image.Pt(x, y), image.Pt(w-2*pad, gtx.Dp(44)), func(gtx layout.Context) layout.Dimensions {
+		return th.Label(gtx, 30, theme.Black, lc.Fg, "Sign in to Slack")
 	})
-	y += gtx.Dp(52)
+	y += gtx.Dp(58)
 
 	var ly, fy int
 	if l.advanced {
@@ -169,8 +205,13 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	fx := x + colW + gap
 	if l.err != "" {
 		fy += gtx.Dp(10)
-		fy += at(gtx, image.Pt(fx, fy), image.Pt(colW, gtx.Dp(80)), func(gtx layout.Context) layout.Dimensions {
-			return th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: lc.Danger, MaxLines: 4}, l.err)
+		ea := float32(clamp01(l.mc.spring(springSmooth, l.errAt)))
+		ed := 0
+		if !l.reduced {
+			ed = int(math.Round(float64(gtx.Dp(6)) * float64(1-ea)))
+		}
+		fy += at(gtx, image.Pt(fx, fy-ed), image.Pt(colW, gtx.Dp(80)), func(gtx layout.Context) layout.Dimensions {
+			return th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: alphaMul(lc.Danger, ea), MaxLines: 4}, l.err)
 		}).Size.Y
 	}
 	// Switch between the two ways in.
@@ -192,11 +233,95 @@ func (a *App) layoutLogin(gtx layout.Context) {
 	left, top := (sz.X-w)/2, max(gtx.Dp(8), (sz.Y-h)/2)
 	r := image.Rect(left, top, left+w, top+h)
 	l.card = r
-	theme.Shadow(gtx, r, gtx.Dp(12), gtx.Dp(12), theme.WithAlpha(lc.PanelShadow, 0x60))
-	theme.RRect(gtx, r, gtx.Dp(12), lc.Bg)
+	// the card's motion: in from below after the introduction, a shake at
+	// a new error (reduced motion: a fade, no shake)
+	alpha, dx, dy, s := float32(1), float32(0), float32(0), float32(1)
+	if !enter.IsZero() {
+		start := enter.Add(150 * time.Millisecond)
+		alpha = float32(clamp01(l.mc.spring(springSmooth, start)))
+		if !l.reduced {
+			e := float32(l.mc.spring(springBouncy, start))
+			dy = float32(gtx.Dp(44)) * (1 - e)
+			s = 0.97 + 0.03*e
+		}
+	}
+	if !l.reduced && l.err != "" && !l.errAt.IsZero() {
+		if t := l.now.Sub(l.errAt).Seconds(); t >= 0 && t < springShake.settle() {
+			dx = float32(gtx.Dp(9)) * float32(springShake.kick(t))
+			l.mc.moving = true
+		}
+	}
+	c := f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
+	tr := op.Affine(f32.Affine2D{}.Scale(c, f32.Pt(s, s)).Offset(f32.Pt(dx, dy))).Push(gtx.Ops)
+	defer tr.Pop()
+	if alpha < 0.997 {
+		// drawn even while invisible: its editors keep their handlers (and
+		// the link field its focus) from the first frame
+		defer paint.PushOpacity(gtx.Ops, alpha).Pop()
+	}
+	// on the dark backdrop: a deep shadow, and a hairline of light on top
+	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(16))), gtx.Dp(16), gtx.Dp(36), theme.WithAlpha(color.NRGBA{}, 0x70))
+	theme.RRect(gtx, r, gtx.Dp(16), lc.Bg)
 	off := op.Offset(r.Min).Push(gtx.Ops)
 	content.Add(gtx.Ops)
 	off.Pop()
+}
+
+// ring is the focus ring of tag (an editor or a button), on a snappy
+// spring.
+func (l *loginScreen) ring(tag any, on bool) float32 {
+	if l.rings == nil {
+		l.rings = map[any]*springVal{}
+	}
+	sv := l.rings[tag]
+	if sv == nil {
+		sv = &springVal{s: springSnappy}
+		l.rings[tag] = sv
+	}
+	t := 0.0
+	if on {
+		t = 1
+	}
+	v, moving := sv.get(l.now, t)
+	if moving && l.mc != nil {
+		l.mc.moving = true
+	}
+	return float32(clamp01(v))
+}
+
+// press is c's hover and press, on springs.
+func (l *loginScreen) press(c *widget.Clickable) (hover, press float32) {
+	if l.presses == nil {
+		l.presses = map[*widget.Clickable]*pressAnim{}
+	}
+	pa := l.presses[c]
+	if pa == nil {
+		pa = &pressAnim{press: springVal{s: springSnappy}, hover: springVal{s: springSnappy}}
+		l.presses[c] = pa
+	}
+	ht, pt := 0.0, 0.0
+	if c.Hovered() {
+		ht = 1
+	}
+	if c.Pressed() {
+		pt = 1
+	}
+	h, m1 := pa.hover.get(l.now, ht)
+	p, m2 := pa.press.get(l.now, pt)
+	if (m1 || m2) && l.mc != nil {
+		l.mc.moving = true
+	}
+	return float32(clamp01(h)), float32(clamp01(p))
+}
+
+// focusRing is the keyboard focus ring around r (Slack's: the link blue
+// at 30%, 3–4px outside the control).
+func focusRing(gtx layout.Context, r image.Rectangle, rad int, v float32) {
+	if v <= 0.01 {
+		return
+	}
+	g := int(math.Round(float64(gtx.Dp(4)) * float64(v)))
+	theme.RRect(gtx, r.Inset(-g), rad+g, theme.WithAlpha(loginInfoBorder, uint8(0x4d*v)))
 }
 
 // startLogin runs the sign-in off the UI goroutine and shows its outcome on
@@ -249,6 +374,7 @@ func (a *App) SignInWithLink(link string) {
 		}
 		l.advanced, l.focused = false, false
 		l.link.SetText(link)
+		a.introToSignIn() // the introduction steps aside for the card
 		a.startLogin(slack.SignInInput{Link: link})
 		a.Invalidate()
 	})
@@ -275,6 +401,7 @@ func (a *App) loginBox(gtx layout.Context, x, y, w int, bg, border color.NRGBA, 
 }
 
 // loginField draws a labelled single-line field and returns its height.
+// Focused, it rings in Slack's blue (the ring grows in on a spring).
 func (a *App) loginField(gtx layout.Context, x, y, w int, label string, ed *widget.Editor, hint string) int {
 	th, lc := a.th, theme.LightPalette
 	at(gtx, image.Pt(x, y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
@@ -282,12 +409,11 @@ func (a *App) loginField(gtx layout.Context, x, y, w int, label string, ed *widg
 	})
 	y += gtx.Dp(26)
 	fr := image.Rect(x, y, x+w, y+gtx.Dp(44))
-	theme.RRect(gtx, fr, gtx.Dp(6), lc.Bg)
-	bc := lc.BorderStrong
-	if gtx.Focused(ed) {
-		bc = lc.Link
-	}
-	theme.Border(gtx, fr, gtx.Dp(6), gtx.Dp(1), bc)
+	v := a.login.ring(ed, gtx.Focused(ed))
+	focusRing(gtx, fr, gtx.Dp(8), v)
+	theme.RRect(gtx, fr, gtx.Dp(8), lc.Bg)
+	bc := theme.Mix(lc.BorderStrong, lc.Link, v)
+	theme.Border(gtx, fr, gtx.Dp(8), gtx.Dp(1), bc)
 	at(gtx, image.Pt(x+gtx.Dp(12), y), image.Pt(w-gtx.Dp(24), gtx.Dp(44)), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, gtx.Dp(44), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -300,20 +426,32 @@ func (a *App) loginField(gtx layout.Context, x, y, w int, label string, ed *widg
 	return gtx.Dp(26 + 56)
 }
 
-// loginButton draws the card's primary button and returns its height.
+// loginButton draws the card's primary button and returns its height. It
+// darkens on hover and presses in on a spring; while signing in, a
+// spinner turns beside its label.
 func (a *App) loginButton(gtx layout.Context, x, y, w int, c *widget.Clickable, txt string) int {
-	th, lc := a.th, theme.LightPalette
-	br := image.Rect(x, y, x+w, y+gtx.Dp(44))
+	th, lc, l := a.th, theme.LightPalette, a.login
+	br := image.Rect(x, y, x+w, y+gtx.Dp(46))
+	hov, prs := l.press(c)
+	focusRing(gtx, br, gtx.Dp(8), l.ring(c, gtx.Focused(c)))
+	sc := 1 - 0.03*prs
+	ctr := f32.Pt(float32(br.Min.X+br.Max.X)/2, float32(br.Min.Y+br.Max.Y)/2)
+	tr := op.Affine(f32.Affine2D{}.Scale(ctr, f32.Pt(sc, sc))).Push(gtx.Ops)
 	atExact(gtx, br.Min, br.Size(), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, hov bool) {
-			bg := lc.ChromeA
-			if hov {
-				bg = lc.ChromeB
-			}
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), bg)
+		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, _ bool) {
+			bg := theme.Mix(lc.ChromeA, lc.ChromeB, hov)
+			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
 		}, func(gtx layout.Context) layout.Dimensions {
 			tw := th.Measure(gtx, 18, theme.Bold, txt)
-			at(gtx, image.Pt((br.Dx()-tw)/2, 0), image.Pt(tw+2, br.Dy()), func(gtx layout.Context) layout.Dimensions {
+			sw := 0
+			if l.busy {
+				sw = gtx.Dp(26)
+			}
+			lx := (br.Dx() - tw - sw) / 2
+			if l.busy {
+				l.spinner(gtx, image.Pt(lx+gtx.Dp(9), br.Dy()/2), gtx.Dp(16), lc.SendText)
+			}
+			at(gtx, image.Pt(lx+sw, 0), image.Pt(tw+2, br.Dy()), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, br.Dy(), func(gtx layout.Context) layout.Dimensions {
 					return th.Label(gtx, 18, theme.Bold, lc.SendText, txt)
 				})
@@ -321,21 +459,52 @@ func (a *App) loginButton(gtx layout.Context, x, y, w int, c *widget.Clickable, 
 			return layout.Dimensions{Size: br.Size()}
 		})
 	})
+	tr.Pop()
 	return br.Dy()
 }
 
-// loginSmallButton draws an outlined secondary button and returns its size.
+// spinner is a turning arc centred at c, d across (it keeps the frames
+// coming only while it shows).
+func (l *loginScreen) spinner(gtx layout.Context, c image.Point, d int, col color.NRGBA) {
+	t := l.now.Sub(l.busyAt).Seconds()
+	if l.mc != nil {
+		l.mc.moving = true
+	}
+	r := float32(d) / 2
+	w := max(2, float32(gtx.Dp(2)))
+	cf := f32.Pt(float32(c.X), float32(c.Y))
+	ring := func(a0, sweep float64, cl color.NRGBA) {
+		var p clip.Path
+		p.Begin(gtx.Ops)
+		p.MoveTo(cf.Add(f32.Pt(r*float32(math.Cos(a0)), r*float32(math.Sin(a0)))))
+		p.ArcTo(cf, cf, float32(sweep))
+		paint.FillShape(gtx.Ops, cl, clip.Stroke{Path: p.End(), Width: w}.Op())
+	}
+	ring(0, 2*math.Pi-0.01, theme.WithAlpha(col, 0x40))
+	if l.reduced {
+		// no turning: a pulse
+		ring(-math.Pi/2, math.Pi*(0.6+0.4*math.Sin(t*4)), col)
+		return
+	}
+	ring(t*2*math.Pi*1.1, math.Pi*(0.55+0.35*math.Sin(t*3)), col)
+}
+
+// loginSmallButton draws an outlined secondary button and returns its
+// size. Hover tints it and a press pushes it in, both on springs.
 func (a *App) loginSmallButton(gtx layout.Context, x, y int, c *widget.Clickable, txt string) image.Point {
-	th, lc := a.th, theme.LightPalette
-	bw, bh := th.Measure(gtx, 14, theme.Bold, txt)+gtx.Dp(24), gtx.Dp(30)
+	th, lc, l := a.th, theme.LightPalette, a.login
+	bw, bh := th.Measure(gtx, 14, theme.Bold, txt)+gtx.Dp(24), gtx.Dp(32)
+	hov, prs := l.press(c)
+	br := image.Rect(x, y, x+bw, y+bh)
+	focusRing(gtx, br, gtx.Dp(8), l.ring(c, gtx.Focused(c)))
+	sc := 1 - 0.04*prs
+	tr := op.Affine(f32.Affine2D{}.Scale(f32.Pt(float32(x)+float32(bw)/2, float32(y)+float32(bh)/2), f32.Pt(sc, sc))).Push(gtx.Ops)
+	defer tr.Pop()
 	atExact(gtx, image.Pt(x, y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, hov bool) {
-			bg := lc.Bg
-			if hov {
-				bg = lc.CodeBg
-			}
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(6), gtx.Dp(1), lc.BorderStrong)
+		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, _ bool) {
+			bg := theme.Mix(lc.Bg, lc.CodeBg, hov)
+			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
+			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), lc.BorderStrong)
 		}, func(gtx layout.Context) layout.Dimensions {
 			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {

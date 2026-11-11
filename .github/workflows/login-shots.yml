@@ -1,12 +1,17 @@
 name: login-shots
 # Renders the sign-in card headlessly at 1440x900 (link sign-in, Advanced,
-# each with an error showing) and uploads the screenshots. Synthetic only:
-# nothing here talks to Slack.
+# each with an error showing) and uploads the screenshots; intro-video
+# renders the introduction (intro.go) frame by frame at 60 fps and encodes
+# it with ffmpeg: MP4s, a GIF, key frames and contact sheets. Synthetic
+# only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run login-shots.yml --ref <branch>)
     paths:
       - "internal/ui/login*.go"
+      - "internal/ui/intro*.go"
+      - "internal/ui/motion*.go"
+      - "internal/ui/osmotion*"
       - ".github/workflows/login-shots.yml"
   workflow_dispatch:
 
@@ -35,9 +40,50 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$LOGIN_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestLoginCardFits|TestSignInWithLink|TestStartLoginSuccess' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestLoginCardFits|TestSignInWithLink|TestStartLoginSuccess|TestIntro|TestSprings|TestClackPrefsTab' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
           name: login-shots
           path: dist/shots
+
+  intro-video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps, Mesa, ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS libgl1-mesa-dri libegl-mesa0 ffmpeg
+      - name: render the introduction (headless, 60 fps)
+        env:
+          INTRO_VIDEO_DIR: ${{ github.workspace }}/dist/intro
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p "$INTRO_VIDEO_DIR"
+          xvfb-run -a -s "-screen 0 1440x900x24" go test -count=1 -v -timeout 50m -run 'TestIntroVideo$' ./internal/ui/
+      - name: GIF, contact sheets
+        if: ${{ !cancelled() }}
+        working-directory: dist/intro
+        run: |
+          set -euo pipefail
+          ls -la
+          for v in intro intro-replay intro-reduced; do
+            [ -f "$v.mp4" ] || continue
+            ffprobe -v error -show_entries stream=width,height,r_frame_rate,nb_frames -of compact "$v.mp4"
+            # four frames a second, eight across: the whole motion at a glance
+            ffmpeg -y -loglevel error -i "$v.mp4" -vf "fps=4,scale=360:-1,tile=8x8" -frames:v 1 "$v-contact.png"
+          done
+          ffmpeg -y -loglevel error -i intro.mp4 -vf "fps=24,scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=200:stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a" intro.gif
+          ls -la
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: intro-video
+          path: dist/intro

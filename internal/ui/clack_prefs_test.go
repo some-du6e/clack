@@ -41,7 +41,12 @@ func TestClackPrefsTab(t *testing.T) {
 			}
 		}
 	}
-	if w := "check Download updates automatically|check Live updates (typing, presence, instant messages)"; strings.Join(got, "|") != w {
+	// the Replay introduction row is intro_prefs.go's, in clackIntroRow:
+	// second, and the tab stays at three
+	if clackIntroRow == nil {
+		t.Fatal("intro_prefs.go didn't hook prefsReplayIntroRow into clackIntroRow")
+	}
+	if w := "check Download updates automatically|legend Replay introduction|check Live updates (typing, presence, instant messages)"; strings.Join(got, "|") != w {
 		t.Errorf("Clack tab rows %q, want %q", got, w)
 	}
 	var buttons []string
@@ -50,24 +55,9 @@ func TestClackPrefsTab(t *testing.T) {
 			buttons = append(buttons, r.Label)
 		}
 	}
-	if w := "Check for Updates"; strings.Join(buttons, "|") != w {
+	if w := "Check for Updates|Replay"; strings.Join(buttons, "|") != w {
 		t.Errorf("buttons %q, want %q", buttons, w)
 	}
-	// the Replay introduction slot: second, and the tab stays at three
-	clackIntroRow = func(p *prefsModal, f *prefsForm) {
-		f.option("replay_intro", "Replay introduction", "", false, false, func() {})
-	}
-	t.Cleanup(func() { clackIntroRow = nil })
-	got = got[:0]
-	for _, r := range pageRows(t, a, p, clackTabID) {
-		if r.Kind == "check" || r.Kind == "legend" || r.Kind == "h2" {
-			got = append(got, r.Label)
-		}
-	}
-	if w := "Download updates automatically|Replay introduction|Live updates (typing, presence, instant messages)"; strings.Join(got, "|") != w {
-		t.Errorf("with the intro row: %q, want %q", got, w)
-	}
-	clackIntroRow = nil
 	// the box is both settings: off stops the checks and the downloads
 	if !a.autoUpdatesOn() {
 		t.Fatal("automatic updates off by default")
