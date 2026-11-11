@@ -169,12 +169,16 @@ type display struct {
 	lines   []lineInfo
 	plain   []byte
 	size    image.Point
-	comps   []compBox // Slack components (see comps.go)
-	slots   []slot    // interactive element runs drawn by Options.Elements
-	tips    []string  // emoji tooltips (":name:"), frag.tip-1
-	codes   []codeRun // inline code runs and code blocks (codecopy.go)
-	removes []removeBtn
-	cards   []v3Card // v3 cards: context menu, hover card (unfurl_hover.go)
+	// overhang is how far paint reaches left of the box: an ordered list's
+	// outside ::marker wider than the li's 20px margin ("10. ") overflows
+	// into the message gutter, which Slack doesn't clip.
+	overhang int
+	comps    []compBox // Slack components (see comps.go)
+	slots    []slot    // interactive element runs drawn by Options.Elements
+	tips     []string  // emoji tooltips (":name:"), frag.tip-1
+	codes    []codeRun // inline code runs and code blocks (codecopy.go)
+	removes  []removeBtn
+	cards    []v3Card // v3 cards: context menu, hover card (unfurl_hover.go)
 	// overlayIcons paint over images (unfurl.go's video buttons)
 	overlayIcons []overlayIcon
 	// spinners are InfiniteSpinners drawn every frame (pending uploads)
@@ -197,6 +201,7 @@ func (d *display) reset() {
 	d.lines = d.lines[:0]
 	d.plain = d.plain[:0]
 	d.size = image.Point{}
+	d.overhang = 0
 	d.comps = d.comps[:0]
 	d.slots = d.slots[:0]
 	d.tips = d.tips[:0]

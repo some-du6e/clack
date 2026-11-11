@@ -577,6 +577,7 @@ func TestListOrderedLabels(t *testing.T) {
 		{2, 0, []string{"i.", "ii.", "iii."}},
 		{0, 4, []string{"5.", "6.", "7."}},
 		{3, 0, []string{"1.", "2.", "3."}},
+		{0, 8, []string{"9.", "10.", "11."}},
 	}
 	for _, c := range cases {
 		st := newTestStyle()
@@ -613,6 +614,19 @@ func TestListOrderedLabels(t *testing.T) {
 		}
 		if string(v.d.plain) != "one\ntwo\nthree" {
 			t.Errorf("plain %q", v.d.plain)
+		}
+		// A label wider than the li's 20px margin ("10. ") starts left of
+		// the list, where Slack's message column doesn't clip it: the
+		// View paints that far left of its box.
+		minX := float32(0)
+		for _, f := range labelFrags {
+			minX = min(minX, f.x)
+		}
+		if want := -int(math.Floor(float64(minX))); v.d.overhang != want {
+			t.Errorf("indent %d offset %d: overhang %d, want %d (leftmost label at %.2f)", c.indent, c.offset, v.d.overhang, want, minX)
+		}
+		if c.offset == 8 && labelFrags[1].x >= 0 {
+			t.Errorf("label %q starts at %.2f, inside the list's 20px margin", labelFrags[1].sh.str, labelFrags[1].x)
 		}
 	}
 }

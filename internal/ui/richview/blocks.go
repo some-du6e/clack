@@ -652,6 +652,9 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			k := l.faceFor(fs.face, fs.size, 0)
 			wd := l.st.word(k, label)
 			end := float32(cx) - l.dpf(8) - l.st.spaceOf(k).adv
+			if o := -int(math.Floor(float64(end - wd.adv))); o > l.d.overhang {
+				l.d.overhang = o
+			}
 			l.d.frags = append(l.d.frags, frag{kind: fText, x: end - wd.adv, y: baseline, w: wd.adv, size: fs.size, sh: wd, col: fs.col, target: -1, top: y, bot: y + fs.lineH, line: -1, p0: -1, p1: -1, part: l.curPart})
 		} else {
 			// disc, circle, square by level (Slack cycles every 3).
