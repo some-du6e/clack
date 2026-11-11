@@ -540,6 +540,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		ViewContext:    c.viewContext(),
 		Count:          c.ed.Doc().Len(),
 		OverLimit:      c.overLimit(),
+		Pending:        c.att.Len() > 0,
 	}
 	if isHeading(st.Block) && c.api.a != nil {
 		st.HeadingFormats = c.api.a.Experiment("rich_text_headers_and_dividers") == "on"

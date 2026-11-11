@@ -118,7 +118,10 @@ type chromeState struct {
 	Hide        uint32
 	NoBroadcast bool
 	SquareTop   bool
-	Count       int // characters in the message (CharacterCount)
+	// Pending: files wait in the attachments row, so the box holds
+	// Slack's .c-pending_files container (crWysiwygKids)
+	Pending bool
+	Count   int // characters in the message (CharacterCount)
 	// HeadingFormats is the rich_text_headers_and_dividers experiment:
 	// italic, underline, strike and code stay on in headings.
 	HeadingFormats bool

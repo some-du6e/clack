@@ -137,6 +137,16 @@ func (c *chrome) layoutWysiwyg(gtx layout.Context, p slackc.Props) layout.Dimens
 	if p != nil {
 		def = crWysiwygFor(p.StrOr("className", ""))
 	}
+	if !slackc.Styles.Empty() {
+		var parts uint8
+		if c.cur.Pending {
+			parts |= crKidFiles
+		}
+		if c.cur.Mode == modeThread && !c.cur.NoBroadcast {
+			parts |= crKidBroadcast
+		}
+		def = crWysiwygKids(def, c.cur.Mode, parts)
+	}
 	var cs css.State
 	var mods uint64
 	if c.cur.Focused {

@@ -66,6 +66,15 @@ func (d *ClassDef) Mods(classes ...string) *ClassDef { d.mods = classes; return 
 // declared kids still answer :has() with false and :empty with no.
 func (d *ClassDef) Kids(kids ...*ClassDef) *ClassDef { d.kids = kids; return d }
 
+// WithKids is a copy of d that also declares kids: the shape of a widget
+// whose children depend on its state (the composer box with its pending
+// files), cached by the caller like any ClassDef.
+func (d *ClassDef) WithKids(kids ...*ClassDef) *ClassDef {
+	c := *d
+	c.kids = append(append([]*ClassDef(nil), d.kids...), kids...)
+	return &c
+}
+
 // Styled is the style a native widget gets from CSS. The zero value (no
 // CSS active, or nothing matched in the chain) answers every query with
 // the widget's own default.
