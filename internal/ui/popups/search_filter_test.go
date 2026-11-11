@@ -189,16 +189,7 @@ func TestSearchTokens(t *testing.T) {
 // mention; a query that holds refs opens with its tokens.
 func TestSearchPopoverFilterCompleter(t *testing.T) {
 	e := srNewEnv(t, false)
-	var who core.User
-	for _, u := range e.h.a.Snapshot().Users {
-		if u.ID != e.h.a.Self().ID && !u.IsBot && !u.Deleted && u.DisplayName != "" && strings.Contains(u.RealName, " ") &&
-			(who.ID == "" || u.ID < who.ID) {
-			who = u
-		}
-	}
-	if who.ID == "" {
-		t.Fatal("no person in the snapshot")
-	}
+	who := srTestPerson(t, e)
 	p := NewSearchPopover(e.h, "", image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.frame()
@@ -295,6 +286,23 @@ func TestSearchPopoverFilterCompleter(t *testing.T) {
 	if p5.ac.open {
 		t.Error("the query the box opened with opened the menu")
 	}
+}
+
+// srTestPerson is the fake's first person (lowest id) with a display
+// name and a two-word real name.
+func srTestPerson(t *testing.T, e *srEnv) core.User {
+	t.Helper()
+	var who core.User
+	for _, u := range e.h.a.Snapshot().Users {
+		if u.ID != e.h.a.Self().ID && !u.IsBot && !u.Deleted && u.DisplayName != "" && strings.Contains(u.RealName, " ") &&
+			(who.ID == "" || u.ID < who.ID) {
+			who = u
+		}
+	}
+	if who.ID == "" {
+		t.Fatal("no person in the snapshot")
+	}
+	return who
 }
 
 // srType types s at the end of the popover's box: the edit, then the
