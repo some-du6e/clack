@@ -127,11 +127,13 @@ Clack has two ways in. Use the first.
 
 This is how Slack's desktop app signs in. You sign in in your browser, Slack's page hands "the Slack app" a one-time `slack://…/magic-login/…` link, and Clack trades that link for a session Slack issues to Clack (`auth.loginMagicBulk?ssb=1`). Nothing is copied from your browser, so Clack and the browser are two separate sessions, the way the browser and Slack desktop are.
 
-1. Start Clack. The sign-in screen opens on **Sign in with a Slack link**.
-2. Click **Open sign-in page** (or open `https://slack.com/ssb/add?s=1&v=4.53.276` yourself) and sign in to your workspace in the browser.
-3. When Slack offers to open the Slack app, click it and let the browser open Clack. On macOS that works out of the box. On Windows, tick "Open slack:// links with Clack" in the installer (or run `Clack.exe -register-url-handler` once); on Linux, run `clack --register-url-handler` once. If you can see the `slack://` link itself, you can paste it into **Sign-in link** instead. Slack's page usually doesn't show it, though.
+1. Start Clack and click **Open Slack sign-in** (or press Enter). Clack opens `https://slack.com/ssb/add?s=1&v=4.53.276` in your browser and waits for the link.
+2. Sign in to your workspace in the browser.
+3. When Slack offers to open the Slack app, let the browser open Clack, and Clack signs in by itself. On macOS that works out of the box. On Windows, tick "Open slack:// links with Clack" in the installer (or run `Clack.exe -register-url-handler` once). On Linux, run `clack --register-url-handler` once.
 
-The link works once, for a few minutes. If it has expired, sign in on the page again. Treat it like a password until then. Workspaces with single sign-on may send you back to the browser to finish.
+If the browser can't hand the link over, copy the `slack://` link and switch back to Clack. When its window comes to the front on the sign-in screen, Clack looks at the clipboard, signs in with a sign-in link it finds there and clears the clipboard, the way Slack desktop does. Pasting the link into the card's field works too. Slack's page usually doesn't show the link, though. **Having trouble?** on the card has these tips for your system.
+
+The link works once, for a few minutes. If it has expired, open Slack sign-in again. Treat it like a password until then. If your workspace uses single sign-on, Slack may send you back to the browser to finish. Clack then opens the page Slack names and waits for the next link.
 
 Letting the browser open Clack needs Clack to handle `slack://` links. On macOS the app declares the scheme, so it works as soon as Clack is installed. Elsewhere Clack never takes them by itself. Run `clack --register-url-handler` once (on Linux it runs `xdg-mime default clack.desktop x-scheme-handler/slack`; on Windows it writes the per-user `slack` URL keys). The Slack desktop app claims `slack://` too and re-claims it whenever it starts, so with both installed whichever registered last wins, and a link may open the wrong app. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
 
@@ -146,9 +148,9 @@ What isn't verified yet: whether this session survives you signing out in the br
 > [!NOTE]
 > **This way Clack shares your browser's Slack session. It is not a separate sign-in.** Earlier versions got sessions signed out **everywhere** (the browser, the desktop app and Clack) on Hack Club's Enterprise Grid, a few seconds after signing in. The cause was found: Grid reacts to Go's TLS handshake. This release connects to Slack with OpenSSL's handshake instead, which Grid leaves alone ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). Slack can still end a shared session for its own reasons, so use an account you can sign back in to.
 
-Click **Advanced: paste a token instead** on the sign-in screen (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
+Click **Advanced** on the sign-in card (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
 
-The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies the tokens Slack's own page keeps in `localStorage`. The sign-in screen shows the same snippet with a Copy button:
+The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies the tokens Slack's own page keeps in `localStorage`. Advanced shows the same snippet with a Copy button:
 
 ```js
 copy(JSON.stringify({teams: JSON.parse(localStorage.localConfig_v2).teams}))
