@@ -34,6 +34,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -159,6 +160,7 @@ type actRow struct {
 	ctx   struct{} // the row's context-menu press target
 	d     actDesc
 	built bool
+	gen   uint64 // i18n.Gen d was described in
 
 	// This frame's row context, read by the Slack boundaries
 	// (ActivityItem and its parts) through method expressions.
@@ -367,6 +369,8 @@ type Activity struct {
 	nameBtn  widget.Clickable
 	closeBtn widget.Clickable
 	prevList widget.List
+
+	locGen uint64 // i18n.Gen the rows were built in
 }
 
 // NewActivity builds the Activity view; it loads on first Layout.
@@ -374,7 +378,7 @@ func NewActivity(h Host) *Activity {
 	v := &Activity{
 		base:     newBase(h),
 		tabs:     newTabs(actTabLabels...),
-		query:    newSearch("Search activity"),
+		query:    newSearchIn(nsActivity, "Type to filter"), // ActivityFilterSearch
 		rows:     map[string]*actRow{},
 		override: map[string]bool{},
 		cleared:  map[string]bool{},
@@ -388,6 +392,7 @@ func NewActivity(h Host) *Activity {
 		fileReq:    map[string]bool{},
 		fileTitles: map[string]string{},
 	}
+	v.tabs.Tr = v.tabTr
 	v.list.Axis = layout.Vertical
 	v.prevList.Axis = layout.Vertical
 	return v
@@ -916,29 +921,28 @@ func actIsMention(t string) bool {
 func actAlertLabel(category string) string {
 	switch category {
 	case "CHANNEL":
-		return "Channel"
+		return nsActivity.T("Channel")
 	case "USER_GROUP":
-		return "User group"
+		return nsActivity.T("User group")
 	case "EXTERNAL_CHANNEL":
-		return "External channel"
+		return nsActivity.T("External channel")
 	case "WORKFLOW":
-		return "Workflow"
+		return nsActivity.T("Workflow")
 	case "INVITATION":
-		return "Invitation"
+		return nsActivity.T("Invitation")
 	}
-	return "Notification"
+	return nsActivity.T("Notification")
 }
 
 func actReplies(n int, adj string) string {
+	if adj == "" {
+		return nsThreads.T("{count, plural, =1 {# reply} other {# replies}}", "count", n) // the reply bar's
+	}
 	w := "replies"
 	if n == 1 {
 		w = "reply"
 	}
-	s := strconv.Itoa(n) + " "
-	if adj != "" {
-		s += adj + " "
-	}
-	return s + w
+	return strconv.Itoa(n) + " " + adj + " " + w
 }
 
 // actStamp is the message timestamp next to a name: "3:04 PM" today, else
@@ -950,6 +954,10 @@ func actStamp(t time.Time) string {
 	now := time.Now()
 	if sameDay(t, now) {
 		return clock(t)
+	}
+	if l := i18n.Locale(); l != i18n.EnUS {
+		d := i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ExcludeYear: t.Year() == now.Year()})
+		return nsMessage.T("{calendarDate} at {time}", "calendarDate", d, "time", clock(t))
 	}
 	s := t.Format("Jan 2") + ordinal(t.Day())
 	if t.Year() != now.Year() {
@@ -1022,7 +1030,7 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		name, av = actor, actorAv
 	}
 	if author == "USLACKBOT" && it.Type != "message_reaction" && it.Type != "thread_v2" {
-		name = "Slackbot"
+		name = nsActivity.T("Slackbot")
 	}
 	d.name, d.avatar = name, av
 	d.prev = v.preview(it.Msg)
@@ -1035,10 +1043,10 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 	}
 	switch {
 	case it.Type == "generic_system_alert":
-		d.name, d.avatar = "Slack", ""
+		d.name, d.avatar = nsActivity.T("Slack"), ""
 		body(oneLine(it.Text))
 	case it.Type == "saved_reminder":
-		d.name, d.avatar = "Reminder", ""
+		d.name, d.avatar = nsActivity.T("Reminder"), ""
 		switch {
 		case it.Msg != nil:
 			// ReminderMessage: "{author}: " before the message
@@ -1049,7 +1057,7 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 			}
 			d.lines = 1
 		case it.ReminderItem == "file":
-			body("You set a reminder about this file")
+			body(nsActivity.T("You set a reminder about this file"))
 		default:
 			body(oneLine(it.Text))
 		}
@@ -1061,12 +1069,12 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 	case it.Type == "thread_v2":
 		v.threadSender(it, &d, author)
 		if it.Msg != nil && it.Msg.User == self {
-			d.subtext = "You: "
+			d.subtext = nsActivity.T("You: ")
 		}
 	case actExternal(it.Type):
 		// InviteSenderName: "{user} from {team}", else "Slack Connect
 		// Invitation"; ExternalInviteContent for the body.
-		d.name, d.avatar = firstNonEmpty(actor, "Slack Connect Invitation"), actorAv
+		d.name, d.avatar = firstNonEmpty(actor, i18n.T("slack_connect", "Slack Connect Invitation")), actorAv
 		if actor != "" {
 			d.team = it.Team
 			if it.Invite != nil {
@@ -1075,11 +1083,11 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		}
 		switch {
 		case it.InviteStatus == "revoked" || it.InviteStatus == "expired" || actor == "":
-			body("You received an invitation that has been ignored, expired, or is no longer available for another reason.")
+			body(nsActivity.T("You received an invitation that has been ignored, expired, or is no longer available for another reason."))
 		case it.Type == "external_dm_invite":
-			body("invited you to direct message")
+			body(nsActivity.T("invited you to direct message"))
 		case it.Title != "":
-			body("invited you to #" + strings.TrimPrefix(it.Title, "#"))
+			body(nsActivity.T("invited you to {channelName}", "channelName", "#"+strings.TrimPrefix(it.Title, "#")))
 		default:
 			body("")
 		}
@@ -1089,7 +1097,9 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		if it.Type == "quietly_added_to_channel" && actor != "" {
 			d.name, d.avatar = actor, actorAv
 		}
-		body("invited you to " + d.title)
+		// "invited you to <#{channelId}|{channelName}>": the channel
+		// token drawn as its title
+		body(strings.Replace(nsActivity.T("invited you to <#{channelId}|{channelName}>", "channelId", "\x00", "channelName", "\x01"), "<#\x00|\x01>", d.title, 1))
 		d.tile = d.avatar == ""
 	case it.Type == "shared_workspace_invite":
 		body("")
@@ -1098,15 +1108,15 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 			d.name, d.avatar = actor, actorAv
 		}
 		if it.JoinerReminder {
-			body("Joined your workspace. A welcome from you will help them get started.")
+			body(nsActivity.T("Joined your workspace. A welcome from you will help them get started."))
 		} else {
-			body("Accepted your invitation to join Slack \u2014\u00a0take a second to say hello.")
+			body(nsActivity.T("Accepted your invitation to join Slack \u2014\u00a0take a second to say hello."))
 		}
 	case it.Type == "prejoin_dm_welcome_party_alert":
 		if actor != "" {
 			d.name, d.avatar = actor, actorAv
 		}
-		body("Was invited to join " + v.teamName() + " \u2014 take a second to say hello.")
+		body(nsActivity.T("Was invited to join {teamName} \u2014 take a second to say hello.", "teamName", v.teamName()))
 	case actIsList(it.Type):
 		// the sender (hliv EM): assigned_by, edited_by, mentioned_by; the
 		// rest name the message author, which they don't have
@@ -1123,7 +1133,7 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 		}
 	default: // mentions, DMs, apps, channel posts
 		if it.Msg != nil && it.Msg.User == self {
-			d.subtext = "You: "
+			d.subtext = nsActivity.T("You: ")
 		}
 	}
 	if d.nameDense == "" {
@@ -1202,8 +1212,8 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		it := &page.Items[i]
 		key := actKey(it)
 		r := v.rowFor(key)
-		if !r.built || patchedViews {
-			r.d, r.built = v.describe(it, page.Convs), true
+		if !r.built || r.gen != i18n.Gen() || patchedViews {
+			r.d, r.built, r.gen = v.describe(it, page.Convs), true, i18n.Gen()
 		}
 		// the store-backed marks (drafts, your replies and reactions,
 		// the reminder's saved item) follow every rebuild
@@ -1262,7 +1272,7 @@ const (
 func (v *Activity) head(gtx C) D {
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx C) D {
-			return v.header(gtx, "Activity",
+			return v.header(gtx, nsActivity.T("Activity"),
 				layout.Rigid(func(gtx C) D {
 					if !v.globalSettings() {
 						return D{} // ActivityFilterLayoutToggle sits in the filter bar
@@ -1420,12 +1430,12 @@ func (v *Activity) layoutToggle(gtx C) D {
 	}
 	// FgHy's tooltips: above with the layout revisions, else below
 	core := v.h.Core()
-	tips := [2]string{"View as detailed", "View as dense"}
+	tips := [2]string{nsActivity.T("View as detailed"), nsActivity.T("View as dense")}
 	switch {
 	case core.ActivityLayoutRevisions():
-		tips = [2]string{"Multi-line view", "Single-line view"}
+		tips = [2]string{nsActivity.T("Multi-line view"), nsActivity.T("Single-line view")}
 	case v.globalSettings():
-		tips = [2]string{"Detailed view", "Dense view"}
+		tips = [2]string{nsActivity.T("Detailed view"), nsActivity.T("Dense view")}
 	}
 	side := popups.Below
 	if core.ActivityLayoutRevisions() {
@@ -1445,7 +1455,7 @@ func (v *Activity) layoutToggle(gtx C) D {
 // gets Slack's small lift shadow.
 func (v *Activity) unreadsBtn(gtx C) D {
 	m := op.Record(gtx.Ops)
-	d := v.filterButton(gtx, &v.unread, "mark-as-unread", "Unreads") // Slack's svg mark-as-unread
+	d := v.filterButton(gtx, &v.unread, "mark-as-unread", nsActivity.T("Unreads")) // Slack's svg mark-as-unread
 	call := m.Stop()
 	if v.unread.Value {
 		theme.Shadow(gtx, image.Rectangle{Max: d.Size}.Add(image.Pt(0, gtx.Dp(1))), gtx.Dp(8), gtx.Dp(2), argb(0x19000000))
@@ -1640,6 +1650,9 @@ func (b *base) actCheckDash(gtx C, size unit.Dp) D {
 
 func (v *Activity) items(gtx C) D {
 	page, loaded, err := v.data.get()
+	if g := i18n.Gen(); g != v.locGen {
+		v.locGen, v.dirty = g, true // row text in the new locale
+	}
 	if v.dirty || v.visN != len(page.Items) {
 		v.rebuild(&page)
 	}
@@ -1751,16 +1764,25 @@ func (v *Activity) emptyState() actEmptyState {
 	pick := v.emptyPick % len(actUnreadsEmpty)
 	switch {
 	case v.unread.Value && (v.slot() == 0 || v.slot() >= actSlotN):
-		return actUnreadsEmpty[pick]
+		return actUnreadsEmpty[pick].local()
 	case v.unread.Value:
-		e := actUnreadsEmpty[pick]
-		e.title = "No unread " + actTabIDs[v.slot()]
+		e := actUnreadsEmpty[pick].local()
+		e.title = strings.TrimSpace(nsMentions.T("{emoji} No unread {filter}", "emoji", "", "filter", actTabIDs[v.slot()]))
 		return e
 	case v.searchOn && v.query.text() != "":
-		return actEmptyState{"thinking_face", "Nothing found", "Filtering from recent notifications.", true}
+		return actEmptyState{"thinking_face", "Nothing found", "Filtering from recent notifications.", true}.local()
 	}
 	return actEmptyState{"white_check_mark", "All caught up",
-		"Looks like things are quiet for now. When there’s new activity, it’ll be here.", v.filtered() || v.showCleared}
+		"Looks like things are quiet for now. When there’s new activity, it’ll be here.", v.filtered() || v.showCleared}.local()
+}
+
+// local is e in the active locale: MmpO's titles are "{emoji} {title}"
+// strings (Clack draws the emoji above, so it formats to nothing) and its
+// descriptions plain ones, all in the mentions namespace.
+func (e actEmptyState) local() actEmptyState {
+	e.title = strings.TrimSpace(nsMentions.T("{emoji} "+e.title, "emoji", ""))
+	e.body = nsMentions.T(e.body)
+	return e
 }
 
 // actEmpty draws the empty state: the 32px emoji, the 16px bold title,
@@ -1789,7 +1811,7 @@ func (v *Activity) actEmpty(gtx C) D {
 				if !e.showAll {
 					return D{}
 				}
-				return layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D { return v.linkButton(gtx, &v.showAll, 15, "Show all activity") })
+				return layout.Inset{Top: 12}.Layout(gtx, func(gtx C) D { return v.linkButton(gtx, &v.showAll, 15, nsMentions.T("Show all activity")) })
 			}),
 		)
 	})
@@ -2376,12 +2398,12 @@ func (v *Activity) undoBar(gtx C) {
 	g.Constraints.Min = image.Point{}
 	d := layout.Inset{Top: 10, Bottom: 10, Left: 16, Right: 16}.Layout(g, func(gtx C) D {
 		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, fg, "Item cleared") }),
+			layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, fg, nsActivity.T("Activity item cleared")) }), // g+cq's toast
 			hgap(16),
 			layout.Rigid(func(gtx C) D {
 				return v.undo.btn.Layout(gtx, func(gtx C) D {
 					pointerCursor(gtx)
-					return v.label(gtx, 15, wBold, link, "Undo")
+					return v.label(gtx, 15, wBold, link, nsActivity.T("Undo"))
 				})
 			}),
 		)
@@ -2819,7 +2841,7 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		// (margin_right_25) before your message
 		return row(gtx, layout.Middle,
 			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, "You:") })
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, nsActivity.T("You:")) })
 			}),
 			layout.Flexed(1, func(gtx C) D {
 				gtx.Constraints.Min.X = 0
@@ -2828,20 +2850,29 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		)
 	}
 	if d.subReact {
-		pre := []layout.FlexChild{layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, "Reacted ") })}
-		if !v.dense {
+		// ReactionContent: "Reacted {emoji} to:" (Detailed: the emoji
+		// drawn where the locale puts it), "Reacted to:" (Dense)
+		var pre []layout.FlexChild
+		if v.dense {
+			pre = append(pre, layout.Rigid(func(gtx C) D {
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, nsActivity.T("Reacted to:")) })
+			}))
+		} else {
+			before, after := around(nsActivity, "Reacted {emoji} to:", "emoji")
+			if before != "" {
+				pre = append(pre, layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, before) }))
+			}
 			pre = append(pre, layout.Rigid(func(gtx C) D {
 				if d.footEmoji != "" {
 					return v.emojiImg(gtx, d.footEmoji, 16)
 				}
 				return v.emojiAlt(gtx, d.footAlt, 16)
-			}), layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, " ") }))
+			}))
+			pre = append(pre, layout.Rigid(func(gtx C) D {
+				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, after) })
+			}))
 		}
-		pre = append(pre,
-			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, "to:") })
-			}),
-			layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }))
+		pre = append(pre, layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }))
 		return row(gtx, layout.Middle, pre...)
 	}
 	if d.subtext == "" {
@@ -2984,12 +3015,12 @@ func (v *Activity) pane(gtx C) D {
 func (v *Activity) previewHead(gtx C) D {
 	d := &v.selDesc
 	w, h := gtx.Constraints.Max.X, gtx.Dp(49)
-	btn := "Open in channel"
+	btn := nsMessage.T("Open in channel")
 	switch {
 	case d.invite:
-		btn = "Open channel"
+		btn = i18n.T("user_groups", "Open channel") // Slack's only "Open channel"
 	case d.thread != "":
-		btn = "View thread"
+		btn = nsMessage.T("View thread")
 	}
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
@@ -3147,7 +3178,7 @@ func actStack(gtx C, n int, el layout.ListElement) D {
 // selectMenu is the "Select options" menu.
 func (v *Activity) selectMenu(gtx C) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	labels := [4]string{"Select all", "Select reads", "Select unreads", "Custom select"}
+	labels := [4]string{nsActivity.T("Select all"), nsActivity.T("Select reads"), nsActivity.T("Select unreads"), nsActivity.T("Custom select")} // BulkActionsSelect
 	return actStack(gtx, len(labels), func(gtx C, i int) D {
 		return v.menuItem(gtx, &v.selC[i], "", labels[i], false, false)
 	})
@@ -3207,16 +3238,18 @@ func (v *Activity) settingsMenu(gtx C) D {
 	rows = append(rows,
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Top: 4, Bottom: 4, Left: 16, Right: 16}.Layout(gtx, func(gtx C) D {
-				return v.label(gtx, 13, wBold, v.p.Muted, "What to show in Activity")
+				return v.label(gtx, 13, wBold, v.p.Muted, i18n.T("prefs", "What to show in Activity")) // ActivitySettingsMenu (vzfm)
 			})
 		}),
-		check(0, "DMs and group DMs", dms),
-		check(1, "Channels set to “All new posts”", chans),
-		check(2, "Reminders from to-dos", rem),
+		check(0, i18n.T("prefs", "DMs and group DMs"), dms),
+		check(1, i18n.T("prefs", "Channels set to “All new posts”"), chans),
+		check(2, i18n.T("prefs", "Reminders from to-dos"), rem),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D { return hline(gtx, v.p.Border) })
 		}),
-		layout.Rigid(func(gtx C) D { return v.menuItem(gtx, &v.setC[3], "", "See all notification settings", false, false) }),
+		layout.Rigid(func(gtx C) D {
+			return v.menuItem(gtx, &v.setC[3], "", nsMentions.T("See all notification settings"), false, false)
+		}),
 	)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, rows...)
 }

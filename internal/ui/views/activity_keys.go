@@ -26,7 +26,6 @@ package views
 import (
 	"context"
 	"image"
-	"strconv"
 	"time"
 
 	"gioui.org/io/event"
@@ -348,11 +347,7 @@ func (v *Activity) bulkKeyRead(clearToo bool) {
 	if clearToo {
 		v.endSelect()
 	} else {
-		noun := "items"
-		if n == 1 {
-			noun = "item"
-		}
-		v.h.Toast(strconv.Itoa(n) + " " + noun + " marked as read")
+		v.h.Toast(nsActivity.T("{numItems} {numItems, plural, =1 {item} other {items}} marked as read", "numItems", n))
 	}
 	v.write("Couldn’t update the items: ", func(ctx context.Context, c *core.App) error {
 		if err := c.MarkActivityReadBulk(ctx, items...); err != nil || !clearToo {

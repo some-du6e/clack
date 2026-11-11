@@ -9,7 +9,6 @@ package views
 import (
 	"context"
 	"image"
-	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -52,6 +52,12 @@ type dirPick struct {
 
 func newDirPick(placeholder string, multi bool) dirPick {
 	return dirPick{srch: newSearch(placeholder), multi: multi}
+}
+
+// newDirPickIn is newDirPick with a placeholder that is Slack's string in
+// ns.
+func newDirPickIn(ns i18n.NS, placeholder string, multi bool) dirPick {
+	return dirPick{srch: newSearchIn(ns, placeholder), multi: multi}
 }
 
 func (p *dirPick) query() string { return strings.TrimSpace(p.srch.text()) }
@@ -330,12 +336,12 @@ func (d *Directories) workspaceOpts(t int) []dirPickOpt {
 		}
 		return out
 	}
-	out := []dirPickOpt{{value: "", label: "All workspaces"}}
+	out := []dirPickOpt{{value: "", label: nsSearch.T("All workspaces")}}
 	if sel != "" {
 		out = append(out, dirPickOpt{value: sel, label: d.dirTeamName(sel), team: true})
 	}
 	if len(teams) > 0 {
-		out = append(out, dirPickOpt{value: "workspaces-label", label: "Your workspaces", header: true})
+		out = append(out, dirPickOpt{value: "workspaces-label", label: nsSearch.T("Your workspaces"), header: true})
 		for _, id := range teams {
 			out = append(out, dirPickOpt{value: id, label: d.dirTeamName(id), team: true, group: true})
 		}
@@ -361,7 +367,7 @@ func (d *Directories) orgOpts() []dirPickOpt {
 		out = append(out, dirPickOpt{value: id, label: d.dirTeamName(id), team: true})
 	}
 	if len(d.orgs) > 1 {
-		out = append(out, dirPickOpt{value: "clear", label: "Clear all", clear: true})
+		out = append(out, dirPickOpt{value: "clear", label: nsSearch.T("Clear all"), clear: true})
 	}
 	var sug []dirPickOpt
 	for _, id := range list {
@@ -370,7 +376,7 @@ func (d *Directories) orgOpts() []dirPickOpt {
 		}
 	}
 	if len(sug) > 0 {
-		out = append(out, dirPickOpt{value: "suggestions-label", label: "Suggestions", header: true})
+		out = append(out, dirPickOpt{value: "suggestions-label", label: nsSearch.T("Suggestions"), header: true})
 		out = append(out, sug...)
 	}
 	return out
@@ -394,7 +400,7 @@ func facetOpts(p *dirPick, chosen []string, facets []core.Facet) []dirPickOpt {
 		out = append(out, dirPickOpt{value: v, label: v})
 	}
 	if len(chosen) > 1 {
-		out = append(out, dirPickOpt{value: "clear", label: "Clear all", clear: true})
+		out = append(out, dirPickOpt{value: "clear", label: nsSearch.T("Clear all"), clear: true})
 	}
 	var sug []dirPickOpt
 	for _, f := range facets[:min(5, len(facets))] {
@@ -403,7 +409,7 @@ func facetOpts(p *dirPick, chosen []string, facets []core.Facet) []dirPickOpt {
 		}
 	}
 	if len(sug) > 0 {
-		out = append(out, dirPickOpt{value: "Suggestions", label: "Suggestions", header: true})
+		out = append(out, dirPickOpt{value: "Suggestions", label: nsSearch.T("Suggestions"), header: true})
 		out = append(out, sug...)
 	}
 	return out
@@ -449,34 +455,34 @@ func (d *Directories) pickTrigger(t int, label string) (text, team string, activ
 	switch {
 	case label == "Workspaces":
 		if id := d.team[t]; id != "" {
-			return "In " + d.dirTeamName(id), id, true
+			return nsSearch.T("In") + "\u00a0" + d.dirTeamName(id), id, true
 		}
 	case label == "Organizations":
 		switch len(d.orgs) {
 		case 0:
 		case 1:
-			return "With " + d.dirTeamName(d.orgs[0]), d.orgs[0], true
+			return nsSearch.T("With") + "\u00a0" + d.dirTeamName(d.orgs[0]), d.orgs[0], true
 		default:
-			return "With " + strconv.Itoa(len(d.orgs)) + " organizations", "", true
+			return nsSearch.T("With {count, plural, =1 {{count} organization} other {{count} organizations}}", "count", len(d.orgs)), "", true
 		}
 	case label == "Title":
 		switch len(d.titles) {
 		case 0:
 		case 1:
-			return "Title: " + d.titles[0], "", true
+			return nsSearch.T("Title:") + "\u00a0" + d.titles[0], "", true
 		default:
-			return "Multiple titles", "", true
+			return nsSearch.T("Multiple titles"), "", true
 		}
 	case label == "Location":
 		switch len(d.locs) {
 		case 0:
 		case 1:
-			return "Location: " + d.locs[0], "", true
+			return nsSearch.T("Location:") + "\u00a0" + d.locs[0], "", true
 		default:
-			return "Multiple locations", "", true
+			return nsSearch.T("Multiple locations"), "", true
 		}
 	}
-	return label, "", false
+	return nsSearch.T(label), "", false
 }
 
 // pickOpts are the options of the popover behind label on tab t and

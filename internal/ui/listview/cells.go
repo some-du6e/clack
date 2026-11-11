@@ -17,6 +17,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -146,7 +147,8 @@ type cellOpts struct {
 	self    string
 }
 
-// momentLayout converts a list column's moment.js date format to Go's.
+// momentLayout converts a list column's moment.js date format to Go's
+// (reading a typed date; the cells draw through renderDate).
 func momentLayout(f string) string {
 	if f == "" || f == "default" {
 		return "Jan 2, 2006" // Slack's "MMM D, YYYY"
@@ -156,29 +158,51 @@ func momentLayout(f string) string {
 	return r.Replace(f)
 }
 
-// dateText is a date cell's text: one day, or a range "start to end".
+// renderDate is Slack's (ew7n): a "YYYY-MM-DD" day in the column's dayjs
+// date format, the locale's "L" for "System (default)" (11/13/2026,
+// 13/11/2026, 2026/11/13); "" for no day.
+func renderDate(day, format string) string {
+	t, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return ""
+	}
+	if format == "" || format == "default" {
+		format = "L"
+	}
+	return i18n.FormatDayjs(i18n.Locale(), t, format)
+}
+
+// dateText is a date cell's text (DateToken, ew7n U8): the value is
+// "start:end"; a range column shows "{startDateRange} to {endDateRange}"
+// (Slack passes the end unformatted there; Clack formats both), any other
+// the start.
 func dateText(c *lists.Column, f *lists.Field) string {
 	if f == nil || len(f.Date) == 0 {
 		return ""
 	}
-	lay := momentLayout(c.Options.DateFormat)
-	var out []string
-	for _, d := range f.Date {
-		for _, part := range strings.Split(d, ":") {
-			if t, err := time.Parse("2006-01-02", part); err == nil {
-				out = append(out, t.Format(lay))
-			}
-		}
+	parts := strings.Split(strings.Join(f.Date, ":"), ":")
+	start, end := renderDate(parts[0], c.Options.DateFormat), ""
+	if len(parts) > 1 {
+		end = renderDate(parts[1], c.Options.DateFormat)
 	}
-	return strings.Join(out, " to ")
+	switch {
+	case c.Options.Format != "range":
+		return start
+	case start != "" && end != "":
+		return nsLists.T("{startDateRange} to {endDateRange}", "startDateRange", start, "endDateRange", end)
+	case start != "":
+		return start
+	}
+	return end
 }
 
-// timeText is a created/edited time (unix seconds).
+// timeText is a created/edited time (unix seconds): TimestampToken's
+// relative time (toTimeAgo, alwaysAgo).
 func timeText(f *lists.Field) string {
 	if f == nil || len(f.Timestamp) == 0 || f.Timestamp[0] <= 0 {
 		return ""
 	}
-	return time.Unix(int64(f.Timestamp[0]), 0).Format("Jan 2, 2006 at 3:04 PM")
+	return i18n.TimeAgo(i18n.Locale(), time.Unix(int64(f.Timestamp[0]), 0), time.Now(), false, true)
 }
 
 func numberText(c *lists.Column, f *lists.Field) string {
@@ -261,7 +285,7 @@ func CellText(a *core.App, c *lists.Column, f *lists.Field) string {
 		}
 	case lists.Message:
 		if len(f.Message) > 0 {
-			return "Message"
+			return nsLists.T("Message")
 		}
 	}
 	return ""
@@ -464,7 +488,7 @@ func messageLabel(h Host, m lists.MessageValue) string {
 			return "Message in #" + c.Name
 		}
 	}
-	return "Message"
+	return nsLists.T("Message")
 }
 
 // optionPill draws a select option's pill at x; returns its width.
@@ -550,7 +574,7 @@ func fileTitle(h Host, id string) string {
 	fileTitlesMu.Unlock()
 	if ok {
 		if t == "" {
-			return "File"
+			return nsLists.T("File")
 		}
 		return t
 	}
@@ -569,7 +593,7 @@ func fileTitle(h Host, id string) string {
 			}
 		}()
 	}
-	return "File"
+	return nsLists.T("File")
 }
 
 var (

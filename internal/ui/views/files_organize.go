@@ -27,7 +27,6 @@ import (
 	"image"
 	"image/color"
 	"sort"
-	"strconv"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -90,7 +89,7 @@ func (f *Files) organizeUpdate(gtx C) {
 func (f *Files) bulkMoveItems() []popups.MenuItem {
 	a := f.h.Core()
 	colls, _ := a.FileCollections()
-	items := []popups.MenuItem{{Header: "Move to…"}}
+	items := []popups.MenuItem{{Header: nsSearch.T("Move to…")}}
 	for _, c := range colls {
 		c := c
 		items = append(items, popups.MenuItem{Key: c.ID, Label: c.Name,
@@ -98,7 +97,7 @@ func (f *Files) bulkMoveItems() []popups.MenuItem {
 			Do:        func() { f.bulkMove(c) }})
 	}
 	if f.canCreateSection() {
-		items = append(items, popups.Sep(), popups.MenuItem{Key: "create-section", Label: "Create section", Icon: "plus",
+		items = append(items, popups.Sep(), popups.MenuItem{Key: "create-section", Label: nsFiles.T("Create section"), Icon: "plus",
 			Do: func() { f.sectionModalThen("", func(c core.FileCollection) { f.bulkMove(c) }) }})
 	}
 	return items
@@ -138,7 +137,7 @@ func (f *Files) bulkMove(c core.FileCollection) {
 			return nil
 		}, func(error) {})
 	}
-	f.bulkToast("Moved "+plural(len(ids), "file")+".", undo)
+	f.bulkToast(nsSearch.T("Moved {count, plural, =1 {# file} other {# files}}.", "count", len(ids)), undo) // BulkFileActionUndoToast
 	f.picked = map[string]bool{}
 }
 
@@ -168,7 +167,7 @@ func (f *Files) bulkRemove() {
 				return nil
 			}, func(error) {})
 		}
-		f.bulkToast("Removed "+plural(len(ids), "file")+" from their sections.", undo)
+		f.bulkToast(nsSearch.T("Removed {count, plural, =1 {# file} other {# files}} from their sections.", "count", len(ids)), undo)
 	}
 	f.stopOrganize()
 }
@@ -194,10 +193,10 @@ func (f *Files) removeLabel() string {
 	}
 	if len(seen) == 1 {
 		for _, name := range seen {
-			return "Remove from " + name
+			return nsSearch.T("Remove from {sectionName}", "sectionName", name) // FileOrganizeModeMenu
 		}
 	}
-	return "Remove from all sections"
+	return nsSearch.T("Remove from all sections")
 }
 
 // organizeBar is FileOrganizeModeMenu.
@@ -213,7 +212,7 @@ func (f *Files) organizeBar(gtx C, sc sbColors) D {
 					return row(gtx, layout.Middle,
 						layout.Flexed(1, func(gtx C) D {
 							return row(gtx, layout.Middle,
-								layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wReg, sc.pry, strconv.Itoa(n)+" selected") }),
+								layout.Rigid(func(gtx C) D { return f.label(gtx, 13, wReg, sc.pry, nsSearch.T("{count} selected", "count", n)) }),
 								layout.Rigid(func(gtx C) D {
 									if n == 0 {
 										return D{}
@@ -226,7 +225,7 @@ func (f *Files) organizeBar(gtx C, sc sbColors) D {
 									}
 									return f.orgClear.Layout(gtx, func(gtx C) D {
 										pointerCursor(gtx)
-										return f.label(gtx, 13, wReg, sc.pry, "Clear selection")
+										return f.label(gtx, 13, wReg, sc.pry, nsSearch.T("Clear selection"))
 									})
 								}),
 							)
@@ -241,11 +240,11 @@ func (f *Files) organizeBar(gtx C, sc sbColors) D {
 			}),
 			layout.Rigid(func(gtx C) D {
 				if n == 0 {
-					return f.orgButton(gtx, &f.orgCreate, &f.orgCreateTip, "plus", "Create New Section", sc, nil)
+					return f.orgButton(gtx, &f.orgCreate, &f.orgCreateTip, "plus", nsSearch.T("Create New Section"), sc, nil)
 				}
 				return col(gtx,
 					layout.Rigid(func(gtx C) D {
-						return f.orgButton(gtx, &f.orgMove, &f.orgMoveTip, "arrow-right", "Move to…", sc, &f.orgMoveSize)
+						return f.orgButton(gtx, &f.orgMove, &f.orgMoveTip, "arrow-right", nsSearch.T("Move to…"), sc, &f.orgMoveSize)
 					}),
 					layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(12))} }),
 					layout.Rigid(func(gtx C) D {

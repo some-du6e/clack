@@ -57,15 +57,15 @@ func (c *Controller) ScheduledHuddles() bool {
 // you're in it here.
 func (c *Controller) huddleItemLabel(channel string) string {
 	if channel == "" {
-		return "Start Huddle"
+		return nsHuddles.T("Start Huddle")
 	}
 	if c.In(channel) {
-		return "Leave Huddle"
+		return nsHuddles.T("Leave Huddle")
 	}
 	if _, live := c.Live(channel); live {
-		return "Join Huddle"
+		return nsHuddles.T("Join Huddle")
 	}
-	return "Start Huddle"
+	return nsHuddles.T("Start Huddle")
 }
 
 // huddleItem is HuddleButtonMenuItem: leave when you're in channel's
@@ -85,7 +85,7 @@ func (c *Controller) huddleItem(channel, member, entry string) popups.MenuItem {
 }
 
 func (c *Controller) copyItem(channel string) popups.MenuItem {
-	return popups.MenuItem{Key: "copy-huddle-link", Label: "Copy huddle link", Icon: "link", Do: func() { c.CopyLink(channel) }}
+	return popups.MenuItem{Key: "copy-huddle-link", Label: nsHuddles.T("Copy huddle link"), Icon: "link", Do: func() { c.CopyLink(channel) }}
 }
 
 // MenuItems is the header caret's menu for channel (HuddleButtonMenu).
@@ -100,14 +100,14 @@ func (c *Controller) MenuItems(channel string) []popups.MenuItem {
 		}
 		return append(items, c.copyItem(channel))
 	}
-	items = append(items, popups.MenuItem{Header: "Huddle"})
+	items = append(items, popups.MenuItem{Header: nsHuddles.T("Huddle")})
 	if showHuddle {
 		items = append(items, c.huddleItem(channel, "", EntryHeaderMenu))
 	}
 	items = append(items, c.copyItem(channel))
 	if c.canSchedule(channel) {
-		items = append(items, popups.Sep(), popups.MenuItem{Header: "Schedule for later"},
-			popups.MenuItem{Key: "external-huddle", Label: "Schedule Huddle", Icon: "calendar", Do: func() {
+		items = append(items, popups.Sep(), popups.MenuItem{Header: nsHuddles.T("Schedule for later")},
+			popups.MenuItem{Key: "external-huddle", Label: nsHuddles.T("Schedule Huddle"), Icon: "calendar", Do: func() {
 				if mh, ok := c.h.(menuHost); ok {
 					mh.ScheduleHuddle(channel)
 				}
@@ -268,11 +268,11 @@ func (c *Controller) CopyLink(channel string) {
 					if err != nil {
 						log.Printf("huddle: rooms.getLink %s: %v", a.ChannelID, err)
 					}
-					c.toastFor(linkCopyFailed, "", 3000)
+					c.toastFor(nsHuddles.T(linkCopyFailed), "", 3000)
 					return nil, err
 				}
 				mh.CopyText(link)
-				c.toastFor(linkCopied, "check", 3000)
+				c.toastFor(nsHuddles.T(linkCopied), "check", 3000)
 				return nil, nil
 			})
 	}()

@@ -65,6 +65,7 @@ func TestMainNoEnglishLeft(t *testing.T) {
 		}
 	}
 	checkSurfaces(t, e, cats, ch) // the menus, dialogs and search (i18n_surfaces_test.go)
+	viewsNoEnglishLeft(t, cats)   // the views, huddles, canvases and lists (i18n_views_test.go)
 }
 
 // TestLocaleShots: the client and Preferences > Language & region in
@@ -106,6 +107,9 @@ func TestLocaleShots(t *testing.T) {
 			e.settle(500 * time.Millisecond)
 			e.shotTo(t, dir, "i18n-"+loc+"-prefs-notifications")
 			shotSurfaces(t, e, dir, loc, ch) // the menus, dialogs and search (i18n_surfaces_test.go)
+			for e.a.dismissTop() {
+			}
+			viewsLocaleShots(t, dir, loc, cat) // i18n_views_test.go
 		})
 	}
 }

@@ -42,13 +42,13 @@ import (
 func (f *Files) plusMenuItems() []popups.MenuItem {
 	a := f.h.Core()
 	items := []popups.MenuItem{
-		{Key: "sidebar_create_canvas", Label: "Canvas", Subtitle: "Create and share content", Icon: "add-channel-canvas", Do: f.newCanvas},
-		{Key: "sidebar_create_list", Label: "List", Subtitle: "Track and manage projects", Icon: "lists", Do: f.newList},
+		{Key: "sidebar_create_canvas", Label: nsSearch.T("Canvas"), Subtitle: nsSearch.T("Create and share content"), Icon: "add-channel-canvas", Do: f.newCanvas},
+		{Key: "sidebar_create_list", Label: nsSearch.T("List"), Subtitle: nsSearch.T("Track and manage projects"), Icon: "lists", Do: f.newList},
 	}
 	// U && D: custom_file_sections and the FileCollectionsCreate
 	// permission (Clack's accounts have it)
 	if a != nil && a.FileSectionsOn() {
-		items = append(items, popups.MenuItem{Key: "sidebar_create_section", Label: "Sidebar section", Subtitle: "Group and organize your files",
+		items = append(items, popups.MenuItem{Key: "sidebar_create_section", Label: nsSearch.T("Sidebar section"), Subtitle: nsSearch.T("Group and organize your files"),
 			Icon: "section", Do: func() { f.sectionModal("") }})
 	}
 	return items
@@ -61,14 +61,14 @@ func (f *Files) gearMenuItems() []popups.MenuItem {
 	if a == nil || !a.FileSectionsOn() || a.OnFreePlan() {
 		return nil
 	}
-	return []popups.MenuItem{{Key: "bulk-manage-files", Label: "Bulk manage files", Do: f.startOrganize}}
+	return []popups.MenuItem{{Key: "bulk-manage-files", Label: nsSearch.T("Bulk manage files"), Do: f.startOrganize}}
 }
 
 // newMenuItems is UnifiedFilesCreateMenu's template for the section, the
 // rows Clack can do.
 func (f *Files) newMenuItems() []popups.MenuItem {
-	canvas := popups.MenuItem{Key: "new_canvas", Label: "New canvas", Do: f.newCanvas}
-	list := popups.MenuItem{Key: "new_list", Label: "New list", Do: f.newList}
+	canvas := popups.MenuItem{Key: "new_canvas", Label: nsFilesExplorer.T("New canvas"), Do: f.newCanvas}
+	list := popups.MenuItem{Key: "new_list", Label: nsFilesExplorer.T("New list"), Do: f.newList}
 	switch f.kind() {
 	case "canvases":
 		return []popups.MenuItem{canvas}

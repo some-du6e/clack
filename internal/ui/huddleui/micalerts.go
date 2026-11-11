@@ -85,9 +85,9 @@ func deviceWarningModal(ph popups.Host) {
 	th := ph.Theme()
 	var link widget.Clickable
 	page := micSettings(avperm.Mic)
-	closeBtn := &popups.ModalButton{Label: "Close", Kind: popups.BtnPrimary, Do: func() bool { return true }}
+	closeBtn := &popups.ModalButton{Label: nsHuddles.T("Close"), Kind: popups.BtnPrimary, Do: func() bool { return true }}
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title:     "Microphone access required",
+		Title:     nsHuddles.T("Microphone access required"),
 		Class:     "DeviceWarningModal",
 		AutoFocus: closeBtn,
 		Body: func(gtx layout.Context) layout.Dimensions {

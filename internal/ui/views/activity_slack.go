@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
@@ -257,24 +258,24 @@ func actFooterDest(d actDest) bool {
 // or "Later", the group's or channel's name, the list's or file's title,
 // the alert category.
 func (v *Activity) destName(it *core.ActivityItem, dest actDest, title string) string {
-	switch dest {
+	switch dest { // ActivityDirectMessageLabel's strings
 	case destDM:
-		return "Direct message"
+		return nsActivity.T("Direct message")
 	case destApp:
 		// rZx3 AN: a Slackbot DM, with slackbot_unread_v2 on
 		if v.slackbotDM(it.Channel) && v.h.Core().Experiment("slackbot_unread_v2") == "on" {
-			return "Slackbot"
+			return nsActivity.T("Slackbot")
 		}
-		return "App"
+		return nsActivity.T("App")
 	case destInvite:
-		return "Invitation"
+		return nsActivity.T("Invitation")
 	case destWorkspaceInvite:
-		return "Workspace invitation"
+		return nsActivity.T("Workspace invitation")
 	case destLater:
 		if v.h.Core().Experiment("later_todos") == "on" {
-			return "To-do"
+			return nsActivity.T("To-do")
 		}
-		return "Later"
+		return nsActivity.T("Later")
 	case destMPDM, destChannel:
 		return title
 	case destList:
@@ -323,22 +324,25 @@ func (v *Activity) footerText(it *core.ActivityItem, dest actDest, title string)
 		}
 	}
 	f := actFoot{name: g, nameIcon: icon}
+	// getFooterContent's strings: the bold destination is {source} or
+	// {channel}, placed where the locale puts it
 	switch {
 	case it.Type == "saved_reminder":
 		if !actReminderSource(it.ReminderItem) {
-			return actFoot{pre: "Reminder"}, true
+			return actFoot{pre: nsActivity.T("Reminder")}, true
 		}
-		f.pre = "Reminder from "
+		f.pre, f.post = around(nsActivity, "<span>Reminder from</span> {source}", "source")
 	case actMentionType(it.Type) || it.Type == "code_review_requested":
-		f.pre = "Mention in "
 		if it.ThreadTS != "" {
-			f.post = " thread"
+			f.pre, f.post = around(nsActivity, "<span>Mention in</span> {channel} thread", "channel")
+		} else {
+			f.pre, f.post = around(nsActivity, "<span>Mention in</span> {channel}", "channel")
 		}
 	case it.Type == "thread_v2":
-		f.pre = "Thread in "
+		f.pre, f.post = around(nsActivity, "<span>Thread in</span> {channel}", "channel")
 	case it.Type == "message_reaction":
 	case dest == destList || dest == destFile:
-		f.pre = "Mention in "
+		f.pre, f.post = around(nsActivity, "<span>Mention in</span> {channel}", "channel")
 	case dest == destChannel:
 	case dest == destInvite || dest == destWorkspaceInvite:
 		return actFoot{pre: g}, true // H, outside the bold span
@@ -426,16 +430,17 @@ func (v *Activity) listBody(it *core.ActivityItem) (actListBody, bool) {
 		return actListBody{}, false
 	}
 	title, column := v.actListRecord(list, row, colID)
-	b := actListBody{item: firstNonEmpty(title, "Untitled item"), icon: true}
+	b := actListBody{item: firstNonEmpty(title, i18n.T("lists", "Untitled item")), icon: true}
+	// ListContent (QTZf): the item is {listName}, drawn with its icon
 	switch it.Type {
 	case "list_user_mentioned":
-		b.pre = "@mention \u2022 " + column + " \u2022 "
+		b.pre = nsActivity.T("@mention") + " \u2022 " + column + " \u2022 "
 	case "list_record_edited":
-		b.pre, b.post = "Edited ", ": "+column
+		b.pre, b.post = around(nsActivity, "Edited {listName}: {columnName}", "listName", "columnName", column)
 	case "list_record_assigned":
-		b.pre = "Assigned to you: "
+		b.pre, b.post = around(nsActivity, "Assigned to you: {listName}", "listName")
 	default:
-		b.pre, b.icon = "List update: ", false
+		b.pre, b.icon = nsActivity.T("List update:")+" ", false
 	}
 	return b, true
 }
@@ -535,19 +540,19 @@ const (
 func actBtnIcon(b actBtn) (icon, label string) {
 	switch b {
 	case actBtnMarkRead:
-		return "mark-as-read", "Mark as read"
+		return "mark-as-read", nsActivity.T("Mark as read")
 	case actBtnMarkUnread:
-		return "mark-as-unread", "Mark as unread"
+		return "mark-as-unread", nsActivity.T("Mark as unread")
 	case actBtnClear:
-		return "eraser", "Clear"
+		return "eraser", nsActivity.T("Clear")
 	case actBtnRestore:
-		return "eraser-filled", "Restore notification"
+		return "eraser-filled", nsActivity.T("Restore notification")
 	case actBtnComplete:
-		return "check", "Mark Complete"
+		return "check", nsActivity.T("Mark Complete")
 	case actBtnReschedule:
-		return "clock", "Reschedule"
+		return "clock", nsActivity.T("Reschedule")
 	}
-	return "ellipsis-vertical-filled", "More actions"
+	return "ellipsis-vertical-filled", nsActivity.T("More actions")
 }
 
 // hoverButtons is ActivityRowContentActions for an item: Mark Complete
@@ -640,18 +645,18 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 
 	var g1 []popups.MenuItem
 	if unread {
-		g1 = append(g1, popups.MenuItem{Key: "mark_as_read", Label: "Mark as read", Icon: "mark-as-read", Hint: "U", Keys: []string{"u"},
+		g1 = append(g1, popups.MenuItem{Key: "mark_as_read", Label: nsActivity.T("Mark as read"), Icon: "mark-as-read", Hint: "U", Keys: []string{"u"},
 			Do: func() { v.markRead(&it, key) }})
 	} else if it.Type != "message_reaction" {
-		g1 = append(g1, popups.MenuItem{Key: "mark_as_unread", Label: "Mark as unread", Icon: "mark-unread", Hint: "U", Keys: []string{"u"},
+		g1 = append(g1, popups.MenuItem{Key: "mark_as_unread", Label: nsActivity.T("Mark as unread"), Icon: "mark-unread", Hint: "U", Keys: []string{"u"},
 			Do: func() { v.markUnread(&it, key) }})
 	}
 	if m != nil && ch != "" && ts != "" {
 		saved := c.SavedState(ch, ts)
 		if c.Experiment("later_todos") == "on" {
-			lbl, icon := "Add to-do", "check-circle"
+			lbl, icon := nsActivity.T("Add to-do"), "check-circle"
 			if saved {
-				lbl, icon = "Remove to-do", "check-circle-filled"
+				lbl, icon = nsActivity.T("Remove to-do"), "check-circle-filled"
 			}
 			g1 = append(g1, popups.MenuItem{Key: "save_for_later", Label: lbl, Icon: icon, Hint: "A", Keys: []string{"a"},
 				Do: func() {
@@ -663,9 +668,9 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 					}, func() {})
 				}})
 		} else {
-			lbl, icon := "Save for later", "bookmark"
+			lbl, icon := nsActivity.T("Save for later"), "bookmark"
 			if saved {
-				lbl, icon = "Remove from Later", "bookmark-filled"
+				lbl, icon = nsActivity.T("Remove from Later"), "bookmark-filled"
 			}
 			g1 = append(g1, popups.MenuItem{Key: "save_for_later", Label: lbl, Icon: icon, Hint: "A", Keys: []string{"a"},
 				Do: func() {
@@ -683,7 +688,7 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	// channel's setting (getNotificationPrefDescription)
 	chanItem := (it.Type == "internal_channel_invite" || it.Type == "external_channel_invite" || it.Type == "channel") && it.Channel != "" && !isDM
 	if chanItem {
-		g1 = append(g1, popups.MenuItem{Key: "change_notifications", Label: "Edit notifications", Icon: "notifications",
+		g1 = append(g1, popups.MenuItem{Key: "change_notifications", Label: nsActivity.T("Edit notifications"), Icon: "notifications",
 			Subtitle: v.notifyDescription(it.Channel, muted), Sub: popups.ChannelNotifyItems(ph, it.Channel)})
 	}
 	groups = append(groups, g1)
@@ -693,7 +698,7 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		var sub []popups.MenuItem
 		for _, p := range laterPresets {
 			p := p
-			sub = append(sub, popups.MenuItem{Label: p.label, Do: func() {
+			sub = append(sub, popups.MenuItem{Label: p.text(), Do: func() {
 				due := p.at(time.Now()).Unix()
 				v.write("Couldn’t set the reminder: ", func(ctx context.Context, c *core.App) error {
 					return c.Save(ctx, ch, ts, due)
@@ -701,15 +706,15 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 			}})
 		}
 		// onAddReminder "Custom": the custom reminder dialog
-		sub = append(sub, popups.MenuItem{Label: "Custom…", Do: func() { ph.ShowOverlay(popups.NewReminderModal(ph, ch, ts)) }})
-		g2 = append(g2, popups.MenuItem{Key: "remind_submenu", Label: "Remind me about this", Sub: sub})
+		sub = append(sub, popups.MenuItem{Label: nsActivity.T("Custom…"), Do: func() { ph.ShowOverlay(popups.NewReminderModal(ph, ch, ts)) }})
+		g2 = append(g2, popups.MenuItem{Key: "remind_submenu", Label: nsActivity.T("Remind me about this"), Sub: sub})
 	}
 	if it.Type == "at_channel" && it.Channel != "" && !muted {
 		// notify_broadcast_mentions: the channel's suppress_at_channel
 		suppressed := c.NotifyPrefs(it.Channel).SuppressAtChannel
-		lbl := "Don\u2019t notify for @here and @channel"
+		lbl := nsActivity.T("Don\u2019t notify for @here and @channel")
 		if suppressed {
-			lbl = "Notify for @here and @channel"
+			lbl = nsActivity.T("Notify for @here and @channel")
 		}
 		chID := it.Channel
 		g2 = append(g2, popups.MenuItem{Key: "notify_broadcast_mentions", Label: lbl, Do: func() {
@@ -720,9 +725,9 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	}
 	if it.Type == "thread_v2" && it.ThreadTS != "" && ch != "" {
 		sub := it.Root != nil && it.Root.FollowingThread
-		lbl := "Get notified about new replies"
+		lbl := nsActivity.T("Get notified about new replies")
 		if sub {
-			lbl = "Turn off notifications for replies"
+			lbl = nsActivity.T("Turn off notifications for replies")
 		}
 		thread := it.ThreadTS
 		g2 = append(g2, popups.MenuItem{Key: "toggle_notifications_replies", Label: lbl, Do: func() {
@@ -732,13 +737,20 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		}})
 	}
 	if mute := it.Type == "at_user" || it.Type == "at_user_group" || it.Type == "internal_channel_invite" || it.Type == "external_channel_invite"; mute && it.Channel != "" && !(m != nil && m.User == "USLACKBOT") {
-		noun := "channel"
+		dm := false
 		if k := c.ConvRef(it.Channel).Kind; isDMKind(k) || strings.HasPrefix(it.Channel, "D") {
-			noun = "conversation"
+			dm = true
 		}
-		lbl := "Mute " + noun
-		if muted {
-			lbl = "Unmute " + noun
+		var lbl string
+		switch {
+		case muted && dm:
+			lbl = nsActivity.T("Unmute conversation")
+		case muted:
+			lbl = nsActivity.T("Unmute channel")
+		case dm:
+			lbl = nsActivity.T("Mute conversation")
+		default:
+			lbl = nsActivity.T("Mute channel")
 		}
 		g2 = append(g2, popups.MenuItem{Key: "mute_conversation", Label: lbl, Do: popups.ChannelMenuAction(ph, it.Channel, "toggle_mute")})
 	}
@@ -747,9 +759,9 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		// section, else "Move to new section" (Create a section)
 		chID := it.Channel
 		if items, custom := popups.MoveChannelItems(chID); custom {
-			g2 = append(g2, popups.MenuItem{Key: "move_to_section", Label: "Move channel", Sub: items})
+			g2 = append(g2, popups.MenuItem{Key: "move_to_section", Label: nsActivity.T("Move channel"), Sub: items})
 		} else if popups.CreateSectionWith != nil {
-			g2 = append(g2, popups.MenuItem{Key: "move_to_section", Label: "Move to new section", Do: func() { popups.CreateSectionWith(chID) }})
+			g2 = append(g2, popups.MenuItem{Key: "move_to_section", Label: nsActivity.T("Move to new section"), Do: func() { popups.CreateSectionWith(chID) }})
 		}
 	}
 	if vip, ok := v.vipItem(ph, it.Channel); ok {
@@ -761,13 +773,13 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 			thread = m.ThreadTS
 		}
 		link := popups.MessageLink(ph, ch, ts, thread, m.Permalink)
-		g2 = append(g2, popups.MenuItem{Key: "copy_link", Label: "Copy link", DoCtx: func(gtx C) { popups.CopyText(gtx, link) }})
+		g2 = append(g2, popups.MenuItem{Key: "copy_link", Label: nsActivity.T("Copy link"), DoCtx: func(gtx C) { popups.CopyText(gtx, link) }})
 	}
 	groups = append(groups, g2)
 
 	if it.FeedTS != "" && !v.showCleared && !(v.searchOn && strings.TrimSpace(v.query.text()) != "") {
 		before := it.FeedTS
-		groups = append(groups, []popups.MenuItem{{Key: "clear_all_before", Label: "Clear all before…", Icon: "eraser",
+		groups = append(groups, []popups.MenuItem{{Key: "clear_all_before", Label: nsActivity.T("Clear all before…"), Icon: "eraser",
 			Do: func() { v.clearAllBefore(ph, before) }}})
 	}
 	if m != nil && it.Channel != "" {
@@ -776,7 +788,7 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		if thread != "" {
 			route += "/t/" + thread
 		}
-		g := []popups.MenuItem{{Key: "open_in_home", Label: "Open in home", Icon: "home", Do: func() { v.h.Navigate(route) }}}
+		g := []popups.MenuItem{{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() { v.h.Navigate(route) }}}
 		// open_in_split_view (not in Simplified layout mode): the thread or
 		// the channel, with the ⌘⌥-click hint
 		if split, ok := popups.SplitViewItem(ph, route, true); ok {
@@ -803,7 +815,7 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 // mentions", "Nothing"); "" for the default.
 func (v *Activity) notifyDescription(ch string, muted bool) string {
 	if muted {
-		return "Muted"
+		return nsSidebar.T("Muted")
 	}
 	c := v.h.Core()
 	d := c.NotifyPrefs(ch).Desktop
@@ -812,11 +824,11 @@ func (v *Activity) notifyDescription(ch string, muted bool) string {
 	}
 	switch d {
 	case "everything":
-		return "All new posts"
+		return nsSidebar.T("All new posts")
 	case "mentions_dms":
-		return "Just mentions"
+		return nsSidebar.T("Just mentions")
 	case "nothing":
-		return "Nothing"
+		return nsSidebar.T("Nothing")
 	}
 	return ""
 }
@@ -844,12 +856,12 @@ func (v *Activity) vipItem(ph popups.Host, ch string) (popups.MenuItem, bool) {
 		isVIP = isVIP || id == uid
 	}
 	if isVIP {
-		return popups.MenuItem{Key: "toggle_vip_user", Label: "Remove from VIP", Do: func() {
-			popups.ActDo(ph, "Removed "+name+" from VIPs", func(ctx context.Context, a *core.App) error { return a.RemoveVIP(ctx, uid) })
+		return popups.MenuItem{Key: "toggle_vip_user", Label: i18n.T("menu", "Remove from VIP"), Do: func() {
+			popups.ActDo(ph, i18n.StripTags(i18n.T("priority_manage", "Removed <b>{memberName}</b> from VIPs", "memberName", name)), func(ctx context.Context, a *core.App) error { return a.RemoveVIP(ctx, uid) })
 		}}, true
 	}
-	return popups.MenuItem{Key: "toggle_vip_user", Label: "Add to VIP", Do: func() {
-		popups.ActDo(ph, "Added "+name+" to VIPs", func(ctx context.Context, a *core.App) error { return a.AddVIP(ctx, uid) })
+	return popups.MenuItem{Key: "toggle_vip_user", Label: i18n.T("menu", "Add to VIP"), Do: func() {
+		popups.ActDo(ph, i18n.StripTags(i18n.T("priority_manage", "Added <b>{memberName}</b> to VIPs", "memberName", name)), func(ctx context.Context, a *core.App) error { return a.AddVIP(ctx, uid) })
 	}}, true
 }
 
@@ -862,19 +874,19 @@ func (v *Activity) copyName(ch string) string {
 // activity.clearBefore with the view's filters.
 func (v *Activity) clearAllBefore(ph popups.Host, before string) {
 	f, filtered := v.clearFilters()
-	body := "This will clear all notifications older than this one from your activity feed."
+	body := nsActivity.T("This will clear all notifications older than this one from your activity feed.")
 	if filtered {
-		body = "This will clear all notifications matching your current filters that are older than this one."
+		body = nsActivity.T("This will clear all notifications matching your current filters that are older than this one.")
 	}
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title:        "Clear all before this?",
+		Title:        nsActivity.T("Clear all before this?"),
 		EnterSubmits: true,
 		Body: func(gtx C) D {
 			return v.para(gtx, 15, 22, wReg, v.p.Text, 0, body)
 		},
 		Buttons: []*popups.ModalButton{
-			{Label: "Cancel", Kind: popups.BtnOutline},
-			{Label: "Clear", Kind: popups.BtnPrimary, Do: func() bool {
+			{Label: nsActivity.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsActivity.T("Clear"), Kind: popups.BtnPrimary, Do: func() bool {
 				v.write("Couldn’t clear activity: ", func(ctx context.Context, c *core.App) error {
 					if err := c.ClearActivityBefore(ctx, before, f); err != nil {
 						return err

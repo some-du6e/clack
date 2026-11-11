@@ -726,7 +726,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 	if s.target != nil && titleSection(v.blocks) && v.blocks[0] == s.target {
 		st.TextSize, st.LineHeight = titleSize, titleLine // the title section
 		lineH = gtx.Dp(titleLine)
-		st.PlaceholderText = titlePlaceholder // TitleSectionOverlay, until the title has text
+		st.PlaceholderText = nsCanvas.T(titlePlaceholder) // TitleSectionOverlay, until the title has text
 	} else if s.target != nil && s.target == v.placeholderRow() {
 		st.PlaceholderText = placeholderFor(v.id) // TextSectionOverlay
 	}
@@ -1193,7 +1193,7 @@ func (e *editState) openFormatMenu(v *View, formats []blockFormat) {
 			continue
 		}
 		k := f.key
-		items = append(items, MenuItem{Label: f.label, Icon: f.icon, Checked: k == cur, Do: func() { v.post(func() { e.apply(v, k, image.Point{}) }) }})
+		items = append(items, MenuItem{Label: nsCanvas.T(f.label), Icon: f.icon, Checked: k == cur, Do: func() { v.post(func() { e.apply(v, k, image.Point{}) }) }})
 	}
 	v.act.Menu(items)
 }
@@ -1215,19 +1215,19 @@ func (e *editState) openInsertMenu(v *View) {
 		return
 	}
 	items := []MenuItem{
-		{Label: "Divider", Icon: "divider", Do: func() { v.post(func() { e.insertDivider(v) }) }},
+		{Label: nsCanvas.T("Divider"), Icon: "divider", Do: func() { v.post(func() { e.insertDivider(v) }) }},
 		{Divider: true},
-		{Label: "Date", Icon: "calendar", Disabled: true},
-		{Label: "Profile", Icon: "user", Do: func() { v.post(func() { e.insertProfile(v) }) }},
-		{Label: "Callout", Icon: "callout", Disabled: true},
+		{Label: nsCanvas.T("Date"), Icon: "calendar", Disabled: true},
+		{Label: nsCanvas.T("Profile"), Icon: "user", Do: func() { v.post(func() { e.insertProfile(v) }) }},
+		{Label: nsCanvas.T("Callout"), Icon: "callout", Disabled: true},
 	}
 	if v.exp("canvas_blockquote_layout") {
-		items = append(items, MenuItem{Label: "Blockquote", Icon: "quote", Do: func() { v.post(func() { e.insertQuote(v) }) }})
+		items = append(items, MenuItem{Label: nsCanvas.T("Blockquote"), Icon: "quote", Do: func() { v.post(func() { e.insertQuote(v) }) }})
 	}
 	items = append(items,
-		MenuItem{Label: "Canvas", Icon: "canvas", Disabled: true},
-		MenuItem{Label: "Image", Icon: "image", Do: func() { v.post(func() { e.insertUpload(v, true) }) }},
-		MenuItem{Label: "File", Icon: "attach", Do: func() { v.post(func() { e.insertUpload(v, false) }) }},
+		MenuItem{Label: nsCanvas.T("Canvas"), Icon: "canvas", Disabled: true},
+		MenuItem{Label: nsCanvas.T("Image"), Icon: "image", Do: func() { v.post(func() { e.insertUpload(v, true) }) }},
+		MenuItem{Label: nsCanvas.T("File"), Icon: "attach", Do: func() { v.post(func() { e.insertUpload(v, false) }) }},
 	)
 	v.act.Menu(items)
 }

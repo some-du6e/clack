@@ -3,12 +3,11 @@ package huddleui
 import (
 	"image"
 	"image/color"
-	"strings"
 
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
-	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -145,10 +144,19 @@ func (c *Controller) HeaderPillWidth(gtx C, th *theme.Theme, ch string) int {
 // headerTip is the main button's tooltip.
 func (c *Controller) headerTip(ch string, in bool, people []string) string {
 	if in {
-		return "Leave huddle"
+		return nsHuddles.T("Leave huddle")
 	}
 	if contains(people, c.selfID()) {
-		return "Joined on another device\nJoin on this device"
+		return nsHuddles.T("Joined on another device") + "\n" + nsHuddles.T("Join on this device") // LiveHuddleButton
+	}
+	if i18n.Locale() != i18n.EnUS {
+		join := nsHuddles.T("Join huddle in {channelName}", "channelName", c.channelTitle(ch))
+		if conv, ok := c.h.Core().S.Conv(ch); ok && conv.IsIM {
+			if n := c.userName(conv.User); n != "" {
+				join = nsHuddles.T("Join huddle with {channelDisplayName}", "channelDisplayName", n)
+			}
+		}
+		return join + "\n" + nsHuddles.T("{memberCount, plural, =1 {# person} other {# people}}", "memberCount", len(people))
 	}
 	where := "in " + c.channelTitle(ch)
 	if conv, ok := c.h.Core().S.Conv(ch); ok && conv.IsIM {
@@ -164,16 +172,16 @@ func (c *Controller) headerTip(ch string, in bool, people []string) string {
 // addJoinLeaveKeyboardShortcuts' hint. sz is the button.
 func (c *Controller) StartTip(gtx C, th *theme.Theme, ch string, hovered bool, sz image.Point) {
 	hs := c.hdrState(ch)
-	tip := "Start huddle"
+	tip := nsHuddles.T("Start huddle")
 	if app := c.h.Core(); app != nil {
 		if conv, ok := app.Conv(ch); ok {
 			switch {
 			case conv.Kind == "im" || conv.Kind == "mpim":
-				if t, _ := c.windowTitle(huddle.State{Channel: ch}); strings.HasPrefix(t, "Huddle with ") {
-					tip = "Start huddle with " + strings.TrimPrefix(t, "Huddle with ")
+				if names := c.dmNames(ch); names != "" {
+					tip = nsHuddles.T("Start huddle with {dmPersons}", "dmPersons", names)
 				}
 			case conv.Name != "":
-				tip = "Start huddle in #" + conv.Name
+				tip = nsHuddles.T("Start huddle in {channelName}", "channelName", "#"+conv.Name)
 			}
 		}
 	}
@@ -182,7 +190,7 @@ func (c *Controller) StartTip(gtx C, th *theme.Theme, ch string, hovered bool, s
 
 // CaretTip is the idle button's caret tooltip ("More Huddles options").
 func (c *Controller) CaretTip(gtx C, th *theme.Theme, ch string, hovered bool, sz image.Point) {
-	popups.Tooltip(gtx, th, &c.hdrState(ch).caretTip, hovered, sz, popups.Below, "More Huddles options", "")
+	popups.Tooltip(gtx, th, &c.hdrState(ch).caretTip, hovered, sz, popups.Below, nsHuddles.T("More Huddles options"), "")
 }
 
 func (c *Controller) hdrState(ch string) *headerState {
@@ -283,7 +291,7 @@ func (c *Controller) HeaderPill(gtx C, th *theme.Theme, ch string, h int) D {
 			})
 			return D{}
 		})
-		popups.Tooltip(gtx, th, &hs.caretTip, hs.caret.Hovered(), image.Pt(cw, h), popups.Below, "More Huddles options", "")
+		popups.Tooltip(gtx, th, &hs.caretTip, hs.caret.Hovered(), image.Pt(cw, h), popups.Below, nsHuddles.T("More Huddles options"), "")
 		return d
 	})
 	cl.Pop()

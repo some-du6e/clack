@@ -356,12 +356,12 @@ func (w *window) inviteTile(gtx C, inv huddle.Invite, r image.Rectangle) {
 	rad := gtx.Dp(tileRadius)
 	sz := r.Size()
 	key := "invite:" + inv.UserID
-	icon, label := "paper-plane", "Invited"
+	icon, label := "paper-plane", nsHuddles.T("Invited")
 	switch inv.Status {
 	case "joining_soon":
-		icon, label = "clock", "Joining soon"
+		icon, label = "clock", nsHuddles.T("Joining soon")
 	case "declined":
-		icon, label = "warning", "Invite Declined"
+		icon, label = "warning", nsHuddles.T("Invite Declined")
 	}
 	at(gtx, r.Min, sz, func(gtx C) D {
 		return button(gtx, w.click(key), sz, func(gtx C, hov bool) {

@@ -49,11 +49,11 @@ func isHand(e string) bool { return stickerBase(e) == "raised_hand" }
 func (c *Controller) stickerLabel(e string) string {
 	b := stickerBase(e)
 	if b == "raised_hand" && c.handQueue() {
-		return "Raised hand" // activeStateLabelOverrides
+		return nsHuddles.T("Raised hand") // activeStateLabelOverrides
 	}
 	for _, s := range stickers {
 		if s.Emoji == b {
-			return s.Label
+			return nsHuddles.T(s.Label) // the picker's labels are huddles strings
 		}
 	}
 	return ""
@@ -115,11 +115,11 @@ func (c *Controller) PickSticker(e string) error {
 func handTip(sticker string) string {
 	switch {
 	case sticker == "":
-		return "Raise hand"
+		return nsHuddles.T("Raise hand")
 	case isHand(sticker):
-		return "Lower hand"
+		return nsHuddles.T("Lower hand")
 	}
-	return "Remove sticker"
+	return nsHuddles.T("Remove sticker")
 }
 
 type handState struct {

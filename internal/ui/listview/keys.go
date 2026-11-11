@@ -504,7 +504,7 @@ func (v *View) cellKey(gtx layout.Context, d *core.ListDoc, m kbMode, k cellKeyK
 	enterF2 := k == keyEnter || k == keyF2 || k == keyMetaEnter
 	if !d.Info.Editable { // viewOnly
 		if start {
-			v.announce("Not editable")
+			v.announce(nsLists.T("Not editable"))
 		}
 		return
 	}
@@ -518,7 +518,7 @@ func (v *View) cellKey(gtx layout.Context, d *core.ListDoc, m kbMode, k cellKeyK
 		if skip, ne := skipEditMode(col, true, populated(col, f)); skip {
 			switch {
 			case ne:
-				v.announce("Not editable")
+				v.announce(nsLists.T("Not editable"))
 			case col.Type == lists.Link && enterF2: // LinkColumn: Enter clicks "Link options"
 				v.linkMenu(d, rec, col, f)
 			case col.Type == lists.Attachment || col.Type == lists.Message:
@@ -576,9 +576,9 @@ func (v *View) customClick(d *core.ListDoc, rec *lists.Record, c *lists.Column, 
 	case lists.Checkbox, lists.Completed, lists.TodoCompleted, lists.Vote:
 		if c.Type == lists.TodoCompleted {
 			if f != nil && f.Checkbox != nil && *f.Checkbox {
-				v.announce("Not completed")
+				v.announce(nsLists.T("Not completed"))
 			} else {
-				v.announce("Completed")
+				v.announce(nsLists.T("Completed"))
 			}
 		}
 		v.cellClickWith(d, rec, c, 0, layout.Context{}, v.gridMenu)
@@ -866,26 +866,26 @@ func (v *View) linkMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *
 	}
 	l := f.Link[0]
 	viewOnly := canEdit(d, c, f) != nil
-	items := []MenuItem{{Label: "Open link", Icon: "external", Do: func() {
+	items := []MenuItem{{Label: nsLists.T("Open link"), Icon: "external", Do: func() {
 		if v.act.OpenURL != nil {
 			v.act.OpenURL(l.OriginalURL)
 		}
 	}}}
 	if !viewOnly {
-		items = append(items, MenuItem{Label: "Edit link", Icon: "edit", Do: func() {
+		items = append(items, MenuItem{Label: nsLists.T("Edit link"), Icon: "edit", Do: func() {
 			v.edit.start(rec.ID, c, l.OriginalURL)
 			v.edit.done = v.editDone(c)
 		}})
 	}
-	items = append(items, MenuItem{Label: "Copy link", Icon: "copy", Do: func() {
+	items = append(items, MenuItem{Label: nsLists.T("Copy link"), Icon: "copy", Do: func() {
 		if v.act.Copy != nil {
 			v.act.Copy(l.OriginalURL)
 		}
 	}})
 	if !viewOnly && l.DisplayName != "" {
-		lbl := "Display as URL"
+		lbl := nsLists.T("Display as URL")
 		if l.DisplayAsURL {
-			lbl = "Display as title"
+			lbl = nsLists.T("Display as title")
 		}
 		items = append(items, MenuItem{Label: lbl, Icon: "link", Do: func() {
 			nl := l
@@ -894,7 +894,7 @@ func (v *View) linkMenu(d *core.ListDoc, rec *lists.Record, c *lists.Column, f *
 		}})
 	}
 	if !viewOnly {
-		items = append(items, MenuItem{Label: "Remove link", Icon: "trash", Do: func() {
+		items = append(items, MenuItem{Label: nsLists.T("Remove link"), Icon: "trash", Do: func() {
 			v.save(lists.Edit{RowID: rec.ID, Column: c, Clear: true})
 		}})
 	}
@@ -1015,9 +1015,9 @@ func (v *View) deleteRecords(ids []string) {
 	if a == nil || len(ids) == 0 {
 		return
 	}
-	msg := "Item deleted"
+	msg := nsLists.T("Item deleted")
 	if len(ids) > 1 {
-		msg = "Items deleted"
+		msg = nsLists.T("Items deleted")
 	}
 	g := &v.grid
 	g.active, g.selA, g.selB = cellRef{}, cellRef{}, cellRef{}
@@ -1149,9 +1149,9 @@ func (v *View) copySelection(gtx layout.Context, d *core.ListDoc, cut bool) {
 	g.copied = s
 	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(s))})
 	if multi {
-		v.h.Toast("Cells copied")
+		v.h.Toast(nsLists.T("Cells copied"))
 	} else {
-		v.h.Toast("Cell copied")
+		v.h.Toast(nsLists.T("Cell copied"))
 	}
 	if cut {
 		v.deleteSelection(d)
@@ -1371,9 +1371,9 @@ func cellLabel(a *core.App, c *lists.Column, f *lists.Field) string {
 		return s + ", " + emojiName(c.Options.Emoji, ":star:")
 	case lists.Checkbox, lists.Completed, lists.TodoCompleted: // CheckboxFieldInput aria-label
 		if f != nil && f.Checkbox != nil && *f.Checkbox {
-			return "Yes"
+			return nsLists.T("Yes")
 		}
-		return "No"
+		return nsLists.T("No")
 	}
 	return CellText(a, c, f)
 }
@@ -1383,16 +1383,16 @@ func cellLabel(a *core.App, c *lists.Column, f *lists.Field) string {
 func cellDescription(self string, c *lists.Column, f *lists.Field) string {
 	switch c.Type {
 	case lists.CreatedBy, lists.CreatedTime, lists.LastEditedBy, lists.LastEditedTime:
-		return "Read only"
+		return nsLists.T("Read only")
 	case lists.Vote:
 		if f != nil {
 			for _, u := range f.User {
 				if u == self {
-					return "Including you"
+					return nsLists.T("Including you")
 				}
 			}
 		}
-		return "No vote from you"
+		return nsLists.T("No vote from you")
 	}
 	return ""
 }

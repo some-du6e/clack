@@ -152,7 +152,7 @@ func (f *Files) sidebarRows() []sbRow {
 		}
 		if len(recents) > 0 {
 			rows = append(rows, sbRow{kind: sbCollection, key: core.RecentlyViewedCollection, coll: core.RecentlyViewedCollection,
-				label: "Recently viewed"})
+				label: nsFileColl.T("Recently viewed")})
 			if !a.FileCollectionCollapsed(core.RecentlyViewedCollection) {
 				rows = append(rows, recents...)
 			}
@@ -184,11 +184,11 @@ func (f *Files) sidebarRows() []sbRow {
 	}
 	if len(recents) > 0 {
 		rows = append(rows, sbRow{kind: sbSpacer, key: "spacer-1"},
-			sbRow{kind: sbSubHeader, key: core.RecentlyViewedCollection, label: "Recently viewed", icon: "clock"})
+			sbRow{kind: sbSubHeader, key: core.RecentlyViewedCollection, label: nsSearch.T("Recently viewed"), icon: "clock"})
 		rows = append(rows, recents...)
 	}
 	rows = append(rows, sbRow{kind: sbSpacer, key: "spacer-2"},
-		sbRow{kind: sbSubHeader, key: "starred-canvas-header", label: "Starred", icon: "star"})
+		sbRow{kind: sbSubHeader, key: "starred-canvas-header", label: nsSearch.T("Starred"), icon: "star"})
 	st, ok, _ := f.starred.get()
 	switch {
 	case !ok:
@@ -459,7 +459,7 @@ func (f *Files) navRow(gtx C, r sbRow, sc sbColors) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D { return f.icon(gtx, nv.icon, 16, fg) }),
 					hgap(8),
-					layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, nv.label) }),
+					layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, fg, nsFiles.T(nv.label)) }), // UnifiedFilesExplorer
 				)
 			})
 		})
@@ -531,7 +531,7 @@ func (f *Files) collectionHeader(gtx C, r sbRow, sc sbColors) D {
 						layout.Center.Layout(gtx, func(gtx C) D { return f.icon(gtx, "ellipsis-vertical-filled", 16, sc.text) })
 						return D{Size: image.Pt(bw, bw)}
 					})
-					popups.Tooltip(gtx, f.th, &s.moreTip, s.more.Hovered(), image.Pt(bw, bw), popups.Above, "More actions", "")
+					popups.Tooltip(gtx, f.th, &s.moreTip, s.more.Hovered(), image.Pt(bw, bw), popups.Above, nsFileColl.T("More actions"), "")
 				}()
 				bx -= gtx.Dp(4)
 			}
@@ -727,18 +727,18 @@ func (f *Files) collectionMenuItems(id string) []popups.MenuItem {
 		return nil
 	}
 	items := []popups.MenuItem{
-		{Header: "Create…"},
-		{Key: "new_canvas", Label: "New canvas", Icon: "add-channel-canvas", Do: func() { f.createCanvasIn(id) }},
-		{Key: "new_list", Label: "New list", Icon: "lists", Do: func() { f.createListIn(id) }},
+		{Header: nsFileColl.T("Create…")},
+		{Key: "new_canvas", Label: nsFileColl.T("New canvas"), Icon: "add-channel-canvas", Do: func() { f.createCanvasIn(id) }},
+		{Key: "new_list", Label: nsFileColl.T("New list"), Icon: "lists", Do: func() { f.createListIn(id) }},
 	}
 	if f.canCreateSection() {
-		items = append(items, popups.MenuItem{Key: "file_section", Label: "Sidebar section", Icon: "section", Do: func() { f.sectionModal("") }})
+		items = append(items, popups.MenuItem{Key: "file_section", Label: nsFileColl.T("Sidebar section"), Icon: "section", Do: func() { f.sectionModal("") }})
 	}
 	cur := c.SortOrDefault()
 	sortItem := func(key, label, v string) popups.MenuItem {
-		return popups.MenuItem{Key: key, Label: label, Radio: true, Checked: cur == v, Do: func() { f.setCollectionSort(id, v) }}
+		return popups.MenuItem{Key: key, Label: nsFileColl.T(label), Radio: true, Checked: cur == v, Do: func() { f.setCollectionSort(id, v) }}
 	}
-	sortBy := popups.MenuItem{Key: "sort-by", Label: "Sort by", Sub: []popups.MenuItem{
+	sortBy := popups.MenuItem{Key: "sort-by", Label: nsFileColl.T("Sort by"), Sub: []popups.MenuItem{
 		sortItem("sort-last-viewed", "Last viewed", core.CollectionSortRecentlyViewed),
 		sortItem("sort-last-updated", "Last updated", core.CollectionSortLastUpdated),
 		sortItem("sort-a-z", "A-Z", core.CollectionSortAlpha),
@@ -748,9 +748,9 @@ func (f *Files) collectionMenuItems(id string) []popups.MenuItem {
 		return append(items, popups.Sep(), sortBy)
 	}
 	return append(items, popups.Sep(),
-		popups.MenuItem{Key: "rename", Label: "Rename section", Icon: "edit", Do: func() { f.sectionModal(id) }},
+		popups.MenuItem{Key: "rename", Label: nsFileColl.T("Rename section"), Icon: "edit", Do: func() { f.sectionModal(id) }},
 		sortBy, popups.Sep(),
-		popups.MenuItem{Key: "delete_section", Label: "Delete section", Icon: "trash", Danger: true, Do: func() { f.deleteSection(id) }})
+		popups.MenuItem{Key: "delete_section", Label: nsFileColl.T("Delete section"), Icon: "trash", Danger: true, Do: func() { f.deleteSection(id) }})
 }
 
 // openCollectionMenu is the header's ⋮: a Popover at right-bottom with
@@ -787,14 +787,14 @@ func (f *Files) fileRowMenu(r sbRow) []popups.MenuItem {
 	starred := r.section != "recently_viewed" // in Starred or a section (isStarred: c3 / uU)
 	var head []popups.MenuItem
 	if sections {
-		head = append(head, popups.MenuItem{Key: "move-to-section", Label: "Move to section", Icon: "folder",
+		head = append(head, popups.MenuItem{Key: "move-to-section", Label: nsMenu.T("Move to section"), Icon: "folder",
 			Sub: f.moveToItems(r.file, true, "file_sidebar")}, popups.Sep())
 	}
 	var mid []popups.MenuItem
 	if link := it.Permalink; link != "" {
 		mid = append(mid, popups.MenuItem{Key: "copy_file_link", Label: copyLinkLabel(&it), DoCtx: func(gtx layout.Context) {
 			gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(link))})
-			f.h.Toast("Link copied to clipboard")
+			f.h.Toast(nsFile.T("Link copied to clipboard"))
 		}})
 	}
 	if !it.isCanvas() && !it.isList() {
@@ -805,30 +805,34 @@ func (f *Files) fileRowMenu(r sbRow) []popups.MenuItem {
 			if len(out) > 0 && !out[len(out)-1].Separator {
 				out = append(out, popups.Sep())
 			}
-			out = append(out, popups.MenuItem{Label: "Remove from recently viewed", Do: func() { f.removeRecent(r) }})
+			out = append(out, popups.MenuItem{Label: nsFile.T("Remove from recently viewed"), Do: func() { f.removeRecent(r) }})
 		}
 		return trimSeps(out)
 	}
 	var split []popups.MenuItem
 	if it.isCanvas() {
 		if co, ok := f.h.(interface{ OpenCanvas(id string) }); ok {
-			split = append(split, popups.MenuItem{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { co.OpenCanvas(id) }})
+			split = append(split, popups.MenuItem{Key: popups.SplitKey, Label: nsFile.T("Open in split view"), Icon: "move-to-split-view", Do: func() { co.OpenCanvas(id) }})
 		}
 	} else if lo, ok := f.h.(interface{ OpenList(id string) }); ok {
-		split = append(split, popups.MenuItem{Key: popups.SplitKey, Label: "Open in split view", Icon: "move-to-split-view", Do: func() { lo.OpenList(id) }})
+		split = append(split, popups.MenuItem{Key: popups.SplitKey, Label: nsLists.T("Open in split view"), Icon: "move-to-split-view", Do: func() { lo.OpenList(id) }})
 	}
 	m := !starred || sections // Unstar hidden
 	var tail []popups.MenuItem
 	if !m {
-		label := "Unstar canvas"
+		label := nsFile.T("Unstar canvas") // CanvasSidebarContextMenu
 		if it.isList() {
-			label = "Unstar list"
+			label = nsLists.T("Unstar list") // ListSidebarContextMenu
 		}
 		file := r.file
 		tail = append(tail, popups.MenuItem{Label: label, Do: func() { f.toggleStar(file) }})
 	}
 	if !starred {
-		tail = append(tail, popups.MenuItem{Label: "Remove from recently viewed", Do: func() { f.removeRecent(r) }})
+		recent := nsFile.T("Remove from recently viewed")
+		if it.isList() {
+			recent = nsLists.T("Remove from recently viewed")
+		}
+		tail = append(tail, popups.MenuItem{Label: recent, Do: func() { f.removeRecent(r) }})
 	}
 	out := append(append([]popups.MenuItem{}, head...), mid...)
 	out = append(out, popups.Sep())
@@ -871,7 +875,7 @@ func (f *Files) moveToItems(file core.File, addToRecents bool, source string) []
 	}
 	colls, _ := a.FileCollections()
 	cur, in := a.FileCollectionOf(file.ID)
-	items := []popups.MenuItem{{Header: "Move to…"}}
+	items := []popups.MenuItem{{Header: nsFiles.T("Move to…")}} // FileSectionMoveToMenu
 	for _, c := range colls {
 		c := c
 		sel := in && cur.ID == c.ID
@@ -888,12 +892,12 @@ func (f *Files) moveToItems(file core.File, addToRecents bool, source string) []
 			}})
 	}
 	if f.canCreateSection() {
-		items = append(items, popups.Sep(), popups.MenuItem{Key: "create-section", Label: "Create section", Icon: "plus",
+		items = append(items, popups.Sep(), popups.MenuItem{Key: "create-section", Label: nsFiles.T("Create section"), Icon: "plus",
 			Do: func() { f.sectionModalThen("", func(c core.FileCollection) { f.moveToCollection(file, c, false) }) }})
 	}
 	if in {
 		cid := cur.ID
-		items = append(items, popups.MenuItem{Key: "remove-from-collection", Label: "Remove from " + cur.Name,
+		items = append(items, popups.MenuItem{Key: "remove-from-collection", Label: nsFiles.T("Remove from {collection}", "collection", cur.Name),
 			Do: func() { f.removeFromCollection(file, cid, addToRecents) }})
 	}
 	return items
@@ -937,7 +941,7 @@ func (f *Files) moveToCollection(file core.File, c core.FileCollection, quiet bo
 		name = c.Emoji + " " + name
 	}
 	it := fileItem{file}
-	text := "Added " + it.title() + " to " + name + "."
+	text := nsFiles.T("Added {file} to {section}.", "file", it.title(), "section", name) // MoveFileToast
 	undo := func() {
 		f.write(func(ctx context.Context, a *core.App) error {
 			<-done
@@ -1040,7 +1044,7 @@ func (f *Files) deleteSection(id string) {
 	if !ok {
 		return
 	}
-	confirm := &popups.ModalButton{Label: "Confirm", Kind: popups.BtnPrimary, Do: func() bool {
+	confirm := &popups.ModalButton{Label: nsDialog.T("Confirm"), Kind: popups.BtnPrimary, Do: func() bool {
 		f.write(func(ctx context.Context, a *core.App) error { return a.DeleteFileCollection(ctx, id) }, func(err error) {
 			if err != nil {
 				f.h.Toast("Couldn’t delete the section: " + friendlyErr(err))
@@ -1049,18 +1053,21 @@ func (f *Files) deleteSection(id string) {
 		return true
 	}}
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title:     "Delete sidebar section?",
+		Title:     nsFileColl.T("Delete sidebar section?"),
 		AutoFocus: confirm,
 		Body: func(gtx layout.Context) layout.Dimensions {
+			// "Are you sure you want to delete <strong>{collectionName}</strong>?",
+			// the name (FileSectionName) where the locale puts it
+			before, after := around(nsFileColl, "Are you sure you want to delete <strong>{collectionName}</strong>?", "collectionName")
 			return row(gtx, layout.Middle,
-				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, f.p.Text, "Are you sure you want to delete ") }),
+				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wReg, f.p.Text, before) }),
 				layout.Rigid(func(gtx C) D { return f.collectionIcon(gtx, c, false, 16, f.p.Text) }),
 				hgap(4),
 				layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, c.Name) }),
-				layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, f.p.Text, "?") }), // <strong>{name}</strong>?
+				layout.Flexed(1, func(gtx C) D { return f.label(gtx, 15, wReg, f.p.Text, after) }),
 			)
 		},
-		Buttons: []*popups.ModalButton{{Label: "Cancel", Kind: popups.BtnOutline}, confirm},
+		Buttons: []*popups.ModalButton{{Label: nsDialog.T("Cancel"), Kind: popups.BtnOutline}, confirm}, // the generic dialog's
 	}))
 }
 
@@ -1079,14 +1086,14 @@ func (f *Files) sectionModalThen(id string, created func(core.FileCollection)) {
 		return
 	}
 	a := f.h.Core()
-	title := "Create a sidebar section"
+	title := nsFiles.T("Create a sidebar section") // FileSectionCreateModal
 	var cur core.FileCollection
 	if id != "" {
 		c, ok := a.FileCollection(id)
 		if !ok {
 			return
 		}
-		cur, title = c, "Rename this section"
+		cur, title = c, nsFiles.T("Rename this section")
 	}
 	st := &sectionModalState{emoji: cur.Emoji}
 	st.ed.SingleLine, st.ed.Submit = true, true
@@ -1121,7 +1128,7 @@ func (f *Files) sectionModalThen(id string, created func(core.FileCollection)) {
 		})
 		return false
 	}
-	saveBtn := &popups.ModalButton{Label: "Save", Kind: popups.BtnPrimary, Enabled: func() bool {
+	saveBtn := &popups.ModalButton{Label: nsFiles.T("Save"), Kind: popups.BtnPrimary, Enabled: func() bool {
 		return strings.TrimSpace(st.ed.Text()) != "" && !st.pending
 	}, Do: save}
 	m = popups.NewModal(ph, popups.ModalOpts{
@@ -1130,7 +1137,7 @@ func (f *Files) sectionModalThen(id string, created func(core.FileCollection)) {
 			return f.sectionModalBody(gtx, ph, &m, st, save)
 		},
 		FocusStops: func() []event.Tag { return []event.Tag{&st.ed} },
-		Buttons:    []*popups.ModalButton{{Label: "Close", Kind: popups.BtnOutline}, saveBtn},
+		Buttons:    []*popups.ModalButton{{Label: nsFiles.T("Close"), Kind: popups.BtnOutline}, saveBtn},
 	})
 	ph.ShowOverlay(m)
 }
@@ -1186,7 +1193,7 @@ func (f *Files) sectionModalBody(gtx C, ph popups.Host, m **popups.Modal, st *se
 	}
 	return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { // margin_top_25
 		return col(gtx,
-			layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, "Name your section") }),
+			layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, nsFiles.T("Name your section")) }),
 			layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(8))} }),
 			layout.Rigid(func(gtx C) D { return f.sectionNameInput(gtx, st) }),
 			layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(20))} }),
@@ -1252,7 +1259,7 @@ func (f *Files) sectionNameInput(gtx C, st *sectionModalState) D {
 					if st.ed.Len() > 0 {
 						return D{}
 					}
-					return f.label(gtx, 15, wReg, f.p.Faint, "Enter a section name")
+					return f.label(gtx, 15, wReg, f.p.Faint, nsFiles.T("Enter a section name"))
 				}),
 				layout.Stacked(func(gtx C) D { return f.th.Editor(gtx, &st.ed, 15, f.p.Text, f.p.Mention) }),
 			)
@@ -1305,7 +1312,7 @@ func (f *Files) sectionButton(gtx C, c *fileClicks, it *fileItem) D {
 		d = f.iconButton(gtx, &c.star, "star", 28, 18, f.p.Meta)
 	}
 	c.starSize = d.Size
-	popups.Tooltip(gtx, f.th, &c.starTip, c.star.Hovered(), d.Size, popups.BelowRight, "Move file", "")
+	popups.Tooltip(gtx, f.th, &c.starTip, c.star.Hovered(), d.Size, popups.BelowRight, nsFiles.T("Move file"), "")
 	return d
 }
 
