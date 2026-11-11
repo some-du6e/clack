@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/huddle/avperm"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -107,12 +108,16 @@ func (k *previewClicks) get(m *map[string]*widget.Clickable, key string) *widget
 }
 
 // shouldPreview is computeShouldShowJoinPreview for a start or join click.
+// computeShouldShowJoinPreview (client-boot e5et): never from the invite
+// window or without huddles_preview_v2; a microphone and a camera that
+// both lack the OS's permission force it (arePermissionsGrantedForInputDevices,
+// kLPq gC); else the pref decides.
 func (c *Controller) shouldPreview(channel, entry string) bool {
 	if c.NoWindow || entry == EntryInviteWindow {
 		return false
 	}
 	app := c.h.Core()
-	if app == nil || !app.PrefBool("huddles_show_join_preview", false) {
+	if app == nil || !c.on(ExpPreviewV2) {
 		return false
 	}
 	c.mu.Lock()
@@ -120,7 +125,18 @@ func (c *Controller) shouldPreview(channel, entry string) bool {
 	if c.s != nil && c.s.Channel() == channel || c.joining == channel {
 		return false
 	}
-	return c.pwin == nil || c.pwin.channel != channel
+	other := c.pwin == nil || c.pwin.channel != channel
+	if !permissionsGranted() && other {
+		return true // "Forcing display of join preview due to device permission problems"
+	}
+	return other && app.PrefBool("huddles_show_join_preview", false)
+}
+
+// permissionsGranted is arePermissionsGrantedForInputDevices: the
+// microphone or the camera may be captured (where the OS doesn't ask,
+// both are).
+var permissionsGranted = func() bool {
+	return avperm.Check(avperm.Mic) == avperm.Authorized || avperm.Check(avperm.Camera) == avperm.Authorized
 }
 
 // openPreview shows the join preview for channel; Join runs start.

@@ -83,6 +83,9 @@ func (l *lay) small(col color.NRGBA) flowStyle {
 
 func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	a := b.Att
+	if a.Huddle != nil { // a huddle_thread message: HuddleMsgText (huddle.go)
+		return l.huddleMsg(b, x, y, w)
+	}
 	if a.MsgCard {
 		return l.msgCard(b, x, y, w)
 	}

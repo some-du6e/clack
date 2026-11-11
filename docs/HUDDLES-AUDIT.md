@@ -28,10 +28,10 @@ Status: **matched** means no change was needed, **fixed** means changed on this 
 
 | Feature | Slack (evidence) | Clack before | Status |
 |---|---|---|---|
-| Every start path | the startHuddle thunk with Slack's entry points (DF8l's enum) | same (Begin) | **matched** |
+| Every start path | the startHuddle thunk with Slack's entry points (DF8l's enum); startEventLog is the transcription (B3Qp), not the join | same (Begin), with the media join wrapped in startEventLog | **fixed** (exp-huddles): the join is no longer a startEventLog; startHuddle carries isMultiDevice |
 | Large-channel warning | HuddleShoutyRoosterModal over 150 members, `Start a huddle in this channel?` | same | **matched** |
 | Start a Huddle picker | HuddleInviteStartModal from the Create menu and the Huddles page | same | **matched** |
-| Join preview | the join preview with mic, camera and device pickers (huddles_show_join_preview) | preview.go | **open**: not re-audited. The camera self-preview belongs to the background-blur work on `bg-blur`, so preview.go was left alone |
+| Join preview | the join preview with mic, camera and device pickers (huddles_show_join_preview), only under huddles_preview_v2; no mic or camera permission forces it (computeShouldShowJoinPreview, kLPq gC); the pref row is aa02's, under the same experiment | preview.go, whatever the experiment | **fixed** (exp-huddles): shouldPreview and the pref row follow huddles_preview_v2, and missing permissions force it. The camera self-preview stays the background-blur work |
 | Joining | HuddleLoading (`render ce74`): Slack's spinner over `Joining huddle…` | the text `Joining the huddle…` | **fixed** |
 | Join or start failure | HuddleErrorModal (`boot OAp3`, isJoinError): `Can’t join the huddle`, the reason's body (permission_denied, rooms_call_ended, else `You’ll have to go back and give it another try.`), OK | toasts `Couldn't join the huddle: <code>` and `Couldn't start the huddle: <code>` | **fixed** (errmodal.go) |
 | A full huddle | room_max_participants: `This huddle already has {maxAmount} people, which is the maximum allowed.`, Got It | the code in a toast | **open**: the modal shows Slack's default body with Got It. Clack isn't sent the team's limit, so it can't fill `{maxAmount}` |
@@ -42,15 +42,15 @@ Status: **matched** means no change was needed, **fixed** means changed on this 
 | Feature | Slack (evidence) | Clack before | Status |
 |---|---|---|---|
 | Title | HuddleMvaWindowTitle (`render zuQH`): headphones, 8px, `Huddle in {channel}` with no `#` (publicChannelIncludeHashSign false), `Huddle with {names}` in a DM or group DM, then the subtitle `{n} people` / `{n} person` in regular weight (not in DMs), at `.p-multi_view_window_title`'s .8 opacity | `Huddle in #channel`, a `Connecting… ` or `Reconnecting… ` prefix, no subtitle | **fixed** (windowTitle; the subtitle is also a `subtitle` prop for plugins) |
-| Title from a huddle topic | the topic replaces the title when set | none | **open**: Clack has no huddle topics |
+| Title from a huddle topic | HuddleMvaWindowTitle shows the topic (the call's name) in place of "Huddle in …" | none | **fixed** (exp-huddles, topic.go): windowTitle uses the room's name |
 | Toolbar frame | HuddleToolbar (`shared 9d6D`), expanded mode: 56px tall, center buttons in one row, HuddleToolbarLeaveButton in rightButtons, 2px from the edge | 60px, Leave in the centered row | **fixed** |
 | Toolbar buttons | `.button`: 40px, 4px margin, radius 8; center order mute, camera, screen share, sticker pair, emoji, canvas, thread, Meeting Assistant, ⋯ | mic, deafen, camera, screen, hand, caret, react, captions, thread | **fixed**: mic, camera, sticker pair, emoji, thread, ⋯. Screen share is the row below; canvas and Meeting Assistant aren't drawn because Clack has no huddle canvases or Slack AI |
 | Deafen | no such control: the word doesn't occur in boot-shared, boot-render, client-boot or the huddle chunks | a deafen button in the window and in the sidebar bar | **fixed**: removed from both |
 | Captions button | captions live in ⋯ › Show captions (CaptionsSubmenu); the toolbar has none | a CC button and the note `Captions show when someone in the huddle turns on transcription` | **fixed**: removed, the menu has them |
-| Mic button | HuddleToolbarMuteButton (`shared Q9S9`): tooltip `Mute mic` / `Unmute mic` with Mod+Shift+Space, `Microphone permission denied` and a warning-filled badge when denied | no tooltip | **fixed** (tooltips; the badge was already there) |
-| Mic device menu | in the window the mic is segmented (36px plus a 28px `Audio settings` caret): `Microphone` and `Speaker` device lists, noise suppression, Audio & video preferences (`shared LmPT`) | a single 40px button | **open**: internal/huddle opens the sound card when you join and can't switch devices mid-huddle, so the lists would only take effect next time |
+| Mic button | HuddleToolbarMuteButton (`shared Q9S9`): tooltip `Mute mic` / `Unmute mic` with Mod+Shift+Space; under huddles_av_button_permission_handling a denied OS permission greys it (micDisabled), shows the warning-filled badge and `Microphone permission denied`, and a click opens DeviceWarningModal (`Microphone access required`) | tooltips; the badge for every microphone problem | **fixed** (exp-huddles, micalerts.go): the badge, grey and tooltip only for a denied permission under the experiment; the click opens DeviceWarningModal; the icon follows the mute state |
+| Mic device menu | in the window and the bottom bar the mute button is segmented (36px plus a 28px `Audio settings` caret, Q9S9): HuddleAVDevicesMenu (LmPT): `Microphone` (gmEJ radio rows), `Speaker` (QdEk rows, a pick plays Test Speaker), `Test Speaker` (complete_quest_requirement), `Enable noise suppression` under huddles_noise_suppression_awareness while it's off, `Audio & video preferences` (yBJd); a pick is setNewPreferredDevice | a single 40px button; internal/huddle opened the sound card once | **fixed** (exp-huddles, audiomenu.go): the segmented button and the menu in the window and the dock; Session.SwitchAudio reopens the chosen speakers or microphone mid-huddle |
 | Camera button | HuddleToolbarCameraButton (`shared LnqA`): segmented with a `Video settings` caret; `Turn on camera` / `Turn off camera` | window_camera.go's button and the tooltip `Camera isn't supported on this platform yet` | **open**: camera devices and backgrounds are the camera and background-blur work; window_camera.go wasn't touched. The unsupported tooltip isn't Slack's |
-| Screen share | HuddleToolbarScreenshareButton (`shared Q9Yv`): `Share your screen`, `Stop sharing screen`, `Screen sharing limit reached` | a button whose click said `Clack can't share your screen yet` | **fixed**: the stub is gone. Sharing your own screen stays **open**: internal/huddle has no screen capture |
+| Screen share | HuddleToolbarScreenshareButton (`shared Q9Yv`): `Share your screen`, `Stop sharing screen`, `Screen sharing limit reached`; ScreenPickerModal (`0S5z`) with `Share audio` under huddles_screenshare_share_audio | a button whose click said `Clack can't share your screen yet` | **fixed**: the stub is gone. Sharing your own screen stays **open**: it needs a native capture per OS (ScreenCaptureKit on macOS, DXGI desktop duplication or Windows.Graphics.Capture, X11 XShm or the xdg-desktop-portal ScreenCast over PipeWire on Wayland) and a second Chime attendee (`<attendee>#content`) publishing H.264 through videosend.go; feasible on all three, not built yet |
 | Sticker pair | HuddleToolbarSegmentedStickerPickerButton (`shared zeVD`): a 36px main half and a 28px caret, a 1px otl-inv-pry divider 20px tall; `Raise hand`, `Lower hand`, `Remove sticker`, `Choose sticker` | 40px plus a 20px caret 8px apart | **fixed** (segFill paints each half once) |
 | Emoji button | HuddleToolbarEmojiPickerButton (`shared dltD`): `emoji`, `emoji-filled` on hover or while open, `Add reaction` | `emoji`, no tooltip | **fixed** |
 | Emoji picker | HuddleQuickEmojiPicker (`shared Vw0B`): tabs Reactions (the emoji picker), Effects, Stickers, GIFs, and a close button | a row of 8 quick emoji over the stage | **open**: Effects need Slack's Lottie packs and GIFs need GIPHY; the full emoji picker isn't available inside the huddle window |
@@ -58,20 +58,20 @@ Status: **matched** means no change was needed, **fixed** means changed on this 
 | Thread view | the huddle thread opens in the huddle window's side panel (client-huddle-thread-view) | opens the thread in the main window | **open**: no flexpane in the huddle window |
 | ⋯ button | HuddleToolbarMoreActionsButton (`shared RXWR`): `ellipsis-vertical-filled`, `More actions`, its menu above it | missing | **fixed** |
 | ⋯ menu rows | `shared a+g1`, expanded window: Invite people, Copy huddle link, `Go to #channel` / `Go to direct message`, divider, Add topic, Choose a huddle theme, Layouts ›, Play music ›, Huddle language ›, divider, Show captions › (`Display as…`, Closed captions, Side-by-side), Hide self-view, divider, Huddle preferences | none | **fixed**: Copy huddle link, Go to…, Show captions › Display as… / Closed captions, Hide self-view (with someone else there), Huddle preferences (opens Preferences › Audio & video) |
-| ⋯ rows Clack lacks | as above | none | **open**: Invite people (no in-huddle invite call), Add topic (no topic API), Choose a huddle theme (no huddle themes), Layouts (no layout modes), Play music (no jukebox), Huddle language (no transcription language), Side-by-side captions (no side panel) |
+| ⋯ rows Clack lacks | as above | none | **fixed**: Add topic / Edit topic (HuddleEditTopicMenuItem, HuddleTopicDialog: `Add a topic` / `Edit topic`, Add / Save, `What is this huddle about?`, 250 characters; screenhero.rooms.rename). **open**: Invite people (inviteMembers is rooms.notifyMember per person; its `Invite people to your huddle` picker isn't built), Choose a huddle theme (no huddle themes), Huddle language (no transcription language), Side-by-side captions (no side panel). Layouts and Play music need huddles_new_grids and huddles_music, which this account isn't in, so Slack hides them too |
 | Hide self-view | isHidingSelf: your tile leaves the gallery; the banner `Self-view is hidden.` with Undo | missing | **fixed** (shared with the docked bar) |
 | Leave button | `c-button--medium c-button--danger`, min-width 80px, `Leave`; tooltip `Leave Huddle` with Mod+Shift+H / Mod+Alt+Shift+H | 84px, no tooltip | **fixed** |
 | Leave options | HuddleLeaveOptionsMenu (`shared OsUf`): a caret with `End huddle for all` where you may end it | none | **open**: Clack can't end a huddle for everyone |
 | Participant tiles | HuddlePeerTile (`shared pluj`): 12px corners, a 1px ring, cover video or avatar, mic pill, name pill on hover, sticker pill, reaction pill, invite status | same (tiles-* shots) | **matched** |
 | Speaking ring | `.p-huddle_peer_tile__active_speaker`: 3px white outline and white glow; the active_speaker bars in the mic pill | same | **matched** |
-| Gallery layout | HuddlePeopleGridView and GridPicker: Slack's grid templates and pagination | Clack's own fit of square tiles up to 220px | **open**: Slack's grid templates aren't ported |
+| Gallery layout | HuddlePeopleGridView and GridPicker: Slack's grid templates and pagination; the order (S5fM): you, raised hands (by field_timestamp_ms, or the raised hand queue), screen sharers, cameras, the rest | Clack's own fit of square tiles up to 220px, you first | **fixed**: the order (galleryOrder). **open**: the grid templates and pagination |
 | Reaction effects | HuddleReactionEffects, the explosion and float-up layers | the tile's pill only | **open**: Lottie animations |
-| Screen share view | HuddleScreenshareView with its tile list, zoom control and top toolbar (fullscreen, pop-out) | the share on the stage, people in a column, `Loading screen share…` while the first frame comes | **open**: zoom, pop-out and Slack's layout aren't ported; the loading text isn't Slack's |
+| Screen share view | HuddleScreenshareView with its tile list, zoom control and top toolbar (fullscreen, pop-out under huddles_screenshare_popout: HuddleScreensharePopoutView with the presenter, `Go full screen`, `Pop back into huddle window`, `Close screen share window` and the huddle toolbar) | the share on the stage, people in a column, `Loading screen share…` while the first frame comes | **fixed** (exp-huddles, popout.go): `Open in new window` and the popout window. **open**: zoom, the drawing toggle, Slack's share layout; the loading text isn't Slack's |
 | Closed captions | HuddleClosedCaptions (`shared PWaJ`, events from `boot mvRv`): a speaker's words within 2 s join one event, the last 5 show; each its own black box (radius 6, padding 4px 8px, 4px apart) with the bold name and a colon, 8px, then the words, both inline so wrapped words start at the box's left edge; at the bottom left, half the width at most; an event fades 5 s after its text last changed, hover shows them again | the last 2 lines in one centered bold box | **fixed** (captions.go) |
-| Caption start | `Captions have been turned on.` when transcription starts | none | **open**: internal/huddle doesn't report the transcription start |
-| Turning captions on | toggleCaptions starts the huddle's transcription | shows only what someone else's transcription sends | **open**: internal/huddle can't start transcription |
+| Caption start | `Captions have been turned on.` (HuddleClosedCaptionStartEvent) is startEventLog's START_TRANSCRIPTION, pushed after rooms.startTranscription | none | **fixed** (exp-huddles, captions.go): the start event shows first, without a name |
+| Turning captions on | toggleClosedCaptions runs startEventLog (rooms.startTranscription with the call id, once more after 5 s on permission_denied) or stopEventLog (rooms.stopTranscription); allowHuddleTranscriptions gates it; only an enabled event log keeps transcripts; huddles_cc_by_default runs it as your audio connects; stopHuddle runs stopEventLog first | shows only what someone else's transcription sends | **fixed** (exp-huddles, transcribe.go, captions_log.go). Grid org-level transcription prefs aren't sent to Clack: before team prefs load (or without the pref) Clack allows it |
 | Mute request | HuddlesInformationalBanner (`shared 7tWB`) `user_was_muted`: a neutral c-banner `Someone muted you.` with microphone-slash and a close button | toast `<name> muted you` | **fixed** (banner) |
-| Speaking while muted | the same banner's `You’re muted.` | none | **open**: needs a speaking-while-muted signal internal/huddle doesn't give |
+| Speaking while muted | useHuddleMutedVolumeTracker (owyz): muted, a level (computeStrength/6) of .065 or more four updates in a row raises SpeakingWhenMuted; HuddlesInformationalBanner (7tWB) shows `You’re muted.` (microphone-slash) unless closed in this call, and hides it for good after 60 s | none | **fixed** (exp-huddles, devices.go, micalerts.go). Clack samples the level every 300 ms (AudioLevelMonitor's cadence); the in-call SDK's own cadence isn't in the build |
 | Huddle ended or dropped | HuddleErrorModal: `This huddle has ended` / `This huddle has ended for everyone who was in it.` (Got It); otherwise `Something went wrong with your huddle` | toasts `The huddle ended` and `You were disconnected from the huddle` | **fixed** |
 | Leaving on lock | HuddleErrorModal `DeviceLocked`: `You’re no longer in a huddle`, `When your computer locks, you automatically leave any huddle you’re in. You can change this in <a>Preferences</a>.`, OK | left silently | **fixed**. The `Preferences` link is plain text: Clack's modal body has no links |
 | Other notices | none | `Couldn't update your sticker`, `Couldn't send the reaction` | **fixed**: removed |
@@ -105,7 +105,7 @@ Slack 2026 (IA4) docks the huddle at the bottom of the client while you're in on
 | Suffix tooltip | the participants, with the channel name | none | **open** |
 | Collapsed section | SectionHuddleIndicator (`render 2LNF`): a huddle avatar stack on a collapsed section | none | **open** |
 | Huddles link | enable_huddles_home_view | same | **matched** |
-| Huddles page | huddles-page (`a29464bf75cbb4a4`): `Huddles` header and actions, the live huddles section (`Show more live huddles`), `Upcoming`, `Recent huddles` with Date / With / In / Has / Huddle type filters, groups Today, Yesterday, This week, Last week, Last month and older, rows like `Huddle for {n} minutes`, `Channel suggestions` and `Direct message suggestions` | `Happening now` (`Huddles in your channels and DMs`), `Recent` (`Huddles you were part of`), `New Huddle`, `Started …`, a green `Join` pill | **open**: views/huddles.go follows an older page; porting the 2026 page is its own job |
+| Huddles page | huddles-page (`a29464bf75cbb4a4`, Igs2): a list of the hero, the live huddles (HuddlesActiveSection, `Show more live huddles`) or DM suggestions, `Upcoming` (calendar), `Recent huddles` with Filters (Date, With, In, Has, Huddle type), ended huddles only, day groups (Today … Last month and older) under huddle_page_enhancements, `Loading older huddles…`, channel suggestions when there's no history | `Happening now` (`Huddles in your channels and DMs`), `Recent` (`Huddles you were part of`), `New Huddle`, `Started …`, a green `Join` pill | **open**: not rewritten on exp-huddles; the composition above is mapped from Slack's code, the rows and suggestions live in modules this branch didn't port |
 | Missed invites on the page | MissedHuddleInvite rows | none | **open** (the page) |
 
 ## Notifications and ringing
@@ -122,33 +122,42 @@ Slack 2026 (IA4) docks the huddle at the bottom of the client while you're in on
 
 | Feature | Slack (evidence) | Clack before | Status |
 |---|---|---|---|
-| huddle_thread rows | HuddleMsgText (`shared EKdW`) in `c-message__body--automated`: `{status}. {body}`, the body from getHuddleMsgText (`shared dbqw`) such as `{a} and {b} are here too.`, `{a} is already there.`, `You and {a} were in the huddle for {duration}.`, `You were in the huddle by yourself for {duration}. A nice, meditative session.`; a `Join Huddle` button with an avatar stack while it's live | a card: `Huddle in progress` or `A huddle happened`, `Lasted 10m · 2 participants`, the names | **open**: the row is internal/richtext's huddleBlock and richview's card, outside the huddle UI; porting Slack's plural sentences, the status line and the Join Huddle button needs those packages |
+| huddle_thread rows | HuddleMsgText (`shared EKdW`) in `c-message__body--automated` (sk_foreground_max_solid), the body from getHuddleMsgText (`shared dbqw`): `{a} is already there.`, `{a} and {b} are here too.`, `You’re the only one here. Enjoy the tranquility, or invite someone.`, `{user} has received a notification to join`, `You and {a} were in the huddle for {duration}.`, `You were in the huddle by yourself for {duration}. A nice, meditative session :tea:`, `{a} and {b} were in the huddle for {duration}.` ({h}h {m}m / {m}m), the long forms under system_messages_redesign_m1; a `Join Huddle` button (outline, plt-jade-20 border, three faces) while it's live and you're not in it (startHuddle, huddle_message_button) | a card: `Huddle in progress` or `A huddle happened`, `Lasted 10m · 2 participants`, the names | **fixed** (exp-huddles: richtext/huddle.go, richview/huddle.go). **open**: the header's LIVE / MISSED badge (the messages package's sender line), the status prefix of redesigned system rows, the `and N others` tooltip, the AI notes lines |
 | Sender in a huddle | BaseHuddleStatus: the headphones by the name (qeNM) | same | **matched** |
+
+## Huddle experiments (branch exp-huddles)
+
+The account's huddle experiments (docs/EXPERIMENTS.md), against Slack build `4d0c78085232` (2026-11-10). Each test sets the group itself, as the Experiments plugins can, and checks both sides.
+
+| Feature | Slack (evidence) | Clack before | Status |
+|---|---|---|---|
+| huddles_alone_timeout | `M3Ec` HuddleAloneTimeoutTimer (every 5 s and on peer joins and leaves), `iKHp` getHuddleAloneTimeoutStep: 10 minutes with no remote peer (30 s under huddles_alone_timeout_shortened) opens HuddleStillHereModal: `Are you still there?`, `You’ve been in this huddle by yourself for a while. You’ll leave it in {seconds} seconds unless you’re still here.`, `I’m Still Here` / `Leave Huddle`; at the 60 s (15 s) deadline you leave | none | **fixed** (alone.go): the modal opens in the huddle window when it's open (winHost overlays), else the main window |
+| huddles_multi_device | `e5et` startHuddleWithConfirmation and `6e8N` HuddleMultiDeviceModal: in a huddle you're already in on another device, your faces (one per device) and the others' (56px, six at most), `You’re in this huddle on a different device` / `… on multiple devices`, `Use both devices` / `Switch to this device` (rooms.join multidevice); `T3hK` keeps awareness per device | rooms.join always multidevice=false; stickers per tile | **fixed** (multidevice.go, awareness.go). The modal's footer is right-aligned (Slack centres it): popups.Modal has no centred footer |
+| huddles_switch_microphone_helper | `owyz`: with two or more microphones and someone else there, 20 one-second checks of an unmuted microphone that hasn't sent sound raise NoAudioDetected (`NoKD`: `We are not detecting any audio from your microphone. Click here to switch to a different microphone`, microphone-slash) | none | **fixed** (micalerts.go): the link opens the Audio settings menu |
+| huddles_missed_notification | `zuQH` handleHuddleMissedCallNotification (`Huddle missed`, 30 s on, only with it on); `zq6z` getDidUserMissHuddleInvite | the notification always | **fixed** (invite.go) |
+| huddles_miles_davis | `IeZG` getSongsMetadata: So What, Freddie Freeloader, All Blues enabled only with it on; off, a pick of one plays Smooth Jazz | always Smooth Jazz for them | **fixed** (avprefs.go). Its effects, NEW badges and coachmark aren't drawn: Clack has no music menu or effects |
+| huddle_join_from_preview | `zq6z` doesChannelSupportHuddlesWithReason: a channel you're previewing supports huddles only with it on | the button in every channel | **fixed** (SupportsHuddles; channel.go passes it to headerFit) |
+| huddles_awareness_timestamp | `T3hK` ChimeChannelBroadcaster sends field_timestamp_ms with it on; `OGIR` xP sorts raised hands by it | no timestamps | **fixed** (awareness.go; galleryOrder) |
+| huddles_link_v2 | `YCI0`: the sidebar Huddles link's count badge of unviewed huddle invites, cleared 600 ms after the page opens | none | **open**: Clack's sidebar link has no facepile and Clack keeps no huddle invite notifications |
+| huddles_discovery_calls | `GPML` CallMenu's `New: Try a huddle for quick informal discussions with your team.` (treatment) | none | **open**: no call apps menu |
+| huddles_mva_window | the huddle window as a multi-view window (secondary views) vs the legacy window's flexpanes (~30 modules) | MVA only | **open**: Clack's window has neither secondary views nor flexpanes, so off and on look the same |
+| huddles_screenshare_share_audio | `0S5z` ScreenPickerModal's `Share audio` | none | **open**: no screen sharing of your own |
 
 ## Counts
 
-78 rows: 18 matched, 35 fixed, 25 open. Four fixed rows still name an open remainder in their cell: the caret's `More call options` wording, the facepile inside the live tooltip, sharing your own screen, and custom account themes for the sidebar badge.
+89 rows: 17 matched, 53 fixed, 19 open. Fixed rows that still name an open remainder: the caret's `More call options` wording, the facepile inside the live tooltip, sharing your own screen, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
 
 The open rows and why:
 
 | Open row | Reason |
 |---|---|
 | Call apps and calendar rows | no call apps or Google Calendar in Clack |
-| Join preview | not re-audited: the camera self-preview belongs to the background-blur work on `bg-blur` |
 | A full huddle | Clack isn't sent the team's participant limit for `{maxAmount}` |
-| Title from a huddle topic | no huddle topic API |
-| Mic device menu | internal/huddle can't switch the sound card mid-huddle |
 | Camera button | camera devices, backgrounds and window_camera.go's unsupported tooltip are the camera and background-blur work |
 | Emoji picker | Effects need Slack's Lottie packs, GIFs need GIPHY, the emoji picker isn't available inside the huddle window |
 | Thread view | the huddle window has no side panel |
-| ⋯ rows Clack lacks | no in-huddle invite, topics, huddle themes, layouts, jukebox, transcription language or side-by-side captions |
 | Leave options | Clack can't end a huddle for everyone |
-| Gallery layout | Slack's grid templates and pagination aren't ported |
 | Reaction effects | Lottie animations |
-| Screen share view | zoom, pop-out and Slack's share layout aren't ported; `Loading screen share…` isn't Slack's |
-| Caption start | internal/huddle doesn't report the transcription start |
-| Turning captions on | internal/huddle can't start transcription |
-| Speaking while muted | no speaking-while-muted signal from internal/huddle |
 | Lounge music | the banner and its controls aren't drawn |
 | Responsive center | the dock doesn't hide buttons in narrow windows |
 | Sticker caret | the dock opens a menu of stickers, not Slack's grid popover |
@@ -157,7 +166,10 @@ The open rows and why:
 | Collapsed section | SectionHuddleIndicator isn't drawn |
 | Huddles page | views/huddles.go follows an older page; porting the 2026 page is its own job |
 | Missed invites on the page | part of the Huddles page |
-| huddle_thread rows | richtext's huddleBlock and richview's card, outside the huddle UI |
+| huddles_link_v2 | no huddle invite notifications or link facepile in the sidebar |
+| huddles_discovery_calls | no call apps menu |
+| huddles_mva_window | no secondary views or flexpanes in the huddle window |
+| huddles_screenshare_share_audio | no screen sharing of your own |
 
 ## What changed
 
@@ -169,3 +181,10 @@ The open rows and why:
 - huddleui/sidebar_suffix.go, sidebar.go: the row's huddle faces and badge.
 - channel.go, huddleui/bar.go: the idle button's tooltips; the shortcut hints go through shortcut.Format.
 - views/taut.go, views/huddles.go: the Huddles page's failures use the modal.
+
+On branch exp-huddles (2026-11-10, Slack build `4d0c78085232`):
+
+- internal/huddle: transcribe.go (startEventLog / stopEventLog: rooms.startTranscription, rooms.stopTranscription, the START_TRANSCRIPTION event, screenhero.rooms.rename for topics), devices.go (SwitchAudio, Slack's level and the speaking-while-muted rule, hasSelfAudioBeenDetected), awareness.go (field_timestamp_ms, per-device keying), rooms.go (rooms.join multidevice), the fake's new answers and SoloRoom.
+- huddleui: experiments.go, alone.go, audiomenu.go, micalerts.go, captions_log.go, topic.go, popout.go, multidevice.go; the window's overlays (winHost.ShowOverlay), the segmented mute button in the window and the dock, galleryOrder, the topic in the title, the join no longer wrapped in startEventLog.
+- richtext/huddle.go and richview/huddle.go: huddle_thread messages as HuddleMsgText with the Join Huddle button (richview.HuddleJoiner, messages' richHandler, the ui root's JoinHuddleFrom); store.HuddleTextOpts / UserAvatar and core's store.ExperimentGroup hook feed it.
+- prefs_pages.go (the join preview row under huddles_preview_v2), channel.go (SupportsHuddles into headerFit), huddle_av.go (SetHuddleAudioPrefs).

@@ -80,6 +80,24 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 		b, _ := json.Marshal(map[string]any{"ok": true, "link": FakeLinkBase + ch})
 		return json.Unmarshal(b, out)
 	}
+	if method == "rooms.startTranscription" || method == "rooms.stopTranscription" { // captions on / off
+		if p.Get("call_id") == "" {
+			return errors.New("fake slack: " + method + " without call_id")
+		}
+		return json.Unmarshal([]byte(`{"ok":true}`), out)
+	}
+	if method == "screenhero.rooms.rename" { // a huddle topic
+		if p.Get("room") == "" {
+			return errors.New("fake slack: screenhero.rooms.rename without room")
+		}
+		return json.Unmarshal([]byte(`{"ok":true}`), out)
+	}
+	if method == "rooms.notifyMember" { // Invite people
+		if p.Get("channel_id") == "" || p.Get("user_id") == "" {
+			return errors.New("fake slack: rooms.notifyMember without channel_id or user_id")
+		}
+		return json.Unmarshal([]byte(`{"ok":true}`), out)
+	}
 	if method == "rooms.inviteResponse" { // Decline / Be there soon on an incoming invite
 		if p.Get("channel_id") == "" || p.Get("room_id") == "" || p.Get("response") == "" {
 			return errors.New("fake slack: rooms.inviteResponse without channel_id, room_id or response")
@@ -125,6 +143,7 @@ type fakeChime struct {
 	sending  atomic.Bool
 	cam      fakeCamIn
 	aware    fakeAware
+	solo     atomic.Bool // SoloRoom: nobody else in the meeting
 }
 
 // fakeAware is the awareness traffic: what you sent, and how the fake's
@@ -272,6 +291,7 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 // chatter is what Chime tells a joined attendee: who's on which audio
 // stream, volumes, and a reaction from the other person.
 func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
+	solo := f.solo.Load()
 	send(ftAudioStreamIDInfo, func(w *pbw) {
 		w.msg(19, func(w *pbw) {
 			w.msg(1, func(w *pbw) {
@@ -279,6 +299,9 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 				w.str(2, fakeSelfAtt)
 				w.str(4, "E1-R0FAKEROOM-"+fakeSelf)
 			})
+			if solo {
+				return
+			}
 			w.msg(1, func(w *pbw) {
 				w.uint(1, 2)
 				w.str(2, fakeRemoteAtt)
@@ -287,6 +310,10 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 			})
 		})
 	})
+	if solo { // nobody to hear, react or caption
+		<-ctx.Done()
+		return
+	}
 	pm := (&PeerMessage{Reacji: &Reacji{Emoji: "tada", Type: ReacjiStandard}, FromPeerIDString: fakeRemoteAtt}).Encode()
 	t := time.NewTicker(150 * time.Millisecond)
 	defer t.Stop()
@@ -304,7 +331,7 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 				})
 			})
 		})
-		if i == 5 || i%40 == 0 { // live captions (Chime transcription)
+		if i == 5 || i%10 == 0 { // live captions (Chime transcription)
 			var tw pbw
 			tw.msg(1, func(w *pbw) {
 				w.msg(2, func(w *pbw) {
@@ -736,6 +763,10 @@ func NewFake(clip []byte, errf func(string, ...any)) *Fake {
 	}
 	return &Fake{f: f, srv: srv}
 }
+
+// SoloRoom makes the meeting yours alone from the next join on: the
+// other person isn't in Chime's audio (the alone timeout's tests).
+func (x *Fake) SoloRoom() { x.f.solo.Store(true) }
 
 // Caller answers rooms.join with the fake meeting.
 func (x *Fake) Caller() Caller {
