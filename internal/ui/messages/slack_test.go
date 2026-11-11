@@ -2,10 +2,13 @@ package messages
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -167,5 +170,27 @@ func TestReactionBarCurrentUser(t *testing.T) {
 	}
 	if p := r.pills[1].buttonProps(); p.StrOr("className", "") != "c-button-unstyled c-reaction c-reaction--reacted" || p.StrOr("data-qa", "") != "reactji" {
 		t.Errorf("UnstyledButton props %v", p)
+	}
+}
+
+// ShowRealUser (Slick, src/plugins/ShowRealUser asForwardedBy) rewrites a
+// forwarded copy of a relay bot's post when it can look the post's sender
+// up by the attachment's channel_id and ts, and it matches the reply's ts
+// with ===. Slack's attachment carries the shared message's ts as a
+// string; Clack sent the whole seconds as a number, so the plugin never
+// fired on forwards ("forwarded copies carry a numeric ts").
+func TestSharedAttachmentTSIsSlacks(t *testing.T) {
+	r := store.New("")
+	share := slack.Message{Type: "message", TS: "1794369300.000100", User: "U1",
+		Attachments: []slack.Attachment{{IsShare: true, ChannelID: "C0CFT52NEGM", TS: json.RawMessage(`"1794369255.504199"`),
+			AuthorLink: "https://hackclub.slack.com/services/B08G06U6SJG", AuthorName: "at-channel", Text: "hi"}}}
+	m := core.Message{TS: share.TS, Channel: "C1", User: "U1", Doc: richtext.FromMessage(r, &share)}
+	p := roundTrip(t, slackMessage(&m))
+	att := slackc.Props(asMap(p.List("attachments")[0]))
+	if ts, ok := att["ts"].(string); !ok || ts != "1794369255.504199" {
+		t.Errorf("forwarded attachment ts %#v, want the string \"1794369255.504199\"", att["ts"])
+	}
+	if att.StrOr("channel_id", "") != "C0CFT52NEGM" || !strings.Contains(att.StrOr("author_link", ""), "/services/B08G06U6SJG") {
+		t.Errorf("forwarded attachment %v: ShowRealUser needs channel_id and the /services/ author link", att)
 	}
 }
