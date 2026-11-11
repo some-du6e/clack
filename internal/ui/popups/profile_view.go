@@ -455,7 +455,11 @@ func (p *pfPaneMenu) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	if p.menu == nil {
 		win := gtx.Constraints.Max
-		off := image.Pt(win.X-dp(gtx, theme.PanelInset)-p.paneW, dp(gtx, theme.TopNavH))
+		right := win.X - dp(gtx, theme.PanelInset)
+		if SecondaryRight != nil { // an open split view sits right of it (split.go)
+			right = SecondaryRight()
+		}
+		off := image.Pt(right-p.paneW, dp(gtx, theme.TopNavH))
 		a := p.box.Add(off)
 		if p.call {
 			if p.menu = pfHuddleMenuAt(gtx, p.h, p.member, a, nil); p.menu == nil {

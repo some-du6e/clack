@@ -499,3 +499,121 @@ func TestAgentIconPaths(t *testing.T) {
 		t.Errorf("circle and check wind the same way (%v, %v): the check would not cut out", a0, a1)
 	}
 }
+
+// plan_block_coding_enhancements (FiNg.XI): a plan task with hide_title
+// has no title line under the experiment (its content stays, with the
+// no-title spacing); off, or not assigned, it keeps its title.
+func TestAgentPlanHideTitle(t *testing.T) {
+	app := core.New(slack.New(slack.Creds{Token: "xoxc-test", UserID: "U1", Team: "T1"}), store.New(""))
+	h := &agentHost{app: app, th: theme.New(false)}
+	rich := func(s string) map[string]any {
+		return map[string]any{"type": "rich_text", "elements": []any{map[string]any{"type": "rich_text_section",
+			"elements": []any{map[string]any{"type": "text", "text": s}}}}}
+	}
+	plan := []any{map[string]any{"type": "plan", "block_id": "ph", "title": "Coding", "tasks": []any{
+		map[string]any{"task_id": "t1", "title": "Edit redirect.ts", "status": "complete", "hide_title": true, "details": rich("Changed two lines.")},
+		map[string]any{"task_id": "t2", "title": "Run the tests", "status": "complete"},
+	}}}
+	app.SetExperimentGroup("agent_streaming_slimmer_task_cards", "on") // hide_title is a slim plan task's
+	size := func(group string) int {
+		app.SetExperimentGroup("plan_block_coding_enhancements", group)
+		m := agentMsgOf(t, plan, "completed")
+		me := MessageElements(h, &m)
+		me.agentState().open["plan\x00ph"] = true
+		return slotSize(t, me, &m, 480).Y
+	}
+	on, off, unassigned := size("on"), size("off"), size("")
+	if off != unassigned {
+		t.Errorf("off %d and unassigned %d should draw alike", off, unassigned)
+	}
+	// the title line (4+2+19.5+2+4) gives way to the no-title spacing (2+4 above, 2 below)
+	if d := off - on; d < 15 || d > 30 {
+		t.Errorf("hide_title saved %dpx (on %d, off %d), want the title line less the no-title spacing", d, on, off)
+	}
+	// without hide_title the experiment changes nothing
+	plan[0].(map[string]any)["tasks"].([]any)[0].(map[string]any)["hide_title"] = false
+	if a, b := size("on"), size("off"); a != b {
+		t.Errorf("no hide_title: on %d, off %d", a, b)
+	}
+}
+
+// cardHost is an agentHost whose core has agent_streaming_slimmer_task_cards
+// in group: "on" draws the slim blocks, anything else Slack's cards.
+func cardHost(dark bool, group string) *agentHost {
+	app := core.New(slack.New(slack.Creds{Token: "xoxc-test", UserID: "U1", Team: "T1"}), store.New(""))
+	app.SetExperimentGroup("agent_streaming_slimmer_task_cards", group)
+	return &agentHost{app: app, th: theme.New(dark)}
+}
+
+// agent_streaming_slimmer_task_cards off (or not assigned): plans and task
+// cards are cards (agent_card.go): a collapsed plan is 40px plus its
+// border, a collapsed task card fits its 40px bar, both up to 480px wide
+// with margin 8px; open, a plan shows every task's header and content.
+func TestAgentCardSizes(t *testing.T) {
+	for _, group := range []string{"off", ""} {
+		h := cardHost(false, group)
+		m := agentMsg(t, "plan-complete")
+		me := MessageElements(h, &m)
+		closed := slotSize(t, me, &m, 560)
+		if closed.Y != 8+42+4 { // first block: margin 8 above, 40 + 2px border, 4 below (richview's gap is the rest)
+			t.Errorf("group %q: collapsed plan card %v, want 54 tall", group, closed)
+		}
+		me.agentState().open["plan\x00p1"] = true
+		open := slotSize(t, me, &m, 560)
+		if open.Y < closed.Y+2*24 {
+			t.Errorf("group %q: open plan card %v not taller than collapsed %v by two task headers", group, open, closed)
+		}
+		c := agentMsg(t, "task-card-complete")
+		cme := MessageElements(h, &c)
+		if sz := slotSize(t, cme, &c, 560); sz.Y != 8+42+4 {
+			t.Errorf("group %q: collapsed task card %v, want its 40px bar", group, sz)
+		}
+	}
+	// "on": the slim line (TestAgentSlotSizes)
+	h := cardHost(false, "on")
+	m := agentMsg(t, "plan-complete")
+	me := MessageElements(h, &m)
+	if sz := slotSize(t, me, &m, 560); sz.Y < 20 || sz.Y > 30 {
+		t.Errorf("slim plan %v", sz)
+	}
+}
+
+// TestAgentCardShots renders every fixture as cards (agent-cards-{light,dark}.png).
+func TestAgentCardShots(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		h := cardHost(dark, "off")
+		names := []string{"plan-complete", "plan-complete-open", "plan-in-progress", "plan-error", "plan-untitled",
+			"task-card-pending", "task-card-in-progress", "task-card-complete", "task-card-error", "task-card-mcp"}
+		var msgs []core.Message
+		for _, n := range names {
+			msgs = append(msgs, agentMsg(t, n))
+		}
+		s := newAgentShot(h, msgs...)
+		for i, n := range names {
+			switch n {
+			case "plan-complete-open", "plan-in-progress", "plan-error", "task-card-complete", "task-card-error", "task-card-in-progress":
+				b := agentButton(&s.rows[i].m, 0)
+				s.rows[i].me.agentState().open[b.Kind+"\x00"+b.BlockID] = true
+			}
+		}
+		const w, hgt = 620, 2200
+		now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
+		var ops *op.Ops
+		for i := 0; i < 3; i++ {
+			ops = s.frame(w, hgt, now.Add(time.Duration(i)*300*time.Millisecond))
+		}
+		img := pixeltest.Render(t, w, hgt, ops)
+		if dir := os.Getenv("BK_AGENT_SHOTS_DIR"); dir != "" {
+			name := "agent-cards-light.png"
+			if dark {
+				name = "agent-cards-dark.png"
+			}
+			f, err := os.Create(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = png.Encode(f, img)
+			_ = f.Close()
+		}
+	}
+}

@@ -131,6 +131,13 @@ func convTitle(h Host, c core.Conv) string {
 			return userName(u)
 		}
 	case "mpim":
+		// getDisplayNameForChannel (W+Ke SB): a named group DM is its
+		// custom name (tpcx JM), wherever Slack names it
+		if a := h.Core(); a != nil {
+			if n, ok := a.MpdmCustomName(c.ID); ok {
+				return n
+			}
+		}
 		var names []string
 		for _, id := range c.Members {
 			if h.Core() != nil && id == h.Core().Self().ID {

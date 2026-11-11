@@ -92,6 +92,11 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	h := sz.Y
 	x := gtx.Dp(18) // Slack: 28px star button at +18, title icon at +54
+
+	// FlexpaneBackButton while the split view has a back stack
+	if a.pane == paneSplit {
+		x = a.splitBackButton(gtx, x, h)
+	}
 	// Slack's header has no star (ViewHeaderEntitySectionSelector) and no
 	// notifications bell for a channel the viewer isn't in: the preview's
 	// title sits at +18 (C08E083LZ9A, 2026-11-08). A code channel shows
@@ -109,6 +114,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	// right-side controls, laid out right-to-left first so the title can
 	// ellipsize into the remaining space.
 	right := sz.X - gtx.Dp(14)
+	if a.pane == paneSplit { // the split view's close button ends the header
+		right = a.splitCloseButton(gtx, right, h)
+	}
 	btn := gtx.Dp(28)
 	y := (h - btn) / 2
 	kebabX := 0
@@ -122,6 +130,10 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	case preview:
 		hdrBtns = []string{"kebab", "search"}
 	}
+	// a narrow column moves buttons out (useActionsToMoveToMenu, split.go)
+	// doesChannelSupportHuddles: no huddle button in a channel you're
+	// previewing without huddle_join_from_preview (huddleui.SupportsHuddles)
+	hdrBtns, hudBtn, narrow := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM && a.huddles().SupportsHuddles(ch))
 	for _, k := range hdrBtns {
 		k := k
 		right -= btn
@@ -143,8 +155,8 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		_ = kebabX
 		// Slack opens it right-aligned 6px inside the kebab's right edge, its
 		// top at y 74 (the header is always 40px down and its kebab sits 14px
-		// from the panel's right inset, here and in a split pane).
-		a.openChannelMenu(ch, image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
+		// from the pane's right edge, before the split view's close button).
+		a.openChannelMenu(ch, image.Pt(a.headerEnd()-gtx.Dp(14)-gtx.Dp(6), gtx.Dp(theme.TopNavH)+gtx.Dp(34)))
 	}
 	if clicked(a.clicks.get("hdr.search")) {
 		a.searchInChannel(ch) // Slack's searchInChannel: the ⌘F pane
@@ -153,13 +165,12 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		a.openNotifPrefs(ch)
 	}
 
-	// doesChannelSupportHuddles: no button in a channel you're previewing
-	// without huddle_join_from_preview (huddleui.SupportsHuddles)
-	if hud := a.huddles(); !appDM && hud.SupportsHuddles(ch) {
+	if hudBtn {
 		// Huddle split button (94×28: 74 + 20); Slack 2026's --polish variant
 		// has no outline, only hover fills. While a huddle is on, huddleui
 		// draws Slack's live button: mint with faces, headphones and a bare
 		// count, or solid jade with the leave headphones when you're in it.
+		hud := a.huddles()
 		hud.Seed()
 		hw := gtx.Dp(94)
 		live := hud.HeaderLive(ch)
@@ -227,7 +238,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		if clicked(a.clicks.get("hdr.huddlemore")) || hud.TakeCaret(ch) {
 			// the pointer is on the caret, so the tracker knows the button's
 			// window position (fallback: where it sits in the main pane)
-			fb := image.Pt(a.winSize.X-gtx.Dp(theme.PanelInset)-(sz.X-hudAt.X), gtx.Dp(theme.TopNavH)+hudAt.Y)
+			fb := image.Pt(a.paneRight()-(sz.X-hudAt.X), gtx.Dp(theme.TopNavH)+hudAt.Y)
 			org := hudOrg.get(fb)
 			caret := image.Rect(caretX, 0, caretX+gtx.Dp(20), btn).Add(org)
 			a.openHuddleMenu(gtx, ch, caret)
@@ -252,6 +263,18 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		}
 	}
 
+	// a group DM's title is MPDMTitle (channel_mpdm.go)
+	if conv != nil && conv.Kind == "mpim" {
+		tw := a.layoutMpdmTitle(gtx, ch, conv, x, max(right-x-gtx.Dp(16), 0), h)
+		if clicked(a.clicks.get("hdr.title")) {
+			a.OpenDetails(ch)
+		}
+		a.headerTitleMenu(gtx, ch, image.Rect(x, (h-gtx.Dp(32))/2, x+tw, (h+gtx.Dp(32))/2))
+		x += tw + gtx.Dp(16)
+		a.layoutHeaderTopicSlot(gtx, ch, conv, sz.X, x, right, h)
+		return layout.Dimensions{Size: sz}
+	}
+
 	// title: icon + name 18px/900 + chevron, clickable → details.
 	name := a.convTitle(conv, ch)
 	icon := "hash"
@@ -261,11 +284,15 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			icon = "lock"
 		case "im", "app":
 			icon = ""
-		case "mpim":
-			icon = "people"
 		}
 	}
-	avail := right - x - gtx.Dp(16)
+	// under 600px Slack hides the topic (@container
+	// .p-view_header__topic_container): the title runs to the actions
+	tgap := gtx.Dp(16)
+	if narrow {
+		tgap = gtx.Dp(4)
+	}
+	avail := right - x - tgap
 	nw := a.th.Measure(gtx, 18, theme.Black, name)
 	// Slack (measured): button padding 2px 4px, 18px icon, name 20px after
 	// it, no chevron, title min-width 88px; the topic starts 16px after.
@@ -277,12 +304,19 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	titleW := max(iconW+nw, gtx.Dp(88)) + gtx.Dp(8)
 	if titleW > avail {
-		nw -= titleW - avail
-		titleW = avail
+		// the title's column shrinks (.p-view_header__text: flex 1 1 0,
+		// min-width 0) but the button keeps its min-width 96: in a narrow
+		// column it runs under the actions, whose opaque background
+		// (.p-view_header__actions, --dt_color-base-pry) covers the rest
+		fit := max(avail, gtx.Dp(88)+gtx.Dp(8))
+		nw -= titleW - fit
+		titleW = fit
 	}
 	if nw < 0 {
 		nw = 0
 	}
+	actL := right + gtx.Dp(6) // the actions' left edge: the title shows up to it
+	tcl := clip.Rect{Max: image.Pt(actL, h)}.Push(gtx.Ops)
 	at(gtx, image.Pt(x, (h-gtx.Dp(32))/2), image.Pt(titleW, gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("hdr.title"), func(gtx layout.Context, s image.Point, hov bool) {
 			if hov {
@@ -308,17 +342,37 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			return layout.Dimensions{Size: image.Pt(titleW, th)}
 		})
 	})
+	tcl.Pop()
 	if clicked(a.clicks.get("hdr.title")) {
 		a.OpenDetails(ch)
 	}
-	a.headerTitleMenu(gtx, ch, image.Rect(x, (h-gtx.Dp(32))/2, x+titleW, (h+gtx.Dp(32))/2))
+	a.headerTitleMenu(gtx, ch, image.Rect(x, (h-gtx.Dp(32))/2, max(x, min(x+titleW, actL)), (h+gtx.Dp(32))/2))
 	x += titleW + gtx.Dp(16)
 
-	// topic (13px muted) in the remaining space.
-	if conv != nil && conv.Topic != "" && right-x > gtx.Dp(40) {
-		a.layoutHeaderTopic(gtx, ch, conv, image.Rect(x, 0, right-gtx.Dp(12), h))
-	}
+	a.layoutHeaderTopicSlot(gtx, ch, conv, sz.X, x, right, h)
 	return layout.Dimensions{Size: sz}
+}
+
+// layoutHeaderTopicSlot fills the space between the title (ending at x)
+// and the right-side controls (from right): the topic (13px muted), or a
+// named group DM's member names; nothing in a header under 600px
+// (@container (width < 600px)).
+func (a *App) layoutHeaderTopicSlot(gtx layout.Context, ch string, conv *convInfo, headerW, x, right, h int) {
+	if conv == nil || headerW < gtx.Dp(600) || right-x <= gtx.Dp(40) {
+		return
+	}
+	r := image.Rect(x, 0, right-gtx.Dp(12), h)
+	if conv.Topic != "" {
+		a.layoutHeaderTopic(gtx, ch, conv, r, headerW)
+		return
+	}
+	if conv.Kind == "mpim" { // ViewHeaderTopic: a named group DM without a topic
+		if c := a.Core(); c != nil {
+			if _, named := c.MpdmCustomName(ch); named {
+				a.layoutMpdmSubtitle(gtx, conv, r)
+			}
+		}
+	}
 }
 
 // headerBellIcon is the bell's glyph (NotificationsControl, source
@@ -334,22 +388,16 @@ func (a *App) headerBellIcon(ch string, conv *convInfo) string {
 }
 
 // canSetTopic is canUserSetTopicForChannelWithReasonById (boot-shared
-// xjwB) on what Clack knows: not archived, a member, allowed to post, not
-// a guest. (Slack's SET_CHANNEL_TOPIC role grant and the
-// channel_topic_purpose_setting_restrict_to_channel_managers experiment
-// need permission data Clack doesn't load.)
+// xjwB, core.CanSetTopic): permission data from permissions/info
+// (SET_CHANNEL_TOPIC) and, under
+// channel_topic_purpose_setting_restrict_to_channel_managers, only that
+// grant outside 1:1 DMs. A preview or a code channel never offers it.
 func (a *App) canSetTopic(ch string, conv *convInfo) bool {
 	if conv == nil || conv.Archived || conv.Preview || conv.Code != nil {
 		return false
 	}
 	c := a.Core()
-	if c == nil {
-		return false
-	}
-	if conv.Kind == "im" || conv.Kind == "mpim" || conv.Kind == "app" {
-		return true
-	}
-	return c.PostingIn(ch).CanPost() && !c.Self().Guest
+	return c != nil && c.CanSetTopic(ch)
 }
 
 // layoutHeaderTopic is Slack's ViewHeaderTopic / ModelInfoTopic
@@ -358,9 +406,10 @@ func (a *App) canSetTopic(ch string, conv *convInfo) bool {
 // only, and an "Edit" link (aria-label "Edit channel topic", "Edit topic"
 // in DMs; .p-classic_nav__model__title__info__topic__edit: link blue,
 // 8px after the topic, underlined on its own hover) shows while the
-// pointer is over the topic container. When the topic doesn't fit,
-// Slack caps it at min(70%, 540px) so Edit stays beside it.
-func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r image.Rectangle) {
+// pointer is over the topic container. A topic too wide for the header
+// is --truncated (channel_topic.go): capped at min(70%, 540px), and
+// hovering it opens the card with the whole topic.
+func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r image.Rectangle, contentW int) {
 	hdrTopicRect = r
 	c := &a.th.C
 	h := r.Dy()
@@ -371,18 +420,26 @@ func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r
 	}
 	avail := r.Dx()
 	full := a.headerTopicWidth(gtx, conv)
-	tw := min(full, avail)
-	if editable && full+gtx.Dp(8)+editW > avail { // --truncated
-		tw = min(avail*7/10, gtx.Dp(540), avail-gtx.Dp(8)-editW)
+	truncated := topicTruncated(gtx, full, avail, editW)
+	tw := topicButtonWidth(gtx, full, avail, truncated)
+	if editable && tw+gtx.Dp(8)+editW > avail {
+		tw = avail - gtx.Dp(8) - editW
 	}
 	if tw <= 0 {
 		return
 	}
+	hdrTopicTruncated, hdrTopicCardShown = truncated, false
 	hov := a.clicks.get("hdr.topicbox")
+	btn := a.clicks.get("hdr.topic")
+	card := a.clicks.get("hdr.topiccard")
+	showCard := truncated && (btn.Hovered() || card.Hovered())
 	at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
 		return hov.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			at(gtx, image.Point{}, image.Pt(tw, h), func(gtx layout.Context) layout.Dimensions {
 				draw := func(gtx layout.Context) layout.Dimensions {
+					if showCard { // the line becomes the card (layoutTopicCard)
+						return layout.Dimensions{Size: image.Pt(tw, h)}
+					}
 					if len(conv.TopicSpans) == 0 {
 						return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
 							return a.th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Regular, Color: c.FgMuted, MaxLines: 1}, oneLine(conv.Topic))
@@ -390,15 +447,18 @@ func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r
 					}
 					return a.inlineSpans(gtx, conv.TopicSpans, 13, c.FgMuted, h)
 				}
-				if !editable {
-					return draw(gtx)
+				if !editable { // a read-only topic is still the hover card's button
+					return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						draw(gtx)
+						return layout.Dimensions{Size: image.Pt(tw, h)}
+					})
 				}
-				return clickArea(gtx, a.clicks.get("hdr.topic"), nil, func(gtx layout.Context) layout.Dimensions {
+				return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
 					draw(gtx)
 					return layout.Dimensions{Size: image.Pt(tw, h)}
 				})
 			})
-			if editable && hov.Hovered() {
+			if editable && (hov.Hovered() || card.Hovered()) {
 				at(gtx, image.Pt(tw+gtx.Dp(8), 0), image.Pt(editW, h), func(gtx layout.Context) layout.Dimensions {
 					return clickArea(gtx, a.clicks.get("hdr.topicedit"), func(gtx layout.Context, s image.Point, over bool) {
 						if over { // :hover text-decoration underline
@@ -415,14 +475,23 @@ func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r
 			return layout.Dimensions{Size: r.Size()}
 		})
 	})
+	if showCard {
+		lineTop := (h - gtx.Sp(18)) / 2
+		a.layoutTopicCard(gtx, ch, conv, r.Min.Add(image.Pt(0, lineTop)), topicCardWidth(gtx, tw, contentW), editable)
+	}
 	if clicked(a.clicks.get("hdr.topic")) || clicked(a.clicks.get("hdr.topicedit")) {
 		a.openTopicDialog(ch, conv)
 	}
 }
 
 // hdrTopicRect is the last header topic box, in the pane's coordinates
-// (tests hover it).
-var hdrTopicRect image.Rectangle
+// (tests hover it); hdrTopicTruncated whether that topic was --truncated
+// and hdrTopicCardShown whether its hover card was drawn.
+var (
+	hdrTopicRect      image.Rectangle
+	hdrTopicTruncated bool
+	hdrTopicCardShown bool
+)
 
 // headerTopicWidth is the topic line's natural width.
 func (a *App) headerTopicWidth(gtx layout.Context, conv *convInfo) int {
@@ -532,10 +601,31 @@ type chTab struct {
 	key, label, icon string
 	fileID           string
 	unread           bool // Slack's blue dot on the tab icon (unopened canvas)
+	// a list tab's default view (core.Tab DefaultView) and its name;
+	// labeled when the tab has a label of its own (useTabLabel then shows
+	// it, no view name)
+	defaultView, viewName string
+	labeled               bool
 	// spans is the label with its :emoji: codes resolved (Slack draws a
 	// canvas tab's title through its Emoji text renderer), bold; nil for a
 	// label without emoji.
 	spans []richtext.Span
+}
+
+// withListViewName is useTabLabel (boot-shared 83sY) under
+// list_channel_tab_show_view_name_fe: a list tab without a label of its
+// own whose default view (listsChannelTabDefaultRefineViewId) is one of
+// the list's views reads "<list title>: <view name>".
+func withListViewName(t chTab) chTab {
+	if t.icon != "list-tab" || t.labeled || t.viewName == "" {
+		return t
+	}
+	suffix := ": " + t.viewName
+	t.label += suffix
+	if t.spans != nil {
+		t.spans = append(append([]richtext.Span(nil), t.spans...), richtext.Span{Text: suffix, Style: richtext.Bold})
+	}
+	return t
 }
 
 // tabLabelSpans resolves a tab label's :emoji: codes to emoji spans, as
@@ -626,9 +716,13 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	c := &a.th.C
 	x := gtx.Dp(16)
 	cur := a.chTab[ch]
+	viewNames := a.Core() != nil && a.Core().Experiment("list_channel_tab_show_view_name_fe") == "on"
 	for i, t := range a.channelTabs(ch) {
 		i, t := i, t
 		t.label = i18n.T("tabbed-channel", t.label) // the standard tabs are Slack's; a bookmark's own name misses and stays
+		if viewNames {
+			t = withListViewName(t)
+		}
 		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
 		if t.spans != nil {
 			lw = a.spansWidth(gtx, t.spans, 13)
