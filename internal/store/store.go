@@ -147,6 +147,17 @@ func (s *Store) HuddleTextOpts(channel string) richtext.HuddleTextOpts {
 	return o
 }
 
+// UserAvatar is richtext.AvatarResolver: a user's 48px picture ("" when
+// unknown).
+func (s *Store) UserAvatar(id string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if u, ok := s.Users[id]; ok {
+		return u.Profile.Image48
+	}
+	return ""
+}
+
 func (s *Store) PutName(id, name string) {
 	if id == "" || name == "" {
 		return

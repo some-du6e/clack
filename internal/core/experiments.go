@@ -231,6 +231,8 @@ var experimentReads = map[string][]string{
 	"enable_new_channel_settings": on, "move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
 	"lists_grid_todos": on, "rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
 	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
+	"channel_details_agents_apps_tab": on, "enable_wfb_ai_answer_step": on, "workflow_execution_window": on,
+	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
 	// huddles (ui/huddleui/experiments.go)
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
 	"huddle_join_from_preview": on, "huddles_preview_v2": on, "huddles_alone_timeout": on, "huddles_alone_timeout_shortened": on,

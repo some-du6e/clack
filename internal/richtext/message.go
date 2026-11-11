@@ -443,6 +443,16 @@ func huddleBlock(r Resolver, raw json.RawMessage, channel string) (Block, bool) 
 		o = hr.HuddleTextOpts(h.Channel)
 	}
 	h.Joinable = h.Live && !in(h.Active, r.SelfID()) // shouldAddJoinButton
+	if ar, ok := r.(AvatarResolver); ok && h.Joinable {
+		for _, u := range h.Active {
+			if len(h.Faces) == 3 {
+				break
+			}
+			if url := ar.UserAvatar(u); url != "" {
+				h.Faces = append(h.Faces, url)
+			}
+		}
+	}
 	a := &Attachment{ServiceName: "Huddle", TS: h.DateStart, Huddle: h}
 	if sp := HuddleMsgText(r, h, o, time.Now()); len(sp) > 0 {
 		a.Text = []Block{{Kind: Paragraph, Spans: sp}}

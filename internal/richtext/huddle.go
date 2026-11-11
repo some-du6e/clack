@@ -31,6 +31,14 @@ type HuddleRoom struct {
 	Live bool
 	// Joinable is shouldAddJoinButton: live, and you're not in it.
 	Joinable bool
+	// Faces are the Join Huddle button's avatar stack: the pictures of up
+	// to three people in it (maxMembers 3, no +N).
+	Faces []string
+}
+
+// AvatarResolver is an optional Resolver method: a user's picture.
+type AvatarResolver interface {
+	UserAvatar(id string) string
 }
 
 // HuddleTextOpts are the conversation and the experiments the sentence
