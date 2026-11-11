@@ -489,7 +489,6 @@ func TestSearchTokenPills(t *testing.T) {
 	p := NewSearchPopover(e.h, "", image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.frame()
-	// a value long enough that its bold and regular widths differ
 	tok := srToken{label: "from:@Wonderwoman", req: "from:<@U0FAKE0001>", icon: "user", mod: "from", entity: "U0FAKE0001"}
 	p.setBox(srJoin([]srPiece{srText("zephyr "), srTokPiece(tok), srText(" more")}), -1)
 	d.frame()
@@ -515,9 +514,12 @@ func TestSearchTokenPills(t *testing.T) {
 	}
 	g := d.gtx()
 	th := p.h.Theme()
-	bold, reg := textW(g, th, 15, theme.Bold, "@Wonderwoman"), textW(g, th, 15, theme.Regular, "@Wonderwoman")
-	if w := val.Dx(); bold < reg+3 || w < bold-1 || w > bold+2 {
-		t.Errorf("value %dpx wide, bold %d, regular %d", w, bold, reg)
+	// the value's span is bold (above); it lays out as wide as the bold
+	// measurement (Lato's weights are within a pixel or two of each
+	// other, so width alone can't tell them apart)
+	bold := textW(g, th, 15, theme.Bold, "@Wonderwoman")
+	if w := val.Dx(); w < bold-1 || w > bold+2 {
+		t.Errorf("value %dpx wide, bold %d", w, bold)
 	}
 	// 4px after the value, then the space
 	if sp, got := textW(g, th, 15, theme.Regular, " "), more[0].Bounds.Min.X-val.Max.X; got < sp+3 || got > sp+5 {
