@@ -87,7 +87,8 @@ jobs:
           name: clack-windows-amd64
           path: dist/clack-windows-amd64.exe
 
-  # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating
+  # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating;
+  # Clack's slack:// registration and the single-instance hand-off
   windows-applog:
     runs-on: windows-latest
     steps:
@@ -103,6 +104,11 @@ jobs:
       - name: huddle OS hooks (WTS lock events, RegisterHotKey Ctrl+Shift+Space)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
+      - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_WINDOWS_ASSOC_TESTS: "1" # TestURLHandlerShell changes the runner user's slack:// association
+        run: go test -count=1 -v -run 'TestURLHandler|TestHandlerCommands|TestForwardOnWindows|TestURLLaunchArgs' ./internal/desktop
 
   macos:
     runs-on: macos-latest
