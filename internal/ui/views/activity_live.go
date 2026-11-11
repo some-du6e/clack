@@ -9,8 +9,11 @@ package views
 //     view can't show it: reminders and DMs while they're off in
 //     Activity, a cleared entry outside Cleared items (or the reverse: it
 //     leaves the list), a reaction under Unreads, an entry that isn't a
-//     VIP's under the VIP filter, another type than the view's types, or
-//     a conversation outside its channels and sections.
+//     VIP's under the VIP filter, an automation's under "Exclude
+//     automations" (activity_bot_item_type_reads) or a person's under
+//     "Automations only" (activity_automations_only), another type than
+//     the view's types, or a conversation outside its channels and
+//     sections.
 //   - activity_deleted drops the entry; activity_invalidated fetches the
 //     feed again; activity_views_updated (its own event) replaces the
 //     saved views (activity_views.go).
@@ -45,6 +48,10 @@ func (v *Activity) liveAccepts(it *core.ActivityItem) bool {
 	case v.unread.Value && (it.Type == "message_reaction" || !it.Unread):
 		return false
 	case v.vip && !it.Priority:
+		return false
+	case c.ActivityBotItemTypeReads() && v.exclAuto && it.IsBot,
+		c.ActivityAutomationsOnly() && v.autoOnly && !it.IsBot:
+		// activityUpdatedV2: p && w && P, _ && x && !P
 		return false
 	}
 	types, none := v.types()

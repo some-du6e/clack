@@ -39,6 +39,7 @@ type App struct {
 	presSeen    map[string]time.Time
 	presWaiters []chan struct{}
 	countsTimer *time.Timer
+	actBadges   map[string]int // client.counts activity_v2 (activity_badges.go)
 	cmdCache    []slack.Command
 	cmdAt       time.Time
 	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
@@ -133,7 +134,20 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnHello = a.onHello
+	appsByStore.Store(s, a)
+	store.ExperimentGroup = experimentForStore
 	return a
+}
+
+// appsByStore maps a store to its App, for store.ExperimentGroup (the
+// huddle message sentences in richtext follow the viewer's groups).
+var appsByStore sync.Map
+
+func experimentForStore(s *store.Store, name string) string {
+	if v, ok := appsByStore.Load(s); ok {
+		return v.(*App).Experiment(name)
+	}
+	return ""
 }
 
 // PollInterval is how often core refreshes unread counts and the open
@@ -576,6 +590,7 @@ func (a *App) Boot(ctx context.Context) error {
 	}
 	if counts != nil {
 		a.S.SetCounts(counts)
+		a.setActivityBadges(counts.ActivityV2)
 	}
 	if errDMs == nil {
 		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
@@ -777,6 +792,7 @@ func (a *App) loadLatest(ctx context.Context, ch string) error {
 func (a *App) refreshCounts(ctx context.Context) {
 	if c, err := a.C.Counts(ctx); err == nil {
 		a.S.SetCounts(c)
+		a.setActivityBadges(c.ActivityV2)
 		a.emit(Event{Type: "counts"})
 		if a.reopenActive() { // a closed DM got a new message
 			a.emit(Event{Type: "sidebar_changed"})
@@ -1125,6 +1141,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
+	v.AgentSession = m.AgentSession
 	v.FunctionExecutionID = m.FunctionExecutionID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)

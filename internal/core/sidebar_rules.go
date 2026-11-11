@@ -61,6 +61,13 @@ var defaultExperimentGroups = map[string]string{
 	// the Activity page's layout toggle sits in its header (5Ns/ XW; the
 	// live audit, docs/VIEWS-AUDIT.md): its density is the global pref
 	"activity_global_settings": "on",
+	// the Activity experiments as experiments.getByUser had them on
+	// 2026-11-10 (activity_agent.go, docs/ACTIVITY.md "Experiments")
+	// (nested_secondary_view, which the detail panel's needs, is the
+	// thread pane's below)
+	"activity_entry_layout_revisions_2": "on", "activity_inbox_remove_persistent_detail_panel": "on",
+	"activity_bot_item_type_reads": "on", "activity_automations_only": "on", "exclude_automations_filter": "on",
+	"agent_status_in_activity": "on",
 	// the section menus (ui/section_menu.go)
 	"sidebar_section_search": "on", "add_channels_channel_sections_slackathon": "on", "mute_channel_edu": "on",
 	// code channels (codechannel.go), as experiments.getByUser had them on 2026-11-08
@@ -102,6 +109,13 @@ var defaultExperimentGroups = map[string]string{
 	// title, controls 4px apart), the reply bar's hover-only last reply; no
 	// thread_header_mute_button (no bell in the header)
 	"nested_secondary_view": "on", "secondary_view_default_width": "on", "smaller_secondary_headers": "on",
+	// huddles (ui/huddleui/experiments.go), as experiments.getByUser had
+	// them on 2026-11-10
+	"huddle_join_from_preview": "on", "huddles_link_v2": "on", "huddles_preview_v2": "on", "huddles_alone_timeout": "on",
+	"huddles_av_button_permission_handling": "on", "huddles_awareness_timestamp": "on", "huddles_discovery_calls": "treatment",
+	"huddles_miles_davis": "on", "huddles_missed_notification": "on", "huddles_multi_device": "treatment",
+	"huddles_mva_window": "on", "huddles_screenshare_popout": "on", "huddles_screenshare_share_audio": "on",
+	"huddles_switch_microphone_helper": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

@@ -38,7 +38,8 @@ import (
 //     …]", silent (the window rings), with Join and Decline.
 //   - 30 s later (handleHuddleMissedCallNotification), if that invite is
 //     still the active one and you're still "pending", a second
-//     notification: "Huddle missed", "{sender} invited you to a huddle".
+//     notification: "Huddle missed", "{sender} invited you to a huddle"
+//     (only under huddles_missed_notification).
 //   - Decline and Be there soon are respondToHuddleInvite: rooms.inviteResponse
 //     {response: decline | joining_soon, channel_id, room_id}. Decline
 //     clears the invite; Be there soon keeps it, says "Join when you're
@@ -271,7 +272,8 @@ func (c *Controller) inviteMissed(inv *incoming) {
 	}
 	pending := cur == inv && inv.status == "pending"
 	c.mu.Unlock()
-	if !pending {
+	// (0,de.Z0)(r) && "pending" === c: only under huddles_missed_notification
+	if !pending || !c.on(ExpMissedNotification) {
 		return
 	}
 	title, body := "Huddle missed", c.displayName(inv.Sender)+" invited you to a huddle"

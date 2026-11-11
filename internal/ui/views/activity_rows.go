@@ -238,6 +238,50 @@ func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 	return actMark{}, false
 }
 
+// agentOn reports whether the row shows its agent's status now:
+// processing holds until date_status_processing_expire (qYb/
+// useProcessingExpiry, the redraw comes then), suspended until it changes.
+func (r *actRow) agentOn(gtx C) bool {
+	if r.agent == "" {
+		return false
+	}
+	if !r.agentUntil.IsZero() {
+		if !gtx.Now.Before(r.agentUntil) {
+			return false
+		}
+		gtx.Execute(op.InvalidateCmd{At: r.agentUntil})
+	}
+	return true
+}
+
+// agentStatus is ActivityAgentStatusIndicator (BZ5B) in the status slot
+// (activity_row_content__status_indicators: 24px wide, centred; the
+// indicator content-pry): Processing is InfiniteSpinner (medium, 16px,
+// slow, blue), Suspended the needs-attention glyph; the tooltip is
+// getAgentStatusLabel's (UaSM): "Working", "Needs attention".
+func (v *Activity) agentStatus(gtx C, r *actRow) D {
+	w, h := gtx.Dp(24), gtx.Dp(20)
+	s := gtx.Dp(16)
+	if r.agent == core.AgentSuspended {
+		s = gtx.Dp(15) // size "inherit": the row's 15px
+	}
+	func() {
+		defer op.Offset(image.Pt((w-s)/2, (h-s)/2)).Push(gtx.Ops).Pop()
+		if r.agent == core.AgentProcessing {
+			actSpinner(gtx, s, v.p.Link)
+		} else {
+			g := gtx
+			g.Constraints = layout.Exact(image.Pt(s, s))
+			v.icon(g, "needs-attention", unit.Dp(float32(s)/gtx.Metric.PxPerDp), v.p.Text)
+		}
+		area := clip.Rect{Max: image.Pt(s, s)}.Push(gtx.Ops)
+		r.agentHov.Add(gtx.Ops)
+		area.Pop()
+		popups.Tooltip(gtx, v.th, &r.agentTip, r.agentHov.Update(gtx.Source), image.Pt(s, s), popups.Below, core.AgentStatusLabel(r.agent), "")
+	}()
+	return D{Size: image.Pt(w, h)}
+}
+
 // actTrunc is s21a: s cut to n characters with an ellipsis.
 func actTrunc(s string, n int) string {
 	if utf8.RuneCountInString(s) <= n {

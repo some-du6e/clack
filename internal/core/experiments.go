@@ -211,6 +211,11 @@ var experimentReads = map[string][]string{
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	"agentforce_deprecation": on, "agent_tasks": on, "later_todos": on, "agents_landing_page": on, "agentic_ia": on,
+	// activity (activity_agent.go: 5Ns/, M/qt ji; nested_secondary_view is
+	// the secondary views' below)
+	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,
+	"activity_bot_item_type_reads": on, "activity_automations_only": on, "exclude_automations_filter": on,
+	"agent_status_in_activity": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
@@ -249,8 +254,12 @@ var experimentReads = map[string][]string{
 	// agents (agent.go; plan and task blocks: ui/blockkit/agent.go)
 	"agent_member_channel_count": on, "plan_block_coding_enhancements": on, "agent_streaming_slimmer_task_cards": on,
 	"app_thread_nugget_fe": on, "app_nugget_refinement": on,
-	// huddles
+	// huddles (ui/huddleui/experiments.go)
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	"huddle_join_from_preview": on, "huddles_preview_v2": on, "huddles_alone_timeout": on, "huddles_alone_timeout_shortened": on,
+	"huddles_av_button_permission_handling": on, "huddles_awareness_timestamp": on, "huddles_miles_davis": on,
+	"huddles_missed_notification": on, "huddles_multi_device": {"treatment"}, "huddles_screenshare_popout": on,
+	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on,
 	// search and the switcher (search*.go, popups/search_*)
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},

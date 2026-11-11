@@ -23,6 +23,10 @@ func (a *App) setHuddleAudio(agc, ns bool) {
 	a.Invalidate()
 }
 
+// SetHuddleAudioPrefs is huddleui.AudioPrefsSaver (the huddle's Audio
+// settings menu turning noise suppression on).
+func (a *App) SetHuddleAudioPrefs(agc, ns bool) { a.setHuddleAudio(agc, ns) }
+
 // RaiseMainWindow is huddleui.RaiseHost: the global mute shortcut brings
 // the main window forward, as Slack's main process does.
 func (a *App) RaiseMainWindow() { a.Raise() }

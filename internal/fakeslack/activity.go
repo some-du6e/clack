@@ -3,6 +3,7 @@ package fakeslack
 import (
 	"encoding/json"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,7 +34,12 @@ import (
 //     bring back a default one (all recorded too).
 //   - activity.feed also filters by priority_only (the entries marked
 //     "priority", from a VIP), channel_ids and channel_section_ids (the
-//     sections' members, users.channelSections.list).
+//     sections' members, users.channelSections.list), and by the
+//     entries' is_bot: exclude_automations drops the automations' (your
+//     Slackbot DM is the one), automations_only keeps only them.
+//   - activity.views.update {next_view_id} moves the view before that
+//     one ("" to the end) and numbers every view's position again (GuYW's
+//     tab drag, 4gYA R).
 //   - The bulk writes: activity.markRead / activity.archive {reason,
 //     entries} and activity.clearAll {reason, filters} (clears every
 //     entry the filters match).
@@ -78,7 +84,12 @@ func activityEntries(base string) []map[string]any {
 		return map[string]any{"ts": ts, "channel": ViewsChannel, "author_user_id": user}
 	}
 	e := func(key, feedTS string, unread bool, item map[string]any) map[string]any {
-		return map[string]any{"key": key, "feed_ts": feedTS, "is_unread": unread, "item": item}
+		return map[string]any{"key": key, "feed_ts": feedTS, "is_unread": unread, "is_bot": false, "item": item}
+	}
+	// bot marks an automation's entry (Slack's entry.is_bot)
+	bot := func(m map[string]any) map[string]any {
+		m["is_bot"] = true
+		return m
 	}
 	// priority marks an entry from a VIP (Slack's entry.priority)
 	priority := func(m map[string]any) map[string]any {
@@ -95,8 +106,8 @@ func activityEntries(base string) []map[string]any {
 				"inviting_team": team(ExternalTeamID, "Partner Co", false),
 				"inviting_user": map[string]any{"id": "U0PARTNER1", "name": "pat",
 					"profile": map[string]any{"real_name": "Pat Partner", "display_name": "pat", "email": "pat@partner.example"}}}}),
-		e("fa-slackbot", "1762701900.000100", false, map[string]any{"type": "dm", "bundle_info": map[string]any{"unread_count": 0,
-			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": "1762701900.000100", "channel": ActivitySlackbotDM}}}}}),
+		bot(e("fa-slackbot", "1762701900.000100", false, map[string]any{"type": "dm", "bundle_info": map[string]any{"unread_count": 0,
+			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": "1762701900.000100", "channel": ActivitySlackbotDM}}}}})),
 		e("fa-reminder-file", "1762701800.000100", false, map[string]any{"type": "saved_reminder",
 			"saved_reminder_payload": map[string]any{"item_type": "file", "item_id": ActivityReminderFile}}),
 		e("fa-reminder-done", "1762701700.000100", false, map[string]any{"type": "saved_reminder",
@@ -158,6 +169,9 @@ type activityState struct {
 	custom []map[string]any
 	hidden map[string]bool
 	seq    int
+	// order is every view's id in position order once a view moved
+	// (activity.views.update next_view_id); nil keeps the defaults first
+	order []string
 }
 
 func (v *viewsState) act() *activityState {
@@ -205,6 +219,7 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		}
 		unreadOnly, archiveOnly := f.Get("unread_only") == "true", f.Get("archive_only") == "true"
 		priorityOnly := f.Get("priority_only") == "true"
+		exclAuto, autoOnly := f.Get("exclude_automations") == "true", f.Get("automations_only") == "true"
 		inChans := s.activityChannels(f.Get("channel_ids"), f.Get("channel_section_ids"))
 		v.mu.Lock()
 		st := v.act()
@@ -216,6 +231,9 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 				continue
 			}
 			if priorityOnly && e["priority"] == nil {
+				continue
+			}
+			if isBot := e["is_bot"] == true; exclAuto && isBot || autoOnly && !isBot {
 				continue
 			}
 			if inChans != nil && !inChans[activityEntryChannel(e)] {
@@ -483,7 +501,54 @@ func (st *activityState) viewsLocked() ([]map[string]any, map[string]any) {
 		}
 		views = append(views, cp)
 	}
+	if st.order != nil {
+		at := map[string]int{}
+		for i, id := range st.order {
+			at[id] = i
+		}
+		for _, vw := range views {
+			if i, ok := at[vw["id"].(string)]; ok {
+				vw["position"] = strconv.Itoa(i)
+			}
+		}
+		slices.SortStableFunc(views, func(a, b map[string]any) int { return at[a["id"].(string)] - at[b["id"].(string)] })
+	}
 	return views, map[string]any{"sort": sort, "density": d}
+}
+
+// allViewIDs is every view's id in position order (hidden default views
+// keep their place).
+func (st *activityState) allViewIDs() []string {
+	if st.order != nil {
+		return st.order
+	}
+	var ids []string
+	for i := range activityDefaultViews {
+		ids = append(ids, "Vw0FAKE"+strconv.Itoa(i))
+	}
+	for _, c := range st.custom {
+		ids = append(ids, c["id"].(string))
+	}
+	return ids
+}
+
+// moveView is activity.views.update's next_view_id: id goes before next,
+// or to the end when next is "".
+func (st *activityState) moveView(id, next string) {
+	var ids []string
+	for _, x := range st.allViewIDs() {
+		if x != id {
+			ids = append(ids, x)
+		}
+	}
+	at := len(ids)
+	for i, x := range ids {
+		if x == next {
+			at = i
+		}
+	}
+	ids = append(ids[:at], append([]string{id}, ids[at:]...)...)
+	st.order = ids
 }
 
 func (st *activityState) customIndex(id string) int {
@@ -537,9 +602,16 @@ func (st *activityState) viewWrite(method string, f url.Values) (map[string]any,
 			vw["emoji"] = e
 		}
 		st.custom = append(st.custom, vw)
+		if st.order != nil {
+			st.order = append(st.order, vw["id"].(string))
+			vw["position"] = strconv.Itoa(len(st.order) - 1)
+		}
 		return vw, ""
 	case "activity.views.update":
 		id := f.Get("view_id")
+		if f.Has("next_view_id") {
+			st.moveView(id, f.Get("next_view_id"))
+		}
 		i := st.customIndex(id)
 		if i < 0 {
 			// a default view: only its density and sort
@@ -590,6 +662,9 @@ func (st *activityState) viewWrite(method string, f url.Values) (map[string]any,
 			return nil, "cannot_delete_default_view"
 		}
 		st.custom = append(st.custom[:i], st.custom[i+1:]...)
+		if st.order != nil {
+			st.order = slices.DeleteFunc(st.order, func(x string) bool { return x == f.Get("view_id") })
+		}
 	case "activity.views.hide", "activity.views.unhide":
 		t := f.Get("view_type")
 		if t != "dms" && t != "mentions" && t != "threads" {

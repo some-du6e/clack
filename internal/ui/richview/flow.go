@@ -122,11 +122,12 @@ const (
 	tImage
 	tFile
 	tButton
-	tCard     // whole-card click (opens URL)
-	tExpand   // attachment "Show more" / "Show less" (id: attachment number)
-	tCollapse // image block's hide / show toggle (img: the image)
-	tRemove   // an unfurl's remove button (id: the attachment id)
-	tBot      // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
+	tCard       // whole-card click (opens URL)
+	tExpand     // attachment "Show more" / "Show less" (id: attachment number)
+	tCollapse   // image block's hide / show toggle (img: the image)
+	tRemove     // an unfurl's remove button (id: the attachment id)
+	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
+	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
 )
 
 type target struct {
