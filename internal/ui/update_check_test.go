@@ -454,7 +454,7 @@ func TestUpdateCheckNowStates(t *testing.T) {
 	click("Try Again")
 	dl.release <- nil
 	waitUpd(t, a, "the download", func() bool { return a.update.phase == updReady })
-	if st := prefsRow(a, p); st.title != "Restart to Apply Update" || !strings.Contains(st.desc, "Just a quick restart") || !st.notes || st.button != "Restart Clack" || !st.primary {
+	if st := prefsRow(a, p); st.title != "Restart to Apply Update" || !strings.Contains(st.desc, "Curious what’s new?") || !st.notes || st.button != "Restart Clack" || !st.primary {
 		t.Fatalf("ready: %+v", st)
 	}
 	if dl.installs.Load() != 0 {

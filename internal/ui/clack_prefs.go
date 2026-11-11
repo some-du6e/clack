@@ -12,18 +12,17 @@ const clackTabID = "clack"
 // clackNav is the Clack tab's nav entry (extraNav puts it first).
 var clackNav = navExtra{id: clackTabID, label: AppName, icon: "info"}
 
-// clackPage is the Clack tab's page.
+// clackPage is the Clack tab: three rows, no headings or notes (Karim,
+// 2026-11-10: "keep the settings thing calm, 3 max"). Updates (one row:
+// automatic download, the step, its button), live updates, and
+// troubleshooting.
 func (p *prefsModal) clackPage(f *prefsForm) {
 	a := p.a
 	p.updatesSection(f) // update_check.go
-	f.hr()
-	f.subheading("Live updates")
-	rtHint := "Opens Slack's realtime connection. Off: messages refresh every 20 s"
+	hint := ""
 	if a.opts.NoRealtime {
-		rtHint = "Turned off with -no-realtime or CLACK_NO_REALTIME"
+		hint = "Turned off with -no-realtime or CLACK_NO_REALTIME"
 	}
-	f.option("realtime", "Live updates (typing, presence, instant messages)", rtHint, a.realtimeOn(), false, a.toggleRealtime)
-	f.note(AppName+" shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.", true, 0)
-	f.hr()
-	p.troubleshootingSection(f) // diagnostics.go
+	f.option("realtime", "Live updates (typing, presence, instant messages)", hint, a.realtimeOn(), false, a.toggleRealtime)
+	p.troubleshootingRow(f) // diagnostics.go
 }

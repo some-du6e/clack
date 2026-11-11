@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"image"
 	"strings"
 	"testing"
@@ -24,20 +25,46 @@ func TestClackPrefsTab(t *testing.T) {
 			t.Errorf("Advanced still has Clack's %s %q", r.Kind, r.Label)
 		}
 	}
+	// three rows, no headings or notes: updates (the box, its step as
+	// the subtext, one button), live updates, troubleshooting
+	a.opts.CheckUpdate = func(context.Context) (UpdateInfo, bool, error) { return UpdateInfo{}, false, nil }
 	rows := pageRows(t, a, p, clackTabID)
-	i := 0
-	for _, w := range []want{
-		lg("Updates"), ck("Check for updates"), ck("Download updates automatically"),
-		lg("Live updates"), ck("Live updates (typing, presence, instant messages)"),
-		lg("Troubleshooting"),
-	} {
-		for i < len(rows) && !w.matches(rows[i]) {
-			i++
+	var got []string
+	for _, r := range rows {
+		switch r.Kind {
+		case "check", "radio", "legend", "h2", "select":
+			got = append(got, r.Kind+" "+r.Label)
+		case "text":
+			if !strings.HasPrefix(r.Label, "Clack ") { // the update row's subtext
+				t.Errorf("a note on the Clack tab: %q", r.Label)
+			}
 		}
-		if i == len(rows) {
-			t.Fatalf("Clack tab: no %s %q (in order) in %s", w.kind, w.label, dumpRows(rows))
+	}
+	if w := "check Download updates automatically|check Live updates (typing, presence, instant messages)|legend Troubleshooting"; strings.Join(got, "|") != w {
+		t.Errorf("Clack tab rows %q, want %q", got, w)
+	}
+	var buttons []string
+	for _, r := range rows {
+		if r.Kind == "button" {
+			buttons = append(buttons, r.Label)
 		}
-		i++
+	}
+	if w := "Check for Updates|Copy diagnostics|Open logs folder"; strings.Join(buttons, "|") != w {
+		t.Errorf("buttons %q, want %q", buttons, w)
+	}
+	// the box is both settings: off stops the checks and the downloads
+	if !a.autoUpdatesOn() {
+		t.Fatal("automatic updates off by default")
+	}
+	p.clicks["update_auto"].Click()
+	pageRows(t, a, p, clackTabID)
+	if a.autoUpdatesOn() || !a.prefs.NoUpdateCheck || !a.prefs.NoUpdateDownload {
+		t.Errorf("after unticking: checks off %v, downloads off %v", a.prefs.NoUpdateCheck, a.prefs.NoUpdateDownload)
+	}
+	p.clicks["update_auto"].Click()
+	pageRows(t, a, p, clackTabID)
+	if !a.autoUpdatesOn() || a.prefs.NoUpdateCheck || a.prefs.NoUpdateDownload {
+		t.Errorf("after ticking again: checks off %v, downloads off %v", a.prefs.NoUpdateCheck, a.prefs.NoUpdateDownload)
 	}
 	// the tab: right after Slack's (Advanced last), before the plugin group
 	if nav := p.extraNav(); len(nav) < 2 || nav[0].id != clackTabID || nav[0].divider || !nav[1].divider {
