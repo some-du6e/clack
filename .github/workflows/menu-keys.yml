@@ -19,6 +19,13 @@ on:
       - "internal/ui/menubar/**"
       - "internal/ui/composer/chrome.go"
       - "internal/ui/slackc/kit/menus.go"
+      - "internal/ui/popups/button_v2.go"
+      - "internal/ui/popups/experiments.go"
+      - "internal/ui/popups/exp_menus*_test.go"
+      - "internal/ui/popups/optionlist.go"
+      - "internal/ui/theme/tooltip*.go"
+      - "internal/ui/theme/button*.go"
+      - "internal/core/message_menu.go"
       - ".github/workflows/menu-keys.yml"
   workflow_dispatch:
 
@@ -59,6 +66,21 @@ jobs:
           mkdir -p "$MENU_KEYS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMenuKeysShots$' ./internal/ui/
           ls -l "$MENU_KEYS_SHOTS_DIR"
+      # the message menu's Slack rows, the menu tag and badge, the select
+      # toggles and the v2 Button over internal/fakeslack; the tooltip's
+      # dark-mode outline in pixels; shots of them light and dark
+      - name: menu rows, selects, v2 Button and tooltips
+        env:
+          EXP_MENUS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$EXP_MENUS_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestTooltip|TestButtonV2' ./internal/ui/theme
+          xvfb-run -a go test -count=1 -v -run 'TestEmojiTooltip|TestCSSEmojiTooltip' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestMessageMenuSlack|TestClientExtras|TestSessionToggleGroups|TestSlackKitV2Button|TestForwardPicker|TestSelectListToggles|TestMenuTagAndBadge|TestTooltipColorsFromTheme|TestNotifyMenuCustomizedTag|TestExpMenusShots' ./internal/ui/popups
+          ls -l "$EXP_MENUS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

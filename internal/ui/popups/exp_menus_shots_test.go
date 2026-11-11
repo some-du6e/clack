@@ -22,7 +22,7 @@ import (
 )
 
 // TestExpMenusShots draws what branch exp-menus changed, light and dark,
-// for the menus-tooltips workflow (EXP_MENUS_SHOTS_DIR): a tooltip with a
+// for the menu-keys workflow (EXP_MENUS_SHOTS_DIR, artifact menu-keys-shots): a tooltip with a
 // shortcut, the bell menu's rows with the Customized tag and badges, a
 // basic select under no-auto-highlight with the placeholder row, and the
 // v2 Button next to the legacy one. Synthetic content only.
