@@ -197,6 +197,11 @@ func lookupIn(ns string, chain []string, src string, args Args) string {
 	if s.cat == nil && !hasBrace {
 		return src // en-US: the source, unformatted (C91c: l&&!n)
 	}
+	return s.message(ns, chain, src).Format(s.locale, args)
+}
+
+// message is src's parsed translation in s (cached per namespace).
+func (s *state) message(ns string, chain []string, src string) *Message {
 	k := msgKey{ns, src}
 	s.mu.RLock()
 	m := s.msgs[k]
@@ -227,7 +232,7 @@ func lookupIn(ns string, chain []string, src string, args Args) string {
 		s.msgs[k] = m
 		s.mu.Unlock()
 	}
-	return m.Format(s.locale, args)
+	return m
 }
 
 // Translated reports whether the active catalog has a translation of src

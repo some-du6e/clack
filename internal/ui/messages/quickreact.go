@@ -80,13 +80,13 @@ func (q *quickBar) tip(i int) string {
 	n := q.names[i]
 	base, _, _ := strings.Cut(n, "::")
 	if !q.customized {
-		switch base {
+		switch base { // the message I18n's (Vkgl)
 		case "white_check_mark":
-			return "Completed"
+			return msgNS.T("Completed")
 		case "eyes":
-			return "Taking a look…"
+			return msgNS.T("Taking a look…")
 		case "raised_hands":
-			return "Nicely done"
+			return msgNS.T("Nicely done")
 		}
 	}
 	return ":" + base + ":"

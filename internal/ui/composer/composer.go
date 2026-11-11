@@ -579,10 +579,12 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 			st.IsDM, st.Group = true, cv.Kind == "mpim"
 		}
 		if st.Mode == modeChannel {
-			if st.IsDM {
-				st.Placeholder = "Message " + cv.Name
+			if cv.Kind == "im" && cv.User != "" && cv.User == c.api.self().ID {
+				st.Placeholder = msgInputNS.T("Jot something down") // isSelfDm
 			} else {
-				st.Placeholder = "Message " + cv.Name // the chrome draws the #/lock icon before the name
+				// the chrome draws a channel's #/lock icon before the name
+				st.Placeholder, st.PlaceholderPre, st.PlaceholderPost = placeholderText(cv.Name)
+				st.PlaceholderMsg = !st.IsDM
 			}
 		}
 	} else if st.Mode == modeChannel {
