@@ -69,6 +69,9 @@ var (
 	// the Add emoji dialog (custom_emoji_list), Loading… from the files'
 	nsEmojiList = i18n.NewChain("custom_emoji_list", "files")
 	nsProfile   = i18n.NS("member_profile") // the profile's ⋮ menu (CpMO)
+	// the media viewer's toolbar: MediaViewerActions (file, the thread
+	// toggle stories_av's) and the zoom controls (image_viewer)
+	nsViewer = i18n.NewChain("file", "stories_av", "image_viewer")
 )
 
 // In is it as a row of Slack's own text in the I18n namespace ns: the
