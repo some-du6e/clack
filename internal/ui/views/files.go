@@ -1819,6 +1819,11 @@ func (f *Files) deleteFile(it fileItem) {
 			a.SetFileStarred(id, false)
 			f.setStarredRow(it.File, false)
 		}
+		// the sidebar's rows leave a deleted file out (isFileDeleted)
+		if f.known == nil {
+			f.known = map[string]core.File{}
+		}
+		f.known[id] = core.File{}
 	})
 }
 
@@ -1918,6 +1923,17 @@ func (f *Files) setTitle(id, title string) {
 			f.items[i].Title = title
 		}
 	}
+	if fl, ok := f.known[id]; ok && fl.ID != "" { // the sidebar's copies
+		fl.Title = title
+		f.known[id] = fl
+	}
+	f.starred.mutate(func(st *[]core.File) {
+		for i := range *st {
+			if (*st)[i].ID == id {
+				(*st)[i].Title = title
+			}
+		}
+	})
 }
 
 // openFile is Slack's handleFileContainerClick from the Files view
