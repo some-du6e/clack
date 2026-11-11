@@ -655,14 +655,21 @@ func TestSlickViewSlimMessageBoxOneLine(t *testing.T) {
 		f := &c.ui.f
 		return fmt.Sprintf("oneLine %v box %v send %v footNat %d row %d text %d att %d input at %v", f.oneLine, f.box, c.ui.rect[crSend], c.ui.footNat, f.rowH, f.textH, f.attH, c.ui.inputOff)
 	}
-	e.until(8*time.Second, "the footer beside the editor, one row tall", frame, func() bool {
-		box, send := c.ui.f.box, c.ui.rect[crSend]
-		return c.ui.f.oneLine && !send.Empty() && box.Dy() < 60
+	// the box is the formatting bar's row (when shown) and one row for
+	// the editor and the footer together: no row of its own for the footer
+	e.until(8*time.Second, "the footer beside the editor, in its row", frame, func() bool {
+		f, send := &c.ui.f, c.ui.rect[crSend]
+		return f.oneLine && !send.Empty() && f.rowH < f.textH+30 && send.Min.Y >= f.box.Max.Y-f.rowH-1
 	})
-	box, send := c.ui.f.box, c.ui.rect[crSend]
-	if send.Min.Y < box.Min.Y || send.Max.Y > box.Max.Y || send.Max.X > box.Max.X || send.Min.X < box.Max.X-80 {
-		t.Errorf("send %v isn't at the right end of the one-line box %v", send, box)
+	f, send := &c.ui.f, c.ui.rect[crSend]
+	box := f.box
+	if send.Max.Y > box.Max.Y || send.Max.X > box.Max.X || send.Min.X < box.Max.X-80 {
+		t.Errorf("send %v isn't at the right end of the one-line row (box %v)", send, box)
 	}
+	if in := c.ui.inputOff; in.Y < box.Max.Y-f.rowH-1 || in.Y > send.Max.Y {
+		t.Errorf("the editor at %v isn't in the footer's row (box %v, row %d)", in, box, f.rowH)
+	}
+	oneLineH := box.Dy()
 	if em := c.ui.rect[crEmoji]; em.Empty() || em.Min.X < box.Min.X+box.Dx()/3 {
 		t.Errorf("the emoji button %v isn't in the footer beside the editor (box %v)", em, box)
 	}
@@ -677,7 +684,7 @@ func TestSlickViewSlimMessageBoxOneLine(t *testing.T) {
 		c.Layout(gtx)
 	}
 	e.until(5*time.Second, "the footer on its own row in a narrow composer", narrow, func() bool {
-		return !c.ui.f.oneLine && c.ui.f.box.Dy() >= 78
+		return !c.ui.f.oneLine && c.ui.f.box.Dy() >= oneLineH+c.ui.f.textH
 	})
 }
 

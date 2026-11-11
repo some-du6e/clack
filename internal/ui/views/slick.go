@@ -8,9 +8,13 @@ package views
 // of a boundary hides that part of the view (BetterBlock's blocked people).
 
 import (
+	"encoding/json"
+
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -91,12 +95,45 @@ func (r *actRow) threadOverride(p slackc.Props) {
 			src, r.pm = m, m
 		}
 	}
+	if om := r.textOverride(src, mp); om != nil {
+		r.pm = om
+	}
 	om := msgOverride(src, mp)
 	r.pd = *r.cur
 	if n, av := r.v.authorOf(&om); n != "" {
 		r.pd.name, r.pd.avatar = n, av
 	}
 	r.cur = &r.pd
+}
+
+// textOverride is src with the text and blocks of a plugin's msg (Slick
+// Censorship's masked copy), which the row previews as Slack does, or nil
+// when they're src's own. Parsed once per change.
+func (r *actRow) textOverride(src *core.Message, mp slackc.Props) *core.Message {
+	t, ok := mp.Str("text")
+	if !ok || t == src.Text {
+		return nil
+	}
+	if r.ovSrc == src && r.ovText == t {
+		return &r.ovMsg
+	}
+	m := *src
+	m.Text = t
+	if app := r.v.h.Core(); app != nil && app.S != nil {
+		raw, _ := json.Marshal(mp["blocks"])
+		if string(raw) == "null" {
+			raw = nil
+		}
+		doc := richtext.FromMessage(app.S, &slack.Message{Type: "message", TS: src.TS, User: src.User, Text: t, Blocks: raw})
+		for _, b := range src.Doc.Blocks { // files and unfurls aren't in msg.blocks
+			if b.Kind == richtext.FileBlock || b.Kind == richtext.AttachmentBlock {
+				doc.Blocks = append(doc.Blocks, b)
+			}
+		}
+		m.Doc = doc
+	}
+	r.ovSrc, r.ovText, r.ovMsg = src, t, m
+	return &r.ovMsg
 }
 
 // dmProps: ActivityDM {channelId, activityItem, msg, isDmTab}.

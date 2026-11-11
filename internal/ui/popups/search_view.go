@@ -20,6 +20,7 @@ package popups
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"net/url"
@@ -35,6 +36,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -244,6 +246,7 @@ type srCard struct {
 	name, avatar, when string
 	where              srWhere
 	flat, full         []srSeg
+	ovText             string // a plugin's text the tokens came from (overText)
 	expanded           bool
 	click, more, chip  widget.Clickable
 	toks               []srTok
@@ -1778,7 +1781,41 @@ func (a srCardArgs) layoutListItem(gtx layout.Context, p slackc.Props) layout.Di
 			a.over = asProps(l[0])
 		}
 	}
+	a.v.overText(a.i, a.over)
 	return slackc.Component(gtx, "SearchResult", a, srCardArgs.resultProps, srCardArgs.layoutResult)
+}
+
+// overText makes the card show a plugin's copy of the result's text
+// (MessageListItem's result.messages: Slick Censorship's masked words), as
+// Slack renders the card from it; the card's own text again when it's
+// gone. Parsed once per change.
+func (v *SearchView) overText(i int, over slackc.Props) {
+	c := &v.cards[i]
+	m := &v.msgs[i]
+	t, _ := over.Str("text")
+	if t == m.Text {
+		t = ""
+	}
+	if t == c.ovText {
+		return
+	}
+	c.ovText = t
+	body := srBody(m)
+	if t != "" {
+		mm := *m
+		mm.Text, mm.Doc = t, richtext.Doc{}
+		if app := v.h.Core(); app != nil && app.S != nil {
+			raw, _ := json.Marshal(over["blocks"])
+			if string(raw) == "null" {
+				raw = nil
+			}
+			mm.Doc = richtext.FromMessage(app.S, &slack.Message{Type: "message", TS: m.TS, User: m.User, Text: t, Blocks: raw})
+		}
+		body = srBody(&mm)
+	}
+	terms := v.q.Highlights()
+	c.flat, c.full = srHighlight(srFlatten(body), terms), srHighlight(strings.TrimSpace(body), terms)
+	c.tokW = -1 // wrap again
 }
 
 func (a srCardArgs) resultProps() slackc.Props {

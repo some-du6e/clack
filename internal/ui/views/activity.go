@@ -175,6 +175,11 @@ type actRow struct {
 	tm    *core.Message // the last thread message pm was looked up as
 	count int
 
+	// a plugin's text for the item's message (textOverride), parsed
+	ovSrc  *core.Message
+	ovText string
+	ovMsg  core.Message
+
 	// nameHov is Slack's ProfileHoverTrigger on a reaction row's reactor
 	// (ActivityItemMember in "X reacted to your message").
 	nameHov hovercard.Trigger
@@ -1910,9 +1915,11 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	sel := v.selOK && v.selKey == r.key
 	hov := r.click.Hovered()
 	var mods uint64
+	r.pm = nil // an ActivityThread override sets it again inside
 	if p != nil {
 		mods = classMods(p.StrOr("className", ""), actItemMods)
 		if mp := p.Map("msg"); mp != nil && it.Msg != nil && !r.d.invite && it.Reaction == nil {
+			r.pm = r.textOverride(it.Msg, mp)
 			om := msgOverride(it.Msg, mp)
 			r.pd = r.d
 			if n, av := v.authorOf(&om); n != "" {

@@ -584,6 +584,7 @@ func TestSlickViewWhoReactedInViews(t *testing.T) {
 	e.install("WhoReacted", nil)
 	e.patched("Reaction", "UnstyledButton")
 	v := NewActivity(e.h)
+	e.frame(v.Layout) // the view's theme and palette
 	m := &core.Message{Channel: sGen, TS: tsMine, User: sSelf, Text: "my synthetic message",
 		Reactions: []core.Reaction{{Name: "tada", Count: 2, Users: []string{sAlice, sBob}}}}
 	var d D
@@ -608,4 +609,28 @@ func TestSlickViewWhoReactedInViews(t *testing.T) {
 	if d.Size.X <= 0 || d.Size.Y != 24 {
 		t.Errorf("the pill row is %v, want one 24px row", d.Size)
 	}
+}
+
+// Censorship in the Activity feed: ActivityItem hands its native a masked
+// copy of the message (msg, its text and blocks), and the row previews
+// that copy, as Slack does (it previewed the store's message).
+func TestSlickViewCensorshipActivity(t *testing.T) {
+	e := newSlickEnv(t)
+	e.install("Censorship", map[string]any{"terms": "mention"})
+	e.patched("ActivityItem")
+	v := NewActivity(e.h)
+	e.until("the feed", v.Layout, func() bool { return len(actPage(v).Items) == 6 })
+	var text string
+	e.until("bob's mention previewed masked", v.Layout, func() bool {
+		if e.actRowH(v, "k-bob") <= 0 {
+			return false
+		}
+		r := v.rows["k-bob"]
+		if r == nil || r.msg() == nil {
+			return false
+		}
+		text = richtext.PlainText(r.msg().Doc) + " / " + r.msg().Text
+		return !strings.Contains(text, "mention") && strings.Contains(text, "made-up") && strings.Contains(text, "*******")
+	})
+	t.Logf("previewed: %q", text)
 }
