@@ -1168,8 +1168,29 @@ func (in *intro) pillButton(f *introFrame, b *widget.Clickable, pa *pressAnim, l
 	})
 }
 
+// keycapIcons are the keys a keycap draws as a glyph from the icon set,
+// not as text: no bundled font has ↵ (Lato doesn't, and Windows' font
+// fallback drew a missing-glyph box for it). keycap_glyphs_test.go keeps
+// every other keycap label inside Lato.
+var keycapIcons = map[string]string{"↵": "enter"}
+
 func (f *introFrame) keycapW(s string) int {
+	if _, ok := keycapIcons[s]; ok {
+		return f.d(22)
+	}
 	return max(f.d(22), f.measure(11.5, theme.Bold, s)+f.d(12))
+}
+
+// keycapFace draws a keycap's label centred in r: its icon, or its text
+// (size: the text's).
+func (f *introFrame) keycapFace(r image.Rectangle, s string, size float32, c color.NRGBA) {
+	if name, ok := keycapIcons[s]; ok {
+		const is = 12
+		f.icon(name, image.Pt(r.Min.X+(r.Dx()-f.d(is))/2, r.Min.Y+(r.Dy()-f.d(is))/2), is, c)
+		return
+	}
+	tw := f.measure(size, theme.Bold, s)
+	f.label(image.Pt(r.Min.X+(r.Dx()-tw)/2, r.Min.Y+(r.Dy()-f.d(size*1.25))/2), size, theme.Bold, c, s)
 }
 
 // keycap is a key's name in a little outlined key (on the dark backdrop).
@@ -1179,8 +1200,7 @@ func (f *introFrame) keycap(p image.Point, s string, a float32) {
 	r := image.Rect(p.X, p.Y, p.X+w, p.Y+h)
 	theme.RRect(f.gtx, r, f.d(5), alphaMul(white, 0.12*a))
 	theme.Border(f.gtx, r, f.d(5), max(1, f.d(1)), alphaMul(white, 0.44*a))
-	tw := f.measure(11.5, theme.Bold, s)
-	f.label(image.Pt(r.Min.X+(w-tw)/2, r.Min.Y+(h-f.d(11.5*1.25))/2), 11.5, theme.Bold, alphaMul(white, a), s)
+	f.keycapFace(r, s, 11.5, alphaMul(white, a))
 }
 
 // keycapDark is a key on the white button.
@@ -1188,6 +1208,5 @@ func (f *introFrame) keycapDark(p image.Point, s string) {
 	w, h := f.keycapW(s), f.d(22)
 	r := image.Rect(p.X, p.Y, p.X+w, p.Y+h)
 	theme.RRect(f.gtx, r, f.d(6), hexc(0xdddddd))
-	tw := f.measure(12, theme.Bold, s)
-	f.label(image.Pt(r.Min.X+(w-tw)/2, r.Min.Y+(h-f.d(12*1.25))/2), 12, theme.Bold, hexc(0x3c3d40), s)
+	f.keycapFace(r, s, 12, hexc(0x3c3d40))
 }
