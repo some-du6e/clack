@@ -1218,6 +1218,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 		if bo, ok := h.(BotOpener); ok && tg.id != "" {
 			bo.OpenBot(tg.id, anchor)
 		}
+	case tHuddleJoin:
+		if hj, ok := h.(HuddleJoiner); ok && tg.id != "" {
+			hj.JoinHuddle(tg.id)
+		}
 	case tCollapse:
 		if tg.img != nil && v.collapsed != nil {
 			v.collapsed[tg.img] = !v.collapsed[tg.img]

@@ -259,6 +259,15 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 	}
 }
 
+// JoinHuddle is a huddle message's Join Huddle (richview.HuddleJoiner):
+// Slack's HuddleMsgJoinButton runs startHuddle with entryPoint
+// huddle_message_button, which the ui root's huddle controller does.
+func (r *richHandler) JoinHuddle(channel string) {
+	if j, ok := r.h.(interface{ JoinHuddleFrom(channel, entry string) }); ok {
+		j.JoinHuddleFrom(channel, "huddle_message_button")
+	}
+}
+
 // RemoveAttachment is the unfurl's remove button: Slack's
 // BaseDeleteMessageAttachmentDialog ("Remove preview?", the danger
 // "Remove"; Clack has no admin blocklist form), then
