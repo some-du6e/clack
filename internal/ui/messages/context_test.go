@@ -213,7 +213,9 @@ func TestContextMenuOnMessageBody(t *testing.T) {
 	e.rightClick(e.find(tsCtxLink, "plain text", onText))
 	m := e.menu(0, "right-click on the body text")
 	got := labels(m)
-	want := []string{"Add reaction…", "Reply in thread", "Forward message…", "Add to-do", "-"}
+	// the share row is the toolbar's (6bWJ): "Share message…" without
+	// private_message_forwarding
+	want := []string{"Add reaction…", "Reply in thread", "Share message…", "Add to-do", "-"}
 	if len(got) < len(want) || strings.Join(got[:len(want)], "|") != strings.Join(want, "|") {
 		t.Fatalf("menu starts %q, want %q", got, want)
 	}

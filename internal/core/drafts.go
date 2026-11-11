@@ -215,7 +215,7 @@ func (a *App) SaveDraft(ctx context.Context, o DraftOpts) (Draft, error) {
 }
 
 func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Draft, error) {
-	if o.Channel == "" && len(o.Users) == 0 {
+	if o.Channel == "" && len(o.Users) == 0 && !o.NoDestination {
 		return Draft{}, errors.New("core: draft needs a channel or users")
 	}
 	blocks := o.Blocks
@@ -226,7 +226,11 @@ func (a *App) saveDraft(ctx context.Context, o DraftOpts, scheduleAt int64) (Dra
 	default:
 		blocks = textBlocks(o.Text)
 	}
-	dest, _ := json.Marshal([]draftDest{{ChannelID: o.Channel, UserIDs: o.Users, ThreadTS: o.ThreadTS, Broadcast: o.Broadcast}})
+	dests := []draftDest{{ChannelID: o.Channel, UserIDs: o.Users, ThreadTS: o.ThreadTS, Broadcast: o.Broadcast}}
+	if o.NoDestination && o.Channel == "" && len(o.Users) == 0 {
+		dests = []draftDest{}
+	}
+	dest, _ := json.Marshal(dests)
 	files, _ := json.Marshal(append([]string{}, o.FileIDs...))
 	p := url.Values{"blocks": {string(blocks)}, "destinations": {string(dest)}, "file_ids": {string(files)},
 		"attachments": {"[]"}, "is_from_composer": {"false"}}

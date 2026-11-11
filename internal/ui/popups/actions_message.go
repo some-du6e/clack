@@ -24,9 +24,10 @@ import (
 // conversation, JsXu in a thread), Add to saved ⇧⌘S, Add a reminder M ▸,
 // the follow row (ojBT) | Copy link L, Copy message ⌘C | Organize ▸ (the
 // pin row, loUg), Connect to apps ▸ | Send reply to this channel (T),
-// Remove reply from channel… (removeBroadcast), Copy workflow ID (q) |
-// Report to Slack (tH), Delete message… (own, danger, 3eXV). Icons only on
-// the first groups, like Slack.
+// Remove reply from channel… (removeBroadcast), View workflow details
+// (t7), Copy workflow ID (q) | Flag this message… (ed, actions_flag.go)
+// or Report to Slack (tH), Delete message… (own, danger, 3eXV). Icons
+// only on the first groups and the flag row, like Slack.
 
 // MessageMenuOpts lets the caller take over actions it handles inline.
 type MessageMenuOpts struct {
@@ -215,16 +216,31 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		}
 		bw = append(bw, MenuItem{Key: "remove_broadcast", Label: label, Do: func() { confirmRemoveBroadcast(h, m, channel) }})
 	}
-	// q: a workflow bot's message with its workflow_id. "View workflow
-	// details" (t7, a trigger_id) opens Slack's workflow details modal,
-	// which Clack doesn't have, and a message with only a trigger_id
-	// copies the trigger's workflow from the trigger previews store
-	// (workflows.triggers.preview), which Clack doesn't keep: neither is
-	// shown.
-	if m.WorkflowID != "" && actWorkflowBot(h, m) {
-		id := m.WorkflowID
+	// t7: a workflow bot's message with a trigger_id: "View workflow
+	// details" opens the workflow details view for the trigger
+	// (openWorkflowDetailsModalCircular: toWorkflowDetails {triggerId})
+	wfBot := actWorkflowBot(h, m)
+	if wfBot && m.TriggerID != "" {
+		trig, ch := m.TriggerID, m.Channel
+		bw = append(bw, MenuItem{Key: "view_workflow_details", Label: "View workflow details", Do: func() {
+			if OpenWorkflowDetails != nil {
+				OpenWorkflowDetails(trig, ch)
+			}
+		}})
+	}
+	// q: a workflow bot's message with its workflow_id, or a trigger_id
+	// whose preview (workflows.triggers.preview, fetched as the menu
+	// opens: EXgk getTriggerPreviews) names the workflow; copyWorkflowId
+	// (aO) puts it on the clipboard and says nothing
+	if wfBot && (m.WorkflowID != "" || m.TriggerID != "") {
+		wfID, trig := m.WorkflowID, m.TriggerID
+		if wfID == "" {
+			fetchTriggerPreview(h, trig)
+		}
 		bw = append(bw, MenuItem{Key: "copy_workflow_id", Label: "Copy workflow ID", DoCtx: func(gtx layout.Context) {
-			copyText(gtx, id) // copyWorkflowId (aO): the clipboard only
+			if id := workflowIDOf(h, wfID, trig); id != "" {
+				copyText(gtx, id)
+			}
 		}})
 	}
 	if len(bw) > 0 {
@@ -233,9 +249,19 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 
 	// the last group: [flag, report, remove response, delete]
 	var last []MenuItem
+	// ed: Flag this message… (actions_flag.go), for others' messages; it
+	// takes Report to Slack's place
+	flag, flagged := MenuItem{}, false
+	if !own {
+		flag, flagged = flagRow(h, m, conv)
+	}
+	if flagged {
+		last = append(last, flag)
+	}
 	// tH: isReportToSlackEnabled (client.extras), someone else's message,
-	// not a tombstone; Slack opens the help center's report form
-	if !own && !m.Tombstone && m.TS != "" && actReporting(h) {
+	// not a tombstone, no flag row; Slack opens the help center's report
+	// form
+	if !flagged && !own && !m.Tombstone && m.TS != "" && actReporting(h) {
 		last = append(last, MenuItem{Key: "report_message", Label: "Report to Slack", Do: func() { reportMessage(h, link()) }})
 	}
 	if own {
@@ -318,6 +344,47 @@ func actWorkflowBot(h Host, m core.Message) bool {
 		}
 	}
 	return false
+}
+
+// OpenWorkflowDetails, set by the ui root, opens the workflow details
+// view (Slack's WorkflowDetails, viewType WorkflowDetails) for a trigger
+// seen in channel ch.
+var OpenWorkflowDetails func(triggerID, ch string)
+
+// fetchTriggerPreview asks for a trigger's preview unless it is known
+// (getTriggerPreviews: fetchObjectWithId for the missing ones).
+func fetchTriggerPreview(h Host, id string) {
+	a := h.Core()
+	if a == nil || id == "" {
+		return
+	}
+	ix := a.Interactive()
+	if _, ok := ix.TriggerPreview(id); ok {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, _ = ix.TriggerPreviews(ctx, id)
+	}()
+}
+
+// workflowIDOf is copyWorkflowId's id: the message's workflow_id, else
+// its trigger preview's (createShortcutFromTriggerAndWorkflow:
+// trigger.workflow.workflow_id); "" when the preview hasn't come (Slack
+// logs an error and copies nothing).
+func workflowIDOf(h Host, wfID, trig string) string {
+	if wfID != "" {
+		return wfID
+	}
+	a := h.Core()
+	if a == nil || trig == "" {
+		return ""
+	}
+	if t, ok := a.Interactive().TriggerPreview(trig); ok && t.Error == "" {
+		return t.WorkflowID
+	}
+	return ""
 }
 
 // actReporting is isReportToSlackEnabled.

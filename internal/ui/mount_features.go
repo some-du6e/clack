@@ -4,6 +4,7 @@ import (
 	"image"
 	"net/url"
 	"strings"
+	"time"
 
 	"gioui.org/layout"
 	"gioui.org/x/explorer"
@@ -174,6 +175,13 @@ func init() {
 		popups.CheckForUpdates = a.menuCheckForUpdates()
 		popups.UpdateItemLabel = a.updateMenuItem
 		popups.OnConversationPicked = a.ResetSidebarTextFilter // the switcher clears the sidebar filter (sidebar_filter.go)
+		// the share dialog's schedule caret: the composer's ScheduleSendMenu
+		// and ScheduleMessageDialog (composer/schedule_share.go)
+		popups.ScheduleSendMenu = func(h popups.Host, anchor image.Rectangle, ch string, pick func(time.Time), custom func()) {
+			composer.ShareScheduleMenu(h, anchor, ch, pick, custom)
+		}
+		popups.OpenScheduleDialog = func(h popups.Host, ch string, pick func(time.Time)) { composer.ShareScheduleDialog(h, ch, pick) }
+		popups.OpenWorkflowDetails = func(trigger, ch string) { a.OpenWorkflowDetails(trigger, ch) } // workflow_details.go
 	}
 	mkStatusModal = func(a *App, fromShortcut bool) Overlay {
 		if fromShortcut {

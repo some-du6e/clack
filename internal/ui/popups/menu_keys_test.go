@@ -2,6 +2,7 @@ package popups
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"slices"
 	"strings"
@@ -397,6 +398,9 @@ func TestMenuTypeAhead(t *testing.T) {
 
 	setGOOS(t, "linux")
 	h := mkHost(t)
+	// a team that allows private message forwarding: the share row is
+	// "Forward message…" (6bWJ), the menu's only F
+	h.a.SetTeamPrefs(map[string]json.RawMessage{"private_message_forwarding": json.RawMessage("true")})
 	e, _ := mkOpen(t, h, "context", false)
 	e.press("C", 0) // Copy link, Copy message, Connect to apps: cycle
 	first := label(e)

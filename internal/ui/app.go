@@ -892,6 +892,7 @@ type toastState struct {
 	undo  func()            // ToastUndo's action ("" button when nil)
 	btn   *widget.Clickable // its "Undo"
 	label string            // the button's label ("" is "Undo")
+	icon  string            // ToastIcon: Slack's Toast with this icon (toast_slack.go)
 }
 
 // Toast shows a short message at the bottom of the window.
@@ -932,6 +933,10 @@ func (a *App) layoutToast(gtx layout.Context) {
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{At: a.toast.until})
+	if a.toast.icon != "" {
+		a.layoutSlackToast(gtx)
+		return
+	}
 	if a.toast.btn != nil && a.toast.btn.Clicked(gtx) {
 		a.undoToast()
 		return

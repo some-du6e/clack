@@ -65,7 +65,8 @@ func TestContextMenuShapes(t *testing.T) {
 
 // In the thread pane the context menu has no thread action; in the
 // Threads view it's "View thread"; on a message with replies "Reply to
-// thread".
+// thread". Without a team allowing private_message_forwarding (no core
+// here) the share row says "Share message…", like the toolbar (6bWJ).
 func TestMessageContextMenuThreadAction(t *testing.T) {
 	h := &tzHost{th: theme.New(false)}
 	at := image.Pt(100, 100)
@@ -80,18 +81,18 @@ func TestMessageContextMenuThreadAction(t *testing.T) {
 		}
 		return strings.Join(out, "|")
 	}
-	if got := first(InChannel, m); got != "Add reaction…|Reply in thread|Forward message…|Add to-do" {
+	if got := first(InChannel, m); got != "Add reaction…|Reply in thread|Share message…|Add to-do" {
 		t.Errorf("channel %q", got)
 	}
-	if got := first(InThread, m); got != "Add reaction…|Forward message…|Add to-do" {
+	if got := first(InThread, m); got != "Add reaction…|Share message…|Add to-do" {
 		t.Errorf("thread pane %q", got)
 	}
-	if got := first(InThreadsView, m); got != "Add reaction…|View thread|Forward message…|Add to-do" {
+	if got := first(InThreadsView, m); got != "Add reaction…|View thread|Share message…|Add to-do" {
 		t.Errorf("threads view %q", got)
 	}
 	r := m
 	r.ReplyCount, r.Saved = 2, true
-	if got := first(InChannel, r); got != "Add reaction…|Reply to thread|Forward message…|Complete to-do" {
+	if got := first(InChannel, r); got != "Add reaction…|Reply to thread|Share message…|Complete to-do" {
 		t.Errorf("with replies, saved %q", got)
 	}
 }

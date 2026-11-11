@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -123,4 +125,51 @@ func (a *App) SetContentReporting(on bool) {
 	x.mu.Lock()
 	x.reporting = on
 	x.mu.Unlock()
+}
+
+// Content review: the menu's "Flag this message…" (2rcC ed) shows on an
+// Enterprise team or workspace (jDlU isEnterpriseOrEnterpriseWorkspace)
+// whose org locks content_review_enabled on (getLockedOrgPref, 8wTz SI),
+// and FlagMessageDialog (Pult, over FlagDialogModal 5GOt) renders only
+// then (0vTf isContentReviewEnabled). Clack reads the locked prefs from
+// enterprise.prefs.get (enterprise_prefs.go).
+
+// ContentReviewEnabled is isContentReviewEnabled: the org's locked
+// content_review_enabled pref is truthy.
+func (a *App) ContentReviewEnabled() bool {
+	v := a.EnterpriseLockedPref("content_review_enabled")
+	return len(v) > 0 && string(v) != "false" && string(v) != "null" && string(v) != "0" && string(v) != `""`
+}
+
+// EnterpriseTeam is isEnterpriseOrEnterpriseWorkspace for the viewer's
+// team: an enterprise itself, or a workspace in one.
+func (a *App) EnterpriseTeam() bool {
+	return a.C.Creds.EnterpriseID != "" || strings.HasPrefix(a.C.Creds.Team, "E")
+}
+
+// EnterpriseID is the viewer's enterprise ("" outside Grid).
+func (a *App) EnterpriseID() string { return a.C.Creds.EnterpriseID }
+
+// FlagCustomLink is the org's flag_message_custom_link (FlagMessageDialog's
+// "View your organization’s policies."), "" when unset.
+func (a *App) FlagCustomLink() string {
+	var s string
+	_ = json.Unmarshal(a.EnterpriseLockedPref("flag_message_custom_link"), &s)
+	return s
+}
+
+// FlagContent is FlagMessageDialog's onSubmit (Pult v): the API call
+// moderation.flags.create (oe8+ f9) with channel_id, item_id (the
+// message's ts), type "message" and the reason; a channel name, topic or
+// description message flags the channel's details instead: type
+// "channel_details" and channel_details_flagged [detail] ("channel_name",
+// "channel_topic", "channel_description", "mpdm_name").
+func (a *App) FlagContent(ctx context.Context, ch, ts, detail, reason string) error {
+	p := url.Values{"channel_id": {ch}, "item_id": {ts}, "type": {"message"}, "reason": {reason}}
+	if detail != "" {
+		p.Set("type", "channel_details")
+		b, _ := json.Marshal([]string{detail})
+		p.Set("channel_details_flagged", string(b))
+	}
+	return a.C.Call(ctx, "moderation.flags.create", p, nil)
 }

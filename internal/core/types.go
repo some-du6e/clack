@@ -621,6 +621,10 @@ type DraftOpts struct {
 	Blocks                json.RawMessage
 	FileIDs               []string
 	DateScheduled         int64 // set when editing a scheduled draft (keeps it scheduled)
+	// NoDestination saves a draft addressed to no one yet (destinations
+	// []): the share dialog's Save Draft before a conversation is picked
+	// (Slack's saveDraft categorizes an empty selection).
+	NoDestination bool
 }
 
 // ScheduledMessage is a message waiting to be posted at PostAt (unix s).
