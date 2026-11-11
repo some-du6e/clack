@@ -19,6 +19,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/refocus"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -499,7 +500,7 @@ func (s *Stack) Layout(gtx C) D {
 	m := op.Record(gtx.Ops)
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(bw, 1<<20)}
-	bd := sf.Layout(g)
+	bd := viewBlocks(g, sf, v)
 	m.Stop()
 	content := bd.Size.Y + padT + padB
 	bodyH := min(max(content, dp(gtx, 90)), max(maxBody, dp(gtx, 90)))
@@ -554,7 +555,7 @@ func (s *Stack) Layout(gtx C) D {
 			d := s.list.Layout(gtx, 1, func(gtx C, _ int) D {
 				return layout.Inset{Left: unit.Dp(24), Right: unit.Dp(20), Top: unit.Dp(8), Bottom: unit.Dp(16)}.Layout(gtx, func(gtx C) D {
 					gtx.Constraints = layout.Constraints{Max: image.Pt(bw, 1<<20)}
-					return sf.Layout(gtx)
+					return viewBlocks(gtx, sf, v)
 				})
 			})
 			// the surface's window origin as drawn (ModalFields; a
@@ -861,3 +862,30 @@ func (s *Stack) failed(viewError string) {
 		s.banner, s.bannerRetry = "We had some trouble connecting. ", true
 	}
 }
+
+// modalView is a modal's body at Slack's ViewBlocks boundary (AppView
+// renders ViewBlocks for a modal: {view, containerId, containerContext,
+// viewContextTeamId}, gantry-v2 client-boot-render). OwlMode adds its
+// "Save in Taut" button after it when owl shows a confession's key.
+type modalView struct {
+	sf *Surface
+	v  *core.View
+}
+
+func viewBlocks(gtx C, sf *Surface, v *core.View) D {
+	return slackc.Component(gtx, "ViewBlocks", modalView{sf, v}, modalView.props, modalView.layout)
+}
+
+// props are ViewBlocks' (Slack's client view model, camelCase).
+func (m modalView) props() slackc.Props {
+	v := m.v
+	blocks := any([]any{})
+	if len(v.Blocks) > 0 {
+		blocks = v.Blocks
+	}
+	return slackc.Props{"$key": v.ID, "containerId": v.ID, "containerContext": "modal", "viewContextTeamId": v.TeamID,
+		"view": slackc.Props{"id": v.ID, "type": v.Type, "appId": v.AppID, "botId": v.BotID, "teamId": v.TeamID,
+			"appInstalledTeamId": v.AppInstalledTeamID, "callbackId": v.CallbackID, "blocks": blocks}}
+}
+
+func (m modalView) layout(gtx C, _ slackc.Props) D { return m.sf.Layout(gtx) }

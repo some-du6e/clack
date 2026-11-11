@@ -93,7 +93,8 @@ func (p *prefsModal) blockedSection(f *prefsForm) {
 		f.para("👋")
 		f.para("To see whose invitations you’ve blocked, you’ll need to verify your email address" + email + ".")
 		f.button("verify_email", "Send Verification Email", false, nil)
-		f.muted("Verifying your email: "+naNote, false)
+		// greyed: Slack's VerifyEmailModal flow (a code sent by email,
+		// then entered in the modal) isn't ported
 		return
 	}
 	if len(l.blocked) == 0 {

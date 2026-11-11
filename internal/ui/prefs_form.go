@@ -32,7 +32,7 @@ type prefsDrawn struct {
 	Key     string // the row's clickable key ("" for text)
 	Label   string
 	On      bool // checkbox/radio state
-	Enabled bool // false: shown the way Slack does, greyed (naNote)
+	Enabled bool // false: shown the way Slack shows a disabled row, greyed
 }
 
 func (f *prefsForm) record(kind, key, label string, on, enabled bool) {
@@ -155,9 +155,6 @@ func (f *prefsForm) optionAt(key, label, hint string, on, radio, enabled bool, d
 	f.y += rowH + gtx.Dp(4)
 }
 
-// naNote is the note under settings Clack shows disabled.
-const naNote = "Not available in Clack yet"
-
 // subheading is a group legend (Slack's fieldset legend: 700 15px/22).
 func (f *prefsForm) subheading(t string) {
 	t = pt(t)
@@ -197,8 +194,23 @@ func (f *prefsForm) muted(t string, indent bool) {
 	f.y += d.Size.Y + gtx.Dp(10)
 }
 
-// na is the "Not available in Clack yet" note.
-func (f *prefsForm) na() { f.muted(naNote, false) }
+// mutedLink is muted with a link at its end (Slack's
+// p-prefs_dialog__secondary_label with a link in it).
+func (f *prefsForm) mutedLink(key, text, link string, do func()) {
+	text, link = pt(text), pt(link)
+	gtx, a := f.gtx, f.p.a
+	pc := f.p.colors()
+	f.record("text", "", text+" "+link, false, true)
+	b := f.p.btn("link." + key)
+	off := op.Offset(image.Pt(0, f.y)).Push(gtx.Ops)
+	h := linkPara(gtx, a.th, f.w, 13, 18, pc.on(a.th, pc.note), pc.link, text, link, b)
+	off.Pop()
+	if clicked(b) && do != nil {
+		do()
+		a.Invalidate()
+	}
+	f.y += h + gtx.Dp(10)
+}
 
 // check is a checkbox bound to a users.prefs boolean (def when absent),
 // written with setUserPrefByApi. invert: the box shows the pref's negation
@@ -528,4 +540,32 @@ func (f *prefsForm) linkDo(key, label string, do func()) {
 func (f *prefsForm) radio2(name string, value bool, label, hint string) {
 	on := f.p.prefBool(name, false) == value
 	f.option("pref."+name+"="+strconv.FormatBool(value), label, hint, on, true, func() { f.p.setPref(name, value) })
+}
+
+// fieldButton is a read-only text field with an outline button to its
+// right, 8px apart (Slack's download location: .p-prefs_modal__downloads_input
+// and its Change… button).
+func (f *prefsForm) fieldButton(key, value string, pb prefsButton) {
+	gtx, a := f.gtx, f.p.a
+	pc := f.p.colors()
+	pb.label = pt(pb.label)
+	bw := a.th.Measure(gtx, 15, theme.Bold, pb.label) + gtx.Dp(32)
+	bh := gtx.Dp(36)
+	fw := max(0, f.w-bw-gtx.Dp(8))
+	f.record("select", "text."+key, value, false, false)
+	at(gtx, image.Pt(0, f.y), image.Pt(fw, bh), func(gtx layout.Context) layout.Dimensions {
+		r := image.Rectangle{Max: image.Pt(fw, bh)}
+		theme.RRect(gtx, r, gtx.Dp(8), pc.field)
+		theme.Border(gtx, r, gtx.Dp(8), gtx.Dp(1), pc.on(a.th, pc.fieldBorder))
+		at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(max(0, fw-gtx.Dp(24)), bh), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
+				return a.th.Label(gtx, 15, theme.Regular, pc.disText, value)
+			})
+		})
+		return layout.Dimensions{Size: r.Max}
+	})
+	// the button: buttons' own drawing, shifted right of the field
+	off := op.Offset(image.Pt(fw+gtx.Dp(8), 0)).Push(gtx.Ops)
+	f.buttons(pb) // advances f.y past the row
+	off.Pop()
 }

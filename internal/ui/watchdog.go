@@ -100,7 +100,7 @@ func (w *watchdog) notePage(p string) {
 	}
 }
 
-// showFreezeReports is Help > Show Freeze Reports: the folder in Finder (or
+// showFreezeReports is Help > Troubleshooting > Show Freeze Reports: the folder in Finder (or
 // a toast when there are none). Any goroutine.
 func (a *App) showFreezeReports() {
 	if a.opts.ConfigDir == "" {

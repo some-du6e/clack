@@ -16,7 +16,8 @@ import (
 // client-boot-shared, build a84662d2d135, checked against the live dialog
 // 2026-11-08; see docs/PREFS-AUDIT.md). A row Clack applies, or whose pref
 // Slack's servers act on (mobile push, email, privacy), reads and writes
-// Slack's key; a row Clack can't honour yet is drawn greyed with naNote.
+// Slack's key; a row Clack can't honour yet is drawn greyed, as Slack
+// draws a disabled row.
 
 // ---- Notifications ----
 
@@ -273,8 +274,9 @@ func (p *prefsModal) navigationPage(f *prefsForm) {
 		func() { p.setPref("ia4_compact_mode", true) })
 	f.gap()
 	f.subheading("App agents & assistants")
-	f.off("show_ai_apps", "Show AI Agents in top bar", "", p.prefBool("show_ai_apps", true), false)
-	f.muted("Show AI Agents in top bar: "+naNote, false)
+	// show_ai_apps: Slack's top nav AI apps container reads it (boot-render);
+	// Clack's top nav has none, so the write is for Slack's other clients
+	f.check("show_ai_apps", "Show AI Agents in top bar", "", true, false)
 	if c != nil && c.Experiment("agents_in_dm_sidebar") == "on" && c.Experiment("agents_in_dm_sidebar_pref") == "on" { // Mq && n7
 		// off: agent DMs go back under Apps (core.AgentInDMSidebar)
 		f.check("hide_agents_in_dm_list", "Show Agents in direct messages", "", false, true)
@@ -555,12 +557,14 @@ func (p *prefsModal) accessibilityPage(f *prefsForm) {
 	f.subheading("Display")
 	p.simplifiedLayoutPref(f)
 	f.subheading("Alt text reminders")
-	f.off("a11y_show_alt_text_reminders", "Remind me to add an image description on image uploads", "", p.prefBool("a11y_show_alt_text_reminders", false), false)
+	// the upload flow's image description reminder reads it (boot-shared);
+	// Clack's uploads have no image description field yet
+	f.check("a11y_show_alt_text_reminders", "Remind me to add an image description on image uploads", "", false, false)
 	f.subheading("Other display options")
-	f.off("a11y_peeks_enabled_on_mouse_enter", "Show previews when hovering over tabs", "", p.prefBool("a11y_peeks_enabled_on_mouse_enter", true), false)
+	// only the prefs-dialog chunks name it; Clack's rail has no hover peeks
+	f.check("a11y_peeks_enabled_on_mouse_enter", "Show previews when hovering over tabs", "", true, false)
 	f.check("underline_links", "Underline links to websites", "", false, false)
 	f.check("a11y_animations", "Allow animations", "Applies to emoji animation, GIFs, and reactions & effects in huddles and across Slack", true, false)
-	f.muted("Alt text reminders and tab previews: "+naNote, false)
 	f.hr()
 	f.subheading("Keyboard")
 	f.para("You can improve the way you use Slack by learning our handy keyboard shortcuts.")
@@ -601,10 +605,12 @@ func (p *prefsModal) accessibilityPage(f *prefsForm) {
 	f.para("Choose which parts of a message to include and the order in which they are announced.")
 	f.button("verbosity_reset", "Reset to Default", false, nil)
 	f.subheading("Screen reader announcements")
-	f.off("a11y_dm_read_out", "Automatically read new messages in the current conversation", "", p.prefBool("a11y_dm_read_out", true), false)
-	f.off("a11y_huddles_reactions_read_out_loud", "Read emoji reactions received in a huddle", "", p.prefBool("huddles_reactions_read_out_loud", false), false)
-	f.off("a11y_huddles_reactions_play_sound", "Play a sound when an emoji is sent or received in a huddle", "", p.prefBool("huddles_reactions_play_sound", false), false)
-	f.na()
+	// a11y_dm_read_out: only the prefs dialog reads it; the huddle two:
+	// Slack's screen-reader announcer and its reaction sound (boot-shared,
+	// client-boot), which Clack's huddles don't have
+	f.check("a11y_dm_read_out", "Automatically read new messages in the current conversation", "", true, false)
+	f.check("huddles_reactions_read_out_loud", "Read emoji reactions received in a huddle", "", false, false)
+	f.check("huddles_reactions_play_sound", "Play a sound when an emoji is sent or received in a huddle", "", false, false)
 	f.para("To change notification sounds, go to Notifications")
 	f.linkDo("to_notifications", "Notifications", func() { p.selectTab("notifications") })
 	f.hr()
@@ -658,8 +664,8 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	f.option("ns", "Enable noise suppression", "", ns, false, func() { p.a.setHuddleAudio(agc, !ns) })
 	f.hr()
 	f.subheading("When audio or video is playing…")
-	f.off("clips_pip_auto_dock", "Automatically dock to corner upon scroll or when navigating away", "", p.prefBool("clips_pip_auto_dock", true), false)
-	f.na()
+	// clips' picture-in-picture reads it (boot-render); Clack plays clips inline
+	f.check("clips_pip_auto_dock", "Automatically dock to corner upon scroll or when navigating away", "", true, false)
 	f.hr()
 	// Set my status "In a huddle" is on Availability (availability_prefs_section)
 	f.subheading("When joining a huddle…")
@@ -685,8 +691,7 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	f.subheading("When your screen saver starts or computer locks…")
 	f.check("huddles_disconnect_on_lock", "Automatically leave huddles", "", false, false)
 	f.subheading("Huddle motion")
-	f.off("huddles_reactions_effects", "Allow for reactions & effects", "", true, false)
-	f.na()
+	p.huddleMotionRow(f)
 	// HuddleLoungeMusicPref: the select shows while Play music is on
 	f.subheading("When alone in a huddle…")
 	music := p.prefBool("huddles_play_music_when_last", false)
@@ -806,8 +811,7 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	f.option("pref.stick_user_sort=true", "Last used:", "Each new search defaults you to the option you last used", sticky, true, func() { p.setPref("stick_user_sort", true) })
 	f.hr()
 	f.subheading("Download location")
-	f.off("download_ask", "Choose location for each download", "Note: this setting is for this computer only and affects all workspaces you are signed in to.", false, false)
-	f.na()
+	p.downloadLocationRows(f) // downloads.go
 	f.subheading("Confirmations and warnings")
 	// Mod+Z in the empty composer unsends (unsend.go, popups.ConfirmUnsend)
 	f.check("should_show_unsend_message_confirmation", "Show me a confirmation when I use "+shortcut.Format("Mod+Z")+" to unsend a message I just sent", "", true, false)
@@ -815,15 +819,52 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	f.check("confirm_user_marked_away", "Ask if I want to toggle my away status when I log in after having set myself away", "", false, false)
 	// "Double-check this link" on a suspicious link (popups.MaybeWarnLink)
 	f.check("suppress_link_warning", "Warn me about potentially malicious links", "", false, true)
-	f.off("hide_sc_files_sharing_speed_bump", "Warn me when sharing files with external organizations", "", !p.prefBool("hide_sc_files_sharing_speed_bump", false), false)
-	f.off("hide_external_members_canvas_sharing_speed_bump", "Warn me when sharing canvases with external organizations", "", !p.prefBool("hide_external_members_canvas_sharing_speed_bump", false), false)
-	f.na()
+	// the send-time Slack Connect speed bumps read these (boot-shared);
+	// Clack doesn't show those dialogs yet
+	f.check("hide_sc_files_sharing_speed_bump", "Warn me when sharing files with external organizations", "", false, true)
+	f.check("hide_external_members_canvas_sharing_speed_bump", "Warn me when sharing canvases with external organizations", "", false, true)
 	f.subheading("Other options")
 	f.check("overloaded_message_enabled", "Send me occasional channel suggestions", "", true, false)
 	f.check("in_prod_surveys_enabled", "Send me occasional surveys", "We’re always working to make Slack better, and we’d love your thoughts.", true, false)
 	if runtime.GOOS != "darwin" { // DesktopPref: Windows and Linux
-		f.off("launchOnStartup", "Launch app on login", "", false, false)
+		p.launchOnLoginRow(f)
+		// runFromTray: Clack's window can't stay alive after a close yet
 		f.off("runFromTray", "Leave app running in notification area when the window is closed", "", false, false)
-		f.na()
 	}
+}
+
+// huddleMotionRow is HuddleReactionsPref: huddles_reaction_explosions
+// (default on), greyed and unticked while Allow animations is off, with
+// Slack's line pointing at it. Clack's huddles draw no reaction effects,
+// so the write is for Slack's other clients.
+func (p *prefsModal) huddleMotionRow(f *prefsForm) {
+	anim := p.prefBool("a11y_animations", true)
+	on := p.prefBool("huddles_reaction_explosions", true)
+	f.optionAt("pref.huddles_reaction_explosions", "Allow for reactions & effects", "", anim && on, false, anim, func() { p.setPref("huddles_reaction_explosions", !on) })
+	if !anim { // p-prefs_dialog__secondary_label, its link to Accessibility
+		f.mutedLink("anim_off", "Animations are turned off in", "Accessibility preferences.", func() { p.selectTab("accessibility") })
+	}
+}
+
+// launchOnLoginRow is DesktopPref's "Launch app on login"
+// (launchOnStartup): the shell's autostart entry or Run key.
+func (p *prefsModal) launchOnLoginRow(f *prefsForm) {
+	a := p.a
+	if a.opts.LaunchOnLogin == nil || a.opts.SetLaunchOnLogin == nil {
+		f.off("launchOnStartup", "Launch app on login", "", false, false)
+		return
+	}
+	if p.launchOn == nil { // a file or registry read: once per dialog
+		v := a.opts.LaunchOnLogin()
+		p.launchOn = &v
+	}
+	on := *p.launchOn
+	f.option("launch_on_login", "Launch app on login", "", on, false, func() {
+		if err := a.opts.SetLaunchOnLogin(!on); err != nil {
+			a.Toast("Couldn’t change Launch app on login: " + err.Error())
+			return
+		}
+		v := !on
+		p.launchOn = &v
+	})
 }

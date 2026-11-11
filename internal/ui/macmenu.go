@@ -22,7 +22,8 @@ import (
 // left out: Settings & Administration,
 // Workspace, Reload, Force Reload, Toggle Privacy Mode, New Channel, New
 // Canvas, Invite People, Workflow Builder, Downloads, Keyboard Navigation,
-// What's New, Troubleshooting, Contact Us, Give Feedback, Developer.
+// What's New, Contact Us, Give Feedback, Developer, and Troubleshooting's
+// items other than the logs (appmenu.go).
 //
 // Shortcuts Clack's window already binds (keys.go) are Forward: a key
 // press goes to Gio as before, so modals and focused widgets still decide;
@@ -134,11 +135,9 @@ func (a *App) macMenus() []menubar.Menu {
 		{Title: "Help", Kind: "help", Items: []menubar.Item{
 			{ID: "menuitem-keyboard-shortcut", Title: "Keyboard Shortcuts", Do: on(a.showShortcutsHelp)},
 			{ID: "menuitem-open-help-center", Title: "Open Help Center", Do: func() { openURL(helpCenter) }},
+			a.troubleshootingMenu(on), // appmenu.go: Slack's Help > Troubleshooting
 			sep,
 			{ID: "menuitem-release-notes", Title: "Release Notes", Do: func() { openURL(releasesPage) }},
-			{ID: "menuitem-freeze-reports", Title: "Show Freeze Reports", Do: a.showFreezeReports},
-			{ID: "menuitem-logs", Title: "Open Logs Folder", Do: a.showLogs},
-			{ID: "menuitem-copy-diagnostics", Title: "Copy Diagnostics", Do: on(a.copyDiagnostics)},
 			{ID: "menuitem-about-slack", Title: "About " + AppName, Role: "orderFrontStandardAboutPanel:"},
 		}},
 	}
@@ -200,6 +199,17 @@ func (a *App) syncMenuBar() {
 	if !a.mbar.on {
 		return
 	}
+	k := a.menuKeyNow()
+	if k == a.mbar.last {
+		return
+	}
+	a.mbar.last = k
+	menubar.SetState(a.menuState(k))
+}
+
+// menuKeyNow is what the menus show right now (the menu bar's state, and
+// the Linux and Windows app menu's when it opens).
+func (a *App) menuKeyNow() menuKey {
 	k := menuKey{
 		signedIn: a.login == nil && a.data != nil,
 		back:     a.router.CanBack(), fwd: a.router.CanForward(),
@@ -214,11 +224,7 @@ func (a *App) syncMenuBar() {
 		t, ok := a.updateMenuItem()
 		k.update, k.updateOff = t, !ok
 	}
-	if k == a.mbar.last {
-		return
-	}
-	a.mbar.last = k
-	menubar.SetState(a.menuState(k))
+	return k
 }
 
 func (a *App) menuState(k menuKey) *menubar.State {
