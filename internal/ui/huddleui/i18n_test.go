@@ -54,9 +54,11 @@ func hudBundle(t *testing.T, loc string) *i18n.Catalog {
 	return c
 }
 
-// hudUnkeyed are strings the huddle UI draws unchanged that Slack draws
-// in English too, or that are Clack's own (docs/I18N.md).
-var hudUnkeyed = map[string]bool{}
+// hudUnkeyed are strings the huddle UI draws unchanged that are the fake
+// huddle's data: words of its caption ("Hello from the fake huddle") and
+// of the remote user's name ("Remote Example"), which wrapping text draws
+// word by word.
+var hudUnkeyed = map[string]bool{"huddle": true, "Example": true}
 
 var hudWordRE = regexp.MustCompile(`[A-Za-z]{3,}`)
 
