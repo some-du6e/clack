@@ -80,6 +80,17 @@ var actPresets = []actPreset{
 	{"house_with_garden", "Working remotely", "Working remotely", actDurToday},
 }
 
+// actPresetText is a preset row's text: the team's presets come from
+// Slack's API in the viewer's locale (refetchLocalizedApis); Clack's
+// fallback defaults (text = text_canonical) are drawn through the
+// current_status I18n, which has "In a meeting".
+func actPresetText(p actPreset) string {
+	if p.canonical == p.text {
+		return nsStatus.T(p.text)
+	}
+	return p.text
+}
+
 // actPresetDur maps a team preset duration code to a duration.
 func actPresetDur(code string) actDur {
 	switch code {
@@ -1016,7 +1027,7 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 		if s.presets != nil {
 			y += s.legend(gtx, th, cl, padX, y, s.forTeam)
 			for i, p := range s.presets {
-				y += s.preset(gtx, th, cl, fw, padX, y, &s.presetBtn[i], p.emoji, p.text, actDurNote(p.dur))
+				y += s.preset(gtx, th, cl, fw, padX, y, &s.presetBtn[i], p.emoji, actPresetText(p), actDurNote(p.dur))
 			}
 		}
 		if cals := s.calPresets(); len(cals) > 0 {

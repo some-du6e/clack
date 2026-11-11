@@ -65,6 +65,7 @@ func SplitViewItem(h Host, route string, hint bool) (MenuItem, bool) {
 // (looksLikeChannelId, jh4t) and never in Simplified layout mode.
 func channelSplitItem(h Host, convID, kind string) MenuItem {
 	it, _ := SplitViewItem(h, "c/"+convID, true)
+	it.Label = nsMenu.T(it.Label) // getTilesTemplate's (the menu I18n); the key is SplitKey
 	if !looksLikeChannelID(convID) {
 		it.Key = SplitKey + ":hidden"
 		return it
@@ -73,8 +74,8 @@ func channelSplitItem(h Host, convID, kind string) MenuItem {
 		switch kind {
 		case "channel", "private", "im", "mpim", "":
 			sub := it
-			sub.Label, sub.Hint = "Split view", ""
-			return MenuItem{Key: SplitKey, Label: "Open in…", Sub: []MenuItem{sub}}
+			sub.Label, sub.Hint = nsMenu.T("Split view"), ""
+			return MenuItem{Key: SplitKey, Label: nsMenu.T("Open in…"), Sub: []MenuItem{sub}}
 		}
 	}
 	return it
