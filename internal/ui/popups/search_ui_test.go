@@ -1461,6 +1461,18 @@ func TestSearchShots(t *testing.T) {
 		d.press(key.NameDownArrow) // picks the first row: #1264a3, "Enter Open"
 		shot(d, "search-popover-picked-"+mode)
 
+		// the search-filter completer: from: and a name, then Enter takes
+		// the person as a from:@name token
+		pf := NewSearchPopover(e.h, "", image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: pf, dark: dark}
+		d.frame()
+		d.frame()
+		srType(d, pf, "from:"+srTestPerson(t, e).RealName)
+		d.until(t, "the people menu", func() bool { return pf.ac.open })
+		shot(d, "search-popover-from-menu-"+mode)
+		d.press(key.NameReturn)
+		shot(d, "search-popover-from-token-"+mode)
+
 		fm := openSearchFeedback(e.h, srFeedbackOpts{feedbackType: "omniswitcher", query: fakeslack.SearchWord})
 		fm.Pick(1)
 		fm.SetText("The channel I was looking for didn't come up.")
