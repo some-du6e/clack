@@ -104,13 +104,15 @@ func (c *Composer) floatEscape() bool {
 // toolbarPositionDataForRect (7LIu). sel is the selection's box relative
 // to the editor (rect), edW the editor's width (editorWidth), ed the
 // editor's top-left in the window (containerLeftBound, containerTopBound),
-// viewW the window's width (viewportWidth), tw×th the bar. It returns the
-// bar's top-left in window coordinates. Like Slack it compares the
-// selection's left edge in the window (m) with fractions of the editor's
-// width, while the selection's right edge stays editor-relative.
-func floatBarPos(sel image.Rectangle, edW int, ed image.Point, tw, th, viewW int) image.Point {
+// viewW the window's width (viewportWidth), tw×th the bar, gap and edge
+// the 5px above the selection and the 10px kept from the window's edge
+// (in pixels at the window's scale). It returns the bar's top-left in
+// window coordinates. Like Slack it compares the selection's left edge in
+// the window (m) with fractions of the editor's width, while the
+// selection's right edge stays editor-relative.
+func floatBarPos(sel image.Rectangle, edW int, ed image.Point, tw, th, viewW, gap, edge int) image.Point {
 	m := sel.Min.X + ed.X
-	top := sel.Min.Y + ed.Y - th - 5
+	top := sel.Min.Y + ed.Y - th - gap
 	x := m
 	o := float64(edW)
 	switch sw := sel.Dx(); {
@@ -123,7 +125,7 @@ func floatBarPos(sel image.Rectangle, edW int, ed image.Point, tw, th, viewW int
 	case m > tw:
 		x = m - (tw - sw)
 	}
-	if over := viewW - 10 - x - tw; over < 0 {
+	if over := viewW - edge - x - tw; over < 0 {
 		x += over
 	}
 	return image.Pt(x, top)
@@ -178,7 +180,7 @@ func (c *Composer) layoutFloatBar(gtx layout.Context, org image.Point) {
 	if viewW <= 0 { // no window size (tests): the composer's own width
 		viewW = c.Origin.X + gtx.Constraints.Max.X
 	}
-	at := floatBarPos(sel, edW, org.Add(c.Origin), tw, th, viewW).Sub(c.Origin)
+	at := floatBarPos(sel, edW, org.Add(c.Origin), tw, th, viewW, gtx.Dp(5), gtx.Dp(10)).Sub(c.Origin)
 	m := op.Record(gtx.Ops)
 	off := op.Offset(at).Push(gtx.Ops)
 	c.fbar.draw(gtx, &c.cs, c)

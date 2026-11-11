@@ -22,42 +22,42 @@ func TestFloatBarPosition(t *testing.T) {
 	const edW, tw, th = 600, 200, 36
 	ed := image.Point{} // the editor at the window's top-left
 	// wider than the bar: centred on the selection
-	if p := floatBarPos(image.Rect(100, 50, 400, 70), edW, ed, tw, th, 900); p != image.Pt(150, 9) {
+	if p := floatBarPos(image.Rect(100, 50, 400, 70), edW, ed, tw, th, 900, 5, 10); p != image.Pt(150, 9) {
 		t.Errorf("wide %v", p)
 	}
 	// the editor's whole width: from its left
-	if p := floatBarPos(image.Rect(0, 50, edW, 70), edW, ed, tw, th, 900); p.X != 0 {
+	if p := floatBarPos(image.Rect(0, 50, edW, 70), edW, ed, tw, th, 900, 5, 10); p.X != 0 {
 		t.Errorf("full width %v", p)
 	}
 	// narrow, in the middle half: centred
-	if p := floatBarPos(image.Rect(250, 50, 300, 70), edW, ed, tw, th, 900); p.X != 175 {
+	if p := floatBarPos(image.Rect(250, 50, 300, 70), edW, ed, tw, th, 900, 5, 10); p.X != 175 {
 		t.Errorf("middle %v", p)
 	}
 	// narrow, right of the middle half with room: ends at its end
-	if p := floatBarPos(image.Rect(500, 50, 550, 70), edW, ed, tw, th, 900); p.X != 350 {
+	if p := floatBarPos(image.Rect(500, 50, 550, 70), edW, ed, tw, th, 900, 5, 10); p.X != 350 {
 		t.Errorf("right %v", p)
 	}
 	// narrow, at the start: from its start
-	if p := floatBarPos(image.Rect(20, 50, 60, 70), edW, ed, tw, th, 900); p.X != 20 {
+	if p := floatBarPos(image.Rect(20, 50, 60, 70), edW, ed, tw, th, 900, 5, 10); p.X != 20 {
 		t.Errorf("left %v", p)
 	}
 	// never closer than 10px to the window's right edge
-	if p := floatBarPos(image.Rect(700, 50, 1000, 70), 1000, ed, tw, th, 900); p.X != 900-10-tw {
+	if p := floatBarPos(image.Rect(700, 50, 1000, 70), 1000, ed, tw, th, 900, 5, 10); p.X != 900-10-tw {
 		t.Errorf("clamped %v", p)
 	}
 	// Slack tests the selection's left edge in the window against the
 	// editor's width: past the sidebar a selection at the editor's start
 	// is centred, not left-aligned
-	if p := floatBarPos(image.Rect(20, 50, 60, 70), edW, image.Pt(300, 400), tw, th, 1400); p != image.Pt(240, 409) {
+	if p := floatBarPos(image.Rect(20, 50, 60, 70), edW, image.Pt(300, 400), tw, th, 1400, 5, 10); p != image.Pt(240, 409) {
 		t.Errorf("after the sidebar %v", p)
 	}
 	// a narrow composer (a thread) on the window's right: the bar may
 	// stick out of it, kept 10px inside the window only
 	const bar = 470
-	if p := floatBarPos(image.Rect(180, 50, 220, 70), 400, image.Pt(900, 500), bar, th, 1400); p != image.Pt(865, 509) {
+	if p := floatBarPos(image.Rect(180, 50, 220, 70), 400, image.Pt(900, 500), bar, th, 1400, 5, 10); p != image.Pt(865, 509) {
 		t.Errorf("past the composer %v", p)
 	}
-	if p := floatBarPos(image.Rect(180, 50, 220, 70), 400, image.Pt(900, 500), bar, th, 1300); p.X != 1300-10-bar {
+	if p := floatBarPos(image.Rect(180, 50, 220, 70), 400, image.Pt(900, 500), bar, th, 1300, 5, 10); p.X != 1300-10-bar {
 		t.Errorf("window clamp %v", p)
 	}
 }
@@ -117,11 +117,11 @@ func TestFloatBarWindowBounds(t *testing.T) {
 	r1, r2 := c.ed.PosRect(24), c.ed.PosRect(27)
 	sel := image.Rect(r1.Min.X, r1.Min.Y, r2.Max.X, r2.Max.Y)
 	ed := c.ui.InputOffset().Add(image.Pt(0, c.top)).Add(c.Origin)
-	want := floatBarPos(sel, c.ed.width, ed, tw, th, 1400)
+	want := floatBarPos(sel, c.ed.width, ed, tw, th, 1400, 5, 10)
 	if got := c.fbar.origin.Add(c.Origin); got != want {
 		t.Errorf("bar at %v in the window, want %v (bounded by the 1,400px window)", got, want)
 	}
-	if boxed := floatBarPos(sel, c.ed.width, ed, tw, th, c.Origin.X+380); boxed == want {
+	if boxed := floatBarPos(sel, c.ed.width, ed, tw, th, c.Origin.X+380, 5, 10); boxed == want {
 		t.Fatalf("the scenario doesn't tell the bounds apart: %v either way (sel %v, editor %v, bar %d)", want, sel, ed, tw)
 	}
 	right := want.X + tw
