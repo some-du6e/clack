@@ -47,6 +47,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -65,10 +66,18 @@ const actMaxViews = 15
 // actState is a view's filters while the page is open: the filter menu's
 // rows, Unreads, Cleared items, VIP and the sections and channels a saved
 // view names.
+//
+// filters[actRowMentions] is the whole Mentions type (a suggested view's
+// "mentions"); the menu itself picks subs, the mention sub-filters
+// (activity_filters.go). exclAuto and autoOnly are the automation
+// filters, showIn showFilterIn (the "In" picker).
 type actState struct {
 	filters            [len(actFilters)]bool
+	subs               [actSubN]bool
 	unread, cleared    bool
 	vip                bool
+	exclAuto, autoOnly bool
+	showIn             bool
 	sections, channels []string
 }
 
@@ -78,20 +87,28 @@ func (s actState) any() bool {
 			return true
 		}
 	}
-	return s.unread || s.cleared || s.vip || len(s.sections) > 0 || len(s.channels) > 0
+	for _, on := range s.subs {
+		if on {
+			return true
+		}
+	}
+	return s.unread || s.cleared || s.vip || s.exclAuto || s.autoOnly || len(s.sections) > 0 || len(s.channels) > 0
 }
 
 func (s actState) equal(o actState) bool {
-	return s.filters == o.filters && s.unread == o.unread && s.cleared == o.cleared && s.vip == o.vip &&
+	return s.filters == o.filters && s.subs == o.subs && s.unread == o.unread && s.cleared == o.cleared && s.vip == o.vip &&
+		s.exclAuto == o.exclAuto && s.autoOnly == o.autoOnly &&
 		slices.Equal(s.sections, o.sections) && slices.Equal(s.channels, o.channels)
 }
 
 func (v *Activity) curState() actState {
-	return actState{filters: v.filters, unread: v.unread.Value, cleared: v.showCleared, vip: v.vip, sections: v.sections, channels: v.channels}
+	return actState{filters: v.filters, subs: v.subs, unread: v.unread.Value, cleared: v.showCleared, vip: v.vip,
+		exclAuto: v.exclAuto, autoOnly: v.autoOnly, showIn: v.showIn, sections: v.sections, channels: v.channels}
 }
 
 func (v *Activity) setState(s actState) {
-	v.filters, v.unread.Value, v.showCleared, v.vip, v.sections, v.channels = s.filters, s.unread, s.cleared, s.vip, s.sections, s.channels
+	v.filters, v.subs, v.unread.Value, v.showCleared, v.vip = s.filters, s.subs, s.unread, s.cleared, s.vip
+	v.exclAuto, v.autoOnly, v.showIn, v.sections, v.channels = s.exclAuto, s.autoOnly, s.showIn, s.sections, s.channels
 }
 
 // actEntryTypes is RmAw r: the activity.feed types a filter row saves as
@@ -109,33 +126,40 @@ var actEntryTypes = [len(actFilters)][]string{
 
 // actStateOf is a saved view's filters as the page starts them (RY04
 // formatFilterViewState: getActivityFilterFeedEntryType maps entry_types
-// back to the rows).
+// back through sTqq G$, the mention types to the sub-filters; showFilterIn
+// when the view names channels or sections).
 func actStateOf(f core.ActivityViewFilters) actState {
-	in := map[string]bool{}
-	for _, t := range f.EntryTypes {
-		in[t] = true
-	}
 	var s actState
-	for i, ts := range actEntryTypes {
-		for _, t := range ts {
-			if in[t] {
-				s.filters[i] = true
-				break
-			}
+	for _, t := range f.EntryTypes {
+		switch r, ok := actG[t]; {
+		case !ok:
+		case r >= actSubRow:
+			s.subs[r-actSubRow] = true
+		default:
+			s.filters[r] = true
 		}
 	}
 	s.unread, s.cleared, s.vip = f.UnreadOnly, f.ArchiveOnly, f.PriorityOnly
+	s.exclAuto, s.autoOnly = f.ExcludeAutomations, f.AutomationsOnly
 	s.sections, s.channels = f.SectionIDs, f.ChannelIDs
+	s.showIn = len(f.SectionIDs) > 0 || len(f.ChannelIDs) > 0
 	return s
 }
 
 // viewFilters is birT's filters for a state.
 func (s actState) viewFilters() core.ActivityViewFilters {
 	f := core.ActivityViewFilters{UnreadOnly: s.unread, ArchiveOnly: s.cleared, PriorityOnly: s.vip,
-		SectionIDs: s.sections, ChannelIDs: s.channels}
+		ExcludeAutomations: s.exclAuto, AutomationsOnly: s.autoOnly, SectionIDs: s.sections, ChannelIDs: s.channels}
 	for i, on := range s.filters {
 		if on {
 			f.EntryTypes = append(f.EntryTypes, actEntryTypes[i]...)
+		}
+		if i == actRowMentions {
+			for k, sub := range s.subs {
+				if sub {
+					f.EntryTypes = append(f.EntryTypes, actSubEntryTypes[k]...)
+				}
+			}
 		}
 	}
 	return f
@@ -370,11 +394,16 @@ func (v *Activity) tabLead(gtx C, slot int, fg color.NRGBA) D {
 // actViewIcon is BGxe B: a view's icon from its filters: Unreads, VIP or
 // Cleared items alone, the Mentions types, or one type row; "" otherwise.
 func actViewIcon(s actState) string {
-	n := 0
+	n, subs := 0, 0
 	only := -1
 	for i, on := range s.filters {
 		if on {
 			n, only = n+1, i
+		}
+	}
+	for _, on := range s.subs {
+		if on {
+			subs++
 		}
 	}
 	flag := ""
@@ -383,15 +412,20 @@ func actViewIcon(s actState) string {
 		flag = "mark-as-unread"
 	case s.vip:
 		flag = "vip"
+	case s.exclAuto, s.autoOnly:
+		flag = "apps"
 	case s.cleared:
 		flag = "eraser"
 	}
 	switch {
-	case n > 0 && flag == "":
-		if n == 1 {
+	case n+subs > 0 && flag == "":
+		if n == 0 {
+			return "mentions" // every type is a mention sub-filter
+		}
+		if n == 1 && subs == 0 {
 			return actRowIcons[only]
 		}
-	case n == 0 && flag != "":
+	case n+subs == 0 && flag != "":
 		return flag
 	}
 	return ""
@@ -1318,6 +1352,13 @@ type actViewModal struct {
 	layoutC  [2]widget.Clickable
 	rowC     [len(actFilters) + 2]widget.Clickable
 	sortC    [2]widget.Clickable
+	// the ADD_TAB menu's other rows (activity_filters.go): the mention
+	// sub-filters, the automation rows, the source select; the In field
+	subC    [actSubN]widget.Clickable
+	autoC   [2]widget.Clickable
+	src     dirDropdown
+	srcInit bool
+	in      actInField
 }
 
 // openViewModal opens ActivityFilterSaveViewModal for kind.
@@ -1617,19 +1658,47 @@ func (m *actViewModal) nameField(gtx C) D {
 	return D{Size: image.Pt(w, h+gtx.Dp(16))}
 }
 
-// addTabRows are ActivityFilterByMenu's ADD_TAB rows: the type rows
-// (DMs while DMs show in Activity, Reminders while reminders do) then VIP
-// and Cleared items; index len(actFilters) is VIP, +1 Cleared items.
-func (m *actViewModal) addTabRows() []int {
-	c := m.v.h.Core()
-	var out []int
-	for i := range actFilters {
-		if i == 0 && !m.v.dmsInActivity() || i == len(actFilters)-1 && !c.GlobalNotifyBool("global_reminders_in_activity", true) {
+// addTabEntries are ActivityFilterByMenu's ADD_TAB rows (lCwf em): the
+// menu's entries for the All tab without the rules, "Specific channel or
+// section" and the closed sub-filters, then the sub-filters after Mentions
+// (open unless "Apps and agents only").
+func (m *actViewModal) addTabEntries() []actEntry {
+	v := m.v
+	uk := v.h.Core().ActivityExcludeAutomationsFilter()
+	open := !uk || m.st.source() != srcAutomations
+	var out []actEntry
+	for _, e := range v.menuEntries(true, m.st).entries {
+		switch e.opt {
+		case optDivider, optSpecific, optSub:
 			continue
 		}
-		out = append(out, i)
+		out = append(out, e)
+		if open && e.opt == optType && e.i == actRowMentions {
+			for i := 0; i < actSubN; i++ {
+				out = append(out, actEntry{opt: optSub, i: i})
+			}
+		}
 	}
-	return append(out, len(actFilters), len(actFilters)+1)
+	return out
+}
+
+// addTabClick is an ADD_TAB row's click target.
+func (m *actViewModal) addTabClick(e actEntry) *widget.Clickable {
+	switch e.opt {
+	case optType:
+		return &m.rowC[e.i]
+	case optVIP:
+		return &m.rowC[len(actFilters)]
+	case optCleared:
+		return &m.rowC[len(actFilters)+1]
+	case optSub:
+		return &m.subC[e.i]
+	case optExcludeAuto:
+		return &m.autoC[0]
+	case optAutoOnly:
+		return &m.autoC[1]
+	}
+	return nil
 }
 
 func (m *actViewModal) addTabClicks(gtx C) {
@@ -1646,18 +1715,49 @@ func (m *actViewModal) addTabClicks(gtx C) {
 			m.vipSort = i == 1
 		}
 	}
-	for _, r := range m.addTabRows() {
-		if !m.rowC[r].Clicked(gtx) {
+	uk := m.v.h.Core().ActivityExcludeAutomationsFilter()
+	for _, e := range m.addTabEntries() {
+		c := m.addTabClick(e)
+		if c == nil || !c.Clicked(gtx) || uk && actSourceDisables(m.st.source(), e) {
 			continue
 		}
-		switch {
-		case r < len(actFilters):
-			m.st.filters[r] = !m.st.filters[r]
-		case r == len(actFilters):
+		// fNIs H: Mentions takes or drops the four sub-filters; a flag
+		// flips; a type or sub-filter toggles
+		switch e.opt {
+		case optType:
+			if e.i == actRowMentions {
+				m.st.toggleMentions()
+			} else {
+				m.st.filters[e.i] = !m.st.filters[e.i]
+			}
+		case optSub:
+			m.st.toggleSub(e.i)
+		case optVIP:
 			m.st.vip = !m.st.vip
-		default:
+		case optCleared:
 			m.st.cleared = !m.st.cleared
+		case optExcludeAuto:
+			m.st.exclAuto = !m.st.exclAuto
+		case optAutoOnly:
+			m.st.autoOnly = !m.st.autoOnly
 		}
+	}
+	if uk {
+		m.syncSource()
+		if m.src.update(gtx) {
+			// fNIs W
+			m.st.setSource([]string{srcEveryone, srcUsers, srcAutomations}[m.src.sel])
+		}
+	}
+}
+
+func (m *actViewModal) syncSource() {
+	if !m.srcInit {
+		m.src = dirDropdown{labels: actSrcLabels}
+		m.srcInit = true
+	}
+	if i := actSrcIndex(m.st.source()); i != m.src.sel && !m.src.open {
+		m.src.sel = i
 	}
 }
 
@@ -1696,11 +1796,36 @@ func (m *actViewModal) addTab(gtx C) D {
 			return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, func(gtx C) D {
 				return col(gtx,
 					layout.Rigid(func(gtx C) D {
+						if !v.h.Core().ActivityExcludeAutomationsFilter() {
+							return D{}
+						}
+						// "Notifications from" (c-label) and the select,
+						// margin_bottom_100
+						return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D {
+							return col(gtx,
+								layout.Rigid(func(gtx C) D {
+									return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+										return v.label(gtx, 15, wBold, v.p.Text, "Notifications from")
+									})
+								}),
+								layout.Rigid(func(gtx C) D {
+									m.syncSource()
+									w := unit.Dp(float32(gtx.Constraints.Max.X) / gtx.Metric.PxPerDp)
+									return m.src.layoutSelect(&v.base, gtx, w)
+								}),
+							)
+						})
+					}),
+					layout.Rigid(func(gtx C) D {
 						return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "Filter by") })
 					}),
 					layout.Rigid(m.rowGrid),
 				)
 			})
+		}),
+		// fNIs: "In" and ActivityFilterBySpecific (ADD_TAB), margin 12px
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Top: 12, Bottom: 12}.Layout(gtx, m.addTabIn)
 		}),
 	)
 	if len(v.h.Core().VIPs()) > 0 {
@@ -1721,41 +1846,71 @@ func (m *actViewModal) addTab(gtx C) D {
 
 // rowGrid is p-activity_ia4_page__filter-menu__add-tab__container: two
 // columns filled top to bottom, each row a 14px checkbox, 8px, the 20px
-// icon, 8px, the label.
+// icon, 8px, the label; a sub-filter 29px in without an icon
+// (__add-tab__sub-item); a row the source disables in content-ter.
 func (m *actViewModal) rowGrid(gtx C) D {
 	v := m.v
-	rows := m.addTabRows()
+	rows := m.addTabEntries()
 	n := (len(rows) + 1) / 2
 	w := gtx.Constraints.Max.X
 	cw := w / 2
 	rh := gtx.Dp(28)
-	for k, r := range rows {
+	uk := v.h.Core().ActivityExcludeAutomationsFilter()
+	for k, e := range rows {
 		x, y := (k/n)*cw, (k%n)*rh
-		label, icon, on := "", "", false
-		switch {
-		case r < len(actFilters):
-			label, icon, on = actFilters[r].label, actFilters[r].icon, m.st.filters[r]
-		case r == len(actFilters):
-			label, icon, on = actExtras[0].label, actExtras[0].icon, m.st.vip
-		default:
-			label, icon, on = actExtras[1].label, actExtras[1].icon, m.st.cleared
+		e := e
+		disabled := uk && actSourceDisables(m.st.source(), e)
+		on := !disabled && v.filterChecked(m.st, e)
+		partial := e.opt == optType && e.i == actRowMentions && m.st.mentionsSome()
+		label, icon := v.entryLabel(e), entryIcon(e)
+		c := m.addTabClick(e)
+		if c == nil {
+			continue
 		}
 		func() {
 			defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints = layout.Exact(image.Pt(cw, rh))
-			m.rowC[r].Layout(g, func(gtx C) D {
-				pointerCursor(gtx)
-				return layout.W.Layout(gtx, func(gtx C) D {
-					return row(gtx, layout.Middle,
-						layout.Rigid(func(gtx C) D { return v.actCheck(gtx, 14, on) }),
-						hgap(8),
-						layout.Rigid(func(gtx C) D { return v.icon(gtx, icon, 20, v.p.Sec) }),
-						hgap(8),
-						layout.Flexed(1, func(gtx C) D { return v.para(gtx, 15, 22, wReg, v.p.Text, 1, label) }),
-					)
+			body := func(gtx C) D {
+				fg, ic := v.p.Text, v.p.Sec
+				if disabled {
+					fg, ic = v.p.Muted, v.p.Muted
+				} else {
+					pointerCursor(gtx)
+				}
+				in := unit.Dp(0)
+				if e.opt == optSub {
+					in = 29
+				}
+				return layout.Inset{Left: in}.Layout(gtx, func(gtx C) D {
+					return layout.W.Layout(gtx, func(gtx C) D {
+						return row(gtx, layout.Middle,
+							layout.Rigid(func(gtx C) D {
+								switch {
+								case disabled:
+									return v.actCheckOff(gtx, 14)
+								case partial:
+									return v.actCheckDash(gtx, 14)
+								}
+								return v.actCheck(gtx, 14, on)
+							}),
+							hgap(8),
+							layout.Rigid(func(gtx C) D {
+								if icon == "" {
+									return D{}
+								}
+								return layout.Inset{Right: 8}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icon, 20, ic) })
+							}),
+							layout.Flexed(1, func(gtx C) D { return v.para(gtx, 15, 22, wReg, fg, 1, label) }),
+						)
+					})
 				})
-			})
+			}
+			if disabled {
+				body(g)
+				return
+			}
+			c.Layout(g, body)
 		}()
 	}
 	return D{Size: image.Pt(w, n*rh)}

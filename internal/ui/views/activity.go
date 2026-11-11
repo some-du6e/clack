@@ -253,6 +253,17 @@ type Activity struct {
 	unread    toggle
 	filterBtn widget.Clickable
 	filterX   int
+
+	// The filter menu (activity_filters.go): the mention sub-filters, the
+	// automation filters (filterExcludeAutomationsSelected /
+	// filterAutomationsOnlySelected) and showFilterIn (the bar's "In"
+	// picker, activity_in.go), with the menu's own state.
+	subs               [actSubN]bool
+	exclAuto, autoOnly bool
+	showIn             bool
+	fl                 actFilterUI
+	in                 actInPicker
+
 	searchBtn widget.Clickable
 	searchOn  bool
 	query     *search
@@ -521,29 +532,16 @@ func (v *Activity) update(gtx C) {
 	if v.scrim.Clicked(gtx) || v.menuClose.Clicked(gtx) {
 		v.menu = actMenuNone
 	}
-	for i := range v.filterC {
-		if v.filterC[i].Clicked(gtx) && !actFilters[i].off {
-			v.filters[i] = !v.filters[i]
-			if actFilters[i].dm {
-				v.dirty = true
-			} else {
-				reload = true
-			}
-		}
+	if v.menuClicks(gtx) { // activity_filters.go
+		reload = true
 	}
-	if v.extraC[0].Clicked(gtx) {
-		// VIP (filterVipSelected: activity.feed priority_only)
-		v.vip, reload = !v.vip, true
-	}
-	if v.extraC[1].Clicked(gtx) {
-		// "Cleared items" shows the archive (activity.feed archive_only).
-		v.showCleared, reload = !v.showCleared, true
+	if v.inClicks(gtx) { // activity_in.go
+		reload = true
 	}
 	if v.undo.btn.Clicked(gtx) && !v.undo.until.IsZero() {
 		v.unclear(&v.undo.item, v.undo.key)
 		v.undo.until = time.Time{}
 	}
-	v.extraC[2].Clicked(gtx)
 	v.plusClicks(gtx) // activity_views.go
 	if v.searchBtn.Clicked(gtx) {
 		v.searchOn = !v.searchOn
@@ -578,6 +576,7 @@ func (v *Activity) update(gtx C) {
 
 // actUI is the input-driven view state compared around update.
 type actUI struct {
+	showIn, subOpen, inOpen                bool
 	menu                                   actMenu
 	sel, search, triage, dense, unread, cl bool
 	picked                                 int
@@ -586,7 +585,7 @@ type actUI struct {
 }
 
 func (v *Activity) uiState() actUI {
-	return actUI{menu: v.menu, sel: v.selOK, search: v.searchOn, triage: v.triage(), dense: v.dense, picked: len(v.picked),
+	return actUI{showIn: v.showIn, subOpen: v.fl.subOpen, inOpen: v.in.pick.open, menu: v.menu, sel: v.selOK, search: v.searchOn, triage: v.triage(), dense: v.dense, picked: len(v.picked),
 		unread: v.unread.Value, cl: v.showCleared, tab: v.tabs.Sel, filters: v.filterCount(), vip: v.vip, serverAll: v.serverAll}
 }
 
@@ -597,13 +596,27 @@ func actToggleMenu(cur, m actMenu) actMenu {
 	return m
 }
 
-// filterCount is the "(N)" shown on the filter menu button.
+// filterCount is the "(N)" shown on the filter menu button: m+ho eZ,
+// the active filters (3x6A ug: Unreads, the automation filters, every
+// type, a mention sub-filter each, VIP, Cleared items) without the
+// specific channels and, on the All tab and the default views, Unreads.
 func (v *Activity) filterCount() int {
 	n := 0
 	for _, on := range v.filters {
 		if on {
 			n++
 		}
+	}
+	for _, on := range v.subs {
+		if on {
+			n++
+		}
+	}
+	if v.exclAuto {
+		n++
+	}
+	if v.autoOnly {
+		n++
 	}
 	if v.showCleared {
 		n++
@@ -638,6 +651,12 @@ func (v *Activity) types() (string, bool) {
 	}
 	var fl []string
 	for i, f := range actFilters {
+		if i == actRowMentions {
+			if t := v.curState().mentionFeedTypes(); t != "" {
+				fl = append(fl, t)
+			}
+			continue
+		}
 		if v.filters[i] && f.types != "" {
 			fl = append(fl, f.types)
 		}
@@ -692,7 +711,8 @@ func (v *Activity) load(mode actLoad) {
 	c := v.h.Core()
 	types, none := v.types()
 	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Archived: v.showCleared, Limit: actLimit,
-		Priority: v.vip, SectionIDs: v.sections, ChannelIDs: v.channels, Mode: v.feedMode()}
+		Priority: v.vip, SectionIDs: v.sections, ChannelIDs: v.channels, Mode: v.feedMode(),
+		ExcludeAutomations: v.exclAuto, AutomationsOnly: v.autoOnly}
 	old, _, _ := v.data.get()
 	if mode == actMore {
 		opts.Cursor = old.Next
@@ -1336,6 +1356,10 @@ func (v *Activity) filterBar(gtx C) D {
 	x += actAt(gtx, x, v.unreadsBtn).Size.X + gap
 	v.filterX = x
 	x += actAt(gtx, x, v.filterMenuBtn).Size.X + gap
+	if v.showIn {
+		// ActivityFilterBySpecific after the menu (m+ho tC: es &&), 8px on
+		x += actAt(gtx, x, v.inPill).Size.X + gap
+	}
 	x += actAt(gtx, x, func(gtx C) D { return v.outlineIcon(gtx, &v.searchBtn, "search", false) }).Size.X + gap
 	if v.searchOn {
 		x += actAt(gtx, x, func(gtx C) D {
@@ -3033,86 +3057,6 @@ func actStack(gtx C, n int, el layout.ListElement) D {
 		y += d.Size.Y
 	}
 	return D{Size: image.Pt(w, y)}
-}
-
-func (v *Activity) filterMenu(gtx C) D {
-	gtx.Constraints.Min.X = gtx.Constraints.Max.X
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 16, Right: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
-				g := gtx
-				g.Constraints.Min.Y = gtx.Dp(32)
-				return row(g, layout.Middle,
-					layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "Filter by") }),
-					layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &v.menuClose, "close", 28, 16, v.p.Sec) }),
-				)
-			})
-		}),
-		layout.Rigid(func(gtx C) D {
-			return actStack(gtx, len(actFilters), func(gtx C, i int) D {
-				return v.menuRow(gtx, &v.filterC[i], &actFilters[i], v.filters[i])
-			})
-		}),
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D { return hline(gtx, v.p.Border) })
-		}),
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Left: 16, Bottom: 8}.Layout(gtx, func(gtx C) D {
-				return v.label(gtx, 13, wReg, v.p.Muted, "Additional Filters")
-			})
-		}),
-		layout.Rigid(func(gtx C) D {
-			return actStack(gtx, len(actExtras), func(gtx C, i int) D {
-				return v.menuRow(gtx, &v.extraC[i], &actExtras[i], i == 0 && v.vip || i == 1 && v.showCleared)
-			})
-		}),
-		// ActivityFilterActionButtons (activity_views.go)
-		layout.Rigid(v.filterActions),
-	)
-}
-
-// menuRow: 28px tall, padding 0 16px, 13px checkbox (12px right margin),
-// 18px icon, 15px label.
-func (v *Activity) menuRow(gtx C, c *widget.Clickable, f *actFilter, on bool) D {
-	return c.Layout(gtx, func(gtx C) D {
-		w, h := gtx.Constraints.Max.X, gtx.Dp(28)
-		fg, ic := v.p.Text, v.p.Sec
-		if f.off {
-			fg, ic = v.p.Faint, v.p.Faint
-		} else {
-			pointerCursor(gtx)
-			if c.Hovered() {
-				fill(gtx, image.Rect(0, 0, w, h), v.actHover(v.p.Surface))
-			}
-		}
-		g := gtx
-		g.Constraints = layout.Exact(image.Pt(w, h))
-		left := unit.Dp(16)
-		if f.nocheck {
-			left = 12 // p-activity_ia4_page__filter-menu__icon
-		}
-		layout.Inset{Left: left, Right: 16}.Layout(g, func(gtx C) D {
-			return row(gtx, layout.Middle,
-				layout.Rigid(func(gtx C) D {
-					if f.nocheck {
-						return D{}
-					}
-					return layout.Inset{Right: 12}.Layout(gtx, func(gtx C) D { return v.actCheck(gtx, 13, on) })
-				}),
-				layout.Rigid(func(gtx C) D { return v.icon(gtx, f.icon, 20, ic) }),
-				hgap(8),
-				layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wReg, fg, f.label) }),
-				layout.Rigid(func(gtx C) D {
-					if f.trail == "" {
-						return D{}
-					}
-					// "Toggle mention sub-filters": a 24px button, 20px caret
-					return layout.UniformInset(2).Layout(gtx, func(gtx C) D { return v.icon(gtx, f.trail, 20, ic) })
-				}),
-			)
-		})
-		return D{Size: image.Pt(w, h)}
-	})
 }
 
 // selectMenu is the "Select options" menu.
