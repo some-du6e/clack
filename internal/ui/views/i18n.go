@@ -30,6 +30,10 @@ var (
 	nsBrowsers      = i18n.NS("browsers")               // the browsers' filters, sorts and empty states
 	nsFilesExplorer = i18n.NS("files-explorer")         // UnifiedFilesCreateMenu
 	nsDocs          = i18n.NS("slack-docs")             // ExplorerActionsTemplates
+	nsOutbox        = i18n.NS("outbox")                 // OutboxPageHeader (Drafts & sent)
+	nsDrafts        = i18n.NS("drafts")                 // the drafts list, the schedule menu, DraftDateScheduled
+	nsComposer      = i18n.NS("composer")               // DeleteDraftModal
+	nsSearch        = i18n.NS("search")                 // the browsers' filters, sorts and rows (search's components)
 )
 
 // localized reports whether Slack's strings differ from the English

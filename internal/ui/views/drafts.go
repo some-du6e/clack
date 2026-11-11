@@ -30,13 +30,16 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
+// draftsTabLabels are OutboxPage's tabs (the sent-page namespace).
 var draftsTabLabels = []string{"Drafts", "Scheduled", "Sent"}
 
 const (
@@ -186,7 +189,7 @@ type Drafts struct {
 func NewDrafts(h Host) *Drafts {
 	d := &Drafts{
 		base:      newBase(h),
-		tabs:      newTabs(draftsTabLabels...),
+		tabs:      &tabs{Labels: draftsTabLabels, clicks: make([]widget.Clickable, len(draftsTabLabels)), Tr: trIn("sent-page")},
 		rows:      map[string]*draftsRow{},
 		sentConvs: map[string]core.ConvRef{},
 		gone:      map[string]time.Time{},
@@ -233,7 +236,7 @@ func (d *Drafts) layoutHeader(gtx C) D {
 		return layout.W.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.Y = 0
 			return row(gtx, layout.Middle,
-				layout.Flexed(1, func(gtx C) D { return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, "Drafts & sent") }),
+				layout.Flexed(1, func(gtx C) D { return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, nsOutbox.T("Drafts & sent")) }), // OutboxPageHeader
 				layout.Rigid(func(gtx C) D {
 					if d.tabs.Sel != draftsTabDrafts || len(d.drafts) == 0 {
 						return D{}
@@ -241,12 +244,12 @@ func (d *Drafts) layoutHeader(gtx C) D {
 					if d.selecting {
 						// Select mode: Cancel, then Delete with the count.
 						n := len(d.selectedIDs())
-						label := "Delete"
+						label := nsOutbox.T("Delete")
 						if n > 0 {
 							label += " (" + strconv.Itoa(n) + ")"
 						}
 						return row(gtx, layout.Middle,
-							layout.Rigid(func(gtx C) D { return d.button(gtx, &d.selCancel, btnOutline, true, "Cancel") }),
+							layout.Rigid(func(gtx C) D { return d.button(gtx, &d.selCancel, btnOutline, true, nsDrafts.T("Cancel")) }),
 							hgap(8),
 							layout.Rigid(func(gtx C) D {
 								kind := btnDanger
@@ -279,7 +282,7 @@ func (d *Drafts) editButton(gtx C) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D { return d.icon(gtx, "edit", 16, d.p.Text) }),
 					hgap(4),
-					layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.p.Text, "Edit") }),
+					layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.p.Text, nsOutbox.T("Edit")) }),
 				)
 			})
 		})
@@ -320,7 +323,7 @@ func (d *Drafts) layoutTabs(gtx C) D {
 					}
 					dims := layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D {
 						return row(gtx, layout.Baseline,
-							layout.Rigid(func(gtx C) D { return d.para(gtx, 13, 16, wBold, fg, 1, t.Labels[i]) }),
+							layout.Rigid(func(gtx C) D { return d.para(gtx, 13, 16, wBold, fg, 1, t.label(i)) }),
 							layout.Rigid(func(gtx C) D {
 								if counts[i] <= 0 {
 									return D{}
@@ -640,6 +643,9 @@ func (d *Drafts) tabLen(tab int) int {
 // "Monday, November 3rd".
 func draftsDay(t time.Time) string {
 	now := time.Now()
+	if l := i18n.Locale(); l != i18n.EnUS && !t.IsZero() {
+		return i18n.DayDivider(l, t, now, false) // formatDateDayDivider
+	}
 	switch {
 	case t.IsZero():
 		return ""
@@ -963,9 +969,9 @@ func (d *Drafts) updateSched(gtx C) {
 // two presets, a divider and "Custom time" (Slack's composer menu).
 func (d *Drafts) schedMenu(gtx C) D {
 	now := time.Now()
-	head := "Schedule message"
+	head := nsDrafts.T("Schedule message")
 	if dr := d.findDraft(d.schedID); dr != nil && dr.DateScheduled > 0 {
-		head = "Reschedule message"
+		head = nsDrafts.T("Reschedule message")
 	}
 	item := func(i int, label string) layout.FlexChild {
 		return layout.Rigid(func(gtx C) D { return d.menuItem(gtx, &d.schedItems[i], "", label, false, false) })
@@ -977,13 +983,36 @@ func (d *Drafts) schedMenu(gtx C) D {
 				return d.para(gtx, 13, 18, wBold, d.p.Muted, 1, head)
 			})
 		}),
-		item(draftsSchedTomorrow, "Tomorrow at "+clock(draftsSchedTime(draftsSchedTomorrow, now))),
-		item(draftsSchedMonday, mon.Format("Monday")+" at "+clock(mon)),
+		item(draftsSchedTomorrow, draftsSchedLabel(draftsSchedTomorrow, draftsSchedTime(draftsSchedTomorrow, now))),
+		item(draftsSchedMonday, draftsSchedLabel(draftsSchedMonday, mon)),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D { return hline(gtx, d.p.Border) })
 		}),
-		item(draftsSchedCustom, "Custom time"),
+		item(draftsSchedCustom, nsDrafts.T("Custom time")),
 	)
+}
+
+// draftsSchedLabel is getStandardScheduledSendMenuOptions' row: its
+// strings are written out with the 9:00 time in both clocks ("Tomorrow at
+// 9:00 AM", "Tomorrow  at 09:00", "Monday at 9:00 AM"); in en-US Clack
+// keeps writing the time it schedules.
+func draftsSchedLabel(preset int, at time.Time) string {
+	if i18n.Locale() != i18n.EnUS && at.Hour() == 9 && at.Minute() == 0 {
+		h24 := uipref.Get().Time24 || i18n.Default24h(i18n.Locale())
+		switch {
+		case preset == draftsSchedTomorrow && h24:
+			return nsDrafts.T("Tomorrow  at 09:00")
+		case preset == draftsSchedTomorrow:
+			return nsDrafts.T("Tomorrow at 9:00 AM")
+		case h24:
+			return nsDrafts.T("Monday at 09:00")
+		}
+		return nsDrafts.T("Monday at 9:00 AM")
+	}
+	if preset == draftsSchedTomorrow {
+		return "Tomorrow at " + clock(at)
+	}
+	return at.Format("Monday") + " at " + clock(at)
 }
 
 // draftsPicker is the "Custom time" dialog: a day (the next 14 days) and
@@ -1018,11 +1047,11 @@ func (d *Drafts) openPicker(dr *core.Draft) {
 	}
 	p.list.Axis = layout.Vertical
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
-		Title: "Schedule message",
+		Title: nsDrafts.T("Schedule message"),
 		Body:  p.body,
 		Buttons: []*popups.ModalButton{
-			{Label: "Cancel", Kind: popups.BtnOutline},
-			{Label: "Schedule message", Kind: popups.BtnPrimary, Enabled: func() bool { return p.at().After(time.Now()) },
+			{Label: nsDrafts.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsDrafts.T("Schedule message"), Kind: popups.BtnPrimary, Enabled: func() bool { return p.at().After(time.Now()) },
 				Do: func() bool {
 					if dr := d.findDraft(p.id); dr != nil {
 						d.scheduleDraft(dr, p.at())
@@ -1050,9 +1079,12 @@ func (p *draftsPicker) body(gtx C) D {
 		t := now.AddDate(0, 0, i)
 		switch i {
 		case 0:
-			return "Today"
+			return i18n.T("date_picker", "Today")
 		case 1:
-			return "Tomorrow"
+			return i18n.T("date_picker", "Tomorrow")
+		}
+		if l := i18n.Locale(); l != i18n.EnUS {
+			return i18n.Weekday(l, t, true) + ", " + i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: true})
 		}
 		return t.Format("Mon, Jan 2")
 	}
@@ -1100,10 +1132,10 @@ func (p *draftsPicker) body(gtx C) D {
 	}
 	return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
 		return col(gtx,
-			heading("Date"),
+			heading(i18n.T("date_time_picker", "Date")),
 			chips(len(p.days), 5, p.day, func(i int) *widget.Clickable { return &p.days[i] }, dayLabel, func(int) bool { return false }),
 			vgap(10),
-			heading("Time"),
+			heading(i18n.T("date_time_picker", "Time")),
 			chips(len(p.slots)-14, 6, p.slot-14, func(i int) *widget.Clickable { return &p.slots[i+14] },
 				func(i int) string {
 					return clock(time.Date(2000, 1, 1, (i+14)/2, 30*((i+14)%2), 0, 0, time.Local))
@@ -1197,7 +1229,7 @@ func (d *Drafts) deleteDraft(dr *core.Draft) {
 func (d *Drafts) sendDraft(dr *core.Draft) {
 	id := dr.ID
 	d.remove(id)
-	d.run(draftsDone{okMsg: "Message sent", errMsg: "Message not sent", unhide: []string{id}},
+	d.run(draftsDone{okMsg: "Message sent", errMsg: i18n.T("msg_input", "Message not sent"), unhide: []string{id}},
 		func(ctx context.Context, c *core.App) (*core.Draft, error) {
 			_, err := c.SendDraft(ctx, id)
 			return nil, err
@@ -1267,9 +1299,9 @@ func (d *Drafts) updateMore(gtx C) {
 func (d *Drafts) moreMenu(gtx C) D {
 	return col(gtx,
 		layout.Rigid(func(gtx C) D {
-			return d.menuItem(gtx, &d.moreItems[0], "", "Cancel schedule and save to drafts", false, false)
+			return d.menuItem(gtx, &d.moreItems[0], "", nsDrafts.T("Cancel schedule and save to drafts"), false, false)
 		}),
-		layout.Rigid(func(gtx C) D { return d.dangerItem(gtx, &d.moreItems[1], "Delete message") }),
+		layout.Rigid(func(gtx C) D { return d.dangerItem(gtx, &d.moreItems[1], nsDrafts.T("Delete message")) }),
 	)
 }
 
@@ -1296,9 +1328,10 @@ func (d *Drafts) dangerItem(gtx C, c *widget.Clickable, label string) D {
 // deleteDialogText is DeleteDraftModal's title, question and buttons.
 // The destination is bold in Slack's question.
 func deleteDialogText(dst draftDest, scheduled, thread, hasDest bool) (title string, q []richtext.Span, del string, saveAsDraft bool) {
-	title, del = "Delete draft?", "Delete Draft"
+	// DeleteDraftModal / handleUnschedule: the composer namespace
+	title, del = nsComposer.T("Delete draft?"), nsComposer.T("Delete Draft")
 	if scheduled {
-		title, del = "Delete scheduled message?", "Delete"
+		title, del = nsComposer.T("Delete scheduled message?"), nsComposer.T("Delete")
 	}
 	name := dst.name
 	if dst.glyph != "" {
@@ -1306,15 +1339,20 @@ func deleteDialogText(dst draftDest, scheduled, thread, hasDest bool) (title str
 	}
 	plain := func(t string) richtext.Span { return richtext.Span{Kind: richtext.Text, Text: t} }
 	bold := richtext.Span{Kind: richtext.Text, Text: name, Style: richtext.Bold}
+	// the destination is bold where the locale puts {destination}
+	withDest := func(src string) []richtext.Span {
+		before, after := around(nsComposer, src, "destination")
+		return []richtext.Span{plain(before), bold, plain(after)}
+	}
 	switch {
 	case !hasDest:
-		q = []richtext.Span{plain("Are you sure you want to delete this draft?")}
+		q = []richtext.Span{plain(nsComposer.T("Are you sure you want to delete this draft?"))}
 	case scheduled && !thread:
-		q = []richtext.Span{plain("Are you sure you want to delete this message to "), bold, plain("?")}
+		q = withDest("Are you sure you want to delete this message to {destination}?")
 	case thread:
-		q = []richtext.Span{plain("Are you sure you want to delete this message to a thread in "), bold, plain("?")}
+		q = withDest("Are you sure you want to delete this message to a thread in {destination}?")
 	default:
-		q = []richtext.Span{plain("Are you sure you want to delete this draft to "), bold, plain("?")}
+		q = withDest("Are you sure you want to delete this draft to {destination}?")
 	}
 	return title, q, del, scheduled && !thread
 }
@@ -1334,7 +1372,7 @@ func (d *Drafts) confirmDelete(dr *core.Draft) {
 	doc := richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: q}}}
 	var btns []*popups.ModalButton
 	if saveAs {
-		btns = append(btns, &popups.ModalButton{Label: "Save as Draft", Kind: popups.BtnOutline, Left: true, Do: func() bool {
+		btns = append(btns, &popups.ModalButton{Label: nsComposer.T("Save as Draft"), Kind: popups.BtnOutline, Left: true, Do: func() bool {
 			if dr := d.findDraft(id); dr != nil {
 				d.unscheduleDraft(dr)
 			}
@@ -1342,7 +1380,7 @@ func (d *Drafts) confirmDelete(dr *core.Draft) {
 		}})
 	}
 	btns = append(btns,
-		&popups.ModalButton{Label: "Cancel", Kind: popups.BtnOutline},
+		&popups.ModalButton{Label: nsComposer.T("Cancel"), Kind: popups.BtnOutline},
 		&popups.ModalButton{Label: del, Kind: popups.BtnDanger, Do: func() bool {
 			if dr := d.findDraft(id); dr != nil {
 				d.deleteDraft(dr)
@@ -1581,13 +1619,14 @@ func (d *Drafts) keys(gtx C, sel int) *vkList {
 // emptyFor: the spec's copy, with a 64px accent icon instead of Slack's
 // illustration, then an outline medium button.
 func (d *Drafts) emptyFor(gtx C, tab int) D {
-	icon, title, body, btn := "edit", "Draft messages to send when you’re ready",
-		"Start typing a message anywhere, then find it here. Re-read, revise, and send whenever you’d like.", "New Message"
+	icon, title, body, btn := "edit", nsDrafts.T("Draft messages to send when you’re ready"),
+		nsDrafts.T("Start typing a message anywhere, then find it here. Re-read, revise, and send whenever you’d like."), nsDrafts.T("New Message")
 	switch tab {
 	case draftsTabScheduled:
-		icon, title, body, btn = "clock", "Write now, send later",
-			"Schedule messages to be sent at a later time, or another day altogether. They’ll wait here until they’re delivered.", "Start New Message"
+		icon, title, body, btn = "clock", nsDrafts.T("Write now, send later"),
+			nsDrafts.T("Schedule messages to be sent at a later time, or another day altogether. They’ll wait here until they’re delivered."), nsDrafts.T("Start New Message")
 	case draftsTabSent:
+		// no Slack key: the Sent tab's empty state is Clack's own
 		icon, title, body, btn = "send", "Nothing sent yet", "Messages you send will show up here.", ""
 	}
 	return layout.Center.Layout(gtx, func(gtx C) D {
@@ -1633,10 +1672,10 @@ func (d *Drafts) eduCard(gtx C) D {
 			gtx.Constraints.Min = image.Point{}
 			return col(gtx,
 				layout.Rigid(func(gtx C) D {
-					return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, "All your outgoing messages")
+					return d.para(gtx, 18, 24, wBlack, d.p.Text, 1, nsDrafts.T("All your outgoing messages"))
 				}),
 				layout.Rigid(func(gtx C) D {
-					return d.para(gtx, 15, 22, wReg, d.p.Text, 2, "Everything you send, draft, and schedule can now be found here.")
+					return d.para(gtx, 15, 22, wReg, d.p.Text, 2, nsDrafts.T("Everything you send, draft, and schedule can now be found here."))
 				}),
 			)
 		})
@@ -1651,6 +1690,7 @@ func (d *Drafts) eduCard(gtx C) D {
 // inline channel glyph, the name, and the tile to show.
 type draftDest struct {
 	prefix  string
+	suffix  string // after the name (a locale's "{channelName} 内のスレッド")
 	glyph   string // "hash" / "lock" before the name; "" for people
 	name    string
 	avatars []string
@@ -1706,10 +1746,12 @@ func (d *Drafts) destOf(ch string, users []string, threadTS string, refs map[str
 		}
 		dst.name = strings.Join(names, ", ")
 	default:
-		dst.glyph, dst.name = "hash", "Draft"
+		dst.glyph, dst.name = "hash", nsDrafts.T("Draft")
 	}
 	if threadTS != "" {
-		dst.prefix = "Thread in "
+		// "Thread in {channelName}" (ComposerDestinationText): the glyph and
+		// name go where the locale puts them
+		dst.prefix, dst.suffix = around(nsDrafts, "Thread in {channelName}", "channelName")
 	}
 	return dst
 }
@@ -1755,7 +1797,7 @@ func (d *Drafts) destLine(gtx C, dst draftDest) D {
 			}
 			return layout.Inset{Right: 2}.Layout(gtx, func(gtx C) D { return d.icon(gtx, dst.glyph, 15, d.p.Text) })
 		}),
-		layout.Flexed(1, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, dst.name) }),
+		layout.Flexed(1, func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, dst.name+dst.suffix) }),
 	)
 }
 
@@ -1937,11 +1979,21 @@ func draftsSendText(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return "Send " + shortPrettyDate(t, time.Now()) + " at " + clock(t)
+	return nsDrafts.T("Send {date} at {time}", "date", shortPrettyDate(t, time.Now()), "time", clock(t))
 }
 
 // shortPrettyDate is Slack's {date_short_pretty}, uncapitalized.
 func shortPrettyDate(t, now time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		if r := i18n.RelativeDay(l, t, now, true); r != "" {
+			return r
+		}
+		d := t.Sub(now)
+		if d < 0 {
+			d = -d
+		}
+		return i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: d < 262080*time.Minute})
+	}
 	switch {
 	case sameDay(t, now):
 		return "today"
@@ -1969,6 +2021,9 @@ func draftsListTime(t, now time.Time) string {
 	}
 	if sameDay(t, now) {
 		return clock(t)
+	}
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ExcludeYear: t.Year() == now.Year()})
 	}
 	s := t.Format("Jan 2") + ordinal(t.Day())
 	if t.Year() != now.Year() {

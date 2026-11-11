@@ -57,7 +57,10 @@ var (
 	dirTabIconsSel = []string{"user-filled", "channel-search-filled", "user-groups-filled", "buildings-filled", "email-filled"}
 
 	dirPlaceholders = [3]string{"Search for people", "Search for channels", "Search by team name, project or department"}
-	dirActions      = [3]string{"Invite People", "Create Channel", "Create user group"}
+	// dirPlaceholderNS: BrowsePeopleView's and BrowseUserGroupsView's
+	// browsers strings, BrowseChannelsView's search one
+	dirPlaceholderNS = [3]i18n.NS{"browsers", "search", "browsers"}
+	dirActions       = [3]string{"Invite People", "Create Channel", "Create user group"}
 
 	dirSortLabels = [3][]string{
 		{"Most recommended", "A to Z", "Z to A"},
@@ -255,7 +258,7 @@ type Directories struct {
 func NewDirectories(h Host) *Directories {
 	d := &Directories{
 		base:      newBase(h),
-		tab:       newTabs(dirTabLabels...),
+		tab:       &tabs{Labels: dirTabLabels, clicks: make([]widget.Clickable, len(dirTabLabels)), Tr: trIn("unified_directory_view")}, // UnifiedDirectoryTabs
 		fclk:      map[string]*widget.Clickable{},
 		cards:     map[string]*widget.Clickable{},
 		rows:      map[string]*widget.Clickable{},
@@ -267,16 +270,16 @@ func NewDirectories(h Host) *Directories {
 	}
 	d.rowMenu.sel = -1
 	d.chanScope.labels = dirScopeLabels
-	d.chanType.labels = dirTypeLabels
-	d.acct.labels = dirAcctLabels
+	d.chanType.labels, d.chanType.ns = dirTypeLabels, nsSearch
+	d.acct.labels, d.acct.ns = dirAcctLabels, nsSearch
 	for i := range d.srch {
-		d.srch[i] = newSearch(dirPlaceholders[i])
-		d.sorts[i].labels = dirSortLabels[i]
-		d.wsPick[i] = newDirPick("Ex. Acme Inc", false)
+		d.srch[i] = newSearchIn(dirPlaceholderNS[i], dirPlaceholders[i])
+		d.sorts[i].labels, d.sorts[i].ns = dirSortLabels[i], nsSearch
+		d.wsPick[i] = newDirPickIn(nsSearch, "Ex. Acme Inc", false)
 	}
-	d.orgPick = newDirPick("Ex. #project-unicorn", true)
-	d.titlePick = newDirPick("Ex. Director", true)
-	d.locPick = newDirPick("Ex. New York", true)
+	d.orgPick = newDirPickIn(nsActivity, "Ex. #project-unicorn", true)
+	d.titlePick = newDirPickIn(nsSearch, "Ex. Director", true)
+	d.locPick = newDirPickIn(nsSearch, "Ex. New York", true)
 	return d
 }
 
@@ -331,7 +334,9 @@ func (d *Directories) titleRow(gtx C) D {
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(w, h))
 	layout.Inset{Left: 18, Right: 18}.Layout(g, func(gtx C) D {
-		return layout.W.Layout(gtx, func(gtx C) D { return d.label(gtx, 18, wBlack, d.p.Text, "Directories") })
+		return layout.W.Layout(gtx, func(gtx C) D {
+			return d.label(gtx, 18, wBlack, d.p.Text, i18n.T("unified_directory_view", "Directories"))
+		}) // UnifiedDirectoryViewHeader
 	})
 	return D{Size: image.Pt(w, h)}
 }
@@ -729,7 +734,7 @@ func (d *Directories) body(gtx C) D {
 						return dirSearchField(&d.base, gtx, d.srch[t], dirFieldStyle{H: 36, Icon: 20, PadL: 12, Gap: 16, Border: dirRing(&d.base, d.p.Surface), Over: d.p.ReadFill}, &d.clear)
 					}),
 					hgap(12),
-					layout.Rigid(func(gtx C) D { return d.button(gtx, &d.action[t], btnOutline, false, dirActions[t]) }),
+					layout.Rigid(func(gtx C) D { return d.button(gtx, &d.action[t], btnOutline, false, nsBrowsers.T(dirActions[t])) }),
 				)
 			})
 		}),
@@ -769,12 +774,12 @@ func (d *Directories) hero(gtx C, t int) D {
 	g.Constraints = layout.Constraints{Max: image.Pt(min(gtx.Dp(517), max(0, w-x-gtx.Dp(64))), h)}
 	cd := col(g,
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return d.para(gtx, 22, 30, wBlack, d.p.Text, 2, dirHeroTitle[t]) })
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return d.para(gtx, 22, 30, wBlack, d.p.Text, 2, nsBrowsers.T(dirHeroTitle[t])) })
 		}),
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Muted, 0, dirHeroBody[t]) })
+			return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Muted, 0, nsBrowsers.T(dirHeroBody[t])) })
 		}),
-		layout.Rigid(func(gtx C) D { return d.button(gtx, &d.heroBtn[t], btnOutline, false, dirHeroBtn[t]) }),
+		layout.Rigid(func(gtx C) D { return d.button(gtx, &d.heroBtn[t], btnOutline, false, nsBrowsers.T(dirHeroBtn[t])) }),
 	)
 	call := m.Stop()
 	func() {
@@ -798,9 +803,9 @@ func (d *Directories) filterBar(gtx C, t int) D {
 			if dd := d.filterMenu(t, i); dd != nil {
 				ch = append(ch,
 					layout.Rigid(func(gtx C) D {
-						label := dd.labels[min(dd.sel, len(dd.labels)-1)]
+						label := dd.text(min(dd.sel, len(dd.labels)-1))
 						if dd == &d.acct && dd.sel == 0 {
-							label = f.label
+							label = nsSearch.T(f.label)
 						}
 						dims := dirFilterPill(&d.base, gtx, &dd.btn, dirPill{icon: f.icon, label: label, caret: f.caret, open: dd.open, active: dd.sel != 0})
 						if dd.open {
@@ -826,7 +831,7 @@ func (d *Directories) filterBar(gtx C, t int) D {
 						dims := dirFilterPill(&d.base, gtx, &pk.btn, dirPill{icon: f.icon, team: team, label: text, caret: f.caret, open: pk.open, active: active})
 						if pk.open {
 							opts, sel := d.pickOpts(t, f.label)
-							pk.popover(&d.base, gtx, dims.Size, opts, sel, "Nothing found")
+							pk.popover(&d.base, gtx, dims.Size, opts, sel, nsSearch.T("Nothing found"))
 						}
 						return dims
 					}),
@@ -844,21 +849,21 @@ func (d *Directories) filterBar(gtx C, t int) D {
 				icon = "check"
 			}
 			ch = append(ch,
-				layout.Rigid(func(gtx C) D { return dirFilterBtn(&d.base, gtx, c, icon, f.label, f.caret) }),
+				layout.Rigid(func(gtx C) D { return dirFilterBtn(&d.base, gtx, c, icon, nsSearch.T(f.label), f.caret) }),
 				hgap(8))
 		}
 		if t != dirTabGroups {
 			// Slack: "Reset", 13px link, 8px after the last filter (shown
 			// with the defaults too; C0CFT52NEGM's browser, 2026-11-08)
-			ch = append(ch, layout.Rigid(func(gtx C) D { return cdLinkReg(&d.base, gtx, &d.reset[t], 13, "Reset") }))
+			ch = append(ch, layout.Rigid(func(gtx C) D { return cdLinkReg(&d.base, gtx, &d.reset[t], 13, nsSearch.T("Reset")) }))
 		}
 		ch = append(ch,
 			layout.Flexed(1, func(gtx C) D { return D{Size: image.Pt(gtx.Constraints.Min.X, 0)} }),
 			layout.Rigid(func(gtx C) D {
 				dd := &d.sorts[t]
-				label := dd.labels[dd.sel]
+				label := dd.text(dd.sel)
 				if t == dirTabChannels && dd.sel == 0 && d.srch[t].text() != "" {
-					label = "Most relevant"
+					label = nsSearch.T("Most relevant")
 				}
 				return dd.layoutSort(&d.base, gtx, label)
 			}))
@@ -1309,9 +1314,9 @@ func (d *Directories) chanRow(gtx C, ch core.ChannelHit, first, last bool) D {
 				if !showBtn {
 					return D{}
 				}
-				label := "Join"
+				label := nsSearch.T("Join")
 				if ch.IsMember {
-					label = "Leave"
+					label = nsSearch.T("Leave")
 				}
 				if pend != nil {
 					label = "Joining…"
@@ -1346,7 +1351,7 @@ var dirRowMenu = []string{"View channel", "Copy link"}
 // rowMenuUpdate handles the open caret menu of row ch.
 func (d *Directories) rowMenuUpdate(gtx C, ch core.ChannelHit) {
 	dd := &d.rowMenu
-	dd.labels = dirRowMenu
+	dd.labels, dd.ns = dirRowMenu, nsSearch
 	dd.sel = -1
 	if !dd.update(gtx) {
 		if !dd.open {
@@ -1361,7 +1366,7 @@ func (d *Directories) rowMenuUpdate(gtx C, ch core.ChannelHit) {
 		d.h.Navigate("c/" + ch.ID)
 	case 1:
 		cdCopy(gtx, cdLinkPrefix+ch.ID)
-		d.h.Toast("Link copied to clipboard")
+		d.h.Toast(i18n.T("file", "Link copied to clipboard"))
 	}
 }
 
@@ -1378,13 +1383,13 @@ func (d *Directories) chanName(gtx C, ch core.ChannelHit, hover, req bool) D {
 			if !hover {
 				return D{}
 			}
-			return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, "View channel") })
+			return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, nsSearch.T("View channel")) })
 		}),
 		layout.Rigid(func(gtx C) D {
 			if !req {
 				return D{}
 			}
-			return layout.Inset{Left: 24}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, "Required") })
+			return layout.Inset{Left: 24}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, nsSearch.T("Required")) })
 		}),
 	)
 }
@@ -1404,11 +1409,11 @@ func (d *Directories) chanMeta(gtx C, ch core.ChannelHit) D {
 	}
 	switch {
 	case ch.IsArchived:
-		add(layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, "Archived") }))
+		add(layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Sec, nsSearch.T("Archived")) }))
 	case ch.IsMember:
 		add(layout.Rigid(func(gtx C) D { return d.icon(gtx, "check", 13, d.joinedColor()) }),
 			hgap(2),
-			layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.joinedColor(), "Joined") }))
+			layout.Rigid(func(gtx C) D { return d.label(gtx, 13, wBold, d.joinedColor(), nsSearch.T("Joined")) }))
 	}
 	// The client snapshot (My channels) has no member counts; a channel
 	// never really has 0 members, so 0 means unknown.
@@ -1551,6 +1556,10 @@ func dirSplitBtn(b *base, gtx C, main, caret *widget.Clickable, label string, me
 
 // dirMembers formats "1 member" / "1,234 members".
 func dirMembers(n int) string {
+	if i18n.Locale() != i18n.EnUS {
+		// the browsers' "{memberCount} {memberCount, plural, …}"
+		return i18n.FormatNumber(i18n.Locale(), float64(n)) + " " + i18n.StripTags(nsBrowsers.T("{memberCount, plural, =1 {member} other {members}}", "memberCount", n))
+	}
 	if n == 1 {
 		return "1 member"
 	}
@@ -1777,7 +1786,7 @@ func dirTabStripSel(b *base, gtx C, t *tabs, icons, selIcons, counts []string) D
 								}
 								return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return b.icon(gtx, ic, 16, fg) })
 							}),
-							layout.Rigid(func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.Labels[i]) }),
+							layout.Rigid(func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.label(i)) }),
 							layout.Rigid(func(gtx C) D {
 								if i >= len(counts) || counts[i] == "" {
 									return D{}
@@ -1834,7 +1843,7 @@ func dirSearchField(b *base, gtx C, s *search, st dirFieldStyle, clr *widget.Cli
 						if s.ed.Len() > 0 {
 							return D{}
 						}
-						return b.label(gtx, 15, wReg, b.p.Muted, s.ph)
+						return b.label(gtx, 15, wReg, b.p.Muted, s.placeholder())
 					}),
 					layout.Stacked(func(gtx C) D { return b.th.Editor(gtx, &s.ed, 15, b.p.Text, b.p.Mention) }),
 				)
@@ -1846,7 +1855,7 @@ func dirSearchField(b *base, gtx C, s *search, st dirFieldStyle, clr *widget.Cli
 				return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
 					return clr.Layout(gtx, func(gtx C) D {
 						pointerCursor(gtx)
-						return b.label(gtx, 13, wReg, b.p.Sec, "Clear")
+						return b.label(gtx, 13, wReg, b.p.Sec, nsSearch.T("Clear"))
 					})
 				})
 			}),
