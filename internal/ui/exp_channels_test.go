@@ -347,10 +347,10 @@ func TestBellMenuCustomizedTag(t *testing.T) {
 	e.settle(150 * time.Millisecond)
 	e.shot("channel-bell-customized")
 	e.a.dismissTop()
-	if err := e.a.Core().SetChannelNotifyPref(ctx, ch, "muted", "true"); err != nil {
+	if err := e.a.Core().Mute(ctx, ch, true); err != nil { // the menu's Mute (actToggleMute → core.Mute)
 		t.Fatal(err)
 	}
-	e.until("muted", 10*time.Second, func() bool { return e.a.Core().NotifyPrefs(ch).Muted })
+	e.until("muted", 10*time.Second, func() bool { c, ok := e.a.Core().Conv(ch); return ok && c.Muted })
 	e.settle(100 * time.Millisecond)
 	if _, tags := checked(); tags["everything"] != "" || tags["mentions_dms"] != "" {
 		t.Errorf("muted: %v", tags)

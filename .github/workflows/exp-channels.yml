@@ -8,6 +8,7 @@ name: exp-channels
 # to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run exp-channels.yml --ref <branch>)
     paths:
       - "internal/core/chperms.go"
       - "internal/core/mpdm_name.go"
