@@ -68,6 +68,7 @@ var (
 	nsCreateCh = i18n.NewChain("create_channel_modal", "channel_modal", "channel_invite")
 	// the Add emoji dialog (custom_emoji_list), Loading… from the files'
 	nsEmojiList = i18n.NewChain("custom_emoji_list", "files")
+	nsProfile   = i18n.NS("member_profile") // the profile's ⋮ menu (CpMO)
 )
 
 // In is it as a row of Slack's own text in the I18n namespace ns: the
