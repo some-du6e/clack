@@ -524,7 +524,7 @@ func newSRACRanker(h Host) *srACRanker {
 	on := func(v string) bool { return v == "on" || strings.HasPrefix(v, "treatment") }
 	r.opts = acrank.Options{Source: acrank.SourceTexty, Limit: 25, Frecency: c.FrecencyCache(),
 		Weights: c.AutocompleteModel(), Now: time.Now(),
-		Passthrough:          c.Experiment("autocomplete_flannel_fuzzy_match_passthrough") == "treatment",
+		Passthrough:          true, // nIFn: unconditional since build 274f7c7f1b69
 		DemotePassthrough:    on(c.Experiment("autocomplete_demote_flannel_passthrough_rltv_exact_match")),
 		BeyondWordBoundaries: on(c.Experiment("ml_fuzzy_match_beyond_word_boundaries_v2")),
 		DisplayRealNames:     s.Prefs.DisplayRealNames,
