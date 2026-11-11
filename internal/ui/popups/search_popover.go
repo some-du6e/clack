@@ -592,11 +592,11 @@ var PageInfo func(page string) (title, icon string)
 // srPageRow is a Recent places page row ("" title: Clack doesn't have it).
 func srPageRow(page string) (srRow, bool) {
 	if pl, ok := srPlaceOf("view:" + page); ok && pl.title != "" {
-		return srRow{kind: srRPlace, id: page, title: pl.title, icon: pl.icon, boxed: true}, true
+		return srRow{kind: srRPlace, id: page, title: nsPage.T(pl.title), icon: pl.icon, boxed: true}, true
 	}
 	if PageInfo != nil {
 		if t, ic := PageInfo(page); t != "" {
-			return srRow{kind: srRPlace, id: page, title: t, icon: ic, boxed: true}, true
+			return srRow{kind: srRPlace, id: page, title: nsPage.T(t), icon: ic, boxed: true}, true
 		}
 	}
 	return srRow{}, false
