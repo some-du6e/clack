@@ -373,9 +373,17 @@ func (c *Composer) layoutPaneBody(gtx layout.Context) layout.Dimensions {
 	if c.ts != "" {
 		m = gtx.Dp(16)
 	}
+	// the thread footer's agent controls row (ThreadAgentControlsRow: the
+	// app's working nugget) sits above the input, across the footer
+	nug := 0
+	if ThreadNugget != nil && c.ts != "" && c.edit == nil {
+		ng := gtx
+		ng.Constraints = layout.Constraints{Max: image.Pt(W, gtx.Constraints.Max.Y)}
+		nug = max(ThreadNugget(ng, c.h, c.ch, c.ts).Size.Y, 0)
+	}
 	cg := gtx
 	cg.Constraints = layout.Constraints{Max: image.Pt(max(W-2*m, 0), gtx.Constraints.Max.Y)}
-	t := op.Offset(image.Pt(m, 0)).Push(gtx.Ops)
+	t := op.Offset(image.Pt(m, nug)).Push(gtx.Ops)
 	var cb layout.Dimensions
 	if e, patched := kid(p, "BaseContextBarV2"); patched {
 		cb = slackc.LayoutElement(cg, e)
@@ -383,8 +391,8 @@ func (c *Composer) layoutPaneBody(gtx layout.Context) layout.Dimensions {
 		cb = slackc.Component(cg, "BaseContextBarV2", c, (*Composer).contextBarProps, (*Composer).layoutContextBar)
 	}
 	t.Pop()
-	c.top = max(cb.Size.Y, 0)
-	c.cs.SquareTop = c.top > 0
+	c.top = nug + max(cb.Size.Y, 0)
+	c.cs.SquareTop = cb.Size.Y > 0
 
 	rg := gtx
 	rg.Constraints.Max.Y = max(gtx.Constraints.Max.Y-c.top, 0)
@@ -414,6 +422,11 @@ func (c *Composer) contextBarProps() slackc.Props {
 // (the shell's code channel bar, ContextBarAgentChannelContent); it
 // returns zero dimensions where there is none.
 var ContextBar func(gtx layout.Context, h Host, ch, ts string) layout.Dimensions
+
+// ThreadNugget, when set, draws what a thread's footer shows above its
+// composer (the shell's app working nugget, AppThreadNugget), the full
+// footer wide and apart from the input; zero dimensions for nothing.
+var ThreadNugget func(gtx layout.Context, h Host, ch, ts string) layout.Dimensions
 
 func (c *Composer) layoutContextBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if c.edit != nil {

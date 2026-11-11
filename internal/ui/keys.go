@@ -101,6 +101,12 @@ func (a *App) defaultShortcuts() *shortcuts {
 		if a.dismissTop() {
 			return
 		}
+		if a.splitEscape() { // the split view has the focus (split.go)
+			return
+		}
+		if a.threadEsc() { // the thread pane's: mark it read, else close it (secondary.go)
+			return
+		}
 		// the Unreads page's Esc (UnreadsList onMarkReadKeyCommand, a
 		// global key command there)
 		if v, ok := a.views[a.router.Current()].(interface{ MarkActiveRead() bool }); ok && v.MarkActiveRead() {
@@ -141,6 +147,7 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 		}
 	}
 	globalKeys := slackc.WantsGlobal("keydown") || slackc.WantsGlobal("keyup")
+	a.secondary.keyFocus = a.threadPaneFocused(gtx) // for the thread pane's Escape
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {

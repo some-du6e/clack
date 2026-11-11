@@ -94,6 +94,9 @@ const (
 	Above
 	Right
 	Left
+	// BelowRight is a tooltip's "bottom-right": below, its right edge on
+	// the trigger's (Tooltip only; the thread pane's close button).
+	BelowRight
 )
 
 // place positions a box of size sz next to anchor inside a window of size

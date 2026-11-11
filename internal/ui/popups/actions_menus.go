@@ -144,9 +144,8 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 		// (C08E083LZ9A, 2026-11-08).
 		items = items[:2]
 	}
+	items = append(append(items, Sep()), addWorkflowItems(h, convID, dm, c.Kind == "private", c.Preview)...) // workflows.go
 	items = append(items,
-		Sep(),
-		MenuItem{Label: "Add a workflow", Do: actToast(h, "Workflows aren't supported in Clack yet")},
 		MenuItem{Label: "Edit settings", Do: func() {
 			if OpenChannelSettings != nil {
 				OpenChannelSettings(convID)
@@ -155,14 +154,7 @@ func newChannelMenu(h Host, anchor image.Point, convID string, alignRight bool) 
 			details()
 		}},
 		Sep(),
-		MenuItem{Label: "Open in split view", Icon: "panel-right", Do: func() {
-			// ui-shell's *ui.App exposes OpenSplit (right-hand pane).
-			if s, ok := h.(interface{ OpenSplit(route string) }); ok {
-				s.OpenSplit("c/" + convID)
-				return
-			}
-			h.Toast("Split view isn't supported yet")
-		}},
+		channelSplitItem(h, convID, c.Kind), // getTilesTemplate (split.go)
 		Sep(),
 	)
 	if dm { // Slack's channel menu has no mute row (that's the header bell)

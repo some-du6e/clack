@@ -41,8 +41,9 @@ func (c composerBox) SetOnFocusList(f func())                     { c.OnFocusLis
 func (c composerBox) Layout(gtx layout.Context) layout.Dimensions { return c.Composer.Layout(gtx) }
 
 func init() {
-	mkChannelView = func(a *App, ch string) View { return channelList{messages.NewChannelView(a, ch)} }
-	mkThreadView = func(a *App, ch, ts string) View { return threadList{messages.NewThreadView(a, ch, ts)} }
+	// each view container (the split view: split.go) lists with its own state
+	mkChannelView = func(a *App, ch string) View { return channelList{messages.NewChannelViewIn(a, ch, a.pane)} }
+	mkThreadView = func(a *App, ch, ts string) View { return threadList{messages.NewThreadViewIn(a, ch, ts, a.pane)} }
 	mkComposer = func(a *App, ch, ts string) View { return composerBox{composer.New(a, ch, ts)} }
 	mkEditComposer = func(a *App, m core.Message, onDone func()) composerView {
 		return composerBox{composer.NewEdit(a, m, onDone)}

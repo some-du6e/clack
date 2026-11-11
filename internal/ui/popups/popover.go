@@ -2,6 +2,7 @@ package popups
 
 import (
 	"image"
+	"image/color"
 	"strings"
 	"time"
 
@@ -164,6 +165,30 @@ const TipDelay = 450 * time.Millisecond
 // combo like "Mod+Shift+K" (internal/ui/shortcut), draws key chips. It
 // draws via op.Defer, above everything.
 func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, label, shortcut string) {
+	tooltipWith(gtx, th, st, hovered, sz, side, func(gtx layout.Context) layout.Dimensions {
+		return tipBox(gtx, th, label, shortcut, st.MaxWidth)
+	})
+}
+
+// TipLine is one line of a TooltipLines tooltip: a plain line (13px/700,
+// the tip's text colour) or a TooltipSubtitle (UZW8: fontWeight base,
+// colour inverse.secondary, --dt_color-content-inv-sec).
+type TipLine struct {
+	Text     string
+	Subtitle bool
+}
+
+// TooltipLines is Tooltip for content of several styled lines, the way
+// Slack's tooltips stack plain divs and TooltipSubtitles.
+func TooltipLines(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, lines []TipLine) {
+	tooltipWith(gtx, th, st, hovered, sz, side, func(gtx layout.Context) layout.Dimensions {
+		return tipLinesBox(gtx, th, lines, st.MaxWidth)
+	})
+}
+
+// tooltipWith shows the tooltip body box draws for a widget of size sz at
+// the current origin, after the hover delay.
+func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, box func(gtx layout.Context) layout.Dimensions) {
 	if !hovered {
 		st.hovered = false
 		return
@@ -180,9 +205,7 @@ func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz
 		gtx.Execute(op.InvalidateCmd{At: wait})
 		return
 	}
-	call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-		return tipBox(gtx, th, label, shortcut, st.MaxWidth)
-	})
+	call, d := record(gtx, box)
 	gap := dp(gtx, 8)
 	var p image.Point
 	switch side {
@@ -192,6 +215,8 @@ func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz
 		p = image.Pt(sz.X+gap, (sz.Y-d.Size.Y)/2)
 	case Left:
 		p = image.Pt(-gap-d.Size.X, (sz.Y-d.Size.Y)/2)
+	case BelowRight:
+		p = image.Pt(sz.X-d.Size.X, sz.Y+gap)
 	default:
 		p = image.Pt((sz.X-d.Size.X)/2, sz.Y+gap)
 	}
@@ -221,6 +246,47 @@ func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz
 	paint.FillShape(gtx.Ops, cl.Tooltip, clip.Outline{Path: path.End()}.Op())
 	macroAt(gtx, call, p)
 	op.Defer(gtx.Ops, m.Stop())
+}
+
+// tipLinesBox draws a TooltipLines body at the origin: the lines stacked
+// and centred, 13px with an 18px line, inside tipBox's padding.
+func tipLinesBox(gtx layout.Context, th *theme.Theme, lines []TipLine, maxWidth unit.Dp) layout.Dimensions {
+	cl := colorsOf(th)
+	padX, padY := dp(gtx, 12), dp(gtx, 8)
+	maxW := dp(gtx, 320)
+	if maxWidth > 0 {
+		maxW = gtx.Dp(maxWidth) - 2*padX
+	}
+	sub := cl.TooltipText // TooltipSubtitle: content-inv-sec, #cbcccf on the light theme's dark tip;
+	if !th.Dark {         // Clack's dark tips are light, so there it keeps the text colour
+		sub = color.NRGBA{R: 0xcb, G: 0xcc, B: 0xcf, A: 0xff}
+	}
+	type piece struct {
+		call op.CallOp
+		d    layout.Dimensions
+	}
+	var ps []piece
+	w, h := 0, 0
+	for _, l := range lines {
+		wt, col := theme.Bold, cl.TooltipText
+		if l.Subtitle {
+			wt, col = theme.Regular, sub
+		}
+		c, d := record(loose(gtx, image.Pt(maxW, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 13, 18, wt, col, l.Text, 0)
+		})
+		ps = append(ps, piece{c, d})
+		w = max(w, d.Size.X)
+		h += d.Size.Y
+	}
+	sz := image.Pt(w+2*padX, h+2*padY)
+	rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 8), cl.Tooltip)
+	y := padY
+	for _, p := range ps {
+		macroAt(gtx, p.call, image.Pt((sz.X-p.d.Size.X)/2, y))
+		y += p.d.Size.Y
+	}
+	return layout.Dimensions{Size: sz}
 }
 
 // tipBox draws the tooltip body at the origin.

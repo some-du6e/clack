@@ -246,6 +246,8 @@ func (c *Composer) init() {
 	if c.edit == nil { // the conversation's files, kept across composers
 		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
 		c.att.setOnChange(c.attChanged)
+		// the + menu's Workflow row (Slack has none when editing)
+		c.att.insertLink = func(text, url string) { c.ed.SetLink(text, url); c.Focus() }
 	} else {
 		c.att = newAttachments(c.h)
 	}
@@ -530,9 +532,13 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		st.ShowPlaceholder = false
 	case c.ts != "":
 		st.Mode = modeThread
-		// Slack's MessageInput: "Reply to thread…" only under the
-		// nested_secondary_view experiment, else "Reply…".
+		// Slack's MessageInput: "Reply to thread…" under the
+		// nested_secondary_view experiment (isNestedSecondaryViewEnabled,
+		// on for the account: docs/THREADS-AUDIT.md), else "Reply…".
 		st.Placeholder = i18n.T("threads", "Reply…")
+		if a := c.api.a; a != nil && a.Experiment("nested_secondary_view") == "on" {
+			st.Placeholder = i18n.T("threads", "Reply to thread…")
+		}
 	default:
 		st.Mode = modeChannel
 	}
@@ -542,7 +548,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		case "private":
 			st.Private = true
 		case "im", "mpim":
-			st.IsDM = true
+			st.IsDM, st.Group = true, cv.Kind == "mpim"
 		}
 		if st.Mode == modeChannel {
 			if st.IsDM {
@@ -554,11 +560,20 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	} else if st.Mode == modeChannel {
 		st.Placeholder = "Message"
 	}
+	// suppressBotTyping: a thread whose app status the footer's nugget shows
+	// (app_thread_nugget_fe) leaves the app out of the typing line
+	var quietBot string
+	if ca := c.h.Core(); ca != nil && c.ts != "" {
+		quietBot, _ = ca.SuppressBotTyping(c.ch, c.ts)
+	}
 	if uipref.Get().ShowTyping { // Messages & media > "Display information about who is currently typing"
 		st.TypingIDs, st.TypingNames = typingHub(c.h.Core()).typers(c.ch, c.ts, c.api.self().ID)
+		if quietBot != "" {
+			st.TypingIDs, st.TypingNames = dropTyper(st.TypingIDs, st.TypingNames, quietBot)
+		}
 	}
 	st.Typing = typingLine(st.TypingNames)
-	if uipref.Get().ShowTyping {
+	if uipref.Get().ShowTyping && quietBot == "" {
 		if name, status := typingHub(c.h.Core()).assistantLine(c.ch, c.ts, c.api.self().ID); status != "" {
 			st.Typing, st.TypingStatus, st.TypingAgent = name+" "+status, status, name // AiAppStatusIndicator
 		}
@@ -1384,6 +1399,10 @@ func (c *Composer) restoreDroppedFocus(gtx layout.Context) {
 // FocusTag is the key-focus tag of the composer's editor (tests check
 // that nothing takes focus from it).
 func (c *Composer) FocusTag() any { return c.ed }
+
+// PopupOpen reports whether the composer's own popup (autocomplete) is
+// up: Escape is the popup's then, not the thread pane's.
+func (c *Composer) PopupOpen() bool { return c.ac != nil && c.ac.Open() }
 
 // TypingLine is the typing indicator's text under the composer as last
 // laid out ("" none; tests).

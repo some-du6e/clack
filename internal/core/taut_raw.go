@@ -111,6 +111,14 @@ func (a *App) MemberCountCached(ch string) (n int, ok bool) {
 	return n, ok
 }
 
+// AppCountCached is how many apps core knows are in ch (edge users/counts
+// `apps`, Slack's membershipCounts app_count).
+func (a *App) AppCountCached(ch string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.memberA[ch]
+}
+
 // GuestCountCached is how many of MemberCountCached's people are guests
 // (edge users/counts `guests`, Slack's restricted_member_count).
 func (a *App) GuestCountCached(ch string) int {

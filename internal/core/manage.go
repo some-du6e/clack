@@ -304,6 +304,7 @@ func (a *App) Invite(ctx context.Context, ch string, users ...string) error {
 	a.mu.Lock()
 	delete(a.memberN, ch)
 	delete(a.memberG, ch)
+	delete(a.memberA, ch)
 	a.mu.Unlock()
 	return nil
 }
@@ -687,6 +688,7 @@ func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
 		Subscription struct {
 			Channel  string `json:"channel"`
 			ThreadTS string `json:"thread_ts"`
+			LastRead string `json:"last_read"`
 		} `json:"subscription"`
 	}
 	_ = json.Unmarshal(raw, &e)
@@ -694,10 +696,41 @@ func (a *App) onThreadSubscription(raw json.RawMessage, on bool) {
 	if ch == "" || ts == "" {
 		return
 	}
-	if m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) { m.Subscribed = on }); ok {
+	// threadSubscribed / threadUnsubscribed: {subscribed, lastRead}
+	if m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) {
+		m.Subscribed = on
+		if lr := e.Subscription.LastRead; lr != "" {
+			m.LastRead = lr
+		}
+	}); ok {
 		a.emitUpdate(ch, &m)
 	}
 	a.emit(Event{Type: "thread_subscription", Channel: ch, ThreadTS: ts, TS: ts, Name: map[bool]string{true: "follow", false: "unfollow"}[on], Raw: raw})
+}
+
+// onThreadMarked is the thread_marked event ({subscription: {channel,
+// thread_ts, last_read}}): another client (or this one) read the thread.
+func (a *App) onThreadMarked(raw json.RawMessage) {
+	var e struct {
+		Subscription struct {
+			Channel  string `json:"channel"`
+			ThreadTS string `json:"thread_ts"`
+			LastRead string `json:"last_read"`
+		} `json:"subscription"`
+	}
+	_ = json.Unmarshal(raw, &e)
+	a.setThreadLastRead(e.Subscription.Channel, e.Subscription.ThreadTS, e.Subscription.LastRead)
+}
+
+// setThreadLastRead records a thread's last read reply on its cached root
+// (Slack's thread subscription lastRead) and tells the views.
+func (a *App) setThreadLastRead(ch, threadTS, lastRead string) {
+	if ch == "" || threadTS == "" || lastRead == "" {
+		return
+	}
+	if m, ok := a.S.Mutate(ch, threadTS, func(m *slack.Message) { m.LastRead = lastRead }); ok {
+		a.emitUpdate(ch, &m)
+	}
 }
 
 func (a *App) onStarEvent(raw json.RawMessage, on bool) {

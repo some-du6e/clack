@@ -17,6 +17,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -39,7 +40,10 @@ type ThreadView struct {
 	top int // header (+ admin tools) height of the last frame
 
 	bellBtn, moreBtn, nameBtn widget.Clickable
+	backBtn                   widget.Clickable // FlexpaneBackButton (PaneBack)
 	bellTip, moreTip, nameTip popups.TipState
+	closeTip                  popups.TipState
+	banner                    threadBanner           // jump to unread (thread_banner.go)
 	nameRect                  image.Rectangle        // the subtitle, view coordinates (last frame)
 	nameSub                   HeaderSubtitle         // what it showed
 	resolving                 bool                   // the conversation is being looked up for the subtitle
@@ -60,11 +64,45 @@ func (v *ThreadView) ContentHeight() int {
 }
 
 // NewThreadView returns the thread pane for the thread rooted at ts.
-func NewThreadView(h Host, ch, ts string) *ThreadView {
-	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateFor(h, ch, ts)}
+func NewThreadView(h Host, ch, ts string) *ThreadView { return NewThreadViewIn(h, ch, ts, "") }
+
+// NewThreadViewIn is NewThreadView in view container pane ("split":
+// Slack's split view), with a list state of its own (stateIn).
+func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
+	v := &ThreadView{h: h, ch: ch, ts: ts, s: stateIn(h, ch, ts, pane)}
 	v.s.closeEdits()
+	v.Reopen()
 	v.s.hb.ensureLoaded(v.s.m)
 	return v
+}
+
+// Reopen is the pane showing the thread again (Slack mounts a new
+// ThreadsFlexpane): the "New" marker is decided afresh from the
+// subscription's lastRead, and the reading position is kept, as Slack
+// restores the scrollmark it saved on close (maybeSaveThreadScrollmarks),
+// except in a public channel the viewer isn't in, where it saves none
+// and the pane opens at its start position again.
+func (v *ThreadView) Reopen() {
+	v.s.thr = threadRead{}
+	v.s.snap.rev = 0 // rebuild the rows with the new marker
+	if app := v.h.Core(); app != nil {
+		if cv, ok := app.Conv(v.ch); ok && cv.Kind == "channel" && cv.Preview {
+			v.s.positioned = false
+		}
+	}
+}
+
+// Esc is the pane's escape handler (ThreadsFlexpane onEsc): with
+// something to mark (shouldMarkThreadAsRead) it marks the thread read,
+// drops the "New" marker and reports true; false lets the secondary
+// view's Escape close the pane.
+func (v *ThreadView) Esc() bool {
+	if !v.s.shouldMarkThreadRead() {
+		return false
+	}
+	v.s.markThreadRead(v.h)
+	v.h.Invalidate()
+	return true
 }
 
 // Channel and TS identify the thread.
@@ -142,6 +180,7 @@ func (v *ThreadView) pane(gtx layout.Context, size image.Point) layout.Dimension
 	g.Constraints = layout.Exact(image.Pt(size.X, max(0, size.Y-top)))
 	shown(&lastThread, v.s)
 	v.s.layoutList(g, v.h, v.Origin.Add(image.Pt(0, top)))
+	v.layoutBanner(g, g.Constraints.Max) // "N new replies" (thread_banner.go)
 	t.Pop()
 	return layout.Dimensions{Size: size}
 }
@@ -305,11 +344,21 @@ func (v *ThreadView) subscribed(m core.Message) bool {
 	return m.FollowingThread
 }
 
-// bellShown mirrors module 5mp4's null cases: the root is loaded, and the
-// subscribe action exists (ojBT returns null for a channel the viewer
-// isn't in unless they already follow the thread).
+// threadExperiment reports whether one of the thread pane's Slack
+// experiments is on for the account (core.App.Experiment; its defaults
+// are the account's, docs/THREADS-AUDIT.md).
+func (v *ThreadView) threadExperiment(name string) bool {
+	app := v.h.Core()
+	return app != nil && app.Experiment(name) == "on"
+}
+
+// bellShown is the flexpane header's eX (client-boot-shared XVla): the
+// bell only under thread_header_mute_button (off for the account: Follow
+// is in the ⋮ menu) once the root is loaded, then module 5mp4's null
+// cases (ojBT returns null for a channel the viewer isn't in unless they
+// already follow the thread).
 func (v *ThreadView) bellShown(m core.Message, ok bool) bool {
-	if !ok || v.h.Core() == nil {
+	if !ok || v.h.Core() == nil || !v.threadExperiment("thread_header_mute_button") {
 		return false
 	}
 	if cv, found := v.h.Core().Conv(v.ch); found && cv.Preview && !v.subscribed(m) {
@@ -345,18 +394,35 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		v.h.Toast(*msg)
 	}
 	px := dp(gtx, 16)
-	// .p-flexpane_header__primary: 18px/24px Black, gap 8 to the subtitle.
+	// .p-flexpane__title_container: 18px/24px Black, the subtitle 8px
+	// after it (margin 0 8px); p-flexpane_header--smaller
+	// (smaller_secondary_headers) makes the title 15px/22px Black and the
+	// controls 4px apart (gap 4 over --gap's 6).
+	smaller := v.threadExperiment("smaller_secondary_headers")
 	tsT := textStyle{size: 18, weight: theme.Black, col: c.Text, lineH: 24}
-	ty := (hh - dp(gtx, 24)) / 2
+	gap := dp(gtx, 6)
+	if smaller {
+		tsT.size, tsT.lineH, gap = 15, 22, dp(gtx, 4)
+	}
+	// FlexpaneBackButton while the view container has a back stack (the
+	// split view's view.prev): 28px, margin-right 6 plus the header's gap.
+	pb, back := v.h.(PaneBack)
+	back = back && pb.PaneBack()
+	if back {
+		px += dp(gtx, 28) + dp(gtx, 6) + gap
+		if v.backBtn.Clicked(gtx) {
+			pb.GoPaneBack()
+		}
+	}
+	ty := (hh - gtx.Sp(unit.Sp(tsT.lineH))) / 2
 	d := at(gtx, px, ty, func(gtx layout.Context) layout.Dimensions {
 		return lineBox(gtx, tsT, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, tsT, "Thread") })
 	})
-	// header controls, right to left 6px apart (p-flexpane_header__primary
-	// --gap): close, ⋮ (SecondaryHeaderMore), the bell
-	// (thread-mute-button), then plugin content in ThreadSearchButton.
-	// Slack's viewHeaderActionButton is 28×28, radius 8.
+	// header controls, right to left gap apart: close, ⋮
+	// (SecondaryHeaderMore), the bell (thread-mute-button), then plugin
+	// content in ThreadSearchButton. Slack's viewHeaderActionButton is
+	// 28×28, radius 8, the close 12px from the edge.
 	bs := dp(gtx, 28)
-	gap := dp(gtx, 6)
 	cx := w - dp(gtx, 12) - bs
 	root, rootOK := v.root()
 	sub := v.subscribed(root)
@@ -394,6 +460,24 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	if st.Hidden() {
 		return
 	}
+	// tooltip delays: the bell's 300, More actions' BaseTooltip default
+	// 150, Close 300 (the header has additional buttons)
+	v.bellTip.Delay, v.moreTip.Delay, v.closeTip.Delay = 300*time.Millisecond, 150*time.Millisecond, 300*time.Millisecond
+	if back { // no tooltip: Slack's FlexpaneBackButton only has its aria-label "Back"
+		at(gtx, dp(gtx, 16), (hh-bs)/2, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
+			return v.backBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if v.backBtn.Hovered() {
+					rrect(gtx.Ops, image.Rectangle{Max: image.Pt(bs, bs)}, dp(gtx, 8), st.Background(c.CloseHover))
+				}
+				is := dp(gtx, 20)
+				at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("caret-left-full")(gtx, unit.Dp(20), st.Color(c.Text3))
+				})
+				return layout.Dimensions{Size: image.Pt(bs, bs)}
+			})
+		})
+	}
 	if bell {
 		icon := "notifications-off"
 		if sub {
@@ -404,10 +488,15 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	v.headerButton(gtx, th, c, st, &v.moreBtn, &v.moreTip, image.Pt(mx, (hh-bs)/2), bs, "ellipsis-vertical-filled", "More actions")
 	at(gtx, cx, (hh-bs)/2, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(bs, bs))
+		var d layout.Dimensions
 		if st.Active() {
-			return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return v.closeButton(gtx, c, st, bs) })
+			d = st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return v.closeButton(gtx, c, st, bs) })
+		} else {
+			d = v.closeButton(gtx, c, st, bs)
 		}
-		return v.closeButton(gtx, c, st, bs)
+		// Flexpane's close: tip "Close", position bottom-right
+		popups.Tooltip(gtx, th, &v.closeTip, v.s.closeBtn.Hovered(), d.Size, popups.BelowRight, i18n.T("flexpane", "Close"), "")
+		return d
 	})
 }
 

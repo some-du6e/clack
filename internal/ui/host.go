@@ -29,6 +29,21 @@ func (a *App) PrimaryChannel() string {
 	return ""
 }
 
+// UserAttention is messages.AttentionHost: Slack's
+// isUserAttentionOnThread (the window has the focus and no overlay is
+// open) gates marking a thread read.
+func (a *App) UserAttention() bool {
+	if !a.focused {
+		return false
+	}
+	for _, o := range a.overlays {
+		if !o.Dismissed() {
+			return false
+		}
+	}
+	return true
+}
+
 // Images returns the shared image cache.
 func (a *App) Images() *imgcache.Cache { return a.images }
 
@@ -36,6 +51,12 @@ func (a *App) Images() *imgcache.Cache { return a.images }
 func (a *App) Navigate(route string) {
 	r := Route(route)
 	if r == "" {
+		return
+	}
+	// a conversation opened from inside the split view stays there, as one
+	// opened with Slack's split modifier click goes there (split.go)
+	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
+		a.OpenSplit(route)
 		return
 	}
 	if r.Page() == "search" {

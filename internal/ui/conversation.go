@@ -67,6 +67,7 @@ func (a *App) readRootPointer(gtx layout.Context) {
 				composer.NotePress() // a click may move the focus (editor_focus.go)
 			}
 			a.navButtons(pe)
+			a.splitPointer(pe) // click modifiers, the split view's focus (split.go)
 			a.globalPointer(gtx, pe)
 		}
 	}
@@ -376,6 +377,14 @@ func (a *App) refreshVisible() {
 		}
 		if r, ok := c.list.(refresher); ok {
 			r.Refresh()
+		}
+	}
+	// the split view's (split.go)
+	if top := a.splitTop(); top != "" && a.pane == "" {
+		if c := a.split.pane.convos[top.Channel()+"/"+top.Thread()]; c != nil {
+			if r, ok := c.list.(refresher); ok {
+				r.Refresh()
+			}
 		}
 	}
 }

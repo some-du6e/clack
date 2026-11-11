@@ -151,6 +151,10 @@ type attachments struct {
 	picking atomic.Bool
 	pasting atomic.Bool
 	browser *attBrowser // UI goroutine only
+
+	// insertLink puts text linked to url at the owning composer's caret
+	// (the + menu's Workflow row, WorkflowItem)
+	insertLink func(text, url string)
 }
 
 func newAttachments(h Host) *attachments {
@@ -618,13 +622,19 @@ func attOneDecimal(f float64) string {
 // shortcuts and "Browse all shortcuts".
 var ShortcutItems func(h popups.Host, ch string, anchor image.Rectangle) []popups.MenuItem
 
+// WorkflowItem, when set (internal/ui/workflows_wire.go), is the + menu's
+// "Workflow" row (Slack's attach-workflow option): the workflow picker,
+// whose Insert puts the workflow's name, linked, at the caret (insert).
+var WorkflowItem func(h popups.Host, ch string, insert func(text, url string)) *popups.MenuItem
+
 // plusMenu is what the composer hands the + menu.
 type plusMenu struct {
 	ch      string
 	snippet func() // Text snippet: the snippet dialog
 }
 
-// plusMenuItems is useComposerIAFormatter's rows that Clack draws.
+// plusMenuItems is useComposerIAFormatter's rows that Clack draws, in
+// Slack's order: Text snippet, Workflow, Upload from your computer.
 func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
 	// Slack's own labels: "Ctrl+Shift+Enter" / "⌘⇧Enter" and "Ctrl+O" /
 	// "⌘O" (shortcut.Format puts macOS's ⇧ before ⌘)
@@ -632,6 +642,11 @@ func (a *attachments) plusMenuItems(pm plusMenu) []popups.MenuItem {
 	var items []popups.MenuItem
 	if pm.snippet != nil {
 		items = append(items, popups.MenuItem{Label: i18n.T("menu_file", "Text snippet"), Icon: "text-snippet", Hint: snippetKey, Do: pm.snippet})
+	}
+	if WorkflowItem != nil && a.insertLink != nil {
+		if it := WorkflowItem(a.h, pm.ch, a.insertLink); it != nil {
+			items = append(items, *it)
+		}
 	}
 	return append(items, popups.MenuItem{Label: i18n.T("menu_file", "Upload from your computer"), Icon: "laptop", Hint: uploadKey, Do: a.Pick})
 }

@@ -451,3 +451,13 @@ func (v *codeBlockKitView) Layout(gtx layout.Context) layout.Dimensions {
 		})
 	})
 }
+
+// codeDetailsLabel is the pane's view label (core.CodeChannelDetailsLabel:
+// "Code channel details" under session_channel_views and
+// code_channels_naming), which Slack's breadcrumbs fall back to.
+func (a *App) codeDetailsLabel() string {
+	if a.data == nil || a.data.core == nil {
+		return "Session channel details"
+	}
+	return a.data.core.CodeChannelDetailsLabel()
+}
