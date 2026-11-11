@@ -1,76 +1,108 @@
 package ui
 
 import (
+	"errors"
 	"image"
-	"image/color"
 	"io"
-	"math"
+	"log"
+	"runtime"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
-	"gioui.org/f32"
 	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
+	"gioui.org/io/transfer"
 	"gioui.org/layout"
-	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
-	"gioui.org/text"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// loginScreen is the native sign-in card shown when credentials are missing.
+// loginScreen is the sign-in card shown while Clack has no session
+// (login_card.go draws it).
 //
-// The main path is desktop-style sign-in: the user signs in in their own
-// browser, and the slack:// link Slack's page hands "the Slack app" is
-// pasted here (or the browser opens Clack with it; App.SignInWithLink).
+// The main path is desktop-style sign-in, done the way Slack desktop does
+// it. "Open Slack sign-in" opens Slack's sign-in page in the user's
+// browser and the card waits. Signing in there ends with Slack's page
+// handing "the Slack app" a one-time slack:// link, which reaches Clack in
+// one of three ways: the OS opens Clack with it (App.SignInWithLink), the
+// user copies it and Clack takes it from the clipboard when its window
+// comes to the front (loginClipboard), or it is pasted into the field.
 // slack.LoginMagic trades it for a session of Clack's own.
 //
 // Advanced is the older path: paste the token and cookie of the browser's
-// own session; slack.SignIn only checks them with auth.test (no page loads,
-// no sign-out), but Clack then shares the browser's session.
+// own session. slack.SignIn only checks them with auth.test (no page
+// loads, no sign-out), but Clack then shares the browser's session.
 type loginScreen struct {
 	link       widget.Editor
-	linkSubmit widget.Clickable
-	openSignIn widget.Clickable
-	advanced   bool // the token-paste form
-	advToggle  widget.Clickable
+	linkSubmit widget.Clickable // the field's ↵ button
+	openSignIn widget.Clickable // the primary action
+	reopen     widget.Clickable // waiting: open the page again
+	troubleBtn widget.Clickable // "Having trouble?"
+	advToggle  widget.Clickable // "Advanced"
+	advBack    widget.Clickable // Advanced's back button
+	copyPage   widget.Clickable // Having trouble? > Copy page link
+	pageCopied bool
 
 	workspace widget.Editor
 	token     widget.Editor
 	orgToken  widget.Editor
 	cookie    widget.Editor
 	submit    widget.Clickable
-	copy      widget.Clickable
+	copy      widget.Clickable // the console snippet
 	copied    bool
-	busy      bool
-	err       string
-	focused   bool
+
+	advanced bool // the token form
+	trouble  bool // "Having trouble?" is open
+	waiting  bool // the sign-in page was opened: waiting for the link
+	sso      bool // waiting for single sign-on to finish in the browser
+	busy     bool
+	busyLink bool // signing in with a link (not the token form)
+	err      string
+	focused  bool
+
+	clipAsk bool // look at the clipboard at the next frame (the window came to the front)
+	clipTag int
+	linkLen int // the link field's length after the last frame
 
 	card image.Rectangle // where the card was last drawn (tests)
 
-	// motion (motion.go): the card comes in after the introduction,
-	// shakes once at a new error, fields ring when focused, buttons
-	// press in
+	// motion (motion.go): the card comes in after the introduction, its
+	// parts staggered; the title and the line under it cross-fade between
+	// states; Having trouble? and Advanced open on springs; the card
+	// shakes once at a new error; fields ring when focused; buttons press
+	// in; the badge pulses while the card waits
 	now      time.Time // this frame's
 	mc       *motionClock
 	reduced  bool
-	shownErr string             // the error the card last showed
-	errAt    time.Time          // when it appeared (zero: it was there from the start)
-	busyAt   time.Time          // when "Signing in…" started
-	drawn    bool               // the card has been on screen
-	rings    map[any]*springVal // focus rings, by editor or button
+	shownErr string    // the error the card last showed
+	errAt    time.Time // when it appeared (zero: it was there from the start)
+	busyAt   time.Time // when "Signing in…" started
+	waitAt   time.Time // when the waiting started (zero: at the next frame)
+	drawn    bool      // the card has been on screen
+	rings    map[any]*springVal
 	presses  map[*widget.Clickable]*pressAnim
+	advV     springVal // 0 the link view … 1 Advanced
+	troubleV springVal // Having trouble? 0 closed … 1 open
+	errV     springVal // the badge's rose while an error shows
+	sendV    springVal // the field's ↵ button popping in (springPop: it overshoots)
+	waitV    springVal // Open Slack sign-in giving way to "Open the page again"
+	dimV     springVal // the controls dimming while Clack signs in
+	keyV     springVal // the badge's globe turning into a key while it does
+	subH     springVal // the height of the line under the title
+	title    loginFade
+	sub      loginFade
+
+	rec *[]string // tests: every string drawn this frame
 }
 
 // desktopSignInURL is the page Slack desktop opens in the browser for
-// "Sign in to Another Workspace" (main.bundle.cjs @1033551 in
-// docs/DESKTOP-SIGNIN.md). Signing in there ends with Slack offering to open
-// the Slack app through a slack:// link, the link Clack wants. Clack only
-// opens it in the user's browser, on a click; it never loads it itself.
+// "Sign in to Another Workspace" (main.bundle.cjs @1033352, also in
+// docs/DESKTOP-SIGNIN.md). Signing in there ends with Slack offering to
+// open the Slack app through a slack:// link, the link Clack wants. Clack
+// only opens it in the user's browser, on a click; it never loads it.
 var desktopSignInURL = "https://slack.com/ssb/add?s=1&v=" + slack.SlackDesktopVersion
 
 // signInSnippet runs in the DevTools console of the user's own signed-in Slack
@@ -78,6 +110,16 @@ var desktopSignInURL = "https://slack.com/ssb/add?s=1&v=" + slack.SlackDesktopVe
 // and org tokens, URLs); SignIn reads that JSON from the Token field. It sends
 // nothing anywhere. No user agent: Clack sends only its own (slack.UserAgent).
 const signInSnippet = `copy(JSON.stringify({teams: JSON.parse(localStorage.localConfig_v2).teams}))`
+
+// loginOpenURL opens a page in the user's browser (tests record it).
+var loginOpenURL = openURL
+
+// loginOS picks the link-handler tip under Having trouble? (tests set it).
+var loginOS = runtime.GOOS
+
+// maxClipLink is the longest clipboard text read as a sign-in link (a
+// login-v2 link for every workspace of an org is far shorter).
+const maxClipLink = 16 << 10
 
 func newLoginScreen() *loginScreen {
 	l := &loginScreen{}
@@ -95,45 +137,61 @@ func newLoginScreen() *loginScreen {
 	return l
 }
 
-// layoutLogin draws the sign-in card over the welcome backdrop
-// (layoutWelcome). enter is when the introduction handed over to it (zero:
-// it is simply there); mc collects whether anything on it still moves.
-func (a *App) layoutLogin(gtx layout.Context, enter time.Time, mc *motionClock) {
+// updateLogin reads the card's buttons, fields and keys and moves its
+// state along. It runs before anything on the card is drawn: a Clickable
+// drops the clicks nobody asked about once it is laid out.
+func (a *App) updateLogin(gtx layout.Context) {
 	l := a.login
-	sz := gtx.Constraints.Max
-	th := a.th
-	lc := theme.LightPalette // the card is always light, like Slack's sign-in page
-	l.now, l.mc, l.reduced = mc.now, mc, a.reduceMotion()
 	if !l.focused {
+		var tag any = &l.link
 		if l.advanced {
-			gtx.Execute(key.FocusCmd{Tag: &l.token})
-		} else {
-			gtx.Execute(key.FocusCmd{Tag: &l.link})
+			tag = &l.token
 		}
+		gtx.Execute(key.FocusCmd{Tag: tag})
 		l.focused = true
 	}
-	if l.advToggle.Clicked(gtx) {
-		l.advanced, l.focused, l.err = !l.advanced, false, ""
+	open := l.openSignIn.Clicked(gtx)
+	if l.reopen.Clicked(gtx) {
+		open = true
 	}
-	if l.openSignIn.Clicked(gtx) {
-		openURL(desktopSignInURL)
+	if l.troubleBtn.Clicked(gtx) && !l.busy {
+		l.trouble = !l.trouble
 	}
-	submit := l.submit.Clicked(gtx)
-	linkSubmit := l.linkSubmit.Clicked(gtx)
+	if (l.advToggle.Clicked(gtx) || l.advBack.Clicked(gtx)) && !l.busy {
+		l.advanced, l.focused, l.err, l.trouble = !l.advanced, false, "", false
+	}
+	if l.copyPage.Clicked(gtx) {
+		loginWriteClipboard(gtx, desktopSignInURL)
+		l.pageCopied = true
+	}
 	if l.copy.Clicked(gtx) {
 		// Written here, not with a.copyText: frame returns before keys.process
 		// (which flushes a.clipboard) while the sign-in screen is up.
-		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(signInSnippet))})
+		loginWriteClipboard(gtx, signInSnippet)
 		l.copied = true
 	}
+	submit := l.submit.Clicked(gtx)
+	linkSubmit := l.linkSubmit.Clicked(gtx)
 	for {
 		e, ok := l.link.Update(gtx)
 		if !ok {
 			break
 		}
 		if _, ok := e.(widget.SubmitEvent); ok {
+			if strings.TrimSpace(l.link.Text()) == "" {
+				// Enter with nothing pasted is the primary action (its ↵)
+				open = open || !l.waiting
+			} else {
+				linkSubmit = true
+			}
+		}
+	}
+	// a whole link pasted into the empty field signs in right away
+	if n := l.link.Len(); n != l.linkLen {
+		if l.linkLen == 0 && slack.IsMagicLink(l.link.Text()) {
 			linkSubmit = true
 		}
+		l.linkLen = n
 	}
 	for _, ed := range []*widget.Editor{&l.workspace, &l.token, &l.orgToken, &l.cookie} {
 		for {
@@ -146,16 +204,40 @@ func (a *App) layoutLogin(gtx layout.Context, enter time.Time, mc *motionClock) 
 			}
 		}
 	}
-	if linkSubmit && !l.advanced && !l.busy {
-		if link := strings.TrimSpace(l.link.Text()); link == "" {
-			l.err = "Paste the slack:// link from your browser first."
-		} else if !slack.IsMagicLink(link) {
-			l.err = slack.ErrNotMagicLink.Error()
+	esc := false
+	for {
+		e, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		if ke, ok := e.(key.Event); ok && ke.State == key.Press {
+			esc = true
+		}
+	}
+	switch {
+	case l.busy:
+	case esc:
+		// Esc backs out one step: the tips, Advanced, the waiting
+		switch {
+		case l.trouble:
+			l.trouble = false
+		case l.advanced:
+			l.advanced, l.focused, l.err = false, false, ""
+		case l.waiting:
+			l.waiting, l.sso = false, false
+		}
+	case open && !l.advanced:
+		// Slack desktop's "Sign in to Another Workspace": the page opens in
+		// the browser (shell.openExternal), and the link comes back later
+		loginOpenURL(desktopSignInURL)
+		l.waiting, l.sso, l.waitAt, l.err = true, false, l.now, ""
+	case linkSubmit && !l.advanced:
+		if link := strings.TrimSpace(l.link.Text()); !slack.IsMagicLink(link) {
+			l.err = signInErrorText(slack.ErrNotMagicLink)
 		} else {
 			a.startLogin(slack.SignInInput{Link: link})
 		}
-	}
-	if submit && l.advanced && !l.busy {
+	case submit && l.advanced:
 		in := slack.SignInInput{
 			Workspace: strings.TrimSpace(l.workspace.Text()),
 			Token:     strings.TrimSpace(l.token.Text()),
@@ -176,155 +258,71 @@ func (a *App) layoutLogin(gtx layout.Context, enter time.Time, mc *motionClock) 
 			l.errAt = l.now
 		}
 	}
-	l.drawn = true
 	if l.busy && l.busyAt.IsZero() {
 		l.busyAt = l.now
 	} else if !l.busy {
 		l.busyAt = time.Time{}
 	}
-
-	// Two columns so everything fits the default 900px-tall window: how to
-	// get the values on the left, the fields on the right. The contents are
-	// recorded first, so the card can be sized to them before it is painted.
-	pad, gap := gtx.Dp(36), gtx.Dp(36)
-	w := min(gtx.Dp(900), sz.X-gtx.Dp(16))
-	colW := (w - 2*pad - gap) / 2
-	rec := op.Record(gtx.Ops)
-	x, y := pad, pad
-	at(gtx, image.Pt(x, y), image.Pt(w-2*pad, gtx.Dp(44)), func(gtx layout.Context) layout.Dimensions {
-		return th.Label(gtx, 30, theme.Black, lc.Fg, "Sign in to Slack")
-	})
-	y += gtx.Dp(58)
-
-	var ly, fy int
-	if l.advanced {
-		ly, fy = a.layoutLoginPaste(gtx, x, y, colW, gap)
-	} else {
-		ly, fy = a.layoutLoginLink(gtx, x, y, colW, gap)
+	if l.waiting && l.waitAt.IsZero() {
+		l.waitAt = l.now
 	}
-	fx := x + colW + gap
-	if l.err != "" {
-		fy += gtx.Dp(10)
-		ea := float32(clamp01(l.mc.spring(springSmooth, l.errAt)))
-		ed := 0
-		if !l.reduced {
-			ed = int(math.Round(float64(gtx.Dp(6)) * float64(1-ea)))
-		}
-		fy += at(gtx, image.Pt(fx, fy-ed), image.Pt(colW, gtx.Dp(80)), func(gtx layout.Context) layout.Dimensions {
-			return th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: alphaMul(lc.Danger, ea), MaxLines: 4}, l.err)
-		}).Size.Y
-	}
-	// Switch between the two ways in.
-	fy += gtx.Dp(18)
-	tog := "Advanced: paste a token instead"
-	if l.advanced {
-		tog = "\u2190 Sign in with a Slack link instead"
-	}
-	tw, tth := th.Measure(gtx, 14, theme.Bold, tog), gtx.Dp(22)
-	atExact(gtx, image.Pt(fx, fy), image.Pt(tw, tth), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, &l.advToggle, nil, func(gtx layout.Context) layout.Dimensions {
-			return th.Label(gtx, 14, theme.Bold, loginAccent, tog)
-		})
-	})
-	fy += tth
-	content := rec.Stop()
-
-	h := max(ly, fy) + pad
-	left, top := (sz.X-w)/2, max(gtx.Dp(8), (sz.Y-h)/2)
-	r := image.Rect(left, top, left+w, top+h)
-	l.card = r
-	// the card's motion: in from below after the introduction, a shake at
-	// a new error (reduced motion: a fade, no shake)
-	alpha, dx, dy, s := float32(1), float32(0), float32(0), float32(1)
-	if !enter.IsZero() {
-		start := enter.Add(150 * time.Millisecond)
-		alpha = float32(clamp01(l.mc.spring(springSnappy, start)))
-		if !l.reduced {
-			e := float32(l.mc.spring(springBouncy, start))
-			dy = float32(gtx.Dp(44)) * (1 - e)
-			s = 0.97 + 0.03*e
-		}
-	}
-	if !l.reduced && l.err != "" && !l.errAt.IsZero() {
-		if t := l.now.Sub(l.errAt).Seconds(); t >= 0 && t < springShake.settle() {
-			dx = float32(gtx.Dp(9)) * float32(springShake.kick(t))
-			l.mc.moving = true
-		}
-	}
-	c := f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
-	tr := op.Affine(f32.Affine2D{}.Scale(c, f32.Pt(s, s)).Offset(f32.Pt(dx, dy))).Push(gtx.Ops)
-	defer tr.Pop()
-	if alpha < 0.997 {
-		// drawn even while invisible: its editors keep their handlers (and
-		// the link field its focus) from the first frame
-		defer paint.PushOpacity(gtx.Ops, alpha).Pop()
-	}
-	// on the dark backdrop: a deep, soft shadow below the card (filled under
-	// it too, so it has no hard edge)
-	sh, shc := r.Add(image.Pt(0, gtx.Dp(10))), theme.WithAlpha(color.NRGBA{}, 0x5c)
-	theme.RRect(gtx, sh, gtx.Dp(16), shc)
-	theme.Shadow(gtx, sh, gtx.Dp(16), gtx.Dp(36), shc)
-	theme.RRect(gtx, r, gtx.Dp(16), lc.Bg)
-	off := op.Offset(r.Min).Push(gtx.Ops)
-	content.Add(gtx.Ops)
-	off.Pop()
 }
 
-// ring is the focus ring of tag (an editor or a button), on a snappy
-// spring.
-func (l *loginScreen) ring(tag any, on bool) float32 {
-	if l.rings == nil {
-		l.rings = map[any]*springVal{}
-	}
-	sv := l.rings[tag]
-	if sv == nil {
-		sv = &springVal{s: springSnappy}
-		l.rings[tag] = sv
-	}
-	t := 0.0
-	if on {
-		t = 1
-	}
-	v, moving := sv.get(l.now, t)
-	if moving && l.mc != nil {
-		l.mc.moving = true
-	}
-	return float32(clamp01(v))
+// loginWriteClipboard puts s on the clipboard.
+func loginWriteClipboard(gtx layout.Context, s string) {
+	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(s))})
 }
 
-// press is c's hover and press, on springs.
-func (l *loginScreen) press(c *widget.Clickable) (hover, press float32) {
-	if l.presses == nil {
-		l.presses = map[*widget.Clickable]*pressAnim{}
+// loginWindowFocused is Slack desktop's magicLoginOnFocusEpic
+// (main.bundle.cjs @954278): when its window comes to the front, Slack
+// desktop looks at the clipboard for a sign-in link. Clack does it on the
+// sign-in screen only (a link never replaces a live session, see
+// SignInWithLink).
+func (a *App) loginWindowFocused() {
+	if l := a.login; l != nil && !l.busy {
+		l.clipAsk = true
+		a.Invalidate()
 	}
-	pa := l.presses[c]
-	if pa == nil {
-		pa = &pressAnim{press: springVal{s: springSnappy}, hover: springVal{s: springSnappy}}
-		l.presses[c] = pa
-	}
-	ht, pt := 0.0, 0.0
-	if c.Hovered() {
-		ht = 1
-	}
-	if c.Pressed() {
-		pt = 1
-	}
-	h, m1 := pa.hover.get(l.now, ht)
-	p, m2 := pa.press.get(l.now, pt)
-	if (m1 || m2) && l.mc != nil {
-		l.mc.moving = true
-	}
-	return float32(clamp01(h)), float32(clamp01(p))
 }
 
-// focusRing is the keyboard focus ring around r (Slack's: the link blue
-// at 30%, 3–4px outside the control).
-func focusRing(gtx layout.Context, r image.Rectangle, rad int, v float32) {
-	if v <= 0.01 {
+// loginClipboard asks for the clipboard once the window has come to the
+// front and signs in with a sign-in link it finds there. As in Slack
+// desktop (c4/c7, c8 @935978), only clipboard text that is a whole
+// magic-login or login-v2 link counts, and the clipboard is cleared once
+// the link is taken: it is a one-time secret. Anything else is left on
+// the clipboard, and nothing read is kept. It runs every frame while the
+// sign-in screen is up, the introduction included.
+func (a *App) loginClipboard(gtx layout.Context) {
+	l := a.login
+	if l == nil {
 		return
 	}
-	g := int(math.Round(float64(gtx.Dp(4)) * float64(v)))
-	theme.RRect(gtx, r.Inset(-g), rad+g, theme.WithAlpha(loginRing, uint8(0x48*v)))
+	for {
+		e, ok := gtx.Event(transfer.TargetFilter{Target: &l.clipTag, Type: "application/text"})
+		if !ok {
+			break
+		}
+		de, ok := e.(transfer.DataEvent)
+		if !ok {
+			continue
+		}
+		rc := de.Open()
+		b, err := io.ReadAll(io.LimitReader(rc, maxClipLink+1))
+		rc.Close()
+		if err != nil || len(b) > maxClipLink || l.busy {
+			continue
+		}
+		link := strings.TrimSpace(string(b))
+		if !slack.IsMagicLink(link) {
+			continue
+		}
+		loginWriteClipboard(gtx, "")
+		a.signInWithLinkNow(link)
+	}
+	if l.clipAsk {
+		l.clipAsk = false
+		gtx.Execute(clipboard.ReadCmd{Tag: &l.clipTag})
+	}
 }
 
 // startLogin runs the sign-in off the UI goroutine and shows its outcome on
@@ -334,13 +332,25 @@ func (a *App) startLogin(in slack.SignInInput) {
 	if l == nil || l.busy || a.opts.Login == nil {
 		return
 	}
-	l.busy, l.err = true, ""
+	l.busy, l.busyLink, l.err = true, in.Link != "", ""
 	go func() {
 		err := a.opts.Login(in)
 		a.Post(func() {
 			l.busy = false
 			if err != nil {
-				l.err = err.Error()
+				log.Printf("sign-in: %v", err)
+				var re *slack.MagicRedirectError
+				if errors.As(err, &re) && re.URL != "" && in.Link != "" {
+					// single sign-on: like Slack desktop, open the
+					// workspace's auth_redir (an https Slack page) in the
+					// browser and wait for the link that comes after it
+					// (MAGIC_LOGIN_REDIRECT, main.bundle.cjs @952867)
+					loginOpenURL(re.URL)
+					l.waiting, l.sso, l.waitAt = true, true, time.Time{}
+					return
+				}
+				l.waiting, l.sso = false, false
+				l.err = signInErrorText(err)
 				return
 			}
 			for _, ed := range []*widget.Editor{&l.link, &l.token, &l.orgToken, &l.cookie} {
@@ -367,255 +377,48 @@ func (a *App) startLogin(in slack.SignInInput) {
 // first (or pastes the link on the sign-in screen).
 func (a *App) SignInWithLink(link string) {
 	a.Post(func() {
-		l := a.login
-		if l == nil {
+		if a.login == nil {
 			a.Toast("Clack got a Slack sign-in link, but you're already signed in. To use it, sign out, then open or paste the link again.")
 			return
 		}
-		if l.busy {
-			return
-		}
-		l.advanced, l.focused = false, false
-		l.link.SetText(link)
-		a.introToSignIn() // the introduction steps aside for the card
-		a.startLogin(slack.SignInInput{Link: link})
+		a.signInWithLinkNow(link)
 		a.Invalidate()
 	})
 }
 
-// loginPara draws wrapped text at (x, y) and returns its height.
-func (a *App) loginPara(gtx layout.Context, x, y, w int, st theme.TextStyle, txt string) int {
-	return at(gtx, image.Pt(x, y), image.Pt(w, gtx.Dp(400)), func(gtx layout.Context) layout.Dimensions {
-		return a.th.Layout(gtx, st, txt)
-	}).Size.Y
-}
-
-// loginBox draws text in a tinted, bordered box and returns its height.
-func (a *App) loginBox(gtx layout.Context, x, y, w int, bg, border color.NRGBA, st theme.TextStyle, txt string) int {
-	ip := gtx.Dp(12)
-	m := op.Record(gtx.Ops)
-	th := a.loginPara(gtx, x+ip, y+ip, w-2*ip, st, txt)
-	call := m.Stop()
-	r := image.Rect(x, y, x+w, y+th+2*ip)
-	theme.RRect(gtx, r, gtx.Dp(6), bg)
-	theme.Border(gtx, r, gtx.Dp(6), gtx.Dp(1), border)
-	call.Add(gtx.Ops)
-	return r.Dy()
-}
-
-// loginField draws a labelled single-line field and returns its height.
-// Focused, it rings in Slack's blue (the ring grows in on a spring).
-func (a *App) loginField(gtx layout.Context, x, y, w int, label string, ed *widget.Editor, hint string) int {
-	th, lc := a.th, theme.LightPalette
-	at(gtx, image.Pt(x, y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-		return th.Label(gtx, 15, theme.Bold, lc.Fg, label)
-	})
-	y += gtx.Dp(26)
-	fr := image.Rect(x, y, x+w, y+gtx.Dp(44))
-	v := a.login.ring(ed, gtx.Focused(ed))
-	focusRing(gtx, fr, gtx.Dp(10), v)
-	theme.RRect(gtx, fr, gtx.Dp(10), lc.Bg)
-	bc := theme.Mix(lc.BorderStrong, loginAccent, v)
-	theme.Border(gtx, fr, gtx.Dp(10), gtx.Dp(1), bc)
-	at(gtx, image.Pt(x+gtx.Dp(12), y), image.Pt(w-gtx.Dp(24), gtx.Dp(44)), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, gtx.Dp(44), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			if ed.Len() == 0 {
-				th.Label(gtx, 15, theme.Regular, lc.FgSubtle, hint)
-			}
-			return th.Editor(gtx, ed, 15, lc.Fg, lc.Selection)
-		})
-	})
-	return gtx.Dp(26 + 56)
-}
-
-// loginButton draws the card's primary button and returns its height. It
-// darkens on hover and presses in on a spring; while signing in, a
-// spinner turns beside its label.
-func (a *App) loginButton(gtx layout.Context, x, y, w int, c *widget.Clickable, txt string) int {
-	th, lc, l := a.th, theme.LightPalette, a.login
-	br := image.Rect(x, y, x+w, y+gtx.Dp(46))
-	hov, prs := l.press(c)
-	focusRing(gtx, br, gtx.Dp(10), l.ring(c, gtx.Focused(c)))
-	sc := 1 - 0.03*prs
-	ctr := f32.Pt(float32(br.Min.X+br.Max.X)/2, float32(br.Min.Y+br.Max.Y)/2)
-	tr := op.Affine(f32.Affine2D{}.Scale(ctr, f32.Pt(sc, sc))).Push(gtx.Ops)
-	atExact(gtx, br.Min, br.Size(), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, _ bool) {
-			bg := theme.Mix(loginAccent, loginAccentDark, hov)
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(10), bg)
-		}, func(gtx layout.Context) layout.Dimensions {
-			tw := th.Measure(gtx, 18, theme.Bold, txt)
-			sw := 0
-			if l.busy {
-				sw = gtx.Dp(26)
-			}
-			lx := (br.Dx() - tw - sw) / 2
-			if l.busy {
-				l.spinner(gtx, image.Pt(lx+gtx.Dp(9), br.Dy()/2), gtx.Dp(16), lc.SendText)
-			}
-			at(gtx, image.Pt(lx+sw, 0), image.Pt(tw+2, br.Dy()), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, br.Dy(), func(gtx layout.Context) layout.Dimensions {
-					return th.Label(gtx, 18, theme.Bold, lc.SendText, txt)
-				})
-			})
-			return layout.Dimensions{Size: br.Size()}
-		})
-	})
-	tr.Pop()
-	return br.Dy()
-}
-
-// spinner is a turning arc centred at c, d across (it keeps the frames
-// coming only while it shows).
-func (l *loginScreen) spinner(gtx layout.Context, c image.Point, d int, col color.NRGBA) {
-	t := l.now.Sub(l.busyAt).Seconds()
-	if l.mc != nil {
-		l.mc.moving = true
-	}
-	r := float32(d) / 2
-	w := max(2, float32(gtx.Dp(2)))
-	cf := f32.Pt(float32(c.X), float32(c.Y))
-	ring := func(a0, sweep float64, cl color.NRGBA) {
-		var p clip.Path
-		p.Begin(gtx.Ops)
-		p.MoveTo(cf.Add(f32.Pt(r*float32(math.Cos(a0)), r*float32(math.Sin(a0)))))
-		p.ArcTo(cf, cf, float32(sweep))
-		paint.FillShape(gtx.Ops, cl, clip.Stroke{Path: p.End(), Width: w}.Op())
-	}
-	ring(0, 2*math.Pi-0.01, theme.WithAlpha(col, 0x40))
-	if l.reduced {
-		// no turning: a pulse
-		ring(-math.Pi/2, math.Pi*(0.6+0.4*math.Sin(t*4)), col)
+// signInWithLinkNow signs in with a link that reached the sign-in screen
+// from outside the card (the OS, the clipboard). UI goroutine.
+func (a *App) signInWithLinkNow(link string) {
+	l := a.login
+	if l == nil || l.busy {
 		return
 	}
-	ring(t*2*math.Pi*1.1, math.Pi*(0.55+0.35*math.Sin(t*3)), col)
+	l.advanced, l.focused, l.trouble = false, false, false
+	l.link.SetText(link)
+	l.linkLen = l.link.Len() // set here: not a paste to sign in with again
+	a.introToSignIn()        // the introduction steps aside for the card
+	a.startLogin(slack.SignInInput{Link: link})
 }
 
-// loginSmallButton draws an outlined secondary button and returns its
-// size. Hover tints it and a press pushes it in, both on springs.
-func (a *App) loginSmallButton(gtx layout.Context, x, y int, c *widget.Clickable, txt string) image.Point {
-	th, lc, l := a.th, theme.LightPalette, a.login
-	bw, bh := th.Measure(gtx, 14, theme.Bold, txt)+gtx.Dp(24), gtx.Dp(32)
-	hov, prs := l.press(c)
-	br := image.Rect(x, y, x+bw, y+bh)
-	focusRing(gtx, br, gtx.Dp(8), l.ring(c, gtx.Focused(c)))
-	sc := 1 - 0.04*prs
-	tr := op.Affine(f32.Affine2D{}.Scale(f32.Pt(float32(x)+float32(bw)/2, float32(y)+float32(bh)/2), f32.Pt(sc, sc))).Push(gtx.Ops)
-	defer tr.Pop()
-	atExact(gtx, image.Pt(x, y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
-		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, _ bool) {
-			bg := theme.Mix(lc.Bg, loginInfoBg, hov)
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.Mix(lc.BorderStrong, loginAccent, hov*0.6))
-		}, func(gtx layout.Context) layout.Dimensions {
-			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-					return th.Label(gtx, 14, theme.Bold, lc.Fg, txt)
-				})
-			})
-			return layout.Dimensions{Size: image.Pt(bw, bh)}
-		})
-	})
-	return image.Pt(bw, bh)
-}
-
-// The card's colours: the introduction's violet (the Clack mark's) for
-// the primary button, focus and the step numbers, a lilac info box.
-var (
-	loginInfoBg, loginInfoBorder = hexc(0xf6f3ff), hexc(0xdcd3ff)
-	loginAccent, loginAccentDark = hexc(0x5b3fd6), hexc(0x4528b8)
-	loginRing                    = hexc(0x7b5cff)
-	loginStepBg, loginStepFg     = hexc(0xeee9ff), hexc(0x5b3fd6)
-)
-
-// loginStep is a numbered step: the number in a violet badge, the text
-// beside it. It returns the step's height and the text's left edge (what
-// belongs to the step goes under the text).
-func (a *App) loginStep(gtx layout.Context, x, y, w, n int, txt string) (int, int) {
-	lc := theme.LightPalette
-	d := gtx.Dp(24)
-	c := image.Pt(x+d/2, y+gtx.Dp(10))
-	theme.Circle(gtx, c, d, loginStepBg)
-	nt := itoa(n)
-	tw := a.th.Measure(gtx, 12.5, theme.Black, nt)
-	at(gtx, image.Pt(c.X-tw/2, c.Y-gtx.Dp(9)), image.Pt(tw+2, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, gtx.Dp(18), func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 12.5, theme.Black, loginStepFg, nt)
-		})
-	})
-	tx := x + d + gtx.Dp(12)
-	h := a.loginPara(gtx, tx, y, w-(tx-x), theme.TextStyle{Size: 14, LineHeight: 20, Color: lc.Fg}, txt)
-	return max(h, d), tx
-}
-
-// layoutLoginLink is the main path: steps on the left, the link field on
-// the right. It returns the bottoms of both columns.
-func (a *App) layoutLoginLink(gtx layout.Context, x, y, colW, gap int) (int, int) {
-	l, lc := a.login, theme.LightPalette
-	body := theme.TextStyle{Size: 14, LineHeight: 20, Color: lc.Fg}
-	small := theme.TextStyle{Size: 13, LineHeight: 18, Color: lc.FgSubtle}
-	ly := y
-	ly += a.loginBox(gtx, x, ly, colW, loginInfoBg, loginInfoBorder, theme.TextStyle{Size: 13, LineHeight: 19, Color: hexc(0x3b3550)},
-		AppName+" signs in the way Slack’s desktop app does: your browser hands it a one-time link, and Slack gives "+
-			AppName+" a session of its own. Nothing is copied from your browser.") + gtx.Dp(24)
-	h, tx := a.loginStep(gtx, x, ly, colW, 1, "Open Slack’s desktop sign-in page in your browser and sign in to your workspace there.")
-	ly += h + gtx.Dp(10)
-	ly += a.loginSmallButton(gtx, tx, ly, &l.openSignIn, "Open sign-in page").Y + gtx.Dp(6)
-	ly += a.loginPara(gtx, tx, ly, colW-(tx-x), small, desktopSignInURL) + gtx.Dp(22)
-	h, tx = a.loginStep(gtx, x, ly, colW, 2, "When Slack offers to open the Slack app, either:")
-	ly += h + gtx.Dp(6)
-	ly += a.loginPara(gtx, tx, ly, colW-(tx-x), body, "• click it and let the browser open "+AppName+". On a Mac that works right away. On Windows, tick “Open slack:// links with Clack” in the installer; on Linux, run clack --register-url-handler once. If the Slack desktop app is installed too, the link may open it instead.") + gtx.Dp(6)
-	ly += a.loginPara(gtx, tx, ly, colW-(tx-x), body, "• or, if you can see the slack:// link itself, paste it here.") + gtx.Dp(22)
-	h, _ = a.loginStep(gtx, x, ly, colW, 3, "The link works once, for a few minutes. If it has expired, sign in on the page again for a new one.")
-	ly += h
-
-	fx, fy := x+colW+gap, y
-	fy += a.loginField(gtx, fx, fy, colW, "Sign-in link", &l.link, "slack://…/magic-login/…")
-	txt := "Sign in"
-	if l.busy {
-		txt = "Signing in…"
+// signInErrorText is the card's few words for a failed sign-in (the whole
+// error is in the log). Errors without short words show their own text.
+func signInErrorText(err error) string {
+	var re *slack.MagicRedirectError
+	switch {
+	case errors.Is(err, slack.ErrNotMagicLink):
+		return "That isn’t a Slack sign-in link."
+	case errors.Is(err, slack.ErrMagicLinkUsed):
+		return "That link has expired. Open Slack sign-in again."
+	case errors.Is(err, slack.ErrSlackUnreachable):
+		return "Couldn’t reach Slack. Check your connection."
+	case errors.Is(err, slack.ErrSessionRejected):
+		return "Slack didn’t accept that token and cookie."
+	case errors.As(err, &re):
+		return "Finish signing in in your browser, then use the new link."
 	}
-	fy += a.loginButton(gtx, fx, fy, colW, &l.linkSubmit, txt)
-	fy += gtx.Dp(12)
-	fy += a.loginPara(gtx, fx, fy, colW, small, "The link is a secret until it’s used: don’t send it to anyone. Workspaces with single sign-on may send you back to the browser to finish.")
-	return ly, fy
-}
-
-// layoutLoginPaste is Advanced: paste the browser session's token and
-// cookie. It returns the bottoms of both columns.
-func (a *App) layoutLoginPaste(gtx layout.Context, x, y, colW, gap int) (int, int) {
-	l, lc := a.login, theme.LightPalette
-	ly := y
-	// The session-sharing warning comes first: this way Clack runs on the
-	// browser's own session, and Slack (Enterprise Grid especially) can end
-	// a session it sees used from somewhere unexpected, in every app at once.
-	ly += a.loginBox(gtx, x, ly, colW, bannerWarn, color.NRGBA{R: 0xe8, G: 0xb3, B: 0x2c, A: 0xff}, theme.TextStyle{Size: 13, LineHeight: 18, Color: lc.Fg},
-		"This way "+AppName+" shares the session of the browser you copy these from: it is not a separate sign-in. "+
-			"If Slack sees that session used in a way it finds unusual, it can sign it out everywhere, browser included "+
-			"(this has happened on Enterprise Grid). Prefer signing in with a Slack link.") + gtx.Dp(20)
-	h, tx := a.loginStep(gtx, x, ly, colW, 1, "Open Slack in the browser you’re signed in to, press F12 and run this in the Console:")
-	ly += h + gtx.Dp(10)
-	ly += a.loginBox(gtx, tx, ly, colW-(tx-x), lc.CodeBg, lc.CodeBorder, theme.TextStyle{Size: 13, LineHeight: 19, Color: lc.CodeFg, Wrap: text.WrapGraphemes}, signInSnippet) + gtx.Dp(8)
-	copyTxt := "Copy snippet"
-	if l.copied {
-		copyTxt = "Copied"
+	s := strings.TrimSpace(err.Error())
+	if r, n := utf8.DecodeRuneInString(s); n > 0 && unicode.IsLower(r) {
+		s = string(unicode.ToUpper(r)) + s[n:]
 	}
-	ly += a.loginSmallButton(gtx, tx, ly, &l.copy, copyTxt).Y + gtx.Dp(22)
-	h, _ = a.loginStep(gtx, x, ly, colW, 2, "Paste what it copied into Token. That fills in the org token for you.")
-	ly += h + gtx.Dp(18)
-	h, _ = a.loginStep(gtx, x, ly, colW, 3, "The d cookie is HttpOnly, so the snippet can’t read it. Copy its value from DevTools → Application → Cookies → https://app.slack.com. Leave d-s out: Clack doesn’t use it.")
-	ly += h
-
-	fx, fy := x+colW+gap, y
-	fy += a.loginField(gtx, fx, fy, colW, "Workspace", &l.workspace, "hackclub")
-	fy += a.loginField(gtx, fx, fy, colW, "Token", &l.token, "xoxc-… or the copied JSON")
-	fy += a.loginField(gtx, fx, fy, colW, "Org token (optional)", &l.orgToken, "filled in from the JSON")
-	fy += a.loginField(gtx, fx, fy, colW, "d cookie", &l.cookie, "xoxd-…")
-	txt := "Sign in"
-	if l.busy {
-		txt = "Signing in…"
-	}
-	fy += a.loginButton(gtx, fx, fy, colW, &l.submit, txt)
-	return ly, fy
+	return s
 }
