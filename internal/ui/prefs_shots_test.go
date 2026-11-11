@@ -1,6 +1,7 @@
 package ui
 
-// Every Preferences page Slack has (Availability … Advanced), drawn over
+// Every Preferences page Slack has (Availability … Advanced), and Clack's
+// own tab after them (Preferences > Clack), drawn over
 // the whole client signed in to internal/fakeslack at 1440x900, light and
 // dark, a shot per screenful of each page (prefs-audit-shots workflow).
 // PREFS_AUDIT_SHOTS_DIR gets the PNGs; without it the test only lays the
@@ -79,7 +80,8 @@ func TestPrefsAuditShots(t *testing.T) {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		e.a.setDark(dark)
 		e.settle(200 * time.Millisecond)
-		for _, it := range prefsNav {
+		tabs := append(append([]struct{ id, label, icon, slackIcon string }(nil), prefsNav...), struct{ id, label, icon, slackIcon string }{id: clackTabID})
+		for _, it := range tabs {
 			for e.a.dismissTop() {
 			}
 			pm = nil

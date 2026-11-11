@@ -288,6 +288,7 @@ var pageFns = map[string]func(p *prefsModal, f *prefsForm){
 	"connected_accounts": (*prefsModal).connectedPage,
 	"privacy_visibility": (*prefsModal).privacyPage,
 	"advanced":           (*prefsModal).advancedPage,
+	clackTabID:           (*prefsModal).clackPage, // clack_prefs.go
 }
 
 // ensureUserAsync loads a user Clack hasn't seen (VIP rows).

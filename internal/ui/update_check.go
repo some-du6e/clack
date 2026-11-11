@@ -19,17 +19,19 @@ import (
 )
 
 // Update checks: when they run (a wall-clock schedule), "Check now"
-// (Preferences > Advanced > Updates), Clack > Check for Updates… on macOS
+// (Preferences > Clack > Updates), Clack > Check for Updates… on macOS
 // and the workspace menu's item elsewhere. Every check runs on
 // updateLoop's goroutine; results come back to the UI goroutine through
 // Post. desktop.go has the download/install phases, update_ui.go what
 // they look like (Slack desktop's Help dot, dialog and menu titles).
 
 const (
-	updateFirst = 15 * time.Second // after launch, so it doesn't slow startup
-	updateTick  = 5 * time.Minute  // how often the loop looks at the clock
-	updateEvery = time.Hour        // automatic checks, by the wall clock
-	updateRetry = 5 * time.Minute  // after a failed check, doubling to updateEvery
+	// updateFirst: the check after launch, once the window is up (it's
+	// one small request off the UI goroutine)
+	updateFirst = 3 * time.Second
+	updateTick  = 5 * time.Minute // how often the loop looks at the clock
+	updateEvery = time.Hour       // automatic checks, by the wall clock
+	updateRetry = 5 * time.Minute // after a failed check, doubling to updateEvery
 	// updateSkew: a last check further than this in the future means the
 	// clock was set back; check rather than wait for it to catch up.
 	updateSkew = 5 * time.Minute
@@ -45,6 +47,20 @@ type updateSched struct {
 	Limited time.Time // GitHub's rate limit: no request before this
 	retry   time.Time // a failed check: no automatic retry before this
 	fails   int
+	// found: the last check found a newer release this build isn't
+	// (Options' UpdateFound), so the launch check runs within the hour
+	found bool
+}
+
+// dueAtLaunch reports whether the check right after launch should run:
+// when due, or when the last session found an update it didn't restart
+// into (GitHub's rate limit still holds it).
+func (s *updateSched) dueAtLaunch(now time.Time) bool {
+	if s.due(now) {
+		return true
+	}
+	_, lim := s.limited(now)
+	return s.found && !lim && !now.Round(0).Before(s.retry)
 }
 
 // due reports whether an automatic check should run at now.
@@ -122,6 +138,7 @@ func (a *App) updateSchedule() updateSched {
 	if a.prefs.UpdateLimitedUntil > 0 {
 		s.Limited = time.Unix(a.prefs.UpdateLimitedUntil, 0)
 	}
+	s.found = a.prefs.UpdateFound != "" && a.prefs.UpdateFound != buildVersion
 	return s
 }
 
@@ -135,19 +152,23 @@ func (a *App) updateLoop(s updateSched, clk updateClock) {
 	}
 	first := clk.first
 	for {
-		manual := false
+		manual, launch := false, false
 		select {
 		case <-clk.stop:
 			return
 		case <-first:
-			first = nil
+			first, launch = nil, true
 		case <-clk.tick:
 		case <-a.updWake:
 		case <-a.updNow:
 			manual = true
 		}
 		now := clk.now()
-		if !manual && (a.updatesOff.Load() || !s.due(now)) {
+		due := s.due(now)
+		if launch {
+			due = s.dueAtLaunch(now)
+		}
+		if !manual && (a.updatesOff.Load() || !due) {
 			continue
 		}
 		var r updateResult
@@ -229,10 +250,18 @@ func (a *App) updateChecked(r updateResult) {
 		notify = c.notify
 		c.checking, c.notify = false, false
 	}
-	// persist the schedule
+	// persist the schedule, and what it found
 	last, lim := unixOrZero(r.sched.Last), unixOrZero(r.sched.Limited)
-	if last != a.prefs.UpdateCheckedAt || lim != a.prefs.UpdateLimitedUntil {
-		a.prefs.UpdateCheckedAt, a.prefs.UpdateLimitedUntil = last, lim
+	found := a.prefs.UpdateFound
+	switch {
+	case r.err != nil:
+	case r.ok:
+		found = r.info.Tag
+	default:
+		found = ""
+	}
+	if last != a.prefs.UpdateCheckedAt || lim != a.prefs.UpdateLimitedUntil || found != a.prefs.UpdateFound {
+		a.prefs.UpdateCheckedAt, a.prefs.UpdateLimitedUntil, a.prefs.UpdateFound = last, lim, found
 		a.savePrefs()
 	}
 	switch {
@@ -250,12 +279,12 @@ func (a *App) updateChecked(r updateResult) {
 		if notify && a.update.phase == updAvailable {
 			// Slack's manual check downloads what it finds; Clack's
 			// does too when automatic downloads are off. Without a
-			// downloader (a package-managed install), Preferences has
-			// the release page.
+			// downloader (a package-managed install), Preferences > Clack
+			// has the release notes.
 			if a.opts.DownloadUpdate != nil {
 				a.startUpdateDownload(true)
 			} else {
-				a.openPrefsSection("advanced")
+				a.openPrefsSection(clackTabID)
 			}
 		}
 	default:
@@ -326,173 +355,250 @@ func agoText(t, now time.Time) string {
 	return "on " + t.Local().Format("Jan 2")
 }
 
-// updateStatus is what the Preferences row says: a line, an optional
-// second (wrapped) one, its buttons, and whether Check now is clickable.
+// updateStatus is the step the Preferences > Clack update row shows
+// under its "Download updates automatically" box, and the row's one
+// button. title is Slack desktop's word for the step (the menu item dY,
+// the message boxes yI/yR, AppUpdateDialog's button); desc says which
+// version and how far.
 type updateStatus struct {
-	msg, detail string
-	muted       bool     // msg is a quiet note, not news
-	buttons     []string // the first is primary, unless quiet
-	quiet       bool     // no primary button (Cancel alone)
-	canCheck    bool
-	// bar: a progress bar under the line, filled frac (0..1), or
+	title, desc string
+	notes       bool   // desc ends with the release notes link (AppUpdateDialog's)
+	button      string // "" for none
+	primary     bool   // the button is the step to take (Download, Restart)
+	enabled     bool
+	// bar: a progress bar under the description, filled frac (0..1), or
 	// indeterminate when frac < 0
 	bar  bool
 	frac float32
 }
 
+// Slack's labels for an update's steps (dY, yI, yR) and the row's buttons.
+const (
+	updRowCheck   = "Check for Updates"
+	updRowGood    = "You’re all good"
+	updRowFailed  = "Couldn’t update " + AppName
+	updRowRestart = "Restart " + AppName // AppUpdateDialog's button
+	updRowTry     = "Try Again"
+	updRowCancel  = "Cancel"
+	updRowGet     = "Download"
+)
+
 // updateStatusAt is the row's state at now (UI goroutine).
 func (a *App) updateStatusAt(now time.Time) updateStatus {
 	u := &a.update
 	c := &u.check
-	if c.checking {
-		return updateStatus{msg: "Checking…"}
-	}
-	s := updateStatus{canCheck: true}
+	check := updateStatus{button: updRowCheck, enabled: !c.checking}
 	if u.info.Tag != "" {
-		tag := u.info.Tag
+		name := AppName + " " + u.info.Tag
 		switch u.phase {
 		case updAvailable:
-			s.msg = AppName + " " + tag + " is available"
-			dl := "Download"
-			if u.dlErr != "" {
-				s.msg, s.detail, dl = "Couldn’t download "+AppName+" "+tag, "The download didn’t work: "+u.dlErr, "Retry"
+			switch {
+			case u.dlErr != "":
+				return updateStatus{title: updRowFailed, desc: "The download of " + name + " didn’t work: " + u.dlErr, button: updRowTry, primary: true, enabled: true}
+			case a.opts.DownloadUpdate == nil: // a package-managed install
+				return updateStatus{title: updMenuAvailable, desc: name + " is out: update it the way you installed " + AppName + ".", notes: true, button: updRowCheck, enabled: !c.checking}
 			}
-			if a.opts.DownloadUpdate != nil {
-				s.buttons = []string{dl}
-			}
-			s.buttons = append(s.buttons, "View release")
-			return s
+			return updateStatus{title: updMenuAvailable, desc: name + " is ready to download.", notes: true, button: updRowGet, primary: true, enabled: true}
 		case updDownloading:
-			s.msg = updateProgressText(tag, u.prog)
-			s.bar, s.frac = true, u.prog.frac()
-			s.buttons, s.quiet = []string{"Cancel"}, true
-			return s
+			return updateStatus{title: updMenuDownload, desc: updateProgressText(u.info.Tag, u.prog), button: updRowCancel, enabled: true, bar: true, frac: u.prog.frac()}
 		case updReady:
-			s.msg = AppName + " " + tag + " is ready to install"
-			s.buttons = []string{"Install and restart"}
-			return s
+			return updateStatus{title: updMenuRestart, desc: name + " is ready. Curious what’s new? ", notes: true, button: updRowRestart, primary: true, enabled: true}
 		case updInstalling:
-			return updateStatus{msg: "Installing " + AppName + " " + tag + "…", bar: true, frac: -1}
+			return updateStatus{title: updMenuRestart, desc: "Installing " + name + "…", button: updRowRestart, primary: true, bar: true, frac: -1}
 		case updManual:
-			s.msg = "Finish installing " + AppName + " " + tag + " in the window that opened, then restart " + AppName
-			return s
+			return updateStatus{title: updMenuRestart, desc: "Finish installing " + name + " in the window that opened, then restart " + AppName + "."}
 		case updFailed:
-			s.msg = "Couldn’t install " + AppName + " " + tag
-			s.detail = u.err
-			s.buttons = []string{"View release"}
-			return s
+			return updateStatus{title: updRowFailed, desc: "Couldn’t install " + name + ": " + u.err, button: updRowTry, primary: true, enabled: true}
 		}
 	}
+	st := check
 	switch {
+	case c.checking:
+		st.title = updMenuChecking
 	case c.err != "":
-		s.msg, s.detail = "Couldn’t check for updates", c.err
+		st.title, st.desc = updRowFailed, c.err
 	case c.upToDate:
-		s.msg = "You’re up to date · checked " + agoText(c.at, now)
-	case a.prefs.UpdateCheckedAt > 0:
-		s.msg, s.muted = "Last checked "+agoText(time.Unix(a.prefs.UpdateCheckedAt, 0), now), true
+		st.title = updRowGood
+		st.desc = AppName + " " + versionOr() + " is the latest. Checked " + agoText(c.at, now) + "."
+	default:
+		st.title = AppName + " " + versionOr()
+		st.desc = "Not checked yet."
+		if a.prefs.UpdateCheckedAt > 0 {
+			st.desc = "Last checked " + agoText(time.Unix(a.prefs.UpdateCheckedAt, 0), now) + "."
+		}
 	}
-	return s
+	return st
 }
 
-// updateRowClick runs a status button (UI goroutine).
+// versionOr is this build's version, or "dev build" when unset.
+func versionOr() string {
+	if buildVersion == "" {
+		return "dev build"
+	}
+	return buildVersion
+}
+
+// updateRowClick runs the row's button (UI goroutine).
 func (a *App) updateRowClick(label string) {
 	u := &a.update
 	switch label {
-	case "Download", "Retry":
+	case updRowCheck:
+		a.checkForUpdates(false)
+	case updRowGet:
 		u.manual = true
 		a.startUpdateDownload(true)
-	case "Cancel":
+	case updRowTry:
+		if u.phase == updFailed {
+			a.installUpdate()
+		} else {
+			u.manual = true
+			a.startUpdateDownload(true)
+		}
+	case updRowCancel:
 		a.cancelUpdateDownload()
-	case "View release":
-		openURL(u.info.URL)
-	case "Install and restart":
+	case updRowRestart:
 		a.installUpdate()
 	}
 	a.Invalidate()
 }
 
-// updatesSection is Preferences > Advanced > Updates.
+// updatesSection is Preferences > Clack's update row: Slack's checkbox
+// row, "Download updates automatically" (checks and downloads; off, only
+// the button checks), its subtext the step in Slack desktop's words, and
+// the step's one button on the right.
 func (p *prefsModal) updatesSection(f *prefsForm) {
 	a := p.a
-	f.subheading("Updates")
-	f.option("updates", "Check for updates", "Looks for a new Clack release on GitHub every hour.", a.updateChecksOn(), false, a.toggleUpdateChecks)
-	f.optionAt("update_download", "Download updates automatically", "Fetched in the background and checked, then Help shows a dot. Installs only when you choose Restart Clack.", a.updateDownloadsOn(), false, a.updateChecksOn(), a.toggleUpdateDownloads)
-	if buildVersion != "" {
-		f.note("You have Clack "+buildVersion, true, 1)
+	if a.opts.CheckUpdate == nil { // dev builds: no checks, nothing to show
+		return
 	}
-	if a.opts.CheckUpdate == nil {
-		return // dev builds: no checks
-	}
-	p.updateCheckRow(f, a.updateStatusAt(time.Now()))
+	p.updateRow(f, a.updateStatusAt(time.Now()))
 }
 
-// updateCheckRow is "Check now" with the status beside it, then the
-// status's second line and buttons (Download, Install and restart, View
-// release) below.
-func (p *prefsModal) updateCheckRow(f *prefsForm, st updateStatus) {
+// autoUpdatesOn is the row's box: automatic checks and downloads.
+func (a *App) autoUpdatesOn() bool { return a.updateChecksOn() && a.updateDownloadsOn() }
+
+// toggleAutoUpdates flips both settings together.
+func (a *App) toggleAutoUpdates() {
+	on := !a.autoUpdatesOn()
+	if a.updateChecksOn() != on {
+		a.toggleUpdateChecks()
+	}
+	if a.updateDownloadsOn() != on {
+		a.toggleUpdateDownloads()
+	}
+	if on {
+		a.nudgeUpdates() // a check now if one is due
+	}
+}
+
+// hint is the row's subtext: the step, then which version and how
+// far ("Downloading Update · Clack v0.1.0-alpha.14 · 12.1 of 35.6 MB
+// (34%)").
+func (st updateStatus) hint() string {
+	if st.desc == "" {
+		return st.title
+	}
+	return st.title + " · " + st.desc
+}
+
+// updateRow lays out st as a Slack checkbox row (the box, the 15px label,
+// the c-label__subtext under it, wrapped, the release notes link inline,
+// the progress bar under that) with a medium button 16px to the right,
+// centred on the text.
+func (p *prefsModal) updateRow(f *prefsForm, st updateStatus) {
 	gtx, a := f.gtx, p.a
-	c := &a.th.C
-	x := gtx.Dp(28)
-	bh := gtx.Dp(28)
-	b := p.btn("update_check")
-	kind := popups.BtnOutline
-	if !st.canCheck {
-		kind = popups.BtnDisabled
-	}
+	pc := p.colors()
+	label := pt("Download updates automatically")
+	on := a.autoUpdatesOn()
+	f.record("check", "update_auto", label, on, true)
+	f.record("text", "", st.hint(), false, true)
+	b := p.btn("update_row")
 	hit := b.Clicked(gtx) // popups.Button lays the clickable out: read it first
-	d := at(gtx, image.Pt(x, f.y), image.Pt(f.w-x, bh), func(gtx layout.Context) layout.Dimensions {
-		return popups.Button(gtx, a.th, b, kind, popups.BtnSmall, "Check now", "", 0)
-	})
-	if hit && st.canCheck {
-		a.checkForUpdates(false)
-	}
-	if st.msg != "" {
-		tx := x + d.Size.X + gtx.Dp(12)
-		col, wt := c.Fg, theme.Bold
-		if st.muted {
-			col, wt = c.FgMuted, theme.Regular
+	var bcall op.CallOp
+	var bd layout.Dimensions
+	if st.button != "" {
+		f.record("button", "update_row", st.button, false, st.enabled)
+		kind := popups.BtnOutline
+		switch {
+		case !st.enabled:
+			kind = popups.BtnDisabled
+		case st.primary:
+			kind = popups.BtnPrimary
 		}
-		at(gtx, image.Pt(tx, f.y), image.Pt(max(0, f.w-tx), bh), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 13, wt, col, st.msg)
-			})
+		bcall, bd = measured(gtx, func(gtx layout.Context) layout.Dimensions {
+			// as wide as its label: the page may come with exact
+			// constraints, which would stretch it over the text
+			gtx.Constraints = layout.Constraints{Max: image.Pt(f.w/2, gtx.Dp(36))}
+			return popups.Button(gtx, a.th, b, kind, popups.BtnMedium, pt(st.button), "", 0)
 		})
 	}
-	f.y += bh + gtx.Dp(8)
-	if st.bar {
-		// a thin bar under the line, as wide as the row allows (the
-		// composer's upload bar: 4dp, the track the text colour at 15%)
-		h := max(gtx.Dp(4), 2)
-		w := min(f.w-2*x, gtx.Dp(360))
-		if w > 0 {
-			off := op.Offset(image.Pt(x, f.y)).Push(gtx.Ops)
-			theme.ProgressBar(gtx, image.Rect(0, 0, w, h), c.Fg, c.Link, st.frac)
-			off.Pop()
+	lx := gtx.Dp(theme.NativeCheckSize + 12)
+	tw := f.w
+	if bd.Size.X > 0 {
+		tw = max(lx+gtx.Dp(120), f.w-bd.Size.X-gtx.Dp(16))
+	}
+	textW := tw - lx
+	lh := gtx.Dp(22)
+	// the subtext first, recorded: the box's click area covers the label
+	// and it, and the row is as tall as they are
+	hint := pt(st.hint())
+	notes := &a.update.notesRow
+	hcall, hd := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+		if st.notes {
+			h := linkPara(gtx, a.th, textW, 15, 22, pc.subtext, pc.link, hint, pt(updDialogLink), notes)
+			return layout.Dimensions{Size: image.Pt(textW, h)}
 		}
-		f.y += h + gtx.Dp(10)
-	}
-	if st.detail != "" {
-		f.note(st.detail, true, 2)
-	}
-	if len(st.buttons) > 0 {
-		bx := x
-		for i, label := range st.buttons {
-			k := popups.BtnOutline
-			if i == 0 && !st.quiet {
-				k = popups.BtnPrimary
-			}
-			b := p.btn("update_action." + label)
-			hit := b.Clicked(gtx)
-			d := at(gtx, image.Pt(bx, f.y), image.Pt(max(0, f.w-bx), bh), func(gtx layout.Context) layout.Dimensions {
-				return popups.Button(gtx, a.th, b, k, popups.BtnSmall, label, "", 0)
+		gtx.Constraints = layout.Constraints{Max: image.Pt(textW, 1<<20)}
+		d := a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: pc.subtext}, hint)
+		d.Size.Y = max(d.Size.Y, lh)
+		return d
+	})
+	textH := gtx.Dp(6) + lh + gtx.Dp(2) + hd.Size.Y
+	box := p.btn("update_auto")
+	at(gtx, image.Pt(0, f.y), image.Pt(tw, textH), func(gtx layout.Context) layout.Dimensions {
+		return clickArea(gtx, box, nil, func(gtx layout.Context) layout.Dimensions {
+			cs := theme.NativeCheckState{On: on, Hover: box.Hovered()}
+			at(gtx, image.Pt(0, gtx.Dp(4)), image.Pt(gtx.Dp(theme.NativeCheckSize), gtx.Dp(theme.NativeCheckSize)), func(gtx layout.Context) layout.Dimensions {
+				return theme.NativeCheck(gtx, pc.dark, cs)
 			})
-			bx += d.Size.X + gtx.Dp(8)
-			if hit {
-				a.updateRowClick(label)
-			}
-		}
-		f.y += bh + gtx.Dp(8)
+			at(gtx, image.Pt(lx, 0), image.Pt(textW, lh+gtx.Dp(2)), func(gtx layout.Context) layout.Dimensions {
+				return a.th.Label(gtx, 15, theme.Regular, pc.text, label)
+			})
+			return layout.Dimensions{Size: image.Pt(tw, textH)}
+		})
+	})
+	// the subtext above the box's click area, so its link takes clicks
+	place(gtx, hcall, image.Pt(lx, f.y+lh+gtx.Dp(2)))
+	if clicked(box) {
+		a.toggleAutoUpdates()
+		a.Invalidate()
 	}
+	if clicked(notes) {
+		url := a.update.info.URL
+		if url == "" {
+			url = releasesPage
+		}
+		prefsOpenURL(url)
+	}
+	y := f.y + textH
+	if st.bar {
+		// the composer's upload bar: 4dp, the track the text colour at
+		// 15%, the bar the link colour
+		y += gtx.Dp(6)
+		h := max(gtx.Dp(4), 2)
+		o := op.Offset(image.Pt(lx, y)).Push(gtx.Ops)
+		theme.ProgressBar(gtx, image.Rect(0, 0, textW, h), pc.text, pc.link, st.frac)
+		o.Pop()
+		y += h + gtx.Dp(2)
+	}
+	rowH := max(y-f.y, bd.Size.Y)
+	if bd.Size.X > 0 {
+		place(gtx, bcall, image.Pt(f.w-bd.Size.X, f.y+(rowH-bd.Size.Y)/2))
+		if hit && st.enabled {
+			a.updateRowClick(st.button)
+		}
+	}
+	f.y += rowH + gtx.Dp(4)
 }
 
 // menuCheckForUpdates is the workspace menu's update item on Linux and

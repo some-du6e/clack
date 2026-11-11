@@ -41,7 +41,7 @@ func (a *App) setRealtime(on bool) {
 		go c.SetRealtime(on) // turning it off waits for the socket to close
 	}
 	if on {
-		a.Toast("Live updates on. Turn them off in Preferences > Advanced.")
+		a.Toast("Live updates on. Turn them off in Preferences > Clack.")
 	}
 	a.Invalidate()
 }
