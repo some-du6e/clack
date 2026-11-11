@@ -574,7 +574,8 @@ func (l *loginScreen) sonar(f *introFrame, c f32.Point, r0 float32, t float64) {
 		p := math.Mod(tk, period) / period
 		e := 1 - math.Pow(1-p, 3)
 		a := 0.5 * math.Pow(1-p, 1.8)
-		ringAt(f, c, r0+f.df(40)*float32(e), alphaMul(loginGlow, float32(a)), f.df(1.6))
+		// at most 30 units out: the badge sits 38 under the card's top
+		ringAt(f, c, r0+f.df(30)*float32(e), alphaMul(loginGlow, float32(a)), f.df(1.6))
 	}
 }
 
