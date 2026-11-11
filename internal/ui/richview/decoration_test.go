@@ -67,8 +67,10 @@ func TestLinkUnderlineSpansSpaces(t *testing.T) {
 	if log.ulT != 0 || see.ulT != 0 || today.ulT != 0 {
 		t.Errorf("the underline runs past the link: see +%.1f, log +%.1f, today +%.1f", see.ulT, log.ulT, today.ulT)
 	}
-	// wrapped after "View": the space at the end of the line isn't decorated
-	v = layoutAt(st, linkDoc(), Options{}, int(view.x+view.w)+2)
+	// wrapped after "View" (too narrow for "see View community", wide
+	// enough for "community"): the space at the end of the line isn't
+	// decorated
+	v = layoutAt(st, linkDoc(), Options{}, int(comm.x+comm.w)-1)
 	view, comm = findFrag(t, &v.d, "View"), findFrag(t, &v.d, "community")
 	if view.line == comm.line {
 		t.Fatalf("control: the link didn't wrap after View")
