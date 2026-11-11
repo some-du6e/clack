@@ -30,6 +30,7 @@ func TestNativeKidsHas(t *testing.T) {
 	)
 	SetStyle("test:kids", `html.taut-streamer-mode .c-inline_channel_entity:has([data-inline-channel-type-icon^="lock"]):not([data-qa="activity-item-container"] *) .c-channel_entity__name { filter: blur(4px) }
 html.taut-streamer-mode .c-inline_channel_entity:hover .c-channel_entity__name { filter: none }
+html.taut-streamer-mode .taut-streamer-mode__revealed .c-inline_channel_entity:has([data-inline-channel-type-icon^="lock"]):not([data-qa="activity-item-container"] *) .c-channel_entity__name { filter: none }
 .c-message_kit__blocks:empty { color: red }
 .c-message_kit__blocks:has(*) { color: blue }`)
 	defer RemoveStyle("test:kids")
@@ -57,8 +58,17 @@ html.taut-streamer-mode .c-inline_channel_entity:hover .c-channel_entity__name {
 	if b := blur(public, 0, nil); b != 0 {
 		t.Errorf("public channel name blurred (%v)", b)
 	}
-	if b := blur(private, css.StateHover, nil); b != 0 {
-		t.Errorf("hovered private name: blur %v, want the :hover reveal", b)
+	// the plugin's :hover reveal (0,4,1) loses to its blur rule (0,5,1:
+	// :has() and :not() each weigh their argument's class), so a hovered
+	// private name stays blurred, as in a browser
+	if b := blur(private, css.StateHover, nil); b != 4 {
+		t.Errorf("hovered private name: blur %v, want 4 (the more specific blur rule wins)", b)
+	}
+	// its reveal rule for a hovered thread row (.taut-streamer-mode__revealed,
+	// 0,6,1) does win
+	revealed := Class("c-virtual_list__item taut-streamer-mode__revealed")
+	if b := blur(private, 0, revealed); b != 0 {
+		t.Errorf("private name in a revealed thread row: blur %v, want 0", b)
 	}
 	if b := blur(private, 0, actRow); b != 0 {
 		t.Errorf("inside an activity row: blur %v, want the :not() exclusion", b)
