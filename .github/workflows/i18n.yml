@@ -8,6 +8,7 @@ name: i18n
 # talks to Slack's API.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run i18n.yml --ref <branch>)
     paths:
       - "internal/i18n/**"
       - "internal/ui/**"

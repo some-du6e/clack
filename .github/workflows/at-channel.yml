@@ -6,6 +6,7 @@ name: at-channel
 # talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run at-channel.yml --ref <branch>)
     paths:
       - "internal/core/broadcast*.go"
       - "internal/core/teamprefs.go"

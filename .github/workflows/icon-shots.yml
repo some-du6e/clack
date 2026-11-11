@@ -12,6 +12,7 @@ name: icon-shots
 # installed (emoji-tabs-bettergifs-*.png in ui-slick-theme-shots).
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run icon-shots.yml --ref <branch>)
     paths:
       - "internal/ui/icons/**"
       - "internal/ui/theme/**"

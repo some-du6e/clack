@@ -7,6 +7,7 @@ name: lists-shots
 # talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run lists-shots.yml --ref <branch>)
     paths:
       - "internal/lists/**"
       - "internal/ui/listview/**"
