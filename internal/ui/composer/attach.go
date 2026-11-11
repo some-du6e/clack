@@ -261,12 +261,16 @@ func (a *attachments) Add(name string, data []byte) { a.add(name, data) }
 
 func (a *attachments) add(name string, data []byte) bool {
 	name = attCleanName(name)
+	upload := a.h.Core() != nil // prepare uploads only with a core
 	a.mu.Lock()
 	err := attCheckAdd(a.pendingLocked(), a.total, int64(len(data)))
 	var c *attChip
 	if err == nil {
+		// The tile is uploading from the first frame it's drawn in (its
+		// corner spinner, isUploading): prepare runs on its own goroutine,
+		// which may start a frame or more later.
 		c = &attChip{id: int(attNextID.Add(1)), name: name, title: name, data: data, kind: attKindOf(name, data),
-			pf: core.NewPendingFile(name, name, data)}
+			pf: core.NewPendingFile(name, name, data), preparing: upload, ptotal: int64(len(data))}
 		a.chips = append(a.chips, c)
 		a.total += int64(len(data))
 	}
@@ -288,7 +292,14 @@ func (a *attachments) add(name string, data []byte) bool {
 // runs meanwhile; a failure shows the warning and falls back to uploading
 // at send time (raw Files).
 func (a *attachments) prepare(c *attChip) {
-	if c == nil || a.h.Core() == nil {
+	if c == nil {
+		return
+	}
+	if a.h.Core() == nil { // nothing to upload with: the send uploads the bytes
+		a.mu.Lock()
+		c.preparing = false
+		a.mu.Unlock()
+		a.h.Invalidate()
 		return
 	}
 	a.mu.Lock()
