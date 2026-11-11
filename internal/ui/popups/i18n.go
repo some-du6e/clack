@@ -1,6 +1,10 @@
 package popups
 
-import "github.com/some-du6e/clack/internal/i18n"
+import (
+	"strings"
+
+	"github.com/some-du6e/clack/internal/i18n"
+)
 
 // Slack's I18n instances the menus and dialogs draw from (docs/I18N.md):
 // each is the namespace of the `new I18n("…")` in the Slack module that
@@ -14,6 +18,29 @@ var (
 	nsInline  = i18n.NS("inline_attachments")
 	nsFile    = i18n.NS("file")  // buildFileContextMenuItems (a3Wp), enqueueCopyLinkSuccessToast (Bwpd)
 	nsFiles   = i18n.NS("files") // DeleteFileDialog
+	// the channel context menu's templates (channel_context_menu_get_template:
+	// getDetailsTemplate, getCopyTemplate, getChannelSectionsTemplate,
+	// getNotificationsTemplate, getLeaveTemplate, …), the team and user menus
+	nsMenu      = i18n.NS("menu")
+	nsChDetails = i18n.NS("channel_details")
+	// the mute rows: Slack's channel menu mutes a channel from its
+	// notifications submenu and never says "Unmute channel", so that one
+	// is the activity menu's (renderMenuPlaceholderItem)
+	nsMenuMute = i18n.NewChain("menu", "activity")
+	// the workspace menu (makeMenuItemIcon, useSwitchWorkspaceMenu) and
+	// the user menu (PresenceToggle, StatusField, getNotificationsState),
+	// with the pause submenu's do_not_disturb strings
+	nsIa4        = i18n.NS("ia4")
+	nsClassicNav = i18n.NS("classic_nav")
+	nsNativeApps = i18n.NS("native_apps_entry_points")
+	nsDND        = i18n.NS("do_not_disturb")
+	// Clack's Tools submenu row "Workflows" (Slack's says "Workflow
+	// Builder"): the client's
+	nsTeamMenu = i18n.NewChain("ia4", "client")
+	nsDialog   = i18n.NS("generic_dialog") // DeprecatedBaseDialog / DeprecatedAlertDialog: Cancel, OK
+	nsPresence = i18n.NS("presence")       // PresencePromptDialog
+	nsChannels = i18n.NS("channels")       // LeaveChannelError
+	nsGroups   = i18n.NS("groups")         // LeaveChannel
 )
 
 // In is it as a row of Slack's own text in the I18n namespace ns: the
@@ -50,4 +77,19 @@ func inAll(ns i18n.NS, items []MenuItem) []MenuItem {
 		}
 	}
 	return items
+}
+
+// linkSplit is an rt() string with one link tag as the text around the
+// link and the link's text (Clack draws the link on its own line, as
+// pass 1's ptLink does for Preferences).
+func linkSplit(parts []i18n.Part, tag string) (text, link string) {
+	var b []string
+	for _, p := range parts {
+		if p.Tag == tag && link == "" {
+			link = p.Text
+			continue
+		}
+		b = append(b, p.Text)
+	}
+	return strings.TrimSpace(strings.Join(b, "")), link
 }

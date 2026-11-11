@@ -247,7 +247,14 @@ func TestLoaderCachesAndSetLocale(t *testing.T) {
 	}}
 	t.Cleanup(func() { DefaultLoader = old; Use(EnUS, nil) })
 	changed := make(chan struct{}, 4)
-	OnChange(func() { changed <- struct{}{} })
+	// the listener outlives the test (OnChange has no undo): later tests'
+	// Use calls must not block on a full channel
+	OnChange(func() {
+		select {
+		case changed <- struct{}{}:
+		default:
+		}
+	})
 	done := make(chan error, 1)
 	SetLocale("es-ES", func(err error) { done <- err })
 	if err := <-done; err != nil {

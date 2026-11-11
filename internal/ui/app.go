@@ -27,6 +27,7 @@ import (
 	"gioui.org/x/explorer"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
@@ -942,7 +943,7 @@ func (a *App) layoutToast(gtx layout.Context) {
 	uw := 0
 	label := a.toast.label
 	if label == "" {
-		label = "Undo"
+		label = i18n.T("channel_sidebar", "Undo") // the sidebar's toasts' (ToastUndo's callers)
 	}
 	if a.toast.undo != nil {
 		uw = a.th.Measure(gtx, 15, theme.Bold, label) + gtx.Dp(16)

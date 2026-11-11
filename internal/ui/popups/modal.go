@@ -492,7 +492,7 @@ func Confirm(h Host, title, textBody, action string, danger bool, body layout.Wi
 				}),
 			)
 		},
-		Buttons: []*ModalButton{{Label: "Cancel", Kind: BtnOutline}, ok},
+		Buttons: []*ModalButton{{Label: nsDialog.T("Cancel"), Kind: BtnOutline}, ok}, // DeprecatedBaseDialog's (generic_dialog)
 	})
 	h.ShowOverlay(m)
 	return m
