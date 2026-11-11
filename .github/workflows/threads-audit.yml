@@ -53,7 +53,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS fonts-lato
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS fonts-lato
       - name: core, the pane and the reply bar
         run: |
           go test -count=1 -v -run 'TestThreadLastRead|TestDesktopNotificationForwarded' ./internal/core

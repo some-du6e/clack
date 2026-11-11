@@ -52,7 +52,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false # this job runs third-party code; never share its Go cache
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+      - run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: plugin acceptance + zero cost
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins

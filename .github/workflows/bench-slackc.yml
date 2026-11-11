@@ -24,7 +24,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: slackc tests on 22.04
         run: go test -count=1 ./internal/ui/slackc/...
 
@@ -39,7 +39,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: inlining of the unpatched fast paths
         run: go build -gcflags=-m ./internal/ui/slackc/ 2>&1 | grep -E 'can inline (Render|RenderLazy|Component|\(\*ClassDef\)\.Enter|Patched)\b' || true
       - name: bench
@@ -73,7 +73,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: build demo
         run: |
           mkdir -p dist
