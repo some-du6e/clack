@@ -43,7 +43,6 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/localimg"
-	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -135,6 +134,13 @@ type attChip struct {
 	// it (guarded by attachments.mu; dropped with the chip)
 	preview string
 
+	// alt is the image's alt text (EditFileDialog's Description) and
+	// detailsPending says the title and alt text were set while the file
+	// was still uploading: files.edit sends them once it lands
+	// (editfile.go). Guarded by attachments.mu.
+	alt            string
+	detailsPending bool
+
 	// UI goroutine only.
 	hover  gesture.Hover
 	remove widget.Clickable
@@ -154,18 +160,19 @@ func (a *attachments) openPreview(c *attChip) {
 	}
 	u := c.preview
 	a.mu.Unlock()
-	img := richtext.Image{URL: u, Title: title, Alt: title}
+	img := pendingViewerImage(u, data, title)
 	switch {
 	case u != "":
-		if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
-			img.W, img.H = cfg.Width, cfg.Height
-		}
 	case thumb != "":
 		img.URL, img.Proxy = thumb, true
 	default:
 		return
 	}
-	a.h.OpenLightbox(img, core.Message{})
+	// FileViewer's pending view: the title and "Edit file details"
+	// (EditFileDialog, editfile.go) over the image
+	a.h.ShowOverlay(popups.NewPendingViewer(a.h, img, title, func() {
+		a.openEditFile([]*attChip{c}, 0, editFileOpts{entry: "media_viewer_button"})
+	}))
 }
 
 // dropPreviews forgets the chips' local image URLs (removed or sent).
@@ -402,7 +409,15 @@ func (a *attachments) prepare(c *attChip) {
 		c.prepared = &p
 	}
 	pf := c.pf
+	// details set while it uploaded: editFileApi now that it has an id
+	edit, title, alt := err == nil && c.detailsPending, c.title, c.alt
+	c.detailsPending = false
 	a.mu.Unlock()
+	if edit {
+		if app := a.h.Core(); app != nil {
+			go func() { _ = app.EditFile(context.Background(), p.ID, title, alt) }()
+		}
+	}
 	if pf != nil {
 		pf.Finish(p, err) // a send waiting for it shares it now
 	}

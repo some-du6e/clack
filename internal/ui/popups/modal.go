@@ -34,8 +34,11 @@ type ModalButton struct {
 	V2 func() bool
 	// Icon goes before the label (the workflow speedbump's ▶ "Start
 	// Workflow").
-	Icon  string
-	click widget.Clickable
+	Icon string
+	// Hidden, when it says so, leaves the button out of the footer (the
+	// Edit file dialog's Next on its last page, its Send before it).
+	Hidden func() bool
+	click  widget.Clickable
 }
 
 // draw lays the footer button out as kind (BtnDisabled when it can't be
@@ -172,7 +175,9 @@ func NewModal(h Host, o ModalOpts) *Modal {
 	return m
 }
 
-func (b *ModalButton) enabled() bool { return b.Enabled == nil || b.Enabled() }
+func (b *ModalButton) enabled() bool { return !b.hidden() && (b.Enabled == nil || b.Enabled()) }
+
+func (b *ModalButton) hidden() bool { return b.Hidden != nil && b.Hidden() }
 
 func (m *Modal) press(b *ModalButton) {
 	if !b.enabled() {
@@ -422,6 +427,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					x, lx := pos.X+w-padX, pos.X+padX
 					for i := len(m.o.Buttons) - 1; i >= 0; i-- {
 						b := m.o.Buttons[i]
+						if b.hidden() {
+							continue
+						}
 						kind := b.Kind
 						if !b.enabled() {
 							kind = BtnDisabled

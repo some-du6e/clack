@@ -47,6 +47,10 @@ type Composer struct {
 	focusRestored bool   // asked for it back once since
 	focused       bool
 
+	// altAsked is includeMissingImageAttachmentsAltTextSpeedBump off: the
+	// send the alt text speed bump resumes.
+	altAsked bool
+
 	// Origin is the composer's top-left corner in window coordinates. The
 	// parent sets it each frame (Gio has no global transform query); menus
 	// and the emoji picker are anchored with it.
@@ -1076,6 +1080,18 @@ func (c *Composer) submit() {
 			}()
 			return
 		}
+	}
+
+	// prepareAndSendMessage's alt text speed bump
+	// (maybeOpenEditFileDialogForImages, editfile.go): images without alt
+	// text, with reminders on, go through Edit alt text first; its Send
+	// sends without asking again
+	if c.att.Len() > 0 && !c.altAsked && c.altTextSpeedBump(false, func() {
+		c.altAsked = true
+		c.submit()
+		c.altAsked = false
+	}) {
+		return
 	}
 
 	o := &outgoing{doc: doc, text: text, blocks: blocks, broadcast: c.broadcast && ts != ""}

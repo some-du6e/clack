@@ -49,10 +49,11 @@ var (
 	nsBroadcast = i18n.NS("broadcast_keywords") // getBroadcastKeywordName: channel, everyone, here
 	nsShare     = i18n.NS("share-dialog")       // the share/forward dialogs (jdUv, Zp0h, IEmj, e9lq)
 	// the emoji picker (Zu56, Pz3S), its categories (bEcp) and the GIF
-	// picker (DMNm)
+	// picker (DMNm); the pending file viewer (W9QH) is multi_file_upload's
 	nsEmojiPicker = i18n.NS("emoji_picker")
 	nsEmoji       = i18n.NS("emoji")
 	nsGifPicker   = i18n.NS("gif-picker")
+	nsMultiUpload = i18n.NS("multi_file_upload")
 	nsStatus      = i18n.NS("current_status") // the status modal (D72a), its expiration (yU++)
 	nsSearch      = i18n.NS("search")         // the search switcher (rs63, SidebarSearchCmdKResults), the results page and its filters
 	nsAttachments = i18n.NS("attachments")    // an unfurl's ⋮ menu
