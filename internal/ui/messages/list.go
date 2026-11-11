@@ -75,6 +75,9 @@ type listState struct {
 	thread bool
 	ch     string
 	ts     string // thread ts
+	// container is the view container the list is in ("" main, "split";
+	// see stateIn)
+	container string
 
 	snap   snap
 	rows   map[string]*row
@@ -198,17 +201,26 @@ func sweepRows(now time.Time) {
 // the popups through it; nil until a list has been drawn.
 var lastHost Host
 
-func stateFor(h Host, ch, ts string) *listState {
+func stateFor(h Host, ch, ts string) *listState { return stateIn(h, ch, ts, "") }
+
+// stateIn is stateFor for a list in view container pane: "" is the main
+// window's views, "split" Slack's split view. Each container keeps its own
+// rows, scroll position and inline editors over the shared conversation
+// model, so the same conversation can be open in both.
+func stateIn(h Host, ch, ts, pane string) *listState {
 	key := ch
 	if ts != "" {
 		key = ch + "/" + ts
+	}
+	if pane != "" {
+		key = pane + ":" + key
 	}
 	hb := hubFor(h)
 	if s, ok := listCache[key]; ok && s.hb == hb {
 		return s
 	}
 	// a new core (signed in again, another account): fresh state
-	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", rows: map[string]*row{}, hoverIdx: -1, tbFor: -1}
+	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", container: pane, rows: map[string]*row{}, hoverIdx: -1, tbFor: -1}
 	if ts != "" {
 		s.m = hb.threadModel(ch, ts)
 	} else {

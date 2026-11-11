@@ -623,10 +623,9 @@ func (v *Activity) actMenuOpen(at image.Point, it core.ActivityItem, key string,
 //	open_in_home, open_in_split_view, open_in_new_window
 //
 // Left out because Clack can't carry them out (docs/ACTIVITY.md):
-// summarize_thread (ACCESS_SLACK_AI_CHANNEL_THREAD_SUMMARIES, Slack AI),
-// open_in_split_view and open_in_new_window (no split view or second
-// window). The Copy ▸ submenu with Copy huddle link is the DMs tab's;
-// the inbox has the message's Copy link.
+// summarize_thread (ACCESS_SLACK_AI_CHANNEL_THREAD_SUMMARIES, Slack AI)
+// and open_in_new_window (no second window). The Copy ▸ submenu with Copy
+// huddle link is the DMs tab's; the inbox has the message's Copy link.
 func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, unread bool) []popups.MenuItem {
 	c := v.h.Core()
 	m := it.Msg
@@ -773,13 +772,17 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 	}
 	if m != nil && it.Channel != "" {
 		thread := actThread(&it)
-		groups = append(groups, []popups.MenuItem{{Key: "open_in_home", Label: "Open in home", Icon: "home", Do: func() {
-			if thread != "" {
-				v.h.Navigate("c/" + it.Channel + "/t/" + thread)
-				return
-			}
-			v.h.Navigate("c/" + it.Channel)
-		}}})
+		route := "c/" + it.Channel
+		if thread != "" {
+			route += "/t/" + thread
+		}
+		g := []popups.MenuItem{{Key: "open_in_home", Label: "Open in home", Icon: "home", Do: func() { v.h.Navigate(route) }}}
+		// open_in_split_view (not in Simplified layout mode): the thread or
+		// the channel, with the ⌘⌥-click hint
+		if split, ok := popups.SplitViewItem(ph, route, true); ok {
+			g = append(g, split)
+		}
+		groups = append(groups, g)
 	}
 
 	var out []popups.MenuItem

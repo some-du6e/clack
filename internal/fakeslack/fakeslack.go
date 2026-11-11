@@ -84,6 +84,9 @@ type Size struct {
 	// fixtures (unreads.go): unread channels, a muted one, a channel
 	// whose message_input megaphone space holds the join banner.
 	Unreads bool
+	// GroupDMs adds the group DM naming fixtures (groupdms.go) and
+	// answers conversations.rename for them.
+	GroupDMs bool
 	// Workflows adds #workflows-gallery and the Workflow Builder methods
 	// (workflows.go): workflow links, a workflow button, a workflow
 	// step's message, a bookmarked workflow, tripping, triggers.
@@ -483,6 +486,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Unreads {
 		s.addUnreads() // unreads.go
+	}
+	if sz.GroupDMs {
+		s.addGroupDMs() // groupdms.go
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
@@ -993,6 +999,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
 		return out
 	}
+	if out, handled := s.handleGroupDMs(method, f); handled { // groupdms.go
+		return out
+	}
 	// the bench threads' replies: ahead of the switch, whose
 	// conversations.replies answers every other thread with none
 	if method == "conversations.replies" && s.Size.PluginBench {
@@ -1024,6 +1033,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if fx, ok := s.unreadsCount(c.ID); ok { // unreads.go
 				e = fx
 			}
+			if l, ok := s.codeLatest(c.ID); ok { // codechannels.go: read, at its fixture's latest message
+				e = slack.CountEntry{ID: c.ID, LastRead: l, Latest: l}
+			}
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1049,9 +1061,15 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
 			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
 			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on"),
-			"composer_smart_symbols": g("on"), "agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
+			"code_channels_auto_close": g("on"), "agent_member_channel_count": g("on"), "plan_block_coding_enhancements": g("on"),
+			"agent_streaming_slimmer_task_cards": g("on"), "composer_smart_symbols": g("on"),
+			"app_thread_nugget_fe": g("on"), "app_nugget_refinement": g("on"),
+			"agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
 			"suggested_sections_auto_sort_v2": g("on"),
 			"lists_tabbing_navigation":        g("on"),
+			// channel details' Agents & apps / Automations tabs and Settings'
+			// tab permissions (views/details.go, details_more.go)
+			"channel_details_agents_apps_tab": g("on"), "move_channel_tabs_settings": g("on"),
 			// focus mode and the Availability section (see core's defaultExperimentGroups)
 			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
 			// message rows (see core's defaultExperimentGroups)

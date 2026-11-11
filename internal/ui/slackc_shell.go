@@ -382,11 +382,12 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	tw := e.width - tx
 	ns := clsSbName.Enter(gtx, 0, 0)
 	size := ns.FontSize(15)
-	nw := 0
+	nw, trunc := 0, false
 	if !ns.Hidden() {
 		nfg := ns.Color(fg)
 		weight := cssWeight(ns, e.weight)
 		nw = a.th.Measure(gtx, size, weight, label)
+		trunc = nw > tw
 		if nw > tw {
 			nw = tw
 		}
@@ -399,6 +400,9 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		})
 	}
 	ns.Leave()
+	if conv.Code != nil { // BaseChannelName's code channel tooltip (codechannel.go)
+		a.codeRowTooltip(gtx, conv, label, image.Rect(tx, 0, tx+nw, rowH), trunc)
+	}
 	if conv.StatusEmoji != "" && nw+gtx.Dp(26) < tw {
 		// status emoji after the name (Slack: 16px, 6px gap)
 		es := gtx.Dp(16)

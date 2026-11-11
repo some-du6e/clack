@@ -304,6 +304,7 @@ func (a *App) Invite(ctx context.Context, ch string, users ...string) error {
 	a.mu.Lock()
 	delete(a.memberN, ch)
 	delete(a.memberG, ch)
+	delete(a.memberA, ch)
 	a.mu.Unlock()
 	return nil
 }

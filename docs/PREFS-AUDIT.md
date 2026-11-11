@@ -478,7 +478,10 @@ tabs" is disabled while the mode is on.
 - The crumbs are the workspace (back to BBMMain, with a mention badge or an
   unread dot), the tab (its list, if the tab has one), the primary view (a
   channel's name with its icon and no #, a DM's person, or a page title,
-  semibold when unread), then the secondary view ("Thread").
+  semibold when unread), then the secondary view ("Thread"; a code
+  channel's details pane is "Code channel details", its view label from
+  getAriaLabelForViewContent under session_channel_views and
+  code_channels_naming, else "Session channel details").
 - Each crumb shows only up to the container on screen
   (shouldIncludeBreadcrumb). Labels are underlined, carets are 16px, and
   the row is max 1200px wide with 12px padding.
