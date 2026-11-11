@@ -292,12 +292,19 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	}
 	titleW := max(iconW+nw, gtx.Dp(88)) + gtx.Dp(8)
 	if titleW > avail {
-		nw -= titleW - avail
-		titleW = avail
+		// the title's column shrinks (.p-view_header__text: flex 1 1 0,
+		// min-width 0) but the button keeps its min-width 96: in a narrow
+		// column it runs under the actions, whose opaque background
+		// (.p-view_header__actions, --dt_color-base-pry) covers the rest
+		fit := max(avail, gtx.Dp(88)+gtx.Dp(8))
+		nw -= titleW - fit
+		titleW = fit
 	}
 	if nw < 0 {
 		nw = 0
 	}
+	actL := right + gtx.Dp(6) // the actions' left edge: the title shows up to it
+	tcl := clip.Rect{Max: image.Pt(actL, h)}.Push(gtx.Ops)
 	at(gtx, image.Pt(x, (h-gtx.Dp(32))/2), image.Pt(titleW, gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("hdr.title"), func(gtx layout.Context, s image.Point, hov bool) {
 			if hov {
@@ -323,10 +330,11 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			return layout.Dimensions{Size: image.Pt(titleW, th)}
 		})
 	})
+	tcl.Pop()
 	if clicked(a.clicks.get("hdr.title")) {
 		a.OpenDetails(ch)
 	}
-	a.headerTitleMenu(gtx, ch, image.Rect(x, (h-gtx.Dp(32))/2, x+titleW, (h+gtx.Dp(32))/2))
+	a.headerTitleMenu(gtx, ch, image.Rect(x, (h-gtx.Dp(32))/2, max(x, min(x+titleW, actL)), (h+gtx.Dp(32))/2))
 	x += titleW + gtx.Dp(16)
 
 	// topic (13px muted) in the remaining space.

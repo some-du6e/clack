@@ -84,6 +84,12 @@ boot-render / boot-shared / client-boot / modern.vendor ones.
   a container query hides `.p-view_header__topic_container` and the title
   runs up to the actions. Clack's `headerFit` measures the split view's
   whole column, or the primary header, which spans a nested thread pane.
+- The title's column shrinks to nothing (`.p-view_header__text`: flex
+  1 1 0, min-width 0), but the title button keeps its min-width of 96px.
+  In a column too narrow for it, the button runs under the actions
+  (`flex: none`, opaque `--dt_color-base-pry` background), which cover
+  the rest. Clack keeps the 96px and clips the title at the actions'
+  left edge, its click area too.
 - Focus: navigating to the split view moves the focus into it (its
   composer), and closing it hands the focus back to the primary view.
   Escape in a closable container closes it (`4zmr` RenderedViewContents)
