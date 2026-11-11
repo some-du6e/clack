@@ -11,6 +11,7 @@ import (
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -23,11 +24,22 @@ import (
 // presenter's panel while you share in the desktop app:
 //
 //   - its own frameless window, 620×60, always on top at the
-//     "screen-saver" level, on every desktop, left out of captures
-//     (setContentProtection), centred at the bottom of the shared screen
-//     100px up (for a window share, Slack's bounds come back empty and it
-//     uses the screen its main window is on; Clack takes the screen the
-//     shared window is on). The body is sk-client-theme--dark.
+//     "screen-saver" level (relative level 1), on every desktop, left out
+//     of captures (setContentProtection), centred at the bottom of the
+//     shared screen 100px up (for a window share, Slack's bounds come
+//     back empty and it uses the screen its main window is on; Clack
+//     takes the screen the shared window is on). The body is
+//     sk-client-theme--dark.
+//   - it opens hidden and shows with showInactive, so the focus stays
+//     where it was; on macOS it is Electron's type "panel" (a click on it
+//     doesn't activate the app, hidden in Mission Control) with
+//     acceptFirstMouse, so one click presses a button while you present
+//     another app. Gio's app.Panel does all that (Clack's Gio patch §7).
+//   - .p-huddle_mini_panel is -webkit-app-region: drag and its buttons
+//     no-drag: the rest of the panel moves the window (a Gio ActionMove
+//     area under the buttons). Presses there go to the OS, so the page's
+//     onDoubleClick (focus the main window) only sees double clicks on
+//     the buttons, which bubble to it.
 //   - .p-huddle_mini_panel: padding 12px, theme-base-inv-pry, text
 //     theme-content-inv-pry. From the left: HuddleActivity (isMiniPanel:
 //     who's talking, or the huddle's name, over "{n} people in the
@@ -42,7 +54,6 @@ import (
 //     needs the host draw window (HostDrawWindow), which Clack doesn't
 //     have, so it isn't drawn; isDrawEnabled goes out false, as Slack's
 //     Linux app sends it.
-//   - a double click focuses Clack's main window.
 
 // The panel's palette (7uI9's theme tokens, Slack Kit's dark values).
 var (
@@ -74,8 +85,6 @@ type miniPanel struct {
 	placed bool
 
 	mic, video, stop widget.Clickable
-	area             widget.Clickable // the double click
-	lastClick        time.Time
 }
 
 // syncMiniPanel opens the panel while you share and closes it after
@@ -153,7 +162,7 @@ func screenOf(src huddle.ShareSource) image.Rectangle {
 func (p *miniPanel) run() {
 	ww := new(app.Window)
 	ww.Option(app.Title(AppName), app.Size(unit.Dp(panelW), unit.Dp(panelH)), app.MinSize(unit.Dp(panelW), unit.Dp(panelH)),
-		app.MaxSize(unit.Dp(panelW), unit.Dp(panelH)), app.Decorated(false), app.TopMost(true))
+		app.MaxSize(unit.Dp(panelW), unit.Dp(panelH)), app.Decorated(false), app.TopMost(true), app.Panel(true))
 	th := theme.Bare(true)
 	sh := theme.NewShaper()
 	th.SetShapers(sh, sh)
@@ -166,19 +175,6 @@ func (p *miniPanel) run() {
 	}
 	screen := make(chan image.Rectangle, 1)
 	go func() { screen <- screenOf(p.src) }()
-	tick := time.NewTicker(500 * time.Millisecond) // who's talking
-	defer tick.Stop()
-	go func() {
-		for range tick.C {
-			p.mu.Lock()
-			done := p.closed
-			p.mu.Unlock()
-			if done {
-				return
-			}
-			ww.Invalidate()
-		}
-	}()
 	var bounds image.Rectangle
 	var ops op.Ops
 	for {
@@ -194,7 +190,13 @@ func (p *miniPanel) run() {
 			default:
 			}
 			gtx := app.NewContext(&ops, e)
-			p.place(bounds, gtx.Metric)
+			// the next frame: who's talking, or sooner while the window
+			// waits for its handle and the screen to be placed on
+			next := 500 * time.Millisecond
+			if !p.place(bounds, gtx.Metric) {
+				next = 50 * time.Millisecond
+			}
+			gtx.Execute(op.InvalidateCmd{At: e.Now.Add(next)})
 			slackc.LockFrame()
 			restore := slackc.SubFrame(gtx, "sk-client-theme--dark", panelInk)
 			p.layout(gtx, th)
@@ -202,28 +204,32 @@ func (p *miniPanel) run() {
 			slackc.UnlockFrame()
 			e.Frame(gtx.Ops)
 		default:
-			if h, ok := panelHandle(e); ok {
+			if h, ok := panelHandle(e); ok { // placed by the next frame
 				p.mu.Lock()
 				p.handle, p.have, p.placed = h, true, false
 				p.mu.Unlock()
-				ww.Invalidate()
 			}
 		}
 	}
 }
 
-// place moves the window once its native handle and the screen are known.
-func (p *miniPanel) place(bounds image.Rectangle, m unit.Metric) {
+// place moves the window once its native handle and the screen are
+// known, and reports whether it has been.
+func (p *miniPanel) place(bounds image.Rectangle, m unit.Metric) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.placed || !p.have || bounds.Empty() {
-		return
+	if p.placed {
+		return true
+	}
+	if !p.have || bounds.Empty() {
+		return false
 	}
 	p.placed = true
 	p.at = panelPlace(bounds, panelScale(m))
 	h := p.handle
 	at := p.at
 	go huddle.SetupPresenterPanel(h, at)
+	return true
 }
 
 // activityText is HuddleActivity's two lines in the mini panel
@@ -284,29 +290,37 @@ func (p *miniPanel) layout(gtx C, th *theme.Theme) {
 		return
 	}
 	st := s.State()
-	if p.mic.Clicked(gtx) {
+	for p.clicked(gtx, &p.mic) {
 		c.micClick(s, st, nil)
 	}
-	if p.video.Clicked(gtx) {
+	for p.clicked(gtx, &p.video) {
 		s.SetCamera(!(st.Camera.State == huddle.CameraOn || st.Camera.State == huddle.CameraStarting))
 	}
-	if p.stop.Clicked(gtx) { // toggleScreenShare
+	for p.clicked(gtx, &p.stop) { // toggleScreenShare
 		c.stopShare(s)
 	}
-	if p.area.Clicked(gtx) {
-		if time.Since(p.lastClick) < 400*time.Millisecond { // onDoubleClick: focus the main window
-			if r, ok := c.h.(interface{ Raise() }); ok {
-				r.Raise()
-			}
-		}
-		p.lastClick = time.Now()
-	}
-	at(gtx, image.Point{}, sz, func(gtx C) D { return p.area.Layout(gtx, func(gtx C) D { return D{Size: sz} }) })
+	// the drag region: everything the buttons (laid out after it) don't cover
+	area := clip.Rect{Max: sz}.Push(gtx.Ops)
+	system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
+	area.Pop()
 	slackc.Render(gtx, "HuddleMiniPanel", slackc.Props{"$key": "huddle-mini-panel", "huddleId": s.RoomID(), "channelId": st.Channel,
 		"className": "p-huddle_mini_panel"}, func(gtx C, _ slackc.Props) D {
 		p.content(gtx, th, s, st, sz)
 		return D{Size: sz}
 	})
+}
+
+// clicked is cl's next click. The second click of a double click is also
+// the panel's onDoubleClick, which focuses the main window
+// (focusWindow(getMainWindowId())).
+func (p *miniPanel) clicked(gtx C, cl *widget.Clickable) bool {
+	k, ok := cl.Update(gtx)
+	if ok && k.NumClicks == 2 {
+		if r, ok := p.c.h.(interface{ Raise() }); ok {
+			r.Raise()
+		}
+	}
+	return ok
 }
 
 func (p *miniPanel) content(gtx C, th *theme.Theme, s *huddle.Session, st huddle.State, sz image.Point) {

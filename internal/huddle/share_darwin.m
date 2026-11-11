@@ -637,10 +637,14 @@ void clack_border_hide(void) {
 
 // ---- the presenter's mini panel (HuddleMiniPanelMounter's window) ----
 
-// clack_panel_setup makes the Gio window behind view the mini panel:
-// above everything ("screen-saver" level, setAlwaysOnTop), on every
-// Space, out of captures (setContentProtection), at x, y (global points,
-// top-left) w×h.
+// clack_panel_setup makes the Gio window behind view (an app.Panel, Gio's
+// ElectronNSPanel) the mini panel the way HuddleMiniPanelMounter sets its
+// BrowserWindow up: above everything (setAlwaysOnTop(true, "screen-saver",
+// 1), NSScreenSaverWindowLevel + 1), on every Space
+// (setVisibleOnAllWorkspaces; the panel adds FullScreenAuxiliary), hidden
+// in Mission Control (hiddenInMissionControl, Transient), out of captures
+// (setContentProtection), at x, y (global points, top-left) w×h. It moves
+// by its ActionMove area (-webkit-app-region: drag), not its background.
 void clack_panel_setup(uintptr_t view, int x, int y, int w, int h) {
 	dispatch_async(dispatch_get_main_queue(), ^{
 		NSView *v = (__bridge NSView *)(void *)view;
@@ -648,10 +652,9 @@ void clack_panel_setup(uintptr_t view, int x, int y, int w, int h) {
 		if (win == nil) {
 			return;
 		}
-		win.level = NSScreenSaverWindowLevel;
+		win.level = NSScreenSaverWindowLevel + 1;
 		win.sharingType = NSWindowSharingNone;
-		win.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary;
-		win.movableByWindowBackground = YES;
+		win.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorTransient;
 		[win setFrame:cocoaRect(CGRectMake(x, y, w, h)) display:YES];
 		clack_sc_exclude((uint32_t)win.windowNumber, 1);
 	});

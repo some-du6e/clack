@@ -17,6 +17,8 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 @interface GioView : NSView <CALayerDelegate,NSTextInputClient>
 @property uintptr_t handle;
 @property BOOL presentWithTrans;
+// firstMouse is a Clack patch (CLACK_PATCHES.md §7): see acceptsFirstMouse.
+@property BOOL firstMouse;
 @end
 
 @implementation GioWindowDelegate
@@ -224,6 +226,11 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 - (BOOL)acceptsFirstResponder {
     return YES;
 }
+// Clack patch (CLACK_PATCHES.md §7): a panel's view takes the click that
+// makes its window key, as Electron's acceptFirstMouse does.
+- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+	return self.firstMouse;
+}
 - (BOOL) resignFirstResponder {
 	gio_onFocus(self.handle, 0);
 	return [super resignFirstResponder];
@@ -376,7 +383,23 @@ void gio_setCursor(NSUInteger curID) {
 	}
 }
 
-CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height) {
+// GioPanelWindow is a Clack patch (CLACK_PATCHES.md §7): Electron's
+// ElectronNSPanel, the window of a BrowserWindow with type "panel". The
+// non-activating mask is reserved for NSPanel; an NSWindow gets it by
+// always reporting it, so a click on the window doesn't activate the app.
+@interface GioPanelWindow : NSWindow
+@end
+
+@implementation GioPanelWindow
+- (NSWindowStyleMask)styleMask {
+	return [super styleMask] | NSWindowStyleMaskNonactivatingPanel;
+}
+- (void)setCollectionBehavior:(NSWindowCollectionBehavior)behavior {
+	[super setCollectionBehavior:behavior | NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary];
+}
+@end
+
+CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int panel) {
 	@autoreleasepool {
 		NSRect rect = NSMakeRect(0, 0, width, height);
 		NSUInteger styleMask = NSTitledWindowMask |
@@ -384,14 +407,23 @@ CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height) {
 			NSMiniaturizableWindowMask |
 			NSClosableWindowMask;
 
-		NSWindow* window = [[NSWindow alloc] initWithContentRect:rect
-													   styleMask:styleMask
-														 backing:NSBackingStoreBuffered
-														   defer:NO];
+		Class cls = panel ? [GioPanelWindow class] : [NSWindow class];
+		NSWindow* window = [[cls alloc] initWithContentRect:rect
+												  styleMask:styleMask
+													backing:NSBackingStoreBuffered
+													  defer:NO];
 		[window setAcceptsMouseMovedEvents:YES];
 		NSView *view = (__bridge NSView *)viewRef;
 		[window setContentView:view];
 		window.delegate = globalWindowDel;
+		if (panel) {
+			// What Electron's NativeWindowMac does for type "panel" when it
+			// creates one: the floating level, and the panel's collection
+			// behaviour (its setCollectionBehavior adds it).
+			[window setLevel:NSFloatingWindowLevel];
+			[window setCollectionBehavior:[window collectionBehavior]];
+			((GioView *)view).firstMouse = YES;
+		}
 		return (__bridge_retained CFTypeRef)window;
 	}
 }

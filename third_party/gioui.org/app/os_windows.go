@@ -118,8 +118,10 @@ func newWindow(win *callbacks, options []Option) {
 		defer winMap.Delete(w.hwnd)
 		w.Configure(options)
 		w.ProcessEvent(Win32ViewEvent{HWND: uintptr(w.hwnd)})
-		windows.SetForegroundWindow(w.hwnd)
-		windows.SetFocus(w.hwnd)
+		if !w.config.panel { // Clack patch (CLACK_PATCHES.md §7)
+			windows.SetForegroundWindow(w.hwnd)
+			windows.SetFocus(w.hwnd)
+		}
 		// Since the window class for the cursor is null,
 		// set it here to show the cursor.
 		w.SetCursor(pointer.CursorDefault)
@@ -865,12 +867,18 @@ func (w *window) Configure(options []Option) {
 	w.config.Decorated = cnf.Decorated
 	w.config.MinSize = cnf.MinSize
 	w.config.MaxSize = cnf.MaxSize
+	w.config.panel = cnf.panel
 	windows.SetWindowText(w.hwnd, cnf.Title)
 
 	style := windows.GetWindowLong(w.hwnd, windows.GWL_STYLE)
 	var showMode int32
 	var x, y, width, height int32
 	swpStyle := uintptr(windows.SWP_FRAMECHANGED)
+	if cnf.panel {
+		// Clack patch (CLACK_PATCHES.md §7): a panel shows without the
+		// focus, as Chromium's inactive show does.
+		swpStyle |= windows.SWP_NOACTIVATE
+	}
 	if cnf.TopMost == w.config.TopMost {
 		// Don't change the z-order if TopMost didn't change.
 		swpStyle |= windows.SWP_NOZORDER
@@ -936,6 +944,9 @@ func (w *window) Configure(options []Option) {
 	// action, so SetWindowPos should come first so as to not "overwrite" system.ActionCenter.
 	windows.SetWindowPos(w.hwnd, hwndAfter, x, y, width, height, swpStyle)
 	windows.SetWindowLong(w.hwnd, windows.GWL_STYLE, style)
+	if cnf.panel && showMode == windows.SW_SHOWNORMAL {
+		showMode = windows.SW_SHOWNOACTIVATE // Clack patch (CLACK_PATCHES.md §7)
+	}
 	windows.ShowWindow(w.hwnd, showMode)
 }
 

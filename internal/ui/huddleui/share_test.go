@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/input"
+	"gioui.org/io/system"
 	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/huddle"
@@ -193,6 +196,31 @@ func TestShareFlow(t *testing.T) {
 		}
 		if n := pixeltest.Count(panel, image.Rect((panelW-200)*shotScale, 0, panelW*shotScale, panelH*shotScale), panelStop, 8); n < 1500 {
 			t.Errorf("no Stop Sharing button at the panel's right (%d px)", n)
+		}
+	}
+	// .p-huddle_mini_panel is -webkit-app-region: drag and its buttons
+	// no-drag: the background moves the window, the buttons don't
+	// (the buttons from the right: 12dp in, Stop Sharing, then the video
+	// and mic buttons, 44dp wide, 12dp apart)
+	var pops op.Ops
+	pgtx := shotCtx(&pops, panelW, panelH)
+	mp.layout(pgtx, th)
+	var rt input.Router
+	rt.Frame(&pops)
+	stopW := 12 + 20 + 12 + 12 + labelSize(pgtx, th, 15, theme.Bold, nsHuddles.T("Stop Sharing")).X/shotScale
+	stopX := panelW - 12 - stopW
+	moves := func(x, y int) bool {
+		a, ok := rt.ActionAt(f32.Pt(float32(x*shotScale), float32(y*shotScale)))
+		return ok && a == system.ActionMove
+	}
+	for _, pt := range []image.Point{{16, 8}, {200, panelH / 2}, {panelW / 2, panelH - 4}, {stopX - 6, panelH / 2}, {stopX - 12 - 44 - 6, panelH / 2}} {
+		if !moves(pt.X, pt.Y) { // the edges, the activity, the gaps between buttons
+			t.Errorf("the panel at %v isn't its drag region", pt)
+		}
+	}
+	for _, x := range []int{stopX + stopW/2, stopX - 12 - 22, stopX - 12 - 44 - 12 - 22} { // Stop Sharing, video, mic
+		if moves(x, panelH/2) {
+			t.Errorf("the button at x=%d moves the window", x)
 		}
 	}
 	line, sub := e.c.activityText(st)

@@ -52,6 +52,8 @@ type Config struct {
 	// decoHeight is the height of the fallback decoration for platforms such
 	// as Wayland that may need fallback client-side decorations.
 	decoHeight unit.Dp
+	// panel is a Clack patch (CLACK_PATCHES.md §7): see Panel.
+	panel bool
 }
 
 // ConfigEvent is sent whenever the configuration of a Window changes.

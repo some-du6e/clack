@@ -12,7 +12,9 @@ To see the whole diff against the release:
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `widget/text.go`, `widget/clack_spans.go`, `op/op.go`,
-`internal/ops/ops.go`, `app/os_x11.go`, `app/clack_gpu.go` and these two
+`internal/ops/ops.go`, `app/os_x11.go`, `app/clack_gpu.go`,
+`app/clack_panel.go`, `app/os.go`, `app/os_macos.go`, `app/os_macos.m`,
+`app/os_windows.go`, `app/internal/windows/windows.go` and these two
 files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -172,3 +174,67 @@ Test: `internal/ui/popups` `TestSearchTokenPills` (a filter token's
 modifier starts 24px after the text before it, its value is as wide as
 the bold measurement, the text after it starts 4px after the value).
 Not in `UPSTREAM.patch`.
+
+## 7. app: Panel windows, and move areas on X11
+
+`app/clack_panel.go` (new: `Panel`), `app/os.go` (`Config.panel`),
+`app/os_macos.go` and `app/os_macos.m` (`GioPanelWindow`,
+`GioView.acceptsFirstMouse:`, `gio_createWindow`'s `panel`, the first
+show), `app/os_windows.go` (`newWindow`, `Configure`) with
+`SW_SHOWNOACTIVATE` in `app/internal/windows/windows.go`, and
+`app/os_x11.go` (`newX11Window`, the `ButtonPress` case,
+`moveByPointer`). Additions: a window without `Panel` is created, shown
+and focused as before, and an X11 window without an `ActionMove` area
+gets every press as before.
+
+Slack's presenter panel while you share your screen in a huddle
+(HuddleMiniPanelMounter, internal/ui/huddleui/minipanel.go) is an
+Electron BrowserWindow opened hidden, with `type: "panel"` on macOS and
+`acceptFirstMouse: true`, then shown with `showInactive()`. Gio has no
+such window: every new window takes the focus (`makeKeyAndOrderFront`,
+`SetForegroundWindow` and `SetFocus`, a plain `XMapWindow`), a click on
+one activates the app on macOS, and the click that makes a macOS window
+key never reaches Gio. So a presenter clicking Mute in Clack's panel
+while showing another app pulled the focus away from it, and on macOS
+the first click only focused the panel.
+
+`app.Panel(true)` does what Electron and Chromium do for those options:
+
+- First show without the focus. macOS: `orderFrontRegardless` instead
+  of `makeKeyAndOrderFront` (`NativeWindowMac::ShowInactive`). Windows:
+  `SWP_NOACTIVATE` in `Configure`'s `SetWindowPos`, `SW_SHOWNOACTIVATE`
+  instead of `SW_SHOWNORMAL`, and no `SetForegroundWindow`/`SetFocus`
+  after creation (Chromium's `HWNDMessageHandler::Show` for
+  `kInactive`). X11: `_NET_WM_USER_TIME` set to `CurrentTime` (0)
+  before the map (`X11Window::Map(inactive)`), which tells the window
+  manager not to focus it. Wayland: unchanged; the compositor decides,
+  as it does for Chromium.
+- macOS only: the window is a `GioPanelWindow`, Electron's
+  `ElectronNSPanel`: an `NSWindow` whose `styleMask` always includes
+  `NSWindowStyleMaskNonactivatingPanel` (the mask is reserved for
+  `NSPanel`; reporting it is Electron's workaround) and whose
+  `setCollectionBehavior:` always adds `CanJoinAllSpaces` and
+  `FullScreenAuxiliary`, created at `NSFloatingWindowLevel`. Its
+  `GioView` returns YES from `acceptsFirstMouse:`, so the click that
+  makes the panel key also reaches the widgets.
+
+The window then behaves like any other: a later click on it focuses it
+on Windows and X11, as Slack's panel (focusable) does.
+
+Move areas on X11: `system.ActionInputOp(system.ActionMove)` already
+moves the window on macOS (`performWindowDragWithEvent`), Windows
+(`HTCAPTION`) and Wayland (`xdg_toplevel.move`); X11 ignored it. A
+primary press in an `ActionMove` area now hands the window to the window
+manager the way Chromium does for a drag region (`DoWMMoveResize`):
+`XUngrabPointer`, then a `_NET_WM_MOVERESIZE` client message to the root
+with the press's root position and `_NET_WM_MOVERESIZE_MOVE`, and the
+press isn't delivered, as on the other platforms. The panel's
+background is such an area (`.p-huddle_mini_panel` is
+`-webkit-app-region: drag`, its buttons `no-drag`).
+
+Tests: `internal/ui/huddleui` `TestMiniPanelShowsInactive` (the panel's
+real X11 window under Xvfb has `_NET_WM_USER_TIME` 0; huddles-audit-shots)
+and `TestShareFlow` (the panel's background is an `ActionMove` area and
+its buttons aren't). The macOS and Windows parts are built by ci's macos
+and windows jobs; whether a window takes the focus can't be observed on
+the CI runners. Not in `UPSTREAM.patch`.
