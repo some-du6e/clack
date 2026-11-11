@@ -318,6 +318,8 @@ type base struct {
 	tt    *taut.Taut
 	tgen  uint32
 	tmemo map[string]*memoEntry
+	// addBtns are the messages' add-reaction buttons (reactions_slack.go)
+	addBtns map[string]*widget.Clickable
 }
 
 func newBase(h Host) base { return base{h: h, rich: richCache{}} }
