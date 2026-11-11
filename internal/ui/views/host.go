@@ -31,10 +31,25 @@ type Host interface {
 	Navigate(route string)
 	OpenThread(channel, ts string)
 	CloseSecondary()
+	// OpenProfile is a click on a person: the ui root opens their
+	// profile in the secondary pane (Slack's showMemberProfile).
 	OpenProfile(anchor image.Point, userID string)
 	OpenMessageMenu(anchor image.Point, m core.Message)
 	OpenLightbox(img richtext.Image, m core.Message)
 	Toast(text string)
+}
+
+// openProfileCard opens the profile card as a click popover (Slack's
+// ProfileCardTrigger, boot-shared 4WSP) on a host that has one (the ui
+// root's App.OpenProfileCard), else the profile (OpenProfile).
+func openProfileCard(h Host, anchor image.Point, userID string) {
+	if c, ok := h.(interface {
+		OpenProfileCard(anchor image.Point, userID string)
+	}); ok {
+		c.OpenProfileCard(anchor, userID)
+		return
+	}
+	h.OpenProfile(anchor, userID)
 }
 
 // Panes is optionally implemented by the Host to embed the real

@@ -17,7 +17,11 @@ import (
 //     "Unknown author" when the author has no name.
 //   - is_msg_unfurl attachments render as MessageAttachmentSlackMessageCard
 //     (the forward_message_card layout): avatar, author, compact time,
-//     getFooterTextData's context line, the message, its files.
+//     getFooterTextData's context line, the message, its files. With an
+//     author_id the avatar and name are the member's (MemberNamer).
+//   - The author's name in both is the member's getPrefCompliantMemberName
+//     (client-boot vUCu, via MemberNamer): the display name, or the real
+//     name under display_real_names, never the username.
 
 // ConvKinder is an optional Resolver extension: the kind of a
 // conversation ("public", "private", "im", "mpim"), ok false when the
@@ -45,8 +49,12 @@ func MessageMentionLabel(r Namer, channel, author string) (label string, lock bo
 	if !known || channel == "" {
 		return "Private message", false, 0, true
 	}
+	// the author: getMessageSenderNameFromState (4ubN), the member's
+	// getPrefCompliantMemberName, "Unknown author" when it is empty
 	name := ""
-	if author != "" {
+	if mn, ok := r.(MemberNamer); ok && author != "" {
+		name, _ = mn.MemberName(author)
+	} else if author != "" {
 		name = strings.TrimPrefix(r.UserName(author), "@")
 	}
 	if name == "" || name == author {
@@ -107,6 +115,13 @@ func (c *builder) msgCard(a *slack.Attachment, att *Attachment) {
 		att.AuthorName = a.AuthorSubname
 	}
 	att.AuthorSubname = ""
+	// the card's author is the member (renderCardAvatar,
+	// renderCardAuthorName): their name and picture
+	if mn, ok := c.r.(MemberNamer); ok && a.AuthorID != "" {
+		if n, known := mn.MemberName(a.AuthorID); known {
+			att.CardMember, att.CardAuthor, att.CardAvatar = true, n, mn.MemberAvatar(a.AuthorID)
+		}
+	}
 	att.ShareChannelID = a.ChannelID
 	att.ShareChannel = strings.TrimPrefix(a.ChannelName, "#")
 	if att.ShareChannel == "" && a.ChannelID != "" {

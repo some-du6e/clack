@@ -239,7 +239,7 @@ func (l *lay) hoverCard(b *richtext.Block, x, y, w int) int {
 		var tg int16 = -1
 		ct := l.enter(attTitleClass)
 		if a.TitleLink != "" {
-			tg = l.d.addTarget(target{kind: tLink, url: a.TitleLink, underline: true})
+			tg = l.d.addTarget(target{kind: tLink, url: a.TitleLink, underline: true, website: true}) // AttachmentTitle (HbXx)
 			l.enter(linkClass)
 		}
 		l.addSpansTarget(a.Title, &fs, tg)

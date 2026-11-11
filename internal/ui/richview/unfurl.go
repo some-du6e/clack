@@ -639,7 +639,8 @@ func (l *lay) fixedCard(b *richtext.Block, x, y, w int) int {
 	default:
 		title, author = a.Title, a.AuthorName
 		if link := firstNonEmpty(a.TitleLink, a.OriginalURL); link != "" && k != akFlickr {
-			titleT = l.d.addTarget(target{kind: tLink, url: link, underline: false})
+			// AttachmentTitle's link (HbXx): underline links reaches it
+			titleT = l.d.addTarget(target{kind: tLink, url: link, underline: false, website: true})
 		}
 		footIcon = a.ServiceIcon
 		if footIcon == "" {

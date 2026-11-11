@@ -369,11 +369,16 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 			}
 		}
 	}
-	if v.hover >= 0 && int(v.hover) < len(v.d.targets) && v.d.targets[v.hover].underline {
-		for i := range v.d.frags {
-			f := &v.d.frags[i]
-			if f.target == v.hover && f.kind == fText {
-				underline(gtx.Ops, f, v.textCol(f))
+	if v.hover >= 0 && int(v.hover) < len(v.d.targets) {
+		switch tg := &v.d.targets[v.hover]; {
+		case tg.inset:
+			v.insetLine(gtx.Ops, v.hover, max(1, gtx.Dp(1)))
+		case tg.underline:
+			for i := range v.d.frags {
+				f := &v.d.frags[i]
+				if f.target == v.hover && f.kind == fText {
+					underline(gtx.Ops, f, f.w+f.ulT, v.textCol(f))
+				}
 			}
 		}
 	}
@@ -686,15 +691,16 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 			v.paintGlyphs(ops, st, f, col)
 			if f.style&(richtext.Strike|richtext.Underline) != 0 {
 				thick := max(1, f.size/14)
+				w := f.w + f.ulU // over the spaces of the same style
 				if f.style&richtext.Strike != 0 {
 					y := f.y - int(float32(f.size)*0.3+0.5)
-					paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+f.w+0.5), y+thick)).Op())
+					paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+w+0.5), y+thick)).Op())
 				}
 				if f.style&richtext.Underline != 0 {
-					underline(ops, f, col)
+					underline(ops, f, w, col)
 				}
-			} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].kind == tLink && !v.d.targets[f.target].slug {
-				underline(ops, f, col) // Accessibility > "Underline links to websites"
+			} else if ul && f.target >= 0 && int(f.target) < len(v.d.targets) && v.d.targets[f.target].website {
+				underline(ops, f, f.w+f.ulT, col) // Accessibility > "Underline links to websites"
 			}
 			if css && f.part != 0 {
 				v.partDeco(ops, i, col)
@@ -744,11 +750,49 @@ func (v *View) partDeco(ops *op.Ops, i int, col color.NRGBA) {
 	slackc.DrawDecoration(ops, ps.deco, dc, f.x, float32(f.y), w, float32(f.size))
 }
 
-// underline draws f's underline in col, its painted (CSS) color.
-func underline(ops *op.Ops, f *frag, col color.NRGBA) {
+// underline draws f's underline w px long (the word, plus the spaces
+// after it its decoration covers: frag.ulT, ulU) in col, its painted (CSS)
+// color.
+func underline(ops *op.Ops, f *frag, w float32, col color.NRGBA) {
 	thick := max(1, f.size/14)
 	y := f.y + max(1, f.size/8)
-	paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+f.w+0.5), y+thick)).Op())
+	paint.FillShape(ops, col, clip.Rect(image.Rect(int(f.x), y, int(f.x+w+0.5), y+thick)).Op())
+}
+
+// insetLine is a hovered target's box-shadow: inset 0 -1px: a thick px
+// line on the bottom edge of each of its inline boxes (baseline plus the
+// font's descent), from its first frag on the line to its last, icons
+// included, in the text's color.
+func (v *View) insetLine(ops *op.Ops, t int16, thick int) {
+	var x0, x1 float32
+	y, on := 0, false
+	var col color.NRGBA
+	line := int32(-1)
+	flush := func() {
+		if on && y > 0 && x1 > x0 {
+			paint.FillShape(ops, col, clip.Rect(image.Rect(int(x0+0.5), y-thick, int(x1+0.5), y)).Op())
+		}
+		on, y = false, 0
+	}
+	for i := range v.d.frags {
+		f := &v.d.frags[i]
+		if f.target != t || f.line < 0 {
+			if on && f.line == line {
+				flush() // another element between: a new box
+			}
+			continue
+		}
+		if !on || f.line != line {
+			flush()
+			on, line, x0, x1 = true, f.line, f.x, f.x+f.w
+		}
+		x0, x1 = min(x0, f.x), max(x1, f.x+f.w)
+		if y == 0 && f.kind == fText && f.sh != nil {
+			y = f.y + int(f.sh.desc+0.5)
+			col = v.textCol(f)
+		}
+	}
+	flush()
 }
 
 func (v *View) paintSelection(gtx layout.Context, st *Style) {

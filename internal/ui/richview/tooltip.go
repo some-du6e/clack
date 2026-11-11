@@ -14,6 +14,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -51,10 +52,11 @@ func (v *View) emojiAt(p f32.Point) int {
 	return -1
 }
 
-// HoveredEmoji is the :name: of the emoji under the pointer, if any.
+// HoveredEmoji is the :name: of the emoji under the pointer, if any (not
+// the "(edited)" label's or a message card time's tooltip).
 func (v *View) HoveredEmoji() (string, bool) {
 	name, ok := v.hoveredTip()
-	if !ok || name == editedTipKey {
+	if !ok || name == editedTipKey || !strings.HasPrefix(name, ":") {
 		return "", false
 	}
 	return name, true
@@ -79,10 +81,35 @@ func (v *View) hoveredTip() (string, bool) {
 // ", 2025" unless shouldExcludeYear (this year, or last year within 31
 // days); the time in the time24 pref's clock.
 func editedTip(ts string, now time.Time) string {
+	t, date, ok := calendarDay(ts, now)
+	if !ok {
+		return ""
+	}
+	return date + " at " + uipref.Clock(t)
+}
+
+// fullTimestamp is getFullTimestamp (boot-shared n8t9), the tooltip of a
+// message card's time (AttachmentFooterTimestamp with compactTime: delay
+// 300): editedTip's "{date} at {time}" with the seconds.
+func fullTimestamp(ts string, now time.Time) string {
+	t, date, ok := calendarDay(ts, now)
+	if !ok {
+		return ""
+	}
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return date + " at " + i18n.Time(l, t, uipref.Get().Time24, true)
+	}
+	return date + " at " + t.Format(uipref.Layout("3:04:05 PM"))
+}
+
+// calendarDay is ts as a time and toCalendarDateOrNameDay's date for it
+// (shortenMonth): "Today", "Yesterday", "Tomorrow", else "Nov 7th" with
+// ", 2025" unless shouldExcludeYear.
+func calendarDay(ts string, now time.Time) (time.Time, string, bool) {
 	sec, _, _ := strings.Cut(ts, ".")
 	n, err := strconv.ParseInt(sec, 10, 64)
 	if err != nil || n <= 0 {
-		return ""
+		return time.Time{}, "", false
 	}
 	t := time.Unix(n, 0).In(now.Location())
 	day := func(x time.Time) time.Time { y, m, d := x.Date(); return time.Date(y, m, d, 0, 0, 0, 0, x.Location()) }
@@ -101,7 +128,7 @@ func editedTip(ts string, now time.Time) string {
 			date += t.Format(", 2006")
 		}
 	}
-	return date + " at " + uipref.Clock(t)
+	return t, date, true
 }
 
 // emojiTip draws the hovered emoji's :name: (or the "(edited)" label's

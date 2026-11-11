@@ -83,9 +83,12 @@ type Env struct {
 	// widget's window origin, as ui's originTracker does.
 	PointerWin func() image.Point
 	// OpenEmojiPicker, OpenProfile and OpenMenu are the popups the ui root
-	// offers every package (anchor in window coordinates).
+	// offers every package (anchor in window coordinates). OpenProfile is a
+	// click on a person (the profile pane, Slack's openProfile);
+	// OpenProfileCard opens the profile card as a popover.
 	OpenEmojiPicker func(anchor image.Point, onPick func(name string))
 	OpenProfile     func(anchor image.Point, userID string)
+	OpenProfileCard func(anchor image.Point, userID string)
 }
 
 var (

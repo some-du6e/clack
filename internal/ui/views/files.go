@@ -356,7 +356,9 @@ func (f *Files) update(gtx C) {
 			f.openMenu(*it, f.buttonRect(&c.menu, c.menuSize))
 		}
 		if c.owner.Clicked(gtx) && it.User != "" {
-			f.h.OpenProfile(image.Point{}, it.User)
+			// Clack's owner avatar keeps its card: Slack's file rows name
+			// the owner in plain text (boot-shared n+2X FileUserTimestamp)
+			openProfileCard(f.h, image.Point{}, it.User)
 		}
 	}
 	if st, ok, _ := f.starred.get(); ok {

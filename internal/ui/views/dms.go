@@ -467,7 +467,7 @@ func (d *DMs) update(gtx C) {
 		}
 		if r.more.Clicked(gtx) {
 			if i, ok := d.index[id]; ok && d.items[i].Conv.User != "" {
-				d.h.OpenProfile(image.Point{}, d.items[i].Conv.User)
+				openProfileCard(d.h, image.Point{}, d.items[i].Conv.User) // the row's ⋮: Clack's card, not a person click
 			}
 		}
 		if r.click.Clicked(gtx) {

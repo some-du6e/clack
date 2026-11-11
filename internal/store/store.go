@@ -560,6 +560,54 @@ func DisplayName(u *slack.User) string {
 	return u.Name
 }
 
+// PrefName is Slack's getPrefCompliantMemberNamePure (client-boot vUCu):
+// the display name, unless displayRealNames (the display_real_names pref)
+// asks for real names, then the real name (getMemberRealName, Yn47:
+// profile.real_name, else real_name). Unlike DisplayName there is no
+// username fallback and nothing is trimmed: a real name of a lone
+// zero-width space is that space.
+func PrefName(u *slack.User, displayRealNames bool) string {
+	if u == nil {
+		return ""
+	}
+	if !displayRealNames && u.Profile.DisplayName != "" {
+		return u.Profile.DisplayName
+	}
+	if u.Profile.RealName != "" {
+		return u.Profile.RealName
+	}
+	return u.RealName
+}
+
+// AvatarURL is u's picture for a slot of size px: the profile image that
+// covers it, else the ca.slack-edge.com picture of avatar_hash, else
+// Slack's default.
+func AvatarURL(u *slack.User, size int) string {
+	p := u.Profile
+	switch {
+	case size <= 72 && p.Image72 != "":
+		return p.Image72
+	case size > 72 && size <= 192 && p.Image192 != "":
+		return p.Image192
+	case size > 192 && p.Image512 != "":
+		return p.Image512
+	}
+	if p.AvatarHash != "" {
+		team := u.TeamID
+		if team == "" {
+			team = p.Team
+		}
+		if team == "" {
+			team = "T0266FRGM"
+		}
+		return "https://ca.slack-edge.com/" + team + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
+	}
+	if p.Image48 != "" {
+		return p.Image48
+	}
+	return "https://a.slack-edge.com/80588/img/avatars/ava_0001-" + strconv.Itoa(size) + ".png"
+}
+
 // ---- richtext.Resolver ----
 
 func (s *Store) UserName(id string) string {
@@ -568,6 +616,56 @@ func (s *Store) UserName(id string) string {
 		s.noteMissing('u', id)
 	}
 	return DisplayName(u)
+}
+
+// MemberName is richtext.MemberNamer: Slack's getPrefCompliantMemberName
+// (client-boot vUCu sE) for id under the viewer's display_real_names
+// pref, "Name hidden" for someone in their hidden_users (0OuZ
+// isUserHidden). ok is false for a member not loaded yet, which is noted
+// to be fetched.
+func (s *Store) MemberName(id string) (string, bool) {
+	u, ok := s.User(id)
+	if !ok || u == nil {
+		s.noteMissing('u', id)
+		return "", false
+	}
+	s.mu.RLock()
+	real := s.Prefs.DisplayRealNames
+	hidden := hiddenUser(s.RawPrefs["hidden_users"], id)
+	s.mu.RUnlock()
+	if hidden {
+		return "Name hidden", true
+	}
+	return PrefName(u, real), true
+}
+
+// MemberAvatar is richtext.MemberNamer: the member's own picture for a
+// 36px avatar (ConnectedBaseAvatar asks for twice that), the image
+// message rows draw; "" for a member not loaded yet.
+func (s *Store) MemberAvatar(id string) string {
+	u, ok := s.User(id)
+	if !ok || u == nil {
+		return ""
+	}
+	return AvatarURL(u, 72)
+}
+
+// hiddenUser reports whether the hidden_users pref (a comma-separated
+// string of ids, People you've hidden) holds id.
+func hiddenUser(raw json.RawMessage, id string) bool {
+	if len(raw) == 0 || id == "" {
+		return false
+	}
+	var list string
+	if json.Unmarshal(raw, &list) != nil {
+		return false
+	}
+	for _, h := range strings.Split(list, ",") {
+		if strings.TrimSpace(h) == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) ChannelName(id string) string {

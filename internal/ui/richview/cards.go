@@ -187,8 +187,8 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		fs.col = p.Link
 		var tg int16 = -1
 		ct := l.enter(attTitleClass)
-		if a.TitleLink != "" {
-			tg = l.d.addTarget(target{kind: tLink, url: a.TitleLink, underline: true})
+		if a.TitleLink != "" { // AttachmentTitle's link (HbXx): underline links reaches it
+			tg = l.d.addTarget(target{kind: tLink, url: a.TitleLink, underline: true, website: true})
 			l.enter(linkClass)
 		}
 		l.addSpansTarget(a.Title, &fs, tg)
@@ -354,8 +354,8 @@ func (l *lay) addTextPart(sp *richtext.Span, fs *flowStyle, k faceKey, tg int16)
 func (l *lay) addSpansPlain(spans []richtext.Span, fs *flowStyle) {
 	for _, sp := range spans {
 		switch sp.Kind {
-		case richtext.Link:
-			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
+		case richtext.Link: // a mrkdwn link (data-stringify-link)
+			tg := l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true})
 			k := l.faceFor(fs.face, fs.size, sp.Style)
 			l.addTextPart(&sp, fs, k, tg)
 		default:

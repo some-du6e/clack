@@ -45,6 +45,12 @@ type frag struct {
 	boxed  bool   // its part's background is a deco box (code, pill)
 	weight font.Weight
 	tip    int16 // emoji: index+1 into display.tips (its :name: tooltip); also the "(edited)" word's
+	// ulT and ulU are how far the frag's decoration runs on past it, over
+	// the spaces after it on its line: those of its own target (a link's
+	// underline) and those with its underline/strike style. CSS decorates
+	// an element's spaces too, so a decorated run of words is one line,
+	// not a line per word.
+	ulT, ulU float32
 }
 
 type boxKind uint8
@@ -141,7 +147,17 @@ type target struct {
 	// slug: a message_mention pill (.p-rich_text_slug), never underlined,
 	// not even by the "underline links" preference
 	slug bool
-	att  *richtext.Attachment // tExpand: the attachment to expand
+	// website: a link the "underline links" preference underlines, which
+	// in Slack are only those marked data-stringify-link (links in message
+	// text, mrkdwn and rich text: boot-shared kQRT renderDefaultLink) and
+	// an attachment's title link (HbXx AttachmentTitle): jRB6 sets
+	// underlineStyle "underline" for those alone
+	website bool
+	// inset: the hover decoration is box-shadow: inset 0 -1px, a line on
+	// the bottom edge of the link's inline box under its text and icons
+	// (the message card's context line, .context__pPPwj a:hover)
+	inset bool
+	att   *richtext.Attachment // tExpand: the attachment to expand
 	// inCard: a tImage inside a v3 link card (unfurl.go). A click opens
 	// the image viewer; a right-click is the card's, as in Slack, where
 	// the image has no context menu of its own.
@@ -515,7 +531,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 			} else {
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})
+				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true})
 			}
 			if st&richtext.Code == 0 {
 				col = p.Link
@@ -661,7 +677,18 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	leadLine := l.lead > 0
 	x, l.lead = l.lead, 0
 
+	// Decorations over spaces (frag.ulT, ulU): last is this line's last
+	// frag, endT/endU where the spaces after it that share its target /
+	// its underline-strike style reach (broken by a pad or another space).
+	last := -1
+	var endT, endU float32
+	brokeT, brokeU := false, false
+	gapReset := func() { endT, endU, brokeT, brokeU = 0, 0, false, false }
+	const lineDeco = richtext.Underline | richtext.Strike
+
 	finishLine := func() {
+		last = -1 // spaces at the end of a line are never decorated
+		gapReset()
 		// Compute this line's height: emoji may be taller.
 		lh := lineH0
 		if lineStart == len(d.frags) && !fs.pre && !leadLine {
@@ -697,6 +724,17 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	}
 
 	emit := func(it *item, sh *shaped, w float32, p0, p1 int32) {
+		if last >= 0 { // the spaces before this frag: decorated by the previous one
+			f := &d.frags[last]
+			if end := f.x + f.w; endT > end {
+				f.ulT = endT - end
+			}
+			if end := f.x + f.w; endU > end {
+				f.ulU = endU - end
+			}
+		}
+		gapReset()
+		last = len(d.frags)
 		if it.kind == itImage {
 			d.frags = append(d.frags, frag{kind: fImage, x: float32(x0) + x + l.dpf(1), w: float32(it.size), size: it.size, url: it.url, target: it.target, p0: p0, p1: p1, alt: it.alt, comp: it.comp, tip: it.tip, part: it.part, col: it.col})
 		} else if it.kind == itWord {
@@ -733,6 +771,20 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				if x+it.w <= maxWf || fs.pre {
 					if it.deco >= 0 {
 						decoRuns = append(decoRuns, placed{item: i, frag: -1, x: float32(x0) + x, w: it.w, line: len(d.lines), decoI: it.deco})
+					}
+					if last >= 0 {
+						f := &d.frags[last]
+						end := float32(x0) + x + it.w
+						if !brokeT && it.target >= 0 && it.target == f.target {
+							endT = end
+						} else {
+							brokeT = true
+						}
+						if !brokeU && it.style&lineDeco != 0 && it.style&lineDeco == f.style&lineDeco {
+							endU = end
+						} else {
+							brokeU = true
+						}
 					}
 					x += it.w
 				} // else: a space that does not fit is swallowed by the wrap
@@ -771,6 +823,7 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				if it.deco >= 0 {
 					decoRuns = append(decoRuns, placed{item: q, frag: -1, x: float32(x0) + x, w: it.w, line: len(d.lines), decoI: it.deco})
 				}
+				brokeT, brokeU = true, true // a pill's padding, an icon's margin
 				x += it.w
 				continue
 			}

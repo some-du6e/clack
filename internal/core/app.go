@@ -7,7 +7,6 @@ import (
 	"log"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -891,25 +890,9 @@ func (a *App) BootErr() error {
 
 // ---- conversions ----
 
-func avatarURL(u *slack.User, size int) string {
-	p := u.Profile
-	switch {
-	case size <= 72 && p.Image72 != "":
-		return p.Image72
-	case size > 72 && size <= 192 && p.Image192 != "":
-		return p.Image192
-	case size > 192 && p.Image512 != "":
-		return p.Image512
-	}
-	if p.AvatarHash != "" {
-		team := firstNonEmpty(u.TeamID, p.Team, "T0266FRGM")
-		return "https://ca.slack-edge.com/" + team + "-" + u.ID + "-" + p.AvatarHash + "-" + strconv.Itoa(size)
-	}
-	if p.Image48 != "" {
-		return p.Image48
-	}
-	return "https://a.slack-edge.com/80588/img/avatars/ava_0001-" + strconv.Itoa(size) + ".png"
-}
+// avatarURL is store.AvatarURL (message unfurl cards draw the same
+// picture, richtext.MemberNamer).
+func avatarURL(u *slack.User, size int) string { return store.AvatarURL(u, size) }
 
 func (a *App) userOf(u *slack.User) User {
 	v := User{

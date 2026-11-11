@@ -844,11 +844,17 @@ func (d *ChannelDetails) update(gtx C) {
 	}
 	if d.viewProfile.Clicked(gtx) {
 		if uid := d.dmUser(inf); uid != "" {
+			// "View full profile" (about-channel-modal vWNA): the dialog
+			// closes, then showMemberProfile opens the profile pane
+			d.closed = true
 			d.h.OpenProfile(d.press.at, uid)
 		}
 	}
 	if d.createdBy.Clicked(gtx) && inf.Conv.Creator != "" {
-		d.h.OpenProfile(d.press.at, inf.Conv.Creator)
+		// Clack keeps its card here. Slack's row isn't a profile link: it
+		// closes the dialog and jumps to the channel's start (vWNA
+		// BaseChannelInfo, jumpToMessage at the created ts).
+		openProfileCard(d.h, d.press.at, inf.Conv.Creator)
 	}
 }
 
@@ -1889,6 +1895,8 @@ func (d *ChannelDetails) memberRow(gtx C, u core.User, self string) D {
 	}
 	c := dirClick(d.memberClk, u.ID)
 	if c.Clicked(gtx) {
+		// the members list row (ia-details-popover Rrv2):
+		// showMemberProfile, the profile pane
 		d.h.OpenProfile(d.press.at, u.ID)
 	}
 	full, disp := cdMemberNames(u, self)
@@ -2062,12 +2070,13 @@ func (d *ChannelDetails) appsItems() []W {
 }
 
 // appRow: padding 12, 36px icon (radius 8), 12px gap; bold 15/22 name with
-// the badge 4px after it; the tagline below. Opens the app's card.
+// the badge 4px after it; the tagline below. Opens the app's card: Slack's
+// AppsSectionItem wraps the row in ProfileCardTrigger (By70).
 func (d *ChannelDetails) appRow(gtx C, ap core.ChannelApp) D {
 	u := d.viewUser(ap.User)
 	c := dirClick(d.memberClk, "app:"+u.ID)
 	if c.Clicked(gtx) {
-		d.h.OpenProfile(d.press.at, u.ID)
+		openProfileCard(d.h, d.press.at, u.ID)
 	}
 	name := dirFirst(u.RealName, displayName(u))
 	return d.hoverable(gtx, c, false, 0, func(gtx C) D {
@@ -2615,7 +2624,7 @@ func (d *ChannelDetails) managedField(gtx C, ids []string) D {
 		ch := make([]layout.FlexChild, 0, 2*len(ids))
 		for i, uid := range ids {
 			c := dirClick(d.rowClk, "mgr:"+uid)
-			if c.Clicked(gtx) {
+			if c.Clicked(gtx) { // ChannelManagerField: showMemberProfile (vWNA)
 				d.h.OpenProfile(d.press.at, uid)
 			}
 			name := d.userName(uid)

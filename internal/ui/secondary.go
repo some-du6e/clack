@@ -49,9 +49,22 @@ type secondaryState struct {
 	// resets the width); reset: this press did, the drag is ignored
 	lastPress time.Time
 	reset     bool
+	// prev is the view a profile opened over, Slack's view.prev (the
+	// FlexpaneBackButton's target; OpenUserProfile)
+	prev *secondaryState
 }
 
 func (s *secondaryState) open() bool { return s.kind != secNone && !s.hidden }
+
+// navSource is the view container being laid out, which a click in it
+// navigates from (Slack's sourceContainer).
+type navSource uint8
+
+const (
+	srcPrimary   navSource = iota
+	srcSecondary           // the secondary pane (layoutSecondary)
+	srcOverlay             // a modal or menu (layoutOverlays)
+)
 
 // OpenThread shows a thread in the secondary pane. Opened from inside the
 // split view, or with Slack's split modifier click (⌘⌥, Ctrl+Alt), it
@@ -115,10 +128,63 @@ func (a *App) OpenDetails(channel string) {
 	a.Invalidate()
 }
 
-// OpenUserProfile shows a full profile in the secondary pane.
+// OpenUserProfile shows a full profile in the secondary pane: Slack's
+// Profile view (toProfile), a secondary-container view type (client-boot
+// +zKh aK). The view it replaces becomes its back stack the way Slack's
+// getNextMainWindowViewSet sets view.prev (client-boot IoL+): when the
+// click came from inside the pane (a name in the thread) or from a modal,
+// and the pane showed something other than a profile, or whenever it
+// showed search in channel. FlexpaneBackButton (GoSecondaryBack) returns
+// to it. The same member's profile again keeps the view and, as Slack's
+// same-type navigation, drops the back stack.
 func (a *App) OpenUserProfile(userID string) {
-	a.secondary = secondaryState{kind: secProfile, user: userID, width: a.secondary.width}
+	if userID == "" {
+		return
+	}
+	cur := a.secondary
+	if cur.kind == secProfile && cur.user == userID && cur.open() && cur.view != nil {
+		a.secondary.prev = nil
+		a.Invalidate()
+		return
+	}
+	var prev *secondaryState
+	if cur.open() && cur.kind != secProfile && (cur.kind == secSearch || a.navSrc != srcPrimary) {
+		p := cur
+		prev = &p
+	}
+	if cur.kind == secThread && cur.open() {
+		a.leaveThreadRoute(cur.channel, cur.ts)
+	}
+	a.secondary = secondaryState{kind: secProfile, user: userID, width: cur.width, prev: prev}
 	a.secondary.view = a.mountProfile(userID)
+	a.Invalidate()
+}
+
+// leaveThreadRoute takes a thread that leaves the pane off the route, as
+// CloseSecondary does.
+func (a *App) leaveThreadRoute(ch, ts string) {
+	if r := a.router.Current(); r.Channel() == ch && r.Thread() == ts {
+		a.router.Replace(Route("c/" + ch))
+	}
+}
+
+// SecondaryBack reports whether the secondary pane's view has a back
+// stack (popups' ProfileView draws FlexpaneBackButton then).
+func (a *App) SecondaryBack() bool { return a.secondary.prev != nil }
+
+// GoSecondaryBack is FlexpaneBackButton: the pane shows the view the
+// profile opened over again (a thread keeps its route, as OpenThread).
+func (a *App) GoSecondaryBack() {
+	p := a.secondary.prev
+	if p == nil {
+		return
+	}
+	w := a.secondary.width
+	a.secondary = *p
+	a.secondary.width = w
+	if s := &a.secondary; s.kind == secThread && a.router.Current().Channel() == s.channel {
+		a.router.Replace(Route("c/" + s.channel + "/t/" + s.ts))
+	}
 	a.Invalidate()
 }
 
@@ -221,6 +287,9 @@ func (a *App) toggleSecondary() {
 
 func (a *App) layoutSecondary(gtx layout.Context) layout.Dimensions {
 	if v := a.secondary.view; v != nil {
+		src := a.navSrc
+		a.navSrc = srcSecondary // clicks in the pane navigate from it
+		defer func() { a.navSrc = src }()
 		return v.Layout(gtx)
 	}
 	return layout.Dimensions{Size: gtx.Constraints.Max}

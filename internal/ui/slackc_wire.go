@@ -47,6 +47,7 @@ func (a *App) slackcFrame(gtx layout.Context) {
 			PointerWin:      func() image.Point { return a.ptrWin },
 			OpenEmojiPicker: a.OpenEmojiPicker,
 			OpenProfile:     a.OpenProfile,
+			OpenProfileCard: a.OpenProfileCard,
 		})
 	}
 	slackc.Frame(gtx)
