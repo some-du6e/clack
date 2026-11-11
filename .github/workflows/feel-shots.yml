@@ -6,6 +6,7 @@ name: feel-shots
 # with. Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run feel-shots.yml --ref <branch>)
     paths:
       - "internal/ui/sidebar.go"
       - "internal/ui/feel_shots_test.go"

@@ -8,6 +8,7 @@ name: dialog-keys
 # talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run dialog-keys.yml --ref <branch>)
     paths:
       - "internal/ui/popups/modal*.go"
       - "internal/ui/popups/style.go"

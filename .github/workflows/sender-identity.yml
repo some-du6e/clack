@@ -6,6 +6,7 @@ name: sender-identity
 # (GPU, synthetic data only: nothing here talks to Slack).
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run sender-identity.yml --ref <branch>)
     paths:
       - "internal/core/sender*.go"
       - "internal/core/badge.go"

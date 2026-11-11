@@ -11,6 +11,7 @@ name: experiments
 on:
   workflow_dispatch:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run experiments.yml --ref <branch>)
     paths:
       - "internal/core/experiments*"
       - "internal/core/mpdm_name.go"
