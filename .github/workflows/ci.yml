@@ -221,6 +221,7 @@ jobs:
           Assert-NoReg 'HKCU\Software\Classes\slack\shell\open\command'
           Assert-NoReg 'HKCU\Software\Classes\Clack.slack'
           Get-Content $log | Select-String -SimpleMatch 'slack://', 'sign-in:' | ForEach-Object { $_.Line }
+          exit 0 # the last reg query's expected exit 1 would otherwise end the step
 
   macos:
     runs-on: macos-latest
