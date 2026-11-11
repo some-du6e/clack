@@ -104,6 +104,14 @@ jobs:
       - name: huddle OS hooks (WTS lock events, RegisterHotKey Ctrl+Shift+Space)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
+      # PowerShell puts a bitmap, a PNG, rich text and an Explorer file list
+      # on the real clipboard; the composer's paste reader takes them back.
+      - name: clipboard paste (CF_DIB/CF_DIBV5, "PNG", CF_HDROP)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
       - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
         if: ${{ !cancelled() }}
         env:
