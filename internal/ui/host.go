@@ -141,6 +141,7 @@ func (a *App) afterRoute(prev, r Route) {
 		}
 	}
 	ch := r.Channel()
+	a.fileOpenedRoute(r) // FileOpenSubscriber: Recently viewed (files_open.go)
 	a.trackPreviewRoute(prev, r)
 	if a.data != nil && a.data.core != nil {
 		a.data.core.SetSelected(ch) // Slack's currentlySelectedId: a previewed channel gets a sidebar row

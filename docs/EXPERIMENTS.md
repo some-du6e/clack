@@ -82,7 +82,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `autocomplete_affinity_ml_model` | `on` | client-boot `y+lP` Sorter.prepSuggestions; features from `1Fxd` AutocompleteFeaturesCache (search.autocomplete.offlineFeatures, 28 h) | `on`: members get userAffinityScore (user_affinity), channels channelPriority90dScore (channel_priority_90d); otherwise both 0 (the USER_AFFINITY_SCORE / CHANNEL_PRIORITY_90D_SCORE features and the +50 bonus stay off) | reads it: `ui/composer/autocomplete_rank.go` (core `AutocompleteAffinity`); `TestAffinityFeaturesFollowExperiment` flips on/off/unassigned |
 | `autocomplete_flannel_fuzzy_match_passthrough` | `treatment` | client-boot `nIFn` makeResultsMatcher | treatment: fuzzy-match passthrough of server (flannel) results | reads it: `ui/composer/autocomplete_rank.go:77` |
 | `updated_scheduled_sends_desktop` | `on` | gantry-v2-async-client-boot-shared `BQDv` getScheduledSendMenuOptions, `BYKP` ScheduleSendMenu, message-share-dialog `jdUv` | `on`: "Tomorrow at 9:00 AM" always offered, the last custom time comes back while ahead, a channel's member time descriptions in the forward dialog's menu, the custom-time dialog stacks over the forward dialog | reads it: `ui/composer/composer.go` scheduleMenu (`TestScheduleMenuRows`); the forward dialog's parts wait for `schedule_send_forwards` |
-| `thread_header_mute_button` | `on` | gantry-v2-async-client-boot-shared `w5Tk` export `g` | the thread pane header has a mute button | missing |
+| `thread_header_mute_button` | `on` | gantry-v2-async-client-boot-shared `w5Tk` export `g` | the thread pane header has a mute button | reads it: `ui/messages/thread.go` `bellShown` (audit-threads 951a1903): the bell once the root is loaded, Follow leaves the ⋮ menu. The live pane on 2026-11-10 showed no bell, so core's default (sidebar_rules.go) leaves it off until getByUser answers |
 | `app_channel_tabs` | `on` | client-boot `mwX5` isAppChannelTabsEnabled; `ygKH` getAppChannelTabsState, `VlLO` EnsureAppViewType, `iJ` canSeeChannelTabsSettings | app DMs open as tabbed channels (Home / Messages / About as channel tabs); without it they open the app space view (`BKNN` AppView) and details have no Tabs tab for an app | not read: Clack's app DMs are always the tabbed channel (this group); the off group's app space view isn't drawn |
 | `enable_new_channel_settings` | `on` | admin-channel-modal `oWlM` GuestRestrictionsField, MessageAndFileSharingRestrictionsField; boot-shared `8d5P`, `mlo3`, `Qb6n`, `OTup`, `6bWJ`, `GUK3`, `L3vL` | Settings has Guest access and Sharing & file downloads (conversations.canSetProperties / setProperties); restricted channels also hide Share and Create canvas from a message, check file downloads, let channel managers remove members, and the invite modals warn about guests | reads it: `ui/views/details_more.go` (Guest access, Sharing & file downloads); the message, file and invite parts belong to those areas |
 | `temp_join_channel` | `on` | client-boot `+7BQ` isTemporaryJoinChannelsEnabled | previewed channels can be joined temporarily | reads it: `core/preview.go:57` |
@@ -303,7 +303,7 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Threads (1)
 
 - Files: the thread pane (internal/ui/views/ thread view, thread header)
-- To do (1): `thread_header_mute_button`
+- Clack reads already (1): `thread_header_mute_button` (gap-audit 2026-11-11 found the read)
 
 ### Channel header, tabs, details and settings (12)
 

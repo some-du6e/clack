@@ -109,7 +109,9 @@ for what it built):
   still makes the list straight away. Lists' "See all" opens Clack's
   `lists.templates` menu, not Slack's templates modal.
 - **Menu items Clack has no screen for:** Ask Slackbot, Add to-do, Share canvas / Share list, View file details, Open in new window and Report to Slack. ("Open in split view" now has Slack's icon and leaves the simplified layout, from the split-view branch.)
-- **custom_file_sections:** with it on, Slack swaps the star for a section picker and adds Bulk manage files, Move to section and the sections in the sidebar (file collections). Not ported; Clack follows the experiment-off path.
+- **custom_file_sections:** ported by files-view-2 (2026-11-11): the
+  section picker, Bulk manage files, Move to section and the sidebar's
+  file collections. See "Sections, Recently viewed and the rest" below.
 - **Image alt text:** Slack's image dialog adds a preview and an alt text field. Clack edits the name only.
 - **PDFs, video, audio, snippets, posts:** getMainFileAction (boot-shared
   C5YW) sends video, audio and PDFs to Slack's media viewer (pdf.js,
@@ -179,27 +181,77 @@ has `custom_file_sections`, `unified_files_3p_primary_custom_sections` and
 | Types control | `filter_file_types_recents`: "{n} Types" (the selected count) with the refine icon, active (content-hgl-1 fill) only off the default selection | "All types" when all were on; always the active fill | "{n} Types"; active only off the default six |
 | Sort control | active only off its default (Recently viewed) | always the active fill | active only when Last updated is picked |
 
+Not done then: Recently viewed, the collection header's ⋮, the gear, the
+"+" and "New" menus, the canvas-browser / canvas-content icons, paging and
+the search sorts. files-view-2 ported them (below), all but "Assigned to
+you".
+
+## Sections, Recently viewed and the rest (files-view-2, 2026-11-11)
+
+Sources: CDN build 4d0c78085232 without a cookie:
+`gantry-v2-async-client-unified-files-sidebar-view` (cNNe
+UnifiedFilesSidebarView), `gantry-v2-async-client-boot-render` (Fl3U
+BrowseSidebarItem and FileCollectionHeaderRow, Q1Ql
+useFileCollectionMenuTemplate, R3yk sortCollectionFiles, 3cwA / 0A31),
+`gantry-v2-async-client-boot-shared` (QLxC FileSectionMoveToMenu, ofyN
+FileSectionDropdownButton, vBP0 FileSectionCreateModal, ICbw / MgtY,
+GIC/ maybeFetchCollections, KUDA / u7AE / d9Vx / oKEb / k+Nh / I0On the
+open-files store, hYuM, gaA3, ZIeL Pagination, 31Gm, 7JHD),
+`client-boot` (mSgJ / wbGe the unifiedFilesBrowser store, DdYY
+generateKeyBetween, mAu1 isOnFreePlan, ogf8),
+`…explorer_helpers_unified-files-create-menu` (n+Lz
+UnifiedFilesCreateMenu), `gantry-v2-async-client-browse-unified-files-view`
+(useUnifiedFilesExplorer) and `client-boot-styles.css` /
+`slack-kit-gantry-v2-styles.css` (Panda tokens through toHash). The
+account has `custom_file_sections`, `unified_files_3p_primary_custom_sections`,
+`file_trash_updates`, `lists_grid_todos` and `later_todos` on, and no
+`custom_file_sections_collapsed_persist`, `custom_file_sections_recents_limit_ab`
+or `shareable_folders`. Tested against fakeslack only
+(`internal/fakeslack/files_sections.go`: files.collections.* and
+files.favorites.* with a collection_id; `TestFilesView*` in core and views,
+`TestFilesSidebarStarred`, `TestFilesRecentlyViewedRoutes` in ui); the
+`files-view` workflow saves the shots.
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| Sidebar icons | the views' iconName: All files `canvas-browser`, Canvases `canvas-content`, Lists `lists`; canvas rows `canvas-content`, list rows `lists` (7JHD) | `files`, `canvas`, `list-view` | Slack's glyphs as centrelines (IoU against Slack's outline 0.999 for both new ones), held by TestIconsMatchSlack |
+| Recently viewed, the store | filesOpenInSessionStore (KUDA): new files go to the top of the display order, reopened ones keep their place, twenty kept; getRecentlyViewedFileIds (u7AE) shows the display order of the ten most recently opened. FileOpenSubscriber (I0On) adds a canvas or list the canvas and list views open (maybeAddToRecentIfNotStarred: not from a channel tab, not a starred file, with sections not one in a section); moving a file into a section takes it out. It's kept in local storage per team (d9Vx) | no store | the same (core `FileOpened`, fed by docs/ and lists/ routes and the side panel); kept in ui.json by team, file ids only |
+| Recently viewed, the rows | without sections: spacer-1, the "Recently viewed" sub-header (clock), the files (starred ones left out); with them: a file_collection header (clock, the caret on hover, collapses: isRecentlyViewedCollapsed), the files, recently-viewed-collections-divider. A row's × is removeOpenFileAndPersist | none | the same |
+| Sections (file collections) | maybeFetchCollections: files.collections.list once custom_file_sections is on (no files.favorites.list then), again after a day; names unescaped; sorted by position, highest first; the client's collapsed state kept over a reload. The file-collections-divider, five shimmer rows while it loads, then each FileCollectionHeaderRow (.container radius 4, theme-surf-inv-ter hover, 12px above all but the first; the 28px row with the emoji, the star or `section`, the caret on hover) and its files in the collection's sort (sortCollectionFiles: last_read, updated, title A-Z without emoji, else position), the starred collection's empty row | the starred collection, from files.favorites.list, its header without ⋮ | the same |
+| Collapsing | toggleCollectionCollapse in the client store (custom_file_sections_collapsed_persist is off); Option-click expands or collapses all, Recently viewed staying open | the starred header only | the same |
+| The header's ⋮ | useFileCollectionMenuTemplate: "Create…" New canvas (createCanvasInCollection) and New list (createListInCollection), Sidebar section (not on a free plan); the starred collection: a divider and Sort by (Last viewed / Last updated / A-Z / Date added radios, files.collections.update {collection, sort}); a custom one: Rename section, Sort by, Delete section (danger). The 20px ellipsis-vertical-filled ("More actions") on hover or while open; a Popover at right-bottom, offsetX -4, offsetY 4, 300 wide; a right-click on the header opens the same menu | not drawn | the same |
+| Section modal | FileSectionCreateModal: "Create a sidebar section" / "Rename this section", "Name your section", the 44px emoji picker inside the 36px input (placeholder "Enter a section name"), Clear all (close-filled) once there's a name or an emoji, Close and Save (off without a name): files.collections.create {name, emoji} / files.collections.update {collection, name, emoji} | none | the same |
+| Delete section | DeleteFileCollectionModal: "Delete sidebar section?", "Are you sure you want to delete **{name}**?", Cancel and Confirm (the primary default, focused), then files.collections.delete {collection} | none | the same |
+| Move to section | the results' FileSectionDropdownButton ("Move file") in the star's place: canvases and lists, every file with unified_files_3p_primary_custom_sections; star-filled on the filled star button in the starred collection, the section's emoji, `section` in another, `star` in none. FileSectionMoveToMenu (320): "Move to…", the collections as radio rows (FileSectionName), Create section (not on a free plan), Remove from {section}. moveFileToCollection: out of the old collection, to the top of the new (generateKeyBetween), out of Recently viewed, files.favorites.add {file_id, collection_id}, "Added {file} to {section}." with Undo; removeFileFromCollectionThunk: files.favorites.remove {file_id, collection_id}, back to Recently viewed when asked (addToRecentsOnRemove). The ⋯ menu has no Add to starred / Unstar under custom_file_sections (hYuM `!ta`) | the star on canvases and lists only | the same |
+| Sidebar file rows | BrowseSidebarItem canvas / list: 24px in, the product icon, the × on hover (.64, 1 under the pointer); CanvasSidebarContextMenu / ListSidebarContextMenu / FileSidebarContextMenu: Move to section ▸ (with sections), Copy link to …, Open in split view, Unstar canvas / list (Starred without sections), Remove from recently viewed | no ×, no menu | the same, without View canvas / list details, Share and Open in new window (as in the ⋯ menu) |
+| Bulk manage | the gear ("More options", shown while its menu has items): Bulk manage files with custom_file_sections off a free plan. Edit mode (setIsFileEditMode): checkboxes, a click picks, no ×; FileOrganizeModeMenu under the list (otl-ter top border, 16/16/24 padding): "{n} selected", then "Clear selection" after a bar, and Done; Move to… (BulkFileSectionMoveMenu above it), Remove from {section} / Remove from all sections, or Create New Section with nothing picked; one "Moved {n} file(s)." / "Removed {n} file(s) from their sections." toast with Undo | no gear | the same |
+| "+" | "Create new" (bottom-left): Canvas "Create and share content", List "Track and manage projects" (lists.create from the blank template, to-do mode under lists_grid_todos), Sidebar section "Group and organize your files" (custom_file_sections) | made a canvas (or Clack's list menu) | the same; Folder, Connect cloud app and New surface follow experiments and banners that are off (shareable_folders) or not ported |
+| "New" | UnifiedFilesCreateMenu (plus-filled, bottom-right, 250 wide): All files New canvas, New list, Templates › Canvas templates, List templates, Import CSV as a list; Canvases New canvas, Start from a template; Lists New list, Start from a template, Import CSV | made a canvas or opened Clack's list menu | New canvas and New list (below) |
+| Paging | useBrowser shows results[page]; the "pagination" row when pageCount > 1: Pagination (caption text, 4px apart, 8px around; 20px circle back / forward carets; five page numbers, 20px tall, min 20 wide, radius 4; the current one in base-inv-hgl-2) | more pages on scroll, up to eight to fill the client-side filters | one page at a time and Slack's row |
+| Types filter | the browser's fileType filter: search type: modifiers (`lists`, `quip` + `documents`, `spreadsheets`, `presentations`, `pdfs`, `folder_skill_set`, `audio`, `videos`, `images`, `snippets`, `emails`) | a client-side match over loaded pages | type: modifiers, a new search on each change |
+| Sorts | Recently viewed (last_engaged) / Last updated (Created by you: Last updated only); with a search Most relevant (score, picked when the search starts) / Last updated | Recently viewed / Last updated, sorted client-side | the search's sort |
+
 Not done, and why:
 
-- **Recently viewed** (the section above Starred whenever
-  `filesOpenInSessionStore` has files): Clack keeps no record of the files
-  opened in the session, so the section never shows.
-- **The collection header's ⋮** (Create… New canvas / New list / Sidebar
-  section, Sort by Last viewed / Last updated / A-Z / Date added, Rename /
-  Delete section) and the other collections: they read and write
-  `files.collections.*`, which Clack doesn't have; the starred files still
-  come from `files.favorites.list`, and the star button stays on canvases
-  and lists (with `custom_file_sections` Slack offers its section picker
-  instead).
-- **The sidebar's settings gear** ("More options" › Bulk manage files, shown
-  with `custom_file_sections`), **"Assigned to you"** (lists_grid_todos with
-  assigned items) and the **"+" and "New" menus** (Canvas / List rows with
-  their subtitles, templates, Import CSV, Add existing, Connect cloud app):
-  not ported; "+" and "New" still create a canvas (or open the list menu)
-  directly.
-- **canvas-browser / canvas-content icons** (All files, Canvases): Clack's
-  icon set doesn't have Slack's glyphs yet and draws files / canvas.
-- **Pagination**: Slack pages the results (`pagination` row, pageCount);
-  Clack keeps loading pages as the list scrolls.
-- **Search sorts**: with a search Slack's sort offers Most relevant / Last
-  updated; Clack keeps Recently viewed / Last updated.
+- **Assigned to you.** Slack draws the row (check-circle) while
+  lists_grid_todos is on and lists.getMyItems returns items. It opens
+  AssignedTasksPage, `client-assigned-tasks-view`, about 2,300 lines
+  beautified: the refine header's All / Open / Completed items, Sort and
+  Group by, the group headers, and TaskRow, whose to-do checkbox writes the
+  list cell next to the reminder date and the record reference. I haven't
+  ported that page, so Clack doesn't draw the row yet.
+- **The "New" menu's other rows.** Canvas templates and Canvases' Start
+  from a template open openCanvasTemplateGalleryModal. List templates and
+  Lists' Start from a template open ListTemplateBrowseModal, boot-shared
+  1OTT with djIA's preview grid. Create a template and Import CSV open
+  their own modals, `…lists_subcomponents_import-modal` for the CSV. None
+  of those modals is ported, so Clack leaves the rows out.
+- **Dragging.** Slack reorders sections by drag (files.collections.reorder)
+  and takes files dropped onto a section. Clack has neither.
+- **CustomFileSectionsNuxBubble.** "Organize it your way" with "Create a
+  Section" shows while a coachmark is open, and Clack doesn't read
+  coachmark state.
+- **Selected file rows.** Slack keeps the Files sidebar next to an open
+  canvas or list and marks its row. Clack's docs/ and lists/ routes belong
+  to Home, so a file row never shows as selected.
+
