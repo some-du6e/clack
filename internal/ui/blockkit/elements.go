@@ -142,6 +142,11 @@ type ew struct {
 	// trailing (useBlockKitInteractiveState's debounce config).
 	charLast    time.Time
 	charPending bool
+
+	// where a surface last drew a text input (its coordinates) and
+	// whether it had the key focus then (ModalFields)
+	pos, box image.Point
+	focusedD bool
 }
 
 func newEW(o owner, b *Block, e *Element, input bool) *ew {
@@ -889,6 +894,7 @@ func (w *ew) layoutText(gtx C, sz image.Point) {
 		}
 	}
 	focused := gtx.Focused(w.ed)
+	w.focusedD, w.box = focused, sz
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 8)
 	bw := max(1, dp(gtx, 1))

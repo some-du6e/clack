@@ -156,6 +156,10 @@ type Surface struct {
 	// fixed is the action base of a surface that isn't a Slack view (a
 	// code channel's block_kit view): its container and app ids.
 	fixed *core.BlockAction
+	// org is the window position of the surface's top-left as the modal
+	// last drew it; curY the y of the block being laid out (ModalFields).
+	org  image.Point
+	curY int
 }
 
 // dirty reports whether the user changed any input since the view was
@@ -427,6 +431,7 @@ func (s *Surface) Layout(gtx C) D {
 		}
 		y += gap
 		var bh int
+		s.curY = y
 		at(gtx, image.Pt(0, y), func(gtx C) D {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
 			bh = s.block(gtx, b, i, w, st)
@@ -629,6 +634,7 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 	if b.Element != nil {
 		ew := s.widget(b, b.Element)
 		sz := ew.size(gtx, w, false)
+		ew.pos = image.Pt(0, s.curY+y)
 		at(gtx, image.Pt(0, y), func(gtx C) D { return ew.layout(fixed(gtx, sz), sz) })
 		y += sz.Y
 	}

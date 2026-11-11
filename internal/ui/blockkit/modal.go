@@ -554,6 +554,9 @@ func (s *Stack) Layout(gtx C) D {
 					return sf.Layout(gtx)
 				})
 			})
+			// the surface's window origin as drawn (ModalFields; a
+			// theme's card border isn't counted)
+			sf.org = pos.Add(image.Pt(dp(gtx, 24), y+dp(gtx, 8)-s.list.Position.Offset))
 			if s.busy {
 				rrect(gtx, image.Rect(0, 0, mw, bodyH), 0, theme.WithAlpha(cl.Bg, 0xb0))
 				sp := dp(gtx, 32)

@@ -108,6 +108,7 @@ func (w *ew) layoutRich(gtx C, sz image.Point) {
 	r := image.Rectangle{Max: sz}
 	rad := dp(gtx, 8)
 	bw := max(1, dp(gtx, 1))
+	w.focusedD, w.box = ed.Focused(gtx), sz
 	switch {
 	case ed.Focused(gtx):
 		ring := dp(gtx, 4)
