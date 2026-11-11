@@ -370,6 +370,47 @@ func TestSendButtonClicks(t *testing.T) {
 			t.Errorf("the chevron sent %d messages; the composer holds %q", extra, cb.DocText())
 		}
 		e.clearComposer(cb)
+		// 5. a tap: the press and the release in one batch before a frame
+		// (a trackpad tap, or a quick click during a slow frame)
+		tap := func(r image.Rectangle) {
+			t.Helper()
+			p := r.Min.Add(r.Size().Div(2))
+			e.ptr(pointer.Move, p)
+			e.frames(2)
+			e.clock += time.Second
+			e.ptr(pointer.Press, p)
+			e.ptr(pointer.Release, p)
+			e.frames(3)
+		}
+		blur := func() {
+			t.Helper()
+			e.rt.Source().Execute(key.FocusCmd{})
+			e.frames(3)
+			if e.rt.Source().Focused(cb.FocusTag()) {
+				t.Fatal("the composer kept the focus")
+			}
+		}
+		cb = e.focusComposer()
+		e.typeIn(cb, "tapped")
+		tap(cb.SendRect())
+		if f := posted(4, "a tap"); !strings.Contains(f.Get("text"), "tapped") {
+			t.Errorf("the tap posted %v", f)
+		}
+		// 6. the editor unfocused after typing (a click went elsewhere): the
+		// press on the button focuses the composer, the click still sends
+		e.typeIn(cb, "clicked unfocused")
+		blur()
+		click("send button", cb.SendRect())
+		if f := posted(5, "a click with the composer unfocused"); !strings.Contains(f.Get("text"), "clicked unfocused") {
+			t.Errorf("the unfocused click posted %v", f)
+		}
+		cb = e.focusComposer()
+		e.typeIn(cb, "tapped unfocused")
+		blur()
+		tap(cb.SendRect())
+		if f := posted(6, "a tap with the composer unfocused"); !strings.Contains(f.Get("text"), "tapped unfocused") {
+			t.Errorf("the unfocused tap posted %v", f)
+		}
 	}
 	t.Run("channel", func(t *testing.T) { run(t, fs.ChannelIDs()[1], false) })
 	t.Run("under the join banner", func(t *testing.T) { run(t, fakeslack.JoinBannerID, true) })
