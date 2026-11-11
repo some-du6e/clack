@@ -158,7 +158,7 @@ func (w *window) layoutPopout(gtx C, s *huddle.Session, st huddle.State) {
 	}
 	// the top toolbar: the presenter, then the buttons at the right
 	pad := gtx.Dp(12)
-	av := gtx.Dp(32) // Avatar medium
+	av := gtx.Dp(36) // Avatar medium
 	at(gtx, image.Pt(pad, (topH-av)/2), image.Pt(av, av), func(gtx C) D {
 		avatar(gtx, w.th, w.c.h.Images(), w.c.avatarURL(w.popoutUser, av), image.Pt(av, av), gtx.Dp(8))
 		return D{Size: image.Pt(av, av)}

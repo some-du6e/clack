@@ -92,10 +92,11 @@ type Controller struct {
 	pwin *previewWindow // the join preview (preview.go)
 	// pending is the preview's Join: the mic and camera to start with
 	pending *pendingJoin
-	card    cardState // its sidebar card (invitecard.go)
-	ring    ringState // the invite sound (ring.go)
-	hand    handState // auto-lowering your raised hand (hand.go)
-	av      avState   // the lock watcher, global mute and lounge music (avprefs.go)
+	multi   *pendingMulti // HuddleMultiDeviceModal's answer (multidevice.go)
+	card    cardState     // its sidebar card (invitecard.go)
+	ring    ringState     // the invite sound (ring.go)
+	hand    handState     // auto-lowering your raised hand (hand.go)
+	av      avState       // the lock watcher, global mute and lounge music (avprefs.go)
 	bar     barState
 	dock    dockState // the docked bar (dock.go)
 	hdr     map[string]*headerState
@@ -265,6 +266,12 @@ func (c *Controller) Start(channel string) {
 		if pj != nil { // the join preview's mic toggle
 			o.Muted = pj.muted
 		}
+		c.mu.Lock()
+		if pm := c.multi; pm != nil && pm.channel == channel { // "Use both devices"
+			o.MultiDevice = pm.multi
+		}
+		c.multi = nil
+		c.mu.Unlock()
 		// startHuddle's media start (its thunk is Begin's, for plugins);
 		// Slack's startEventLog is the captions' transcription, not this
 		s, err := huddle.Join(ctx, o, channel)
@@ -317,9 +324,10 @@ const (
 // startArgs is Slack's startHuddle thunk argument (what BetterHuddles
 // reads: channelId, muted, entryPoint).
 type startArgs struct {
-	ChannelID  string `json:"channelId,omitempty"`
-	Muted      bool   `json:"muted"`
-	EntryPoint string `json:"entryPoint,omitempty"`
+	ChannelID     string `json:"channelId,omitempty"`
+	Muted         bool   `json:"muted"`
+	EntryPoint    string `json:"entryPoint,omitempty"`
+	IsMultiDevice bool   `json:"isMultiDevice,omitempty"`
 }
 
 // Begin is a start or join click (or shortcut, or /huddle) in channel:
@@ -338,6 +346,21 @@ func (c *Controller) Begin(channel, entry string) {
 			return
 		}
 		c.begin(channel, entry)
+	}
+	// startHuddleWithConfirmation: in a huddle you're in on another device,
+	// huddles_multi_device asks first, and its answer skips the preview
+	// (overrideJoinPreview) and sets isMultiDevice
+	if devices, others := c.huddlingElsewhere(channel); devices > 0 && c.group(ExpMultiDevice, "treatment") {
+		c.multiDeviceModal(devices, others, func(multi bool) {
+			c.mu.Lock()
+			c.multi = &pendingMulti{channel: channel, multi: multi}
+			c.mu.Unlock()
+			join := func() { c.begin(channel, entry) }
+			if !c.shoutyRooster(channel, join) {
+				join()
+			}
+		})
+		return
 	}
 	if c.shoutyRooster(channel, start) {
 		return
@@ -397,7 +420,10 @@ func (c *Controller) begin(channel, entry string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		_, err := taut.Dispatch(ctx, tt, "startHuddle", startArgs{ChannelID: channel, EntryPoint: entry},
+		c.mu.Lock()
+		multi := c.multi != nil && c.multi.channel == channel && c.multi.multi
+		c.mu.Unlock()
+		_, err := taut.Dispatch(ctx, tt, "startHuddle", startArgs{ChannelID: channel, EntryPoint: entry, IsMultiDevice: multi},
 			func(ctx context.Context, a startArgs) (any, error) {
 				if a.ChannelID != "" {
 					c.post(func() { c.Start(a.ChannelID) })

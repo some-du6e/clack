@@ -595,3 +595,49 @@ func TestMediaExperiments(t *testing.T) {
 		t.Fatalf("%+v", x)
 	}
 }
+
+// ---- huddles_multi_device: the multi-device modal ----
+
+func TestMultiDeviceModal(t *testing.T) {
+	e := newExpEnv(t, nil)
+	// the room lists you (another device) while this client isn't in it
+	e.c.mu.Lock()
+	e.c.live[hcChannel] = liveRoom{ID: huddle.FakeRoomID, Channel: hcChannel, Participants: []string{huddle.FakeSelfUser, huddle.FakeRemoteUser}}
+	e.c.mu.Unlock()
+	if n, others := e.c.huddlingElsewhere(hcChannel); n != 1 || len(others) != 1 {
+		t.Fatalf("elsewhere: %d %v", n, others)
+	}
+	e.set(ExpMultiDevice, "control")
+	e.c.Begin(hcChannel, EntryHeaderButton)
+	waitFor(t, "control: a plain join", func() bool { return len(fakeCalls(e.fk, "rooms.join")) == 1 })
+	if e.oh.modal() != nil {
+		t.Fatal("control asked about devices")
+	}
+	if j := fakeCalls(e.fk, "rooms.join"); j[0].Params.Get("multidevice") != "false" {
+		t.Fatalf("multidevice %q", j[0].Params.Get("multidevice"))
+	}
+	e.c.Leave()
+	waitFor(t, "left", func() bool { return !e.c.Active() })
+
+	e.set(ExpMultiDevice, "treatment")
+	e.c.mu.Lock()
+	e.c.live[hcChannel] = liveRoom{ID: huddle.FakeRoomID, Channel: hcChannel, Participants: []string{huddle.FakeSelfUser, huddle.FakeRemoteUser}}
+	e.c.mu.Unlock()
+	e.c.Begin(hcChannel, EntryHeaderButton)
+	var m *popups.Modal
+	waitFor(t, "the multi-device modal", func() bool { m = e.oh.modal(); return m != nil })
+	if len(fakeCalls(e.fk, "rooms.join")) != 1 {
+		t.Fatal("joined before answering")
+	}
+	// "Use both devices" (the modal's pick): rooms.join with multidevice true
+	m.Dismiss()
+	e.c.mu.Lock()
+	e.c.multi = &pendingMulti{channel: hcChannel, multi: true}
+	e.c.mu.Unlock()
+	e.c.begin(hcChannel, EntryHeaderButton)
+	waitFor(t, "the multi-device join", func() bool { return len(fakeCalls(e.fk, "rooms.join")) == 2 })
+	if j := fakeCalls(e.fk, "rooms.join"); j[1].Params.Get("multidevice") != "true" {
+		t.Fatalf("Use both devices: multidevice %q", j[1].Params.Get("multidevice"))
+	}
+	e.c.Leave()
+}
