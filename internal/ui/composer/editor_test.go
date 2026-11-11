@@ -1,12 +1,17 @@
 package composer
 
 import (
+	"image"
+	"strings"
 	"testing"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -402,6 +407,64 @@ func TestEnterInLists(t *testing.T) {
 	for _, c := range cases {
 		if got := insertsNewline(c.meta, c.ctrl, c.shift, c.alt, c.mac, c.pref, c.pre, c.in); got != c.want {
 			t.Errorf("insertsNewline%+v = %v", c, got)
+		}
+	}
+}
+
+// Karim (2026-11-10): "a quote overlaps with the thingy". Slack's composer
+// quote: each quote line a blockquote with padding-left 16px and the 4px
+// bar (radius clamped to 2) at its left, 4px margins around a quote run,
+// consecutive lines joined (margin-top -3px collapsing to 1px, padding-top
+// 3px, the bar carried over the gap), and no placeholder once the line
+// has a block format (Quill's isBlank).
+func TestQuoteLayoutLikeSlack(t *testing.T) {
+	st := DefaultEditorStyle(theme.NewShaper())
+	lay := func(d *Doc) *Editor {
+		e := NewEditor()
+		e.SetDoc(d)
+		var ops op.Ops
+		gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(400, 200))}
+		e.Layout(gtx, st)
+		return e
+	}
+	quote := func(lines ...string) *Doc {
+		d := NewDoc()
+		d.Insert(0, strings.Join(lines, "\n"), Attr{})
+		d.SetLineKind(0, len(d.Lines)-1, Quote)
+		return d
+	}
+	para := lay(NewDoc())
+	if para.lay.height != 22 || !quillBlank(NewDoc()) {
+		t.Fatalf("an empty paragraph: height %d, blank %v", para.lay.height, quillBlank(NewDoc()))
+	}
+	e := lay(quote(""))
+	if quillBlank(quote("")) {
+		t.Error("the placeholder shows on an empty quote line")
+	}
+	p := e.lay.paras[0]
+	if p.top != 4 || p.bot != 26 || e.lay.height != 30 {
+		t.Errorf("an empty quote line: top %d bot %d height %d, want 4 26 30", p.top, p.bot, e.lay.height)
+	}
+	if x, _, _, _, _ := e.lay.caretInfo(0); x != 16 {
+		t.Errorf("the caret on an empty quote line at x %d, want 16 (padding-left)", x)
+	}
+	e = lay(quote("first", "second"))
+	p0, p1 := e.lay.paras[0], e.lay.paras[1]
+	if p0.top != 4 || p0.bot != 26 || p1.top != 30 || p1.bot != 52 || e.lay.height != 56 {
+		t.Errorf("two quote lines: %d-%d, %d-%d, height %d; want 4-26, 30-52, 56", p0.top, p0.bot, p1.top, p1.bot, e.lay.height)
+	}
+	d := quote("q")
+	d.Insert(d.Len(), "\nafter", Attr{})
+	d.SetLineKind(1, 1, Para)
+	e = lay(d)
+	if q, a := e.lay.paras[0], e.lay.paras[1]; q.bot != 26 || a.top != 30 {
+		t.Errorf("a paragraph after a quote: quote ends %d, paragraph starts %d; want 26, 30", q.bot, a.top)
+	}
+	for _, k := range []BlockKind{Bullet, Ordered, CodeBlock, Header1} {
+		d := NewDoc()
+		d.SetLineKind(0, 0, k)
+		if quillBlank(d) {
+			t.Errorf("the placeholder shows on an empty %v line", k)
 		}
 	}
 }

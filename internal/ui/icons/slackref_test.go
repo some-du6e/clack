@@ -286,6 +286,8 @@ var clackOwn = map[string]string{
 	"times-circle-medium":  "Slack's icon-font glyph U+E229 (c-icon--times-circle-medium, iconfont.go), not an SvgIcon",
 	"disable-font":         "Slack's icon-font glyph U+E149 (c-icon--disable, iconfont.go; IgnoreForkedModalButton's y8g2 icon), not the SvgIcon",
 	"chevron-medium-right": "Slack's icon-font glyph U+E254 (c-icon--chevron-medium-right, iconfont.go), not an SvgIcon",
+	"chevron-medium-down":  "Slack's icon-font glyph U+E256 (c-icon--chevron-medium-down, iconfont.go; the join banner's section chevron), not an SvgIcon",
+	"star-font":            "Slack's icon-font glyph U+E500 (c-icon--star, iconfont.go; the join banner's Starred section), not the SvgIcon",
 	"bookmark-add":         "a bookmark with a plus (save for later); Slack's set has none",
 	"close-small":          "a smaller close for 16px chips",
 	"dot":                  "SlackFallback, drawn for Slack names the set lacks",
