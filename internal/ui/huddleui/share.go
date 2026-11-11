@@ -218,7 +218,7 @@ func alertParts(alert string) (parts []i18n.Part, link string) {
 	case alertNoScreenShare:
 		if shareGOOS == "darwin" {
 			parts = nsHuddles.RT("<strong>Allow screen recording access in <a>system preferences</a></strong>. If you’ve already granted permissions, quit and reopen Slack.")
-			link = huddle.ScreenAccessSettingsURL()
+			link = screenRecordingSettings
 		} else {
 			parts = nsHuddles.RT("Please check your system preferences to give screen share access to Slack.")
 		}
@@ -233,6 +233,11 @@ func alertParts(alert string) (parts []i18n.Part, link string) {
 
 // shareGOOS is runtime.GOOS (tests draw the macOS text anywhere).
 var shareGOOS = micGOOS
+
+// screenRecordingSettings is the alert's link on macOS: Privacy &
+// Security › Screen Recording (what huddle.ScreenAccessSettingsURL is
+// there).
+const screenRecordingSettings = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
 
 // alertState is one surface's banner widgets.
 type alertState struct {
