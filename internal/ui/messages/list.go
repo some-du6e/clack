@@ -1121,7 +1121,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	// message pane's (a thread pane has neither; its own banners are
 	// ThreadFloatingBanners, thread_banner.go)
 	s.archivesBanner(gtx, h, size)
-	s.unreadBanner(gtx, h, rc, size)
+	s.paneUnreadBanner(gtx, h, rc, size)
 	if req := s.dayReq; req != nil {
 		s.dayReq = nil
 		s.openDayMenu(h, *req, rc.now, gtx)

@@ -119,8 +119,9 @@ func (s *listState) newestTS() string {
 	return ""
 }
 
-// unreadBanner draws UnreadBanner for a channel list.
-func (s *listState) unreadBanner(gtx layout.Context, h Host, rc *rowCtx, size image.Point) {
+// paneUnreadBanner draws the message pane's UnreadBanner (the thread pane has
+// its own, thread_banner.go).
+func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, size image.Point) {
 	ub := &s.ub
 	app := h.Core()
 	if ub.ch != s.ch {
