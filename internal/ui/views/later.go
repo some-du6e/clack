@@ -61,6 +61,10 @@ type laterPreset struct {
 	at    func(now time.Time) time.Time
 }
 
+// text is the label in the active locale: the strings of the Activity
+// item menu's "Remind me about this" (wrqs), which these presets are.
+func (p laterPreset) text() string { return nsActivity.T(p.label) }
+
 var laterPresets = [5]laterPreset{
 	{"In 20 minutes", func(n time.Time) time.Time { return n.Add(20 * time.Minute) }},
 	{"In 1 hour", func(n time.Time) time.Time { return n.Add(time.Hour) }},
@@ -578,7 +582,7 @@ func (s *savedBase) remindMenu(gtx C, it *core.SavedItem, r *laterRow) D {
 			i := i
 			ch = append(ch, layout.Rigid(func(gtx C) D {
 				return layout.Inset{Right: 8}.Layout(gtx, func(gtx C) D {
-					return s.button(gtx, &r.presets[i], btnOutline, true, laterPresets[i].label)
+					return s.button(gtx, &r.presets[i], btnOutline, true, laterPresets[i].text())
 				})
 			}))
 		}

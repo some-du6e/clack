@@ -19,6 +19,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -52,6 +53,12 @@ type dirPick struct {
 
 func newDirPick(placeholder string, multi bool) dirPick {
 	return dirPick{srch: newSearch(placeholder), multi: multi}
+}
+
+// newDirPickIn is newDirPick with a placeholder that is Slack's string in
+// ns.
+func newDirPickIn(ns i18n.NS, placeholder string, multi bool) dirPick {
+	return dirPick{srch: newSearchIn(ns, placeholder), multi: multi}
 }
 
 func (p *dirPick) query() string { return strings.TrimSpace(p.srch.text()) }

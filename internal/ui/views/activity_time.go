@@ -12,6 +12,8 @@ import (
 	"math"
 	"strconv"
 	"time"
+
+	"github.com/some-du6e/clack/internal/i18n"
 )
 
 // actNarrowW is the container width at which a row shows the narrow
@@ -23,17 +25,14 @@ const actNarrowW = 285
 // long until the text changes.
 func actRel(age time.Duration) (string, time.Duration) {
 	if age < time.Minute {
-		return "Just now", time.Minute - age
+		return nsMentions.T("Just now"), time.Minute - age
 	}
 	m := int(math.Round(age.Minutes()))
 	left := time.Duration((float64(m)+.5)*float64(time.Minute)) - age
 	if left <= 0 {
 		left = time.Second
 	}
-	if m == 1 {
-		return "1 min", left
-	}
-	return strconv.Itoa(m) + " mins", left
+	return nsMentions.T("{time, plural, =1 {# min} other {# mins}}", "time", m), left
 }
 
 // actWhen is rK past the hour: the time within 8 hours, "Yesterday", the
@@ -51,13 +50,16 @@ func actWhen(now, t time.Time, narrow bool) string {
 	case e < 8*time.Hour:
 		return clock(t)
 	case sameDay(t, now.AddDate(0, 0, -1)):
-		return "Yesterday"
+		return nsMentions.T("Yesterday")
 	case e < day:
 		return clock(t)
 	case e < 7*day:
-		return t.Format("Monday")
+		return weekday(t)
 	case e < 8*day && t.Format("Monday") == now.AddDate(0, 0, -7).Format("Monday"):
-		return t.Format("Monday")
+		return weekday(t)
+	}
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: narrow, ExcludeYear: e < 365*day})
 	}
 	month := "January" // MMMM Do
 	if narrow {

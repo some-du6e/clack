@@ -28,6 +28,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -1897,6 +1898,16 @@ type dirDropdown struct {
 	width  unit.Dp
 	picked int // index+1 of a pick made through onSelectionChange
 	shown  []string
+	ns     i18n.NS // labels are Slack's strings in ns ("": drawn as is)
+}
+
+// text is option i's label as drawn (in the active locale when the
+// labels are Slack's).
+func (dd *dirDropdown) text(i int) string {
+	if dd.ns != "" {
+		return dd.ns.T(dd.labels[i])
+	}
+	return dd.labels[i]
 }
 
 // update handles clicks and reports whether the selection changed.
@@ -1979,8 +1990,8 @@ func (dd *dirDropdown) layoutSelect(b *base, gtx C, width unit.Dp) D {
 // Values are the option indexes as strings.
 func (dd *dirDropdown) selectProps() slackc.Props {
 	opts := make([]any, len(dd.labels))
-	for i, l := range dd.labels {
-		opts[i] = slackc.Props{"label": l, "value": strconv.Itoa(i)}
+	for i := range dd.labels {
+		opts[i] = slackc.Props{"label": dd.text(i), "value": strconv.Itoa(i)}
 	}
 	return slackc.Props{"$key": strings.Join(dd.labels, "\x00"), "options": opts,
 		"selectedOption": opts[min(dd.sel, len(opts)-1)], "width": int(dd.width), "size": "medium",
@@ -2016,7 +2027,7 @@ func (dd *dirDropdown) selectProps() slackc.Props {
 // plugin passed (string or element).
 func (dd *dirDropdown) layoutSelectNative(gtx C, p slackc.Props) D {
 	b, width := dd.b, dd.width
-	label := dd.labels[min(dd.sel, len(dd.labels)-1)]
+	label := dd.text(min(dd.sel, len(dd.labels)-1))
 	var elem slackc.Element
 	dd.shown = nil
 	if p != nil {
@@ -2030,11 +2041,11 @@ func (dd *dirDropdown) layoutSelectNative(gtx C, p slackc.Props) D {
 		if ol := p.List("options"); len(ol) == len(dd.labels) {
 			dd.shown = make([]string, len(ol))
 			for i, o := range ol {
-				dd.shown[i] = dd.labels[i]
+				dd.shown[i] = dd.text(i)
 				if m, ok := o.(slackc.Props); ok {
-					dd.shown[i] = m.StrOr("label", dd.labels[i])
+					dd.shown[i] = m.StrOr("label", dd.text(i))
 				} else if m, ok := o.(map[string]any); ok {
-					dd.shown[i] = slackc.Props(m).StrOr("label", dd.labels[i])
+					dd.shown[i] = slackc.Props(m).StrOr("label", dd.text(i))
 				}
 			}
 		}
@@ -2101,7 +2112,10 @@ func (dd *dirDropdown) menu(b *base, gtx C, btn image.Point, right bool) {
 		g := gtx
 		g.Constraints = layout.Exact(r.Max)
 		dd.panel.Layout(g, func(gtx C) D { return D{Size: r.Max} })
-		labels := dd.labels
+		labels := make([]string, len(dd.labels))
+		for i := range labels {
+			labels[i] = dd.text(i)
+		}
 		if len(dd.shown) == len(labels) {
 			labels = dd.shown
 		}
