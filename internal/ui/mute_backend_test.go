@@ -66,7 +66,13 @@ func TestBackendSetMutedWritesSlackPref(t *testing.T) {
 		t.Errorf("wrote channel_ids=%q global=%q, want %q false", w.ch, w.global, dm)
 	}
 
-	// already muted: no second write
+	// already muted: no second write (once the backend's snapshot rebuilds,
+	// resnapshot's 150 ms, have landed: one taken before core read the
+	// mute back would put the row back for a moment)
+	e.settle(400 * time.Millisecond)
+	if !muted() {
+		t.Fatal("the row isn't muted once the snapshots landed")
+	}
 	e.a.data.setMuted(dm, true)
 	e.settle(100 * time.Millisecond)
 	mu.Lock()
