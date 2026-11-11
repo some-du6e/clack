@@ -510,3 +510,23 @@ void clack_x11_cap_free(void *p) {
 	freeImage(c);
 	free(c);
 }
+
+// clack_x11_panel makes Gio's window the presenter's mini panel: above
+// other windows and on every desktop (EWMH _NET_WM_STATE ABOVE and
+// STICKY), at x, y w×h on the root.
+void clack_x11_panel(void *display, unsigned long win, int x, int y, int w, int h) {
+	Display *d = display;
+	XEvent e;
+	memset(&e, 0, sizeof e);
+	e.xclient.type = ClientMessage;
+	e.xclient.window = win;
+	e.xclient.message_type = XInternAtom(d, "_NET_WM_STATE", False);
+	e.xclient.format = 32;
+	e.xclient.data.l[0] = 1; // _NET_WM_STATE_ADD
+	e.xclient.data.l[1] = XInternAtom(d, "_NET_WM_STATE_ABOVE", False);
+	e.xclient.data.l[2] = XInternAtom(d, "_NET_WM_STATE_STICKY", False);
+	e.xclient.data.l[3] = 1;
+	XSendEvent(d, DefaultRootWindow(d), False, SubstructureRedirectMask | SubstructureNotifyMask, &e);
+	XMoveResizeWindow(d, win, x, y, w, h);
+	XFlush(d);
+}

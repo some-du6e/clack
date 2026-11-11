@@ -14,6 +14,7 @@ int clack_x11_thumb(unsigned long win, int x, int y, int w, int h, uint8_t *rgba
 void *clack_x11_cap_new(unsigned long win, int x, int y, int w, int h, int cursor);
 int clack_x11_cap_grab(void *p, uint8_t *y, uint8_t *uv, int dw, int dh, int *nw, int *nh);
 void clack_x11_cap_free(void *p);
+void clack_x11_panel(void *display, unsigned long win, int x, int y, int w, int h);
 */
 import "C"
 
@@ -218,4 +219,27 @@ func (c *x11Capture) Close() {
 		C.clack_x11_cap_free(c.p)
 		x11Mu.Unlock()
 	})
+}
+
+// Linux has no screen recording permission, and Slack draws no border
+// there (BIqb: !isLinux()).
+func screenAccess() bool   { return true }
+func requestScreenAccess() {}
+
+const (
+	screenSettingsURL = ""
+	borderSupported   = false
+)
+
+func showBorder(ShareSource) {}
+func hideBorder()            {}
+
+// setupPanel puts Gio's X11 window for the mini panel at r, above other
+// windows and on every desktop. A Wayland window can't be placed or kept
+// on top (the compositor decides), so it stays where it opens.
+func setupPanel(h PanelHandle, r image.Rectangle) {
+	if h.Display == nil || h.View == 0 {
+		return
+	}
+	C.clack_x11_panel(h.Display, C.ulong(h.View), C.int(r.Min.X), C.int(r.Min.Y), C.int(r.Dx()), C.int(r.Dy()))
 }

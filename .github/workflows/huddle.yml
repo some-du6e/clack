@@ -109,7 +109,7 @@ jobs:
         run: go test -count=1 -v -run 'TestOpus|TestMic(AGC|NoiseSuppression)' ./internal/huddle
       - name: VideoToolbox + camera publish
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip' ./internal/huddle
+        run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip|TestSCKList|TestFakeScreenShare' ./internal/huddle
       - name: test
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/... ./internal/ui/screenlock/... ./internal/ui/globalkey/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
@@ -151,4 +151,4 @@ jobs:
       - name: test
         run: |
           go test -count=1 -v ./internal/ui/screenlock/... ./internal/ui/globalkey/...
-          go test -count=1 -v -run 'TestMic|TestPreview|TestVideoEffect' ./internal/huddle
+          go test -count=1 -v -run 'TestMic|TestPreview|TestVideoEffect|TestGDIShares|TestMFEncode|TestFakeScreenShare' ./internal/huddle

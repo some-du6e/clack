@@ -44,6 +44,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 )
 
 // ShareKind is the screen picker's source type (D7xu's tabs: "Share
@@ -148,8 +149,67 @@ type shareBackend interface {
 var shareOS shareBackend
 
 // ShareSupported reports whether this build can share a screen: an OS
-// backend, or CLACK_HUDDLE_TESTSCREEN.
-func ShareSupported() bool { return shareBackendFor() != nil }
+// backend that works here (ScreenCaptureKit needs macOS 12.3), or
+// CLACK_HUDDLE_TESTSCREEN.
+func ShareSupported() bool {
+	b := shareBackendFor()
+	if s, ok := b.(interface{ supported() bool }); ok && !s.supported() {
+		return false
+	}
+	return b != nil
+}
+
+// ScreenAccessAllowed is Slack's maybeCheckSystemMediaAccess for "screen":
+// macOS's Screen Recording permission (always true elsewhere, and with the
+// test screen).
+func ScreenAccessAllowed() bool { return testScreenEnv() || screenAccess() }
+
+// RequestScreenAccess asks the OS for screen recording (macOS shows its
+// prompt, or lists Clack in System Settings); it doesn't wait. Slack's
+// click handler does it through getScreenThumbnails after the alert.
+func RequestScreenAccess() {
+	if !testScreenEnv() {
+		requestScreenAccess()
+	}
+}
+
+// ScreenAccessSettingsURL is where the user grants screen recording
+// ("" where the OS has no such page).
+func ScreenAccessSettingsURL() string { return screenSettingsURL }
+
+// BorderSupported: Slack outlines the shared screen or window on macOS and
+// Windows only (BIqb: !isLinux() && isDesktopApp()).
+func BorderSupported() bool { return borderSupported }
+
+// ShowShareBorder outlines src the way Slack's desktop app does while you
+// pick it and while you share it (BIqb X: createBorderWindow, width 6,
+// colour 0, 255/265, 0.2, 1, showBorder): a window above everything that
+// no capture shows. It follows a shared window as it moves.
+func ShowShareBorder(src ShareSource) {
+	if borderSupported && !testScreenEnv() && src.ID != "" {
+		showBorder(src)
+	}
+}
+
+// HideShareBorder removes it (BIqb a: hideBorder).
+func HideShareBorder() {
+	if borderSupported {
+		hideBorder()
+	}
+}
+
+// PanelHandle is the presenter's mini panel window as Gio's ViewEvent
+// names it: an NSView (macOS), an HWND (Windows), or an X11 window with
+// its Display.
+type PanelHandle struct {
+	View    uintptr
+	Display unsafe.Pointer
+}
+
+// SetupPresenterPanel places the mini panel at r (screen coordinates) and
+// makes it Slack's: above everything (setAlwaysOnTop "screen-saver"), on
+// every desktop, and left out of captures (setContentProtection).
+func SetupPresenterPanel(h PanelHandle, r image.Rectangle) { setupPanel(h, r) }
 
 // ShareSystemAudio reports whether the capture can share system audio
 // (the picker's "Share system audio" checkbox).
