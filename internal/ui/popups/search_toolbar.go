@@ -284,9 +284,6 @@ func (p *SearchPopover) tbLayout(gtx layout.Context, th *theme.Theme, sz image.P
 	y := (sz.Y - bs) / 2
 	for i := range acts {
 		a := acts[i]
-		if tb.btns[i].Clicked(gtx) {
-			tb.run = i + 1 // the rows may change: after the list
-		}
 		label, ic := a.label, a.icon
 		if tb.active == i+1 && a.activeLabel != "" {
 			label, ic = a.activeLabel, "check"
@@ -326,6 +323,22 @@ func (p *SearchPopover) tbLayout(gtx layout.Context, th *theme.Theme, sz image.P
 		})
 		tb.rects[i] = image.Rectangle{Min: image.Pt(bx, y), Max: image.Pt(bx+bs, y+bs)}
 	}
+}
+
+// tbClicks reads last frame's clicks on the buttons, before the rows'
+// own: the buttons sit inside the picked row's Clickable, and Gio hands a
+// click to both (memory gio-nested-clicks), so the row drops a click a
+// button took. The action runs after the list is laid out
+// (tbRunPending): the rows may change.
+func (p *SearchPopover) tbClicks(gtx layout.Context) bool {
+	tb := &p.tb
+	hit := false
+	for i := range tb.acts {
+		if tb.btns[i].Clicked(gtx) {
+			tb.run, hit = i+1, true
+		}
+	}
+	return hit
 }
 
 // tbRunPending runs the button clicked while the list was laid out.

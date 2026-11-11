@@ -599,6 +599,28 @@ func TestSearchToolbar(t *testing.T) {
 		t.Errorf("split %q dismissed %v", sh.splits, p.Dismissed())
 	}
 
+	// a click on Open in… opens its menu and nothing else: the button is
+	// inside the row's Clickable, which Gio hands the click to as well
+	p = NewSearchPopover(sh, name, image.Rectangle{})
+	d = &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "the channel row for the mouse", func() bool { return p.snapOK && len(p.rows) > 0 && p.rows[0].id == ch })
+	d.press(key.NameDownArrow)
+	d.frame()
+	navs, shown := len(e.h.navs), e.h.shownCount()
+	g := d.gtx()
+	c := p.tb.rects[1].Add(p.listOrg).Add(image.Pt(0, p.rowTop(g, p.sel)))
+	pt := f32.Pt(float32(c.Min.X+c.Dx()/2), float32(c.Min.Y+c.Dy()/2))
+	d.r.Queue(pointer.Event{Kind: pointer.Move, Position: pt, Source: pointer.Mouse})
+	d.frame()
+	d.r.Queue(pointer.Event{Kind: pointer.Press, Position: pt, Buttons: pointer.ButtonPrimary, Source: pointer.Mouse},
+		pointer.Event{Kind: pointer.Release, Position: pt, Source: pointer.Mouse})
+	d.frame()
+	d.frame()
+	if p.Dismissed() || len(e.h.navs) != navs || e.h.shownCount() != shown+1 {
+		t.Errorf("clicking Open in…: dismissed %v, %d navigations, %d overlays shown (want the menu only)",
+			p.Dismissed(), len(e.h.navs)-navs, e.h.shownCount()-shown)
+	}
+
 	p = NewSearchPopover(sh, name, image.Rectangle{})
 	d = &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "the channel row again", func() bool { return p.snapOK && len(p.rows) > 0 && p.rows[0].id == ch })

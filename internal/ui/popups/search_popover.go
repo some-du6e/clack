@@ -1422,8 +1422,12 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	p.qfAutoShow()
+	tbHit := p.tbClicks(gtx) // first: a toolbar button's click reaches its row too
 	for i := range p.rows {
 		if p.clicks[i].Clicked(gtx) {
+			if tbHit && p.picked && i == p.sel {
+				continue // the button took it
+			}
 			p.activate(i)
 			if p.done {
 				return layout.Dimensions{}
