@@ -18,24 +18,35 @@ type videoEncoder interface {
 	Name() string
 }
 
-// newHWEncoder is the OS's H.264 encoder: VideoToolbox on macOS
-// (h264enc_darwin.go). Nil elsewhere for now.
-var newHWEncoder func(w, h, fps, bps int) (videoEncoder, error)
+// encOpts is what an encoder is made for.
+type encOpts struct {
+	W, H, FPS, Bps int
+	// Screen is screen content (the content share): text and still
+	// pictures, keyframes only on request (Slack's JOIN asks Chime not to
+	// request them periodically: disablePeriodicKeyframeRequestOnContentSender).
+	Screen bool
+}
+
+// newHWEncoders are the OS's H.264 encoders, tried in order: VideoToolbox
+// on macOS (h264enc_darwin.go), Media Foundation on Windows
+// (h264enc_windows.go), OpenH264 where it is installed on Linux
+// (h264enc_openh264.go).
+var newHWEncoders []func(o encOpts) (videoEncoder, error)
 
 // newVideoEncoder picks the OS encoder, falling back to the pure-Go I_PCM
 // one for pictures small enough (the test camera).
-func newVideoEncoder(w, h, fps, bps int, logf func(string, ...any)) (videoEncoder, error) {
-	if newHWEncoder != nil {
-		e, err := newHWEncoder(w, h, fps, bps)
+func newVideoEncoder(o encOpts, logf func(string, ...any)) (videoEncoder, error) {
+	for _, nw := range newHWEncoders {
+		e, err := nw(o)
 		if err == nil {
 			return e, nil
 		}
-		logf("huddle: %dx%d hardware encoder: %v", w, h, err)
+		logf("huddle: %dx%d hardware encoder: %v", o.W, o.H, err)
 	}
-	if w*h <= maxPCMPixels {
-		return newPCMEncoder(w, h)
+	if o.W*o.H <= maxPCMPixels {
+		return newPCMEncoder(o.W, o.H)
 	}
-	return nil, fmt.Errorf("no H.264 encoder for %dx%d video in this build", w, h)
+	return nil, fmt.Errorf("no H.264 encoder for %dx%d video in this build", o.W, o.H)
 }
 
 // hasIDR reports whether an Annex B access unit holds an IDR slice.

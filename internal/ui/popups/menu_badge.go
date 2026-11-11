@@ -35,8 +35,8 @@ import (
 type MenuTag struct {
 	Label string
 	// Style is the Tag style: "informative", "neutral",
-	// "inverse-informative", "success", "urgent" or "warning" ("" is
-	// "neutral", Tag's default).
+	// "inverse-informative", "success", "urgent", "warning" or
+	// "education" ("" is "neutral", Tag's default).
 	Style string
 }
 
@@ -93,6 +93,11 @@ func menuTagColors(th *theme.Theme, style string) (bg, fg color.NRGBA) {
 	case "warning":
 		b = chipTok{"var(--dt_color-surf-hgl-3)", rgba8(0xffc600, 0x2e), rgba8(0xa07300, 0x2e)}
 		f = chipTok{"var(--dt_color-content-hgl-3)", rgb(0x6b5000), rgb(0xdea700)}
+	case "education":
+		// base.education and content.education (EducationTag, 7ux/:
+		// the + menu's "New" on its GIF row)
+		b = chipTok{"var(--dt_color-base-education)", rgb(0xf0f3fc), rgb(0x040b3d)}
+		f = chipTok{"var(--dt_color-content-education)", rgb(0x112377), rgb(0xe4e8f4)}
 	case "white":
 		// constants.white with palettes.ocean.70 (ocean.30 in dark mode:
 		// rgb(var(--dt_color-plt-ocean-30)) is 19,87,149 there)

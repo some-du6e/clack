@@ -81,6 +81,17 @@ func listifyNames(items []string) string {
 	return b.String()
 }
 
+// listifyNoConj is listify with noConj (HuddleChannelName's other
+// members): the locale's separator between every name, no "and".
+func listifyNoConj(items []string) string {
+	sep := ","
+	switch i18n.Locale() {
+	case "ja-JP", "zh-CN", "zh-TW":
+		sep = "、"
+	}
+	return strings.Join(items, sep+" ")
+}
+
 // linkParts splits a huddles string with one <a>…</a> (or <l>…</l>) link
 // into the text before it, the link's text and the text after, tags
 // stripped and the edges trimmed.

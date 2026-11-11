@@ -73,6 +73,25 @@ type Lightbox struct {
 	prevBtn, nextBtn                          widget.Clickable
 	tips                                      [9]TipState
 	moreRect                                  image.Rectangle
+
+	// pending is the pending file viewer (NewPendingViewer): a file not
+	// sent yet, with its title and "Edit file details" in the header.
+	pending      bool
+	pendingTitle string
+	onEdit       func()
+	editBtn      widget.Clickable
+}
+
+// NewPendingViewer is openPendingFileViewer (boot-shared SFhE: W9QH's
+// FileViewer with isPendingView): a file attached to the composer, before
+// it is sent. Its header is the file's title and, when onEdit is set
+// (disableFileEditOptions off), the "Edit file details" link
+// (multi_file_upload), which opens the Edit file dialog over the viewer
+// (media_viewer_button); Close. The footer has only the zoom controls.
+func NewPendingViewer(h Host, img richtext.Image, title string, onEdit func()) *Lightbox {
+	lb := &Lightbox{h: h, zoom: 1, pending: true, pendingTitle: title, onEdit: onEdit}
+	lb.items = []lbItem{{img: img}}
+	return lb
 }
 
 const (
@@ -228,6 +247,9 @@ func (it lbItem) windowURL() string {
 }
 
 func (lb *Lightbox) cur() lbItem { return lb.items[lb.idx] }
+
+// Image is the image the viewer shows now.
+func (lb *Lightbox) Image() richtext.Image { return lb.cur().img }
 
 func (lb *Lightbox) go2(i int) {
 	if i < 0 || i >= len(lb.items) || i == lb.idx {
@@ -391,6 +413,9 @@ func (lb *Lightbox) clicks(gtx layout.Context) {
 	if lb.closeBtn.Clicked(gtx) {
 		lb.Dismiss()
 		return
+	}
+	if lb.editBtn.Clicked(gtx) && lb.onEdit != nil {
+		lb.onEdit() // stacked over the viewer (isStackable)
 	}
 	if lb.rotBtn.Clicked(gtx) {
 		lb.rot = (lb.rot + 1) % 4
@@ -631,6 +656,10 @@ func (lb *Lightbox) drawImage(gtx layout.Context, th *theme.Theme, panel, area i
 
 func (lb *Lightbox) header(gtx layout.Context, th *theme.Theme, panel image.Rectangle) {
 	white := rgb(0xffffff)
+	if lb.pending {
+		lb.pendingHeader(gtx, th, panel)
+		return
+	}
 	m := lb.m
 	name := m.Name
 	av := m.Avatar
@@ -663,6 +692,34 @@ func (lb *Lightbox) header(gtx layout.Context, th *theme.Theme, panel image.Rect
 	at(gtx, cp, func(gtx layout.Context) layout.Dimensions {
 		d := iconButton(gtx, &lb.closeBtn, "close", 36, 20, white, rgba(0xffffff, .1), 8)
 		Tooltip(gtx, th, &lb.tips[8], lb.closeBtn.Hovered(), d.Size, Below, "Close", "Esc")
+		return d
+	})
+}
+
+// pendingHeader is FileViewer's header (p-file_viewer__header): the
+// meta stack (padding 12px 16px) with the title bold over "Edit file
+// details" (p-file_viewer__header__meta__minor, 13px), Close at the right.
+func (lb *Lightbox) pendingHeader(gtx layout.Context, th *theme.Theme, panel image.Rectangle) {
+	white := rgb(0xffffff)
+	p := panel.Min.Add(image.Pt(dp(gtx, 16), dp(gtx, 12)))
+	tw := maxInt(1, panel.Max.X-dp(gtx, 72)-p.X)
+	at(gtx, p, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 20))}
+		return para(gtx, th, 15, 20, theme.Bold, white, lb.pendingTitle, 1)
+	})
+	if lb.onEdit != nil && lb.pendingTitle != "" {
+		at(gtx, image.Pt(p.X, p.Y+dp(gtx, 20)), func(gtx layout.Context) layout.Dimensions {
+			return lb.editBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				pointer.CursorPointer.Add(gtx.Ops)
+				gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 18))}
+				return para(gtx, th, 13, 18, theme.Regular, white, nsMultiUpload.T("Edit file details"), 1)
+			})
+		})
+	}
+	cp := image.Pt(panel.Max.X-dp(gtx, 12)-dp(gtx, 36), panel.Min.Y+dp(gtx, 12))
+	at(gtx, cp, func(gtx layout.Context) layout.Dimensions {
+		d := iconButton(gtx, &lb.closeBtn, "close", 36, 20, white, rgba(0xffffff, .1), 8)
+		Tooltip(gtx, th, &lb.tips[8], lb.closeBtn.Hovered(), d.Size, Below, nsMultiUpload.T("Close"), "Esc")
 		return d
 	})
 }
@@ -724,8 +781,11 @@ func (lb *Lightbox) footer(gtx layout.Context, th *theme.Theme, panel image.Rect
 	}
 	hosted := lb.cur().hosted()
 	x := panel.Min.X + dp(gtx, 12)
-	if hosted {
+	if hosted || lb.pending {
 		lb.zoomControls(gtx, btn, x, y)
+	}
+	if lb.pending {
+		return // a file not sent yet: no download, thread or window actions
 	}
 
 	// counter

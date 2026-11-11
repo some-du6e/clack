@@ -97,6 +97,11 @@ type Options struct {
 	// desktop's autostart entry or Run key). nil: the row is greyed.
 	LaunchOnLogin    func() bool
 	SetLaunchOnLogin func(on bool) error
+	// EnsureLinkHandler, when set, runs as Open Slack sign-in opens the
+	// page, before the browser can hand a link back (cmd/clack, Windows:
+	// registers Clack as a slack:// handler again, as every start does).
+	// It must return at once.
+	EnsureLinkHandler func()
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
@@ -162,6 +167,8 @@ type App struct {
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
+	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
+	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
 	ptrWin          image.Point
 	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
@@ -284,6 +291,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
+	// the composer's floating formatting bar keeps inside the window
+	composer.WindowSize = func() image.Point { return a.winSize }
+
 	a.startSpell()                                // spellcheck_wire.go
 	a.startLocale()                               // locale_wire.go
 	messages.PersistActions = a.bbmPersistActions // Simplified layout mode (bbm.go)

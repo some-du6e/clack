@@ -92,6 +92,9 @@ type Size struct {
 	// (workflows.go): workflow links, a workflow button, a workflow
 	// step's message, a bookmarked workflow, tripping, triggers.
 	Workflows bool
+	// PreviewAgents puts agents and apps into #lounge-preview, the
+	// channel the viewer previews (preview_agents.go).
+	PreviewAgents bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -1311,6 +1314,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("results", res)
 	case "edge/users/counts":
+		if out, handled := s.previewAgentCounts(edge); handled { // preview_agents.go
+			return out
+		}
 		return ok("counts", map[string]int{"everyone": 1200, "people": 1100, "members": 1150, "guests": 3, "bots": 47, "apps": 12})
 	case "edge/users/list":
 		// filter as Slack's client sends it: "everyone AND NOT bots AND NOT
@@ -1322,6 +1328,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		s.listFilters = append(s.listFilters, filter)
 		s.convMu.Unlock()
 		if filter == "apps" {
+			if out, handled := s.previewAgentList(edge); handled { // preview_agents.go
+				return out
+			}
 			var bots []slack.User
 			for _, u := range s.variants() {
 				if u.IsBot && u.TeamID == TeamID {
@@ -1394,6 +1403,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	if s.codeFx != nil && id == s.codeFx.Agent.ID {
 		return s.codeFx.Agent, true
 	}
+	if u, ok := s.previewAgentUser(id); ok {
+		return u, true
+	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {
 			return s.users[n], true
@@ -1410,6 +1422,7 @@ func (s *Server) historyPage(f url.Values) any {
 		var gallery bool
 		if msgs, gallery = s.galleryHistoryOf(ch); !gallery { // gallery.go
 			msgs = s.history(ch)
+			s.previewAgentHistory(ch, msgs) // preview_agents.go
 		}
 		s.hist[ch] = msgs
 	}

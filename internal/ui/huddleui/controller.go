@@ -108,6 +108,7 @@ type Controller struct {
 	tick   sessionTick
 	mic    micAlerts   // the mic button's permission, NoAudioDetected, "You’re muted." (micalerts.go)
 	popout popoutState // huddles_screenshare_popout (popout.go)
+	share  shareUI     // your screen share: the picker, alerts, border, mini panel (share.go)
 }
 
 // sessionTick is what onSession compares between changes.
@@ -515,6 +516,7 @@ func (c *Controller) onSession() {
 		c.peersTick(s, st)
 		c.autoLowerHand(s, st)
 		c.musicTick(s, st)
+		c.shareTick(s, st)
 		if tt := c.taut(); tt != nil {
 			peers := make(map[string]string, len(st.Participants))
 			for _, p := range st.Participants {
@@ -608,6 +610,7 @@ func (c *Controller) ended(err error) {
 	c.stopAloneTimer()
 	c.stopMicChecks()
 	c.closePopouts()
+	c.shareEnded()
 	if w != nil {
 		w.close()
 	}

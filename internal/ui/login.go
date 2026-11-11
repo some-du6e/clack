@@ -228,7 +228,11 @@ func (a *App) updateLogin(gtx layout.Context) {
 		}
 	case open && !l.advanced:
 		// Slack desktop's "Sign in to Another Workspace": the page opens in
-		// the browser (shell.openExternal), and the link comes back later
+		// the browser (shell.openExternal), and the link comes back later,
+		// to whichever app the OS hands slack:// links to
+		if a.opts.EnsureLinkHandler != nil {
+			a.opts.EnsureLinkHandler()
+		}
 		loginOpenURL(desktopSignInURL)
 		l.waiting, l.sso, l.waitAt, l.err = true, false, l.now, ""
 	case linkSubmit && !l.advanced:
@@ -378,9 +382,11 @@ func (a *App) startLogin(in slack.SignInInput) {
 func (a *App) SignInWithLink(link string) {
 	a.Post(func() {
 		if a.login == nil {
+			log.Printf("sign-in: a sign-in link came from outside Clack while signed in; not used")
 			a.Toast("Clack got a Slack sign-in link, but you're already signed in. To use it, sign out, then open or paste the link again.")
 			return
 		}
+		log.Printf("sign-in: a sign-in link came from outside Clack; signing in with it")
 		a.signInWithLinkNow(link)
 		a.Invalidate()
 	})

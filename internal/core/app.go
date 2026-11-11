@@ -1317,10 +1317,7 @@ func (a *App) sections(convs []Conv) []Section {
 	for _, c := range convs {
 		names[c.ID] = a.sortName(c)
 	}
-	var temp map[string]bool // temporary memberships, under temp_join_channel (preview.go)
-	if a.TempJoinEnabled() {
-		temp = a.tempChannels(time.Now())
-	}
+	temp := a.tempChannels(time.Now()) // temporary memberships (preview.go)
 	secOf := assignSections(ordered, starred, temp)
 	sel := a.selectedID()
 	// Slack's candidates: closed DMs leave every section (sidebar_rules.go),

@@ -601,6 +601,8 @@ type Draft struct {
 	FileIDs               []string
 	FileInfo              []DraftFile // the attached files as drafts.list describes them (by FileIDs order when known)
 	FromComposer          bool        // is_from_composer
+	// Attachments are the draft's message attachments (the composer's GIFs).
+	Attachments json.RawMessage
 }
 
 // DraftFile is a file attached to a draft: uploaded but not shared yet
@@ -621,6 +623,9 @@ type DraftOpts struct {
 	Blocks                json.RawMessage
 	FileIDs               []string
 	DateScheduled         int64 // set when editing a scheduled draft (keeps it scheduled)
+	// Attachments are the draft's message attachments (drafts.create's
+	// attachments: the composer's GIFs); nil sends "[]".
+	Attachments json.RawMessage
 }
 
 // ScheduledMessage is a message waiting to be posted at PostAt (unix s).

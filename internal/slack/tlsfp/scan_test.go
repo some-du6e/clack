@@ -17,6 +17,9 @@ var scanAllow = map[string]map[string]string{
 	// Amazon Chime's signalling socket for huddles: a Chime host and Chime's
 	// join token, never a Slack host or Slack credentials.
 	"internal/huddle/session.go": {"websocket.Dial without HTTPClient": "Chime, not Slack"},
+	// the screen share's content attendee: the same Chime signalling host
+	// with the "#content" join token
+	"internal/huddle/content.go": {"websocket.Dial without HTTPClient": "Chime, not Slack"},
 }
 
 // Every connection that can reach Slack is made by this package: no other

@@ -109,6 +109,7 @@ type State struct {
 	Videos        []Video
 	Captions      []Caption    // most recent last
 	Camera        CameraStatus // yours (SetCamera)
+	Share         ShareStatus  // your screen share (StartShare)
 	// Invites are the people the huddle rang who aren't in it (yet), in
 	// the order they were rung: Slack draws them as pending tiles.
 	Invites []Invite
@@ -148,7 +149,10 @@ type Options struct {
 	// OpenCamera replaces the system camera for SetCamera (tests, the demo:
 	// NewTestCamera); nil = the default camera behind the OS permission.
 	OpenCamera func(logf func(string, ...any)) (Camera, error)
-	Logf       func(format string, args ...any)
+	// OpenShare replaces the OS screen capture for StartShare (tests, the
+	// demo: NewTestScreen); nil = the OS's (or CLACK_HUDDLE_TESTSCREEN's).
+	OpenShare func(src ShareSource, audio bool, logf func(string, ...any)) (ScreenCapture, error)
+	Logf      func(format string, args ...any)
 	// OnChange is called (from any goroutine, coalesced) when State or a
 	// video frame changed.
 	OnChange func()
@@ -216,6 +220,7 @@ type Session struct {
 	eventsLoading bool
 	sinks         map[string]*videoSink // by video key
 	cam           camPipe               // your camera (videosend.go)
+	share         sharePipe             // your screen share (share.go, content.go)
 	ended         bool
 	leaving       bool // LEAVE sent: a closing socket is expected, not a drop
 
@@ -277,7 +282,9 @@ func Join(ctx context.Context, o Options, channel string) (*Session, error) {
 		streamAt: map[uint32]string{}, sources: map[uint32]streamDesc{}, sinks: map[string]*videoSink{},
 		waiters: map[int][]chan *signalFrame{}, doneCh: make(chan struct{}), mic: newMicFramer(),
 		apm: newMicProcessor(o.AGC, o.NoiseSuppression)}
+	s.cam.init()
 	s.cam.fx.set(o.VideoEffect)
+	s.share.preview.plain = true
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	if o.SelfID != "" {
 		s.person(o.SelfID).Self = true
@@ -359,6 +366,8 @@ func (s *Session) SelfAttendee() string { return s.join.Attendee.AttendeeID }
 // State returns a snapshot.
 func (s *Session) State() State {
 	cam := s.CameraStatus()
+	share := s.ShareStatus()
+	sharePic := s.share.preview.has()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := State{Phase: s.phase, Err: s.err, RoomID: s.join.RoomID, Channel: s.join.Channel,
@@ -388,6 +397,7 @@ func (s *Session) State() State {
 		if p.Self {
 			p.Muted = s.muted
 			p.Camera = cam.State == CameraOn
+			p.Sharing = share.State.Sharing() // yours is local state (isScreenshareEnabled), not INDEX
 			p.Sticker, p.StickerTS = s.sticker, s.stickerTS
 		}
 		p.Sticker = stickerAt(p, now)
@@ -402,6 +412,11 @@ func (s *Session) State() State {
 		vid.W, vid.H = v.size()
 		st.Videos = append(st.Videos, vid)
 	}
+	if share.State.Sharing() && sharePic {
+		// your share as the others see it: the content share tile the SDK
+		// binds to your own stream (contentShareTile)
+		st.Videos = append(st.Videos, Video{Key: SelfShareKey, AttendeeID: s.join.Attendee.AttendeeID, UserID: s.o.SelfID, Content: true})
+	}
 	sort.Slice(st.Videos, func(i, j int) bool {
 		if st.Videos[i].Content != st.Videos[j].Content {
 			return st.Videos[i].Content
@@ -410,6 +425,7 @@ func (s *Session) State() State {
 	})
 	st.Captions = append(st.Captions, s.lines...)
 	st.Camera = cam
+	st.Share = share
 	return st
 }
 
@@ -454,6 +470,9 @@ func (s *Session) setInvites(m map[string]string) {
 func (s *Session) Frame(key string) VideoFrame {
 	if key == SelfVideoKey {
 		return s.cam.preview.latest()
+	}
+	if key == SelfShareKey {
+		return s.share.preview.latest()
 	}
 	s.mu.Lock()
 	v := s.sinks[key]
@@ -576,6 +595,9 @@ func (s *Session) Leave() {
 	s.leaving = true
 	connected := s.phase == Connected
 	s.mu.Unlock()
+	// your screen share's content attendee leaves first, while the
+	// connection still runs (stopHuddle stops the content share)
+	s.closeShare()
 	if connected {
 		s.awarenessClose() // everyone drops your sticker
 	}
@@ -601,6 +623,7 @@ func (s *Session) finish(err error) {
 	s.mu.Unlock()
 	s.cancel()
 	s.closeCamera()
+	s.closeShare()
 	s.closeConn()
 	s.mu.Lock()
 	mic := s.micDev
@@ -852,8 +875,19 @@ func (s *Session) handle(f *signalFrame) {
 
 // ---- media ----
 
-// testSettings lets tests adjust the ICE setup (loopback candidates).
-var testSettings func(*webrtc.SettingEngine)
+// testSettings lets tests adjust the ICE setup (loopback candidates). The
+// fake sets and clears it while sessions (and content attendees) may still
+// be connecting, hence the lock.
+var (
+	testSettingsMu sync.Mutex
+	testSettings   func(*webrtc.SettingEngine)
+)
+
+func setTestSettings(f func(*webrtc.SettingEngine)) {
+	testSettingsMu.Lock()
+	testSettings = f
+	testSettingsMu.Unlock()
+}
 
 var h264Fmtp = []struct {
 	pt   uint8
@@ -888,8 +922,11 @@ func newAPI() (*webrtc.API, error) {
 	se := webrtc.SettingEngine{}
 	// Chime's audio server only speaks AES-CM: with GCM it drops you.
 	se.SetSRTPProtectionProfiles(dtls.SRTP_AES128_CM_HMAC_SHA1_80)
-	if testSettings != nil {
-		testSettings(&se)
+	testSettingsMu.Lock()
+	ts := testSettings
+	testSettingsMu.Unlock()
+	if ts != nil {
+		ts(&se)
 	}
 	return webrtc.NewAPI(webrtc.WithMediaEngine(me), webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(se)), nil
 }
@@ -1211,8 +1248,8 @@ func (s *Session) Stats() string {
 		vids = append(vids, fmt.Sprintf("%s: %d pkts %d frames", k, v.packets.Load(), v.decoded.Load()))
 	}
 	sort.Strings(vids)
-	return fmt.Sprintf("audio out %d, in %d (lost %d, level %.3f); video [%s]; camera out %d", s.stats.audioOut, s.stats.audioIn,
-		s.stats.audioLost, s.stats.inLevel, strings.Join(vids, "; "), s.cam.sent.Load())
+	return fmt.Sprintf("audio out %d, in %d (lost %d, level %.3f); video [%s]; camera out %d; share out %d", s.stats.audioOut, s.stats.audioIn,
+		s.stats.audioLost, s.stats.inLevel, strings.Join(vids, "; "), s.cam.sent.Load(), s.share.sent())
 }
 
 // ---- signaling state ----
@@ -1320,8 +1357,28 @@ func (s *Session) updateVideos() {
 }
 
 func (s *Session) onAudioInfo(info []audioStreamInfo) {
+	self := s.join.Attendee.AttendeeID
 	s.mu.Lock()
 	for _, st := range info {
+		// a screen share's content attendee is nobody's tile: Slack's
+		// realtimeAttendeeIdPresenceCallback returns early for one
+		// (isAttendeeOfTypeContent); yours present means your share
+		// started (DefaultContentShareController's contentShareDidStart)
+		if att := firstNonEmpty(st.AttendeeID, s.streamAt[st.StreamID]); strings.HasSuffix(att, "#content") {
+			if st.AttendeeID != "" {
+				s.streamAt[st.StreamID] = st.AttendeeID
+			} else if !st.HasMuted {
+				delete(s.streamAt, st.StreamID)
+			}
+			if strings.TrimSuffix(att, "#content") == self {
+				if st.AttendeeID != "" {
+					s.share.present.Store(true)
+				} else if !st.HasMuted {
+					s.share.present.Store(false)
+				}
+			}
+			continue
+		}
 		switch {
 		case st.AttendeeID != "":
 			s.streamAt[st.StreamID] = st.AttendeeID

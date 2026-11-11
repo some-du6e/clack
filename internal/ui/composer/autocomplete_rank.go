@@ -85,7 +85,10 @@ func rankCtxFrom(api coreAPI, s core.Snapshot, convKind string) rankCtx {
 	r.entID = s.EnterpriseID
 	r.team = s.Team.ID
 	r.displayRealNames = s.Prefs.DisplayRealNames
-	r.passthrough = a.Experiment("autocomplete_flannel_fuzzy_match_passthrough") == "treatment"
+	// nIFn makeResultsMatcher passes flannel's fuzzy matches through
+	// unconditionally since build 274f7c7f1b69 (2026-11-11);
+	// autocomplete_flannel_fuzzy_match_passthrough is no longer read
+	r.passthrough = true
 	r.demote = expOn(a.Experiment("autocomplete_demote_flannel_passthrough_rltv_exact_match"))
 	r.beyond = expOn(a.Experiment("ml_fuzzy_match_beyond_word_boundaries_v2"))
 	r.emojiBoost = a.Experiment("emoji_exact_match_boost") == "on"
