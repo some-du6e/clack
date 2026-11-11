@@ -57,6 +57,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -139,15 +140,15 @@ func (m *ChannelNotifyModal) state() cnState {
 // Subtitle is the header's second line (n9iP tz).
 func (m *ChannelNotifyModal) Subtitle() string {
 	s := m.state()
-	switch {
+	switch { // n9iP's (channel_sidebar)
 	case s.Muted:
-		return "Notifications are muted"
+		return nsSidebar.T("Notifications are muted")
 	case s.Desktop == "everything":
-		return "Notifications set to all new posts"
+		return nsSidebar.T("Notifications set to all new posts")
 	case s.Desktop == "nothing":
-		return "Notifications set to nothing"
+		return nsSidebar.T("Notifications set to nothing")
 	}
-	return "Notifications set to just mentions"
+	return nsSidebar.T("Notifications set to just mentions")
 }
 
 // Rows are the switches and links shown, in order: desktop, mobile,
@@ -283,13 +284,31 @@ func (m *ChannelNotifyModal) header(gtx layout.Context) layout.Dimensions {
 	maxW := maxInt(1, gtx.Constraints.Max.X-x-dp(gtx, 64))
 	at(gtx, image.Pt(x, ty), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 30))}
-		return para(gtx, th, 22, 30, theme.Black, cl.Fg, "Advanced settings", 1)
+		return para(gtx, th, 22, 30, theme.Black, cl.Fg, nsPrefs.T("Advanced settings"), 1)
 	})
 	at(gtx, image.Pt(x, ty+dp(gtx, 30)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 22))}
 		return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, m.Subtitle(), 1)
 	})
 	return layout.Dimensions{Size: gtx.Constraints.Max}
+}
+
+// rtRuns are an rt() string's runs: <strong> bold, the placeholder named
+// badge the mention badge, other placeholders (the @channel and @here
+// tokens) bold.
+func rtRuns(parts []i18n.Part, badge string) []cnRun {
+	out := make([]cnRun, 0, len(parts))
+	for _, p := range parts {
+		switch {
+		case badge != "" && p.Arg == badge:
+			out = append(out, cnRun{s: p.Text, badge: true})
+		case p.Arg != "" || p.Tag == "strong" || p.Tag == "b":
+			out = append(out, cnRun{s: p.Text, bold: true})
+		default:
+			out = append(out, cnRun{s: p.Text})
+		}
+	}
+	return out
 }
 
 // cnRun is a piece of a wrapping line: plain or bold text, or the mention
@@ -331,17 +350,19 @@ func cnRuns(gtx layout.Context, th *theme.Theme, cl *Colors, runs []cnRun, size,
 			if wd == "" {
 				continue
 			}
-			word := strings.TrimRight(wd, " ")
-			ww := textW(gtx, th, size, wt, word)
-			if x > 0 && x+ww > w {
-				x, y = 0, y+lh
-			}
-			at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, size, wt, col, word)
+			// a CJK run breaks between its characters (cjkChunks)
+			for _, word := range cjkChunks(strings.TrimRight(wd, " ")) {
+				ww := textW(gtx, th, size, wt, word)
+				if x > 0 && x+ww > w {
+					x, y = 0, y+lh
+				}
+				at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+						return text(gtx, th, size, wt, col, word)
+					})
 				})
-			})
-			x += ww
+				x += ww
+			}
 			if strings.HasSuffix(wd, " ") {
 				x += space
 			}
@@ -435,20 +456,19 @@ func (m *ChannelNotifyModal) layout(gtx layout.Context) layout.Dimensions {
 	}
 	if m.failed {
 		place(func(gtx layout.Context) int {
-			return cnAlert(gtx, th, cl, true, []cnRun{{s: "Unable to update your notification preferences. Please try again later."}}, w) + dp(gtx, 12)
+			return cnAlert(gtx, th, cl, true, []cnRun{{s: nsPrefs.T("Unable to update your notification preferences. Please try again later.")}}, w) + dp(gtx, 12)
 		})
 	}
 	if s.Desktop == "everything" && !s.DesktopPush && s.MobileRaw == "nothing" {
 		place(func(gtx layout.Context) int {
-			return cnAlert(gtx, th, cl, false, []cnRun{{s: "If you want to be notified about "}, {s: "all new posts", bold: true},
-				{s: ", you’ll need to turn desktop or mobile notifications on."}}, w) + dp(gtx, 16)
+			return cnAlert(gtx, th, cl, false, rtRuns(nsPrefs.RT("If you want to be notified about <strong>all new posts</strong>, you’ll need to turn desktop or mobile notifications on."), ""), w) + dp(gtx, 16)
 		})
 	}
 	place(func(gtx layout.Context) int {
-		return m.switchRow(gtx, th, cl, "desktop", "Desktop notifications", []cnRun{{s: "You’ll see a banner when new messages come in."}}, w)
+		return m.switchRow(gtx, th, cl, "desktop", nsPrefs.T("Desktop notifications"), []cnRun{{s: nsPrefs.T("You’ll see a banner when new messages come in.")}}, w)
 	})
 	place(func(gtx layout.Context) int {
-		return m.switchRow(gtx, th, cl, "mobile", "Mobile notifications", nil, w)
+		return m.switchRow(gtx, th, cl, "mobile", nsPrefs.T("Mobile notifications"), nil, w)
 	})
 	if !s.Muted {
 		place(func(gtx layout.Context) int { return m.overrides(gtx, th, cl, s, w) })
@@ -459,12 +479,12 @@ func (m *ChannelNotifyModal) layout(gtx layout.Context) layout.Dimensions {
 		})
 		if s.Desktop == "everything" {
 			place(func(gtx layout.Context) int {
-				return m.switchRow(gtx, th, cl, "badge", "Badge every new message in your sidebar",
-					[]cnRun{{s: "Show a badge ("}, {s: "1", badge: true}, {s: ") on the channel name for every new message."}}, w)
+				return m.switchRow(gtx, th, cl, "badge", nsPrefs.T("Badge every new message in your sidebar"),
+					rtRuns(nsPrefs.RT("Show a badge ({unreadBadge}) on the channel name for every new message.", "unreadBadge", "1"), "unreadBadge"), w)
 			})
 		}
 		place(func(gtx layout.Context) int {
-			return m.switchRow(gtx, th, cl, "follow", "Follow every thread", []cnRun{{s: "Get notified about every new thread and its replies."}}, w)
+			return m.switchRow(gtx, th, cl, "follow", nsPrefs.T("Follow every thread"), []cnRun{{s: nsPrefs.T("Get notified about every new thread and its replies.")}}, w)
 		})
 		if s.Desktop == "mentions_dms" {
 			who := "@channel"
@@ -472,8 +492,8 @@ func (m *ChannelNotifyModal) layout(gtx layout.Context) layout.Dimensions {
 				who = "@everyone"
 			}
 			place(func(gtx layout.Context) int {
-				return m.switchRow(gtx, th, cl, "broadcast", "Get broadcast messages",
-					[]cnRun{{s: "Be notified anytime someone uses "}, {s: who, bold: true}, {s: " or "}, {s: "@here", bold: true}, {s: "."}}, w)
+				return m.switchRow(gtx, th, cl, "broadcast", nsPrefs.T("Get broadcast messages"),
+					rtRuns(nsPrefs.RT("Be notified anytime someone uses {atChannel} or {atHere}.", "atChannel", who, "atHere", "@here"), ""), w)
 			})
 		}
 	}
@@ -489,9 +509,9 @@ func (m *ChannelNotifyModal) overrides(gtx layout.Context, th *theme.Theme, cl *
 	for link.Clicked(gtx) {
 		m.ToggleOverrides()
 	}
-	label, caret := "Show advanced mobile overrides", "caret-down"
+	label, caret := nsPrefs.T("Show advanced mobile overrides"), "caret-down"
 	if m.showOver {
-		label, caret = "Hide advanced mobile overrides", "caret-up"
+		label, caret = nsPrefs.T("Hide advanced mobile overrides"), "caret-up"
 	}
 	col := cl.Link
 	if off {
@@ -530,20 +550,20 @@ func (m *ChannelNotifyModal) overrides(gtx layout.Context, th *theme.Theme, cl *
 	iw := w - 2*px
 	call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(iw, 1<<20)}
-		yy := para(gtx, th, 15, 22, theme.Regular, cl.Fg, "Get different push notifications on mobile", 0).Size.Y + dp(gtx, 8)
+		yy := para(gtx, th, 15, 22, theme.Regular, cl.Fg, nsPrefs.T("Get different push notifications on mobile"), 0).Size.Y + dp(gtx, 8)
 		same := func(v string) bool { return s.Mobile == v && s.Desktop == v }
-		everySub := "Messages and threads you follow"
+		everySub := nsSidebar.T("Messages and threads you follow")
 		if same("everything") {
-			everySub = "Same as desktop"
+			everySub = nsPrefs.T("Same as desktop")
 		}
-		mentSub := "@you, @channel, @here"
+		mentSub := nsSidebar.T("@you, @channel, @here")
 		if !s.Broadcast {
-			mentSub = "@you"
+			mentSub = nsSidebar.T("@you")
 		}
 		if same("mentions_dms") {
-			mentSub = "Same as desktop"
+			mentSub = nsPrefs.T("Same as desktop")
 		}
-		for _, r := range []struct{ v, label, sub string }{{"everything", "All new posts", everySub}, {"mentions_dms", "Just mentions", mentSub}} {
+		for _, r := range []struct{ v, label, sub string }{{"everything", nsSidebar.T("All new posts"), everySub}, {"mentions_dms", nsSidebar.T("Just mentions"), mentSub}} {
 			r := r
 			c := m.click("mob:" + r.v)
 			for c.Clicked(gtx) {

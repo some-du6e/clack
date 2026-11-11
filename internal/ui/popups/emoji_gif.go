@@ -204,7 +204,7 @@ func (p *EmojiPicker) layoutGif(gtx layout.Context, th *theme.Theme, cl *Colors,
 
 	at(gtx, image.Pt(dp(gtx, gifInputX), dp(gtx, gifInputY)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(sz.X-2*dp(gtx, gifInputX), dp(gtx, epInputH)))
-		return field(gtx, th, &g.ed, "Search all GIFs on Giphy", "", epInputH, 15)
+		return field(gtx, th, &g.ed, nsGifPicker.T("Search all GIFs on Giphy"), "", epInputH, 15)
 	})
 
 	r := image.Rect(0, dp(gtx, gifListY), sz.X, sz.Y)
@@ -429,12 +429,9 @@ func (p *EmojiPicker) gifSkeleton(gtx layout.Context, th *theme.Theme, vh int) {
 // gifEmpty is the no-results / error state.
 func (p *EmojiPicker) gifEmpty(gtx layout.Context, th *theme.Theme, cl *Colors, w, h int) {
 	g := &p.gif
-	msg := "No GIFs to show"
-	switch {
-	case g.err != "":
+	msg := nsGifPicker.T("No GIFs to show") // the GIF picker's empty state (DMNm), searched or not
+	if g.err != "" {
 		msg = "Couldn't load GIFs: " + g.err
-	case g.query != "":
-		msg = "No GIFs found for “" + g.query + "”"
 	}
 	ig := dp(gtx, 32)
 	maxW := w - 2*dp(gtx, 16)
