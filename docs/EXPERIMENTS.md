@@ -1,6 +1,6 @@
 # Slack's experiments in Clack
 
-<!-- Generated from the experiments inventory (branch experiments, 2026-11-10); the method below. -->
+<!-- Generated from the experiments inventory (branch experiments, 2026-11-10); the method below. Refreshed by hand on 2026-11-11 (branch exp-wave-2): see "2026-11-11 refresh". -->
 
 Slack turns features on per account with experiments. Clack should behave the way
 Slack's desktop client does in whatever group the account is in. This is the inventory
@@ -33,6 +33,50 @@ plumbing that lets Clack and its plugins follow them, and the work left, by area
 
 609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 95 today (the Clack column cites where).
 
+## 2026-11-11 refresh (build 274f7c7f1b69)
+
+Same method: one `experiments.getByUser` call (names and groups kept, then deleted) and the newest public CDN build, `274f7c7f1b69`, whose chunks.txt lists 3,838 chunks (4,492 for `4d0c78085232`; 589 of the 3,838 changed and were fetched, the rest are byte-identical to the 2026-11-10 cache). The tables below this section still describe the 2026-11-10 inventory, apart from the rows this pass edited.
+
+**Assignments: 1,617 (was 1,609) in 43 groups.** 17 new, 9 gone, 6 changed groups.
+
+| New experiment | Group | Read by the client | Class |
+|---|---|---|---|
+| `agent_governance` | `off` | modern `tJRW` canAccessRoute; boot-render `B8lM` AppAdminResolutionConfirmationModal | B: admin routes |
+| `agent_observability` | `off` | modern `tJRW` canAccessRoute | B: admin routes |
+| `calendar_jit_menu` | `on` | no | C |
+| `canvas_web_perf_engine` | `on` | boot-shared `65wK` createInitConfig (`perfEngine`) | B: Quip's editor engine, not Clack's canvas view |
+| `channels_onboarding_tasks_v3_large` | `treatment` | megaphone-onboarding-tasks-sidebar-menu-link `G4UD` | B: onboarding tasks |
+| `client_boot_fetch_team_prefs_from_extras` | `on` | no | C |
+| `huddles_quieter_recording_voiceovers` | `on` | client-boot `pSxm` VU, `ws4B` getRecordingSounds | B: Slack AI huddle recording |
+| `huddles_recording_type` | `admin_enforced_type` | client-boot `pSxm` R4, `J3WD`, `b0mi`; boot-shared `qaOq` | B: Slack AI huddle recording types |
+| `jp_pocket_guide_megaphone_loop_fix` | `off` | boot-render `B8lM` getBizPlusUpgradePocketGuideV2Tasks | B: upgrade pocket guide |
+| `search_add_file_type_filter_for_huddle_ai_notes` | `off` | client-boot `7KpF` isHuddleAiNotesFileFilterEnabled | B: off, and huddle AI notes need Slack AI |
+| `slack_crm_task_todos` | `on` | client-boot `4Qqq` isSalesforceTaskTodoFilterEnabled | B: Salesforce |
+| `slackbot_calendar_connect_card` | `on` | no | C |
+| `slackbot_skill_details_v2` | `on` | client-boot `I87A` o2 | B: Slackbot AI skills |
+| `sui_stable_streaming_mount` | `on` | boot-shared `x48o` MessageBlocks | B: how React mounts a streaming message's blocks; nothing Clack draws differs |
+| `systems_deprecation_2026_november_phase_three` | `on` | client-boot `vLfH` hc, `fGjU`; boot-shared `rZW0` OutdatedDesktopOsBanner | B: Electron's outdated-OS banner and blocking modal |
+| `use_case_template_nav_links` | `on` (visitor) | no | C |
+| `wfb_multi_step_forms` | `on` | client-boot `6qzQ` isWfbMultiStepFormsEnabled | B: Workflow Builder |
+
+Gone: `admin_home_dynamic_connector_banner`, `ai_apps_list_skip_directory_fields`, `fe_persist_workspace_filter_selection`, `mcp_aaa_auth_error_translations`, `sidebar_data_all_members`, `simplify_workspace_invite_modal`, `slackforce_flex_credits_org_status_error_translation`, `truncate_url`, `use_canvas_styling_for_built_ins`. Changed groups, none read by the client: `client_bundles_preload` treatment → control, `integrations_cta_v2_q3fy27` treatment_b → treatment_a, `loggedin_hp_app_install_q2fy27`, `marketplace_aa_v2_q2fy27`, `marketplace_nav_groups_q3fy27` and `newxp_14783_recaptcha_riskanalysis_score` control → treatment.
+
+**Reads.** 21 names are read that weren't before, none of them assigned to the test account: `agent_whispers` (boot-shared `sCiM`, agent whispers in the message pane), `agentic_ia_browse_toolbar_search`, `agentic_ia_you_page` (agentic IA), `audit_logs_archive_exports`, `canvas_sc_external_org_sharing_warning` (canvas-share-dialog `HSx1` CanvasSlackConnectSharingSpeedBump), `canvas_share_default_workspace_access` (boot-shared `OJGk`), `channel_insights_echart` (`toHK` ActivityChartContainer), `code_channels_pr_state_picker`, `session_channels_artifact_tabs_exp` (client-boot `biaa`, code channels), `gantry_manage_salesforce_organizations`, `huddle_agents` (`pSxm` Sg), `marketplace_testing_info_save_fixes`, `mcp_slack_connect_allowlist`, `new_team_launchpad_v2`, `permission_sets`, `plus_reverse_trial_plan_recommender_fe_translation`, `slackbot_ai_skill_suggestion_card`, `two_factor_recommend_totp_app`, `update_message_builtin`, `wfb_3p_agent_tasks_access_copy`, `wfb_custom_step_after_form`. 16 assigned experiments are no longer read: `agent_topics_in_profile`, `analytics_slackbot_roi_m6`, `animated_text_streaming_agentforce`, `autocomplete_flannel_fuzzy_match_passthrough`, `calendar_jit_menu`, `canvas_size_limit_save_banner`, `flow_of_work_ai_channel_join`, `gdrive_onboarding_fixes_aug_2026`, `slack_crm_card_error_toast`, `slack_crm_hide_email_event_type`, `slackbot_ai_skills_only_slash_menu`, `slackbot_mcp_create_to_discover`, `slackbot_skill_share_cached_nova_scan`, `slackforce_add_record_composer`, `tableau_workobject_disable_agent_viz`, `temp_join_channel`. Three of those were A:
+- `temp_join_channel`: client-boot `+7BQ` lost isTemporaryJoinChannelsEnabled, so the Join split button and the Temporary channels section are for everyone. Clack dropped its gate: the split button follows boot-shared `OtvL` Y (a public channel, not externally shared, archived or #general: `core.CanTempJoin`), and temporary memberships always file into Temporary channels.
+- `autocomplete_flannel_fuzzy_match_passthrough`: client-boot `nIFn` makeResultsMatcher passes flannel's fuzzy matches through (unless `disableFuzzyPassthrough`) and lets an exact email match win, with no experiment. Clack's two reads (composer autocomplete, search filters) are now unconditional.
+- `canvas_size_limit_save_banner`: the banner is no longer gated; Clack still has no QuipSystemMessage banner (Canvases package).
+
+**Karim's screenshots** are two experiments the test account isn't assigned (Slack reads null and draws neither), built behind them:
+
+| Experiment | Slack evidence | What it does | Clack |
+|---|---|---|---|
+| `channel_join_experience_with_agents` | client-boot `M/qt` v_; boot-shared `UY14` JoinChannelPane (data hook, `Z` facepile, fetchChannelPreviewAgentsApps), `hHrC` join-channel-pane.module.lazy.less; client-boot-styles `.p-message_pane_input__preview--revamped`; `cYPn`, `+z2S`, `Wv58`, `RW6b` Nl, `552O` | for a public channel being previewed: a card (ctr-sec, 1px otl-ter, radius 10, padding 16) with a facepile of up to three people and the agents seen active in the last 28 messages (36px, overlapping by 8), "Join #name", the purpose, "A, B, and N more people are here." and "X, Y, and N other agents or apps are also here." (all named when that's everyone), and the Join split button as the only action; the caret's menu is "Join…": Just for today, For 48 hours, For 1 week. Off: the classic centred pane with Details | `core/channel_agents.go`, `ui/joincard.go`, `ui/joinpane.go`; tests `TestJoinCardWithAgents`, `TestMembersSeenActive` (exp-channels) |
+| `channel_header_with_agents` | client-boot `M/qt` wX; boot-shared `g2K5` (the header's actions: `agent_count` after `avatar_stack`), view-header chunk `Ms5K` AgentCountButton; `RW6b` Li | the four-dot ai-agents glyph and the channel's agents-and-apps count (membershipCounts app_count; "–" until it loads) between the avatar stack and Huddle, for a channel that isn't archived and whose count isn't 0; tooltip "View all agents & apps of this channel" / "Includes {first three}" (fetched on hover); a click opens the details on Agents & apps. Its labels are translated only under `agents_in_channels_improvements` (`off` here) | `ui/agent_count.go`, `ui/channel.go`; test `TestHeaderAgentCount` (exp-channels) |
+
+fakeslack's `Size.PreviewAgents` gives #lounge-preview 4,199 people and 11 agents and apps, lists an agent and two apps for it, and makes the agent and one app the authors of its newest messages. The join pane's strings are now on Slack's `archives` namespace (UY14, cRQG), checked by the i18n surfaces `join-pane`, `join-card` and `join-menu`.
+
+Not ported in the two: the native channel expert and Slackbot-in-channel that RW6b adds to the count (Clack keeps neither `channel_agent_status` nor `is_slackbot_channel_enabled`), the code-channel summary line, Slack Connect's connection info, the offline tooltip, the suggested-channel prefix and Not Now, the invite CTA that replaces the count in workspaces under four people, and `channel_resources_remove_tabs`'s resources button that takes its place. The card's people come from Clack's member list (cYPn's fallback), not the channel's recent posters.
+
 ## How Clack follows them
 
 - **core** keeps what Slack's `experiments` store keeps (client-boot `RIWm`): experiments.getByUser's records, whole (`ExperimentAssignments`), plus a forced layer, the way Slack's `overrideExperimentAssignments` replaces a group. `Experiment(name)` is the group every check reads ("" when not assigned, Slack's null). `SetExperimentGroup` / `SetExperimentGroups` force groups ("" reads as not assigned), `ClearExperimentGroup` gives the server's back; every change emits one `experiments` event, the sidebar is rebuilt and every check reads the new group on its next frame (internal/core/experiments.go).
@@ -42,7 +86,7 @@ plumbing that lets Clack and its plugins follow them, and the work left, by area
 
 ### Notes
 
-- Clack checks 15 experiments the account is **not assigned to**, so Slack reads null for them and so does Clack (none are in its defaults): `activity_in_home_prototype`, `activity_with_sidebar`, `agentic_ia`, `channel_ia_header_refinements`, `huddles_raised_hand_queue`, `meeting_assistant`, `ml_fuzzy_match_beyond_word_boundaries_v2`, `programmable_sidebar_dm_history`, `scheduled_huddles`, `session_channels_code_tab_pr`, `session_channels_gh_wo`, `slash_command_failed_dedupe`, `suggested_sections_auto_sort_killswitch`, `support_lots_of_agents`, `unified_global_triage`.
+- Clack checks 17 experiments the account is **not assigned to**, so Slack reads null for them and so does Clack (none are in its defaults): `activity_in_home_prototype`, `activity_with_sidebar`, `agentic_ia`, `channel_header_with_agents`, `channel_ia_header_refinements`, `channel_join_experience_with_agents`, `huddles_raised_hand_queue`, `meeting_assistant`, `ml_fuzzy_match_beyond_word_boundaries_v2`, `programmable_sidebar_dm_history`, `scheduled_huddles`, `session_channels_code_tab_pr`, `session_channels_gh_wo`, `slash_command_failed_dedupe`, `suggested_sections_auto_sort_killswitch`, `support_lots_of_agents`, `unified_global_triage`.
 - `reskin_custom_responses` is assigned (`on`) but **no longer read** by this build: Slack draws every custom response the reskinned way without asking (BaseMessageAvatar's TeamIcon, ffJE's `isCustomResponse` for the team's name, t6PO's `customResponseInfoBadgeIcon__mN56C` badge, MessageLabels' tint with no label line, ReplyBarAvatar's team icon). Clack dropped its gate too (2026-11-10, Karim's call; core's `CustomResponseReskin` is gone): custom responses always draw that way (ui/messages/custom_response.go), and BringBackSlackbot's override of the experiment no longer changes them, in Clack as in Slack.
 - `agentforce_deprecation` is read by Clack's rail (internal/core/rail.go) only to hide an Agents tab that needs Agentforce access, which Hack Club doesn't have; it's B.
 
@@ -80,12 +124,12 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `activity_inbox_remove_persistent_detail_panel` | `on` | client-boot `5Ns/` isActivityInboxRemovePersistentDetailPanelEnabled (Bb; VlLO, L1Ms, gantry GMkG, Ezzs) | with nested secondary views: the inbox is the Primary view at the full width and an opened item a secondary view beside it; off: the inbox in the sidebar column and Primary always showing the item or "Select a notification to view the details." | reads it: `core/activity_agent.go:30`, `ui/views/activity_panel.go` |
 | `later_todos` | `on` | client-boot `6owI` isLaterTodosEnabled | Later is Later + to-dos | reads it: `core/rail.go:191`, `ui/views/activity_slack.go:274` |
 | `autocomplete_affinity_ml_model` | `on` | client-boot `y+lP` Sorter.prepSuggestions; features from `1Fxd` AutocompleteFeaturesCache (search.autocomplete.offlineFeatures, 28 h) | `on`: members get userAffinityScore (user_affinity), channels channelPriority90dScore (channel_priority_90d); otherwise both 0 (the USER_AFFINITY_SCORE / CHANNEL_PRIORITY_90D_SCORE features and the +50 bonus stay off) | reads it: `ui/composer/autocomplete_rank.go` (core `AutocompleteAffinity`); `TestAffinityFeaturesFollowExperiment` flips on/off/unassigned |
-| `autocomplete_flannel_fuzzy_match_passthrough` | `treatment` | client-boot `nIFn` makeResultsMatcher | treatment: fuzzy-match passthrough of server (flannel) results | reads it: `ui/composer/autocomplete_rank.go:77` |
+| `autocomplete_flannel_fuzzy_match_passthrough` | `treatment` | client-boot `nIFn` makeResultsMatcher (unconditional in 274f7c7f1b69) | treatment: fuzzy-match passthrough of server (flannel) results | no longer read by Slack (2026-11-11): Clack's passthrough is unconditional (`ui/composer/autocomplete_rank.go`, `ui/popups/search_filter_ac.go`) |
 | `updated_scheduled_sends_desktop` | `on` | gantry-v2-async-client-boot-shared `BQDv` getScheduledSendMenuOptions, `BYKP` ScheduleSendMenu, message-share-dialog `jdUv` | `on`: "Tomorrow at 9:00 AM" always offered, the last custom time comes back while ahead, a channel's member time descriptions in the forward dialog's menu, the custom-time dialog stacks over the forward dialog | reads it: `ui/composer/composer.go` scheduleMenu (`TestScheduleMenuRows`); the forward dialog's parts wait for `schedule_send_forwards` |
 | `thread_header_mute_button` | `on` | gantry-v2-async-client-boot-shared `w5Tk` export `g` | the thread pane header has a mute button | reads it: `ui/messages/thread.go` `bellShown` (audit-threads 951a1903): the bell once the root is loaded, Follow leaves the ⋮ menu. The live pane on 2026-11-10 showed no bell, so core's default (sidebar_rules.go) leaves it off until getByUser answers |
 | `app_channel_tabs` | `on` | client-boot `mwX5` isAppChannelTabsEnabled; `ygKH` getAppChannelTabsState, `VlLO` EnsureAppViewType, `iJ` canSeeChannelTabsSettings | app DMs open as tabbed channels (Home / Messages / About as channel tabs); without it they open the app space view (`BKNN` AppView) and details have no Tabs tab for an app | not read: Clack's app DMs are always the tabbed channel (this group); the off group's app space view isn't drawn |
 | `enable_new_channel_settings` | `on` | admin-channel-modal `oWlM` GuestRestrictionsField, MessageAndFileSharingRestrictionsField; boot-shared `8d5P`, `mlo3`, `Qb6n`, `OTup`, `6bWJ`, `GUK3`, `L3vL` | Settings has Guest access and Sharing & file downloads (conversations.canSetProperties / setProperties); restricted channels also hide Share and Create canvas from a message, check file downloads, let channel managers remove members, and the invite modals warn about guests | reads it: `ui/views/details_more.go` (Guest access, Sharing & file downloads); the message, file and invite parts belong to those areas |
-| `temp_join_channel` | `on` | client-boot `+7BQ` isTemporaryJoinChannelsEnabled | previewed channels can be joined temporarily | reads it: `core/preview.go:57` |
+| `temp_join_channel` | `on` | client-boot `+7BQ` isTemporaryJoinChannelsEnabled (gone in 274f7c7f1b69) | previewed channels can be joined temporarily | no longer read by Slack (2026-11-11): Clack's gate dropped, `core.CanTempJoin` is OtvL Y |
 | `search_autocomplete_promote_exact_name_matches` | `treatment_5` | client-boot `J3WV` (rules `QT`, `yg`; `ed` exposeAndRetainExactNameMatches), run by `y+lP` applySortRules for texty-autocomplete and the switcher's searcher | treatment_5: exact name matches (active humans of the org whose real or display name is the query) stay in the model's input; up to two who are in the open conversation go to the first people slots, other ones to people slot 4; treatment_3 lifts to slot 2 | reads it: `ui/popups/search_popover.go` (switcher), `ui/composer/autocomplete_rank.go` (composer); the rules are `acrank/sortrules.go` |
 | `session_channels` | `on` | client-boot `/HhV` | code (session) channels | reads it: `core/codechannel.go:350`, `ui/codechannel.go:170` |
 | `a11y_underline_button_link` | `on` | client-boot `CX15` export `bF` (with the underline_links pref), read by boot-shared `rs63` and `N0zR` | the search modal footer's "Learn more" and the Hide user dialog's "preferences" help links are underlined | not messages: search and profile popups |
@@ -240,7 +284,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `agent_prevent_fake_thread_roots` | `on` | client-boot `HLQ9` export `DG`; boot-render `zuQH` | from the Agentforce tab, a new agent home conversation opens the reply's thread rather than the message as a root | missing: needs the Agentforce tab (no Agentforce on Hack Club) |
 | `agent_streaming_slimmer_task_cards` | `on` | gantry-v2-async-client-boot-shared `n7nl` export `n`; `E5Xj` PlanBlock, `wdtw` TaskCard, `uPDO` ToggleBar | plan and task_card blocks are slim lines; off they are cards (ToggleBar, task headers, shimmering titles) | reads it: `ui/blockkit/agent_card.go:73` |
 | `agent_ui_loading_state` | `on` | client-boot `HLQ9` export `Ag`; thread-view `c/U0`, boot-shared `NnKv` AgentCheckingDetailsLoader | agent threads in any non-Slackbot DM get the AI loading row; agent channels show the checking-details loader | missing: the thread view's AiMessageShimmer row isn't ported (the composer's status line is) |
-| `agents_in_channels_improvements` | `off` | client-boot `M/qt` export `Io` | off: no agents-in-channels improvements | default: in `off` Slack keeps its default, as Clack does |
+| `agents_in_channels_improvements` | `off` | client-boot `M/qt` export `Io`; view-header `Ms5K` AgentCountButton | off: no agents-in-channels improvements; AgentCountButton's labels stay English literals | reads it for the agent count's labels: `ui/agent_count.go` (exp-wave-2); the rest is Slack's default in `off`, as in Clack |
 | `ai_apps_loading` | `on` | gantry-v2-async-client-boot-shared `BcxC` AiMessageShimmer | the AI loading row shows the loading messages instead of skeleton bars | missing: as agent_ui_loading_state |
 | `app_history_badge` | `on` | client-boot `Db4L` export `a2`; tab-change `GPMo`, ai-app-view `M1gt` AiAppHistoryList | an AI app's History tab gets an unread badge | missing: Clack's app DMs have no History tab |
 | `app_nugget_refinement` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `q`; `P5g9` useAppAgentNuggetLabels, `352G` AppThreadNugget, `v8ac` | the working-agent nugget is a chip (avatar, "{app} is working" or the loading messages, a slow spinner; its tooltip says Stop isn’t available); off, a shimmering row reading "{app} is working…" | reads it: `core/agent.go:208` (the thread footer's nugget; the reply bar's open-thread nugget needs agent sessions on messages) |
@@ -309,7 +353,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 
 - Files: the channel header (internal/ui/channel*.go), internal/ui/views/details*.go, internal/core/chperms.go, internal/core/preview.go
 - To do (5): `app_channel_tabs` (the off group's app space view), `channel_tab_overflow_right_click` (needs the tab bar's overflow menu and tab context menus), `unified_file_picker` (needs Slack's unified file picker; inert here without `tab_3p_files_fe_allow_add`), `fe_private_public_channel_management`, `fe_private_to_public_slack_connect_and_visual_updates` (need Settings' managing-this-channel)
-- Clack reads already (7): `temp_join_channel`, `enable_new_channel_settings`, `channel_details_agents_apps_tab`, `move_channel_tabs_settings`, `channel_topic_purpose_setting_restrict_to_channel_managers`, `list_channel_tab_show_view_name_fe`, `lists_channel_tabs_default_view`
+- Done (branch exp-wave-2, 2026-11-11): `channel_join_experience_with_agents` (the preview's join card), `channel_header_with_agents` (the header's agent count); `temp_join_channel`'s gate dropped (Slack no longer reads it).
+- Clack reads already (6): `enable_new_channel_settings`, `channel_details_agents_apps_tab`, `move_channel_tabs_settings`, `channel_topic_purpose_setting_restrict_to_channel_managers`, `list_channel_tab_show_view_name_fe`, `lists_channel_tabs_default_view`
 
 ### Search and the switcher (10)
 
@@ -363,7 +408,17 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 
 - Files: internal/core/badge.go, internal/core/agent.go, internal/ui/messages/ (sender identity), internal/core/rail.go
 - To do (13): `agent_about_page`, `agent_auto_thread_opening`, `agent_browser_recent_agents`, `agent_channel_header`, `agent_channel_thread_naming`, `agent_dm_thread_naming`, `agent_peek_view`, `agent_prevent_fake_thread_roots`, `agent_ui_loading_state`, `ai_apps_loading`, `app_history_badge`, `flexpane_content_parity`, `revamp_agent_app_profile`
-- Clack reads already (8): `agent_badge`, `agent_tasks`, `agents_landing_page`, `show_as_agent`, `agent_member_channel_count`, `agent_streaming_slimmer_task_cards`, `app_thread_nugget_fe`, `app_nugget_refinement`
+- Clack reads already (9): `agent_badge`, `agent_tasks`, `agents_landing_page`, `show_as_agent`, `agents_in_channels_improvements` (the agent count's labels, exp-wave-2), `agent_member_channel_count`, `agent_streaming_slimmer_task_cards`, `app_thread_nugget_fe`, `app_nugget_refinement`
+
+### New reads in 274f7c7f1b69, unassigned on the test account
+
+None of these is assigned to the test account, so Slack draws none of them there. Work packages for when an account is in them (smallest and most visible first):
+- `agent_whispers` (boot-shared `sCiM` isAgentWhispersEnabled, shouldShowAgentWhisper: an agent's whisper in the message pane only). Files: internal/ui/messages/.
+- `code_channels_pr_state_picker` (client-boot `biaa` cW), `session_channels_artifact_tabs_exp` (`biaa` isCodeChannelArtifactTabsEnabled, `treatment`). Files: internal/ui/codechannel*.go.
+- `canvas_sc_external_org_sharing_warning` (canvas-share-dialog `HSx1` CanvasSlackConnectSharingSpeedBump), `canvas_share_default_workspace_access` (boot-shared `OJGk` NQ, the share dialog's access options). Clack has no canvas share dialog yet.
+- `huddle_agents` (client-boot `pSxm` Sg). Files: internal/ui/huddleui/.
+- `slackbot_ai_skill_suggestion_card` (boot-shared `Ngjb`, Slackbot AI), `agentic_ia_browse_toolbar_search`, `agentic_ia_you_page` (agentic IA): B while Clack has neither.
+- B: `audit_logs_archive_exports`, `channel_insights_echart`, `gantry_manage_salesforce_organizations`, `marketplace_testing_info_save_fixes`, `mcp_slack_connect_allowlist`, `new_team_launchpad_v2`, `permission_sets`, `plus_reverse_trial_plan_recommender_fe_translation`, `two_factor_recommend_totp_app`, `update_message_builtin`, `wfb_3p_agent_tasks_access_copy`, `wfb_custom_step_after_form` (admin, billing, onboarding and Workflow Builder).
 
 ### Menus, selects and buttons (3)
 

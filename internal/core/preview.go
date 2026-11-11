@@ -22,7 +22,7 @@ import (
 //     → addChannel`, and the row filter returns true for it first), so a
 //     previewed channel shows a row while it's open and drops out when the
 //     viewer leaves it.
-//   - Join calls conversations.join; "Join…" under temp_join_channel adds
+//   - Join calls conversations.join; "Join…" (OtvL, CanTempJoin) adds
 //     expiration_ts (boot-shared uFAp: end of today, +48h, +1 week), and
 //     the channel then sits in the Temporary channels section
 //     (temporaryChannelStore, filled from channel_joined's
@@ -52,9 +52,16 @@ func TempJoinExpiry(d TempJoin, now time.Time) int64 {
 	return 0
 }
 
-// TempJoinEnabled reports Slack's temp_join_channel experiment
-// (+7BQ isTemporaryJoinChannelsEnabled).
-func (a *App) TempJoinEnabled() bool { return a.experiment("temp_join_channel") == "on" }
+// CanTempJoin is boot-shared OtvL Y, which decides whether JoinChannelPane's
+// Join button is the split button with "Join…": a public channel, not
+// externally shared (5DYq ju), archived (Jgk4 F) or #general (xLPg N).
+// Build 274f7c7f1b69 (2026-11-11) dropped temp_join_channel: +7BQ no
+// longer has isTemporaryJoinChannelsEnabled, so temporary joins and the
+// Temporary channels section no longer depend on an experiment.
+func (a *App) CanTempJoin(ch string) bool {
+	c, ok := a.Conv(ch)
+	return ok && c.Kind == "channel" && !c.IsShared && !c.IsArchived && !c.IsGeneral
+}
 
 // isPreviewConv is Opi6's isPreview for a stored conversation: a channel
 // the viewer isn't in (outside the sidebar's member set), not archived.

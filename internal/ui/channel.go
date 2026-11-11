@@ -256,6 +256,22 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		right -= gtx.Dp(6)
 	}
 
+	// channel_header_with_agents: AgentCountButton between the avatar
+	// stack and the huddle button (g2K5's action order; agent_count.go)
+	if !appDM && a.showAgentCount(ch, conv) {
+		call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(right-x, 0), btn)}
+			return a.agentCountButton(gtx, ch, btn)
+		})
+		right -= d.Size.X
+		place(gtx, call, image.Pt(right, y))
+		if a.secChannelPane(ch) == nil { // the main pane's header ends at headerEnd
+			wx := a.headerEnd() - (sz.X - right)
+			a.agentCountRect = image.Rect(wx, gtx.Dp(theme.TopNavH)+y, wx+d.Size.X, gtx.Dp(theme.TopNavH)+y+d.Size.Y)
+		}
+		right -= gtx.Dp(6)
+	}
+
 	// member facepile (up to 3 avatars, 20px, overlapped) + count: Slack's
 	// BaseAvatarStack, whose width a plugin may change (HumanCount).
 	if conv != nil && conv.Kind != "im" && !appDM && conv.NumMembers > 0 {
