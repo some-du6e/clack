@@ -11,9 +11,10 @@ To see the whole diff against the release:
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
-`widget/text.go`, `widget/clack_spans.go`, `op/op.go`,
-`internal/ops/ops.go`, `app/os_x11.go`, `app/clack_gpu.go` and these two
-files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
+`widget/text.go`, `widget/clack_spans.go`, `text/shaper.go`,
+`text/gotext.go`, `op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`,
+`app/clack_gpu.go` and these two files (`CLACK_PATCHES.md`,
+`UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -172,3 +173,27 @@ Test: `internal/ui/popups` `TestSearchTokenPills` (a filter token's
 modifier starts 24px after the text before it, its value is as wide as
 the bold measurement, the text after it starts 4px after the value).
 Not in `UPSTREAM.patch`.
+
+## 7. text: tab stops
+
+`text/shaper.go` (`Parameters.TabStop`), `text/gotext.go`
+(`shapeAndWrapText`, `tabStops`), `widget/text.go` and `widget/editor.go`
+(`textView.TabStop`, `Editor.TabStop`). An addition: zero, the default,
+shapes as upstream does.
+
+Gio's shaper has no tab stops: a tab is shaped with its font's glyph,
+usually .notdef, so it draws as a box one glyph wide. Clack's snippet
+dialog edits code in a `widget.Editor`, and Slack's CodeMirror draws a tab
+to the next multiple of `tabSize` (4) columns from the line's start, so
+the content lines up.
+
+With `TabStop` set, each one-rune tab cluster's advance becomes
+`(TabStop - col % TabStop)` space advances of its run's face, where `col`
+counts the paragraph's runes before it, a tab counting the columns it
+takes (CodeMirror's count). Its glyph becomes the face's space, so
+nothing is drawn, and the run's advance follows. This happens before line
+wrapping, so carets, selections, `Regions` and pointer hits use the
+widened tabs.
+
+Test: `internal/ui/composer` `TestSnippetTabStops`. Not in
+`UPSTREAM.patch`.
