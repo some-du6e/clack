@@ -683,13 +683,19 @@ func (p *SearchPopover) srExactFactsFor(q string) func(srCand) srExactFacts {
 			}
 		}
 	}
+	// a name can only normalize to nq if its length is near nq's (the
+	// pool is every cached person, scanned per keystroke)
+	near := func(n string) bool { return len(n) >= len(nq)/2 && len(n) <= 2*len(nq)+4 }
 	return func(cd srCand) srExactFacts {
 		if cd.Kind != srKUser || cd.ID == "" || (cd.ID[0] != 'U' && cd.ID[0] != 'W') {
 			return srExactFacts{}
 		}
 		f := srExactFacts{user: true}
+		if nq == "" || (!near(cd.Name) && !near(cd.Alt) && !near(cd.Handle)) {
+			return f
+		}
 		u, ok := lookupUser(p.h, cd.ID)
-		if !ok || nq == "" {
+		if !ok {
 			return f
 		}
 		human := !u.Deleted && !u.IsBot && !u.AppUser && !u.Workflow && !u.External && u.ID != "USLACKBOT"
