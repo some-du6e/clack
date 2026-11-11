@@ -318,6 +318,11 @@ func main() {
 	if desktop.LaunchOnLoginSupported() {
 		opts.LaunchOnLogin, opts.SetLaunchOnLogin = desktop.LaunchOnLogin, desktop.SetLaunchOnLogin
 	}
+	if registered != nil {
+		// again when Open Slack sign-in is clicked, in case the start's
+		// failed or another app took the legacy key since
+		opts.EnsureLinkHandler = func() { go ensureURLHandler() }
+	}
 
 	creds, err := slack.ReadCreds(*credsPath)
 	ui.SetVersion(version)

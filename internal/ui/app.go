@@ -97,6 +97,11 @@ type Options struct {
 	// desktop's autostart entry or Run key). nil: the row is greyed.
 	LaunchOnLogin    func() bool
 	SetLaunchOnLogin func(on bool) error
+	// EnsureLinkHandler, when set, runs as Open Slack sign-in opens the
+	// page, before the browser can hand a link back (cmd/clack, Windows:
+	// registers Clack as a slack:// handler again, as every start does).
+	// It must return at once.
+	EnsureLinkHandler func()
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
