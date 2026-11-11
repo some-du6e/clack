@@ -573,8 +573,11 @@ func snippetCheck(gtx layout.Context, th *theme.Theme, btn *widget.Clickable, on
 
 // snippetCode is the snippet editor's CodeMirror: line numbers in a
 // gutter (.CodeMirror-gutters #f7f7f7 with a 1px #ddd edge; numbers #999,
-// right-aligned, padding 0 3px 0 5px, at least 20px), monospace text with
-// 4px line padding, wrapped only with Wrap on; it scrolls inside its 12rem.
+// right-aligned, padding 0 3px 0 5px, at least 20px), monospace text at
+// 13px on 1.5 lines (.CodeMirror-sizer) with 4px around the lines
+// (.CodeMirror-lines) and 4px beside them, wrapped only with Wrap on; it
+// scrolls inside its 12rem. A tab draws as Gio's missing glyph (its
+// shaper has no tab stops); the content keeps it.
 type snippetCode struct {
 	ed    widget.Editor
 	list  layout.List
@@ -582,7 +585,7 @@ type snippetCode struct {
 	click widget.Clickable
 }
 
-const snippetCodeSize, snippetCodeLine = 12, 18
+const snippetCodeSize, snippetCodeLine = 13, 19.5
 
 func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Colors, wrap bool) bool {
 	sz := gtx.Constraints.Max
@@ -627,7 +630,7 @@ func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Col
 		sm := op.Record(gtx.Ops)
 		paint.ColorOp{Color: th.C.Selection}.Add(gtx.Ops)
 		sel := sm.Stop()
-		s.ed.LineHeight = unit.Sp(snippetCodeLine)
+		s.ed.LineHeight, s.ed.LineHeightScale = unit.Sp(snippetCodeLine), 1
 		return s.ed.Layout(gtx, th.Shaper, mono, snippetCodeSize, txt, sel)
 	}
 	numbers := func(gtx layout.Context, n int, heights []int) {
@@ -665,12 +668,15 @@ func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Col
 	}
 	gtx.Constraints = layout.Exact(sz)
 	s.list.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
-		total := 0
+		pad := gtx.Dp(4) // .CodeMirror-lines padding 4px 0
+		total := 2 * pad
 		for _, h := range heights {
 			total += h
 		}
+		no := op.Offset(image.Pt(0, pad)).Push(gtx.Ops)
 		numbers(gtx, lines, heights)
-		off := op.Offset(image.Pt(gutW+gtx.Dp(4), 0)).Push(gtx.Ops)
+		no.Pop()
+		off := op.Offset(image.Pt(gutW+gtx.Dp(4), pad)).Push(gtx.Ops)
 		g := gtx
 		g.Constraints = layout.Constraints{Max: image.Pt(sz.X-gutW-gtx.Dp(4), 1<<20)}
 		var dd layout.Dimensions
@@ -680,7 +686,7 @@ func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Col
 			dd = s.hlist.Layout(g, 1, func(gtx layout.Context, _ int) layout.Dimensions { return ed(gtx) })
 		}
 		off.Pop()
-		return layout.Dimensions{Size: image.Pt(sz.X, max(total, dd.Size.Y, sz.Y))}
+		return layout.Dimensions{Size: image.Pt(sz.X, max(total, dd.Size.Y+2*pad, sz.Y))}
 	})
 	return focused
 }

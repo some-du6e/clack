@@ -17,6 +17,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -40,6 +41,7 @@ func TestExpComposerShots(t *testing.T) {
 	app, fs := fakeslackApp(t)
 	stubTyping(t)
 	ch := fs.ChannelIDs()[2]
+	app.S.PutConv(slack.Conversation{ID: ch, Name: "design-crit", IsChannel: true, IsMember: true})
 	clearDraft(ch, "")
 	t.Cleanup(func() { clearDraft(ch, "") })
 	const scale = 2

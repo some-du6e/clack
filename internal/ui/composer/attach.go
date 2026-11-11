@@ -645,7 +645,8 @@ func (a *attachments) Menu(anchor image.Rectangle, pm plusMenu) {
 			items = append(append(items, popups.Sep()), more...)
 		}
 	}
-	a.h.ShowOverlay(popups.NewMenuOpts(a.h, items, popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 300}))
+	// the shortcuts menu's template menu is 360 wide
+	a.h.ShowOverlay(popups.NewMenuOpts(a.h, items, popups.MenuOpts{Anchor: anchor, Side: popups.Above, Width: 360}))
 }
 
 // ---- picking files ----
