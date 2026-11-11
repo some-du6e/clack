@@ -61,6 +61,14 @@ var (
 	loginCode     = hexc(0xd4c9ff)
 )
 
+// loginGlassUnder is about what the glass looks like under its controls.
+// Their translucent fills go through loginOn: Gio blends in linear light,
+// where 6% white on a dark panel reads like 25% grey, so the alpha is
+// corrected to land where a browser's sRGB blend of the same alpha would.
+var loginGlassUnder = hexc(0x19142a)
+
+func loginOn(c color.NRGBA) color.NRGBA { return theme.LinearAlpha(c, loginGlassUnder) }
+
 // loginLine is a line of the card's header: its words, and whether it is
 // an error.
 type loginLine struct {
@@ -350,7 +358,7 @@ func (a *App) loginLinkView(gtx layout.Context, f *introFrame, enter time.Time, 
 		ly := y + f.d(8)
 		ow := f.measure(12.5, theme.Bold, "or")
 		gap := f.d(14)
-		lc := alphaMul(introWhite, 0.10*dim)
+		lc := loginOn(alphaMul(introWhite, 0.12*dim))
 		th := max(1, f.d(1))
 		theme.Fill(gtx, image.Rect(x0, ly, cx-ow/2-gap, ly+th), lc)
 		theme.Fill(gtx, image.Rect(cx+(ow+1)/2+gap, ly, x1, ly+th), lc)
@@ -392,7 +400,7 @@ func (a *App) loginLinkView(gtx layout.Context, f *introFrame, enter time.Time, 
 		fx0 := cx - (w1+gap+w2)/2
 		o := paint.PushOpacity(gtx.Ops, dim)
 		a.loginTextButton(ctl, f, &l.troubleBtn, image.Pt(fx0, y), ta, "chevron-down", float32(tr)*math.Pi)
-		theme.Circle(gtx, image.Pt(fx0+w1+gap/2, y+f.d(10)), max(2, f.d(3)), alphaMul(introWhite, 0.24))
+		theme.Circle(gtx, image.Pt(fx0+w1+gap/2, y+f.d(10)), max(2, f.d(3)), loginOn(alphaMul(introWhite, 0.30)))
 		a.loginTextButton(ctl, f, &l.advToggle, image.Pt(fx0+w1+gap, y), aa, "chevron-right", 0)
 		o.Pop()
 		return f.d(20)
@@ -574,8 +582,9 @@ func (l *loginScreen) sonar(f *introFrame, c f32.Point, r0 float32, t float64) {
 		p := math.Mod(tk, period) / period
 		e := 1 - math.Pow(1-p, 3)
 		a := 0.5 * math.Pow(1-p, 1.8)
-		// at most 30 units out: the badge sits 38 under the card's top
-		ringAt(f, c, r0+f.df(30)*float32(e), alphaMul(loginGlow, float32(a)), f.df(1.6))
+		// at most 20 units out: clear of the card's top (the badge sits 38
+		// under it) and of the title under the badge
+		ringAt(f, c, r0+f.df(20)*float32(e), alphaMul(loginGlow, float32(a)), f.df(1.6))
 	}
 }
 
@@ -632,7 +641,7 @@ func (l *loginScreen) tips() []loginTip {
 func (a *App) loginTips(gtx layout.Context, f *introFrame, x0, y, cw int, tr float64) int {
 	l := a.login
 	y0 := y
-	theme.Fill(gtx, image.Rect(x0, y, x0+cw, y+max(1, f.d(1))), alphaMul(introWhite, float32(0.08*tr)))
+	theme.Fill(gtx, image.Rect(x0, y, x0+cw, y+max(1, f.d(1))), loginOn(alphaMul(introWhite, float32(0.10*tr))))
 	y += f.d(18)
 	for i, tp := range l.tips() {
 		k := clamp01((tr - 0.12*float64(i)) / (1 - 0.12*float64(i)))
@@ -750,8 +759,8 @@ func (a *App) loginWarn(gtx layout.Context, f *introFrame, x, y, w int, s string
 		return l.block(f, image.Pt(x+ip+is+f.d(10), y+ip), w-2*ip-is-f.d(10), 13.5, 19.5, theme.Regular, alphaMul(introWhite, 0.86), text.Start, s)
 	})
 	r := image.Rect(x, y, x+w, y+th+2*ip)
-	theme.RRect(gtx, r, f.d(12), alphaMul(loginAmber, 0.09))
-	theme.Border(gtx, r, f.d(12), max(1, f.d(1)), alphaMul(loginAmber, 0.32))
+	theme.RRect(gtx, r, f.d(12), loginOn(alphaMul(loginAmber, 0.10)))
+	theme.Border(gtx, r, f.d(12), max(1, f.d(1)), loginOn(alphaMul(loginAmber, 0.40)))
 	f.icon("warning", image.Pt(x+ip, y+ip+f.d(1.5)), 16, loginAmber)
 	call.Add(gtx.Ops)
 	return r.Dy()
@@ -777,8 +786,8 @@ func (a *App) loginSnippet(gtx layout.Context, f *introFrame, x, y, w int) int {
 	})
 	h := max(th, bh) + 2*ip
 	r := image.Rect(x, y, x+w, y+h)
-	theme.RRect(gtx, r, f.d(12), alphaMul(introWhite, 0.05))
-	theme.Border(gtx, r, f.d(12), max(1, f.d(1)), alphaMul(introWhite, 0.10))
+	theme.RRect(gtx, r, f.d(12), loginOn(alphaMul(introWhite, 0.05)))
+	theme.Border(gtx, r, f.d(12), max(1, f.d(1)), loginOn(alphaMul(introWhite, 0.14)))
 	call.Add(gtx.Ops)
 	a.loginGlassButton(gtx, f, &l.copy, image.Rect(r.Max.X-ip-bw, y+(h-bh)/2, r.Max.X-ip, y+(h-bh)/2+bh), label, 13)
 	return h
@@ -852,8 +861,8 @@ func (a *App) loginGlassButton(gtx layout.Context, f *introFrame, b *widget.Clic
 	sc := 1 - 0.04*prs
 	t := op.Affine(f32.Affine2D{}.Scale(center(r), f32.Pt(sc, sc))).Push(gtx.Ops)
 	defer t.Pop()
-	theme.RRect(gtx, r, rad, alphaMul(introWhite, 0.07+0.05*hov))
-	theme.Border(gtx, r, rad, max(1, f.d(1)), alphaMul(introWhite, 0.16+0.12*hov))
+	theme.RRect(gtx, r, rad, loginOn(alphaMul(introWhite, 0.08+0.06*hov)))
+	theme.Border(gtx, r, rad, max(1, f.d(1)), loginOn(alphaMul(introWhite, 0.20+0.14*hov)))
 	lw := f.measure(size, theme.Bold, label)
 	l.text(f, image.Pt(r.Min.X+(r.Dx()-lw)/2, r.Min.Y+(r.Dy()-f.d(size*1.25))/2), size, theme.Bold, alphaMul(introWhite, 0.86+0.1*hov), label)
 	loginHit(gtx, b, r)
@@ -867,7 +876,7 @@ func (a *App) loginCircleButton(gtx layout.Context, f *introFrame, b *widget.Cli
 	sc := 1 - 0.06*prs
 	t := op.Affine(f32.Affine2D{}.Scale(center(r), f32.Pt(sc, sc))).Push(gtx.Ops)
 	defer t.Pop()
-	theme.RRect(gtx, r, r.Dy()/2, alphaMul(introWhite, 0.06+0.07*hov))
+	theme.RRect(gtx, r, r.Dy()/2, loginOn(alphaMul(introWhite, 0.09+0.08*hov)))
 	is := float32(18)
 	f.icon(icon, image.Pt(r.Min.X+(r.Dx()-f.d(is))/2, r.Min.Y+(r.Dy()-f.d(is))/2), is, alphaMul(introWhite, 0.80+0.15*hov))
 	loginHit(gtx, b, r)
@@ -908,8 +917,8 @@ func (a *App) loginField(gtx layout.Context, f *introFrame, r image.Rectangle, e
 	th := a.th
 	v := l.ring(ed, gtx.Focused(ed))
 	loginFocusRing(gtx, f, r, rad, v)
-	theme.RRect(gtx, r, rad, alphaMul(introWhite, 0.055+0.025*v))
-	theme.Border(gtx, r, rad, max(1, f.d(1)), theme.Mix(alphaMul(introWhite, 0.14), alphaMul(loginLilac, 0.9), v))
+	theme.RRect(gtx, r, rad, loginOn(alphaMul(introWhite, 0.06+0.03*v)))
+	theme.Border(gtx, r, rad, max(1, f.d(1)), theme.Mix(loginOn(alphaMul(introWhite, 0.18)), alphaMul(loginLilac, 0.9), v))
 	x := r.Min.X + f.d(16)
 	if icon != "" {
 		x = r.Min.X + f.d(18)
@@ -944,7 +953,7 @@ func (a *App) loginField(gtx layout.Context, f *introFrame, r image.Rectangle, e
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			if ed.Len() == 0 {
 				l.note(hint)
-				th.Label(gtx, f.sp(size), theme.Regular, alphaMul(introWhite, 0.40), hint)
+				th.Label(gtx, f.sp(size), theme.Regular, alphaMul(introWhite, 0.36), hint)
 			}
 			return th.Editor(gtx, ed, f.sp(size), alphaMul(introWhite, 0.94), alphaMul(loginViolet, 0.55))
 		})

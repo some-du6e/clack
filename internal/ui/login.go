@@ -420,5 +420,8 @@ func signInErrorText(err error) string {
 	if r, n := utf8.DecodeRuneInString(s); n > 0 && unicode.IsLower(r) {
 		s = string(unicode.ToUpper(r)) + s[n:]
 	}
+	if r, _ := utf8.DecodeLastRuneInString(s); unicode.IsLetter(r) || unicode.IsDigit(r) {
+		s += "." // a sentence on the card ("…get a new link")
+	}
 	return s
 }

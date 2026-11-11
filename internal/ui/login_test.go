@@ -433,6 +433,7 @@ func TestSignInErrorShortCopy(t *testing.T) {
 		{fmt.Errorf("Slack rejected the token and cookie: %w", slack.ErrSessionRejected), "Slack didn’t accept that token and cookie."},
 		{&slack.MagicRedirectError{}, "Finish signing in in your browser, then use the new link."},
 		{errors.New("the token should start with xoxc-"), "The token should start with xoxc-"},
+		{errors.New("Slack accepted the link but didn't give Clack a session cookie; get a new link and try again"), "Slack accepted the link but didn't give Clack a session cookie; get a new link and try again."},
 	}
 	for _, c := range cases {
 		if got := signInErrorText(c.err); got != c.want {
