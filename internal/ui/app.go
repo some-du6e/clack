@@ -281,6 +281,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
+	// the composer's floating formatting bar keeps inside the window
+	composer.WindowSize = func() image.Point { return a.winSize }
+
 	a.startSpell()                                // spellcheck_wire.go
 	a.startLocale()                               // locale_wire.go
 	messages.PersistActions = a.bbmPersistActions // Simplified layout mode (bbm.go)

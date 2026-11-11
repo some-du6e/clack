@@ -20,7 +20,7 @@ var hardHint = regexp.MustCompile(`\b(Ctrl|Cmd|Command)(\+| )(Shift|Alt|Option|[
 // ⇧⌘K and Windows and Linux get Ctrl+Shift+K. Comments and tests may
 // say anything.
 func TestNoHardCodedHints(t *testing.T) {
-	formatter := map[string]bool{"IDENTFormat": true, "IDENTFormatFor": true, "IDENTChips": true, "IDENTChipsFor": true, "IDENTParse": true}
+	formatter := map[string]bool{"IDENTFormat": true, "IDENTFormatFor": true, "IDENTChips": true, "IDENTChipsFor": true, "IDENTParse": true, "IDENTFormatAsWritten": true}
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
