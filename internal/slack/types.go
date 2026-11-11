@@ -40,10 +40,22 @@ type Message struct {
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
 	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	// AgentSession is a thread session's state on its root message
+	// (Slack's iR00 getMessageByTimestamp(…)?.agent_session).
+	AgentSession *MessageAgentSession `json:"agent_session,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
 	UploadStatus string `json:"-"`
+}
+
+// MessageAgentSession is a message's agent_session: the status (active,
+// processing, suspended, closed) and when processing lapses
+// (date_status_processing_expire, unix seconds; iR00
+// readProcessingExpireSeconds).
+type MessageAgentSession struct {
+	Status           string      `json:"status,omitempty"`
+	ProcessingExpire json.Number `json:"date_status_processing_expire,omitempty"`
 }
 
 // PinnedInfo says who pinned a message (history / messages.list).

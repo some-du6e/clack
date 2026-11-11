@@ -52,6 +52,9 @@ type Message struct {
 	// appendStream / stopStream): "in_progress" while open, then
 	// "completed" or "errored" (agent.go).
 	StreamingState string
+	// AgentSession is the message's agent_session: a thread session's
+	// state on its root message (nil for other messages).
+	AgentSession *slack.MessageAgentSession
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the
@@ -412,6 +415,10 @@ type ActivityOpts struct {
 	// Mode is activity.feed's mode; "" is chrono_v1 (TfjX w: VIP unreads
 	// on top is priority_unreads_first_v1).
 	Mode string
+	// ExcludeAutomations and AutomationsOnly are the view's
+	// filterExcludeAutomationsSelected / filterAutomationsOnlySelected
+	// (eP2o fetchActivityFeed: exclude_automations, automations_only).
+	ExcludeAutomations, AutomationsOnly bool
 }
 
 type ActivityItem struct {
@@ -427,6 +434,9 @@ type ActivityItem struct {
 	// Priority is the entry's priority (from a VIP; /29I isPriority:
 	// !!priority) and Archived its is_archived (a cleared item).
 	Priority, Archived bool
+	// IsBot is the entry's is_bot: an automation's (an app's, a bot's or
+	// an agent's), which the automations filters split on (sD/F).
+	IsBot bool
 
 	// Items that aren't (only) a message: the person behind it when that
 	// isn't the message author (inviter, invitee, assigner), and the
