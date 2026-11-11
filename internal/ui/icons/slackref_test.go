@@ -43,6 +43,8 @@ var slackRef = map[string]string{
 	"call":                        "call",
 	"callout":                     "callout",
 	"canvas":                      "canvas",
+	"caret-down-filled":           "caret-down-filled",
+	"caret-right-filled":          "caret-right-filled",
 	"checkbox":                    "checkbox",
 	"column-two":                  "column-two",
 	"heading-1":                   "heading-1",
