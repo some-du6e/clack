@@ -432,53 +432,7 @@ func TestIntroVideo(t *testing.T) {
 	defer win.Release()
 	record := func(name string, fps int, e *introEnv, script func(step func(d time.Duration), keyframe func(string))) {
 		t.Helper()
-		e.win = win
-		out := filepath.Join(dir, name+".mp4")
-		cmd := exec.Command("ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba",
-			"-s", fmt.Sprintf("%dx%d", sz.X, sz.Y), "-r", fmt.Sprint(fps), "-i", "-",
-			"-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out)
-		cmd.Stderr = os.Stderr
-		w, err := cmd.StdinPipe()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		frames := 0
-		t0 := time.Now()
-		step := func(d time.Duration) {
-			dt := time.Second / time.Duration(fps)
-			for x := time.Duration(0); x < d; x += dt {
-				e.frame(dt)
-				if _, err := w.Write(e.img.Pix); err != nil {
-					t.Fatal(err)
-				}
-				frames++
-			}
-		}
-		keyframe := func(label string) {
-			if e.img == nil {
-				return
-			}
-			f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%s-%04d-%s.png", name, frames, label)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := png.Encode(f, e.img); err != nil {
-				t.Fatal(err)
-			}
-			f.Close()
-		}
-		script(step, keyframe)
-		if err := w.Close(); err != nil {
-			t.Fatal(err)
-		}
-		if err := cmd.Wait(); err != nil {
-			t.Fatalf("ffmpeg: %v", err)
-		}
-		t.Logf("%s: %d frames at %d fps (%.1f s of video) in %v", out, frames, fps, float64(frames)/float64(fps), time.Since(t0).Round(time.Second))
-		e.win = nil
+		recordVideo(t, dir, win, sz, name, fps, e, script)
 	}
 
 	// the first launch, left alone, then a wrong link pasted on the card
@@ -562,4 +516,58 @@ func TestIntroVideo(t *testing.T) {
 		step(time.Second)
 		kf("signin")
 	})
+}
+
+// recordVideo renders e's frames through win at fps into dir/name.mp4
+// (ffmpeg, x264) while script steps the virtual clock; keyframe saves the
+// frame on screen as dir/name-NNNN-label.png.
+func recordVideo(t *testing.T, dir string, win *headless.Window, sz image.Point, name string, fps int, e *introEnv, script func(step func(d time.Duration), keyframe func(string))) {
+	t.Helper()
+	e.win = win
+	out := filepath.Join(dir, name+".mp4")
+	cmd := exec.Command("ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgba",
+		"-s", fmt.Sprintf("%dx%d", sz.X, sz.Y), "-r", fmt.Sprint(fps), "-i", "-",
+		"-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out)
+	cmd.Stderr = os.Stderr
+	w, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	frames := 0
+	t0 := time.Now()
+	step := func(d time.Duration) {
+		dt := time.Second / time.Duration(fps)
+		for x := time.Duration(0); x < d; x += dt {
+			e.frame(dt)
+			if _, err := w.Write(e.img.Pix); err != nil {
+				t.Fatal(err)
+			}
+			frames++
+		}
+	}
+	keyframe := func(label string) {
+		if e.img == nil {
+			return
+		}
+		f, err := os.Create(filepath.Join(dir, fmt.Sprintf("%s-%04d-%s.png", name, frames, label)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(f, e.img); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	script(step, keyframe)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("ffmpeg: %v", err)
+	}
+	t.Logf("%s: %d frames at %d fps (%.1f s of video) in %v", out, frames, fps, float64(frames)/float64(fps), time.Since(t0).Round(time.Second))
+	e.win = nil
 }

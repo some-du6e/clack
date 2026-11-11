@@ -412,7 +412,8 @@ func (a *App) Run() error {
 			return e.Err
 		case app.ConfigEvent:
 			if e.Config.Focused && !a.focused {
-				a.nudgeUpdates() // back from sleep, often: is a check due?
+				a.nudgeUpdates()       // back from sleep, often: is a check due?
+				a.loginWindowFocused() // a sign-in link copied in the browser (login.go)
 			}
 			a.focused = e.Config.Focused
 		case app.FrameEvent:

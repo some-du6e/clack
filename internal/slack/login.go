@@ -66,7 +66,21 @@ func SignIn(ctx context.Context, in SignInInput) (Creds, error) {
 	c := Creds{Token: tok, Cookie: ck, TeamURL: "https://" + ws + "/"} // d-s is never kept or sent (Client.cookieHeader)
 	a, err := New(c).AuthTest(ctx)
 	if err != nil {
-		return Creds{}, fmt.Errorf("Slack rejected the token and cookie: %w", err)
+		// Slack's answer (invalid_auth, …) or no answer at all
+		var kind error
+		var se *Error
+		var ue *url.Error
+		switch {
+		case errors.As(err, &se):
+			kind = ErrSessionRejected
+		case errors.As(err, &ue):
+			kind = ErrSlackUnreachable
+		}
+		err = fmt.Errorf("Slack rejected the token and cookie: %w", err)
+		if kind != nil {
+			err = &kindError{err, kind}
+		}
+		return Creds{}, err
 	}
 	if strings.HasPrefix(a.TeamID, "E") {
 		return Creds{}, errors.New("that is the org token; paste the workspace token in Token and this one in Org token")
