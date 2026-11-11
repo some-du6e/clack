@@ -247,6 +247,18 @@ func TestRealtimeDeleteThreadReply(t *testing.T) {
 		m, _ := a.S.Find(ch, p.TS)
 		return m.ReplyCount == 0 && m.LatestReply == ""
 	})
+	// the parent can show 0 replies before the second delete event is
+	// logged (the parent's message_changed and the reply's delete are
+	// separate events): wait for both deletes before counting them
+	log.wait(t, "both delete events", func(evs []Event) bool {
+		n := 0
+		for _, ev := range evs {
+			if ev.Type == "delete" {
+				n++
+			}
+		}
+		return n >= 2
+	})
 	if tl := timelineOf(a, ch); len(tl) != 1 || tl[0].TS != p.TS {
 		t.Errorf("channel timeline %+v, want only the parent", tl)
 	}
