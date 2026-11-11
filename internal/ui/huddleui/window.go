@@ -397,7 +397,7 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 			at(gtx, sr.Min, sr.Size(), func(gtx C) D { fit(gtx, img, sr.Size(), gtx.Dp(8)); return D{} })
 		} else {
 			at(gtx, sr.Min, sr.Size(), func(gtx C) D {
-				centerLabel(gtx, w.th, sr.Size(), 13, theme.Bold, hudWhite, "Loading screen share…")
+				centerLabel(gtx, w.th, sr.Size(), 13, theme.Bold, hudWhite, "Loading screen share…") // no Slack key
 				return D{}
 			})
 		}
@@ -480,7 +480,7 @@ func (w *window) stickerPicker(gtx C, stage image.Rectangle) {
 		on := mine == st.Emoji
 		cl := w.click("pick:" + st.Emoji)
 		if cl.Hovered() {
-			hover = st.Label
+			hover = nsHuddles.T(st.Label)
 		}
 		at(gtx, p, image.Pt(bs, bs), func(gtx C) D {
 			return button(gtx, cl, image.Pt(bs, bs), func(gtx C, hov bool) {
@@ -583,10 +583,10 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	if w.stick {
 		caret = "caret-down"
 	}
-	sticks := ctl{id: "stickers", icon: caret, on: w.stick, tip: "Choose sticker", seg: segCaret}
-	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: "Add reaction"}
-	thread := ctl{id: "thread", icon: "threads", tip: "Open thread"}
-	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: "More actions"}
+	sticks := ctl{id: "stickers", icon: caret, on: w.stick, tip: nsHuddles.T("Choose sticker"), seg: segCaret}
+	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: nsHuddles.T("Add reaction")}
+	thread := ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")}
+	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: nsHuddles.T("More actions")}
 	ctls := append(mics, w.cameraCtl(st), hand, sticks, react, thread, more)
 
 	h := gtx.Dp(40)
@@ -599,7 +599,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 		}
 	}
 	// the leave button: Leave in a c-button--medium (min-width 80px)
-	lw := max(gtx.Dp(80), labelSize(gtx, w.th, 15, theme.Bold, "Leave").X+2*gtx.Dp(12))
+	lw := max(gtx.Dp(80), labelSize(gtx, w.th, 15, theme.Bold, nsHuddles.T("Leave")).X+2*gtx.Dp(12))
 	lx := r.Dx() - gtx.Dp(2) - m - lw
 	x := (r.Dx() - total) / 2
 	if x+total > lx-m { // a narrow window: the center row moves left of Leave
@@ -670,7 +670,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	// with its shortcut
 	cl := w.click("leave")
 	if cl.Hovered() {
-		w.cam.tip, w.cam.tipAnchor = "Leave Huddle  "+leaveShortcut(), image.Rect(lx, y, lx+lw, y+h).Sub(r.Min)
+		w.cam.tip, w.cam.tipAnchor = nsHuddles.T("Leave Huddle")+"  "+leaveShortcut(), image.Rect(lx, y, lx+lw, y+h).Sub(r.Min)
 	}
 	at(gtx, image.Pt(lx, y), image.Pt(lw, h), func(gtx C) D {
 		return button(gtx, cl, image.Pt(lw, h), func(gtx C, hov bool) {
@@ -680,7 +680,7 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 			}
 			theme.RRect(gtx, image.Rectangle{Max: image.Pt(lw, h)}, gtx.Dp(8), bg)
 		}, func(gtx C) D {
-			centerLabel(gtx, w.th, image.Pt(lw, h), 15, theme.Bold, hudWhite, "Leave")
+			centerLabel(gtx, w.th, image.Pt(lw, h), 15, theme.Bold, hudWhite, nsHuddles.T("Leave"))
 			return D{}
 		})
 	})

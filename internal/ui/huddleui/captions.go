@@ -70,7 +70,7 @@ func captionEvents(lines []huddle.Caption) []ccEvent {
 	var out []ccEvent
 	for _, l := range lines {
 		if l.Start { // a non-TRANSCRIBE event: its own, ending the one before
-			out = append(out, ccEvent{user: l.UserID, text: ccStarted, start: l.At, end: l.At, begin: true})
+			out = append(out, ccEvent{user: l.UserID, text: nsHuddles.T(ccStarted), start: l.At, end: l.At, begin: true})
 			continue
 		}
 		t := strings.TrimSpace(l.Text)
@@ -259,7 +259,7 @@ func (w *window) layoutBanner(gtx C, s *huddle.Session, stage image.Rectangle, n
 	// Self-view is hidden.)
 	muted := w.c.mutedBanner(s)
 	if muted {
-		b = banner{text: "You’re muted.", icon: "mic-off"}
+		b = banner{text: nsHuddles.T("You’re muted."), icon: "mic-off"}
 	}
 	if b.text == "" {
 		return
@@ -327,11 +327,11 @@ func (w *window) layoutBanner(gtx C, s *huddle.Session, stage image.Rectangle, n
 // huddle…" while the join runs.
 func huddleLoading(gtx C, th *theme.Theme, sz image.Point) {
 	d := gtx.Dp(32)
-	ls := labelSize(gtx, th, 15, theme.Bold, "Joining huddle…")
+	ls := labelSize(gtx, th, 15, theme.Bold, nsHuddles.T("Joining huddle…"))
 	y := (sz.Y - d - gtx.Dp(12) - ls.Y) / 2
 	at(gtx, image.Pt((sz.X-d)/2, y), image.Pt(d, d), func(gtx C) D { spinner(gtx, d, hudWhite); return D{} })
 	at(gtx, image.Pt((sz.X-ls.X)/2, y+d+gtx.Dp(12)), ls, func(gtx C) D {
-		return th.Label(gtx, 15, theme.Bold, hudWhite, "Joining huddle…")
+		return th.Label(gtx, 15, theme.Bold, hudWhite, nsHuddles.T("Joining huddle…"))
 	})
 }
 
@@ -342,28 +342,25 @@ func huddleLoading(gtx C, th *theme.Theme, sz image.Point) {
 // people" / "{n} person", which DMs don't get.
 func (c *Controller) windowTitle(st huddle.State) (title, sub string) {
 	n := max(1, len(st.Participants))
-	sub = strconv.Itoa(n) + " people"
-	if n == 1 {
-		sub = "1 person"
-	}
+	sub = nsHuddles.T("{memberCount, plural, =1 {# person} other {# people}}", "memberCount", n)
 	if t := strings.TrimSpace(st.Name); t != "" { // the huddle's topic (topic.go) is the title
 		sub = c.titleSub(st, sub)
 		return t, sub
 	}
 	app := c.h.Core()
 	if app == nil {
-		return "Huddle", sub
+		return nsHuddles.T("Huddle"), sub
 	}
 	conv, ok := app.Conv(st.Channel)
 	if !ok {
-		return "Huddle", sub
+		return nsHuddles.T("Huddle"), sub
 	}
 	switch conv.Kind {
 	case "im":
 		if name := c.userName(conv.User); name != "" {
-			return "Huddle with " + name, ""
+			return nsHuddles.T("Huddle with {dmPersons}", "dmPersons", name), ""
 		}
-		return "Huddle", ""
+		return nsHuddles.T("Huddle"), ""
 	case "mpim":
 		var names []string
 		self := c.selfID()
@@ -375,14 +372,14 @@ func (c *Controller) windowTitle(st huddle.State) (title, sub string) {
 			}
 		}
 		if len(names) == 0 {
-			return "Huddle", ""
+			return nsHuddles.T("Huddle"), ""
 		}
-		return "Huddle with " + strings.Join(names, ", "), ""
+		return nsHuddles.T("Huddle with {dmPersons}", "dmPersons", strings.Join(names, ", ")), ""
 	}
 	if conv.Name == "" {
-		return "Huddle", sub
+		return nsHuddles.T("Huddle"), sub
 	}
-	return "Huddle in " + conv.Name, sub
+	return nsHuddles.T("Huddle in {channelName}", "channelName", conv.Name), sub
 }
 
 // titleSub is the subtitle under a topic: none in a DM or group DM.

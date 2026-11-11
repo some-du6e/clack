@@ -89,19 +89,19 @@ func layoutCard(gtx C, th *theme.Theme, c *Controller, v inviteView, st *cardSta
 		cl      *widget.Clickable
 		label   string
 		primary bool
-	}{{&st.join, "Join", true}}
+	}{{&st.join, nsHuddles.T("Join"), true}}
 	if !v.JoiningSoon {
 		btns = append(btns, struct {
 			cl      *widget.Clickable
 			label   string
 			primary bool
-		}{&st.soon, "Be there soon", false})
+		}{&st.soon, nsHuddles.T("Be there soon"), false})
 	}
 	btns = append(btns, struct {
 		cl      *widget.Clickable
 		label   string
 		primary bool
-	}{&st.decline, "Decline", false})
+	}{&st.decline, nsHuddles.T("Decline"), false})
 	btnsH := len(btns)*bh + (len(btns)-1)*gtx.Dp(6)
 	errH := 0
 	if v.NoteErr {
