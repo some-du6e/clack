@@ -180,6 +180,7 @@ var slackRef = map[string]string{
 	"mic":                         "microphone",
 	"mic-filled":                  "microphone-filled",
 	"mic-off":                     "microphone-off",
+	"move-to-split-view":          "move-to-split-view",
 	"minus":                       "minus",
 	"mobile":                      "mobile",
 	"mobile-filled":               "mobile-filled",

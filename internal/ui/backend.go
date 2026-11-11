@@ -589,6 +589,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 	case "connection":
 		m.Connected = ev.Connected
 		changed = true
+	case "permissions": // permissions/info answered (core.ChannelGrant): the topic's Edit reads it
+		a.Invalidate()
 	}
 	if changed {
 		b.recount()
@@ -717,7 +719,7 @@ func (b *backend) opened(ch string) {
 				continue
 			}
 			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID, unread: t.Unread,
-				spans: tabLabelSpans(label, b.core.Emoji)})
+				spans: tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string

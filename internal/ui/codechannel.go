@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -20,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -153,10 +156,19 @@ func (a *App) codeHeaderTile(gtx layout.Context) layout.Dimensions {
 func init() {
 	composer.ContextBar = func(gtx layout.Context, h composer.Host, ch, ts string) layout.Dimensions {
 		a, ok := h.(*App)
-		if !ok || ts != "" { // shouldDisplayAgentChannelBanner: not in threads
+		if !ok {
+			return layout.Dimensions{}
+		}
+		if ts != "" { // shouldDisplayAgentChannelBanner: not in threads
 			return layout.Dimensions{}
 		}
 		return a.layoutCodeContextBar(gtx, ch)
+	}
+	composer.ThreadNugget = func(gtx layout.Context, h composer.Host, ch, ts string) layout.Dimensions {
+		if a, ok := h.(*App); ok {
+			return a.layoutAppThreadNugget(gtx, ch, ts) // agent_nugget.go
+		}
+		return layout.Dimensions{}
 	}
 }
 
@@ -404,4 +416,57 @@ func ccItemIcon(name string) string {
 		return name
 	}
 	return "link"
+}
+
+// ---- the row's name tooltip (BaseChannelName) ----
+
+// codeRowTip is one code channel row's name tooltip.
+type codeRowTip struct {
+	hover gesture.Hover
+	tip   popups.TipState
+}
+
+// codeRowTooltip is the tooltip BaseChannelName puts over a code channel
+// row's name (delay 600, position top, maxWidth small): the name when it
+// is cut off, then BaseChannelNameTooltipContent's codeChannelTooltipText
+// ("Public code channel"; core.CodeChannelRowTooltip follows
+// session_channels and code_channels_naming) and the agent's "@name" as a
+// TooltipSubtitle. r is the name's rectangle in the row.
+func (a *App) codeRowTooltip(gtx layout.Context, conv *convInfo, name string, r image.Rectangle, truncated bool) {
+	if a.data == nil || a.data.core == nil || r.Empty() {
+		return
+	}
+	if a.sidebar.codeTips == nil {
+		a.sidebar.codeTips = map[string]*codeRowTip{}
+	}
+	st := a.sidebar.codeTips[conv.ID]
+	if st == nil {
+		st = &codeRowTip{}
+		st.tip.Delay = 600 * time.Millisecond
+		st.tip.MaxWidth = 200 // .c-tooltip__tip max-width
+		a.sidebar.codeTips[conv.ID] = st
+	}
+	t := op.Offset(r.Min).Push(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	area := clip.Rect(image.Rectangle{Max: r.Size()}).Push(gtx.Ops)
+	st.hover.Add(gtx.Ops)
+	area.Pop()
+	pass.Pop()
+	hovered := st.hover.Update(gtx.Source)
+	var lines []popups.TipLine
+	if hovered {
+		kind, agent, ok := a.data.core.CodeChannelRowTooltip(conv.ID)
+		if ok {
+			if truncated {
+				lines = append(lines, popups.TipLine{Text: name})
+			}
+			lines = append(lines, popups.TipLine{Text: kind})
+			if agent != "" {
+				lines = append(lines, popups.TipLine{Text: agent, Subtitle: true})
+			}
+		}
+		hovered = ok
+	}
+	popups.TooltipLines(gtx, a.th, &st.tip, hovered, r.Size(), popups.Above, lines)
+	t.Pop()
 }

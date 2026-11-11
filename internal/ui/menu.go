@@ -10,6 +10,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -18,7 +19,13 @@ func (a *App) ShowOverlay(o Overlay) {
 	if o == nil {
 		return
 	}
+	if m, ok := o.(*popups.Menu); ok { // no split rows where Slack has no split view
+		popups.StripSplitView(m, !a.SplitViewOK())
+	}
 	a.overlays = append(a.overlays, o)
+	// what it does happens in the view container it was opened from
+	// (layoutOverlays; split.go)
+	a.overlayPane = append(a.overlayPane[:min(len(a.overlayPane), len(a.overlays)-1)], a.pane)
 	a.Invalidate()
 }
 
@@ -37,6 +44,9 @@ func (a *App) dismissTop() bool {
 			d.Dismiss()
 		}
 		a.overlays = append(a.overlays[:i], a.overlays[i+1:]...)
+		if i < len(a.overlayPane) {
+			a.overlayPane = append(a.overlayPane[:i], a.overlayPane[i+1:]...)
+		}
 		a.Invalidate()
 		return true
 	}

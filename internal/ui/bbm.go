@@ -583,8 +583,10 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 		switch a.secondary.kind {
 		case secProfile:
 			label = "Profile"
-		case secDetails, secCode:
+		case secDetails:
 			label = "Details"
+		case secCode: // no breadcrumb label: getAriaLabelForViewContent (session_channel_views)
+			label = a.codeDetailsLabel()
 		case secSearch:
 			label = "Search"
 		case secHelp:

@@ -112,7 +112,7 @@ func (a *App) openNotifPrefs(ch string) {
 	if conv != nil && (conv.Kind == "channel" || conv.Kind == "private" || conv.Kind == "mpim") && a.Core() != nil {
 		// Slack's ChannelNotificationPrefMenu, right-aligned like the ⋮
 		// menu, 3px lower (y 77 vs 74)
-		a.ShowOverlay(popups.NewChannelNotifyMenu(a, a.anchor(image.Pt(a.winSize.X-a.px(int(theme.PanelInset))-a.px(14)-a.px(6), a.px(int(theme.TopNavH))+a.px(37))), ch))
+		a.ShowOverlay(popups.NewChannelNotifyMenu(a, a.anchor(image.Pt(a.headerEnd()-a.px(14)-a.px(6), a.px(int(theme.TopNavH))+a.px(37))), ch))
 		return
 	}
 	// 1:1 DMs: the header's NotificationsControl is a plain mute toggle

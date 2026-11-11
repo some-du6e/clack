@@ -78,7 +78,8 @@ func (a *App) SetSelected(id string) {
 	if old == id {
 		return
 	}
-	a.noteView(id) // the navigation history (autocomplete HISTORY_AGE_DECAY_*)
+	a.noteView(id)                     // the navigation history (autocomplete HISTORY_AGE_DECAY_*)
+	a.maybeReopenViewedCodeChannel(id) // viewing a closed code channel reopens it (codechannel_close.go)
 	if a.selectionShapesSidebar(old) || a.selectionShapesSidebar(id) {
 		a.emit(Event{Type: "sidebar_changed"})
 	}
@@ -106,6 +107,9 @@ func (a *App) selectionShapesSidebar(id string) bool {
 		if !a.dmCandidate(id) {
 			return true
 		}
+	}
+	if a.codeChannelClosed(id) { // a closed code channel shows only while selected
+		return true
 	}
 	a.S.RLock()
 	p := a.S.Prefs
