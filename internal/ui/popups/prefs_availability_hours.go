@@ -75,8 +75,15 @@ func avShow(o map[string]any, def bool) bool {
 func (hr avHours) FocusShown() bool   { return avShow(hr.Focus, true) }
 func (hr avHours) OutsideShown() bool { return avShow(hr.Outside, false) }
 
-// avPad is padStart(v, 5, "0"): "8:00" → "08:00".
+// avPad is padStart(v, 5, "0"): "8:00" → "08:00". An unset pref stays ""
+// (padStart would make it "00000"): BaseDndTimeSelect checks the raw
+// value first, so an unset end hour shows its "--:--" placeholder and gets
+// no option of its own (insertNonIntervalTimeOption runs only when the
+// raw value is set).
 func avPad(v string) string {
+	if v == "" {
+		return ""
+	}
 	for len(v) < 5 {
 		v = "0" + v
 	}

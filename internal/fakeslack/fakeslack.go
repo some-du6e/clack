@@ -318,6 +318,9 @@ func DefaultPrefs() map[string]any {
 		"show_sidebar_avatars": true, "home_unread_dot": true, "should_show_connect_section": true,
 		"mute_sounds": false, "mute_huddle_sounds": false,
 		"mac_ssb_bullet": true, "mac_ssb_bounce": "", "reminder_notification_time": "9:00",
+		// working hours: notifications 8:00 to 22:00 every day, with the
+		// server's unpadded "H:MM" (as reminder_notification_time)
+		"dnd_enabled": true, "dnd_days": "every_day", "dnd_start_hour": "22:00", "dnd_end_hour": "8:00",
 		"tz": "America/Los_Angeles", "set_tz_automatically": true, "webapp_spellcheck": true,
 		// Preferences dialog keys Clack wires, at Slack's defaults
 		"display_real_names_override": 0, "mentions_real_names_override": 0, "messages_theme": "default",
