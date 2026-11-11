@@ -210,10 +210,11 @@ var experimentReads = map[string][]string{
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	"agentforce_deprecation": on, "agent_tasks": on, "later_todos": on, "agents_landing_page": on, "agentic_ia": on,
-	// activity (activity_agent.go: 5Ns/, M/qt ji; views/activity_bulk.go)
-	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on, "nested_secondary_view": on,
+	// activity (activity_agent.go: 5Ns/, M/qt ji; nested_secondary_view is
+	// the secondary views' below)
+	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,
 	"activity_bot_item_type_reads": on, "activity_automations_only": on, "exclude_automations_filter": on,
-	"agent_status_in_activity": on, "activity_bulk_unread_tool": on,
+	"agent_status_in_activity": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
 	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
@@ -247,13 +248,4 @@ var experimentReads = map[string][]string{
 	"app_thread_nugget_fe": on, "app_nugget_refinement": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
-	// read by code merged into ui without an entry here (ui 3a5a0373,
-	// 2026-11-10): channel details, drafts, lists, the composer
-	"ai_channel_exclusions": on, "mcp_ai_channel_exclusions": on, "enable_new_channel_settings": on,
-	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
-	"draft_management_in_composer": {"treatment"}, "sidebar_draft_indicator_menu_and_thread_inclusion": on,
-	"lists_grid_todos": on, "rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
-	// (ui dc7566fd: the thread pane, workflows, channel details)
-	"secondary_view_default_width": on, "unread_thread_indication_in_replybar": on, "channel_details_agents_apps_tab": on,
-	"enable_wfb_ai_answer_step": on, "workflow_execution_window": on,
 }
