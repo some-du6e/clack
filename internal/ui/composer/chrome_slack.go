@@ -37,6 +37,7 @@ type crFrame struct {
 	minOverflow            int
 	narrow, fold           bool
 	oneLine                bool // the footer sits beside the editor (layoutBox)
+	rowH, textH, attH      int  // layoutBox's editor row, text area and attachments heights
 	toolbarHidden          bool
 	sufX                   int // composer-local x of the send group
 

@@ -569,3 +569,43 @@ func TestSlickViewBetterHuddles(t *testing.T) {
 		t.Logf("startHuddle was taken over by BetterHuddles (no native toast)")
 	}
 }
+
+// WhoReacted in the Threads, Unreads and Activity views: their reaction
+// pills are Slack's Reaction with the pill button (UnstyledButton
+// data-qa="reactji") in its tree, as in a channel, so the reactors' avatars
+// the plugin adds inside the button are drawn (they weren't: the views drew
+// a native pill with no boundary).
+func TestSlickViewWhoReactedInViews(t *testing.T) {
+	e := newSlickEnv(t)
+	alice, bob := sUser(sAlice, "alice", "Alice Example"), sUser(sBob, "bob", "Bob Example")
+	alice.Profile.Image24, alice.Profile.Image48 = "https://avatars.invalid/alice-24.png", "https://avatars.invalid/alice-48.png"
+	bob.Profile.Image24, bob.Profile.Image48 = "https://avatars.invalid/bob-24.png", "https://avatars.invalid/bob-48.png"
+	e.app.S.PutUsers([]slack.User{alice, bob})
+	e.install("WhoReacted", nil)
+	e.patched("Reaction", "UnstyledButton")
+	v := NewActivity(e.h)
+	m := &core.Message{Channel: sGen, TS: tsMine, User: sSelf, Text: "my synthetic message",
+		Reactions: []core.Reaction{{Name: "tada", Count: 2, Users: []string{sAlice, sBob}}}}
+	var d D
+	pills := func(gtx C) D {
+		gtx.Constraints.Min = image.Point{}
+		d = v.actReactions(gtx, m)
+		return d
+	}
+	has := func(sub string) bool {
+		e.ui.mu.Lock()
+		defer e.ui.mu.Unlock()
+		for _, tr := range e.ui.trees {
+			if strings.Contains(string(tr), sub) {
+				return true
+			}
+		}
+		return false
+	}
+	e.until("the reactors' avatars in the tada pill", pills, func() bool {
+		return has("slick-wr__av") && has("alice-24.png") && has(`"data-qa":"reactji"`)
+	})
+	if d.Size.X <= 0 || d.Size.Y != 24 {
+		t.Errorf("the pill row is %v, want one 24px row", d.Size)
+	}
+}

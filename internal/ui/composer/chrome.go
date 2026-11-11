@@ -737,6 +737,7 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 		box.Max.Y = bcTop + bcH + bw
 	}
 	c.f.box, c.f.boxOK = box, true
+	c.f.rowH, c.f.textH, c.f.attH = rowH, textH, ah
 
 	// Box: shadow, border, fill, formatting bar background. Under a
 	// plugin's context bar the top corners are square.

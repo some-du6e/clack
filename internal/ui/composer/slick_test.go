@@ -652,7 +652,8 @@ func TestSlickViewSlimMessageBoxOneLine(t *testing.T) {
 	e.patched("TextyButtons")
 	c, frame := e.composer(tChGen)
 	e.why = func() string {
-		return fmt.Sprintf("oneLine %v box %v send %v footNat %d", c.ui.f.oneLine, c.ui.f.box, c.ui.rect[crSend], c.ui.footNat)
+		f := &c.ui.f
+		return fmt.Sprintf("oneLine %v box %v send %v footNat %d row %d text %d att %d input at %v", f.oneLine, f.box, c.ui.rect[crSend], c.ui.footNat, f.rowH, f.textH, f.attH, c.ui.inputOff)
 	}
 	e.until(8*time.Second, "the footer beside the editor, one row tall", frame, func() bool {
 		box, send := c.ui.f.box, c.ui.rect[crSend]
