@@ -24,7 +24,15 @@ var (
 	actPageClass = slackc.Class("p-activity_ia p-activity_ia4_page p-activity_page")
 	actItemClass = slackc.Class("c-message_kit__hover p-activity_ia4_page__item", "data-qa", "activity-item-container").
 			Mods(actItemMods...)
-	actMsgClass  = slackc.Class("p-activity_item__message", "data-qa", "activity-item-message")
+	actMsgClass = slackc.Class("p-activity_item__message", "data-qa", "activity-item-message")
+	// a private channel's row holds its destination InlineChannelEntity
+	// with the lock icon (InlineChannelIcon's data-inline-channel-type-icon
+	// lock-filled), which Clack draws without entering it: declared, so
+	// Slick StreamerMode's [data-qa="activity-item-container"]:has([data-
+	// inline-channel-type-icon^="lock"]) blurs its preview and time
+	actItemPrivateClass = actItemClass.WithKids(slackc.Class("c-inline_channel_entity c-base_inline_entity").Tag("span").Kids(
+		slackc.Class("").Tag("span").Kids(slackc.Class("c-base_inline_entity__avatar c-inline_channel_icon c-inline_channel_icon--space",
+			"data-inline-channel-type-icon", "lock-filled").Tag("span"))))
 	actNameClass = slackc.Class("c-inline_channel_entity c-base_inline_entity c-message__sender c-message_kit__sender p-activity_page__item__link",
 		"data-qa", "inline_channel_entity").Tag("span")
 	actAvatarClass = slackc.Class("activity_row_content__avatar_and_icon").Mods("activity_row_content__avatar_and_icon_small")

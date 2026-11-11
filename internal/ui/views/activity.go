@@ -2025,7 +2025,11 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	if sel {
 		mods |= actModSelected
 	}
-	st := actItemClass.Enter(gtx, hoverState(hov), mods)
+	def := actItemClass
+	if !slackc.Styles.Empty() && channelIcon(v.h.Core(), it.Channel, "") == "lock-filled" {
+		def = actItemPrivateClass // its destination's lock icon, for :has() (Slick StreamerMode)
+	}
+	st := def.Enter(gtx, hoverState(hov), mods)
 	defer st.Leave()
 	if st.Hidden() {
 		return D{}
