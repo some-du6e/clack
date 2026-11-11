@@ -101,10 +101,13 @@ func (f *introFrame) transform(e fx, pivot f32.Point) func() {
 	return t.Pop
 }
 
-// card is a floating white panel: a soft shadow on the dark backdrop and
-// a hairline.
+// card is a floating panel: a soft shadow below it on the dark backdrop
+// (filled under the card too, so it has no hard edge) and the panel.
 func (f *introFrame) card(r image.Rectangle, rad int, bg color.NRGBA) {
-	theme.Shadow(f.gtx, r.Add(image.Pt(0, f.d(12))), rad, f.d(30), alphaMul(introBlack, 0.42))
+	sh := r.Add(image.Pt(0, f.d(8)))
+	c := alphaMul(introBlack, 0.36)
+	theme.RRect(f.gtx, sh, rad, c)
+	theme.Shadow(f.gtx, sh, rad, f.d(30), c)
 	theme.RRect(f.gtx, r, rad, bg)
 }
 
@@ -174,6 +177,8 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 			paint.LinearGradientOp{Stop1: layout.FPt(win.Min), Color1: miniChromeA, Stop2: layout.FPt(win.Max), Color2: miniChromeB}.Add(f.gtx.Ops)
 			paint.PaintOp{}.Add(f.gtx.Ops)
 		}()
+		// a hairline of light: the dark window against the dark backdrop
+		theme.Border(f.gtx, win, rad, max(1, f.d(1)), alphaMul(introWhite, 0.12))
 		sr := k.rect(wx+ww*0.3, wy+8, ww*0.4, 17)
 		theme.RRect(f.gtx, sr, f.d(5), alphaMul(miniActive, 0.2))
 		at(f.gtx, k.pt(wx+ww*0.3+8, wy+10.5), image.Pt(f.d(12), f.d(12)), func(gtx layout.Context) layout.Dimensions {
@@ -183,7 +188,7 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 	})
 	// the rail: the workspace, then Home, DMs, Activity
 	for i, name := range []string{"", "home", "dms", "bell"} {
-		e := f.pop(start.Add(msec(170+50*float64(i))), 0.55, springPop).fade(A)
+		e := f.pop(start.Add(msec(60+40*float64(i))), 0.55, springPop).fade(A)
 		r := k.rect(wx+11, wy+36+float32(i)*40, 26, 26)
 		f.with("native-rail", e, center(r), func() {
 			if i == 0 {
@@ -204,35 +209,35 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 	// the sidebar slides in, its rows after it
 	sx := wx + 48
 	sb := k.rect(sx, wy+32, 158, wh-38)
-	se := f.slideX(start.Add(msec(230)), -f.df(30)).fade(A)
+	se := f.slideX(start.Add(msec(90)), -f.df(30)).fade(A)
 	f.with("native-sidebar", se, f32.Point{}, func() {
-		theme.RRect(f.gtx, sb, f.d(8), alphaMul(miniActive, 0.09))
+		theme.RRect(f.gtx, sb, f.d(8), alphaMul(miniActive, 0.07))
 		f.label(k.pt(sx+12, wy+42), 13.5, theme.Black, introWhite, "Hack Club")
 		at(f.gtx, k.pt(sx+86, wy+44), image.Pt(f.d(12), f.d(12)), func(gtx layout.Context) layout.Dimensions {
 			return icons.Get("chevron-down")(gtx, f.idp(11), alphaMul(introWhite, 0.8))
 		})
 	})
 	// which channel is open: #ship, then #lounge, then #code
-	t1, t2 := start.Add(msec(1950)), start.Add(msec(3350))
+	t1, t2 := start.Add(msec(1750)), start.Add(msec(3050))
 	pos := 1 + f.mc.spring(springBouncy, t1) + f.mc.spring(springBouncy, t2)
 	rowY := func(i float64) float32 { return wy + 72 + float32(i)*24 }
 	// the selected row's pill glides between rows
 	if f.reduced {
 		for i, w := range [3]float64{1 - clamp01(f.mc.spring(springSmooth, t1)), clamp01(f.mc.spring(springSmooth, t1)) - clamp01(f.mc.spring(springSmooth, t2)), clamp01(f.mc.spring(springSmooth, t2))} {
 			if w > 0.004 {
-				e := f.slideX(start.Add(msec(300+45*float64(i+1))), 0).fade(A * float32(w))
+				e := f.slideX(start.Add(msec(120+40*float64(i+1))), 0).fade(A * float32(w))
 				r := k.rect(sx+6, rowY(float64(i+1))-3, 146, 22)
 				f.with("native-active", e, f32.Point{}, func() { theme.RRect(f.gtx, r, f.d(6), miniActive) })
 			}
 		}
 	} else {
-		e := f.slideX(start.Add(msec(300+45)), -f.df(18)).fade(A)
+		e := f.slideX(start.Add(msec(120+40)), -f.df(18)).fade(A)
 		e.dy = f.df(24) * float32(pos-1)
 		r := k.rect(sx+6, rowY(1)-3, 146, 22)
 		f.with("native-active", e, f32.Point{}, func() { theme.RRect(f.gtx, r, f.d(6), miniActive) })
 	}
 	for i, ch := range nativeChannels {
-		e := f.slideX(start.Add(msec(300+45*float64(i))), -f.df(18)).fade(A)
+		e := f.slideX(start.Add(msec(120+40*float64(i))), -f.df(18)).fade(A)
 		y := rowY(float64(i))
 		active := math.Abs(pos-float64(i)) < 0.5
 		f.with("native-row", e, f32.Point{}, func() {
@@ -258,7 +263,7 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 	// the message pane
 	px := sx + 164
 	pane := k.rect(px, wy+32, ww-(px-wx)-6, wh-38)
-	pe := f.rise(start.Add(msec(330)), f.df(10), 1).fade(A)
+	pe := f.rise(start.Add(msec(110)), f.df(10), 1).fade(A)
 	f.with("native-pane", pe, f32.Point{}, func() {
 		theme.RRect(f.gtx, pane, f.d(9), introWhite)
 	})
@@ -268,7 +273,7 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 		if ws[c] <= 0.004 {
 			continue
 		}
-		base := start.Add(msec(400))
+		base := start.Add(msec(170))
 		switch c {
 		case 1:
 			base = t1
@@ -282,11 +287,7 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 			theme.Fill(f.gtx, k.rect(px, wy+70, ww-(px-wx)-6, 0.6), miniBorder)
 		})
 		for i, m := range nativeMessages[c] {
-			d := 70.0
-			if c == 0 {
-				d = 90
-			}
-			e := f.enter(base.Add(msec(80+d*float64(i))), f.df(14), springBouncy, false).fade(A * float32(ws[c]))
+			e := f.enter(base.Add(msec(60+60*float64(i))), f.df(14), springBouncy, false).fade(A * float32(ws[c]))
 			f.with("native-message", e, f32.Point{}, func() {
 				k.msgRow(px+16, wy+86+float32(i)*58, m[0], m[1], m[2], 1)
 			})
@@ -294,14 +295,14 @@ func (in *intro) drawNativeStage(f *introFrame, g introGeom, start time.Time, st
 	}
 	// a pointer clicks #lounge, then #code
 	if !f.reduced {
-		appear := start.Add(msec(1350))
+		appear := start.Add(msec(1150))
 		ca := float32(clamp01(f.mc.spring(springSmooth, appear))) * A
 		if ca > 0.004 {
 			p0 := k.fpt(px+150, wy+250)
 			p1 := k.fpt(sx+70, rowY(2)+9)
 			p2 := k.fpt(sx+60, rowY(3)+9)
-			m1 := float32(f.mc.spring(springSmooth, start.Add(msec(1500))))
-			m2 := float32(f.mc.spring(springSmooth, start.Add(msec(2950))))
+			m1 := float32(f.mc.spring(springSmooth, start.Add(msec(1300))))
+			m2 := float32(f.mc.spring(springSmooth, start.Add(msec(2650))))
 			p := p0.Add(p1.Sub(p0).Mul(m1)).Add(p2.Sub(p1).Mul(m2))
 			for _, click := range []time.Time{t1, t2} {
 				if c := f.now.Sub(click.Add(-msec(60))).Seconds() / 0.5; c > 0 && c < 1 {
@@ -386,7 +387,7 @@ func (in *intro) drawSlackStage(f *introFrame, g introGeom, start time.Time, sta
 	f.with("slack-card", fx{a: A, s: 1}, f32.Point{}, func() {
 		f.card(card, f.d(14), introWhite)
 	})
-	he := f.enter(start.Add(msec(120)), f.df(8), springSmooth, false).fade(A)
+	he := f.enter(start.Add(msec(70)), f.df(8), springSmooth, false).fade(A)
 	f.with("slack-header", he, f32.Point{}, func() {
 		w := f.label(k.pt(cx+20, 13), 16, theme.Black, miniFg, "# lounge")
 		f.label(image.Pt(k.pt(cx+20, 0).X+w+f.d(12), k.pt(0, 16).Y), 12.5, theme.Regular, miniSubtle, "Ship it, then show it")
@@ -394,13 +395,13 @@ func (in *intro) drawSlackStage(f *introFrame, g introGeom, start time.Time, sta
 	})
 	msgs := [2][3]string{{"Ava", "2:41 PM", "anyone shipping tonight?"}, {"Leo", "2:42 PM", "pushing the arcade build in 10"}}
 	for i, m := range msgs {
-		e := f.enter(start.Add(msec(220+80*float64(i))), f.df(14), springBouncy, false).fade(A)
+		e := f.enter(start.Add(msec(130+60*float64(i))), f.df(14), springBouncy, false).fade(A)
 		f.with("slack-message", e, f32.Point{}, func() { k.msgRow(cx+20, 60+float32(i)*54, m[0], m[1], m[2], 1) })
 	}
 	// the composer
 	cy := ch - 92
 	box := k.rect(cx+16, cy, cw-32, 70)
-	typeAt := start.Add(msec(950))
+	typeAt := start.Add(msec(750))
 	n := 0
 	for n < len(slackTyped) && !f.now.Before(typeAt.Add(typedAt(n+1))) {
 		n++
@@ -413,7 +414,7 @@ func (in *intro) drawSlackStage(f *introFrame, g introGeom, start time.Time, sta
 		n = 0 // no typing: the message fades in sent
 	}
 	sent := !f.now.Before(sendAt)
-	be := f.enter(start.Add(msec(360)), f.df(12), springSmooth, false).fade(A)
+	be := f.enter(start.Add(msec(200)), f.df(12), springSmooth, false).fade(A)
 	f.with("slack-composer", be, f32.Point{}, func() {
 		theme.RRect(f.gtx, box, f.d(9), introWhite)
 		focus := float32(clamp01(f.mc.spring(springSnappy, typeAt.Add(-msec(150)))))
@@ -549,7 +550,7 @@ func (in *intro) drawPluginsStage(f *introFrame, g introGeom, start time.Time, s
 	list := k.rect(lx, 6, pw, 318)
 	conv := k.rect(rx, 6, pw, 318)
 	le := f.rise(start, f.df(24), 0.97).mul(stage)
-	flips := [3]time.Time{start.Add(msec(950)), start.Add(msec(1850)), start.Add(msec(2750))}
+	flips := [3]time.Time{start.Add(msec(850)), start.Add(msec(1650)), start.Add(msec(2450))}
 	func() {
 		pop := f.transform(fx{dx: le.dx, dy: le.dy, s: le.s}, center(list))
 		defer pop()
@@ -562,7 +563,7 @@ func (in *intro) drawPluginsStage(f *introFrame, g introGeom, start time.Time, s
 		})
 		for i, p := range introPlugins {
 			y := 80 + float32(i)*80
-			e := f.enter(start.Add(msec(200+90*float64(i))), f.df(14), springBouncy, false).fade(A)
+			e := f.enter(start.Add(msec(90+60*float64(i))), f.df(14), springBouncy, false).fade(A)
 			f.with("plugins-row", e, f32.Point{}, func() {
 				f.label(k.pt(lx+20, y), 14.5, theme.Black, miniFg, p.name)
 				nw := f.measure(14.5, theme.Black, p.name)
@@ -584,13 +585,13 @@ func (in *intro) drawPluginsStage(f *introFrame, g introGeom, start time.Time, s
 				}
 			})
 			// the switch
-			se := f.enter(start.Add(msec(260+90*float64(i))), f.df(14), springBouncy, false).fade(A)
+			se := f.enter(start.Add(msec(120+60*float64(i))), f.df(14), springBouncy, false).fade(A)
 			sr := k.rect(lx+pw-20-34, y+8, 34, 20)
 			f.with("plugins-switch", se, f32.Point{}, func() { in.drawSwitch(f, sr, flips[i]) })
 		}
 	}()
 	// the conversation the plugins change
-	ce := f.rise(start.Add(msec(140)), f.df(24), 0.97).mul(stage)
+	ce := f.rise(start.Add(msec(60)), f.df(24), 0.97).mul(stage)
 	pop := f.transform(fx{dx: ce.dx, dy: ce.dy, s: ce.s}, center(conv))
 	defer pop()
 	A := ce.a
@@ -627,7 +628,7 @@ func (in *intro) drawPluginsStage(f *introFrame, g introGeom, start time.Time, s
 	}
 	// the messages
 	nick := float32(clamp01(f.mc.spring(springSmooth, flips[1].Add(msec(180)))))
-	me := f.enter(start.Add(msec(380)), f.df(12), springBouncy, false).fade(A)
+	me := f.enter(start.Add(msec(160)), f.df(12), springBouncy, false).fade(A)
 	me.dy += shift
 	f.with("plugins-message", me, f32.Point{}, func() {
 		y := float32(64)
@@ -648,7 +649,7 @@ func (in *intro) drawPluginsStage(f *introFrame, g introGeom, start time.Time, s
 		}
 		f.label(k.pt(rx+60, y+17), 13, theme.Regular, miniFg, "the arcade build is live")
 	})
-	m2 := f.enter(start.Add(msec(470)), f.df(12), springBouncy, false).fade(A)
+	m2 := f.enter(start.Add(msec(220)), f.df(12), springBouncy, false).fade(A)
 	m2.dy += shift
 	f.with("plugins-message", m2, f32.Point{}, func() {
 		y := float32(128)
@@ -682,7 +683,7 @@ func (in *intro) drawPluginsStage(f *introFrame, g introGeom, start time.Time, s
 		// the link's underline follows its new length
 		theme.Fill(f.gtx, image.Rect(lp.X, lp.Y+f.d(17), lp.X+hw+int(float32(vis)*(1-redden)), lp.Y+f.d(17)+max(1, f.d(0.8))), alphaMul(miniLink, 0.5))
 	})
-	m3 := f.enter(start.Add(msec(560)), f.df(12), springBouncy, false).fade(A)
+	m3 := f.enter(start.Add(msec(280)), f.df(12), springBouncy, false).fade(A)
 	m3.dy += shift
 	f.with("plugins-message", m3, f32.Point{}, func() {
 		k.msgRow(rx+20, 196, "Zara", "5:24 PM", "same plugins as in the browser", 1)
@@ -746,26 +747,28 @@ func (in *intro) drawHackClubStage(f *introFrame, g introGeom, start time.Time, 
 	pop := f.transform(fx{dx: stage.dx, dy: stage.dy, s: 1}, c)
 	defer pop()
 	A := stage.a
-	// the burst, behind the tile
-	burstAt := start.Add(msec(300))
-	if bt := f.now.Sub(burstAt).Seconds(); bt > 0 && bt < 1.7 && !f.reduced {
+	// the burst, behind the tile, kept to the stage (it never rains on
+	// the line under it)
+	burstAt := start.Add(msec(220))
+	if bt := f.now.Sub(burstAt).Seconds(); bt > 0 && bt < 1.4 && !f.reduced {
 		f.mc.moving = true
-		for i := 0; i < 34; i++ {
+		cl := clip.Rect(image.Rect(g.stage.Min.X-f.d(60), g.stage.Min.Y-f.d(40), g.stage.Max.X+f.d(60), g.stage.Max.Y+f.d(6))).Push(f.gtx.Ops)
+		for i := 0; i < 46; i++ {
 			h := uint32(i*2654435761 + 12345)
 			ang := float64(h%6283) / 1000
-			spd := 300 + float64((h>>13)%260)
-			vx, vy := math.Cos(ang)*spd, math.Sin(ang)*spd-160
-			const drag, grav = 1.9, 620.0
+			spd := 360 + float64((h>>13)%300)
+			vx, vy := math.Cos(ang)*spd, math.Sin(ang)*spd*0.8-140
+			const drag, grav = 2.3, 540.0
 			e := (1 - math.Exp(-drag*bt)) / drag
 			x := vx * e
 			y := vy*e + grav/drag*(bt-e)
-			life := 1 - clamp01((bt-0.9)/0.8)
+			life := 1 - clamp01((bt-0.75)/0.6)
 			if life <= 0.004 {
 				continue
 			}
 			rot := float32(ang*3 + bt*float64(4+int(h%5)))
-			p := c.Add(f32.Pt(f.df(float32(x)/1.6), f.df(float32(y)/1.6)))
-			w, hh := f.df(8), f.df(4.2)
+			p := c.Add(f32.Pt(f.df(float32(x)/1.5), f.df(float32(y)/1.5)))
+			w, hh := f.df(9), f.df(4.6)
 			col := hcConfetti[i%len(hcConfetti)]
 			func() {
 				t := op.Affine(f32.Affine2D{}.Rotate(f32.Point{}, rot).Offset(p)).Push(f.gtx.Ops)
@@ -774,16 +777,17 @@ func (in *intro) drawHackClubStage(f *introFrame, g introGeom, start time.Time, 
 				theme.RRect(f.gtx, r, max(1, int(hh/3)), alphaMul(col, float32(life)*A))
 			}()
 		}
+		cl.Pop()
 	}
 	// the workspace tile
-	te := f.pop(start.Add(msec(80)), 0.4, springPop).fade(A)
+	te := f.pop(start.Add(msec(40)), 0.4, springPop).fade(A)
 	f.with("hc-tile", te, c, func() {
 		theme.Shadow(f.gtx, tile.Add(image.Pt(0, f.d(10))), f.d(26), f.d(30), alphaMul(hexc(0xec3750), 0.35))
 		theme.RRect(f.gtx, tile, f.d(26), hexc(0xec3750))
 		tw := f.measure(62, theme.Black, "h")
 		f.label(image.Pt(tile.Min.X+(tile.Dx()-tw)/2, tile.Min.Y+(tile.Dy()-f.d(62*1.25))/2-f.d(3)), 62, theme.Black, introWhite, "h")
 	})
-	de := f.enter(start.Add(msec(430)), f.df(8), springSmooth, false).fade(A)
+	de := f.enter(start.Add(msec(300)), f.df(8), springSmooth, false).fade(A)
 	f.with("hc-domain", de, f32.Point{}, func() {
 		s := "hackclub.slack.com"
 		w := f.measure(13, theme.Bold, s)
@@ -791,7 +795,7 @@ func (in *intro) drawHackClubStage(f *introFrame, g introGeom, start time.Time, 
 	})
 	// its channels, popping in around it, drifting
 	for i, ch := range hcChips {
-		when := start.Add(msec(520 + 60*float64(i)))
+		when := start.Add(msec(360 + 50*float64(i)))
 		e := f.pop(when, 0.6, springPop).fade(A)
 		if !f.reduced {
 			ph := f.now.Sub(start).Seconds()*1.15 + float64(i)*1.3

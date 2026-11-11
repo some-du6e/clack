@@ -223,7 +223,7 @@ func (a *App) layoutLogin(gtx layout.Context, enter time.Time, mc *motionClock) 
 	tw, tth := th.Measure(gtx, 14, theme.Bold, tog), gtx.Dp(22)
 	atExact(gtx, image.Pt(fx, fy), image.Pt(tw, tth), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, &l.advToggle, nil, func(gtx layout.Context) layout.Dimensions {
-			return th.Label(gtx, 14, theme.Bold, lc.Link, tog)
+			return th.Label(gtx, 14, theme.Bold, loginAccent, tog)
 		})
 	})
 	fy += tth
@@ -238,7 +238,7 @@ func (a *App) layoutLogin(gtx layout.Context, enter time.Time, mc *motionClock) 
 	alpha, dx, dy, s := float32(1), float32(0), float32(0), float32(1)
 	if !enter.IsZero() {
 		start := enter.Add(150 * time.Millisecond)
-		alpha = float32(clamp01(l.mc.spring(springSmooth, start)))
+		alpha = float32(clamp01(l.mc.spring(springSnappy, start)))
 		if !l.reduced {
 			e := float32(l.mc.spring(springBouncy, start))
 			dy = float32(gtx.Dp(44)) * (1 - e)
@@ -321,7 +321,7 @@ func focusRing(gtx layout.Context, r image.Rectangle, rad int, v float32) {
 		return
 	}
 	g := int(math.Round(float64(gtx.Dp(4)) * float64(v)))
-	theme.RRect(gtx, r.Inset(-g), rad+g, theme.WithAlpha(loginInfoBorder, uint8(0x4d*v)))
+	theme.RRect(gtx, r.Inset(-g), rad+g, theme.WithAlpha(loginRing, uint8(0x48*v)))
 }
 
 // startLogin runs the sign-in off the UI goroutine and shows its outcome on
@@ -410,10 +410,10 @@ func (a *App) loginField(gtx layout.Context, x, y, w int, label string, ed *widg
 	y += gtx.Dp(26)
 	fr := image.Rect(x, y, x+w, y+gtx.Dp(44))
 	v := a.login.ring(ed, gtx.Focused(ed))
-	focusRing(gtx, fr, gtx.Dp(8), v)
-	theme.RRect(gtx, fr, gtx.Dp(8), lc.Bg)
-	bc := theme.Mix(lc.BorderStrong, lc.Link, v)
-	theme.Border(gtx, fr, gtx.Dp(8), gtx.Dp(1), bc)
+	focusRing(gtx, fr, gtx.Dp(10), v)
+	theme.RRect(gtx, fr, gtx.Dp(10), lc.Bg)
+	bc := theme.Mix(lc.BorderStrong, loginAccent, v)
+	theme.Border(gtx, fr, gtx.Dp(10), gtx.Dp(1), bc)
 	at(gtx, image.Pt(x+gtx.Dp(12), y), image.Pt(w-gtx.Dp(24), gtx.Dp(44)), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, gtx.Dp(44), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -433,14 +433,14 @@ func (a *App) loginButton(gtx layout.Context, x, y, w int, c *widget.Clickable, 
 	th, lc, l := a.th, theme.LightPalette, a.login
 	br := image.Rect(x, y, x+w, y+gtx.Dp(46))
 	hov, prs := l.press(c)
-	focusRing(gtx, br, gtx.Dp(8), l.ring(c, gtx.Focused(c)))
+	focusRing(gtx, br, gtx.Dp(10), l.ring(c, gtx.Focused(c)))
 	sc := 1 - 0.03*prs
 	ctr := f32.Pt(float32(br.Min.X+br.Max.X)/2, float32(br.Min.Y+br.Max.Y)/2)
 	tr := op.Affine(f32.Affine2D{}.Scale(ctr, f32.Pt(sc, sc))).Push(gtx.Ops)
 	atExact(gtx, br.Min, br.Size(), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, _ bool) {
-			bg := theme.Mix(lc.ChromeA, lc.ChromeB, hov)
-			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
+			bg := theme.Mix(loginAccent, loginAccentDark, hov)
+			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(10), bg)
 		}, func(gtx layout.Context) layout.Dimensions {
 			tw := th.Measure(gtx, 18, theme.Bold, txt)
 			sw := 0
@@ -502,9 +502,9 @@ func (a *App) loginSmallButton(gtx layout.Context, x, y int, c *widget.Clickable
 	defer tr.Pop()
 	atExact(gtx, image.Pt(x, y), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, c, func(gtx layout.Context, s image.Point, _ bool) {
-			bg := theme.Mix(lc.Bg, lc.CodeBg, hov)
+			bg := theme.Mix(lc.Bg, loginInfoBg, hov)
 			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(8), bg)
-			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), lc.BorderStrong)
+			theme.Border(gtx, image.Rectangle{Max: s}, gtx.Dp(8), gtx.Dp(1), theme.Mix(lc.BorderStrong, loginAccent, hov*0.6))
 		}, func(gtx layout.Context) layout.Dimensions {
 			at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(bw, bh), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
@@ -517,7 +517,34 @@ func (a *App) loginSmallButton(gtx layout.Context, x, y int, c *widget.Clickable
 	return image.Pt(bw, bh)
 }
 
-var loginInfoBg, loginInfoBorder = color.NRGBA{R: 0xe8, G: 0xf5, B: 0xfa, A: 0xff}, color.NRGBA{R: 0x1d, G: 0x9b, B: 0xd1, A: 0xff}
+// The card's colours: the introduction's violet (the Clack mark's) for
+// the primary button, focus and the step numbers, a lilac info box.
+var (
+	loginInfoBg, loginInfoBorder = hexc(0xf6f3ff), hexc(0xdcd3ff)
+	loginAccent, loginAccentDark = hexc(0x5b3fd6), hexc(0x4528b8)
+	loginRing                    = hexc(0x7b5cff)
+	loginStepBg, loginStepFg     = hexc(0xeee9ff), hexc(0x5b3fd6)
+)
+
+// loginStep is a numbered step: the number in a violet badge, the text
+// beside it. It returns the step's height and the text's left edge (what
+// belongs to the step goes under the text).
+func (a *App) loginStep(gtx layout.Context, x, y, w, n int, txt string) (int, int) {
+	lc := theme.LightPalette
+	d := gtx.Dp(24)
+	c := image.Pt(x+d/2, y+gtx.Dp(10))
+	theme.Circle(gtx, c, d, loginStepBg)
+	nt := itoa(n)
+	tw := a.th.Measure(gtx, 12.5, theme.Black, nt)
+	at(gtx, image.Pt(c.X-tw/2, c.Y-gtx.Dp(9)), image.Pt(tw+2, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, gtx.Dp(18), func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 12.5, theme.Black, loginStepFg, nt)
+		})
+	})
+	tx := x + d + gtx.Dp(12)
+	h := a.loginPara(gtx, tx, y, w-(tx-x), theme.TextStyle{Size: 14, LineHeight: 20, Color: lc.Fg}, txt)
+	return max(h, d), tx
+}
 
 // layoutLoginLink is the main path: steps on the left, the link field on
 // the right. It returns the bottoms of both columns.
@@ -526,17 +553,19 @@ func (a *App) layoutLoginLink(gtx layout.Context, x, y, colW, gap int) (int, int
 	body := theme.TextStyle{Size: 14, LineHeight: 20, Color: lc.Fg}
 	small := theme.TextStyle{Size: 13, LineHeight: 18, Color: lc.FgSubtle}
 	ly := y
-	ly += a.loginBox(gtx, x, ly, colW, loginInfoBg, loginInfoBorder, theme.TextStyle{Size: 13, LineHeight: 18, Color: lc.Fg},
-		AppName+" signs in the way Slack's desktop app does: your browser hands it a one-time link, and Slack gives "+
-			AppName+" a session of its own. Nothing is copied from your browser.") + gtx.Dp(20)
-	ly += a.loginPara(gtx, x, ly, colW, body, "1. Open Slack's desktop sign-in page in your browser and sign in to your workspace there.") + gtx.Dp(8)
-	ly += a.loginSmallButton(gtx, x, ly, &l.openSignIn, "Open sign-in page").Y + gtx.Dp(6)
-	ly += a.loginPara(gtx, x, ly, colW, small, desktopSignInURL) + gtx.Dp(16)
-	ly += a.loginPara(gtx, x, ly, colW, body, "2. When Slack offers to open the Slack app, either:") + gtx.Dp(6)
-	ind := gtx.Dp(16)
-	ly += a.loginPara(gtx, x+ind, ly, colW-ind, body, "• click it and let the browser open "+AppName+". On a Mac that works right away. On Windows, tick “Open slack:// links with Clack” in the installer; on Linux, run clack --register-url-handler once. If the Slack desktop app is installed too, the link may open it instead.") + gtx.Dp(6)
-	ly += a.loginPara(gtx, x+ind, ly, colW-ind, body, "• or, if you can see the slack:// link itself, paste it here.") + gtx.Dp(16)
-	ly += a.loginPara(gtx, x, ly, colW, body, "3. The link works once, for a few minutes. If it has expired, sign in on the page again for a new one.")
+	ly += a.loginBox(gtx, x, ly, colW, loginInfoBg, loginInfoBorder, theme.TextStyle{Size: 13, LineHeight: 19, Color: hexc(0x3b3550)},
+		AppName+" signs in the way Slack’s desktop app does: your browser hands it a one-time link, and Slack gives "+
+			AppName+" a session of its own. Nothing is copied from your browser.") + gtx.Dp(24)
+	h, tx := a.loginStep(gtx, x, ly, colW, 1, "Open Slack’s desktop sign-in page in your browser and sign in to your workspace there.")
+	ly += h + gtx.Dp(10)
+	ly += a.loginSmallButton(gtx, tx, ly, &l.openSignIn, "Open sign-in page").Y + gtx.Dp(6)
+	ly += a.loginPara(gtx, tx, ly, colW-(tx-x), small, desktopSignInURL) + gtx.Dp(22)
+	h, tx = a.loginStep(gtx, x, ly, colW, 2, "When Slack offers to open the Slack app, either:")
+	ly += h + gtx.Dp(6)
+	ly += a.loginPara(gtx, tx, ly, colW-(tx-x), body, "• click it and let the browser open "+AppName+". On a Mac that works right away. On Windows, tick “Open slack:// links with Clack” in the installer; on Linux, run clack --register-url-handler once. If the Slack desktop app is installed too, the link may open it instead.") + gtx.Dp(6)
+	ly += a.loginPara(gtx, tx, ly, colW-(tx-x), body, "• or, if you can see the slack:// link itself, paste it here.") + gtx.Dp(22)
+	h, _ = a.loginStep(gtx, x, ly, colW, 3, "The link works once, for a few minutes. If it has expired, sign in on the page again for a new one.")
+	ly += h
 
 	fx, fy := x+colW+gap, y
 	fy += a.loginField(gtx, fx, fy, colW, "Sign-in link", &l.link, "slack://…/magic-login/…")
@@ -546,7 +575,7 @@ func (a *App) layoutLoginLink(gtx layout.Context, x, y, colW, gap int) (int, int
 	}
 	fy += a.loginButton(gtx, fx, fy, colW, &l.linkSubmit, txt)
 	fy += gtx.Dp(12)
-	fy += a.loginPara(gtx, fx, fy, colW, small, "The link is a secret until it's used: don't send it to anyone. Workspaces with single sign-on may send you back to the browser to finish.")
+	fy += a.loginPara(gtx, fx, fy, colW, small, "The link is a secret until it’s used: don’t send it to anyone. Workspaces with single sign-on may send you back to the browser to finish.")
 	return ly, fy
 }
 
@@ -554,7 +583,6 @@ func (a *App) layoutLoginLink(gtx layout.Context, x, y, colW, gap int) (int, int
 // cookie. It returns the bottoms of both columns.
 func (a *App) layoutLoginPaste(gtx layout.Context, x, y, colW, gap int) (int, int) {
 	l, lc := a.login, theme.LightPalette
-	body := theme.TextStyle{Size: 14, LineHeight: 20, Color: lc.Fg}
 	ly := y
 	// The session-sharing warning comes first: this way Clack runs on the
 	// browser's own session, and Slack (Enterprise Grid especially) can end
@@ -563,15 +591,18 @@ func (a *App) layoutLoginPaste(gtx layout.Context, x, y, colW, gap int) (int, in
 		"This way "+AppName+" shares the session of the browser you copy these from: it is not a separate sign-in. "+
 			"If Slack sees that session used in a way it finds unusual, it can sign it out everywhere, browser included "+
 			"(this has happened on Enterprise Grid). Prefer signing in with a Slack link.") + gtx.Dp(20)
-	ly += a.loginPara(gtx, x, ly, colW, body, "1. Open Slack in the browser you're signed in to, press F12 and run this in the Console:") + gtx.Dp(8)
-	ly += a.loginBox(gtx, x, ly, colW, lc.CodeBg, lc.CodeBorder, theme.TextStyle{Size: 13, LineHeight: 19, Color: lc.CodeFg, Wrap: text.WrapGraphemes}, signInSnippet) + gtx.Dp(8)
+	h, tx := a.loginStep(gtx, x, ly, colW, 1, "Open Slack in the browser you’re signed in to, press F12 and run this in the Console:")
+	ly += h + gtx.Dp(10)
+	ly += a.loginBox(gtx, tx, ly, colW-(tx-x), lc.CodeBg, lc.CodeBorder, theme.TextStyle{Size: 13, LineHeight: 19, Color: lc.CodeFg, Wrap: text.WrapGraphemes}, signInSnippet) + gtx.Dp(8)
 	copyTxt := "Copy snippet"
 	if l.copied {
 		copyTxt = "Copied"
 	}
-	ly += a.loginSmallButton(gtx, x, ly, &l.copy, copyTxt).Y + gtx.Dp(16)
-	ly += a.loginPara(gtx, x, ly, colW, body, "2. Paste what it copied into Token. That fills in the org token for you.") + gtx.Dp(12)
-	ly += a.loginPara(gtx, x, ly, colW, body, "3. The d cookie is HttpOnly, so the snippet can't read it. Copy its value from DevTools → Application → Cookies → https://app.slack.com. Leave d-s out: Clack doesn't use it.")
+	ly += a.loginSmallButton(gtx, tx, ly, &l.copy, copyTxt).Y + gtx.Dp(22)
+	h, _ = a.loginStep(gtx, x, ly, colW, 2, "Paste what it copied into Token. That fills in the org token for you.")
+	ly += h + gtx.Dp(18)
+	h, _ = a.loginStep(gtx, x, ly, colW, 3, "The d cookie is HttpOnly, so the snippet can’t read it. Copy its value from DevTools → Application → Cookies → https://app.slack.com. Leave d-s out: Clack doesn’t use it.")
+	ly += h
 
 	fx, fy := x+colW+gap, y
 	fy += a.loginField(gtx, fx, fy, colW, "Workspace", &l.workspace, "hackclub")

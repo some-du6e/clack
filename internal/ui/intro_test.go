@@ -164,7 +164,7 @@ func TestIntroFirstRun(t *testing.T) {
 	if !a.prefs.IntroSeen {
 		t.Error("the introduction isn't marked seen")
 	}
-	e.run(1600 * time.Millisecond)
+	e.run(2 * time.Second)
 	if a.intro != nil {
 		t.Fatal("the introduction is still there after handing over")
 	}
@@ -502,11 +502,12 @@ func TestIntroVideo(t *testing.T) {
 		for a.intro != nil && !a.intro.signIn {
 			cur := a.intro.cur
 			step(time.Second / 60)
-			if a.intro != nil && a.intro.cur != cur {
+			if in := a.intro; in != nil && in.cur != cur && !in.signIn {
+				b := in.cur
 				step(350 * time.Millisecond)
-				kf(fmt.Sprintf("beat%d-entering", a.intro.cur))
+				kf(fmt.Sprintf("beat%d-entering", b))
 				step(1500 * time.Millisecond)
-				kf(fmt.Sprintf("beat%d", a.intro.cur))
+				kf(fmt.Sprintf("beat%d", b))
 			}
 		}
 		step(500 * time.Millisecond)

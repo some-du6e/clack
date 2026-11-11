@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"os"
 	"time"
 
 	"gioui.org/f32"
@@ -58,12 +59,16 @@ const (
 
 // introDwell is how long each beat stays before the next comes in.
 var introDwell = [introBeats]time.Duration{
-	beatLogo:     3600 * time.Millisecond,
-	beatNative:   5000 * time.Millisecond,
-	beatSlack:    6000 * time.Millisecond,
-	beatPlugins:  5600 * time.Millisecond,
-	beatHackClub: 4800 * time.Millisecond,
+	beatLogo:     3300 * time.Millisecond,
+	beatNative:   4700 * time.Millisecond,
+	beatSlack:    5600 * time.Millisecond,
+	beatPlugins:  5200 * time.Millisecond,
+	beatHackClub: 4300 * time.Millisecond,
 }
+
+// introEnterDelay is how long a beat waits for the one leaving to clear
+// before its pieces come in (the two never pile up).
+const introEnterDelay = 110 * time.Millisecond
 
 // introWait is how long the first frame waits for the OS's reduce-motion
 // answer and the mark's blurred copies before the sequence starts.
@@ -219,6 +224,7 @@ func (in *intro) update(gtx layout.Context, a *App) {
 	}
 	if in.t0.IsZero() {
 		_, known := osReduceMotion()
+		known = known || a.motionOverride != 0 || os.Getenv("CLACK_REDUCE_MOTION") != ""
 		if (known && in.sprites.ready()) || now.Sub(in.made) >= introWait {
 			in.t0, in.curAt = now, now
 		} else {
@@ -519,10 +525,10 @@ var introWordmark = []rune("Clack")
 var introCopy = [introBeats]struct{ eyebrow, title, sub string }{
 	beatLogo:     {"", "", "A native Slack client, made for Hack Club."},
 	beatNative:   {"NATIVE", "Native, and fast.", "Written in Go and drawn by your GPU. No Electron, no browser tab, no waiting."},
-	beatSlack:    {"YOUR SLACK", "It's your Slack, 1:1.", "The same sidebar, threads and shortcuts, signed in to your own workspace."},
+	beatSlack:    {"YOUR SLACK", "It’s your Slack, 1:1.", "The same sidebar, threads and shortcuts, signed in to your own workspace."},
 	beatPlugins:  {"PLUGINS", "Your plugins, unmodified.", "Taut and Slick plugins and themes load as they are: the same JavaScript, the same components."},
 	beatHackClub: {"HACK CLUB", "Made for Hack Club.", "Built for the Hack Club Slack, so #ship, #scrapbook and your DMs are a click away."},
-	beatFinal:    {"", "You're all set.", "That's Clack. Your workspace is right where you left it."},
+	beatFinal:    {"", "You’re all set.", "That’s Clack. Your workspace is right where you left it."},
 }
 
 // introAccent is each beat's label colour.
@@ -726,8 +732,8 @@ func (in *intro) drawBeats(f *introFrame) {
 // leave is the look of the beat on its way out: a quick fade, drifting
 // away from the one coming in.
 func (in *intro) leave(f *introFrame) fx {
-	e := f.mc.spring(spring{response: 0.3, damping: 1}, in.prevAt)
-	out := fx{a: float32(1 - clamp01(e*1.25)), s: 1}
+	e := f.mc.spring(spring{response: 0.26, damping: 1}, in.prevAt)
+	out := fx{a: float32(1 - clamp01(e*1.45)), s: 1}
 	if !f.reduced {
 		dir := float32(-1)
 		if in.back {
@@ -744,11 +750,18 @@ func (in *intro) leave(f *introFrame) fx {
 
 // beatStart is when beat b's pieces started coming in (the leaving
 // beat keeps its own clock: a beat skipped half-way leaves as it was).
+// A beat that follows another waits introEnterDelay for it to clear.
 func (in *intro) beatStart(b int) time.Time {
 	if b == in.cur {
-		return in.curAt
+		if in.curAt.Equal(in.t0) {
+			return in.curAt
+		}
+		return in.curAt.Add(introEnterDelay)
 	}
-	return in.prevStart
+	if in.prevStart.Equal(in.t0) {
+		return in.prevStart
+	}
+	return in.prevStart.Add(introEnterDelay)
 }
 
 func (in *intro) drawBeat(f *introFrame, b int, parent fx) {
@@ -843,8 +856,14 @@ func (in *intro) drawText(f *introFrame, b int, g introGeom, start time.Time, pa
 	})
 }
 
-// para draws centred, wrapped text whose top-centre is p.
+// para draws centred, wrapped text whose top-centre is p. Lines are
+// balanced (CSS text-wrap: balance): a sentence that needs two lines gets
+// two of about the same length, never one word left alone.
 func (f *introFrame) para(p image.Point, w int, size float32, c color.NRGBA, s string) {
+	if full := f.measure(size, theme.Regular, s); full > w {
+		lines := (full + w - 1) / w
+		w = min(w, full/lines+f.d(size*2.2))
+	}
 	g := f.gtx
 	g.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, 1<<20)}
 	defer op.Offset(image.Pt(p.X-w/2, p.Y)).Push(f.gtx.Ops).Pop()
@@ -962,11 +981,12 @@ func (in *intro) drawDock(f *introFrame) {
 		f.record("mark", fx{a: 1, dx: r.Min.X - hero.Min.X, dy: r.Min.Y - hero.Min.Y, s: r.Dx() / hero.Dx()})
 		drawMark(f.gtx, r.Min, r.Dx(), markParts{lines: [2]float32{1, 1}})
 	}
-	// the small wordmark beside the docked mark
-	if la := float32(clamp01((t - 0.55) / 0.45)); la > 0.004 {
-		e := fx{a: la, dx: f.df(8) * (1 - la), s: 1}
+	// the small wordmark beside the mark, travelling with it and showing
+	// only as it arrives
+	if la := float32(clamp01((t - 0.72) / 0.28)); la > 0.004 {
+		e := fx{a: la, dx: f.df(10) * (1 - la), s: 1}
 		f.with("dock-name", e, f32.Point{}, func() {
-			f.label(image.Pt(int(dock.Max.X)+f.d(10), int(dock.Min.Y)+(int(dock.Dy())-f.d(17*1.25))/2), 17, theme.Black, white, AppName)
+			f.label(image.Pt(int(r.Max.X)+f.d(10), int(r.Min.Y)+(int(r.Dy())-f.d(17*1.25))/2), 17, theme.Black, white, AppName)
 		})
 	}
 }
@@ -1124,9 +1144,12 @@ func (in *intro) drawBar(f *introFrame) {
 				theme.RRect(f.gtx, image.Rect(r.Min.X, r.Min.Y, r.Min.X+max(fw, segH), r.Max.Y), segH/2, alphaMul(white, 0.9))
 			}
 		}
-		// Continue, with Enter's key
-		label := "Continue"
-		if in.cur == beatHackClub {
+		// Continue, with Enter's key (fading out, it keeps the label it had)
+		label, lb := "Continue", in.cur
+		if (in.signIn || in.cur == beatFinal) && in.prev >= 0 {
+			lb = in.prev
+		}
+		if lb == beatHackClub {
 			label = "Sign in"
 			if in.mode == introReplay {
 				label = "Finish"

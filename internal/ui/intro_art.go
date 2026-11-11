@@ -95,9 +95,9 @@ var introBase = hexc(0x0a0812)
 // introPalettes are the beats' lights; the last is the sign-in's.
 var introPalettes = [introBeats]introPalette{
 	beatLogo: {
-		{hexc(0x7b5cff), 0.50, 0.40, 0.46, 0.34},
-		{hexc(0x3b1fb8), 0.16, 0.92, 0.55, 0.42},
-		{hexc(0xffb547), 0.86, 0.12, 0.32, 0.10},
+		{hexc(0x7b5cff), 0.50, 0.36, 0.42, 0.25},
+		{hexc(0x3b1fb8), 0.14, 0.94, 0.55, 0.40},
+		{hexc(0xff9e3d), 0.88, 0.10, 0.24, 0.07},
 	},
 	beatNative: {
 		{hexc(0x6e56ff), 0.22, 0.22, 0.50, 0.30},
@@ -115,8 +115,8 @@ var introPalettes = [introBeats]introPalette{
 		{hexc(0xff5ca8), 0.12, 0.16, 0.30, 0.09},
 	},
 	beatHackClub: {
-		{hexc(0xec3750), 0.50, 0.30, 0.50, 0.30},
-		{hexc(0xff8c37), 0.12, 0.88, 0.42, 0.18},
+		{hexc(0xec3750), 0.50, 0.22, 0.46, 0.19},
+		{hexc(0xff8c37), 0.12, 0.90, 0.40, 0.16},
 		{hexc(0x338eda), 0.90, 0.88, 0.32, 0.10},
 	},
 	beatFinal: {
