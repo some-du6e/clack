@@ -47,10 +47,18 @@ type MenuItem struct {
 	// is regular and the Subtitle wraps to two lines.
 	Radio    bool
 	External bool // draws an external-link glyph at the right
-	// Tag is the item's informative tag (MenuItem renderTagMaybe: a micro
-	// Slack Kit Tag after the label, style "white" while the row is
-	// highlighted): the bell menu's "Customized".
-	Tag string
+
+	// Tag and BadgeCount are Slack Kit MenuItem's tag and badgeCount
+	// (menu_badge.go): a micro Tag ({"Customized", "informative"} on
+	// ChannelNotificationPrefMenu's customized rows) and a c-badge pill
+	// (BadgeStyle: "red" by default, "blue", "white", "black",
+	// "min_gray"), after the label and the shortcut, before the caret.
+	// Slack hides the badge on the highlighted row unless
+	// BadgeHighlighted (search's More filters menu).
+	Tag              *MenuTag
+	BadgeCount       int
+	BadgeStyle       string
+	BadgeHighlighted bool
 
 	Separator bool   // a divider line instead of an item
 	Header    string // a small non-interactive heading row
@@ -79,6 +87,12 @@ type MenuOpts struct {
 	Width  float32         // dp; default 300
 	Anchor image.Rectangle // the element the menu belongs to (flips around it)
 	Side   Side            // Below (default), Above, Right, Left
+	// Popover places the menu as Slack's Popover does at that position
+	// ("right-bottom", "bottom-right", …; slack_place.go) with OffsetX /
+	// OffsetY (dp) and TryOpposite (tryOppositePosition), instead of Side.
+	Popover          string
+	OffsetX, OffsetY float32
+	TryOpposite      bool
 	// AlignRight right-aligns the menu with the anchor's right edge
 	// (header kebab menus).
 	AlignRight bool
@@ -230,7 +244,7 @@ func (m *Menu) rowHeight(gtx layout.Context, th *theme.Theme, i, w int) int {
 		// 3px padding, the 15/22 label, the 13/18 description (≤ 2 lines):
 		// Slack's 46 / 63 px rows
 		x := dp(gtx, 60)
-		_, d := record(loose(gtx, image.Pt(max(1, w-x-dp(gtx, 24)), 1<<20)), func(gtx layout.Context) layout.Dimensions {
+		_, d := record(loose(gtx, image.Pt(max(1, w-x-dp(gtx, 24)-tagAndBadgeW(gtx, th, it)), 1<<20)), func(gtx layout.Context) layout.Dimensions {
 			return para(gtx, th, 13, 18, theme.Regular, colorsOf(th).Fg3, it.Subtitle, 2)
 		})
 		return dp(gtx, 6) + dp(gtx, 22) + d.Size.Y
@@ -453,7 +467,11 @@ func (m *Menu) layoutCard(gtx layout.Context, win image.Point) {
 		if m.opts.AlignRight {
 			a.Min.X = a.Max.X - w
 		}
-		pos = place(a, sz, win, dp(gtx, 8), m.opts.Side)
+		if m.opts.Popover != "" {
+			pos = slackPlace(m.opts.Anchor, sz, win, m.opts.Popover, dp(gtx, m.opts.OffsetX), dp(gtx, m.opts.OffsetY), dp(gtx, 16), dp(gtx, 10), m.opts.TryOpposite)
+		} else {
+			pos = place(a, sz, win, dp(gtx, 8), m.opts.Side)
+		}
 	}
 	m.rect = image.Rectangle{Min: pos, Max: pos.Add(sz)}
 	if len(m.rows) != len(m.items) {
@@ -659,6 +677,7 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 			})
 			right -= dp(gtx, 8)
 		}
+		right = m.tagAndBadge(gtx, th, it, hl, right, sz.Y)
 		for _, s := range []struct {
 			t    string
 			size float32
@@ -730,14 +749,8 @@ func (m *Menu) radioRow(gtx layout.Context, th *theme.Theme, cl *Colors, it *Men
 		})
 		x += dp(gtx, 36)
 	}
-	lw := max(1, sz.X-x-dp(gtx, 24))
-	if it.Tag != "" { // c-menu_item__button align-items:center: the tag sits at the row's right, centred
-		tw := MenuTagWidth(gtx, th, it.Tag)
-		at(gtx, image.Pt(sz.X-dp(gtx, 24)-tw, (sz.Y-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-			return MenuTag(gtx, th, it.Tag, hl)
-		})
-		lw = max(1, lw-tw)
-	}
+	right := m.tagAndBadge(gtx, th, it, hl, sz.X-dp(gtx, 24), sz.Y)
+	lw := max(1, right-x)
 	at(gtx, image.Pt(x, top), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(lw, dp(gtx, 22))}
 		return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
@@ -754,39 +767,6 @@ func (m *Menu) radioRow(gtx layout.Context, th *theme.Theme, cl *Colors, it *Men
 		pointerCursor(gtx, sz)
 	}
 	return layout.Dimensions{Size: sz}
-}
-
-// MenuTagWidth is a micro tag's width: the 12px label and 4px either side.
-func MenuTagWidth(gtx layout.Context, th *theme.Theme, label string) int {
-	return textW(gtx, th, 12, theme.Regular, label) + 2*dp(gtx, 4)
-}
-
-// MenuTag is Slack Kit's Tag with isMicro (client-boot jF6I: inline-flex,
-// height 5 = 20px, padding-inline 4px, radius base 4px, fontSize micro
-// 12px, fontWeight base 400). "informative" is base.highlight.1 on
-// content.highlight.1 (#e3f8ff / #1264a3; dark surface.highlight.1
-// #03669640 / #2ba5ce); a highlighted row's tag is "white": white with
-// palettes.ocean.70 (#1264a3; dark ocean.30 rgb(19,87,149)).
-func MenuTag(gtx layout.Context, th *theme.Theme, label string, highlighted bool) layout.Dimensions {
-	dark := th != nil && th.Dark
-	bg, fg := rgb(0xe3f8ff), rgb(0x1264a3)
-	if dark {
-		bg, fg = color.NRGBA{R: 0x03, G: 0x66, B: 0x96, A: 0x40}, rgb(0x2ba5ce)
-	}
-	if highlighted {
-		bg, fg = rgb(0xffffff), rgb(0x1264a3)
-		if dark {
-			fg = rgb(0x135795)
-		}
-	}
-	w, h := MenuTagWidth(gtx, th, label), dp(gtx, 20)
-	rrect(gtx, image.Rect(0, 0, w, h), dp(gtx, 4), bg)
-	at(gtx, image.Pt(dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
-		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 12, theme.Regular, fg, label)
-		})
-	})
-	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
 // macroAt replays call at p.

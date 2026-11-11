@@ -13,6 +13,7 @@ package fakeslack
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -46,6 +47,8 @@ type listStore struct {
 	next     int
 	cells    []url.Values               // lists.cells.update calls
 	creates  []url.Values               // lists.records.create calls
+	lcreates []url.Values               // lists.create calls
+	dls      []string                   // list downloads (files-pri paths and queries)
 	comments map[string][]slack.Message // "<channel>/<thread ts>" -> replies, root first
 }
 
@@ -269,7 +272,9 @@ func (s *Server) listFile(l *FakeList) map[string]any {
 		"editors": []string{l.Creator, SelfID}, "last_editor": SelfID,
 		"permalink": "https://fake.slack.com/lists/" + TeamID + "/" + l.ID,
 		"is_public": true, "comments_count": 0, "size": 0,
-		"list_metadata": json.RawMessage(meta),
+		"list_metadata":         json.RawMessage(meta),
+		"url_private_download":  s.URL + "files-pri/" + TeamID + "-" + l.ID + "/download/" + listSlug(l.Title),
+		"list_csv_download_url": s.URL + "files-pri/" + TeamID + "-" + l.ID + "/csv/" + listSlug(l.Title) + ".csv",
 		"list_limits": map[string]any{"row_count": len(l.Records), "row_count_limit": 10000, "column_count": len(l.Meta.Schema),
 			"column_count_limit": 100, "view_count": len(l.Meta.Views), "view_count_limit": 25, "archived_row_count": 0,
 			"max_attachments_per_cell": 10, "over_row_maximum": false, "over_column_maximum": false, "over_view_maximum": false},
@@ -278,6 +283,76 @@ func (s *Server) listFile(l *FakeList) map[string]any {
 		f["channels"] = []string{l.Channel}
 	}
 	return f
+}
+
+// listSlug is a list's file name in its download URLs.
+func listSlug(title string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(title) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case b.Len() > 0 && !strings.HasSuffix(b.String(), "_"):
+			b.WriteByte('_')
+		}
+	}
+	return strings.Trim(b.String(), "_")
+}
+
+// serveListDownload answers a list's CSV or JSON download
+// (url_private_download with csv / json for download) with a made-up
+// export of its items; false when id isn't a list.
+func (s *Server) serveListDownload(w http.ResponseWriter, r *http.Request, id, kind string) bool {
+	ls := s.listStore()
+	ls.mu.Lock()
+	l, ok := ls.byID[id]
+	if ok {
+		ls.dls = append(ls.dls, r.URL.Path+"?"+r.URL.RawQuery)
+	}
+	var names []string
+	if ok {
+		for _, rec := range l.Records {
+			for _, f := range rec.Fields {
+				if f.Key == "name" && f.Text != nil {
+					names = append(names, *f.Text)
+				}
+			}
+		}
+	}
+	ls.mu.Unlock()
+	if !ok {
+		return false
+	}
+	if kind == "json" {
+		w.Header().Set("Content-Type", "application/json")
+		b, _ := json.Marshal(map[string]any{"name": l.Title, "items": names})
+		w.Write(b)
+		return true
+	}
+	w.Header().Set("Content-Type", "text/csv")
+	var b strings.Builder
+	b.WriteString("Name\n")
+	for _, n := range names {
+		b.WriteString(strings.ReplaceAll(n, ",", " ") + "\n")
+	}
+	w.Write([]byte(b.String()))
+	return true
+}
+
+// ListDownloads returns the list downloads received (tests).
+func (s *Server) ListDownloads() []string {
+	ls := s.listStore()
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return append([]string(nil), ls.dls...)
+}
+
+// ListCreates returns the lists.create calls received (tests).
+func (s *Server) ListCreates() []url.Values {
+	ls := s.listStore()
+	ls.mu.Lock()
+	defer ls.mu.Unlock()
+	return append([]url.Values(nil), ls.lcreates...)
 }
 
 // List returns a copy of a fixture list's state (tests).
@@ -643,14 +718,21 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 			"event_ts": fmt.Sprintf("%d.000700", time.Now().Unix())})
 		return ok(), true
 	case "lists.templates":
-		return ok("starter_templates", []any{
-			map[string]any{"id": "Ttodo", "name": "To-do list", "description": "Keep track of what needs doing", "icon": ":white_check_mark:"}},
-			"templates", []any{
-				// Slack's production template ids (PTs7.op), which the Files
-				// view's Templates strip picks by
-				map[string]any{"id": "F07QP7D3TC5", "name": "Project tracker", "description": "Plan and track a project", "icon": ":rocket:"},
-				map[string]any{"id": "F07QS06GTNX", "name": "Feedback tracker", "description": "Collect and triage feedback", "icon": ":speech_balloon:"},
-				map[string]any{"id": "F07QRV73FNF", "name": "Quarterly plan", "description": "Plan the quarter's projects", "icon": ":calendar:"}}), true
+		// Slack's production template ids (PTs7.op), which the Files
+		// view's Templates strip picks by
+		tpls := []any{
+			map[string]any{"id": "F07QP7D3TC5", "name": "Project tracker", "description": "Plan and track a project", "icon": ":rocket:"},
+			map[string]any{"id": "F07QS06GTNX", "name": "Feedback tracker", "description": "Collect and triage feedback", "icon": ":speech_balloon:"},
+			map[string]any{"id": "F07QRV73FNF", "name": "Quarterly plan", "description": "Plan the quarter's projects", "icon": ":calendar:"}}
+		// the file-backed set (lists_file_backed_templates) also has the
+		// contact tracker, which the sales tracker of the plain set replaces
+		files := append(append([]any(nil), tpls...),
+			map[string]any{"id": "F07QKDVNEK1", "name": "Contact tracker", "description": "Keep track of contacts", "icon": ":busts_in_silhouette:"})
+		plain := append(append([]any(nil), tpls...),
+			map[string]any{"id": "sales_tracker", "name": "Sales tracker", "description": "Track deals through the pipeline", "icon": ":chart_with_upwards_trend:"})
+		starter := []any{map[string]any{"id": "Ttodo", "name": "To-do list", "description": "Keep track of what needs doing", "icon": ":white_check_mark:"}}
+		starterFiles := []any{map[string]any{"id": "F08C8VB1DN3", "name": "To-do list", "description": "Keep track of what needs doing", "icon": ":white_check_mark:"}}
+		return ok("starter_templates", starter, "templates", plain, "template_files", files, "starter_template_files", starterFiles), true
 	case "lists.create":
 		name := f.Get("name")
 		if name == "" {
@@ -661,6 +743,20 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		now := time.Now().Unix()
 		id := fmt.Sprintf("F0LISTNEW%02d", ls.next)
 		l := &FakeList{ID: id, Title: name, Creator: SelfID, Created: now, Updated: now}
+		ls.lcreates = append(ls.lcreates, f)
+		if src, found := ls.byID[f.Get("copy_from_list_id")]; found { // More actions > Make a copy
+			l.Meta = src.Meta
+			l.Meta.Icon = f.Get("icon")
+			for _, r := range src.Records {
+				r.ID, r.ListID = r.ID+"C"+id[len(id)-2:], id
+				l.Records = append(l.Records, r)
+			}
+			ls.byID[id] = l
+			ls.order = append(ls.order, id)
+			file := s.listFile(l)
+			ls.mu.Unlock()
+			return ok("list", file), true
+		}
 		switch tpl := f.Get("template_id"); {
 		case tpl == "blank" && f.Get("todo_mode") == "true": // the channel tab bar's new list (lists_add.go)
 			t := todoList(now)
@@ -670,10 +766,10 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		case tpl == "add_to_new_list": // "Add to list…" > Create New List
 			l.Meta.Schema = []lists.Column{{ID: "Col0NEWNAME", Key: "name", Name: "Name", Type: lists.Text, IsPrimary: true, Options: lists.Options{Format: "text"}},
 				{ID: "Col0NEWMSG", Key: "Col0NEWMSG", Name: "Message", Type: lists.Message}}
-		case tpl == "Ttodo":
+		case tpl == "Ttodo", tpl == "F08C8VB1DN3": // the to-do starter, plain and file-backed
 			t := todoList(now)
 			l.Meta.Schema, l.Meta.TodoMode = t.Meta.Schema, true
-		case tpl == "F07QP7D3TC5", tpl == "F07QS06GTNX", tpl == "F07QRV73FNF":
+		case tpl == "F07QP7D3TC5", tpl == "F07QS06GTNX", tpl == "F07QRV73FNF", tpl == "F07QKDVNEK1", tpl == "sales_tracker":
 			k := kitchenList(now)
 			l.Meta.Schema = k.Meta.Schema[:5]
 		default:

@@ -105,8 +105,10 @@ type Palette struct {
 	FileIconBg, FileIconPDF        color.NRGBA
 	FileIconZip, FileIconText      color.NRGBA
 	PlayBg, PlayFg                 color.NRGBA
-	TooltipBg, TooltipText         color.NRGBA // emoji :name: tooltips
+	TooltipBg, TooltipText         color.NRGBA // emoji :name: tooltips (theme/tooltip.go)
+	TooltipGlow                    color.NRGBA // the dark mode tooltip outline (none in light)
 	FooterSep                      color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
+	HuddleJoinBorder               color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -157,8 +159,9 @@ func LightPalette() Palette {
 		Danger: rgb(224, 30, 90), DangerText: rgb(255, 255, 255),
 		FileIconBg: rgba(29, 28, 29, 0.04), FileIconPDF: rgb(224, 30, 90), FileIconZip: rgb(97, 96, 97), FileIconText: rgb(97, 96, 97),
 		PlayBg: rgba(0, 0, 0, 0.4), PlayFg: rgb(255, 255, 255),
-		TooltipBg: rgb(29, 28, 29), TooltipText: rgb(255, 255, 255),
-		FooterSep: rgb(0xcb, 0xcc, 0xcf),
+		TooltipBg: theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText,
+		FooterSep:        rgb(0xcb, 0xcc, 0xcf),
+		HuddleJoinBorder: rgb(116, 219, 175),
 	}.flat()
 }
 
@@ -180,8 +183,9 @@ func DarkPalette() Palette {
 	p.ButtonBorder, p.ButtonHoverBg = rgba(232, 232, 232, 0.3), rgb(34, 37, 41)
 	p.Primary = rgb(0, 122, 90)
 	p.Highlight = rgba(242, 199, 68, 0.3)
-	p.TooltipBg, p.TooltipText = rgb(232, 232, 232), rgb(26, 29, 33)
+	p.TooltipBg, p.TooltipText, p.TooltipGlow = theme.DarkPalette.Tooltip, theme.DarkPalette.TooltipText, theme.DarkPalette.TooltipGlow
 	p.FooterSep = rgb(0xb9, 0xba, 0xbd)
+	p.HuddleJoinBorder = rgb(0, 85, 61)
 	return p.flat()
 }
 
@@ -226,6 +230,9 @@ type Style struct {
 	// 18px; canvases use --text-code-line-height, 20px).
 	PreLine float32
 
+	// flatHeadings is Slack's p-header_block--flat_scale (SetFlatHeadings).
+	flatHeadings bool
+
 	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped
 	prev  map[wordKey]*shaped // previous generation (see word)
@@ -249,6 +256,17 @@ func NewStyle(sh *text.Shaper, imgs Images, p Palette) *Style {
 func (s *Style) SetPalette(p Palette) {
 	s.Palette = p
 	s.gen = styleGens.Add(1)
+}
+
+// SetFlatHeadings switches header blocks to Slack's flat heading scale
+// (Header, boot-shared /WQN: p-header_block--flat_scale under cQrd WZ,
+// flat_message_heading_scale on or portable_content_composer treatment);
+// a change re-lays every View out.
+func (s *Style) SetFlatHeadings(on bool) {
+	if s.flatHeadings != on {
+		s.flatHeadings = on
+		s.gen = styleGens.Add(1)
+	}
 }
 
 // styleGens numbers style generations across every Style: Views compare

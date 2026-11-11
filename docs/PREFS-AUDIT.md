@@ -11,7 +11,7 @@ Every Slack Preferences page in Clack, compared against:
   `gantry-v2-async-client-boot-shared`, and `modern.vendor` KlX6 for the
   theme shade tables.
 
-Plugins / Themes / Plugin settings and Advanced > Updates / Troubleshooting
+Plugins / Themes / Plugin settings and Clack (updates, Replay introduction, live updates)
 were out of scope and left as they were.
 
 **Legend:** *applied* means Clack acts on the pref. *Server* means Slack's
@@ -35,7 +35,7 @@ real. *Greyed* means the row is drawn the way Slack draws it, disabled, with
 | Salesforce | **fixed**. Slack's exact copy; removed Clack's invented sentence | none |
 | Connected accounts | **fixed**. Slack's copy, Learn more, "Apps connected through workflows". **2026-11-09:** the list is fetched like ConnectedWorkflowAccountsList (fetchUserAuth: apps.auth.external.userAuths.get, reason fetch_user_auth): one row per app, or "No accounts found". Still different: no Manage button (Slack's manage-accounts modal isn't ported) | none |
 | Privacy & visibility | **fixed**. Learn more links, "Preferences only apply to this workspace" note, the workspace name in Contact sharing, People you've hidden. Removed the invented Privacy Mode section. **2026-11-09:** Find my workspaces opens Slack's get-started find page (Rgd9); Invitations you’ve blocked asks users.emailVerificationStatus.get and, verified, lists users.listIgnoredUsers with each email's unblock button (UnblockConfirmationModal, users.removeUserBlock), or "You haven’t blocked any invitations from anyone yet."; unverified, Slack's 👋 copy. People you’ve hidden lists hidden_users with unhide (unhideUserApi writes the list without them), or "You haven’t hidden anyone yet." Still different: "Send Verification Email" is greyed (Slack's code-entry flow goes through signin.confirmCode); Clack doesn't hide hidden people's messages | server: who_can_see_account_by_searching_email, who_can_share_contact_card, hidden_users |
-| Advanced | **fixed**. Slack's Input options order and copy, Enter-key radios, Search options, Download location, Confirmations and warnings, Other options, Launch on login / notification-area rows (Linux, Windows). Removed "Copy message text as Markdown" (gated off in the live dialog). Clack's own Live updates / Updates / Troubleshooting section kept | **newly applied:** msg_input_send_btn (Enter adds a line, Mod+Enter sends). Applied: enter_is_special_in_tbt, plain_text_mode. **2026-11-09:** disable_smart_symbols (behind composer_smart_symbols, as iZ.w gates the row: TextSubstitutionsModule's "-- " → "— ", -> ← ↔, ... → …, type-time curly quotes, none in code, each its own undo), search_exclude_channels (Slack's channel multi-select; the In suggestions drop them as parseSuggestions does, Slack's servers drop the results), stick_user_sort (a new search starts from search_sort; the sort menu says "Most relevant" and writes search_sort, "Most relevant (default)" otherwise, plus "Edit default"), should_show_unsend_message_confirmation (Mod+Z in the empty composer within 15 s of a send unsends it and puts it back, behind Slack's Unsend message dialog), confirm_user_marked_away (after connecting while manually away, "Set yourself to active?"), suppress_link_warning (isLinkSuspicious and the "Double-check this link" dialog on message links). Server: overloaded_message_enabled, in_prod_surveys_enabled. Greyed: disable_link_truncation (its reader isn't in the public client bundles checked), hide_sc_files_sharing_speed_bump and hide_external_members_canvas_sharing_speed_bump (the send-time Slack Connect "Is it OK to send this?" dialog isn't ported), download location, launch on login, notification area |
+| Advanced | **fixed**. Slack's Input options order and copy, Enter-key radios, Search options, Download location, Confirmations and warnings, Other options, Launch on login / notification-area rows (Linux, Windows). Removed "Copy message text as Markdown" (gated off in the live dialog). Clack's own rows moved to its own Clack tab (after Advanced, where a Taut tab lands; three rows: updates, Replay introduction, live updates; Troubleshooting is the macOS Help menu's) | **newly applied:** msg_input_send_btn (Enter adds a line, Mod+Enter sends). Applied: enter_is_special_in_tbt, plain_text_mode. **2026-11-09:** disable_smart_symbols (behind composer_smart_symbols, as iZ.w gates the row: TextSubstitutionsModule's "-- " → "— ", -> ← ↔, ... → …, type-time curly quotes, none in code, each its own undo), search_exclude_channels (Slack's channel multi-select; the In suggestions drop them as parseSuggestions does, Slack's servers drop the results), stick_user_sort (a new search starts from search_sort; the sort menu says "Most relevant" and writes search_sort, "Most relevant (default)" otherwise, plus "Edit default"), should_show_unsend_message_confirmation (Mod+Z in the empty composer within 15 s of a send unsends it and puts it back, behind Slack's Unsend message dialog), confirm_user_marked_away (after connecting while manually away, "Set yourself to active?"), suppress_link_warning (isLinkSuspicious and the "Double-check this link" dialog on message links). Server: overloaded_message_enabled, in_prod_surveys_enabled. **2026-11-10:** disable_link_truncation applied the way Slack's client applies it: InputOptionsPref writes !checked with setUserPrefByApi, and the prefs-dialog chunks are the only client code that reads it. Greyed: hide_sc_files_sharing_speed_bump and hide_external_members_canvas_sharing_speed_bump (the send-time Slack Connect "Is it OK to send this?" dialog isn't ported), download location, launch on login, notification area |
 
 ## Still greyed after part A, and the plan for each
 
@@ -121,6 +121,30 @@ itself and a Vacationing that doesn't clear becomes a start and end range.
 Clear Status is clearUserStatus (status_text_canonical null, ending a snooze
 that belonged to the status). Like Slack, saving shows no toast.
 
+**Opening it, the tip and the calendar row** (exp-media, CDN build
+4d0c78085232). Mod+Shift+Y is Slack's status shortcut (boot-render PG1Q:
+openCustomStatusDialog with fromKeyboardShortcut); Clack had bound it to an
+invented dark mode toggle, and Slack has no dark mode shortcut. The shortcut
+first saves used_custom_status_kb_shortcut (setUserPrefByApi), and while that
+pref is unset the modal, however it was opened, shows the keyboard hint
+(D72a showKeyboardHint): a .p-pill 50px under the modal's bottom, centred on
+it, "**Tip:** Open this faster with **⌘ + Shift + Y**" (Ctrl elsewhere), for
+as long as the modal is open (Clack showed it only from the user menu, at the
+window's bottom, for 4 s). The "Automatically updates" row was always "In a
+meeting — Based on your Google Calendar" and toasted that calendar sync isn't
+available. Slack builds it from getCurrentCalendarAndUser on mount
+(calendar.getInstalledCalendars {}, then calendar.user.info {app_type} when
+Google or Outlook is installed; the current calendar from mx_calendar_type) and
+getAllCalendarPresets (aq7I), so there's no row without a manageable or
+installed calendar app. The row has the app's logo and "Based on your
+{Google} Calendar" or "{Google} Calendar updates are on". Pressing it swaps
+the body for the calendar step (renderCalendarModalSyncText's line, the status
+sync picture) with "ⓘ Learn more" and Back + Add / Connect / Turn On / Turn
+Off: Add opens slack.com/interop/{gcal,ocal}app/install, Connect the calendar
+user's provider_auth_url, Turn On/Off its turn_on_status_sync_url or
+calendar.user.toggleStatusSync {calapp_user_id, enable} (the store first, back
+on failure), then the modal closes.
+
 **Focus mode** is real in this build: Slack calls it the silent sidebar, and
 it exists under the silent_sidebar experiment (the live dialog's Appearance
 row, which only ThemeColorModeContainer draws under that experiment, shows
@@ -136,10 +160,16 @@ a subtitle, "Notifications paused (until …)", the Duration select and
 "Continue to get notifications from VIPs" (priority_dnd_override). While it
 is on, unread rows aren't bold, mention badges are dots (the count on hover),
 and the theme is the Silent Sidebar Gray theme, whose sidebarInverted is
-focus_mode_force_dark_mode_enabled. Not built: focus music (Slack's Miles
-Davis soundtrack, under focus_mode_music), the Custom date/time duration
-(focus_mode_custom_duration treatment), the calendar-started popover
-(calendar_focus_sync), the first-open Lottie animation and swirling blobs
+focus_mode_force_dark_mode_enabled. Under focus_mode_custom_duration
+"treatment" (exp-media, CDN build 4d0c78085232) the Duration select also has
+Custom: picking it writes today's next half hour an hour on, and the row under
+the select holds the date button ("Nov 11th, 2026", Slack's DatePicker from
+today to a year on) and a 30-minute time select (later than now on today);
+each change writes the pref, and turning focus mode off puts Custom back to
+"Don't turn off". Not built: focus music (Slack's Miles
+Davis soundtrack, under focus_mode_music), the calendar-started popover
+(calendar_focus_sync, which also starts a Custom duration at the event's end),
+the first-open Lottie animation and swirling blobs
 (Clack draws the reduced-motion rendering), the recap
 (focus_mode_recap, an AI summary), the button's glow coachmark, and the
 other silent sidebar themes (only Gray is the default, and Slack's picker for
@@ -607,3 +637,9 @@ dev.
   `TestActStatusModalScheduledSection` (popups, actions_status_api_test.go);
   `TestFocusExpiration`, `TestFocusModeToggle` (ui, focus_mode_test.go). All
   write to fakeslack only.
+- exp-media (2026-11-10): `TestStatusShortcut` (ui), `TestActStatusTipPill`,
+  `TestActTipKeys`, `TestActCalendarRules`, `TestActStatusNoCalendar`,
+  `TestActStatusCalendarStep` (popups, actions_status_calendar_test.go);
+  `TestFocusCustomDuration`, `TestFocusCustomShots` (ui); `TestEmojiToneChoices`,
+  `TestEmojiTonePopover` (popups); `TestDeferStreamingNotification` (ui) and
+  `TestStreamDoneEvent`, `TestOpenStreams` (core).

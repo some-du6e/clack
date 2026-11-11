@@ -15,9 +15,9 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Feature | Slack (evidence) | Clack before | Status |
 |---|---|---|---|
 | Placeholder | `BaseSearch.getSearchText`: "Search {teamName}"; on Grid the org name (`getSelfEnterpriseOrgNameWithFallback`); "(GovSlack)" variant | "Search " + team name | **matched** |
-| With a query | "Search: {plainTextQuery}" | the bare query | **open**: the pill is drawn in internal/ui/chrome.go and bbm.go, which aren't search code (ui root) |
-| Clear button | `p-top_nav__search__clear`: a 16px close icon after the text when there's a query, tooltip "Clear search" (300 ms), runs `clearSearchInput` | none | **open**: same files |
-| Opening | `onMouseDown` (left button, no Ctrl) and Enter/Space open the omniswitcher | opens on click (press + release) | **open**: same files |
+| With a query | "Search: {plainTextQuery}"; on Windows and Linux the icon hides (`p-top_nav__search--windows-linux.p-top_nav__search--with-query`) | the bare query | **fixed** (exp-search: internal/ui/search_topbar.go) |
+| Clear button | `p-top_nav__search__clear`: 26×26 at the right, a 16px close icon, tooltip "Clear search" (300 ms, below), runs `clearSearchInput` | none | **fixed** (exp-search) |
+| Opening | `onMouseDown` (left button, no Ctrl) and Enter/Space open the omniswitcher, with the query it holds | opens on click (press + release), empty | **fixed** (exp-search): on the press; Ctrl+press opens nothing |
 | Size, icon, text | measured in docs/FIDELITY.md row 10 (width `min(1000, ⅔·…)`, search icon 16 at +10, 13px text at +34) | same | **matched** |
 | ⌘K / Ctrl+K | the same omniswitcher, empty | `NewQuickSwitcher` | **matched** |
 
@@ -27,11 +27,11 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 |---|---|---|---|
 | Frame, input row, placeholder | `SearchInputBox`: "Search across people, channels, files, workflows, and more"; geometry measured earlier (649 wide over the pill, input 48 + 1px line) | same | **matched** |
 | Placeholder per mode | "Search messages at {teamName}" (and channels, files, people, DMs, workflows) in a searchy mode; "Ask Slackbot…"; "Search for anything" | default text only | **open**: Clack has no searchy modes or Slackbot mode |
-| Clear, Filter, Recent searches buttons | Clear when there's text, the filter button opens the results page, the clock toggles history | same | **matched** |
-| Blank slate | `renderBlankSlateSuggestions`: Unreads & drafts (five, "Show N more" / "Show fewer", 24 at most), a divider, Recent places | same | **matched** |
+| Clear, Filter, Recent searches buttons | Clear when there's text, the clock toggles history; the filter button is `QuickFilterMenu` ("Show filters" / "Hide filters", icon `refine` 20), which toggles the quick filter row (In this channel, From me, Includes me, Has a link, Threads only, In Activity, Last 7 days, and a + menu) | the filter button opens the results page | **open** (exp-search found it): Clack has no quick filter row or filter tokens; `omni_date_quick_filters` changes that row's Date entry |
+| Blank slate | the merged zero state (`OXCx`, build 4d0c78085232): Unreads & drafts, ten then "Show N more" / "Show fewer" (24 at most), a divider, Recent places: three when there are unreads, else five, without the unreads' conversations | five unreads, five places, unreads repeated | **fixed** (exp-search) |
 | "Show N more" states | `.c-search_autocomplete__see_more` 13px link colour; `:hover` underlined; `--selected` base-ter and underlined | grey whenever it was the selection row, never underlined | **fixed** |
-| Recent searches | history mode lists them, "Your recent searches will show up here." when empty; Slack loads them from the server (`searchAutocomplete` fetcher: query, limit, use_hash, type, query_suggestion_limit) | this session's searches, kept in memory | **open**: the method name is a constant module the build doesn't inline, so it wasn't confirmed |
-| Typing | top hit, "Show results for:", then people and channels (edge `users/search`, `channels/search`), Recent messages (`search.inline`), files and canvases (`search.autocomplete.files`) | same | **matched** |
+| Recent searches | history mode lists ten, "Your recent searches will show up here." when empty. `desktop_search_recents_read` on: the recents pref's searches (users.prefs.get prefs=recents); off: `search.autocomplete` {query "", limit 100, use_hash} (`zyu/`; the method is `1PcI` in gantry-v2-vendors), cached 5 minutes and dropped after search.save | this session's searches, kept in memory | **fixed** (exp-search: core/search_recents.go). Slackbot rows are left out: Clack has no Slackbot to reopen them |
+| Typing | top hit, "Show results for:", then people and channels (edge `users/search`, `channels/search`), Recent messages (`search.inline`), files and canvases (`search.autocomplete.files`); the places are cut to 15, or to 5 (`omni_quick_message_results` on) / 8 once quick messages show (`jAWM`) | the same, always five places | **fixed** (exp-search) |
 | Selection at first | `selectedIndex` null: nothing is selected; suggestion 0 is `--pseudo-selected` (base-ter #eaeaea) while the input has focus, with the Enter key in `suggestion_item_shortcut` (16px from the content) | the first row selected and drawn grey with the Enter chip | **fixed**: same look, now a pseudo-selection |
 | Picked row | `.c-search_autocomplete__suggestion_item--selected`: #1264a3, white text, icons and secondary text; no badge (`!r && S`), no Enter key | grey like the first row; badge and Enter chip drawn | **fixed** |
 | Mouse | `onMouseMove` picks the row; `onMouseLeaveList` sets null again | hover moved the grey selection, which stayed after leaving | **fixed** (`gesture.Hover` on the list) |
@@ -48,7 +48,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | from:@ / in:# completion | the input is a Texty editor (`completeOnMembers`, `completeOnChannels`, `completeOnEmoji`); `useSearchFilterAutoSlug` turns "from:@name " into a filter token | a plain text field | **open**: no Texty input in the popover |
 | Modifier vocabulary | fsda `wd`: has, type, from, to, in, is, before, during, on, after, hasmy, with, creator, threads, dm, each also with "-" | no hasmy:, threads:, dm: | **fixed** (`srModKeys`) |
 | Date values | `buildDateCapturePattern`: today, yesterday, week, month, year, month names, numeric dates | passed through as typed | **matched** (Slack's server reads them) |
-| Message cards | "Recent messages" cards measured earlier (border, avatar 36, name 15/900, highlights) | same | **matched** |
+| Message cards | `omni_quick_message_results` on: cards (`quick_message_item--card`: 1px otl-ter, radius 12; picked: #1264a3, white); a DM reads "Direct Message with {name}" ("…with you" in your own). Off: the plain row (the text, then "name • date", "Reply in a thread"). Quick messages need plain words (one STRING token) or words and an in: filter, at least 3 characters | radius 8, picked grey, the DM's name only; searched any text | **fixed** (exp-search) |
 
 ## Results page
 
@@ -60,29 +60,30 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Messages source icon | `SlackIcon`, the four-colour logo image | monochrome slack-logo glyph | **open**: icons are owned elsewhere |
 | "Display options: Show as a left sidebar" | source menu footer | none | **open**: not built (see SEARCH.md) |
 | Messages pills | `_p` messages: From, In, With ("Includes me"), Has a link, Threads only, Last 7 days, then More | same | **matched** |
-| Pills that don't fit | `useSearchFiltersResponsive` measures each `${filter}-button` and moves the rest into More | a fixed set | **open**: not built; the fixed set is what fits at 1440 px |
-| Files pills | From, In, File type, Date, Only my channels (With in More) | the source pill only | **open**: not built; modifiers typed into the query do work |
-| Canvases pills | Creator, From, In, Date (With in More) | the source pill only | **open**: not built |
+| Pills that don't fit | `useSearchFiltersResponsive`: the source pill and the filters are kept while they fit in the row less 24, More and Reset (+8), each taking its width + 8; the rest go to More | a fixed set | **fixed** (exp-search: popups/search_view_filters.go) |
+| Reset | `p-search_filter__reset_button` (13px, link colour, underlined on hover, 8px after More) while filters are applied (a modifier, Exact matches only, or the Exclude bot messages / Only my channels prefs); it clears them all, the prefs too | none | **fixed** (exp-search) |
+| Files pills | From, In, File type, Date, Only my channels (the search_only_my_channels pref); More: With people | the source pill only | **fixed** (exp-search). Slack draws a chosen person's avatar in the pill; Clack's Pill draws icons only |
+| Canvases pills | Created By, From, In, Date; More: With people | the source pill only | **fixed** (exp-search) |
 | Channels pills | All channels, Channel type (Any / Public / Private / Archived / External), Workspace, Org | the source pill only | **open**: core has no channel_type / exclude_my_channels options |
 | People pills | Title, Location, Workspace, Department (Account type, Org, Celebration, Division in More) | the source pill only | **open**: core has no profile_* options |
-| DMs pills | With | the source pill only | **open**: not built |
+| DMs pills | With (a people menu); no More | the source pill only | **fixed** (exp-search) |
 | More: rows | Saved preferences (Exclude bot messages, Only my channels), Results (Exact matches only), With people, Message has, Message is, Date, File type, Reactions | same rows | **matched** |
-| More: Exclude archived | under Results, only when the menu's `e` prop is set and the tab isn't excluded | none | **open**: the gate wasn't resolved |
+| More: Exclude archived | under Results, only with `search_explore_freshness_signals` on (`e`, not assigned to the account) and not `hideExcludeArchived`; sends channel_type exclude_archived | none | **fixed** (exp-search): hidden, as for the account; shown and sent when the group is forced on |
 | More: width | `e5`: width 240 | 280 | **fixed** |
 | More: icons | Message has `message`, Reactions `emoji` (16px) | `attach`, `add-reaction` | **fixed** |
 | More: Date description | `description: /upd S({after, before})`: "After Nov 3, 2026", "Before …", "Any time", "Today", "Yesterday", "On …", a preset's name, "Nov 3 - Nov 9" | none | **fixed** (`srDateLabel`) |
 | More: Date rows | `type: radio` | a check at the right | **fixed** (radio rows) |
 | More: File type icons | `labelIcon` from `$.t9` (canvas, lists, document, email, image, pdf-file, presentation, text-snippet, spreadsheet, sound, video), 8px before the label | none | **fixed** where Clack has the glyph. pdf-file, presentation and text-snippet are **open**: no glyphs |
-| More: counts | blue `badgeCount` on submenus with selections; `getMoreFiltersCount` on the More pill | none (the pill only turns active) | **open**: popups/menu.go has no badge slot (not search code) |
+| More: counts | blue `badgeCount` on submenus with selections; `getMoreFiltersCount` on the More pill | none (the pill only turns active) | **open**: the slot is there now (popups `MenuItem.BadgeCount`, `BadgeStyle: "blue"`, `BadgeHighlighted` for `.p-more_filters_dropdown__menu`, whose badges stay on the highlighted row; branch exp-menus); the More menu still has to fill it, and the pill's count is search code |
 | Sort, messages | `MessageEntity`: Most relevant (default), Newest, Oldest, divider, Edit default; "(default)" dropped with stick_user_sort | same | **matched** |
-| Sort, other tabs | Files: Most relevant, Oldest, Newest, A to Z, Z to A; Canvases adds Last updated; Channels: Most relevant, Newest, Oldest, Most members, Fewest members, A to Z, Z to A; People: Most relevant, A to Z, Z to A; each with Edit default | none | **open**: core's files/channels/people calls have no sort option, and the A to Z values weren't traced |
+| Sort, other tabs | Files: Most relevant (score), Oldest (timestamp_asc), Newest (created), A to Z (name), Z to A (name_desc); Canvases add Last updated (timestamp); Channels: Most relevant, Newest (created), Oldest (created_asc), Most members, Fewest members, A to Z, Z to A; People: Most relevant, A to Z, Z to A; each then Edit default; getSortParams maps them (name → name asc, …). With stick_user_sort the choice is kept in search_file_sort / search_channel_sort / search_people_sort. The Files tab starts at Most relevant; only count-only calls are forced newest first | none; the Files tab always newest first | **fixed** (exp-search) |
 | Give feedback | `CombinedViewFeedbackLink` (`short`): CombinedSearchFeedbackModal for the selected module; hidden when `has_hipaa_compliance`, `ml_opt_out` or `search_feedback_opt_out` is on | toast "Feedback isn't supported yet" | **fixed**. The opt-out flags aren't read: **open** |
 | Message result cards, hover bar, More actions | measured in the 2026-11-08 audit | same | **matched** |
 | Highlights | U+E000/E001 markers stripped; terms highlighted | same | **matched** |
 | Pagination | numbered `c-pagination` (`getCurrentPageRange`) | same | **matched** |
 | No results: text | `GenericSearchEmptyState`: "Nothing turned up", "You may want to try using different keywords, checking for typos, or adjusting filters." | "…check for typos, or adjust filters." (the Slackbot variant's wording) | **fixed** |
 | No results: feedback line | "Not the results you expected? Give feedback." on its own line first; the link opens the combined modal for the module | none | **fixed** |
-| No results: Search without filters | `RelaxationSuggestion`: an outline button when the response suggests dropping a filter (messages) | none | **open**: core doesn't read the relaxation data |
+| No results: Search without filters | `RelaxationSuggestion`: with the messages response's unfiltered_result_count (> 0) and unfiltered_result_filter, an outline medium "Search without filters" under the empty state (margin-top 16); it clears in, from, with, creator, has, is, my reactions, file type and the dates | none | **fixed** (exp-search) |
 | No results: Slackbot | Ask Slackbot / Broaden Search variants for teams with AI search | none | **open**: AI search isn't on the account |
 | Opening a canvas | `openCanvas` | `OpenCanvasFull`, else toast "Opening canvases isn't supported yet" | **fixed**: the canvas view (`docs/<id>`), no toast |
 | Opening a list | list view | handled as a file | **fixed**: `lists/<id>` |
@@ -128,10 +129,11 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 
 ## Counts
 
-Rows: 91. **matched** 24, **fixed** 37, **open** 30. Four fixed rows keep an open remainder (File type icons, the results page's feedback opt-out flags, the file details flexpane, active_filters); they're counted as fixed.
+Rows: 92. **matched** 20, **fixed** 52, **open** 20 (after exp-search, 2026-11-11: 15 rows fixed and one added, the filter row's Reset; the switcher's filter button moved from matched to open, since Slack's toggles a quick filter row). Fixed rows that keep an open remainder (File type icons, the feedback opt-out flags, the file details flexpane, active_filters, the pills' avatars, Slackbot history rows) are counted as fixed.
 
 ## Not done
 
-- Everything marked open above. The largest pieces are the other tabs' filters and sorts, the Texty input with from:/in: completion and filter tokens, the suggestion action toolbar (Tab), and the file details flexpane.
-- The top-bar box's "Search: query" text and clear button need internal/ui/chrome.go and bbm.go, which belong to the ui root.
+- Everything marked open above. The largest pieces are the Texty input with from:/in: completion and filter tokens (and with it the switcher's quick filter row, which `omni_date_quick_filters` changes), the suggestion action toolbar (Tab), the file details flexpane, and the Channels and People tabs' filters (channel_type, profile fields).
+- The Files, Channels and People rows are still the 2026-11-08 ones: Slack draws them as UnifiedSearchInteractiveList rows (ChannelListItem and its siblings), which weren't re-measured.
 - The popover's selection still reaches Slick plugins as before: `selectedIndex` is the pseudo-selected row when nothing is picked (slick_search.go isn't search_*.go).
+- docs/EXPERIMENTS.md has the search experiments' rows (exp-search).

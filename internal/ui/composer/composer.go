@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
@@ -96,6 +97,9 @@ type Composer struct {
 	pending       *outgoing     // the message sendJS is deciding on
 	top           int           // context bar height above the box
 	ctxShowing    bool          // onIsContextBarShowing
+	sbar          scheduledBar  // the scheduled-send context bar (schedule_bar.go)
+	cmdPick       core.Command  // the command last picked from the / list
+	fbar          floatBar      // the floating formatting bar (floatbar.go)
 	drewInput     bool          // the editor was laid out (no roadblock)
 	roadblock     string        // SetRoadblock: Slack's notice instead of the editor
 	rbLink, rbURL string        // SetRoadblockLink: a link after it ("Learn more")
@@ -221,6 +225,7 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 
 func (c *Composer) init() {
 	c.ed = NewEditor()
+	c.ed.Snippets = c.edit == nil // MessageInput's enableSnippetCreation; not the edit composer
 	c.bindSlugs()
 	if c.api.a != nil {
 		warmEmoji()
@@ -229,6 +234,14 @@ func (c *Composer) init() {
 	}
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
+	c.ed.Intercept = c.floatBarKey(c.ed.Intercept) // the floating bar's Escape first
+	accept := c.ac.OnAccept
+	c.ac.OnAccept = func(it acItem, start, end int) {
+		if it.Kind == acCommand && it.Command != nil {
+			c.cmdPick = *it.Command // the picked command's app: slashCommandAppId
+		}
+		accept(it, start, end)
+	}
 	c.ac.later, c.ac.thread, c.ac.threadTS = c.later, c.ts != "", c.ts
 	if c.edit == nil { // the conversation's files, kept across composers
 		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
@@ -378,6 +391,9 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	c.acceptAutocomplete()
 	if c.ac.Open() && c.drewInput {
 		c.layoutPopup(gtx)
+	}
+	if c.drewInput { // floatbar.go: the formatting bar over a selection
+		c.layoutFloatBar(gtx, c.ui.InputOffset().Add(image.Pt(0, c.top)))
 	}
 	c.handleActions(gtx)
 	return dims
@@ -604,11 +620,13 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvPasted:
 			c.att.PasteClipboardImage()
 		case EvPasteLimit:
-			c.pasteLimitDialog()
+			c.pasteLimitDialog(c.ed.RefusedPaste())
+		case EvSnippet:
+			c.openSnippet(true)
 		case EvPlusMenu:
 			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its button
 			if c.edit == nil && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {
-				c.att.Menu(c.ui.rect[crAttach].Add(c.Origin).Add(image.Pt(0, c.top)), c.ch)
+				c.att.Menu(c.ui.rect[crAttach].Add(c.Origin).Add(image.Pt(0, c.top)), c.plusMenu())
 			}
 		case EvNavBack, EvNavForward:
 			if n, ok := c.h.(historyNavigator); ok && c.edit == nil {
@@ -649,7 +667,12 @@ func (c *Composer) changed() {
 }
 
 func (c *Composer) handleActions(gtx layout.Context) {
-	for _, a := range c.ui.Actions() {
+	acts := c.ui.Actions()
+	if len(c.fbar.acts) > 0 { // a copy: Actions hands back the chrome's own buffer
+		acts = append(append([]chromeAction(nil), acts...), c.fbar.acts...)
+		c.fbar.acts = c.fbar.acts[:0]
+	}
+	for _, a := range acts {
 		a.Anchor = a.Anchor.Add(c.Origin).Add(image.Pt(0, c.top))
 		switch a.Kind {
 		case caFocus:
@@ -668,7 +691,7 @@ func (c *Composer) handleActions(gtx layout.Context) {
 			c.toggleShowFormatting()
 			c.ed.Focus(gtx)
 		case caAttach:
-			c.att.Menu(a.Anchor, c.ch)
+			c.att.Menu(a.Anchor, c.plusMenu())
 		case caEmoji:
 			c.h.OpenEmojiPicker(image.Pt(a.Anchor.Min.X, a.Anchor.Min.Y), func(name string) { c.InsertEmoji(name) })
 		case caMention:
@@ -700,6 +723,13 @@ func (c *Composer) handleActions(gtx layout.Context) {
 		}
 		c.h.Invalidate()
 	}
+}
+
+// plusMenu is the + menu's composer side: the conversation and the
+// Text snippet row's snippet dialog (create-text-snippet, the same dialog
+// Ctrl+Shift+Enter opens with the message).
+func (c *Composer) plusMenu() plusMenu {
+	return plusMenu{ch: c.ch, snippet: func() { c.openSnippet(false) }}
 }
 
 // mentionTrigger is the @ button's maybeTriggerMentionAutocomplete: it
@@ -782,7 +812,8 @@ func (c *Composer) scheduleMenu(anchor image.Rectangle) {
 		if r.opt == schedCustom {
 			items = append(items, popups.Sep(), popups.MenuItem{Label: r.label, Do: func() {
 				// openScheduleMessageDialog
-				openSchedulePicker(c.h, schedCustomDefault(time.Now(), c.scheduleMember()), func(t time.Time) {
+				m := c.scheduleMember()
+				openSchedulePicker(c.h, schedCustomDefault(time.Now(), m), m, func(t time.Time) {
 					lastCustomSchedule = t
 					c.schedule(t)
 				})
@@ -867,17 +898,27 @@ func (c *Composer) schedule(t time.Time) {
 
 // ---- sending ----
 
-// pasteLimitDialog is PasteLimitDialog: the title, the limit's
-// explanation and OK.
-func (c *Composer) pasteLimitDialog() {
+// pasteLimitDialog is renderPasteLimitDialog: the title, the limit's
+// explanation, "Create a Snippet" (the snippet dialog with the refused
+// paste) and OK.
+func (c *Composer) pasteLimitDialog(pasted string) {
 	th := c.h.Theme()
 	m := popups.NewModal(c.h, popups.ModalOpts{
-		Title:        pasteLimitTitle,
+		Title:        i18n.T("msg_input", pasteLimitTitle),
 		EnterSubmits: true,
 		Body: func(gtx layout.Context) layout.Dimensions {
-			return label(gtx, th.Shaper, textStyle{Size: 15, LineHeight: 22, Color: th.C.Fg}, pasteLimitText)
+			st := textStyle{Size: 15, LineHeight: 22, Color: th.C.Fg}
+			b := st
+			b.Weight = font.Bold
+			return richLabel(gtx, th.Shaper, []richSpan{{pasteLimitText, st}, {pasteLimitBold, b}, {pasteLimitAfter, st}})
 		},
-		Buttons: []*popups.ModalButton{{Label: "OK", Kind: popups.BtnPrimary, Do: func() bool { return true }}},
+		Buttons: []*popups.ModalButton{
+			{Label: i18n.T("msg_input", "Create a Snippet"), Kind: popups.BtnOutline, Do: func() bool {
+				c.openSnippetFromPaste(pasted)
+				return true
+			}},
+			{Label: i18n.T("msg_input", "OK"), Kind: popups.BtnPrimary, Do: func() bool { return true }},
+		},
 	}).OldDialog()
 	c.h.ShowOverlay(m)
 }
@@ -981,12 +1022,19 @@ func (c *Composer) submit() {
 				hs.SlashHuddle(ch)
 				return
 			}
+			// slashCommandAppId: the app of the command picked from the
+			// list, while the message still runs it
+			app := ""
+			if p := c.cmdPick; p.AppID != "" && strings.EqualFold(strings.TrimPrefix(p.Name, "/"), strings.TrimPrefix(cmd, "/")) {
+				app = p.AppID
+			}
+			c.cmdPick = core.Command{}
 			c.clearAfterSend()
 			go func() {
 				// handleSlashCommand: the reply or the failure is
 				// Slackbot's ephemeral; the app's modal arrives as
 				// view_opened for the command's client_token
-				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts})
+				res, err := runCommand(context.Background(), api, core.CommandOpts{Channel: ch, Command: cmd, Text: strings.TrimSpace(rest), ThreadTS: ts, AppID: app})
 				if err == nil && res.KeepInput {
 					c.restore(doc)
 				}

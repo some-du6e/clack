@@ -145,12 +145,28 @@ type listState struct {
 	rc rowCtx // this frame's row inputs (rows keep a pointer to it)
 
 	// hover toolbar state for its natives (MessageActions)
-	tbRow  *row
-	tbSize image.Point
-	tbHov  int      // hovered toolbar button, -1 none
-	quick  quickBar // one-click reactions before the buttons (quickreact.go)
+	tbRow   *row
+	tbSize  image.Point
+	tbHov   int             // hovered toolbar button, -1 none
+	tbBtns  []int           // the buttons tbRow's toolbar has, in order (actions_rules.go)
+	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
+	tbQAs   [tbCount]string // … and data-qa
+	quick   quickBar        // one-click reactions before the buttons (quickreact.go)
 
 	kb kbNav // keyboard focus and the selected message (kbnav.go)
+
+	// the floating banners and the day pills' menu (banners.go)
+	ub          unreadBannerState
+	pendingDate time.Time                    // jumpToTimestamp's time, paged back to
+	dayReq      *dayMenuReq                  // a day pill clicked this frame
+	dayBtns     map[string]*widget.Clickable // the dividers' pills, by day
+	stickyDay   widget.Clickable             // the sticky pill
+	latestR     image.Rectangle              // the "Latest messages" pill drawn last frame (tests)
+	unreadTh    unreadThreads                // the reply bars' "Unread" marks (unread_threads.go)
+
+	// system messages under system_messages_redesign_m1 (system.go)
+	sysOn, sysInit, sysMissing bool
+	sysUsers                   uint64
 }
 
 var listCache = map[string]*listState{}
@@ -247,7 +263,32 @@ func (s *listState) sync(h Host, now time.Time) {
 		}
 	}
 	s.viewsOn = views
+	// system messages follow system_messages_redesign_m1 (system.go): a new
+	// group re-reads the snapshot and rebuilds the rows; an actor's name
+	// arriving rebuilds the system rows
+	sysOn := systemRedesign(h)
+	switch {
+	case !s.sysInit || sysOn != s.sysOn:
+		if s.sysInit {
+			for k := range s.rows {
+				delete(s.rows, k)
+			}
+		}
+		s.sysOn, s.sysInit = sysOn, true
+		s.snap.rev = 0
+	case s.sysMissing && s.hb.usersRev() != s.sysUsers:
+		for i := range s.snap.msgs {
+			if m := &s.snap.msgs[i].m; m.System || isAutomatedSubtype(m.Subtype) {
+				delete(s.rows, m.TS)
+			}
+		}
+		s.snap.rev = 0
+	}
 	changed := s.m.snapshot(&s.snap)
+	if changed {
+		s.sysUsers = s.hb.usersRev()
+		s.sysMissing = s.adjustSystem(h, sysOn)
+	}
 	if changed && len(s.inj.msgs) > 0 {
 		s.mergeInjected()
 	}
@@ -377,11 +418,13 @@ func (s *listState) anchorItem(key string) int {
 // groupable is Slack's isAdjacentMessage (boot-shared Ag38): b continues
 // a's group. Senders compare as core.Adjacent does (same user; a user-less
 // bot by bot_id, username and msg.icons); a thread parent (reply_count)
-// on either side starts a new group. Pinning doesn't: Slack's Message
-// hides the sender of any adjacent message (shouldHideSenderAndTimestamp)
-// and draws the pinned label above its body.
+// on either side starts a new group, and so does an automated subtype
+// (KC8h: joins, topics, pins…), whatever system_messages_redesign_m1
+// draws it as. Pinning doesn't: Slack's Message hides the sender of any
+// adjacent message (shouldHideSenderAndTimestamp) and draws the pinned
+// label above its body.
 func groupable(a, b *core.Message, ta, tb time.Time) bool {
-	if a.System || b.System || a.Tombstone || b.Tombstone || !core.Adjacent(a, b) {
+	if a.System || b.System || isAutomatedSubtype(a.Subtype) || isAutomatedSubtype(b.Subtype) || a.Tombstone || b.Tombstone || !core.Adjacent(a, b) {
 		return false
 	}
 	if b.Broadcast || a.ReplyCount > 0 || b.ReplyCount > 0 {
@@ -666,6 +709,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.unreadSeen = ui < 0 || (ui >= s.visible[0] && ui < s.visible[1])
 	}
 
+	s.updateUnreadThreads(h)
 	s.contextMenu(h, origin)
 	s.overlays(gtx, h, rc, size)
 	s.layoutScrollbar(gtx, c, size, now)
@@ -682,6 +726,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			s.pendingJump = "" // not in this conversation (or too far back)
 		}
 	}
+	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {
 		s.lastOlder = now
@@ -851,7 +896,7 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	w := gtx.Constraints.Max.X
 	switch it.kind {
 	case itDay:
-		return s.dayDivider(gtx, h, c, it.day, rc.now, w)
+		return s.dayDivider(gtx, h, c, i, it.day, rc.now, w)
 	case itUnread:
 		if s.thread {
 			return s.threadDivider(gtx, h, c, it, w, rc.now)
@@ -952,20 +997,32 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
-func (s *listState) dayPill(gtx layout.Context, h Host, c *colors, label string, cx, y int) {
+// dayPill draws a day divider's pill (DayDividerJumper's
+// c-message_list__day_divider__label__pill, a menu trigger: "Jump to
+// date") centred on cx at y; it returns the pill's rect and whether it
+// was clicked.
+func (s *listState) dayPill(gtx layout.Context, h Host, c *colors, btn *widget.Clickable, label string, cx, y int) (image.Rectangle, bool) {
 	th := h.Theme()
 	ts := textStyle{size: 13, weight: theme.Bold, col: c.Text, lineH: 18}
 	sz := measure(gtx, th, ts, label)
 	ph := dp(gtx, mt.dayPillH)
 	pw := dp(gtx, 16) + sz.X + dp(gtx, 4) + dp(gtx, 13) + dp(gtx, 8)
 	r := image.Rect(cx-pw/2, y, cx-pw/2+pw, y+ph)
+	clicked := btn.Clicked(gtx)
 	shadowCard(gtx.Ops, r, ph/2, dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
-	at(gtx, r.Min.X+dp(gtx, 16), y+(ph-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions {
-		return labelText(gtx, th, ts, label)
+	at(gtx, r.Min.X, r.Min.Y, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(r.Size())
+		return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			at(gtx, dp(gtx, 16), (ph-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions {
+				return labelText(gtx, th, ts, label)
+			})
+			at(gtx, dp(gtx, 16)+sz.X+dp(gtx, 4), (ph-dp(gtx, 13))/2, func(gtx layout.Context) layout.Dimensions {
+				return icons.Get("chevron-down")(gtx, unit.Dp(13), c.Text)
+			})
+			return layout.Dimensions{Size: r.Size()}
+		})
 	})
-	at(gtx, r.Min.X+dp(gtx, 16)+sz.X+dp(gtx, 4), y+(ph-dp(gtx, 13))/2, func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("chevron-down")(gtx, unit.Dp(13), c.Text)
-	})
+	return r, clicked
 }
 
 // labelText avoids the shadowed name in dayPill.
@@ -973,11 +1030,22 @@ func labelText(gtx layout.Context, th *theme.Theme, s textStyle, txt string) lay
 	return label(gtx, th, s, txt)
 }
 
-func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, day, now time.Time, w int) layout.Dimensions {
+func (s *listState) dayDivider(gtx layout.Context, h Host, c *colors, i int, day, now time.Time, w int) layout.Dimensions {
 	hh := dp(gtx, mt.dayH)
 	ly := dp(gtx, 19)
 	fill(gtx.Ops, image.Rect(0, ly, w, ly+dp(gtx, 1)), c.DayLine)
-	s.dayPill(gtx, h, c, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2)
+	if s.dayBtns == nil {
+		s.dayBtns = map[string]*widget.Clickable{}
+	}
+	key := day.Format("2006-01-02")
+	btn := s.dayBtns[key]
+	if btn == nil {
+		btn = &widget.Clickable{}
+		s.dayBtns[key] = btn
+	}
+	if pr, clicked := s.dayPill(gtx, h, c, btn, dayLabel(day, now), w/2, (hh-dp(gtx, mt.dayPillH))/2); clicked {
+		s.dayReq = &dayMenuReq{day: day, item: i, r: pr}
+	}
 	return layout.Dimensions{Size: image.Pt(w, hh)}
 }
 
@@ -1064,7 +1132,10 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 						break
 					}
 				}
-				s.dayPill(gtx, h, c, dayLabel(s.items[d].day, rc.now), size.X/2, pillY)
+				day := s.items[d].day
+				if pr, clicked := s.dayPill(gtx, h, c, &s.stickyDay, dayLabel(day, rc.now), size.X/2, pillY); clicked {
+					s.dayReq = &dayMenuReq{day: day, item: -1, r: pr}
+				}
 			}
 		}
 	}
@@ -1091,36 +1162,14 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 		}
 	}
 
-	// jump to recent: the message pane's (a thread pane has none; its
-	// own banners are ThreadFloatingBanners, thread_banner.go)
-	p := s.list.Position
-	if !s.thread && p.BeforeEnd && s.visible[1] < len(s.items)-2 {
-		ts := textStyle{size: 13, weight: theme.Bold, col: c.JumpText, lineH: 18}
-		txt := "Jump to recent"
-		sz := measure(gtx, th, ts, txt)
-		bh := dp(gtx, 28)
-		bw := dp(gtx, 8) + dp(gtx, 16) + dp(gtx, 4) + sz.X + dp(gtx, 16)
-		r := image.Rect((size.X-bw)/2, size.Y-bh-dp(gtx, 16), (size.X-bw)/2+bw, size.Y-dp(gtx, 16))
-		if s.jump.Clicked(gtx) {
-			s.list.Position = layout.Position{}
-			h.Invalidate()
-		}
-		at(gtx, r.Min.X, r.Min.Y, func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Exact(r.Size())
-			return s.jump.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				rr := image.Rectangle{Max: r.Size()}
-				bg := c.JumpBg
-				if s.jump.Hovered() {
-					bg.A = 230
-				}
-				rrect(gtx.Ops, rr, bh/2, bg)
-				at(gtx, dp(gtx, 8), (bh-dp(gtx, 16))/2, func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("arrow-down")(gtx, unit.Dp(16), c.JumpText)
-				})
-				at(gtx, dp(gtx, 28), (bh-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, txt) })
-				return layout.Dimensions{Size: rr.Size()}
-			})
-		})
+	// ArchivesBanner ("Latest messages") and UnreadBanner (banners.go): the
+	// message pane's (a thread pane has neither; its own banners are
+	// ThreadFloatingBanners, thread_banner.go)
+	s.archivesBanner(gtx, h, size)
+	s.paneUnreadBanner(gtx, h, rc, size)
+	if req := s.dayReq; req != nil {
+		s.dayReq = nil
+		s.openDayMenu(h, *req, rc.now, gtx)
 	}
 }
 
@@ -1147,7 +1196,7 @@ func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor 
 		y = anchor.Y + dp(gtx, 40)
 	}
 	r := image.Rect(x, y, x+bw, y+bh)
-	rrect(gtx.Ops, r, dp(gtx, 6), c.Tooltip)
+	theme.TooltipShape(gtx, r, dp(gtx, 6), theme.TooltipArrow{}, c.Tooltip, tipGlow(th)) // theme/tooltip.go
 	at(gtx, x+pad, y+dp(gtx, 6), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Max.X = tw
 		return label(gtx, th, ts, txt)
@@ -1172,6 +1221,16 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	}
 	s.tbRow, s.tbSize, s.tbHov = r, size, -1
 	s.quick.prepare(h, s.ch, r)
+	s.prepareButtons(h.Core(), r)
+	// message_actions_truncate (L2dv calculateResponsiveActions): the
+	// quick reactions go when the toolbar with them is wider than the
+	// message from its left edge to the toolbar's right edge
+	if app := h.Core(); app != nil && app.Experiment("message_actions_truncate") == "on" && len(s.quick.names) > 0 {
+		bs, pad := dp(gtx, mt.toolbarBtn), dp(gtx, mt.toolbarPad)
+		if pad*2+(len(s.quick.names)+len(s.tbBtns))*bs > size.X-dp(gtx, mt.toolbarRight) {
+			s.quick.names = s.quick.names[:0]
+		}
+	}
 	// Right-aligned: measure first (a plugin may add to the toolbar). The
 	// card is absolutely positioned in Slack, so it shrink-wraps: unbounded
 	// width makes a patched (block-level) root as wide as its content
@@ -1192,13 +1251,44 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	}
 	if i := s.tbHov; i >= 0 {
 		bs := dp(gtx, mt.toolbarBtn)
-		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+i)*bs
-		tip := tbTips[i]
+		slot := 0
+		for k, b := range s.tbBtns {
+			if b == i {
+				slot = k
+			}
+		}
+		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+slot)*bs
+		tip := s.tbLabel[i]
 		if i == tbTodo && r.src.Saved {
 			tip = "Remove from to-dos"
 		}
 		s.tip = ""
 		tooltip(gtx, th, c, tip, image.Pt(bx+bs/2, y-dp(gtx, 4)), size)
+	}
+}
+
+// prepareButtons picks r's toolbar buttons and their labels: the thread
+// and share actions follow Slack's rules (actions_rules.go), the rest are
+// always there.
+func (s *listState) prepareButtons(app *core.App, r *row) {
+	s.tbBtns = s.tbBtns[:0]
+	s.tbLabel, s.tbQAs = tbTips, tbQA
+	for i := 0; i < tbCount; i++ {
+		switch i {
+		case tbReply:
+			l := replyLabel(app, &r.src, s.thread)
+			if l == "" {
+				continue
+			}
+			s.tbLabel[i] = l
+		case tbForward:
+			l, qa, ok := shareAction(app, &r.src, s.thread)
+			if !ok {
+				continue
+			}
+			s.tbLabel[i], s.tbQAs[i] = l, qa
+		}
+		s.tbBtns = append(s.tbBtns, i)
 	}
 }
 
@@ -1232,7 +1322,7 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 	bs := dp(gtx, mt.toolbarBtn)
 	pad := dp(gtx, mt.toolbarPad)
 	nq := len(s.quick.names)
-	size := image.Pt(pad*2+(nq+tbCount)*bs, bs+2*pad)
+	size := image.Pt(pad*2+(nq+len(s.tbBtns))*bs, bs+2*pad)
 	shadowCard(gtx.Ops, image.Rectangle{Max: size}, dp(gtx, 12), dp(gtx, 1), st.Background(c.Bg), c.PillBorder, c.Shadow)
 	s.quick.hov = -1
 	for i := 0; i < nq; i++ {
@@ -1241,8 +1331,8 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 			return s.quickButton(gtx, i)
 		})
 	}
-	for i := 0; i < tbCount; i++ {
-		at(gtx, pad+(nq+i)*bs, pad, func(gtx layout.Context) layout.Dimensions {
+	for k, i := range s.tbBtns {
+		at(gtx, pad+(nq+k)*bs, pad, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
 			if i == tbAddReact {
 				return slackc.Component(gtx, "MessageActionButtonReaction", s, (*listState).reactionButtonProps, (*listState).layoutReactionButton)
@@ -1285,10 +1375,15 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			// Slack's menu top sits 32px above the kebab's centre (16 above
 			// the button), its right edge 3px left of the centre.
 			anchor = anchor.Add(image.Pt(-dp(gtx, 2), -dp(gtx, 32)))
+			where := popups.InChannel // messageContainerType: a thread's Mark unread marks the thread
+			if s.thread {
+				where = popups.InThread
+			}
 			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
 				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
+				Where:   where,
 			}))
 		}
 	}
@@ -1296,7 +1391,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 	if hov {
 		s.tbHov = i
 	}
-	st := actionBtnClass.EnterAttr(gtx, btnState(gtx, btn), 0, "data-qa", tbQA[i])
+	st := actionBtnClass.EnterAttr(gtx, btnState(gtx, btn), 0, "data-qa", s.tbQAs[i])
 	defer st.Leave()
 	bs := gtx.Constraints.Max.X
 	if st.Hidden() {

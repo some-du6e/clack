@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gioui.org/layout"
 
@@ -23,6 +24,7 @@ import (
 type filesHost struct {
 	*vaHost
 	opened []string
+	action func() // the last ToastAction's
 }
 
 func (h *filesHost) OpenCanvasFull(id string) { h.opened = append(h.opened, "canvas:"+id) }
@@ -210,7 +212,7 @@ func TestFilesViewShots(t *testing.T) {
 		e.until(t, "the star", func() bool { return len(fs.StarredFiles()) == 1 })
 		e.frame()
 		vaShot(t, e, "files-starred", dark)
-		v.openMenu(it)
+		v.openMenu(it, image.Rect(1086, 316, 1114, 344)) // the ⋯ under the pointer
 		e.frame()
 		vaShot(t, e, "files-menu", dark)
 		dismissAll(h)
@@ -230,5 +232,128 @@ func dismissAll(h *filesHost) {
 		if d, ok := o.(interface{ Dismiss() }); ok {
 			d.Dismiss()
 		}
+	}
+}
+
+// ToastAction records the restored toast and keeps its action (tests).
+func (h *filesHost) ToastAction(text, label string, do func()) {
+	h.Toast(text + " [" + label + "]")
+	h.action = do
+}
+
+// Deleted: DeletedFilesList's rows from files.recentlyDeleted ("Deleted
+// {ago}", the Restore button), UndeleteFileDialog, files.undelete, the
+// row gone and "{title} restored." with View opening the canvas.
+func TestFilesViewRestore(t *testing.T) {
+	v, h, e, fs := filesView(t)
+	ctx := t.Context()
+	if err := h.Core().DeleteFile(ctx, fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Core().DeleteFile(ctx, fakeslack.ListKitchen); err != nil {
+		t.Fatal(err)
+	}
+	v.nav, v.reload = 3, true
+	e.until(t, "the deleted rows", func() bool { r, ok, _ := v.del.rows(); return ok && len(r) == 2 })
+	rows, _, _ := v.del.rows()
+	byID := map[string]core.DeletedFile{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	c, ok := byID[fakeslack.CanvasShared]
+	if !ok || c.FileType != "quip" || c.Title != "Weekly sync notes" || byID[fakeslack.ListKitchen].FileType != "list" {
+		t.Fatalf("rows %+v", rows)
+	}
+	if got := "Deleted " + deletedAgo(time.Unix(c.DateDelete, 0), time.Now()); got != "Deleted < 1 minute ago" {
+		t.Errorf("meta %q", got)
+	}
+	e.frame()
+	btn, _ := v.del.btn(fakeslack.CanvasShared)
+	btn.Click()
+	e.frame()
+	if len(h.open()) != 1 {
+		t.Fatalf("overlays = %d, want UndeleteFileDialog", len(h.open()))
+	}
+	v.restoreFile(c)
+	e.until(t, "files.undelete", func() bool {
+		r, _, _ := v.del.rows()
+		return len(r) == 1 && r[0].ID == fakeslack.ListKitchen
+	})
+	calls := fs.FilesViewCalls()
+	if last := calls[len(calls)-1]; last.Method != "files.undelete" || last.Args.Get("file_id") != fakeslack.CanvasShared {
+		t.Errorf("last call %+v", last)
+	}
+	ts := h.toasts()
+	if len(ts) == 0 || ts[len(ts)-1] != "Weekly sync notes restored. [View]" {
+		t.Fatalf("toasts %q", ts)
+	}
+	h.action()
+	if h.last() != "canvas:"+fakeslack.CanvasShared {
+		t.Errorf("View opened %q", h.last())
+	}
+	for _, c := range []struct {
+		d    time.Duration
+		want string
+	}{{30 * time.Second, "< 1 minute ago"}, {80 * time.Second, "1 minute ago"}, {150 * time.Second, "3 minutes ago"},
+		{50 * time.Minute, "1 hour ago"}, {5 * time.Hour, "5 hours ago"}, {30 * time.Hour, "1 day ago"}} {
+		now := time.Unix(1900000000, 0)
+		if got := deletedAgo(now.Add(-c.d), now); got != c.want {
+			t.Errorf("%v: %q, want %q", c.d, got, c.want)
+		}
+	}
+}
+
+// file_trash_updates: the sidebar's Deleted item shows while
+// files.recentlyDeleted has rows, or always with the experiment on.
+func TestFilesViewDeletedNav(t *testing.T) {
+	v, h, e, _ := filesView(t)
+	a := h.Core()
+	e.until(t, "the sidebar's deleted load", func() bool { _, ok, _ := v.del.data.get(); return ok })
+	a.SetExperimentGroup("file_trash_updates", "")
+	if v.deletedNavShown() {
+		t.Error("Deleted shown with nothing deleted and the experiment unassigned")
+	}
+	a.SetExperimentGroup("file_trash_updates", "on")
+	if !v.deletedNavShown() {
+		t.Error("Deleted hidden with the experiment on")
+	}
+	a.SetExperimentGroup("file_trash_updates", "off")
+	if err := a.DeleteFile(t.Context(), fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	v.startDeleted()
+	e.until(t, "the deleted canvas", func() bool { r, ok, _ := v.del.rows(); return ok && len(r) == 1 })
+	if !v.deletedNavShown() {
+		t.Error("Deleted hidden with a deleted canvas")
+	}
+}
+
+// Under file_trash_updates the deleted list follows the socket: a
+// file_deleted refetches it, a file_undeleted drops the row. Off, neither.
+func TestFilesViewTrashEvents(t *testing.T) {
+	v, h, e, _ := filesView(t)
+	a := h.Core()
+	e.until(t, "the sidebar's deleted load", func() bool { _, ok, _ := v.del.data.get(); return ok })
+	if err := a.DeleteFile(t.Context(), fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	a.SetExperimentGroup("file_trash_updates", "off")
+	v.onTrashEvent("file_deleted", []string{fakeslack.CanvasShared})
+	e.frame()
+	if r, _, _ := v.del.rows(); len(r) != 0 {
+		t.Fatalf("off: the list refetched: %+v", r)
+	}
+	a.SetExperimentGroup("file_trash_updates", "on")
+	v.onTrashEvent("file_deleted", []string{fakeslack.CanvasShared})
+	e.until(t, "the refetch", func() bool { r, ok, _ := v.del.rows(); return ok && len(r) == 1 })
+	v.onTrashEvent("file_undeleted", []string{fakeslack.CanvasShared})
+	if r, _, _ := v.del.rows(); len(r) != 0 {
+		t.Errorf("file_undeleted kept the row: %+v", r)
+	}
+	if got := trashEventIDs([]byte(`{"type":"file_undeleted","file_ids":["F1","F2"]}`)); len(got) != 2 || got[1] != "F2" {
+		t.Errorf("file_ids %v", got)
+	}
+	if got := trashEventIDs([]byte(`{"type":"file_deleted","file_id":"F3"}`)); len(got) != 1 || got[0] != "F3" {
+		t.Errorf("file_id %v", got)
 	}
 }

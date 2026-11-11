@@ -39,13 +39,14 @@ func TestNotifyCustomized(t *testing.T) {
 		{"mobile nothing reads as mentions", core.ChannelNotify{Desktop: "mentions_dms", Mobile: "nothing"}, "mentions_dms", false, "mentions_dms", false},
 		{"mobile same", core.ChannelNotify{Desktop: "everything", Mobile: "everything"}, "everything", false, "everything", false},
 		{"global default, mobile override", core.ChannelNotify{Mobile: "everything"}, "mentions_dms", false, "mentions_dms", true},
+		{"mobile nothing, all posts", core.ChannelNotify{Desktop: "everything", Mobile: "nothing"}, "everything", false, "everything", true},
 	}
 	for _, c := range cases {
 		if got := notifyCustomized(c.n, c.desktop, c.muted, c.setting); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
-		if got := customizedTag(c.n, c.desktop, c.muted, c.setting); (got == "Customized") != c.want {
-			t.Errorf("%s: tag %q", c.name, got)
+		if got := customizedTag(c.n, c.desktop, c.muted, c.setting); (got != nil) != c.want || got != nil && *got != (MenuTag{Label: "Customized", Style: "informative"}) {
+			t.Errorf("%s: tag %+v", c.name, got)
 		}
 	}
 }
@@ -53,24 +54,24 @@ func TestNotifyCustomized(t *testing.T) {
 // A menu item's tag crosses MenuFromTemplate as {label, style}; a plugin
 // may drop it.
 func TestMenuTagTemplate(t *testing.T) {
-	items := []MenuItem{{Key: "everything", Label: "All new posts", Radio: true, Checked: true, Tag: "Customized", Do: func() {}}}
+	items := []MenuItem{{Key: "everything", Label: "All new posts", Radio: true, Checked: true, Tag: &MenuTag{Label: "Customized", Style: "informative"}, Do: func() {}}}
 	m := &Menu{}
 	tpl := m.menuTemplate(items)
 	tag := asProps(asProps(tpl[0])["tag"])
 	if tag == nil || tag.StrOr("label", "") != "Customized" || tag.StrOr("style", "") != "informative" {
 		t.Fatalf("template tag %v", asProps(tpl[0])["tag"])
 	}
-	if got := menuFromTemplate(nil, tpl, items); len(got) != 1 || got[0].Tag != "Customized" {
+	if got := menuFromTemplate(nil, tpl, items); len(got) != 1 || got[0].Tag == nil || got[0].Tag.Label != "Customized" {
 		t.Errorf("round trip lost the tag: %+v", got)
 	}
 	e := asProps(tpl[0])
 	e["tag"] = nil
-	if got := menuFromTemplate(nil, []any{e}, items); len(got) != 1 || got[0].Tag != "" {
-		t.Errorf("a plugin's removed tag stayed: %q", got[0].Tag)
+	if got := menuFromTemplate(nil, []any{e}, items); len(got) != 1 || got[0].Tag != nil {
+		t.Errorf("a plugin's removed tag stayed: %+v", got[0].Tag)
 	}
 	e["tag"] = slackc.Props{"label": "New", "style": "informative"}
-	if got := menuFromTemplate(nil, []any{e}, items); got[0].Tag != "New" {
-		t.Errorf("a plugin's tag: %q", got[0].Tag)
+	if got := menuFromTemplate(nil, []any{e}, items); got[0].Tag == nil || got[0].Tag.Label != "New" || got[0].Tag.Style != "informative" {
+		t.Errorf("a plugin's tag: %+v", got[0].Tag)
 	}
 }
 

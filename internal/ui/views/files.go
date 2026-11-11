@@ -112,10 +112,13 @@ type Files struct {
 	done   []func()
 
 	editName widget.Editor // Edit file details' File name
+
+	del filesDeleted // the Deleted page (files_deleted.go)
 }
 
 type fileClicks struct {
 	row, star, menu, owner widget.Clickable
+	menuSize               image.Point // the ⋯ button, last layout
 }
 
 var filesNav = [...]struct{ label, icon, kind, title, placeholder string }{
@@ -184,7 +187,7 @@ func (f *Files) start() {
 	f.items, f.page, f.pages = f.items[:0], 0, 0
 	a := f.h.Core()
 	if f.kind() == "deleted" {
-		f.data.load(f.h, false, func(ctx context.Context) (core.FilePage, error) { return a.DeletedFiles(ctx) })
+		f.startDeleted()
 		return
 	}
 	q := core.FilesOpts{Kind: f.kind(), Query: f.query, Mine: f.seg == 1, SharedWithMe: f.seg == 2, Page: 1}
@@ -248,6 +251,9 @@ func (f *Files) update(gtx C) {
 	if f.h.Core() != nil && !f.starAsked {
 		f.starAsked = true
 		f.loadStarred()
+	}
+	if f.h.Core() != nil && !f.del.data.started() { // the sidebar's mount: files.recentlyDeleted
+		f.startDeleted()
 	}
 	for i := range f.navClicks {
 		if f.navClicks[i].Clicked(gtx) {
@@ -347,7 +353,7 @@ func (f *Files) update(gtx C) {
 			f.toggleStar(it.File)
 		}
 		if c.menu.Clicked(gtx) {
-			f.openMenu(*it)
+			f.openMenu(*it, f.buttonRect(&c.menu, c.menuSize))
 		}
 		if c.owner.Clicked(gtx) && it.User != "" {
 			f.h.OpenProfile(image.Point{}, it.User)
@@ -359,6 +365,9 @@ func (f *Files) update(gtx C) {
 				openFile(f.h, fileItem{sf})
 			}
 		}
+	}
+	if f.kind() == "deleted" {
+		f.deletedUpdate(gtx)
 	}
 }
 
@@ -500,8 +509,14 @@ func (f *Files) nav_(gtx C) D {
 				})
 			}),
 			navItem(0), navItem(1), navItem(2),
-			rule,
-			navItem(3),
+			// the divider and Deleted are visible while there are recently
+			// deleted files or under file_trash_updates
+			layout.Rigid(func(gtx C) D {
+				if !f.deletedNavShown() {
+					return D{}
+				}
+				return col(gtx, rule, navItem(3))
+			}),
 			rule,
 			layout.Rigid(func(gtx C) D {
 				g := gtx
@@ -580,6 +595,9 @@ func (f *Files) main(gtx C) D {
 	fill(gtx, image.Rectangle{Max: size}, f.paneBg())
 	gtx.Constraints = layout.Exact(size)
 	title := filesNav[f.nav].title
+	if f.kind() == "deleted" { // DeletedFilesPage: its own header and list
+		return col(gtx, layout.Rigid(f.deletedHeader), layout.Flexed(1, f.deletedBody))
+	}
 	return col(gtx,
 		layout.Rigid(func(gtx C) D {
 			g := gtx
@@ -1033,8 +1051,6 @@ func (f *Files) empty(gtx C) D {
 		return f.emptyState(gtx, "", "No canvases yet", "Your recently viewed or updated canvases will show up here.", &f.emptyNew, "+ New Canvas")
 	case f.nav == 2:
 		return f.emptyState(gtx, "", "No lists yet", "Your recently viewed or updated lists will show up here.", &f.emptyNew, "+ New List")
-	case f.nav == 3:
-		return f.emptyState(gtx, "", "No deleted files", "Files you delete stay here for a while before they're gone for good.", nil, "")
 	}
 	return f.emptyState(gtx, "", "No files yet", "Files you share or view will show up here.", nil, "")
 }
@@ -1104,7 +1120,9 @@ func (f *Files) card(gtx C, it *fileItem, first, last bool) D {
 					if f.kind() == "deleted" {
 						return D{}
 					}
-					return f.iconButton(gtx, &c.menu, "kebab", 28, 18, f.p.Meta)
+					d := f.iconButton(gtx, &c.menu, "kebab", 28, 18, f.p.Meta)
+					c.menuSize = d.Size
+					return d
 				}),
 			)
 		})
@@ -1591,10 +1609,11 @@ func (f *Files) fileMenuItems(it fileItem) []popups.MenuItem {
 	return items
 }
 
-// openMenu is the row's ⋯ ("More actions", more_file_actions): Slack's
-// menu opens beside the button (right-bottom); Clack anchors it at the
-// pointer, which is on the button.
-func (f *Files) openMenu(it fileItem) {
+// openMenu is the row's ⋯ ("More actions", more_file_actions): FileActions'
+// menu trigger is a Popover at "right-bottom" with offsetX 4 and
+// tryOppositePosition (boot-shared gaA3), so the menu opens beside the
+// button, its top at the button's, kept inside the window.
+func (f *Files) openMenu(it fileItem, btn image.Rectangle) {
 	ph, ok := f.h.(popups.Host)
 	if !ok {
 		return
@@ -1603,11 +1622,21 @@ func (f *Files) openMenu(it fileItem) {
 	if len(items) == 0 {
 		return
 	}
+	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: btn, Width: 240,
+		Popover: "right-bottom", OffsetX: 4, TryOpposite: true}))
+}
+
+// buttonRect is a just-clicked button's window rectangle: the pointer
+// (window coordinates) less where in the button the press landed.
+func (f *Files) buttonRect(c *widget.Clickable, size image.Point) image.Rectangle {
 	var at image.Point
 	if pp, ok := f.h.(interface{ PointerPos() image.Point }); ok {
 		at = pp.PointerPos()
 	}
-	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, Width: 240}))
+	if hs := c.History(); len(hs) > 0 {
+		at = at.Sub(hs[len(hs)-1].Position)
+	}
+	return image.Rectangle{Min: at, Max: at.Add(size)}
 }
 
 // confirmDelete is DeleteFileDialog: "Delete canvas" / "Are you sure you

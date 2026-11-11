@@ -30,6 +30,9 @@ type Message struct {
 	PinnedBy                 string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned    bool
 	Broadcast, System        bool // System: join/leave/topic… drawn compactly
+	// A system message's own fields: who added the joiner (inviter), the
+	// topic or purpose it set, a rename's old and new names.
+	Inviter, Topic, Purpose, OldName, NewName string
 	// Tombstone: a deleted message kept for its replies (Slack's subtype
 	// "tombstone", user USLACKBOT, hidden): drawn as Slack's
 	// MessageTombstone, never as a Slackbot message.
@@ -40,6 +43,7 @@ type Message struct {
 	FollowingThread bool // the viewer follows this thread (root messages)
 	ReplyCount      int
 	ReplyUsers      []string
+	ReplyUserIcons  []slack.ReplyUserIcon // reply_user_icons (bot repliers' pictures)
 	Reactions       []Reaction
 	Huddle          json.RawMessage
 	Doc             richtext.Doc
@@ -52,6 +56,12 @@ type Message struct {
 	// appendStream / stopStream): "in_progress" while open, then
 	// "completed" or "errored" (agent.go).
 	StreamingState string
+	// WorkflowID and TriggerID are a workflow message's workflow_id and
+	// trigger_id (the message menu's workflow rows, message_menu.go).
+	WorkflowID, TriggerID string
+	// AgentSession is the message's agent_session: a thread session's
+	// state on its root message (nil for other messages).
+	AgentSession *slack.MessageAgentSession
 	// ThreadLastRead is a followed thread's last read reply (root
 	// messages; the subscription's last_read from conversations.replies,
 	// thread_marked and subscriptions.thread.mark): Slack's
@@ -74,9 +84,10 @@ const SubtypeSlackbotResponse = "slackbot_response"
 // of the workspace's custom responses.
 func (m *Message) SlackbotCustomResponse() bool { return m.Subtype == SubtypeSlackbotResponse }
 
-// CustomResponse is Slack's isCustomResponse (REqS ZO): a custom response
-// posted by Slackbot itself, which the reskin_custom_responses experiment
-// shows as the team (App.CustomResponseTeam) with an info badge.
+// CustomResponse is Slack's isCustomResponse (ZO): a custom response
+// posted by Slackbot itself, which Slack shows as the team
+// (App.CustomResponseTeam) with an info badge; build 4d0c78085232 no
+// longer reads reskin_custom_responses for it.
 // SlackbotCustomResponse, the subtype alone, is what MessageLabels and the
 // row's custom_response class check.
 func (m *Message) CustomResponse() bool {
@@ -266,23 +277,29 @@ type Page struct {
 // passthroughs (thread_marked, update_thread_state, dnd_updated,
 // dnd_updated_user, pref_change, badge_counts_updated) in Raw.
 type Event struct {
-	Type      string
-	Channel   string
-	TS        string
-	ThreadTS  string
-	UserID    string
-	Name      string // typing: display name
-	Msg       *Message
-	User      *User
-	Conv      *Conv
-	Count     *Count // message, marked: the conversation's new unread state
-	Reply     bool   // message: a thread reply
-	Mention   bool   // message: mentions the viewer
-	ConvKind  string // message: kind of the conversation
-	Connected bool   // connection: socket up; realtime: live updates on
-	Presence  string // presence: active | away
-	Users     []string
-	Prefs     *Prefs
+	Type     string
+	Channel  string
+	TS       string
+	ThreadTS string
+	UserID   string
+	Name     string // typing: display name
+	Msg      *Message
+	User     *User
+	Conv     *Conv
+	Count    *Count // message, marked: the conversation's new unread state
+	Reply    bool   // message: a thread reply
+	Mention  bool   // message: mentions the viewer
+	ConvKind string // message: kind of the conversation
+	// StreamDone marks the update (message_changed) that ends an app's chat
+	// stream: the stored copy was streaming_state in_progress and this one
+	// isn't. It carries UserID, User, Reply, Mention and ConvKind like a
+	// message event (Slack's messageChanged shows the deferred
+	// notification then, under defer_notification_3p_streaming).
+	StreamDone bool
+	Connected  bool   // connection: socket up; realtime: live updates on
+	Presence   string // presence: active | away
+	Users      []string
+	Prefs      *Prefs
 	// sent: the confirmed message replaces the local pending row whose TS
 	// is ReplacesTS. message/sent/update/delete of own sends carry ClientMsgID.
 	ReplacesTS  string
@@ -329,6 +346,13 @@ type PreparedUpload struct {
 type UploadFile struct {
 	Name, Title string
 	Data        []byte
+	// SnippetType is a snippet's type (the snippet dialog's Type: "auto",
+	// "text" or a SnippetFileTypes key), files.getUploadURL's
+	// snippet_type; "" for an ordinary file.
+	SnippetType string
+	// AltText is an image's alt text (the Edit file dialog),
+	// files.getUploadURL's alt_txt.
+	AltText string
 }
 
 type UploadedFile struct {
@@ -342,7 +366,10 @@ type SearchOpts struct {
 	Module      string // "messages" (default) | "dms"
 	Context     string // search_context ("" = the module's results tab)
 	ExactOnly   bool   // More > Exact matches only
-	Session     SearchSession
+	// ExcludeArchived is More > Exclude archived (channel_type
+	// exclude_archived; search_explore_freshness_signals)
+	ExcludeArchived bool
+	Session         SearchSession
 	// InChannel is search in channel (⌘F): the query runs as
 	// "in:<#InChannel> …" with count 10.
 	InChannel      string
@@ -355,6 +382,12 @@ type SearchResult struct {
 	Total, Page, Pages   int
 	Convs                map[string]ConvRef
 	FilterIn, FilterFrom []FilterSuggestion // filter_suggestions
+	// Unfiltered is unfiltered_result_count: what the query finds without
+	// its filters (unfiltered_result_filter names them), set when the
+	// filtered search found less. The results page offers "Search without
+	// filters" for it (RelaxationSuggestion).
+	Unfiltered       int
+	UnfilteredFilter map[string]json.RawMessage
 }
 
 // ChannelHit is a channel search / browse result.
@@ -424,6 +457,10 @@ type ActivityOpts struct {
 	// Mode is activity.feed's mode; "" is chrono_v1 (TfjX w: VIP unreads
 	// on top is priority_unreads_first_v1).
 	Mode string
+	// ExcludeAutomations and AutomationsOnly are the view's
+	// filterExcludeAutomationsSelected / filterAutomationsOnlySelected
+	// (eP2o fetchActivityFeed: exclude_automations, automations_only).
+	ExcludeAutomations, AutomationsOnly bool
 }
 
 type ActivityItem struct {
@@ -439,6 +476,9 @@ type ActivityItem struct {
 	// Priority is the entry's priority (from a VIP; /29I isPriority:
 	// !!priority) and Archived its is_archived (a cleared item).
 	Priority, Archived bool
+	// IsBot is the entry's is_bot: an automation's (an app's, a bot's or
+	// an agent's), which the automations filters split on (sD/F).
+	IsBot bool
 
 	// Items that aren't (only) a message: the person behind it when that
 	// isn't the message author (inviter, invitee, assigner), and the
@@ -604,8 +644,9 @@ type DMPage struct {
 
 type Command struct {
 	Name, Desc, Usage, Type, AppID string
-	AppName                        string // app commands: the app's display name
-	IconURL                        string // app commands: the app's icon (Slack CDN)
+	AppName                        string   // app commands: the app's display name
+	IconURL                        string   // app commands: the app's icon (Slack CDN)
+	Teams                          []string // the workspaces it is installed in
 }
 
 type CommandOpts struct {

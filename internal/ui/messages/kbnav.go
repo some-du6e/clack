@@ -11,7 +11,8 @@ import (
 // recent message in the list will be selected"). The selected message
 // draws as hovered (its highlight and hover actions); ↑/↓ move it, ↓ past
 // the newest message or Escape hands focus back to the composer, Enter or
-// E edits a message of yours.
+// E edits a message of yours, and V is its "Add to list…" (6r+G's
+// shortcut, EtVr P2.ADD_TO_LIST).
 
 type kbNav struct {
 	on       bool   // the list has keyboard focus
@@ -58,7 +59,8 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 			key.Filter{Focus: &s.kb, Name: key.NameDownArrow},
 			key.Filter{Focus: &s.kb, Name: key.NameEscape},
 			key.Filter{Focus: &s.kb, Name: key.NameReturn},
-			key.Filter{Focus: &s.kb, Name: "E"})
+			key.Filter{Focus: &s.kb, Name: "E"},
+			key.Filter{Focus: &s.kb, Name: "V"})
 		if !ok {
 			break
 		}
@@ -89,6 +91,11 @@ func (s *listState) kbKeys(gtx layout.Context, h Host) {
 				}
 			case key.NameEscape:
 				s.kbLeave(gtx)
+			case "V": // Add to list…: a message the server has (not a local send)
+				r := s.rows[s.kb.ts]
+				if la, ok := h.(ListAdder); ok && r != nil && !r.src.Pending && !r.src.Failed {
+					la.AddMessageToList(r.src)
+				}
 			default: // Enter, E: edit it when it's yours
 				if r := s.rows[s.kb.ts]; r != nil && h.Core() != nil && r.m.User == h.Core().Self().ID {
 					s.kbLeave(gtx)

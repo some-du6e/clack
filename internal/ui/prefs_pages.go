@@ -671,8 +671,11 @@ func (p *prefsModal) audioVideoPage(f *prefsForm) {
 	// prefs.video.effect: "blur" or unset (huddle/bgblur, huddle_av.go)
 	f.option("video_background_filter", "Blur your video background when you’re in a huddle with your camera on", "", p.a.huddleBlurOn(), false, p.a.toggleHuddleBlur)
 	// HuddleJoinPreviewPref: starting a huddle opens Slack's preview
-	// window first (huddleui/preview.go); unset is off
-	f.check("huddles_show_join_preview", "Show audio and video preview", "", false, false)
+	// window first (huddleui/preview.go); unset is off. It renders only
+	// under huddles_preview_v2 (aa02: t ? the row : null)
+	if c := p.a.Core(); c == nil || c.Experiment(huddleui.ExpPreviewV2) == "on" {
+		f.check("huddles_show_join_preview", "Show audio and video preview", "", false, false)
+	}
 	f.hr()
 	// HuddleBackgroundPref: Mod+Shift+Space while in a huddle
 	// (huddleui/avprefs.go, globalkey)
@@ -784,8 +787,10 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	f.check("enter_is_special_in_tbt", "When typing code with ```, Enter should not send the message.", "With this checked use Shift+Enter to send.", false, false)
 	// the composer's own toggle (prefs.go): live markup follows it
 	f.option("plaintext", "Format messages with markup", "The text formatting toolbar won’t show in the composer.", a.plainTextOn(), false, a.togglePlainText)
-	f.off("disable_link_truncation", "Shorten external links", "When pasting links to places outside Slack, URLs will be shortened.", !p.prefBool("disable_link_truncation", false), false)
-	f.muted("Shortened links: "+naNote, false)
+	// Slack's InputOptionsPref: the box is !disable_link_truncation,
+	// written with setUserPrefByApi; nothing else in the web client reads
+	// it (the prefs-dialog chunks are its only readers)
+	f.check("disable_link_truncation", "Shorten external links", "When pasting links to places outside Slack, URLs will be shortened.", false, true)
 	f.subheading("When writing a message, press Enter to…")
 	// msg_input_send_btn: the composer sends on Mod+Enter (editor_keys.go)
 	f.radio2("msg_input_send_btn", false, "Send the message", "")
@@ -821,15 +826,4 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 		f.off("runFromTray", "Leave app running in notification area when the window is closed", "", false, false)
 		f.na()
 	}
-	f.hr()
-	f.heading("Clack")
-	f.subheading("Live updates")
-	rtHint := "Opens Slack's realtime connection. Off: messages refresh every 20 s"
-	if a.opts.NoRealtime {
-		rtHint = "Turned off with -no-realtime or CLACK_NO_REALTIME"
-	}
-	f.option("realtime", "Live updates (typing, presence, instant messages)", rtHint, a.realtimeOn(), false, a.toggleRealtime)
-	f.note("Clack shares your browser's Slack session. On some Enterprise Grid workspaces Slack can sign that session out everywhere if it notices.", true, 2)
-	p.updatesSection(f)         // update_check.go
-	p.troubleshootingSection(f) // diagnostics.go
 }

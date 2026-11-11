@@ -115,7 +115,20 @@ var (
 	styles   = map[*text.Shaper]*styleEntry{}
 )
 
-func styleFor(h Host) *richview.Style { return styleForTheme(h.Theme(), h.Images()) }
+func styleFor(h Host) *richview.Style {
+	st := styleForTheme(h.Theme(), h.Images())
+	if app := h.Core(); app != nil {
+		st.SetFlatHeadings(flatHeadings(app))
+	}
+	return st
+}
+
+// flatHeadings is Slack's cQrd WZ, which Header (/WQN) reads for
+// p-header_block--flat_scale: flat_message_heading_scale on, or
+// portable_content_composer's treatment.
+func flatHeadings(app *core.App) bool {
+	return app.Experiment("flat_message_heading_scale") == "on" || app.Experiment("portable_content_composer") == "treatment"
+}
 
 func styleForTheme(th *theme.Theme, images *imgcache.Cache) *richview.Style {
 	uiExt = theme.UIExtents(th.Shaper)
@@ -256,6 +269,15 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 		openURL(f.Permalink)
 	} else if f.URL != "" {
 		openURL(f.URL)
+	}
+}
+
+// JoinHuddle is a huddle message's Join Huddle (richview.HuddleJoiner):
+// Slack's HuddleMsgJoinButton runs startHuddle with entryPoint
+// huddle_message_button, which the ui root's huddle controller does.
+func (r *richHandler) JoinHuddle(channel string) {
+	if j, ok := r.h.(interface{ JoinHuddleFrom(channel, entry string) }); ok {
+		j.JoinHuddleFrom(channel, "huddle_message_button")
 	}
 }
 

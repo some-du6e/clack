@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -139,39 +140,59 @@ func srTitles(rows []srRow, k srRowKind) []string {
 	return out
 }
 
-// The blank slate is Slack's renderBlankSlateSuggestions: Unreads &
-// drafts (five, then "Show N more" / "Show fewer"), Recent places from
-// where you went (pages too) without where you are, and no Recent
-// searches; the clock button switches the list to Recent searches.
+// The blank slate is Slack's merged zero state (renderBlankSlateSuggestions):
+// Unreads & drafts (ten, then "Show N more" / "Show fewer"), Recent places
+// from where you went (pages too) without where you are and without the
+// unreads (three when there are unreads, else five), and no Recent
+// searches; the clock button switches the list to Recent searches, Slack's
+// server history (search.autocomplete).
 func TestSearchPopoverBlankSlate(t *testing.T) {
 	e := srNewEnv(t, false)
-	chs := e.fs.ChannelIDs()
-	RecordRecentPlace(chs[1], "", "")
-	RecordRecentPlace("view:later", "To-dos", "todos")
-	RecordRecentPlace(chs[2], "", "")
-	RecordRecentPlace("view:activity", "Activity", "activity") // where you are now
 	p := NewQuickSwitcher(e.h)
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "the snapshot", func() bool { return p.snapOK })
+	unread := map[string]bool{}
+	for _, id := range p.unreads {
+		unread[id] = true
+	}
+	var read []string // channels that aren't unreads
+	for _, id := range e.fs.ChannelIDs() {
+		if !unread[id] && e.h.a.ConvRef(id).Name != "" {
+			read = append(read, id)
+		}
+	}
+	if len(read) < 3 || len(p.unreads) == 0 {
+		t.Fatalf("fixture: %d read channels, %d unreads", len(read), len(p.unreads))
+	}
+	RecordRecentPlace(read[0], "", "")
+	RecordRecentPlace("view:later", "To-dos", "todos")
+	RecordRecentPlace(p.unreads[0], "", "") // an unread: listed there, not here
+	RecordRecentPlace(read[1], "", "")
+	RecordRecentPlace(read[2], "", "")
+	RecordRecentPlace("view:activity", "Activity", "activity") // where you are now
+	p.rebuild(time.Now(), true)
 
-	places := []string{}
-	in := false
-	for _, r := range p.rows {
-		if r.kind == srRHeader {
-			in = r.title == "Recent places"
-			continue
+	places := func() []string {
+		out := []string{}
+		in := false
+		for _, r := range p.rows {
+			if r.kind == srRHeader {
+				in = r.title == "Recent places"
+				continue
+			}
+			if in && r.selectable() {
+				out = append(out, r.title)
+			}
 		}
-		if in && r.selectable() {
-			places = append(places, r.title)
-		}
+		return out
 	}
-	c2, c1 := e.h.a.ConvRef(chs[2]).Name, e.h.a.ConvRef(chs[1]).Name
-	if !slices.Equal(places, []string{c2, "To-dos", c1}) {
-		t.Errorf("Recent places %q, want [%s To-dos %s] (newest first, the open page left out)", places, c2, c1)
+	n2, n1 := e.h.a.ConvRef(read[2]).Name, e.h.a.ConvRef(read[1]).Name
+	if got := places(); !slices.Equal(got, []string{n2, n1, "To-dos"}) {
+		t.Errorf("Recent places %q, want [%s %s To-dos] (three with unreads, newest first, no unread, the open page left out)", got, n2, n1)
 	}
-	for _, bad := range []string{"Saved", "Threads", "Activity"} {
-		if slices.Contains(places, bad) {
-			t.Errorf("Recent places has %q, a page you didn't visit (or the one you're on)", bad)
+	for _, bad := range []string{"Saved", "Threads", "Activity", e.h.a.ConvRef(p.unreads[0]).Name} {
+		if slices.Contains(places(), bad) {
+			t.Errorf("Recent places has %q (not visited, the open page, or an unread)", bad)
 		}
 	}
 	if slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") {
@@ -182,14 +203,22 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 			t.Errorf("page row data-type %q", srDataType(&r))
 		}
 	}
+	// no unreads: five places
+	keep := p.unreads
+	p.unreads = nil
+	p.rebuild(time.Now(), true)
+	if got := places(); len(got) != 5 {
+		t.Errorf("without unreads %d Recent places %q, want 5", len(got), got)
+	}
+	p.unreads = keep
 
-	// Unreads & drafts: five, then Show N more
+	// Unreads & drafts: ten, then Show N more
 	var ids []string
 	for id := range p.byConv {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	p.unreads = ids[:8]
+	p.unreads = ids[:13]
 	p.rebuild(time.Now(), true)
 	if got := srTitles(p.rows, srRMore); !slices.Equal(got, []string{"Show 3 more"}) {
 		t.Fatalf("more row %q", got)
@@ -203,8 +232,8 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 			n++
 		}
 	}
-	if n != srUnreadsShown {
-		t.Errorf("%d unreads before Show more, want %d", n, srUnreadsShown)
+	if n != srUnreadsShown || srUnreadsShown != 10 {
+		t.Errorf("%d unreads before Show more, want 10", n)
 	}
 	for i := range p.rows {
 		if p.rows[i].kind == srRMore {
@@ -216,17 +245,94 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 		t.Errorf("after Show more: %q", got)
 	}
 
-	// history mode
+	// history mode: Slack's server history, fetched when the list opens
 	p.history.Click()
 	d.frame()
+	d.until(t, "the history fetch", func() bool { return !p.histLoading })
 	if got := srTitles(p.rows, srRNote); !slices.Equal(got, []string{"Your recent searches will show up here."}) {
 		t.Errorf("empty history %q", got)
 	}
-	srRecordQuery("zephyr notes")
-	p.rebuild(time.Now(), true)
-	if !slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") || !slices.Contains(srTitles(p.rows, srRQuery), "zephyr notes") {
+	if err := e.h.a.SaveSearch(context.Background(), "zephyr notes"); err != nil { // drops the cached history
+		t.Fatal(err)
+	}
+	d.until(t, "the saved search in history", func() bool { return slices.Contains(srTitles(p.rows, srRQuery), "zephyr notes") })
+	if !slices.Contains(srTitles(p.rows, srRHeader), "Recent searches") {
 		t.Errorf("history rows %+v", srTitles(p.rows, srRQuery))
 	}
+	if f := e.fs.SearchForms("search.autocomplete"); len(f) == 0 || f[0].Get("use_hash") != "true" || f[0].Get("limit") != "100" {
+		t.Errorf("search.autocomplete %v", f)
+	}
+}
+
+// desktop_search_recents_read on: Recent places come from Slack's
+// visits.list and Recent searches from the recents pref; forced off they
+// come from this session's history and search.autocomplete again. With
+// desktop_search_recents_write on, a search run from the switcher is
+// recorded (and, with read on, shows in history at once).
+func TestSearchPopoverRecentsGroups(t *testing.T) {
+	e := srNewEnv(t, false)
+	ctx := context.Background()
+	old := PageInfo // the ui root's page titles
+	PageInfo = func(page string) (string, string) {
+		if page == "saved" {
+			return "Saved", "bookmark"
+		}
+		return "", ""
+	}
+	t.Cleanup(func() { PageInfo = old })
+	a := e.h.a
+	chs := e.fs.ChannelIDs()
+	pref := `{"search":[{"query":"from the pref","type":"SLACK","timestamp":5},{"query":"sf","type":"SALESFORCE","timestamp":9}]}`
+	if err := a.C.SetPref(ctx, "recents", pref); err != nil {
+		t.Fatal(err)
+	}
+	e.fs.SetVisits(fakeslack.Visit{EntityID: chs[3], EntityType: "channel", LastMS: 300},
+		fakeslack.Visit{EntityID: "Psaved", EntityType: "view", LastMS: 200})
+	e.fs.SetSearchHistory("from search.autocomplete")
+	a.SetExperimentGroup("desktop_search_recents_read", "on")
+	a.MaybeLoadRecents(ctx)
+
+	p := NewQuickSwitcher(e.h)
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.until(t, "the snapshot", func() bool { return p.snapOK })
+	p.unreads = nil // five places, none excluded
+	p.rebuild(time.Now(), true)
+	var places []string
+	in := false
+	for _, r := range p.rows {
+		if r.kind == srRHeader {
+			in = r.title == "Recent places"
+			continue
+		}
+		if in && r.selectable() {
+			places = append(places, r.title)
+		}
+	}
+	if want := []string{a.ConvRef(chs[3]).Name, "Saved"}; !slices.Equal(places, want) {
+		t.Errorf("Recent places from visits.list %q, want %q", places, want)
+	}
+	p.history.Click()
+	d.frame()
+	if got := srTitles(p.rows, srRQuery); !slices.Equal(got, []string{"from the pref"}) {
+		t.Errorf("history from the recents pref %q (no Salesforce rows)", got)
+	}
+
+	a.SetExperimentGroup("desktop_search_recents_read", "off")
+	d.frame()
+	d.until(t, "search.autocomplete history", func() bool {
+		return slices.Equal(srTitles(p.rows, srRQuery), []string{"from search.autocomplete"})
+	})
+
+	a.SetExperimentGroup("desktop_search_recents_read", "on")
+	a.SetExperimentGroup("desktop_search_recents_write", "on")
+	p.submit("fresh search")
+	a.FlushRecents()
+	q := NewQuickSwitcher(e.h)
+	q.histMode = true
+	d2 := &srDrv{size: image.Pt(1280, 800), w: q}
+	d2.until(t, "the recorded search", func() bool {
+		return slices.Contains(srTitles(q.rows, srRQuery), "fresh search")
+	})
 }
 
 // Typing: users/channels from the edge search, Recent messages from
@@ -235,6 +341,7 @@ func TestSearchPopoverBlankSlate(t *testing.T) {
 // "— Open" next to the query for a place.
 func TestSearchPopoverTyping(t *testing.T) {
 	e := srNewEnv(t, false)
+	RecordRecentPlace(e.fs.ChannelIDs()[0], "", "") // where Clack opened: the quick messages' recent channels
 	p := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "the message and file suggestions", func() bool {
@@ -245,7 +352,8 @@ func TestSearchPopoverTyping(t *testing.T) {
 		t.Fatal("no search.inline")
 	}
 	last := f[len(f)-1]
-	for k, v := range map[string]string{"query": fakeslack.SearchWord, "count": "3", "extract_len": "110", "from_me": "true", "with_me": "true", "page": "1"} {
+	for k, v := range map[string]string{"query": fakeslack.SearchWord, "count": "3", "extract_len": "110", "from_me": "true", "with_me": "true",
+		"page": "1", "recent_channels": e.fs.ChannelIDs()[0]} {
 		if last.Get(k) != v {
 			t.Errorf("search.inline %s = %q, want %q", k, last.Get(k), v)
 		}
@@ -282,6 +390,162 @@ func TestSearchPopoverTyping(t *testing.T) {
 	}
 }
 
+// omni_quick_message_results (suggestionsQuickMessages): on, the typed
+// words search your recent conversations (from_me, with_me) as cards and
+// the places above are cut to five; an in: filter searches its channel;
+// fewer than three characters, a phrase, or another filter search nothing.
+// Off, only the channel you're in is searched (from_me/with_me false),
+// the rows are the plain ones (text, then "name • date") and the places
+// are cut to eight.
+func TestSearchPopoverQuickMessages(t *testing.T) {
+	e := srNewEnv(t, false)
+	chs := e.fs.ChannelIDs()
+	inline := func() int { return len(e.fs.SearchForms("search.inline")) }
+	open := func(q string) (*SearchPopover, *srDrv) {
+		p := NewSearchPopover(e.h, q, image.Rectangle{})
+		d := &srDrv{size: image.Pt(1280, 900), w: p}
+		d.until(t, "the switcher", func() bool { return p.snapOK })
+		return p, d
+	}
+	settle := func(d *srDrv) {
+		end := time.Now().Add(600 * time.Millisecond) // past the 250 ms debounce
+		for time.Now().Before(end) {
+			d.frame()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	navRows := func(p *SearchPopover) int {
+		n := 0
+		for _, r := range p.rows {
+			switch r.kind {
+			case srRConv, srRUser, srRChan, srRFile:
+				n++
+			}
+		}
+		return n
+	}
+	if g := e.h.a.Experiment("omni_quick_message_results"); g != "on" {
+		t.Fatalf("the fake account has omni_quick_message_results %q, want on (as the real one)", g)
+	}
+	RecordRecentPlace(chs[0], "", "")
+	RecordRecentPlace(chs[1], "", "")
+
+	// on: recent conversations, cards, five places
+	p, d := open(fakeslack.SearchWord)
+	d.until(t, "quick messages", func() bool { return len(p.msgs) == 3 })
+	f := e.fs.SearchForms("search.inline")
+	last := f[len(f)-1]
+	if last.Get("recent_channels") != chs[1]+","+chs[0] || last.Get("from_me") != "true" || last.Get("with_me") != "true" ||
+		last.Get("channel") != "" {
+		t.Errorf("on: search.inline %v", last)
+	}
+	for _, r := range p.rows {
+		if r.kind == srRMsg && (r.plain || r.heightDp() != 76) {
+			t.Errorf("on: a plain quick message row %+v", r.title)
+		}
+	}
+	if n := navRows(p); n > 5 {
+		t.Errorf("on, with quick messages: %d places, want at most 5", n)
+	}
+
+	// fewer than 3 characters, a phrase, another filter: no search
+	for _, q := range []string{"ze", `"zephyr rollout"`, "from:@nobody zephyr", "@someone"} {
+		n := inline()
+		p, d = open(q)
+		settle(d)
+		if inline() != n || len(p.msgs) != 0 {
+			t.Errorf("%q searched quick messages (%d calls, %d messages)", q, inline()-n, len(p.msgs))
+		}
+	}
+	// no quick messages: up to 15 places
+	p, d = open("e")
+	settle(d)
+	if n := navRows(p); n <= 5 || n > 15 || len(p.msgs) != 0 {
+		t.Errorf("a one-letter query: %d places, %d messages (want 6 to 15 places, no messages)", n, len(p.msgs))
+	}
+
+	// in:#channel: that channel only
+	name := e.h.a.ConvRef(chs[0]).Name
+	p, d = open("in:#" + name + " " + fakeslack.SearchWord)
+	d.until(t, "in: quick messages", func() bool { return p.msgQ != "" })
+	f = e.fs.SearchForms("search.inline")
+	last = f[len(f)-1]
+	if last.Get("channel") != chs[0] || last.Get("with_me") != "true" || last.Get("from_me") != "false" ||
+		!last.Has("recent_channels") || last.Get("query") != fakeslack.SearchWord {
+		t.Errorf("in: search.inline %v", last)
+	}
+	for _, m := range p.msgs {
+		if m.Channel != chs[0] {
+			t.Errorf("in:#%s kept a hit in %s", name, m.Channel)
+		}
+	}
+
+	// off: only the open channel; plain rows; eight places
+	e.h.a.SetExperimentGroup("omni_quick_message_results", "off")
+	RecordRecentPlace("view:activity", "Activity", "activity") // not in a channel: nothing to search
+	n := inline()
+	p, d = open(fakeslack.SearchWord)
+	settle(d)
+	if inline() != n || len(p.msgs) != 0 {
+		t.Errorf("off, on a page: %d search.inline calls", inline()-n)
+	}
+	RecordRecentPlace(chs[2], "", "")
+	p, d = open(fakeslack.SearchWord)
+	d.until(t, "off quick messages", func() bool { return p.msgQ != "" })
+	f = e.fs.SearchForms("search.inline")
+	last = f[len(f)-1]
+	if last.Get("channel") != chs[2] || last.Get("from_me") != "false" || last.Get("with_me") != "false" || last.Has("recent_channels") {
+		t.Errorf("off: search.inline %v", last)
+	}
+	for _, r := range p.rows {
+		if r.kind == srRMsg && (!r.plain || r.heightDp() != 54) {
+			t.Errorf("off: a card quick message row %q", r.title)
+		}
+	}
+	if len(p.msgs) > 0 {
+		if n := navRows(p); n > 8 {
+			t.Errorf("off, with quick messages: %d places, want at most 8", n)
+		}
+		x := d.scan()
+		if !srHas(x, "\u2022") {
+			t.Errorf("off: no metadata bullet in %q", x)
+		}
+	}
+}
+
+// Slack's query tokens (rawTokensFromOps): words merge into one string,
+// quotes are phrases, modifier:value a filter, @x and <…> mentions.
+func TestSearchQueryTokens(t *testing.T) {
+	kinds := func(q string) string {
+		var b strings.Builder
+		for _, tk := range srQueryTokens(q) {
+			b.WriteString([]string{"w", "p", "f", "m"}[tk.kind])
+			if tk.kind == srQTFilter {
+				b.WriteString("(" + tk.mod + "=" + tk.val + ")")
+			}
+			b.WriteString(" ")
+		}
+		return strings.TrimSpace(b.String())
+	}
+	for q, want := range map[string]string{
+		"zephyr rollout":            "w",
+		"in:#general zephyr notes":  "f(in=#general) w",
+		"zephyr in: #general":       "w f(in=#general)",
+		`say "the rollout" twice`:   "w p w",
+		"from:<@U123> hi -in:#rand": "f(from=<@U123>) w f(-in=#rand)",
+		"@karim hello":              "m w",
+		"hasmy::tada: x":            "f(hasmy=:tada:) w",
+		"":                          "",
+	} {
+		if got := kinds(q); got != want {
+			t.Errorf("tokens(%q) = %q, want %q", q, got, want)
+		}
+	}
+	if tk := srQueryTokens("zephyr   rollout  plan"); len(tk) != 1 || tk[0].text != "zephyr rollout plan" {
+		t.Errorf("merged words %+v", tk)
+	}
+}
+
 // Keys, as SearchAutocomplete's increment/decrementSelectedIndex: nothing
 // is selected at first (the top hit is pseudo-selected, Enter opens it);
 // ↓ picks the first row, then the next, skipping headers and dividers;
@@ -296,8 +560,12 @@ func TestSearchPopoverKeys(t *testing.T) {
 	name := e.h.a.ConvRef(ch).Name
 	p := NewSearchPopover(e.h, name, image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
-	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) > 2 })
-	d.frame()
+	// the channel and "Show results for:" (no quick messages: nothing was
+	// visited, so there are no recent conversations to search)
+	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) >= 2 && p.dirFired })
+	for end := time.Now().Add(400 * time.Millisecond); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		d.frame() // the directory searches answer
+	}
 	if p.sel != 0 || p.picked || p.rows[0].id != ch {
 		t.Fatalf("top hit %+v sel %d picked %v, want %s first, pseudo-selected", p.rows[0], p.sel, p.picked, ch)
 	}
@@ -459,11 +727,13 @@ func TestSearchViewResults(t *testing.T) {
 		}
 	}
 
-	// More: Slack's rows
+	// More: Slack's rows (To-dos under later_todos, on for the account;
+	// no Exclude archived without search_explore_freshness_signals)
+	e.h.a.SetExperimentGroup("later_todos", "on")
 	v.moreMenu(layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}})
 	m = srMenu(e.h)
 	want := []string{"# Saved preferences", "Exclude bot messages", "Only my channels", "--", "# Results", "Exact matches only",
-		"With people", "Message has", "Message is", "Date", "File type", "Reactions"}
+		"--", "With people", "Message has", "Message is", "Date", "File type", "Reactions"}
 	if got := srLabels(m.items); !slices.Equal(got, want) {
 		t.Errorf("More menu %q\nwant %q", got, want)
 	}
@@ -551,6 +821,251 @@ func TestSearchViewResults(t *testing.T) {
 	d.frame()
 	if !v.q.Has("with", "<@"+fakeslack.SelfID+">") {
 		t.Errorf("Includes me: %q", v.q.String())
+	}
+}
+
+// The other tabs' filter rows are Slack's _p: Files From, In, File type,
+// Date, Only my channels; Canvases Created By, From, In, Date; DMs With.
+// More offers the tab's other filters (With people on Files and
+// Canvases) and isn't drawn on DMs; Reset shows once a filter is on and
+// clears it. Narrow, the pills that don't fit move into More.
+func TestSearchViewTabFilters(t *testing.T) {
+	e := srNewEnv(t, false)
+	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	for _, c := range []struct {
+		q          string
+		pills      []string
+		more       []string // nil: no More
+		notDrawn   []string
+		wantModule string
+	}{
+		{fakeslack.SearchWord + "&module=files", []string{"Files", "From", "In", "File type", "Date", "Only my channels", "More"},
+			[]string{"With people"}, []string{"Includes me", "Threads only"}, "files"},
+		{fakeslack.SearchWord + "&module=canvases", []string{"Canvases", "Created By", "From", "In", "Date", "More"},
+			[]string{"With people"}, []string{"File type", "Includes me"}, "canvases"},
+		{fakeslack.SearchWord + "&module=dms", []string{"DMs", "With"}, nil, []string{"More", "From", "Includes me"}, "dms"},
+	} {
+		v, d := srView(t, e, c.q, false)
+		x := d.scan()
+		for _, p := range c.pills {
+			if !srHas(x, p) {
+				t.Errorf("%s: pill %q not drawn: %q", c.wantModule, p, x)
+			}
+		}
+		for _, p := range c.notDrawn {
+			if srHas(x, p) {
+				t.Errorf("%s: %q drawn", c.wantModule, p)
+			}
+		}
+		if c.more == nil {
+			if !v.pillR[srPMore].Empty() {
+				t.Errorf("%s: More drawn", c.wantModule)
+			}
+			continue
+		}
+		v.moreMenu(gtx)
+		m := srMenu(e.h)
+		if got := srLabels(m.items); !slices.Equal(got, c.more) {
+			t.Errorf("%s: More %q, want %q", c.wantModule, got, c.more)
+		}
+		m.Dismiss()
+	}
+
+	// File type, Date and Only my channels on Files
+	v, d := srView(t, e, fakeslack.SearchWord+"&module=files", false)
+	v.pillClicked(gtx, srPFileType)
+	m := srMenu(e.h)
+	for _, it := range m.items {
+		if it.Label == "PDFs" {
+			it.Do()
+		}
+	}
+	m.Dismiss()
+	d.until(t, "the PDFs search", func() bool { return !v.loading })
+	if !v.q.Has("type", "pdfs") {
+		t.Errorf("File type > PDFs: %q", v.q.String())
+	}
+	x := d.scan()
+	if !srHas(x, "PDFs") || !srHas(x, "Reset") {
+		t.Errorf("the File type pill names PDFs and Reset shows: %q", x)
+	}
+	f := e.fs.SearchForms("search.modules.files")
+	if q := f[len(f)-1].Get("query"); !strings.Contains(q, "type:pdfs") {
+		t.Errorf("files query %q", q)
+	}
+	v.pillClicked(gtx, srPOnlyMine)
+	slUntil(t, 10*time.Second, "Only my channels", d.frame, func() bool {
+		f := e.fs.SearchForms("search.modules.files")
+		return e.h.a.PrefBool("search_only_my_channels", false) && f[len(f)-1].Get("search_only_my_channels") == "true"
+	})
+	// Reset: filters and the two prefs off
+	v.pillClicked(gtx, srPReset)
+	slUntil(t, 10*time.Second, "Reset", d.frame, func() bool {
+		return len(v.q.Mods) == 0 && !e.h.a.PrefBool("search_only_my_channels", false) && !v.loading
+	})
+	if x := d.scan(); srHas(x, "Reset") {
+		t.Error("Reset still drawn with no filter on")
+	}
+
+	// narrow: the row keeps the pills that fit; the rest are in More
+	nv := NewSearchView(e.h, fakeslack.SearchWord+"&module=files")
+	nv.SetOrigin(image.Pt(0, 0))
+	nd := &srDrv{size: image.Pt(560, 700), w: nv}
+	nd.until(t, "the narrow results", func() bool { return nv.started && !nv.loading })
+	nd.frame()
+	if len(nv.visible) >= 6 || len(nv.visible) < 1 {
+		t.Fatalf("narrow row shows %q", nv.visible)
+	}
+	nv.moreMenu(gtx)
+	labels := srLabels(srMenu(e.h).items)
+	hidden := srFiltersShown(srTabFiles)[len(nv.visible)-1:]
+	for _, f := range hidden {
+		want := map[string]string{srFFrom: "From", srFIn: "In", srFFileType: "File type", srFDate: "Date", srFOnlyMine: "Only my channels"}[f]
+		if !slices.Contains(labels, want) {
+			t.Errorf("overflowed %s missing from More %q", f, labels)
+		}
+	}
+}
+
+// The other tabs' Sort selects (search-filter-sort): Files Most relevant
+// (default), Oldest, Newest, A to Z, Z to A; Canvases add Last updated;
+// Channels Most relevant, Newest, Oldest, Most members, Fewest members, A
+// to Z, Z to A; People Most relevant, A to Z, Z to A; each then Edit
+// default. A choice is getSortParams' sort and sort_dir; with
+// stick_user_sort it is kept in the tab's pref and the next search starts
+// from it.
+func TestSearchViewTabSorts(t *testing.T) {
+	e := srNewEnv(t, false)
+	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	// the tab's own call (not another tab's count-only one, which Slack
+	// sends newest first). The fake answers canvases (type:quip) in its
+	// canvas handler, so every call is read off a hook.
+	var mu sync.Mutex
+	calls := map[string][]url.Values{}
+	e.fs.SetHook(func(method string, f url.Values) (any, bool) {
+		mu.Lock()
+		calls[method] = append(calls[method], f)
+		mu.Unlock()
+		return nil, false
+	})
+	t.Cleanup(func() { e.fs.SetHook(nil) })
+	tabCall := func(method, sctx string) url.Values {
+		mu.Lock()
+		defer mu.Unlock()
+		f := calls[method]
+		for i := len(f) - 1; i >= 0; i-- {
+			if f[i].Get("search_context") == sctx && f[i].Get("count") != "0" {
+				return f[i]
+			}
+		}
+		t.Fatalf("no %s call for %s", method, sctx)
+		return nil
+	}
+	for _, c := range []struct {
+		q, method   string
+		labels      []string
+		pick        string
+		sort, dir   string
+		wantMembers bool
+	}{
+		{fakeslack.SearchWord + "&module=files", "search.modules.files",
+			[]string{"Most relevant (default)", "Oldest", "Newest", "A to Z", "Z to A", "--", "Edit default"}, "A to Z", "name", "asc", false},
+		{fakeslack.SearchWord + "&module=canvases", "search.modules.files",
+			[]string{"Most relevant (default)", "Oldest", "Newest", "A to Z", "Z to A", "Last updated", "--", "Edit default"}, "Last updated", "timestamp", "desc", false},
+		{"e&module=channels", "search.modules.channels",
+			[]string{"Most relevant (default)", "Newest", "Oldest", "Most members", "Fewest members", "A to Z", "Z to A", "--", "Edit default"},
+			"Most members", "member_count", "desc", true},
+		{"e&module=people", "search.modules.people",
+			[]string{"Most relevant (default)", "A to Z", "Z to A", "--", "Edit default"}, "Z to A", "name", "desc", false},
+	} {
+		v, d := srView(t, e, c.q, false)
+		sctx := "desktop_" + srTabModules[v.tab] + "_tab"
+		if first := tabCall(c.method, sctx); c.method == "search.modules.files" && (first.Get("sort") != "score" || first.Get("sort_dir") != "desc") {
+			t.Errorf("%s: the tab starts %s %s, want score desc (Most relevant)", c.q, first.Get("sort"), first.Get("sort_dir"))
+		}
+		if x := d.scan(); !srHas(x, "Sorted by ") || !srHas(x, "Most relevant (default)") {
+			t.Errorf("%s: no Sort select: %q", c.q, x)
+		}
+		v.sortMenu(gtx)
+		m := srMenu(e.h)
+		if got := srLabels(m.items); !slices.Equal(got, c.labels) {
+			t.Errorf("%s: sort menu %q, want %q", c.q, got, c.labels)
+		}
+		for _, it := range m.items {
+			if it.Label == c.pick {
+				it.Do()
+			}
+		}
+		m.Dismiss()
+		d.until(t, c.pick, func() bool { return !v.loading })
+		last := tabCall(c.method, sctx)
+		if last.Get("sort") != c.sort || last.Get("sort_dir") != c.dir {
+			t.Errorf("%s %s: sort %s %s, want %s %s", c.q, c.pick, last.Get("sort"), last.Get("sort_dir"), c.sort, c.dir)
+		}
+		if x := d.scan(); !srHas(x, c.pick) {
+			t.Errorf("%s: the select doesn't name %q", c.q, c.pick)
+		}
+		if c.wantMembers {
+			for i := 1; i < len(v.chans); i++ {
+				if v.chans[i-1].NumMembers < v.chans[i].NumMembers {
+					t.Errorf("Most members: %d before %d", v.chans[i-1].NumMembers, v.chans[i].NumMembers)
+				}
+			}
+		}
+	}
+
+	// stick_user_sort: kept in search_file_sort, the next search starts there
+	if err := e.h.a.SetPref(context.Background(), "stick_user_sort", true); err != nil {
+		t.Fatal(err)
+	}
+	v, d := srView(t, e, fakeslack.SearchWord+"&module=files", false)
+	v.sortMenu(gtx)
+	m := srMenu(e.h)
+	if got := srLabels(m.items); got[0] != "Most relevant" {
+		t.Errorf("sticky: first option %q, want Most relevant (no default suffix)", got[0])
+	}
+	for _, it := range m.items {
+		if it.Label == "Newest" {
+			it.Do()
+		}
+	}
+	m.Dismiss()
+	slUntil(t, 10*time.Second, "search_file_sort", d.frame, func() bool { return e.h.a.PrefString("search_file_sort") == "created" })
+	v2, _ := srView(t, e, fakeslack.SearchWord+"&module=files", false)
+	if v2.tabSort[srTabFiles] != "created" {
+		t.Errorf("the next search starts at %q, want created", v2.tabSort[srTabFiles])
+	}
+}
+
+// RelaxationSuggestion: a filtered search that finds nothing, when the
+// words alone find something, offers "Search without filters", which
+// drops the filters and searches again.
+func TestSearchViewRelaxation(t *testing.T) {
+	e := srNewEnv(t, false)
+	var empty string
+	for _, id := range e.fs.ChannelIDs() {
+		r, err := e.h.a.SearchMessages(context.Background(), core.SearchOpts{Query: fakeslack.SearchWord + " in:<#" + id + ">"})
+		if err == nil && r.Total == 0 && r.Unfiltered > 0 {
+			empty = id
+			break
+		}
+	}
+	if empty == "" {
+		t.Fatal("no channel without the fixture word")
+	}
+	v, d := srView(t, e, fakeslack.SearchWord+" in:<#"+empty+">", false)
+	x := d.scan()
+	if !srHas(x, srNothingTitle) || !srHas(x, "Search without filters") {
+		t.Fatalf("no relaxation: %q", x)
+	}
+	v.relaxBtn.Click()
+	d.frame()
+	d.until(t, "the unfiltered search", func() bool { return !v.loading && v.total > 0 })
+	if v.q.String() != fakeslack.SearchWord {
+		t.Errorf("after Search without filters: %q", v.q.String())
+	}
+	if x := d.scan(); srHas(x, "Search without filters") {
+		t.Error("the button stays once results show")
 	}
 }
 
@@ -669,7 +1184,7 @@ func TestSearchPopoverGhostText(t *testing.T) {
 	}
 	p := NewSearchPopover(e.h, name[:3], image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
-	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) > 2 })
+	d.until(t, "the switcher", func() bool { return p.snapOK && len(p.rows) >= 2 })
 	d.frame()
 	top := p.rows[p.sel]
 	if !strings.HasPrefix(strings.ToLower(top.title), strings.ToLower(name[:3])) {
@@ -702,6 +1217,7 @@ func TestSearchPopoverGhostText(t *testing.T) {
 // confirmation replaces the dialog.
 func TestSearchFeedbackFromPopover(t *testing.T) {
 	e := srNewEnv(t, false)
+	RecordRecentPlace(e.fs.ChannelIDs()[0], "", "")
 	p := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
 	d := &srDrv{size: image.Pt(1280, 800), w: p}
 	d.until(t, "suggestions", func() bool { return p.snapOK && len(p.msgs) == 3 })
@@ -937,6 +1453,7 @@ func TestSearchShots(t *testing.T) {
 		d.until(t, "the snapshot", func() bool { return p.snapOK })
 		shot(d, "search-popover-blank-"+mode)
 
+		RecordRecentPlace(chs[0], "", "") // the quick messages' recent channels
 		p2 := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
 		d = &srDrv{size: image.Pt(1280, 800), w: p2, dark: dark}
 		d.until(t, "suggestions", func() bool { return len(p2.msgs) == 3 && len(p2.files) == 1 })

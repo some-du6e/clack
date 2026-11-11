@@ -515,10 +515,12 @@ func TestSlickViewMentionProfiles(t *testing.T) {
 }
 
 // CustomSlackbot: Slackbot's custom responses (subtype slackbot_response)
-// get the plugin's avatar and name. On the message row its CSS hits
+// get the plugin's avatar. On the message row its CSS hits
 // .c-message_kit__background--labels--custom_response: the avatar is the
-// rule's background-image, and the sender name is font-size 0 with the
-// new name in ::after. In the reply bar, ReplyBarAvatar asks Slack's
+// rule's background-image on the TeamIcon (.c-message_kit__avatar), while
+// its name rule targets .c-message__sender_button, which a custom
+// response doesn't have: Slack draws the team's name in a span (no
+// experiment decides that any more). In the reply bar, ReplyBarAvatar asks Slack's
 // hasSlackbotCustomResponseInThread(state, channelId, threadTs, userId) and
 // draws its own avatar. Plain Slackbot messages and threads keep Slack's.
 func TestSlickViewCustomSlackbot(t *testing.T) {
@@ -544,9 +546,6 @@ func TestSlickViewCustomSlackbot(t *testing.T) {
 			{Type: "message", TS: replyB, User: tBot, Text: "a plain synthetic Slackbot reply", ThreadTS: tsB},
 		})
 	})
-	// Slackbot's classic look first (the plugin's name rule targets the
-	// sender button); the reskin's team sender is checked at the end.
-	e.app.SetExperimentGroup("reskin_custom_responses", "off")
 	e.install(t, "CustomSlackbot", map[string]any{"name": "Helper", "url": helper})
 	patched(t, "ReplyBarAvatar")
 	v := NewChannelView(e.h, ch)
@@ -559,9 +558,9 @@ func TestSlickViewCustomSlackbot(t *testing.T) {
 		}
 		return drawn
 	}
-	e.waitFor(t, "the custom response's avatar and name, and the plugin's reply-bar avatar", frameFn(v), func() bool {
+	e.waitFor(t, "the custom response's team sender with the plugin's avatar, and the plugin's reply-bar avatar", frameFn(v), func() bool {
 		c := v.s.rows[tsCustom]
-		return c != nil && c.avDrawn == helper && c.nameShown == "Helper" &&
+		return c != nil && c.custom && c.avDrawn == helper && c.nameShown == "Synthetic Club" &&
 			slackbotAv(tsA) && e.ui.anyTree("slick-custom-slackbot-reply-avatar") &&
 			// the plain thread's reply bar renders Slack's ReplyBarAvatar with Slack's props
 			slackbotAv(tsB) && e.ui.anyTree(`"n":"ReplyBarAvatar"`) && e.ui.anyTree(`"threadTs":"`+tsB+`"`)
@@ -583,14 +582,16 @@ func TestSlickViewCustomSlackbot(t *testing.T) {
 		e.ui.dump(t)
 		t.Fatal("the custom-response thread still rendered Slack's ReplyBarAvatar")
 	}
-	// reskin_custom_responses on: Slack's sender is the team in a span, which
-	// the name rule (.c-message__sender_button) doesn't reach, while the
-	// avatar rule still hits the TeamIcon's .c-message_kit__avatar
-	e.app.SetExperimentGroup("reskin_custom_responses", "on")
-	e.waitFor(t, "the team sender with the plugin's avatar", frameFn(v), func() bool {
-		c := v.s.rows[tsCustom]
-		return c != nil && c.custom && c.avDrawn == helper && c.nameShown == "Synthetic Club"
-	})
+	// forcing reskin_custom_responses off (BringBackSlackbot's patch) changes
+	// nothing: Slack's client no longer reads it
+	e.app.SetExperimentGroup("reskin_custom_responses", "off")
+	f := frameFn(v)
+	for k := 0; k < 5; k++ {
+		f()
+	}
+	if c := v.s.rows[tsCustom]; c == nil || !c.custom || c.avDrawn != helper || c.nameShown != "Synthetic Club" {
+		t.Error("forcing reskin_custom_responses off changed the custom response's look")
+	}
 }
 
 // WhoReacted: each reaction pill lists its reactors' avatars (Reaction

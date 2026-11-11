@@ -143,6 +143,13 @@ func (a *App) afterRoute(prev, r Route) {
 	a.trackPreviewRoute(prev, r)
 	if a.data != nil && a.data.core != nil {
 		a.data.core.SetSelected(ch) // Slack's currentlySelectedId: a previewed channel gets a sidebar row
+		// maybeRecordRecentNavigationEvent (desktop_search_recents_write)
+		if id := ch; id != "" || core.SlackPageIDs[r.Page()] != "" {
+			if id == "" {
+				id = core.SlackPageIDs[r.Page()]
+			}
+			a.data.core.RecordRecentNavigation(id, "")
+		}
 	}
 	if prev.Channel() != ch {
 		// leaving a channel closes its thread/details pane (Slack keeps the

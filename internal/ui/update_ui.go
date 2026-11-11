@@ -416,8 +416,8 @@ func (a *App) updateMenuItem() (title string, enabled bool) {
 	case updAvailable:
 		// Slack greys this out (its updater always downloads next).
 		// Clack's waits for the user when downloads are off or the
-		// download failed: the item opens Preferences > Advanced, which
-		// has Download and View release.
+		// download failed: the item opens Preferences > Clack, whose
+		// Updates row has Download (or Try Again).
 		return updMenuAvailable, true
 	case updReady:
 		return updMenuRestart, true
@@ -437,7 +437,7 @@ func (a *App) updateMenuClick() {
 	case updMenuRestart: // restart-to-apply: no dialog in Slack either
 		a.installUpdate()
 	case updMenuAvailable:
-		a.openPrefsSection("advanced")
+		a.openPrefsSection(clackTabID)
 	default:
 		a.checkUpdatesNotify()
 	}

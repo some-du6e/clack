@@ -56,6 +56,8 @@ var slackRef = map[string]string{
 	"caret-up":                    "caret-up-filled",
 	"caret-up-down":               "caret-up-down",
 	"channel":                     "channel",
+	"clear":                       "clear",   // the History dialog's Clear history (history.go)
+	"command":                     "command", // the Keyboard Shortcuts pane's ⌘ chip (shortcuts.go)
 	"channel-add":                 "channel-add",
 	"channel-plus":                "channel-add",
 	"channel-search":              "channel-search",
@@ -147,6 +149,8 @@ var slackRef = map[string]string{
 	"keyboard":                    "keyboard",
 	"keyboard-filled":             "keyboard-filled",
 	"laptop":                      "laptop",
+	"text-snippet":                "text-snippet",
+	"gif":                         "gif",
 	"later":                       "bookmark",
 	"later-filled":                "bookmark-filled",
 	"life-ring":                   "life-ring",

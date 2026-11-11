@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
@@ -99,5 +100,55 @@ func TestFilesViewRename(t *testing.T) {
 	calls := fs.FilesViewCalls()
 	if len(calls) != 1 || calls[0].Args.Get("is_canvas_template") != "false" {
 		t.Errorf("calls = %+v", calls)
+	}
+}
+
+// Deleted: files.recentlyDeleted lists deleted canvases and lists (the
+// latest first, by file_type, nothing older than a day), and
+// files.undelete {file_id} brings one back.
+func TestFilesViewRestore(t *testing.T) {
+	a, fs := filesViewFake(t)
+	ctx := context.Background()
+	for _, id := range []string{fakeslack.CanvasShared, fakeslack.ListKitchen, fakeslack.CanvasChannel} {
+		if err := a.DeleteFile(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fs.TrashFile(fakeslack.CanvasShared, time.Now().Add(-time.Hour))
+	fs.TrashFile(fakeslack.CanvasChannel, time.Now().Add(-25*time.Hour)) // past the day
+	got, err := a.RecentlyDeleted(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != fakeslack.ListKitchen || got[0].FileType != "list" || got[1].ID != fakeslack.CanvasShared ||
+		got[1].FileType != "quip" || got[1].Title != "Weekly sync notes" || got[1].DateDelete == 0 {
+		t.Fatalf("recently deleted %+v", got)
+	}
+	if only, _ := a.RecentlyDeleted(ctx, "list"); len(only) != 1 || only[0].ID != fakeslack.ListKitchen {
+		t.Errorf("lists only: %+v", only)
+	}
+	if err := a.UndeleteFile(ctx, fakeslack.CanvasShared); err != nil {
+		t.Fatal(err)
+	}
+	calls := fs.FilesViewCalls()
+	if last := calls[len(calls)-1]; last.Method != "files.undelete" || last.Args.Get("file_id") != fakeslack.CanvasShared {
+		t.Errorf("last call %+v", last)
+	}
+	p, err := a.Files(ctx, FilesOpts{Kind: "canvases"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range p.Files {
+		found = found || f.ID == fakeslack.CanvasShared
+	}
+	if !found {
+		t.Error("the restored canvas isn't listed")
+	}
+	if left, _ := a.RecentlyDeleted(ctx, ""); len(left) != 1 || left[0].ID != fakeslack.ListKitchen {
+		t.Errorf("after restore %+v", left)
+	}
+	if err := a.UndeleteFile(ctx, fakeslack.CanvasChannel); err == nil {
+		t.Error("restored a canvas deleted more than a day ago")
 	}
 }

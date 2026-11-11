@@ -429,10 +429,15 @@ var ContextBar func(gtx layout.Context, h Host, ch, ts string) layout.Dimensions
 var ThreadNugget func(gtx layout.Context, h Host, ch, ts string) layout.Dimensions
 
 func (c *Composer) layoutContextBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	if ContextBar != nil && c.edit == nil {
-		return ContextBar(gtx, c.h, c.ch, c.ts)
+	if c.edit != nil {
+		return layout.Dimensions{}
 	}
-	return layout.Dimensions{}
+	if ContextBar != nil {
+		if d := ContextBar(gtx, c.h, c.ch, c.ts); d.Size.Y > 0 {
+			return d
+		}
+	}
+	return c.layoutScheduledBar(gtx) // schedule_bar.go
 }
 
 func (c *Composer) setContextBarShowing(on bool) {

@@ -51,8 +51,8 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$STATUS_SHOTS_DIR"
-          xvfb-run -a go test -p 1 -count=1 -v -run 'TestStatusShots|TestAvailabilityCustomDaysShots' ./internal/ui/popups 2>&1 | tee dist/status-shots.log
-          xvfb-run -a go test -p 1 -count=1 -v -run 'TestFocusPopoverShots' ./internal/ui 2>&1 | tee -a dist/status-shots.log
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestStatusShots|TestStatusCalendarShots|TestAvailabilityCustomDaysShots' ./internal/ui/popups 2>&1 | tee dist/status-shots.log
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestFocusPopoverShots|TestFocusCustomShots' ./internal/ui 2>&1 | tee -a dist/status-shots.log
           ls -la "$STATUS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

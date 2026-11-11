@@ -9,8 +9,10 @@ import (
 
 // An update's download progress, from the shell's downloader
 // (Options.DownloadUpdate's progress callback; cmd/clack maps
-// desktop.Progress onto it) to the Preferences row's bar and the menus'
-// update item. Slack has no such screen: this is Clack's own updater UI.
+// desktop.Progress onto it) to the menus' "Downloading Update" item and
+// Preferences > Clack > Updates (its Downloading Update row and bar).
+// Slack desktop downloads without showing how far; Clack says so in the
+// same places Slack names the step.
 
 // UpdateStage is how far a download has got.
 type UpdateStage int
@@ -53,28 +55,27 @@ func (p UpdateProgress) percent() int {
 	return min(int(p.Done*100/p.Total), 99)
 }
 
-// updateProgressText is the row's line for a download of tag at p:
-// "Downloading Clack v0.1.0-alpha.26… 34% (12.1 of 35.6 MB)".
+// updateProgressText is the Downloading Update row's description for a
+// download of tag at p: "Clack v0.1.0-alpha.26 · 12.1 of 35.6 MB (34%)".
 func updateProgressText(tag string, p UpdateProgress) string {
 	name := AppName + " " + tag
 	switch p.Stage {
 	case UpdateVerifying:
-		s := "Verifying " + name + " against SHA256SUMS…"
+		s := name + " · Checking it against SHA256SUMS…"
 		if p.Total > 0 {
 			s += " " + strconv.Itoa(p.percent()) + "%"
 		}
 		return s
 	case UpdateStaging, UpdateStaged:
-		return "Preparing " + name + "…"
+		return name + " · Preparing…"
 	}
-	s := "Downloading " + name + "…"
 	switch {
 	case p.Total > 0:
-		s += " " + strconv.Itoa(p.percent()) + "% (" + updSizePair(p.Done, p.Total) + ")"
+		return name + " · " + updSizePair(p.Done, p.Total) + " (" + strconv.Itoa(p.percent()) + "%)"
 	case p.Done > 0:
-		s += " " + updSize(p.Done) // size unknown: what's in so far
+		return name + " · " + updSize(p.Done) // size unknown: what's in so far
 	}
-	return s
+	return name + " · Starting…"
 }
 
 // updateMenuProgress is the menus' "Downloading Update" with its share

@@ -131,7 +131,9 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 		hdrBtns = []string{"kebab", "search"}
 	}
 	// a narrow column moves buttons out (useActionsToMoveToMenu, split.go)
-	hdrBtns, hudBtn, narrow := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM)
+	// doesChannelSupportHuddles: no huddle button in a channel you're
+	// previewing without huddle_join_from_preview (huddleui.SupportsHuddles)
+	hdrBtns, hudBtn, narrow := a.headerFit(gtx, sz.X, conv, hdrBtns, !appDM && a.huddles().SupportsHuddles(ch))
 	for _, k := range hdrBtns {
 		k := k
 		right -= btn

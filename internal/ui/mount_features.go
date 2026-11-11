@@ -63,7 +63,11 @@ func init() {
 		case "dms":
 			return views.NewDMs(a)
 		case "drafts":
-			return views.NewDrafts(a)
+			v := views.NewDrafts(a)
+			if strings.Contains(string(r), "tab=scheduled") { // navigateToScheduledMessages
+				v.ShowScheduled()
+			}
+			return v
 		case "files":
 			return views.NewFiles(a)
 		case "huddles":
@@ -107,6 +111,7 @@ func init() {
 	}
 	mkProfile = func(a *App, user string) View { return popups.NewProfileView(a, user) }
 	onPlace = popups.RecordRecentPlace
+	popups.PageInfo = func(page string) (string, string) { return pageTitle(Route(page)), pageIcon(page) }
 	mkSearchInChannel = func(a *App, ch string) View { return popups.NewSearchInChannel(a, ch) }
 	mkSwitcher = func(a *App) Overlay { return popups.NewQuickSwitcher(a) }
 	mkSearch = func(a *App, q string) Overlay { return popups.NewSearchPopover(a, q, a.searchPill) }
@@ -169,7 +174,12 @@ func init() {
 		popups.CheckForUpdates = a.menuCheckForUpdates()
 		popups.UpdateItemLabel = a.updateMenuItem
 	}
-	mkStatusModal = func(a *App) Overlay { return popups.NewSetStatusModal(a) }
+	mkStatusModal = func(a *App, fromShortcut bool) Overlay {
+		if fromShortcut {
+			return popups.NewSetStatusModalFromShortcut(a)
+		}
+		return popups.NewSetStatusModal(a)
+	}
 	mkCreateChannel = func(a *App, section string) Overlay {
 		return popups.NewCreateChannelModal(a, popups.CreateChannelOpts{Section: section})
 	}
