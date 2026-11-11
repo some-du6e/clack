@@ -39,7 +39,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | ChatTabs | ✅ | CI (`TestSlickViewChatTabs`, `TestSlickViewHaikuWarningWithChatTabs`, `TestSlickViewMissedFrameChatTabs`) | Its tab bar inside the primary view, "Open in new Slick tab" in the channel menu, Ctrl+W through its main half. The send it blocked with HaikuWarning on is fixed (`815933f`). |
 | ClearURLs | ⚠️ | CI (acceptance check) | Tracking parameters go on send (its main half fetches the rules). Its paste-time cleaning patches Quill's Clipboard module, which Clack's native composer doesn't have. |
 | Click2Load | ❌ | — | It gates iframes; Clack never creates any. |
-| CopyReacted | ⚠️ | CI (`TestSlickViewCopyReacted`) | In channels its copy button follows the add-reaction button (ReactionAddButton inside ReactionBar's tree). The Threads, Unreads and Activity views have Slack's Reaction boundary now but no ReactionBar or add-reaction button, so its button isn't there. |
+| CopyReacted | ✅ | CI (`TestSlickViewCopyReacted`, `TestSlickViewCopyReactedInViews`) | Its copy button follows the add-reaction button (ReactionAddButton inside ReactionBar's tree) in channels and, since plugins-leftovers, in the Threads, Unreads and Activity views, which now draw Slack's ReactionBar with the add-reaction button. The chip draws with Slack's `c-reaction_add` rules (the CSS engine's host base sheet). |
 | CustomFonts | ❌ | — | Its stylesheet installs, but Clack draws its bundled Lato and doesn't load `@font-face` fonts. |
 | CustomNameRecording | ⚠️ | — | Its button shows on your own profile; `decodeAudioData` isn't supported, so nothing uploads. |
 | CustomSlackbot | ✅ | CI (`TestSlickViewCustomSlackbot`) | Its avatar and name on Slackbot's custom responses (`subtype: slackbot_response`) and in the reply bar. Clack draws no custom-response label, so its rule hiding that badge has nothing to hide. |
@@ -47,7 +47,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | DeArrow | ✅ | CI (`TestSlickViewDeArrow`) | Crowdsourced title and thumbnail on YouTube unfurls, with its toggle. |
 | Experiments | ✅ | CI (`experiments` workflow `TestExperimentsPluginsDriveClack`, acceptance check) | A group forced in its tab drives Clack (sidebar_section_search gates the section menu's "Search in this section"); turning it off gives the server's group back. Never set on the real account. |
 | HaikuWarning | ✅ | live (alone), CI (with ChatTabs) | "Found a haiku in your message!"; Keep editing returns the text. |
-| HcaStatus | ⚠️ | CI (acceptance check) | The auth.hackclub.com lookup works and its class reaches the sender. Whether its name underline draws on Clack's native sender isn't covered by a test. |
+| HcaStatus | ✅ | CI (acceptance check; `TestSlickViewHcaStatus`) | The auth.hackclub.com lookup works and its class reaches the sender; the native sender name draws its wavy underline in the unverified and over-18 colours (pixels, `hca-status.png`). |
 | HuddleMuteDetector | ❌ | — | Out of scope (huddle media). |
 | HumanCount | ✅ | live | The header count (17, same as Slack). |
 | IgnoreTime | ✅ | CI (`TestIgnoreTimeLeavesTimesOutOfCopies`) | Its `.c-timestamp__label {user-select: none}` now keeps the times out of a multi-message copy's header lines, as in Slack. |
@@ -57,7 +57,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | LocalTime | ✅ | live (messages), CI (`TestSlickViewLocalTime`) | The sender's local time after the timestamp; the profile card and the full profile's clock row. |
 | MentionProfiles | ✅ | CI (`TestSlickViewMentionProfiles`) | Pictures in @mention pills (MemberSlug); without the @ when its setting says so. |
 | MessageLogger | ✅ | CI (`TestSlickViewMessageLogger*`) | Deleted messages stay, marked; edits are marked; "Accept deletion" in the ⋮ menu. Not run live (it keeps message contents on disk). |
-| Nicknames | ✅ | live | "Set nickname…" → the row's sender and popups show the nickname. |
+| Nicknames | ✅ | live; CI (`TestSlickViewNicknamesMentions`) | "Set nickname…" → the row's sender and popups show the nickname; @mentions in messages too (richview asks for the patched member at layout time). |
 | NoTrack | ✅ | CI | Telemetry fetches are blocked. Nothing visible, as in Slack. |
 | NotShitMarkdown | ✅ | CI | Pasted Markdown is converted on send. |
 | NoUpsell | ✅ | live | Clack draws no upsells. |
@@ -73,9 +73,9 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | ShowSendingBot | ✅ | CI (`TestSlickViewShowSendingBot`, messages and shell) | The bot's badge on the avatar of a message a bot posted for a person. |
 | ShutUpSlackbot | ✅ | CI | Slash-command notices are dropped, other notifications shown. |
 | SilentTyping | ✅ | live | Its composer toggle. |
-| SlimMessageBox | ✅ | CI (`TestSlickViewSlimMessageBoxOneLine`, `…HidesEmoji`) | The hide toggles, and now the Discord-style one-line layout: its row-flex `.c-basic_container__body` puts the footer beside the editor (composer `layoutBox`). Unlike Slack, pending attachments don't stack it again (Clack's natives answer `:has()` with false), and the editor's 450px min-width alone decides when it wraps (`@container` queries always apply). |
+| SlimMessageBox | ✅ | CI (`TestSlickViewSlimMessageBoxOneLine`, `…HidesEmoji`) | The hide toggles and the Discord-style one-line layout: its row-flex `.c-basic_container__body` puts the footer beside the editor (composer `layoutBox`). Attached files stack it again, as in Slack: the composer box declares its pending files row, so the layout's `:not(:has(… .c-pending_files …))` sees it. `@container` queries always apply, so the editor's 450px min-width alone decides when it wraps. |
 | Snappy | ✅ | CI (`TestSnappyInClack`, `TestSlickViewSnappy`) | See [Snappy in Clack](#snappy-in-clack). |
-| StreamerMode | ⚠️ | CI (acceptance check) | Notifications are silenced and its redaction stylesheet installs. Its blur (`filter: blur`) applies to natives that wrap their CSS, but no view test checks the sidebar, Activity or DM rows yet. |
+| StreamerMode | ✅ | CI (acceptance check; `TestSlickViewStreamerMode`) | Notifications are silenced and its redaction stylesheet blurs, in the window's pixels, the private-channel and group-DM sidebar rows and a private channel's name in the thread header (Slack's InlineChannelEntity with its lock icon declared for `:has()`); a public row stays sharp (`streamer-mode-slick-*.png`). Its toggle draws with Slack's top-nav button rules. A private channel's Activity row declares its destination's lock icon for the activity rules (not pixel-tested). |
 | UserPronouns | ✅ | CI (`TestSlickViewUserPronouns`, acceptance check) | Pronouns after the timestamp in channel rows (BaseBroadcastPreamble), once per run of grouped messages, and in thread headers. |
 | WhoReacted | ✅ | CI (`TestSlickViewWhoReacted`, `TestSlickViewWhoReactedInViews`) | Reactors' avatars in reaction pills, in channels and now in the Threads, Unreads and Activity views (their pills are Slack's Reaction → UnstyledButton). |
 
@@ -148,4 +148,15 @@ Related theme fixes: importing selects the theme (`fcc7ac9`); pausing Slick keep
 | `76205972`, `e375e310` | views, popups | A plugin's copy of a message's text is what Activity rows and search cards show (Censorship) |
 | `c7d05fe4` | messages | A multi-message copy leaves times out when the timestamp label is unselectable (IgnoreTime) |
 
-Still open: StreamerMode's blur and HcaStatus's underline on natives have no view test; CopyReacted in the views (no ReactionBar or ReactionAddButton there); SlimMessageBox's `:has()`/`@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, oneko's sprite, OnlineCount, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; huddle media (out of scope); and every *CI*-only row's live re-check.
+## Fixed in plugins-leftovers (2026-11-11, CI only)
+
+| Package | What |
+|---|---|
+| css, slackc | The host base sheet (Slack's rules for the classes plugins put on their own elements; plugin elements only) and its cascade layers; natives' declared kids (`ClassDef.Kids`) for `:has()`; the legacy icon font's glyphs as vector icons |
+| views | ReactionBar with the add-reaction button in the Threads, Unreads and Activity views (CopyReacted); a private channel's Activity row declares its lock icon (StreamerMode) |
+| messages, views | InlineChannelEntity in the thread header and the Threads view's headers (StreamerMode) |
+| richview | Mentions name the patched member (Nicknames) |
+| composer | The box declares its pending files and broadcast rows (SlimMessageBox) |
+| ui, messages | View tests: StreamerMode's blur and HcaStatus's underline, from the GPU renderer's pixels |
+
+Still open: SlimMessageBox's `@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, oneko's sprite, OnlineCount, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; huddle media (out of scope); and every *CI*-only row's live re-check.
