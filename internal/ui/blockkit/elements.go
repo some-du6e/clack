@@ -432,7 +432,9 @@ func (w *ew) press() {
 		// WorkflowButtonElement only trips the trigger: it never sends
 		// blocks.actions.
 		if link, inputs := workflowTrigger(w.e); link != "" {
-			act := func() { tripWorkflow(w.o.host(), link, w.o.channel(), w.messageTS(), inputs) }
+			act := func() {
+				tripWorkflowButton(w.o.host(), link, inputs, w.e.ActionID, w.bid, w.o.channel(), w.messageTS())
+			}
 			if w.e.Confirm != nil {
 				showConfirm(w.o.host(), w.e.Confirm, act, nil)
 				return
