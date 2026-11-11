@@ -16,6 +16,7 @@ import (
 // never had a message except the self-DM.
 func TestDMsTabFilters(t *testing.T) {
 	a, f := testApp(t)
+	a.SetExperimentGroup("agents_in_dm_sidebar", "off")
 	a.S.PutUsers([]slack.User{{ID: "UDEL", Name: "gone", Deleted: true}, {ID: "UAPP", Name: "app", IsAppUser: true}})
 	msg := func(ts, user string) string {
 		return `{"type":"message","ts":"` + ts + `","user":"` + user + `","text":"synthetic"}`
@@ -57,5 +58,20 @@ func TestDMsTabFilters(t *testing.T) {
 	}
 	if q.Get("exclude_bots") != "true" { // agents_in_dm_sidebar off
 		t.Errorf("exclude_bots %q, want true without agents_in_dm_sidebar", q.Get("exclude_bots"))
+	}
+	// with agents in the DM sidebar Slack asks for the bots too (an agent
+	// DM may show) and still drops the plain bot DMs client-side
+	a.SetExperimentGroup("agents_in_dm_sidebar", "on")
+	p, err = a.DMs(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := f.last("client.dms"); q.Get("exclude_bots") != "false" {
+		t.Errorf("exclude_bots %q, want false with agents_in_dm_sidebar", q.Get("exclude_bots"))
+	}
+	for _, d := range p.DMs {
+		if d.Channel == "DBOT" || d.Channel == "DSLACKBOT" {
+			t.Errorf("%s listed with agents_in_dm_sidebar on (not an agent)", d.Channel)
+		}
 	}
 }
