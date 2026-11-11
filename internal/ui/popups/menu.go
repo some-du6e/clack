@@ -48,6 +48,18 @@ type MenuItem struct {
 	Radio    bool
 	External bool // draws an external-link glyph at the right
 
+	// Tag and BadgeCount are Slack Kit MenuItem's tag and badgeCount
+	// (menu_badge.go): a micro Tag ({"Customized", "informative"} on
+	// ChannelNotificationPrefMenu's customized rows) and a c-badge pill
+	// (BadgeStyle: "red" by default, "blue", "white", "black",
+	// "min_gray"), after the label and the shortcut, before the caret.
+	// Slack hides the badge on the highlighted row unless
+	// BadgeHighlighted (search's More filters menu).
+	Tag              *MenuTag
+	BadgeCount       int
+	BadgeStyle       string
+	BadgeHighlighted bool
+
 	Separator bool   // a divider line instead of an item
 	Header    string // a small non-interactive heading row
 	Note      string // a wrapped 13px footnote row
@@ -226,7 +238,7 @@ func (m *Menu) rowHeight(gtx layout.Context, th *theme.Theme, i, w int) int {
 		// 3px padding, the 15/22 label, the 13/18 description (≤ 2 lines):
 		// Slack's 46 / 63 px rows
 		x := dp(gtx, 60)
-		_, d := record(loose(gtx, image.Pt(max(1, w-x-dp(gtx, 24)), 1<<20)), func(gtx layout.Context) layout.Dimensions {
+		_, d := record(loose(gtx, image.Pt(max(1, w-x-dp(gtx, 24)-tagAndBadgeW(gtx, th, it)), 1<<20)), func(gtx layout.Context) layout.Dimensions {
 			return para(gtx, th, 13, 18, theme.Regular, colorsOf(th).Fg3, it.Subtitle, 2)
 		})
 		return dp(gtx, 6) + dp(gtx, 22) + d.Size.Y
@@ -655,6 +667,7 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 			})
 			right -= dp(gtx, 8)
 		}
+		right = m.tagAndBadge(gtx, th, it, hl, right, sz.Y)
 		for _, s := range []struct {
 			t    string
 			size float32
@@ -726,7 +739,8 @@ func (m *Menu) radioRow(gtx layout.Context, th *theme.Theme, cl *Colors, it *Men
 		})
 		x += dp(gtx, 36)
 	}
-	lw := max(1, sz.X-x-dp(gtx, 24))
+	right := m.tagAndBadge(gtx, th, it, hl, sz.X-dp(gtx, 24), sz.Y)
+	lw := max(1, right-x)
 	at(gtx, image.Pt(x, top), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(lw, dp(gtx, 22))}
 		return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {

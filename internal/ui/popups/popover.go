@@ -2,14 +2,13 @@ package popups
 
 import (
 	"image"
+	"image/color"
 	"strings"
 	"time"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	gtext "gioui.org/text"
 	"gioui.org/unit"
 
@@ -210,20 +209,25 @@ func Tooltip(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz
 	default:
 		ac = image.Pt(sz.X/2, sz.Y+gap)
 	}
-	var path clip.Path
-	path.Begin(gtx.Ops)
-	fx, fy, fr := float32(ac.X), float32(ac.Y), float32(ar)
-	path.MoveTo(pt(fx, fy-fr))
-	path.LineTo(pt(fx+fr, fy))
-	path.LineTo(pt(fx, fy+fr))
-	path.LineTo(pt(fx-fr, fy))
-	path.Close()
-	paint.FillShape(gtx.Ops, cl.Tooltip, clip.Outline{Path: path.End()}.Op())
+	// the box and its arrow, outlined together in dark mode
+	// (theme/tooltip.go), then the text
+	theme.TooltipShape(gtx, image.Rectangle{Min: p, Max: p.Add(d.Size)}, dp(gtx, 8),
+		theme.TooltipArrow{C: ac, Half: ar}, cl.Tooltip, tipGlow(th))
 	macroAt(gtx, call, p)
 	op.Defer(gtx.Ops, m.Stop())
 }
 
-// tipBox draws the tooltip body at the origin.
+// tipGlow is the dark mode tooltip outline (theme's TooltipGlow; none in
+// light mode).
+func tipGlow(th *theme.Theme) color.NRGBA {
+	if th == nil {
+		return color.NRGBA{}
+	}
+	return th.C.TooltipGlow
+}
+
+// tipBox draws the tooltip body's text and shortcut chips at the origin
+// and returns the box's size (Tooltip fills the box under it).
 func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string, maxWidth unit.Dp) layout.Dimensions {
 	cl := colorsOf(th)
 	lines := strings.Split(label, "\n")
@@ -263,7 +267,8 @@ func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string, maxWidt
 		kc, _ = record(gtx, func(gtx layout.Context) layout.Dimensions {
 			x := 0
 			for _, k := range keys {
-				d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions { return kbd(gtx, th, k, !th.Dark) })
+				// KeyboardKey's tooltip variant: black chips in both modes
+				d := at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions { return kbd(gtx, th, k, true) })
 				x += d.Size.X + dp(gtx, 4)
 			}
 			kw = x - dp(gtx, 4)
@@ -281,7 +286,6 @@ func tipBox(gtx layout.Context, th *theme.Theme, label, shortcut string, maxWidt
 		h += dp(gtx, 24)
 	}
 	sz := image.Pt(w+2*padX, h+2*padY)
-	rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 8), cl.Tooltip)
 	y := padY
 	for _, p := range ps {
 		macroAt(gtx, p.call, image.Pt((sz.X-p.d.Size.X)/2, y))
@@ -352,10 +356,14 @@ func (t *Toast) Layout(gtx layout.Context) layout.Dimensions {
 		softShadow(gtx, r, rad, dp(gtx, 4), dp(gtx, 12), cl.Shadow)
 	}
 	rrect(gtx, r, rad, bg)
+	fg := cl.TooltipText // .c-toast: content-inv-pry on base-inv-pry
+	if t.pill {
+		fg = rgb(0xffffff)
+	}
 	at(gtx, image.Pt(r.Min.X+padX, r.Min.Y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, h)}
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, fs, theme.Bold, rgb(0xffffff), t.text)
+			return text(gtx, th, fs, theme.Bold, fg, t.text)
 		})
 	})
 	return layout.Dimensions{}

@@ -95,6 +95,23 @@ func tomorrowAt9(now time.Time) time.Time {
 	return time.Date(t.Year(), t.Month(), t.Day(), 9, 0, 0, 0, now.Location())
 }
 
+// notifyCustomized is ChannelNotificationPrefMenu's tag (PND5: {label
+// "Customized", style "informative"}) on the setting's row when n9iP Xq
+// holds: the channel isn't muted, the setting is the one in effect, and
+// its advanced settings depart from it (follow every thread, @channel
+// suppressed under Just mentions, badge every message under All new
+// posts, or a mobile level of its own).
+func notifyCustomized(n core.ChannelNotify, cur, setting string, muted bool) *MenuTag {
+	if muted || cur != setting {
+		return nil
+	}
+	mobile := n.Mobile != "" && n.Mobile != "default" && n.Mobile != cur
+	if !n.FollowAllThreads && !(setting == "mentions_dms" && n.SuppressAtChannel) && !(setting == "everything" && n.BadgeAllUnreads) && !mobile {
+		return nil
+	}
+	return &MenuTag{Label: "Customized", Style: "informative"}
+}
+
 // ChannelNotifyItems are the bell menu's rows for ch.
 func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	a := h.Core()
@@ -160,9 +177,9 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 	return []MenuItem{
 		{Header: "Notify you about…"},
 		{Key: "everything", Label: "All new posts", Subtitle: "Messages and threads you follow", Icon: NotifyIcon("everything", false), Radio: true,
-			Checked: cur == "everything", Do: set("everything")},
+			Checked: cur == "everything", Tag: notifyCustomized(n, cur, "everything", muted), Do: set("everything")},
 		{Key: "mentions_dms", Label: "Just mentions", Subtitle: mentions, Icon: NotifyIcon("mentions_dms", false), Radio: true,
-			Checked: cur == "mentions_dms", Do: set("mentions_dms")},
+			Checked: cur == "mentions_dms", Tag: notifyCustomized(n, cur, "mentions_dms", muted), Do: set("mentions_dms")},
 		{Key: "mute", Label: muteLabel, Subtitle: muteDesc, Icon: NotifyIcon("nothing", true), Radio: true, Checked: muted,
 			Do: func() { actToggleMute(h, ch, "channel") }},
 		Sep(),

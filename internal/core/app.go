@@ -560,6 +560,8 @@ func (a *App) Boot(ctx context.Context) error {
 		return nil
 	})
 	a.later(5*time.Second, func() { _ = a.loadUsergroups(a.bg) }) // cosmetic; cached on disk after the first run
+	// client.extras: the message menu's Report to Slack (message_menu.go)
+	a.later(5*time.Second, func() { _ = a.LoadClientExtras(a.bg) })
 	wg.Wait()
 	if errConvs != nil {
 		a.bootErr = errConvs
@@ -1110,6 +1112,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
+	v.WorkflowID, v.TriggerID = m.WorkflowID, m.TriggerID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)
 	}

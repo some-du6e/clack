@@ -31,7 +31,7 @@ plumbing that lets Clack and its plugins follow them, and the work left, by area
 | C: not read by the client | 1000 |
 | **All assignments** | **1,609** |
 
-609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 35 today (the Clack column cites where).
+609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 38 today (the Clack column cites where).
 
 ## How Clack follows them
 
@@ -151,7 +151,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `agent_tasks` | `on` | client-boot `HLQ9` export `rh` | agent tasks (rail More menu) | reads it: `core/rail.go:122` |
 | `agents_landing_page` | `on` | client-boot `M/qt` export `Wp` | Agents landing page | reads it: `core/rail.go:195` |
 | `show_as_agent` | `on` | client-boot `HLQ9` export `ej` | agent apps are labelled as agents | reads it: `core/badge.go:73` |
-| `slack_kit_v2_button` | `on` | gantry-v2-async-message-share-dialog `jdUv` isSlackKitV2ButtonEnabled | Slack Kit v2 buttons | missing |
+| `slack_kit_v2_button` | `on` | gantry-v2-async-message-share-dialog `jdUv` isSlackKitV2ButtonEnabled | the share (forward) dialog's Forward button is Slack Kit's v2 Button (no 80px minimum, no hover shadow, a 4px focus halo, `content-inv-pry` text); Save Draft turns secondary, and the schedule caret joins Forward in a ButtonGroup | reads it: `ui/popups/actions_forward.go:81` (`theme/button.go`) |
 | `expand_flag_message_to_private_threads_v2` | `on` | modern.vendor `tZyZ` | "Flag message" reaches messages in private threads | missing |
 | `mpdm_default_exclude_history_clients_webapp` | `on` | gantry-v2-async-client-boot-shared `J1Xx` useDefaultExcludeHistory | adding people to a group DM excludes history by default | missing |
 | `prefill_dm_canvas_removal` | `treatment` | client-boot `Rc9k` | treatment: DMs no longer prefill a canvas | missing |
@@ -247,8 +247,8 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `app_thread_nugget_fe` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `r` | app thread nugget | missing |
 | `flexpane_content_parity` | `on` | client-boot `HLQ9` export `X7` | flexpane content parity for agent cards | missing |
 | `revamp_agent_app_profile` | `on` | client-boot `HLQ9` export `sD` | revamped agent app profile | missing |
-| `a11y_no_auto_highlight_search_multi_select` | `on` | client-boot `MrD9` | search multi-selects do not auto-highlight | missing |
-| `basic_select_placeholder_option` | `on` | client-boot `MrD9` | basic selects show a placeholder option | missing |
+| `a11y_no_auto_highlight_search_multi_select` | `on` | client-boot `MrD9` Hk, read by `Fd8o` SelectOptionsList and `ivsZ` | options lists open with no active row; the first row is pseudo-active (`surf-pry` with an Enter key) and Enter picks it | reads it: `ui/popups/experiments.go:62` (the forward picker, basic select lists) |
+| `basic_select_placeholder_option` | `on` | client-boot `MrD9` tS, read by `Fd8o` and `zDm3` BasicSelect | a basic select that opened empty lists "--Select an option--" first (picking it clears), and its closed button shows that text in its own colour | reads it: `ui/popups/experiments.go:68` (`optionlist.go`, Search feedback's select) |
 
 ## Work packages
 
@@ -358,7 +358,9 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Menus, selects and buttons (3)
 
 - Files: internal/ui/popups/ (menu and select components), internal/ui/theme/ (buttons)
-- To do (3): `slack_kit_v2_button`, `a11y_no_auto_highlight_search_multi_select`, `basic_select_placeholder_option`
+- Clack reads already (3): `slack_kit_v2_button`, `a11y_no_auto_highlight_search_multi_select`, `basic_select_placeholder_option` (branch exp-menus; `TestSlackKitV2ButtonFollowsExperiment`, `TestForwardPickerAutoHighlight`, `TestSelectListToggles`, `TestSessionToggleGroups`)
+- The two `MrD9` names are session toggles: on for `treatment` or `on` (V1z/'s default treatment groups), off for any other group or none. Slack latches the group for the next session; Clack applies it at once, like every forced group.
+- Left: the share dialog's schedule caret (`schedule_send_forwards`, on for the account) and Save Draft (`forwarding_save_as_draft`, not assigned) need a scheduled or drafted forward, which Clack doesn't have, so their v2 forms aren't drawn either.
 
 ## B: read by the client, not applicable
 

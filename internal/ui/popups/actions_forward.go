@@ -56,12 +56,15 @@ type actForward struct {
 	query    string
 	focusTo  bool
 	copyLink bool
+	hov      int // the suggestion under the pointer last frame (-1 none)
 }
 
 // NewForwardModal builds the forward dialog for m. Show it with
 // h.ShowOverlay.
-func NewForwardModal(h Host, m core.Message) *Modal {
-	f := &actForward{h: h, m: m, focusTo: true}
+func NewForwardModal(h Host, m core.Message) *Modal { return newForward(h, m).modal }
+
+func newForward(h Host, m core.Message) *actForward {
+	f := &actForward{h: h, m: m, focusTo: true, hov: -1}
 	f.to.SingleLine = true
 	f.to.Submit = true
 	f.link = m.Permalink
@@ -72,19 +75,25 @@ func NewForwardModal(h Host, m core.Message) *Modal {
 	f.fwd = &ModalButton{Label: "Forward", Kind: BtnPrimary, Enabled: func() bool { return len(f.chips) > 0 }, Do: func() bool {
 		f.send()
 		return true
-	}}
+	},
+		// the share dialog's go button: Slack Kit's v2 Button under
+		// slack_kit_v2_button (jdUv: ex = W ? ey : ev), the legacy one else
+		V2: func() bool { return expOn(h, ExpSlackKitV2Button) },
+	}
 	f.modal = NewModal(h, ModalOpts{
 		Title: "Forward this message",
 		Body:  f.layout,
 		Buttons: []*ModalButton{
-			{Label: "Copy link", Kind: BtnOutline, Do: func() bool {
+			// ShareDialogCopyLinkButton (Zp0h): the legacy outline button
+			// whatever the experiment, labelled "Copy Link"
+			{Label: "Copy Link", Kind: BtnOutline, Do: func() bool {
 				f.copyLink = true // copied by the body, which has the frame context
 				return false
 			}},
 			f.fwd,
 		},
 	})
-	return f.modal
+	return f
 }
 
 // actFwdTargets lists forwardable conversations from the snapshot.
@@ -226,7 +235,13 @@ func (f *actForward) refilter() {
 	}
 	f.query = q
 	f.match = f.match[:0]
+	// SelectOptionsList on new options: the first match is the active row,
+	// or, under a11y_no_auto_highlight_search_multi_select, no row is
+	// active and the first is pseudo-active (Fd8o componentDidUpdate)
 	f.sel = 0
+	if noAutoHighlight(f.h) {
+		f.sel = -1
+	}
 	if q == "" {
 		return
 	}
@@ -247,6 +262,25 @@ func (f *actForward) refilter() {
 	for k := 0; k < len(hits) && k < actFwdMax; k++ {
 		f.match = append(f.match, hits[k].i)
 	}
+}
+
+// enterRow is the row Enter and Tab pick: the active row, else the
+// pseudo-active one (onEnter: activeRowIndex ?? pseudoActiveRowIndex);
+// -1 for none.
+func (f *actForward) enterRow() int {
+	if f.sel >= 0 {
+		return f.sel
+	}
+	return f.pseudoRow()
+}
+
+// pseudoRow is getPseudoActiveRowIndex: the first match while no row is
+// active, under a11y_no_auto_highlight_search_multi_select; -1 otherwise.
+func (f *actForward) pseudoRow() int {
+	if f.sel < 0 && len(f.match) > 0 && noAutoHighlight(f.h) {
+		return 0
+	}
+	return -1
 }
 
 func (f *actForward) pick(i int) {
@@ -308,15 +342,24 @@ func (f *actForward) events(gtx layout.Context) {
 		}
 		switch ke.Name {
 		case key.NameUpArrow:
+			// getPreviousActiveRowIndex: the last row from none, no
+			// further than the first (the picker doesn't wrap)
 			if n := len(f.match); n > 0 {
-				f.sel = (f.sel - 1 + n) % n
+				switch {
+				case f.sel < 0:
+					f.sel = n - 1
+				case f.sel > 0:
+					f.sel--
+				}
 			}
 		case key.NameDownArrow:
-			if n := len(f.match); n > 0 {
-				f.sel = (f.sel + 1) % n
+			// getNextActiveRowIndex: the first row from none, no
+			// further than the last
+			if n := len(f.match); n > 0 && f.sel < n-1 {
+				f.sel++
 			}
 		case key.NameReturn, key.NameEnter, key.NameTab:
-			f.pick(f.sel)
+			f.pick(f.enterRow())
 		case key.NameDeleteBackward:
 			if f.to.Len() == 0 && len(f.chips) > 0 {
 				f.chips = f.chips[:len(f.chips)-1]
@@ -333,7 +376,7 @@ func (f *actForward) events(gtx layout.Context) {
 			f.refilter()
 		case widget.SubmitEvent:
 			if len(f.match) > 0 {
-				f.pick(f.sel)
+				f.pick(f.enterRow())
 			} else if len(f.chips) > 0 {
 				f.modal.press(f.fwd)
 				return
@@ -511,11 +554,22 @@ func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors
 	r := image.Rect(0, 0, w, n*rh+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Ring)
 	rrect(gtx, r.Inset(1), dp(gtx, 8)-1, cl.Bg)
+	// onMouseEnteredOption makes the row under the pointer active;
+	// onMouseLeftOption clears it (clearActive: the pseudo-active row
+	// comes back under a11y_no_auto_highlight_search_multi_select)
+	hov := -1
 	for i := range f.match {
 		if f.sugg[i].Hovered() {
-			f.sel = i
+			hov = i
 		}
 	}
+	if hov >= 0 {
+		f.sel = hov
+	} else if f.hov >= 0 {
+		f.sel = -1
+	}
+	f.hov = hov
+	pseudo := f.pseudoRow()
 	for i, ti := range f.match {
 		t := &f.all[ti]
 		at(gtx, image.Pt(0, pad+i*rh), func(gtx layout.Context) layout.Dimensions {
@@ -523,10 +577,16 @@ func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors
 			return clickBox(gtx, &f.sugg[i], nil, func(gtx layout.Context) layout.Dimensions {
 				fg, fg2 := cl.Fg, cl.Fg2
 				sel, rowBg := i == f.sel, cl.Bg
+				right := w - dp(gtx, 16)
 				if sel {
 					rowBg = cl.Highlight
 					fill(gtx, image.Rect(0, 0, w, rh), rowBg)
 					fg, fg2 = cl.HighText, cl.HighText
+				} else if i == pseudo {
+					// .c-select_options_list__option--pseudo-active and its
+					// KeyboardKey "Enter" (margin-inline-start 16)
+					fill(gtx, image.Rect(0, 0, w, rh), selectPseudoActive(th))
+					right = enterKeyChip(gtx, th, right, rh) - dp(gtx, 16)
 				}
 				x := dp(gtx, 16)
 				at(gtx, image.Pt(x, (rh-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
@@ -543,7 +603,7 @@ func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors
 				})
 				x += dp(gtx, 30)
 				at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x-dp(gtx, 16)), rh)}
+					gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-x), rh)}
 					return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, 15, theme.Regular, fg, t.title)
 					})

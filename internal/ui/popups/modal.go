@@ -28,8 +28,20 @@ type ModalButton struct {
 	Do func() bool
 	// Left puts the button at the footer's left edge, apart from the
 	// others (Slack's delete-scheduled-message "Save as Draft").
-	Left  bool
+	Left bool
+	// V2, when it says so, draws Slack Kit's v2 Button instead of the
+	// legacy c-button (the share dialog under slack_kit_v2_button).
+	V2    func() bool
 	click widget.Clickable
+}
+
+// draw lays the footer button out as kind (BtnDisabled when it can't be
+// pressed), with the keyboard focus ring when ring is set.
+func (b *ModalButton) draw(gtx layout.Context, th *theme.Theme, kind BtnKind, ring bool) layout.Dimensions {
+	if b.V2 != nil && b.V2() {
+		return buttonV2(gtx, th, &b.click, kind, theme.ButtonV2Medium, b.Label, "", ring)
+	}
+	return button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80, ring)
 }
 
 // ModalOpts configure a modal.
@@ -377,7 +389,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						}
 						ring := kind != BtnDisabled && m.ringOn(gtx, &b.click)
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-							return button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80, ring)
+							return b.draw(gtx, th, kind, ring)
 						})
 						if b.Left {
 							macroAt(gtx, call, image.Pt(lx, fy+footPad))

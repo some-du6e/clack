@@ -655,6 +655,20 @@ type dtTimeList struct {
 	rect   image.Rectangle
 	focus  bool
 	rows   int // visible rows, last layout
+
+	// sm is set for a basic select's listbox (NewSelectList): Slack Kit's
+	// SelectOptionsList rules instead of the time list's.
+	sm *selectMode
+}
+
+// selectMode is SelectOptionsList (client-boot Fd8o) for a BasicSelect:
+// one active row (the pointer's or the keyboard's), the selected row in
+// Slack's --selected style when it isn't the active one, and, under
+// a11y_no_auto_highlight_search_multi_select, no active row on open and
+// the first row pseudo-active (surf-pry with an Enter key) while none is.
+type selectMode struct {
+	noAuto  bool
+	hovered int // the row under the pointer last frame (-1 none)
 }
 
 func dtNewTimeList(h Host, anchor image.Rectangle, value, from int, onPick func(int)) *dtTimeList {
@@ -702,10 +716,19 @@ func (t *dtTimeList) pick(i int) {
 
 func (t *dtTimeList) move(d int) {
 	i := t.cur
-	if i < 0 {
+	if t.sm != nil {
+		// getNextActiveRowIndex / getPreviousActiveRowIndex: from no
+		// active row, the first row down or the last up
+		if i < 0 {
+			i = -1
+			if d < 0 {
+				i = len(t.slots)
+			}
+		}
+	} else if i < 0 {
 		i = t.sel
 	}
-	if i < 0 {
+	if i < 0 && t.sm == nil {
 		i = t.list.Position.First - d
 	}
 	i += d
@@ -722,6 +745,34 @@ func (t *dtTimeList) move(d int) {
 	} else if n := maxInt(1, t.rows); i >= t.list.Position.First+n {
 		t.list.Position.First, t.list.Position.Offset = i-n+1, 0
 	}
+}
+
+// pseudoRow is getPseudoActiveRowIndex: the first row while no row is
+// active, in a select under a11y_no_auto_highlight_search_multi_select;
+// -1 otherwise.
+func (t *dtTimeList) pseudoRow() int {
+	if t.sm == nil || !t.sm.noAuto || t.cur >= 0 || len(t.slots) == 0 {
+		return -1
+	}
+	return 0
+}
+
+// selectHover is onMouseEnteredOption / onMouseLeftOption: the row under
+// the pointer becomes the active one; leaving the rows clears it
+// (clearActive).
+func (t *dtTimeList) selectHover() {
+	hov := -1
+	for i := range t.clicks {
+		if t.clicks[i].Hovered() {
+			hov = i
+		}
+	}
+	if hov >= 0 {
+		t.cur = hov
+	} else if t.sm.hovered >= 0 {
+		t.cur = -1
+	}
+	t.sm.hovered = hov
 }
 
 // Layout draws the list.
@@ -762,6 +813,15 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 			t.move(1)
 		default:
 			i := t.cur
+			if t.sm != nil && i < 0 {
+				// onEnter: activeRowIndex ?? pseudoActiveRowIndex; with
+				// neither, the list closes without a change
+				i = t.pseudoRow()
+				if i < 0 {
+					t.Dismiss()
+					return layout.Dimensions{}
+				}
+			}
 			if i < 0 {
 				i = t.sel
 			}
@@ -796,6 +856,10 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 	keyTarget(gtx, t, t.rect)
 
 	cs := clipRRect(gtx, t.rect, dp(gtx, 4))
+	if t.sm != nil {
+		t.selectHover()
+	}
+	pseudo := t.pseudoRow()
 	at(gtx, pos.Add(image.Pt(0, padY)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, listH))
 		return t.list.Layout(gtx, len(t.slots), func(gtx layout.Context, i int) layout.Dimensions {
@@ -803,12 +867,31 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &t.clicks[i], nil, func(gtx layout.Context) layout.Dimensions {
 				s := image.Pt(w, rowH)
 				fg := cl.Fg
-				if i == t.sel || i == t.cur || t.clicks[i].Hovered() {
+				right := w - dp(gtx, 8)
+				switch {
+				case t.sm != nil:
+					switch {
+					case i == t.cur: // --active
+						fill(gtx, image.Rectangle{Max: s}, cl.Highlight)
+						fg = cl.HighText
+					case i == pseudo: // --pseudo-active, with its Enter key
+						fill(gtx, image.Rectangle{Max: s}, selectPseudoActive(th))
+						right = enterKeyChip(gtx, th, w-dp(gtx, 24), rowH) - dp(gtx, 16)
+					}
+					if i == t.sel && i != t.cur {
+						// --selected: content-hgl-1, Slack's check glyph
+						// 18px left of the label (margin 0 2px 0 -18px)
+						fg = cl.Link
+						at(gtx, image.Pt(dp(gtx, 24-18), (rowH-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+							return icon(gtx, "check", 16, fg)
+						})
+					}
+				case i == t.sel || i == t.cur || t.clicks[i].Hovered():
 					fill(gtx, image.Rectangle{Max: s}, cl.Highlight)
 					fg = cl.HighText
 				}
 				at(gtx, image.Pt(dp(gtx, 24), 0), func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-dp(gtx, 32)), rowH)}
+					gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-dp(gtx, 24)), rowH)}
 					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, 15, theme.Regular, fg, t.labels[i])
 					})

@@ -1123,7 +1123,7 @@ func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor 
 		y = anchor.Y + dp(gtx, 40)
 	}
 	r := image.Rect(x, y, x+bw, y+bh)
-	rrect(gtx.Ops, r, dp(gtx, 6), c.Tooltip)
+	theme.TooltipShape(gtx, r, dp(gtx, 6), theme.TooltipArrow{}, c.Tooltip, tipGlow(th)) // theme/tooltip.go
 	at(gtx, x+pad, y+dp(gtx, 6), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Max.X = tw
 		return label(gtx, th, ts, txt)
@@ -1261,10 +1261,15 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 			// Slack's menu top sits 32px above the kebab's centre (16 above
 			// the button), its right edge 3px left of the centre.
 			anchor = anchor.Add(image.Pt(-dp(gtx, 2), -dp(gtx, 32)))
+			where := popups.InChannel // messageContainerType: a thread's Mark unread marks the thread
+			if s.thread {
+				where = popups.InThread
+			}
 			h.ShowOverlay(popups.NewMessageMenuOpts(h, anchor, m, popups.MessageMenuOpts{
 				Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 				OnEdit:  func() { s.startEdit(h, mm.TS) },
 				OnReply: func() { h.OpenThread(mm.Channel, threadRoot(&mm)) },
+				Where:   where,
 			}))
 		}
 	}

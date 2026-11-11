@@ -47,7 +47,7 @@ type Colors struct {
 	Selected             color.NRGBA // search row selection #eaeaea
 	Tab                  color.NRGBA // emoji category active tab bg #dddddd
 	Tooltip, TooltipText color.NRGBA
-	Kbd, KbdText         color.NRGBA // tooltip shortcut chip
+	Kbd, KbdText         color.NRGBA // tooltip shortcut chip (KeyboardKey tooltip: constants.black, inverse.primary)
 	KbdLight             color.NRGBA // light chips (search footer) #eaeaea
 	MatchBg              color.NRGBA // search highlight rgba(255,198,0,.18)
 	EmojiHover           color.NRGBA // rgba(247,233,34,.7)
@@ -97,8 +97,8 @@ var lightColors = Colors{
 	Disabled: rgb(0xeaeaea), DisText: rgb(0x454447),
 	Selected: rgb(0xeaeaea),
 	Tab:      rgb(0xdddddd),
-	Tooltip:  rgb(0x1d1c1d), TooltipText: rgb(0xffffff),
-	Kbd: rgb(0x000000), KbdText: rgb(0xffffff), KbdLight: rgb(0xeaeaea),
+	Tooltip:  theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText, // theme/tooltip.go
+	Kbd: rgb(0x000000), KbdText: theme.LightPalette.TooltipText, KbdLight: rgb(0xeaeaea),
 	MatchBg:     rgba(0xffc600, .18),
 	EmojiHover:  rgba(0xf7e922, .7),
 	EmojiSelect: rgba(0x9bdf58, .7),
@@ -130,8 +130,8 @@ var darkColors = Colors{
 	Disabled: rgb(0x2c2d30), DisText: rgb(0x9a9b9e),
 	Selected: rgb(0x2c2d30),
 	Tab:      rgb(0x35373b),
-	Tooltip:  rgb(0xf8f8f8), TooltipText: rgb(0x1d1c1d),
-	Kbd: rgb(0xdddddd), KbdText: rgb(0x1d1c1d), KbdLight: rgb(0x35373b),
+	Tooltip:  theme.DarkPalette.Tooltip, TooltipText: theme.DarkPalette.TooltipText, // theme/tooltip.go
+	Kbd: rgb(0x000000), KbdText: theme.DarkPalette.TooltipText, KbdLight: rgb(0x35373b),
 	MatchBg:     rgba(0xffc600, .25),
 	EmojiHover:  rgba(0xf7e922, .5),
 	EmojiSelect: rgba(0x9bdf58, .5),

@@ -40,6 +40,8 @@ type Message struct {
 	Channel        string          `json:"channel,omitempty"`
 	Inviter        string          `json:"inviter,omitempty"`
 	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
+	WorkflowID     string          `json:"workflow_id,omitempty"`     // a workflow's message (the menu's Copy workflow ID)
+	TriggerID      string          `json:"trigger_id,omitempty"`      // the workflow trigger that posted it
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.

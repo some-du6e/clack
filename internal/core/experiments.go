@@ -227,4 +227,9 @@ var experimentReads = map[string][]string{
 	"session_channels_inline_diff": on,
 	// huddles
 	"scheduled_huddles": on, "huddles_raised_hand_queue": on,
+	// menus, selects and buttons (ui/popups/experiments.go): the v2 Button,
+	// and two session toggles (enabled for treatment or on)
+	"slack_kit_v2_button":                        on,
+	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
+	"basic_select_placeholder_option":            {"on", "treatment"},
 }
