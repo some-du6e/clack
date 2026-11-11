@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/io/input"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -100,6 +101,51 @@ func TestExpComposerShots(t *testing.T) {
 			overlay(t, th, fmt.Sprintf("exp-plus-menu-%s", mode), h.last())
 		})
 	}
+	// the floating formatting bar over a selection, Aa off
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		t.Run("floating-bar-"+mode, func(t *testing.T) {
+			th := theme.New(dark)
+			h := &ovHost{slickHost: &slickHost{app: app, th: th}}
+			c := New(h, ch, "")
+			t.Cleanup(c.Close)
+			old := showFormatting
+			formattingWrite.Lock()
+			formattingWrite.pending, formattingWrite.on = 1, false
+			formattingWrite.Unlock()
+			t.Cleanup(func() {
+				formattingWrite.Lock()
+				formattingWrite.pending = 0
+				formattingWrite.Unlock()
+				showFormatting = old
+			})
+			d := NewDoc()
+			d.Insert(0, "Ship the floating formatting bar today", Attr{})
+			c.ed.SetDoc(d)
+			c.Focus()
+			var r input.Router
+			w, hh := 760*scale, 260*scale
+			var ops op.Ops
+			for i := 0; i < 6; i++ {
+				if i == 3 {
+					c.ed.SetSelection(9, 28) // "floating formatting"
+				}
+				frame(th, &ops, w, hh, func(gtx layout.Context) {
+					gtx.Source = r.Source()
+					gtx.Constraints = layout.Constraints{Max: image.Pt(w, hh)}
+					off := op.Offset(image.Pt(0, 110*scale)).Push(gtx.Ops)
+					c.Layout(gtx)
+					off.Pop()
+				})
+				r.Frame(&ops)
+			}
+			if !c.fbar.shown {
+				t.Fatal("no floating bar")
+			}
+			save(t, fmt.Sprintf("exp-floating-bar-%s", mode), w, hh, &ops)
+		})
+	}
+
 	// the scheduled-send bar over the composer
 	if _, err := app.ScheduleMessage(context.Background(), core.SendOpts{Channel: ch, Text: "later"}, time.Now().Add(26*time.Hour).Unix()); err != nil {
 		t.Fatal(err)

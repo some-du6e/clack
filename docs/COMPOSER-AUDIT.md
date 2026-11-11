@@ -22,7 +22,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Buttons off in a heading | bold always (shouldDisableButton); italic, underline, strike and code too unless `rich_text_headers_and_dividers` (ZGif disabledFormats) | nothing turned off | **fixed** (`HeadingFormats`) |
 | Aa (Show formatting) | ComposerButton: "Show formatting" / "Hide formatting", pressed while shown; the state is the account pref `msg_input_sticky_composer` (Ex/u kx) and the click writes it (WysiwygContainer, setUserPrefByApi) | a process variable, never read from or written to Slack | **fixed** (`syncShowFormatting`, `toggleShowFormatting`; TestFormattingTogglePref) |
 | No toolbar under "Format messages with markup" | Texty isn't WYSIWYG with `plain_text_mode` | same | **matched** |
-| Floating bar | TextyFloatingFormattingBar (ZGif): with the toolbar hidden, selecting text shows the same buttons above the selection (shouldToolbarShow, cj0/ calculateToolbarPosition) | none | **open**: a new overlay with its own placement; not built on exp-composer either (the time went to the dialogs and experiments) |
+| Floating bar | TextyFloatingFormattingBar (ZGif): with the toolbar hidden, selecting text shows the same buttons above the selection (shouldToolbarShow, cj0/ calculateToolbarPosition) | none | **fixed** (exp-composer, floatbar.go: the toolbar's buttons in Slack's dark floating bar 5px above the selection, placed by calculateToolbarPosition; Escape hides it until the selection changes) |
 | Simplified composer | the `composer_control_simplifications_*` experiments (47WU) fold Aa into an expanding strip, change the send button, the + and @ menus | not built | **open**: experiment-only, groups not known for the account |
 
 ## Live formatting (markdown shortcuts), links, lists, code, quotes
@@ -133,7 +133,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 
 ## Counts
 
-87 rows: 27 matched, 44 fixed, 21 open (after exp-composer). Five rows are partly matched or fixed and partly open; they count under both.
+87 rows: 27 matched, 45 fixed, 20 open (after exp-composer). Five rows are partly matched or fixed and partly open; they count under both.
 
 ## Effects outside the composer
 

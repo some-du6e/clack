@@ -99,6 +99,7 @@ type Composer struct {
 	ctxShowing    bool          // onIsContextBarShowing
 	sbar          scheduledBar  // the scheduled-send context bar (schedule_bar.go)
 	cmdPick       core.Command  // the command last picked from the / list
+	fbar          floatBar      // the floating formatting bar (floatbar.go)
 	drewInput     bool          // the editor was laid out (no roadblock)
 	roadblock     string        // SetRoadblock: Slack's notice instead of the editor
 	rbLink, rbURL string        // SetRoadblockLink: a link after it ("Learn more")
@@ -233,6 +234,7 @@ func (c *Composer) init() {
 	}
 	c.ac = newAutocomplete(c.h, c.ch)
 	bindAutocomplete(c.ed, c.ac, c.h.Invalidate)
+	c.ed.Intercept = c.floatBarKey(c.ed.Intercept) // the floating bar's Escape first
 	accept := c.ac.OnAccept
 	c.ac.OnAccept = func(it acItem, start, end int) {
 		if it.Kind == acCommand && it.Command != nil {
@@ -387,6 +389,9 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	c.acceptAutocomplete()
 	if c.ac.Open() && c.drewInput {
 		c.layoutPopup(gtx)
+	}
+	if c.drewInput { // floatbar.go: the formatting bar over a selection
+		c.layoutFloatBar(gtx, c.ui.InputOffset().Add(image.Pt(0, c.top)))
 	}
 	c.handleActions(gtx)
 	return dims
@@ -647,7 +652,12 @@ func (c *Composer) changed() {
 }
 
 func (c *Composer) handleActions(gtx layout.Context) {
-	for _, a := range c.ui.Actions() {
+	acts := c.ui.Actions()
+	if len(c.fbar.acts) > 0 { // a copy: Actions hands back the chrome's own buffer
+		acts = append(append([]chromeAction(nil), acts...), c.fbar.acts...)
+		c.fbar.acts = c.fbar.acts[:0]
+	}
+	for _, a := range acts {
 		a.Anchor = a.Anchor.Add(c.Origin).Add(image.Pt(0, c.top))
 		switch a.Kind {
 		case caFocus:
