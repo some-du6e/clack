@@ -163,3 +163,20 @@ func (v *ChannelView) LayoutSig() (msgs int, loaded bool, sig uint64) {
 // or an older page it asked for to fill the view): the ui root's reveal
 // waits for it so the first visible frame doesn't move.
 func (v *ChannelView) Loading() bool { return v.s.snap.loading || v.s.snap.older }
+
+// RowY is an item's key and top edge in the last layout.
+type RowY struct {
+	Key string
+	Y   int
+}
+
+// VisibleRows lists the items on screen in the last layout, top to bottom
+// (the wheel frame probe measures scrolled distance with it).
+func (v *ChannelView) VisibleRows() []RowY {
+	s := v.s
+	var out []RowY
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos); i++ {
+		out = append(out, RowY{Key: s.items[i].key, Y: s.pos[i]})
+	}
+	return out
+}

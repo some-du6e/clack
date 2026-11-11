@@ -223,6 +223,18 @@ jobs:
           Get-Content $log | Select-String -SimpleMatch 'slack://', 'sign-in:' | ForEach-Object { $_.Line }
           exit 0 # the last reg query's expected exit 1 would otherwise end the step
 
+      # Wheel scrolling on Windows: frame times while synthetic mouse-wheel
+      # notches scroll a long fakeslack channel at 60 Hz (layout, and the
+      # Direct3D 11 render when the runner has a device). The numbers are
+      # in the log; nothing fails on them.
+      - name: wheel scrolling frame times (internal/ui TestWheelFrameProbe)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WHEEL_PROBE: "1"
+          CLACK_BENCH_GPU: "1"
+        run: go test -count=1 -v -timeout 30m -run '^TestWheelFrameProbe$' ./internal/ui
+
   macos:
     runs-on: macos-latest
     steps:
