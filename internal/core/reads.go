@@ -229,7 +229,8 @@ func (a *App) installPrefs(raw map[string]json.RawMessage) {
 	a.S.RUnlock()
 	a.frecencyPrefsChanged(old, raw)
 	a.S.SetRawPrefs(raw)
-	a.S.SetPrefs(store.ParsePrefs(raw))
+	p, muted := store.ParsePrefs(raw)
+	a.S.SetPrefs(p, a.withTempMutes(p, muted)) // temp_mute's muted-until (temp_mute.go)
 }
 
 // Pref returns one users.prefs.get value as Slack sent it (ok: present).

@@ -74,56 +74,6 @@ func (a *App) openMoreMenu(anchor image.Point) {
 	})
 }
 
-func (a *App) openHistoryMenu() {
-	var items []MenuItem
-	for _, r := range a.router.Recent(12) {
-		r := r
-		items = append(items, MenuItem{Label: a.routeLabel(r), Icon: a.routeIcon(r), Do: func() { a.Navigate(string(r)) }})
-	}
-	if len(items) == 0 {
-		items = []MenuItem{{Label: "No recent history", Disabled: true}}
-	}
-	a.menu(image.Pt(a.px(theme0RailW()), a.px(40)), items)
-}
-
-func theme0RailW() int { return 70 }
-
-func (a *App) routeLabel(r Route) string {
-	if c := a.model().conv(r.Channel()); c != nil {
-		if c.Kind == "channel" || c.Kind == "private" {
-			return "#" + c.displayName()
-		}
-		return c.displayName()
-	}
-	if t := pageTitle(r); t != "" {
-		return t
-	}
-	return string(r)
-}
-
-func (a *App) routeIcon(r Route) string {
-	if c := a.model().conv(r.Channel()); c != nil {
-		switch c.Kind {
-		case "private":
-			return "lock"
-		case "im", "mpim", "app":
-			return "dms"
-		}
-		return "hash"
-	}
-	switch r.Page() {
-	case "activity":
-		return "activity"
-	case "later":
-		return "later"
-	case "files":
-		return "files"
-	case "search":
-		return "search"
-	}
-	return "history"
-}
-
 func (a *App) openChannelMenu(ch string, anchor image.Point) {
 	if mkChannelMenu != nil {
 		a.ShowOverlay(mkChannelMenu(a, anchor, ch))

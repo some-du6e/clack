@@ -294,6 +294,15 @@ func init() {
 		}
 	}
 
+	// Snappy collapses the transitions of Slack's stylesheet in the page
+	// (TestSnappyInClack follows them into the natives, its spellcheck and
+	// its switches)
+	checks["Snappy"] = func(t *testing.T, h *harness) {
+		eventually(t, 15*time.Second, "transition overrides", func() bool {
+			return strings.Contains(h.ui.style("plugin:Snappy:transitions:"), ".block__G68co")
+		})
+	}
+
 	enableWith["BetterBlock"] = map[string]any{"blockedUsers": map[string]any{aliceID: "alice"}}
 	checks["BetterBlock"] = func(t *testing.T, h *harness) {
 		var r struct {

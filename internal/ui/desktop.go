@@ -117,8 +117,9 @@ type updateState struct {
 	gen      int              // counts downloads: a stopped one's late answers are dropped
 	check    updateCheckState // update_check.go
 	// card is Help's "Take action" card; keys its header's Keyboard
-	// shortcuts button (update_ui.go).
-	card, keys, close widget.Clickable
+	// shortcuts button (update_ui.go); notesRow the Preferences row's
+	// release notes link.
+	card, keys, close, notesRow widget.Clickable
 	// dialog is the "Restart and update Clack?" dialog, box the last
 	// updater message box ("You’re all good") and boxTitle its title.
 	dialog   *updateDialog
@@ -239,7 +240,7 @@ func (a *App) installUpdate() {
 	}()
 }
 
-// updateChecksOn is Preferences > Advanced > "Check for updates"
+// updateChecksOn is Preferences > Clack > "Check for updates"
 // (automatic checks; Check now works either way).
 func (a *App) updateChecksOn() bool { return !a.prefs.NoUpdateCheck }
 
@@ -253,7 +254,7 @@ func (a *App) toggleUpdateChecks() {
 	a.savePrefs()
 }
 
-// updateDownloadsOn is Preferences > Advanced > "Download updates
+// updateDownloadsOn is Preferences > Clack > "Download updates
 // automatically" (on unless turned off).
 func (a *App) updateDownloadsOn() bool { return !a.prefs.NoUpdateDownload }
 

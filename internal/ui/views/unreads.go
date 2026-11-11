@@ -1214,7 +1214,7 @@ func (v *Unreads) message(gtx C, r unrRow) D {
 			if len(m.Reactions) == 0 {
 				return D{}
 			}
-			return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return v.actReactions(gtx, m.Reactions) })
+			return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return v.actReactions(gtx, m) })
 		}),
 	)
 	colCall := colRec.Stop()

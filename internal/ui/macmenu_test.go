@@ -2,11 +2,15 @@ package ui
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
 	"gioui.org/io/key"
 
+	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/menubar"
 )
 
@@ -117,6 +121,8 @@ History
   Back|⌘[|→ fwd
   Forward|⌘]|→ fwd
   --- (recent views)
+  ---
+  Show full history|⌘Y|→
 Window [window]
   Minimize|⌘M|performMiniaturize:
   Zoom||performZoom:
@@ -232,6 +238,10 @@ func TestMenuStateSignedOut(t *testing.T) {
 	}
 }
 
+// History's recent places are the web client's (a6xy gJ): only with
+// desktop_history_menu, newest first, one per place (the current one too),
+// places with no label left out, at most 15, then Show full history when
+// there are more.
 func TestMenuStateRecent(t *testing.T) {
 	a := &App{}
 	for _, r := range []Route{"activity", "c/C1", "threads", "c/C1", "dms", "later", "files", "drafts", "unreads", "huddles"} {
@@ -239,19 +249,39 @@ func TestMenuStateRecent(t *testing.T) {
 	}
 	k := menuKey{signedIn: true, back: a.router.CanBack(), sidebar: true, team: "Hack Club", cur: a.router.Current()}
 	s := a.menuState(k)
-	var got []string
-	for _, r := range s.Recent {
-		got = append(got, r.Route+"="+r.Title)
-	}
-	want := "unreads=All unreads drafts=Drafts & sent files=Files later=To-dos dms=DMs c/C1=c/C1"
-	if j := strings.Join(got, " "); j != want {
-		t.Errorf("recent = %q, want %q", j, want)
+	if len(s.Recent) != 0 || !s.Hidden[menuHistoryShowAll] || !s.Hidden[menuHistoryMoreSep] {
+		t.Errorf("without desktop_history_menu: recent %v, hidden %v", s.Recent, s.Hidden)
 	}
 	if s.Titles["menuitem-toggle-sidebar"] != "Show Sidebar" || s.Titles[menuSignOutTeam] != "Hack Club" {
 		t.Errorf("titles %v", s.Titles)
 	}
 	if s.Disabled["menuitem-navigate-back"] || !s.Disabled["menuitem-navigate-forward"] {
 		t.Errorf("disabled %v", s.Disabled)
+	}
+
+	ca := core.New(slack.New(slack.Creds{Token: "xoxc-test"}), store.New(""))
+	ca.SetExperimentGroup("desktop_history_menu", "on")
+	a.data = &backend{core: ca, app: a}
+	k.historyMenu = true
+	s = a.menuState(k)
+	var got []string
+	for _, r := range s.Recent {
+		got = append(got, r.Route+"="+r.Title)
+	}
+	// c/C1 isn't a conversation Clack knows: no label, no entry
+	want := "huddles=Huddles unreads=All unreads drafts=Drafts & sent files=Files later=To-dos dms=DMs threads=All Threads activity=Activity"
+	if j := strings.Join(got, " "); j != want {
+		t.Errorf("recent = %q, want %q", j, want)
+	}
+	if !s.Hidden[menuHistoryShowAll] {
+		t.Error("Show full history shown with 8 places")
+	}
+	for i := range 20 {
+		a.router.Push(Route("search?q=q" + strconv.Itoa(i)))
+	}
+	s = a.menuState(k)
+	if len(s.Recent) != historyOSMax || s.Recent[0].Title != "q19" || s.Hidden[menuHistoryShowAll] || s.Hidden[menuHistoryMoreSep] {
+		t.Errorf("past 15 places: %d recent (first %+v), hidden %v", len(s.Recent), s.Recent[0], s.Hidden)
 	}
 }
 

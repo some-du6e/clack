@@ -349,6 +349,39 @@ func TestHeadingDividerBlocks(t *testing.T) {
 	}
 }
 
+// Slack's send keeps blank list items, a trailing one too: trimDelta
+// (ASJc trimOps) never drops a newline with a block format and
+// processDeltaAsList (VxMM) makes the empty line {type:
+// rich_text_section, elements: []}, which RichTextList renders as an
+// item with its marker (Karim's "3."). A blank paragraph after the list
+// still goes, the fallback text drops the blank item, and a lone empty
+// item is nothing to send.
+func TestRichTextBlocksKeepEmptyListItems(t *testing.T) {
+	btStubBlockID(t)
+	item := func(s string) string {
+		if s == "" {
+			return `{"type":"rich_text_section","elements":[]}`
+		}
+		return `{"type":"rich_text_section","elements":[{"type":"text","text":"` + s + `"}]}`
+	}
+	d := btNew().kind(Ordered, 0).t("a", 0).nl().t("b", 0).nl().d
+	want := btWrap(`{"type":"rich_text_list","elements":[` + item("a") + `,` + item("b") + `,` + item("") + `],"style":"ordered","indent":0,"border":0}`)
+	if got := string(d.RichTextBlocks()); got != want {
+		t.Errorf("trailing empty item\n got: %s\nwant: %s", got, want)
+	}
+	if m := d.Mrkdwn(); m != "1. a\n2. b" {
+		t.Errorf("mrkdwn %q", m)
+	}
+	d = btNew().kind(Bullet, 0).t("a", 0).nl().nl().kind(Para, 0).d
+	want = btWrap(`{"type":"rich_text_list","elements":[` + item("a") + `,` + item("") + `],"style":"bullet","indent":0,"border":0}`)
+	if got := string(d.RichTextBlocks()); got != want {
+		t.Errorf("empty item, then a blank paragraph\n got: %s\nwant: %s", got, want)
+	}
+	if b := btNew().kind(Ordered, 0).d.RichTextBlocks(); b != nil {
+		t.Errorf("a lone empty item: %s", b)
+	}
+}
+
 func TestRichTextBlocksGolden(t *testing.T) {
 	btStubBlockID(t)
 	for _, c := range btCases() {

@@ -199,8 +199,9 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		a.Forward()
 	}
 	left.Leave()
-	if clicked(a.clicks.get("nav.history")) {
-		a.openHistoryMenu()
+	if clicked(a.clicks.get("nav.history")) { // the rightmost of the three
+		hx := primaryX - gtx.Dp(9) - b
+		a.openHistoryMenu(image.Rect(hx, y, hx+b, y+b))
 	}
 
 	// search pill: starts at the primary panel's left edge. Slack's middle

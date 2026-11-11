@@ -98,27 +98,7 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		if e.anchor == e.caret {
 			e.convertEmoticon(e.caret) // onEnter: convert_emoticons (emoticon.go)
 		}
-		if e.inCode() && uipref.Get().EnterIsSpecial {
-			// Advanced > "When typing code with ```, Enter should not send
-			// the message" (enter_is_special_in_tbt): Shift+Enter sends.
-			if shift {
-				e.emit(EvSubmit)
-			} else {
-				e.newline()
-			}
-			return
-		}
-		if uipref.Get().SendOnModEnter {
-			// Advanced > "When writing a message, press Enter to… Start a
-			// new line" (msg_input_send_btn): Mod+Enter sends.
-			if short {
-				e.emit(EvSubmit)
-			} else {
-				e.enter(true)
-			}
-			return
-		}
-		e.enter(mods != 0)
+		e.enter(mods)
 	case key.NameEscape:
 		if mods == 0 && e.escapeClearsFormat() {
 			// the keyboard module's Escape: an empty quote line, or a code
@@ -284,22 +264,66 @@ func (e *Editor) copySel(gtx layout.Context) bool {
 	return true
 }
 
-// enter handles Enter (soft: with a modifier, i.e. Shift+Enter).
-// Plain Enter submits, except in lists (new item, or leave the list on an
-// empty item) and on an empty quote line (leave the quote).
-func (e *Editor) enter(soft bool) {
-	d := e.doc
-	line := d.LineOf(e.caret)
-	k := d.Lines[line].Kind
-	if !soft {
-		empty := d.LineStart(line) == d.LineEnd(line)
-		if k != Bullet && k != Ordered && !(k == Quote && empty) {
-			e.emit(EvSubmit)
+// enter is Enter with mods, the way Slack's composer takes it (Texty's
+// keyboard module, gantry client-boot-shared, CDN build bv1-13):
+//
+//   - Quill's "list empty enter" binding comes first (Keyboard.DEFAULTS;
+//     getSlackKeyboardModule lodash-assigns Slack's bindings after it): a
+//     bare Enter with a collapsed caret on an empty list item drops the
+//     list format and the indent.
+//   - Then Slack's "enter" bindings call on_enter_onEnter: a newline when
+//     shouldInsertNewline(mods) (xrjr, insertsNewline) says so, else
+//     MessageInput.onEnter, which sends (and never asks for a newline).
+//     There is no list case: Enter in a list item with text sends, and
+//     so does Enter on an empty quote line.
+//
+// Mod+Shift+Enter with snippets on (the snippet dialog) is caught before
+// this, in command.
+func (e *Editor) enter(mods key.Modifiers) {
+	meta := mods.Contain(key.ModCommand) || mods.Contain(key.ModSuper)
+	ctrl := mods.Contain(key.ModCtrl)
+	shift := mods.Contain(key.ModShift)
+	alt := mods.Contain(key.ModAlt)
+	if !meta && !ctrl && !shift && !alt && e.anchor == e.caret {
+		d := e.doc
+		line := d.LineOf(e.caret)
+		if ln := &d.Lines[line]; (ln.Kind == Bullet || ln.Kind == Ordered) && d.LineStart(line) == d.LineEnd(line) {
+			e.begin(edOther, true)
+			*ln = Line{}
+			e.commit()
 			return
 		}
 	}
-	e.newline()
+	p := uipref.Get()
+	if insertsNewline(meta, ctrl, shift, alt, edMac, p.SendOnModEnter, p.EnterIsSpecial, e.inCode()) {
+		e.newline()
+		return
+	}
+	e.emit(EvSubmit)
 }
+
+// insertsNewline is Slack's shouldInsertNewline (xrjr) as TextyInput calls
+// it: newlinePref is Advanced > "When writing a message, press Enter
+// to… Start a new line" (enterCreatesNewlinePref, msg_input_send_btn),
+// preNewlines is "When typing code with ```, Enter should not send the
+// message" (enter_is_special_in_tbt) and inPre isCursorInPreBlock. On
+// macOS Ctrl+Enter always adds a line and ⌘+Enter always sends.
+func insertsNewline(meta, ctrl, shift, alt, mac, newlinePref, preNewlines, inPre bool) bool {
+	switch {
+	case meta:
+		return false
+	case ctrl:
+		return mac || !shift && !newlinePref
+	case newlinePref:
+		return true
+	case preNewlines && inPre:
+		return !shift
+	}
+	return shift || alt
+}
+
+// edMac is the platform test Slack's keyboard module makes (isMac, +oeN cX).
+var edMac = runtime.GOOS == "darwin"
 
 // inCode reports whether the caret is in code being typed with ```: a
 // code block line, or after an unclosed ``` in the text.
@@ -395,30 +419,71 @@ func (e *Editor) clearLineFormat() {
 func (e *Editor) newline() {
 	d := e.doc
 	lo, hi := e.sel()
+	collapsed := lo == hi
 	e.begin(edOther, true)
 	d.Delete(lo, hi)
 	line := d.LineOf(lo)
 	ln := &d.Lines[line]
-	if (ln.Kind == Bullet || ln.Kind == Ordered || ln.Kind == Quote) && d.LineStart(line) == d.LineEnd(line) {
-		if ln.Kind != Quote && ln.Indent > 0 {
-			ln.Indent--
-		} else {
-			*ln = Line{}
-		}
+	ls, le := d.LineStart(line), d.LineEnd(line)
+	switch {
+	case collapsed && (ln.Kind == Bullet || ln.Kind == Ordered) && ls == le:
+		// formatLine(index, 1, {list: false, indent: 0})
+		*ln = Line{}
 		e.anchor, e.caret = lo, lo
-	} else {
-		if !e.plainText && lo == hi {
+	case collapsed && e.secondEmptyBlockLine(line, lo):
+		// the caret's line and the empty one above it (two "\n" of the
+		// block before the caret) become one plain line
+		prev := d.LineStart(line - 1)
+		d.Delete(prev, ls)
+		d.Lines[line-1] = Line{}
+		e.anchor, e.caret = prev, prev
+	default:
+		if !e.plainText && collapsed {
 			autoLinkBefore(d, lo) // SlackLinkModule.onEnter: maybeLinkify
 		}
 		pos := d.Insert(lo, "\n", Attr{})
-		// Headings and dividers don't continue: the new line is a paragraph.
-		if k := d.Lines[line].Kind; isHeading(k) || k == Divider {
+		// Headings and dividers don't continue: the new line is a
+		// paragraph; at a heading's start the new empty line above it is
+		// (a.format.header && 0 === a.offset: removeFormat on it).
+		if k := d.Lines[line].Kind; isHeading(k) && lo == ls {
+			d.Lines[line] = Line{}
+			d.Lines[line+1].Kind = k
+		} else if isHeading(k) || k == Divider {
 			d.Lines[line+1] = Line{}
 		}
 		e.anchor, e.caret = pos, pos
 	}
 	e.lastSpace = true
 	e.commit()
+}
+
+// secondEmptyBlockLine is the newline branch's block exit for quotes and
+// code blocks: the caret at the start of a quote line that is empty, or
+// of a code line holding only whitespace, whose previous line is an empty
+// line of the same block and the line before that the same block too
+// (getContents(index-2, 2) is one "\n\n" op with blockquote or
+// code-block).
+func (e *Editor) secondEmptyBlockLine(line, pos int) bool {
+	d := e.doc
+	if line < 2 || pos != d.LineStart(line) {
+		return false
+	}
+	k := d.Lines[line].Kind
+	switch k {
+	case Quote:
+		if d.LineEnd(line) != pos {
+			return false
+		}
+	case CodeBlock:
+		for i := pos; i < d.LineEnd(line); i++ {
+			if d.Attrs[i].Atom != nil || !unicode.IsSpace(d.Runes[i]) {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	return d.Lines[line-1].Kind == k && d.LineStart(line-1) == d.LineEnd(line-1) && d.Lines[line-2].Kind == k
 }
 
 // tab indents (or with shift outdents) the selected list lines; in a code

@@ -20,9 +20,16 @@ import (
 //     viewer.
 //   - #unreads-muted: muted, with two unread messages (Slack's
 //     shouldCountUnreadsInModel leaves it out of the view).
-//   - #new-joiners: read; megaphone.notifications.list answers
-//     education_channel_join_banner for its message_input space until a
-//     dismissal is recorded.
+//   - #new-joiners: read, the channel the viewer just joined: the
+//     megaphone boot load (megaphone.notifications.list without a
+//     channel_id) answers education_channel_join_banner for message_input
+//     while the banner is queued (QueueJoinBanner, on by default), and so
+//     does a load for #new-joiners until a dismissal is recorded.
+//   - #old-hangout: read, a channel the viewer has been in for long; a
+//     load for it answers education_channel_join_banner too (what Slack's
+//     server answered Karim's long-standing channel), which Slack's client
+//     only asks once the boot load or a push put the banner in the global
+//     space.
 //
 // The methods: conversations.history with oldest (the messages just
 // after it, like Slack's), unread.markRead {markers}, unread.collapse /
@@ -35,6 +42,7 @@ const (
 	UnreadsLaunchID = "C0UNRD00002"
 	UnreadsMutedID  = "C0UNRD00003"
 	JoinBannerID    = "C0JOIN00001"
+	JoinBannerOldID = "C0JOIN00002"
 )
 
 // unreadsBase is the fixtures' clock: 2026-11-06 09:00 UTC.
@@ -51,6 +59,16 @@ type unreadsState struct {
 	lastRead  map[string]string // initial read cursors
 	calls     []UnreadsCall
 	dismissed map[string]bool // channel -> join banner dismissed
+	noQueue   bool            // the boot load answers no join banner (QueueJoinBanner)
+}
+
+// QueueJoinBanner sets whether the megaphone boot load answers the join
+// banner for message_input (it does by default, for #new-joiners).
+func (s *Server) QueueJoinBanner(on bool) {
+	u := s.unreads()
+	u.mu.Lock()
+	u.noQueue = !on
+	u.mu.Unlock()
 }
 
 var unreadsStates sync.Map // *Server -> *unreadsState
@@ -86,7 +104,7 @@ func (s *Server) addUnreads() {
 			Purpose: &slack.Purpose{Value: "Synthetic fixture channel."}}
 	}
 	s.convs = append(s.convs, ch(UnreadsDesignID, "unreads-design"), ch(UnreadsLaunchID, "unreads-launch"),
-		ch(UnreadsMutedID, "unreads-muted"), ch(JoinBannerID, "new-joiners"))
+		ch(UnreadsMutedID, "unreads-muted"), ch(JoinBannerID, "new-joiners"), ch(JoinBannerOldID, "old-hangout"))
 	msg := func(ts, user, text string) slack.Message {
 		return slack.Message{Type: "message", TS: ts, User: user, Text: text, ClientMsgID: "unrd-" + ts}
 	}
@@ -137,6 +155,10 @@ func (s *Server) addUnreads() {
 	build(JoinBannerID, []slack.Message{
 		msg(unreadsTS(t-9000, 1), a, "welcome, newcomers"),
 		msg(unreadsTS(t-8000, 2), b, "say hi and tell us what you are making"),
+	}, nil)
+	build(JoinBannerOldID, []slack.Message{
+		msg(unreadsTS(t-9e5, 1), c, "the usual synthetic chatter"),
+		msg(unreadsTS(t-8e5, 2), a, "same as every week"),
 	}, nil)
 	s.prefsMu.Lock()
 	cur, _ := s.prefs["muted_channels"].(string)
@@ -251,10 +273,19 @@ func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 		ch := f.Get("channel_id")
 		for _, sp := range ev.Spaces {
 			out[sp] = nil
+			if sp != "message_input" {
+				continue
+			}
 			u.mu.Lock()
-			gone := u.dismissed[ch]
+			var banner bool
+			switch ch {
+			case "": // the boot load, a user_refresh
+				banner = !u.noQueue && !u.dismissed[JoinBannerID]
+			case JoinBannerID, JoinBannerOldID:
+				banner = !u.dismissed[ch]
+			}
 			u.mu.Unlock()
-			if sp == "message_input" && ch == JoinBannerID && !gone {
+			if banner {
 				out[sp] = map[string]any{"name": "education_channel_join_banner", "data": map[string]any{}}
 			}
 		}

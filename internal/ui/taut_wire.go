@@ -421,7 +421,8 @@ func argStr(args map[string]any, k string) string {
 // Go).
 func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel string) *slick.Slick {
 	t0 := time.Now()
-	s, err := slick.New(slick.Options{Taut: t, OpenURL: openURL, OpenFile: a.openFilePath})
+	s, err := slick.New(slick.Options{Taut: t, OpenURL: openURL, OpenFile: a.openFilePath,
+		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: a.setSessionSpellChecker})
 	if err != nil {
 		log.Printf("slick: %v", err)
 		return nil

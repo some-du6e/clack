@@ -68,8 +68,10 @@ type Palette struct {
 	Reaction               color.NRGBA
 	ReactionSelf           color.NRGBA
 	ReactionSelfBorder     color.NRGBA
-	Tooltip                color.NRGBA
-	TooltipText            color.NRGBA
+	Tooltip                color.NRGBA // base-inv-pry (.c-tooltip__tip, toasts; tooltip.go)
+	TooltipText            color.NRGBA // content-inv-pry
+	TooltipSub             color.NRGBA // content-inv-sec (TooltipSubtitle)
+	TooltipGlow            color.NRGBA // dark mode drop-shadow, otl-pry (zero in light)
 	Selection              color.NRGBA // text selection
 	ScrollThumb            color.NRGBA
 }
@@ -149,6 +151,7 @@ var LightPalette = Palette{
 	ReactionSelfBorder: rgb(0x1d9bd1),
 	Tooltip:            rgb(0x1d1c1d),
 	TooltipText:        rgb(0xffffff),
+	TooltipSub:         rgb(0xcbcccf),
 	Selection:          rgba(0x1d9bd1, 0x4d),
 	ScrollThumb:        rgba(0x1d1c1d, 0x40),
 }
@@ -214,8 +217,10 @@ var DarkPalette = Palette{
 	Reaction:           rgba(0xd1d2d3, 0x14),
 	ReactionSelf:       rgba(0x1d9bd1, 0x26),
 	ReactionSelfBorder: rgb(0x1d9bd1),
-	Tooltip:            rgb(0xe8e8e8),
-	TooltipText:        rgb(0x1d1c1d),
+	Tooltip:            rgb(0x212428), // base-inv-pry
+	TooltipText:        rgb(0xf8f8f8), // content-inv-pry
+	TooltipSub:         rgb(0xb9babd), // content-inv-sec
+	TooltipGlow:        rgb(0x797c81), // otl-pry
 	Selection:          rgba(0x1d9bd1, 0x4d),
 	ScrollThumb:        rgba(0xd1d2d3, 0x40),
 }

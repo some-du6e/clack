@@ -166,33 +166,13 @@ const (
 	megaphoneReasonRecordNotifyEvent = "record-notification-event"
 )
 
-// MegaphoneSpaces asks Slack which notification each space should show
-// for ch (ChannelJoinBanner's REQUEST_SPACES on mount): space -> name,
-// "" for a space the server answered null.
+// MegaphoneSpaces is ChannelJoinBanner's REQUEST_SPACES on mount (and
+// maybeHideChannelJoinBanner's): loadMegaphoneNotificationData with
+// event {type: request_spaces, spaces} and channelId, the answers filed
+// under ch (megaphone.go). It returns space -> name, "" for a space the
+// server answered null.
 func (a *App) MegaphoneSpaces(ctx context.Context, ch string, spaces []string) (map[string]string, error) {
-	ev, _ := json.Marshal(map[string]any{"type": megaphoneRequestSpaces, "spaces": spaces})
-	p := url.Values{"event": {string(ev)}, "reason": {megaphoneReasonLoad}, "critical_only": {"false"}}
-	if ch != "" {
-		p.Set("channel_id", ch)
-	}
-	var r struct {
-		Notifications map[string]*struct {
-			Name string          `json:"name"`
-			Data json.RawMessage `json:"data"`
-		} `json:"notifications"`
-	}
-	if err := a.C.Call(ctx, "megaphone.notifications.list", p, &r); err != nil {
-		return nil, err
-	}
-	out := make(map[string]string, len(r.Notifications))
-	for space, n := range r.Notifications {
-		if n == nil {
-			out[space] = ""
-			continue
-		}
-		out[space] = n.Name
-	}
-	return out, nil
+	return a.loadMegaphone(ctx, map[string]any{"type": megaphoneRequestSpaces, "spaces": spaces}, ch, megaphoneReasonLoad, nil)
 }
 
 // RecordMegaphone records an impression or a dismissal of a megaphone

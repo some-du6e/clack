@@ -56,6 +56,9 @@ type Message struct {
 	// appendStream / stopStream): "in_progress" while open, then
 	// "completed" or "errored" (agent.go).
 	StreamingState string
+	// WorkflowID and TriggerID are a workflow message's workflow_id and
+	// trigger_id (the message menu's workflow rows, message_menu.go).
+	WorkflowID, TriggerID string
 	// AgentSession is the message's agent_session: a thread session's
 	// state on its root message (nil for other messages).
 	AgentSession *slack.MessageAgentSession
@@ -256,6 +259,8 @@ type Snapshot struct {
 	EmojiCount   int
 	EnterpriseID string
 	Rail         RailState // the left rail from Navigation prefs and experiments (rail.go)
+	// FilterNames is what the sidebar text filter matches (sidebar_filter.go).
+	FilterNames FilterNames
 }
 
 // Page is a window of a conversation's history.

@@ -302,7 +302,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	// the v1/v2 remove buttons' rail sits left of the View's box
 	v.drawRails(gtx, st)
 	v.railInput(gtx)
-	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+	defer clip.Rect{Min: image.Pt(-v.d.overhang, 0), Max: size}.Push(gtx.Ops).Pop()
 	var opac paint.OpacityStack
 	if v.opts.Dim {
 		opac = paint.PushOpacity(gtx.Ops, 0.5)
@@ -1261,6 +1261,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tBot:
 		if bo, ok := h.(BotOpener); ok && tg.id != "" {
 			bo.OpenBot(tg.id, anchor)
+		}
+	case tHuddleJoin:
+		if hj, ok := h.(HuddleJoiner); ok && tg.id != "" {
+			hj.JoinHuddle(tg.id)
 		}
 	case tCollapse:
 		if tg.img != nil && v.collapsed != nil {

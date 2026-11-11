@@ -16,6 +16,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -182,15 +183,9 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	if o < 1 {
 		opac = paint.PushOpacity(gtx.Ops, max(o, 0))
 	}
-	paint.FillShape(gtx.Ops, bg, clip.UniformRRect(r, l.dp(8)).Op(gtx.Ops))
-	var path clip.Path
-	path.Begin(gtx.Ops)
-	ax, ay := float32(cx), float32(top-gap)
-	path.MoveTo(f32.Pt(ax-float32(ar), ay-float32(ar)))
-	path.LineTo(f32.Pt(ax+float32(ar), ay-float32(ar)))
-	path.LineTo(f32.Pt(ax, ay))
-	path.Close()
-	paint.FillShape(gtx.Ops, bg, clip.Outline{Path: path.End()}.Op())
+	// the box and its arrow (centred on the box's bottom edge, 6px of it
+	// under the box), outlined together in dark mode (theme/tooltip.go)
+	theme.TooltipShape(gtx, r, l.dp(8), theme.TooltipArrow{C: image.Pt(cx, r.Max.Y), Half: ar}, bg, p.TooltipGlow)
 	bm := st.spaceOf(k)
 	base := r.Min.Y + padY + int((float32(lh)-(bm.asc+bm.desc))/2+bm.asc+0.5)
 	t := op.Offset(image.Pt(r.Min.X+padX, base)).Push(gtx.Ops)

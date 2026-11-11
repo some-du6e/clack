@@ -630,6 +630,14 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			}
 		}
 		if b.Ordered {
+			// Slack's RichTextList always adds p-rich_text_list--nested,
+			// so an ordered list draws the browser's own marker
+			// (.p-rich_text_list__ordered.p-rich_text_list--nested: decimal,
+			// lower-alpha, lower-roman by data-indent; li margin-inline-
+			// start 20px + padding-inline-start 8px, li:before content
+			// none). The outside ::marker is "N. " (the counter style's ". "
+			// suffix, white-space pre) with its end at the li's border box,
+			// 8px before the text: the period sits a space short of it.
 			n := b.Offset + i + 1
 			var label string
 			switch b.Indent % 3 {
@@ -643,8 +651,11 @@ func (l *lay) list(b *richtext.Block, x, y, w int, edited bool) int {
 			label += "."
 			k := l.faceFor(fs.face, fs.size, 0)
 			wd := l.st.word(k, label)
-			gapW := l.dpf(8)
-			l.d.frags = append(l.d.frags, frag{kind: fText, x: float32(cx) - gapW - wd.adv, y: baseline, w: wd.adv, size: fs.size, sh: wd, col: fs.col, target: -1, top: y, bot: y + fs.lineH, line: -1, p0: -1, p1: -1, part: l.curPart})
+			end := float32(cx) - l.dpf(8) - l.st.spaceOf(k).adv
+			if o := -int(math.Floor(float64(end - wd.adv))); o > l.d.overhang {
+				l.d.overhang = o
+			}
+			l.d.frags = append(l.d.frags, frag{kind: fText, x: end - wd.adv, y: baseline, w: wd.adv, size: fs.size, sh: wd, col: fs.col, target: -1, top: y, bot: y + fs.lineH, line: -1, p0: -1, p1: -1, part: l.curPart})
 		} else {
 			// disc, circle, square by level (Slack cycles every 3).
 			r := l.dpf(2.75)

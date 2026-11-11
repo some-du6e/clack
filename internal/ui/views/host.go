@@ -77,3 +77,21 @@ type PaneChooser interface {
 type Closer interface {
 	Closed() bool
 }
+
+// NestedSecondary is optionally implemented by the Host: Slack's
+// isNestedSecondaryViewEnabled (client-boot kl02 W7), the
+// nested_secondary_view experiment outside the simplified layout mode,
+// which the view headers follow. Without it the views read the
+// experiment alone.
+type NestedSecondary interface {
+	NestedSecondaryView() bool
+}
+
+// nestedSecondary is kl02 W7 for h.
+func nestedSecondary(h Host) bool {
+	if n, ok := h.(NestedSecondary); ok {
+		return n.NestedSecondaryView()
+	}
+	c := h.Core()
+	return c != nil && c.NestedSecondaryView()
+}

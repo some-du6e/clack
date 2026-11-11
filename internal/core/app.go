@@ -78,6 +78,7 @@ type App struct {
 	rec        recentsState      // recent searches and places: the recents pref, visits (search_recents.go)
 	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
 	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
+	mega       megaphoneState    // megaphone spaces, global and per channel (megaphone.go)
 	selected   string            // the open conversation (SetSelected, preview.go)
 	temp       map[string]int64  // temporary memberships: channel -> expiration_ts (preview.go)
 
@@ -96,6 +97,9 @@ type App struct {
 	pollSeen  map[string]string  // conversation -> counts latest|updated at the last poll
 	watchCh   string             // conversation last opened (History), refreshed every poll
 	watchTh   []watchedThread    // threads last opened (Replies), newest first
+
+	// tempMuteTimer is kickOffTempMuteTimer's timer (temp_mute.go).
+	tempMuteTimer *time.Timer
 }
 
 type watchedThread struct {
@@ -132,7 +136,20 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnHello = a.onHello
+	appsByStore.Store(s, a)
+	store.ExperimentGroup = experimentForStore
 	return a
+}
+
+// appsByStore maps a store to its App, for store.ExperimentGroup (the
+// huddle message sentences in richtext follow the viewer's groups).
+var appsByStore sync.Map
+
+func experimentForStore(s *store.Store, name string) string {
+	if v, ok := appsByStore.Load(s); ok {
+		return v.(*App).Experiment(name)
+	}
+	return ""
 }
 
 // PollInterval is how often core refreshes unread counts and the open
@@ -565,6 +582,8 @@ func (a *App) Boot(ctx context.Context) error {
 		return nil
 	})
 	a.later(5*time.Second, func() { _ = a.loadUsergroups(a.bg) }) // cosmetic; cached on disk after the first run
+	// client.extras: the message menu's Report to Slack (message_menu.go)
+	a.later(5*time.Second, func() { _ = a.LoadClientExtras(a.bg) })
 	wg.Wait()
 	if errConvs != nil {
 		a.bootErr = errConvs
@@ -875,10 +894,12 @@ func (a *App) snapshotNow() Snapshot {
 	connected := a.connected
 	a.mu.Unlock()
 	self, _ := a.User(selfID)
+	secs, counts := a.sections(convs), a.Counts()
 	return Snapshot{
-		Self: self, Team: team, Convs: convs, Sections: a.sections(convs), Counts: a.Counts(),
+		Self: self, Team: team, Convs: convs, Sections: secs, Counts: counts,
 		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
 		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID, Rail: a.Rail(),
+		FilterNames: a.filterNames(convs, secs, counts),
 	}
 }
 
@@ -1110,6 +1131,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	v.ClientMsgID = m.ClientMsgID
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
+	v.WorkflowID, v.TriggerID = m.WorkflowID, m.TriggerID
 	v.AgentSession = m.AgentSession
 	v.FunctionExecutionID = m.FunctionExecutionID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)

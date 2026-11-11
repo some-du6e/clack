@@ -7,7 +7,6 @@ import (
 	"gioui.org/io/event"
 
 	"github.com/some-du6e/clack/internal/ui/menubar"
-	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 // The macOS menu bar: Slack desktop's (4.53.276), whose menus come from two
@@ -34,8 +33,6 @@ const releasesPage = "https://github.com/some-du6e/clack/releases"
 
 // helpCenter is Slack's Help Center (Help > Open Help Center).
 const helpCenter = "https://slack.com/help"
-
-const menuRecentMax = 6 // Slack lists six recent views
 
 // macMenus is the menu bar model. Its actions run on the UI goroutine
 // (Post) except Quit, which may not wait for a frame.
@@ -118,10 +115,15 @@ func (a *App) macMenus() []menubar.Menu {
 			sep,
 			{ID: "menuitem-profile", Title: "Profile", Do: on(func() { a.OpenUserProfile(a.model().SelfID) })},
 		}},
+		// History: Back and Forward, then, with desktop_history_menu, the
+		// web client's recent places (a6xy gJ, history_menu.go) and Show
+		// full history ⌘Y (menuState shows them)
 		{Title: "History", Items: []menubar.Item{
 			{ID: "menuitem-navigate-back", Title: "Back", Key: "[", Mods: C, Forward: true, Do: on(a.Back)},
 			{ID: "menuitem-navigate-forward", Title: "Forward", Key: "]", Mods: C, Forward: true, Do: on(a.Forward)},
-			{Sep: true, Recent: true}, // then the recent views (menuState)
+			{Sep: true, Recent: true}, // then the recent places (menuState)
+			{ID: menuHistoryMoreSep, Sep: true},
+			{ID: menuHistoryShowAll, Title: "Show full history", Key: "y", Mods: C, Do: on(a.openShowAllHistory)},
 		}},
 		{Title: "Window", Kind: "window", Items: []menubar.Item{
 			{ID: "menuitem-window-minimize", Title: "Minimize", Key: "m", Mods: C, Role: "performMiniaturize:"},
@@ -145,6 +147,9 @@ func (a *App) macMenus() []menubar.Menu {
 const (
 	menuSignOutTeam = "menuitem-sign-out-team"
 	menuUpdate      = "menuitem-update-status"
+	// gJ's ids: Px "menuitem-top-level-history" + Q/rf SHOW_ALL_RECENTS
+	menuHistoryMoreSep = "menuitem-top-level-history-view-more-separator"
+	menuHistoryShowAll = "menuitem-top-level-history-showAllRecents"
 )
 
 // menuWorkspaceOnly are the web client's items: Slack shows them only with
@@ -156,7 +161,7 @@ var menuWorkspaceOnly = map[string]bool{
 	"menuitem-all-dms": true, "menuitem-drafts": true, "menuitems-mentions-reactions": true,
 	"menuitem-later": true, "menuitems-channel-browser": true, "menuitem-file-browser": true,
 	"menuitem-people-user-groups": true, "menuitem-apps": true, "menuitem-profile": true,
-	"menuitem-navigate-back": true, "menuitem-navigate-forward": true,
+	"menuitem-navigate-back": true, "menuitem-navigate-forward": true, menuHistoryShowAll: true,
 }
 
 // menuKey is what menuState shows; the state is rebuilt when it changes.
@@ -165,6 +170,8 @@ type menuKey struct {
 	team                         string
 	cur                          Route
 	depth, pos                   int
+	recents                      int   // the recents' length (history_menu.go)
+	historyMenu                  bool  // desktop_history_menu
 	tick                         int64 // conversation names load later: refresh every 2 s
 	update                       string
 	updateOff                    bool // the update item is greyed out
@@ -198,7 +205,10 @@ func (a *App) syncMenuBar() {
 		back:     a.router.CanBack(), fwd: a.router.CanForward(),
 		sidebar: a.sidebar.hidden, team: a.teamName(),
 		cur: a.router.Current(), depth: len(a.router.stack), pos: a.router.pos,
-		tick: time.Now().Unix() / 2,
+		tick: time.Now().Unix() / 2, recents: len(a.router.Recents()),
+	}
+	if c := a.Core(); c != nil {
+		k.historyMenu = c.HistoryMenuExperiment()
 	}
 	if a.opts.CheckUpdate != nil {
 		t, ok := a.updateMenuItem()
@@ -231,11 +241,20 @@ func (a *App) menuState(k menuKey) *menubar.State {
 	if k.team != "" {
 		s.Titles[menuSignOutTeam] = k.team
 	}
-	for _, r := range a.router.Recent(menuRecentMax + 1) {
-		if r == k.cur || len(s.Recent) == menuRecentMax {
-			continue
+	// gJ's recent places and Show full history, with desktop_history_menu
+	// only: without it the web client sends History nothing (its six
+	// recent views are no longer returned by getWorkspaceMenuItems).
+	more := false
+	if k.historyMenu {
+		var places []visit
+		var labels []string
+		places, labels, more = a.historyOSRecents()
+		for i, v := range places {
+			s.Recent = append(s.Recent, menubar.Recent{Title: labels[i], Route: string(v.Route)})
 		}
-		s.Recent = append(s.Recent, menubar.Recent{Title: a.routeLabel(r), Route: string(r)})
+	}
+	if !more {
+		s.Hidden = map[string]bool{menuHistoryMoreSep: true, menuHistoryShowAll: true}
 	}
 	return s
 }
@@ -263,12 +282,8 @@ func (a *App) findInConversation() {
 }
 
 // showShortcutsHelp is the top bar's help button and Help > Keyboard
-// Shortcuts.
-func (a *App) showShortcutsHelp() {
-	f := shortcut.Format
-	a.Toast("Keyboard shortcuts: " + f("Mod+K") + " switch, " + f("Mod+Shift+A") + " unreads, " +
-		f("Alt+Up") + "/" + f("Alt+Down") + " channels, " + f("Mod+.") + " side pane")
-}
+// Shortcuts: Slack's Keyboard Shortcuts pane (shortcuts_pane.go).
+func (a *App) showShortcutsHelp() { a.toggleKeyboardShortcuts() }
 
 // checkUpdatesNotify is Slack's "Check for Updates…" (Clack > on macOS,
 // the workspace menu elsewhere): a check now, answered like Slack's

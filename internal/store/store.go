@@ -124,6 +124,42 @@ func (s *Store) ChannelAccess(id string) richtext.ChannelAccess {
 	return s.access[id]
 }
 
+// ExperimentGroup reads a Slack experiment's group for richtext's
+// experiment-dependent text (core sets it to its Experiment).
+var ExperimentGroup func(s *Store, name string) string
+
+// HuddleTextOpts is richtext.HuddleResolver: a huddle_thread message's
+// conversation (a DM and its other member, a group DM) and the
+// experiments its sentence follows.
+func (s *Store) HuddleTextOpts(channel string) richtext.HuddleTextOpts {
+	s.mu.RLock()
+	c, ok := s.Convs[channel]
+	if !ok {
+		c, ok = s.ext[channel]
+	}
+	var o richtext.HuddleTextOpts
+	if ok {
+		o.IM, o.MPIM, o.Partner = c.IsIM, c.IsMPIM, c.User
+	}
+	s.mu.RUnlock()
+	if f := ExperimentGroup; f != nil {
+		o.Redesign = f(s, "system_messages_redesign_m1") == "on"
+		o.Missed = f(s, "huddles_missed_notification") == "on"
+	}
+	return o
+}
+
+// UserAvatar is richtext.AvatarResolver: a user's 48px picture ("" when
+// unknown).
+func (s *Store) UserAvatar(id string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if u, ok := s.Users[id]; ok {
+		return u.Profile.Image48
+	}
+	return ""
+}
+
 func (s *Store) PutName(id, name string) {
 	if id == "" || name == "" {
 		return

@@ -120,8 +120,14 @@ func (m *Menu) menuTemplate(items []MenuItem) []any {
 			if it.Disabled {
 				e["disabled"] = true
 			}
-			if it.Tag != "" { // MenuTemplateItem tag {label, style}
-				e["tag"] = slackc.Props{"label": it.Tag, "style": "informative"}
+			if it.Tag != nil {
+				e["tag"] = slackc.Props{"label": it.Tag.Label, "style": it.Tag.Style}
+			}
+			if it.BadgeCount > 0 {
+				e["badgeCount"] = it.BadgeCount
+				if it.BadgeStyle != "" {
+					e["badgeStyle"] = it.BadgeStyle
+				}
 			}
 			if it.Checked {
 				e["type"] = "checkbox"
@@ -208,11 +214,22 @@ func menuFromTemplate(th *theme.Theme, list []any, base []MenuItem) []MenuItem {
 		if e.Has("disabled") {
 			it.Disabled = e.Bool("disabled")
 		}
+		// MenuFromTemplate passes tag, badgeCount and badgeStyle to the
+		// MenuItem (OCqs); a tag that is a component isn't drawn here
 		if e.Has("tag") {
-			it.Tag = ""
+			it.Tag = nil
 			if t := asProps(e["tag"]); t != nil {
-				it.Tag = t.StrOr("label", "")
+				if l, ok := t.Str("label"); ok && l != "" {
+					it.Tag = &MenuTag{Label: l, Style: t.StrOr("style", "")}
+				}
 			}
+		}
+		if e.Has("badgeCount") {
+			n, _ := e.Num("badgeCount")
+			it.BadgeCount = int(n)
+		}
+		if e.Has("badgeStyle") {
+			it.BadgeStyle = e.StrOr("badgeStyle", "")
 		}
 		if typ == "checkbox" || typ == "radio" || e.Has("checked") {
 			it.Checked = e.Bool("checked")
