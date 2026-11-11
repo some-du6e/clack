@@ -45,6 +45,9 @@ type backend struct {
 	schedN     int // scheduled messages (its schedule-send badge)
 	draftChans map[string]bool
 	draftSeq   int
+	// chanDrafts are the drafts each row counts (the pencil's tooltip and
+	// its Jump to draft… menu: sidebar_draft.go)
+	chanDrafts map[string][]core.Draft
 
 	tabCache map[string][]chTab
 	tabsDone map[string]bool // opened() finished for the channel (the header is complete; reveal.go)
@@ -202,7 +205,9 @@ func (b *backend) loadDrafts(a *App) {
 		inComposer := b.core.Experiment("draft_management_in_composer") == "treatment"
 		threads := inComposer && b.core.Experiment("sidebar_draft_indicator_menu_and_thread_inclusion") == "on"
 		n, sched, chans := 0, 0, map[string]bool{}
+		byChan := map[string][]core.Draft{}
 		var dmUsers []string
+		var dmDrafts []core.Draft
 		for _, d := range ds {
 			if d.DateScheduled != 0 {
 				sched++  // Slack's getScheduledDraftsCount: date_scheduled set
@@ -213,24 +218,27 @@ func (b *backend) loadDrafts(a *App) {
 			case d.Channel == "":
 				if inComposer && len(d.Users) == 1 {
 					dmUsers = append(dmUsers, d.Users[0])
+					dmDrafts = append(dmDrafts, d)
 				}
 			case d.ThreadTS != "" && !threads, d.FromComposer && !inComposer:
 			default:
 				chans[d.Channel] = true
+				byChan[d.Channel] = append(byChan[d.Channel], d)
 			}
 		}
 		a.Post(func() {
 			if seq != b.draftSeq {
 				return
 			}
-			for _, u := range dmUsers {
+			for i, u := range dmUsers {
 				for id, c := range b.m.Convs {
 					if (c.Kind == "im" || c.Kind == "app") && c.User == u {
 						chans[id] = true
+						byChan[id] = append(byChan[id], dmDrafts[i])
 					}
 				}
 			}
-			b.draftN, b.schedN, b.draftChans = n, sched, chans
+			b.draftN, b.schedN, b.draftChans, b.chanDrafts = n, sched, chans, byChan
 			a.Invalidate()
 		})
 	}()
@@ -486,6 +494,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 	switch ev.Type {
 	case "experiments": // a group changed (experiments.getByUser, a plugin's override): the sidebar rules and names read them
 		b.resnapshot(a)
+		b.loadDrafts(a) // which drafts a row counts follows the draft experiments
 	case "prefs": // users.prefs changed (Preferences, pref_change)
 		if ev.Prefs != nil {
 			a.applyAccountPrefs(*ev.Prefs)

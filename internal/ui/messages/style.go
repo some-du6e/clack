@@ -34,7 +34,7 @@ func rgba(v uint32, a float32) color.NRGBA {
 type colors struct {
 	Bg, Hover, Text, Text2, Text3                     color.NRGBA
 	Edited, PinIcon, Muted70, TimeSystem              color.NRGBA
-	Pinned, PinnedHover, Highlight                    color.NRGBA
+	Pinned, PinnedHover, Highlight, ActiveThread      color.NRGBA
 	BadgeBg, BadgeText                                color.NRGBA
 	ReactBg, ReactHoverBorder                         color.NRGBA
 	ReactSelfBg, ReactSelfHoverBg                     color.NRGBA
@@ -65,6 +65,9 @@ var lightColors = colors{
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
 	Editing: rgba(0xf2c744, 0.2), ScrollThumb: rgba(0x1d1c1d, 0.3), ScrollThumbHover: rgba(0x1d1c1d, 0.5), Selection: rgba(0x1d9bd1, 0.3),
 	SystemText: rgb(0x454447), HeaderBorder: rgba(0x1d1c1d, 0.13), CloseHover: rgba(0x1d1c1d, 0.06),
+
+	// --dt_color-base-hgl-3 (slack-kit-gantry-v2-styles): the selected thread root (active_thread.go)
+	ActiveThread: rgb(0xfffae0),
 }
 
 var darkColors = colors{
@@ -85,6 +88,9 @@ var darkColors = colors{
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
 	Editing: rgba(0xf2c744, 0.14), ScrollThumb: rgba(0xe8e8e8, 0.3), ScrollThumbHover: rgba(0xe8e8e8, 0.5), Selection: rgba(0x1d9bd1, 0.4),
 	SystemText: rgb(0xababad), HeaderBorder: rgba(0xe8e8e8, 0.13), CloseHover: rgba(0xe8e8e8, 0.06),
+
+	// --dt_color-base-hgl-3, dark
+	ActiveThread: rgb(0x2f1e00),
 }
 
 func colorsFor(th *theme.Theme) *colors {

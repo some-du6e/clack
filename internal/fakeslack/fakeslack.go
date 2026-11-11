@@ -1079,7 +1079,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
 			// the sidebar text filter and temporary mutes (core sidebar_filter.go, temp_mute.go)
 			"sidebar_text_filter": g("on"), "sidebar_text_filter_m2": g("on"), "sidebar_text_filter_m3": g("on"),
-			"temp_mute": g("on"), "manage_conversations_strings": g("on"),
+			"temp_mute": g("on"), "manage_conversations_strings": g("on"), "thread_root_selected_state": g("on"),
 			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
 			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
 			"unread_thread_indication_in_replybar": g("on")})

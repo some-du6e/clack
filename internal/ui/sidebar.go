@@ -85,6 +85,13 @@ type sidebarState struct {
 	filterFor string
 	fq        string
 	fm2, fm3  bool
+
+	// the draft pencils (sidebar_draft.go): each row's tooltip and menu
+	// trigger, and the slot the row being laid out put its pencil in
+	drafts    map[string]*sbDraftUI
+	draftSlot image.Rectangle
+	draftFg   color.NRGBA
+	draftMenu bool
 }
 
 // sbLinks are the page links in Slack's order (client-channel-list-view
@@ -497,6 +504,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	if item.Hidden() {
 		return layout.Dimensions{}
 	}
+	a.sidebar.draftSlot = image.Rectangle{}
 	var inner slackc.Styled
 	switch {
 	case conv != nil:
@@ -539,6 +547,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	})
 	if conv != nil {
 		a.sbRowInput(gtx, conv.ID, btn, image.Pt(w, d.Size.Y))
+		if slot := a.sidebar.draftSlot; !slot.Empty() { // the pencil's tooltip and menu, over the row
+			a.layoutSbDraft(gtx, conv.ID, slot.Add(image.Pt(pad, 0)), a.sidebar.draftFg, a.sidebar.draftMenu)
+		}
 	}
 	if r.kind == sbHeading {
 		a.sbHeadingControls(gtx, r, btn.Hovered(), image.Pt(w, d.Size.Y))
@@ -649,6 +660,11 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 	sel, conv := rs.sel, rs.conv
 	box := a.sbBBMBox(r)
 	return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hovered bool) {
+		if conv != nil && !hovered { // the draft menu trigger sits over the row: it keeps the row hovered
+			if d := a.sidebar.drafts[conv.ID]; d != nil && d.btn.Hovered() {
+				hovered = true
+			}
+		}
 		switch {
 		case box:
 			// border 1px theme-otl-inv-pry, radius 4, the
@@ -760,9 +776,16 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				if conv.Muted {
 					pc = theme.WithAlpha(pc, uint8(float32(pc.A)*0.64+0.5))
 				}
-				at(gtx, image.Pt(right+(slot-gs)/2, (rowH-gs)/2), image.Pt(gs, gs), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("pencil-glyph")(gtx, 14, pc)
-				})
+				// o && l && _: the menu trigger replaces the glyph (drawn
+				// over the row, sidebar_draft.go)
+				menu := a.sbDraftMenuOn() && a.data != nil && len(a.data.chanDrafts[conv.ID]) > 0
+				if !menu {
+					at(gtx, image.Pt(right+(slot-gs)/2, (rowH-gs)/2), image.Pt(gs, gs), func(gtx layout.Context) layout.Dimensions {
+						return icons.Get("pencil-glyph")(gtx, 14, pc)
+					})
+				}
+				a.sidebar.draftSlot = image.Rect(right, (rowH-slot)/2, right+slot, (rowH+slot)/2)
+				a.sidebar.draftFg, a.sidebar.draftMenu = pc, menu
 				right -= gtx.Dp(6)
 			}
 		}
