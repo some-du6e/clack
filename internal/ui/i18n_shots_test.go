@@ -46,6 +46,9 @@ func TestMainNoEnglishLeft(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	t.Cleanup(func() { i18n.Use(i18n.EnUS, nil) })
+	// no locale pref: the app follows the account's (applyLocalePref, on
+	// every snapshot), which would switch back to en-US mid-draw
+	fs.SetPrefs(map[string]any{"locale": ""})
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
 	ch := fs.ChannelIDs()[0]
