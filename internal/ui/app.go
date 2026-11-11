@@ -16,6 +16,7 @@ import (
 
 	"gioui.org/app"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -235,6 +236,11 @@ type App struct {
 	bbmListBase   color.NRGBA     // its list surface, opaque (bbm_views.go)
 	teamIconShown string          // the last workspace icon URL that drew (kept while a new one loads)
 	mbar          menuBar         // the macOS menu bar's state (macmenu.go)
+
+	split       splitState    // Slack's split view (split.go)
+	pane        string        // the view container being drawn or acted on: "" main, paneSplit
+	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
+	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -257,6 +263,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
+	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
 	a.startSpell()                                // spellcheck_wire.go
 	a.startLocale()                               // locale_wire.go
@@ -559,6 +566,7 @@ func (a *App) frame(gtx layout.Context) {
 
 	ia.Leave()
 	client.Leave()
+	a.syncSplitWindow(gtx) // the split view's minimum window width (split.go)
 
 	a.layoutSwipe(gtx, primary)
 	a.layoutHoverCard(gtx) // above the content, under the overlays
@@ -570,6 +578,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
+	a.clickMods = 0           // splitClick: only this frame's click
 }
 
 // layoutShell draws the normal window: top nav, rail, banners, the
@@ -588,6 +597,15 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	bannerH += demoH
 	dockH := a.huddles().DockHeight(gtx) // the huddle bar's row (huddle_wire.go)
 	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset-dockH)
+	wsFull := ws
+	// Slack's split view takes the workspace's right end (split.go)
+	splitW, sbSplit := a.splitColumn(gtx, ws.Dx(), sbW)
+	var splitCol image.Rectangle
+	if splitW > 0 {
+		splitCol = image.Rect(ws.Max.X-splitW, ws.Min.Y, ws.Max.X, ws.Max.Y)
+		ws.Max.X -= splitW
+		sbW = sbSplit
+	}
 	primary := image.Rect(ws.Min.X+sbW, ws.Min.Y, ws.Max.X, ws.Max.Y)
 	a.primaryOrigin = primary.Min
 
@@ -595,12 +613,17 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	// panel's rounded corners): full-window fills are the main per-frame
 	// cost on software GL.
 	rad := gtx.Dp(theme.PanelRadius)
-	for _, r := range []image.Rectangle{
+	grads := []image.Rectangle{
 		image.Rect(0, 0, sz.X, ws.Min.Y+rad),
 		image.Rect(0, navH, railW+rad, sz.Y),
 		image.Rect(ws.Max.X-rad, navH, sz.X, sz.Y),
 		image.Rect(railW, ws.Max.Y-rad, sz.X, sz.Y),
-	} {
+	}
+	if splitW > 0 { // the gap and the split card's corners, not under the card
+		grads[2] = image.Rect(ws.Max.X-rad, navH, splitCol.Min.X+gtx.Dp(splitGap)+rad, sz.Y)
+		grads = append(grads, image.Rect(splitCol.Max.X-rad, navH, sz.X, sz.Y))
+	}
+	for _, r := range grads {
 		a.grad.draw(gtx, sz, image.Point{}, clip.Rect(r).Op(), a.th.C.ChromeA, a.th.C.ChromeB)
 	}
 
@@ -615,10 +638,10 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	a.layoutRail(gtx, navH, sz.Y-navH-dockH)
 	a.th.Chrome = false
 	if demoH > 0 {
-		a.layoutDemoBanner(gtx, image.Rect(ws.Min.X, navH, ws.Max.X, navH+demoH-gtx.Dp(bannerGap)))
+		a.layoutDemoBanner(gtx, image.Rect(wsFull.Min.X, navH, wsFull.Max.X, navH+demoH-gtx.Dp(bannerGap)))
 	}
 	if bannerH > demoH {
-		a.layoutRealtimeBanner(gtx, image.Rect(ws.Min.X, navH+demoH, ws.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
+		a.layoutRealtimeBanner(gtx, image.Rect(wsFull.Min.X, navH+demoH, wsFull.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
 	}
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
@@ -655,6 +678,11 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 		if sbW > 0 {
 			theme.Fill(gtx, image.Rect(primary.Min.X, ws.Min.Y, primary.Min.X+gtx.Dp(1), ws.Max.Y), bc)
 		}
+	}
+	if splitW > 0 {
+		a.layoutSplit(gtx, splitCol)
+	} else {
+		a.split.col, a.split.card = image.Rectangle{}, image.Rectangle{}
 	}
 	return primary
 }
@@ -803,19 +831,31 @@ func (a *App) updateTitle() {
 
 func (a *App) layoutOverlays(gtx layout.Context) {
 	live := a.overlays[:0]
-	for _, o := range a.overlays {
+	panes := a.overlayPane[:0]
+	for i, o := range a.overlays {
 		if !o.Dismissed() {
+			p := ""
+			if i < len(a.overlayPane) {
+				p = a.overlayPane[i]
+			}
 			live = append(live, o)
+			panes = append(panes, p)
 		}
 	}
 	for i := len(live); i < len(a.overlays); i++ {
 		a.overlays[i] = nil
 	}
-	a.overlays = live
-	for _, o := range a.overlays {
+	a.overlays, a.overlayPane = live, panes
+	for i, o := range a.overlays {
 		g := gtx
 		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
-		o.Layout(g)
+		// in the view container it was opened from: a split view menu's
+		// Reply in thread or Edit acts there (split.go)
+		p := ""
+		if i < len(panes) {
+			p = panes[i]
+		}
+		a.inPane(p, func() { o.Layout(g) })
 	}
 }
 

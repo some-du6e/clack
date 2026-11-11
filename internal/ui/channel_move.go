@@ -146,7 +146,7 @@ func (a *App) layoutHeaderStar(gtx layout.Context, ch string, conv *convInfo, po
 		return d
 	})
 	if clicked(a.clicks.get("hdr.star")) {
-		o := org.get(image.Pt(a.winSize.X-gtx.Constraints.Max.X-gtx.Dp(theme.PanelInset)+pos.X, gtx.Dp(theme.TopNavH)+pos.Y))
+		o := org.get(image.Pt(a.paneRight()-gtx.Constraints.Max.X+pos.X, gtx.Dp(theme.TopNavH)+pos.Y))
 		a.openMoveToMenu(ch, image.Rectangle{Min: o, Max: o.Add(image.Pt(box, box))}, false)
 	}
 }
