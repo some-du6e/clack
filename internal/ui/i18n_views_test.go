@@ -73,6 +73,10 @@ func viewsNoEnglishLeft(t *testing.T, cats map[string]*i18n.Catalog) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
+	// no locale pref: every snapshot re-applies the account's prefs, and
+	// an "en-US" one would switch the locale back between the passes
+	// (applyLocalePref follows the pref when it differs from i18n.Wanted)
+	fs.SetPrefs(map[string]any{"locale": ""})
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
 	allow := unkeyedWith(mainUnkeyed, viewsUnkeyed)
