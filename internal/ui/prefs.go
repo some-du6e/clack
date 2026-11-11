@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uifont"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -124,7 +125,9 @@ func (a *App) loadPrefs() {
 	if w := a.prefs.SidebarW; w >= 160 && w <= 480 {
 		a.sidebar.width = w
 	}
-	if w := a.prefs.SecondaryW; w >= 300 {
+	// a width the user dragged to ("manual"); builds before the auto
+	// width saved their fixed 400 default, which is auto now
+	if w := a.prefs.SecondaryW; w >= 300 && w != theme.SecondaryW {
 		a.secondary.width = w
 	}
 	if len(a.prefs.Collapsed) > 0 {

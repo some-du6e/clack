@@ -31,7 +31,10 @@ type ModalButton struct {
 	Left bool
 	// V2, when it says so, draws Slack Kit's v2 Button instead of the
 	// legacy c-button (the share dialog under slack_kit_v2_button).
-	V2    func() bool
+	V2 func() bool
+	// Icon goes before the label (the workflow speedbump's ▶ "Start
+	// Workflow").
+	Icon  string
 	click widget.Clickable
 }
 
@@ -39,9 +42,9 @@ type ModalButton struct {
 // pressed), with the keyboard focus ring when ring is set.
 func (b *ModalButton) draw(gtx layout.Context, th *theme.Theme, kind BtnKind, ring bool) layout.Dimensions {
 	if b.V2 != nil && b.V2() {
-		return buttonV2(gtx, th, &b.click, kind, theme.ButtonV2Medium, b.Label, "", ring)
+		return buttonV2(gtx, th, &b.click, kind, theme.ButtonV2Medium, b.Label, b.Icon, ring)
 	}
-	return button(gtx, th, &b.click, kind, BtnMedium, b.Label, "", 80, ring)
+	return button(gtx, th, &b.click, kind, BtnMedium, b.Label, b.Icon, 80, ring)
 }
 
 // ModalOpts configure a modal.

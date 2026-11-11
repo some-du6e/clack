@@ -253,7 +253,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	}
 	go a.invalidator()
 	a.sidebar.width = theme.SidebarW
-	a.secondary.width = theme.SecondaryW
+	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
@@ -664,13 +664,8 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	secW := 0
 	if a.secondary.open() && !a.bbmOn() { // the mode shows one container (bbm.go)
-		secW = gtx.Dp(unit.Dp(a.secondary.width))
-		if max := sz.X - gtx.Dp(360); secW > max {
-			secW = max
-		}
-		if secW < gtx.Dp(theme.SecondaryMin) {
-			secW = gtx.Dp(theme.SecondaryMin)
-		}
+		secW = a.secondaryWidth(gtx, sz.X) // secondary.go
+		a.secondary.drawnW = secW
 		if a.secondary.expanded && a.secondary.kind == secCode {
 			secW = sz.X // the code channel pane's single-column mode
 		}

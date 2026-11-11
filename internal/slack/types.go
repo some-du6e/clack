@@ -16,8 +16,10 @@ type Message struct {
 	ParentUser     string          `json:"parent_user_id,omitempty"`
 	ReplyCount     int             `json:"reply_count,omitempty"`
 	ReplyUsers     []string        `json:"reply_users,omitempty"`
+	ReplyUsersN    int             `json:"reply_users_count,omitempty"`
 	LatestReply    string          `json:"latest_reply,omitempty"`
 	Subscribed     bool            `json:"subscribed,omitempty"`
+	LastRead       string          `json:"last_read,omitempty"` // a followed thread's root (conversations.replies): the viewer's last read reply
 	Edited         *Edited         `json:"edited,omitempty"`
 	Reactions      []Reaction      `json:"reactions,omitempty"`
 	Files          []File          `json:"files,omitempty"`
@@ -42,6 +44,9 @@ type Message struct {
 	StreamingState string          `json:"streaming_state,omitempty"` // chat.startStream: in_progress | completed | errored
 	WorkflowID     string          `json:"workflow_id,omitempty"`     // a workflow's message (the menu's Copy workflow ID)
 	TriggerID      string          `json:"trigger_id,omitempty"`      // the workflow trigger that posted it
+	// FunctionExecutionID marks a workflow step's message: its block
+	// actions carry it (Slack's blocks.actions function_execution_id).
+	FunctionExecutionID string `json:"function_execution_id,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
