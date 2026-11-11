@@ -202,6 +202,7 @@ type Activity struct {
 
 	tabs  *tabs
 	strip actTabStrip // the tab strip's drag and badges (activity_tabs.go)
+	pageW int         // the page's width: the view, or its sidebar column (activity_panel.go)
 	plus  widget.Clickable
 	plusX int
 	seg   [2]widget.Clickable
@@ -485,10 +486,17 @@ func (v *Activity) Layout(gtx C) D {
 	defer st.Leave()
 	size := gtx.Constraints.Max
 	fill(gtx, image.Rectangle{Max: size}, st.Background(v.p.Bg))
-	layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		layout.Rigid(v.head),
-		layout.Flexed(1, v.main),
-	)
+	if v.h.Core().ActivityRemovePersistentDetailPanel() {
+		// the inbox is the Primary view; an opened item is a secondary
+		// view beside it (main's pane)
+		v.pageW = size.X
+		layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(v.head),
+			layout.Flexed(1, v.main),
+		)
+	} else {
+		v.persistentLayout(gtx) // activity_panel.go
+	}
 	v.undoBar(gtx)
 	v.clearAllToast(gtx)
 	v.menus(gtx)
@@ -536,7 +544,7 @@ func (v *Activity) update(gtx C) {
 	}
 	if v.sortBtn.Clicked(gtx) {
 		// the header's ActivityFilterSort (bottom-right of its 28px button)
-		v.sortMenu(image.Pt(gtx.Constraints.Max.X-gtx.Dp(16+28+8), gtx.Dp(14+28+4)))
+		v.sortMenu(image.Pt(v.pageWidth(gtx)-gtx.Dp(16+28+8), gtx.Dp(14+28+4)))
 	}
 	v.bulkClicks(gtx) // activity_bulk.go
 	v.settingsClicks(gtx)
@@ -3072,7 +3080,7 @@ func (v *Activity) menus(gtx C) {
 	case actMenuSettings:
 		// right-aligned under the 28px kebab (header row: 14px down, 16px in)
 		w := gtx.Dp(300)
-		v.popover(gtx, image.Pt(gtx.Constraints.Max.X-gtx.Dp(16)-w, gtx.Dp(14+28+4)), 300, 8, v.settingsMenu)
+		v.popover(gtx, image.Pt(v.pageWidth(gtx)-gtx.Dp(16)-w, gtx.Dp(14+28+4)), 300, 8, v.settingsMenu)
 	}
 }
 
