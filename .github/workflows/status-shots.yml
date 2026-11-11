@@ -7,6 +7,7 @@ name: status-shots
 # talks to a real Slack workspace.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run status-shots.yml --ref <branch>)
     paths:
       - "internal/ui/popups/actions_status*"
       - "internal/ui/popups/prefs_availability*"

@@ -8,6 +8,7 @@ name: emoji-picker
 # Slack workspace.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run emoji-picker.yml --ref <branch>)
     paths:
       - "internal/frecency/**"
       - "internal/core/frecency*.go"
