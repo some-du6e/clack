@@ -431,12 +431,15 @@ func (a *App) layoutArchivedBar(gtx layout.Context, c *convo, ci *convInfo) layo
 	if clicked(&jp.close) {
 		a.closeArchived(c.ch)
 	}
-	// renderArchivedChannelFooterText's polished variant
+	// renderArchivedChannelFooterText's polished variant; the link's
+	// clicks are read before it is laid out (Layout drains them), and
+	// every frame, so a click from before it showed doesn't linger
 	polish := false
+	unarchive := jp.unarchive.Clicked(gtx)
 	if a.data != nil && a.data.core != nil {
 		svc := a.data.core
 		polish = svc.Experiment("unarchive_channel_banner_polish") == "on" && svc.CanUnarchive(c.ch)
-		if polish && clicked(&jp.unarchive) {
+		if polish && unarchive {
 			ch := c.ch
 			go func() { // onUnarchiveLinkClicked: submitUnarchive
 				if err := svc.Unarchive(context.Background(), ch); err != nil {
