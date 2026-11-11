@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/huddle"
@@ -249,6 +250,12 @@ type alertState struct {
 // underlined), a close button; it returns its size (nothing when there is
 // no alert).
 func (c *Controller) layoutShareAlert(gtx C, th *theme.Theme, st *alertState, w int) D {
+	return c.layoutShareAlertR(gtx, th, st, w, 8)
+}
+
+// layoutShareAlertR is layoutShareAlert with its corner radius (12 for
+// the bottom_bar entry point above the dock).
+func (c *Controller) layoutShareAlertR(gtx C, th *theme.Theme, st *alertState, w int, radius unit.Dp) D {
 	alert := c.shareAlert()
 	if alert == "" {
 		return D{}
@@ -276,7 +283,7 @@ func (c *Controller) layoutShareAlert(gtx C, th *theme.Theme, st *alertState, w 
 	lines := wrapSpans(gtx, th, 13, spans, tw)
 	lineH := gtx.Sp(18)
 	h := pad + max(len(lines)*lineH, ic) + pad
-	theme.RRect(gtx, image.Rectangle{Max: image.Pt(w, h)}, gtx.Dp(8), hudWarnBg)
+	theme.RRect(gtx, image.Rectangle{Max: image.Pt(w, h)}, gtx.Dp(radius), hudWarnBg)
 	at(gtx, image.Pt(pad, pad+gtx.Dp(1)), image.Pt(ic, ic), func(gtx C) D {
 		iconAt(gtx, image.Pt(ic, ic), "warning", 16, hudWarn)
 		return D{Size: image.Pt(ic, ic)}

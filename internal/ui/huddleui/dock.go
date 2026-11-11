@@ -151,7 +151,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 	if c.shareAlert() != "" { // HuddlesAlertBanner, entryPoint bottom_bar
 		aw := sz.X - 2*gtx.Dp(dockPad)
 		d := at(gtx, image.Pt(gtx.Dp(dockPad), y), image.Pt(aw, sz.Y), func(gtx C) D {
-			return c.layoutShareAlert(gtx, th, &c.dock.shareAlert, aw)
+			return c.layoutShareAlertR(gtx, th, &c.dock.shareAlert, aw, 12)
 		})
 		if d.Size.Y > 0 {
 			y += d.Size.Y + gtx.Dp(4)
