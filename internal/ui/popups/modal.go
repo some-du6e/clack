@@ -34,8 +34,11 @@ type ModalButton struct {
 	V2 func() bool
 	// Icon goes before the label (the workflow speedbump's ▶ "Start
 	// Workflow").
-	Icon  string
-	click widget.Clickable
+	Icon string
+	// Hidden, when it says so, leaves the button out of the footer (the
+	// Edit file dialog's Next on its last page, its Send before it).
+	Hidden func() bool
+	click  widget.Clickable
 }
 
 // draw lays the footer button out as kind (BtnDisabled when it can't be
@@ -132,6 +135,10 @@ type ModalOpts struct {
 	// it.
 	Hero  func(gtx layout.Context) layout.Dimensions
 	HeroH float32
+	// Header draws the header's own content in place of a title, with
+	// gtx.Constraints exactly the header's size (Slack's ModalHeader with
+	// other children: the screen picker's source tabs).
+	Header func(gtx layout.Context) layout.Dimensions
 	// Over draws on top of the whole card, header and footer included,
 	// in card coordinates with gtx.Constraints exactly the card's size
 	// (Slack's c-modal_speed_bump veils the dialog with its sheet; the
@@ -172,7 +179,9 @@ func NewModal(h Host, o ModalOpts) *Modal {
 	return m
 }
 
-func (b *ModalButton) enabled() bool { return b.Enabled == nil || b.Enabled() }
+func (b *ModalButton) enabled() bool { return !b.hidden() && (b.Enabled == nil || b.Enabled()) }
+
+func (b *ModalButton) hidden() bool { return b.Hidden != nil && b.Hidden() }
 
 func (m *Modal) press(b *ModalButton) {
 	if !b.enabled() {
@@ -330,6 +339,12 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 
 				// header
+				if m.o.Header != nil {
+					at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Exact(image.Pt(w, headH))
+						return m.o.Header(gtx)
+					})
+				}
 				ty := (headH - subH - dp(gtx, titleLH)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
@@ -422,6 +437,9 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					x, lx := pos.X+w-padX, pos.X+padX
 					for i := len(m.o.Buttons) - 1; i >= 0; i-- {
 						b := m.o.Buttons[i]
+						if b.hidden() {
+							continue
+						}
 						kind := b.Kind
 						if !b.enabled() {
 							kind = BtnDisabled

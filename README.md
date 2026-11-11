@@ -33,9 +33,11 @@ The app declares the `slack://` scheme, so macOS can send Slack links to it. If 
 
 ### Windows
 
-**Installer:** run `Clack-<ver>-windows-amd64-setup.exe`. It installs for your user only (no admin prompt) into `%LocalAppData%\Programs\Clack`, adds a Start Menu entry and, if you tick it, makes Clack open `slack://` links (off by default: the Slack desktop app claims those too, and you don't need it to sign in). A desktop shortcut is optional. Uninstall from **Settings → Apps**. Running a newer installer upgrades in place.
+**Installer:** run `Clack-<ver>-windows-amd64-setup.exe`. It installs for your user only (no admin prompt) into `%LocalAppData%\Programs\Clack`, adds a Start Menu entry and registers Clack for `slack://` links (below). A box makes Clack their default too (off by default: the Slack desktop app claims them as well). A desktop shortcut is optional. Uninstall from **Settings → Apps**; it removes only Clack's keys. Running a newer installer upgrades in place.
 
-**Portable:** unzip `Clack-<ver>-windows-amd64.zip` anywhere and run `Clack.exe`. It doesn't touch the registry. To have it open `slack://` links, run `Clack.exe -register-url-handler` once from that folder (`-unregister-url-handler` undoes it; both only affect your user).
+**Portable:** unzip `Clack-<ver>-windows-amd64.zip` anywhere and run `Clack.exe`.
+
+**`slack://` links on Windows.** Every start registers the running `Clack.exe` for `slack://` links, for your user only (HKCU, no admin): a `Clack.slack` ProgID, `Software\Clack\Capabilities` with `URLAssociations\slack`, and `Software\RegisteredApplications\Clack`, the registration Microsoft's Default Programs describes. Windows then lists Clack in its "Select an app to open this 'slack' link" box and in **Settings → Apps → Default apps** (on Windows 11, `start ms-settings:defaultapps?registeredAppUser=Clack` opens Clack's page there). Clack also becomes what runs when Windows doesn't ask, but only if no other app has `slack://`. It never changes an app you picked with **Always**, which Windows protects. `Clack.exe -register-url-handler` makes Clack that default anyway, and `-unregister-url-handler` removes Clack's keys and leaves other apps' alone.
 
 The files aren't code-signed, so SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 
@@ -129,13 +131,13 @@ This is how Slack's desktop app signs in. You sign in in your browser, Slack's p
 
 1. Start Clack and click **Open Slack sign-in** (or press Enter). Clack opens `https://slack.com/ssb/add?s=1&v=4.53.276` in your browser and waits for the link.
 2. Sign in to your workspace in the browser.
-3. When Slack offers to open the Slack app, let the browser open Clack, and Clack signs in by itself. On macOS that works out of the box. On Windows, tick "Open slack:// links with Clack" in the installer (or run `Clack.exe -register-url-handler` once). On Linux, run `clack --register-url-handler` once.
+3. When Slack offers to open the Slack app, let the browser open Clack, and Clack signs in by itself. On macOS that works out of the box. On Windows, if Windows asks which app opens the link ("Select an app to open this 'slack' link"), pick **Clack**, then **Just once** or **Always**. On Linux, choose Clack if your browser asks, or run `clack --register-url-handler` once to make it the default.
 
-If the browser can't hand the link over, copy the `slack://` link and switch back to Clack. When its window comes to the front on the sign-in screen, Clack looks at the clipboard, signs in with a sign-in link it finds there and clears the clipboard, the way Slack desktop does. Pasting the link into the card's field works too. Slack's page usually doesn't show the link, though. **Having trouble?** on the card has these tips for your system.
+Clack also signs in with a link you already have: when its window comes to the front on the sign-in screen, it looks at the clipboard, signs in with a sign-in link it finds there and clears the clipboard, the way Slack desktop does, and the card's field takes a pasted link. Slack's sign-in page doesn't show the link, though, so the hand-off from the browser is the way in. **Having trouble?** on the card has the tips for your system.
 
 The link works once, for a few minutes. If it has expired, open Slack sign-in again. Treat it like a password until then. If your workspace uses single sign-on, Slack may send you back to the browser to finish. Clack then opens the page Slack names and waits for the next link.
 
-Letting the browser open Clack needs Clack to handle `slack://` links. On macOS the app declares the scheme, so it works as soon as Clack is installed. Elsewhere Clack never takes them by itself. Run `clack --register-url-handler` once (on Linux it runs `xdg-mime default clack.desktop x-scheme-handler/slack`; on Windows it writes the per-user `slack` URL keys). The Slack desktop app claims `slack://` too and re-claims it whenever it starts, so with both installed whichever registered last wins, and a link may open the wrong app. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
+Letting the browser open Clack needs Clack to handle `slack://` links. On macOS the app declares the scheme, so it works as soon as Clack is installed; with Slack.app installed too, macOS picks one of the two. On Windows every start registers Clack, so Windows offers it next to the Slack desktop app (see Install → Windows). On Linux the packages list Clack as a handler, and `clack --register-url-handler` makes it the default (`xdg-mime default clack.desktop x-scheme-handler/slack`); Clack never takes the default by itself there. The Slack desktop app claims `slack://` too and re-claims its default whenever it starts. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
 
 From a terminal: `clack login 'slack://T…/magic-login/…'`, or `clack login` and paste the link at the prompt. A running Clack also accepts `clack 'slack://T…/magic-login/…'`.
 
@@ -185,8 +187,8 @@ clack 'slack://channel?team=T0266FRGM&id=C0266FRGV'   # open a Slack link
 |---|---|---|
 | `-creds <file>` | `~/.config/clack/creds.json` | credentials file |
 | `-dark` | off | start in dark mode |
-| `-register-url-handler` | | make Clack this user's `slack://` handler and exit (Windows registry; `xdg-mime` on Linux). Clack never does this on its own; the Slack desktop app claims the same links |
-| `-unregister-url-handler` | | remove Clack's `slack://` registration (Windows) and exit |
+| `-register-url-handler` | | make Clack this user's default `slack://` handler and exit (Windows: the legacy `Software\Classes\slack` key as well as Clack's own, which every start writes; `xdg-mime` on Linux). An app picked with **Always** in Windows' box still wins |
+| `-unregister-url-handler` | | remove Clack's `slack://` registration (Windows) and exit; other apps' keys stay |
 
 Only one Clack runs per user. Starting it again, or opening a `slack://` link, brings the running window to the front and opens the link there (`slack://channel?id=C…[&thread_ts=…]`, `slack://user?id=U…`, `slack://open`). A `slack://…/magic-login/…` or `slack://login-v2/…` link signs in instead, from the sign-in screen only. Instances with different `CLACK_HOME`s are separate. On Windows, Clack also puts an icon in the notification area: click it to bring the window back, or right-click it to quit.
 

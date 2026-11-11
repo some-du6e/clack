@@ -64,6 +64,8 @@ type textView struct {
 	// DisableSpaceTrim configures whether trailing whitespace on a line will have its
 	// width zeroed. Set to true for editors, but false for non-editable text.
 	DisableSpaceTrim bool
+	// TabStop is text.Parameters' TabStop (Clack patch 7).
+	TabStop int
 	// Mask replaces the visual display of each rune in the contents with the given rune.
 	// Newline characters are not masked. When non-zero, the unmasked contents
 	// are accessed by Len, Text, and SetText.
@@ -301,6 +303,10 @@ func (e *textView) Layout(gtx layout.Context, lt *text.Shaper, font font.Font, s
 	}
 	if e.DisableSpaceTrim != e.params.DisableSpaceTrim {
 		e.params.DisableSpaceTrim = e.DisableSpaceTrim
+		e.invalidate()
+	}
+	if e.TabStop != e.params.TabStop { // Clack patch 7
+		e.params.TabStop = e.TabStop
 		e.invalidate()
 	}
 

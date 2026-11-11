@@ -133,6 +133,11 @@ func migrateLegacyCache(cfg, acct, userID string) {
 }
 
 func main() {
+	// A URL handler's launch ("Clack.exe" "%1" on Windows, clack.desktop's
+	// clack %u) is the program and the link. Whatever follows the link
+	// came out of it (a quote in a link splits the command line), so it is
+	// dropped before any argument is read: no flags, no --update, no demo.
+	os.Args = desktop.URLLaunchArgs(os.Args)
 	// The update helper (a temp copy of Clack started by "Install and
 	// restart"): it waits for Clack to exit, installs, relaunches.
 	if len(os.Args) == 3 && os.Args[1] == "-apply-update" {
@@ -216,14 +221,19 @@ func main() {
 	}
 
 	if *regURL || *unregURL {
-		f, what := desktop.RegisterURLHandler, "registered"
+		attachConsole()
+		f := desktop.RegisterURLHandler
 		if *unregURL {
-			f, what = desktop.UnregisterURLHandler, "unregistered"
+			f = desktop.UnregisterURLHandler
 		}
-		if err := f(); err != nil {
+		r, err := f()
+		if err != nil {
+			if runtime.GOOS == "windows" {
+				fmt.Fprintln(os.Stderr, "clack:", err) // the console attachConsole found
+			}
 			log.Fatal(err)
 		}
-		fmt.Println("clack: slack:// handler", what)
+		fmt.Println(urlHandlerMessage(*unregURL, r))
 		return
 	}
 
@@ -239,7 +249,27 @@ func main() {
 	// One Clack per user (and config dir): a second launch, or the OS
 	// running `clack slack://…` for a link, hands it to the running one.
 	link := desktop.URLArg(flag.Args())
+	// Windows: every start registers this Clack.exe as a slack:// handler
+	// (desktop.EnsureURLHandler), so Windows' "Select an app to open this
+	// 'slack' link" box lists Clack and the browser's sign-in hand-off can
+	// reach it. A launch that hands over to a running Clack registers too,
+	// before it exits: a new copy opened while an older one runs is then
+	// still the one links go to.
+	var registered chan struct{}
+	if desktop.URLHandlerAtStart() {
+		registered = make(chan struct{})
+		go func() {
+			defer close(registered)
+			ensureURLHandler()
+		}()
+	}
 	if desktop.Forward(cfg, desktop.Request{URL: link}) {
+		if registered != nil {
+			select {
+			case <-registered:
+			case <-time.After(3 * time.Second):
+			}
+		}
 		return
 	}
 	// The image cache's disk tier is the signed-in account's (build sets it).
@@ -288,6 +318,11 @@ func main() {
 	if desktop.LaunchOnLoginSupported() {
 		opts.LaunchOnLogin, opts.SetLaunchOnLogin = desktop.LaunchOnLogin, desktop.SetLaunchOnLogin
 	}
+	if registered != nil {
+		// again when Open Slack sign-in is clicked, in case the start's
+		// failed or another app took the legacy key since
+		opts.EnsureLinkHandler = func() { go ensureURLHandler() }
+	}
 
 	creds, err := slack.ReadCreds(*credsPath)
 	ui.SetVersion(version)
@@ -303,6 +338,10 @@ func main() {
 		a.OpenURL(u)
 	}
 	inst, lerr := desktop.Listen(cfg, func(r desktop.Request) {
+		if r.URL != "" {
+			// never the link itself: a sign-in link is a one-time secret
+			log.Printf("desktop: another launch handed over a slack:// %s", linkKind(r.URL))
+		}
 		a.Raise()
 		if r.URL != "" {
 			openLink(r.URL)
@@ -384,6 +423,7 @@ func main() {
 		a.SetLogin(login)
 	}
 	if link != "" {
+		log.Printf("desktop: started with a slack:// %s", linkKind(link))
 		openLink(link)
 	}
 	// Taut's api.accounts: switch to other saved credentials.
@@ -550,4 +590,41 @@ func firstNonEmpty(ss ...string) string {
 		}
 	}
 	return ""
+}
+
+// ensureURLHandler is the start's slack:// registration (Windows), in one
+// log line.
+func ensureURLHandler() {
+	r, err := desktop.EnsureURLHandler()
+	switch {
+	case err != nil:
+		log.Printf("desktop: slack:// handler: %v", err)
+	case r.Default:
+		log.Printf("desktop: slack:// handler: Clack is registered and is the default (changed: %t)", r.Changed)
+	default:
+		log.Printf("desktop: slack:// handler: Clack is registered; %s has the default, so Windows asks which app to use or uses the one picked with Always (changed: %t)", filepath.Base(r.Owner), r.Changed)
+	}
+}
+
+// urlHandlerMessage is -register-url-handler's or
+// -unregister-url-handler's one line.
+func urlHandlerMessage(unregister bool, r desktop.URLHandlerResult) string {
+	switch {
+	case unregister && r.Owner != "":
+		return "clack: removed Clack's slack:// registration; slack:// links still open with " + r.Owner
+	case unregister:
+		return "clack: removed Clack's slack:// registration"
+	case runtime.GOOS == "windows" && !r.Default:
+		return "clack: Clack is registered for slack:// links, but Windows opens them with the app picked with Always (" + r.Owner + "). To switch, choose Clack in Settings > Apps > Default apps (start ms-settings:defaultapps?registeredAppUser=Clack)."
+	}
+	return "clack: slack:// links open with Clack"
+}
+
+// linkKind names a slack:// link for the log without saying what is in
+// it (a sign-in link is a one-time secret).
+func linkKind(u string) string {
+	if slack.IsMagicLink(u) {
+		return "sign-in link"
+	}
+	return "link"
 }

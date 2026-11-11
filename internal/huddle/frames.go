@@ -153,6 +153,10 @@ func encodeJoin(audioSessionID uint64) []byte {
 		})
 		w.uint(6, audioSessionID)
 		w.boolean(7, false) // wants_compressed_sdp
+		// disable_periodic_keyframe_request_on_content_sender: Slack sets
+		// it on the meeting's configuration (m8Tb), so both attendees send
+		// it; a screen share then gets keyframes only when someone asks
+		w.boolean(13, true)
 	})
 	return wrapRTC(w.b)
 }

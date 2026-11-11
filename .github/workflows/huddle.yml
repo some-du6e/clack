@@ -15,10 +15,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: deps (Xlib headers for the X11 screen capture; Xvfb and xsetroot to test it; OpenH264 to test its encoder)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq libx11-dev xvfb x11-xserver-utils libopenh264-dev
       - name: vet
         run: go vet ./internal/huddle/...
       - name: test
         run: go test -race -gcflags=all=-d=checkptr=0 ./internal/huddle/... # the transpiled libopus trips checkptr
+      - name: screen share capture and encoder (Xvfb, OpenH264)
+        # the X11 backend grabs a root painted by xsetroot; OpenH264's
+        # screen-content mode encodes the test screen and goh264 decodes it
+        run: xvfb-run -a go test -count=1 -v -run 'TestX11ScreenCapture|TestOpenH264Encode|TestFakeScreenShare' ./internal/huddle
       - name: test (no cgo)
         run: CGO_ENABLED=0 go test ./internal/huddle/...
       - name: probe
@@ -103,7 +109,7 @@ jobs:
         run: go test -count=1 -v -run 'TestOpus|TestMic(AGC|NoiseSuppression)' ./internal/huddle
       - name: VideoToolbox + camera publish
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip' ./internal/huddle
+        run: go test -count=1 -v -run 'TestVTEncode|TestFakeCamera|TestPCMEncoderRoundTrip|TestSCKList|TestFakeScreenShare' ./internal/huddle
       - name: test
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/huddle/... ./internal/ui/huddleui/... ./internal/ui/openurl/... ./internal/ui/screenlock/... ./internal/ui/globalkey/... 2>&1 | tee test.log | grep -E '^(=== RUN|--- |ok|FAIL|panic)|opus' ; test "${PIPESTATUS[0]}" = 0
@@ -145,4 +151,4 @@ jobs:
       - name: test
         run: |
           go test -count=1 -v ./internal/ui/screenlock/... ./internal/ui/globalkey/...
-          go test -count=1 -v -run 'TestMic|TestPreview|TestVideoEffect' ./internal/huddle
+          go test -count=1 -v -run 'TestMic|TestPreview|TestVideoEffect|TestGDIShares|TestMFEncode|TestFakeScreenShare' ./internal/huddle

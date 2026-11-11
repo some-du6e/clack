@@ -208,6 +208,11 @@ func (c *Composer) applyServerDraft(d core.Draft) {
 		c.setServerDraftID(d.ID)
 	}
 	c.att.restoreFiles(d.FileInfo)
+	if gs := gifsFromDraft(d.Attachments); len(gs) > 0 {
+		c.att.mu.Lock()
+		c.att.gifs = gs
+		c.att.mu.Unlock()
+	}
 	c.dsync.syncedAtt = c.attVer
 	c.touched = true
 	c.saveDraft()

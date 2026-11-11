@@ -127,6 +127,43 @@ func keyLabel(k string) string {
 // they are (Slack's "delete", or a hint a plugin already formatted).
 func Format(s string) string { return FormatFor(GOOS, s) }
 
+// FormatAsWritten is Format, except that on macOS the glyphs keep the
+// order s writes the modifiers in instead of AppKit's ⌃⌥⇧⌘. A few of
+// Slack's literal hints are written that way: the composer's + menu
+// labels Text snippet "⌘⇧Enter" (useComposerIAFormatter, boot-render
+// zuQH: cX() ? "⌘⇧Enter" : "Ctrl+Shift+Enter"), so its combo is
+// "Mod+Shift+Enter". Off macOS it is exactly Format.
+func FormatAsWritten(s string) string { return FormatAsWrittenFor(GOOS, s) }
+
+// FormatAsWrittenFor is FormatAsWritten on goos.
+func FormatAsWrittenFor(goos, s string) string {
+	c, ok := parse(s)
+	if !ok || goos != "darwin" {
+		return FormatFor(goos, s)
+	}
+	mods := strings.Split(strings.TrimSpace(s), "+")
+	if c.key == "+" {
+		mods = strings.Split(strings.TrimSuffix(strings.TrimSpace(s), "++"), "+")
+	} else {
+		mods = mods[:len(mods)-1]
+	}
+	var b strings.Builder
+	for _, m := range mods {
+		switch strings.ToLower(strings.TrimSpace(m)) {
+		case "mod", "cmd", "command", "meta", "cmdorctrl", "⌘":
+			b.WriteString("⌘")
+		case "ctrl", "control", "ctl", "⌃":
+			b.WriteString("⌃")
+		case "alt", "option", "opt", "⌥":
+			b.WriteString("⌥")
+		case "shift", "⇧":
+			b.WriteString("⇧")
+		}
+	}
+	b.WriteString(keyLabel(c.key))
+	return b.String()
+}
+
 // FormatFor is Format on goos ("darwin", "windows", "linux").
 func FormatFor(goos, s string) string {
 	c, ok := parse(s)

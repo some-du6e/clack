@@ -116,7 +116,7 @@ func TestLoginCardFits(t *testing.T) {
 	defer func() { loginOS = prevOS }()
 	shots := os.Getenv("LOGIN_SHOTS_DIR")
 	// small: also saved at the smaller sizes
-	small := map[string]bool{"login-default": true, "login-long-error": true, "login-trouble": true, "login-advanced": true}
+	small := map[string]bool{"login-default": true, "login-long-error": true, "login-trouble": true, "login-advanced": true, "login-trouble-waiting-windows": true}
 	states := []struct {
 		name string
 		set  func(l *loginScreen)
@@ -148,6 +148,9 @@ func TestLoginCardFits(t *testing.T) {
 		{"login-advanced-cookie-error", func(l *loginScreen) {
 			l.advanced, l.err = true, signInErrorText(fmt.Errorf("x: %w", slack.ErrCookieRejected))
 		}},
+		// Windows' own words (pick Clack in Windows' box)
+		{"login-waiting-windows", func(l *loginScreen) { loginOS = "windows"; l.waiting = true }},
+		{"login-trouble-waiting-windows", func(l *loginScreen) { loginOS = "windows"; l.trouble, l.waiting = true, true }},
 	}
 	for _, sz := range []image.Point{{1440, 900}, {1280, 720}, {800, 500}} {
 		var win *headless.Window
@@ -162,6 +165,7 @@ func TestLoginCardFits(t *testing.T) {
 		clock := time.Now()
 		for _, st := range states {
 			a.login = newLoginScreen()
+			loginOS = "linux"
 			st.set(a.login)
 			var img *image.RGBA
 			for i := 0; i < 3; i++ {
@@ -514,6 +518,44 @@ func TestSignInSSORedirect(t *testing.T) {
 	}
 }
 
+// On Windows the waiting card says to pick Clack if Windows asks which
+// app opens the link, and Having trouble? keeps to what is known to work
+// there: Windows' box and Copy page link. No tip about copying the link
+// (Slack's page never shows it) and none about -register-url-handler
+// (every start registers Clack). Open Slack sign-in runs
+// EnsureLinkHandler before the page opens.
+func TestSignInWindowsWords(t *testing.T) {
+	s := newSignInEnv(t, nil, image.Pt(1440, 900))
+	loginOS = "windows" // newSignInEnv's cleanup puts it back
+	l := s.a.login
+	ensured := 0
+	s.a.opts.EnsureLinkHandler = func() { ensured++ }
+	s.key(key.NameReturn) // nothing pasted: Open Slack sign-in
+	if ensured != 1 || len(s.opened) != 1 || !l.waiting {
+		t.Fatalf("Open Slack sign-in: EnsureLinkHandler ran %d times, opened %q, waiting %v", ensured, s.opened, l.waiting)
+	}
+	s.run(1500 * time.Millisecond)
+	if !s.drew("Continue in your browser. If Windows asks, pick Clack.") {
+		t.Errorf("waiting on Windows: %q", s.strs)
+	}
+	l.troubleBtn.Click()
+	s.frame(time.Second / 60)
+	s.run(1500 * time.Millisecond)
+	for _, want := range []string{"Browser didn’t open?", "Copy page link", "If Windows asks for an app, pick Clack, then Just once or Always."} {
+		if !s.drew(want) {
+			t.Errorf("Windows tips: no %q in %q", want, s.strs)
+		}
+	}
+	for _, gone := range []string{"register-url-handler", "Copied the slack:// link?", "F12", "Console", "external handler"} {
+		if s.drew(gone) {
+			t.Errorf("Windows tips show %q: %q", gone, s.strs)
+		}
+	}
+	if !l.card.In(image.Rect(0, 0, 1440, 900)) {
+		t.Errorf("the card %v leaves the window", l.card)
+	}
+}
+
 // Having trouble? opens under the footer on a spring (the card grows,
 // downward, and the tips come in) with this OS's link-handler tip; Esc
 // closes it. Advanced opens the token form in the card's place, takes the
@@ -534,7 +576,7 @@ func TestSignInDisclosures(t *testing.T) {
 	if !l.card.In(image.Rect(0, 0, 1440, 900)) {
 		t.Errorf("open, the card %v leaves the window", l.card)
 	}
-	for _, want := range []string{"Browser didn’t open?", "Copy page link", "clack --register-url-handler", "Copied the slack:// link?", "Single sign-on"} {
+	for _, want := range []string{"Browser didn’t open?", "Copy page link", "choose Clack", "clack --register-url-handler", "Copied the slack:// link?", "Single sign-on"} {
 		if !s.drew(want) {
 			t.Errorf("tips: no %q in %q", want, s.strs)
 		}
