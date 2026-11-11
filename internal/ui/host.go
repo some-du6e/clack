@@ -53,6 +53,12 @@ func (a *App) Navigate(route string) {
 	if r == "" {
 		return
 	}
+	// a conversation opened from inside the split view stays there, as one
+	// opened with Slack's split modifier click goes there (split.go)
+	if r.Channel() != "" && (a.pane == paneSplit || a.splitClick()) && a.SplitViewOK() {
+		a.OpenSplit(route)
+		return
+	}
 	if r.Page() == "search" {
 		a.searchQuery = r.Query() // routes carry it URL-escaped (popups' search)
 		if q, err := url.QueryUnescape(a.searchQuery); err == nil {

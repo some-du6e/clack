@@ -55,7 +55,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `system_messages_redesign_m1` | `on` | client-boot `biaa` export `Ox` | join/leave and other system messages drawn in the redesigned compact style (BaseMessageAvatar, hidden counts) | missing |
 | `flat_message_heading_scale` | `on` | client-boot `cQrd` export `WZ` | rich-text headings in messages use the flat heading scale | missing |
 | `unread_thread_indication_in_replybar` | `on` | client-boot `O2By` export `vg` | the reply bar under a thread root marks unread replies | missing |
-| `mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | group DMs can carry a custom name, shown instead of the member list | reads it: `core/mpdm_name.go:15` |
+| `mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | group DMs can carry a custom name, shown instead of the member list; the header's EditMpdmNameButton and details' Conversation name open RenameMpdmDialog | reads it: `core/mpdm_name.go` (sidebar, header `ui/channel_mpdm.go`, details `ui/views/details_mpdm.go`, switcher, `popups/rename_mpdm_dialog.go`) |
 | `dm_recency_sort_rollout` | `without_edu` | application `WaW2` isDmRecencyDefaultSortEnabled | without_edu: DM sections default to recent-activity sort | reads it: `ui/section_menu.go:303` |
 | `filter_dormant_channels` | `on` | gantry-v2-async-client-boot-shared `pDWx` export `K` | "active" section filters hide dormant channels | reads it: `ui/section_menu.go:254`, `ui/section_menu.go:302` |
 | `sidebar_text_filter` | `on` | client-boot `O2By` isVipSectionPrefEnabled | the sidebar has a text filter for conversations | missing |
@@ -63,8 +63,8 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `block_kit_revamp_blocks` | `on` | gantry-v2-async-client-boot-shared `A6yj` | revamped Block Kit block rendering (gallery scroller, prototype blocks) | missing |
 | `forward_message_card` | `on` | gantry-v2-async-client-boot-render `zuQH` | forwarded/shared messages render as the new message card | missing |
 | `truncated_url_hover_card` | `on` | gantry-v2-async-client-boot-shared `kQRT` | hovering a truncated URL shows a hover card with the full link | missing |
-| `flag_custom_mpdm_names` | `on` | gantry-v2-async-client-boot-shared `cPB6` isExperimentPnpSessionDurationDeviceSettingsGroupOn | the feature permission for renaming group DMs is checked | missing |
-| `sc_mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | custom group DM names also for Slack Connect group DMs | reads it: `core/mpdm_name.go:15` |
+| `flag_custom_mpdm_names` | `on` | gantry-v2-async-client-boot-shared `cPB6` isExperimentFlagCustomMpdmNamesGroupOn | with the org's content review (locked pref content_review_enabled), flagging a named group DM reports its "Conversation name" (mpdm_name) | missing: Clack has no content review flags (FlagChannelDetailsDialog, FlagMessageDialog) |
+| `sc_mpdm_naming` | `on` | client-boot `tpcx` isMpdmNamingEnabled | custom group DM names also for Slack Connect group DMs | reads it: `core/mpdm_name.go` |
 | `agents_in_dm_sidebar` | `on` | client-boot `O2By` export `Mq` | agents are listed among direct messages | reads it: `core/app.go:1491`, `ui/prefs_pages.go:278` |
 | `improve_mute_pref` | `on` | client-boot `yqzr` | muted channels: the improved mute pref and its menu | reads it: `ui/views/details.go:2400`, `ui/popups/notify_menu.go:129` |
 | `sidebar_text_filter_m2` | `on` | client-boot `O2By` export `sO` | sidebar text filter, milestone 2 | missing |
@@ -83,8 +83,8 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `autocomplete_flannel_fuzzy_match_passthrough` | `treatment` | client-boot `nIFn` makeResultsMatcher | treatment: fuzzy-match passthrough of server (flannel) results | reads it: `ui/composer/autocomplete_rank.go:77` |
 | `updated_scheduled_sends_desktop` | `on` | gantry-v2-async-client-boot-shared `BQDv` getScheduledSendMenuOptions | the updated scheduled-send menu options | missing |
 | `thread_header_mute_button` | `on` | gantry-v2-async-client-boot-shared `w5Tk` export `g` | the thread pane header has a mute button | missing |
-| `app_channel_tabs` | `on` | client-boot `mwX5` isAppChannelTabsEnabled | apps can add channel tabs | missing |
-| `enable_new_channel_settings` | `on` | application `WiwZ` | the new channel settings | missing |
+| `app_channel_tabs` | `on` | client-boot `mwX5` isAppChannelTabsEnabled; `ygKH` getAppChannelTabsState, `VlLO` EnsureAppViewType, `iJ` canSeeChannelTabsSettings | app DMs open as tabbed channels (Home / Messages / About as channel tabs); without it they open the app space view (`BKNN` AppView) and details have no Tabs tab for an app | not read: Clack's app DMs are always the tabbed channel (this group); the off group's app space view isn't drawn |
+| `enable_new_channel_settings` | `on` | admin-channel-modal `oWlM` GuestRestrictionsField, MessageAndFileSharingRestrictionsField; boot-shared `8d5P`, `mlo3`, `Qb6n`, `OTup`, `6bWJ`, `GUK3`, `L3vL` | Settings has Guest access and Sharing & file downloads (conversations.canSetProperties / setProperties); restricted channels also hide Share and Create canvas from a message, check file downloads, let channel managers remove members, and the invite modals warn about guests | reads it: `ui/views/details_more.go` (Guest access, Sharing & file downloads); the message, file and invite parts belong to those areas |
 | `temp_join_channel` | `on` | client-boot `+7BQ` isTemporaryJoinChannelsEnabled | previewed channels can be joined temporarily | reads it: `core/preview.go:57` |
 | `search_autocomplete_promote_exact_name_matches` | `treatment_5` | client-boot `J3WV` | treatment_5: exact name matches promoted in search autocomplete | missing |
 | `session_channels` | `on` | client-boot `/HhV` | code (session) channels | reads it: `core/codechannel.go:350`, `ui/codechannel.go:170` |
@@ -118,10 +118,10 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `portable_content_composer` | `treatment` | client-boot `cQrd` isPortableContentComposerEnabled | treatment: the portable content composer | missing |
 | `schedule_send_forwards` | `on` | gantry-v2-async-message-share-dialog `jdUv` | forwards can be scheduled | missing |
 | `semantic_emoji_matching` | `on` | client-boot `O2By` export `RY` | emoji autocomplete matches by meaning | missing |
-| `channel_details_agents_apps_tab` | `on` | client-boot `M/qt` export `_2` | channel details has an Agents & Apps tab | missing |
-| `channel_tab_overflow_right_click` | `treatment` | client-boot `mwX5` export `yG` | treatment: right-click on overflowing channel tabs | missing |
-| `move_channel_tabs_settings` | `on` | gantry-v2-async-client-channel-settings- `jf5b` | channel tab settings moved into Manage channel tabs | missing |
-| `unified_file_picker` | `on` | about-channel-modal `zJdS` useActiveBadgeName | bookmarks and attachments use the unified file picker | missing |
+| `channel_details_agents_apps_tab` | `on` | client-boot `M/qt` export `_2`; about-channel-modal `vWNA` | on: details has "Agents & apps" and, after it, "Automations"; otherwise "Agents" only with Agentforce, channel experts or Slackbot in channels, and "Integrations" after Tabs | reads it: `ui/views/details.go` setTabs |
+| `channel_tab_overflow_right_click` | `treatment` | client-boot `mwX5` export `yG`; boot-render `E/Yw` useTabsOverflowMenuRenderer | treatment: a right-click on a row of the tab bar's overflow menu opens that tab's context menu | missing: Clack's tab bar has no overflow menu and no tab context menus |
+| `move_channel_tabs_settings` | `on` | channel settings `jf5b`; manage-channel-tabs `Wg5J` ManageChannelTabs | on: who can manage tabs is Settings' tab-permissions section; otherwise the same field heads the details Tabs tab | reads it: `ui/views/details_more.go` (Settings), `ui/views/details.go` (Tabs) |
+| `unified_file_picker` | `on` | client-boot `mwX5` export `Qk`; boot-shared `/wV5` AddTabMenu; about-channel-modal `zJdS` | with `tab_3p_files_fe_allow_add` too (not assigned here), the add-tab menu's Canvas and List become one file item opening the unified file picker (with its New badge) | not read: `tab_3p_files_fe_allow_add` is unassigned, so Slack's add-tab menu has Canvas and List, as Clack's does; Clack has no unified file picker |
 | `desktop_search_recents_read` | `on` | client-boot `PEUt` isDesktopSearchRecentsWriteEnabled | search reads recent searches | missing |
 | `desktop_search_recents_write` | `on` | client-boot `PEUt` isEnterpriseSearchMultiauthUiEnabled | search writes recent searches | missing |
 | `fe_nav_first_apply_post_processing_rules` | `treatment` | gantry-v2-async-client-boot-shared `OXCx` | treatment: the quick switcher applies post-processing rules | missing |
@@ -143,9 +143,9 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `huddle_join_from_preview` | `on` | client-boot `pSxm` export `M1` | join a huddle from its preview | missing |
 | `huddles_link_v2` | `on` | client-boot `pSxm` export `$A` | huddle links v2 | missing |
 | `huddles_preview_v2` | `on` | client-boot `pSxm` export `ZN` | the huddle preview window v2 | missing |
-| `code_channels_naming` | `on` | client-boot `biaa` export `Fo` | code channels use their own naming in the sidebar | missing |
-| `session_channel_views` | `on` | client-boot `WwBZ` | code channel views | missing |
-| `session_channels_create` | `on` | client-boot `biaa` isCodeChannelArtifactTabsEnabled | code channels can be created | missing |
+| `code_channels_naming` | `on` | client-boot `biaa` export `Fo`; `p4Ef` getChannelSectionNameIfStatic, boot-render ConnectedChannel | "Code channels" wording instead of "Session channels": the section heading, the row tooltip ("Public code channel"), the details view's label, the section menu's "Create a code channel", the browser and the slash-command labels | reads it: `core/codechannel.go:355` (heading, row tooltip, details label; the create menu, browser and slash-command labels sit on surfaces Clack lacks) |
+| `session_channel_views` | `on` | client-boot `WwBZ` getAriaLabelForViewContent | the code channel details view is labelled "Code channel details" (with code_channels_naming), the label its breadcrumb falls back to | reads it: `core/codechannel.go:380` (the simplified layout's breadcrumb, `ui/bbm.go`) |
+| `session_channels_create` | `on` | client-boot `biaa` export `MH` isCodeChannelCreateEnabled; boot-render getCreateCodeChannelMenuItem, boot-shared `wj+C` CreateCodeChannelModal | "Create a code channel" in the Code channels section menu, the create menu and Agents & tools, opening the create modal | missing: the create modal (agent and workspace pickers, a rich-text prompt, name, visibility) isn't ported |
 | `session_channels_inline_diff` | `on` | client-boot `biaa` export `_5` | inline diffs | reads it: `core/codechannel_views.go:36` |
 | `agent_badge` | `on` | client-boot `HLQ9` export `wQ` | agent badge on agent senders | reads it: `core/badge.go:73` |
 | `agent_tasks` | `on` | client-boot `HLQ9` export `rh` | agent tasks (rail More menu) | reads it: `core/rail.go:122` |
@@ -153,8 +153,8 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `show_as_agent` | `on` | client-boot `HLQ9` export `ej` | agent apps are labelled as agents | reads it: `core/badge.go:73` |
 | `slack_kit_v2_button` | `on` | gantry-v2-async-message-share-dialog `jdUv` isSlackKitV2ButtonEnabled | Slack Kit v2 buttons | missing |
 | `expand_flag_message_to_private_threads_v2` | `on` | modern.vendor `tZyZ` | "Flag message" reaches messages in private threads | missing |
-| `mpdm_default_exclude_history_clients_webapp` | `on` | gantry-v2-async-client-boot-shared `J1Xx` useDefaultExcludeHistory | adding people to a group DM excludes history by default | missing |
-| `prefill_dm_canvas_removal` | `treatment` | client-boot `Rc9k` | treatment: DMs no longer prefill a canvas | missing |
+| `mpdm_default_exclude_history_clients_webapp` | `on` | gantry-v2-async-client-boot-shared `J1Xx` useDefaultExcludeHistory | with the org pref `mpdm_add_people_default_exclude_history` (enterprise.prefs.get), adding people to a DM starts on "Don’t include" history; otherwise "From today" | reads it: `ui/views/details_more.go` (org prefs: `core/enterprise_prefs.go`) |
+| `prefill_dm_canvas_removal` | `treatment` | client-boot `Rc9k` prefillDmCanvasRemovalMaybeLogExposure | only the exposure logger reads it; whether a DM's canvas is prefilled is the server's | nothing to do: no client behaviour (Clack logs no exposures) |
 | `manage_conversations_strings` | `on` | client-boot `O2By` export `Z4` | updated strings in the manage-conversations menus | missing |
 | `mute_channel_edu` | `on` | gantry-v2-async-client-boot-shared `3njJ` export `D` | section menus explain muting | reads it: `ui/section_menu.go:255` |
 | `today_calendar_watchdog` | `on` | client-boot `vQYI` export `EV` | Today watches calendar staleness | missing |
@@ -167,11 +167,11 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `invite_slash_command_in_threads` | `on` | gantry-v2-async-client-boot-shared `7R+y` isInviteSlashCommandInThreadsEnabled | /invite works in threads | missing |
 | `invite_slash_command_multi` | `off` | gantry-v2-async-client-boot-shared `7R+y` export `w` | off: /invite takes one person | default: in `off` Slack keeps its default, as Clack does |
 | `unarchive_channel_banner_polish` | `on` | gantry-v2-async-client-boot-render `bgYM` | the archived-channel input bar polish | missing |
-| `channel_topic_purpose_setting_restrict_to_channel_managers` | `on` | gantry-v2-async-client-boot-shared `uJL7` | topic/purpose editing can be limited to channel managers | missing |
-| `fe_private_public_channel_management` | `on` | gantry-v2-async-client-boot-shared `8d5P` isPrivateToPublicChannelManagementEnabled | private channels can be made public | missing |
-| `fe_private_to_public_slack_connect_and_visual_updates` | `on` | gantry-v2-async-client-boot-shared `fNVg` isPrivateToPublicSlackConnectVisualUpdatesEnabled | private-to-public visual updates | missing |
-| `list_channel_tab_show_view_name_fe` | `on` | client-boot `mwX5` export `uT` | list channel tabs show the view name | missing |
-| `lists_channel_tabs_default_view` | `on` | client-boot `mwX5` export `Wy` | list channel tabs open the default view | missing |
+| `channel_topic_purpose_setting_restrict_to_channel_managers` | `on` | gantry-v2-async-client-boot-shared `xjwB` canUserSetTopicForChannelWithReasonById, `uJL7` canUserSetPurpose | topic and description edits need the SET_CHANNEL_TOPIC / SET_CHANNEL_PURPOSE grants (permissions/info), except a 1:1 DM's topic; otherwise members who can post edit them | reads it: `core/chperms.go` (the header topic's Edit, details' Topic and Description) |
+| `fe_private_public_channel_management` | `on` | gantry-v2-async-client-boot-shared `8d5P` isPrivateToPublicChannelManagementEnabled | private channels can be made public from Settings' managing-this-channel, for those allowed | missing: Clack draws no managing-this-channel section (docs/CHANNELS-AUDIT.md) |
+| `fe_private_to_public_slack_connect_and_visual_updates` | `on` | gantry-v2-async-client-boot-shared `fNVg`; archive-channel-modal `ZnI0` | the convert-to-public modal's Slack Connect copy and visual updates | missing: Clack has no convert-to-public modal |
+| `list_channel_tab_show_view_name_fe` | `on` | client-boot `mwX5` export `uT`; boot-shared `83sY` useTabLabel | a list tab without its own label reads "<list>: <default view>" | reads it: `ui/channel.go` withListViewName (the view's name: `core/browse.go` Tabs) |
+| `lists_channel_tabs_default_view` | `on` | client-boot `mwX5` export `Wy`; boot-shared `kXBb`, `K7k9` | a list opened from its channel tab starts on the tab's default view (listsChannelTabDefaultRefineViewId) | reads it: `ui/mount_features_lists.go` listTabView |
 | `omni_merged_follow_ups` | `control` | client-boot `3D8U` export `$z` | control: follow-ups not merged | default: in `control` Slack keeps its default, as Clack does |
 | `search_file_channel_messages` | `on` | gantry-v2-async-client-boot-shared `lH2I` mapStateToProps | search covers file channel messages | missing |
 | `srp_card_explore` | `on` | gantry-v2-async-client-boot-shared `+zqw` isSrpCardExploreExperimentEnabled | search results page explore cards | missing |
@@ -221,32 +221,32 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `huddles_switch_microphone_helper` | `on` | client-boot `pSxm` export `fs` | a helper to switch microphones | missing |
 | `standalone_huddles_copy_link` | `off` | client-boot `pSxm` export `EQ` | off: standalone huddles have no copy-link | default: in `off` Slack keeps its default, as Clack does |
 | `standalone_huddles_zchannel` | `off` | client-boot `pSxm` isStandaloneHuddlesZChannelExperimentEnabled | off: no standalone-huddle channel | default: in `off` Slack keeps its default, as Clack does |
-| `code_channels_auto_close` | `on` | gantry-v2-async-client-boot-render `zuQH` | code channels close automatically | missing |
-| `code_channels_client_create_api` | `on` | client-boot `biaa` isCodeChannelCreateEnabled | client create API | missing |
-| `code_diff_comments` | `on` | client-boot `biaa` export `_z` | comments on diffs | missing |
-| `plan_block_coding_enhancements` | `on` | client-boot `FiNg` export `XI` | plan blocks for coding agents | missing |
-| `session_channels_slug_peek` | `on` | client-boot `biaa` export `cn` | slug peeks | missing |
-| `surface_card_comments` | `on` | client-boot `biaa` export `xe` | surface card comments | missing |
-| `surface_links` | `on` | client-boot `biaa` export `Xq` | surface links | missing |
-| `surface_skill_links` | `on` | client-boot `biaa` export `bk` | surface skill links | missing |
-| `agent_about_page` | `on` | gantry-v2-async-shared-js_modern_compone `2Fle` | agent About page | missing |
-| `agent_auto_thread_opening` | `on` | client-boot `Db4L` export `Uv` | agent threads open automatically | missing |
-| `agent_browser_recent_agents` | `on` | client-boot `HLQ9` export `Qr` | recent agents in the agent browser | missing |
-| `agent_channel_header` | `on` | client-boot `M/qt` export `Zc` | agent channel header | missing |
-| `agent_channel_thread_naming` | `on` | client-boot `HLQ9` export `GL` | agent threads in channels get names | missing |
-| `agent_dm_thread_naming` | `on` | client-boot `HLQ9` export `AM` | agent DM threads get names | missing |
-| `agent_member_channel_count` | `on` | client-boot `M/qt` export `lx` | agent member channel count | missing |
-| `agent_peek_view` | `on` | client-boot `HLQ9` export `Dp` | agent peek view | missing |
-| `agent_prevent_fake_thread_roots` | `on` | client-boot `HLQ9` export `DG` | no fake thread roots for agents | missing |
-| `agent_streaming_slimmer_task_cards` | `on` | gantry-v2-async-client-boot-shared `n7nl` export `n` | slimmer streaming task cards | missing |
-| `agent_ui_loading_state` | `on` | client-boot `HLQ9` export `Ag` | agent loading state | missing |
+| `code_channels_auto_close` | `on` | boot-render `zuQH` checkForOldCodeChannelsToClose (`et8`), closeChannelApi (boot-shared `6wqB`), codeChannelReopen (`Uge0`), openRecordChannel (`+Kg2`) | two minutes after connecting, then every 15 minutes, up to 10 (then 5) open, read code channels quiet for a week (and not starred, drafted, selected or in another section) are closed with conversations.close; closed ones leave the sidebar; viewing one, or record_channel_open, reopens it | reads it: `core/codechannel_close.go:91` |
+| `code_channels_client_create_api` | `on` | client-boot `biaa` export `Wz`; boot-shared `wj+C` createCodeChannel | the create modal calls client.codeChannels.create (off: client.codeChannels.createAndStart) | missing: no create modal (see session_channels_create) |
+| `code_diff_comments` | `on` | client-boot `biaa` export `_z`; `lu3W` CodeFileDiff, CodeCommentComposer | a branch diff's lines take a comment composer whose comment, with the file and diff snippet, is appended to the channel's message draft | missing: needs a composer inside the diff that edits the channel's draft |
+| `plan_block_coding_enhancements` | `on` | client-boot `FiNg` export `XI`; boot-shared `SkmW` TaskItem | a plan task with hide_title shows its content without its title line; in-progress task icons lose their colour and shimmer | reads it: `ui/blockkit/agent.go:731`, `ui/blockkit/agent_card.go:79` |
+| `session_channels_slug_peek` | `on` | client-boot `biaa` export `cn`; boot-render ChannelTabSlugPeekTrigger, `q5Cv` | hovering a channel-tab slug shows that tab's peek card | missing: the tab peek cards aren't ported (the slug opens the pane) |
+| `surface_card_comments` | `on` | client-boot `biaa` export `xe`; boot-shared `PJLO` SurfaceTabView | comments on a Slackbot surface's cards | missing: surfaces are Slack AI dashboards drawn in a sandboxed iframe (HtmlSurfaceIframe); Clack has no web view |
+| `surface_links` | `on` | client-boot `biaa` export `Xq`; boot-shared `PJLO` SurfaceTabView | links in a Slackbot surface open ("This link can’t be opened from a dashboard" otherwise) | missing: as surface_card_comments |
+| `surface_skill_links` | `on` | client-boot `biaa` export `bk`; boot-shared `PJLO` SurfaceTabView | skill links in a surface ask "Run this skill?" and run it in the Slackbot conversation | missing: as surface_card_comments |
+| `agent_about_page` | `on` | gantry-v2-async-shared-js_modern_compone `2Fle` BaseAppSpace, AboutPageSidebar | an agent app's About tab is the new About page with its sidebar | missing: Clack's app DM About tab (`ui/blockkit/apphome.go`) is the older layout |
+| `agent_auto_thread_opening` | `on` | client-boot `Db4L` export `Uv`; boot-render handleAiAssistantStatus, client-boot `L1Ms` | an assistant status on a fresh thread the viewer started in an agent DM opens that thread in the split view | missing: Clack has no split view for agent DMs |
+| `agent_browser_recent_agents` | `on` | client-boot `HLQ9` export `Qr`; more-platform-sidebar-view `vvr+` MorePlatformSidebar | the Agents & tools sidebar lists recently used agents | missing: Clack's Agents & tools opens a menu, not Slack's page |
+| `agent_channel_header` | `on` | client-boot `M/qt` export `Zc`; boot-shared `89cq`, `L3vL` ChannelInviteForm, `QvQO`; remove-member-dialog, ia-details-popover-members | agents can be added to channels from the invite form, and member lists and removal treat them as agents | missing: the invite form's agent search and the agent member actions aren't ported |
+| `agent_channel_thread_naming` | `on` | client-boot `HLQ9` export `GL`; boot-shared `puxw` renderThreadTitle (EditableThreadTitle) | a channel thread whose root has an agent_session shows that session's title, with Edit thread name | missing: Clack doesn't keep agent_session on messages; its thread header says "Thread" |
+| `agent_dm_thread_naming` | `on` | client-boot `HLQ9` export `AM`; boot-shared `puxw` renderThreadTitle, `v8ac` ThreadReplies | agent DM threads show the agent_session or assistant_app_thread title, editable | missing: as agent_channel_thread_naming |
+| `agent_member_channel_count` | `on` | client-boot `M/qt` export `lx`; client-boot `RW6b` vC / iz | channel member counts are people only (off: people plus apps) | reads it: `core/agent.go:151` |
+| `agent_peek_view` | `on` | client-boot `HLQ9` export `Dp`; boot-render `Zxh6` AutomationsPeekView | the Agents & tools rail button's peek lists recent agents and automations | missing: Clack has no peek on that rail button |
+| `agent_prevent_fake_thread_roots` | `on` | client-boot `HLQ9` export `DG`; boot-render `zuQH` | from the Agentforce tab, a new agent home conversation opens the reply's thread rather than the message as a root | missing: needs the Agentforce tab (no Agentforce on Hack Club) |
+| `agent_streaming_slimmer_task_cards` | `on` | gantry-v2-async-client-boot-shared `n7nl` export `n`; `E5Xj` PlanBlock, `wdtw` TaskCard, `uPDO` ToggleBar | plan and task_card blocks are slim lines; off they are cards (ToggleBar, task headers, shimmering titles) | reads it: `ui/blockkit/agent_card.go:73` |
+| `agent_ui_loading_state` | `on` | client-boot `HLQ9` export `Ag`; thread-view `c/U0`, boot-shared `NnKv` AgentCheckingDetailsLoader | agent threads in any non-Slackbot DM get the AI loading row; agent channels show the checking-details loader | missing: the thread view's AiMessageShimmer row isn't ported (the composer's status line is) |
 | `agents_in_channels_improvements` | `off` | client-boot `M/qt` export `Io` | off: no agents-in-channels improvements | default: in `off` Slack keeps its default, as Clack does |
-| `ai_apps_loading` | `on` | gantry-v2-async-client-boot-shared `BcxC` | AI app loading shimmer | missing |
-| `app_history_badge` | `on` | client-boot `Db4L` export `a2` | app history badge | missing |
-| `app_nugget_refinement` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `q` | app nugget refinement | missing |
-| `app_thread_nugget_fe` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `r` | app thread nugget | missing |
-| `flexpane_content_parity` | `on` | client-boot `HLQ9` export `X7` | flexpane content parity for agent cards | missing |
-| `revamp_agent_app_profile` | `on` | client-boot `HLQ9` export `sD` | revamped agent app profile | missing |
+| `ai_apps_loading` | `on` | gantry-v2-async-client-boot-shared `BcxC` AiMessageShimmer | the AI loading row shows the loading messages instead of skeleton bars | missing: as agent_ui_loading_state |
+| `app_history_badge` | `on` | client-boot `Db4L` export `a2`; tab-change `GPMo`, ai-app-view `M1gt` AiAppHistoryList | an AI app's History tab gets an unread badge | missing: Clack's app DMs have no History tab |
+| `app_nugget_refinement` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `q`; `P5g9` useAppAgentNuggetLabels, `352G` AppThreadNugget, `v8ac` | the working-agent nugget is a chip (avatar, "{app} is working" or the loading messages, a slow spinner; its tooltip says Stop isn’t available); off, a shimmering row reading "{app} is working…" | reads it: `core/agent.go:208` (the thread footer's nugget; the reply bar's open-thread nugget needs agent sessions on messages) |
+| `app_thread_nugget_fe` | `on` | gantry-v2-async-client-boot-shared `CLuG` export `r`; `352G` AppThreadNugget, `G2VO` Ss / ZL, `v8ac` AppSessionReplyNugget | while an app has a status in a thread, a nugget above the thread composer says it's working, and the composer leaves the app out of its typing line; processing agent sessions get one with Stop, also in the reply bar | reads it: `core/agent.go:191` (the status nugget and the typing line; agent-session nuggets and Stop need agent_session on messages, which Clack doesn't keep) |
+| `flexpane_content_parity` | `on` | client-boot `HLQ9` export `X7`; app-details `Qsn3`, client-boot `aXqJ`, boot-shared `+/mf`, `L9wq` | App details flexpane parity: bot DMs open their About tab, the header layout, an agent DM's default tab | missing: Clack has no App details flexpane |
+| `revamp_agent_app_profile` | `on` | client-boot `HLQ9` export `sD`; app-details, about-ai-app, agent browser | the revamped agent and app profile (App details) | missing: as flexpane_content_parity |
 | `a11y_no_auto_highlight_search_multi_select` | `on` | client-boot `MrD9` | search multi-selects do not auto-highlight | missing |
 | `basic_select_placeholder_option` | `on` | client-boot `MrD9` | basic selects show a placeholder option | missing |
 
@@ -261,9 +261,10 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 
 ### Direct messages and group DMs (5)
 
-- Files: internal/core/mpdm_name.go (done), internal/ui/views/details.go, the channel header, popups/search_* (switcher)
-- To do (3): `flag_custom_mpdm_names`, `mpdm_default_exclude_history_clients_webapp`, `prefill_dm_canvas_removal`
-- Clack reads already (2): `mpdm_naming`, `sc_mpdm_naming`
+- Files: internal/core/mpdm_name.go, internal/ui/channel_mpdm.go, internal/ui/views/details_mpdm.go, popups/rename_mpdm_dialog.go, popups/search_popover.go (switcher)
+- To do (1): `flag_custom_mpdm_names` (Clack has no content review flags)
+- Clack reads already (3): `mpdm_naming`, `sc_mpdm_naming`, `mpdm_default_exclude_history_clients_webapp`
+- Nothing to do (1): `prefill_dm_canvas_removal` (exposure logging only)
 
 ### Sidebar (19)
 
@@ -301,9 +302,9 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 
 ### Channel header, tabs, details and settings (12)
 
-- Files: the channel header, internal/ui/views/details.go, channel settings, internal/core/preview.go
-- To do (11): `app_channel_tabs`, `enable_new_channel_settings`, `channel_details_agents_apps_tab`, `channel_tab_overflow_right_click`, `move_channel_tabs_settings`, `unified_file_picker`, `channel_topic_purpose_setting_restrict_to_channel_managers`, `fe_private_public_channel_management`, `fe_private_to_public_slack_connect_and_visual_updates`, `list_channel_tab_show_view_name_fe`, `lists_channel_tabs_default_view`
-- Clack reads already (1): `temp_join_channel`
+- Files: the channel header (internal/ui/channel*.go), internal/ui/views/details*.go, internal/core/chperms.go, internal/core/preview.go
+- To do (5): `app_channel_tabs` (the off group's app space view), `channel_tab_overflow_right_click` (needs the tab bar's overflow menu and tab context menus), `unified_file_picker` (needs Slack's unified file picker; inert here without `tab_3p_files_fe_allow_add`), `fe_private_public_channel_management`, `fe_private_to_public_slack_connect_and_visual_updates` (need Settings' managing-this-channel)
+- Clack reads already (7): `temp_join_channel`, `enable_new_channel_settings`, `channel_details_agents_apps_tab`, `move_channel_tabs_settings`, `channel_topic_purpose_setting_restrict_to_channel_managers`, `list_channel_tab_show_view_name_fe`, `lists_channel_tabs_default_view`
 
 ### Search and the switcher (10)
 
@@ -348,14 +349,14 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Code channels (13)
 
 - Files: internal/core/codechannel*.go, internal/ui/codechannel*.go
-- To do (11): `code_channels_naming`, `session_channel_views`, `session_channels_create`, `code_channels_auto_close`, `code_channels_client_create_api`, `code_diff_comments`, `plan_block_coding_enhancements`, `session_channels_slug_peek`, `surface_card_comments`, `surface_links`, `surface_skill_links`
-- Clack reads already (2): `session_channels`, `session_channels_inline_diff`
+- To do (7): `session_channels_create`, `code_channels_client_create_api`, `code_diff_comments`, `session_channels_slug_peek`, `surface_card_comments`, `surface_links`, `surface_skill_links` (the last three need a web view; see their rows)
+- Clack reads already (6): `session_channels`, `session_channels_inline_diff`, `code_channels_naming`, `session_channel_views`, `code_channels_auto_close`, `plan_block_coding_enhancements`
 
 ### Agents (third-party AI apps) (22)
 
 - Files: internal/core/badge.go, internal/core/agent.go, internal/ui/messages/ (sender identity), internal/core/rail.go
-- To do (17): `agent_about_page`, `agent_auto_thread_opening`, `agent_browser_recent_agents`, `agent_channel_header`, `agent_channel_thread_naming`, `agent_dm_thread_naming`, `agent_member_channel_count`, `agent_peek_view`, `agent_prevent_fake_thread_roots`, `agent_streaming_slimmer_task_cards`, `agent_ui_loading_state`, `ai_apps_loading`, `app_history_badge`, `app_nugget_refinement`, `app_thread_nugget_fe`, `flexpane_content_parity`, `revamp_agent_app_profile`
-- Clack reads already (4): `agent_badge`, `agent_tasks`, `agents_landing_page`, `show_as_agent`
+- To do (13): `agent_about_page`, `agent_auto_thread_opening`, `agent_browser_recent_agents`, `agent_channel_header`, `agent_channel_thread_naming`, `agent_dm_thread_naming`, `agent_peek_view`, `agent_prevent_fake_thread_roots`, `agent_ui_loading_state`, `ai_apps_loading`, `app_history_badge`, `flexpane_content_parity`, `revamp_agent_app_profile`
+- Clack reads already (8): `agent_badge`, `agent_tasks`, `agents_landing_page`, `show_as_agent`, `agent_member_channel_count`, `agent_streaming_slimmer_task_cards`, `app_thread_nugget_fe`, `app_nugget_refinement`
 
 ### Menus, selects and buttons (3)
 

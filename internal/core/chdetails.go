@@ -46,9 +46,10 @@ const (
 // ChannelProps are the conversations.info properties the details
 // Settings tab reads.
 type ChannelProps struct {
-	ExcludeFromAI    bool   `json:"exclude_from_slack_ai"` // vz5j: AI use restricted
-	RestrictGuests   bool   `json:"restrict_guests"`       // PgTJ: guests not allowed
-	WhoCanManageTabs string `json:"who_can_manage_tabs"`   // "" (everyone) | channel_managers
+	ExcludeFromAI    bool   `json:"exclude_from_slack_ai"`             // vz5j: AI use restricted
+	RestrictGuests   bool   `json:"restrict_guests"`                   // PgTJ: guests not allowed
+	RestrictSharing  bool   `json:"restrict_message_and_file_sharing"` // e4 I: no sharing or file downloads
+	WhoCanManageTabs string `json:"who_can_manage_tabs"`               // "" (everyone) | channel_managers
 }
 
 // ParseChannelProps reads a conversation's properties object.
