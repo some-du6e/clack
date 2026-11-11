@@ -4,9 +4,11 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"log"
 	"time"
 
 	"gioui.org/font"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -38,6 +40,11 @@ import (
 //     "You are viewing #name, an archived channel" and a small outline
 //     "Close Channel" button that goes back to the previous conversation.
 //     In a thread: "You are viewing a thread from an archived channel".
+//     Under unarchive_channel_banner_polish, for a viewer who may
+//     unarchive it (canUserUnarchiveChannel: UNARCHIVE_CHANNEL), it reads
+//     "You are viewing #name, an archived channel. Unarchive it to
+//     continue the discussion." with "Unarchive" a link
+//     (submitUnarchive: conversations.unarchive), and no Close button.
 //   - a posting-restricted channel (core/posting.go): the composer's own
 //     MessageInputRoadblock with MessageInputAnnounceOnlyRoadblock's
 //     message, so Taut's RestrictedChannelWarning still patches it
@@ -46,7 +53,7 @@ import (
 // Not ported: the revamped layout's facepile and member captions, the
 // code-channel summary, Slack Connect's connection info line, the offline
 // tooltip ("Go online to join this channel"), the suggested-channel
-// prefix, and "Unarchive" for viewers who may unarchive.
+// prefix.
 
 type footerKind uint8
 
@@ -59,6 +66,7 @@ const (
 // joinPane is one conversation's footer state.
 type joinPane struct {
 	details, join, caret, back, close widget.Clickable
+	unarchive                         widget.Clickable // the polished footer's "Unarchive" link
 	caretTip                          popups.TipState
 	joining                           bool
 	// window coords of the buttons (menu anchor, tests)
@@ -423,6 +431,20 @@ func (a *App) layoutArchivedBar(gtx layout.Context, c *convo, ci *convInfo) layo
 	if clicked(&jp.close) {
 		a.closeArchived(c.ch)
 	}
+	// renderArchivedChannelFooterText's polished variant
+	polish := false
+	if a.data != nil && a.data.core != nil {
+		svc := a.data.core
+		polish = svc.Experiment("unarchive_channel_banner_polish") == "on" && svc.CanUnarchive(c.ch)
+		if polish && clicked(&jp.unarchive) {
+			ch := c.ch
+			go func() { // onUnarchiveLinkClicked: submitUnarchive
+				if err := svc.Unarchive(context.Background(), ch); err != nil {
+					log.Printf("unarchive %s: %v", ch, err)
+				}
+			}()
+		}
+	}
 	pad := gtx.Dp(12)
 	row := func(gtx layout.Context) layout.Dimensions {
 		if c.ts != "" { // threads footer: an inline alert, centered
@@ -440,6 +462,18 @@ func (a *App) layoutArchivedBar(gtx layout.Context, c *convo, ci *convInfo) layo
 			}
 			piece("You are viewing ", theme.Regular)
 			piece("#"+ci.Name, theme.Bold)
+			if polish {
+				piece(", an archived channel. ", theme.Regular)
+				t := op.Offset(image.Pt(x, 0)).Push(gtx.Ops)
+				d := jp.unarchive.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					pointer.CursorPointer.Add(gtx.Ops)
+					return th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: th.C.Link, MaxLines: 1}, "Unarchive")
+				})
+				t.Pop()
+				x += d.Size.X
+				piece(" it to continue the discussion.", theme.Regular)
+				return layout.Dimensions{Size: image.Pt(x, lh)} // showCloseButton: false
+			}
 			piece(", an archived channel", theme.Regular)
 			x += gtx.Dp(12)
 			bm := op.Record(gtx.Ops)

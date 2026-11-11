@@ -234,6 +234,7 @@ var experimentReads = map[string][]string{
 	"semantic_emoji_matching":                                  on,
 	"invite_slash_command_in_threads":                          on,
 	"ia4_slash_command_fe":                                     on,
+	"unarchive_channel_banner_polish":                          on,
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on,
