@@ -367,6 +367,9 @@ func (m *model) find(ts string) int {
 
 func (m *model) upsert(msg core.Message) {
 	if !m.visible(&msg) {
+		// a reply taken back from the conversation (removeBroadcast) leaves
+		// its list; its thread keeps it
+		m.remove(msg.TS)
 		return
 	}
 	if i := m.find(msg.TS); i >= 0 {

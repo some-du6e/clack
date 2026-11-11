@@ -178,7 +178,10 @@ func (m *SearchFeedbackModal) layout(gtx layout.Context) layout.Dimensions {
 		for i, c := range srFeedbackCategories {
 			labels[i] = c.label
 		}
-		m.h.ShowOverlay(NewOptionList(m.h, m.selR, labels, m.cat, func(i int) { m.cat = i }))
+		// BasicSelect (zDm3) with placeholderText "Select an option", empty
+		// at first: the placeholder row under basic_select_placeholder_option
+		// clears the choice (onPick -1)
+		m.h.ShowOverlay(NewSelectList(m.h, m.selR, labels, m.cat, SelectListOpts{Placeholder: srFeedbackPick}, func(i int) { m.cat = i }))
 	}
 	if m.edArea.Clicked(gtx) {
 		gtx.Execute(key.FocusCmd{Tag: &m.ed})
@@ -241,7 +244,13 @@ func (m *SearchFeedbackModal) selectBox(gtx layout.Context, th *theme.Theme, cl 
 		gtx.Constraints = layout.Exact(r.Size())
 		return m.selBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			srInputBox(gtx, cl, image.Rectangle{Max: r.Size()}, gtx.Focused(&m.selBtn))
+			// renderContent: the placeholder in .c-select_button__placeholder,
+			// or under basic_select_placeholder_option "--Select an option--"
+			// in the button's own colour
 			s, fg := srFeedbackPick, cl.Placeholder
+			if placeholderOption(m.h) {
+				s, fg = formatPlaceholderText(srFeedbackPick), cl.Fg
+			}
 			if m.cat >= 0 {
 				s, fg = srFeedbackCategories[m.cat].label, cl.Fg
 			}

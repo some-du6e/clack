@@ -6,13 +6,11 @@ import (
 	"strconv"
 	"time"
 
-	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -109,27 +107,18 @@ func tooltip(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		ac = image.Pt(d.Size.X/2, -gap-extra)
 	}
 	m := op.Record(gtx.Ops)
-	diamond(gtx, ac, dp(gtx, 6), cl.Tooltip)
+	// box and arrow, outlined together in dark mode (theme/tooltip.go)
+	var glow color.NRGBA
+	if th != nil {
+		glow = th.C.TooltipGlow
+	}
+	theme.TooltipShape(gtx, image.Rectangle{Min: p, Max: p.Add(box)}, dp(gtx, 8), theme.TooltipArrow{C: ac, Half: dp(gtx, 6)}, cl.Tooltip, glow)
 	at(gtx, p, func(gtx layout.Context) layout.Dimensions {
-		theme.RRect(gtx, image.Rectangle{Max: box}, dp(gtx, 8), cl.Tooltip)
 		callAt(gtx, content, image.Pt(padX, padY))
 		return layout.Dimensions{Size: box}
 	})
 	op.Defer(gtx.Ops, m.Stop())
 	return d
-}
-
-// diamond fills a rotated square of radius r centered at c (tooltip arrow).
-func diamond(gtx layout.Context, c image.Point, r int, col color.NRGBA) {
-	var path clip.Path
-	path.Begin(gtx.Ops)
-	fx, fy, fr := float32(c.X), float32(c.Y), float32(r)
-	path.MoveTo(f32.Pt(fx, fy-fr))
-	path.LineTo(f32.Pt(fx+fr, fy))
-	path.LineTo(f32.Pt(fx, fy+fr))
-	path.LineTo(f32.Pt(fx-fr, fy))
-	path.Close()
-	paint.FillShape(gtx.Ops, col, clip.Outline{Path: path.End()}.Op())
 }
 
 // ---- Popover ----
