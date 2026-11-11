@@ -22,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -137,7 +138,8 @@ func smCheck(t *testing.T, e *svEnv, sh *svShooter, prefix string, on func()) {
 	// container's flex items), two 20px light glyphs on the aubergine bar
 	nav := image.Rect(e.sz.X-140, 0, e.sz.X, int(theme.TopNavH))
 	if n := smLight(off, nav); n < 140 { // the help glyph alone is ~96
-		t.Errorf("the top nav's right end has %d light glyph pixels: the help button and the plugin's toggle aren't both drawn", n)
+		t.Errorf("the top nav's right end has %d light glyph pixels: the help button and the plugin's toggle aren't both drawn; HelpButton laid out as %s",
+			n, slackc.LayoutShape("HelpButton"))
 	} else {
 		t.Logf("top nav glyph pixels: %d", n)
 	}
