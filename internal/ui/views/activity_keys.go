@@ -262,6 +262,15 @@ func (v *Activity) scrollToKey(k string) {
 	}
 }
 
+// StepItem is the Activity tab's option+up/down from the shell (N8Zu
+// ClientKeyboardShortcutsActivity: Slack binds them for the whole tab,
+// not just the focused list): openStep, in keyboard mode.
+func (v *Activity) StepItem(dir int, unread bool) {
+	v.openStep(dir, unread)
+	v.kbMode = true
+	v.h.Invalidate()
+}
+
 // openStep is Alt+Up / Alt+Down (and with Shift the unread rows only):
 // open the row before or after the opened one (or the focused one),
 // the first one when neither is (N8Zu ec / eu / em / ep).

@@ -116,6 +116,8 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	right := sz.X - gtx.Dp(14)
 	if a.pane == paneSplit { // the split view's close button ends the header
 		right = a.splitCloseButton(gtx, right, h)
+	} else if p := a.secChannelPane(ch); p != nil { // in the secondary column (secondary_channel.go)
+		right = p.closeButton(gtx, right, h)
 	}
 	btn := gtx.Dp(28)
 	y := (h - btn) / 2

@@ -267,6 +267,7 @@ func (v *Activity) switchView(prev int, save ...bool) {
 		v.setState(actState{})
 	}
 	v.endSelect()
+	v.closeSecondary() // utzr: the Secondary container closes too
 	v.selOK = false
 	if !v.globalSettings() {
 		// each saved view keeps its own layout

@@ -29,6 +29,80 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
+// ActivitySecondary is optionally implemented by the Host: with
+// activity_inbox_remove_persistent_detail_panel Slack opens an item
+// beside the inbox as a secondary view (gantry boot-shared GMkG
+// handleOnClickActivityItem: forceRenderInSecondary, forceTab
+// ActivityInbox), a thread as the thread pane (Host.OpenThread), anything
+// else as its conversation. Hosts without it keep the item in the
+// view's own pane.
+type ActivitySecondary interface {
+	OpenChannelSecondary(ch string)
+	SecondaryShows(ch, ts string) bool
+	// OpenDetailSecondary shows draw, the view's own detail for item key
+	// (one without a conversation: a reminder, a system notification), in
+	// the column, as Slack opens those (ActivityLaterReminderDetailsView,
+	// ActivitySystemNotificationView).
+	OpenDetailSecondary(key string, draw layout.Widget)
+	SecondaryShowsDetail(key string) bool
+}
+
+// openSecondary opens the chosen item in the app's secondary column
+// (Bb on, a Host with one, an item with a conversation).
+func (v *Activity) openSecondary() {
+	v.selSec, v.selOut = false, false
+	sh, ok := v.h.(ActivitySecondary)
+	if !ok || !v.selOK || !v.h.Core().ActivityRemovePersistentDetailPanel() {
+		return
+	}
+	switch {
+	case v.sel.Channel == "":
+		sh.OpenDetailSecondary(v.selKey, v.pane)
+	case v.selDesc.thread != "":
+		v.h.OpenThread(v.sel.Channel, v.selDesc.thread)
+	default:
+		sh.OpenChannelSecondary(v.sel.Channel)
+	}
+	// the app shows it: in the column beside the inbox, or in the split
+	// view (opened from there, or with the split modifier click)
+	v.selOut = true
+	v.selSec = v.secondaryShows(sh)
+}
+
+// secondaryShows reports whether the app's column shows the chosen item.
+func (v *Activity) secondaryShows(sh ActivitySecondary) bool {
+	if v.sel.Channel == "" {
+		return sh.SecondaryShowsDetail(v.selKey)
+	}
+	return sh.SecondaryShows(v.sel.Channel, v.selDesc.thread)
+}
+
+// closeSecondary closes the item's secondary view (the selected row
+// clicked again).
+func (v *Activity) closeSecondary() {
+	if v.selSec {
+		v.selSec = false
+		v.h.CloseSecondary()
+	}
+}
+
+// followSecondary ends the selection once the app's column no longer
+// shows the item (closed, ⌘., Esc, another view opened there).
+func (v *Activity) followSecondary() {
+	if !v.selOK || !v.selSec {
+		return
+	}
+	if sh, ok := v.h.(ActivitySecondary); !ok || !v.secondaryShows(sh) {
+		v.selOK, v.selSec = false, false
+	}
+}
+
+// paneInView reports whether the opened item shows in the view's own
+// pane beside the list: only when the app didn't take it (a Host without
+// a secondary column, or the experiment off). An item the app opened
+// never halves the inbox.
+func (v *Activity) paneInView() bool { return v.selOK && !v.selOut }
+
 // pageWidth is the Activity page's width: the view's, or its sidebar
 // column's with the persistent panel.
 func (v *Activity) pageWidth(gtx C) int {

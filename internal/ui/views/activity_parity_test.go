@@ -306,6 +306,7 @@ var actRefKeys = []string{"k-at-user", "k-thread", "k-reaction-many", "k-dm", "k
 // shipping CSS next to Clack's screenshot).
 type actRefRow struct {
 	Key, Name, Body, Sub, Time, Loc, LocIcon, FootIcon, TypeIcon, Emoji string
+	TimeNarrow                                                          string // the Dense row's (activity_time.go)
 	FootPre, FootName, FootPost, FootNameIcon                           string
 	FootText, LocOn, Unread, React                                      bool
 	Count                                                               int
@@ -328,7 +329,7 @@ var actRowKeys = []string{"fa-ext-dm-invite", "fa-ext-invite", "fa-slackbot", "f
 func actRefOf(v *Activity, it *core.ActivityItem, key string) actRefRow {
 	r := v.rowFor(actKey(it))
 	d := r.d
-	out := actRefRow{Key: key, Name: d.name, Body: firstNonEmpty(d.body, d.prev), Sub: d.subtext, Time: d.when,
+	out := actRefRow{Key: key, Name: d.name, Body: firstNonEmpty(d.body, d.prev), Sub: d.subtext, Time: d.when, TimeNarrow: d.whenNarrow,
 		Loc: d.loc, LocIcon: d.locIcon, LocOn: d.locOn, FootIcon: d.footIcon, TypeIcon: d.typeIcon, FootText: d.footText,
 		FootPre: d.ft.pre, FootName: d.ft.name, FootPost: d.ft.post, FootNameIcon: d.ft.nameIcon,
 		Unread: v.isUnread(it, actKey(it)), Count: actUnreadCount(it), React: d.subReact, Emoji: d.footAlt,

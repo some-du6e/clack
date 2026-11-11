@@ -2,7 +2,8 @@ name: activity-shots
 # Renders the Activity feed headlessly from the synthetic fixture
 # (internal/core/testdata/activity_feed.json: one entry per activity.feed
 # item type) in Detailed and Dense, light and dark, plus the hover bar,
-# the item menu and the "Clear all before" dialog, runs the Activity
+# the item menu and the "Clear all before" dialog, the tab in the whole
+# window with an item open beside the inbox (shell-*.png), runs the Activity
 # parity tests (core against internal/fakeslack's feed, the view's
 # clicks, menus and filters) and uploads the screenshots. The side-*.png
 # side-by-sides put Clack's Dense and Detailed rows next to the same rows
@@ -14,6 +15,8 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run activity-shots.yml --ref <branch>)
     paths:
       - "internal/ui/views/activity*.go"
+      - "internal/ui/activity_shell_test.go"
+      - "internal/ui/secondary_channel.go"
       - "internal/core/activity*.go"
       - "internal/core/testdata/activity_feed.json"
       - "internal/core/manage.go"
@@ -55,6 +58,16 @@ jobs:
           mkdir -p "$ACTIVITY_SHOTS_DIR"
           go test -count=1 -v -run 'TestActivityItemShapes|TestActivityFakeslack|TestActivityClearBefore|TestActivityFeedParams|TestActivityDensityRoundTrip|TestActivityInvite|TestActivityReminderWrites|TestActivityClearAllViewsAndSuppress|TestActivityRepliedReacted' ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestActivity' ./internal/ui/views
+      - name: the Activity tab in the whole window
+        # the inbox with an item open beside it in the app's secondary
+        # column, and Slack's global keys there (activity_shell_test.go)
+        env:
+          ACTIVITY_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p "$ACTIVITY_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack' ./internal/ui/
       - name: side-by-sides with Slack's CSS
         run: |
           python3 -m pip install --quiet pillow

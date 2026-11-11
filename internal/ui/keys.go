@@ -10,6 +10,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
@@ -72,7 +73,14 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Mod+N", "Compose", func(a *App) { a.compose() })
 	add("Mod+Shift+N", "New canvas", func(a *App) { a.CreateCanvas() }) // the Create menu's Canvas hint
 	add("Mod+,", "Preferences", func(a *App) { a.openPrefs() })
-	add("Mod+.", "Toggle the right pane", func(a *App) { a.toggleSecondary() })
+	add("Mod+.", "Toggle the right pane", func(a *App) {
+		if a.activityTab() && a.secondary.open() {
+			// the Activity tab's mod+. (N8Zu): close the item beside the inbox
+			a.CloseSecondary()
+			return
+		}
+		a.toggleSecondary()
+	})
 	add("Mod+/", "Keyboard shortcuts", func(a *App) { a.toggleKeyboardShortcuts() }) // shortcuts_pane.go
 	// Slack's zoom (View > Actual Size, Zoom In, Zoom Out): Cmd/Ctrl with
 	// 0, = or + (shifted or not, by keyboard), -.
@@ -96,10 +104,27 @@ func (a *App) defaultShortcuts() *shortcuts {
 		}
 		s.list = append(s.list, keyBinding{name: b.name, mods: b.mods, desc: desc, do: func(a *App) { a.navigate(dir) }})
 	}
-	add("Alt+Up", "Previous conversation", func(a *App) { a.stepConv(-1, false) })
-	add("Alt+Down", "Next conversation", func(a *App) { a.stepConv(1, false) })
-	add("Alt+Shift+Up", "Previous unread", func(a *App) { a.stepConv(-1, true) })
-	add("Alt+Shift+Down", "Next unread", func(a *App) { a.stepConv(1, true) })
+	// on the Activity tab they're the inbox's (activityStep)
+	add("Alt+Up", "Previous conversation", func(a *App) {
+		if !a.activityStep(-1, false) {
+			a.stepConv(-1, false)
+		}
+	})
+	add("Alt+Down", "Next conversation", func(a *App) {
+		if !a.activityStep(1, false) {
+			a.stepConv(1, false)
+		}
+	})
+	add("Alt+Shift+Up", "Previous unread", func(a *App) {
+		if !a.activityStep(-1, true) {
+			a.stepConv(-1, true)
+		}
+	})
+	add("Alt+Shift+Down", "Next unread", func(a *App) {
+		if !a.activityStep(1, true) {
+			a.stepConv(1, true)
+		}
+	})
 	add("Esc", "Close / mark as read", func(a *App) {
 		if a.dismissTop() {
 			return
@@ -108,6 +133,12 @@ func (a *App) defaultShortcuts() *shortcuts {
 			return
 		}
 		if a.threadEsc() { // the thread pane's: mark it read, else close it (secondary.go)
+			return
+		}
+		if a.activityTab() && a.secondary.open() && !a.secondary.keyFocus {
+			// the Activity tab's esc (N8Zu ClientKeyboardShortcutsActivity):
+			// the item beside the inbox closes
+			a.CloseSecondary()
 			return
 		}
 		// the Unreads page's Esc (UnreadsList onMarkReadKeyCommand, a
@@ -144,15 +175,26 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 	// a modal dialog makes the page inert (its keys go to it), and so does
 	// a replayed introduction (intro.go)
 	if !slackc.ModalOpen() && a.intro == nil {
+		var compEd *composer.Editor // the column's focused composer, on the Activity tab
+		activity := a.activityTab()
+		if activity {
+			compEd = a.secComposerEd(gtx)
+		}
 		for _, sc := range s.list {
 			if escOwned && sc.name == key.NameEscape && sc.mods == 0 {
+				continue
+			}
+			if activity && sc.mods&key.ModAlt != 0 && (sc.name == key.NameUpArrow || sc.name == key.NameDownArrow) &&
+				!composerEdgeOK(compEd, sc.name == key.NameUpArrow) {
+				// the composer's own: text before / after the caret that way
+				// (ddmY cannotMovePrevious / cannotMoveNext)
 				continue
 			}
 			filters = append(filters, key.Filter{Name: sc.name, Required: sc.mods, Optional: 0})
 		}
 	}
 	globalKeys := slackc.WantsGlobal("keydown") || slackc.WantsGlobal("keyup")
-	a.secondary.keyFocus = a.threadPaneFocused(gtx) // for the thread pane's Escape
+	a.secondary.keyFocus = a.threadPaneFocused(gtx) || a.secChannelFocused(gtx) // for the pane's Escape
 	for {
 		e, ok := gtx.Event(filters...)
 		if !ok {
