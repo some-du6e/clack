@@ -19,9 +19,9 @@ import (
 // forceOpenOnClick.
 //
 //   - Hover: entering the button starts the trigger delay (T = 300 ms) when
-//     peeksEnabledOnMouseEnter is on (Preferences › Accessibility "Show
-//     previews when hovering over tabs", default on); leaving the button
-//     before it's up cancels it.
+//     peeksEnabledOnMouseEnter is on (the client-side "Show previews when
+//     hovering over tabs", default on, off in the simplified layout);
+//     leaving the button before it's up cancels it.
 //   - While a hover peek is open, every pointer move is checked against
 //     the safe area (isMouseInsideSafeArea): the button, the card, then
 //     the union of both until there is a previous position, after that the
@@ -65,17 +65,13 @@ func (a *App) railPeekOpen() bool {
 	return p.menu != nil
 }
 
-// peeksOnHover is the accessibility store's peeksEnabledOnMouseEnter. The
+// peeksOnHover is the accessibility store's peeksEnabledOnMouseEnter, a
+// client-side setting (the prefs dialog's AccessibilityTabPreviews "Show
+// previews when hovering over tabs" logs "Changed client-side pref for
+// peeks enabled"; nothing goes to users.prefs). It starts on; the
 // simplified layout turns it off (BBM's setPeeksEnabledOnMouseEnter).
-func (a *App) peeksOnHover() bool {
-	if a.prefs.BBM {
-		return false
-	}
-	if a.data == nil || a.data.core == nil {
-		return true
-	}
-	return a.data.core.PrefBool("a11y_peeks_enabled_on_mouse_enter", true)
-}
+// Clack's Preferences don't offer the toggle yet, so it's on outside BBM.
+func (a *App) peeksOnHover() bool { return !a.prefs.BBM }
 
 // railMoreFrame runs the More button's peek logic for this frame: trig is
 // the button's window rectangle, hov whether the pointer is on it.
