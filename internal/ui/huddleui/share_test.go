@@ -223,9 +223,41 @@ func TestShareFlow(t *testing.T) {
 			t.Errorf("the button at x=%d moves the window", x)
 		}
 	}
-	line, sub := e.c.activityText(st)
+	line, sub := e.c.activityText(st, nil)
 	if line == "" || sub != "2 people in the huddle" {
 		t.Errorf("activity %q / %q", line, sub)
+	}
+	// HuddleActivity's joiningMembers: who joins while the panel is up
+	// shows for 2s after the last of them; who was there when it opened
+	// doesn't
+	jp := &miniPanel{c: e.c}
+	t0 := time.Now()
+	you := huddle.Participant{UserID: huddle.FakeSelfUser, Self: true}
+	alone := huddle.State{Channel: st.Channel, Participants: []huddle.Participant{you}}
+	if j := jp.joins(alone, t0); len(j) != 0 {
+		t.Errorf("joined at open: %v", j)
+	}
+	two := alone
+	two.Participants = []huddle.Participant{you, {UserID: huddle.FakeRemoteUser}}
+	j := jp.joins(two, t0.Add(time.Second))
+	want := e.c.userName(huddle.FakeRemoteUser) + " joined"
+	if line, _ := e.c.activityText(two, j); len(j) != 1 || line != want {
+		t.Errorf("one joined: %v, %q (want %q)", j, line, want)
+	}
+	three := two
+	three.Participants = append(append([]huddle.Participant(nil), two.Participants...), huddle.Participant{UserID: "U0THIRD"})
+	j = jp.joins(three, t0.Add(1500*time.Millisecond))
+	if line, _ := e.c.activityText(three, j); line != "Several people joined" {
+		t.Errorf("two joined: %v, %q", j, line)
+	}
+	if j = jp.joins(three, t0.Add(3400*time.Millisecond)); len(j) != 2 {
+		t.Errorf("cleared before 2s after the last join: %v", j)
+	}
+	if j = jp.joins(three, t0.Add(3600*time.Millisecond)); len(j) != 0 {
+		t.Errorf("still joining 2.1s after the last join: %v", j)
+	}
+	if _, sub := e.c.activityText(alone, nil); sub != "Just you in the huddle" {
+		t.Errorf("alone: %q", sub)
 	}
 	if r := panelPlace(image.Rect(0, 0, 1920, 1080), 1); r != image.Rect(650, 920, 1270, 980) {
 		t.Errorf("panel placed at %v on a 1920×1080 screen", r)

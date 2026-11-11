@@ -3,6 +3,7 @@ package huddleui
 import (
 	"image"
 	"image/color"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +86,10 @@ type miniPanel struct {
 	placed bool
 
 	mic, video, stop widget.Clickable
+
+	seen   map[string]bool // joins
+	joined []string
+	joinAt time.Time
 }
 
 // syncMiniPanel opens the panel while you share and closes it after
@@ -232,16 +237,25 @@ func (p *miniPanel) place(bounds image.Rectangle, m unit.Metric) bool {
 	return true
 }
 
-// activityText is HuddleActivity's two lines in the mini panel
-// (HuddleChannelName and getMemberCountText).
-func (c *Controller) activityText(st huddle.State) (line, sub string) {
+// activityText is HuddleActivity's two lines in the mini panel, for the
+// huddle you're in: HuddleChannelName over getMemberCountText. The first
+// line is, in Slack's order: who just joined (joined is joiningMembers,
+// miniPanel.joins), who's talking, a DM's "Waiting for", the huddle's
+// topic, the conversation's name (getDisplayNameForChannel without the #
+// or @), the others' names, "Waiting for others…".
+func (c *Controller) activityText(st huddle.State, joined []string) (line, sub string) {
 	now := time.Now()
 	n := len(st.Participants)
-	alone := n <= 1
-	if alone {
+	if n == 1 && st.Participants[0].Self {
 		sub = nsHuddles.T("Just you in the huddle")
 	} else {
 		sub = nsHuddles.T("{memberCount, plural, =1 {# person} other {# people}} in the huddle", "memberCount", n)
+	}
+	switch {
+	case len(joined) > 1:
+		return nsHuddles.T("Several people joined"), sub
+	case len(joined) == 1:
+		return nsHuddles.T("{memberName} joined", "memberName", c.userName(joined[0])), sub
 	}
 	for _, q := range st.Participants {
 		if q.Speaking(now) {
@@ -250,35 +264,80 @@ func (c *Controller) activityText(st huddle.State) (line, sub string) {
 			}
 		}
 	}
-	if t := strings.TrimSpace(st.Name); t != "" { // the huddle's topic
-		return t, sub
-	}
+	var name string
 	if app := c.h.Core(); app != nil {
 		if conv, ok := app.Conv(st.Channel); ok {
 			switch conv.Kind {
 			case "im":
-				if alone {
+				if n <= 1 {
 					return nsHuddles.T("Waiting for {memberName}", "memberName", c.userName(conv.User)), sub
 				}
-				return c.userName(conv.User), sub
-			case "mpim":
+				name = c.userName(conv.User)
+			case "mpim": // getMpimDisplayNameAlphabetical
+				self := c.selfID()
 				var names []string
-				for _, q := range st.Participants {
-					if !q.Self {
-						names = append(names, c.userName(q.UserID))
+				for _, m := range conv.Members {
+					if m != self {
+						if s := c.userName(m); s != "" {
+							names = append(names, s)
+						}
 					}
 				}
-				if len(names) == 0 {
-					return nsHuddles.T("Waiting for others…"), sub
-				}
-				return listifyNames(names), sub
-			}
-			if conv.Name != "" {
-				return conv.Name, sub // publicChannelIncludeHashSign false
+				sort.SliceStable(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
+				name = strings.Join(names, ", ")
+			default:
+				name = conv.Name
 			}
 		}
 	}
-	return nsHuddles.T("Huddle"), sub
+	if t := strings.TrimSpace(st.Name); t != "" { // the huddle's topic
+		return t, sub
+	}
+	if name != "" {
+		return name, sub
+	}
+	var others []string
+	for _, q := range st.Participants {
+		if !q.Self {
+			others = append(others, c.userName(q.UserID))
+		}
+	}
+	switch {
+	case len(others) > 1:
+		return listifyNoConj(others), sub
+	case len(others) == 1:
+		return others[0], sub
+	}
+	return nsHuddles.T("Waiting for others…"), sub
+}
+
+// joins is HuddleActivity's joiningMembers: who joined since the panel
+// opened, while you're in the huddle, until 2s after the last of them.
+func (p *miniPanel) joins(st huddle.State, now time.Time) []string {
+	in := false
+	for _, q := range st.Participants {
+		in = in || q.Self
+	}
+	if p.seen == nil {
+		p.seen = map[string]bool{}
+		for _, q := range st.Participants {
+			p.seen[q.UserID] = true
+		}
+	} else if in {
+		cur := make(map[string]bool, len(st.Participants))
+		for _, q := range st.Participants {
+			if !p.seen[q.UserID] && !cur[q.UserID] {
+				p.joined = append(p.joined, q.UserID)
+				p.joinAt = now
+			}
+			cur[q.UserID] = true
+		}
+		p.seen = cur
+	}
+	if len(p.joined) > 0 && now.Sub(p.joinAt) >= 2*time.Second {
+		p.joined = nil
+	}
+	return p.joined
 }
 
 func (p *miniPanel) layout(gtx C, th *theme.Theme) {
@@ -414,7 +473,7 @@ func (p *miniPanel) content(gtx C, th *theme.Theme, s *huddle.Session, st huddle
 		at(gtx, image.Pt(pad, (sz.Y-ls.Y)/2), image.Pt(tw, ls.Y), func(gtx C) D { return th.Label(gtx, 15, theme.Bold, panelInk, hint) })
 		return
 	}
-	line, sub := c.activityText(st)
+	line, sub := c.activityText(st, p.joins(st, gtx.Now))
 	l1 := labelSize(gtx, th, 15, theme.Bold, line)
 	l2 := labelSize(gtx, th, 13, theme.Regular, sub)
 	top := (sz.Y - (l1.Y + l2.Y - gtx.Dp(4))) / 2
