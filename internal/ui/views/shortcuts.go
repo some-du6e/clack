@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"strings"
 
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -59,6 +60,7 @@ type KeyboardShortcuts struct {
 	tips   []popups.TipState
 	empty  int // the empty state, picked once
 	query  string
+	opened bool // the first frame focused the search field
 }
 
 // ShortcutRunner is implemented by the Host: executeKeyboardShortcut for
@@ -156,6 +158,15 @@ func (v *KeyboardShortcuts) Layout(gtx C) D {
 	fill(gtx, image.Rectangle{Max: size}, v.p.Bg)
 	if v.close.Clicked(gtx) {
 		v.h.CloseSecondary()
+	}
+	if !v.opened {
+		v.opened = true
+		// with the search, opening the view forces the focus into its
+		// field (odUS shouldForceFocus; KeyboardShortcutsSearch's
+		// VIEW_KEYBOARD_SHORTCUTS focus handler)
+		if v.searchOn() {
+			gtx.Execute(key.FocusCmd{Tag: &v.search.ed})
+		}
 	}
 	v.search.update(gtx)
 	v.buildRows()

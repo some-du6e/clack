@@ -86,6 +86,10 @@ func TestKeyboardShortcutsSearchGroups(t *testing.T) {
 		e := &vaEnv{size: image.Pt(420, 900)}
 		e.draw = func(gtx layout.Context) { v.Layout(gtx) }
 		e.frame()
+		e.frame() // the open's FocusCmd lands
+		if focused := e.r.Source().Focused(&v.search.ed); focused != (g == "on") {
+			t.Errorf("%q: search field focused %v on open", g, focused)
+		}
 		all := v.Rows()
 		if all[0] != "(subtitle)" || all[1] != "## Basics" {
 			t.Fatalf("%q: rows start %v", g, all[:2])
