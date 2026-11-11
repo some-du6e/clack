@@ -21,6 +21,7 @@ on:
         required: false
         default: "20"
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run flake-check.yml --ref <branch>)
     paths:
       - ".github/workflows/flake-check.yml"
       - "internal/ui/composer/drafts_sync.go"

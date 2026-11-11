@@ -24,6 +24,7 @@ on:
         required: false
         default: "main"
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run plugin-library.yml --ref <branch>)
     paths:
       - ".github/workflows/plugin-library.yml"
       - ".github/scripts/plugin-index.mjs"

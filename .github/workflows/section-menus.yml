@@ -6,6 +6,7 @@ name: section-menus
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run section-menus.yml --ref <branch>)
     paths:
       - "internal/ui/section_menu*.go"
       - "internal/ui/create_channel*.go"

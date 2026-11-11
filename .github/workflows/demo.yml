@@ -7,6 +7,7 @@ name: demo
 # the demo runs fakeslack on 127.0.0.1 and nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run demo.yml --ref <branch>)
     paths:
       - "internal/demo/**"
       - "cmd/clack/demo.go"

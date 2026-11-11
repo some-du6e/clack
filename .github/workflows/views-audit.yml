@@ -7,6 +7,7 @@ name: views-audit
 # each state (views-audit-shots). Nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run views-audit.yml --ref <branch>)
     paths:
       - "internal/ui/views/**"
       - "internal/fakeslack/views.go"

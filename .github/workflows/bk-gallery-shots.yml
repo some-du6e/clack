@@ -6,6 +6,7 @@ name: bk-gallery-shots
 # to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run bk-gallery-shots.yml --ref <branch>)
     paths:
       - "internal/richtext/**"
       - "internal/ui/richview/**"

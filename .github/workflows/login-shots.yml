@@ -4,6 +4,7 @@ name: login-shots
 # nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run login-shots.yml --ref <branch>)
     paths:
       - "internal/ui/login*.go"
       - ".github/workflows/login-shots.yml"

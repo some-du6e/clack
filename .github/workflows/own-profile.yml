@@ -5,6 +5,7 @@ name: own-profile
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
+    branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run own-profile.yml --ref <branch>)
     paths:
       - "internal/ui/popups/profile_*.go"
       - "internal/ui/popups/app_card.go"
