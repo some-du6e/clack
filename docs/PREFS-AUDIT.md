@@ -131,7 +131,13 @@ has a "None" option (dnd_enabled_&lt;day&gt; all_day, hiding the second
 select) while fewer than six other days are None; a "disabled" day shows 12:00
 AM to Midnight; picking a time makes the day "partial". Every change sends only
 the prefs it changed plus dnd_enabled: true, as setMultiplePrefsByApi does
-(users.prefs.set prefs=JSON). The automatic statuses write huddles_set_status
+(users.prefs.set prefs=JSON). The hours come as "H:MM" strings, sometimes
+unpadded ("8:00", like reminder_notification_time); BaseDndTimeSelect pads
+them to five characters to find the option and labels it with
+format_24_hour_time (time24: "08:00", else "8:00 AM"). An unset hour is
+checked before padding: the select shows its "--:--" placeholder and gets
+no option of its own (2026-11-10: Clack had padded "" to "00000" and shown
+that). The automatic statuses write huddles_set_status
 and the focus_mode_status / scheduled_dnd_status objects with show flipped
 (users.prefs.set name/value). "VIPs" calls the dialog's section switch with
 "vip" (Slack's setActiveSection).
