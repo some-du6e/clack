@@ -25,6 +25,7 @@ type prefsModal struct {
 	a        *App
 	ra       prefsA // part A's editors and state (prefs_a.go)
 	clicks   map[string]*widget.Clickable
+	launchOn *bool // Launch app on login, read once per dialog (prefs_pages.go)
 	section  string
 	avail    pagePositioned // popups.AvailabilityPage when linked
 	org      originTracker

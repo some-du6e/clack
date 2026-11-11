@@ -174,6 +174,7 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 		return
 	}
 	left := clsTopNavLeft.Enter(gtx, 0, 0)
+	a.appMenuButton(gtx, h) // appmenu.go: Linux and Windows
 	// history buttons: 26×26, 6px gaps, right-aligned 9px before the search.
 	b := gtx.Dp(26)
 	gap := gtx.Dp(6)
