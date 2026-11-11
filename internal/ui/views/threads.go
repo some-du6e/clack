@@ -82,6 +82,9 @@ type thrCard struct {
 	name, people, moreText string
 	also                   string // "Also send to #general"
 	built                  bool
+	// icon is getChannelIconType's name for a channel's header
+	// (InlineChannelEntity), "" for a DM or group DM
+	icon string
 
 	comp  *composer.Composer // the real reply composer, made on first click
 	compY int                // composer top within the list element (px)
@@ -770,6 +773,7 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 		if isDMKind(kind) {
 			c.also = "Also send as direct message"
 		}
+		c.icon = channelIcon(v.h.Core(), t.Channel, kind)
 		c.built = true
 	}
 	return c
@@ -811,7 +815,26 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef, y0 in
 						gtx.Constraints.Min.X = 0
 						return c.title.Layout(gtx, func(gtx C) D {
 							pointerCursor(gtx)
-							d := v.para(gtx, 15, 22, nameW, v.p.Text, 1, c.name)
+							// a channel's name is Slack's InlineChannelEntity
+							// (p-threads_view_header__channel_name nudge_left_3),
+							// whose icon and name plugins' rules see
+							// (StreamerMode blurs a private channel's)
+							var nst slackc.Styled
+							if c.icon != "" {
+								ent := thrHeaderEntity.Enter(gtx, hoverState(c.title.Hovered()), t.Channel, c.icon)
+								defer ent.Leave()
+								if ent.Hidden() {
+									return D{}
+								}
+								nst = thrHeaderEntity.Name(ent)
+							}
+							name := func(gtx C) D { return v.para(gtx, 15, 22, nameW, v.p.Text, 1, c.name) }
+							var d D
+							if nst.Active() {
+								d = nst.Wrap(gtx, name)
+							} else {
+								d = name(gtx)
+							}
 							if c.title.Hovered() {
 								fill(gtx, image.Rect(0, d.Size.Y-gtx.Dp(3), d.Size.X, d.Size.Y-gtx.Dp(2)), v.p.Text)
 							}

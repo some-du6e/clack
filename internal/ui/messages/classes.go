@@ -63,6 +63,11 @@ var (
 	mrkdwnClass        = slackc.Class("p-mrkdwn_element")
 	memberLinkClass    = slackc.Class("c-link c-member_slug c-member_slug--link").Tag("button")
 	channelEntityClass = slackc.Class("c-inline_channel_entity").Tag("span")
+
+	// the thread header's channel name (Slack's threads Header NCqL:
+	// InlineChannelEntity className p-threads_flexpane__header_channel_name,
+	// truncate)
+	thrHeaderEntity = slackc.NewChannelEntity("p-threads_flexpane__header_channel_name", true)
 )
 
 // tbQA are the toolbar buttons' data-qa values (live client).

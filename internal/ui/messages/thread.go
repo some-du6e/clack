@@ -522,6 +522,19 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 	d := at(gtx, x, top, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, gtx.Sp(unit.Sp(ns.lineH)))}
 		w := func(gtx layout.Context) layout.Dimensions {
+			// a channel is Slack's InlineChannelEntity (className
+			// p-threads_flexpane__header_channel_name, truncate): its icon
+			// and name are the elements plugins' rules see (StreamerMode
+			// blurs a private channel's name)
+			var nst slackc.Styled
+			if sub.Icon != "" {
+				ent := thrHeaderEntity.Enter(gtx, btnState(gtx, &v.nameBtn), v.ch, sub.Icon)
+				defer ent.Leave()
+				if ent.Hidden() {
+					return layout.Dimensions{}
+				}
+				nst = thrHeaderEntity.Name(ent)
+			}
 			ix := 0
 			if sub.Icon != "" {
 				is := gtx.Sp(unit.Sp(ns.size))
@@ -533,7 +546,13 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 			g := gtx
 			g.Constraints.Max.X = max(0, gtx.Constraints.Max.X-ix)
 			td := at(g, ix, 0, func(gtx layout.Context) layout.Dimensions {
-				return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, sub.Text) })
+				name := func(gtx layout.Context) layout.Dimensions {
+					return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, sub.Text) })
+				}
+				if nst.Active() {
+					return nst.Wrap(gtx, name)
+				}
+				return name(gtx)
 			})
 			sz := image.Pt(ix+td.Size.X, gtx.Sp(unit.Sp(ns.lineH)))
 			if link {

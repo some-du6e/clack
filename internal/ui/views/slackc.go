@@ -34,6 +34,10 @@ var (
 	thrItemClass   = slackc.Class("c-virtual_list__item")
 	thrMsgClass    = slackc.Class("c-message_kit__background c-message_kit__thread_message").Mods("c-message_kit__background--hovered")
 	thrSenderClass = slackc.Class("c-message__sender c-message_kit__sender", "data-qa", "message_sender").Tag("span")
+	// a thread's header names its channel with InlineChannelEntity
+	// (client-threads-view auBp: className
+	// "p-threads_view_header__channel_name nudge_left_3")
+	thrHeaderEntity = slackc.NewChannelEntity("p-threads_view_header__channel_name nudge_left_3", false)
 
 	// DMs list.
 	dmRowClass   = slackc.Class("p-activity_ia4_page__item", "data-qa", "dms_channel").Mods("p-activity_ia4_page__item--selected")
@@ -74,6 +78,38 @@ func classMods(className string, mods []string) uint64 {
 		}
 	}
 	return bits
+}
+
+// channelIcon is getChannelIconType's icon name as InlineChannelIcon asks
+// for it (/HhV; filled for a private channel): "archive-filled" or
+// "archive" for an archived channel, "lock-filled" for a private one,
+// else "channel"; "" for a DM or group DM, which aren't
+// InlineChannelEntity.
+func channelIcon(app *core.App, id, kind string) string {
+	if isDMKind(kind) || strings.HasPrefix(id, "D") {
+		return ""
+	}
+	archived := false
+	if app != nil {
+		if cv, ok := app.Conv(id); ok {
+			archived = cv.IsArchived
+			if kind == "" {
+				kind = cv.Kind
+			}
+		}
+	}
+	if kind == "mpim" || kind == "im" {
+		return ""
+	}
+	switch {
+	case archived && kind == "private":
+		return "archive-filled"
+	case archived:
+		return "archive"
+	case kind == "private":
+		return "lock-filled"
+	}
+	return "channel"
 }
 
 func hoverState(h bool) css.State {
