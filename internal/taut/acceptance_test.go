@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -41,7 +42,37 @@ var before = map[string]func(h *harness){
 		h.fetches["https://raw.githubusercontent.com/ClearURLs/Rules/"] = `{"providers":{"globalRules":{"urlPattern":".*","rules":["utm_[a-z]+"],"rawRules":[],"exceptions":[]}}}`
 		h.fetchMu.Unlock()
 	},
+	"HaikuWarning": func(h *harness) {
+		// the syllable dictionary as the plugin caches it after its first
+		// download (its Cache, keyed by the dictionary's commit), so the test
+		// downloads and compacts nothing; words it lacks use the estimate
+		cached, _ := json.Marshal(map[string]any{haikuDictionaryKey: map[string]any{"value": "zzz 3", "ts": time.Now().UnixMilli()}})
+		h.tt.data.write("plugin:HaikuWarning:cache", "syllables", string(cached))
+	},
+	"OwlMode": func(h *harness) {
+		// a confession owl posted in a public channel, its key saved for you
+		h.app.S.PutConv(slack.Conversation{ID: chOwl, Name: "confessions", IsChannel: true, IsMember: true, NumMembers: 40})
+		h.app.S.SetLatest(chOwl, []slack.Message{{Type: "message", TS: owlTS, User: "U0OWL", BotID: "B0OWL", Text: "123: a synthetic confession",
+			BotProfile: &slack.BotProfile{ID: "B0OWL", Name: "owl", AppID: owlApp}}}, false)
+		h.tt.data.write("plugin:OwlMode:secrets", "confessions", `{"`+selfID+`":{"123":{"key":"k-123"}}}`)
+		// owl's message shortcuts, as apps.actions.v2.list lists them
+		h.api.set("apps.actions.v2.list", map[string]any{"ok": true, "app_actions": []any{map[string]any{
+			"app_id": owlApp, "app_name": "owl", "team_id": teamID, "teams": []string{teamID},
+			"actions": []any{
+				map[string]any{"action_id": "Aa0OWLREPLY", "app_id": owlApp, "name": "Reply anonymously", "description": "Reply to a confession", "type": "message_action"},
+				map[string]any{"action_id": "Aa0OWLREACT", "app_id": owlApp, "name": "React anonymously", "description": "React to a confession", "type": "message_action"},
+				map[string]any{"action_id": "Aa0OWLPOST", "app_id": owlApp, "name": "Confess", "type": "global_action"},
+			}}}})
+	},
 }
+
+const (
+	// HaikuWarning's dictionary commit (its DICTIONARY_COMMIT) + "-compact"
+	haikuDictionaryKey = "aece7f5fcc873b8e71ecccfa5216849fafd959e1-compact"
+	chOwl              = "C0CONFESS"
+	owlTS              = "1700000020.000100"
+	owlApp             = "A0C5L27PB9P" // owl's app (OwlMode's OWL_APPS)
+)
 
 var checks = map[string]pluginCheck{
 	"HumanCount": func(t *testing.T, h *harness) {
@@ -261,6 +292,132 @@ var checks = map[string]pluginCheck{
 			defer h.ui.mu.Unlock()
 			return len(h.ui.trees[6]) > 2
 		})
+	},
+	"HaikuWarning": func(t *testing.T, h *harness) {
+		// Taut's default warning is a banner over the composer while its
+		// draft is a haiku Orpheus would repeat. It reads the composer's live
+		// draft, state.drafts.unifiedDrafts[draftId].ops, which Slack's
+		// composer keeps current as you type (SetComposerDraft), for the
+		// composer's BaseContextBarV2.
+		const root = 8
+		h.render(root, "BaseContextBarV2", map[string]any{"channelId": chGen, "draftId": chGen})
+		banner := func() bool {
+			h.ui.mu.Lock()
+			defer h.ui.mu.Unlock()
+			return strings.Contains(string(h.ui.trees[root]), "taut-haiku-context-bar")
+		}
+		draft := func(text string) {
+			h.tt.SetComposerDraft(ComposerDraft{DraftID: chGen, Channel: chGen, Ops: []any{map[string]any{"insert": text + "\n"}}})
+		}
+		draft("hello there")
+		time.Sleep(700 * time.Millisecond) // past its 250 ms banner delay
+		if banner() {
+			t.Fatal("a banner for a message that isn't a haiku")
+		}
+		draft(strings.TrimSpace(strings.Repeat("cat ", 17))) // 5 + 7 + 5 syllables
+		eventually(t, renderWait(), "the haiku banner over the composer", banner)
+		// keyed like Slack's store: client_draft_id = encodeDraftKey(channel, thread)
+		var key any
+		h.jsInto(`return T.redux.getStore().getState().drafts?.unifiedDrafts?.["`+chGen+`"]?.client_draft_id ?? null`, &key)
+		if key != chGen {
+			t.Errorf("unifiedDrafts[%s].client_draft_id = %v", chGen, key)
+		}
+		// sending clears the composer's draft, and the banner goes
+		h.tt.ClearComposerDraft(chGen)
+		eventually(t, renderWait(), "no banner once the draft is sent", func() bool { return !banner() })
+	},
+	"OwlMode": func(t *testing.T, h *harness) {
+		// natives for the thunks OwlMode dispatches, as ui/blockkit registers them
+		ix := h.app.Interactive()
+		h.tt.RegisterThunk("executeAppAction", func(ctx context.Context, raw []json.RawMessage) (any, error) {
+			var a struct {
+				AppID, ActionID, ChannelID, MessageTs, ApplicableTeamID, ClientToken string
+			}
+			_ = json.Unmarshal(raw[0], &a)
+			return map[string]any{"ok": true}, ix.RunShortcutAs(ctx, core.AppShortcut{AppID: a.AppID, ActionID: a.ActionID, TeamID: a.ApplicableTeamID}, a.ChannelID, a.MessageTs, a.ClientToken)
+		})
+		h.tt.RegisterThunk("submitView", func(ctx context.Context, raw []json.RawMessage) (any, error) {
+			var a struct {
+				ViewID    string `json:"viewId"`
+				ViewState struct {
+					Values json.RawMessage `json:"values"`
+				} `json:"viewState"`
+			}
+			_ = json.Unmarshal(raw[0], &a)
+			_, err := ix.SubmitView(ctx, a.ViewID, a.ViewState.Values)
+			return map[string]any{}, err
+		})
+		// owl's shortcuts reach the store as Slack keeps them (state.appActions)
+		var acts map[string]any
+		eventually(t, 5*time.Second, "owl's message shortcuts in appActions", func() bool {
+			h.jsInto(`return T.redux.getStore().getState().appActions ?? null`, &acts)
+			a, _ := acts["actions"].(map[string]any)
+			return len(a) == 2
+		})
+		reply, _ := acts["actions"].(map[string]any)["Aa0OWLREPLY"].(map[string]any)
+		if reply["appId"] != owlApp || reply["name"] != "Reply anonymously" || reply["type"] != "message_action" || acts["isLoaded"] != true {
+			t.Errorf("appActions %v", acts)
+		}
+		// a reply in your confession's thread goes through owl's "Reply
+		// anonymously" shortcut with the plugin's own client_token, not as you
+		type sendArgs struct {
+			ChannelID string         `json:"channelId"`
+			ReplyToTs string         `json:"replyToTs"`
+			Delta     map[string]any `json:"delta"`
+		}
+		sentAsSelf := make(chan struct{}, 1)
+		done := make(chan error, 1)
+		go func() {
+			_, err := Dispatch(h.ctx(), h.tt, "prepareAndSendMessage", sendArgs{chOwl, owlTS, map[string]any{"ops": []any{map[string]any{"insert": "an anonymous reply\n"}}}},
+				func(ctx context.Context, a sendArgs) (any, error) { sentAsSelf <- struct{}{}; return nil, nil })
+			done <- err
+		}()
+		var token string
+		eventually(t, 15*time.Second, "owl's Reply shortcut run (apps.actions.v2.execute)", func() bool {
+			for _, f := range h.api.called("apps.actions.v2.execute") {
+				if f.Get("action_id") == "Aa0OWLREPLY" && f.Get("app_id") == owlApp && strings.Contains(f.Get("context"), owlTS) {
+					token = f.Get("client_token")
+					return true
+				}
+			}
+			return false
+		})
+		if !strings.HasPrefix(token, "web-") {
+			t.Fatalf("client_token %q: the plugin's own token must reach Slack, so owl's modal comes back to it", token)
+		}
+		// owl opens its modal for that token; the plugin fills it in and submits it
+		raw, _ := json.Marshal(map[string]any{"type": "view_opened", "client_token": token, "view_id": "V0OWLREPLY"})
+		h.app.Inject(slack.Event{Type: "view_opened", Raw: raw})
+		eventually(t, 10*time.Second, "the reply modal submitted (views.submit)", func() bool {
+			for _, f := range h.api.called("views.submit") {
+				if f.Get("view_id") == "V0OWLREPLY" {
+					return true
+				}
+			}
+			return false
+		})
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("send: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Error("the send never finished")
+		}
+		select {
+		case <-sentAsSelf:
+			t.Error("the reply was sent as you")
+		default:
+		}
+		var submitted string
+		for _, f := range h.api.called("views.submit") {
+			if f.Get("view_id") == "V0OWLREPLY" {
+				submitted = f.Get("view") + f.Get("state") + f.Get("values")
+			}
+		}
+		if !strings.Contains(submitted, "k-123") || !strings.Contains(submitted, "an anonymous reply") {
+			t.Errorf("submitted %q, want the confession key and the reply", submitted)
+		}
 	},
 	"OfficeHours": func(t *testing.T, h *harness) {
 		if len(h.tt.PreferencesTabs()) == 0 && len(h.introspect().Components) == 0 && len(h.introspect().Tabs) == 0 {

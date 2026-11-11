@@ -77,6 +77,8 @@ type Composer struct {
 	// Server draft sync (syncDraftCreate / syncDraftUpdates /
 	// deleteDraftApi): see drafts_sync.go.
 	dsync draftSync
+	// live is the local draft plugins read as you type (taut_drafts.go).
+	live liveDraft
 	// the files in the draft (draft_files.go): attVer counts changes to
 	// them; touched is set once the user (or a restore) filled the
 	// composer, after which server drafts no longer restore into it;
@@ -638,6 +640,7 @@ func (c *Composer) changed() {
 	c.touched = true
 	c.saveDraft()
 	c.syncDraftSoon()
+	c.liveDraftSoon()
 	if c.ed.Empty() {
 		c.typingStopped()
 	} else if time.Since(c.lastTyping) > 3*time.Second {
@@ -1206,6 +1209,7 @@ func (c *Composer) clearAfterSend() {
 	c.ed.SetDoc(NewDoc())
 	c.lastVer = c.ed.Version()
 	c.deleteServerDraft("message_sent")
+	c.clearLiveDraft()
 	c.broadcast = false
 	c.lastTyping = time.Time{}
 	c.typingStopped()
