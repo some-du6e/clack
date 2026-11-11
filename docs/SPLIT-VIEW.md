@@ -74,6 +74,16 @@ boot-render / boot-shared / client-boot / modern.vendor ones.
   `FlexpaneBackButton` (`DG1E`, `caret-left-full`, 28px, margin-right 6)
   while the view has a back stack. A thread view's flexpane header has
   the same back and close buttons.
+- Narrow columns follow `useActionsToMoveToMenu` (view-header chunk,
+  module `1DLG`) with `channel_ia_header_refinements` off. Under 550px
+  the header drops its search button, and under 500px it drops the bell
+  too. The Slackbot DM only ever loses the bell. `getOverflowingActions`
+  then keeps floor((width - 340) / 30) of the other movable actions, so
+  Huddle goes under 370px. The ⋮ menu lists moved actions only with the
+  experiment on, so here it stays the same. Under 600px (`isColumnNarrow`)
+  a container query hides `.p-view_header__topic_container` and the title
+  runs up to the actions. Clack's `headerFit` measures the split view's
+  whole column, or the primary header, which spans a nested thread pane.
 - Focus: navigating to the split view moves the focus into it (its
   composer), and closing it hands the focus back to the primary view.
   Escape in a closable container closes it (`4zmr` RenderedViewContents)
@@ -106,3 +116,6 @@ boot-render / boot-shared / client-boot / modern.vendor ones.
   boundaries: plugins patch the channel's own components in both views,
   not the split container.
 - Keyboard resizing of the split column (BaseResizer's range input).
+- `channel_ia_header_refinements` on: Slack moves search and the bell
+  into the ⋮ menu at every width. Clack keeps them in the header, since
+  those rows would go in the channel menu, which isn't this code's.
