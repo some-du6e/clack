@@ -237,7 +237,8 @@ Clack puts each drawn cell in Gio's semantic tree: the label, the description, a
 - Columns Slack computes (created/edited by and time) are never written.
 - Message, file, canvas and reference cells need pickers Clack doesn't have, so clicking one says "This field can't be edited in Clack yet (it has …)".
 - Plain text and bare links edit in the inline editor. Text with formatting, named links, mentions, emoji, lists, quotes or code is Slack's rich text editor (`W077`), so it opens in the composer's rich editor and saves the rich_text the editor writes (`listview/richedit.go`). A cell opens there only when the editor reads it and writes it back the same (`richRoundTrips`: sections, lists, quotes, code and every run's kind, text, target and style). A cell with something the editor can't hold, such as a date, keeps the refusal.
-- Date ranges and cells with several links stay read-only.
+- Date ranges stay read-only: Slack edits them in its range date picker (`i9.A`, DateSelectComponent), which Clack doesn't have yet.
+- A link cell is Slack's LinkColumn: the grid reads its first link (getTypedFieldValue: `link[0]`) and an edit writes one back (`link: [the edited link]`). So a cell with several links shows, opens, copies and edits its first link, as in Slack. It shows the URL when the link displays as one, else its name, else its unfurl's title. A typed or pasted link is I6yI's `{originalUrl, displayName, attachment: null}`, saved with `display_as_url: false`.
 - New items take only the name and a group value.
 
 **Not supported yet**:
