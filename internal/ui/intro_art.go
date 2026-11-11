@@ -4,7 +4,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"math/rand"
 	"sync"
 
 	"gioui.org/f32"
@@ -19,9 +18,10 @@ import (
 	"golang.org/x/image/vector"
 
 	"github.com/some-du6e/clack/assets/fonts"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The introduction's art: the lit backdrop, its grain, the Clack mark,
+// The introduction's art: the flat backdrop, the Clack mark,
 // and blurred copies of the display text for the blur-in (Gio has no blur
 // filter, so the blurred states are rendered on the CPU, small, and the
 // sharp state is Gio's own text).
@@ -77,223 +77,22 @@ func alphaMul(c color.NRGBA, a float32) color.NRGBA {
 
 // ---- the backdrop ----
 
-// introGlow is one light in the backdrop: a colour, a place (fractions of
-// the window), a radius (fraction of the window's short side) and how
-// strong it is.
-type introGlow struct {
-	c    color.NRGBA
-	x, y float32
-	r    float32
-	i    float32
-}
+// introBase is the window behind the introduction and the sign-in card:
+// one flat colour, Slack's dark app background (#1a1d21), so the window
+// the user signs in to, and its dark caption, are the same surface.
+var introBase = hexc(0x1a1d21)
 
-type introPalette [3]introGlow
-
-// introBase is the backdrop's ink: almost black, a little violet.
-var introBase = hexc(0x0a0812)
-
-// introPalettes are the beats' lights; the last is the sign-in's.
-var introPalettes = [introBeats]introPalette{
-	beatLogo: {
-		{hexc(0x7b5cff), 0.50, 0.36, 0.42, 0.25},
-		{hexc(0x3b1fb8), 0.14, 0.94, 0.55, 0.40},
-		{hexc(0xff9e3d), 0.88, 0.10, 0.24, 0.07},
-	},
-	beatNative: {
-		{hexc(0x6e56ff), 0.22, 0.22, 0.50, 0.30},
-		{hexc(0x2f7bff), 0.84, 0.80, 0.55, 0.30},
-		{hexc(0x3ce0ff), 0.88, 0.10, 0.28, 0.08},
-	},
-	beatSlack: {
-		{hexc(0xb03cb5), 0.20, 0.30, 0.50, 0.26},
-		{hexc(0x36c5f0), 0.86, 0.84, 0.42, 0.14},
-		{hexc(0x611f69), 0.62, 0.06, 0.55, 0.50},
-	},
-	beatPlugins: {
-		{hexc(0x7b5cff), 0.78, 0.24, 0.48, 0.30},
-		{hexc(0xffb547), 0.18, 0.86, 0.42, 0.16},
-		{hexc(0xff5ca8), 0.12, 0.16, 0.30, 0.09},
-	},
-	beatHackClub: {
-		{hexc(0xec3750), 0.50, 0.22, 0.46, 0.19},
-		{hexc(0xff8c37), 0.12, 0.90, 0.40, 0.16},
-		{hexc(0x338eda), 0.90, 0.88, 0.32, 0.10},
-	},
-	beatFinal: {
-		{hexc(0x7b5cff), 0.18, 0.18, 0.52, 0.28},
-		{hexc(0x8b2f8f), 0.86, 0.86, 0.52, 0.30},
-		{hexc(0x3b1fb8), 0.84, 0.12, 0.36, 0.22},
-	},
-}
-
-// backdrop is the window-filling light, computed on the CPU at about a
-// fifth of the window's resolution (it is all smooth gradients) and drawn
-// scaled up: one image per frame, no layers. A static backdrop isn't
-// recomputed.
-type backdrop struct {
-	buf   [2]*image.RGBA
-	flip  int
-	img   paint.ImageOp
-	key   backdropKey
-	grain paint.ImageOp
-	hasG  bool
-}
-
-type backdropKey struct {
-	w, h  int
-	wq    [introBeats]float32
-	t     float32
-	drift float32
-	light float32
-}
-
-// backdropState is what the backdrop shows this frame: each beat's
-// palette at its weight w (they cross-fade), the lights drifting by drift
-// (0 still) at time t, all of it at light (0 dark: the first launch's
-// light comes up).
-type backdropState struct {
-	w     [introBeats]float32
-	t     float64
-	drift float32
-	light float32
-}
-
-func (b *backdrop) draw(gtx layout.Context, st backdropState) {
-	sz := gtx.Constraints.Max
-	if sz.X <= 0 || sz.Y <= 0 {
-		return
-	}
-	// about 1/5 of the window, at most 288 px across
-	w := min(288, max(16, (sz.X+4)/5))
-	h := max(10, int(math.Round(float64(w)*float64(sz.Y)/float64(sz.X))))
-	k := backdropKey{w: w, h: h, drift: quant(st.drift, 512), light: quant(st.light, 512)}
-	for i, v := range st.w {
-		k.wq[i] = quant(v, 512)
-	}
-	if st.drift > 0 {
-		k.t = float32(st.t)
-	}
-	if k != b.key || b.buf[0] == nil {
-		b.flip ^= 1
-		img := b.buf[b.flip]
-		if img == nil || img.Rect.Dx() != w || img.Rect.Dy() != h {
-			img = image.NewRGBA(image.Rect(0, 0, w, h))
-			b.buf[b.flip] = img
-		}
-		backdropField(img, float32(sz.X), float32(sz.Y), k.wq, st.t, st.drift, st.light)
-		b.img = paint.NewImageOp(img)
-		b.img.Filter = paint.FilterLinear
-		b.key = k
-	}
-	func() {
-		defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
-		s := f32.Pt(float32(sz.X)/float32(w), float32(sz.Y)/float32(h))
-		defer op.Affine(f32.Affine2D{}.Scale(f32.Point{}, s)).Push(gtx.Ops).Pop()
-		b.img.Add(gtx.Ops)
-		paint.PaintOp{}.Add(gtx.Ops)
-	}()
-	b.drawGrain(gtx, sz)
-}
-
-func quant(v float32, n float32) float32 { return float32(math.Round(float64(v*n))) / n }
-
-// backdropField lights dst: the base, every palette's glows at its
-// weight, drifting, a vignette, then a soft shoulder and sRGB.
-func backdropField(dst *image.RGBA, W, H float32, weights [introBeats]float32, t float64, drift, light float32) {
-	type g struct {
-		x, y, inv float32
-		c         lin
-	}
-	var gs [3 * introBeats]g
-	n := 0
-	short := min(W, H)
-	add := func(p *introPalette, wgt float32, seed int) {
-		if wgt <= 0.002 {
-			return
-		}
-		for i, gl := range p {
-			ph := float64(seed*3 + i)
-			dx := drift * 0.04 * float32(math.Sin(t*0.23+ph*1.9))
-			dy := drift * 0.035 * float32(math.Cos(t*0.19+ph*2.7))
-			c := linOf(gl.c)
-			s := gl.i * wgt * light
-			gs[n] = g{x: (gl.x + dx) * W / short, y: (gl.y + dy) * H / short, inv: 1 / (gl.r * gl.r), c: lin{c[0] * s, c[1] * s, c[2] * s}}
-			n++
-		}
-	}
-	for i := range weights {
-		add(&introPalettes[i], weights[i], i)
-	}
-	base := linOf(introBase)
-	w, h := dst.Rect.Dx(), dst.Rect.Dy()
-	ax, ay := W/short/float32(w), H/short/float32(h)
-	for yy := 0; yy < h; yy++ {
-		py := (float32(yy) + 0.5) * ay
-		vy := (float32(yy)+0.5)/float32(h) - 0.5
-		row := dst.Pix[yy*dst.Stride:]
-		for xx := 0; xx < w; xx++ {
-			px := (float32(xx) + 0.5) * ax
-			vx := (float32(xx)+0.5)/float32(w) - 0.5
-			r, gg, b := base[0], base[1], base[2]
-			for i := 0; i < n; i++ {
-				q := gs[i]
-				dx, dy := px-q.x, py-q.y
-				f := 1 / (1 + 1.8*(dx*dx+dy*dy)*q.inv)
-				f *= f
-				r += q.c[0] * f
-				gg += q.c[1] * f
-				b += q.c[2] * f
-			}
-			v := 1 - 0.95*(vx*vx+vy*vy)
-			r, gg, b = r*v, gg*v, b*v
-			// a soft shoulder: light adds up without clipping
-			r, gg, b = r/(1+r*0.6), gg/(1+gg*0.6), b/(1+b*0.6)
-			o := row[xx*4:]
-			o[0], o[1], o[2], o[3] = linToSRGB(r), linToSRGB(gg), linToSRGB(b), 0xff
-		}
-	}
-}
-
+// introPill and introInk are the white primary button and its label:
+// neutral, the one bright thing on the flat dark window.
 var (
-	grainOnce sync.Once
-	grainImg  *image.RGBA
+	introPill = hexc(0xececec)
+	introInk  = hexc(0x111214)
 )
 
-// grainTile is 256 px of fine dark noise: it breaks up the 8-bit bands a
-// dark gradient would show, and gives the surface some tooth.
-func grainTile() *image.RGBA {
-	grainOnce.Do(func() {
-		const n = 256
-		img := image.NewRGBA(image.Rect(0, 0, n, n))
-		r := rand.New(rand.NewSource(1110))
-		for i := 0; i < n*n; i++ {
-			// triangular, mostly faint: black at 0–9% (premultiplied)
-			v := (r.Float32() + r.Float32()) * 0.5
-			a := uint8(math.Max(0, float64(v-0.35)) * 38)
-			img.Pix[i*4+3] = a
-		}
-		grainImg = img
-	})
-	return grainImg
-}
-
-func (b *backdrop) drawGrain(gtx layout.Context, sz image.Point) {
-	if !b.hasG {
-		b.grain = paint.NewImageOp(grainTile())
-		b.grain.Filter = paint.FilterNearest
-		b.hasG = true
-	}
-	const n = 256
-	for y := 0; y < sz.Y; y += n {
-		for x := 0; x < sz.X; x += n {
-			st := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
-			cl := clip.Rect{Max: image.Pt(min(n, sz.X-x), min(n, sz.Y-y))}.Push(gtx.Ops)
-			b.grain.Add(gtx.Ops)
-			paint.PaintOp{}.Add(gtx.Ops)
-			cl.Pop()
-			st.Pop()
-		}
-	}
+// drawBackdrop fills the window with introBase: no gradient, no glows,
+// no grain (on a flat fill there are no bands to break up).
+func drawBackdrop(gtx layout.Context) {
+	theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, introBase)
 }
 
 // ---- soft round light (sprites drawn scaled) ----

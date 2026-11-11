@@ -142,6 +142,8 @@ type App struct {
 	images *imgcache.Cache
 	data   *backend // nil until signed in
 
+	caption captionState // Windows: the native caption's colours (caption_windows.go)
+
 	router          router
 	clicks          clickables
 	hdrx            *headerExtra // the channel header's topic card and edit-name tooltip (channel_mpdm.go)
@@ -396,6 +398,7 @@ func (a *App) Run() error {
 		if menuViewEvent != nil {
 			menuViewEvent(ev)
 		}
+		a.syncCaption(ev) // Windows: the native caption follows the window (caption_windows.go)
 		switch e := ev.(type) {
 		case app.DestroyEvent:
 			wd.end()

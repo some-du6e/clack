@@ -24,8 +24,8 @@ import (
 )
 
 // The sign-in card (login.go has its state), drawn in the introduction's
-// language: the same lit backdrop, display type and springs, white on a
-// dark glass panel. One primary action, Open Slack sign-in, with the
+// language: the same flat backdrop, display type and springs, white on a
+// solid dark panel. One primary action, Open Slack sign-in, with the
 // slack:// field under it as the second way in. The rest waits behind
 // Having trouble? (tips for when the link doesn't come back) and Advanced
 // (the token form), which open on springs.
@@ -50,24 +50,22 @@ const (
 const signInTitle = "Sign in to Slack"
 
 var (
-	loginGlassTop = hexc(0x1d1830)
-	loginGlassBot = hexc(0x110e1b)
-	loginInk      = hexc(0x0b0912) // the pill's label (the introduction's)
+	loginSurface  = hexc(0x222529) // the card: Slack's dark raised surface, a step above introBase
+	loginHairline = hexc(0x3a3d41) // its 1px rim: about 13% white over the surface
+	loginInk      = introInk       // the pill's label (the introduction's)
 	loginViolet   = hexc(0x7b5cff) // the mark's
 	loginLilac    = hexc(0x9d8cff) // focus, the badge's ring
 	loginGlow     = hexc(0xb7a8ff)
-	loginRose     = hexc(0xff8f9c) // errors on the dark glass
+	loginRose     = hexc(0xff8f9c) // errors on the dark card
 	loginAmber    = hexc(0xffc56b) // Advanced's warning
 	loginCode     = hexc(0xd4c9ff)
 )
 
-// loginGlassUnder is about what the glass looks like under its controls.
-// Their translucent fills go through loginOn: Gio blends in linear light,
-// where 6% white on a dark panel reads like 25% grey, so the alpha is
-// corrected to land where a browser's sRGB blend of the same alpha would.
-var loginGlassUnder = hexc(0x19142a)
-
-func loginOn(c color.NRGBA) color.NRGBA { return theme.LinearAlpha(c, loginGlassUnder) }
+// The controls' translucent fills go through loginOn: Gio blends in
+// linear light, where 6% white on a dark panel reads like 25% grey, so the
+// alpha is corrected to land where a browser's sRGB blend of the same
+// alpha over the card's surface would.
+func loginOn(c color.NRGBA) color.NRGBA { return theme.LinearAlpha(c, loginSurface) }
 
 // loginLine is a line of the card's header: its words, and whether it is
 // an error.
@@ -173,9 +171,9 @@ func (a *App) layoutLogin(gtx layout.Context, enter time.Time, f *introFrame) {
 		// the link field its focus) from the first frame
 		defer paint.PushOpacity(gtx.Ops, alpha).Pop()
 	}
-	// a deep, soft shadow on the dark backdrop, then the glass
-	loginShadow(gtx, r.Add(image.Pt(0, f.d(18))), f.d(loginRadius), f.d(22), alphaMul(introBlack, 0.62))
-	loginGlass(gtx, f, r)
+	// a soft shadow on the flat backdrop, then the panel
+	loginShadow(gtx, r.Add(image.Pt(0, f.d(12))), f.d(loginRadius), f.d(18), alphaMul(introBlack, 0.38))
+	loginPanel(gtx, f, r)
 	cl := clip.UniformRRect(r, f.d(loginRadius)).Push(gtx.Ops)
 	if showLink {
 		// the link view slides out to the left as Advanced comes in
@@ -832,7 +830,7 @@ func loginFocusRing(gtx layout.Context, f *introFrame, r image.Rectangle, rad in
 
 // loginPill is the card's primary button: the introduction's white pill
 // at full width, its label and keycap centred (kca: the keycap's
-// opacity), a soft light under it that grows on hover, pressing in on a
+// opacity), a faint white light under it on hover, pressing in on a
 // spring. busy: a spinner turns beside the label.
 func (a *App) loginPill(gtx layout.Context, f *introFrame, b *widget.Clickable, r image.Rectangle, label, kc string, kca float32, busy bool) {
 	l := a.login
@@ -842,8 +840,10 @@ func (a *App) loginPill(gtx layout.Context, f *introFrame, b *widget.Clickable, 
 	sc := 1 - 0.035*prs
 	t := op.Affine(f32.Affine2D{}.Scale(center(r), f32.Pt(sc, sc))).Push(gtx.Ops)
 	defer t.Pop()
-	theme.Shadow(gtx, r, h/2, f.d(14), alphaMul(loginGlow, 0.10+0.16*hov))
-	theme.RRect(gtx, r, h/2, theme.Mix(hexc(0xeeeaf8), introWhite, hov))
+	if hov > 0.004 {
+		theme.Shadow(gtx, r, h/2, f.d(14), alphaMul(introWhite, 0.08*hov))
+	}
+	theme.RRect(gtx, r, h/2, theme.Mix(introPill, introWhite, hov))
 	lw := f.measure(15.5, theme.Bold, label)
 	kw := 0
 	if kc != "" {
@@ -876,7 +876,7 @@ func loginHit(gtx layout.Context, b *widget.Clickable, r image.Rectangle) {
 	})
 }
 
-// loginGlassButton is a quiet button on the glass: a faint fill and rim
+// loginGlassButton is a quiet button on the card: a faint fill and rim
 // that brighten on hover, pressing in on a spring.
 func (a *App) loginGlassButton(gtx layout.Context, f *introFrame, b *widget.Clickable, r image.Rectangle, label string, size float32) {
 	l := a.login
@@ -1058,28 +1058,17 @@ func (l *loginScreen) spinner(gtx layout.Context, c image.Point, d int, col colo
 	ring(t*2*math.Pi*1.1, math.Pi*(0.55+0.35*math.Sin(t*3)), col)
 }
 
-// ---- the glass and its shadow ----
+// ---- the panel and its shadow ----
 
-// loginGlass is the card's panel: deep translucent glass, a little lighter
-// at the top, with a hairline rim lit from above.
-func loginGlass(gtx layout.Context, f *introFrame, r image.Rectangle) {
+// loginPanel is the card: an opaque surface a step lighter than the
+// window, ringed by a 1px hairline.
+func loginPanel(gtx layout.Context, f *introFrame, r image.Rectangle) {
 	rad := f.d(loginRadius)
-	func() {
-		defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
-		paint.LinearGradientOp{
-			Stop1: f32.Pt(0, float32(r.Min.Y)), Color1: alphaMul(loginGlassTop, 0.86),
-			Stop2: f32.Pt(0, float32(r.Max.Y)), Color2: alphaMul(loginGlassBot, 0.90),
-		}.Add(gtx.Ops)
-		paint.PaintOp{}.Add(gtx.Ops)
-	}()
-	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-	w := float32(max(1, f.d(1)))
-	defer clip.Stroke{Path: theme.RRectPath(r.Dx(), r.Dy(), rad), Width: w}.Op().Push(gtx.Ops).Pop()
-	paint.LinearGradientOp{
-		Stop1: f32.Pt(0, 0), Color1: alphaMul(introWhite, 0.22),
-		Stop2: f32.Pt(0, float32(r.Dy())), Color2: alphaMul(introWhite, 0.05),
-	}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
+	w := max(1, f.d(1))
+	// the hairline, then the surface inside it: whole pixels, no
+	// half-covered stroke edges
+	theme.RRect(gtx, r, rad, loginHairline)
+	theme.RRect(gtx, r.Inset(w), max(0, rad-w), loginSurface)
 }
 
 // loginShadowSprite is a blurred rounded rectangle, for nine-slicing: the

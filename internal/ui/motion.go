@@ -39,7 +39,7 @@ var (
 	// springPop: underdamped and quick (about 10% overshoot), for small
 	// elements popping in (a reaction, a badge, the logo's accents).
 	springPop = spring{response: 0.36, damping: 0.6}
-	// springGentle: critically damped and slow, for the backdrop's light.
+	// springGentle: critically damped and slow, for long, quiet fades.
 	springGentle = spring{response: 1.1, damping: 1}
 	// springShake: a stiff, lightly damped spring kicked sideways, the
 	// sign-in card's "no" (about three swings).
