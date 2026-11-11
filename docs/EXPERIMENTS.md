@@ -71,11 +71,11 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `sidebar_text_filter_m3` | `on` | client-boot `O2By` export `Nv` | sidebar text filter, milestone 3 | missing |
 | `temp_mute` | `on` | client-boot `O2By` export `VJ` | channels can be muted for a limited time | missing |
 | `vip_section_pref` | `on` | client-boot `O2By` isSidebarVisualUpdatesNuxEnabled | the VIP section pref shows | reads it: `core/prefs_a.go:90`, `ui/prefs_pages.go:249` |
-| `desktop_history_menu` | `on` | gantry-v2-async-client-boot-shared `Fpm/` export `Ti` | the history (back/forward) menu merges visits | missing |
-| `nested_secondary_view` | `on` | client-boot `kl02` isNestedSecondaryViewEnabled | secondary views (right pane) can nest | missing |
-| `secondary_view_default_width` | `on` | client-boot `kl02` export `k5` | the secondary view opens at the new default width | missing |
-| `smaller_secondary_headers` | `on` | client-boot `kl02` export `I$` | secondary view headers are smaller | missing |
-| `today_v2` | `on` | client-boot `/Qva` isTodayV2Provisioned | the Today tab (v2) when provisioned | missing |
+| `desktop_history_menu` | `on` | gantry-v2-async-client-boot-shared `Fpm/` export `Ti`; boot-render `tLXx` HistoryButtons, `a6xy` gJ | the clock button's history menu lists 25 places instead of 15; the desktop app gets the top-level History menu (Back, Forward, up to 15 places, Show full history ⌘Y) | reads it: `core/views_experiments.go`, `ui/history_menu.go` (menu and History dialog), `ui/macmenu.go` |
+| `nested_secondary_view` | `on` | client-boot `kl02` isNestedSecondaryViewEnabled (!BBM, !agentic_ia, !tbd client) | a channel's thread and profile panes nest below the channel header; the column may grow to fill the region (aTtQ wE); the Threads view header keeps its line (auBp, W58+) | reads it: `core/views_experiments.go`, `ui/app.go` layoutPrimary, `ui/secondary.go`, `ui/views/threads.go` |
+| `secondary_view_default_width` | `on` | client-boot `kl02` export `k5` (nested only); boot-render `aTtQ` getIdealSecondaryWidth | the secondary column's default is 40% of the region beside the sidebar instead of 30% of the space beside the rail | reads it: `ui/secondary.go` secondaryDefault (under the nested view) |
+| `smaller_secondary_headers` | `on` | client-boot `kl02` export `I$` (nested only); boot-shared `JvjC`, `XVla` p-flexpane_header--smaller | secondary flexpane headers of the nhyY views (thread, profile, search in channel, canvas, code channel details…) get a 15px title and 4px gaps | reads it: `core/views_experiments.go`; the thread pane follows it (`ui/messages/thread.go`); the profile, search-in-channel and code channel panes don't yet |
+| `today_v2` | `on` | client-boot `/Qva` isTodayV2Provisioned | the Today tab (v2) when provisioned | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
 | `activity_entry_layout_revisions_2` | `on` | client-boot `5Ns/` export `xi` | activity rows use layout revisions 2 | missing |
 | `activity_inbox_remove_persistent_detail_panel` | `on` | client-boot `5Ns/` isActivityInboxRemovePersistentDetailPanelEnabled | the inbox has no persistent detail panel | missing |
 | `later_todos` | `on` | client-boot `6owI` isLaterTodosEnabled | Later is Later + to-dos | reads it: `core/rail.go:191`, `ui/views/activity_slack.go:274` |
@@ -101,15 +101,15 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `silent_sidebar` | `on` | client-boot `O2By` export `Pn` | focus mode can silence the sidebar (SilentSidebarTriggerButton) | reads it: `ui/focus_mode.go:119` |
 | `suggested_sections_auto_sort_v2` | `on` | client-boot `O2By` isAutoSortExperimentOn | auto-sorted suggested sections and their Home pref | reads it: `ui/joinbanner.go:87` |
 | `thread_root_selected_state` | `on` | client-boot `O2By` export `Gl` | the selected thread root keeps a selected state | missing |
-| `desktop_history_recents_read` | `on` | gantry-v2-async-client-boot-shared `Fpm/` isDesktopHistoryRecentsReadEnabled | the history menu reads recents | missing |
-| `keyboard_shortcuts_search` | `on` | client-boot `odUS` | the keyboard shortcuts pane has a search box | missing |
-| `today_todos` | `on` | client-boot `/Qva` isTodayTodosEnabled | Today shows to-dos | missing |
+| `desktop_history_recents_read` | `on` | gantry-v2-async-client-boot-shared `Fpm/` isDesktopHistoryRecentsReadEnabled (shouldMergeHistoryVisits `Q`; boot-render `WAHR`, boot-shared `jtFG`, `qsEE` B7) | the history menu and the History dialog merge the server's visits.list into the client's recents | missing: Clack keeps its own recents and doesn't call visits.list |
+| `keyboard_shortcuts_search` | `on` | client-boot `odUS`; keyboard-shortcuts-view `u1zV` KeyboardShortcutsSearch, EmptyState | the Keyboard Shortcuts pane has a search field that filters the rows by title, with three random empty states, and takes the focus when the pane opens | reads it: `core/views_experiments.go`, `ui/views/shortcuts.go` (the pane itself is new: `ui/shortcuts_pane.go`, `ui/shortcut/sections.go`) |
+| `today_todos` | `on` | client-boot `/Qva` isTodayTodosEnabled | Today shows to-dos | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
 | `activity_automations_only` | `on` | client-boot `5Ns/` export `LS` | an Automations-only filter | missing |
 | `activity_bot_item_type_reads` | `on` | client-boot `5Ns/` export `zK` | bot items get their own read state | missing |
 | `activity_global_settings` | `on` | client-boot `5Ns/` export `XW` | Activity settings are global (layout toggle in header) | reads it: `core/manage.go:592`, `core/manage.go:610` |
 | `exclude_automations_filter` | `on` | client-boot `5Ns/` export `UK` | a filter that excludes automations | missing |
 | `slackbot_unread_v2` | `on` | client-boot `I87A` export `m0` | Slackbot DM unreads v2 in Activity | reads it: `ui/views/activity_slack.go:265` |
-| `lists_in_later` | `on` | client-boot `Hm0j` isListsMarkAsDoneForCheckboxEnabled | list items assigned to you appear in Later | missing |
+| `lists_in_later` | `on` | client-boot `Hm0j` isListsInLaterExperimentEnabled (export `v`); boot-shared `Jf4A` RemindMeAboutThisMenuItem, boot-render `nckZ` ListRecord | list records' menus (grid row, record details) get "Remind me about this" / "Edit reminder", which puts the record in Later; Later's ListRecord row only translates its "List item" label | missing: the record menus are the Lists code's (listview); Clack's Later has no ListRecord row yet |
 | `autocomplete_demote_flannel_passthrough_rltv_exact_match` | `on` | client-boot `LRGb` | passthrough results demoted below exact matches | reads it: `ui/composer/autocomplete_rank.go:78` |
 | `autocomplete_frequently_used_emojis_frecency` | `on` | gantry-v2-async-client-boot-render `zuQH` | frequently used emoji by frecency | reads it: `core/frecency.go:273` |
 | `composer_smart_symbols` | `on` | gantry-v2-async-client-boot-shared `YGxP` isComposerSmartSymbolsOn | smart quotes and symbols, and its Advanced pref | reads it: `ui/prefs_pages.go:780`, `ui/composer/coreapi.go:54` |
@@ -157,12 +157,12 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `prefill_dm_canvas_removal` | `treatment` | client-boot `Rc9k` prefillDmCanvasRemovalMaybeLogExposure | only the exposure logger reads it; whether a DM's canvas is prefilled is the server's | nothing to do: no client behaviour (Clack logs no exposures) |
 | `manage_conversations_strings` | `on` | client-boot `O2By` export `Z4` | updated strings in the manage-conversations menus | missing |
 | `mute_channel_edu` | `on` | gantry-v2-async-client-boot-shared `3njJ` export `D` | section menus explain muting | reads it: `ui/section_menu.go:255` |
-| `today_calendar_watchdog` | `on` | client-boot `vQYI` export `EV` | Today watches calendar staleness | missing |
-| `today_hide_agenda_or_connect_buttons` | `on` | client-boot `/Qva` isEmailInComposerEnabled | Today hides agenda/connect buttons | missing |
-| `today_outlook_cal_integration` | `on` | client-boot `/Qva` isTodayOutlookCalIntegrationEnabled | Today reads Outlook calendars | missing |
-| `today_pause` | `on` | client-boot `/Qva` isTodayPauseEnabled | Today can be paused | missing |
-| `today_request_calendar_rtm_updates` | `on` | client-boot `vQYI` export `$7` | Today asks for calendar realtime updates | missing |
-| `view_header_overflow_borders` | `on` | client-list-record-details `Y95U` | view headers draw overflow borders | missing |
+| `today_calendar_watchdog` | `on` | client-boot `vQYI` export `EV` | Today watches calendar staleness | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_hide_agenda_or_connect_buttons` | `on` | client-boot `/Qva` isEmailInComposerEnabled | Today hides agenda/connect buttons | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_outlook_cal_integration` | `on` | client-boot `/Qva` isTodayOutlookCalIntegrationEnabled | Today reads Outlook calendars | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_pause` | `on` | client-boot `/Qva` isTodayPauseEnabled | Today can be paused | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `today_request_calendar_rtm_updates` | `on` | client-boot `vQYI` export `$7` | Today asks for calendar realtime updates | not applicable: Today needs ACCESS_SLACK_AI_TODAY (Slack AI; permissions/info: not allowed for the account), so Slack shows no Today in any group |
+| `view_header_overflow_borders` | `on` | client-threads-view `auBp` maybeSetIsScrolled; boot-shared `XVla` (--no-bottom-border), `+E9o` SidebarHeader, `Y95U`, `utL9`, `9xzW`, `f9u9` | a header without its bottom line gets one once its list scrolls more than 15px under it (without nested_secondary_view in the Threads view) | reads it: `ui/views/threads.go` headBorder; the thread pane, sidebar, list record and profile headers don't yet |
 | `agent_status_in_activity` | `on` | client-boot `M/qt` export `ji` | agent status in activity rows | missing |
 | `invite_slash_command_in_threads` | `on` | gantry-v2-async-client-boot-shared `7R+y` isInviteSlashCommandInThreadsEnabled | /invite works in threads | missing |
 | `invite_slash_command_multi` | `off` | gantry-v2-async-client-boot-shared `7R+y` export `w` | off: /invite takes one person | default: in `off` Slack keeps its default, as Clack does |
@@ -275,7 +275,9 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Views, rail and navigation (14)
 
 - Files: internal/ui/views/, internal/ui/nav.go, internal/ui/bbm*.go, internal/core/rail.go, internal/ui/shortcut/
-- To do (14): `desktop_history_menu`, `nested_secondary_view`, `secondary_view_default_width`, `smaller_secondary_headers`, `today_v2`, `desktop_history_recents_read`, `keyboard_shortcuts_search`, `today_todos`, `today_calendar_watchdog`, `today_hide_agenda_or_connect_buttons`, `today_outlook_cal_integration`, `today_pause`, `today_request_calendar_rtm_updates`, `view_header_overflow_borders`
+- Clack reads (6, branch `exp-views`): `desktop_history_menu`, `nested_secondary_view`, `secondary_view_default_width`, `smaller_secondary_headers` (thread pane only), `keyboard_shortcuts_search`, `view_header_overflow_borders` (Threads view only)
+- To do (1): `desktop_history_recents_read` (visits.list)
+- Not applicable (7): `today_v2`, `today_todos`, `today_calendar_watchdog`, `today_hide_agenda_or_connect_buttons`, `today_outlook_cal_integration`, `today_pause`, `today_request_calendar_rtm_updates`. Slack's Today tab (client-boot `/Qva` isTodayTabVisible) needs `today_v2` and the ACCESS_SLACK_AI_TODAY permission (Slack AI). permissions/info (edge, read only, 2026-11-10) doesn't allow it for the test account, so Slack's client shows no Today in any group. The calendar experiments only reach Today, Slackbot's big mode agenda (boot-render `LfV6`) and the calendar link attachment's Connect buttons (`eKpe`, `tiDf`). The Today view's AI recap, agenda and action items come from Slack AI and calendar endpoints Clack can't use without that permission.
 
 ### Activity (9)
 
@@ -286,8 +288,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Later (2)
 
 - Files: internal/ui/views/ (Later), internal/core/rail.go, internal/lists/
-- To do (1): `lists_in_later`
-- Clack reads already (1): `later_todos`
+- To do (1): `lists_in_later` (the record menus' "Remind me about this" lives in the Lists code; Later's ListRecord row)
+- Clack reads already (1): `later_todos` (and To-dos' sections, `ui/views/later_sections.go`)
 
 ### Composer and autocomplete (14)
 

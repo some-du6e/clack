@@ -12,24 +12,20 @@ package core
 //     layout mode (BBM) is a device pref the UI adds; Clack is never
 //     Slack's "tbd" client (uYza Wx: a desktop environment flag or
 //     ?tbd_client=1).
-//   - boot-shared Fpm/: desktop_history_menu (Ti) and
-//     desktop_history_recents_read (isDesktopHistoryRecentsReadEnabled,
-//     shouldMergeHistoryVisits Q).
+//   - boot-shared Fpm/: desktop_history_menu (Ti). (Its
+//     desktop_history_recents_read, shouldMergeHistoryVisits Q, merges
+//     visits.list into the recents; Clack doesn't call visits.list, so it
+//     doesn't read it.)
 //   - keyboard-shortcuts-view u1zV: keyboard_shortcuts_search.
 //   - view_header_overflow_borders: the Threads view (auBp
 //     maybeSetIsScrolled), Flexpane (XVla) and other headers.
-//   - client-boot Hm0j isListsInLaterExperimentEnabled (v): lists_in_later.
+//   - +o0o j: submit_forward_keybinding (the Keyboard Shortcuts pane's
+//     "Submit forward dialog" row).
 
 // NestedSecondaryView is kl02 isNestedSecondaryViewEnabled without the
 // simplified layout mode, which the caller checks.
 func (a *App) NestedSecondaryView() bool {
 	return a.experiment("agentic_ia") != "on" && a.experiment("nested_secondary_view") == "on"
-}
-
-// SecondaryViewDefaultWidth is kl02 k5: the secondary view's ideal width
-// is 40% of the region beside the sidebar instead of 30% of the window.
-func (a *App) SecondaryViewDefaultWidth() bool {
-	return a.NestedSecondaryView() && a.experiment("secondary_view_default_width") == "on"
 }
 
 // SmallerSecondaryHeaders is kl02 I$ (JvjC useIsSmallerSecondaryHeader
@@ -42,11 +38,6 @@ func (a *App) SmallerSecondaryHeaders() bool {
 // menu lists 25 places instead of 15, and the desktop app gets the
 // History menu (a6xy gJ).
 func (a *App) HistoryMenuExperiment() bool { return a.experiment("desktop_history_menu") == "on" }
-
-// MergeHistoryVisits is Fpm/ shouldMergeHistoryVisits (Q,
-// desktop_history_recents_read): the history menu merges visits.list
-// into the recents.
-func (a *App) MergeHistoryVisits() bool { return a.experiment("desktop_history_recents_read") == "on" }
 
 // KeyboardShortcutsSearch is the Keyboard Shortcuts pane's search box
 // (u1zV KeyboardShortcutsSearch, keyboard_shortcuts_search).
@@ -66,14 +57,10 @@ func (a *App) SubmitForwardKeybinding() bool {
 	return a.experiment("submit_forward_keybinding") == "on"
 }
 
-// ListsInLater is Hm0j isListsInLaterExperimentEnabled (lists_in_later).
-func (a *App) ListsInLater() bool { return a.experiment("lists_in_later") == "on" }
-
 // viewsExperimentReads joins experimentReads (TestExperimentReadsListed).
 var viewsExperimentReads = map[string][]string{
-	"nested_secondary_view": on, "secondary_view_default_width": on, "smaller_secondary_headers": on,
-	"desktop_history_menu": on, "desktop_history_recents_read": on, "keyboard_shortcuts_search": on,
-	"view_header_overflow_borders": on, "lists_in_later": on, "submit_forward_keybinding": on,
+	"nested_secondary_view": on, "smaller_secondary_headers": on, "desktop_history_menu": on,
+	"keyboard_shortcuts_search": on, "view_header_overflow_borders": on, "submit_forward_keybinding": on,
 }
 
 // viewsDefaultGroups are the test account's groups for them

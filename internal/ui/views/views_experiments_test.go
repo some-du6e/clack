@@ -16,6 +16,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -224,5 +225,92 @@ func TestTodosSectionsGroups(t *testing.T) {
 	app.SetExperimentGroup("later_todos", "")
 	if got := todoRowsText(l, l.todoRows(now)); got != "1762601003.000100" {
 		t.Errorf("without later_todos: %s", got)
+	}
+}
+
+// Threads' "Show N more replies" (LoadOlderMessage, loadOlderReplies):
+// N is reply_count less the replies shown (at most 100); a click asks
+// conversations.replies for the 100 up to the oldest shown (latest,
+// inclusive, limit 100) and shows them in the card above the others,
+// without marking the thread read or opening it; at the thread's start
+// the row goes.
+func TestThreadsShowMoreReplies(t *testing.T) {
+	app, fs := vaFake(t)
+	ch, root := fakeslack.ViewsChannel, "1762700000.000100"
+	msg := func(ts, user, text string) slack.Message {
+		return slack.Message{Type: "message", Channel: ch, TS: ts, ThreadTS: root, User: user, Text: text}
+	}
+	r := msg(root, "U0FAKE00001", "a synthetic long thread")
+	r.ReplyCount, r.LatestReply = 7, "1762700700.000100"
+	var mu sync.Mutex
+	var asks []url.Values
+	fs.SetHook(func(method string, f url.Values) (any, bool) {
+		switch method {
+		case "subscriptions.thread.getView":
+			th := map[string]any{"root_msg": r, "unread_replies": []slack.Message{},
+				"latest_replies": []slack.Message{msg("1762700600.000100", "U0FAKE00002", "reply 6"), msg("1762700700.000100", "U0FAKE00001", "reply 7")}}
+			return map[string]any{"ok": true, "threads": []any{th}, "has_more": false, "total_unread_replies": 0}, true
+		case "conversations.replies":
+			mu.Lock()
+			asks = append(asks, f)
+			n := len(asks)
+			mu.Unlock()
+			if n == 1 { // up to reply 6: replies 3-6 (6 again: inclusive) and more before
+				return map[string]any{"ok": true, "has_more": true, "messages": []slack.Message{r,
+					msg("1762700300.000100", "U0FAKE00001", "reply 3"), msg("1762700400.000100", "U0FAKE00002", "reply 4"),
+					msg("1762700500.000100", "U0FAKE00001", "reply 5"), msg("1762700600.000100", "U0FAKE00002", "reply 6")}}, true
+			}
+			return map[string]any{"ok": true, "has_more": false, "messages": []slack.Message{r,
+				msg("1762700100.000100", "U0FAKE00001", "reply 1"), msg("1762700200.000100", "U0FAKE00002", "reply 2"),
+				msg("1762700300.000100", "U0FAKE00001", "reply 3")}}, true
+		}
+		return nil, false
+	})
+	h := newKBHost(app, false)
+	v := NewThreads(h)
+	e := &vaEnv{size: image.Pt(1000, 1400)}
+	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+	e.until(t, "the long thread", func() bool { p, ok, _ := v.data.get(); return ok && len(p.items) == 1 })
+	e.frame()
+	p, _, _ := v.data.get()
+	it := &p.items[0]
+	c := v.cards[it.key]
+	if c == nil || c.moreText != "Show 5 more replies" {
+		t.Fatalf("row %q", c.moreText)
+	}
+	vaShot(t, e, "threads-show-more", false)
+	v.loadOlder(it, c)
+	e.until(t, "the older replies", func() bool { return !c.olderBusy && len(c.older) == 3 })
+	e.frame()
+	mu.Lock()
+	a := asks[0]
+	mu.Unlock()
+	if a.Get("channel") != ch || a.Get("ts") != root || a.Get("latest") != "1762700600.000100" || a.Get("limit") != "100" || a.Get("inclusive") != "true" {
+		t.Errorf("conversations.replies %v", a)
+	}
+	if got := thrShown(it, c); len(got) != 5 || got[0].TS != "1762700300.000100" || got[4].TS != "1762700700.000100" {
+		t.Errorf("shown %v", got)
+	}
+	if c.moreText != "Show 2 more replies" {
+		t.Errorf("after the first load: %q", c.moreText)
+	}
+	found := false
+	for _, k := range v.kbItems(p.items) {
+		found = found || k.key == it.key+"-1762700300.000100"
+	}
+	if !found {
+		t.Error("the loaded reply isn't a keyboard row")
+	}
+	vaShot(t, e, "threads-show-more-loaded", false)
+	v.loadOlder(it, c)
+	e.until(t, "the thread's start", func() bool { return !c.olderBusy && len(c.older) == 5 })
+	if c.moreText != "" || !c.olderStart {
+		t.Errorf("at the start: %q (start %v)", c.moreText, c.olderStart)
+	}
+	if len(fs.ThreadMarks()) != 0 {
+		t.Errorf("loading replies marked the thread: %v", fs.ThreadMarks())
+	}
+	if _, th := h.last(); th != "" {
+		t.Errorf("loading replies opened %s", th)
 	}
 }

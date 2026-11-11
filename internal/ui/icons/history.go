@@ -1,12 +1,19 @@
 package icons
 
 // Slack's SvgIcon "clear" (a broom over three lines): the History dialog's
-// Clear history button (boot-render +gg6 ModalMoreHistory). Its
-// icons.json outline (filled evenodd) drawn the way Clack draws Slack's
-// filled glyphs: what survives a 0.72 inset as an fl part (1.44 edge
-// band, outer contours one way and holes the other, rebuilt with
-// shapely), and the bristles, too thin for the inset (10% of the area),
-// as plain fills.
+// Clear history button (boot-render +gg6 ModalMoreHistory). Line art, so
+// drawn the way the set draws Slack's 1.5-unit glyphs: on the centrelines
+// of its icons.json outline (the head's wall inset 0.75 with shapely; the
+// ferrule and the two bristles 1 unit wide), within 2% of Slack's shape
+// (IoU 0.982).
 func init() {
-	reg("clear", fl("M12.72 13.76 L12.76 13.72 L17.74 13.72 L17.78 13.75 L17.74 13.78 Z M14.72 16.75 L14.76 16.72 L17.74 16.72 L17.78 16.75 L17.74 16.78 L14.76 16.78 Z M17.76 10.78 L12.76 10.78 L12.72 10.75 L12.76 10.72 L17.74 10.72 L17.78 10.74 Z M4.47 9.75 L4.5 9.79 L4.03 10.29 L3.66 10.75 L3.12 11.59 L2.68 12.53 L2.34 13.54 L2.13 14.61 L2.06 15.73 L2.12 16.58 L2.31 17.74 L11.25 17.74 L11.36 17.49 L10.4 16.39 L9.95 15.79 L9.53 15.06 L9.24 14.35 L9.07 13.62 L9.01 12.94 L9.01 12.19 L9.1 10.87 L9.08 10.34 L8.97 9.86 L8.87 9.64 L8.72 9.43 L8.37 9.11 L7.87 8.85 L7.41 8.71 L6.82 8.68 L6.33 8.75 L5.74 8.96 L5.35 9.16 L4.83 9.5 L4.81 9.47 L4.54 9.69 L4.76 9.5 L4.95 9.36 L5.43 9.05 L5.88 8.83 L6.4 8.67 L6.84 8.62 L7.27 8.63 L7.61 8.7 L8.23 8.88 L12.74 1.76 L12.79 1.74 L12.79 1.79 L8.29 8.89 L8.87 9.53 L9.02 9.82 L9.11 10.12 L9.16 10.75 L9.07 12.33 L9.08 13.12 L9.2 13.97 L9.46 14.76 L9.82 15.48 L10.35 16.23 L10.95 16.89 L11.88 17.72 L11.91 17.79 L2.3 17.79 L2.09 16.83 L2.02 16.21 L2 15.59 L2.06 14.67 L2.15 14.07 L2.29 13.49 L2.67 12.38 L3.18 11.37 L3.79 10.49 Z"), f("M8.35 11.36 L8.31 11.35 L8.28 12.71 L8.28 12.66 L8.28 12.56 L8.28 12.46 L8.28 12.36 L7.88 12.3 L7.32 12.16 L6.8 11.97 L6.32 11.75 L5.89 11.5 L5.5 11.22 L5.16 10.93 L4.78 10.53 L5.16 10.14 L5.55 9.89 L6.11 10.43 L6.76 10.85 L7.42 11.14 Z M8.17 17.02 L6.97 17.02 L6.78 16.63 L6.58 16.08 L6.46 15.59 L6.37 15.05 L6.31 14.47 L6.3 14 L6.33 13.84 L6.42 13.67 L6.61 13.54 L6.8 13.5 L6.99 13.54 L7.15 13.65 L7.26 13.81 L7.3 13.97 L7.35 14.87 L7.49 15.6 L7.74 16.31 Z M5.43 17.02 L4.37 17.02 L4.32 16.84 L4.23 16.36 L4.17 15.83 L4.17 15.25 L4.2 14.73 L4.25 14.33 L4.31 14.17 L4.43 14.02 L4.62 13.92 L4.82 13.9 L5.01 13.97 L5.15 14.1 L5.23 14.27 L5.25 14.44 L5.17 15.31 L5.17 15.78 L5.25 16.39 Z"))
+	reg("clear",
+		s("M12.77 1.76 L8.55 8.42"), // the handle
+		s("M2.32 17.77 L11.89 17.77 L10.93 16.92 L10.24 16.14 L9.73 15.38 L9.34 14.53 L9.13 13.77 L9.04 13.02 L9.11 10.3 "+
+			"L8.95 9.73 L8.48 9.02 L8.07 8.77 L6.76 8.65 L6.24 8.74 L5.64 8.97 L4.5 9.76 L3.5 10.93 L2.94 11.87 L2.59 12.66 "+
+			"L2.13 14.37 L2.04 15.28 L2.05 16.21 Z"), // the head
+		sw(1, "M5.17 10.21 C5.75 10.91 6.83 11.67 8.32 11.86"), // the ferrule
+		sw(1, "M4.75 14.4 L4.78 15.6 L4.9 17"),
+		sw(1.1, "M6.8 14 L6.85 15.4 L7.15 16.5 L7.57 17"),
+		s("M12.75 10.75 H17.75"), s("M12.75 13.75 H17.75"), s("M14.75 16.75 H17.75"))
 }

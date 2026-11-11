@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gioui.org/gesture"
@@ -84,6 +85,14 @@ type thrCard struct {
 
 	comp  *composer.Composer // the real reply composer, made on first click
 	compY int                // composer top within the list element (px)
+
+	// "Show N more replies" (threads_older.go): the older replies loaded
+	// into the card, oldest first; a fetch running; the thread's start
+	// reached (has_more false); the fetch's answer for the UI goroutine
+	older      []core.Message
+	olderBusy  bool
+	olderStart bool
+	olderRes   atomic.Pointer[thrOlder]
 }
 
 func (c *thrCard) msg(ts string) *thrMsg {
@@ -750,14 +759,7 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 			c.name = v.dmPartner(&t.Root, t.Replies)
 		}
 		c.people = v.people(&t.Root, t.Replies)
-		c.moreText = ""
-		if hidden := t.Root.ReplyCount - len(t.Replies); hidden > 0 {
-			w := "replies"
-			if hidden == 1 {
-				w = "reply"
-			}
-			c.moreText = "Show " + strconv.Itoa(hidden) + " more " + w
-		}
+		c.moreText = thrMoreText(t, c)
 		kind := ""
 		if r, ok := convs[t.Channel]; ok {
 			kind = r.Kind
@@ -780,9 +782,10 @@ func (v *Threads) thread(gtx C, t *thrItem, convs map[string]core.ConvRef, y0 in
 	if c.title.Clicked(gtx) {
 		v.h.Navigate("c/" + t.Channel)
 	}
+	v.applyOlder(t, c)
 	if c.more.Clicked(gtx) {
 		gtx.Execute(op.InvalidateCmd{})
-		v.showMore(t)
+		v.loadOlder(t, c)
 	}
 	if c.reply.Clicked(gtx) {
 		gtx.Execute(op.InvalidateCmd{})
@@ -870,12 +873,6 @@ type thrSub struct {
 	y, h int
 }
 
-// showMore is the "Show N more replies" row (Clack opens the thread).
-func (v *Threads) showMore(t *thrItem) {
-	v.markRead(t)
-	v.h.OpenThread(t.Channel, t.Root.TS)
-}
-
 // openReply swaps in the card's real composer and focuses it.
 func (v *Threads) openReply(t *thrItem, c *thrCard) {
 	v.markRead(t)
@@ -897,7 +894,8 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 // the reply box within it.
 func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h int)) (D, int) {
 	unread := v.unread(t)
-	unreadFrom := len(t.Replies) - unread
+	replies := thrShown(t, c) // the loaded older replies, then the latest ones
+	unreadFrom := len(replies) - unread
 	compH, compBottom := 0, 20
 	if c.comp != nil {
 		compBottom = 0 // the real composer ends with its 24px hint bar
@@ -918,21 +916,11 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h 
 			if c.moreText == "" {
 				return D{}
 			}
-			return rec("load_older-"+t.key, layout.Inset{Top: 4, Bottom: 4, Left: thrMsgIndent, Right: thrMsgPad}.Layout(gtx, func(gtx C) D {
-				gtx.Constraints.Min.X = 0
-				return c.more.Layout(gtx, func(gtx C) D {
-					pointerCursor(gtx)
-					d := v.para(gtx, 15, 22, wBold, v.p.Link, 1, c.moreText)
-					if c.more.Hovered() {
-						fill(gtx, image.Rect(0, d.Size.Y-gtx.Dp(3), d.Size.X, d.Size.Y-gtx.Dp(2)), v.p.Link)
-					}
-					return d
-				})
-			}))
+			return rec("load_older-"+t.key, v.olderRow(gtx, c))
 		}),
 		layout.Rigid(func(gtx C) D {
-			return actStack(gtx, len(t.Replies), func(gtx C, i int) D {
-				m := &t.Replies[i]
+			return actStack(gtx, len(replies), func(gtx C, i int) D {
+				m := &replies[i]
 				d := v.msg(gtx, c.msg(m.TS), m, 8)
 				if unread > 0 && i == max(unreadFrom, 0) {
 					v.newLine(gtx, d.Size.X)
@@ -1315,8 +1303,8 @@ func (v *Threads) kbItems(items []thrItem) []vkItem {
 		if c := v.cards[k]; c != nil && c.moreText != "" {
 			add("load_older-"+k, thrKBRow{kind: "load_older", key: k, ch: t.Channel}, i)
 		}
-		for j := range t.Replies {
-			add(k+"-"+t.Replies[j].TS, thrKBRow{kind: "reply", key: k, ch: t.Channel, ts: t.Replies[j].TS}, i)
+		for _, m := range thrShown(t, v.cards[k]) {
+			add(k+"-"+m.TS, thrKBRow{kind: "reply", key: k, ch: t.Channel, ts: m.TS}, i)
 		}
 		add("footer-"+k, thrKBRow{kind: "footer", key: k, ch: t.Channel}, i)
 	}
@@ -1337,8 +1325,8 @@ func (v *Threads) item(key string) (*thrItem, *thrCard) {
 // shows the older replies.
 func (v *Threads) kbClick(key string) {
 	if r := v.kbRows[key]; r.kind == "load_older" {
-		if t, _ := v.item(r.key); t != nil {
-			v.showMore(t)
+		if t, c := v.item(r.key); t != nil && c != nil {
+			v.loadOlder(t, c)
 		}
 	}
 }
