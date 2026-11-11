@@ -556,6 +556,31 @@ func (w *x11Window) destroy() {
 	w.x = nil
 }
 
+// moveByPointer hands the window to the window manager to move with the
+// pointer, from the press b: Chromium's DoWMMoveResize for a drag region
+// (HTCAPTION). It drops the press's implicit grab, which the window
+// manager takes over, and sends _NET_WM_MOVERESIZE_MOVE. A Clack patch
+// (CLACK_PATCHES.md §8).
+func (w *x11Window) moveByPointer(b *C.XButtonEvent) {
+	C.XUngrabPointer(w.x, C.CurrentTime)
+	var xev C.XEvent
+	ev := (*C.XClientMessageEvent)(unsafe.Pointer(&xev))
+	*ev = C.XClientMessageEvent{
+		_type:        C.ClientMessage,
+		display:      w.x,
+		window:       w.xw,
+		message_type: w.atom("_NET_WM_MOVERESIZE", false),
+		format:       32,
+	}
+	data := (*[5]C.long)(unsafe.Pointer(&ev.data))
+	data[0] = C.long(b.x_root)
+	data[1] = C.long(b.y_root)
+	data[2] = 8 // _NET_WM_MOVERESIZE_MOVE
+	C.XSendEvent(w.x, C.XDefaultRootWindow(w.x), C.False,
+		C.SubstructureNotifyMask|C.SubstructureRedirectMask, &xev)
+	C.XFlush(w.x)
+}
+
 // atom is a wrapper around XInternAtom. Callers should cache the result
 // in order to limit round-trips to the X server.
 func (w *x11Window) atom(name string, onlyIfExists bool) C.Atom {
@@ -647,6 +672,16 @@ func (h *x11EventHandler) handleEvents() bool {
 			}
 		case C.ButtonPress, C.ButtonRelease:
 			bevt := (*C.XButtonEvent)(unsafe.Pointer(xev))
+			if bevt._type == C.ButtonPress && bevt.button == C.Button1 {
+				// Clack patch (CLACK_PATCHES.md §8): an ActionMove area
+				// moves the window here too, as it does on macOS, Windows
+				// and Wayland. The press doesn't reach the widgets.
+				p := f32.Point{X: float32(bevt.x), Y: float32(bevt.y)}
+				if a, ok := w.w.ActionAt(p); ok && a == system.ActionMove && w.config.Mode != Fullscreen {
+					w.moveByPointer(bevt)
+					break
+				}
+			}
 			ev := pointer.Event{
 				Kind:   pointer.Press,
 				Source: pointer.Mouse,
@@ -870,7 +905,8 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 
 	ppsp := x11DetectUIScale(dpy)
 	cfg := unit.Metric{PxPerDp: ppsp, PxPerSp: ppsp}
-	// Only use cnf for getting the window size.
+	// Only use cnf for getting the window size (and, a Clack patch,
+	// whether it's a Panel).
 	var cnf Config
 	cnf.apply(cfg, options)
 
@@ -939,6 +975,15 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 	// IBus IME
 	if strings.Contains(os.Getenv("XMODIFIERS"), "@im=ibus") {
 		w.ibus, _ = ibus.Start(C.GoString(C.XDisplayString(dpy)), (*ibusEventHandler)(w))
+	}
+
+	if cnf.panel {
+		// Clack patch (CLACK_PATCHES.md §8): a panel maps without the
+		// focus, as Chromium's X11Window::Map(inactive) does it:
+		// _NET_WM_USER_TIME is CurrentTime (0).
+		t := C.long(C.CurrentTime)
+		C.XChangeProperty(dpy, win, w.atom("_NET_WM_USER_TIME", false), w.atom("CARDINAL", false), 32,
+			C.PropModeReplace, (*C.uchar)(unsafe.Pointer(&t)), 1)
 	}
 
 	// make the window visible on the screen

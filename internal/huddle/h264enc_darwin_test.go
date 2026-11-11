@@ -15,7 +15,7 @@ import (
 // keyframe on request, and pictures goh264 (the receive side) decodes.
 func TestVTEncode(t *testing.T) {
 	const w, h = 640, 360
-	enc, err := newVTEncoder(w, h, 15, 800_000)
+	enc, err := newVTEncoder(encOpts{W: w, H: h, FPS: 15, Bps: 800_000})
 	if err != nil {
 		t.Fatalf("VideoToolbox: %v", err)
 	}

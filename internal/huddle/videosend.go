@@ -90,17 +90,14 @@ type camPipe struct {
 	pc     *webrtc.PeerConnection
 	api    *webrtc.API
 
-	encMu   sync.Mutex // the encoder belongs to the camera goroutine
-	enc     videoEncoder
-	encSize [2]int
-	encBps  int
-	lastAt  time.Time
-	errAt   time.Time
-	keyReq  atomic.Bool
-	remb    atomic.Int64
-	sent    atomic.Int64
+	h264Pub // the encoder (it belongs to the camera goroutine)
 	preview selfPreview
 	fx      videoFX // the background effect, before preview and encoder
+}
+
+// init sets the camera's encoder settings (Join).
+func (c *camPipe) init() {
+	c.what, c.fps, c.bps, c.minBps = "camera", camFPS, camBitrate, camMinBitrate
 }
 
 // SetCamera turns your camera on or off. It returns at once: asking the OS
@@ -287,7 +284,7 @@ func (s *Session) attachLocked() error {
 	}
 	c.sender = sender
 	c.keyReq.Store(true)
-	go s.readCameraRTCP(sender)
+	go c.readRTCP(sender)
 	return nil
 }
 
@@ -320,12 +317,7 @@ func (s *Session) cameraOff() {
 	if cam != nil {
 		cam.Close()
 	}
-	c.encMu.Lock()
-	if c.enc != nil {
-		c.enc.Close()
-		c.enc = nil
-	}
-	c.encMu.Unlock()
+	c.closeEncoder()
 	c.preview.clear()
 	c.fx.close()
 	if sender != nil && pc != nil {
@@ -356,12 +348,7 @@ func (s *Session) closeCamera() {
 	if cam != nil {
 		cam.Close()
 	}
-	c.encMu.Lock()
-	if c.enc != nil {
-		c.enc.Close()
-		c.enc = nil
-	}
-	c.encMu.Unlock()
+	c.closeEncoder()
 	c.preview.clear()
 	c.fx.close()
 }
@@ -379,26 +366,6 @@ func (s *Session) cameraDesc() *streamDesc {
 		GroupID: camGroupID, AttendeeID: s.join.Attendee.AttendeeID, MediaType: mediaVideo}
 }
 
-// readCameraRTCP turns Chime's PLI/FIR into a keyframe and its REMB into
-// the encoder's target. It ends when the sender stops (RemoveTrack, close).
-func (s *Session) readCameraRTCP(sender *webrtc.RTPSender) {
-	c := &s.cam
-	for {
-		pkts, _, err := sender.ReadRTCP()
-		if err != nil {
-			return
-		}
-		for _, p := range pkts {
-			switch p := p.(type) {
-			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
-				c.keyReq.Store(true)
-			case *rtcp.ReceiverEstimatedMaximumBitrate:
-				c.remb.Store(int64(p.Bitrate))
-			}
-		}
-	}
-}
-
 // onCameraFrame runs on the camera's goroutine: the background effect,
 // the preview, then (when published) encode and send.
 func (s *Session) onCameraFrame(f *CameraFrame) {
@@ -414,58 +381,149 @@ func (s *Session) onCameraFrame(f *CameraFrame) {
 	if !sending {
 		return
 	}
-	c.encMu.Lock()
-	defer c.encMu.Unlock()
-	c.mu.Lock()
-	sending = c.sender != nil && c.want // cameraOff may have run meanwhile
-	c.mu.Unlock()
-	if !sending {
+	c.send(f, track, func() bool { // cameraOff may have run meanwhile
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.sender != nil && c.want
+	}, s.logf)
+}
+
+// ---- publishing H.264 ----
+
+// h264Pub is the sending half of one published video track: the encoder
+// (made for the frame's size), Chime's REMB as its target bitrate, its
+// PLI and FIR as keyframes, and each sample's duration. The camera and
+// the screen share (content.go) each have one.
+type h264Pub struct {
+	what             string // "camera", "screen share" (logs)
+	fps, bps, minBps int
+	// screen: encoder settings for screen content, and a frame the
+	// encoder can't take whole is scaled down to what it can (the pure-Go
+	// fallback's 640x360) instead of not sent
+	screen bool
+
+	encMu   sync.Mutex // the encoder belongs to the capture goroutine
+	enc     videoEncoder
+	srcSize [2]int // the frames' size
+	encSize [2]int // the encoder's (smaller when scaled)
+	scaled  CameraFrame
+	encBps  int
+	lastAt  time.Time
+	errAt   time.Time
+	keyReq  atomic.Bool
+	remb    atomic.Int64
+	sent    atomic.Int64
+}
+
+// readRTCP turns Chime's PLI/FIR into a keyframe and its REMB into the
+// encoder's target. It ends when the sender stops (RemoveTrack, close).
+func (p *h264Pub) readRTCP(sender *webrtc.RTPSender) {
+	for {
+		pkts, _, err := sender.ReadRTCP()
+		if err != nil {
+			return
+		}
+		for _, pk := range pkts {
+			switch pk := pk.(type) {
+			case *rtcp.PictureLossIndication, *rtcp.FullIntraRequest:
+				p.keyReq.Store(true)
+			case *rtcp.ReceiverEstimatedMaximumBitrate:
+				p.remb.Store(int64(pk.Bitrate))
+			}
+		}
+	}
+}
+
+// closeEncoder drops the encoder (the next frame makes a new one).
+func (p *h264Pub) closeEncoder() {
+	p.encMu.Lock()
+	if p.enc != nil {
+		p.enc.Close()
+		p.enc = nil
+	}
+	p.encMu.Unlock()
+}
+
+// send encodes f and writes it to track. still, when not nil, is asked
+// under the encoder's lock: false (the video went off meanwhile) drops
+// the frame.
+func (p *h264Pub) send(f *CameraFrame, track *webrtc.TrackLocalStaticSample, still func() bool, logf func(string, ...any)) {
+	if track == nil {
 		return
 	}
-	if c.enc == nil || c.encSize != [2]int{f.W, f.H} {
-		if c.enc != nil {
-			c.enc.Close()
-			c.enc = nil
+	p.encMu.Lock()
+	defer p.encMu.Unlock()
+	if still != nil && !still() {
+		return
+	}
+	p.encode(f, func(au []byte, d time.Duration) error { return track.WriteSample(media.Sample{Data: au, Duration: d}) }, logf)
+}
+
+// sendTo is send with the access unit going to write instead of a track.
+func (p *h264Pub) sendTo(f *CameraFrame, write func(au []byte, d time.Duration) error, logf func(string, ...any)) {
+	p.encMu.Lock()
+	defer p.encMu.Unlock()
+	p.encode(f, write, logf)
+}
+
+// encode runs f through the encoder (made or remade for its size) and
+// writes the access unit; encMu is held.
+func (p *h264Pub) encode(f *CameraFrame, write func(au []byte, d time.Duration) error, logf func(string, ...any)) {
+	if p.enc == nil || p.srcSize != [2]int{f.W, f.H} {
+		if p.enc != nil {
+			p.enc.Close()
+			p.enc = nil
 		}
-		enc, err := newVideoEncoder(f.W, f.H, camFPS, camBitrate, s.logf)
+		ew, eh := f.W, f.H
+		enc, err := newVideoEncoder(encOpts{W: ew, H: eh, FPS: p.fps, Bps: p.bps, Screen: p.screen}, logf)
+		if err != nil && p.screen {
+			if ew, eh = fitArea(f.W, f.H, maxPCMPixels); ew < f.W {
+				enc, err = newVideoEncoder(encOpts{W: ew, H: eh, FPS: p.fps, Bps: p.bps, Screen: true}, logf)
+			}
+		}
 		if err != nil {
-			if time.Since(c.errAt) > 10*time.Second {
-				c.errAt = time.Now()
-				s.logf("huddle: camera encoder: %v", err)
+			if time.Since(p.errAt) > 10*time.Second {
+				p.errAt = time.Now()
+				logf("huddle: %s encoder: %v", p.what, err)
 			}
 			return
 		}
-		s.logf("huddle: camera %dx%d, %s H.264", f.W, f.H, enc.Name())
-		c.enc, c.encBps = enc, camBitrate
-		c.encSize = [2]int{f.W, f.H}
-		c.keyReq.Store(true)
+		logf("huddle: %s %dx%d, %s H.264", p.what, ew, eh, enc.Name())
+		p.enc, p.encBps = enc, p.bps
+		p.srcSize, p.encSize = [2]int{f.W, f.H}, [2]int{ew, eh}
+		p.keyReq.Store(true)
 	}
-	if r := c.remb.Load(); r > 0 {
-		bps := int(max(camMinBitrate, min(camBitrate, r*9/10)))
-		if d := bps - c.encBps; d > c.encBps/10 || -d > c.encBps/10 {
-			c.enc.SetBitrate(bps)
-			c.encBps = bps
+	in := f
+	if p.encSize != p.srcSize {
+		scaleNV12(&p.scaled, f, p.encSize[0], p.encSize[1])
+		in = &p.scaled
+	}
+	if r := p.remb.Load(); r > 0 {
+		bps := int(max(int64(p.minBps), min(int64(p.bps), r*9/10)))
+		if d := bps - p.encBps; d > p.encBps/10 || -d > p.encBps/10 {
+			p.enc.SetBitrate(bps)
+			p.encBps = bps
 		}
 	}
-	key := c.keyReq.Swap(false)
-	au, err := c.enc.Encode(f, key)
+	key := p.keyReq.Swap(false)
+	au, err := p.enc.Encode(in, key)
 	if err != nil || au == nil {
 		if key {
-			c.keyReq.Store(true)
+			p.keyReq.Store(true)
 		}
-		if err != nil && time.Since(c.errAt) > 10*time.Second {
-			c.errAt = time.Now()
-			s.logf("huddle: camera encode: %v", err)
+		if err != nil && time.Since(p.errAt) > 10*time.Second {
+			p.errAt = time.Now()
+			logf("huddle: %s encode: %v", p.what, err)
 		}
 		return
 	}
-	dur := time.Second / camFPS
-	if !c.lastAt.IsZero() {
-		dur = min(max(f.At.Sub(c.lastAt), time.Millisecond), 200*time.Millisecond)
+	dur := time.Second / time.Duration(max(1, p.fps))
+	if !p.lastAt.IsZero() {
+		dur = min(max(f.At.Sub(p.lastAt), time.Millisecond), 200*time.Millisecond)
 	}
-	c.lastAt = f.At
-	if track.WriteSample(media.Sample{Data: au, Duration: dur}) == nil {
-		c.sent.Add(1)
+	p.lastAt = f.At
+	if write(au, dur) == nil {
+		p.sent.Add(1)
 	}
 }
 
@@ -475,6 +533,9 @@ func (s *Session) onCameraFrame(f *CameraFrame) {
 // on the camera goroutine only while someone looks (Session.Frame) and at
 // most maxFPS times a second, scaled down to at most 480 px wide.
 type selfPreview struct {
+	// plain: not mirrored, up to 960 px wide and 10 frames a second (your
+	// screen share as the others see it)
+	plain     bool
 	mu        sync.Mutex
 	on        bool // between start and clear: a late frame doesn't come back
 	frame     VideoFrame
@@ -496,11 +557,15 @@ func (p *selfPreview) offer(f *CameraFrame, notify func()) {
 	if shown && now.UnixNano()-p.wanted.Load() > int64(2*time.Second) {
 		return
 	}
-	if now.Sub(last) < time.Second/maxFPS {
+	fps, widest := maxFPS, 480
+	if p.plain {
+		fps, widest = 10, 960
+	}
+	if now.Sub(last) < time.Second/time.Duration(fps) {
 		return
 	}
 	step := 1
-	for f.W/step > 480 {
+	for f.W/step > widest {
 		step *= 2
 	}
 	w, h := f.W/step, f.H/step
@@ -512,7 +577,11 @@ func (p *selfPreview) offer(f *CameraFrame, notify func()) {
 	}
 	p.next = (p.next + 1) % len(p.pool)
 	p.mu.Unlock()
-	nv12ToRGBAMirrored(img, f, step)
+	if p.plain {
+		nv12ToRGBA(img, f, step)
+	} else {
+		nv12ToRGBAMirrored(img, f, step)
+	}
 	out := &image.RGBA{Pix: img.Pix, Stride: img.Stride, Rect: img.Rect}
 	p.mu.Lock()
 	if !p.on {
@@ -525,6 +594,13 @@ func (p *selfPreview) offer(f *CameraFrame, notify func()) {
 	if notify != nil {
 		notify()
 	}
+}
+
+// has reports whether there is a picture to show.
+func (p *selfPreview) has() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.on && p.frame.Img != nil
 }
 
 func (p *selfPreview) latest() VideoFrame {

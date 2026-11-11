@@ -135,6 +135,10 @@ type ModalOpts struct {
 	// it.
 	Hero  func(gtx layout.Context) layout.Dimensions
 	HeroH float32
+	// Header draws the header's own content in place of a title, with
+	// gtx.Constraints exactly the header's size (Slack's ModalHeader with
+	// other children: the screen picker's source tabs).
+	Header func(gtx layout.Context) layout.Dimensions
 	// Over draws on top of the whole card, header and footer included,
 	// in card coordinates with gtx.Constraints exactly the card's size
 	// (Slack's c-modal_speed_bump veils the dialog with its sheet; the
@@ -335,6 +339,12 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 				}
 
 				// header
+				if m.o.Header != nil {
+					at(gtx, pos, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Exact(image.Pt(w, headH))
+						return m.o.Header(gtx)
+					})
+				}
 				ty := (headH - subH - dp(gtx, titleLH)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
