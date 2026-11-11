@@ -28,8 +28,11 @@ func TestArchivedFooterUnarchive(t *testing.T) {
 	svc := e.a.data.core
 	svc.SetExperimentGroup("unarchive_channel_banner_polish", "off")
 	e.openChannel(ch)
-	c := e.a.convoFor(ch, "")
-	e.until("archived bar", 20*time.Second, func() bool { return c != nil && e.a.footerFor(c) == footArchived && c.jp != nil })
+	var c *convo
+	e.until("archived bar", 20*time.Second, func() bool {
+		c = e.a.convoFor(ch, "")
+		return c != nil && e.a.footerFor(c) == footArchived && c.jp != nil
+	})
 	e.until("the permission", 10*time.Second, func() bool { return svc.CanUnarchive(ch) })
 	c.jp.unarchive.Click()
 	e.settle(300 * time.Millisecond)
