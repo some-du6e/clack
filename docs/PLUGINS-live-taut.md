@@ -38,7 +38,7 @@ Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is liste
 | NoTrack | ✅ | Blocks Slack's tracking requests (`NoTrack.ts:105`) | Clack makes none of these requests; the plugin's own blocking works on what plugins fetch | Nothing visible by design. `taut` NoTrack/behaviour. |
 | OfficeHours | ✅ | Out of office or away on a weekly schedule (`OfficeHours.tsx:208-262`) | Same (users.profile.set, users.setPresence, dnd.setSnooze) | Bench: "inside an Away window, you're set away". Not run on the real account (it changes your status). |
 | Oneko | ✅ (fixed) | A cat that chases your cursor (`Oneko.ts:90`) | Same | Was ⚠️: the cat followed the pointer but never changed frame, as `background-position` other than center was ignored. slackc now positions and tiles backgrounds and honours `image-rendering: pixelated` (TestBgPosition, TestImageRendering). |
-| OwlMode | ⚠️ (fixed mostly) | Reply and react anonymously in your owl confession's thread; save confession keys from owl's DM or modal (`OwlMode.tsx:102-500`) | The thread composer's owl button, context bar and styling; replies and reactions go through owl's shortcuts; keys save from owl's DM | Was ❌ for replies and reactions: Clack had no `appActions` store (owl's shortcuts weren't found), and `executeAppAction` dropped the plugin's client_token. `taut` OwlMode/behaviour runs a reply end to end. Left: "Save in Taut" inside owl's modal needs a ViewBlocks patch point in Clack's Block Kit modals. |
+| OwlMode | ✅ (fixed) | Reply and react anonymously in your owl confession's thread; save confession keys from owl's DM or modal (`OwlMode.tsx:102-500`) | The thread composer's owl button, context bar and styling; replies and reactions go through owl's shortcuts; Save in Taut under owl's DM and modal | Was ❌ for replies and reactions: Clack had no `appActions` store (owl's shortcuts weren't found), and `executeAppAction` dropped the plugin's client_token, so owl's modal never came back to it. `taut` OwlMode/behaviour runs a reply end to end. Clack's Block Kit modals now render through Slack's ViewBlocks (props as AppView passes them; TestViewBlocksProps), where Save in Taut goes; that part isn't run end to end. |
 | PrivateChannel | ⚠️ (fixed partly) | Names private channels you aren't in from the flaron index; mentions grayed with a lock; local names (`PrivateChannel.tsx:83-689`) | Mentions get Slack's props (isPrivate, isMember, isNonExistent, isUnknown) and the plugin's lock styling; a typed channel id resolves through `fetchAndUpsertChannelsById` | `taut` PrivateChannel/behaviour names a channel from flaron. Was: `fetchAndUpsertChannelsById` didn't exist, so typed ids hung for 5 s. Clack never dispatches `fetchRawChannelsById` for mentions it can't resolve, so those keep their id until typed. |
 | QuickJoin | ✅ | "Join channel" in the right-click menu of channels you're not in (`QuickJoin.tsx:29`) | Same, in the channel menus (a channel link's right-click menu among them) | `popups-taut` QuickJoin, bench. |
 | RealMarkdown | ✅ | Standard Markdown as you type (`RealMarkdown.ts:17`) | Same | `composer-taut` TestTautRealMarkdown. |
@@ -65,6 +65,7 @@ Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is liste
 | taut thunks | `fetchAndUpsertChannelsById` (through `fetchRawChannelsById`, as Slack's) | PrivateChannel |
 | slackc | `background-position` (lengths, percentages, keywords), `background-repeat` tiling, `image-rendering: pixelated` | Oneko |
 | slackc | Slack's `.p-context_bar_v2` rules for plugins' own elements | HaikuWarning, OwlMode |
+| blockkit | A modal's body is Slack's ViewBlocks (`{view, containerId, containerContext: "modal", viewContextTeamId}`) | OwlMode |
 | Preferences | Preferences > Plugins is Taut's own tab (see below) | all |
 
 New acceptance checks in `internal/taut` (workflow `taut`): HaikuWarning, OwlMode, PrivateChannel and ThreadJump behaviours.
@@ -84,7 +85,6 @@ Karim: the plugin settings page read like a thank-you page written for Slick. It
 - **Search masking** (Censorship): the search view would have to hand its results to the mirror and read the patched copy back.
 - **AttachmentMedia** (ClickToLoad): the media part of an unfurl as its own patch point, with Slack's `audioHtml` props.
 - **Audio in jsrt** (CustomNameRecording): `AudioContext.decodeAudioData` and `MediaRecorder`.
-- **ViewBlocks** (OwlMode's Save in Taut in owl's modal): a patch point in Clack's Block Kit modals.
 - **Mentions under Nicknames**: mention labels from the patched members slice.
 - **CSS on natives** (StreamerMode's mention blur, SlimMessageBox's one-line layout): `:has()` over natives' children and flex `order` on native composer parts.
 - **Slack's stylesheet for plugins' own elements** beyond the context bar (CopyReacted's chip, ThreadJump's and StreamerMode's header buttons draw unstyled).
