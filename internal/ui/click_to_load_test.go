@@ -55,19 +55,15 @@ func TestTautViewClickToLoad(t *testing.T) {
 	e.until(15*time.Second, "the Load Spotify placeholder in the card's media", func() bool {
 		return e.tree("taut-click-to-load", "Load Spotify") != ""
 	})
-	// the media boundary carries the attachment's audio_html, and the
-	// card itself (MessageAttachment) isn't inside it
-	tr := e.tree(`"n":"AttachmentMedia"`, "audioHtml")
-	if tr == "" {
-		t.Fatal("no AttachmentMedia tree with audioHtml")
-	}
-	for _, want := range []string{"open.spotify.com/embed/track/0SyntheticTrack00000", `"audioHtmlHeight":152`} {
-		if !strings.Contains(tr, want) {
-			t.Errorf("AttachmentMedia's props lack %s: %.400s", want, tr)
-		}
+	// the placeholder stands for the player: it read the provider from
+	// audioHtml's iframe ("Load Spotify") and took audioHtmlHeight as its
+	// height; it covers the media alone, not the card's title
+	tr := e.tree("taut-click-to-load", "Load Spotify")
+	if !strings.Contains(tr, `"height":152`) {
+		t.Errorf("the placeholder's height isn't audio_html_height's 152: %.600s", tr)
 	}
 	if strings.Contains(tr, "A Synthetic Song") {
-		t.Errorf("the media boundary holds the card's title: it should cover the media alone")
+		t.Errorf("the media's tree holds the card's title: the patch should cover the media alone")
 	}
 	sh := newSVShooter(t, e)
 	sh.dir = os.Getenv("TAUT_SHOTS_DIR")
