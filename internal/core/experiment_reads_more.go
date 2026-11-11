@@ -27,6 +27,13 @@ func init() {
 		"rich_text_headers_and_dividers":                    on,
 		"sidebar_draft_indicator_menu_and_thread_inclusion": on,
 		"updated_scheduled_sends_desktop":                   on,
+		// and with ui's later merges (3207730f: threads, workflows)
+		"channel_details_agents_apps_tab":      on,
+		"enable_wfb_ai_answer_step":            on,
+		"nested_secondary_view":                on,
+		"secondary_view_default_width":         on,
+		"unread_thread_indication_in_replybar": on,
+		"workflow_execution_window":            on,
 	} {
 		experimentReads[name] = groups
 	}
