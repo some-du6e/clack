@@ -159,6 +159,6 @@ func (v *Activity) activityEmpty(gtx C) D {
 		gtx.Constraints.Min.X = 0
 		gtx.Constraints.Min.Y = 0
 		return v.th.Layout(gtx, theme.TextStyle{Size: 15, Weight: wReg, Color: v.p.Muted, LineHeight: 22, Align: text.Middle},
-			"Select a notification to view the details.")
+			nsActivity.T("Select a notification to view the details.")) // ActivityEmptyView
 	})
 }

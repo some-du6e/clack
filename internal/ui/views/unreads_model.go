@@ -422,15 +422,15 @@ func unrMsgCount(n int, exact bool) string {
 		return ""
 	}
 	if exact {
-		return plural(n, "message")
+		return nsUnreads.T("{messageCount, plural, =1 {# message} other {# messages}}", "messageCount", n)
 	}
-	return formatInt(int64(n)) + "+ " + map[bool]string{true: "message", false: "messages"}[n == 1]
+	return nsUnreads.T("{messageCount, plural, =1 {#+ message} other {#+ messages}}", "messageCount", n)
 }
 
 // unrNewText is renderNewMsgs' label.
 func unrNewText(n int, exact bool) string {
 	if !exact {
-		return "New messages"
+		return nsUnreads.T("New messages")
 	}
-	return formatInt(int64(n)) + " new " + map[bool]string{true: "message", false: "messages"}[n == 1]
+	return nsUnreads.T("{messageCount} new {messageCount, plural, =1 {message} other {messages}}", "messageCount", n)
 }

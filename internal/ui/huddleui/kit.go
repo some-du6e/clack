@@ -14,6 +14,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
+	"github.com/go-text/typesetting/segmenter"
 
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/imgcache"
@@ -88,6 +89,34 @@ func labelSize(gtx C, th *theme.Theme, size unit.Sp, w font.Weight, txt string) 
 	d := th.Label(gtx, size, w, hudWhite, txt)
 	m.Stop()
 	return d.Size
+}
+
+// lineBreaks are the rune offsets in rs a line may start at: UAX #14's
+// break opportunities (segmenter.LineIterator, the rules Gio's labels and
+// the browser wrap Slack's text by: after spaces, and between CJK
+// characters but not before 、。」 or small kana, so ja-JP's space-less
+// sentences wrap too). The text's end is one.
+func lineBreaks(rs []rune) map[int]bool {
+	out := map[int]bool{}
+	var seg segmenter.Segmenter
+	seg.Init(rs)
+	for it := seg.LineIterator(); it.Next(); {
+		l := it.Line()
+		out[l.Offset+len(l.Text)] = true
+	}
+	return out
+}
+
+// breakUnits is s cut at its line break opportunities (lineBreaks), each
+// piece with the spaces after it.
+func breakUnits(s string) []string {
+	var out []string
+	var seg segmenter.Segmenter
+	seg.Init([]rune(s))
+	for it := seg.LineIterator(); it.Next(); {
+		out = append(out, string(it.Line().Text))
+	}
+	return out
 }
 
 // avatar draws a user's picture (cover) or a placeholder.

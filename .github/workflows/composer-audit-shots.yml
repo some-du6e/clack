@@ -34,7 +34,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: composer audit tests
         run: |
           go test -count=1 -v -run 'TestSlackLength|TestOverLimitBlocksSend|TestClipButtonsNeedARecorder|TestShortcutAndMentionButtons|TestEmptyEditAsksToDelete|TestMarkdownShortcutsLikeSlack|TestComposerKeysLikeSlack|TestComposerEditingKeysLikeSlack|TestScheduleMenuRows|TestFormattingTogglePref|TestPasteLimit|TestAutoformat|TestLiveMarkup|TestEnter|TestBackspace|TestAffinityFeaturesFollowExperiment|TestScheduleDialogLikeSlack|TestSnippetDialogLikeSlack|TestSnippetTypeOptions|TestPasteLimitCreatesSnippet|TestPlusMenuRows|TestScheduledSendBar|TestSlashListKeysByApp|TestFloatBarPosition|TestFloatBarShowsLikeSlack' ./internal/ui/composer

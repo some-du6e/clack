@@ -72,7 +72,7 @@ func newForward(h Host, m core.Message) *actForward {
 		f.link = permalink(h, m.Channel, m.TS, m.ThreadTS)
 	}
 	f.all = actFwdTargets(h)
-	f.fwd = &ModalButton{Label: "Forward", Kind: BtnPrimary, Enabled: func() bool { return len(f.chips) > 0 }, Do: func() bool {
+	f.fwd = &ModalButton{Label: nsShare.T("Forward"), Kind: BtnPrimary, Enabled: func() bool { return len(f.chips) > 0 }, Do: func() bool {
 		f.send()
 		return true
 	},
@@ -81,12 +81,12 @@ func newForward(h Host, m core.Message) *actForward {
 		V2: func() bool { return expOn(h, ExpSlackKitV2Button) },
 	}
 	f.modal = NewModal(h, ModalOpts{
-		Title: "Forward this message",
+		Title: nsShare.T("Forward this message"),
 		Body:  f.layout,
 		Buttons: []*ModalButton{
 			// ShareDialogCopyLinkButton (Zp0h): the legacy outline button
 			// whatever the experiment, labelled "Copy Link"
-			{Label: "Copy Link", Kind: BtnOutline, Do: func() bool {
+			{Label: nsShare.T("Copy Link"), Kind: BtnOutline, Do: func() bool {
 				f.copyLink = true // copied by the body, which has the frame context
 				return false
 			}},
@@ -414,7 +414,7 @@ func (f *actForward) layout(gtx layout.Context) layout.Dimensions {
 	if f.copyLink {
 		f.copyLink = false
 		copyText(gtx, f.link)
-		f.h.Toast("Link copied")
+		f.h.Toast(nsShare.T("Link copied to clipboard")) // ShareDialogCopyLinkButton's
 	}
 	f.events(gtx)
 	if f.modal.done {
@@ -484,7 +484,7 @@ func (f *actForward) picker(gtx layout.Context, th *theme.Theme, cl *Colors) lay
 				gtx.Constraints = layout.Constraints{Min: image.Pt(ew, 0), Max: image.Pt(ew, lineH)}
 				if f.to.Len() == 0 && len(f.chips) == 0 {
 					call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Add a channel or person")
+						return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsShare.T("Search for channel or person"))
 					})
 					call.Add(gtx.Ops)
 				}
@@ -624,7 +624,7 @@ func (f *actForward) noteField(gtx layout.Context, th *theme.Theme, cl *Colors) 
 		gtx.Constraints = layout.Constraints{Min: image.Pt(tw, 0), Max: image.Pt(tw, dp(gtx, 160))}
 		if f.note.Len() == 0 {
 			call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, cl.Placeholder, "Add a message, if you'd like.")
+				return text(gtx, th, 15, theme.Regular, cl.Placeholder, nsShare.T("Add a message, if you’d like."))
 			})
 			call.Add(gtx.Ops)
 		}

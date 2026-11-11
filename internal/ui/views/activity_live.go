@@ -175,7 +175,7 @@ func (v *Activity) newActivityBanner(gtx C, listTop int) {
 			g.Constraints.Min.Y = gtx.Dp(28)
 			return layout.W.Layout(g, func(gtx C) D {
 				return row(gtx, layout.Middle,
-					layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, rgb(0xffffff), "New activity") }),
+					layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, rgb(0xffffff), nsActivity.T("New activity")) }),
 					hgap(4),
 					layout.Rigid(func(gtx C) D { return v.icon(gtx, "arrow-up", 13, rgb(0xffffff)) }),
 				)

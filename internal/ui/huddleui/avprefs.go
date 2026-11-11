@@ -221,7 +221,7 @@ func (c *Controller) onScreenLock(locked bool) {
 		c.leave(s)
 		// HuddleErrorModal "DeviceLocked" (its "Preferences" is a link in
 		// Slack; here the sentence names the page)
-		c.showErrModal(errModal{title: "You’re no longer in a huddle", button: "OK",
+		c.showErrModal(errModal{title: nsHuddles.T("You’re no longer in a huddle"), button: "OK",
 			body: "When your computer locks, you automatically leave any huddle you’re in. You can change this in Preferences."})
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -270,7 +271,7 @@ func (v *Huddles) Layout(gtx C) D {
 		items = append(items, huddleItem{kind: hkHero})
 	}
 	if len(live) > 0 {
-		items = append(items, huddleItem{kind: hkSection, title: "Happening now", tx: "Huddles in your channels and DMs"})
+		items = append(items, huddleItem{kind: hkSection, title: i18n.T("today", "Happening now"), tx: "Huddles in your channels and DMs"})
 		for _, r := range live {
 			items = append(items, huddleItem{kind: hkRoom, r: r})
 		}
@@ -282,17 +283,17 @@ func (v *Huddles) Layout(gtx C) D {
 		}
 	}
 	if len(past) > 0 {
-		items = append(items, huddleItem{kind: hkSection, title: "Recent", tx: "Huddles you were part of"})
+		items = append(items, huddleItem{kind: hkSection, title: nsHuddles.T("Recent huddles"), tx: "Huddles you were part of"}) // PastHuddleSectionTitle
 		for _, r := range past {
 			items = append(items, huddleItem{kind: hkRoom, r: r})
 		}
 	}
 	if len(v.sugUsers) > 0 {
-		items = append(items, huddleItem{kind: hkSection, title: "Direct messages", tx: "Talk privately 1:1 with someone"})
+		items = append(items, huddleItem{kind: hkSection, title: nsHuddles.T("Direct messages"), tx: nsHuddles.T("Talk privately 1:1 with someone")}) // HuddlesPageDmSuggestions
 		items = append(items, huddleItem{kind: hkTiles})
 	}
 	if len(v.sugChans) > 0 {
-		items = append(items, huddleItem{kind: hkSection, title: "Channels", tx: "Meet with a whole team, or just let people drop in and out"})
+		items = append(items, huddleItem{kind: hkSection, title: nsHuddles.T("Channels"), tx: nsHuddles.T("Meet with a whole team, or just let people drop in and out")}) // HuddlesPageChannelSuggestions
 		for i := range v.sugChans {
 			items = append(items, huddleItem{kind: hkChannel, row: i})
 		}
@@ -338,8 +339,8 @@ func (v *Huddles) layoutHeader(gtx C) D {
 	g.Constraints = layout.Exact(image.Pt(w, h))
 	layout.Inset{Left: 34, Right: 36}.Layout(g, func(gtx C) D {
 		return row(gtx, layout.Middle,
-			layout.Flexed(1, func(gtx C) D { return v.label(gtx, 18, wBlack, v.p.Text, "Huddles") }),
-			layout.Rigid(func(gtx C) D { return v.smallOutline(gtx, &v.newBtn, "plus", "New Huddle") }),
+			layout.Flexed(1, func(gtx C) D { return v.label(gtx, 18, wBlack, v.p.Text, nsHuddles.T("Huddles")) }),
+			layout.Rigid(func(gtx C) D { return v.smallOutline(gtx, &v.newBtn, "plus", nsHuddles.T("New Huddle")) }),
 		)
 	})
 	return D{Size: image.Pt(w, h)}
@@ -432,16 +433,16 @@ func (v *Huddles) hero(gtx C) D {
 		col(g,
 			layout.Rigid(func(gtx C) D {
 				return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
-					return v.para(gtx, 22, 30, wBlack, v.p.Text, 2, "Instantly connect over audio or video")
+					return v.para(gtx, 22, 30, wBlack, v.p.Text, 2, nsHuddles.T("Instantly connect over audio or video"))
 				})
 			}),
 			layout.Rigid(func(gtx C) D {
 				gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(517))
 				return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D {
-					return v.para(gtx, 15, 22, wReg, body, 3, "Talk it out in real time on a huddle, with screen-sharing, expressive reactions and a message thread that automatically saves for later reference.")
+					return v.para(gtx, 15, 22, wReg, body, 3, nsHuddles.T("Talk it out in real time on a huddle, with screen-sharing, expressive reactions and a message thread that automatically saves for later reference."))
 				})
 			}),
-			layout.Rigid(func(gtx C) D { return v.greenButton(gtx, &v.heroBtn, "headphones", "Start a Huddle") }),
+			layout.Rigid(func(gtx C) D { return v.greenButton(gtx, &v.heroBtn, "headphones", nsHuddles.T("Start a Huddle")) }),
 		)
 	}()
 	if w > gtx.Dp(760) {
@@ -581,12 +582,13 @@ func (v *Huddles) room(gtx C, r huddleRoom) D {
 
 // joinPill draws the small green "Join" button face.
 func (v *Huddles) joinPill(gtx C) D {
-	tw := v.th.Measure(gtx, 13, wBold, "Join")
+	join := nsHuddles.T("Join")
+	tw := v.th.Measure(gtx, 13, wBold, join)
 	sz := image.Pt(tw+gtx.Dp(24), gtx.Dp(28))
 	rrect(gtx, image.Rectangle{Max: sz}, gtx.Dp(4), v.p.Green)
 	g := gtx
 	g.Constraints = layout.Exact(sz)
-	layout.Center.Layout(g, func(gtx C) D { return v.label(gtx, 13, wBold, rgb(0xffffff), "Join") })
+	layout.Center.Layout(g, func(gtx C) D { return v.label(gtx, 13, wBold, rgb(0xffffff), join) })
 	return D{Size: sz}
 }
 
@@ -597,7 +599,7 @@ func (v *Huddles) roomTitle(r huddleRoom) string {
 	if len(r.Channels) > 0 {
 		return v.convTitle(r.Channels[0], nil)
 	}
-	return "Huddle"
+	return nsHuddles.T("Huddle")
 }
 
 func (v *Huddles) roomMeta(r huddleRoom) string {
@@ -606,18 +608,22 @@ func (v *Huddles) roomMeta(r huddleRoom) string {
 		people = r.History
 	}
 	var who string
+	// HuddleInviteWindowText's name lists
 	switch n := len(people); {
 	case n == 1:
 		who = v.userName(people[0])
 	case n == 2:
-		who = v.userName(people[0]) + " and " + v.userName(people[1])
+		who = nsHuddles.T("{inviteSenderMemberName} and {otherMemberName}", "inviteSenderMemberName", v.userName(people[0]), "otherMemberName", v.userName(people[1]))
 	case n > 2:
-		who = v.userName(people[0]) + " and " + strconv.Itoa(n-1) + " others"
+		who = nsHuddles.T("{inviteSenderMemberName} and {numRemaining, plural, =1 {{numRemaining} other} other {{numRemaining} others}}", "inviteSenderMemberName", v.userName(people[0]), "numRemaining", n-1)
 	}
 	var when string
 	if r.Active {
 		if r.Start > 0 {
 			when = "Started " + agoText(time.Since(unixTime(r.Start)))
+			if i18n.Locale() != i18n.EnUS {
+				when = agoText(time.Since(unixTime(r.Start))) // no Slack "Started …": the time ago alone
+			}
 		}
 	} else if r.Start > 0 {
 		when = listTime(unixTime(r.Start))
@@ -820,6 +826,10 @@ func (v *Huddles) channelRow(gtx C, i int) D {
 }
 
 func agoText(d time.Duration) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		now := time.Now()
+		return i18n.TimeAgo(l, now.Add(-d), now, false, true) // toTimeAgo
+	}
 	switch {
 	case d < time.Minute:
 		return "just now"
@@ -831,6 +841,15 @@ func agoText(d time.Duration) string {
 }
 
 func durText(d time.Duration) string {
+	if i18n.Locale() != i18n.EnUS {
+		// the huddles strings' "{mins, plural, …}" and "{hours, plural, …}
+		// {mins, plural, …}" (GoToTooltip)
+		m := max(1, int(d.Minutes()))
+		if m < 60 {
+			return nsHuddles.T("{mins, plural, =1 {# minute} other {# minutes}}", "mins", m)
+		}
+		return nsHuddles.T("{hours, plural, =1 {# hour} other {# hours}} {mins, plural, =1 {# minute} other {# minutes}}", "hours", m/60, "mins", m%60)
+	}
 	switch {
 	case d < time.Minute:
 		return plural(int(d.Seconds()), "sec")

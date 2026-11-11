@@ -27,7 +27,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Summarize thread | needs Slack AI thread summaries (7KpF) | none | **open**: Clack has no Slack AI |
 | Start huddle in thread | canUserPostInChannel and doesChannelSupportHuddles (o/IU, zq6z) | none | **open**: Clack starts huddles in channels and DMs only |
 | Create a code channel from thread | its own menu group when the thread can become one | none | **open**: Clack doesn't create code channels |
-| Open in split view, Open in new window | the surface group (eXbF, HWmf) | none | **open**: Clack has one right-hand pane, where a thread in split view would land, and no second window |
+| Open in split view, Open in new window | the surface group (eXbF, HWmf) | none | Open in split view **fixed** (split-view, 3c9bc068: `popups/actions_thread.go` adds Slack's row outside the split view, docs/SPLIT-VIEW.md). Open in new window **open**: Clack has no second window |
 | Menu position | Popover "bottom-left", moved inside the window with its 16px allowance (L1PI keepInBounds) | right-aligned to the button | **open**: never seen live (the pane didn't load) |
 | Expand view | ExpandSecondaryViewButton only under channel_resources_remove_tabs | none | **matched** (the account's channels have tabs) |
 | Find in thread | ThreadSearchButton and ThreadSearchBar under find_in_thread | the boundary, empty natively | **matched** (off for the account; ThreadJump still draws there) |
@@ -93,7 +93,7 @@ The parent row itself is the message row's (ThreadRoot through MessageKit); the 
 | Drafts and scheduled replies | "N replies & 1 draft", "… & N scheduled" with their icons | none | **open**: thread drafts aren't wired to the bar |
 | Hover look | white with a 1px 13% border, radius 6, at most 600px, 34px tall, caret-right 18px at #868686. Live: 34px, radius 6 | same | **matched** |
 | Click | openThread opens the thread and focuses its input | opened it unfocused | **fixed** |
-| Modifier click | opens the thread in split view (not in BBM) | opens the pane | **open**: Clack has one right-hand pane |
+| Modifier click | opens the thread in split view (not in BBM) | opens the pane | **fixed** (split-view: `App.OpenThread` takes the modifier, ZRE2/v8ac; docs/SPLIT-VIEW.md Entries) |
 | Faces' clicks | not interactive (no profile card) | part of the bar | **matched** |
 
 ## Width, resizing and scroll position

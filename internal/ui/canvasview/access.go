@@ -80,9 +80,9 @@ func commentable(access string) bool {
 // accessLabel is the pill's text.
 func (v *View) accessLabel(info core.CanvasInfo) string {
 	if v.exp("canvas_comment_only_mode") && commentable(info.Access) {
-		return "Comment only"
+		return nsCanvas.T("Comment only")
 	}
-	return "View only"
+	return nsCanvas.T("View only")
 }
 
 // showsAccess: the header draws the indicator for this canvas.
@@ -148,21 +148,21 @@ func (v *View) accessCopy(info core.CanvasInfo) (title, desc string, buttons []s
 	exp := v.exp("canvas_comment_only_mode")
 	switch v.access.status {
 	case askAlready:
-		return "You’ve already asked for access", "Still waiting for edit access? You can send the owner a reminder.", []string{"Remind The Owner"}
+		return nsCanvas.T("You’ve already asked for access"), nsCanvas.T("Still waiting for edit access? You can send the owner a reminder."), []string{nsCanvas.T("Remind The Owner")}
 	case askSent:
-		return "Request sent", "You’ll be notified once it’s been shared with you.", nil
+		return nsCanvas.T("Request sent"), nsCanvas.T("You’ll be notified once it’s been shared with you."), nil
 	case askFailed:
-		return "Error", "Something’s gone wrong. Please try again later.", []string{"Try Again"}
+		return nsCanvas.T("Error"), nsCanvas.T("Something’s gone wrong. Please try again later."), []string{nsCanvas.T("Try Again")}
 	}
-	title = "You only have permission to view."
+	title = nsCanvas.T("You only have permission to view.")
 	if exp && commentable(info.Access) {
-		title = "You only have permission to comment."
+		title = nsCanvas.T("You only have permission to comment.")
 	}
-	buttons = []string{"Request Edit Access"}
+	buttons = []string{nsCanvas.T("Request Edit Access")}
 	if exp && !commentable(info.Access) {
-		buttons = append(buttons, "Request Comment Access")
+		buttons = append(buttons, nsCanvas.T("Request Comment Access"))
 	}
-	return title, "To make changes, ask the owner for edit access.", buttons
+	return title, nsCanvas.T("To make changes, ask the owner for edit access."), buttons
 }
 
 // requestAccess runs useQuipAccess's request.

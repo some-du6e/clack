@@ -543,10 +543,12 @@ func (a *App) Boot(ctx context.Context) error {
 	step("team", func() error {
 		var r struct {
 			Team struct {
-				ID     string          `json:"id"`
-				Name   string          `json:"name"`
-				Domain string          `json:"domain"`
-				Icon   json.RawMessage `json:"icon"`
+				ID           string          `json:"id"`
+				Name         string          `json:"name"`
+				Domain       string          `json:"domain"`
+				Icon         json.RawMessage `json:"icon"`
+				Plan         string          `json:"plan"`
+				EnterpriseID string          `json:"enterprise_id"`
 			} `json:"team"`
 		}
 		err := a.C.Call(ctx, "team.info", nil, &r)
@@ -554,6 +556,7 @@ func (a *App) Boot(ctx context.Context) error {
 			a.S.Lock()
 			a.S.TeamID, a.S.TeamName, a.S.TeamDomain = r.Team.ID, r.Team.Name, r.Team.Domain
 			a.S.Unlock()
+			a.setTeamPlan(r.Team.Plan, r.Team.EnterpriseID) // files_sections.go
 			a.setTeamIcon(r.Team.ID, r.Team.Icon)
 			a.setTeamName(r.Team.ID, r.Team.Name)
 		}

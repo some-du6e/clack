@@ -33,7 +33,6 @@ import (
 	"image"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 
 	"gioui.org/layout"
@@ -54,7 +53,7 @@ type actInPicker struct {
 
 func (p *actInPicker) init() {
 	if !p.inited {
-		p.pick = newDirPick("Ex. #project-unicorn", true)
+		p.pick = newDirPickIn(nsActivity, "Ex. #project-unicorn", true)
 		p.inited = true
 	}
 }
@@ -147,7 +146,7 @@ func (v *Activity) inOptions() []dirPickOpt {
 		out = append(out, dirPickOpt{value: s, label: v.inLabel(snap, s)})
 	}
 	if len(sel) > 1 {
-		out = append(out, dirPickOpt{value: "clear", label: "Clear all", clear: true})
+		out = append(out, dirPickOpt{value: "clear", label: nsActivity.T("Clear all"), clear: true})
 	}
 	// Recent: the channel last open (wv6G PA) and its section (YE: Starred
 	// when it's starred, else the section that lists it)
@@ -163,7 +162,7 @@ func (v *Activity) inOptions() []dirPickOpt {
 		}
 	}
 	if len(recent) > 0 {
-		out = append(out, dirPickOpt{value: "recent", label: "Recent", header: true})
+		out = append(out, dirPickOpt{value: "recent", label: nsActivity.T("Recent"), header: true})
 		out = append(out, recent...)
 	}
 	return out
@@ -231,7 +230,7 @@ func (v *Activity) inSearch(snap core.Snapshot, q string) []dirPickOpt {
 // p4Ef yF).
 func actSectionName(s core.Section) string {
 	if s.Type == "stars" && s.Name == "" {
-		return "Starred"
+		return nsSidebar.T("Starred")
 	}
 	return s.Name
 }
@@ -253,25 +252,26 @@ func (v *Activity) inLabel(snap core.Snapshot, val string) string {
 // {n} places" past one; lead is the section's emoji or icon (one section).
 func (v *Activity) inPillText() (text, icon, emoji string) {
 	sel := v.inSelected()
+	in := nsActivity.T("In:") + "\u00a0" // ActivityFilterBySpecific: "In:", then the name
 	switch len(sel) {
 	case 0:
-		return "In", "", ""
+		return nsActivity.T("In"), "", ""
 	case 1:
 		snap := v.h.Core().Snapshot()
 		if id, ok := strings.CutPrefix(sel[0], actInSectionPrefix); ok {
 			for _, s := range snap.Sections {
 				if s.ID == id {
 					if s.EmojiURL != "" {
-						return "In: " + actSectionName(s), "", s.EmojiURL
+						return in + actSectionName(s), "", s.EmojiURL
 					}
-					return "In: " + actSectionName(s), "section", ""
+					return in + actSectionName(s), "section", ""
 				}
 			}
-			return "In: " + id, "section", ""
+			return in + id, "section", ""
 		}
-		return "In: " + v.convTitle(sel[0], nil), "", ""
+		return in + v.convTitle(sel[0], nil), "", ""
 	}
-	return "In " + strconv.Itoa(len(sel)) + " places", "", ""
+	return actInPlaces(len(sel)), "", ""
 }
 
 // inPill is the bar's In pill and its popover.
@@ -340,7 +340,7 @@ func (v *Activity) inPill(gtx C) D {
 		for _, s := range v.inSelected() {
 			picked[s] = true
 		}
-		p.pick.popover(&v.base, gtx, d.Size, p.opts, func(val string) bool { return picked[val] }, "Nothing found")
+		p.pick.popover(&v.base, gtx, d.Size, p.opts, func(val string) bool { return picked[val] }, nsActivity.T("Nothing found"))
 	}
 	return d
 }
@@ -356,7 +356,7 @@ type actInField struct {
 
 func (f *actInField) init() {
 	if !f.inited {
-		f.pick = newDirPick("Ex. #project-unicorn", true)
+		f.pick = newDirPickIn(nsActivity, "Ex. #project-unicorn", true)
 		f.inited = true
 	}
 }
@@ -380,18 +380,18 @@ func (m *actViewModal) addTabIn(gtx C) D {
 	}
 	return col(gtx,
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "In") })
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("In")) })
 		}),
 		layout.Rigid(func(gtx C) D {
 			sel := append(append([]string(nil), m.st.channels...), prefixAll(m.st.sections)...)
-			text := "Channel or section…"
+			text := nsActivity.T("Channel or section…")
 			snap := v.h.Core().Snapshot()
 			switch len(sel) {
 			case 0:
 			case 1:
-				text = "In: " + v.inLabel(snap, sel[0])
+				text = nsActivity.T("In:") + "\u00a0" + v.inLabel(snap, sel[0])
 			default:
-				text = "In " + strconv.Itoa(len(sel)) + " places"
+				text = actInPlaces(len(sel))
 			}
 			d := f.pick.btn.Layout(gtx, func(gtx C) D {
 				pointerCursor(gtx)
@@ -428,10 +428,10 @@ func (m *actViewModal) addTabIn(gtx C) D {
 						opts = append(opts, dirPickOpt{value: s, label: v.inLabel(snap, s)})
 					}
 					if len(sel) > 1 {
-						opts = append(opts, dirPickOpt{value: "clear", label: "Clear all", clear: true})
+						opts = append(opts, dirPickOpt{value: "clear", label: nsActivity.T("Clear all"), clear: true})
 					}
 				}
-				f.pick.popover(&v.base, gtx, d.Size, opts, func(val string) bool { return picked[val] }, "Nothing found")
+				f.pick.popover(&v.base, gtx, d.Size, opts, func(val string) bool { return picked[val] }, nsActivity.T("Nothing found"))
 			}
 			return d
 		}),
@@ -444,4 +444,9 @@ func prefixAll(ids []string) []string {
 		out[i] = actInSectionPrefix + id
 	}
 	return out
+}
+
+// actInPlaces is ActivityFilterBySpecific's count: "In 3 places".
+func actInPlaces(n int) string {
+	return nsActivity.T("In {count, plural, =1 {{count} place} other {{count} places}}", "count", n)
 }

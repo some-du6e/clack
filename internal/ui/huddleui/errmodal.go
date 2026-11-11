@@ -23,19 +23,19 @@ type errModal struct{ title, body, button string }
 
 // joinErrorModal is HuddleErrorModal{isJoinError} for err.
 func joinErrorModal(err error) errModal {
-	m := errModal{title: "Can’t join the huddle", body: "You’ll have to go back and give it another try.", button: "OK"}
+	m := errModal{title: nsHuddles.T("Can’t join the huddle"), body: nsHuddles.T("You’ll have to go back and give it another try."), button: "OK"}
 	var se *slack.Error
 	if errors.As(err, &se) {
 		switch se.Code {
 		case "permission_denied":
-			m.body = "You are unable to join the Huddle as you do not have permission to join Huddles."
+			m.body = nsHuddles.T("You are unable to join the Huddle as you do not have permission to join Huddles.")
 		case "rooms_call_ended":
-			m.body = "The Huddle has ended."
+			m.body = nsHuddles.T("The Huddle has ended.")
 		case "room_max_participants":
 			// Slack says "This huddle already has {maxAmount} people, which
 			// is the maximum allowed." from a limit Clack isn't sent; it
 			// keeps the default text with Slack's Got It
-			m.button = "Got It"
+			m.button = nsHuddles.T("Got It")
 		}
 	}
 	return m
@@ -48,9 +48,9 @@ func endedModal(err error) (errModal, bool) {
 	case err == nil:
 		return errModal{}, false
 	case errors.Is(err, huddle.ErrEnded): // HuddleEndedForEveryone
-		return errModal{title: "This huddle has ended", body: "This huddle has ended for everyone who was in it.", button: "Got It"}, true
+		return errModal{title: nsHuddles.T("This huddle has ended"), body: nsHuddles.T("This huddle has ended for everyone who was in it."), button: nsHuddles.T("Got It")}, true
 	}
-	return errModal{title: "Something went wrong with your huddle", body: "You’ll have to go back and give it another try.", button: "OK"}, true
+	return errModal{title: nsHuddles.T("Something went wrong with your huddle"), body: nsHuddles.T("You’ll have to go back and give it another try."), button: "OK"}, true
 }
 
 // JoinFailed shows HuddleErrorModal{isJoinError} for err (nil: Slack's

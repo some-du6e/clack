@@ -56,8 +56,43 @@ import (
 // "Deleted <section>.", "Renamed to <section>.", each with Undo; "Section
 // link copied".
 
-// mi makes a menu item pointer (nil = not offered).
-func mi(it MenuItem) *MenuItem { return &it }
+// mi makes a menu item pointer (nil = not offered): a row of Slack's
+// section menu, its label (or heading) translated through smNS and its key
+// pinned to the English label's (popups.LabelKey) when it has none.
+// Rows of data (conversations, the section's own name) use miData.
+func mi(it MenuItem) *MenuItem {
+	if it.Label != "" {
+		if it.Key == "" {
+			it.Key = popups.LabelKey(it.Label)
+		}
+		it.Label = smNS.T(it.Label)
+	}
+	if it.Subtitle != "" {
+		it.Subtitle = smNS.T(it.Subtitle)
+	}
+	return &it
+}
+
+// miData is mi for a row whose label is data (drawn as is).
+func miData(it MenuItem) *MenuItem { return &it }
+
+// smNS are the section menus' I18n instances (boot-render's
+// getSectionHeadingEllipsisMenuTemplate module: the menu I18n, and
+// channel_sidebar's "Search in this section"); smToast its toasts'
+// (channel_sidebar).
+var (
+	smNS    = i18n.NewChain("menu", "channel_sidebar")
+	smToast = i18n.NS("channel_sidebar")
+)
+
+// sectionLabel is a section's name as the sidebar draws it: Slack's own
+// for a standard section, in the locale.
+func sectionLabel(s *sbSection) string {
+	if s.DefaultName {
+		return i18n.T("channel_sidebar", s.Name)
+	}
+	return s.Name
+}
 
 // assembleMenuGroups drops missing items and groups with nothing to click,
 // and puts separators between the rest.
@@ -92,6 +127,11 @@ func (a *App) exp(name string) string {
 }
 
 func heading(s string) *MenuItem { return mi(MenuItem{Header: true, Label: s}) }
+
+// sectionHeading is the menu's first heading, the section's name.
+func sectionHeading(s *sbSection) *MenuItem {
+	return miData(MenuItem{Key: popups.LabelKey(s.Name), Header: true, Label: sectionLabel(s)})
+}
 
 func custom(sec *sbSection) bool { return sec.Type == "standard" }
 
@@ -156,12 +196,12 @@ func (a *App) shareItem(sec *sbSection) *MenuItem {
 	}
 	name, emoji, ids := sec.Name, sec.Emoji, append([]string(nil), sec.All...)
 	return mi(MenuItem{Key: "section_menu_visual_updates_share", Label: "Share", Icon: "share-message", Sub: []MenuItem{
-		{Label: "Share directly", Icon: "share-message", Subtitle: "Invite to public or private channels",
+		*mi(MenuItem{Label: "Share directly", Icon: "share-message", Subtitle: "Invite to public or private channels",
 			Do: func() {
 				a.ShowOverlay(popups.NewShareSectionModal(a, popups.ShareSectionOpts{Name: name, Emoji: emoji, Channels: ids}))
-			}},
-		{Label: "Copy section link", Icon: "link", Subtitle: "Private channels won’t be visible to people who aren’t already in them",
-			Do: func() { a.copySectionLink(name, emoji, ids) }},
+			}}),
+		*mi(MenuItem{Label: "Copy section link", Icon: "link", Subtitle: "Private channels won’t be visible to people who aren’t already in them",
+			Do: func() { a.copySectionLink(name, emoji, ids) }}),
 	}})
 }
 
@@ -264,7 +304,7 @@ func (a *App) filterItem(sec *sbSection) *MenuItem {
 		if k == "active" && dormant && muteEdu {
 			it.Subtitle = "New activity within the last 30 days"
 		}
-		return it
+		return *mi(it)
 	}
 	var keys []string
 	switch {
@@ -286,7 +326,7 @@ func (a *App) filterItem(sec *sbSection) *MenuItem {
 	for _, k := range keys {
 		sub = append(sub, item(k))
 	}
-	return mi(MenuItem{Key: "channel_section_filter_submenu", Label: "Filter", Right: filterStateLabel(cur, dormant), Sub: sub})
+	return mi(MenuItem{Key: "channel_section_filter_submenu", Label: "Filter", Right: smNS.T(filterStateLabel(cur, dormant)), Sub: sub})
 }
 
 func sortStateLabel(s string) string {
@@ -317,10 +357,10 @@ func (a *App) sortItem(sec *sbSection) *MenuItem {
 		recent = "Recency"
 	}
 	set := func(v string) func() { return func() { a.setSectionPref(id, "sort", v) } }
-	return mi(MenuItem{Key: "channel_section_sort_submenu", Label: "Sort", Right: sortStateLabel(cur), Sub: []MenuItem{
-		{Key: "channel_section_menu_sort_default", Label: alpha, Checked: cur == "" || cur == "default", Do: set("default")},
-		{Key: "channel_section_menu_sort_recent", Label: recent, Checked: cur == "recent", Do: set("recent")},
-		{Key: "channel_section_menu_sort_priority", Label: "Priority", Checked: cur == "priority", Do: set("priority")},
+	return mi(MenuItem{Key: "channel_section_sort_submenu", Label: "Sort", Right: smNS.T(sortStateLabel(cur)), Sub: []MenuItem{
+		*mi(MenuItem{Key: "channel_section_menu_sort_default", Label: alpha, Checked: cur == "" || cur == "default", Do: set("default")}),
+		*mi(MenuItem{Key: "channel_section_menu_sort_recent", Label: recent, Checked: cur == "recent", Do: set("recent")}),
+		*mi(MenuItem{Key: "channel_section_menu_sort_priority", Label: "Priority", Checked: cur == "priority", Do: set("priority")}),
 	}})
 }
 
@@ -388,7 +428,7 @@ func (a *App) leaveTempsItem(sec *sbSection) *MenuItem {
 // sectionMenuItems is the heading's ⋯ menu (getSectionHeadingEllipsisMenuTemplate).
 func (a *App) sectionMenuItems(sec *sbSection) []MenuItem {
 	return assembleMenuGroups(
-		[]*MenuItem{heading(sec.Name), a.searchInSectionItem(sec), a.markAllReadItem(sec), a.createConversationItem(sec),
+		[]*MenuItem{sectionHeading(sec), a.searchInSectionItem(sec), a.markAllReadItem(sec), a.createConversationItem(sec),
 			a.shareItem(sec), a.browsePageItem(sec)},
 		[]*MenuItem{heading("Manage section"), a.renameItem(sec), a.createSectionItem(sec), a.manageConversationsItem(sec)},
 		[]*MenuItem{heading("Section settings"), a.filterItem(sec), a.sortItem(sec)},
@@ -400,7 +440,7 @@ func (a *App) sectionMenuItems(sec *sbSection) []MenuItem {
 // sectionContextItems is the heading's right-click menu
 // (getSectionHeadingContextMenuTemplate).
 func (a *App) sectionContextItems(sec *sbSection) []MenuItem {
-	g1 := []*MenuItem{heading(sec.Name), a.markAllReadItem(sec), a.createConversationItem(sec), a.shareItem(sec)}
+	g1 := []*MenuItem{sectionHeading(sec), a.markAllReadItem(sec), a.createConversationItem(sec), a.shareItem(sec)}
 	switch sec.Type {
 	case "channels", "recent_apps", "apps", "slack_connect", "agents":
 		g1 = append(g1, a.browsePageItem(sec))
@@ -429,7 +469,7 @@ func (a *App) sectionContextItems(sec *sbSection) []MenuItem {
 				continue
 			}
 			id := id
-			out = append(out, mi(MenuItem{Label: c.displayName(), Icon: convIcon(c), Do: func() { a.Navigate("c/" + id) }}))
+			out = append(out, miData(MenuItem{Label: c.displayName(), Icon: convIcon(c), Do: func() { a.Navigate("c/" + id) }}))
 		}
 		return out
 	}
@@ -545,12 +585,12 @@ func (a *App) markSectionRead(id string) {
 		prev, err = c.MarkManyRead(ctx, ids)
 		return err
 	}, func() {
-		n := len(prev)
-		what := plural(n, "1 channel", "channels")
+		// markChannelsAsRead's toast (the unread I18n)
+		msg := i18n.T("unread", "Marked {numChannels, plural, =1 {# channel} other {# channels}} as read.", "numChannels", len(prev))
 		if dm {
-			what = plural(n, "1 conversation", "conversations")
+			msg = i18n.T("unread", "Marked {numChannels, plural, =1 {# conversation} other {# conversations}} as read.", "numChannels", len(prev))
 		}
-		a.ToastUndo("Marked "+what+" as read.", func() {
+		a.ToastUndo(msg, func() {
 			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error { return c.UndoMarkRead(ctx, prev) }, nil)
 		})
 	})
@@ -563,16 +603,18 @@ func (a *App) muteSection(ids []string, mute bool) {
 	a.sectionRun("Couldn’t change notifications", func(ctx context.Context, c *core.App) error {
 		return c.MuteMany(ctx, ids, mute)
 	}, func() {
-		n := len(ids)
-		what := plural(n, "channel", "channels")
-		if dm {
-			what = plural(n, "conversation", "conversations")
+		var src string
+		switch {
+		case mute && dm:
+			src = "Muted {numChannels, plural, =1{conversation} other {# conversations}}."
+		case mute:
+			src = "Muted {numChannels, plural, =1{channel} other {# channels}}."
+		case dm:
+			src = "Unmuted {numChannels, plural, =1{conversation} other {# conversations}}."
+		default:
+			src = "Unmuted {numChannels, plural, =1{channel} other {# channels}}."
 		}
-		verb := "Muted "
-		if !mute {
-			verb = "Unmuted "
-		}
-		a.ToastUndo(verb+what+".", func() {
+		a.ToastUndo(smToast.T(src, "numChannels", len(ids)), func() {
 			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error { return c.MuteMany(ctx, ids, !mute) }, nil)
 		})
 	})
@@ -584,7 +626,7 @@ func (a *App) deleteSection(id string) {
 	sec := a.sectionByID(id)
 	name := ""
 	if sec != nil {
-		name = sec.Name
+		name = sectionLabel(sec)
 	}
 	var d core.DeletedSection
 	a.sectionRun("Couldn’t delete the section", func(ctx context.Context, c *core.App) error {
@@ -592,11 +634,12 @@ func (a *App) deleteSection(id string) {
 		d, err = c.DeleteSection(ctx, id)
 		return err
 	}, func() {
+		msg := smToast.T("Deleted {channelSection}.", "channelSection", name)
 		if d.Section.Type != "standard" {
-			a.Toast("Deleted " + name + ".")
+			a.Toast(msg)
 			return
 		}
-		a.ToastUndo("Deleted "+name+".", func() {
+		a.ToastUndo(msg, func() {
 			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error {
 				_, err := c.UndoDeleteSection(ctx, d)
 				return err
@@ -608,7 +651,7 @@ func (a *App) deleteSection(id string) {
 func (a *App) openRenameSection(id, name, emoji string) {
 	m := popups.NewRenameSectionModal(a, id, name, emoji)
 	m.OnRenamed = func(oldName, oldEmoji, newName string) {
-		a.ToastUndo("Renamed to "+newName+".", func() {
+		a.ToastUndo(smToast.T("Renamed to {channelSection}.", "channelSection", newName), func() {
 			a.sectionRun("Couldn’t undo", func(ctx context.Context, c *core.App) error {
 				return c.RenameSection(ctx, id, oldName, oldEmoji)
 			}, nil)
@@ -669,11 +712,11 @@ func (a *App) copySectionLink(name, emoji string, ids []string) {
 		u, err := c.SectionLink(ctx, name, emoji, ids)
 		a.Post(func() {
 			if err != nil {
-				a.Toast("Unable to copy section link")
+				a.Toast(i18n.T("menu", "Unable to copy section link"))
 				return
 			}
 			a.copyText(u)
-			a.Toast("Section link copied")
+			a.Toast(i18n.T("menu", "Section link copied"))
 		})
 	}()
 }
@@ -707,38 +750,31 @@ func (a *App) bulkMoveText(m core.SectionMove) string {
 		}
 		return nil
 	}
-	name := func(s *sbSection) string {
-		if s.DefaultName {
-			return i18n.T("channel_sidebar", s.Name)
-		}
-		return s.Name
-	}
+	name := sectionLabel
 	to, from := one(m.InsertSections()), one(m.RemoveSections())
 	var w *convInfo
 	if chs := m.Channels(); len(chs) == 1 {
 		w = md.conv(chs[0])
 	}
+	t := smToast.T // eq1K's strings (channel_sidebar)
 	if w == nil || w.Kind == "im" || w.Kind == "mpim" || w.Kind == "app" {
-		n := "conversation"
-		if m.Count != 1 {
-			n = strconv.Itoa(m.Count) + " conversations"
-		}
+		n := m.Count
 		switch {
 		case to != nil && a.exp("manage_conversations_strings") == "on":
-			return "Updated conversations in " + name(to) + "."
+			return t("Updated conversations in {channelSection}.", "channelSection", name(to))
 		case to != nil:
-			return "Moved " + n + " to " + name(to) + "."
+			return t("Moved {numChannels, plural, =1{conversation} other {# conversations}} to {channelSection}.", "numChannels", n, "channelSection", name(to))
 		case from != nil:
-			return "Removed " + n + " from " + name(from) + "."
+			return t("Removed {numChannels, plural, =1{conversation} other {# conversations}} from {channelSection}.", "numChannels", n, "channelSection", name(from))
 		}
-		return "Moved " + n + "."
+		return t("Moved {numChannels, plural, =1{conversation} other {# conversations}}.", "numChannels", n)
 	}
 	ent := "#" + w.displayName()
 	switch {
 	case to != nil:
-		return "Moved " + ent + " to " + name(to) + "."
+		return t("Moved {channel} to {channelSection}.", "channel", ent, "channelSection", name(to))
 	case from != nil:
-		return "Removed " + ent + " from " + name(from) + "."
+		return t("Removed {channel} from {channelSection}.", "channel", ent, "channelSection", name(from))
 	}
-	return "Moved " + ent + "."
+	return t("Moved {channel}.", "channel", ent)
 }

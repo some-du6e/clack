@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"image"
 	"strconv"
+	"strings"
 	"time"
 
 	"gioui.org/layout"
@@ -185,15 +186,15 @@ func (l *Later) todoSectionRow(gtx C, r todoRow) D {
 	case tdNoInProgress: // .noInProgressRow__KPFSW: padding 8px 20px 24px, 15px/1.5 content-sec
 		return layout.Inset{Top: 8, Bottom: 24, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
-			return l.para(gtx, 15, 22.5, wReg, l.p.Muted, 0, "You’re all caught up 🎉")
+			return l.para(gtx, 15, 22.5, wReg, l.p.Muted, 0, strings.Replace(nsLater.T("You’re all caught up :tada:"), ":tada:", "🎉", 1)) // NoInProgressTodosRow
 		})
 	}
-	sec, label, fg := todoSecInProgress, "In progress", l.p.Text
+	sec, label, fg := todoSecInProgress, nsLater.T("In progress"), l.p.Text
 	switch r.kind {
 	case tdOverdue:
-		sec, label = todoSecOverdue, "Overdue"
+		sec, label = todoSecOverdue, nsLater.T("Overdue")
 	case tdCompleted:
-		sec, label, fg = todoSecCompleted, "Completed", l.p.Muted
+		sec, label, fg = todoSecCompleted, nsLater.T("Completed"), l.p.Muted
 	}
 	top := 0
 	if r.kind == tdCompleted { // .completedDivider__xKFxD

@@ -1211,7 +1211,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 					"image_88": s.URL + "img/88x88/partner.png"}})
 		}
 		return ok("team", map[string]any{"id": TeamID, "name": "Fake Club", "domain": "fakeclub",
-			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"}})
+			"icon": map[string]any{"image_88": s.URL + "img/88x88/team.png"},
+			"plan": "enterprise", "enterprise_id": "E0FAKE00001"}) // the test account's team is an enterprise grid's
 	case "apps.profile.get":
 		if p, found := s.appProfile(f.Get("bot"), f.Get("app")); found {
 			return ok("app_profile", p)

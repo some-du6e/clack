@@ -43,6 +43,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -152,10 +153,11 @@ func (f *Files) startDeleted() {
 	f.del.data.load(f.h, false, func(ctx context.Context) ([]core.DeletedFile, error) { return a.RecentlyDeleted(ctx, "") })
 }
 
-// deletedNoun is {fileType, select, quip {canvas} other {list}}.
-func deletedNoun(fileType string) string {
+// deletedFT is the files strings' {fileType, select, quip {canvas} other
+// {list}} argument.
+func deletedFT(fileType string) string {
 	if fileType == "quip" {
-		return "canvas"
+		return "quip"
 	}
 	return "list"
 }
@@ -164,6 +166,9 @@ func deletedNoun(fileType string) string {
 // ago", "N minutes ago", "1 hour ago", "N hours ago", "1 day ago", "N
 // days ago").
 func deletedAgo(t, now time.Time) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return i18n.TimeAgo(l, t, now, false, true)
+	}
 	s := now.Sub(t).Seconds()
 	if s < 0 {
 		s = -s
@@ -203,8 +208,9 @@ func (f *Files) confirmRestore(r core.DeletedFile) {
 	if !ok {
 		return
 	}
-	noun := deletedNoun(r.FileType)
-	popups.Confirm(ph, "Restore "+noun, "Are you sure you want to restore this "+noun+"?", "Restore "+noun, false,
+	ft := deletedFT(r.FileType) // UndeleteFileDialog's {fileType, select, …}
+	restore := nsFiles.T("Restore {fileType, select, quip {canvas} other {list}}", "fileType", ft)
+	popups.Confirm(ph, restore, nsFiles.T("Are you sure you want to restore this {fileType, select, quip {canvas} other {list}}?", "fileType", ft), restore, false,
 		func(gtx C) D {
 			return layout.Inset{Top: 4}.Layout(gtx, func(gtx C) D { return f.deletedEntity(gtx, r, true, true, nil, nil) })
 		}, func() { f.restoreFile(r) })
@@ -214,16 +220,16 @@ func (f *Files) confirmRestore(r core.DeletedFile) {
 func (f *Files) restoreFile(r core.DeletedFile) {
 	f.write(func(ctx context.Context, a *core.App) error { return a.UndeleteFile(ctx, r.ID) }, func(err error) {
 		if err != nil {
-			f.h.Toast("Oops! We couldn’t restore that " + deletedNoun(r.FileType))
+			f.h.Toast(nsFiles.T("Oops! We couldn’t restore that {fileType, select, quip {canvas} other {list}}", "fileType", deletedFT(r.FileType)))
 			return
 		}
 		f.del.gone[r.ID] = true
-		msg := r.Title + " restored."
+		msg := nsFiles.T("{title} restored.", "title", r.Title)
 		view := func() { f.viewRestored(r) }
 		if t, ok := f.h.(interface {
 			ToastAction(text, label string, do func())
 		}); ok {
-			t.ToastAction(msg, "View", view)
+			t.ToastAction(msg, nsFiles.T("View"), view)
 		} else {
 			f.h.Toast(msg)
 		}
@@ -246,13 +252,13 @@ func (f *Files) deletedHeader(gtx C) D {
 	g.Constraints.Min.Y = gtx.Dp(56)
 	return layout.Inset{Top: 13, Bottom: 13, Left: 24, Right: 16}.Layout(g, func(gtx C) D {
 		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D { return f.label(gtx, 18, wBlack, f.p.Text, "Deleted") }),
+			layout.Rigid(func(gtx C) D { return f.label(gtx, 18, wBlack, f.p.Text, nsFiles.T("Deleted")) }),
 			hgap(12),
 			layout.Flexed(1, func(gtx C) D {
 				if len(rows) == 0 {
 					return D{}
 				}
-				return f.label(gtx, 13, wReg, f.p.Text, "You can restore deleted canvases or lists within 24 hours of deletion.")
+				return f.label(gtx, 13, wReg, f.p.Text, nsFiles.T("You can restore deleted {pageFileType, select, quip {canvases} list {lists} other {canvases or lists}} within 24 hours of deletion.", "pageFileType", "all"))
 			}),
 		)
 	})
@@ -271,7 +277,7 @@ func (f *Files) deletedBody(gtx C) D {
 	case len(rows) == 0:
 		g := gtx
 		g.Constraints.Min.Y = gtx.Dp(300)
-		return f.emptyState(g, "", "Nothing to see here", "You haven’t deleted any canvases or lists recently.", nil, "")
+		return f.emptyState(g, "", nsFiles.T("Nothing to see here"), nsFiles.T("You haven’t deleted any {pageFileType, select, quip {canvases} list {lists} other {canvases or lists}} recently.", "pageFileType", "all"), nil, "")
 	}
 	return f.scrollList(gtx, &f.list, len(rows), func(gtx C, i int) D {
 		bottom := unit.Dp(0)
@@ -345,7 +351,7 @@ func (f *Files) deletedEntity(gtx C, r core.DeletedFile, first, last bool, c *wi
 					layout.Rigid(func(gtx C) D { return f.label(gtx, 15, wBold, f.p.Text, r.Title) }),
 					layout.Rigid(func(gtx C) D {
 						return layout.Inset{Top: 2}.Layout(gtx, func(gtx C) D {
-							return f.label(gtx, 13, wReg, f.p.Meta, "Deleted "+deletedAgo(time.Unix(r.DateDelete, 0), time.Now()))
+							return f.label(gtx, 13, wReg, f.p.Meta, nsFiles.T("Deleted {ago}", "ago", deletedAgo(time.Unix(r.DateDelete, 0), time.Now())))
 						})
 					}),
 				)
@@ -369,7 +375,7 @@ func (f *Files) deletedEntity(gtx C, r core.DeletedFile, first, last bool, c *wi
 				f.icon(gtx, "undo", 18, col)
 				return D{Size: image.Pt(s, s)}
 			})
-			popups.Tooltip(gtx, f.th, tip, c.Hovered(), d.Size, popups.Above, "Restore "+deletedNoun(r.FileType), "")
+			popups.Tooltip(gtx, f.th, tip, c.Hovered(), d.Size, popups.Above, nsFiles.T("Restore {fileType, select, quip {canvas} other {list}}", "fileType", deletedFT(r.FileType)), "")
 		}()
 	}
 	return D{Size: rr.Size()}

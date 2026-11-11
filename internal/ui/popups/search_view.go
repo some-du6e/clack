@@ -36,6 +36,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
@@ -822,7 +823,7 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 	items := make([]MenuItem, 0, len(opts)+2)
 	for _, o := range opts {
 		val := o.val
-		items = append(items, MenuItem{Label: o.label, Checked: v.sortBy == val, Do: func() {
+		items = append(items, MenuItem{Key: LabelKey(o.label), Label: nsSearch.T(o.label), Checked: v.sortBy == val, Do: func() {
 			if v.sortBy != val {
 				v.sortBy = val
 				v.search(1)
@@ -842,7 +843,7 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 		if OpenPreferencesSection != nil {
 			OpenPreferencesSection("advanced")
 		}
-	}})
+	}}.In(nsSearch))
 	v.openMenu(gtx, v.sortR, items, 240)
 }
 
@@ -1128,16 +1129,16 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 		x := px
 		d := at(gtx, image.Pt(x, ry), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg2, "Sorted by ")
+				return text(gtx, th, 13, theme.Regular, cl.Fg2, nsSearch.T("Sorted by")+" ")
 			})
 		})
 		x += d.Size.X
-		label := "Most relevant (default)"
+		label := nsSearch.T("Most relevant (default)")
 		switch v.sortBy {
 		case "timestamp":
-			label = "Newest"
+			label = nsSearch.T("Newest")
 		case "oldest":
-			label = "Oldest"
+			label = nsSearch.T("Oldest")
 		}
 		if v.tab != srTabMessages {
 			label = v.tabSortLabel()
@@ -1158,11 +1159,11 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 			})
 		})
 	}
-	fw := textW(gtx, th, 13, theme.Regular, "Give feedback")
+	fw := textW(gtx, th, 13, theme.Regular, nsSearch.T("Give feedback"))
 	at(gtx, image.Pt(right-dp(gtx, 23)-fw, ry), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &v.feedback, nil, func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Link, "Give feedback")
+				return text(gtx, th, 13, theme.Regular, cl.Link, nsSearch.T("Give feedback"))
 			})
 		})
 	})
@@ -1173,7 +1174,7 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 	count := ""
 	switch {
 	case v.loading && v.total == 0:
-		count = "Searching…"
+		count = nsSearch.T("Searching…")
 	case v.err != "":
 		count = "Search failed: " + v.err
 	default:
@@ -1211,11 +1212,11 @@ func (v *SearchView) title(gtx layout.Context, th *theme.Theme, cl *Colors) layo
 	h := dp(gtx, 26)
 	if q == "" {
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 18, theme.Black, cl.Fg, "Search")
+			return text(gtx, th, 18, theme.Black, cl.Fg, nsSearch.T("Search"))
 		})
 	}
 	d := vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-		return text(gtx, th, 18, theme.Regular, cl.Fg, "Results for: ")
+		return text(gtx, th, 18, theme.Regular, cl.Fg, srResultsFor())
 	})
 	maxW := gtx.Constraints.Max.X - d.Size.X
 	if maxW < 1 {
@@ -1239,9 +1240,13 @@ func (v *SearchView) pill(gtx layout.Context, th *theme.Theme, cl *Colors, i, x,
 	return d.Size.X
 }
 
-// srResultsLabel is "291,727 results" ({count, plural, =1 {result}
-// other {results}} with the count grouped).
+// srResultsLabel is "291,727 results": the results header's
+// "{displayString} {count, plural, =1 {result} other {results}}" (c9v/,
+// the search I18n) with the count in the locale's grouping.
 func srResultsLabel(n int) string {
+	if l := i18n.Locale(); l != i18n.EnUS {
+		return nsSearch.T("{displayString} {count, plural, =1 {result} other {results}}", "displayString", i18n.FormatNumber(l, float64(n)), "count", n)
+	}
 	unit := " results"
 	if n == 1 {
 		unit = " result"
@@ -1268,29 +1273,42 @@ const (
 	srNothingAsk   = "Not the results you expected? "
 )
 
+// srResultsFor is the title's "Results for:" (selectFiltersData) with the
+// space before the query.
+func srResultsFor() string {
+	t := nsSearch.T("Results for:")
+	if !strings.HasSuffix(t, " ") {
+		t += " "
+	}
+	return t
+}
+
 // srNothing draws GenericSearchEmptyState centred in w at y: the title
 // (18 Black), then the two description lines (15/22 secondary), the first
 // with its "Give feedback" link (fb). It returns the height used.
 func srNothing(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int, fb *widget.Clickable) int {
-	tw := textW(gtx, th, 18, theme.Black, srNothingTitle)
+	title := nsSearch.T(srNothingTitle)
+	tw := textW(gtx, th, 18, theme.Black, title)
 	at(gtx, image.Pt(x+(w-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
-		return text(gtx, th, 18, theme.Black, cl.Fg, srNothingTitle)
+		return text(gtx, th, 18, theme.Black, cl.Fg, title)
 	})
 	y += dp(gtx, 32)
 	lh := dp(gtx, 22)
-	aw := textW(gtx, th, 15, theme.Regular, srNothingAsk)
-	lw := textW(gtx, th, 15, theme.Regular, "Give feedback")
+	ask := nsSearch.T("Not the results you expected?") + " " // FeedbackLink's (RhHp)
+	feedback := nsSearch.T("Give feedback")
+	aw := textW(gtx, th, 15, theme.Regular, ask)
+	lw := textW(gtx, th, 15, theme.Regular, feedback)
 	dw := textW(gtx, th, 15, theme.Regular, ".")
 	lx := x + (w-aw-lw-dw)/2
 	at(gtx, image.Pt(lx, y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Regular, cl.Fg2, srNothingAsk)
+			return text(gtx, th, 15, theme.Regular, cl.Fg2, ask)
 		})
 	})
 	at(gtx, image.Pt(lx+aw, y), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, fb, nil, func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 15, theme.Regular, cl.Link, "Give feedback")
+				return text(gtx, th, 15, theme.Regular, cl.Link, feedback)
 			})
 		})
 	})
@@ -1303,7 +1321,7 @@ func srNothing(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int, fb 
 	sw := minInt(w, dp(gtx, 420))
 	d := at(gtx, image.Pt(x+(w-sw)/2, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(sw, 1<<20)}
-		return paraCentered(gtx, th, 15, 22, cl.Fg2, srNothingDesc, sw)
+		return paraCentered(gtx, th, 15, 22, cl.Fg2, nsSearch.T(srNothingDesc), sw)
 	})
 	return y + d.Size.Y
 }
@@ -1334,7 +1352,7 @@ func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px
 			// min-height 84, margin-top 16) holding the outline medium
 			// "Search without filters"
 			call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-				return Button(gtx, th, &v.relaxBtn, BtnOutline, BtnMedium, "Search without filters", "", 0)
+				return Button(gtx, th, &v.relaxBtn, BtnOutline, BtnMedium, nsSearch.T("Search without filters"), "", 0)
 			})
 			t := op.Offset(image.Pt(px+(cw-d.Size.X)/2, y+dp(gtx, 16))).Push(gtx.Ops)
 			call.Add(gtx.Ops)
@@ -1699,7 +1717,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		if c.expanded {
 			c.toks, c.lines, c.over = srWrapFit(gtx, th, c.full, bw, 0, 0)
 		} else {
-			more := textW(gtx, th, 13, theme.Regular, " … Show more") + dp(gtx, 4)
+			more := textW(gtx, th, 13, theme.Regular, " … "+nsSearch.T("Show more")) + dp(gtx, 4)
 			c.toks, c.lines, c.over = srWrapFit(gtx, th, c.flat, bw, 1, more)
 		}
 	}
@@ -1770,7 +1788,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		at(gtx, image.Pt(x, bodyY), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &c.more, nil, func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg3, "… Show more")
+					return text(gtx, th, 13, theme.Regular, cl.Fg3, "… "+nsSearch.T("Show more"))
 				})
 			})
 		})
@@ -1778,7 +1796,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		at(gtx, image.Pt(tx, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &c.more, nil, func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, dp(gtx, 20), func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Fg3, "Show less")
+					return text(gtx, th, 13, theme.Regular, cl.Fg3, nsSearch.T("Show less"))
 				})
 			})
 		})
@@ -1827,9 +1845,9 @@ func (v *SearchView) hoverBar(gtx layout.Context, th *theme.Theme, cl *Colors, c
 		tip         *TipState
 		icon, label string
 	}{
-		{&c.fwd, &c.tipFwd, "forward-msg", "Forward message…"},
-		{&c.jump, &c.tipJump, "external", "Open in home"},
-		{&c.kebab, &c.tipMore, "kebab", "More actions"},
+		{&c.fwd, &c.tipFwd, "forward-msg", nsMessage.T("Forward message…")},
+		{&c.jump, &c.tipJump, "external", nsSearch.T("Open in home")},
+		{&c.kebab, &c.tipMore, "kebab", nsSearch.T("More actions")},
 	} {
 		at(gtx, image.Pt(x, r.Min.Y+pad), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Min = image.Point{}
@@ -1902,36 +1920,31 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 		actDo(h, "You'll be notified about new replies", func(ctx context.Context, a *core.App) error {
 			return a.SubscribeThread(ctx, ch, root, true)
 		})
-	}}
+	}}.In(nsMessage)
 	if self != "" && (m.User == self || slices.Contains(m.ReplyUsers, self)) {
 		follow = MenuItem{Label: "Turn off notifications for replies", Icon: "bell-off", Do: func() {
 			actDo(h, "You won't be notified about new replies", func(ctx context.Context, a *core.App) error {
 				return a.SubscribeThread(ctx, ch, root, false)
 			})
-		}}
+		}}.In(nsMessage)
 	}
+	rems := actReminderItems(remind, nil)
 	return []MenuItem{
-		{Label: "Add to saved", Icon: "bookmark-add", Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
+		MenuItem{Label: "Add to saved", Icon: "bookmark-add", Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
 			actDo(h, "Saved for later", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, 0) })
-		}},
-		{Label: "Add a reminder", Icon: "remind", Hint: "M", Keys: KeyRemind, Sub: []MenuItem{
-			{Label: "In 30 mins", Do: remind(actRem30m)},
-			{Label: "In 1 hour", Do: remind(actRem1h)},
-			{Label: "In 3 hours", Do: remind(actRem3h)},
-			{Label: "Tomorrow at 9:00 AM", Do: remind(actRemTomorrow)},
-			{Label: "Monday at 9:00 AM", Do: remind(actRemMonday)},
-		}},
+		}}.In(nsSaved),
+		MenuItem{Label: "Add a reminder", Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: rems[:len(rems)-1]}.In(nsMessage), // no Custom… here
 		follow,
 		Sep(),
-		{Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
+		MenuItem{Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, link)
 			h.Toast("Link copied")
-		}},
-		{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
+		}}.In(nsMessage),
+		MenuItem{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
 			copyText(gtx, actMsgText(m))
-		}},
+		}}.In(nsMessage),
 		Sep(),
-		{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}},
+		MenuItem{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}}.In(nsMessage),
 	}
 }
 
@@ -1983,9 +1996,9 @@ func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 			return icon(gtx, convIcon(ch.Kind), 20, cl.Fg2)
 		})
 		tx := x + box + dp(gtx, 12)
-		label := "View"
+		label := nsSearch.T("View")
 		if !ch.IsMember {
-			label = "Join"
+			label = nsSearch.T("Join")
 		}
 		bw := textW(gtx, th, 13, theme.Bold, label) + dp(gtx, 24)
 		bx := cw - dp(gtx, 12) - bw
@@ -1998,14 +2011,17 @@ func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 			return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
 				name := ch.Name
 				if ch.IsArchived {
-					name += " (archived)"
+					name += " " + nsSearch.T("(archived)") // ChannelName's
 				}
 				return text(gtx, th, 15, theme.Bold, cl.Fg, name)
 			})
 		})
 		sub := plural(ch.NumMembers, "member")
+		if i18n.Locale() != i18n.EnUS {
+			sub = nsSearch.T("{count, plural, =1 {# member} other {# members}}", "count", ch.NumMembers) // BrowsePageChannelSubtext
+		}
 		if ch.IsMember {
-			sub = "Joined · " + sub
+			sub = nsSearch.T("Joined") + " · " + sub
 		}
 		if p := strings.TrimSpace(ch.Purpose); p != "" {
 			sub += " · " + strings.Join(strings.Fields(p), " ")

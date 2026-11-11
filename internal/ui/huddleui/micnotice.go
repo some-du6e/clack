@@ -37,7 +37,7 @@ func settingsLabel() string {
 	if micGOOS == "darwin" {
 		return "Open System Settings"
 	}
-	return "Open Settings"
+	return nsHuddles.T("Open Settings")
 }
 
 func micNoteFor(st huddle.State) (micNote, bool) {

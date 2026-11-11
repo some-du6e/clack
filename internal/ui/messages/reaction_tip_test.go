@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"encoding/json"
 	"image"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -34,7 +36,7 @@ func TestReactionTipText(t *testing.T) {
 		{core.Reaction{Name: "eyes", Count: 2, Users: []string{"U1", "USELF"}, Self: true}, "U1 and you reacted with :eyes:"},
 		{core.Reaction{Name: "fire", Count: 73, Users: many}, strings.Join(many, ", ") + ", and others reacted with :fire:"},
 	} {
-		if got := reactionTip(nilHost{}, &c.re, "USELF"); got != c.want {
+		if got := plainTip(reactionTip(nilHost{}, &c.re, "USELF")); got != c.want {
 			t.Errorf("%v: %q, want %q", c.re.Users, got, c.want)
 		}
 		if tipCountFor(reactionTip(nilHost{}, &c.re, "USELF")) != c.re.Count {
@@ -155,5 +157,43 @@ func TestReactionBarCollapseLikeSlack(t *testing.T) {
 	gtx.Metric = unit.Metric{PxPerDp: 2, PxPerSp: 2}
 	if shown, _, _ := bar(12, -1).reactionCollapse(gtx, 600); shown != 10 {
 		t.Errorf("2x: %d shown, want 10", shown)
+	}
+}
+
+// ja-JP's getTip strings (the bundle's shape): the subtitle follows the
+// name with no space ("U1さんが :tada: でリアクションしました"), the viewer
+// is 自分 and listify joins with 、 and no conjunction. The tooltip draws
+// the name in bold, glued to the regular subtitle.
+func TestReactionTipLocale(t *testing.T) {
+	sub := func(s string) string { return `<span className="c-tooltip__subtitle">` + s + `</span>` }
+	b, _ := json.Marshal(map[string]map[string]string{
+		"reactions": {
+			i18n.Key(tipUser)[:7]:        "{user}" + sub("さんが {emoji} でリアクションしました"),
+			i18n.Key(tipUsersAndYou)[:7]: "{users_and_you}" + sub("が {emoji} でリアクションしました"),
+		},
+		"channel_token": {i18n.Key("you")[:7]: "自分"},
+	})
+	cat, err := i18n.ParseBundle("ja-JP", b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i18n.Use("ja-JP", cat)
+	t.Cleanup(func() { i18n.Use(i18n.EnUS, nil) })
+	one := reactionTip(nilHost{}, &core.Reaction{Name: "tada", Count: 1, Users: []string{"U1"}}, "USELF")
+	if got := plainTip(one); got != "U1さんが :tada: でリアクションしました" {
+		t.Errorf("one = %q", got)
+	}
+	bold, reg := textStyle{size: 13, weight: theme.Bold}, textStyle{size: 13}
+	runs := tipRuns(one, bold, reg)
+	if len(runs) != 2 || runs[0] != (tipRun{bold, "U1"}) || runs[1] != (tipRun{reg, "さんが :tada: でリアクションしました"}) {
+		t.Errorf("runs %+v", runs)
+	}
+	toks := tipTokens(runs)
+	if len(toks) < 2 || toks[0].s != "U1" || toks[1].s != "さ" || toks[1].space {
+		t.Errorf("the name and さ should meet with no space: %+v", toks)
+	}
+	two := reactionTip(nilHost{}, &core.Reaction{Name: "eyes", Count: 2, Users: []string{"U1", "USELF"}}, "USELF")
+	if got := plainTip(two); got != "U1、 自分が :eyes: でリアクションしました" {
+		t.Errorf("two = %q", got)
 	}
 }
