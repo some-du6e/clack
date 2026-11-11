@@ -22,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 const (
@@ -96,6 +97,21 @@ func smInk(img *image.RGBA, r image.Rectangle) int {
 	return n
 }
 
+// smLight counts the light pixels (luma over 170) in r.
+func smLight(img *image.RGBA, r image.Rectangle) int {
+	r = r.Intersect(img.Bounds())
+	n := 0
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			p := img.RGBAAt(x, y)
+			if svLuma(color.NRGBA{p.R, p.G, p.B, 0xff}) > 170 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // smRowRect is the text area of ch's sidebar row.
 func (e *svEnv) smRowRect(ch string) image.Rectangle {
 	e.t.Helper()
@@ -116,6 +132,15 @@ func smCheck(t *testing.T, e *svEnv, sh *svShooter, prefix string, on func()) {
 	}
 	off := sh.shot()
 	sh.save(prefix+"-off", off)
+	// the top nav's right end: Slack's help button and, before it, the
+	// plugin's toggle (HelpButton's patch renders both: they're the right
+	// container's flex items), two 20px light glyphs on the aubergine bar
+	nav := image.Rect(e.sz.X-140, 0, e.sz.X, int(theme.TopNavH))
+	if n := smLight(off, nav); n < 140 { // the help glyph alone is ~96
+		t.Errorf("the top nav's right end has %d light glyph pixels: the help button and the plugin's toggle aren't both drawn", n)
+	} else {
+		t.Logf("top nav glyph pixels: %d", n)
+	}
 	_, hr, _ := tv.HeaderName()
 	regions := map[string]image.Rectangle{
 		"private channel row": e.smRowRect(smPriv),

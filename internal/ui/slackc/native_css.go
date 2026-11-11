@@ -47,6 +47,7 @@ const nativeCSS = `
 .c-message__reply_bar_description { color: N }
 .c-message_kit__labels__text { color: N }
 .c-tooltip__tip { color: N; background-color: N }
+.p-ia4_client .p-ia4_top_nav__right_container{flex:1 0 auto;justify-content:flex-end;align-items:center;margin-right:4px;display:flex}
 `
 
 // pluginElementCSS is Slack's own rules (client-boot-styles, 2026-11:

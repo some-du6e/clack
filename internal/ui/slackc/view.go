@@ -39,6 +39,7 @@ type View struct {
 	topEl     css.Element
 	topKey    uint64
 	hasTop    bool
+	topFlex   bool // the parent native's flex items (ClassDef.FlexItems)
 	rootStyle css.Style
 	rootsGen  uint64 // nativeRootsGen the styles were computed with
 	topStyle  *css.Style
@@ -235,6 +236,10 @@ func (v *View) Layout(gtx layout.Context, nodes []*Node, name string, orig Props
 		v.setTree(nodes)
 	}
 	el, st, key := stackParent()
+	if f := flexParent(el); f != v.topFlex {
+		v.topFlex = f
+		v.needStyle = true
+	}
 	if key != v.topKey || (st != nil) != v.hasTop {
 		v.topKey, v.hasTop = key, st != nil
 		if st != nil {
@@ -479,6 +484,13 @@ func (s *scope) layout() {
 		s.root.st = css.Initial(cssEnv().Fg)
 	}
 	root.st.Display = css.DisplayBlock
+	if ps := v.topStyle; v.topFlex && ps != nil && (ps.Display == css.DisplayFlex || ps.Display == css.DisplayInlineFlex) {
+		// the parent native's flex items (ClassDef.FlexItems)
+		root.st.Display = css.DisplayFlex
+		root.st.FlexDirection, root.st.FlexWrap = ps.FlexDirection, ps.FlexWrap
+		root.st.JustifyContent, root.st.AlignItems, root.st.AlignContent = ps.JustifyContent, ps.AlignItems, ps.AlignContent
+		root.st.RowGap, root.st.ColGap = ps.RowGap, ps.ColGap
+	}
 	root.lastOK = false
 	v.layout(root, c)
 	if !s.exact && root.w < float32(cs.Min.X) {

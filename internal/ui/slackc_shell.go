@@ -29,7 +29,7 @@ var (
 	clsIA          = slackc.Class("p-ia4_client_container p-ia4_client p-ia")
 	clsTopNav      = slackc.Class("p-ia4_top_nav p-top_nav")
 	clsTopNavLeft  = slackc.Class("p-ia4_top_nav__left_container")
-	clsTopNavRight = slackc.Class("p-ia4_top_nav__right_container p-top_nav__right")
+	clsTopNavRight = slackc.Class("p-ia4_top_nav__right_container p-top_nav__right").FlexItems() // a flex row: a HelpButton patch's buttons sit beside it
 	clsHelp        = slackc.Class("c-button-unstyled p-top_nav__button p-top_nav__help", "data-qa", "top-nav-help-button", "aria-label", "Help").Tag("button")
 	clsPrimaryView = slackc.Class("p-workspace__primary_view p-view_contents p-view_contents--primary")
 	clsSecondary   = slackc.Class("p-workspace__secondary_view p-view_contents p-view_contents--secondary")

@@ -41,6 +41,8 @@ type ClassDef struct {
 	attrs   []string // name, value pairs
 	mods    []string
 	kids    []*ClassDef // Kids: elements the native draws inside itself
+	// flexItems: host trees right under it are its flex items (FlexItems)
+	flexItems bool
 }
 
 // Class declares a native widget class. classes is a space-separated
@@ -65,6 +67,25 @@ func (d *ClassDef) Mods(classes ...string) *ClassDef { d.mods = classes; return 
 // public channel) declares one ClassDef per shape. Natives without
 // declared kids still answer :has() with false and :empty with no.
 func (d *ClassDef) Kids(kids ...*ClassDef) *ClassDef { d.kids = kids; return d }
+
+// FlexItems marks a native that is a flex container in Slack's DOM whose
+// children include what plugins render in it: a patched component's
+// top-level nodes, laid out right under it, become its flex items under
+// its computed flex properties (the top nav's right container, where
+// StreamerMode's HelpButton patch puts its toggle beside Slack's help
+// button), instead of the blocks of a plain container.
+func (d *ClassDef) FlexItems() *ClassDef { d.flexItems = true; return d }
+
+// flexParent reports a native marked FlexItems.
+func flexParent(el css.Element) bool {
+	switch e := el.(type) {
+	case *nativeEl:
+		return e.def.flexItems
+	case *kidsEl:
+		return e.def.flexItems
+	}
+	return false
+}
 
 // WithKids is a copy of d that also declares kids: the shape of a widget
 // whose children depend on its state (the composer box with its pending
