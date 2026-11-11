@@ -20,12 +20,22 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
+
+// shotHost is the GIF test host with a real image cache (the fake's
+// images; the attached files' own bytes through localimg).
+type shotHost struct {
+	*gifTestHost
+	img *imgcache.Cache
+}
+
+func (h shotHost) Images() *imgcache.Cache { return h.img }
 
 // TestComposer2Shots draws the composer-2 branch's ports, light and dark
 // at 2x, into COMPOSER_AUDIT_SHOTS_DIR (the composer-audit-shots
@@ -44,6 +54,7 @@ func TestComposer2Shots(t *testing.T) {
 	}
 	app, fs := fakeslackApp(t)
 	app.SetTeamPrefs(map[string]json.RawMessage{"allow_native_gif_picker": json.RawMessage("true")})
+	images := imgcache.New(fs.Fetch, "", nil)
 	stubTyping(t)
 	ch := fs.ChannelIDs()[2]
 	app.S.PutConv(slack.Conversation{ID: ch, Name: "design-crit", IsChannel: true, IsMember: true})
@@ -80,13 +91,14 @@ func TestComposer2Shots(t *testing.T) {
 		w, h := 1100*scale, 760*scale
 		var ops op.Ops
 		var r input.Router
-		for i := 0; i < 4; i++ {
+		for i := 0; i < 6; i++ {
 			frame(th, &ops, &r, w, h, func(gtx layout.Context) {
 				if focus != nil && i == 1 {
 					gtx.Execute(key.FocusCmd{Tag: focus})
 				}
 				o.Layout(gtx)
 			})
+			time.Sleep(60 * time.Millisecond) // the image cache decodes off the frame
 		}
 		save(t, name, w, h, &ops)
 	}
@@ -97,6 +109,7 @@ func TestComposer2Shots(t *testing.T) {
 			if setup != nil {
 				setup(i)
 			}
+			time.Sleep(40 * time.Millisecond)
 			frame(th, &ops, &r, w*scale, h*scale, func(gtx layout.Context) {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(w*scale, h*scale)}
 				off := op.Offset(image.Pt(0, (h-200)*scale)).Push(gtx.Ops)
@@ -109,7 +122,8 @@ func TestComposer2Shots(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		th := theme.New(dark)
-		h := &gifTestHost{ovHost: &ovHost{slickHost: &slickHost{app: app, th: th}}}
+		gh := &gifTestHost{ovHost: &ovHost{slickHost: &slickHost{app: app, th: th}}}
+		h := shotHost{gifTestHost: gh, img: images}
 
 		t.Run("gif-tiles-"+mode, func(t *testing.T) {
 			c := New(h, ch, "")
