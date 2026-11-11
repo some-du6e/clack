@@ -28,7 +28,7 @@ type prefs struct {
 	EmojiStyle    string   `json:"emoji_style,omitempty"`
 	SidebarHidden bool     `json:"sidebar_hidden,omitempty"`
 	// NoUpdateCheck turns off the GitHub Releases check (Preferences >
-	// Advanced).
+	// Clack).
 	NoUpdateCheck bool `json:"no_update_check,omitempty"`
 	// NoUpdateDownload turns off "Download updates automatically" (on by
 	// default): a newer release then only shows its release page.
@@ -38,6 +38,12 @@ type prefs struct {
 	// restart waits out both (update_check.go).
 	UpdateCheckedAt    int64 `json:"update_checked_at,omitempty"`
 	UpdateLimitedUntil int64 `json:"update_limited_until,omitempty"`
+	// UpdateFound is the newer release the last check found (cleared
+	// when a check finds none): Clack quit before restarting into it, so
+	// the check right after launch runs even within the hour and its
+	// download (or the verified copy already in the cache) is ready in
+	// seconds.
+	UpdateFound string `json:"update_found,omitempty"`
 	// Realtime is the live-updates choice (Slack's websocket): nil until
 	// the user answers the first-run banner, which means off (realtime.go).
 	Realtime *bool `json:"realtime,omitempty"`

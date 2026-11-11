@@ -117,7 +117,7 @@ func TestUpdatePhasesPresentation(t *testing.T) {
 	if a.secondary.kind == secHelp || !strings.HasPrefix(a.toast.text, "Keyboard shortcuts") {
 		t.Errorf("Help without an update: pane %d, toast %q", a.secondary.kind, a.toast.text)
 	}
-	a.updateMenuClick() // An Update Is Available: Preferences > Advanced (openPrefsModal)
+	a.updateMenuClick() // An Update Is Available: Preferences > Clack (openPrefsModal)
 	waitUpd(t, a, "Preferences", func() bool { return len(a.overlays) > 0 })
 	if len(a.overlays) != 1 {
 		t.Errorf("An Update Is Available opened %d overlays", len(a.overlays))
@@ -402,7 +402,8 @@ func TestUpdateUIShots(t *testing.T) {
 
 // The whole window against the fake Slack (internal/fakeslack), light and
 // dark: an update downloading (no dot), downloaded (the Help dot), Help's
-// Take action card, and the restart dialog. UPDATE_SHOTS_DIR only (the
+// Take action card, the restart dialog, and Preferences > Clack while it
+// downloads and once it's ready. UPDATE_SHOTS_DIR only (the
 // updater workflow's prefs-shots job, under xvfb).
 func TestUpdateAppShots(t *testing.T) {
 	dir := os.Getenv("UPDATE_SHOTS_DIR")
@@ -450,6 +451,16 @@ func TestUpdateAppShots(t *testing.T) {
 		shot("3-help-take-action")
 		a.openAppUpdateDialog()
 		shot("4-restart-dialog")
+		closeAll()
+		// Preferences > Clack: the Updates row downloading (a third in)
+		// and ready, in the dialog with its nav
+		u.phase, u.prog = updDownloading, UpdateProgress{Stage: UpdateDownloading, Done: 12_700_000, Total: 37_330_000}
+		a.showPrefs(clackTabID)
+		shot("5-prefs-clack-downloading")
+		closeAll()
+		u.phase, u.prog = updReady, UpdateProgress{}
+		a.showPrefs(clackTabID)
+		shot("6-prefs-clack-ready")
 		closeAll()
 	}
 }

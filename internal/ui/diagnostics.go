@@ -20,7 +20,7 @@ import (
 )
 
 // Getting the log out: Help > Open Logs Folder and Help > Copy Diagnostics
-// (macOS menu bar), and the same two buttons in Preferences > Advanced >
+// (macOS menu bar), and the same two buttons in Preferences > Clack >
 // Troubleshooting, next to Show freeze reports.
 
 // diagLogLines is how many log lines Copy Diagnostics includes.
@@ -41,7 +41,7 @@ func (a *App) showLogs() {
 	_ = openurl.OpenFolder(dir)
 }
 
-// troubleshootingSection is Preferences > Advanced > Troubleshooting: the
+// troubleshootingSection is Preferences > Clack > Troubleshooting: the
 // log, the freeze reports, Copy diagnostics (every OS; macOS also has
 // them in the Help menu).
 func (p *prefsModal) troubleshootingSection(f *prefsForm) {

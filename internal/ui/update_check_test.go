@@ -335,8 +335,8 @@ func checkApp(t *testing.T, f *fakeCheck, dl *fakeUpdater) *App {
 	return a
 }
 
-// prefsRow lays out Preferences > Advanced > Updates (handling its
-// clicks) and returns what the row says.
+// prefsRow lays out Preferences > Clack > Updates (handling its clicks)
+// and returns what the row says.
 func prefsRow(a *App, p *prefsModal) updateStatus {
 	a.drain()
 	gtx := ttContext(new(op.Ops), image.Pt(523, 600))
@@ -346,9 +346,26 @@ func prefsRow(a *App, p *prefsModal) updateStatus {
 	return a.updateStatusAt(time.Now())
 }
 
-// Check now's states: Checking…, up to date (with when), a newer release
-// with Download → downloading → Install and restart, and errors in plain
-// words, all driven by clicks on the Preferences row.
+// rowClick clicks the row's button, which must read label, and returns
+// the row after it.
+func rowClick(t *testing.T, a *App, p *prefsModal, label string) updateStatus {
+	t.Helper()
+	st := a.updateStatusAt(time.Now())
+	if st.button != label {
+		t.Fatalf("the row's button is %q, want %q (%+v)", st.button, label, st)
+	}
+	b, ok := p.clicks["update_row"]
+	if !ok {
+		t.Fatalf("no row button laid out (have %v)", keysOf(p.clicks))
+	}
+	b.Click()
+	return prefsRow(a, p)
+}
+
+// Check for Updates' states: Checking for Update, You’re all good (with
+// when), a newer release with Download → Downloading Update → Restart to
+// Apply Update, and errors in plain words, all driven by clicks on the
+// Preferences row's one button.
 func TestUpdateCheckNowStates(t *testing.T) {
 	SetVersion("v0.1.0-alpha.12")
 	t.Cleanup(func() { SetVersion("") })
@@ -359,38 +376,30 @@ func TestUpdateCheckNowStates(t *testing.T) {
 	a := checkApp(t, f, dl)
 	a.toggleUpdateDownloads() // "Download updates automatically" off: the Download button
 	startLoop(t, a, updateSched{}, time.Now())
-	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: "advanced"}
-	click := func(key string) updateStatus {
-		t.Helper()
-		b, ok := p.clicks[key]
-		if !ok {
-			t.Fatalf("no %s button (have %v)", key, keysOf(p.clicks))
-		}
-		b.Click()
-		return prefsRow(a, p)
-	}
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: clackTabID}
+	click := func(label string) updateStatus { t.Helper(); return rowClick(t, a, p, label) }
 	answer := func(info UpdateInfo, ok bool, err error) {
 		f.set(info, ok, err)
 		gate <- struct{}{}
 		waitUpd(t, a, "the answer", func() bool { return !a.update.check.checking })
 	}
 
-	if st := prefsRow(a, p); st.msg != "" || !st.canCheck {
+	if st := prefsRow(a, p); st.title != "Clack v0.1.0-alpha.12" || st.desc != "Not checked yet." || st.button != "Check for Updates" || !st.enabled {
 		t.Fatalf("before any check: %+v", st)
 	}
-	// Checking…: the button is disabled, a second click doesn't ask twice
-	if st := click("update_check"); st.msg != "Checking…" || st.canCheck {
+	// Checking for Update: the button is disabled, a second click doesn't ask twice
+	if st := click("Check for Updates"); st.title != "Checking for Update" || st.enabled {
 		t.Fatalf("checking: %+v", st)
 	}
 	a.checkForUpdates(false)
 	answer(UpdateInfo{}, false, nil)
-	if st := prefsRow(a, p); st.msg != "You’re up to date · checked just now" || !st.canCheck {
+	if st := prefsRow(a, p); st.title != "You’re all good" || !strings.HasSuffix(st.desc, "Checked just now.") || !st.enabled {
 		t.Fatalf("up to date: %+v", st)
 	}
 	if n := f.calls.Load(); n != 1 {
 		t.Errorf("%d checks for a double click", n)
 	}
-	if got := a.updateStatusAt(time.Now().Add(42 * time.Minute)).msg; got != "You’re up to date · checked 42 minutes ago" {
+	if got := a.updateStatusAt(time.Now().Add(42 * time.Minute)).desc; !strings.HasSuffix(got, "Checked 42 minutes ago.") {
 		t.Errorf("later: %q", got)
 	}
 
@@ -403,10 +412,10 @@ func TestUpdateCheckNowStates(t *testing.T) {
 		{context.DeadlineExceeded, "GitHub didn’t answer in time. Check your internet connection and try again."},
 		{statusErr("502 Bad Gateway"), "GitHub couldn’t answer right now (502 Bad Gateway). Try again later."},
 	} {
-		click("update_check")
+		click("Check for Updates")
 		answer(UpdateInfo{}, false, c.err)
 		st := prefsRow(a, p)
-		if st.msg != "Couldn’t check for updates" || st.detail != c.want || !st.canCheck {
+		if st.title != "Couldn’t update Clack" || st.desc != c.want || st.button != "Check for Updates" || !st.enabled {
 			t.Errorf("%v: %+v", c.err, st)
 		}
 	}
@@ -419,36 +428,39 @@ func TestUpdateCheckNowStates(t *testing.T) {
 		t.Errorf("other: %q", got)
 	}
 
-	// alpha.14 is out: available, Download, downloading, ready, install
+	// alpha.14 is out: available, Download, downloading, ready, restart
 	f.setGate(nil)
 	f.set(newerInfo, true, nil)
-	click("update_check")
+	click("Check for Updates")
 	waitUpd(t, a, "the newer release", func() bool { return a.update.info.Tag == newerInfo.Tag })
 	st := prefsRow(a, p)
-	if st.msg != "Clack v0.1.0-alpha.14 is available" || strings.Join(st.buttons, "|") != "Download|View release" {
+	if st.title != "An Update Is Available" || st.desc != "Clack v0.1.0-alpha.14 is ready to download." || !st.notes || st.button != "Download" || !st.primary {
 		t.Fatalf("available: %+v", st)
 	}
 	if dl.downloads.Load() != 0 {
 		t.Fatal("downloaded with downloads off")
 	}
-	if st := click("update_action.Download"); st.msg != "Downloading Clack v0.1.0-alpha.14…" || strings.Join(st.buttons, "|") != "Cancel" || !st.quiet || !st.bar || st.frac >= 0 {
+	if a.prefs.UpdateFound != newerInfo.Tag {
+		t.Errorf("the found release isn't kept for the next launch: %q", a.prefs.UpdateFound)
+	}
+	if st := click("Download"); st.title != "Downloading Update" || st.button != "Cancel" || st.primary || !st.bar || st.frac >= 0 {
 		t.Fatalf("downloading: %+v", st)
 	}
 	dl.release <- errors.New("update: the download doesn't match the release's SHA256SUMS")
 	waitUpd(t, a, "the failed download", func() bool { return a.update.phase == updAvailable })
-	if st := prefsRow(a, p); st.msg != "Couldn’t download Clack v0.1.0-alpha.14" || !strings.Contains(st.detail, "SHA256SUMS") || strings.Join(st.buttons, "|") != "Retry|View release" {
+	if st := prefsRow(a, p); st.title != "Couldn’t update Clack" || !strings.Contains(st.desc, "SHA256SUMS") || st.button != "Try Again" {
 		t.Fatalf("download failed: %+v", st)
 	}
-	click("update_action.Retry")
+	click("Try Again")
 	dl.release <- nil
 	waitUpd(t, a, "the download", func() bool { return a.update.phase == updReady })
-	if st := prefsRow(a, p); st.msg != "Clack v0.1.0-alpha.14 is ready to install" || strings.Join(st.buttons, "|") != "Install and restart" || st.detail != "" {
+	if st := prefsRow(a, p); st.title != "Restart to Apply Update" || !strings.Contains(st.desc, "Just a quick restart") || !st.notes || st.button != "Restart Clack" || !st.primary {
 		t.Fatalf("ready: %+v", st)
 	}
 	if dl.installs.Load() != 0 {
 		t.Fatal("installed without the click")
 	}
-	click("update_action.Install and restart")
+	click("Restart Clack")
 	waitUpd(t, a, "the install", func() bool { return dl.quits == 1 })
 	if dl.installs.Load() != 1 {
 		t.Errorf("%d installs", dl.installs.Load())
@@ -564,8 +576,9 @@ func hasItem(menus []menubar.Menu, id string) bool {
 	return found
 }
 
-// Preferences > Advanced > Updates in each state, light and dark
-// (UPDATE_SHOTS_DIR, the updater workflow's prefs-shots job).
+// Preferences > Clack > Updates in each state, light and dark
+// (UPDATE_SHOTS_DIR, the updater workflow's prefs-shots job): one row, the
+// label and description on the left and its one button on the right.
 func TestUpdatePrefsShots(t *testing.T) {
 	SetVersion("v0.1.0-alpha.12")
 	t.Cleanup(func() { SetVersion("") })
@@ -574,7 +587,7 @@ func TestUpdatePrefsShots(t *testing.T) {
 	dl := &fakeUpdater{release: make(chan error, 1)}
 	a := checkApp(t, f, dl)
 	shots := os.Getenv("UPDATE_SHOTS_DIR")
-	r := &ttRenderer{t: t, a: a, sz: image.Pt(600, 380), dir: shots}
+	r := &ttRenderer{t: t, a: a, sz: image.Pt(600, 330), dir: shots}
 	if shots != "" {
 		w, err := pixeltest.NewWindow(r.sz.X, r.sz.Y)
 		if err != nil {
@@ -583,10 +596,10 @@ func TestUpdatePrefsShots(t *testing.T) {
 		r.win = w
 		defer w.Release()
 	}
-	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: "advanced"}
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}, section: clackTabID}
 	draw := func(gtx layout.Context) {
 		op.Offset(image.Pt(24, 20)).Push(gtx.Ops)
-		gtx.Constraints = layout.Exact(image.Pt(523, 350))
+		gtx.Constraints = layout.Exact(image.Pt(523, 300))
 		p.updatesSection(p.form(gtx))
 	}
 	now := time.Now().Round(0)
@@ -598,43 +611,44 @@ func TestUpdatePrefsShots(t *testing.T) {
 		a.prefs.UpdateCheckedAt = 0
 	}
 	states := []struct {
-		name string
-		set  func()
-		want string
+		name          string
+		set           func()
+		title, button string
 	}{
-		{"idle", func() {}, ""},
-		{"last-checked", func() { a.prefs.UpdateCheckedAt = now.Add(-2 * time.Hour).Unix() }, "Last checked 2 hours ago"},
-		{"checking", func() { u.check.checking = true }, "Checking…"},
-		{"up-to-date", func() { u.check.upToDate, u.check.at = true, now.Add(-3*time.Minute) }, "You’re up to date · checked 3 minutes ago"},
-		{"error-offline", func() { u.check.err = updateErrText(offline, now) }, "Couldn’t check for updates"},
-		{"error-rate-limited", func() { u.check.err = updateErrText(rateLimited{now.Add(25 * time.Minute)}, now) }, "Couldn’t check for updates"},
-		{"available", func() { u.info, u.phase = info, updAvailable }, "Clack v0.1.0-alpha.14 is available"},
+		{"idle", func() {}, "Clack v0.1.0-alpha.12", "Check for Updates"},
+		{"last-checked", func() { a.prefs.UpdateCheckedAt = now.Add(-2 * time.Hour).Unix() }, "Clack v0.1.0-alpha.12", "Check for Updates"},
+		{"checking", func() { u.check.checking = true }, "Checking for Update", "Check for Updates"},
+		{"up-to-date", func() { u.check.upToDate, u.check.at = true, now.Add(-3*time.Minute) }, "You’re all good", "Check for Updates"},
+		{"error-offline", func() { u.check.err = updateErrText(offline, now) }, "Couldn’t update Clack", "Check for Updates"},
+		{"error-rate-limited", func() { u.check.err = updateErrText(rateLimited{now.Add(25 * time.Minute)}, now) }, "Couldn’t update Clack", "Check for Updates"},
+		{"available", func() { u.info, u.phase = info, updAvailable }, "An Update Is Available", "Download"},
 		{"download-failed", func() {
 			u.info, u.phase, u.dlErr = info, updAvailable, "update: the download doesn't match the release's SHA256SUMS"
-		}, "Couldn’t download Clack v0.1.0-alpha.14"},
-		{"downloading", func() { u.info, u.phase = info, updDownloading }, "Downloading Clack v0.1.0-alpha.14…"},
+		}, "Couldn’t update Clack", "Try Again"},
+		{"downloading", func() { u.info, u.phase = info, updDownloading }, "Downloading Update", "Cancel"},
 		// a third of the way in (Karim asked to see this)
 		{"downloading-progress", func() {
 			u.info, u.phase = info, updDownloading
 			u.prog = UpdateProgress{Stage: UpdateDownloading, Done: 12_700_000, Total: 37_330_000}
-		}, "Downloading Clack v0.1.0-alpha.14… 34% (12.1 of 35.6 MB)"},
+		}, "Downloading Update", "Cancel"},
 		{"downloading-unknown-size", func() {
 			u.info, u.phase = info, updDownloading
 			u.prog = UpdateProgress{Stage: UpdateDownloading, Done: 5 << 20}
-		}, "Downloading Clack v0.1.0-alpha.14… 5.0 MB"},
+		}, "Downloading Update", "Cancel"},
 		{"verifying", func() {
 			u.info, u.phase = info, updDownloading
 			u.prog = UpdateProgress{Stage: UpdateVerifying, Done: 30 << 20, Total: 40 << 20}
-		}, "Verifying Clack v0.1.0-alpha.14 against SHA256SUMS… 75%"},
+		}, "Downloading Update", "Cancel"},
 		{"staging", func() {
 			u.info, u.phase = info, updDownloading
 			u.prog = UpdateProgress{Stage: UpdateStaging, Done: 40 << 20, Total: 40 << 20}
-		}, "Preparing Clack v0.1.0-alpha.14…"},
-		{"installing", func() { u.info, u.phase = info, updInstalling }, "Installing Clack v0.1.0-alpha.14…"},
-		{"ready", func() { u.info, u.phase = info, updReady }, "Clack v0.1.0-alpha.14 is ready to install"},
+		}, "Downloading Update", "Cancel"},
+		{"ready", func() { u.info, u.phase = info, updReady }, "Restart to Apply Update", "Restart Clack"},
+		{"installing", func() { u.info, u.phase = info, updInstalling }, "Restart to Apply Update", "Restart Clack"},
+		{"installer-open", func() { u.info, u.phase = info, updManual }, "Restart to Apply Update", ""},
 		{"install-failed", func() {
 			u.info, u.phase, u.err = info, updFailed, "update: moving the old copy aside: permission denied"
-		}, "Couldn’t install Clack v0.1.0-alpha.14"},
+		}, "Couldn’t update Clack", "Try Again"},
 	}
 	for _, dark := range []bool{false, true} {
 		a.setDark(dark)
@@ -642,8 +656,8 @@ func TestUpdatePrefsShots(t *testing.T) {
 		for _, s := range states {
 			reset()
 			s.set()
-			if got := a.updateStatusAt(now).msg; got != s.want {
-				t.Errorf("%s: %q, want %q", s.name, got, s.want)
+			if st := a.updateStatusAt(now); st.title != s.title || st.button != s.button {
+				t.Errorf("%s: %q [%s], want %q [%s]", s.name, st.title, st.button, s.title, s.button)
 			}
 			r.frame(draw)
 			r.save("updates-"+s.name+"-"+mode, r.frame(draw), r.sz.Y)
