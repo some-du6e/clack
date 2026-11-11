@@ -133,7 +133,20 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnHello = a.onHello
+	appsByStore.Store(s, a)
+	store.ExperimentGroup = experimentForStore
 	return a
+}
+
+// appsByStore maps a store to its App, for store.ExperimentGroup (the
+// huddle message sentences in richtext follow the viewer's groups).
+var appsByStore sync.Map
+
+func experimentForStore(s *store.Store, name string) string {
+	if v, ok := appsByStore.Load(s); ok {
+		return v.(*App).Experiment(name)
+	}
+	return ""
 }
 
 // PollInterval is how often core refreshes unread counts and the open

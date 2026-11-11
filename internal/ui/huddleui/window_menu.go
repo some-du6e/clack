@@ -3,6 +3,8 @@ package huddleui
 import (
 	"image"
 
+	"gioui.org/layout"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/imgcache"
@@ -24,8 +26,9 @@ import (
 //	Huddle preferences
 //
 // Clack keeps the rows it can do: copying the link (rooms.getLink), going
-// to the conversation, the closed captions, hiding your own tile and the
-// preferences. Inviting, topics, huddle themes, layouts, the jukebox, the
+// to the conversation, the topic (screenhero.rooms.rename, topic.go), the
+// closed captions (rooms.startTranscription, captions_log.go), hiding your
+// own tile and the preferences. Huddle themes, layouts, the jukebox, the
 // huddle language and side-by-side captions need Slack features Clack
 // doesn't have (docs/HUDDLES-AUDIT.md lists them).
 
@@ -46,8 +49,26 @@ func (h winHost) OpenThread(channel, ts string) {
 	m := h.w.c.h
 	h.w.c.post(func() { m.OpenThread(channel, ts); m.Invalidate() })
 }
-func (h winHost) CloseSecondary()                           {}
-func (h winHost) ShowOverlay(popups.Overlay)                {}
+func (h winHost) CloseSecondary() {}
+
+// ShowOverlay stacks o over the huddle window (its modals: Slack opens
+// HuddleStillHereModal, the topic dialog and DeviceWarningModal in the
+// huddle window when it's open). Any goroutine.
+func (h winHost) ShowOverlay(o popups.Overlay) {
+	h.w.mu.Lock()
+	h.w.overlays = append(h.w.overlays, o)
+	h.w.mu.Unlock()
+	h.w.invalidate()
+}
+
+// post runs f on the huddle window's goroutine at its next frame.
+func (h winHost) post(f func()) {
+	h.w.mu.Lock()
+	h.w.posts = append(h.w.posts, f)
+	h.w.mu.Unlock()
+	h.w.invalidate()
+}
+
 func (h winHost) OpenEmojiPicker(image.Point, func(string)) {}
 func (h winHost) OpenProfile(image.Point, string)           {}
 func (h winHost) OpenMessageMenu(image.Point, core.Message) {}
@@ -68,11 +89,19 @@ func (c *Controller) moreMenu(s *huddle.Session, st huddle.State, w *window) []p
 		}})
 	}
 	items = append(items, popups.Sep())
+	var ph popups.Host // where the menu's dialogs open: the window it's in
+	if w != nil {
+		ph = winHost{w}
+	} else if h, ok := c.h.(popups.Host); ok {
+		ph = h
+	}
+	// HuddleEditTopicMenuItem (topic.go), then a divider before captions
+	items = append(items, c.topicItem(s, st, ph), popups.Sep())
 	// CaptionsSubmenu: "Show captions" › Display as… / Closed captions
 	on := st.CaptionsOn
 	items = append(items, popups.MenuItem{Key: "show-captions", Label: "Show captions", Sub: []popups.MenuItem{
 		{Header: "Display as…"},
-		{Key: "closed-captions", Label: "Closed captions", Checked: on, Do: func() { s.SetCaptions(!on) }},
+		{Key: "closed-captions", Label: "Closed captions", Checked: on, Do: func() { c.ToggleClosedCaptions(s) }},
 	}})
 	// useHideSelfMenuItem: only with someone else in the huddle
 	if len(st.Participants) > 1 {
@@ -130,13 +159,75 @@ func (w *window) toggleMore(s *huddle.Session, st huddle.State) {
 		MenuClass: "p-huddle_more_actions_menu"})
 }
 
-// layoutMore draws the open ⋯ menu over the window.
-func (w *window) layoutMore(gtx C) {
-	if w.more == nil {
+// toggleAudio opens (or closes) the mic's Audio settings menu above its
+// caret (position "top", closeOnSelect false: a pick keeps it open until
+// the menu item closes it).
+func (w *window) toggleAudio(s *huddle.Session) {
+	if w.audio != nil {
+		w.audio.Dismiss()
+		w.audio = nil
 		return
 	}
-	w.more.Layout(gtx)
-	if w.more.Dismissed() {
+	if w.more != nil {
+		w.more.Dismiss()
 		w.more = nil
 	}
+	w.picker, w.stick = false, false
+	anchor := w.audioBtn.Add(image.Pt(0, w.barTop))
+	w.audio = popups.NewMenuOpts(winHost{w}, w.c.audioMenu(s), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
+		MenuClass: "p-huddle_more_actions_menu"})
+}
+
+// layoutMore draws the open ⋯ and Audio settings menus over the window.
+func (w *window) layoutMore(gtx C) {
+	if w.more != nil {
+		w.more.Layout(gtx)
+		if w.more.Dismissed() {
+			w.more = nil
+		}
+	}
+	if w.audio != nil {
+		w.audio.Layout(gtx)
+		if w.audio.Dismissed() {
+			w.audio = nil
+		}
+	}
+}
+
+// runPosts runs what winHost.post queued (start of a frame).
+func (w *window) runPosts() {
+	w.mu.Lock()
+	ps := w.posts
+	w.posts = nil
+	w.mu.Unlock()
+	for _, f := range ps {
+		f()
+	}
+}
+
+// layoutOverlays draws the stacked overlays (modals) over everything,
+// dropping the dismissed ones.
+func (w *window) layoutOverlays(gtx C) {
+	w.mu.Lock()
+	ovs := append([]popups.Overlay(nil), w.overlays...)
+	w.mu.Unlock()
+	if len(ovs) == 0 {
+		return
+	}
+	var keep []popups.Overlay
+	for _, o := range ovs {
+		g := gtx
+		g.Constraints = layout.Exact(gtx.Constraints.Max)
+		o.Layout(g)
+		if !o.Dismissed() {
+			keep = append(keep, o)
+		}
+	}
+	w.mu.Lock()
+	// overlays shown during this frame stay
+	for _, o := range w.overlays[len(ovs):] {
+		keep = append(keep, o)
+	}
+	w.overlays = keep
+	w.mu.Unlock()
 }
