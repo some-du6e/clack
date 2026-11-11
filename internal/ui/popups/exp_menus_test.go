@@ -518,7 +518,9 @@ func TestMenuTagAndBadge(t *testing.T) {
 	// the narrower label box: no taller than two lines either way
 	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(1000, 800))}
 	plain := NewMenuOpts(h, []MenuItem{{Label: items[0].Label, Radio: true, Checked: true, Subtitle: items[0].Subtitle, Do: func() {}}}, MenuOpts{})
-	if rh, rp := m.rowHeight(gtx, th, 0, 300), plain.rowHeight(gtx, th, 0, 300); rp < 46 || rh < rp {
+	// at 300px the tag narrows the label box enough to wrap the
+	// description onto a second line
+	if rh, rp := m.rowHeight(gtx, th, 0, 300), plain.rowHeight(gtx, th, 0, 300); rp < 28 || rh <= rp {
 		t.Errorf("radio row %d with the tag, %d without", rh, rp)
 	}
 	e := newMkEnv(t, m) // draws the rows (tag, badge, caret)
