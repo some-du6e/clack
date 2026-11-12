@@ -170,6 +170,9 @@ type ChannelDetails struct {
 	presN   int
 
 	x cdExtra // details_more.go: Settings, stacked dialogs, VIP / Hide
+
+	cl cdCall  // details_call.go: Start a Call ▾
+	em cdEmail // details_email.go: Send emails to this channel
 }
 
 // NewChannelDetails opens the details dialog for a conversation.
@@ -329,7 +332,8 @@ func (d *ChannelDetails) refreshInfo() {
 
 // watch subscribes to this conversation's conv / conv_removed events, and
 // to presence_change / user_change for the loaded members (their rows read
-// presence live, so an empty note just redraws).
+// presence live, so an empty note just redraws); its permissions and
+// channel_email events and the team and org prefs redraw too.
 func (d *ChannelDetails) watch() {
 	id := d.id
 	shown := &d.presIDs
@@ -351,8 +355,12 @@ func (d *ChannelDetails) watch() {
 				}
 			}
 			return dirMemberNote{}, false
+		case ev.Type == "team_prefs" || ev.Type == "enterprise_prefs":
+			return dirMemberNote{}, true // calls_apps, disable_email_ingestion, the org's email pref: redraw
 		case ev.Channel != id:
 			return dirMemberNote{}, false
+		case ev.Type == "permissions" || ev.Type == "channel_email":
+			return dirMemberNote{}, true // the email grant, a kept address: redraw (details_email.go)
 		case ev.Type == "conv":
 			return dirMemberNote{id: id, verify: true}, true
 		case ev.Type == "conv_removed":
@@ -709,10 +717,16 @@ func (d *ChannelDetails) update(gtx C) {
 	}
 
 	d.updateAddApps(gtx) // "Add an App" / "Add agents and apps": the apps browser (details_more.go)
-	for _, c := range []*widget.Clickable{&d.call, &d.emails, &d.addWorkflow} {
+	for _, c := range []*widget.Clickable{&d.addWorkflow} {
 		if c.Clicked(gtx) {
 			d.h.Toast(cdUnsupported)
 		}
+	}
+	if d.call.Clicked(gtx) {
+		d.callClicked() // details_call.go
+	}
+	if d.emails.Clicked(gtx) {
+		d.openEmails() // details_email.go
 	}
 	d.updateSlackParts(gtx, inf, loaded)
 	if d.orgLearn.Clicked(gtx) {
@@ -889,8 +903,9 @@ func (d *ChannelDetails) Layout(gtx C) D {
 	if dw <= 0 || dh <= 0 {
 		return D{Size: full}
 	}
+	d.cl.dlg = image.Pt((full.X-dw)/2, (full.Y-dh)/2) // the overlay is at the window's origin
 	func() {
-		defer op.Offset(image.Pt((full.X-dw)/2, (full.Y-dh)/2)).Push(gtx.Ops).Pop()
+		defer op.Offset(d.cl.dlg).Push(gtx.Ops).Pop()
 		r := image.Rect(0, 0, dw, dh)
 		rad := gtx.Dp(cdRadius)
 		theme.Shadow(gtx, r, rad, gtx.Dp(24), argb(0x59000000))
@@ -1129,7 +1144,7 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 	dirAt(gtx, image.Pt(w-gtx.Dp(56), gtx.Dp(20)), func(gtx C) D {
 		return d.iconButton(gtx, &d.closeBtn, "close", 36, 20, d.p.Sec)
 	})
-	dirAt(gtx, image.Pt(gtx.Dp(cdPadX), btnY), func(gtx C) D {
+	btnRow := dirAt(gtx, image.Pt(gtx.Dp(cdPadX), btnY), func(gtx C) D {
 		ch := []layout.FlexChild{
 			layout.Rigid(func(gtx C) D {
 				ic := "star"
@@ -1179,9 +1194,13 @@ func (d *ChannelDetails) head(gtx C, inf core.ChannelDetails, loaded bool) D {
 				}),
 				hgap(8))
 		}
-		ch = append(ch, layout.Rigid(func(gtx C) D { return cdBtn(&d.base, gtx, &d.call, "phone", "Start a Call", true, 0) }))
+		if d.callVisible() { // CallButton (details_call.go)
+			ch = append(ch, layout.Rigid(d.callButton))
+		}
 		return row(gtx, layout.Middle, ch...)
 	})
+	// the call button is the row's last: its right edge is the row's
+	d.cl.row = image.Rectangle{Min: image.Pt(gtx.Dp(cdPadX), btnY), Max: image.Pt(gtx.Dp(cdPadX), btnY).Add(btnRow.Size)}
 	dirAt(gtx, image.Pt(gtx.Dp(cdPadX-8), tabY), func(gtx C) D {
 		counts := make([]string, len(d.tabKinds))
 		for i, k := range d.tabKinds {
@@ -1463,13 +1482,14 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 		if d.inviting {
 			items = append(items, cdGap(8), func(gtx C) D { return d.invitePanel(gtx, d.dmMembers(cv)) })
 		}
-		items = append(items, cdGap(16), d.cdCard(d.emailsField))
+		items = append(items, d.emailsItems()...)
 	case "mpim":
 		items = []W{cdGap(16)}
 		if d.h.Core().CanNameMpdm(d.id) { // MpdmConversationNameField
 			items = append(items, d.cdCard(d.mpdmNameField), cdGap(16))
 		}
-		items = append(items, d.cdCard(topic), cdGap(16), d.cdCard(d.emailsField))
+		items = append(items, d.cdCard(topic))
+		items = append(items, d.emailsItems()...)
 	default:
 		rows := []W{topic, func(gtx C) D { return d.purposeField(gtx, cv) }}
 		if d.showOrgAccess(inf) {
@@ -1484,7 +1504,8 @@ func (d *ChannelDetails) aboutItems(inf core.ChannelDetails) []W {
 		if !cv.IsArchived && !(cv.IsGeneral && inf.IsMember) {
 			rows = append(rows, func(gtx C) D { return d.leaveField(gtx, inf) })
 		}
-		items = []W{cdGap(16), d.cdCard(rows...), cdGap(16), d.cdCard(d.emailsField)}
+		items = []W{cdGap(16), d.cdCard(rows...)}
+		items = append(items, d.emailsItems()...)
 	}
 	return append(items, d.idLine)
 }
@@ -1661,25 +1682,6 @@ func (d *ChannelDetails) cdTileRow(gtx C, icon string, text W) D {
 		hgap(12),
 		layout.Flexed(1, func(gtx C) D { return dirFill(gtx, text) }),
 	)
-}
-
-func (d *ChannelDetails) emailsField(gtx C) D {
-	what := "channel"
-	if cdGroup(d.kind) != "channel" {
-		what = "conversation"
-	}
-	return d.cdButtonField(gtx, &d.emails, func(gtx C) D {
-		return layout.Inset{Top: 16, Bottom: 16, Left: 20, Right: 20}.Layout(gtx, func(gtx C) D {
-			return d.cdTileRow(gtx, "mail", func(gtx C) D {
-				return col(gtx,
-					layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 1, "Send emails to this "+what) }),
-					layout.Rigid(func(gtx C) D {
-						return d.para(gtx, 15, 22, wReg, d.p.Text, 0, "Get an email address that posts incoming emails in this "+what+".")
-					}),
-				)
-			})
-		})
-	})
 }
 
 // addPeopleField (DMs): 20px person-plus icon + 15px bold label, h ~56.

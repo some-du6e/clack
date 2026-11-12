@@ -44,9 +44,9 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The channel details' I18n namespaces (each component's `new I18n(…)`).
+// PostingPermissions' I18n namespace (ViewPostingPermissions and
+// PostingPermissionsModal use nsChannelDetails, details_call.go).
 var (
-	nsChanDetails = i18n.NS("channel_details") // ViewPostingPermissions, PostingPermissionsModal(Contents)
 	nsChanOptions = i18n.NS("channel_options") // PostingPermissions, createPermissionsSubtitleBulleted
 )
 
@@ -142,7 +142,7 @@ func (d *ChannelDetails) postingField(gtx C, inf core.ChannelDetails, vis core.P
 	if vis.Disabled {
 		fg = cdDim(fg)
 	}
-	return d.cdFieldOf(gtx, &d.x.postRow, cdFieldSpec{titleText: nsChanDetails.T("Posting permissions"), disabled: vis.Disabled,
+	return d.cdFieldOf(gtx, &d.x.postRow, cdFieldSpec{titleText: nsChannelDetails.T("Posting permissions"), disabled: vis.Disabled,
 		text: func(gtx C) D { return d.postingSubtitle(gtx, inf, fg) }})
 }
 
@@ -177,7 +177,7 @@ func (d *ChannelDetails) postingSubtitle(gtx C, inf core.ChannelDetails, fg colo
 			})
 		},
 		func(gtx C) D {
-			return cdLinkReg(&d.base, gtx, &d.x.postLearn, 15, i18n.Plain(nsChanDetails.RT("<link>Learn more</link>")))
+			return cdLinkReg(&d.base, gtx, &d.x.postLearn, 15, i18n.Plain(nsChannelDetails.RT("<link>Learn more</link>")))
 		},
 	)
 }
@@ -414,9 +414,9 @@ func (d *ChannelDetails) updatePosting(gtx C, inf core.ChannelDetails) {
 			if err != nil {
 				var se *slack.Error
 				if errors.As(err, &se) && se.Code == "restricted_action" {
-					p.err = nsChanDetails.T("Unable to save posting permissions. It seems like the posting permission for this channel has been changed and you can no longer change this preference.")
+					p.err = nsChannelDetails.T("Unable to save posting permissions. It seems like the posting permission for this channel has been changed and you can no longer change this preference.")
 				} else {
-					p.err = nsChanDetails.T("Oops, something went wrong with updating message posting permissions. Please try again.")
+					p.err = nsChannelDetails.T("Oops, something went wrong with updating message posting permissions. Please try again.")
 				}
 				return
 			}
@@ -434,9 +434,9 @@ func (d *ChannelDetails) postingDialog(gtx C, full image.Point, inf core.Channel
 		return
 	}
 	c := d.h.Core()
-	title := nsChanDetails.T("Posting permissions")
+	title := nsChannelDetails.T("Posting permissions")
 	if c.OnPlusPlanOrHigher() {
-		title = nsChanDetails.T("Channel permissions")
+		title = nsChannelDetails.T("Channel permissions")
 	}
 	var body []W
 	if p.err != "" {
@@ -508,8 +508,8 @@ func (d *ChannelDetails) postingDialog(gtx C, full image.Point, inf core.Channel
 		}))
 	}
 	d.skModal(gtx, full, title, true, body, []W{
-		d.cdDlgButton(&dl.cancel, btnOutline, nsChanDetails.T("Cancel"), false),
-		d.cdDlgButton(&dl.ok, btnPrimary, nsChanDetails.T("Save Changes"), !p.seeded || !p.changed || p.saving),
+		d.cdDlgButton(&dl.cancel, btnOutline, nsChannelDetails.T("Cancel"), false),
+		d.cdDlgButton(&dl.ok, btnPrimary, nsChannelDetails.T("Save Changes"), !p.seeded || !p.changed || p.saving),
 	})
 }
 

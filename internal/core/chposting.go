@@ -487,3 +487,10 @@ func (a *App) loadFeatures(ctx context.Context) {
 		a.emit(Event{Type: "features"})
 	}
 }
+
+// The experiments the posting permissions read (TestExperimentReadsListed):
+// PostingPermissions' frontline label and the Standard-plan upsell.
+func init() {
+	experimentReads["frontline_users"] = on
+	experimentReads["boost_bus_plus_awareness_and_upgrades"] = []string{"treatment"}
+}
