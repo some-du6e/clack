@@ -693,7 +693,14 @@ func (w *window) scrollEvent(wParam, lParam uintptr, horizontal bool, kmods key.
 	np := windows.Point{X: int32(x), Y: int32(y)}
 	windows.ScreenToClient(w.hwnd, &np)
 	p := f32.Point{X: float32(np.X), Y: float32(np.Y)}
-	dist := float32(int16(wParam >> 16))
+	delta := int16(wParam >> 16)
+	// Clack patch 9: whole notches (multiples of WHEEL_DELTA) animate; a
+	// precision touchpad's or a free-spinning wheel's smaller deltas
+	// don't. Chromium can't tell them apart either (crbug.com/545234,
+	// web_input_event_builders_win.cc); its precision touchpads come
+	// through DirectManipulation instead, which Gio doesn't use.
+	notched := delta != 0 && delta%120 == 0
+	dist := float32(delta) * w.wheelPixelsPerDelta(horizontal, kmods == key.ModShift)
 	var sp f32.Point
 	if horizontal {
 		sp.X = dist
@@ -711,9 +718,46 @@ func (w *window) scrollEvent(wParam, lParam uintptr, horizontal bool, kmods key.
 		Position:  p,
 		Buttons:   getPointerButtons(pi),
 		Scroll:    sp,
+		Notched:   notched,
 		Modifiers: kmods,
 		Time:      windows.GetMessageTime(),
 	})
+}
+
+// wheelPixelsPerDelta converts WM_MOUSEWHEEL's WHEEL_DELTA units to
+// pixels the way Chromium does (WebMouseWheelEventBuilder::Build,
+// ui/events/blink/web_input_event_builders_win.cc): a notch scrolls
+// SPI_GETWHEELSCROLLLINES lines (3 if it can't be read) of
+// kScrollbarPixelsPerLine, 100/3 dp, so 100 dp at the default; a
+// horizontal notch SPI_GETWHEELSCROLLCHARS characters (1) of the same
+// width. Shift turns the vertical wheel horizontal (Gio's convention)
+// and keeps its lines. "One screen at a time" (WHEEL_PAGESCROLL) scrolls
+// by Blink's page step, 87.5% of the scroller's height
+// (kMinFractionToStepWhenPaging, cc/input/scroll_utils.h), here of the
+// window's.
+func (w *window) wheelPixelsPerDelta(horizontal, shift bool) float32 {
+	const (
+		wheelDelta     = 120
+		pixelsPerLine  = 100.0 / 3.0
+		pageFraction   = 0.875
+		defaultLines   = 3
+		defaultChars   = 1
+		pageScrollUint = windows.WHEEL_PAGESCROLL
+	)
+	ppdp := configForDPI(windows.GetWindowDPI(w.hwnd)).PxPerDp
+	if horizontal {
+		chars := windows.SystemParametersUint(windows.SPI_GETWHEELSCROLLCHARS, defaultChars)
+		return float32(chars) * pixelsPerLine * ppdp / wheelDelta
+	}
+	lines := windows.SystemParametersUint(windows.SPI_GETWHEELSCROLLLINES, defaultLines)
+	if lines == pageScrollUint {
+		size := w.config.Size.Y
+		if shift {
+			size = w.config.Size.X
+		}
+		return float32(size) * pageFraction / wheelDelta
+	}
+	return float32(lines) * pixelsPerLine * ppdp / wheelDelta
 }
 
 // Adapted from https://blogs.msdn.microsoft.com/oldnewthing/20060126-00/?p=32513/

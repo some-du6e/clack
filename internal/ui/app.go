@@ -371,6 +371,9 @@ func (a *App) Run() error {
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
 	a.watchOSTheme()
+	if a.motionOverride == 0 {
+		watchOSMotion() // wheel scrolling animates unless the OS asks for less motion (syncWheelAnimation)
+	}
 	if a.images != nil {
 		a.images.SetInvalidate(a.Invalidate)
 		a.th.Images = a.images
@@ -559,6 +562,7 @@ func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
 	a.winSize = sz
+	a.syncWheelAnimation()
 	a.syncThemeTokens()
 	a.syncMenuBar()
 

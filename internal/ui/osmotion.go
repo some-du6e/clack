@@ -5,6 +5,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"gioui.org/gesture"
+
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -63,4 +65,34 @@ func (a *App) reduceMotion() bool {
 		return true
 	}
 	return uipref.Get().NoAnimations
+}
+
+// syncWheelAnimation tells every scroll gesture whether a notched mouse
+// wheel animates (Gio patch 9, third_party/gioui.org/gesture/clack_wheel.go).
+// Chromium animates wheel scrolling when
+// gfx::Animation::ScrollAnimationsEnabledBySystem: the OS's reduced-motion
+// setting (Windows' SPI_GETCLIENTAREAANIMATION, GTK's animations on
+// Linux; ui/gfx/animation/animation_win.cc, animation_linux.cc), which
+// osReduceMotion reads. Slack's own "Allow animations" (a11y_animations)
+// never reaches Chromium's scrolling, so it doesn't count here.
+// CLACK_REDUCE_MOTION and the tests' override still do.
+func (a *App) syncWheelAnimation() {
+	on := true
+	switch {
+	case a.motionOverride != 0:
+		on = a.motionOverride < 0
+	default:
+		switch os.Getenv("CLACK_REDUCE_MOTION") {
+		case "1", "true":
+			on = false
+		case "0", "false":
+		default:
+			if r, ok := osReduceMotion(); ok && r {
+				on = false
+			}
+		}
+	}
+	if gesture.WheelAnimation() != on {
+		gesture.SetWheelAnimation(on)
+	}
 }

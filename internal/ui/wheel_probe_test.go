@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
+	"gioui.org/gpu/headless"
 	"gioui.org/io/pointer"
 )
 
@@ -21,21 +23,22 @@ import (
 // runner has a device).
 //
 // Input is synthetic wheel notches at a real cadence (bursts of six 35 ms
-// apart, like a quick flick, 500 ms between bursts), frames paced at
-// 60 Hz on the wall clock: a frame that runs past its vsync pushes the
-// next one to the following vsync, as a real swap chain would. Each frame
-// reports its layout and render times and how far the list moved.
+// apart, like a quick flick, 500 ms between bursts) at 60 Hz frames (see
+// run). Each frame reports its layout and render times and how far the
+// list moved.
 func TestWheelFrameProbe(t *testing.T) {
 	if os.Getenv("CLACK_WHEEL_PROBE") == "" {
 		t.Skip("CLACK_WHEEL_PROBE not set")
 	}
 	e := newPerfEnv(t, true)
+	gpu := e.gpu
+	e.gpu = nil // loading runs layout only
 	e.waitReady()
 	ch := e.fs.ChannelIDs()[2]
 	e.openChannel(ch)
 	e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
 	p := e.listPoint()
-	dl := time.Now().Add(60 * time.Second)
+	dl := time.Now().Add(90 * time.Second)
 	for e.loadedMessages(ch) < 300 && time.Now().Before(dl) { // infinite scroll up to 300
 		e.scroll(p, -2000)
 		e.frame()
@@ -53,11 +56,24 @@ func TestWheelFrameProbe(t *testing.T) {
 		e.frame()
 	}
 	e.settle(800 * time.Millisecond)
-	t.Logf("wheel-probe: %d messages loaded, gpu=%v, %s", e.loadedMessages(ch), e.gpu != nil, wheelProbeInput)
+	t.Logf("wheel-probe: %d messages loaded, gpu=%v, %s", e.loadedMessages(ch), gpu != nil, wheelProbeInput)
 
 	pr := &wheelProbe{e: e, ch: ch, p: p}
-	pr.run(t, "up", -1)
-	pr.run(t, "down", +1)
+	pr.run(t, "up", -1, nil)
+	pr.run(t, "down", +1, nil)
+	if gpu != nil {
+		pr.run(t, "up, rendered", -1, gpu)
+		pr.run(t, "down, rendered", +1, gpu)
+	}
+	// the same input with the animation off (reduced motion): each notch
+	// jumps in one frame, as before Gio patch 9
+	gesture.SetWheelAnimation(false)
+	defer gesture.SetWheelAnimation(true)
+	e.a.motionOverride = 1 // syncWheelAnimation would turn it back on
+	defer func() { e.a.motionOverride = 0 }()
+	pr.run(t, "up, instant", -1, nil)
+	pr.run(t, "down, instant", +1, nil)
+	e.gpu = gpu
 }
 
 type wheelProbe struct {
@@ -79,8 +95,17 @@ type probeFrame struct {
 
 // run sends 3 bursts of 6 notches (dir -1 scrolls toward older messages)
 // and records frames until 400 ms after the last one.
-func (pr *wheelProbe) run(t *testing.T, name string, dir float32) {
+//
+// Without gpu, frames are paced on the wall clock at 60 Hz: a frame that
+// runs past its vsync pushes the next to the following one. With gpu,
+// every frame is also rendered, and since the runners render in software
+// (WARP) a frame takes far longer than a vsync: the clock the app sees is
+// then virtual, exactly one vsync per frame, so the animation runs
+// through the same frames and each frame's cost is measured.
+func (pr *wheelProbe) run(t *testing.T, name string, dir float32, gpu *headless.Window) {
 	e := pr.e
+	e.gpu = gpu
+	defer func() { e.gpu = nil }()
 	const vsync = time.Second / 60
 	var at []time.Duration // notch times from the start
 	for b := 0; b < 3; b++ {
@@ -90,16 +115,22 @@ func (pr *wheelProbe) run(t *testing.T, name string, dir float32) {
 	}
 	end := at[len(at)-1] + 400*time.Millisecond
 	start := time.Now()
+	if gpu != nil {
+		pr.frame(start.Add(-vsync)) // the renderer's first frame compiles its shaders
+	}
 	next := start
 	sent := 0
 	prev := pr.rows()
 	var frames []probeFrame
 	lastFrame := start
-	for {
-		if d := time.Until(next); d > 0 {
-			time.Sleep(d)
+	for i := 0; ; i++ {
+		now := start.Add(time.Duration(i) * vsync)
+		if gpu == nil {
+			if d := time.Until(next); d > 0 {
+				time.Sleep(d)
+			}
+			now = time.Now()
 		}
-		now := time.Now()
 		if now.Sub(start) > end {
 			break
 		}
@@ -109,29 +140,33 @@ func (pr *wheelProbe) run(t *testing.T, name string, dir float32) {
 			sent++
 			n++
 		}
-		lay, gpu := pr.frame()
+		lay, rend := pr.frame(now)
 		rows := pr.rows()
-		f := probeFrame{at: now.Sub(start), layout: lay, gpu: gpu, moved: movedBetween(prev, rows), notches: n, interval: now.Sub(lastFrame), visible: len(rows)}
+		f := probeFrame{at: now.Sub(start), layout: lay, gpu: rend, moved: movedBetween(prev, rows), notches: n, interval: now.Sub(lastFrame), visible: len(rows)}
 		_, f.wantsNext = e.r.WakeupTime()
 		prev, lastFrame = rows, now
-		// the next vsync after this frame's work
-		next = next.Add(vsync)
-		for done := time.Now(); next.Before(done); next = next.Add(vsync) {
-			f.missedVsyncs++
+		if gpu == nil {
+			// the next vsync after this frame's work
+			next = next.Add(vsync)
+			for done := time.Now(); next.Before(done); next = next.Add(vsync) {
+				f.missedVsyncs++
+			}
+		} else {
+			f.missedVsyncs = int((lay + rend) / vsync)
 		}
 		frames = append(frames, f)
 	}
 	pr.report(t, name, frames)
 }
 
-// frame is perfEnv.frame with the layout (App.frame plus the router) and
-// the GPU render timed apart.
-func (pr *wheelProbe) frame() (lay, gpu time.Duration) {
+// frame is perfEnv.frame at time now with the layout (App.frame plus the
+// router) and the GPU render timed apart.
+func (pr *wheelProbe) frame(now time.Time) (lay, gpu time.Duration) {
 	e := pr.e
 	a := e.a
 	a.drain()
 	t0 := time.Now()
-	e.now = t0
+	e.now = now
 	gtx := e.context()
 	before := a.router.Current()
 	a.frame(gtx)
@@ -145,7 +180,7 @@ func (pr *wheelProbe) frame() (lay, gpu time.Duration) {
 		if err := e.gpu.Frame(&e.ops); err != nil {
 			e.tb.Fatal(err)
 		}
-		// Frame only submits; reading a pixel waits for the GPU
+		// Frame only submits; reading the pixels back waits for the GPU
 		_ = e.gpu.Screenshot(image.NewRGBA(image.Rect(0, 0, e.size.X, e.size.Y)))
 	}
 	return t1.Sub(t0), time.Since(t1)
@@ -180,7 +215,7 @@ func movedBetween(a, b map[string]int) int {
 
 func (pr *wheelProbe) report(t *testing.T, name string, fs []probeFrame) {
 	var lay, gpu, tot []time.Duration
-	missed, moving, wants := 0, 0, 0
+	missed, moving, wants, jump := 0, 0, 0, 0
 	maxGap := time.Duration(0)
 	var sb strings.Builder
 	for i, f := range fs {
@@ -191,6 +226,7 @@ func (pr *wheelProbe) report(t *testing.T, name string, fs []probeFrame) {
 		if f.moved != 0 {
 			moving++
 		}
+		jump = max(jump, f.moved, -f.moved)
 		if f.wantsNext {
 			wants++
 		}
@@ -200,11 +236,11 @@ func (pr *wheelProbe) report(t *testing.T, name string, fs []probeFrame) {
 		fmt.Fprintf(&sb, "  %6.1fms n=%d layout=%5.2fms gpu=%5.2fms moved=%4dpx wantsNext=%v missed=%d\n",
 			ms(f.at), f.notches, ms(f.layout), ms(f.gpu), f.moved, f.wantsNext, f.missedVsyncs)
 	}
-	t.Logf("wheel-probe %s: %d frames, %d moved, %d asked for another frame, %d vsyncs missed, longest frame gap %.1fms\n"+
+	t.Logf("wheel-probe %s: %d frames, %d moved (largest step %dpx), %d asked for another frame, %d vsyncs missed, longest frame gap %.1fms\n"+
 		"  layout  p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n"+
 		"  gpu     p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n"+
 		"  total   p50 %.2f p90 %.2f p99 %.2f max %.2f ms\n%s",
-		name, len(fs), moving, wants, missed, ms(maxGap),
+		name, len(fs), moving, jump, wants, missed, ms(maxGap),
 		pct(lay, 50), pct(lay, 90), pct(lay, 99), pct(lay, 100),
 		pct(gpu, 50), pct(gpu, 90), pct(gpu, 99), pct(gpu, 100),
 		pct(tot, 50), pct(tot, 90), pct(tot, 99), pct(tot, 100), sb.String())
@@ -223,10 +259,10 @@ func pct(ds []time.Duration, p int) float64 {
 }
 
 // wheelProbeInput describes the notch events.
-const wheelProbeInput = "one notch = Scroll 120 (stock Gio's WM_MOUSEWHEEL: the raw WHEEL_DELTA as pixels, applied at once)"
+const wheelProbeInput = "one notch = Scroll 100, Notched (Gio patch 9's WM_MOUSEWHEEL: 3 lines of 100/3 dp at 96 dpi, animated)"
 
 // wheelNotch is one notch of a mouse wheel at p as Gio's Windows backend
-// delivers it.
+// delivers it at 96 dpi with the default 3 lines per notch.
 func wheelNotch(p image.Point, dir float32) pointer.Event {
-	return pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y)), Scroll: f32.Pt(0, 120*dir)}
+	return pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y)), Scroll: f32.Pt(0, 100*dir), Notched: true}
 }

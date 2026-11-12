@@ -6,7 +6,6 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
-	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -20,6 +19,7 @@ import (
 // boardState is the board's scroll, hover and hit areas.
 type boardState struct {
 	scrollX, scrollY int
+	wheel            wheelScroll
 	hover            image.Point
 	press            f32.Point
 	pressed          bool
@@ -111,6 +111,10 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 	maxX := max(0, x0+len(groups)*(lw+gtx.Dp(laneGap))+gtx.Dp(16)-sz.X)
 	maxY := max(0, tallest+gtx.Dp(16)-sz.Y)
 	v.boardEvents(gtx, d, maxX, maxY)
+	if dx, dy := b.wheel.tick(gtx); dx != 0 || dy != 0 {
+		b.scrollX += dx
+		b.scrollY += dy
+	}
 	b.scrollX = min(max(0, b.scrollX), maxX)
 	b.scrollY = min(max(0, b.scrollY), maxY)
 	for gi, g := range groups {
@@ -291,10 +295,7 @@ func (v *View) boardEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) 
 		}
 		switch pe.Kind {
 		case pointer.Scroll:
-			dx, dy := int(pe.Scroll.X), int(pe.Scroll.Y)
-			if pe.Modifiers.Contain(key.ModShift) && dx == 0 {
-				dx, dy = dy, 0
-			}
+			dx, dy := b.wheel.event(gtx, pe, b.scrollX, b.scrollY, maxX, maxY, true)
 			b.scrollX = min(max(0, b.scrollX+dx), maxX)
 			b.scrollY = min(max(0, b.scrollY+dy), maxY)
 		case pointer.Move:

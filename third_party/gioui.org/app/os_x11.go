@@ -696,7 +696,12 @@ func (h *x11EventHandler) handleEvents() bool {
 				ev.Kind = pointer.Release
 			}
 			var btn pointer.Buttons
-			const scrollScale = 10
+			// Clack patch 9 (CLACK_PATCHES.md): buttons 4 to 7 are wheel
+			// notches. Chromium scrolls MouseWheelEvent::kWheelDelta, 120
+			// dp, per notch on Linux (ui/events/event.cc,
+			// kWheelScrollAmount in ui/events/x/events_x_utils.cc) and
+			// animates it; Gio moved 10 pixels at once.
+			scrollScale := 120 * w.metric.PxPerDp
 			switch bevt.button {
 			case C.Button1:
 				btn = pointer.ButtonPrimary
@@ -705,7 +710,7 @@ func (h *x11EventHandler) handleEvents() bool {
 			case C.Button3:
 				btn = pointer.ButtonSecondary
 			case C.Button4:
-				ev.Kind = pointer.Scroll
+				ev.Kind, ev.Notched = pointer.Scroll, true
 				// scroll up or left (if shift is pressed).
 				if ev.Modifiers == key.ModShift {
 					ev.Scroll.X = -scrollScale
@@ -714,7 +719,7 @@ func (h *x11EventHandler) handleEvents() bool {
 				}
 			case C.Button5:
 				// scroll down or right (if shift is pressed).
-				ev.Kind = pointer.Scroll
+				ev.Kind, ev.Notched = pointer.Scroll, true
 				if ev.Modifiers == key.ModShift {
 					ev.Scroll.X = +scrollScale
 				} else {
@@ -723,12 +728,12 @@ func (h *x11EventHandler) handleEvents() bool {
 			case 6:
 				// http://xahlee.info/linux/linux_x11_mouse_button_number.html
 				// scroll left.
-				ev.Kind = pointer.Scroll
-				ev.Scroll.X = -scrollScale * 2
+				ev.Kind, ev.Notched = pointer.Scroll, true
+				ev.Scroll.X = -scrollScale
 			case 7:
 				// scroll right
-				ev.Kind = pointer.Scroll
-				ev.Scroll.X = +scrollScale * 2
+				ev.Kind, ev.Notched = pointer.Scroll, true
+				ev.Scroll.X = +scrollScale
 			default:
 				continue
 			}

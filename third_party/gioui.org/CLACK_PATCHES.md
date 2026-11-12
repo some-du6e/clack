@@ -14,8 +14,10 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `widget/text.go`, `widget/clack_spans.go`, `text/shaper.go`,
 `text/gotext.go`, `op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`,
 `app/clack_gpu.go`, `app/clack_panel.go`, `app/os.go`, `app/os_macos.go`,
-`app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`
-and these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
+`app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
+`app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
+`gesture/clack_wheel.go` and these two files (`CLACK_PATCHES.md`,
+`UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -262,3 +264,75 @@ and `TestShareFlow` (the panel's background is an `ActionMove` area and
 its buttons aren't). The macOS and Windows parts are built by ci's macos
 and windows jobs; whether a window takes the focus can't be observed on
 the CI runners. Not in `UPSTREAM.patch`.
+
+## 9. Animated mouse-wheel scrolling
+
+`io/pointer/pointer.go` (`Event.Notched`), `gesture/clack_wheel.go` (new:
+`WheelCurve`, `Wheel`, `WheelDuration`, `SetWheelAnimation`),
+`gesture/gesture.go` (`Scroll`), `app/os_windows.go`
+(`scrollEvent`, `wheelPixelsPerDelta`) with `SystemParametersUint` and the
+`SPI_GETWHEELSCROLL*` constants in `app/internal/windows/windows.go`,
+`app/os_x11.go` (buttons 4 to 7) and `app/os_wayland.go` (`flushScroll`).
+An event without `Notched` scrolls as upstream does.
+
+Karim on Windows 11 (alpha.37): "scrolling feels choppy". Gio applied
+each wheel notch in the frame it arrived, and as raw `WHEEL_DELTA`
+units: 120 pixels at once, whatever the DPI or the "lines per notch"
+setting. Slack's Chromium animates a notch: cc's
+`ScrollOffsetAnimationCurve` for `ScrollType::kMouseWheel` is an
+ease-in-out (`kEaseInOutControlPoints`, cubic-bezier(0.42, 0, 0.58, 1))
+whose duration falls with the distance (`DurationBehavior::kInverseDelta`:
+12 frames of 60 Hz, 200 ms, up to 120px; 6 frames, 100 ms, from 480px;
+linear between). A notch that arrives while it runs moves the target on
+and `UpdateTarget` rebuilds the curve from where it is, scaling y1 so the
+velocity carries over, with the duration bounded by
+`VelocityBasedDurationBound` (2.5 times the time to the target at the
+current speed). The target is clamped to the scroller's range. Read in
+Chromium main df2e801: `cc/animation/scroll_offset_animation_curve.cc`,
+`scroll_offset_animation_curve_factory.cc`, `scroll_offset_animations_impl.cc`.
+
+- `Event.Notched` marks a Scroll from a notched wheel whose `Scroll` is
+  already the notches' distance in pixels. Only the OS backends set it.
+- `gesture.Scroll` (so every `layout.List` and `widget.List`) feeds a
+  notch into a `WheelCurve` and reports the curve's progress frame by
+  frame, asking for the next frame with `op.InvalidateCmd` while it moves,
+  as its fling does. A precise delta applies at once and stops a running
+  animation (Blink cancels a wheel animation for a precise-pixel scroll).
+  `Stop` stops it too.
+- `gesture.Wheel` is the same for widgets that read `pointer.Scroll`
+  themselves (`internal/ui/listview`).
+- `SetWheelAnimation(false)` makes notches instant. Clack sets it from
+  the OS's reduced-motion setting each frame, as Chromium's
+  `ScrollAnimationsEnabledBySystem` does (`internal/ui/osmotion.go`).
+
+Where notches come from, and their distance (Chromium's numbers):
+
+- Windows: a `WM_MOUSEWHEEL` delta that is a whole multiple of
+  `WHEEL_DELTA`. `SPI_GETWHEELSCROLLLINES` lines (3 when unreadable) of
+  `kScrollbarPixelsPerLine` (100/3 dp) per notch, 100 dp by default;
+  `WM_MOUSEHWHEEL` `SPI_GETWHEELSCROLLCHARS` (1) of the same width;
+  `WHEEL_PAGESCROLL` 87.5% of the window's height
+  (`kMinFractionToStepWhenPaging`, `cc/input/scroll_utils.h`; Blink takes the scroller's). Read on
+  every event, as `WebMouseWheelEventBuilder::Build`
+  (`ui/events/blink/web_input_event_builders_win.cc`) does. Smaller
+  deltas (precision touchpads, free-spinning wheels) are not marked
+  and are converted at the same rate. Chromium gets precision touchpads
+  through DirectManipulation and can't tell the rest apart
+  (crbug.com/545234). Gio has no DirectManipulation.
+- X11: buttons 4 to 7, 120 dp each (`MouseWheelEvent::kWheelDelta` on
+  Linux, `ui/events/event.cc`; Gio moved 10 pixels, 20 horizontally).
+- Wayland: an axis with discrete steps, 120 dp per 10 of axis value
+  (`kAxisValueScale`, `ui/ozone/platform/wayland/host/wayland_pointer.cc`;
+  Gio multiplied the value by 10). Continuous axes (touchpads) are
+  unchanged.
+- macOS: none. Chromium animates the wheel there only when the
+  `NSScrollAnimationEnabled` default is set (`animation_mac.mm`), which
+  it isn't out of the box, and Gio passes AppKit's deltas through
+  unchanged.
+
+Tests: `internal/ui/wheel` (the curve against ease-in-out, durations,
+retargets keeping speed, reversal, clamping, touchpad passthrough,
+reduced motion, and a `layout.List` animating through a real
+`input.Router`). ci's windows-applog job runs
+`internal/ui` `TestWheelFrameProbe` (frame times while notches scroll a
+long channel). Not in `UPSTREAM.patch`.

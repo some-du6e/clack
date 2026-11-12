@@ -498,6 +498,7 @@ var (
 	_SetWindowPlacement           = user32.NewProc("SetWindowPlacement")
 	_SetWindowPos                 = user32.NewProc("SetWindowPos")
 	_SetWindowText                = user32.NewProc("SetWindowTextW")
+	_SystemParametersInfo         = user32.NewProc("SystemParametersInfoW") // Clack patch 9
 	_TranslateMessage             = user32.NewProc("TranslateMessage")
 	_UnregisterClass              = user32.NewProc("UnregisterClassW")
 	_UpdateWindow                 = user32.NewProc("UpdateWindow")
@@ -986,6 +987,25 @@ func SetTimer(hwnd syscall.Handle, nIDEvent uintptr, uElapse uint32, timerProc u
 
 func ScreenToClient(hwnd syscall.Handle, p *Point) {
 	_ScreenToClient.Call(uintptr(hwnd), uintptr(unsafe.Pointer(p)))
+}
+
+// Clack patch 9 (CLACK_PATCHES.md): the wheel's lines and characters per
+// notch.
+const (
+	SPI_GETWHEELSCROLLLINES = 0x0068
+	SPI_GETWHEELSCROLLCHARS = 0x006C
+	WHEEL_PAGESCROLL        = 0xFFFFFFFF
+)
+
+// SystemParametersUint reads a UINT system parameter (SystemParametersInfo
+// with a pointer to a UINT), or def when the call fails.
+func SystemParametersUint(action uint32, def uint32) uint32 {
+	var v uint32
+	r, _, _ := _SystemParametersInfo.Call(uintptr(action), 0, uintptr(unsafe.Pointer(&v)), 0)
+	if r == 0 {
+		return def
+	}
+	return v
 }
 
 func ShowWindow(hwnd syscall.Handle, nCmdShow int32) {

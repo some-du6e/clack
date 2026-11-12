@@ -38,6 +38,11 @@ type Event struct {
 	Position f32.Point
 	// Scroll is the scroll amount, if any.
 	Scroll f32.Point
+	// Notched marks a Scroll from a notched (non-precise) mouse wheel,
+	// already converted to pixels: Scroll gestures animate it the way
+	// Chromium does. Precise deltas (touchpads, trackpads) leave it false.
+	// Clack patch 9 (CLACK_PATCHES.md).
+	Notched bool
 	// Modifiers is the set of active modifiers when
 	// the mouse button was pressed.
 	Modifiers key.Modifiers

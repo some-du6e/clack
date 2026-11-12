@@ -6,7 +6,6 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
-	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -22,6 +21,7 @@ import (
 // gridState is the table's scroll and hover state.
 type gridState struct {
 	scrollX, scrollY int
+	wheel            wheelScroll
 	hover            int // line under the pointer (-1 none)
 	hoverX           int
 	press            f32.Point
@@ -146,6 +146,10 @@ func (v *View) layoutGrid(gtx layout.Context, d *core.ListDoc, lv *lists.View, r
 	maxY := max(0, totalH-sz.Y)
 	maxX := max(0, g.x0+totalW+gtx.Dp(32)-sz.X)
 	v.gridEvents(gtx, d, maxX, maxY)
+	if dx, dy := g.wheel.tick(gtx); dx != 0 || dy != 0 {
+		g.scrollX = min(max(0, g.scrollX+dx), maxX)
+		g.scrollY = min(max(0, g.scrollY+dy), maxY)
+	}
 	v.gridKeys(gtx, d, sz.Y)
 	if g.reveal {
 		g.reveal = false
@@ -484,10 +488,7 @@ func (v *View) gridEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {
 		}
 		switch pe.Kind {
 		case pointer.Scroll:
-			dx, dy := int(pe.Scroll.X), int(pe.Scroll.Y)
-			if pe.Modifiers.Contain(key.ModShift) && dx == 0 {
-				dx, dy = dy, 0
-			}
+			dx, dy := g.wheel.event(gtx, pe, g.scrollX, g.scrollY, maxX, maxY, true)
 			g.scrollX = min(max(0, g.scrollX+dx), maxX)
 			g.scrollY = min(max(0, g.scrollY+dy), maxY)
 			g.hover = v.lineAt(int(pe.Position.Y))

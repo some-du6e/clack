@@ -45,18 +45,20 @@ type Item struct {
 	queue    []func()
 
 	// UI goroutine only
-	btns     map[string]*widget.Clickable
-	styles   styles
-	rvs      map[string]*richview.View
-	rvDoc    map[string]*core.Message
-	handler  *handler
-	scroll   int
-	tag      int
-	press    f32.Point
-	pressed  bool
-	hits     []itemHit
-	composer widget.Editor
-	sending  bool
+	wheel     wheelScroll
+	maxScroll int // last frame's
+	btns      map[string]*widget.Clickable
+	styles    styles
+	rvs       map[string]*richview.View
+	rvDoc     map[string]*core.Message
+	handler   *handler
+	scroll    int
+	tag       int
+	press     f32.Point
+	pressed   bool
+	hits      []itemHit
+	composer  widget.Editor
+	sending   bool
 
 	live     atomic.Bool
 	lastSeen atomic.Int64
@@ -250,7 +252,9 @@ func (it *Item) Layout(gtx layout.Context) layout.Dimensions {
 	h := it.layoutContent(gtx, d, rec, comments, cload, body.X)
 	call := m.Stop()
 	maxS := max(0, h-body.Y+gtx.Dp(80))
-	it.scroll = min(max(0, it.scroll), maxS)
+	_, dy := it.wheel.tick(gtx)
+	it.scroll = min(max(0, it.scroll+dy), maxS)
+	it.maxScroll = maxS
 	func() {
 		defer op.Offset(image.Pt(0, -it.scroll)).Push(gtx.Ops).Pop()
 		call.Add(gtx.Ops)
@@ -560,7 +564,8 @@ func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 		}
 		switch pe.Kind {
 		case pointer.Scroll:
-			it.scroll += int(pe.Scroll.Y)
+			_, dy := it.wheel.event(gtx, pe, 0, it.scroll, 0, it.maxScroll, false)
+			it.scroll += dy
 		case pointer.Press:
 			it.press, it.pressed = pe.Position, true
 		case pointer.Release:
