@@ -515,8 +515,8 @@ func TestSearchW24Shots(t *testing.T) {
 		dpo.until(t, "the in: menu", func() bool {
 			return p.ac.open && len(srItemIDs(p.ac.items, srAITeam)) > 0
 		})
-		// scroll to the group DMs and the workspace at the end
-		p.ac.sel, p.ac.pseudo, p.ac.scroll = len(p.ac.items)-2, false, true
+		// scroll to the group DMs and the workspace at the end (selected)
+		p.ac.sel, p.ac.pseudo, p.ac.scroll = len(p.ac.items)-1, false, true
 		shot(dpo, "w24-search-in-groupdms-"+mode)
 
 		vp, dpe := srView(t, e, fakeslack.SearchPeopleWord, dark)
