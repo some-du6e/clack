@@ -207,8 +207,14 @@ func hpHas(items []hpItem, k hpKind) bool {
 // huddles (first/last), the footer; each row's title, time and length as
 // Slack writes them.
 func TestHuddlesPageHistoryLikeSlack(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		hpHistoryCase(t, dark)
+	}
+}
+
+func hpHistoryCase(t *testing.T, dark bool) {
 	now := time.Now()
-	env := hpStart(t, false, image.Pt(1000, 900), func(_ *core.App, fs *fakeslack.Server) { fs.SetHuddleHistory(hpHistory(now)) })
+	env := hpStart(t, dark, image.Pt(1000, 900), func(_ *core.App, fs *fakeslack.Server) { fs.SetHuddleHistory(hpHistory(now)) })
 	v := env.v
 	calls := env.fs.HuddleHistoryCalls()
 	if len(calls) != 1 || calls[0].Get("limit") != "30" || calls[0].Has("cursor") || calls[0].Has("missed_huddles_only") {
@@ -269,7 +275,7 @@ func TestHuddlesPageHistoryLikeSlack(t *testing.T) {
 	if !contains(st.ended[3].Missed, fakeslack.SelfID) {
 		t.Errorf("row 3 missed %v", st.ended[3].Missed)
 	}
-	hpShot(t, env, "huddles-page-history", false)
+	hpShot(t, env, "huddles-page-history", dark)
 }
 
 // huddle_page_enhancements on: no "Recent huddles", the day groups
@@ -309,8 +315,14 @@ func TestHuddlesPageEnhancementsGroups(t *testing.T) {
 // always, false included; users and channels comma-joined); a filter
 // that leaves nothing shows NoResults; Reset clears them.
 func TestHuddlesPageFiltersLikeSlack(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		hpFiltersCase(t, dark)
+	}
+}
+
+func hpFiltersCase(t *testing.T, dark bool) {
 	now := time.Now()
-	env := hpStart(t, false, image.Pt(1000, 900), func(_ *core.App, fs *fakeslack.Server) { fs.SetHuddleHistory(hpHistory(now)) })
+	env := hpStart(t, dark, image.Pt(1000, 900), func(_ *core.App, fs *fakeslack.Server) { fs.SetHuddleHistory(hpHistory(now)) })
 	v := env.v
 	// step runs one filter change and waits for its huddles.history
 	step := func(n int, what string, do func()) url.Values {
@@ -325,7 +337,7 @@ func TestHuddlesPageFiltersLikeSlack(t *testing.T) {
 	if st := v.state(); len(st.ended) != 1 || st.ended[0].ID != "R0HUDHIST04" {
 		t.Errorf("missed rows %+v", st.ended)
 	}
-	hpShot(t, env, "huddles-page-missed", false)
+	hpShot(t, env, "huddles-page-missed", dark)
 	step(3, "all", func() { v.setType("all") })
 	if f := step(4, "with", func() { v.toggleWith(hpGrace) }); f.Get("users") != hpGrace || f.Get("missed_huddles_only") != "false" {
 		t.Errorf("with: %v", f)
@@ -345,7 +357,7 @@ func TestHuddlesPageFiltersLikeSlack(t *testing.T) {
 	if items := v.rows(v.state(), now); !hpHas(items, hpNoResults) || hpHas(items, hpChannels) || hpHas(items, hpRow) {
 		t.Errorf("rows with no results: %v", hpKinds(items))
 	}
-	hpShot(t, env, "huddles-page-no-results", false)
+	hpShot(t, env, "huddles-page-no-results", dark)
 	step(9, "reset again", v.resetFilters)
 	if n := len(v.state().ended); n != 5 {
 		t.Errorf("%d rows after Reset filters, want 5", n)

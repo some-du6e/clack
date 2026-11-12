@@ -105,8 +105,44 @@ Slack 2026 (IA4) docks the huddle at the bottom of the client while you're in on
 | Suffix tooltip | the participants, with the channel name | none | **open** |
 | Collapsed section | SectionHuddleIndicator (`render 2LNF`): a huddle avatar stack on a collapsed section | none | **open** |
 | Huddles link | enable_huddles_home_view | same | **matched** |
-| Huddles page | huddles-page (`a29464bf75cbb4a4`, Igs2): a list of the hero, the live huddles (HuddlesActiveSection, `Show more live huddles`) or DM suggestions, `Upcoming` (calendar), `Recent huddles` with Filters (Date, With, In, Has, Huddle type), ended huddles only, day groups (Today … Last month and older) under huddle_page_enhancements, `Loading older huddles…`, channel suggestions when there's no history | `Happening now` (`Huddles in your channels and DMs`), `Recent` (`Huddles you were part of`), `New Huddle`, `Started …`, a green `Join` pill | **open**: not rewritten on exp-huddles; the composition above is mapped from Slack's code, the rows and suggestions live in modules this branch didn't port |
-| Missed invites on the page | MissedHuddleInvite rows | none | **open** (the page) |
+
+## The Huddles page (branch huddles-page)
+
+Slack build `4d0c78085232` (2026-11-10): the route's view HuddlesNewUserPage (huddles-page chunk `a29464bf75cbb4a4`, module `Igs2`) under HuddlesPageHeader (`render rLwU`), as the IA4 pages router mounts them (`render jbC3`, `e3.c.Huddles`); the rows and cards in the use-load-backgrounds chunk (`ZvF8`, `gF2E`, `JZX4`, `LvIh`, `nU5A`, `itst`, `9F8a`, `U8VP`), the filters in the use-filter-huddle-with-users chunk (`Ab7S`, `FW00`, `aQic`, `DQb+`, `yd0k`, `ZO7s`), the hero in the hero-banner chunk (`m8E3`); the thunks and selectors in client-boot and boot-shared (`ZTSP`, `xmfF`, `jNSy`, `tn4A`, `jQSr`, `IqvY`, `5BO1`, `Fa67`, `Xghl`, `b0mi`, `zq6z`, `pSxm`, `lodJ`, `iz7u`). CSS from client-boot-styles (`cf726c4f2eaecc74`). The account has huddle_page_enhancements, hide_suggested_huddles, huddles_history_files_section and external_huddles unassigned, frontline_users on (it acts only for frontline workers). Tests: views TestHuddlesPage*, TestSuggestedHuddlesLikeSlack, core TestHuddleHistoryParamsLikeSlack; pictures `huddles-page-*` in huddles-audit-shots.
+
+| Feature | Slack (evidence) | Clack before | Status |
+|---|---|---|---|
+| Page frame | one virtual list of renderHuddlePageRow's rows on `.p-huddles_page` (base-sec); every row in a 968px border-box column padded 20px (`.p-huddles_page_history_hhv`, `.p-huddles-page-content`) | a white page with 55px insets | **fixed** (views/huddles.go) |
+| Header | HuddlesPageHeader in the route's `.p-view_header` (49px, base-pry, 1px otl-ter below, padding 0 16px 0 18px): `.p-huddles_header` centred at most 968 wide, padded 0 16px up to 1024; `Huddles` 18px/24px 900; New Huddle a ViewHeaderPrimaryButton (small outline, plus) running useStartHuddleClick, which opens HuddleInviteStartModal (standalone_huddles_copy_link off: no Copy huddle link) | a 34px inset and a hand-made button | **fixed**. external_huddles' New meeting menu (it needs MANAGE_EXTERNAL_HUDDLES) isn't drawn |
+| Hero | HuddlesPageNewUserHero in HeroBanner: hidden while users.interactions.list loads and once HUDDLE_PAGE_BANNER or EXTERNAL_HUDDLES_AWARENESS_BANNER has a Dismiss; mojito-0 between otl-ter lines, the text column (60%, padding 44px 0, 44px left up to 1124) and Slack's picture (huddles_page_hero-e8cc7fe.png, at most 360 wide, above 768), `Instantly connect over audio or video`, the body, primary `Start a Huddle` (HuddleInviteStartModal, huddles_page_hero_banner); the close button records the Dismiss (users.interactions.set) | Clack's own vector drawing of a huddle window, hidden locally | **fixed** (huddles_hero.go). Open: Slack's Lottie in the picture's place (a11y_animations on), the external-huddles variants |
+| Live huddles | HuddlesActiveSection: live calls with someone in them, in a conversation you're in or invited to, not muted (b0mi eE/eC/eS), yours first; a grid of one, two (`calc(50% - 8px)`) or three (`calc(33.333% - 8px)`) cards by the page's width (428 / 640), at most that many until `Show more live huddles` / `Show fewer live huddles` between 40px lines | `Happening now` rows with a green Join pill | **fixed** (huddles_live.go) |
+| Live card | HuddlesActiveTile: huddles.get per call (useHuddleInfo); 200px, 1px otl-ter, radius 8; the 136px header the theme's previewUrl (huddles.listBackgrounds) with HuddlesActiveTimer (`1 min 35 sec`) and the 40px faces; the topic or the channel with its icon (a link), `N people` or the channel under a topic, `· N replies`; LiveHuddleButton (`Join Huddle`; `Joined`, `Leave` on hover); the card's click JoinLiveHuddlesModal | none | **fixed**. Open: the invited card's white border (no active invite in views), the timer's units outside en-US (dayjs's relativeTime tables) |
+| Joining from the page | use_on_start_or_join_huddle_with_speedbump: HuddleJoinSpeedbumpModal (`Joining a huddle?` / `Starting a huddle?`, `Don’t show this message again.` checked) unless it was ticked, then startHuddleWithConfirmation with the entry point | startHuddle | **fixed**. The tick lasts the session (Slack keeps it in localStorage) |
+| Suggested huddles | SuggestedHuddles: the unfiltered history's last week by conversation, most first, without group DMs, records, KTE, file or other conversations, live ones or ones you weren't in; dashed cards (surf-pry), faces at .5, `Start a huddle in #channel?`, `You huddled here N times in the last week`, `Start Huddle` on hover | none | **fixed** |
+| DM suggestions | HuddlesPageDmSuggestions: `Direct messages — Talk privately 1:1 with someone`, the People browser's first page (useBrowser PEOPLE: search.modules.people) without you, three HuddlesSuggestionTile cards (360 wide, the theme's url, your face and theirs at 60px, name with status emoji or presence, status text, `Start Huddle` on hover); a card opens HuddleInviteStartModal with the person picked, only when you have a DM with them | IM partners by priority on tints Clack made up | **fixed** (huddles_suggest.go). The third card's `@media (width<=1000px)` reads the view's width |
+| Invite teammates | HuddlesPageInviteTeammates when the browser has exactly one person: Slack's three teammate pictures and the user-add tile, `Invite teammates`, `Add teammates to huddle 1:1`, `Add coworkers` | none | **open**: drawn, but `Add coworkers` opens Slack's invite modal, which Clack doesn't have |
+| Channel suggestions | HuddlesPageChannelSuggestions with no history: `Channels — Meet with a whole team, or just let people drop in and out`, getChannelHuddleSuggestionsForNUX (the first three conversations of the store you're in that support huddles), 56px rows, `Start Huddle` on hover, HuddleInviteStartModal with the channel picked | channels by priority | **fixed**. Slack walks its store in insertion order; Clack's has none, so the snapshot's (by name) |
+| Recent huddles | PastHuddleSectionTitle (huddle_page_enhancements off) | `Recent — Huddles you were part of` | **fixed** |
+| Filters | FilterRow: FilterHuddleType (`All huddles` / `Missed huddles`), FilterHuddleWithUsers and FilterExcludeOthers, FilterHuddleIn as FilterPills; their lists (selected, `Clear all`, `Suggestions` from the history: yd0k, ZO7s); each change runs filterHuddleHistory: huddles.history with users, channels, start/end_date_ts, missed_huddles_only, users_only and has_* (transformFiltersForApi) | none | **fixed** (huddles_filters.go). The popovers' search boxes aren't drawn |
+| Filters, huddle_page_enhancements | the All / Missed pills; In, Date, With, Include only, Has (`Meeting notes`, `Thread`, `Files & links`) and `Reset filters` at the right | none | **fixed** but Date: its SearchFilterDate picker isn't drawn |
+| Collapsed filters | a row that overflows becomes `Filters (N)` and FiltersModal | none | **open**: the row keeps its pills |
+| No results, skeleton | NoResults (`No results`, `You may want to try adjusting your filters.`); ListSkeleton while a filter's fetch runs | none | **fixed** |
+| History row | HuddlesHistoryListItem in HuddlesListRow: 1px otl-ter sides, padding 10px 12px, 8px outer corners per run; the 36px headphones tile; the title (topic, the channel with its filled icon, or the people; `topic in #channel` from 640); the right side by width (300 / 320 / 480 / 640) | a bordered card per huddle | **fixed** (huddles_history.go) |
+| Row time | Timestamp relative (toTimeAgo); huddle_page_enhancements' HUDDLE_HISTORY_ROW (the time ago within a day, else {date_long}) | listTime | **fixed** (i18n.LongDate) |
+| Row length | use_huddle_duration_text: `25 minutes`, `1 hour 5 minutes`, `Less than a minute` | `25 min` | **fixed** |
+| Thread, files, notes | useHuddleArtifactActions: `· N replies` (opens the thread), `· N files` (huddles_history_files_section); the AI notes button (opens the notes canvas); under huddle_page_enhancements the 28px artifact buttons with counts from 640 | none | **fixed**. The files & links view isn't drawn (Clack has no huddle files view) |
+| Missed huddle | MissedHuddleInvite: the date and `· Missed huddle invite` in content-imp, the base-imp tile, no length | none | **fixed** |
+| Private conversation | PrivateConversation for a conversation conversations.info doesn't know: `· From a private conversation` and the info icon | none | **fixed**. The info icon's tooltip isn't drawn |
+| Participants | HuddleParticipantsFacepileButton (24px faces overlapping 4px, at most three, `+N`; `See N participants` over `N members`) opening ParticipantsModalView (`You huddled here in #channel for 25 minutes`, each person opening their profile) | faces only | **fixed** |
+| ⋯ menu | HuddleHistoryOverflowMenu: `See N participants` (`N members`), under huddle_page_enhancements thread / files & links / notes and a separator, `Save for later` (saved.add, `Saved for later`), `Copy huddle link`, `Edit huddle topic`, `Start a huddle from thread` | none | **fixed**. Open: `Start a huddle from thread` (no thread huddles), `View files & links` (disabled) |
+| Edit huddle topic | HuddlesEditTopicModal: `Edit Topic`, `New topic`, 250 characters, Save sends huddles.update {huddle_id, topic} and fetches the history again | none | **fixed** |
+| Row click | jumpToMessage to the huddle message under GoToTooltip (`Go to conversation` over the people) | joined live huddles only | **fixed** (route c/<id>/m/<ts>) |
+| Day groups | RelativeTime (huddle_page_enhancements on, no date filter): Today, Yesterday, This week, Last week, Last month and older | none | **fixed** |
+| Pagination | the list's loadPost: fetchAndUpsertHuddleHistory {cursor, …filters}; the 64px footer with the spinner | the first page only | **fixed** |
+| Back to top | BackToTop: the 42px base-inv-hgl-2 square (radius 11) at the column's bottom right after a scroll, `Scroll to the top` | a fixed green square | **fixed** |
+| Loading | the page is its Loader until the first fetch; a failure throws to the page's error boundary | the view's own spinner and error | **fixed** (the loader). The boundary's screen is Clack's errorState |
+| Megaphone | HuddlesPageHeaderMegaphoneWrapper's notices (Miles Davis, Pro trial) | none | **open**: Clack has no megaphone API |
+| Upcoming | UpcomingHuddlesSection: calendar events, with external_huddles and MANAGE_EXTERNAL_HUDDLES | none | **open**: no calendar events in Clack (the account's external_huddles is unassigned, so Slack shows none either) |
 
 ## Notifications and ringing
 
@@ -209,7 +245,7 @@ The account's huddle experiments (docs/EXPERIMENTS.md), against Slack build `4d0
 
 ## Counts
 
-127 rows: 19 matched, 85 fixed, 23 open. Fixed rows that still name an open remainder: the caret's `More call options` wording, the facepile inside the live tooltip, system audio on older Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
+156 rows: 19 matched, 112 fixed, 25 open. Fixed rows that still name an open remainder: the caret's `More call options` wording, the facepile inside the live tooltip, system audio on older Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
 
 The open rows and why:
 
@@ -228,8 +264,10 @@ The open rows and why:
 | Face crescent | the second face isn't clipped |
 | Suffix tooltip | no tooltip on the row's faces and badge |
 | Collapsed section | SectionHuddleIndicator isn't drawn |
-| Huddles page | views/huddles.go follows an older page; porting the 2026 page is its own job |
-| Missed invites on the page | part of the Huddles page |
+| Invite teammates | `Add coworkers` needs Slack's invite modal |
+| Collapsed filters | FiltersModal isn't drawn |
+| Megaphone | no megaphone API |
+| Upcoming | no calendar events |
 | huddles_link_v2 | no huddle invite notifications or link facepile in the sidebar |
 | huddles_discovery_calls | no call apps menu |
 | huddles_mva_window | no secondary views or flexpanes in the huddle window |
@@ -256,6 +294,12 @@ On branch exp-huddles (2026-11-10, Slack build `4d0c78085232`):
 - huddleui: experiments.go, alone.go, audiomenu.go, micalerts.go, captions_log.go, topic.go, popout.go, multidevice.go; the window's overlays (winHost.ShowOverlay), the segmented mute button in the window and the dock, galleryOrder, the topic in the title, the join no longer wrapped in startEventLog.
 - richtext/huddle.go and richview/huddle.go: huddle_thread messages as HuddleMsgText with the Join Huddle button (richview.HuddleJoiner, messages' richHandler, the ui root's JoinHuddleFrom); store.HuddleTextOpts / UserAvatar and core's store.ExperimentGroup hook feed it.
 - prefs_pages.go (the join preview row under huddles_preview_v2), channel.go (SupportsHuddles into headerFit), huddle_av.go (SetHuddleAudioPrefs).
+
+On branch huddles-page (2026-11-11, Slack build `4d0c78085232`; see "The Huddles page"):
+
+- views/huddles.go (the page, its rows, loading, pagination, header, back to top), huddles_hero.go, huddles_live.go (the active section, the live and suggested cards, the join modals), huddles_suggest.go (DM and channel suggestions), huddles_history.go (the rows, the participants modal, the ⋯ menu, Edit Topic), huddles_filters.go; slick.go's join point on the live card.
+- core/huddles_page.go: huddles.history with the filters, huddles.get, huddles.update, huddles.listBackgrounds, users.interactions.list / .set; the huddle object's page fields (browse.go); i18n.LongDate ({date_long}).
+- fakeslack/huddles_page.go: those methods on synthetic fixtures and the People browser; huddle_wire.go: OpenHuddleStartWith, ActiveHuddleChannel, LeaveHuddle, SupportsHuddles.
 
 On branch screenshare (2026-11-11, Slack build `4d0c78085232`; see "Sharing your screen"):
 

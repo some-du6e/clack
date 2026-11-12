@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"time"
 
 	"gioui.org/layout"
 
@@ -56,9 +57,21 @@ func (v *Huddles) peopleSuggestions() (all []core.User, ok bool) {
 	return us, loaded
 }
 
+// convs is the client's conversations for the suggestions: the
+// snapshot as core holds it now (SnapshotNow never waits for boot), kept
+// 30 s (Slack's selectors are memoized over its store).
+func (v *Huddles) convs() []core.Conv {
+	now := time.Now()
+	if v.convsAt.IsZero() || now.Sub(v.convsAt) > 30*time.Second || len(v.convList) == 0 && now.Sub(v.convsAt) > time.Second {
+		v.convsAt = now
+		v.convList = v.h.Core().SnapshotNow().Convs
+	}
+	return v.convList
+}
+
 // imFor is the person's DM (getImChannelIdForUser), "" without one.
 func (v *Huddles) imFor(uid string) string {
-	for _, c := range v.h.Core().Snapshot().Convs {
+	for _, c := range v.convs() {
 		if c.Kind == "im" && c.User == uid {
 			return c.ID
 		}
@@ -165,8 +178,14 @@ func (v *Huddles) suggestionTile(gtx C, uid, bgURL string) D {
 					layout.Flexed(1, func(gtx C) D {
 						return col(gtx,
 							layout.Rigid(func(gtx C) D {
+								// flex-wrap nowrap: the name (one line, truncated), then
+								// its status emoji (6px after) or presence
+								tail := gtx.Dp(26)
 								return row(gtx, layout.Middle,
-									layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wBold, fg, displayName(u)) }),
+									layout.Rigid(func(gtx C) D {
+										gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-tail)
+										return v.label(gtx, 15, wBold, fg, displayName(u))
+									}),
 									layout.Rigid(func(gtx C) D {
 										if u.StatusEmojiURL != "" {
 											return layout.Inset{Left: 6}.Layout(gtx, func(gtx C) D { return v.emojiImg(gtx, u.StatusEmojiURL, 16) })
@@ -312,7 +331,7 @@ func (v *Huddles) inviteTeammates(gtx C) D {
 func (v *Huddles) channelSuggestions() []core.Conv {
 	var out []core.Conv
 	hs, _ := v.h.(interface{ SupportsHuddles(ch string) bool })
-	for _, c := range v.h.Core().Snapshot().Convs {
+	for _, c := range v.convs() {
 		if len(out) >= 3 {
 			break
 		}

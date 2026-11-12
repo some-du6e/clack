@@ -95,7 +95,7 @@ The same method (my own CDP window on Slack, the CI build on a private Xvfb). Sc
 | 27 | P1 | channel menu | items / anchor | no "Mute channel" (the bell does it); 300 wide, right edge 6px inside the kebab, top y 74 | Mute row; at the pointer (10px high, 5px left) | matches | popups, ui |
 | 28 | P1 | Preferences | frame | 800×700 at (320,100): 76px header (title 900 22/36 at 28,20) with a 1px line under it, no footer; nav 205×29 items every 33px at (16,17), 15px icons, selected r 4; page at (249,21), sections 700 18px | 70px header, no line, a Done footer, 184px nav 24px higher, 15px bold titles at x≈228 | matches | popups (`ModalOpts.Flush`), ui |
 | 29 | P2 | team menu | position | 320 wide at (58, 91) | (86, 82) | (58, 91) | ui |
-| 30 | P2 | Huddles page | banner text / cards | text block at +76/+66 in the banner; DM cards 301×239 | +48/+48; 258 tall | matches | views |
+| 30 | P2 | Huddles page | banner text / cards | HeroBanner's CSS: the text column 60% (padding 44px 0, 44px left up to 1124 wide), Slack's 360px picture; DM cards 360 wide (136px header); live and suggested cards 200 tall in a 1/2/3-column grid (docs/HUDDLES-AUDIT.md, "The Huddles page") | +48/+48; 258 tall | matches | views |
 | 31 | P2 | Drafts & sent | banner | title 900 18px at (24,45), body right under it | title at y 20, 4px gap | matches | views |
 | 32 | P2 | Drafts markers | sidebar | "✎ N" (13px pencil + 400 13px count, 8px from the edge) on Drafts & sent; 13px pencil on conversations with a draft | none | from drafts.list, refreshed on `draft` events | ui |
 | 33 | P2 | To-dos / Saved empty | layout | 157×140 SVG illustration, 24px gap, 900 18/24 title, 15/22 text | 64px icon only, text 32px higher | the 157×140 box kept (SVG not drawn: no SVG decoder) | views |

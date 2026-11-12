@@ -196,6 +196,10 @@ type Huddles struct {
 	tips   map[string]*popups.TipState
 	toks   hdTokCache
 
+	convsAt  time.Time // convs' cache (huddles_suggest.go)
+	convList []core.Conv
+	replies  map[string]hdReplies // replyCount's cache by channel/ts
+
 	// joinFn is the onHuddleJoin a HuddleInviteWindowWithPreviewContent
 	// patch handed the Join point, by room (slick.go).
 	joinFn map[string]slackc.JSFunc

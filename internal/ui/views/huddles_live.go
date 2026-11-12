@@ -9,6 +9,7 @@ import (
 	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
@@ -224,12 +225,22 @@ func (v *Huddles) liveTile(gtx C, h huddleRoom, room huddleRoom, maxCards int) D
 	rad := gtx.Dp(8)
 	r := image.Rectangle{Max: sz}
 	bg := v.tok("dt_color-base-pry") // sk_primary_background once joined: the same in both modes
+	people := room.Participants
+	if len(people) == 0 {
+		people = h.Participants
+	}
+	// the card is a 200px flex column: the 136px header gives way to the
+	// content (padding 8) down to its facepile's 50px
+	content := recordTo(gtx, func(gtx C) D {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(sz.X-gtx.Dp(16), sz.Y)}
+		return v.liveTileContent(gtx, h, len(people), in, name, replies, btn)
+	})
+	hh := max(gtx.Dp(50), min(gtx.Dp(136), sz.Y-content.d.Size.Y-gtx.Dp(16)))
 	card.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
 		func() {
 			defer clipRR(gtx, r, rad, rad, rad, rad).Pop()
 			fill(gtx, r, bg)
-			hh := gtx.Dp(136)
 			if url := v.backgroundURL(h.BackgroundID, true); url != "" {
 				v.cdnImage(gtx, url, image.Pt(sz.X, hh))
 			}
@@ -239,16 +250,13 @@ func (v *Huddles) liveTile(gtx C, h huddleRoom, room huddleRoom, maxCards int) D
 			if maxCards > 1 && v.pageW > gtx.Dp(hdSmallBP) && v.pageW <= gtx.Dp(hdMediumBP) {
 				faces = 2
 			}
-			people := room.Participants
-			if len(people) == 0 {
-				people = h.Participants
-			}
-			v.facepile(gtx, people, 40, faces, image.Rect(0, gtx.Dp(10), sz.X, hh+gtx.Dp(10)))
+			func() {
+				defer clip.Rect(image.Rect(0, 0, sz.X, hh)).Push(gtx.Ops).Pop()
+				v.facepile(gtx, people, 40, faces, image.Rect(0, gtx.Dp(10), sz.X, hh+gtx.Dp(10)))
+			}()
 			func() {
 				defer opOffset(gtx, image.Pt(gtx.Dp(8), hh+gtx.Dp(8))).Pop()
-				g := gtx
-				g.Constraints = layout.Constraints{Max: image.Pt(sz.X-gtx.Dp(16), sz.Y-hh-gtx.Dp(16))}
-				v.liveTileContent(g, h, len(people), in, name, replies, btn)
+				content.call.Add(gtx.Ops)
 			}()
 		}()
 		border(gtx, r, rad, max(1, gtx.Dp(1)), v.tokOver("dt_color-otl-ter", bg))
@@ -410,10 +418,26 @@ func (v *Huddles) replyCount(h huddleRoom) int {
 	if h.ThreadTS == "" || h.ThreadTS == "0000000000.000000" || roomChannel(h) == "" {
 		return 0
 	}
-	if m, ok := v.h.Core().S.Find(roomChannel(h), h.ThreadTS); ok {
-		return m.ReplyCount
+	k := roomChannel(h) + "/" + h.ThreadTS
+	now := time.Now()
+	if r, ok := v.replies[k]; ok && now.Sub(r.at) < 5*time.Second {
+		return r.n
 	}
-	return 0
+	n := 0
+	if m, ok := v.h.Core().S.Find(roomChannel(h), h.ThreadTS); ok {
+		n = m.ReplyCount
+	}
+	if v.replies == nil {
+		v.replies = map[string]hdReplies{}
+	}
+	v.replies[k] = hdReplies{n: n, at: now}
+	return n
+}
+
+// hdReplies is one replyCount answer and when it was read.
+type hdReplies struct {
+	n  int
+	at time.Time
 }
 
 // backgroundURL is the huddle's background picture: previewUrl on a live
@@ -801,11 +825,18 @@ func (v *Huddles) dashedBorder(gtx C, r image.Rectangle, rad int, c color.NRGBA)
 		fill(gtx, image.Rect(r.Min.X, y, r.Min.X+px1, e), c)
 		fill(gtx, image.Rect(r.Max.X-px1, y, r.Max.X, e), c)
 	}
-	// the corners as quarter arcs
-	border(gtx, image.Rect(r.Min.X, r.Min.Y, r.Min.X+2*rad, r.Min.Y+2*rad), rad, px1, c)
-	border(gtx, image.Rect(r.Max.X-2*rad, r.Min.Y, r.Max.X, r.Min.Y+2*rad), rad, px1, c)
-	border(gtx, image.Rect(r.Min.X, r.Max.Y-2*rad, r.Min.X+2*rad, r.Max.Y), rad, px1, c)
-	border(gtx, image.Rect(r.Max.X-2*rad, r.Max.Y-2*rad, r.Max.X, r.Max.Y), rad, px1, c)
+	// the corners: the rounded border's quarter in each corner square
+	for _, q := range []image.Rectangle{
+		image.Rect(r.Min.X, r.Min.Y, r.Min.X+rad, r.Min.Y+rad),
+		image.Rect(r.Max.X-rad, r.Min.Y, r.Max.X, r.Min.Y+rad),
+		image.Rect(r.Min.X, r.Max.Y-rad, r.Min.X+rad, r.Max.Y),
+		image.Rect(r.Max.X-rad, r.Max.Y-rad, r.Max.X, r.Max.Y),
+	} {
+		func() {
+			defer clip.Rect(q).Push(gtx.Ops).Pop()
+			border(gtx, r, rad, px1, c)
+		}()
+	}
 }
 
 // ---- joining ----
