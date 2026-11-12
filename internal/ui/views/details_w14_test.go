@@ -289,7 +289,11 @@ func TestDetailsAddAppOpensBrowser(t *testing.T) {
 			t.Errorf("toast %q", s)
 		}
 	}
-	if want := "Add apps to general-ish"; b.Title() != want {
+	want := "Add apps to general-ish"
+	if e.h.app.Experiment("channel_details_agents_apps_tab") == "on" {
+		want = "Add agents and apps to #general-ish" // includeChannelPrefix under the agents tab
+	}
+	if b.Title() != want {
 		t.Errorf("title %q, want %q", b.Title(), want)
 	}
 	var r input.Router
@@ -392,6 +396,10 @@ func (e *cdTestEnv) toHistoryStep() *cdAddPeople {
 // (oldest = its local midnight, limit 200, inclusive); Done sends that
 // start; too_many_messages opens the speed bump, whose OK closes it.
 func TestDetailsDMAddPeopleCustomHistory(t *testing.T) {
+	// the client backs off a request that just failed identically (1 s);
+	// the retry after the speed bump would wait for it
+	defer func(d time.Duration) { slack.BackoffBase = d }(slack.BackoffBase)
+	slack.BackoffBase = time.Millisecond
 	now := time.Now()
 	oldest := dayStart(now.AddDate(0, 0, -10)).Add(9 * time.Hour)
 	tooMany := false
@@ -447,6 +455,7 @@ func TestDetailsDMAddPeopleCustomHistory(t *testing.T) {
 	}
 	tooMany = false
 	n := len(srv.seen("conversations.createChild"))
+	time.Sleep(5 * time.Millisecond) // past the shortened backoff
 	e.d.x.dlg.ok.Click()
 	e.until("createChild", func() bool { return len(srv.seen("conversations.createChild")) > n })
 	if f := srv.seen("conversations.createChild")[n].form; f.Get("migrate_history_start_ts") != start || f.Get("user_ids") != "U2" {
