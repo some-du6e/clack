@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"image"
 	"net/url"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +22,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
@@ -48,6 +48,13 @@ func (h *w26Host) OpenDetailSecondary(string, layout.Widget) {}
 func (h *w26Host) SecondaryShowsDetail(string) bool          { return false }
 
 func newW26Host(app *core.App, dark bool) *w26Host { return &w26Host{kbHost: newKBHost(app, dark)} }
+
+// w26Draft is the draft a new reply box for the thread opens on.
+func w26Draft(h composer.Host, ch, ts string) string {
+	c := composer.New(h, ch, ts)
+	defer c.Close()
+	return c.DocText()
+}
 
 // kbType is a key press as the OS sends it: the key.Event, the text it
 // typed (key.EditEvent; WM_CHAR, XLookupString, insertText), the release.
@@ -80,14 +87,17 @@ func TestThreadsTypedTextLikeSlack(t *testing.T) {
 		p, _, _ := v.data.get()
 		k0 := p.items[0].key
 		root := "root-" + k0
+		// the reply box opens on any draft the composer kept for this
+		// thread (drafts outlive a composer, and earlier tests type here)
+		draft := w26Draft(h, p.items[0].Channel, p.items[0].Root.TS)
 		kbClickRow(t, e, v.kb, root, 49)
 		kbType(e, "1", key.ModShift, "!")
 		c := v.cards[k0]
 		if c == nil || c.comp == nil {
 			t.Fatalf("Shift+1 on a row didn't open the reply box (active %q)", v.kb.active)
 		}
-		if got := c.comp.DocText(); !strings.HasSuffix(got, "!") || strings.Count(got, "!") != 1 {
-			t.Fatalf("Shift+1: reply box %q, want it to end with one !", got)
+		if got := c.comp.DocText(); got != draft+"!" {
+			t.Fatalf("Shift+1: reply box %q, want %q (the draft, then one !)", got, draft+"!")
 		}
 		before := c.comp.DocText()
 		kbClickRow(t, e, v.kb, root, 49)
@@ -217,6 +227,12 @@ func TestThreadsShowMoreFocusLikeSlack(t *testing.T) {
 	})
 }
 
+// w26LiveTS is a message messages.list has: fakeslack answers it with
+// the Activity fixture's messages ("a synthetic keyword match", a
+// top-level message in ViewsChannel). The other items' ts are in no
+// fixture, so messages.list answers without them: deleted, Gone.
+const w26LiveTS = "1762700400.000100"
+
 // laterItems serves saved.list: n to-dos on unknown timestamps (gone
 // from the history), plus one on a message the fixtures have.
 func laterItems(t *testing.T, todo string, n int, live bool) (*core.App, *callLog) {
@@ -229,7 +245,7 @@ func laterItems(t *testing.T, todo string, n int, live bool) (*core.App, *callLo
 	}
 	if live {
 		items = append(items, map[string]any{"item_id": fakeslack.ViewsChannel, "item_type": "message",
-			"ts": fakeslack.ViewsThreadUnread, "todo_state": todo, "date_created": now - 100})
+			"ts": w26LiveTS, "todo_state": todo, "date_created": now - 100})
 	}
 	log := &callLog{}
 	var mu sync.Mutex
@@ -327,7 +343,7 @@ func TestTodosTombstoneEnterLikeSlack(t *testing.T) {
 		for i := range l.view {
 			it := &l.view[i]
 			switch {
-			case it.TS == fakeslack.ViewsThreadUnread:
+			case it.TS == w26LiveTS:
 				live = laterKey(it)
 				if it.Msg == nil || laterTombstoned(it) {
 					t.Fatalf("the fixture message wasn't hydrated: %+v", it)
