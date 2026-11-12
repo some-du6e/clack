@@ -7,8 +7,8 @@ package popups
 //     filters (getDefaultFiltersByEntity): Messages From, In, a divider,
 //     Includes me (with:me), Has a link, Threads only, Last 7 days; DMs
 //     With; Files From, In, File type, Date, Only my channels; Canvases
-//     Created By, From, In, Date. Channels and People have filters Clack
-//     doesn't build (channel_type, profile fields), so only the source.
+//     Created By, From, In, Date; Channels All channels, Channel type,
+//     Workspaces; People Title, Location (search_view_tabfilters.go).
 //   - useSearchFiltersResponsive fits them: every pill (the source pill
 //     first) is measured and kept while it fits in the row less 24px, the
 //     More button and, with filters applied, the Reset button (each pill
@@ -70,6 +70,10 @@ func srFiltersShown(tab int) []string {
 		return []string{srFFrom, srFIn, srFFileType, srFDate, srFOnlyMine}
 	case srTabCanvases:
 		return []string{srFCreator, srFFrom, srFIn, srFDate}
+	case srTabChannels: // Org: search_view_tabfilters.go
+		return []string{srFAllChannels, srFChannelType, srFWorkspace}
+	case srTabPeople: // Workspace with enterprise options, Department with a SCIM field
+		return []string{srFTitle, srFLocation}
 	}
 	return nil
 }
@@ -90,6 +94,10 @@ func srFiltersDefault(tab int, laterTodos bool) []string {
 		return []string{srFFrom, srFIn, srFWith, srFDate, srFFileType, srFOnlyMine}
 	case srTabCanvases:
 		return []string{srFFrom, srFIn, srFWith, srFDate, srFCreator}
+	case srTabChannels:
+		return []string{srFAllChannels, srFChannelType, srFWorkspace}
+	case srTabPeople:
+		return []string{srFAccountType, srFLocation, srFTitle, srFCelebration}
 	}
 	return nil
 }
@@ -145,6 +153,16 @@ func srPillOf(f string) int {
 		return srPOnlyMine
 	case srFCreator:
 		return srPCreator
+	case srFAllChannels:
+		return srPAllChannels
+	case srFChannelType:
+		return srPChanType
+	case srFWorkspace:
+		return srPWorkspace
+	case srFTitle:
+		return srPTitle
+	case srFLocation:
+		return srPLocation
 	}
 	return -1
 }
@@ -199,12 +217,16 @@ func (v *SearchView) pillSpec(f string) srPillSpec {
 		}
 		return srPillSpec{icon: icon, label: srTeammates(pre, len(vals)), chevron: true, active: true}
 	}
+	if s, ok := v.tabPillSpec(f); ok {
+		return s
+	}
 	switch f {
 	case srFSources:
 		if src := v.woSource(); src != nil { // a work object source: the app's name
 			return srPillSpec{icon: "apps", label: src.AppName, chevron: true}
 		}
-		return srPillSpec{icon: srTabIcons[v.tab], label: nsSearch.T(srTabNames[v.tab]), chevron: true}
+		// SearchFilterSourcesDisplay: Slack's logo before every Slack source
+		return srPillSpec{icon: srSlackMark, label: nsSearch.T(srTabNames[v.tab]), chevron: true}
 	case srFFrom:
 		return person("from", "From", "From", "user")
 	case srFCreator:
@@ -294,11 +316,11 @@ func srPillWidth(gtx layout.Context, th *theme.Theme, s srPillSpec) int {
 // filtersApplied is getAppliedFilters: a modifier in the query, Exact
 // matches only, or the Exclude bot messages / Only my channels prefs.
 func (v *SearchView) filtersApplied() bool {
-	if len(v.q.Mods) > 0 || v.exact {
+	if len(v.q.Mods) > 0 || v.exact || (v.chanType != "" && v.chanType != "all") || len(v.titles) > 0 || len(v.locs) > 0 ||
+		v.acctType != "" || len(v.celebs) > 0 {
 		return true
 	}
-	c := v.h.Core()
-	return c != nil && (c.PrefBool("search_exclude_bots", false) || c.PrefBool("search_only_my_channels", false))
+	return v.pref("search_exclude_bots") || v.pref("search_only_my_channels") || v.pref("search_hide_my_channels")
 }
 
 // pillRow lays out the filter row at (x, y) up to right.
@@ -314,7 +336,15 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 		specs[i] = v.pillSpec(f)
 		widths[i] = srPillWidth(gtx, th, specs[i])
 	}
-	more := srPillSpec{icon: "filter", label: nsSearch.T("More"), chevron: true, active: v.moreActive()}
+	laterTodos := false
+	if c := v.h.Core(); c != nil {
+		laterTodos = c.Experiment("later_todos") == "on"
+	}
+	// the More button: "More (N)" with getMoreFiltersCount over what it
+	// offers, active while N > 0
+	ms := v.moreState()
+	mc := ms.count(srMoreAllowed(v.tab, row[1:], laterTodos))
+	more := srPillSpec{icon: "filter", label: srMoreLabel(mc), chevron: true, active: mc > 0}
 	// what's left for the pills: the row less 24, More (when it has
 	// filters) and Reset (+8) when filters are applied
 	avail := right - x - dp(gtx, 24)
@@ -323,10 +353,6 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 	if applied {
 		resetW = textW(gtx, th, 13, theme.Regular, nsSearch.T("Reset"))
 		avail -= resetW + gap
-	}
-	laterTodos := false
-	if c := v.h.Core(); c != nil {
-		laterTodos = c.Experiment("later_todos") == "on"
 	}
 	// the row's last element is More when it has filters to offer; when
 	// the pills overflow they go to More, which then shows
@@ -354,8 +380,9 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 		s := specs[i]
 		x += v.pill(gtx, th, cl, srPillOf(f), x, y, s.icon, s.label, s.chevron, s.active) + gap
 	}
-	if len(srMoreAllowed(v.tab, v.visible[1:], laterTodos)) > 0 {
-		x += v.pill(gtx, th, cl, srPMore, x, y, more.icon, more.label, more.chevron, more.active) + gap
+	if allowed := srMoreAllowed(v.tab, v.visible[1:], laterTodos); len(allowed) > 0 {
+		mc := ms.count(allowed)
+		x += v.pill(gtx, th, cl, srPMore, x, y, more.icon, srMoreLabel(mc), more.chevron, mc > 0) + gap
 	}
 	if applied {
 		ph := dp(gtx, 28)
@@ -415,6 +442,16 @@ func (v *SearchView) pillClicked(gtx layout.Context, i int) {
 		v.moreMenu(gtx)
 	case srPReset:
 		v.resetFilters()
+	case srPAllChannels:
+		v.allChannelsMenu(gtx)
+	case srPChanType:
+		v.channelTypeMenu(gtx)
+	case srPWorkspace:
+		v.workspaceMenu(gtx)
+	case srPTitle:
+		v.titleMenu(gtx)
+	case srPLocation:
+		v.locationMenu(gtx)
 	}
 }
 
@@ -445,13 +482,14 @@ func (v *SearchView) resetFilters() {
 	c := v.h.Core()
 	var prefs []string
 	if c != nil {
-		for _, p := range []string{"search_exclude_bots", "search_only_my_channels"} {
+		for _, p := range []string{"search_exclude_bots", "search_only_my_channels", "search_hide_my_channels"} {
 			if c.PrefBool(p, false) {
 				prefs = append(prefs, p)
 			}
 		}
 	}
 	v.exact = false
+	v.chanType, v.titles, v.locs, v.acctType, v.celebs = "", nil, nil, "", nil
 	v.setQuery(v.q.ClearMods())
 	if len(prefs) == 0 || c == nil {
 		return
@@ -586,6 +624,7 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 		return it
 	}
 	has := func(key, val string) func() bool { return func() bool { return v.q.Has(key, val) } }
+	ms := v.moreState()
 
 	// people: you, then the people the results came from
 	people := func(key string) []MenuItem {
@@ -638,7 +677,7 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 		items = append(items, Sep())
 	}
 	if shown(srFFrom) {
-		items = append(items, MenuItem{Label: "From", Icon: "user", Sub: people("from")}.In(nsSearch))
+		items = append(items, srMoreBadge(MenuItem{Label: "From", Icon: "user", Sub: people("from")}.In(nsSearch), len(ms.from)))
 	}
 	if shown(srFIn) {
 		var in []MenuItem
@@ -646,10 +685,10 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 			val := "<#" + cv.ID + ">"
 			in = append(in, check(cv.Name, func() bool { return srRefID(v.q.Get("in")) == cv.ID }, toggle("in", val)))
 		}
-		items = append(items, MenuItem{Label: "In", Icon: "channel", Sub: in}.In(nsSearch))
+		items = append(items, srMoreBadge(MenuItem{Label: "In", Icon: "channel", Sub: in}.In(nsSearch), len(ms.in)))
 	}
 	if shown(srFWith) {
-		items = append(items, MenuItem{Label: "With people", Icon: "user", Sub: people("with")}.In(nsSearch))
+		items = append(items, srMoreBadge(MenuItem{Label: "With people", Icon: "user", Sub: people("with")}.In(nsSearch), len(ms.with)))
 	}
 	if shown(srFHasFile) || shown(srFHasLink) || shown(srFHasAction) {
 		var sub []MenuItem
@@ -660,7 +699,7 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 		if shown(srFHasAction) {
 			sub = append(sub, checkT("Action", has("has", "action"), toggle("has", "action")))
 		}
-		items = append(items, MenuItem{Label: "Message has", Icon: "message", Sub: sub}.In(nsSearch))
+		items = append(items, srMoreBadge(MenuItem{Label: "Message has", Icon: "message", Sub: sub}.In(nsSearch), srTrues(ms.hasFile, ms.hasLink, ms.hasAction)))
 	}
 	if shown(srFIsDM) || shown(srFIsThread) || shown(srFIsSaved) || shown(srFIsTodos) || shown(srFHasPin) || shown(srFIsActivity) {
 		var sub []MenuItem
@@ -680,14 +719,16 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 		if shown(srFIsActivity) {
 			sub = append(sub, checkT("In Activity", has("in", "activity"), toggle("in", "activity")))
 		}
-		items = append(items, MenuItem{Label: "Message is", Icon: "message", Sub: sub}.In(nsSearch))
+		activity := slices.ContainsFunc(ms.in, func(x string) bool { return strings.EqualFold(x, "activity") })
+		items = append(items, srMoreBadge(MenuItem{Label: "Message is", Icon: "message", Sub: sub}.In(nsSearch),
+			srTrues(ms.isDM, ms.isThread, ms.isSaved, ms.isTodos, ms.hasPin, activity)))
 	}
 	if shown(srFDate) {
 		items = append(items, MenuItem{Label: "Date", Icon: "calendar",
 			Subtitle: srDateLabel(v.q.Get("after"), v.q.Get("before"), v.q.Get("on"), time.Now()), Sub: v.dateItems(gtx, srPMore)}.In(nsSearch))
 	}
 	if shown(srFFileType) {
-		items = append(items, MenuItem{Label: "File type", Icon: "file", Sub: v.fileTypeItems()}.In(nsSearch))
+		items = append(items, srMoreBadge(MenuItem{Label: "File type", Icon: "file", Sub: v.fileTypeItems()}.In(nsSearch), len(ms.types)))
 	}
 	if shown(srFReaction) {
 		var reacts []MenuItem
@@ -703,10 +744,36 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 				}
 			})
 		}})
-		items = append(items, MenuItem{Label: "Reactions", Icon: "emoji", Sub: reacts}.In(nsSearch))
+		items = append(items, srMoreBadge(MenuItem{Label: "Reactions", Icon: "emoji", Sub: reacts}.In(nsSearch), len(ms.reacts)+len(ms.mine)))
+	}
+	items = append(items, v.peopleMoreItems(shown)...) // Account type
+	if shown(srFChannelType) {                         // when its pill didn't fit
+		cur := v.chanType
+		if cur == "" {
+			cur = "all"
+		}
+		var sub []MenuItem
+		for _, o := range srChannelTypes {
+			val := o.val
+			sub = append(sub, MenuItem{Key: val, Label: srChannelTypeLabel(val), Radio: true, Checked: cur == val, Do: func() {
+				if val == "all" {
+					val = ""
+				}
+				v.chanType = val
+				v.search(1)
+			}})
+		}
+		n := 0
+		if cur != "all" {
+			n = 1
+		}
+		items = append(items, srMoreBadge(MenuItem{Label: "Channel type", Icon: "channel", Sub: sub}.In(nsSearch), n))
+	}
+	if shown(srFCelebration) {
+		items = append(items, v.celebrationItem())
 	}
 	if shown(srFCreator) {
-		items = append(items, MenuItem{Label: "Creator", Icon: "user", Sub: people("creator")}.In(nsSearch))
+		items = append(items, srMoreBadge(MenuItem{Label: "Creator", Icon: "user", Sub: people("creator")}.In(nsSearch), len(ms.creators)))
 	}
 	v.openMenu(gtx, v.pillR[srPMore], items, 240) // MoreFiltersMenu width 240
 }

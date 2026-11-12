@@ -1131,8 +1131,8 @@ func TestSearchInChannel(t *testing.T) {
 	v := NewSearchInChannel(e.h, ch)
 	d := &srDrv{size: image.Pt(420, 800), w: v}
 	x := d.scan()
-	name := "#" + e.h.a.ConvRef(ch).Name
-	for _, want := range []string{"Search in " + name, "Not searching in this channel?", "Go to full search (CTRL G)", "Nothing to show yet."} {
+	name := e.h.a.ConvRef(ch).Name // the header's pieces: Search, in, the hash icon, the name
+	for _, want := range []string{"Search", "in", name, "Not searching in this channel?", "Go to full search (CTRL G)", "Nothing to show yet."} {
 		if !srHas(x, want) {
 			t.Errorf("%q not drawn: %q", want, x)
 		}
@@ -1153,7 +1153,7 @@ func TestSearchInChannel(t *testing.T) {
 		}
 	}
 	x = d.scan()
-	if !srHas(x, `Search "zephyr" in `+name) || !srHas(x, "View full search") || !srHasPrefix(x, " results found") {
+	if !srHas(x, `"zephyr"`) || !srHas(x, name) || !srHas(x, "View full search") || !srHasPrefix(x, " results found") {
 		t.Errorf("results header not drawn: %q", x)
 	}
 	v.fullBtn.Click()
@@ -1584,5 +1584,50 @@ func TestSearchShots(t *testing.T) {
 		sc.Search(fakeslack.SearchNothing)
 		ds.until(t, "in-channel no results", func() bool { return !sc.loading })
 		shot(ds, "search-in-channel-nothing-"+mode)
+
+		// gap-w6: the loading skeleton, a DM's header (avatar), the
+		// Channels and People tabs' pills, More's counts and badges
+		skl := NewSearchInChannel(e.h, chs[0])
+		dskl := &srDrv{size: image.Pt(420, 800), w: skl, dark: dark}
+		skl.query, skl.loading, skl.searched = fakeslack.SearchWord, true, true
+		shot(dskl, "search-in-channel-loading-"+mode)
+		skl.loading = false
+		dm, _ := srDMWith(t, e)
+		sdmv := NewSearchInChannel(e.h, dm)
+		shot(&srDrv{size: image.Pt(420, 800), w: sdmv, dark: dark}, "search-in-channel-dm-"+mode)
+
+		cwd := strings.Split(e.h.a.ConvRef(chs[1]).Name, "-")[0]
+		vcs, dcs := srView(t, e, cwd, dark)
+		vcs.setTab(srTabChannels)
+		dcs.until(t, "channels", func() bool { return !vcs.loading && len(vcs.chans) > 0 })
+		shot(dcs, "search-results-channels-"+mode)
+		vcs.channelTypeMenu(gtx)
+		m = srMenu(e.h)
+		dcs.over = func(gtx layout.Context) { m.Layout(gtx) }
+		shot(dcs, "search-results-channel-type-"+mode)
+		dcs.over = nil
+
+		vpe, dpe := srView(t, e, fakeslack.SearchPeopleWord, dark)
+		vpe.setTab(srTabPeople)
+		dpe.until(t, "people", func() bool { return !vpe.loading && len(vpe.people) > 0 && len(vpe.facetLocs) > 0 })
+		vpe.locs = []string{vpe.facetLocs[0].Value}
+		vpe.search(1)
+		dpe.until(t, "a location", func() bool { return !vpe.loading })
+		vpe.locationMenu(gtx)
+		m = srMenu(e.h)
+		dpe.over = func(gtx layout.Context) { m.Layout(gtx) }
+		shot(dpe, "search-results-people-location-"+mode)
+		vpe.moreMenu(gtx)
+		m = srMenu(e.h)
+		shot(dpe, "search-results-people-more-"+mode)
+		dpe.over = nil
+
+		vmc, dmc := srView(t, e, fakeslack.SearchWord+" with:<@"+who.ID+"> has:pin is:saved type:pdfs type:images", dark)
+		shot(dmc, "search-results-more-count-"+mode)
+		vmc.moreMenu(gtx)
+		m = srMenu(e.h)
+		dmc.over = func(gtx layout.Context) { m.Layout(gtx) }
+		shot(dmc, "search-results-more-badges-"+mode)
+		dmc.over = nil
 	}
 }

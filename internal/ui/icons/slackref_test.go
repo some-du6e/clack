@@ -7,6 +7,7 @@ package icons
 var slackRef = map[string]string{
 	// the search switcher's toolbar (search.go)
 	"quick-switch":       "quick-switch",
+	"emoji-celebration":  "emoji-celebration", // More > Celebration (gap-w6)
 	"posts":              "posts",
 	"app-directory":      "app-directory",
 	"surface":            "surface",

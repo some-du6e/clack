@@ -32,7 +32,61 @@ const (
 	// SearchFileTitle and SearchFileID are the file fixture.
 	SearchFileTitle = "Zephyr launch checklist"
 	SearchFileID    = "F0FAKESRCH1"
+	// SearchPeopleWord is in most fixture people's names (the People
+	// tab's filter tests).
+	SearchPeopleWord = "a"
 )
+
+// SearchLocations are the People tab's locations: fixture user i lives
+// in SearchLocations[i%3] (profiles have no location field here).
+var SearchLocations = []string{"Brooklyn, NY", "London", "Remote"}
+
+// channelTypeMatch is search.modules.channels' channel_type and
+// exclude_my_channels / search_only_my_channels for a channel.
+func channelTypeMatch(c *slack.Conversation, f url.Values) bool {
+	if f.Get("exclude_my_channels") == "1" && c.IsMember {
+		return false
+	}
+	if f.Get("search_only_my_channels") == "true" && !c.IsMember {
+		return false
+	}
+	switch f.Get("channel_type") {
+	case "private_exclude":
+		return !c.IsPrivate
+	case "private":
+		return c.IsPrivate
+	case "archived":
+		return c.IsArchived
+	case "external_shared":
+		return c.IsExtShared
+	}
+	return true
+}
+
+// facetList is a filter_suggestions list: {value, facet_count, checked},
+// most first, ten at most (max_filter_suggestions).
+func facetList(counts map[string]int, checked []string) []any {
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		if k != "" {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if counts[keys[i]] != counts[keys[j]] {
+			return counts[keys[i]] > counts[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	if len(keys) > 10 {
+		keys = keys[:10]
+	}
+	out := make([]any, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]any{"value": k, "facet_count": counts[k], "checked": containsStr(checked, k)})
+	}
+	return out
+}
 
 // searchLog records search calls' forms (SearchForms).
 type searchLog struct {
@@ -514,11 +568,12 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 		q := strings.ToLower(strings.TrimSpace(f.Get("query")))
 		var items []any
 		for _, c := range s.convs {
-			if c.IsChannel && q != "" && strings.Contains(c.Name, q) {
-				items = append(items, map[string]any{"id": c.ID, "name": c.Name, "iid": "I" + c.ID, "is_archived": c.IsArchived,
-					"member_count": c.NumMembers, "is_member": true, "context_team_id": TeamID, "is_private": c.IsPrivate,
-					"purpose": map[string]any{"value": c.Purpose.Value, "creator": "", "last_set": 0}, "timestamp": c.Created})
+			if !c.IsChannel || q == "" || !strings.Contains(c.Name, q) || !channelTypeMatch(&c, f) {
+				continue
 			}
+			items = append(items, map[string]any{"id": c.ID, "name": c.Name, "iid": "I" + c.ID, "is_archived": c.IsArchived,
+				"member_count": c.NumMembers, "is_member": c.IsMember, "context_team_id": TeamID, "is_private": c.IsPrivate,
+				"purpose": map[string]any{"value": c.Purpose.Value, "creator": "", "last_set": 0}, "timestamp": c.Created})
 		}
 		sortItems(items, f.Get("sort"), f.Get("sort_dir"), func(x any) (string, int) {
 			m := x.(map[string]any)
@@ -532,16 +587,26 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 			return nil, false
 		}
 		q := strings.ToLower(strings.TrimSpace(f.Get("query")))
+		titles, locs := splitList(f.Get("profile_title")), splitList(f.Get("profile_location"))
 		var items []any
-		for _, u := range s.users {
-			if q != "" && (strings.Contains(u.Name, q) || strings.Contains(strings.ToLower(u.RealName), q)) {
-				items = append(items, u)
+		tc, lc := map[string]int{}, map[string]int{}
+		for i, u := range s.users {
+			if q == "" || !(strings.Contains(u.Name, q) || strings.Contains(strings.ToLower(u.RealName), q)) {
+				continue
 			}
+			loc := SearchLocations[i%len(SearchLocations)]
+			if (len(titles) > 0 && !containsStr(titles, u.Profile.Title)) || (len(locs) > 0 && !containsStr(locs, loc)) {
+				continue
+			}
+			items = append(items, u)
+			tc[u.Profile.Title]++
+			lc[loc]++
 		}
 		sortItems(items, f.Get("sort"), f.Get("sort_dir"), func(x any) (string, int) { return x.(slack.User).Name, 0 })
 		page, pages, start, end := pageOf(f, len(items), 20)
 		return ok("module", "people", "items", append([]any{}, items[start:end]...),
-			"pagination", pagination(len(items), page, pages, 20, start, end)), true
+			"pagination", pagination(len(items), page, pages, 20, start, end),
+			"filter_suggestions", map[string]any{"title": facetList(tc, titles), "location": facetList(lc, locs)}), true
 	case "search.inline":
 		if f.Get("find_in_thread") == "true" {
 			return s.findInThread(f), true
