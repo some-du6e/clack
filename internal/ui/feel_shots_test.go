@@ -38,7 +38,7 @@ func TestFeelShots(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			e := ctxShell(t)
 			e.sz = image.Pt(1440, 900)
-			e.a.sidebar.width = 328
+			// Slack's auto sidebar at 1440 is 328 (sidebar_width.go)
 			e.ca.S.PutConv(slack.Conversation{ID: shotChan, Name: "clack", IsChannel: true, IsMember: true, NumMembers: 3})
 			e.ca.S.SetLatest(shotChan, nil, false)
 			b := e.a.data

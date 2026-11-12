@@ -276,6 +276,9 @@ func (b *backend) stop() <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// a section collapse still in its 3 s debounce goes out now
+		// (flushPendingChannelSectionCollapsedSync on teardown)
+		b.core.FlushSectionCollapsed()
 		closeTaut(s, t)
 		_ = b.core.Close()
 	}()

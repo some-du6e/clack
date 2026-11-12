@@ -33,9 +33,12 @@ import (
 
 // Measurements of Slack's DMs list.
 const (
-	dmsPaneFrac         = 0.38 // list width: 519 of the 1366 workspace
-	dmsPaneMin  unit.Dp = 300
-	dmsPaneMax  unit.Dp = 640
+	// list width: Slack's wide sidebar (Activity, DMs, To-dos; zfm1
+	// tabHasWideSidebar, W2CY isWideWidth): .38 of the space beside the
+	// rail within 320 … 720 (519 of the 1366 workspace)
+	dmsPaneFrac         = 0.38
+	dmsPaneMin  unit.Dp = 320
+	dmsPaneMax  unit.Dp = 720
 	dmsAvatar   unit.Dp = 36
 	dmsPad      unit.Dp = 16 // row padding on all sides
 	dmsAvGap    unit.Dp = 8  // avatar → text

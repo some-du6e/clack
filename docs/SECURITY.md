@@ -134,7 +134,7 @@ Policy (https://news.hackclub.com/news/scraping-use-policy/): Clack never writes
 | `internal/slack/creds.go` creds.json | tokens, cookies, team URLs | no messages; owner-only (C-6) |
 | `cmd/clack` `migrateConfig` | copies creds.json, ui.json | no messages; the old shared `cache/` moves into the account's directory when its sidebar.json was the same user's, else is deleted (`migrateLegacyCache`) |
 | `internal/store` <account>/meta.json | users and profiles, custom emoji, usergroups, prefs, channel names, bots | metadata only, 0600 |
-| `internal/ui/prefs.go` ui.json | layout, last route (ids only), collapsed sections | search routes are no longer saved (C-12), so search queries don't reach disk |
+| `internal/ui/prefs.go` ui.json | layout (column widths), last route (ids only); collapsed sections are the account's since account-sync (docs/ACCOUNT-SYNC.md) | search routes are no longer saved (C-12), so search queries don't reach disk |
 | `internal/imgcache` <account>/img | avatars (`avatars.slack-edge.com`, `ca.slack-edge.com`, gravatar) and emoji (`emoji.slack-edge.com`, `a.slack-edge.com` emoji paths) | `DiskOK` allow-list; files.slack.com images and thumbnails, Slack's image proxy, unfurl and GIF images stay in memory (tested). Bytes are written only after a successful decode (C-13), 0600 temp files renamed into place; 384 MB, least recently used out; deleted on sign-out |
 | `internal/ui/prefs.go` ui.json `acct_theme`, `plugin_slots` | the account's ia_theme (the boot placeholder's colours), the dp insets plugins put around components they wrap | no messages |
 | `internal/ui/popups/emoji_frecency.go` | emoji names and use times | no messages |

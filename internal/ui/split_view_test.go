@@ -244,10 +244,11 @@ func TestSplitViewResize(t *testing.T) {
 		t.Errorf("prefs %d %q", e.a.prefs.SplitW, e.a.prefs.SplitWMode)
 	}
 
-	// past the maximum: the primary view keeps 300 (1366-232-300 = 834)
+	// past the maximum: the primary view keeps 300 beside the sidebar
+	// (1366-328-300 = 738 with Slack's auto sidebar at 1440)
 	e.splitDrag(s.card.Min.X - 600)
-	if w := s.col.Dx(); w != 834 {
-		t.Errorf("dragged far left: %dpx, want 834", w)
+	if w, want := s.col.Dx(), 1366-e.a.sidebar.width-300; w != want {
+		t.Errorf("dragged far left: %dpx, want %d", w, want)
 	}
 	// past the minimum
 	e.splitDrag(s.card.Max.X - 50)

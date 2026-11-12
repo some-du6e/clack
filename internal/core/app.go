@@ -73,21 +73,22 @@ type App struct {
 	// Save), so the list read before them doesn't undo them.
 	starEdits  map[string]bool
 	savedEdits map[string]bool
-	memberN    map[string]int    // conversation -> people count (edge users/counts)
-	memberG    map[string]int    // conversation -> guests among them (edge users/counts)
-	memberA    map[string]int    // conversation -> apps among its members (edge users/counts)
-	dms        dmState           // which DMs Slack's sidebar shows (dmsidebar.go)
-	exp        *sidebarExp       // experiments the sidebar rules read (nil: defaults)
-	expGroups  map[string]string // the groups every check reads (experiments.go)
-	icon       teamIconState     // the rail's workspace icon (team_icon.go)
-	rxn        reactState        // the viewer's reactions in flight (reactions.go)
-	frec       frecencyState     // the frecency pref's save throttle and Frequently Used cache (frecency.go)
-	rec        recentsState      // recent searches and places: the recents pref, visits (search_recents.go)
-	drafts     draftCache        // the viewer's server drafts (drafts.go), memory only
-	dnd        dndState          // the viewer's Do Not Disturb (dnd.go)
-	mega       megaphoneState    // megaphone spaces, global and per channel (megaphone.go)
-	selected   string            // the open conversation (SetSelected, preview.go)
-	temp       map[string]int64  // temporary memberships: channel -> expiration_ts (preview.go)
+	memberN    map[string]int       // conversation -> people count (edge users/counts)
+	memberG    map[string]int       // conversation -> guests among them (edge users/counts)
+	memberA    map[string]int       // conversation -> apps among its members (edge users/counts)
+	dms        dmState              // which DMs Slack's sidebar shows (dmsidebar.go)
+	exp        *sidebarExp          // experiments the sidebar rules read (nil: defaults)
+	expGroups  map[string]string    // the groups every check reads (experiments.go)
+	icon       teamIconState        // the rail's workspace icon (team_icon.go)
+	rxn        reactState           // the viewer's reactions in flight (reactions.go)
+	frec       frecencyState        // the frecency pref's save throttle and Frequently Used cache (frecency.go)
+	rec        recentsState         // recent searches and places: the recents pref, visits (search_recents.go)
+	secCol     sectionCollapseState // the channel_sections collapse write's debounce (section_collapse.go)
+	drafts     draftCache           // the viewer's server drafts (drafts.go), memory only
+	dnd        dndState             // the viewer's Do Not Disturb (dnd.go)
+	mega       megaphoneState       // megaphone spaces, global and per channel (megaphone.go)
+	selected   string               // the open conversation (SetSelected, preview.go)
+	temp       map[string]int64     // temporary memberships: channel -> expiration_ts (preview.go)
 
 	// experiments.go: experiments.getByUser's records (nil until it
 	// answers) and the forced groups ("" reads as not assigned)
