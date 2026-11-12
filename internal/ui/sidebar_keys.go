@@ -758,7 +758,11 @@ func (a *App) sbFocusRing(gtx layout.Context, r *sbRow, sz image.Point) {
 	if a.sbInverted() {
 		ring = a.th.C.SidebarTextUnread
 	}
-	popups.FocusRingColors(gtx, ring, theme.WithAlpha(ring, 0x4d), image.Rect(in, 0, sz.X-in, h), gtx.Dp(8))
+	// the halo stays translucent (it lies over the neighbours' tiles), its
+	// alpha the one Gio's linear-light blend needs to land on the browser's
+	// 30% mix over the sidebar
+	halo := theme.LinearAlpha(theme.WithAlpha(ring, 0x4d), a.sbBase)
+	popups.FocusRingColors(gtx, ring, halo, image.Rect(in, 0, sz.X-in, h), gtx.Dp(8))
 }
 
 // sbInverted reports whether the sidebar is Slack's light-inverted-sidebar

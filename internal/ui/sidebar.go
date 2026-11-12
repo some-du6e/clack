@@ -800,11 +800,12 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 		right := rw - gtx.Dp(6)
 		if rs.edit {
 			// renderEditModeCheckbox: 1em of the row's 15px, centred in its
-			// 26px box 1px after the row's 10px padding (.64 until picked);
-			// the rest moves 24px right, the right padding 2px in
+			// 26px box 1px after the row's 10px padding (.64 until picked,
+			// as the browser mixes it over the sidebar: Gio blends in linear
+			// light); the rest moves 24px right, the right padding 2px in
 			cbox, es := gtx.Dp(26), gtx.Dp(15)
 			cx := gtx.Dp(10) + gtx.Dp(1) + cbox/2
-			name, cc := "real-checkbox-empty", theme.WithAlpha(fg, uint8(float32(fg.A)*0.64+0.5))
+			name, cc := "real-checkbox-empty", theme.LinearAlpha(theme.WithAlpha(fg, uint8(float32(fg.A)*0.64+0.5)), a.sbBase)
 			if rs.picked {
 				name, cc = "real-checkbox-checked", fg
 			}
@@ -958,8 +959,11 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 	if r.disabled {
 		// organize mode's page link (.p-channel_sidebar__link--page--disabled):
 		// .64 opacity, the default cursor, no hover tile and no click; the
-		// open page's keeps its tile, its text content-inv-sec
-		defer paint.PushOpacity(gtx.Ops, .64).Pop()
+		// open page's keeps its tile, its text content-inv-sec. Gio
+		// composites the layer in linear light: its opacity is the one that
+		// lands the row's text on the browser's .64 mix over the sidebar.
+		o := float32(theme.LinearAlpha(theme.WithAlpha(rs.col, 0xa3), a.sbBase).A) / 255
+		defer paint.PushOpacity(gtx.Ops, o).Pop()
 		m := op.Record(gtx.Ops)
 		d := body(gtx)
 		call := m.Stop()
