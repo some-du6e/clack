@@ -198,8 +198,10 @@ func TestPrefsConnectedManage(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		a.drain()
 	}
-	waitFor(t, a, "the confirmation closed", func() bool { return len(a.overlays) == n+1 })
-	strs = drawnBy(func() { layoutTop(t, a) })
+	if !md.Dismissed() || p.manage.modal.Dismissed() {
+		t.Fatalf("after the delete: confirmation dismissed %v, manage modal dismissed %v (want true, false)", md.Dismissed(), p.manage.modal.Dismissed())
+	}
+	strs = drawnBy(func() { p.manage.modal.Layout(ttContext(new(op.Ops), image.Pt(1200, 900))) })
 	if hasText(strs, "me@example.com") || !hasText(strs, "it@example.com") {
 		t.Fatalf("manage modal after the delete drew %q", strs)
 	}
