@@ -112,6 +112,15 @@ func (a *App) dropZoneAt(p image.Point) *convo {
 	return nil
 }
 
+// dropTop is where c's FileDragDrop container starts in its pane: under
+// the thread pane's header (messages.ThreadView.DropTop), else the top.
+func dropTop(c *convo) int {
+	if t, ok := c.list.(interface{ DropTop() int }); ok {
+		return t.DropTop()
+	}
+	return 0
+}
+
 // dropZonesReset starts a frame's drop zones.
 func (a *App) dropZonesReset() { a.drop.zones = a.drop.zones[:0] }
 
@@ -122,6 +131,7 @@ func (a *App) dropZone(c *convo, r image.Rectangle, foot footerKind) {
 	if foot != footNone || c.comp == nil {
 		return
 	}
+	r.Min.Y += dropTop(c)
 	a.drop.zones = append(a.drop.zones, dropZone{c: c, r: r})
 }
 
@@ -286,8 +296,9 @@ func (a *App) layoutDropOverlay(gtx layout.Context, c *convo, sz image.Point) {
 	thread := c.ts != ""
 	kind, title, sub := a.dropOverlayText(c)
 
-	// the whole overlay: inset -1px 0 0, swallows the pane's pointer
-	r := image.Rect(0, -gtx.Dp(1), sz.X, sz.Y)
+	// the whole overlay: inset -1px 0 0 over FileDragDrop's container
+	// (a thread's starts under the pane's header)
+	r := image.Rect(0, dropTop(c)-gtx.Dp(1), sz.X, sz.Y)
 	bg := dropSK(th, "sk_primary_background")
 	bgA := 0.95
 	op1 := 1.0
@@ -347,8 +358,6 @@ func (a *App) layoutDropOverlay(gtx layout.Context, c *convo, sz image.Point) {
 	}
 	ostack.Pop()
 
-	// the overlay covers the pane: nothing under it takes the pointer
-	// (it only shows during an OS drag, which holds the pointer anyway)
 }
 
 // atLine centres a single text line vertically in a line box of lh.

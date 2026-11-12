@@ -100,6 +100,17 @@ func TestFileDropOverlayFollowsThePane(t *testing.T) {
 	if chZone.Overlaps(thZone) {
 		t.Fatalf("the panes' zones overlap: channel %v, thread %v", chZone, thZone)
 	}
+	// the thread's FileDragDrop wraps the flexpane body: the header (49px)
+	// takes no drops
+	if tv := e.threadView(ch, fakeslack.ThreadRootTS); tv == nil || tv.DropTop() < 49 {
+		t.Fatalf("the thread's drop top is %v, want under its 49px header", tv)
+	}
+	hdr := image.Pt(thZone.Min.X+100, thZone.Min.Y-20)
+	e.a.fileDrop(dropAt(app.FileDragEnter, hdr, 0, "/tmp/a.png"))
+	if e.a.drop.hover != nil {
+		t.Fatalf("over the thread pane's header: hover %v, want none", e.a.drop.hover)
+	}
+	e.a.fileDrop(app.FileDropEvent{Kind: app.FileDragLeave})
 	var d dropDrawn
 	d.hook(t)
 	team := "Upload to " + e.a.teamName()
