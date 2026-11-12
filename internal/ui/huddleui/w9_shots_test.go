@@ -31,6 +31,7 @@ func TestHuddleShotsW9(t *testing.T) {
 			mode = "dark"
 		}
 		e, s := windowShotEnv(t, dark, 2)
+		e.h.th.Images = e.h.imgs // the dock draws with the main theme
 		app := e.h.app
 		app.SetExperimentGroup(extHuddles, "on")
 		remote, _ := app.S.User(huddle.FakeRemoteUser)
@@ -93,6 +94,7 @@ func TestHuddleShotsW9(t *testing.T) {
 			theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)
 			e.c.LayoutDock(gtx, e.h.th)
 		}
+		loadPictures(t, e, 1000, dockBar+dockPad, dock) // the faces and the raise-hand
 		img = render(t, "w9-dock-"+mode, 1000, dockBar+dockPad, dock)
 		right := image.Rect(820*shotScale, 0, 1000*shotScale, dockBar*shotScale)
 		if n := pixeltest.Count(img, right, hudLeave, 12); n < 3000 {
@@ -107,6 +109,8 @@ func TestHuddleShotsW9(t *testing.T) {
 		ov := oh.shown[len(oh.shown)-1]
 		render(t, "w9-dock-quick-"+mode, 1000, MH, func(gtx C) {
 			theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, e.h.th.C.Bg)
+			// the client's bottom row under the dock, as in the other dock shots
+			theme.Fill(gtx, image.Rect(0, gtx.Dp(MH-dockBar-dockPad), gtx.Constraints.Max.X, gtx.Constraints.Max.Y), hudFrame)
 			off := op.Offset(image.Pt(0, gtx.Dp(MH-dockBar-dockPad))).Push(gtx.Ops)
 			g := gtx
 			g.Constraints.Max.Y = gtx.Dp(dockBar + dockPad)
