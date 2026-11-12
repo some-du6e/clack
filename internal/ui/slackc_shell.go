@@ -366,6 +366,12 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 			icon = "lock"
 		case "mpim":
 			icon = "people"
+		default:
+			// BaseChannelPrefixIcon: an unread channel that isn't muted
+			// (the row's --unread, bold) gets channel-filled
+			if e.weight == theme.Black && conv.Unread && !conv.Muted {
+				icon = "hash-filled"
+			}
 		}
 		is := clsSbIcon.Enter(gtx, 0, 0)
 		if !is.Hidden() {

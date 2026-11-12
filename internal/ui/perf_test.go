@@ -84,6 +84,7 @@ type perfEnv struct {
 	gpu   *headless.Window
 	now   time.Time
 	start time.Time
+	scale float32 // px per dp (0: 1)
 }
 
 // newPerfEnv starts the client against the fake. warm reuses (or creates)
@@ -262,7 +263,11 @@ func (e *perfEnv) frame() {
 
 func (e *perfEnv) context() layout.Context {
 	e.ops.Reset()
-	return layout.Context{Ops: &e.ops, Now: e.now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+	sc := e.scale
+	if sc == 0 {
+		sc = 1
+	}
+	return layout.Context{Ops: &e.ops, Now: e.now, Metric: unit.Metric{PxPerDp: sc, PxPerSp: sc},
 		Constraints: layout.Exact(e.size), Source: e.r.Source()}
 }
 

@@ -62,8 +62,8 @@ func TestResizersHoldThePointer(t *testing.T) {
 		if !s.rz.dragging() {
 			t.Fatal("the press on the handle didn't start a drag")
 		}
-		e.rzMove(image.Pt(edge+5, y))
-		drawn(w0+5, "5px right")
+		e.rzMove(image.Pt(edge+40, y)) // past the ±15px snap to the default
+		drawn(w0+40, "40px right")
 		e.rzMove(image.Pt(edge-100, y+300)) // into the messages, down the window
 		drawn(w0-100, "a jerk 100px left")
 		e.rzMove(image.Pt(edge+60, y-150))
@@ -86,11 +86,11 @@ func TestResizersHoldThePointer(t *testing.T) {
 	t.Run("secondary", func(t *testing.T) {
 		ch, _ := splitChannels(t, e)
 		e.openChannel(ch)
-		a.OpenDetails(ch)
+		a.openHelpPane() // a full-height pane (channel details is a modal here)
 		e.settle(200 * time.Millisecond)
 		s := &a.secondary
 		if !s.open() || s.drawnW == 0 {
-			t.Fatal("no details pane")
+			t.Fatal("no Help pane")
 		}
 		panel := e.size.X - int(theme.PanelInset) - a.primaryOrigin.X
 		edge := func() int { return a.secondaryOrigin.X - 1 } // the pane's left edge, window px

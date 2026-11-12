@@ -17,6 +17,15 @@ name: font-shots
 # own Lato from its CDN, and .github/scripts/text_render_compare.py
 # measures ink, stem and bar darkness, edges and alignment per cell and
 # writes 400% side-by-sides (text-render-* artifacts).
+#
+# sidebar-rows-linux / sidebar-rows-windows: Clack's sidebar channel rows
+# against Slack's. TestSidebarRowShots (internal/ui/sidebar_rows_shots_test.go)
+# crops read, selected, hovered, unread, mentioned and muted rows of
+# fakeslack's Unreads fixtures, dark and light, at 1 and 1.25x;
+# .github/scripts/sidebar_rows_ref.py renders the same rows in Slack's
+# markup under client-boot-styles with Slack's own Lato (public CDN, no
+# cookie) in headless Chrome, measures the icon, name and badge ink of
+# each and writes 400% side-by-sides (sidebar-rows-* artifacts).
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run font-shots.yml --ref <branch>)
@@ -33,12 +42,16 @@ on:
       - "internal/ui/prefs_font*.go"
       - "internal/ui/font_shots_test.go"
       - "internal/ui/messages/font_switch_test.go"
+      - "internal/ui/sidebar.go"
+      - "internal/ui/slackc_shell.go"
+      - "internal/ui/sidebar_rows_shots_test.go"
+      - ".github/scripts/sidebar_rows_ref.py"
       - ".github/scripts/text_render_compare.py"
       - ".github/workflows/font-shots.yml"
   workflow_dispatch:
     inputs:
       only:
-        description: "text-render: run only the text-render jobs"
+        description: "text-render or sidebar-rows: run only those jobs"
         required: false
         default: ""
 
@@ -50,7 +63,7 @@ permissions:
 
 jobs:
   font-shots:
-    if: ${{ inputs.only != 'text-render' }}
+    if: ${{ inputs.only != 'text-render' && inputs.only != 'sidebar-rows' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -86,6 +99,7 @@ jobs:
           path: dist/shots
 
   text-render-linux:
+    if: ${{ inputs.only != 'sidebar-rows' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -136,6 +150,7 @@ jobs:
           path: dist/text-render
 
   text-render-windows:
+    if: ${{ inputs.only != 'sidebar-rows' }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -201,3 +216,70 @@ jobs:
         with:
           name: text-render-windows
           path: dist/text-render
+
+  sidebar-rows-linux:
+    if: ${{ inputs.only != 'text-render' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS libgl1-mesa-dri libegl-mesa0
+      - name: Clack's rows (Mesa llvmpipe)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SIDEBAR_ROWS_DIR: ${{ github.workspace }}/dist/sidebar-rows
+        run: |
+          mkdir -p "$SIDEBAR_ROWS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestSidebarRowShots$' ./internal/ui/
+      - name: Slack's rows in Chrome, measured
+        run: |
+          python3 -m pip install --quiet pillow brotli
+          python3 .github/scripts/sidebar_rows_ref.py fetch dist/slack-ref
+          google-chrome --version | tee dist/sidebar-rows/browser.txt
+          python3 .github/scripts/sidebar_rows_ref.py dist/sidebar-rows dist/slack-ref/client-boot-styles.cf726c4f2eaecc74.min.css internal/ui/slackc/css/slackvars.go dist/slack-ref/icons.json google-chrome linux
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: sidebar-rows-linux
+          path: dist/sidebar-rows
+
+  sidebar-rows-windows:
+    if: ${{ inputs.only != 'text-render' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Clack's rows (D3D11)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          SIDEBAR_ROWS_DIR: ${{ github.workspace }}\dist\sidebar-rows
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:SIDEBAR_ROWS_DIR | Out-Null
+          go test -count=1 -v -timeout 15m -run 'TestSidebarRowShots$' ./internal/ui/
+      - name: Slack's rows in Chrome, measured
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python -m pip install --quiet pillow brotli
+          python .github/scripts/sidebar_rows_ref.py fetch dist/slack-ref
+          $chrome = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe').'(default)'
+          "chrome $((Get-Item $chrome).VersionInfo.ProductVersion)" | Tee-Object -FilePath dist/sidebar-rows/browser.txt
+          python .github/scripts/sidebar_rows_ref.py dist/sidebar-rows dist/slack-ref/client-boot-styles.cf726c4f2eaecc74.min.css internal/ui/slackc/css/slackvars.go dist/slack-ref/icons.json "$chrome" windows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: sidebar-rows-windows
+          path: dist/sidebar-rows
