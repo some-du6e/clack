@@ -6,6 +6,10 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 )
 
+// appName is the app's name in Clack's own messages (the toasts for what
+// Clack doesn't have); ui.AppName.
+const appName = "Clack"
+
 // Slack's I18n instances the menus and dialogs draw from (docs/I18N.md):
 // each is the namespace of the `new I18n("…")` in the Slack module that
 // renders the string, so a word Slack translates differently per

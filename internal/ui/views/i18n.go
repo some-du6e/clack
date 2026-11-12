@@ -7,6 +7,10 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 )
 
+// appName is the app's name in Clack's own messages (what Clack doesn't
+// have yet); ui.AppName.
+const appName = "Clack"
+
 // Slack's strings for the views (internal/i18n, docs/I18N.md). Each I18n
 // instance is the namespace of the Slack component a view follows: the
 // `X = new I18n("ns")` its `X.t(…)` belongs to.

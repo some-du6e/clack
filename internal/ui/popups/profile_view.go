@@ -77,7 +77,7 @@ func NewProfileView(h Host, userID string) *ProfileView {
 	return v
 }
 
-const pfEditToast = "Editing your profile isn't supported in yoloslack yet"
+const pfEditToast = "Editing your profile isn't supported in " + appName + " yet"
 
 // Layout fills the constraints with the profile.
 func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {

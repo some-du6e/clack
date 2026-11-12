@@ -1,8 +1,11 @@
 name: create-channel
 # The create-channel flow end to end against internal/fakeslack (entry
 # points, name checks, visibility, create, Add people, a restricted org),
-# rendered headlessly at 1440x900 with each step saved as a screenshot.
-# Synthetic only: nothing here talks to Slack.
+# rendered headlessly at 1440x900 with each step saved as a screenshot;
+# and the Create menu's other modal, "Invite people" (popups/invite.go:
+# the email tokens, requests, guests, the invite link, the summary), with
+# its shots light and dark. Synthetic only: nothing here talks to Slack,
+# and the invites go to internal/fakeslack's recorder.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run create-channel.yml --ref <branch>)
@@ -11,7 +14,10 @@ on:
       - "internal/ui/popups/create_channel*.go"
       - "internal/ui/popups/modal.go"
       - "internal/core/create*.go"
+      - "internal/core/invite*.go"
+      - "internal/ui/popups/invite*.go"
       - "internal/fakeslack/channels.go"
+      - "internal/fakeslack/invites.go"
       - ".github/workflows/create-channel.yml"
   workflow_dispatch:
 
@@ -38,6 +44,8 @@ jobs:
         run: |
           go test -count=1 -v -run 'TestNormalizeChannelName|TestChannelNameErrorText|TestValidateChannelName|TestCreateChannel' ./internal/core
           go test -count=1 -v -run 'TestCreateChannelModal' ./internal/ui/popups
+          go test -count=1 -v -run 'TestInviteRules|TestMemberIDByEmail|TestSendInvites|TestInviteLink' ./internal/core
+          go test -count=1 -v -run 'TestInviteSplit|TestInviteTokenize|TestInviteTokenErrors|TestInviteModal' ./internal/ui/popups
       - name: flow + screenshots
         env:
           CREATE_CHANNEL_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -47,6 +55,17 @@ jobs:
           mkdir -p "$CREATE_CHANNEL_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestCreateChannelEntryPoints|TestCreateChannelFlow' ./internal/ui/
           ls -l "$CREATE_CHANNEL_SHOTS_DIR"
+      - name: invite modal screenshots (light, dark)
+        if: ${{ !cancelled() }}
+        env:
+          INVITE_SHOTS_DIR: ${{ github.workspace }}/dist/shots/invite
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$INVITE_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestInviteShots$' ./internal/ui/popups
+          ls -l "$INVITE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

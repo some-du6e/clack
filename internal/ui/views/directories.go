@@ -721,9 +721,9 @@ func (d *Directories) body(gtx C) D {
 	t := d.tab.Sel
 	switch t {
 	case dirTabExternal:
-		return d.emptyState(gtx, "globe", "External", "Connecting with people and channels outside Hack Club isn’t available in yoloslack yet.", nil, "")
+		return d.emptyState(gtx, "globe", "External", "Connecting with people and channels outside "+d.teamName()+" isn’t available in "+appName+" yet.", nil, "")
 	case dirTabInvites:
-		return d.emptyState(gtx, "send", "Invitations", "Managing invitations isn’t available in yoloslack yet.", nil, "")
+		return d.emptyState(gtx, "send", "Invitations", "Managing invitations isn’t available in "+appName+" yet.", nil, "")
 	}
 	return col(gtx,
 		vgap(16),
@@ -1043,7 +1043,7 @@ func (d *Directories) peopleGrid(gtx C, p slackc.Props) D {
 		case len(us) == 0:
 			if d.peopleQ == "" {
 				return dirListState(gtx, func(gtx C) D {
-					return d.emptyState(gtx, "people", i18n.T("channel_details", "Find people"), "Search by name or title to find anyone in Hack Club.", nil, "")
+					return d.emptyState(gtx, "people", i18n.T("channel_details", "Find people"), "Search by name or title to find anyone in "+d.teamName()+".", nil, "")
 				})
 			}
 			return dirListState(gtx, func(gtx C) D {
@@ -1592,7 +1592,7 @@ func (d *Directories) groupsTab(gtx C) D {
 		case n == 0:
 			if d.groupsQ == "" {
 				return dirListState(gtx, func(gtx C) D {
-					return d.emptyState(gtx, "people", "No user groups", "Hack Club doesn’t have any user groups yet.", nil, "")
+					return d.emptyState(gtx, "people", "No user groups", d.teamName()+" doesn’t have any user groups yet.", nil, "")
 				})
 			}
 			return dirListState(gtx, func(gtx C) D {

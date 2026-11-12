@@ -9,6 +9,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -268,9 +269,15 @@ func (v *Huddles) startDisplay(gtx C, shown bool, bg color.NRGBA) D {
 // inviteTeammates is HuddlesPageInviteTeammates: a 346px card, its 136px
 // header (the first background) holding Slack's three teammate pictures
 // and the user-add tile (60px each, 12 apart), then "Invite teammates",
-// "Add teammates to huddle 1:1" and the outline medium "Add coworkers"
-// (Slack's invite modal, source huddles_page; Clack has no invite flow).
+// "Add teammates to huddle 1:1" and the outline medium "Add coworkers",
+// which opens the invite modal (openInviteModal, source huddles_page;
+// popups/invite.go).
 func (v *Huddles) inviteTeammates(gtx C) D {
+	if v.clk("invite").Clicked(gtx) {
+		if ph, ok := v.h.(popups.Host); ok {
+			popups.OpenInviteModal(ph, popups.InviteFromHuddles)
+		}
+	}
 	w := gtx.Dp(346)
 	hh := gtx.Dp(136)
 	fg := v.tok("dt_color-content-pry")
