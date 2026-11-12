@@ -177,6 +177,7 @@ var slackRef = map[string]string{
 	"lock-filled":                 "lock-filled",
 	"magic-wand":                  "magic-wand",
 	"mail":                        "email",
+	"email-up":                    "email-up",
 	"map":                         "map",
 	"mark-as-read":                "mark-as-read",
 	"mark-unread":                 "mark-as-unread",

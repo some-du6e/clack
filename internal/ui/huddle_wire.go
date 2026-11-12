@@ -143,6 +143,12 @@ func (a *App) HuddleMemberMenu(user string) []popups.MenuItem {
 	return a.huddles().MemberMenuItems(user)
 }
 
+// HuddleCallMenu is CallMenu's huddle rows for a channel (channel
+// details' Start a Call ▾, views/details_call.go).
+func (a *App) HuddleCallMenu(ch string) []popups.MenuItem {
+	return a.huddles().CallMenuItems(ch)
+}
+
 // openHuddleMenu opens the header caret's menu under caret (window
 // coordinates), where Slack's MenuTrigger puts it (huddleui.MenuAnchor).
 func (a *App) openHuddleMenu(gtx layout.Context, ch string, caret image.Rectangle) {

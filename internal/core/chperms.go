@@ -39,8 +39,9 @@ const ExpRestrictTopicPurpose = "channel_topic_purpose_setting_restrict_to_chann
 
 // chPermSet is what one permissions/info call asks for: both grants, the
 // way the header's topic and the details' Topic and Description read them
-// together.
-var chPermSet = []string{PermSetChannelTopic, PermSetChannelPurpose}
+// together, and About's "Send emails to this channel" grant
+// (showChannelEmailAddress, chdetails_email.go).
+var chPermSet = []string{PermSetChannelTopic, PermSetChannelPurpose, PermCreateChannelEmailAddresses}
 
 const chPermMaxAge = time.Hour
 

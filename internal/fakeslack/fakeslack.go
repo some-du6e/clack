@@ -311,9 +311,10 @@ type Server struct {
 
 	emailTokens []map[string]any // users.emailtoken.* (under prefsMu)
 
-	chans chanState   // conversations.create and friends (channels.go)
-	secs  secState    // sidebar sections, marks, channel notification prefs (sections.go)
-	hud   huddleState // rooms.getLink, huddles.scheduled.new, calendar.* (huddles.go)
+	chans chanState       // conversations.create and friends (channels.go)
+	secs  secState        // sidebar sections, marks, channel notification prefs (sections.go)
+	hud   huddleState     // rooms.getLink, huddles.scheduled.new, calendar.* (huddles.go)
+	cem   callsEmailState // calls.request, conversations.emailaddresses.*, avatars.* (calls_email.go)
 }
 
 // DefaultPrefs are the fake account's users.prefs (Slack's defaults for the
@@ -976,7 +977,7 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		form, _ = url.ParseQuery(string(body))
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			form = url.Values{}
-			if method == "users.preparePhoto" { // profile.go: the image part's size
+			if method == "users.preparePhoto" || method == "avatars.upload" { // profile.go, calls_email.go: the image part's size
 				form.Set(photoBytesKey, multipartFileSize(r.Header.Get("Content-Type"), body, "image"))
 			}
 		}
@@ -1037,6 +1038,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleInvites(method, f); handled { // invites.go
+		return out
+	}
+	if out, handled := s.handleCallsEmail(method, f); handled { // calls_email.go
 		return out
 	}
 	if out, handled := s.handleModeration(method, f); handled { // moderation.go
