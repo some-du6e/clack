@@ -48,7 +48,7 @@ func wfHasGlyph(name string) bool {
 	if _, ok := wfGlyphs[name]; ok {
 		return true
 	}
-	return icons.Has(name)
+	return icons.HasSlack(name) // a registered icon, or a Slack name the set maps (icons.Get resolves both)
 }
 
 // wfDrawGlyph draws name at size dp in col: one of Slack's glyphs above,
