@@ -2,6 +2,7 @@ package uiatest
 
 import (
 	"errors"
+	"fmt"
 	"runtime"
 	"sync"
 	"syscall"
@@ -21,6 +22,9 @@ type ShellHook struct {
 	hwnd    uintptr
 	flashes chan uintptr
 	done    chan struct{}
+
+	mu   sync.Mutex
+	seen []string // every SHELLHOOK message: code and window
 }
 
 var (
@@ -84,6 +88,11 @@ func shWndProc(hwnd, m, wp, lp uintptr) uintptr {
 	shMu.Unlock()
 	switch {
 	case h != nil && m == shMsgID:
+		h.mu.Lock()
+		if len(h.seen) < 200 {
+			h.seen = append(h.seen, fmt.Sprintf("%#x:%#x", wp, lp))
+		}
+		h.mu.Unlock()
 		if wp == hshellFlash {
 			select {
 			case h.flashes <- lp:
@@ -146,6 +155,14 @@ func StartShellHook() (*ShellHook, error) {
 		return nil, errors.Join(errors.New("uiatest: shell hook window"), err)
 	}
 	return h, nil
+}
+
+// Seen is every shell hook message so far ("code:hwnd"), for a failing
+// test's log.
+func (h *ShellHook) Seen() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.seen...)
 }
 
 // Drain forgets the flashes heard so far.

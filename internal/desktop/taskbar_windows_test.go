@@ -168,6 +168,7 @@ func TestTaskbarFlashAndRevive(t *testing.T) {
 	defer runtime.UnlockOSThread()
 	hwnd := testWindow(t)
 	pump(time.Second)
+	t.Logf("the test window %#x; shell hook messages so far: %v", hwnd, hook.Seen())
 
 	Minimize(hwnd) // not the active window any more: the button flashes
 	pump(300 * time.Millisecond)
@@ -178,7 +179,7 @@ func TestTaskbarFlashAndRevive(t *testing.T) {
 	FlashFrame(hwnd, true)
 	pump(200 * time.Millisecond)
 	if !hook.WaitFlash(hwnd, 5*time.Second) {
-		t.Fatal("no HSHELL_FLASH for the window after FlashFrame(true)")
+		t.Fatalf("no HSHELL_FLASH for the window after FlashFrame(true); the shell hook heard %v", hook.Seen())
 	}
 	FlashFrame(hwnd, false)
 	pump(200 * time.Millisecond)
@@ -207,7 +208,7 @@ func TestTaskbarFlashAndRevive(t *testing.T) {
 	FlashFrame(hwnd, true)
 	pump(200 * time.Millisecond)
 	if !hook.WaitFlash(hwnd, 5*time.Second) {
-		t.Fatal("no HSHELL_FLASH for the revived window")
+		t.Fatalf("no HSHELL_FLASH for the revived window; the shell hook heard %v", hook.Seen())
 	}
 	pump(500 * time.Millisecond)
 	screenshot(t, "taskbar-flash-revived")

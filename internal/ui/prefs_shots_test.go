@@ -128,6 +128,7 @@ func TestPrefsAuditShots(t *testing.T) {
 		pm.scroll.y = 1 << 20 // the end; layout clamps it
 		shot("prefs-notifications-windows-" + mode)
 		e.a.Post(func() { e.a.setDesktopSetting(func(u *prefs) { u.NotificationMethod = "html" }) })
+		e.settle(150 * time.Millisecond) // laid out with the position selects before the scroll clamps
 		pm.scroll.y = 1 << 20
 		shot("prefs-notifications-windows-html-" + mode)
 		e.a.Post(func() { e.a.setDesktopSetting(func(u *prefs) { u.NotificationMethod = "" }) })

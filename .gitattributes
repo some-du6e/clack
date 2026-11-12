@@ -1,0 +1,2 @@
+# Slack's own resource file, byte for byte (its sha256 is checked)
+internal/desktop/unread-badge-resources.json -text

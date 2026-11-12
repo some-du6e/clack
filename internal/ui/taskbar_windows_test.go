@@ -119,6 +119,15 @@ func TestTaskbarWindow(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
+	onUI := func(f func()) { // a.Post, waited for: the setting is in before the next close
+		ran := make(chan struct{})
+		a.Post(func() { f(); close(ran) })
+		select {
+		case <-ran:
+		case <-time.After(10 * time.Second):
+			t.Fatal("posted work didn't run")
+		}
+	}
 	visible := func() bool { r, _, _ := trayTestIsVisible.Call(hwnd); return r != 0 }
 	iconic := func() bool { r, _, _ := trayTestIsIconic.Call(hwnd); return r != 0 }
 	until("the first frames", func() bool { return frames.Load() > 2 })
@@ -147,7 +156,7 @@ func TestTaskbarWindow(t *testing.T) {
 
 	// 2. "Always": the close minimizes, the balloon explains, a
 	// notification flashes the button
-	a.Post(func() {
+	onUI(func() {
 		a.prefs.WindowFlashBehavior = flashAlways
 		a.notify = &recNotifier{}
 	})
@@ -160,7 +169,7 @@ func TestTaskbarWindow(t *testing.T) {
 	hook.Drain()
 	a.Post(func() { a.Notify("fakeslack", "a message") })
 	if !hook.WaitFlash(hwnd, 10*time.Second) {
-		t.Fatal("always: no HSHELL_FLASH for Clack's window after a notification")
+		t.Fatalf("always: no HSHELL_FLASH for Clack's window %#x after a notification; the shell hook heard %v", hwnd, hook.Seen())
 	}
 	uiScreenshot(t, "clack-taskbar-flash-always")
 	a.Raise() // FOREGROUND_APP: the flash stopped, the badge again
@@ -168,15 +177,14 @@ func TestTaskbarWindow(t *testing.T) {
 
 	// 3. "When left idle", an idle user, the window hidden to the tray
 	idle.Store(30)
-	a.Post(func() { a.prefs.WindowFlashBehavior = flashIdle })
-	time.Sleep(200 * time.Millisecond)
+	onUI(func() { a.prefs.WindowFlashBehavior = flashIdle })
 	trayTestPostMessage.Call(hwnd, trayTestWMClose, 0, 0)
 	until("the window hidden by the close", func() bool { return !visible() })
 	hook.Drain()
 	a.Post(func() { a.Notify("fakeslack", "another message") })
 	until("the hidden window shown minimized", func() bool { return visible() && iconic() })
 	if !hook.WaitFlash(hwnd, 10*time.Second) {
-		t.Fatal("idle: no HSHELL_FLASH for the revived window")
+		t.Fatalf("idle: no HSHELL_FLASH for the revived window; the shell hook heard %v", hook.Seen())
 	}
 	uiScreenshot(t, "clack-taskbar-flash-revived")
 
