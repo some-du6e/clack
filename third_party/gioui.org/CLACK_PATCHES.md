@@ -337,14 +337,38 @@ reduced motion, and a `layout.List` animating through a real
 `internal/ui` `TestWheelFrameProbe` (frame times while notches scroll a
 long channel). Not in `UPSTREAM.patch`.
 
-## 10. io/input: ExecuteHook
+## 10. Idle frames: input.ExecuteHook, and the caret in an inactive window
 
-`io/input/router.go`, `Source.Execute`.
+`io/input/router.go` (`Source.Execute`), `widget/editor.go`
+(`blinkInterval`, `Editor.inactive`, `Editor.Layout`).
 
-A package variable, `input.ExecuteHook`, that sees every command a
-`Source` executes, on the caller's stack, before the router does. Nil by
-default: one load per command. Clack's idle-frame probe
-(`internal/ui` `TestIdleFrames`) sets it to record who asked for each
-`op.InvalidateCmd`, since the router only keeps the earliest wake-up time
-and not where it came from. Nothing else uses it. Not in
-`UPSTREAM.patch`.
+Karim runs Clack all day on a Windows laptop; Slack's Chromium draws
+nothing while nothing changes.
+
+- `input.ExecuteHook`: a package variable that sees every command a
+  `Source` executes, on the caller's stack, before the router does. Nil
+  by default (one load per command). Clack's idle-frame probe
+  (`internal/ui/idleprobe`, `internal/ui` `TestIdleFrames`) sets it to
+  record who asked for each `op.InvalidateCmd`; the router keeps only the
+  earliest wake-up time.
+- The `Editor` caret blinks like Blink's `FrameCaret`
+  (`third_party/blink/renderer/core/editing/frame_caret.cc`): a
+  repeating timer every `LayoutTheme::CaretBlinkInterval`, with no
+  timeout, while the frame is focused and active. Upstream Gio blinked
+  for 10 s and then showed a solid caret. The interval is Chromium's
+  default, `OsSettingsProvider::kDefaultCaretBlinkInterval` (500 ms,
+  `ui/native_theme/os_settings_provider.h`; Windows' `GetCaretBlinkTime`
+  and GTK's `gtk-cursor-blink-time` / 2 override it there, not here).
+  When the window loses the focus Gio keeps the key focus and sends the
+  editor `FocusEvent{Focus: false}`; upstream restarted the blink on it,
+  so a background window kept drawing for 10 s. Chromium disables the
+  caret in an inactive window
+  (`FrameSelection::FocusedOrActiveStateChanged` →
+  `FrameCaret::SetCaretEnabled(false)`, `frame_selection.cc`): now the
+  editor draws no caret and asks for no frames until a
+  `FocusEvent{Focus: true}`. A `ReadOnly` editor, whose caret is never
+  painted, no longer asks for blink frames either (Blink disables
+  blinking in read-only text controls).
+
+Read in Chromium main f6df131 (2026-11-12). Clack's own composer editor
+(`internal/ui/composer/editor.go`) does the same. Not in `UPSTREAM.patch`.

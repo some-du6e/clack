@@ -79,6 +79,9 @@ type Editor struct {
 	// from the textView.
 	scratch    []byte
 	blinkStart time.Time
+	// inactive: the window lost the focus while the editor kept the key
+	// focus (Clack patch 10); no caret then, and no blinking.
+	inactive bool
 
 	// ime tracks the state relevant to input methods.
 	ime struct {
@@ -194,10 +197,10 @@ type SubmitEvent struct {
 // Editor.SelectedText() (which can be empty).
 type SelectEvent struct{}
 
-const (
-	blinksPerSecond  = 1
-	maxBlinkDuration = 10 * time.Second
-)
+// blinkInterval is how long the caret shows, then hides (Clack patch 10:
+// Chromium's default, kDefaultCaretBlinkInterval, toggled with no timeout
+// while the window is active).
+const blinkInterval = 500 * time.Millisecond
 
 func (e *Editor) processEvents(gtx layout.Context) (ev EditorEvent, ok bool) {
 	if len(e.pending) > 0 {
@@ -409,6 +412,7 @@ func (e *Editor) processKey(gtx layout.Context) (EditorEvent, bool) {
 		e.blinkStart = gtx.Now
 		switch ke := ke.(type) {
 		case key.FocusEvent:
+			e.inactive = !ke.Focus
 			// Reset IME state.
 			e.ime.imeState = imeState{}
 			e.ime.composition = key.Range{Start: -1, End: -1}
@@ -799,16 +803,11 @@ func (e *Editor) layout(gtx layout.Context, textMaterial, selectMaterial op.Call
 	e.clicker.Add(gtx.Ops)
 	e.dragger.Add(gtx.Ops)
 	e.showCaret = false
-	if gtx.Focused(e) {
+	if gtx.Focused(e) && !e.inactive && !e.ReadOnly {
 		now := gtx.Now
 		dt := now.Sub(e.blinkStart)
-		blinking := dt < maxBlinkDuration
-		const timePerBlink = time.Second / blinksPerSecond
-		nextBlink := now.Add(timePerBlink/2 - dt%(timePerBlink/2))
-		if blinking {
-			gtx.Execute(op.InvalidateCmd{At: nextBlink})
-		}
-		e.showCaret = !blinking || dt%timePerBlink < timePerBlink/2
+		gtx.Execute(op.InvalidateCmd{At: now.Add(blinkInterval - dt%blinkInterval)})
+		e.showCaret = dt%(2*blinkInterval) < blinkInterval
 	}
 	semantic.Editor.Add(gtx.Ops)
 	if e.Len() > 0 {

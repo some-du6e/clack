@@ -66,8 +66,16 @@ type Participant struct {
 
 // Speaking reports whether the speaking ring should show at now.
 func (p Participant) Speaking(now time.Time) bool {
-	return !p.Muted && !p.SpokeAt.IsZero() && now.Sub(p.SpokeAt) < 450*time.Millisecond
+	return !p.Muted && !p.SpokeAt.IsZero() && now.Sub(p.SpokeAt) < speakingFor
 }
+
+// speakingFor is how long a participant counts as speaking after they
+// were last heard.
+const speakingFor = 450 * time.Millisecond
+
+// SpeakingUntil is when Speaking turns false unless they're heard again
+// (a window that draws the speaker redraws then).
+func (p Participant) SpeakingUntil() time.Time { return p.SpokeAt.Add(speakingFor) }
 
 // Video is a remote video the session receives.
 type Video struct {

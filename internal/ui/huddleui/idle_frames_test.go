@@ -68,10 +68,12 @@ func TestHuddleWindowIdleFrames(t *testing.T) {
 	e.c.mu.Lock()
 	e.c.s = s
 	e.c.mu.Unlock()
-	waitState(t, s, "connected", func(st huddle.State) bool { return st.Phase == huddle.Connected })
+	st := waitState(t, s, "connected", func(st huddle.State) bool { return st.Phase == huddle.Connected })
+	for _, q := range st.Participants {
+		t.Logf("participant %s self=%v inMedia=%v attendee=%s", q.UserID, q.Self, q.InMedia, q.AttendeeID)
+	}
+	t.Logf("invites %+v", st.Invites)
 
-	stop := e.w.startTick() // window.run's
-	defer stop()
 	var (
 		r   input.Router
 		ops op.Ops
@@ -90,6 +92,9 @@ func TestHuddleWindowIdleFrames(t *testing.T) {
 	for dl := time.Now().Add(3 * time.Second); time.Now().Before(dl); { // joining: the spinner, the join sound's banner
 		frame(time.Now())
 		time.Sleep(16 * time.Millisecond)
+	}
+	for _, q := range s.State().Participants {
+		t.Logf("after 3 s: participant %s self=%v inMedia=%v", q.UserID, q.Self, q.InMedia)
 	}
 	res := p.Run("huddle window, alone", 10*time.Second, &r, frame)
 	res.Log(t)

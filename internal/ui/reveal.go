@@ -264,21 +264,19 @@ func (a *App) settlePluginSlots(b *backend) {
 	}
 	var ver uint64
 	save := func() {
-		a.Post(func() {
-			slackc.UnreserveAll()
-			m, v := slackc.Learned()
-			if v == ver && v != 0 {
-				return
-			}
-			ver = v
-			if !sameSlots(a.prefs.PluginSlots, m) {
-				a.prefs.PluginSlots = m
-				a.savePrefsSoon()
-			}
-			a.Invalidate()
-		})
+		freed := slackc.UnreserveAll()
+		m, v := slackc.Learned()
+		if v == ver && v != 0 && !freed {
+			return
+		}
+		ver = v
+		if !sameSlots(a.prefs.PluginSlots, m) {
+			a.prefs.PluginSlots = m
+			a.savePrefsSoon()
+		}
+		a.Invalidate()
 	}
-	save()
+	a.Post(save)
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {
@@ -286,7 +284,10 @@ func (a *App) settlePluginSlots(b *backend) {
 		case <-b.ctx.Done():
 			return
 		case <-t.C:
-			save()
+			// Slots are learned while frames are drawn, so a window
+			// that draws nothing has nothing new: check before the
+			// next frame, without asking for one (postLazy).
+			a.postLazy(save)
 		}
 	}
 }

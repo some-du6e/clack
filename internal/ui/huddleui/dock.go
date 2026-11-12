@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gioui.org/io/system"
+	"gioui.org/op"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/huddle"
@@ -307,6 +308,13 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 	ty := inner.Min.Y + (inner.Dy()-ts)/2
 	now := time.Now()
 	if s != nil {
+		// the speaker's ring, tile and "… is speaking" go when they stop
+		// being heard: draw again then (nothing else changes)
+		for _, p := range st.Participants {
+			if p.Speaking(now) {
+				gtx.Execute(op.InvalidateCmd{At: p.SpeakingUntil()})
+			}
+		}
 		for i, p := range c.dockTiles(st, now) {
 			if i > 0 {
 				tx += gtx.Dp(8)

@@ -148,12 +148,15 @@ func (w *window) run() {
 	if closed {
 		ww.Perform(system.ActionClose)
 	}
-	stopTick := w.startTick()
+	// No ticker: the window draws when something changes (the session's
+	// OnChange, a loaded image: Controller.ImagesChanged) and at the
+	// deadlines its layout asks for (speaking bars, spinners, a notice
+	// going, the captions' fade), like Slack's, which draws nothing in a
+	// still call.
 	var ops op.Ops
 	for {
 		switch e := ww.Event().(type) {
 		case app.DestroyEvent:
-			stopTick()
 			if w.popout != "" {
 				w.c.popoutGone(w)
 				return
@@ -177,24 +180,6 @@ func (w *window) run() {
 			e.Frame(gtx.Ops)
 		}
 	}
-}
-
-// startTick redraws the window every 250 ms (speaking bars, timer,
-// images) until stop.
-func (w *window) startTick() (stop func()) {
-	tick := time.NewTicker(250 * time.Millisecond)
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-tick.C:
-				w.invalidate()
-			case <-done:
-				return
-			}
-		}
-	}()
-	return func() { tick.Stop(); close(done) }
 }
 
 // AppName is the window title suffix (the ui root sets it to its own).
@@ -292,6 +277,7 @@ func (w *window) layout(gtx C) {
 		})
 	}
 	if w.notice != "" && now.Sub(w.noteAt) < 4*time.Second {
+		gtx.Execute(op.InvalidateCmd{At: w.noteAt.Add(4 * time.Second)}) // it goes
 		ns := labelSize(gtx, w.th, 13, theme.Bold, w.notice)
 		pad := gtx.Dp(10)
 		r := image.Rect((sz.X-ns.X)/2-pad, stage.Min.Y+gtx.Dp(10), (sz.X+ns.X)/2+pad, stage.Min.Y+gtx.Dp(10)+ns.Y+pad)
