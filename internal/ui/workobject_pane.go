@@ -79,7 +79,9 @@ func (a *App) OpenWorkObject(o messages.WorkObjectOpen) {
 		a.Invalidate()
 		return
 	}
-	p := &woPane{a: a, o: o}
+	// the doc link and up to 15 footer buttons: allocated once, so no
+	// append moves a Clickable the frame already laid out
+	p := &woPane{a: a, o: o, footer: make([]widget.Clickable, 16)}
 	p.list.Axis = layout.Vertical
 	p.comments.Axis = layout.Vertical
 	p.editor.Submit = true
@@ -247,6 +249,9 @@ func (p *woPane) Layout(gtx layout.Context) layout.Dimensions {
 	var acts []workobject.Button
 	if f := e.Full(); f != nil && f.Actions != nil && p.tab == "details" {
 		acts = f.Actions.Primary
+		if len(acts) > len(p.footer)-1 {
+			acts = acts[:len(p.footer)-1]
+		}
 	}
 	if len(acts) > 0 {
 		footH = gtx.Dp(36) + 2*gtx.Dp(12)
@@ -532,17 +537,10 @@ func (p *woPane) footerAction(e *workobject.Entity, b workobject.Button) {
 	}()
 }
 
-// footerClick is the i-th footer (or doc link: 99) clickable.
+// footerClick is the i-th footer button's clickable (99: the doc link).
 func (p *woPane) footerClick(i int) *widget.Clickable {
-	if i == 99 {
-		i = 0
-		if len(p.footer) == 0 {
-			p.footer = make([]widget.Clickable, 1)
-		}
+	if i == 99 || i+1 >= len(p.footer) {
 		return &p.footer[0]
-	}
-	for len(p.footer) < i+2 {
-		p.footer = append(p.footer, widget.Clickable{})
 	}
 	return &p.footer[i+1]
 }
@@ -768,8 +766,8 @@ func (p *woPane) layoutRefs(gtx layout.Context, e *workobject.Entity) layout.Dim
 		btn := &p.refs[i]
 		name := "#" + strings.TrimPrefix(co.S.ChannelName(r.ChannelID), "#")
 		text := ""
-		if m, ok := co.S.Find(r.ChannelID, r.TS); ok {
-			text = m.Text
+		if m, ok := co.S.Find(r.ChannelID, r.TS); ok { // the message as it reads (links by their labels)
+			text = strings.ReplaceAll(richtext.PlainText(richtext.FromMessage(co.S, &m)), "\n", " ")
 		}
 		rh := gtx.Dp(64)
 		at(gtx, image.Pt(0, y), image.Pt(w, rh), func(gtx layout.Context) layout.Dimensions {
