@@ -116,6 +116,16 @@ func (v *Threads) applyOlder(t *thrItem, c *thrCard) {
 		c.olderStart = true // reachedStart
 	}
 	c.moreText = thrMoreText(t, c)
+	// onLoadOlderRepliesClick, once loadOlderReplies is done:
+	// focusOnKey(the key holding the minimum visible ts it started from),
+	// the reply that was the oldest shown. A click or Enter both get here;
+	// the ring stays as the modality left it (no ring after a click).
+	if r.latest != "" {
+		ring := v.kb.ring
+		if v.kb.focusOn(t.key + "-" + r.latest) {
+			v.kb.ring = ring
+		}
+	}
 }
 
 // olderRow draws the load_older row.

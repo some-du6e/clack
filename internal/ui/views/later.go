@@ -532,7 +532,13 @@ func (s *savedBase) open(it *core.SavedItem) {
 // line (13px bold muted) with the chip at its right, then sender (15px
 // black) + time (13px), then 3 lines of text. todo picks the To-dos hover
 // actions (Move to Saved) over the Saved ones (Remove from Saved).
-func (s *savedBase) itemRow(gtx C, it *core.SavedItem, todo bool) D {
+//
+// rs.focus is the row's hasFocus (LaterTodoRow kmjU, BookmarksPage eQN2
+// eM: hasFocus || hasFocusWithin): the actions (z03r) take
+// p-saved_item__actions--active and show as on hover. rs.selected is
+// rowSelected (the to-do shown beside the page): .rowSelected__pKHOV,
+// surf-hgl-3 with no hover blend.
+func (s *savedBase) itemRow(gtx C, it *core.SavedItem, todo bool, rs laterRowSt) D {
 	r := s.rowState(laterKey(it))
 	var bar, below W
 	if it.Channel != "" {
@@ -541,8 +547,15 @@ func (s *savedBase) itemRow(gtx C, it *core.SavedItem, todo bool) D {
 	if r.pin && !laterCompleted(it) {
 		below = func(gtx C) D { return s.remindMenu(gtx, it, r) }
 	}
+	hov, bg := s.p.Hover, color.NRGBA{}
+	if rs.selected {
+		bg = s.th.C.SelfMention // --dt_color-surf-hgl-3
+		hov = bg
+	}
 	return s.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{
-		HoverBg: s.p.Hover,
+		Bg:      bg,
+		HoverBg: hov,
+		Active:  rs.focus,
 		Rule:    s.p.Border,
 		Content: func(gtx C) D {
 			return layout.Inset{Top: 12, Right: 20, Bottom: 12, Left: 16}.Layout(gtx, func(gtx C) D {
@@ -555,6 +568,9 @@ func (s *savedBase) itemRow(gtx C, it *core.SavedItem, todo bool) D {
 		BarRight: 16,
 	})
 }
+
+// laterRowSt is a row's hasFocus and rowSelected (itemRow).
+type laterRowSt struct{ focus, selected bool }
 
 func (s *savedBase) rowBar(gtx C, it *core.SavedItem, r *laterRow, todo bool) D {
 	ib := func(c *widget.Clickable, icon string) layout.FlexChild {
@@ -801,6 +817,8 @@ type Later struct {
 	secCollapsed [3]bool
 	secClick     [3]widget.Clickable
 	sk           todoSecKB // a keyboard list per section, the dividers' Tab stops
+
+	sel todoSel // the to-do "View to-dos" showed beside the page (later_sections.go)
 }
 
 // NewLater builds the To-dos page.
@@ -1308,6 +1326,7 @@ func (l *Later) layoutList(gtx C) D {
 			}
 		}
 	}
+	sel := l.todoSelection(rows)
 	l.sk.frame()
 	l.todoTab(gtx)
 	l.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Key: l.todoKey, Extra: todoKeyFilters(l.kb), NoGlobal: true})
@@ -1321,7 +1340,8 @@ func (l *Later) layoutList(gtx C) D {
 			return l.kb.elem(i, l.todoSectionRow(gtx, r))
 		}
 		it := &l.view[r.item]
-		d := l.itemRow(gtx, it, true)
+		k := laterKey(it)
+		d := l.itemRow(gtx, it, true, laterRowSt{focus: l.kb.hasFocus(k), selected: k == sel})
 		if l.kb.ringOn(laterKey(it)) {
 			// .todoRow[role=listitem]:focus-visible:after: inset 5px,
 			// radius 8
@@ -1496,7 +1516,7 @@ func (s *Saved) layoutList(gtx C) D {
 		if i >= n {
 			return s.skeleton(gtx, 1, laterAvatar)
 		}
-		d := s.itemRow(gtx, &items[i], false)
+		d := s.itemRow(gtx, &items[i], false, laterRowSt{focus: s.kb.hasFocus(laterKey(&items[i]))})
 		if s.kb.ringOn(laterKey(&items[i])) {
 			// .p-saved_for_later_page__list--navigation keeps
 			// .c-virtual_list__item--focus:focus:after: inset 4px, radius 8
@@ -1691,6 +1711,7 @@ type dlRowState struct {
 	hover   gesture.Hover
 	hovered bool
 	pin     bool // keep the action bar shown (e.g. while its menu is open)
+	barOn   bool // the bar was drawn in the last layout
 	barTag  int  // blocks clicks in the bar's padding from reaching the row
 }
 
@@ -1701,6 +1722,7 @@ type dlRowOpts struct {
 	Content     W           // the clickable part
 	Below       W           // optional non-clickable part under Content
 	Bar         W           // optional floating action bar shown on hover
+	Active      bool        // the bar shows without the hover too (p-saved_item__actions--active)
 	BarTop      unit.Dp     // bar offset from the row's top
 	BarRight    unit.Dp     // and from its right edge
 }
@@ -1747,7 +1769,8 @@ func (b *base) dlHoverRow(gtx C, st *dlRowState, o dlRowOpts) D {
 	if hl > 0 {
 		fill(gtx, image.Rect(0, d.Size.Y, d.Size.X, size.Y), o.Rule)
 	}
-	if o.Bar != nil && (st.hovered || st.pin) {
+	st.barOn = o.Bar != nil && (st.hovered || st.pin || o.Active)
+	if st.barOn {
 		mb := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints.Min = image.Point{}
@@ -1885,6 +1908,12 @@ func (l *Later) todoKey(e key.Event, active string) bool {
 	it := f.items[i]
 	switch e.Name {
 	case key.NameReturn, key.NameEnter:
+		// rC: Enter first dispatches openLaterRemoveModal (boot-shared
+		// Kivd), which opens LaterRemoveModal for a tombstoned item and
+		// returns true; only otherwise rv opens the item
+		if l.openRemoveModal(it) {
+			return true
+		}
 		l.open(&it)
 	case key.NameDeleteForward, key.NameDeleteBackward:
 		l.clearTodo(it)

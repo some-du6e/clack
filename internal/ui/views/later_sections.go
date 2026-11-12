@@ -1,6 +1,7 @@
 package views
 
 import (
+	"context"
 	"encoding/json"
 	"image"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // The To-dos page's sections, from Slack's TodosPage (the todos-page
@@ -43,9 +45,8 @@ import (
 //     divider sits on .completedDivider (base-sec in light, transparent in
 //     dark, a 1px otl-ter line on top, 4px over the toggle).
 //
-// The dividers are Tab stops between the sections' lists (below). Not
-// ported: Slack opening a collapsed section when the selected to-do is
-// in it.
+// The dividers are Tab stops between the sections' lists (below). A
+// collapsed section opens when the selected to-do is in it (todoSelection).
 
 const (
 	tdItem = iota
@@ -547,4 +548,134 @@ func (l *Later) todoDividerFocus(gtx C, sec int) bool {
 	}
 	sk.hadFocus[sec] = f
 	return f && sk.ring[sec]
+}
+
+// ---- the selected to-do and the tombstone (gap-w26) ----
+
+// todoSel is the to-do "View to-dos" showed beside the page. Slack's row
+// isSelected (vAPb rk) is the to-do whose message the sibling view
+// (primary or secondary, getSiblingView) shows (qb0V b1
+// isSavedMessageSelectedInPrimaryView); Clack's rows open their message
+// in the channel instead of beside the page, so only LaterLabel's "View
+// to-dos" (wRj5) shows one there, and the selection lasts while the
+// secondary column still shows it.
+type todoSel struct {
+	key, ch, thread string // laterKey, the conversation, the thread for a reply
+	opened, shown   bool   // vAPb's rS / rT refs: the section opened, the row scrolled to
+}
+
+// SelectTodo is LaterLabel's "View to-dos" landing on the page
+// (setActiveTab todo, setHighlightId) with the message opened beside it
+// in the secondary column (thread for a reply, else ""): the to-do's row
+// is selected once the column shows it.
+func (l *Later) SelectTodo(ch, ts, thread string) {
+	l.sel = todoSel{key: ch + "/" + ts, ch: ch, thread: thread}
+	l.h.Invalidate()
+}
+
+// todoSelection is the selected row's key ("" when the column no longer
+// shows its message) and vAPb's effect on it: a collapsed section holding
+// it opens (setTodoSectionCollapsed false, once per selection), then the
+// row scrolls into view, block nearest (t3), once.
+func (l *Later) todoSelection(rows []todoRow) string {
+	if l.sel.key == "" {
+		return ""
+	}
+	sh, ok := l.h.(ActivitySecondary)
+	if !ok || !sh.SecondaryShows(l.sel.ch, l.sel.thread) {
+		return ""
+	}
+	at := slices.IndexFunc(l.view, func(it core.SavedItem) bool { return laterKey(&it) == l.sel.key })
+	if at < 0 {
+		return l.sel.key
+	}
+	shown := slices.ContainsFunc(rows, func(r todoRow) bool { return r.kind == tdItem && r.item == at })
+	if !shown && !l.sel.opened {
+		it := &l.view[at]
+		sec := todoSecInProgress
+		switch {
+		case laterCompleted(it):
+			sec = todoSecCompleted
+		case l.h.Core() != nil && l.h.Core().Experiment("activity_in_home_prototype") == "on" && todoOverdueRow(it, todoNow()):
+			sec = todoSecOverdue
+		}
+		l.sel.opened = true
+		if l.secCollapsed[sec] {
+			l.secCollapsed[sec] = false
+			l.h.Invalidate() // the rows come back next frame
+		}
+		return l.sel.key
+	}
+	if shown && !l.sel.shown {
+		l.sel.shown = true
+		l.kb.reveal(l.sel.key)
+	}
+	return l.sel.key
+}
+
+// laterTombstoned is openLaterRemoveModal's test for a message (Kivd):
+// the savedItem's isTombstoned or the stored message a tombstone
+// (ZnG4 sO, R+b2 aK). Core marks a saved message Gone when messages.list
+// answered without it; one that couldn't be looked up (an error) has no
+// message and isn't Gone, and Kivd, finding no message, opens no modal.
+func laterTombstoned(it *core.SavedItem) bool {
+	if it.ItemType != "message" || it.Channel == "" || it.TS == "" {
+		return false
+	}
+	if m := it.Msg; m != nil {
+		return m.Tombstone || m.Subtype == "tombstone"
+	}
+	return it.Gone
+}
+
+// openRemoveModal is openLaterRemoveModal (boot-shared Kivd) with
+// LaterRemoveModal (6Fvj) over w6zd's copy, for a tombstoned message: it
+// reports whether it opened. With later_todos (6owI tj) a to-do's title is
+// "Remove to-do" and its text D9's "A message you added as a to-do was
+// deleted. Remove it from To-dos?" (U4's "… you saved …" for a saved
+// item, whose title stays "Remove saved item"); without it "Remove saved
+// item" and "{removedActionText} Remove it from Later?". Cancel, then
+// Remove (danger), which unsaves the message.
+func (l *Later) openRemoveModal(it core.SavedItem) bool {
+	if !laterTombstoned(&it) {
+		return false
+	}
+	ph, ok := l.h.(popups.Host)
+	if !ok {
+		return false
+	}
+	title, body := laterRemoveCopy(&it, l.todoSectioned())
+	k, ch, ts := laterKey(&it), it.Channel, it.TS
+	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
+		Title: title,
+		Body: func(gtx C) D {
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 0, body) })
+		},
+		Buttons: []*popups.ModalButton{
+			{Label: nsLater.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsLater.T("Remove"), Kind: popups.BtnDanger, Do: func() bool {
+				l.remove(k)
+				l.write(k, "", true, func(ctx context.Context, c *core.App) error { return c.Unsave(ctx, ch, ts) })
+				return true
+			}},
+		},
+	}))
+	return true
+}
+
+// laterRemoveCopy is LaterRemoveModal's title and text for a deleted
+// message (6Fvj U and q over w6zd; R, the message deleted, holds for a
+// tombstone). todos is later_todos (6owI tj).
+func laterRemoveCopy(it *core.SavedItem, todos bool) (title, body string) {
+	saved := it.TodoState == "saved" // qb0V I0
+	if !todos {
+		// translateString(ki(Qm(message), R, "")): the English copy goes
+		// through "{text}" untranslated
+		return nsLater.T("Remove saved item"), nsLater.T("{removedActionText} Remove it from Later?",
+			"removedActionText", nsLater.T("{text}", "text", "A message you saved was deleted."))
+	}
+	if saved { // U4, and the title stays P
+		return nsLater.T("Remove saved item"), nsLater.T("A message you saved was deleted. Remove it from Saved?")
+	}
+	return nsLater.T("Remove to-do"), nsLater.T("A message you added as a to-do was deleted. Remove it from To-dos?") // B (R), D9
 }

@@ -214,7 +214,7 @@ func TestThreadsKeysLikeSlack(t *testing.T) {
 		// a printable key on a row: the reply box takes it (after any
 		// draft the composer restored for this thread)
 		before := c.comp.DocText()
-		kbPress(e, "A", 0)
+		kbType(e, "A", 0, "a")
 		if got := c.comp.DocText(); got != before+"a" {
 			t.Errorf("typing on a row: reply box %q, was %q", got, before)
 		}

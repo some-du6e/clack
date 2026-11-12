@@ -159,6 +159,13 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 // hydrate fetches messages by (channel, ts): memory first, then one
 // messages.list call for the rest.
 func (a *App) hydrate(ctx context.Context, want map[string][]string) map[string]slack.Message {
+	out, _ := a.hydrateOK(ctx, want)
+	return out
+}
+
+// hydrateOK is hydrate, also reporting whether every lookup answered (no
+// messages.list error): then a message missing from the result is gone.
+func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[string]slack.Message, bool) {
 	out := map[string]slack.Message{}
 	missing := map[string][]string{}
 	for ch, tss := range want {
@@ -171,7 +178,7 @@ func (a *App) hydrate(ctx context.Context, want map[string][]string) map[string]
 		}
 	}
 	if len(missing) == 0 {
-		return out
+		return out, true
 	}
 	got, err := a.C.MessagesList(ctx, missing)
 	if err != nil {
@@ -185,7 +192,7 @@ func (a *App) hydrate(ctx context.Context, want map[string][]string) map[string]
 		}
 	}
 	a.EnsureUsers(ctx, referencedUsers(all))
-	return out
+	return out, err == nil
 }
 
 // SlackbotCustomResponseInThread reports whether user (Slackbot) answered
@@ -841,7 +848,7 @@ func (a *App) Saved(ctx context.Context, filter, cursor string) (SavedPage, erro
 			want[it.ItemID] = append(want[it.ItemID], it.TS)
 		}
 	}
-	got := a.hydrate(ctx, want)
+	got, answered := a.hydrateOK(ctx, want)
 	out := SavedPage{Counts: res.Counts, Next: res.Meta.NextCursor}
 	chans := map[string]bool{}
 	a.mu.Lock()
@@ -857,6 +864,8 @@ func (a *App) Saved(ctx context.Context, filter, cursor string) (SavedPage, erro
 			chans[v.Channel] = true
 			if m, ok := got[savedKey(v.Channel, v.TS)]; ok {
 				v.Msg = a.messagePtr(v.Channel, &m)
+			} else if answered && v.ItemType == "message" && v.TS != "" {
+				v.Gone = true
 			}
 		}
 		out.Items = append(out.Items, v)

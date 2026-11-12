@@ -147,6 +147,15 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_DROP_TESTS: "1"
         run: go test -count=1 -v -timeout 10m -run 'TestOLEFileDrop|TestWMDropFiles|FileDrop|URIList' gioui.org/app
+      # SendInput Shift+1 and A onto a Gio window whose focused tag isn't an
+      # editor (a list, like Threads'): the key.Event, then WM_CHAR's text
+      # as a key.EditEvent to the same tag (gap-w26's shifted symbols).
+      - name: typed text on a focused list (SendInput, WM_KEYDOWN then WM_CHAR)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_KEY_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run 'TestWinKeyText' gioui.org/app
       - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
         if: ${{ !cancelled() }}
         env:

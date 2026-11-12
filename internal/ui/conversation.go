@@ -345,6 +345,21 @@ func (a *App) focusList(c *convo) {
 	}
 }
 
+// FocusMessage gives channel ch's message list the keyboard focus at
+// message ts once it has it (views.MessageFocuser: the Threads view's
+// Enter, transitionFocusTo MESSAGE_PANE_MESSAGE_LIST); leaving the list
+// goes back to the composer, as focusList's does.
+func (a *App) FocusMessage(ch, ts string) {
+	c := a.convoFor(ch, "")
+	if l, ok := c.list.(interface{ FocusMessage(string, func()) }); ok {
+		l.FocusMessage(ts, func() {
+			if c.comp != nil {
+				c.comp.Focus()
+			}
+		})
+	}
+}
+
 // startEdit swaps the conversation's composer for an edit composer on m.
 func (a *App) startEdit(c *convo, m core.Message) {
 	if mkEditComposer == nil {

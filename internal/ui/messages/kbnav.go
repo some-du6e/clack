@@ -18,6 +18,7 @@ type kbNav struct {
 	on       bool   // the list has keyboard focus
 	ts       string // the selected message
 	focusReq bool
+	want     string // FocusMessage's message, until the list has it
 	leave    func() // back to the composer
 }
 
@@ -48,6 +49,7 @@ func (s *listState) kbIndex() int {
 
 // kbKeys handles the list's focus and keys (layoutList, each frame).
 func (s *listState) kbKeys(gtx layout.Context, h Host) {
+	s.kbWant()
 	if s.kb.focusReq && gtx.Source.Enabled() {
 		s.kb.focusReq = false
 		s.kb.on = true
@@ -114,6 +116,41 @@ func (s *listState) kbLeave(gtx layout.Context) {
 	if s.kb.leave != nil {
 		s.kb.leave()
 	}
+}
+
+// kbWant selects FocusMessage's message once the jump to it is done (the
+// history holds it and pendingJump is spent); a message the jump gave up
+// on is dropped.
+func (s *listState) kbWant() {
+	w := s.kb.want
+	if w == "" || !s.snap.loaded || s.pendingJump != "" {
+		return
+	}
+	s.kb.want = ""
+	for _, it := range s.items {
+		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == w {
+			s.kb.ts, s.kb.focusReq = it.key, true
+			return
+		}
+	}
+}
+
+// FocusMessage is transitionFocusTo(MESSAGE_PANE_MESSAGE_LIST) with
+// uiState.ts after a jumpToMessage (client-threads-view onItemKeyDown):
+// once the list holds ts it takes keyboard focus with that message
+// selected; leave runs when focus goes back.
+func (v *ChannelView) FocusMessage(ts string, leave func()) {
+	v.s.kb.leave, v.s.kb.want = leave, ts
+	v.h.Invalidate()
+}
+
+// KeyboardSelected is the message the list's keyboard focus selects (""
+// while the list doesn't have it).
+func (v *ChannelView) KeyboardSelected() string {
+	if !v.s.kb.on {
+		return ""
+	}
+	return v.s.kb.ts
 }
 
 // FocusNewest moves keyboard focus to the list with its newest message

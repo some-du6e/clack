@@ -159,6 +159,14 @@ type Threads struct {
 	marks map[string]string
 }
 
+// MessageFocuser is optionally implemented by the Host: transitionFocusTo
+// MESSAGE_PANE_MESSAGE_LIST with uiState.ts, the channel's message list
+// taking the keyboard focus at message ts once it has it (after the
+// Navigate that jumps there).
+type MessageFocuser interface {
+	FocusMessage(channel, ts string)
+}
+
 // thrKBRow is one keyboard row of the Threads list.
 type thrKBRow struct {
 	kind   string // heading, root, load_older, reply, footer
@@ -465,7 +473,8 @@ func (v *Threads) body(gtx C) D {
 	div := v.firstRead(page.items)
 	v.divAt = div
 	v.kb.setItems(v.kbItems(page.items))
-	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick, Key: func(e key.Event, active string) bool { return v.kbKey(gtx, e, active) }, Extra: v.typeFilters()})
+	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick, Key: func(e key.Event, active string) bool { return v.kbKey(gtx, e, active) },
+		Text: func(text, active string) { v.kbText(gtx, text, active) }, Extra: v.typeFilters()})
 	v.kb.begin()
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
 		if i >= n {
@@ -1424,7 +1433,14 @@ func (v *Threads) kbKey(gtx C, e key.Event, active string) bool {
 	case key.NameReturn, key.NameEnter:
 		if (r.kind == "root" || r.kind == "reply") && active != "" {
 			if t, _ := v.item(r.key); t != nil {
+				// jumpToMessage({channelId, ts: threadTs}).then(
+				// transitionFocusTo MESSAGE_PANE_MESSAGE_LIST with
+				// uiState.ts: the root): the channel's list takes the
+				// keyboard focus at the root once the jump has it
 				v.h.Navigate("c/" + t.Channel + "/m/" + t.Root.TS)
+				if f, ok := v.h.(MessageFocuser); ok {
+					f.FocusMessage(t.Channel, t.Root.TS)
+				}
 				return true
 			}
 		}
@@ -1437,53 +1453,50 @@ func (v *Threads) kbKey(gtx C, e key.Event, active string) bool {
 		}
 		return true
 	}
-	ch, ok := thrPrintable(e)
-	if !ok {
+	if !thrPrintable(e) {
 		return false
 	}
-	thread := v.kbRows[v.kb.initial].key
-	if thread == "" {
-		thread = r.key
-	}
-	t, c := v.item(thread)
-	if t == nil || c == nil {
-		return true
-	}
-	v.openReply(t, c)
-	if c.comp != nil && ch != "" {
-		c.comp.InsertText(ch)
-	}
-	v.kb.setActive("footer-"+thread, true)
-	gtx.Execute(op.InvalidateCmd{})
+	v.typeInto(gtx, active, "")
 	return true
 }
 
-// thrPrintable is isPrintableKeyEvent (a one-character key without ⌘ or
-// Ctrl) for the keys Gio names; the text is what the key types when it's
-// known (letters, digits, space, unshifted punctuation).
-func thrPrintable(e key.Event) (string, bool) {
+// kbText is the text the key typed (key.EditEvent, after the key.Event):
+// the browser types it into the reply box onKeyDown just focused, so a
+// shifted symbol or another layout's character arrives as typed. Text
+// without a key Clack names (a dead key's letter, an IME's) runs
+// onKeyDown's move as well: isPrintableKeyEvent saw a one-character key.
+func (v *Threads) kbText(gtx C, text, active string) {
+	v.typeInto(gtx, active, text)
+}
+
+// typeInto is onKeyDown's move for a printable key: the keyboard thread's
+// footer (focusOnKey footer-…) and its reply box take the focus, and the
+// box takes text.
+func (v *Threads) typeInto(gtx C, active, text string) {
+	thread := v.kbRows[v.kb.initial].key
+	if thread == "" {
+		thread = v.kbRows[active].key
+	}
+	t, c := v.item(thread)
+	if t == nil || c == nil {
+		return
+	}
+	v.openReply(t, c)
+	if c.comp != nil && text != "" {
+		c.comp.InsertText(text)
+	}
+	v.kb.setActive("footer-"+thread, true)
+	gtx.Execute(op.InvalidateCmd{})
+}
+
+// thrPrintable is isPrintableKeyEvent (client-boot 3NzO: e.key is one
+// character, no ⌘ or Ctrl) for the keys Gio names. The character itself
+// comes after, as the key.EditEvent the OS sends (kbText).
+func thrPrintable(e key.Event) bool {
 	if e.Modifiers.Contain(key.ModCtrl) || e.Modifiers.Contain(key.ModCommand) || e.Modifiers.Contain(key.ModSuper) {
-		return "", false
+		return false
 	}
-	if e.Name == key.NameSpace {
-		return " ", true
-	}
-	n := string(e.Name)
-	if len(n) != 1 {
-		return "", false
-	}
-	c := n[0]
-	shift := e.Modifiers.Contain(key.ModShift)
-	switch {
-	case c >= 'A' && c <= 'Z':
-		if shift {
-			return n, true
-		}
-		return strings.ToLower(n), true
-	case shift:
-		return "", true // the shifted symbol isn't known: focus only
-	}
-	return n, true
+	return e.Name == key.NameSpace || len(e.Name) == 1
 }
 
 // typeFilters are the keys ThreadsView's onKeyDown and keyCommands read

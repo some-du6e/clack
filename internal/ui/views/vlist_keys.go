@@ -86,6 +86,11 @@ type vkOpts struct {
 	// row; it reports whether it used the key.
 	Key   func(e key.Event, active string) bool
 	Extra []key.Filter
+	// Text gets the text the OS typed while the list holds key focus
+	// (key.EditEvent: the character a key press produced, shifted or
+	// from any layout), the input a browser hands the element that has
+	// focus once the keydown is done.
+	Text func(text, active string)
 	// NoGlobal leaves the keys alone while nothing is focused (lists
 	// without useGlobalKeyboardShortcuts).
 	NoGlobal bool
@@ -350,6 +355,12 @@ func (k *vkList) ringOn(key string) bool {
 	return k.focused && k.ring && key != "" && key == k.active
 }
 
+// hasFocus is the row's hasFocus (FSLM renderItem: activeItem === key,
+// set by a press too) while the list holds key focus.
+func (k *vkList) hasFocus(key string) bool {
+	return k.focused && key != "" && key == k.active
+}
+
 func (k *vkList) pageH() int { return max(0, k.viewH-21) }
 
 // update handles key focus, presses and keys; call before layout with
@@ -409,6 +420,10 @@ func (k *vkList) update(gtx C, viewH int, o vkOpts) {
 				k.active = ""
 			}
 			k.focused = e.Focus
+		case key.EditEvent:
+			if o.Text != nil && e.Text != "" {
+				o.Text(e.Text, k.active)
+			}
 		case key.Event:
 			if e.State != key.Press {
 				continue

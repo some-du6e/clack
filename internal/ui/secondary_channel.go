@@ -62,6 +62,37 @@ func (a *App) OpenChannelSecondary(ch string) {
 	a.Invalidate()
 }
 
+// ViewTodo is LaterLabel's "View to-dos" (boot-shared wRj5 f): the To-dos
+// tab (setActiveTab todo), the to-do highlighted (setHighlightId) and,
+// without agentic IA (swdb TT), the message opened with forceTab Later: a
+// reply in its thread (jpad UX, highlightRoot), anything else in its
+// conversation at the message (R9). The To-dos page is the primary view
+// here, so the message goes in the secondary column beside it, as Palc
+// puts a record there when the LaterList is the primary view; the page
+// selects the row while the column shows it (views.Later.SelectTodo).
+func (a *App) ViewTodo(ch, ts, thread string) {
+	if ch == "" || ts == "" {
+		a.Navigate("later")
+		return
+	}
+	a.Navigate("later")
+	if thread != "" {
+		a.OpenThread(ch, thread)
+	} else {
+		a.OpenChannelSecondary(ch)
+		if h, ok := a.convoFor(ch, "").list.(interface{ Highlight(string) }); ok {
+			h.Highlight(ts)
+		}
+	}
+	if mkPage == nil {
+		return
+	}
+	r := Route("later")
+	if v, ok := a.view(r, func() View { return mkPage(a, r) }).(interface{ SelectTodo(ch, ts, thread string) }); ok {
+		v.SelectTodo(ch, ts, thread)
+	}
+}
+
 // secActivity is the column's kind for an Activity item without a
 // conversation (a reminder, a system notification).
 const secActivity secKind = 66

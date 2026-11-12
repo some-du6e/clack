@@ -586,6 +586,9 @@ type SavedItem struct {
 	DateCreated, DateDue, DateCompleted int64
 	Archived                            bool
 	Msg                                 *Message
+	// Gone: a saved message the history no longer has (messages.list
+	// answered without it): deleted, Later's tombstone.
+	Gone bool
 }
 
 type SavedPage struct {

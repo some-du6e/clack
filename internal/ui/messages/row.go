@@ -2001,7 +2001,17 @@ func (r *row) labelRuns(gtx layout.Context, rc *rowCtx, y int, icon string, runs
 // minute (NLD/ useMinuteRefresh): a deadline at the next minute.
 func (r *row) laterLabelLine(gtx layout.Context, rc *rowCtx, y int, ll laterLabel) int {
 	if r.laterLink.Clicked(gtx) && ll.route != "" {
-		rc.h.Navigate(ll.route)
+		// "View to-dos" (wRj5 f) also selects the to-do and opens its
+		// message beside the page, on a host that can (ui App.ViewTodo)
+		if vt, ok := rc.h.(interface{ ViewTodo(ch, ts, thread string) }); ok && ll.route == "later" {
+			th := ""
+			if m := &r.m; m.ThreadTS != "" && m.ThreadTS != m.TS {
+				th = m.ThreadTS
+			}
+			vt.ViewTodo(r.m.Channel, r.m.TS, th)
+		} else {
+			rc.h.Navigate(ll.route)
+		}
 	}
 	if ll.route == "later" {
 		gtx.Execute(op.InvalidateCmd{At: rc.now.Truncate(time.Minute).Add(time.Minute)})
