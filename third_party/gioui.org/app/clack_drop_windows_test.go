@@ -32,13 +32,16 @@ import (
 // way Explorer drags them. The drag moves the real cursor, so it runs only
 // where CLACK_WINDOWS_DROP_TESTS is set (ci's windows-applog job).
 //
-// The dragging process is Windows PowerShell 5.1 (STA) running C#: a
-// WinForms DataObject with SetFileDropList (CF_HDROP, what Explorer
-// offers) and its own IDropSource, so the drag needs no mouse button:
-// ole32's DoDragDrop starts at the cursor (set over the window), the
-// source moves the cursor 10 px after 400 ms (a DragOver at the new
-// point) and ends the drag after 1.2 s with DRAGDROP_S_DROP, or with
-// DRAGDROP_S_CANCEL (what Esc does: the target gets DragLeave).
+// The dragging process is Windows PowerShell 5.1 (STA) running C#, doing
+// what Explorer does: the left button goes down (injected) on a small
+// window of its own, then ole32's DoDragDrop with a WinForms DataObject
+// (SetFileDropList: CF_HDROP, what Explorer offers) and its own
+// IDropSource. A thread moves the cursor onto the Gio window's centre,
+// then 10, 5 px on (a DragOver at the new point), and after 1.4 s the
+// source ends the drag with DRAGDROP_S_DROP, or DRAGDROP_S_CANCEL (what
+// Esc does: the target gets DragLeave). Without the button down, OLE's
+// capture never gets the mouse and the drag loop never runs (the first
+// CI rounds: QueryContinueDrag never called).
 //
 // What it proves: RegisterDragDrop took, OLE finds the window under the
 // cursor, the Go IDropTarget vtable is called across processes with the
@@ -131,7 +134,9 @@ const oleDragCS = `
 using System;
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 
 [ComImport, Guid("00000121-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -141,15 +146,12 @@ public interface IClackDropSource {
 }
 
 public class ClackDropSource : IClackDropSource {
-	public int X, Y, Calls;
-	public bool Cancel, Moved;
-	public Stopwatch SW = Stopwatch.StartNew();
-	[DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+	public int Calls;
+	public bool Cancel;
+	public volatile bool End;
 	public int QueryContinueDrag(int esc, uint keys) {
 		Calls++;
-		long ms = SW.ElapsedMilliseconds;
-		if (ms > 400 && !Moved) { SetCursorPos(X + 10, Y + 5); Moved = true; }
-		if (ms > 1200) return Cancel ? 0x00040101 : 0x00040100; // DRAGDROP_S_CANCEL : DRAGDROP_S_DROP
+		if (End) return Cancel ? 0x00040101 : 0x00040100; // DRAGDROP_S_CANCEL : DRAGDROP_S_DROP
 		return 0;
 	}
 	public int GiveFeedback(uint e) { return 0x00040102; } // DRAGDROP_S_USEDEFAULTCURSORS
@@ -160,36 +162,54 @@ public static class ClackDrag {
 	[DllImport("ole32.dll")] static extern int OleInitialize(IntPtr reserved);
 	[DllImport("ole32.dll")] static extern int DoDragDrop(System.Runtime.InteropServices.ComTypes.IDataObject data, IClackDropSource src, int okEffects, out int effect);
 	[DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
-	[DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+	[DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+	[DllImport("user32.dll")] static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+	const uint LEFTDOWN = 0x2, LEFTUP = 0x4;
+
+	// Run drags files from a small window of this process (at the screen's
+	// top left, as Explorer drags from its own window: the button goes
+	// down there, so OLE's capture gets the mouse) onto the point x, y,
+	// moves 10, 5 px, then drops (or cancels).
 	public static string Run(int x, int y, string[] files, bool cancel) {
-		int ole = OleInitialize(IntPtr.Zero); // DoDragDrop needs OLE, not just an STA (CO_E_NOTINITIALIZED)
+		int ole = OleInitialize(IntPtr.Zero); // DoDragDrop needs OLE, not just an STA
 		if (ole < 0) return String.Format("OleInitialize=0x{0:X8}", ole);
 		var list = new StringCollection();
 		list.AddRange(files);
 		var data = new DataObject();
 		data.SetFileDropList(list);
-		bool set = ClackDropSource.SetCursorPos(x, y);
-		POINT at; GetCursorPos(out at);
+		var form = new Form { FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.Manual,
+			Location = new Point(0, 0), Size = new Size(80, 80), TopMost = true, ShowInTaskbar = false };
+		form.Show();
+		Application.DoEvents();
+		SetCursorPos(40, 40);
+		Thread.Sleep(100);
+		mouse_event(LEFTDOWN, 0, 0, 0, UIntPtr.Zero);
+		Thread.Sleep(100);
+		Application.DoEvents();
 		IntPtr under = WindowFromPoint(new POINT { X = x, Y = y });
-		var src = new ClackDropSource { X = x, Y = y, Cancel = cancel };
-		// OLE's loop asks the source only when input arrives: a thread
-		// nudges the cursor by a pixel every 50 ms (the target sees
-		// DragOvers; the 10 px move happens in QueryContinueDrag)
-		var done = false;
-		var nudge = new System.Threading.Thread(() => {
-			for (int i = 0; !done && i < 400; i++) {
-				System.Threading.Thread.Sleep(50);
-				int bx = src.Moved ? x + 10 : x, by = src.Moved ? y + 5 : y;
-				ClackDropSource.SetCursorPos(bx + (i % 2), by);
-				if (i % 10 == 0) { Console.Error.WriteLine("tick " + i + " calls=" + src.Calls); }
+		var src = new ClackDropSource { Cancel = cancel };
+		var sw = Stopwatch.StartNew();
+		// the moves, from a thread while DoDragDrop runs its loop; a
+		// 1 px jitter every 50 ms keeps mouse messages (and so
+		// QueryContinueDrag and DragOver) coming
+		var mover = new Thread(() => {
+			for (int i = 0; i < 400 && !src.End; i++) {
+				Thread.Sleep(50);
+				long ms = sw.ElapsedMilliseconds;
+				int bx = ms < 700 ? x : x + 10, by = ms < 700 ? y : y + 5;
+				SetCursorPos(bx + (i % 2), by);
+				if (ms > 1400) src.End = true;
+				if (i % 10 == 0) Console.Error.WriteLine("tick " + ms + "ms calls=" + src.Calls);
 			}
 		});
-		nudge.IsBackground = true;
-		nudge.Start();
+		mover.IsBackground = true;
+		mover.Start();
 		int effect;
 		int hr = DoDragDrop(data, src, 1 | 2 | 4, out effect); // copy | move | link, as Explorer offers
-		done = true;
-		return String.Format("hr=0x{0:X8} effect={1} calls={2} setcursor={3} cursor={4},{5} under=0x{6:X}", hr, effect, src.Calls, set, at.X, at.Y, under.ToInt64());
+		src.End = true;
+		mouse_event(LEFTUP, 0, 0, 0, UIntPtr.Zero);
+		form.Close();
+		return String.Format("hr=0x{0:X8} effect={1} calls={2} under=0x{3:X}", hr, effect, src.Calls, under.ToInt64());
 	}
 }
 `
@@ -201,8 +221,8 @@ func runOLEDrag(t *testing.T, at windows.Point, files []string, cancel bool) str
 		quoted = append(quoted, "'"+strings.ReplaceAll(f, "'", "''")+"'")
 	}
 	script := "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n" +
-		"Add-Type -AssemblyName System.Windows.Forms\n" +
-		"Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'\n" + oleDragCS + "\n'@\n" +
+		"Add-Type -AssemblyName System.Windows.Forms, System.Drawing\n" +
+		"Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @'\n" + oleDragCS + "\n'@\n" +
 		fmt.Sprintf("[ClackDrag]::Run(%d, %d, @(%s), $%v)\n", at.X, at.Y, strings.Join(quoted, ", "), cancel)
 	u := utf16.Encode([]rune(script))
 	raw := make([]byte, 2*len(u))
