@@ -145,20 +145,22 @@ After that, Clack sends every cookie Slack set for the session (`d`, `lc`, `d-s`
 
 What isn't verified yet: whether this session survives you signing out in the browser (it should, it's a separate session), how Enterprise Grid treats DPoP, and whether Slack's desktop boot page always has the token Clack reads from it. See [docs/DESKTOP-SIGNIN.md](docs/DESKTOP-SIGNIN.md).
 
-### Advanced: paste a token
+### Advanced: paste the d cookie
 
 > [!NOTE]
 > **This way Clack shares your browser's Slack session. It is not a separate sign-in.** Earlier versions got sessions signed out **everywhere** (the browser, the desktop app and Clack) on Hack Club's Enterprise Grid, a few seconds after signing in. The cause was found: Grid reacts to Go's TLS handshake. This release connects to Slack with OpenSSL's handshake instead, which Grid leaves alone ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). Slack can still end a shared session for its own reasons, so use an account you can sign back in to.
 
-Click **Advanced** on the sign-in card (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
+Click **Advanced** on the sign-in card (or press Enter at `clack login`'s link prompt). It needs one thing, your browser's **`d` cookie** (`xoxd-…`). `d` is HttpOnly, so copy it from DevTools: press F12 on a Slack tab, then **Application › Cookies › `https://app.slack.com` › `d`**. Press Ctrl+V (⌘V on a Mac) anywhere on the card, or paste it into the field: Clack signs in right away. `d=xoxd-…` and a whole Cookie header work too. Don't bother with `d-s`: Clack never sends it on a pasted session.
 
-The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies the tokens Slack's own page keeps in `localStorage`. Advanced shows the same snippet with a Copy button:
+With only `d`, Clack gets the session's tokens the way the desktop sign-in does: it loads Slack's token page (`app.slack.com/auth`) with that cookie, then checks the workspace token with one `auth.test`. It never loads `/ssb/redirect`, never sends the org token to `auth.test` and never calls a sign-out API ([docs/DESKTOP-SIGNIN.md](docs/DESKTOP-SIGNIN.md)).
+
+**Use a token instead** (under the field) skips the token page. Run this in the Console of the same tab, then press Ctrl+V on the card:
 
 ```js
 copy(JSON.stringify({teams: JSON.parse(localStorage.localConfig_v2).teams}))
 ```
 
-Paste that JSON into the Token field. Clack picks out the workspace token, the org token and the workspace URL. (JSON from the older snippet, with a `"ua"` in it, still works; the user agent is ignored.) `d` is HttpOnly, so copy it from DevTools > Application > Cookies > `https://app.slack.com`. Leave `d-s` alone: Slack resets it to the current time on every response, so a copy is stale at once, and sending an older one than the browser's looks like a cloned cookie.
+Clack picks out the workspace token, the org token and the workspace URL from that JSON, wherever you paste it. (JSON from the older snippet, with a `"ua"` in it, still works; the user agent is ignored.) You still need `d`.
 
 ### Either way
 

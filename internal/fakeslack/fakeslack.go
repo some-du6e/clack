@@ -522,6 +522,8 @@ func Serve(ln net.Listener, sz Size) *Server {
 	mux.HandleFunc("/img/", s.img)
 	mux.HandleFunc("/ws", s.ws)
 	mux.HandleFunc("/files-pri/", s.filesPri) // canvas exports (canvas.go)
+	mux.HandleFunc("/auth", s.authPage)       // the token page (auth_page.go)
+	mux.HandleFunc("/", s.otherPage)          // any other page: logged, not found
 	s.srv = &http.Server{Handler: mux}
 	go s.srv.Serve(ln)
 	return s
@@ -530,6 +532,7 @@ func Serve(ln net.Listener, sz Size) *Server {
 // Close stops the server.
 func (s *Server) Close() error {
 	searchLogs.Delete(s)
+	pageLogs.Delete(s)
 	viewsStates.Delete(s)
 	threadsAuditStates.Delete(s)
 	if s.srv == nil {

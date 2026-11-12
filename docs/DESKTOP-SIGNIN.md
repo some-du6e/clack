@@ -481,6 +481,47 @@ Still unverified (needs a live test, with consent, on a throwaway account):
   a first sign-in from there ends in a copyable `slack://…/magic-login/…`
   link is unverified.
 
+Added 2026-11-11 (branch `signin-flat`): **Advanced needs only the `d` cookie.**
+
+- **The request sequence.** `slack.SignIn` with a `d` cookie and no token
+  (`signInCookie`, internal/slack/cookie_signin.go) runs the desktop
+  sign-in's own token step: `GET https://app.slack.com/auth?app=client&return_to=%2Fclient%2F&teams=&iframe=1`
+  (`authPage("")`: no team id is known yet), reads
+  `sessionStorage.incomingConfig` (`parseIncomingConfigFor`, taking the
+  workspace whose URL matches the Workspace field, `hackclub` by default,
+  else the page's first), then one `POST <workspace>/api/auth.test` with
+  that workspace token. The org token from the page is kept but never sent
+  to `auth.test`. Both requests carry only `Cookie: d=<value>`: the client
+  has no jar, so `d-s`, `lc` and the rest are neither kept nor sent, as for
+  every pasted session.
+- **Transport.** `magicClient`: the API transport (tlsfp's recorded
+  OpenSSL 3.0.13 ClientHello, HTTP/1.1), `honestTransport`'s headers, and
+  `magicRedirect`, which keeps redirects on https slack.com and refuses
+  `/ssb/redirect` before the request goes out
+  (`TestSignInCookieUsesTheRecordedHello`).
+- **It is the browser's session.** Unlike a magic link, the cookie is the
+  browser's own `d`, so Clack shares that session and Advanced keeps its
+  warning (docs/SECURITY.md C-16).
+- **Smart paste.** Ctrl/⌘+V on the card, the clipboard check on focus and
+  text pasted into any field are classified (`slack.ClassifyPaste`): a
+  sign-in link signs in; `xoxd-…`, `d=xoxd-…`, a Cookie header or a
+  DevTools cookie row fills `d` and signs in; the console snippet's JSON or
+  a bare `xoxc-` token goes under "Use a token instead". Anything else is
+  left alone.
+- **Where `d` is.** The card says "d cookie: F12 › Application › Cookies ›
+  https://app.slack.com › d": Chrome's and Edge's DevTools both list
+  cookies under Application › Storage › Cookies › the page's origin
+  (developer.chrome.com/docs/devtools/application/cookies,
+  learn.microsoft.com/microsoft-edge/devtools/storage/cookies), and F12
+  opens DevTools in both (developer.chrome.com/docs/devtools/open,
+  learn.microsoft.com/microsoft-edge/devtools/overview). `d` has
+  `Domain=.slack.com`, so it is listed under `https://app.slack.com`.
+
+Unverified (fakes only, no live test): loading the token page with a
+browser's own `d` cookie rather than a freshly vended one (every live run
+that loaded it used a vended cookie), and `return_to=%2Fclient%2F` without
+a team id.
+
 ## Windows: Clack in Windows' app box (2026-11-11, branch `win-url-handler`)
 
 What Karim hit on Windows 11 (α.36, with Slack desktop and Slick installed):

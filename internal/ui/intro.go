@@ -99,8 +99,6 @@ type intro struct {
 	focusAsked                bool
 
 	dock    springVal // the mark: 0 the hero in the middle, 1 docked top-left
-	weights [introBeats]springVal
-	bd      backdrop
 	sprites introSprites
 	mc      motionClock // this frame's
 
@@ -120,9 +118,6 @@ type introDrawn struct {
 func newIntro(mode introMode, a *App) *intro {
 	in := &intro{mode: mode, prev: -1}
 	in.dock.s = springBouncy
-	for i := range in.weights {
-		in.weights[i].s = springGentle
-	}
 	in.sprites.done = a.Invalidate
 	return in
 }
@@ -565,7 +560,7 @@ func splitWords(s string) []string {
 
 // ---- drawing ----
 
-// layoutWelcome is the window while Clack isn't signed in: the backdrop,
+// layoutWelcome is the window while Clack isn't signed in: the flat backdrop,
 // the introduction on the first launch, then the sign-in card.
 func (a *App) layoutWelcome(gtx layout.Context) {
 	a.loginClipboard(gtx) // a sign-in link copied in the browser (login.go)
@@ -676,50 +671,10 @@ func (m *motionClock) schedule(gtx layout.Context) {
 	}
 }
 
-// drawBackdrop lights the window for the beat on screen.
+// drawBackdrop fills the window behind the beats and the card: flat,
+// the same for every beat (intro_art.go).
 func (in *intro) drawBackdrop(f *introFrame) {
-	st := backdropState{light: 1}
-	target := in.cur
-	if in.signIn {
-		target = beatFinal
-	}
-	for i := range in.weights {
-		w := 0.0
-		if i == target {
-			w = 1
-		}
-		if !in.weights[i].init {
-			// the first frame: the first beat's light, and nothing else
-			in.weights[i].set(f.now, w)
-		}
-		v, moving := in.weights[i].get(f.now, w)
-		if moving {
-			f.mc.moving = true
-		}
-		st.w[i] = float32(clamp01(v))
-	}
-	if !in.t0.IsZero() && in.mode == introFirstRun && !in.signIn {
-		// first launch: the light comes up as the mark arrives
-		st.light = float32(clamp01(f.mc.spring(springGentle, in.t0)))
-	}
-	if !f.reduced && !in.t0.IsZero() {
-		st.t = f.now.Sub(in.t0).Seconds()
-		st.drift = 1
-		if in.signIn {
-			// the lights come to rest under the sign-in card
-			st.drift = float32(1 - clamp01(f.mc.spring(springGentle, in.signInAt)))
-			if st.drift < 0.002 {
-				st.drift = 0
-			}
-		}
-		if in.cur == beatFinal && in.mode == introReplay {
-			st.drift = float32(1 - clamp01(f.mc.spring(springGentle, in.curAt)))
-		}
-		if st.drift > 0 {
-			f.mc.moving = true
-		}
-	}
-	in.bd.draw(f.gtx, st)
+	drawBackdrop(f.gtx)
 }
 
 // drawBeats draws the beat leaving and the beat coming in, then the
@@ -1169,7 +1124,7 @@ func (in *intro) drawBar(f *introFrame) {
 // key), its right-centre at rc (or centred on rc when !right). It presses
 // in on a spring.
 func (in *intro) pillButton(f *introFrame, b *widget.Clickable, pa *pressAnim, label string, rc image.Point, right bool) {
-	ink := hexc(0x0b0912)
+	ink := introInk
 	lw := f.measure(15, theme.Bold, label)
 	h := f.d(42)
 	w := f.d(20) + lw + f.d(10) + f.keycapW("↵") + f.d(14)
@@ -1198,9 +1153,11 @@ func (in *intro) pillButton(f *introFrame, b *widget.Clickable, pa *pressAnim, l
 	c := f32.Pt(float32(r.Min.X+r.Max.X)/2, float32(r.Min.Y+r.Max.Y)/2)
 	t := op.Affine(f32.Affine2D{}.Scale(c, f32.Pt(s, s))).Push(f.gtx.Ops)
 	defer t.Pop()
-	// a soft light under it, stronger on hover
-	theme.Shadow(f.gtx, r, h/2, f.d(14), alphaMul(hexc(0xb7a8ff), float32(0.10+0.16*hv)))
-	theme.RRect(f.gtx, r, h/2, theme.Mix(hexc(0xeeeaf8), hexc(0xffffff), float32(hv)))
+	// a faint white light under it on hover (no tint: the window is flat)
+	if hv > 0.004 {
+		theme.Shadow(f.gtx, r, h/2, f.d(14), alphaMul(introWhite, float32(0.08*hv)))
+	}
+	theme.RRect(f.gtx, r, h/2, theme.Mix(introPill, introWhite, float32(hv)))
 	f.label(image.Pt(r.Min.X+f.d(20), r.Min.Y+(h-f.d(15*1.25))/2), 15, theme.Bold, ink, label)
 	f.keycapDark(image.Pt(r.Min.X+f.d(20)+lw+f.d(10), r.Min.Y+(h-f.d(22))/2), "↵")
 	atExact(f.gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
@@ -1211,8 +1168,29 @@ func (in *intro) pillButton(f *introFrame, b *widget.Clickable, pa *pressAnim, l
 	})
 }
 
+// keycapIcons are the keys a keycap draws as a glyph from the icon set,
+// not as text: no bundled font has ↵ (Lato doesn't, and Windows' font
+// fallback drew a missing-glyph box for it). keycap_glyphs_test.go keeps
+// every other keycap label inside Lato.
+var keycapIcons = map[string]string{"↵": "enter"}
+
 func (f *introFrame) keycapW(s string) int {
+	if _, ok := keycapIcons[s]; ok {
+		return f.d(22)
+	}
 	return max(f.d(22), f.measure(11.5, theme.Bold, s)+f.d(12))
+}
+
+// keycapFace draws a keycap's label centred in r: its icon, or its text
+// (size: the text's).
+func (f *introFrame) keycapFace(r image.Rectangle, s string, size float32, c color.NRGBA) {
+	if name, ok := keycapIcons[s]; ok {
+		const is = 12
+		f.icon(name, image.Pt(r.Min.X+(r.Dx()-f.d(is))/2, r.Min.Y+(r.Dy()-f.d(is))/2), is, c)
+		return
+	}
+	tw := f.measure(size, theme.Bold, s)
+	f.label(image.Pt(r.Min.X+(r.Dx()-tw)/2, r.Min.Y+(r.Dy()-f.d(size*1.25))/2), size, theme.Bold, c, s)
 }
 
 // keycap is a key's name in a little outlined key (on the dark backdrop).
@@ -1222,15 +1200,13 @@ func (f *introFrame) keycap(p image.Point, s string, a float32) {
 	r := image.Rect(p.X, p.Y, p.X+w, p.Y+h)
 	theme.RRect(f.gtx, r, f.d(5), alphaMul(white, 0.12*a))
 	theme.Border(f.gtx, r, f.d(5), max(1, f.d(1)), alphaMul(white, 0.44*a))
-	tw := f.measure(11.5, theme.Bold, s)
-	f.label(image.Pt(r.Min.X+(w-tw)/2, r.Min.Y+(h-f.d(11.5*1.25))/2), 11.5, theme.Bold, alphaMul(white, a), s)
+	f.keycapFace(r, s, 11.5, alphaMul(white, a))
 }
 
 // keycapDark is a key on the white button.
 func (f *introFrame) keycapDark(p image.Point, s string) {
 	w, h := f.keycapW(s), f.d(22)
 	r := image.Rect(p.X, p.Y, p.X+w, p.Y+h)
-	theme.RRect(f.gtx, r, f.d(6), hexc(0xdcd6ec))
-	tw := f.measure(12, theme.Bold, s)
-	f.label(image.Pt(r.Min.X+(w-tw)/2, r.Min.Y+(h-f.d(12*1.25))/2), 12, theme.Bold, hexc(0x3a3450), s)
+	theme.RRect(f.gtx, r, f.d(6), hexc(0xdddddd))
+	f.keycapFace(r, s, 12, hexc(0x3c3d40))
 }

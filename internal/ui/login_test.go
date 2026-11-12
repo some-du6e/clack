@@ -138,6 +138,16 @@ func TestLoginCardFits(t *testing.T) {
 			l.advanced, l.err = true, signInErrorText(fmt.Errorf("x: %w", slack.ErrSessionRejected))
 		}},
 		{"login-advanced-busy", func(l *loginScreen) { l.advanced, l.busy = true, true }},
+		{"login-advanced-tokens", func(l *loginScreen) { l.advanced, l.tokenForm = true, true }},
+		{"login-advanced-filled", func(l *loginScreen) {
+			l.advanced, l.tokenForm, l.pasteNote = true, true, "Filled the workspace, token and org token."
+			l.setField(&l.workspace, "hackclub.slack.com", false)
+			l.setField(&l.token, "xoxc-1111111111-2222222222-3333333333-aaaabbbb", false)
+			l.setField(&l.orgToken, "xoxc-9999999999-8888888888-7777777777-eeeeffff", false)
+		}},
+		{"login-advanced-cookie-error", func(l *loginScreen) {
+			l.advanced, l.err = true, signInErrorText(fmt.Errorf("x: %w", slack.ErrCookieRejected))
+		}},
 		// Windows' own words (pick Clack in Windows' box)
 		{"login-waiting-windows", func(l *loginScreen) { loginOS = "windows"; l.waiting = true }},
 		{"login-trouble-waiting-windows", func(l *loginScreen) { loginOS = "windows"; l.trouble, l.waiting = true, true }},
@@ -585,17 +595,17 @@ func TestSignInDisclosures(t *testing.T) {
 	l.advToggle.Click()
 	s.frame(time.Second / 60)
 	s.run(1500 * time.Millisecond)
-	if !l.advanced || !s.drew("Paste a token") || !s.drew("d cookie") || s.drew("Open Slack sign-in") {
+	if !l.advanced || !s.drew("Sign in with a cookie") || !s.drew("d cookie") || !s.drew("Use a token instead") || s.drew("Open Slack sign-in") || s.drew("Org token") {
 		t.Fatalf("Advanced: %v, %q", l.advanced, s.strs)
 	}
-	if !s.r.Source().Focused(&l.token) {
-		t.Error("Advanced didn't take the focus to Token")
+	if !s.r.Source().Focused(&l.cookie) {
+		t.Error("Advanced didn't take the focus to d cookie")
 	}
 	if !l.card.In(image.Rect(0, 0, 1440, 900)) {
 		t.Errorf("Advanced: the card %v leaves the window", l.card)
 	}
 	s.key(key.NameReturn) // nothing pasted yet
-	if l.err != "Paste your token and d cookie first." {
+	if l.err != "Paste the d cookie first." {
 		t.Errorf("Advanced, empty: err %q", l.err)
 	}
 	s.key(key.NameEscape)

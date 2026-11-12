@@ -17,7 +17,6 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -674,14 +673,10 @@ func (s *Surface) inputBlock(gtx C, b *Block, key string, w int) int {
 	if s.errs[b.BlockID] == "" && enterHint(b) {
 		// InputBlockContent's p-block_kit_input_block__enter_help_text
 		at(gtx, image.Pt(0, y+dp(gtx, 4)), func(gtx C) D {
-			x := 0
-			if icons.Has("enter") {
-				is := dp(gtx, 13)
-				at(gtx, image.Pt(0, (dp(gtx, 18)-is)/2), func(gtx C) D { return icon(gtx, "enter", 13, cl.Hint) })
-				x = is + dp(gtx, 4)
-			} else {
-				x = label(gtx, th, 13, theme.Regular, cl.Hint, "⏎").Size.X + dp(gtx, 4)
-			}
+			// the enter icon, not a ⏎ glyph: no bundled font has one
+			is := dp(gtx, 13)
+			at(gtx, image.Pt(0, (dp(gtx, 18)-is)/2), func(gtx C) D { return icon(gtx, "enter", 13, cl.Hint) })
+			x := is + dp(gtx, 4)
 			at(gtx, image.Pt(x, 0), func(gtx C) D {
 				return label(gtx, th, 13, theme.Regular, cl.Hint, "Press 'enter' to submit")
 			})

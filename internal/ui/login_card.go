@@ -20,12 +20,13 @@ import (
 	"golang.org/x/image/vector"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The sign-in card (login.go has its state), drawn in the introduction's
-// language: the same lit backdrop, display type and springs, white on a
-// dark glass panel. One primary action, Open Slack sign-in, with the
+// language: the same flat backdrop, display type and springs, white on a
+// solid dark panel. One primary action, Open Slack sign-in, with the
 // slack:// field under it as the second way in. The rest waits behind
 // Having trouble? (tips for when the link doesn't come back) and Advanced
 // (the token form), which open on springs.
@@ -45,29 +46,31 @@ const (
 	loginRefH     = 470 // about the default card's height: where its top sits
 )
 
+// loginCookieWhere is where the d cookie is, in one line.
+const loginCookieWhere = "d cookie: F12 › Application › Cookies › https://app.slack.com › d"
+
 // signInTitle is the card's first line (its words blur in after the
 // introduction; intro.prefetch asks for their blurred copies).
 const signInTitle = "Sign in to Slack"
 
 var (
-	loginGlassTop = hexc(0x1d1830)
-	loginGlassBot = hexc(0x110e1b)
-	loginInk      = hexc(0x0b0912) // the pill's label (the introduction's)
+	loginSurface  = hexc(0x222529) // the card: Slack's dark raised surface, a step above introBase
+	loginHairline = hexc(0x3a3d41) // its 1px rim: about 13% white over the surface
+	loginInk      = introInk       // the pill's label (the introduction's)
 	loginViolet   = hexc(0x7b5cff) // the mark's
 	loginLilac    = hexc(0x9d8cff) // focus, the badge's ring
 	loginGlow     = hexc(0xb7a8ff)
-	loginRose     = hexc(0xff8f9c) // errors on the dark glass
+	loginRose     = hexc(0xff8f9c) // errors on the dark card
 	loginAmber    = hexc(0xffc56b) // Advanced's warning
 	loginCode     = hexc(0xd4c9ff)
+	loginMint     = hexc(0x5fd3a3) // a field a paste filled: its tick and the line saying so
 )
 
-// loginGlassUnder is about what the glass looks like under its controls.
-// Their translucent fills go through loginOn: Gio blends in linear light,
-// where 6% white on a dark panel reads like 25% grey, so the alpha is
-// corrected to land where a browser's sRGB blend of the same alpha would.
-var loginGlassUnder = hexc(0x19142a)
-
-func loginOn(c color.NRGBA) color.NRGBA { return theme.LinearAlpha(c, loginGlassUnder) }
+// The controls' translucent fills go through loginOn: Gio blends in
+// linear light, where 6% white on a dark panel reads like 25% grey, so the
+// alpha is corrected to land where a browser's sRGB blend of the same
+// alpha over the card's surface would.
+func loginOn(c color.NRGBA) color.NRGBA { return theme.LinearAlpha(c, loginSurface) }
 
 // loginLine is a line of the card's header: its words, and whether it is
 // an error.
@@ -173,9 +176,9 @@ func (a *App) layoutLogin(gtx layout.Context, enter time.Time, f *introFrame) {
 		// the link field its focus) from the first frame
 		defer paint.PushOpacity(gtx.Ops, alpha).Pop()
 	}
-	// a deep, soft shadow on the dark backdrop, then the glass
-	loginShadow(gtx, r.Add(image.Pt(0, f.d(18))), f.d(loginRadius), f.d(22), alphaMul(introBlack, 0.62))
-	loginGlass(gtx, f, r)
+	// a soft shadow on the flat backdrop, then the panel
+	loginShadow(gtx, r.Add(image.Pt(0, f.d(12))), f.d(loginRadius), f.d(18), alphaMul(introBlack, 0.38))
+	loginPanel(gtx, f, r)
 	cl := clip.UniformRRect(r, f.d(loginRadius)).Push(gtx.Ops)
 	if showLink {
 		// the link view slides out to the left as Advanced comes in
@@ -716,9 +719,11 @@ func (a *App) loginTips(gtx layout.Context, f *introFrame, x0, y, cw int, tr flo
 
 // ---- Advanced: the token form ----
 
-// loginAdvView lays out Advanced: back, the session warning, the console
-// snippet, the four fields and Sign in. It returns the recording and its
-// height; x runs from the (wider) card's left edge.
+// loginAdvView lays out Advanced: back, the session warning, the d cookie
+// field and where to find d, Sign in, and "Use a token instead", which
+// opens the console snippet and the Workspace, Token and Org token fields
+// under it. It returns the recording and its height; x runs from the
+// (wider) card's left edge.
 func (a *App) loginAdvView(gtx layout.Context, f *introFrame) (op.CallOp, int) {
 	l := a.login
 	m := op.Record(gtx.Ops)
@@ -730,7 +735,7 @@ func (a *App) loginAdvView(gtx layout.Context, f *introFrame) (op.CallOp, int) {
 	// back, and the title
 	bs := f.d(36)
 	a.loginCircleButton(ctl, f, &l.advBack, image.Rect(x0-f.d(8), y, x0-f.d(8)+bs, y+bs), "chevron-left")
-	tt := "Paste a token"
+	tt := "Sign in with a cookie"
 	tw := f.measure(22, theme.Black, tt)
 	l.text(f, image.Pt(cx-tw/2, y+(bs-f.d(22*1.25))/2), 22, theme.Black, introWhite, tt)
 	y += bs + f.d(18)
@@ -741,47 +746,85 @@ func (a *App) loginAdvView(gtx layout.Context, f *introFrame) (op.CallOp, int) {
 	// at once
 	y += a.loginWarn(gtx, f, x0, y, cw, "Clack shares your browser’s session this way, and Slack can end that session everywhere, browser included.") + f.d(18)
 
-	y += l.block(f, image.Pt(x0, y), cw, 14, 20, theme.Regular, alphaMul(introWhite, 0.80), text.Start, "In Slack in your browser, press F12 and run this in the Console:") + f.d(10)
-	y += a.loginSnippet(ctl, f, x0, y, cw) + f.d(20)
+	// the d cookie: the one thing to paste
+	fh := f.d(46)
+	l.text(f, image.Pt(x0+f.d(2), y), 12.5, theme.Bold, alphaMul(introWhite, 0.62), "d cookie")
+	a.loginField(ctl, f, image.Rect(x0, y+f.d(22), x1, y+f.d(22)+fh), &l.cookie, "", "xoxd-…", nil, 0, f.d(12), 14.5)
+	y += f.d(22) + fh + f.d(12)
 
-	// the fields, two by two
-	gap := f.d(14)
-	colW := (cw - gap) / 2
-	fh := f.d(42)
-	rowH := f.d(22) + fh + gap
-	for i, fd := range []struct {
-		label string
-		ed    *widget.Editor
-		hint  string
-	}{
-		{"Workspace", &l.workspace, "hackclub"},
-		{"Token", &l.token, "xoxc-… or the copied JSON"},
-		{"Org token", &l.orgToken, "optional"},
-		{"d cookie", &l.cookie, "xoxd-…"},
-	} {
-		colX := x0 + (i%2)*(colW+gap)
-		colY := y + (i/2)*rowH
-		l.text(f, image.Pt(colX+f.d(2), colY), 12.5, theme.Bold, alphaMul(introWhite, 0.62), fd.label)
-		a.loginField(ctl, f, image.Rect(colX, colY+f.d(22), colX+colW, colY+f.d(22)+fh), fd.ed, "", fd.hint, nil, 0, f.d(12), 14)
-	}
-	y += 2*rowH + f.d(2)
-
-	// how to get d, or the error
-	if l.err != "" {
+	// what a paste filled, the error, and where the d cookie is (it is
+	// HttpOnly, so no snippet can copy it: Chrome's and Edge's DevTools
+	// show it under Application › Storage › Cookies › the page's origin,
+	// developer.chrome.com/docs/devtools/application/cookies,
+	// learn.microsoft.com/microsoft-edge/devtools/storage/cookies)
+	switch {
+	case l.err != "":
 		ea := float32(clamp01(l.mc.spring(springSmooth, l.errAt)))
-		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(loginRose, ea), text.Start, l.err)
-	} else {
-		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(introWhite, 0.50), text.Start, "d is HttpOnly, so copy it from DevTools → Application → Cookies. Leave d-s out.")
+		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(loginRose, ea), text.Start, l.err) + f.d(4)
+	case l.pasteNote != "":
+		na := float32(1)
+		if !l.pasteAt.IsZero() {
+			na = float32(clamp01(l.mc.spring(springSmooth, l.pasteAt)))
+		}
+		y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Bold, alphaMul(loginMint, na), text.Start, l.pasteNote) + f.d(4)
 	}
-	y += f.d(18)
+	y += l.block(f, image.Pt(x0, y), cw, 13, 19, theme.Regular, alphaMul(introWhite, 0.50), text.Start, loginCookieWhere)
+	y += f.d(20)
 
 	txt, kc := "Sign in", "↵"
 	if l.busy {
 		txt, kc = "Signing in…", ""
 	}
 	a.loginPill(ctl, f, &l.submit, image.Rect(x0, y, x1, y+f.d(loginCtlH)), txt, kc, 1, l.busy)
-	y += f.d(loginCtlH) + f.d(30)
+	y += f.d(loginCtlH) + f.d(20)
+
+	// the fallback: a token of the browser's session instead of Clack
+	// fetching one
+	tv := clamp01(l.follow(&l.tokenV, springSmooth, l.tokenForm))
+	tl := "Use a token instead"
+	a.loginTextButton(ctl, f, &l.tokenBtn, image.Pt(cx-a.loginTextButtonW(f, tl)/2, y), tl, "chevron-down", float32(tv)*math.Pi)
+	y += f.d(20)
+	if l.tokenForm || tv > 0.004 {
+		y0 := y
+		tg := ctl
+		if !l.tokenForm {
+			tg = gtx.Disabled() // closing: no clicks, no typing
+		}
+		tc, th := recordOps(gtx, func() int { return a.loginTokenForm(tg, f, x0, y+f.d(20), cw) })
+		l.put(f, "signin-tokens", fx{a: float32(clamp01((tv - 0.3) / 0.7)), s: 1}, f32.Point{}, image.Point{}, tc)
+		y = y0 + int(math.Round(float64(f.d(20)+th)*tv))
+	}
+	y += f.d(28)
 	return m.Stop(), y
+}
+
+// loginTokenForm is "Use a token instead": the console snippet and the
+// Workspace, Token and Org token fields, at y; it returns its height.
+func (a *App) loginTokenForm(gtx layout.Context, f *introFrame, x0, y, cw int) int {
+	l := a.login
+	y0 := y
+	pasteKey := shortcut.Format("Mod+V") // Ctrl+V, or ⌘V on a Mac
+	y += l.block(f, image.Pt(x0, y), cw, 14, 20, theme.Regular, alphaMul(introWhite, 0.80), text.Start, "Run this in the Console of your Slack tab (F12), then press "+pasteKey+" here.") + f.d(10)
+	y += a.loginSnippet(gtx, f, x0, y, cw) + f.d(20)
+	// the fields, side by side
+	gap := f.d(12)
+	colW := (cw - 2*gap) / 3
+	fh := f.d(42)
+	for i, fd := range []struct {
+		label string
+		ed    *widget.Editor
+		hint  string
+	}{
+		{"Workspace", &l.workspace, "hackclub"},
+		{"Token", &l.token, "xoxc-… or JSON"},
+		{"Org token", &l.orgToken, "optional"},
+	} {
+		colX := x0 + i*(colW+gap)
+		l.text(f, image.Pt(colX+f.d(2), y), 12.5, theme.Bold, alphaMul(introWhite, 0.62), fd.label)
+		a.loginField(gtx, f, image.Rect(colX, y+f.d(22), colX+colW, y+f.d(22)+fh), fd.ed, "", fd.hint, nil, 0, f.d(12), 14)
+	}
+	y += f.d(22) + fh
+	return y - y0
 }
 
 // loginWarn is Advanced's warning in an amber-tinted box; it returns the
@@ -844,7 +887,7 @@ func loginFocusRing(gtx layout.Context, f *introFrame, r image.Rectangle, rad in
 
 // loginPill is the card's primary button: the introduction's white pill
 // at full width, its label and keycap centred (kca: the keycap's
-// opacity), a soft light under it that grows on hover, pressing in on a
+// opacity), a faint white light under it on hover, pressing in on a
 // spring. busy: a spinner turns beside the label.
 func (a *App) loginPill(gtx layout.Context, f *introFrame, b *widget.Clickable, r image.Rectangle, label, kc string, kca float32, busy bool) {
 	l := a.login
@@ -854,8 +897,10 @@ func (a *App) loginPill(gtx layout.Context, f *introFrame, b *widget.Clickable, 
 	sc := 1 - 0.035*prs
 	t := op.Affine(f32.Affine2D{}.Scale(center(r), f32.Pt(sc, sc))).Push(gtx.Ops)
 	defer t.Pop()
-	theme.Shadow(gtx, r, h/2, f.d(14), alphaMul(loginGlow, 0.10+0.16*hov))
-	theme.RRect(gtx, r, h/2, theme.Mix(hexc(0xeeeaf8), introWhite, hov))
+	if hov > 0.004 {
+		theme.Shadow(gtx, r, h/2, f.d(14), alphaMul(introWhite, 0.08*hov))
+	}
+	theme.RRect(gtx, r, h/2, theme.Mix(introPill, introWhite, hov))
 	lw := f.measure(15.5, theme.Bold, label)
 	kw := 0
 	if kc != "" {
@@ -888,7 +933,7 @@ func loginHit(gtx layout.Context, b *widget.Clickable, r image.Rectangle) {
 	})
 }
 
-// loginGlassButton is a quiet button on the glass: a faint fill and rim
+// loginGlassButton is a quiet button on the card: a faint fill and rim
 // that brighten on hover, pressing in on a spring.
 func (a *App) loginGlassButton(gtx layout.Context, f *introFrame, b *widget.Clickable, r image.Rectangle, label string, size float32) {
 	l := a.login
@@ -953,9 +998,11 @@ func (a *App) loginField(gtx layout.Context, f *introFrame, r image.Rectangle, e
 	l := a.login
 	th := a.th
 	v := l.ring(ed, gtx.Focused(ed))
+	tp, ta := l.loginTick(ed) // a paste just filled it (login_paste.go)
 	loginFocusRing(gtx, f, r, rad, v)
 	theme.RRect(gtx, r, rad, loginOn(alphaMul(introWhite, 0.06+0.03*v)))
-	theme.Border(gtx, r, rad, max(1, f.d(1)), theme.Mix(loginOn(alphaMul(introWhite, 0.18)), alphaMul(loginLilac, 0.9), v))
+	rim := theme.Mix(loginOn(alphaMul(introWhite, 0.18)), alphaMul(loginLilac, 0.9), v)
+	theme.Border(gtx, r, rad, max(1, f.d(1)), theme.Mix(rim, loginMint, 0.7*ta))
 	x := r.Min.X + f.d(16)
 	if icon != "" {
 		x = r.Min.X + f.d(18)
@@ -964,6 +1011,16 @@ func (a *App) loginField(gtx layout.Context, f *introFrame, r image.Rectangle, e
 		x += is + f.d(12)
 	}
 	right := r.Max.X - f.d(16)
+	if ta > 0.004 {
+		// the tick: pops in at the field's end, fades after a moment
+		is := f.d(16)
+		tr := image.Rect(right-is, r.Min.Y+(r.Dy()-is)/2, right, r.Min.Y+(r.Dy()-is)/2+is)
+		sc := max(tp, 0)
+		t := op.Affine(f32.Affine2D{}.Scale(center(tr), f32.Pt(sc, sc))).Push(gtx.Ops)
+		f.icon("check", tr.Min, 16, alphaMul(loginMint, ta))
+		t.Pop()
+		right = tr.Min.X - f.d(8)
+	}
 	if send != nil {
 		d := r.Dy() - f.d(14)
 		sr := image.Rect(r.Max.X-f.d(7)-d, r.Min.Y+f.d(7), r.Max.X-f.d(7), r.Min.Y+f.d(7)+d)
@@ -1070,28 +1127,17 @@ func (l *loginScreen) spinner(gtx layout.Context, c image.Point, d int, col colo
 	ring(t*2*math.Pi*1.1, math.Pi*(0.55+0.35*math.Sin(t*3)), col)
 }
 
-// ---- the glass and its shadow ----
+// ---- the panel and its shadow ----
 
-// loginGlass is the card's panel: deep translucent glass, a little lighter
-// at the top, with a hairline rim lit from above.
-func loginGlass(gtx layout.Context, f *introFrame, r image.Rectangle) {
+// loginPanel is the card: an opaque surface a step lighter than the
+// window, ringed by a 1px hairline.
+func loginPanel(gtx layout.Context, f *introFrame, r image.Rectangle) {
 	rad := f.d(loginRadius)
-	func() {
-		defer clip.UniformRRect(r, rad).Push(gtx.Ops).Pop()
-		paint.LinearGradientOp{
-			Stop1: f32.Pt(0, float32(r.Min.Y)), Color1: alphaMul(loginGlassTop, 0.86),
-			Stop2: f32.Pt(0, float32(r.Max.Y)), Color2: alphaMul(loginGlassBot, 0.90),
-		}.Add(gtx.Ops)
-		paint.PaintOp{}.Add(gtx.Ops)
-	}()
-	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-	w := float32(max(1, f.d(1)))
-	defer clip.Stroke{Path: theme.RRectPath(r.Dx(), r.Dy(), rad), Width: w}.Op().Push(gtx.Ops).Pop()
-	paint.LinearGradientOp{
-		Stop1: f32.Pt(0, 0), Color1: alphaMul(introWhite, 0.22),
-		Stop2: f32.Pt(0, float32(r.Dy())), Color2: alphaMul(introWhite, 0.05),
-	}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
+	w := max(1, f.d(1))
+	// the hairline, then the surface inside it: whole pixels, no
+	// half-covered stroke edges
+	theme.RRect(gtx, r, rad, loginHairline)
+	theme.RRect(gtx, r.Inset(w), max(0, rad-w), loginSurface)
 }
 
 // loginShadowSprite is a blurred rounded rectangle, for nine-slicing: the
