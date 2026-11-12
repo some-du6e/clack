@@ -534,6 +534,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 		Block:          c.ed.ActiveBlock(),
 		Link:           c.ed.ActiveLink(),
 		CanSend:        !c.ed.Empty() || c.att.Len() > 0 || c.att.gifCount() > 0,
+		HintInPre:      uipref.Get().EnterIsSpecial && c.ed.inCode(),
 		Broadcast:      c.broadcast,
 		SetBroadcast:   c.setBroadcastFn,
 		Origin:         c.Origin,

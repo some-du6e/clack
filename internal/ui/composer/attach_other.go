@@ -1,4 +1,4 @@
-//go:build !linux || android
+//go:build (!linux && !windows) || android
 
 package composer
 
@@ -12,15 +12,18 @@ import (
 
 // macOS: clipboard images via pngpaste (if installed) or osascript, and an
 // osascript "choose file" picker when the ui root set no explorer.
-// Windows and the rest: no clipboard images yet; the picker is the explorer
-// or the in-app modal.
+// The rest: no clipboard images; the picker is the explorer or the in-app
+// modal. Windows is attach_windows.go.
 
 // attExplorerUsable reports whether the Gio explorer's chooser is safe to
-// call. macOS and Windows use native panels that return promptly, so the
+// call. macOS uses native panels that return promptly, so the
 // explorer is always usable there (the portal-hang problem is Linux only).
 func attExplorerUsable() bool { return true }
 
 func attClipboardSupported() bool { return runtime.GOOS == "darwin" }
+
+// attClipboardFiles: copied files aren't read from the macOS clipboard.
+func attClipboardFiles(context.Context) ([]string, error) { return nil, nil }
 
 func attClipboardImage(ctx context.Context, explicit bool) ([]byte, string, error) {
 	if runtime.GOOS != "darwin" {

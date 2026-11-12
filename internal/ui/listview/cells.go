@@ -281,7 +281,7 @@ func CellText(a *core.App, c *lists.Column, f *lists.Field) string {
 		}
 	case lists.Checkbox, lists.Completed, lists.TodoCompleted:
 		if f.Checkbox != nil && *f.Checkbox {
-			return "✓"
+			return nsLists.T("Yes") // never drawn: headers draw a checkbox
 		}
 	case lists.Message:
 		if len(f.Message) > 0 {

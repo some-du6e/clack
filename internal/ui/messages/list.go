@@ -559,6 +559,16 @@ func (s *listState) bottomSpacerH(h Host) float32 {
 	return 24
 }
 
+// newestBottom is the window y of the newest message row's bottom edge,
+// false when it wasn't on screen in the last frame.
+func (s *listState) newestBottom() (int, bool) {
+	n := s.newestItem()
+	if n < s.visible[0] || n >= s.visible[1] || n >= len(s.pos) || s.heights[n] == 0 {
+		return 0, false
+	}
+	return s.origin.Y + s.pos[n] + s.heights[n], true
+}
+
 // newestItem is the item index of the newest message (the bottom spacer
 // comes after it), or -1.
 func (s *listState) newestItem() int {

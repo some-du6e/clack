@@ -236,6 +236,12 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 		if groupCol != nil {
 			if ln.group == "" {
 				label = lists.EmptyGroupLabel(groupCol)
+			} else if groupCol.Type == lists.Checkbox || groupCol.Type == lists.Completed || groupCol.Type == lists.TodoCompleted {
+				// as the board's lane headers: the value's checkbox
+				at(gtx, image.Pt(x, (ln.h-gtx.Dp(20))/2), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
+					return checkbox(gtx, th, ln.group == "true")
+				})
+				x += gtx.Dp(28)
 			} else if ch, ok := groupCol.Choice(ln.group); ok {
 				x += optionPill(gtx, th, x, ln.h, ch, 15) + gtx.Dp(8)
 			} else {

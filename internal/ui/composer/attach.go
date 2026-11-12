@@ -1001,7 +1001,8 @@ var (
 
 // PasteClipboardImage probes the system clipboard for an image (async) and
 // attaches it as "image.png", like Slack. Called on every Ctrl+V; it skips
-// office-app copies (rich text plus a rendered picture of it).
+// office-app copies (rich text plus a rendered picture of it). Files copied
+// in Explorer (Windows) attach as those files.
 func (a *attachments) PasteClipboardImage() { a.pasteImage(false) }
 
 func (a *attachments) pasteImage(explicit bool) {
@@ -1012,12 +1013,21 @@ func (a *attachments) pasteImage(explicit bool) {
 		defer a.pasting.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
+		// Files copied in a file manager attach as themselves (Chromium
+		// hands them to the page as the paste's files).
+		if paths, err := attClipboardFiles(ctx); err == nil && len(paths) > 0 {
+			a.addPaths(paths)
+			return
+		}
 		data, mime, err := attClipboardImage(ctx, explicit)
 		if err == nil && !strings.HasPrefix(http.DetectContentType(data), "image/") {
 			err = errAttNoClipImage
 		}
 		if err != nil {
-			if explicit {
+			switch {
+			case errors.Is(err, errAttTooBig):
+				a.toast(attRejectText(attPastedName(mime), err))
+			case explicit:
 				a.toast(err.Error())
 			}
 			return
@@ -1034,16 +1044,8 @@ var attClipImageTypes = []string{"image/png", "image/jpeg", "image/jpg", "image/
 // Unless explicit, copies that carry rich text (LibreOffice, Word, Excel
 // put a rendered image next to the text) don't count as images.
 func attPickImageType(targets []string, explicit bool) string {
-	if !explicit {
-		for _, t := range targets {
-			lt := strings.ToLower(t)
-			if lt == "text/rtf" || lt == "application/rtf" || lt == "text/richtext" ||
-				strings.HasPrefix(lt, "application/x-openoffice") ||
-				strings.HasPrefix(lt, "application/vnd.oasis.opendocument") ||
-				strings.Contains(lt, "rich text format") {
-				return ""
-			}
-		}
+	if !explicit && attRichCopy(targets) {
+		return ""
 	}
 	for _, want := range attClipImageTypes {
 		for _, t := range targets {
@@ -1053,6 +1055,22 @@ func attPickImageType(targets []string, explicit bool) string {
 		}
 	}
 	return ""
+}
+
+// attRichCopy reports whether a clipboard's targets (or, on Windows, its
+// format names) include rich text: an office app's copy, whose picture is
+// only a rendering of the text.
+func attRichCopy(targets []string) bool {
+	for _, t := range targets {
+		lt := strings.ToLower(t)
+		if lt == "text/rtf" || lt == "application/rtf" || lt == "text/richtext" ||
+			strings.HasPrefix(lt, "application/x-openoffice") ||
+			strings.HasPrefix(lt, "application/vnd.oasis.opendocument") ||
+			strings.Contains(lt, "rich text format") {
+			return true
+		}
+	}
+	return false
 }
 
 // attParseTargets splits a newline-separated target list.

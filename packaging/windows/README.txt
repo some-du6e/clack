@@ -16,11 +16,17 @@ slack:// links
   Just once or Always), and in Settings > Apps > Default apps.
 
   Clack only becomes the app Windows uses without asking when no other app
-  (such as the Slack desktop app) has slack://, and it never changes an app
-  you picked with Always. To make Clack that default anyway, tick the box in
-  the installer or run:
+  (such as the Slack desktop app) has slack://. To make Clack that default
+  anyway, tick "Make Clack the default for slack:// links" in the installer
+  or run:
 
     Clack.exe -register-url-handler
+
+  Neither changes an app you picked with Always in Windows' "Select an app"
+  box: Windows protects that choice. Change it in Settings > Apps > Default
+  apps > Choose defaults by link type (at the bottom of the page) > SLACK,
+  and pick Clack. You can also type "slack" in that page's "Set a default
+  for a file type or link type" box.
 
   To remove Clack's registration (other apps' stay as they are):
 
