@@ -151,7 +151,7 @@ func (p *SearchPopover) acItems(m srACMatch) []srACItem {
 		return rk.rank(m.value, a.users[m.value], true, false, nil)
 	case m.typ == "in":
 		// searchStaticValues, then searchChannelsMembersAndWorkspaces
-		return append(srACStatic(vals, m.typ, m.value), rk.rank(m.value, a.users[m.value], true, true, a.chans[m.value])...)
+		return append(srACStatic(vals, m.typ, m.value), rk.rankIn(m.value, a.users[m.value], a.chans[m.value])...)
 	case m.typ == "has":
 		return append(srACStatic(vals, m.typ, m.value), srACEmoji(p.h, m.value, rk.opts)...)
 	case m.typ == "hasmy":
@@ -560,6 +560,28 @@ func (p *SearchPopover) acRow(gtx layout.Context, th *theme.Theme, cl *Colors, i
 		}
 		at(gtx, square(is), func(gtx layout.Context) layout.Dimensions { return icon(gtx, ic, 18, fg) })
 		x += is + dp(gtx, 8)
+		draw(15, theme.Bold, fg, it.label)
+	case srAIMpim:
+		// TextyAutocompleteChannelResult's SmallMpimListEntity: the
+		// group-DM tile, then the members' names
+		av := dp(gtx, 20)
+		rowBg := cl.Bg
+		switch {
+		case sel:
+			rowBg = cl.Highlight
+		case hot:
+			rowBg = cl.Selected
+		}
+		at(gtx, square(av), func(gtx layout.Context) layout.Dimensions {
+			return mpimTile(gtx, p.h, it.members, 20, rowBg, sel)
+		})
+		x += av + dp(gtx, 8)
+		draw(15, theme.Bold, fg, it.label)
+	case srAITeam:
+		// SmallTeamListEntity: the team icon, then its name
+		av := dp(gtx, 20)
+		pfTeamIcon(gtx, p.h, th, it.label, it.teamIcon, square(av), 20, false)
+		x += av + dp(gtx, 8)
 		draw(15, theme.Bold, fg, it.label)
 	default:
 		av := dp(gtx, 20)

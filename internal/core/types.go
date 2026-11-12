@@ -384,6 +384,11 @@ type SearchOpts struct {
 	InChannel      string
 	RecentChannels []string // recent_channels
 	ActiveCID      string   // request_context.active_cid: the open view
+	// DisableSortOverride sends disable_sort_override: the viewer just
+	// picked Most relevant (the sort select's disableSortOverride thunk;
+	// rZ6M getSearchParams, O8Qt's search in channel), so the server
+	// mustn't force the results newest first.
+	DisableSortOverride bool
 }
 
 type SearchResult struct {
@@ -397,6 +402,11 @@ type SearchResult struct {
 	// filters" for it (RelaxationSuggestion).
 	Unfiltered       int
 	UnfilteredFilter map[string]json.RawMessage
+	// SortForcedToRecent is the messages response's sort_forced_to_recent:
+	// the server sorted newest first whatever the request asked, and the
+	// sort select shows Newest (MessageEntity reads the module's
+	// sortForcedToRecent).
+	SortForcedToRecent bool
 }
 
 // ChannelHit is a channel search / browse result.

@@ -363,6 +363,8 @@ const (
 	srAIMember                      // a person (TextyAutocompleteMemberResult)
 	srAIChannel                     // a channel (the channel result)
 	srAIEmoji                       // an emoji (emojiResult)
+	srAIMpim                        // a group DM (the channel result's SmallMpimListEntity)
+	srAITeam                        // a workspace (SmallTeamListEntity)
 )
 
 // srACItem is one row of the completer's menu.
@@ -376,10 +378,13 @@ type srACItem struct {
 	// members
 	alt, avatar, presence, mention string
 	self, bot                      bool
-	// channels
+	// channels; a group DM is private (is_private) and has its members
 	private bool
+	members []string
 	// emoji
 	emojiURL string
+	// workspaces: the team icon's URL ("" draws initials)
+	teamIcon string
 }
 
 // srToken is a filter or mention token in the box: its label as typed
@@ -422,6 +427,13 @@ func srACPick(m srACMatch, it srACItem) srToken {
 		t.self = it.self // formatMemberInsertData's mention: shouldHighlightMention
 	case srAIChannel:
 		t.label, t.req = m.mod+it.label, mod+"<#"+it.id+"|"+it.label+">"
+	case srAIMpim:
+		// formatChannelInsertData's label (getDisplayNameForChannel);
+		// the request is InQuerySuggestionToken's formatMpim, "<#G…>"
+		t.label, t.req = m.mod+it.label, mod+"<#"+it.id+">"
+	case srAITeam:
+		// formatWorkspaceInsertData (getTeamDisplayName); formatTeam "<T…>"
+		t.label, t.req = m.mod+it.label, mod+"<"+it.id+">"
 	case srAIEmoji:
 		// emojiBestNameMatchLocalized || name
 		t.label, t.req = m.mod+":"+it.label+":", mod+":"+it.label+":"
@@ -639,6 +651,177 @@ func (r *srACRanker) rank(q string, remote map[string]core.User, people, channel
 	return out
 }
 
+// rankIn is searchChannelsMembersAndWorkspaces for in: (ltuT, build
+// fa938a086569): the Searcher over channels (public, private and group
+// DMs, no DMs), channel sections, members and, with includeWorkspaces
+// (in: has the "workspace" completion type), teams {onlyCurrentOrg,
+// includeCurrentTeam, includeExternal, excludeEnterprise}.
+//
+//   - Channel sections never show: buildFilterSteps filters them with
+//     `!!entities.channelSections?.includeTypes?.[type]`, and the
+//     completer passes channelSections: true, which has no includeTypes.
+//   - Group DMs are filterMpims: with no query every one; a custom-named
+//     one (mpdm_naming) by its name; otherwise the query split on commas,
+//     spaces and bars (getSubQueryMatchers, a leading @ dropped) must
+//     each match a member other than the viewer (scoreMember), scored by
+//     the members' best scores. SearcherSorter's fuzzy comparator puts a
+//     group DM after every other kind (isMpim(a) && !isMpim(b) → 1), then
+//     by score, member count and name.
+//   - Teams are getLocalTeams through getTeamFilterFunction: the current
+//     team and, on Grid, the org's other workspaces the viewer is in
+//     (onlyCurrentOrg drops Slack Connect teams, excludeEnterprise the
+//     org itself); with a query filterTeams keeps the names the fuzzy
+//     matcher scores within its limit. They sort in the second tier
+//     (with non-member channels), after the first.
+//
+// acrank has no group DM or team kinds, so the ranked people and channels
+// keep their order and the group DMs, then the teams, follow them.
+func (r *srACRanker) rankIn(q string, remote map[string]core.User, hits []core.ChannelHit) []srACItem {
+	out := r.rank(q, remote, true, true, hits)
+	out = append(out, r.mpims(q)...)
+	return append(out, r.teams(q)...)
+}
+
+// srSubQueries is getSubQueryMatchers' split of the query.
+func srSubQueries(q string) []string {
+	var out []string
+	for _, f := range strings.FieldsFunc(q, func(r rune) bool {
+		return r == ',' || r == '，' || r == '、' || r == '､' || r == '|' || r == ' '
+	}) {
+		f = strings.TrimPrefix(f, "@")
+		if f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// srMemberScore is scoreMember: the best of a person's names.
+func srMemberScore(m *acrank.Matcher, u core.User) float64 {
+	best := acrank.Inf
+	for _, n := range []string{u.RealName, u.DisplayName, u.Handle, u.FirstName, u.LastName} {
+		if n == "" {
+			continue
+		}
+		if s := m.NormalizeAndScore(n); s < best {
+			best = s
+		}
+	}
+	return best
+}
+
+// mpims are the group DMs filterMpims keeps for q, sorted.
+func (r *srACRanker) mpims(q string) []srACItem {
+	type hit struct {
+		it    srACItem
+		score float64
+		n     int
+	}
+	var hs []hit
+	mo := acrank.MatcherOpts{FuzzyLimit: 3, FuzzyJumpLimit: 20, FuzzyCJK: true}
+	qq := strings.TrimSpace(acrank.SearcherQuery(q))
+	subs := srSubQueries(qq)
+	for _, cv := range r.c.Snapshot().Convs {
+		if cv.Kind != "mpim" || cv.IsArchived {
+			continue
+		}
+		var others []string
+		for _, id := range cv.Members {
+			if id != r.self {
+				others = append(others, id)
+			}
+		}
+		it := srACItem{kind: srAIMpim, id: cv.ID, label: convTitle(r.h, cv), private: true, members: cv.Members}
+		if qq == "" {
+			hs = append(hs, hit{it, 0, len(others)})
+			continue
+		}
+		if name, ok := r.c.MpdmCustomName(cv.ID); ok {
+			if s := acrank.NewMatcher(qq, mo).NormalizeAndScore(name); s <= 3 {
+				hs = append(hs, hit{it, s, len(others)})
+				continue
+			}
+		}
+		best := map[string]float64{}
+		total := 0.0
+		for _, sq := range subs {
+			m := acrank.NewMatcher(sq, mo)
+			low := acrank.Inf
+			for _, id := range others {
+				u, ok := r.user(id)
+				if !ok || u.Deleted {
+					continue
+				}
+				s := srMemberScore(m, u)
+				if b, ok := best[id]; s < acrank.Inf && (!ok || s < b) {
+					best[id] = s
+				}
+				if s < low {
+					low = s
+				}
+			}
+			total += low
+		}
+		if len(subs) == 0 || total >= acrank.Inf {
+			continue
+		}
+		score := 0.0
+		for _, s := range best {
+			score += s
+		}
+		if score <= 3 {
+			hs = append(hs, hit{it, score, len(others)})
+		}
+	}
+	sort.SliceStable(hs, func(i, j int) bool {
+		a, b := hs[i], hs[j]
+		if a.score != b.score {
+			return a.score < b.score
+		}
+		if a.n != b.n {
+			return a.n < b.n
+		}
+		return strings.ToLower(a.it.label) < strings.ToLower(b.it.label)
+	})
+	out := make([]srACItem, 0, len(hs))
+	for _, h := range hs {
+		out = append(out, h.it)
+	}
+	return out
+}
+
+// user is a known person by id.
+func (r *srACRanker) user(id string) (core.User, bool) {
+	i := sort.Search(len(r.users), func(i int) bool { return r.users[i].ID >= id })
+	if i < len(r.users) && r.users[i].ID == id {
+		return r.users[i], true
+	}
+	return lookupUser(r.h, id)
+}
+
+// teams are getLocalTeams with the completer's filter, then filterTeams.
+func (r *srACRanker) teams(q string) []srACItem {
+	qq := strings.TrimSpace(acrank.SearcherQuery(q))
+	m := acrank.NewMatcher(qq, acrank.MatcherOpts{FuzzyLimit: 3, FuzzyJumpLimit: 20, FuzzyCJK: true})
+	snap := r.c.Snapshot()
+	var out []srACItem
+	for _, id := range r.c.EnterpriseTeams() {
+		name, ic := "", ""
+		if id == snap.Team.ID {
+			name, ic = snap.Team.Name, snap.Team.Icon
+		}
+		if name == "" {
+			name, ic, _ = r.c.Team(id, 40)
+		}
+		name = pfTeamName(name)
+		if qq != "" && m.NormalizeAndScore(name) > 3 {
+			continue
+		}
+		out = append(out, srACItem{kind: srAITeam, id: id, label: name, teamIcon: ic})
+	}
+	return out
+}
+
 // srTSF parses a Slack ts into seconds.
 func srTSF(s string) float64 {
 	var f, div float64 = 0, 0
@@ -687,8 +870,9 @@ func srACEmoji(h Host, q string, o acrank.Options) []srACItem {
 // ---- queries that already hold refs ----
 
 // srRefRe finds a request query's refs: a modifier's (from:<@U…>,
-// in:<#C…|name>) or a bare mention (<@U…>, <#C…|name>).
-var srRefRe = regexp.MustCompile(`(?i)(^|\s)((-?(?:from|to|with|in|creator|dm)):)?<([@#])([A-Z0-9]+)(?:\|([^>]*))?>`)
+// in:<#C…|name>, a group DM's in:<#G…>, a workspace's in:<T…>) or a bare
+// mention (<@U…>, <#C…|name>).
+var srRefRe = regexp.MustCompile(`(?i)(^|\s)((-?(?:from|to|with|in|creator|dm)):)?<([@#]?)([A-Z0-9]+)(?:\|([^>]*))?>`)
 
 // srDisplayQuery is a request query as the box shows it (the omniswitcher's
 // display query): each ref a token labelled as a pick would have it,
@@ -756,13 +940,32 @@ func srRefToken(h Host, mod, sigil, id, name string) (srToken, bool) {
 	if mod != "" && typ != "in" {
 		return srToken{}, false
 	}
+	if sigil == "" {
+		// InQuerySuggestionToken's team (formatTeam "<T…>"), labelled
+		// getTeamDisplayName; a bare <…> is no ref
+		if mod == "" || !strings.HasPrefix(strings.ToUpper(id), "T") {
+			return srToken{}, false
+		}
+		n := srTeamName(h, id)
+		if n == "" {
+			return srToken{}, false
+		}
+		return srToken{label: mod + n, icon: srFilterIcon(typ, srACItem{kind: srAITeam, id: id}), mod: fmod, entity: id}, true
+	}
 	private := false
 	if c := h.Core(); c != nil {
 		ref := c.ConvRef(id)
+		if ref.Kind == "mpim" {
+			// formatMpim: getDisplayNameForChannel, whatever the ref's |name
+			if cv, ok := c.Conv(id); ok {
+				name = convTitle(h, cv)
+			}
+			private = true
+		}
 		if name == "" {
 			name = ref.Name
 		}
-		private = ref.Kind == "private"
+		private = private || ref.Kind == "private"
 	}
 	if name == "" {
 		return srToken{}, false
@@ -771,6 +974,19 @@ func srRefToken(h Host, mod, sigil, id, name string) (srToken, bool) {
 		return srToken{label: "#" + name, mention: true, entity: id}, true
 	}
 	return srToken{label: mod + name, icon: srFilterIcon(typ, srACItem{kind: srAIChannel, id: id, private: private}), mod: fmod, entity: id}, true
+}
+
+// srTeamName is a workspace's getTeamDisplayName, "" when unknown.
+func srTeamName(h Host, id string) string {
+	c := h.Core()
+	if c == nil {
+		return ""
+	}
+	if snap := c.Snapshot(); snap.Team.ID == id && snap.Team.Name != "" {
+		return snap.Team.Name
+	}
+	n, _, _ := c.Team(id, 20)
+	return n
 }
 
 // SearchDisplayText is a search query as Slack's search box shows it

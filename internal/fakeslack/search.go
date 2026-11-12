@@ -96,6 +96,10 @@ type searchLog struct {
 	// hist is the search history search.autocomplete answers: search.save
 	// adds to it (or bumps a query's count), search.delete drops a query.
 	hist []savedSearch
+	// forceRecent makes search.modules.messages sort newest first and say
+	// sort_forced_to_recent, unless the call sends disable_sort_override
+	// (SetSortForcedToRecent)
+	forceRecent bool
 }
 
 // savedSearch is one search history entry.
@@ -132,6 +136,17 @@ var searchLogs sync.Map // *Server -> *searchLog
 func (s *Server) slog() *searchLog {
 	v, _ := searchLogs.LoadOrStore(s, &searchLog{forms: map[string][]url.Values{}})
 	return v.(*searchLog)
+}
+
+// SetSortForcedToRecent makes search.modules.messages override the
+// requested sort the way Slack's server may: newest first, answering
+// sort_forced_to_recent: true, unless the call carries
+// disable_sort_override=true.
+func (s *Server) SetSortForcedToRecent(on bool) {
+	l := s.slog()
+	l.mu.Lock()
+	l.forceRecent = on
+	l.mu.Unlock()
 }
 
 // SearchForms returns the forms of every call to method (a search.*
@@ -409,8 +424,12 @@ func (s *Server) searchMessages(f url.Values, dms bool) any {
 		}
 		hits = append(hits, h)
 	}
-	if f.Get("sort") == "timestamp" {
-		asc := f.Get("sort_dir") == "asc"
+	l := s.slog()
+	l.mu.Lock()
+	forced := l.forceRecent && !dms && f.Get("disable_sort_override") != "true"
+	l.mu.Unlock()
+	if forced || f.Get("sort") == "timestamp" {
+		asc := !forced && f.Get("sort_dir") == "asc"
 		sort.SliceStable(hits, func(i, j int) bool {
 			if asc {
 				return atof(hits[i].m.TS) < atof(hits[j].m.TS)
@@ -471,6 +490,9 @@ func (s *Server) searchMessages(f url.Values, dms bool) any {
 	out := ok("query", f.Get("query"), "module", module, "filters", map[string]any{}, "items", items,
 		"pagination", pagination(len(hits), page, pages, per, start, end),
 		"filter_suggestions", map[string]any{"in": sugg(inN, o.in), "from": sugg(fromN, o.from)})
+	if forced {
+		out["sort_forced_to_recent"] = true
+	}
 	// nothing with the in:/from: filters, something without them: Slack's
 	// relaxation (unfiltered_result_count, unfiltered_result_filter)
 	if len(hits) == 0 && !dms && (len(o.in) > 0 || len(o.from) > 0) {

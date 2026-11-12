@@ -29,17 +29,23 @@ import (
 	"image"
 	"image/color"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/io/key"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // "Other channels" is slack_connect_hub_next's (a6).
@@ -196,39 +202,6 @@ func (v *SearchView) workspaceMenu(gtx layout.Context) {
 	v.openMenu(gtx, v.pillR[srPWorkspace], []MenuItem{{Key: "all", Label: nsSearch.T("All workspaces"), Radio: true, Checked: true, Do: func() {}}}, 240)
 }
 
-// srFacetMenu is SearchFilterLocation / SearchFilterTitle's options: the
-// chosen values (checked; a click takes one off), Clear all past one, then
-// "Suggestions" with the first five facets not chosen.
-func srFacetMenu(chosen []string, facets []core.Facet, toggle func(string), clear func()) []MenuItem {
-	var items []MenuItem
-	for _, c := range chosen {
-		val := c
-		items = append(items, MenuItem{Label: val, Checked: true, Do: func() { toggle(val) }})
-	}
-	if len(chosen) > 1 {
-		items = append(items, MenuItem{Key: "clear_all", Label: nsSearch.T("Clear all"), Do: clear})
-	}
-	var sugg []MenuItem
-	for i, f := range facets {
-		if i == 5 {
-			break
-		}
-		if f.Value == "" || slices.Contains(chosen, f.Value) {
-			continue
-		}
-		val := f.Value
-		sugg = append(sugg, MenuItem{Label: val, Do: func() { toggle(val) }})
-	}
-	if len(sugg) > 0 {
-		items = append(items, MenuItem{Header: nsSearch.T("Suggestions")})
-		items = append(items, sugg...)
-	}
-	if len(items) == 0 {
-		items = append(items, MenuItem{Note: nsSearch.T("Nothing found")})
-	}
-	return items
-}
-
 func srToggleIn(list []string, v string) []string {
 	if i := slices.Index(list, v); i >= 0 {
 		return slices.Delete(slices.Clone(list), i, i+1)
@@ -236,16 +209,28 @@ func srToggleIn(list []string, v string) []string {
 	return append(slices.Clone(list), v)
 }
 
+// titleMenu is SearchFilterTitle's select (srFacetSelect, below).
 func (v *SearchView) titleMenu(gtx layout.Context) {
-	items := srFacetMenu(v.titles, v.facetTitles, func(s string) { v.titles = srToggleIn(v.titles, s); v.search(1) },
-		func() { v.titles = nil; v.search(1) })
-	v.openMenu(gtx, v.pillR[srPTitle], items, 266)
+	v.h.ShowOverlay(newSRFacetSelect(v.h, v.win(gtx, v.pillR[srPTitle]), nsSearch.T("Ex. Director"),
+		func() []string { return v.titles }, func() []core.Facet { return v.facetTitles },
+		func(s string, on bool) { v.titles = srSetIn(v.titles, s, on); v.search(1) },
+		func() { v.titles = nil; v.search(1) }))
 }
 
+// locationMenu is SearchFilterLocation's select.
 func (v *SearchView) locationMenu(gtx layout.Context) {
-	items := srFacetMenu(v.locs, v.facetLocs, func(s string) { v.locs = srToggleIn(v.locs, s); v.search(1) },
-		func() { v.locs = nil; v.search(1) })
-	v.openMenu(gtx, v.pillR[srPLocation], items, 266)
+	v.h.ShowOverlay(newSRFacetSelect(v.h, v.win(gtx, v.pillR[srPLocation]), nsSearch.T("Ex. New York"),
+		func() []string { return v.locs }, func() []core.Facet { return v.facetLocs },
+		func(s string, on bool) { v.locs = srSetIn(v.locs, s, on); v.search(1) },
+		func() { v.locs = nil; v.search(1) }))
+}
+
+// srSetIn adds v to list (on) or takes it out.
+func srSetIn(list []string, v string, on bool) []string {
+	if slices.Contains(list, v) == on {
+		return list
+	}
+	return srToggleIn(list, v)
 }
 
 // setPrefs sets several search prefs, then searches again.
@@ -534,4 +519,395 @@ func srMergeFacets(have, add []core.Facet) []core.Facet {
 		}
 	}
 	return out
+}
+
+// ---- the Title and Location menus' search field ----
+//
+// SearchFilterTitle (4TgK) and SearchFilterLocation (K4vW), gantry
+// search-prefs chunk of build fa938a086569, render SearchFilterSearchSelect
+// (boot-shared 1Vs3) with selectType "multi", useEchoQuery and
+// placeholderText "Ex. Director" / "Ex. New York":
+//
+//   - a c-menu 280 wide (486 with isFullWidthPopover) at "bottom-left",
+//     offsetY -4, offsetX -10; .p-search_filter__multi-select-items-wrapper
+//     pads 24 above the medium search input (36 tall, 234 wide, centred,
+//     the search icon 12 in, the text at 33; focusOnMount), which keeps 16
+//     below while there is nothing to list (--empty);
+//   - the options list (Fd8o in multiSelectMode, optionsRowHeight 32,
+//     headingRowHeight and clearOptionRowHeight 25, the virtual list padded
+//     8 above and below, options 24 in): with no query the chosen values,
+//     "Clear all" past one (13px, #1264a3), then a "Suggestions" heading
+//     (13px, content-sec) over the first five facets not chosen; with a
+//     query the search's hits, then the query itself (useEchoQuery), so a
+//     value nobody has can be chosen too;
+//   - search scores every facet of the field (searchSharedFacets: the
+//     response's filter_suggestions) with the Searcher's fuzzy matcher
+//     (normalizeAndScore), keeps the finite ones and sorts them by score;
+//     the select runs it 200 ms after the last keystroke
+//     (debounceWaitPeriod), and "Nothing found" only shows for a query
+//     with no rows, which the echo row rules out;
+//   - interactive rows are .p-search_filter__list_item--checkbox: the 13px
+//     checkbox image 12 before the label; a chosen one is --selected
+//     (#1264a3, bold, the checked image); the active row (the pointer's,
+//     or ↑ / ↓; shouldAlwaysHaveActiveRow) is base-inv-hgl-1 with white
+//     text. A click or Enter toggles the row (onSelectionChange /
+//     onOptionUnselected: the popover stays open, a multi select), Clear
+//     all is onClear; Escape or a click outside closes.
+
+// srFacetSelect is one Title or Location menu.
+type srFacetSelect struct {
+	base
+	h           Host
+	anchor      image.Rectangle // the pill (window coords)
+	placeholder string
+	chosen      func() []string
+	facets      func() []core.Facet
+	toggle      func(val string, on bool)
+	clear       func()
+
+	ed      widget.Editor
+	query   string    // filterQuery
+	hits    []string  // the search's options for query
+	due     time.Time // the debounced search's deadline (zero: none pending)
+	focused bool
+	active  int // the active row (-1 none)
+	moved   bool
+
+	rows  []srFacetRow
+	click []widget.Clickable
+	list  layout.List
+	scrim scrim
+	block blocker
+	rect  image.Rectangle
+}
+
+// srFacetRow is one row of the list.
+type srFacetRow struct {
+	kind  int // srFRHeading, srFRClear or srFROption
+	value string
+}
+
+const (
+	srFROption = iota
+	srFRHeading
+	srFRClear
+)
+
+func newSRFacetSelect(h Host, anchor image.Rectangle, placeholder string, chosen func() []string, facets func() []core.Facet,
+	toggle func(string, bool), clear func()) *srFacetSelect {
+	s := &srFacetSelect{h: h, anchor: anchor, placeholder: placeholder, chosen: chosen, facets: facets, toggle: toggle, clear: clear}
+	s.ed.SingleLine = true
+	s.list.Axis = layout.Vertical
+	return s
+}
+
+// srFacetSearch is the menus' search: every facet value scored against q
+// (an empty q scores 0), the finite ones by score.
+func srFacetSearch(facets []core.Facet, q string) []string {
+	m := acrank.NewMatcher(q, acrank.MatcherOpts{})
+	type hit struct {
+		v string
+		s float64
+	}
+	var hs []hit
+	for _, f := range facets {
+		sc := 0.0
+		if q != "" {
+			sc = m.NormalizeAndScore(f.Value)
+		}
+		if sc < acrank.Inf {
+			hs = append(hs, hit{f.Value, sc})
+		}
+	}
+	sort.SliceStable(hs, func(i, j int) bool { return hs[i].s < hs[j].s })
+	out := make([]string, 0, len(hs))
+	for _, x := range hs {
+		out = append(out, x.v)
+	}
+	return out
+}
+
+// srFacetRows is the list for a query: F (the chosen values, Clear all,
+// the Suggestions) without one, the hits and the echo row with one.
+func srFacetRows(chosen []string, facets []core.Facet, query string, hits []string) []srFacetRow {
+	var rows []srFacetRow
+	if query != "" {
+		for _, v := range hits {
+			rows = append(rows, srFacetRow{kind: srFROption, value: v})
+		}
+		return append(rows, srFacetRow{kind: srFROption, value: query})
+	}
+	for _, v := range chosen {
+		rows = append(rows, srFacetRow{kind: srFROption, value: v})
+	}
+	if len(chosen) > 1 {
+		rows = append(rows, srFacetRow{kind: srFRClear, value: nsSearch.T("Clear all")})
+	}
+	var sugg []srFacetRow
+	for i, f := range facets {
+		if i == 5 {
+			break // O.slice(0, 5), then the chosen ones dropped
+		}
+		if f.Value != "" && !slices.Contains(chosen, f.Value) {
+			sugg = append(sugg, srFacetRow{kind: srFROption, value: f.Value})
+		}
+	}
+	if len(sugg) > 0 {
+		rows = append(rows, srFacetRow{kind: srFRHeading, value: nsSearch.T("Suggestions")})
+		rows = append(rows, sugg...)
+	}
+	return rows
+}
+
+// interactive reports whether row i can be active.
+func (s *srFacetSelect) interactive(i int) bool {
+	return i >= 0 && i < len(s.rows) && s.rows[i].kind != srFRHeading
+}
+
+// step moves the active row by d over the interactive rows.
+func (s *srFacetSelect) step(d int) {
+	n := len(s.rows)
+	if n == 0 {
+		return
+	}
+	i := s.active
+	for k := 0; k < n; k++ {
+		i = ((i+d)%n + n) % n
+		if s.interactive(i) {
+			s.active, s.moved = i, true
+			return
+		}
+	}
+}
+
+// pick runs row i.
+func (s *srFacetSelect) pick(i int) {
+	if !s.interactive(i) {
+		return
+	}
+	r := s.rows[i]
+	if r.kind == srFRClear {
+		s.clear()
+		return
+	}
+	s.toggle(r.value, !slices.Contains(s.chosen(), r.value))
+}
+
+func (s *srFacetSelect) Layout(gtx layout.Context) layout.Dimensions {
+	drain()
+	if s.done {
+		return layout.Dimensions{}
+	}
+	stacked(gtx, s)
+	win := gtx.Constraints.Max
+	gtx.Constraints.Min = image.Point{}
+	if !s.focused {
+		gtx.Execute(key.FocusCmd{Tag: &s.ed}) // focusOnMount
+		s.focused = true
+	}
+	if isTop(s) && escape(gtx, nil) {
+		s.Dismiss()
+		return layout.Dimensions{}
+	}
+	for {
+		e, ok := gtx.Event(
+			key.Filter{Focus: &s.ed, Name: key.NameUpArrow},
+			key.Filter{Focus: &s.ed, Name: key.NameDownArrow},
+			key.Filter{Focus: &s.ed, Name: key.NameReturn},
+			key.Filter{Focus: &s.ed, Name: key.NameEnter},
+		)
+		if !ok {
+			break
+		}
+		ke, ok := e.(key.Event)
+		if !ok || ke.State != key.Press {
+			continue
+		}
+		switch ke.Name {
+		case key.NameUpArrow:
+			s.step(-1)
+		case key.NameDownArrow:
+			s.step(1)
+		default:
+			s.pick(s.active)
+		}
+	}
+	for {
+		if _, ok := s.ed.Update(gtx); !ok {
+			break
+		}
+	}
+	if q := strings.TrimSpace(s.ed.Text()); q != s.query {
+		// handleSelectStateChange: a new query is searched 200 ms later;
+		// none clears the hits at once
+		s.query = q
+		if q == "" {
+			s.hits, s.due = nil, time.Time{}
+		} else {
+			s.due = gtx.Now.Add(200 * time.Millisecond)
+		}
+	}
+	if !s.due.IsZero() {
+		if !gtx.Now.Before(s.due) {
+			s.hits, s.due = srFacetSearch(s.facets(), s.query), time.Time{}
+		} else {
+			gtx.Execute(op.InvalidateCmd{At: s.due})
+		}
+	}
+	if s.scrim.Layout(gtx) {
+		s.Dismiss()
+		return layout.Dimensions{}
+	}
+	chosen := s.chosen()
+	s.rows = srFacetRows(chosen, s.facets(), s.query, s.hits)
+	for len(s.click) < len(s.rows) {
+		s.click = append(s.click, widget.Clickable{})
+	}
+	for i := range s.rows {
+		if s.click[i].Clicked(gtx) {
+			s.active = i
+			s.pick(i)
+		}
+	}
+	if !s.interactive(s.active) {
+		s.active = -1
+		s.step(1) // shouldAlwaysHaveActiveRow
+		s.moved = false
+	}
+
+	th := s.h.Theme()
+	cl := colorsOf(th)
+	w := dp(gtx, 280)
+	optH, headH := dp(gtx, 32), dp(gtx, 25)
+	rowH := func(r srFacetRow) int {
+		if r.kind == srFROption {
+			return optH
+		}
+		return headH
+	}
+	listH := 0
+	for _, r := range s.rows {
+		listH += rowH(r)
+	}
+	inputTop, inputH := dp(gtx, 24), dp(gtx, 36)
+	top := inputTop + inputH
+	listPad := dp(gtx, 8)
+	h := top
+	if len(s.rows) == 0 {
+		h += dp(gtx, 16) // --empty
+	} else {
+		h += 2*listPad + listH
+	}
+	maxH := max(win.Y-dp(gtx, 20), top+headH)
+	if h > maxH {
+		listH -= h - maxH
+		h = maxH
+	}
+	pos := slackPlace(s.anchor, image.Pt(w, h), win, "bottom-left", -dp(gtx, 10), -dp(gtx, 4), dp(gtx, 16), dp(gtx, 10), true)
+	s.rect = image.Rectangle{Min: pos, Max: pos.Add(image.Pt(w, h))}
+	card(gtx, cl, s.rect, dp(gtx, 6))
+	s.block.Layout(gtx, s.rect)
+	cs := clipRRect(gtx, s.rect, dp(gtx, 6))
+	defer cs.Pop()
+
+	// the search input
+	iw := dp(gtx, 234)
+	ir := image.Rect(pos.X+(w-iw)/2, pos.Y+inputTop, pos.X+(w-iw)/2+iw, pos.Y+top)
+	srFacetInput(gtx, th, cl, &s.ed, s.placeholder, ir)
+
+	if len(s.rows) == 0 {
+		return layout.Dimensions{Size: win}
+	}
+	if s.moved {
+		// keep the active row in view
+		s.moved = false
+		if s.active < s.list.Position.First || s.active >= s.list.Position.First+max(s.list.Position.Count-1, 1) {
+			s.list.ScrollTo(s.active)
+		}
+	}
+	at(gtx, image.Pt(pos.X, pos.Y+top+listPad), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(image.Pt(w, max(listH, 1)))
+		return s.list.Layout(gtx, len(s.rows), func(gtx layout.Context, i int) layout.Dimensions {
+			return s.row(gtx, th, cl, i, w, rowH(s.rows[i]), chosen)
+		})
+	})
+	return layout.Dimensions{Size: win}
+}
+
+// row draws list row i (w by rh).
+func (s *srFacetSelect) row(gtx layout.Context, th *theme.Theme, cl *Colors, i, w, rh int, chosen []string) layout.Dimensions {
+	r := s.rows[i]
+	sz := image.Pt(w, rh)
+	if r.kind == srFRHeading {
+		at(gtx, image.Pt(dp(gtx, 24), 0), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 13, theme.Regular, cl.Fg2, r.value) // .p-search_filter__multi-select-label
+			})
+		})
+		return layout.Dimensions{Size: sz}
+	}
+	gtx.Constraints = layout.Exact(sz)
+	return s.click[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		if s.click[i].Hovered() && s.active != i {
+			s.active = i // onMouseMove
+		}
+		act := i == s.active
+		if act {
+			fill(gtx, image.Rectangle{Max: sz}, cl.Highlight) // --active: base-inv-hgl-1
+		}
+		pointerCursor(gtx, sz)
+		x := dp(gtx, 24)
+		if r.kind == srFRClear {
+			fg := cl.Link // .p-search_filter__select-list .c-select_options_list__clear_option
+			if act {
+				fg = cl.HighText
+			}
+			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 13, theme.Regular, fg, r.value) })
+			})
+			return layout.Dimensions{Size: sz}
+		}
+		on := slices.Contains(chosen, r.value)
+		srFacetCheckbox(gtx, image.Pt(x, (rh-dp(gtx, 13))/2+dp(gtx, 1)), on)
+		x += dp(gtx, 13) + dp(gtx, 12)
+		fg, wt := cl.Fg, theme.Regular
+		if on {
+			fg, wt = cl.Link, theme.Bold // --selected: #1264a3, bold
+		}
+		if act {
+			fg = cl.HighText // --active (--active--selected inherits)
+		}
+		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, w-x-dp(gtx, 24)), rh)}
+			return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 15, wt, fg, r.value) })
+		})
+		return layout.Dimensions{Size: sz}
+	})
+}
+
+// srFacetCheckbox is .p-search_filter__list_item--checkbox's image at p,
+// 13px: checkbox_unselected (white, a #a0a0a2 ring) or checkbox_selected
+// (#4d89f5 with a white check), both radius 3 at 14px.
+func srFacetCheckbox(gtx layout.Context, p image.Point, on bool) {
+	sz := dp(gtx, 13)
+	r := image.Rectangle{Min: p, Max: p.Add(image.Pt(sz, sz))}
+	rad := dp(gtx, 3)
+	if on {
+		rrect(gtx, r, rad, rgb(0x4d89f5))
+		is := dp(gtx, 10)
+		at(gtx, p.Add(image.Pt((sz-is)/2, (sz-is)/2)), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, "check", 10, rgb(0xffffff))
+		})
+		return
+	}
+	rrect(gtx, r, rad, rgb(0xa0a0a2))
+	rrect(gtx, r.Inset(1), max(rad-1, 0), rgb(0xffffff))
+}
+
+// srFacetInput is the medium select input with the search icon in r.
+func srFacetInput(gtx layout.Context, th *theme.Theme, cl *Colors, ed *widget.Editor, placeholder string, r image.Rectangle) {
+	at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(r.Size())
+		return field(gtx, th, ed, placeholder, "search", 36, 15)
+	})
 }

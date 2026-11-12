@@ -50,7 +50,8 @@ type SearchInChannel struct {
 	feedback widget.Clickable
 	emptyFb  widget.Clickable // the no-results state's "Give feedback"
 	sortR    image.Rectangle
-	sortBy   string // score | timestamp | oldest
+	sortBy   string      // score | timestamp | oldest
+	sortSt   srSortState // sort_forced_to_recent / disable_sort_override (search_view.go)
 	origin   image.Point
 	searched bool // a search ran (Slack's eu: the no-results state replaces "Nothing to show yet.")
 	// skelStart is when the loading skeleton's shimmer began
@@ -97,8 +98,11 @@ func (v *SearchInChannel) Search(q string) {
 	v.skelStart = time.Time{}
 	sort := v.sortBy
 	ch := v.ch
+	// O8Qt: disableSortOverride is the handler's (Most relevant picked)
+	// or the window's
+	noOverride := v.sortSt.noOverride
 	run(v.h, func(ctx context.Context) (core.SearchResult, error) {
-		return c.SearchMessages(ctx, core.SearchOpts{Query: q, InChannel: ch, Sort: sort})
+		return c.SearchMessages(ctx, core.SearchOpts{Query: q, InChannel: ch, Sort: sort, DisableSortOverride: noOverride})
 	}, func(res core.SearchResult, err error) {
 		if seq != v.seq {
 			return
@@ -109,6 +113,7 @@ func (v *SearchInChannel) Search(q string) {
 			return
 		}
 		v.msgs, v.total, v.convs = res.Messages, res.Total, res.Convs
+		v.sortSt.answered(res)
 		for len(v.rows) < len(v.msgs) {
 			v.rows = append(v.rows, widget.Clickable{})
 		}
@@ -176,7 +181,8 @@ func (v *SearchInChannel) sortMenu() {
 	var items []MenuItem
 	for _, o := range [...]string{"score", "timestamp", "oldest"} {
 		val := o
-		items = append(items, MenuItem{Label: srcSortLabel(c, val), Checked: v.sortBy == val, Do: func() {
+		items = append(items, MenuItem{Label: srcSortLabel(c, val), Checked: v.sortSt.shown(v.sortBy) == val, Do: func() {
+			v.sortSt.picked(val) // customMessageSortHandler: disableSortOverride for Most relevant
 			v.sortBy = val
 			v.Search(v.query)
 			if sticky {
@@ -467,10 +473,10 @@ func (v *SearchInChannel) resultsHeader(gtx layout.Context, th *theme.Theme, cl 
 	// least 350 wide (FilterSortSelectedOptionContent inChannel)
 	label := ""
 	if w >= dp(gtx, 350) {
-		label = nsSearch.T(srcSortLabel(v.h.Core(), v.sortBy))
+		label = nsSearch.T(srcSortLabel(v.h.Core(), v.sortSt.shown(v.sortBy)))
 	}
 	call, pd := record(gtx, func(gtx layout.Context) layout.Dimensions {
-		return Pill(gtx, th, &v.sortBtn, "sort", label, true, v.sortBy != "score")
+		return Pill(gtx, th, &v.sortBtn, "sort", label, true, v.sortSt.shown(v.sortBy) != "score")
 	})
 	sx := w - pad - pd.Size.X
 	sy := (lh - pd.Size.Y) / 2
@@ -514,10 +520,35 @@ func (v *SearchInChannel) row(gtx layout.Context, th *theme.Theme, cl *Colors, i
 	segs := srHighlight(srFlatten(srBody(m)), terms)
 	cw := w - 2*pad
 	tx := dp(gtx, 12) + dp(gtx, 36) + dp(gtx, 8)
+	// a hidden sender's card (SearchResult's isMsgFromHiddenSender,
+	// search_view.go cardHidden): no header, HiddenMessageBody
+	hidden := srHiddenSender(v.h, m)
+	var htoks []srRichTok
 	toks, lines, over := srWrapFit(gtx, th, segs, maxInt(1, cw-tx-dp(gtx, 12)), 2, textW(gtx, th, 15, theme.Regular, "…"))
+	if hidden {
+		htoks, lines = srRichLayout(gtx, th, 15, srHiddenContents(v.h, m), maxInt(1, cw-tx-dp(gtx, 12)))
+		toks, over = nil, false
+	}
 	lh := dp(gtx, 22)
 	h := dp(gtx, 12) + lh + lines*lh + dp(gtx, 12)
 	h = maxInt(h, dp(gtx, 64))
+	if hidden {
+		return at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &v.rows[i], nil, func(gtx layout.Context) layout.Dimensions {
+				r := image.Rect(0, 0, cw, h)
+				bg := cl.Bg
+				if v.rows[i].Hovered() {
+					bg = cl.BgHover
+				}
+				rrect(gtx, r, dp(gtx, 12), bg)
+				stroke(gtx, r, dp(gtx, 12), maxInt(1, dp(gtx, 1)), cl.Divider)
+				srDrawHiddenAvatar(gtx, th, image.Pt(dp(gtx, 12), dp(gtx, 12)), 36, bg)
+				srDrawHiddenHead(gtx, th, cl, m, tx, dp(gtx, 10), cw-dp(gtx, 12), lh)
+				srDrawRich(gtx, th, cl, htoks, tx, dp(gtx, 10)+lh, lh)
+				return layout.Dimensions{Size: image.Pt(cw, h+dp(gtx, 8))}
+			})
+		})
+	}
 	return at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
 		return clickBox(gtx, &v.rows[i], nil, func(gtx layout.Context) layout.Dimensions {
 			r := image.Rect(0, 0, cw, h)

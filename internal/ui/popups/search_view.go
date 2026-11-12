@@ -286,6 +286,9 @@ type SearchView struct {
 	q      srQuery
 	tab    int
 	sortBy string // score | timestamp | oldest
+	// sortState is the messages module's sortForcedToRecent and the
+	// window's disableSortOverride (srSortState)
+	sortState srSortState
 
 	origin    image.Point
 	originSet bool
@@ -512,7 +515,8 @@ func (v *SearchView) search(page int) {
 			return
 		}
 		o := core.SearchOpts{Query: q, Page: page, Sort: v.sortBy, ExactOnly: v.exact, ExcludeArchived: v.exclArch,
-			Session: sess, RecentChannels: srRecentChannels(), Module: srTabModules[v.tab]}
+			Session: sess, RecentChannels: srRecentChannels(), Module: srTabModules[v.tab],
+			DisableSortOverride: v.tab == srTabMessages && v.sortState.noOverride}
 		v.loading = true
 		run(v.h, func(ctx context.Context) (core.SearchResult, error) { return c.SearchMessages(ctx, o) },
 			func(res core.SearchResult, err error) {
@@ -528,6 +532,7 @@ func (v *SearchView) search(page int) {
 				if v.tab == srTabMessages {
 					v.fromSugg = res.FilterFrom
 					v.unfiltered = res.Unfiltered
+					v.sortState.answered(res)
 				}
 				done(res.Total)
 			})
@@ -852,8 +857,10 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 	items := make([]MenuItem, 0, len(opts)+2)
 	for _, o := range opts {
 		val := o.val
-		items = append(items, MenuItem{Key: LabelKey(o.label), Label: nsSearch.T(o.label), Checked: v.sortBy == val, Do: func() {
-			if v.sortBy != val {
+		shown := v.sortState.shown(v.sortBy)
+		items = append(items, MenuItem{Key: LabelKey(o.label), Label: nsSearch.T(o.label), Checked: shown == val, Do: func() {
+			if shown != val {
+				v.sortState.picked(val)
 				v.sortBy = val
 				v.search(1)
 			}
@@ -874,6 +881,39 @@ func (v *SearchView) sortMenu(gtx layout.Context) {
 		}
 	}}.In(nsSearch))
 	v.openMenu(gtx, v.sortR, items, 240)
+}
+
+// srSortState is the messages sort's server override, as Slack keeps it
+// in searchUi (client-boot selectors ag sortForcedToRecent, dM
+// disableSortOverride; search-filter-sort's disableSortOverride thunk):
+//
+//   - a messages response's sort_forced_to_recent sets forced, and the
+//     sort select (MessageEntity: u = ag(…) ? recentMessages : WJ) then
+//     shows Newest whatever was asked;
+//   - picking Most relevant dispatches disableSortOverride first
+//     (noOverride on, forced off), so that search sends
+//     disable_sort_override; every messages response turns noOverride
+//     off again ($f {disableSortOverride: !1}).
+type srSortState struct{ forced, noOverride bool }
+
+// shown is the select's sort: Newest while the server forced it.
+func (s srSortState) shown(sortBy string) string {
+	if s.forced {
+		return "timestamp"
+	}
+	return sortBy
+}
+
+// picked is a choice in the select (before its search).
+func (s *srSortState) picked(val string) {
+	if val == "score" {
+		s.noOverride, s.forced = true, false
+	}
+}
+
+// answered is a messages response.
+func (s *srSortState) answered(res core.SearchResult) {
+	s.forced, s.noOverride = res.SortForcedToRecent, false
 }
 
 // srSortPref is the search_sort value for a sort (cX/T kK).
@@ -1124,7 +1164,7 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 		})
 		x += d.Size.X
 		label := nsSearch.T("Most relevant (default)")
-		switch v.sortBy {
+		switch v.sortState.shown(v.sortBy) {
 		case "timestamp":
 			label = nsSearch.T("Newest")
 		case "oldest":
@@ -1714,6 +1754,9 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	gtx.Constraints.Min = image.Point{}
 	c := &v.cards[i]
 	m := &v.msgs[i]
+	if srHiddenSender(v.h, m) {
+		return v.cardHidden(gtx, th, cl, i, w)
+	}
 	padL, padR, padT, padB := dp(gtx, 16), dp(gtx, 32), dp(gtx, 15), dp(gtx, 12)
 	av := dp(gtx, 36)
 	tx := padL + av + dp(gtx, 9)
@@ -1826,6 +1869,199 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 	return layout.Dimensions{Size: sz}
 }
 
+// A hidden person's message in the results, as SearchResult (boot-shared
+// Wzwx, build fa938a086569) draws it when isMsgFromHiddenSender (client-boot
+// eQJk: the sender is in hidden_users, the message not shown anyway):
+//
+//   - renderContentHeader returns null: no sender, channel or time line;
+//   - renderText / renderBlocks are renderHiddenMessage: a
+//     div.c-search_message__body.c-search_message_hidden__body
+//     (content-sec, margin unset) around HiddenMessageBody (aOPx) with
+//     renderShowMessageLink false: MessageSender, "This message is
+//     hidden", a no-break space, then (not under Compact) a no-break
+//     space, a space and the clickable Timestamp; a break; the contents
+//     "You’re hiding messages from this person.", or "Someone you hid
+//     <b>mentioned you</b> in this message." when it mentions the viewer
+//     (checkForMentionInMessage without @here, @channel, @everyone and
+//     highlight words). There is no "Show anyway" link here;
+//   - the Show more button is off (hasBodyExpandButton: !isMsgFromHiddenSender);
+//   - the gutter's BaseAvatar is HiddenUserAvatar (isUserHidden): the
+//     rgba(foreground_soft, .06) square, radius 4, with user-hide (24px)
+//     in rgba(foreground_max, .7);
+//   - the reply chip (renderReactionsAndReplies) stays.
+
+// srHiddenSender is isMsgFromHiddenSender for a result.
+func srHiddenSender(h Host, m *core.Message) bool {
+	app := h.Core()
+	return app != nil && m != nil && m.User != "" && app.MessageFromHiddenSender(m)
+}
+
+// srHiddenContents is HiddenMessageBody's contents for m: plain, or with
+// "mentioned you" bold.
+func srHiddenContents(h Host, m *core.Message) []srRich {
+	if app := h.Core(); app != nil && app.MentionsViewerDirectly(m) {
+		var out []srRich
+		for _, p := range nsMessage.RT("Someone you hid <b>mentioned you</b> in this message.") {
+			out = append(out, srRich{s: p.Text, bold: p.Tag == "b"})
+		}
+		return out
+	}
+	return []srRich{{s: nsMessage.T("You’re hiding messages from this person.")}}
+}
+
+// srRich is a run of text, bold or not.
+type srRich struct {
+	s    string
+	bold bool
+}
+
+// srRichLayout wraps runs into lines of width w (a word that doesn't fit
+// moves down; one wider than the line stays): each word's x and line.
+func srRichLayout(gtx layout.Context, th *theme.Theme, size float32, runs []srRich, w int) ([]srRichTok, int) {
+	var out []srRichTok
+	x, line := 0, 0
+	for _, r := range runs {
+		wt := theme.Regular
+		if r.bold {
+			wt = theme.Bold
+		}
+		for _, word := range srSplitWords(r.s, nil) {
+			if word == "\n" {
+				x, line = 0, line+1
+				continue
+			}
+			ww := textW(gtx, th, size, wt, word)
+			if x > 0 && x+ww > w && strings.TrimSpace(word) != "" {
+				x, line = 0, line+1
+			}
+			if x == 0 && strings.TrimSpace(word) == "" {
+				continue
+			}
+			out = append(out, srRichTok{s: word, bold: r.bold, x: x, line: line, w: ww})
+			x += ww
+		}
+	}
+	return out, line + 1
+}
+
+type srRichTok struct {
+	s          string
+	bold       bool
+	x, line, w int
+}
+
+// srDrawHiddenAvatar is HiddenUserAvatar in a size dp square at pt, over
+// bg.
+func srDrawHiddenAvatar(gtx layout.Context, th *theme.Theme, pt image.Point, size float32, bg color.NRGBA) {
+	fg := uint32(0x1d1c1d) // foreground_soft / foreground_max
+	if th != nil && th.Dark {
+		fg = 0xe8e8e8
+	}
+	px := dp(gtx, size)
+	r := image.Rectangle{Min: pt, Max: pt.Add(image.Pt(px, px))}
+	rrect(gtx, r, dp(gtx, 4), linearAlpha(rgba(fg, .06), bg))
+	is := float32(24)
+	if size <= 24 {
+		is = 16
+	}
+	ip := dp(gtx, is)
+	at(gtx, image.Pt(r.Min.X+(px-ip)/2, r.Min.Y+(px-ip)/2), func(gtx layout.Context) layout.Dimensions {
+		return icon(gtx, "user-hide", is, linearAlpha(rgba(fg, .7), bg))
+	})
+}
+
+// srDrawHiddenHead is HiddenMessageBody's first line at (x, y), clipped
+// at right: MessageSender's "This message is hidden", "\u00a0", "\u00a0 ",
+// then the Timestamp.
+func srDrawHiddenHead(gtx layout.Context, th *theme.Theme, cl *Colors, m *core.Message, x, y, right, lineH int) {
+	d := at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, right-x), lineH)}
+		return vcenter(gtx, lineH, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Black, cl.Fg, nsMessage.T("This message is hidden"))
+		})
+	})
+	x += d.Size.X + textW(gtx, th, 15, theme.Regular, "\u00a0\u00a0 ")
+	if when := clock(tsTime(m.TS)); when != "" && x < right {
+		at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, right-x), lineH)}
+			return vcenter(gtx, lineH, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 12, theme.Regular, cl.Fg2, when)
+			})
+		})
+	}
+}
+
+// srDrawRich draws laid-out runs from (x, y) in content-sec
+// (.c-search_message_hidden__body).
+func srDrawRich(gtx layout.Context, th *theme.Theme, cl *Colors, toks []srRichTok, x, y, lh int) {
+	for _, t := range toks {
+		wt := theme.Regular
+		if t.bold {
+			wt = theme.Bold
+		}
+		at(gtx, image.Pt(x+t.x, y+t.line*lh), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(t.w+dp(gtx, 2), lh)}
+			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, wt, cl.Fg2, t.s)
+			})
+		})
+	}
+}
+
+// cardHidden is card i for a hidden sender's message (see above).
+func (v *SearchView) cardHidden(gtx layout.Context, th *theme.Theme, cl *Colors, i, w int) layout.Dimensions {
+	c := &v.cards[i]
+	m := &v.msgs[i]
+	padL, padR, padT, padB := dp(gtx, 16), dp(gtx, 32), dp(gtx, 15), dp(gtx, 12)
+	av := dp(gtx, 36)
+	tx := padL + av + dp(gtx, 9)
+	bw := max(w-tx-padR, 1)
+	lh := dp(gtx, 22)
+	nameH := dp(gtx, 20)
+	toks, lines := srRichLayout(gtx, th, 15, srHiddenContents(v.h, m), bw)
+	bodyY := padT + nameH
+	h := bodyY + lines*lh
+	if m.ReplyCount > 0 {
+		h += dp(gtx, 9) + dp(gtx, 22)
+	}
+	h += padB
+	sz := image.Pt(w, h)
+	r := image.Rectangle{Max: sz}
+	rad := dp(gtx, 12)
+	hovered := c.click.Hovered() || c.chip.Hovered() || c.bar.Hovered() ||
+		c.fwd.Hovered() || c.jump.Hovered() || c.kebab.Hovered() || v.menuCard == i
+	bg := cl.Bg
+	if hovered {
+		bg = cl.BgHover
+	}
+	rrect(gtx, r, rad, cl.Divider)
+	rrect(gtx, r.Inset(1), rad-1, bg)
+	{
+		g := gtx
+		g.Constraints = layout.Exact(sz)
+		c.click.Layout(g, func(gtx layout.Context) layout.Dimensions {
+			pointerCursor(gtx, sz)
+			return layout.Dimensions{Size: sz}
+		})
+	}
+	srDrawHiddenAvatar(gtx, th, image.Pt(padL, padT+dp(gtx, 2)), 36, bg)
+	srDrawHiddenHead(gtx, th, cl, m, tx, padT, w-padR, nameH)
+	srDrawRich(gtx, th, cl, toks, tx, bodyY, lh) // the break, then the contents
+	y := bodyY + lines*lh
+	if m.ReplyCount > 0 {
+		y += dp(gtx, 9)
+		at(gtx, image.Pt(tx, y), func(gtx layout.Context) layout.Dimensions {
+			return v.replyChip(gtx, th, cl, &c.chip, m.ReplyCount)
+		})
+	}
+	if hovered {
+		v.hoverBar(gtx, th, cl, c, w)
+	} else {
+		c.tipFwd, c.tipJump, c.tipMore = TipState{}, TipState{}, TipState{}
+	}
+	return layout.Dimensions{Size: sz}
+}
+
 // hoverBar draws the floating action bar at the top-right of a card of
 // width w. It is laid out after the card's content and click target, so
 // its clicks never reach the card (which would open the message).
@@ -1906,8 +2142,9 @@ func (v *SearchView) resultMenu(gtx layout.Context, i int) {
 }
 
 // srResultItems is a search result's More actions menu (search_more.png):
-// Add to saved | Add a reminder ▸ | reply notifications | sep | Copy link |
-// Copy message | sep | Connect to apps ▸.
+// the save row (Add to saved, Remove from Saved, Move to Saved) | the
+// reminder row (Add a reminder, Edit reminder on a to-do) ▸ | reply
+// notifications | sep | Copy link | Copy message | sep | Connect to apps ▸.
 func srResultItems(h Host, m core.Message) []MenuItem {
 	ch, ts := m.Channel, m.TS
 	root := m.ThreadTS
@@ -1939,11 +2176,14 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 		}}.In(nsMessage)
 	}
 	rems := actReminderItems(remind, nil)
+	// the save and reminder rows are the message menu's (gap-w7,
+	// actions_todo.go): oMi4's save row and its aSBj click, ih0g's name
+	sa := SaveActionFor(h.Core(), &m)
 	return []MenuItem{
-		MenuItem{Label: "Add to saved", Icon: "bookmark-add", Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
-			actDo(h, "Saved for later", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, 0) })
+		MenuItem{Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
+			RunSaveAction(h, m)
 		}}.In(nsSaved),
-		MenuItem{Label: "Add a reminder", Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: rems[:len(rems)-1]}.In(nsMessage), // no Custom… here
+		MenuItem{Label: ReminderLabel(h.Core(), &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: rems[:len(rems)-1]}.In(nsMessage), // no Custom… here
 		follow,
 		Sep(),
 		MenuItem{Label: "Copy link", Icon: "link", Hint: "L", Keys: KeyCopyLink, DoCtx: func(gtx layout.Context) {
