@@ -172,8 +172,23 @@ public static class ClackDrag {
 		POINT at; GetCursorPos(out at);
 		IntPtr under = WindowFromPoint(new POINT { X = x, Y = y });
 		var src = new ClackDropSource { X = x, Y = y, Cancel = cancel };
+		// OLE's loop asks the source only when input arrives: a thread
+		// nudges the cursor by a pixel every 50 ms (the target sees
+		// DragOvers; the 10 px move happens in QueryContinueDrag)
+		var done = false;
+		var nudge = new System.Threading.Thread(() => {
+			for (int i = 0; !done && i < 400; i++) {
+				System.Threading.Thread.Sleep(50);
+				int bx = src.Moved ? x + 10 : x, by = src.Moved ? y + 5 : y;
+				ClackDropSource.SetCursorPos(bx + (i % 2), by);
+				if (i % 10 == 0) { Console.Error.WriteLine("tick " + i + " calls=" + src.Calls); }
+			}
+		});
+		nudge.IsBackground = true;
+		nudge.Start();
 		int effect;
 		int hr = DoDragDrop(data, src, 1 | 2 | 4, out effect); // copy | move | link, as Explorer offers
+		done = true;
 		return String.Format("hr=0x{0:X8} effect={1} calls={2} setcursor={3} cursor={4},{5} under=0x{6:X}", hr, effect, src.Calls, set, at.X, at.Y, under.ToInt64());
 	}
 }
@@ -202,7 +217,8 @@ func runOLEDrag(t *testing.T, at windows.Point, files []string, cancel bool) str
 		"-EncodedCommand", base64.StdEncoding.EncodeToString(raw))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("powershell: %v\n%s", err, out)
+		// keep going: the events the window got say which side stuck
+		t.Errorf("powershell: %v\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out))
 }
