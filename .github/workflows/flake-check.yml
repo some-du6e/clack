@@ -19,6 +19,18 @@ name: flake-check
 #                                            group's both loading (the flag
 #                                            set inside the goroutine);
 #                                            TestRecentsLoadOnce pins it
+# and 2026-11-11's (the flakes-1111 job, 50 runs each under -race):
+#   TestRealtimeSendEchoOneMessage (core)    boot's prefetch, queued behind
+#                                            three others, refetching a
+#                                            channel History had loaded and
+#                                            wiping the echoed send
+#   TestListEditRoundTrip (core)             see the job's entry
+#   TestChannelLeaveRejoin (ui)              the header copy resolved while a
+#                                            member outliving the leave
+#   TestEditRoundTrip (listview)             a third-star click on a 3-star
+#                                            item sends a clear
+#   TestHuddleLoungeMusic (huddleui)         MusicPlaying is on before the
+#                                            song is loaded
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -48,6 +60,11 @@ on:
       - "internal/ui/messages/slick_test.go"
       - "internal/jsrt/loop.go"
       - "internal/taut/taut.go"
+      - "internal/core/realtime_msgs_test.go"
+      - "internal/core/lists_test.go"
+      - "internal/ui/channels_audit_test.go"
+      - "internal/ui/listview/render_test.go"
+      - "internal/ui/huddleui/avprefs_test.go"
 
 permissions:
   contents: read
@@ -205,3 +222,48 @@ jobs:
         run: |
           go test -count=$COUNT -timeout 30m -run 'TestSlickViewMessageLoggerThreads$|TestSlickViewMessageLogger$' ./internal/ui/messages
           go test -race -cpu 1 -count=$COUNT -timeout 30m -run 'TestSlickViewMessageLoggerThreads$' ./internal/ui/messages
+
+  flakes-1111:
+    name: "flakes-1111 ${{ matrix.test }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test: TestRealtimeSendEchoOneMessage
+            pkg: ./internal/core
+          - test: TestListEditRoundTrip
+            pkg: ./internal/core
+          - test: TestChannelLeaveRejoin
+            pkg: ./internal/ui
+          - test: TestEditRoundTrip
+            pkg: ./internal/ui/listview
+          - test: TestHuddleLoungeMusic
+            pkg: ./internal/ui/huddleui
+            flags: -gcflags=all=-d=checkptr=0 # pion under -race, as in the huddle job
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }}, race detector, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+          FLAGS: ${{ matrix.flags }}
+        run: |
+          set +e
+          log="$RUNNER_TEMP/flake.log"
+          go test -v -race $FLAGS -count=$COUNT -timeout 60m -run "^${TEST}\$" "$PKG" > "$log" 2>&1
+          rc=$?
+          fails=$(grep -cE "^--- FAIL: ${TEST} \(" "$log")
+          passes=$(grep -cE "^--- PASS: ${TEST} \(" "$log")
+          echo "::notice title=${TEST}::${fails} of ${COUNT} runs failed (${passes} passed, exit ${rc})"
+          grep -E -A12 "^--- FAIL: ${TEST} \(" "$log" | head -400
+          tail -5 "$log"
+          exit $rc

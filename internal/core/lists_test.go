@@ -66,6 +66,7 @@ func TestListEditRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	evs, stop := a.Subscribe()
 	defer stop()
+	rawSeen := diagRawTap(t, a) // DIAG flakes-1111, temporary
 	a.SetRealtime(true)
 	waitEvent(t, evs, 5*time.Second, func(ev Event) bool { return ev.Type == "connection" && ev.Connected })
 	d, err := a.List(ctx, fakeslack.ListKitchen)
@@ -168,6 +169,7 @@ func TestListEditRoundTrip(t *testing.T) {
 		select {
 		case <-evs:
 		case <-deadline:
+			diagListFlake(t, a, fs, rawSeen) // DIAG flakes-1111, temporary
 			t.Fatal("list_cells_updated never applied")
 		}
 	}
