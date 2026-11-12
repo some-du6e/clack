@@ -708,13 +708,11 @@ func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Col
 	}
 	ed := func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(textW, 0), Max: image.Pt(edW, 1<<20)}
-		tm := op.Record(gtx.Ops)
 		fg := th.C.Fg
 		if lang != "" {
 			fg = color.NRGBA{} // the highlighter paints the text (snippet_highlight.go)
 		}
-		paint.ColorOp{Color: fg}.Add(gtx.Ops)
-		txt := tm.Stop()
+		txt := theme.TextMaterial(gtx, fg)
 		sm := op.Record(gtx.Ops)
 		paint.ColorOp{Color: th.C.Selection}.Add(gtx.Ops)
 		sel := sm.Stop()

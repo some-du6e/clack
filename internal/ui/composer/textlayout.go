@@ -1110,12 +1110,14 @@ func tlPaintGlyphs(gtx layout.Context, sh *text.Shaper, gs []text.Glyph, origin 
 		theme.ScanGlyph(sh, g) // a running tofu scan (tests); one atomic load otherwise
 	}
 	t := op.Affine(f32.AffineId().Offset(origin)).Push(gtx.Ops)
-	if len(emb) > 0 && emb[0] > 0 {
+	// outline growth under the legacy text model only; theme.FillText
+	// inks the run (Skia's contrast under the Windows model)
+	if len(emb) > 0 && theme.GlyphEmbolden(emb[0]) > 0 {
 		if path, ok := theme.EmboldenedShape(sh, gs, emb[0]); ok {
-			paint.FillShape(gtx.Ops, col, clip.Outline{Path: path}.Op())
+			theme.FillText(gtx.Ops, col, path)
 		} else {
 			path := sh.Shape(gs)
-			paint.FillShape(gtx.Ops, col, clip.Outline{Path: path}.Op())
+			theme.FillText(gtx.Ops, col, path)
 			paint.FillShape(gtx.Ops, col, clip.Stroke{Path: path, Width: emb[0]}.Op())
 		}
 		if call := sh.Bitmaps(gs); call != (op.CallOp{}) {
@@ -1124,11 +1126,7 @@ func tlPaintGlyphs(gtx layout.Context, sh *text.Shaper, gs []text.Glyph, origin 
 		t.Pop()
 		return
 	}
-	path := sh.Shape(gs)
-	outline := clip.Outline{Path: path}.Op().Push(gtx.Ops)
-	paint.ColorOp{Color: col}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
-	outline.Pop()
+	theme.FillText(gtx.Ops, col, sh.Shape(gs))
 	if call := sh.Bitmaps(gs); call != (op.CallOp{}) {
 		call.Add(gtx.Ops)
 	}

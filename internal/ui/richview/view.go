@@ -24,6 +24,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -1319,14 +1320,16 @@ func (v *View) Baselines() []int {
 // content), at its place.
 func (v *View) paintGlyphs(ops *op.Ops, st *Style, f *frag, col color.NRGBA) {
 	// Browsers render Lato visibly heavier than Gio's linear
-	// coverage. Dark text gets the missing ink (st.Embolden px,
-	// ~0.45 at 1x and 2x) from an emboldened outline: one fill,
-	// no stroke tessellation (theme.EmboldenedShape).
+	// coverage. Under the legacy text model dark text gets the missing
+	// ink (st.Embolden px, ~0.45 at 1x and 2x) from an emboldened
+	// outline: one fill, no stroke tessellation (theme.EmboldenedShape).
+	// Under Skia's (Windows) it gets Skia's contrast from theme.FillText
+	// instead, and no outline growth (theme.GlyphEmbolden).
 	var emb clip.PathSpec
 	embOK := false
-	embW := st.Embolden
+	embW := theme.GlyphEmbolden(st.Embolden)
 	if embW == 0 {
-		embW = st.lightEmbolden(col, v.laidPx)
+		embW = theme.GlyphEmbolden(st.lightEmbolden(col, v.laidPx))
 	}
 	if embW > 0 {
 		emb, embOK = st.emboldenedOf(f.sh, embW)
@@ -1338,10 +1341,7 @@ func (v *View) paintGlyphs(ops *op.Ops, st *Style, f *frag, col color.NRGBA) {
 	// Whole-pixel pen positions: Gio's path cache snaps fractional
 	// offsets, which makes word spacing uneven.
 	t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
-	cs := clip.Outline{Path: path}.Op().Push(ops)
-	paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
-	paint.PaintOp{}.Add(ops)
-	cs.Pop()
+	theme.FillText(ops, st.textColor(col, v.laidPx), path)
 	if embW > 0 && !embOK { // fallback-font run
 		// Browsers render Lato visibly heavier than Gio's linear
 		// coverage; a hairline stroke of the outline matches it.
