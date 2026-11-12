@@ -11,7 +11,9 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"math/rand/v2"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -198,6 +200,13 @@ type DMs struct {
 	compose widget.Clickable
 	retry   widget.Clickable
 
+	// The empty list (DmsList with no channelIds): which
+	// getUnreadsEmptyPageData state shows and its "Show all DMs" link;
+	// showAllFocus drops the ring once the list takes focus after it.
+	emptyPick    int
+	showAll      widget.Clickable
+	showAllFocus bool
+
 	dirty   bool
 	autoSel bool // the newest DM was considered for auto-selection
 	lastQ   string
@@ -228,6 +237,7 @@ func NewDMs(h Host) *DMs {
 		known:   map[string]bool{},
 		dirty:   true,
 	}
+	d.emptyPick = dmsEmptyPick()
 	d.list.Axis = layout.Vertical
 	d.kb = newVKList(&d.list)
 	return d
@@ -447,9 +457,18 @@ func (d *DMs) update(gtx C) {
 		d.searchPeople(dq)
 	}
 	d.unreads.Update(gtx)
+	if d.showAll.Clicked(gtx) {
+		// "Show all DMs": the ALL filter (setDmsFilter), then the list
+		// takes focus (transitionFocusTo DmsList)
+		d.unreads.Value = false
+		d.kb.focusIt, d.showAllFocus = true, true
+	}
 	if d.unreads.Value != d.lastUnr {
 		d.lastUnr, d.dirty = d.unreads.Value, true
 		d.list.Position = layout.Position{}
+		// the filtered and the full list are different DmsLists, so the
+		// empty state is picked again (its useMemo runs on mount)
+		d.emptyPick = dmsEmptyPick()
 	}
 	if q != d.lastQ {
 		d.lastQ, d.dirty = q, true
@@ -824,6 +843,10 @@ func (d *DMs) keys(gtx C) {
 		d.kb.initial = d.sel
 	}
 	d.kb.update(gtx, d.listH, vkOpts{Click: d.choose})
+	if d.showAllFocus && d.kb.focused {
+		// a click focused the list: the active row, no keyboard ring
+		d.kb.ring, d.showAllFocus = false, false
+	}
 }
 
 // ---- list ----
@@ -935,10 +958,8 @@ func (d *DMs) layoutRows(gtx C, p slackc.Props) D {
 			return d.dmsSkeleton(gtx, 2)
 		}
 		return d.notice(gtx, nsSearch.T("No results"), "Nothing matches “"+q+"”.", nil, "")
-	case len(view) == 0 && d.unreads.Value:
-		return d.notice(gtx, nsActivity.T("You’re all caught up"), "There are no unread direct messages.", nil, "") // ConversationsEmpty
 	case len(view) == 0:
-		return d.notice(gtx, "No direct messages yet", "Use Find a DM to start a conversation.", nil, "")
+		return d.dmsEmpty(gtx)
 	}
 	n := len(view)
 	extra := 0
@@ -1265,6 +1286,101 @@ func (d *DMs) personRow(gtx C, u core.User) D {
 
 // notice is the list pane's own empty/error state (white text on the
 // themed column).
+// dmsEmptyPick is DmsList's useMemo: a random index into
+// getUnreadsEmptyPageData's five states.
+func dmsEmptyPick() int { return rand.IntN(len(actUnreadsEmpty)) }
+
+// dmsEmpty is DmsList with no channelIds (boot-render eLDn, build
+// d3de3a487b1c): EmptyState (gkKy) isExtended with one of
+// getUnreadsEmptyPageData's states (boot-shared MmpO FS, the mentions
+// namespace: "🙌 You’re all caught up / Nice work!", "🌞 Nothing new /
+// Carry on.", "🎉 Ta-da! / You’re up to date.", "🐴 You’ve read all the
+// unreads / Here’s a pony.", "🦦 No unread activity / Isn’t that nice?";
+// raised_hands in your skin tone) and "Show all DMs" (recent_page), which
+// turns Unreads off and focuses the list. Slack draws it whenever the list
+// has no DMs, so with Unreads off too.
+//
+// CSS (client-boot-styles): .c-empty_state--extended is a centred column
+// (max-width 420, height 100%); .p-activity_ia4_page__empty_unreads_container
+// pads it 0 24px 100px; the emoji (.p-activity_ia4_page__unreads_emoji) is
+// a 32px block with 8px under it, the title 16/22 bold with 4px, the
+// description 15/22 with 12px, the link 15/22. The text inherits the
+// column's content-inv-pry; the link is content-inv-hgl-1 under the light
+// theme's inverted sidebar (.sk-client-theme--light-inverted-sidebar
+// .c-empty_state_secondary_action_link), the link colour in dark.
+func (d *DMs) dmsEmpty(gtx C) D {
+	e := actUnreadsEmpty[d.emptyPick%len(actUnreadsEmpty)].local()
+	if e.emoji == "raised_hands" {
+		e.emoji = d.skinTone(e.emoji) // getSkinToneModifiedName (QMob)
+	}
+	link := rgb(0x1d9bd1) // content-inv-hgl-1
+	if d.th.Dark {
+		link = d.p.Link
+	}
+	size := gtx.Constraints.Max
+	gtx.Constraints.Min = image.Point{}
+	m := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints.Max.X = min(size.X, gtx.Dp(420)) - 2*gtx.Dp(24)
+	g.Constraints.Max.Y = max(0, size.Y-gtx.Dp(100))
+	inner := layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(g,
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
+				if u, _, ok := d.h.Core().Emoji(e.emoji); ok && u != "" {
+					return d.emojiImg(gtx, u, 32)
+				}
+				return D{Size: image.Pt(gtx.Dp(32), gtx.Dp(32))}
+			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Bottom: 4}.Layout(gtx, func(gtx C) D {
+				return d.th.Layout(gtx, theme.TextStyle{Size: 16, LineHeight: 22, Weight: wBold, Color: d.c.white, Align: text.Middle}, e.title)
+			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Bottom: 12}.Layout(gtx, func(gtx C) D {
+				return d.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: d.c.white, Align: text.Middle}, e.body)
+			})
+		}),
+		layout.Rigid(func(gtx C) D {
+			return d.showAll.Layout(gtx, func(gtx C) D {
+				pointerCursor(gtx)
+				ld := d.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: link, MaxLines: 1}, nsRecent.T("Show all DMs"))
+				if d.showAll.Hovered() {
+					fill(gtx, image.Rect(0, ld.Size.Y-gtx.Dp(3), ld.Size.X, ld.Size.Y-gtx.Dp(2)), link)
+				}
+				return ld
+			})
+		}),
+	)
+	call := m.Stop()
+	// justify-content: center in the height above the 100px padding
+	x := (size.X - inner.Size.X) / 2
+	y := max(0, (size.Y-gtx.Dp(100)-inner.Size.Y)/2)
+	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
+	return D{Size: size}
+}
+
+// skinTone is getSkinToneModifiedName: name in your preferred_skin_tone
+// (2–6) when it takes one.
+func (d *DMs) skinTone(name string) string {
+	c := d.h.Core()
+	if c == nil {
+		return name
+	}
+	t := c.PrefString("preferred_skin_tone")
+	if t == "" {
+		if n := c.PrefInt("preferred_skin_tone", 0); n > 0 {
+			t = strconv.Itoa(n)
+		}
+	}
+	if n, err := strconv.Atoi(t); err == nil && n >= 2 && n <= 6 {
+		return name + "::skin-tone-" + t
+	}
+	return name
+}
+
 func (d *DMs) notice(gtx C, title, body string, btn *widget.Clickable, btnLabel string) D {
 	return layout.Inset{Top: 32, Left: 24, Right: 24}.Layout(gtx, func(gtx C) D {
 		return layout.N.Layout(gtx, func(gtx C) D {

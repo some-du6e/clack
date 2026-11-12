@@ -1515,12 +1515,23 @@ func (d *Drafts) layoutList(gtx C) D {
 		}
 		dd := d.entry(gtx, sel, i)
 		if kb.ringOn(d.entryKey(sel, i)) {
-			if d.view[i].kind == draftsEntryDraft {
+			m := gtx.Dp(draftsMargin)
+			switch {
+			case sel == draftsTabSent && d.view[i].kind == draftsEntrySent:
+				// .p-sent_page .p-sent_page__sent_list_item:after: the
+				// default inset 4px, radius 12, inside the scroll
+				// container's 20px margins
+				in := gtx.Dp(4)
+				d.vkRing(gtx, image.Rect(m+in, in, dd.Size.X-m-in, dd.Size.Y-in), gtx.Dp(12))
+			case sel == draftsTabSent:
+				// …__sent_list_item--education:after: top 20px
+				in := gtx.Dp(4)
+				d.vkRing(gtx, image.Rect(m+in, gtx.Dp(20), dd.Size.X-m-in, dd.Size.Y-in), gtx.Dp(12))
+			case d.view[i].kind == draftsEntryDraft:
 				// .p-drafts_page__draft_list_item:after: radius 12,
 				// inset 16px 0 0 — the card itself
-				m := gtx.Dp(draftsMargin)
 				d.vkRing(gtx, image.Rect(m, 0, dd.Size.X-m, dd.Size.Y-gtx.Dp(8)), gtx.Dp(12))
-			} else { // the education card: the default inset 4px, radius 8
+			default: // the education card: the default inset 4px, radius 8
 				in := gtx.Dp(4)
 				d.vkRing(gtx, image.Rect(in, in, dd.Size.X-in, dd.Size.Y-in), gtx.Dp(8))
 			}
@@ -1567,13 +1578,22 @@ func (d *Drafts) entry(gtx C, sel, i int) D {
 	}
 }
 
-// entryKey is a view entry's list key (getDraftListKeys): the education
-// card's, a draft's id, "" for Clack's spacers.
+// entryKey is a view entry's list key (getDraftListKeys; SentPage's
+// "sent-page-education-card" and a key per message on Sent): the
+// education card's, a draft's id, a sent message's, "" for Clack's
+// spacers and the day dividers.
 func (d *Drafts) entryKey(sel, i int) string {
 	e := d.view[i]
 	switch e.kind {
 	case draftsEntryCard:
+		if sel == draftsTabSent {
+			return "sent-page-education-card"
+		}
 		return "sent_page_education_card"
+	case draftsEntrySent:
+		if e.i < len(d.sentMsgs) {
+			return "s:" + d.sentMsgs[e.i].Channel + "/" + d.sentMsgs[e.i].TS
+		}
 	case draftsEntryDraft:
 		l := d.drafts
 		if sel == draftsTabScheduled {
@@ -1586,13 +1606,17 @@ func (d *Drafts) entryKey(sel, i int) string {
 	return ""
 }
 
-// keys runs the Drafts and Scheduled lists' keyboard (DraftList: FSLM
-// with useGlobalKeyboardShortcuts; every row is focusable, Enter is
-// onItemClick: a draft opens for editing, the education card does
-// nothing). Sent isn't a DraftList: nil.
+// keys runs the lists' keyboard. Drafts and Scheduled are DraftLists
+// (FSLM with useGlobalKeyboardShortcuts; every row is focusable, Enter
+// is onItemClick: a draft opens for editing, the education card does
+// nothing). Sent is SentPage (boot-shared awZj, build d3de3a487b1c): an
+// FSLM without global keys whose isFocusableItem takes the messages and
+// the education card ("header"), not the day dividers or the loader;
+// Enter (onItemClick) on a message jumps to it, in its thread for a
+// reply (openMessage with threadTs).
 func (d *Drafts) keys(gtx C, sel int) *vkList {
 	if sel == draftsTabSent {
-		return nil
+		return d.sentKeys(gtx)
 	}
 	kb := d.kb[sel]
 	items := make([]vkItem, 0, len(d.view))
@@ -1621,6 +1645,30 @@ func (d *Drafts) keys(gtx C, sel int) *vkList {
 	return kb
 }
 
+// sentKeys is SentPage's list keyboard (see keys).
+func (d *Drafts) sentKeys(gtx C) *vkList {
+	kb := d.kb[draftsTabSent]
+	items := make([]vkItem, 0, len(d.view))
+	for i := range d.view {
+		k := d.entryKey(draftsTabSent, i)
+		focusable := k != ""
+		if k == "" {
+			k = "gap:" + strconv.Itoa(i)
+		}
+		items = append(items, vkItem{key: k, elem: i, focusable: focusable})
+	}
+	kb.setItems(items)
+	kb.begin()
+	kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{NoGlobal: true, Click: func(k string) {
+		if id, ok := strings.CutPrefix(k, "s:"); ok {
+			if m := d.findSent(id); m != nil {
+				d.openMsg(m)
+			}
+		}
+	}})
+	return kb
+}
+
 // emptyFor: the spec's copy, with a 64px accent icon instead of Slack's
 // illustration, then an outline medium button.
 func (d *Drafts) emptyFor(gtx C, tab int) D {
@@ -1631,8 +1679,11 @@ func (d *Drafts) emptyFor(gtx C, tab int) D {
 		icon, title, body, btn = "clock", nsDrafts.T("Write now, send later"),
 			nsDrafts.T("Schedule messages to be sent at a later time, or another day altogether. They’ll wait here until they’re delivered."), nsDrafts.T("Start New Message")
 	case draftsTabSent:
-		// no Slack key: the Sent tab's empty state is Clack's own
-		icon, title, body, btn = "send", "Nothing sent yet", "Messages you send will show up here.", ""
+		// SentPage's (awZj, sent-page): "Start New Message" opens a new
+		// message (hPMC)
+		sp := i18n.NS("sent-page")
+		icon, title, body, btn = "send", sp.T("You haven’t sent any messages yet"),
+			sp.T("They’ll appear here once you do - a record for the future you."), sp.T("Start New Message")
 	}
 	return layout.Center.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(420))

@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p "$VIEWS_SHOTS_DIR"
           go test -count=1 -v -run 'TestUnscheduleDraft|TestActivityFeedParams' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestThreadsTimeLikeSlack|TestDraftsTimesLikeSlack|TestDraftsDeleteDialog|TestActivityEmptyStates|TestActivitySelectOptions|TestActivitySettingsMenu|TestThreadsUpToDateDivider|TestThreadsEmptyState|TestDraftsScheduledActions|TestViewsAuditShotsDark|TestThreadsKeysLikeSlack|TestThreadsRealtimeLikeSlack|TestDraftsKeysAndRealtimeLikeSlack|TestTodosKeysAndRealtimeLikeSlack|TestUnreadsHomeEndLikeSlack|TestThreadsHeaderGroups|TestKeyboardShortcutsSearchGroups|TestTodosSectionsGroups|TestThreadsShowMoreReplies' ./internal/ui/views
+          xvfb-run -a go test -count=1 -v -run 'TestThreadsTimeLikeSlack|TestDraftsTimesLikeSlack|TestDraftsDeleteDialog|TestActivityEmptyStates|TestActivitySelectOptions|TestActivitySettingsMenu|TestThreadsUpToDateDivider|TestThreadsEmptyState|TestDraftsScheduledActions|TestViewsAuditShotsDark|TestThreadsKeysLikeSlack|TestThreadsRealtimeLikeSlack|TestDraftsKeysAndRealtimeLikeSlack|TestTodosKeysAndRealtimeLikeSlack|TestUnreadsHomeEndLikeSlack|TestThreadsHeaderGroups|TestKeyboardShortcutsSearchGroups|TestTodosSectionsGroups|TestThreadsShowMoreReplies|TestTodosSectionListsLikeSlack|TestSentKeysLikeSlack|TestSavedKeysLikeSlack|TestUnreadsGlobalScrollLikeSlack|TestDMsUnreadsEmptyLikeSlack' ./internal/ui/views
           ls -la "$VIEWS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
