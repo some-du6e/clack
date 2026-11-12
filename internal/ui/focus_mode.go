@@ -18,12 +18,21 @@ package ui
 //     sets the "In focus mode" status from it (Availability's
 //     focus_mode_status), which Clack sees through dnd.info / dnd_updated and
 //     the profile like any other DND or status.
-//   - While on, hovering the button (300 ms) opens FocusModePopoverContent:
+//   - While on, hovering the button (300 ms) opens FocusModePopoverContent
+//     as a PeekTrigger's hover peek (focus_peek.go; the toggle's view
+//     transition is focus_fade.go, the status tab it brings rail_status.go):
 //     "You’re in focus mode" with the preferences gear (under
 //     availability_prefs_section), the banner (a random subtitle, "Notifications
 //     paused" / "…until {time}"), the Duration select (writes the pref at
-//     once) and "Continue to get notifications from VIPs"
-//     (priority_dnd_override).
+//     once) and, on a paid team (isPriorityVipAvailableForCurrentTeam),
+//     "Continue to get notifications from VIPs" (priority_dnd_override).
+//     Its lazy CSS module (boot-render Vjk7, build fa938a086569) gives the
+//     header no shadow, the banner's text 15px/1.5 with a 13px/1.25
+//     sub-label, the section label 15px/1.5 bold. Not ported: the first
+//     open's Lottie (lottie-focus-mode-popover.json; reduced motion shows
+//     the telescope, as Clack always does), the banner's two blurred
+//     swirling blobs (20 s / 27 s infinite loops), the Miles Davis focus
+//     music player (focus_mode_music treatment and huddles_miles_davis).
 //   - Under focus_mode_custom_duration "treatment" (CDN build 4d0c78085232,
 //     boot-render FocusModePopoverContent) the Duration select also offers
 //     "Custom". Picking it writes the pref for today's next half hour an
@@ -48,7 +57,6 @@ import (
 	"image"
 	"image/color"
 	"math"
-	"math/rand"
 	"sort"
 	"strconv"
 	"time"
@@ -192,9 +200,13 @@ type focusMode struct {
 
 	btn      widget.Clickable
 	tip      popups.TipState
-	hoverAt  time.Time
+	trig     image.Rectangle // the button, window coords (last frame)
+	peek     focusPeekState  // its PeekTrigger and transitions (focus_peek.go)
+	fade     focusFade       // the toggle's view transition (focus_fade.go)
+	fadeNext bool            // the next theme change is the toggle's
 	pop      *popups.Popover
-	opened   bool // the popover was opened since focus mode started
+	child    Overlay // what the card opened (the Duration menu, the date picker, the time menu)
+	opened   bool    // the popover was opened since focus mode started
 	subtitle string
 	durBtn   widget.Clickable
 	durRect  image.Rectangle // card coords
@@ -272,6 +284,7 @@ func (a *App) toggleFocusMode() {
 		return
 	}
 	f := a.fm()
+	f.fadeNext = true // maybeToggleFocusModeWithViewTransition (focus_fade.go)
 	if a.focusModeActive() {
 		if f.pop != nil {
 			f.pop.Dismiss()
@@ -295,11 +308,17 @@ func (a *App) focusChanged() {
 	f := a.fm()
 	on, inv := a.focusModeActive(), a.focusInverted()
 	if on != f.wasActive || on && inv != f.wasInv {
+		toggled := on != f.wasActive && f.fadeNext
 		f.wasActive, f.wasInv = on, inv
 		if !on && f.pop != nil {
 			f.pop.Dismiss()
 		}
+		old := a.th.C
 		a.th.Refresh()
+		if toggled {
+			f.fadeNext = false
+			a.startFocusFade(old)
+		}
 	}
 	a.Invalidate()
 }
@@ -325,103 +344,6 @@ func (a *App) focusTheme() (theme.IATheme, bool) {
 		Highlight2: theme.IARole{Palette: "mojito"}, Important: theme.IARole{Palette: "gray"},
 		Brightness: 6, SidebarInverted: inv,
 	}, true
-}
-
-// focusButton draws the control strip's focus mode button at org (window
-// coordinates; the strip's own) cs wide, with its tooltip or popover.
-// Clicks toggle focus mode.
-func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
-	f := a.fm()
-	if f.wasActive != a.focusModeActive() || f.wasActive && f.wasInv != a.focusInverted() {
-		a.focusChanged()
-	}
-	active := a.focusModeActive()
-	if exp := a.focusExp(); active && exp != focusForever {
-		gtx.Execute(op.InvalidateCmd{At: time.Unix(exp, 0)}) // it ends by itself
-	}
-	f.btnOrigin = org
-	c := &a.th.C
-	at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
-		hovered := f.btn.Hovered()
-		// p-control_strip__circle_button; --active: base-pry with the
-		// tertiary text colour
-		bg, fg := c.SidebarButton, c.ChromeText
-		if active {
-			bg, fg = c.Bg, c.FgSubtle
-		} else if hovered {
-			bg = c.SearchHover
-		}
-		d := clickArea(gtx, &f.btn, func(gtx layout.Context, sz image.Point, _ bool) {
-			if active {
-				theme.RRect(gtx, image.Rectangle{Max: sz}, sz.X/2, bg)
-				return
-			}
-			a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, bg)
-		}, func(gtx layout.Context) layout.Dimensions {
-			icon := "moon"
-			if active {
-				icon = "moon-filled"
-			}
-			off := (cs - gtx.Dp(20)) / 2
-			// buttonContainer: tilted -15° and two sparkles while hovered
-			// (idle: upright, no sparkles)
-			if hovered || active {
-				ctr := f32.Pt(float32(cs)/2, float32(cs)/2)
-				defer op.Affine(f32.Affine2D{}.Rotate(ctr, -15*math.Pi/180)).Push(gtx.Ops).Pop()
-			}
-			at(gtx, image.Pt(off, off), image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get(icon)(gtx, 20, fg)
-			})
-			if hovered || active {
-				at(gtx, image.Pt(cs-gtx.Dp(4)-gtx.Dp(8), gtx.Dp(1)), image.Pt(gtx.Dp(8), gtx.Dp(8)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("sparkle")(gtx, 8, fg)
-				})
-				at(gtx, image.Pt(cs-gtx.Dp(1)-gtx.Dp(6), gtx.Dp(6)+gtx.Dp(4)), image.Pt(gtx.Dp(6), gtx.Dp(6)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get("sparkle")(gtx, 6, fg)
-				})
-			}
-			return layout.Dimensions{Size: image.Pt(cs, cs)}
-		})
-		if !active {
-			popups.Tooltip(gtx, a.th, &f.tip, hovered, d.Size, popups.Right,
-				"Turn on focus mode\nPause notifications and reduce badging and bolding.", "")
-			f.hoverAt = time.Time{}
-			return d
-		}
-		popups.Tooltip(gtx, a.th, &f.tip, false, d.Size, popups.Right, "", "")
-		// the popover: on a 300 ms hover (triggerDelay) or a click
-		if hovered && (f.pop == nil || f.pop.Dismissed()) {
-			if f.hoverAt.IsZero() {
-				f.hoverAt = gtx.Now
-			}
-			if open := f.hoverAt.Add(300 * time.Millisecond); gtx.Now.Before(open) {
-				gtx.Execute(op.InvalidateCmd{At: open})
-			} else {
-				a.openFocusPopover(image.Rectangle{Min: org, Max: org.Add(image.Pt(cs, cs))})
-			}
-		} else if !hovered {
-			f.hoverAt = time.Time{}
-		}
-		return d
-	})
-	if clicked(&f.btn) {
-		a.toggleFocusMode()
-	}
-}
-
-// openFocusPopover opens "You’re in focus mode" to the right of the button
-// (RightTop, offset 12/15).
-func (a *App) openFocusPopover(btn image.Rectangle) {
-	f := a.fm()
-	if !f.opened {
-		f.subtitle = focusSubtitles[0] // getInitialSubtitle on the first open
-	} else {
-		f.subtitle = focusSubtitles[rand.Intn(len(focusSubtitles))]
-	}
-	f.opened = true
-	// RightTop: the card's top at the button's, clamped into the window
-	f.pop = popups.NewPopover(a, a.focusCard, popups.PopoverOpts{Anchor: btn, Side: popups.Right, Gap: 12, Width: 320, Radius: 12})
-	a.ShowOverlay(f.pop)
 }
 
 // focusSubLabel is the banner's second line (QBEZ zv without the silent
@@ -475,7 +397,8 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 		a.openPrefsSection("availability")
 	}
 	y := 0
-	// p-peek_card__header: 44 tall, 15/900, padding 0 8 0 16, a 1px shadow
+	// p-peek_card__header: 44 tall, 15/900, padding 0 8 0 16, items
+	// centred; header__mfSuR takes its 1px shadow off
 	hh := gtx.Dp(44)
 	at(gtx, image.Pt(gtx.Dp(16), 0), image.Pt(w, hh), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions {
@@ -483,15 +406,16 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 		})
 	})
 	if cr := a.Core(); cr != nil && cr.Experiment("availability_prefs_section") == "on" {
+		// gearIcon__uz9m7: margin-left 8, margin-top 4 (centred with its
+		// margin: 2px lower)
 		bs := gtx.Dp(28)
-		gp := image.Pt(w-gtx.Dp(8)-bs, (hh-bs)/2)
+		gp := image.Pt(w-gtx.Dp(8)-bs, (hh-bs-gtx.Dp(4))/2+gtx.Dp(4))
 		at(gtx, gp, image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
 			d := iconButton(gtx, &f.gearBtn, "settings", 28, 18, c.FgMuted, c.BgHover, 4)
 			popups.Tooltip(gtx, th, &f.gearTip, f.gearBtn.Hovered(), d.Size, popups.Above, "Focus mode preferences", "")
 			return d
 		})
 	}
-	theme.RRect(gtx, image.Rect(0, hh, w, hh+max(1, gtx.Dp(1))), 0, theme.WithAlpha(c.Fg, 0x21))
 	y = hh
 	// statusBanner: padding 12 16, gap 12, the 64px telescope and the text
 	by := y + gtx.Dp(12)
@@ -506,10 +430,10 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 	tg.Constraints = layout.Constraints{Max: image.Pt(tw, 1<<20)}
 	td := layout.Flex{Axis: layout.Vertical}.Layout(tg,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return th.Para(gtx, 15, 22, theme.Bold, c.Fg, f.subtitle)
+			return th.Para(gtx, 15, 22.5, theme.Bold, c.Fg, f.subtitle) // statusText 15px/1.5, statusTitle bold
 		}),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			return th.Para(gtx, 13, 18, theme.Regular, c.FgMuted, focusSubLabel(a.focusExp(), gtx.Now))
+			return th.Para(gtx, 13, 16.25, theme.Regular, c.FgMuted, focusSubLabel(a.focusExp(), gtx.Now)) // subLabel 13px/1.25, content-sec
 		}),
 	)
 	call := m.Stop()
@@ -521,10 +445,14 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 	y = by + bannerH + gtx.Dp(12)
 	// options: padding 16, gap 8 — "Duration", the select, the VIP box
 	y += gtx.Dp(16)
-	at(gtx, image.Pt(gtx.Dp(16), y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
-		return th.Label(gtx, 15, theme.Bold, c.Fg, "Duration")
+	// sectionLabel: 15px/1.5 bold
+	lh := gtx.Dp(22.5)
+	at(gtx, image.Pt(gtx.Dp(16), y), image.Pt(w, lh), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+			return th.Label(gtx, 15, theme.Bold, c.Fg, "Duration")
+		})
 	})
-	y += gtx.Dp(22 + 8)
+	y += lh + gtx.Dp(8)
 	sw := w - gtx.Dp(32)
 	f.durRect = image.Rect(gtx.Dp(16), y, gtx.Dp(16)+sw, y+gtx.Dp(36))
 	at(gtx, f.durRect.Min, f.durRect.Size(), func(gtx layout.Context) layout.Dimensions {
@@ -558,12 +486,14 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 		y += gtx.Dp(8)
 		y += a.focusCustomRow(gtx, image.Pt(gtx.Dp(16), y), sw)
 	}
-	// vipCheckbox (13px, content-sec): Continue to get notifications from VIPs
-	y += gtx.Dp(8)
-	vip := false
-	if cr := a.Core(); cr != nil {
-		vip = cr.PrefBool("priority_dnd_override", false)
+	// vipCheckbox (13px, content-sec): Continue to get notifications from
+	// VIPs, on a paid team (isPriorityVipAvailableForCurrentTeam)
+	cr := a.Core()
+	if cr == nil || !cr.PaidTeam() {
+		return layout.Dimensions{Size: image.Pt(w, y+gtx.Dp(16))}
 	}
+	y += gtx.Dp(8)
+	vip := cr.PrefBool("priority_dnd_override", false)
 	rh := gtx.Dp(20)
 	at(gtx, image.Pt(gtx.Dp(16), y), image.Pt(sw, rh), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, &f.vipBtn, nil, func(gtx layout.Context) layout.Dimensions {
@@ -605,7 +535,7 @@ func (a *App) openFocusDurations() {
 			a.pickFocusOption(opts[i].key, time.Now())
 		}
 	})
-	a.ShowOverlay(f.durList)
+	a.showFocusChild(f.durList)
 }
 
 // pickFocusOption is the select's onSelectionChange (M): the pref (Custom:
@@ -728,7 +658,7 @@ func (a *App) openFocusDate() {
 	date, clock := a.focusCustomValue(now)
 	sel := focusAt(date, clock, now.Location())
 	r := f.dateRect.Add(f.pop.Rect().Min)
-	a.ShowOverlay(popups.NewDatePickerRange(a, r, sel, now, now.AddDate(1, 0, 0), func(day time.Time) {
+	a.showFocusChild(popups.NewDatePickerRange(a, r, sel, now, now.AddDate(1, 0, 0), func(day time.Time) {
 		a.setFocusCustomDate(day, time.Now())
 	}))
 }
@@ -751,7 +681,7 @@ func (a *App) openFocusTimes() {
 		}
 	}
 	r := f.timeRect.Add(f.pop.Rect().Min)
-	a.ShowOverlay(popups.NewOptionList(a, r, labels, sel, func(i int) {
+	a.showFocusChild(popups.NewOptionList(a, r, labels, sel, func(i int) {
 		if i >= 0 && i < len(opts) {
 			a.setFocusCustomTime(opts[i].value, time.Now())
 		}

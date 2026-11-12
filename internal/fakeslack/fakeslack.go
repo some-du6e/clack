@@ -1225,6 +1225,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "users.prefs.set":
 		if n := f.Get("name"); n != "" {
 			s.setPref(n, f.Get("value"))
+			if n == "focus_mode_expiration_ts" {
+				s.focusModeWritten(f.Get("value")) // focus_mode.go
+			}
 		} else if ps := f.Get("prefs"); ps != "" { // setMultipleUserPrefsByApi
 			var kv map[string]any
 			if json.Unmarshal([]byte(ps), &kv) != nil {

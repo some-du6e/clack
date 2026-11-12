@@ -241,7 +241,7 @@ func (a *App) handle(ev slack.Event) {
 	case "thread_marked", "update_thread_state", "dnd_updated", "dnd_updated_user", "pref_change", "badge_counts_updated",
 		"channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		if ev.Type == "dnd_updated" {
-			a.onDNDUpdated(ev.Raw) // before the UI hears of it
+			a.onDNDUpdated(ctx, ev.Raw) // before the UI hears of it
 		}
 		if ev.Type == "thread_marked" {
 			a.onThreadMarked(ev.Raw) // the root's last_read, before the UI hears of it

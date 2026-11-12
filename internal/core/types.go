@@ -129,6 +129,7 @@ type User struct {
 	Email                            string // only when Slack shows it (Hack Club: the viewer's own)
 	StatusText, StatusEmoji          string
 	StatusEmojiURL                   string
+	StatusCanonical                  string // profile.status_text_canonical (a preset's key)
 	StatusExp                        int64
 	TZ, TZLabel                      string
 	TZOffset                         int
