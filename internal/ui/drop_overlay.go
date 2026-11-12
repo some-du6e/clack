@@ -260,6 +260,9 @@ func dropNight(now time.Time) bool {
 	return h >= 20 || h < 8
 }
 
+// dropNightAt is dropNight (screenshot tests pin it).
+var dropNightAt = dropNight
+
 // dropOverlayAnim is how long the overlay's entrance runs (.12s).
 const dropOverlayAnim = 120 * time.Millisecond
 
@@ -484,7 +487,7 @@ func (a *App) dropKeyChip(gtx layout.Context, r image.Rectangle) {
 // time; each part eases in-out over the same .12s).
 func (a *App) dropAnim(gtx layout.Context, kind dropOverlayKind, thread bool, p float64, box image.Point) {
 	e := cubicBezierY(0.42, 0, 0.58, 1, p) // ease-in-out
-	night := dropNight(gtx.Now)
+	night := dropNightAt(gtx.Now)
 	sp := dropSprites()
 	dp := func(v float64) float32 { return float32(v) * gtx.Metric.PxPerDp }
 

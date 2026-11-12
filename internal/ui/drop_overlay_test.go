@@ -9,6 +9,7 @@ package ui
 
 import (
 	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sync"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // dropDrawn records the strings frames draw (theme.DrawHook).
@@ -314,5 +316,71 @@ func TestDropTimingAndNight(t *testing.T) {
 		if got := dropNight(day.Add(time.Duration(h-12) * time.Hour)); got != want {
 			t.Errorf("dropNight at %02d:00 = %v, want %v", h, got, want)
 		}
+	}
+}
+
+// TestDropOverlayShots saves the overlays over the message pane and the
+// thread pane, light and dark, day and night cards (FILES_SHOTS_DIR: the
+// files-shots workflow; drop-*.png).
+func TestDropOverlayShots(t *testing.T) {
+	if os.Getenv("FILES_SHOTS_DIR") == "" {
+		t.Skip("FILES_SHOTS_DIR not set")
+	}
+	defer func(f func(time.Time) bool) { dropNightAt = f }(dropNightAt)
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		t.Run(mode, func(t *testing.T) {
+			e, _, chZone, thZone := dropEnv(t)
+			w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
+			if err != nil {
+				t.Fatalf("headless window: %v", err)
+			}
+			if e.gpu != nil {
+				e.gpu.Release()
+			}
+			e.gpu = w
+			if dark {
+				e.a.setDark(true)
+			}
+			e.settle(600 * time.Millisecond)
+			for _, night := range []bool{false, true} {
+				dropNightAt = func(time.Time) bool { return night }
+				when := map[bool]string{false: "day", true: "night"}[night]
+				e.a.fileDrop(dropAt(app.FileDragEnter, centre(chZone), 0, "/tmp/a.png"))
+				e.filesShot("drop-message-pane-" + when + "-" + mode)
+				e.a.fileDrop(dropAt(app.FileDragOver, centre(thZone), 0))
+				e.filesShot("drop-thread-" + when + "-" + mode)
+				e.a.fileDrop(app.FileDropEvent{Kind: app.FileDragLeave})
+				e.settle(100 * time.Millisecond)
+			}
+			// the entrance, mid-way (motion on): the cards scaling in
+			e.a.motionOverride = -1
+			e.a.fileDrop(dropAt(app.FileDragEnter, centre(chZone), 0, "/tmp/a.png"))
+			e.frame()
+			e.a.drop.since = e.now.Add(-dropOverlayAnim / 2)
+			gtx := e.context()
+			e.a.frame(gtx)
+			e.r.Frame(&e.ops)
+			if err := e.gpu.Frame(&e.ops); err != nil {
+				t.Fatal(err)
+			}
+			img := image.NewRGBA(image.Rectangle{Max: e.size})
+			if err := e.gpu.Screenshot(img); err != nil {
+				t.Fatal(err)
+			}
+			saveDropShot(t, "drop-message-pane-entrance-"+mode, img)
+			e.a.fileDrop(app.FileDropEvent{Kind: app.FileDragLeave})
+		})
+	}
+}
+
+func saveDropShot(t *testing.T, name string, img image.Image) {
+	f, err := os.Create(filepath.Join(os.Getenv("FILES_SHOTS_DIR"), name+".png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -34,6 +34,17 @@ jobs:
       - name: Gio file-drop events (vendored gioui.org/app)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'FileDrop|URIList' gioui.org/app
+      # the X11 path on a real X server: python-xlib plays a file manager's
+      # XDND source against a Gio window (enter, positions, drop, leave)
+      - name: XDND file drops on Xvfb (Gio patch 11)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_X11_DROP_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
+          xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop' gioui.org/app
       # Idle: the client left alone for 10 s per surface (channel, thread,
       # Activity, Preferences, the sidebar with unreads, the huddle window),
       # with and without reduced motion; fails past a caret's blinks plus
