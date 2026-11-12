@@ -272,7 +272,8 @@ than the entry; svza `RepliedBadge` compact, `check-filled`), You reacted
 compact, `check-filled`, "You reacted: :a: :b: :c: +n more"); none
 otherwise. All are `status_icon --circle --compact`: a 20px `plt-gray-10`
 circle, the 12px glyph in `content-pry`, in the 24px status slot, the
-tooltip below. Typing and agent status aren't in Clack's Activity.
+tooltip below. Agent status and typing come first (see "Experiments"
+and "Leftovers").
 
 **Badges.** The text badges (Draft `lagoon`, Replied `grass`, Incomplete
 `honeycomb` / Completed `lagoon`) are Pck2
@@ -665,24 +666,173 @@ activity-shots artifact adds activity-filter-source, -people-only,
 -icon-only, activity-tab-drag, activity-detail-panel-empty / -item,
 activity-agent-status, activity-create-view-source, activity-no-revisions.
 
+## Leftovers (2026-11-12, branch `gap-w15`)
+
+Read from Slack's public CDN build `d3de3a487b1c` (slack-datamine-plus
+`build/meta.json`, captured 2026-11-12; `client-boot.1dda789952479959`,
+`gantry-v2-async-client-boot-shared.f0cb243a3139a62a`,
+`gantry-v2-async-client-boot-vendors.01d5fef3c8cd6893`), no cookie, and
+the `client-boot-styles` CSS. Nothing was opened in a live Slack client;
+every write below is tested against internal/fakeslack only.
+
+**Where the code went.** In this build the Activity list and rows
+(`ActivityList`, `ActivityRowContentMultiLine`, `ActivityRowContentSingleLine`,
+`ActivityRowContentStatusIndicatorWithResolvedReply`,
+`useHideActionsBehindStickyHeader`) are one boot-shared module, `5465`.
+Build 4d0c78085232 had them in boot-render `Eojr`, and the 2026-11-10
+passes cite them as boot-render `U5s4`. The helpers (rZx3, QTZf, laKt,
+VeYL, Gjwd, oDbF, Qt0R, SKIQ) keep their ids. There is no
+`reaction_bundle` type or "reaction bundle" anywhere in either build, so
+that "Not done" entry was wrong. What Slack draws for reactions that Clack
+didn't is below.
+
+**Typing** (rZx3 `z8`, HCiS `rg` / `Oc`, +SIc `BaseChannelPrefixTyping`).
+The status slot's order is: agent status, then typing, then the unread
+badge, then the read marks. So a row whose conversation someone is typing
+in shows the dots instead of its badge. Typing counts for DM and
+channel-post entries when someone types in the conversation (not in a
+thread), and for thread_v2 entries when someone types in that thread. It
+never counts your own typing (`memberIsSelf`) or a group DM. A record
+lasts 6 s, and a message from the typist ends it. The dots are +SIc's
+24-unit SVG at 15px (`.status_indicators .typing_status`) in
+`content-sec`: circles r 3 at x 4 / 12 / 20, resting at opacity 1, .4 and
+.3. Each one ramps 1 → .2 over .75 s, starting .15 s after the one before,
+on a .8 s cycle. The slot is the inline, standalone one (20px tall, at
+least 20px wide). The tooltip "Typing…" (`activity`) shows below. Clack
+asks for frames only while a row shows the dots. Not in Clack: z8's
+thread-subscription check (the store doesn't keep "unsubscribed" apart
+from "unknown") and the agent command center's assistant status.
+
+**A reaction row's reactions** (rZx3 `GY`, SKIQ `ActivityRowContentReactions`).
+A reaction entry whose message has reactions shows the message's
+MessageReactionBar in `entry_extras`, every reaction expanded
+(`alwaysExpand`). The add button is hidden (`--add_button_hidden`). The bar
+has `margin-top: 8px` and the multi-line row's `margin-bottom: -4px`;
+`entry_extras` is a column with 12px between its children. Detailed only.
+The pills are views' ReactionBar (reactions_slack.go), which also renders
+Unreads' and Threads' reactions.
+
+**Subtext** (/ad9 `ActivityMessage`). The subtext span
+(`p-activity_ia4_page__item__activity_subtext`, 15px under
+`--threads_v2`) sits inside the line-clamped message, before its text.
+Clack now runs it into the first paragraph's spans, so a second line
+starts at the left edge. Before any other first block (a list, a quote, a
+code block, an attachment) it takes its own line, as an inline span before
+a block element does in the browser. It covers "You: " and the reminders'
+"{author}: ".
+
+**Sticky section headers** (5465 `ActivityList` `stickyItems` `e5`, RIad
+`BaseStickyList`, oDbF `ActivitySectionHeader`). With the layout revisions
+on, the VIP sort's "VIP unreads" / "Everything else" headers are sticky
+items (`stickyZIndex` 199). The header of the section at the top of the
+list stays there until the next header pushes it up (its sticky container
+ends where the next one starts). While stuck it shows oDbF's `--stuck`
+shadow (`0 2px 4px #0000000a` under its 1px `otl-ter` line). A wheel over
+it still scrolls the list (gesture.Scroll, added to the list's position),
+and the rows under it get no presses. A row under it hides its hover
+actions (`useHideActionsBehindStickyHeader`: the row's top above the
+header's bottom less 2px). Without the revisions `e5` is empty and nothing
+sticks.
+
+**Accept on a Slack Connect channel invite** (boot-shared dcZX; Clack's
+core/connect_accept.go, popups/sc_accept.go). The channel invite now has
+Accept after Ignore. `SlackConnectAcceptChannelInviteAction` calls Me1V,
+vendors tkxP `conversations.sharedInviteAcceptanceEligibility {sig,
+include_eligible_alternative_actions: true, reason
+fetch-and-upsert-channel-acceptance-eligibility}`. On
+`grid_workspace_required` it asks again with `team_id`: the workspace the
+user accepted on, or the only suggested one. Then:
+
+| answer | next |
+|---|---|
+| eligible, `requirements.upgrade`, or `upgrade_required_but_user_cannot` | SlackConnectUpgradeModal: "Upgrade to join this channel", Not Now / See Upgrade Options (kzxh getPlansPageUrl: `/plans?entry_point=slack_connect_received_invite&invite_id=…` on the team's domain, in the browser) |
+| eligible | SlackConnectAcceptChannelInviteMultiPaneModal (below) |
+| `alternative_actions.join_channel` | vendors WlHm `conversations.joinConnectedShared {reason slack-connect-accept-channel-invite-join-channel, sig, invite_id}`, then the welcome modal |
+| anything else | the row's error ("Hmm, something went wrong", hasConnectInviteAcceptanceFailed) |
+
+The multi-pane modal is three panes, each under AcceptInvitationModalHeader
+("Accept your invitation", "#channel" under it: ZuZy formatChannelName),
+with FooterSteps ("Step {currentStep} of {totalSteps}", `#1d1c1db3`) at the
+footer's left. All strings are in `slack_connect`.
+
+1. WorkspaceSelectionPane: "Workspace where this channel will live:" and
+   the workspace's name. Off Grid (jDlU r7) the escape hatch follows: "You
+   can also sign into a different workspace or create a new workspace."
+   Both links are redirectToGetStartedPage
+   (`app.slack.com/get-started?sig&invite_id&redir=/share/{sig}`,
+   `#/createnew` for a new one) in a new window, and the modal closes.
+   Then Next.
+2. ChannelNamePane: "Name this channel for your team", the 45Rv name input
+   (36px, no prefix), validated on load and after each edit
+   (`conversations.validateName`, 500 ms). A name_taken error on the
+   invite's own name doesn't count. The hint reads "This won’t impact the
+   channel name for {invitingTeamName}." until an error replaces it. Back,
+   and Next, which is disabled while the name is checking or invalid.
+3. ChannelPrivacyPane: "Should this channel be public or private?", then
+   "Public - Anyone in {selectedWorkspace} can join" and "Private - Only
+   specific people can join" ("Requires an invitation"). The option that
+   `requirements.channel_privacy` rules out is disabled. Then "{invitingTeamName}
+   may have different privacy settings for their team.", and Back and
+   "Accept and Join Channel" ("Accept and Start Trial" with a trial, plus
+   FreeTrialNote under the footer). The accept is vendors I6kl
+   `conversations.acceptSharedInvite {reason slack-connect-accept-channel-invite,
+   sig, invite_id, channel_name, is_private, free_trial_accepted}`. A
+   failure shows AcceptInvitationErrorModalContent ("Something went
+   wrong", "If the problem persists, please drop us a line"), and the
+   footer becomes a danger Close.
+
+After the accept, g7VB acceptSharedInviteAndMaybeOpenWelcomeModal calls
+nZov `connectInvites.list {invite_ids, invite_types: ["channel"], reason
+open-welcome-modal}`. An approved acceptance opens the channel. Then
+SBlm SharedInviteCreatorWelcomeModal (`setup_page`) appears, with Got It:
+
+- Connected: "Welcome to the channel!" and "**#channel** is where you’ll
+  work with {invitingMember} and others from **{invitingTeam}**."
+- Pending: "All set — admins are taking a look". The body depends on which
+  organisations still have to review the acceptance (Vd/3: neither side's
+  review → "…admins from your organization and {invitingTeam} need to
+  approve it…"; one side → that side's copy; none → "All organizations
+  will need the approval of their admins…").
+
+The feed reloads, and the accepted invite leaves it. **Left out**
+(Clack signs in to one workspace): the suggested-workspaces select and
+SlackConnectConfirmWorkspaceModal (Grid's "accept on another workspace"),
+SlackConnectStartFreeTrialModal before a trial's accept (Clack opens the
+accept modal with the trial's note and button), the join-when-connected
+and join-workspace alternatives, Sponsored Connections' modal, the
+welcome modal's trial, SCDM-prompt and error variants, and the
+`conversations.info` membership refresh before opening the channel
+(Navigate loads it).
+
+**Tests and screenshots.** `TestConnectChannelAcceptRoundTrip` (core,
+fakeslack: every arg above, the Grid retry, pending and approved
+read-backs); `TestActivityTypingStatusLikeSlack`,
+`TestActivityReactionRowReactionsLikeSlack`,
+`TestActivitySubtextInlineLikeSlack`,
+`TestActivityStickySectionHeadersLikeSlack`,
+`TestActivityAcceptChannelInviteLikeSlack` (views, light and dark).
+The activity-shots artifact adds activity-typing(-dense),
+activity-reaction-row, activity-subtext-inline, activity-sticky-vip,
+activity-sticky-push, activity-channel-invite-row,
+activity-accept-workspace / -name / -privacy / -welcome / -upgrade,
+each `-light` and `-dark`.
+
 ## Not done
 
-- Reaction bundles ("reaction_bundle" rows), behind an experiment.
-- The typing indicator in the status column (agent status is done, see
-  "Experiments"); the importance icon; Block Kit action buttons under app
-  messages.
-- Accept on a Slack Connect channel invite (Slack's multi-step accept
-  modal), the trust modal's illustration.
+- The importance icon; Block Kit action buttons under app messages
+  (5465's `k`: `activity_actions` blocks under an agent's entry).
+- The channel accept's other workspaces, start-trial modal and other
+  alternatives (see "Leftovers"); the trust modal's illustration.
 - Summarize thread, Open in new window (see above); the priority /
   importance rows.
-- The subtext is drawn as a column before the message, so a 2-line
-  message's second line is indented under it (Slack runs it inline).
 - With activity_entry_layout_revisions_2 off Slack draws its older rows
   (Pck2 ActivityRowContentDense / ActivityRowContentDetailed, with
   ActivityRowContentTimestampAndActionsWithResolvedReply's text badges);
   Clack keeps the revised rows in that group (the tabs, dividers,
-  tooltips, reactions and line caps do follow it). The sticky section
-  headers the revisions add (Eojr e5) aren't in Clack either.
+  tooltips, reactions and line caps do follow it).
+- The list's 8px lead-in above the first row
+  (`--activity-first-item-lead-in`); with it Slack's VIP header isn't
+  stuck at scroll 0.
 - The In picker's "Suggestions" without a query (the last search's "in"
   suggestions: Clack's search keeps them per search view).
 - "Discard changes?" when closing Create a new view with changes; the

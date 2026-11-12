@@ -197,8 +197,11 @@ type actRow struct {
 	markOK       bool
 	markHov      gesture.Hover
 	markTipState popups.TipState
-	complete     widget.Clickable
-	invC         [3]widget.Clickable
+	// the typing dots' tooltip (typingStatus)
+	typeHov  gesture.Hover
+	typeTip  popups.TipState
+	complete widget.Clickable
+	invC     [3]widget.Clickable
 
 	// The agent's status (agent_status_in_activity): processing or
 	// suspended, until when processing holds; its tooltip.
@@ -371,6 +374,11 @@ type Activity struct {
 	prevList widget.List
 
 	locGen uint64 // i18n.Gen the rows were built in
+
+	// typing is who's typing where, for the status column (rZx3 z8;
+	// activity_rows.go); stk the sticky section header (Eojr e5).
+	typing actTyping
+	stk    actStickyHdr
 }
 
 // NewActivity builds the Activity view; it loads on first Layout.
@@ -409,6 +417,13 @@ func (v *Activity) watchItems() {
 	ch, _ := v.h.Core().Subscribe()
 	go func() {
 		for ev := range ch {
+			if ev.Type == "typing" || ev.Type == "message" {
+				// the status column's typing indicator (rZx3 z8)
+				if v.typing.apply(ev, v.h.Core().Self().ID) {
+					v.h.Invalidate()
+				}
+				continue
+			}
 			if ev.Type == "conv" {
 				// channel_updated: an agent session's status (the rows'
 				// agent status) may have changed
@@ -1680,32 +1695,43 @@ func (v *Activity) items(gtx C) D {
 	// inside its area
 	v.listFocusEvents(gtx)
 	area := v.listFocusArea(gtx, image.Rectangle{Max: gtx.Constraints.Max})
+	v.stk.begin()
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
-		if i >= n {
-			return v.footer(gtx, failed)
-		}
-		idx := v.vis[i]
-		switch {
-		case idx == actVisVIP || idx == actVisElse:
-			return v.sectionHeader(gtx, idx == actVisVIP)
-		case idx == actVisSpacer:
-			return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(16))}
-		case idx < 0:
-			if j := -1 - idx; j < len(page.Items) {
-				return v.dayDivider(gtx, tsTime(page.Items[j].FeedTS))
-			}
-			return D{}
-		}
-		if idx >= len(page.Items) {
-			return D{}
-		}
-		return v.row(gtx, &page.Items[idx], i)
+		d := v.listItem(gtx, &page, i, n, failed)
+		v.stk.h[i] = d.Size.Y
+		return d
 	})
+	// the VIP sort's sticky section header over the list (activity_rows.go)
+	v.stickyHeader(gtx, d.Size)
 	area.Pop()
 	if page.Next != "" && !failed && !v.data.busy() && v.list.Position.First+v.list.Position.Count >= n-5 {
 		v.load(actMore)
 	}
 	return d
+}
+
+// listItem is the list's item i: a row, a day divider, a section header
+// or its spacer, or the footer after the n items.
+func (v *Activity) listItem(gtx C, page *core.ActivityPage, i, n int, failed bool) D {
+	if i >= n {
+		return v.footer(gtx, failed)
+	}
+	idx := v.vis[i]
+	switch {
+	case idx == actVisVIP || idx == actVisElse:
+		return v.sectionHeader(gtx, idx == actVisVIP)
+	case idx == actVisSpacer:
+		return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(16))}
+	case idx < 0:
+		if j := -1 - idx; j < len(page.Items) {
+			return v.dayDivider(gtx, tsTime(page.Items[j].FeedTS))
+		}
+		return D{}
+	}
+	if idx >= len(page.Items) {
+		return D{}
+	}
+	return v.row(gtx, &page.Items[idx], i)
 }
 
 // dayDivider is Slack's p-activity_page__date_divider: a 50px row with the
@@ -1941,7 +1967,7 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 			break
 		}
 	}
-	if sel || focused || r.click.Hovered() || r.bar.Hovered() {
+	if (sel || focused || r.click.Hovered() || r.bar.Hovered()) && !v.underSticky(gtx, i) {
 		y := -gtx.Dp(25)
 		if v.dense {
 			// activity_single_line_row_content__actions_toggle: centred on
@@ -2550,16 +2576,10 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 							return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return v.actFooter(gtx, d, unread) })
 						}),
 						layout.Rigid(func(gtx C) D {
-							// entry_extras: the Slack Connect invite's
-							// text actions (ActivityRowContentInviteActions)
-							acts := v.inviteActions(r.it)
-							if len(acts) == 0 {
-								return D{}
-							}
-							// entry_extras is a column flex and the text
-							// actions' ul is align-self: center
-							gtx.Constraints.Min.X = gtx.Constraints.Max.X
-							return layout.N.Layout(gtx, func(gtx C) D { return v.inviteButtons(gtx, r, acts) })
+							// entry_extras: the reaction row's reactions,
+							// the Slack Connect invite's text actions
+							// (activity_rows.go)
+							return v.entryExtras(gtx, r)
 						}),
 					)
 				})
@@ -2569,6 +2589,8 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 				switch {
 				case r.agentOn(gtx):
 					return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.agentStatus(gtx, r) })
+				case v.typingOn(gtx, r.it): // ahead of the badge (activity_rows.go)
+					return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.typingStatus(gtx, r) })
 				case unread:
 					return layout.Inset{Top: 5, Bottom: 2}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
 				case r.markOK: // read rows: the completed to-do, Draft, replied, reacted
@@ -2645,6 +2667,8 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 							switch {
 							case r.agentOn(gtx):
 								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.agentStatus(gtx, r) })
+							case v.typingOn(gtx, r.it):
+								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.typingStatus(gtx, r) })
 							case unread:
 								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
 							case r.markOK:
@@ -2882,10 +2906,8 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 	if d.subtext == "" {
 		return r.preview(gtx, lines)
 	}
-	return row(gtx, layout.Middle,
-		layout.Rigid(func(gtx C) D { return v.para(gtx, 15, 22, wReg, col, 1, d.subtext) }),
-		layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }),
-	)
+	// the subtext runs inline, inside the clamp (activity_rows.go)
+	return r.previewSub(gtx, lines, d.subtext)
 }
 
 // shimmerLine is Slack's loading placeholder (applyShimmer) for a body

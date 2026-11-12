@@ -338,7 +338,7 @@ func actRefOf(v *Activity, it *core.ActivityItem, key string) actRefRow {
 		out.Mark = r.mark.icon
 	}
 	for _, a := range v.inviteActions(it) {
-		out.Invite = append(out.Invite, map[string]string{core.InviteActIgnore: "Ignore", core.InviteActAcceptDM: "Accept"}[a])
+		out.Invite = append(out.Invite, map[string]string{core.InviteActIgnore: "Ignore", core.InviteActAcceptDM: "Accept", core.InviteActAcceptChannel: "Accept"}[a])
 	}
 	out.Complete = it.Type == "saved_reminder" && (it.ReminderItem == "message" || it.ReminderItem == "reminder") && v.reminderIncomplete(it)
 	if it.Type == "saved_reminder" && it.Msg != nil {
