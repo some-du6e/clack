@@ -76,7 +76,20 @@ func TestThreadsAuditLocked(t *testing.T) {
 		ci.Preview = false
 	}
 
-	// message_locked: unlocked, the reply box is back; locked, it goes
+	// message_locked over the socket (perfEnv starts without realtime):
+	// unlocked, the reply box is back; locked, it goes
+	evs, stop := svc.Subscribe()
+	defer stop()
+	svc.SetRealtime(true)
+	dl := time.After(10 * time.Second)
+	for up := false; !up; {
+		select {
+		case ev := <-evs:
+			up = ev.Type == "connection" && ev.Connected
+		case <-dl:
+			t.Fatal("no realtime connection")
+		}
+	}
 	e.fs.PushThreadLocked(ch, fakeslack.ThreadsAuditLocked, false)
 	e.until("unlocked", 10*time.Second, func() bool { return roadblockOf(tc) == "" })
 	other := e.openAuditThread(fakeslack.ThreadsAuditRead)

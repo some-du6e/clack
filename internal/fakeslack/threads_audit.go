@@ -56,6 +56,7 @@ type threadsAuditState struct {
 	mu       sync.Mutex
 	lastRead map[string]string // root -> last_read
 	marks    []ThreadMark
+	locked   map[string]bool // root -> is_locked set by PushThreadLocked
 }
 
 var threadsAuditStates sync.Map // *Server -> *threadsAuditState
@@ -141,10 +142,13 @@ func (s *Server) threadsAuditRoot(c threadsAuditCase) slack.Message {
 		}
 	}
 	m.ReplyUsersN = len(m.ReplyUsers)
-	m.IsLocked = c.locked
 	m.LatestReply = ThreadsAuditReply(c.root, len(c.repliers)-1)
 	st := s.threadsAudit()
 	st.mu.Lock()
+	m.IsLocked = c.locked
+	if l, ok := st.locked[c.root]; ok {
+		m.IsLocked = l
+	}
 	if lr, ok := st.lastRead[c.root]; ok {
 		m.Subscribed, m.LastRead = true, lr
 	}
@@ -190,9 +194,28 @@ func (s *Server) handleThreadsAudit(method string, f url.Values) (any, bool) {
 // PushThreadLocked sends the socket's message_locked for root in ch, as
 // Slack's server does when an admin turns a thread's replies off or back
 // on: the fields boot-render's messageLocked (`yYRM`) reads (channel,
-// thread_ts, is_locked, locked_by_team_id). Only the clients hear it; the
-// fixtures' history keeps their own is_locked.
+// thread_ts, is_locked, locked_by_team_id). The server records it first,
+// so conversations.history and conversations.replies serve the new
+// is_locked to a client that reloads on the update.
 func (s *Server) PushThreadLocked(ch, root string, locked bool) {
+	st := s.threadsAudit()
+	st.mu.Lock()
+	if st.locked == nil {
+		st.locked = map[string]bool{}
+	}
+	st.locked[root] = locked
+	st.mu.Unlock()
+	s.histMu.Lock()
+	for i := range s.hist[ch] {
+		if s.hist[ch][i].TS == root {
+			s.hist[ch][i].IsLocked = locked
+			s.hist[ch][i].LockedByTeamID = ""
+			if locked {
+				s.hist[ch][i].LockedByTeamID = TeamID
+			}
+		}
+	}
+	s.histMu.Unlock()
 	s.Push(map[string]any{"type": "message", "subtype": "message_locked", "channel": ch, "thread_ts": root,
 		"is_locked": locked, "locked_by_team_id": TeamID, "event_ts": root})
 }
