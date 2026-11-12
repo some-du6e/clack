@@ -366,6 +366,9 @@ func (s *Server) List(id string) (FakeList, bool) {
 	}
 	c := *l
 	c.Records = append([]lists.Record(nil), l.Records...)
+	for i := range c.Records { // SetField writes a record's cells in place
+		c.Records[i].Fields = append([]lists.Field(nil), c.Records[i].Fields...)
+	}
 	return c, true
 }
 

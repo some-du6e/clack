@@ -81,6 +81,13 @@ func installAVHooks(t *testing.T) *avHooks {
 	return h
 }
 
+// songs is what loadMusic was asked for so far.
+func (h *avHooks) songs() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.musicGot...)
+}
+
 func avWaitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
@@ -206,8 +213,8 @@ func TestHuddleLoungeMusic(t *testing.T) {
 	if el := time.Since(start); el < 900*time.Millisecond {
 		t.Fatalf("music after %v, want ~1 s", el)
 	}
-	if len(hk.musicGot) != 1 || hk.musicGot[0] != "waiting_muzak-9187b04.mp3" {
-		t.Fatalf("loaded %v, want Smooth Jazz (waiting_muzak)", hk.musicGot)
+	if got := hk.songs(); len(got) != 1 || got[0] != "waiting_muzak-9187b04.mp3" {
+		t.Fatalf("loaded %v, want Smooth Jazz (waiting_muzak)", got)
 	}
 
 	e.c.musicTick(s, together)
@@ -224,9 +231,11 @@ func TestHuddleLoungeMusic(t *testing.T) {
 	e.c.av.together = false // as if just joined
 	e.c.av.mu.Unlock()
 	e.c.musicTick(s, alone)
-	avWaitFor(t, "the music again", func() bool { return e.c.MusicPlaying() })
-	if hk.musicGot[len(hk.musicGot)-1] != "subway_music-ff03dfb.mp3" {
-		t.Fatalf("song pref subway loaded %v", hk.musicGot)
+	// startMusic turns MusicPlaying on before it loads the song: wait for
+	// the song itself (s.LocalPlaying), as above, not just the flag
+	avWaitFor(t, "the music again", func() bool { return e.c.MusicPlaying() && s.LocalPlaying() })
+	if got := hk.songs(); got[len(got)-1] != "subway_music-ff03dfb.mp3" {
+		t.Fatalf("song pref subway loaded %v", got)
 	}
 	setPrefs(e.h.app, map[string]any{"huddles_play_music_when_last": false, "huddles_play_music_timeout": 1})
 	e.c.PrefsChanged()

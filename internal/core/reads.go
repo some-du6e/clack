@@ -69,7 +69,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		t := a.S.Timeline(ch)
 		if t == nil {
 			source = "fetch"
-			if err := a.loadLatest(ctx, ch); err != nil {
+			if err := a.loadLatestIfMissing(ctx, ch); err != nil {
 				return Page{}, err
 			}
 			t = a.S.Timeline(ch)

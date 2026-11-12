@@ -480,7 +480,7 @@ func (a *App) joinPreview(c *convo, d core.TempJoin) {
 				ci.Preview = false // the snapshot that follows agrees
 			}
 			if a.data != nil {
-				delete(a.data.ext, ch)
+				a.data.forgetExt(ch)
 			}
 			if c.comp != nil {
 				c.comp.Focus()

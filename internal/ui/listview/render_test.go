@@ -350,11 +350,17 @@ func TestEditRoundTrip(t *testing.T) {
 		f := stored("Rec0ITEM003", "Col0EST0001")
 		return f != nil && len(f.Number) == 1 && f.Number[0] == 4.5
 	})
-	// a rating: the third star
-	v.cellClick(d, rec, d.Meta.Column("Col0PRIO001"), gtx.Dp(26)*2+2, gtx)
+	// a rating: the fourth star. The item starts at three, and a click on
+	// the current star clears it (cellClick), so a third-star click sent a
+	// clear and the wait passed only when it looked before the clear landed.
+	if f := rec.Field("Col0PRIO001"); f == nil || len(f.Rating) != 1 || f.Rating[0] != 3 {
+		t.Fatalf("fixture rating %+v, want 3", f)
+	}
+	sent := len(fs.ListCellUpdates())
+	v.cellClick(d, rec, d.Meta.Column("Col0PRIO001"), gtx.Dp(26)*3+2, gtx)
 	wait("the rating", func() bool {
 		f := stored("Rec0ITEM003", "Col0PRIO001")
-		return f != nil && len(f.Rating) == 1 && f.Rating[0] == 3
+		return len(fs.ListCellUpdates()) == sent+1 && f != nil && len(f.Rating) == 1 && f.Rating[0] == 4
 	})
 	// a vote: mine added
 	v.cellClick(d, rec, d.Meta.Column("Col0VOTE001"), 0, gtx)
