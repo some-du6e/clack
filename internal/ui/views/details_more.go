@@ -57,7 +57,7 @@ const (
 
 // cdSettingsPerms are the permissions.info checks the Settings tab needs.
 var cdSettingsPerms = []string{core.PermRenameChannel, core.PermManageChannelPermission,
-	core.PermEditChannelAIExclusions, core.PermManageChannelTabs}
+	core.PermEditChannelAIExclusions, core.PermManageChannelTabs, core.PermManageChannelPosting}
 
 // Stacked dialog kinds.
 const (
@@ -70,6 +70,7 @@ const (
 	cdDlgHide
 	cdDlgAddPeople
 	cdDlgSharing
+	cdDlgPosting // PostingPermissionsModal (details_posting.go)
 )
 
 // cdExtra is the dialog state behind the Slack parts above.
@@ -85,6 +86,8 @@ type cdExtra struct {
 	suggest, huddleLearn, aiLearn widget.Clickable
 	copyNames, copyEmails         widget.Clickable
 	mpdmName                      widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
+	postRow, postLearn            widget.Clickable // Posting permissions (details_posting.go)
+	postSub                       async[core.PostingPrefs]
 	helpTips                      map[string]*cdTip
 
 	suggestOp      async[bool]
@@ -141,6 +144,7 @@ type cdDialog struct {
 	checks                  map[string]*widget.Clickable
 	userID, userName, dmID  string // cdDlgHide
 	add                     *cdAddPeople
+	post                    *cdPosting // cdDlgPosting
 	addOp                   async[core.Conv]
 	ptr                     int
 	focusIn                 int
@@ -331,12 +335,15 @@ func (d *ChannelDetails) slackSettingsItems(inf core.ChannelDetails, name W) []W
 	return append(items, cdGap(24))
 }
 
-// permissionsRows is the "permissions" field group: AI use, Guest access,
-// Huddles. (Posting permissions and Message history need modals Clack
-// doesn't have: docs/CHANNELS-AUDIT.md.)
+// permissionsRows is the "permissions" field group: Posting permissions
+// (details_posting.go), AI use, Guest access, Huddles. (Message history
+// needs a modal Clack doesn't have: docs/CHANNELS-AUDIT.md.)
 func (d *ChannelDetails) permissionsRows(inf core.ChannelDetails) []W {
 	c := d.h.Core()
 	var rows []W
+	if vis := d.postingVisibility(inf); vis.Show {
+		rows = append(rows, func(gtx C) D { return d.postingField(gtx, inf, vis) })
+	}
 	if c.Experiment("ai_channel_exclusions") == "on" {
 		rows = append(rows, func(gtx C) D { return d.aiUseField(gtx, inf) })
 	}
@@ -1203,6 +1210,8 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 		}, []W{cancel, d.cdDlgButton(&dl.ok, btnDanger, "Hide This Person", dl.pending)})
 	case cdDlgAddPeople:
 		d.addPeopleDialog(gtx, full, inf)
+	case cdDlgPosting:
+		d.postingDialog(gtx, full, inf)
 	}
 }
 
@@ -1299,6 +1308,10 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 	}
 	if dl.kind == cdDlgAddPeople {
 		d.updateAddPeople(gtx, inf)
+		return
+	}
+	if dl.kind == cdDlgPosting {
+		d.updatePosting(gtx, inf)
 		return
 	}
 	if dl.ok.Clicked(gtx) && !dl.pending {
@@ -1601,11 +1614,13 @@ func (d *ChannelDetails) escapeDialog() bool {
 // cdMaxGroupDM is the people a group DM holds, you included.
 const cdMaxGroupDM = 9
 
-// Conversation history choices (hLnn): none, today, all.
+// Conversation history choices (hLnn): none, today, all, custom
+// (details_history.go).
 const (
 	cdHistNone = iota
 	cdHistToday
 	cdHistAll
+	cdHistCustom
 )
 
 // cdAddPeople is the modal's state: step 0 picks people (SelectMembersForm),
@@ -1620,8 +1635,9 @@ type cdAddPeople struct {
 	resClk     map[string]*widget.Clickable
 	members    map[string]bool // already in the conversation
 	hist       int
-	histClk    [3]widget.Clickable
-	confirm    bool // "Include history from the beginning?"
+	histClk    [4]widget.Clickable
+	hx         cdHistState // Custom, the preview, the speed bump (details_history.go)
+	confirm    bool        // "Include history from the beginning?"
 	creating   bool
 	focused    bool
 	focusTries int
@@ -1643,6 +1659,7 @@ func (d *ChannelDetails) openAddPeople(inf core.ChannelDetails) {
 		a.hist = cdHistNone
 	}
 	d.x.dlg.add = a
+	d.histOpen(a)
 }
 
 // addRoom is how many more people fit: 9 minus everyone in it and picked.
@@ -1684,8 +1701,12 @@ func (d *ChannelDetails) updateAddPeople(gtx C, inf core.ChannelDetails) {
 		}
 		return
 	}
+	d.updateHistory(gtx, a)
+	if d.x.dlg.kind != cdDlgAddPeople {
+		return // the speed bump's Cancel closed the modal
+	}
 	for i := range a.histClk {
-		if a.histClk[i].Clicked(gtx) {
+		if a.histClk[i].Clicked(gtx) && !a.hx.tooMany {
 			a.hist = i
 		}
 	}
@@ -1697,7 +1718,7 @@ func (d *ChannelDetails) updateAddPeople(gtx C, inf core.ChannelDetails) {
 	if dl.confirmBack.Clicked(gtx) {
 		a.confirm = false
 	}
-	submit := dl.ok.Clicked(gtx) && !a.creating
+	submit := dl.ok.Clicked(gtx) && !a.creating && !a.hx.tooMany && !(a.hist == cdHistCustom && a.hx.day.IsZero())
 	if submit && a.hist == cdHistAll && !a.confirm {
 		a.confirm = true // "Include history from the beginning?"
 		return
@@ -1707,18 +1728,11 @@ func (d *ChannelDetails) updateAddPeople(gtx C, inf core.ChannelDetails) {
 		for i, u := range a.picked {
 			ids[i] = u.ID
 		}
-		start := ""
-		switch a.hist {
-		case cdHistToday:
-			now := gtx.Now
-			if now.IsZero() {
-				now = time.Now()
-			}
-			y, m, dd := now.Date()
-			start = cdUnixDay(time.Date(y, m, dd, 0, 0, 0, 0, now.Location()).Unix())
-		case cdHistAll:
-			start = "0000000000.000001"
+		now := gtx.Now
+		if now.IsZero() {
+			now = time.Now()
 		}
+		start := histStartTS(a, now)
 		a.creating = true
 		dl.addOp.load(d.h, false, func(ctx context.Context) (core.Conv, error) { return c.AddToConversation(ctx, id, ids, start) })
 	}
@@ -1727,7 +1741,7 @@ func (d *ChannelDetails) updateAddPeople(gtx C, inf core.ChannelDetails) {
 			a.creating = false
 			switch {
 			case err != nil && strings.Contains(err.Error(), "too_many_messages"):
-				dl.err = "too_many_messages"
+				a.hx.tooMany = true // the "Too many messages selected" speed bump
 			case err != nil:
 				dl.err = "Hmm…something went wrong"
 			case conv.ID != "":
@@ -1770,47 +1784,46 @@ func (d *ChannelDetails) addPeopleDialog(gtx C, full image.Point, inf core.Chann
 		names[i] = displayName(u)
 	}
 	who := cdJoinNames(names)
-	labels := [3]string{"Don’t include any conversation history", "From today", "From the beginning"}
+	ns := nsMpdmAudience
 	body := []W{
 		d.cdPara("hist", "Choose whether "+who+" can see past messages and files once they’re added to the conversation."),
 		cdSpace(16),
-		func(gtx C) D { return hline(gtx, dirRing(&d.base, d.p.Surface)) },
-		cdSpace(16),
-	}
-	for i := range labels {
-		i := i
-		body = append(body, func(gtx C) D {
-			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
-				return a.histClk[i].Layout(gtx, func(gtx C) D {
-					pointerCursor(gtx)
-					return row(gtx, layout.Middle,
-						layout.Rigid(func(gtx C) D { return cdRadio(&d.base, gtx, a.hist == i) }),
-						hgap(8),
-						layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Text, 1, labels[i]) }),
-					)
-				})
+		func(gtx C) D { // SelectHistoryOptionForm spans the modal (its own 24px padding)
+			return layout.Inset{Left: -28, Right: -28}.Layout(gtx, func(gtx C) D {
+				gtx.Constraints.Min.X = gtx.Constraints.Max.X
+				return d.historyForm(gtx, a)
 			})
-		})
+		},
 	}
-	switch {
-	case dl.err == "too_many_messages":
-		body = append(body, cdSpace(8), d.cdAlert("You can only include up to 100 messages. Select another option or create a private channel instead.", false))
-	case dl.err != "":
+	if dl.err != "" {
 		body = append(body, cdSpace(8), d.cdAlert(dl.err, false))
 	}
-	if a.confirm {
-		body = append(body, cdSpace(8), func(gtx C) D { return d.para(gtx, 15, 22, wBold, d.p.Text, 0, "Include history from the beginning?") },
-			d.cdPara("histall", "This lets everyone see past messages and files once they’re added to the conversation."))
-		d.skModal(gtx, full, "Include conversation history?", true, body, []W{
-			d.cdDlgButton(&dl.confirmBack, btnOutline, "Go Back", false),
-			d.cdDlgButton(&dl.confirmAll, btnPrimary, "Confirm", a.creating),
+	switch {
+	case a.hx.tooMany:
+		body = append(body, d.historyBump()...)
+		d.skModal(gtx, full, ns.T("Include conversation history?"), true, body, []W{
+			d.cdDlgButton(&a.hx.bumpCancel, btnOutline, ns.T("Cancel"), false),
+			d.cdDlgButton(&a.hx.bumpOK, btnPrimary, ns.T("OK"), false),
+		})
+		return
+	case a.confirm:
+		body = append(body, cdSpace(8), func(gtx C) D {
+			return d.para(gtx, 15, 22, wBold, d.p.Text, 0, ns.T("Include history from the beginning?"))
+		},
+			d.cdPara("histall", ns.T("This lets everyone see past messages and files once they’re added to the conversation.")))
+		d.skModal(gtx, full, ns.T("Include conversation history?"), true, body, []W{
+			d.cdDlgButton(&dl.confirmBack, btnOutline, ns.T("Go Back"), false),
+			d.cdDlgButton(&dl.confirmAll, btnPrimary, ns.T("Confirm"), a.creating),
 		})
 		return
 	}
-	d.skModal(gtx, full, "Include conversation history?", true, body, []W{
-		func(gtx C) D { return d.para(gtx, 13, 18, wReg, d.p.Muted, 1, "Once included, it can’t be undone.") },
-		d.cdDlgButton(&dl.back, btnOutline, "Back", false),
-		d.cdDlgButton(&dl.ok, btnPrimary, "Done", a.creating),
+	noDate := a.hist == cdHistCustom && a.hx.day.IsZero()
+	d.skModal(gtx, full, ns.T("Include conversation history?"), true, body, []W{
+		func(gtx C) D {
+			return d.para(gtx, 13, 18, wReg, d.p.Muted, 1, ns.T("Once included, it can’t be undone."))
+		},
+		d.cdDlgButton(&dl.back, btnOutline, ns.T("Back"), false),
+		d.cdDlgButton(&dl.ok, btnPrimary, ns.T("Done"), a.creating || noDate),
 	})
 }
 
@@ -2040,6 +2053,21 @@ func (d *ChannelDetails) settingsVisible() bool {
 	return true
 }
 
+// updateAddApps opens the apps browser (popups.OpenAppsBrowser, Slack's
+// openAppsBrowserModal with addAppsVariant) from the Integrations tab's
+// "Add an App" and from Agents & apps' "Add agents and apps" (the latter
+// while agents_in_channels_improvements is off, as for the test account;
+// on, Slack opens the channel invite modal scoped to agents and apps,
+// which Clack doesn't have, so the browser opens then too).
+func (d *ChannelDetails) updateAddApps(gtx C) {
+	if !d.addApp.Clicked(gtx) {
+		return
+	}
+	if ph, ok := d.h.(popups.Host); ok {
+		popups.OpenAppsBrowser(ph, d.id)
+	}
+}
+
 // updateSlackParts runs the Slack parts' clicks and finished writes.
 func (d *ChannelDetails) updateSlackParts(gtx C, inf core.ChannelDetails, loaded bool) {
 	d.updateDialog(gtx, inf)
@@ -2090,13 +2118,15 @@ func (d *ChannelDetails) updateSlackParts(gtx C, inf core.ChannelDetails, loaded
 // Press clicks a control by name: leave, add-people (About in a DM, the
 // Members row in a group DM), vip, hide, ai-use, guests, member-perms,
 // suggest, new-tab, ok, cancel, back, conversation-name (a group DM's
-// "Conversation name" Edit).
+// "Conversation name" Edit), posting (Settings › Posting permissions),
+// save, add-app ("Add an App" / "Add agents and apps").
 func (d *ChannelDetails) Press(name string) {
 	cs := map[string]*widget.Clickable{
 		"leave": &d.leaveRow, "vip": &d.vip, "hide": &d.hide, "ai-use": &d.x.aiRow, "guests": &d.x.guestRow,
 		"member-perms": &d.x.memPermRow, "suggest": &d.x.suggest, "new-tab": &d.newTab,
 		"ok": &d.x.dlg.ok, "cancel": &d.x.dlg.cancel, "back": &d.x.dlg.back,
 		"conversation-name": &d.x.mpdmName, "sharing": &d.x.sharingRow,
+		"posting": &d.x.postRow, "save": &d.x.dlg.ok, "add-app": &d.addApp,
 	}
 	if name == "add-people" {
 		if cdGroup(d.kind) == "im" {
@@ -2137,6 +2167,8 @@ func (d *ChannelDetails) Dialog() string {
 		return "sharing"
 	case cdDlgPerms:
 		return "perms"
+	case cdDlgPosting:
+		return "posting"
 	case cdDlgHide:
 		return "hide"
 	case cdDlgAddPeople:

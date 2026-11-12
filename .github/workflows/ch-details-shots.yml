@@ -2,14 +2,23 @@ name: ch-details-shots
 # Channel details' Slack parts (docs/CHANNELS-AUDIT.md) rendered headlessly
 # at 1440x900 against internal/fakeslack: Settings (AI use, Guest access,
 # Member / Guest permissions, member suggestions, Copy members), the last
-# member's "Leave and archive", and a DM's Add people modal. Synthetic
-# only: nothing here talks to Slack.
+# member's "Leave and archive", a DM's Add people modal, and W14's
+# Posting permissions, apps browser and Custom history (light and dark).
+# Synthetic only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run ch-details-shots.yml --ref <branch>)
     paths:
       - "internal/ui/views/details.go"
       - "internal/ui/views/details_more.go"
+      - "internal/ui/views/details_posting.go"
+      - "internal/ui/views/details_history.go"
+      - "internal/ui/views/details_w14_test.go"
+      - "internal/ui/popups/apps_browser.go"
+      - "internal/ui/details_w14_test.go"
+      - "internal/core/chposting.go"
+      - "internal/core/apps_index.go"
+      - "internal/core/history_preview.go"
       - "internal/ui/views/details_slack_test.go"
       - "internal/ui/details_audit_test.go"
       - "internal/ui/details_host.go"
@@ -37,14 +46,16 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: details tests
-        run: go test -count=1 -run 'TestDetails|TestHoverTriggerChannelMembers' ./internal/ui/views/
+        run: |
+          go test -count=1 -run 'TestDetails|TestHoverTriggerChannelMembers|TestHistoryBeginningLabel|TestPostingBullets' ./internal/ui/views/
+          go test -count=1 -run 'TestPosting|TestChannelPostingPrefsCalls|TestFeatureAccess|TestApps|TestHistoryPreview' ./internal/core/
       - name: details screenshots
         env:
           PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelDetailsSettingsSlackShot$|TestChannelDetailsLeaveArchiveShot$|TestChannelDetailsDMAddPeopleShot$|TestChannelDetailsMembersAndApps$|TestChannelDetailsTabsShot$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelDetailsSettingsSlackShot$|TestChannelDetailsLeaveArchiveShot$|TestChannelDetailsDMAddPeopleShot$|TestChannelDetailsMembersAndApps$|TestChannelDetailsTabsShot$|TestChannelDetailsPostingShot$|TestChannelDetailsAppsBrowserShot$|TestChannelDetailsDMCustomHistoryShot$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
