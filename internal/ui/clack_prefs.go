@@ -1,7 +1,7 @@
 package ui
 
 // Preferences > Clack: Clack's own settings (updates, Replay
-// introduction, live updates), out of Slack's Advanced page. The tab sits where a
+// introduction), out of Slack's Advanced page. The tab sits where a
 // Taut plugin's registered tab lands: after Slack's tabs[] (Advanced
 // stays last there), drawn with the same nav item (Slack's c-tabs__tab,
 // a 15px Slack svgIcon at 9,7). Clack's plugin tabs follow it below
@@ -21,17 +21,12 @@ var clackIntroRow func(p *prefsModal, f *prefsForm)
 // clackPage is the Clack tab: three rows at most, no headings or notes
 // (Karim, 2026-11-10: "keep the settings thing calm, 3 max"). Updates
 // (one row: automatic download, the step, its button), Replay
-// introduction, live updates. Troubleshooting (logs, Copy Diagnostics,
+// introduction. Live updates have no switch: they're always on, as in
+// Slack (realtime.go). Troubleshooting (logs, Copy Diagnostics,
 // freeze reports) is Help > Troubleshooting (appmenu.go).
 func (p *prefsModal) clackPage(f *prefsForm) {
-	a := p.a
 	p.updatesSection(f) // update_check.go
 	if clackIntroRow != nil {
 		clackIntroRow(p, f)
 	}
-	hint := ""
-	if a.opts.NoRealtime {
-		hint = "Turned off with -no-realtime or CLACK_NO_REALTIME"
-	}
-	f.option("realtime", "Live updates (typing, presence, instant messages)", hint, a.realtimeOn(), false, a.toggleRealtime)
 }
