@@ -65,6 +65,32 @@ Not fixed here, because the difference is data or a feature rather than a style:
 - The top-bar "avatar" is Slack's agent launcher ("Open 24Bot" + "More agents"), driven by the ai_apps prefs and an AI-apps fetch (round 2).
 - Huddle system rows ("You joined the huddle…") are Slack's own render of `huddle_thread` messages (round 2).
 
+## Text on Windows (branch `text-render`, 2026-11-11)
+
+Karim, Windows 11, dark mode: text looked washed out. font-shots' `text-render-linux` and `text-render-windows` jobs draw Slack's message (15px), sidebar (13px) and meta (12px) text, 400 and 700, both modes, at 1, 1.25, 1.5 and 2×, through Gio (Mesa llvmpipe; D3D11 on the Windows runner) and through headless Chrome 156 (and Edge 156) in the same embedded Lato (`TestTextRenderShots`, `.github/scripts/text_render_compare.py`). Per cell they measure the total ink and the peaks of strokes along rows (stems) and columns (bars), in sRGB-space ink (0 at the background, 1 at the text colour). Ink alone hides the problem: the earlier tuning (the section above) matched it.
+
+What differs on Windows:
+
+- **Not the framebuffer.** D3D11 renders in linear light into an sRGB target like the other backends: half-alpha white over black is 188 in the headless target and in a real window's swapchain read back from the screen (`TestD3D11WindowSRGB`). Gio's D3D11 (WARP) and llvmpipe pixels differ by at most 13 levels on a few pixels.
+- **Gamma and contrast.** Chromium's Windows build sets `SK_GAMMA_SRGB` and `SK_GAMMA_CONTRAST=1.0` (`skia/BUILD.gn`). Skia's mask-gamma table adds `contrast·toLuma(1-src)·a·(1-a)` to dark text's coverage, then blits it in sRGB (`SkMaskGamma.cpp`). DirectWrite masks go through it, grayscale and ClearType alike. On Linux, grayscale FreeType masks skip the table (`ignorePreBlend` without `SK_GAMMA_APPLY_TO_A8`), so Clack's legacy fade and embolden, tuned against Linux Chrome, were fitted to a different browser.
+- **Hinting.** Lato's `gasp` (v1, flags 15) makes DirectWrite grid-fit it vertically (`NATURAL_SYMMETRIC`), so Chrome's horizontal strokes are crisper. Gio doesn't hint.
+- **Smaller ones.** The runner's Chrome draws ClearType (Edge draws identically); `--disable-lcd-text` gives 1.5–3% more ink. Slack's own CDN Lato (re-hinted by ttfautohint 1.8.1) differs from the embedded one by about ±3% on Windows and not at all on Linux.
+
+Clack as shipped vs Chrome on Windows (ClearType), per mode means; stem and bar are peak differences:
+
+| | dark 1× | dark 1.5× | light 1× | light 1.5× |
+|---|---|---|---|---|
+| legacy model (fade, embolden) | ink 95.8%, stem −0.111, bar −0.107 | 100.1%, −0.100, −0.057 | 95.7%, −0.046, −0.085 | 97.5%, −0.050, −0.028 |
+| Skia's model (now on Windows) | 108.1%, −0.030, −0.022 | 106.3%, −0.045, +0.000 | 100.1%, −0.019, −0.047 | 100.3%, −0.036, −0.008 |
+
+Dark timestamps (`#ababad`) were the worst under the legacy model: 83% of Chrome's ink with stems 0.20 below at 1×. Under Skia's model they are at 112% with stems −0.021.
+
+The Windows model (`theme/textgamma.go`): no fade and no embolden. Skia's contrast is a second paint of the same glyph coverage at alpha k, which is Skia's `apply_contrast` exactly in Gio's linear blend. In light mode, dark ink's k is fitted to Chrome's sRGB blit of the table over white, because the table assumes a grey background for grey text. With Skia's own k, `#616061` timestamps came out at 87% of Chrome's ink and stems −0.074; fitted, 99.8% and −0.003. Linux and macOS keep the legacy model, byte for byte.
+
+Left over on Windows: dark-mode light text carries 2–11% more ink than Chrome's, with stems 0.03–0.045 lower. Gio's unhinted edges spread wider, and the table's guessed background is lighter than Slack's `#1a1d21`, which a second paint can't undo. Bars at 1× are 0.02–0.05 lower (hinting). On Linux the legacy model shows the same pattern, milder: dark-mode stems −0.06 to −0.08 on average and timestamps −0.13 to −0.14. Skia's model would track Linux Chrome's stems better there too (worst cell −0.035 to −0.047). macOS wasn't measured.
+
+`TestTextMatchesChrome` holds the Windows model to Chrome-on-Windows screenshots at 1× and 1.5×, and the legacy model to Chrome-on-Linux at 1× (`theme/testdata/text-render`). It runs in ci's pixel step and in both text-render jobs.
+
 ## Region diff score (light, 1×, mean |Δ| 0–255 and % of pixels off by more than 24)
 
 Same window, same channel, the chrome regions that don't depend on message content. Sidebar sections stay high because Slack's onboarding row shifts them 28px.

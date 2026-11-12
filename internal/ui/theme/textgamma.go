@@ -182,7 +182,8 @@ func onWhite(c color.NRGBA) bool {
 // contrast·toLuma(1-src) with sRGB luma (SkSRGBColorSpaceLuminance), for an
 // A8 glyph mask drawn in c. src is c's luminance as SkScalerContext reduces
 // it: each channel to 3 bits (SkScalerContextRec::setLuminanceColor:
-// SkTMaskGamma<3,3,3>::CanonicalColor, sk_t_scale255<3>), then
+// SkMaskGamma::CanonicalColor, sk_t_scale255<3>; SkScalerContext.h
+// "typedef SkTMaskGamma<3, 3, 3> SkMaskGamma"), then
 // SkComputeLuminance's (r·54 + g·183 + b·19) >> 8 for A8 masks
 // (SkScalerContext::PreprocessRec), then 3 bits again; the table for it is
 // built from sk_t_scale255<3> of the top 3 bits (SkTMaskGamma::preBlend).
