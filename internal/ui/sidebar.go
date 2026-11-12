@@ -69,11 +69,10 @@ type sidebarState struct {
 	// model that predates a toggle
 	acctCollapsed map[string]bool
 	rowCount      int
-	drag          gesture.Drag
-	dragX         float32
-	dragW         float32
 	hover         bool            // pointer over the sidebar (.p-channel_sidebar:hover)
 	headTags      map[string]*int // section headings' right-click tags (create_channel.go)
+	headHovers    map[string]*gesture.Hover
+	headCtl       string // the heading whose ⋯ (and +) this frame drew, "" for none
 
 	// Drafts & sent's badge list: hovering it shows Slack's tooltip
 	// ("N Drafts" / "N Scheduled", to the right).
@@ -343,6 +342,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	}
 	c := a.sidebarPalette()
 	m := a.model()
+	a.sidebar.headCtl = ""
 	a.tickSidebarFilter(gtx)
 	if a.sbStale(m) {
 		a.sidebar.rebuild(m)
@@ -585,7 +585,16 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	if btn == nil {
 		btn = a.clicks.get(clickPrefix + r.key)
 	}
-	hov := hoverState(btn.Hovered())
+	hovered := btn.Hovered()
+	var headHov *gesture.Hover
+	if r.kind == sbHeading {
+		// a heading's :hover is the whole row's, its ⋯ and + buttons
+		// included (registered over them below): the row's own button
+		// loses the pointer to them
+		headHov = a.sidebar.headingHover(r.key)
+		hovered = headHov.Update(gtx.Source)
+	}
+	hov := hoverState(hovered)
 	item := clsSbItem.EnterAttr(gtx, hov, 0, "data-item-key", r.itemKey)
 	defer item.Leave()
 	if item.Hidden() {
@@ -620,7 +629,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	d := item.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return at(gtx, image.Pt(pad, 0), image.Pt(w-pad*2, rowH), func(gtx layout.Context) layout.Dimensions {
 			return inner.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-				rs := sbRowState{sel: sel, label: label, icon: icon, emoji: sbEmoji(r, icon), weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
+				rs := sbRowState{hovered: hovered, sel: sel, label: label, icon: icon, emoji: sbEmoji(r, icon), weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
 				if conv != nil && a.sidebar.edit.on {
 					rs.edit, rs.picked = true, a.sidebar.edit.sel[conv.ID]
 					if rs.picked {
@@ -646,7 +655,13 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		}
 	}
 	if r.kind == sbHeading {
-		a.sbHeadingControls(gtx, r, btn.Hovered(), image.Pt(w, d.Size.Y))
+		a.sbHeadingControls(gtx, r, hovered, image.Pt(w, d.Size.Y))
+		// the row's hover, over its buttons, passing every event through
+		pass := pointer.PassOp{}.Push(gtx.Ops)
+		area := clip.Rect{Max: image.Pt(w, d.Size.Y)}.Push(gtx.Ops)
+		headHov.Add(gtx.Ops)
+		area.Pop()
+		pass.Pop()
 	}
 	if clicked(btn) {
 		switch r.kind {
@@ -718,6 +733,7 @@ var _ color.NRGBA
 
 // sbRowState is what layoutSidebarRow resolved for a row.
 type sbRowState struct {
+	hovered  bool // the row is hovered (a heading: anywhere in it, its buttons too)
 	sel      bool
 	label    string
 	icon     string
@@ -792,7 +808,7 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			fg = c.SidebarActiveText
 		}
 		icon := rs.icon
-		if r.kind == sbHeading && btn.Hovered() && !a.sbCollapsed(r) {
+		if r.kind == sbHeading && rs.hovered && !a.sbCollapsed(r) {
 			icon = "caret-down"
 		}
 		ix := pad + rs.indent

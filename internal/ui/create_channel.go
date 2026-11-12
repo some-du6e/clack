@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 
+	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -144,6 +145,21 @@ func (s *sidebarState) headingTag(id string) *int {
 	return t
 }
 
+// headingHover is a heading row's hover: Slack's
+// .p-channel_sidebar__section_heading:hover, true while the pointer is
+// anywhere in the row, its ⋯ and + buttons included.
+func (s *sidebarState) headingHover(id string) *gesture.Hover {
+	if s.headHovers == nil {
+		s.headHovers = map[string]*gesture.Hover{}
+	}
+	h := s.headHovers[id]
+	if h == nil {
+		h = new(gesture.Hover)
+		s.headHovers[id] = h
+	}
+	return h
+}
+
 // sbHeadingControls handles a section heading's right-click and, while it
 // is hovered, draws its ⋯ (and, on Channels, +) buttons at the row's right
 // (sz: the row, px).
@@ -168,9 +184,10 @@ func (a *App) sbHeadingControls(gtx layout.Context, r *sbRow, hovered bool, sz i
 		return
 	}
 	more, plus := a.clicks.get("sbh.more."+r.key), a.clicks.get("sbh.plus."+r.key)
-	if !hovered && !more.Hovered() && !plus.Hovered() {
+	if !hovered { // the row's :hover, the buttons inside it (sidebar.go)
 		return
 	}
+	a.sidebar.headCtl = r.key
 	c := &a.sbPal
 	bs := gtx.Dp(24)
 	x := sz.X - gtx.Dp(8) - bs - a.sidebar.headInd // left of a SectionHuddleIndicator

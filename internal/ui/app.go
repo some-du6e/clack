@@ -176,6 +176,7 @@ type App struct {
 	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
 	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
+	rzOverlayTag    int // .p-resizer-overlay (resizer.go)
 	ptrWin          image.Point
 	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
@@ -667,6 +668,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutToast(gtx)
 	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
 	a.rootPointer(gtx)
+	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
@@ -681,7 +683,10 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	railW := gtx.Dp(theme.RailW)
 	inset := gtx.Dp(theme.PanelInset)
 	// Slack's sidebar column: the window's share, or the dragged width
-	// (sidebar_width.go)
+	// (sidebar_width.go); the resizers' drags first, so the columns follow
+	// the pointer in this frame (resizer.go)
+	a.sidebarResizeEvents(gtx, railW)
+	a.splitResizeEvents(gtx, sz.X-inset)
 	a.sidebar.width = a.sidebar.widthFor(float32(sz.X) / gtx.Metric.PxPerDp)
 	a.syncSecondaryTab() // Activity and To-dos keep their own pane width
 	sbW := gtx.Dp(unit.Dp(a.sidebar.width))
@@ -785,6 +790,7 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	secW := 0
 	if a.secondary.open() && !a.bbmOn() { // the mode shows one container (bbm.go)
+		a.secondaryResizeEvents(gtx, sz.X) // its drags first: the pane follows in this frame (resizer.go)
 		secW = a.secondaryWidth(gtx, sz.X) // secondary.go
 		a.secondary.drawnW = secW
 		if a.secondary.expanded && a.secondary.kind == secCode {

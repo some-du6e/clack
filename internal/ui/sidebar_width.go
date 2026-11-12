@@ -29,12 +29,8 @@ package ui
 
 import (
 	"image"
-	"time"
 
-	"gioui.org/gesture"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -52,10 +48,9 @@ const (
 
 // sbWidthState is the sidebar column's intent and resizer state.
 type sbWidthState struct {
-	intent    int    // dp: the dragged width ("manual"), 0 for none
-	mode      string // Slack's sidebarWidthMode: "auto" or "manual"
-	lastPress time.Time
-	reset     bool // the press was a double click's second: no drag follows
+	intent int    // dp: the dragged width ("manual"), 0 for none
+	mode   string // Slack's sidebarWidthMode: "auto" or "manual"
+	rz     colResizer
 }
 
 // sidebarDefaultW is the "auto" width (dp) for a window winDp wide.
@@ -86,58 +81,40 @@ func (s *sidebarState) loadWidth(w int, mode string) {
 	}
 }
 
-// layoutSidebarResize is the 6px drag handle on the sidebar's right edge
-// (BaseResizer).
-func (a *App) layoutSidebarResize(gtx layout.Context, x, y, h int) {
+// sidebarResizeEvents applies the resizer's drags (BaseResizer, its
+// sidebar props: offset the tab rail, fromRight false) before the shell
+// sizes the column, so a drag shows in the frame it arrives in. left is
+// the sidebar's left edge, px in the shell's (window) frame.
+func (a *App) sidebarResizeEvents(gtx layout.Context, left int) {
 	s := &a.sidebar
 	px := gtx.Metric.PxPerDp
-	base := float32(s.width) // all events this frame share last frame's origin
-	def := sidebarDefaultW(float32(a.winSize.X) / px)
+	def := sidebarDefaultW(float32(gtx.Constraints.Max.X) / px)
 	for {
-		e, ok := s.drag.Update(gtx.Metric, gtx.Source, gesture.Horizontal)
+		e, ok := s.rz.next(gtx)
 		if !ok {
 			break
 		}
-		switch e.Kind {
-		case pointer.Press:
-			if !s.lastPress.IsZero() && gtx.Now.Sub(s.lastPress) < 500*time.Millisecond {
-				// onReset: the default width, "auto"
-				s.intent, s.mode, s.lastPress, s.reset = 0, "auto", time.Time{}, true
-				s.width = int(def + .5)
-				a.savePrefs()
-				continue
-			}
-			s.lastPress, s.reset = gtx.Now, false
-			// the handle moves with the edge, so positions are relative to
-			// the current edge: keep the press offset and accumulate.
-			s.dragX = e.Position.X
-			s.dragW = float32(s.width)
-		case pointer.Drag:
-			if s.reset {
-				continue
-			}
-			pos := base + (e.Position.X-s.dragX)/px
+		switch e.kind {
+		case resizeReset: // onReset: the default width, "auto"
+			s.intent, s.mode = 0, "auto"
+			a.savePrefs()
+		case resizeMove:
+			pos := (e.pos - float32(left)) / px
 			if pos >= def-sbSnap && pos <= def+sbSnap {
 				s.intent, s.mode = 0, "auto"
-				s.width = int(def + .5)
 			} else {
 				s.intent, s.mode = int(clampF(pos, sbWidthMin, sbWidthMax)+.5), "manual"
-				s.width = s.intent
 			}
-			s.dragW = float32(s.width)
-		case pointer.Release, pointer.Cancel:
-			if !s.reset {
-				a.savePrefs()
-			}
+		case resizeEnd:
+			a.savePrefs()
 		}
 	}
-	r := image.Rect(x-gtx.Dp(3), y, x+gtx.Dp(3), y+h)
-	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-	sz := r.Size()
-	g := gtx
-	g.Constraints = layout.Exact(sz)
-	area := image.Rectangle{Max: sz}
-	pointerArea(g, &s.drag, area, pointer.CursorColResize)
+}
+
+// layoutSidebarResize is the 6px drag handle on the sidebar's right edge
+// (BaseResizer) at x, px in the shell's frame.
+func (a *App) layoutSidebarResize(gtx layout.Context, x, y, h int) {
+	a.sidebar.rz.area(gtx, image.Rect(x-gtx.Dp(3), y, x+gtx.Dp(3), y+h), x)
 }
 
 // secTabWidths are the secondary pane's widths by tab: Slack keeps one
