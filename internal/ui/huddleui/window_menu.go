@@ -158,7 +158,7 @@ func (w *window) toggleMore(s *huddle.Session, st huddle.State) {
 		w.more = nil
 		return
 	}
-	w.picker, w.stick = false, false
+	w.closeMenus()
 	anchor := w.moreBtn.Add(image.Pt(0, w.barTop))
 	w.more = popups.NewMenuOpts(winHost{w}, w.c.moreMenu(s, st, w), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
 		MenuClass: "p-huddle_more_actions_menu"})
@@ -173,18 +173,60 @@ func (w *window) toggleAudio(s *huddle.Session) {
 		w.audio = nil
 		return
 	}
-	if w.more != nil {
-		w.more.Dismiss()
-		w.more = nil
-	}
-	w.picker, w.stick = false, false
+	w.closeMenus()
 	anchor := w.audioBtn.Add(image.Pt(0, w.barTop))
 	w.audio = popups.NewMenuOpts(winHost{w}, w.c.audioMenu(s), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
 		MenuClass: "p-huddle_more_actions_menu"})
 }
 
-// layoutMore draws the open ⋯ and Audio settings menus over the window.
+// closeMenus closes the toolbar's menus and pickers (one is open at a
+// time, as Slack's popovers close on the next click outside them).
+func (w *window) closeMenus() {
+	for _, m := range []**popups.Menu{&w.more, &w.audio, &w.video, &w.leaveMenu} {
+		if *m != nil {
+			(*m).Dismiss()
+			*m = nil
+		}
+	}
+	w.closeQuick()
+	w.stick = false
+}
+
+// toggleQuick opens (or closes) the emoji button's quick picker above it.
+func (w *window) toggleQuick(s *huddle.Session) {
+	if w.quick != nil {
+		w.closeQuick()
+		return
+	}
+	w.closeMenus()
+	anchor := w.reactBtn.Add(image.Pt(0, w.barTop))
+	w.quick = newQuickPicker(winHost{w}, anchor, w.popout == "", func(name string) { _ = s.React(name, "") })
+}
+
+func (w *window) closeQuick() {
+	if w.quick != nil {
+		w.quick.Dismiss()
+		w.quick = nil
+	}
+}
+
+// layoutMore draws the open toolbar menus and the quick picker over the
+// window.
 func (w *window) layoutMore(gtx C) {
+	if w.quick != nil {
+		w.quick.Layout(gtx)
+		if w.quick != nil && w.quick.Dismissed() {
+			w.quick = nil
+		}
+	}
+	for _, m := range []**popups.Menu{&w.video, &w.leaveMenu} {
+		if *m != nil {
+			(*m).Layout(gtx)
+			if (*m).Dismissed() {
+				*m = nil
+			}
+		}
+	}
 	if w.more != nil {
 		w.more.Layout(gtx)
 		if w.more.Dismissed() {

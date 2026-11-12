@@ -36,8 +36,8 @@ type window struct {
 
 	vids   videoOps
 	clicks map[string]*widget.Clickable
-	picker bool
-	stick  bool // the sticker picker (hand.go)
+	quick  *quickPicker // the emoji button's HuddleQuickEmojiPicker (quickpicker.go)
+	stick  bool         // the sticker picker (hand.go)
 	mic    micBanner
 	notice string
 	noteAt time.Time
@@ -45,14 +45,19 @@ type window struct {
 	cam    camUI        // window_camera.go
 	phase  huddle.Phase // this frame's (tiles: your spinner until connected)
 
-	more     *popups.Menu    // the ⋯ More actions menu (window_menu.go)
-	moreBtn  image.Rectangle // its button, in the toolbar
-	audio    *popups.Menu    // the mic's Audio settings menu (audiomenu.go)
-	audioBtn image.Rectangle // its caret, in the toolbar
-	barTop   int             // the toolbar's top in the window
-	cc       ccState         // the closed captions' fade (captions.go)
-	banner   banner          // HuddlesInformationalBanner (captions.go)
-	tips     map[string]*popups.TipState
+	more      *popups.Menu    // the ⋯ More actions menu (window_menu.go)
+	moreBtn   image.Rectangle // its button, in the toolbar
+	reactBtn  image.Rectangle // the emoji button, in the toolbar
+	video     *popups.Menu    // the camera's Video settings menu (window_camera.go)
+	videoBtn  image.Rectangle // its caret, in the toolbar
+	leaveMenu *popups.Menu    // Leave options (leave_options.go)
+	leaveBtn  image.Rectangle // its caret, in the toolbar
+	audio     *popups.Menu    // the mic's Audio settings menu (audiomenu.go)
+	audioBtn  image.Rectangle // its caret, in the toolbar
+	barTop    int             // the toolbar's top in the window
+	cc        ccState         // the closed captions' fade (captions.go)
+	banner    banner          // HuddlesInformationalBanner (captions.go)
+	tips      map[string]*popups.TipState
 
 	overlays []popups.Overlay // modals over the window (winHost.ShowOverlay; under mu)
 	posts    []func()         // winHost.post (under mu)
@@ -325,9 +330,6 @@ func (w *window) layout(gtx C) {
 		if st.CaptionsOn {
 			w.captions(gtx, st, stage, now)
 		}
-		if w.picker {
-			w.emojiPicker(gtx, stage)
-		}
 		if w.stick {
 			w.stickerPicker(gtx, stage)
 		}
@@ -411,16 +413,21 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 		h := winHost{w}
 		w.c.shareClick(s, st, h, h.post)
 	}
-	if w.click("react").Clicked(gtx) {
-		w.picker = !w.picker
-		w.stick = false
+	if w.click("react").Clicked(gtx) { // HuddleToolbarEmojiPickerButton
+		w.toggleQuick(s)
+	}
+	if w.click("videomenu").Clicked(gtx) { // Video settings
+		w.toggleVideo(s, st)
+	}
+	if w.click("leavemenu").Clicked(gtx) { // Leave options
+		w.toggleLeaveOptions(s)
 	}
 	if w.click("hand").Clicked(gtx) { // Raise hand / Lower hand / Remove sticker
 		go func() { _ = w.c.ToggleHand() }()
 	}
 	if w.click("stickers").Clicked(gtx) { // Choose sticker
 		w.stick = !w.stick
-		w.picker = false
+		w.closeQuick()
 	}
 	for _, st := range stickers {
 		if w.click("pick:" + st.Emoji).Clicked(gtx) {
@@ -453,12 +460,6 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 	if w.click("leave").Clicked(gtx) {
 		w.c.Leave()
 	}
-	for _, e := range quickEmoji {
-		if w.click("emoji:" + e).Clicked(gtx) {
-			w.picker = false
-			_ = s.React(e, "")
-		}
-	}
 }
 
 func firstNonEmpty(s ...string) string {
@@ -469,8 +470,6 @@ func firstNonEmpty(s ...string) string {
 	}
 	return ""
 }
-
-var quickEmoji = []string{"+1", "heart", "joy", "tada", "wave", "clap", "raised_hands", "fire"}
 
 // stage draws the participants in r (and the screen share, when there is
 // one): with nobody's camera on, HuddleCompactAudioPane's tiles
@@ -713,25 +712,6 @@ func (c *Controller) emojiText(name string) string {
 	return ":" + name + ":"
 }
 
-func (w *window) emojiPicker(gtx C, stage image.Rectangle) {
-	bs := gtx.Dp(36)
-	pad := gtx.Dp(6)
-	wd := len(quickEmoji)*bs + 2*pad
-	r := image.Rect((stage.Min.X+stage.Max.X-wd)/2, stage.Max.Y-bs-2*pad-gtx.Dp(6), (stage.Min.X+stage.Max.X+wd)/2, stage.Max.Y-gtx.Dp(6))
-	theme.RRect(gtx, r, gtx.Dp(10), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xf2})
-	for i, e := range quickEmoji {
-		p := image.Pt(r.Min.X+pad+i*bs, r.Min.Y+pad)
-		txt := w.emojiText(e)
-		at(gtx, p, image.Pt(bs, bs), func(gtx C) D {
-			return button(gtx, w.click("emoji:"+e), image.Pt(bs, bs), func(gtx C, hov bool) {
-				if hov {
-					theme.RRect(gtx, image.Rectangle{Max: image.Pt(bs, bs)}, gtx.Dp(8), hudBtnHover)
-				}
-			}, func(gtx C) D { centerLabel(gtx, w.th, image.Pt(bs, bs), 20, theme.Regular, hudWhite, txt); return D{} })
-		})
-	}
-}
-
 type ctl struct {
 	id, icon string
 	on       bool // toggled on (.buttonToggledOn: the mic while it's live)
@@ -788,12 +768,17 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	// the caret is toggled on while the picker is open or a sticker is set
 	// (isEmojiMenuOpen || P)
 	sticks := ctl{id: "stickers", icon: caret, on: w.stick || mine != "", tip: nsHuddles.T("Choose sticker"), seg: segCaret}
-	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: nsHuddles.T("Add reaction")}
+	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.quick != nil, tip: nsHuddles.T("Add reaction")}
 	thread := ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")}
 	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: nsHuddles.T("More actions")}
 	compact := w.popout == ""
-	ctls := append(mics, w.cameraCtl(st))
-	if !compact || r.Dx() >= gtx.Dp(winShareMinW) {
+	ctls := append(mics, w.c.cameraCtls(st, w.video != nil)...)
+	endAll := w.c.canEndForAll(st)
+	shareMin := winShareMinW
+	if endAll { // ek: the Leave options caret takes 28px more
+		shareMin += leaveCaretW
+	}
+	if !compact || r.Dx() >= gtx.Dp(unit.Dp(shareMin)) {
 		ctls = append(ctls, w.c.shareCtl(st))
 	}
 	ctls = append(ctls, hand, sticks, react, thread, more)
@@ -809,10 +794,14 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	}
 	// the leave button: Leave in a c-button--medium (min-width 80px)
 	lw := max(gtx.Dp(80), labelSize(gtx, w.th, 15, theme.Bold, nsHuddles.T("Leave")).X+2*gtx.Dp(12))
-	lx := r.Dx() - gtx.Dp(2) - m - lw
+	lt := lw // with the Leave options caret (.segmentedLeaveButton)
+	if endAll {
+		lt += gtx.Dp(leaveCaretW)
+	}
+	lx := r.Dx() - gtx.Dp(2) - m - lt
 	x := (r.Dx() - total) / 2
 	if compact { // Leave ends the centred row
-		x = max(0, (r.Dx()-total-lw-2*m)/2)
+		x = max(0, (r.Dx()-total-lt-2*m)/2)
 	} else if x+total > lx-m { // a narrow window: the center row moves left of Leave
 		x = max(0, lx-m-total)
 	}
@@ -830,8 +819,13 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 		if c.id == "more" {
 			w.moreBtn = image.Rect(x, y, x+cw, y+h)
 		}
-		if c.id == "micmenu" {
+		switch c.id {
+		case "micmenu":
 			w.audioBtn = image.Rect(x, y, x+cw, y+h)
+		case "videomenu":
+			w.videoBtn = image.Rect(x, y, x+cw, y+h)
+		case "react":
+			w.reactBtn = image.Rect(x, y, x+cw, y+h)
 		}
 		at(gtx, image.Pt(x, y), image.Pt(cw, h), func(gtx C) D {
 			return button(gtx, cl, image.Pt(cw, h), func(gtx C, hov bool) {
@@ -886,18 +880,30 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	if cl.Hovered() {
 		w.cam.tip, w.cam.tipAnchor = nsHuddles.T("Leave Huddle")+"  "+leaveShortcut(), image.Rect(lx, y, lx+lw, y+h).Sub(r.Min)
 	}
+	seg := 0
+	if endAll {
+		seg = segMain // .segmentedLeaveButtonMain: 8px 0 0 8px
+	}
 	at(gtx, image.Pt(lx, y), image.Pt(lw, h), func(gtx C) D {
 		return button(gtx, cl, image.Pt(lw, h), func(gtx C, hov bool) {
 			bg := hudLeave
 			if hov {
 				bg = hudLeaveHov
 			}
-			theme.RRect(gtx, image.Rectangle{Max: image.Pt(lw, h)}, gtx.Dp(8), bg)
+			segFill(gtx, image.Rectangle{Max: image.Pt(lw, h)}, seg, gtx.Dp(8), bg)
 		}, func(gtx C) D {
 			centerLabel(gtx, w.th, image.Pt(lw, h), 15, theme.Bold, hudWhite, nsHuddles.T("Leave"))
 			return D{}
 		})
 	})
+	if endAll {
+		cr := image.Rect(lx+lw, y, lx+lt, y+h)
+		w.leaveBtn = cr
+		lc := w.click("leavemenu") // aria-label "Leave options", no tooltip
+		at(gtx, cr.Min, cr.Size(), func(gtx C) D {
+			return leaveCaret(gtx, lc, cr.Size(), w.leaveMenu != nil)
+		})
+	}
 }
 
 // segFill paints a toolbar button's background: radius 8, or a

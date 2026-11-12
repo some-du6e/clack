@@ -19,6 +19,7 @@ on:
       - "internal/ui/views/huddles*.go"
       - "internal/core/huddles_page.go"
       - "internal/fakeslack/huddles_page.go"
+      - "internal/ui/popups/emoji_picker.go"
       - ".github/workflows/huddles-audit-shots.yml"
   workflow_dispatch:
 
@@ -52,7 +53,8 @@ jobs:
           # TestShareFlow: share-picker-*, share-window-*, share-mini-panel, share-alert-* (the test screen, CLACK_HUDDLE_TESTSCREEN)
           # TestMiniPanelShowsInactive: the panel's real X11 window maps inactive (Gio's app.Panel)
           # TestHuddleShotsWindowCompact: window-compact-{light,dark}-{2,4}[-tray] (Slack's compact window, the Arizona theme from Slack's CDN)
-          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$|TestShareFlow$|TestShareButtonStates$|TestMiniPanelShowsInactive$|TestHuddleShotsWindowCompact$|TestStickerEmojiFits$|TestHuddleShotsTiles$' ./internal/ui/huddleui
+          # TestHuddleShotsW9: w9-window-{video,leave,quick}-*, w9-dock[-quick]-* (Video settings, Leave options, the quick picker's Reactions tab)
+          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsW9$|TestCameraButtonLikeSlack$|TestVideoMenuLikeSlack$|TestCanEndForAllLikeSlack$|TestEndHuddleForAll$|TestQuickPickerLikeSlack$|TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$|TestShareFlow$|TestShareButtonStates$|TestMiniPanelShowsInactive$|TestHuddleShotsWindowCompact$|TestStickerEmojiFits$|TestHuddleShotsTiles$' ./internal/ui/huddleui
           ls -la "$CLACK_SHOTS"
       - name: the Huddles page (views; Mesa llvmpipe)
         if: ${{ !cancelled() }}

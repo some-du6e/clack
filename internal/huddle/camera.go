@@ -37,6 +37,26 @@ type Camera interface {
 // (Linux would be V4L2, Windows Media Foundation; see camera_other.go).
 var openDefaultCamera func(logf func(string, ...any)) (Camera, error)
 
+// VideoDevice is a camera as the Video settings menu lists it.
+type VideoDevice struct{ ID, Name string }
+
+// listCameras lists the cameras the backend opens (camera_darwin.go sets
+// it; nil without a backend).
+var listCameras func() []VideoDevice
+
+// CameraDevices lists the cameras SetCamera can open: the system's default
+// camera (Clack opens only that one), or the test pattern under
+// CLACK_HUDDLE_TESTCAM. Empty where there is no camera.
+func CameraDevices() []VideoDevice {
+	if testCamEnv() {
+		return []VideoDevice{{ID: "clack-test-camera", Name: "Test pattern"}}
+	}
+	if listCameras != nil {
+		return listCameras()
+	}
+	return nil
+}
+
 // ErrCameraUnsupported: this build has no camera backend.
 var ErrCameraUnsupported = errors.New("camera not supported on this platform yet")
 

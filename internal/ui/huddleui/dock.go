@@ -51,6 +51,9 @@ type dockState struct {
 	tips              map[string]*popups.TipState
 	stick             *popups.Menu
 	audio             *popups.Menu // the mic's Audio settings menu
+	video             *popups.Menu // the camera's Video settings menu (window_camera.go)
+	leaveMenu         *popups.Menu // Leave options (leave_options.go)
+	quick             *quickPicker // the emoji button's quick picker (quickpicker.go)
 	shareAlert        alertState   // the screen share alert above the card (share.go)
 }
 
@@ -176,15 +179,29 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 		btnH = gtx.Dp(32)
 	}
 	lw := max(gtx.Dp(80), labelSize(gtx, th, 15, theme.Bold, nsHuddles.T("Leave")).X+2*gtx.Dp(12))
-	lx := inner.Max.X - gtx.Dp(4) - lw
+	endAll := s != nil && c.canEndForAll(st)
+	lt, seg := lw, 0
+	if endAll { // HuddleToolbarLeaveButton, segmented (leave_options.go)
+		lt, seg = lw+gtx.Dp(leaveCaretW), segMain
+	}
+	lx := inner.Max.X - gtx.Dp(4) - lt
 	by := inner.Min.Y + (inner.Dy()-btnH)/2
+	if endAll {
+		cr := image.Rect(lx+lw, by, lx+lt, by+btnH)
+		lc := d.click("leavemenu")
+		if lc.Clicked(gtx) {
+			c.dockClick(gtx, "leavemenu", s, st, cr)
+		}
+		open := d.leaveMenu != nil && !d.leaveMenu.Dismissed()
+		at(gtx, cr.Min, cr.Size(), func(gtx C) D { return leaveCaret(gtx, lc, cr.Size(), open) })
+	}
 	at(gtx, image.Pt(lx, by), image.Pt(lw, btnH), func(gtx C) D {
 		dd := button(gtx, &d.leave, image.Pt(lw, btnH), func(gtx C, hov bool) {
 			bg := hudLeave
 			if hov {
 				bg = hudLeaveHov
 			}
-			theme.RRect(gtx, image.Rectangle{Max: image.Pt(lw, btnH)}, gtx.Dp(8), bg)
+			segFill(gtx, image.Rectangle{Max: image.Pt(lw, btnH)}, seg, gtx.Dp(8), bg)
 		}, func(gtx C) D {
 			centerLabel(gtx, th, image.Pt(lw, btnH), 15, theme.Bold, hudWhite, nsHuddles.T("Leave"))
 			return D{}
@@ -448,16 +465,9 @@ func (c *Controller) dockTiles(st huddle.State, now time.Time) []huddle.Particip
 func (c *Controller) dockCtls(st huddle.State) []ctl {
 	// HuddleToolbarMuteButton inBottomBar: segmented, like the window's
 	mics := c.micCtls(st, c.dock.audio != nil && !c.dock.audio.Dismissed())
-	cam := ctl{id: "camera", icon: "video-off", tip: nsHuddles.T("Turn on camera")}
-	switch st.Camera.State {
-	case huddle.CameraOn:
-		cam = ctl{id: "camera", icon: "video", on: true, tip: nsHuddles.T("Turn off camera")}
-	case huddle.CameraStarting:
-		cam = ctl{id: "camera", icon: "video", tip: nsHuddles.T("Turn off camera")}
-	}
-	if !cameraSupported() && st.Camera.State != huddle.CameraOn {
-		cam.dim = true
-	}
+	// HuddleToolbarCameraButton inBottomBar: segmented, its Video settings
+	// a popover above the caret (window_camera.go)
+	cams := c.cameraCtls(st, c.dock.video != nil && !c.dock.video.Dismissed())
 	mine := ""
 	for _, p := range st.Participants {
 		if p.Self {
@@ -473,10 +483,12 @@ func (c *Controller) dockCtls(st huddle.State) []ctl {
 	if stick {
 		caret = "caret-down"
 	}
-	return append(mics, cam, c.shareCtl(st),
+	quick := c.dock.quick != nil && !c.dock.quick.Dismissed()
+	out := append(mics, cams...)
+	return append(out, c.shareCtl(st),
 		ctl{id: "hand", emoji: c.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain},
 		ctl{id: "stickers", icon: caret, on: stick, tip: nsHuddles.T("Choose sticker"), seg: segCaret},
-		ctl{id: "react", icon: "emoji", hover: "emoji-filled", tip: nsHuddles.T("Add reaction")},
+		ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: quick, tip: nsHuddles.T("Add reaction")},
 		ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")},
 		ctl{id: "more", icon: "ellipsis-vertical-filled", tip: nsHuddles.T("More actions")},
 	)
@@ -515,6 +527,30 @@ func (c *Controller) dockClick(gtx C, id string, s *huddle.Session, st huddle.St
 		c.dock.audio = popups.NewMenuOpts(ph, c.audioMenu(s), popups.MenuOpts{Anchor: r, Side: popups.Above,
 			MenuClass: "p-huddle_more_actions_menu"})
 		ph.ShowOverlay(c.dock.audio)
+	case "videomenu": // Video settings
+		if ph == nil {
+			return
+		}
+		if c.dock.video != nil && !c.dock.video.Dismissed() {
+			c.dock.video.Dismiss()
+			c.dock.video = nil
+			break
+		}
+		c.dock.video = popups.NewMenuOpts(ph, c.videoMenu(s), popups.MenuOpts{Anchor: r, Side: popups.Above,
+			MenuClass: "p-huddle_more_actions_menu"})
+		ph.ShowOverlay(c.dock.video)
+	case "leavemenu": // Leave options
+		if ph == nil {
+			return
+		}
+		if c.dock.leaveMenu != nil && !c.dock.leaveMenu.Dismissed() {
+			c.dock.leaveMenu.Dismiss()
+			c.dock.leaveMenu = nil
+			break
+		}
+		c.dock.leaveMenu = popups.NewMenuOpts(ph, c.leaveOptionsMenu(s), popups.MenuOpts{Anchor: r, Side: popups.Above,
+			MenuClass: "p-huddle_more_actions_menu"})
+		ph.ShowOverlay(c.dock.leaveMenu)
 	case "camera":
 		if st.Camera.State == huddle.CameraOn || st.Camera.State == huddle.CameraStarting {
 			s.SetCamera(false)
@@ -537,10 +573,17 @@ func (c *Controller) dockClick(gtx C, id string, s *huddle.Session, st huddle.St
 		}
 		c.dock.stick = popups.NewMenuOpts(ph, items, popups.MenuOpts{Width: 240, Anchor: r, Side: popups.Above})
 		ph.ShowOverlay(c.dock.stick)
-	case "react": // the Reactions tab: the emoji picker
-		if ph != nil {
-			ph.OpenEmojiPicker(image.Pt(r.Min.X, r.Min.Y), func(name string) { _ = s.React(name, "") })
+	case "react": // HuddleEmojiMenuTrigger: the quick picker above the button
+		if ph == nil {
+			return
 		}
+		if c.dock.quick != nil && !c.dock.quick.Dismissed() {
+			c.dock.quick.Dismiss()
+			c.dock.quick = nil
+			break
+		}
+		c.dock.quick = newQuickPicker(ph, r, false, func(name string) { _ = s.React(name, "") })
+		ph.ShowOverlay(c.dock.quick)
 	case "thread":
 		if st.ThreadTS != "" {
 			c.h.OpenThread(firstNonEmpty(st.ThreadChannel, st.Channel), st.ThreadTS)

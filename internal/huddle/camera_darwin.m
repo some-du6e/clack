@@ -46,6 +46,21 @@ typedef struct {
 
 static char *dupErr(NSString *s) { return strdup(s.UTF8String ? s.UTF8String : "camera error"); }
 
+// clack_cam_default_name is the default camera's localizedName (and its
+// uniqueID in *uid), malloc'd, or NULL with no camera. It doesn't open
+// the device, so it never asks for access.
+char *clack_cam_default_name(char **uid) {
+	@autoreleasepool {
+		AVCaptureDevice *dev = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+		if (dev == nil) {
+			*uid = NULL;
+			return NULL;
+		}
+		*uid = strdup(dev.uniqueID.UTF8String ? dev.uniqueID.UTF8String : "");
+		return strdup(dev.localizedName.UTF8String ? dev.localizedName.UTF8String : "");
+	}
+}
+
 // clack_cam_open starts the default camera at about 960x540 (Chime's
 // default camera size), 15 fps. It blocks while the session starts, so Go
 // calls it off the main thread and the UI goroutine. NULL + *err on failure.

@@ -67,6 +67,7 @@ const (
 	epCellH        = 32
 	epImgSz        = 22
 	epCols         = 9
+	epEmbInputY    = 7 // hideTabs: .p-emoji_picker--style-v2 .p-emoji_picker__input_container padding-top
 )
 
 // EmojiPickerSize is the picker card size in dp (361×518), for callers
@@ -198,6 +199,10 @@ type EmojiPicker struct {
 	onGif        func(g Gif)
 	gifCh, gifTS string
 
+	// embedded: the bare EmojiPicker inside another card with hideTabs
+	// (HuddleQuickEmojiPicker's Reactions tab; LayoutEmbedded)
+	embedded bool
+
 	// EmojiPickerPopover (the message reacted to) and slackc state
 	msgCh, msgTS, msgThread string
 	key                     string
@@ -225,6 +230,60 @@ func NewEmojiPickerAt(h Host, anchor image.Point, onPick func(name string)) *Emo
 	p := NewEmojiPicker(h, onPick)
 	p.anchorPt, p.anchorKind = anchor, 1
 	return p
+}
+
+// NewEmbeddedEmojiPicker is the bare EmojiPicker that HuddleQuickEmojiPicker
+// (gantry-v2-async-client-boot-shared Vw0B) puts in its Reactions tab:
+// hideTabs (no group tabs), no Emoji | GIFs row (that row belongs to
+// EmojiAndGIFPickerPopover, which isn't there), no card of its own. The
+// owner draws it with LayoutEmbedded and closes its card once Dismissed.
+func NewEmbeddedEmojiPicker(h Host, onPick func(name string)) *EmojiPicker {
+	p := NewEmojiPicker(h, onPick)
+	p.embedded = true
+	return p
+}
+
+// LayoutEmbedded draws an embedded picker into gtx.Constraints.Max at the
+// origin: the search box (.p-emoji_picker__input_container: padding-top
+// 7px, 17.5px at the sides, 7px under), the list and the footer, which
+// grows to fill the box (.p-huddle_quick_emoji_picker__tab_panel
+// .c-menu.p-emoji_picker: a 260px column, 200px in compact mode).
+func (p *EmojiPicker) LayoutEmbedded(gtx layout.Context) layout.Dimensions {
+	drain()
+	if p.done {
+		return layout.Dimensions{}
+	}
+	stacked(gtx, p)
+	sz := gtx.Constraints.Max
+	gtx.Constraints.Min = image.Point{}
+	p.refreshIndex()
+	p.scale = gtx.Metric.PxPerDp
+	if isTop(p) && !p.toneUI.open && escape(gtx, nil) {
+		p.Dismiss()
+		return layout.Dimensions{}
+	}
+	p.win = sz
+	th := p.h.Theme()
+	cl := colorsOf(th)
+	fill(gtx, image.Rectangle{Max: sz}, cl.EmojiBg)
+	p.layoutBody(gtx, th, cl, sz)
+	return layout.Dimensions{Size: sz}
+}
+
+// inputY and listY are the search box's and the list's tops: under the
+// tab rows, or with hideTabs at the top (7px, then the 36px box and 7px).
+func (p *EmojiPicker) inputY() float32 {
+	if p.embedded {
+		return epEmbInputY
+	}
+	return epInputY
+}
+
+func (p *EmojiPicker) listY() float32 {
+	if p.embedded {
+		return epEmbInputY + epInputH + 7
+	}
+	return epListY
 }
 
 // SetSide sets the preferred side of the anchor (Above by default; Below
@@ -741,19 +800,21 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 	}
 
 	cs := clipRRect(gtx, local, rad)
-	p.layoutTop(gtx, th, cl, sz.X)
-	p.layoutCats(gtx, th, cl)
-	at(gtx, image.Pt(dp(gtx, epInputX), dp(gtx, epInputY)), func(gtx layout.Context) layout.Dimensions {
+	if !p.embedded {
+		p.layoutTop(gtx, th, cl, sz.X)
+		p.layoutCats(gtx, th, cl)
+	}
+	at(gtx, image.Pt(dp(gtx, epInputX), dp(gtx, p.inputY())), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(sz.X-2*dp(gtx, epInputX), dp(gtx, epInputH)))
 		// c-input_text on --dt_color-base-pry (the card's primary background)
 		return fieldOn(gtx, th, &p.ed, nsEmojiPicker.T("Search all emoji"), "", epInputH, 15, cl.EmojiBg)
 	})
 	foot := dp(gtx, epFootH)
-	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, epListY), sz.X, sz.Y-foot))
+	p.layoutList(gtx, th, cl, image.Rect(0, dp(gtx, p.listY()), sz.X, sz.Y-foot))
 	p.layoutFooter(gtx, th, cl, image.Rect(0, sz.Y-foot, sz.X, sz.Y))
 	p.layoutTonePopover(gtx, th, cl, sz, sz.Y-foot)
 	cs.Pop()
-	if tab := p.activeTab(); tab != p.drawnTab {
+	if tab := p.activeTab(); tab != p.drawnTab && !p.embedded { // hideTabs: no tab row to catch up
 		gtx.Execute(op.InvalidateCmd{}) // the tab row was drawn before the list scrolled
 	}
 }

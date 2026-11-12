@@ -9,6 +9,7 @@ package huddle
 #include <stdlib.h>
 void *clack_cam_open(uintptr_t h, char **err);
 void clack_cam_close(void *c);
+char *clack_cam_default_name(char **uid);
 */
 import "C"
 
@@ -22,7 +23,24 @@ import (
 
 const cameraBackend = "avfoundation"
 
-func init() { openDefaultCamera = openAVCamera }
+func init() {
+	openDefaultCamera = openAVCamera
+	listCameras = avCameras
+}
+
+// avCameras is the camera Clack opens, AVFoundation's default video
+// device, with its localizedName and uniqueID (none when there isn't one).
+func avCameras() []VideoDevice {
+	var uid *C.char
+	name := C.clack_cam_default_name(&uid)
+	if name == nil {
+		return nil
+	}
+	d := VideoDevice{Name: C.GoString(name), ID: C.GoString(uid)}
+	C.free(unsafe.Pointer(name))
+	C.free(unsafe.Pointer(uid))
+	return []VideoDevice{d}
+}
 
 // avCamera is the default camera through AVFoundation: an AVCaptureSession
 // with an AVCaptureVideoDataOutput delivering NV12 on its own serial

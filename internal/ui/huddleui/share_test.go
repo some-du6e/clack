@@ -43,8 +43,8 @@ func TestShareButtonStates(t *testing.T) {
 		}
 		return strings.Join(out, " ")
 	}
-	if got := ids(e.c.dockCtls(huddle.State{})); !strings.Contains(got, "camera share hand") {
-		t.Errorf("dock buttons %q: share should follow the camera", got)
+	if got := ids(e.c.dockCtls(huddle.State{})); !strings.Contains(got, "camera videomenu share hand") {
+		t.Errorf("dock buttons %q: share should follow the camera and its Video settings caret", got)
 	}
 }
 
