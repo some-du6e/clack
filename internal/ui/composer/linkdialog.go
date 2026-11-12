@@ -1,9 +1,16 @@
 package composer
 
 import (
+	"encoding/json"
 	"gioui.org/io/event"
 	"image"
 	"strings"
+
+	"gioui.org/op/paint"
+
+	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/richview"
 
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -30,13 +37,27 @@ type crLinkDlg struct {
 	onSave         func(text, url string)
 	text0, url0    string        // the prefill (didTextChange, props)
 	saveJS         slackc.JSFunc // a plugin's saveLink override
+	// preview is ComposerLinkModal's textIsEditable false: the selection
+	// holds an emoji or a mention (an embed, "\uE000" in its text), or a
+	// line break when making a new link, so the Text field is the
+	// selection's rich text (initialBlocks' first block, Xjhw RichText) in
+	// "margin_bottom_125 half_opacity" under the Text label, and Save
+	// links the selection where it is.
+	preview *richview.View
 }
 
 // openLinkDialog shows the dialog. text and url prefill the fields (url
 // when editing an existing link); onSave gets the text and the normalized
 // URL, onCancel runs when the dialog closes without saving.
 func openLinkDialog(h Host, text, url string, onSave func(text, url string), onCancel func()) {
-	d := &crLinkDlg{h: h, onSave: onSave, text0: text, url0: url}
+	openLinkDialogRich(h, text, url, nil, onSave, onCancel)
+}
+
+// openLinkDialogRich is openLinkDialog with textIsEditable false when
+// preview is set: preview is the selection's rich text, drawn in place of
+// the Text field.
+func openLinkDialogRich(h Host, text, url string, preview *richview.View, onSave func(text, url string), onCancel func()) {
+	d := &crLinkDlg{h: h, onSave: onSave, text0: text, url0: url, preview: preview}
 	d.text = widget.Editor{SingleLine: true, Submit: true}
 	d.link = widget.Editor{SingleLine: true, Submit: true}
 	if text != "" {
@@ -61,7 +82,12 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 		PadX:         24, // Slack's link dialog: 24px padding, 68px header → 472px fields
 		HeadH:        68,
 		EnterSubmits: true,
-		FocusStops:   func() []event.Tag { return []event.Tag{&d.text, &d.link} },
+		FocusStops: func() []event.Tag {
+			if d.preview != nil {
+				return []event.Tag{&d.link}
+			}
+			return []event.Tag{&d.text, &d.link}
+		},
 		Buttons: []*popups.ModalButton{
 			{Label: messageInputNS.T("Cancel"), Kind: popups.BtnOutline},
 			{Label: messageInputNS.T("Save"), Kind: popups.BtnPrimary, Enabled: d.canSave, Do: func() bool { d.save(); return true }},
@@ -72,8 +98,14 @@ func openLinkDialog(h Host, text, url string, onSave func(text, url string), onC
 			}
 		},
 	})
+	if linkDialogTap != nil {
+		linkDialogTap(d)
+	}
 	h.ShowOverlay(d.modal)
 }
+
+// linkDialogTap sees each dialog as it opens (tests).
+var linkDialogTap func(*crLinkDlg)
 
 func (d *crLinkDlg) canSave() bool { return strings.TrimSpace(d.link.Text()) != "" }
 
@@ -86,6 +118,9 @@ func (d *crLinkDlg) save() {
 	}
 	d.saved = true
 	text, url := d.text.Text(), crNormalizeURL(d.link.Text())
+	if d.preview != nil {
+		text = d.text0 // the text can't change: c === e, didTextChange false
+	}
 	if d.saveJS.ID != 0 {
 		d.saveJS.Call(slackc.Props{"didTextChange": text != d.text0, "text": text, "url": url})
 		return
@@ -114,6 +149,8 @@ func (d *crLinkDlg) props() slackc.Props {
 		"url":       d.url0,
 		"text":      d.text0,
 		"isEditing": d.url0 != "",
+		// textIsEditable (ComposerLinkModal's prop)
+		"textIsEditable": d.preview == nil,
 		"saveLink": func(a slackc.Props) {
 			d.saveLink(a.StrOr("text", d.text.Text()), crNormalizeURL(a.StrOr("url", d.link.Text())))
 		},
@@ -170,6 +207,10 @@ func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
 	}{{messageInputNS.T("Text"), &d.text}, {messageInputNS.T("Link"), &d.link}} {
 		crText(gtx, th.Shaper, 0, y, w, textStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: th.C.Fg, MaxLines: 1}, f.label)
 		y += gtx.Dp(22 + 8)
+		if f.ed == &d.text && d.preview != nil {
+			y += d.layoutPreview(gtx, y, w)
+			continue
+		}
 		t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 		crLinkField(gtx, th, f.ed, w)
 		t.Pop()
@@ -177,6 +218,53 @@ func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
 	}
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
+
+// layoutPreview draws the selection's rich text at y, at half opacity
+// (.half_opacity: opacity .5, an sRGB blend; Gio's layers blend in
+// linear light, so the layer's alpha is LinearAlpha's), and returns the
+// height it takes with margin_bottom_125 (1.25rem, 20px).
+func (d *crLinkDlg) layoutPreview(gtx layout.Context, y, w int) int {
+	th := d.h.Theme()
+	st := warningStyle(th, d.h.Images())
+	bg := popups.BasePryOf(th)
+	alpha := float32(theme.LinearAlpha(theme.WithAlpha(th.C.Fg, 0x80), bg).A) / 255
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(w, gtx.Constraints.Max.Y)}
+	m := op.Record(gtx.Ops)
+	dims := d.preview.Layout(g, st, warningLinks{})
+	call := m.Stop()
+	t := op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+	o := paint.PushOpacity(gtx.Ops, alpha)
+	call.Add(gtx.Ops)
+	o.Pop()
+	t.Pop()
+	return dims.Size.Y + gtx.Dp(20)
+}
+
+// linkPreview builds the dialog's rich preview of d (the selection) the
+// way initialBlocks is made: the selection's delta as message blocks,
+// the first rich_text block drawn by RichText.
+func linkPreview(r richtext.Resolver, d *Doc) *richview.View {
+	raw := d.RichTextBlocks()
+	var bs []json.RawMessage
+	if json.Unmarshal(raw, &bs) == nil && len(bs) > 1 {
+		raw, _ = json.Marshal(bs[:1]) // t.blocks[0]
+	}
+	if r == nil {
+		r = linkPreviewNames{}
+	}
+	doc := richtext.FromMessage(r, &slack.Message{Type: "message", Blocks: raw})
+	return richview.New(doc, richview.Options{})
+}
+
+// linkPreviewNames resolves nothing (no workspace): ids stay as they are.
+type linkPreviewNames struct{}
+
+func (linkPreviewNames) UserName(id string) string                { return id }
+func (linkPreviewNames) ChannelName(id string) string             { return id }
+func (linkPreviewNames) UsergroupName(id string) string           { return id }
+func (linkPreviewNames) Emoji(string) (url, text string, ok bool) { return "", "", false }
+func (linkPreviewNames) SelfID() string                           { return "" }
 
 // crLinkField draws a Slack c-input_text: 36 tall, radius 8, padding 4 12.
 func crLinkField(gtx layout.Context, th *theme.Theme, ed *widget.Editor, w int) {

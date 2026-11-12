@@ -17,7 +17,23 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/icons"
 )
+
+// tabcompleteNS is TextyAutocompleteMenu's I18n namespace (boot-shared
+// WOwF: new s.Ay("tabcomplete")).
+var tabcompleteNS = i18n.NS("tabcomplete")
+
+// acClientOnline is isClientOnline (client-boot mG45 Pb, core/online.go)
+// for the help bar; signed out counts as online. Tests replace it.
+var acClientOnline = func(h Host) bool {
+	if h == nil {
+		return true
+	}
+	a := h.Core()
+	return a == nil || a.ClientOnline()
+}
 
 // Popup metrics and colors measured from the Slack desktop client
 // (div.c-texty_autocomplete). Every list is flat: no section headers.
@@ -122,8 +138,12 @@ func (ac *Autocomplete) Layout(gtx layout.Context, maxWidth int) layout.Dimensio
 	n := len(ac.items)
 	rowH := gtx.Dp(spec.rowH)
 	pad := gtx.Dp(acPadY)
+	// TextyAutocompleteMenu's help bar: showOfflineHelp (!isClientOnline,
+	// every type but "date") takes it over, in the / popup too, which
+	// has no keyboard help
+	offline := !acClientOnline(ac.h)
 	footH := 0
-	if spec.footer {
+	if spec.footer || offline {
 		footH = gtx.Dp(acFooterH)
 	}
 	content := 2*pad + n*rowH
@@ -187,7 +207,11 @@ func (ac *Autocomplete) Layout(gtx layout.Context, maxWidth int) layout.Dimensio
 		drawScrollbar(gtx, image.Rect(w-scrollW, 0, w, bodyH), top, content, bodyH)
 	}
 	if footH > 0 {
-		ac.layoutFooter(gtx, image.Rect(0, bodyH, w, h))
+		if offline {
+			ac.layoutOfflineFooter(gtx, image.Rect(0, bodyH, w, h))
+		} else {
+			ac.layoutFooter(gtx, image.Rect(0, bodyH, w, h))
+		}
 	}
 	area.Pop()
 	return layout.Dimensions{Size: box.Size()}
@@ -612,6 +636,47 @@ func (ac *Autocomplete) layoutFooter(gtx layout.Context, r image.Rectangle) {
 	txt(b, "esc")
 	x += space
 	txt(s, "to dismiss")
+}
+
+// layoutOfflineFooter is TextyAutocompleteMenu's showOfflineHelp item
+// (boot-shared WOwF): "{iconOffline} <strong>No connection.</strong>\u00a0
+// Some results may not be available." in the help bar, the icon
+// cloud-offline at size inherit (the item's 12px).
+func (ac *Autocomplete) layoutOfflineFooter(gtx layout.Context, r image.Rectangle) {
+	fillRect(gtx, r, acHelpBg)
+	line := max(gtx.Dp(1), 1)
+	fillRect(gtx, image.Rect(r.Min.X, r.Max.Y-line, r.Max.X, r.Max.Y), acRing)
+	s := textStyle{Size: acHelpSize, Color: acHelpText, MaxLines: 1}
+	x := r.Min.X + gtx.Dp(acFooterPadX)
+	right := r.Max.X - gtx.Dp(acFooterPadX)
+	y, h := r.Min.Y, r.Dy()
+	for _, p := range acOfflineParts() {
+		if x >= right {
+			break
+		}
+		if p.Arg == "iconOffline" {
+			isz := gtx.Dp(12)
+			func() {
+				defer op.Offset(image.Pt(x, y+(h-isz)/2)).Push(gtx.Ops).Pop()
+				g := gtx
+				g.Constraints = layout.Exact(image.Pt(isz, isz))
+				icons.Get("cloud-offline")(g, unit.Dp(12), acHelpText)
+			}()
+			x += isz
+			continue
+		}
+		st := s
+		if p.Tag == "strong" || p.Tag == "b" {
+			st.Weight = font.Bold
+		}
+		x += ac.drawText(gtx, x, y, h, right-x, st, p.Text)
+	}
+}
+
+// acOfflineParts is the offline help's rich string, cut at its tags and
+// its icon placeholder.
+func acOfflineParts() []i18n.Part {
+	return tabcompleteNS.RT("{iconOffline} <strong>No connection.</strong>\u00a0Some results may not be available.", "iconOffline", "\u2601")
 }
 
 // drawText draws a one-line label vertically centred in [y, y+h) at x,

@@ -33,9 +33,10 @@ import (
 //
 // Each step is applied the way Quill's updateContents does it (false
 // attributes remove a format) and the selection moves like Quill's for
-// an API change (transformPosition with priority). Clack's Doc has no
-// quoted lists or code (Slack's "border" line attribute) and no list
-// start numbers ("offset"), so those are dropped when reading back.
+// an API change (transformPosition with priority). A list line's
+// "border" reads back as a list inside a quote (Line.Quoted); Clack's Doc
+// has no quoted code blocks and no list start numbers ("offset"), so
+// those are dropped when reading back.
 // Links are found with the composer's own URL finder (http(s)://, www.)
 // plus e-mail addresses; Slack's detectLinks also takes bare domains and
 // tel: numbers.
@@ -576,6 +577,9 @@ func qLineAttrs(l Line) qAttrs {
 		if l.Indent > 0 {
 			at["indent"] = l.Indent
 		}
+		if l.Quoted {
+			at["border"] = 1
+		}
 		return at
 	case Quote:
 		return qAttrs{"blockquote": true}
@@ -695,7 +699,7 @@ func qLine(at qAttrs) Line {
 		if at["list"] == "ordered" {
 			k = Ordered
 		}
-		return Line{Kind: k, Indent: min(max(attrInt(at["indent"]), 0), edMaxIndent)}
+		return Line{Kind: k, Indent: min(max(attrInt(at["indent"]), 0), edMaxIndent), Quoted: attrInt(at["border"]) >= 1}
 	}
 	if truthy(at["blockquote"]) {
 		return Line{Kind: Quote}

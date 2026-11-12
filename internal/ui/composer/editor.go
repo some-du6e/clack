@@ -107,6 +107,7 @@ const (
 	EvNavForward // Mod+Right in an empty editor: forward (onCmdRightWhenEmpty)
 	EvPasteLimit // a paste over 50,000 characters was refused (onPasteLimit)
 	EvSnippet    // Mod+Shift+Enter: the snippet dialog with the message (MessageInput.onEnter)
+	EvDownEmpty  // Down in an empty editor (onDownArrowWhenEmpty); the caret still moves (it can't)
 )
 
 // EditorEvent is reported by Editor.Update.
@@ -241,6 +242,13 @@ type Editor struct {
 	// up_to_browse_kb_shortcut, for upArrow.
 	upMode   int
 	upBrowse bool
+	// PageKeysHandled is a view's onPageUp / onPageDown that handles the
+	// keys: ThreadFooter's return false, which the keyboard module's
+	// binding (`!isBoolean(e) || e`) turns into "handled", so PageUp and
+	// PageDown do nothing in a reply box. Without them (the channel's
+	// MessagePaneInput, the edit composer) the browser moves the caret
+	// by a page.
+	PageKeysHandled bool
 
 	spell edSpell // spellcheck.go
 }
@@ -802,7 +810,8 @@ func (e *Editor) autoformat() {
 		return // "Format messages with markup": markup stays as typed
 	}
 	custom := InlineMarkup != nil
-	if r != ' ' && r != '`' && r != '*' && r != '_' && r != '~' && r != '>' && r != '＞' && !(custom && markupTrigger(r)) {
+	wide := r == '＊' || r == '＿' || r == '｀' // XmNU's full-width markers
+	if r != ' ' && r != '`' && r != '*' && r != '_' && r != '~' && r != '>' && r != '＞' && !wide && !(custom && markupTrigger(r)) {
 		return
 	}
 	literal := e.snap()
@@ -844,7 +853,16 @@ func (e *Editor) autoformat() {
 			return
 		}
 	}
-	if r == ' ' || r == '`' {
+	if r == '`' || r == '｀' {
+		// "```" ending a code block line: the fence goes and a plain
+		// line follows (buildLocalCodeBlockMarkdownChangeDelta "remove")
+		if nc, ok := autoformatFenceInCode(e.doc, c); ok {
+			done(nc)
+			e.setPending(0)
+			return
+		}
+	}
+	if r == ' ' || r == '`' || r == '｀' {
 		if nc, _, ok := autoformatBlock(e.doc, c); ok {
 			e.pushUndo(literal)
 			e.anchor, e.caret = nc, nc
@@ -853,7 +871,7 @@ func (e *Editor) autoformat() {
 			return
 		}
 	}
-	if r == '`' {
+	if r == '`' || r == '｀' {
 		if nc, ok := autoformatFence(e.doc, c); ok {
 			e.pushUndo(literal)
 			e.anchor, e.caret = nc, nc
@@ -867,6 +885,9 @@ func (e *Editor) autoformat() {
 		return
 	}
 	inline := autoformatInline
+	if wide {
+		inline = autoformatWide
+	}
 	if custom {
 		inline = markupInline // a plugin's markup replaces Slack's
 	}

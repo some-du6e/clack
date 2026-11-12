@@ -181,6 +181,7 @@ type tlMetrics struct {
 	quoteBar               int
 	quoteLeft              int
 	quoteMargin            int
+	quoteListPad           int // ul/ol[class*=ql-border-]: padding-left 11px
 	prePad                 int
 	preMargin              int
 	preRadius              int
@@ -233,6 +234,7 @@ func tlMakeMetrics(m unit.Metric, st *EditorStyle) tlMetrics {
 		quoteBar:     m.Dp(4),
 		quoteLeft:    m.Dp(16),
 		quoteMargin:  m.Dp(4),
+		quoteListPad: m.Dp(11),
 		prePad:       m.Dp(8),
 		preMargin:    m.Dp(4),
 		preRadius:    m.Dp(4),
@@ -303,6 +305,7 @@ type tlPara struct {
 	start, end int // runes [start, end); end is the '\n' or Len()
 	kind       BlockKind
 	indent     int
+	quoted     bool            // a list item inside a quote (Line.Quoted)
 	left       int             // x of the text origin
 	px         []fixed.Int26_6 // caret x per position start..end, unwrapped
 	stop       []bool          // caret stops per position start..end
@@ -450,7 +453,7 @@ func (l *tlLayout) build(d *Doc, st *EditorStyle, sh *text.Shaper, k tlKey) {
 			end++
 		}
 		ln := d.Lines[i]
-		p := tlPara{start: start, end: end, kind: ln.Kind, indent: ln.Indent}
+		p := tlPara{start: start, end: end, kind: ln.Kind, indent: ln.Indent, quoted: ln.Quoted && rtIsList(ln.Kind)}
 		l.buildPara(d, &p, len(l.paras), k)
 		l.paras = append(l.paras, p)
 		start = end + 1
@@ -474,6 +477,9 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 	switch p.kind {
 	case Bullet, Ordered:
 		p.left = tlListLeft(m, p.indent)
+		if p.quoted {
+			p.left += m.quoteListPad
+		}
 	case Quote:
 		p.left = m.quoteLeft
 	case CodeBlock:
@@ -714,6 +720,13 @@ func (l *tlLayout) vertical() {
 				y += max(0, m.quoteMargin-pending)
 			}
 		}
+		// a list inside a quote (ol/ul[class*=ql-border-]: margin 4px 0,
+		// one list per run of the same list kind, as Quill groups them;
+		// the editor is a block formatting context, so the first one's
+		// top margin stays, like a quote's)
+		if p.quoted && (i == 0 || !l.sameQuotedList(i-1, i)) {
+			y += max(0, m.quoteMargin-pending)
+		}
 		pending = 0
 		p.top = y
 		for li := p.l0; li < p.l1; li++ {
@@ -787,8 +800,29 @@ func (l *tlLayout) vertical() {
 			y += m.quoteMargin
 			pending = m.quoteMargin
 		}
+		if p.quoted && (i+1 == len(l.paras) || !l.sameQuotedList(i, i+1)) {
+			y += m.quoteMargin
+			pending = m.quoteMargin
+		}
 	}
 	l.height = y
+}
+
+// sameQuotedList reports whether paragraphs a and b are items of one
+// quoted list (one ol/ul: the same list kind, both quoted).
+func (l *tlLayout) sameQuotedList(a, b int) bool {
+	pa, pb := &l.paras[a], &l.paras[b]
+	return pa.quoted && pb.quoted && pa.kind == pb.kind
+}
+
+// barred reports whether paragraph i draws the quote bar: a quote line
+// (blockquote:before) or a list item inside a quote (ul[class*=ql-border-]
+// :before, 4px wide at left 0). Adjacent ones join: blockquote+ul and
+// ul+blockquote bars start 7px up (height calc(100% + 7px)), which spans
+// the collapsed 4px margin between them.
+func (l *tlLayout) barred(i int) bool {
+	p := &l.paras[i]
+	return p.kind == Quote || p.quoted
 }
 
 // emojiURL is Slack's image for an emoji stem in the theme's style.
@@ -972,9 +1006,9 @@ func (l *tlLayout) paintBG(gtx layout.Context, c tlColors) {
 		// one bar down a quote run (blockquote:before, 4px wide, radius 8
 		// clamped to 2 by its width; the next line's bar starts 6px up and
 		// covers the gap)
-		if p.kind == Quote && (pi == 0 || l.paras[pi-1].kind != Quote) {
+		if l.barred(pi) && (pi == 0 || !l.barred(pi-1)) {
 			last := pi
-			for last+1 < len(l.paras) && l.paras[last+1].kind == Quote {
+			for last+1 < len(l.paras) && l.barred(last+1) {
 				last++
 			}
 			fillRRect(gtx, image.Rect(0, p.top, m.quoteBar, l.paras[last].bot), m.quoteBar/2, c.quoteBar)

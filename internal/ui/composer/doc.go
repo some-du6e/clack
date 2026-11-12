@@ -88,6 +88,11 @@ type Attr struct {
 type Line struct {
 	Kind   BlockKind
 	Indent int // list nesting level, 0-based
+	// Quoted is a list item inside a quote: Quill's "border" line format
+	// 1 on a list (BorderAttributor, boot-shared KT9Q), which list
+	// autofill sets when it runs on a quote line, and rich_text_list's
+	// border: 1. Only list lines carry it.
+	Quoted bool
 }
 
 // Doc is the editable document.
@@ -371,7 +376,7 @@ func (d *Doc) SetLineKind(from, to int, k BlockKind) {
 		}
 		d.Lines[i].Kind = k
 		if k != Bullet && k != Ordered {
-			d.Lines[i].Indent = 0
+			d.Lines[i].Indent, d.Lines[i].Quoted = 0, false
 		}
 	}
 }

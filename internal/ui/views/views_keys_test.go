@@ -191,6 +191,22 @@ func TestThreadsKeysLikeSlack(t *testing.T) {
 		if v.kb.active != k0+"-"+last || !v.kb.focused || !v.kb.ring {
 			t.Fatalf("↑ in the reply box: active %q focused %v", v.kb.active, v.kb.focused)
 		}
+		// ↓ in the empty reply box (gap-w10): onDownArrowInEmptyInput's
+		// focusItemBelowInput, the key after the footer
+		var below string
+		for i, it := range v.kb.items {
+			if it.key == "footer-"+k0 && i+1 < len(v.kb.items) {
+				below = v.kb.items[i+1].key
+			}
+		}
+		if below != "" {
+			c.comp.OnDownWhenEmpty()
+			e.frame()
+			e.frame()
+			if v.kb.active != below {
+				t.Errorf("↓ in the reply box: active %q, want %q", v.kb.active, below)
+			}
+		}
 		kbPress(e, key.NameHome, 0)
 		if v.kb.active != "heading-"+k0 {
 			t.Errorf("Home: active %q", v.kb.active)

@@ -63,6 +63,11 @@ type Composer struct {
 	// message selected (Accessibility > "Press ↑ in the empty message
 	// field to: Move focus to the message list").
 	OnFocusList func()
+	// OnDownWhenEmpty is the view's onDownArrowWhenEmpty: Down in the
+	// empty box. The Threads view focuses the item below the reply box
+	// (client-threads-view onDownArrowInEmptyInput, focusItemBelowInput);
+	// ThreadFooter's default and the channel's do nothing.
+	OnDownWhenEmpty func()
 
 	// InThreadsView marks the Threads view's inline reply composer:
 	// .p-threads_view .p-threads_footer__input_container has margin 0 20px,
@@ -258,6 +263,10 @@ func (c *Composer) init() {
 		accept(it, start, end)
 	}
 	c.ac.later, c.ac.thread, c.ac.threadTS = c.later, c.ts != "", c.ts
+	// ThreadFooter passes onPageUp / onPageDown that return false (the
+	// keys do nothing in a reply box); the channel's input and the edit
+	// composer pass none
+	c.ed.PageKeysHandled = c.ts != "" && c.edit == nil
 	if c.edit == nil { // the conversation's files, kept across composers
 		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
 		c.att.setOnChange(c.attChanged)
@@ -647,6 +656,10 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			if c.edit == nil && c.OnFocusList != nil {
 				c.OnFocusList()
 			}
+		case EvDownEmpty:
+			if c.edit == nil && c.OnDownWhenEmpty != nil {
+				c.OnDownWhenEmpty()
+			}
 		case EvUndoEmpty:
 			if !c.tryUnsend() {
 				c.ed.Undo()
@@ -803,19 +816,40 @@ func (c *Composer) mentionTrigger() {
 	c.ed.Replace(start, hi, s)
 }
 
+// openLink is openTextyLinkFormBasedOnSelection (boot-shared NTqE): the
+// dialog's Text is editable unless the range holds an embed (emoji,
+// mention: "\uE000" in getContentsForRange's text) or, for a new link,
+// a line break; then ComposerLinkModal draws the range's rich text and
+// Save links it in place (saveLink's retain branch: didTextChange false).
 func (c *Composer) openLink() {
+	sl, sh := c.ed.Selection()
 	lo, hi, url := c.ed.LinkAt()
-	txt := c.ed.Doc().String(lo, hi)
+	d := c.ed.Doc()
+	raw := d.String(lo, hi)
+	txt := raw
+	editing := sl == sh && url != "" // the caret in a link: the edit path
+	editable := !strings.ContainsRune(raw, ObjRune) && (editing || !strings.ContainsRune(raw, '\n'))
 	if strings.ContainsRune(txt, ObjRune) {
-		txt = c.ed.Doc().Slice(lo, hi).Text()
+		txt = d.Slice(lo, hi).Text()
 	}
 	if lo != hi {
 		c.ed.SetSelection(lo, hi)
 	}
-	openLinkDialog(c.h, txt, url, func(text, url string) {
+	save := func(text, url string) {
 		c.ed.SetLink(text, url)
 		c.Focus()
-	}, c.Focus)
+	}
+	if editable || lo == hi {
+		openLinkDialog(c.h, txt, url, save, c.Focus)
+		return
+	}
+	var r richtext.Resolver
+	if c.api.a != nil && c.api.a.S != nil {
+		r = c.api.resolver()
+	}
+	// the text handed back is the range's own runes, so SetLink links
+	// them where they are
+	openLinkDialogRich(c.h, raw, url, linkPreview(r, d.Slice(lo, hi)), save, c.Focus)
 }
 
 func (c *Composer) paragraphMenu(anchor image.Rectangle) {
