@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gioui.org/f32"
 	"gioui.org/io/input"
@@ -101,8 +102,9 @@ func TestWorkObjectCard(t *testing.T) {
 		t.Errorf("card width %d, want 480 (customMaxWidth)", w)
 	}
 	static := woTexts(v, false)
+	flat := strings.ReplaceAll(static, " ", "") // words shape apart ("TASK-" "1")
 	for _, want := range []string{"Tracker", "Draw work objects", "TASK-1 · Clack", "Status", "In progress", "Project", "Clack desktop", "Updated", "Start work"} {
-		if !strings.Contains(static, want) {
+		if !strings.Contains(flat, strings.ReplaceAll(want, " ", "")) {
 			t.Errorf("card text %q lacks %q", static, want)
 		}
 	}
@@ -185,7 +187,8 @@ func TestWorkObjectClicks(t *testing.T) {
 		t.Fatalf("no Open button in the bar (%v, card %v)", open, r)
 	}
 	q := f32.Pt(float32(open.Min.X+open.Max.X)/2, float32(open.Min.Y+open.Max.Y)/2)
-	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: q}, press(q, 100), release(q, 120))
+	// a second later: two clicks within 400ms are a double click (tapCount)
+	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: q}, press(q, time.Second), release(q, time.Second+20*time.Millisecond))
 	if len(h.evs) != 2 || h.evs[1].Action != WOOpen {
 		t.Fatalf("Open: %+v", h.evs)
 	}
