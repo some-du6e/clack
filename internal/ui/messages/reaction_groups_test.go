@@ -61,21 +61,26 @@ func TestReactionGroupsLikeSlack(t *testing.T) {
 		t.Errorf("groupReactions allocates %.0f times a frame", n)
 	}
 
-	// changeReactionFromUserAction with actionSource reaction_toggle_button
+	// changeReactionFromUserAction with actionSource reaction_toggle_button,
+	// for the viewer (core's Self is theirs); others' reactions as the
+	// viewer's when they are U2
+	others := tonedReactions()
+	others[2].Self = false
 	for _, c := range []struct {
 		why, base, self, tone string
+		rs                    []core.Reaction
 		add                   string
 		remove                []string
 	}{
-		{"the viewer's tone comes off", "+1", "USELF", "3", "", []string{"+1::skin-tone-4"}},
-		{"every tone a member reacted with comes off", "+1", "U2", "", "", []string{"+1", "+1::skin-tone-4"}},
-		{"a new reaction takes the preferred tone", "+1", "U9", "3", "+1::skin-tone-3", nil},
-		{"no preferred tone: the plain emoji", "+1", "U9", "", "+1", nil},
-		{"tone 1 is no tone", "+1", "U9", "1", "+1", nil},
-		{"an emoji without skin tones stays plain", "tada", "U9", "5", "tada", nil},
-		{"a custom emoji stays plain", "partyparrot", "U9", "5", "partyparrot", nil},
+		{"the viewer's tone comes off", "+1", "USELF", "3", rs, "", []string{"+1::skin-tone-4"}},
+		{"every tone the viewer reacted with comes off", "+1", "U2", "", others, "", []string{"+1", "+1::skin-tone-4"}},
+		{"a new reaction takes the preferred tone", "+1", "U9", "3", others, "+1::skin-tone-3", nil},
+		{"no preferred tone: the plain emoji", "+1", "U9", "", others, "+1", nil},
+		{"tone 1 is no tone", "+1", "U9", "1", others, "+1", nil},
+		{"an emoji without skin tones stays plain", "tada", "U9", "5", others, "tada", nil},
+		{"a custom emoji stays plain", "partyparrot", "U9", "5", others, "partyparrot", nil},
 	} {
-		add, remove := toggleTargets(rs, c.base, c.self, c.tone)
+		add, remove := toggleTargets(c.rs, c.base, c.self, c.tone)
 		if add != c.add || !reflect.DeepEqual(remove, c.remove) {
 			t.Errorf("%s: add %q, remove %v; Slack adds %q, removes %v", c.why, add, remove, c.add, c.remove)
 		}

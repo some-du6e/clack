@@ -116,11 +116,14 @@ func (g *repliesGate) hook(method string, f url.Values) (any, bool) {
 	}
 	g.calls.Add(1)
 	g.mu.Lock()
-	hold, failure := g.hold, g.failure
+	hold := g.hold
 	g.mu.Unlock()
 	if hold != nil {
 		<-hold
 	}
+	g.mu.Lock()
+	failure := g.failure // what the test set while the call was held
+	g.mu.Unlock()
 	if failure != "" {
 		return map[string]any{"ok": false, "error": failure}, true
 	}
@@ -210,7 +213,11 @@ func TestThreadLoadingRepliesRow(t *testing.T) {
 	}
 	d := s.loadingRepliesRow(gtx, host, colorsFor(host.th), 480)
 	labelHook = nil
-	if d.Size.Y != 96 || !reflect.DeepEqual(got, []string{"Loading replies…"}) {
+	ok := len(got) > 0
+	for _, l := range got {
+		ok = ok && l == "Loading replies\u2026" // measured, then drawn
+	}
+	if d.Size.Y != 96 || !ok {
 		t.Errorf("row %v, italic labels %q", d.Size, got)
 	}
 	s.snap.loaded = true

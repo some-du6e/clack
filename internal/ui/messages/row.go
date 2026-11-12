@@ -2149,7 +2149,11 @@ func (r *row) reactionCollapse(gtx layout.Context, w int) (shown, more int, sel 
 	}
 	bar := float64(w) / float64(max(gtx.Metric.PxPerDp, 0.01))
 	est := func(i int) float64 {
-		return 8*math.Floor(math.Log10(float64(max(gs[i].count, 1)))+1) + 18*float64(len(gs[i].idx)) + 18
+		n := 0
+		for _, k := range gs[i].idx {
+			n += r.m.Reactions[k].Count
+		}
+		return 8*math.Floor(math.Log10(float64(max(n, 1)))+1) + 18*float64(len(gs[i].idx)) + 18
 	}
 	// fit is lodash sortedIndex over the running estimates: how many sums
 	// stay under limit
