@@ -98,18 +98,21 @@ type State struct {
 	ThreadChannel string
 	ThreadTS      string
 	Name          string
-	Started       time.Time
-	SelfAttendee  string
-	Muted         bool
-	Deafened      bool
-	CaptionsOn    bool
-	Mic           MicStatus     // MicStatus.Problem: tell the user
-	MicErr        string        // why, for MicFailed and MicSilent
-	Participants  []Participant // you first, then by join order
-	Videos        []Video
-	Captions      []Caption    // most recent last
-	Camera        CameraStatus // yours (SetCamera)
-	Share         ShareStatus  // your screen share (StartShare)
+	// Background is the huddle's theme: a huddles.listBackgrounds id
+	// ("" = none; HuddleBackground draws nothing then).
+	Background   string
+	Started      time.Time
+	SelfAttendee string
+	Muted        bool
+	Deafened     bool
+	CaptionsOn   bool
+	Mic          MicStatus     // MicStatus.Problem: tell the user
+	MicErr       string        // why, for MicFailed and MicSilent
+	Participants []Participant // you first, then by join order
+	Videos       []Video
+	Captions     []Caption    // most recent last
+	Camera       CameraStatus // yours (SetCamera)
+	Share        ShareStatus  // your screen share (StartShare)
 	// Invites are the people the huddle rang who aren't in it (yet), in
 	// the order they were rung: Slack draws them as pending tiles.
 	Invites []Invite
@@ -371,7 +374,7 @@ func (s *Session) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := State{Phase: s.phase, Err: s.err, RoomID: s.join.RoomID, Channel: s.join.Channel,
-		ThreadChannel: s.join.ThreadCh, ThreadTS: s.join.ThreadTS, Name: s.join.Name,
+		ThreadChannel: s.join.ThreadCh, ThreadTS: s.join.ThreadTS, Name: s.join.Name, Background: s.join.Background,
 		SelfAttendee: s.join.Attendee.AttendeeID, Muted: s.muted, Deafened: s.deafened, CaptionsOn: s.captions,
 		Mic: s.micStatus, MicErr: s.micErr}
 	if s.join.DateStart > 0 {
@@ -1578,6 +1581,12 @@ func (s *Session) HandleRoomEvent(name string, raw json.RawMessage) {
 	}
 	if r.Name != "" {
 		s.join.Name = r.Name
+	}
+	// HtDl's updateHuddle: a room with its channels and thread root sets
+	// the theme as it stands, background_id absent = none (a theme was
+	// taken off)
+	if len(r.Channels) > 0 && r.ThreadRootTS != "" && r.ThreadRootTS != "0000000000.000000" {
+		s.join.Background = r.BackgroundID
 	}
 	s.setInvites(r.invites())
 	if r.Participants != nil {

@@ -124,6 +124,7 @@ func TestHuddleShotsInvite(t *testing.T) {
 	render(t, "invite-sticker-picker", 620, 320, func(gtx C) {
 		theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)
 		e.w.stage(gtx, s, st, image.Rectangle{Max: gtx.Constraints.Max}, now)
+		e.w.stickerPicker(gtx, image.Rectangle{Max: gtx.Constraints.Max})
 	})
 	e.w.stick = false
 }

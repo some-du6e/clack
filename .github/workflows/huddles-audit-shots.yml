@@ -2,6 +2,7 @@ name: huddles-audit-shots
 # The huddles audit (docs/HUDDLES-AUDIT.md) rendered headlessly against the
 # fake Chime (huddle.NewFake) and internal/fakeslack: the huddle window's
 # title, toolbar, closed captions, ⋯ menu, banners and hidden self-view;
+# the compact window at 2 and 4 people with a theme, light and dark;
 # the docked bar with the window closed and open; the sidebar row's
 # huddle badge; the header button, its menu and the invite window and
 # card; sharing your screen (the picker, the presenter's mini panel, the
@@ -45,7 +46,8 @@ jobs:
           mkdir -p "$CLACK_SHOTS"
           # TestShareFlow: share-picker-*, share-window-*, share-mini-panel, share-alert-* (the test screen, CLACK_HUDDLE_TESTSCREEN)
           # TestMiniPanelShowsInactive: the panel's real X11 window maps inactive (Gio's app.Panel)
-          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$|TestShareFlow$|TestShareButtonStates$|TestMiniPanelShowsInactive$' ./internal/ui/huddleui
+          # TestHuddleShotsWindowCompact: window-compact-{light,dark}-{2,4}[-tray] (Slack's compact window, the Arizona theme from Slack's CDN)
+          xvfb-run -a go test -count=1 -v -run 'TestHuddleShotsAudit$|TestHeaderShots$|TestHuddleShotsInvite|TestHuddleShotsMic|TestSidebarSuffixFaces$|TestSidebarFaceSteps$|TestShareFlow$|TestShareButtonStates$|TestMiniPanelShowsInactive$|TestHuddleShotsWindowCompact$|TestStickerEmojiFits$|TestHuddleShotsTiles$' ./internal/ui/huddleui
           ls -la "$CLACK_SHOTS"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

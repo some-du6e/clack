@@ -131,6 +131,9 @@ var entMethods = map[string]bool{
 	// the full profile (popups.ProfileView): team host answers
 	// team_is_restricted (verified 2026-11-08)
 	"users.profile.getSections": true,
+	// the huddle themes (HuddleBackground): the team host answers
+	// team_is_restricted (verified 2026-11-11)
+	"huddles.listBackgrounds": true,
 }
 
 // MaxConcurrent bounds in-flight Web API requests (be gentle with rate

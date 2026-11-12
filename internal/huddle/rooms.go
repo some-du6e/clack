@@ -43,7 +43,10 @@ type joinInfo struct {
 	Attendee     chimeAttendee
 	Name         string
 	DateStart    int64
-	Invites      map[string]string // user -> last invite status (DM rings)
+	// Background is the huddle's theme (HuddleBackground: the room's
+	// background_id, a huddles.listBackgrounds id; "" = none).
+	Background string
+	Invites    map[string]string // user -> last invite status (DM rings)
 }
 
 // participants decodes ["U1",…] or [{"user_id":"U1"},…].
@@ -95,6 +98,10 @@ type roomJSON struct {
 	// for each (HuddlePeerTile's invite status overlay).
 	LastInviteStatus map[string]string `json:"last_invite_status_by_user"`
 	PendingInvitees  json.RawMessage   `json:"pending_invitees"`
+	// background_id is the theme everyone in the huddle sees ("Choose a
+	// huddle theme"; client-boot qY8a convertRtmRoomMessageForRedux,
+	// HtDl's updateHuddle reducer).
+	BackgroundID string `json:"background_id"`
 }
 
 // invites is the room's invite statuses: last_invite_status_by_user, and
@@ -179,6 +186,9 @@ func roomsJoin(ctx context.Context, c Caller, channel, region string, multi bool
 		}
 		if ji.Name == "" {
 			ji.Name = r.Name
+		}
+		if ji.Background == "" {
+			ji.Background = r.BackgroundID
 		}
 		if ji.DateStart == 0 {
 			ji.DateStart = r.DateStart

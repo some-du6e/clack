@@ -24,6 +24,7 @@ const (
 	ExpShareAudio          = "huddles_screenshare_share_audio"       // Jf: the screen picker's "Share system audio"
 	ExpSwitchMicHelper     = "huddles_switch_microphone_helper"      // fs: "We are not detecting any audio…"
 	ExpNoiseSuppAwareness  = "huddles_noise_suppression_awareness"   // nL: the Audio settings menu's NS row
+	ExpNewGrids            = "huddles_new_grids"                     // KR: no troubleshooting button in the compact header
 )
 
 // on reports whether name is in group (Slack's "on"===getGroupForUser).

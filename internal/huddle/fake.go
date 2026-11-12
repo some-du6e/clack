@@ -40,6 +40,7 @@ const (
 type fakeCaller struct {
 	signal string
 	log    *callLog
+	bg     *atomic.Value // string: the room's background_id (SetBackground)
 }
 
 // FakeCall is one Slack Web API call the fake answered (or refused).
@@ -104,6 +105,9 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 		}
 		return json.Unmarshal([]byte(`{"ok":true}`), out)
 	}
+	if method == "huddles.listBackgrounds" { // the huddle themes (HuddleBackground)
+		return json.Unmarshal(fakeBackgrounds, out)
+	}
 	if method != "rooms.join" {
 		return errors.New("fake slack: " + method)
 	}
@@ -114,6 +118,11 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 			"attendee": map[string]any{"AttendeeId": fakeSelfAtt, "ExternalUserId": "E1-R0FAKEROOM-" + fakeSelf, "JoinToken": fakeToken},
 		}},
 		"huddle": map[string]any{"id": "R0FAKEROOM", "participants": []string{fakeSelf, fakeRemote}, "thread_root_ts": "1700000000.000100", "date_start": time.Now().Unix()},
+	}
+	if f.bg != nil {
+		if bg, _ := f.bg.Load().(string); bg != "" {
+			res["huddle"].(map[string]any)["background_id"] = bg
+		}
 	}
 	if strings.HasPrefix(p.Get("channel_id"), "D") {
 		// a new DM huddle: only you so far (the server rings the other
@@ -747,7 +756,32 @@ type Fake struct {
 	f   *fakeChime
 	srv *httptest.Server
 	log callLog
+	bg  atomic.Value // string
 }
+
+// SetBackground gives the fake room a huddle theme (its background_id,
+// one of FakeBackgrounds' ids) from the next rooms.join on.
+func (x *Fake) SetBackground(id string) { x.bg.Store(id) }
+
+// FakeBackgroundUpdate is the sh_room_update Slack sends when someone in
+// the fake room picks theme id ("" takes it off).
+func FakeBackgroundUpdate(channel, id string) json.RawMessage {
+	room := map[string]any{"id": FakeRoomID, "channels": []string{channel}, "thread_root_ts": "1700000000.000100"}
+	if id != "" {
+		room["background_id"] = id
+	}
+	b, _ := json.Marshal(map[string]any{"type": "sh_room_update", "room": room})
+	return b
+}
+
+// fakeBackgrounds is huddles.listBackgrounds as Slack answers it (the
+// enterprise host, 2026-11-11; Slack's public CDN pictures).
+var fakeBackgrounds = []byte(`{"ok":true,"backgrounds":[` +
+	`{"id":"STAR_GAZING","category_id":"featured","category_name":"Featured","category_order":1,"name":"Stargazing","artist":"Art by Lisk Feng","url":"https://a.slack-edge.com/f06881b/img/huddles/LiskFeng-Star_Gazing.jpg","preview_url":"https://a.slack-edge.com/f06881b/img/huddles/LiskFeng-Star_Gazing-preview.jpg"},` +
+	`{"id":"ARIZONA","category_id":"featured","category_name":"Featured","category_order":1,"name":"Arizona","artist":"Art by Haley Tippmann","url":"https://a.slack-edge.com/f06881b/img/huddles/HaleyTippmann-Arizona.jpg","preview_url":"https://a.slack-edge.com/f06881b/img/huddles/HaleyTippmann-Arizona-preview.jpg"},` +
+	`{"id":"GRADIENT_03","category_id":"colors","category_name":"Colors","category_order":2,"name":"Midnight","artist":null,"url":"https://a.slack-edge.com/feac618/img/huddles/midnight_fizz.jpg","preview_url":"https://a.slack-edge.com/feac618/img/huddles/midnight_fizz-preview.jpg"},` +
+	`{"id":"LANDSCAPE_01","category_id":"landscapes","category_name":"Landscapes","category_order":3,"name":"Dunes","artist":null,"url":"https://a.slack-edge.com/27f87ff/img/huddles/landscape_01.jpg","preview_url":"https://a.slack-edge.com/27f87ff/img/huddles/landscape_01-preview.jpg"}` +
+	`]}`)
 
 // FakeRoomID is the fake huddle's room (call) id.
 const FakeRoomID = "R0FAKEROOM"
@@ -792,7 +826,7 @@ func (x *Fake) SoloRoom() { x.f.solo.Store(true) }
 
 // Caller answers rooms.join with the fake meeting.
 func (x *Fake) Caller() Caller {
-	return fakeCaller{signal: "ws" + strings.TrimPrefix(x.srv.URL, "http") + "/control/m-1", log: &x.log}
+	return fakeCaller{signal: "ws" + strings.TrimPrefix(x.srv.URL, "http") + "/control/m-1", log: &x.log, bg: &x.bg}
 }
 
 // Close stops the fake.

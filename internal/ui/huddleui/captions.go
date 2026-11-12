@@ -248,7 +248,15 @@ func (c *Controller) showBannerLink(text, icon, link string, do func()) {
 
 var bannerBg = color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff} // base-inv-pry
 
-func (w *window) layoutBanner(gtx C, s *huddle.Session, stage image.Rectangle, now time.Time) {
+// bannerH is the informational banner's height.
+const bannerH = 48
+
+// layoutBanner is HuddlesInformationalBanner in the compact window
+// (entryPoint baby_window): in the flow above the stage, r its box
+// (.p-huddles_alert_banner_base--baby_window: radius 8px, margin 4px 4px
+// 6px; text-align left: the icon and text from the left, the close button
+// at the right). It returns the height it took (0: no banner).
+func (w *window) layoutBanner(gtx C, s *huddle.Session, r image.Rectangle) int {
 	w.mu.Lock()
 	b := w.banner
 	w.mu.Unlock()
@@ -259,39 +267,33 @@ func (w *window) layoutBanner(gtx C, s *huddle.Session, stage image.Rectangle, n
 	if muted {
 		b = banner{text: nsHuddles.T("You’re muted."), icon: "mic-off"}
 	}
-	if b.text == "" {
-		return
+	if b.text == "" || r.Dx() <= 0 {
+		return 0
 	}
 	if w.click("banner-close").Clicked(gtx) {
 		if muted {
 			w.c.closeMutedBanner(s)
-			return
+			return 0
 		}
 		w.mu.Lock()
 		w.banner = banner{}
 		w.mu.Unlock()
-		return
+		return 0
 	}
 	if b.do != nil && w.click("banner-link").Clicked(gtx) {
 		w.mu.Lock()
 		w.banner = banner{}
 		w.mu.Unlock()
 		b.do()
-		return
+		return 0
 	}
-	h := gtx.Dp(48)
-	r := image.Rect(stage.Min.X, stage.Min.Y+gtx.Dp(4), stage.Max.X, stage.Min.Y+gtx.Dp(4)+h)
+	h := r.Dy()
 	theme.RRect(gtx, r, gtx.Dp(8), bannerBg)
 	ts := labelSize(gtx, w.th, 15, theme.Bold, b.text)
 	is := gtx.Dp(20)
-	cw := is + gtx.Dp(8) + ts.X
-	var ls image.Point
-	if b.link != "" {
-		ls = labelSize(gtx, w.th, 15, theme.Regular, b.link)
-		cw += gtx.Dp(4) + ls.X
-	}
-	x := r.Min.X + (r.Dx()-cw)/2
+	x := r.Min.X + gtx.Dp(16)
 	if b.link != "" { // a c-link in the banner's colour, underlined on hover
+		ls := labelSize(gtx, w.th, 15, theme.Regular, b.link)
 		lx := x + is + gtx.Dp(8) + ts.X + gtx.Dp(4)
 		lp := image.Pt(lx, r.Min.Y+(h-ls.Y)/2)
 		cl := w.click("banner-link")
@@ -319,6 +321,7 @@ func (w *window) layoutBanner(gtx C, s *huddle.Session, stage image.Rectangle, n
 			}
 		}, func(gtx C) D { iconAt(gtx, image.Pt(bs, bs), "close", 16, hudWhite); return D{} })
 	})
+	return h
 }
 
 // huddleLoading is Slack's HuddleLoading: its spinner over "Joining
