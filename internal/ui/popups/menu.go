@@ -54,7 +54,8 @@ type MenuItem struct {
 	// (c-menu_item__checkbox_dash) where the check goes (EaYn's Move to…
 	// rows when some of the conversations are in the section).
 	Indeterminate bool
-	// IconURL draws an image (a custom section's emoji) where Icon goes.
+	// IconURL draws an image where Icon goes (a custom section's emoji on
+	// a radio row, a call app's icon in CallMenu).
 	IconURL  string
 	External bool // draws an external-link glyph at the right
 
@@ -704,6 +705,11 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 		} else if it.Icon != "" {
 			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 18))/2), func(gtx layout.Context) layout.Dimensions {
 				return icon(gtx, it.Icon, 18, fg)
+			})
+			x += dp(gtx, 28)
+		} else if it.IconURL != "" { // CallMenu's apps: img.p-classic_nav__call-menu_icon, 20×20
+			at(gtx, image.Pt(x, (sz.Y-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+				return menuImage(gtx, th, it.IconURL, dp(gtx, 20))
 			})
 			x += dp(gtx, 28)
 		}

@@ -32,9 +32,10 @@ import (
 //     member, and Copy huddle link when your DM with them exists. Position
 //     bottom, offsetY 10.
 //
-// Huddle-team call apps (Zoom and friends, "Video meetings" and "Phone"
-// groups) and the Google Calendar "Schedule meeting" item
-// (channel_meeting_invite) aren't in Clack.
+// Channel details' CallMenu (views/details_call.go) adds the team's call
+// apps ("Video meetings" and "Phone") after CallMenuItems. The Google
+// Calendar "Schedule meeting" item (channel_meeting_invite) isn't in
+// Clack.
 
 // menuHost is what the menus need from the ui root beyond Host (the App
 // implements it in huddle_wire.go).
@@ -114,6 +115,14 @@ func (c *Controller) MenuItems(channel string) []popups.MenuItem {
 			}})
 	}
 	return items
+}
+
+// CallMenuItems are CallMenu's huddle rows for channel (GPML addMenuItem
+// for the A01 app, channel details' Start a Call ▾): HuddleButtonMenuItem
+// (XLpf: Start / Join / Leave Huddle, entry channel_header_huddle_menu)
+// and HuddleCopyLinkMenuItem (GS+p).
+func (c *Controller) CallMenuItems(channel string) []popups.MenuItem {
+	return []popups.MenuItem{c.huddleItem(channel, "", EntryHeaderMenu), c.copyItem(channel)}
 }
 
 // canSchedule is ExternalHuddleMenuItem's condition (the experiment
