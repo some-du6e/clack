@@ -11,6 +11,7 @@ import (
 	"image"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -320,10 +321,30 @@ func TestTodosKeysAndRealtimeLikeSlack(t *testing.T) {
 		items = append(items, map[string]any{"item_id": fakeslack.ViewsChannel, "item_type": "message",
 			"ts": fmt.Sprintf("%d.000100", 1762601000+i), "todo_state": "to_do", "date_created": 1762600000 + i})
 	}
+	// E's write reloads the feeds; CI once saw that reload land between
+	// the test picking the row Delete clears and the keys that reach it.
+	// The reload is held at the server until the row is picked, then
+	// applied before the keys, every run.
+	var completed atomic.Bool
+	listHeld, release := make(chan struct{}), make(chan struct{})
+	var heldOnce sync.Once
 	log := &callLog{}
 	app, fs := vkFake(t, func(method string, f url.Values) (any, bool) {
 		log.rec(method, f)
-		if method == "saved.list" {
+		switch method {
+		case "saved.update": // BEFORE: the list keeps the completed to-do as to_do
+			if f.Get("mark") != "completed" {
+				break
+			}
+			completed.Store(true)
+		case "saved.list":
+			if completed.Load() {
+				heldOnce.Do(func() { close(listHeld) })
+				select {
+				case <-release:
+				case <-time.After(10 * time.Second):
+				}
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			return map[string]any{"ok": true, "saved_items": append([]map[string]any(nil), items...)}, true
@@ -365,7 +386,17 @@ func TestTodosKeysAndRealtimeLikeSlack(t *testing.T) {
 	})
 	todoUndoFor = 50 * time.Millisecond
 	t.Cleanup(func() { todoUndoFor = 6 * time.Second })
+	e.until(t, "the reload after E at the server", func() bool {
+		select {
+		case <-listHeld:
+			return true
+		default:
+			return false
+		}
+	})
 	gone := laterKey(&l.view[1])
+	close(release)
+	e.until(t, "the reload after E applied", func() bool { return laterSettled(l) })
 	kbPress(e, key.NameHome, 0)
 	kbPress(e, key.NameDownArrow, 0)
 	kbPress(e, key.NameDeleteForward, 0)
@@ -389,6 +420,20 @@ func TestTodosKeysAndRealtimeLikeSlack(t *testing.T) {
 	fs.Push(map[string]any{"type": "saved_added", "saved": map[string]any{"item_id": fakeslack.ViewsChannel, "item_type": "message",
 		"ts": "1762700000.000100", "todo_state": "to_do", "date_created": 1762700000}, "event_ts": "1762700000.000200"})
 	e.until(t, "the reload after saved_added", func() bool { return log.count("saved.list", nil) > lists })
+}
+
+// laterSettled: every feed's first page that was asked for is in.
+func laterSettled(l *Later) bool {
+	for _, f := range l.feeds {
+		if !f.first.started() {
+			continue
+		}
+		v, ok, _ := f.first.get()
+		if f.first.busy() || !ok || v.seq != f.firstApplied {
+			return false
+		}
+	}
+	return true
 }
 
 // Unreads: the virtual list's own Home/End under UnreadsList's commands,

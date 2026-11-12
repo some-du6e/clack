@@ -48,6 +48,26 @@ name: flake-check
 #   TestOLEFileDrop (windows)                the source's timed moves entered
 #                                            at the second point when the drag
 #                                            loop started late
+# and flakes-1112b's (50 runs each, the race forced every run as above):
+#   TestCloseToTrayWindow (ui, windows)      Gio's DestroyEvent comes from
+#                                            WM_DESTROY, so Run returned up
+#                                            to 3.4 ms before DestroyWindow
+#                                            freed the HWND; the test now
+#                                            waits for DestroyWindow to
+#                                            return (a WH_GETMESSAGE hook)
+#   TestFakeScreenShare, TestFakeCamera      the only keyframe lost (written
+#     (huddle)                               before pion's SRTP was up) and
+#                                            the fake asked for one only
+#                                            after 5 pictures; it now asks
+#                                            when it can't decode
+#   TestDetailsDMAddPeopleCustomHistory      the first-message read and the
+#     (ui/views)                             preview both in flight; the
+#                                            test wanted the read first
+#   TestTodosKeysAndRealtimeLikeSlack        E's reload landed between the
+#     (ui/views)                             test picking Delete's row and
+#                                            the keys; the test's saved.list
+#                                            put the completed to-do back
+#                                            (the server drops it)
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -93,6 +113,11 @@ on:
       - "internal/core/reads.go"
       - "internal/fakeslack/faults.go"
       - "third_party/gioui.org/app/clack_drop_windows_test.go"
+      - "internal/ui/runfromtray_windows_test.go"
+      - "internal/huddle/fake_video.go"
+      - "internal/huddle/share_test.go"
+      - "internal/ui/views/details_w14_test.go"
+      - "internal/ui/views/views_keys_test.go"
 
 permissions:
   contents: read
@@ -392,16 +417,17 @@ jobs:
           CLACK_WINDOWS_TRAY_TESTS: "1"
           TEST: TestCloseToTrayWindow
           PKG: ./internal/ui
+          FLAKE_TAIL: "300"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
 
   flakes-1112b-share:
     if: ${{ !inputs.only || startsWith('flakes-1112b-share', inputs.only) }}
-    name: "flakes-1112b TestFakeScreenShare (drop first AU: ${{ matrix.drop }})"
+    name: "flakes-1112b ${{ matrix.test }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        drop: ["", "1"] # CLACK_FAKE_DROP_FIRST_AU: the fake never gets the first keyframe
+        test: [TestFakeScreenShare, TestFakeCamera] # each loses its first keyframe at the fake every run
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -412,17 +438,20 @@ jobs:
           cache: true
       - name: gio deps (internal/huddle's X11 screen share needs the headers)
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "TestFakeScreenShare, race detector, every run counted"
+      - name: "${{ matrix.test }}, race detector, every run counted"
         env:
-          CLACK_FAKE_DROP_FIRST_AU: ${{ matrix.drop }}
-          TEST: TestFakeScreenShare
+          TEST: ${{ matrix.test }}
           PKG: ./internal/huddle
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race -gcflags=all=-d=checkptr=0
 
   flakes-1112b-views:
     if: ${{ !inputs.only || startsWith('flakes-1112b-views', inputs.only) }}
-    name: "flakes-1112b TestDetailsDMAddPeopleCustomHistory"
+    name: "flakes-1112b ${{ matrix.test }}"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test: [TestDetailsDMAddPeopleCustomHistory, TestTodosKeysAndRealtimeLikeSlack]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -433,8 +462,8 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: "TestDetailsDMAddPeopleCustomHistory, race detector, every run counted"
+      - name: "${{ matrix.test }}, race detector, every run counted"
         env:
-          TEST: TestDetailsDMAddPeopleCustomHistory
+          TEST: ${{ matrix.test }}
           PKG: ./internal/ui/views
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race

@@ -15,5 +15,5 @@ awk -v run="=== RUN   ${TEST}" -v done="--- FAIL: ${TEST} (" -v ok="--- PASS: ${
   index($0, done) == 1 { print "::group::failed run"; for (i = (n > 150 ? n - 150 : 0); i < n; i++) print buf[i % 150]; print "::endgroup::"; inrun = 0 }
   index($0, ok) == 1 { inrun = 0 }' "$log" | head -3000
 awk '/^WARNING: DATA RACE/,/^==================$/' "$log" | head -400
-tail -5 "$log"
+tail -"${FLAKE_TAIL:-5}" "$log"
 exit $rc
