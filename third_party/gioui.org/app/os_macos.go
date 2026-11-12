@@ -685,6 +685,23 @@ func gio_onText(h C.uintptr_t, cstr C.CFTypeRef) {
 	w.w.EditorInsert(str)
 }
 
+// Clack patch (CLACK_PATCHES.md §11): GioView's NSDraggingDestination
+// methods (os_macos.m). paths is NUL-separated, or nil.
+//
+//export gio_onFileDrop
+func gio_onFileDrop(h C.uintptr_t, kind C.int, x, y C.CGFloat, paths C.CFTypeRef, mods C.NSUInteger) {
+	w := windowFor(h)
+	e := FileDropEvent{
+		Kind:      FileDropKind(kind),
+		Position:  f32.Point{X: float32(x) * w.scale, Y: float32(y) * w.scale},
+		Modifiers: convertMods(mods),
+	}
+	if s := nsstringToString(paths); s != "" {
+		e.Paths = strings.Split(s, "\x00")
+	}
+	w.ProcessEvent(e)
+}
+
 //export gio_onMouse
 func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, dy C.CGFloat, ti C.double, mods C.NSUInteger) {
 	w := windowFor(h)

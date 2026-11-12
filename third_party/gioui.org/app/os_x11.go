@@ -119,6 +119,7 @@ type x11Window struct {
 	dispatchFns chan func()
 	handler     x11EventHandler
 	buf         [100]byte
+	xdnd        xdndState // Clack patch (CLACK_PATCHES.md §11)
 }
 
 var (
@@ -778,6 +779,9 @@ func (h *x11EventHandler) handleEvents() bool {
 			// redraw will be done by a later expose event
 		case C.SelectionNotify:
 			cevt := (*C.XSelectionEvent)(unsafe.Pointer(xev))
+			if w.handleXdndSelection(cevt) { // Clack patch (CLACK_PATCHES.md §11)
+				break
+			}
 			prop := w.atoms.clipboardContent
 			if cevt.property != prop {
 				break
@@ -849,6 +853,9 @@ func (h *x11EventHandler) handleEvents() bool {
 			}
 		case C.ClientMessage: // extensions
 			cevt := (*C.XClientMessageEvent)(unsafe.Pointer(xev))
+			if w.handleXdnd(cevt) { // Clack patch (CLACK_PATCHES.md §11)
+				break
+			}
 			switch *(*C.long)(unsafe.Pointer(&cevt.data)) {
 			case C.long(w.atoms.evDelWindow):
 				if w.closing != nil {
@@ -976,6 +983,7 @@ func newX11Window(gioWin *callbacks, options []Option) error {
 
 	// extensions
 	C.XSetWMProtocols(dpy, win, &w.atoms.evDelWindow, 1)
+	w.initXdnd() // Clack patch (CLACK_PATCHES.md §11)
 
 	// IBus IME
 	if strings.Contains(os.Getenv("XMODIFIERS"), "@im=ibus") {

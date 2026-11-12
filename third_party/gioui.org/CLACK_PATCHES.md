@@ -16,7 +16,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_gpu.go`, `app/clack_panel.go`, `app/os.go`, `app/os_macos.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
-`gesture/clack_wheel.go`, `io/input/router.go` and these two files (`CLACK_PATCHES.md`,
+`gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
+`app/clack_drop*.go` and these two files (`CLACK_PATCHES.md`,
 `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -372,3 +373,68 @@ nothing while nothing changes.
 
 Read in Chromium main f6df131 (2026-11-12). Clack's own composer editor
 (`internal/ui/composer/editor.go`) does the same. Not in `UPSTREAM.patch`.
+
+## 11. OS file drops: app.FileDropEvent
+
+`app/clack_drop.go` (the event, the queue, text/uri-list),
+`app/window.go` (`eventSummary.drops`, `nextEvent`, `processEvent`),
+`app/clack_drop_windows*.go` with hooks in `app/os_windows.go`,
+`app/os_macos.go` and `app/os_macos.m`, `app/clack_drop_x11.go` with hooks
+in `app/os_x11.go`, and `app/os_wayland.go`.
+
+Gio v0.10.3 has no way to take files dragged from Explorer, Finder or a
+file manager. Slack's FileDragDrop (boot-shared `oCSS`) shows a drop
+overlay over the pane under the pointer and attaches what's dropped, and
+Karim drags screenshots onto Clack on Windows every day.
+
+`Window.Event` now returns `FileDropEvent{Kind, Position, Paths,
+Modifiers}`: one `FileDragEnter`, `FileDragOver` as the pointer moves,
+then `FileDragLeave` (the pointer left, or Esc) or `FileDrop`. They come
+before the next `FrameEvent`, in order; consecutive `FileDragOver`s fold
+into the last one. `Position` is in the FrameEvent's coordinates (Gio's
+own decorations subtracted, like the router's pointer events). Only drags
+that carry files send anything. The window always answers the OS with a
+copy. Gio doesn't redraw for these: the app asks for a frame when it
+draws something.
+
+- Windows: an OLE drop target (`RegisterDragDrop` after `OleInitialize`
+  on the window's thread), the IDropTarget vtable as
+  `syscall.NewCallback`s, no cgo. CF_HDROP from the data object's
+  `GetData`, `DragQueryFileW` for the paths, `ScreenToClient` for the
+  point; MK_SHIFT/MK_CONTROL/MK_ALT for the modifiers. The POINTL argument
+  is passed by value: one register on amd64 and arm64
+  (`clack_drop_windows_64.go`), two words on 386
+  (`clack_drop_windows_32.go`). Each method also calls
+  IDropTargetHelper (`CLSID_DragDropHelper`), as Chromium's
+  `DropTargetWin` does, so the shell's drag image keeps drawing over the
+  window. When OLE can't start there (another apartment model on the
+  thread), the window falls back to `DragAcceptFiles`; `WM_DROPFILES` is
+  handled either way as one `FileDrop` at `DragQueryPoint`. The target is
+  revoked on `WM_DESTROY`.
+- macOS: GioView registers for `NSPasteboardTypeFileURL` and implements
+  NSDraggingDestination (`draggingEntered:`, `draggingUpdated:`,
+  `draggingExited:`, `prepareForDragOperation:`,
+  `performDragOperation:`), reading file URLs with
+  `NSPasteboardURLReadingFileURLsOnlyKey`. The point is converted like
+  mouse events (flipped, times the backing scale).
+- X11: XDND version 5 (`XdndAware`). A drag whose types (the message's
+  three, or `XdndTypeList`) include `text/uri-list` sends `FileDragEnter`
+  on its first `XdndPosition` and `FileDragOver` on the rest, answering
+  `XdndStatus` with `XdndActionCopy`; `XdndDrop` converts `XdndSelection`
+  to `text/uri-list`, and the `SelectionNotify` brings the paths for
+  `FileDrop` before `XdndFinished`. X11 only learns the paths on the drop,
+  so `FileDragEnter` has none there. Modifiers come from `XQueryPointer`.
+- Wayland: `wl_data_device` enter/motion/leave/drop for an offer with
+  `text/uri-list`: `wl_data_offer_accept` and `set_actions(copy, copy)`
+  on enter, then on drop `wl_data_offer_receive` into a pipe (read with a
+  2 s deadline), `wl_data_offer_finish` when the compositor chose copy,
+  and the offer destroyed. Upstream's enter destroyed every offer but the
+  clipboard's; `flushOffers` now keeps the drag's.
+
+Tests: `app/clack_drop_test.go` (order, folding, the decoration offset,
+drops before a ConfigEvent, URI lists; ci's linux job), and on ci's
+windows-applog job `app/clack_drop_windows_test.go`: PowerShell C#
+`DoDragDrop` of a WinForms `DataObject` (CF_HDROP) from another process
+onto a real Gio window with an IDropSource that moves the cursor and
+drops or cancels, and a `WM_DROPFILES` with an HDROP built in-process.
+Not in `UPSTREAM.patch`.

@@ -280,6 +280,10 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		call.Add(gtx.Ops)
 		t.Pop()
 	}
+	// Slack's FileDragDrop around the pane: its drop zone, and the drop
+	// overlay over list and composer while files hover it (drop_overlay.go)
+	a.dropZone(c, image.Rectangle{Min: origin, Max: origin.Add(sz)}, foot)
+	a.layoutDropOverlay(gtx, c, sz)
 	return layout.Dimensions{Size: sz}
 }
 

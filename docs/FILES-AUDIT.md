@@ -75,7 +75,7 @@ A pasted screenshot's `message` event often arrives before Slack has processed t
 - **View file details, external links, folders, sections, transcripts, edit image details:** not in the menu, because Clack has no screens for them.
 - **`attachments_and_unfurls_max_width`:** with this experiment on, Slack caps the flex gallery at 716. Clack always uses 936.
 - **PDF first-page thumbnail:** the PDF pillow uses the icon tile. I didn't check whether Slack's message pillow shows `thumb_pdf` (the `p-file_card__preview` card that does is used on the Files page).
-- **Drag-and-drop overlay:** Gio v0.10.3 has no OS file-drop events, so there's still no drop target. Paste, the + menu and drag-drop all end in the same attach path.
+- **Drag-and-drop overlay:** done on branch gap-w1-drop. Gio patch 11 adds OS file-drop events (Windows, macOS, X11, Wayland), and the message and thread panes show Slack's drop overlays and attach what's dropped (Shift shares at once). Paste, the + menu and drop all end in the same attach path. The huddle's `HuddleDragOverlay` and Slack Connect's blocked state are still open (docs/FIDELITY.md "Drop to upload").
 
 ## Files view (files-view, 2026-11-10)
 
