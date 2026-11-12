@@ -69,12 +69,14 @@ func TestIdleFrames(t *testing.T) {
 			ch := fakeslack.ThreadPublicID
 			e.openChannel(ch)
 			e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+			e.focusComposer(ch, "")
 			e.idle(t, p, "channel", true)
 			e.blur()
 			e.idle(t, p, "channel, window in the background", false)
 			e.unblur()
 			e.a.OpenThread(ch, fakeslack.ThreadRootTS)
 			e.frame()
+			e.focusComposer(ch, fakeslack.ThreadRootTS)
 			e.idle(t, p, "thread", true)
 			e.a.CloseSecondary()
 			e.a.Navigate("activity")
@@ -97,6 +99,7 @@ func TestIdleFrames(t *testing.T) {
 			ch = e.fs.ChannelIDs()[0]
 			e.openChannel(ch)
 			e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+			e.focusComposer(ch, "")
 			e.idle(t, p, "sidebar with unreads", true)
 		})
 	}
@@ -165,6 +168,20 @@ func (e *perfEnv) unblur() {
 	e.frame()
 }
 
+// focusComposer puts the key focus in a conversation's composer, as
+// Slack does when a conversation opens (and the reply bar does for a
+// thread, FocusThreadComposer).
+func (e *perfEnv) focusComposer(ch, ts string) {
+	e.frame()
+	c := e.a.convoFor(ch, ts)
+	if c == nil || c.comp == nil {
+		e.tb.Fatalf("no composer for %s/%s", ch, ts)
+	}
+	c.comp.Focus()
+	e.frame()
+	e.frame()
+}
+
 // idleFrame is one App.Run FrameEvent at now (layout and the router; no
 // GPU).
 func (e *perfEnv) idleFrame(now time.Time) {
@@ -189,6 +206,11 @@ func (e *perfEnv) idleFrame(now time.Time) {
 func (e *perfEnv) idle(t *testing.T, p *idleprobe.Probe, name string, caret bool) {
 	t.Helper()
 	e.settle(2 * time.Second)
+	// core's deferred boot loads (usergroups, client extras: a.later 5 s
+	// after boot) are start-up, not idle
+	if d := 8*time.Second - time.Since(e.a.data.booted); d > 0 {
+		e.settle(d)
+	}
 	res := p.Run(name, idleFor, &e.r, e.idleFrame)
 	res.Log(t)
 	blinks := res.CountMatching("Editor).Layout")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"image"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/huddle/avperm"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/idleprobe"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
@@ -23,7 +23,9 @@ import (
 // window (CLACK_IDLE_FRAMES=1): you alone in a huddle against the fake
 // Chime, microphone silent, camera off, nothing moving, for 10 s. Slack's
 // huddle window draws nothing then (no caret, and it shows no timer:
-// window.go). Allowed: idleOtherFrames, for a clock tick.
+// window.go). Allowed: idleOtherFrames, for a clock tick. (With someone
+// else in it, their tile's spinner until their media connects, their
+// speaking bars and a shared screen animate, as in Slack.)
 func TestHuddleWindowIdleFrames(t *testing.T) {
 	if os.Getenv("CLACK_IDLE_FRAMES") == "" {
 		t.Skip("CLACK_IDLE_FRAMES not set")
@@ -41,13 +43,14 @@ func TestHuddleWindowIdleFrames(t *testing.T) {
 	e.c.win = e.w // the open huddle window: Controller.changed redraws it
 	e.c.mu.Unlock()
 
-	clip, err := os.ReadFile(filepath.Join("..", "..", "huddle", "testdata", "testsrc-320x180.h264"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	e.fk = huddle.NewFake(clip, t.Errorf)
+	// A new DM huddle: rooms.join lists only you (the fake's answer for a
+	// D… channel), SoloRoom has nobody on the media, and NewFake(nil)
+	// shares no screen. Nothing on screen moves.
+	const dm = "D0IDLE00001"
+	e.h.app.S.PutConv(slack.Conversation{ID: dm, IsIM: true, User: huddle.FakeRemoteUser})
+	e.fk = huddle.NewFake(nil, t.Errorf)
 	t.Cleanup(e.fk.Close)
-	e.fk.SoloRoom() // nobody else: no voices, captions or reactions
+	e.fk.SoloRoom()
 	granted := func() <-chan avperm.Status {
 		ch := make(chan avperm.Status, 1)
 		ch <- avperm.Authorized
@@ -57,7 +60,7 @@ func TestHuddleWindowIdleFrames(t *testing.T) {
 		MicAccess: granted, OpenAudio: nullAudio}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	s, err := huddle.Join(ctx, o, hcChannel)
+	s, err := huddle.Join(ctx, o, dm)
 	if err != nil {
 		t.Fatal(err)
 	}
