@@ -147,7 +147,7 @@ func afBoundary(d *Doc, i int, word bool) bool {
 // /^\s*?(1(\.|\)|-|\*|\u2022|\[ ?\]|\[x\])$/ before the typed space
 // (the check-list forms are canvases' only), and "```".
 func afBlockPrefix(rs []rune) (BlockKind, bool) {
-	if string(rs) == "```" {
+	if s := string(rs); s == "```" || s == "｀｀｀" {
 		return CodeBlock, true
 	}
 	n := len(rs)
@@ -170,10 +170,16 @@ func afBlockPrefix(rs []rune) (BlockKind, bool) {
 // autoformatBlock converts the caret's paragraph to a list or code block
 // when the text between the line start and the caret is one of the
 // markdown block prefixes. The prefix is removed; it returns the new caret.
+//
+// List autofill also runs on a quote line (its binding only excludes
+// list, code and code-block lines) and then sets border "1" with the list
+// (`l = s?.blockquote ? "1" : "0"`, convertShortcutToBlockFormat): the
+// quote line becomes a list item inside the quote (Line.Quoted).
 func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 	caret = d.clamp(caret)
 	line := d.LineOf(caret)
-	if d.Lines[line].Kind != Para {
+	quoted := d.Lines[line].Kind == Quote
+	if d.Lines[line].Kind != Para && !quoted {
 		return caret, Para, false
 	}
 	ls := d.LineStart(line)
@@ -186,11 +192,11 @@ func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 		}
 	}
 	k, ok = afBlockPrefix(d.Runes[ls:caret])
-	if !ok {
+	if !ok || quoted && k == CodeBlock {
 		return caret, Para, false
 	}
 	d.Delete(ls, caret)
-	d.Lines[line] = Line{Kind: k}
+	d.Lines[line] = Line{Kind: k, Quoted: quoted}
 	return ls, k, true
 }
 
@@ -317,14 +323,19 @@ func autoformatFence(d *Doc, caret int) (newCaret int, ok bool) {
 	case CodeBlock, Divider:
 		return caret, false
 	}
+	// "```" or "｀｀｀" (buildLocalCodeBlockMarkdownChangeDelta takes both)
+	tick := d.Runes[caret-1]
+	if tick != '`' && tick != '｀' {
+		return caret, false
+	}
 	for i := caret - 3; i < caret; i++ {
-		if d.Runes[i] != '`' || d.Attrs[i].Atom != nil || d.Attrs[i].Style&Code != 0 {
+		if d.Runes[i] != tick || d.Attrs[i].Atom != nil || d.Attrs[i].Style&Code != 0 {
 			return caret, false
 		}
 	}
 	// A fourth backtick before is someone typing ```` (or ``` inside a
 	// longer run): leave it.
-	if d.Runes[caret-4] == '`' {
+	if d.Runes[caret-4] == tick {
 		return caret, false
 	}
 	start := caret - 3
@@ -348,4 +359,159 @@ func autoformatFence(d *Doc, caret int) (newCaret int, ok bool) {
 	d.SetStyle(cut+1, end, Bold|Italic|Underline|Strike|Code, false)
 	d.SetLink(cut+1, end, "")
 	return cut + 1, true
+}
+
+// autoformatFenceInCode is buildLocalCodeBlockMarkdownChangeDelta's
+// "remove" action (boot-shared KT9Q): "```" (or "｀｀｀") typed on a code
+// block line, ending it (the next character is the line's newline), goes,
+// and a plain line is added after the line (retain(r).delete(3).retain(1)
+// .insert("\n")). The text change queue applies that as n.diff(r) with
+// updateContents(…, "user"), and Quill's shiftRange then puts the caret at
+// the start of the new line (checked with quill-delta: transformPosition
+// of the caret through the diff). Not on inline code (c?.code). It
+// returns the new caret.
+func autoformatFenceInCode(d *Doc, caret int) (newCaret int, ok bool) {
+	caret = d.clamp(caret)
+	line := d.LineOf(caret)
+	if d.Lines[line].Kind != CodeBlock || caret != d.LineEnd(line) {
+		return caret, false
+	}
+	r := caret - 3
+	if r < d.LineStart(line) {
+		return caret, false
+	}
+	tick := d.Runes[caret-1]
+	if tick != '`' && tick != '｀' {
+		return caret, false
+	}
+	for i := r; i < caret; i++ {
+		if d.Runes[i] != tick || d.Attrs[i].Atom != nil {
+			return caret, false
+		}
+	}
+	if d.Attrs[caret-1].Style&Code != 0 {
+		return caret, false
+	}
+	d.Delete(r, caret)
+	pos := d.Insert(r, "\n", Attr{})
+	d.Lines[line+1] = Line{}
+	return pos, true
+}
+
+// afWideMarker reports whether r is one of XmNU's full-width markers:
+// ＊ ＿ ｀ and ＞.
+func afWideMarker(r rune) bool { return r == '＊' || r == '＿' || r == '｀' || r == '＞' }
+
+// afWideAt is XmNU's hJ for the full-width markers: ＊ bold (H_), ＿
+// italic (QX, generateMarkdownRegex("＿")) and ｀ code (j5), as
+// mdconvert ports them.
+func afWideAt(r rune) (func(s []rune, i int) (mdMatch, bool), Style, bool) {
+	switch r {
+	case '＊':
+		return mdCJKBoldAt, Bold, true
+	case '＿':
+		return mdMarkAt('＿'), Italic, true
+	case '｀':
+		return mdCJKCodeAt, Code, true
+	}
+	return nil, 0, false
+}
+
+// afRegexText is getTextForRegex (N7Ca) for the line [ls, le): an atom
+// and inline code are "!", and so is link text unless the line holds
+// markdown link syntax (zI).
+func afRegexText(d *Doc, ls, le int) []rune {
+	plain := make([]rune, 0, le-ls)
+	for i := ls; i < le; i++ {
+		if d.Attrs[i].Atom != nil {
+			plain = append(plain, ' ')
+		} else {
+			plain = append(plain, d.Runes[i])
+		}
+	}
+	links := !mdHasLinkSyntax(plain)
+	out := make([]rune, le-ls)
+	for i := ls; i < le; i++ {
+		a := d.Attrs[i]
+		switch {
+		case a.Atom != nil, a.Style&Code != 0, links && a.Link != "":
+			out[i-ls] = '!'
+		default:
+			out[i-ls] = d.Runes[i]
+		}
+	}
+	return out
+}
+
+// autoformatWide is buildLocalMarkdownChangeDelta (boot-shared KT9Q) for
+// the full-width markers ＊ ＿ ｀: on the typed marker's line (not a code
+// block line), findPotentialMatchBounds takes the nearest same marker
+// before it, else after it, and the text from one character before the
+// first to two after the last (clamped to the line); the marker's hJ
+// pattern runs over that, and its last match makes the delta
+// retain(line + matchStart + len(group 1) − 1).delete(1)
+// .retain(len(group 2), {format}).delete(1), so the offsets count from
+// matchStart, as Slack's do. It returns the new caret and the style.
+func autoformatWide(d *Doc, caret int) (newCaret int, st Style, ok bool) {
+	n := caret - 1
+	if n < 0 || n >= d.Len() || d.Attrs[n].Atom != nil {
+		return caret, 0, false
+	}
+	at, st, ok := afWideAt(d.Runes[n])
+	if !ok {
+		return caret, 0, false
+	}
+	line := d.LineOf(n)
+	if d.Lines[line].Kind == CodeBlock {
+		return caret, 0, false
+	}
+	ls, le := d.LineStart(line), d.LineEnd(line)
+	text := afRegexText(d, ls, le)
+	pos, mark := n-ls, d.Runes[n]
+	other := -1
+	for i := pos - 1; i >= 0; i-- {
+		if text[i] == mark {
+			other = i
+			break
+		}
+	}
+	if other < 0 {
+		for i := pos + 1; i < len(text); i++ {
+			if text[i] == mark {
+				other = i
+				break
+			}
+		}
+	}
+	if other < 0 {
+		return caret, 0, false
+	}
+	lo, hi := min(pos, other), max(pos, other)
+	ms := lo
+	if lo > 0 {
+		ms = lo - 1
+	}
+	me := min(hi+2, len(text))
+	ml := mdAll(text[ms:me], at)
+	if len(ml) == 0 {
+		return caret, 0, false
+	}
+	m := ml[len(ml)-1]
+	open := ls + ms + (m.in - m.start) - 1
+	inner := m.close - m.in
+	closing := open + 1 + inner
+	if open < ls || closing >= le {
+		return caret, 0, false
+	}
+	d.Delete(closing, closing+1)
+	d.Delete(open, open+1)
+	d.SetStyle(open, open+inner, st, true)
+	c := caret
+	if c > closing {
+		c--
+	}
+	if c > open {
+		c--
+	}
+	return c, st, true
 }

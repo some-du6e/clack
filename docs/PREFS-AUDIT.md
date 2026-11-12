@@ -243,9 +243,24 @@ were never changed.
 | Engine | Electron: macOS NSSpellChecker (`checkSpellingOfString` with language nil, `guessesForWordRange`, `learnWord`); Windows Chromium's hybrid checker (ISpellChecker `ComprehensiveCheck` for languages Windows supports, Hunspell for the rest); Linux Hunspell. Slack sets the dictionary URL to `https://spellcheck.slack-edge.com/dictionaries_v2/` (gov/mil builds use their own); 5 retries of a failed download | `internal/spell`: cgo NSSpellChecker; ISpellChecker over COM (no cgo); a pure-Go Hunspell (`internal/spell/hunspell`) reading Chromium's `.bdic` files, downloaded from Slack's URL into `<user cache>/clack/Dictionaries` |
 | Languages | `SpellcheckPrefs` → `renderSpellcheckLanguagesV3`: `isLanguageSelectionEnabled` is `!darwin`, so macOS shows "We spellcheck the languages specified in your system settings. You can find those under System Preferences > Keyboard > Text."; Windows and Linux a large full-width multi-select of `getAvailableLanguages` (the shell's 56 labels, `SM`, sorted by label), greyed while spellcheck is off, writing `setCurrentLanguages`, then "Choose the languages you’d like Slack to spellcheck as you type." Default: the OS locale's language | `prefs_spell.go`; the choice is per device (ui.json `spellcheck_languages`) like Electron's session |
 
-Still different: the menu is drawn in Clack's menu style, like its other
-shell menus (Copy Link, Copy this code), not as the OS's native menu
-Electron pops up; macOS and Windows check word by word through Chromium's
+The menu (gap-w10, 2026-11-12): Electron's Menu.popup runs an NSMenu on
+macOS (shell/browser/api/electron_api_menu_mac.mm,
+popUpMenuPositioningItem:nil atLocation:(x, view height − y) inView:)
+and views::MenuRunner on Windows and Linux (electron_api_menu_views.cc,
+CONTEXT_MENU | HAS_MNEMONICS), a menu Chromium paints with its own
+MenuConfig. Clack's `internal/ui/nativemenu` pops the same rows as a
+real NSMenu on macOS (Cut, Copy and Paste with ⌘X/⌘C/⌘V key
+equivalents), and on Windows as the system's popup menu
+(TrackPopupMenuEx on the window's thread, accelerators in its tab
+column, opened on the button's release as WM_CONTEXTMENU is); Linux
+keeps Clack's drawn menu. The pick runs in the editor's next frame
+(TestW10NativeSpellMenu, with the platform menu faked).
+
+Still different: on Windows the menu is the OS's own rather than the
+one Chromium draws (its views menu: 12px horizontal padding, 6px item
+margins, 17px separators, the color pipeline's menu colours), and on
+Linux it is Clack's menu style, like its other shell menus (Copy Link,
+Copy this code); macOS and Windows check word by word through Chromium's
 iterator where Chromium hands them whole paragraphs; the Hunspell
 implementation is new code, so its suggestion order can differ from
 Hunspell's on some words; Inspect Element and Exit Full Screen (dev

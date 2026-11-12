@@ -931,6 +931,8 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 		key := t.key
 		// onUpArrowInEmptyInput: focusItemAboveInput
 		c.comp.OnFocusList = func() { v.focusAboveFooter(key) }
+		// onDownArrowInEmptyInput: focusItemBelowInput
+		c.comp.OnDownWhenEmpty = func() { v.focusBelowFooter(key) }
 	}
 	c.comp.Focus()
 }
@@ -1393,6 +1395,18 @@ func (v *Threads) focusAboveFooter(thread string) {
 	for i, it := range v.kb.items {
 		if it.key == "footer-"+thread && i > 0 {
 			v.kb.focusOn(v.kb.items[i-1].key)
+			v.h.Invalidate()
+			return
+		}
+	}
+}
+
+// focusBelowFooter is focusItemBelowInput (client-threads-view): the
+// key after the thread's footer, when there is one.
+func (v *Threads) focusBelowFooter(thread string) {
+	for i, it := range v.kb.items {
+		if it.key == "footer-"+thread && i+1 < len(v.kb.items) {
+			v.kb.focusOn(v.kb.items[i+1].key)
 			v.h.Invalidate()
 			return
 		}

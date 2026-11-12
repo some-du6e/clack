@@ -178,11 +178,13 @@ func TestAutoformatBlock(t *testing.T) {
 	if _, k, ok := autoformatBlock(d, end); !ok || k != Bullet || d.Text() != "a\n" || d.Lines[1].Kind != Bullet || d.Lines[0].Kind != Para {
 		t.Fatalf("second line: ok=%v text=%q lines=%+v", ok, d.Text(), d.Lines)
 	}
+	// On a quote line list autofill makes a list inside the quote
+	// (border "1", gap-w10)
 	d = NewDoc()
 	end = d.Insert(0, "- ", Attr{})
 	d.Lines[0].Kind = Quote
-	if _, _, ok := autoformatBlock(d, end); ok {
-		t.Fatal("autoformat on a quote line")
+	if _, k, ok := autoformatBlock(d, end); !ok || k != Bullet || !d.Lines[0].Quoted {
+		t.Fatalf("on a quote line: ok=%v kind=%v line %+v", ok, k, d.Lines[0])
 	}
 }
 

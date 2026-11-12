@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"gioui.org/f32"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/spell"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/nativemenu"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -81,6 +83,16 @@ type edSpell struct {
 	pending  []spellReq
 	ctxTag   int // context-click handler
 	menuWait *spellMenuWait
+	native   *spellNative // a native menu that's open (nativemenu)
+}
+
+// spellNative is a native menu's items and, once it closed, the pick
+// (set from the menu's goroutine; the editor runs it in its next frame).
+type spellNative struct {
+	items []popups.MenuItem
+	mu    sync.Mutex
+	done  bool
+	pick  int
 }
 
 // Chromium's constants (hot_mode_spell_check_requester.cc,
@@ -500,18 +512,58 @@ func NotePointer(p image.Point) { winPointer = p }
 // or Ctrl+click on macOS).
 func (e *Editor) spellContextEvents(gtx layout.Context) {
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &e.spell.ctxTag, Kinds: pointer.Press})
+		ev, ok := gtx.Event(pointer.Filter{Target: &e.spell.ctxTag, Kinds: pointer.Press | pointer.Release | pointer.Cancel})
 		if !ok {
 			break
 		}
 		pe, ok := ev.(pointer.Event)
-		if !ok || !ctxclick.Press(pe) {
+		if !ok {
+			continue
+		}
+		if pe.Kind != pointer.Press {
+			if w := e.spell.menuWait; w != nil {
+				w.held = false
+			}
+			continue
+		}
+		if !ctxclick.Press(pe) {
 			continue
 		}
 		e.onContextPress(gtx, pe.Position.Round())
 	}
 	if w := e.spell.menuWait; w != nil {
 		e.menuPoll(gtx)
+	}
+	e.nativePick(gtx)
+}
+
+// nativePick runs the item a native menu's pick names, in a frame (Cut,
+// Copy and Paste need its context).
+func (e *Editor) nativePick(gtx layout.Context) {
+	n := e.spell.native
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	done, pick := n.done, n.pick
+	n.mu.Unlock()
+	if !done {
+		return
+	}
+	e.spell.native = nil
+	if pick < 0 || pick >= len(n.items) {
+		return
+	}
+	it := n.items[pick]
+	if it.Disabled || it.Separator {
+		return
+	}
+	gtx.Execute(key.FocusCmd{Tag: e})
+	switch {
+	case it.DoCtx != nil:
+		it.DoCtx(gtx)
+	case it.Do != nil:
+		it.Do()
 	}
 }
 
@@ -545,7 +597,7 @@ func (e *Editor) onContextPress(gtx layout.Context, pt image.Point) {
 	if MenuHost == nil {
 		return
 	}
-	w := &spellMenuWait{at: at, word: misspelled, lo: mlo, hi: mhi, ver: e.version, since: gtx.Now}
+	w := &spellMenuWait{at: at, word: misspelled, lo: mlo, hi: mhi, ver: e.version, since: gtx.Now, held: true}
 	e.spell.menuWait = w
 	e.menuPoll(gtx)
 }
@@ -560,6 +612,7 @@ type spellMenuWait struct {
 	ver     uint64
 	since   time.Time
 	pending bool
+	held    bool // the button that opened it is still down
 }
 
 const spellMenuWaitMax = 300 * time.Millisecond
@@ -577,15 +630,72 @@ func (e *Editor) menuPoll(gtx layout.Context) {
 			sugg = s
 		}
 	}
+	if w.held && nativeOnRelease && nativemenu.Supported() {
+		return // Windows: the menu comes with WM_CONTEXTMENU, after the button's release
+	}
 	e.spell.menuWait = nil
-	MenuHost.ShowOverlay(e.contextMenu(w, sugg))
+	items := e.contextItems(w, sugg)
+	if spellMenuTap != nil {
+		spellMenuTap(items)
+	}
+	if e.popupNative(items, w.at) {
+		return
+	}
+	MenuHost.ShowOverlay(e.menuFor(w, items))
 }
 
-// contextMenu is the desktop shell's buildMenuForTextInput:
-// addSpellingItems (the suggestions, a separator, Add to Dictionary),
-// addSearchItems (Search with Google and a separator, with a selection),
-// then Cut, Copy and Paste (enabled by editFlags).
-func (e *Editor) contextMenu(w *spellMenuWait, sugg []string) *popups.Menu {
+// nativeOnRelease: on Windows a context menu opens when the button goes
+// up (WM_CONTEXTMENU follows WM_RBUTTONUP, and Chromium's contextmenu
+// event with it), and TrackPopupMenuEx must not start under a held
+// button, whose release it would take as a pick; AppKit's opens on the
+// press (rightMouseDown: menuForEvent).
+var nativeOnRelease = runtime.GOOS == "windows"
+
+// popupNative shows the menu the way Electron's Menu.popup does, drawn
+// by the OS (nativemenu: NSMenu on macOS, the system popup menu on
+// Windows). It reports false where there's none (Linux, tests).
+func (e *Editor) popupNative(items []popups.MenuItem, at image.Point) bool {
+	if !nativemenu.Supported() {
+		return false
+	}
+	nat := make([]nativemenu.Item, len(items))
+	for i, it := range items {
+		nat[i] = nativemenu.Item{Label: it.Label, Hint: it.Hint, Sep: it.Separator, Disabled: it.Disabled}
+		switch it.Key {
+		case "cut":
+			nat[i].Key = "x"
+		case "copy":
+			nat[i].Key = "c"
+		case "paste":
+			nat[i].Key = "v"
+		}
+		if runtime.GOOS == "darwin" {
+			nat[i].Hint = "" // the key equivalent draws it
+		}
+	}
+	n := &spellNative{items: items}
+	host := MenuHost
+	ok := nativemenu.Popup(nat, at, func(pick int) {
+		n.mu.Lock()
+		n.done, n.pick = true, pick
+		n.mu.Unlock()
+		if host != nil {
+			host.Invalidate() // the editor runs the pick in its next frame
+		}
+	})
+	if ok {
+		e.spell.native = n
+	}
+	return ok
+}
+
+// menuFor is the drawn menu (where there's no native one).
+func (e *Editor) menuFor(w *spellMenuWait, items []popups.MenuItem) *popups.Menu {
+	return popups.NewMenuOpts(MenuHost, items, popups.MenuOpts{Anchor: image.Rectangle{Min: w.at, Max: w.at.Add(image.Pt(1, 1))}, Width: 220})
+}
+
+// contextItems are contextMenu's rows.
+func (e *Editor) contextItems(w *spellMenuWait, sugg []string) []popups.MenuItem {
 	var items []popups.MenuItem
 	ver := w.ver
 	for _, s := range sugg {
@@ -627,10 +737,7 @@ func (e *Editor) contextMenu(w *spellMenuWait, sugg []string) *popups.Menu {
 			e.emit(EvPasted)
 		}},
 	)
-	if spellMenuTap != nil {
-		spellMenuTap(items)
-	}
-	return popups.NewMenuOpts(MenuHost, items, popups.MenuOpts{Anchor: image.Rectangle{Min: w.at, Max: w.at.Add(image.Pt(1, 1))}, Width: 220})
+	return items
 }
 
 // replaceMisspelling is webContents.replaceMisspelling: the selected

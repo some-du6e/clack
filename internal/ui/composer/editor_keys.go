@@ -131,6 +131,9 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		}
 		e.moveH(1, word, toLine, shift)
 	case key.NameUpArrow:
+		if mods == 0 && e.leaveCodeBlockUp() {
+			return
+		}
 		if (mods == 0 || mods == key.ModShortcut) && e.upArrow(mods == key.ModShortcut) {
 			return
 		}
@@ -141,6 +144,11 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		e.moveV(-1, shift)
 		keepX = true
 	case key.NameDownArrow:
+		if mods == 0 && e.doc.Len() == 0 {
+			// onDownArrowWhenEmpty's binding: {key: 40, handler: () =>
+			// (1 === getLength() && r(), !0)}, then the default
+			e.emit(EvDownEmpty)
+		}
 		if mods == 0 && e.leaveCodeBlockDown() {
 			return
 		}
@@ -151,9 +159,15 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 		e.moveV(1, shift)
 		keepX = true
 	case key.NamePageUp:
+		if e.PageKeysHandled && mods == 0 {
+			return
+		}
 		e.movePage(-1, shift)
 		keepX = true
 	case key.NamePageDown:
+		if e.PageKeysHandled && mods == 0 {
+			return
+		}
 		e.movePage(1, shift)
 		keepX = true
 	case key.NameHome:
@@ -388,6 +402,26 @@ func (e *Editor) leaveCodeBlockDown() bool {
 	pos := d.Insert(c, "\n", Attr{})
 	d.Lines[line+1] = Line{}
 	e.anchor, e.caret = pos, pos
+	e.commit()
+	return true
+}
+
+// leaveCodeBlockUp is the keyboard module's "up arrow out of code block"
+// (boot-shared KT9Q, WYSIWYG only): Up with the caret collapsed at the
+// very start of the message, on a code block that is the first block
+// (getLine(index − 1) has no prev and its parent is the scroll, prefix
+// empty, index 0), inserts " \n" at 0 with code-block off — a plain line
+// holding one space above the block — and puts the caret at 0. The
+// binding then lets Up go on, which moves nowhere from there.
+func (e *Editor) leaveCodeBlockUp() bool {
+	d := e.doc
+	if e.plainText || e.anchor != e.caret || e.caret != 0 || d.Lines[0].Kind != CodeBlock {
+		return false
+	}
+	e.begin(edOther, true)
+	d.Insert(0, " \n", Attr{})
+	d.Lines[0] = Line{}
+	e.anchor, e.caret = 0, 0
 	e.commit()
 	return true
 }

@@ -45,6 +45,9 @@ func (d *Doc) Delta() map[string]any {
 		if l.Indent > 0 && (l.Kind == Bullet || l.Kind == Ordered) {
 			at["indent"] = l.Indent
 		}
+		if l.Quoted && (l.Kind == Bullet || l.Kind == Ordered) {
+			at["border"] = "1" // list autofill's value on a quote line
+		}
 		op := map[string]any{"insert": "\n"}
 		if len(at) > 0 {
 			op["attributes"] = at

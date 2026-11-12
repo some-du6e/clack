@@ -36,6 +36,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/nativemenu"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -387,6 +388,7 @@ func (a *App) invalidator() {
 func (a *App) Run() error {
 	a.timing("run", a.opts.Started)
 	a.win = new(app.Window)
+	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(
 		app.Title(AppName),
 		app.Size(1440, 900),
@@ -435,7 +437,8 @@ func (a *App) Run() error {
 		if menuViewEvent != nil {
 			menuViewEvent(ev)
 		}
-		a.syncCaption(ev) // Windows: the native caption follows the window (caption_windows.go)
+		a.syncCaption(ev)        // Windows: the native caption follows the window (caption_windows.go)
+		nativemenu.NoteEvent(ev) // the window's HWND / NSView for native context menus
 		switch e := ev.(type) {
 		case app.DestroyEvent:
 			wd.end()

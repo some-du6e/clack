@@ -77,7 +77,7 @@ func rtLines(d *Doc, keepLists bool) []rtSpan {
 			l = d.Lines[n]
 		}
 		if l.Kind != Bullet && l.Kind != Ordered {
-			l.Indent = 0
+			l.Indent, l.Quoted = 0, false
 		} else if l.Indent < 0 {
 			l.Indent = 0
 		}
@@ -355,6 +355,9 @@ func (d *Doc) rtElements(ls []rtSpan) []any {
 				items = append(items, rtOutSection{Type: "rich_text_section", Elements: d.rtInline(s.start, s.end)})
 			}
 			l := rtOutList{Type: "rich_text_list", Elements: items, Style: "bullet", Indent: g.line.Indent}
+			if g.line.Quoted {
+				l.Border = 1 // the line's border format
+			}
 			off := cnt.take(g.line, len(g.lines))
 			if g.line.Kind == Ordered {
 				l.Style = "ordered"
@@ -709,6 +712,9 @@ func (d *Doc) Mrkdwn() string {
 				cnt.reset()
 			}
 			pad := strings.Repeat("    ", g.line.Indent)
+			if g.line.Quoted {
+				pad = "> " + pad // a list inside a quote
+			}
 			for _, s := range g.lines {
 				mark := "• "
 				if g.line.Kind == Ordered {
@@ -999,7 +1005,7 @@ func DocFromRichtext(blocks []richtext.Block) *Doc {
 		case richtext.Preformatted:
 			b.rtSpans(Line{Kind: CodeBlock}, bl.Spans, true)
 		case richtext.List:
-			l := Line{Kind: Bullet, Indent: bl.Indent}
+			l := Line{Kind: Bullet, Indent: bl.Indent, Quoted: bl.Border}
 			if bl.Ordered {
 				l.Kind = Ordered
 			}
@@ -1126,7 +1132,8 @@ type rtIn struct {
 	SkinTone    int             `json:"skin_tone"`
 	Range       string          `json:"range"`
 	Indent      int             `json:"indent"`
-	Level       int             `json:"level"` // header block level 1/2/3
+	Border      int             `json:"border"` // rich_text_list: a list inside a quote
+	Level       int             `json:"level"`  // header block level 1/2/3
 	Timestamp   json.RawMessage `json:"timestamp"`
 	Fallback    string          `json:"fallback"`
 	Value       string          `json:"value"`
@@ -1231,7 +1238,7 @@ func DocFromBlocksJSON(raw json.RawMessage, r AtomResolver) (*Doc, error) {
 			case "rich_text_preformatted":
 				b.rtJSONInline(Line{Kind: CodeBlock}, el.Elements, r, true)
 			case "rich_text_list":
-				l := Line{Kind: Bullet, Indent: el.Indent}
+				l := Line{Kind: Bullet, Indent: el.Indent, Quoted: el.Border > 0}
 				if el.styleString() == "ordered" {
 					l.Kind = Ordered
 				}
