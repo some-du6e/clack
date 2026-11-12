@@ -602,6 +602,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "megaphone": // a megaphone space changed: the join banner's gate reads them (joinbanner.go)
 		a.Invalidate()
+	case "work_objects": // the work object store moved (cards' refresh and comments, the flexpane)
+		a.Invalidate()
 	}
 	if changed {
 		b.recount()

@@ -598,6 +598,10 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 			label = "Help"
 		case secWorkflow: // the flexpane's title (WorkflowDetails titleContent)
 			label = wfDetailsNS.T("Workflow")
+		case secWorkObject: // the flexpane's title (WorkObjectFlexpane tq)
+			if p, ok := a.secondary.view.(*woPane); ok {
+				label = p.title(p.entity())
+			}
 		}
 		cs = append(cs, bbmCrumb{key: "secondary", label: label, last: true})
 	}
