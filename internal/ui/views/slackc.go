@@ -24,7 +24,15 @@ var (
 	actPageClass = slackc.Class("p-activity_ia p-activity_ia4_page p-activity_page")
 	actItemClass = slackc.Class("c-message_kit__hover p-activity_ia4_page__item", "data-qa", "activity-item-container").
 			Mods(actItemMods...)
-	actMsgClass  = slackc.Class("p-activity_item__message", "data-qa", "activity-item-message")
+	actMsgClass = slackc.Class("p-activity_item__message", "data-qa", "activity-item-message")
+	// a private channel's row holds its destination InlineChannelEntity
+	// with the lock icon (InlineChannelIcon's data-inline-channel-type-icon
+	// lock-filled), which Clack draws without entering it: declared, so
+	// Slick StreamerMode's [data-qa="activity-item-container"]:has([data-
+	// inline-channel-type-icon^="lock"]) blurs its preview and time
+	actItemPrivateClass = actItemClass.WithKids(slackc.Class("c-inline_channel_entity c-base_inline_entity").Tag("span").Kids(
+		slackc.Class("").Tag("span").Kids(slackc.Class("c-base_inline_entity__avatar c-inline_channel_icon c-inline_channel_icon--space",
+			"data-inline-channel-type-icon", "lock-filled").Tag("span"))))
 	actNameClass = slackc.Class("c-inline_channel_entity c-base_inline_entity c-message__sender c-message_kit__sender p-activity_page__item__link",
 		"data-qa", "inline_channel_entity").Tag("span")
 	actAvatarClass = slackc.Class("activity_row_content__avatar_and_icon").Mods("activity_row_content__avatar_and_icon_small")
@@ -34,6 +42,10 @@ var (
 	thrItemClass   = slackc.Class("c-virtual_list__item")
 	thrMsgClass    = slackc.Class("c-message_kit__background c-message_kit__thread_message").Mods("c-message_kit__background--hovered")
 	thrSenderClass = slackc.Class("c-message__sender c-message_kit__sender", "data-qa", "message_sender").Tag("span")
+	// a thread's header names its channel with InlineChannelEntity
+	// (client-threads-view auBp: className
+	// "p-threads_view_header__channel_name nudge_left_3")
+	thrHeaderEntity = slackc.NewChannelEntity("p-threads_view_header__channel_name nudge_left_3", false)
 
 	// DMs list.
 	dmRowClass   = slackc.Class("p-activity_ia4_page__item", "data-qa", "dms_channel").Mods("p-activity_ia4_page__item--selected")
@@ -74,6 +86,38 @@ func classMods(className string, mods []string) uint64 {
 		}
 	}
 	return bits
+}
+
+// channelIcon is getChannelIconType's icon name as InlineChannelIcon asks
+// for it (/HhV; filled for a private channel): "archive-filled" or
+// "archive" for an archived channel, "lock-filled" for a private one,
+// else "channel"; "" for a DM or group DM, which aren't
+// InlineChannelEntity.
+func channelIcon(app *core.App, id, kind string) string {
+	if isDMKind(kind) || strings.HasPrefix(id, "D") {
+		return ""
+	}
+	archived := false
+	if app != nil {
+		if cv, ok := app.Conv(id); ok {
+			archived = cv.IsArchived
+			if kind == "" {
+				kind = cv.Kind
+			}
+		}
+	}
+	if kind == "mpim" || kind == "im" {
+		return ""
+	}
+	switch {
+	case archived && kind == "private":
+		return "archive-filled"
+	case archived:
+		return "archive"
+	case kind == "private":
+		return "lock-filled"
+	}
+	return "channel"
 }
 
 func hoverState(h bool) css.State {

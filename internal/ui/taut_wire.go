@@ -23,6 +23,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -218,6 +219,8 @@ func (b *backend) installTaut(a *App, t *taut.Taut, s *slick.Slick) {
 	messages.SetTaut(t) // message list thunks, patched message views
 	composer.SetTaut(t) // composer buttons, send checks/transforms, drafts
 	blockkit.SetTaut(t) // sendActions, executeAppAction, submitView, blocksFormatFetcher
+	// @mentions name the member as plugins present it (Nicknames)
+	richview.SetMemberLabel(newMentionLabels(t))
 	if s != nil {
 		b.slick = s
 		a.slickSetDark(s, a.th.Dark)     // if the mode changed while it started
@@ -255,6 +258,7 @@ func (b *backend) detachTaut() {
 		popups.SetTaut(nil)
 		messages.SetTaut(nil)
 		composer.SetTaut(nil)
+		richview.SetMemberLabel(nil)
 		b.taut = nil
 		slackc.SetBridge(nil)
 		slackc.Reset()

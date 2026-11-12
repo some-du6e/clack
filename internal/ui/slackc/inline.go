@@ -163,6 +163,11 @@ func (v *View) textToks(t *box, st *css.Style) []tok {
 		}
 		w := wb.String()
 		wb.Reset()
+		if name := legacyGlyph(st, w); name != "" {
+			// a glyph of Slack's legacy icon font, drawn as its vector icon
+			c.toks = append(c.toks, tok{kind: iEmoji, url: legacyIconURL + name, w: f26(fk.size) + v.dp, brk: brk})
+			return
+		}
 		if segs := splitEmoji(w); segs != nil {
 			for i, sg := range segs {
 				last := i == len(segs)-1

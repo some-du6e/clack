@@ -196,6 +196,72 @@ func TestPluginsPrefsShots(t *testing.T) {
 		}
 		shot("plugins-installed-" + mode)
 
+		// the search field focused (Karim, α.37 on Windows: its focus ring
+		// and the All pill's left edge were cut at the controls' left
+		// edge): Slack's ring, box-shadows 5px outside the field, shows
+		// whole in the panel's 28px padding
+		pp.focusSearch = true
+		e.until("the search field focused", 5*time.Second, func() bool { return pp.searchFocused })
+		shot("plugins-search-focused-" + mode)
+		if e.gpu != nil {
+			img := image.NewRGBA(image.Rectangle{Max: e.size})
+			if err := e.gpu.Screenshot(img); err != nil {
+				t.Fatal(err)
+			}
+			// the ring is otl-hgl-1 and its 30% halo, blue over the dialog:
+			// its top band is the first long run of blue rows
+			blue := func(x, y int) bool { c := img.RGBAAt(x, y); return int(c.B)-int(c.R) >= 20 }
+			row := func(y int) (n, l, r int) {
+				l = -1
+				for x := 0; x < e.size.X; x++ {
+					if blue(x, y) {
+						n++
+						if l < 0 {
+							l = x
+						}
+						r = x
+					}
+				}
+				return
+			}
+			top, bottom, left, right := -1, -1, 0, 0
+			for y := 0; y < e.size.Y; y++ {
+				if n, l, r := row(y); n >= 400 {
+					if top < 0 {
+						top, left, right = y, l, r
+					}
+					if y-top < 70 {
+						bottom = y
+					}
+				}
+			}
+			if top < 0 || bottom-top < 30 {
+				t.Fatalf("%s: no focus ring round the search field (bands %d..%d)", mode, top, bottom)
+			}
+			// its two sides, away from the corners: the top band is inset by
+			// the corner on both ends, so the right side's outer edge (on a
+			// middle row) gives the inset, and the left side should sit as
+			// far out from the band's start; that one was cut
+			_, _, outer := row((top + bottom) / 2)
+			inset := outer - right
+			band := func(x0 int) int {
+				n := 0
+				for y := top + 10; y < bottom-10; y++ {
+					for x := x0; x < x0+4; x++ {
+						if blue(x, y) {
+							n++
+						}
+					}
+				}
+				return n
+			}
+			l, r := band(left-inset), band(outer-3)
+			t.Logf("%s: ring rows %d..%d, x %d..%d; side bands %d (left) and %d (right)", mode, top, bottom, left, right, l, r)
+			if r == 0 || l < r*3/4 {
+				t.Errorf("%s: the search field's focus ring is cut on its left: side bands %d (left) vs %d (right)", mode, l, r)
+			}
+		}
+
 		// a search nothing installed matches suggests the library's plugins
 		// that do (Clear URLs and Message Links mention links), each with
 		// its Install action

@@ -323,6 +323,7 @@ type SearchView struct {
 	total int
 	page  int
 	pages int
+	store srStoreRows // the page's rows as plugins present the store (search_store.go)
 
 	fromSugg []core.FilterSuggestion // filter_suggestions.from (With people)
 
@@ -606,6 +607,7 @@ func (v *SearchView) addMessages(res core.SearchResult, page int) {
 		})
 	}
 	v.msgs = append(v.msgs, res.Messages...)
+	v.mirror()
 }
 
 // ---- menus ----
@@ -1624,18 +1626,30 @@ type srCardArgs struct {
 	over slackc.Props // the message MessageListItem's plugin passed (ShowRealUser)
 }
 
+// listItemProps are MessageListItem's: its result is the store's row as
+// plugins present it (search_store.go), else the card's own.
 func (a srCardArgs) listItemProps() slackc.Props {
 	m := &a.v.msgs[a.i]
+	r := a.v.storeResult(a.i)
+	if r == nil {
+		r = srResultRow(slackMessage(m))
+	}
 	return slackc.Props{
 		"$key":    m.Channel + "/" + m.TS,
 		"index":   a.i,
 		"variant": "search",
-		"result":  slackc.Props{"type": "message", "messages": []any{slackMessage(m)}},
+		"result":  r,
 	}
 }
 
 func (a srCardArgs) layoutListItem(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	if r := p.Map("result"); r != nil {
+	r := p.Map("result")
+	if r == nil {
+		// unpatched MessageListItem: the row still comes from the store,
+		// where a slice patch may have changed it
+		r = a.v.storeResult(a.i)
+	}
+	if r != nil {
 		if l := r.List("messages"); len(l) > 0 {
 			a.over = asProps(l[0])
 		}

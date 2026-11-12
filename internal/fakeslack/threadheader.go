@@ -2,6 +2,7 @@ package fakeslack
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -106,10 +107,13 @@ func (s *Server) threadHeaderMsg(ch, ts string) slack.Message {
 	if ts == ThreadRootTS {
 		m.Text = "Launch checklist for Friday"
 		m.ReplyCount, m.LatestReply, m.ReplyUsers = 2, ThreadReplyTS(1), []string{u[1].ID}
-		return m
+	} else {
+		m.User = u[1].ID
+		m.Text = map[string]string{ThreadReplyTS(0): "Docs are ready", ThreadReplyTS(1): "Ship it"}[ts]
 	}
-	m.User = u[1].ID
-	m.Text = map[string]string{ThreadReplyTS(0): "Docs are ready", ThreadReplyTS(1): "Ship it"}[ts]
+	// a user's message has its text as rich_text too (find in thread
+	// marks matches in blocks only)
+	m.Blocks = rawJSON(richText(map[string]any{"type": "text", "text": m.Text}))
 	return m
 }
 
@@ -131,4 +135,43 @@ func (s *Server) handleThreadHeader(method string, f url.Values) (any, bool) {
 	ch := f.Get("channel")
 	return ok("messages", []slack.Message{s.threadHeaderMsg(ch, ThreadRootTS), s.threadHeaderMsg(ch, ThreadReplyTS(0)),
 		s.threadHeaderMsg(ch, ThreadReplyTS(1))}, "has_more", false), true
+}
+
+// findInThread answers search.inline with find_in_thread (Slack's find
+// in thread) for a fixture's thread: its messages whose text contains the
+// query, ignoring case, oldest first, count (or FindInThreadPage) a page
+// with next_cursor after each page but the last.
+func (s *Server) findInThread(f url.Values) any {
+	q := strings.ToLower(strings.TrimSpace(f.Get("query")))
+	ch, ts := f.Get("channel"), f.Get("thread_ts")
+	var hits []slack.Message
+	if s.Size.ThreadHeader && s.isThreadHeaderConv(ch) && ts == ThreadRootTS && q != "" {
+		for _, t := range []string{ThreadRootTS, ThreadReplyTS(0), ThreadReplyTS(1)} {
+			if m := s.threadHeaderMsg(ch, t); strings.Contains(strings.ToLower(m.Text), q) {
+				hits = append(hits, m)
+			}
+		}
+	}
+	per, _ := strconv.Atoi(f.Get("count"))
+	if per <= 0 {
+		per = 20
+	}
+	if s.FindInThreadPage > 0 && s.FindInThreadPage < per {
+		per = s.FindInThreadPage
+	}
+	start := 0
+	if c, found := strings.CutPrefix(f.Get("cursor"), "fit:"); found {
+		start, _ = strconv.Atoi(c)
+	}
+	start = min(max(start, 0), len(hits))
+	end := min(start+per, len(hits))
+	items := []any{}
+	for _, m := range hits[start:end] {
+		items = append(items, map[string]any{"ts": m.TS, "user": m.User, "channel_id": ch, "text": m.Text})
+	}
+	next := ""
+	if end < len(hits) {
+		next = "fit:" + strconv.Itoa(end)
+	}
+	return ok("query", f.Get("query"), "items", items, "next_cursor", next)
 }

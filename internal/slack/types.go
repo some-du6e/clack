@@ -219,6 +219,7 @@ type Attachment struct {
 	OriginalURL   string            `json:"original_url"`
 	VideoHTML     string            `json:"video_html"`
 	AudioHTML     string            `json:"audio_html,omitempty"`
+	AudioHTMLH    int               `json:"audio_html_height,omitempty"`
 	OtherHTML     string            `json:"other_html,omitempty"`
 	ImageBytes    int64             `json:"image_bytes,omitempty"`
 	MediaType     string            `json:"media_type,omitempty"` // "image" on image-only link unfurls

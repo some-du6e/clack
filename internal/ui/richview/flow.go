@@ -199,6 +199,9 @@ type display struct {
 	overlayIcons []overlayIcon
 	// spinners are InfiniteSpinners drawn every frame (pending uploads)
 	spinners []spinPrim
+	// names are the user mentions laid out and the plugin labels they
+	// used (members.go)
+	names []nameUse
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -226,6 +229,7 @@ func (d *display) reset() {
 	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
+	d.names = d.names[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -330,6 +334,9 @@ type lay struct {
 	collapsed map[*richtext.Image]bool
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
+	// media is the card's AttachmentMedia part (fixedMedia), for
+	// compBlock to make it its own component
+	media mediaNote
 	// CSS parts (css.go), nil while no CSS is installed: ctr is the
 	// current container's element path, curPart the part new items get.
 	css     *cssParts
@@ -483,6 +490,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			k = l.partFace(k, pt)
 		}
 		noAt := false
+		var before float32 // the slug's ::before box (compState.before)
 		n0 := len(l.items)
 		var cmp int16 // a mention pill laid out as a Slack component
 		txt := sp.Text
@@ -549,6 +557,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				kind = tChannel
 			case richtext.Usergroup:
 				kind = tUsergroup
+			case richtext.User:
+				// the member as plugins present it (Nicknames)
+				txt = l.mentionText(sp.ID, txt)
 			}
 			if l.opts.Muted && sp.Kind == richtext.User {
 				// System messages show member names as plain text that
@@ -605,6 +616,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				if kind == compUser && l.compState(cmp).noAt {
 					noAt = true // MemberSlug supressMentionAtSymbol
 				}
+				if kind == compUser {
+					before = l.compState(cmp).before
+				}
 			}
 		case richtext.MessageMention:
 			l.messageMention(sp, fs, k, pt)
@@ -618,12 +632,23 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		if st&richtext.Code != 0 && !fs.pre && dc < 0 {
 			l.decos = append(l.decos, deco{kind: 2, bg: p.CodeBg, border: p.CodeBorder, padL: l.dpf(3), padR: l.dpf(3), padT: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, part: pt})
 			dc = int16(len(l.decos) - 1)
+		} else if st&richtext.FindHighlight != 0 && dc < 0 {
+			// over a keyword highlight: only the find span draws
+			bg := p.FindHighlight
+			if l.opts.FindFocused {
+				bg = p.FindFocused
+			}
+			l.decos = append(l.decos, deco{kind: 3, bg: bg, face: k, target: -1, part: pt})
+			dc = int16(len(l.decos) - 1)
 		} else if st&richtext.Highlight != 0 && dc < 0 {
 			l.decos = append(l.decos, deco{kind: 3, bg: p.Highlight, face: k, target: -1, part: pt})
 			dc = int16(len(l.decos) - 1)
 		}
 		if dc >= 0 && l.decos[dc].padL > 0 {
 			l.addPad(l.decos[dc].padL, dc, k)
+		}
+		if before > 0 && dc >= 0 { // the slug's ::before box, inside the pill
+			l.addPad(before, dc, k)
 		}
 		if sp.Kind == richtext.Channel && sp.Lock {
 			// a private channel the viewer is in: lock-filled, then its

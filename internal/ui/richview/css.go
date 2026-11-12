@@ -63,6 +63,9 @@ var (
 	broadcastClass = slackc.Class("c-mrkdwn__broadcast c-mrkdwn__broadcast--link c-mrkdwn__broadcast--mention", "data-stringify-type", "mention").Tag("span")
 	emojiClass     = slackc.Class("c-emoji c-emoji__medium c-emoji--inline", "data-qa", "emoji").Tag("span")
 	highlightClass = slackc.Class("c-search__highlight").Tag("span")
+	// a find in thread match (WithFormattingStyles: instead of the
+	// keyword's span)
+	findHighlightClass = slackc.Class("c-mrkdwn__highlight--find-in-thread").Tag("span")
 
 	attTextClass    = slackc.Class("c-message_attachment__text")
 	attPretextClass = slackc.Class("c-message_attachment__pretext")
@@ -273,7 +276,9 @@ func (l *lay) spanPart(sp *richtext.Span) uint8 {
 	if st&richtext.Code != 0 {
 		p = p.with(codeClass)
 	}
-	if st&richtext.Highlight != 0 {
+	if st&richtext.FindHighlight != 0 {
+		p = p.with(findHighlightClass)
+	} else if st&richtext.Highlight != 0 {
 		p = p.with(highlightClass)
 	}
 	return l.partFor(&p)

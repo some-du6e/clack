@@ -189,6 +189,11 @@ func clackIcon(name string) string {
 			}
 		}
 	}
+	// the icon set's own table of Slack's names ("eye-open" → "eye":
+	// StreamerMode's toggle), which this one predates
+	if icons.HasSlack(n) {
+		return icons.Slack(n)
+	}
 	return fallbackIcon
 }
 

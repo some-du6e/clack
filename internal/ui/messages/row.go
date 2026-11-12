@@ -70,6 +70,12 @@ type row struct {
 	handler richHandler
 	drawn   time.Time // last frame the row was laid out (sweepRows)
 
+	// find in thread (thread_find.go): the query the body marks
+	// (findInThreadHighlightWords) and whether the row is the current
+	// result (c-message_kit__blocks--focused-result)
+	find        string
+	findFocused bool
+
 	// a huddle message's room, status and activity (huddle_msg.go),
 	// read once per message revision and users generation; hmName: the
 	// sender line is the status (system_messages_redesign_m1 off)
@@ -212,6 +218,9 @@ type rowCtx struct {
 	onRetry   func(r *row)
 	onDiscard func(r *row)
 	highlight float32 // 0..1 flash for jump targets
+	// findFlash is find in thread's flash on its result (0..1 of
+	// --dt_color-base-hgl-3: p-threads_flexpane__find_flash)
+	findFlash float32
 	onReact   func(r *row, name string, add bool)
 	// activeThread: the row is the root of the thread open in the side pane
 	// (thread_root_selected_state, active_thread.go)
@@ -272,10 +281,14 @@ func (r *row) set(e *entry) {
 // setDoc shows r.m's body (after set or a msg override).
 func (r *row) setDoc() {
 	opts := r.rvOpts()
+	doc := r.m.Doc
+	if r.find != "" {
+		doc = richtext.FindHighlighted(doc, []string{r.find})
+	}
 	if r.rv == nil {
-		r.rv = richview.New(r.m.Doc, opts)
+		r.rv = richview.New(doc, opts)
 	} else {
-		r.rv.Set(r.m.Doc, opts)
+		r.rv.Set(doc, opts)
 	}
 	r.uRev = 0
 	r.blocksOv, r.tailOv = 0, [2]uintptr{}
@@ -287,7 +300,8 @@ func (r *row) setDoc() {
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
-	o := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own}
+	o := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
+		FindFocused: r.findFocused}
 	if r.m.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 	}
@@ -885,6 +899,11 @@ func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.
 	if hl := r.rc.highlight; hl > 0 {
 		c := r.rc.c.Highlight
 		c.A = uint8(float32(c.A) * hl)
+		fill(gtx.Ops, image.Rectangle{Max: size}, c)
+	}
+	if fl := r.rc.findFlash; fl > 0 {
+		c := r.rc.c.ActiveThread
+		c.A = uint8(float32(c.A) * fl)
 		fill(gtx.Ops, image.Rectangle{Max: size}, c)
 	}
 	content.Add(gtx.Ops)

@@ -40,11 +40,22 @@ func wrapBox(ns *nativeStyle) *box {
 }
 
 func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dimensions {
+	return wrapNativeX(gtx, ns, w, false)
+}
+
+// wrapView is the View wrapNative measures and paints with.
+func wrapView(gtx layout.Context) *View {
 	if wrapState.v == nil {
 		wrapState.v = NewView(0)
 	}
-	v := wrapState.v
-	v.setMetrics(gtx)
+	wrapState.v.setMetrics(gtx)
+	return wrapState.v
+}
+
+// wrapNativeX is wrapNative; ownPseudo leaves box pseudo-elements to the
+// native (Styled.WrapOwnPseudo).
+func wrapNativeX(gtx layout.Context, ns *nativeStyle, w layout.Widget, ownPseudo bool) layout.Dimensions {
+	v := wrapView(gtx)
 	b := wrapBox(ns)
 	b.v = v
 	st := &b.st
@@ -59,16 +70,28 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 	ml, mr, mt, mb := b.m[3], b.m[1], b.m[0], b.m[2]
 	hb, vb := b.bd[1]+b.bd[3], b.bd[0]+b.bd[2]
 
-	// generated content
+	// generated content: text, or a box of its own (content '' with a
+	// size or a background, an inline-block: MentionProfiles' picture
+	// before the mention's name)
+	cbW := float32(cs.Max.X)
 	var bsh, ash *shaped
+	var bbox, abox *box
 	var bw, aw float32
 	if ns.before != nil && ns.before.Content != "" {
 		bsh = word(v.face(ns.before), ns.before.Content)
 		bw = bsh.adv
+	} else if !ownPseudo {
+		if bbox = wrapPseudo(v, ns.before, cbW); bbox != nil {
+			bw = bbox.m[3] + bbox.w + bbox.m[1]
+		}
 	}
 	if ns.after != nil && ns.after.Content != "" {
 		ash = word(v.face(ns.after), ns.after.Content)
 		aw = ash.adv
+	} else if !ownPseudo {
+		if abox = wrapPseudo(v, ns.after, cbW); abox != nil {
+			aw = abox.m[3] + abox.w + abox.m[1]
+		}
 	}
 
 	inner := cs
@@ -80,7 +103,6 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 		inner.Max.Y = max(inner.Max.Y-shrinkY, 0)
 	}
 	inner.Min.Y = max(inner.Min.Y-shrinkY, 0)
-	cbW := float32(cs.Max.X)
 	lo, hi := v.minMaxW(b, cbW)
 	if hi < inf/2 {
 		inner.Max.X = min(inner.Max.X, ceilI(hi))
@@ -112,6 +134,11 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 	if ash != nil {
 		contentH = max(contentH, v.lineHeight(ns.after))
 	}
+	for _, pb := range [...]*box{bbox, abox} {
+		if pb != nil {
+			contentH = max(contentH, pb.m[0]+pb.h+pb.m[2])
+		}
+	}
 	b.w, b.h = contentW+hb, contentH+vb
 
 	p := painter{v: v, ops: gtx.Ops, clip: noClip}
@@ -138,6 +165,9 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 		a, _, _, _ := v.metrics(ns.before)
 		p.drawWord(bsh, x, b.bd[0]+(contentH-v.lineHeight(ns.before))/2+a, ns.before.Color, ns.before)
 		x += bw
+	} else if bbox != nil {
+		p.wrapPseudo(bbox, x, b.bd[0], contentH)
+		x += bw
 	}
 	t := op.Offset(image.Pt(int(math.Round(float64(x))), int(math.Round(float64(b.bd[0]))))).Push(gtx.Ops)
 	call.Add(gtx.Ops)
@@ -146,6 +176,8 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 	if ash != nil {
 		a, _, _, _ := v.metrics(ns.after)
 		p.drawWord(ash, x, b.bd[0]+(contentH-v.lineHeight(ns.after))/2+a, ns.after.Color, ns.after)
+	} else if abox != nil {
+		p.wrapPseudo(abox, x, b.bd[0], contentH)
 	}
 	if st.Visibility == css.Visible {
 		p.outline(b, r, rad)
@@ -169,6 +201,44 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 		out.Baseline = dims.Baseline + ceilI(mb+b.bd[2])
 	}
 	return out
+}
+
+// wrapPseudo is a native's ::before or ::after that generates no text but
+// a box (content set to an empty string, with a width, a height or a
+// background) as an inline-block: its margins, size, border and
+// background, an image too (background: url(…) center / cover). nil when
+// there's none.
+func wrapPseudo(v *View, st *css.Style, cbW float32) *box {
+	if st == nil || !st.HasContent || st.Content != "" || st.Display == css.DisplayNone {
+		return nil
+	}
+	pb := &box{kind: kPseudo, st: *st, v: v}
+	v.edges(pb, cbW)
+	for i := range pb.m {
+		if st.Margin[i].IsAuto() {
+			pb.m[i] = 0
+		}
+	}
+	w, h := max(v.specW(pb, cbW), 0), max(v.specH(pb, -1), 0)
+	pb.w, pb.h = w+pb.hpad(), h+pb.vpad()
+	if pb.w <= 0 || pb.h <= 0 {
+		return nil // nothing to draw
+	}
+	return pb
+}
+
+// wrapPseudo paints pb at x, its margin box centred in the content's
+// height from y (vertical-align: middle, as the slug's own text sits).
+func (p *painter) wrapPseudo(pb *box, x, y, contentH float32) {
+	top := y + (contentH-(pb.m[0]+pb.h+pb.m[2]))/2 + pb.m[0]
+	r := rectF{x + pb.m[3], top, x + pb.m[3] + pb.w, top + pb.h}
+	if pb.st.Visibility != css.Visible {
+		return
+	}
+	rad := p.v.radii(pb, pb.w, pb.h)
+	p.shadows(pb, r, rad, false)
+	p.background(pb, r, rad)
+	p.border(pb, r, rad)
 }
 
 var _ = f32.Point{}

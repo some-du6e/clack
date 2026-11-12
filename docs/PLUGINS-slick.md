@@ -158,8 +158,8 @@ Send checks may wait for the user as long as they like. But a task the jsrt watc
 
 ## Known gaps
 
-- Component boundaries: every name the Slick plugins patch has a `slackc` boundary (PLUGINS-components.md §9.1). The views' reaction pills (Threads, Unreads, Activity) have Slack's Reaction but not ReactionBar or ReactionAddButton (CopyReacted).
-- CSS on natives: `:has()` against a native's own parts is false (natives expose no children), and `@container` queries always apply, so SlimMessageBox's one-line composer doesn't stack again for attachments or below its container width as in Slack.
-- Huddle plugins (BetterHuddles, CallTimer, LetMeSee, HuddleMuteDetector, CustomNameRecording) start and patch, but Clack has no huddle media, so their surfaces never render.
+- Component boundaries: every name the Slick plugins patch has a `slackc` boundary (PLUGINS-components.md §9.1). The Threads, Unreads and Activity views draw Slack's ReactionBar with its add-reaction button (CopyReacted).
+- CSS on natives: `:has()` sees the parts a native declares (`ClassDef.Kids`: the thread header's channel entity, the composer's pending files and broadcast row), not the rest of what it draws. `@container` queries always apply, so SlimMessageBox's one-line composer doesn't stack again below its container width as in Slack.
+- Huddle plugins: Clack's huddles are native, with audio, video and screen share. CallTimer's timer and LetMeSee's points draw in them; BetterHuddles replaces Slack's call with its own Chime client over browser WebRTC, which jsrt can't run; HuddleMuteDetector waits for a mute alert Clack's huddle doesn't dispatch to plugins; CustomNameRecording needs audio decoding in jsrt.
 - Pop-out windows (`onDocument`) and frames (QuietSpotify's Spotify embeds) have no Clack equivalent: accepted, inert. Chromium switches other than the three above are kept and change nothing.
 - AccountSwitcher's main half moves Slack session cookies between accounts; in Clack that maps to Taut's cookie host and one session, so switching accounts goes through Clack's own sign-in.

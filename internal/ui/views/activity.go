@@ -2025,7 +2025,11 @@ func (r *actRow) layoutItem(gtx C, p slackc.Props) D {
 	if sel {
 		mods |= actModSelected
 	}
-	st := actItemClass.Enter(gtx, hoverState(hov), mods)
+	def := actItemClass
+	if !slackc.Styles.Empty() && channelIcon(v.h.Core(), it.Channel, "") == "lock-filled" {
+		def = actItemPrivateClass // its destination's lock icon, for :has() (Slick StreamerMode)
+	}
+	st := def.Enter(gtx, hoverState(hov), mods)
 	defer st.Leave()
 	if st.Hidden() {
 		return D{}
@@ -3338,31 +3342,6 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 	}
 	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
 	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, ver, m.Doc, richview.Options{Edited: m.Edited, Muted: m.System}, 0)
-}
-
-// actReactions lays msg's reaction pills out left to right, wrapping
-// (each at Slack's Reaction boundary: reactions_slack.go).
-func (b *base) actReactions(gtx C, msg *core.Message) D {
-	rs := msg.Reactions
-	maxW := gtx.Constraints.Max.X
-	gap := gtx.Dp(4)
-	x, y, lineH := 0, 0, 0
-	for i := range rs {
-		m := op.Record(gtx.Ops)
-		cg := gtx
-		cg.Constraints.Min = image.Point{}
-		d := b.actReaction(cg, msg, &rs[i])
-		call := m.Stop()
-		if x > 0 && x+d.Size.X > maxW {
-			x, y, lineH = 0, y+lineH+gap, 0
-		}
-		st := op.Offset(image.Pt(x, y)).Push(gtx.Ops)
-		call.Add(gtx.Ops)
-		st.Pop()
-		x += d.Size.X + gap
-		lineH = max(lineH, d.Size.Y)
-	}
-	return D{Size: image.Pt(maxW, y+lineH)}
 }
 
 // actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue

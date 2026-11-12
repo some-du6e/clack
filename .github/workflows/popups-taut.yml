@@ -1,6 +1,6 @@
 name: popups-taut
 # Builds the Taut plugins popups' wiring is tested with (CopyReacted,
-# QuickJoin, Nicknames, OwlMode) with Taut's own `build:user-plugin`, and
+# QuickJoin, Nicknames, OwlMode, Censorship) with Taut's own `build:user-plugin`, and
 # runs internal/ui/popups' Taut tests against them over a synthetic
 # workspace and a fake Slack API. The built plugins (GPLv3) are uploaded
 # as an artifact and never committed.
@@ -53,7 +53,7 @@ jobs:
         working-directory: /tmp/taut
         run: |
           mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
-          for name in CopyReacted QuickJoin Nicknames OwlMode; do
+          for name in CopyReacted QuickJoin Nicknames OwlMode Censorship; do
             f=$(ls plugins/$name.ts plugins/$name.tsx 2>/dev/null | head -1)
             npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
           done

@@ -50,6 +50,7 @@ type ThreadView struct {
 	follow                    *bool                  // the bell's state clicked, until the root message has it
 	followAt                  time.Time              // when follow was set
 	failed                    atomic.Pointer[string] // the subscribe request's error (set off the UI goroutine)
+	find                      threadFind             // find in thread (thread_find.go)
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
@@ -83,6 +84,7 @@ func NewThreadViewIn(h Host, ch, ts, pane string) *ThreadView {
 // except in a public channel the viewer isn't in, where it saves none
 // and the pane opens at its start position again.
 func (v *ThreadView) Reopen() {
+	v.closeFind(false) // ThreadSearchBar unmounts with the pane
 	v.s.thr = threadRead{}
 	v.s.snap.rev = 0 // rebuild the rows with the new marker
 	if app := v.h.Core(); app != nil {
@@ -178,9 +180,17 @@ func (v *ThreadView) pane(gtx layout.Context, size image.Point) layout.Dimension
 	v.top = top
 	t := op.Offset(image.Pt(0, top)).Push(gtx.Ops)
 	g.Constraints = layout.Exact(image.Pt(size.X, max(0, size.Y-top)))
+	// find in thread: a search's answer, then the rows' highlight words
+	// and current result (thread_find.go)
+	v.findTick(g)
+	v.s.findWords, v.s.findTS = v.find.words, v.findCurrent()
 	shown(&lastThread, v.s)
 	v.s.layoutList(g, v.h, v.Origin.Add(image.Pt(0, top)))
 	v.layoutBanner(g, g.Constraints.Max) // "N new replies" (thread_banner.go)
+	if v.find.active {
+		v.layoutFindBar(g, th, c, size.X) // over p-threads_flexpane__content's top right
+		v.find.bar = v.find.bar.Add(image.Pt(0, top))
+	}
 	t.Pop()
 	return layout.Dimensions{Size: size}
 }
@@ -194,7 +204,7 @@ func (v *ThreadView) searchButtonProps() slackc.Props {
 }
 
 // layoutEmpty is the native of boundaries Clack has no surface for
-// (ThreadSearchButton, ThreadFlexpaneAdminTools): plugin siblings show.
+// (ThreadFlexpaneAdminTools): plugin siblings show.
 func (v *ThreadView) layoutEmpty(gtx layout.Context, _ slackc.Props) layout.Dimensions {
 	return layout.Dimensions{}
 }
@@ -432,12 +442,23 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	if bell {
 		left = mx - gap - bs
 	}
+	// a ThreadSearchButton patch's items are as wide as they are, in the
+	// header row's height, in what the title leaves them (Slack's title
+	// column shrinks first)
+	bgtx := gtx
+	bgtx.Constraints = layout.Constraints{Max: image.Pt(max(left-gap-px-d.Size.X, 0), hh)}
 	rec := op.Record(gtx.Ops)
-	sd := slackc.Component(gtx, "ThreadSearchButton", v, (*ThreadView).searchButtonProps, (*ThreadView).layoutEmpty)
+	hs := flexPrimaryClass.Enter(bgtx, 0, 0)
+	sd := slackc.Component(bgtx, "ThreadSearchButton", v, (*ThreadView).searchButtonProps, (*ThreadView).layoutSearchButton)
+	hs.Leave()
 	call := rec.Stop()
 	end := left // where the title column ends
+	v.find.btnRect = image.Rectangle{}
 	if sd.Size.X > 0 {
 		end = left - gap - sd.Size.X
+		if !slackc.Patched("ThreadSearchButton") { // the native's own Search in thread
+			v.find.btnRect = image.Rect(end, (hh-sd.Size.Y)/2, end+sd.Size.X, (hh+sd.Size.Y)/2)
+		}
 		t := op.Offset(image.Pt(end, (hh-sd.Size.Y)/2)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()
@@ -522,6 +543,19 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 	d := at(gtx, x, top, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxX-x, gtx.Sp(unit.Sp(ns.lineH)))}
 		w := func(gtx layout.Context) layout.Dimensions {
+			// a channel is Slack's InlineChannelEntity (className
+			// p-threads_flexpane__header_channel_name, truncate): its icon
+			// and name are the elements plugins' rules see (StreamerMode
+			// blurs a private channel's name)
+			var nst slackc.Styled
+			if sub.Icon != "" {
+				ent := thrHeaderEntity.Enter(gtx, btnState(gtx, &v.nameBtn), v.ch, sub.Icon)
+				defer ent.Leave()
+				if ent.Hidden() {
+					return layout.Dimensions{}
+				}
+				nst = thrHeaderEntity.Name(ent)
+			}
 			ix := 0
 			if sub.Icon != "" {
 				is := gtx.Sp(unit.Sp(ns.size))
@@ -533,7 +567,13 @@ func (v *ThreadView) layoutSubtitle(gtx layout.Context, th *theme.Theme, c *colo
 			g := gtx
 			g.Constraints.Max.X = max(0, gtx.Constraints.Max.X-ix)
 			td := at(g, ix, 0, func(gtx layout.Context) layout.Dimensions {
-				return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, sub.Text) })
+				name := func(gtx layout.Context) layout.Dimensions {
+					return lineBox(gtx, ns, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ns, sub.Text) })
+				}
+				if nst.Active() {
+					return nst.Wrap(gtx, name)
+				}
+				return name(gtx)
 			})
 			sz := image.Pt(ix+td.Size.X, gtx.Sp(unit.Sp(ns.lineH)))
 			if link {

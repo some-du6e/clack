@@ -345,8 +345,9 @@ func (p *prefsModal) tabs(gtx layout.Context, tp slackc.Props) layout.Dimensions
 		gtx.Constraints.Min = image.Point{}
 		ps := clsPrefsPanel.Enter(gtx, 0, 0)
 		defer ps.Leave()
-		if ps.Has("background-color") { // a theme's .p-prefs_dialog__panel (Material)
-			theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, ps.Background(color.NRGBA{}))
+		if ps.Has("background-color") { // a theme's .p-prefs_dialog__panel (Material), over its padding too
+			pad := panelPad(gtx)
+			theme.Fill(gtx, image.Rect(-pad.X, -pad.Y, gtx.Constraints.Max.X+pad.X, gtx.Constraints.Max.Y), ps.Background(color.NRGBA{}))
 		}
 		if !ownContent {
 			return slackc.LayoutElement(gtx, content)
@@ -552,7 +553,7 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 		p.scroll, p.scrollFor = prefsScroll{}, sec
 	}
 	if sec == "appearance" { // prefs_appearance.go, owned with the account theme
-		return p.scroll.layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		return p.scroll.panel(gtx, func(gtx layout.Context) layout.Dimensions {
 			d := p.appearancePage(gtx)
 			d.Size.Y += gtx.Dp(24)
 			return d
@@ -565,7 +566,7 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	if fn == nil {
 		return layout.Dimensions{}
 	}
-	return p.scroll.layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	return p.scroll.panel(gtx, func(gtx layout.Context) layout.Dimensions {
 		f := p.form(gtx)
 		fn(p, f)
 		f.y += gtx.Dp(24) // room under the last row

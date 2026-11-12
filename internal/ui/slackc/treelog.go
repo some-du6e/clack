@@ -1,10 +1,13 @@
 package slackc
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/some-du6e/clack/internal/ui/slackc/css"
 )
 
 // treeLog names the components whose delivered host trees are logged
@@ -71,4 +74,77 @@ func TreeShape(nodes []*Node) string {
 	}
 	walk(nodes)
 	return b.String()
+}
+
+// LayoutShape outlines the laid-out host trees of component name, with
+// each box's display and border box (layout-parent-relative device px),
+// and the root's: `root(flex 412x26)>[div.a(block 26,0 34x26)>(@Tooltip…)]`.
+// Like TreeShape it carries no text or prop values. A debugging aid for
+// tests that can only read pixels (UI goroutine).
+func LayoutShape(name string) string {
+	var out []string
+	for _, in := range insts {
+		if in.name != name || in.view == nil {
+			continue
+		}
+		var b strings.Builder
+		r := &in.view.main.root
+		fmt.Fprintf(&b, "root(%s %.0fx%.0f)>[", displayName(r.st.Display), r.w, r.h)
+		var walk func(list []*box)
+		walk = func(list []*box) {
+			for i, k := range list {
+				if i > 0 {
+					b.WriteByte(' ')
+				}
+				switch k.kind {
+				case kText:
+					b.WriteByte('#')
+					continue
+				case kComp:
+					b.WriteString("@")
+					if k.n != nil {
+						b.WriteString(k.n.N)
+					}
+				default:
+					if k.n != nil {
+						b.WriteString(k.n.T)
+						for _, c := range k.n.Class {
+							b.WriteString("." + c)
+						}
+					}
+				}
+				fmt.Fprintf(&b, "(%s %.0f,%.0f %.0fx%.0f)", displayName(k.st.Display), k.x, k.y, k.w, k.h)
+				if len(k.kids) > 0 {
+					b.WriteString(">[")
+					walk(k.kids)
+					b.WriteByte(']')
+				}
+			}
+		}
+		walk(in.view.top)
+		b.WriteByte(']')
+		out = append(out, b.String())
+	}
+	sort.Strings(out)
+	return strings.Join(out, " | ")
+}
+
+func displayName(d css.Display) string {
+	switch d {
+	case css.DisplayNone:
+		return "none"
+	case css.DisplayBlock:
+		return "block"
+	case css.DisplayInline:
+		return "inline"
+	case css.DisplayInlineBlock:
+		return "inline-block"
+	case css.DisplayFlex:
+		return "flex"
+	case css.DisplayInlineFlex:
+		return "inline-flex"
+	case css.DisplayContents:
+		return "contents"
+	}
+	return fmt.Sprint(int(d))
 }

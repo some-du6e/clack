@@ -543,6 +543,9 @@ func (s *Server) handleSearch(method string, f url.Values) (any, bool) {
 		return ok("module", "people", "items", append([]any{}, items[start:end]...),
 			"pagination", pagination(len(items), page, pages, 20, start, end)), true
 	case "search.inline":
+		if f.Get("find_in_thread") == "true" {
+			return s.findInThread(f), true
+		}
 		o := parseSQ(f.Get("query"))
 		var items []any
 		n := 0

@@ -1492,3 +1492,66 @@ func TestImageRendering(t *testing.T) {
 		t.Error("an unknown value turned pixelated on")
 	}
 }
+
+// hostLike is a host-tree node (a plugin's own element): the host base
+// sheet's rules match it.
+type hostLike struct{ *fakeEl }
+
+func (hostLike) HostNode() bool { return true }
+
+// The host base sheet (SetHostBase: Slack's rules for the classes plugins
+// put on their own elements) matches host nodes only, never a native that
+// carries the class; it comes after the base sheet, keeps its cascade
+// layers in their declared order, never makes the engine non-empty, and
+// HostStyled names the host nodes it may style.
+func TestHostBaseSheet(t *testing.T) {
+	e := NewEngine()
+	e.SetBase(`.c-reaction_add { color: ` + NativeValue + ` }`)
+	e.SetHostBase(`@layer sk.foundation, sk.core;
+@layer sk.core{.c-icon_button--default{color:var(--dt_color-content-sec)}}
+@layer sk.foundation{.c-button-unstyled{color:inherit;background:0 0;padding:0}}
+.p-bar--hidden .c-reaction_add{display:none}
+.c-reaction_add{color:var(--dt_color-content-pry);height:24px}
+.c-reaction_add:hover{background-color:#0000}`)
+	if !e.Empty() {
+		t.Fatal("the host base sheet made the engine non-empty")
+	}
+	chip := n("button.c-button-unstyled.c-reaction_add")
+	host := hostLike{chip}
+	if got := val(t, e.Cascade(host, 0, nil, testEnv), "height"); got != "24px" {
+		t.Errorf("host chip height %q, want Slack's 24px", got)
+	}
+	// unlayered beats sk.foundation's color:inherit, and comes after the
+	// base sheet's native value
+	if got := val(t, e.Cascade(host, 0, nil, testEnv), "color"); got != "var(--dt_color-content-pry)" {
+		t.Errorf("host chip color %q", got)
+	}
+	if got := val(t, e.Cascade(chip, 0, nil, testEnv), "color"); got != NativeValue {
+		t.Errorf("a native with the class got %q from the host sheet, want its own value", got)
+	}
+	if c := e.Cascade(chip, 0, nil, testEnv); c.Has("height") {
+		t.Error("a native matched a host rule")
+	}
+	if !e.HostStyled(host) || e.HostStyled(hostLike{n("button.other")}) {
+		t.Error("HostStyled: want true for a host rule's subject class only")
+	}
+	// sk.core comes after sk.foundation (declared order), so it wins
+	btn := hostLike{n("button.c-button-unstyled.c-icon_button--default")}
+	if got := val(t, e.Cascade(btn, 0, nil, testEnv), "color"); got != "var(--dt_color-content-sec)" {
+		t.Errorf("icon button color %q, want sk.core's over sk.foundation's", got)
+	}
+	// an ancestor may be a native: the subject alone must be a host node
+	n("div.p-bar--hidden", chip)
+	if got := val(t, e.Cascade(host, 0, nil, testEnv), "display"); got != "none" {
+		t.Errorf("chip under the hidden bar: display %q", got)
+	}
+	host.fakeEl.st = StateHover
+	if got := val(t, e.Cascade(host, 0, nil, testEnv), "background-color"); got != "#0000" {
+		t.Errorf("hovered chip background %q", got)
+	}
+	// a plugin rule of the same specificity, later, wins
+	e.Set("p", `.c-reaction_add{color:red}`)
+	if got := val(t, e.Cascade(host, 0, nil, testEnv), "color"); got != "red" {
+		t.Errorf("plugin rule lost to the host base: %q", got)
+	}
+}

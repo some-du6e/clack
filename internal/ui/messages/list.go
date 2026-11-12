@@ -138,9 +138,14 @@ type listState struct {
 	lastOlder   time.Time
 	highlight   string
 	highlightAt time.Time
-	sel         selection
-	sb          scrollbar
-	pendingJump string
+	// find in thread (thread_find.go): the highlight words (the query of
+	// the last results), the current result and the result flashing
+	findWords, findTS string
+	findFlash         string
+	findFlashAt       time.Time
+	sel               selection
+	sb                scrollbar
+	pendingJump       string
 
 	// the list as the last frame left it (anchoring in layoutList)
 	laidOut   bool
@@ -1006,6 +1011,29 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
+	rc.findFlash = 0
+	if s.findFlash == e.m.TS {
+		if el := rc.now.Sub(s.findFlashAt); el < findFlashFor {
+			rc.findFlash = findFlashAlpha(el)
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+	// the query in a message's rich text: Slack's Blocks pass it only to
+	// messages with blocks (BaseRichText)
+	fw, ff := "", false
+	if s.findWords != "" {
+		ff = e.m.TS == s.findTS
+		if len(e.m.Blocks) > 0 {
+			fw = s.findWords
+		}
+	}
+	if r.find != fw {
+		r.find, r.findFocused = fw, ff
+		r.setDoc()
+	} else if r.findFocused != ff {
+		r.findFocused = ff
+		r.rv.SetOptions(r.rvOpts())
+	}
 	gtx.Constraints.Min.X = w
 	d := r.layout(gtx, rc)
 	// hover tooltip for reaction pills
@@ -1639,6 +1667,19 @@ func (s *listState) scrollTo(ts string) {
 			return
 		}
 	}
+}
+
+// scrollToFind is find in thread's scrollToTs with scrollOffset -200:
+// ts's row off px below the list's top (as near as the list's ends let
+// it). False when ts isn't loaded.
+func (s *listState) scrollToFind(ts string, off int) bool {
+	for i, it := range s.items {
+		if it.kind == itMsg && it.key == ts {
+			s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -off}
+			return true
+		}
+	}
+	return false
 }
 
 func (s *listState) retry(h Host, r *row) {

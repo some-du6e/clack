@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"gioui.org/io/event"
+	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/ui/menubar"
 )
@@ -280,11 +281,46 @@ func (a *App) toggleSidebar() { a.sidebar.hidden = !a.sidebar.hidden }
 // findInConversation is ⌘F: Slack's search in channel pane for the open
 // conversation (SearchInChannelView), else the search box.
 func (a *App) findInConversation() {
+	if a.findInThread() {
+		return
+	}
 	if ch := a.router.Current().Channel(); ch != "" && mkSearchInChannel != nil {
 		a.OpenSearchInChannel(ch)
 	} else {
 		a.openSearch("")
 	}
+}
+
+// findInThread is Mod+F under find_in_thread with the thread pane
+// focused (rn2N: getFocusedContainer() === Secondary showing a thread):
+// openThreadSearch, the pane's search bar. False otherwise: Mod+F is the
+// conversation's search.
+func (a *App) findInThread() bool {
+	s := &a.secondary
+	if s.kind != secThread || !s.open() || !(s.keyFocus || s.findFocus) {
+		return false
+	}
+	c := a.convos[s.channel+"/"+s.ts]
+	if c == nil {
+		return false
+	}
+	tl, ok := c.list.(threadList)
+	return ok && tl.OpenFind()
+}
+
+// threadFindFocused reports whether the key focus is in the open
+// thread's find bar.
+func (a *App) threadFindFocused(gtx layout.Context) bool {
+	s := &a.secondary
+	if s.kind != secThread || !s.open() {
+		return false
+	}
+	c := a.convos[s.channel+"/"+s.ts]
+	if c == nil {
+		return false
+	}
+	tl, ok := c.list.(threadList)
+	return ok && tl.FindFocused(gtx)
 }
 
 // showShortcutsHelp is the top bar's help button and Help > Keyboard

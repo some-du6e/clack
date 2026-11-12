@@ -99,6 +99,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Opening an image | `previewFile` → media viewer | lightbox | **matched** |
 | Opening other files | `previewFile`: the file details flexpane | the first channel it was shared in, else toast "Opening this file isn't supported yet" | **fixed**: no toast; it opens like a message's file card, at the permalink. The flexpane itself is **open**: Clack has none |
 | Files, channel and people rows | not compared this round | unchanged | **open**: not re-measured |
+| Results in the store | the search's API response is `state.searchResults[windowId].response` (windowId `main`, pl6F N2), each module's rows under `results[module].items[page]` (yLIV getResponseModule, getModuleResultsForCurrentPage); MessageListItem's `result` row comes from there | the cards' own copies only; plugins' patches over `searchResults` (Taut Censorship) never reached them | **fixed** (plugins-leftovers: popups/search_store.go hands the page to the Redux mirror, and each card reads its row back as plugins present it) |
 
 ## Search in channel
 

@@ -285,7 +285,7 @@ func (v *View) setState(b *box, bit css.State, on bool) {
 		ns.hover = on
 	}
 	b.state = ns.st
-	if ns.st != old && (!Styles.Empty() || styleHook != nil) {
+	if ns.st != old && (!Styles.Empty() || styleHook != nil || Styles.HostStyled(b)) {
 		v.needStyle = true
 		v.dirtyGen++
 	}

@@ -972,14 +972,19 @@ func (v *viewCache) staleAll() {
 	}
 }
 
-func (v *viewCache) stale(slice, key string) {
+// stale marks the cached views of slice (key "" = all) stale, reporting
+// whether it held any.
+func (v *viewCache) stale(slice, key string) bool {
+	hit := false
 	v.mu.Lock()
 	for k, e := range v.entries {
 		if k.slice == slice && (key == "" || k.key == key) {
 			e.stale = true
+			hit = true
 		}
 	}
 	v.mu.Unlock()
+	return hit
 }
 
 func (v *viewCache) fetch() {
