@@ -189,7 +189,7 @@ func (t *Theme) SetShapers(light, dark *text.Shaper) {
 	if t.textScale > 0 {
 		for _, sh := range t.shapers {
 			if sh != nil {
-				sh.SetTrackingScale(t.textScale)
+				shaperSetTrackingScale(sh, t.textScale)
 			}
 		}
 	}

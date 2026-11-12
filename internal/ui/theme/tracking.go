@@ -49,6 +49,9 @@ const (
 	pxPerPt       = 4.0 / 3
 )
 
+// fontT is font.Font (gio_patch12*.go).
+type fontT = font.Font
+
 // TrackingFor is the letter spacing, in sp (CSS px), Slack's CSS gives text
 // of font f at size sp under a tracked font (see above).
 func TrackingFor(f font.Font, size float32) float32 {
@@ -111,7 +114,7 @@ func UITracking() bool {
 // fonts).
 func setTracking(sh *text.Shaper, u *UIFont) {
 	if u != nil && u.Tracking {
-		sh.SetTracking(TrackingFor)
+		shaperSetTracking(sh, TrackingFor)
 	}
 }
 
@@ -125,7 +128,7 @@ func (t *Theme) SetTextScale(pxPerSp float32) {
 	t.textScale = pxPerSp
 	for _, sh := range t.shapers {
 		if sh != nil {
-			sh.SetTrackingScale(pxPerSp)
+			shaperSetTrackingScale(sh, pxPerSp)
 		}
 	}
 }

@@ -89,13 +89,15 @@ func drawnBy(f func()) []string {
 	return out
 }
 
+// hasText reports whether sub was drawn, in one string or across the
+// strings in order (richRuns draws a word at a time).
 func hasText(ss []string, sub string) bool {
 	for _, s := range ss {
 		if strings.Contains(s, sub) {
 			return true
 		}
 	}
-	return false
+	return strings.Contains(strings.Join(ss, " "), sub)
 }
 
 func gdriveAuths(tokens ...map[string]any) map[string]any {
@@ -183,11 +185,19 @@ func TestPrefsConnectedManage(t *testing.T) {
 	// lists only that one
 	md, _ = topModal(a)
 	md.PressDefault()
-	waitFor(t, a, "the delete and the reload", func() bool {
+	for deadline := time.Now().Add(10 * time.Second); ; {
 		ap, ok := p.connectedApp("A0GDRIVE")
-		return h.count("apps.auth.external.delete") == 2 && h.count("apps.auth.external.userAuths.get") >= 2 &&
-			ok && len(ap.Providers) == 1 && len(ap.Providers[0].Tokens) == 1
-	})
+		if h.count("apps.auth.external.delete") == 2 && h.count("apps.auth.external.userAuths.get") >= 2 &&
+			ok && len(ap.Providers) == 1 && len(ap.Providers[0].Tokens) == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the delete and the reload: %d deletes, %d userAuths.get, app %v %+v, lists %+v, overlays %d",
+				h.count("apps.auth.external.delete"), h.count("apps.auth.external.userAuths.get"), ok, ap, p.lists, len(a.overlays))
+		}
+		time.Sleep(10 * time.Millisecond)
+		a.drain()
+	}
 	waitFor(t, a, "the confirmation closed", func() bool { return len(a.overlays) == n+1 })
 	strs = drawnBy(func() { layoutTop(t, a) })
 	if hasText(strs, "me@example.com") || !hasText(strs, "it@example.com") {
