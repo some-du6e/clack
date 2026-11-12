@@ -3,6 +3,7 @@ package huddleui
 import (
 	"image"
 	"image/color"
+	"strconv"
 	"sync"
 	"time"
 
@@ -57,6 +58,9 @@ type window struct {
 	posts    []func()         // winHost.post (under mu)
 
 	shareAlert alertState // the screen share alert's link and close (share.go)
+	theme      bgShown    // the huddle theme on the stage (background.go)
+
+	tweak func(*huddle.State) // tests: edits each frame's state
 
 	// popout is the video key of the screen share this window pops out
 	// ("" = the huddle window; popout.go), popoutUser its presenter.
@@ -126,7 +130,11 @@ func (w *window) run() {
 	if w.popout != "" {
 		ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(960), unit.Dp(600)), app.MinSize(unit.Dp(480), unit.Dp(320)))
 	} else {
-		ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(620), unit.Dp(400)), app.MinSize(unit.Dp(520), unit.Dp(300)))
+		// the compact window: getHuddleCompactWindowInitialWidthV2 (v1CF)
+		// is 565px, 24 more in the multi-view window; Slack sizes its
+		// height to the content (32 + 44 + 222 + 53); .p-huddle_window's
+		// min-width 455px and min-height 302px
+		ww.Option(app.Title("Huddle - "+AppName), app.Size(unit.Dp(589), unit.Dp(351)), app.MinSize(unit.Dp(455), unit.Dp(302)))
 	}
 	main := w.c.h.Theme()
 	th := theme.Bare(true)
@@ -154,8 +162,11 @@ func (w *window) run() {
 		}
 	}()
 	var ops op.Ops
+	var caption captionState // Windows: the caption takes the window's colour (caption.go)
 	for {
-		switch e := ww.Event().(type) {
+		ev := ww.Event()
+		caption.sync(ev, ww, hudCaption)
+		switch e := ev.(type) {
 		case app.DestroyEvent:
 			tick.Stop()
 			close(done)
@@ -187,6 +198,35 @@ func (w *window) run() {
 // AppName is the window title suffix (the ui root sets it to its own).
 var AppName = "Clack"
 
+// The compact huddle window, Slack's default huddle window surface
+// (huddle_window_compact; HuddleWindowComponent and HuddleWindowContent in
+// gantry-v2-async-client-boot-shared PWaJ, build 274f7c7f1b69, with
+// client-boot-styles' rules):
+//
+//   - the title bar, 32px (.p-huddle_window_titlebar; HuddleMvaWindowTitle
+//     shows no "{n} people" subtitle in compact mode);
+//   - HuddlesInformationalBanner (7tWB, entryPoint baby_window) in the flow
+//     above the content: .p-huddles_alert_banner_base--baby_window, radius
+//     8px, margin 4px 4px 6px, its text left-aligned;
+//   - the stage: HuddleBackground's .p-huddle_background__container--
+//     compact_mode, radius 8px, margin 0 4px, height calc(100% - 56px),
+//     with the huddle's theme (background.go);
+//   - HuddleCompactHeader (XuJY): margin 16px 16px 0, padding 0 8px, the
+//     connection-quality button at its right;
+//   - the people: HuddleCompactAudioPane (aM8U) in a pane at most 222px tall
+//     (.p-huddle_compact_av_pane--footer_below_content);
+//   - HuddleFooter (PWaJ) with HuddleToolbar (9d6D) in compact mode below
+//     the gallery (.p-huddle_window_content__gallery_toolbar is calc(100% -
+//     53px)): the buttons in one centred row with Leave last, padding 4px 0.
+const (
+	winTitleH    = 32  // .p-huddle_window_titlebar
+	winFooterH   = 53  // what the gallery (calc(100% - 53px)) leaves the footer
+	winStageGap  = 56  // the background's calc(100% - 56px)
+	winPaneMaxH  = 222 // .p-huddle_compact_av_pane--footer_below_content
+	winBarH      = 48  // .toolbarContainerCompactMode: 40px buttons, padding 4px 0
+	winShareMinW = 550 // HuddleToolbar's eC: narrower, no screen share button (ed.aJ)
+)
+
 func (w *window) layout(gtx C) {
 	w.runPosts()
 	sz := gtx.Constraints.Max
@@ -198,6 +238,9 @@ func (w *window) layout(gtx C) {
 		return
 	}
 	st := s.State()
+	if w.tweak != nil {
+		w.tweak(&st)
+	}
 	now := time.Now()
 	w.handle(gtx, s, st)
 	if w.popout != "" {
@@ -206,25 +249,25 @@ func (w *window) layout(gtx C) {
 	}
 	w.cameraWatch(st)
 
-	// the title is Slack's HuddleMvaWindowTitle (CallTimer adds its timer
-	// after it): .p-multi_view_window_title__huddle, the headphones, 8px,
-	// the title, 8px, the "{n} people" subtitle (regular), all at the
-	// title's .8 opacity; measured, then centered
-	titleH := gtx.Dp(34)
-	title, sub := w.c.windowTitle(st)
+	// the title: HuddleMvaWindowTitle (CallTimer adds its timer after it):
+	// .p-multi_view_window_title__huddle, the headphones, 8px, the title,
+	// all at the title's .8 opacity; measured, then centred. No subtitle:
+	// the window is in compact mode (getIsCompactMode).
+	titleH := gtx.Dp(winTitleH)
+	title, _ := w.c.windowTitle(st)
 	ink := theme.WithAlpha(hudWhite, 0xcc)
 	tg := gtx
 	tg.Constraints = layout.Constraints{Max: image.Pt(max(0, sz.X-gtx.Dp(24)-gtx.Dp(120)), titleH)}
 	tm := op.Record(gtx.Ops)
-	td := slackc.Render(tg, "HuddleMvaWindowTitle", w.titleProps(s, st, title, sub), func(gtx C, p slackc.Props) D {
-		t := w.th.Label(gtx, 14, theme.Bold, ink, p.StrOr("title", title))
-		sb := p.StrOr("subtitle", sub)
+	td := slackc.Render(tg, "HuddleMvaWindowTitle", w.titleProps(s, st, title, ""), func(gtx C, p slackc.Props) D {
+		t := w.th.Label(gtx, 13, theme.Bold, ink, p.StrOr("title", title))
+		sb := p.StrOr("subtitle", "")
 		if sb == "" {
 			return t
 		}
 		so := op.Offset(image.Pt(t.Size.X+gtx.Dp(8), 0)).Push(gtx.Ops)
 		gtx.Constraints.Max.X = max(0, gtx.Constraints.Max.X-t.Size.X-gtx.Dp(8))
-		sd := w.th.Label(gtx, 14, theme.Regular, ink, sb)
+		sd := w.th.Label(gtx, 13, theme.Regular, ink, sb)
 		so.Pop()
 		return D{Size: image.Pt(t.Size.X+gtx.Dp(8)+sd.Size.X, max(t.Size.Y, sd.Size.Y)), Baseline: t.Baseline}
 	})
@@ -241,23 +284,59 @@ func (w *window) layout(gtx C) {
 	// No elapsed time here: Slack's huddle window shows none (its only
 	// huddle timer is the Huddles page's HuddlesActiveTimer); Slick's
 	// CallTimer adds one after the title.
-	bs := gtx.Dp(28)
-	at(gtx, image.Pt(sz.X-bs-gtx.Dp(10), (titleH-bs)/2), image.Pt(bs, bs), func(gtx C) D {
-		return button(gtx, w.click("full"), image.Pt(bs, bs), func(gtx C, hov bool) {
-			if hov {
-				theme.RRect(gtx, image.Rectangle{Max: gtx.Constraints.Max}, gtx.Dp(6), hudBtn)
-			}
-		}, func(gtx C) D { iconAt(gtx, image.Pt(bs, bs), "expand", 16, hudWhite); return D{} })
-	})
 
-	barH := gtx.Dp(56) // .toolbarContainerExpandedMode: height 56px
-	stage := image.Rect(gtx.Dp(8), titleH, sz.X-gtx.Dp(8), sz.Y-barH)
-	if stage.Dx() > 0 && stage.Dy() > 0 {
-		w.stage(gtx, s, st, stage, now)
+	top := titleH
+	if bh := w.layoutBanner(gtx, s, image.Rect(gtx.Dp(4), top+gtx.Dp(4), sz.X-gtx.Dp(4), top+gtx.Dp(4)+gtx.Dp(bannerH))); bh > 0 {
+		top += gtx.Dp(4) + bh + gtx.Dp(6) // margin 4px 4px 6px
 	}
-	w.barTop = sz.Y - barH
-	w.bottomBar(gtx, s, st, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
-	w.layoutBanner(gtx, s, stage, now)
+	stage := image.Rect(gtx.Dp(4), top, sz.X-gtx.Dp(4), sz.Y-gtx.Dp(winStageGap))
+	share := w.stageShare(st)
+	if !stage.Empty() {
+		w.layoutTheme(gtx, st.RoomID, st.Background, stage, gtx.Dp(8))
+		if share != nil {
+			// a share on the stage: .p-huddle_background__overlay--dark
+			theme.RRect(gtx, stage, gtx.Dp(8), bgOverlayDark)
+		}
+	}
+	// HuddleCompactHeader: hidden in the screen share view
+	// (.p-huddle_compact_header--screenshare_view) and, with
+	// huddles_new_grids, the troubleshooting button isn't drawn
+	hdrBottom := top
+	if share == nil {
+		hdrBottom = top + gtx.Dp(16) + gtx.Dp(connBtnH)
+		if !w.c.on(ExpNewGrids) {
+			w.connectionButton(gtx, st, image.Pt(sz.X-gtx.Dp(16)-gtx.Dp(8)-gtx.Dp(connBtnW), top+gtx.Dp(16)))
+		}
+	}
+	barTop := sz.Y - gtx.Dp(winFooterH)
+	gallery := image.Rect(0, hdrBottom, sz.X, barTop)
+	if share == nil && !w.hasVideo(st) {
+		// the audio pane is at most 222px tall; Slack sizes the window to
+		// it, Clack's window keeps its size, so the pane is centred
+		if ph := gtx.Dp(winPaneMaxH); gallery.Dy() > ph {
+			gallery.Min.Y += (gallery.Dy() - ph) / 2
+			gallery.Max.Y = gallery.Min.Y + ph
+		}
+	} else {
+		gallery = image.Rect(stage.Min.X, hdrBottom, stage.Max.X, stage.Max.Y)
+	}
+	if gallery.Dx() > 0 && gallery.Dy() > 0 {
+		w.stage(gtx, s, st, gallery, now)
+	}
+	if !stage.Empty() {
+		if st.CaptionsOn {
+			w.captions(gtx, st, stage, now)
+		}
+		if w.picker {
+			w.emojiPicker(gtx, stage)
+		}
+		if w.stick {
+			w.stickerPicker(gtx, stage)
+		}
+	}
+	w.barTop = barTop
+	bar := image.Rect(0, barTop, sz.X, barTop+gtx.Dp(winBarH))
+	w.bottomBar(gtx, s, st, bar)
 	if _, bad := w.mic.visible(st); !bad && w.c.noAudioAlert() && stage.Dx() > gtx.Dp(40) {
 		bw := min(stage.Dx()-gtx.Dp(24), gtx.Dp(480))
 		at(gtx, image.Pt((sz.X-bw)/2, stage.Min.Y+gtx.Dp(12)), image.Pt(bw, stage.Dy()), func(gtx C) D {
@@ -288,9 +367,34 @@ func (w *window) layout(gtx C) {
 		})
 	}
 	w.cameraNotice(gtx, st, stage)
-	w.toolbarTip(gtx, image.Rect(0, sz.Y-barH, sz.X, sz.Y))
+	w.toolbarTip(gtx, bar)
 	w.layoutMore(gtx)
 	w.layoutOverlays(gtx)
+}
+
+// bgOverlayDark is .p-huddle_background__overlay--dark.
+var bgOverlayDark = color.NRGBA{R: 0x1a, G: 0x1d, B: 0x21, A: 0xff}
+
+// stageShare is the screen share the stage shows (nil: none, or it's
+// popped out).
+func (w *window) stageShare(st huddle.State) *huddle.Video {
+	for i := range st.Videos {
+		if v := st.Videos[i]; v.Content && !w.c.popped(v.Key) {
+			return &st.Videos[i]
+		}
+	}
+	return nil
+}
+
+// hasVideo reports whether anyone's camera is on (HuddleCompactAvPane:
+// the video pane instead of the audio pane).
+func (w *window) hasVideo(st huddle.State) bool {
+	for _, v := range st.Videos {
+		if !v.Content {
+			return true
+		}
+	}
+	return st.Camera.State == huddle.CameraOn && st.SelfAttendee != ""
 }
 
 func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
@@ -350,14 +454,6 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 	if w.click("leave").Clicked(gtx) {
 		w.c.Leave()
 	}
-	if w.click("full").Clicked(gtx) {
-		w.full = !w.full
-		if w.full {
-			w.w.Option(app.Fullscreen.Option())
-		} else {
-			w.w.Option(app.Windowed.Option())
-		}
-	}
 	for _, e := range quickEmoji {
 		if w.click("emoji:" + e).Clicked(gtx) {
 			w.picker = false
@@ -377,9 +473,11 @@ func firstNonEmpty(s ...string) string {
 
 var quickEmoji = []string{"+1", "heart", "joy", "tada", "wave", "clap", "raised_hands", "fire"}
 
-// stage draws the participants (and the screen share, when there is one).
+// stage draws the participants in r (and the screen share, when there is
+// one): with nobody's camera on, HuddleCompactAudioPane's tiles
+// (compactTiles); with cameras or a share, Clack's own grid (Slack's
+// compact video pane, yT9P, isn't ported).
 func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectangle, now time.Time) {
-	gradient(gtx, r, gtx.Dp(10), hudStageA, hudStageB)
 	ps := galleryOrder(st, w.c.handQueue())
 	if w.c.hideSelf.Load() && len(ps) > 1 { // "Hide self-view": your tile leaves the gallery
 		ps = withoutSelf(ps)
@@ -400,6 +498,22 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 	}
 	selfCam(st, cams) // your own tile shows your (mirrored) preview
 	w.phase = st.Phase
+	n := len(ps) + len(st.Invites)
+	if share == nil && len(cams) == 0 {
+		g := compactTiles(gtx, r, n)
+		rad := gtx.Dp(compactTileRadius)
+		for i, tr := range g.tiles {
+			if i < len(ps) {
+				w.tileR(gtx, s, ps[i], "", tr, now, rad)
+			} else {
+				w.inviteTileR(gtx, st.Invites[i-len(ps)], tr, rad)
+			}
+		}
+		if g.more > 0 {
+			overflowCount(gtx, w.th, r, g.more)
+		}
+		return
+	}
 	area := r.Inset(gtx.Dp(12))
 	if share != nil {
 		// the share takes the stage; the people sit in a column on the right
@@ -422,7 +536,6 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 		w.popoutButton(gtx, share, sr)
 		// no presenter label on the shared screen: Slack names the presenter
 		// only on a screen share tile's footer in the grid
-		n := len(ps) + len(st.Invites)
 		tile := min(col, (area.Dy()-gtx.Dp(8)*(n-1))/max(n, 1))
 		y := area.Min.Y
 		for i := 0; i < n; i++ {
@@ -437,7 +550,7 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 			}
 			y += tile + gtx.Dp(8)
 		}
-	} else if n := len(ps) + len(st.Invites); n > 0 {
+	} else if n > 0 {
 		gap := gtx.Dp(8)
 		best, bc := 0, 1
 		for cols := 1; cols <= n; cols++ {
@@ -463,15 +576,87 @@ func (w *window) stage(gtx C, s *huddle.Session, st huddle.State, r image.Rectan
 			}
 		}
 	}
-	if st.CaptionsOn {
-		w.captions(gtx, st, r, now)
+}
+
+// compactTileRadius is the compact audio pane's tiles' 4px corners
+// (.p-huddle_compact_audio_pane--container .p-huddle_grid_component__tile
+// .p-huddle_peer_tile and the avatar inside).
+const compactTileRadius = 4
+
+// compactGrid is where HuddleCompactAudioPane puts n people.
+type compactGrid struct {
+	tiles []image.Rectangle // the tiles drawn, in gallery order
+	more  int               // the people beyond them (the "+N" badge)
+}
+
+// compactTiles is HuddleCompactAudioPane's sizing (aM8U), in r: padding
+// 16px (8px on top: --container__top_padding's !important beats the
+// inline 16px); the tiles' available size is r less 32px each way; a
+// tile is at most 150px, gaps 8px; one row when its tiles are at least
+// 99px (48 + (150 - 48) / 2), else two rows of at least 48px, else
+// 48px tiles, floor((width - 32) / 56) a row, two rows, and the rest as
+// "+N". The tiles sit centred (flex, centre, centre) row by row, the
+// last row centred too (p-huddle_grid_component).
+func compactTiles(gtx C, r image.Rectangle, n int) compactGrid {
+	if n <= 0 {
+		return compactGrid{}
 	}
-	if w.picker {
-		w.emojiPicker(gtx, r)
+	gap := gtx.Dp(8)
+	ah, aw := r.Dy()-gtx.Dp(32), r.Dx()-gtx.Dp(32)
+	maxT := gtx.Dp(150)
+	minT := gtx.Dp(48)
+	if ah < minT || aw < minT {
+		return compactGrid{more: n}
 	}
-	if w.stick {
-		w.stickerPicker(gtx, r)
+	perRow := aw / gtx.Dp(56)
+	size := func(rows, tiles int) int {
+		cols := (tiles + rows - 1) / rows
+		h := ah
+		if rows > 1 {
+			h -= (rows - 1) * gap
+		}
+		return min(h/rows, (aw-(cols-1)*gap)/cols, maxT)
 	}
+	rows, shown, cols, side := 1, n, n, size(1, n)
+	switch {
+	case side >= minT+(maxT-minT)/2:
+	case size(2, n) >= minT:
+		rows, side = 2, size(2, n)
+		cols = (n + 1) / 2
+	default:
+		shown = min(perRow*2, n)
+		rows, cols, side = 2, perRow, minT
+		if shown <= perRow {
+			rows = 1
+		}
+	}
+	if cols <= 0 || side <= 0 {
+		return compactGrid{more: n}
+	}
+	inner := image.Rect(r.Min.X+gtx.Dp(16), r.Min.Y+gtx.Dp(8), r.Max.X-gtx.Dp(16), r.Max.Y-gtx.Dp(16))
+	gh := rows*side + (rows-1)*gap
+	y0 := inner.Min.Y + (inner.Dy()-gh)/2
+	g := compactGrid{more: n - shown}
+	for i := 0; i < shown; i++ {
+		row, col := i/cols, i%cols
+		inRow := min(cols, shown-row*cols)
+		x0 := inner.Min.X + (inner.Dx()-(inRow*side+(inRow-1)*gap))/2
+		x, y := x0+col*(side+gap), y0+row*(side+gap)
+		g.tiles = append(g.tiles, image.Rect(x, y, x+side, y+side))
+	}
+	return g
+}
+
+// overflowCount is the compact audio pane's "+N"
+// (.p-huddle_compact_audio_pane--additional_peers, bottom 4px right 4px;
+// .p-peer_tile__overflow_text: 14px, weight 900, white on constants-black
+// in this pane, radius 4px, padding 2px 4px).
+func overflowCount(gtx C, th *theme.Theme, r image.Rectangle, more int) {
+	txt := "+" + strconv.Itoa(more)
+	ls := labelSize(gtx, th, 14, theme.Black, txt)
+	b := image.Rect(r.Max.X-gtx.Dp(4)-ls.X-gtx.Dp(8), r.Max.Y-gtx.Dp(4)-ls.Y-gtx.Dp(4), r.Max.X-gtx.Dp(4), r.Max.Y-gtx.Dp(4))
+	theme.RRect(gtx, b, gtx.Dp(4), color.NRGBA{A: 0xff})
+	at(gtx, image.Pt(b.Min.X+gtx.Dp(4), b.Min.Y+gtx.Dp(2)), ls, func(gtx C) D { return th.Label(gtx, 14, theme.Black, hudWhite, txt) })
 }
 
 // stickerPicker is the sticker picker (the emoji picker's stickers tab,
@@ -568,15 +753,19 @@ const (
 	segCaret = 2
 )
 
-// toolbar is HuddleToolbar in the expanded window: the center buttons
-// (HuddleToolbarMuteButton, HuddleToolbarCameraButton,
+// toolbar is HuddleToolbar (gantry-v2-async-client-boot-shared 9d6D):
+// the center buttons (HuddleToolbarMuteButton, HuddleToolbarCameraButton,
 // HuddleToolbarScreenshareButton, the segmented sticker button,
 // HuddleToolbarEmojiPickerButton, HuddleToolbarThreadButton,
-// HuddleToolbarMoreActionsButton), each 40px with a 4px margin, centered,
-// and HuddleToolbarLeaveButton at the right (rightButtons, margin-right
-// 2px). Slack's canvas and Meeting Assistant buttons need what Clack
-// doesn't have (huddle canvases, Slack AI), so they aren't drawn; the
-// device carets are open (docs/HUDDLES-AUDIT.md).
+// HuddleToolbarMoreActionsButton), each 40px with a 4px margin, centred.
+// In the compact window (the huddle window) HuddleToolbarLeaveButton is
+// the centre row's last button and there are no left or right buttons; in
+// the expanded mode (the screen share popout) Leave sits at the right
+// (rightButtons, margin-right 2px). The screen share button needs a
+// toolbar at least 550px wide (eC; ed.aJ hides it below). Slack's canvas
+// ("Take meeting notes") and Meeting Assistant buttons need what Clack
+// doesn't have (huddle canvases in the window, Slack AI), so they aren't
+// drawn (docs/HUDDLES-AUDIT.md).
 func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	// HuddleToolbarMuteButton, segmented in the window (audiomenu.go)
 	mics := w.c.micCtls(st, w.audio != nil)
@@ -597,11 +786,18 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	if w.stick {
 		caret = "caret-down"
 	}
-	sticks := ctl{id: "stickers", icon: caret, on: w.stick, tip: nsHuddles.T("Choose sticker"), seg: segCaret}
+	// the caret is toggled on while the picker is open or a sticker is set
+	// (isEmojiMenuOpen || P)
+	sticks := ctl{id: "stickers", icon: caret, on: w.stick || mine != "", tip: nsHuddles.T("Choose sticker"), seg: segCaret}
 	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.picker, tip: nsHuddles.T("Add reaction")}
 	thread := ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")}
 	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: nsHuddles.T("More actions")}
-	ctls := append(mics, w.cameraCtl(st), w.c.shareCtl(st), hand, sticks, react, thread, more)
+	compact := w.popout == ""
+	ctls := append(mics, w.cameraCtl(st))
+	if !compact || r.Dx() >= gtx.Dp(winShareMinW) {
+		ctls = append(ctls, w.c.shareCtl(st))
+	}
+	ctls = append(ctls, hand, sticks, react, thread, more)
 
 	h := gtx.Dp(40)
 	m := gtx.Dp(4) // each button's margin
@@ -616,7 +812,9 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	lw := max(gtx.Dp(80), labelSize(gtx, w.th, 15, theme.Bold, nsHuddles.T("Leave")).X+2*gtx.Dp(12))
 	lx := r.Dx() - gtx.Dp(2) - m - lw
 	x := (r.Dx() - total) / 2
-	if x+total > lx-m { // a narrow window: the center row moves left of Leave
+	if compact { // Leave ends the centred row
+		x = max(0, (r.Dx()-total-lw-2*m)/2)
+	} else if x+total > lx-m { // a narrow window: the center row moves left of Leave
 		x = max(0, lx-m-total)
 	}
 	y := r.Min.Y + (r.Dy()-h)/2
@@ -682,6 +880,9 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	}
 	// HuddleToolbarLeaveButton: base-inv-imp, "Leave", tooltip Leave Huddle
 	// with its shortcut
+	if compact {
+		lx = x + m
+	}
 	cl := w.click("leave")
 	if cl.Hovered() {
 		w.cam.tip, w.cam.tipAnchor = nsHuddles.T("Leave Huddle")+"  "+leaveShortcut(), image.Rect(lx, y, lx+lw, y+h).Sub(r.Min)

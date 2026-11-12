@@ -90,10 +90,8 @@ func TestHuddleShotsInvite(t *testing.T) {
 	})
 	// the right tile's pill at its top left: white, wider than an emoji
 	g := shotCtx(nil, 620, 320)
-	area := image.Rectangle{Max: g.Constraints.Max}.Inset(g.Dp(12))
-	side := min(g.Dp(220), (area.Dx()-g.Dp(8))/2, area.Dy())
-	x0 := area.Min.X + (area.Dx()-(2*side+g.Dp(8)))/2 + side + g.Dp(8)
-	y0 := area.Min.Y + (area.Dy()-side)/2
+	rt := compactTiles(g, image.Rectangle{Max: g.Constraints.Max}, 2).tiles[1]
+	x0, y0 := rt.Min.X, rt.Min.Y
 	pill := image.Rect(x0+10*shotScale, y0+10*shotScale, x0+90*shotScale, y0+38*shotScale)
 	if n := pixeltest.Count(img, pill, hudWhite, 8); n < pill.Dx()*pill.Dy()/3 {
 		t.Fatalf("no sticker pill with its label (%d px)", n)
@@ -124,6 +122,7 @@ func TestHuddleShotsInvite(t *testing.T) {
 	render(t, "invite-sticker-picker", 620, 320, func(gtx C) {
 		theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)
 		e.w.stage(gtx, s, st, image.Rectangle{Max: gtx.Constraints.Max}, now)
+		e.w.stickerPicker(gtx, image.Rectangle{Max: gtx.Constraints.Max})
 	})
 	e.w.stick = false
 }

@@ -87,11 +87,8 @@ func TestHuddleShotsTiles(t *testing.T) {
 	}
 	// two tiles side by side: the left one's box, for the checks
 	twoTiles := func(gtx C) (image.Rectangle, image.Rectangle) {
-		area := image.Rectangle{Max: gtx.Constraints.Max}.Inset(gtx.Dp(12))
-		side := min(gtx.Dp(220), (area.Dx()-gtx.Dp(8))/2, area.Dy())
-		x0 := area.Min.X + (area.Dx()-(2*side+gtx.Dp(8)))/2
-		y0 := area.Min.Y + (area.Dy()-side)/2
-		return image.Rect(x0, y0, x0+side, y0+side), image.Rect(x0+side+gtx.Dp(8), y0, x0+2*side+gtx.Dp(8), y0+side)
+		g := compactTiles(gtx, image.Rectangle{Max: gtx.Constraints.Max}, 2)
+		return g.tiles[0], g.tiles[1]
 	}
 	var ops = shotCtx(nil, 620, 320)
 	left, right := twoTiles(ops)

@@ -41,8 +41,6 @@ var (
 	hudMintDark = color.NRGBA{R: 0x1e, G: 0x51, B: 0x3d, A: 0xff}
 	hudMintInk  = color.NRGBA{R: 0x00, G: 0x5e, B: 0x3d, A: 0xff}
 	hudTileBg   = color.NRGBA{R: 0xf4, G: 0xf3, B: 0xf5, A: 0xff}
-	hudStageA   = color.NRGBA{R: 0xf9, G: 0xd9, B: 0xe9, A: 0xff} // stage gradient (Slack draws a theme picture)
-	hudStageB   = color.NRGBA{R: 0xd5, G: 0xe6, B: 0xf7, A: 0xff}
 )
 
 func at(gtx C, p, sz image.Point, w layout.Widget) D {
@@ -81,6 +79,24 @@ func centerLabel(gtx C, th *theme.Theme, box image.Point, size unit.Sp, w font.W
 	d := th.Label(gtx, size, w, col, txt)
 	call := m.Stop()
 	at(gtx, image.Pt((box.X-d.Size.X)/2, (box.Y-d.Size.Y)/2), box, func(gtx C) D { call.Add(gtx.Ops); return d })
+}
+
+// emojiAt draws an emoji (its character, as the emoji text from
+// emojiText) px pixels wide, centred in box. Labels draw an emoji as
+// Slack's image at 1.2em (theme.textWithEmoji), so the text size is px /
+// 1.2; the line gets a little room so rounding never leaves the image
+// without space (a label that can't fit it draws "…": a 20px sticker
+// laid out at 18sp needed 22px and showed "…Be right back").
+func emojiAt(gtx C, th *theme.Theme, box image.Point, px int, txt string) D {
+	sp := unit.Sp(float32(px) / 1.2 / gtx.Metric.PxPerSp)
+	room := image.Pt(max(box.X, px+gtx.Dp(4)), max(box.Y, px+gtx.Dp(4)))
+	m := op.Record(gtx.Ops)
+	gtx.Constraints = layout.Constraints{Max: room}
+	d := th.Label(gtx, sp, theme.Regular, hudInk, txt)
+	call := m.Stop()
+	defer op.Offset(image.Pt((box.X-d.Size.X)/2, (box.Y-d.Size.Y)/2)).Push(gtx.Ops).Pop()
+	call.Add(gtx.Ops)
+	return d
 }
 
 func labelSize(gtx C, th *theme.Theme, size unit.Sp, w font.Weight, txt string) image.Point {
@@ -168,13 +184,6 @@ func fit(gtx C, img paint.ImageOp, sz image.Point, radius int) {
 
 func f32Affine(s, dx, dy float32) f32.Affine2D {
 	return f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(s, s)).Offset(f32.Pt(dx, dy))
-}
-
-// gradient fills r with a vertical two-colour gradient.
-func gradient(gtx C, r image.Rectangle, radius int, a, b color.NRGBA) {
-	defer clip.UniformRRect(r, radius).Push(gtx.Ops).Pop()
-	paint.LinearGradientOp{Stop1: layout.FPt(r.Min), Color1: a, Stop2: layout.FPt(image.Pt(r.Max.X, r.Max.Y)), Color2: b}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
 }
 
 // elapsed is "m:ss" or "h:mm:ss".

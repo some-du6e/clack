@@ -269,8 +269,12 @@ func (w *inviteWindow) run() {
 		}
 	}()
 	var ops op.Ops
+	var caption captionState // Windows: the caption takes the window's colour (caption.go)
+	look := inviteCaption(invInkFor(th), dark)
 	for {
-		switch e := ww.Event().(type) {
+		ev := ww.Event()
+		caption.sync(ev, ww, look)
+		switch e := ev.(type) {
 		case app.DestroyEvent:
 			tick.Stop()
 			close(done)

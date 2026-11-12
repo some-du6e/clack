@@ -109,6 +109,7 @@ type Controller struct {
 	mic    micAlerts   // the mic button's permission, NoAudioDetected, "You’re muted." (micalerts.go)
 	popout popoutState // huddles_screenshare_popout (popout.go)
 	share  shareUI     // your screen share: the picker, alerts, border, mini panel (share.go)
+	bg     bgCatalog   // the huddle themes (background.go)
 }
 
 // sessionTick is what onSession compares between changes.

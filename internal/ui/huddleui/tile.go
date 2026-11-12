@@ -81,7 +81,11 @@ func (w *window) ink() tileInk {
 }
 
 func (w *window) tile(gtx C, s *huddle.Session, p huddle.Participant, cam string, r image.Rectangle, now time.Time) {
-	rad := gtx.Dp(tileRadius)
+	w.tileR(gtx, s, p, cam, r, now, gtx.Dp(tileRadius))
+}
+
+// tileR is tile with rad corners (the compact audio pane's are 4px).
+func (w *window) tileR(gtx C, s *huddle.Session, p huddle.Participant, cam string, r image.Rectangle, now time.Time, rad int) {
 	sz := r.Size()
 	speaking := p.Speaking(now)
 	if speaking {
@@ -270,10 +274,11 @@ func (w *window) reactionPill(gtx C, name string, sz image.Point, age time.Durat
 	defer op.Affine(f32.Affine2D{}.Scale(c, f32.Pt(sc, sc))).Push(gtx.Ops).Pop()
 	defer paint.PushOpacity(gtx.Ops, alpha).Pop()
 	pillShadow(gtx, r)
-	theme.RRect(gtx, r, h/2, hudWhite)
+	bg, _ := w.pillInk()
+	theme.RRect(gtx, r, h/2, bg)
 	txt := w.emojiText(name)
 	at(gtx, image.Pt(r.Min.X+gtx.Dp(10), r.Min.Y+(h-es)/2), image.Pt(es, es), func(gtx C) D {
-		centerLabel(gtx, w.th, image.Pt(es, es), unit.Sp(float32(es)/gtx.Metric.PxPerSp*0.9), theme.Regular, hudInk, txt)
+		emojiAt(gtx, w.th, image.Pt(es, es), es, txt)
 		return D{}
 	})
 	gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(33 * time.Millisecond)})
@@ -311,8 +316,8 @@ func (w *window) stickerPill(gtx C, p huddle.Participant, sz image.Point) {
 	if r.Dx() <= 0 {
 		return
 	}
-	bg, fg := hudWhite, hudInk
-	if audioOnly {
+	bg, fg := w.pillInk()
+	if audioOnly { // p-huddle_tile_reaction__audio_only_mode--huddle_window: sk_inverted_*
 		bg, fg = hudInk, hudWhite
 	}
 	draw := func(gtx C, hov bool) {
@@ -326,7 +331,7 @@ func (w *window) stickerPill(gtx C, p huddle.Participant, sz image.Point) {
 		if !audioOnly {
 			txt := w.emojiText(p.Sticker)
 			at(gtx, image.Pt(x, (rr.Dy()-es)/2), image.Pt(es, es), func(gtx C) D {
-				centerLabel(gtx, w.th, image.Pt(es, es), unit.Sp(float32(es)/gtx.Metric.PxPerSp*0.9), theme.Regular, hudInk, txt)
+				emojiAt(gtx, w.th, image.Pt(es, es), es, txt)
 				return D{}
 			})
 			x += es + gtx.Dp(4)
@@ -335,7 +340,8 @@ func (w *window) stickerPill(gtx C, p huddle.Participant, sz image.Point) {
 			ls := labelSize(gtx, w.th, 13, theme.Bold, label)
 			tw := max(0, rr.Dx()-x-gtx.Dp(10))
 			defer clip.Rect(image.Rect(x, 0, x+tw, rr.Dy())).Push(gtx.Ops).Pop()
-			at(gtx, image.Pt(x, (rr.Dy()-ls.Y)/2), ls, func(gtx C) D { return w.th.Label(gtx, 13, theme.Bold, fg, label) })
+			// .p-huddle_tile_reaction__description: text-overflow ellipsis
+			at(gtx, image.Pt(x, (rr.Dy()-ls.Y)/2), image.Pt(tw, ls.Y), func(gtx C) D { return w.th.Label(gtx, 13, theme.Bold, fg, label) })
 		}
 	}
 	at(gtx, r.Min, r.Size(), func(gtx C) D {
@@ -351,9 +357,24 @@ func (w *window) stickerPill(gtx C, p huddle.Participant, sz image.Point) {
 	})
 }
 
+// pillInk is the reaction and sticker pills' colours:
+// .p-huddle_peer_tile__emoji_container / __sticky_emoji_container's
+// background sk_primary_background and .p-huddle_tile_reaction__description's
+// content-pry, so they follow the client's theme (dark in dark mode).
+func (w *window) pillInk() (bg, fg color.NRGBA) {
+	if th := w.c.h.Theme(); th != nil {
+		return th.C.Bg, th.C.Fg
+	}
+	return hudWhite, hudInk
+}
+
 // inviteTile is a rung person who isn't in the huddle (yet).
 func (w *window) inviteTile(gtx C, inv huddle.Invite, r image.Rectangle) {
-	rad := gtx.Dp(tileRadius)
+	w.inviteTileR(gtx, inv, r, gtx.Dp(tileRadius))
+}
+
+// inviteTileR is inviteTile with rad corners.
+func (w *window) inviteTileR(gtx C, inv huddle.Invite, r image.Rectangle, rad int) {
 	sz := r.Size()
 	key := "invite:" + inv.UserID
 	icon, label := "paper-plane", nsHuddles.T("Invited")
