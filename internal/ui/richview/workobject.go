@@ -1627,3 +1627,24 @@ func (l *lay) woTagsWrap(tags []workobject.Tag, x, y, w int) int {
 	}
 	return cy + h - y
 }
+
+// WorkObjectRect is a work object card's box (View coordinates).
+type WorkObjectRect struct {
+	Att *richtext.Attachment
+	R   image.Rectangle
+}
+
+// WorkObjectRects lists the laid-out work object cards (after the first
+// Layout), in layout order.
+func (v *View) WorkObjectRects() []WorkObjectRect {
+	var out []WorkObjectRect
+	for _, h := range v.d.hits {
+		if h.t < 0 || int(h.t) >= len(v.d.targets) || h.r.Empty() {
+			continue
+		}
+		if tg := &v.d.targets[h.t]; tg.kind == tWorkObject && tg.id == "click" && tg.att != nil {
+			out = append(out, WorkObjectRect{Att: tg.att, R: h.r})
+		}
+	}
+	return out
+}

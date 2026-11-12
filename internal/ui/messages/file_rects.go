@@ -126,6 +126,26 @@ func (v *ChannelView) CardRects() []CardRect {
 	return out
 }
 
+// WorkObjectRect is a work object card's box on screen (window
+// coordinates).
+type WorkObjectRect struct {
+	TS string // the message
+	richview.WorkObjectRect
+}
+
+// WorkObjectRects lists the visible messages' work object cards as of
+// the last frame, in window coordinates.
+func (v *ChannelView) WorkObjectRects() []WorkObjectRect {
+	var out []WorkObjectRect
+	v.s.eachBody(func(ts string, off image.Point, rv *richview.View) {
+		for _, c := range rv.WorkObjectRects() {
+			c.R = c.R.Add(off)
+			out = append(out, WorkObjectRect{TS: ts, WorkObjectRect: c})
+		}
+	})
+	return out
+}
+
 // RemoveRect is a link preview's remove button on screen.
 type RemoveRect struct {
 	TS string // the message

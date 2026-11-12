@@ -3,14 +3,24 @@ package richview
 import (
 	"encoding/json"
 	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"gioui.org/f32"
+	"gioui.org/io/input"
 	"gioui.org/io/pointer"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/unit"
 
 	rt "github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 	"github.com/some-du6e/clack/internal/workobject"
 )
 
@@ -210,5 +220,84 @@ func TestWorkObjectDetails(t *testing.T) {
 	}
 	if len(woCards(v)) != 0 {
 		t.Error("the Details tab drew a card")
+	}
+}
+
+// TestWorkObjectShots saves the cards, light and dark (the
+// messages-audit-shots workflow sets MESSAGES_AUDIT_SHOTS_DIR): a lone
+// task at rest and hovered (the actions bar, "Preview in Slack", the
+// footer's Refresh), two docs rearranged side by side, the same two
+// stacked under their meta line without work_objects_rearrangement, and
+// the flexpane's Details body.
+func TestWorkObjectShots(t *testing.T) {
+	dir := os.Getenv("MESSAGES_AUDIT_SHOTS_DIR")
+	if dir == "" {
+		t.Skip("MESSAGES_AUDIT_SHOTS_DIR not set (the messages-audit-shots workflow)")
+	}
+	task := func() rt.Doc {
+		return woDocOf(t, woEntity("W:A0TEST:T1", "Draw work object cards like Slack", true, true))
+	}
+	pair := func() rt.Doc {
+		return woDocOf(t, woEntity("W:A0TEST:D1", "Clack roadmap", true, false), woEntity("W:A0TEST:D2", "Meeting notes", true, false))
+	}
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		pal := LightPalette()
+		if dark {
+			pal = DarkPalette()
+		}
+		for _, c := range []struct {
+			name  string
+			doc   func() rt.Doc
+			flags WorkObjectFlags
+			hover bool
+			opts  Options
+		}{
+			{"card", task, WorkObjectFlags{Rearrange: true, RefreshTimestamp: true, CommentSync: true}, false, Options{}},
+			{"card-hover", task, WorkObjectFlags{Rearrange: true, RefreshTimestamp: true, CommentSync: true}, true, Options{}},
+			{"card-no-refresh-timestamp", task, WorkObjectFlags{Rearrange: true}, false, Options{}},
+			{"rearranged", pair, WorkObjectFlags{Rearrange: true, RefreshTimestamp: true}, false, Options{}},
+			{"stacked", pair, WorkObjectFlags{RefreshTimestamp: true}, false, Options{}},
+		} {
+			c.flags.Locale = "en-US"
+			st := NewStyle(themeShaper(), &gradImages{cache: map[string]paint.ImageOp{}}, pal)
+			st.SetWorkObjects(c.flags)
+			c.opts.Channel, c.opts.TS = "C1", "1762700000.000300"
+			v := New(c.doc(), c.opts)
+			var r input.Router
+			var ops op.Ops
+			const w, h, pad = 820, 560, 20
+			frame := func() {
+				ops.Reset()
+				paint.FillShape(&ops, pal.Panel, clip.Rect{Max: image.Pt(w, h)}.Op())
+				tr := op.Offset(image.Pt(pad, pad)).Push(&ops)
+				gtx := layout.Context{Ops: &ops, Source: r.Source(), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+					Constraints: layout.Exact(image.Pt(w-2*pad, h-2*pad))}
+				v.Layout(gtx, st, &recHandler{})
+				tr.Pop()
+				r.Frame(&ops)
+			}
+			frame()
+			if c.hover {
+				cards := woCards(v)
+				if len(cards) == 0 {
+					t.Fatal("no card")
+				}
+				cr := cards[0]
+				r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(pad+cr.Min.X+60), float32(pad+cr.Max.Y-50))})
+				frame()
+				frame()
+			}
+			frame()
+			img := pixeltest.Render(t, w, h, &ops)
+			fh, err := os.Create(filepath.Join(dir, "work-object-"+c.name+"-"+mode+".png"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := png.Encode(fh, img); err != nil {
+				t.Fatal(err)
+			}
+			fh.Close()
+		}
 	}
 }
