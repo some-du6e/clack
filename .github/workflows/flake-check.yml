@@ -152,6 +152,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: gio deps (internal/huddle's X11 screen share needs the headers)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: huddle (no logging after Leave)
         run: go test -race -gcflags=all=-d=checkptr=0 -count=$COUNT -run 'TestCameraUnsupported$|TestNoLogAfterLeave$|TestFakeChime$' ./internal/huddle
 
@@ -232,6 +234,8 @@ jobs:
         include:
           - test: TestRealtimeSendEchoOneMessage
             pkg: ./internal/core
+          - test: TestPrefetchSkipsLoadedWhileQueued # the echo flake's cause, every time
+            pkg: ./internal/core
           - test: TestListEditRoundTrip
             pkg: ./internal/core
           - test: TestChannelLeaveRejoin
@@ -264,6 +268,12 @@ jobs:
           fails=$(grep -cE "^--- FAIL: ${TEST} \(" "$log")
           passes=$(grep -cE "^--- PASS: ${TEST} \(" "$log")
           echo "::notice title=${TEST}::${fails} of ${COUNT} runs failed (${passes} passed, exit ${rc})"
-          grep -E -A12 "^--- FAIL: ${TEST} \(" "$log" | head -400
+          # each failed run's own output (its last 150 lines), then any race reports
+          awk -v run="=== RUN   ${TEST}" -v done="--- FAIL: ${TEST} (" -v ok="--- PASS: ${TEST} (" '
+            $0 == run { n = 0; inrun = 1 }
+            inrun { buf[n++ % 150] = $0 }
+            index($0, done) == 1 { print "::group::failed run"; for (i = (n > 150 ? n - 150 : 0); i < n; i++) print buf[i % 150]; print "::endgroup::"; inrun = 0 }
+            index($0, ok) == 1 { inrun = 0 }' "$log" | head -3000
+          awk '/^WARNING: DATA RACE/,/^==================$/' "$log" | head -400
           tail -5 "$log"
           exit $rc
