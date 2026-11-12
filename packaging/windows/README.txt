@@ -34,6 +34,22 @@ slack:// links
 
   Uninstalling removes Clack's keys too.
 
+Notifications
+  Clack's notifications are Windows toasts, filed under Clack's app id,
+  io.github.some-du6e.clack. Windows only shows toasts from an id it
+  knows, so the installer registers it, and Clack.exe does too before its
+  first toast. Both write the same key, for your user only:
+
+    HKCU\Software\Classes\AppUserModelId\io.github.some-du6e.clack
+      DisplayName  Clack
+      IconUri      %LOCALAPPDATA%\Clack\clack.png
+
+  Settings > System > Notifications then lists Clack, where you can turn
+  its notifications off or change how they show. Clicking a toast opens
+  the conversation while Clack is running. Clack registers no COM
+  activator, so Windows can't start Clack from a toast it left in
+  Notification Center. Uninstalling removes the key and the icon.
+
 SmartScreen
   Clack is not code-signed, so Windows may say it "protected your PC".
   Click "More info", then "Run anyway".

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -13,64 +14,23 @@ import (
 	"github.com/some-du6e/clack/assets/icon"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
+	"github.com/some-du6e/clack/internal/desktop/uiatest"
+	"github.com/some-du6e/clack/internal/ui/huddleui"
 )
+
+// huddleNotificationFor is an invite's notification as huddleui makes it
+// with desktop_notification_actions unassigned: Dismiss and Join.
+func huddleNotificationFor(ch string) huddleui.Notification {
+	return huddleui.Notification{Channel: ch, User: "U0FAKEUSER1", Call: "R0FAKECALL1", Buttons: []huddleui.NotifyAction{
+		{Key: "Dismiss", Label: "Dismiss"}, {Key: "Join", Label: "Join", URI: "slack://huddle?id=" + ch + "&team=T0FAKE", Do: func() {}}}}
+}
 
 // Clack's own toasts on the windows-applog job (CLACK_WINDOWS_TOAST_TESTS=1):
 // the real notifier (WinRT, under a scratch app id registered as Clack
-// registers its own) shows a fakeslack DM's toast; UI Automation clicks it
-// in the shell, and Clack opens the DM; a reply typed into a toast's
-// box is sent to the fake. CLACK_TOAST_SHOTS names a folder for
-// screenshots.
-
-const uiToastUIA = `param([string]$Mode, [string]$Name, [string]$Text = '', [int]$Secs = 10)
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-$A = [System.Windows.Automation.AutomationElement]
-$TS = [System.Windows.Automation.TreeScope]
-$All = [System.Windows.Automation.Condition]::TrueCondition
-$root = $A::RootElement
-$deadline = (Get-Date).AddSeconds($Secs)
-while ((Get-Date) -lt $deadline) {
-  foreach ($el in $root.FindAll($TS::Descendants, $All)) {
-    $n = $el.Current.Name
-    if ($Mode -eq 'setvalue') {
-      if ($el.Current.ControlType.ProgrammaticName -ne 'ControlType.Edit') { continue }
-      if (-not (($n -like ("*" + $Name + "*")) -or ($el.Current.HelpText -like ("*" + $Name + "*")))) { continue }
-      $pat = $null
-      if ($el.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$pat)) { $pat.SetValue($Text); "set '" + $n + "'"; exit 0 }
-      continue
-    }
-    $match = if ($Mode -eq 'invoke') { $n -eq $Name } else { $n -like ("*" + $Name + "*") }
-    if (-not $match) { continue }
-    $pat = $null
-    if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) { "invoked " + $el.Current.ControlType.ProgrammaticName + " '" + $n + "'"; $pat.Invoke(); exit 0 }
-  }
-  Start-Sleep -Milliseconds 400
-}
-"not found: " + $Name
-foreach ($w in $root.FindAll($TS::Children, $All)) {
-  "[" + $w.Current.ClassName + "] '" + $w.Current.Name + "'"
-  if ($w.Current.ClassName -like '*CoreWindow*') {
-    $i = 0
-    foreach ($e in $w.FindAll($TS::Descendants, $All)) {
-      "    " + $e.Current.ControlType.ProgrammaticName + " '" + $e.Current.Name + "' help '" + $e.Current.HelpText + "'"
-      $i++; if ($i -gt 200) { break }
-    }
-  }
-}
-exit 1
-`
-
-func uiUIA(t *testing.T, mode, name, text string, secs int) (string, bool) {
-	t.Helper()
-	script := filepath.Join(t.TempDir(), "uia.ps1")
-	if err := os.WriteFile(script, []byte(uiToastUIA), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	b, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
-		"-Mode", mode, "-Name", name, "-Text", text, "-Secs", fmt.Sprint(secs)).CombinedOutput()
-	return strings.TrimSpace(string(b)), err == nil
-}
+// registers its own) shows a fakeslack DM's toast; UI Automation
+// (internal/desktop/uiatest) clicks it in the shell, and Clack opens the
+// DM; a reply typed into a toast's box is sent to the fake.
+// CLACK_TOAST_SHOTS names a folder for screenshots.
 
 func uiNotificationCenter(t *testing.T, open bool) {
 	t.Helper()
@@ -117,8 +77,12 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	a.notify = &toastNotifier{aumid: id, cache: t.TempDir()}
 	team := storeTeam(ca)
 	nonce := fmt.Sprint(time.Now().UnixNano() % 1e6)
+	named := func(text string) func(uiatest.Element) bool {
+		return func(e uiatest.Element) bool { return strings.Contains(e.Name, text) }
+	}
 
-	// a DM: its toast reaches Notification Center under its tag
+	// a DM: its toast reaches Notification Center under its tag (the
+	// shell's id, team_ts)
 	msg := &core.Message{TS: "1762520099.000300", User: "U0FAKEUSER1", Name: "Ada", Text: "hello " + nonce}
 	a.data.handle(a, core.Event{Type: "message", Channel: "D0NOTE0001", TS: msg.TS, ConvKind: "im", Msg: msg})
 	tag := team + "_" + msg.TS
@@ -141,12 +105,14 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	time.Sleep(800 * time.Millisecond)
 	uiScreenshot(t, "clack-dm-banner")
 
-	// the reply box (a banner shows it; Notification Center may not)
+	// the reply box, when a banner shows it (Do not disturb hides banners)
 	reply := "on my way " + nonce
-	if out, ok := uiUIA(t, "setvalue", "Reply", reply, 6); ok {
-		t.Logf("UI Automation: %s", out)
-		if out, ok := uiUIA(t, "invoke", "➤", "", 4); ok {
-			t.Logf("UI Automation: %s", out)
+	if e, err := uiatest.SetValue(func(e uiatest.Element) bool {
+		return strings.Contains(e.Name, "Reply") || strings.Contains(e.Help, "Reply")
+	}, reply, 6*time.Second); err == nil {
+		t.Logf("typed into %s", e)
+		if e, err := uiatest.Act(func(e uiatest.Element) bool { return e.Name == "➤" }, 4*time.Second); err == nil {
+			t.Logf("clicked %s", e)
 			select {
 			case f := <-posted:
 				if f.Get("channel") != "D0NOTE0001" || f.Get("text") != reply || f.Get("thread_ts") != "" {
@@ -156,10 +122,10 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 				t.Errorf("the reply typed into the toast wasn't sent")
 			}
 		} else {
-			t.Logf("UI Automation couldn't press the reply's ➤:\n%s", out)
+			t.Logf("UI Automation couldn't press the reply's ➤: %v", err)
 		}
 	} else {
-		t.Logf("UI Automation found no reply box (Do not disturb on: no banner):\n%s", firstLines(out, 40))
+		t.Logf("no reply box on the screen (%v):\n%s", err, uiatest.Dump(40))
 	}
 
 	// a second DM: clicked in Notification Center, Clack opens it
@@ -169,11 +135,11 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	a.drain()
 	uiNotificationCenter(t, true)
 	uiScreenshot(t, "clack-dm-notification-center")
-	out, ok := uiUIA(t, "invokelike", "open me "+nonce, "", 10)
-	t.Logf("UI Automation:\n%s", firstLines(out, 60))
-	if !ok {
-		t.Fatalf("UI Automation couldn't click the DM's toast in Notification Center")
+	e, err := uiatest.Act(named("open me "+nonce), 10*time.Second)
+	if err != nil {
+		t.Fatalf("UI Automation couldn't click the DM's toast in Notification Center: %v\n%s", err, uiatest.Dump(60))
 	}
+	t.Logf("clicked %s", e)
 	deadline = time.Now().Add(10 * time.Second)
 	for a.router.Current().Channel() != "D0NOTE0002" {
 		if time.Now().After(deadline) {
@@ -192,4 +158,72 @@ func firstLines(s string, n int) string {
 		ls = ls[:n]
 	}
 	return strings.Join(ls, "\n")
+}
+
+// setWindowsTheme switches the shell between light and dark (the
+// Personalize keys Settings writes) and tells it so (WM_SETTINGCHANGE
+// "ImmersiveColorSet").
+func setWindowsTheme(t *testing.T, dark bool) {
+	t.Helper()
+	v := "1"
+	if dark {
+		v = "0"
+	}
+	ps := `$k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'; ` +
+		`New-Item -Path $k -Force | Out-Null; ` +
+		`Set-ItemProperty -Path $k -Name AppsUseLightTheme -Type DWord -Value ` + v + `; ` +
+		`Set-ItemProperty -Path $k -Name SystemUsesLightTheme -Type DWord -Value ` + v + `; ` +
+		`Add-Type -Namespace W -Name U -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint m, UIntPtr w, string l, uint f, uint t, out UIntPtr r);'; ` +
+		`$r = [UIntPtr]::Zero; [W.U]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'ImmersiveColorSet', 2, 5000, [ref]$r) | Out-Null`
+	if b, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).CombinedOutput(); err != nil {
+		t.Logf("theme: %v %s", err, b)
+	}
+	time.Sleep(2 * time.Second)
+}
+
+// TestWindowsToastShots: a DM's toast (the sender's picture, the header,
+// the reply box) and a huddle invite's (Dismiss, Join) as Windows draws
+// them, light and dark, as banners and in Notification Center.
+func TestWindowsToastShots(t *testing.T) {
+	if os.Getenv("CLACK_WINDOWS_TOAST_TESTS") == "" || os.Getenv("CLACK_TOAST_SHOTS") == "" {
+		t.Skip("set CLACK_WINDOWS_TOAST_TESTS=1 and CLACK_TOAST_SHOTS (the windows-applog job)")
+	}
+	a, _, _ := fakeApp(t, map[string]any{"mute_sounds": true})
+	id := fmt.Sprintf("%s.shots%d", desktop.AppUserModelID, time.Now().UnixNano()%1e9)
+	if _, err := desktop.RegisterAppUserModelID(id, "Clack", filepath.Join(t.TempDir(), "clack.png"), icon.PNG128); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = desktop.RemoveToasts(id, "", "")
+		_ = desktop.UnregisterAppUserModelID(id)
+		setWindowsTheme(t, false)
+	})
+	// the sender's picture: Clack's icon standing in for a Slack CDN avatar
+	tn := &toastNotifier{aumid: id, cache: t.TempDir(), fetch: func(_ context.Context, raw string) ([]byte, error) {
+		return icon.PNG128, nil
+	}}
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		setWindowsTheme(t, dark)
+		dm := a.messageNote("D0NOTE0001", "1762520099.00030"+map[bool]string{false: "1", true: "2"}[dark], "", "")
+		dm.Avatar = "https://avatars.slack-edge.com/ci/ada_192.png"
+		dm.Title, dm.Body, dm.ChannelName, dm.Grouped, dm.Workspace = "New message from Ada", "are we still on for lunch?", "Ada", true, "Fake Workspace"
+		if err := tn.NotifyNote(dm); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(1500 * time.Millisecond)
+		uiScreenshot(t, "toast-dm-"+mode)
+		inv := a.huddleNote(huddleNotificationFor("D0NOTE0001"))
+		inv.Body, inv.Workspace = "Ada is inviting you to a huddle", "Fake Workspace"
+		inv.Avatar = "https://avatars.slack-edge.com/ci/ada_192.png"
+		if err := tn.NotifyNote(inv); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(1500 * time.Millisecond)
+		uiScreenshot(t, "toast-huddle-"+mode)
+		uiNotificationCenter(t, true)
+		uiScreenshot(t, "toast-notification-center-"+mode)
+		uiNotificationCenter(t, false)
+		_ = desktop.RemoveToasts(id, "", "")
+	}
 }

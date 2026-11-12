@@ -217,10 +217,15 @@ func TestToastActivationArgs(t *testing.T) {
 	}
 }
 
-// storeTeam is the signed-in team's id as the notes read it.
+// storeTeam gives the store the signed-in team a booted session has
+// (fakeApp doesn't boot), and returns its id: Slack's toast needs one
+// (the header; handleToastActivation requires a teamId).
 func storeTeam(ca *core.App) string {
-	ca.S.RLock()
-	defer ca.S.RUnlock()
+	ca.S.Lock()
+	defer ca.S.Unlock()
+	if ca.S.TeamID == "" {
+		ca.S.TeamID, ca.S.TeamName = "T0FAKETEAM", "Fake Workspace"
+	}
 	return ca.S.TeamID
 }
 
@@ -329,7 +334,8 @@ func TestToastClickOpensConversation(t *testing.T) {
 // thread for a reply's toast (delegate_replyToNotification), and leaves
 // the window where it was.
 func TestToastReplySends(t *testing.T) {
-	a, _, fs := fakeApp(t, map[string]any{"mute_sounds": true})
+	a, ca, fs := fakeApp(t, map[string]any{"mute_sounds": true})
+	storeTeam(ca)
 	posted := make(chan url.Values, 4)
 	fs.OnPost = func(f url.Values, _ map[string]any) { posted <- f }
 	rec := &noteRec{}
