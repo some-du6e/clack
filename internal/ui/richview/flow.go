@@ -490,6 +490,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			k = l.partFace(k, pt)
 		}
 		noAt := false
+		var before float32 // the slug's ::before box (compState.before)
 		n0 := len(l.items)
 		var cmp int16 // a mention pill laid out as a Slack component
 		txt := sp.Text
@@ -615,6 +616,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				if kind == compUser && l.compState(cmp).noAt {
 					noAt = true // MemberSlug supressMentionAtSymbol
 				}
+				if kind == compUser {
+					before = l.compState(cmp).before
+				}
 			}
 		case richtext.MessageMention:
 			l.messageMention(sp, fs, k, pt)
@@ -642,6 +646,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		}
 		if dc >= 0 && l.decos[dc].padL > 0 {
 			l.addPad(l.decos[dc].padL, dc, k)
+		}
+		if before > 0 && dc >= 0 { // the slug's ::before box, inside the pill
+			l.addPad(before, dc, k)
 		}
 		if sp.Kind == richtext.Channel && sp.Lock {
 			// a private channel the viewer is in: lock-filled, then its

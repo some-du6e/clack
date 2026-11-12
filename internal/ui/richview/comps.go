@@ -124,6 +124,9 @@ type compState struct {
 	title   string // MessageAttachmentYouTube: the plugin's title
 	thumb   string // … and thumbUrl
 	noAt    bool   // MemberSlug: the plugin's supressMentionAtSymbol
+	// before is the px the slug's box ::before takes inside the pill
+	// (MentionProfiles' picture, Styled.Pseudo), 0 for none
+	before float32
 }
 
 // compRef is the receiver of a component's props and natives.
@@ -414,7 +417,23 @@ func (c *compRef) layoutSlug(gtx layout.Context, p slackc.Props) layout.Dimensio
 	}
 	s := memberClass.Enter(gtx, 0, 0)
 	defer s.Leave()
-	return c.styled(gtx, s)
+	// a ::before box (content '', a size: MentionProfiles' picture) sits
+	// inside the slug's pill, before the name, as CSS has it: the flow
+	// keeps its width in the pill (flow.go) and the pill draws it there
+	bw, _, ok := s.Pseudo(gtx, false)
+	if cs := &c.v.cs[c.i]; bw != cs.before {
+		cs.before = bw
+		c.v.dirty = true
+		gtx.Execute(op.InvalidateCmd{})
+	}
+	if !ok || s.Hidden() {
+		return c.styled(gtx, s)
+	}
+	return s.WrapOwnPseudo(gtx, func(gtx layout.Context) layout.Dimensions {
+		d := c.paint(gtx, s)
+		s.DrawPseudo(gtx, false, float32(gtx.Dp(2)), 0, float32(d.Size.Y)) // after the pill's 2px
+		return d
+	})
 }
 
 func (c *compRef) channelProps() slackc.Props {

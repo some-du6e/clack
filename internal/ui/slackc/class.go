@@ -793,6 +793,57 @@ func (s Styled) Wrap(gtx layout.Context, w layout.Widget) layout.Dimensions {
 	return wrapNative(gtx, s.s, w)
 }
 
+// WrapOwnPseudo is Wrap for a native that lays out its box
+// pseudo-elements among its own parts (Pseudo, DrawPseudo): a mention
+// pill draws a ::before picture inside its pill, as CSS puts it inside
+// the slug's box. Text ::before/::after content is still Wrap's.
+func (s Styled) WrapOwnPseudo(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	if s.s == nil || !s.Active() {
+		return w(gtx)
+	}
+	if s.s.style.Display == css.DisplayNone {
+		return layout.Dimensions{}
+	}
+	return wrapNativeX(gtx, s.s, w, true)
+}
+
+// Pseudo is the size in px of the native's ::before (or ::after) when it
+// generates a box rather than text (content set to an empty string, with
+// a size: MentionProfiles' 1em picture), margins included; ok is false
+// when there's none.
+func (s Styled) Pseudo(gtx layout.Context, after bool) (w, h float32, ok bool) {
+	pb := s.pseudoBox(gtx, after)
+	if pb == nil {
+		return 0, 0, false
+	}
+	return pb.m[3] + pb.w + pb.m[1], pb.m[0] + pb.h + pb.m[2], true
+}
+
+// DrawPseudo paints the box Pseudo measured with its margin box at x,
+// centred in a line lineH tall from y (vertical-align: middle).
+func (s Styled) DrawPseudo(gtx layout.Context, after bool, x, y, lineH float32) {
+	pb := s.pseudoBox(gtx, after)
+	if pb == nil {
+		return
+	}
+	p := painter{v: wrapState.v, ops: gtx.Ops, clip: noClip}
+	p.wrapPseudo(pb, x, y, lineH)
+}
+
+func (s Styled) pseudoBox(gtx layout.Context, after bool) *box {
+	if s.s == nil {
+		return nil
+	}
+	st := s.s.before
+	if after {
+		st = s.s.after
+	}
+	if st == nil {
+		return nil
+	}
+	return wrapPseudo(wrapView(gtx), st, float32(gtx.Constraints.Max.X))
+}
+
 // WrapRounded is Wrap for a native that rounds its own box (a menu, a
 // popover, a modal card) as Slack's own stylesheet rounds the element
 // (.c-menu{border-radius:4px}, .c-sk-modal{border-radius:8px}): a rule's

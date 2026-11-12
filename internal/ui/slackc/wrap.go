@@ -40,11 +40,22 @@ func wrapBox(ns *nativeStyle) *box {
 }
 
 func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dimensions {
+	return wrapNativeX(gtx, ns, w, false)
+}
+
+// wrapView is the View wrapNative measures and paints with.
+func wrapView(gtx layout.Context) *View {
 	if wrapState.v == nil {
 		wrapState.v = NewView(0)
 	}
-	v := wrapState.v
-	v.setMetrics(gtx)
+	wrapState.v.setMetrics(gtx)
+	return wrapState.v
+}
+
+// wrapNativeX is wrapNative; ownPseudo leaves box pseudo-elements to the
+// native (Styled.WrapOwnPseudo).
+func wrapNativeX(gtx layout.Context, ns *nativeStyle, w layout.Widget, ownPseudo bool) layout.Dimensions {
+	v := wrapView(gtx)
 	b := wrapBox(ns)
 	b.v = v
 	st := &b.st
@@ -69,14 +80,18 @@ func wrapNative(gtx layout.Context, ns *nativeStyle, w layout.Widget) layout.Dim
 	if ns.before != nil && ns.before.Content != "" {
 		bsh = word(v.face(ns.before), ns.before.Content)
 		bw = bsh.adv
-	} else if bbox = wrapPseudo(v, ns.before, cbW); bbox != nil {
-		bw = bbox.m[3] + bbox.w + bbox.m[1]
+	} else if !ownPseudo {
+		if bbox = wrapPseudo(v, ns.before, cbW); bbox != nil {
+			bw = bbox.m[3] + bbox.w + bbox.m[1]
+		}
 	}
 	if ns.after != nil && ns.after.Content != "" {
 		ash = word(v.face(ns.after), ns.after.Content)
 		aw = ash.adv
-	} else if abox = wrapPseudo(v, ns.after, cbW); abox != nil {
-		aw = abox.m[3] + abox.w + abox.m[1]
+	} else if !ownPseudo {
+		if abox = wrapPseudo(v, ns.after, cbW); abox != nil {
+			aw = abox.m[3] + abox.w + abox.m[1]
+		}
 	}
 
 	inner := cs

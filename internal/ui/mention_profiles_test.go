@@ -202,6 +202,19 @@ func TestSlickViewMentionProfilesFromLibrary(t *testing.T) {
 		return n >= 40
 	})
 	t.Logf("%d avatar pixels in the pill", n)
+	// inside the pill, as CSS has the ::before inside .c-member_slug: the
+	// pill's own (blue-tinted) background runs on left of the picture
+	x0, y0, y1 := e.size.X, e.size.Y, 0
+	for y := 0; y < e.size.Y; y++ {
+		for x := 0; x < e.size.X; x++ {
+			if c := img.RGBAAt(x, y); c.G > 0xc0 && c.R < 0x60 && c.B < 0x60 {
+				x0, y0, y1 = min(x0, x), min(y0, y), max(y1, y)
+			}
+		}
+	}
+	if c := img.RGBAAt(x0-2, (y0+y1)/2); int(c.B) <= int(c.R)+8 {
+		t.Errorf("the picture isn't inside the mention pill: left of it is %v, not the pill's background", c)
+	}
 	if d := os.Getenv("SLICK_SHOTS_DIR"); d != "" {
 		f, err := os.Create(filepath.Join(d, "mention-profiles-library.png"))
 		if err == nil {
