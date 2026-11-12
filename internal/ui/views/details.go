@@ -716,7 +716,8 @@ func (d *ChannelDetails) update(gtx C) {
 		d.setTabs() // the group changed under the open dialog
 	}
 
-	for _, c := range []*widget.Clickable{&d.addApp, &d.addWorkflow} {
+	d.updateAddApps(gtx) // "Add an App" / "Add agents and apps": the apps browser (details_more.go)
+	for _, c := range []*widget.Clickable{&d.addWorkflow} {
 		if c.Clicked(gtx) {
 			d.h.Toast(cdUnsupported)
 		}
