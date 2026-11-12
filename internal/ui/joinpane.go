@@ -113,6 +113,9 @@ func (a *App) footerFor(c *convo) footerKind {
 	case ci.Archived:
 		return footArchived
 	case ci.Preview:
+		if a.threadLockedCopy(c) != "" {
+			return footNone // ThreadFooter: the locked roadblock comes before nonMember's join
+		}
 		return footPreview
 	}
 	return footNone
@@ -585,9 +588,9 @@ func (a *App) closeArchived(ch string) {
 // ---- the composer's roadblock (posting restrictions, app DMs) ----
 
 // composerRoadblock sets the composer's MessageInputRoadblock message: a
-// read-only app DM's notice, or MessageInputAnnounceOnlyRoadblock's when
-// the viewer may not post here (top level: read-only or thread-only;
-// thread: read-only). Taut's readOnlyChannels/threadOnlyChannels patches
+// locked thread's (threadLockedCopy), a read-only app DM's notice, or
+// MessageInputAnnounceOnlyRoadblock's when the viewer may not post here
+// (top level: read-only or thread-only; thread: read-only). Taut's readOnlyChannels/threadOnlyChannels patches
 // (RestrictedChannelWarning) decide when a plugin wraps them.
 func (a *App) composerRoadblock(c *convo, comp composerView) {
 	r, ok := comp.(interface{ SetRoadblock(string) })
@@ -595,8 +598,8 @@ func (a *App) composerRoadblock(c *convo, comp composerView) {
 		return
 	}
 	link, _ := comp.(interface{ SetRoadblockLink(label, url string) })
-	msg, more := "", false
-	if c.ts == "" {
+	msg, more := a.threadLockedCopy(c), false
+	if msg == "" && c.ts == "" {
 		if dm := a.appDM(c.ch); dm != nil && dm.ReadOnly() {
 			msg = "Sending messages to this app has been turned off."
 		}
@@ -615,6 +618,26 @@ func (a *App) composerRoadblock(c *convo, comp composerView) {
 			link.SetRoadblockLink("", "")
 		}
 	}
+}
+
+// nsLockedThreads is useThreadLockedCopy's I18n namespace (boot-shared
+// `352G`).
+var nsLockedThreads = i18n.NS("locked_threads")
+
+// threadLockedCopy is MessageInputLockedThreadRoadblock's message for c
+// ("" unless c is a thread whose root is locked): ThreadFooter (`352G`)
+// draws it instead of the reply box when isThreadLocked (client-boot
+// `rZb1`, core.ThreadLocked), after the archived channel's alert and
+// before the other roadblocks and the join pane. useThreadLockedCopy
+// says reactions are off too under feat_flag_message_hide_replies.
+func (a *App) threadLockedCopy(c *convo) string {
+	if c.ts == "" || a.data == nil || a.data.core == nil || !a.data.core.ThreadLocked(c.ch, c.ts) {
+		return ""
+	}
+	if a.data.core.HideRepliesOn() {
+		return nsLockedThreads.T("Replies and reactions have been turned off for this thread.")
+	}
+	return nsLockedThreads.T("Replies have been turned off for this thread.")
 }
 
 // postingRestriction is what the viewer may not do in c's channel, cached

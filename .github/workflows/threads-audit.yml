@@ -34,6 +34,9 @@ on:
       - "internal/ui/popups/actions_thread.go"
       - "internal/core/manage.go"
       - "internal/core/thread_read_test.go"
+      - "internal/core/thread_lock*.go"
+      - "internal/ui/joinpane.go"
+      - "internal/ui/threads_locked_test.go"
       - "internal/fakeslack/threads_audit.go"
       - ".github/scripts/threads_ref.py"
       - ".github/workflows/threads-audit.yml"
@@ -60,7 +63,7 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS fonts-lato
       - name: core, the pane and the reply bar
         run: |
-          go test -count=1 -v -run 'TestThreadLastRead|TestDesktopNotificationForwarded' ./internal/core
+          go test -count=1 -v -run 'TestThreadLastRead|TestDesktopNotificationForwarded|TestThreadLocked|TestHideRepliesExperiment' ./internal/core
           go test -count=1 -v -run 'TestThreadsAudit|TestReplyBar|TestThreadHeader|TestThreadPane|TestThreadLoadingRepliesRow|TestThreadJumpToUnread' ./internal/ui/messages
       - name: notifications, width, Escape, with screenshots
         env:
