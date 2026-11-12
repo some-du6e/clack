@@ -102,12 +102,72 @@ type Notification struct {
 	// (shouldHideNotificationText).
 	PlainBody string
 	Actions   []NotifyAction
+	// What desktopHuddleNotificationOptions adds for the desktop shell
+	// (the Windows toast): the huddle's conversation, whose picture it
+	// shows (the inviter's; yours on a missed one), the call, and
+	// actionButtons in Slack's order, where a button with no URI is the
+	// toast's own dismiss.
+	Channel, User, Call string
+	Missed              bool
+	Buttons             []NotifyAction
 }
 
-// NotifyAction is one of a notification's buttons.
+// NotifyAction is one of a notification's buttons. URI is its
+// actionButtons launchUri (Buttons only).
 type NotifyAction struct {
 	Key, Label string
+	URI        string
 	Do         func()
+}
+
+// The namespaces of Slack's notification strings (boot-shared gaJC):
+// growl (eA) for sharedHuddleNotificationOptions' text and
+// desktopHuddleNotificationOptions' buttons, notifications (e2) for
+// showHuddleMissedNotification's buttons.
+var (
+	nsGrowl         = i18n.NS("growl")
+	nsNotifications = i18n.NS("notifications")
+)
+
+// expNotificationActions is desktop_notification_actions (awVE's Ky):
+// Slack's notification ids and groups, translated button labels, and an
+// invite's Decline button.
+const expNotificationActions = "desktop_notification_actions"
+
+// Slack's notification buttons (awVE's K4) and the ones a huddle invite
+// and a missed one get (its s table: Huddle Dismiss, Join, Decline;
+// HuddleMissed Dismiss, View).
+const (
+	notifyDismiss = "Dismiss"
+	notifyJoin    = "Join"
+	notifyDecline = "Decline"
+	notifyView    = "View"
+)
+
+// notifyButtons is buildNotificationActionButtons: keys with their
+// launch URIs, labelled through ns under desktop_notification_actions
+// and with the bare keys otherwise.
+func (c *Controller) notifyButtons(ns i18n.NS, keys []string, uri map[string]string, do map[string]func()) []NotifyAction {
+	on := c.on(expNotificationActions)
+	var out []NotifyAction
+	for _, k := range keys {
+		label := k
+		if on {
+			label = ns.T(k)
+		}
+		out = append(out, NotifyAction{Key: k, Label: label, URI: uri[k], Do: do[k]})
+	}
+	return out
+}
+
+// teamID is the signed-in team's id.
+func (c *Controller) teamID() string {
+	if app := c.h.Core(); app != nil {
+		app.S.RLock()
+		defer app.S.RUnlock()
+		return app.S.TeamID
+	}
+	return ""
 }
 
 // notifyHost is the ui root's desktop notifications.
@@ -232,7 +292,9 @@ func (c *Controller) mayNotifyHuddle(ch string, dnd bool) bool {
 // desktopHuddleNotificationOptions.
 func (c *Controller) inviteNotification(inv *incoming) Notification {
 	who := c.displayName(inv.Sender)
-	plain := nsHuddles.T("{memberName} is inviting you to a huddle", "memberName", who)
+	// sharedHuddleNotificationOptions (growl; the topic forms aren't
+	// ported: Clack reads no huddle topic here)
+	plain := nsGrowl.T("{memberName} is inviting you to a huddle", "memberName", who)
 	body := plain
 	if app := c.h.Core(); app != nil {
 		if conv, ok := app.Conv(inv.Channel); ok {
@@ -248,19 +310,29 @@ func (c *Controller) inviteNotification(inv *incoming) Notification {
 					}
 				}
 				if len(others) > 0 {
-					body = nsHuddles.T("{senderName} is inviting you to a huddle with {mpdmMembers}", "senderName", who, "mpdmMembers", joinNames(others))
+					body = nsGrowl.T("{memberName} is inviting you to a huddle with {otherMemberNamesString}", "memberName", who, "otherMemberNamesString", joinNames(others))
 				}
 			case "im":
 			default:
-				body = nsHuddles.T("{senderName} is inviting you to a huddle in {channelName}", "senderName", who, "channelName", c.channelTitle(inv.Channel))
+				body = nsGrowl.T("{memberName} is inviting you to a huddle in {channelDisplayName}", "memberName", who, "channelDisplayName", c.channelTitle(inv.Channel))
 			}
 		}
 	}
 	ch := inv.Channel
+	join := func() { c.post(func() { c.joinInviteIn(ch, "") }) }
+	// desktopHuddleNotificationOptions: Dismiss, Join (slack://huddle…),
+	// and Decline only under desktop_notification_actions (m.slice(0,-1)
+	// otherwise). Decline has no launch URI: on Windows it only closes
+	// the toast.
+	buttons := c.notifyButtons(nsGrowl, []string{notifyDismiss, notifyJoin, notifyDecline},
+		map[string]string{notifyJoin: "slack://huddle?id=" + ch + "&team=" + c.teamID()}, map[string]func(){notifyJoin: join})
+	if !c.on(expNotificationActions) {
+		buttons = buttons[:2]
+	}
 	return Notification{Title: c.workspaceName(), Body: body, PlainBody: plain, Actions: []NotifyAction{
-		{Key: "join", Label: nsHuddles.T("Join"), Do: func() { c.post(func() { c.joinInviteIn(ch, "") }) }},
+		{Key: "join", Label: nsHuddles.T("Join"), Do: join},
 		{Key: "decline", Label: nsHuddles.T("Decline"), Do: func() { c.post(func() { c.respondInviteIn(ch, "decline") }) }},
-	}}
+	}, Channel: ch, User: inv.Sender, Call: inv.Call, Buttons: buttons}
 }
 
 // inviteMissed is handleHuddleMissedCallNotification, 30 s on.
@@ -284,9 +356,14 @@ func (c *Controller) inviteMissed(inv *incoming) {
 		}
 	}
 	ch := inv.Channel
+	view := func() { c.post(func() { c.h.Navigate("c/" + ch) }) }
+	// showHuddleMissedNotification: desktopHuddleNotificationOptions with
+	// your own picture, and Dismiss and View (slack://channel…) always
 	c.notify(Notification{Title: title, Body: body, PlainBody: body, Actions: []NotifyAction{
-		{Key: "view", Label: "View", Do: func() { c.post(func() { c.h.Navigate("c/" + ch) }) }},
-	}})
+		{Key: "view", Label: "View", Do: view},
+	}, Channel: ch, User: c.selfID(), Call: inv.Call, Missed: true,
+		Buttons: c.notifyButtons(nsNotifications, []string{notifyDismiss, notifyView},
+			map[string]string{notifyView: "slack://channel?team=" + c.teamID() + "&id=" + ch}, map[string]func(){notifyView: view})})
 }
 
 // clearInvite is clearInviteForChannelId: the window closes, the card

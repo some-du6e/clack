@@ -55,12 +55,12 @@ func TestPrefsAuditAppliedRoundTripSounds(t *testing.T) {
 	waitFor(t, a, "desktop_sound", func() bool {
 		return fakeNotify(fs, "desktop_sound") == "hummus.mp3" && ca.GlobalNotifyString("desktop_sound") == "hummus.mp3"
 	})
-	a.notifyMessage("t", "b")
+	a.notifyMessage("t", "b", nil)
 	waitFor(t, a, "the message sound", func() bool { return reflect.DeepEqual(snd.got(), []string{"hummus.mp3"}) })
 
 	p.setPref("mute_sounds", true)
 	waitFor(t, a, "mute_sounds", func() bool { v, _ := fs.Pref("mute_sounds"); return v == true && ca.PrefBool("mute_sounds", false) })
-	a.notifyMessage("t", "b")
+	a.notifyMessage("t", "b", nil)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(snd.got()); n != 1 {
 		t.Fatalf("a sound played with mute_sounds on: %v", snd.got())
@@ -76,7 +76,7 @@ func TestPrefsAuditAppliedRoundTripSounds(t *testing.T) {
 
 	// DND holds the sound (canPlaySound)
 	ca.SetDNDStatus(core.DNDStatus{SnoozeEnabled: true, SnoozeEnd: time.Now().Add(time.Hour).Unix()})
-	a.notifyMessage("t", "b")
+	a.notifyMessage("t", "b", nil)
 	time.Sleep(50 * time.Millisecond)
 	if n := len(snd.got()); n != 1 {
 		t.Fatalf("a sound played under DND: %v", snd.got())

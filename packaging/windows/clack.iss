@@ -77,12 +77,26 @@ Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreve
 Source: "README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+; The icon Windows shows for Clack's toasts and in Settings > System >
+; Notifications: the app id registration below names it. Clack.exe writes
+; the same file when it's missing (internal/desktop/aumid_windows.go).
+Source: "..\..\assets\icon\clack-128.png"; DestDir: "{localappdata}\Clack"; DestName: "clack.png"; Flags: ignoreversion
 
 [Icons]
+; No AppUserModelID here: toasts find Clack through its registry
+; registration below, and an id on the shortcut (with the matching one the
+; process would then have to set) would split taskbar pins made before it.
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Slack client"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
+; Clack's AppUserModelID, for toasts: Windows drops a toast from an app id
+; it doesn't know. An unpackaged app registers its id here (DisplayName and
+; IconUri, REG_EXPAND_SZ, as the Windows App SDK's RegisterAssets writes
+; them). Clack.exe writes the same values before its first toast
+; (internal/desktop/aumid_windows.go).
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\io.github.some-du6e.clack"; ValueType: expandsz; ValueName: "DisplayName"; ValueData: "Clack"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\io.github.some-du6e.clack"; ValueType: expandsz; ValueName: "IconUri"; ValueData: "{localappdata}\Clack\clack.png"
 ; Clack as a slack:// handler Windows can offer, per user (Default
 ; Programs: an application-specific ProgID, Capabilities with
 ; URLAssociations, RegisteredApplications; the same keys Slick's installer

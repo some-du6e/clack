@@ -274,6 +274,9 @@ var experimentReads = map[string][]string{
 	// prefs, status, focus, notifications, emoji picker
 	"emoji_skin_tone_picker_improvement": on, "focus_mode_custom_duration": {"treatment"},
 	"defer_notification_3p_streaming": on,
+	// desktop notifications (ui/notify.go, huddleui/invite.go): Slack's
+	// notification ids and groups, translated buttons, an invite's Decline
+	"desktop_notification_actions": on,
 	// files
 	"file_trash_updates": on,
 	// menus, selects and buttons (ui/popups/experiments.go): the v2 Button,
