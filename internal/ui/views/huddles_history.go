@@ -321,11 +321,8 @@ func (v *Huddles) historyRow(gtx C, h *core.Huddle, first, last bool) D {
 		func() {
 			defer opOffset(gtx, image.Pt(pad, gtx.Dp(10))).Pop()
 			s := gtx.Dp(36)
-			tile := flatten(argb(0x0f1d1c1d), bg)
+			tile := v.sk("sk_foreground_soft", 0x0f, bg) // rgba(foreground_soft, .06)
 			ic := v.tok("dt_color-content-pry")
-			if v.th.Dark {
-				tile = flatten(argb(0x0fe8e8e8), bg)
-			}
 			if missed {
 				tile, ic = v.tok("dt_color-base-imp"), imp
 			}

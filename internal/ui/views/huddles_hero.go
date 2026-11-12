@@ -122,7 +122,7 @@ func (v *Huddles) layoutHero(gtx C) D {
 	textW := max(0, leftW-padL-padR)
 	// the text column, recorded to measure it
 	fg := v.tok("dt_color-content-pry")
-	body := flatten(theme.WithAlpha(fg, 0xb3), bg) // rgba(foreground_max, .7)
+	body := v.sk("sk_foreground_max", 0xb3, bg) // rgba(foreground_max, .7)
 	m := recordTo(gtx, func(gtx C) D {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(textW, 1<<20)}
 		return col(gtx,

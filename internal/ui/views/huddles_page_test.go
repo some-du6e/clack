@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -382,6 +384,15 @@ func TestHuddlesPagePaginates(t *testing.T) {
 	if n := len(v.state().ended); n != 30 {
 		t.Fatalf("first page %d huddles, want 30", n)
 	}
+	// a wheel scroll down the list brings BackToTop up
+	env.e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(500, 600)},
+		pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(500, 600), Scroll: f32.Pt(0, 900)})
+	env.e.frame()
+	env.e.frame()
+	if !v.backTop {
+		t.Errorf("no back-to-top button after scrolling (position %+v)", v.list.Position)
+	}
+	hpShot(t, env, "huddles-page-scrolled", false)
 	v.paginate()
 	env.e.until(t, "the second page", func() bool { return len(v.state().ended) == 35 })
 	cs := env.fs.HuddleHistoryCalls()
@@ -487,6 +498,32 @@ func TestHuddlesPageLiveCardsLikeSlack(t *testing.T) {
 		}
 		env.e.until(t, "the backgrounds", func() bool { return v.backgroundURL("STAR_GAZING", true) != "" })
 		hpShot(t, env, "huddles-page-live", dark)
+	}
+	// four live huddles: three cards, then "Show more live huddles"
+	rooms := map[string]string{"R0HUDLIVE11": hpDesign, "R0HUDLIVE12": hpLaunch, "R0HUDLIVE13": hpPlanning, "R0HUDLIVE14": hpDMAda}
+	env := hpStart(t, false, image.Pt(1000, 900), func(_ *core.App, fs *fakeslack.Server) {
+		fs.SetHuddleHistory(hpHistory(now))
+		for id, ch := range rooms {
+			fs.SetHuddleInfo(id, fakeslack.HuddleFixture{"id": id, "date_start": now.Add(-10 * time.Minute).Unix(), "channels": []string{ch},
+				"participants": []string{hpGrace, hpLinus, hpMargaret, hpAda}, "participant_history": []string{hpGrace, hpLinus},
+				"background_id": "ARIZONA"})
+		}
+	})
+	for id, ch := range rooms {
+		raw, _ := json.Marshal(map[string]any{"type": "sh_room_join", "user": hpGrace, "room": map[string]any{
+			"id": id, "date_start": now.Add(-10 * time.Minute).Unix(), "participants": []string{hpGrace, hpLinus, hpMargaret, hpAda},
+			"channels": []string{ch}}})
+		env.app.Inject(slack.Event{Type: "sh_room_join", Channel: json.RawMessage(strconv.Quote(ch)), Raw: raw})
+	}
+	env.e.until(t, "four live huddles", func() bool { return len(env.v.pageLive()) == 4 })
+	if _, shown := env.v.liveLimits(layout.Context{}, 4); shown != 3 {
+		t.Errorf("%d live cards shown, want 3 before Show more", shown)
+	}
+	env.e.until(t, "the cards' info", func() bool { return len(env.fs.HuddleGetCalls()) >= 3 })
+	hpShot(t, env, "huddles-page-live-more", false)
+	env.v.moreLive = true
+	if _, shown := env.v.liveLimits(layout.Context{}, 4); shown != 4 {
+		t.Errorf("%d live cards shown after Show more, want 4", shown)
 	}
 	for secs, want := range map[int64]string{0: "0 sec", 95: "1 min 35 sec", 3600: "1 hour", 3725: "1 hour 2 min 5 sec", 90061: "1 day 1 hour 1 min 1 sec"} {
 		if got := hdDuration(secs); got != want {

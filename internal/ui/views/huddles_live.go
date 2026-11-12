@@ -17,7 +17,6 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
-	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The live part of the page: HuddlesActiveSection (Igs2) with its
@@ -332,9 +331,8 @@ func (v *Huddles) liveButton(gtx C, c *widget.Clickable, w int, in bool) D {
 		case in && c.Hovered():
 			bg, fg, label = v.tok("dt_color-base-inv-imp"), v.tok("dt_color-constants-white"), "Leave"
 		case in:
-			base := v.tok("dt_color-base-pry")
-			bg = flatten(theme.WithAlpha(v.tok("dt_color-content-pry"), 0x21), base)
-			fg = flatten(theme.WithAlpha(v.tok("dt_color-content-pry"), 0xb3), bg)
+			bg = v.sk("sk_foreground_low", 0x21, v.tok("dt_color-base-pry"))
+			fg = v.sk("sk_foreground_max", 0xb3, bg)
 			label, icon = nsHuddles.T("Joined"), "headphones"
 		default:
 			bg, fg = v.tok("dt_color-base-inv-hgl-2"), v.tok("dt_color-content-inv-pry")

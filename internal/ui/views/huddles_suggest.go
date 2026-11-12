@@ -240,7 +240,7 @@ func (v *Huddles) suggestionTile(gtx C, uid, bgURL string) D {
 // .13) and 0 1px 3px #00000014.
 func (v *Huddles) cardShadow(gtx C, r image.Rectangle, rad int) {
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(1))), rad, gtx.Dp(3), argb(0x14000000))
-	ring := flatten(theme.WithAlpha(v.tok("dt_color-content-pry"), 0x21), v.tok("dt_color-base-sec"))
+	ring := v.sk("sk_foreground_low", 0x21, v.tok("dt_color-base-sec"))
 	border(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+max(1, gtx.Dp(1)), max(1, gtx.Dp(1)), ring)
 }
 
@@ -258,7 +258,7 @@ func (v *Huddles) startDisplay(gtx C, shown bool, bg color.NRGBA) D {
 	rad := gtx.Dp(6)
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(6))), rad, gtx.Dp(12), argb(0x14000000))
 	rrect(gtx, r, rad, v.tok("dt_color-base-pry"))
-	border(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+1, max(1, gtx.Dp(1)), flatten(theme.WithAlpha(v.tok("dt_color-content-pry"), 0x21), bg))
+	border(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+1, max(1, gtx.Dp(1)), v.sk("sk_foreground_low", 0x21, bg))
 	g := gtx
 	g.Constraints = layout.Exact(sz)
 	layout.Center.Layout(g, func(gtx C) D { return v.label(gtx, 15, wBold, v.tok("dt_color-content-pry"), label) })
@@ -414,7 +414,7 @@ func (v *Huddles) channelSuggestion(gtx C, c core.Conv, first, last bool) D {
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D {
 					s := gtx.Dp(36)
-					rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), flatten(argb(0x0f1d1c1d), bg))
+					rrect(gtx, image.Rect(0, 0, s, s), gtx.Dp(8), v.sk("sk_foreground_soft", 0x0f, bg))
 					gg := gtx
 					gg.Constraints = layout.Exact(image.Pt(s, s))
 					layout.Center.Layout(gg, func(gtx C) D { return v.icon(gtx, "channel", 20, v.tok("dt_color-content-pry")) })

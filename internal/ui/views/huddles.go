@@ -269,6 +269,18 @@ func (v *Huddles) tok(name string) color.NRGBA {
 // tokOver is tok flattened over bg (Gio blends in linear RGB).
 func (v *Huddles) tokOver(name string, bg color.NRGBA) color.NRGBA { return flatten(v.tok(name), bg) }
 
+// sk is one of Slack's legacy rgba(var(--sk_…), a) colours (the
+// variable is an "r, g, b" triple per mode: --sk_foreground_soft is
+// "232, 232, 232" in dark) flattened over bg.
+func (v *Huddles) sk(name string, a uint8, bg color.NRGBA) color.NRGBA {
+	c, ok := css.ParseColor(css.SlackVars(v.th.Dark)["--"+name])
+	if !ok {
+		c = v.tok("dt_color-content-pry")
+	}
+	c.A = a
+	return flatten(c, bg)
+}
+
 // ---- live huddles ----
 
 func (v *Huddles) subscribe() {
