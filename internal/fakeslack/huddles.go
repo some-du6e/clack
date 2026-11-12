@@ -33,6 +33,7 @@ type huddleState struct {
 	ims       map[string]string
 	responses []url.Values // rooms.inviteResponse forms
 	dnd       map[string]any
+	page      huddlePageState // the Huddles page's API (huddles_page.go)
 }
 
 // InviteResponses returns the rooms.inviteResponse calls so far.
@@ -72,6 +73,9 @@ func (s *Server) OpenedDMs() []string {
 }
 
 func (s *Server) handleHuddles(method string, f url.Values) (any, bool) {
+	if out, ok := s.handleHuddlesPage(method, f); ok {
+		return out, true
+	}
 	h := &s.hud
 	switch method {
 	case "rooms.getLink":

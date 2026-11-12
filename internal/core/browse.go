@@ -69,6 +69,27 @@ type Huddle struct {
 	History             []string // everyone who joined
 	Start, End          int64
 	Active, DM          bool
+
+	// The rest are the huddle object's fields the Huddles page reads
+	// (huddles.history, huddles.get).
+	HasEnded         bool
+	ThreadTS         string   // thread_root_ts: the huddle message
+	TranscriptFileID string   // transcript_file_id: the AI notes canvas
+	RecordingType    string   // recording.recording_type
+	FileIDs          []string // artifacts.file_ids
+	Links            []HuddleLink
+	AttachedFileIDs  []string // attached_file_ids
+	// Missed is missed_participants' keys: the people who were invited
+	// and didn't come.
+	Missed       []string
+	ChannelType  string         // channel_type: channel | private | im | mpim | file | other | …
+	AccessByUser map[string]int // access_type_by_user
+	BackgroundID string         // background_id
+}
+
+// HuddleLink is one of a huddle's artifacts.links.
+type HuddleLink struct {
+	URL, Title, IconURL string
 }
 
 // SentPage is a page of Drafts & sent → Sent.
@@ -373,12 +394,51 @@ type huddleRaw struct {
 	Channels           []string `json:"channels"`
 	IsDMCall           bool     `json:"is_dm_call"`
 	HasEnded           bool     `json:"has_ended"`
+
+	ThreadRootTS     string `json:"thread_root_ts"`
+	TranscriptFileID string `json:"transcript_file_id"`
+	Recording        *struct {
+		RecordingType string `json:"recording_type"`
+	} `json:"recording"`
+	Artifacts *struct {
+		FileIDs []string `json:"file_ids"`
+		Links   []struct {
+			URL     string `json:"url"`
+			Title   string `json:"title"`
+			IconURL string `json:"icon_url"`
+		} `json:"links"`
+	} `json:"artifacts"`
+	AttachedFileIDs    []string                   `json:"attached_file_ids"`
+	MissedParticipants map[string]json.RawMessage `json:"missed_participants"`
+	ChannelType        string                     `json:"channel_type"`
+	AccessTypeByUser   map[string]int             `json:"access_type_by_user"`
+	BackgroundID       string                     `json:"background_id"`
 }
 
 func (r *huddleRaw) huddle() Huddle {
-	return Huddle{ID: r.ID, Name: r.Name, CreatedBy: r.CreatedBy, Channels: r.Channels,
+	h := Huddle{ID: r.ID, Name: r.Name, CreatedBy: r.CreatedBy, Channels: r.Channels,
 		Participants: r.Participants, History: r.ParticipantHistory, Start: r.DateStart, End: r.DateEnd,
-		Active: r.DateEnd == 0 && !r.HasEnded && len(r.Participants) > 0, DM: r.IsDMCall}
+		Active: r.DateEnd == 0 && !r.HasEnded && len(r.Participants) > 0, DM: r.IsDMCall,
+		HasEnded: r.HasEnded, ThreadTS: r.ThreadRootTS, TranscriptFileID: r.TranscriptFileID,
+		AttachedFileIDs: r.AttachedFileIDs, ChannelType: r.ChannelType, AccessByUser: r.AccessTypeByUser,
+		BackgroundID: r.BackgroundID}
+	if r.Recording != nil {
+		h.RecordingType = r.Recording.RecordingType
+	}
+	if r.Artifacts != nil {
+		h.FileIDs = r.Artifacts.FileIDs
+		for _, l := range r.Artifacts.Links {
+			h.Links = append(h.Links, HuddleLink{URL: l.URL, Title: l.Title, IconURL: l.IconURL})
+		}
+	}
+	if len(r.MissedParticipants) > 0 {
+		h.Missed = make([]string, 0, len(r.MissedParticipants))
+		for id := range r.MissedParticipants {
+			h.Missed = append(h.Missed, id)
+		}
+		sort.Strings(h.Missed)
+	}
+	return h
 }
 
 // ParseHuddle decodes a huddle room: an sh_room_* event ({room} or
@@ -438,23 +498,7 @@ func (a *App) ensureHuddleUsers(ctx context.Context, hs []Huddle) {
 // (huddles.history, as Slack's Huddles page calls it). Pass next back as
 // cursor; "" means no more.
 func (a *App) HuddleHistory(ctx context.Context, cursor string) ([]Huddle, string, error) {
-	p := url.Values{"limit": {"30"}}
-	if cursor != "" {
-		p.Set("cursor", cursor)
-	}
-	var res struct {
-		Huddles []json.RawMessage `json:"huddles"`
-		Rooms   []json.RawMessage `json:"rooms"`
-		Meta    struct {
-			NextCursor string `json:"next_cursor"`
-		} `json:"response_metadata"`
-	}
-	if err := a.C.Call(ctx, "huddles.history", p, &res); err != nil {
-		return nil, "", err
-	}
-	out := parseHuddles(append(res.Huddles, res.Rooms...), false)
-	a.ensureHuddleUsers(ctx, out)
-	return out, res.Meta.NextCursor, nil
+	return a.HuddleHistoryPage(ctx, HuddleHistoryOpts{Cursor: cursor})
 }
 
 // parseActiveHuddles decodes an edge huddles/list response.

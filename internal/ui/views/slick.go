@@ -10,8 +10,6 @@ package views
 import (
 	"encoding/json"
 
-	"gioui.org/layout"
-
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
@@ -373,10 +371,10 @@ func (d *Directories) peopleOverride(p slackc.Props, us []core.User) []core.User
 //
 // The live call's components (HuddleMvaWindowTitle, HuddleBottomBarContent,
 // HuddleRecordingIndicator, BaseDrawRenderer, HuddleMiniPanel) are patch
-// points in huddleui's call window and sidebar bar. A live huddle's row on
-// the Huddles page keeps the join point:
+// points in huddleui's call window and sidebar bar. A live huddle's card
+// on the Huddles page keeps the join point:
 //
-//	HuddleInviteWindowWithPreviewContent the Join button (onHuddleJoin)
+//	HuddleInviteWindowWithPreviewContent the card's Join Huddle (onHuddleJoin)
 
 func roomChannel(r huddleRoom) string {
 	if len(r.Channels) > 0 {
@@ -390,26 +388,11 @@ func huddleBase(r huddleRoom, part string) slackc.Props {
 	return slackc.Props{"$key": r.ID + "/" + part, "huddleId": r.ID, "channelId": roomChannel(r), "isActive": r.Active}
 }
 
-// huddleTitle is the live row's title. Slack's huddle window components
-// (HuddleMvaWindowTitle, HuddleBottomBarContent, HuddleRecordingIndicator,
-// BaseDrawRenderer, HuddleMiniPanel) are patch points in huddleui's real
-// call window and sidebar bar; this list row only joins.
-func (v *Huddles) huddleTitle(gtx C, r huddleRoom) D {
-	return v.label(gtx, 15, wBold, v.p.Text, v.roomTitle(r))
-}
-
-// huddleBar is the row's right side: faces, then the Join point.
-func (v *Huddles) huddleBar(gtx C, r huddleRoom) D {
-	return row(gtx, layout.Middle,
-		layout.Rigid(func(gtx C) D { return v.faces(gtx, r) }),
-		layout.Rigid(func(gtx C) D { return v.joinPoint(gtx, r) }),
-	)
-}
-
-// joinPoint: HuddleInviteWindowWithPreviewContent {channelId, huddleId,
-// onHuddleJoin}. The row's click joins through the onHuddleJoin a plugin
-// left (BetterHuddles notes the preview's devices, then calls Clack's).
-func (v *Huddles) joinPoint(gtx C, r huddleRoom) D {
+// joinPoint is HuddleInviteWindowWithPreviewContent {channelId, huddleId,
+// onHuddleJoin} around the live card's Join Huddle: its click joins
+// through the onHuddleJoin a plugin left (BetterHuddles notes the
+// preview's devices, then calls Clack's).
+func (v *Huddles) joinPoint(gtx C, r huddleRoom, w W) D {
 	return slackc.RenderLazy(gtx, "HuddleInviteWindowWithPreviewContent", func() slackc.Props {
 		p := huddleBase(r, "join")
 		id := r.ID
@@ -428,13 +411,13 @@ func (v *Huddles) joinPoint(gtx C, r huddleRoom) D {
 		} else {
 			delete(v.joinFn, r.ID)
 		}
-		// drawn, not a separate clickable: the whole row joins
-		return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D { return v.joinPill(gtx) })
+		return w(gtx)
 	})
 }
 
-// joinClicked is a click on a huddle row: through the plugin's
-// onHuddleJoin when the Join point is patched, else straight to join.
+// joinClicked is a click on a live card's Join Huddle: through the
+// plugin's onHuddleJoin when the Join point is patched, else straight to
+// join.
 func (v *Huddles) joinClicked(id string) {
 	if f, ok := v.joinFn[id]; ok && f.ID != 0 {
 		f.Call()
@@ -443,29 +426,37 @@ func (v *Huddles) joinClicked(id string) {
 	v.join(id)
 }
 
-// join starts Slack's startHuddle for the room (from its join preview
-// when the huddle is live).
+// join is the card's Join Huddle (use_on_start_or_join_huddle_with_speedbump,
+// entry point huddles_page_live_huddle_card).
 func (v *Huddles) join(id string) {
 	r, ok := v.roomByID(id)
-	if !ok {
+	if !ok || roomChannel(r) == "" {
 		huddleAttempt(v.h, v.tt, startHuddleArgs{HuddleID: id})
 		return
 	}
-	startHuddle(v.h, v.tt, startHuddleArgs{ChannelID: roomChannel(r), HuddleID: r.ID, FromJoinPreview: r.Active})
+	v.joinOrStart(roomChannel(r), &r, "huddles_page_live_huddle_card")
 }
 
 func (v *Huddles) roomByID(id string) (huddleRoom, bool) {
 	v.mu.Lock()
 	r, ok := v.live[id]
-	v.mu.Unlock()
-	if ok {
-		return r, true
+	if info, has := v.info[id]; has {
+		if len(info.Channels) == 0 {
+			info.Channels = r.Channels
+		}
+		if len(info.Participants) == 0 {
+			info.Participants = r.Participants
+		}
+		r, ok = info, true
 	}
-	recent, _, _ := v.recent.get()
-	for _, r := range recent {
-		if r.ID == id {
-			return r, true
+	if !ok {
+		for _, h := range v.hist.huddles {
+			if h.ID == id {
+				r, ok = h, true
+				break
+			}
 		}
 	}
-	return huddleRoom{}, false
+	v.mu.Unlock()
+	return r, ok
 }
