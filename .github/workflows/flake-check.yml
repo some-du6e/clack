@@ -56,6 +56,10 @@ on:
         description: "runs per test"
         required: false
         default: "20"
+      only:
+        description: "run only the jobs whose id starts with this (empty: all)"
+        required: false
+        default: ""
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run flake-check.yml --ref <branch>)
     paths:
@@ -99,6 +103,7 @@ env:
 
 jobs:
   go:
+    if: ${{ !inputs.only || startsWith('go', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -125,6 +130,7 @@ jobs:
           go test -cpu 1 -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
 
   image-send:
+    if: ${{ !inputs.only || startsWith('image-send', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -146,6 +152,7 @@ jobs:
         run: go test -cpu 1 -count=$COUNT -run 'TestImageOnlySendFlow$' ./internal/ui/composer
 
   search-recents:
+    if: ${{ !inputs.only || startsWith('search-recents', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -167,6 +174,7 @@ jobs:
         run: go test -cpu 1 -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
 
   huddle:
+    if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -182,6 +190,7 @@ jobs:
         run: go test -race -gcflags=all=-d=checkptr=0 -count=$COUNT -run 'TestCameraUnsupported$|TestNoLogAfterLeave$|TestFakeChime$' ./internal/huddle
 
   pixel:
+    if: ${{ !inputs.only || startsWith('pixel', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -205,6 +214,7 @@ jobs:
             ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/huddleui
 
   slick:
+    if: ${{ !inputs.only || startsWith('slick', inputs.only) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -250,6 +260,7 @@ jobs:
           go test -race -cpu 1 -count=$COUNT -timeout 30m -run 'TestSlickViewMessageLoggerThreads$' ./internal/ui/messages
 
   flakes-1111:
+    if: ${{ !inputs.only || startsWith('flakes-1111', inputs.only) }}
     name: "flakes-1111 ${{ matrix.test }}"
     runs-on: ubuntu-latest
     strategy:
@@ -303,6 +314,7 @@ jobs:
           exit $rc
 
   flakes-1112:
+    if: ${{ !inputs.only || startsWith('flakes-1112', inputs.only) }}
     name: "flakes-1112 ${{ matrix.test }}"
     runs-on: ubuntu-latest
     strategy:
@@ -336,6 +348,7 @@ jobs:
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
 
   flakes-1112-ole:
+    if: ${{ !inputs.only || startsWith('flakes-1112-ole', inputs.only) }}
     name: "flakes-1112 TestOLEFileDrop (windows-applog)"
     runs-on: windows-latest
     strategy:
@@ -358,4 +371,25 @@ jobs:
           CLACK_OLE_LATE_START_MS: ${{ matrix.late }}
           TEST: TestOLEFileDrop
           PKG: gioui.org/app
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
+  flakes-1112b-tray:
+    if: ${{ !inputs.only || startsWith('flakes-1112b-tray', inputs.only) }}
+    name: "flakes-1112b TestCloseToTrayWindow (windows-applog)"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "TestCloseToTrayWindow, every run counted"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog (no -race without cgo)
+          CLACK_WINDOWS_TRAY_TESTS: "1"
+          TEST: TestCloseToTrayWindow
+          PKG: ./internal/ui
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"

@@ -5,6 +5,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -61,6 +62,7 @@ func TestCloseToTrayWindow(t *testing.T) {
 	cache := filepath.Join(home, "cache")
 	hwnds := make(chan uintptr, 1)
 	var frames atomic.Int64
+	var destroyAt atomic.Int64 // DIAG: when App.Run saw DestroyEvent
 	images := imgcache.New(fs.Fetch, "", nil)
 	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), OnWindowEvent: func(e event.Event) {
 		switch e := e.(type) {
@@ -73,6 +75,8 @@ func TestCloseToTrayWindow(t *testing.T) {
 			}
 		case app.FrameEvent:
 			frames.Add(1)
+		case app.DestroyEvent:
+			destroyAt.Store(time.Now().UnixNano())
 		}
 	}}, images)
 	a.Attach(core.New(slack.New(fs.Creds()), store.New(cache)), cache)
@@ -149,6 +153,7 @@ func TestCloseToTrayWindow(t *testing.T) {
 	}
 
 	// 5. Quit Clack while hidden: the window closes and Run returns
+	quitAt := time.Now()
 	a.Quit()
 	select {
 	case err := <-done:
@@ -158,7 +163,18 @@ func TestCloseToTrayWindow(t *testing.T) {
 	case <-time.After(60 * time.Second):
 		t.Fatal("Quit didn't end Run")
 	}
+	returned := time.Now()
 	if exists() {
-		t.Error("the window outlived Quit")
+		// DIAG (flakes-1112b): how long the HWND outlives Run, and where
+		// every goroutine (the window thread's included) is meanwhile
+		buf := make([]byte, 1<<20)
+		buf = buf[:runtime.Stack(buf, true)]
+		for exists() && time.Since(returned) < 10*time.Second {
+			time.Sleep(time.Millisecond)
+		}
+		gone := time.Since(returned)
+		t.Logf("DIAG goroutines when Run returned:\n%s", buf)
+		t.Errorf("the window outlived Quit: DestroyEvent %v after Quit, Run returned %v after Quit, IsWindow true for %v more (still there: %v)",
+			time.Unix(0, destroyAt.Load()).Sub(quitAt), returned.Sub(quitAt), gone, exists())
 	}
 }
