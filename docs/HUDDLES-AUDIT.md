@@ -123,7 +123,7 @@ Slack build `4d0c78085232` (2026-11-10): the route's view HuddlesNewUserPage (hu
 | Joining from the page | use_on_start_or_join_huddle_with_speedbump: HuddleJoinSpeedbumpModal (`Joining a huddle?` / `Starting a huddle?`, `Don’t show this message again.` checked) unless it was ticked, then startHuddleWithConfirmation with the entry point | startHuddle | **fixed**. The tick lasts the session (Slack keeps it in localStorage) |
 | Suggested huddles | SuggestedHuddles: the unfiltered history's last week by conversation, most first, without group DMs, records, KTE, file or other conversations, live ones or ones you weren't in; dashed cards (surf-pry), faces at .5, `Start a huddle in #channel?`, `You huddled here N times in the last week`, `Start Huddle` on hover | none | **fixed** |
 | DM suggestions | HuddlesPageDmSuggestions: `Direct messages — Talk privately 1:1 with someone`, the People browser's first page (useBrowser PEOPLE: search.modules.people) without you, three HuddlesSuggestionTile cards (360 wide, the theme's url, your face and theirs at 60px, name with status emoji or presence, status text, `Start Huddle` on hover); a card opens HuddleInviteStartModal with the person picked, only when you have a DM with them | IM partners by priority on tints Clack made up | **fixed** (huddles_suggest.go). The third card's `@media (width<=1000px)` reads the view's width |
-| Invite teammates | HuddlesPageInviteTeammates when the browser has exactly one person: Slack's three teammate pictures and the user-add tile, `Invite teammates`, `Add teammates to huddle 1:1`, `Add coworkers` | none | **open**: drawn, but `Add coworkers` opens Slack's invite modal, which Clack doesn't have |
+| Invite teammates | HuddlesPageInviteTeammates when the browser has exactly one person: Slack's three teammate pictures and the user-add tile, `Invite teammates`, `Add teammates to huddle 1:1`, `Add coworkers` | none | **fixed** (gap-w4): drawn, and `Add coworkers` opens Slack's invite modal (openInviteModal, source huddles_page: `views/huddles_suggest.go` inviteTeammates, `popups/invite.go`) |
 | Channel suggestions | HuddlesPageChannelSuggestions with no history: `Channels — Meet with a whole team, or just let people drop in and out`, getChannelHuddleSuggestionsForNUX (the first three conversations of the store you're in that support huddles), 56px rows, `Start Huddle` on hover, HuddleInviteStartModal with the channel picked | channels by priority | **fixed**. Slack walks its store in insertion order; Clack's has none, so the snapshot's (by name) |
 | Recent huddles | PastHuddleSectionTitle (huddle_page_enhancements off) | `Recent — Huddles you were part of` | **fixed** |
 | Filters | FilterRow: FilterHuddleType (`All huddles` / `Missed huddles`), FilterHuddleWithUsers and FilterExcludeOthers, FilterHuddleIn as FilterPills; their lists (selected, `Clear all`, `Suggestions` from the history: yd0k, ZO7s); each change runs filterHuddleHistory: huddles.history with users, channels, start/end_date_ts, missed_huddles_only, users_only and has_* (transformFiltersForApi) | none | **fixed** (huddles_filters.go). The popovers' search boxes aren't drawn |
@@ -242,13 +242,13 @@ The account's huddle experiments (docs/EXPERIMENTS.md), against Slack build `4d0
 | huddle_join_from_preview | `zq6z` doesChannelSupportHuddlesWithReason: a channel you're previewing supports huddles only with it on | the button in every channel | **fixed** (SupportsHuddles; channel.go passes it to headerFit) |
 | huddles_awareness_timestamp | `T3hK` ChimeChannelBroadcaster sends field_timestamp_ms with it on; `OGIR` xP sorts raised hands by it | no timestamps | **fixed** (awareness.go; galleryOrder) |
 | huddles_link_v2 | `YCI0`: the sidebar Huddles link's count badge of unviewed huddle invites, cleared 600 ms after the page opens | none | **open**: Clack's sidebar link has no facepile and Clack keeps no huddle invite notifications |
-| huddles_discovery_calls | `GPML` CallMenu's `New: Try a huddle for quick informal discussions with your team.` (treatment) | none | **open**: no call apps menu |
+| huddles_discovery_calls | `GPML` CallMenu's `New: Try a huddle for quick informal discussions with your team.` and `Show me how` (treatment), drawn only when the menu has no huddle row (useGetCallMenuItems: `b && R.length > 0 && !O`) | none | **open**: CallMenu is ported since gap-w13 (`views/details_call.go`, `huddleui/menu.go`), but not this line; it shows only where huddles aren't offered, so it's rare (gap-audit-2, build 2cd9270e786c) |
 | huddles_mva_window | the huddle window as a multi-view window (secondary views) vs the legacy window's flexpanes (~30 modules) | MVA only | **open**: Clack's window has neither secondary views nor flexpanes, so off and on look the same |
 | huddles_screenshare_share_audio | `0S5z` ScreenPickerModal's `Share system audio` (shown when on, in the desktop app on macOS or Windows) | none | **fixed** (screenpicker.go): the checkbox when it's on and the capture can take system audio without Clack's own sound (macOS 13+: ScreenCaptureKit's excludesCurrentProcessAudio; Windows 10 build 20348+: WASAPI process loopback leaving Clack's process tree out); the share's content attendee then sends it as stereo Opus. Older Windows gets no checkbox (Slack captures all system audio there and cancels the echo) |
 
 ## Counts
 
-160 rows: 19 matched, 117 fixed, 24 open (gap-w9 split the camera and emoji picker rows). Fixed rows that still name an open remainder: the camera's allow_huddles_video reading and its no-camera note, the caret's `More call options` wording, the facepile inside the live tooltip, system audio on older Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
+160 rows: 19 matched, 118 fixed, 23 open (gap-w9 split the camera and emoji picker rows; gap-audit-2 found Invite teammates fixed by gap-w4). Fixed rows that still name an open remainder: the camera's allow_huddles_video reading and its no-camera note, the caret's `More call options` wording, the facepile inside the live tooltip, system audio on older Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
 
 The open rows and why:
 
@@ -266,12 +266,11 @@ The open rows and why:
 | Face crescent | the second face isn't clipped |
 | Suffix tooltip | no tooltip on the row's faces and badge |
 | Collapsed section | SectionHuddleIndicator isn't drawn |
-| Invite teammates | `Add coworkers` needs Slack's invite modal |
 | Collapsed filters | FiltersModal isn't drawn |
 | Megaphone | no megaphone API |
 | Upcoming | no calendar events |
 | huddles_link_v2 | no huddle invite notifications or link facepile in the sidebar |
-| huddles_discovery_calls | no call apps menu |
+| huddles_discovery_calls | CallMenu's discovery line (shown only without a huddle row) isn't drawn |
 | huddles_mva_window | no secondary views or flexpanes in the huddle window |
 | Presenter drawing | no host draw window, so no "Draw on your own screen" and isDrawEnabled stays false |
 | Wayland | the desktop portal (ScreenCast over PipeWire) isn't built; Wayland sessions have no capture |

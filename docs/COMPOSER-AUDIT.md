@@ -24,7 +24,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | No toolbar under "Format messages with markup" | Texty isn't WYSIWYG with `plain_text_mode` | same | **matched** |
 | Floating bar | TextyFloatingFormattingBar (ZGif): with the toolbar hidden, selecting text shows the same buttons above the selection (shouldToolbarShow, cj0/ calculateToolbarPosition) | none | **fixed** (exp-composer, floatbar.go: the toolbar's buttons in Slack's dark floating bar 5px above the selection, placed by calculateToolbarPosition; Escape hides it until the selection changes) |
 | Floating bar's bounds | the bar is portaled to the document's body and toolbarPositionDataForRect (7LIu) passes viewportWidth = documentElement.clientWidth: it keeps 10px from the window's right edge, so over a narrow composer it may pass the composer's; the centring tests compare the selection's window x with fractions of the editor's width | kept inside the composer, editor-relative tests, 5px and 10px unscaled | **fixed** (composer-2: `floatBarPos` in Slack's frames, the window's width from the ui root, dp-scaled gaps; TestFloatBarWindowBounds, `c2-floating-bar-window-*`) |
-| Simplified composer | the `composer_control_simplifications_*` experiments (47WU) fold Aa into an expanding strip, change the send button, the + and @ menus | not built | **open**: experiment-only, groups not known for the account |
+| Simplified composer | the `composer_control_simplifications_*` experiments (47WU) fold Aa into an expanding strip, change the send button, the + and @ menus | not built | **matched**: the test account is in none of the nine (`_m1`, `_emoji_gifs`, `_formatting_toolbar`, `_formatting_toolbar_slackbot`, `_mention_menu`, `_mention_menu_slackbot`, `_mention_menu_suggested_agents`, `_plus_menu`, `_send_button`; boot-shared, build 2cd9270e786c) per experiments.getByUser on 2026-11-10, so Slack draws the standard composer, as Clack does (gap-audit-2) |
 
 ## Live formatting (markdown shortcuts), links, lists, code, quotes
 
@@ -80,7 +80,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 |---|---|---|---|
 | Draft per conversation | MessageInput setDraft / drafts.create, update | in memory plus drafts sync (drafts_sync.go) | **matched** |
 | Draft indicator | sidebar pencil; ✎ count on Drafts & sent | drawn by the sidebar | **matched** |
-| Manage drafts in the composer | DraftManagementButton ("Manage drafts", "Save as draft") behind experimentDraftManagementInComposerEnabled | none | **open**: experiment-only |
+| Manage drafts in the composer | DraftManagementButton ("Manage drafts", "Save as draft") behind experimentDraftManagementInComposerEnabled | none | **matched**: the prop is client-boot's `gp` (`"treatment" === _Z(e, "draft_management_in_composer")`, build 2cd9270e786c), and the test account isn't assigned that experiment (experiments.getByUser, 2026-11-10), so Slack shows no button either (gap-audit-2) |
 | Schedule menu rows | BYKP + BQDv getScheduledSendMenuOptions picks by time block. Tuesday to Friday before 8:00 it offers Later today at 9:00 AM, from 8:00 to noon Later today at 1:00 PM, and Tuesday to Thursday afternoons Tomorrow at 9:00 AM, each followed by Monday at 9:00 AM; Friday afternoon to Sunday: Monday at 9:00 AM only; Mondays: the same with "Next Monday at 9:00 AM"; then a separator and "Custom time" | always Tomorrow / Monday / "Custom time…" | **fixed** (schedule_menu.go) |
 | 24-hour labels | `time24`: "Later today at 09:00", "Tomorrow  at 09:00" (Slack's double space), "Monday at 09:00" | 12-hour only | **fixed** |
 | A DM in another time zone | each row says "3:00 AM for Alice" (Mluw); at night for them (22:00 to 08:00, cCED) a row for their 9:00 leads (MemberSpecificSchedulingTime) | none | **fixed**; Slack also uses their Do Not Disturb, which Clack can't read for others: **open** |
@@ -95,7 +95,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 | Pasting files and images | onFilesSelected, pasted image | attach.go | **matched** (attach agent's) |
 | Edit file details (a pending file) | EditFileDialog (boot-shared e4hN): "Edit file details" ("Edit alt text" in the alt-text variant) with "Your organization requests…" under it when the team asks (alt_text_reminders), per file the image preview beside "File name" (required, 255) and, for images, "Description" (alt text, 10,000; Slack's subtext and Bixby Bridge placeholder), Next between images, Done or the caller's submit, "Would you like to save your work?" (Discard / Keep Editing); reached from the pending file viewer (SFhE / W9QH: the title and "Edit file details" in the header) and from the alt-text speed bump at send (6Lt3, with alt_text_reminders or a11y_show_alt_text_reminders: "Edit alt text" with "Send"); editFileApi sends files.edit {file, title, alt_txt, is_canvas_template} for an uploaded file, updatePendingFile keeps them for one still uploading; then maybeOpenAltTextRemindersModal | none | **fixed** (composer-2, editfile.go and the Lightbox's pending view; TestEditFileDetailsLikeSlack, TestAltTextSpeedBumpLikeSlack, `c2-edit-file-*`, `c2-edit-alt-text-*`, `c2-pending-viewer-*`). **open**: Slack AI's alt text generation (CX15 SR: ai_image_alt_text and the Slack AI permission, which the account lacks), the fields' validation messages and the page control |
 | Long paste | onPasteLimit: more than 5e4 refused; MessageInput's renderPasteLimitDialog "That’s a bit too long to paste" with "If you’d like you could **create a snippet** instead.", "Create a Snippet" (the snippet dialog with the paste) and OK | pasted anything (rich pastes over 40,000 went in as plain text) | **fixed**: refused, with Slack's dialog; on exp-composer its text and "Create a Snippet" too |
-| Markdown paste toasts | MarkdownPasteToast / MarkdownModePasteToast | none | **open**: not compared |
+| Markdown paste toasts | MarkdownPasteToast / MarkdownModePasteToast | none | **open**: traced (gap-audit-2, build 2cd9270e786c): TextyInput (boot-shared `KT9Q`) detects a Markdown paste only with `enableMarkdownPasteDetection`, which the composers pass from `useOpaqueBlockEmbeds` / the portable-content experiment, so it waits on `portable_content_composer` (docs/EXPERIMENTS.md), which Clack's composer can't do yet |
 
 ## Character limit
 
@@ -136,7 +136,7 @@ Status: **matched** (no change needed), **fixed** (on this branch), **open** (st
 
 ## Counts
 
-90 rows: 27 matched, 57 fixed, 13 open (after gap-w10). Seven rows are partly matched or fixed and partly open; they count under both.
+90 rows: 29 matched, 57 fixed, 11 open (after gap-w10, and gap-audit-2's two rows behind experiments the test account isn't in). Seven rows are partly matched or fixed and partly open; they count under both.
 
 gap-w10 (2026-11-12) checked the rows it fixed against CDN build d3de3a487b1c, fetched without a cookie. Module ids that moved since the audit's build: TextyInput's keyboard module and SlackMarkdown (fffk) are now in boot-shared `KT9Q`, and OF9+ (the markdown patterns) is client-boot `EkaK`; XmNU, 3D1w, rs9k, cRQG and 63o2 kept their ids.
 

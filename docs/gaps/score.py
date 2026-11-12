@@ -94,19 +94,32 @@ def plugins():
 
 # The roadmap's grep was "supported yet|available yet|in Clack yet"; this one
 # also catches the same toasts worded "… in yoloslack", "… here yet", "… on
-# this platform yet" and the create menu's unavailable("…") rows.
-GAP = r"(supported|available|edited)( [a-zA-Z]+)*( \" \+ AppName \+ \")? yet|n.t supported in (Clack|yoloslack)|unavailable\(\""
+# this platform yet" and the create menu's unavailable("…") rows. Since
+# gap-w4 (2026-11-11) the "… in yoloslack" toasts end in "+appName (the
+# popups and views constant "Clack"), which the first version of this grep
+# missed: six toasts and empty states dropped out of the count while still
+# in the code. The grep takes `"+appName` and `" + AppName + "` now, and
+# gap_messages() joins the pieces back into one string.
+APPNAME = r'"\s*\+\s*[aA]pp[nN]ame'
+GAP = (r"(supported|available|edited)( [a-zA-Z]+)*( ?" + APPNAME + r"\s*\+\s*\")? yet"
+       r"|n.t supported in (Clack|yoloslack|" + APPNAME + r")|unavailable\(\"")
 # Wordings of one gap counted once; the generic fallback (the roadmap
 # filtered those too) isn't a gap of its own.
 SAME_GAP = {'camera not supported on this platform yet': "camera isn't supported on this platform yet"}
 GENERIC = {'not supported yet'}
+def joined(line):
+    """One Go line with its string concatenations joined: appName reads as
+    Clack, any other call (d.teamName()) as {…}."""
+    line = re.sub(APPNAME + r'\s*\+\s*"', 'Clack', line)
+    line = re.sub(APPNAME + r'\b', 'Clack"', line)
+    return re.sub(r'"\s*\+\s*[\w.]+\(\)\s*\+\s*"', '{…}', line)
 def gap_messages():
-    msgs = set(re.findall(r'"([^"]*)"', '\n'.join(l for l in grep_code(GAP).splitlines() if not l.lstrip().startswith('//'))))
+    msgs = set(re.findall(r'"([^"]*)"', '\n'.join(joined(l) for l in grep_code(GAP).splitlines() if not l.lstrip().startswith('//'))))
     msgs = {m.strip() for m in msgs if re.search(r'yet|supported in|available$', m) and len(m.strip()) > 4}
     # one check per gap: the list field message comes as a format string and as a prefix
     out = {}
     for m in msgs:
-        key = re.sub(r'\s*\((%w\))?\s*$', '', m.lower()).strip()
+        key = re.sub(r'\s*\((%w|\{…\})?\)?\s*$', '', m.lower()).strip()
         key = SAME_GAP.get(key, key)
         if key not in GENERIC:
             out.setdefault(key, m)
