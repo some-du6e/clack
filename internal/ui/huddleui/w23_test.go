@@ -221,15 +221,22 @@ type prefLog struct {
 	got map[string]any
 }
 
-func stubPrefs(t *testing.T) *prefLog {
+// stubPrefs records pref writes and applies them on top of base (the
+// prefs the test set; setPrefs replaces the whole set).
+func stubPrefs(t *testing.T, base map[string]any) *prefLog {
 	l := &prefLog{got: map[string]any{}}
 	old := prefWriter
 	t.Cleanup(func() { prefWriter = old })
 	prefWriter = func(app *core.App, name string, v any) error {
 		l.mu.Lock()
 		l.got[name] = v
+		base[name] = v
+		all := map[string]any{}
+		for k, x := range base {
+			all[k] = x
+		}
 		l.mu.Unlock()
-		setPrefs(app, map[string]any{name: v})
+		setPrefs(app, all)
 		return nil
 	}
 	return l
@@ -244,7 +251,7 @@ func (l *prefLog) get(name string) (any, bool) {
 
 func TestLoungeBannerLikeSlack(t *testing.T) {
 	const W, H = 589, 351
-	pl := stubPrefs(t)
+	pl := stubPrefs(t, map[string]any{"huddles_play_music_when_last": true, "huddles_play_music_timeout": 1})
 	e, s, hk := soloEnv(t, true)
 	if !e.c.LoungeBanner() {
 		t.Fatal("no banner with the music on")
@@ -338,7 +345,9 @@ func TestLoungeBannerLikeSlack(t *testing.T) {
 	if v, _ := pl.get("huddles_play_music_when_last"); v != false {
 		t.Fatalf("huddles_play_music_when_last %v", v)
 	}
-	setPrefs(e.h.app, map[string]any{"huddles_play_music_when_last": true, "huddles_play_music_timeout": 1})
+	if err := prefWriter(e.h.app, "huddles_play_music_when_last", true); err != nil {
+		t.Fatal(err)
+	}
 	e.c.PlaySong("jazz")
 	avWaitFor(t, "jazz", func() bool { return e.c.MusicPlaying() })
 
@@ -475,6 +484,7 @@ func TestDockResponsiveButtonsLikeSlack(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		e, s := windowShotEnv(t, dark, 2)
+		withPictures(e) // the dock's raise-hand is Slack's emoji image
 		e.c.mu.Lock()
 		e.c.win = nil
 		e.c.mu.Unlock()
