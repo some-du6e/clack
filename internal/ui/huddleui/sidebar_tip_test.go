@@ -204,7 +204,7 @@ func TestSidebarFaceCrescent(t *testing.T) {
 }
 
 // Light and dark pictures of the row's tooltip and a collapsed section's
-// indicator with its tooltip (the channel named), five faces with "+3" on
+// indicator with its tooltip (the channel named), five faces with "+4" (8 - 5 + 1) on
 // the last for eight people, and a topic.
 func TestSidebarTooltipShots(t *testing.T) {
 	for _, dark := range []bool{false, true} {
