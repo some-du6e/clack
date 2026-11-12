@@ -2,6 +2,7 @@ package popups
 
 import (
 	"image"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/layout"
@@ -38,16 +39,54 @@ type ModalButton struct {
 	// Hidden, when it says so, leaves the button out of the footer (the
 	// Edit file dialog's Next on its last page, its Send before it).
 	Hidden func() bool
-	click  widget.Clickable
+	// Joined puts the button flush against the one before it, the two
+	// drawn as one group (Slack Kit's ButtonGroup, or the share dialog's
+	// legacy Forward with its schedule caret): the inner corners square.
+	Joined bool
+	// Draw, when set, draws the button instead of the c-button / v2
+	// Button (grp: its place in a Joined pair).
+	Draw func(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, ring bool, grp grpSide) layout.Dimensions
+	// Tip, when set, is the button's tooltip text (Slack's Tooltip around
+	// it: on top, after 150ms, at most 200px wide), asked every frame;
+	// TipHidden runs when the tooltip goes away (its onHide).
+	Tip       func() string
+	TipHidden func()
+	tip       TipState
+	tipUp     bool
+	rect      image.Rectangle // where it was drawn last frame (window coordinates)
+	click     widget.Clickable
 }
+
+// Rect is where the button was drawn last frame, in window coordinates
+// (a menu it opens anchors there).
+func (b *ModalButton) Rect() image.Rectangle { return b.rect }
 
 // draw lays the footer button out as kind (BtnDisabled when it can't be
 // pressed), with the keyboard focus ring when ring is set.
-func (b *ModalButton) draw(gtx layout.Context, th *theme.Theme, kind BtnKind, ring bool) layout.Dimensions {
-	if b.V2 != nil && b.V2() {
-		return buttonV2(gtx, th, &b.click, kind, theme.ButtonV2Medium, b.Label, b.Icon, ring)
+func (b *ModalButton) draw(gtx layout.Context, th *theme.Theme, kind BtnKind, ring bool, grp grpSide) layout.Dimensions {
+	if b.Draw != nil {
+		return b.Draw(gtx, th, &b.click, kind, ring, grp)
 	}
-	return button(gtx, th, &b.click, kind, BtnMedium, b.Label, b.Icon, 80, ring)
+	if b.V2 != nil && b.V2() {
+		return buttonV2Grp(gtx, th, &b.click, kind, theme.ButtonV2Medium, b.Label, b.Icon, ring, grp)
+	}
+	return buttonGrp(gtx, th, &b.click, kind, BtnMedium, b.Label, b.Icon, 80, ring, grp)
+}
+
+// tooltip draws b's Tip over it (the button at the current origin, size
+// sz), and runs TipHidden once it goes away.
+func (b *ModalButton) tooltip(gtx layout.Context, th *theme.Theme, sz image.Point) {
+	if b.Tip == nil {
+		return
+	}
+	b.tip.Delay, b.tip.MaxWidth = 150*time.Millisecond, 200
+	hovered := b.click.Hovered()
+	Tooltip(gtx, th, &b.tip, hovered, sz, Above, b.Tip(), "")
+	up := b.tip.Showing(gtx.Now)
+	if b.tipUp && !up && b.TipHidden != nil {
+		b.TipHidden()
+	}
+	b.tipUp = up
 }
 
 // ModalOpts configure a modal.
@@ -444,18 +483,35 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						if !b.enabled() {
 							kind = BtnDisabled
 						}
+						grp := grpNone
+						switch {
+						case b.Joined:
+							grp = grpLast
+						case i+1 < len(m.o.Buttons) && m.o.Buttons[i+1].Joined:
+							grp = grpFirst
+						}
 						ring := kind != BtnDisabled && m.ringOn(gtx, &b.click)
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
-							return b.draw(gtx, th, kind, ring)
+							return b.draw(gtx, th, kind, ring, grp)
+						})
+						p := image.Pt(x-d.Size.X, fy+footPad)
+						if b.Left {
+							p.X = lx
+						}
+						macroAt(gtx, call, p)
+						b.rect = image.Rectangle{Min: p, Max: p.Add(d.Size)}.Add(m.rect.Min)
+						at(gtx, p, func(gtx layout.Context) layout.Dimensions {
+							b.tooltip(gtx, th, d.Size)
+							return layout.Dimensions{}
 						})
 						if b.Left {
-							macroAt(gtx, call, image.Pt(lx, fy+footPad))
 							lx += d.Size.X + dp(gtx, 12)
 							continue
 						}
 						x -= d.Size.X
-						macroAt(gtx, call, image.Pt(x, fy+footPad))
-						x -= dp(gtx, 12)
+						if !b.Joined {
+							x -= dp(gtx, 12)
+						}
 					}
 					if m.o.FooterLeft != nil {
 						call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {

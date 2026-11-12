@@ -626,6 +626,10 @@ type DraftOpts struct {
 	// Attachments are the draft's message attachments (drafts.create's
 	// attachments: the composer's GIFs); nil sends "[]".
 	Attachments json.RawMessage
+	// NoDestination saves a draft addressed to no one yet (destinations
+	// []): the share dialog's Save Draft before a conversation is picked
+	// (Slack's saveDraft categorizes an empty selection).
+	NoDestination bool
 }
 
 // ScheduledMessage is a message waiting to be posted at PostAt (unix s).

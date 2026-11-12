@@ -40,8 +40,11 @@ type MenuItem struct {
 	Subtitle string // a 13px second line under the label (Slack's More menu rows)
 	Right    string // right-aligned value text before the chevron ("On")
 	Danger   bool
-	Disabled bool
-	Checked  bool // draws a check at the right
+	// DangerHighlight paints only the highlighted row red (base-inv-imp):
+	// the flag row, .p-message_actions_menu__flag.
+	DangerHighlight bool
+	Disabled        bool
+	Checked         bool // draws a check at the right
 	// Radio is Slack's type:"radio" item (ChannelNotificationPrefMenu): the
 	// check sits in a left gutter, a checked row is link blue, the label
 	// is regular and the Subtitle wraps to two lines.
@@ -665,7 +668,7 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 		gtx.Constraints.Min = image.Point{}
 		if hl {
 			bg := cl.Highlight
-			if it.Danger {
+			if it.Danger || it.DangerHighlight {
 				bg = cl.DangerBg
 			}
 			fill(gtx, image.Rectangle{Max: sz}, st.Background(bg))

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/some-du6e/clack/internal/core"
-	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // The hover toolbar's thread and share buttons, ported from Slack's
@@ -31,28 +31,9 @@ import (
 //     says "Forward file…" / "Share file…", "Share canvas…" (a canvas with
 //     forwarding on), "Share list…"; data-qa share_file or share_message.
 
-// automatedSubtypes is KC8h isAutomatedSubtype's list.
-var automatedSubtypes = map[string]bool{}
-
-func init() {
-	for _, s := range []string{"agent_view_added", "code_channel_review_submitted", "code_channel_lifecycle", "channel_join", "channel_leave",
-		"channel_topic", "channel_purpose", "channel_archive", "channel_unarchive", "channel_convert_to_private", "channel_convert_to_public",
-		"channel_convert_to_linked_private", "channel_convert_to_linked_private_read", "channel_convert_to_linked_private_edit",
-		"channel_convert_to_linked_private_transfer", "channel_convert_shared", "group_join", "group_leave", "group_topic", "group_purpose",
-		"group_archive", "group_unarchive", "group_name", "channel_name", "play_sound", "pinned_item", "unpinned_item", "sh_room_shared",
-		"sh_room_created", "bot_enable", "bot_disable", "bot_add", "bot_remove", "bot_updated", "reminder_add", "reminder_delete",
-		"reply_broadcast", "app_conversation_join", "app_conversation_leave", "app_conversation_created", "channel_posting_permissions",
-		"retention_threshold", "joiner_notification", "joiner_notification_for_inviter", "prejoin_dm_welcome_party_notification",
-		"slack_connect_dm_acceptance", "canvas", "mpdm_move", "canvas_open_by_default", "canvas_editing_permissions_changed",
-		"channel_canvas_updated", "channel_canvas_updated_unread_ignore", "tabbed_canvas_updated", "tabbed_canvas_updated_unread_ignore",
-		"automatic_ai_huddle_notes_enabled", "automatic_ai_huddle_notes_disabled", "workflow_channel_opt_in_enabled",
-		"workflow_channel_opt_in_disabled", "welcome_party"} {
-		automatedSubtypes[s] = true
-	}
-}
-
-// isAutomatedSubtype is KC8h's isAutomatedSubtype.
-func isAutomatedSubtype(s string) bool { return automatedSubtypes[s] }
+// isAutomatedSubtype is KC8h's isAutomatedSubtype (popups keeps the
+// list: the share action there reads it too).
+func isAutomatedSubtype(s string) bool { return popups.IsAutomatedSubtype(s) }
 
 // isReply is azCc isReply: a thread_ts that isn't the message's own ts.
 func isReply(m *core.Message) bool { return m.ThreadTS != "" && m.ThreadTS != m.TS }
@@ -139,87 +120,10 @@ func replyLabel(app *core.App, m *core.Message, thread bool) string {
 	return "Reply in thread"
 }
 
-// canBeShared is p6HR canBeShared for what Clack keeps of a message: not
-// a file comment, and actionable (not a tombstone, ephemeral or
-// restricted message).
-func canBeShared(m *core.Message) bool {
-	switch m.Subtype {
-	case "file_comment", "tombstone":
-		return false
-	}
-	return !m.Tombstone && !m.Pending && !m.Failed
-}
-
-// singleFile is iR00 isSingleFileMessageAction: one file and neither text
-// nor blocks, in a channel list (not the thread pane, not a reply).
-func singleFile(m *core.Message, thread bool) *richtext.File {
-	if thread || m.ThreadTS != "" || m.Text != "" || len(m.Blocks) > 0 {
-		return nil
-	}
-	var f *richtext.File
-	for i := range m.Doc.Blocks {
-		if b := &m.Doc.Blocks[i]; b.Kind == richtext.FileBlock && b.File != nil {
-			if f != nil {
-				return nil
-			}
-			f = b.File
-		}
-	}
-	return f
-}
-
-// fileIsCanvas and fileIsList are 2HRR's.
-func fileIsCanvas(f *richtext.File) bool { return f.Mode == "quip" || f.Type == "quip" }
-func fileIsList(f *richtext.File) bool {
-	return (f.Mode == "list" || f.Type == "list") && f.Subtype != "poll"
-}
-
-// shareAction is the share action for m: its label and data-qa, ok false
-// when the toolbar has none.
+// shareAction is the share action for m (popups.ShareAction, which the
+// right-click menu's Forward row reads as well): its label and data-qa,
+// ok false when the toolbar has none.
 func shareAction(app *core.App, m *core.Message, thread bool) (label, qa string, ok bool) {
-	if app != nil && app.Experiment("system_messages_redesign_m1") == "on" && (isAutomatedSubtype(m.Subtype) || m.Subtype == "huddle_thread") {
-		return "", "", false
-	}
-	if !canBeShared(m) {
-		return "", "", false
-	}
-	if app != nil && app.Experiment("enable_new_channel_settings") == "on" {
-		if c, ok := app.S.Conv(m.Channel); ok && restrictsSharing(c.Properties) {
-			return "", "", false
-		}
-	}
-	forwarding := false
-	if app != nil {
-		v, _ := app.TeamPref("private_message_forwarding")
-		forwarding = string(v) == "true"
-	}
-	if f := singleFile(m, thread); f != nil {
-		switch {
-		case fileIsCanvas(f) && forwarding:
-			return "Share canvas…", "share_file", true
-		case fileIsCanvas(f):
-			return "Share file…", "share_file", true
-		case fileIsList(f):
-			return "Share list…", "share_file", true
-		case forwarding:
-			return "Forward file…", "share_file", true
-		}
-		return "Share file…", "share_file", true
-	}
-	if forwarding {
-		return "Forward message…", "share_message", true
-	}
-	return "Share message…", "share_message", true
-}
-
-// restrictsSharing reads properties.restrict_message_and_file_sharing (1oza).
-func restrictsSharing(props json.RawMessage) bool {
-	if len(props) == 0 {
-		return false
-	}
-	var p struct {
-		Restrict bool `json:"restrict_message_and_file_sharing"`
-	}
-	_ = json.Unmarshal(props, &p)
-	return p.Restrict
+	a, ok := popups.ShareAction(app, m, thread)
+	return a.Label, a.QA, ok
 }

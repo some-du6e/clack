@@ -15,9 +15,11 @@ var (
 	nsMessage = i18n.NS("message")         // the message action modules (jFAp, ximo, ojBT, loUg, 5GOt, 1ixK, …)
 	nsSaved   = i18n.NS("saved_for_later") // the save action (mcYr), useReminderTimeOptions (GufF), LaterTimePicker (FzLp)
 	nsMsgEdit = i18n.NS("msg_edit")        // BaseDeleteMessageDialog (6Qou), BaseRemoveBroadcastDialog (L16H)
-	nsInline  = i18n.NS("inline_attachments")
-	nsFile    = i18n.NS("file")  // buildFileContextMenuItems (a3Wp), enqueueCopyLinkSuccessToast (Bwpd)
-	nsFiles   = i18n.NS("files") // DeleteFileDialog
+	// the message menu's flag and report rows (2rcC ed, tH)
+	nsMsgActionItems = i18n.NS("messages_action_items")
+	nsInline         = i18n.NS("inline_attachments")
+	nsFile           = i18n.NS("file")  // buildFileContextMenuItems (a3Wp), enqueueCopyLinkSuccessToast (Bwpd)
+	nsFiles          = i18n.NS("files") // DeleteFileDialog
 	// the channel context menu's templates (channel_context_menu_get_template:
 	// getDetailsTemplate, getCopyTemplate, getChannelSectionsTemplate,
 	// getNotificationsTemplate, getLeaveTemplate, …), the team and user menus

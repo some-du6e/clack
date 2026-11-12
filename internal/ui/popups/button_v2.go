@@ -16,6 +16,13 @@ import (
 // BtnPrimary is "primary", BtnOutline "secondary", BtnDanger "danger" and
 // BtnDisabled "disabled". ring draws the :focus-visible ring.
 func buttonV2(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size theme.ButtonV2Size, label, iconName string, ring bool) layout.Dimensions {
+	return buttonV2Grp(gtx, th, c, kind, size, label, iconName, ring, grpNone)
+}
+
+// buttonV2Grp is buttonV2 in a ButtonGroup (button_group.go): inGroup's
+// _first / _last corners, the primary's divider, the last icon-only
+// button's narrower width.
+func buttonV2Grp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size theme.ButtonV2Size, label, iconName string, ring bool, grp grpSide) layout.Dimensions {
 	variation := "primary"
 	switch kind {
 	case BtnOutline:
@@ -42,6 +49,9 @@ func buttonV2(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind Btn
 	w := tw + iw + 2*pad
 	if label == "" { // isIconOnly: as wide as tall
 		w = h
+		if grp == grpLast { // inGroup isIconOnly _last: width 6 / 7 / 9
+			w = dp(gtx, v2GroupIconW(size))
+		}
 	}
 	sz := image.Pt(max(w, gtx.Constraints.Min.X), h)
 	draw := func(gtx layout.Context) layout.Dimensions {
@@ -61,10 +71,19 @@ func buttonV2(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind Btn
 			FocusRingColors4(gtx, solid, theme.WithAlpha(solid, 0x4d), r, rad)
 		}
 		if pal.Border.A > 0 {
-			rrect(gtx, r, rad, pal.Border)
-			rrect(gtx, r.Inset(max(1, dp(gtx, 1))), max(0, rad-1), bg)
+			in := r.Inset(max(1, dp(gtx, 1)))
+			if grp == grpLast { // _notFirst: borderInlineStartWidth 0
+				in.Min.X = r.Min.X
+			}
+			rrectGrp(gtx, r, rad, grp, pal.Border)
+			rrectGrp(gtx, in, max(0, rad-1), grp, bg)
 		} else {
-			rrect(gtx, r, rad, bg)
+			rrectGrp(gtx, r, rad, grp, bg)
+		}
+		if grp == grpFirst && (variation == "primary" || variation == "danger") {
+			// inGroup _notLast: a 1px end border, jade.60 (dark jade.30)
+			// on primary, flamingo.40 (dark flamingo.50) on danger
+			fill(gtx, image.Rect(r.Max.X-max(1, dp(gtx, 1)), 0, r.Max.X, r.Max.Y), v2GroupDivider(th, variation))
 		}
 		x := (sz.X - tw - iw) / 2
 		if iconName != "" {

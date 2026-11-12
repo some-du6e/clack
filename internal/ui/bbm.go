@@ -596,6 +596,8 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 			label = "Search"
 		case secHelp:
 			label = "Help"
+		case secWorkflow: // the flexpane's title (WorkflowDetails titleContent)
+			label = wfDetailsNS.T("Workflow")
 		}
 		cs = append(cs, bbmCrumb{key: "secondary", label: label, last: true})
 	}

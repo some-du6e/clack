@@ -2,9 +2,11 @@ package popups
 
 import (
 	"context"
+	"encoding/json"
 	"image"
 	"sort"
 	"strings"
+	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -18,14 +20,42 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// "Forward this message" modal: a conversation picker (fuzzy over the
-// sidebar's conversations, DMs included; picks become chips), an optional
-// message, a quoted preview, and [Copy link] [Forward]. Forwarding posts
-// the optional note plus the permalink, which Slack unfurls as a shared
-// message. Group DMs show Slack's member tile (mpimTile) and are titled
-// and matched by their members' names.
+// The share ("forward") dialog, Slack's MessageShareDialog (gantry-v2-
+// async-message-share-dialog jdUv, build 4d0c78085232): a conversation
+// picker (ShareDialogChannelPicker eKtn, "Search for channel or person";
+// fuzzy over the sidebar's conversations, DMs included; picks become
+// chips), an optional message ("Add a message, if you’d like."), a
+// quoted preview, and the footer: ShareDialogCopyLinkButton (Zp0h) on the
+// left; on the right Save Draft (forwarding_save_as_draft) and Forward,
+// which under schedule_send_forwards carries a "Schedule for later" caret
+// (Slack Kit's ButtonGroup with slack_kit_v2_button, else
+// .p-share_dialog__forward_button--with_options) opening ScheduleSendMenu
+// (BYKP). Forwarding posts the optional note plus the permalink, which
+// Slack unfurls as a shared message; scheduleForwardMessage and saveDraft
+// put the same in a draft (the permalink inserted after the note's ops).
+// Group DMs show Slack's member tile (mpimTile) and are titled and matched
+// by their members' names.
+//
+// The title (e3): "Share this message", or with the team's
+// private_message_forwarding (Db0x) "Forward this message" in a public
+// channel and "Forward this private message" elsewhere. Copy Link's
+// tooltip explains the link ("…To forward, paste it…" / "…To share…")
+// and says "Copied!" once clicked, until it hides; Slack toasts only for
+// canvases and lists. The picker's options list (SelectOptionsList Fd8o)
+// has 32px rows (optionsRowHeight) and scrolls past 200px
+// (maxOptionsListHeight).
 
-const actFwdMax = 6
+// actFwdMax caps the local matches the picker lists (Clack matches the
+// sidebar's conversations itself; Slack asks its searcher). The list
+// shows 32px rows and scrolls past 200px.
+const actFwdMax = 50
+
+// The options list's geometry: optionsRowHeight 32, maxOptionsListHeight
+// 200 (dp).
+const (
+	actFwdRowH    = 32
+	actFwdListMax = 200
+)
 
 type actFwdTarget struct {
 	id, title, lower, kind, avatar string
@@ -43,6 +73,8 @@ type actForward struct {
 	m     core.Message
 	modal *Modal
 	fwd   *ModalButton
+	caret *ModalButton // the schedule caret (schedule_send_forwards)
+	copy  *ModalButton
 	link  string
 
 	to, note widget.Editor
@@ -52,11 +84,47 @@ type actForward struct {
 	match    []int
 	sel      int
 	sugg     [actFwdMax]widget.Clickable
+	sugList  layout.List
 	chips    []*actFwdChip
 	query    string
 	focusTo  bool
 	copyLink bool
-	hov      int // the suggestion under the pointer last frame (-1 none)
+	copied   bool // Copy Link's "Copied!" until its tooltip hides
+	hov      int  // the suggestion under the pointer last frame (-1 none)
+}
+
+// Experiments the share dialog reads (jdUv, O2By jv).
+const (
+	ExpScheduleSendForwards  = "schedule_send_forwards"
+	ExpForwardingSaveAsDraft = "forwarding_save_as_draft"
+	expUpdatedScheduledSends = "updated_scheduled_sends_desktop"
+)
+
+// ScheduleSendMenu, set by the ui root to the composer's, opens Slack's
+// ScheduleSendMenu (boot-shared BYKP) at anchor for a message to
+// channelID that has no draft yet (the share dialog's draftId ""): its
+// rows, and under updated_scheduled_sends_desktop the "{time} for
+// {member}" lines of getScheduledChannelTimeZoneDetails (Mluw). pick
+// gets a preset's time; custom is "Custom time".
+var ScheduleSendMenu func(h Host, anchor image.Rectangle, channelID string, pick func(at time.Time), custom func())
+
+// OpenScheduleDialog, set by the ui root to the composer's, opens Slack's
+// ScheduleMessageDialog (z1vG) for a draft to channelID; pick gets the
+// time chosen with Schedule Message.
+var OpenScheduleDialog func(h Host, channelID string, pick func(at time.Time))
+
+// IconToaster is a Host that shows Slack's Toast (c-toast, 4HH1: bottom
+// right, 20px in, the icon 20px before the text) with an icon.
+type IconToaster interface{ ToastIcon(text, icon string) }
+
+// toastIcon shows text in Slack's Toast with icon where the host can,
+// else as a plain toast.
+func toastIcon(h Host, text, icon string) {
+	if t, ok := h.(IconToaster); ok {
+		t.ToastIcon(text, icon)
+		return
+	}
+	h.Toast(text)
 }
 
 // NewForwardModal builds the forward dialog for m. Show it with
@@ -67,33 +135,287 @@ func newForward(h Host, m core.Message) *actForward {
 	f := &actForward{h: h, m: m, focusTo: true, hov: -1}
 	f.to.SingleLine = true
 	f.to.Submit = true
+	f.sugList.Axis = layout.Vertical
 	f.link = m.Permalink
 	if f.link == "" {
 		f.link = permalink(h, m.Channel, m.TS, m.ThreadTS)
 	}
 	f.all = actFwdTargets(h)
-	f.fwd = &ModalButton{Label: nsShare.T("Forward"), Kind: BtnPrimary, Enabled: func() bool { return len(f.chips) > 0 }, Do: func() bool {
+	v2 := func() bool { return expOn(h, ExpSlackKitV2Button) }
+	label := nsShare.T("Share") // e0: "Forward" with private_message_forwarding
+	if privateForwarding(h.Core()) {
+		label = nsShare.T("Forward")
+	}
+	f.fwd = &ModalButton{Label: label, Kind: BtnPrimary, Enabled: f.canGo, Do: func() bool {
 		f.send()
 		return true
 	},
 		// the share dialog's go button: Slack Kit's v2 Button under
 		// slack_kit_v2_button (jdUv: ex = W ? ey : ev), the legacy one else
-		V2: func() bool { return expOn(h, ExpSlackKitV2Button) },
+		V2: v2,
+	}
+	// ShareDialogCopyLinkButton (Zp0h): the legacy outline button
+	// whatever the experiment, labelled "Copy Link", inside a Tooltip
+	f.copy = &ModalButton{Label: nsShare.T("Copy Link"), Kind: BtnOutline, Left: true, Do: func() bool {
+		f.copyLink = true // copied by the body, which has the frame context
+		return false
+	}, Tip: f.copyTip, TipHidden: func() { f.copied = false }}
+	buttons := []*ModalButton{f.copy}
+	if f.saveDraftShown() {
+		// Save Draft (e5): v2 secondary, or the legacy outline
+		buttons = append(buttons, &ModalButton{Label: nsShare.T("Save Draft"), Kind: BtnOutline, V2: v2, Do: func() bool {
+			f.saveDraft()
+			return true
+		}})
+	}
+	buttons = append(buttons, f.fwd)
+	if expOn(h, ExpScheduleSendForwards) {
+		// renderForwardActions: the caret ("Schedule for later",
+		// caret-down, data-qa share_dialog_schedule_send_button), off
+		// with Forward
+		f.caret = &ModalButton{Icon: "caret-down", Kind: BtnPrimary, Joined: true, Enabled: f.canGo, V2: v2, Draw: f.drawCaret,
+			Do: func() bool {
+				f.openSchedule()
+				return false
+			}}
+		buttons = append(buttons, f.caret)
 	}
 	f.modal = NewModal(h, ModalOpts{
-		Title: nsShare.T("Forward this message"),
-		Body:  f.layout,
-		Buttons: []*ModalButton{
-			// ShareDialogCopyLinkButton (Zp0h): the legacy outline button
-			// whatever the experiment, labelled "Copy Link"
-			{Label: nsShare.T("Copy Link"), Kind: BtnOutline, Do: func() bool {
-				f.copyLink = true // copied by the body, which has the frame context
-				return false
-			}},
-			f.fwd,
-		},
+		TitleFunc: f.title,
+		Body:      f.layout,
+		Buttons:   buttons,
+		FooterPad: 24, // c-sk-modal_footer: 84px, padding 24px 28px
 	})
 	return f
+}
+
+// canGo is Forward's enabled state: a destination chosen (Slack's ea:
+// canPostInSelectedChannel and nothing else in the way).
+func (f *actForward) canGo() bool { return len(f.chips) > 0 }
+
+// title is e3's: "Share this message", or with private message
+// forwarding "Forward this message" from a public channel, else
+// "Forward this private message".
+func (f *actForward) title() string {
+	if !privateForwarding(f.h.Core()) {
+		return nsShare.T("Share this message")
+	}
+	if a := f.h.Core(); a != nil {
+		if c, ok := a.Conv(f.m.Channel); ok && c.Kind == "channel" {
+			return nsShare.T("Forward this message")
+		}
+	} else if actKindOf(f.m.Channel) == "channel" {
+		return nsShare.T("Forward this message")
+	}
+	return nsShare.T("Forward this private message")
+}
+
+// copyTip is Copy Link's tooltip: "Copied!" after a click, else what
+// the link is for.
+func (f *actForward) copyTip() string {
+	if f.copied {
+		return nsShare.T("Copied!")
+	}
+	if privateForwarding(f.h.Core()) {
+		return nsShare.T("You can also copy a link to this message. To forward, paste it in any channel or conversation.")
+	}
+	return nsShare.T("You can also copy a link to this message. To share, paste it in any channel or conversation.")
+}
+
+// saveDraftShown is el: forwarding_save_as_draft (O2By jv), outside the
+// story viewer, for a message that isn't an AI answer.
+func (f *actForward) saveDraftShown() bool { return expOn(f.h, ExpForwardingSaveAsDraft) }
+
+// drawCaret draws the schedule caret: Slack Kit's icon-only Button, last
+// in the ButtonGroup, under slack_kit_v2_button; else the legacy
+// c-icon_button p-share_dialog__schedule_send_button (36px,
+// base-inv-hgl-2 with a white caret, the start corners square; disabled
+// base-ter and content-sec).
+func (f *actForward) drawCaret(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, ring bool, grp grpSide) layout.Dimensions {
+	if expOn(f.h, ExpSlackKitV2Button) {
+		return buttonV2Grp(gtx, th, c, kind, theme.ButtonV2Medium, "", "caret-down", ring, grp)
+	}
+	cl := colorsOf(th)
+	sz := image.Pt(dp(gtx, 36), dp(gtx, 36))
+	draw := func(gtx layout.Context) layout.Dimensions {
+		bg, fg := cl.Primary, cl.PrimaryText
+		switch {
+		case kind == BtnDisabled:
+			bg, fg = cl.Disabled, cl.DisText
+		case c.Hovered():
+			bg = theme.Mix(bg, rgb(0x000000), .1)
+		}
+		if ring {
+			focusRing(gtx, cl, image.Rectangle{Max: sz}, dp(gtx, 8))
+		}
+		rrectGrp(gtx, image.Rectangle{Max: sz}, dp(gtx, 8), grpLast, bg)
+		at(gtx, image.Pt((sz.X-dp(gtx, 20))/2, (sz.Y-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, "caret-down", 20, fg) // font-size calc(.5 * 36px + 2px)
+		})
+		if kind != BtnDisabled {
+			pointerCursor(gtx, sz)
+		}
+		return layout.Dimensions{Size: sz}
+	}
+	if kind == BtnDisabled {
+		return draw(gtx)
+	}
+	return c.Layout(gtx, draw)
+}
+
+// targets are the chosen conversations' ids.
+func (f *actForward) targets() []string {
+	ids := make([]string, len(f.chips))
+	for i, c := range f.chips {
+		ids[i] = c.t.id
+	}
+	return ids
+}
+
+// message is what the forward posts: the note, then the permalink.
+func (f *actForward) message() (text string, blocks json.RawMessage) {
+	note := strings.TrimSpace(f.note.Text())
+	return fwdText(note, f.link), fwdBlocks(note, f.link)
+}
+
+// fwdText is the forward's text: the note and the permalink on its own
+// line.
+func fwdText(note, link string) string {
+	if note == "" {
+		return link
+	}
+	return note + "\n" + link
+}
+
+// fwdBlocks is the draft scheduleForwardMessage and saveDraft build: the
+// note's ops with the permalink inserted after them (Delta.insert(link,
+// {link})), as rich text.
+func fwdBlocks(note, link string) json.RawMessage {
+	var els []any
+	if note != "" {
+		els = append(els, map[string]any{"type": "text", "text": note + "\n"})
+	}
+	els = append(els, map[string]any{"type": "link", "url": link})
+	b, _ := json.Marshal([]any{map[string]any{"type": "rich_text", "elements": []any{
+		map[string]any{"type": "rich_text_section", "elements": els},
+	}}})
+	return b
+}
+
+func (f *actForward) send() {
+	ids := f.targets()
+	msg, _ := f.message()
+	actDo(f.h, "Message forwarded", func(ctx context.Context, a *core.App) error {
+		for _, id := range ids {
+			if _, err := a.Send(ctx, core.SendOpts{Channel: id, Text: msg}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// openSchedule is the caret: ScheduleSendMenu over it for the first
+// destination (selectedChannelId).
+func (f *actForward) openSchedule() {
+	if !f.canGo() || ScheduleSendMenu == nil {
+		return
+	}
+	ScheduleSendMenu(f.h, f.caret.Rect(), f.chips[0].t.id, f.schedule, f.scheduleCustom)
+}
+
+// schedule is onScheduleSend with a preset's time: scheduleForwardMessage
+// creates the draft with date_scheduled for each destination, the dialog
+// closes, and once scheduled ScheduleForwardToast says "Message
+// scheduled" (the schedule-send icon).
+func (f *actForward) schedule(at time.Time) {
+	if !f.canGo() {
+		return
+	}
+	ids := f.targets()
+	text, blocks := f.message()
+	f.modal.Close()
+	f.scheduleDrafts(ids, text, blocks, at.Unix(), "")
+}
+
+func (f *actForward) scheduleDrafts(ids []string, text string, blocks json.RawMessage, postAt int64, draftID string) {
+	h := f.h
+	a := h.Core()
+	if a == nil {
+		h.Toast("Not connected yet")
+		return
+	}
+	run(h, func(ctx context.Context) (struct{}, error) {
+		if draftID != "" {
+			_, err := a.RescheduleMessage(ctx, draftID, postAt)
+			return struct{}{}, err
+		}
+		for _, id := range ids {
+			if _, err := a.ScheduleMessage(ctx, core.SendOpts{Channel: id, Text: text, Blocks: blocks}, postAt); err != nil {
+				return struct{}{}, err
+			}
+		}
+		return struct{}{}, nil
+	}, func(_ struct{}, err error) {
+		if err != nil {
+			return // Slack only logs it ("Failed to schedule forward message")
+		}
+		toastIcon(h, nsShare.T("Message scheduled"), "schedule-send") // ScheduleForwardToast
+	})
+}
+
+// scheduleCustom is onScheduleSend without a time ("Custom time"):
+// scheduleForwardMessage saves the draft first, then opens
+// ScheduleMessageDialog for it, stacked over the share dialog under
+// updated_scheduled_sends_desktop (which then stays until the time is
+// picked, closing with it), else after the share dialog closes.
+func (f *actForward) scheduleCustom() {
+	if !f.canGo() || OpenScheduleDialog == nil {
+		return
+	}
+	h := f.h
+	a := h.Core()
+	if a == nil {
+		h.Toast("Not connected yet")
+		return
+	}
+	ch := f.chips[0].t.id
+	text, blocks := f.message()
+	stacked := expOn(h, expUpdatedScheduledSends)
+	if !stacked {
+		f.modal.Close()
+	}
+	run(h, func(ctx context.Context) (core.Draft, error) {
+		return a.SaveDraft(ctx, core.DraftOpts{Channel: ch, Text: text, Blocks: blocks})
+	}, func(d core.Draft, err error) {
+		if err != nil {
+			return // logged only, as scheduleForwardMessage's catch does
+		}
+		OpenScheduleDialog(h, ch, func(at time.Time) {
+			f.modal.Close() // closeAll
+			f.scheduleDrafts(nil, text, blocks, at.Unix(), d.ID)
+		})
+	})
+}
+
+// saveDraft is Save Draft (ek saveDraft): a draft with the note and the
+// permalink for each destination (none yet: a draft without one), then
+// the dialog closes; Slack says nothing.
+func (f *actForward) saveDraft() {
+	ids := f.targets()
+	text, blocks := f.message()
+	actDo(f.h, "", func(ctx context.Context, a *core.App) error {
+		if len(ids) == 0 {
+			_, err := a.SaveDraft(ctx, core.DraftOpts{NoDestination: true, Text: text, Blocks: blocks})
+			return err
+		}
+		for _, id := range ids {
+			if _, err := a.SaveDraft(ctx, core.DraftOpts{Channel: id, Text: text, Blocks: blocks}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // actFwdTargets lists forwardable conversations from the snapshot.
@@ -235,6 +557,7 @@ func (f *actForward) refilter() {
 	}
 	f.query = q
 	f.match = f.match[:0]
+	f.sugList.Position = layout.Position{}
 	// SelectOptionsList on new options: the first match is the active row,
 	// or, under a11y_no_auto_highlight_search_multi_select, no row is
 	// active and the first is pseudo-active (Fd8o componentDidUpdate)
@@ -295,25 +618,6 @@ func (f *actForward) pick(i int) {
 	f.query = ""
 	f.match = f.match[:0]
 	f.focusTo = true
-}
-
-func (f *actForward) send() {
-	ids := make([]string, len(f.chips))
-	for i, c := range f.chips {
-		ids[i] = c.t.id
-	}
-	msg := f.link
-	if note := strings.TrimSpace(f.note.Text()); note != "" {
-		msg = note + "\n" + f.link
-	}
-	actDo(f.h, "Message forwarded", func(ctx context.Context, a *core.App) error {
-		for _, id := range ids {
-			if _, err := a.Send(ctx, core.SendOpts{Channel: id, Text: msg}); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }
 
 func (f *actForward) events(gtx layout.Context) {
@@ -412,9 +716,11 @@ func (f *actForward) layout(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	if f.copyLink {
+		// Zp0h: the clipboard, then "Copied!" in the tooltip (a toast only
+		// for canvases and lists)
 		f.copyLink = false
 		copyText(gtx, f.link)
-		f.h.Toast(nsShare.T("Link copied to clipboard")) // ShareDialogCopyLinkButton's
+		f.copied = true
 	}
 	f.events(gtx)
 	if f.modal.done {
@@ -545,13 +851,16 @@ func (f *actForward) chip(gtx layout.Context, th *theme.Theme, cl *Colors, c *ac
 	return layout.Dimensions{Size: image.Pt(w, ch)}
 }
 
-// suggestions draws up to six matching conversations under the picker.
+// suggestions draws the matching conversations under the picker: 32px
+// rows (optionsRowHeight) in a list that scrolls past 200px
+// (maxOptionsListHeight); the keyboard's row is kept in view.
 func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	w := gtx.Constraints.Max.X
-	rh := dp(gtx, 36)
+	rh := dp(gtx, actFwdRowH)
 	pad := dp(gtx, 6)
 	n := len(f.match)
-	r := image.Rect(0, 0, w, n*rh+2*pad)
+	lh := minInt(n*rh, dp(gtx, actFwdListMax))
+	r := image.Rect(0, 0, w, lh+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Ring)
 	rrect(gtx, r.Inset(1), dp(gtx, 8)-1, cl.Bg)
 	// onMouseEnteredOption makes the row under the pointer active;
@@ -569,10 +878,21 @@ func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors
 		f.sel = -1
 	}
 	f.hov = hov
+	if f.sel >= 0 && hov < 0 { // scrollToRow: the active row in view
+		vis := maxInt(1, lh/rh)
+		switch {
+		case f.sel < f.sugList.Position.First:
+			f.sugList.Position.First, f.sugList.Position.Offset = f.sel, 0
+		case f.sel >= f.sugList.Position.First+vis:
+			f.sugList.Position.First, f.sugList.Position.Offset = f.sel-vis+1, 0
+		}
+	}
 	pseudo := f.pseudoRow()
-	for i, ti := range f.match {
-		t := &f.all[ti]
-		at(gtx, image.Pt(0, pad+i*rh), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(0, pad), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Exact(image.Pt(w, lh))
+		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		return f.sugList.Layout(gtx, n, func(gtx layout.Context, i int) layout.Dimensions {
+			t := &f.all[f.match[i]]
 			gtx.Constraints = layout.Exact(image.Pt(w, rh))
 			return clickBox(gtx, &f.sugg[i], nil, func(gtx layout.Context) layout.Dimensions {
 				fg, fg2 := cl.Fg, cl.Fg2
@@ -611,7 +931,7 @@ func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors
 				return layout.Dimensions{Size: image.Pt(w, rh)}
 			})
 		})
-	}
+	})
 	return layout.Dimensions{Size: r.Max}
 }
 

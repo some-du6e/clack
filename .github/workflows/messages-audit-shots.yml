@@ -25,6 +25,8 @@ on:
       - "internal/ui/richview/decoration_test.go"
       - "internal/ui/messages/links_shots_test.go"
       - "internal/richtext/msgmention.go"
+      - "internal/ui/messages/actions_rules.go"
+      - "internal/ui/popups/actions_share.go"
       - ".github/workflows/messages-audit-shots.yml"
   workflow_dispatch:
 
@@ -58,7 +60,7 @@ jobs:
           go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard' ./internal/richtext
           go test -count=1 -v -run 'TestMemberName' ./internal/store
           xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots' ./internal/ui/messages
+          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots' ./internal/ui/messages
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -109,9 +109,14 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 			h.OpenThread(ch, root)
 		}}.In(nsMessage))
 	}
-	items = append(items, MenuItem{Label: "Forward message…", Icon: "forward-msg", Hint: nsMessage.T("F"), Keys: KeyShare, Do: func() {
-		h.ShowOverlay(NewForwardModal(h, m))
-	}}.In(nsMessage))
+	// the share action (6bWJ, actions_share.go, the message I18n): the
+	// toolbar's label, its F or S hint, and no row when Slack has none;
+	// its id is share_message whatever the label (lq1n)
+	if sa, ok := ShareAction(h.Core(), &m, where == InThread); ok {
+		items = append(items, MenuItem{Key: "share_message", Label: sa.Label, Icon: "forward-msg", Hint: nsMessage.T(sa.Hint), Keys: KeyShare, Do: func() {
+			h.ShowOverlay(NewForwardModal(h, m))
+		}}.In(nsMessage))
+	}
 	todo := MenuItem{Label: "Add to-do", Icon: "todo-add", Hint: nsSaved.T("A"), Keys: KeyLaterTodos}
 	if m.Saved {
 		todo.Label, todo.Icon = "Complete to-do", "check"

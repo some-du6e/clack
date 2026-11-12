@@ -281,4 +281,9 @@ var experimentReads = map[string][]string{
 	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
 	"basic_select_placeholder_option":            {"on", "treatment"},
 	"custom_file_sections":                       on, // the Files sidebar's starred file collection (views/files.go)
+	// message actions (ui/popups actions_forward.go, actions_flag.go): the
+	// share dialog's schedule caret and Save Draft; the flag row's custom
+	// group DM names and its cross-org rules
+	"schedule_send_forwards": on, "forwarding_save_as_draft": on,
+	"flag_custom_mpdm_names": on, "flag_xorg_refinement": {"treatment"}, "flag_xorg_external_team_check": on,
 }
