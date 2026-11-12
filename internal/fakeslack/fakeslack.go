@@ -95,6 +95,10 @@ type Size struct {
 	// PreviewAgents puts agents and apps into #lounge-preview, the
 	// channel the viewer previews (preview_agents.go).
 	PreviewAgents bool
+	// WorkObjects adds #work-objects: app unfurls as work objects and
+	// the methods and events their cards and flexpane use
+	// (workobjects.go).
+	WorkObjects bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -486,6 +490,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Embeds {
 		s.addEmbedsChannel() // embeds.go
+	}
+	if sz.WorkObjects {
+		s.addWorkObjectsChannel() // workobjects.go
 	}
 	if sz.ThreadHeader {
 		s.addThreadHeader() // threadheader.go
@@ -1363,6 +1370,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	}
 	if out, handled := s.handleIdentity(method, f); handled && s.Size.Identity { // identity.go
 		return out
+	}
+	if s.Size.WorkObjects {
+		if out, handled := s.handleWorkObjects(method, f); handled { // workobjects.go
+			return out
+		}
 	}
 	if out, handled := s.handleEmbeds(method, f); handled && s.Size.Embeds { // embeds.go
 		return out
