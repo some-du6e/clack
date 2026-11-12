@@ -355,7 +355,7 @@ func (b *AppsBrowser) Layout(gtx layout.Context) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							return layout.Inset{Bottom: 32}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return para(gtx, th, 34, 41, theme.Bold, cl.Fg, b.Title(), 1)
+								return para(gtx, th, 34, 41, theme.Bold, cl.Fg, b.Title(), 0) // overflow_hidden: wraps, no ellipsis
 							})
 						}),
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions { return b.filter(gtx, th, cl) }),

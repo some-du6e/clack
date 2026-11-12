@@ -2,8 +2,8 @@ package ui
 
 // W14's channel details parts against internal/fakeslack, light and dark
 // (synthetic; the ch-details-shots workflow saves each state with
-// PREVIEW_SHOTS_DIR): Settings › Posting permissions and its modal (with
-// the "…plus specific people" picker), the apps browser "Add an App"
+// PREVIEW_SHOTS_DIR): Settings › Posting permissions and its modal, the
+// apps browser "Add an App"
 // opens, and a DM's add people modal on Custom history with its preview.
 
 import (
@@ -83,8 +83,8 @@ func (e *perfEnv) shotBoth(name string) {
 	e.settle(200 * time.Millisecond)
 }
 
-// Settings with Posting permissions, then PostingPermissionsModal on
-// "…plus specific people".
+// Settings with Posting permissions, then PostingPermissionsModal as
+// loaded (Admins only) and on Everyone (no Allow threads).
 func TestChannelDetailsPostingShot(t *testing.T) {
 	e, fs := previewEnv(t)
 	w14Hooks(fs)
