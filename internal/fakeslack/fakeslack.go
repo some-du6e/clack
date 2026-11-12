@@ -863,6 +863,16 @@ func (s *Server) history(ch string) []slack.Message {
 	base := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix()
 	n := s.Size.History
 	out := make([]slack.Message, 0, n)
+	// the channels a message can link, read under convMu: a join, a leave
+	// or SetTopic changes s.convs while a page is built (-race, flake-check
+	// 2026-11-12)
+	type chanRef struct{ id, name string }
+	s.convMu.Lock()
+	linkable := make([]chanRef, 0, min(len(s.convs), s.Size.Channels))
+	for _, c := range s.convs[:min(len(s.convs), s.Size.Channels)] {
+		linkable = append(linkable, chanRef{c.ID, c.Name})
+	}
+	s.convMu.Unlock()
 	var emo []string
 	for k := range s.emoji {
 		emo = append(emo, k)
@@ -888,9 +898,9 @@ func (s *Server) history(ch string) []slack.Message {
 				parts = append(parts, "<@"+o.ID+">")
 				els = append(els, map[string]any{"type": "user", "user_id": o.ID})
 			case x == 1:
-				c := s.convs[r.Intn(min(len(s.convs), s.Size.Channels))]
-				parts = append(parts, "<#"+c.ID+"|"+c.Name+">")
-				els = append(els, map[string]any{"type": "channel", "channel_id": c.ID})
+				c := linkable[r.Intn(len(linkable))]
+				parts = append(parts, "<#"+c.id+"|"+c.name+">")
+				els = append(els, map[string]any{"type": "channel", "channel_id": c.id})
 			case x == 2 || x == 3:
 				e := std[r.Intn(len(std))]
 				if x == 3 && len(emo) > 0 {
