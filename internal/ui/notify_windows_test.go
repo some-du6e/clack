@@ -63,7 +63,7 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	if os.Getenv("CLACK_WINDOWS_TOAST_TESTS") == "" {
 		t.Skip("set CLACK_WINDOWS_TOAST_TESTS=1 to show real toasts (the windows-applog job)")
 	}
-	a, ca, fs := fakeApp(t, map[string]any{"mute_sounds": true})
+	a, ca, fs, _ := noteApp(t)
 	posted := make(chan url.Values, 4)
 	fs.OnPost = func(f url.Values, _ map[string]any) { posted <- f }
 	id := fmt.Sprintf("%s.uici%d", desktop.AppUserModelID, time.Now().UnixNano()%1e9)
@@ -77,13 +77,19 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	a.notify = &toastNotifier{aumid: id, cache: t.TempDir()}
 	team := storeTeam(ca)
 	nonce := fmt.Sprint(time.Now().UnixNano() % 1e6)
+	open := false
+	t.Cleanup(func() {
+		if open {
+			uiNotificationCenter(t, false)
+		}
+	})
 	named := func(text string) func(uiatest.Element) bool {
 		return func(e uiatest.Element) bool { return strings.Contains(e.Name, text) }
 	}
 
 	// a DM: its toast reaches Notification Center under its tag (the
 	// shell's id, team_ts)
-	msg := &core.Message{TS: "1762520099.000300", User: "U0FAKEUSER1", Name: "Ada", Text: "hello " + nonce}
+	msg := noteMsg("1762520099.000300", "", "hello "+nonce)
 	a.data.handle(a, core.Event{Type: "message", Channel: "D0NOTE0001", TS: msg.TS, ConvKind: "im", Msg: msg})
 	tag := team + "_" + msg.TS
 	deadline := time.Now().Add(10 * time.Second)
@@ -113,13 +119,24 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 		t.Logf("typed into %s", e)
 		if e, err := uiatest.Act(func(e uiatest.Element) bool { return e.Name == "➤" }, 4*time.Second); err == nil {
 			t.Logf("clicked %s", e)
-			select {
-			case f := <-posted:
-				if f.Get("channel") != "D0NOTE0001" || f.Get("text") != reply || f.Get("thread_ts") != "" {
-					t.Errorf("the toast's reply posted %v", f)
+			// the click comes back through App.Post, which the frame loop
+			// runs: drain while waiting
+			deadline := time.Now().Add(15 * time.Second)
+		wait:
+			for {
+				a.drain()
+				select {
+				case f := <-posted:
+					if f.Get("channel") != "D0NOTE0001" || f.Get("text") != reply || f.Get("thread_ts") != "" {
+						t.Errorf("the toast's reply posted %v", f)
+					}
+					break wait
+				case <-time.After(50 * time.Millisecond):
 				}
-			case <-time.After(15 * time.Second):
-				t.Errorf("the reply typed into the toast wasn't sent")
+				if time.Now().After(deadline) {
+					t.Errorf("the reply typed into the toast wasn't sent")
+					break
+				}
 			}
 		} else {
 			t.Logf("UI Automation couldn't press the reply's ➤: %v", err)
@@ -129,11 +146,12 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	}
 
 	// a second DM: clicked in Notification Center, Clack opens it
-	msg2 := &core.Message{TS: "1762520101.000500", User: "U0FAKEUSER1", Name: "Ada", Text: "open me " + nonce}
+	msg2 := noteMsg("1762520101.000500", "", "open me "+nonce)
 	a.data.handle(a, core.Event{Type: "message", Channel: "D0NOTE0002", TS: msg2.TS, ConvKind: "im", Msg: msg2})
 	time.Sleep(1500 * time.Millisecond)
 	a.drain()
 	uiNotificationCenter(t, true)
+	open = true
 	uiScreenshot(t, "clack-dm-notification-center")
 	e, err := uiatest.Act(named("open me "+nonce), 10*time.Second)
 	if err != nil {
@@ -149,6 +167,7 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 		a.drain()
 	}
 	uiNotificationCenter(t, false)
+	open = false
 }
 
 // firstLines is the first n lines of s.
@@ -188,7 +207,7 @@ func TestWindowsToastShots(t *testing.T) {
 	if os.Getenv("CLACK_WINDOWS_TOAST_TESTS") == "" || os.Getenv("CLACK_TOAST_SHOTS") == "" {
 		t.Skip("set CLACK_WINDOWS_TOAST_TESTS=1 and CLACK_TOAST_SHOTS (the windows-applog job)")
 	}
-	a, _, _ := fakeApp(t, map[string]any{"mute_sounds": true})
+	a, _, _, _ := noteApp(t)
 	id := fmt.Sprintf("%s.shots%d", desktop.AppUserModelID, time.Now().UnixNano()%1e9)
 	if _, err := desktop.RegisterAppUserModelID(id, "Clack", filepath.Join(t.TempDir(), "clack.png"), icon.PNG128); err != nil {
 		t.Fatal(err)
@@ -213,6 +232,9 @@ func TestWindowsToastShots(t *testing.T) {
 		}
 		time.Sleep(1500 * time.Millisecond)
 		uiScreenshot(t, "toast-dm-"+mode)
+		// Windows shows one banner at a time: the DM's goes first
+		_ = desktop.RemoveToasts(id, "", "")
+		time.Sleep(700 * time.Millisecond)
 		inv := a.huddleNote(huddleNotificationFor("D0NOTE0001"))
 		inv.Body, inv.Workspace = "Ada is inviting you to a huddle", "Fake Workspace"
 		inv.Avatar = "https://avatars.slack-edge.com/ci/ada_192.png"
@@ -221,9 +243,14 @@ func TestWindowsToastShots(t *testing.T) {
 		}
 		time.Sleep(1500 * time.Millisecond)
 		uiScreenshot(t, "toast-huddle-"+mode)
+		if err := tn.NotifyNote(dm); err != nil { // both, for Notification Center
+			t.Fatal(err)
+		}
+		time.Sleep(500 * time.Millisecond)
 		uiNotificationCenter(t, true)
 		uiScreenshot(t, "toast-notification-center-"+mode)
 		uiNotificationCenter(t, false)
 		_ = desktop.RemoveToasts(id, "", "")
+		time.Sleep(700 * time.Millisecond)
 	}
 }

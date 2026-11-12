@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 )
 
@@ -229,6 +232,30 @@ func storeTeam(ca *core.App) string {
 	return ca.S.TeamID
 }
 
+// noteApp is fakeApp with the backend a signed-in session has (its caches
+// and context: Navigate fetches the conversation's tabs and members from
+// the fake), the store's team, and rec recording the notifications.
+func noteApp(t *testing.T) (*App, *core.App, *fakeslack.Server, *noteRec) {
+	t.Helper()
+	a, ca, fs := fakeApp(t, map[string]any{"mute_sounds": true})
+	b := newBackend(ca, "")
+	b.app = a
+	b.ctx, b.cancel = context.WithCancel(context.Background())
+	t.Cleanup(b.cancel)
+	a.data = b
+	storeTeam(ca)
+	rec := &noteRec{}
+	a.notify = rec
+	return a, ca, fs, rec
+}
+
+// noteMsg is a message from Ada with text as its body (the notification
+// reads the parsed text, Msg.Doc).
+func noteMsg(ts, thread, text string) *core.Message {
+	return &core.Message{TS: ts, ThreadTS: thread, User: "U0FAKEUSER1", Name: "Ada", Text: text,
+		Doc: richtext.Doc{Blocks: richtext.FromMrkdwn(noResolver{}, text)}}
+}
+
 // noteRec records the notes a noteNotifier gets.
 type noteRec struct {
 	mu    sync.Mutex
@@ -294,11 +321,9 @@ func click(t *testing.T, a *App, n *desktopNote, elem string, i int) {
 // payload, and a click on it opens the conversation (a reply's, its
 // thread); the header only raises the window.
 func TestToastClickOpensConversation(t *testing.T) {
-	a, ca, _ := fakeApp(t, map[string]any{"mute_sounds": true})
-	rec := &noteRec{}
-	a.notify = rec
+	a, ca, _, rec := noteApp(t)
 	team := storeTeam(ca)
-	msg := &core.Message{TS: "1762520099.000300", User: "U0FAKEUSER1", Name: "Ada", Text: "hello"}
+	msg := noteMsg("1762520099.000300", "", "hello")
 	a.data.handle(a, core.Event{Type: "message", Channel: "D0NOTE0001", TS: msg.TS, ConvKind: "im", Msg: msg})
 	n := rec.wait(t, a, 1)
 	if n.Channel != "D0NOTE0001" || n.Msg != msg.TS || !n.HasReply || n.Title != "New message from Ada" || n.Body != "hello" {
@@ -318,7 +343,7 @@ func TestToastClickOpensConversation(t *testing.T) {
 
 	// a reply in a followed thread (desktop_notification): its thread
 	ca.SetExperimentGroup("desktop_notification_actions", "on")
-	reply := &core.Message{TS: "1762520100.000400", ThreadTS: "1762520099.000300", User: "U0FAKEUSER1", Name: "Ada", Text: "<!here> look"}
+	reply := noteMsg("1762520100.000400", "1762520099.000300", "<!here> look")
 	a.data.handle(a, core.Event{Type: "message", Channel: "C0NOTE0001", TS: reply.TS, ConvKind: "channel", Msg: reply, Reply: true, Mention: true})
 	n = rec.wait(t, a, 2)
 	if want := buildNotificationID(team, "msg", "C0NOTE0001", reply.TS, reply.ThreadTS); n.ID != want || n.GroupID != buildNotificationID(team, "msg", "C0NOTE0001") {
@@ -334,13 +359,10 @@ func TestToastClickOpensConversation(t *testing.T) {
 // thread for a reply's toast (delegate_replyToNotification), and leaves
 // the window where it was.
 func TestToastReplySends(t *testing.T) {
-	a, ca, fs := fakeApp(t, map[string]any{"mute_sounds": true})
-	storeTeam(ca)
+	a, _, fs, rec := noteApp(t)
 	posted := make(chan url.Values, 4)
 	fs.OnPost = func(f url.Values, _ map[string]any) { posted <- f }
-	rec := &noteRec{}
-	a.notify = rec
-	reply := &core.Message{TS: "1762520100.000400", ThreadTS: "1762520099.000300", User: "U0FAKEUSER1", Name: "Ada", Text: "<!here> look"}
+	reply := noteMsg("1762520100.000400", "1762520099.000300", "<!here> look")
 	a.data.handle(a, core.Event{Type: "message", Channel: "C0NOTE0001", TS: reply.TS, ConvKind: "channel", Msg: reply, Reply: true, Mention: true})
 	n := rec.wait(t, a, 1)
 	before := a.router.Current()
@@ -374,9 +396,7 @@ func TestToastReplySends(t *testing.T) {
 // (Dismiss, Join; Decline too under desktop_notification_actions, as a
 // second dismiss), and Join joins.
 func TestToastHuddleInvite(t *testing.T) {
-	a, ca, _ := fakeApp(t, map[string]any{"mute_sounds": true})
-	rec := &noteRec{}
-	a.notify = rec
+	a, ca, _, rec := noteApp(t)
 	team := storeTeam(ca)
 	joined := 0
 	inv := func(buttons []huddleui.NotifyAction) huddleui.Notification {
