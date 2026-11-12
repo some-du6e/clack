@@ -2,18 +2,31 @@ package ui
 
 import (
 	"context"
+	"log"
+	"strconv"
+	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
-// notifier posts desktop notifications (D-Bus on Linux, no-op elsewhere).
+// notifier posts desktop notifications (D-Bus on Linux, WinRT toasts on
+// Windows, no-op elsewhere).
 type notifier interface {
 	Notify(title, body string) error
 	// NotifyActions is Notify with buttons: actions is key/label pairs;
 	// on gets the key of the one clicked.
 	NotifyActions(title, body string, actions []string, on func(key string)) error
+}
+
+// noteNotifier is a notifier that shows the whole notification as
+// Slack's shell gets it (the Windows toast: its header, the sender's
+// picture, its buttons, where a click goes).
+type noteNotifier interface {
+	NotifyNote(n *desktopNote) error
 }
 
 type nopNotifier struct{}
@@ -23,16 +36,21 @@ func (nopNotifier) NotifyActions(string, string, []string, func(string)) error {
 	return nil
 }
 
+// nsGrowl is the namespace of Slack's notification strings (gaJC's eA).
+var nsGrowl = i18n.NS("growl")
+
 // Notify shows a desktop notification if enabled.
-func (a *App) Notify(title, body string) { a.notifyShow(title, body) }
+func (a *App) Notify(title, body string) { a.notifyShow(title, body, nil) }
 
 // notifyMessage is a new message's desktop notification with its sound:
 // Slack's desktopNotificationOptions hands the shell desktop_sound (a
 // global notification pref) and the shell plays it with the banner,
 // unless mute_sounds (canPlayMessageSound), Do Not Disturb (canPlaySound)
-// or the value is "none".
-func (a *App) notifyMessage(title, body string) {
-	if !a.notifyShow(title, body) {
+// or the value is "none". n is the payload for a notifier that shows it
+// (messageNote, made on the UI goroutine before the showNotification
+// thunk ran).
+func (a *App) notifyMessage(title, body string, n *desktopNote) {
+	if !a.notifyShow(title, body, n) {
 		return
 	}
 	c := a.Core()
@@ -58,7 +76,7 @@ func messageSound(v string) string {
 	return v
 }
 
-func (a *App) notifyShow(title, body string) bool {
+func (a *App) notifyShow(title, body string, n *desktopNote) bool {
 	if !a.notifyOn() || uipref.Get().NoDesktopPush { // Notifications > Desktop notifications
 		return false
 	}
@@ -68,7 +86,15 @@ func (a *App) notifyShow(title, body string) bool {
 	if a.notify == nil {
 		a.notify = newNotifier()
 	}
-	go func() { _ = a.notify.Notify(title, body) }()
+	if nn, ok := a.notify.(noteNotifier); ok {
+		if n == nil {
+			n = a.plainNote()
+		}
+		n.Title, n.Body = title, body
+		go func() { _ = nn.NotifyNote(n) }()
+	} else {
+		go func() { _ = a.notify.Notify(title, body) }()
+	}
 	a.bounceDock() // mac_ssb_bounce
 	return true
 }
@@ -92,6 +118,12 @@ func (a *App) notifyActions(n huddleui.Notification) {
 	if a.notify == nil {
 		a.notify = newNotifier()
 	}
+	if nn, ok := a.notify.(noteNotifier); ok && n.Channel != "" {
+		dn := a.huddleNote(n)
+		dn.Body = body
+		go func() { _ = nn.NotifyNote(dn) }()
+		return
+	}
 	var keys []string
 	for _, ac := range n.Actions {
 		keys = append(keys, ac.Key, ac.Label)
@@ -105,5 +137,199 @@ func (a *App) notifyActions(n huddleui.Notification) {
 				}
 			}
 		})
+	}()
+}
+
+// ---- the payloads (UI goroutine) ----
+
+// noteTeam is the signed-in team's id and name (teamId, and the
+// shell's win32.workspaceName).
+func (a *App) noteTeam() (id, name string) {
+	c := a.Core()
+	if c == nil {
+		return "", ""
+	}
+	c.S.RLock()
+	defer c.S.RUnlock()
+	return c.S.TeamID, c.S.TeamName
+}
+
+// noteActionsOn is desktop_notification_actions (awVE's Ky): Slack's
+// notification ids, groups and translated buttons.
+func (a *App) noteActionsOn() bool {
+	c := a.Core()
+	return c != nil && c.Experiment("desktop_notification_actions") == "on"
+}
+
+// noteAvatar is a user's 192 px picture (getMemberAvatar(…, 192)).
+func (a *App) noteAvatar(user string) string {
+	c := a.Core()
+	if c == nil || user == "" {
+		return ""
+	}
+	u, ok := c.User(user)
+	if !ok {
+		return ""
+	}
+	if u.Avatar192 != "" {
+		return u.Avatar192
+	}
+	return u.Avatar
+}
+
+// plainNote is a notification with nothing to open (App.Notify).
+func (a *App) plainNote() *desktopNote {
+	team, ws := a.noteTeam()
+	n := &desktopNote{Team: team, Workspace: ws}
+	n.ID = shellNoteID(team, "")
+	n.Activated = func(act toastActivation) { a.Post(func() { a.toastActivated(n, act) }) }
+	return n
+}
+
+// messageNote is desktopNotificationOptions for a message in ch (ts, in
+// the thread at thread when it's a reply) from user.
+func (a *App) messageNote(ch, ts, thread, user string) *desktopNote {
+	team, ws := a.noteTeam()
+	var c *convInfo
+	if a.data != nil {
+		c = a.data.m.conv(ch)
+	}
+	n := &desktopNote{Team: team, Workspace: ws, Channel: ch, ChannelName: notifyChannelName(c), Msg: ts, ThreadTS: thread,
+		Avatar: a.noteAvatar(user), HasReply: true,
+		// shouldWindowsNotificationsBeGrouped: the conversation is known and
+		// the message isn't a DM's that overrides Do Not Disturb (Clack
+		// shows none of those)
+		Grouped: c != nil}
+	if a.noteActionsOn() {
+		n.ID = buildNotificationID(team, noteTypeMessage, messageNotificationPayload(ch, ts, thread)...)
+		n.GroupID, n.GroupTitle = buildNotificationID(team, noteTypeMessage, ch), n.ChannelName
+	} else {
+		n.ID = shellNoteID(team, ts)
+	}
+	n.Activated = func(act toastActivation) { a.Post(func() { a.toastActivated(n, act) }) }
+	return n
+}
+
+// huddleNote is desktopHuddleNotificationOptions (with
+// sharedHuddleNotificationOptions' text, which huddleui wrote) for an
+// invite or a missed one.
+func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
+	team, ws := a.noteTeam()
+	var c *convInfo
+	if a.data != nil {
+		c = a.data.m.conv(h.Channel)
+	}
+	now := time.Now()
+	n := &desktopNote{Team: team, Workspace: ws, Channel: h.Channel, ChannelName: notifyChannelName(c),
+		Msg: huddleNotificationTag(h.Channel, now), Avatar: a.noteAvatar(h.User)}
+	typ := noteTypeHuddle
+	if h.Missed {
+		// showHuddleMissedNotification's title; an invite has none
+		// (sharedHuddleNotificationOptions), and the Windows shell, unlike
+		// Linux's, puts no workspace name in its place
+		typ, n.Title = noteTypeHuddleMissed, h.Title
+	}
+	if a.noteActionsOn() {
+		call := h.Call
+		if call == "" {
+			call = "t" + strconv.FormatInt(now.UnixMilli(), 10) // notificationDedupKey
+		}
+		n.ID = buildNotificationID(team, typ, h.Channel, call)
+	} else {
+		n.ID = shellNoteID(team, n.Msg)
+	}
+	for _, b := range h.Buttons {
+		n.Buttons = append(n.Buttons, noteButton{Content: b.Label, LaunchURI: b.URI, Do: b.Do})
+	}
+	n.Activated = func(act toastActivation) { a.Post(func() { a.toastActivated(n, act) }) }
+	return n
+}
+
+// ---- clicks (UI goroutine) ----
+
+// toastActivated is handleToastActivation for one of Clack's toasts:
+// the toast itself (notificationClicked), a button (its launch URI as a
+// deep link; Clack runs the button's own action), the header
+// (slack://channel?team=…: the workspace). Each brings the window to
+// the front, as the shell's click and deep-link handlers do.
+func (a *App) toastActivated(n *desktopNote, act toastActivation) {
+	raise := func() {
+		if a.winLive.Load() != nil { // a click only comes while the window is up
+			a.Raise()
+		}
+	}
+	switch act.Type {
+	case "notification":
+		if act.Reply != "" {
+			a.replyFromNotification(act)
+			return
+		}
+		raise()
+		a.notificationClicked(act.Channel, act.MessageID, act.ThreadTS, act.NotificationID)
+	case "action":
+		raise()
+		if act.Index >= 0 && act.Index < len(n.Buttons) && n.Buttons[act.Index].Do != nil {
+			n.Buttons[act.Index].Do()
+			return
+		}
+		if isSlackURI(act.LaunchURI) {
+			a.OpenURL(act.LaunchURI)
+		}
+	case "header":
+		raise()
+	}
+}
+
+// notificationClicked is the webapp's notificationClicked (boot-shared
+// rFJr) for what Clack notifies about: a huddle's notification opens its
+// conversation (the msg starts "huddle", or the id says so); a message's
+// opens its conversation, in the thread for a reply.
+func (a *App) notificationClicked(ch, msg, thread, id string) {
+	if _, typ, payload, truncated := parseNotificationID(id); ch == "" && !truncated && typ == noteTypeMessage && len(payload) > 0 {
+		// parseMessageNotificationRoute: the id names the conversation
+		ch = payload[0]
+		if len(payload) > 2 && thread == "" {
+			thread = payload[2]
+		}
+	}
+	if ch == "" {
+		return
+	}
+	if strings.HasPrefix(msg, "huddle") {
+		a.Navigate("c/" + ch)
+		return
+	}
+	route := "c/" + ch
+	if thread != "" && slackTSRE.MatchString(thread) {
+		route += "/t/" + thread
+	}
+	a.Navigate(route)
+}
+
+// replyFromNotification is delegate_replyToNotification: the reply box's
+// text goes to the notification's conversation (the one its id names when
+// the arguments don't), in the thread when the notification was for a
+// reply. The window stays where it is.
+func (a *App) replyFromNotification(act toastActivation) {
+	ch, thread := act.Channel, act.ThreadTS
+	if ch == "" && act.NotificationID != "" {
+		if _, typ, payload, truncated := parseNotificationID(act.NotificationID); !truncated && typ == noteTypeMessage && len(payload) > 0 {
+			ch = payload[0]
+			if thread == "" && len(payload) > 2 {
+				thread = payload[2]
+			}
+		}
+	}
+	c := a.Core()
+	if c == nil || ch == "" {
+		return
+	}
+	text := act.Reply
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := composer.SendText(ctx, c, ch, thread, text); err != nil {
+			log.Printf("notify: the reply typed into a notification wasn't sent: %v", err)
+		}
 	}()
 }

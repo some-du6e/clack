@@ -54,6 +54,9 @@ type headerState struct {
 	click, caret  widget.Clickable
 	tip, caretTip popups.TipState
 	caretHit      bool // the caret was clicked (TakeCaret)
+	// the sidebar row's HuddleChannelTooltip triggers (sidebar_suffix.go):
+	// the faces and the headphones badge, or a collapsed section's stack
+	sbFaces, sbBadge sbTip
 }
 
 // TakeCaret reports (once) whether the live button's caret for ch was

@@ -68,6 +68,7 @@ var symbolsOutsideLato = map[rune]string{
 	'⁃': "input only: composer's pasted-list bullets, never drawn",
 	'■': "input only: composer's pasted-list bullets, never drawn",
 	'⧸': "input only: link_warning normalises it to /",
+	'➤': "Windows draws it: the Windows toast's reply button (notify_toast.go, Slack's shell's content)",
 }
 
 // Every visible symbol in internal/ui's strings is in Lato or drawn as an

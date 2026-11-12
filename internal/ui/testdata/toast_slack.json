@@ -1,0 +1,284 @@
+{
+ "source": "Slack desktop 4.53.276 win32 x64 (slack-4.53.276-full.nupkg, dist/main.bundle.cjs sha256 0d25eda0cdebf927a7a67c81ac851a77efadde004f00d337139fec336c916380): gX, ch, Ek, EF, aw and EH.createToastNotification's toastXml with windows_com_activation on; buildNotificationId from gantry-v2-async-client-boot-shared HAag (build 2cd9270e786c). Each function was cut out of the bundle and run in node's vm on these samples.",
+ "samples": {
+  "toasts": {
+   "channel": {
+    "state": {
+     "workspaces": {
+      "T0FAKE0001": {
+       "name": "Fake Workspace"
+      }
+     },
+     "settings": {
+      "notificationPlayback": "web"
+     }
+    },
+    "payload": {
+     "title": "New message in #general",
+     "body": "Ada: hello <world> & \"friends\" it's",
+     "teamId": "T0FAKE0001",
+     "userId": "U0SELF",
+     "channel": "C0FAKE00000",
+     "channelName": "#general",
+     "msg": "1762520099.000300",
+     "id": "T0FAKE0001_1762520099.000300",
+     "groupWindowsNotifications": true,
+     "hasReply": true,
+     "silent": true,
+     "avatarImage": "C:/Users/k/AppData/Local/Temp/Clack Notification Cache/0f1e.png",
+     "trace_id": ""
+    }
+   },
+   "reply": {
+    "state": {
+     "workspaces": {
+      "T0FAKE0001": {
+       "name": "Fake & Co"
+      }
+     },
+     "settings": {
+      "notificationPlayback": "web"
+     }
+    },
+    "payload": {
+     "title": "New message from Ada",
+     "body": "a reply &amp; more",
+     "teamId": "T0FAKE0001",
+     "channel": "D0FAKEDM001",
+     "channelName": "Ada",
+     "msg": "1762520100.000400",
+     "thread_ts": "1762520099.000300",
+     "id": "T0FAKE0001|msg|D0FAKEDM001|1762520100.000400|1762520099.000300",
+     "groupId": "T0FAKE0001|msg|D0FAKEDM001",
+     "groupTitle": "Ada",
+     "groupWindowsNotifications": true,
+     "hasReply": true,
+     "silent": true,
+     "trace_id": ""
+    }
+   },
+   "huddle": {
+    "state": {
+     "workspaces": {
+      "T0FAKE0001": {
+       "name": "Fake Workspace"
+      }
+     },
+     "settings": {
+      "notificationPlayback": "web"
+     }
+    },
+    "payload": {
+     "body": "Ada is inviting you to a huddle",
+     "content": "Ada is inviting you to a huddle",
+     "teamId": "T0FAKE0001",
+     "channel": "D0FAKEDM001",
+     "channelName": "Ada",
+     "msg": "huddle_D0FAKEDM001_29541168",
+     "id": "T0FAKE0001_huddle_D0FAKEDM001_29541168",
+     "hasReply": false,
+     "silent": true,
+     "actionButtons": [
+      {
+       "content": "Dismiss",
+       "launchUri": ""
+      },
+      {
+       "content": "Join",
+       "launchUri": "slack://huddle?id=D0FAKEDM001&team=T0FAKE0001"
+      }
+     ]
+    }
+   },
+   "huddle3": {
+    "state": {
+     "workspaces": {
+      "T0FAKE0001": {
+       "name": "Fake Workspace"
+      }
+     },
+     "settings": {
+      "notificationPlayback": "web"
+     }
+    },
+    "payload": {
+     "body": "Ada is inviting you to a huddle in #general",
+     "teamId": "T0FAKE0001",
+     "channel": "C0FAKE00000",
+     "channelName": "#general",
+     "msg": "huddle_C0FAKE00000_29541168",
+     "id": "T0FAKE0001|huddle|C0FAKE00000|R0FAKECALL1",
+     "hasReply": false,
+     "silent": true,
+     "actionButtons": [
+      {
+       "content": "Dismiss",
+       "launchUri": ""
+      },
+      {
+       "content": "Join",
+       "launchUri": "slack://huddle?id=C0FAKE00000&team=T0FAKE0001"
+      },
+      {
+       "content": "Decline",
+       "launchUri": ""
+      }
+     ]
+    }
+   },
+   "missed": {
+    "state": {
+     "workspaces": {
+      "T0FAKE0001": {
+       "name": "Fake Workspace"
+      }
+     },
+     "settings": {
+      "notificationPlayback": "web"
+     }
+    },
+    "payload": {
+     "title": "Huddle missed",
+     "body": "Ada invited you to a huddle",
+     "teamId": "T0FAKE0001",
+     "channel": "D0FAKEDM001",
+     "channelName": "Ada",
+     "msg": "huddle_D0FAKEDM001_29541168",
+     "id": "T0FAKE0001_huddle_D0FAKEDM001_29541168",
+     "hasReply": false,
+     "silent": true,
+     "actionButtons": [
+      {
+       "content": "Dismiss",
+       "launchUri": ""
+      },
+      {
+       "content": "View",
+       "launchUri": "slack://channel?team=T0FAKE0001&id=D0FAKEDM001"
+      }
+     ]
+    }
+   },
+   "plain": {
+    "state": {
+     "workspaces": {},
+     "settings": {
+      "notificationPlayback": "web"
+     }
+    },
+    "payload": {
+     "title": "Clack",
+     "body": "plain",
+     "id": "x1"
+    }
+   },
+   "nonslack": {
+    "state": {
+     "workspaces": {
+      "T0FAKE0001": {
+       "name": "W"
+      }
+     },
+     "settings": {
+      "notificationPlayback": "web"
+     }
+    },
+    "payload": {
+     "title": "t",
+     "body": "b",
+     "teamId": "T0FAKE0001",
+     "channel": "C1",
+     "msg": "1.2",
+     "id": "T0FAKE0001_1.2",
+     "hasReply": false,
+     "actionButtons": [
+      {
+       "content": "Go",
+       "launchUri": "https://example.com/?a=1&b=2"
+      }
+     ]
+    }
+   }
+  },
+  "truncate": {
+   "short": [
+    "hello world",
+    25,
+    null
+   ],
+   "words": [
+    "one two three four five six seven eight nine ten eleven",
+    25,
+    null
+   ],
+   "cap": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    20,
+    30
+   ],
+   "spaces": [
+    "a  b\nc\td e f g h i j k",
+    5,
+    9
+   ],
+   "emoji": [
+    "\ud83d\ude00\ud83d\ude00\ud83d\ude00 \ud83d\ude00\ud83d\ude00\ud83d\ude00 \ud83d\ude00\ud83d\ude00\ud83d\ude00 \ud83d\ude00\ud83d\ude00\ud83d\ude00",
+    7,
+    9
+   ]
+  },
+  "ids": {
+   "msg": [
+    "T0FAKE0001",
+    "msg",
+    "C0FAKE00000",
+    "1762520099.000300"
+   ],
+   "thread": [
+    "T0FAKE0001",
+    "msg",
+    "C0FAKE00000",
+    "1762520100.000400",
+    "1762520099.000300"
+   ],
+   "long": [
+    "E0FAKEORG001",
+    "msg",
+    "C0FAKE00000LONGCHANNELID",
+    "1762520100.000400",
+    "1762520099.000300"
+   ],
+   "huddle": [
+    "T0FAKE0001",
+    "huddle",
+    "D0FAKEDM001",
+    "R0FAKECALL1"
+   ]
+  }
+ },
+ "slack": {
+  "xml": {
+   "channel": "\n  <toast activationType=\"foreground\" launch=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;C0FAKE00000&quot;,&quot;messageId&quot;:&quot;1762520099.000300&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001_1762520099.000300&quot;,&quot;traceId&quot;:&quot;&quot;}\"><header id=\"T0FAKE0001\" title=\"Fake Workspace\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;header&quot;,&quot;launchUri&quot;:&quot;slack://channel?team=T0FAKE0001&quot;}\"></header><visual><binding template=\"ToastGeneric\"><text hint-wrap=\"false\" hint-maxLines=\"1\">#general</text><text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">Ada: hello &lt;world&gt; &amp; &quot;friends&quot; it&apos;s</text><image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"C:/Users/k/AppData/Local/Temp/Clack Notification Cache/0f1e.png\" /></binding></visual><audio silent=\"true\" /><actions><input id=\"replyBox\" type=\"text\" placeHolderContent=\"Reply\"/><action content=\"\u27a4\" hint-inputId=\"replyBox\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;C0FAKE00000&quot;,&quot;messageId&quot;:&quot;1762520099.000300&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001_1762520099.000300&quot;,&quot;traceId&quot;:&quot;&quot;}\"/></actions></toast>",
+   "reply": "\n  <toast activationType=\"foreground\" launch=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;D0FAKEDM001&quot;,&quot;messageId&quot;:&quot;1762520100.000400&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001|msg|D0FAKEDM001|1762520100.000400|1762520099.000300&quot;,&quot;traceId&quot;:&quot;&quot;,&quot;threadTimestamp&quot;:&quot;1762520099.000300&quot;}\"><header id=\"T0FAKE0001|msg|D0FAKEDM001\" title=\"Ada\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;header&quot;,&quot;launchUri&quot;:&quot;slack://channel?team=T0FAKE0001&quot;}\"></header><visual><binding template=\"ToastGeneric\"><text hint-wrap=\"false\" hint-maxLines=\"1\">Ada</text><text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">a reply &amp; more</text></binding></visual><audio silent=\"true\" /><actions><input id=\"replyBox\" type=\"text\" placeHolderContent=\"Reply\"/><action content=\"\u27a4\" hint-inputId=\"replyBox\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;D0FAKEDM001&quot;,&quot;messageId&quot;:&quot;1762520100.000400&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001|msg|D0FAKEDM001|1762520100.000400|1762520099.000300&quot;,&quot;traceId&quot;:&quot;&quot;,&quot;threadTimestamp&quot;:&quot;1762520099.000300&quot;}\"/></actions></toast>",
+   "huddle": "\n  <toast activationType=\"foreground\" launch=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;D0FAKEDM001&quot;,&quot;messageId&quot;:&quot;huddle_D0FAKEDM001_29541168&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001_huddle_D0FAKEDM001_29541168&quot;,&quot;traceId&quot;:&quot;&quot;}\"><header id=\"T0FAKE0001\" title=\"Fake Workspace\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;header&quot;,&quot;launchUri&quot;:&quot;slack://channel?team=T0FAKE0001&quot;}\"></header><visual><binding template=\"ToastGeneric\"><text hint-wrap=\"false\" hint-maxLines=\"1\"></text><text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">Ada is inviting you to a huddle</text></binding></visual><audio silent=\"true\" /><actions><action activationType=\"system\" arguments=\"dismiss\" content=\"Dismiss\"/><action activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;action&quot;,&quot;launchUri&quot;:&quot;slack://huddle?id=D0FAKEDM001&amp;team=T0FAKE0001&quot;,&quot;id&quot;:&quot;T0FAKE0001_huddle_D0FAKEDM001_29541168&quot;,&quot;index&quot;:1}\" content=\"Join\"/></actions></toast>",
+   "huddle3": "\n  <toast activationType=\"foreground\" launch=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;C0FAKE00000&quot;,&quot;messageId&quot;:&quot;huddle_C0FAKE00000_29541168&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001|huddle|C0FAKE00000|R0FAKECALL1&quot;,&quot;traceId&quot;:&quot;&quot;}\"><header id=\"T0FAKE0001\" title=\"Fake Workspace\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;header&quot;,&quot;launchUri&quot;:&quot;slack://channel?team=T0FAKE0001&quot;}\"></header><visual><binding template=\"ToastGeneric\"><text hint-wrap=\"false\" hint-maxLines=\"1\"></text><text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">Ada is inviting you to a huddle in #general</text></binding></visual><audio silent=\"true\" /><actions><action activationType=\"system\" arguments=\"dismiss\" content=\"Dismiss\"/><action activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;action&quot;,&quot;launchUri&quot;:&quot;slack://huddle?id=C0FAKE00000&amp;team=T0FAKE0001&quot;,&quot;id&quot;:&quot;T0FAKE0001|huddle|C0FAKE00000|R0FAKECALL1&quot;,&quot;index&quot;:1}\" content=\"Join\"/><action activationType=\"system\" arguments=\"dismiss\" content=\"Decline\"/></actions></toast>",
+   "missed": "\n  <toast activationType=\"foreground\" launch=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;D0FAKEDM001&quot;,&quot;messageId&quot;:&quot;huddle_D0FAKEDM001_29541168&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001_huddle_D0FAKEDM001_29541168&quot;,&quot;traceId&quot;:&quot;&quot;}\"><header id=\"T0FAKE0001\" title=\"Fake Workspace\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;header&quot;,&quot;launchUri&quot;:&quot;slack://channel?team=T0FAKE0001&quot;}\"></header><visual><binding template=\"ToastGeneric\"><text hint-wrap=\"false\" hint-maxLines=\"1\">Huddle missed</text><text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">Ada invited you to a huddle</text></binding></visual><audio silent=\"true\" /><actions><action activationType=\"system\" arguments=\"dismiss\" content=\"Dismiss\"/><action activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;action&quot;,&quot;launchUri&quot;:&quot;slack://channel?team=T0FAKE0001&amp;id=D0FAKEDM001&quot;,&quot;id&quot;:&quot;T0FAKE0001_huddle_D0FAKEDM001_29541168&quot;,&quot;index&quot;:1}\" content=\"View\"/></actions></toast>",
+   "plain": "\n  <toast activationType=\"foreground\" launch=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;&quot;,&quot;channel&quot;:&quot;&quot;,&quot;messageId&quot;:&quot;&quot;,&quot;notificationId&quot;:&quot;x1&quot;,&quot;traceId&quot;:&quot;&quot;}\"><visual><binding template=\"ToastGeneric\"><text hint-wrap=\"false\" hint-maxLines=\"1\">Clack</text><text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">plain</text></binding></visual><audio silent=\"true\" /></toast>",
+   "nonslack": "\n  <toast activationType=\"foreground\" launch=\"{&quot;type&quot;:&quot;notification&quot;,&quot;teamId&quot;:&quot;T0FAKE0001&quot;,&quot;channel&quot;:&quot;C1&quot;,&quot;messageId&quot;:&quot;1.2&quot;,&quot;notificationId&quot;:&quot;T0FAKE0001_1.2&quot;,&quot;traceId&quot;:&quot;&quot;}\"><header id=\"T0FAKE0001\" title=\"W\" activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;header&quot;,&quot;launchUri&quot;:&quot;slack://channel?team=T0FAKE0001&quot;}\"></header><visual><binding template=\"ToastGeneric\"><text hint-wrap=\"false\" hint-maxLines=\"1\">t</text><text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">b</text></binding></visual><audio silent=\"true\" /><actions><action activationType=\"foreground\" arguments=\"{&quot;type&quot;:&quot;action&quot;,&quot;launchUri&quot;:&quot;slack://noop&quot;,&quot;id&quot;:&quot;T0FAKE0001_1.2&quot;,&quot;index&quot;:0}\" content=\"Go\"/></actions></toast>"
+  },
+  "truncate": {
+   "short": "hello world",
+   "words": "one two three four five six\u2026",
+   "cap": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u2026",
+   "spaces": "a  b c\u2026",
+   "emoji": "\ud83d\ude00\ud83d\ude00\ud83d\ude00 \ud83d\u2026"
+  },
+  "ids": {
+   "msg": "T0FAKE0001|msg|C0FAKE00000|1762520099.000300",
+   "thread": "T0FAKE0001|msg|C0FAKE00000|1762520100.000400|1762520099.000300",
+   "long": "E0FAKEORG001|msg|~mql6lz",
+   "huddle": "T0FAKE0001|huddle|D0FAKEDM001|R0FAKECALL1"
+  },
+  "digest": {}
+ }
+}

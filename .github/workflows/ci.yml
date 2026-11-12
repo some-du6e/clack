@@ -294,6 +294,82 @@ jobs:
           go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop
           go test -count=1 -v -timeout 15m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui
 
+      # Toasts (WinRT, internal/desktop/toast_windows.go). Windows drops a
+      # toast from an app id it doesn't know without an error, so a scratch
+      # id shows one without and one with the registration Clack writes
+      # (HKCU\Software\Classes\AppUserModelId), and Notification Center's
+      # history says which Windows kept. Then UI Automation clicks a toast's
+      # button in the shell's toast window: the Activated event has to reach
+      # the test process. Screenshots of the desktop go in toast-shots.
+      - name: toasts (app id registration, Notification Center, a click through UI Automation)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+          CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
+        run: go test -count=1 -v -timeout 10m -run 'TestToast' ./internal/desktop
+      # The installer registers Clack's own id (and its icon) for the toasts
+      # an installed Clack shows, and the uninstaller removes both.
+      - name: toasts from the installed Clack (the installer's app id registration, uninstall)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+          CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path build\Clack.exe)) {
+            go install github.com/tc-hib/go-winres@v0.3.3
+            & (Join-Path (go env GOPATH) 'bin\go-winres.exe') make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version 0.0.0-ci
+            go build -trimpath -ldflags="-s -w -H windowsgui" -o build\Clack.exe .\cmd\clack
+            if ($LASTEXITCODE -ne 0) { throw 'go build' }
+          }
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'choco install innosetup failed' }
+          }
+          & $iscc /Qp '/DAppVersion=0.0.1' '/DAppVersionNum=0.0.1.0' "/DSourceExe=$PWD\build\Clack.exe" "/DOutputDir=$PWD\dist" packaging\windows\clack.iss
+          if ($LASTEXITCODE -ne 0) { throw 'iscc failed' }
+          $key = 'HKCU:\Software\Classes\AppUserModelId\io.github.some-du6e.clack'
+          $png = Join-Path $env:LOCALAPPDATA 'Clack\clack.png'
+          if (Test-Path $key) { throw "$key exists before the install" }
+          $p = Start-Process -Wait -PassThru -FilePath (Get-Item dist\Clack-0.0.1-windows-amd64-setup.exe).FullName -ArgumentList '/VERYSILENT', '/CURRENTUSER', '/SUPPRESSMSGBOXES', '/NORESTART'
+          if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode)" }
+          $k = Get-ItemProperty $key
+          Write-Host "DisplayName '$($k.DisplayName)', IconUri '$($k.IconUri)'"
+          if ($k.DisplayName -ne 'Clack') { throw "DisplayName is '$($k.DisplayName)'" }
+          if ($k.IconUri -ne $png) { throw "IconUri is '$($k.IconUri)', want '$png'" }
+          if (-not (Test-Path $png)) { throw "no $png" }
+          $env:CLACK_TOAST_INSTALLED = '1'
+          go test -count=1 -v -run 'TestToastInstalledAUMID' ./internal/desktop
+          if ($LASTEXITCODE -ne 0) { throw 'TestToastInstalledAUMID' }
+          $app = Join-Path $env:LOCALAPPDATA 'Programs\Clack'
+          Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          # the uninstaller finishes from a temp copy of itself: wait for its keys to go
+          for ($i = 0; $i -lt 120 -and (Test-Path $key); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path $key) { throw "uninstall left $key" }
+          for ($i = 0; $i -lt 20 -and (Test-Path $png); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path $png) { throw "uninstall left $png" }
+      # Clack's own toasts (internal/ui notify_windows_test.go): the WinRT
+      # notifier shows a fakeslack DM's toast, UI Automation types into its
+      # reply box and clicks a second DM's toast in Notification Center, and
+      # Clack sends the reply and opens the DM.
+      - name: Clack's toasts (a fakeslack DM's toast clicked opens the DM; the reply box sends)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+          CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
+        run: go test -count=1 -v -timeout 15m -run '^TestWindowsToast' ./internal/ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: toast-shots
+          path: ${{ runner.temp }}/toast-shots
+          if-no-files-found: ignore
+
       # Wheel scrolling on Windows: frame times while synthetic mouse-wheel
       # notches scroll a long fakeslack channel at 60 Hz (layout, and the
       # Direct3D 11 render when the runner has a device). The numbers are
