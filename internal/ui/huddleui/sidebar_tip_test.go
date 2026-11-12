@@ -56,10 +56,11 @@ func TestHuddleChannelTooltipText(t *testing.T) {
 		}
 	}
 	setLive(e, "C0OTHER", liveRoom{ID: "R2", Participants: []string{huddle.FakeRemoteUser}, Name: "Standup :coffee:"})
-	if a, m := e.c.tipText("C0OTHER", false); a != "Standup :coffee:" || m != "remote is in the huddle" {
+	who := e.c.userName(huddle.FakeRemoteUser) // vUCu sE: the name the viewer's display pref picks
+	if a, m := e.c.tipText("C0OTHER", false); a != "Standup :coffee:" || m != who+" is in the huddle" {
 		t.Errorf("one other with a topic: %q / %q", a, m)
 	}
-	if _, m := e.c.tipText("C0OTHER", true); m != "remote is in the huddle #other" {
+	if _, m := e.c.tipText("C0OTHER", true); m != who+" is in the huddle #other" {
 		t.Errorf("one other, with the channel: %q", m)
 	}
 	setLive(e, "C0OTHER", liveRoom{ID: "R2", Participants: []string{huddle.FakeSelfUser}, Name: "   "})
