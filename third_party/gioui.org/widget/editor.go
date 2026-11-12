@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -197,10 +198,39 @@ type SubmitEvent struct {
 // Editor.SelectedText() (which can be empty).
 type SelectEvent struct{}
 
-// blinkInterval is how long the caret shows, then hides (Clack patch 10:
-// Chromium's default, kDefaultCaretBlinkInterval, toggled with no timeout
-// while the window is active).
-const blinkInterval = 500 * time.Millisecond
+// defaultBlinkInterval is how long the caret shows, then hides, when the
+// OS gives no interval (Clack patch 10: Chromium's default,
+// kDefaultCaretBlinkInterval, toggled with no timeout while the window is
+// active).
+const defaultBlinkInterval = 500 * time.Millisecond
+
+// caretBlink is CaretBlinkInterval in nanoseconds, plus one so that the
+// zero value means "not set" (Clack patch 13).
+var caretBlink atomic.Int64
+
+// CaretBlinkInterval is how long a focused editor's caret shows, then
+// hides: the OS's setting where the app package reads one (Windows'
+// GetCaretBlinkTime when a window opens, as Chromium's
+// OsSettingsProviderWin::CaretBlinkInterval does), else 500 ms. Zero
+// means the caret doesn't blink: it stays drawn and asks for no frames
+// (Blink's FrameCaret with a zero LayoutTheme::CaretBlinkInterval).
+// Clack patch 13, CLACK_PATCHES.md.
+func CaretBlinkInterval() time.Duration {
+	if v := caretBlink.Load(); v != 0 {
+		return time.Duration(v - 1)
+	}
+	return defaultBlinkInterval
+}
+
+// SetCaretBlinkInterval sets CaretBlinkInterval (zero: no blinking; a
+// negative d restores the default). Safe from any goroutine.
+func SetCaretBlinkInterval(d time.Duration) {
+	if d < 0 {
+		caretBlink.Store(0)
+		return
+	}
+	caretBlink.Store(int64(d) + 1)
+}
 
 func (e *Editor) processEvents(gtx layout.Context) (ev EditorEvent, ok bool) {
 	if len(e.pending) > 0 {
@@ -804,10 +834,13 @@ func (e *Editor) layout(gtx layout.Context, textMaterial, selectMaterial op.Call
 	e.dragger.Add(gtx.Ops)
 	e.showCaret = false
 	if gtx.Focused(e) && !e.inactive && !e.ReadOnly {
-		now := gtx.Now
-		dt := now.Sub(e.blinkStart)
-		gtx.Execute(op.InvalidateCmd{At: now.Add(blinkInterval - dt%blinkInterval)})
-		e.showCaret = dt%(2*blinkInterval) < blinkInterval
+		e.showCaret = true
+		if blink := CaretBlinkInterval(); blink > 0 {
+			now := gtx.Now
+			dt := now.Sub(e.blinkStart)
+			gtx.Execute(op.InvalidateCmd{At: now.Add(blink - dt%blink)})
+			e.showCaret = dt%(2*blink) < blink
+		}
 	}
 	semantic.Editor.Add(gtx.Ops)
 	if e.Len() > 0 {

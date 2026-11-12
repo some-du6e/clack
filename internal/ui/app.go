@@ -237,6 +237,10 @@ type App struct {
 	switchAt         time.Time             // navigation time, for the channel-switch latency log
 	switchTo         Route
 	winLive          atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
+	tray             atomic.Pointer[trayRef]    // the notification-area icon (SetTray, runfromtray.go)
+	quitting         atomic.Bool                // Quit: the next close isn't runFromTray's (Slack's app.isQuitting)
+	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
+	hideHook         func() bool                // tests: replaces Window.Hide (runfromtray.go)
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
 	update           updateState                // "Update available" banner
 	updatesOff       atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
@@ -454,14 +458,27 @@ func (a *App) Run() error {
 			}
 			a.flushPrefs() // the window is gone: nothing waits on this
 			return e.Err
+		case *app.ClosingEvent:
+			// the close button, Alt+F4: Slack's MAIN_WINDOW_CLOSE keeps the
+			// app in the notification area (runfromtray.go)
+			if a.closeToTray() {
+				e.Abort()
+			}
 		case app.FileDropEvent: // files dragged from the OS (Gio patch 11, drop_overlay.go)
 			a.fileDrop(e)
 		case app.ConfigEvent:
+			a.winMode = e.Config.Mode
 			if e.Config.Focused && !a.focused {
 				a.nudgeUpdates()       // back from sleep, often: is a check due?
 				a.loginWindowFocused() // a sign-in link copied in the browser (login.go)
 			}
 			a.focused = e.Config.Focused
+		default:
+			// Gio's wake-up after an Invalidate, which also comes while
+			// the window draws no frames (hidden to the notification
+			// area, minimized): run what was posted, so messages,
+			// notifications and their sounds keep coming (runfromtray.go)
+			a.drainIdle()
 		case app.FrameEvent:
 			t0 := time.Now()
 			if a.th.Shaper == nil && !a.takeShaper() {

@@ -23,6 +23,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/text"
 	"gioui.org/unit"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
@@ -124,12 +125,6 @@ const (
 
 const (
 	edUndoCap = 200
-	// edBlinkInterval is Chromium's caret blink interval when the OS gives
-	// none (OsSettingsProvider::kDefaultCaretBlinkInterval, 500 ms): the
-	// caret shows for one interval, hides for the next. Blink's FrameCaret
-	// toggles it on a repeating timer with no timeout, for as long as the
-	// window is focused and active.
-	edBlinkInterval = 500 * time.Millisecond
 )
 
 type edSnap struct {
@@ -1349,10 +1344,19 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 	focused := gtx.Focused(e)
 	showCaret := false
 	if focused && !e.inactive {
-		now := gtx.Now
-		dt := now.Sub(e.blinkStart)
-		gtx.Execute(op.InvalidateCmd{At: now.Add(edBlinkInterval - dt%edBlinkInterval)})
-		showCaret = dt%(2*edBlinkInterval) < edBlinkInterval
+		// Blink's FrameCaret: the caret shows for one interval, hides for
+		// the next, on a repeating timer with no timeout while the window
+		// is focused and active. The interval is the OS's
+		// (widget.CaretBlinkInterval, Gio patch 13: GetCaretBlinkTime on
+		// Windows, else Chromium's 500 ms); zero keeps the caret drawn
+		// and asks for no frames.
+		showCaret = true
+		if blink := widget.CaretBlinkInterval(); blink > 0 {
+			now := gtx.Now
+			dt := now.Sub(e.blinkStart)
+			gtx.Execute(op.InvalidateCmd{At: now.Add(blink - dt%blink)})
+			showCaret = dt%(2*blink) < blink
+		}
 	}
 
 	e.spellUpdate(gtx, focused)

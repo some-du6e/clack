@@ -266,6 +266,25 @@ jobs:
           Get-Content $log | Select-String -SimpleMatch 'slack://', 'sign-in:' | ForEach-Object { $_.Line }
           exit 0 # the last reg query's expected exit 1 would otherwise end the step
 
+      # Closing the window keeps Clack in the notification area (Slack's
+      # runFromTray): Gio patch 13's Window.Hide and the show in
+      # ActionRaise on real HWNDs (windowed and maximized), the hidden
+      # window's wake-ups without frames, the caret blink time from
+      # GetCaretBlinkTime (set on the runner with SetCaretBlinkTime and put
+      # back), the RunFromTray balloon through Shell_NotifyIcon, and
+      # App.Run's own window signed in to internal/fakeslack hiding on
+      # SC_CLOSE / WM_CLOSE, running posted work while hidden, coming back
+      # on Raise and closing on Quit.
+      - name: close to the tray (Window.Hide, the tray balloon, runFromTray in App.Run, the caret blink time)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TRAY_TESTS: "1"
+        run: |
+          go test -count=1 -v -timeout 10m -run 'TestHideAndRaise|TestHideWithoutDriver|TestCaretBlinkFromOS' gioui.org/app
+          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop
+          go test -count=1 -v -timeout 15m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui
+
       # Wheel scrolling on Windows: frame times while synthetic mouse-wheel
       # notches scroll a long fakeslack channel at 60 Hz (layout, and the
       # Direct3D 11 render when the runner has a device). The numbers are

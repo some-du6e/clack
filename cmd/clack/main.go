@@ -450,6 +450,8 @@ func main() {
 		var terr error
 		if tray, terr = desktop.StartTray("Clack", a.Raise, a.Quit); terr != nil {
 			log.Printf("desktop: tray: %v", terr)
+		} else {
+			a.SetTray(tray) // closing the window leaves Clack here (runFromTray)
 		}
 	}
 	go func() {

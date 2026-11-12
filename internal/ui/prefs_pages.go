@@ -828,10 +828,9 @@ func (p *prefsModal) advancedPage(f *prefsForm) {
 	f.subheading("Other options")
 	f.check("overloaded_message_enabled", "Send me occasional channel suggestions", "", true, false)
 	f.check("in_prod_surveys_enabled", "Send me occasional surveys", "We’re always working to make Slack better, and we’d love your thoughts.", true, false)
-	if runtime.GOOS != "darwin" { // DesktopPref: Windows and Linux
+	if runtime.GOOS != "darwin" { // DesktopPref (prefs-dialog GpYL): Windows and Linux
 		p.launchOnLoginRow(f)
-		// runFromTray: Clack's window can't stay alive after a close yet
-		f.off("runFromTray", "Leave app running in notification area when the window is closed", "", false, false)
+		p.runFromTrayRow(f)
 	}
 }
 
@@ -846,6 +845,22 @@ func (p *prefsModal) huddleMotionRow(f *prefsForm) {
 	if !anim { // p-prefs_dialog__secondary_label, its link to Accessibility
 		f.mutedLink("anim_off", "Animations are turned off in", "Accessibility preferences.", func() { p.selectTab("accessibility") })
 	}
+}
+
+// runFromTrayRow is DesktopPref's last row, the desktop setting
+// runFromTray (default on): closing the window leaves Clack running in
+// the notification area (runfromtray.go). It needs the tray icon, which
+// only Windows has, so elsewhere it stays greyed and unticked: a close
+// quits there.
+func (p *prefsModal) runFromTrayRow(f *prefsForm) {
+	const label = "Leave app running in notification area when the window is closed"
+	a := p.a
+	if a.trayIcon() == nil {
+		f.off("runFromTray", label, "", false, false)
+		return
+	}
+	on := a.runFromTrayOn()
+	f.option("run_from_tray", label, "", on, false, func() { a.setRunFromTray(!on) })
 }
 
 // launchOnLoginRow is DesktopPref's "Launch app on login"

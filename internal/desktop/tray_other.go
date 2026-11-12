@@ -16,5 +16,10 @@ func StartTray(tooltip string, onOpen, onQuit func()) (*Tray, error) {
 // SetTooltip is a no-op.
 func (t *Tray) SetTooltip(s string) {}
 
+// Balloon is Windows-only.
+func (t *Tray) Balloon(title, content string) error {
+	return errors.New("desktop: no tray on this platform")
+}
+
 // Close is a no-op.
 func (t *Tray) Close() {}

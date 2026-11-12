@@ -17,7 +17,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
-`app/clack_drop*.go` and these two files (`CLACK_PATCHES.md`,
+`app/clack_drop*.go`, `app/clack_hide*.go` and these two files (`CLACK_PATCHES.md`,
 `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -358,8 +358,9 @@ nothing while nothing changes.
   timeout, while the frame is focused and active. Upstream Gio blinked
   for 10 s and then showed a solid caret. The interval is Chromium's
   default, `OsSettingsProvider::kDefaultCaretBlinkInterval` (500 ms,
-  `ui/native_theme/os_settings_provider.h`; Windows' `GetCaretBlinkTime`
-  and GTK's `gtk-cursor-blink-time` / 2 override it there, not here).
+  `ui/native_theme/os_settings_provider.h`). Windows' `GetCaretBlinkTime`
+  overrides it since patch 13; GTK's `gtk-cursor-blink-time` / 2 does
+  in Chromium, not here yet.
   When the window loses the focus Gio keeps the key focus and sends the
   editor `FocusEvent{Focus: false}`; upstream restarted the blink on it,
   so a background window kept drawing for 10 s. Chromium disables the
@@ -478,3 +479,61 @@ the tracking function for callers that space text themselves.
 
 Tests: `internal/ui/theme` `TestLetterSpacingShaper` and
 `TestTrackingForSize`. Not in `UPSTREAM.patch`.
+
+## 13. app: Window.Hide, showing a hidden window, and the caret blink time from Windows
+
+`app/clack_hide.go` (new: `Window.Hide`), `app/os_windows.go`
+(`window.hide`, `runLoop`, `Perform`'s `ActionRaise`,
+`setCaretBlinkFromOS` in `newWindow`), `app/internal/windows/windows.go`
+(`IsWindowVisible`, `GetCaretBlinkTime`, `SWP_HIDEWINDOW`) and
+`widget/editor.go` (`CaretBlinkInterval`, `SetCaretBlinkInterval`, the
+caret in `Editor.Layout`). Additions: nothing hides unless the app calls
+`Hide`, and outside Windows the blink stays 500 ms.
+
+Slack's desktop keeps running in the notification area when its window is
+closed (the `runFromTray` setting, on by default; `main.bundle.cjs`
+4.53.276 @1104552). Its MAIN_WINDOW_CLOSE handler (@1137071) calls
+`preventDefault` on the close and `BrowserWindow.hide()`, and the tray
+icon's click shows the window again (`FOREGROUND_APP` → `FOCUS_WINDOW`:
+`show()`, `focus()`). Gio could abort a close (`ClosingEvent.Abort`) but
+not hide a window.
+
+- `Window.Hide()` runs on the window's thread and reports whether the
+  window was hidden. Windows: Chromium's `HWNDMessageHandler::Hide`
+  (Electron's `hide()`), `SetWindowPos` with `SWP_HIDEWINDOW |
+  SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOREPOSITION | SWP_NOSIZE |
+  SWP_NOZORDER`, not `ShowWindow(SW_HIDE)`, which activates another window
+  itself. Other platforms return false and do nothing (Clack then lets the
+  close go on). It may be called while handling a `ClosingEvent`: the
+  window thread runs `Window.Run` functions while it waits for the app to
+  take the next event.
+- A hidden window draws no frames, as a minimized one doesn't: `runLoop`
+  skips its animation frames while `IsWindowVisible` is false. Gio still
+  delivers its wake-up event to `Window.Event` after every `Invalidate`,
+  so an app can run posted work then (Clack's `drainIdle`).
+- `Perform(system.ActionRaise)` on a hidden window shows it first the way
+  Chromium's `HWNDMessageHandler::Show(kNormal)` does: `SW_SHOW` when it
+  was maximized (it stays maximized), `SW_SHOWNORMAL` otherwise, then
+  raises it as before. The `WM_PAINT` that follows draws it.
+- The caret blink time: Chromium on Windows asks
+  `OsSettingsProviderWin::CaretBlinkInterval`
+  (`ui/native_theme/os_settings_provider_win.cc`): `GetCaretBlinkTime`,
+  the 500 ms default when that returns 0, and no blinking for `INFINITE`
+  (the Control Panel's "Cursor blink rate: None"). Windows sends no
+  notification when it changes, so Chromium reads it when it builds a
+  renderer's preferences. Gio reads it as each window opens
+  (`setCaretBlinkFromOS`) into `widget.SetCaretBlinkInterval`.
+  `widget.CaretBlinkInterval()` is what `Editor` blinks at; zero keeps the
+  caret drawn and asks for no frames (Blink's `FrameCaret` with a zero
+  `LayoutTheme::CaretBlinkInterval`). Windows' default is 530 ms. Clack's
+  composer editor reads the same function.
+
+Read in Chromium main 64e5bbc6 (`ui/views/win/hwnd_message_handler.cc`
+`Show`, `Hide`, `Activate`) and Electron main 295785f5. Tests on ci's
+windows-applog job (`CLACK_WINDOWS_TRAY_TESTS`):
+`app/clack_hide_windows_test.go` (`TestHideAndRaise`: hide from inside an
+aborted `ClosingEvent`, no frames but wake-ups while hidden, `ActionRaise`
+shows it, maximized stays maximized; `TestCaretBlinkFromOS`: the runner's
+blink time set to 800 ms, 530 ms and `INFINITE` with `SetCaretBlinkTime`,
+then put back), and `internal/ui` `TestCloseToTrayWindow` (Clack's own
+window). Not in `UPSTREAM.patch`.
