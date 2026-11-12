@@ -126,6 +126,7 @@ func windowShotEnv(t *testing.T, dark bool, people int) (*shotEnv, *huddle.Sessi
 	e.h.app.S.PutUsers(users)
 	e.h.imgs = imgcache.New(shotPictures, "", nil)
 	e.w.th.Images = e.h.imgs
+	e.noShare = true // the people, not a screen share, on the stage
 	s := e.join(nil, nil)
 	e.c.Client = e.fk.Caller() // huddles.listBackgrounds
 	waitState(t, s, "connected", func(st huddle.State) bool {
