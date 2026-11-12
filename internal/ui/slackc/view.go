@@ -15,6 +15,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // View lays out one root's host trees and keeps per-node UI state (hover,
@@ -48,6 +49,7 @@ type View struct {
 	styleGen  uint32
 	styleVer  uint64
 	styleDark bool
+	styleFont uint32 // theme.FontGen the styles were computed for
 	styleWin  image.Point
 	needStyle bool
 	dirtyGen  uint32 // bumps force a relayout (images arriving, state)
@@ -257,6 +259,10 @@ func (v *View) Layout(gtx layout.Context, nodes []*Node, name string, orig Props
 	}
 	if g := nativeRootsGen.Load(); g != v.rootsGen {
 		v.rootsGen = g // a native's root became known: "@" displays follow it
+		v.needStyle = true
+	}
+	if g := theme.FontGen(); g != v.styleFont {
+		v.styleFont = g // the UI font changed: its tracking variables (tracking.go)
 		v.needStyle = true
 	}
 	dark := env().Theme != nil && env().Theme.Dark

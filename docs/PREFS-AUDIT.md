@@ -33,8 +33,8 @@ real. *Greyed* means the row is drawn the way Slack draws it, disabled, with
 | Mark as read | **fixed**. Removed the invented hint under Prompt to confirm; added Keyboard shortcuts | applied: mark_msgs_read_immediately + start_scroll_at_oldest (one users.prefs.set), confirm_clear_all_unreads |
 | Audio & video | **fixed**. Camera, Microphone, gain control, noise suppression, auto-dock, 150-member warning, blur, Huddle motion, music delay. Removed "Set my status In a huddle" (Slack shows it under Availability) and "Turn off my video" (gated off in the live dialog) | applied: huddles_mute_by_default, **huddles_cc_by_default** (a joined huddle starts with captions shown), **huddles_show_shouty_rooster** (starting, not joining, a huddle in a channel of more than 150 members asks "Start a huddle in this channel?", HuddleShoutyRoosterModal, with its "Don’t show this message again." box writing the pref). **2026-11-10, huddle-audio, newly applied:** agc and ns (device prefs in ui.json, like Slack's localStorage prefs.audio: gain control and RNNoise noise suppression before the Opus encoder), huddles_show_join_preview (the join preview window), huddles_global_mute (Mod+Shift+Space while in a huddle), huddles_disconnect_on_lock (leave when the screen locks), huddles_play_music_when_last and huddles_play_music_timeout (the lounge music); see "Audio & video (2026-11-10)" below. **2026-11-10, bg-blur:** video_background_filter ("Blur your video background…": Slack's prefs.video.effect, a device pref; the camera's background is blurred before the self view and the encoder, see "Background blur" below). Greyed: huddles_reactions_effects, clips_pip_auto_dock (Clack has no clip picture-in-picture) |
 | Salesforce | **fixed**. Slack's exact copy; removed Clack's invented sentence | none |
-| Connected accounts | **fixed**. Slack's copy, Learn more, "Apps connected through workflows". **2026-11-09:** the list is fetched like ConnectedWorkflowAccountsList (fetchUserAuth: apps.auth.external.userAuths.get, reason fetch_user_auth): one row per app, or "No accounts found". Still different: no Manage button (Slack's manage-accounts modal isn't ported) | none |
-| Privacy & visibility | **fixed**. Learn more links, "Preferences only apply to this workspace" note, the workspace name in Contact sharing, People you've hidden. Removed the invented Privacy Mode section. **2026-11-09:** Find my workspaces opens Slack's get-started find page (Rgd9); Invitations you’ve blocked asks users.emailVerificationStatus.get and, verified, lists users.listIgnoredUsers with each email's unblock button (UnblockConfirmationModal, users.removeUserBlock), or "You haven’t blocked any invitations from anyone yet."; unverified, Slack's 👋 copy. People you’ve hidden lists hidden_users with unhide (unhideUserApi writes the list without them), or "You haven’t hidden anyone yet." Still different: "Send Verification Email" is greyed (Slack's code-entry flow goes through signin.confirmCode). **2026-11-12 (gap-w8):** hidden people's messages are hidden (HiddenMessageBody with Show anyway, MESSAGES-AUDIT "Hidden people's messages"), and unhiding someone here also resets their messages shown anyway (unhideUserApi) | server: who_can_see_account_by_searching_email, who_can_share_contact_card, hidden_users |
+| Connected accounts | **fixed**. Slack's copy, Learn more, "Apps connected through workflows". **2026-11-09:** the list is fetched like ConnectedWorkflowAccountsList (fetchUserAuth: apps.auth.external.userAuths.get, reason fetch_user_auth): one row per app, or "No accounts found". **2026-11-12 (gap-w16):** each row is Slack's ConnectedWorkflowAccountAppRow with its Manage button, which opens the manage-accounts modal and its Disconnect confirmation (apps.auth.external.delete), see "Connected accounts' Manage" below | none |
+| Privacy & visibility | **fixed**. Learn more links, "Preferences only apply to this workspace" note, the workspace name in Contact sharing, People you've hidden. Removed the invented Privacy Mode section. **2026-11-09:** Find my workspaces opens Slack's get-started find page (Rgd9); Invitations you’ve blocked asks users.emailVerificationStatus.get and, verified, lists users.listIgnoredUsers with each email's unblock button (UnblockConfirmationModal, users.removeUserBlock), or "You haven’t blocked any invitations from anyone yet."; unverified, Slack's 👋 copy. People you’ve hidden lists hidden_users with unhide (unhideUserApi writes the list without them), or "You haven’t hidden anyone yet." **2026-11-12 (gap-w16):** Send Verification Email works: signup.confirmEmail emails the code, VerifyEmailModal takes it (signin.confirmCode), and the page then lists the blocked invitations, see "Send Verification Email" below. **2026-11-12 (gap-w8):** hidden people's messages are hidden (HiddenMessageBody with Show anyway, MESSAGES-AUDIT "Hidden people's messages"), and unhiding someone here also resets their messages shown anyway (unhideUserApi) | server: who_can_see_account_by_searching_email, who_can_share_contact_card, hidden_users |
 | Advanced | **fixed**. Slack's Input options order and copy, Enter-key radios, Search options, Download location, Confirmations and warnings, Other options, Launch on login / notification-area rows (Linux, Windows). Removed "Copy message text as Markdown" (gated off in the live dialog). Clack's own rows moved to its own Clack tab (after Advanced, where a Taut tab lands; three rows: updates, Replay introduction, live updates; Troubleshooting is the macOS Help menu's) | **newly applied:** msg_input_send_btn (Enter adds a line, Mod+Enter sends). Applied: enter_is_special_in_tbt, plain_text_mode. **2026-11-09:** disable_smart_symbols (behind composer_smart_symbols, as iZ.w gates the row: TextSubstitutionsModule's "-- " → "— ", -> ← ↔, ... → …, type-time curly quotes, none in code, each its own undo), search_exclude_channels (Slack's channel multi-select; the In suggestions drop them as parseSuggestions does, Slack's servers drop the results), stick_user_sort (a new search starts from search_sort; the sort menu says "Most relevant" and writes search_sort, "Most relevant (default)" otherwise, plus "Edit default"), should_show_unsend_message_confirmation (Mod+Z in the empty composer within 15 s of a send unsends it and puts it back, behind Slack's Unsend message dialog), confirm_user_marked_away (after connecting while manually away, "Set yourself to active?"), suppress_link_warning (isLinkSuspicious and the "Double-check this link" dialog on message links). Server: overloaded_message_enabled, in_prod_surveys_enabled. **2026-11-10:** disable_link_truncation applied the way Slack's client applies it: InputOptionsPref writes !checked with setUserPrefByApi, and the prefs-dialog chunks are the only client code that reads it. Greyed: hide_sc_files_sharing_speed_bump and hide_external_members_canvas_sharing_speed_bump (the send-time Slack Connect "Is it OK to send this?" dialog isn't ported), download location, launch on login, notification area |
 
 ## Still greyed after part A, and the plan for each
@@ -87,9 +87,6 @@ part that reads them:
 - Leave app running in notification area (runFromTray): Gio's window
   can't refuse a close, so it can't stay in the tray, and Linux has no
   tray.
-- Privacy & visibility's Send Verification Email: Slack's
-  VerifyEmailModal flow (a code sent by email, then entered in the
-  modal) isn't ported.
 
 ## Language (locale, 2026-11-10)
 
@@ -312,9 +309,9 @@ face's hhea metrics instead of Lato's constants). At startup a saved font
 whose files are all on this computer is built before the first frame; one
 that still needs a download starts in Lato and switches when it arrives.
 
-Still different: Slack's letter-spacing variables for the system and Roboto
-Mono / Noto Sans fonts (`--custom-font-tracking-*`, e.g. 0.06pt on body
-text) aren't applied, because Clack's labels have no letter spacing; Chrome's
+Letter spacing (gap-w16, 2026-11-12): Slack's `--custom-font-tracking-*`
+for the system fonts, Roboto Mono, Noto Sans and Meiryo are applied, see
+"Font tracking" below. Still different: Chrome's
 synthetic oblique and synthetic bold aren't drawn; a unicode-range companion
 (OpenDyslexic's Cyrillic file) only fills in what the main face lacks, while
 Chrome prefers it inside its range; SF's optical size is fixed at 15px (Chrome sets
@@ -333,6 +330,77 @@ switch every row matches a fresh row in the new font, the scrollbar
 forgets old heights, nothing moves after). Screenshots: `TestFontShots`
 with the `font-shots` workflow (a channel in every option, light, and the
 open menu; `fonts.txt` lists what each option resolved to on the runner).
+
+### Font tracking (gap-w16, 2026-11-12)
+
+From CDN build d3de3a487b1c (fetched without cookies) and the CSS Slack
+serves with it (client-boot-styles, the webapp's application CSS,
+slack-kit-gantry-v2-styles, rollup-style-plastic).
+
+| What | Slack | Clack |
+| --- | --- | --- |
+| Which fonts | boot-shared `oWug` Theme: `M = S \|\| T \|\| I \|\| j \|\| E`, the labels San Francisco Pro (System), Segoe UI (System), Roboto Mono (`wj/S`.RR), Noto Sans (`.Cp`) and value `meiryo`; Atkinson Hyperlegible Next (`.gw`) gets only the weights | `uifont.Tracks`; `theme.UIFont.Tracking` |
+| Values | on `.use-theme-font`: headline -0.36pt, title -0.43pt, subtitle -0.15pt, large-body -0.15pt, body 0.06pt, caption 0.12pt, micro 0.17pt; unset otherwise, so `var(…, inherit)` is normal | `theme/tracking.go` |
+| Where | `letter-spacing: var(--custom-font-tracking-X, inherit)` beside each type size: caption 13px (972 rules), body 15px (671, plus slack-kit's `body`), subtitle 18px (241), micro 12px (146), title 22px (120), headline 28px (41), large-body 18px (22); Slack Kit's `--dt_static_type-size-*` / `-tracking-*` agree. Other sizes inherit, mostly body's; code blocks set none | `theme.TrackingFor(font, size)`: the size's variable, body's off the scale and for monospace runs; none for the emoji slot (Slack's emoji are images) |
+| How Chrome spaces | Blink `ShapeResult::ApplySpacingOrExpansion`: the spacing goes after each grapheme cluster's last glyph; `ShapeResultSpacing::ComputeSpacing` skips `TreatAsZeroWidthSpace` (CR, FF, U+FFFC, ZWNJ, ZWJ, default ignorables) and cursive scripts' non-space characters; `font_features.cc` turns liga, clig and calt off when letter-spacing isn't 0 | Gio patch 12 (`third_party/gioui.org/CLACK_PATCHES.md`): the same, in the shaper before wrapping, so measuring, carets and drawing agree |
+| Who gets it | everything under body | every text the theme's painters, Gio's Label and Editor, richview and the composer shape; slackc (Clack's CSS engine for Slack-styled views) gets the variables at `:root` and spaces through its own letter-spacing |
+
+Not done: when a tracked font can't load and Clack falls back to the
+embedded Lato, Slack would still track the fallback; Clack draws plain
+Lato.
+
+Tests: `TestTrackingForSize`, `TestLetterSpacingShaper` (Blink's rules:
+the per-cluster spacing, ZWSP, ligatures off, PxPerSp and the shaper's
+scale, an explicit spacing), `TestTrackedLabelsAndEditors` (the painters,
+`widget.Label`, `widget.Editor`'s caret) and `TestSetTrackingFollowsUIFont`
+(internal/ui/theme). Shots: `font-shots` adds
+`font-tracking-{notosans,robotomono}-{light,dark}.png` and the same font
+untracked (`font-untracked-…`) to compare.
+
+## Connected accounts' Manage (gap-w16, 2026-11-12)
+
+From CDN build d3de3a487b1c, boot-shared modules:
+
+| Part | Slack | Clack |
+| --- | --- | --- |
+| Row | `d40N` ConnectedWorkflowAccount → `BcGa` ConnectedWorkflowAccountAppRow: 32px app icon (12px gap), the name (h3, 15px bold in `.p-prefs_dialog`) and a check-circle-filled in content-hgl-2 ("Connected"), an outline medium "Manage" (aria "Manage {appName}"), rows 8px apart | `prefs_connected.go` connectedRow |
+| Modal | `H7Jb` ConnectedWorkflowAccountManageModal, opened as `manage_accounts_modal` (stacked). From Preferences only the app id is passed. Title bar: the 32px icon in its 40px box, 16px gap, the app's name (padding 16px 28px). Per provider (`lsX5`.iN, in the response's order): "Connected {providerName} Accounts" (h3 18px black, 20px under), rows 16px apart: external_user_id (h4, ellipsized) with the check; a domain-wide token (`KYUQ`: dwa_user, dwa_app) says "Added by your administrator" and has no Disconnect; the others an outline medium Disconnect 16px right. Domain-wide rows, then sections with one, first; empty providers dropped; none: "No accounts found". Footer: Done | openManageAccounts, manageSections |
+| Disconnect | `j8Vt` ConnectedWorkflowAccountConfirmationModal on `iIWJ` ConfirmationModal: the title centered (the 64px app icon 64px down, 20px gap, "Are you sure you want to disconnect this {providerName} account?", 8px gap, the account at 50%), WorkflowAlert (a default boxed c-alert without its icon: base-ter, otl-sec border in dark; "What will change:" in bold, three disable-icon items 12px apart, the 12px note at 50%), Cancel and a danger LoadingButton "Disconnect" (`oG6i`: the label hidden, a 16px spinner, disabled) | confirmDisconnect; the disable icon in `icons/redrawn.go` |
+| Delete | `F/EF` deleteUserAuth: `apps.auth.external.delete` (external_token_id, reason delete-user-auth), then resetAppAuths and fetchUserAuth; a failure shows "Something went wrong. Please try again." in an error alert and keeps the confirmation open; success closes it, and the manage modal too when that was its only account (no domain-wide one) | `core.DeleteUserAuth`; reloadConnected |
+| Data | apps.auth.external.userAuths.get `apps[id].providers[key] = {provider_name, valid_tokens: [{external_token_id, external_user_id, auth_model}]}` | `core.WorkflowAppAuth.Providers` (key order kept) |
+
+Not ported: the search-connector, GBP ("Disable"), multi-auth ("Connect
+Another Account"), disconnect-URL and misconfigured-connector variants of
+the same modal, which Preferences never opens.
+
+Tests: `TestPrefsConnectedManage` (the row, the modal's text, Disconnect,
+a failed and then a good delete, the reload), `TestPrefsManageSections`
+(internal/ui, fakeslack hooks). Shots: `prefs-connected-manage-{mode}`,
+`prefs-connected-disconnect-{mode}`, and the page itself in
+`prefs-connected_accounts-{mode}`.
+
+## Send Verification Email (gap-w16, 2026-11-12)
+
+From CDN build d3de3a487b1c:
+
+| Part | Slack | Clack |
+| --- | --- | --- |
+| Section | prefs-dialog BlockedInvitesUnverifiedEmailSection: a foreground_min_solid box (radius 8, padding 24px 64px, centered): 👋 (8px under), "To see whose invitations you’ve blocked, you’ll need to verify your email address{memberEmail}." (16px under), a primary "Send Verification Email" | `prefs_verify_email.go` verifySection |
+| Request | boot-shared `3+f0` useEmailVerificationHandlers.handleVerifyEmail: one request at a time, `signup.confirmEmail` (vendors `knqT`) with the member's email (left out when there's none), the client locale, reason request-new-email-verification-code; ok opens VerifyEmailModal (`verify-email-modal`, stacked); a failure shows nothing on this page | `core.RequestEmailCode` |
+| Modal | `3+f0` VerifyEmailModal: "Enter the code we sent you", "We’ve sent a 6-character code to **{email}**. The code expires shortly, so please enter it soon.", `LJSk` SplitInput, `mFn7` CodeCheckStatus, Cancel (disabled, and closing refused, while checking) | verifyEmail.open, body |
+| Split input | six cells, two groups of three around an em dash (`confirmation_code_span_cell`, margin 8px); `isNumbersOnly` false: letters and digits, uppercased; typing moves right, ← → move, Backspace in an empty cell moves left, a paste fills from the focused cell and focuses the next; a full code submits (componentDidUpdate). Desktop rules ((width>=1024px) and (hover:hover) and (pointer:fine)): the cells joined in a group with 4px outer corners, 92px tall, 50px/56 text; focused, a highlight border and glow | verifyEmail.split, cell, update, paste |
+| Check | `signin.confirmCode` (vendors `wIr1`; code, email, reason "verify email modal code confirmation"). Errors (`i0DY`, `wIr1`.Mv): failed → invalid_code → "That code wasn't valid. Give it another go!"; ratelimited; expired → "That code’s no longer valid. <a>Request a new code</a> and try again." (the link requests one); ratelimited_blocked → "Temporarily blocked". The cells clear and the first takes the focus | `core.ConfirmEmailCode`; confirmed, statusLine |
+| Success | "Your email has been verified", "You can now manage the Slack Connect invitations you’ve blocked.", Got It; `5kqq` isEmailVerified, so the page lists the blocked invitations | emailVerified |
+
+Tests: `TestPrefsVerifyEmailFlow` (the enabled button and copy, the
+request's form, the modal, typing through a real input.Router: uppercase,
+a rejected dash, Backspace and →, Ctrl+V and a paste that submits, the
+check's form, an invalid code clearing the cells, success and the blocked
+list), `TestPrefsVerifyEmailRefocus` (the first cell takes the focus back after a failed check) and `TestPrefsVerifyEmailErrors` (internal/ui). Shots:
+`prefs-verify-email-{,typing-,invalid-,expired-,ratelimited-,checking-,verified-}{mode}`,
+`prefs-privacy-after-verify-{mode}`, and the section in
+`prefs-privacy_visibility-{mode}`. All against fakeslack: no email was
+sent, no account setting changed.
 
 ## Compact (messages_theme dense, 2026-11-09)
 

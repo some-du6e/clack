@@ -161,6 +161,7 @@ type layoutKey struct {
 	wrapPolicy         WrapPolicy
 	lineHeight         fixed.Int26_6
 	lineHeightScale    float32
+	letterSpacing      fixed.Int26_6 // Clack patch 12
 }
 
 const maxSize = 1000

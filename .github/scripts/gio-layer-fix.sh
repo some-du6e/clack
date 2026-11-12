@@ -14,7 +14,8 @@ sed '/^replace gioui.org /d' go.mod > "$stock/go.mod"
 cp go.sum "$stock/go.sum"
 go get -modfile="$stock/go.mod" gioui.org@v0.10.3
 for p in "${pkgs[@]}"; do
-	if "$@" go test -modfile="$stock/go.mod" -count=1 -v -run "$tests" "$p" > "$stock/out" 2>&1; then
+	# stockgio: theme's patch-12 calls (letter spacing) become no-ops
+	if "$@" go test -modfile="$stock/go.mod" -tags stockgio -count=1 -v -run "$tests" "$p" > "$stock/out" 2>&1; then
 		cat "$stock/out"
 		echo "::error::$p: the regression test passed on stock Gio v0.10.3"
 		exit 1

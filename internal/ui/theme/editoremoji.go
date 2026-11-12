@@ -158,12 +158,14 @@ func scanEditor(gtx layout.Context, sh *text.Shaper, e *widget.Editor, f font.Fo
 	if e.SingleLine || maxW <= 0 {
 		maxW = 1 << 20
 	}
-	sh.LayoutString(text.Parameters{
+	params := text.Parameters{
 		Font:     f,
 		PxPerEm:  fixed.I(gtx.Sp(size)),
 		MaxWidth: maxW,
 		Locale:   gtx.Locale,
-	}, txt)
+	}
+	paramsPxPerSp(&params, gtx.Metric.PxPerSp)
+	sh.LayoutString(params, txt)
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		ScanGlyph(sh, g)
 	}

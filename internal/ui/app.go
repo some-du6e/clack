@@ -586,6 +586,7 @@ func (a *App) newContext(ops *op.Ops, e app.FrameEvent) layout.Context {
 		gtx.Metric.PxPerDp *= f
 		gtx.Metric.PxPerSp *= f
 	}
+	a.th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking (theme/tracking.go)
 	return gtx
 }
 

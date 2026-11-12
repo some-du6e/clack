@@ -23,6 +23,7 @@ import (
 	"gioui.org/gpu/headless"
 
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 	"github.com/some-du6e/clack/internal/ui/uifont"
 )
@@ -131,6 +132,42 @@ func TestFontShots(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Log("\n" + report.String())
+
+	// Slack's letter spacing (--custom-font-tracking-*, theme/tracking.go)
+	// for the two tracked fonts every runner has, light and dark, next to
+	// the same font without it
+	for _, v := range []string{"notosans", "robotomono"} {
+		o, ok := uifont.Find(runtime.GOOS, v)
+		if !ok {
+			t.Fatalf("no %s option", v)
+		}
+		f, err := fontLoader(false).Load(t.Context(), o)
+		if err != nil || f.UI == nil {
+			t.Fatalf("%s: %v (%+v)", v, err, f)
+		}
+		if !f.UI.Tracking {
+			t.Fatalf("%s isn't tracked", v)
+		}
+		plain := *f.UI
+		plain.Tracking = false
+		for _, dark := range []bool{false, true} {
+			mode := map[bool]string{false: "light", true: "dark"}[dark]
+			e.a.setDark(dark)
+			for _, u := range []*theme.UIFont{f.UI, &plain} {
+				sh, err := theme.NewShaperWith(u)
+				if err != nil {
+					t.Fatal(err)
+				}
+				e.a.installUIShaper(sh, u, o.Value)
+				name := "font-tracking-" + v + "-" + mode
+				if !u.Tracking {
+					name = "font-untracked-" + v + "-" + mode
+				}
+				shot(name, win)
+			}
+		}
+		e.a.setDark(false)
+	}
 
 	// the select open on Appearance, every option in its own font (Lato
 	// as the UI font again)

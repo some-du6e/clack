@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/url"
@@ -8,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Preferences-dialog writes beyond SetPref, each the call Slack's web
@@ -209,18 +212,41 @@ func (a *App) TeamURL() string {
 }
 
 // WorkflowAppAuth is one app in Preferences > Connected accounts > "Apps
-// connected through workflows" (apps.auth.external.userAuths.get apps).
+// connected through workflows" (apps.auth.external.userAuths.get apps):
+// the workflowAppsAuth store's entry (boot-shared uxbL, selectors lsX5).
 type WorkflowAppAuth struct {
 	AppID, Name, Icon string
+	// Providers are the app's providers in the response's order (lsX5.iN,
+	// which ConnectedWorkflowAccountManageModal walks with Object.entries).
+	Providers []WorkflowProvider
 }
+
+// WorkflowProvider is one provider of an app's auths.
+type WorkflowProvider struct {
+	Key, Name string // provider key, provider_name
+	Tokens    []WorkflowToken
+}
+
+// WorkflowToken is one of a provider's valid_tokens.
+type WorkflowToken struct {
+	ID             string // external_token_id
+	ExternalUserID string // external_user_id, the account the modal names
+	AuthModel      string // user_oauth, dwa_user, dwa_app (vendors BRj2)
+}
+
+// DWA reports a domain-wide auth (KYUQ isDwaAuthModel: dwa_user or
+// dwa_app), which the manage modal lists as "Added by your
+// administrator", without Disconnect.
+func (t WorkflowToken) DWA() bool { return t.AuthModel == "dwa_user" || t.AuthModel == "dwa_app" }
 
 // WorkflowAppAuths is Slack's fetchUserAuth (reason fetch_user_auth):
 // the third-party accounts the viewer set up through workflows, by app.
 func (a *App) WorkflowAppAuths(ctx context.Context) ([]WorkflowAppAuth, error) {
 	var r struct {
 		Apps map[string]struct {
-			AppName    string `json:"app_name"`
-			AppIconURL string `json:"app_icon_url"`
+			AppName    string          `json:"app_name"`
+			AppIconURL string          `json:"app_icon_url"`
+			Providers  json.RawMessage `json:"providers"`
 		} `json:"apps"`
 	}
 	if err := a.C.Call(ctx, "apps.auth.external.userAuths.get", url.Values{"reason": {"fetch_user_auth"}}, &r); err != nil {
@@ -228,12 +254,103 @@ func (a *App) WorkflowAppAuths(ctx context.Context) ([]WorkflowAppAuth, error) {
 	}
 	out := make([]WorkflowAppAuth, 0, len(r.Apps))
 	for id, ap := range r.Apps {
-		out = append(out, WorkflowAppAuth{AppID: id, Name: ap.AppName, Icon: ap.AppIconURL})
+		out = append(out, WorkflowAppAuth{AppID: id, Name: ap.AppName, Icon: ap.AppIconURL, Providers: workflowProviders(ap.Providers)})
 	}
 	slices.SortFunc(out, func(x, y WorkflowAppAuth) int {
 		return strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name))
 	})
 	return out, nil
+}
+
+// workflowProviders decodes an app's providers object, keeping its keys'
+// order.
+func workflowProviders(raw json.RawMessage) []WorkflowProvider {
+	var out []WorkflowProvider
+	_ = jsonObjectEach(raw, func(key string, v json.RawMessage) {
+		var p struct {
+			ProviderName string `json:"provider_name"`
+			ValidTokens  []struct {
+				ExternalTokenID string `json:"external_token_id"`
+				ExternalUserID  string `json:"external_user_id"`
+				AuthModel       string `json:"auth_model"`
+			} `json:"valid_tokens"`
+		}
+		if json.Unmarshal(v, &p) != nil {
+			return
+		}
+		wp := WorkflowProvider{Key: key, Name: p.ProviderName}
+		for _, t := range p.ValidTokens {
+			wp.Tokens = append(wp.Tokens, WorkflowToken{ID: t.ExternalTokenID, ExternalUserID: t.ExternalUserID, AuthModel: t.AuthModel})
+		}
+		out = append(out, wp)
+	})
+	return out
+}
+
+// jsonObjectEach calls f for each member of a JSON object, in order.
+func jsonObjectEach(raw json.RawMessage, f func(key string, v json.RawMessage)) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	t, err := d.Token()
+	if err != nil {
+		return err
+	}
+	if t != json.Delim('{') {
+		return nil
+	}
+	for d.More() {
+		t, err := d.Token()
+		if err != nil {
+			return err
+		}
+		k, _ := t.(string)
+		var v json.RawMessage
+		if err := d.Decode(&v); err != nil {
+			return err
+		}
+		f(k, v)
+	}
+	return nil
+}
+
+// DeleteUserAuth is Slack's deleteUserAuth (boot-shared F/EF):
+// apps.auth.external.delete (external_token_id, reason delete-user-auth),
+// after which the caller fetches the auths again (fetchUserAuth).
+func (a *App) DeleteUserAuth(ctx context.Context, externalTokenID string) error {
+	return a.C.Call(slack.NoBackoff(ctx), "apps.auth.external.delete", url.Values{ // a click: a retry after a failure is deliberate
+		"external_token_id": {externalTokenID},
+		"reason":            {"delete-user-auth"},
+	}, nil)
+}
+
+// RequestEmailCode is useEmailVerificationHandlers' code request
+// (boot-shared 3+f0, fetcher vendors knqT): signup.confirmEmail for the
+// viewer's email in the client's locale, which emails a 6-character code.
+func (a *App) RequestEmailCode(ctx context.Context, email, locale string) error {
+	v := url.Values{
+		"locale":      {locale},
+		"reason":      {"request-new-email-verification-code"},
+		"entry_point": {"use-email-verification-handlers"},
+	}
+	if email != "" { // ...t ? {email: t} : {}
+		v.Set("email", email)
+	}
+	return a.C.Call(slack.NoBackoff(ctx), "signup.confirmEmail", v, nil) // "Request a new code" repeats it on purpose
+}
+
+// ConfirmEmailCode is VerifyEmailModal's code check (3+f0, fetcher
+// vendors wIr1): signin.confirmCode with the email and the typed code.
+func (a *App) ConfirmEmailCode(ctx context.Context, email, code string) error {
+	v := url.Values{
+		"code":   {code},
+		"reason": {"verify email modal code confirmation"},
+	}
+	if email != "" {
+		v.Set("email", email)
+	}
+	return a.C.Call(slack.NoBackoff(ctx), "signin.confirmCode", v, nil)
 }
 
 // EmailVerified is users.emailVerificationStatus.get is_verified (Privacy

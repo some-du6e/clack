@@ -71,6 +71,10 @@ type UIFont struct {
 	Name  string // Slack's option value ("arial"), for logs and tests
 	Faces [8]FaceSlot
 	Ext   []FaceSlot
+	// Tracking turns on Slack's --custom-font-tracking-* letter spacing
+	// (tracking.go): San Francisco Pro and Segoe UI (System), Roboto Mono,
+	// Noto Sans, Meiryo.
+	Tracking bool
 }
 
 // varFace is a gio font.Face at a variation instance. Gio asks Face()
@@ -165,7 +169,9 @@ func NewShaperWith(u *UIFont, extra ...FaceSlot) (*text.Shaper, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newShaper(coll), nil
+	sh := newShaper(coll)
+	setTracking(sh, u)
+	return sh, nil
 }
 
 func newShaper(coll []font.FontFace) *text.Shaper {

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"io"
 	"iter"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -88,6 +89,20 @@ type Parameters struct {
 	// paragraph (CodeMirror's tabSize), and draw as a space. Zero shapes a
 	// tab with its font's glyph. Clack patch 7 (CLACK_PATCHES.md).
 	TabStop int
+
+	// LetterSpacing, when nonzero, is CSS letter-spacing: it widens every
+	// glyph cluster's advance by this much (Blink's ShapeResult
+	// ApplySpacing), and turns the liga, clig and calt features off
+	// (Blink's FontFeatures with letter-spacing). Zero asks the shaper's
+	// tracking function (SetTracking), if any. Clack patch 12.
+	LetterSpacing fixed.Int26_6
+	// PxPerSp is the context's pixels per sp, which the shaper's tracking
+	// function needs to tell the text's size in sp; zero uses the
+	// shaper's SetTrackingScale. Clack patch 12.
+	PxPerSp float32
+	// Untracked skips the shaper's tracking function: for callers that
+	// space the text themselves (Clack's CSS engine). Clack patch 12.
+	Untracked bool
 }
 
 type FontFace = giofont.FontFace
@@ -231,8 +246,13 @@ type Shaper struct {
 	bitmapShapeCache bitmapShapeCache
 	layoutCache      layoutCache
 
-	reader     *bufio.Reader
-	paragraph  []byte
+	reader    *bufio.Reader
+	paragraph []byte
+
+	// tracking and trackScale are SetTracking and SetTrackingScale (Clack
+	// patch 12).
+	tracking   TrackingFunc
+	trackScale float32
 	iterString string
 
 	// Iterator state.
@@ -283,6 +303,37 @@ func (l *Shaper) init() {
 	l.initialized = true
 	l.reader = bufio.NewReader(nil)
 	l.shaper = *newShaperImpl(!l.config.disableSystemFonts, l.config.collection)
+}
+
+// TrackingFunc gives the letter spacing, in sp, for text in font f at
+// size sp (CSS px): the font's letter-spacing per size. Clack patch 12.
+type TrackingFunc func(f giofont.Font, size float32) float32
+
+// SetTracking makes fn the letter spacing of text laid out with a zero
+// Parameters.LetterSpacing (nil: none). Clack patch 12.
+func (l *Shaper) SetTracking(fn TrackingFunc) { l.tracking = fn }
+
+// SetTrackingScale is the pixels per sp for text laid out with a zero
+// Parameters.PxPerSp: the window's metric. Clack patch 12.
+func (l *Shaper) SetTrackingScale(pxPerSp float32) { l.trackScale = pxPerSp }
+
+// letterSpacing is params' letter spacing in pixels (Clack patch 12).
+func (l *Shaper) letterSpacing(params Parameters) fixed.Int26_6 {
+	if params.LetterSpacing != 0 || l.tracking == nil || params.Untracked {
+		return params.LetterSpacing
+	}
+	sc := params.PxPerSp
+	if sc <= 0 {
+		sc = l.trackScale
+	}
+	if sc <= 0 {
+		sc = 1
+	}
+	sp := l.tracking(params.Font, float32(params.PxPerEm)/64/sc)
+	if sp == 0 {
+		return 0
+	}
+	return fixed.Int26_6(math.Round(float64(sp * sc * 64)))
 }
 
 // Layout text from an io.Reader according to a set of options. Results can be retrieved by
@@ -404,6 +455,7 @@ func (l *Shaper) countUnreadByString() int {
 // This allows the shaping results to be cached independently by paragraph.
 func (l *Shaper) layoutText(params Parameters, str string, txt io.Reader) {
 	l.reset(params.Alignment)
+	params.LetterSpacing = l.letterSpacing(params)
 	truncating := params.MaxLines > 0
 	// IMPORTANT: Keep these two loop bodies in sync. If we try to unify them by making the
 	// iterator implementation dynamic, Go fails to inline the whole loop and we add tons of
@@ -457,6 +509,7 @@ func (l *Shaper) layoutParagraph(params Parameters, asStr string) document {
 		str:             asStr,
 		lineHeight:      params.LineHeight,
 		lineHeightScale: params.LineHeightScale,
+		letterSpacing:   params.LetterSpacing,
 	}
 	if l, ok := l.layoutCache.Get(lk); ok {
 		return l

@@ -55,6 +55,9 @@ type Theme struct {
 	Chrome bool
 	C      Palette
 	Shaper *text.Shaper
+	// textScale is the last SetTextScale (tracking.go), given to shapers
+	// SetShapers installs later.
+	textScale float32
 	// Images, when set (the ui root sets the app's imgcache), lets labels
 	// draw unicode emoji as Slack CDN images.
 	Images EmojiImages
@@ -169,7 +172,9 @@ func Bare(dark bool) *Theme {
 func NewShaperFor(dark bool) *text.Shaper {
 	if u := defaultUI.Load(); u != nil {
 		if coll, err := facesWith(u, nil); err == nil {
-			return newShaper(coll)
+			sh := newShaper(coll)
+			setTracking(sh, u)
+			return sh
 		}
 	}
 	return newShaper(FacesFor(dark))
@@ -181,6 +186,13 @@ func NewShaper() *text.Shaper { return NewShaperFor(false) }
 // SetShapers installs both mode shapers; Shaper follows the mode.
 func (t *Theme) SetShapers(light, dark *text.Shaper) {
 	t.shapers = [2]*text.Shaper{light, dark}
+	if t.textScale > 0 {
+		for _, sh := range t.shapers {
+			if sh != nil {
+				shaperSetTrackingScale(sh, t.textScale)
+			}
+		}
+	}
 	shaperThemes.Store(light, t)
 	shaperThemes.Store(dark, t)
 	t.pickShaper()

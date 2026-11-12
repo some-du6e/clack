@@ -251,10 +251,11 @@ func (e *textView) Layout(gtx layout.Context, lt *text.Shaper, font font.Font, s
 		e.invalidate()
 	}
 	textSize := fixed.I(gtx.Sp(size))
-	if e.params.Font != font || e.params.PxPerEm != textSize {
+	if e.params.Font != font || e.params.PxPerEm != textSize || e.params.PxPerSp != gtx.Metric.PxPerSp {
 		e.invalidate()
 		e.params.Font = font
 		e.params.PxPerEm = textSize
+		e.params.PxPerSp = gtx.Metric.PxPerSp // Clack patch 12
 	}
 	maxWidth := gtx.Constraints.Max.X
 	if e.SingleLine {

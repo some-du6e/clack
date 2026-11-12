@@ -616,7 +616,7 @@ func cssEnv() css.Env {
 		e.Dark = th.Dark
 		e.Fg = th.C.Fg
 	}
-	e.RootVars = css.SlackVars(e.Dark)
+	e.RootVars = rootVars(e.Dark) // design tokens, plus the UI font's tracking (tracking.go)
 	return e
 }
 

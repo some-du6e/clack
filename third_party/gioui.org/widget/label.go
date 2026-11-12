@@ -68,6 +68,7 @@ func (l Label) LayoutDetailed(gtx layout.Context, lt *text.Shaper, font font.Fon
 		Locale:          gtx.Locale,
 		LineHeight:      lineHeight,
 		LineHeightScale: l.LineHeightScale,
+		PxPerSp:         gtx.Metric.PxPerSp, // Clack patch 12
 	}, txt)
 	m := op.Record(gtx.Ops)
 	viewport := image.Rectangle{Max: cs.Max}

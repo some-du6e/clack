@@ -349,7 +349,7 @@ func drawTextSlots(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string,
 	if o.MaxLines > 0 {
 		trunc = "…"
 	}
-	sh.LayoutString(text.Parameters{
+	params := text.Parameters{
 		Font:       o.Font,
 		PxPerEm:    fixed.I(gtx.Sp(o.Size)),
 		MaxLines:   o.MaxLines,
@@ -360,7 +360,9 @@ func drawTextSlots(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string,
 		MinWidth:   cs.Min.X,
 		Locale:     gtx.Locale,
 		LineHeight: fixed.I(gtx.Sp(o.LineHeight)),
-	}, txt)
+	}
+	paramsPxPerSp(&params, gtx.Metric.PxPerSp) // the UI font's tracking (tracking.go)
+	sh.LayoutString(params, txt)
 	m := op.Record(gtx.Ops)
 	viewport := image.Rectangle{Max: cs.Max}
 	it := glyphIter{viewport: viewport, maxLines: o.MaxLines, col: o.Color, emb: emb, slots: slots} // px, not dp
