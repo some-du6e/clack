@@ -253,6 +253,7 @@ type Server struct {
 	// delAtts: chat.deleteAttachment calls (embeds.go)
 	delAtts []DeletedAttachment
 	hist    map[string][]slack.Message // channel -> all messages, newest first
+	pins    map[string][]fakePin       // channel -> pins, oldest first (pins.go)
 	code    codeCalls                  // code channel API calls (codechannels.go)
 	codeFx  *CodeFixtures
 
@@ -1112,6 +1113,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleUnreads(method, f); handled { // unreads.go
 		return out
 	}
+	if out, handled := s.handlePins(method, f); handled { // pins.go
+		return out
+	}
 	if out, handled := s.handleGroupDMs(method, f); handled { // groupdms.go
 		return out
 	}
@@ -1524,11 +1528,11 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	return slack.User{}, false
 }
 
-func (s *Server) historyPage(f url.Values) any {
-	ch := f.Get("channel")
-	s.histMu.Lock()
-	msgs, okc := s.hist[ch]
-	if !okc {
+// histLocked is ch's history, newest first, made on first use (caller
+// holds histMu).
+func (s *Server) histLocked(ch string) []slack.Message {
+	msgs, ok := s.hist[ch]
+	if !ok {
 		var gallery bool
 		if msgs, gallery = s.galleryHistoryOf(ch); !gallery { // gallery.go
 			msgs = s.history(ch)
@@ -1536,6 +1540,13 @@ func (s *Server) historyPage(f url.Values) any {
 		}
 		s.hist[ch] = msgs
 	}
+	return msgs
+}
+
+func (s *Server) historyPage(f url.Values) any {
+	ch := f.Get("channel")
+	s.histMu.Lock()
+	msgs := s.histLocked(ch) // pins.go swaps in a new slice rather than edit this one
 	s.histMu.Unlock()
 	limit, _ := strconv.Atoi(f.Get("limit"))
 	if limit <= 0 {

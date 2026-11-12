@@ -141,6 +141,7 @@ func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error)
 	if m.User == "" {
 		m.User = local.User
 	}
+	a.S.KeepPin(o.Channel, m) // pinned before the reply came (store/pins.go)
 	if !a.confirmPending(o.Channel, m) {
 		if got, ok := a.S.Find(o.Channel, m.TS); ok { // the echo already replaced it
 			m = &got
