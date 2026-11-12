@@ -86,11 +86,11 @@ func TestComposerGap(t *testing.T) {
 				if cv == nil || cv.comp == nil || cv.compRect.Empty() {
 					t.Fatalf("no composer in #gap")
 				}
-				v, ok := cv.list.(*messages.ChannelView)
+				v, ok := cv.list.(channelList)
 				if !ok {
 					t.Fatalf("#gap's list is a %T", cv.list)
 				}
-				return cv, v
+				return cv, v.ChannelView
 			}
 			check := func(name string, pinned bool) {
 				t.Helper()

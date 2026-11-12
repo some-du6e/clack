@@ -605,11 +605,7 @@ func (p *tautPage) optionField(f *flow, t *taut.Taut, pl taut.PluginInfo, o taut
 				var items []MenuItem
 				for _, ch := range o.Kind.Options {
 					ch := ch
-					lbl := ch.Label
-					if ch.Value == cur {
-						lbl = "✓ " + lbl
-					}
-					items = append(items, MenuItem{Label: lbl, Do: func() { set(ch.Value) }})
+					items = append(items, MenuItem{Label: ch.Label, Checked: ch.Value == cur, Do: func() { set(ch.Value) }})
 				}
 				p.a.menu(p.a.PointerPos(), items)
 			}

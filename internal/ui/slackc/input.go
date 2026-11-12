@@ -864,11 +864,21 @@ func (s *scope) drawDropdown(p *painter) {
 		if o.disabled {
 			col.A /= 2
 		}
-		label := o.label
+		x := d.r.x0 + 12*dp
 		if o.value == cur {
-			label = "✓ " + label
+			// the current option's check, drawn (Lato has no ✓; a font
+			// fallback drew a box on Windows)
+			s := v.lineHeight(st)
+			cy := y + 4*dp + s/2
+			var pa clip.Path
+			pa.Begin(p.ops)
+			pa.MoveTo(f32.Pt(x+s*0.08, cy+s*0.02))
+			pa.LineTo(f32.Pt(x+s*0.30, cy+s*0.24))
+			pa.LineTo(f32.Pt(x+s*0.72, cy-s*0.22))
+			paint.FillShape(p.ops, p.col(col), clip.Stroke{Path: pa.End(), Width: 1.6 * dp}.Op())
+			x += s * 0.9
 		}
-		p.drawWord(word(v.face(st), label), d.r.x0+12*dp, y+4*dp+a, col, st)
+		p.drawWord(word(v.face(st), o.label), x, y+4*dp+a, col, st)
 	}
 	ar := clip.Rect(irect(d.r)).Push(p.ops)
 	event.Op(p.ops, &s.stag)
