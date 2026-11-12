@@ -127,6 +127,18 @@ type prefs struct {
 	// (runfromtray.go).
 	NoRunFromTray  bool `json:"no_run_from_tray,omitempty"`
 	HasRunFromTray bool `json:"has_run_from_tray,omitempty"`
+	// Windows' Notifications block (prefs_win_appearance.go), Slack's
+	// desktop settings: WindowFlashBehavior is win32.windowFlashBehavior
+	// ("never", "idle", "always"; "" the default, idle) and
+	// HasExplainedWindowFlash win32.hasExplainedWindowFlash (the "always
+	// flash" balloon was shown); NotificationMethod is notificationMethod
+	// ("" null, "winrt", "window", "html") and NotifyCorner /
+	// NotifyDisplay are notifyPosition ("" bottom_right / same_as_app).
+	WindowFlashBehavior     string `json:"window_flash_behavior,omitempty"`
+	HasExplainedWindowFlash bool   `json:"has_explained_window_flash,omitempty"`
+	NotificationMethod      string `json:"notification_method,omitempty"`
+	NotifyCorner            string `json:"notify_corner,omitempty"`
+	NotifyDisplay           string `json:"notify_display,omitempty"`
 	// OpenFiles is the Files sidebar's Recently viewed by team: Slack's
 	// filesOpenInSessionStore in local storage (file ids only;
 	// files_open.go).

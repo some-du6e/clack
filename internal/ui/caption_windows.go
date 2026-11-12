@@ -74,6 +74,10 @@ func (a *App) syncCaption(ev event.Event) {
 	a.win.Run(func() { setCaption(hwnd, want) })
 }
 
+// mainHWND is the main window's HWND from Gio's Win32ViewEvent (0 before
+// it, and after the window is destroyed). UI goroutine.
+func (a *App) mainHWND() uintptr { return a.caption.hwnd }
+
 // setCaption sets the DWM attributes for look l (the window's thread).
 func setCaption(hwnd uintptr, l captionLook) {
 	if procDwmSetWindowAttribute.Find() != nil {

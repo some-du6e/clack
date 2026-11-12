@@ -7,6 +7,9 @@ package core
 // these like the rest.
 func init() {
 	for name, groups := range map[string][]string{
+		// Windows' Notifications block (ui/prefs_win_appearance.go): on
+		// hides "Deliver notifications via…" and the position selects
+		"force_native_notifications": on,
 		// canvases (ui/canvasview; docs/EXPERIMENTS.md, Canvases)
 		"canvas_table_of_contents": on, // TableOfContentsDrawer and Quip's 64px outline gutter
 		"canvas_blockquote_layout": on, // the toolbars' blockquote layout (M6vS zk, foOi)

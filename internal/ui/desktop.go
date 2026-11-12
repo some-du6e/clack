@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"runtime"
 
 	"gioui.org/io/system"
 	"gioui.org/widget"
@@ -55,7 +56,12 @@ func (a *App) openDeepLink(uri string) bool {
 // Raise brings the window to the front (restoring it if minimized). Safe
 // from any goroutine; it doesn't wait for a frame, which a minimized window
 // may never get.
-func (a *App) Raise() { a.perform(system.ActionRaise) }
+func (a *App) Raise() {
+	a.perform(system.ActionRaise)
+	if runtime.GOOS == "windows" || taskbarAnyOS {
+		a.Post(a.foregrounded) // FOREGROUND_APP's badge, the flash stopped (dock.go)
+	}
+}
 
 // Quit closes the window; Run then returns. Safe from any goroutine. It
 // is Slack's QUIT_APP: app.isQuitting is set first, so the close isn't

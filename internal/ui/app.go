@@ -442,6 +442,7 @@ func (a *App) Run() error {
 			menuViewEvent(ev)
 		}
 		a.syncCaption(ev)        // Windows: the native caption follows the window (caption_windows.go)
+		a.syncTaskbar()          // Windows: the taskbar overlay on a new window (dock.go)
 		nativemenu.NoteEvent(ev) // the window's HWND / NSView for native context menus
 		switch e := ev.(type) {
 		case app.DestroyEvent:

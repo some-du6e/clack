@@ -64,36 +64,60 @@ func (a *App) setRunFromTray(on bool) {
 }
 
 // closeToTray handles a close request (ClosingEvent) the way
-// MAIN_WINDOW_CLOSE does, reporting whether the window was hidden instead
-// (the caller then aborts the close). With no tray icon there is nowhere
-// to come back from, so the close quits, as it does on macOS and Linux
-// (Clack has no icon there). UI goroutine.
+// MAIN_WINDOW_CLOSE does, reporting whether the window was hidden or
+// minimized instead (the caller then aborts the close). With no tray icon
+// there is nowhere to come back from, so the close quits, as it does on
+// macOS and Linux (Clack has no icon there), unless the window only
+// minimizes. UI goroutine.
+//
+// The win32 build's handler (@1149121) also reads
+// win32.windowFlashBehavior: "always" is keepAppInTaskbar, which keeps
+// Clack running even with runFromTray off and minimizes the window
+// instead of hiding it ("minimizing to preserve taskbar flash", gP
+// @1151399), then shows the WindowFlash balloon once
+// (hasExplainedWindowFlash) in place of RunFromTray's.
 func (a *App) closeToTray() bool {
 	if a.quitting.Load() { // app.isQuitting: Quit Clack, File > Quit, an update's restart
 		return false
 	}
 	t := a.trayIcon()
-	if t == nil {
+	keep := a.keepAppInTaskbar()
+	if t == nil && !keep {
 		return false
 	}
 	on := a.runFromTrayOn()
-	if !on || a.data == nil || a.login != nil { // 0 === zT(workspaces)
-		log.Printf("ui: main window closed, consider it a quit action (runFromTray %v)", on)
+	if !on && !keep || a.data == nil || a.login != nil { // 0 === zT(workspaces)
+		log.Printf("ui: main window closed, consider it a quit action (runFromTray %v, keepAppInTaskbar %v)", on, keep)
 		return false
 	}
-	if a.winMode == app.Fullscreen && a.win != nil {
-		log.Print("ui: attempted to close the window while fullscreen, exiting fullscreen")
-		a.win.Option(app.Windowed.Option())
+	if keep {
+		if !a.minimizeWindow() {
+			return false
+		}
+		log.Print("ui: attempted to close the window, minimizing to preserve taskbar flash")
+	} else {
+		if a.winMode == app.Fullscreen && a.win != nil {
+			log.Print("ui: attempted to close the window while fullscreen, exiting fullscreen")
+			a.win.Option(app.Windowed.Option())
+		}
+		if !a.hideWindow() {
+			return false
+		}
+		log.Print("ui: attempted to close the window, hiding due to run from tray")
 	}
-	if !a.hideWindow() {
-		return false
-	}
-	log.Print("ui: attempted to close the window, hiding due to run from tray")
 	a.focused = false // no ConfigEvent may come before the next notification
-	if !a.prefs.HasRunFromTray {
+	var title, content string
+	switch {
+	case keep && !a.prefs.HasExplainedWindowFlash:
+		a.prefs.HasExplainedWindowFlash = true
+		a.savePrefs()
+		title, content = windowFlashBalloon()
+	case !keep && !a.prefs.HasRunFromTray:
 		a.prefs.HasRunFromTray = true
 		a.savePrefs()
-		title, content := runFromTrayBalloon()
+		title, content = runFromTrayBalloon()
+	}
+	if title != "" && t != nil {
 		go func() {
 			if err := t.Balloon(title, content); err != nil {
 				log.Printf("ui: tray balloon: %v", err)
@@ -101,6 +125,25 @@ func (a *App) closeToTray() bool {
 		}()
 	}
 	return true
+}
+
+// minimizeWindow is gP's minimize (BrowserWindow.minimize: SC_MINIMIZE).
+func (a *App) minimizeWindow() bool {
+	hwnd := a.taskbarHWND()
+	if hwnd == 0 {
+		return false
+	}
+	a.onWindowThread(func() { winMinimize(hwnd) })
+	return true
+}
+
+// windowFlashBalloon is getBalloonText(WindowFlash) (@1181747), with
+// Clack's name for Slack's.
+func windowFlashBalloon() (title, content string) {
+	ns := i18n.NS("desktop_browser")
+	title = ns.T("Why didn’t Slack quit?")
+	content = ns.T("Slack’s set to always flash when you get notifications. To change this, visit Preferences > Notifications.")
+	return strings.ReplaceAll(title, "Slack", AppName), strings.ReplaceAll(content, "Slack", AppName)
 }
 
 // runFromTrayBalloon is TrayHandler.getBalloonText(RunFromTray), in the

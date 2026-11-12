@@ -95,7 +95,8 @@ func (a *App) notifyShow(title, body string, n *desktopNote) bool {
 	} else {
 		go func() { _ = a.notify.Notify(title, body) }()
 	}
-	a.bounceDock() // mac_ssb_bounce
+	a.bounceDock()        // mac_ssb_bounce
+	a.notificationShown() // Windows: the frame flash (windowFlashBehavior)
 	return true
 }
 
@@ -122,6 +123,7 @@ func (a *App) notifyActions(n huddleui.Notification) {
 		dn := a.huddleNote(n)
 		dn.Body = body
 		go func() { _ = nn.NotifyNote(dn) }()
+		a.notificationShown()
 		return
 	}
 	var keys []string
@@ -129,6 +131,7 @@ func (a *App) notifyActions(n huddleui.Notification) {
 		keys = append(keys, ac.Key, ac.Label)
 	}
 	acts := n.Actions
+	a.notificationShown()
 	go func() {
 		_ = a.notify.NotifyActions(n.Title, body, keys, func(key string) {
 			for _, ac := range acts {

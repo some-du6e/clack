@@ -8,3 +8,6 @@ import "gioui.org/io/event"
 type captionState struct{}
 
 func (a *App) syncCaption(event.Event) {}
+
+// mainHWND is Windows' window handle; there is none here.
+func (a *App) mainHWND() uintptr { return 0 }
