@@ -30,6 +30,9 @@ func TestTextInk(t *testing.T) {
 
 	defer SetTextModel(CurrentTextModel())
 	SetTextModel(TextModelSkiaWin)
+	prev := primaryTheme.Load()
+	defer SetPrimary(prev)
+	// Skia's own table (its guessed background, 1-src)
 	for _, c := range []struct {
 		ink  uint32
 		want float32 // contrast·toLuma(1-src), src the 3-bit canonical luminance
@@ -42,23 +45,49 @@ func TestTextInk(t *testing.T) {
 		{ink: 0xffffff, want: 0},       // src 255
 	} {
 		col := color.NRGBA{R: uint8(c.ink >> 16), G: uint8(c.ink >> 8), B: uint8(c.ink), A: 0xff}
-		if got := TextContrast(col); math.Abs(float64(got-c.want)) > 0.001 {
-			t.Errorf("TextContrast(#%06x) = %.4f, want %.4f", c.ink, got, c.want)
+		if got := skiaContrast(col, skiaWinContrast); math.Abs(float64(got-c.want)) > 0.001 {
+			t.Errorf("skiaContrast(#%06x) = %.4f, want %.4f", c.ink, got, c.want)
 		}
 		col.A = 0x80 // alpha plays no part in the table
-		if got := TextContrast(col); math.Abs(float64(got-c.want)) > 0.001 {
-			t.Errorf("TextContrast(#%06x at half alpha) = %.4f, want %.4f", c.ink, got, c.want)
+		if got := skiaContrast(col, skiaWinContrast); math.Abs(float64(got-c.want)) > 0.001 {
+			t.Errorf("skiaContrast(#%06x at half alpha) = %.4f, want %.4f", c.ink, got, c.want)
 		}
 	}
-	// opaque ink: the second paint is k exactly
-	if a1, a2 := textAlphas(color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff}); a1 != 0xff || a2 != 0xff {
-		t.Errorf("#1d1c1d paints (%d, %d), want (255, 255)", a1, a2)
+	// what gets painted: Skia's k in dark mode; in light mode dark ink's k
+	// is fitted to Chrome's blit of that table over white
+	paints := func(ink uint32) [2]uint8 {
+		a1, a2 := textAlphas(color.NRGBA{R: uint8(ink >> 16), G: uint8(ink >> 8), B: uint8(ink), A: 0xff})
+		return [2]uint8{a1, a2}
 	}
-	if a1, a2 := textAlphas(color.NRGBA{R: 0x61, G: 0x60, B: 0x61, A: 0xff}); a1 != 0xff || a2 != 73 {
-		t.Errorf("#616061 paints (%d, %d), want (255, 73)", a1, a2)
+	near := func(a, b [2]uint8) bool { // ±1 for the fitted alphas' rounding
+		return a[0] == b[0] && int(a[1])-int(b[1]) <= 1 && int(b[1])-int(a[1]) <= 1
 	}
-	if a1, a2 := textAlphas(color.NRGBA{R: 0xd1, G: 0xd2, B: 0xd3, A: 0xff}); a1 != 0xff || a2 != 0 {
-		t.Errorf("#d1d2d3 paints (%d, %d), want one paint (k under 2%%)", a1, a2)
+	SetPrimary(Bare(true))
+	for ink, want := range map[uint32][2]uint8{
+		0x1d1c1d: {255, 255},
+		0x616061: {255, 73}, // Skia's 0.2874
+		0xb9babd: {255, 17},
+		0xd1d2d3: {255, 0}, // k under 2%: one paint
+	} {
+		if got := paints(ink); !near(got, want) {
+			t.Errorf("dark mode: #%06x paints %v, want %v", ink, got, want)
+		}
+	}
+	SetPrimary(Bare(false))
+	for ink, want := range map[uint32][2]uint8{
+		0x000000: {255, 255},
+		0x1d1c1d: {255, 255},
+		0x616061: {255, 172}, // fitted over white: 0.676 (Skia's own 0.287 drew it at 87% of Chrome's ink)
+		0x868686: {255, 186}, // 0.728 (Skia's own 0.153)
+		0x454447: {255, 168},
+		0xd1d2d3: {255, 0}, // light ink keeps Skia's k
+	} {
+		if got := paints(ink); !near(got, want) {
+			t.Errorf("light mode: #%06x paints %v, want %v", ink, got, want)
+		}
+	}
+	if k := TextContrast(rgb(0x616061)); math.Abs(float64(k)-0.6756) > 0.002 {
+		t.Errorf("light mode TextContrast(#616061) = %.4f, want 0.6756", k)
 	}
 	// translucent ink: full coverage stays at α, the slope never passes
 	// Skia's α(1+k), and the pair moves continuously with α (fades)

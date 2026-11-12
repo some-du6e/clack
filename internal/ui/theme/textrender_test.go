@@ -66,7 +66,7 @@ const (
 
 var (
 	trScales   = []float32{1, 1.25, 1.5, 2}
-	trVariants = []string{"clack", "raw", "win", "win-bg", "skia"}
+	trVariants = []string{"clack", "raw", "skia", "win"}
 )
 
 const (
@@ -223,6 +223,11 @@ func trProbeSRGB(t *testing.T) color.RGBA {
 }
 
 func trRender(t *testing.T, th *Theme, cs []trCell, s float32, variant string) *image.RGBA {
+	// th is the app's theme here: its mode (set per cell) is what the
+	// text model follows
+	prev := primaryTheme.Load()
+	SetPrimary(th)
+	defer SetPrimary(prev)
 	w, h := trPx(trCellW, s), trPx(len(cs)*trCellH, s)
 	var ops op.Ops
 	gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: s, PxPerSp: s}, Constraints: layout.Exact(image.Pt(w, h))}
@@ -254,21 +259,20 @@ func trDraw(gtx layout.Context, th *Theme, c trCell, variant string, s float32) 
 	switch variant {
 	case "raw": // Gio's coverage, linear-light blend, nothing added
 		return trPaint(gtx, th.Shaper, o, c.Text, 0, 0)
-	case "skia": // raw plus Skia's contrast (Windows), painted by the test: a cross-check of "win"
+	case "skia": // raw plus Skia's contrast for its own guessed background, painted by the test
 		return trPaint(gtx, th.Shaper, o, c.Text, 0, skiaContrast(o.Color, skiaWinContrast))
 	}
 	// the app's paths under the variant's model: "clack" legacy, "win"
-	// Skia's Windows model, "win-bg" the same with bgContrast
+	// Skia's Windows model (with whiteContrast for dark ink in light mode)
 	m := TextModelLegacy
-	if variant == "win" || variant == "win-bg" {
+	if variant == "win" {
 		m = TextModelSkiaWin
 	} else if variant != "clack" {
 		panic("variant " + variant)
 	}
-	pm, pb := CurrentTextModel(), textBgAware.Load()
+	pm := CurrentTextModel()
 	SetTextModel(m)
-	textBgAware.Store(variant == "win-bg")
-	defer func() { SetTextModel(pm); textBgAware.Store(pb) }()
+	defer SetTextModel(pm)
 	if c.Ctx == "body" {
 		// richview as messages.styleForTheme sets it up: light mode
 		// strokes every body glyph by BodyEmboldenFor(Fg), dark mode

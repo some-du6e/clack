@@ -201,6 +201,7 @@ func (t *Theme) pickShaper() {
 func (t *Theme) SetDark(dark bool) {
 	oldDark, oldC, oldTok := t.Dark, t.C, tokensKey(t.Tokens)
 	t.Dark = dark
+	notePrimaryDark(t, dark)
 	defer t.pickShaper()
 	p := LightPalette
 	if dark {

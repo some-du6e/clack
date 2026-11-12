@@ -282,6 +282,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 		updWake: make(chan struct{}, 1),
 	}
 	go a.invalidator()
+	theme.SetPrimary(a.th) // the text model follows this window's mode (theme/textgamma.go)
 	a.sidebar.width = theme.SidebarW
 	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()

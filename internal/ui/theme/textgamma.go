@@ -54,6 +54,19 @@ import (
 //     which Chromium defines for Android only.
 //   - macOS: SK_GAMMA_SRGB, SK_GAMMA_CONTRAST=0.0.
 //
+// One thing the table can't know is the real background: it is built for
+// the guessed one (1-src), and Chrome then blits it over whatever is
+// there. For dark ink on white (light mode's panes, menus and dialogs)
+// that guess is grey for grey text, and the sRGB-space blit over white
+// inks it much more than a linear blend would: #616061 timestamps came out
+// at 87% of Chrome's ink with Skia's own k. So in light mode dark ink
+// (luma < 0.6) gets the k that lands Gio's blend over white where Chrome's
+// blit of the table over white does (whiteContrast), never less than
+// Skia's. Light ink keeps Skia's k: over a background darker than Skia's
+// guess Chrome's light text comes out lighter than a linear blend, which a
+// second paint can't take away, and thinning the outline costs stem
+// darkness (measured).
+//
 // Clack's first model, lightTextColor's alpha fade for light text and
 // EmboldenFor's outline growth for dark text, was tuned by ink count
 // against Chrome on Linux. Against Chrome on Windows (font-shots'
@@ -121,13 +134,48 @@ func GlyphEmbolden(w float32) float32 {
 	return w
 }
 
-// TextContrast is the contrast Skia's table adds to glyphs drawn in c under
-// the current model: the k in a + k·a·(1-a). 0 under the legacy model.
+// TextContrast is the contrast glyphs drawn in c get under the current
+// model: the k in a + k·a·(1-a). 0 under the legacy model.
 func TextContrast(c color.NRGBA) float32 {
 	if CurrentTextModel() != TextModelSkiaWin {
 		return 0
 	}
+	if onWhite(c) {
+		return whiteContrast(c, skiaWinContrast)
+	}
 	return skiaContrast(c, skiaWinContrast)
+}
+
+// primaryTheme is the main window's theme (SetPrimary): its mode says
+// whether dark ink sits on white. Other themes (huddle windows, fallbacks)
+// don't change it. primaryDark mirrors its Dark for painters on other
+// windows' goroutines.
+var (
+	primaryTheme atomic.Pointer[Theme]
+	primaryDark  atomic.Bool
+)
+
+// SetPrimary makes t the theme whose mode the text model follows (the
+// app's own; ui.New sets it).
+func SetPrimary(t *Theme) {
+	primaryTheme.Store(t)
+	primaryDark.Store(t != nil && t.Dark)
+}
+
+// notePrimaryDark is SetDark's: the primary theme switched modes.
+func notePrimaryDark(t *Theme, dark bool) {
+	if primaryTheme.Load() == t {
+		primaryDark.Store(dark)
+	}
+}
+
+// onWhite reports whether c is dark ink (luma < 0.6, StrokeGamma's split)
+// drawn while the primary theme is light (or there is none).
+func onWhite(c color.NRGBA) bool {
+	if primaryDark.Load() {
+		return false
+	}
+	return (0.2126*float64(c.R)+0.7152*float64(c.G)+0.0722*float64(c.B))/255 < sgLight
 }
 
 // skiaContrast is SkTMaskGamma_build_correcting_lut's adjustedContrast,
@@ -149,24 +197,14 @@ func skiaLuminance(c color.NRGBA) float64 {
 	return float64(cn(uint8(lum))) / 255
 }
 
-// textBgAware selects TextContrast's variant for the measurements: Skia's
-// table applied over the surface the text most likely sits on instead of
-// Skia's own guess (see bgContrast). Off in the app.
-var textBgAware atomic.Bool
-
-// bgContrast is the k that makes Gio's linear blend over bg land where
-// Chrome's sRGB-space blit of Skia's table over bg does, fitted by least
-// squares over the coverage, and no less than Skia's own k.
-func bgContrast(c color.NRGBA, contrast float64) float32 {
+// whiteContrast is the k that makes Gio's linear blend of c over white
+// land where Chrome's sRGB-space blit of Skia's table (skiaTable) over
+// white does, fitted by least squares over the coverage, and no less than
+// Skia's own k. Luminance stands in for the channels.
+func whiteContrast(c color.NRGBA, contrast float64) float32 {
 	k := float64(skiaContrast(c, contrast))
-	luma := func(c color.NRGBA) float64 {
-		return (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
-	}
-	fg := luma(c)
-	bg := 1.0 // dark ink: on white
-	if fg >= sgLight {
-		bg = 0x1d / 255.0 // light ink: on Slack's dark surface (#1a1d21), as StrokeGamma guesses
-	}
+	fg := (0.2126*float64(c.R) + 0.7152*float64(c.G) + 0.0722*float64(c.B)) / 255
+	const bg = 1.0
 	lf, lb := sgLin(fg), sgLin(bg)
 	if math.Abs(lf-lb) < 1e-3 {
 		return float32(k)
@@ -209,8 +247,9 @@ func textAlphas(c color.NRGBA) (a1, a2 uint8) {
 	if c.A == 0 || CurrentTextModel() != TextModelSkiaWin {
 		return c.A, 0
 	}
+	white := onWhite(c)
 	key := uint64(c.R)<<24 | uint64(c.G)<<16 | uint64(c.B)<<8 | uint64(c.A)
-	if textBgAware.Load() {
+	if white {
 		key |= 1 << 40
 	}
 	if v, ok := inkCache.Load(key); ok {
@@ -218,8 +257,8 @@ func textAlphas(c color.NRGBA) (a1, a2 uint8) {
 		return p[0], p[1]
 	}
 	k := float64(skiaContrast(c, skiaWinContrast))
-	if textBgAware.Load() {
-		k = float64(bgContrast(c, skiaWinContrast))
+	if white {
+		k = float64(whiteContrast(c, skiaWinContrast))
 	}
 	f1, f2 := contrastPaints(float64(c.A)/255, k)
 	p := [2]uint8{uint8(f1*255 + 0.5), uint8(f2*255 + 0.5)}
