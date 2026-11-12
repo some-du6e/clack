@@ -42,6 +42,11 @@ type Composer struct {
 	att      *attachments
 	st       EditorStyle
 	focusReq bool
+	// cmdK is the Mod+K coachmark while it shows (cmdk_coachmark.go);
+	// drawnAt is the frame the composer was last laid out in (the
+	// coachmark goes when its composer isn't drawn).
+	cmdK    *cmdKCoachmark
+	drawnAt time.Time
 	// focus dropped by Gio without a blur (restoreDroppedFocus)
 	focusPress    uint64 // pressCount when last seen focused
 	focusRestored bool   // asked for it back once since
@@ -245,7 +250,8 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 
 func (c *Composer) init() {
 	c.ed = NewEditor()
-	c.ed.Snippets = c.edit == nil // MessageInput's enableSnippetCreation; not the edit composer
+	c.ed.Snippets = c.edit == nil      // MessageInput's enableSnippetCreation; not the edit composer
+	c.ed.CmdKCoachmark = c.edit == nil // MessageInput's onCmdKWhenSelected; the edit composer (cjbg) has none
 	c.bindSlugs()
 	if c.api.a != nil {
 		warmEmoji()
@@ -367,6 +373,7 @@ func (c *Composer) prepareSend(d *Doc) *Doc {
 // edit composers draw just the box.
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	runRestores()
+	c.drawnAt = gtx.Now
 	c.maybeRestoreServerDraft()
 	syncHooks()
 	th := c.h.Theme()
@@ -676,6 +683,8 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			c.pasteLimitDialog(c.ed.RefusedPaste())
 		case EvSnippet:
 			c.openSnippet(true)
+		case EvCmdKSelected:
+			c.cmdKSelected()
 		case EvPlusMenu:
 			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its button
 			if c.edit == nil && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {

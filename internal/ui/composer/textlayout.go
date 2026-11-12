@@ -305,7 +305,7 @@ type tlPara struct {
 	start, end int // runes [start, end); end is the '\n' or Len()
 	kind       BlockKind
 	indent     int
-	quoted     bool            // a list item inside a quote (Line.Quoted)
+	quoted     bool            // a list item or code line inside a quote (Line.Quoted)
 	left       int             // x of the text origin
 	px         []fixed.Int26_6 // caret x per position start..end, unwrapped
 	stop       []bool          // caret stops per position start..end
@@ -316,8 +316,9 @@ type tlPara struct {
 	asc, desc  int          // primary font metrics
 	num        int          // Ordered: item number
 	// boxTop/boxBot is the code block box; set on the last line of a
-	// code block group.
+	// code block group. groupTop is the box's top on every code line.
 	boxTop, boxBot int
+	groupTop       int
 }
 
 // tlLine is one visual (wrapped) line.
@@ -453,7 +454,7 @@ func (l *tlLayout) build(d *Doc, st *EditorStyle, sh *text.Shaper, k tlKey) {
 			end++
 		}
 		ln := d.Lines[i]
-		p := tlPara{start: start, end: end, kind: ln.Kind, indent: ln.Indent, quoted: ln.Quoted && rtIsList(ln.Kind)}
+		p := tlPara{start: start, end: end, kind: ln.Kind, indent: ln.Indent, quoted: ln.Quoted && (rtIsList(ln.Kind) || ln.Kind == CodeBlock)}
 		l.buildPara(d, &p, len(l.paras), k)
 		l.paras = append(l.paras, p)
 		start = end + 1
@@ -484,6 +485,11 @@ func (l *tlLayout) buildPara(d *Doc, p *tlPara, pi int, k tlKey) {
 		p.left = m.quoteLeft
 	case CodeBlock:
 		p.left = m.border + m.prePad
+		if p.quoted {
+			// .ql-code-block[class*=ql-border-]: margin-left 11px, width
+			// calc(100% - 11px): the box moves in, its right edge stays
+			p.left += m.quoteListPad
+		}
 	}
 	right := 0
 	if p.kind == CodeBlock {
@@ -699,8 +705,10 @@ func (l *tlLayout) vertical() {
 	pending := 0
 	for i := range l.paras {
 		p := &l.paras[i]
-		prevCode := i > 0 && l.paras[i-1].kind == CodeBlock
-		nextCode := i+1 < len(l.paras) && l.paras[i+1].kind == CodeBlock
+		// a code box is a run of code lines with the same border (a
+		// quoted run sits 11px in)
+		prevCode := i > 0 && l.paras[i-1].kind == CodeBlock && l.paras[i-1].quoted == p.quoted
+		nextCode := i+1 < len(l.paras) && l.paras[i+1].kind == CodeBlock && l.paras[i+1].quoted == p.quoted
 		if p.kind == CodeBlock && !prevCode {
 			if i > 0 {
 				y += max(0, m.preMargin-pending)
@@ -724,11 +732,14 @@ func (l *tlLayout) vertical() {
 		// one list per run of the same list kind, as Quill groups them;
 		// the editor is a block formatting context, so the first one's
 		// top margin stays, like a quote's)
-		if p.quoted && (i == 0 || !l.sameQuotedList(i-1, i)) {
+		if p.quoted && rtIsList(p.kind) && (i == 0 || !l.sameQuotedList(i-1, i)) {
 			y += max(0, m.quoteMargin-pending)
 		}
 		pending = 0
 		p.top = y
+		if p.kind == CodeBlock {
+			p.groupTop = groupTop
+		}
 		for li := p.l0; li < p.l1; li++ {
 			ln := &l.lines[li]
 			h := m.lh
@@ -800,7 +811,7 @@ func (l *tlLayout) vertical() {
 			y += m.quoteMargin
 			pending = m.quoteMargin
 		}
-		if p.quoted && (i+1 == len(l.paras) || !l.sameQuotedList(i, i+1)) {
+		if p.quoted && rtIsList(p.kind) && (i+1 == len(l.paras) || !l.sameQuotedList(i, i+1)) {
 			y += m.quoteMargin
 			pending = m.quoteMargin
 		}
@@ -812,14 +823,18 @@ func (l *tlLayout) vertical() {
 // quoted list (one ol/ul: the same list kind, both quoted).
 func (l *tlLayout) sameQuotedList(a, b int) bool {
 	pa, pb := &l.paras[a], &l.paras[b]
-	return pa.quoted && pb.quoted && pa.kind == pb.kind
+	return pa.quoted && pb.quoted && pa.kind == pb.kind && rtIsList(pa.kind)
 }
 
 // barred reports whether paragraph i draws the quote bar: a quote line
-// (blockquote:before) or a list item inside a quote (ul[class*=ql-border-]
-// :before, 4px wide at left 0). Adjacent ones join: blockquote+ul and
-// ul+blockquote bars start 7px up (height calc(100% + 7px)), which spans
-// the collapsed 4px margin between them.
+// (blockquote:before), a list item inside a quote (ul[class*=ql-border-]
+// :before, 4px wide at left 0) or a code line inside one
+// (.ql-code-block[class*=ql-border-]:before: left -12px of the box moved
+// 11px in, so at 0 too, from the box's top to 8px under its last line,
+// the bottom cap included). Adjacent ones join: blockquote+ul and
+// ul+blockquote bars start 7px up (height calc(100% + 7px)), and next to
+// a quoted code block 9px (top: -9px), which spans the margins between
+// them.
 func (l *tlLayout) barred(i int) bool {
 	p := &l.paras[i]
 	return p.kind == Quote || p.quoted
@@ -999,7 +1014,11 @@ func (l *tlLayout) paintBG(gtx layout.Context, c tlColors) {
 	for pi := range l.paras {
 		p := &l.paras[pi]
 		if p.kind == CodeBlock && p.boxBot > p.boxTop {
-			r := image.Rect(0, p.boxTop, l.width, p.boxBot)
+			x0 := 0
+			if p.quoted {
+				x0 = m.quoteListPad
+			}
+			r := image.Rect(x0, p.boxTop, l.width, p.boxBot)
 			fillRRect(gtx, r, m.preRadius, c.preBg)
 			strokeRRect(gtx, r, m.preRadius, m.border, c.preBorder)
 		}
@@ -1011,7 +1030,14 @@ func (l *tlLayout) paintBG(gtx layout.Context, c tlColors) {
 			for last+1 < len(l.paras) && l.barred(last+1) {
 				last++
 			}
-			fillRRect(gtx, image.Rect(0, p.top, m.quoteBar, l.paras[last].bot), m.quoteBar/2, c.quoteBar)
+			top, bot := p.top, l.paras[last].bot
+			if p.kind == CodeBlock {
+				top = p.groupTop // the box's top (top: -1px of its padding box)
+			}
+			if lp := &l.paras[last]; lp.kind == CodeBlock && lp.boxBot > lp.boxTop {
+				bot = lp.boxBot // bottom: -8px, the bottom cap's edge
+			}
+			fillRRect(gtx, image.Rect(0, top, m.quoteBar, bot), m.quoteBar/2, c.quoteBar)
 		}
 		if p.kind == Divider {
 			y := p.top + (p.bot-p.top-m.dividerThick)/2

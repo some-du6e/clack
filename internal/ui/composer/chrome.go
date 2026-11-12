@@ -244,13 +244,11 @@ var crFmtOrder = [...]crBtn{crBold, crItalic, crUnderline, crStrike, crPara, crL
 
 var crFmtSep = [len(crFmtOrder)]bool{5: true, 8: true}
 
-// crFootOverflow is what the footer's ⋯ holds on narrow composers.
-var crFootOverflow = [...]crBtn{crVideo, crAudio, crShortcut}
-
-// crFootCollapseW is the box width under which the footer folds video,
-// audio and Run shortcut into ⋯. Slack folds them at 582 and 383 wide but
-// not at 998; the exact breakpoint is unmeasured.
-const crFootCollapseW = 600
+// crFootOverflow is what the footer's ⋯ holds on narrow composers, in
+// TextyButtons' order: the composer, emoji and mention buttons once the
+// toolbar is under 65, 105 and 160px (crFootMoves), the clip buttons, Run
+// shortcut (overflow.go).
+var crFootOverflow = [...]crBtn{crAa, crEmoji, crMention, crVideo, crAudio, crShortcut}
 
 // crPal is the chrome's colors, pre-composited where Slack's are
 // translucent (Gio blends in linear light; theme.Over matches browsers).
@@ -362,6 +360,8 @@ type chrome struct {
 	fpal    crPal       // this frame's colors: pal with CSS overrides
 	base    image.Point // composer-local position of the current gtx origin
 	footNat int         // the footer row's own width as last laid out (a row-flex body, layoutBox)
+	sufW    int         // the submit group's width as last laid out (the toolbar's width, overflow.go)
+	more    crMore      // TextyButtonOverflow's open state (overflow.go)
 	pxPerDp float32
 	wBox    layout.Widget
 	wFoot   [crNumBtn]layout.Widget
@@ -459,6 +459,8 @@ func (c *chrome) actionFor(id crBtn, anchor image.Rectangle) chromeAction {
 // update turns last frame's pointer input into actions. It runs before
 // anything is laid out: Clickable.Layout drops unread clicks.
 func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
+	c.moreOutside(gtx, st) // overflow.go
+	c.more.shown = false
 	for {
 		e, ok := c.bg.Update(gtx.Source)
 		if !ok {
@@ -473,28 +475,27 @@ func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
 			continue
 		}
 		switch id {
-		case crFmtMore, crFootMore:
+		case crFmtMore:
 			c.openMore(h, st, id)
+		case crFootMore:
+			c.toggleMore() // TextyButtonOverflow's toggle (overflow.go)
+		case crMention, crShortcut:
+			// MentionButton's and SlashCommandsButton's handlers close
+			// the overflow (eH.current.close())
+			c.more.open = false
+			c.emit(c.actionFor(id, c.rect[id]))
 		default:
 			c.emit(c.actionFor(id, c.rect[id]))
 		}
 	}
 }
 
-// openMore shows the ⋯ overflow menu; its items queue the same actions the
-// hidden buttons would.
+// openMore shows the formatting bar's ⋯ menu; its items queue the same
+// actions the hidden buttons would. (The footer's ⋯ is TextyButtonOverflow's
+// row of buttons, overflow.go.)
 func (c *chrome) openMore(h Host, st *chromeState, id crBtn) {
 	anchor := c.rect[id]
-	var ids []crBtn
-	if id == crFmtMore {
-		ids = crFmtOrder[len(crFmtOrder)-c.fmtHidden:]
-	} else {
-		for _, b := range crFootOverflow {
-			if c.f.hide&(1<<b) == 0 {
-				ids = append(ids, b)
-			}
-		}
-	}
+	ids := crFmtOrder[len(crFmtOrder)-c.fmtHidden:]
 	if len(ids) == 0 {
 		return
 	}
@@ -533,7 +534,7 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	c.cur = st
 	c.fpal = *p
 	c.pxPerDp = gtx.Metric.PxPerDp
-	c.f = crFrame{h: h, inputP: inputP, input: input, att: attachments, barBg: p.bar, hide: st.Hide, minOverflow: 1}
+	c.f = crFrame{h: h, inputP: inputP, input: input, att: attachments, barBg: p.bar, hide: st.Hide, minOverflow: crOverflowDefault}
 
 	edit := st.Mode == modeEdit
 	W := gtx.Constraints.Max.X
@@ -1105,7 +1106,10 @@ func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 	// beside the editor the footer is as wide as its buttons: Slack's
 	// overflow test sees the display: contents toolbar as 0 wide there
 	// and folds nothing
-	c.f.narrow = !c.f.oneLine && x1-x0+2*gtx.Dp(1) < gtx.Dp(crFootCollapseW)
+	c.f.eq = 0
+	if !c.f.oneLine {
+		c.f.eq = c.toolbarWidth(gtx, x1-x0)
+	}
 	c.f.fold = c.foldFooter()
 	c.f.sufX = x1 - gtx.Dp(6)
 	org := image.Pt(x0, y)
