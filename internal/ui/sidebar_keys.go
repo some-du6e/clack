@@ -68,6 +68,51 @@ type sbKeys struct {
 	listH     int   // the list's height last frame (px)
 	rowOff    []int // the rows' tops in display order last frame (px)
 	order     []int // display order: row indexes (the plugin-shown ones)
+	// the key filters, boxed once (the sidebar allocates nothing per
+	// frame): the fixed ones, and the conditional ones added to buf
+	fixed, tab, del, huddle []event.Filter
+	buf                     []event.Filter
+	press                   event.Filter
+}
+
+// sbFilters are the list's key filters for this frame.
+func (a *App) sbFilters() []event.Filter {
+	k := &a.sidebar.kb
+	t := &k.tag
+	if k.fixed == nil {
+		k.fixed = []event.Filter{
+			key.FocusFilter{Target: t},
+			key.Filter{Focus: t, Name: key.NameUpArrow},
+			key.Filter{Focus: t, Name: key.NameDownArrow},
+			key.Filter{Focus: t, Name: key.NameHome},
+			key.Filter{Focus: t, Name: key.NameEnd},
+			key.Filter{Focus: t, Name: key.NamePageUp, Optional: key.ModShift},
+			key.Filter{Focus: t, Name: key.NamePageDown, Optional: key.ModShift},
+			key.Filter{Focus: t, Name: key.NameReturn, Optional: key.ModShift},
+			key.Filter{Focus: t, Name: key.NameEnter, Optional: key.ModShift},
+			key.Filter{Focus: t, Name: key.NameSpace, Optional: key.ModShift},
+			key.Filter{Focus: t, Name: key.NameLeftArrow, Optional: key.ModAlt},
+			key.Filter{Focus: t, Name: key.NameRightArrow, Optional: key.ModAlt},
+			key.Filter{Focus: t, Name: key.NameDeleteForward},
+			key.Filter{Focus: t, Name: "*", Optional: key.ModShift},
+		}
+		k.tab = []event.Filter{key.Filter{Focus: t, Name: key.NameTab, Required: key.ModShift}}
+		k.del = []event.Filter{key.Filter{Focus: t, Name: key.NameDeleteBackward}}
+		// isHuddleKeyboardShortcutPressed
+		k.huddle = []event.Filter{key.Filter{Focus: t, Name: "H", Required: key.ModShortcut | key.ModShift},
+			key.Filter{Focus: t, Name: "H", Required: key.ModShortcut | key.ModShift | key.ModAlt}}
+	}
+	k.buf = append(k.buf[:0], k.fixed...)
+	if shortcut.GOOS == "darwin" {
+		k.buf = append(k.buf, k.del...)
+	}
+	if a.sbFilterOn() {
+		k.buf = append(k.buf, k.tab...)
+	}
+	if r := a.sidebar.rowAtPos(a.sidebar.sbPos(k.key)); r != nil && r.kind == sbConv {
+		k.buf = append(k.buf, k.huddle...)
+	}
+	return k.buf
 }
 
 // sbFocusable is isRowObjectFocusable: a treeitem row.
@@ -285,7 +330,10 @@ func (a *App) sbListEvents(gtx layout.Context) {
 	s := &a.sidebar
 	k := &s.kb
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &k.tag, Kinds: pointer.Press})
+		if k.press == nil {
+			k.press = pointer.Filter{Target: &k.tag, Kinds: pointer.Press}
+		}
+		ev, ok := gtx.Event(k.press)
 		if !ok {
 			break
 		}
@@ -301,33 +349,7 @@ func (a *App) sbListEvents(gtx layout.Context) {
 			}
 		}
 	}
-	filters := []event.Filter{
-		key.FocusFilter{Target: &k.tag},
-		key.Filter{Focus: &k.tag, Name: key.NameUpArrow},
-		key.Filter{Focus: &k.tag, Name: key.NameDownArrow},
-		key.Filter{Focus: &k.tag, Name: key.NameHome},
-		key.Filter{Focus: &k.tag, Name: key.NameEnd},
-		key.Filter{Focus: &k.tag, Name: key.NamePageUp, Optional: key.ModShift},
-		key.Filter{Focus: &k.tag, Name: key.NamePageDown, Optional: key.ModShift},
-		key.Filter{Focus: &k.tag, Name: key.NameReturn, Optional: key.ModShift},
-		key.Filter{Focus: &k.tag, Name: key.NameEnter, Optional: key.ModShift},
-		key.Filter{Focus: &k.tag, Name: key.NameSpace, Optional: key.ModShift},
-		key.Filter{Focus: &k.tag, Name: key.NameLeftArrow, Optional: key.ModAlt},
-		key.Filter{Focus: &k.tag, Name: key.NameRightArrow, Optional: key.ModAlt},
-		key.Filter{Focus: &k.tag, Name: key.NameDeleteForward},
-		key.Filter{Focus: &k.tag, Name: "*", Optional: key.ModShift},
-	}
-	if shortcut.GOOS == "darwin" {
-		filters = append(filters, key.Filter{Focus: &k.tag, Name: key.NameDeleteBackward})
-	}
-	if a.sbFilterOn() {
-		filters = append(filters, key.Filter{Focus: &k.tag, Name: key.NameTab, Required: key.ModShift})
-	}
-	if r := s.rowAtPos(s.sbPos(k.key)); r != nil && r.kind == sbConv {
-		// isHuddleKeyboardShortcutPressed, for the row's conversation
-		filters = append(filters, key.Filter{Focus: &k.tag, Name: "H", Required: key.ModShortcut | key.ModShift},
-			key.Filter{Focus: &k.tag, Name: "H", Required: key.ModShortcut | key.ModShift | key.ModAlt})
-	}
+	filters := a.sbFilters()
 	for {
 		ev, ok := gtx.Event(filters...)
 		if !ok {

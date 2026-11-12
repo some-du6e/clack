@@ -259,7 +259,7 @@ func TestSidebarOrganizeMode(t *testing.T) {
 	}
 	var leaveCh string
 	for _, id := range sbConvs(a, from) {
-		if cv := a.model().conv(id); cv != nil && cv.Kind == "channel" {
+		if cv := a.model().conv(id); cv != nil && cv.Kind == "channel" && cv.Name != "general" && !cv.Archived {
 			leaveCh = id
 		}
 	}
@@ -441,18 +441,23 @@ func TestSectionMoveErrorToasts(t *testing.T) {
 		return map[string]any{"ok": false, "error": code}, true
 	})
 	src := a.sectionByID("L0FAKE01")
-	dst := a.sectionByID("L0FAKE03")
-	if src == nil || dst == nil || len(src.All) == 0 {
+	if src == nil || len(src.All) == 0 {
 		t.Fatal("no fake sections")
 	}
 	ch := src.All[0]
-	for _, tc := range []struct{ code, want string }{
-		{"too_many_channels", "Unfortunately, you can have up to 500 conversations in a section \u2014\u00a0but no more."},
-		{"too_many_operations", "Something went wrong. Reloading Slack might clear things up. If it doesn’t, drop us a line."},
+	// a different move each time: slack.Client answers a request that just
+	// failed the same way from its backoff, without asking again
+	for _, tc := range []struct{ code, to, want string }{
+		{"too_many_channels", "L0FAKE03", "Unfortunately, you can have up to 500 conversations in a section \u2014\u00a0but no more."},
+		{"too_many_operations", "L0FAKE02", "Something went wrong. Reloading Slack might clear things up. If it doesn’t, drop us a line."},
 	} {
 		mu.Lock()
 		code = tc.code
 		mu.Unlock()
+		dst := a.sectionByID(tc.to)
+		if dst == nil {
+			t.Fatalf("no section %s", tc.to)
+		}
 		a.toast = toastState{}
 		a.moveChannelTo(ch, dst, a.channelSections(ch))
 		e.until(tc.code+" toast", 10*time.Second, func() bool { return a.toast.text != "" })
@@ -473,9 +478,10 @@ func TestTempMuteNewBadge(t *testing.T) {
 	e, _ := organizeEnv(t, func(fs *fakeslack.Server) { fs.SetNewBadges(popups.TempMuteNewBadge) })
 	a := e.a
 	c := a.Core()
-	e.until("the badge", 10*time.Second, func() bool { return c.MegaphoneNewBadge(popups.TempMuteNewBadge) })
+	// the boot load goes out once a conversation is on screen (joinbanner.go)
 	ch := fakeslackMemberChannel(e)
 	e.openChannel(ch)
+	e.until("the badge", 10*time.Second, func() bool { return c.MegaphoneNewBadge(popups.TempMuteNewBadge) })
 	e.settle(200 * time.Millisecond)
 	more := notifyPick(t, popups.ChannelNotifyItems(a, ch), "More options")
 	if more.Tag == nil || more.Tag.Label != "New" || more.Tag.Style != "inverse-education" || more.Tag.HighStyle != "education" {

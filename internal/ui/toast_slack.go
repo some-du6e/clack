@@ -15,11 +15,13 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Slack's Toast (client-boot c5oy over 4HH1, CSS .c-toast): at the
-// window's bottom right, 20px in (getToastOffset), base-inv-pry with
+// window's bottom right, 20px in (80px up over a conversation's composer:
+// toastBottom), base-inv-pry with
 // content-inv-pry text, radius 8, padding 12 16, 15px on 1.5 lines, at
 // most 350px wide; the svgIcon (20px) 8px before the text
 // (.c-toast__wrapper gap 8); a 1px rgba(29,28,29,.13) ring and 0 4px 12px
@@ -46,7 +48,7 @@ func (a *App) layoutSlackToast(gtx layout.Context) {
 	}
 	w, h := 2*px+is+gap+tw, 2*py+lh
 	off := gtx.Dp(20)
-	r := image.Rect(sz.X-off-w, sz.Y-off-h, sz.X-off, sz.Y-off)
+	r := image.Rect(sz.X-off-w, sz.Y-a.toastBottom(gtx)-h, sz.X-off, sz.Y-a.toastBottom(gtx))
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(4))), gtx.Dp(8), gtx.Dp(12), theme.WithAlpha(c.PanelShadow, 0x14))
 	theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), gtx.Dp(8)+1, theme.WithAlpha(c.Fg, 0x21))
 	theme.RRect(gtx, r, gtx.Dp(8), c.Tooltip)
@@ -100,7 +102,7 @@ func (a *App) layoutRichToast(gtx layout.Context) {
 	words, lines, tw := a.wrapToastParts(gtx, a.toast.parts, maxW)
 	w, h := 2*px+is+gap+tw, 2*py+lines*lh
 	off := gtx.Dp(20)
-	r := image.Rect(sz.X-off-w, sz.Y-off-h, sz.X-off, sz.Y-off)
+	r := image.Rect(sz.X-off-w, sz.Y-a.toastBottom(gtx)-h, sz.X-off, sz.Y-a.toastBottom(gtx))
 	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(4))), gtx.Dp(8), gtx.Dp(12), theme.WithAlpha(c.PanelShadow, 0x14))
 	theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), gtx.Dp(8)+1, theme.WithAlpha(c.Fg, 0x21))
 	theme.RRect(gtx, r, gtx.Dp(8), c.Tooltip)
@@ -192,4 +194,18 @@ func (a *App) toastLink(gtx layout.Context, r image.Rectangle, href string) {
 	defer clip.Rect(r).Push(gtx.Ops).Pop()
 	pointer.CursorPointer.Add(gtx.Ops)
 	a.toastClick.Add(gtx.Ops)
+}
+
+// toastBottom is a bottom-right Toast's distance from the window's bottom
+// (ToastConfigProvider's getToastOffset, boot-shared 8ZyS): 80px over a
+// conversation the viewer can post in (canUserPostInChannel: a member, not
+// archived) with no secondary view or modal open, clear of its composer;
+// else Toast's 20px.
+func (a *App) toastBottom(gtx layout.Context) int {
+	if ch := a.router.Current().Channel(); ch != "" && !a.secondary.open() && !slackc.ModalOpen() {
+		if cv := a.model().conv(ch); cv != nil && !cv.Preview && !cv.Archived {
+			return gtx.Dp(80)
+		}
+	}
+	return gtx.Dp(20)
 }
