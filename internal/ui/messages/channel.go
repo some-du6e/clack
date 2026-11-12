@@ -114,6 +114,11 @@ func (v *ChannelView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 // AtBottom reports whether the newest message is visible.
 func (v *ChannelView) AtBottom() bool { return !v.s.list.Position.BeforeEnd }
 
+// NewestRowBottom is the window y of the newest message row's bottom edge
+// as last drawn, and whether that row was on screen (the gap above the
+// composer, ui's TestComposerGap).
+func (v *ChannelView) NewestRowBottom() (int, bool) { return v.s.newestBottom() }
+
 // Highlight scrolls to ts and flashes it (permalinks, search results,
 // route "c/<id>/m/<ts>"). Older messages are paged in until ts is loaded.
 func (v *ChannelView) Highlight(ts string) {
