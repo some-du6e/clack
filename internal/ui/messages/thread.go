@@ -1,18 +1,25 @@
 package messages
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"image"
+	"image/draw"
+	"image/gif"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"gioui.org/f32"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -51,6 +58,9 @@ type ThreadView struct {
 	followAt                  time.Time              // when follow was set
 	failed                    atomic.Pointer[string] // the subscribe request's error (set off the UI goroutine)
 	find                      threadFind             // find in thread (thread_find.go)
+	// announced is what Slack's announcer API would have said (a live
+	// region; Clack has no screen-reader bridge yet): tests read it.
+	announced []string
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
@@ -637,4 +647,324 @@ func (v *ThreadView) closeButton(gtx layout.Context, c *colors, st slackc.Styled
 		})
 		return layout.Dimensions{Size: image.Pt(bs, bs)}
 	})
+}
+
+// ---- before the replies arrive (ThreadsFlexpane, client-boot-shared puxw) ----
+
+// threadPending draws the pane while it has no messages yet, as
+// ThreadsFlexpane does (CDN build 4d0c78085232):
+//
+//   - isLoading (no timestamps yet): FlexpaneLoading (usav) with the
+//     loadingMessage "Loading thread…" (the threads I18n): .p-flexpane_loading,
+//     absolute 200px from the pane's top, centred, 13px in
+//     rgba(sk_foreground_high, .5), Slack's loading_hash_animation (40px,
+//     margin 0 16px 8px 8px; the _dark one in the dark theme), a line
+//     break, then the message. The list's only row is the input, so the
+//     composer sits under the header (ContentHeight).
+//   - a failed fetchReplies (isThreadErrored): ThreadsError, the pane's
+//     only content (no list, no composer): .p-threads_flexpane__error, a
+//     column centred in the pane: :mag: at 64px (margin-bottom 16),
+//     "Couldn’t load thread" (22px/1.36365 Black, margin-bottom 4), "If
+//     the problem persists, please drop us a line." (15px/1.46668,
+//     margin-bottom 16; the link is https://slack.com/help/contact) and a
+//     primary "Try Again" (tryAgain: fetch again). thread_not_found
+//     (deletedThreadKey) says "This message was deleted." (the message
+//     I18n) under the :mag: and nothing else.
+//
+// False leaves the pane to the list (signed out: its sign-in prompt).
+func (s *listState) threadPending(gtx layout.Context, h Host, c *colors, size image.Point) bool {
+	if s.snap.err != nil && !s.snap.loading {
+		if app := h.Core(); app != nil && app.SignedOut() {
+			return false
+		}
+		s.threadsError(gtx, h, c, size, threadNotFound(s.snap.err))
+		return true
+	}
+	s.flexpaneLoading(gtx, h, c, size)
+	return true
+}
+
+// threadNotFound: fetchReplies failed with thread_not_found (the root is
+// gone).
+func threadNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "thread_not_found")
+}
+
+// threadErrored is ThreadsFlexpane's isThreadErrored with nothing loaded:
+// ThreadsError is all the pane shows.
+func (s *listState) threadErrored(h Host) bool {
+	if !s.thread || s.snap.loaded || len(s.snap.msgs) > 0 || s.snap.err == nil || s.snap.loading {
+		return false
+	}
+	app := h.Core()
+	return app == nil || !app.SignedOut()
+}
+
+// threadLoading is isLoading: the pane has no messages yet and no error.
+func (s *listState) threadLoading() bool {
+	return s.thread && !s.snap.loaded && len(s.snap.msgs) == 0 && (s.snap.err == nil || s.snap.loading)
+}
+
+// HidesComposer: ThreadsError replaces the whole pane, its reply input
+// included.
+func (v *ThreadView) HidesComposer() bool { return v.s.threadErrored(v.h) }
+
+// flexpaneLoading is FlexpaneLoading with "Loading thread…".
+func (s *listState) flexpaneLoading(gtx layout.Context, h Host, c *colors, size image.Point) {
+	th := h.Theme()
+	if s.pendAt.IsZero() {
+		s.pendAt = gtx.Now
+	}
+	col := c.Muted70 // sk_foreground_high (Muted70's rgb) at .5
+	col.A = 128
+	ts := textStyle{size: 13, col: col, lineH: 19}
+	msg := threadsNS.T("Loading thread…")
+	// the line box of the 40px image: its bottom margin edge (8px) on the
+	// baseline of a 13px line
+	sp := dp(gtx, 40)
+	top := dp(gtx, 200)
+	inline := dp(gtx, 8) + sp + dp(gtx, 16)
+	x := (size.X-inline)/2 + dp(gtx, 8)
+	m := measure(gtx, th, ts, msg)
+	desc := dp(gtx, 4)
+	hashSpinner(gtx, th.Dark, image.Rect(x, top, x+sp, top+sp), s.pendAt)
+	y := top + sp + dp(gtx, 8) + desc
+	at(gtx, (size.X-m.X)/2, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, msg) })
+}
+
+// threadsError is ThreadsError (puxw).
+func (s *listState) threadsError(gtx layout.Context, h Host, c *colors, size image.Point, deleted bool) {
+	th := h.Theme()
+	if s.retryBtn.Clicked(gtx) {
+		s.hb.retry(s.m) // tryAgain: the pane fetches again
+	}
+	if s.helpLink.Clicked(gtx) {
+		openURL("https://slack.com/help/contact")
+	}
+	es := dp(gtx, 64)
+	head := textStyle{size: 22, weight: theme.Black, col: c.Text, lineH: 30}
+	body := textStyle{size: 15, col: c.Text, lineH: 22}
+	link := body
+	link.col = c.Link
+	var hdr string
+	if deleted {
+		hdr = msgNS.T("This message was deleted.")
+	} else {
+		hdr = threadsNS.T("Couldn’t load thread")
+	}
+	var parts []i18n.Part
+	btnH := 0
+	h1 := es + dp(gtx, 16) + dp(gtx, 30)
+	if !deleted {
+		parts = threadsNS.RT("If the problem persists, please <a>drop us a line.</a>")
+		btnH = dp(gtx, 36)
+		h1 += dp(gtx, 4) + dp(gtx, 22) + dp(gtx, 16) + btnH
+	}
+	y := max(0, (size.Y-h1)/2)
+	// :mag:
+	ex := (size.X - es) / 2
+	if app := h.Core(); app != nil {
+		url, txt, _ := app.Emoji("mag")
+		if !drawEmoji(gtx, h, url, image.Rect(ex, y, ex+es, y+es)) && txt != "" {
+			es := textStyle{size: 48, col: c.Text, lineH: 64}
+			w := measure(gtx, th, es, txt).X
+			at(gtx, (size.X-w)/2, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, es, txt) })
+		}
+	}
+	y += es + dp(gtx, 16)
+	hw := measure(gtx, th, head, hdr).X
+	at(gtx, (size.X-hw)/2, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, head, hdr) })
+	y += dp(gtx, 30)
+	if deleted {
+		return
+	}
+	y += dp(gtx, 4)
+	// the body: its text, the link (Link, underlined under the pointer)
+	w := 0
+	for _, p := range parts {
+		st := body
+		if p.Tag == "a" {
+			st = link
+		}
+		w += measure(gtx, th, st, p.Text).X
+	}
+	x := (size.X - w) / 2
+	for _, p := range parts {
+		if p.Tag != "a" {
+			d := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, body, p.Text) })
+			x += d.Size.X
+			continue
+		}
+		d := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+			return s.helpLink.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				d := label(gtx, th, link, p.Text)
+				if s.helpLink.Hovered() {
+					base := d.Size.Y - d.Baseline
+					fill(gtx.Ops, image.Rect(0, base+dp(gtx, 1), d.Size.X, base+dp(gtx, 2)), c.Link)
+				}
+				return d
+			})
+		})
+		x += d.Size.X
+	}
+	y += dp(gtx, 22) + dp(gtx, 16)
+	// Try Again: a primary Button (R2sM), medium
+	rec := op.Record(gtx.Ops)
+	bd := popups.Button(gtx, th, &s.retryBtn, popups.BtnPrimary, popups.BtnMedium, threadsNS.T("Try Again"), "", 0)
+	call := rec.Stop()
+	t := op.Offset(image.Pt((size.X-bd.Size.X)/2, y)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+}
+
+// loadingRepliesRow is getThreadRowsAndKeys' "loading" row while the
+// replies load after some are known (reachedEnd false): "Loading
+// replies…" (the threads I18n) in .p-threads_flexpane__loading, 96px
+// tall, centred, 13px italic in sk_foreground_high_solid.
+func (s *listState) loadingRepliesRow(gtx layout.Context, h Host, c *colors, w int) layout.Dimensions {
+	th := h.Theme()
+	col := c.Edited
+	if th.Dark {
+		col = rgb(0x818385)
+	}
+	ts := textStyle{size: 13, italic: true, col: col, lineH: 96}
+	msg := threadsNS.T("Loading replies…")
+	m := measure(gtx, th, ts, msg)
+	at(gtx, (w-m.X)/2, 0, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, msg) })
+	return layout.Dimensions{Size: image.Pt(w, dp(gtx, 96))}
+}
+
+// Slack's loading_hash_animation@2x (light and dark), the image
+// FlexpaneLoading shows: 80px frames for a 40px box, 30ms each.
+var (
+	//go:embed assets/loading_hash_animation_2x.gif
+	hashGIFLight []byte
+	//go:embed assets/loading_hash_animation_2x_dark.gif
+	hashGIFDark []byte
+)
+
+// hashAnim is the decoded animation, composed frame by frame (each frame
+// draws over the last: disposal "none").
+type hashAnim struct {
+	once   sync.Once
+	frames []paint.ImageOp
+	ends   []time.Duration
+	total  time.Duration
+}
+
+var hashAnims [2]hashAnim // light, dark
+
+func (a *hashAnim) load(raw []byte) {
+	a.once.Do(func() {
+		g, err := gif.DecodeAll(bytes.NewReader(raw))
+		if err != nil || len(g.Image) == 0 {
+			return
+		}
+		bounds := image.Rect(0, 0, g.Config.Width, g.Config.Height)
+		canvas := image.NewRGBA(bounds)
+		for i, f := range g.Image {
+			var prev *image.RGBA
+			disp := byte(0)
+			if i < len(g.Disposal) {
+				disp = g.Disposal[i]
+			}
+			if disp == gif.DisposalPrevious {
+				prev = image.NewRGBA(bounds)
+				draw.Draw(prev, bounds, canvas, image.Point{}, draw.Src)
+			}
+			draw.Draw(canvas, f.Bounds(), f, f.Bounds().Min, draw.Over)
+			out := image.NewRGBA(bounds)
+			draw.Draw(out, bounds, canvas, image.Point{}, draw.Src)
+			a.frames = append(a.frames, paint.NewImageOp(out))
+			d := 30 * time.Millisecond
+			if i < len(g.Delay) && g.Delay[i] > 0 {
+				d = time.Duration(g.Delay[i]) * 10 * time.Millisecond
+			}
+			a.total += d
+			a.ends = append(a.ends, a.total)
+			switch disp {
+			case gif.DisposalBackground:
+				draw.Draw(canvas, f.Bounds(), image.Transparent, image.Point{}, draw.Src)
+			case gif.DisposalPrevious:
+				canvas = prev
+			}
+		}
+	})
+}
+
+// hashSpinner draws the animation's frame for now in r, from its start,
+// and asks for the frame after it (an InvalidateCmd deadline, so nothing
+// redraws once the pane stops drawing it).
+func hashSpinner(gtx layout.Context, dark bool, r image.Rectangle, start time.Time) {
+	a, raw := &hashAnims[0], hashGIFLight
+	if dark {
+		a, raw = &hashAnims[1], hashGIFDark
+	}
+	a.load(raw)
+	if len(a.frames) == 0 || a.total <= 0 {
+		return
+	}
+	now := gtx.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	el := now.Sub(start) % a.total
+	if el < 0 {
+		el = 0
+	}
+	i := sort.Search(len(a.ends), func(i int) bool { return a.ends[i] > el })
+	i = min(i, len(a.frames)-1)
+	img := a.frames[i]
+	sz := img.Size()
+	t := op.Offset(r.Min).Push(gtx.Ops)
+	sc := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(float32(r.Dx())/float32(sz.X), float32(r.Dy())/float32(sz.Y)))).Push(gtx.Ops)
+	img.Filter = paint.FilterLinear
+	img.Add(gtx.Ops)
+	cl := clip.Rect(image.Rectangle{Max: sz}).Push(gtx.Ops)
+	paint.PaintOp{}.Add(gtx.Ops)
+	cl.Pop()
+	sc.Pop()
+	t.Pop()
+	gtx.Execute(op.InvalidateCmd{At: start.Add(now.Sub(start) - el + a.ends[i])})
+}
+
+// ---- Mod+J ----
+
+// JumpToUnread is ThreadsFlexpane's onKeyDown for j with the desktop
+// modifier (isDesktopApp, isCmdKey: ⌘ on macOS, Ctrl elsewhere) while
+// the key focus is in the pane and no overlay is up: jumpToUnread scrolls
+// firstUnreadTs's row to the list's top (scrollToKey, offset 0); without
+// one it announces "No unread messages" (the threads I18n). Reports
+// whether there was a reply to jump to.
+func (v *ThreadView) JumpToUnread() bool {
+	ts := v.s.firstUnreadTs()
+	if ts == "" {
+		v.announced = append(v.announced, threadsNS.T("No unread messages"))
+		return false
+	}
+	if v.s.scrollToFind(ts, 0) {
+		v.h.Invalidate()
+	}
+	return true
+}
+
+// Announced is what the pane's announcer said (Slack's live region;
+// Clack has no screen-reader bridge yet), oldest first.
+func (v *ThreadView) Announced() []string { return append([]string(nil), v.announced...) }
+
+// firstUnreadTs is ThreadsFlexpane's: the first of the thread's
+// timestamps after originalLastRead (the lastRead the pane opened with)
+// that isn't the root, else originalLastRead itself; "" when the pane
+// opened on a thread it doesn't follow.
+func (s *listState) firstUnreadTs() string {
+	lr := s.thr.open
+	if lr == "" {
+		return ""
+	}
+	for i := range s.snap.msgs {
+		if ts := s.snap.msgs[i].m.TS; ts != s.ts && tsLess(lr, ts) {
+			return ts
+		}
+	}
+	return lr
 }

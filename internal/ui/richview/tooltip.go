@@ -89,6 +89,13 @@ func editedTip(ts string, now time.Time) string {
 	return date + " at " + uipref.Clock(t)
 }
 
+// editedByTip is EditedLabel's tooltip when the element has an
+// editedByUserId: the message_kit string "{dateTime} by {name}" with the
+// member's name (getMemberNameById).
+func editedByTip(dateTime, name string) string {
+	return i18n.T("message_kit", "{dateTime} by {name}", "name", name, "dateTime", dateTime)
+}
+
 // fullTimestamp is getFullTimestamp (boot-shared n8t9), the tooltip of a
 // message card's time (AttachmentFooterTimestamp with compactTime: delay
 // 300): editedTip's "{date} at {time}" with the seconds.
@@ -158,6 +165,9 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 		}
 		if name = editedTip(v.opts.EditedTS, now); name == "" {
 			return
+		}
+		if by := v.opts.EditedBy; by != "" {
+			name = editedByTip(name, by)
 		}
 	}
 	l := lay{st: st, d: &v.d, scale: v.laidPx, spx: v.laidSp}

@@ -24,27 +24,35 @@ var tooltipClass = slackc.Class("c-tooltip__tip c-tooltip__tip--top", "role", "t
 const reactionTipDelay = 300 * time.Millisecond
 
 // reactionTooltip is Slack's ReactionTip (boot-shared Qvn6) in its
-// Tooltip (F2XN, position "top"), centred above anchor (6px over the
-// pill: list.go):
+// Tooltip (F2XN, position "top") for one reaction: txt is reactionTip's
+// (whose count picks the width: tipCountFor), url its emoji.
+func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt, url string, anchor, bounds image.Point) {
+	reactionGroupTooltip(gtx, h, th, c, &groupTip{lines: []string{txt}, urls: []string{url}, wide: tipCountFor(txt) > 9}, anchor, bounds)
+}
+
+// reactionGroupTooltip is Slack's ReactionTip (boot-shared Qvn6) in its
+// Tooltip (F2XN, position "top") for a pill's group, centred above anchor
+// (6px over the pill: list.go):
 //
 //   - .c-tooltip__tip: padding 8px 12px, radius 8, 13px/1.25 bold, centred,
-//     max-width 200px ("small"), 400px ("large") once the count passes 9;
-//     margin-bottom 8px, and the arrow (a 9px square turned -45deg, its
-//     corner 6px under the box) pointing at the pill.
-//   - .c-reaction__tip--emoji: the emoji LARGER (one reaction in the
-//     group: a 64px white tile, radius 4, padding 4, so a 56px emoji),
-//     min-height 32, margin-bottom 4.
-//   - the text: the names in the tip's bold, then TooltipSubtitle
+//     max-width 200px ("small"), 400px ("large": Reaction's count past 9
+//     or more than four reactions in the group); margin-bottom 8px, and
+//     the arrow (a 9px square turned -45deg, its corner 6px under the
+//     box) pointing at the pill.
+//   - .c-reaction__tip--emoji: the group's emoji in rows of eight (lodash
+//     chunk), each row a centred flex line with gap 4, min-height 32,
+//     margin-bottom 4. One reaction is LARGER (a 64px white tile, radius
+//     4, padding 4, so a 56px emoji); more are LARGE (36px tiles, padding
+//     2: 32px emoji).
+//   - the text: one .c-reaction__tip_group per reaction (16px between
+//     them), each the names in the tip's bold, then TooltipSubtitle
 //     ("reacted with :name:", regular weight, inverse.secondary) inline,
 //     wrapped as one paragraph. Where the subtitle sits is the locale's
 //     (getTip's rich strings: ja-JP's follows the name with no space).
-//
-// txt is reactionTip's (whose count picks the width: tipCountFor).
-func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt, url string, anchor, bounds image.Point) {
+func reactionGroupTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, gt *groupTip, anchor, bounds image.Point) {
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
-	tile, es := dp(gtx, 64), dp(gtx, 56)
 	maxW := dp(gtx, 200)
-	if tipCountFor(txt) > 9 {
+	if gt.wide {
 		maxW = dp(gtx, 400)
 	}
 	// Slack's tooltip is a portal under <body> (.c-tooltip__tip): a
@@ -53,16 +61,42 @@ func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt
 	bold := cssText(tip, textStyle{size: 13, weight: theme.Bold, col: c.TooltipText, lineH: 16.25})
 	reg := bold
 	reg.weight, reg.col = theme.Regular, tooltipSubtitle(th, c, bold.col)
-	runs := tipRuns(txt, bold, reg)
 
-	// the text, wrapped at the box's content width, centred
-	m := op.Record(gtx.Ops)
-	td := flowTip(gtx, th, runs, maxW-2*padX)
-	tcall := m.Stop()
-
-	w := max(td.X, tile) + 2*padX
+	// the emoji rows
+	tile, es := dp(gtx, 64), dp(gtx, 56)
+	if len(gt.urls) > 1 {
+		tile, es = dp(gtx, 36), dp(gtx, 32)
+	}
 	gap := dp(gtx, 4)
-	hgt := padY + tile + gap + td.Y + padY
+	rows := (len(gt.urls) + reactTipRow - 1) / reactTipRow
+	rowH := max(tile, dp(gtx, 32))
+	emojiW := 0
+	for i := 0; i < rows; i++ {
+		n := min(reactTipRow, len(gt.urls)-i*reactTipRow)
+		emojiW = max(emojiW, n*tile+(n-1)*gap)
+	}
+	emojiH := rows * (rowH + gap)
+
+	// the groups' text, each wrapped at the box's content width, centred
+	type para struct {
+		call op.CallOp
+		size image.Point
+	}
+	paras := make([]para, 0, len(gt.lines))
+	textW, textH := 0, 0
+	for i, txt := range gt.lines {
+		m := op.Record(gtx.Ops)
+		td := flowTip(gtx, th, tipRuns(txt, bold, reg), maxW-2*padX)
+		paras = append(paras, para{m.Stop(), td})
+		textW = max(textW, td.X)
+		textH += td.Y
+		if i > 0 {
+			textH += dp(gtx, 16) // .c-reaction__tip_group:not(:last-child) { margin-bottom: 16px }
+		}
+	}
+
+	w := max(textW, emojiW) + 2*padX
+	hgt := padY + emojiH + textH + padY
 	// the box's bottom 8px over the pill (anchor is 6px over it)
 	bottom := anchor.Y + dp(gtx, 6) - dp(gtx, 8)
 	x := min(max(anchor.X-w/2, dp(gtx, 4)), bounds.X-dp(gtx, 4)-w)
@@ -83,12 +117,74 @@ func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt
 	}
 	// box and arrow, outlined together in dark mode (theme/tooltip.go)
 	theme.TooltipShape(gtx, r, dp(gtx, 8), arrow, bg, tipGlow(th))
-	tr := image.Rect(x+(w-tile)/2, y+padY, x+(w-tile)/2+tile, y+padY+tile)
-	rrect(gtx.Ops, tr, dp(gtx, 4), rgb(0xffffff))
-	drawEmoji(gtx, h, url, image.Rect(tr.Min.X+(tile-es)/2, tr.Min.Y+(tile-es)/2, tr.Min.X+(tile-es)/2+es, tr.Min.Y+(tile-es)/2+es))
-	t := op.Offset(image.Pt(x+(w-td.X)/2, tr.Max.Y+gap)).Push(gtx.Ops)
-	tcall.Add(gtx.Ops)
-	t.Pop()
+	ty := y + padY
+	for i := 0; i < rows; i++ {
+		urls := gt.urls[i*reactTipRow : min((i+1)*reactTipRow, len(gt.urls))]
+		n := len(urls)
+		tx := x + (w-(n*tile+(n-1)*gap))/2
+		for _, url := range urls {
+			tr := image.Rect(tx, ty+(rowH-tile)/2, tx+tile, ty+(rowH-tile)/2+tile)
+			rrect(gtx.Ops, tr, dp(gtx, 4), rgb(0xffffff))
+			o := (tile - es) / 2
+			drawEmoji(gtx, h, url, image.Rect(tr.Min.X+o, tr.Min.Y+o, tr.Min.X+o+es, tr.Min.Y+o+es))
+			tx += tile + gap
+		}
+		ty += rowH + gap
+	}
+	for i, p := range paras {
+		if i > 0 {
+			ty += dp(gtx, 16)
+		}
+		t := op.Offset(image.Pt(x+(w-p.size.X)/2, ty)).Push(gtx.Ops)
+		p.call.Add(gtx.Ops)
+		t.Pop()
+		ty += p.size.Y
+	}
+}
+
+// reactTipRow is ReactionTip's emoji per row (lodash chunk(…, 8)).
+const reactTipRow = 8
+
+// groupTip is a pill's ReactionTip: one getTip line per reaction of the
+// group (reactionTip's marked runs), the reactions' emoji, and the
+// tooltip's width ("large").
+type groupTip struct {
+	lines []string
+	urls  []string
+	wide  bool
+}
+
+// text is the tip as one string (tests, the list's "is a tip up").
+func (gt *groupTip) text() string { return strings.Join(gt.lines, "\n") }
+
+// groupTip is ReactionTip for pill k: Reaction passes the group's count
+// and reactions. A multi-skin-tone emoji's reactions read as one line
+// under the group's name with all their users (isMultiSkintone); past 50
+// reactions in a group of several tones each line names its first ten
+// (getTip's isOverflow then: that reaction's count past 10).
+func (r *row) groupTip(h Host, k int, selfID string) groupTip {
+	g := &r.groups[k]
+	rs := r.m.Reactions
+	gt := groupTip{wide: g.count > 9 || len(g.idx) > 4}
+	for _, i := range g.idx {
+		re := &rs[i]
+		url := re.URL
+		if url == "" && h.Core() != nil {
+			url, _, _ = h.Core().Emoji(re.Name)
+		}
+		gt.urls = append(gt.urls, url)
+	}
+	if multiSkinTone[g.name] {
+		one := rs[g.idx[0]]
+		one.Name, one.Users = g.name, groupUsers(rs, g)
+		gt.lines = []string{reactionTipLine(h, &one, selfID, false)}
+		return gt
+	}
+	cut := g.count > 50 && len(g.idx) > 1
+	for _, i := range g.idx {
+		gt.lines = append(gt.lines, reactionTipLine(h, &rs[i], selfID, cut))
+	}
+	return gt
 }
 
 // lastTip is the reaction count of the tip reactionTip wrote last: the

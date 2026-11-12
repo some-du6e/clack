@@ -5,7 +5,9 @@ name: messages-audit-shots
 # internal/ui/messages/compact_shots_test.go (made-up people and messages,
 # fakeslack's pictures), light and dark, headlessly through Gio's GPU
 # renderer (Mesa llvmpipe): the thread pane with a pinned reply and a reply
-# also sent to the channel, the reaction tooltip, message links (two
+# also sent to the channel, the reaction tooltip, skin-tone pills
+# (getReactionGroups) with their group tooltip, "Pinned by" with its
+# member link, message links (two
 # message_mention slugs, a message unfurl card drawing its member, with and
 # without "Underline links to websites") and link decorations (one
 # underline per hovered link, the card's time and context hovers)
@@ -18,6 +20,10 @@ on:
       - "internal/ui/messages/reaction_tip.go"
       - "internal/ui/messages/pin_icon.go"
       - "internal/ui/messages/row.go"
+      - "internal/ui/messages/reaction_groups.go"
+      - "internal/ui/messages/reaction_groups_test.go"
+      - "internal/ui/messages/row_labels_test.go"
+      - "internal/ui/messages/gap_shots_test.go"
       - "internal/ui/messages/huddle_msg.go"
       - "internal/ui/messages/huddle_msg_test.go"
       - "internal/ui/richview/tooltip.go"
@@ -59,8 +65,9 @@ jobs:
           mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
           go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard' ./internal/richtext
           go test -count=1 -v -run 'TestMemberName' ./internal/store
-          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots' ./internal/ui/messages
+          go test -count=1 -v -run 'TestMessageKeepsEditor' ./internal/core
+          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots' ./internal/ui/messages
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

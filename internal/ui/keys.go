@@ -53,6 +53,7 @@ func (a *App) defaultShortcuts() *shortcuts {
 	add("Mod+T", "Jump to a conversation", func(a *App) { a.openSwitcher() })
 	add("Mod+G", "Search", func(a *App) { a.openSearch("") })
 	add("Mod+F", "Search in conversation", func(a *App) { a.findInConversation() })
+	add("Mod+J", "Jump to the first unread reply", func(a *App) { a.threadJumpUnread() })
 	add("Mod+Shift+A", "All unreads", func(a *App) { a.Navigate("unreads") })
 	add("Mod+Shift+T", "Threads", func(a *App) { a.Navigate("threads") })
 	add("Mod+Shift+K", "DMs", func(a *App) { a.Navigate("dms") })
@@ -297,6 +298,21 @@ func (a *App) stepConv(dir int, unreadOnly bool) {
 		if c := m.conv(ids[j]); !unreadOnly || (c != nil && c.Unread) {
 			a.Navigate("c/" + ids[j])
 			return
+		}
+	}
+}
+
+// threadJumpUnread is Mod+J with the key focus in the thread pane (its
+// reply input or find bar): ThreadsFlexpane's onKeyDown jumps to the
+// thread's first unread reply (messages.ThreadView.JumpToUnread).
+func (a *App) threadJumpUnread() {
+	s := &a.secondary
+	if s.kind != secThread || !s.open() || !(s.keyFocus || s.findFocus) {
+		return
+	}
+	if c := a.convos[s.channel+"/"+s.ts]; c != nil {
+		if j, ok := c.list.(interface{ JumpToUnread() bool }); ok {
+			j.JumpToUnread()
 		}
 	}
 }

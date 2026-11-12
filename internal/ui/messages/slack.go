@@ -76,7 +76,11 @@ func slackMessage(m *core.Message) slackc.Props {
 		set("latest_reply", m.LatestReply)
 	}
 	if m.Edited {
-		p["edited"] = slackc.Props{"ts": m.EditedTS, "user": m.User}
+		by := m.EditedBy
+		if by == "" {
+			by = m.User // a message core built without edited.user (a local edit)
+		}
+		p["edited"] = slackc.Props{"ts": m.EditedTS, "user": by}
 	}
 	if m.Pinned {
 		p["pinned_to"] = []any{m.Channel}
