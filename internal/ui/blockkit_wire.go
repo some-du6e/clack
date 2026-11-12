@@ -42,6 +42,7 @@ func (b *backend) startBlockkit(a *App) {
 		}
 		return out, err
 	}
+	popups.PickFiles = blockkit.PickFiles // Edit profile's Upload Photo (profile_edit.go)
 	bkMu.Lock()
 	bkStops[b] = stop
 	bkMu.Unlock()

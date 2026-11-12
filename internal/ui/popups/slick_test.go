@@ -530,20 +530,23 @@ func TestSlickViewNicknames(t *testing.T) {
 	})
 
 	// Edit profile dispatches openEditProfileModal through the plugin; the
-	// native (Clack's stand-in toast) runs under it
+	// native (the Edit profile modal) runs under it, and its form pane
+	// mounts EditProfileFormPane
 	slUntil(t, 10*time.Second, "openEditProfileModal patched", nil, func() bool { return e.tt.ThunkPatched("openEditProfileModal") })
-	pfEditProfile(e.h)
-	slUntil(t, 10*time.Second, "the edit-profile toast via the thunk", nil, func() bool {
-		for _, s := range e.h.toastList() {
-			if s == pfEditToast {
+	pfEditProfile(e.h, EditProfileOpts{Focus: "real_name"})
+	var ep *EditProfileModal
+	slUntil(t, 10*time.Second, "the Edit profile modal via the thunk", nil, func() bool {
+		e.h.mu.Lock()
+		defer e.h.mu.Unlock()
+		for _, o := range e.h.shown {
+			if m, ok := o.(*EditProfileModal); ok {
+				ep = m
 				return true
 			}
 		}
 		return false
 	})
-	v := NewProfileView(e.h, slSelf)
-	v.editUntil = time.Now().Add(pfEditPaneFor)
-	slUntil(t, 10*time.Second, "EditProfileFormPane mounted while editing", slFrame(v), func() bool {
+	slUntil(t, 10*time.Second, "EditProfileFormPane mounted while editing", slFrame(ep), func() bool {
 		return e.rec.rendered("EditProfileFormPane")
 	})
 }

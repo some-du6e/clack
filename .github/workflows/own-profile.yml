@@ -1,7 +1,9 @@
 name: own-profile
 # The full profile pane (popups.ProfileView) on internal/fakeslack's
 # users.profile.getSections, light and dark: render tests, the plain-text
-# emoji tofu scan (theme, richview, slackc and the pane), and screenshots.
+# emoji tofu scan (theme, richview, slackc and the pane), and screenshots;
+# the Edit profile modal and the section editor (popups/profile_edit.go)
+# on fakeslack's profile writes (core/profile_write.go), with their shots.
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
@@ -16,6 +18,8 @@ on:
       - "internal/ui/theme/emojislot*"
       - "internal/ui/theme/embolden.go"
       - "internal/core/profile_sections*.go"
+      - "internal/core/profile_write*.go"
+      - "internal/ui/popups/slick.go"
       - "internal/fakeslack/profile.go"
       - ".github/workflows/own-profile.yml"
   workflow_dispatch:
@@ -44,12 +48,13 @@ jobs:
           PROFILE_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
+          CLACK_PIXEL_TESTS: "1"
         run: |
           mkdir -p "$PROFILE_SHOTS_DIR"
           go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
-          go test -count=1 -v -run 'TestProfileSections|TestPeopleBrowseCustomFields|TestProfileActionCalls|TestVIPError' ./internal/core
+          go test -count=1 -v -run 'TestProfileSections|TestPeopleBrowseCustomFields|TestProfileActionCalls|TestVIPError|TestValidateProfileFieldLikeSlack|TestPhotoCropLikeSlack|TestCheckPhoto|TestSaveProfileForm|TestSetProfileSectionLikeSlack|TestProfilePhotoLikeSlack' ./internal/core
           go test -count=1 -v -run 'TestEmojiTofu' ./internal/ui/richview ./internal/ui/slackc
-          xvfb-run -a go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane|TestProfileNameIsRealName|TestProfileMoreMenu|TestProfilePresenceColor|TestProfileDate|TestProfileVIPToggle|TestProfileMenuViewFiles|TestProfileFieldLink|TestProfileOpenFullWithoutHooks|TestProfileViewAs|TestAppAddToChannel|TestUserGroupPane|TestProfilePaneBackButton' ./internal/ui/popups
+          xvfb-run -a go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane|TestProfileNameIsRealName|TestProfileMoreMenu|TestProfilePresenceColor|TestProfileDate|TestProfileVIPToggle|TestProfileMenuViewFiles|TestProfileFieldLink|TestProfileOpenFullWithoutHooks|TestProfileViewAs|TestAppAddToChannel|TestUserGroupPane|TestProfilePaneBackButton|TestEditProfile' ./internal/ui/popups
           ls -la "$PROFILE_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

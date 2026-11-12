@@ -976,6 +976,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 		form, _ = url.ParseQuery(string(body))
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
 			form = url.Values{}
+			if method == "users.preparePhoto" { // profile.go: the image part's size
+				form.Set(photoBytesKey, multipartFileSize(r.Header.Get("Content-Type"), body, "image"))
+			}
 		}
 		if strings.HasPrefix(method, "upload/") && r.Header.Get("Cookie") != "" {
 			form.Set(uploadCookieKey, "1")
@@ -1446,6 +1449,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
+		return out
+	}
+	if out, handled := s.handleProfileWrites(method, f); handled { // profile.go
 		return out
 	}
 	if out, handled := s.handleChannels(method, f); handled {
