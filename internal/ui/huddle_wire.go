@@ -15,8 +15,18 @@ func (a *App) huddles() *huddleui.Controller {
 	if a.hud == nil {
 		huddleui.AppName = AppName
 		a.hud = huddleui.New(a)
+		a.hudLive.Store(a.hud)
 	}
 	return a.hud
+}
+
+// imagesReady is the image cache's repaint callback (any goroutine): the
+// main window, and the huddle windows, which draw from the same cache.
+func (a *App) imagesReady() {
+	a.Invalidate()
+	if h := a.hudLive.Load(); h != nil {
+		h.ImagesChanged()
+	}
 }
 
 // layoutHuddleDock draws Slack's docked huddle bar (HuddleBottomBar) in

@@ -31,6 +31,7 @@ type videoSink struct {
 	pc     *webrtc.PeerConnection
 	notify func()
 	logf   func(string, ...any)
+	nudged bool // show asked for a redraw since the stream was last wanted (run's goroutine)
 
 	mu     sync.Mutex
 	frame  VideoFrame
@@ -116,8 +117,20 @@ func isTimeout(err error) bool {
 func (v *videoSink) show(f *goh264.Frame) {
 	now := time.Now()
 	if now.UnixNano()-v.wanted.Load() > int64(2*time.Second) && !v.lastShown.IsZero() {
-		return // nobody is looking: decode (for references) but don't convert
+		// Nobody drew it for 2 s: decode (for references) but don't
+		// convert. The window draws only when something changes, so a
+		// stream that paused that long while on screen would stay
+		// frozen: ask for one redraw, which marks it wanted again
+		// (latest) if a tile still shows it.
+		if !v.nudged {
+			v.nudged = true
+			if v.notify != nil {
+				v.notify()
+			}
+		}
+		return
 	}
+	v.nudged = false
 	if now.Sub(v.lastShown) < time.Second/maxFPS {
 		return
 	}

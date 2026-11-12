@@ -821,7 +821,8 @@ func NewFake(clip []byte, errf func(string, ...any)) *Fake {
 }
 
 // SoloRoom makes the meeting yours alone from the next join on: the
-// other person isn't in Chime's audio (the alone timeout's tests).
+// other person isn't in Chime's audio and doesn't answer awareness
+// queries (the alone timeout's tests, the idle-frame probe).
 func (x *Fake) SoloRoom() { x.f.solo.Store(true) }
 
 // Caller answers rooms.join with the fake meeting.
@@ -862,7 +863,7 @@ func (f *fakeChime) onAwareness(pm *PeerMessage) {
 		f.aware.seen.Closes++
 	}
 	f.aware.mu.Unlock()
-	if answer {
+	if answer && !f.solo.Load() { // SoloRoom: nobody to answer
 		f.remoteAwareness(&PeerMessage{AwarenessBroadcast: f.remoteState()})
 	}
 }

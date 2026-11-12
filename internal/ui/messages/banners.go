@@ -168,7 +168,10 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 		case t > 0:
 			opacity = 1 - t*t // easeInQuad from 1 to 0
 		}
-		if ub.shown {
+		switch {
+		case ub.shown && t < 0: // the ghost's wait: the fade starts then
+			gtx.Execute(op.InvalidateCmd{At: ub.fadeAt})
+		case ub.shown:
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}

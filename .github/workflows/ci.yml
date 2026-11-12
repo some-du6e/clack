@@ -29,6 +29,15 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test ./...
+      # Idle: the client left alone for 10 s per surface (channel, thread,
+      # Activity, Preferences, the sidebar with unreads, the huddle window),
+      # with and without reduced motion; fails past a caret's blinks plus
+      # a clock tick, and logs who asked for every frame.
+      - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_IDLE_FRAMES: "1"
+        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       - name: pixel tests (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -243,6 +252,14 @@ jobs:
           CLACK_WHEEL_PROBE: "1"
           CLACK_BENCH_GPU: "1"
         run: go test -count=1 -v -timeout 30m -run '^TestWheelFrameProbe$' ./internal/ui
+
+      # The idle-frame budget on Windows (see the linux job's step).
+      - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_IDLE_FRAMES: "1"
+        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
 
   macos:
     runs-on: macos-latest

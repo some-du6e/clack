@@ -52,8 +52,9 @@ func SetReserved(m map[string]Insets) {
 	reserved.Store(&cp)
 }
 
-// UnreserveAll releases every reservation (plugins started and settled).
-func UnreserveAll() { reserved.Store(nil) }
+// UnreserveAll releases every reservation (plugins started and settled)
+// and reports whether there was any.
+func UnreserveAll() bool { return reserved.Swap(nil) != nil }
 
 func unreserve(name string) {
 	for {

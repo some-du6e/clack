@@ -182,6 +182,19 @@ func (c *Controller) changed() {
 	c.invalidatePopouts()
 }
 
+// ImagesChanged redraws the huddle window and the popouts: an image they
+// may draw (avatars, emoji) finished loading in the image cache, which
+// tells only the main window (any goroutine).
+func (c *Controller) ImagesChanged() {
+	c.mu.Lock()
+	w := c.win
+	c.mu.Unlock()
+	if w != nil {
+		w.invalidate()
+	}
+	c.invalidatePopouts()
+}
+
 // invalidatePopouts redraws the screen share popouts (popout.go).
 func (c *Controller) invalidatePopouts() {
 	c.popout.mu.Lock()

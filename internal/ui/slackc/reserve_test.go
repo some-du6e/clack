@@ -12,7 +12,7 @@ import (
 // A component kept for a plugin draws its native inside the reserved
 // insets, at full size, until released; then it fills the space again.
 func TestReservedSlot(t *testing.T) {
-	t.Cleanup(UnreserveAll)
+	t.Cleanup(func() { UnreserveAll() })
 	var got layout.Constraints
 	native := func(_ struct{}, gtx layout.Context, _ Props) layout.Dimensions {
 		got = gtx.Constraints

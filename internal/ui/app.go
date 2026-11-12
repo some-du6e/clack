@@ -189,6 +189,9 @@ type App struct {
 	mu      sync.Mutex
 	pending []func()
 
+	// hud, for the image cache's goroutines (imagesReady, huddle_wire.go)
+	hudLive atomic.Pointer[huddleui.Controller]
+
 	title       string
 	firstPaint  bool
 	frameStats  frameStats
@@ -332,6 +335,14 @@ func (a *App) Post(f func()) {
 	a.Invalidate()
 }
 
+// postLazy is Post without waking the window: f runs before the next
+// frame, whenever something else draws one (any goroutine).
+func (a *App) postLazy(f func()) {
+	a.mu.Lock()
+	a.pending = append(a.pending, f)
+	a.mu.Unlock()
+}
+
 // Invalidate requests a redraw. It is safe from any goroutine, including the
 // UI goroutine mid-layout and AppKit callbacks: it never calls into Gio itself.
 //
@@ -343,11 +354,19 @@ func (a *App) Post(f func()) {
 // before the freeze watchdog can report it. That was the macOS launch
 // beachball. Only invalidator, on its own goroutine, may call it.
 func (a *App) Invalidate() {
+	if h := invalidateHook; h != nil {
+		h(a)
+	}
 	select {
 	case a.inval <- struct{}{}:
 	default: // one is already queued; it covers this one
 	}
 }
+
+// invalidateHook, when set, sees every Invalidate (the idle-frame probe,
+// idle_frames_test.go, names the code that keeps the window drawing). Set
+// before the App starts; any goroutine calls it.
+var invalidateHook func(*App)
 
 // invalidator forwards Invalidate requests to the window from a goroutine that
 // is never the main thread (see Invalidate).
@@ -377,7 +396,7 @@ func (a *App) Run() error {
 		watchOSMotion() // wheel scrolling animates unless the OS asks for less motion (syncWheelAnimation)
 	}
 	if a.images != nil {
-		a.images.SetInvalidate(a.Invalidate)
+		a.images.SetInvalidate(a.imagesReady) // huddle_wire.go
 		a.th.Images = a.images
 	}
 	if installHooks != nil {

@@ -122,9 +122,13 @@ const (
 )
 
 const (
-	edUndoCap          = 200
-	edBlinksPerSecond  = 1
-	edMaxBlinkDuration = 10 * time.Second
+	edUndoCap = 200
+	// edBlinkInterval is Chromium's caret blink interval when the OS gives
+	// none (OsSettingsProvider::kDefaultCaretBlinkInterval, 500 ms): the
+	// caret shows for one interval, hides for the next. Blink's FrameCaret
+	// toggles it on a repeating timer with no timeout, for as long as the
+	// window is focused and active.
+	edBlinkInterval = 500 * time.Millisecond
 )
 
 type edSnap struct {
@@ -177,18 +181,24 @@ type Editor struct {
 	filters []event.Filter
 
 	// Input state.
-	clicker     gesture.Click
-	dragger     gesture.Drag
-	scroller    gesture.Scroll
-	dragging    bool
-	dragMode    edDragMode
-	dragLo      int
-	dragHi      int
-	clickBias   int       // clicks a host counted before the editor existed (SeedClick)
-	seedAt      time.Time // when that click was, zero: none
-	seedPt      image.Point
-	blinkStart  time.Time
-	resetBlink  bool
+	clicker    gesture.Click
+	dragger    gesture.Drag
+	scroller   gesture.Scroll
+	dragging   bool
+	dragMode   edDragMode
+	dragLo     int
+	dragHi     int
+	clickBias  int       // clicks a host counted before the editor existed (SeedClick)
+	seedAt     time.Time // when that click was, zero: none
+	seedPt     image.Point
+	blinkStart time.Time
+	resetBlink bool
+	// inactive: the window lost the focus while this editor had the key
+	// focus (Gio keeps the focus and sends FocusEvent{Focus: false}).
+	// Chromium disables the caret then (FrameSelection::
+	// FocusedOrActiveStateChanged → FrameCaret::SetCaretEnabled(false)):
+	// not drawn, not blinking, so the window draws nothing for it.
+	inactive    bool
 	scrollCaret bool
 	desiredX    int
 	ime         struct {
@@ -1108,6 +1118,7 @@ func (e *Editor) processKeys(gtx layout.Context) {
 		e.blinkStart = gtx.Now
 		switch ev := ev.(type) {
 		case key.FocusEvent:
+			e.inactive = !ev.Focus
 			e.ime.sel = key.Range{}
 			e.ime.echoOK = false
 			e.ime.caret = key.Caret{}
@@ -1313,16 +1324,11 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 
 	focused := gtx.Focused(e)
 	showCaret := false
-	if focused {
+	if focused && !e.inactive {
 		now := gtx.Now
 		dt := now.Sub(e.blinkStart)
-		blinking := dt < edMaxBlinkDuration
-		const timePerBlink = time.Second / edBlinksPerSecond
-		nextBlink := now.Add(timePerBlink/2 - dt%(timePerBlink/2))
-		if blinking {
-			gtx.Execute(op.InvalidateCmd{At: nextBlink})
-		}
-		showCaret = !blinking || dt%timePerBlink < timePerBlink/2
+		gtx.Execute(op.InvalidateCmd{At: now.Add(edBlinkInterval - dt%edBlinkInterval)})
+		showCaret = dt%(2*edBlinkInterval) < edBlinkInterval
 	}
 
 	e.spellUpdate(gtx, focused)

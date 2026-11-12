@@ -176,10 +176,19 @@ func (q *Router) Source() Source {
 	return Source{r: q}
 }
 
+// ExecuteHook, when set, sees every command a Source executes, on the
+// caller's goroutine and stack (Clack patch 10: the idle-frame probe
+// attributes each op.InvalidateCmd to the code that asked for it). Set it
+// before frames run; nil costs one load per command.
+var ExecuteHook func(Command)
+
 // Execute a command.
 func (s Source) Execute(c Command) {
 	if !s.Enabled() {
 		return
+	}
+	if h := ExecuteHook; h != nil {
+		h(c)
 	}
 	s.r.execute(c)
 }

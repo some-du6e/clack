@@ -87,7 +87,14 @@ func (c *Controller) WindowOpen() bool {
 	return c.win != nil
 }
 
+// invalidateHook, when set, sees every invalidate (the idle-frame probe,
+// idle_frames_test.go). Set before the window opens.
+var invalidateHook func(*window)
+
 func (w *window) invalidate() {
+	if h := invalidateHook; h != nil {
+		h(w)
+	}
 	w.mu.Lock()
 	ww := w.w
 	w.mu.Unlock()
@@ -149,18 +156,11 @@ func (w *window) run() {
 	if closed {
 		ww.Perform(system.ActionClose)
 	}
-	tick := time.NewTicker(250 * time.Millisecond) // speaking bars, timer, images
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-tick.C:
-				ww.Invalidate()
-			case <-done:
-				return
-			}
-		}
-	}()
+	// No ticker: the window draws when something changes (the session's
+	// OnChange, a loaded image: Controller.ImagesChanged) and at the
+	// deadlines its layout asks for (speaking bars, spinners, a notice
+	// going, the captions' fade), like Slack's, which draws nothing in a
+	// still call.
 	var ops op.Ops
 	var caption captionState // Windows: the caption takes the window's colour (caption.go)
 	for {
@@ -168,8 +168,6 @@ func (w *window) run() {
 		caption.sync(ev, ww, hudCaption)
 		switch e := ev.(type) {
 		case app.DestroyEvent:
-			tick.Stop()
-			close(done)
 			if w.popout != "" {
 				w.c.popoutGone(w)
 				return
@@ -358,6 +356,7 @@ func (w *window) layout(gtx C) {
 		})
 	}
 	if w.notice != "" && now.Sub(w.noteAt) < 4*time.Second {
+		gtx.Execute(op.InvalidateCmd{At: w.noteAt.Add(4 * time.Second)}) // it goes
 		ns := labelSize(gtx, w.th, 13, theme.Bold, w.notice)
 		pad := gtx.Dp(10)
 		r := image.Rect((sz.X-ns.X)/2-pad, stage.Min.Y+gtx.Dp(10), (sz.X+ns.X)/2+pad, stage.Min.Y+gtx.Dp(10)+ns.Y+pad)
