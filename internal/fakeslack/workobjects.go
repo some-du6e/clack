@@ -144,7 +144,8 @@ func (s *Server) woDoc(id, title, sub string) map[string]any {
 	icon := map[string]any{"type": "image", "image_url": s.woImg(72, 72, "wo-docs-product"), "alt_text": "Docs"}
 	appIcons := map[string]any{"image_72": map[string]any{"image_url": s.woImg(72, 72, "wo-docs-app"), "alt_text": "Example Docs"}}
 	fields := []any{map[string]any{"field_type": "user", "label": "Owner", "field_name": "owner",
-		"user": []any{map[string]any{"user_type": "external", "text": "Robin Example"}}},
+		"user": []any{map[string]any{"user_type": "external", "text": "Robin Example",
+			"image": map[string]any{"image_url": s.woImg(48, 48, "wo-robin"), "alt_text": "Robin Example"}}}},
 		map[string]any{"field_type": "timestamp", "label": "Last edited", "field_name": "last_edited", "timestamp": []any{woBaseTS - 86400}}}
 	_, obj, _ := strings.Cut(strings.TrimPrefix(id, "W:"), ":")
 	return map[string]any{
@@ -191,7 +192,8 @@ func (s *Server) addWorkObjectsChannel() {
 	st.comments[WOTaskID] = []map[string]any{
 		{"id": "c1", "sender": map[string]any{"user_type": "slack", "user_id": s.users[1%len(s.users)].ID}, "timestamp": woBaseTS - 1200,
 			"comment": map[string]any{"blocks": woRich("Can we match the hover bar too?")}, "can_reply": true},
-		{"id": "c2", "sender": map[string]any{"user_type": "external", "text": "Robin Example"}, "timestamp": woBaseTS - 600,
+		{"id": "c2", "sender": map[string]any{"user_type": "external", "text": "Robin Example",
+			"image": map[string]any{"image_url": s.woImg(48, 48, "wo-robin")}}, "timestamp": woBaseTS - 600,
 			"comment": map[string]any{"value": "Yes, and the refresh line."}},
 	}
 	st.mu.Unlock()
@@ -257,6 +259,8 @@ func (s *Server) handleWorkObjects(method string, f url.Values) (any, bool) {
 			s.Push(map[string]any{"type": "entity_comment_action_acknowledged", "comment_action": "post", "entity_id": id, "comment": c})
 		}()
 		return ok(), true
+	case "search.modules.workObjects":
+		return s.searchWorkObjects(f), true
 	case "entities.refs.list":
 		if f.Get("entity_id") != WOTaskID {
 			return ok("refs", []any{}), true
@@ -289,4 +293,29 @@ func (s *Server) handleWorkObjects(method string, f url.Values) (any, bool) {
 		return ok(), true
 	}
 	return nil, false
+}
+
+// searchWorkObjects answers search.modules.workObjects: the fixture
+// entities whose title has every query word, as work_object_unfurl items.
+func (s *Server) searchWorkObjects(f url.Values) map[string]any {
+	q := strings.ToLower(strings.TrimSpace(f.Get("query")))
+	var items []any
+	for _, id := range []string{WOTaskID, WODocA, WODocB} {
+		e := s.woEntityByID(id)
+		raw, _ := json.Marshal(e)
+		hay := strings.ToLower(string(raw))
+		match := q != ""
+		for _, w := range strings.Fields(q) {
+			if !strings.Contains(hay, w) {
+				match = false
+			}
+		}
+		if match {
+			items = append(items, map[string]any{"work_object_unfurl": e, "iid": "wo-" + id})
+		}
+	}
+	if items == nil {
+		items = []any{}
+	}
+	return ok("items", items, "query", f.Get("query"))
 }

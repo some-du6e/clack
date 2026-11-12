@@ -87,6 +87,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		if l.opts.WorkObjectDetails {
 			return l.woDetails(b, x, y, w)
 		}
+		if l.opts.WorkObjectSearch {
+			return l.woCard(b, x, y, w, l.opts.WorkObjectSize, false)
+		}
 		return l.woCard(b, x, y, w, "", !l.opts.HoverCard)
 	}
 	if a.Huddle != nil { // a huddle_thread message: HuddleMsgText (huddle.go)

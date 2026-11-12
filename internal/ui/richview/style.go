@@ -344,6 +344,12 @@ type Options struct {
 	// Details tab (WorkObjectDetails: the full layout's fields and the
 	// "Updated …" line) instead of the card (workobject.go).
 	WorkObjectDetails bool
+	// WorkObjectSearch lays the doc's work object out as a search result
+	// (WorkObjectSearchResult: source WORK_OBJECT_SEARCH, no width cap,
+	// no meta line), at WorkObjectSize ("compact" for the dense view,
+	// "" for the layout's own).
+	WorkObjectSearch bool
+	WorkObjectSize   string
 	// EditedTS is the message's edited.ts: the "(edited)" label's tooltip
 	// (EditedLabel: "{date} at {time}", tooltip.go editedTip).
 	EditedTS string

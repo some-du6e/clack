@@ -15,6 +15,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
 
@@ -182,6 +183,8 @@ func init() {
 		}
 		popups.OpenScheduleDialog = func(h popups.Host, ch string, pick func(time.Time)) { composer.ShareScheduleDialog(h, ch, pick) }
 		popups.OpenWorkflowDetails = func(trigger, ch string) { a.OpenWorkflowDetails(trigger, ch) } // workflow_details.go
+		// the search page's work object cards draw with the rows' style (workobject_pane.go)
+		popups.RichStyle = func(h popups.Host) *richview.Style { return messages.RichStyle(h) }
 	}
 	mkStatusModal = func(a *App, fromShortcut bool) Overlay {
 		if fromShortcut {

@@ -49,12 +49,19 @@ type WorkObjectHost interface {
 	ShareWorkObject(o WorkObjectOpen) bool
 }
 
+// WorkObjectSharer is a WorkObjectHost that has the share dialog.
+type WorkObjectSharer interface{ CanShareWorkObjects() bool }
+
 // woStyleFlags are the experiments and prefs the cards read.
-func woStyleFlags(app *core.App) richview.WorkObjectFlags {
+func woStyleFlags(h Host, app *core.App) richview.WorkObjectFlags {
 	f := app.WorkObjectFlags()
+	share := false
+	if s, ok := h.(WorkObjectSharer); ok {
+		share = s.CanShareWorkObjects()
+	}
 	return richview.WorkObjectFlags{
 		Rearrange: f.Rearrange, RefreshTimestamp: f.RefreshTimestamp, CommentSync: f.CommentSync,
-		EmbeddedPreview: f.EmbeddedPreview, Locale: i18n.Locale(), Time24: uipref.Get().Time24,
+		EmbeddedPreview: f.EmbeddedPreview, CanShare: share, Locale: i18n.Locale(), Time24: uipref.Get().Time24,
 		ClickPrefs: app.PrefString("work_objects_click_opens_url_prefs"), Gen: app.WorkObjectGen(),
 	}
 }
@@ -138,7 +145,7 @@ func (r *richHandler) WorkObject(ev richview.WorkObjectEvent) {
 		}
 		wh, _ := r.h.(WorkObjectHost)
 		var share func()
-		if wh != nil {
+		if sh, ok := r.h.(WorkObjectSharer); ok && wh != nil && sh.CanShareWorkObjects() {
 			share = func() {
 				wh.ShareWorkObject(WorkObjectOpen{Entity: e, AppUnfurlURL: wo.AppUnfurlURL, Channel: ch, TS: ts})
 			}

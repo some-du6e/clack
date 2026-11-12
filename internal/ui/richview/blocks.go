@@ -354,7 +354,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		}
 		// work object cards (workobject.go): MessageKitAttachments' group,
 		// or rearranged into MessageFiles' gallery after the files
-		if isWorkObjectBlock(b) && top && !l.inAtt && !l.opts.WorkObjectDetails {
+		if isWorkObjectBlock(b) && top && !l.inAtt && !l.opts.WorkObjectDetails && !l.opts.WorkObjectSearch {
 			var grp []*richtext.Block
 			j := i
 			for j < len(bs) && isWorkObjectBlock(&bs[j]) {

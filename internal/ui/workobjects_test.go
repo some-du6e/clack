@@ -45,6 +45,10 @@ func woEnv(t *testing.T, dark bool) *perfEnv {
 		e.gpu = w
 	}
 	e.waitReady()
+	// the harness starts with live updates off (no banner shifting the
+	// layout); work object details and comments only come over the socket
+	go e.a.Core().SetRealtime(true)
+	e.until("the socket", 15*time.Second, func() bool { return e.a.data.m.Connected })
 	if dark {
 		e.a.setDark(true)
 	}

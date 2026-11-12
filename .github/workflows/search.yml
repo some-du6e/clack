@@ -14,6 +14,8 @@ on:
       - "internal/core/types.go"
       - "internal/slack/more.go"
       - "internal/fakeslack/search.go"
+      - "internal/fakeslack/workobjects.go"
+      - "internal/ui/richview/workobject*.go"
       - "internal/ui/popups/search*.go"
       - "internal/ui/popups/menu.go"
       - "internal/ui/secondary.go"

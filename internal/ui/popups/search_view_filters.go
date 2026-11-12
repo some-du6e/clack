@@ -201,6 +201,9 @@ func (v *SearchView) pillSpec(f string) srPillSpec {
 	}
 	switch f {
 	case srFSources:
+		if src := v.woSource(); src != nil { // a work object source: the app's name
+			return srPillSpec{icon: "apps", label: src.AppName, chevron: true}
+		}
 		return srPillSpec{icon: srTabIcons[v.tab], label: nsSearch.T(srTabNames[v.tab]), chevron: true}
 	case srFFrom:
 		return person("from", "From", "From", "user")

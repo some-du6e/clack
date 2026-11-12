@@ -70,9 +70,12 @@ type WorkObjectFlags struct {
 	RefreshTimestamp bool // work_objects_refresh_timestamp (hZia Ym)
 	CommentSync      bool // wo_comment_sync_client_xp (hZia Y)
 	EmbeddedPreview  bool // work_objects_embedded_preview (hZia ll)
-	Locale           string
-	Time24           bool   // the time24 pref (the footer's times)
-	ClickPrefs       string // work_objects_click_opens_url_prefs as stored (JSON)
+	// CanShare: the host has the share dialog (ShareWorkObjectModal);
+	// without it the actions bar leaves Share… out.
+	CanShare   bool
+	Locale     string
+	Time24     bool   // the time24 pref (the footer's times)
+	ClickPrefs string // work_objects_click_opens_url_prefs as stored (JSON)
 	// Gen is the host's work object state generation (WorkObjectSource):
 	// a refresh starting or ending, comments seen.
 	Gen uint64
@@ -899,11 +902,15 @@ func (l *lay) woFieldNatural(wo *richtext.WorkObject, lay *workobject.Layout, f 
 			}
 		}
 	case f.IsUser():
-		for i, u := range f.Users {
+		for i, u := range f.Users { // woUsers' tokens: the picture, 4px, the name, 4px
 			if i > 0 {
 				vw += l.dp(2)
 			}
-			vw += l.dp(24) + l.textWidth(woUserName(wo, u), &vs)
+			s := l.dp(20)
+			if u.UserType != "slack" {
+				s = l.dp(22)
+			}
+			vw += s + l.dp(4) + l.textWidth(woUserName(wo, u), &vs) + l.dp(4)
 		}
 	case f.Type == workobject.FieldCheckbox:
 		for _, c := range f.Checks {
@@ -1329,7 +1336,9 @@ func (l *lay) woActionsBar(att *richtext.Attachment, opensURL, fileNoPreview boo
 		// is an embed (DbXo O) gets "Open in side panel" in View
 		// conversations' place; Clack draws no embedded previews (an
 		// iframe), so it keeps View conversations.
-		items = append(items, item{icon: "share-message", id: "share"})
+		if fl.CanShare {
+			items = append(items, item{icon: "share-message", id: "share"})
+		}
 		if fl.CommentSync && e.Comments != nil {
 			items = append(items, item{icon: "comment", id: "comments"})
 		}

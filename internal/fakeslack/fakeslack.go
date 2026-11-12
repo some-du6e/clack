@@ -1112,6 +1112,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			"fe_nav_first_apply_post_processing_rules": g("treatment"), "omni_date_quick_filters": g("on"),
 			"srp_card_explore": g("on"), "search_file_channel_messages": g("on"),
 			"work_objects_message_search_xp_v2": g("on"),
+			// work object cards (core/workobjects.go), as the account had them on 2026-11-10
+			"work_objects_rearrangement": g("on"), "work_objects_refresh_timestamp": g("on"), "wo_comment_sync_client_xp": g("on"),
+			"work_objects_embedded_preview": g("on"), "third_party_integrations_video_previews": g("on"),
 			// message rows (see core's defaultExperimentGroups)
 			"system_messages_redesign_m1": g("on"), "flat_message_heading_scale": g("on"), "portable_content_composer": g("treatment"),
 			"message_actions_truncate": g("on"), "unread_thread_indication_in_replybar": g("on"), "agent_identity_overrides": g("on"),

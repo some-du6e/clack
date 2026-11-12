@@ -167,3 +167,18 @@ func TestWorkObjectExperiments(t *testing.T) {
 		t.Error("rearrangement still on after forcing off")
 	}
 }
+
+// searchWorkObjects groups search.modules.workObjects' items by app.
+func TestWorkObjectSearchGroups(t *testing.T) {
+	fs, a, _ := woApp(t)
+	srcs, err := a.SearchWorkObjects(context.Background(), "notes", "score", NewSearchSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srcs) != 1 || srcs[0].AppID != fakeslack.WODocsAppID || len(srcs[0].Hits) != 1 || srcs[0].Hits[0].Entity.EntityID != fakeslack.WODocB {
+		t.Fatalf("sources %+v", srcs)
+	}
+	if f := fs.SearchForms("search.modules.workObjects"); len(f) != 1 || f[0].Get("sort") != "score" || f[0].Get("sort_dir") != "desc" {
+		t.Errorf("params %v", f)
+	}
+}

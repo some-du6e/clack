@@ -94,11 +94,21 @@ func (a *App) OpenWorkObject(o messages.WorkObjectOpen) {
 	a.Invalidate()
 }
 
+// OpenWorkObjectEntity opens the flexpane for a search result
+// (popups.WorkObjectOpener).
+func (a *App) OpenWorkObjectEntity(e *workobject.Entity, appUnfurlURL, ch, ts, tab string) {
+	a.OpenWorkObject(messages.WorkObjectOpen{Entity: e, AppUnfurlURL: appUnfurlURL, Channel: ch, TS: ts, Tab: tab})
+}
+
 // ShareWorkObject is the card's Share…: Clack has no ShareWorkObjectModal
 // yet (Slack's share dialog with the link going into the chosen
 // conversation's composer), so there is nothing to open and the card and
 // its menu leave Share out.
 func (a *App) ShareWorkObject(o messages.WorkObjectOpen) bool { return false }
+
+// CanShareWorkObjects is messages.WorkObjectSharer: not yet (see
+// ShareWorkObject).
+func (a *App) CanShareWorkObjects() bool { return false }
 
 // woPane is WorkObjectFlexpane in the secondary pane.
 type woPane struct {
