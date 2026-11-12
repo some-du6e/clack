@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 
 	"gioui.org/io/event"
 	"gioui.org/io/key"
@@ -754,15 +755,24 @@ func (a *App) sbFocusRing(gtx layout.Context, r *sbRow, sz image.Point) {
 	if a.sbBBMBox(r) {
 		in, h = gtx.Dp(12), a.sbRowH(gtx)
 	}
-	ring := theme.ButtonV2Focus(a.th)
-	if a.sbInverted() {
-		ring = a.th.C.SidebarTextUnread
-	}
+	ring := a.sbFocusColor()
 	// the halo stays translucent (it lies over the neighbours' tiles), its
 	// alpha the one Gio's linear-light blend needs to land on the browser's
 	// 30% mix over the sidebar
 	halo := theme.LinearAlpha(theme.WithAlpha(ring, 0x4d), a.sbBase)
 	popups.FocusRingColors(gtx, ring, halo, image.Rect(in, 0, sz.X-in, h), gtx.Dp(8))
+}
+
+// sbFocusColor is the sidebar's --sk_focused-shadow-color, the solid part
+// of its focus rings (rows, the filter input): the sidebar's
+// --dt_color-theme-content-inv-pry under
+// .sk-client-theme--light-inverted-sidebar, else unset, so the rings fall
+// back to --dt_color-otl-hgl-1.
+func (a *App) sbFocusColor() color.NRGBA {
+	if a.sbInverted() {
+		return a.th.C.SidebarTextUnread
+	}
+	return theme.ButtonV2Focus(a.th)
 }
 
 // sbInverted reports whether the sidebar is Slack's light-inverted-sidebar

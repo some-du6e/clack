@@ -167,9 +167,10 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		bg = a.sbBase // dark: transparent box, outline only
 	}
 	if focused {
-		// box-shadow 0 0 0 1px otl-hgl-1, 0 0 0 5px of it at 30%; the
-		// border is transparent
-		ring := a.th.C.Accent
+		// .c-filter_input--active: box-shadow 0 0 0 1px
+		// --sk_focused-shadow-color, 0 0 0 5px of it at 30%; the border is
+		// transparent
+		ring := a.sbFocusColor()
 		hw := gtx.Dp(5)
 		theme.RRect(gtx, r.Inset(-hw), rad+hw, theme.Over(theme.WithAlpha(ring, 0x4d), a.sbBase))
 		theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+gtx.Dp(1), ring)
