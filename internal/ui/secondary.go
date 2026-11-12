@@ -20,10 +20,11 @@ const (
 	secThread
 	secDetails
 	secProfile
-	secHelp     // the Help flexpane (update_ui.go)
-	secSearch   // search in channel (⌘F, popups.SearchInChannel)
-	secCode     // a code channel's details pane (codechannel_pane.go)
-	secWorkflow // the workflow details view (workflow_details.go)
+	secHelp       // the Help flexpane (update_ui.go)
+	secSearch     // search in channel (⌘F, popups.SearchInChannel)
+	secCode       // a code channel's details pane (codechannel_pane.go)
+	secWorkflow   // the workflow details view (workflow_details.go)
+	secWorkObject // a work object's flexpane (workobject_pane.go)
 )
 
 // secondaryState is the resizable right-hand pane (thread, channel details,

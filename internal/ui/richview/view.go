@@ -61,6 +61,7 @@ type View struct {
 	css cssParts
 
 	hover    int16 // hovered target
+	hovPaint int16 // the hover layer paint is drawing (drawHoverLayers), 0 none
 	press    int16 // target under the press
 	pressPos f32.Point
 	moved    bool
@@ -318,6 +319,9 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
 			b := &v.d.boxes[i]
+			if b.hov != 0 {
+				continue // a hover layer's: drawn with its layer (drawHoverLayers)
+			}
 			if (b.target == v.hover || b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) && b.hover.A > 0 {
 				switch b.kind {
 				case bBorder:
@@ -387,6 +391,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.drawCopyButtons(gtx, st)
+	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
 	if v.opts.Dim {
 		opac.Pop()
@@ -589,20 +594,27 @@ func (v *View) record(st *Style) {
 }
 
 // paint draws the primitives tagged comp (0: the static content, which
-// also tracks images still loading); fg, if set, recolors text.
+// also tracks images still loading); fg, if set, recolors text. Only
+// the primitives of hover layer v.hovPaint draw (0: none of a layer's;
+// drawHoverLayers paints each layer over the recording).
 func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	css := len(v.css.parts) > 0
+	hp := v.hovPaint
+	static := comp == 0 && hp == 0 // the recording: it tracks pending and animated images
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp {
+		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
+			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
+				fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.hover)
+			}
 		}
 	}
-	if css {
+	if css && hp == 0 {
 		v.partBackgrounds(func(r image.Rectangle, c color.NRGBA) { fillRadii(ops, r, [4]int{}, c) }, comp)
 	}
 	for i := range v.d.imgs {
 		im := &v.d.imgs[i]
-		if im.comp != comp {
+		if im.comp != comp || im.hov != hp {
 			continue
 		}
 		if im.url == "" {
@@ -620,7 +632,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		if !ok {
 			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
-			if comp == 0 {
+			if static {
 				v.pending = append(v.pending, int32(i))
 			}
 			continue
@@ -637,11 +649,11 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		drawImage(ops, img, im.r, im.radii, !im.fit)
 	}
 	for i := range v.d.boxes { // over images, under text (gallery scrims, video pills)
-		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp {
+		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 		}
 	}
-	if comp == 0 {
+	if static {
 		for i := range v.d.overlayIcons {
 			o := &v.d.overlayIcons[i]
 			paintIconAt(ops, o.name, o.r, o.col)
@@ -650,7 +662,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	ul := uipref.Get().UnderlineLinks
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.comp != comp {
+		if f.comp != comp || f.hov != hp {
 			continue
 		}
 		switch f.kind {
@@ -659,7 +671,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				paintIcon(ops, name, f)
 				continue
 			}
-			if comp == 0 && animated(st.Images, f.url, f.size) {
+			if static && animated(st.Images, f.url, f.size) {
 				v.live = append(v.live, int32(i)) // a recording would freeze it
 				continue
 			}
@@ -669,7 +681,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				img, ok = st.Images.Get(f.url, f.size)
 			}
 			if !ok {
-				if comp == 0 {
+				if static {
 					v.pending = append(v.pending, ^int32(i))
 				}
 				continue
@@ -712,7 +724,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 	}
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp {
+		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 		}
 	}
@@ -1269,6 +1281,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tHuddleJoin:
 		if hj, ok := h.(HuddleJoiner); ok && tg.id != "" {
 			hj.JoinHuddle(tg.id)
+		}
+	case tWorkObject:
+		if wh, ok := h.(WorkObjectHandler); ok && tg.att != nil {
+			wh.WorkObject(v.woEvent(tg, anchor))
 		}
 	case tCollapse:
 		if tg.img != nil && v.collapsed != nil {

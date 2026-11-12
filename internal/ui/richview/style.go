@@ -248,6 +248,10 @@ type Style struct {
 
 	// flatHeadings is Slack's p-header_block--flat_scale (SetFlatHeadings).
 	flatHeadings bool
+	// woFlags are the work object cards' experiments (SetWorkObjects);
+	// WorkObjects, if set, is their live state (refreshes, comments).
+	woFlags     WorkObjectFlags
+	WorkObjects WorkObjectSource
 
 	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped
@@ -336,6 +340,16 @@ type Options struct {
 	// HoverCard lays the doc's attachment out as Slack's link preview
 	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
 	HoverCard bool
+	// WorkObjectDetails lays the doc's work object out as its flexpane's
+	// Details tab (WorkObjectDetails: the full layout's fields and the
+	// "Updated …" line) instead of the card (workobject.go).
+	WorkObjectDetails bool
+	// WorkObjectSearch lays the doc's work object out as a search result
+	// (WorkObjectSearchResult: source WORK_OBJECT_SEARCH, no width cap,
+	// no meta line), at WorkObjectSize ("compact" for the dense view,
+	// "" for the layout's own).
+	WorkObjectSearch bool
+	WorkObjectSize   string
 	// EditedTS is the message's edited.ts: the "(edited)" label's tooltip
 	// (EditedLabel: "{date} at {time}", tooltip.go editedTip).
 	EditedTS string

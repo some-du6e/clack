@@ -693,6 +693,30 @@ func (s *Store) MemberName(id string) (string, bool) {
 	return PrefName(u, real), true
 }
 
+// MemberRealName is richtext.RealNamer: the member's real name, as the
+// member tokens Slack draws with forceRealName print it (a work object's
+// user fields), else their display name; "" for a member not loaded yet.
+func (s *Store) MemberRealName(id string) string {
+	u, ok := s.User(id)
+	if !ok || u == nil {
+		s.noteMissing('u', id)
+		return ""
+	}
+	if n := firstNonEmptyName(u.Profile.RealName, u.RealName); n != "" {
+		return n
+	}
+	return DisplayName(u)
+}
+
+func firstNonEmptyName(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // MemberAvatar is richtext.MemberNamer: the member's own picture for a
 // 36px avatar (ConnectedBaseAvatar asks for twice that), the image
 // message rows draw; "" for a member not loaded yet.

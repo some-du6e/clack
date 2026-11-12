@@ -15,6 +15,7 @@ on:
     paths:
       - "internal/core/experiments*"
       - "internal/core/mpdm_name.go"
+      - "internal/core/workobjects.go"
       - "internal/core/sidebar_rules*"
       - "internal/taut/**"
       - "internal/slick/**"
@@ -57,7 +58,7 @@ jobs:
           .github/scripts/fetch_library.sh dist/library
           test -s dist/library/index.json
       - name: core and Taut experiment tests
-        run: go test -count=1 -timeout 15m -v -run 'TestForcedExperiment|TestExperimentReads|TestMpdmCustomName|TestPluginExperimentOverridesReachCore' ./internal/core/ ./internal/taut/
+        run: go test -count=1 -timeout 15m -v -run 'TestForcedExperiment|TestExperimentReads|TestMpdmCustomName|TestPluginExperimentOverridesReachCore|TestWorkObjectExperiments' ./internal/core/ ./internal/taut/
       - name: the Experiments plugins drive Clack
         env:
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library

@@ -341,6 +341,8 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: "file_trash", Name: ev.Type, Raw: ev.Raw})
 	case "file_created":
 		a.onFileCreated(ev) // an upload in PROCESSING resolves (upload_send.go)
+	case "entity_details_present", "entity_comments_present", "entity_comment_thread_present", "entity_comment_action_acknowledged":
+		a.onWorkObjectEvent(ev) // work objects (workobjects.go)
 	case "megaphone_delayed_notification_ready", "clear_megaphone_notification",
 		"megaphone_notifications_user_refresh", "megaphone_notifications_team_refresh":
 		a.onMegaphoneEvent(ev.Type, ev.Raw) // megaphone.go
@@ -460,6 +462,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		if needsFileInfo(&m) {
 			go a.fillFiles(ch, m.TS)
 		}
+		a.woMessageUpdated(ch, &m) // a work object's refreshed unfurl (workobjects.go)
 		if streamed && m.StreamingState != "in_progress" {
 			a.emitStreamDone(ch, &m)
 			return

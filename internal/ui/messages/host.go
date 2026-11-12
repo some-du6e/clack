@@ -119,9 +119,16 @@ func styleFor(h Host) *richview.Style {
 	st := styleForTheme(h.Theme(), h.Images())
 	if app := h.Core(); app != nil {
 		st.SetFlatHeadings(flatHeadings(app))
+		st.SetWorkObjects(woStyleFlags(h, app)) // work object cards (workobjects.go)
+		st.WorkObjects = woSource{app}
 	}
 	return st
 }
+
+// RichStyle is the message rows' richview style for h's window: their
+// palette, text model and experiments (the work object flexpane draws
+// its Details and comments with it).
+func RichStyle(h Host) *richview.Style { return styleFor(h) }
 
 // flatHeadings is Slack's cQrd WZ, which Header (/WQN) reads for
 // p-header_block--flat_scale: flat_message_heading_scale on, or

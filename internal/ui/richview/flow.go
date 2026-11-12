@@ -12,6 +12,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/workobject"
 )
 
 // ---------- display list ----------
@@ -41,6 +42,7 @@ type frag struct {
 	p0, p1 int32  // plain text byte range
 	alt    bool   // image frag has text fallback in plain (":name:")
 	comp   int16  // component tag (index+1 into display.comps), 0 = static
+	hov    int16  // hover layer (index+1 into display.hovers), 0 = none
 	part   uint8  // CSS part (css.go), 0 = none
 	boxed  bool   // its part's background is a deco box (code, pill)
 	weight font.Weight
@@ -81,6 +83,7 @@ type box struct {
 	perCorner bool
 	corners   [4]int
 	comp      int16 // component tag, 0 = static
+	hov       int16 // hover layer (index+1 into display.hovers), 0 = none
 	tgTo      int16 // > target: targets target..tgTo all hover the box (a card's links)
 	part      uint8 // CSS part (css.go): its background (or color, colFill) replaces fill
 	colFill   bool  // fill is the part's text color (list markers)
@@ -94,6 +97,7 @@ type imgPrim struct {
 	px     int         // requested decode size
 	fit    bool        // contain (letterbox) instead of cover
 	comp   int16       // component tag, 0 = static
+	hov    int16       // hover layer (index+1 into display.hovers), 0 = none
 	tint   color.NRGBA // an iconURL image: the icon's color
 	alpha  float32     // < 1: drawn at this opacity (a pending upload, .5)
 }
@@ -134,6 +138,7 @@ const (
 	tRemove     // an unfurl's remove button (id: the attachment id)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
+	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
 )
 
 type target struct {
@@ -163,6 +168,8 @@ type target struct {
 	// the image viewer; a right-click is the card's, as in Slack, where
 	// the image has no context menu of its own.
 	inCard bool
+	// wob is a tWorkObject footer button's primary action.
+	wob *workobject.Button
 }
 
 type hit struct {
@@ -202,6 +209,27 @@ type display struct {
 	// names are the user mentions laid out and the plugin labels they
 	// used (members.go)
 	names []nameUse
+	// hovers are the primitives drawn only while a card is hovered (a
+	// work object card's hovered subtitle, actions bar and Refresh):
+	// those with hov == index+1
+	hovers []hoverLayer
+}
+
+// hoverLayer is drawn while the View's hovered target is in card..cardTo
+// and outside skip..skipTo (the actions bar's own buttons, which hide
+// the hovered subtitle, as Slack's isActionsBarHovered does).
+type hoverLayer struct {
+	card, cardTo int16
+	skip, skipTo int16
+	bar          bool // the actions bar itself: shown over its own buttons too
+}
+
+// shown reports whether the layer draws with target t hovered.
+func (h *hoverLayer) shown(t int16) bool {
+	if t < 0 || h.card < 0 || t < h.card || t > h.cardTo {
+		return false
+	}
+	return h.bar || t < h.skip || t > h.skipTo
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -230,6 +258,7 @@ func (d *display) reset() {
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
 	d.names = d.names[:0]
+	d.hovers = d.hovers[:0]
 }
 
 func (d *display) addTarget(t target) int16 {

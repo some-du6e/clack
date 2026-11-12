@@ -312,6 +312,9 @@ type SearchView struct {
 	unfiltered int
 	relaxBtn   widget.Clickable
 
+	// wo is the work object sources and results (search_workobjects.go)
+	wo srWO
+
 	// the source menu's per-tab totals for the query in countQ
 	counts  [srTabN]int
 	countOK [srTabN]bool
@@ -399,6 +402,13 @@ func (v *SearchView) setQuery(q srQuery) {
 }
 
 func (v *SearchView) setTab(t int) {
+	if v.wo.sel != "" { // leaving a work object source for a standard one
+		v.wo.sel = ""
+		if t == v.tab {
+			v.h.Invalidate()
+			return
+		}
+	}
 	if t == v.tab {
 		return
 	}
@@ -479,6 +489,9 @@ func (v *SearchView) search(page int) {
 	sess := v.sess
 	done := func(total int) {
 		v.counts[v.tab], v.countOK[v.tab] = total, true
+	}
+	if page <= 1 && v.tab == srTabMessages {
+		v.searchWO(c, q) // searchWorkObjects rides along with a messages search
 	}
 	switch v.tab {
 	case srTabMessages, srTabDMs:
@@ -721,9 +734,11 @@ func (v *SearchView) typeMenu(gtx layout.Context) {
 		if v.countOK[i] {
 			count = srCountShort(v.counts[i])
 		}
-		items = append(items, MenuItem{Key: srTabModules[i], Label: n, Checked: v.tab == i,
-			Widget: srSourceRow(th, n, count, v.tab == i), Do: func() { v.setTab(t) }})
+		sel := v.tab == i && v.wo.sel == ""
+		items = append(items, MenuItem{Key: srTabModules[i], Label: n, Checked: sel,
+			Widget: srSourceRow(th, n, count, sel), Do: func() { v.setTab(t) }})
 	}
+	items = append(items, v.woMenuItems(th)...) // each app's work objects (search_workobjects.go)
 	v.openMenu(gtx, v.pillR[srPType], items, 280)
 }
 
@@ -1174,7 +1189,12 @@ func (v *SearchView) Layout(gtx layout.Context) layout.Dimensions {
 		cy = ry
 	}
 	count := ""
+	if src := v.woSource(); src != nil {
+		v.woToggle(gtx, th, cl, right-dp(gtx, 23)-fw-dp(gtx, 16)-dp(gtx, 56), ry-dp(gtx, 4))
+	}
 	switch {
+	case v.woSource() != nil:
+		count = srResultsLabel(len(v.woSource().Hits))
 	case v.loading && v.total == 0:
 		count = nsSearch.T("Searching…")
 	case v.err != "":
@@ -1329,6 +1349,9 @@ func srNothing(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int, fb 
 }
 
 func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px int, sz image.Point) layout.Dimensions {
+	if v.woSource() != nil { // WorkObjectResults (search_workobjects.go)
+		return v.woResults(gtx, th, cl, px, sz)
+	}
 	cw := sz.X - 2*px
 	n := 0
 	switch v.tab {

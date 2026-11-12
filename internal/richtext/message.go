@@ -274,6 +274,17 @@ func attachmentColor(c string) string {
 
 // attachment converts a legacy attachment, link/app unfurl or shared message.
 func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
+	if IsWorkObject(a) {
+		// MessageKitAttachments hands every attachment with a work
+		// object to MessageAttachmentWorkObject, never to the unfurl
+		// renderers (workobject.go)
+		e := workObjectOf(a)
+		if e == nil {
+			return Block{}, false
+		}
+		return Block{Kind: AttachmentBlock, Att: &Attachment{WorkObject: c.workObject(a, e),
+			FromURL: SafeURL(firstNonEmpty(a.FromURL, a.OriginalURL)), OriginalURL: SafeURL(a.OriginalURL)}}, true
+	}
 	att := &Attachment{
 		Color: attachmentColor(a.Color), TS: tsSeconds(a.TS),
 		AuthorName: a.AuthorName, AuthorSubname: a.AuthorSubname,

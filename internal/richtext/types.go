@@ -246,6 +246,11 @@ type Attachment struct {
 	CardMember bool
 	CardAuthor string
 	CardAvatar string
+
+	// WorkObject is the attachment's work object (workobject.go): Slack
+	// draws such an attachment as MessageAttachmentWorkObject, an entity
+	// card, instead of an unfurl.
+	WorkObject *WorkObject
 }
 
 // File is a file shared in a message.
