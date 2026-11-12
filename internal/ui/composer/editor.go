@@ -729,7 +729,10 @@ func (e *Editor) typeAt(lo, hi int, s string) {
 	e.lastSpace = edSpace(last) || last == '\n'
 	e.pendingOK = false
 	e.commit()
-	if utf8.RuneCountInString(s) == 1 && !emoji.MayHaveEmoji(s) {
+	// The full-width markers sit in the Halfwidth and Fullwidth Forms
+	// block, which MayHaveEmoji takes for possible emoji; they're
+	// SlackMarkdown's (XmNU), so they take the live markdown path.
+	if utf8.RuneCountInString(s) == 1 && (!emoji.MayHaveEmoji(s) || afWideMarker(first)) {
 		if e.smartSymbols() {
 			return
 		}

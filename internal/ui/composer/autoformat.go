@@ -398,6 +398,10 @@ func autoformatFenceInCode(d *Doc, caret int) (newCaret int, ok bool) {
 	return pos, true
 }
 
+// afWideMarker reports whether r is one of XmNU's full-width markers:
+// ＊ ＿ ｀ and ＞.
+func afWideMarker(r rune) bool { return r == '＊' || r == '＿' || r == '｀' || r == '＞' }
+
 // afWideAt is XmNU's hJ for the full-width markers: ＊ bold (H_), ＿
 // italic (QX, generateMarkdownRegex("＿")) and ｀ code (j5), as
 // mdconvert ports them.
