@@ -34,9 +34,11 @@ var slackRef = map[string]string{
 	// HiddenMessageBody's links (hidden_msg.go)
 	"caret-right-full": "caret-right-full",
 	"caret-down-full":  "caret-down-full",
-	"bell":             "notifications",
-	"bell-filled":      "notifications-filled",
-	"bell-off":         "notifications-off",
+	// HiddenUserAvatar's icon (profile.go)
+	"user-hide":   "user-hide",
+	"bell":        "notifications",
+	"bell-filled": "notifications-filled",
+	"bell-off":    "notifications-off",
 
 	"notifications-all-new-posts": "notifications-all-new-posts",
 	"blocks":                      "blocks",
