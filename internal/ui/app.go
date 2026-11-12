@@ -320,6 +320,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 		// one collection serves both modes; the UI font when its files
 		// are on this computer, else Lato until it has loaded
 		sh, o, pending := startupShaper(stored)
+		if h := shaperReadyHook; h != nil {
+			h()
+		}
 		a.shaperCh <- [2]*text.Shaper{sh, sh}
 		a.timing("shapers ready", t)
 		a.Invalidate() // the first frames painted the background only
@@ -372,6 +375,10 @@ func (a *App) Invalidate() {
 	default: // one is already queued; it covers this one
 	}
 }
+
+// shaperReadyHook, when set (tests), runs before the startup shaper is
+// handed to the UI goroutine: a test holds it to make the fonts load late.
+var shaperReadyHook func()
 
 // invalidateHook, when set, sees every Invalidate (the idle-frame probe,
 // idle_frames_test.go, names the code that keeps the window drawing). Set

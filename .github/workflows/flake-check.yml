@@ -55,6 +55,10 @@ name: flake-check
 #                                            freed the HWND; the test now
 #                                            waits for DestroyWindow to
 #                                            return (a WH_GETMESSAGE hook)
+#                                            and (a real bug) the fonts
+#                                            loading after the window was
+#                                            hidden: no frame took them and
+#                                            drainIdle ran no posted work
 #   TestFakeScreenShare, TestFakeCamera      the only keyframe lost (written
 #     (huddle)                               before pion's SRTP was up) and
 #                                            the fake asked for one only
@@ -114,6 +118,8 @@ on:
       - "internal/fakeslack/faults.go"
       - "third_party/gioui.org/app/clack_drop_windows_test.go"
       - "internal/ui/runfromtray_windows_test.go"
+      - "internal/ui/runfromtray.go"
+      - "internal/ui/runfromtray_test.go"
       - "internal/huddle/fake_video.go"
       - "internal/huddle/share_test.go"
       - "internal/ui/views/details_w14_test.go"
@@ -451,7 +457,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test: [TestDetailsDMAddPeopleCustomHistory, TestTodosKeysAndRealtimeLikeSlack]
+        include:
+          - test: TestDetailsDMAddPeopleCustomHistory
+            pkg: ./internal/ui/views
+          - test: TestTodosKeysAndRealtimeLikeSlack
+            pkg: ./internal/ui/views
+          - test: TestDrainIdleRunsPosted # TestCloseToTrayWindow's posted work, on linux
+            pkg: ./internal/ui
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -465,5 +477,5 @@ jobs:
       - name: "${{ matrix.test }}, race detector, every run counted"
         env:
           TEST: ${{ matrix.test }}
-          PKG: ./internal/ui/views
+          PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race

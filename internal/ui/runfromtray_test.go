@@ -194,12 +194,28 @@ func TestDrainIdleRunsPosted(t *testing.T) {
 	if !ran {
 		t.Error("drainIdle didn't run the posted work")
 	}
-	// before the fonts load, the first frames drain (as before)
+	// before the fonts load, the first frames drain (as before); once
+	// they have, the wake-up drains though no frame took them (a window
+	// closed to the tray while they loaded: CI, TestCloseToTrayWindow)
+	held, hold := make(chan struct{}), make(chan struct{})
+	shaperReadyHook = func() { close(held); <-hold }
+	t.Cleanup(func() { shaperReadyHook = nil })
 	b := New(Options{ConfigDir: t.TempDir(), NoRealtime: true}, a.images)
+	<-held
 	ran = false
 	b.postLazy(func() { ran = true })
 	b.drainIdle()
 	if ran {
 		t.Error("drainIdle ran posted work before the shaper was ready")
+	}
+	close(hold)
+	for deadline := time.Now().Add(10 * time.Second); len(b.shaperCh) == 0; time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the shaper never came")
+		}
+	}
+	b.drainIdle()
+	if !ran {
+		t.Error("drainIdle didn't run posted work once the shaper was ready (no frame had taken it)")
 	}
 }
