@@ -100,6 +100,7 @@ const (
 	trayTestWHCallWndProc = 4 // WH_CALLWNDPROC
 	trayTestWMNCDestroy   = 0x0082
 	trayTestNCDestroyHold = 100 * time.Millisecond
+	trayTestChainHold     = 200 * time.Millisecond
 )
 
 // trayTestStacks is the goroutines in Gio's app package or the App, for a
@@ -122,7 +123,8 @@ func trayTestStacks() string {
 // records balloons). The close button's SC_CLOSE and a WM_CLOSE (Alt+F4,
 // the taskbar's Close window) hide the window instead of closing it; the
 // first close shows the RunFromTray balloon once; the hidden window draws
-// no frames while posted work still runs; Raise (the tray icon's click,
+// no frames while posted work still runs (and work that work posts);
+// Raise (the tray icon's click,
 // another launch) shows it again; Quit while hidden ends Run and destroys
 // the window.
 //
@@ -210,6 +212,21 @@ func TestCloseToTrayWindow(t *testing.T) {
 	case <-ran:
 	case <-time.After(10 * time.Second):
 		t.Fatalf("work posted while hidden didn't run\n%s", trayTestStacks())
+	}
+	// work posted by posted work: its Invalidate reaches Gio while the
+	// wake-up that ran the first is still being handled (held here so it
+	// does every run). Gio dropped that Invalidate (mayInvalidate was
+	// reset only once the events ran out), and the hidden window, drawing
+	// no frames, never ran the second (CI, 2026-11-12).
+	ran2 := make(chan struct{})
+	a.Post(func() {
+		a.Post(func() { close(ran2) })
+		time.Sleep(trayTestChainHold)
+	})
+	select {
+	case <-ran2:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("work posted by posted work while hidden didn't run\n%s", trayTestStacks())
 	}
 	a.Invalidate()
 	time.Sleep(time.Second)
