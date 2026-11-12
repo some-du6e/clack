@@ -182,6 +182,11 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 			comp = c.edit
 		}
 	}
+	// ThreadsError is the thread pane's only content: no reply input
+	// (messages.ThreadView.HidesComposer)
+	if hc, ok := c.list.(interface{ HidesComposer() bool }); ok && hc.HidesComposer() {
+		comp = nil
+	}
 	// Slack top-aligns a short thread: the reply composer sits right under
 	// the last reply instead of at the pane's bottom (last frame's height).
 	fit := 0

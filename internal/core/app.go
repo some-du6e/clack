@@ -1136,7 +1136,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		Tombstone: m.Subtype == "tombstone",
 	}
 	if m.Edited != nil {
-		v.EditedTS = m.Edited.TS
+		v.EditedTS, v.EditedBy = m.Edited.TS, m.Edited.User
 	}
 	v.Inviter, v.Topic, v.Purpose, v.OldName, v.NewName = m.Inviter, m.Topic, m.Purpose, m.OldName, m.NewName
 	v.ReplyUserIcons = m.ReplyUserIcons

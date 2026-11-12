@@ -97,6 +97,54 @@ def reply_bar():
             '<div class="c-message__reply_bar_arrow">%s</div></div>' % (faces, svg("caret-right", 18)))
 
 
+def flexpane_loading():
+    # FlexpaneLoading (usav): the light or dark hash animation, a line
+    # break, the message; absolute 200px down the pane
+    return ('<div class="p-flexpane_loading" data-qa="flexpane_loading"><img class="p-flexpane_loading__spinner" '
+            'src="https://a.slack-edge.com/bv1-13-br/loading_hash_animation-80ecd38.gif" width="40" height="40" alt=""><br>Loading thread\u2026</div>')
+
+
+def threads_error(deleted=False):
+    # ThreadsError (puxw): :mag: (LARGE emoji, 64px under the error CSS),
+    # the header, and unless deleted the body and a primary Try Again
+    mag = ('<div class="p-threads_flexpane__error_emoji"><span class="c-emoji c-emoji__large" style="display:inline-block">'
+           '<img src="https://a.slack-edge.com/production-standard-emoji-assets/16.0/apple-large/1f50d.png" style="width:64px;height:64px"></span></div>')
+    if deleted:
+        inner = mag + '<p class="p-threads_flexpane__error_header">This message was deleted.</p>'
+    else:
+        inner = (mag + '<p class="p-threads_flexpane__error_header">Couldn\u2019t load thread</p>'
+                 '<p class="p-threads_flexpane__error_body">If the problem persists, please <a class="c-link" href="#">drop us a line.</a></p>'
+                 '<button class="c-button c-button--primary c-button--medium" type="button">Try Again</button>')
+    return ('<div style="height:540px;display:flex;flex-direction:column"><div class="p-threads_flexpane__error" data-qa="threads_flexpane_error">'
+            '<div class="p-threads_flexpane__error_contents">%s</div></div></div>' % inner)
+
+
+def reply_bar_draft(text, icon=None):
+    pre = ""
+    if icon:
+        pre = '<i class="c-icon c-icon--%s c-icon--inherit c-icon--inline" type="%s" aria-hidden="true"></i> ' % (icon, icon)
+    faces = '<span class="c-avatar c-message__reply_bar_avatar" style="width:24px;height:24px;margin-right:4px;display:inline-block;background:#8d8d8d;border-radius:4px"></span>'
+    return ('<div class="p-message_pane"><div style="padding:8px 20px 8px 64px"><div class="c-message__reply_bar c-message_kit__thread_replies" role="presentation">%s'
+            '<button class="c-link--button c-message__reply_count">%s%s</button>'
+            '<div class="c-message__reply_bar_description"><span class="c-message__reply_bar_view_thread">View thread</span></div>'
+            '<div class="c-message__reply_bar_arrow">%s</div></div></div></div>' % (faces if not icon else "", pre, E(text), svg("caret-right", 18)))
+
+
+def pinned_label(name):
+    # MessageLabels' pinned label with PinnedLabel's MemberLink (25Rg),
+    # in the thread pane (c-message_kit__thread_message)
+    return ('<div class="c-message_kit__background c-message_kit__message c-message_kit__thread_message c-message_kit__background--labels--pinned">'
+            '<div class="c-message_kit__labels c-message_kit__labels--light c-message_kit__labels--pinned">'
+            '<div class="c-message_kit__labels__label"><span class="c-message_kit__labels__icon">'
+            '<i class="c-icon c-icon--thumb-tack-filled c-icon--inherit" type="thumb-tack-filled" aria-hidden="true"></i></span>'
+            '<span class="c-message_kit__labels__text">Pinned by <button class="c-link--button c-member_link display_flex c-message_kit__labels__link">'
+            '<span class="c-member_name"><strong data-qa="member_name">%s</strong></span></button></span></div></div>'
+            '<div class="c-message_kit__gutter"><div class="c-message_kit__gutter__left"><span class="c-avatar" style="width:36px;height:36px;display:block;background:#8d8d8d;border-radius:var(--sk_avatar-border-radius)"></span></div>'
+            '<div class="c-message_kit__gutter__right"><span class="c-message__sender c-message_kit__sender"><button class="c-link--button c-message__sender_button">ben</button></span>'
+            '&nbsp;&nbsp;<a class="c-link c-timestamp"><span class="c-timestamp__label">9:22 AM</span></a><br>'
+            '<div class="c-message_kit__blocks c-message_kit__blocks--rich_text"><div class="p-rich_text_section">Looks good.</div></div></div></div></div>' % E(name))
+
+
 STATES = {
     "separator": separator("7 replies", "default") + reply_row("Robin Example", "Reply 1 to: Photos from the trip"),
     "separator-new": separator("2 replies", "unread") + reply_row("Robin Example", "Reply 1 to: Who has the projector key?"),
@@ -107,7 +155,16 @@ STATES = {
     + reply_row("Robin Example", "Reply 4 to: Draft agenda for the offsite"),
     "banner": '<div style="position:relative;height:120px">%s</div>' % banner(3),
     "reply-bar": '<div class="p-message_pane"><div style="padding:8px 20px 8px 64px">%s</div></div>' % reply_bar(),
+    "loading": flexpane_loading(),
+    "error": threads_error(),
+    "deleted": threads_error(deleted=True),
+    "reply-bar-draft": reply_bar_draft("3 replies, 1 scheduled, 1 draft"),
+    "reply-bar-draft-only": reply_bar_draft("1 draft", icon="pencil"),
+    "pinned-by": pinned_label("ana"),
 }
+
+# the pane-sized states (the rest fit 200px)
+HEIGHTS = {"loading": 600, "error": 600, "deleted": 600}
 
 
 def page(body, dark):
@@ -115,7 +172,8 @@ def page(body, dark):
     root = ";".join("%s:%s" % kv for kv in t.items())
     return ("<!doctype html><html><head><meta charset=utf-8><link rel=stylesheet href='file://%s'>"
             "<style>:root{%s;color-scheme:%s}html,body{margin:0;background:var(--dt_color-base-pry);color:var(--dt_color-content-pry);"
-            "font-family:Lato,sans-serif;font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}</style>"
+            "font-family:Lato,sans-serif;font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}"
+            "p{margin:0 0 16px}</style>"
             "</head><body class='%s'><div class='p-ia4_client'><div class='p-flexpane p-threads_flexpane' style='width:415px;position:relative;padding-top:8px'>%s</div></div></body></html>"
             % (os.path.abspath(css_path), root, "dark" if dark else "light", "sk-client-theme--dark" if dark else "", body))
 
@@ -127,6 +185,6 @@ for name, body in STATES.items():
         open(hp, "w").write(page(body, dark))
         out = os.path.join(shots, "slack-ref-%s-%s.png" % (name, mode))
         subprocess.run(["google-chrome", "--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars",
-                        "--force-device-scale-factor=1", "--window-size=415,200", "--screenshot=" + out, "file://" + os.path.abspath(hp)],
+                        "--force-device-scale-factor=1", "--window-size=415,%d" % HEIGHTS.get(name, 200), "--screenshot=" + out, "file://" + os.path.abspath(hp)],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print("saved", os.path.basename(out))

@@ -25,6 +25,7 @@ type Message struct {
 	Subtype, Text            string       // Text: raw mrkdwn (editing, copy, search)
 	ThreadTS, LatestReply    string
 	EditedTS                 string
+	EditedBy                 string // edited.user: who made the last edit (EditedLabel names them on a workflow message)
 	Permalink                string // set on search results
 	ClientMsgID              string
 	PinnedBy                 string // who pinned it (when Pinned)

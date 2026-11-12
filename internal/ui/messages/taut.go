@@ -43,6 +43,14 @@ type rxnUserArgs struct {
 	Add  *bool  `json:"add,omitempty"`
 	// SkipFrecencyRecord: the emoji picker already recorded the pick.
 	SkipFrecencyRecord bool `json:"skipFrecencyRecord,omitempty"`
+	// ActionSource is "reaction_toggle_button" for a pill's click
+	// (handleReactionClick, aHRx): Name is the group's, and the native
+	// removes every tone of it the viewer reacted with or adds the
+	// preferred one (reaction_groups.go).
+	ActionSource string `json:"actionSource,omitempty"`
+	// UseDefaultSkinToneForMultiSkinToneEmoji: aHRx sets it with the
+	// toggle button's actionSource.
+	UseDefaultSkinToneForMultiSkinToneEmoji bool `json:"useDefaultSkinToneForMultiSkinToneEmoji,omitempty"`
 }
 
 // rxnSubmitArgs is submitAddOrRemoveReaction {reactionKey, name, add}.

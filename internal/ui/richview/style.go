@@ -353,6 +353,10 @@ type Options struct {
 	// EditedTS is the message's edited.ts: the "(edited)" label's tooltip
 	// (EditedLabel: "{date} at {time}", tooltip.go editedTip).
 	EditedTS string
+	// EditedBy is the name of the member getMessageLabelValues (XSZB)
+	// gives EditedLabel as editedByUserId (a workflow message's
+	// edited.user): the tooltip reads "{dateTime} by {name}".
+	EditedBy string
 	// FindFocused: the message is find in thread's current result
 	// (c-message_kit__blocks--focused-result), so its FindHighlight runs
 	// draw in FindFocused.

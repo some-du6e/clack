@@ -115,12 +115,14 @@ type listState struct {
 	tbFor    int
 	jump     widget.Clickable
 	retryBtn widget.Clickable
+	helpLink widget.Clickable // ThreadsError's "drop us a line." (thread.go)
+	pendAt   time.Time        // when the thread pane started waiting for its replies (FlexpaneLoading's animation)
 	closeBtn widget.Clickable
 
 	tip     string
 	tipRect image.Rectangle
 	tipItem int
-	tipURL  string    // the hovered reaction's emoji image
+	tipG    groupTip  // the hovered pill's ReactionTip (reaction_tip.go)
 	tipKey  string    // which pill (item key + name), to time the delay
 	tipAt   time.Time // when the pointer reached it
 
@@ -539,6 +541,11 @@ func (s *listState) build(h Host, now time.Time) {
 	if !s.thread && s.snap.loaded { // reachedEnd: Clack always holds the newest page
 		s.items = append(s.items, item{kind: itBottom, key: "bottomSpacer"})
 	}
+	if s.thread && !s.snap.loaded && len(msgs) > 0 && s.snap.err == nil {
+		// getThreadRowsAndKeys' "loading-end" row: some messages are in
+		// (the root, a live reply) before the replies are (thread.go)
+		s.items = append(s.items, item{kind: itLoading, key: "loading-end"})
+	}
 	if cap(s.heights) < len(s.items) {
 		s.heights = make([]int, len(s.items), len(s.items)+64)
 		s.pos = make([]int, len(s.items), len(s.items)+64)
@@ -634,6 +641,10 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	event.Op(gtx.Ops, s)
 
 	if !s.snap.loaded && len(s.snap.msgs) == 0 {
+		if s.thread && s.threadPending(gtx, h, c, size) { // FlexpaneLoading, ThreadsError (thread.go)
+			area.Pop()
+			return layout.Dimensions{Size: size}
+		}
 		if s.snap.err != nil && !s.snap.loading {
 			s.layoutLoadError(gtx, h, c, size)
 		} else {
@@ -650,6 +661,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 
 	if s.thread {
+		s.pendAt = time.Time{}
 		s.checkThreadUnreads(gtx, h, now) // thread_unread.go
 	}
 	// first positioning: at the unread line if there are many unread
@@ -706,10 +718,11 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	urev := s.hb.usersRev()
 	chanFrame = urev // channel names the rows may show this frame (channels.go)
 	s.rc = rowCtx{h: h, th: th, st: st, c: c, now: now, thread: s.thread, dense: uipref.Get().Dense, persist: PersistActions(), list: s, selfID: selfID, usersRev: urev + 1,
-		origin:    func(p image.Point) image.Point { return s.anchor(h, origin, p) },
-		onReact:   func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
-		onRetry:   func(r *row) { s.retry(h, r) },
-		onDiscard: func(r *row) { s.discard(h, r) },
+		origin:       func(p image.Point) image.Point { return s.anchor(h, origin, p) },
+		onReact:      func(r *row, name string, add bool) { s.react(h, r, name, add, selfID) },
+		onReactGroup: func(r *row, base string) { s.reactGroup(h, r, base, selfID) },
+		onRetry:      func(r *row) { s.retry(h, r) },
+		onDiscard:    func(r *row) { s.discard(h, r) },
 	}
 	rc := &s.rc
 	s.activeTS = activeThreadIn(h, s.ch, s.thread)
@@ -967,6 +980,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		at(gtx, lx, -dp(gtx, 10), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), s, newTxt) })
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	case itLoading:
+		if s.thread {
+			return s.loadingRepliesRow(gtx, h, c, w) // thread.go
+		}
 		gg := gtx
 		gg.Constraints = layout.Exact(image.Pt(w, dp(gtx, 60)))
 		return skeleton(gg, c, 0)
@@ -1039,16 +1055,12 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	// hover tooltip for reaction pills
 	if rc.hovered {
 		for k := range r.pills {
-			if k < len(r.reactRects) && k < len(r.m.Reactions) && r.pills[k].btn.Hovered() {
-				re := &r.m.Reactions[k]
-				s.tip = reactionTip(h, re, rc.selfID)
+			if k < len(r.reactRects) && k < len(r.groups) && r.pills[k].btn.Hovered() {
+				s.tipG = r.groupTip(h, k, rc.selfID) // the pill's group (reaction_groups.go)
+				s.tip = s.tipG.text()
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
 				s.tipItem = i
-				s.tipURL = re.URL
-				if s.tipURL == "" && h.Core() != nil {
-					s.tipURL, _, _ = h.Core().Emoji(re.Name)
-				}
-				if key := s.items[i].key + "\x00" + re.Name; key != s.tipKey {
+				if key := s.items[i].key + "\x00" + r.groups[k].name; key != s.tipKey {
 					s.tipKey, s.tipAt = key, rc.now
 				}
 			}
@@ -1240,7 +1252,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 			gtx.Execute(op.InvalidateCmd{At: wait})
 		} else {
 			r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
-			reactionTooltip(gtx, h, th, c, s.tip, s.tipURL, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
+			reactionGroupTooltip(gtx, h, th, c, &s.tipG, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
 		}
 	}
 
