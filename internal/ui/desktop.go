@@ -57,8 +57,13 @@ func (a *App) openDeepLink(uri string) bool {
 // may never get.
 func (a *App) Raise() { a.perform(system.ActionRaise) }
 
-// Quit closes the window; Run then returns. Safe from any goroutine.
-func (a *App) Quit() { a.perform(system.ActionClose) }
+// Quit closes the window; Run then returns. Safe from any goroutine. It
+// is Slack's QUIT_APP: app.isQuitting is set first, so the close isn't
+// runFromTray's hide (runfromtray.go).
+func (a *App) Quit() {
+	a.quitting.Store(true)
+	a.perform(system.ActionClose)
+}
 
 func (a *App) perform(act system.Action) {
 	if w := a.winLive.Load(); w != nil {

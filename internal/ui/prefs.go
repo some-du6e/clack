@@ -120,6 +120,13 @@ type prefs struct {
 	// (or was skipped there), so later launches go straight to sign-in.
 	// Preferences > Clack > Replay introduction plays it again.
 	IntroSeen bool `json:"intro_seen,omitempty"`
+	// NoRunFromTray is Advanced's "Leave app running in notification area
+	// when the window is closed" unticked (Slack's desktop setting
+	// runFromTray, default on), and HasRunFromTray Slack's
+	// hasRunFromTray: the "Why didn’t Clack quit?" balloon was shown
+	// (runfromtray.go).
+	NoRunFromTray  bool `json:"no_run_from_tray,omitempty"`
+	HasRunFromTray bool `json:"has_run_from_tray,omitempty"`
 	// OpenFiles is the Files sidebar's Recently viewed by team: Slack's
 	// filesOpenInSessionStore in local storage (file ids only;
 	// files_open.go).

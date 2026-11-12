@@ -27,6 +27,7 @@ var (
 	procTranslateMessage       = user32.NewProc("TranslateMessage")
 	procDispatchMessageW       = user32.NewProc("DispatchMessageW")
 	procPostMessageW           = user32.NewProc("PostMessageW")
+	procSendMessageW           = user32.NewProc("SendMessageW")
 	procPostQuitMessage        = user32.NewProc("PostQuitMessage")
 	procRegisterWindowMessageW = user32.NewProc("RegisterWindowMessageW")
 	procLoadImageW             = user32.NewProc("LoadImageW")
@@ -56,12 +57,18 @@ const (
 	wmApp         = 0x8000
 	wmTrayCB      = wmApp + 1
 	wmTrayTip     = wmApp + 2
+	wmTrayBalloon = wmApp + 3
 	nimAdd        = 0
 	nimModify     = 1
 	nimDelete     = 2
 	nifMessage    = 0x1
 	nifIcon       = 0x2
 	nifTip        = 0x4
+	nifInfo       = 0x10
+	niifUser      = 0x4
+	niifLargeIcon = 0x20
+	smCxIcon      = 11
+	smCyIcon      = 12
 	imageIcon     = 1
 	smCxSmIcon    = 49
 	smCySmIcon    = 50
@@ -131,6 +138,9 @@ type Tray struct {
 	onOpen,
 	onQuit func()
 	taskbarCreated uint32
+	largeIcon      windows.Handle // the balloon's (SM_CXICON)
+	balloon        notifyIconData // the last Balloon's NIM_MODIFY, for tests
+	balloonText    [2]string      // title, content: Balloon → the tray thread
 }
 
 var (
@@ -193,6 +203,12 @@ func (t *Tray) run(tooltip string, errc chan<- error) {
 	if icon == 0 { // built without the resource: the generic app icon
 		icon, _, _ = procLoadIconW.Call(0, idiApp)
 	}
+	lx, _, _ := procGetSystemMetrics.Call(smCxIcon)
+	ly, _, _ := procGetSystemMetrics.Call(smCyIcon)
+	large, _, _ := procLoadImageW.Call(inst, iconID, imageIcon, lx, ly, 0)
+	if large == 0 {
+		large, _, _ = procLoadIconW.Call(0, idiApp)
+	}
 	t.mu.Lock()
 	t.hwnd = windows.HWND(hwnd)
 	t.taskbarCreated = uint32(r)
@@ -202,6 +218,7 @@ func (t *Tray) run(tooltip string, errc chan<- error) {
 	t.nid.Flags = nifMessage | nifIcon | nifTip
 	t.nid.CallbackMessage = wmTrayCB
 	t.nid.Icon = windows.Handle(icon)
+	t.largeIcon = windows.Handle(large)
 	setTip(&t.nid, tooltip)
 	t.mu.Unlock()
 	if ok, _, err := procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&t.nid))); ok == 0 {
@@ -247,6 +264,54 @@ func (t *Tray) SetTooltip(s string) {
 	procPostMessageW.Call(uintptr(hwnd), wmTrayTip, 0, 0)
 }
 
+var errBalloon = errors.New("desktop: Shell_NotifyIcon couldn't show the balloon")
+
+// Balloon shows a notification from the icon, as Electron's
+// Tray.displayBalloon does on Windows (shell/browser/ui/win/notify_icon.cc
+// NotifyIcon::DisplayBalloon with Electron's defaults: iconType custom,
+// largeIcon): NIM_MODIFY with NIF_INFO, the title and text, uTimeout 0,
+// NIIF_USER | NIIF_LARGE_ICON and the app's icon at SM_CXICON as
+// hBalloonIcon. Windows 10 and 11 show it as a toast from the app. Slack
+// shows its RunFromTray and WindowFlash notices this way. Any goroutine;
+// it waits for the tray thread.
+func (t *Tray) Balloon(title, content string) error {
+	if t == nil {
+		return errors.New("desktop: no tray")
+	}
+	t.mu.Lock()
+	t.balloonText = [2]string{title, content}
+	hwnd := t.hwnd
+	t.mu.Unlock()
+	if r, _, _ := procSendMessageW.Call(uintptr(hwnd), wmTrayBalloon, 0, 0); r == 0 {
+		return errBalloon
+	}
+	return nil
+}
+
+// balloonData is the NOTIFYICONDATA a balloon sends. t.mu held.
+func (t *Tray) balloonData() notifyIconData {
+	var n notifyIconData
+	n.Size = uint32(unsafe.Sizeof(n))
+	n.Wnd = t.nid.Wnd
+	n.ID = t.nid.ID
+	n.Flags = nifInfo
+	putUTF16(n.InfoTitle[:], t.balloonText[0])
+	putUTF16(n.Info[:], t.balloonText[1])
+	n.Version = 0 // uTimeout
+	n.InfoFlags = niifUser | niifLargeIcon
+	n.BalloonIcon = t.largeIcon
+	return n
+}
+
+// putUTF16 copies s into dst, cut to fit with its NUL (wcslcpy).
+func putUTF16(dst []uint16, s string) {
+	u, _ := windows.UTF16FromString(s)
+	if len(u) > len(dst) {
+		u = append(u[:len(dst)-1], 0)
+	}
+	copy(dst, u)
+}
+
 // Close removes the icon and stops the tray thread.
 func (t *Tray) Close() {
 	if t == nil {
@@ -282,6 +347,13 @@ func trayWndProc(hwnd, m, wp, lp uintptr) uintptr {
 		procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&t.nid)))
 		t.mu.Unlock()
 		return 0
+	case wmTrayBalloon:
+		t.mu.Lock()
+		t.balloon = t.balloonData()
+		n := t.balloon
+		t.mu.Unlock()
+		ok, _, _ := procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&n)))
+		return ok
 	case wmClose:
 		procDestroyWindow.Call(hwnd)
 		return 0

@@ -275,6 +275,7 @@ const (
 	SWP_NOSIZE        = 0x0001
 	SWP_NOZORDER      = 0x0004
 	SWP_SHOWWINDOW    = 0x0040
+	SWP_HIDEWINDOW    = 0x0080 // Clack patch (CLACK_PATCHES.md §13)
 
 	USER_TIMER_MINIMUM = 0x0000000A
 
@@ -499,6 +500,8 @@ var (
 	_SetWindowPos                 = user32.NewProc("SetWindowPos")
 	_SetWindowText                = user32.NewProc("SetWindowTextW")
 	_SystemParametersInfo         = user32.NewProc("SystemParametersInfoW") // Clack patch 9
+	_IsWindowVisible              = user32.NewProc("IsWindowVisible")       // Clack patch 13
+	_GetCaretBlinkTime            = user32.NewProc("GetCaretBlinkTime")     // Clack patch 13
 	_TranslateMessage             = user32.NewProc("TranslateMessage")
 	_UnregisterClass              = user32.NewProc("UnregisterClassW")
 	_UpdateWindow                 = user32.NewProc("UpdateWindow")
@@ -987,6 +990,20 @@ func SetTimer(hwnd syscall.Handle, nIDEvent uintptr, uElapse uint32, timerProc u
 
 func ScreenToClient(hwnd syscall.Handle, p *Point) {
 	_ScreenToClient.Call(uintptr(hwnd), uintptr(unsafe.Pointer(p)))
+}
+
+// IsWindowVisible reports whether the window has WS_VISIBLE (Clack patch
+// 13, CLACK_PATCHES.md: a window hidden to the notification area).
+func IsWindowVisible(hwnd syscall.Handle) bool {
+	r, _, _ := _IsWindowVisible.Call(uintptr(hwnd))
+	return r != 0
+}
+
+// GetCaretBlinkTime is the caret's blink time in milliseconds: 0 when the
+// call fails, INFINITE when the user turned blinking off (Clack patch 13).
+func GetCaretBlinkTime() uint32 {
+	r, _, _ := _GetCaretBlinkTime.Call()
+	return uint32(r)
 }
 
 // Clack patch 9 (CLACK_PATCHES.md): the wheel's lines and characters per

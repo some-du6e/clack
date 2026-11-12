@@ -42,6 +42,9 @@ func TestPrefsAuditShots(t *testing.T) {
 	w16.answer("users.listIgnoredUsers", map[string]any{"ok": true, "emails": []string{"spam@example.com"}})
 	t.Cleanup(func() { fs.SetHook(nil) })
 	e := startEnv(t, fs, home)
+	// gap-w18: Advanced's runFromTray row as Windows draws it (a tray
+	// icon runs there; Linux has none and greys the row)
+	e.a.SetTray(&fakeTray{})
 	dir := os.Getenv("PREFS_AUDIT_SHOTS_DIR")
 	if dir != "" && e.gpu == nil {
 		w, err := headless.NewWindow(e.size.X, e.size.Y)

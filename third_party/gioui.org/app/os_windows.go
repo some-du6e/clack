@@ -31,6 +31,7 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/io/system"
+	"gioui.org/widget"
 )
 
 type Win32ViewEvent struct {
@@ -103,6 +104,7 @@ func newWindow(win *callbacks, options []Option) {
 		// awareness.
 		runtime.LockOSThread()
 		windows.SetThreadDpiAwarenessContext()
+		setCaretBlinkFromOS() // Clack patch (CLACK_PATCHES.md §13)
 
 		w := &window{
 			w: win,
@@ -773,7 +775,9 @@ loop:
 	for {
 		anim := w.animating
 		p := windows.GetWindowPlacement(w.hwnd)
-		if anim && !p.IsMinimized() && !windows.PeekMessage(msg, 0, 0, 0, windows.PM_NOREMOVE) {
+		// Clack patch (CLACK_PATCHES.md §13): a hidden window draws
+		// nothing either, like a minimized one; showing it paints it.
+		if anim && !p.IsMinimized() && windows.IsWindowVisible(w.hwnd) && !windows.PeekMessage(msg, 0, 0, 0, windows.PM_NOREMOVE) {
 			w.draw(false)
 			continue
 		}
@@ -1120,6 +1124,18 @@ func (w *window) Perform(acts system.Action) {
 			y := (area.Bottom + area.Top - dy) / 2
 			windows.SetWindowPos(w.hwnd, 0, x, y, dx, dy, windows.SWP_NOZORDER|windows.SWP_FRAMECHANGED)
 		case system.ActionRaise:
+			// Clack patch (CLACK_PATCHES.md §13): a window hidden with
+			// Window.Hide comes back the way Electron's BrowserWindow.show
+			// shows it (Chromium's HWNDMessageHandler::Show for
+			// kNormal): SW_SHOW when it was maximized, so it stays
+			// maximized, SW_SHOWNORMAL otherwise.
+			if !windows.IsWindowVisible(w.hwnd) {
+				cmd := int32(windows.SW_SHOWNORMAL)
+				if w.config.Mode == Maximized {
+					cmd = windows.SW_SHOW
+				}
+				windows.ShowWindow(w.hwnd, cmd)
+			}
 			// A minimized window has to be restored before it can be
 			// brought to the front; SetForegroundWindow on its own
 			// leaves it minimized, so raising an iconified window did
@@ -1134,6 +1150,32 @@ func (w *window) Perform(acts system.Action) {
 			windows.PostMessage(w.hwnd, windows.WM_CLOSE, 0, 0)
 		}
 	})
+}
+
+// hide is Window.Hide (Clack patch, CLACK_PATCHES.md §13): Chromium's
+// HWNDMessageHandler::Hide, which Electron's BrowserWindow.hide calls.
+// SetWindowPos rather than ShowWindow(SW_HIDE), which would activate
+// another window itself while the activation may be changing.
+func (w *window) hide() bool {
+	windows.SetWindowPos(w.hwnd, 0, 0, 0, 0, 0,
+		windows.SWP_HIDEWINDOW|windows.SWP_NOACTIVATE|windows.SWP_NOMOVE|
+			windows.SWP_NOOWNERZORDER|windows.SWP_NOSIZE|windows.SWP_NOZORDER)
+	return !windows.IsWindowVisible(w.hwnd)
+}
+
+// setCaretBlinkFromOS is Chromium's OsSettingsProviderWin::CaretBlinkInterval
+// (Clack patch, CLACK_PATCHES.md §13): GetCaretBlinkTime, the default
+// when it fails (0), no blinking for INFINITE. Read as a window opens:
+// Windows has no notification for the setting, and Chromium reads it
+// when it builds a renderer's preferences.
+func setCaretBlinkFromOS() {
+	switch t := windows.GetCaretBlinkTime(); t {
+	case 0:
+	case windows.INFINITE:
+		widget.SetCaretBlinkInterval(0)
+	default:
+		widget.SetCaretBlinkInterval(time.Duration(t) * time.Millisecond)
+	}
 }
 
 func convertKeyCode(code uintptr) (key.Name, bool) {

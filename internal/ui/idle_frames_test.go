@@ -11,6 +11,7 @@ import (
 
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
+	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -216,8 +217,10 @@ func (e *perfEnv) idle(t *testing.T, p *idleprobe.Probe, name string, caret bool
 	blinks := res.CountMatching("Editor).Layout")
 	other := res.Count() - blinks
 	maxBlinks := 0
-	if caret && e.a.focused {
-		maxBlinks = int(idleFor/(500*time.Millisecond)) + 1
+	if blink := widget.CaretBlinkInterval(); caret && e.a.focused && blink > 0 {
+		// 500 ms, or Windows' GetCaretBlinkTime once a window opened
+		// in this process (Gio patch 13); none when blinking is off
+		maxBlinks = int(idleFor/blink) + 1
 	}
 	if blinks > maxBlinks {
 		t.Errorf("%s: %d caret frames in %v idle, want at most %d (focused window: %v)", name, blinks, idleFor, maxBlinks, e.a.focused)
