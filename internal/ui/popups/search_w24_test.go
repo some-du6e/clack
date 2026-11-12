@@ -403,8 +403,9 @@ func TestSearchHiddenSenderCardsLikeSlack(t *testing.T) {
 	}
 	who := srHideFirstSender(t, e, v.msgs)
 	x := d.scan()
+	joined := strings.Join(x, "") // the contents are drawn word by word
 	for _, want := range []string{"This message is hidden", "You’re hiding messages from this person."} {
-		if !srHas(x, want) {
+		if !strings.Contains(joined, want) {
 			t.Errorf("%q not drawn: %q", want, x)
 		}
 	}
