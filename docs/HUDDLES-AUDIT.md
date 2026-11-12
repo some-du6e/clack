@@ -78,7 +78,7 @@ Status: **matched** means no change was needed, **fixed** means changed on this 
 | Huddle ended or dropped | HuddleErrorModal: `This huddle has ended` / `This huddle has ended for everyone who was in it.` (Got It); otherwise `Something went wrong with your huddle` | toasts `The huddle ended` and `You were disconnected from the huddle` | **fixed** |
 | Leaving on lock | HuddleErrorModal `DeviceLocked`: `You’re no longer in a huddle`, `When your computer locks, you automatically leave any huddle you’re in. You can change this in <a>Preferences</a>.`, OK | left silently | **fixed**. The `Preferences` link is plain text: Clack's modal body has no links |
 | Other notices | none | `Couldn't update your sticker`, `Couldn't send the reaction` | **fixed**: removed |
-| Lounge music | HuddleLoungeMusicBanner (`shared 4ahz`, `fHBk`): `You’re the only one in this huddle. Enjoy the tranquility.`, `Turn off music`, the song menu | the music plays (avprefs.go) without the banner or its controls | **open** |
+| Lounge music | HuddleLoungeMusicBanner (`shared 4ahz`, `fHBk`; build 2cd9270e786c): HuddlesTemporaryControlBanner's `lounge_music_player` (`7tWB`, shown when `aAey` M holds: the alone notice is up, huddles_play_music_when_last is on, you haven't stopped the music in this huddle, the window is closed or compact). In the compact window it sits above the informational banner (baby_window: radius 8, margin 4px 4px 6px, padding 12px 0); for 15 s (isLoungeMusicBannerDismissed) `You’re the only one in this huddle. Enjoy the tranquility.` over a 1px otl-sec divider, then the player: the note (`zqUb`), HuddleLoungeMusicMenuTrigger (the song's name, a caret, `Choose a song`) and `Turn off music` (`ZCaB`'s stop icon; stopHuddleLoungeMusic isStoppedByUser keeps it off for the huddle). The song menu: `Choose a song`, the songs (the Miles Davis three only under huddles_miles_davis), Settings › `Play music when alone in a huddle…`, Right when I join / After 30 seconds / After 1 minute, `Never play music`, `You can undo this later in preferences.`. With the window closed the docked bar shows the player alone above its card (bottom_bar, radius 12), ahead of its warnings | the music plays (avprefs.go) without the banner or its controls | **fixed** (gap-w23, lounge.go; TestLoungeBannerLikeSlack, w23-lounge-* shots). While the music plays Slack loops a Lottie note; Clack has no Lottie player and draws the still one |
 | Window palette | `.p-huddle_window` is theme-base-inv-pry; buttons surf-inv-pry, hover surf-inv-ter, toggled base-pry | the palette measured on the 2026 web client by the earlier huddles work | **matched** (kept). In the light table (`858H`) theme-base-inv-pry is the light lilac rgb(249,237,255), so whether the window carries the inverted scope needs a live look, which this audit didn't take |
 
 ## Docked bar
@@ -91,8 +91,8 @@ Slack 2026 (IA4) docks the huddle at the bottom of the client while you're in on
 | Card | `.toolbarMainBar`: theme-surf-inv-sec, radius 12, three columns (1fr, 2fr, max-content), gap 16px, padding 8px 8px 8px 12px, 56px | a translucent card with a title row, faces and four buttons | **fixed** |
 | Left, window closed | your 40px tile and the active speaker's or sharer's; the title (13px bold) over the subtitle (13px, content-inv-sec): `{a} and {b} are screensharing`, `{name} is screensharing`, `{name} is speaking`, `{n} people here`, `You’re the only one here`; none in a DM | `Huddle in #channel`, an elapsed timer and up to 7 faces | **fixed**. Slack's bar has no timer (Slick's CallTimer adds one) |
 | Center | HuddleToolbarCenterButtons: mute, camera, screen share, sticker pair, emoji, canvas, thread, ⋯ | mic, deafen, open-window | **fixed**: mic, camera (segmented with Video settings, gap-w9), sticker pair, emoji (the quick picker, gap-w9), thread, ⋯; Leave takes its Leave options caret |
-| Responsive center | useResponsiveHuddleToolbarButtons hides buttons in narrow windows | none | **open** |
-| Sticker caret | the HuddleStickerGrid popover | none | **open**: Clack opens a menu of the same stickers, not Slack's grid |
+| Responsive center | useResponsiveHuddleToolbarButtons (`render wjeI`): at most 7 buttons with the camera, 6 without (8 less the camera and the canvas button, which Clack doesn't draw); the middle grid column's width picks how many by breakpoints (camera: 486 438 342 270 222 150 78; none: 366 318 270 198 150 78), keeping the first n-1 and ⋯; a 250 ms debounced ResizeObserver, a grown column shows them all again while they fit | the buttons centred on the card at any width | **fixed** (gap-w23, dock.go: the card's 1fr/2fr/max-content columns and the hook's state; TestDockResponsiveButtonsLikeSlack, w23-dock-* shots at 1200, 1000, 760 and 560 dp) |
+| Sticker caret | HuddleEmojiMenuTrigger with onlyShowStickers (`shared Vw0B`): the c-menu card (360px, sk_primary_background, the close button at the top right) with HuddleStickerGrid: `Stickers stay on until you remove them.` (12px content-ter), two 56px ctr-sec tiles a row (24px emoji, 13px bold label), yours on base-inv-hgl-2; no On mobile or Audio-only, DJ’ing only under huddles_music; above the caret, offsetY -5 | a menu of the eight stickers | **fixed** (gap-w23, hand.go; the window's caret opens the same grid; TestStickerGridLikeSlack, w23-sticker-grid-* shots) |
 | Right | `Open Huddle in new window` (open-in-window), Leave | an expand button and a 64px Leave | **fixed** |
 | Collapsed, window open | `.toolbarMainBarControlsCollapsed`, 48px: headphones and the title in 15px bold, `Bring huddle to front`, Leave, 32px tall | the same card as above | **fixed** |
 | Clicking the bar | opens the window, or brings it to the front | the title opened the window | **fixed** |
@@ -224,9 +224,8 @@ Things Clack lacks entirely, so nothing is drawn for them (no stubs):
 - the Meeting Assistant button (Slack AI);
 - the compact video pane (`yT9P`) and the full window surface with its resize button;
 - the "Choose a huddle theme" dialog (`a+g1`, the ⋯ row; Clack shows a theme someone else picked but can't set one: setting it is the sendBackground thunk, not ported);
-- the sticker tray as Slack's emoji picker with only stickers (`onlyShowStickers`); Clack's tray is a row of the eight stickers.
 
-Shots (`huddles-audit-shots`, TestHuddleShotsWindowCompact): `window-compact-{light,dark}-{2,4}.png` at 589×351 with the other people on Be right back and the Arizona theme fetched from Slack's CDN (a stand-in if CI can't reach it), and `window-compact-{light,dark}-2-tray.png` with the sticker tray open.
+Shots (`huddles-audit-shots`, TestHuddleShotsWindowCompact): `window-compact-{light,dark}-{2,4}.png` at 589×351 with the other people on Be right back and the Arizona theme fetched from Slack's CDN (a stand-in if CI can't reach it), and `window-compact-{light,dark}-2-tray.png` with the sticker grid open (HuddleStickerGrid since gap-w23).
 
 ## Huddle experiments (branch exp-huddles)
 
@@ -238,7 +237,7 @@ The account's huddle experiments (docs/EXPERIMENTS.md), against Slack build `4d0
 | huddles_multi_device | `e5et` startHuddleWithConfirmation and `6e8N` HuddleMultiDeviceModal: in a huddle you're already in on another device, your faces (one per device) and the others' (56px, six at most), `You’re in this huddle on a different device` / `… on multiple devices`, `Use both devices` / `Switch to this device` (rooms.join multidevice); `T3hK` keeps awareness per device | rooms.join always multidevice=false; stickers per tile | **fixed** (multidevice.go, awareness.go). The modal's footer is right-aligned (Slack centres it): popups.Modal has no centred footer |
 | huddles_switch_microphone_helper | `owyz`: with two or more microphones and someone else there, 20 one-second checks of an unmuted microphone that hasn't sent sound raise NoAudioDetected (`NoKD`: `We are not detecting any audio from your microphone. Click here to switch to a different microphone`, microphone-slash) | none | **fixed** (micalerts.go): the link opens the Audio settings menu |
 | huddles_missed_notification | `zuQH` handleHuddleMissedCallNotification (`Huddle missed`, 30 s on, only with it on); `zq6z` getDidUserMissHuddleInvite | the notification always | **fixed** (invite.go) |
-| huddles_miles_davis | `IeZG` getSongsMetadata: So What, Freddie Freeloader, All Blues enabled only with it on; off, a pick of one plays Smooth Jazz | always Smooth Jazz for them | **fixed** (avprefs.go). Its effects, NEW badges and coachmark aren't drawn: Clack has no music menu or effects |
+| huddles_miles_davis | `IeZG` getSongsMetadata: So What, Freddie Freeloader, All Blues enabled only with it on; off, a pick of one plays Smooth Jazz | always Smooth Jazz for them | **fixed** (avprefs.go; since gap-w23 the lounge banner's song menu lists the three only with it on). Its effects, the songs' highlight and HuddleMilesDavisCoachmark aren't drawn: Clack has no effects, and the highlight and coachmark come from Slack's in-product notification store |
 | huddle_join_from_preview | `zq6z` doesChannelSupportHuddlesWithReason: a channel you're previewing supports huddles only with it on | the button in every channel | **fixed** (SupportsHuddles; channel.go passes it to headerFit) |
 | huddles_awareness_timestamp | `T3hK` ChimeChannelBroadcaster sends field_timestamp_ms with it on; `OGIR` xP sorts raised hands by it | no timestamps | **fixed** (awareness.go; galleryOrder) |
 | huddles_link_v2 | `YCI0`: the sidebar Huddles link's count badge of unviewed huddle invites, cleared 600 ms after the page opens | none | **open**: Clack's sidebar link has no facepile and Clack keeps no huddle invite notifications |
@@ -248,7 +247,7 @@ The account's huddle experiments (docs/EXPERIMENTS.md), against Slack build `4d0
 
 ## Counts
 
-160 rows: 19 matched, 118 fixed, 23 open (gap-w9 split the camera and emoji picker rows; gap-audit-2 found Invite teammates fixed by gap-w4). Fixed rows that still name an open remainder: the camera's allow_huddles_video reading and its no-camera note, the caret's `More call options` wording, the facepile inside the live tooltip, system audio on older Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
+160 rows: 18 matched, 124 fixed, 1 partial, 17 open (gap-w9 split the camera and emoji picker rows; gap-audit-2 found Invite teammates fixed by gap-w4; gap-w22 and gap-w23 fixed the sidebar and window rows named in their docs/GAPS-2026-11-12.md packages). Fixed rows that still name an open remainder: the camera's allow_huddles_video reading and its no-camera note, the caret's `More call options` wording, the facepile inside the live tooltip, system audio on older Windows, custom account themes for the sidebar badge, the ⋯ menu (Invite people, themes, language, side-by-side), the gallery's grid templates, the screen share view's zoom and drawing, the huddle message's header badge and tooltip, Grid's org-level transcription prefs, and the in-call level cadence.
 
 The open rows and why:
 
@@ -260,9 +259,6 @@ The open rows and why:
 | Emoji picker: Effects and GIFs | Effects need Slack's Lottie packs, GIFs need GIPHY |
 | Thread view | the huddle window has no side panel |
 | Reaction effects | Lottie animations |
-| Lounge music | the banner and its controls aren't drawn |
-| Responsive center | the dock doesn't hide buttons in narrow windows |
-| Sticker caret | the dock opens a menu of stickers, not Slack's grid popover |
 | Collapsed filters | FiltersModal isn't drawn |
 | Megaphone | no megaphone API |
 | Upcoming | no calendar events |
@@ -304,3 +300,10 @@ On branch screenshare (2026-11-11, Slack build `4d0c78085232`; see "Sharing your
 - internal/huddle: share.go (sources, the share's state, the test screen), content.go and fake_content.go (the `#content` attendee and the fake's side of it), screenimg.go (scaling and NV12), videosend.go (the H.264 publisher shared by the camera and the share), videoenc.go and h264enc_* (VideoToolbox's screen mode, Media Foundation, OpenH264), share_darwin.m/.go (ScreenCaptureKit, the border, the panel), share_windows.go and sysaudio_windows.c (GDI capture, the border, WASAPI process loopback), share_x11_linux.c/.go (XShm, RandR, XFixes); session.go (State().Share, `self#content`, content attendees out of the tiles), frames.go (JOIN field 13).
 - huddleui: share.go (the button, the click, the alerts), screenpicker.go (ScreenPickerModal), minipanel*.go (HuddleMiniPanel); window.go, dock.go and controller.go wire them; popups/modal.go gained a header slot; icons: `screen-off`, `stop-screen-sharing`.
 - third_party/gioui.org: `app.Panel` and X11 move areas (CLACK_PATCHES.md §8).
+
+On branch gap-w23 (2026-11-12, Slack build `2cd9270e786c`):
+
+- huddleui/hand.go: stickerGrid, HuddleEmojiMenuTrigger's onlyShowStickers popover with HuddleStickerGrid (`shared Vw0B`), opened by the sticker caret in the window (window.go, window_menu.go) and the dock (dock.go); the tile's DJ’ing label untranslated without huddles_music, as `eAbZ` has it.
+- huddleui/lounge.go (new): HuddleLoungeMusicBanner, its trigger and song menu (`4ahz`, `fHBk`, `IeZG`, `jfdF` Rv), Turn off music; avprefs.go keeps hasUserStoppedLoungeMusic and the info line's 15 s; window.go stacks it above the informational banner, dock.go above the card ahead of the warnings.
+- huddleui/dock.go: the card's grid columns and useResponsiveHuddleToolbarButtons (`render wjeI`).
+- core/experiment_reads_huddle_window.go: huddles_music (pSxm lV).

@@ -290,7 +290,9 @@ func TestLoungeBannerLikeSlack(t *testing.T) {
 	}
 
 	// the song menu: Choose a song, the nine songs (no Miles Davis without
-	// the experiment), Settings ›
+	// the experiment, which core's defaults turn on as the account has
+	// it), Settings ›
+	e.h.app.SetExperimentGroup(ExpMilesDavis, "off")
 	items := e.c.musicMenu()
 	if items[0].Header != "Choose a song" || len(items) != 1+9+2 {
 		t.Fatalf("menu %d rows, first %+v", len(items), items[0])
