@@ -192,7 +192,12 @@ func Pill(gtx layout.Context, th *theme.Theme, c *widget.Clickable, iconName, la
 		in := pillInnerCls.Enter(gtx, 0, 0)
 		in.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 			lx := dp(gtx, 10)
-			if iconName != "" {
+			if iconName == srSlackMark { // the search source pill's logo image (appIconSmall: 15px)
+				at(gtx, image.Pt(lx, (h-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions {
+					return srSlackMarkDraw(gtx, dp(gtx, 15))
+				})
+				lx += dp(gtx, 16) + dp(gtx, 6)
+			} else if iconName != "" {
 				at(gtx, image.Pt(lx, (h-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
 					return icon(gtx, iconName, 16, fg)
 				})

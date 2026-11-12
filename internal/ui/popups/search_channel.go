@@ -2,8 +2,10 @@ package popups
 
 // Search in channel (⌘F / Ctrl+F in a conversation): Slack's
 // SearchInChannelView, a secondary pane (client-search-in-channel-view
-// chunk, build 407aff01646b). Its header reads "Search in #channel" (with
-// keywords: 'Search "kw" in #channel'); the query runs as
+// chunk, build 407aff01646b; the header, skeleton and empty state are
+// search_channel_states.go's, from d3de3a487b1c). Its header reads
+// "Search in [#] channel" (with keywords: 'Search "kw" in [#] channel', a
+// DM's avatar in place of the #); the query runs as
 // search.modules.messages for "in:<#C> query", count 10, search_context
 // search_in_channel, sort score/desc, timestamp/desc or timestamp/asc.
 // Before a search: "Not searching in this channel? Go to full search
@@ -51,6 +53,9 @@ type SearchInChannel struct {
 	sortBy   string // score | timestamp | oldest
 	origin   image.Point
 	searched bool // a search ran (Slack's eu: the no-results state replaces "Nothing to show yet.")
+	// skelStart is when the loading skeleton's shimmer began
+	// (search_channel_states.go)
+	skelStart time.Time
 
 	query   string // the submitted keywords
 	session core.SearchSession
@@ -89,6 +94,7 @@ func (v *SearchInChannel) Search(q string) {
 		return
 	}
 	v.loading, v.searched = true, true
+	v.skelStart = time.Time{}
 	sort := v.sortBy
 	ch := v.ch
 	run(v.h, func(ctx context.Context) (core.SearchResult, error) {
@@ -107,33 +113,6 @@ func (v *SearchInChannel) Search(q string) {
 			v.rows = append(v.rows, widget.Clickable{})
 		}
 	})
-}
-
-func (v *SearchInChannel) channelLabel() string {
-	c := v.h.Core()
-	if c == nil {
-		return ""
-	}
-	ref := c.ConvRef(v.ch)
-	switch ref.Kind {
-	case "im", "mpim":
-		return ref.Name
-	}
-	if ref.Name == "" {
-		return ""
-	}
-	return "#" + ref.Name
-}
-
-// srcTitle is SearchInChannelView's header.
-func srcTitle(query, channel string) string {
-	if channel == "" {
-		return nsSearch.T("Search in channel")
-	}
-	if query != "" {
-		return `Search "` + query + `" in ` + channel // no Slack string has the query
-	}
-	return nsSearch.T("Search in {channelName}", "channelName", channel)
 }
 
 func (v *SearchInChannel) fullSearch() {
@@ -292,10 +271,8 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 	// header
 	hh := dp(gtx, 49)
 	at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, sz.X-pad-dp(gtx, 52)), hh)}
-		return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 18, theme.Black, cl.Fg, srcTitle(v.query, v.channelLabel()))
-		})
+		v.header(gtx, th, cl, maxInt(1, sz.X-pad-dp(gtx, 52)), hh)
+		return layout.Dimensions{}
 	})
 	at(gtx, image.Pt(sz.X-dp(gtx, 12)-dp(gtx, 28), (hh-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
 		return iconButton(gtx, &v.closeBtn, "close", 28, 20, cl.Fg2, cl.BgHover, 8)
@@ -356,13 +333,15 @@ func srcFullLabel() string {
 func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, w, top int) layout.Dimensions {
 	pad := dp(gtx, 16)
 	inner := maxInt(1, w-2*pad)
-	if v.loading || v.err != "" {
-		if v.err != "" {
-			at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(inner, dp(gtx, 20))}
-				return text(gtx, th, 13, theme.Regular, cl.Fg3, "Search failed: "+v.err)
-			})
-		}
+	if v.loading {
+		v.skeleton(gtx, th, w, gtx.Constraints.Max.Y)
+		return layout.Dimensions{Size: gtx.Constraints.Max}
+	}
+	if v.err != "" {
+		at(gtx, image.Pt(pad, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(inner, dp(gtx, 20))}
+			return text(gtx, th, 13, theme.Regular, cl.Fg3, "Search failed: "+v.err)
+		})
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 	if len(v.msgs) == 0 {
@@ -389,17 +368,9 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 				})
 			})
 		})
-		y := lh + dp(gtx, 16) + dp(gtx, 28)
-		title := nsSearch.T("Nothing to show yet.")
-		tw := textW(gtx, th, 15, theme.Bold, title)
-		at(gtx, image.Pt((w-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Bold, cl.Fg, title)
-		})
-		y += dp(gtx, 26)
-		at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
-			return paraCentered(gtx, th, 13, 18, cl.Fg2,
-				i18n.Plain(nsSearch.RT("Type a keyword or <strong>from: @name</strong> to find that message you’re looking for.")), inner)
-		})
+		// the "empty-state" row under the label (p-explorer_section--align:
+		// padding-bottom 16)
+		v.emptyState(gtx, th, cl, w, lh+dp(gtx, 16))
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
 

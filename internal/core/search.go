@@ -429,13 +429,52 @@ func channelSearchParams(query string, page int, s SearchSession, onlyMine bool)
 // channelSearchParamsSort is channelSearchParams with the Sort select's
 // value (SearchSortParams).
 func channelSearchParamsSort(query, sortBy string, page int, s SearchSession, onlyMine bool) url.Values {
-	p := moduleParams(ModChannels, query, page, 20, moduleContext[ModChannels], s)
+	return channelTabParams(ChannelTabOpts{Query: query, Sort: sortBy, Page: page, Session: s}, onlyMine, false)
+}
+
+// ChannelTabOpts is a Channels tab search: its query, Sort select value
+// and the Channel type pill (the All channels pill is the
+// search_only_my_channels and search_hide_my_channels prefs).
+type ChannelTabOpts struct {
+	Query, Sort string
+	Page        int
+	Session     SearchSession
+	// ChannelType is SearchFilterChannelTypes' value (cX/T xV's keys):
+	// "" or all, public, private, archived, shared.
+	ChannelType string
+}
+
+// SearchChannelType is channel_type for a Channel type value
+// (getChannelSearchApiArguments: cX/T xV maps public to private_exclude;
+// External is external_shared).
+func SearchChannelType(t string) string {
+	switch t {
+	case "public":
+		return "private_exclude"
+	case "private", "archived":
+		return t
+	case "shared":
+		return "external_shared"
+	}
+	return "all"
+}
+
+// channelTabParams is getChannelSearchApiArguments (client-boot rZ6M):
+// search_only_my_channels and exclude_my_channels (+!!search_hide_my_channels)
+// are the All channels pill's prefs, channel_type the Channel type pill's.
+func channelTabParams(o ChannelTabOpts, onlyMine, hideMine bool) url.Values {
+	p := moduleParams(ModChannels, o.Query, o.Page, 20, moduleContext[ModChannels], o.Session)
 	p.Set("search_only_my_channels", boolStr(onlyMine))
-	p.Set("channel_type", "all")
+	p.Set("channel_type", SearchChannelType(o.ChannelType))
 	p.Set("external_shared_team_ids", "")
-	p.Set("exclude_my_channels", "0")
+	exclude := "0"
+	if hideMine {
+		exclude = "1"
+	}
+	p.Set("exclude_my_channels", exclude)
 	p.Set("request_context", requestContext(""))
 	p.Set("spell_correction", "FUZZY_MATCH")
+	sortBy := o.Sort
 	if sortBy == "" {
 		sortBy = "relevant"
 	}
@@ -456,7 +495,15 @@ func (a *App) SearchChannelsTab(ctx context.Context, query string, page int, s S
 // (relevant, created, created_asc, member_count, member_count_asc, name,
 // name_desc).
 func (a *App) SearchChannelsTabSort(ctx context.Context, query, sortBy string, page int, s SearchSession) (ChannelPage, error) {
-	p := channelSearchParamsSort(query, sortBy, page, s, a.PrefBool("search_only_my_channels", false))
+	return a.SearchChannelsTabOpts(ctx, ChannelTabOpts{Query: query, Sort: sortBy, Page: page, Session: s})
+}
+
+// SearchChannelsTabOpts is the Channels tab with its filters: the
+// search_only_my_channels and search_hide_my_channels prefs (All
+// channels) and o's Channel type.
+func (a *App) SearchChannelsTabOpts(ctx context.Context, o ChannelTabOpts) (ChannelPage, error) {
+	page := o.Page
+	p := channelTabParams(o, a.PrefBool("search_only_my_channels", false), a.PrefBool("search_hide_my_channels", false))
 	var raw json.RawMessage
 	if err := a.C.Call(ctx, "search.modules.channels", p, &raw); err != nil {
 		return ChannelPage{}, err
@@ -489,21 +536,64 @@ func peopleSearchParams(query string, page int, s SearchSession) url.Values {
 // peopleSearchParamsSort is peopleSearchParams with the Sort select's
 // value (relevant, name, name_desc).
 func peopleSearchParamsSort(query, sortBy string, page int, s SearchSession) url.Values {
-	p := moduleParams(ModPeople, query, page, 20, moduleContext[ModPeople], s)
-	for _, k := range []string{"tz", "external_shared_team_ids", "search_only_team", "profile_location", "profile_title",
-		"profile_division", "profile_department", "profile_celebration"} {
+	return peopleTabParams(PeopleTabOpts{Query: query, Sort: sortBy, Page: page, Session: s}, false)
+}
+
+// PeopleTabOpts is a People tab search: its query, Sort select value and
+// filters (the Title and Location pills, More's Account type and
+// Celebration).
+type PeopleTabOpts struct {
+	Query, Sort string
+	Page        int
+	Session     SearchSession
+	// Titles and Locations are profile_title and profile_location.
+	Titles, Locations []string
+	// AccountType is a cX/T Dx key (owners, admins, full, guests,
+	// deactivated, profile_only); "" or all sends no account_type.
+	AccountType string
+	// Celebrations is profile_celebration (new_hire, anniversary).
+	Celebrations []string
+}
+
+// SearchAccountTypes is cX/T Dx: account_type's value for each Account
+// type row.
+var SearchAccountTypes = map[string]string{
+	"all": "0,1,2,3,4,5,6,7,8,9,10", "owners": "0,1", "admins": "0,1,2", "full": "0,1,2,3,7",
+	"guests": "4,5,8", "deactivated": "6", "profile_only": "9", "frontline": "10",
+}
+
+// peopleTabParams is getPeopleSearchApiArguments (client-boot rZ6M): the
+// profile_* filters (the people browser's XjMX joins each list with
+// commas), hide_deactivated_users from the search_hide_deactivated_users
+// pref, account_type unless Any account type.
+func peopleTabParams(o PeopleTabOpts, hideDeactivated bool) url.Values {
+	p := moduleParams(ModPeople, o.Query, o.Page, 20, moduleContext[ModPeople], o.Session)
+	for _, k := range []string{"tz", "external_shared_team_ids", "search_only_team"} {
 		p.Set(k, "")
 	}
+	p.Set("profile_location", strings.Join(o.Locations, ","))
+	p.Set("profile_title", strings.Join(o.Titles, ","))
+	p.Set("profile_division", "")
+	p.Set("profile_department", "")
+	p.Set("profile_celebration", strings.Join(o.Celebrations, ","))
 	p.Set("custom_fields", "{}")
-	p.Set("hide_deactivated_users", "0")
+	hide := "0"
+	if hideDeactivated {
+		hide = "1"
+	}
+	p.Set("hide_deactivated_users", hide)
 	p.Set("request_context", requestContext(""))
 	p.Set("spell_correction", "FUZZY_MATCH")
+	sortBy := o.Sort
 	if sortBy == "" {
 		sortBy = "relevant"
 	}
 	sb, dir := SearchSortParams(sortBy)
 	p.Set("sort", sb)
 	p.Set("sort_dir", dir)
+	if at, ok := SearchAccountTypes[o.AccountType]; ok && o.AccountType != "all" {
+		p.Set("account_type", at)
+	}
 	return p
 }
 
@@ -515,21 +605,35 @@ func (a *App) SearchPeopleTab(ctx context.Context, query string, page int, s Sea
 
 // SearchPeopleTabSort is SearchPeopleTab with a Sort select value.
 func (a *App) SearchPeopleTabSort(ctx context.Context, query, sortBy string, page int, s SearchSession) (PeoplePage, error) {
-	p := peopleSearchParamsSort(query, sortBy, page, s)
+	return a.SearchPeopleTabOpts(ctx, PeopleTabOpts{Query: query, Sort: sortBy, Page: page, Session: s})
+}
+
+// SearchPeopleTabOpts is the People tab with its filters. The page's
+// Titles and Locations are the response's filter_suggestions, which
+// Slack keeps as searchSharedFacets (ujfX hydrateFacetSuggestions: the
+// locations by facet_count, most first) for the Title and Location pills.
+func (a *App) SearchPeopleTabOpts(ctx context.Context, o PeopleTabOpts) (PeoplePage, error) {
+	page := o.Page
+	p := peopleTabParams(o, a.PrefBool("search_hide_deactivated_users", false))
 	var raw json.RawMessage
 	if err := a.C.Call(ctx, "search.modules.people", p, &raw); err != nil {
 		return PeoplePage{}, err
 	}
 	var res struct {
-		Items      []slack.User     `json:"items"`
-		Pagination searchPagination `json:"pagination"`
+		Items       []slack.User     `json:"items"`
+		Pagination  searchPagination `json:"pagination"`
+		Suggestions struct {
+			Title    []facetRaw `json:"title"`
+			Location []facetRaw `json:"location"`
+		} `json:"filter_suggestions"`
 	}
 	if err := json.Unmarshal(stripHighlightJSON(raw), &res); err != nil {
 		return PeoplePage{}, err
 	}
 	a.S.PutUsers(res.Items)
 	out := PeoplePage{Users: make([]User, 0, len(res.Items)), Total: res.Pagination.Total, Page: res.Pagination.Page,
-		Pages: res.Pagination.PageCount}
+		Pages: res.Pagination.PageCount, Titles: facets(res.Suggestions.Title), Locations: facets(res.Suggestions.Location)}
+	sort.SliceStable(out.Locations, func(i, j int) bool { return out.Locations[i].Count > out.Locations[j].Count })
 	if out.Page == 0 {
 		out.Page = max(page, 1)
 	}

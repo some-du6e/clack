@@ -202,7 +202,6 @@ const (
 )
 
 var srTabNames = [...]string{"Messages", "DMs", "Files", "People", "Channels", "Canvases"}
-var srTabIcons = [...]string{"slack-logo", "dms", "files", "people", "hash", "canvas"}
 var srTabModules = [...]string{core.ModMessages, core.ModDMs, core.ModFiles, core.ModPeople, core.ModChannels, core.ModCanvases}
 
 // srTabOf maps a module name to its tab (-1 unknown).
@@ -243,6 +242,11 @@ const (
 	srPFileType
 	srPOnlyMine
 	srPCreator
+	srPAllChannels // the Channels and People tabs' (search_view_tabfilters.go)
+	srPChanType
+	srPWorkspace
+	srPTitle
+	srPLocation
 	srPMore
 	srPReset
 	srPN
@@ -314,6 +318,15 @@ type SearchView struct {
 
 	// wo is the work object sources and results (search_workobjects.go)
 	wo srWO
+
+	// the Channels and People tabs' filters (search_view_tabfilters.go):
+	// Channel type, Title, Location, More's Account type and Celebration,
+	// and the People response's facets (searchSharedFacets)
+	chanType               string
+	titles, locs           []string
+	acctType               string
+	celebs                 []string
+	facetTitles, facetLocs []core.Facet
 
 	// the source menu's per-tab totals for the query in countQ
 	counts  [srTabN]int
@@ -543,10 +556,8 @@ func (v *SearchView) search(page int) {
 			return
 		}
 		v.loading = true
-		sortBy := v.tabSort[srTabChannels]
-		run(v.h, func(ctx context.Context) (core.ChannelPage, error) {
-			return c.SearchChannelsTabSort(ctx, words, sortBy, page, sess)
-		},
+		o := core.ChannelTabOpts{Query: words, Sort: v.tabSort[srTabChannels], Page: page, Session: sess, ChannelType: v.chanType}
+		run(v.h, func(ctx context.Context) (core.ChannelPage, error) { return c.SearchChannelsTabOpts(ctx, o) },
 			func(cp core.ChannelPage, err error) {
 				if seq != v.seq {
 					return
@@ -565,10 +576,9 @@ func (v *SearchView) search(page int) {
 			return
 		}
 		v.loading = true
-		sortBy := v.tabSort[srTabPeople]
-		run(v.h, func(ctx context.Context) (core.PeoplePage, error) {
-			return c.SearchPeopleTabSort(ctx, words, sortBy, page, sess)
-		},
+		o := core.PeopleTabOpts{Query: words, Sort: v.tabSort[srTabPeople], Page: page, Session: sess,
+			Titles: slices.Clone(v.titles), Locations: slices.Clone(v.locs), AccountType: v.acctType, Celebrations: slices.Clone(v.celebs)}
+		run(v.h, func(ctx context.Context) (core.PeoplePage, error) { return c.SearchPeopleTabOpts(ctx, o) },
 			func(pp core.PeoplePage, err error) {
 				if seq != v.seq {
 					return
@@ -579,6 +589,8 @@ func (v *SearchView) search(page int) {
 					return
 				}
 				v.people, v.total, v.page, v.pages = pp.Users, pp.Total, max(pp.Page, 1), pp.Pages
+				// hydrateFacetSuggestions: the pills' suggestions merge in
+				v.facetTitles, v.facetLocs = srMergeFacets(v.facetTitles, pp.Titles), srMergeFacets(v.facetLocs, pp.Locations)
 				v.growRows(len(pp.Users))
 				done(pp.Total)
 			})
@@ -881,45 +893,6 @@ func DefaultSearchSort(c *core.App) string {
 		return "oldest"
 	}
 	return "score"
-}
-
-// moreActive reports filters that only the More menu sets (the pill
-// draws active).
-func (v *SearchView) moreActive() bool {
-	if v.exact {
-		return true
-	}
-	wk := srLast7(time.Now())
-	self := ""
-	if snap, ok := v.snapshot(); ok {
-		self = "<@" + snap.Self.ID + ">"
-	}
-	for _, m := range v.q.Mods {
-		switch m.Key {
-		case "from", "in":
-			if !strings.EqualFold(m.Val, "activity") {
-				continue
-			}
-		case "with":
-			if m.Val == self {
-				continue
-			}
-		case "has":
-			if strings.EqualFold(m.Val, "link") {
-				continue
-			}
-		case "is":
-			if strings.EqualFold(m.Val, "thread") {
-				continue
-			}
-		case "after":
-			if m.Val == wk {
-				continue
-			}
-		}
-		return true
-	}
-	return false
 }
 
 // refName renders a from:/in: value for a pill label.
