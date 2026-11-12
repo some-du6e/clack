@@ -464,8 +464,10 @@ func (a *App) Run() error {
 			if a.closeToTray() {
 				e.Abort()
 			}
+			a.drainIdle() // Gio folds a pending wake-up into any event (below)
 		case app.FileDropEvent: // files dragged from the OS (Gio patch 11, drop_overlay.go)
 			a.fileDrop(e)
+			a.drainIdle()
 		case app.ConfigEvent:
 			a.winMode = e.Config.Mode
 			if e.Config.Focused && !a.focused {
@@ -473,11 +475,15 @@ func (a *App) Run() error {
 				a.loginWindowFocused() // a sign-in link copied in the browser (login.go)
 			}
 			a.focused = e.Config.Focused
+			a.drainIdle()
 		default:
 			// Gio's wake-up after an Invalidate, which also comes while
 			// the window draws no frames (hidden to the notification
 			// area, minimized): run what was posted, so messages,
-			// notifications and their sounds keep coming (runfromtray.go)
+			// notifications and their sounds keep coming (runfromtray.go).
+			// Gio delivers no separate wake-up when another event is
+			// pending ("every event counts as a wakeup"), so the cases
+			// above drain too.
 			a.drainIdle()
 		case app.FrameEvent:
 			t0 := time.Now()

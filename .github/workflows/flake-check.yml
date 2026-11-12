@@ -55,6 +55,12 @@ name: flake-check
 #                                            freed the HWND; the test now
 #                                            waits for DestroyWindow to
 #                                            return (a WH_GETMESSAGE hook)
+#                                            and (a real bug) work posted
+#                                            by posted work while hidden:
+#                                            Gio dropped its Invalidate
+#                                            (window.go nextEvent), and the
+#                                            app drained only on a bare
+#                                            wake-up
 #   TestFakeScreenShare, TestFakeCamera      the only keyframe lost (written
 #     (huddle)                               before pion's SRTP was up) and
 #                                            the fake asked for one only
@@ -114,6 +120,7 @@ on:
       - "internal/fakeslack/faults.go"
       - "third_party/gioui.org/app/clack_drop_windows_test.go"
       - "internal/ui/runfromtray_windows_test.go"
+      - "third_party/gioui.org/app/window.go"
       - "internal/huddle/fake_video.go"
       - "internal/huddle/share_test.go"
       - "internal/ui/views/details_w14_test.go"
