@@ -774,7 +774,7 @@ func (a *App) prefetch(ctx context.Context) {
 		go func(id string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			_ = a.loadLatest(ctx, id)
+			_ = a.loadLatestIfMissing(ctx, id)
 		}(c.id)
 	}
 	wg.Wait()
@@ -783,21 +783,37 @@ func (a *App) prefetch(ctx context.Context) {
 	}
 }
 
+// loadLatest fetches the newest page of ch, replacing the cached one.
 func (a *App) loadLatest(ctx context.Context, ch string) error {
+	return a.once("h:"+ch, func() error { return a.fetchLatest(ctx, ch) })
+}
+
+// loadLatestIfMissing is loadLatest for a timeline nothing loaded yet. The
+// check runs inside the once: a prefetch queued behind the others must not
+// refetch a channel History loaded meanwhile, since its page (read from
+// Slack before a send's echo, say) would replace the newer cached one.
+func (a *App) loadLatestIfMissing(ctx context.Context, ch string) error {
 	return a.once("h:"+ch, func() error {
-		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
-		if err != nil {
-			return err
+		if a.S.Timeline(ch) != nil {
+			return nil
 		}
-		a.EnsureUsers(ctx, referencedUsers(p.Messages))
-		a.S.SetLatest(ch, p.Messages, p.HasMore)
-		for i := range p.Messages {
-			if needsFileInfo(&p.Messages[i]) {
-				go a.fillFiles(ch, p.Messages[i].TS)
-			}
-		}
-		return nil
+		return a.fetchLatest(ctx, ch)
 	})
+}
+
+func (a *App) fetchLatest(ctx context.Context, ch string) error {
+	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
+	if err != nil {
+		return err
+	}
+	a.EnsureUsers(ctx, referencedUsers(p.Messages))
+	a.S.SetLatest(ch, p.Messages, p.HasMore)
+	for i := range p.Messages {
+		if needsFileInfo(&p.Messages[i]) {
+			go a.fillFiles(ch, p.Messages[i].TS)
+		}
+	}
+	return nil
 }
 
 // ---- counts ----

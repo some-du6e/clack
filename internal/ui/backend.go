@@ -38,6 +38,9 @@ type backend struct {
 	domain string
 	teamID string
 	ext    map[string]*convInfo // ResolveConv results for convs outside the sidebar
+	// extGen counts forgetExt calls per conversation: a resolve that
+	// started before one is stale and must not land (resolved).
+	extGen map[string]int
 
 	// unsent drafts (drafts.list, refreshed on "draft" events), UI goroutine
 	// only: Slack's "✎ N" on Drafts & sent and the pencil on channel rows.
@@ -578,6 +581,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 			changed = true
 		}
 	case "conv", "conv_removed", "sidebar_changed", "resync", "team": // "prefs" is handled above (it resnapshots too)
+		if ev.Type == "conv_removed" && ev.Channel != "" {
+			b.forgetExt(ev.Channel) // left: a preview again, not the member it resolved as
+		}
 		b.resnapshot(a)
 	case "auth_failed":
 		// core stopped all traffic on a dead session: back to sign-in
@@ -588,7 +594,7 @@ func (b *backend) handle(a *App, ev core.Event) {
 		b.resnapshot(a)
 		a.refreshVisible()
 		for id := range b.ext {
-			delete(b.ext, id) // re-resolve closed-DM headers
+			b.forgetExt(id) // re-resolve closed-DM headers
 		}
 	case "tabs":
 		delete(b.fetched, ev.Channel)
@@ -910,6 +916,7 @@ func (b *backend) resolved(ch string) *convInfo {
 		b.ext = map[string]*convInfo{}
 	}
 	b.ext[ch] = nil // in flight
+	gen := b.extGen[ch]
 	a := b.app
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
@@ -929,12 +936,28 @@ func (b *backend) resolved(ch string) *convInfo {
 			ci.Self = c.User == b.selfID
 		}
 		a.Post(func() {
+			if b.extGen[ch] != gen { // forgotten meanwhile (joined, left): its answer is stale
+				return
+			}
 			b.applySide(ci, true) // opened()'s facepile, if it came first
 			b.ext[ch] = ci
 			a.Invalidate()
 		})
 	}()
 	return nil
+}
+
+// forgetExt drops ch's resolved header info (and any resolve in flight),
+// so the next resolved call asks core again. Membership changes need it:
+// the copy resolved while the viewer was in the channel says it isn't a
+// preview, and once they leave it is the only conversation info left.
+// UI goroutine only.
+func (b *backend) forgetExt(ch string) {
+	delete(b.ext, ch)
+	if b.extGen == nil {
+		b.extGen = map[string]int{}
+	}
+	b.extGen[ch]++
 }
 
 func tabIcon(typ string) string {
