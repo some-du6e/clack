@@ -596,6 +596,16 @@ func DayDivider(loc string, t, now time.Time, lower bool) string {
 	return strings.NewReplacer("%1", day, "%2", CalendarDate(loc, t, CalendarOpts{ExcludeYear: true})).Replace(d.vqFormat)
 }
 
+// LongDate is formatDate's {date_long}: Sq's "%1, %2" of the weekday and
+// the month and day, with the year outside ±182 days ("Monday, November
+// 3rd"; "Monday, November 3rd, 2025").
+func LongDate(loc string, t, now time.Time) string {
+	d := localeData(loc)
+	excl := math.Abs(now.Sub(t).Minutes()) < 262080
+	return strings.NewReplacer("%1", Weekday(loc, t, d.sqShortenDay), "%2",
+		CalendarDate(loc, t, CalendarOpts{ExcludeYear: excl})).Replace(d.sqFormat)
+}
+
 // LongDatePretty is formatDate's {date_long_pretty}: "Today",
 // "Yesterday", else Sq's "%1, %2" of the weekday and the month and day
 // (with the year outside ±182 days).
