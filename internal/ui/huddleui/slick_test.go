@@ -35,14 +35,15 @@ import (
 const hcChannel = "C0TEST" // the fake meeting's channel
 
 type hcHost struct {
-	app *core.App
-	th  *theme.Theme
-	tt  *taut.Taut
+	app  *core.App
+	th   *theme.Theme
+	tt   *taut.Taut
+	imgs *imgcache.Cache // nil: no pictures
 }
 
 func (h *hcHost) Core() *core.App           { return h.app }
 func (h *hcHost) Theme() *theme.Theme       { return h.th }
-func (h *hcHost) Images() *imgcache.Cache   { return nil }
+func (h *hcHost) Images() *imgcache.Cache   { return h.imgs }
 func (h *hcHost) Invalidate()               {}
 func (h *hcHost) Navigate(string)           {}
 func (h *hcHost) OpenThread(string, string) {}

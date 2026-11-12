@@ -53,7 +53,7 @@ jobs:
           cache: true
       - name: gio deps
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: updater tests
         run: go test -count=1 -v -run 'Install|Asset|Release|Download|Sums|Prepare|Apply|WaitPID|Newer|UpdateCLI' ./internal/desktop
       - name: update checks in the UI (schedule, Check now, menus)
@@ -73,7 +73,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
       - name: Updates screenshots
         env:
           UPDATE_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -165,6 +165,14 @@ jobs:
           $v = (& $exe -version | Out-String).Trim(); Write-Host "installed: $v"
           if (-not $v.Contains('v0.0.1')) { throw "want v0.0.1, got $v" }
           if (-not (Test-Path "$app\unins000.exe")) { throw "no unins000.exe: DetectInstall would call this portable" }
+          # slack://: the installer always registers Clack (what Windows' "Select
+          # an app" box lists); the legacy default only with its box, unticked here
+          $cmd = (Get-ItemProperty 'HKCU:\Software\Classes\Clack.slack\shell\open\command').'(default)'
+          if ($cmd -ne "`"$exe`" `"%1`"") { throw "Clack.slack command: $cmd" }
+          if ((Get-ItemProperty 'HKCU:\Software\Clack\Capabilities').ApplicationName -ne 'Clack') { throw 'Capabilities ApplicationName' }
+          if ((Get-ItemProperty 'HKCU:\Software\Clack\Capabilities\URLAssociations').slack -ne 'Clack.slack') { throw 'URLAssociations\slack' }
+          if ((Get-ItemProperty 'HKCU:\Software\RegisteredApplications').Clack -ne 'Software\Clack\Capabilities') { throw 'RegisteredApplications\Clack' }
+          if (Test-Path 'HKCU:\Software\Classes\slack\shell\open\command') { throw 'the unticked box took the legacy slack key' }
           # what StartHelper does: a temp copy of the running exe with a plan
           $h = Join-Path $env:RUNNER_TEMP 'clack-update-helper-ci'
           New-Item -ItemType Directory -Force $h | Out-Null
@@ -181,7 +189,16 @@ jobs:
           if (-not (Select-String -Path "$h\update.log" -Pattern 'installed v0.0.2' -Quiet)) { throw "update.log" }
           $u = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{71A683CE-53A9-4BFE-877D-F9A6A1CA70FA}_is1'
           if ($u.DisplayVersion -ne '0.0.2') { throw "DisplayVersion is '$($u.DisplayVersion)'" }
+          # another app's slack:// registration, which the uninstaller must leave
+          New-Item -Path 'HKCU:\Software\Classes\slack\shell\open\command' -Force | Out-Null
+          Set-ItemProperty -Path 'HKCU:\Software\Classes\slack\shell\open\command' -Name '(default)' -Value '"C:\Other\slack.exe" "%1"'
           Start-Process -Wait -FilePath "$app\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          # the uninstaller finishes from a temp copy of itself: wait for its keys to go
+          for ($i = 0; $i -lt 120 -and (Test-Path 'HKCU:\Software\Classes\Clack.slack'); $i++) { Start-Sleep -Milliseconds 500 }
+          foreach ($k in 'HKCU:\Software\Classes\Clack.slack', 'HKCU:\Software\Clack\Capabilities') { if (Test-Path $k) { throw "uninstall left $k" } }
+          if ((Get-ItemProperty 'HKCU:\Software\RegisteredApplications' -ErrorAction SilentlyContinue).Clack) { throw 'uninstall left RegisteredApplications\Clack' }
+          if ((Get-ItemProperty 'HKCU:\Software\Classes\slack\shell\open\command').'(default)' -ne '"C:\Other\slack.exe" "%1"') { throw "uninstall changed another app's slack key" }
+          Remove-Item -Path 'HKCU:\Software\Classes\slack' -Recurse -Force
       - name: portable swap through the update helper
         run: |
           $ErrorActionPreference = 'Stop'

@@ -43,6 +43,9 @@ type Editor struct {
 	// LineHeightScale is multiplied by LineHeight to determine the final gap
 	// between baselines. If zero, a sensible default will be used.
 	LineHeightScale float32
+	// TabStop, when positive, sets tab stops every TabStop space widths
+	// (text.Parameters' TabStop, Clack patch 7).
+	TabStop int
 	// SingleLine force the text to stay on a single line.
 	// SingleLine also sets the scrolling direction to
 	// horizontal.
@@ -664,6 +667,7 @@ func (e *Editor) initBuffer() {
 	e.text.Mask = e.Mask
 	e.text.WrapPolicy = e.WrapPolicy
 	e.text.DisableSpaceTrim = true
+	e.text.TabStop = e.TabStop
 }
 
 // Update the state of the editor in response to input events. Update consumes editor

@@ -40,6 +40,7 @@ const (
 type fakeCaller struct {
 	signal string
 	log    *callLog
+	bg     *atomic.Value // string: the room's background_id (SetBackground)
 }
 
 // FakeCall is one Slack Web API call the fake answered (or refused).
@@ -104,6 +105,9 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 		}
 		return json.Unmarshal([]byte(`{"ok":true}`), out)
 	}
+	if method == "huddles.listBackgrounds" { // the huddle themes (HuddleBackground)
+		return json.Unmarshal(fakeBackgrounds, out)
+	}
 	if method != "rooms.join" {
 		return errors.New("fake slack: " + method)
 	}
@@ -114,6 +118,11 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 			"attendee": map[string]any{"AttendeeId": fakeSelfAtt, "ExternalUserId": "E1-R0FAKEROOM-" + fakeSelf, "JoinToken": fakeToken},
 		}},
 		"huddle": map[string]any{"id": "R0FAKEROOM", "participants": []string{fakeSelf, fakeRemote}, "thread_root_ts": "1700000000.000100", "date_start": time.Now().Unix()},
+	}
+	if f.bg != nil {
+		if bg, _ := f.bg.Load().(string); bg != "" {
+			res["huddle"].(map[string]any)["background_id"] = bg
+		}
 	}
 	if strings.HasPrefix(p.Get("channel_id"), "D") {
 		// a new DM huddle: only you so far (the server rings the other
@@ -140,8 +149,11 @@ type fakeChime struct {
 	audioIn  atomic.Int64
 	peak     atomic.Int64 // level * 1000
 	reacji   atomic.Value // string
+	peerMu   sync.Mutex
+	peerSeen []PeerMessage // your data-channel peer messages
 	sending  atomic.Bool
 	cam      fakeCamIn
+	content  fakeContentIn // your screen share's "#content" attendee (fake_content.go)
 	aware    fakeAware
 	solo     atomic.Bool // SoloRoom: nobody else in the meeting
 }
@@ -190,7 +202,12 @@ func (f *fakeChime) send(ctx context.Context, c *websocket.Conn, typ int, body f
 }
 
 func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Header.Get("Sec-WebSocket-Protocol"), fakeToken) {
+	proto := r.Header.Get("Sec-WebSocket-Protocol")
+	if strings.Contains(proto, fakeToken+"#content") { // a screen share's content attendee
+		f.serveContent(w, r, fakeToken+"#content")
+		return
+	}
+	if strings.Contains(proto, fakeToken) {
 		f.gotToken.Store(true)
 	}
 	c, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{"_aws_wt_session"}, OriginPatterns: []string{"app.slack.com"}})
@@ -274,7 +291,13 @@ func (f *fakeChime) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		case ftDataMessage:
 			for _, m := range fr.Data {
-				if pm, err := DecodePeerMessage(m.Data); err == nil && pm.Reacji != nil && m.Topic == TopicData {
+				pm, err := DecodePeerMessage(m.Data)
+				if err == nil && m.Topic == TopicData {
+					f.peerMu.Lock()
+					f.peerSeen = append(f.peerSeen, *pm)
+					f.peerMu.Unlock()
+				}
+				if err == nil && pm.Reacji != nil && m.Topic == TopicData {
 					f.reacji.Store(pm.Reacji.Emoji + "/" + pm.FromPeerIDString)
 				} else if err == nil && m.Topic == TopicAwareness {
 					f.onAwareness(pm)
@@ -308,6 +331,14 @@ func (f *fakeChime) chatter(ctx context.Context, send func(int, func(*pbw))) {
 				w.str(4, "E1-R0FAKEROOM-"+fakeRemote)
 				w.boolean(3, false)
 			})
+			if len(f.clip) > 0 { // their screen share's content attendee, as Chime lists it
+				w.msg(1, func(w *pbw) {
+					w.uint(1, 4)
+					w.str(2, fakeRemoteAtt+"#content")
+					w.str(4, "E1-R0FAKEROOM-"+fakeRemote)
+					w.boolean(3, false)
+				})
+			}
 		})
 	})
 	if solo { // nobody to hear, react or caption
@@ -384,7 +415,7 @@ func (f *fakeChime) index(w *pbw, mine []streamDesc) {
 				w.uint(12, 180)
 			})
 		}
-		for _, v := range mine {
+		for _, v := range append(append([]streamDesc(nil), mine...), f.contentStreams()...) {
 			w.msg(2, func(w *pbw) {
 				w.uint(1, uint64(v.StreamID))
 				w.uint(2, uint64(v.Framerate))
@@ -725,7 +756,32 @@ type Fake struct {
 	f   *fakeChime
 	srv *httptest.Server
 	log callLog
+	bg  atomic.Value // string
 }
+
+// SetBackground gives the fake room a huddle theme (its background_id,
+// one of FakeBackgrounds' ids) from the next rooms.join on.
+func (x *Fake) SetBackground(id string) { x.bg.Store(id) }
+
+// FakeBackgroundUpdate is the sh_room_update Slack sends when someone in
+// the fake room picks theme id ("" takes it off).
+func FakeBackgroundUpdate(channel, id string) json.RawMessage {
+	room := map[string]any{"id": FakeRoomID, "channels": []string{channel}, "thread_root_ts": "1700000000.000100"}
+	if id != "" {
+		room["background_id"] = id
+	}
+	b, _ := json.Marshal(map[string]any{"type": "sh_room_update", "room": room})
+	return b
+}
+
+// fakeBackgrounds is huddles.listBackgrounds as Slack answers it (the
+// enterprise host, 2026-11-11; Slack's public CDN pictures).
+var fakeBackgrounds = []byte(`{"ok":true,"backgrounds":[` +
+	`{"id":"STAR_GAZING","category_id":"featured","category_name":"Featured","category_order":1,"name":"Stargazing","artist":"Art by Lisk Feng","url":"https://a.slack-edge.com/f06881b/img/huddles/LiskFeng-Star_Gazing.jpg","preview_url":"https://a.slack-edge.com/f06881b/img/huddles/LiskFeng-Star_Gazing-preview.jpg"},` +
+	`{"id":"ARIZONA","category_id":"featured","category_name":"Featured","category_order":1,"name":"Arizona","artist":"Art by Haley Tippmann","url":"https://a.slack-edge.com/f06881b/img/huddles/HaleyTippmann-Arizona.jpg","preview_url":"https://a.slack-edge.com/f06881b/img/huddles/HaleyTippmann-Arizona-preview.jpg"},` +
+	`{"id":"GRADIENT_03","category_id":"colors","category_name":"Colors","category_order":2,"name":"Midnight","artist":null,"url":"https://a.slack-edge.com/feac618/img/huddles/midnight_fizz.jpg","preview_url":"https://a.slack-edge.com/feac618/img/huddles/midnight_fizz-preview.jpg"},` +
+	`{"id":"LANDSCAPE_01","category_id":"landscapes","category_name":"Landscapes","category_order":3,"name":"Dunes","artist":null,"url":"https://a.slack-edge.com/27f87ff/img/huddles/landscape_01.jpg","preview_url":"https://a.slack-edge.com/27f87ff/img/huddles/landscape_01-preview.jpg"}` +
+	`]}`)
 
 // FakeRoomID is the fake huddle's room (call) id.
 const FakeRoomID = "R0FAKEROOM"
@@ -757,10 +813,10 @@ func NewFake(clip []byte, errf func(string, ...any)) *Fake {
 	f := &fakeChime{errf: errf, clip: splitAU(clip)}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	// ICE on loopback for the client side too
-	testSettings = func(se *webrtc.SettingEngine) {
+	setTestSettings(func(se *webrtc.SettingEngine) {
 		se.SetIncludeLoopbackCandidate(true)
 		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-	}
+	})
 	return &Fake{f: f, srv: srv}
 }
 
@@ -770,7 +826,7 @@ func (x *Fake) SoloRoom() { x.f.solo.Store(true) }
 
 // Caller answers rooms.join with the fake meeting.
 func (x *Fake) Caller() Caller {
-	return fakeCaller{signal: "ws" + strings.TrimPrefix(x.srv.URL, "http") + "/control/m-1", log: &x.log}
+	return fakeCaller{signal: "ws" + strings.TrimPrefix(x.srv.URL, "http") + "/control/m-1", log: &x.log, bg: &x.bg}
 }
 
 // Close stops the fake.
@@ -782,7 +838,12 @@ func (x *Fake) Close() {
 		_ = x.f.pc.Close()
 	}
 	x.f.mu.Unlock()
-	testSettings = nil
+	x.f.content.mu.Lock()
+	if x.f.content.pc != nil {
+		_ = x.f.content.pc.Close()
+	}
+	x.f.content.mu.Unlock()
+	setTestSettings(nil)
 }
 
 func (f *fakeChime) onAwareness(pm *PeerMessage) {
@@ -851,6 +912,13 @@ func (x *Fake) RemoteSticker(emoji string) error {
 	x.f.aware.sticker = emoji
 	x.f.aware.mu.Unlock()
 	return x.f.remoteAwareness(&PeerMessage{AwarenessBroadcast: x.f.remoteState()})
+}
+
+// PeerMessages is every data-channel peer message you sent, in order.
+func (x *Fake) PeerMessages() []PeerMessage {
+	x.f.peerMu.Lock()
+	defer x.f.peerMu.Unlock()
+	return append([]PeerMessage(nil), x.f.peerSeen...)
 }
 
 // lastSub is the last SUBSCRIBE the fake got.

@@ -707,6 +707,9 @@ func (l *lay) fixedMedia(a *richtext.Attachment, k attKind, x, y, w int, cardT i
 	if k == akVideo || k == akFlickr {
 		l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, y-l.dp(1), x+w, y), fill: p.Divider, target: -1, layer: 1})
 	}
+	// everything from here is AttachmentMedia's (the right box's hairline
+	// above isn't): compBlock makes it its own component
+	defer l.noteMedia(r, radii, len(l.d.frags), len(l.d.boxes), len(l.d.imgs))
 	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, fill: rgb(255, 255, 255), target: -1, perCorner: true, corners: radii})
 	s := r.Dy() * 60 / 200
 	c := r.Min.Add(r.Max).Div(2)

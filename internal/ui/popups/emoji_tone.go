@@ -199,7 +199,7 @@ func (p *EmojiPicker) layoutTone(gtx layout.Context, th *theme.Theme, cl *Colors
 	// .p-emoji_picker_skintone (padding 3px; bottom 14.5px, right 16px) >
 	// toggle_btn (1px clear border, padding 2px 3px): the 22px hand, then
 	// the label (14.4/700, margin 0 3px) while no tone is set
-	const label = "Skin Tone"
+	label := nsEmojiPicker.T("Skin Tone")
 	bh, ig, in, gap := dp(gtx, 28), dp(gtx, 22), dp(gtx, 4), dp(gtx, 3)
 	bw := in + ig + in
 	lw := 0
@@ -226,7 +226,7 @@ func (p *EmojiPicker) layoutTone(gtx layout.Context, th *theme.Theme, cl *Colors
 			return layout.Dimensions{Size: image.Pt(bw, bh)}
 		})
 		if p.toneImproved() {
-			Tooltip(gtx, th, &p.toneUI.tip, p.toneBtn.Hovered() && !p.toneUI.open, d.Size, Above, "Select default skin tone", "")
+			Tooltip(gtx, th, &p.toneUI.tip, p.toneBtn.Hovered() && !p.toneUI.open, d.Size, Above, nsEmojiPicker.T("Select default skin tone"), "")
 		}
 		return d
 	})
@@ -267,7 +267,7 @@ func (p *EmojiPicker) layoutTonePopover(gtx layout.Context, th *theme.Theme, cl 
 	pad := image.Pt(dp(gtx, 8), dp(gtx, 4))
 	cw, ch, cgap := dp(gtx, 22), dp(gtx, 22), 0
 	labelH := 0
-	const lbl = "Choose your default skin tone"
+	lbl := nsEmojiPicker.T("Choose your default skin tone")
 	if improved {
 		pad = image.Pt(dp(gtx, 4), dp(gtx, 4))
 		cw, ch, cgap = dp(gtx, 36), dp(gtx, 32), dp(gtx, 1)

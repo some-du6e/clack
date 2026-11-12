@@ -22,6 +22,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
@@ -68,6 +69,12 @@ type row struct {
 	rv      *richview.View
 	handler richHandler
 	drawn   time.Time // last frame the row was laid out (sweepRows)
+
+	// find in thread (thread_find.go): the query the body marks
+	// (findInThreadHighlightWords) and whether the row is the current
+	// result (c-message_kit__blocks--focused-result)
+	find        string
+	findFocused bool
 
 	// a huddle message's room, status and activity (huddle_msg.go),
 	// read once per message revision and users generation; hmName: the
@@ -211,6 +218,9 @@ type rowCtx struct {
 	onRetry   func(r *row)
 	onDiscard func(r *row)
 	highlight float32 // 0..1 flash for jump targets
+	// findFlash is find in thread's flash on its result (0..1 of
+	// --dt_color-base-hgl-3: p-threads_flexpane__find_flash)
+	findFlash float32
 	onReact   func(r *row, name string, add bool)
 	// activeThread: the row is the root of the thread open in the side pane
 	// (thread_root_selected_state, active_thread.go)
@@ -271,10 +281,14 @@ func (r *row) set(e *entry) {
 // setDoc shows r.m's body (after set or a msg override).
 func (r *row) setDoc() {
 	opts := r.rvOpts()
+	doc := r.m.Doc
+	if r.find != "" {
+		doc = richtext.FindHighlighted(doc, []string{r.find})
+	}
 	if r.rv == nil {
-		r.rv = richview.New(r.m.Doc, opts)
+		r.rv = richview.New(doc, opts)
 	} else {
-		r.rv.Set(r.m.Doc, opts)
+		r.rv.Set(doc, opts)
 	}
 	r.uRev = 0
 	r.blocksOv, r.tailOv = 0, [2]uintptr{}
@@ -286,7 +300,8 @@ func (r *row) setDoc() {
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
-	o := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own}
+	o := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
+		FindFocused: r.findFocused}
 	if r.m.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 	}
@@ -884,6 +899,11 @@ func (r *row) paintBackground(gtx layout.Context, content op.CallOp, size image.
 	if hl := r.rc.highlight; hl > 0 {
 		c := r.rc.c.Highlight
 		c.A = uint8(float32(c.A) * hl)
+		fill(gtx.Ops, image.Rectangle{Max: size}, c)
+	}
+	if fl := r.rc.findFlash; fl > 0 {
+		c := r.rc.c.ActiveThread
+		c.A = uint8(float32(c.A) * fl)
 		fill(gtx.Ops, image.Rectangle{Max: size}, c)
 	}
 	content.Add(gtx.Ops)
@@ -1857,29 +1877,40 @@ func (r *row) broadcastLine(gtx layout.Context, rc *rowCtx, x, y int) int {
 	if ps.Hidden() {
 		return 0
 	}
-	link := func(x int, txt string, maxW int) {
+	link := func(x int, txt string, maxW int) int {
 		ls := preambleLinkClass.Enter(gtx, btnState(gtx, &r.broadcastBtn), 0)
 		defer ls.Leave()
-		at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
+		return at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints.Max.X = max(maxW, 0)
 			return r.broadcastBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 				return styledLabel(gtx, rc.th, ls, textStyle{size: 15, weight: theme.Bold, col: c.Link, lineH: 22, maxLines: 1}, txt)
 			})
-		})
+		}).Size.X
 	}
 	right := gtx.Constraints.Max.X
 	if prev := r.rootPreview(rc); prev != "" {
+		// `${getThreadPreambleMetaText()}:` (G7JM, the threads I18n)
 		pd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
-			return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to a thread:")
+			return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, threadsNS.T("replied to a thread")+":")
 		})
 		lx := x + pd.Size.X + dp(gtx, 4)
 		link(lx, prev, right-lx-dp(gtx, 4))
 		return h
 	}
-	pd := at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
-		return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, "replied to ")
-	})
-	link(x+pd.Size.X, "a thread", right-x-pd.Size.X)
+	// rt("replied to <a>a thread</a>"): the <a> is the link, wherever the
+	// locale puts it (ja-JP leads with it)
+	lx := x
+	for _, p := range threadsNS.RT("replied to <a>a thread</a>") {
+		if p.Tag == "a" {
+			lx += link(lx, p.Text, right-lx)
+			continue
+		}
+		txt := p.Text
+		pd := at(gtx, lx, y, func(gtx layout.Context) layout.Dimensions {
+			return styledLabel(gtx, rc.th, ps, textStyle{size: 15, col: c.Text2, lineH: 22}, txt)
+		})
+		lx += pd.Size.X
+	}
 	return h
 }
 
@@ -2734,27 +2765,33 @@ func (r *row) threadBar(gtx layout.Context, rc *rowCtx, x, y, w, count int, user
 	return bh - dp(gtx, 4)
 }
 
-// reactionTip is the tooltip text for a reaction pill.
 // reactionTip is the reaction tooltip's text, Slack's getTip (boot-shared
-// Qvn6): every reactor by name, the viewer as "You" first or "you" after,
-// joined like listify ("A and B", "A, B, and C"), and "others" at the end
-// once the count passes 50 (the API stops listing reactors); then
-// "reacted with :name:", which the tooltip sets in the regular-weight
-// subtitle (reactionTipSubtitle). The viewer alone reads "You (click to
-// remove)" (showClickToRemove).
+// Qvn6, the reactions I18n): every reactor by name, the viewer as "You"
+// first or "you" after (TooltipMemberName, channel_token), joined by
+// listify ("A and B", "A, B, and C"; ja-JP "A、 B"), and "others" at the
+// end once the count passes 50 (the API stops listing reactors); then
+// "reacted with :name:" in the tooltip's regular-weight subtitle. Each is
+// one of Slack's rich strings ("{users} <span className=
+// "c-tooltip__subtitle">reacted with {emoji}</span>"), so the subtitle's
+// words and their order are the locale's: ja-JP puts the name first and
+// "さんが :tada: でリアクションしました" after it. The viewer alone reads
+// "You (click to remove)" (showClickToRemove). The runs are marked with
+// tipSubOn/tipSubOff (i18n.go).
 func reactionTip(h Host, re *core.Reaction, selfID string) string {
-	sub := reactionTipSubtitle + " :" + re.Name + ":"
+	emoji := ":" + re.Name + ":"
 	if len(re.Users) == 1 && re.Users[0] == selfID {
-		lastTip.txt, lastTip.count = "You (click to remove) "+sub, re.Count
+		lastTip.txt, lastTip.count = reactionTipRuns(tipYouRemove, "emoji", emoji), re.Count
 		return lastTip.txt
 	}
 	names := make([]string, 0, len(re.Users)+1)
+	self := false
 	for i, id := range re.Users {
 		if id == selfID {
+			self = true
 			if i == 0 {
-				names = append(names, "You")
+				names = append(names, tokenNS.T("You"))
 			} else {
-				names = append(names, "you")
+				names = append(names, tokenNS.T("you"))
 			}
 			continue
 		}
@@ -2769,32 +2806,36 @@ func reactionTip(h Host, re *core.Reaction, selfID string) string {
 		names = append(names, n)
 	}
 	if len(names) > 1 && re.Count > 50 {
-		names = append(names, "others")
+		names = append(names, reactionsNS.T("others"))
 	}
-	txt := sub
-	if len(names) > 0 {
-		txt = listify(names) + " " + sub
+	var txt string
+	switch {
+	case len(names) == 1 && !self:
+		txt = reactionTipRuns(tipUser, "user", names[0], "emoji", emoji)
+	case self:
+		txt = reactionTipRuns(tipUsersAndYou, "users_and_you", listify(names), "emoji", emoji)
+	default:
+		txt = reactionTipRuns(tipUsers, "users", listify(names), "emoji", emoji)
 	}
 	lastTip.txt, lastTip.count = txt, re.Count
 	return txt
 }
 
-// reactionTipSubtitle starts the tooltip's TooltipSubtitle run.
+// getTip's strings (the reactions I18n), as the pinned bundles key them.
+const (
+	tipYouRemove   = `You (click to remove) <span className="c-tooltip__subtitle">reacted with {emoji}</span>`
+	tipUser        = `{user} <span className="c-tooltip__subtitle">reacted with {emoji}</span>`
+	tipUsersAndYou = `{users_and_you} <span className="c-tooltip__subtitle">reacted with {emoji}</span>`
+	tipUsers       = `{users} <span className="c-tooltip__subtitle">reacted with {emoji}</span>`
+)
+
+// reactionTipSubtitle starts an unmarked tooltip's subtitle run (a plain
+// text tooltip: tests, plugins).
 const reactionTipSubtitle = "reacted with"
 
-// listify joins names as Slack's listify does in en-US: "A", "A and B",
-// "A, B, and C" (the serial comma from three on).
-func listify(names []string) string {
-	switch len(names) {
-	case 0:
-		return ""
-	case 1:
-		return names[0]
-	case 2:
-		return names[0] + " and " + names[1]
-	}
-	return strings.Join(names[:len(names)-1], ", ") + ", and " + names[len(names)-1]
-}
+// listify joins names as Slack's listify does in the locale: "A", "A and
+// B", "A, B, and C" in en-US (the serial comma from three on).
+func listify(names []string) string { return i18n.Listify(names, false) }
 
 // reactionAria is the pill's aria-label (Reaction 9FoR): "{count}
 // reaction(s), react with {name} emoji", the name's _ and - read as spaces.

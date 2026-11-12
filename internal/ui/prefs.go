@@ -52,7 +52,8 @@ type prefs struct {
 	// seconds.
 	UpdateFound string `json:"update_found,omitempty"`
 	// Realtime is the live-updates choice (Slack's websocket): nil until
-	// the user answers the first-run banner, which means off (realtime.go).
+	// the user switches it in Preferences > Clack, which means on
+	// (realtime.go).
 	Realtime *bool `json:"realtime,omitempty"`
 	// ThemeSync is Appearance's "Sync with OS setting" (Slack keeps it in
 	// localStorage, per device). nil: on while Dark was never chosen.
@@ -119,6 +120,10 @@ type prefs struct {
 	// (or was skipped there), so later launches go straight to sign-in.
 	// Preferences > Clack > Replay introduction plays it again.
 	IntroSeen bool `json:"intro_seen,omitempty"`
+	// OpenFiles is the Files sidebar's Recently viewed by team: Slack's
+	// filesOpenInSessionStore in local storage (file ids only;
+	// files_open.go).
+	OpenFiles map[string]openFilesPrefs `json:"open_files,omitempty"`
 }
 
 func (a *App) prefsPath() string {

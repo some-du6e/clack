@@ -131,7 +131,7 @@ func (w *window) layoutPopout(gtx C, s *huddle.Session, st huddle.State) {
 	}
 	if share == nil { // the share stopped: screenshare_popout_auto_close
 		w.c.closePopout(w.popout)
-		centerLabel(gtx, w.th, sz, 15, theme.Regular, hudWhite, "No one is sharing their screen")
+		centerLabel(gtx, w.th, sz, 15, theme.Regular, hudWhite, nsHuddles.T("No one is sharing their screen"))
 		return
 	}
 	if w.click("pop-full").Clicked(gtx) {
@@ -167,7 +167,7 @@ func (w *window) layoutPopout(gtx C, s *huddle.Session, st huddle.State) {
 	ns := labelSize(gtx, w.th, 15, theme.Bold, name)
 	ty := (topH - ns.Y) / 2
 	at(gtx, image.Pt(pad+av+gtx.Dp(8), ty), ns, func(gtx C) D { return w.th.Label(gtx, 15, theme.Bold, hudWhite, name) })
-	sub := "Screen share"
+	sub := nsHuddles.T("Screen share")
 	ss := labelSize(gtx, w.th, 13, theme.Regular, sub)
 	sx := pad + av + gtx.Dp(8) + ns.X + gtx.Dp(8)
 	at(gtx, image.Pt(sx, (topH-ss.Y)/2), ss, func(gtx C) D {
@@ -175,14 +175,14 @@ func (w *window) layoutPopout(gtx C, s *huddle.Session, st huddle.State) {
 	})
 	bs := gtx.Dp(36)
 	full := "window-expand"
-	fullTip := "Go full screen"
+	fullTip := nsHuddles.T("Go full screen")
 	if w.full {
-		full, fullTip = "window-expand-filled", "Exit full screen"
+		full, fullTip = "window-expand-filled", nsHuddles.T("Exit full screen")
 	}
 	btns := []struct{ id, icon, tip string }{
 		{"pop-full", full, fullTip},
-		{"pop-back", "move-to-main-window", "Pop back into huddle window"},
-		{"pop-close", "close", "Close screen share window"},
+		{"pop-back", "move-to-main-window", nsHuddles.T("Pop back into huddle window")},
+		{"pop-close", "close", nsHuddles.T("Close screen share window")},
 	}
 	x := sz.X - pad - len(btns)*(bs+gtx.Dp(4))
 	tip, tipAt := "", image.Rectangle{}
@@ -232,7 +232,7 @@ func (w *window) popoutButton(gtx C, share *huddle.Video, sr image.Rectangle) {
 	bs := gtx.Dp(36)
 	p := image.Pt(sr.Max.X-bs-gtx.Dp(8), sr.Min.Y+gtx.Dp(8))
 	if cl.Hovered() {
-		tip := "Open in new window"
+		tip := nsHuddles.T("Open in new window")
 		ts := labelSize(gtx, w.th, 12, theme.Bold, tip)
 		tp := gtx.Dp(8)
 		r := image.Rect(0, 0, ts.X+2*tp, ts.Y+tp)

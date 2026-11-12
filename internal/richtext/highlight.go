@@ -228,7 +228,61 @@ func highlightBlock(b *Block, ws [][]rune) {
 // highlightSpans is processChunk + the split: text and links contribute
 // their text, a line break "\n", anything else (mentions, emoji) one
 // space; matched runs of Text and Link spans get Style Highlight.
-func highlightSpans(spans []Span, ws [][]rune) []Span {
+func highlightSpans(spans []Span, ws [][]rune) []Span { return markSpans(spans, ws, false, Highlight) }
+
+// Find in thread (ThreadSearchBar): while the bar has results, every
+// message of the thread marks the query in its rich text. Slack's Blocks
+// pass findInThreadHighlightWords ([query]) to BaseRichText, whose
+// markupHighlightWords locates them with substringMatch (every
+// occurrence: no word-edge, mention or overlap checks, overlapping runs
+// merged) and styles the runs findInThreadHighlight, drawn as
+// c-mrkdwn__highlight--find-in-thread instead of a keyword's
+// c-mrkdwn__highlight (WithFormattingStyles: a && !h).
+
+// FindHighlighted returns doc with words marked FindHighlight in its rich
+// text (Paragraph, Quote, Preformatted and List blocks: BaseRichText's
+// sections), copying what it changes: doc's own blocks stay as they were.
+func FindHighlighted(doc Doc, words []string) Doc {
+	ws := prepWords(words)
+	if len(ws) == 0 || len(doc.Blocks) == 0 {
+		return doc
+	}
+	bs := make([]Block, len(doc.Blocks))
+	copy(bs, doc.Blocks)
+	for i := range bs {
+		b := &bs[i]
+		switch b.Kind {
+		case Paragraph, Quote, Preformatted:
+			b.Spans = markSpans(b.Spans, ws, true, FindHighlight)
+		case List:
+			items := make([][]Span, len(b.Items))
+			for j, it := range b.Items {
+				items[j] = markSpans(it, ws, true, FindHighlight)
+			}
+			b.Items = items
+		}
+	}
+	doc.Blocks = bs
+	return doc
+}
+
+// locateSub is locateRichTextHighlightWords with substringMatch: every
+// occurrence of each word, overlapping runs merged.
+func locateSub(text []rune, ws [][]rune) []Match {
+	s := normalizeRunes(text)
+	var out []Match
+	for _, w := range ws {
+		for i := indexRunes(s, w, 0); i >= 0; i = indexRunes(s, w, i+1) {
+			out = append(out, Match{i, len(w)})
+		}
+	}
+	return combineMatches(out)
+}
+
+// markSpans returns spans with the runs that match ws (substring: every
+// occurrence; else Slack's keyword rules) split off and given style st.
+// spans itself isn't modified.
+func markSpans(spans []Span, ws [][]rune, substring bool, st Style) []Span {
 	if len(spans) == 0 {
 		return spans
 	}
@@ -245,7 +299,12 @@ func highlightSpans(spans []Span, ws [][]rune) []Span {
 			all = append(all, ' ')
 		}
 	}
-	ms := locate(all, ws, true)
+	var ms []Match
+	if substring {
+		ms = locateSub(all, ws)
+	} else {
+		ms = locate(all, ws, true)
+	}
 	if len(ms) == 0 {
 		return spans
 	}
@@ -271,7 +330,7 @@ func highlightSpans(spans []Span, ws [][]rune) []Span {
 			part := sp
 			part.Text = string(rs[j:k])
 			if on[base+j] {
-				part.Style |= Highlight
+				part.Style |= st
 			}
 			out = append(out, part)
 			j = k

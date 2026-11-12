@@ -53,7 +53,8 @@ OutputBaseFilename=Clack-{#AppVersion}-windows-amd64-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-; Tell Explorer the slack:// handler changed.
+; Tell Explorer the slack:// handlers changed (SHChangeNotify
+; SHCNE_ASSOCCHANGED, as Default Programs asks).
 ChangesAssociations=yes
 ; Close a running Clack before replacing its files.
 CloseApplications=force
@@ -63,11 +64,12 @@ RestartApplications=no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-; Off by default: the Slack desktop app also owns slack:// (it re-registers
-; on every start), and taking the scheme from it silently is rude. Clack only
-; needs it to receive sign-in links straight from the browser; copying the
-; link into Clack's sign-in screen works without it (README "Sign in").
-Name: "slackurl"; Description: "Open slack:// links with Clack (the Slack desktop app also claims these)"; GroupDescription: "Links:"; Flags: unchecked
+; Off by default: the legacy slack key is what Windows runs when it doesn't
+; ask, and Slack desktop rewrites it at every start, so taking it silently
+; is rude. Clack doesn't need it: the registration below always puts Clack
+; in Windows' "Select an app to open this 'slack' link" box, and Clack.exe
+; takes the legacy key by itself when no other app has slack://.
+Name: "slackurl"; Description: "Make Clack the default for slack:// links"; GroupDescription: "Links:"; Flags: unchecked
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
@@ -81,7 +83,23 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; Comment: "Slack 
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Registry]
-; Same keys as `Clack.exe -register-url-handler`.
+; Clack as a slack:// handler Windows can offer, per user (Default
+; Programs: an application-specific ProgID, Capabilities with
+; URLAssociations, RegisteredApplications; the same keys Slick's installer
+; writes for itself). Always written: Windows' "Select an app" box and
+; Settings > Default apps list Clack from these. Clack.exe writes the same
+; keys at every start (internal/desktop/urlhandler_windows.go).
+Root: HKCU; Subkey: "Software\Classes\Clack.slack"; ValueType: string; ValueName: ""; ValueData: "URL:slack Protocol"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\Clack.slack"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\Clack.slack\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"",0"
+Root: HKCU; Subkey: "Software\Classes\Clack.slack\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"" ""%1"""
+Root: HKCU; Subkey: "Software\Clack"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Clack\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "Clack"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Clack\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "Clack is a native Slack client. It signs in with Slack's browser sign-in and opens slack:// links."
+Root: HKCU; Subkey: "Software\Clack\Capabilities\URLAssociations"; ValueType: string; ValueName: "slack"; ValueData: "Clack.slack"
+Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Clack"; ValueData: "Software\Clack\Capabilities"; Flags: uninsdeletevalue
+; The box: also the legacy key, what runs when Windows doesn't ask (the
+; same as `Clack.exe -register-url-handler`).
 Root: HKCU; Subkey: "Software\Classes\slack"; ValueType: string; ValueName: ""; ValueData: "URL:slack Protocol"; Tasks: slackurl
 Root: HKCU; Subkey: "Software\Classes\slack"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Tasks: slackurl
 Root: HKCU; Subkey: "Software\Classes\slack\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExe}"",0"; Tasks: slackurl
@@ -91,20 +109,29 @@ Root: HKCU; Subkey: "Software\Classes\slack\shell\open\command"; ValueType: stri
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-// Remove the slack:// handler on uninstall, but only if it still points at
-// this Clack. If another app (e.g. the official Slack client) took it over
-// since, leave it alone.
+// On uninstall, besides the keys above: Clack.exe's entry in the slack
+// key's OpenWithProgids, and the legacy handler if it still points at this
+// Clack. Another app's (Slack desktop's, Slick's) is left alone, and so
+// are other apps' OpenWithProgids entries.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Cmd, Mine: String;
 begin
   if CurUninstallStep = usUninstall then
   begin
+    RegDeleteValue(HKCU, 'Software\Classes\slack\OpenWithProgids', 'Clack.slack');
+    RegDeleteKeyIfEmpty(HKCU, 'Software\Classes\slack\OpenWithProgids');
     if RegQueryStringValue(HKCU, 'Software\Classes\slack\shell\open\command', '', Cmd) then
     begin
       Mine := '"' + ExpandConstant('{app}\{#AppExe}') + '"';
       if Pos(Lowercase(Mine), Lowercase(Cmd)) = 1 then
-        RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\slack');
+      begin
+        RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\slack\shell');
+        RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\slack\DefaultIcon');
+        RegDeleteValue(HKCU, 'Software\Classes\slack', '');
+        RegDeleteValue(HKCU, 'Software\Classes\slack', 'URL Protocol');
+        RegDeleteKeyIfEmpty(HKCU, 'Software\Classes\slack');
+      end;
     end;
   end;
 end;

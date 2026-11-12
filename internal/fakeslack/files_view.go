@@ -23,6 +23,12 @@ type filesViewStore struct {
 	titles  map[string]string // files.edit titles
 	trash   map[string]trashed
 	calls   []FilesViewCall
+	// file collections (files_sections.go): the custom ones, the starred
+	// files' positions and the starred collection's sort
+	colls             []*fakeCollection
+	starPos           map[string]string
+	starSort          string
+	nextPos, nextColl int
 }
 
 // trashed is a deleted canvas or list (files.recentlyDeleted).
@@ -101,7 +107,8 @@ func (s *Server) uploaded(id string) bool {
 // handleFilesView answers the Files view's writes; handled=false passes on.
 func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 	switch method {
-	case "files.favorites.add", "files.favorites.remove", "files.favorites.list", "files.recentlyDeleted", "files.undelete":
+	case "files.favorites.add", "files.favorites.remove", "files.favorites.list", "files.recentlyDeleted", "files.undelete",
+		"files.collections.list", "files.collections.create", "files.collections.update", "files.collections.delete":
 	case "files.delete", "files.edit":
 		if s.uploaded(f.Get("file")) {
 			return nil, false
@@ -112,6 +119,9 @@ func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 	fv := s.filesView()
 	fv.mu.Lock()
 	defer fv.mu.Unlock()
+	if out, handled := s.handleFileSections(fv, method, f); handled { // files_sections.go
+		return out, true
+	}
 	if method != "files.favorites.list" && method != "files.recentlyDeleted" {
 		fv.calls = append(fv.calls, FilesViewCall{Method: method, Args: f})
 	}
@@ -174,6 +184,7 @@ func (s *Server) handleFilesView(method string, f url.Values) (any, bool) {
 			}
 		}
 		fv.starred = append(fv.starred, id)
+		fv.starPosLocked(id)
 		return ok(), true
 	case "files.favorites.remove":
 		id := f.Get("file_id")

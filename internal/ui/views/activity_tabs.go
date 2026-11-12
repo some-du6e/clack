@@ -154,14 +154,14 @@ func actTabTip(slot, n int) string {
 	if n > 0 {
 		switch slot {
 		case 1:
-			return strconv.Itoa(n) + actPlural(n, " unread DM", " unread DMs")
+			return nsActivity.T("{count, plural, =1 {# unread DM} other {# unread DMs}}", "count", n)
 		case 2:
-			return strconv.Itoa(n) + actPlural(n, " unread mention", " unread mentions")
+			return nsActivity.T("{count, plural, =1 {# unread mention} other {# unread mentions}}", "count", n)
 		case 3:
-			return strconv.Itoa(n) + actPlural(n, " unread thread", " unread threads")
+			return nsActivity.T("{count, plural, =1 {# unread thread} other {# unread threads}}", "count", n)
 		}
 	}
-	return actTabLabels[slot]
+	return nsActivity.T(actTabLabels[slot])
 }
 
 func actPlural(n int, one, many string) string {
@@ -264,7 +264,7 @@ func (v *Activity) viewTab(gtx C, i, slot, count int, xi, iconOnly bool) D {
 			fg = v.p.Text
 		}
 		m := op.Record(gtx.Ops)
-		d := v.tabBody(gtx, slot, t.Labels[i], fg, count, xi, iconOnly)
+		d := v.tabBody(gtx, slot, t.label(i), fg, count, xi, iconOnly)
 		call := m.Stop()
 		if t.clicks[i].Hovered() && !v.strip.dragging {
 			r := gtx.Dp(8)
@@ -580,7 +580,7 @@ func (v *Activity) dragPreview(gtx C, i int) {
 		g := gtx
 		g.Constraints.Min = image.Point{}
 		rec := op.Record(gtx.Ops)
-		d := v.tabBody(g, slot, v.tabs.Labels[i], v.p.Text, 0, true, false)
+		d := v.tabBody(g, slot, v.tabs.label(i), v.p.Text, 0, true, false)
 		call := rec.Stop()
 		r := image.Rectangle{Max: d.Size}
 		rad := gtx.Dp(6)

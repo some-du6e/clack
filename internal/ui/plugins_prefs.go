@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 
@@ -245,6 +246,12 @@ type pluginsPage struct {
 	mode string       // installed | browse
 
 	inst *pluginInstaller
+
+	// the search field as last drawn: its top and width in the page's
+	// content box (unscrolled), and whether it has the focus (tests)
+	searchY, searchW int
+	searchFocused    bool
+	focusSearch      bool // focus the search field in the next frame
 }
 
 func newPluginsPage(a *App, tp *tautPage, openTab func(string)) *pluginsPage {
@@ -343,7 +350,7 @@ func (pp *pluginsPage) layout(gtx layout.Context) layout.Dimensions {
 	pp.lib.s.k.gtxNow = gtx
 	pp.taut.gtxNow = gtx
 	sz := gtx.Constraints.Max
-	return p.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+	return panelList(gtx, &p.list.List, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
 		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
 		if pp.mode == "browse" {
@@ -420,7 +427,13 @@ func (pp *pluginsPage) pluginList(f *flow, ps []unifiedPlugin) {
 	p, tp := pp.s, pp.taut
 	cl := tp.colors()
 	fs := pp.filters(ps)
+	pp.searchY, pp.searchW = f.y, f.w
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		if pp.focusSearch {
+			gtx.Execute(key.FocusCmd{Tag: &p.query})
+			pp.focusSearch = false
+		}
+		pp.searchFocused = gtx.Focused(&p.query)
 		return tp.input(gtx, &p.query, f.w, gtx.Dp(36), "Search plugins", false)
 	})
 	f.gap(12) // .taut-settings__filters: margin 12px 0 8px, gap 8px
@@ -501,6 +514,10 @@ func (pp *pluginsPage) row(gtx layout.Context, w int, u unifiedPlugin) layout.Di
 	if desc != "" {
 		h += gtx.Dp(18)
 	}
+	note := pluginlib.CompatOf(u.System, u.ID) // how it works in Clack, under the name
+	if note.Line != "" {
+		h += gtx.Dp(18)
+	}
 	b := tp.btn("row." + u.key())
 	at(gtx, image.Pt(mx, 0), image.Pt(mw, h), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, func(gtx layout.Context, s image.Point, hov bool) {
@@ -517,8 +534,19 @@ func (pp *pluginsPage) row(gtx layout.Context, w int, u unifiedPlugin) layout.Di
 			}
 			at(gtx, image.Pt(gtx.Dp(4), gtx.Dp(6)), image.Pt(textW, h-gtx.Dp(12)), func(gtx layout.Context) layout.Dimensions {
 				tp.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 20, Weight: theme.Bold, Color: cl.fg, MaxLines: 1}, u.Name)
+				y := gtx.Dp(20)
+				if note.Line != "" {
+					col := cl.fg2
+					if note.Status == pluginlib.CompatBroken {
+						col = cl.err
+					}
+					at(gtx, image.Pt(0, y), image.Pt(textW, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+						return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: col, MaxLines: 1}, note.Line)
+					})
+					y += gtx.Dp(18)
+				}
 				if desc != "" { // .taut-settings__row-description: content-sec, an error too (the icon flags it)
-					at(gtx, image.Pt(0, gtx.Dp(20)), image.Pt(textW, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+					at(gtx, image.Pt(0, y), image.Pt(textW, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 						return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg2, MaxLines: 1}, desc)
 					})
 				}
@@ -598,25 +626,46 @@ func (pp *pluginsPage) suggestions(f *flow, words []string) bool {
 	return true
 }
 
-// suggest is the library's plugins that match words and aren't
-// installed, in the library's order (nil until its index is there).
+// suggest is the library's plugins that match words (libraryRank) and
+// aren't installed, best match first, then by name (nil until its index
+// is there).
 func (v *libraryPage) suggest(words []string) []libGroup {
-	if v.ix == nil {
+	if v.ix == nil || len(words) == 0 {
 		return nil
 	}
-	var hits []libGroup
-	for _, g := range libraryGroups(libraryEntries(v.ix)) {
-		if installed, _ := v.groupStates(g); len(installed) > 0 {
+	return rankGroups(libraryGroups(libraryEntries(v.ix)), words, func(g libGroup) bool {
+		installed, _ := v.groupStates(g)
+		return len(installed) > 0
+	})
+}
+
+// rankGroups is the rows of groups that words match (groupRank), best
+// match first, then by name; skip leaves rows out.
+func rankGroups(groups []libGroup, words []string, skip func(libGroup) bool) []libGroup {
+	type hit struct {
+		g    libGroup
+		rank int
+	}
+	var hits []hit
+	for _, g := range groups {
+		if skip != nil && skip(g) {
 			continue
 		}
-		for _, e := range g.Entries {
-			if libraryMatches(e, words) {
-				hits = append(hits, g)
-				break
-			}
+		if r := groupRank(g, words); r >= 0 {
+			hits = append(hits, hit{g, r})
 		}
 	}
-	return hits
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].rank != hits[j].rank {
+			return hits[i].rank < hits[j].rank
+		}
+		return strings.ToLower(hits[i].g.first().Name) < strings.ToLower(hits[j].g.first().Name)
+	})
+	out := make([]libGroup, len(hits))
+	for i, h := range hits {
+		out[i] = h.g
+	}
+	return out
 }
 
 // suggestionRow is a library plugin in Taut's row: the name and its
@@ -649,6 +698,15 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 	y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
 		return tp.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 20, Weight: theme.Bold, Color: cl.fg, MaxLines: 1}, e.Name)
 	}).Size.Y
+	if c := groupCompat(g); c.Line != "" { // how it works in Clack, before Install
+		col := cl.fg2
+		if c.Status == pluginlib.CompatBroken {
+			col = cl.err
+		}
+		y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: col, MaxLines: 1}, c.Line)
+		}).Size.Y
+	}
 	if d := plainMrkdwn(e.Description); d != "" {
 		y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg2, MaxLines: 1}, d)
@@ -728,6 +786,26 @@ func (pp *pluginsPage) setEnabled(u unifiedPlugin, on bool) {
 type pluginInstaller struct {
 	pp   *pluginsPage
 	busy bool
+}
+
+// enableInstalled turns a plugin just installed from a file or a URL on,
+// as the library's Install does, unless it doesn't work in Clack
+// (pluginlib.CompatOf): that one stays off with its status line showing.
+func enableInstalled(ctx context.Context, a *App, system, id string) error {
+	if pluginlib.CompatOf(system, id).Status == pluginlib.CompatBroken {
+		return nil
+	}
+	switch system {
+	case pluginlib.Taut:
+		if t := a.Taut(); t != nil {
+			return t.SetEnabled(ctx, id, true)
+		}
+	case pluginlib.Slick:
+		if s := a.Slick(); s != nil {
+			return s.SetEnabled(ctx, id, true)
+		}
+	}
+	return nil
 }
 
 // pluginKind is which system a plugin file is for.
@@ -844,6 +922,9 @@ func (in *pluginInstaller) run(system string, install func(ctx context.Context) 
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		id, err := install(ctx)
+		if err == nil && id != "" {
+			err = enableInstalled(ctx, a, system, id)
+		}
 		a.Post(func() {
 			in.busy = false
 			done(system, id, err)

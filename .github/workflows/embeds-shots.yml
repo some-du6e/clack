@@ -73,7 +73,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: layout
         run: |
           go test -count=1 -v -run 'TestUnfurlKinds|TestXCard|TestGenericCard|TestVideoServiceCard|TestV1Card|TestNonMediaPref|TestRemoveButton|TestAttachmentImageClicks|TestUnfurlPopoverTrigger|TestUnfurlHoverTiming|TestUnfurlHoverCardLayout|TestAttachmentContextMenu|TestRemoveRail|TestAddedBy|TestMentionHoverCard' ./internal/ui/richview/

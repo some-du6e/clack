@@ -34,6 +34,9 @@ func init() {
 		"secondary_view_default_width":         on,
 		"unread_thread_indication_in_replybar": on,
 		"workflow_execution_window":            on,
+		// find in thread: ThreadSearchButton and ThreadSearchBar
+		// (ui/messages/thread_find.go; Taut's ThreadJump forces it on)
+		"find_in_thread": on,
 	} {
 		experimentReads[name] = groups
 	}

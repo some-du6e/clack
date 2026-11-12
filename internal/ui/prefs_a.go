@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -582,11 +583,13 @@ func (p *prefsModal) textField(f *prefsForm, key string, ed *widget.Editor, plac
 		rr := image.Rectangle{Max: image.Pt(f.w, bh)}
 		pc := p.colors() // .c-input_text
 		theme.RRect(gtx, rr, gtx.Dp(8), pc.field)
-		bc := pc.on(a.th, pc.fieldBorder)
 		if focused {
-			bc = pc.focus
+			// .c-input_text:focus: the 1px and 5px box-shadows outside
+			// the box (in the panel's padding), the border transparent
+			popups.FocusRingColors(gtx, pc.focus, theme.WithAlpha(pc.focus, 0x4d), rr, gtx.Dp(8))
+		} else {
+			richview.StrokeRRect(gtx.Ops, rr, gtx.Dp(8), gtx.Dp(1), pc.on(a.th, pc.fieldBorder))
 		}
-		theme.Border(gtx, rr, gtx.Dp(8), gtx.Dp(1), bc)
 		at(gtx, image.Pt(gtx.Dp(10), (bh-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 			return icons.Get("search")(gtx, 16, c.FgMuted)
 		})

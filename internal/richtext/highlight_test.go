@@ -50,3 +50,48 @@ func TestHighlightDocSplitsSpans(t *testing.T) {
 		t.Fatalf("split lost styles: %+v", bs[0].Spans)
 	}
 }
+
+// Find in thread marks every occurrence of the query in a message's rich
+// text (substringMatch): inside words, inside @mention text and overlapping
+// ones merged, case-insensitively, over a keyword highlight; the blocks
+// handed in stay as they were.
+func TestFindHighlighted(t *testing.T) {
+	doc := Doc{Blocks: []Block{
+		{Kind: Paragraph, Spans: []Span{{Kind: Text, Text: "Docs are ready, "}, {Kind: User, ID: "U1", Text: "@ada"}, {Kind: Text, Text: " READ it", Style: Highlight}}},
+		{Kind: List, Items: [][]Span{{{Kind: Text, Text: "aaa"}}}},
+		{Kind: Header, Spans: []Span{{Kind: Text, Text: "read me"}}},
+	}}
+	before := append([]Span(nil), doc.Blocks[0].Spans...)
+	got := FindHighlighted(doc, []string{"rea"})
+	var marked []string
+	for _, sp := range got.Blocks[0].Spans {
+		if sp.Style&FindHighlight != 0 {
+			marked = append(marked, sp.Text)
+		}
+	}
+	if want := []string{"rea", "REA"}; !reflect.DeepEqual(marked, want) {
+		t.Errorf("marked runs %q, want %q (spans %+v)", marked, want, got.Blocks[0].Spans)
+	}
+	for _, sp := range got.Blocks[0].Spans {
+		if sp.Text == "REA" && sp.Style&Highlight == 0 {
+			t.Error("the keyword highlight under the match was dropped")
+		}
+	}
+	if !reflect.DeepEqual(doc.Blocks[0].Spans, before) {
+		t.Errorf("the original spans changed: %+v", doc.Blocks[0].Spans)
+	}
+	// overlapping occurrences ("aa" twice in "aaa") are one run
+	ls := FindHighlighted(doc, []string{"aa"}).Blocks[1].Items[0]
+	if len(ls) != 1 || ls[0].Text != "aaa" || ls[0].Style&FindHighlight == 0 {
+		t.Errorf("list item %+v, want one marked run \"aaa\"", ls)
+	}
+	// a header isn't BaseRichText: no marks
+	for _, sp := range got.Blocks[2].Spans {
+		if sp.Style&FindHighlight != 0 {
+			t.Errorf("header span %q marked", sp.Text)
+		}
+	}
+	if d := FindHighlighted(doc, []string{" "}); &d.Blocks[0] != &doc.Blocks[0] {
+		t.Error("a blank query copied the blocks")
+	}
+}

@@ -653,3 +653,39 @@ func TestSlickViewCensorshipActivity(t *testing.T) {
 	}
 	t.Logf("previewed: %q", text)
 }
+
+// CopyReacted in the Threads, Unreads and Activity views: their reaction
+// rows are Slack's ReactionBar with the ReactionAddButton after the pills,
+// as in a channel, so the plugin's copy chip (rendered after
+// ReactionAddButton, with the reactors from ReactionBar's props through
+// React context) shows in the row.
+func TestSlickViewCopyReactedInViews(t *testing.T) {
+	e := newSlickEnv(t)
+	e.install("CopyReacted", nil)
+	e.patched("ReactionBar", "ReactionAddButton")
+	m := &core.Message{Channel: sGen, TS: tsMine, User: sSelf, Text: "my synthetic message",
+		Reactions: []core.Reaction{{Name: "tada", Count: 2, Users: []string{sAlice, sBob}}, {Name: "eyes", Count: 1, Users: []string{sBob}}}}
+	check := func(name string, view func(C) D, b *base) {
+		t.Helper()
+		e.frame(view) // the view's theme and palette
+		var d D
+		bar := func(gtx C) D {
+			gtx.Constraints.Min = image.Point{}
+			d = b.actReactions(gtx, m)
+			return d
+		}
+		e.until(name+": the copy chip after the add-reaction button", bar, func() bool {
+			_, js := e.ui.tree("ReactionAddButton")
+			return strings.Contains(js, "slick-cr__btn") && strings.Contains(js, `"reactionKey":"message-`+tsMine+`-`+sGen+`"`)
+		})
+		if d.Size.Y < 24 || d.Size.Y > 32 {
+			t.Errorf("%s: the reaction row is %v, want one row of pills, the add button and the chip", name, d.Size)
+		}
+	}
+	act := NewActivity(e.h)
+	check("activity", act.Layout, &act.base)
+	thr := NewThreads(e.h)
+	check("threads", thr.Layout, &thr.base)
+	unr := NewUnreads(e.h)
+	check("unreads", unr.Layout, &unr.base)
+}

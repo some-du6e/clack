@@ -352,7 +352,7 @@ func (a *App) bbmSurface(panel image.Rectangle) color.NRGBA {
 func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 	c := &a.th.C
 	h := gtx.Dp(theme.TopNavH)
-	tn := clsTopNav.Enter(gtx, 0, 0)
+	tn := clsTopNav.Enter(gtx, 0, a.scopeMod())
 	defer tn.Leave()
 	if tn.Hidden() {
 		return
@@ -596,6 +596,8 @@ func (a *App) bbmCrumbs() []bbmCrumb {
 			label = "Search"
 		case secHelp:
 			label = "Help"
+		case secWorkflow: // the flexpane's title (WorkflowDetails titleContent)
+			label = wfDetailsNS.T("Workflow")
 		}
 		cs = append(cs, bbmCrumb{key: "secondary", label: label, last: true})
 	}

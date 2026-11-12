@@ -40,6 +40,9 @@ type ClassDef struct {
 	classes []string
 	attrs   []string // name, value pairs
 	mods    []string
+	kids    []*ClassDef // Kids: elements the native draws inside itself
+	// flexItems: host trees right under it are its flex items (FlexItems)
+	flexItems bool
 }
 
 // Class declares a native widget class. classes is a space-separated
@@ -54,6 +57,45 @@ func (d *ClassDef) Tag(tag string) *ClassDef { d.tag = tag; return d }
 // Mods declares optional modifier classes; Enter's mods bit i adds mods[i].
 func (d *ClassDef) Mods(classes ...string) *ClassDef { d.mods = classes; return d }
 
+// Kids declares the elements Slack's DOM has inside the widget that the
+// native draws itself without entering them (an icon, a name), each with
+// its own declared kids, so :has() and :empty see them: a private
+// channel's InlineChannelEntity holds span.c-inline_channel_icon
+// [data-inline-channel-type-icon=lock], which StreamerMode's
+// .c-inline_channel_entity:has([data-inline-channel-type-icon^="lock"])
+// looks for. A widget whose children differ by state (a private or a
+// public channel) declares one ClassDef per shape. Natives without
+// declared kids still answer :has() with false and :empty with no.
+func (d *ClassDef) Kids(kids ...*ClassDef) *ClassDef { d.kids = kids; return d }
+
+// FlexItems marks a native that is a flex container in Slack's DOM whose
+// children include what plugins render in it: a patched component's
+// top-level nodes, laid out right under it, become its flex items under
+// its computed flex properties (the top nav's right container, where
+// StreamerMode's HelpButton patch puts its toggle beside Slack's help
+// button), instead of the blocks of a plain container.
+func (d *ClassDef) FlexItems() *ClassDef { d.flexItems = true; return d }
+
+// flexParent reports a native marked FlexItems.
+func flexParent(el css.Element) bool {
+	switch e := el.(type) {
+	case *nativeEl:
+		return e.def.flexItems
+	case *kidsEl:
+		return e.def.flexItems
+	}
+	return false
+}
+
+// WithKids is a copy of d that also declares kids: the shape of a widget
+// whose children depend on its state (the composer box with its pending
+// files), cached by the caller like any ClassDef.
+func (d *ClassDef) WithKids(kids ...*ClassDef) *ClassDef {
+	c := *d
+	c.kids = append(append([]*ClassDef(nil), d.kids...), kids...)
+	return &c
+}
+
 // Styled is the style a native widget gets from CSS. The zero value (no
 // CSS active, or nothing matched in the chain) answers every query with
 // the widget's own default.
@@ -64,6 +106,7 @@ type Styled struct {
 // nativeStyle is one cached element: cascade + computed style.
 type nativeStyle struct {
 	el     nativeEl
+	kel    *kidsEl // el with its declared kids (ClassDef.Kids), nil without
 	style  css.Style
 	set    propSet // properties a rule set on this element
 	inh    propSet // inherited properties some rule set on it or an ancestor
@@ -182,6 +225,85 @@ func (e *nativeEl) Index() (int, int)     { return 0, 0 }
 func (e *nativeEl) TypeIndex() (int, int) { return 0, 0 }
 func (e *nativeEl) State() css.State      { return e.st }
 
+// kidsEl is a native with declared kids: a css.KidsElement over them.
+type kidsEl struct {
+	*nativeEl
+	kids []css.Element
+}
+
+func (k *kidsEl) Kids() []css.Element { return k.kids }
+
+// declEl is a declared kid (ClassDef.Kids): its def's tag, classes and
+// static attributes under its parent, and its own declared kids.
+type declEl struct {
+	def    *ClassDef
+	parent css.Element
+	kids   []css.Element
+	index  int
+	n      int
+}
+
+func (e *declEl) Tag() string { return e.def.tag }
+func (e *declEl) ID() string  { v, _ := e.Attr("id"); return v }
+func (e *declEl) HasClass(c string) bool {
+	for _, x := range e.def.classes {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}
+func (e *declEl) Classes() []string { return e.def.classes }
+func (e *declEl) Attr(name string) (string, bool) {
+	if name == "class" {
+		return strings.Join(e.def.classes, " "), true
+	}
+	for i := 0; i+1 < len(e.def.attrs); i += 2 {
+		if e.def.attrs[i] == name {
+			return e.def.attrs[i+1], true
+		}
+	}
+	return "", false
+}
+func (e *declEl) Parent() css.Element { return e.parent }
+func (e *declEl) Prev() css.Element {
+	if k, ok := e.parent.(css.KidsElement); ok && e.index > 0 {
+		return k.Kids()[e.index-1]
+	}
+	return nil
+}
+func (e *declEl) Index() (int, int)     { return e.index, e.n }
+func (e *declEl) TypeIndex() (int, int) { return 0, 0 }
+func (e *declEl) State() css.State {
+	if len(e.kids) == 0 {
+		return css.StateEmpty
+	}
+	return 0
+}
+func (e *declEl) Kids() []css.Element { return e.kids }
+
+// declKids builds the declared kids of def under parent.
+func declKids(def *ClassDef, parent css.Element) []css.Element {
+	if len(def.kids) == 0 {
+		return nil
+	}
+	out := make([]css.Element, len(def.kids))
+	for i, kd := range def.kids {
+		k := &declEl{def: kd, parent: parent, index: i, n: len(def.kids)}
+		k.kids = declKids(kd, k)
+		out[i] = k
+	}
+	return out
+}
+
+// element is the cached native as selectors see it.
+func (ns *nativeStyle) element() css.Element {
+	if ns.kel != nil {
+		return ns.kel
+	}
+	return &ns.el
+}
+
 // The element stack (UI goroutine): natives and host-tree nodes push
 // themselves so selectors see the real ancestry.
 type stackEntry struct {
@@ -277,7 +399,7 @@ func (d *ClassDef) enterX(st css.State, mods uint64, ak, av, extra string) Style
 }
 
 func (ns *nativeStyle) entry() stackEntry {
-	return stackEntry{el: &ns.el, style: &ns.style, inh: ns.inh, deco: ns.deco, key: ns.key}
+	return stackEntry{el: ns.element(), style: &ns.style, inh: ns.inh, deco: ns.deco, key: ns.key}
 }
 
 // Child is the style of a native part drawn inside s that isn't pushed on
@@ -370,6 +492,10 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 		return ns
 	}
 	ns = &nativeStyle{el: nativeEl{def: k.def, mods: k.mods, st: k.st, attrK: k.attrK, attrV: k.attrV, extra: strings.Fields(k.extra)}}
+	if len(k.def.kids) > 0 {
+		ns.kel = &kidsEl{nativeEl: &ns.el}
+		ns.kel.kids = declKids(k.def, ns.kel)
+	}
 	var ps *css.Style
 	var pinh propSet
 	var pdeco decoProp
@@ -380,8 +506,12 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 		pdeco = parent.deco
 	}
 	e := cssEnv()
-	c := Styles.Cascade(&ns.el, css.PseudoNone, nil, e)
+	el := ns.element()
+	c := Styles.Cascade(el, css.PseudoNone, nil, e)
 	ns.style = css.Compute(&c, ps, e)
+	if vs := scopeVarsOf(&ns.el, ns.style.Vars); vs != nil {
+		ns.style.Vars = vs // a theme scope's tokens (scopevars.go)
+	}
 	ns.set, ns.native = propsOf(&c), nativesOf(&c)
 	ns.trans = hasTransition(&c)
 	// An inherited property Slack's own rule gives the widget (its link
@@ -392,13 +522,13 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 		pdeco = decoProp{}
 	}
 	ns.deco = pdeco.merge(ownDeco(&ns.style, ns.set&propBits["color"] != 0))
-	if b := Styles.Cascade(&ns.el, css.PseudoBefore, nil, e); len(b.Decls) > 0 {
+	if b := Styles.Cascade(el, css.PseudoBefore, nil, e); len(b.Decls) > 0 {
 		s := css.Compute(&b, &ns.style, e)
 		if s.HasContent {
 			ns.before = &s
 		}
 	}
-	if a := Styles.Cascade(&ns.el, css.PseudoAfter, nil, e); len(a.Decls) > 0 {
+	if a := Styles.Cascade(el, css.PseudoAfter, nil, e); len(a.Decls) > 0 {
 		s := css.Compute(&a, &ns.style, e)
 		if s.HasContent {
 			ns.after = &s
@@ -493,7 +623,12 @@ func cssEnv() css.Env {
 // --- queries (all nil-safe) ---
 
 // Active reports that some rule applies to this widget or its ancestry.
-func (s Styled) Active() bool { return s.s != nil && (s.s.set|s.s.inh) != 0 }
+func (s Styled) Active() bool {
+	// a ::before or ::after counts: a rule may give the native nothing but
+	// generated content (MentionProfiles' picture before the mention's
+	// name), which Wrap draws
+	return s.s != nil && ((s.s.set|s.s.inh) != 0 || s.s.before != nil || s.s.after != nil)
+}
 
 // Style is the computed style, or nil when no CSS is active.
 func (s Styled) Style() *css.Style {
@@ -656,6 +791,57 @@ func (s Styled) Wrap(gtx layout.Context, w layout.Widget) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	return wrapNative(gtx, s.s, w)
+}
+
+// WrapOwnPseudo is Wrap for a native that lays out its box
+// pseudo-elements among its own parts (Pseudo, DrawPseudo): a mention
+// pill draws a ::before picture inside its pill, as CSS puts it inside
+// the slug's box. Text ::before/::after content is still Wrap's.
+func (s Styled) WrapOwnPseudo(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	if s.s == nil || !s.Active() {
+		return w(gtx)
+	}
+	if s.s.style.Display == css.DisplayNone {
+		return layout.Dimensions{}
+	}
+	return wrapNativeX(gtx, s.s, w, true)
+}
+
+// Pseudo is the size in px of the native's ::before (or ::after) when it
+// generates a box rather than text (content set to an empty string, with
+// a size: MentionProfiles' 1em picture), margins included; ok is false
+// when there's none.
+func (s Styled) Pseudo(gtx layout.Context, after bool) (w, h float32, ok bool) {
+	pb := s.pseudoBox(gtx, after)
+	if pb == nil {
+		return 0, 0, false
+	}
+	return pb.m[3] + pb.w + pb.m[1], pb.m[0] + pb.h + pb.m[2], true
+}
+
+// DrawPseudo paints the box Pseudo measured with its margin box at x,
+// centred in a line lineH tall from y (vertical-align: middle).
+func (s Styled) DrawPseudo(gtx layout.Context, after bool, x, y, lineH float32) {
+	pb := s.pseudoBox(gtx, after)
+	if pb == nil {
+		return
+	}
+	p := painter{v: wrapState.v, ops: gtx.Ops, clip: noClip}
+	p.wrapPseudo(pb, x, y, lineH)
+}
+
+func (s Styled) pseudoBox(gtx layout.Context, after bool) *box {
+	if s.s == nil {
+		return nil
+	}
+	st := s.s.before
+	if after {
+		st = s.s.after
+	}
+	if st == nil {
+		return nil
+	}
+	return wrapPseudo(wrapView(gtx), st, float32(gtx.Constraints.Max.X))
 }
 
 // WrapRounded is Wrap for a native that rounds its own box (a menu, a

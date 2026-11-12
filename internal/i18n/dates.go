@@ -20,6 +20,8 @@ import (
 
 type dayjsLocale struct {
 	weekdays, weekdaysShort [7]string
+	weekdaysMin             [7]string    // "dd" (en has none: dayjs cuts weekdays to two letters)
+	weekStart               time.Weekday // the first day of the week (startOf("week"), weekday(0))
 	months, monthsShort     [12]string
 	lt, lts                 string // formats LT, LTS
 	l, ll                   string // formats L, LL
@@ -151,6 +153,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"en-GB": {
 		weekdays: enWeekdays, weekdaysShort: enWeekdaysShort, months: enMonths, monthsShort: enMonthsShort,
+		weekdaysMin: split7("Su_Mo_Tu_We_Th_Fr_Sa"), weekStart: time.Monday,
 		lt: "HH:mm", lts: "HH:mm:ss", l: "DD/MM/YYYY", ll: "D MMMM YYYY",
 		ordinal: enOrdinal, meridiem: ampm, rel: [3]string{"Yesterday", "Today", "Tomorrow"},
 		sqFormat: "%1, %2", vqFormat: "%1, %2",
@@ -160,6 +163,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"de-DE": {
 		weekdays: split7("Sonntag_Montag_Dienstag_Mittwoch_Donnerstag_Freitag_Samstag"), weekdaysShort: split7("So._Mo._Di._Mi._Do._Fr._Sa."),
+		weekdaysMin: split7("So_Mo_Di_Mi_Do_Fr_Sa"), weekStart: time.Monday,
 		months: split12("Januar_Februar_März_April_Mai_Juni_Juli_August_September_Oktober_November_Dezember"), monthsShort: split12("Jan._Feb._März_Apr._Mai_Juni_Juli_Aug._Sept._Okt._Nov._Dez."),
 		lt: "HH:mm [Uhr]", lts: "HH:mm:ss [Uhr]", l: "DD.MM.YYYY", ll: "D. MMMM YYYY",
 		ordinal: suffixOrdinal("."), meridiem: ampm, rel: [3]string{"gestern", "heute", "morgen"},
@@ -170,6 +174,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"es-ES": {
 		weekdays: split7("domingo_lunes_martes_miércoles_jueves_viernes_sábado"), weekdaysShort: split7("dom._lun._mar._mié._jue._vie._sáb."),
+		weekdaysMin: split7("do_lu_ma_mi_ju_vi_sá"), weekStart: time.Monday,
 		months: split12("enero_febrero_marzo_abril_mayo_junio_julio_agosto_septiembre_octubre_noviembre_diciembre"), monthsShort: split12("ene._feb._mar._abr._may._jun._jul._ago._sep._oct._nov._dic."),
 		lt: "HH:mm", lts: "HH:mm:ss", l: "DD/MM/YYYY", ll: "D [de] MMMM [de] YYYY",
 		ordinal: suffixOrdinal("º"), meridiem: ampm, rel: [3]string{"ayer", "hoy", "mañana"},
@@ -186,6 +191,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"es-LA": {
 		weekdays: split7("domingo_lunes_martes_miércoles_jueves_viernes_sábado"), weekdaysShort: split7("dom._lun._mar._mié._jue._vie._sáb."),
+		weekdaysMin: split7("do_lu_ma_mi_ju_vi_sá"), weekStart: time.Monday,
 		months: split12("enero_febrero_marzo_abril_mayo_junio_julio_agosto_septiembre_octubre_noviembre_diciembre"), monthsShort: split12("ene._feb._mar._abr._may._jun._jul._ago._sep._oct._nov._dic."),
 		lt: "H:mm", lts: "H:mm:ss", l: "DD/MM/YYYY", ll: "D [de] MMMM [de] YYYY",
 		ordinal: suffixOrdinal("º"), meridiem: ampm, rel: [3]string{"ayer", "hoy", "mañana"},
@@ -196,6 +202,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"fr-FR": {
 		weekdays: split7("dimanche_lundi_mardi_mercredi_jeudi_vendredi_samedi"), weekdaysShort: split7("dim._lun._mar._mer._jeu._ven._sam."),
+		weekdaysMin: split7("di_lu_ma_me_je_ve_sa"), weekStart: time.Monday,
 		months: split12("janvier_février_mars_avril_mai_juin_juillet_août_septembre_octobre_novembre_décembre"), monthsShort: split12("janv._févr._mars_avr._mai_juin_juil._août_sept._oct._nov._déc."),
 		lt: "H [h] mm", lts: "H [h] mm [min] ss [s]", l: "DD/MM/YYYY", ll: "D MMMM YYYY",
 		ordinal: func(n int, _ byte) string {
@@ -212,6 +219,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"it-IT": {
 		weekdays: split7("domenica_lunedì_martedì_mercoledì_giovedì_venerdì_sabato"), weekdaysShort: split7("dom_lun_mar_mer_gio_ven_sab"),
+		weekdaysMin: split7("do_lu_ma_me_gi_ve_sa"), weekStart: time.Monday,
 		months: split12("gennaio_febbraio_marzo_aprile_maggio_giugno_luglio_agosto_settembre_ottobre_novembre_dicembre"), monthsShort: split12("gen_feb_mar_apr_mag_giu_lug_ago_set_ott_nov_dic"),
 		lt: "H:mm", lts: "H:mm:ss", l: "DD/MM/YYYY", ll: "D MMMM YYYY",
 		ordinal: suffixOrdinal("º"), meridiem: ampm, rel: [3]string{"Ieri", "Oggi", "Domani"},
@@ -227,6 +235,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"ja-JP": {
 		weekdays: split7("日曜日_月曜日_火曜日_水曜日_木曜日_金曜日_土曜日"), weekdaysShort: split7("日_月_火_水_木_金_土"),
+		weekdaysMin: split7("日_月_火_水_木_金_土"), weekStart: time.Sunday,
 		months: cjkMonthsShort, monthsShort: cjkMonthsShort,
 		lt: "HH:mm", lts: "HH:mm:ss", l: "YYYY/MM/DD", ll: "YYYY年M月D日",
 		ordinal: suffixOrdinal("日"),
@@ -244,6 +253,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"ko-KR": {
 		weekdays: split7("일요일_월요일_화요일_수요일_목요일_금요일_토요일"), weekdaysShort: split7("일_월_화_수_목_금_토"),
+		weekdaysMin: split7("일_월_화_수_목_금_토"), weekStart: time.Sunday,
 		months: split12("1월_2월_3월_4월_5월_6월_7월_8월_9월_10월_11월_12월"), monthsShort: split12("1월_2월_3월_4월_5월_6월_7월_8월_9월_10월_11월_12월"),
 		lt: "A h:mm", lts: "A h:mm:ss", l: "YYYY/MM/DD", ll: "YYYY년 MMMM D일",
 		ordinal: suffixOrdinal("일"),
@@ -261,6 +271,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"pt-BR": {
 		weekdays: split7("Domingo_Segunda-feira_Terça-feira_Quarta-feira_Quinta-feira_Sexta-feira_Sábado"), weekdaysShort: split7("Dom_Seg_Ter_Qua_Qui_Sex_Sáb"),
+		weekdaysMin: split7("Do_2ª_3ª_4ª_5ª_6ª_Sá"), weekStart: time.Sunday,
 		months: split12("janeiro_fevereiro_março_abril_maio_junho_julho_agosto_setembro_outubro_novembro_dezembro"), monthsShort: split12("jan_fev_mar_abr_mai_jun_jul_ago_set_out_nov_dez"),
 		lt: "H[h]mm", lts: "H[h]mm[min]ss[s]", l: "DD/MM/YYYY", ll: "D [de] MMMM [de] YYYY",
 		ordinal: suffixOrdinal("º"), meridiem: ampm, rel: [3]string{"Ontem", "Hoje", "Amanhã"},
@@ -276,6 +287,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"zh-CN": {
 		weekdays: zhWeekdays, weekdaysShort: split7("周日_周一_周二_周三_周四_周五_周六"),
+		weekdaysMin: split7("日_一_二_三_四_五_六"), weekStart: time.Monday,
 		months: zhMonths, monthsShort: cjkMonthsShort,
 		lt: "A h:mm", lts: "A h:mm:ss", l: "YYYY/MM/DD", ll: "YYYY年M月D日",
 		ordinal: zhOrdinal("周"), meridiem: zhMeridiem, rel: [3]string{"昨天", "今天", "明天"},
@@ -286,6 +298,7 @@ var dayjsLocales = map[string]*dayjsLocale{
 	},
 	"zh-TW": {
 		weekdays: zhWeekdays, weekdaysShort: split7("週日_週一_週二_週三_週四_週五_週六"),
+		weekdaysMin: split7("日_一_二_三_四_五_六"), weekStart: time.Sunday,
 		months: zhMonths, monthsShort: cjkMonthsShort,
 		lt: "A h:mm", lts: "A h:mm:ss", l: "YYYY/MM/DD", ll: "YYYY年M月D日",
 		ordinal: zhOrdinal("週"), meridiem: zhMeridiem, rel: [3]string{"昨天", "今天", "明天"},
@@ -294,6 +307,22 @@ var dayjsLocales = map[string]*dayjsLocale{
 		time:       timeFormats{h24: timeVariant{def: "HH:mm", seconds: "HH:mm:ss"}, h12: h12Plain, h12WithMeridiem: &timeVariant{def: "LT", seconds: "LTS"}},
 		default12h: true, relFormatPretty: "%1%2", relFormatPrettyS: "%1 %2",
 	},
+}
+
+// WeekStart is the locale's first day of the week (dayjs's weekStart:
+// Monday in de, en-GB, es, fr, it and zh-CN), where Slack's calendars
+// start their rows.
+func WeekStart(loc string) time.Weekday { return localeData(loc).weekStart }
+
+// WeekdayMin is dayjs's "dd" for d: "Su", "lu", "日" (DaysOfWeek's
+// headings).
+func WeekdayMin(loc string, d time.Weekday) string {
+	l := localeData(loc)
+	if m := l.weekdaysMin[d]; m != "" {
+		return m
+	}
+	r := []rune(l.weekdays[d])
+	return string(r[:min(2, len(r))])
 }
 
 func localeData(loc string) *dayjsLocale {
@@ -607,6 +636,27 @@ func LongDatePretty(loc string, t, now time.Time, lower bool) string {
 	excl := math.Abs(now.Sub(t).Minutes()) < 262080
 	return strings.NewReplacer("%1", Weekday(loc, t, d.sqShortenDay), "%2",
 		CalendarDate(loc, t, CalendarOpts{ExcludeYear: excl})).Replace(d.sqFormat)
+}
+
+// WeekdayDate is a day as Azem's Sq format puts it ("%1, %2"; ja-JP
+// "%2 (%1)"): the short weekday and toCalendarDate with the month and
+// day shortened, the year only when asked ("Mon, Nov 9", "lun., 9 nov.",
+// "11月9日 (月)").
+func WeekdayDate(loc string, t time.Time, withYear bool) string {
+	d := localeData(loc)
+	return strings.NewReplacer("%1", Weekday(loc, t, true), "%2",
+		CalendarDate(loc, t, CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: !withYear})).Replace(d.sqFormat)
+}
+
+// ShortDatePretty is formatDate's {date_short_pretty}: the relative day
+// ("Today", "Mañana") or toCalendarDate with the month and day shortened,
+// the year left out within half a year ("Nov 14", "14 nov.", "11月14日").
+func ShortDatePretty(loc string, t, now time.Time, lower bool) string {
+	if r := RelativeDay(loc, t, now, lower); r != "" {
+		return r
+	}
+	excl := math.Abs(now.Sub(t).Minutes()) < 262080
+	return CalendarDate(loc, t, CalendarOpts{ShortenMonth: true, ShortenDay: true, ExcludeYear: excl})
 }
 
 // TimeAgo is toTimeAgo (zZAT): "< 1 minute ago" … "N years ago",

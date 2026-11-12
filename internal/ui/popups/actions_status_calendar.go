@@ -44,6 +44,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -160,10 +161,11 @@ func actCalendarPresets(cur *actCalendar, cals *actCals) []actCalendar {
 
 // actCalendarNote is a calendar row's customDuration.
 func actCalendarNote(u *actCalUser, c actCalendar) string {
+	// aq7I's "{calType}Calendar …" (current_status), calType "Google "
 	if u != nil && u.IsStatusSync {
-		return " — " + c.Name + " Calendar updates are on"
+		return " — " + nsStatus.T("{calType}Calendar updates are on", "calType", c.Name+" ")
 	}
-	return " — Based on your " + c.Name + " Calendar"
+	return " — " + nsStatus.T("Based on your {calType}Calendar", "calType", c.Name+" ")
 }
 
 // actCalendarLogo is CustomStatusCalendarIcon's image.
@@ -208,30 +210,33 @@ const actCalendarBlurb = "Your calendar will automatically update your status to
 // actCalendarText is renderCalendarModalSyncText: the bold line and the
 // sentence under it ("" bold for the last case).
 func actCalendarText(c actCalendar, u *actCalUser) (bold, rest string) {
+	// D72a's "<strong>…</strong>" lines (current_status), drawn bold
+	strong := func(src string) string { return i18n.Plain(nsStatus.RT(src, "calName", c.Name)) }
+	blurb := nsStatus.T(actCalendarBlurb)
 	switch {
 	case u == nil:
-		return "Add " + c.Name + " Calendar", actCalendarBlurb
+		return strong("<strong>Add {calName} Calendar</strong>"), blurb
 	case u.IsProviderConnected && !u.IsStatusSync:
-		return "Update your status with " + c.Name + " Calendar", actCalendarBlurb
+		return strong("<strong>Update your status with {calName} Calendar</strong>"), blurb
 	case !u.IsProviderConnected:
-		return "Connect your " + c.Name + " Calendar account", actCalendarBlurb
+		return strong("<strong>Connect your {calName} Calendar account</strong>"), blurb
 	case u.IsStatusSync:
-		return c.Name + " Calendar updates are on", actCalendarBlurb
+		return strong("<strong>{calName} Calendar updates are on</strong>"), blurb
 	}
-	return "", "Visit the calendar app settings to turn off status sync any time."
+	return "", nsStatus.T("Visit the calendar app settings to turn off status sync any time.")
 }
 
 // actCalendarAction is the calendar step's primary button label.
 func actCalendarAction(u *actCalUser) string {
 	switch {
 	case u == nil:
-		return "Add"
+		return nsStatus.T("Add")
 	case !u.IsProviderConnected:
-		return "Connect"
+		return nsStatus.T("Connect")
 	case u.IsStatusSync:
-		return "Turn Off"
+		return nsStatus.T("Turn Off")
 	}
-	return "Turn On"
+	return nsStatus.T("Turn On")
 }
 
 // actGetInstalledCalendars is calendarGetInstalledCalendars.
@@ -322,7 +327,7 @@ func (s *actStatus) calPresets() []actCalendar {
 // calButtons are the calendar step's footer: Back and the action.
 func (s *actStatus) calButtons() []*ModalButton {
 	if s.cal.back == nil {
-		s.cal.back = &ModalButton{Label: "Back", Kind: BtnOutline, Do: func() bool {
+		s.cal.back = &ModalButton{Label: nsStatus.T("Back"), Kind: BtnOutline, Do: func() bool {
 			s.cal.on = false
 			s.focus = true
 			return false
@@ -458,10 +463,11 @@ func (s *actStatus) calFooter(gtx layout.Context) {
 				return icon(gtx, "info", 15, fg)
 			})
 			x := is + dp(gtx, 8)
-			lw := textW(gtx, th, 15, theme.Regular, "Learn more")
+			learn := nsStatus.T("Learn more")
+			lw := textW(gtx, th, 15, theme.Regular, learn)
 			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Regular, fg, "Learn more")
+					return text(gtx, th, 15, theme.Regular, fg, learn)
 				})
 			})
 			if s.cal.learn.Hovered() {
@@ -481,5 +487,5 @@ func (s *actStatus) calRow(gtx layout.Context, th *theme.Theme, cl *Colors, fw, 
 			return containImage(gtx, img, image.Pt(px, px))
 		}
 		return layout.Dimensions{Size: image.Pt(px, px)}
-	}, "In a meeting", actCalendarNote(actCalUser0, c))
+	}, nsStatus.T("In a meeting"), actCalendarNote(actCalUser0, c))
 }

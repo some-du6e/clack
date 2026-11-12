@@ -20,9 +20,10 @@ const (
 	secThread
 	secDetails
 	secProfile
-	secHelp   // the Help flexpane (update_ui.go)
-	secSearch // search in channel (⌘F, popups.SearchInChannel)
-	secCode   // a code channel's details pane (codechannel_pane.go)
+	secHelp     // the Help flexpane (update_ui.go)
+	secSearch   // search in channel (⌘F, popups.SearchInChannel)
+	secCode     // a code channel's details pane (codechannel_pane.go)
+	secWorkflow // the workflow details view (workflow_details.go)
 )
 
 // secondaryState is the resizable right-hand pane (thread, channel details,
@@ -41,6 +42,9 @@ type secondaryState struct {
 	// keyFocus: the key focus is in the thread pane (set each frame
 	// before the shortcuts run; threadEsc)
 	keyFocus bool
+	// findFocus: the key focus is in the thread's find bar (set each
+	// frame with keyFocus): Mod+F there is the thread's again
+	findFocus bool
 	// drawnW is the pane's width last frame, px (screenshots crop it)
 	drawnW int
 	drag   gesture.Drag

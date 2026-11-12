@@ -656,6 +656,12 @@ func FocusButton(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind 
 }
 
 func button(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool) layout.Dimensions {
+	return buttonGrp(gtx, th, c, kind, size, label, iconName, minW, ring, grpNone)
+}
+
+// buttonGrp is button as the first of a joined pair or the last
+// (button_group.go): the inner corners square.
+func buttonGrp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool, grp grpSide) layout.Dimensions {
 	var mods uint64 = 1 << kind // BtnOutline … BtnDisabled
 	if size == BtnMedium {
 		mods |= 1 << 5
@@ -682,7 +688,7 @@ func button(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind BtnKi
 		return layout.Dimensions{}
 	}
 	return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-		return buttonNative(gtx, th, st, c, kind, size, label, iconName, minW, ring)
+		return buttonNative(gtx, th, st, c, kind, size, label, iconName, minW, ring, grp)
 	})
 }
 
@@ -709,7 +715,7 @@ func FocusRingColors(gtx layout.Context, solid, halo color.NRGBA, r image.Rectan
 	stroke(gtx, r.Inset(-one), rad+one, one, solid)
 }
 
-func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool) layout.Dimensions {
+func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widget.Clickable, kind BtnKind, size BtnSize, label, iconName string, minW float32, ring bool, grp grpSide) layout.Dimensions {
 	cl := colorsOf(th)
 	h, fs, rad, pad, isz := float32(28), float32(13), float32(4), float32(12), float32(16)
 	if size == BtnMedium {
@@ -771,10 +777,21 @@ func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widg
 			}
 		}
 		if border.A > 0 {
-			rrect(gtx, r, dp(gtx, rad), border)
-			rrect(gtx, r.Inset(1), dp(gtx, rad)-1, b)
+			rrectGrp(gtx, r, dp(gtx, rad), grp, border)
+			rrectGrp(gtx, r.Inset(1), dp(gtx, rad)-1, grp, b)
 		} else {
-			rrect(gtx, r, dp(gtx, rad), b)
+			rrectGrp(gtx, r, dp(gtx, rad), grp, b)
+		}
+		if grp == grpFirst && kind == BtnPrimary || grp == grpFirst && kind == BtnDisabled {
+			// .p-share_dialog__forward_button--with_options
+			// .c-button--primary:before: 1px of #fff6, 8px shorter than the
+			// button, at its end edge (otl-ter while aria-disabled)
+			div := rgba(0xffffff, 0x66/255.0)
+			if kind == BtnDisabled {
+				div = theme.OtlTer(th)
+			}
+			inset := dp(gtx, 4) // height calc(100% - 8px), centred
+			fill(gtx, image.Rect(w-max(1, dp(gtx, 1)), inset, w, hh-inset), div)
 		}
 		x := (w - tw - iw) / 2
 		if iconName != "" {

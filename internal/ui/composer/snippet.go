@@ -20,6 +20,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -132,6 +133,7 @@ type snippetDialog struct {
 	shareBtn   widget.Clickable
 	shareOn    bool
 	ch         string
+	picked     core.Conv // the picker's last pick (a searched channel may not be in the store)
 	chBtn      widget.Clickable
 	chOv       popups.Overlay
 	bcBtn      widget.Clickable
@@ -210,6 +212,13 @@ func (d *snippetDialog) wrap() bool {
 func (d *snippetDialog) conv() (core.Conv, bool) {
 	if d.ch == "" || d.c.api.a == nil {
 		return core.Conv{}, false
+	}
+	if d.picked.ID == d.ch && d.picked.ID != "" {
+		// a searched channel: the store's copy when it has one
+		if cv, ok := d.c.api.a.Conv(d.ch); ok {
+			return cv, true
+		}
+		return d.picked, true
 	}
 	return d.c.api.conv(d.ch)
 }
@@ -313,11 +322,14 @@ func (d *snippetDialog) handle(gtx layout.Context) {
 		}
 	}
 	// handleCodeMirrorKeyDown: ⌘Enter / Ctrl+Enter creates; Escape stops
-	// editing (the editor lets go of the keyboard) instead of closing
+	// editing (the editor lets go of the keyboard) instead of closing;
+	// Tab is CodeMirror's defaultTab (a tab, or the selected lines
+	// indented one tab: indentWithTabs)
 	for {
 		e, ok := gtx.Event(key.Filter{Focus: &d.code.ed, Name: key.NameReturn, Required: key.ModShortcut},
 			key.Filter{Focus: &d.code.ed, Name: key.NameEnter, Required: key.ModShortcut},
-			key.Filter{Focus: &d.code.ed, Name: key.NameEscape})
+			key.Filter{Focus: &d.code.ed, Name: key.NameEscape},
+			key.Filter{Focus: &d.code.ed, Name: key.NameTab})
 		if !ok {
 			break
 		}
@@ -327,6 +339,10 @@ func (d *snippetDialog) handle(gtx layout.Context) {
 		}
 		if ke.Name == key.NameEscape {
 			gtx.Execute(key.FocusCmd{})
+			continue
+		}
+		if ke.Name == key.NameTab {
+			snippetTab(&d.code.ed)
 			continue
 		}
 		if !d.goDisabled() && d.submit() {
@@ -378,6 +394,7 @@ func (d *snippetDialog) body(gtx layout.Context) layout.Dimensions {
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(nameW, fh))
 	popups.Field(g, th, &d.title, i18n.T("snippet-dialog", "snippet.txt"), "", 36, 15)
+	snippetTitleCount(g, th, &d.title, fh)
 	off.Pop()
 	if d.typeBtn.Clicked(gtx) && !overlayOpen(d.typeOv) {
 		ext := false
@@ -410,7 +427,7 @@ func (d *snippetDialog) body(gtx layout.Context) layout.Dimensions {
 	off = op.Offset(image.Pt(0, y)).Push(gtx.Ops)
 	g = gtx
 	g.Constraints = layout.Exact(image.Pt(w, gtx.Dp(192)))
-	d.focused = d.code.layout(g, th, cl, d.wrap())
+	d.focused = d.code.layout(g, th, cl, d.wrap(), snippetLangs[d.typ])
 	off.Pop()
 	y += gtx.Dp(192) + gap
 
@@ -427,6 +444,17 @@ func (d *snippetDialog) body(gtx layout.Context) layout.Dimensions {
 	}
 	off.Pop()
 	y += cd.Size.Y
+
+	// renderShareAlert: ShareDialogAlert while sharing
+	if d.shareOn {
+		if msg := d.shareWarning(); msg != "" {
+			y += gtx.Dp(16) // .p-share_dialog__section margin-top
+			off = op.Offset(image.Pt(0, y)).Push(gtx.Ops)
+			ad := shareAlert(gtx, th, msg, w)
+			off.Pop()
+			y += ad.Size.Y
+		}
+	}
 
 	// renderMessageInput: hidden while not sharing
 	if d.shareOn {
@@ -447,6 +475,82 @@ func (d *snippetDialog) body(gtx layout.Context) layout.Dimensions {
 		y += gtx.Dp(8) // .p-snippet_dialog .c-dialog__body padding-bottom
 	}
 	return layout.Dimensions{Size: image.Pt(w, y)}
+}
+
+// snippetTitleMax and snippetTitleCounter are the Title input's
+// maxCharacterLimit and counterMinimumCharacters.
+const snippetTitleMax, snippetTitleCounter = 255, 200
+
+// snippetTitleCount is the Title input's CharacterCount (sBpu): while the
+// field has the focus and holds at least 200 characters, what is left of
+// 255 at its right end (padding 8px 12px, 13px content-sec on the input's
+// background, content-imp once over).
+func snippetTitleCount(gtx layout.Context, th *theme.Theme, ed *widget.Editor, h int) {
+	if !gtx.Focused(ed) {
+		return
+	}
+	n := jsLen(ed.Text())
+	if n < snippetTitleCounter {
+		return
+	}
+	s := itoa(snippetTitleMax - n)
+	col := th.C.FgMuted
+	if n > snippetTitleMax {
+		col = th.C.Danger
+	}
+	st := textStyle{Size: 13, LineHeight: 18, Color: col}
+	w := gtx.Constraints.Max.X
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(w, h)} // the field's are exact
+	m := op.Record(gtx.Ops)
+	dd := label(g, th.Shaper, st, s)
+	call := m.Stop()
+	bw := dd.Size.X + gtx.Dp(24)
+	r := image.Rect(w-bw, 1, w-1, h-1)
+	paint.FillShape(gtx.Ops, th.C.Bg, clip.Rect(r).Op())
+	off := op.Offset(image.Pt(w-bw+gtx.Dp(12), (h-dd.Size.Y)/2)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	off.Pop()
+}
+
+// shareWarning is ShareDialogAlert's text (tD+p) for the selected
+// conversation: a public channel the viewer isn't in is joined by
+// sharing into it. (Its broadcast lines need a mention in the message,
+// which this plain message input doesn't make.)
+func (d *snippetDialog) shareWarning() string {
+	cv, ok := d.conv()
+	if !ok || cv.Kind != "channel" || !cv.Preview {
+		return ""
+	}
+	return i18n.T("share-dialog", "You will join this channel when you share the file into it.")
+}
+
+// shareAlert is the inline warning Alert (VvO8, .c-alert--inline
+// .c-alert--level_warning): surface-highlight-3 behind, radius 8, padding
+// 8px 16px, the warning icon in content-highlight-3 12px before 13px text.
+func shareAlert(gtx layout.Context, th *theme.Theme, msg string, w int) layout.Dimensions {
+	px, py, ic := gtx.Dp(16), gtx.Dp(8), gtx.Dp(16)
+	tw := max(1, w-2*px-ic-gtx.Dp(12))
+	st := textStyle{Size: 13, LineHeight: 18, Color: th.C.Fg}
+	m := op.Record(gtx.Ops)
+	g := gtx
+	g.Constraints = layout.Constraints{Max: image.Pt(tw, 1<<20)}
+	dd := label(g, th.Shaper, st, msg)
+	call := m.Stop()
+	h := dd.Size.Y + 2*py
+	bg := color.NRGBA{R: 0xff, G: 0xc6, B: 0x00, A: 0x2e} // --dt_color-surf-hgl-3
+	fg := rgbHex(0x6b5000)                                // --dt_color-content-hgl-3
+	if th.Dark {
+		bg, fg = color.NRGBA{R: 0xa0, G: 0x73, B: 0x00, A: 0x2e}, rgbHex(0xdea700)
+	}
+	fillRRect(gtx, image.Rect(0, 0, w, h), gtx.Dp(8), bg)
+	off := op.Offset(image.Pt(px, py+gtx.Dp(1))).Push(gtx.Ops)
+	icons.Get("warning")(gtx, unit.Dp(16), fg)
+	off.Pop()
+	off = op.Offset(image.Pt(px+ic+gtx.Dp(12), py)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	off.Pop()
+	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
 // broadcastLabel is FileUploadBroadcastCheckbox's text.
@@ -508,44 +612,19 @@ func (d *snippetDialog) footer(gtx layout.Context) layout.Dimensions {
 	return layout.Dimensions{Size: image.Pt(x+selW, cd.Size.Y)}
 }
 
-// openConvList lists the conversations the select offers (the sidebar's,
-// channels first), the selected one highlighted, under the select (x
-// into the footer, w wide).
+// openConvList opens the select's searcher (ShareDialogChannelPicker,
+// snippet_picker.go) over the footer's select, x into the footer and w
+// wide.
 func (d *snippetDialog) openConvList(gtx layout.Context, x, w int) {
 	if d.c.api.a == nil {
 		return
-	}
-	var convs []core.Conv
-	for _, cv := range d.c.api.snapshot().Convs {
-		if cv.IsArchived || cv.Name == "" {
-			continue
-		}
-		convs = append(convs, cv)
-	}
-	sort.SliceStable(convs, func(i, j int) bool {
-		ci, cj := convs[i].Kind == "im" || convs[i].Kind == "mpim", convs[j].Kind == "im" || convs[j].Kind == "mpim"
-		if ci != cj {
-			return !ci
-		}
-		return strings.ToLower(convs[i].Name) < strings.ToLower(convs[j].Name)
-	})
-	labels := make([]string, len(convs))
-	sel := -1
-	for i, cv := range convs {
-		labels[i] = convLabel(cv)
-		if cv.ID == d.ch {
-			sel = i
-		}
 	}
 	// the footer's select: its row is the card's bottom less the footer's
 	// 20px padding, from 28px in
 	r := d.m.Rect()
 	left := r.Min.X + gtx.Dp(28) + x
 	anchor := image.Rect(left, r.Max.Y-gtx.Dp(20)-popups.SelectFieldHeight(gtx), left+w, r.Max.Y-gtx.Dp(20))
-	d.chOv = popups.NewOptionList(d.h, anchor, labels, sel, func(i int) {
-		d.ch = convs[i].ID
-		d.h.Invalidate()
-	})
+	d.chOv = newConvPicker(d, anchor)
 	d.h.ShowOverlay(d.chOv)
 }
 
@@ -579,15 +658,20 @@ func snippetCheck(gtx layout.Context, th *theme.Theme, btn *widget.Clickable, on
 // scrolls inside its 12rem. A tab draws as Gio's missing glyph (its
 // shaper has no tab stops); the content keeps it.
 type snippetCode struct {
-	ed    widget.Editor
-	list  layout.List
-	hlist layout.List
-	click widget.Clickable
+	ed      widget.Editor
+	list    layout.List
+	hlist   layout.List
+	click   widget.Clickable
+	regions []widget.Region // paintHighlights' scratch
 }
 
 const snippetCodeSize, snippetCodeLine = 13, 19.5
 
-func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Colors, wrap bool) bool {
+// snippetTabSize is CodeMirror's tabSize (its default 4: lYxy sets
+// indentUnit 4 and indentWithTabs).
+const snippetTabSize = 4
+
+func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Colors, wrap bool, lang string) bool {
 	sz := gtx.Constraints.Max
 	r := image.Rectangle{Max: sz}
 	rad := gtx.Dp(8)
@@ -624,14 +708,21 @@ func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Col
 	}
 	ed := func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(textW, 0), Max: image.Pt(edW, 1<<20)}
-		tm := op.Record(gtx.Ops)
-		paint.ColorOp{Color: th.C.Fg}.Add(gtx.Ops)
-		txt := tm.Stop()
+		fg := th.C.Fg
+		if lang != "" {
+			fg = color.NRGBA{} // the highlighter paints the text (snippet_highlight.go)
+		}
+		txt := theme.TextMaterial(gtx, fg)
 		sm := op.Record(gtx.Ops)
 		paint.ColorOp{Color: th.C.Selection}.Add(gtx.Ops)
 		sel := sm.Stop()
 		s.ed.LineHeight, s.ed.LineHeightScale = unit.Sp(snippetCodeLine), 1
-		return s.ed.Layout(gtx, th.Shaper, mono, snippetCodeSize, txt, sel)
+		s.ed.TabStop = snippetTabSize // CodeMirror's tabSize (Gio patch 7)
+		d := s.ed.Layout(gtx, th.Shaper, mono, snippetCodeSize, txt, sel)
+		if lang != "" {
+			s.paintHighlights(gtx, th, lang, mono)
+		}
+		return d
 	}
 	numbers := func(gtx layout.Context, n int, heights []int) {
 		y := 0
@@ -689,6 +780,47 @@ func (s *snippetCode) layout(gtx layout.Context, th *theme.Theme, cl *popups.Col
 		return layout.Dimensions{Size: image.Pt(sz.X, max(total, dd.Size.Y+2*pad, sz.Y))}
 	})
 	return focused
+}
+
+// snippetTab is CodeMirror's defaultTab with indentWithTabs: no
+// selection inserts a tab; a selection gets indentMore, a tab at the start
+// of each line it covers (a line it only reaches the start of excluded,
+// as in indentSelection), still selected.
+func snippetTab(ed *widget.Editor) {
+	a, b := ed.Selection()
+	if a == b {
+		ed.Insert("\t")
+		return
+	}
+	lo, hi := min(a, b), max(a, b)
+	rs := []rune(ed.Text())
+	hi = min(hi, len(rs))
+	s := min(lo, len(rs))
+	for s > 0 && rs[s-1] != '\n' {
+		s--
+	}
+	var starts []int
+	for i := s; ; {
+		starts = append(starts, i)
+		j := i
+		for j < len(rs) && rs[j] != '\n' {
+			j++
+		}
+		if j >= len(rs) || j+1 >= hi {
+			break
+		}
+		i = j + 1
+	}
+	out := make([]rune, 0, len(rs)+len(starts))
+	prev := 0
+	for _, st := range starts {
+		out = append(out, rs[prev:st]...)
+		out = append(out, '\t')
+		prev = st
+	}
+	out = append(out, rs[prev:]...)
+	ed.SetText(string(out))
+	ed.SetCaret(lo+1, hi+len(starts))
 }
 
 func rgbHex(v uint32) color.NRGBA {

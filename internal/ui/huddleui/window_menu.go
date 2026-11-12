@@ -7,6 +7,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -80,7 +81,7 @@ func (h winHost) Toast(text string)                         { h.w.c.h.Toast(text
 func (c *Controller) moreMenu(s *huddle.Session, st huddle.State, w *window) []popups.MenuItem {
 	ch := st.Channel
 	items := []popups.MenuItem{
-		{Key: "copy-huddle-link", Label: "Copy huddle link", Do: func() { c.CopyLink(ch) }},
+		{Key: "copy-huddle-link", Label: nsHuddles.T("Copy huddle link"), Do: func() { c.CopyLink(ch) }},
 	}
 	if g := c.goToLabel(ch); g != "" { // HuddleGoToMenuItem
 		h := c.h
@@ -99,17 +100,18 @@ func (c *Controller) moreMenu(s *huddle.Session, st huddle.State, w *window) []p
 	items = append(items, c.topicItem(s, st, ph), popups.Sep())
 	// CaptionsSubmenu: "Show captions" › Display as… / Closed captions
 	on := st.CaptionsOn
-	items = append(items, popups.MenuItem{Key: "show-captions", Label: "Show captions", Sub: []popups.MenuItem{
-		{Header: "Display as…"},
-		{Key: "closed-captions", Label: "Closed captions", Checked: on, Do: func() { c.ToggleClosedCaptions(s) }},
+	items = append(items, popups.MenuItem{Key: "show-captions", Label: nsHuddles.T("Show captions"), Sub: []popups.MenuItem{
+		{Header: nsHuddles.T("Display as…")},
+		{Key: "closed-captions", Label: nsHuddles.T("Closed captions"), Checked: on, Do: func() { c.ToggleClosedCaptions(s) }},
 	}})
 	// useHideSelfMenuItem: only with someone else in the huddle
 	if len(st.Participants) > 1 {
 		hide := c.hideSelf.Load()
-		items = append(items, popups.MenuItem{Key: "hidingSelf", Label: "Hide self-view", Checked: hide, Do: func() {
+		items = append(items, popups.MenuItem{Key: "hidingSelf", Label: nsHuddles.T("Hide self-view"), Checked: hide, Do: func() {
 			c.hideSelf.Store(!hide)
 			if !hide { // "user_self_view_is_hidden": Self-view is hidden. Undo
-				c.showBannerLink("Self-view is hidden.", "eye-off", "Undo", func() { c.hideSelf.Store(false) })
+				text, undo, _ := linkParts("<strong>Self-view is hidden.</strong> <a>Undo</a>") // HuddlesInformationalBanner
+				c.showBannerLink(text, "eye-off", undo, func() { c.hideSelf.Store(false) })
 			} else {
 				c.showBanner("", "")
 			}
@@ -117,7 +119,7 @@ func (c *Controller) moreMenu(s *huddle.Session, st huddle.State, w *window) []p
 		}})
 	}
 	// useAVPreferencesSettingsMenuItem("Huddle preferences", open-in-window)
-	items = append(items, popups.Sep(), popups.MenuItem{Key: "huddle-preferences", Label: "Huddle preferences", External: true, Do: func() {
+	items = append(items, popups.Sep(), popups.MenuItem{Key: "huddle-preferences", Label: nsHuddles.T("Huddle preferences"), External: true, Do: func() {
 		if p, ok := c.h.(interface{ OpenPreferences(section string) }); ok {
 			c.post(func() { p.OpenPreferences("video_audio") })
 		}
@@ -138,12 +140,15 @@ func (c *Controller) goToLabel(ch string) string {
 	}
 	switch conv.Kind {
 	case "im", "mpim":
+		if i18n.Locale() != i18n.EnUS {
+			return nsHuddles.T("Go to conversation") // GoToTooltip
+		}
 		return "Go to direct message"
 	}
 	if conv.Name == "" {
 		return ""
 	}
-	return "Go to #" + conv.Name
+	return nsHuddles.T("Go to {copyChannelName}", "copyChannelName", "#"+conv.Name) // HuddleGoToTipContent
 }
 
 // toggleMore opens (or closes) the ⋯ menu above its button.

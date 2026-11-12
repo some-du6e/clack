@@ -32,10 +32,10 @@ func TestHuddleShotsAudit(t *testing.T) {
 	}
 
 	img := render(t, "audit-window", 620, 400, func(gtx C) { e.w.layout(gtx) })
-	// Leave sits at the right edge of the 56px toolbar, not in the centre row
-	right := image.Rect((620-110)*shotScale, (400-56)*shotScale, 620*shotScale, 400*shotScale)
-	if n := pixeltest.Count(img, right, hudLeave, 12); n < 4000 {
-		t.Fatalf("no Leave button at the toolbar's right (%d px)", n)
+	// the compact window: Leave ends the centred toolbar row, after ⋯
+	right := image.Rect(e.w.moreBtn.Max.X, (400-winFooterH)*shotScale, e.w.moreBtn.Max.X+100*shotScale, (400-5)*shotScale)
+	if n := pixeltest.Count(img, right, hudLeave, 12); n < 3000 {
+		t.Fatalf("no Leave button after ⋯ (%d px)", n)
 	}
 	// the closed captions: a black box at the content's bottom left
 	cc := image.Rect(8*shotScale, 200*shotScale, 310*shotScale, (400-56)*shotScale)

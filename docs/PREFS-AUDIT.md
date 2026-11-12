@@ -691,3 +691,7 @@ dev.
   `TestFocusCustomDuration`, `TestFocusCustomShots` (ui); `TestEmojiToneChoices`,
   `TestEmojiTonePopover` (popups); `TestDeferStreamingNotification` (ui) and
   `TestStreamDoneEvent`, `TestOpenStreams` (core).
+
+## The panel's padding and focus rings (plugins-leftovers, 2026-11-11)
+
+Slack's `.p-prefs_dialog__panel` (padding 20px 28px) is the page's scroll container, so it scrolls and clips at its padding box: what overflows a control shows in the padding, like the 5px box-shadow ring of `.c-input_text:focus`. Clack's panes clipped at the content box, at the controls' own edge, so the Plugins search field's focus ring and the All pill's left edge were cut (Karim, α.37 on Windows). Every pane now scrolls and clips at the padding box (`panelList` for the Plugins, Themes and Taut pages, `prefsScroll.panel` for Slack's sections), and a theme's panel background covers the padding as Slack's does. The search fields (Plugins, the library, Themes, Slick's settings, VIP's) draw Slack's focus ring (1px `otl-hgl-1` and 5px of it at 30%, outside the box, the border transparent), and the inputs', pills' and chips' borders sit inside their box as CSS borders do. CI: `TestPluginsPrefsShots` (plugins-shots) focuses the Plugins search with a click and checks the ring's pixels left of it (`plugins-search-focused-light.png`, `-dark`).

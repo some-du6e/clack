@@ -24,6 +24,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -282,12 +283,14 @@ func (p *tautPage) input(gtx layout.Context, e *widget.Editor, w, h int, placeho
 	r := image.Rect(0, 0, w, h)
 	rad := gtx.Dp(8)
 	theme.RRect(gtx, r, rad, cl.bg)
-	bc := cl.border
 	if gtx.Focused(e) {
-		bc = cl.focus
-		theme.Border(gtx, r.Inset(-gtx.Dp(3)), rad+gtx.Dp(3), gtx.Dp(3), theme.WithAlpha(cl.focus, 0x30))
+		// .c-input_text:focus: box-shadow 0 0 0 1px otl-hgl-1, 0 0 0 5px
+		// of it at 30%, outside the box (the panel's padding has room for
+		// it), and the border transparent
+		popups.FocusRingColors(gtx, cl.focus, theme.WithAlpha(cl.focus, 0x4d), r, rad)
+	} else {
+		richview.StrokeRRect(gtx.Ops, r, rad, gtx.Dp(1), cl.border) // a CSS border: inside the box
 	}
-	theme.Border(gtx, r, rad, gtx.Dp(1), bc)
 	size := unit.Sp(15)
 	if mono {
 		size = 12
@@ -350,7 +353,7 @@ func (p *tautPage) layout(gtx layout.Context) layout.Dimensions {
 		p.subGen = p.a.tautGen
 	}
 	sz := gtx.Constraints.Max
-	return p.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+	return panelList(gtx, &p.list.List, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
 		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
 		p.gtxNow = gtx
@@ -605,11 +608,7 @@ func (p *tautPage) optionField(f *flow, t *taut.Taut, pl taut.PluginInfo, o taut
 				var items []MenuItem
 				for _, ch := range o.Kind.Options {
 					ch := ch
-					lbl := ch.Label
-					if ch.Value == cur {
-						lbl = "✓ " + lbl
-					}
-					items = append(items, MenuItem{Label: lbl, Do: func() { set(ch.Value) }})
+					items = append(items, MenuItem{Label: ch.Label, Checked: ch.Value == cur, Do: func() { set(ch.Value) }})
 				}
 				p.a.menu(p.a.PointerPos(), items)
 			}
@@ -1232,7 +1231,7 @@ func (p *tautPage) filterPill(gtx layout.Context, k, label string, active bool) 
 			bg = p.a.th.C.BgHover
 		}
 		theme.RRect(gtx, r, h/2, bg)
-		theme.Border(gtx, r, h/2, gtx.Dp(1), bd)
+		richview.StrokeRRect(gtx.Ops, r, h/2, gtx.Dp(1), bd) // a CSS border: inside the pill
 		at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(lw+2, h), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return p.label(gtx, 13, theme.Bold, fg, label) })
 		})
@@ -1433,18 +1432,20 @@ func (p *tautPage) followConfig(path string) {
 	p.cfgInit = true
 }
 
-// aboutScreen is Taut's About screen: Taut, then every installed plugin
-// with its authors (Slick's among them).
+// aboutScreen is Plugins > About: Clack itself (its name and version,
+// what it is, its repository), then the credits: a line each for the two
+// plugin systems Clack runs plugins from, and the installed plugins'
+// authors (none listed while nothing is installed).
 func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
 	hc := t.IsHackClub()
 	p.subScreen(f, "About", "Plugins")
-	p.legend(f, "Taut")
-	about := tautMrkdwnHere("A client mod for Slack, made by <@U06UYA5GMB5>. Come say hi in <#C0A057686SF>, and find the code on <https://github.com/jeremy46231/taut|GitHub> (GPLv3 or later). "+
-		AppName+" runs Taut plugins on its own implementation of Taut's API; no Taut code is included.", hc)
-	f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, "about", about, false, cl.fg) })
+	p.legend(f, AppName+" "+appVersion())
+	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		return p.mrkdwn(gtx, "about", aboutClack, false, cl.fg)
+	})
 	p.fieldGap(f)
-	p.legend(f, "Plugins")
+	p.legend(f, "Credits")
 	n := 0
 	line := func(key, s string) {
 		if n > 0 {
@@ -1452,6 +1453,9 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		}
 		n++
 		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, key, s, false, cl.fg) })
+	}
+	for _, c := range aboutSystems {
+		line("credit.system."+c[0], c[1])
 	}
 	for _, c := range s.Categories {
 		for _, pl := range c.Plugins {
@@ -1471,9 +1475,15 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 			line("credit.slick."+pl.ID, l)
 		}
 	}
-	if n == 0 {
-		p.muted(f, "No plugins installed.")
-	}
+}
+
+// aboutClack is About's line on Clack (the README's), with its repository.
+const aboutClack = "A fast Slack client for the desktop, written in Go with a native, GPU-rendered window. <https://github.com/some-du6e/clack|github.com/some-du6e/clack>"
+
+// aboutSystems are About's credit lines for the plugin systems.
+var aboutSystems = [][2]string{
+	{"taut", "Compatible with <https://github.com/jeremy46231/taut|Taut> plugins"},
+	{"slick", "Compatible with <https://github.com/3kh0/slick|Slick> plugins"},
 }
 
 // ---- helpers ----

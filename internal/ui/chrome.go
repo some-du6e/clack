@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -168,7 +169,7 @@ func (a *App) chromeBase(p image.Point) color.NRGBA {
 func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	c := &a.th.C
 	h := gtx.Dp(theme.TopNavH)
-	tn := clsTopNav.Enter(gtx, 0, 0)
+	tn := clsTopNav.Enter(gtx, 0, a.scopeMod())
 	defer tn.Leave()
 	if tn.Hidden() {
 		return
@@ -323,9 +324,75 @@ func (a *App) railTabFor(id string) railTab {
 // "Activity", "Files"), More and Later the view's.
 var railNS = i18n.NewChain("client", "view", "saved_for_later")
 
-// railLines splits "Agents & tools" onto two lines, as Slack wraps it.
-func railLines(label string) []string {
-	return strings.SplitN(strings.Replace(label, " & ", "\n& ", 1), "\n", 2)
+// railTall is useTabRailOrganizer's (4v2a) per-locale table of the tabs
+// whose label wraps onto two lines: each costs 80 of the rail's budget
+// instead of 68.
+var railTall = map[string][]string{
+	"de-DE": {core.TabPlatform},
+	"es-ES": {core.TabDMs, core.TabPlatform},
+	"es-LA": {core.TabDMs, core.TabPlatform},
+	"fr-FR": {core.TabDMs, core.TabPlatform},
+	"it-IT": {core.TabPlatform},
+	"pt-BR": {core.TabPlatform},
+	"ja-JP": {core.TabActivity, core.TabActivityInbox},
+	"zh-CN": {core.TabLater},
+}
+
+// railTabH is a tab's height (dp) with n label lines: 8px padding, the
+// 36px tile, a 4px gap, the 12px lines and 8px padding
+// (.p-tab_rail__button .c-tabs__tab_content).
+func railTabH(n int) int { return 56 + 12*max(n, 1) }
+
+// railLabelLines is a tab's label as Slack's rail wraps it: the tab
+// content is 52px of 11px bold text with white-space normal
+// (.p-tab_rail__button .c-tabs__tab_content), so a label breaks at its
+// spaces and between CJK characters (i18n.LineChunks): "Mensajes
+// directos" (es-ES DMs) and アクティビティ (ja-JP Activity) take two lines.
+// Agents & tools is balanced (.p-tab_rail__button__label--agents-tools:
+// text-wrap balance). The label is hyphens:auto too, which Blink applies
+// only with a hyphenation dictionary for the locale; Clack has none, so a
+// word wider than the tab keeps its line and overflows (layoutRail). Only
+// en-US and en-GB's Agents & tools label ellipsizes
+// (.p-tab_rail__button__label--en), and its words fit.
+func (a *App) railLabelLines(gtx layout.Context, t railTab) []string {
+	w := gtx.Dp(52)
+	lines := a.railWrap(gtx, t.label, w)
+	if t.id == core.TabPlatform && len(lines) > 1 {
+		lo, hi := 1, w // the narrowest width that keeps the line count
+		for lo < hi {
+			if mid := (lo + hi) / 2; len(a.railWrap(gtx, t.label, mid)) <= len(lines) {
+				hi = mid
+			} else {
+				lo = mid + 1
+			}
+		}
+		lines = a.railWrap(gtx, t.label, hi)
+	}
+	return lines
+}
+
+// railWrap breaks label into lines of at most w px, as many chunks to a
+// line as fit (a chunk wider than w gets a line of its own).
+func (a *App) railWrap(gtx layout.Context, label string, w int) []string {
+	var lines []string
+	cur := ""
+	for _, word := range strings.Fields(label) {
+		for i, c := range i18n.LineChunks(word) {
+			next := cur + c
+			if i == 0 && cur != "" {
+				next = cur + " " + c
+			}
+			if cur != "" && a.th.Measure(gtx, 11, theme.Bold, next) > w {
+				lines = append(lines, cur)
+				next = c
+			}
+			cur = next
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return lines
 }
 
 // railFit runs Slack's tab rail organizer for the space between the first
@@ -337,10 +404,16 @@ func (a *App) railFit(gtx layout.Context, space int) (show, overflow []string) {
 		r.Available = r.Rail
 	}
 	h := func(id string) int {
-		if len(railLines(a.railTabFor(id).label)) == 2 {
-			return 80 // two-line label (Slack keeps 68 in its budget; Clack draws it taller)
+		b := core.RailTabHeight(r.Compact)
+		if !r.Compact && slices.Contains(railTall[i18n.Locale()], id) {
+			b = 80
 		}
-		return core.RailTabHeight(r.Compact)
+		if n := len(a.railLabelLines(gtx, a.railTabFor(id))); n > 1 {
+			// the lines Clack draws (Slack's table keeps 68 for en-US's
+			// two-line Agents & tools; Clack budgets what it draws)
+			b = max(b, railTabH(n))
+		}
+		return b
 	}
 	return core.OrganizeRail(r, int(float32(space)/gtx.Metric.PxPerDp), h)
 }
@@ -371,11 +444,8 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 	for _, id := range show {
 		t := a.railTabFor(id)
 		btn := a.clicks.get("rail." + t.key)
-		th := gtx.Dp(68)
-		lines := railLines(t.label)
-		if len(lines) == 2 {
-			th = gtx.Dp(80) // Slack wraps "Agents & tools" onto two lines
-		}
+		lines := a.railLabelLines(gtx, t)
+		th := gtx.Dp(unit.Dp(railTabH(len(lines))))
 		org := image.Pt(gtx.Dp(9), y)
 		// More is a PeekTrigger: hovering opens its menu (rail_peek.go),
 		// and it keeps the hover tile while the menu shows
@@ -401,14 +471,6 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				at(gtx, image.Pt(tile.Min.X+gtx.Dp(8), tile.Min.Y+gtx.Dp(8)), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(name)(gtx, 20, c.ChromeText)
 				})
-				// label 700 11px/12px, centered under the tile.
-				for li, ln := range lines {
-					ln := ln
-					lw := a.th.Measure(gtx, 11, theme.Bold, ln)
-					at(gtx, image.Pt((gtx.Dp(52)-lw)/2, gtx.Dp(48)+li*gtx.Dp(12)), image.Pt(lw+2, gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 11, theme.Bold, c.ChromeText, ln)
-					})
-				}
 				// unread badge / dot on the tile's top-right corner.
 				if n, dot := a.railBadge(t.key); n > 0 {
 					at(gtx, image.Pt(tile.Max.X-gtx.Dp(10), tile.Min.Y-gtx.Dp(5)), image.Pt(gtx.Dp(40), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
@@ -420,6 +482,20 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				return layout.Dimensions{Size: image.Pt(gtx.Dp(52), th)}
 			})
 		})
+		// the label, 700 11px/12px under the tile, each line centered
+		// (.p-tab_rail__tab_menu .c-tabs__tab: text-align center). A line
+		// wider than the tab starts at its left edge and runs on to the
+		// rail's (CSS start-aligns an overflowing line; .p-tab_rail is
+		// overflow hidden), past the button's clip.
+		lc := clip.Rect{Min: image.Pt(0, org.Y), Max: image.Pt(gtx.Dp(70), org.Y+th)}.Push(gtx.Ops)
+		for li, ln := range lines {
+			lw := a.th.Measure(gtx, 11, theme.Bold, ln)
+			lo := org.Add(image.Pt(max((gtx.Dp(52)-lw)/2, 0), gtx.Dp(48)+li*gtx.Dp(12)))
+			at(gtx, lo, image.Pt(lw+2, gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
+				return a.th.Label(gtx, 11, theme.Bold, c.ChromeText, ln)
+			})
+		}
+		lc.Pop()
 		if clicked(btn) {
 			if t.key == "browse" {
 				a.railMoreClick() // forceOpenOnClick

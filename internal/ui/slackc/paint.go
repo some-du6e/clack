@@ -1215,7 +1215,7 @@ func (p *painter) drawWord(sh *shaped, x, y float32, col color.NRGBA, st *css.St
 		paint.FillShape(p.ops, p.col(ts.Color), clip.Outline{Path: path}.Op())
 		s.Pop()
 	}
-	paint.FillShape(p.ops, col, clip.Outline{Path: path}.Op())
+	theme.FillText(p.ops, col, path)
 	if e := theme.EmboldenFor(col); e > 0 {
 		paint.FillShape(p.ops, col, clip.Stroke{Path: path, Width: e}.Op())
 	}
@@ -1290,6 +1290,10 @@ func (p *painter) run(b *box, r *run, x, y float32) {
 		case iEmoji:
 			st := &it.b.st
 			if st.Visibility != css.Visible {
+				continue
+			}
+			if name, ok := strings.CutPrefix(it.url, legacyIconURL); ok {
+				p.legacyIcon(name, ox+fr.x, oy+fr.y, it.w-p.v.dp, p.col(st.Color))
 				continue
 			}
 			p.emoji(it.url, ox+fr.x, oy+fr.y, it.w-p.v.dp)

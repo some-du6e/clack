@@ -138,9 +138,14 @@ type listState struct {
 	lastOlder   time.Time
 	highlight   string
 	highlightAt time.Time
-	sel         selection
-	sb          scrollbar
-	pendingJump string
+	// find in thread (thread_find.go): the highlight words (the query of
+	// the last results), the current result and the result flashing
+	findWords, findTS string
+	findFlash         string
+	findFlashAt       time.Time
+	sel               selection
+	sb                scrollbar
+	pendingJump       string
 
 	// the list as the last frame left it (anchoring in layoutList)
 	laidOut   bool
@@ -559,6 +564,16 @@ func (s *listState) bottomSpacerH(h Host) float32 {
 	return 24
 }
 
+// newestBottom is the window y of the newest message row's bottom edge,
+// false when it wasn't on screen in the last frame.
+func (s *listState) newestBottom() (int, bool) {
+	n := s.newestItem()
+	if n < s.visible[0] || n >= s.visible[1] || n >= len(s.pos) || s.heights[n] == 0 {
+		return 0, false
+	}
+	return s.origin.Y + s.pos[n] + s.heights[n], true
+}
+
 // newestItem is the item index of the newest message (the bottom spacer
 // comes after it), or -1.
 func (s *listState) newestItem() int {
@@ -945,10 +960,11 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 		// the right end (padding 0 4, margin-right 15).
 		hh := dp(gtx, 1)
 		s := textStyle{size: 13, weight: theme.Bold, col: c.NewLine, lineH: 19.5}
-		sz := measure(gtx, h.Theme(), s, "New")
+		newTxt := messagesNS.T("New") // UnreadDivider's (VxYf, the messages I18n)
+		sz := measure(gtx, h.Theme(), s, newTxt)
 		lx := w - dp(gtx, 15) - dp(gtx, 4) - sz.X
 		fill(gtx.Ops, image.Rect(0, 0, lx-dp(gtx, 4), hh), c.NewLine)
-		at(gtx, lx, -dp(gtx, 10), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), s, "New") })
+		at(gtx, lx, -dp(gtx, 10), func(gtx layout.Context) layout.Dimensions { return label(gtx, h.Theme(), s, newTxt) })
 		return layout.Dimensions{Size: image.Pt(w, hh)}
 	case itLoading:
 		gg := gtx
@@ -994,6 +1010,29 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 			}
 			gtx.Execute(op.InvalidateCmd{})
 		}
+	}
+	rc.findFlash = 0
+	if s.findFlash == e.m.TS {
+		if el := rc.now.Sub(s.findFlashAt); el < findFlashFor {
+			rc.findFlash = findFlashAlpha(el)
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+	// the query in a message's rich text: Slack's Blocks pass it only to
+	// messages with blocks (BaseRichText)
+	fw, ff := "", false
+	if s.findWords != "" {
+		ff = e.m.TS == s.findTS
+		if len(e.m.Blocks) > 0 {
+			fw = s.findWords
+		}
+	}
+	if r.find != fw {
+		r.find, r.findFocused = fw, ff
+		r.setDoc()
+	} else if r.findFocused != ff {
+		r.findFocused = ff
+		r.rv.SetOptions(r.rvOpts())
 	}
 	gtx.Constraints.Min.X = w
 	d := r.layout(gtx, rc)
@@ -1303,7 +1342,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+slot)*bs
 		tip := s.tbLabel[i]
 		if i == tbTodo && r.src.Saved {
-			tip = "Remove from to-dos"
+			tip = savedNS.T("Complete to-do") // the to-do action's name for a saved message (LaZW)
 		}
 		s.tip = ""
 		tooltip(gtx, th, c, tip, image.Pt(bx+bs/2, y-dp(gtx, 4)), size)
@@ -1331,6 +1370,7 @@ func (s *listState) prepareButtons(app *core.App, r *row) {
 			}
 			s.tbLabel[i], s.tbQAs[i] = l, qa
 		}
+		s.tbLabel[i] = tbTip(i, s.tbLabel[i])
 		s.tbBtns = append(s.tbBtns, i)
 	}
 }
@@ -1342,7 +1382,7 @@ func (s *listState) actionsProps() slackc.Props {
 }
 
 func (s *listState) reactionButtonProps() slackc.Props {
-	return s.paneProps(slackc.Props{"$key": s.tbRow.ts, "aria-label": tbTips[tbAddReact], "label": tbTips[tbAddReact],
+	return s.paneProps(slackc.Props{"$key": s.tbRow.ts, "aria-label": tbTip(tbAddReact, tbTips[tbAddReact]), "label": tbTip(tbAddReact, tbTips[tbAddReact]),
 		"data-qa": tbQA[tbAddReact], "actionId": "add_reaction", "showLabel": false})
 }
 
@@ -1627,6 +1667,19 @@ func (s *listState) scrollTo(ts string) {
 			return
 		}
 	}
+}
+
+// scrollToFind is find in thread's scrollToTs with scrollOffset -200:
+// ts's row off px below the list's top (as near as the list's ends let
+// it). False when ts isn't loaded.
+func (s *listState) scrollToFind(ts string, off int) bool {
+	for i, it := range s.items {
+		if it.kind == itMsg && it.key == ts {
+			s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -off}
+			return true
+		}
+	}
+	return false
 }
 
 func (s *listState) retry(h Host, r *row) {

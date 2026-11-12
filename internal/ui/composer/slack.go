@@ -129,7 +129,52 @@ var (
 	// crWysiwygByName caches the box's ClassDef per className a plugin
 	// passes (OwlMode adds taut-owl-composer). UI goroutine only.
 	crWysiwygByName = map[string]*slackc.ClassDef{}
+	// crWysiwygWithKids is a box ClassDef with the parts Clack draws
+	// without entering them declared inside, per box def, mode and parts.
+	// UI goroutine only.
+	crWysiwygWithKids = map[crKidsKey]*slackc.ClassDef{}
 )
+
+type crKidsKey struct {
+	def   *slackc.ClassDef
+	mode  chromeMode
+	parts uint8
+}
+
+// The box's parts crWysiwygKids can declare.
+const (
+	crKidFiles     uint8 = 1 << iota // the pending files row
+	crKidBroadcast                   // the thread's "Also send to" row
+)
+
+// crWysiwygKids is def with the box's present parts declared as kids.
+// Clack draws the pending files row (c-wysiwyg_container__attachments
+// c-pending_files; the thread's p-message_input__attachments, the
+// editor's c-message__editor__composer_attachments) and the thread's
+// broadcast controls without entering them, but Slack's box holds them,
+// and SlimMessageBox's one-line rules ask for them with :has(): its
+// :not(:has(… .c-pending_files …)) keeps Slack's stacked layout while
+// files are attached, and :has(.p-threads_footer__input_container__
+// broadcast_controls) lets the editor shrink beside a broadcast checkbox.
+func crWysiwygKids(def *slackc.ClassDef, mode chromeMode, parts uint8) *slackc.ClassDef {
+	if parts == 0 {
+		return def
+	}
+	k := crKidsKey{def, mode, parts}
+	d := crWysiwygWithKids[k]
+	if d == nil {
+		var kids []*slackc.ClassDef
+		if parts&crKidFiles != 0 {
+			kids = append(kids, crAttClass[mode])
+		}
+		if parts&crKidBroadcast != 0 {
+			kids = append(kids, crBroadcastClass)
+		}
+		d = def.WithKids(kids...)
+		crWysiwygWithKids[k] = d
+	}
+	return d
+}
 
 func crWysiwygDef(className string) *slackc.ClassDef {
 	return slackc.Class(crWysiwygClasses + " " + className).Mods("c-wysiwyg_container--input_focused")

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"image"
 	"net/http"
@@ -12,10 +13,13 @@ import (
 	"time"
 
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
@@ -214,8 +218,10 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 		}
 	}
 	lp.s.filter = "all"
-	if !libraryMatches(es[0], []string{"slick", "messages"}) || libraryMatches(es[1], []string{"slick"}) {
-		t.Error("search doesn't match on the system name")
+	// the search matches names and descriptions, never a category or a
+	// system name alone ("Lib Slick" is under Messages)
+	if !libraryMatches(es[0], []string{"slick"}) || libraryMatches(es[0], []string{"slick", "messages"}) || libraryMatches(es[1], []string{"slick"}) {
+		t.Error("the search matched on a category or system name, or missed a name")
 	}
 	r.save("plugins-browse-light", r.frame(dialog))
 	r.save("plugins-browse-light-full", r.frame(tall), r.sz.Y)
@@ -239,6 +245,25 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	if rc, mc := sl.InstalledSHA256("LibSlick"); lp.failed["slick/LibSlick"] || rc != pluginlib.Hash([]byte(libSlickPlugin)) || mc != pluginlib.Hash([]byte(libSlickMain)) {
 		t.Fatalf("slick install: %q, installed %q %q", lp.status["slick/LibSlick"], rc, mc)
 	}
+	// Install turns each on in its own system, no restart (Karim: no
+	// "turn it on" step; LibTest's own default is off)
+	for _, k := range []string{"taut/LibTest", "slick/LibSlick"} {
+		if lp.status[k] != "Installed and turned on." {
+			t.Errorf("%s after Install: %q", k, lp.status[k])
+		}
+	}
+	wait("both on and running", func() bool {
+		tOn, sOn := false, false
+		for _, c := range tt.Settings().Categories {
+			for _, pl := range c.Plugins {
+				tOn = tOn || pl.ID == "LibTest" && pl.Enabled && pl.Running
+			}
+		}
+		for _, pl := range sl.Settings().Plugins {
+			sOn = sOn || pl.ID == "LibSlick" && pl.Enabled && pl.Running
+		}
+		return tOn && sOn
+	})
 	if tt.InstalledSHA256("LibSlick") != "" {
 		t.Error("the Slick entry landed in Taut")
 	}
@@ -373,5 +398,160 @@ func TestNotificationText(t *testing.T) {
 	}
 	if ti, b, _ := notificationText(map[string]any{"title": "New", "message": "plain"}, orig, "x"); ti != "New" || b != "plain" {
 		t.Errorf("string message: %q %q", ti, b)
+	}
+}
+
+// The search suggestions (Preferences > Plugins with nothing installed
+// that matches) rank the library's plugins by how they match: the name's
+// start, a word of the name, the name, then a word of the description.
+// A category's or an author's name alone is no match (Karim, α.37:
+// "message" suggested everything filed under Messages). Names and
+// descriptions are the published library's.
+func TestPluginSuggestionsRank(t *testing.T) {
+	lib := []pluginlib.Entry{
+		{System: pluginlib.Slick, ID: "MessageLogger", Name: "Message Logger", Description: "Keep deleted and edited messages visible", CategoryLabel: "Messages"},
+		{System: pluginlib.Taut, ID: "SlimMessageBox", Name: "Slim Message Box", Description: "Fits the message box on one line and hides the buttons you don't use", CategoryLabel: "Message Box"},
+		{System: pluginlib.Taut, ID: "CopyReacted", Name: "Copy Reacted", Description: "Copies the list of people who reacted to a message", CategoryLabel: "Messages"},
+		{System: pluginlib.Slick, ID: "CopyReacted", Name: "Copy Reacted", Description: "Copy the list of people who reacted to a message", CategoryLabel: "Messages"},
+		{System: pluginlib.Taut, ID: "BringBackSlackbot", Name: "Bring Back Slackbot", Description: "Shows Slackbot's custom responses as sent by Slackbot again", CategoryLabel: "Messages"},
+		{System: pluginlib.Slick, ID: "CustomSlackbot", Name: "Custom Slackbot", Description: "Customize the name and avatar used for workspace custom responses", CategoryLabel: "Messages",
+			Authors: []pluginlib.Author{{Name: "messagebird"}}},
+		{System: pluginlib.Taut, ID: "ShutUpSlackbot", Name: "Shut Up Slackbot", Description: "Marks Slackbot's \"an app took over your slash command\" DMs as read and silences them", CategoryLabel: "Messages"},
+		{System: pluginlib.Slick, ID: "DeArrow", Name: "DeArrow", Description: "Replace clickbait YouTube titles and thumbnails with crowdsourced ones", CategoryLabel: "Messages"},
+		{System: pluginlib.Slick, ID: "IgnoreTime", Name: "Ignore Time", Description: "Makes Slack not copy that stupid little timestamp", CategoryLabel: "Messages"},
+		{System: pluginlib.Slick, ID: "CallTimer", Name: "Call Timer", Description: "Show how long you’ve been in a huddle", CategoryLabel: "Huddles & sounds"},
+		{System: pluginlib.Slick, ID: "LocalTime", Name: "Local Time", Description: "Show each person's local time beside their messages and in their profile, even while they're away.", CategoryLabel: "Other"},
+	}
+	groups := libraryGroups(lib)
+	names := func(q string) []string {
+		var out []string
+		for _, g := range rankGroups(groups, strings.Fields(q), nil) {
+			out = append(out, g.first().Name)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		q    string
+		want []string
+	}{
+		// the name first; then descriptions that say it; never Bring Back
+		// Slackbot, Custom Slackbot (an author is "messagebird"), DeArrow
+		// or Ignore Time, which are only filed under Messages
+		{"message", []string{"Message Logger", "Slim Message Box", "Copy Reacted", "Local Time"}},
+		{"slackbot", []string{"Bring Back Slackbot", "Custom Slackbot", "Shut Up Slackbot"}},
+		{"time", []string{"Call Timer", "Ignore Time", "Local Time"}},
+		{"mesage", nil}, // a typo: no suggestion rather than a guess
+		{"copyreacted", []string{"Copy Reacted"}},
+		{"messages", []string{"Local Time", "Message Logger"}}, // descriptions only: "Messages" is a category, not a match
+		{"is", nil}, // under 3 letters a description word doesn't count
+	} {
+		if got := names(c.q); strings.Join(got, ", ") != strings.Join(c.want, ", ") {
+			t.Errorf("%q: %q, want %q", c.q, got, c.want)
+		}
+	}
+	// "See all N results" counts the same rows the library's search shows
+	lp := &libraryPage{s: &slickPage{filter: "all"}}
+	n := 0
+	for _, g := range groups {
+		if lp.matches(g, []string{"message"}) {
+			n++
+		}
+	}
+	if want := len(names("message")); n != want {
+		t.Errorf("the library's search shows %d rows for \"message\", the suggestions count %d", n, want)
+	}
+}
+
+// Install turns a plugin on at once, from the library and from its search
+// suggestions alike, but one that doesn't work in Clack (its ❌ row in
+// docs/PLUGINS-live-*.md: pluginlib.CompatOf) installs and stays off.
+// Its line is on the library row and the suggestion before Install.
+func TestLibraryInstallTurnsOn(t *testing.T) {
+	ls := newLibServer(t)
+	a, _ := ttApp(t, t.TempDir())
+	var es []pluginlib.Entry
+	ls.mu.Lock()
+	for _, id := range []string{"MentionProfiles", "BetterHuddles"} {
+		code := []byte("synthetic " + id)
+		e := pluginlib.Entry{System: pluginlib.Slick, ID: id, Name: id, Description: "A synthetic plugin", Category: "messages",
+			File: pluginlib.File{File: "slick-" + id + ".js", SHA256: pluginlib.Hash(code)}}
+		es = append(es, e)
+		ls.files[e.File.File] = code
+	}
+	ix, _ := json.Marshal(pluginlib.Index{Schema: 1, Plugins: es})
+	ls.files["index.json"] = ix
+	ls.mu.Unlock()
+
+	lp := newLibraryPage(a, nil)
+	defer lp.close()
+	var mu sync.Mutex
+	var installed, enabled []string
+	lp.hosts = func(string) (libraryHost, bool) {
+		return libraryHost{
+			installed: func(string) (string, string) { return "", "" },
+			install: func(_ context.Context, e pluginlib.Entry, _, _ []byte, _ bool) error {
+				mu.Lock()
+				installed = append(installed, e.ID)
+				mu.Unlock()
+				return nil
+			},
+			enable: func(_ context.Context, id string) error {
+				mu.Lock()
+				enabled = append(enabled, id)
+				mu.Unlock()
+				return nil
+			},
+		}, true
+	}
+	ops := new(op.Ops)
+	gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Constraints{Max: image.Pt(600, 400)}, Now: time.Now()}
+	drawn := func(draw func()) string {
+		var b strings.Builder
+		theme.DrawHook = func(s string) { b.WriteString(s + "\n") }
+		defer func() { theme.DrawHook = nil }()
+		ops.Reset()
+		draw()
+		return b.String()
+	}
+	groups := libraryGroups(es)
+	var bh libGroup
+	for _, g := range groups {
+		if g.first().ID == "BetterHuddles" {
+			bh = g
+		}
+	}
+	const line = "Doesn't work in Clack: needs browser WebRTC"
+	if got := drawn(func() { lp.row(gtx, 600, bh) }); !strings.Contains(got, line) {
+		t.Errorf("the library row doesn't say %q before Install: %q", line, got)
+	}
+	pp := &pluginsPage{a: a, s: newSlickPage(a), taut: newTautPage(a), lib: lp}
+	if got := drawn(func() { pp.suggestionRow(gtx, 600, bh) }); !strings.Contains(got, line) {
+		t.Errorf("the suggestion doesn't say %q before Install: %q", line, got)
+	}
+
+	for _, e := range es {
+		lp.installEntry(e, false)
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for lp.status["slick/MentionProfiles"] == "" || lp.status["slick/BetterHuddles"] == "" {
+		if time.Now().After(deadline) {
+			t.Fatalf("installs didn't finish: %v", lp.status)
+		}
+		a.drain()
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(installed) != 2 {
+		t.Errorf("installed %v, want both", installed)
+	}
+	if strings.Join(enabled, ",") != "MentionProfiles" {
+		t.Errorf("turned on %v, want MentionProfiles only (BetterHuddles doesn't work in Clack)", enabled)
+	}
+	if st := lp.status["slick/MentionProfiles"]; st != "Installed and turned on." {
+		t.Errorf("MentionProfiles: %q", st)
+	}
+	if st := lp.status["slick/BetterHuddles"]; st != "Installed and left off: it doesn't work in Clack." {
+		t.Errorf("BetterHuddles: %q", st)
 	}
 }

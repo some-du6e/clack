@@ -221,7 +221,7 @@ var experimentReads = map[string][]string{
 	"agent_status_in_activity": on,
 	// views
 	"activity_global_settings": on, "slackbot_unread_v2": on, "unified_files_3p_primary_custom_sections": on,
-	"lists_tabbing_navigation": on, "miles_davis_themes": on, "temp_join_channel": on,
+	"lists_tabbing_navigation": on, "miles_davis_themes": on,
 	"availability_prefs_section": on, "status_improvements": on, "activity_bulk_unread_tool": on,
 	"lists_grid_todos": on,
 	// channel header, tabs and details (channel.go, views/details*.go)
@@ -229,6 +229,7 @@ var experimentReads = map[string][]string{
 	"move_channel_tabs_settings": on, "mpdm_default_exclude_history_clients_webapp": on,
 	"channel_topic_purpose_setting_restrict_to_channel_managers": on, "channel_details_agents_apps_tab": on,
 	"list_channel_tab_show_view_name_fe": on, "lists_channel_tabs_default_view": on,
+	ExpChannelJoinWithAgents: on, ExpChannelHeaderWithAgents: on, ExpAgentsInChannelsImprovements: on, // the join card and header count (channel_agents.go)
 	// secondary views, messages and workflows (merged from their branches)
 	"nested_secondary_view": on, "secondary_view_default_width": on, "unread_thread_indication_in_replybar": on,
 	"workflow_execution_window": on, "enable_wfb_ai_answer_step": on,
@@ -240,8 +241,7 @@ var experimentReads = map[string][]string{
 	"message_actions_truncate": on, "agent_identity_overrides": on,
 	// composer and autocomplete
 	"composer_smart_symbols": on, "slash_command_failed_dedupe": on, "autocomplete_frequently_used_emojis_frecency": on,
-	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on,
-	"autocomplete_flannel_fuzzy_match_passthrough":             {"treatment"},
+	"rich_text_headers_and_dividers": on, "updated_scheduled_sends_desktop": on, "giphy_fixed_width": on,
 	"autocomplete_demote_flannel_passthrough_rltv_exact_match": {"on", "treatment"},
 	"ml_fuzzy_match_beyond_word_boundaries_v2":                 {"on", "treatment"},
 	"emoji_exact_match_boost":                                  on,
@@ -262,7 +262,8 @@ var experimentReads = map[string][]string{
 	"huddle_join_from_preview": on, "huddles_preview_v2": on, "huddles_alone_timeout": on, "huddles_alone_timeout_shortened": on,
 	"huddles_av_button_permission_handling": on, "huddles_awareness_timestamp": on, "huddles_miles_davis": on,
 	"huddles_missed_notification": on, "huddles_multi_device": {"treatment"}, "huddles_screenshare_popout": on,
-	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on,
+	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on, "huddles_screenshare_share_audio": on,
+	"huddles_new_grids": on,
 	// search and the switcher (search*.go, popups/search_*)
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},
@@ -281,4 +282,9 @@ var experimentReads = map[string][]string{
 	"a11y_no_auto_highlight_search_multi_select": {"on", "treatment"},
 	"basic_select_placeholder_option":            {"on", "treatment"},
 	"custom_file_sections":                       on, // the Files sidebar's starred file collection (views/files.go)
+	// message actions (ui/popups actions_forward.go, actions_flag.go): the
+	// share dialog's schedule caret and Save Draft; the flag row's custom
+	// group DM names and its cross-org rules
+	"schedule_send_forwards": on, "forwarding_save_as_draft": on,
+	"flag_custom_mpdm_names": on, "flag_xorg_refinement": {"treatment"}, "flag_xorg_external_team_check": on,
 }

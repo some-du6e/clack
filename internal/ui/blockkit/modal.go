@@ -699,12 +699,12 @@ func (s *Stack) footer(gtx C, org image.Point, mw, fh int, v *core.View) {
 	if v.Submit != nil || s.dialog != nil {
 		txt := titleOf(v.Submit)
 		if s.dialog != nil {
-			txt = firstNonEmpty(s.dialog.SubmitLabel, "Submit")
+			txt = firstNonEmpty(s.dialog.SubmitLabel, bkSubmit())
 		}
-		btn(&s.submit, firstNonEmpty(txt, "Submit"), "primary", v.SubmitDisabled || s.busy)
+		btn(&s.submit, firstNonEmpty(txt, bkSubmit()), "primary", v.SubmitDisabled || s.busy)
 	}
 	// renderBackButton: the view's close text, else "Close"
-	closeTxt := firstNonEmpty(titleOf(v.Close), "Close")
+	closeTxt := firstNonEmpty(titleOf(v.Close), appViewNS.T("Close"))
 	btn(&s.cancel, closeTxt, "", false)
 }
 

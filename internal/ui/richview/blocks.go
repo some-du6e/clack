@@ -620,6 +620,11 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if b.Att == nil {
 			return 0
 		}
+		if isWorkObjectBlock(b) {
+			// MessageAttachmentWorkObject is its own component, never
+			// MessageAttachment's (workobject.go)
+			return l.woCard(b, x, y, w, "", !l.opts.HoverCard)
+		}
 		if l.mode&modeAtts != 0 && !l.inAtt {
 			return l.compBlock(b, x, y, w)
 		}

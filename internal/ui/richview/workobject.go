@@ -470,15 +470,15 @@ func (l *lay) hoverFrom() (nb, ni, nf int) { return len(l.d.boxes), len(l.d.imgs
 
 // hoverEnd tags the primitives since nb/ni/nf as hover layer k (1-based).
 func (l *lay) hoverEnd(k int, nb, ni, nf int) {
-	tag := -int16(k)
+	tag := int16(k)
 	for i := nb; i < len(l.d.boxes); i++ {
-		l.d.boxes[i].comp = tag
+		l.d.boxes[i].hov = tag
 	}
 	for i := ni; i < len(l.d.imgs); i++ {
-		l.d.imgs[i].comp = tag
+		l.d.imgs[i].hov = tag
 	}
 	for i := nf; i < len(l.d.frags); i++ {
-		l.d.frags[i].comp = tag
+		l.d.frags[i].hov = tag
 	}
 }
 
@@ -677,7 +677,7 @@ func (l *lay) woCard(b *richtext.Block, x, y, w int, size string, capped bool) i
 			hv.skip, hv.skipTo = l.d.hovers[bar-1].skip, l.d.hovers[bar-1].skipTo
 			// withHover: the otl-sec border while the card (not its bar) is hovered
 			l.d.boxes = append(l.d.boxes, box{kind: bBorder, r: r, radius: l.dp(12), stroke: l.tok("otl-sec"), bw: max(1, l.dp(1)),
-				target: -1, comp: -int16(subLayer)})
+				target: -1, hov: int16(subLayer)})
 		}
 		for i := range l.d.hovers {
 			if hv := &l.d.hovers[i]; hv.card == -2 { // the footer's Refresh (woFooter)
@@ -1425,9 +1425,11 @@ func (v *View) drawHoverLayers(gtx layout.Context, st *Style) {
 	}
 	for i := range v.d.hovers {
 		if v.d.hovers[i].shown(v.hover) {
-			v.paint(gtx.Ops, st, -int16(i+1), nil)
+			v.hovPaint = int16(i + 1)
+			v.paint(gtx.Ops, st, 0, nil)
 		}
 	}
+	v.hovPaint = 0
 }
 
 // woActions maps a card target's id to its action.

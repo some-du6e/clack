@@ -689,6 +689,16 @@ func TestSlickViewSlimMessageBoxOneLine(t *testing.T) {
 	e.until(5*time.Second, "the footer on its own row in a narrow composer", narrow, func() bool {
 		return !c.ui.f.oneLine && c.ui.f.box.Dy() >= oneLineH+c.ui.f.textH
 	})
+
+	// attached files keep Slack's stacked layout: the box declares its
+	// pending files row, so ONE_LINE's :not(:has(… .c-pending_files …))
+	// stops matching
+	c.att.Add("synthetic.txt", []byte("synthetic file"))
+	e.until(5*time.Second, "the footer on its own row with a file attached", frame, func() bool {
+		return c.att.Len() == 1 && !c.ui.f.oneLine && c.ui.f.attH > 0
+	})
+	c.att.Clear()
+	e.until(5*time.Second, "one line again once the file is gone", frame, func() bool { return c.ui.f.oneLine })
 }
 
 func TestSlickViewSlimMessageBoxHidesEmoji(t *testing.T) {

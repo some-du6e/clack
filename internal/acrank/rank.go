@@ -98,9 +98,10 @@ type Options struct {
 	// HasChannel: the composer has a current conversation (sort.
 	// currentChannel); ChannelIsIM drops the channel-membership features.
 	HasChannel, ChannelIsIM bool
-	// Passthrough is autocomplete_flannel_fuzzy_match_passthrough
-	// (treatment); DemotePassthrough autocomplete_demote_flannel_
-	// passthrough_rltv_exact_match.
+	// Passthrough is nIFn's passthroughRemoteFuzzyFiltering (it was
+	// autocomplete_flannel_fuzzy_match_passthrough's treatment until build
+	// 274f7c7f1b69 made it unconditional); DemotePassthrough
+	// autocomplete_demote_flannel_passthrough_rltv_exact_match.
 	Passthrough, DemotePassthrough bool
 	BeyondWordBoundaries           bool // ml_fuzzy_match_beyond_word_boundaries_v2
 	EmojiExactBoost                bool // emoji_exact_match_boost: exact emoji +300, not +100

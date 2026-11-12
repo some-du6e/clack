@@ -51,7 +51,7 @@ jobs:
         working-directory: /tmp/taut
         run: |
           mkdir -p "$GITHUB_WORKSPACE/dist/taut-plugins"
-          for name in SilentTyping InvisibleForward ClearURLs RealMarkdown AnonymizeFilenames NativeAtChannel; do
+          for name in SilentTyping InvisibleForward ClearURLs RealMarkdown AnonymizeFilenames NativeAtChannel SlimMessageBox; do
             f=$(ls plugins/$name.ts plugins/$name.tsx 2>/dev/null | head -1)
             npm run -s build:user-plugin -- "$f" "$GITHUB_WORKSPACE/dist/taut-plugins/$name.js"
           done
@@ -61,7 +61,7 @@ jobs:
           go-version-file: go.mod
           cache: false # this job runs third-party code; never share its Go cache
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
       - name: composer plugin tests
         env:
           TAUT_PLUGINS_DIR: ${{ github.workspace }}/dist/taut-plugins

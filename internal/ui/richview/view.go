@@ -24,6 +24,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -60,6 +61,7 @@ type View struct {
 	css cssParts
 
 	hover    int16 // hovered target
+	hovPaint int16 // the hover layer paint is drawing (drawHoverLayers), 0 none
 	press    int16 // target under the press
 	pressPos f32.Point
 	moved    bool
@@ -266,6 +268,9 @@ func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimension
 	} else if rec {
 		v.recorded = false
 	}
+	if v.namesChanged() {
+		v.dirty = true // a mention's plugin label changed (members.go)
+	}
 	if v.dirty || w != v.laidW || gtx.Metric.PxPerDp != v.laidPx || gtx.Metric.PxPerSp != v.laidSp || st.gen != v.laidGen || mode != v.laidMode || uipref.Gen() != v.laidPf {
 		v.relayout(st, w, gtx.Metric.PxPerDp, gtx.Metric.PxPerSp)
 	} else if len(v.pending) > 0 && v.anyReady(st) {
@@ -314,7 +319,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
 			b := &v.d.boxes[i]
-			if b.comp < 0 {
+			if b.hov != 0 {
 				continue // a hover layer's: drawn with its layer (drawHoverLayers)
 			}
 			if (b.target == v.hover || b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) && b.hover.A > 0 {
@@ -589,23 +594,27 @@ func (v *View) record(st *Style) {
 }
 
 // paint draws the primitives tagged comp (0: the static content, which
-// also tracks images still loading); fg, if set, recolors text.
+// also tracks images still loading); fg, if set, recolors text. Only
+// the primitives of hover layer v.hovPaint draw (0: none of a layer's;
+// drawHoverLayers paints each layer over the recording).
 func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	css := len(v.css.parts) > 0
+	hp := v.hovPaint
+	static := comp == 0 && hp == 0 // the recording: it tracks pending and animated images
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp {
+		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
-			if comp < 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
+			if hp != 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
 				fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.hover)
 			}
 		}
 	}
-	if css {
+	if css && hp == 0 {
 		v.partBackgrounds(func(r image.Rectangle, c color.NRGBA) { fillRadii(ops, r, [4]int{}, c) }, comp)
 	}
 	for i := range v.d.imgs {
 		im := &v.d.imgs[i]
-		if im.comp != comp {
+		if im.comp != comp || im.hov != hp {
 			continue
 		}
 		if im.url == "" {
@@ -623,7 +632,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 		if !ok {
 			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
-			if comp == 0 {
+			if static {
 				v.pending = append(v.pending, int32(i))
 			}
 			continue
@@ -640,11 +649,11 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		drawImage(ops, img, im.r, im.radii, !im.fit)
 	}
 	for i := range v.d.boxes { // over images, under text (gallery scrims, video pills)
-		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp {
+		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 		}
 	}
-	if comp == 0 {
+	if static {
 		for i := range v.d.overlayIcons {
 			o := &v.d.overlayIcons[i]
 			paintIconAt(ops, o.name, o.r, o.col)
@@ -653,7 +662,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	ul := uipref.Get().UnderlineLinks
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.comp != comp {
+		if f.comp != comp || f.hov != hp {
 			continue
 		}
 		switch f.kind {
@@ -662,7 +671,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				paintIcon(ops, name, f)
 				continue
 			}
-			if comp == 0 && animated(st.Images, f.url, f.size) {
+			if static && animated(st.Images, f.url, f.size) {
 				v.live = append(v.live, int32(i)) // a recording would freeze it
 				continue
 			}
@@ -672,7 +681,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 				img, ok = st.Images.Get(f.url, f.size)
 			}
 			if !ok {
-				if comp == 0 {
+				if static {
 					v.pending = append(v.pending, ^int32(i))
 				}
 				continue
@@ -715,7 +724,7 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		}
 	}
 	for i := range v.d.boxes {
-		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp {
+		if b := &v.d.boxes[i]; b.layer == 1 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
 		}
 	}
@@ -1330,14 +1339,16 @@ func (v *View) Baselines() []int {
 // content), at its place.
 func (v *View) paintGlyphs(ops *op.Ops, st *Style, f *frag, col color.NRGBA) {
 	// Browsers render Lato visibly heavier than Gio's linear
-	// coverage. Dark text gets the missing ink (st.Embolden px,
-	// ~0.45 at 1x and 2x) from an emboldened outline: one fill,
-	// no stroke tessellation (theme.EmboldenedShape).
+	// coverage. Under the legacy text model dark text gets the missing
+	// ink (st.Embolden px, ~0.45 at 1x and 2x) from an emboldened
+	// outline: one fill, no stroke tessellation (theme.EmboldenedShape).
+	// Under Skia's (Windows) it gets Skia's contrast from theme.FillText
+	// instead, and no outline growth (theme.GlyphEmbolden).
 	var emb clip.PathSpec
 	embOK := false
-	embW := st.Embolden
+	embW := theme.GlyphEmbolden(st.Embolden)
 	if embW == 0 {
-		embW = st.lightEmbolden(col, v.laidPx)
+		embW = theme.GlyphEmbolden(st.lightEmbolden(col, v.laidPx))
 	}
 	if embW > 0 {
 		emb, embOK = st.emboldenedOf(f.sh, embW)
@@ -1349,10 +1360,7 @@ func (v *View) paintGlyphs(ops *op.Ops, st *Style, f *frag, col color.NRGBA) {
 	// Whole-pixel pen positions: Gio's path cache snaps fractional
 	// offsets, which makes word spacing uneven.
 	t := op.Offset(image.Pt(int(f.x+0.5), f.y)).Push(ops)
-	cs := clip.Outline{Path: path}.Op().Push(ops)
-	paint.ColorOp{Color: st.textColor(col, v.laidPx)}.Add(ops)
-	paint.PaintOp{}.Add(ops)
-	cs.Pop()
+	theme.FillText(ops, st.textColor(col, v.laidPx), path)
 	if embW > 0 && !embOK { // fallback-font run
 		// Browsers render Lato visibly heavier than Gio's linear
 		// coverage; a hairline stroke of the outline matches it.

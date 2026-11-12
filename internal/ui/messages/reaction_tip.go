@@ -5,6 +5,7 @@ import (
 	"image/color"
 	"strings"
 	"time"
+	"unicode"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -35,7 +36,8 @@ const reactionTipDelay = 300 * time.Millisecond
 //     min-height 32, margin-bottom 4.
 //   - the text: the names in the tip's bold, then TooltipSubtitle
 //     ("reacted with :name:", regular weight, inverse.secondary) inline,
-//     wrapped as one paragraph.
+//     wrapped as one paragraph. Where the subtitle sits is the locale's
+//     (getTip's rich strings: ja-JP's follows the name with no space).
 //
 // txt is reactionTip's (whose count picks the width: tipCountFor).
 func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt, url string, anchor, bounds image.Point) {
@@ -48,11 +50,10 @@ func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt
 	// Slack's tooltip is a portal under <body> (.c-tooltip__tip): a
 	// tooltip rule styles it, a row's rules don't
 	tip := slackc.BodyScope().Child(tooltipClass, 0)
-	names, sub := splitReactionTip(txt)
 	bold := cssText(tip, textStyle{size: 13, weight: theme.Bold, col: c.TooltipText, lineH: 16.25})
 	reg := bold
 	reg.weight, reg.col = theme.Regular, tooltipSubtitle(th, c, bold.col)
-	runs := []tipRun{{bold, names}, {reg, sub}}
+	runs := tipRuns(txt, bold, reg)
 
 	// the text, wrapped at the box's content width, centred
 	m := op.Record(gtx.Ops)
@@ -104,8 +105,45 @@ func tipCountFor(txt string) int {
 	if txt == lastTip.txt {
 		return lastTip.count
 	}
-	names, _ := splitReactionTip(txt)
-	return strings.Count(names, ",") + 1 + strings.Count(names, " and ")
+	names, _ := splitReactionTip(plainTip(txt))
+	return strings.Count(names, ",") + strings.Count(names, "、") + 1 + strings.Count(names, " and ")
+}
+
+// tipRuns are txt's runs: TooltipSubtitle's (between tipSubOn and
+// tipSubOff, reactionTip's marks) in sub, the rest in bold; a tooltip
+// without marks splits at "reacted with" (splitReactionTip).
+func tipRuns(txt string, bold, sub textStyle) []tipRun {
+	if !strings.Contains(txt, tipSubOn) {
+		names, s := splitReactionTip(txt)
+		return []tipRun{{bold, names + " "}, {sub, s}}
+	}
+	var runs []tipRun
+	add := func(st textStyle, s string) {
+		if s == "" {
+			return
+		}
+		if n := len(runs); n > 0 && runs[n-1].st == st {
+			runs[n-1].txt += s
+			return
+		}
+		runs = append(runs, tipRun{st, s})
+	}
+	for txt != "" {
+		i := strings.Index(txt, tipSubOn)
+		if i < 0 {
+			add(bold, txt)
+			break
+		}
+		add(bold, txt[:i])
+		txt = txt[i+len(tipSubOn):]
+		j := strings.Index(txt, tipSubOff)
+		if j < 0 {
+			j = len(txt)
+		}
+		add(sub, txt[:j])
+		txt = txt[min(j+len(tipSubOff), len(txt)):]
+	}
+	return runs
 }
 
 // splitReactionTip cuts reactionTip's text before its subtitle ("reacted
@@ -146,8 +184,10 @@ type tipRun struct {
 }
 
 // flowTip lays runs out as one inline paragraph at most maxW wide: words
-// in their run's style, wrapped at spaces, each line centred on the
-// widest (text-align: center); returns the size.
+// in their run's style, wrapped at spaces and between CJK characters (not
+// before closing or after opening punctuation), each line centred on the
+// widest (text-align: center); returns the size. Runs meet without a
+// space unless their text has one ("Ann" + "さんが" is one word).
 func flowTip(gtx layout.Context, th *theme.Theme, runs []tipRun, maxW int) image.Point {
 	type word struct {
 		st textStyle
@@ -160,26 +200,27 @@ func flowTip(gtx layout.Context, th *theme.Theme, runs []tipRun, maxW int) image
 	}
 	var lines []line
 	cur := line{}
-	for _, run := range runs {
-		space := measure(gtx, th, run.st, "x x").X - measure(gtx, th, run.st, "xx").X
-		for _, f := range strings.Fields(run.txt) {
-			wd := word{st: run.st, s: f, w: measure(gtx, th, run.st, f).X}
-			add := wd.w
-			if len(cur.ws) > 0 {
-				add += space
-			}
-			if len(cur.ws) > 0 && cur.w+add > maxW {
-				lines = append(lines, cur)
-				cur, add = line{}, wd.w
-			}
-			if len(cur.ws) > 0 {
-				// the space before the word, in the word's run (the
-				// subtitle's leading space is the names' trailing one)
-				cur.ws = append(cur.ws, word{st: run.st, s: " ", w: space})
-			}
-			cur.ws = append(cur.ws, wd)
-			cur.w += add
+	for _, tk := range tipTokens(runs) {
+		space := 0
+		if tk.space {
+			space = measure(gtx, th, tk.st, "x x").X - measure(gtx, th, tk.st, "xx").X
 		}
+		wd := word{st: tk.st, s: tk.s, w: measure(gtx, th, tk.st, tk.s).X}
+		add := wd.w
+		if len(cur.ws) > 0 {
+			add += space
+		}
+		if len(cur.ws) > 0 && tk.brk && cur.w+add > maxW {
+			lines = append(lines, cur)
+			cur, add = line{}, wd.w
+		}
+		if len(cur.ws) > 0 && space > 0 {
+			// the space before the word, in the word's run (the
+			// subtitle's leading space is the names' trailing one)
+			cur.ws = append(cur.ws, word{st: tk.st, s: " ", w: space})
+		}
+		cur.ws = append(cur.ws, wd)
+		cur.w += add
 	}
 	if len(cur.ws) > 0 {
 		lines = append(lines, cur)
@@ -206,3 +247,67 @@ func flowTip(gtx layout.Context, th *theme.Theme, runs []tipRun, maxW int) image
 	}
 	return image.Pt(wmax, len(lines)*lh)
 }
+
+// tipToken is one unbreakable piece of tooltip text.
+type tipToken struct {
+	st    textStyle
+	s     string
+	space bool // whitespace came before it
+	brk   bool // a line may break before it
+}
+
+// tipTokens cuts runs into tokens: words split at whitespace, each CJK
+// character its own token, a style change ending a token without a space.
+func tipTokens(runs []tipRun) []tipToken {
+	var out []tipToken
+	space := false
+	var last rune // the last character of the token before
+	for _, run := range runs {
+		var cur []rune
+		curSpace, curBrk := false, false
+		flush := func() {
+			if len(cur) > 0 {
+				out = append(out, tipToken{st: run.st, s: string(cur), space: curSpace, brk: curBrk})
+				last = cur[len(cur)-1]
+				cur = cur[:0]
+			}
+		}
+		for _, r := range run.txt {
+			switch {
+			case r != '\u00a0' && unicode.IsSpace(r) || r == '\u200b': // a no-break space stays in its word
+				flush()
+				space = true
+			case r == '\u2060': // a word joiner (group_cjk) holds its neighbours together
+			case isCJK(r):
+				flush()
+				brk := space || len(out) > 0 && !noBreakBefore(r) && !noBreakAfter(last)
+				out = append(out, tipToken{st: run.st, s: string(r), space: space, brk: brk})
+				last, space = r, false
+			default:
+				if len(cur) == 0 {
+					curSpace = space
+					curBrk = space || len(out) > 0 && isCJK(last) && !noBreakAfter(last)
+				}
+				cur = append(cur, r)
+				space = false
+			}
+		}
+		flush()
+	}
+	return out
+}
+
+// isCJK: ideographs, kana, hangul and their punctuation (line breaks
+// may fall between them).
+func isCJK(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) ||
+		r >= 0x3000 && r <= 0x303f || r >= 0xff00 && r <= 0xffef || r == 0x30fc
+}
+
+// noBreakBefore and noBreakAfter are kinsoku: no line starts with closing
+// punctuation or a small kana, none ends with opening punctuation.
+func noBreakBefore(r rune) bool {
+	return strings.ContainsRune("、。，．・：；？！ー）」』】〕〉》）］｝ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ々", r)
+}
+
+func noBreakAfter(r rune) bool { return strings.ContainsRune("（「『【〔〈《（［｛", r) }

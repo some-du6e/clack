@@ -242,6 +242,36 @@ func (p *prefsModal) setNotifies(kv map[string]any) {
 
 // ---- scrolling (pages and the nav outgrow the 624px dialog) ----
 
+// The page's scroll container is Slack's .p-prefs_dialog__panel (padding
+// 20px 28px), so it scrolls and clips at its padding box: what overflows
+// a control (an input's focus ring, a box-shadow 5px outside it) shows in
+// that padding, and a scrolled page runs up under the top padding to the
+// dialog's line. The modal hands a page the panel's content box (its
+// left edge at the controls'); panelPad is the padding round it (none
+// below: the page already reaches the dialog's bottom edge).
+func panelPad(gtx layout.Context) image.Point { return image.Pt(gtx.Dp(28), gtx.Dp(20)) }
+
+// panelList lays a page's one-child list out over the panel's padding
+// box, w drawing at the content box as before (gtx's max size; w's own
+// height is what scrolls).
+func panelList(gtx layout.Context, l *layout.List, w layout.Widget) layout.Dimensions {
+	sz := gtx.Constraints.Max
+	pad := panelPad(gtx)
+	t := op.Offset(image.Pt(-pad.X, -pad.Y)).Push(gtx.Ops)
+	g := gtx
+	g.Constraints = layout.Exact(image.Pt(sz.X+2*pad.X, sz.Y+pad.Y))
+	l.Layout(g, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+		c := gtx
+		c.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X, 1<<24)}
+		ct := op.Offset(pad).Push(gtx.Ops)
+		d := w(c)
+		ct.Pop()
+		return layout.Dimensions{Size: image.Pt(sz.X+2*pad.X, d.Size.Y+pad.Y)}
+	})
+	t.Pop()
+	return layout.Dimensions{Size: sz}
+}
+
 type prefsScroll struct {
 	sc       gesture.Scroll
 	y        int
@@ -251,6 +281,20 @@ type prefsScroll struct {
 // layout draws w (laid out with unbounded height) scrolled and clipped to
 // gtx's max size.
 func (s *prefsScroll) layout(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	return s.scroll(gtx, image.Rectangle{Max: gtx.Constraints.Max}, w)
+}
+
+// panel is layout for a page: scrolled within, and clipped to, the
+// panel's padding box round gtx's max size (panelPad).
+func (s *prefsScroll) panel(gtx layout.Context, w layout.Widget) layout.Dimensions {
+	pad := panelPad(gtx)
+	size := gtx.Constraints.Max
+	return s.scroll(gtx, image.Rect(-pad.X, -pad.Y, size.X+pad.X, size.Y), w)
+}
+
+// scroll draws w at gtx's box scrolled, clipped (and taking the wheel)
+// within area.
+func (s *prefsScroll) scroll(gtx layout.Context, area image.Rectangle, w layout.Widget) layout.Dimensions {
 	vh := gtx.Constraints.Max.Y
 	sr := pointer.ScrollRange{Min: -s.y, Max: max(0, s.contentH-vh-s.y)}
 	if d := s.sc.Update(gtx.Metric, gtx.Source, gtx.Now, gesture.Vertical, pointer.ScrollRange{}, sr); d != 0 {
@@ -258,7 +302,7 @@ func (s *prefsScroll) layout(gtx layout.Context, w layout.Widget) layout.Dimensi
 	}
 	s.y = min(max(s.y, 0), max(0, s.contentH-vh))
 	size := gtx.Constraints.Max
-	cl := clip.Rect{Max: size}.Push(gtx.Ops)
+	cl := clip.Rect(area).Push(gtx.Ops)
 	s.sc.Add(gtx.Ops)
 	t := op.Offset(image.Pt(0, -s.y)).Push(gtx.Ops)
 	g := gtx

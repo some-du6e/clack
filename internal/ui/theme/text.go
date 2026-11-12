@@ -87,7 +87,7 @@ func envFloat(name string, def float32) float32 {
 // of it (dark tabs, #b9babd and #f8f8f8). Black gets no fade: the white
 // team name is already light, see lightBlackEmbolden.
 func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) color.NRGBA {
-	if LightTextFade <= 0 || pxPerDp <= 0 || w >= font.Black {
+	if LightTextFade <= 0 || pxPerDp <= 0 || w >= font.Black || !LegacyTextInk() {
 		return c
 	}
 	y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255
@@ -121,9 +121,10 @@ func IsDarkText(c color.NRGBA) bool {
 
 // EmboldenFor is the stroke (px) for text of color c: Embolden for dark
 // text, fading to none for light text (light-on-dark is already heavy in
-// linear blending). CLACK_NOEMBOLDEN=1 disables it for A/B timing.
+// linear blending). CLACK_NOEMBOLDEN=1 disables it for A/B timing. None
+// under Skia's model (textgamma.go), which inks dark text with contrast.
 func EmboldenFor(c color.NRGBA) float32 {
-	if noEmbolden {
+	if noEmbolden || !LegacyTextInk() {
 		return 0
 	}
 	return emboldenStroke(c)
@@ -340,7 +341,7 @@ func drawText(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb 
 // (nil: none) instead of painting them.
 func drawTextSlots(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb float32, slots *slotDraw) layout.Dimensions {
 	emb *= weightEmbolden(o.Font.Weight)
-	if emb == 0 && o.Font.Weight >= font.Black && !noEmbolden && !IsDarkText(o.Color) {
+	if emb == 0 && o.Font.Weight >= font.Black && !noEmbolden && !IsDarkText(o.Color) && LegacyTextInk() {
 		emb = lightBlackEmbolden
 	}
 	cs := gtx.Constraints
@@ -457,12 +458,14 @@ func (it *glyphIter) paint(gtx layout.Context, sh *text.Shaper, g text.Glyph, li
 	if g.Flags&text.FlagLineBreak != 0 || cap(line)-len(line) == 0 || !ok {
 		t := op.Affine(f32.AffineId().Offset(it.lineOff)).Push(gtx.Ops)
 		// Dark text gets its extra ink from an emboldened outline (one
-		// fill, see EmboldenedShape); fallback-font runs keep the stroke.
+		// fill, see EmboldenedShape) under the legacy model, from Skia's
+		// contrast under the Windows one (FillText); fallback-font runs
+		// keep the stroke.
 		if path, ok := EmboldenedShape(sh, line, it.emb); ok {
-			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
+			FillText(gtx.Ops, it.col, path)
 		} else {
 			path := sh.Shape(line)
-			paint.FillShape(gtx.Ops, it.col, clip.Outline{Path: path}.Op())
+			FillText(gtx.Ops, it.col, path)
 			if it.emb > 0 {
 				paint.FillShape(gtx.Ops, it.col, clip.Stroke{Path: path, Width: it.emb}.Op())
 			}

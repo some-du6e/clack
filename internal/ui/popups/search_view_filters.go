@@ -155,8 +155,17 @@ type srPillSpec struct {
 	chevron, active bool
 }
 
-// srTeammates is "{n} teammate(s)".
+// srTeammates is "{n} teammate(s)" after the pill's word:
+// getFilterTriggerContent's "From {count, plural, …}" (the search I18n).
 func srTeammates(pre string, n int) string {
+	switch pre {
+	case "From":
+		return nsSearch.T("From {count, plural, =1 {{count} teammate} other {{count} teammates}}", "count", n)
+	case "Created by":
+		return nsSearch.T("Created by {count, plural, =1 {{count} teammate} other {{count} teammates}}", "count", n)
+	case "With":
+		return nsSearch.T("With {count, plural, =1 {{count} teammate} other {{count} teammates}}", "count", n)
+	}
 	if n == 1 {
 		return pre + " 1 teammate"
 	}
@@ -184,15 +193,15 @@ func (v *SearchView) pillSpec(f string) srPillSpec {
 		vals := v.values(key)
 		switch len(vals) {
 		case 0:
-			return srPillSpec{icon: icon, label: empty, chevron: true}
+			return srPillSpec{icon: icon, label: nsSearch.T(empty), chevron: true}
 		case 1:
-			return srPillSpec{icon: icon, label: pre + " " + strings.TrimPrefix(v.refName("from", vals[0]), "@"), chevron: true, active: true}
+			return srPillSpec{icon: icon, label: nsSearch.T(pre) + " " + strings.TrimPrefix(v.refName("from", vals[0]), "@"), chevron: true, active: true}
 		}
 		return srPillSpec{icon: icon, label: srTeammates(pre, len(vals)), chevron: true, active: true}
 	}
 	switch f {
 	case srFSources:
-		return srPillSpec{icon: srTabIcons[v.tab], label: srTabNames[v.tab], chevron: true}
+		return srPillSpec{icon: srTabIcons[v.tab], label: nsSearch.T(srTabNames[v.tab]), chevron: true}
 	case srFFrom:
 		return person("from", "From", "From", "user")
 	case srFCreator:
@@ -201,7 +210,7 @@ func (v *SearchView) pillSpec(f string) srPillSpec {
 	case srFWith:
 		if v.tab != srTabDMs { // Includes me: with:<@self>
 			self := v.selfRef()
-			return srPillSpec{icon: "user", label: "Includes me", active: self != "" && v.q.Has("with", self)}
+			return srPillSpec{icon: "user", label: nsSearch.T("Includes me"), active: self != "" && v.q.Has("with", self)}
 		}
 		return person("with", "With", "With", "")
 	case srFIn:
@@ -213,35 +222,35 @@ func (v *SearchView) pillSpec(f string) srPillSpec {
 		}
 		switch len(in) {
 		case 0:
-			return srPillSpec{icon: "channel", label: "In", chevron: true}
+			return srPillSpec{icon: "channel", label: nsSearch.T("In"), chevron: true}
 		case 1:
-			return srPillSpec{icon: "channel", label: "In " + v.refName("in", in[0]), chevron: true, active: true}
+			return srPillSpec{icon: "channel", label: nsSearch.T("In") + " " + v.refName("in", in[0]), chevron: true, active: true}
 		}
-		return srPillSpec{icon: "channel", label: "In " + strconv.Itoa(len(in)) + " places", chevron: true, active: true}
+		return srPillSpec{icon: "channel", label: nsSearch.T("In {count, plural, =1 {{count} place} other {{count} places}}", "count", len(in)), chevron: true, active: true}
 	case srFHasLink:
-		return srPillSpec{icon: "link", label: "Has a link", active: v.q.Has("has", "link")}
+		return srPillSpec{icon: "link", label: nsSearch.T("Has a link"), active: v.q.Has("has", "link")}
 	case srFIsThread:
-		return srPillSpec{icon: "threads", label: "Threads only", active: v.q.Has("is", "thread")}
+		return srPillSpec{icon: "threads", label: nsSearch.T("Threads only"), active: v.q.Has("is", "thread")}
 	case srFLast7:
-		return srPillSpec{icon: "calendar", label: "Last 7 days", active: v.q.Has("after", srLast7(time.Now()))}
+		return srPillSpec{icon: "calendar", label: nsSearch.T("Last 7 days"), active: v.q.Has("after", srLast7(time.Now()))}
 	case srFDate:
 		after, before, on := v.q.Get("after"), v.q.Get("before"), v.q.Get("on")
 		if l := srDateLabel(after, before, on, time.Now()); l != "" {
 			return srPillSpec{label: l, chevron: true, active: true}
 		}
-		return srPillSpec{label: "Date", chevron: true}
+		return srPillSpec{label: nsSearch.T("Date"), chevron: true}
 	case srFFileType:
 		ts := v.values("type")
 		switch len(ts) {
 		case 0:
-			return srPillSpec{label: "File type", chevron: true}
+			return srPillSpec{label: nsSearch.T("File type"), chevron: true}
 		case 1:
 			return srPillSpec{label: srFileTypeLabel(ts[0]), chevron: true, active: true}
 		}
-		return srPillSpec{label: strconv.Itoa(len(ts)) + " file types", chevron: true, active: true}
+		return srPillSpec{label: nsSearch.T("{count} file types", "count", len(ts)), chevron: true, active: true}
 	case srFOnlyMine:
 		c := v.h.Core()
-		return srPillSpec{label: "Only my channels", active: c != nil && c.PrefBool("search_only_my_channels", false)}
+		return srPillSpec{label: nsSearch.T("Only my channels"), active: c != nil && c.PrefBool("search_only_my_channels", false)}
 	}
 	return srPillSpec{}
 }
@@ -250,7 +259,7 @@ func (v *SearchView) pillSpec(f string) srPillSpec {
 func srFileTypeLabel(val string) string {
 	for _, ft := range srFileTypes {
 		if strings.EqualFold(ft.val, val) {
-			return ft.label
+			return nsSearch.T(ft.label)
 		}
 	}
 	return val
@@ -302,14 +311,14 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 		specs[i] = v.pillSpec(f)
 		widths[i] = srPillWidth(gtx, th, specs[i])
 	}
-	more := srPillSpec{icon: "filter", label: "More", chevron: true, active: v.moreActive()}
+	more := srPillSpec{icon: "filter", label: nsSearch.T("More"), chevron: true, active: v.moreActive()}
 	// what's left for the pills: the row less 24, More (when it has
 	// filters) and Reset (+8) when filters are applied
 	avail := right - x - dp(gtx, 24)
 	applied := v.filtersApplied()
 	resetW := 0
 	if applied {
-		resetW = textW(gtx, th, 13, theme.Regular, "Reset")
+		resetW = textW(gtx, th, 13, theme.Regular, nsSearch.T("Reset"))
 		avail -= resetW + gap
 	}
 	laterTodos := false
@@ -351,7 +360,7 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 		at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &v.pills[srPReset], nil, func(gtx layout.Context) layout.Dimensions {
 				d := vcenter(gtx, ph, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 13, theme.Regular, cl.Link, "Reset")
+					return text(gtx, th, 13, theme.Regular, cl.Link, nsSearch.T("Reset"))
 				})
 				if v.pills[srPReset].Hovered() { // :hover underlines
 					uy := (ph+dp(gtx, 13))/2 + dp(gtx, 1)
@@ -463,7 +472,7 @@ func (v *SearchView) resetFilters() {
 // Anyone, you, then people, each setting key:<@id>.
 func (v *SearchView) peopleMenu(gtx layout.Context, key, anyone string, slot int) {
 	cur := v.q.Get(key)
-	items := []MenuItem{{Label: anyone, Checked: cur == "", Do: func() { v.setQuery(v.q.Set(key, "")) }}, Sep()}
+	items := []MenuItem{{Key: LabelKey(anyone), Label: anyone, Checked: cur == "", Do: func() { v.setQuery(v.q.Set(key, "")) }}, Sep()}
 	snap, ok := v.snapshot()
 	if ok {
 		type person struct{ id, name string }
@@ -496,12 +505,12 @@ func (v *SearchView) peopleMenu(gtx layout.Context, key, anyone string, slot int
 // Before…, After…, Range…); anchor is the pill the date picker opens at.
 func (v *SearchView) dateItems(gtx layout.Context, anchor int) []MenuItem {
 	now := time.Now()
-	dates := []MenuItem{{Label: "Any time", Radio: true, Checked: v.q.Get("after") == "" && v.q.Get("before") == "" && v.q.Get("on") == "",
-		Do: func() { v.setQuery(srWithRange(v.q, "", "")) }}}
+	dates := []MenuItem{MenuItem{Label: "Any time", Radio: true, Checked: v.q.Get("after") == "" && v.q.Get("before") == "" && v.q.Get("on") == "",
+		Do: func() { v.setQuery(srWithRange(v.q, "", "")) }}.In(nsSearch)}
 	for _, d := range srDateRanges {
 		after, before := srDate(d.from(now)), srDate(d.end(now))
 		dates = append(dates, MenuItem{Label: d.label, Radio: true, Checked: v.q.Get("after") == after && v.q.Get("before") == before,
-			Do: func() { v.setQuery(srWithRange(v.q, after, before)) }})
+			Do: func() { v.setQuery(srWithRange(v.q, after, before)) }}.In(nsSearch))
 	}
 	pick := func(key string) func() {
 		return func() {
@@ -523,8 +532,8 @@ func (v *SearchView) dateItems(gtx layout.Context, anchor int) []MenuItem {
 			}))
 		}
 	}
-	return append(dates, Sep(), MenuItem{Label: "On…", Do: pick("on")}, MenuItem{Label: "Before…", Do: pick("before")},
-		MenuItem{Label: "After…", Do: pick("after")}, MenuItem{Label: "Range…", Do: pick("range")})
+	return append(dates, Sep(), MenuItem{Label: "On…", Do: pick("on")}.In(nsSearch), MenuItem{Label: "Before…", Do: pick("before")}.In(nsSearch),
+		MenuItem{Label: "After…", Do: pick("after")}.In(nsSearch), MenuItem{Label: "Range…", Do: pick("range")}.In(nsSearch))
 }
 
 // fileTypeItems are the File type rows (checkboxes with their icons).
@@ -533,7 +542,8 @@ func (v *SearchView) fileTypeItems() []MenuItem {
 	var types []MenuItem
 	for _, ft := range srFileTypes {
 		val := ft.val
-		types = append(types, MenuItem{Label: ft.label, Widget: srCheckIconRow(th, ft.label, ft.icon, func() bool { return v.q.Has("type", val) }),
+		label := nsSearch.T(ft.label)
+		types = append(types, MenuItem{Key: LabelKey(ft.label), Label: label, Widget: srCheckIconRow(th, label, ft.icon, func() bool { return v.q.Has("type", val) }),
 			Do: func() { v.setQuery(v.q.Toggle("type", val)) }, KeepOpen: true})
 	}
 	return types
@@ -565,6 +575,13 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 	check := func(label string, on func() bool, do func()) MenuItem {
 		return MenuItem{Label: label, Widget: srCheckRow(th, label, on), Do: do, KeepOpen: true}
 	}
+	// checkT is check for a row of Slack's own text (the search I18n),
+	// keyed by its English label
+	checkT := func(src string, on func() bool, do func()) MenuItem {
+		it := check(nsSearch.T(src), on, do)
+		it.Key = LabelKey(src)
+		return it
+	}
 	has := func(key, val string) func() bool { return func() bool { return v.q.Has(key, val) } }
 
 	// people: you, then the people the results came from
@@ -593,32 +610,32 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 	var items []MenuItem
 	saved := shown(srFExclBots) || shown(srFOnlyMine)
 	if saved {
-		items = append(items, MenuItem{Header: "Saved preferences"})
+		items = append(items, MenuItem{Header: "Saved preferences"}.In(nsSearch))
 	}
 	if shown(srFExclBots) {
-		items = append(items, check("Exclude bot messages", func() bool { return pref("search_exclude_bots") }, v.togglePref("search_exclude_bots")))
+		items = append(items, checkT("Exclude bot messages", func() bool { return pref("search_exclude_bots") }, v.togglePref("search_exclude_bots")))
 	}
 	if shown(srFOnlyMine) {
-		items = append(items, check("Only my channels", func() bool { return pref("search_only_my_channels") }, v.togglePref("search_only_my_channels")))
+		items = append(items, checkT("Only my channels", func() bool { return pref("search_only_my_channels") }, v.togglePref("search_only_my_channels")))
 	}
 	if saved {
 		items = append(items, Sep())
 	}
 	exclArch := shown(srFExclArch) && c != nil && c.Experiment("search_explore_freshness_signals") == "on"
 	if shown(srFExact) || exclArch {
-		items = append(items, MenuItem{Header: "Results"})
+		items = append(items, MenuItem{Header: "Results"}.In(nsSearch))
 	}
 	if shown(srFExact) {
-		items = append(items, check("Exact matches only", func() bool { return v.exact }, func() { v.exact = !v.exact; v.search(1) }))
+		items = append(items, checkT("Exact matches only", func() bool { return v.exact }, func() { v.exact = !v.exact; v.search(1) }))
 	}
 	if exclArch {
-		items = append(items, check("Exclude archived", func() bool { return v.exclArch }, func() { v.exclArch = !v.exclArch; v.search(1) }))
+		items = append(items, checkT("Exclude archived", func() bool { return v.exclArch }, func() { v.exclArch = !v.exclArch; v.search(1) }))
 	}
 	if shown(srFExact) || exclArch {
 		items = append(items, Sep())
 	}
 	if shown(srFFrom) {
-		items = append(items, MenuItem{Label: "From", Icon: "user", Sub: people("from")})
+		items = append(items, MenuItem{Label: "From", Icon: "user", Sub: people("from")}.In(nsSearch))
 	}
 	if shown(srFIn) {
 		var in []MenuItem
@@ -626,48 +643,48 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 			val := "<#" + cv.ID + ">"
 			in = append(in, check(cv.Name, func() bool { return srRefID(v.q.Get("in")) == cv.ID }, toggle("in", val)))
 		}
-		items = append(items, MenuItem{Label: "In", Icon: "channel", Sub: in})
+		items = append(items, MenuItem{Label: "In", Icon: "channel", Sub: in}.In(nsSearch))
 	}
 	if shown(srFWith) {
-		items = append(items, MenuItem{Label: "With people", Icon: "user", Sub: people("with")})
+		items = append(items, MenuItem{Label: "With people", Icon: "user", Sub: people("with")}.In(nsSearch))
 	}
 	if shown(srFHasFile) || shown(srFHasLink) || shown(srFHasAction) {
 		var sub []MenuItem
 		if shown(srFHasFile) {
-			sub = append(sub, check("File", has("has", "file"), toggle("has", "file")))
+			sub = append(sub, checkT("File", has("has", "file"), toggle("has", "file")))
 		}
-		sub = append(sub, check("Link", has("has", "link"), toggle("has", "link")))
+		sub = append(sub, checkT("Link", has("has", "link"), toggle("has", "link")))
 		if shown(srFHasAction) {
-			sub = append(sub, check("Action", has("has", "action"), toggle("has", "action")))
+			sub = append(sub, checkT("Action", has("has", "action"), toggle("has", "action")))
 		}
-		items = append(items, MenuItem{Label: "Message has", Icon: "message", Sub: sub})
+		items = append(items, MenuItem{Label: "Message has", Icon: "message", Sub: sub}.In(nsSearch))
 	}
 	if shown(srFIsDM) || shown(srFIsThread) || shown(srFIsSaved) || shown(srFIsTodos) || shown(srFHasPin) || shown(srFIsActivity) {
 		var sub []MenuItem
 		if shown(srFIsDM) {
-			sub = append(sub, check("A direct message", has("is", "dm"), toggle("is", "dm")))
+			sub = append(sub, checkT("A direct message", has("is", "dm"), toggle("is", "dm")))
 		}
-		sub = append(sub, check("In a thread", has("is", "thread"), toggle("is", "thread")))
+		sub = append(sub, checkT("In a thread", has("is", "thread"), toggle("is", "thread")))
 		if shown(srFIsSaved) {
-			sub = append(sub, check("Saved", has("is", "saved"), toggle("is", "saved")))
+			sub = append(sub, checkT("Saved", has("is", "saved"), toggle("is", "saved")))
 		}
 		if shown(srFIsTodos) {
-			sub = append(sub, check("To-dos", has("is", "todos"), toggle("is", "todos")))
+			sub = append(sub, checkT("To-dos", has("is", "todos"), toggle("is", "todos")))
 		}
 		if shown(srFHasPin) {
-			sub = append(sub, check("Pinned", has("has", "pin"), toggle("has", "pin")))
+			sub = append(sub, checkT("Pinned", has("has", "pin"), toggle("has", "pin")))
 		}
 		if shown(srFIsActivity) {
-			sub = append(sub, check("In Activity", has("in", "activity"), toggle("in", "activity")))
+			sub = append(sub, checkT("In Activity", has("in", "activity"), toggle("in", "activity")))
 		}
-		items = append(items, MenuItem{Label: "Message is", Icon: "message", Sub: sub})
+		items = append(items, MenuItem{Label: "Message is", Icon: "message", Sub: sub}.In(nsSearch))
 	}
 	if shown(srFDate) {
 		items = append(items, MenuItem{Label: "Date", Icon: "calendar",
-			Subtitle: srDateLabel(v.q.Get("after"), v.q.Get("before"), v.q.Get("on"), time.Now()), Sub: v.dateItems(gtx, srPMore)})
+			Subtitle: srDateLabel(v.q.Get("after"), v.q.Get("before"), v.q.Get("on"), time.Now()), Sub: v.dateItems(gtx, srPMore)}.In(nsSearch))
 	}
 	if shown(srFFileType) {
-		items = append(items, MenuItem{Label: "File type", Icon: "file", Sub: v.fileTypeItems()})
+		items = append(items, MenuItem{Label: "File type", Icon: "file", Sub: v.fileTypeItems()}.In(nsSearch))
 	}
 	if shown(srFReaction) {
 		var reacts []MenuItem
@@ -675,7 +692,7 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 			val := ":" + r + ":"
 			reacts = append(reacts, check(val, has("has", val), toggle("has", val)))
 		}
-		reacts = append(reacts, MenuItem{Label: "More reactions", Do: func() {
+		reacts = append(reacts, MenuItem{Key: LabelKey("More reactions"), Label: nsSearch.T("More reactions"), Do: func() {
 			anchor := v.win(gtx, v.pillR[srPMore])
 			v.h.OpenEmojiPicker(image.Pt(anchor.Min.X, anchor.Max.Y+dp(gtx, 4)), func(name string) {
 				if name = strings.Trim(name, ":"); name != "" {
@@ -683,10 +700,10 @@ func (v *SearchView) moreMenu(gtx layout.Context) {
 				}
 			})
 		}})
-		items = append(items, MenuItem{Label: "Reactions", Icon: "emoji", Sub: reacts})
+		items = append(items, MenuItem{Label: "Reactions", Icon: "emoji", Sub: reacts}.In(nsSearch))
 	}
 	if shown(srFCreator) {
-		items = append(items, MenuItem{Label: "Creator", Icon: "user", Sub: people("creator")})
+		items = append(items, MenuItem{Label: "Creator", Icon: "user", Sub: people("creator")}.In(nsSearch))
 	}
 	v.openMenu(gtx, v.pillR[srPMore], items, 240) // MoreFiltersMenu width 240
 }
@@ -784,15 +801,15 @@ func (v *SearchView) tabSortLabel() string {
 	for i, o := range opts {
 		if o.val == v.tabSort[v.tab] {
 			if i == 0 && !sticky {
-				return o.label + " (default)"
+				return srDefaultLabel(o.label)
 			}
-			return o.label
+			return nsSearch.T(o.label)
 		}
 	}
 	if !sticky {
-		return "Most relevant (default)"
+		return nsSearch.T("Most relevant (default)")
 	}
-	return "Most relevant"
+	return nsSearch.T("Most relevant")
 }
 
 // tabSortMenu is a non-message tab's Sort select: its options, a
@@ -804,11 +821,11 @@ func (v *SearchView) tabSortMenu(gtx layout.Context) {
 	tab := v.tab
 	var items []MenuItem
 	for i, o := range srTabSorts(tab) {
-		label, val := o.label, o.val
+		key, label, val := LabelKey(o.label), nsSearch.T(o.label), o.val
 		if i == 0 && !sticky {
-			label += " (default)"
+			key, label = LabelKey(o.label+" (default)"), srDefaultLabel(o.label)
 		}
-		items = append(items, MenuItem{Label: label, Checked: v.tabSort[tab] == val, Do: func() {
+		items = append(items, MenuItem{Key: key, Label: label, Checked: v.tabSort[tab] == val, Do: func() {
 			if v.tabSort[tab] != val {
 				v.tabSort[tab] = val
 				if sticky && (tab == srTabFiles || tab == srTabCanvases) {
@@ -832,7 +849,7 @@ func (v *SearchView) tabSortMenu(gtx layout.Context) {
 		if OpenPreferencesSection != nil {
 			OpenPreferencesSection("advanced")
 		}
-	}})
+	}}.In(nsSearch))
 	v.openMenu(gtx, v.sortR, items, 240)
 }
 
@@ -849,4 +866,14 @@ func srWithoutFilters(q srQuery) srQuery {
 		}
 	}
 	return q.withMods(mods)
+}
+
+// srDefaultLabel is a sort's label marked as the default: Slack's own
+// "Most relevant (default)" where it has one, else the label and the
+// marker.
+func srDefaultLabel(label string) string {
+	if label == "Most relevant" {
+		return nsSearch.T("Most relevant (default)")
+	}
+	return nsSearch.T(label) + " (default)"
 }

@@ -33,9 +33,11 @@ The app declares the `slack://` scheme, so macOS can send Slack links to it. If 
 
 ### Windows
 
-**Installer:** run `Clack-<ver>-windows-amd64-setup.exe`. It installs for your user only (no admin prompt) into `%LocalAppData%\Programs\Clack`, adds a Start Menu entry and, if you tick it, makes Clack open `slack://` links (off by default: the Slack desktop app claims those too, and you don't need it to sign in). A desktop shortcut is optional. Uninstall from **Settings → Apps**. Running a newer installer upgrades in place.
+**Installer:** run `Clack-<ver>-windows-amd64-setup.exe`. It installs for your user only (no admin prompt) into `%LocalAppData%\Programs\Clack`, adds a Start Menu entry and registers Clack for `slack://` links (below). A box makes Clack their default too (off by default: the Slack desktop app claims them as well). A desktop shortcut is optional. Uninstall from **Settings → Apps**; it removes only Clack's keys. Running a newer installer upgrades in place.
 
-**Portable:** unzip `Clack-<ver>-windows-amd64.zip` anywhere and run `Clack.exe`. It doesn't touch the registry. To have it open `slack://` links, run `Clack.exe -register-url-handler` once from that folder (`-unregister-url-handler` undoes it; both only affect your user).
+**Portable:** unzip `Clack-<ver>-windows-amd64.zip` anywhere and run `Clack.exe`.
+
+**`slack://` links on Windows.** Every start registers the running `Clack.exe` for `slack://` links, for your user only (HKCU, no admin): a `Clack.slack` ProgID, `Software\Clack\Capabilities` with `URLAssociations\slack`, and `Software\RegisteredApplications\Clack`, the registration Microsoft's Default Programs describes. Windows then lists Clack in its "Select an app to open this 'slack' link" box and in **Settings → Apps → Default apps** (on Windows 11, `start ms-settings:defaultapps?registeredAppUser=Clack` opens Clack's page there). Clack also becomes what runs when Windows doesn't ask, but only if no other app has `slack://`. `Clack.exe -register-url-handler` (or the installer's "Make Clack the default for slack:// links" box) makes Clack that default anyway, and `-unregister-url-handler` removes Clack's keys and leaves other apps' alone. Neither changes an app you picked with **Always** in Windows' box, which Windows protects. Change that one in **Settings → Apps → Default apps → Choose defaults by link type** (at the bottom of the page) **→ SLACK**, and pick Clack; typing `slack` in the page's "Set a default for a file type or link type" box finds it too ([Microsoft Support, "Change default apps in Windows"](https://support.microsoft.com/en-us/windows/change-default-apps-in-windows-e5d82cad-17d1-c53b-3505-f10a32e1894d)).
 
 The files aren't code-signed, so SmartScreen may say "Windows protected your PC". Click **More info → Run anyway**.
 
@@ -127,13 +129,15 @@ Clack has two ways in. Use the first.
 
 This is how Slack's desktop app signs in. You sign in in your browser, Slack's page hands "the Slack app" a one-time `slack://…/magic-login/…` link, and Clack trades that link for a session Slack issues to Clack (`auth.loginMagicBulk?ssb=1`). Nothing is copied from your browser, so Clack and the browser are two separate sessions, the way the browser and Slack desktop are.
 
-1. Start Clack. The sign-in screen opens on **Sign in with a Slack link**.
-2. Click **Open sign-in page** (or open `https://slack.com/ssb/add?s=1&v=4.53.276` yourself) and sign in to your workspace in the browser.
-3. When Slack offers to open the Slack app, click it and let the browser open Clack. On macOS that works out of the box. On Windows, tick "Open slack:// links with Clack" in the installer (or run `Clack.exe -register-url-handler` once); on Linux, run `clack --register-url-handler` once. If you can see the `slack://` link itself, you can paste it into **Sign-in link** instead. Slack's page usually doesn't show it, though.
+1. Start Clack and click **Open Slack sign-in** (or press Enter). Clack opens `https://slack.com/ssb/add?s=1&v=4.53.276` in your browser and waits for the link.
+2. Sign in to your workspace in the browser.
+3. When Slack offers to open the Slack app, let the browser open Clack, and Clack signs in by itself. On macOS that works out of the box. On Windows, if Windows asks which app opens the link ("Select an app to open this 'slack' link"), pick **Clack**, then **Just once** or **Always**. On Linux, choose Clack if your browser asks, or run `clack --register-url-handler` once to make it the default.
 
-The link works once, for a few minutes. If it has expired, sign in on the page again. Treat it like a password until then. Workspaces with single sign-on may send you back to the browser to finish.
+Clack also signs in with a link you already have: when its window comes to the front on the sign-in screen, it looks at the clipboard, signs in with a sign-in link it finds there and clears the clipboard, the way Slack desktop does, and the card's field takes a pasted link. Slack's sign-in page doesn't show the link, though, so the hand-off from the browser is the way in. **Having trouble?** on the card has the tips for your system.
 
-Letting the browser open Clack needs Clack to handle `slack://` links. On macOS the app declares the scheme, so it works as soon as Clack is installed. Elsewhere Clack never takes them by itself. Run `clack --register-url-handler` once (on Linux it runs `xdg-mime default clack.desktop x-scheme-handler/slack`; on Windows it writes the per-user `slack` URL keys). The Slack desktop app claims `slack://` too and re-claims it whenever it starts, so with both installed whichever registered last wins, and a link may open the wrong app. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
+The link works once, for a few minutes. If it has expired, open Slack sign-in again. Treat it like a password until then. If your workspace uses single sign-on, Slack may send you back to the browser to finish. Clack then opens the page Slack names and waits for the next link.
+
+Letting the browser open Clack needs Clack to handle `slack://` links. On macOS the app declares the scheme, so it works as soon as Clack is installed; with Slack.app installed too, macOS picks one of the two. On Windows every start registers Clack, so Windows offers it next to the Slack desktop app (see Install → Windows). On Linux the packages list Clack as a handler, and `clack --register-url-handler` makes it the default (`xdg-mime default clack.desktop x-scheme-handler/slack`); Clack never takes the default by itself there. The Slack desktop app claims `slack://` too and re-claims its default whenever it starts. A link that reaches Clack while it's already signed in does nothing but show a note: any web page can make your browser open a `slack://` link, and one for someone else's account must not swap yours. Sign out first.
 
 From a terminal: `clack login 'slack://T…/magic-login/…'`, or `clack login` and paste the link at the prompt. A running Clack also accepts `clack 'slack://T…/magic-login/…'`.
 
@@ -146,9 +150,9 @@ What isn't verified yet: whether this session survives you signing out in the br
 > [!NOTE]
 > **This way Clack shares your browser's Slack session. It is not a separate sign-in.** Earlier versions got sessions signed out **everywhere** (the browser, the desktop app and Clack) on Hack Club's Enterprise Grid, a few seconds after signing in. The cause was found: Grid reacts to Go's TLS handshake. This release connects to Slack with OpenSSL's handshake instead, which Grid leaves alone ([docs/SIGNOUT-AUDIT.md](docs/SIGNOUT-AUDIT.md)). Slack can still end a shared session for its own reasons, so use an account you can sign back in to.
 
-Click **Advanced: paste a token instead** on the sign-in screen (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
+Click **Advanced** on the sign-in card (or press Enter at `clack login`'s link prompt). Fill in your workspace, the `xoxc-` **token**, the **`d` cookie** (`xoxd-…`) and, optionally, the org token (Enterprise Grid workspaces such as Hack Club). Don't paste `d-s`: Clack never sends it on a pasted session. Clack only checks them with `auth.test`: it never loads Slack web pages with your cookie and never calls a sign-out API, so your browser session stays signed in.
 
-The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies the tokens Slack's own page keeps in `localStorage`. The sign-in screen shows the same snippet with a Copy button:
+The quickest way to get them: open Slack in the browser you'll copy from, open DevTools (F12) on that tab, and run this in the Console. It copies the tokens Slack's own page keeps in `localStorage`. Advanced shows the same snippet with a Copy button:
 
 ```js
 copy(JSON.stringify({teams: JSON.parse(localStorage.localConfig_v2).teams}))
@@ -162,7 +166,7 @@ Every connection Clack makes to Slack uses the TLS handshake of OpenSSL 3.0.13 (
 
 Credentials are saved to `~/.config/clack/creds.json`, readable only by you (mode 600 in a 700 directory; an owner-only ACL on Windows). They only ever go to https slack.com hosts. "Sign out on this device" deletes that file and nothing else.
 
-**Live updates are off until you turn them on.** On first run a banner asks. You can also switch them in Preferences > Clack. While they're off, Clack never opens Slack's realtime websocket. It refreshes unread counts and the open conversation and threads over the Web API every 20 seconds instead. You can read and send, but there's no typing indicator, presence, instant delivery, desktop notifications, huddle events or slash-command modals. `clack -no-realtime` (or `CLACK_NO_REALTIME=1`) keeps the socket closed whatever the setting says.
+**Live updates are on**, as in Slack desktop: Clack opens Slack's realtime websocket after it signs in, over the same OpenSSL handshake as every other connection. You can turn them off in Preferences > Clack, and a saved "off" stays off. While they're off, Clack never opens the websocket. It refreshes unread counts and the open conversation and threads over the Web API every 20 seconds instead. You can read and send, but there's no typing indicator, presence, instant delivery, desktop notifications, huddle events or slash-command modals. `clack -no-realtime` (or `CLACK_NO_REALTIME=1`) keeps the socket closed whatever the setting says.
 
 Clack never calls Slack's sign-out or token-revoke methods. "Sign out on this device" only deletes `creds.json`; your Slack session in the browser and other apps is not affected.
 
@@ -181,8 +185,8 @@ clack 'slack://channel?team=T0266FRGM&id=C0266FRGV'   # open a Slack link
 |---|---|---|
 | `-creds <file>` | `~/.config/clack/creds.json` | credentials file |
 | `-dark` | off | start in dark mode |
-| `-register-url-handler` | | make Clack this user's `slack://` handler and exit (Windows registry; `xdg-mime` on Linux). Clack never does this on its own; the Slack desktop app claims the same links |
-| `-unregister-url-handler` | | remove Clack's `slack://` registration (Windows) and exit |
+| `-register-url-handler` | | make Clack this user's default `slack://` handler and exit (Windows: the legacy `Software\Classes\slack` key as well as Clack's own, which every start writes; `xdg-mime` on Linux). An app picked with **Always** in Windows' box still wins |
+| `-unregister-url-handler` | | remove Clack's `slack://` registration (Windows) and exit; other apps' keys stay |
 
 Only one Clack runs per user. Starting it again, or opening a `slack://` link, brings the running window to the front and opens the link there (`slack://channel?id=C…[&thread_ts=…]`, `slack://user?id=U…`, `slack://open`). A `slack://…/magic-login/…` or `slack://login-v2/…` link signs in instead, from the sign-in screen only. Instances with different `CLACK_HOME`s are separate. On Windows, Clack also puts an icon in the notification area: click it to bring the window back, or right-click it to quit.
 
