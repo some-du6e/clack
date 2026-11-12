@@ -510,15 +510,7 @@ not hide a window.
 - A hidden window draws no frames, as a minimized one doesn't: `runLoop`
   skips its animation frames while `IsWindowVisible` is false. Gio still
   delivers its wake-up event to `Window.Event` after every `Invalidate`,
-  so an app can run posted work then (Clack's `drainIdle`). For that to
-  hold, `app/window.go`'s `nextEvent` lets `Invalidate` through again
-  (`mayInvalidate`) as each event is handed to the app, not only once
-  the events have run out: upstream drops an `Invalidate` made while the
-  app handles the wake-up of the one before, which a drawing window
-  covers with its next frame and a hidden or minimized one never did
-  (work posted by posted work waited for the window to come back). A
-  pending wake-up still rides on whichever event goes out next, so the
-  app runs posted work on every event, not only on the bare wake-up.
+  so an app can run posted work then (Clack's `drainIdle`).
 - `Perform(system.ActionRaise)` on a hidden window shows it first the way
   Chromium's `HWNDMessageHandler::Show(kNormal)` does: `SW_SHOW` when it
   was maximized (it stays maximized), `SW_SHOWNORMAL` otherwise, then

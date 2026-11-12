@@ -571,15 +571,6 @@ func (w *Window) nextEvent() (event.Event, bool) {
 	defer func() {
 		// Every event counts as a wakeup.
 		s.wakeup = false
-		// Clack patch (CLACK_PATCHES.md §13): so an Invalidate made
-		// while the app handles this event wakes it once more. Reset
-		// only once the events ran out, an Invalidate made after the app
-		// read a wakeup (and ran its posted work) and before that was
-		// dropped, and a window that draws no frames (hidden, minimized)
-		// never woke for it.
-		w.invMu.Lock()
-		w.mayInvalidate = w.driver != nil
-		w.invMu.Unlock()
 	}()
 	switch {
 	case s.framePending:
@@ -615,6 +606,9 @@ func (w *Window) nextEvent() (event.Event, bool) {
 	case s.wakeup:
 		return wakeupEvent{}, true
 	}
+	w.invMu.Lock()
+	defer w.invMu.Unlock()
+	w.mayInvalidate = w.driver != nil
 	return nil, false
 }
 
