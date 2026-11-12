@@ -57,6 +57,33 @@ func TestFormatPerOS(t *testing.T) {
 	}
 }
 
+// FormatAsWritten keeps the written modifier order on macOS, for
+// Slack's literal "⌘⇧Enter" (the + menu's Text snippet); elsewhere it is
+// Format.
+func TestFormatAsWritten(t *testing.T) {
+	cases := []struct{ combo, mac, win string }{
+		{"Mod+Shift+Enter", "⌘⇧Enter", "Ctrl+Shift+Enter"},
+		{"Shift+Mod+Enter", "⇧⌘Enter", "Ctrl+Shift+Enter"},
+		{"Mod+O", "⌘O", "Ctrl+O"},
+		{"Mod+Alt+K", "⌘⌥K", "Ctrl+Alt+K"},
+		{"Mod++", "⌘+", "Ctrl++"},
+		{"Esc", "Esc", "Esc"},
+		{"Ctrl Shift 1", "Ctrl Shift 1", "Ctrl Shift 1"},
+	}
+	for _, c := range cases {
+		if got := FormatAsWrittenFor("darwin", c.combo); got != c.mac {
+			t.Errorf("FormatAsWrittenFor(darwin, %q) = %q, want %q", c.combo, got, c.mac)
+		}
+		if got := FormatAsWrittenFor("windows", c.combo); got != c.win {
+			t.Errorf("FormatAsWrittenFor(windows, %q) = %q, want %q", c.combo, got, c.win)
+		}
+		setGOOS(t, "darwin")
+		if got := FormatAsWritten(c.combo); got != c.mac {
+			t.Errorf("FormatAsWritten(%q) on darwin = %q, want %q", c.combo, got, c.mac)
+		}
+	}
+}
+
 // Chips follow Slack's KeyboardKeysTooltip: ⌘, Option, Shift, key on
 // macOS; Ctrl, Alt, Shift, key elsewhere.
 func TestChipsPerOS(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -141,6 +142,7 @@ func (a *App) afterRoute(prev, r Route) {
 		}
 	}
 	ch := r.Channel()
+	a.fileOpenedRoute(r) // FileOpenSubscriber: Recently viewed (files_open.go)
 	a.trackPreviewRoute(prev, r)
 	if a.data != nil && a.data.core != nil {
 		a.data.core.SetSelected(ch) // Slack's currentlySelectedId: a previewed channel gets a sidebar row
@@ -433,6 +435,29 @@ func (a *App) OpenEmojiPicker(anchor image.Point, onPick func(name string)) {
 		return
 	}
 	a.Toast("Emoji picker arrives with ui-popups")
+}
+
+// OpenEmojiGifPicker is the composer's emoji and GIF picker: a picked GIF
+// goes to onGif (the composer adds it to its draft, handleSelectGif)
+// instead of being sent. gifs opens it on the GIFs tab above anchor (the
+// + menu's GIF row: EmojiAndGIFPickerPopover with selectedTabId GIFS at
+// the menu's targetBounds, position top-left).
+func (a *App) OpenEmojiGifPicker(anchor image.Rectangle, onPick func(name string), onGif func(popups.Gif), gifs bool) {
+	if mkEmojiPicker == nil {
+		a.Toast("Emoji picker arrives with ui-popups")
+		return
+	}
+	ov := mkEmojiPicker(a, anchor.Min, onPick)
+	if p, ok := ov.(*popups.EmojiPicker); ok {
+		p.SetGifHandler(onGif)
+		if gifs {
+			p.ShowGifs()
+			if !anchor.Empty() {
+				p.SetAnchorRect(anchor)
+			}
+		}
+	}
+	a.ShowOverlay(ov)
 }
 
 // OpenProfile is a click on a person: an @mention, a message sender's

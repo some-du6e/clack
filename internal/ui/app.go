@@ -27,6 +27,7 @@ import (
 	"gioui.org/x/explorer"
 
 	"github.com/some-du6e/clack/internal/applog"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/slick"
@@ -96,6 +97,11 @@ type Options struct {
 	// desktop's autostart entry or Run key). nil: the row is greyed.
 	LaunchOnLogin    func() bool
 	SetLaunchOnLogin func(on bool) error
+	// EnsureLinkHandler, when set, runs as Open Slack sign-in opens the
+	// page, before the browser can hand a link back (cmd/clack, Windows:
+	// registers Clack as a slack:// handler again, as every start does).
+	// It must return at once.
+	EnsureLinkHandler func()
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
@@ -161,6 +167,8 @@ type App struct {
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
+	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
+	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
 	ptrWin          image.Point
 	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
@@ -220,7 +228,6 @@ type App struct {
 	winLive          atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
 	update           updateState                // "Update available" banner
-	rtAsk            realtimeState              // first-run "Live updates are off" banner
 	updatesOff       atomic.Bool                // prefs.NoUpdateCheck, for updateLoop
 	updNow           chan struct{}              // Check now → updateLoop (cap 1)
 	updWake          chan struct{}              // focus came back: is a check due? (cap 1)
@@ -281,6 +288,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
+	// the composer's floating formatting bar keeps inside the window
+	composer.WindowSize = func() image.Point { return a.winSize }
+
 	a.startSpell()                                // spellcheck_wire.go
 	a.startLocale()                               // locale_wire.go
 	messages.PersistActions = a.bbmPersistActions // Simplified layout mode (bbm.go)
@@ -360,6 +370,9 @@ func (a *App) Run() error {
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
 	a.watchOSTheme()
+	if a.motionOverride == 0 {
+		watchOSMotion() // wheel scrolling animates unless the OS asks for less motion (syncWheelAnimation)
+	}
 	if a.images != nil {
 		a.images.SetInvalidate(a.Invalidate)
 		a.th.Images = a.images
@@ -412,7 +425,8 @@ func (a *App) Run() error {
 			return e.Err
 		case app.ConfigEvent:
 			if e.Config.Focused && !a.focused {
-				a.nudgeUpdates() // back from sleep, often: is a check due?
+				a.nudgeUpdates()       // back from sleep, often: is a check due?
+				a.loginWindowFocused() // a sign-in link copied in the browser (login.go)
 			}
 			a.focused = e.Config.Focused
 		case app.FrameEvent:
@@ -547,6 +561,7 @@ func (a *App) frame(gtx layout.Context) {
 	sz := gtx.Constraints.Max
 	a.pxPerDp = gtx.Metric.PxPerDp
 	a.winSize = sz
+	a.syncWheelAnimation()
 	a.syncThemeTokens()
 	a.syncMenuBar()
 
@@ -615,11 +630,9 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0
 	}
-	bannerH := a.realtimeAskH(gtx)   // the workspace starts below the live-updates question
-	demoH := a.demoBannerHeight(gtx) // `clack demo` (demo_banner.go)
-	bannerH += demoH
+	demoH := a.demoBannerHeight(gtx)     // `clack demo` (demo_banner.go)
 	dockH := a.huddles().DockHeight(gtx) // the huddle bar's row (huddle_wire.go)
-	ws := image.Rect(railW, navH+bannerH, sz.X-inset, sz.Y-inset-dockH)
+	ws := image.Rect(railW, navH+demoH, sz.X-inset, sz.Y-inset-dockH)
 	wsFull := ws
 	// Slack's split view takes the workspace's right end (split.go)
 	splitW, sbSplit := a.splitColumn(gtx, ws.Dx(), sbW)
@@ -662,9 +675,6 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	a.th.Chrome = false
 	if demoH > 0 {
 		a.layoutDemoBanner(gtx, image.Rect(wsFull.Min.X, navH, wsFull.Max.X, navH+demoH-gtx.Dp(bannerGap)))
-	}
-	if bannerH > demoH {
-		a.layoutRealtimeBanner(gtx, image.Rect(wsFull.Min.X, navH+demoH, wsFull.Max.X, ws.Min.Y-gtx.Dp(bannerGap)))
 	}
 
 	// workspace: sidebar (translucent) + primary panel, one rounded unit
@@ -892,6 +902,7 @@ type toastState struct {
 	undo  func()            // ToastUndo's action ("" button when nil)
 	btn   *widget.Clickable // its "Undo"
 	label string            // the button's label ("" is "Undo")
+	icon  string            // ToastIcon: Slack's Toast with this icon (toast_slack.go)
 }
 
 // Toast shows a short message at the bottom of the window.
@@ -932,6 +943,10 @@ func (a *App) layoutToast(gtx layout.Context) {
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{At: a.toast.until})
+	if a.toast.icon != "" {
+		a.layoutSlackToast(gtx)
+		return
+	}
 	if a.toast.btn != nil && a.toast.btn.Clicked(gtx) {
 		a.undoToast()
 		return
@@ -942,7 +957,7 @@ func (a *App) layoutToast(gtx layout.Context) {
 	uw := 0
 	label := a.toast.label
 	if label == "" {
-		label = "Undo"
+		label = i18n.T("channel_sidebar", "Undo") // the sidebar's toasts' (ToastUndo's callers)
 	}
 	if a.toast.undo != nil {
 		uw = a.th.Measure(gtx, 15, theme.Bold, label) + gtx.Dp(16)

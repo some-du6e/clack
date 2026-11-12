@@ -15,6 +15,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -223,6 +224,18 @@ func clock(t time.Time) string { return uipref.Clock(t) }
 func dayTime(t time.Time, now time.Time) string {
 	if t.IsZero() {
 		return ""
+	}
+	if l := i18n.Locale(); l != i18n.EnUS {
+		// the message I18n's timestamp strings, as the thread pane's
+		tm := clock(t)
+		switch {
+		case dtSameDay(t, now):
+			return nsMessage.T("Today at {time}", "time", tm)
+		case dtSameDay(t, now.AddDate(0, 0, -1)):
+			return nsMessage.T("Yesterday at {time}", "time", tm)
+		}
+		d := i18n.CalendarDate(l, t, i18n.CalendarOpts{ShortenMonth: true, ExcludeYear: t.Year() == now.Year()})
+		return nsMessage.T("{calendarDate} at {time}", "calendarDate", d, "time", tm)
 	}
 	y1, m1, d1 := t.Date()
 	y2, m2, d2 := now.Date()

@@ -376,27 +376,27 @@ func (v *Activity) filterChecked(st actState, e actEntry) bool {
 
 // entryLabel is g7lN's label for an entry.
 func (v *Activity) entryLabel(e actEntry) string {
-	switch e.opt {
+	switch e.opt { // g7lN's labels (the mentions namespace)
 	case optUnreads:
-		return "Unreads"
+		return nsMentions.T("Unreads")
 	case optType:
-		return actFilters[e.i].label
+		return nsMentions.T(actFilters[e.i].label)
 	case optSub:
 		if e.i == 0 {
 			c := v.h.Core()
 			return "@" + c.S.UserName(c.S.SelfID())
 		}
-		return actSubLabels[e.i]
+		return nsMentions.T(actSubLabels[e.i])
 	case optVIP:
-		return actExtras[0].label
+		return nsMentions.T(actExtras[0].label)
 	case optCleared:
-		return actExtras[1].label
+		return nsMentions.T(actExtras[1].label)
 	case optExcludeAuto:
-		return "Exclude automations"
+		return nsMentions.T("Exclude automations")
 	case optAutoOnly:
-		return "Automations only"
+		return nsMentions.T("Automations only")
 	case optSpecific:
-		return actExtras[2].label
+		return nsMentions.T(actExtras[2].label)
 	}
 	return ""
 }
@@ -504,7 +504,7 @@ func (v *Activity) menuClicks(gtx C) bool {
 // syncSourceSelect keeps the select on the view's source.
 func (v *Activity) syncSourceSelect(src string) {
 	if !v.fl.srcInit {
-		v.fl.src = dirDropdown{labels: actSrcLabels}
+		v.fl.src = dirDropdown{labels: actSrcLabels, ns: nsActivity}
 		v.fl.srcInit = true
 	}
 	if i := actSrcIndex(src); i != v.fl.src.sel && !v.fl.src.open {
@@ -531,7 +531,7 @@ func (v *Activity) filterMenu(gtx C) D {
 				g := gtx
 				g.Constraints.Min.Y = gtx.Dp(32)
 				return row(g, layout.Middle,
-					layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, "Filter by") }),
+					layout.Flexed(1, func(gtx C) D { return v.label(gtx, 15, wBold, v.p.Text, nsActivity.T("Filter by")) }),
 					layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &v.menuClose, "close", 28, 16, v.p.Sec) }),
 				)
 			})
@@ -547,7 +547,7 @@ func (v *Activity) filterMenu(gtx C) D {
 				return col(gtx,
 					layout.Rigid(func(gtx C) D {
 						return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D {
-							return v.label(gtx, 13, wReg, v.p.Muted, "Notifications from")
+							return v.label(gtx, 13, wReg, v.p.Muted, nsActivity.T("Notifications from"))
 						})
 					}),
 					layout.Rigid(func(gtx C) D {
@@ -580,7 +580,7 @@ func (v *Activity) menuList(gtx C, m actMenuList, st actState) D {
 	src := st.source()
 	for k, e := range m.entries {
 		if k == m.typeHead {
-			at(func(gtx C) D { return v.menuHeading(gtx, "Filter by entry type") })
+			at(func(gtx C) D { return v.menuHeading(gtx, nsActivity.T("Filter by entry type")) })
 		}
 		switch e.opt {
 		case optDivider:
@@ -590,7 +590,7 @@ func (v *Activity) menuList(gtx C, m actMenuList, st actState) D {
 				return layout.Inset{Top: 8, Bottom: 8}.Layout(gtx, func(gtx C) D { return hline(gtx, v.p.Border) })
 			})
 			if k == m.extHead {
-				at(func(gtx C) D { return v.menuHeading(gtx, "Additional Filters") })
+				at(func(gtx C) D { return v.menuHeading(gtx, nsActivity.T("Additional Filters")) })
 			}
 			continue
 		}
@@ -692,7 +692,7 @@ func (v *Activity) menuEntry(gtx C, e actEntry, st actState, disabled, uk bool) 
 								return D{}
 							}
 							// "Active" (margin_left_25 normal)
-							return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, fg, "Active") })
+							return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, fg, nsActivity.T("Active")) })
 						}),
 					)
 				}),

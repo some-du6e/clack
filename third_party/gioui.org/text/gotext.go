@@ -411,7 +411,57 @@ func (s *shaperImpl) shapeAndWrapText(params Parameters, txt []rune) (_ []shapin
 		wc.Truncator = s.shapeText(params.PxPerEm, params.Locale, []rune(params.Truncator))[0]
 	}
 	// Wrap outputs into lines.
-	return s.wrapper.WrapParagraph(wc, params.MaxWidth, txt, shaping.NewSliceIterator(s.shapeText(params.PxPerEm, params.Locale, txt)))
+	outs := s.shapeText(params.PxPerEm, params.Locale, txt)
+	if params.TabStop > 0 {
+		tabStops(outs, txt, params.TabStop)
+	}
+	return s.wrapper.WrapParagraph(wc, params.MaxWidth, txt, shaping.NewSliceIterator(outs))
+}
+
+// tabStops widens every one-rune tab cluster in outs to the next multiple
+// of stop columns (one column is the face's space advance), counting
+// columns from the paragraph's start the way CodeMirror does (a tab takes
+// stop - col%stop columns, anything else one), and draws it as the
+// space glyph. Runs get their advances back in step. Clack patch 7.
+func tabStops(outs []shaping.Output, txt []rune, stop int) {
+	cols := make([]int, len(txt)+1)
+	col := 0
+	for i, r := range txt {
+		cols[i] = col
+		if r == '\t' {
+			col += stop - col%stop
+		} else {
+			col++
+		}
+	}
+	cols[len(txt)] = col
+	for o := range outs {
+		run := &outs[o]
+		if run.Face == nil {
+			continue
+		}
+		space, ok := run.Face.NominalGlyph(' ')
+		if !ok {
+			continue
+		}
+		upem := run.Face.Upem()
+		if upem == 0 {
+			continue
+		}
+		spaceAdv := fixed.Int26_6(float32(run.Face.HorizontalAdvance(space)) * float32(run.Size) / float32(upem))
+		for g := range run.Glyphs {
+			gl := &run.Glyphs[g]
+			ci := gl.ClusterIndex
+			if gl.RuneCount != 1 || ci < 0 || ci >= len(txt) || txt[ci] != '\t' {
+				continue
+			}
+			w := fixed.Int26_6(stop-cols[ci]%stop) * spaceAdv
+			run.Advance += w - gl.Advance
+			gl.Advance, gl.XAdvance = w, w
+			gl.GlyphID = space
+			gl.Width, gl.Height, gl.XBearing, gl.YBearing = 0, 0, 0, 0
+		}
+	}
 }
 
 // replaceControlCharacters replaces problematic unicode

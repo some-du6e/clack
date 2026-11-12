@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
 )
 
@@ -231,7 +232,7 @@ func (c *Controller) mayNotifyHuddle(ch string, dnd bool) bool {
 // desktopHuddleNotificationOptions.
 func (c *Controller) inviteNotification(inv *incoming) Notification {
 	who := c.displayName(inv.Sender)
-	plain := who + " is inviting you to a huddle"
+	plain := nsHuddles.T("{memberName} is inviting you to a huddle", "memberName", who)
 	body := plain
 	if app := c.h.Core(); app != nil {
 		if conv, ok := app.Conv(inv.Channel); ok {
@@ -247,18 +248,18 @@ func (c *Controller) inviteNotification(inv *incoming) Notification {
 					}
 				}
 				if len(others) > 0 {
-					body = plain + " with " + joinNames(others)
+					body = nsHuddles.T("{senderName} is inviting you to a huddle with {mpdmMembers}", "senderName", who, "mpdmMembers", joinNames(others))
 				}
 			case "im":
 			default:
-				body = plain + " in " + c.channelTitle(inv.Channel)
+				body = nsHuddles.T("{senderName} is inviting you to a huddle in {channelName}", "senderName", who, "channelName", c.channelTitle(inv.Channel))
 			}
 		}
 	}
 	ch := inv.Channel
 	return Notification{Title: c.workspaceName(), Body: body, PlainBody: plain, Actions: []NotifyAction{
-		{Key: "join", Label: "Join", Do: func() { c.post(func() { c.joinInviteIn(ch, "") }) }},
-		{Key: "decline", Label: "Decline", Do: func() { c.post(func() { c.respondInviteIn(ch, "decline") }) }},
+		{Key: "join", Label: nsHuddles.T("Join"), Do: func() { c.post(func() { c.joinInviteIn(ch, "") }) }},
+		{Key: "decline", Label: nsHuddles.T("Decline"), Do: func() { c.post(func() { c.respondInviteIn(ch, "decline") }) }},
 	}}
 }
 
@@ -276,10 +277,10 @@ func (c *Controller) inviteMissed(inv *incoming) {
 	if !pending || !c.on(ExpMissedNotification) {
 		return
 	}
-	title, body := "Huddle missed", c.displayName(inv.Sender)+" invited you to a huddle"
+	title, body := nsHuddles.T("Huddle missed"), nsHuddles.T("{displayName} invited you to a huddle", "displayName", c.displayName(inv.Sender))
 	if app := c.h.Core(); app != nil {
 		if conv, ok := app.Conv(inv.Channel); ok && conv.Kind == "mpim" {
-			body = c.displayName(inv.Sender) + " invited " + c.channelTitle(inv.Channel) + " to a huddle"
+			body = nsHuddles.T("{displayName} invited {mpdmName} to a huddle", "displayName", c.displayName(inv.Sender), "mpdmName", c.channelTitle(inv.Channel))
 		}
 	}
 	ch := inv.Channel
@@ -531,6 +532,9 @@ func (c *Controller) workspaceName() string {
 
 // joinNames is Slack's list format: "A", "A and B", "A, B, and C".
 func joinNames(n []string) string {
+	if i18n.Locale() != i18n.EnUS {
+		return listifyNames(n)
+	}
 	switch len(n) {
 	case 0:
 		return ""

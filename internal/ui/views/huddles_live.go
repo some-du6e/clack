@@ -144,10 +144,10 @@ func (v *Huddles) layoutActive(gtx C, st pageState) D {
 // gap 12): a 40px otl-ter line, "Show more live huddles" / "Show fewer
 // live huddles" (13px/18px bold) with the caret, another line.
 func (v *Huddles) overflowToggle(gtx C, x, y, cw int) D {
-	label := hdNS.T("Show more live huddles")
+	label := nsHuddles.T("Show more live huddles")
 	caret := "caret-down"
 	if v.moreLive {
-		label, caret = hdNS.T("Show fewer live huddles"), "caret-up"
+		label, caret = nsHuddles.T("Show fewer live huddles"), "caret-up"
 	}
 	fg := v.tok("dt_color-content-pry")
 	tw := v.th.Measure(gtx, 13, wBold, label)
@@ -280,7 +280,7 @@ func (v *Huddles) liveTileContent(gtx C, h huddleRoom, n int, in bool, name, rep
 					if h.Name != "" {
 						return v.channelNameWithIcon(gtx, ch, h.History, 13, wReg, fg, false)
 					}
-					return v.label(gtx, 13, wReg, fg, hdNS.T("{memberCount, plural, =1 {# person} other {# people}}", "memberCount", n))
+					return v.label(gtx, 13, wReg, fg, nsHuddles.T("{memberCount, plural, =1 {# person} other {# people}}", "memberCount", n))
 				}),
 				layout.Rigid(func(gtx C) D {
 					c := v.replyCount(h)
@@ -292,7 +292,7 @@ func (v *Huddles) liveTileContent(gtx C, h huddleRoom, n int, in bool, name, rep
 						layout.Rigid(func(gtx C) D { return v.dot(gtx, 2, ter) }),
 						hgap(4),
 						layout.Rigid(func(gtx C) D {
-							return v.linkText(gtx, replies, 13, hdNS.T("{replyCount, plural, =1 {# reply} other {# replies}}", "replyCount", c))
+							return v.linkText(gtx, replies, 13, nsHuddles.T("{replyCount, plural, =1 {# reply} other {# replies}}", "replyCount", c))
 						}),
 					)
 				}),
@@ -314,7 +314,7 @@ func (v *Huddles) liveButton(gtx C, c *widget.Clickable, w int, in bool) D {
 		r := image.Rectangle{Max: sz}
 		rad := gtx.Dp(5)
 		var bg, fg color.NRGBA
-		label, icon := hdNS.T("Join Huddle"), ""
+		label, icon := nsHuddles.T("Join Huddle"), ""
 		switch {
 		case in && c.Hovered():
 			bg, fg, label = v.tok("dt_color-base-inv-imp"), v.tok("dt_color-constants-white"), "Leave"
@@ -322,7 +322,7 @@ func (v *Huddles) liveButton(gtx C, c *widget.Clickable, w int, in bool) D {
 			base := v.tok("dt_color-base-pry")
 			bg = flatten(theme.WithAlpha(v.tok("dt_color-content-pry"), 0x21), base)
 			fg = flatten(theme.WithAlpha(v.tok("dt_color-content-pry"), 0xb3), bg)
-			label, icon = hdNS.T("Joined"), "headphones"
+			label, icon = nsHuddles.T("Joined"), "headphones"
 		default:
 			bg, fg = v.tok("dt_color-base-inv-hgl-2"), v.tok("dt_color-content-inv-pry")
 			if c.Hovered() {
@@ -531,7 +531,7 @@ func (v *Huddles) truncatedNames(ids []string) string {
 	}
 	s := strings.Join(vis, ", ")
 	if extra := len(names) - len(vis); extra > 0 {
-		return hdNS.T("{ visibleNamesString } and{ truncatedCount, plural, =1 { # other } other { # others }}",
+		return nsHuddles.T("{ visibleNamesString } and{ truncatedCount, plural, =1 { # other } other { # others }}",
 			"visibleNamesString", s, "truncatedCount", extra)
 	}
 	return s
@@ -697,7 +697,7 @@ func (v *Huddles) suggestedTile(gtx C, h core.Huddle, count int, maxCards int) D
 					if hov {
 						return layout.N.Layout(gtx, func(gtx C) D {
 							return layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D {
-								return v.outlineFace(gtx, hdNS.T("Start Huddle"), false, 15)
+								return v.outlineFace(gtx, nsHuddles.T("Start Huddle"), false, 15)
 							})
 						})
 					}
@@ -713,10 +713,10 @@ func (v *Huddles) suggestedTile(gtx C, h core.Huddle, count int, maxCards int) D
 						if peer == "" {
 							peer = "them"
 						}
-						s = hdNS.T("You huddled with { peerName } { count, plural, =1 { # time } other { # times }} in the last week",
+						s = nsHuddles.T("You huddled with { peerName } { count, plural, =1 { # time } other { # times }} in the last week",
 							"peerName", peer, "count", count)
 					} else {
-						s = hdNS.T("You huddled here { count, plural, =1 { # time } other { # times }} in the last week", "count", count)
+						s = nsHuddles.T("You huddled here { count, plural, =1 { # time } other { # times }} in the last week", "count", count)
 					}
 					return v.centered(gtx, 13, wReg, v.tok("dt_color-content-ter"), oneSpace(s))
 				}),
@@ -731,9 +731,9 @@ func (v *Huddles) suggestedTile(gtx C, h core.Huddle, count int, maxCards int) D
 // huddle with", a no-break space, the channel's filled icon and name,
 // "?" (13px bold, one line).
 func (v *Huddles) startHuddleCopy(gtx C, isDM bool, icon, name string, fg color.NRGBA) D {
-	src := hdNS.T("Start a huddle in<slack-channel-name>{channel}</slack-channel-name>?", "channel", "\x00")
+	src := nsHuddles.T("Start a huddle in<slack-channel-name>{channel}</slack-channel-name>?", "channel", "\x00")
 	if isDM {
-		src = hdNS.T("Start a huddle with<person-name>{person}</person-name>?", "person", "\x00")
+		src = nsHuddles.T("Start a huddle with<person-name>{person}</person-name>?", "person", "\x00")
 	}
 	lead, tail, _ := strings.Cut(i18n.StripTags(src), "\x00")
 	if icon == "channel" {
@@ -822,21 +822,21 @@ func (v *Huddles) joinOrStart(ch string, h *core.Huddle, entry string) {
 	if c, ok := v.h.Core().Conv(ch); ok {
 		isDM = c.Kind == "im" || c.Kind == "mpim"
 	}
-	title := hdNS.T("Joining a huddle?")
+	title := nsHuddles.T("Joining a huddle?")
 	var body string
 	switch {
 	case start && isDM:
-		body = hdNS.T("You’ll be starting a huddle with <b>{memberNames}</b>.", "memberNames", v.truncatedNames(h.History))
+		body = nsHuddles.T("You’ll be starting a huddle with <b>{memberNames}</b>.", "memberNames", v.truncatedNames(h.History))
 	case start:
-		body = hdNS.T("You’ll be starting a huddle in {channelIcon}{channelName}.", "channelIcon", hdIconText(icon), "channelName", chName)
+		body = nsHuddles.T("You’ll be starting a huddle in {channelIcon}{channelName}.", "channelIcon", hdIconText(icon), "channelName", chName)
 	case isDM:
-		body = hdNS.T("You’ll be joining a huddle with <b>{memberNames}</b>.", "memberNames", v.truncatedNames(h.Participants))
+		body = nsHuddles.T("You’ll be joining a huddle with <b>{memberNames}</b>.", "memberNames", v.truncatedNames(h.Participants))
 	default:
-		body = hdNS.T("You’ll be joining a huddle with <b>{memberNames}</b> in {channelIcon} {channelName}.",
+		body = nsHuddles.T("You’ll be joining a huddle with <b>{memberNames}</b> in {channelIcon} {channelName}.",
 			"memberNames", v.truncatedNames(h.Participants), "channelIcon", hdIconText(icon), "channelName", chName)
 	}
 	if start {
-		title = hdNS.T("Starting a huddle?")
+		title = nsHuddles.T("Starting a huddle?")
 	}
 	dontShow := true
 	var check widget.Bool
@@ -848,8 +848,8 @@ func (v *Huddles) joinOrStart(ch string, h *core.Huddle, entry string) {
 			return v.speedbumpBody(gtx, stripB(body), &check)
 		},
 		Buttons: []*popups.ModalButton{
-			{Label: hdNS.T("Cancel"), Kind: popups.BtnOutline},
-			{Label: hdNS.T("OK"), Kind: popups.BtnPrimary, Do: func() bool {
+			{Label: nsHuddles.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsHuddles.T("OK"), Kind: popups.BtnPrimary, Do: func() bool {
 				if dontShow {
 					hdSetSpeedbumpOff(start)
 				}
@@ -889,7 +889,7 @@ func (v *Huddles) speedbumpBody(gtx C, body string, check *widget.Bool) D {
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D { return v.checkbox(gtx, check.Value) }),
 					hgap(8),
-					layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, fg, hdNS.T("Don’t show this message again.")) }),
+					layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, fg, nsHuddles.T("Don’t show this message again.")) }),
 				)
 			})
 		}),
@@ -929,14 +929,14 @@ func (v *Huddles) openJoinLive(ch string, h huddleRoom) {
 			others = append(others, v.userName(id))
 		}
 	}
-	title := hdNS.T("Join huddle in {channelEntity}", "channelEntity", chName)
+	title := nsHuddles.T("Join huddle in {channelEntity}", "channelEntity", chName)
 	body := title
 	if len(others) > 0 {
 		second := ""
 		if len(others) > 1 {
 			second = others[1]
 		}
-		body = stripA(hdNS.T("You’ll be joining a huddle in {channelEntity} with {participants, plural, =0 {{firstParticipant}} =1 {{firstParticipant} and {secondParticipant}} other {{firstParticipant} <a>and # others</a>}}.",
+		body = stripA(nsHuddles.T("You’ll be joining a huddle in {channelEntity} with {participants, plural, =0 {{firstParticipant}} =1 {{firstParticipant} and {secondParticipant}} other {{firstParticipant} <a>and # others</a>}}.",
 			"channelEntity", chName, "participants", len(others)-1, "firstParticipant", others[0], "secondParticipant", second))
 	}
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
@@ -945,8 +945,8 @@ func (v *Huddles) openJoinLive(ch string, h huddleRoom) {
 			return v.para(gtx, 15, 22, wReg, v.tok("dt_color-content-pry"), 0, body)
 		},
 		Buttons: []*popups.ModalButton{
-			{Label: hdNS.T("Cancel"), Kind: popups.BtnOutline},
-			{Label: hdNS.T("Join Huddle"), Kind: popups.BtnPrimary, Do: func() bool {
+			{Label: nsHuddles.T("Cancel"), Kind: popups.BtnOutline},
+			{Label: nsHuddles.T("Join Huddle"), Kind: popups.BtnPrimary, Do: func() bool {
 				v.joinOrStart(ch, &h, "huddles_page_live_huddle_card")
 				return true
 			}},

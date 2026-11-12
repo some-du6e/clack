@@ -67,6 +67,10 @@ type gifResult struct {
 // of sending it.
 func (p *EmojiPicker) SetGifHandler(f func(g Gif)) { p.onGif = f }
 
+// ShowGifs opens the picker on its GIFs tab (EmojiAndGIFPickerPopover's
+// selectedTabId GIFS: the composer's + menu GIF row).
+func (p *EmojiPicker) ShowGifs() { p.setGifMode(true) }
+
 // SetGifTarget makes picking a GIF send it to channel (in threadTS's thread
 // when set) when no GIF handler is set.
 func (p *EmojiPicker) SetGifTarget(channel, threadTS string) {
@@ -204,7 +208,7 @@ func (p *EmojiPicker) layoutGif(gtx layout.Context, th *theme.Theme, cl *Colors,
 
 	at(gtx, image.Pt(dp(gtx, gifInputX), dp(gtx, gifInputY)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(sz.X-2*dp(gtx, gifInputX), dp(gtx, epInputH)))
-		return field(gtx, th, &g.ed, "Search all GIFs on Giphy", "", epInputH, 15)
+		return field(gtx, th, &g.ed, nsGifPicker.T("Search all GIFs on Giphy"), "", epInputH, 15)
 	})
 
 	r := image.Rect(0, dp(gtx, gifListY), sz.X, sz.Y)
@@ -407,6 +411,8 @@ func (p *EmojiPicker) gifPickerProps() slackc.Props {
 				return
 			}
 			g.Still = g.Preview
+			g.Picked = &GifSelection{OriginalGifURL: g.URL, PreviewURL: g.Preview, Name: g.Title, Width: g.W, Height: g.H,
+				Bytes: int64(pl.IntOr("bytes", 0)), PreviewBytes: int64(pl.IntOr("previewBytes", 0))}
 			p.pickGif(g)
 		},
 	}
@@ -429,12 +435,9 @@ func (p *EmojiPicker) gifSkeleton(gtx layout.Context, th *theme.Theme, vh int) {
 // gifEmpty is the no-results / error state.
 func (p *EmojiPicker) gifEmpty(gtx layout.Context, th *theme.Theme, cl *Colors, w, h int) {
 	g := &p.gif
-	msg := "No GIFs to show"
-	switch {
-	case g.err != "":
+	msg := nsGifPicker.T("No GIFs to show") // the GIF picker's empty state (DMNm), searched or not
+	if g.err != "" {
 		msg = "Couldn't load GIFs: " + g.err
-	case g.query != "":
-		msg = "No GIFs found for “" + g.query + "”"
 	}
 	ig := dp(gtx, 32)
 	maxW := w - 2*dp(gtx, 16)

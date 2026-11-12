@@ -89,6 +89,58 @@ The sectioned footer holds the members-only "Add Automation" (it opens Workflows
 
 Without rows, the empty state: `/img/ia-details/workflows-empty.png`, the title and description, then the same buttons with "Go to Your Workflows" in place of "Add Automation". The `channel_details_agents_apps_tab` experiment picks the copy: "Let workflows take tasks off your plate" / "Workflow Builder lets you automate your team’s daily routines and everyday processes, all without writing a single line of code." Without it: "Supercharge your channel" / "There’s a few automations that will make your life easier. Set them up in a flash." A team below Workflow Builder's plan sees an upsell instead.
 
+## The workflow details view
+
+"View workflow details" on a workflow's message (2rcC t7, a workflow
+bot's message with a `trigger_id`) opens Slack's WorkflowDetails view
+(client-workflow-details `HRfd`, the viewType WorkflowDetails route of
+openWorkflowDetailsModalCircular) in the flexpane (`ui/workflow_details.go`,
+secondary kind `secWorkflow`):
+
+- Data: the triggers store's workflows.triggers.info with
+  include_workflow_details (core `TriggerInfo`: `Steps`, `Collaborators`,
+  `IsWorkflowApp`), then the workflows store's functions.workflows.get
+  (core `Workflow`), merged as createShortcutFromTriggerAndWorkflow (jsMl)
+  does. A trigger error draws "Workflow not found" (trigger_not_found),
+  "Permission denied" (access_denied) or "Something’s gone wrong".
+- Flexpane "Workflow" with its close button; WorkflowDetailsInfo (padding
+  24, rows 8px apart, an otl-ter line under it): the icon (36), the title
+  (18px bold), the description, an automated trigger's type line
+  (getTriggerTypeIcon / getTriggerTypeLabel, hermes_shortcuts), ▶ Start
+  Workflow across the panel for a link trigger (tripped with
+  `FlexpaneTripContext`, uiPage workflow_details_view), the VIP button for
+  the workflow's bot user ("Add to VIP" / "Remove from VIP", core
+  `AddVIP` / `RemoveVIP`) and the ⋮ (MoreActionsMenu isDetailsView: Copy
+  workflow link with "Workflow link copied", Copy workflow ID).
+- WorkflowDetailsTab: Information ("Managed by" ShortcutByline's
+  LinkifyMembers within 30 characters, "Created by" the owning team when
+  it isn't the viewer's) and Steps: the trigger step (aquarium; "When
+  someone clicks the workflow link" with right-click for a link), an arrow
+  down, then renderStepsWithBranches: a level's steps but loops as one
+  entity list (8uOE icons, Eu1t themes: the 32px tile's -0 fill and -60
+  icon, charcoal plain), each switch's cases after it as tinted boxes
+  ("Branch A"… / "Fallback", workflow_builder; the case's display_config
+  colour, gray by default, tomato as paprika) and loops in an outlined
+  "Repeat" box with the campfire tile.
+- Tests and shots: `TestWorkflowDetailsPaneLikeSlack`,
+  `TestMessageActionsHooksWired` (ui), `TestWorkflowDetailsData` (core),
+  `TestMessageMenuWorkflowRowsLikeSlack` (popups); menu-keys-shots
+  `workflow-details-{light,dark}.png`, `workflow-details-error-light.png`.
+- Glyphs: Slack's form, right-click, wrench, workspace, webhook,
+  unarchive, ai-summary, ai-sparkle and ai-agents aren't in Clack's icon
+  set yet; the view draws them from Slack's own paths (icons.json,
+  flattened with each hole wound for Clack's nonzero fill,
+  `ui/workflow_glyphs.go`), and slackbot-color from its SVG
+  (`TestWorkflowDetailsGlyphsResolve`). Porting them into the icon set
+  (centrelines and edge bands held to Slack's ink by icon-shots) is left.
+- Left out: Share and Edit (Slack's share-workflow dialog and Workflow
+  Builder), the ⋮ menu's builder rows (edit, unpublish, copy, export, add
+  to channel), Connections (third-party steps' accounts), the VIP badge
+  after the title, the "and N others" managers dialog, and an event
+  trigger's type line (Clack keeps no event type). The other ways in
+  (the Workflows tab's rows and ⋮ View details, Automations' non-link
+  triggers and ⋮, workflow mentions) still don't open it.
+
 ## What Clack does
 
 | | Slack (evidence) | Clack before | Clack now |
@@ -110,7 +162,7 @@ Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpe
 ## Not done
 
 - **Workflow Builder.** "Create a Workflow" opens Slack's Builder page in the browser, the page Slack's own window loads. The Builder's editor (chunk `client-workflow-editor-view`, 13,000 lines beautified) and template gallery (`client-workflow-templates-view`, `workflows.templates.*`) aren't ported: "Add a workflow" doesn't lead to them.
-- **The Workflows tab's education banner** (megaphone notifications), **its rows' ⋮ menu** (View details, Copy workflow link, Forward, Remove…) and **row clicks** (Slack opens the workflow details view, which Clack lacks), **"Browse templates"** (Slack's template gallery), and **trigger summaries** in a row's description (a scheduled or event trigger's "Runs every Monday…", `iN.WL`).
+- **The Workflows tab's education banner** (megaphone notifications), **its rows' ⋮ menu** (View details, Copy workflow link, Forward, Remove…) and **row clicks** (Slack opens the workflow details view, which Clack now has from the message menu but doesn't open from here), **"Browse templates"** (Slack's template gallery), and **trigger summaries** in a row's description (a scheduled or event trigger's "Runs every Monday…", `iN.WL`).
 - **Picker details.** Frecency sorting (Slack's searcher ranks by local frecency; Clack keeps the server's order); the empty state's illustration (an SVG, which Clack can't draw: its space stays empty) and templates list; the "Add automation as member" mode.
 - **Third-party auth, missing inputs, AI access and multi-step speedbumps.** These need Slack's OAuth window and its conversation, canvas and user pickers. When Slack would show one, Clack opens the workflow link in the browser, where Slack's web client trips it and shows the speedbump.
 - **Toast styling.** Clack's toast is one bold line with no icon, shown for 3.5 s. Slack's success toast lasts 2 s, and the slow-workflow toast has a rocket icon and a bold first sentence.
@@ -118,4 +170,4 @@ Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpe
 - **The `/` menu's workflow triggers** (`autocompleteCommands` in `26v2` searches `workflowTriggers` and trips with `location: slash_command`) belong to the composer's autocomplete, which doesn't list them yet (docs/AUTOCOMPLETE-RULES.md).
 - **The workflow execution window and status toasts** ("Running workflow step 1 of 3: …", `WorkflowStatusToast` / `WorkflowOutcomeToast` in `Izws`), which follow a run's progress when `workflow_execution_window` is on.
 - **Automations: the buttons and menus that lead to views Clack lacks.** These are "Go to Your Workflows" / "Add Automation" / "Manage" (Slack's Workflows › Managed by you view), the ⋮ menu's View details / Forward workflow / Edit workflow, a non-link trigger's click (the workflow details modal), "Add Automation as Member" (a second picker mode, `searchWorkflowsToAddAsChannelMember` / `addWorkflowAsChannelMember`, behind `wfb_add_workflow_to_channel_via_channel_details_modal`), and the empty state's illustration (served from app.slack.com only, which Clack doesn't fetch with the session). The free-plan upsell isn't drawn either: Clack doesn't know the team's plan.
-- **Workflow mentions** (rich text `workflow_mention`, `jp/6`: clicking one opens the workflow details view) and **workflow unfurl cards** (`NLQV` WorkflowEntity). Clack has no workflow details view.
+- **Workflow mentions** (rich text `workflow_mention`, `jp/6`: clicking one opens the workflow details view, which Clack has but doesn't open from a mention yet) and **workflow unfurl cards** (`NLQV` WorkflowEntity).

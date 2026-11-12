@@ -16,6 +16,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -77,6 +78,17 @@ var actPresets = []actPreset{
 	{"face_with_thermometer", "Out sick", "Out sick", actDurToday},
 	{"palm_tree", "Vacationing", "Vacationing", actDurNone},
 	{"house_with_garden", "Working remotely", "Working remotely", actDurToday},
+}
+
+// actPresetText is a preset row's text: the team's presets come from
+// Slack's API in the viewer's locale (refetchLocalizedApis); Clack's
+// fallback defaults (text = text_canonical) are drawn through the
+// current_status I18n, which has "In a meeting".
+func actPresetText(p actPreset) string {
+	if p.canonical == p.text {
+		return nsStatus.T(p.text)
+	}
+	return p.text
 }
 
 // actPresetDur maps a team preset duration code to a duration.
@@ -171,15 +183,35 @@ func actStatusExpiry(now time.Time, d actDur, keep int64) int64 {
 	return 0
 }
 
-// actKeepLabel describes an existing expiration ("Until 5:00 PM").
+// actKeepLabel describes an existing expiration ("Until 5:00 PM"):
+// BaseCustomStatusExpiration's "Until {expirationDate}" (current_status).
+// The date is the time today, else "Nov 8th at 9:30 AM" in en-US; in other
+// locales the calendar date and the time ({status_expiration}'s Azem
+// formats aren't ported).
 func actKeepLabel(exp int64, now time.Time) string {
 	t := time.Unix(exp, 0).In(now.Location())
 	y1, m1, d1 := t.Date()
 	y2, m2, d2 := now.Date()
-	if y1 == y2 && m1 == m2 && d1 == d2 {
-		return "Until " + clock(t)
+	date := clock(t)
+	switch {
+	case y1 == y2 && m1 == m2 && d1 == d2:
+	case i18n.Locale() == i18n.EnUS:
+		date = t.Format("Jan ") + ordinal(d1) + " at " + clock(t)
+	default:
+		date = i18n.CalendarDate(i18n.Locale(), t, i18n.CalendarOpts{ShortenMonth: true, ExcludeYear: y1 == y2}) + " " + clock(t)
 	}
-	return "Until " + t.Format("Jan ") + ordinal(d1) + " at " + clock(t)
+	return nsStatus.T("Until {expirationDate}", "expirationDate", date)
+}
+
+// actDurLabel is a duration's label in the locale (current_status).
+func actDurLabel(d actDur) string { return nsStatus.T(actDurLabels[d]) }
+
+// actDurNote is a preset row's suffix: " — " and its duration.
+func actDurNote(d actDur) string {
+	if actDurLabels[d] == "" {
+		return actDurNotes[d]
+	}
+	return " — " + actDurLabel(d)
 }
 
 // actRangeDefaults are the Start/End defaults Slack shows
@@ -200,7 +232,7 @@ func actRangeDefaults(now time.Time) (start, end time.Time) {
 // actOOOReply is the prefilled automatic reply for an out-of-office status
 // ending at end: "I’m out of office until {date}." (OutOfOfficeMessageContainer).
 func actOOOReply(end, now time.Time) string {
-	return "I’m out of office until " + actOOODate(end, now) + "."
+	return nsStatus.T("I’m out of office until {date}.", "date", actOOODate(end, now))
 }
 
 // actOOODate is Slack's v4SM date for the reply (en-US): just the time
@@ -209,10 +241,21 @@ func actOOOReply(end, now time.Time) string {
 // otherwise "3:00 PM, Sat, Nov 7".
 func actOOODate(end, now time.Time) string {
 	end = end.In(now.Location())
-	day := func(t time.Time) string { return t.Format("Mon, Jan 2") }
+	loc := i18n.Locale()
+	day := func(t time.Time) string {
+		if loc != i18n.EnUS {
+			return i18n.CalendarDate(loc, t, i18n.CalendarOpts{ShortenMonth: true, ExcludeYear: t.Year() == now.Year()})
+		}
+		return t.Format("Mon, Jan 2")
+	}
 	if end.Hour() == 23 && end.Minute() == 59 {
 		next := end.AddDate(0, 0, 1)
 		if dtSameDay(end, now) {
+			if loc != i18n.EnUS {
+				if r := i18n.RelativeDay(loc, next, now, true); r != "" {
+					return r
+				}
+			}
 			return "tomorrow"
 		}
 		fri := 5 - int(now.Weekday())
@@ -220,7 +263,7 @@ func actOOODate(end, now time.Time) string {
 			fri += 7
 		}
 		if dtSameDay(end, now.AddDate(0, 0, fri)) {
-			return "next week"
+			return nsStatus.T("next week")
 		}
 		return day(next)
 	}
@@ -330,7 +373,7 @@ func NewSetStatusModalFromShortcut(h Host) *Modal { return actNewStatus(h, true)
 func actNewStatus(h Host, fromShortcut bool) *Modal { return actNewStatusState(h, fromShortcut).modal }
 
 func actNewStatusState(h Host, fromShortcut bool) *actStatus {
-	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: "For Hack Club"}
+	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: nsStatus.T("For {teamName}", "teamName", "Hack Club")}
 	s.showTip = !fromShortcut && (h.Core() == nil || !h.Core().PrefBool("used_custom_status_kb_shortcut", false))
 	s.ed.SingleLine = true
 	s.ed.Submit = true
@@ -361,24 +404,24 @@ func actNewStatusState(h Host, fromShortcut bool) *actStatus {
 		s.selfName = "You"
 	}
 	if snap, ok := actSnapshot(h); ok && snap.Team.Name != "" {
-		s.forTeam = "For " + snap.Team.Name
+		s.forTeam = nsStatus.T("For {teamName}", "teamName", snap.Team.Name)
 	}
 	actFetchPresets(h)
 	s.takePresets()
 	var btns []*ModalButton
 	if s.had {
-		btns = append(btns, &ModalButton{Label: "Clear Status", Kind: BtnOutline, Do: func() bool {
+		btns = append(btns, &ModalButton{Label: nsStatus.T("Clear Status"), Kind: BtnOutline, Do: func() bool {
 			s.clearStatus()
 			return true
 		}})
 	}
-	s.saveBtn = &ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: s.canSave, Do: s.save}
-	btns = append(btns, &ModalButton{Label: "Cancel", Kind: BtnOutline}, s.saveBtn)
+	s.saveBtn = &ModalButton{Label: nsStatus.T("Save"), Kind: BtnPrimary, Enabled: s.canSave, Do: s.save}
+	btns = append(btns, &ModalButton{Label: nsStatus.T("Cancel"), Kind: BtnOutline}, s.saveBtn)
 	title := func() string {
 		if s.editID != "" {
-			return "Edit status"
+			return nsStatus.T("Edit status")
 		}
-		return "Set a status"
+		return nsStatus.T("Set a status")
 	}
 	s.btns = btns
 	s.modal = NewModal(h, ModalOpts{TitleFunc: title, Body: s.layout, Buttons: btns, Border: true, Over: s.calFooter})
@@ -633,13 +676,13 @@ func (s *actStatus) save() bool {
 		}
 	}
 	if sv.Start > 0 {
-		toast := "Status scheduled."
+		toast := nsStatus.T("Status scheduled.")
 		if s.editID != "" {
-			toast = "Scheduled status updated."
+			toast = nsStatus.T("Scheduled status updated.")
 		}
 		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, actScheduleStatus(ctx, a, sv) }, func(_ struct{}, err error) {
 			if err != nil {
-				h.Toast("Something went wrong. Please try again later.") // ScheduledStatusToast error
+				h.Toast(nsStatus.T("Something went wrong. Please try again later.")) // ScheduledStatusToast error
 				return
 			}
 			h.Toast(toast)
@@ -682,7 +725,7 @@ func (s *actStatus) durLabel(d actDur) string {
 	if d == actDurKeep {
 		return actKeepLabel(s.keepExp, time.Now())
 	}
-	return actDurLabels[d]
+	return actDurLabel(d)
 }
 
 func (s *actStatus) events(gtx layout.Context) {
@@ -822,7 +865,7 @@ func (s *actStatus) setEditing(st *actScheduled) {
 	if s.saveBtn != nil {
 		s.saveBtn.Label = "Save"
 		if st != nil {
-			s.saveBtn.Label = "Update"
+			s.saveBtn.Label = nsStatus.T("Update")
 		}
 	}
 }
@@ -834,7 +877,7 @@ func (s *actStatus) confirmDeleteScheduled(id string) {
 	if a == nil {
 		return
 	}
-	del := &ModalButton{Label: "Delete Status", Kind: BtnDanger, Do: func() bool {
+	del := &ModalButton{Label: nsStatus.T("Delete Status"), Kind: BtnDanger, Do: func() bool {
 		for i := range s.sched { // removeScheduledStatus: drop it right away
 			if s.sched[i].ID == id {
 				s.setSched(append(append([]actScheduled(nil), s.sched[:i]...), s.sched[i+1:]...))
@@ -843,22 +886,22 @@ func (s *actStatus) confirmDeleteScheduled(id string) {
 		}
 		run(h, func(ctx context.Context) (struct{}, error) { return struct{}{}, actDeleteScheduled(ctx, a, id) }, func(_ struct{}, err error) {
 			if err != nil {
-				h.Toast("Something went wrong. Please try again later.")
+				h.Toast(nsStatus.T("Something went wrong. Please try again later."))
 				s.reloadSched(a) // fetchCustomStatuses
 				return
 			}
-			h.Toast("Scheduled status removed.")
+			h.Toast(nsStatus.T("Scheduled status removed."))
 		})
 		return true
 	}}
 	th := h.Theme()
 	m := NewModal(h, ModalOpts{
-		Title:     "Delete this scheduled status?",
+		Title:     nsStatus.T("Delete this scheduled status?"),
 		AutoFocus: del,
 		Body: func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg, "Plans change, and that’s okay.", 0)
+			return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg, nsStatus.T("Plans change, and that’s okay."), 0)
 		},
-		Buttons: []*ModalButton{{Label: "Keep Status", Kind: BtnOutline}, del},
+		Buttons: []*ModalButton{{Label: nsStatus.T("Keep Status"), Kind: BtnOutline}, del},
 	})
 	h.ShowOverlay(m)
 }
@@ -883,9 +926,9 @@ func (s *actStatus) openDurations(gtx layout.Context) {
 		if s.ooo && d != actDurNone && d != actDurToday && d != actDurWeek {
 			continue // CustomStatusDurationDefault: isOutOfOffice keeps these
 		}
-		items = append(items, MenuItem{Label: actDurLabels[d], Checked: s.dur == d, Do: pick(d)})
+		items = append(items, MenuItem{Key: LabelKey(actDurLabels[d]), Label: actDurLabel(d), Checked: s.dur == d, Do: pick(d)})
 	}
-	items = append(items, MenuItem{Label: actDurLabels[actDurCustom], Checked: s.dur == actDurCustom, Do: pick(actDurCustom)})
+	items = append(items, MenuItem{Key: LabelKey(actDurLabels[actDurCustom]), Label: actDurLabel(actDurCustom), Checked: s.dur == actDurCustom, Do: pick(actDurCustom)})
 	r := s.selRect
 	wr := image.Rectangle{Min: s.win(gtx, r.Min), Max: s.win(gtx, r.Max)}
 	ppd := gtx.Metric.PxPerDp
@@ -955,10 +998,10 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 		// the scheduled-flow alerts above the input, re-checked every second
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Truncate(time.Second).Add(time.Second)})
 		if s.editID == "" && len(s.sched) >= actMaxScheduled {
-			y += actAlert(gtx, th, cl, padX, y, cw, "You can only have 5 scheduled statuses at a time.")
+			y += actAlert(gtx, th, cl, padX, y, cw, nsStatus.T("You can only have 5 scheduled statuses at a time."))
 		}
 		if s.rangeInit && !s.endTime().After(time.Now()) {
-			y += actAlert(gtx, th, cl, padX, y, cw, "End time must be in the future.")
+			y += actAlert(gtx, th, cl, padX, y, cw, nsStatus.T("End time must be in the future."))
 		}
 	}
 	iy := y
@@ -970,7 +1013,7 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 	y += dp(gtx, 42)
 	if !filled {
 		if len(s.sched) > 0 {
-			y += s.legend(gtx, th, cl, padX, y, "Scheduled")
+			y += s.legend(gtx, th, cl, padX, y, nsStatus.T("Scheduled"))
 			now := time.Now()
 			for i, st := range s.sched {
 				if i >= len(s.schedBtn) {
@@ -979,16 +1022,16 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 				y += s.schedRow(gtx, th, cl, fw, padX, y, i, st, now)
 			}
 		}
-		y += s.legend(gtx, th, cl, padX, y, "Schedule for later")
-		y += s.preset(gtx, th, cl, fw, padX, y, &s.oooBtn, "no_entry", "Out of office", " — Set a start and end date")
+		y += s.legend(gtx, th, cl, padX, y, nsStatus.T("Schedule for later"))
+		y += s.preset(gtx, th, cl, fw, padX, y, &s.oooBtn, "no_entry", nsStatus.T("Out of office"), " — "+nsStatus.T("Set a start and end date"))
 		if s.presets != nil {
 			y += s.legend(gtx, th, cl, padX, y, s.forTeam)
 			for i, p := range s.presets {
-				y += s.preset(gtx, th, cl, fw, padX, y, &s.presetBtn[i], p.emoji, p.text, actDurNotes[p.dur])
+				y += s.preset(gtx, th, cl, fw, padX, y, &s.presetBtn[i], p.emoji, actPresetText(p), actDurNote(p.dur))
 			}
 		}
 		if cals := s.calPresets(); len(cals) > 0 {
-			y += s.legend(gtx, th, cl, padX, y, "Automatically updates")
+			y += s.legend(gtx, th, cl, padX, y, nsStatus.T("Automatically updates"))
 			for i, c := range cals {
 				y += s.calRow(gtx, th, cl, fw, padX, y, &s.cal.btns[i], c)
 			}
@@ -998,7 +1041,7 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 	// duration
 	y += dp(gtx, 20)
 	at(gtx, image.Pt(padX, y), func(gtx layout.Context) layout.Dimensions {
-		return text(gtx, th, 15, theme.Bold, cl.Fg, "Duration")
+		return text(gtx, th, 15, theme.Bold, cl.Fg, nsStatus.T("Duration"))
 	})
 	y += dp(gtx, 30)
 	sh := dp(gtx, 44)
@@ -1042,7 +1085,7 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 			return clickBox(gtx, &s.pauseBtn, nil, func(gtx layout.Context) layout.Dimensions {
 				rh := dp(gtx, 22)
 				actCheckbox(gtx, cl, image.Pt(0, (rh-dp(gtx, 16))/2), s.pause)
-				lbl := "Pause notifications until status is cleared"
+				lbl := nsStatus.T("Pause notifications until status is cleared")
 				at(gtx, image.Pt(dp(gtx, 25), 0), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, rh, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, 15, theme.Regular, cl.Fg, lbl)
@@ -1056,7 +1099,7 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 	if s.ooo {
 		y += dp(gtx, 16)
 		at(gtx, image.Pt(padX, y), func(gtx layout.Context) layout.Dimensions {
-			return text(gtx, th, 15, theme.Bold, cl.Fg, "Automatic reply:")
+			return text(gtx, th, 15, theme.Bold, cl.Fg, nsStatus.T("Automatic reply:"))
 		})
 		y += dp(gtx, 30)
 		y += s.replyBox(gtx, th, cl, padX, y, cw)
@@ -1079,7 +1122,7 @@ func (s *actStatus) rangeRows(gtx layout.Context, th *theme.Theme, cl *Colors, x
 		dw = maxInt(dp(gtx, 80), tx-dp(gtx, 12)-dx)
 	}
 	y := top + dp(gtx, 28)
-	for i, lbl := range [2]string{"Start", "End"} {
+	for i, lbl := range [2]string{nsStatus.T("Start"), nsStatus.T("End")} {
 		day, tm := &s.sDay, &s.sTime
 		if i == 1 {
 			day, tm = &s.eDay, &s.eTime
@@ -1165,7 +1208,7 @@ func (s *actStatus) replyPreview(gtx layout.Context, th *theme.Theme, cl *Colors
 		})
 		at(gtx, image.Pt(dp(gtx, 20), 0), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, iw-dp(gtx, 20)), dp(gtx, 18))}
-			return text(gtx, th, 13, theme.Regular, cl.Muted, "Automatic reply ∙ Only visible to you")
+			return text(gtx, th, 13, theme.Regular, cl.Muted, nsStatus.T("{autoReply} \u2219 {visibility}", "autoReply", nsStatus.T("Automatic reply"), "visibility", nsStatus.T("Only visible to you")))
 		})
 		yy += dp(gtx, 26)
 		at(gtx, image.Pt(0, yy+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions { return avatar(gtx, s.h, s.selfAv, 20) })
@@ -1262,7 +1305,7 @@ func (s *actStatus) inputNative(gtx layout.Context, th *theme.Theme, cl *Colors)
 			gtx.Constraints = layout.Constraints{Min: image.Pt(tw, 0), Max: image.Pt(tw, hh)}
 			if s.ed.Len() == 0 {
 				call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 18, theme.Regular, cl.Placeholder, "What's your status?")
+					return text(gtx, th, 18, theme.Regular, cl.Placeholder, nsStatus.T("What’s your status?"))
 				})
 				call.Add(gtx.Ops)
 			}
@@ -1326,15 +1369,18 @@ func (s *actStatus) presetRow(gtx layout.Context, th *theme.Theme, cl *Colors, f
 	return rh
 }
 
-// actScheduledRange is formatScheduledDateRange: "Today, 3:00 PM – 5:00 PM",
-// "Tomorrow 9:00 AM – Fri, Nov 14 5:00 PM".
+// actScheduledRange is formatScheduledDateRange (current_status): each end
+// as {date_short_pretty} and {time}, in "{startDate}, {startTime} –
+// {endTime}" ("Today, 3:00 PM – 5:00 PM") or "{startDate} {startTime} –
+// {endDate} {endTime}" ("Tomorrow 9:00 AM – Nov 14 5:00 PM").
 func actScheduledRange(start, end int64, now time.Time) string {
 	st, en := time.Unix(start, 0).In(now.Location()), time.Unix(end, 0).In(now.Location())
-	sd, ed := dtDateLabel(dtDay(st), now, dtRelative), dtDateLabel(dtDay(en), now, dtRelative)
+	loc := i18n.Locale()
+	sd, ed := i18n.ShortDatePretty(loc, st, now, false), i18n.ShortDatePretty(loc, en, now, false)
 	if sd == ed {
-		return sd + ", " + clock(st) + " – " + clock(en)
+		return nsStatus.T("{startDate}, {startTime} – {endTime}", "startDate", sd, "startTime", clock(st), "endTime", clock(en))
 	}
-	return sd + " " + clock(st) + " – " + ed + " " + clock(en)
+	return nsStatus.T("{startDate} {startTime} – {endDate} {endTime}", "startDate", sd, "startTime", clock(st), "endDate", ed, "endTime", clock(en))
 }
 
 // schedRow draws a "Scheduled" row: emoji, **text** — range, and on hover
@@ -1432,12 +1478,36 @@ type actTipSeg struct {
 	w font.Weight
 }
 
-// actTipSegs is the tip's text: bold, regular, bold. The keys are the
-// shortcut's chips joined by " + " (commandKey: ⌘ on macOS, Ctrl
-// elsewhere).
-func actTipSegs() [3]actTipSeg {
-	keys := strings.Join(shortcut.Chips("Mod+Shift+Y"), " + ")
-	return [3]actTipSeg{{"Tip:", theme.Bold}, {"Open this faster with", theme.Regular}, {keys, theme.Bold}}
+// actTipSegs is the tip's text, "<strong>Tip:</strong> Open this faster
+// with <strong>{commandKey} + Shift + Y</strong>" (current_status) in the
+// locale's order: its <strong> runs bold, the rest regular, each run
+// trimmed (the pill puts a 15px space between them). commandKey is ⌘ on
+// macOS, Ctrl elsewhere.
+func actTipSegs() []actTipSeg {
+	cmd := "Ctrl"
+	if chips := shortcut.Chips("Mod+Shift+Y"); len(chips) > 0 {
+		cmd = chips[0]
+	}
+	// runs of one weight (a placeholder joins the text around it), trimmed
+	var runs []actTipSeg
+	for _, p := range nsStatus.RT("<strong>Tip:</strong> Open this faster with <strong>{commandKey} + Shift + Y</strong>", "commandKey", cmd) {
+		w := theme.Regular
+		if p.Tag == "strong" {
+			w = theme.Bold
+		}
+		if n := len(runs); n > 0 && runs[n-1].w == w {
+			runs[n-1].s += p.Text
+			continue
+		}
+		runs = append(runs, actTipSeg{p.Text, w})
+	}
+	out := runs[:0]
+	for _, r := range runs {
+		if r.s = strings.TrimSpace(r.s); r.s != "" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 type actTipPill struct {

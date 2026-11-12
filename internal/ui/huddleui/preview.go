@@ -297,7 +297,7 @@ func (w *previewWindow) view() previewView {
 	v.Labels[1] = deviceLabel(devs["out"], outSel)
 	v.Labels[2] = "Default"
 	if v.CamBad {
-		v.Labels[2] = "No cameras found"
+		v.Labels[2] = nsHuddles.T("No cameras found")
 	}
 	switch v.Menu {
 	case "mic", "out":
@@ -336,9 +336,9 @@ func (c *Controller) previewTitle(ch string) (title []span, faces []string, join
 			}
 		}
 	}
-	join = "Start Huddle"
+	join = nsHuddles.T("Start Huddle")
 	if len(there) > 0 {
-		join = "Join"
+		join = nsHuddles.T("Join")
 	}
 	kind := ""
 	var dmUser string
@@ -349,28 +349,26 @@ func (c *Controller) previewTitle(ch string) (title []span, faces []string, join
 	}
 	switch kind {
 	case "im", "mpim":
-		title = []span{{"Start huddle with ", false}, {c.channelTitle(ch), true}}
+		title = boldSpans("Start huddle with {dmPersons}", "dmPersons", c.channelTitle(ch))
 		if dmUser != "" {
 			faces = []string{dmUser}
 		}
 	default:
 		if len(there) == 0 {
-			title = []span{{"Start huddle in ", false}, {c.channelTitle(ch), true}}
+			title = boldSpans("Start huddle in {channelName}", "channelName", c.channelTitle(ch))
 		} else {
-			title = []span{{"Join huddle in ", false}, {c.channelTitle(ch), true}, {". ", false}}
+			title = append(boldSpans("Join huddle in {channelName}", "channelName", c.channelTitle(ch)), span{". ", false})
 			names := make([]string, 0, 2)
 			for _, u := range there[:min(2, len(there))] {
 				names = append(names, c.displayName(u))
 			}
-			switch len(there) {
-			case 1:
-				title = append(title, span{names[0], true}, span{" is already there.", false})
-			case 2:
-				title = append(title, span{names[0], true}, span{" and ", false}, span{names[1], true}, span{" are already there.", false})
-			default:
-				n := len(there) - 1
-				title = append(title, span{names[0], true}, span{" and " + itoa(n) + " others are already there.", false})
+			second := ""
+			if len(names) > 1 {
+				second = names[1]
 			}
+			// getHuddleParticipants' plain sentence, the names bold
+			title = append(title, boldSpans("{participants, plural, =0 {{firstParticipant} is} =1 {{firstParticipant} and {secondParticipant} are} other {{firstParticipant} and # others are}} already there.",
+				"participants", len(there)-1, "firstParticipant", names[0], "secondParticipant", second)...)
 			faces = there[:min(3, len(there))]
 		}
 	}
@@ -663,9 +661,9 @@ func layoutPreview(gtx C, th *theme.Theme, c *Controller, v previewView, cl *pre
 		icon, label string
 		join        bool
 	}
-	btns := []fbtn{{&cl.cancel, "close", "Cancel", false}, {&cl.join, "headphones", v.JoinLabel, true}}
+	btns := []fbtn{{&cl.cancel, "close", nsHuddles.T("Cancel"), false}, {&cl.join, "headphones", v.JoinLabel, true}}
 	bd := dp(48)
-	lh := labelSize(gtx, th, 13, theme.Regular, "Join").Y
+	lh := labelSize(gtx, th, 13, theme.Regular, nsHuddles.T("Join")).Y
 	blk := bd + dp(4) + lh
 	fy := sz.Y - footH + (footH-blk)/2 - dp(4)
 	widths := make([]int, len(btns))

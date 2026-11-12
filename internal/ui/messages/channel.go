@@ -114,6 +114,11 @@ func (v *ChannelView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 // AtBottom reports whether the newest message is visible.
 func (v *ChannelView) AtBottom() bool { return !v.s.list.Position.BeforeEnd }
 
+// NewestRowBottom is the window y of the newest message row's bottom edge
+// as last drawn, and whether that row was on screen (the gap above the
+// composer, ui's TestComposerGap).
+func (v *ChannelView) NewestRowBottom() (int, bool) { return v.s.newestBottom() }
+
 // Highlight scrolls to ts and flashes it (permalinks, search results,
 // route "c/<id>/m/<ts>"). Older messages are paged in until ts is loaded.
 func (v *ChannelView) Highlight(ts string) {
@@ -163,3 +168,20 @@ func (v *ChannelView) LayoutSig() (msgs int, loaded bool, sig uint64) {
 // or an older page it asked for to fill the view): the ui root's reveal
 // waits for it so the first visible frame doesn't move.
 func (v *ChannelView) Loading() bool { return v.s.snap.loading || v.s.snap.older }
+
+// RowY is an item's key and top edge in the last layout.
+type RowY struct {
+	Key string
+	Y   int
+}
+
+// VisibleRows lists the items on screen in the last layout, top to bottom
+// (the wheel frame probe measures scrolled distance with it).
+func (v *ChannelView) VisibleRows() []RowY {
+	s := v.s
+	var out []RowY
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items) && i < len(s.pos); i++ {
+		out = append(out, RowY{Key: s.items[i].key, Y: s.pos[i]})
+	}
+	return out
+}

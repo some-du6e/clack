@@ -16,7 +16,6 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
-	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -51,9 +50,6 @@ import (
 // suggestions. Live huddles come from sh_room_* events and edge
 // huddles/list. Starts and joins go through Slack's startHuddle (the
 // ui root's JoinHuddleFrom with Slack's entry points, else startHuddle).
-
-// hdNS is Slack's new I18n("huddles").
-var hdNS = i18n.NS("huddles")
 
 // huddleRoom is an active or past huddle.
 type huddleRoom = core.Huddle
@@ -883,7 +879,7 @@ func (v *Huddles) layoutHeader(gtx C) D {
 	g.Constraints = layout.Exact(image.Pt(cw, h-px1))
 	row(g, layout.Middle,
 		layout.Flexed(1, func(gtx C) D {
-			return v.label(gtx, 18, wBlack, v.tok("dt_color-content-pry"), hdNS.T("Huddles"))
+			return v.label(gtx, 18, wBlack, v.tok("dt_color-content-pry"), nsHuddles.T("Huddles"))
 		}),
 		layout.Rigid(func(gtx C) D { return v.newHuddleButton(gtx) }),
 	)
@@ -896,7 +892,7 @@ func (v *Huddles) layoutHeader(gtx C) D {
 // (4px before the label). Its click is useStartHuddleClick: without
 // standalone huddles, HuddleInviteStartModal.
 func (v *Huddles) newHuddleButton(gtx C) D {
-	return v.outlineButton(gtx, v.clk("new"), "plus", hdNS.T("New Huddle"), true)
+	return v.outlineButton(gtx, v.clk("new"), "plus", nsHuddles.T("New Huddle"), true)
 }
 
 // outlineButton is Slack's c-button--outline: small (28px, 13px, radius
@@ -963,7 +959,7 @@ func (v *Huddles) layoutBackToTop(gtx C, sz image.Point) {
 		layout.Center.Layout(g, func(gtx C) D { return v.icon(gtx, "arrow-up", 20, v.tok("dt_color-content-inv-pry")) })
 		return D{Size: image.Pt(s, s)}
 	})
-	popups.Tooltip(gtx, v.th, v.tip("top"), c.Hovered(), image.Pt(s, s), popups.Above, hdNS.T("Scroll to the top"), "")
+	popups.Tooltip(gtx, v.th, v.tip("top"), c.Hovered(), image.Pt(s, s), popups.Above, nsHuddles.T("Scroll to the top"), "")
 }
 
 // layoutPastTitle is PastHuddleSectionTitle: "Recent huddles" (15px
@@ -974,7 +970,7 @@ func (v *Huddles) layoutPastTitle(gtx C) D {
 	defer opOffset(gtx, image.Pt(x, 0)).Pop()
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(cw, gtx.Constraints.Max.Y)}
-	d := v.para(g, 15, 22, wBold, v.tok("dt_color-content-pry"), 1, hdNS.T("Recent huddles"))
+	d := v.para(g, 15, 22, wBold, v.tok("dt_color-content-pry"), 1, nsHuddles.T("Recent huddles"))
 	return D{Size: image.Pt(w, d.Size.Y+gtx.Dp(20))}
 }
 
@@ -991,7 +987,7 @@ func (v *Huddles) layoutDay(gtx C, it hpItem) D {
 	defer opOffset(gtx, image.Pt(x, top)).Pop()
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(cw, gtx.Constraints.Max.Y)}
-	d := v.para(g, 15, 22, wBold, v.tok("dt_color-content-pry"), 1, hdNS.T(hdDayLabels[min(it.day, 4)]))
+	d := v.para(g, 15, 22, wBold, v.tok("dt_color-content-pry"), 1, nsHuddles.T(hdDayLabels[min(it.day, 4)]))
 	return D{Size: image.Pt(w, top+d.Size.Y+gtx.Dp(16))}
 }
 
@@ -1005,10 +1001,10 @@ func (v *Huddles) layoutNoResults(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		fg := v.tok("dt_color-content-pry")
 		return col(gtx,
-			layout.Rigid(func(gtx C) D { return v.centered(gtx, 18, wBlack, fg, hdNS.T("No results")) }),
+			layout.Rigid(func(gtx C) D { return v.centered(gtx, 18, wBlack, fg, nsHuddles.T("No results")) }),
 			vgap(8),
 			layout.Rigid(func(gtx C) D {
-				return v.centered(gtx, 15, wReg, fg, hdNS.T("You may want to try adjusting your filters."))
+				return v.centered(gtx, 15, wReg, fg, nsHuddles.T("You may want to try adjusting your filters."))
 			}),
 		)
 	})

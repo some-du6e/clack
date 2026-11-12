@@ -36,6 +36,7 @@ func (e *Editor) keyFilters() []event.Filter {
 		key.Filter{Focus: e, Name: "A", Required: sc},
 		key.Filter{Focus: e, Name: "B", Required: sc},
 		key.Filter{Focus: e, Name: "C", Required: sc, Optional: key.ModShift | key.ModAlt},
+		key.Filter{Focus: e, Name: "F", Required: sc | key.ModShift}, // "convert markdown" (mdconvert.go)
 		key.Filter{Focus: e, Name: "I", Required: sc},
 		key.Filter{Focus: e, Name: "O", Required: sc},
 		key.Filter{Focus: e, Name: "U", Required: sc, Optional: key.ModShift},
@@ -181,6 +182,13 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		e.resetBlink = true
 	case "B":
 		e.ToggleStyle(Bold)
+	case "F":
+		// the keyboard module's "convert markdown" (Mod+Shift+F): typed
+		// markdown in the message or the selection becomes formatting
+		if !shift || alt {
+			return false
+		}
+		return e.ConvertMarkdown()
 	case "I":
 		e.ToggleStyle(Italic)
 	case "O":

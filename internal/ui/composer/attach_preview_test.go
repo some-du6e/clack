@@ -15,17 +15,28 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // lightboxHost records the image viewer's openings.
 type lightboxHost struct {
 	slickHost
-	opened []richtext.Image
+	opened   []richtext.Image
+	overlays []popups.Overlay
 }
 
 func (h *lightboxHost) OpenLightbox(img richtext.Image, _ core.Message) {
 	h.opened = append(h.opened, img)
+}
+
+// ShowOverlay records the pending file viewer (popups.NewPendingViewer)
+// with the image it shows.
+func (h *lightboxHost) ShowOverlay(o popups.Overlay) {
+	h.overlays = append(h.overlays, o)
+	if lb, ok := o.(*popups.Lightbox); ok {
+		h.opened = append(h.opened, lb.Image())
+	}
 }
 
 // Karim, 2026-11-10: "you can't click this little image in the composer".

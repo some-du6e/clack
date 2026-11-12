@@ -121,6 +121,12 @@ type Scroll struct {
 	last      int
 	// Leftover scroll.
 	scroll float32
+	// Clack patch 9: notched wheel scrolling's animation (clack_wheel.go),
+	// the distance it moved so far and how much of that was reported in
+	// whole pixels.
+	wheel    WheelCurve
+	wheelPos float64
+	wheelPx  int
 }
 
 type ScrollState uint8
@@ -259,6 +265,12 @@ func (s *Scroll) Add(ops *op.Ops) {
 // Stop any remaining fling movement.
 func (s *Scroll) Stop() {
 	s.flinger = fling.Animation{}
+	s.stopWheel()
+}
+
+func (s *Scroll) stopWheel() {
+	s.wheel.Stop()
+	s.wheelPos, s.wheelPx = 0, 0
 }
 
 // Update state and report the scroll distance along axis.
@@ -308,14 +320,24 @@ func (s *Scroll) Update(cfg unit.Metric, q input.Source, t time.Time, axis Axis,
 		case pointer.Cancel:
 			s.dragging = false
 		case pointer.Scroll:
+			var d float32
+			r := scrolly
 			switch axis {
 			case Horizontal:
-				s.scroll += e.Scroll.X
+				d, r = e.Scroll.X, scrollx
 			case Vertical:
-				s.scroll += e.Scroll.Y
+				d = e.Scroll.Y
 			case Both:
-				s.scroll += e.Scroll.X + e.Scroll.Y
+				d, r = e.Scroll.X+e.Scroll.Y, scrollx.Union(scrolly)
 			}
+			// Clack patch 9: a wheel notch animates (Chromium's
+			// ScrollAnimator); precise deltas apply at once and stop it.
+			if e.Notched && WheelAnimation() && !t.IsZero() {
+				s.wheel.Add(t, float64(d), float64(r.Min), float64(r.Max))
+				break
+			}
+			s.stopWheel()
+			s.scroll += d
 			iscroll := int(s.scroll)
 			s.scroll -= float32(iscroll)
 			total += iscroll
@@ -339,7 +361,16 @@ func (s *Scroll) Update(cfg unit.Metric, q input.Source, t time.Time, axis Axis,
 		}
 	}
 	total += s.flinger.Tick(t)
-	if s.flinger.Active() {
+	if s.wheel.Active() {
+		s.wheelPos += s.wheel.Tick(t)
+		n := int(math.Round(s.wheelPos)) - s.wheelPx
+		s.wheelPx += n
+		total += n
+		if !s.wheel.Active() {
+			s.wheelPos, s.wheelPx = 0, 0
+		}
+	}
+	if s.flinger.Active() || s.wheel.Active() {
 		q.Execute(op.InvalidateCmd{})
 	}
 	return total

@@ -12,6 +12,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -133,8 +134,8 @@ func NewRenameSectionModal(h Host, id, name, emoji string) *RenameSectionModal {
 	m.ed.SingleLine, m.ed.Submit = true, true
 	m.ed.SetText(name)
 	m.ed.SetCaret(len([]rune(name)), len([]rune(name)))
-	m.save = &ModalButton{Label: "Save", Kind: BtnPrimary, Enabled: m.CanSave, Do: func() bool { m.Save(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: "Rename this section", Body: m.layout, Buttons: []*ModalButton{m.save},
+	m.save = &ModalButton{Label: nsSection.T("Save"), Kind: BtnPrimary, Enabled: m.CanSave, Do: func() bool { m.Save(); return false }}
+	m.modal = NewModal(h, ModalOpts{Title: nsSection.T("Rename this section"), Body: m.layout, Buttons: []*ModalButton{m.save},
 		FocusStops: func() []event.Tag { return []event.Tag{&m.ed} }})
 	return m
 }
@@ -164,7 +165,7 @@ func (m *RenameSectionModal) code() string {
 }
 
 // Error is the alert under the input ("" for none).
-func (m *RenameSectionModal) Error() string { return core.SectionNameErrorText(m.code()) }
+func (m *RenameSectionModal) Error() string { return nsSection.T(core.SectionNameErrorText(m.code())) }
 
 // CanSave mirrors Save's enabled state.
 func (m *RenameSectionModal) CanSave() bool {
@@ -315,14 +316,14 @@ func NewCreateSectionModal(h Host, o CreateSectionOpts) *CreateSectionModal {
 	for _, id := range o.Preselect {
 		m.picked[id] = true
 	}
-	m.create = &ModalButton{Label: "Create and Add Channels", Kind: BtnPrimary, Enabled: m.CanCreate, Do: func() bool { m.Create(); return false }}
-	m.skip = &ModalButton{Label: "Skip", Kind: BtnOutline, Do: func() bool { m.finish(0); return true }}
-	m.add = &ModalButton{Label: "Add Conversations", Kind: BtnPrimary, Enabled: func() bool { return !m.pending }, Do: func() bool { m.Submit(); return false }}
-	m.update = &ModalButton{Label: "Update Section", Kind: BtnPrimary, Enabled: func() bool { return !m.pending }, Do: func() bool { m.Submit(); return false }}
-	m.cancel = &ModalButton{Label: "Cancel", Kind: BtnOutline}
-	m.editSel = &ModalButton{Label: "Edit Selections", Kind: BtnOutline, Do: func() bool { m.bump = false; m.sync(); return false }}
-	m.moveConv = &ModalButton{Label: "Move Conversations", Kind: BtnPrimary, Enabled: func() bool { return !m.pending }, Do: func() bool { m.move(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: "Create a section", Body: m.layout, FocusStops: func() []event.Tag {
+	m.create = &ModalButton{Label: nsSection.T("Create and Add Channels"), Kind: BtnPrimary, Enabled: m.CanCreate, Do: func() bool { m.Create(); return false }}
+	m.skip = &ModalButton{Label: nsSection.T("Skip"), Kind: BtnOutline, Do: func() bool { m.finish(0); return true }}
+	m.add = &ModalButton{Label: nsSection.T("Add Conversations"), Kind: BtnPrimary, Enabled: func() bool { return !m.pending }, Do: func() bool { m.Submit(); return false }}
+	m.update = &ModalButton{Label: nsSection.T("Update Section"), Kind: BtnPrimary, Enabled: func() bool { return !m.pending }, Do: func() bool { m.Submit(); return false }}
+	m.cancel = &ModalButton{Label: nsSection.T("Cancel"), Kind: BtnOutline}
+	m.editSel = &ModalButton{Label: nsSection.T("Edit Selections"), Kind: BtnOutline, Do: func() bool { m.bump = false; m.sync(); return false }}
+	m.moveConv = &ModalButton{Label: nsSection.T("Move Conversations"), Kind: BtnPrimary, Enabled: func() bool { return !m.pending }, Do: func() bool { m.move(); return false }}
+	m.modal = NewModal(h, ModalOpts{Title: nsSection.T("Create a section"), Body: m.layout, FocusStops: func() []event.Tag {
 		if m.step == 0 {
 			return []event.Tag{&m.ed}
 		}
@@ -375,7 +376,7 @@ func (m *CreateSectionModal) code() string {
 }
 
 // Error is step 1's alert.
-func (m *CreateSectionModal) Error() string { return core.SectionNameErrorText(m.code()) }
+func (m *CreateSectionModal) Error() string { return nsSection.T(core.SectionNameErrorText(m.code())) }
 
 // CanCreate mirrors "Create and Add Channels".
 func (m *CreateSectionModal) CanCreate() bool { return m.step == 0 && !m.pending && m.code() == "" }
@@ -485,13 +486,13 @@ func (m *CreateSectionModal) sync() {
 	o := &m.modal.o
 	switch {
 	case m.step == 0:
-		o.Title, o.FooterNote, o.Buttons = "Create a section", "Step 1 of 2", []*ModalButton{m.create}
+		o.Title, o.FooterNote, o.Buttons = nsSection.T("Create a section"), nsSection.T("Step 1 of 2"), []*ModalButton{m.create}
 	case m.bump:
 		o.Title, o.FooterNote, o.Buttons = m.modal.o.Title, "", []*ModalButton{m.editSel, m.moveConv}
 	case m.o.Edit != "":
-		o.Title, o.FooterNote, o.Buttons = "Manage conversations", "", []*ModalButton{m.cancel, m.update}
+		o.Title, o.FooterNote, o.Buttons = nsSection.T("Manage conversations"), "", []*ModalButton{m.cancel, m.update}
 	default:
-		o.Title, o.FooterNote, o.Buttons = "Add conversations", "Step 2 of 2", []*ModalButton{m.skip, m.add}
+		o.Title, o.FooterNote, o.Buttons = nsSection.T("Add conversations"), nsSection.T("Step 2 of 2"), []*ModalButton{m.skip, m.add}
 	}
 }
 
@@ -520,7 +521,7 @@ func (m *CreateSectionModal) layout(gtx layout.Context) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	if m.bump {
 		d := para(loose(gtx, image.Pt(w, 1<<20)), th, 15, 22, theme.Regular, cl.Fg,
-			"Some conversations you selected are already organized in other sections. Are you sure you want to move them here?", 0)
+			nsSection.T("Some conversations you selected are already organized in other sections. Are you sure you want to move them here?"), 0)
 		return layout.Dimensions{Size: image.Pt(w, d.Size.Y+dp(gtx, 8))}
 	}
 	if m.step == 1 {
@@ -559,18 +560,18 @@ func (m *CreateSectionModal) layout(gtx layout.Context) layout.Dimensions {
 		})
 		y += lh + dp(gtx, 8)
 	}
-	label("Section name")
+	label(nsSection.T("Section name"))
 	d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		return layout.Dimensions{Size: image.Pt(w, sectionNameField(gtx, m.h, th, cl, &m.ed, &m.emojiBtn, m.emoji, m.Error(), w))}
 	})
 	y += d.Size.Y + dp(gtx, 20)
-	label("Sort conversations by")
+	label(nsSection.T("Sort conversations by"))
 	def := m.o.DefaultSort
 	if def == "" {
 		def = "default"
 	}
 	for i, k := range csSortKeys {
-		lbl := map[string]string{"default": "A-Z", "recent": "Recency", "priority": "Priority"}[k]
+		lbl := nsSection.T(map[string]string{"default": "A-Z", "recent": "Recency", "priority": "Priority"}[k])
 		on := m.sortVal == k
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &m.sortBtn[i], nil, func(gtx layout.Context) layout.Dimensions {
@@ -582,7 +583,7 @@ func (m *CreateSectionModal) layout(gtx layout.Context) layout.Dimensions {
 				})
 				if k == def { // Tag style="gray"
 					tx := x + tw.Size.X + dp(gtx, 8)
-					tag := "Your default"
+					tag := nsSection.T("Your default")
 					tgw := textW(gtx, th, 12, theme.Bold, tag) + dp(gtx, 8)
 					rrect(gtx, image.Rect(tx, dp(gtx, 2), tx+tgw, lh-dp(gtx, 2)), dp(gtx, 4), cl.BgHover)
 					at(gtx, image.Pt(tx+dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
@@ -629,13 +630,13 @@ func (m *CreateSectionModal) layoutConvs(gtx layout.Context, th *theme.Theme, cl
 	y := 0
 	at(gtx, image.Point{}, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, dp(gtx, 36)))
-		return field(gtx, th, &m.filter, "Filter by name…", "search", 36, 15)
+		return field(gtx, th, &m.filter, nsSection.T("Filter by name…"), "search", 36, 15)
 	})
 	y += dp(gtx, 36) + dp(gtx, 12)
 	// tabs, then Selected Only / Select all at the right
 	x := 0
 	th22 := dp(gtx, 28)
-	for i, s := range []string{"All", "Channels", "Direct Messages"} {
+	for i, s := range []string{nsSection.T("All"), nsSection.T("Channels"), nsSection.T("Direct Messages")} {
 		on := m.tab == i
 		tw := textW(gtx, th, 13, theme.Bold, s) + dp(gtx, 20)
 		at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
@@ -659,7 +660,7 @@ func (m *CreateSectionModal) layoutConvs(gtx layout.Context, th *theme.Theme, cl
 		btn *widget.Clickable
 		s   string
 		on  bool
-	}{{&m.allBtn, "Select all", false}, {&m.selBtn, "Selected Only", m.selOnly}} {
+	}{{&m.allBtn, nsSection.T("Select all"), false}, {&m.selBtn, nsSection.T("Selected Only"), m.selOnly}} {
 		tw := textW(gtx, th, 13, theme.Regular, it.s) + dp(gtx, 26)
 		right -= tw
 		on := it.on
@@ -681,7 +682,7 @@ func (m *CreateSectionModal) layoutConvs(gtx layout.Context, th *theme.Theme, cl
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, listH))
 		if len(vis) == 0 {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, "If you can’t find a conversation, try searching for it by name.", 0)
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, nsSection.T("If you can’t find a conversation, try searching for it by name."), 0)
 		}
 		return m.list.Layout(gtx, len(vis), func(gtx layout.Context, i int) layout.Dimensions {
 			c := vis[i]
@@ -726,16 +727,18 @@ func NewDeleteSectionModal(h Host, name string, onDelete func()) *Modal {
 			})
 			y += d.Size.Y + dp(gtx, wt)
 		}
-		line("Anything you added to "+name+" will move back to their default sections:", 6, 0)
-		line("•  Channels", 2, dp(gtx, 12))
-		line("•  Direct messages", 12, dp(gtx, 12))
-		line("And don’t worry — you won’t be removed from any channels when you delete this section.", 8, 0)
+		// the delete confirmation's strings (channel_browser_coachmark; the
+		// two default sections are the sidebar's names)
+		line(i18n.Plain(nsDelSection.RT("Anything you added to <strong>{inlineChannelSection}</strong> will move back to their default sections:", "inlineChannelSection", name)), 6, 0)
+		line("•  "+nsSidebar.T("Channels"), 2, dp(gtx, 12))
+		line("•  "+nsSidebar.T("Direct messages"), 12, dp(gtx, 12))
+		line(nsDelSection.T("And don’t worry — you won’t be removed from any channels when you delete this section."), 8, 0)
 		return layout.Dimensions{Size: image.Pt(w, y)}
 	}
-	del := &ModalButton{Label: "Delete", Kind: BtnDanger, Do: func() bool { onDelete(); return true }}
+	del := &ModalButton{Label: nsDelSection.T("Delete"), Kind: BtnDanger, Do: func() bool { onDelete(); return true }}
 	// ConfirmationModal (submit type danger): its submit button autoFocuses
-	return NewModal(h, ModalOpts{Title: "Delete this section?", Body: body, AutoFocus: del, Buttons: []*ModalButton{
-		{Label: "Cancel", Kind: BtnOutline}, del,
+	return NewModal(h, ModalOpts{Title: nsDelSection.T("Delete this section?"), Body: body, AutoFocus: del, Buttons: []*ModalButton{
+		{Label: nsDelSection.T("Cancel"), Kind: BtnOutline}, del,
 	}})
 }
 

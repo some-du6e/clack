@@ -390,6 +390,13 @@ type srToken struct {
 	req     string // "from:<@U…>"
 	icon    string // getSearchFilterIconName ("" for mentions)
 	mention bool   // a plain @/# mention (c-member_slug), not a filter
+	// mod and entity are a filter's slacksearchfilter modifier ("from",
+	// "-in") and entityId ("U…", "link", "2026-11-04"); a mention's
+	// entity is its id
+	mod, entity string
+	// self is the filter's mention attribute (shouldHighlightMention: the
+	// viewer): drawn as c-member_slug--mention
+	self bool
 }
 
 func (t srToken) end() int { return t.start + len([]rune(t.label)) }
@@ -400,14 +407,19 @@ func srACPick(m srACMatch, it srACItem) srToken {
 	mod := strings.ToLower(m.mod)
 	switch m.kind {
 	case srACMember:
-		return srToken{label: "@" + it.mention, req: "<@" + it.id + ">", mention: true}
+		return srToken{label: "@" + it.mention, req: "<@" + it.id + ">", mention: true, entity: it.id}
 	case srACChannel:
-		return srToken{label: "#" + it.label, req: "<#" + it.id + "|" + it.label + ">", mention: true}
+		return srToken{label: "#" + it.label, req: "<#" + it.id + "|" + it.label + ">", mention: true, entity: it.id}
 	}
-	t := srToken{icon: srFilterIcon(m.typ, it)}
+	// getModifierForSearchFilterId: the type, "-" kept
+	t := srToken{icon: srFilterIcon(m.typ, it), mod: m.typ, entity: it.id}
+	if strings.HasPrefix(m.mod, "-") {
+		t.mod = "-" + m.typ
+	}
 	switch it.kind {
 	case srAIMember:
 		t.label, t.req = m.mod+"@"+it.mention, mod+"<@"+it.id+">"
+		t.self = it.self // formatMemberInsertData's mention: shouldHighlightMention
 	case srAIChannel:
 		t.label, t.req = m.mod+it.label, mod+"<#"+it.id+"|"+it.label+">"
 	case srAIEmoji:
@@ -512,7 +524,7 @@ func newSRACRanker(h Host) *srACRanker {
 	on := func(v string) bool { return v == "on" || strings.HasPrefix(v, "treatment") }
 	r.opts = acrank.Options{Source: acrank.SourceTexty, Limit: 25, Frecency: c.FrecencyCache(),
 		Weights: c.AutocompleteModel(), Now: time.Now(),
-		Passthrough:          c.Experiment("autocomplete_flannel_fuzzy_match_passthrough") == "treatment",
+		Passthrough:          true, // nIFn: unconditional since build 274f7c7f1b69
 		DemotePassthrough:    on(c.Experiment("autocomplete_demote_flannel_passthrough_rltv_exact_match")),
 		BeyondWordBoundaries: on(c.Experiment("ml_fuzzy_match_beyond_word_boundaries_v2")),
 		DisplayRealNames:     s.Prefs.DisplayRealNames,
@@ -722,6 +734,10 @@ func srDisplayQuery(h Host, q string) (string, []srToken) {
 // srRefToken labels one ref the way srACPick would.
 func srRefToken(h Host, mod, sigil, id, name string) (srToken, bool) {
 	typ := strings.TrimPrefix(strings.ToLower(strings.TrimSuffix(mod, ":")), "-")
+	fmod := typ
+	if strings.HasPrefix(mod, "-") {
+		fmod = "-" + typ
+	}
 	if sigil == "@" {
 		u, ok := lookupUser(h, id)
 		if !ok {
@@ -729,9 +745,13 @@ func srRefToken(h Host, mod, sigil, id, name string) (srToken, bool) {
 		}
 		n := srMentionName(u)
 		if mod == "" {
-			return srToken{label: "@" + n, mention: true}, true
+			return srToken{label: "@" + n, mention: true, entity: id}, true
 		}
-		return srToken{label: mod + "@" + n, icon: srFilterIcon(typ, srACItem{kind: srAIMember, id: id})}, true
+		self := false
+		if c := h.Core(); c != nil {
+			self = c.Self().ID == id
+		}
+		return srToken{label: mod + "@" + n, icon: srFilterIcon(typ, srACItem{kind: srAIMember, id: id}), mod: fmod, entity: id, self: self}, true
 	}
 	if mod != "" && typ != "in" {
 		return srToken{}, false
@@ -748,9 +768,9 @@ func srRefToken(h Host, mod, sigil, id, name string) (srToken, bool) {
 		return srToken{}, false
 	}
 	if mod == "" {
-		return srToken{label: "#" + name, mention: true}, true
+		return srToken{label: "#" + name, mention: true, entity: id}, true
 	}
-	return srToken{label: mod + name, icon: srFilterIcon(typ, srACItem{kind: srAIChannel, id: id, private: private})}, true
+	return srToken{label: mod + name, icon: srFilterIcon(typ, srACItem{kind: srAIChannel, id: id, private: private}), mod: fmod, entity: id}, true
 }
 
 // SearchDisplayText is a search query as Slack's search box shows it

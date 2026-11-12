@@ -41,7 +41,7 @@ import (
 __attribute__ ((visibility ("hidden"))) void gio_main(void);
 __attribute__ ((visibility ("hidden"))) void gio_init(void);
 __attribute__ ((visibility ("hidden"))) CFTypeRef gio_createView(int presentWithTrans);
-__attribute__ ((visibility ("hidden"))) CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height);
+__attribute__ ((visibility ("hidden"))) CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int panel);
 __attribute__ ((visibility ("hidden"))) void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle);
 
 static void writeClipboard(CFTypeRef str) {
@@ -106,6 +106,15 @@ static void makeKeyAndOrderFront(CFTypeRef windowRef) {
 	@autoreleasepool {
 		NSWindow *window = (__bridge NSWindow *)windowRef;
 		[window makeKeyAndOrderFront:nil];
+	}
+}
+
+// orderFrontRegardless is Electron's showInactive (Clack patch,
+// CLACK_PATCHES.md §8).
+static void orderFrontRegardless(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		[window orderFrontRegardless];
 	}
 }
 
@@ -1044,7 +1053,11 @@ func newWindow(win *callbacks, options []Option) {
 			w.ProcessEvent(DestroyEvent{Err: err})
 			return
 		}
-		window := C.gio_createWindow(w.view, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y))
+		panel := C.int(0)
+		if cnf.panel {
+			panel = 1
+		}
+		window := C.gio_createWindow(w.view, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y), panel)
 		// Release our reference now that the NSWindow has it.
 		C.CFRelease(w.view)
 		w.Configure(options)
@@ -1056,7 +1069,13 @@ func newWindow(win *callbacks, options []Option) {
 		nextTopLeft = C.cascadeTopLeftFromPoint(window, nextTopLeft)
 		C.makeFirstResponder(window, w.view)
 		// makeKeyAndOrderFront assumes ownership of our window reference.
-		C.makeKeyAndOrderFront(window)
+		if cnf.panel {
+			// Clack patch (CLACK_PATCHES.md §8): a panel shows without
+			// becoming key (Electron's showInactive).
+			C.orderFrontRegardless(window)
+		} else {
+			C.makeKeyAndOrderFront(window)
+		}
 	})
 	<-res
 }

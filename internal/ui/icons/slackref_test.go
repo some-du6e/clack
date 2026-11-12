@@ -5,6 +5,11 @@ package icons
 // them). The redrawn ones say so in redrawn.go; the formatting bar and
 // section-menu glyphs are in icons.go and slack.go.
 var slackRef = map[string]string{
+	// the search switcher's toolbar (search.go)
+	"quick-switch":       "quick-switch",
+	"posts":              "posts",
+	"app-directory":      "app-directory",
+	"surface":            "surface",
 	"cloud-offline":      "cloud-offline",
 	"spreadsheet":        "spreadsheet",
 	"kanban":             "kanban",
@@ -221,6 +226,7 @@ var slackRef = map[string]string{
 	"saved-filled":                "bookmark-filled",
 	"schedule":                    "clock",
 	"screen":                      "screen",
+	"screen-off":                  "screen-off",
 	"screen-share":                "screen-share",
 	"search":                      "search",
 	"search-filled":               "search-filled",
@@ -312,6 +318,7 @@ var clackOwn = map[string]string{
 	"slick-mark":           "Slick's mark (a plugin system's, not Slack's)",
 	"sticker":              "a peeling sticker (huddle reactions); Slack's set has none",
 	"times-small":          "Slack's icon-font glyph U+E294 (c-icon--times-small, iconfont.go), not an SvgIcon",
+	"stop-screen-sharing":  "Slack's icon-font glyph U+E096 (c-icon--stop-screen-sharing, iconfont.go; the mini panel's Stop Sharing), not an SvgIcon",
 	"unpin":                "Slack's pin with a slash; Slack's set has no unpin",
 	"unreads":              "Slack's set has no unreads glyph",
 }

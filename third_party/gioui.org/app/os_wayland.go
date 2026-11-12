@@ -1827,10 +1827,13 @@ func (w *window) flushScroll() {
 		dist := float32(w.fling.anim.Tick(time.Now()))
 		fling = w.fling.dir.Mul(dist)
 	}
-	// The Wayland reported scroll distance for
-	// discrete scroll axes is only 10 pixels, where
-	// 100 seems more appropriate.
-	const discreteScale = 10
+	// Clack patch 9 (CLACK_PATCHES.md): a discrete axis is a wheel's
+	// notches. Chromium turns their axis value into wheel deltas, one
+	// MouseWheelEvent::kWheelDelta (120 dp) per 10 (kAxisValueScale,
+	// ui/ozone/platform/wayland/host/wayland_pointer.cc), and animates
+	// them; Gio scaled the value by 10 and moved at once.
+	discreteScale := float32(120.0/10.0) * float32(w.scale)
+	notched := w.scroll.steps != (image.Point{})
 	if w.scroll.steps.X != 0 {
 		w.scroll.dist.X *= discreteScale
 	}
@@ -1855,6 +1858,7 @@ func (w *window) flushScroll() {
 		Buttons:   w.pointerBtns,
 		Position:  w.lastPos,
 		Scroll:    total,
+		Notched:   notched,
 		Time:      w.scroll.time,
 		Modifiers: w.disp.xkb.Modifiers(),
 	})

@@ -234,8 +234,14 @@ Per-OS, and what Clack already has (checked against `origin/ui`):
 - **macOS.** Clack's `packaging/macos/Info.plist` already declares
   `CFBundleURLSchemes = [slack]`. LaunchServices registers it when the bundle
   is first seen; `urlhandler_other.go` says as much. Real Slack.app also claims
-  it; macOS uses the most-recently-registered unless the user chose one.
-- **Windows.** `packaging/windows/clack.iss` and
+  it. Launch Services takes the user's explicit choice first; otherwise, among
+  apps claiming the scheme, it prefers the boot volume, a local volume and the
+  newest version of the same app, and then "chooses one of the remaining
+  applications in an unspecified manner" (Apple, Launch Services Programming
+  Guide, "Preferred Application for a URL", archived). So with Clack.app and
+  Slack.app both installed, either may get the link.
+- **Windows.** (As planned; superseded 2026-11-11, see "Windows: Clack in
+  Windows' app box" below.) `packaging/windows/clack.iss` and
   `internal/desktop/urlhandler_windows.go` write
   `HKCU\Software\Classes\slack\shell\open\command = "clack.exe" "%1"`. This is
   per-user and overwrites any existing `slack` handler for that user, which is
@@ -415,7 +421,9 @@ Differences from the plan:
   handler. `clack --register-url-handler` does that, on request. The Windows
   installer's "Open slack:// links with Clack" task is now unchecked by
   default. Copying the link into the sign-in screen works without the
-  handler.
+  handler. (Windows changed on 2026-11-11: every start registers Clack as
+  *a* handler, below. It still takes the default only when no other app has
+  `slack://`.)
 - **External links while signed in.** A magic link the OS delivers while
   Clack is signed in doesn't replace the session (any web page can make the
   browser open a `slack://` link). It shows a toast. Links sign in from the
@@ -437,6 +445,25 @@ Differences from the plan:
   below). The plan in §6 assumed a consistent desktop identity was safe, and
   that was wrong.
 
+Added 2026-11-11 (branch `signin-polish`, the sign-in card's redesign):
+
+- **The card waits.** "Open Slack sign-in" opens the page above in the
+  browser, and the card says "Waiting for Slack…" until a link arrives
+  from the OS (`App.SignInWithLink`), the clipboard or its field. A whole
+  link pasted into the empty field signs in without Enter.
+- **Clipboard on focus.** Like Slack desktop's `magicLoginOnFocusEpic`
+  (main.bundle.cjs @954278), Clack reads the clipboard when its window
+  comes to the front. If the text is a whole magic-login or login-v2 link
+  (Slack's `c4`/`c7`), Clack clears the clipboard (`c8`, @935978) and
+  signs in with it. Slack desktop does this whenever its main window is
+  focused. Clack does it on the sign-in screen only, the rule links from
+  the OS already follow. Slack's `isClipboardReadDisabled` setting
+  (default false, @1104280) has no Clack equivalent.
+- **Single sign-on.** An `auth_redir` that is https on a Slack host opens
+  in the browser and the card waits for the next link, as Slack desktop
+  does (`MAGIC_LOGIN_REDIRECT`, @952867). Clack used to show the URL in an
+  error. An `auth_redir` anywhere else is still refused.
+
 Still unverified (needs a live test, with consent, on a throwaway account):
 
 - whether `/ssb/first` really carries `api_token` for a fresh SSB session;
@@ -448,10 +475,104 @@ Still unverified (needs a live test, with consent, on a throwaway account):
   websocket and `/ssb/first`; not file downloads), whether Slack sends
   `DPoP-Nonce`, and what a rejection looks like (Clack stops on a 401 with
   a DPoP `WWW-Authenticate` or an error code containing `dpop`);
-- the sign-in page: Clack's "Open sign-in page" opens
+- the sign-in page: Clack's "Open Slack sign-in" opens
   `https://slack.com/ssb/add?s=1&v=4.53.276`, the URL Slack desktop's
-  "Sign in to Another Workspace" opens. Whether a first sign-in from there
-  ends in a copyable `slack://…/magic-login/…` link is unverified.
+  "Sign in to Another Workspace" opens (main.bundle.cjs @1033352). Whether
+  a first sign-in from there ends in a copyable `slack://…/magic-login/…`
+  link is unverified.
+
+## Windows: Clack in Windows' app box (2026-11-11, branch `win-url-handler`)
+
+What Karim hit on Windows 11 (α.36, with Slack desktop and Slick installed):
+Open Slack sign-in opened Slack's "Launching Hack Club" page, and Windows
+showed "Select an app to open this 'slack' link" listing Slack and Slick,
+not Clack. The page never shows the link, so the card waited forever.
+
+Why: Windows builds that box from registered applications' URL
+capabilities, and Clack registered none. It only wrote the legacy
+`HKCU\Software\Classes\slack` key (and the installer only with its
+unchecked box), which Slack desktop rewrites at every start.
+
+Sources:
+
+- Microsoft Learn, "Default Programs" (Registering an Application for Use
+  with Default Programs): an application-specific ProgID per protocol; a
+  `Capabilities` key, from HKCU or HKLM, with `ApplicationDescription`
+  (required: without it the app "does not appear in UI lists of potential
+  default programs"), `ApplicationName` (must match the
+  `RegisteredApplications` value) and `UrlAssociations` (scheme = ProgID);
+  `RegisteredApplications` pointing at it; `SHChangeNotify(SHCNE_ASSOCCHANGED,
+  SHCNF_DWORD | SHCNF_FLUSH)` after registering; and "An application should
+  never reclaim a default without asking the user". The page notes that
+  Windows 10 changed how defaults are set: apps no longer set them, the user
+  does.
+- Microsoft Learn, "Registering an Application to a URI Scheme": the legacy
+  key (`URL Protocol`, `DefaultIcon`, `shell\open\command` with a quoted
+  `"%1"`), and that a quote in a URI splits the command line, so handlers
+  "should assume that any parameters on the command line could come from
+  malicious parties".
+- Microsoft Learn, "Launch Windows Settings":
+  `ms-settings:defaultapps?registeredAppUser=<name>` opens an app's page in
+  Default apps (Windows 11 21H2/22H2 with the 2023-04 update, or later).
+- Slick (https://github.com/3kh0/slick, `install.ps1` at `5e2db780`,
+  `Register-SlackHandler`), which Karim's box listed: the ProgID
+  `HKCU\Software\Classes\Slick.slack` ((Default) and `FriendlyTypeName`
+  "Slick", `URL Protocol`, `DefaultIcon`, `shell\open\command "Slick.exe"
+  "%1"`), `HKCU\Software\Slick\Capabilities` (`ApplicationName`,
+  `ApplicationDescription`, `URLAssociations\slack = Slick.slack`),
+  `HKCU\Software\RegisteredApplications\Slick`, an empty REG_NONE
+  `Slick.slack` under `Classes\slack\OpenWithProgids`, and the legacy key,
+  taken unconditionally. Its uninstaller removes its own keys and points the
+  legacy key back at Slack desktop.
+
+What Clack does now (`internal/desktop/urlhandler_windows.go`):
+
+- Every start of an installed or portable Clack.exe (not a `go run` build)
+  writes `HKCU\Software\Classes\Clack.slack` (`URL:slack Protocol`,
+  `URL Protocol`, `DefaultIcon`, `shell\open\command "<exe>" "%1"`),
+  `HKCU\Software\Clack\Capabilities` (`ApplicationName` Clack,
+  `ApplicationDescription`, `URLAssociations\slack = Clack.slack`) and
+  `HKCU\Software\RegisteredApplications\Clack`, the layout copied from
+  Slick. It writes only values that differ (a start that finds them in place
+  only reads) and calls SHChangeNotify when it changed something. A launch
+  that hands over to a running Clack registers too, before it exits. Open
+  Slack sign-in registers again (`ui.Options.EnsureLinkHandler`).
+- Slick's `OpenWithProgids` entry is copied too, but only into a `slack` key
+  that is already a registration. Clack never creates a `slack` key for it.
+- The legacy key is Slick's departure. Clack takes it only when no other app
+  opens `slack://`: no UserChoice (or UserChoiceLatest) for another ProgID,
+  no other program in HKCR's `slack\shell\open\command` (the user's key over
+  the machine's), and no other program from
+  `AssocQueryString(ASSOCF_IS_PROTOCOL, ASSOCSTR_EXECUTABLE)`, which also
+  answers for Store apps. A Clack.exe anywhere counts as Clack, so an old
+  path is updated. `-register-url-handler` and the installer's box take the
+  legacy key on request. UserChoice is never written.
+- `-unregister-url-handler` and the uninstaller remove Clack's ProgID,
+  Capabilities, RegisteredApplications value and OpenWithProgids entry, and
+  the legacy handler only if a Clack owns it.
+- A URL handler's launch keeps only the program and the link
+  (`desktop.URLLaunchArgs`), so nothing after the link becomes a flag,
+  `--update` or `demo`.
+- The hand-off: Windows starts `Clack.exe "slack://…"`, which forwards the
+  link to the running Clack over the instance socket (`desktop.Forward`) and
+  exits. The running Clack logs that a launch handed over a sign-in link (not
+  the link), and `App.SignInWithLink` takes it on the sign-in screen.
+- The card on Windows, while waiting: "Continue in your browser. If Windows
+  asks, pick Clack." Having trouble? has only Copy page link and "If Windows
+  asks for an app, pick Clack, then Just once or Always."
+
+Checked on CI's Windows runner (ci.yml `windows-applog`): the registry
+writes and the rules for the legacy key (`TestURLHandlerRegistration`); the
+shell's list of `slack://` handlers
+(`SHAssocEnumHandlersForProtocolByApplication`), which lists only another
+program on the legacy key before and Clack once it is registered
+(`TestURLHandlerShell`); the hand-off over the real socket
+(`TestForwardOnWindows`); and the built Clack.exe registering at start,
+`reg query` on its keys, `cmd /c start "" "slack://T0FAKE/magic-login/xyz"`
+reaching the running Clack through a second launch, the flags, and
+unregistering. Not checked there: the "Select an app" box itself (no one
+clicks on the runner), a browser's own prompt, Windows 11 client builds
+(the runner is Windows Server), and a real sign-in.
 
 ## Live test, 2026-11-08 (meclod, Hack Club Grid)
 

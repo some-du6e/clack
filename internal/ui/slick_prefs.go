@@ -431,11 +431,7 @@ func (p *slickPage) sselect(gtx layout.Context, k string, w, h int, cur string, 
 		var items []MenuItem
 		for _, o := range opts {
 			o := o
-			lbl := o.Label
-			if o.Value == cur {
-				lbl = "✓ " + lbl
-			}
-			items = append(items, MenuItem{Label: lbl, Do: func() { pick(o.Value) }})
+			items = append(items, MenuItem{Label: o.Label, Checked: o.Value == cur, Do: func() { pick(o.Value) }})
 		}
 		p.a.menu(p.a.PointerPos(), items)
 	}
@@ -1468,16 +1464,14 @@ func (p *slickPage) scheduleControl(gtx layout.Context, key string, w int, o sli
 		at(gtx, image.Pt(x, y), image.Pt(daysW, ch), func(gtx layout.Context) layout.Dimensions {
 			d, c := p.box(gtx, "days."+rk, daysW, ch, func(gtx layout.Context) layout.Dimensions {
 				w := gtx.Constraints.Max.X
-				aw := p.a.th.Measure(gtx, 13, theme.Regular, "▾")
+				aw := gtx.Dp(12) // the caret icon (Lato has no ▾)
 				at(gtx, image.Pt(0, 0), image.Pt(w-aw-gap, ch), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
 						return p.k.label(gtx, 13, theme.Bold, cl.pry, daysLabel(r.Days))
 					})
 				})
-				at(gtx, image.Pt(w-aw, 0), image.Pt(aw+2, ch), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
-						return p.k.label(gtx, 13, theme.Regular, theme.WithAlpha(cl.pry, 0x99), "▾")
-					})
+				at(gtx, image.Pt(w-aw, (ch-aw)/2), image.Pt(aw, aw), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("caret-down")(gtx, 12, theme.WithAlpha(cl.pry, 0x99))
 				})
 				return layout.Dimensions{Size: image.Pt(w, ch)}
 			})
@@ -1555,7 +1549,11 @@ func (p *slickPage) scheduleControl(gtx layout.Context, key string, w int, o sli
 		})
 		x += gtx.Dp(172) + gap
 		at(gtx, image.Pt(x, y), image.Pt(ch, ch), func(gtx layout.Context) layout.Dimensions {
-			d, c := p.ghost(gtx, "rmrule."+rk, "✕", ch, ch)
+			d, c := p.ghost(gtx, "rmrule."+rk, "", ch, ch)
+			is := gtx.Dp(14) // the close icon (Lato has no ✕)
+			at(gtx, image.Pt((ch-is)/2, (ch-is)/2), image.Pt(is, is), func(gtx layout.Context) layout.Dimensions {
+				return icons.Get("close")(gtx, 14, cl.pry)
+			})
 			if c {
 				next := append(append([]schedRule(nil), rules[:i]...), rules[i+1:]...)
 				p.daysOpen = ""
@@ -1608,8 +1606,8 @@ func (p *slickPage) daysPopover(gtx layout.Context, rk string, days []int, setDa
 				return vcenter(gtx, gtx.Dp(28), func(gtx layout.Context) layout.Dimensions { return p.k.label(gtx, 13, theme.Bold, cl.pry, pr.label) })
 			})
 			if sameDays(days, pr.days) {
-				at(gtx, image.Pt(bw-gtx.Dp(22), 0), image.Pt(gtx.Dp(14), gtx.Dp(28)), func(gtx layout.Context) layout.Dimensions {
-					return vcenter(gtx, gtx.Dp(28), func(gtx layout.Context) layout.Dimensions { return p.k.label(gtx, 13, theme.Bold, cl.pry, "✓") })
+				at(gtx, image.Pt(bw-gtx.Dp(22), (gtx.Dp(28)-gtx.Dp(14))/2), image.Pt(gtx.Dp(14), gtx.Dp(14)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get("check")(gtx, 14, cl.pry) // Lato has no ✓
 				})
 			}
 			if c {

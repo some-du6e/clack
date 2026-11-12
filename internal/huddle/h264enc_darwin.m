@@ -102,7 +102,7 @@ static void setInt(VTCompressionSessionRef s, CFStringRef k, int v) {
 
 // clack_vt_new makes a realtime constrained-baseline H.264 session (the
 // hardware encoder when there is one, else Apple's software one).
-void *clack_vt_new(int w, int h, int fps, int bps, uintptr_t handle, int *status) {
+void *clack_vt_new(int w, int h, int fps, int bps, int screen, uintptr_t handle, int *status) {
 	@autoreleasepool {
 		clackVT *e = calloc(1, sizeof *e);
 		e->h = handle;
@@ -133,8 +133,9 @@ void *clack_vt_new(int w, int h, int fps, int bps, uintptr_t handle, int *status
 		setInt(e->s, kVTCompressionPropertyKey_ExpectedFrameRate, fps);
 		setInt(e->s, kVTCompressionPropertyKey_MaxKeyFrameInterval, fps * 20); // Chime asks (PLI) when it needs one
 		setInt(e->s, kVTCompressionPropertyKey_AverageBitRate, bps);
-		// at most 1.5x the average over any second
-		int limit = bps / 8 * 3 / 2, one = 1;
+		// at most 1.5x the average over any second; a screen's keyframe
+		// (all text) gets 3x, so it stays readable
+		int limit = screen ? bps / 8 * 3 : bps / 8 * 3 / 2, one = 1;
 		CFNumberRef ln = CFNumberCreate(NULL, kCFNumberIntType, &limit), on = CFNumberCreate(NULL, kCFNumberIntType, &one);
 		CFTypeRef lim[2] = {ln, on};
 		CFArrayRef la = CFArrayCreate(NULL, lim, 2, &kCFTypeArrayCallBacks);

@@ -16,6 +16,7 @@ on:
       - "internal/ui/composer/thread_margin_test.go"
       - "internal/ui/richview/**"
       - "internal/ui/spacing_shots_test.go"
+      - "internal/ui/composer_gap_test.go"
       - ".github/workflows/spacing-shots.yml"
   workflow_dispatch:
 
@@ -37,7 +38,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: gio deps
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq $GIO_DEPS
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: geometry
         run: |
           go test -count=1 -v -run 'TestMessageGeometry|TestThreadTime|TestChannelListBottomSpacer|TestThreadListNoBottomSpacer' ./internal/ui/messages/
@@ -48,7 +49,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$SPACING_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestSpacingShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestSpacingShots$|TestComposerGap$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

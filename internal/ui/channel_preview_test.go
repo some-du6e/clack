@@ -84,7 +84,7 @@ func TestChannelPreviewJoin(t *testing.T) {
 		t.Errorf("preview conv %+v", ci)
 	}
 	if c.jp.caretRect.Empty() {
-		t.Error("temp_join_channel is on in the fake: no Join… caret")
+		t.Error("no Join… caret on a public channel (OtvL Y, core.CanTempJoin)")
 	}
 	e.settle(200 * time.Millisecond)
 	e.shot("channel-preview")

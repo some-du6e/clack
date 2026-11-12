@@ -30,6 +30,7 @@ const (
 type gdmState struct {
 	mu      sync.Mutex
 	org     map[string]any
+	locked  map[string]any // SetEnterpriseLockedPrefs (content_review_enabled…)
 	renames []url.Values
 }
 
@@ -83,6 +84,16 @@ func (s *Server) SetEnterpriseOrgPrefs(kv map[string]any) {
 	g.mu.Unlock()
 }
 
+// SetEnterpriseLockedPrefs sets what enterprise.prefs.get answers in
+// locked_prefs (the org's locked prefs, e.g. content_review_enabled for
+// the message menu's Flag row).
+func (s *Server) SetEnterpriseLockedPrefs(kv map[string]any) {
+	g := s.gdm()
+	g.mu.Lock()
+	g.locked = kv
+	g.mu.Unlock()
+}
+
 // Renames returns the conversations.rename calls the fake answered.
 func (s *Server) Renames() []url.Values {
 	g := s.gdm()
@@ -96,12 +107,15 @@ func (s *Server) handleGroupDMs(method string, f url.Values) (any, bool) {
 	case "enterprise.prefs.get":
 		g := s.gdm()
 		g.mu.Lock()
-		org := g.org
+		org, locked := g.org, g.locked
 		g.mu.Unlock()
 		if org == nil {
 			org = map[string]any{}
 		}
-		return ok("org_prefs", org, "locked_prefs", map[string]any{}, "unlocked_prefs", map[string]any{}), true
+		if locked == nil {
+			locked = map[string]any{}
+		}
+		return ok("org_prefs", org, "locked_prefs", locked, "unlocked_prefs", map[string]any{}), true
 	case "conversations.rename":
 		g := s.gdm()
 		g.mu.Lock()

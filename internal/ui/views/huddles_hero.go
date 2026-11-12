@@ -127,15 +127,15 @@ func (v *Huddles) layoutHero(gtx C) D {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(textW, 1<<20)}
 		return col(gtx,
 			layout.Rigid(func(gtx C) D {
-				d := v.para(gtx, 22, 30, wBlack, fg, 0, hdNS.T("Instantly connect over audio or video"))
+				d := v.para(gtx, 22, 30, wBlack, fg, 0, nsHuddles.T("Instantly connect over audio or video"))
 				return D{Size: image.Pt(d.Size.X, d.Size.Y+gtx.Dp(8))}
 			}),
 			layout.Rigid(func(gtx C) D {
-				d := v.para(gtx, 15, 22, wReg, body, 0, hdNS.T("Talk it out in real time on a huddle, with screen-sharing, expressive reactions and a message thread that automatically saves for later reference."))
+				d := v.para(gtx, 15, 22, wReg, body, 0, nsHuddles.T("Talk it out in real time on a huddle, with screen-sharing, expressive reactions and a message thread that automatically saves for later reference."))
 				return D{Size: image.Pt(d.Size.X, d.Size.Y+gtx.Dp(16))}
 			}),
 			layout.Rigid(func(gtx C) D {
-				return v.primaryButton(gtx, v.clk("hero-start"), "headphones", hdNS.T("Start a Huddle"))
+				return v.primaryButton(gtx, v.clk("hero-start"), "headphones", nsHuddles.T("Start a Huddle"))
 			}),
 		)
 	})

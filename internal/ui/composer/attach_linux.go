@@ -52,6 +52,9 @@ func attExplorerUsable() bool {
 
 func attClipboardSupported() bool { return true }
 
+// attClipboardFiles: copied files aren't read from the Linux clipboard.
+func attClipboardFiles(context.Context) ([]string, error) { return nil, nil }
+
 // attClipboardImage reads an image from the system clipboard. It returns
 // errAttNoClipImage when the clipboard holds none and errAttClipTools when
 // no clipboard tool is installed.

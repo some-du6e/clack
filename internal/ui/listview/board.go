@@ -6,7 +6,6 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
-	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -20,6 +19,7 @@ import (
 // boardState is the board's scroll, hover and hit areas.
 type boardState struct {
 	scrollX, scrollY int
+	wheel            wheelScroll
 	hover            image.Point
 	press            f32.Point
 	pressed          bool
@@ -111,6 +111,10 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 	maxX := max(0, x0+len(groups)*(lw+gtx.Dp(laneGap))+gtx.Dp(16)-sz.X)
 	maxY := max(0, tallest+gtx.Dp(16)-sz.Y)
 	v.boardEvents(gtx, d, maxX, maxY)
+	if dx, dy := b.wheel.tick(gtx); dx != 0 || dy != 0 {
+		b.scrollX += dx
+		b.scrollY += dy
+	}
 	b.scrollX = min(max(0, b.scrollX), maxX)
 	b.scrollY = min(max(0, b.scrollY), maxY)
 	for gi, g := range groups {
@@ -152,7 +156,7 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 				label = CellText(v.h.Core(), gc, groupField(gc, g.Value))
 			}
 		} else {
-			label = "All items"
+			label = nsLists.T("All items")
 		}
 		hh := gtx.Dp(laneHdr)
 		if gc != nil && (gc.Type == lists.Checkbox || gc.Type == lists.TodoCompleted) {
@@ -207,7 +211,7 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 			})
 			at(gtx, image.Pt(fr.Min.X+gtx.Dp(34), fr.Min.Y), image.Pt(fr.Dx()-gtx.Dp(40), fr.Dy()), func(gtx layout.Context) layout.Dimensions {
 				return vcenter(gtx, fr.Dy(), func(gtx layout.Context) layout.Dimensions {
-					return th.Label(gtx, 13, theme.Bold, ac, "Add item")
+					return th.Label(gtx, 13, theme.Bold, ac, nsLists.T("Add item"))
 				})
 			})
 			b.hits = append(b.hits, boardHit{r: fr, add: true, group: g.Value})
@@ -244,7 +248,7 @@ func (v *View) drawCard(gtx layout.Context, d *core.ListDoc, cols []*lists.Colum
 	if p := d.Meta.Primary(); p != nil {
 		name := r.Rec.Field(p.Key).PlainText()
 		if name == "" {
-			name = "Untitled item"
+			name = nsLists.T("Untitled item")
 		}
 		tx := x
 		if d.Meta.TodoMode {
@@ -291,10 +295,7 @@ func (v *View) boardEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) 
 		}
 		switch pe.Kind {
 		case pointer.Scroll:
-			dx, dy := int(pe.Scroll.X), int(pe.Scroll.Y)
-			if pe.Modifiers.Contain(key.ModShift) && dx == 0 {
-				dx, dy = dy, 0
-			}
+			dx, dy := b.wheel.event(gtx, pe, b.scrollX, b.scrollY, maxX, maxY, true)
 			b.scrollX = min(max(0, b.scrollX+dx), maxX)
 			b.scrollY = min(max(0, b.scrollY+dy), maxY)
 		case pointer.Move:

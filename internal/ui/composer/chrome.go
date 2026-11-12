@@ -17,6 +17,7 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -82,6 +83,7 @@ type chromeState struct {
 	Block          BlockKind // caret line kind (pressed list/quote/code-block buttons)
 	Link           bool      // caret in a link (link button pressed)
 	InCode         bool      // caret in a code block: B I U S link code divider disabled
+	HintInPre      bool      // caret in code typed with ``` under enter_is_special_in_tbt (the hint bar's Enter)
 	CanSend        bool
 	Broadcast      bool // thread: checkbox checked
 	// ChannelType ("channel", "im", "mpim", …) and SetBroadcast feed the
@@ -95,7 +97,12 @@ type chromeState struct {
 	// hash/lock icon + name), "Message Karim" (DM), "Reply to thread…".
 	Placeholder     string
 	ShowPlaceholder bool
-	Typing          string // "Karim is typing" for the hint bar, "" none
+	// PlaceholderMsg: Placeholder holds a channel's {msg} (its icon and
+	// name), with PlaceholderPre before it and PlaceholderPost after, as
+	// the locale words it ("Message " and ""; ja-JP "" and " へのメッセージ").
+	PlaceholderMsg                  bool
+	PlaceholderPre, PlaceholderPost string
+	Typing                          string // "Karim is typing" for the hint bar, "" none
 	// ScrolledTop / ScrolledBottom: editor content is scrolled under the
 	// top / there is more below; draws the 1px edge separators.
 	ScrolledTop, ScrolledBottom bool
@@ -1261,10 +1268,10 @@ func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState) layou
 		if uipref.Get().SendOnModEnter {
 			keys = "Mod+Enter"
 		}
-		popups.Tooltip(gtx, th, &c.tip[crSend], hs, rs.Size(), popups.Above, "Send now", keys)
+		popups.Tooltip(gtx, th, &c.tip[crSend], hs, rs.Size(), popups.Above, draftsNS.T("Send now"), keys) // ScheduleSendMenu's
 		if sched {
 			t := op.Offset(rc.Min).Push(gtx.Ops)
-			popups.Tooltip(gtx, th, &c.tip[crSchedule], hc, rc.Size(), popups.Above, "Schedule for later", "")
+			popups.Tooltip(gtx, th, &c.tip[crSchedule], hc, rc.Size(), popups.Above, draftsNS.T("Schedule for later"), "")
 			t.Pop()
 		}
 	}
@@ -1371,15 +1378,23 @@ func crCheckbox(gtx layout.Context, r image.Rectangle, on, hov bool, p *crPal) {
 
 // placeholder draws the empty-composer hint at the text origin (#5e5d60,
 // 15/22). Channel placeholders put a 20px hash (lock) box with -4px side
-// margins between "Message" and the name.
+// margins before the name, where the locale's string has {msg}
+// ("Message {msg}{govSlackSuffix}": after "Message ", or first in ja-JP).
 func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, org image.Point, tw int) {
 	s := textStyle{Size: 15, LineHeight: 22, Color: p.ph, MaxLines: 1}
 	ph := st.Placeholder
-	const pre = "Message "
-	if st.Mode == modeChannel && !st.IsDM && st.ChannelName != "" &&
-		strings.HasPrefix(ph, pre) && ph[len(pre):] == st.ChannelName {
-		d := crText(gtx, th.Shaper, org.X, org.Y, tw, s, pre[:len(pre)-1])
-		x := org.X + d.Size.X + c.space(gtx, th.Shaper, 0)
+	if st.Mode == modeChannel && !st.IsDM && st.ChannelName != "" && st.PlaceholderMsg {
+		x := org.X
+		var d layout.Dimensions
+		if pre := strings.TrimRight(st.PlaceholderPre, " "); pre != "" {
+			d = crText(gtx, th.Shaper, org.X, org.Y, tw, s, pre)
+			x += d.Size.X
+			if pre != st.PlaceholderPre {
+				x += c.space(gtx, th.Shaper, 0)
+			}
+		} else {
+			_, d = crRec(gtx, th.Shaper, tw, s, st.ChannelName) // the line's baseline, for the icon
+		}
 		box := gtx.Dp(20)
 		if st.Private {
 			is := gtx.Dp(16)
@@ -1400,16 +1415,43 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 			t.Pop()
 		}
 		x += box - 2*gtx.Dp(4)
-		crText(gtx, th.Shaper, x, org.Y, org.X+tw-x, s, st.ChannelName)
+		nd := crText(gtx, th.Shaper, x, org.Y, org.X+tw-x, s, st.ChannelName)
+		if post := st.PlaceholderPost; post != "" {
+			x += nd.Size.X
+			crText(gtx, th.Shaper, x, org.Y, org.X+tw-x, s, post)
+		}
 		return
 	}
 	crText(gtx, th.Shaper, org.X, org.Y, tw, s, ph)
 }
 
+// msgInputNS is Slack's "msg_input" I18n: MessageInput's placeholder
+// (getPlaceholderText, txEg).
+var msgInputNS = i18n.NS("msg_input")
+
+// placeholderText is getPlaceholderText for a conversation named name:
+// "Message {msg}{govSlackSuffix}" (no GovSlack suffix), as text and as
+// the text before and after {msg}.
+func placeholderText(name string) (text, pre, post string) {
+	parts := msgInputNS.RT("Message {msg}{govSlackSuffix}", "msg", name, "govSlackSuffix", "")
+	seen := false
+	for _, p := range parts {
+		switch {
+		case p.Arg == "msg":
+			seen = true
+		case !seen:
+			pre += p.Text
+		default:
+			post += p.Text
+		}
+	}
+	return i18n.Plain(parts), pre, post
+}
+
 // layoutHint draws the 24px bar under the box (.p-notification_bar: 24px,
 // 12px left padding, inside the pane): the typing indicator on the left
 // (.p-notification_bar__section: .7em = 10.5px, 1rem line height,
-// sk_foreground_max_solid), or "Shift + Return to add a new line" on the
+// sk_foreground_max_solid), or "Shift + Enter to add a new line" on the
 // right (bold keys, 70% ink, ending 8px inside) once there's something to
 // send. A plugin's TypingNames (BetterTypingIndicator) is laid out in that
 // section's text style, as it is in Slack's DOM.
@@ -1439,20 +1481,70 @@ func (c *chrome) layoutHint(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	if !st.CanSend {
 		return
 	}
-	s := textStyle{Size: 10.5, LineHeight: 16, Color: p.hint, MaxLines: 1}
-	rest, d2 := crRec(gtx, th.Shaper, maxW, s, "to add a new line")
-	s.Weight = theme.Bold
-	keys, d1 := crRec(gtx, th.Shaper, maxW, s, "Shift + Return")
-	right := box.Max.X - gtx.Dp(8)
-	x2 := right - d2.Size.X
-	x1 := x2 - c.space(gtx, th.Shaper, 2) - d1.Size.X
-	t := op.Offset(image.Pt(x1, ty)).Push(gtx.Ops)
-	keys.Add(gtx.Ops)
-	t.Pop()
-	t = op.Offset(image.Pt(x2, ty)).Push(gtx.Ops)
-	rest.Add(gtx.Ops)
-	t.Pop()
+	// rt("<b>Shift + Enter</b> to add a new line") (SyrM, the
+	// notification_bar I18n): the keys bold, wherever the locale has them
+	pref := uipref.Get()
+	src := hintSource(shortcut.GOOS, pref.SendOnModEnter, pref.EnterIsSpecial, st.HintInPre)
+	type seg struct {
+		call op.CallOp
+		w    int
+		gap  bool // a space before it
+	}
+	var segs []seg
+	total, space := 0, false
+	for _, pt := range notificationBarNS.RT(src) {
+		txt := strings.TrimSpace(pt.Text)
+		gap := space || strings.HasPrefix(pt.Text, " ")
+		space = strings.HasSuffix(pt.Text, " ")
+		if txt == "" {
+			space = space || gap
+			continue
+		}
+		s := textStyle{Size: 10.5, LineHeight: 16, Color: p.hint, MaxLines: 1}
+		if pt.Tag == "b" {
+			s.Weight = theme.Bold
+		}
+		call, d := crRec(gtx, th.Shaper, maxW, s, txt)
+		gap = gap && len(segs) > 0
+		segs = append(segs, seg{call, d.Size.X, gap})
+		total += d.Size.X
+		if gap {
+			total += c.space(gtx, th.Shaper, 2)
+		}
+	}
+	x := box.Max.X - gtx.Dp(8) - total
+	for _, sg := range segs {
+		if sg.gap {
+			x += c.space(gtx, th.Shaper, 2)
+		}
+		t := op.Offset(image.Pt(x, ty)).Push(gtx.Ops)
+		sg.call.Add(gtx.Ops)
+		t.Pop()
+		x += sg.w
+	}
 }
+
+// hintSource is NotificationBar's renderFormattingTips (SyrM): Windows
+// says Enter and every other platform, Linux too, says Return (+oeN uF is
+// isWindows, cX isMac). newlinePref is msg_input_send_btn (Enter starts a
+// new line), preNewlines enter_is_special_in_tbt and inPre the caret in
+// code being typed with ```.
+func hintSource(goos string, newlinePref, preNewlines, inPre bool) string {
+	win := goos == "windows"
+	switch {
+	case (newlinePref || preNewlines && inPre) && win:
+		return "<b>Enter</b> to add a new line"
+	case newlinePref || preNewlines && inPre:
+		return "<b>Return</b> to add a new line"
+	case win:
+		return "<b>Shift + Enter</b> to add a new line"
+	}
+	return "<b>Shift + Return</b> to add a new line"
+}
+
+// notificationBarNS is the hint bar's I18n (MessagePaneNotificationBar,
+// SyrM).
+var notificationBarNS = i18n.NS("notification_bar")
 
 // crText draws one line of text at (x, y), at most maxW wide.
 func crText(gtx layout.Context, sh *text.Shaper, x, y, maxW int, s textStyle, txt string) layout.Dimensions {

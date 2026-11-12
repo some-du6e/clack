@@ -32,9 +32,9 @@ import (
 
 // topicItem is HuddleEditTopicMenuItem.
 func (c *Controller) topicItem(s *huddle.Session, st huddle.State, ph popups.Host) popups.MenuItem {
-	label := "Add topic"
+	label := nsHuddles.T("Add topic")
 	if strings.TrimSpace(st.Name) != "" {
-		label = "Edit topic"
+		label = nsHuddles.T("Edit topic")
 	}
 	return popups.MenuItem{Key: "huddle-edit-topic-menu-item", Label: label, Do: func() {
 		if ph != nil {
@@ -50,9 +50,9 @@ func (c *Controller) openTopicDialog(s *huddle.Session, topic string, ph popups.
 	ed.MaxLen = 250
 	ed.SetText(topic)
 	ed.SetCaret(len([]rune(topic)), len([]rune(topic)))
-	title, submit := "Add a topic", "Add"
+	title, submit := nsHuddles.T("Add a topic"), nsHuddles.T("Add")
 	if topic != "" {
-		title, submit = "Edit topic", "Save"
+		title, submit = nsHuddles.T("Edit topic"), nsHuddles.T("Save")
 	}
 	save := func() {
 		name := ed.Text()
@@ -86,10 +86,10 @@ func (c *Controller) openTopicDialog(s *huddle.Session, topic string, ph popups.
 					m.Dismiss()
 				}
 			}
-			return popups.Field(gtx, ph.Theme(), &ed, "What is this huddle about?", "", 40, 15)
+			return popups.Field(gtx, ph.Theme(), &ed, nsHuddles.T("What is this huddle about?"), "", 40, 15)
 		},
 		FocusStops: func() []event.Tag { return []event.Tag{&ed} },
-		Buttons:    []*popups.ModalButton{{Label: "Cancel", Kind: popups.BtnOutline}, ok},
+		Buttons:    []*popups.ModalButton{{Label: nsHuddles.T("Cancel"), Kind: popups.BtnOutline}, ok},
 	})
 	ph.ShowOverlay(m)
 	ph.Invalidate()

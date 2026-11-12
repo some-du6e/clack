@@ -232,6 +232,109 @@ type WorkflowTrigger struct {
 	Published                          bool   // workflow_details.is_published (true without details)
 	BotUserID                          string
 	Error                              string // a lookup that failed (access_denied…)
+	// Steps and Collaborators are workflow_details' (workflows.triggers.info
+	// with include_workflow_details): what the workflow details view draws
+	// until the workflow itself (WorkflowInfo) has come.
+	Steps         []WorkflowStep
+	Collaborators []string
+	IsWorkflowApp bool // workflow.app.is_workflow_app
+}
+
+// WorkflowStep is a workflow step as the workflow details view reads it:
+// its function's callback_id, title, type ("builtin", "app"…) and app;
+// a "switch" step's cases (each a step whose Expression is empty for the
+// fallback, with Color its display_config.color and Steps its own) and a
+// "loop" step's Steps.
+type WorkflowStep struct {
+	ID, Type                    string
+	CallbackID, Title, FuncType string
+	AppID                       string
+	Expression                  bool
+	Color                       string
+	Steps                       []WorkflowStep
+}
+
+type rawStep struct {
+	ID         string          `json:"id"`
+	Type       string          `json:"type"`
+	Expression json.RawMessage `json:"expression"`
+	Display    struct {
+		Color string `json:"color"`
+	} `json:"display_config"`
+	Function struct {
+		CallbackID string `json:"callback_id"`
+		Title      string `json:"title"`
+		Type       string `json:"type"`
+		AppID      string `json:"app_id"`
+		App        struct {
+			ID string `json:"id"`
+		} `json:"app"`
+	} `json:"function"`
+	Steps []rawStep `json:"steps"`
+}
+
+func stepsOf(raw []rawStep) []WorkflowStep {
+	var out []WorkflowStep
+	for _, r := range raw {
+		expr := len(r.Expression) > 0 && string(r.Expression) != "null" && string(r.Expression) != `""`
+		out = append(out, WorkflowStep{ID: r.ID, Type: r.Type, CallbackID: r.Function.CallbackID, Title: r.Function.Title,
+			FuncType: r.Function.Type, AppID: firstNonEmpty(r.Function.AppID, r.Function.App.ID), Expression: expr,
+			Color: r.Display.Color, Steps: stepsOf(r.Steps)})
+	}
+	return out
+}
+
+// WorkflowInfo is a workflow as functions.workflows.get returns it (the
+// workflows store, Okt3 getWorkflowById over JPWF): what the workflow
+// details view reads from it.
+type WorkflowInfo struct {
+	ID, Title, Description string
+	Steps                  []WorkflowStep
+	Collaborators          []string
+	BotUserID              string
+	Published              bool
+	Icon                   string // icons.image_96
+}
+
+// Workflow is the workflows store's fetch (fetchWorkflowsForTeamId):
+// functions.workflows.get {workflow_id}.
+func (ix *Interactive) Workflow(ctx context.Context, id string) (WorkflowInfo, error) {
+	var res struct {
+		Workflow struct {
+			ID            string            `json:"id"`
+			Title         string            `json:"title"`
+			Description   string            `json:"description"`
+			Steps         []rawStep         `json:"steps"`
+			Collaborators []string          `json:"collaborators"`
+			BotUserID     string            `json:"bot_user_id"`
+			IsPublished   *bool             `json:"is_published"`
+			Icons         map[string]string `json:"icons"`
+		} `json:"workflow"`
+	}
+	err := ix.call(ctx, "functions.workflows.get", url.Values{"workflow_id": {id}}, &res)
+	logCall("functions.workflows.get", "workflow="+id, err)
+	if err != nil {
+		return WorkflowInfo{}, err
+	}
+	w := res.Workflow
+	wi := WorkflowInfo{ID: firstNonEmpty(w.ID, id), Title: w.Title, Description: w.Description, Steps: stepsOf(w.Steps),
+		Collaborators: w.Collaborators, BotUserID: w.BotUserID, Published: true, Icon: w.Icons["image_96"]}
+	if w.IsPublished != nil {
+		wi.Published = *w.IsPublished
+	}
+	return wi, nil
+}
+
+// FlexpaneTripContext is the workflow details view's trip context
+// (workflowLinkTriggerUIContext {location: flexpane}, with the channel
+// it was opened from when that was a message, a bookmark or a
+// flexpane).
+func FlexpaneTripContext(ch string) TripContext {
+	c := TripContext{"location": "flexpane"}
+	if ch != "" {
+		c["channel_id"] = ch
+	}
+	return c
 }
 
 // Title is the shortcut's title: the trigger's name, else its workflow's.
@@ -260,14 +363,17 @@ type rawTrigger struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
 		App         struct {
-			ID    string            `json:"id"`
-			Name  string            `json:"name"`
-			Icons map[string]string `json:"icons"`
+			ID            string            `json:"id"`
+			Name          string            `json:"name"`
+			Icons         map[string]string `json:"icons"`
+			IsWorkflowApp bool              `json:"is_workflow_app"`
 		} `json:"app"`
 	} `json:"workflow"`
 	Details *struct {
-		IsPublished *bool  `json:"is_published"`
-		BotUserID   string `json:"bot_user_id"`
+		IsPublished   *bool     `json:"is_published"`
+		BotUserID     string    `json:"bot_user_id"`
+		Steps         []rawStep `json:"steps"`
+		Collaborators []string  `json:"collaborators"`
 	} `json:"workflow_details"`
 }
 
@@ -282,26 +388,77 @@ func (r rawTrigger) trigger() WorkflowTrigger {
 			break
 		}
 	}
+	t.IsWorkflowApp = r.Workflow.App.IsWorkflowApp
 	if d := r.Details; d != nil {
 		if d.IsPublished != nil {
 			t.Published = *d.IsPublished
 		}
 		t.BotUserID = d.BotUserID
+		t.Steps, t.Collaborators = stepsOf(d.Steps), d.Collaborators
 	}
 	return t
 }
 
-// wfState is an App's workflow memory: triggers by id.
+// wfState is an App's workflow memory: triggers by id, and the trigger
+// previews (Slack's workflowTriggerPreviews store, errors included).
 type wfState struct {
 	mu       sync.Mutex
 	triggers map[string]WorkflowTrigger
+	previews map[string]WorkflowTrigger
 }
 
 var wfStates sync.Map // *App -> *wfState
 
 func (ix *Interactive) wf() *wfState {
-	v, _ := wfStates.LoadOrStore(ix.a, &wfState{triggers: map[string]WorkflowTrigger{}})
+	v, _ := wfStates.LoadOrStore(ix.a, &wfState{triggers: map[string]WorkflowTrigger{}, previews: map[string]WorkflowTrigger{}})
 	return v.(*wfState)
+}
+
+// TriggerPreviews is the trigger previews store's fetch (EXgk
+// fetchTriggerPreviewsForTeamId): workflows.triggers.preview with the ids
+// comma-joined. Every preview, or its error (access_denied…), is kept for
+// TriggerPreview; the good ones join the triggers Trigger knows.
+func (ix *Interactive) TriggerPreviews(ctx context.Context, ids ...string) ([]WorkflowTrigger, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	var res struct {
+		Triggers []struct {
+			rawTrigger
+			Error string `json:"error"`
+		} `json:"triggers"`
+	}
+	err := ix.call(ctx, "workflows.triggers.preview", url.Values{"trigger_ids": {strings.Join(ids, ",")}}, &res)
+	logCall("workflows.triggers.preview", "n="+strconv.Itoa(len(ids)), err)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WorkflowTrigger, 0, len(res.Triggers))
+	st := ix.wf()
+	for _, r := range res.Triggers {
+		t := r.rawTrigger.trigger()
+		t.Error = r.Error
+		out = append(out, t)
+		if r.Error == "" {
+			ix.putTriggers(t)
+		}
+		if t.ID != "" {
+			st.mu.Lock()
+			st.previews[t.ID] = t
+			st.mu.Unlock()
+		}
+	}
+	return out, nil
+}
+
+// TriggerPreview is a trigger's preview as last fetched (getTriggerPreview
+// without the fetch); ok is false until TriggerPreviews brought it.
+func (ix *Interactive) TriggerPreview(id string) (WorkflowTrigger, bool) {
+	st := ix.wf()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	t, ok := st.previews[id]
+	return t, ok
 }
 
 func (ix *Interactive) putTriggers(ts ...WorkflowTrigger) {
@@ -663,24 +820,12 @@ func (ix *Interactive) ChannelWorkflowsTab(ctx context.Context, ch string) (Work
 	}
 	previews := map[string]WorkflowTrigger{}
 	if len(ids) > 0 {
-		var res struct {
-			Triggers []struct {
-				rawTrigger
-				Error string `json:"error"`
-			} `json:"triggers"`
-		}
-		err := ix.call(ctx, "workflows.triggers.preview", url.Values{"trigger_ids": {strings.Join(ids, ",")}}, &res)
-		logCall("workflows.triggers.preview", "n="+strconv.Itoa(len(ids)), err)
+		ts, err := ix.TriggerPreviews(ctx, ids...)
 		if err != nil {
 			return WorkflowsTab{}, err
 		}
-		for _, r := range res.Triggers {
-			t := r.rawTrigger.trigger()
-			t.Error = r.Error
+		for _, t := range ts {
 			previews[t.ID] = t
-			if r.Error == "" {
-				ix.putTriggers(t)
-			}
 		}
 	}
 	keep := func(id string) (WorkflowTrigger, bool) {

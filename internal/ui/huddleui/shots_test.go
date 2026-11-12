@@ -35,6 +35,8 @@ type shotEnv struct {
 	w  *window
 	h  *hcHost
 	fk *huddle.Fake
+
+	noShare bool // the fake's other person doesn't share their screen
 }
 
 func newShotEnv(t *testing.T, dark bool) *shotEnv {
@@ -67,6 +69,9 @@ func (e *shotEnv) join(access func() <-chan avperm.Status, open func(func(string
 	clip, err := os.ReadFile(filepath.Join("..", "..", "huddle", "testdata", "testsrc-320x180.h264"))
 	if err != nil {
 		e.t.Fatal(err)
+	}
+	if e.noShare {
+		clip = nil
 	}
 	e.fk = huddle.NewFake(clip, e.t.Errorf)
 	e.t.Cleanup(e.fk.Close)
@@ -224,7 +229,8 @@ func TestHuddleShotsMicOK(t *testing.T) {
 	s := e.join(nil, nil)
 	waitState(t, s, "connected", func(st huddle.State) bool { return st.Phase == huddle.Connected })
 	img := render(t, "window-mic-ok", 620, 400, func(gtx C) { e.w.layout(gtx) })
-	if n := pixeltest.Count(img, image.Rect(0, 30*shotScale, 620*shotScale, 160*shotScale), hudWarnBg, 6); n > 200 {
+	// (the band stops short of the connection button: its bars are #1d1c1d too)
+	if n := pixeltest.Count(img, image.Rect(0, 30*shotScale, 560*shotScale, 160*shotScale), hudWarnBg, 6); n > 200 {
 		t.Fatalf("a banner with a working mic (%d px)", n)
 	}
 	var ops op.Ops

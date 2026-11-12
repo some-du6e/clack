@@ -6,7 +6,6 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
-	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -22,6 +21,7 @@ import (
 // gridState is the table's scroll and hover state.
 type gridState struct {
 	scrollX, scrollY int
+	wheel            wheelScroll
 	hover            int // line under the pointer (-1 none)
 	hoverX           int
 	press            f32.Point
@@ -146,6 +146,10 @@ func (v *View) layoutGrid(gtx layout.Context, d *core.ListDoc, lv *lists.View, r
 	maxY := max(0, totalH-sz.Y)
 	maxX := max(0, g.x0+totalW+gtx.Dp(32)-sz.X)
 	v.gridEvents(gtx, d, maxX, maxY)
+	if dx, dy := g.wheel.tick(gtx); dx != 0 || dy != 0 {
+		g.scrollX = min(max(0, g.scrollX+dx), maxX)
+		g.scrollY = min(max(0, g.scrollY+dy), maxY)
+	}
 	v.gridKeys(gtx, d, sz.Y)
 	if g.reveal {
 		g.reveal = false
@@ -232,6 +236,12 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 		if groupCol != nil {
 			if ln.group == "" {
 				label = lists.EmptyGroupLabel(groupCol)
+			} else if groupCol.Type == lists.Checkbox || groupCol.Type == lists.Completed || groupCol.Type == lists.TodoCompleted {
+				// as the board's lane headers: the value's checkbox
+				at(gtx, image.Pt(x, (ln.h-gtx.Dp(20))/2), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
+					return checkbox(gtx, th, ln.group == "true")
+				})
+				x += gtx.Dp(28)
 			} else if ch, ok := groupCol.Choice(ln.group); ok {
 				x += optionPill(gtx, th, x, ln.h, ch, 15) + gtx.Dp(8)
 			} else {
@@ -258,7 +268,7 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 	case lineAdd:
 		defer op.Offset(image.Pt(0, ty)).Push(gtx.Ops).Pop()
 		ac := shade(th, "gray-70")
-		lw := th.Measure(gtx, 13, theme.Bold, "Add item")
+		lw := th.Measure(gtx, 13, theme.Bold, nsLists.T("Add item"))
 		bw := gtx.Dp(8+16+6+8) + lw
 		bx := g.x0 + gtx.Dp(4)
 		if g.hover == idx {
@@ -269,7 +279,7 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 		})
 		at(gtx, image.Pt(bx+gtx.Dp(30), 0), image.Pt(lw+2, ln.h), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, ln.h, func(gtx layout.Context) layout.Dimensions {
-				return th.Label(gtx, 13, theme.Bold, ac, "Add item")
+				return th.Label(gtx, 13, theme.Bold, ac, nsLists.T("Add item"))
 			})
 		})
 		return
@@ -433,7 +443,7 @@ func hglColor(th *theme.Theme) color.NRGBA {
 func (v *View) openButton(gtx layout.Context, x, h int) {
 	th := v.h.Theme()
 	c := &th.C
-	lw := th.Measure(gtx, 13, theme.Bold, "Open")
+	lw := th.Measure(gtx, 13, theme.Bold, nsLists.T("Open"))
 	w := lw + gtx.Dp(16)
 	bh := gtx.Dp(26)
 	at(gtx, image.Pt(x, (h-bh)/2), image.Pt(w, bh), func(gtx layout.Context) layout.Dimensions {
@@ -442,17 +452,14 @@ func (v *View) openButton(gtx layout.Context, x, h int) {
 		theme.Border(gtx, r, gtx.Dp(6), gtx.Dp(1), c.Border)
 		return at(gtx, image.Pt(gtx.Dp(8), 0), image.Pt(lw+2, bh), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
-				return th.Label(gtx, 13, theme.Bold, c.Fg, "Open")
+				return th.Label(gtx, 13, theme.Bold, c.Fg, nsLists.T("Open"))
 			})
 		})
 	})
 }
 
 func itemsLabel(n int) string {
-	if n == 1 {
-		return "1 item"
-	}
-	return itoa(n) + " items"
+	return nsLists.T("{count} {count, plural, =1 {item} other {items}}", "count", n)
 }
 
 // groupField is a group's value as a cell (for its label).
@@ -487,10 +494,7 @@ func (v *View) gridEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {
 		}
 		switch pe.Kind {
 		case pointer.Scroll:
-			dx, dy := int(pe.Scroll.X), int(pe.Scroll.Y)
-			if pe.Modifiers.Contain(key.ModShift) && dx == 0 {
-				dx, dy = dy, 0
-			}
+			dx, dy := g.wheel.event(gtx, pe, g.scrollX, g.scrollY, maxX, maxY, true)
 			g.scrollX = min(max(0, g.scrollX+dx), maxX)
 			g.scrollY = min(max(0, g.scrollY+dy), maxY)
 			g.hover = v.lineAt(int(pe.Position.Y))

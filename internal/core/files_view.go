@@ -127,6 +127,17 @@ func (a *App) FileInfo(ctx context.Context, id string) (File, error) {
 	return r.File.file(), nil
 }
 
+// EditFile is editFileApi (Rv7W over NQkX editFile) for an image's
+// details: files.edit {file, title (when set), alt_txt (always, "" clears
+// it), is_canvas_template: false}.
+func (a *App) EditFile(ctx context.Context, id, title, altText string) error {
+	p := url.Values{"file": {id}, "alt_txt": {altText}, "is_canvas_template": {"false"}}
+	if title != "" {
+		p.Set("title", title)
+	}
+	return a.C.Call(ctx, "files.edit", p, nil)
+}
+
 // RenameFile is EditFileDialog's Done: editFile's files.edit {file, title,
 // is_canvas_template: false} (Slack always sends is_canvas_template).
 func (a *App) RenameFile(ctx context.Context, id, title string) error {

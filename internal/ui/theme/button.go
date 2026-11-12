@@ -57,6 +57,10 @@ const (
 	ButtonV2Halo = 4
 )
 
+// OtlTer is --dt_color-otl-ter in t (the v2 secondary's border; the
+// share dialog's legacy split divider while disabled).
+func OtlTer(t *Theme) color.NRGBA { return v2OtlTer.of(t) }
+
 // ButtonV2Colors is a variation's paint: the background, the text and
 // icon colour, the border (zero: none), and what the pointer adds over the
 // background (Over at rest is zero).

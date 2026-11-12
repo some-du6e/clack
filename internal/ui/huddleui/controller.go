@@ -19,7 +19,6 @@ import (
 	"log"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -109,6 +108,8 @@ type Controller struct {
 	tick   sessionTick
 	mic    micAlerts   // the mic button's permission, NoAudioDetected, "You’re muted." (micalerts.go)
 	popout popoutState // huddles_screenshare_popout (popout.go)
+	share  shareUI     // your screen share: the picker, alerts, border, mini panel (share.go)
+	bg     bgCatalog   // the huddle themes (background.go)
 }
 
 // sessionTick is what onSession compares between changes.
@@ -403,12 +404,12 @@ func (c *Controller) shoutyRooster(channel string, start func()) bool {
 // show this message again." (checked = !huddles_show_shouty_rooster,
 // written on change), Cancel / OK.
 func ShoutyRoosterModal(h popups.Host, cv core.Conv, start func()) {
-	body := "You’ll be starting a huddle that every member of #" + cv.Name + " can join."
+	body := nsHuddles.T("You’ll be starting a huddle that every member of {channel} can join.", "channel", "#"+cv.Name)
 	if cv.NumMembers > 1 {
-		body = "You’ll be starting a huddle that all " + strconv.Itoa(cv.NumMembers) + " members of #" + cv.Name + " can join."
+		body = nsHuddles.T("You’ll be starting a huddle that all {count} members of {channel} can join.", "count", cv.NumMembers, "channel", "#"+cv.Name)
 	}
-	popups.ConfirmPrefModal(h, "Start a huddle in this channel?", body, "Cancel", "OK",
-		"Don’t show this message again.", "huddles_show_shouty_rooster", start)
+	popups.ConfirmPrefModal(h, nsHuddles.T("Start a huddle in this channel?"), body, nsHuddles.T("Cancel"), "OK",
+		nsHuddles.T("Don’t show this message again."), "huddles_show_shouty_rooster", start)
 }
 
 func (c *Controller) begin(channel, entry string) {
@@ -496,7 +497,7 @@ func (c *Controller) options(app *core.App) huddle.Options {
 			}
 			if ev.Message != nil && ev.Message.MuteRequest != nil && ev.Message.MuteRequest.PeerID == ev.SelfAttendeeID {
 				// HuddlesInformationalBanner "user_was_muted" (microphone-slash)
-				c.showBanner("Someone muted you.", "mic-off")
+				c.showBanner(nsHuddles.T("Someone muted you."), "mic-off")
 			}
 		},
 		OnEnd: func(err error) { go c.ended(err) },
@@ -516,6 +517,7 @@ func (c *Controller) onSession() {
 		c.peersTick(s, st)
 		c.autoLowerHand(s, st)
 		c.musicTick(s, st)
+		c.shareTick(s, st)
 		if tt := c.taut(); tt != nil {
 			peers := make(map[string]string, len(st.Participants))
 			for _, p := range st.Participants {
@@ -609,6 +611,7 @@ func (c *Controller) ended(err error) {
 	c.stopAloneTimer()
 	c.stopMicChecks()
 	c.closePopouts()
+	c.shareEnded()
 	if w != nil {
 		w.close()
 	}

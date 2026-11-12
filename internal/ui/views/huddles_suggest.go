@@ -118,7 +118,7 @@ func (v *Huddles) layoutDMSuggestions(gtx C) D {
 	defer opOffset(gtx, image.Pt(x, top)).Pop()
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(cw, gtx.Constraints.Max.Y)}
-	d := v.sectionTitle(g, hdNS.T("Direct messages"), hdNS.T("Talk privately 1:1 with someone"))
+	d := v.sectionTitle(g, nsHuddles.T("Direct messages"), nsHuddles.T("Talk privately 1:1 with someone"))
 	y := d.Size.Y + gtx.Dp(12)
 	n := len(ids)
 	if n == 3 && w <= gtx.Dp(1000) { // @media (width<=1000px): the last card hides
@@ -229,7 +229,7 @@ func (v *Huddles) cardShadow(gtx C, r image.Rectangle, rad int) {
 // padding 6px 12px, radius 6, base-pry), shown only while its card or row
 // is hovered, with a ring and a soft 18px shadow.
 func (v *Huddles) startDisplay(gtx C, shown bool, bg color.NRGBA) D {
-	label := hdNS.T("Start Huddle")
+	label := nsHuddles.T("Start Huddle")
 	tw := v.th.Measure(gtx, 15, wBold, label)
 	sz := image.Pt(tw+2*gtx.Dp(12), gtx.Dp(22)+2*gtx.Dp(6))
 	if !shown {
@@ -262,11 +262,11 @@ func (v *Huddles) inviteTeammates(gtx C) D {
 			return row(gtx, layout.Middle,
 				layout.Flexed(1, func(gtx C) D {
 					return col(gtx,
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, fg, hdNS.T("Invite teammates")) }),
-						layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, fg, hdNS.T("Add teammates to huddle 1:1")) }),
+						layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wBold, fg, nsHuddles.T("Invite teammates")) }),
+						layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, fg, nsHuddles.T("Add teammates to huddle 1:1")) }),
 					)
 				}),
-				layout.Rigid(func(gtx C) D { return v.outlineButton(gtx, v.clk("invite"), "", hdNS.T("Add coworkers"), false) }),
+				layout.Rigid(func(gtx C) D { return v.outlineButton(gtx, v.clk("invite"), "", nsHuddles.T("Add coworkers"), false) }),
 			)
 		})
 	})
@@ -339,7 +339,7 @@ func (v *Huddles) layoutChannelSuggestions(gtx C) D {
 	defer opOffset(gtx, image.Pt(x, top)).Pop()
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(cw, gtx.Constraints.Max.Y)}
-	d := v.sectionTitle(g, hdNS.T("Channels"), hdNS.T("Meet with a whole team, or just let people drop in and out"))
+	d := v.sectionTitle(g, nsHuddles.T("Channels"), nsHuddles.T("Meet with a whole team, or just let people drop in and out"))
 	y := d.Size.Y + gtx.Dp(10)
 	for i, c := range chans {
 		func() {
