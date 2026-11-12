@@ -51,6 +51,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf16"
 
@@ -434,6 +435,8 @@ func (a *App) SetOwnProfile(ctx context.Context, profile map[string]any) (slack.
 // mergeSelfProfile is NJNP's {...currentMember, profile}: the viewer's
 // cached member with the new profile.
 func (a *App) mergeSelfProfile(p slack.Profile) {
+	selfEditMu.Lock()
+	defer selfEditMu.Unlock()
 	id := a.Self().ID
 	u, ok := a.S.User(id)
 	if !ok || id == "" {
@@ -455,6 +458,11 @@ func (a *App) mergeSelfProfile(p slack.Profile) {
 	}
 }
 
+// selfEditMu serializes the cache updates after a save: the tz pref and
+// users.profile.set answer concurrently, and each rewrites the viewer's
+// cached member from what it reads.
+var selfEditMu sync.Mutex
+
 // SetOwnTimezone writes the tz pref (setUserPrefByApi) and moves the
 // viewer's cached member to it, as the user_change that follows would.
 func (a *App) SetOwnTimezone(ctx context.Context, tz string) error {
@@ -466,6 +474,8 @@ func (a *App) SetOwnTimezone(ctx context.Context, tz string) error {
 }
 
 func (a *App) setSelfTZ(tz string) {
+	selfEditMu.Lock()
+	defer selfEditMu.Unlock()
 	id := a.Self().ID
 	u, ok := a.S.User(id)
 	if !ok || tz == "" {
