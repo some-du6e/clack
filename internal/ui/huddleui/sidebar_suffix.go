@@ -4,12 +4,19 @@ import (
 	"image"
 	"image/color"
 	"strconv"
+	"strings"
+	"time"
 
+	"gioui.org/gesture"
+	"gioui.org/io/pointer"
+	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/text"
 
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -35,6 +42,11 @@ import (
 //     theme-base-inv-hgl-1 with content-inv-pry ink, and on the selected
 //     row surf-inv with theme-content-hgl-1 (your huddle) or base-pry with
 //     content-pry (one you're not in).
+//   - The stack (withTooltip) and the badge (lw/3's withTooltip, default
+//     true) each show HuddleChannelTooltip without the channel's name
+//     (below). The stack, the badge's count and the tooltip read
+//     getActiveMembersByChannelId: your own huddle lists the others and
+//     then you.
 
 // sbBadge is the badge's colours by theme (Slack's default theme tables:
 // the inverted sidebar scope in light mode, dark mode).
@@ -95,9 +107,10 @@ func sbFaceSteps(n, s int) []int {
 // SidebarSuffix draws a conversation row's huddle suffix ending at right
 // (row coordinates, rowH tall) when a huddle is on in ch, and returns the
 // new right edge (right itself when there's none). sel is the selected
-// row. Main window goroutine.
+// row. The faces and the badge each carry HuddleChannelTooltip. Main
+// window goroutine.
 func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, rowH int, sel bool) int {
-	people := c.headerPeople(ch)
+	people := c.activeMembers(ch)
 	if _, live := c.Live(ch); !live && !c.In(ch) || len(people) == 0 {
 		return right
 	}
@@ -112,6 +125,7 @@ func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, row
 			bg, ink = k.selBg, k.selInk
 		}
 	}
+	hs := c.hdrState(ch)
 	right -= gtx.Dp(4) // margin-right
 	num := strconv.Itoa(len(people))
 	nw := th.Measure(gtx, 13, theme.Bold, num)
@@ -129,6 +143,7 @@ func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, row
 		at(gtx, image.Pt(0, (h-m.Y)/2), m, func(gtx C) D { return th.Label(gtx, 13, theme.Bold, ink, num) })
 		return D{Size: image.Pt(nw, h)}
 	})
+	c.sbTipArea(gtx, th, &hs.sbBadge, r, ch, false) // lw/3's withTooltip
 	right = x0
 	// the fake mask: its path clipped to its 2×20 box
 	mw := gtx.Dp(2)
@@ -141,9 +156,17 @@ func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, row
 	}()
 	right -= mw
 	if c.transitioning(ch) {
+		hs.sbFaces = sbTip{} // the stack is gone, and its tooltip with it
 		return right
 	}
-	// the faces
+	return c.sbStack(gtx, th, &hs.sbFaces, ch, people, right, rowH, false) - gtx.Dp(8) // margin-left 8px
+}
+
+// sbStack draws HuddleAvatarStackContent (excludeIcon,
+// excludeMemberOverflowCount, x_small faces) for ch ending at right with
+// its tooltip (withTooltip; includeChannelNameInTooltip is withChannel),
+// and returns its left edge.
+func (c *Controller) sbStack(gtx C, th *theme.Theme, t *sbTip, ch string, people []string, right, rowH int, withChannel bool) int {
 	fs := gtx.Dp(hdrFace)
 	n := min(len(people), sbMaxFaces)
 	steps := sbFaceSteps(n, fs)
@@ -153,7 +176,8 @@ func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, row
 		p := image.Pt(fx+steps[i], (rowH-fs)/2)
 		c.sbFace(gtx, th, u, p, fs, i > 0)
 	}
-	return fx - gtx.Dp(8) // margin-left 8px
+	c.sbTipArea(gtx, th, t, image.Rect(fx, (rowH-fs)/2, right, (rowH+fs)/2), ch, withChannel)
+	return fx
 }
 
 // sbFace draws one face of the stack at p (s px), clipped by the stack's
@@ -172,4 +196,384 @@ func (c *Controller) sbFace(gtx C, th *theme.Theme, id string, p image.Point, s 
 		}
 	}
 	theme.RRect(gtx, image.Rectangle{Max: sz}, rad, th.C.Skeleton) // .c-base_icon: base-ter
+}
+
+// activeMembers is getActiveMembersByChannelId (client-boot b0mi ft / A7
+// with excludeSelf false) for the stack, the badge's count and the
+// tooltip: in your own huddle the connected peers and then you (the
+// client store's peers, then the viewer pushed last), elsewhere the room's
+// participants in its order.
+func (c *Controller) activeMembers(ch string) []string {
+	s := c.Session()
+	if s == nil || s.Channel() != ch {
+		return c.headerPeople(ch)
+	}
+	st := s.State()
+	if st.Phase == huddle.Ended {
+		return c.headerPeople(ch)
+	}
+	self := c.selfID()
+	var out []string
+	for _, p := range st.Participants {
+		if !p.Self && p.UserID != self && !contains(out, p.UserID) {
+			out = append(out, p.UserID)
+		}
+	}
+	return append(out, self)
+}
+
+// ---- HuddleChannelTooltip ----
+//
+// Every trigger is Slack's Tooltip (F2XN: position top, delay 150) around
+// HuddleChannelTooltip (client-boot Soit), modern.vendor's rules:
+//
+//   - .c-tooltip__tip: base-inv-pry, max-width 200px, padding 8px 12px,
+//     13px bold, line-height 1.25, centred; .p-huddle_channel_tooltip
+//     inside it pads another 8px.
+//   - HuddleTooltipAvatarStack (MemberTooltipAvatarStack): the first five
+//     members (A7), medium 36px avatars in inline-block boxes 28px wide
+//     (medium - 8; the last one auto), each with border-radius 8px and a
+//     2px #1d1c1d ring (box-shadow 0 0 0 2px), margin 4px above and
+//     below. With more than five the fifth carries c-avatar__additional
+//     _overlay: "+N" (N = count - 4) or "9+", 15px bold white on #00000080.
+//   - the action text (margin_bottom_25: 4px under it, empty or not): the
+//     huddle's topic (U4Fz: the optimistic topic, else the call's name),
+//     or "Only {maxParticipants} people can join a huddle" once the count
+//     reaches getParticipantLimit (zq6z df: 250 with
+//     increase_huddles_max_participants, else 50).
+//   - the member text: "Just you in the huddle", "{name} is in the
+//     huddle", or "{memberCount} people in the huddle", each with
+//     " #{channelName}" when the trigger asks for the channel
+//     (includeChannelNameInTooltip: SectionHuddleIndicator, never a row's
+//     own suffix) and the conversation is neither a DM nor a group DM.
+
+// sbTip is one HuddleChannelTooltip trigger's hover and timing.
+type sbTip struct {
+	hover gesture.Hover
+	tip   popups.TipState
+}
+
+// sbTipDelay is F2XN Tooltip's default delay.
+const sbTipDelay = 150 * time.Millisecond
+
+// sbTipArea makes r (current coordinates) t's hover target, passing
+// pointer events through to the row under it, and shows HuddleChannelTooltip
+// for ch above it once hovered.
+func (c *Controller) sbTipArea(gtx C, th *theme.Theme, t *sbTip, r image.Rectangle, ch string, withChannel bool) {
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	func() {
+		defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+		defer clip.Rect{Max: r.Size()}.Push(gtx.Ops).Pop()
+		t.hover.Add(gtx.Ops)
+	}()
+	t.tip.Delay = sbTipDelay
+	popups.TooltipBox(gtx, th, &t.tip, t.hover.Update(gtx.Source), r.Size(), popups.Above, func(gtx C) D {
+		return c.channelTip(gtx, th, ch, withChannel)
+	})
+}
+
+// Huddle participant limits (zq6z getParticipantLimit).
+const (
+	sbLimit         = 50
+	sbLimitIncrease = 250
+)
+
+// participantLimit is getParticipantLimit.
+func (c *Controller) participantLimit() int {
+	if c.on(ExpMaxParticipants) {
+		return sbLimitIncrease
+	}
+	return sbLimit
+}
+
+// topicFor is U4Fz: your huddle's topic (Clack applies a rename to the
+// session at once, Slack's optimistic topic), else the call's name.
+func (c *Controller) topicFor(ch string) string {
+	if s := c.Session(); s != nil && s.Channel() == ch {
+		return s.State().Name
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.live[ch].Name
+}
+
+// tipText is HuddleChannelTooltip's action and member lines for ch.
+func (c *Controller) tipText(ch string, withChannel bool) (action, member string) {
+	members := c.activeMembers(ch) // ft
+	n := len(members)
+	if t := c.topicFor(ch); strings.TrimSpace(t) != "" {
+		action = t // FormattedHuddleTopic
+	}
+	if n >= c.participantLimit() {
+		action = nsHuddles.T("Only {maxParticipants} people can join a huddle", "maxParticipants", c.participantLimit())
+	}
+	var chName string
+	if app := c.h.Core(); withChannel && app != nil {
+		if conv, ok := app.Conv(ch); ok && conv.Kind != "im" && conv.Kind != "mpim" { // !isHuddleChannel && !JM
+			chName = conv.Name // deprecatedUnsafeGetDisplayName: no prefix
+		}
+	}
+	withChannel = chName != ""
+	self := c.selfID()
+	switch {
+	case n == 1 && members[0] == self && withChannel:
+		member = nsHuddles.T("Just you in the huddle #{channelName}", "channelName", chName)
+	case n == 1 && withChannel:
+		member = nsHuddles.T("{name} is in the huddle #{channelName}", "name", c.userName(members[0]), "channelName", chName)
+	case withChannel:
+		member = nsHuddles.T("{memberCount} people in the huddle #{channelName}", "memberCount", n, "channelName", chName)
+	case n == 1 && members[0] == self:
+		member = nsHuddles.T("Just you in the huddle")
+	case n == 1:
+		member = nsHuddles.T("{name} is in the huddle", "name", c.userName(members[0]))
+	default:
+		member = nsHuddles.T("{memberCount} people in the huddle", "memberCount", n)
+	}
+	return action, member
+}
+
+// Tooltip geometry (px at 1x).
+const (
+	tipMaxW    = 200 // .c-tooltip__tip max-width (border-box)
+	tipPadX    = 12 + 8
+	tipPadY    = 8 + 8
+	tipFace    = 36 // medium
+	tipFaceBox = tipFace - 8
+	tipFaceRad = 8
+	tipRing    = 2
+	tipMaxFace = 5
+)
+
+// tipRingColor is the avatars' box-shadow: #1d1c1d in both modes.
+var tipRingColor = rgba(0x1d, 0x1c, 0x1d, 1)
+
+// channelTip draws HuddleChannelTooltip's body at the origin (its
+// padding included) and returns the tip's size.
+func (c *Controller) channelTip(gtx C, th *theme.Theme, ch string, withChannel bool) D {
+	members := c.activeMembers(ch)
+	action, member := c.tipText(ch, withChannel)
+	ink := th.C.TooltipText
+	padX, padY := gtx.Dp(tipPadX), gtx.Dp(tipPadY)
+	textW := gtx.Dp(tipMaxW) - 2*padX
+	para := func(txt string) (op.CallOp, D) {
+		m := op.Record(gtx.Ops)
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(textW, 1<<20)}
+		d := th.Layout(g, theme.TextStyle{Size: 13, Weight: theme.Bold, Color: ink, LineHeight: 13 * 1.25, Align: text.Middle}, txt)
+		return m.Stop(), d
+	}
+	var actCall, memCall op.CallOp
+	var actD, memD D
+	if action != "" {
+		actCall, actD = para(action)
+	}
+	memCall, memD = para(member)
+	shown := members[:min(len(members), tipMaxFace)]
+	fs, fb := gtx.Dp(tipFace), gtx.Dp(tipFaceBox)
+	stackW := 0
+	if len(shown) > 0 {
+		stackW = (len(shown)-1)*fb + fs
+	}
+	w := max(stackW, actD.Size.X, memD.Size.X)
+	y := padY
+	stackH := 0
+	if len(shown) > 0 {
+		stackH = gtx.Dp(4) + fs + gtx.Dp(4)
+	}
+	h := padY + stackH + actD.Size.Y + gtx.Dp(4) + memD.Size.Y + padY
+	sz := image.Pt(w+2*padX, h)
+	if len(shown) > 0 {
+		x0 := (sz.X - stackW) / 2
+		top := y + gtx.Dp(4)
+		ring, rad := gtx.Dp(tipRing), gtx.Dp(tipFaceRad)
+		for i, u := range shown {
+			p := image.Pt(x0+i*fb, top)
+			theme.RRect(gtx, image.Rectangle{Min: p.Sub(image.Pt(ring, ring)), Max: p.Add(image.Pt(fs+ring, fs+ring))}, rad+ring, tipRingColor)
+			c.tipFace(gtx, th, u, p, fs, rad)
+			if i == len(shown)-1 && len(members) > tipMaxFace {
+				more := len(members) - len(shown) + 1
+				label := "+" + strconv.Itoa(more)
+				if more > 9 {
+					label = "9+"
+				}
+				r := image.Rectangle{Min: p, Max: p.Add(image.Pt(fs, fs))}
+				theme.RRect(gtx, r, rad, rgba(0, 0, 0, .5))
+				at(gtx, p, image.Pt(fs, fs), func(gtx C) D {
+					centerLabel(gtx, th, image.Pt(fs, fs), 15, theme.Bold, rgba(255, 255, 255, 1), label)
+					return D{Size: image.Pt(fs, fs)}
+				})
+			}
+		}
+		y += stackH
+	}
+	if action != "" {
+		at(gtx, image.Pt((sz.X-actD.Size.X)/2, y), actD.Size, func(gtx C) D { actCall.Add(gtx.Ops); return actD })
+	}
+	y += actD.Size.Y + gtx.Dp(4) // margin_bottom_25
+	at(gtx, image.Pt((sz.X-memD.Size.X)/2, y), memD.Size, func(gtx C) D { memCall.Add(gtx.Ops); return memD })
+	return D{Size: sz}
+}
+
+// tipFace draws one of the tooltip's avatars at p (s px, rad corners); one
+// that hasn't loaded is the base-ter tile.
+func (c *Controller) tipFace(gtx C, th *theme.Theme, id string, p image.Point, s, rad int) {
+	defer op.Offset(p).Push(gtx.Ops).Pop()
+	sz := image.Pt(s, s)
+	if url := c.avatarURL(id, s); url != "" && c.h.Images() != nil {
+		if img, ok := c.h.Images().Get(url, s); ok {
+			theme.Image(gtx, img, sz, rad)
+			return
+		}
+	}
+	theme.RRect(gtx, image.Rectangle{Max: sz}, rad, th.C.Skeleton)
+}
+
+// ---- SectionHuddleIndicator ----
+//
+// A collapsed section's heading (render SectionMenuNewInternal, under
+// huddle_section_indicator: pSxm I6) ends its buttonsContainer (flex,
+// gap 4px, margin-left auto, after the ⋯ button) with
+// SectionHuddleIndicator (render 2LNF) for the section's
+// channelsAssociatedOrdered: HuddleAvatarStackContent (the row suffix's
+// stack: excludeIcon, excludeMemberOverflowCount, two x_small faces, the
+// crescent mask) with class huddleAvatarStack (margin-left 0),
+// withTooltip and includeChannelNameInTooltip. Which huddle it shows is
+// getChannelIdWithActiveHuddle (b0mi nf) over the section's channels that
+// have one (jg: an active huddle with participants, yours read from your
+// session):
+//
+//  1. the channel of the huddle inviting you, if it's in the section
+//     (getActiveInviteForCurrentTeam);
+//  2. otherwise only channels you're a member of (JUrK isMemberOfChannel),
+//     not muted (pTqQ), not your self-DM (N9WL), not a DM with Slackbot
+//     or a bot (DUy0), that you can post in (o/IU canUserPostInChannel;
+//     is_huddle_channel, which Clack doesn't read, would also do), not a
+//     preview, archived, frozen or pending Slack Connect channel, and not
+//     a DM with an invited user (Opi6 dq, which Clack can't tell);
+//  3. of those, the one with your huddle, else the earliest started
+//     (date_start; the first in section order on a tie).
+//
+// The stack hides, as on a row, while your huddle there is starting or
+// ending. Its own click does nothing: it isn't inside toggleAndLabel, so
+// the heading doesn't collapse or expand.
+
+const (
+	// ExpSectionIndicator is pSxm I6.
+	ExpSectionIndicator = "huddle_section_indicator"
+	// ExpMaxParticipants is pSxm nC (getParticipantLimit 250, else 50).
+	ExpMaxParticipants = "increase_huddles_max_participants"
+)
+
+// SectionHuddle is getChannelIdWithActiveHuddle over ids (a section's
+// channelsAssociatedOrdered): the channel whose huddle a collapsed heading
+// shows, "" for none. "" too while huddle_section_indicator is off.
+func (c *Controller) SectionHuddle(ids []string) string {
+	if !c.on(ExpSectionIndicator) {
+		return ""
+	}
+	var have []string // jg, in the section's order
+	for _, ch := range ids {
+		if _, live := c.Live(ch); (live || c.In(ch)) && len(c.activeMembers(ch)) > 0 {
+			have = append(have, ch)
+		}
+	}
+	if len(have) == 0 {
+		return ""
+	}
+	app := c.h.Core()
+	c.mu.Lock()
+	inv := c.inv
+	c.mu.Unlock()
+	if inv != nil && contains(have, inv.Channel) && (app == nil || inv.Team == "" || app.S.TeamID == "" || inv.Team == app.S.TeamID) {
+		return inv.Channel
+	}
+	var ok []string
+	for _, ch := range have {
+		if c.sectionEligible(ch) {
+			ok = append(ok, ch)
+		}
+	}
+	if len(ok) == 0 {
+		return ""
+	}
+	if s := c.Session(); s != nil && contains(ok, s.Channel()) {
+		return s.Channel()
+	}
+	best, start := ok[0], c.startOf(ok[0])
+	for _, ch := range ok[1:] {
+		if t := c.startOf(ch); t > 0 && (start <= 0 || t < start) {
+			best, start = ch, t
+		}
+	}
+	return best
+}
+
+// startOf is the huddle's date_start in ch (0 when unknown).
+func (c *Controller) startOf(ch string) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.live[ch].Start
+}
+
+// sectionEligible is getChannelIdWithActiveHuddle's filter for ch.
+func (c *Controller) sectionEligible(ch string) bool {
+	app := c.h.Core()
+	if app == nil {
+		return false
+	}
+	conv, ok := app.Conv(ch)
+	raw, rok := app.S.Conv(ch)
+	if !ok || !rok {
+		return false // isExistentObject
+	}
+	im, mpim := conv.Kind == "im", conv.Kind == "mpim"
+	if !(im || mpim || raw.IsMember) || conv.Preview { // isMemberOfChannel, isPreview
+		return false
+	}
+	if conv.Muted || conv.IsArchived || raw.IsFrozen || raw.IsPendingExtShared && im {
+		return false
+	}
+	if im {
+		if conv.User == c.selfID() || conv.User == "USLACKBOT" || conv.User == "USLACK" {
+			return false // N9WL, isChannelSlackbotIm
+		}
+		if u, ok := c.user(conv.User); ok && u.IsBot {
+			return false // isBotUser
+		}
+	}
+	return app.PostingFor(raw).CanPost() // canUserPostInChannel (not archived, not frozen, not read-only)
+}
+
+// SectionIndicatorWidth is the room ch's SectionHuddleIndicator takes in a
+// heading (0 when it's hidden), its 4px gap to the ⋯ button not included.
+func (c *Controller) SectionIndicatorWidth(gtx C, ch string) int {
+	if ch == "" || c.transitioning(ch) {
+		return 0
+	}
+	n := min(len(c.activeMembers(ch)), sbMaxFaces)
+	if n == 0 {
+		return 0
+	}
+	fs := gtx.Dp(hdrFace)
+	return sbFaceSteps(n, fs)[n-1] + fs
+}
+
+// SectionIndicator draws a collapsed heading's SectionHuddleIndicator for
+// ch ending at right (row coordinates, rowH tall), with its tooltip, and
+// returns its left edge (right when there's none). key is the section.
+func (c *Controller) SectionIndicator(gtx C, th *theme.Theme, key, ch string, right, rowH int) int {
+	t := &c.hdrState("\x00section:" + key).sbFaces
+	if c.SectionIndicatorWidth(gtx, ch) == 0 {
+		*t = sbTip{}
+		return right
+	}
+	return c.sbStack(gtx, th, t, ch, c.activeMembers(ch), right, rowH, true)
+}
+
+// SectionIndicatorHovered reports whether the pointer is over section
+// key's indicator (the heading then skips the click: the stack sits
+// outside SectionMenuNew's toggleAndLabel).
+func (c *Controller) SectionIndicatorHovered(gtx C, key string) bool {
+	hs := c.hdr["\x00section:"+key]
+	return hs != nil && hs.sbFaces.hover.Update(gtx.Source)
 }

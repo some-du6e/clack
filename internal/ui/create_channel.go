@@ -173,7 +173,7 @@ func (a *App) sbHeadingControls(gtx layout.Context, r *sbRow, hovered bool, sz i
 	}
 	c := &a.sbPal
 	bs := gtx.Dp(24)
-	x := sz.X - gtx.Dp(8) - bs
+	x := sz.X - gtx.Dp(8) - bs - a.sidebar.headInd // left of a SectionHuddleIndicator
 	y := (sz.Y - bs) / 2
 	hover := c.SidebarHover
 	if sec.Type == "channels" {
