@@ -11,6 +11,7 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run search.yml --ref <branch>)
     paths:
       - "internal/core/search*.go"
+      - "internal/core/online*.go"
       - "internal/core/types.go"
       - "internal/slack/more.go"
       - "internal/fakeslack/search.go"
@@ -49,7 +50,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$SEARCH_SHOTS_DIR"
-          go test -count=1 -v -run 'TestSearch' ./internal/core
+          go test -count=1 -v -run 'TestSearch|TestClientOnline' ./internal/core
           go test -count=1 -v ./internal/fakeslack
           go test -count=1 -v -run 'TestNoHardCodedHints' ./internal/ui/shortcut
           xvfb-run -a go test -count=1 -v -run 'TestSearch' ./internal/ui/popups

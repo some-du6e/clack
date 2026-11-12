@@ -14,7 +14,8 @@ package popups
 // Dividers 1px rgba(29,28,29,.13) inset 16. Message cards: 1px border,
 // radius 8, avatar 36, name 15/900, "# channel" 13px, time right, text 15px
 // with rgba(255,198,0,.18) term highlights. Footer 45 tall: ▲▼ light key
-// chips + "Select", right "Give feedback" link.
+// chips + "Select", right "Give feedback" link; offline, the "No
+// connection." notice in their place (srOfflineNotice).
 
 import (
 	"context"
@@ -39,6 +40,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
@@ -203,6 +205,13 @@ type SearchPopover struct {
 	pills   srPillState
 	tb      srTBState
 	listOrg image.Point // the list's window origin, last layout
+
+	// setText: while uqOn the box shows the text of the suggestion ↑ / ↓
+	// picked, and uq is the user's query the suggestions are for (with
+	// uqArmed, its acArmed). See srSetText.
+	uq      srBox
+	uqOn    bool
+	uqArmed bool
 }
 
 // NewQuickSwitcher opens the Ctrl+K switcher: empty query, centered at the
@@ -416,7 +425,7 @@ func (p *SearchPopover) candRow(c srCand, typing bool) srRow {
 
 // rebuild recomputes the rows for the current query and results.
 func (p *SearchPopover) rebuild(now time.Time, resetSel bool) {
-	q := strings.TrimSpace(p.query)
+	q := strings.TrimSpace(p.userQuery())
 	rows := p.full[:0]
 	if q == "" {
 		rows = p.emptyRows(rows)
@@ -481,6 +490,61 @@ func (p *SearchPopover) pick(i int) {
 func (p *SearchPopover) unpick() {
 	p.picked = false
 	p.setSel(p.firstRow())
+}
+
+// userQuery is the query the suggestions are for: the box's text, or
+// the user's while the box shows a picked suggestion's (setText).
+func (p *SearchPopover) userQuery() string {
+	if p.uqOn {
+		return p.uq.text
+	}
+	return p.query
+}
+
+// srSetText is the omniswitcher's onSuggestionSelected with setText (lj3A
+// a$, which ↑ / ↓ call: SearchAutocomplete's increment/
+// decrementSelectedIndex; the pointer's onMouseMove and the caret keys
+// pass setText false and leave the box alone). A picked query completion
+// (getQueryReplacementOps: a recent search, client-boot y+lP's
+// queryHistory, is one) puts its suggestion_replacement_ops in the box
+// as a display query (isQueryUserGenerated false: no new search, the
+// suggestions stay the user's); any other row, or none (restoreUserQuery,
+// past either end), puts the user's query back, as the searchy mode
+// does. "Show results for:" is queryUser (tGcK's query-echo): its
+// replacement is the user's query.
+func (p *SearchPopover) srSetText() {
+	if p.picked && p.sel >= 0 && p.sel < len(p.rows) && p.rows[p.sel].kind == srRQuery {
+		if !p.uqOn {
+			p.uq, p.uqArmed, p.uqOn = p.box(), p.acArmed, true
+		}
+		text, toks := srDisplayQuery(p.h, p.rows[p.sel].id)
+		p.showBox(srBox{text: text, toks: toks})
+		p.acArmed = false // Texty completes what the user types
+		return
+	}
+	p.restoreUserQuery()
+}
+
+// restoreUserQuery is restoreUserQuery (lj3A aN): the user's query back
+// in the box.
+func (p *SearchPopover) restoreUserQuery() {
+	if !p.uqOn {
+		return
+	}
+	b, armed := p.uq, p.uqArmed
+	p.uq, p.uqOn, p.uqArmed = srBox{}, false, false
+	p.showBox(b)
+	p.acArmed = armed
+}
+
+// showBox puts b in the box, the caret at its end, without a new search.
+func (p *SearchPopover) showBox(b srBox) {
+	if b.text != p.ed.Text() {
+		p.ed.SetText(b.text)
+	}
+	n := len([]rune(b.text))
+	p.ed.SetCaret(n, n)
+	p.query, p.tokens = b.text, b.toks
 }
 
 func (p *SearchPopover) setSel(i int) {
@@ -966,6 +1030,8 @@ func (p *SearchPopover) onQuery(gtx layout.Context) { p.queryChanged(gtx.Now) }
 
 // queryChanged restarts the searches for the box's new text.
 func (p *SearchPopover) queryChanged(now time.Time) {
+	// the user changed the box: what it shows is their query now
+	p.uq, p.uqOn, p.uqArmed = srBox{}, false, false
 	p.seq++
 	p.changed = now
 	p.dirFired, p.msgFired = false, false
@@ -985,7 +1051,7 @@ func (p *SearchPopover) queryChanged(now time.Time) {
 }
 
 func (p *SearchPopover) tick(gtx layout.Context) {
-	q := strings.TrimSpace(p.query)
+	q := strings.TrimSpace(p.userQuery())
 	c := p.h.Core()
 	if q == "" || c == nil {
 		return
@@ -1117,7 +1183,7 @@ func (p *SearchPopover) submit(q string) {
 // CombinedSearchFeedbackModal with feedbackType "omniswitcher", the query
 // and the suggestions on screen). The popover closes under it.
 func (p *SearchPopover) openFeedback() {
-	q, sess := strings.TrimSpace(p.query), p.sess
+	q, sess := strings.TrimSpace(p.userQuery()), p.sess
 	sugg := srFeedbackSuggestions(p.rows)
 	p.Dismiss()
 	openSearchFeedback(p.h, srFeedbackOpts{feedbackType: "omniswitcher", query: q, payload: func() any {
@@ -1205,6 +1271,8 @@ func (p *SearchPopover) activate(i int) {
 		p.Dismiss()
 		p.h.Navigate(r.id)
 	case srRShow:
+		// the query echo's own replacement: the user's query
+		p.restoreUserQuery()
 		p.submit(p.reqQuery(p.query))
 	case srRQuery:
 		p.submit(r.id)
@@ -1248,6 +1316,7 @@ func (p *SearchPopover) move(d int) {
 		}
 	}
 	p.ensure = true
+	p.srSetText()
 }
 
 func (p *SearchPopover) keys(gtx layout.Context) {
@@ -1341,7 +1410,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{}
 	p.loadSnap(gtx.Now)
-	if c := p.h.Core(); c != nil && strings.TrimSpace(p.query) == "" {
+	if c := p.h.Core(); c != nil && strings.TrimSpace(p.userQuery()) == "" {
 		// the history and Recent places follow the recents' arrival and
 		// the read experiment's group (an Experiments plugin flips it live)
 		v, g := c.RecentsVersion(), c.Experiment("desktop_search_recents_read")
@@ -1483,7 +1552,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	// the input row, the quick filter row while it shows, the 1px line
 	inputH := dp(gtx, 48) + p.qfRowH(gtx) + 1
 	padT, padB := dp(gtx, 8), dp(gtx, 8)
-	footH := dp(gtx, 45)
+	footH := p.footerH(gtx, th, w)
 	content := 0
 	for i := range p.rows {
 		content += dp(gtx, p.rows[i].heightDp())
@@ -1754,7 +1823,99 @@ func (p *SearchPopover) ghostText() string {
 	return string(name[len(q):]) + nsSearch.T(" — Open")
 }
 
+// srClientOnline is isClientOnline (core/online.go) for the footer; signed
+// out counts as online. Tests replace it.
+var srClientOnline = func(h Host) bool {
+	c := h.Core()
+	return c == nil || c.ClientOnline()
+}
+
+// srOfflineText is the footer's offline notice, rt'd in the search I18n
+// (lj3A Footer's eC) with the cloud-offline icon at {iconOffline}.
+const srOfflineText = "{iconOffline} <strong>No connection.</strong> Search is not available while offline, and navigating to conversations may be limited."
+
+// footerH is the footer's height: 45 (padding 12 16, the 20px key chips,
+// the 1px border-top), or with the offline notice its lines in the
+// modal's 16px line-height (.c-search_modal) plus the padding and border.
+func (p *SearchPopover) footerH(gtx layout.Context, th *theme.Theme, w int) int {
+	if srClientOnline(p.h) {
+		return dp(gtx, 45)
+	}
+	_, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+		return srOfflineNotice(gtx, th, color.NRGBA{}, srOfflineW(gtx, w))
+	})
+	return d.Size.Y + dp(gtx, 24) + 1
+}
+
+// srOfflineW is the notice's wrap width: .offlineNotice__a6x3P grows to
+// the footer's content box (padding 16 a side) less its padding-right 48.
+func srOfflineW(gtx layout.Context, w int) int {
+	return max(1, w-dp(gtx, 32)-dp(gtx, 48))
+}
+
+// srOfflineNotice lays out the notice as one wrapping paragraph (pre-wrap,
+// word by word), 13px in the footer's content-sec, the <strong> part
+// bold. The icon is the legacy font Icon (type cloud-offline, size
+// inherit, c-icon--inline: a 1em box, the glyph U+E0A0 at the text's 13px
+// in the line's middle); its ink spans the whole em, which Clack's
+// cloud-offline centrelines reach at 14.4.
+func srOfflineNotice(gtx layout.Context, th *theme.Theme, col color.NRGBA, w int) layout.Dimensions {
+	lh := dp(gtx, 16)
+	x, y := 0, 0
+	space := textW(gtx, th, 13, theme.Regular, " ")
+	place := func(ww int) {
+		if x > 0 && x+ww > w {
+			x, y = 0, y+lh
+		}
+	}
+	for _, pt := range nsSearch.RT(srOfflineText, "iconOffline", "\uFFFC") {
+		if pt.Arg == "iconOffline" {
+			iw := dp(gtx, 13)
+			place(iw)
+			// the glyph's ink: x 0 to 1em, y 1.3 to 12.7 of the em box,
+			// which sits 1.5 into the 16px line
+			at(gtx, image.Pt(x-dp(gtx, 0.7), y+dp(gtx, 0.85)), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, "cloud-offline", 14.4, col)
+			})
+			x += iw
+			continue
+		}
+		wt := theme.Regular
+		if pt.Tag == "strong" || pt.Tag == "b" {
+			wt = theme.Bold
+		}
+		for _, wd := range strings.SplitAfter(pt.Text, " ") {
+			if wd == "" {
+				continue
+			}
+			for _, word := range i18n.LineChunks(strings.TrimRight(wd, " ")) {
+				ww := textW(gtx, th, 13, wt, word)
+				place(ww)
+				at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+						return text(gtx, th, 13, wt, col, word)
+					})
+				})
+				x += ww
+			}
+			if strings.HasSuffix(wd, " ") {
+				x += space
+			}
+		}
+	}
+	return layout.Dimensions{Size: image.Pt(w, y+lh)}
+}
+
 func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, sz image.Point) layout.Dimensions {
+	if !srClientOnline(p.h) {
+		// Footer with shouldShowOfflineNotice: no keyboard hints, and
+		// useShouldShowFooterContent (isClientOnline, no megaphone)
+		// hides the feedback link
+		at(gtx, image.Pt(dp(gtx, 16), 1+dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions { // under the 1px border
+			return srOfflineNotice(gtx, th, cl.Fg2, srOfflineW(gtx, sz.X))
+		})
+		return layout.Dimensions{Size: sz}
+	}
 	ch := dp(gtx, 20)
 	cy := (sz.Y - ch) / 2
 	x := dp(gtx, 16)

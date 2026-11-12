@@ -30,6 +30,7 @@ type App struct {
 	bootErr   error
 	mu        sync.Mutex
 	connected bool
+	online    onlineState // isClientOnline: the machine has a network (online.go)
 	inflight  map[string]*call
 
 	subMu sync.Mutex
