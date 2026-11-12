@@ -10,6 +10,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
@@ -84,12 +85,13 @@ func (a *App) openAddChannelsMenu(anchor image.Point) {
 //   - Notes (microphone; "Record meeting notes"; meeting_assistant, off for
 //     the test account).
 //   - a separator, then "Invite people" (user-add) for users who may
-//     invite; "Workspace" only on SPF non-work workspaces.
+//     invite (canUserSeeInviteModal): the invite modal (popups/invite.go,
+//     source sidebar_create_new_invite_people); "Workspace" only on SPF
+//     non-work workspaces.
 //
-// Clack draws every row the account has. Lists, Workflow Builder, meeting
-// notes and invitations have no Clack screens yet, so those rows say so in
-// a toast, like Clack's other unavailable features, instead of doing
-// nothing.
+// Clack draws every row the account has. Workflow Builder and meeting
+// notes have no Clack screens yet, so those rows say so in a toast, like
+// Clack's other unavailable features, instead of doing nothing.
 func (a *App) openCreateMenu(anchor image.Rectangle) {
 	unavailable := func(what string) func() {
 		return func() { a.Toast(what + " in " + AppName + " yet") }
@@ -107,8 +109,10 @@ func (a *App) openCreateMenu(anchor image.Rectangle) {
 		items = append(items, MenuItem{Key: "create-notes", Label: "Notes", Icon: "microphone", Subtitle: "Record meeting notes",
 			Do: unavailable("Meeting notes aren’t available")})
 	}
-	items = append(items, MenuItem{Divider: true},
-		MenuItem{Key: "invite", Label: "Invite people", Icon: "user-add", Do: unavailable("Inviting people isn’t available")})
+	if popups.CanInvite(a) { // canInvite: canUserSeeInviteModal (c1OI Lz)
+		items = append(items, MenuItem{Divider: true},
+			MenuItem{Key: "invite", Label: "Invite people", Icon: "user-add", Do: func() { popups.OpenInviteModal(a, popups.InviteFromCreateMenu) }})
+	}
 	a.menuAt(anchor, 2, 360, items)
 }
 

@@ -520,10 +520,16 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 	items := []MenuItem{
 		{Widget: header, Do: actToast(h, team.Name+" is the only workspace you're signed in to")},
 		Sep(),
-		{Key: LabelKey("Invite people to " + team.Name), Label: nsIa4.T("Invite people to {teamDisplayName}", "teamDisplayName", team.Name), Do: actToast(h, "Invites aren't supported in yoloslack")},
-		Sep(),
-		MenuItem{Label: "Preferences", Do: actPreferences(h)}.In(nsIa4),
 	}
+	// "Invite people to …" (key invite-people, show: canUserSeeInviteModal)
+	// opens the invite modal from the team menu (invite.go)
+	if CanInvite(h) {
+		items = append(items,
+			MenuItem{Key: LabelKey("Invite people to " + team.Name), Label: nsIa4.T("Invite people to {teamDisplayName}", "teamDisplayName", team.Name),
+				Do: func() { OpenInviteModal(h, InviteFromTeamMenu) }},
+			Sep())
+	}
+	items = append(items, MenuItem{Label: "Preferences", Do: actPreferences(h)}.In(nsIa4))
 	if f := CheckForUpdates; f != nil {
 		label, ok := "Check for Updates…", true
 		if UpdateItemLabel != nil {
@@ -533,8 +539,8 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 	}
 	items = append(items, []MenuItem{
 		MenuItem{Label: "Tools", Sub: []MenuItem{
-			{Key: LabelKey("Workflows"), Label: nsTeamMenu.T("Workflows"), Do: actToast(h, "Workflows aren't supported in yoloslack")},
-			MenuItem{Label: "Analytics", Do: actToast(h, "Analytics aren't supported in yoloslack")}.In(nsIa4),
+			{Key: LabelKey("Workflows"), Label: nsTeamMenu.T("Workflows"), Do: actToast(h, "Workflows aren't supported in "+appName)},
+			MenuItem{Label: "Analytics", Do: actToast(h, "Analytics aren't supported in "+appName)}.In(nsIa4),
 		}}.In(nsIa4),
 		Sep(),
 		MenuItem{Label: "Sign in on mobile", Do: actToast(h, "Use the Slack mobile app to sign in on your phone")}.In(nsClassicNav),

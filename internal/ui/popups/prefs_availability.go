@@ -255,7 +255,7 @@ func (p *avPrefs) events(gtx layout.Context, org image.Point, cx int) {
 			OpenPreferences()
 			return
 		}
-		h.Toast(avNav[i].label + " preferences aren't available in yoloslack yet")
+		h.Toast(avNav[i].label + " preferences aren't available in " + appName + " yet")
 	}
 	if !p.loaded {
 		return

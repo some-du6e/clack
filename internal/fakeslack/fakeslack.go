@@ -256,6 +256,8 @@ type Server struct {
 	code    codeCalls                  // code channel API calls (codechannels.go)
 	codeFx  *CodeFixtures
 
+	inv inviteState // the invite modal's methods (invites.go)
+
 	bkMu      sync.Mutex
 	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
 	bkSuggest []url.Values      // blocks.suggestions forms
@@ -1029,6 +1031,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 	}
 	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
+		return out
+	}
+	if out, handled := s.handleInvites(method, f); handled { // invites.go
 		return out
 	}
 	if out, handled := s.handleModeration(method, f); handled { // moderation.go

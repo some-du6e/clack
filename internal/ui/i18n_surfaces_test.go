@@ -80,6 +80,7 @@ func i18nSurfaces(t *testing.T, e *perfEnv, ch string) []i18nSurface {
 		{"emoji-picker", func(e *perfEnv) { e.a.ShowOverlay(popups.NewReactionPicker(e.a, at, ch, m.TS, "", nil)) }},
 		{"status-dialog", func(e *perfEnv) { e.a.ShowOverlay(popups.NewSetStatusModal(e.a)) }},
 		{"team-menu", func(e *perfEnv) { e.a.ShowOverlay(popups.NewTeamMenu(e.a, image.Pt(20, 40))) }},
+		{"invite-modal", func(e *perfEnv) { popups.OpenInviteModal(e.a, popups.InviteFromTeamMenu) }},
 		{"user-menu", func(e *perfEnv) { e.a.ShowOverlay(popups.NewUserMenu(e.a, image.Pt(20, 860))) }},
 		{"switcher", func(e *perfEnv) { e.a.openSwitcher() }},
 		{"search-page", func(e *perfEnv) { e.a.Navigate("search?q=" + url.QueryEscape("the")) }},

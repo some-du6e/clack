@@ -548,7 +548,7 @@ func (s *emojiAddModal) layout(gtx layout.Context) layout.Dimensions {
 	if s.tab == 1 {
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, "Emoji packs aren’t available in yoloslack yet.", 0)
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, "Emoji packs aren’t available in "+appName+" yet.", 0)
 		})
 		return layout.Dimensions{Size: image.Pt(w, y+d.Size.Y+dp(gtx, 28))}
 	}

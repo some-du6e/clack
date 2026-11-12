@@ -373,7 +373,11 @@ func NewSetStatusModalFromShortcut(h Host) *Modal { return actNewStatus(h, true)
 func actNewStatus(h Host, fromShortcut bool) *Modal { return actNewStatusState(h, fromShortcut).modal }
 
 func actNewStatusState(h Host, fromShortcut bool) *actStatus {
-	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: nsStatus.T("For {teamName}", "teamName", "Hack Club")}
+	team := "Hack Club" // before the snapshot has the team
+	if snap, ok := actSnapshot(h); ok && strings.TrimSpace(snap.Team.Name) != "" {
+		team = strings.TrimSpace(snap.Team.Name)
+	}
+	s := &actStatus{h: h, dur: actDurToday, focus: true, forTeam: nsStatus.T("For {teamName}", "teamName", team)}
 	s.showTip = !fromShortcut && (h.Core() == nil || !h.Core().PrefBool("used_custom_status_kb_shortcut", false))
 	s.ed.SingleLine = true
 	s.ed.Submit = true
