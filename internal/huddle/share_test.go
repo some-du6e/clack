@@ -28,6 +28,10 @@ func TestFakeScreenShare(t *testing.T) {
 	}
 	fk := NewFake(clip, t.Errorf)
 	defer fk.Close()
+	// The first keyframe never arrives, as when it was written between
+	// pion's DTLS transport saying connected and SRTP starting (CI, 0
+	// pictures for 20 s): the receiver asks for another.
+	fk.f.content.dropFirst.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := Join(ctx, Options{
@@ -50,8 +54,8 @@ func TestFakeScreenShare(t *testing.T) {
 	}
 	info := func() string {
 		c := fk.ContentShare()
-		return s.State().Share.State.String() + " " + s.State().Share.Err + "; fake content: " + itoa64(int64(c.Joins)) + " joins, " +
-			itoa64(c.Frames) + " pictures, " + itoa64(c.Keys) + " keyframes (" + itoa64(c.KeysAfterPLI) + " after PLI), " +
+		return s.State().Share.State.String() + " " + s.State().Share.Err + "; fake content: " + itoa64(int64(c.Joins)) + " joins, " + itoa64(c.Packets) + " video packets, " +
+			itoa64(c.Frames) + " pictures (" + itoa64(c.Undecodable) + " undecodable, " + itoa64(c.KeyRequests) + " keyframe requests), " + itoa64(c.Keys) + " keyframes (" + itoa64(c.KeysAfterPLI) + " after PLI), " +
 			itoa64(c.AudioPackets) + " audio packets; " + s.Stats()
 	}
 	waitFor(t, 20*time.Second, "the share at the fake", func() bool {

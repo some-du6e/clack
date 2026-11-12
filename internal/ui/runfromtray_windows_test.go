@@ -5,9 +5,12 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"gioui.org/app"
 	"gioui.org/io/event"
@@ -25,13 +28,76 @@ var (
 	trayTestPostMessage = trayTestUser32.NewProc("PostMessageW")
 	trayTestIsVisible   = trayTestUser32.NewProc("IsWindowVisible")
 	trayTestIsWindow    = trayTestUser32.NewProc("IsWindow")
+	trayTestSetHook     = trayTestUser32.NewProc("SetWindowsHookExW")
+	trayTestUnhook      = trayTestUser32.NewProc("UnhookWindowsHookEx")
+	trayTestNextHook    = trayTestUser32.NewProc("CallNextHookEx")
 )
+
+// trayTestCWP is CWPSTRUCT, what a WH_CALLWNDPROC hook gets.
+type trayTestCWP struct {
+	LParam, WParam uintptr
+	Message        uint32
+	HWND           uintptr
+}
+
+// Gio sends DestroyEvent from WM_DESTROY, while DestroyWindow is still
+// running (WM_NCDESTROY comes after it, then the HWND goes), so App.Run
+// can return before the window is gone: on the runner by 0.3 to 3.4 ms,
+// in 19 of 50 runs. Two hooks on the window's thread make that gap every
+// run's and give the test the moment DestroyWindow returned:
+// trayTestOnSend holds the window's WM_NCDESTROY for
+// trayTestNCDestroyHold; trayTestOnGet sees the thread's next message
+// read after it (GetMessage's WM_QUIT, which WM_DESTROY posted), which
+// can only come once DestroyWindow returned to the message loop.
+var trayTestDestroy struct {
+	mu   sync.Mutex
+	hwnd uintptr       // the window the hooks watch
+	nc   bool          // its WM_NCDESTROY was sent
+	gone chan struct{} // closed at the thread's first message read after that
+}
+
+var trayTestOnSend = syscall.NewCallback(func(code, wParam, lParam uintptr) uintptr {
+	if int32(code) == 0 {
+		cwp := *(**trayTestCWP)(unsafe.Pointer(&lParam)) // lParam is a *CWPSTRUCT
+		d := &trayTestDestroy
+		d.mu.Lock()
+		ours := cwp.Message == trayTestWMNCDestroy && cwp.HWND == d.hwnd
+		if ours {
+			d.nc = true
+		}
+		d.mu.Unlock()
+		if ours {
+			time.Sleep(trayTestNCDestroyHold)
+		}
+	}
+	r, _, _ := trayTestNextHook.Call(0, code, wParam, lParam)
+	return r
+})
+
+var trayTestOnGet = syscall.NewCallback(func(code, wParam, lParam uintptr) uintptr {
+	if int32(code) == 0 {
+		d := &trayTestDestroy
+		d.mu.Lock()
+		if d.nc && d.gone != nil {
+			close(d.gone)
+			d.gone = nil
+		}
+		d.mu.Unlock()
+	}
+	r, _, _ := trayTestNextHook.Call(0, code, wParam, lParam)
+	return r
+})
 
 const (
 	trayTestWMClose     = 0x0010
 	trayTestWMSysCmd    = 0x0112
 	trayTestSCClose     = 0xF060
 	trayTestWaitTimeout = 30 * time.Second
+
+	trayTestWHGetMessage  = 3 // WH_GETMESSAGE
+	trayTestWHCallWndProc = 4 // WH_CALLWNDPROC
+	trayTestWMNCDestroy   = 0x0082
+	trayTestNCDestroyHold = 100 * time.Millisecond
 )
 
 // TestCloseToTrayWindow is runFromTray on a real Windows desktop
@@ -41,7 +107,8 @@ const (
 // the taskbar's Close window) hide the window instead of closing it; the
 // first close shows the RunFromTray balloon once; the hidden window draws
 // no frames while posted work still runs; Raise (the tray icon's click,
-// another launch) shows it again; Quit while hidden ends Run.
+// another launch) shows it again; Quit while hidden ends Run and destroys
+// the window.
 //
 // What it proves: Gio patch 13's hide and show on a real HWND, the
 // ClosingEvent abort from the UI goroutine, the wake-up drain, Quit's
@@ -102,6 +169,21 @@ func TestCloseToTrayWindow(t *testing.T) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
+	tid, err := windows.GetWindowThreadProcessId(windows.HWND(hwnd), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := make(chan struct{})
+	trayTestDestroy.mu.Lock()
+	trayTestDestroy.hwnd, trayTestDestroy.nc, trayTestDestroy.gone = hwnd, false, gone
+	trayTestDestroy.mu.Unlock()
+	for _, hk := range []struct{ id, proc uintptr }{{trayTestWHCallWndProc, trayTestOnSend}, {trayTestWHGetMessage, trayTestOnGet}} {
+		h, _, err := trayTestSetHook.Call(hk.id, hk.proc, 0, uintptr(tid))
+		if h == 0 {
+			t.Fatalf("SetWindowsHookEx(%d): %v", hk.id, err)
+		}
+		defer trayTestUnhook.Call(h)
+	}
 	visible := func() bool { r, _, _ := trayTestIsVisible.Call(hwnd); return r != 0 }
 	exists := func() bool { r, _, _ := trayTestIsWindow.Call(hwnd); return r != 0 }
 	until("the first frames", func() bool { return frames.Load() > 2 })
@@ -157,6 +239,11 @@ func TestCloseToTrayWindow(t *testing.T) {
 		}
 	case <-time.After(60 * time.Second):
 		t.Fatal("Quit didn't end Run")
+	}
+	select {
+	case <-gone: // DestroyWindow returned
+	case <-time.After(60 * time.Second):
+		t.Fatal("the window's thread never read a message after its WM_NCDESTROY")
 	}
 	if exists() {
 		t.Error("the window outlived Quit")
