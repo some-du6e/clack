@@ -205,8 +205,8 @@ type actMark struct {
 // unread badge (inline, as both shipping rows use it): a reminder whose
 // saved item isn't incomplete ("You completed this to-do"), a draft in the
 // conversation or thread, your reply ("You replied"), your reaction
-// ("You reacted:"); none otherwise. Typing and agent status aren't in
-// Clack's Activity.
+// ("You reacted:"); none otherwise. Agent status and typing come before
+// all of them and the unread badge (agentStatus, typingStatus).
 func (v *Activity) readMark(it *core.ActivityItem) (actMark, bool) {
 	c := v.h.Core()
 	if it.Type == "saved_reminder" {
