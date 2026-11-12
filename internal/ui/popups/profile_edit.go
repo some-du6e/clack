@@ -145,7 +145,7 @@ func (e *EditProfileModal) Layout(gtx layout.Context) layout.Dimensions {
 }
 
 // Dismissed reports the modal closed.
-func (e *EditProfileModal) Dismissed() bool { return e.done }
+func (e *EditProfileModal) Dismissed() bool { return e.done || (e.m != nil && e.m.Dismissed()) }
 
 // Dismiss closes it the way Escape does (the speed bump first when the
 // form has unsaved changes).
@@ -938,7 +938,7 @@ func epSpeedBump(gtx layout.Context, h Host, m *Modal, veil *int, keep, discard 
 	x := sz.X - px
 	for _, b := range []*ModalButton{discard, keep} {
 		ring := m.ringOn(gtx, &b.click)
-		c, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+		c, d := record(loose(gtx, image.Pt(sz.X, bh)), func(gtx layout.Context) layout.Dimensions {
 			return b.draw(gtx, th, b.Kind, ring, grpNone)
 		})
 		x -= d.Size.X

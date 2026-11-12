@@ -36,6 +36,9 @@ func epEnv(t *testing.T, dark bool) (*tzHost, *fakeslack.Server) {
 	if err := h.a.LoadTeamPrefs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	h.a.S.Lock()
+	h.a.S.TeamName = "Fake Club"
+	h.a.S.Unlock()
 	h.th.SetDark(dark)
 	return h, fs
 }
