@@ -1634,11 +1634,13 @@ func TestSearchShots(t *testing.T) {
 		vpe.search(1)
 		dpe.until(t, "a location", func() bool { return !vpe.loading })
 		vpe.locationMenu(gtx)
-		m = srMenu(e.h)
-		dpe.over = func(gtx layout.Context) { m.Layout(gtx) }
+		locSel, _ := lastShown[*srFacetSelect](e.h)
+		dpe.over = func(gtx layout.Context) { locSel.Layout(gtx) }
 		shot(dpe, "search-results-people-location-"+mode)
+		locSel.Dismiss()
 		vpe.moreMenu(gtx)
 		m = srMenu(e.h)
+		dpe.over = func(gtx layout.Context) { m.Layout(gtx) }
 		shot(dpe, "search-results-people-more-"+mode)
 		dpe.over = nil
 

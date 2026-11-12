@@ -176,11 +176,17 @@ func messageSearchParams(o SearchOpts, excludeBots, onlyMine bool) url.Values {
 	if o.InChannel != "" {
 		p.Set("search_exclude_bots", "false")
 		searchSortParams(p, o.Sort)
+		if o.DisableSortOverride {
+			p.Set("disable_sort_override", "true") // O8Qt: ...o ? {disable_sort_override: !0} : {}
+		}
 		return p
 	}
 	p.Set("search_exclude_bots", boolStr(excludeBots))
 	p.Set("search_only_my_channels", boolStr(onlyMine))
 	p.Set("spell_correction", "FUZZY_MATCH")
+	if o.DisableSortOverride {
+		p.Set("disable_sort_override", "true") // getSearchParams: ...i ? {disable_sort_override: !0} : {}
+	}
 	p.Set("search_only_team", "")
 	p.Set("facets_result_count", "5")
 	p.Set("query_refinement_suggestions_version", "1")
@@ -293,14 +299,17 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 			In   []filterSuggestionRaw `json:"in"`
 			From []filterSuggestionRaw `json:"from"`
 		} `json:"filter_suggestions"`
-		Unfiltered       int                        `json:"unfiltered_result_count"`
-		UnfilteredFilter map[string]json.RawMessage `json:"unfiltered_result_filter"`
+		Unfiltered         int                        `json:"unfiltered_result_count"`
+		UnfilteredFilter   map[string]json.RawMessage `json:"unfiltered_result_filter"`
+		SortForcedToRecent json.RawMessage            `json:"sort_forced_to_recent"`
 	}
 	if err := json.Unmarshal(stripHighlightJSON(raw), &res); err != nil {
 		return SearchResult{}, err
 	}
 	out := SearchResult{Total: res.Pagination.Total, Page: res.Pagination.Page, Pages: res.Pagination.PageCount,
-		FilterIn: a.withoutExcluded(filterSuggestions(res.Filters.In)), FilterFrom: filterSuggestions(res.Filters.From)}
+		FilterIn: a.withoutExcluded(filterSuggestions(res.Filters.In)), FilterFrom: filterSuggestions(res.Filters.From),
+		// !0 === a.sort_forced_to_recent (only a JSON true), for messages only
+		SortForcedToRecent: module == ModMessages && strings.TrimSpace(string(res.SortForcedToRecent)) == "true"}
 	if res.Unfiltered > 0 && res.UnfilteredFilter != nil { // the relaxation selector's count && filter
 		out.Unfiltered, out.UnfilteredFilter = res.Unfiltered, res.UnfilteredFilter
 	}

@@ -283,17 +283,28 @@ func TestSearchPeoplePills(t *testing.T) {
 		}
 	}
 	gtx := srTestGtx()
-	v.locationMenu(gtx)
-	m := srMenu(e.h)
-	if len(m.items) < 2 || m.items[0].Header != "Suggestions" {
-		t.Fatalf("Location menu %q", srLabels(m.items))
+	// the Location select (srFacetSelect, gap-w24): its rows
+	facetSel := func() (*srFacetSelect, []srFacetRow) {
+		t.Helper()
+		v.locationMenu(gtx)
+		s, ok := lastShown[*srFacetSelect](e.h)
+		if !ok {
+			t.Fatal("Location opened no select")
+		}
+		return s, srFacetRows(s.chosen(), s.facets(), "", nil)
 	}
-	loc := m.items[1].Label
+	sel, rows := facetSel()
+	if len(rows) < 2 || rows[0].kind != srFRHeading || rows[0].value != "Suggestions" {
+		t.Fatalf("Location menu %+v", rows)
+	}
+	loc := rows[1].value
 	if !slices.Contains(fakeslack.SearchLocations, loc) {
 		t.Errorf("suggested location %q", loc)
 	}
 	all := v.total
-	m.items[1].Do()
+	sel.rows = rows
+	sel.pick(1)
+	sel.Dismiss()
 	d.until(t, "one location", func() bool { return !v.loading })
 	forms := e.fs.SearchForms("search.modules.people")
 	if got := forms[len(forms)-1].Get("profile_location"); got != loc {
@@ -305,29 +316,31 @@ func TestSearchPeoplePills(t *testing.T) {
 	if x := d.scan(); !srHas(x, "Location: "+loc) {
 		t.Errorf("the pill after %s: %q", loc, x)
 	}
-	v.locationMenu(gtx)
-	m = srMenu(e.h)
-	if m.items[0].Label != loc || !m.items[0].Checked {
-		t.Errorf("the chosen location isn't first: %q", srLabels(m.items))
+	sel, rows = facetSel()
+	if rows[0].kind != srFROption || rows[0].value != loc || !slices.Contains(sel.chosen(), loc) {
+		t.Errorf("the chosen location isn't first: %+v", rows)
 	}
 	// a second location: "Multiple locations" and Clear all
-	for _, it := range m.items {
-		if it.Label != loc && slices.Contains(fakeslack.SearchLocations, it.Label) {
-			it.Do()
+	sel.rows = rows
+	for i, r := range rows {
+		if r.kind == srFROption && r.value != loc && slices.Contains(fakeslack.SearchLocations, r.value) {
+			sel.pick(i)
 			break
 		}
 	}
+	sel.Dismiss()
 	d.until(t, "two locations", func() bool { return !v.loading && len(v.locs) == 2 })
 	if x := d.scan(); !srHas(x, "Multiple locations") {
 		t.Errorf("two locations: %q", x)
 	}
-	v.locationMenu(gtx)
-	if got := srLabels(srMenu(e.h).items); !slices.Contains(got, "Clear all") {
-		t.Errorf("no Clear all: %q", got)
+	sel, rows = facetSel()
+	if !slices.ContainsFunc(rows, func(r srFacetRow) bool { return r.kind == srFRClear && r.value == "Clear all" }) {
+		t.Errorf("no Clear all: %+v", rows)
 	}
+	sel.Dismiss()
 	// More: Account type, then Celebration
 	v.moreMenu(gtx)
-	m = srMenu(e.h)
+	m := srMenu(e.h)
 	if got := srLabels(m.items); !slices.Equal(got, []string{"Account type", "Celebration"}) {
 		t.Fatalf("People More %q", got)
 	}
