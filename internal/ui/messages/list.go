@@ -179,6 +179,9 @@ type listState struct {
 	// system messages under system_messages_redesign_m1 (system.go)
 	sysOn, sysInit, sysMissing bool
 	sysUsers                   uint64
+	// sysHidden: the hidden-people state the system texts were written
+	// under (hiddenKey, system.go)
+	sysHidden string
 	// activeTS is the root of the thread open in the side pane, this frame
 	// (active_thread.go)
 	activeTS string
@@ -282,6 +285,7 @@ func (s *listState) sync(h Host, now time.Time) {
 	// group re-reads the snapshot and rebuilds the rows; an actor's name
 	// arriving rebuilds the system rows
 	sysOn := systemRedesign(h)
+	hk := hiddenKey(h)
 	switch {
 	case !s.sysInit || sysOn != s.sysOn:
 		if s.sysInit {
@@ -291,7 +295,10 @@ func (s *listState) sync(h Host, now time.Time) {
 		}
 		s.sysOn, s.sysInit = sysOn, true
 		s.snap.rev = 0
-	case s.sysMissing && s.hb.usersRev() != s.sysUsers:
+	case s.sysMissing && s.hb.usersRev() != s.sysUsers, hk != s.sysHidden:
+		// a name arrived, or someone was hidden or unhidden (RollupName
+		// reads isUserHidden): write the system texts again
+		s.sysHidden = hk
 		for i := range s.snap.msgs {
 			if m := &s.snap.msgs[i].m; m.System || isAutomatedSubtype(m.Subtype) {
 				delete(s.rows, m.TS)
@@ -301,7 +308,7 @@ func (s *listState) sync(h Host, now time.Time) {
 	}
 	changed := s.m.snapshot(&s.snap)
 	if changed {
-		s.sysUsers = s.hb.usersRev()
+		s.sysUsers, s.sysHidden = s.hb.usersRev(), hk
 		s.sysMissing = s.adjustSystem(h, sysOn)
 	}
 	if changed && len(s.inj.msgs) > 0 {
@@ -1018,11 +1025,9 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	rc.parent = s.thread && e.m.TS == s.ts
 	rc.activeThread = s.activeTS != "" && e.m.TS == s.activeTS
 	// MessageWrapper's isSenderHidden and the message's isUnhidden
-	// (hidden_msg.go); a joins summary row is a system row
-	rc.hiddenUser, rc.unhidden = false, false
-	if len(it.group) == 0 {
-		rc.hiddenUser, rc.unhidden = hiddenSender(h, &e.m, s.ch)
-	}
+	// (hidden_msg.go): system rows too, and a joins summary by its first
+	// message's sender (the rollup is that message's row)
+	rc.hiddenUser, rc.unhidden = hiddenSender(h, &e.m, s.ch)
 	rc.highlight = 0
 	if s.highlight == e.m.TS {
 		if el := rc.now.Sub(s.highlightAt); el < 4*time.Second {
@@ -1723,13 +1728,19 @@ func joinKind(m *core.Message) int {
 
 // groupEntry builds the summary message for a run of joins or leaves:
 // "A and B have joined the channel", "A, B and N others have joined the
-// channel" (names are member links).
+// channel" (names are member links). The row is the run's first message,
+// as Slack's rollups are (client-boot Nw4e keeps the first message of
+// the run and folds the rest into its rollup): its sender, time and
+// isSenderHidden. A member the viewer hid is RollupName's
+// HiddenUserIconAndName (hiddenSpan, system.go).
 func (s *listState) groupEntry(h Host, idx []int) entry {
 	msgs := s.snap.msgs
-	last := msgs[idx[len(idx)-1]]
+	first, last := msgs[idx[0]], msgs[idx[len(idx)-1]]
 	var rev uint32 = uint32(len(idx))
 	seen := map[string]bool{}
 	var users []string
+	app := h.Core()
+	hidden := func(id string) bool { return app != nil && app.UserHidden(id) }
 	for _, i := range idx {
 		rev = rev*31 + msgs[i].rev
 		if u := msgs[i].m.User; u != "" && !seen[u] {
@@ -1747,6 +1758,11 @@ func (s *listState) groupEntry(h Host, idx []int) entry {
 	}
 	var spans []richtext.Span
 	user := func(id string) {
+		if hidden(id) {
+			spans = append(spans, hiddenSpan(id))
+			rev = rev*31 + 7 // a hidden name rebuilds the row
+			return
+		}
 		spans = append(spans, richtext.Span{Kind: richtext.User, ID: id, Text: "@" + name(id)})
 	}
 	txt := func(t string) { spans = append(spans, richtext.Span{Kind: richtext.Text, Text: t}) }
@@ -1775,7 +1791,7 @@ func (s *listState) groupEntry(h Host, idx []int) entry {
 		verb = strings.Replace(verb, "have", "has", 1)
 	}
 	txt(verb)
-	m := last.m
+	m := first.m
 	m.Reactions = nil
 	m.Doc = richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: spans}}}
 	return entry{m: m, rev: rev | 1}
