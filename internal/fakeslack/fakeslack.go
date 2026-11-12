@@ -804,6 +804,20 @@ func (s *Server) SetProperties(id string, props json.RawMessage) {
 	}
 }
 
+// SetTopic replaces a conversation's topic in what conversations.info and
+// users.conversations answer (a topic set from another client).
+func (s *Server) SetTopic(id, topic string) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for _, cs := range [][]slack.Conversation{s.convs, s.others} {
+		for i := range cs {
+			if cs[i].ID == id {
+				cs[i].Topic = &slack.Purpose{Value: topic}
+			}
+		}
+	}
+}
+
 // UserListFilters returns the filter of every edge users/list call.
 func (s *Server) UserListFilters() []string {
 	s.convMu.Lock()
@@ -849,6 +863,16 @@ func (s *Server) history(ch string) []slack.Message {
 	base := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix()
 	n := s.Size.History
 	out := make([]slack.Message, 0, n)
+	// the channels a message can link, read under convMu: a join, a leave
+	// or SetTopic changes s.convs while a page is built (-race, flake-check
+	// 2026-11-12)
+	type chanRef struct{ id, name string }
+	s.convMu.Lock()
+	linkable := make([]chanRef, 0, min(len(s.convs), s.Size.Channels))
+	for _, c := range s.convs[:min(len(s.convs), s.Size.Channels)] {
+		linkable = append(linkable, chanRef{c.ID, c.Name})
+	}
+	s.convMu.Unlock()
 	var emo []string
 	for k := range s.emoji {
 		emo = append(emo, k)
@@ -874,9 +898,9 @@ func (s *Server) history(ch string) []slack.Message {
 				parts = append(parts, "<@"+o.ID+">")
 				els = append(els, map[string]any{"type": "user", "user_id": o.ID})
 			case x == 1:
-				c := s.convs[r.Intn(min(len(s.convs), s.Size.Channels))]
-				parts = append(parts, "<#"+c.ID+"|"+c.Name+">")
-				els = append(els, map[string]any{"type": "channel", "channel_id": c.ID})
+				c := linkable[r.Intn(len(linkable))]
+				parts = append(parts, "<#"+c.id+"|"+c.name+">")
+				els = append(els, map[string]any{"type": "channel", "channel_id": c.id})
 			case x == 2 || x == 3:
 				e := std[r.Intn(len(std))]
 				if x == 3 && len(emo) > 0 {
@@ -1011,6 +1035,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if out == nil {
 		out = map[string]any{"ok": true}
+	}
+	if faulted && fault.ReplyDelay > 0 {
+		time.Sleep(fault.ReplyDelay)
 	}
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back

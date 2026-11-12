@@ -128,6 +128,11 @@ func TestAccountThemeUnderStylesheets(t *testing.T) {
 func TestAccountThemeWriteBack(t *testing.T) {
 	a, ca, fs := fakeApp(t, nil)
 	a.applyAccountPrefs(ca.Prefs())
+	// The fake stores a pref before it answers; core stores it once the
+	// answer is in (core.SetPref). A check on core right after the fake
+	// had it read the old value (CI flake, gap-w1-drop 2026-11-12). Hold
+	// every answer so that order happens every run; wait for core too.
+	fs.SetFault("users.prefs.set", fakeslack.Fault{ReplyDelay: 200 * time.Millisecond})
 	var lagoon theme.ThemePreset
 	for _, p := range theme.ThemePresets {
 		if p.ID == "lagoon" {
@@ -138,15 +143,13 @@ func TestAccountThemeWriteBack(t *testing.T) {
 	if a.accountTheme() != lagoon.Theme { // applied at once
 		t.Fatalf("not applied: %+v", a.accountTheme())
 	}
-	waitTheme(t, a, "ia_theme on the fake", func() bool {
+	waitTheme(t, a, "ia_theme on the fake, then in core", func() bool {
 		v, _ := fs.Pref("ia_theme")
 		s, _ := v.(string)
 		got, ok := theme.ParseIATheme(s)
-		return ok && got == lagoon.Theme
+		back, _ := theme.ParseIATheme(ca.PrefString("ia_theme")) // core reads it back
+		return ok && got == lagoon.Theme && back == lagoon.Theme
 	})
-	if got, _ := theme.ParseIATheme(ca.PrefString("ia_theme")); got != lagoon.Theme {
-		t.Errorf("core reads back %+v", got)
-	}
 	if fs.CallCount("users.prefs.set") != 1 {
 		t.Errorf("%d users.prefs.set calls", fs.CallCount("users.prefs.set"))
 	}
@@ -161,13 +164,10 @@ func TestAccountThemeWriteBack(t *testing.T) {
 	a.th.SetDark(false)
 
 	a.setWindowGradients(false)
-	waitTheme(t, a, "window_background_gradients", func() bool {
+	waitTheme(t, a, "window_background_gradients off on the fake, then in core", func() bool {
 		v, _ := fs.Pref("window_background_gradients")
-		return v == false
+		return v == false && !ca.PrefBool("window_background_gradients", true) && ca.Prefs().NoWindowGradients
 	})
-	if ca.PrefBool("window_background_gradients", true) || !ca.Prefs().NoWindowGradients {
-		t.Error("core still has gradients on")
-	}
 }
 
 // A failed write puts the old theme back.

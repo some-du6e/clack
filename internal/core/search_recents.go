@@ -424,14 +424,7 @@ func recentsJSON(d recentsData, rest map[string]json.RawMessage) string {
 // pref changes, Slack's server copy doesn't.
 func (a *App) setRecentsLocal(d recentsData, rest map[string]json.RawMessage) {
 	s, _ := json.Marshal(recentsJSON(d, rest))
-	a.S.RLock()
-	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+1)
-	for k, v := range a.S.RawPrefs {
-		raw[k] = v
-	}
-	a.S.RUnlock()
-	raw[prefRecents] = s
-	a.installPrefs(raw)
+	a.mergePrefs(map[string]json.RawMessage{prefRecents: s})
 	a.bumpRecents()
 }
 
@@ -454,14 +447,7 @@ func (a *App) LoadRecentsPrefs(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	a.S.RLock()
-	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+1)
-	for k, val := range a.S.RawPrefs {
-		raw[k] = val
-	}
-	a.S.RUnlock()
-	raw[prefRecents] = v
-	a.installPrefs(raw)
+	a.mergePrefs(map[string]json.RawMessage{prefRecents: v})
 	a.bumpRecents()
 	return nil
 }

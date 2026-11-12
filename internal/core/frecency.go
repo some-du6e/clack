@@ -81,6 +81,7 @@ func (a *App) RecordFrecency(id, text string) {
 	a.frec.mu.Lock()
 	now := a.frec.clock()
 	a.frec.mu.Unlock()
+	a.prefsMu.Lock() // a merge in flight would install a copy without this record (mergePrefs)
 	a.S.Lock()
 	c := frecency.Parse(a.S.RawPrefs[prefFrecency])
 	c.Record(id, text, now)
@@ -95,6 +96,7 @@ func (a *App) RecordFrecency(id, text string) {
 		a.S.RawPrefs = raw
 	}
 	a.S.Unlock()
+	a.prefsMu.Unlock()
 	if err != nil {
 		return
 	}
@@ -201,18 +203,13 @@ func (a *App) LoadFrecencyPrefs(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	a.S.RLock()
-	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+2)
-	for k, v := range a.S.RawPrefs {
-		raw[k] = v
-	}
-	a.S.RUnlock()
+	set := map[string]json.RawMessage{}
 	for _, k := range []string{prefEmojiUse, prefFrecency} {
 		if v, ok := r.Prefs[k]; ok {
-			raw[k] = v
+			set[k] = v
 		}
 	}
-	a.installPrefs(raw)
+	a.mergePrefs(set)
 	a.invalidateFrequentEmoji()
 	return nil
 }

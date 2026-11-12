@@ -143,14 +143,7 @@ func (a *App) SetUnreadCollapsed(ctx context.Context, ch string, collapsed bool)
 // follows).
 func (a *App) setLocalPref(name, value string) {
 	local, _ := json.Marshal(value)
-	a.S.RLock()
-	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+1)
-	for k, v := range a.S.RawPrefs {
-		raw[k] = v
-	}
-	a.S.RUnlock()
-	raw[name] = local
-	a.installPrefs(raw)
+	a.mergePrefs(map[string]json.RawMessage{name: local})
 	p := a.Prefs()
 	a.emit(Event{Type: "prefs", Prefs: &p})
 }

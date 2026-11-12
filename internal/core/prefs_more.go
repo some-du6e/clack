@@ -29,17 +29,12 @@ func (a *App) SetMultiplePrefs(ctx context.Context, kv map[string]any) error {
 	if err := a.C.Call(ctx, "users.prefs.set", url.Values{"prefs": {string(b)}}, nil); err != nil {
 		return err
 	}
-	a.S.RLock()
-	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+len(kv))
-	for k, v := range a.S.RawPrefs {
-		raw[k] = v
-	}
-	a.S.RUnlock()
+	set := make(map[string]json.RawMessage, len(kv))
 	for k, v := range kv {
 		j, _ := json.Marshal(v)
-		raw[k] = j
+		set[k] = j
 	}
-	a.installPrefs(raw)
+	a.mergePrefs(set)
 	p := a.Prefs()
 	a.emit(Event{Type: "prefs", Prefs: &p})
 	return nil
@@ -148,14 +143,7 @@ func (a *App) AddVIP(ctx context.Context, user string) error {
 // users.prefs.set) and emits "prefs".
 func (a *App) setRawPref(name string, value any) {
 	j, _ := json.Marshal(value)
-	a.S.RLock()
-	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+1)
-	for k, v := range a.S.RawPrefs {
-		raw[k] = v
-	}
-	a.S.RUnlock()
-	raw[name] = j
-	a.installPrefs(raw)
+	a.mergePrefs(map[string]json.RawMessage{name: j})
 	p := a.Prefs()
 	a.emit(Event{Type: "prefs", Prefs: &p})
 }

@@ -34,6 +34,20 @@ name: flake-check
 #                                            cloning outside its lock
 #   TestHuddleLoungeMusic (huddleui)         MusicPlaying is on before the
 #                                            song is loaded
+# and 2026-11-12's (flakes-1112, 50 runs each; each test now makes its race
+# happen every run, so the old order fails 50 of 50):
+#   TestChannelLeaveRejoin (ui)              reopened after the fake recorded
+#                                            the leave, before its reply; the
+#                                            leave's done went to Threads
+#   TestHeaderTopicHoverCard (ui)            the header's conversations.info
+#                                            stored the fake's topic over the
+#                                            test's
+#   TestAccountThemeWriteBack (ui)           core read before the reply;
+#   TestSetPrefConcurrentKeepsEvery (core)   two pref writes at once kept one
+#                                            (core.mergePrefs)
+#   TestOLEFileDrop (windows)                the source's timed moves entered
+#                                            at the second point when the drag
+#                                            loop started late
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -46,6 +60,7 @@ on:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run flake-check.yml --ref <branch>)
     paths:
       - ".github/workflows/flake-check.yml"
+      - ".github/flake-count.sh"
       - "internal/ui/composer/drafts_sync.go"
       - "internal/ui/composer/draft_files_test.go"
       - "internal/ui/composer/attach.go"
@@ -68,6 +83,12 @@ on:
       - "internal/ui/channels_audit_test.go"
       - "internal/ui/listview/render_test.go"
       - "internal/ui/huddleui/avprefs_test.go"
+      - "internal/ui/exp_channels_test.go"
+      - "internal/ui/theme_account_test.go"
+      - "internal/core/prefs_merge_test.go"
+      - "internal/core/reads.go"
+      - "internal/fakeslack/faults.go"
+      - "third_party/gioui.org/app/clack_drop_windows_test.go"
 
 permissions:
   contents: read
@@ -280,3 +301,61 @@ jobs:
           awk '/^WARNING: DATA RACE/,/^==================$/' "$log" | head -400
           tail -5 "$log"
           exit $rc
+
+  flakes-1112:
+    name: "flakes-1112 ${{ matrix.test }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test: TestChannelLeaveRejoin
+            pkg: ./internal/ui
+          - test: TestHeaderTopicHoverCard
+            pkg: ./internal/ui
+          - test: TestAccountThemeWriteBack
+            pkg: ./internal/ui
+          - test: TestSetPrefConcurrentKeepsEvery
+            pkg: ./internal/core
+          - test: TestListEditRoundTrip # not reproduced; its DIAG lines say why if it times out
+            pkg: ./internal/core
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }}, race detector, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+
+  flakes-1112-ole:
+    name: "flakes-1112 TestOLEFileDrop (windows-applog)"
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        late: ["0", "900"] # CLACK_OLE_LATE_START_MS: DoDragDrop held back, as on gap-w13's runner
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "TestOLEFileDrop, drag loop late by ${{ matrix.late }} ms, every run counted"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog (no -race without cgo)
+          CLACK_WINDOWS_DROP_TESTS: "1"
+          CLACK_OLE_LATE_START_MS: ${{ matrix.late }}
+          TEST: TestOLEFileDrop
+          PKG: gioui.org/app
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"

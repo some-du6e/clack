@@ -224,6 +224,31 @@ func (a *App) RefreshPrefs(ctx context.Context) (Prefs, error) {
 
 // installPrefs keeps users.prefs.get's map and its parsed Prefs.
 func (a *App) installPrefs(raw map[string]json.RawMessage) {
+	a.prefsMu.Lock()
+	defer a.prefsMu.Unlock()
+	a.installPrefsLocked(raw)
+}
+
+// mergePrefs sets kv over the current raw prefs and installs them. The
+// copy and the install are one step: a write finishing meanwhile (another
+// SetPref, a pref_change reload) can't be undone by this one's older copy.
+func (a *App) mergePrefs(kv map[string]json.RawMessage) {
+	a.prefsMu.Lock()
+	defer a.prefsMu.Unlock()
+	a.S.RLock()
+	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+len(kv))
+	for k, v := range a.S.RawPrefs {
+		raw[k] = v
+	}
+	a.S.RUnlock()
+	for k, v := range kv {
+		raw[k] = v
+	}
+	a.installPrefsLocked(raw)
+}
+
+// installPrefsLocked is installPrefs with prefsMu held.
+func (a *App) installPrefsLocked(raw map[string]json.RawMessage) {
 	a.S.RLock()
 	old := a.S.RawPrefs
 	a.S.RUnlock()
@@ -337,14 +362,7 @@ func (a *App) SetPref(ctx context.Context, name string, value any) error {
 	if err := a.C.SetPref(ctx, name, form); err != nil {
 		return err
 	}
-	a.S.RLock()
-	raw := make(map[string]json.RawMessage, len(a.S.RawPrefs)+1)
-	for k, v := range a.S.RawPrefs {
-		raw[k] = v
-	}
-	a.S.RUnlock()
-	raw[name] = local
-	a.installPrefs(raw)
+	a.mergePrefs(map[string]json.RawMessage{name: local})
 	p := a.Prefs()
 	a.emit(Event{Type: "prefs", Prefs: &p})
 	return nil
