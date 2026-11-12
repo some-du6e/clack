@@ -230,6 +230,12 @@ func (s *Server) PostUnread(ch, user, text string) string {
 
 func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 	if !s.Size.Unreads {
+		// SetNewBadges answers the boot load's generic_new_badge in any fake
+		if method == "megaphone.notifications.list" && f.Get("channel_id") == "" {
+			if out := s.newBadgeSpaces(f); out != nil {
+				return ok("notifications", out), true
+			}
+		}
 		return nil, false
 	}
 	u := s.unreads()
@@ -320,4 +326,34 @@ func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 		return ok(), true
 	}
 	return nil, false
+}
+
+// newBadgeSpaces is a megaphone.notifications.list answer naming only the
+// generic_new_badge space with SetNewBadges' badges (nil when the request
+// doesn't ask for it or there are none).
+func (s *Server) newBadgeSpaces(f url.Values) map[string]any {
+	u := s.unreads()
+	u.mu.Lock()
+	badges := append([]string(nil), u.badges...)
+	u.mu.Unlock()
+	if len(badges) == 0 {
+		return nil
+	}
+	var ev struct {
+		Spaces []string `json:"spaces"`
+	}
+	_ = json.Unmarshal([]byte(f.Get("event")), &ev)
+	out := map[string]any{}
+	found := false
+	for _, sp := range ev.Spaces {
+		out[sp] = nil
+		if sp == "generic_new_badge" {
+			out[sp] = map[string]any{"name": "new_badge_generic", "data": map[string]any{"badges": badges}}
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return out
 }

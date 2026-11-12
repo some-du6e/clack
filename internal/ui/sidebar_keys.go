@@ -740,7 +740,10 @@ func (a *App) sbSetAllCollapsed(collapsed bool) {
 
 // sbFocusRing draws the keyboard focus ring on a row (sz: the row, px):
 // the item's :after 0 8px in (12px in the simplified layout), radius 8,
-// one px of otl-hgl-1 and its 5px halo at 30% outside it.
+// one px of --sk_focused-shadow-color and its 5px halo at 30% outside it.
+// That colour is --dt_color-otl-hgl-1, except in a light client's dark
+// sidebar (.sk-client-theme--light-inverted-sidebar), where it's the
+// sidebar's --dt_color-theme-content-inv-pry.
 func (a *App) sbFocusRing(gtx layout.Context, r *sbRow, sz image.Point) {
 	k := &a.sidebar.kb
 	if !k.ring || r.itemKey == "" || r.itemKey != k.key || !gtx.Focused(&k.tag) {
@@ -751,8 +754,22 @@ func (a *App) sbFocusRing(gtx layout.Context, r *sbRow, sz image.Point) {
 	if a.sbBBMBox(r) {
 		in, h = gtx.Dp(12), a.sbRowH(gtx)
 	}
-	ring := a.th.C.Accent
+	ring := theme.ButtonV2Focus(a.th)
+	if a.sbInverted() {
+		ring = a.th.C.SidebarTextUnread
+	}
 	popups.FocusRingColors(gtx, ring, theme.WithAlpha(ring, 0x4d), image.Rect(in, 0, sz.X-in, h), gtx.Dp(8))
+}
+
+// sbInverted reports whether the sidebar is Slack's light-inverted-sidebar
+// theme scope: a light client with the theme's dark sidebar (focus mode's
+// silent theme included).
+func (a *App) sbInverted() bool {
+	t := a.accountTheme()
+	if ft, ok := a.focusTheme(); ok {
+		t = ft
+	}
+	return !a.th.Dark && t.SidebarInverted
 }
 
 // sbBeforeList applies, once the rows are laid out for this frame, what
