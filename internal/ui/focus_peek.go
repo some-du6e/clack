@@ -243,7 +243,7 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 		}
 		ctr := f32.Pt(float32(cs)/2, float32(cs)/2)
 		tr := f32.Affine2D{}.Rotate(ctr, float32(-15*tilt*math.Pi/180)).Mul(f32.Affine2D{}.Scale(ctr, f32.Pt(float32(scale), float32(scale))))
-		defer op.Affine(tr).Push(gtx.Ops).Pop()
+		ts := op.Affine(tr).Push(gtx.Ops) // the button only: its tooltip stays upright
 		d := clickArea(gtx, &f.btn, func(gtx layout.Context, sz image.Point, _ bool) {
 			if !active && bg == bgT && !hov { // settled: the strip's own chrome composite
 				a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, c.SidebarButton)
@@ -279,6 +279,7 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 			}
 			return layout.Dimensions{Size: image.Pt(cs, cs)}
 		})
+		ts.Pop()
 		if !active {
 			popups.Tooltip(gtx, a.th, &f.tip, hov, d.Size, popups.Right,
 				"Turn on focus mode\nPause notifications and reduce badging and bolding.", "")
