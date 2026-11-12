@@ -308,8 +308,9 @@ func (a *App) sbRowInput(gtx layout.Context, id string, btn *widget.Clickable, s
 		}
 	}
 	if sbRowNested() {
-		if ctxclick.Clicked(gtx, btn) {
+		if ok, mods := ctxclick.ClickedMods(gtx, btn); ok {
 			clickedSet[btn] = true
+			lastClickMods[btn] = mods
 		}
 		g := gtx
 		g.Constraints = layout.Exact(sz)
@@ -554,10 +555,27 @@ func (a *App) sbMenuInfo(c *convInfo, move bool) popups.ChannelMenuInfo {
 	for k := range secs {
 		i.Custom = i.Custom || custom(&secs[k])
 	}
+	ids := []string{c.ID}
+	if a.sidebar.edit.on { // getChannels: organize mode's picks
+		ids = a.sbPicked()
+		i.Organize, i.MoveCount, i.MoveDM = true, len(ids), a.anyDM(ids)
+	}
 	if move && !i.NoSections && (i.Custom || i.MoveToSection) {
-		i.Move = toPopupItems(a.moveToItems(c.ID, a.channelSections(c.ID)))
+		// a sidebar row's menu passes onEnterEditModeClick: "Edit all
+		// sections" at the end (renderChannelSectionsSubmenu)
+		i.Move = toPopupItems(a.moveToMenuItems(ids, moveMenuOpts{edit: true, section: a.sbRowSection(c.ID)}))
 	}
 	return i
+}
+
+// sbRowSection is the section the sidebar shows conversation ch in.
+func (a *App) sbRowSection(ch string) string {
+	for _, r := range a.sidebar.rows {
+		if r.kind == sbConv && r.key == ch {
+			return r.section
+		}
+	}
+	return ""
 }
 
 // handle returns the row's getTemplate (nil without a plugin runtime).

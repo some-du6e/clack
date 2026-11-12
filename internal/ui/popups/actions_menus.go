@@ -243,6 +243,12 @@ type ChannelMenuInfo struct {
 	// rows (the header's section picker) the submenus show.
 	NoSections, Custom, MoveToSection bool
 	Move                              []MenuItem
+	// Organize is the sidebar's organize mode: the Move row acts on its
+	// MoveCount picks ("Move channels" past one; "conversations" with a
+	// DM among them, MoveDM) instead of the row's conversation.
+	Organize  bool
+	MoveCount int
+	MoveDM    bool
 }
 
 func (c ChannelMenuInfo) dm() bool { return c.Kind == "im" || c.Kind == "mpim" || c.Kind == "app" }
@@ -255,10 +261,10 @@ func (c ChannelMenuInfo) dm() bool { return c.Kind == "im" || c.Kind == "mpim" |
 //
 // The section rows are getChannelSectionsTemplate's (boot-render, the
 // sidebar case): with channel_ia_header_refinements, "Move to section" ▸;
-// else without a custom section, toggle_star and "Move to new section"
-// (move_to_new_section: Create a section with the channel); with one,
-// "Move channel" (or "conversation") ▸ instead of the star. The ▸ rows
-// are c.Move.
+// else without a custom section, toggle_star and "Move channel" (or
+// "conversation"; move_to_new_section: Create a section with it); with
+// one, "Move channel" ▸ instead of the star ("Move channels" over
+// organize mode's picks). The ▸ rows are c.Move.
 func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem {
 	// the channel context menu's templates (the menu I18n)
 	details, star, mute, move := "View channel details", "Star channel", "Mute channel", "Move channel"
@@ -289,10 +295,22 @@ func ChannelMenuItems(c ChannelMenuInfo, do func(key string) func()) []MenuItem 
 	case c.MoveToSection:
 		items = append(items, MenuItem{Key: "move_to_section", Label: t("Move to section"), Sub: c.Move})
 	case c.Custom:
-		items = append(items, MenuItem{Key: "move", Label: t(move), Sub: c.Move})
+		// getChannelSectionsTemplate: "Move {itemCount, plural, …}" over the
+		// row, or organize mode's picks
+		n, dm := 1, c.dm()
+		if c.Organize {
+			n, dm = c.MoveCount, c.MoveDM
+		}
+		label := t("Move {itemCount, plural, =1 {channel} other {channels}}", "itemCount", n)
+		if dm {
+			label = t("Move {itemCount, plural, =1 {conversation} other {conversations}}", "itemCount", n)
+		}
+		items = append(items, MenuItem{Key: "move", Label: label, Sub: c.Move})
 	default:
+		// no custom section: Star, and "Move channel" opening Create a
+		// section with it (channel_ctx_menu_move_to_new_section)
 		items = append(items, MenuItem{Key: "toggle_star", Label: t(star)},
-			MenuItem{Key: "move_to_new_section", Label: t("Move to new section")})
+			MenuItem{Key: "move_to_new_section", Label: t(move)})
 	}
 	items = append(items,
 		MenuItem{Key: "toggle_mute", Label: nsMenuMute.T(mute)},

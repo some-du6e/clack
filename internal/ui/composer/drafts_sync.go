@@ -65,6 +65,9 @@ type draftOp struct {
 	api  coreAPI
 	save *draftSyncArgs   // drafts.create/update with this content
 	del  *deleteDraftArgs // or delete (Draft.ID filled in when it runs)
+	// or attach the key's slot to this server draft (selectStashedDraft,
+	// stash_draft.go): the saves after it update that one
+	attach *string
 }
 
 func queueDraftOp(key string, op draftOp) {
@@ -101,6 +104,10 @@ func (q *draftQueue) run(key string) {
 }
 
 func runDraftOp(key string, op draftOp) {
+	if op.attach != nil {
+		serverDraftIDs.Store(key, *op.attach)
+		return
+	}
 	cur := ""
 	if v, ok := serverDraftIDs.Load(key); ok {
 		cur = v.(string)
@@ -139,6 +146,9 @@ func (c *Composer) syncDraftSoon() {
 // syncDraftNow saves (or deletes, when empty) the server draft for what is
 // in the editor now (UI goroutine; the network work runs in draftOps).
 func (c *Composer) syncDraftNow() {
+	if c.edit == nil && c.attachGen != attachGenOf(c.key()) {
+		return // a composer from before a picked draft took the slot (stash_draft.go)
+	}
 	v := c.ed.Version()
 	if v == c.dsync.synced && c.attVer == c.dsync.syncedAtt {
 		return
@@ -177,6 +187,9 @@ func (c *Composer) syncDraftNow() {
 func (c *Composer) deleteServerDraft(reason string) {
 	if c.dsync.timer != nil {
 		c.dsync.timer.Stop()
+	}
+	if c.edit == nil && c.attachGen != attachGenOf(c.key()) {
+		return // the slot is another draft's now (stash_draft.go)
 	}
 	c.dsync.synced, c.dsync.syncedAtt = c.ed.Version(), c.attVer
 	queueDraftOp(c.key(), draftOp{api: c.api, del: &deleteDraftArgs{Draft: draftRef{ClientDraftID: c.draftID()}, Reason: reason}})

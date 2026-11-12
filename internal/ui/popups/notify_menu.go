@@ -39,6 +39,9 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 )
 
+// TempMuteNewBadge is PND5's badge name M.
+const TempMuteNewBadge = "temp_mute_new_badge"
+
 // notifyChoice is the menu's checked row.
 func notifyChoice(n core.ChannelNotify, global string, muted bool) string {
 	if muted {
@@ -251,7 +254,18 @@ func ChannelNotifyItems(h Host, ch string) []MenuItem {
 		if advanced {
 			more = append(more, MenuItem{Key: "channel_ctx_menu_advanced_options", Label: "Advanced settings", Do: openAdvanced}.In(nsSidebar))
 		}
-		tail = []MenuItem{Sep(), MenuItem{Key: "more_options", Label: "More options", Sub: more}.In(nsMenu)}
+		mo := MenuItem{Key: "more_options", Label: "More options", Sub: more}.In(nsMenu)
+		// temp_mute_new_badge: with temp_mute, the megaphone's
+		// generic_new_badge space turns on EducationTag's "New" (Yu9P) on
+		// More options; opening the submenu clears it (clearNewBadge). The
+		// impression PND5 records names NEW_BADGE_GENERIC, which hro4's
+		// table lacks in this build, so recordNotificationEvent sends
+		// nothing (NznF: no notificationName).
+		if a.MegaphoneNewBadge(TempMuteNewBadge) {
+			mo.Tag = &MenuTag{Label: i18n.T("education", "New"), Style: "inverse-education", HighStyle: "education"}
+			mo.OnSubOpen = func() { a.ClearNewBadge(TempMuteNewBadge) }
+		}
+		tail = []MenuItem{Sep(), mo}
 	} else {
 		if advanced {
 			tail = append(tail, Sep(), MenuItem{Key: "more_options", Label: "Advanced options", Icon: "filter-sliders",

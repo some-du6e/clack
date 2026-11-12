@@ -37,6 +37,9 @@ func init() {
 		// find in thread: ThreadSearchButton and ThreadSearchBar
 		// (ui/messages/thread_find.go; Taut's ThreadJump forces it on)
 		"find_in_thread": on,
+		// the sidebar's organize mode (ui/sidebar_organize.go: SYcU
+		// OrganizeModeMenu's Leave, ConfirmLeaveChannelsModal)
+		"bulk_leave_channels_from_sidebar": on,
 	} {
 		experimentReads[name] = groups
 	}

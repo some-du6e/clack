@@ -2,8 +2,11 @@ name: channels-audit
 # The channels audit (docs/CHANNELS-AUDIT.md) rendered headlessly at
 # 1440x900 against internal/fakeslack: the header star's Move to… menu,
 # a preview channel's header, the Join… menu, channel details (About,
-# Members, Agents & apps, Settings) and the channel browser. Synthetic
-# only: nothing here talks to Slack.
+# Members, Agents & apps, Settings), the channel browser, and the sidebar:
+# its organize mode (row selection, Move to…, Leave and its confirmation),
+# its keyboard (the filter's ArrowDown, roving focus, Shift+Tab), the move
+# error toasts, temp_mute's "New" tag and the draft menu's picked draft.
+# Synthetic only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run channels-audit.yml --ref <branch>)
@@ -18,6 +21,13 @@ on:
       - "internal/ui/popups/actions_menus.go"
       - "internal/ui/popups/notify_menu.go"
       - "internal/ui/sidebar_filter.go"
+      - "internal/ui/sidebar_keys.go"
+      - "internal/ui/sidebar_organize*.go"
+      - "internal/ui/sidebar_draft*.go"
+      - "internal/ui/toast_slack.go"
+      - "internal/ui/popups/confirm_leave_channels.go"
+      - "internal/ui/composer/stash_draft.go"
+      - "internal/core/bulk_leave*.go"
       - ".github/workflows/channels-audit.yml"
   workflow_dispatch:
 
@@ -46,7 +56,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestChannelLeaveRejoin$|TestChannelDetailsTabsShot$|TestSidebarTextFilter$|TestSidebarTextFilterFollowsExperiment$|TestTempMuteFollowsExperiment$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestChannelLeaveRejoin$|TestChannelDetailsTabsShot$|TestSidebarTextFilter$|TestSidebarTextFilterFollowsExperiment$|TestTempMuteFollowsExperiment$|TestSidebarOrganizeMode$|TestSidebarKeyboard$|TestSectionMoveErrorToasts$|TestTempMuteNewBadge$|TestSidebarDraftMenuOpensPickedDraft$|TestSidebarDraftPencilMenu$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

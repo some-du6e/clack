@@ -66,6 +66,25 @@ var MegaphoneMessageInputNotifications = []string{
 	"plus_request_to_purchase_channel_banner",
 }
 
+// megaphoneBootSpaces2 is the boot load's second chunk (i2+v's l[1]),
+// loaded beside the first: the menus' and pages' spaces, among them
+// generic_new_badge, whose badges list turns on Slack's "New" tags
+// (temp_mute_new_badge on the bell's More options).
+var megaphoneBootSpaces2 = []string{
+	"workspace_menu_primary_plan_info", "workspace_menu_secondary_plan_info", "workspace_menu_upsell", "emoji_drawer",
+	"invite_modal_learn_more_about_guests_cta", "create_channel_make_shared_cta", "guests_modal_dropdown", "main_menu",
+	"profile_menu", "sidebar_menu_header", "later_page_today", "workflow_builder_header", "app_header",
+	"all_workflows_header", "workflows_more_actions_menu", "more_peek_menu", "search_modal_footer",
+	"huddle_invite_modal", "huddle_toolbar", "automations_tab_coachmarks", "search_modal_header",
+	"workspace_add_menu", "workspace_team_switcher_menu", "canvas_create_menu", SpaceGenericNewBadge,
+	"sidebar_menu_seasonal_link", "sidebar_menu_onboarding_tasks_link", "slackbot_ai_dm_thread_header",
+	"slackbot_ai_dm", "tools_tab_rail", "tools_tab_sidebar_header", "tools_tab_coachmarks", "focus_mode_button",
+	"message_composer",
+}
+
+// SpaceGenericNewBadge is hro4 xu.GENERIC_NEW_BADGE.
+const SpaceGenericNewBadge = "generic_new_badge"
+
 // megaphoneBootSpaces is the boot load's first chunk.
 var megaphoneBootSpaces = []string{
 	"client_footer", "client_header_right", "message_pane", "sidebar_footer", "launch_modal",
@@ -95,9 +114,12 @@ type megaphoneState struct {
 	mu       sync.Mutex
 	global   map[string]string
 	channels map[string]map[string]string
-	bootAt   time.Time            // the last boot load (memoized for an hour)
-	memo     map[string]time.Time // memoized loads (CHANNEL_OPEN) by request
-	delayed  bool                 // a random-delay boot load is pending
+	// badges is the global generic_new_badge space's notificationData.badges
+	// (the "New" tags its notification turns on; NWiV ap reads them)
+	badges  []string
+	bootAt  time.Time            // the last boot load (memoized for an hour)
+	memo    map[string]time.Time // memoized loads (CHANNEL_OPEN) by request
+	delayed bool                 // a random-delay boot load is pending
 }
 
 // MegaphoneNotification is selectMegaphoneNotification's name: space's
@@ -168,6 +190,17 @@ func (a *App) loadMegaphone(ctx context.Context, event map[string]any, ch, reaso
 			at = ""
 		}
 		a.megaphoneSet(space, at, name)
+		if space == SpaceGenericNewBadge && at == "" {
+			var d struct {
+				Badges []string `json:"badges"`
+			}
+			if n != nil {
+				_ = json.Unmarshal(n.Data, &d)
+			}
+			a.mega.mu.Lock()
+			a.mega.badges = d.Badges
+			a.mega.mu.Unlock()
+		}
 	}
 	a.emit(Event{Type: "megaphone", Channel: ch})
 	return out, nil
@@ -188,13 +221,65 @@ func (a *App) MegaphoneBoot(ctx context.Context, open string) error {
 }
 
 func (a *App) megaphoneBootLoad(ctx context.Context, open, reason string) error {
-	ev := map[string]any{"type": megaphoneRequestSpaces, "spaces": megaphoneBootSpaces, "ia_version": 4,
+	// chunkedLoadMegaphoneNotificationBootData: both chunks at once
+	var err2 error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err2 = a.loadMegaphone(ctx, megaphoneBootEvent(megaphoneBootSpaces2, open), "", reason, nil)
+	}()
+	_, err := a.loadMegaphone(ctx, megaphoneBootEvent(megaphoneBootSpaces, open), "", reason, nil)
+	<-done
+	if err == nil {
+		err = err2
+	}
+	return err
+}
+
+// megaphoneBootEvent is one boot chunk's REQUEST_SPACES event.
+func megaphoneBootEvent(spaces []string, open string) map[string]any {
+	ev := map[string]any{"type": megaphoneRequestSpaces, "spaces": spaces, "ia_version": 4,
 		"is_app_store_build": false, "is_joiner_launchpad_enabled": false}
 	if LooksLikeChannelID(open) {
 		ev["channel"] = open
 	}
-	_, err := a.loadMegaphone(ctx, ev, "", reason, nil)
-	return err
+	return ev
+}
+
+// MegaphoneNewBadge is isNewBadgeShowing (NWiV ap): the global
+// generic_new_badge space's badges list has badge.
+func (a *App) MegaphoneNewBadge(badge string) bool {
+	m := &a.mega
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, b := range m.badges {
+		if b == badge {
+			return true
+		}
+	}
+	return false
+}
+
+// ClearNewBadge is clearNewBadge (ZNtt h1): badge leaves the list here
+// only (Slack sends nothing; the server stops answering it once the
+// notification's impressions are in).
+func (a *App) ClearNewBadge(badge string) {
+	m := &a.mega
+	m.mu.Lock()
+	var keep []string
+	found := false
+	for _, b := range m.badges {
+		if b == badge {
+			found = true
+			continue
+		}
+		keep = append(keep, b)
+	}
+	m.badges = keep
+	m.mu.Unlock()
+	if found {
+		a.emit(Event{Type: "megaphone"})
+	}
 }
 
 // MegaphoneChannelOpened is channelOpenedEvent: CHANNEL_OPEN for ch when
@@ -268,6 +353,9 @@ func (a *App) onMegaphoneEvent(typ string, raw json.RawMessage) {
 		for sp, n := range spaces {
 			if n == e.Notification {
 				delete(spaces, sp)
+				if sp == SpaceGenericNewBadge && e.Channel == "" {
+					m.badges = nil
+				}
 			}
 		}
 		m.mu.Unlock()

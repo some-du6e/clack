@@ -13,7 +13,7 @@ package ui
 //     and every custom section as radios (checked: where the channel is),
 //     a separator, then "Create your first section" (no custom sections
 //     yet) or "Create new section" and, for a channel in a custom
-//     section, "Remove from section". Choosing a section is
+//     section, "Remove from <section>". Choosing a section is
 //     performBulkChannelMove: insert there, remove from where it was.
 //   - The header ⋮ menu's "Move channel" opens the same choice; with no
 //     custom section to offer, Slack goes straight to "Create a section"
@@ -21,12 +21,12 @@ package ui
 //   - None of this shows for a channel the viewer isn't in.
 
 import (
-	"context"
 	"image"
 
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -151,50 +151,160 @@ func (a *App) layoutHeaderStar(gtx layout.Context, ch string, conv *convInfo, po
 	}
 }
 
-// moveToItems is ChannelSectionMoveToMenu for ch.
-func (a *App) moveToItems(ch string, st chSectionState) []MenuItem {
-	items := []MenuItem{{Header: true, Label: "Move to…"}}
-	if st.stars == nil {
-		items = append(items, MenuItem{Key: "channel_section_select_menu_stars", Label: "Starred", Icon: "star", Radio: true,
-			Checked: st.starred, Do: func() { a.moveChannelTo(ch, nil, st) }})
-	}
-	standard := false
-	for _, s := range st.sections {
-		s := s
-		icon := ""
-		cur := st.custom == s && !st.starred
-		if s.Type == "stars" {
-			icon = "star"
-			cur = st.starred
-		} else {
-			standard = true
+// moveToItems is ChannelSectionMoveToMenu for ch (the header's star,
+// the ⋮ menu's Move channel).
+func (a *App) moveToItems(ch string, _ chSectionState) []MenuItem {
+	return a.moveToMenuItems([]string{ch}, moveMenuOpts{})
+}
+
+// moveMenuOpts are what ChannelSectionMoveToMenu's callers set.
+type moveMenuOpts struct {
+	// edit is showEditButton (a sidebar row's menu: onEnterEditModeClick
+	// was passed): "Edit all sections" ends the menu and enters organize
+	// mode at section, the row's.
+	edit    bool
+	section string
+}
+
+// moveToMenuItems is ChannelSectionMoveToMenu (boot-shared EaYn, build
+// 4d0c78085232) for the conversations ids (a row's one, or organize
+// mode's picks: getChannels):
+//
+//   - "Move to…", then Starred (a stand-in first when the sidebar has
+//     none) and the custom sections in sidebar order as radios: checked
+//     when any of ids is there (Starred: starred), indeterminate when not
+//     all are; the section's emoji, else its type's glyph (star /
+//     star-filled when checked, section for a custom one). Picking a
+//     section that has all of them takes them out of it
+//     (performBulkChannelMove remove); any other moves them there
+//     (performMoveManyChannelsToSection).
+//   - a separator, then "Create your first section" without a custom
+//     section, else "Create new section" (Create a section with ids
+//     picked), "Remove from {section}" / "Remove from all sections" while
+//     they are in a custom section or Starred, and for a sidebar row a
+//     separator and "Edit all sections".
+func (a *App) moveToMenuItems(ids []string, o moveMenuOpts) []MenuItem {
+	ns := i18n.NS("menu")
+	m := a.model()
+	var list []*sbSection
+	var stars *sbSection
+	custom := false
+	for i := range m.Sections {
+		s := &m.Sections[i]
+		switch s.Type {
+		case "stars":
+			stars = s
+			list = append(list, s)
+		case "standard":
+			custom = true
+			list = append(list, s)
 		}
-		items = append(items, MenuItem{Key: "channel_section_select_menu_" + s.ID, Label: s.Name, Icon: icon, Radio: true, Checked: cur,
+	}
+	starred := func(id string) bool { return a.channelSections(id).starred }
+	in := func(s *sbSection, id string) bool {
+		if s == nil || s.Type == "stars" {
+			return starred(id) || s != nil && secHas(s, id)
+		}
+		return secHas(s, id)
+	}
+	item := func(s *sbSection) MenuItem {
+		has, all := false, len(ids) > 0
+		for _, id := range ids {
+			h := in(s, id)
+			has, all = has || h, all && h
+		}
+		label, key, icon, url := ns.T("Starred"), "section-stars", "star", ""
+		if s != nil {
+			label, key = sectionLabel(s), "section-"+s.ID
+			icon = sectionIcon("standard") // Slack's "section" glyph
+			if s.Type == "stars" {
+				icon = "star"
+			}
+			if s.EmojiURL != "" {
+				icon, url = "", s.EmojiURL
+			}
+		}
+		if icon == "star" && has {
+			icon = "star-filled"
+		}
+		to := s
+		return MenuItem{Key: key, Label: label, Icon: icon, IconURL: url, Radio: true, Checked: has, Indeterminate: has && !all,
 			Do: func() {
-				if !cur {
-					a.moveChannelTo(ch, s, st)
+				if !all {
+					a.moveManyTo(ids, to)
+					return
 				}
-			}})
+				if to != nil { // all of them there: out of it (…-deselect)
+					a.moveMany(ids, nil, []core.SectionItems{{Section: to.ID, Channels: ids}}, nil)
+				}
+			}}
+	}
+	items := []MenuItem{{Header: true, Label: ns.T("Move to…")}}
+	if stars == nil {
+		items = append(items, item(nil))
+	}
+	for _, s := range list {
+		items = append(items, item(s))
 	}
 	items = append(items, MenuItem{Divider: true})
-	if !standard {
-		return append(items, MenuItem{Key: "channel_section_select_menu_create_new_section", Label: "Create your first section",
-			Icon: "plus", Do: func() { a.openCreateSectionWith(ch) }})
+	if !custom {
+		return append(items, MenuItem{Key: "channel_section_select_menu_create_new_section", Label: ns.T("Create your first section"),
+			Icon: "plus", Do: func() { a.openCreateSectionWithIDs(ids) }})
 	}
-	items = append(items, MenuItem{Key: "channel_section_select_menu_new_section", Label: "Create new section",
-		Icon: "plus", Do: func() { a.openCreateSectionWith(ch) }})
-	if st.custom != nil && !st.starred {
-		id := st.custom.ID
-		items = append(items, MenuItem{Key: "channel_section_select_menu_remove_from_section", Label: "Remove from section",
-			Do: func() {
-				var mv core.SectionMove
-				a.sectionRun("Couldn’t move the channel", func(ctx context.Context, c *core.App) (err error) {
-					mv, err = c.MoveToSectionRecord(ctx, id, nil, []string{ch})
-					return err
-				}, func() { a.bulkMoveToast(mv) })
-			}})
+	items = append(items, MenuItem{Key: "channel_section_select_menu_new_section", Label: ns.T("Create new section"),
+		Icon: "plus", Do: func() { a.openCreateSectionWithIDs(ids) }})
+	if rm, ok := a.removeFromSectionItem(ids, stars); ok {
+		items = append(items, rm)
+	}
+	if o.edit {
+		sec := o.section
+		items = append(items, MenuItem{Divider: true},
+			MenuItem{Key: "edit_mode_enter", Label: ns.T("Edit all sections"), Do: func() { a.sbEnterEditMode(sec) }})
 	}
 	return items
+}
+
+// removeFromSectionItem is renderRemoveFromSection: the custom sections
+// and Starred holding ids, "Remove from {section}" for one, "Remove from
+// all sections" for several.
+func (a *App) removeFromSectionItem(ids []string, stars *sbSection) (MenuItem, bool) {
+	m := a.model()
+	var secs []*sbSection
+	per := map[string][]string{}
+	add := func(s *sbSection, id string) {
+		if _, ok := per[s.ID]; !ok {
+			secs = append(secs, s)
+		}
+		per[s.ID] = append(per[s.ID], id)
+	}
+	for _, id := range ids {
+		if a.channelSections(id).starred {
+			if stars != nil {
+				add(stars, id)
+			}
+			continue
+		}
+		for i := range m.Sections {
+			if s := &m.Sections[i]; s.Type == "standard" && secHas(s, id) {
+				add(s, id)
+			}
+		}
+	}
+	if len(secs) == 0 {
+		return MenuItem{}, false
+	}
+	ns := i18n.NS("menu")
+	label := ns.T("Remove from all sections")
+	if len(secs) == 1 {
+		label = ns.T("Remove from {section}", "section", sectionLabel(secs[0]))
+	}
+	var rem []core.SectionItems
+	for _, s := range secs {
+		rem = append(rem, core.SectionItems{Section: s.ID, Channels: per[s.ID]})
+	}
+	return MenuItem{Key: "channel_section_select_menu_remove_from_section", Label: label, Do: func() {
+		a.moveMany(ids, nil, rem, nil)
+	}}, true
 }
 
 // openMoveToMenu shows the Move to… menu under anchor (window
@@ -223,76 +333,23 @@ func (a *App) openMoveToMenu(ch string, anchor image.Rectangle, fromKebab bool) 
 	a.menuAt(r, 0, 280, a.moveToItems(ch, st))
 }
 
-// moveChannelTo is performBulkChannelMove: into to (nil: the synthetic
-// Starred), out of the section ch was in.
-func (a *App) moveChannelTo(ch string, to *sbSection, st chSectionState) {
-	toStars := to == nil || to.Type == "stars"
-	toID := ""
-	if to != nil {
-		toID = to.ID
-	}
-	starsID := ""
-	if st.stars != nil {
-		starsID = st.stars.ID
-	}
-	customID := ""
-	if st.custom != nil {
-		customID = st.custom.ID
-	}
-	wasStarred := st.starred
-	var mv core.SectionMove // the whole move, for performBulkChannelMove's toast and Undo
-	step := func(ctx context.Context, c *core.App, id string, ins, rem []string) error {
-		r, err := c.MoveToSectionRecord(ctx, id, ins, rem)
-		mv = mv.Merge(r)
-		return err
-	}
-	star := func(ctx context.Context, c *core.App, on bool) error {
-		if err := c.Star(ctx, ch, on); err != nil {
-			return err
-		}
-		if on {
-			mv = mv.Merge(core.SectionMove{Starred: []string{ch}})
-		} else {
-			mv = mv.Merge(core.SectionMove{Unstarred: []string{ch}})
-		}
-		return nil
-	}
-	a.sectionRun("Couldn’t move the channel", func(ctx context.Context, c *core.App) error {
-		if toStars {
-			if toID == "" {
-				if err := star(ctx, c, true); err != nil {
-					return err
-				}
-			} else if err := step(ctx, c, toID, []string{ch}, nil); err != nil {
-				return err
-			}
-			if customID != "" {
-				return step(ctx, c, customID, nil, []string{ch})
-			}
-			return nil
-		}
-		// into a custom section (core drops it from the other custom ones)
-		if err := step(ctx, c, toID, []string{ch}, nil); err != nil {
-			return err
-		}
-		if wasStarred {
-			if starsID != "" {
-				return step(ctx, c, starsID, nil, []string{ch})
-			}
-			return star(ctx, c, false)
-		}
-		return nil
-	}, func() { a.bulkMoveToast(mv) })
+// moveChannelTo is ChannelSectionMoveToMenu's pick for one conversation:
+// performMoveManyChannelsToSection into to (nil: the synthetic Starred).
+func (a *App) moveChannelTo(ch string, to *sbSection, _ chSectionState) {
+	a.moveManyTo([]string{ch}, to)
 }
 
 // openCreateSectionWith is openCreateChannelSectionModal({channelIds:
 // [ch]}): "Create a section" with ch already picked on step 2.
-func (a *App) openCreateSectionWith(ch string) {
+func (a *App) openCreateSectionWith(ch string) { a.openCreateSectionWithIDs([]string{ch}) }
+
+// openCreateSectionWithIDs is openCreateChannelSectionModal({channelIds}).
+func (a *App) openCreateSectionWithIDs(ids []string) {
 	if a.Core() == nil {
 		a.Toast("Sign in first")
 		return
 	}
-	o := popups.CreateSectionOpts{Candidates: a.sidebarConvs(), Preselect: []string{ch}, Moved: a.bulkMoveToast}
+	o := popups.CreateSectionOpts{Candidates: a.sidebarConvs(), Preselect: append([]string(nil), ids...), Moved: a.bulkMoveToast}
 	switch s := a.Core().Prefs().ChannelSort; s {
 	case "recent", "priority":
 		o.DefaultSort = s

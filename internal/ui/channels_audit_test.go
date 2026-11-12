@@ -88,7 +88,8 @@ func TestChannelHeaderMoveTo(t *testing.T) {
 		t.Errorf("a channel in a custom section shows %q, not the section glyph", icon)
 	}
 	items := e.a.moveToItems(ch, st)
-	want := "Move to… | Starred | Hack Club | Projects | Events | Random stuff | Bots |  | Create new section | Remove from section"
+	// EaYn renderRemoveFromSection names the one section it leaves
+	want := "Move to… | Starred | Hack Club | Projects | Events | Random stuff | Bots |  | Create new section | Remove from Hack Club"
 	if got := menuLabels(items); got != want {
 		t.Errorf("Move to… menu:\n got %s\nwant %s", got, want)
 	}

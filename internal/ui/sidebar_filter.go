@@ -118,14 +118,20 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		f.inited = true
 	}
 	// FilterInputBase: Escape empties the input and the row text (the
-	// keydown handler's clear), so it doesn't reach "Close / mark as read"
+	// keydown handler's clear), so it doesn't reach "Close / mark as read";
+	// SidebarTextFilterInput's ArrowDown focuses the first row
+	// (SIDEBAR_FIRST_VISIBLE_ROW, sidebar_keys.go)
 	shortcut.OwnEscape(&f.ed)
 	for {
-		ev, ok := gtx.Event(key.Filter{Focus: &f.ed, Name: key.NameEscape})
+		ev, ok := gtx.Event(key.Filter{Focus: &f.ed, Name: key.NameEscape}, key.Filter{Focus: &f.ed, Name: key.NameDownArrow})
 		if !ok {
 			break
 		}
 		if k, ok := ev.(key.Event); ok && k.State == key.Press {
+			if k.Name == key.NameDownArrow {
+				a.sbFocusFirstRow(gtx)
+				continue
+			}
 			f.clear()
 			gtx.Execute(op.InvalidateCmd{}) // the rows follow on the next frame
 		}
@@ -161,9 +167,10 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		bg = a.sbBase // dark: transparent box, outline only
 	}
 	if focused {
-		// box-shadow 0 0 0 1px otl-hgl-1, 0 0 0 5px of it at 30%; the
-		// border is transparent
-		ring := a.th.C.Accent
+		// .c-filter_input--active: box-shadow 0 0 0 1px
+		// --sk_focused-shadow-color, 0 0 0 5px of it at 30%; the border is
+		// transparent
+		ring := a.sbFocusColor()
 		hw := gtx.Dp(5)
 		theme.RRect(gtx, r.Inset(-hw), rad+hw, theme.Over(theme.WithAlpha(ring, 0x4d), a.sbBase))
 		theme.RRect(gtx, r.Inset(-max(1, gtx.Dp(1))), rad+gtx.Dp(1), ring)

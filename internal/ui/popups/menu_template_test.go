@@ -157,8 +157,9 @@ func TestChannelMenuTemplateRoundTrip(t *testing.T) {
 }
 
 // The sidebar menu's section rows are getChannelSectionsTemplate's
-// (boot-render, sidebar): Star and "Move to new section" without a custom
-// section; "Move channel" ▸ (no Star) with one; "Move to section" ▸ under
+// (boot-render 50XG, sidebar): Star and "Move channel" (opening Create a
+// section) without a custom section; "Move channel" ▸ (no Star) with one,
+// "Move channels" ▸ over organize mode's picks; "Move to section" ▸ under
 // channel_ia_header_refinements; nothing for an archived channel or one
 // you aren't in. The ▸ rows are the section picker's, with its actions.
 func TestChannelMenuSectionRows(t *testing.T) {
@@ -180,10 +181,13 @@ func TestChannelMenuSectionRows(t *testing.T) {
 		c    ChannelMenuInfo
 		want string
 	}{
-		{"no custom section", ChannelMenuInfo{ID: "C1", Kind: "channel"}, "Star channel,Move to new section"},
-		{"DM, no custom section", ChannelMenuInfo{ID: "D1", Kind: "im", Starred: true}, "Unstar conversation,Move to new section"},
+		{"no custom section", ChannelMenuInfo{ID: "C1", Kind: "channel"}, "Star channel,Move channel"},
+		{"DM, no custom section", ChannelMenuInfo{ID: "D1", Kind: "im", Starred: true}, "Unstar conversation,Move conversation"},
 		{"custom section", ChannelMenuInfo{ID: "C1", Kind: "channel", Custom: true, Move: move}, "Move channel"},
 		{"DM, custom section", ChannelMenuInfo{ID: "D1", Kind: "im", Custom: true, Move: move}, "Move conversation"},
+		{"organize mode, three picks", ChannelMenuInfo{ID: "C1", Kind: "channel", Custom: true, Move: move, Organize: true, MoveCount: 3}, "Move channels"},
+		{"organize mode, a DM picked", ChannelMenuInfo{ID: "C1", Kind: "channel", Custom: true, Move: move, Organize: true, MoveCount: 2, MoveDM: true}, "Move conversations"},
+		{"organize mode, no picks", ChannelMenuInfo{ID: "C1", Kind: "channel", Custom: true, Move: move, Organize: true}, "Move channels"},
 		{"refinements", ChannelMenuInfo{ID: "C1", Kind: "channel", MoveToSection: true, Move: move}, "Move to section"},
 		{"archived", ChannelMenuInfo{ID: "C1", Kind: "channel", NoSections: true, Custom: true, Move: move}, ""},
 	}

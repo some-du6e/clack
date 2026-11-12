@@ -331,31 +331,34 @@ type Profile struct {
 
 // Conversation is a channel, private channel, DM or group DM.
 type Conversation struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name,omitempty"`
-	IsChannel     bool            `json:"is_channel,omitempty"`
-	IsGroup       bool            `json:"is_group,omitempty"`
-	IsIM          bool            `json:"is_im,omitempty"`
-	IsMPIM        bool            `json:"is_mpim,omitempty"`
-	IsPrivate     bool            `json:"is_private,omitempty"`
-	IsArchived    bool            `json:"is_archived,omitempty"`
-	IsGeneral     bool            `json:"is_general,omitempty"`
-	IsMember      bool            `json:"is_member,omitempty"`
-	IsExtShared   bool            `json:"is_ext_shared,omitempty"`
-	IsOrgShared   bool            `json:"is_org_shared,omitempty"`
-	User          string          `json:"user,omitempty"` // IM partner
-	Created       int64           `json:"created,omitempty"`
-	Creator       string          `json:"creator,omitempty"`
-	NumMembers    int             `json:"num_members,omitempty"`
-	Topic         *Purpose        `json:"topic,omitempty"`
-	Purpose       *Purpose        `json:"purpose,omitempty"`
-	LastRead      string          `json:"last_read,omitempty"`
-	Latest        json.RawMessage `json:"latest,omitempty"`
-	Members       []string        `json:"members,omitempty"`
-	Properties    json.RawMessage `json:"properties,omitempty"`
-	Priority      float64         `json:"priority,omitempty"`
-	IsOpen        bool            `json:"is_open,omitempty"`
-	ContextTeamID string          `json:"context_team_id,omitempty"`
+	ID          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	IsChannel   bool   `json:"is_channel,omitempty"`
+	IsGroup     bool   `json:"is_group,omitempty"`
+	IsIM        bool   `json:"is_im,omitempty"`
+	IsMPIM      bool   `json:"is_mpim,omitempty"`
+	IsPrivate   bool   `json:"is_private,omitempty"`
+	IsArchived  bool   `json:"is_archived,omitempty"`
+	IsGeneral   bool   `json:"is_general,omitempty"`
+	IsMember    bool   `json:"is_member,omitempty"`
+	IsExtShared bool   `json:"is_ext_shared,omitempty"`
+	IsOrgShared bool   `json:"is_org_shared,omitempty"`
+	// IsOrgMandatory: a channel everyone in the org is in (Slack's gx
+	// is_general || is_org_mandatory: it can't be left).
+	IsOrgMandatory bool            `json:"is_org_mandatory,omitempty"`
+	User           string          `json:"user,omitempty"` // IM partner
+	Created        int64           `json:"created,omitempty"`
+	Creator        string          `json:"creator,omitempty"`
+	NumMembers     int             `json:"num_members,omitempty"`
+	Topic          *Purpose        `json:"topic,omitempty"`
+	Purpose        *Purpose        `json:"purpose,omitempty"`
+	LastRead       string          `json:"last_read,omitempty"`
+	Latest         json.RawMessage `json:"latest,omitempty"`
+	Members        []string        `json:"members,omitempty"`
+	Properties     json.RawMessage `json:"properties,omitempty"`
+	Priority       float64         `json:"priority,omitempty"`
+	IsOpen         bool            `json:"is_open,omitempty"`
+	ContextTeamID  string          `json:"context_team_id,omitempty"`
 	// IsFrozen and IsPendingExtShared keep a DM off Slack's DMs tab
 	// (isFrozen, the pending Slack Connect IM check).
 	IsFrozen           bool `json:"is_frozen,omitempty"`

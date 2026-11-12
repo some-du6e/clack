@@ -235,6 +235,8 @@ type Server struct {
 	others []slack.Conversation
 	Joins  []JoinCall
 	Leaves []string // conversations.leave calls (LeaveCalls)
+	// BulkLeaves are conversations.bulkLeave calls' channels (BulkLeaveCalls)
+	BulkLeaves [][]string
 	// listFilters: every edge users/list filter (UserListFilters).
 	listFilters []string
 	emoji       map[string]string
@@ -729,6 +731,47 @@ func (s *Server) leave(f url.Values) any {
 	return ok("not_in_channel", true)
 }
 
+// bulkLeave is conversations.bulkLeave {channels: "C1,C2"} (the sidebar's
+// organize mode): each channel is left as with conversations.leave
+// (#general stays), recorded in BulkLeaves.
+func (s *Server) bulkLeave(f url.Values) any {
+	var ids []string
+	for _, id := range strings.Split(f.Get("channels"), ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return map[string]any{"ok": false, "error": "invalid_arguments"}
+	}
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	s.BulkLeaves = append(s.BulkLeaves, ids)
+	for _, id := range ids {
+		for i, c := range s.convs {
+			if c.ID != id || c.IsGeneral {
+				continue
+			}
+			c.IsMember = false
+			s.convs = append(s.convs[:i], s.convs[i+1:]...)
+			s.others = append(s.others, c)
+			break
+		}
+	}
+	return ok()
+}
+
+// BulkLeaveCalls returns each conversations.bulkLeave call's channels.
+func (s *Server) BulkLeaveCalls() [][]string {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	out := make([][]string, len(s.BulkLeaves))
+	for i, ids := range s.BulkLeaves {
+		out[i] = append([]string(nil), ids...)
+	}
+	return out
+}
+
 // LeaveCalls returns the channels conversations.leave was called for.
 func (s *Server) LeaveCalls() []string {
 	s.convMu.Lock()
@@ -1112,6 +1155,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			// the sidebar text filter and temporary mutes (core sidebar_filter.go, temp_mute.go)
 			"sidebar_text_filter": g("on"), "sidebar_text_filter_m2": g("on"), "sidebar_text_filter_m3": g("on"),
 			"temp_mute": g("on"), "manage_conversations_strings": g("on"), "thread_root_selected_state": g("on"),
+			// the sidebar's organize mode gets Leave (ui/sidebar_organize.go)
+			"bulk_leave_channels_from_sidebar": g("on"),
 			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
 			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
 			// views and navigation (core/views_experiments.go), as the account had them on 2026-11-10
@@ -1265,6 +1310,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return s.join(f)
 	case "conversations.leave":
 		return s.leave(f)
+	case "conversations.bulkLeave":
+		return s.bulkLeave(f)
 	case "chat.deleteAttachment":
 		return s.deleteAttachment(f)
 	case "chat.postMessage":

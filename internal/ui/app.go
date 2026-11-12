@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"gioui.org/app"
+	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -177,6 +178,7 @@ type App struct {
 	overlays        []Overlay
 	slackc          slackcState
 	toast           toastState
+	toastClick      gesture.Click // a rich toast's links (toast_slack.go)
 	keys            *shortcuts
 	login           *loginScreen
 	intro           *intro // the introduction: first launch, or replayed (intro.go)
@@ -710,6 +712,7 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 		a.sidebar.hover = a.ptrWin.In(sb)
 		sv := clsSidebarView.Enter(gtx, 0, 0)
 		a.th.Chrome = true
+		a.sidebar.origin = sb.Min
 		atExact(gtx, sb.Min, sb.Size(), a.layoutSidebar)
 		a.th.Chrome = false
 		sv.Leave()
@@ -925,6 +928,11 @@ type toastState struct {
 	btn   *widget.Clickable // its "Undo"
 	label string            // the button's label ("" is "Undo")
 	icon  string            // ToastIcon: Slack's Toast with this icon (toast_slack.go)
+	// ToastParts: Slack's Toast with rt() parts (bold and link runs), an
+	// optional icon in iconCol (toast_slack.go)
+	parts   []i18n.Part
+	iconCol color.NRGBA
+	rich    bool
 }
 
 // Toast shows a short message at the bottom of the window.
@@ -965,6 +973,10 @@ func (a *App) layoutToast(gtx layout.Context) {
 		return
 	}
 	gtx.Execute(op.InvalidateCmd{At: a.toast.until})
+	if a.toast.rich {
+		a.layoutRichToast(gtx)
+		return
+	}
 	if a.toast.icon != "" {
 		a.layoutSlackToast(gtx)
 		return
