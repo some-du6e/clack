@@ -8,6 +8,7 @@ import (
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/huddle/avperm"
 	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -41,20 +42,139 @@ func (w *window) cameraClick(s *huddle.Session, st huddle.State) {
 	}
 }
 
-// cameraCtl is the toolbar's camera button: lit while on, greyed with a
-// tooltip where there is no camera backend.
-func (w *window) cameraCtl(st huddle.State) ctl {
+// HuddleToolbarCameraButton (gantry-v2-async-client-boot-shared LnqA,
+// build d3de3a487b1c) is segmented in every toolbar (.segmentedButton):
+//
+//   - the camera half (.segmentedButtonMain, 36px), toggled on while your
+//     camera is on, video-off or video-filled (7d+n with
+//     shouldUseFilledActiveIcon); its tooltip is HuddlesToolTipDeviceContent
+//     with useCameraButtonLabels' (I4aw z) videoLabel, "Turn on video" or
+//     "Turn off video" (deviceLabel is never set), its aria-label "Turn on
+//     camera" / "Turn off camera";
+//   - the "Video settings" caret (.segmentedButtonPopover, 28px):
+//     caret-up, caret-down while its menu is open, toggled on while open
+//     or while the camera is on. It opens HuddleVideoDevicesMenu (DU15 O)
+//     above it (position "top", closeOnSelect false).
+//
+// HuddleToolbar (9d6D) draws the button only under
+// isHuddlesVideoEnabledForOrgWorkspaces (zq6z F7, videoAllowed). The
+// menu, in Slack's order:
+//
+//	Video                       (header; F7)
+//	  ◉ each camera             (Tml2 useCameraSettingsMenuItems: radio rows,
+//	                             the one in use checked; "No cameras found")
+//	────
+//	Video preview               (HuddleCameraPreviewMenuItem; F7)
+//	Video background            (useChangeVideoBackgroundMenuItem; F7, not Firefox)
+//	────
+//	Audio & video preferences   (yBJd; hidden for an external guest, cB5s U)
+//
+// Clack lists the camera it opens (AVFoundation's default device; the test
+// pattern under CLACK_HUDDLE_TESTCAM): it can't switch cameras. Video
+// preview (a camera preview with a Camera source picker, NfdB) and Video
+// background (HuddleBackgroundPickerDialog's images, or the older
+// ChangeVideoBackgroundDialog) aren't drawn: Clack has no camera switch,
+// no live preview in a menu and no background images (only blur, in
+// Preferences › Audio & video). docs/HUDDLES-AUDIT.md "Camera button".
+
+// listCameras is huddle.CameraDevices (tests list fakes).
+var listCameras = huddle.CameraDevices
+
+// cameraCtls is the segmented camera button's two halves (none when video
+// isn't allowed).
+func (c *Controller) cameraCtls(st huddle.State, menuOpen bool) []ctl {
+	if !c.videoAllowed() {
+		return nil
+	}
+	on := st.Camera.State == huddle.CameraOn
+	main := ctl{id: "camera", icon: "video-off", tip: nsHuddles.T("Turn on video"), seg: segMain}
 	switch st.Camera.State {
 	case huddle.CameraOn:
-		return ctl{id: "camera", icon: "video", on: true}
+		main.icon, main.on, main.tip = "video-filled", true, nsHuddles.T("Turn off video")
 	case huddle.CameraStarting:
-		return ctl{id: "camera", icon: "video"}
+		main.icon, main.tip = "video", nsHuddles.T("Turn off video")
 	}
-	c := ctl{id: "camera", icon: "video-off"}
-	if !cameraSupported() {
-		c.dim, c.tip = true, camUnsupported
+	if !cameraSupported() && !on {
+		main.dim = true
 	}
-	return c
+	caret := ctl{id: "videomenu", icon: "caret-up", on: menuOpen || on, tip: nsHuddles.T("Video settings"), seg: segCaret}
+	if menuOpen {
+		caret.icon = "caret-down"
+	}
+	return []ctl{main, caret}
+}
+
+// videoAllowed is isHuddlesVideoEnabledForOrgWorkspaces (zq6z F7): you're
+// an external guest in an external huddle (cB5s U), or the team pref
+// allow_huddles_video is on (h/Bp xp). Slack reads a missing pref as off;
+// Clack only hides video when the loaded prefs turn it off, since it can't
+// tell a pref team.prefs.get leaves out from one that's unset.
+func (c *Controller) videoAllowed() bool {
+	app := c.h.Core()
+	if app == nil {
+		return true
+	}
+	if c.selfExternalGuest() {
+		return true
+	}
+	if !app.TeamPrefsLoaded() {
+		return true
+	}
+	v, ok := app.TeamPref("allow_huddles_video")
+	if !ok {
+		return true
+	}
+	return string(v) != "false" && string(v) != `"false"` && string(v) != "0"
+}
+
+// selfExternalGuest is cB5s U: external huddles on and you're an external
+// guest (wY11 EG: is_restricted, restricted_user_type external_guest).
+func (c *Controller) selfExternalGuest() bool {
+	app := c.h.Core()
+	if app == nil || !c.on(extHuddles) {
+		return false
+	}
+	u, ok := app.S.User(c.selfID())
+	return ok && u.IsRestricted && u.RestrictedUserType == "external_guest"
+}
+
+// videoMenu is HuddleVideoDevicesMenu's rows.
+func (c *Controller) videoMenu(s *huddle.Session) []popups.MenuItem {
+	var items []popups.MenuItem
+	if c.videoAllowed() {
+		items = append(items, popups.MenuItem{Header: nsHuddles.T("Video")})
+		cams := listCameras()
+		if len(cams) == 0 {
+			// useCameraSettingsMenuItems' case 2 (KI/8 q: no devices)
+			items = append(items, popups.MenuItem{Key: "no-cameras", Label: nsHuddles.T("No cameras found"), Radio: true})
+		}
+		for i, d := range cams {
+			items = append(items, popups.MenuItem{Key: "av-camera-device-menu-item_" + d.Name, Label: d.Name, Radio: true,
+				Checked: i == 0, Do: func() {}}) // the one Clack opens
+		}
+		items = append(items, popups.Sep())
+	}
+	if !c.selfExternalGuest() { // useAVPreferencesSettingsMenuItem
+		items = append(items, popups.MenuItem{Key: "preferences", Label: nsHuddles.T("Audio & video preferences"), Radio: true, Do: func() {
+			if p, ok := c.h.(interface{ OpenPreferences(section string) }); ok {
+				c.post(func() { p.OpenPreferences("video_audio") })
+			}
+		}})
+	}
+	return items
+}
+
+// toggleVideo opens (or closes) Video settings above the camera's caret.
+func (w *window) toggleVideo(s *huddle.Session, st huddle.State) {
+	if w.video != nil {
+		w.video.Dismiss()
+		w.video = nil
+		return
+	}
+	w.closeMenus()
+	anchor := w.videoBtn.Add(image.Pt(0, w.barTop))
+	w.video = popups.NewMenuOpts(winHost{w}, w.c.videoMenu(s), popups.MenuOpts{Anchor: anchor, Side: popups.Above,
+		MenuClass: "p-huddle_more_actions_menu"})
 }
 
 // cameraWatch toasts a camera failure once, when it happens.

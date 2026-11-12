@@ -105,6 +105,12 @@ func (f fakeCaller) Call(ctx context.Context, method string, p url.Values, out a
 		}
 		return json.Unmarshal([]byte(`{"ok":true}`), out)
 	}
+	if method == "huddles.external.end" { // Leave options › End huddle for all
+		if p.Get("channel_id") == "" {
+			return errors.New("fake slack: huddles.external.end without channel_id")
+		}
+		return json.Unmarshal([]byte(`{"ok":true}`), out)
+	}
 	if method == "huddles.listBackgrounds" { // the huddle themes (HuddleBackground)
 		return json.Unmarshal(fakeBackgrounds, out)
 	}

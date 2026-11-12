@@ -135,7 +135,20 @@ func hudSurfaces(t *testing.T) []hudSurface {
 			for _, it := range c.audioMenu(s) {
 				out = append(out, it.Label, it.Header)
 			}
+			// Video settings and Leave options (window_camera.go, leave_options.go)
+			for _, it := range append(c.videoMenu(s), c.leaveOptionsMenu(s)...) {
+				out = append(out, it.Label, it.Header)
+			}
 			return out
+		}},
+		{name: "window-quick-picker", w: 589, h: 351, draw: func(gtx C) {
+			c.mu.Lock()
+			c.win = e.w
+			c.mu.Unlock()
+			if e.w.quick == nil {
+				e.w.quick = newQuickPicker(winHost{e.w}, image.Rect(300, 300, 340, 340), true, func(string) {})
+			}
+			e.w.layout(gtx)
 		}},
 		{name: "dock-collapsed", w: 1000, h: dockCollapsed + dockPad, draw: func(gtx C) {
 			c.mu.Lock()
