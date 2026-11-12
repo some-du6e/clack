@@ -35,7 +35,7 @@ func (f *fakeTray) got() [][2]string {
 	return append([][2]string(nil), f.balloons...)
 }
 
-// MAIN_WINDOW_CLOSE (main.bundle.cjs @1137071): a close hides the window
+// MAIN_WINDOW_CLOSE (main.bundle.cjs @1137077): a close hides the window
 // when runFromTray is on, a workspace is signed in and the app isn't
 // quitting, and the first such hide ever shows the RunFromTray balloon;
 // anything else is a quit.

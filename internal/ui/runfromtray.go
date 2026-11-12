@@ -11,17 +11,17 @@ import (
 )
 
 // Slack desktop's runFromTray (main.bundle.cjs 4.53.276): the setting
-// defaults to true (@1104552), and MAIN_WINDOW_CLOSE (@1137071) answers
+// defaults to true (@1104712), and MAIN_WINDOW_CLOSE (@1137077) answers
 // the window's close event, unless the app is quitting, with
 //
 //	if (!runFromTray || no signed-in workspace) → quit
-//	else preventDefault, EH(): leave full screen first, then hide()
+//	else preventDefault, EH (@1139607): leave full screen first, then hide()
 //	then, the first time ever (hasRunFromTray), the tray balloon
-//	RunFromTray: "Why didn’t Slack quit?"
+//	RunFromTray (TrayHandler _X @1174664, @1180282): "Why didn’t Slack quit?"
 //
-// The tray icon's click (TrayHandler handleTrayClick → FOREGROUND_APP →
-// FOCUS_WINDOW's i6: show, focus) brings the window back: cmd/clack's
-// tray calls Raise, which shows a hidden window (Gio patch 13).
+// The tray icon's click (handleTrayClick @1178197 → FOREGROUND_APP →
+// FOCUS_WINDOW's i6 @796332: show, focus) brings the window back:
+// cmd/clack's tray calls Raise, which shows a hidden window (Gio patch 13).
 
 // TrayIcon is the notification-area icon cmd/clack runs (desktop.Tray on
 // Windows).

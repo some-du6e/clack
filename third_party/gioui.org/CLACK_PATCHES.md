@@ -492,7 +492,7 @@ caret in `Editor.Layout`). Additions: nothing hides unless the app calls
 
 Slack's desktop keeps running in the notification area when its window is
 closed (the `runFromTray` setting, on by default; `main.bundle.cjs`
-4.53.276 @1104552). Its MAIN_WINDOW_CLOSE handler (@1137071) calls
+4.53.276 @1104712). Its MAIN_WINDOW_CLOSE handler (@1137077) calls
 `preventDefault` on the close and `BrowserWindow.hide()`, and the tray
 icon's click shows the window again (`FOREGROUND_APP` → `FOCUS_WINDOW`:
 `show()`, `focus()`). Gio could abort a close (`ClosingEvent.Abort`) but
