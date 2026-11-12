@@ -706,7 +706,8 @@ func (a *App) sbCollapsed(row *sbRow) bool {
 
 // sbSetCollapsed is onChannelSectionCollapseToggle for one heading:
 // organize mode's state there (setEditModeChannelSectionCollapsed), else
-// the sidebar's.
+// the sidebar's, saved to the account (setChannelSectionCollapsed:
+// core/section_collapse.go).
 func (a *App) sbSetCollapsed(row *sbRow, collapsed bool) {
 	s := &a.sidebar
 	if row.open { // the text filter shows every match expanded
@@ -719,13 +720,18 @@ func (a *App) sbSetCollapsed(row *sbRow, collapsed bool) {
 		s.edit.collapsed[row.key] = collapsed
 	} else {
 		s.collapsed[row.key] = collapsed
+		if c := a.Core(); c != nil {
+			c.SetSectionCollapsed([]string{row.key}, collapsed)
+		}
 	}
 	s.builtFor = -1
 }
 
-// sbSetAllCollapsed is the toggleAll case (bulkSet…Collapsed).
+// sbSetAllCollapsed is the toggleAll case (bulkSet…Collapsed); outside
+// organize mode one account write takes every section.
 func (a *App) sbSetAllCollapsed(collapsed bool) {
 	s := &a.sidebar
+	var ids []string
 	for _, sec := range a.model().Sections {
 		if s.edit.on {
 			if s.edit.collapsed == nil {
@@ -734,7 +740,11 @@ func (a *App) sbSetAllCollapsed(collapsed bool) {
 			s.edit.collapsed[sec.ID] = collapsed
 		} else {
 			s.collapsed[sec.ID] = collapsed
+			ids = append(ids, sec.ID)
 		}
+	}
+	if c := a.Core(); c != nil && len(ids) > 0 {
+		c.SetSectionCollapsed(ids, collapsed)
 	}
 	s.builtFor = -1
 }

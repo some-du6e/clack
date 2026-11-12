@@ -18,15 +18,19 @@ import (
 // prefs are UI-only settings persisted to <config>/ui.json (no message
 // content: routes hold only ids).
 type prefs struct {
-	Dark          *bool    `json:"dark,omitempty"`
-	SidebarW      int      `json:"sidebar_w,omitempty"`
-	SecondaryW    int      `json:"secondary_w,omitempty"`
-	Route         string   `json:"route,omitempty"`
-	LastChannel   string   `json:"last_channel,omitempty"`
-	Notifications *bool    `json:"notifications,omitempty"`
-	Collapsed     []string `json:"collapsed,omitempty"`
-	EmojiStyle    string   `json:"emoji_style,omitempty"`
-	SidebarHidden bool     `json:"sidebar_hidden,omitempty"`
+	Dark *bool `json:"dark,omitempty"`
+	// SidebarW and SidebarWMode are the sidebar's dragged width (dp) and
+	// Slack's sidebarWidthMode ("auto", "manual"), per device as Slack
+	// keeps viewLayoutSidebarWidthIntent / Mode in localStorage
+	// (sidebar_width.go).
+	SidebarW      int    `json:"sidebar_w,omitempty"`
+	SidebarWMode  string `json:"sidebar_w_mode,omitempty"`
+	SecondaryW    int    `json:"secondary_w,omitempty"`
+	Route         string `json:"route,omitempty"`
+	LastChannel   string `json:"last_channel,omitempty"`
+	Notifications *bool  `json:"notifications,omitempty"`
+	EmojiStyle    string `json:"emoji_style,omitempty"`
+	SidebarHidden bool   `json:"sidebar_hidden,omitempty"`
 	// NoUpdateCheck turns off the GitHub Releases check (Preferences >
 	// Clack).
 	NoUpdateCheck bool `json:"no_update_check,omitempty"`
@@ -156,19 +160,11 @@ func (a *App) loadPrefs() {
 	if a.prefs.Dark != nil {
 		a.th.SetDark(*a.prefs.Dark)
 	}
-	if w := a.prefs.SidebarW; w >= 160 && w <= 480 {
-		a.sidebar.width = w
-	}
+	a.sidebar.loadWidth(a.prefs.SidebarW, a.prefs.SidebarWMode) // sidebar_width.go
 	// a width the user dragged to ("manual"); builds before the auto
 	// width saved their fixed 400 default, which is auto now
 	if w := a.prefs.SecondaryW; w >= 300 && w != theme.SecondaryW {
 		a.secondary.width = w
-	}
-	if len(a.prefs.Collapsed) > 0 {
-		a.sidebar.collapsed = map[string]bool{}
-		for _, id := range a.prefs.Collapsed {
-			a.sidebar.collapsed[id] = true
-		}
 	}
 	a.lastChannel = a.prefs.LastChannel
 	a.th.EmojiStyle = a.prefs.EmojiStyle
@@ -198,19 +194,13 @@ func (a *App) savePrefs() {
 	}
 	d := a.th.Dark
 	a.prefs.Dark = &d
-	a.prefs.SidebarW = a.sidebar.width
+	a.prefs.SidebarW, a.prefs.SidebarWMode = a.sidebar.intent, a.sidebar.mode
 	a.prefs.SecondaryW = a.secondary.width
 	if r := a.router.Current(); r.Page() != "search" { // search queries stay in memory
 		a.prefs.Route = string(r)
 	}
 	a.prefs.LastChannel = a.lastChannel
 	a.prefs.SidebarHidden = a.sidebar.hidden
-	a.prefs.Collapsed = a.prefs.Collapsed[:0]
-	for id, c := range a.sidebar.collapsed {
-		if c {
-			a.prefs.Collapsed = append(a.prefs.Collapsed, id)
-		}
-	}
 	b, _ := json.MarshalIndent(a.prefs, "", "  ")
 	a.prefsSave.save(p, b)
 }

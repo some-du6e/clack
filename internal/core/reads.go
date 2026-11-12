@@ -233,6 +233,10 @@ func (a *App) RefreshPrefs(ctx context.Context) (Prefs, error) {
 func (a *App) installPrefs(raw map[string]json.RawMessage) {
 	a.prefsMu.Lock()
 	defer a.prefsMu.Unlock()
+	a.S.RLock()
+	old := a.S.RawPrefs
+	a.S.RUnlock()
+	a.sectionCollapsePending(old, raw) // a collapse write still waiting (section_collapse.go)
 	a.installPrefsLocked(raw)
 }
 

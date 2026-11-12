@@ -56,19 +56,24 @@ type sbRow struct {
 }
 
 type sidebarState struct {
-	width     int // dp
+	width int // dp: the width drawn (widthFor, each layout)
+	sbWidthState
 	hidden    bool
 	list      widget.List
 	rows      []sbRow
 	builtFor  int    // model version
 	viewsFor  string // sbViewsKey the rows were built with
 	collapsed map[string]bool
-	rowCount  int
-	drag      gesture.Drag
-	dragX     float32
-	dragW     float32
-	hover     bool            // pointer over the sidebar (.p-channel_sidebar:hover)
-	headTags  map[string]*int // section headings' right-click tags (create_channel.go)
+	// acctCollapsed is each section's collapsed state in the last model
+	// (the account's channel_sections), to tell its changes from a
+	// model that predates a toggle
+	acctCollapsed map[string]bool
+	rowCount      int
+	drag          gesture.Drag
+	dragX         float32
+	dragW         float32
+	hover         bool            // pointer over the sidebar (.p-channel_sidebar:hover)
+	headTags      map[string]*int // section headings' right-click tags (create_channel.go)
 
 	// Drafts & sent's badge list: hovering it shows Slack's tooltip
 	// ("N Drafts" / "N Scheduled", to the right).
@@ -196,6 +201,9 @@ func (s *sidebarState) rebuild(m *model) {
 	if s.collapsed == nil {
 		s.collapsed = map[string]bool{}
 	}
+	if s.acctCollapsed == nil {
+		s.acctCollapsed = map[string]bool{}
+	}
 	rows := s.rows[:0]
 	s.viewsFor = sbViewsKey()
 	if s.fq != "" {
@@ -246,11 +254,15 @@ func (s *sidebarState) rebuildRows(m *model, rows []sbRow) []sbRow {
 			hr.tr = "channel_sidebar"
 		}
 		rows = append(rows, hr)
+		// the account's state (channel_sections "c") wins whenever it
+		// changes: first sight, another client's pref_change, our own
+		// write coming back. A model older than a toggle keeps the toggle.
 		col, seen := s.collapsed[sec.ID]
-		if !seen { // first sight: Slack's saved state (channel_sections "c")
+		if acct, had := s.acctCollapsed[sec.ID]; !seen || !had || acct != sec.Collapsed {
 			col = sec.Collapsed
 			s.collapsed[sec.ID] = col
 		}
+		s.acctCollapsed[sec.ID] = sec.Collapsed
 		if edit {
 			if s.edit.collapsed[sec.ID] {
 				continue
@@ -700,43 +712,6 @@ func (a *App) presenceDot(gtx layout.Context, center image.Point, active, sel bo
 	}
 	theme.Circle(gtx, center, gtx.Dp(7), fg)
 	theme.Circle(gtx, center, gtx.Dp(4), ring)
-}
-
-// layoutSidebarResize is the 6px drag handle on the sidebar's right edge.
-func (a *App) layoutSidebarResize(gtx layout.Context, x, y, h int) {
-	s := &a.sidebar
-	base := float32(s.width) // all events this frame share last frame's origin
-	for {
-		e, ok := s.drag.Update(gtx.Metric, gtx.Source, gesture.Horizontal)
-		if !ok {
-			break
-		}
-		switch e.Kind {
-		case pointer.Press:
-			// the handle moves with the edge, so positions are relative to
-			// the current edge: keep the press offset and accumulate.
-			s.dragX = e.Position.X
-			s.dragW = float32(s.width)
-		case pointer.Drag:
-			s.dragW = base + (e.Position.X-s.dragX)/gtx.Metric.PxPerDp
-			if s.dragW < theme.SidebarMinW {
-				s.dragW = theme.SidebarMinW
-			}
-			if s.dragW > theme.SidebarMaxW {
-				s.dragW = theme.SidebarMaxW
-			}
-			s.width = int(s.dragW + .5)
-		case pointer.Release, pointer.Cancel:
-			a.savePrefs()
-		}
-	}
-	r := image.Rect(x-gtx.Dp(3), y, x+gtx.Dp(3), y+h)
-	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-	sz := r.Size()
-	g := gtx
-	g.Constraints = layout.Exact(sz)
-	area := image.Rectangle{Max: sz}
-	pointerArea(g, &s.drag, area, pointer.CursorColResize)
 }
 
 var _ color.NRGBA

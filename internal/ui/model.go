@@ -37,7 +37,7 @@ type sbSection struct {
 	ID, Name, Type, Emoji string
 	DefaultName           bool     // Name is Slack's default for Type (drawn in the locale)
 	EmojiURL              string   // the section emoji's image ("" = Slack's default icon)
-	Collapsed             bool     // saved collapsed state (seeds the sidebar's toggle once)
+	Collapsed             bool     // the account's collapsed state (channel_sections "c"; core/section_collapse.go)
 	Rows                  []string // conv ids
 	CollapsedRows         []string // what shows while collapsed (unread rows, muted included)
 	// For the heading menus (section_menu.go): every conversation before

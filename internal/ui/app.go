@@ -678,6 +678,9 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	navH := gtx.Dp(theme.TopNavH)
 	railW := gtx.Dp(theme.RailW)
 	inset := gtx.Dp(theme.PanelInset)
+	// Slack's sidebar column: the window's share, or the dragged width
+	// (sidebar_width.go)
+	a.sidebar.width = a.sidebar.widthFor(float32(sz.X) / gtx.Metric.PxPerDp)
 	sbW := gtx.Dp(unit.Dp(a.sidebar.width))
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0

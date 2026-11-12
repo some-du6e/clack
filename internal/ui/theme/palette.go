@@ -230,9 +230,7 @@ var DarkPalette = Palette{
 const (
 	TopNavH      = 40
 	RailW        = 70
-	SidebarW     = 232 // default; resizable
-	SidebarMinW  = 160
-	SidebarMaxW  = 480
+	SidebarW     = 232 // before the first layout; then Slack's auto share of the window (ui/sidebar_width.go)
 	PanelRadius  = 6
 	PanelInset   = 4 // gap between the panel and the window edges (right/bottom)
 	SearchW      = 432
