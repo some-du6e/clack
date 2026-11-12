@@ -278,7 +278,7 @@ func (m *manageModal) body(gtx layout.Context) layout.Dimensions {
 			})
 			if r.tok.DWA() {
 				at(gtx, image.Pt(0, top+nameH), image.Pt(rowW, subH), func(gtx layout.Context) layout.Dimensions {
-					return th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: skForeground(th, "sk_foreground_high", 1)}, cwmNS.T("Added by your administrator"))
+					return th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Color: skForeground(th, "sk_foreground_high", .5)}, cwmNS.T("Added by your administrator"))
 				})
 			} else {
 				b := m.btn("disconnect." + r.tok.ID)

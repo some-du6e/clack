@@ -1017,6 +1017,12 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	rc.winOrigin = s.origin.Add(image.Pt(0, s.pos[i]))
 	rc.parent = s.thread && e.m.TS == s.ts
 	rc.activeThread = s.activeTS != "" && e.m.TS == s.activeTS
+	// MessageWrapper's isSenderHidden and the message's isUnhidden
+	// (hidden_msg.go); a joins summary row is a system row
+	rc.hiddenUser, rc.unhidden = false, false
+	if len(it.group) == 0 {
+		rc.hiddenUser, rc.unhidden = hiddenSender(h, &e.m, s.ch)
+	}
 	rc.highlight = 0
 	if s.highlight == e.m.TS {
 		if el := rc.now.Sub(s.highlightAt); el < 4*time.Second {

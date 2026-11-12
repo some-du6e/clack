@@ -12,8 +12,9 @@ name: messages-audit-shots
 # without "Underline links to websites") and link decorations (one
 # underline per hovered link, the card's time and context hovers), and
 # Later's labels on saved messages and to-dos with the toolbar's
-# Complete to-do (gap-w7) (messages-audit-shots artifact). Nothing here
-# talks to Slack.
+# Complete to-do (gap-w7), and a hidden person's messages
+# (HiddenMessageBody, Show anyway, HiddenUserAvatar; gap-w8)
+# (messages-audit-shots artifact). Nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run messages-audit-shots.yml --ref <branch>)
@@ -40,6 +41,10 @@ on:
       - "internal/ui/popups/actions_todo_test.go"
       - "internal/core/saved_meta.go"
       - "internal/core/saved_meta_test.go"
+      - "internal/ui/messages/hidden_msg.go"
+      - "internal/ui/messages/hidden_msg_test.go"
+      - "internal/core/chdetails.go"
+      - "internal/core/hidden_users_test.go"
       - "internal/ui/popups/actions_share.go"
       - "internal/workobject/**"
       - "internal/richtext/workobject*.go"
@@ -80,9 +85,9 @@ jobs:
           mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
           go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard' ./internal/richtext
           go test -count=1 -v -run 'TestMemberName' ./internal/store
-          go test -count=1 -v -run 'TestMessageKeepsEditor|TestSavedMeta|TestToggleTodoLikeSlack' ./internal/core
+          go test -count=1 -v -run 'TestMessageKeepsEditor|TestSavedMeta|TestToggleTodoLikeSlack|TestUserHiddenLikeSlack|TestMentionsViewerDirectly' ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots' ./internal/ui/messages
+          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots|TestHiddenSender|TestHiddenMessageMentionContents' ./internal/ui/messages
           # the to-do and reminder rows (gap-w7)
           xvfb-run -a go test -count=1 -v -run 'TestTodoAndReminderLabelsLikeSlack|TestTodoActionClickToasts|TestTodoToastText|TestSaveRowLikeSlack|TestMessageContextMenuThreadAction' ./internal/ui/popups
           # work object cards and their flexpane (docs/MESSAGES-AUDIT.md, Work objects)

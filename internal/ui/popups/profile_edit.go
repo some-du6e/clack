@@ -1219,29 +1219,47 @@ func epPreview(gtx layout.Context, h Host, photo func(gtx layout.Context, size i
 // ---- the crop pane ----
 
 type epCrop struct {
-	e       *EditProfileModal
-	m       *Modal
-	up      core.PhotoUpload
+	cropBox
+	e      *EditProfileModal
+	m      *Modal
+	up     core.PhotoUpload
+	saving bool
+	failed bool
+}
+
+// cropBox is BaseImageCrop's square selection on an image fitted into
+// 460px (the profile photo's crop pane, and the channel email icon's in
+// channel_email.go).
+type cropBox struct {
+	h       Host
 	img     paint.ImageOp // the image at its display size
 	dw, dh  float64       // display size (≤ 460)
 	x, y, s float64       // the square in display px
+	min     float64       // the smallest square (minSize)
 	drag    int           // the pointer tag
 	mode    string        // move, nw, ne, sw, se
 	from    f32.Point
 	fx, fy  float64
 	fs      float64
-	saving  bool
-	failed  bool
 }
 
-func newEPCrop(e *EditProfileModal, up core.PhotoUpload, img image.Image) *epCrop {
-	c := &epCrop{e: e, up: up}
+// newCropBox fits img into 460px with BaseImageCrop's first square
+// (defaultCropScale 1, at least minSize, centred).
+func newCropBox(h Host, img image.Image, minSize float64) cropBox {
+	c := cropBox{h: h, min: minSize}
 	b := img.Bounds()
 	c.dw, c.dh = core.PhotoDisplaySize(float64(b.Dx()), float64(b.Dy()), core.PhotoCropMaxSize)
 	dst := image.NewRGBA(image.Rect(0, 0, max(1, int(math.Round(c.dw))), max(1, int(math.Round(c.dh)))))
 	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Src, nil)
 	c.img = paint.NewImageOp(dst)
-	c.x, c.y, c.s = core.DefaultPhotoCrop(c.dw, c.dh)
+	e, t := math.Min(c.dh, core.PhotoCropMaxSize), math.Min(c.dw, core.PhotoCropMaxSize)
+	c.s = math.Max(minSize, math.Min(e, t))
+	c.x, c.y = math.Max(0, (t-c.s)/2), math.Max(0, (e-c.s)/2)
+	return c
+}
+
+func newEPCrop(e *EditProfileModal, up core.PhotoUpload, img image.Image) *epCrop {
+	c := &epCrop{e: e, up: up, cropBox: newCropBox(e.h, img, core.PhotoCropMinSize)}
 	cancel := &ModalButton{Label: nsEditProfile.T("Cancel"), Kind: BtnOutline, Do: func() bool { e.switchPane("formPane"); return false }}
 	save := &ModalButton{Label: nsEditProfile.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return !c.saving }, Do: func() bool { c.Save(); return false }}
 	c.m = NewModal(e.h, ModalOpts{Title: nsEditProfile.T("Crop your photo"), HeadH: 65, Body: c.layout,
@@ -1257,8 +1275,8 @@ func (c *epCrop) Crop() core.PhotoCrop {
 // SetSquare moves the selection (display px), kept inside the image.
 func (c *epCrop) SetSquare(x, y, s float64) { c.x, c.y, c.s = c.clamp(x, y, s) }
 
-func (c *epCrop) clamp(x, y, s float64) (float64, float64, float64) {
-	s = math.Max(math.Min(s, math.Min(c.dw, c.dh)), math.Min(core.PhotoCropMinSize, math.Min(c.dw, c.dh)))
+func (c *cropBox) clamp(x, y, s float64) (float64, float64, float64) {
+	s = math.Max(math.Min(s, math.Min(c.dw, c.dh)), math.Min(c.min, math.Min(c.dw, c.dh)))
 	x = math.Min(math.Max(0, x), c.dw-s)
 	y = math.Min(math.Max(0, y), c.dh-s)
 	return x, y, s
@@ -1319,7 +1337,7 @@ func (c *epCrop) layout(gtx layout.Context) layout.Dimensions {
 // drawCropper is ReactCrop: the image, a 50% black mask outside the
 // square, the marching-ants border and the four corner handles (12px,
 // #0003 with a #ffffffb3 border; fixed aspect hides the edge ones).
-func (c *epCrop) drawCropper(gtx layout.Context, iw, ih int) {
+func (c *cropBox) drawCropper(gtx layout.Context, iw, ih int) {
 	k := float64(gtx.Metric.PxPerDp)
 	c.events(gtx, k)
 	theme.Image(gtx, c.img, image.Pt(iw, ih), 0)
@@ -1368,7 +1386,7 @@ func epAnts(gtx layout.Context, r image.Rectangle) {
 
 // events moves the square (a drag inside it) or resizes it from the corner
 // grabbed, the opposite corner fixed.
-func (c *epCrop) events(gtx layout.Context, k float64) {
+func (c *cropBox) events(gtx layout.Context, k float64) {
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: &c.drag, Kinds: pointer.Press | pointer.Drag | pointer.Release | pointer.Cancel})
 		if !ok {
@@ -1423,7 +1441,7 @@ func (c *epCrop) events(gtx layout.Context, k float64) {
 				_, _, s = c.clamp(0, 0, s)
 				c.x, c.y, c.s = c.fx+c.fs-s, c.fy, s
 			}
-			c.e.h.Invalidate()
+			c.h.Invalidate()
 		case pointer.Release, pointer.Cancel:
 			c.mode = ""
 		}
@@ -1431,7 +1449,7 @@ func (c *epCrop) events(gtx layout.Context, k float64) {
 }
 
 // previewPhoto is ImageCropPreview: the square scaled into size, radius 3.
-func (c *epCrop) previewPhoto(gtx layout.Context, size int) layout.Dimensions {
+func (c *cropBox) previewPhoto(gtx layout.Context, size int) layout.Dimensions {
 	defer clip.UniformRRect(image.Rectangle{Max: image.Pt(size, size)}, dp(gtx, 3)).Push(gtx.Ops).Pop()
 	is := c.img.Size()
 	if c.s <= 0 || is.X == 0 {

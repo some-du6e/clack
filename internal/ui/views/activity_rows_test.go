@@ -199,7 +199,8 @@ func TestActivityInviteButtonsLikeSlack(t *testing.T) {
 	if got := v.inviteActions(dm); len(got) != 2 || got[0] != core.InviteActIgnore || got[1] != core.InviteActAcceptDM {
 		t.Fatalf("dm invite buttons %v", got)
 	}
-	if got := v.inviteActions(ch); len(got) != 1 || got[0] != core.InviteActIgnore {
+	// a channel invite's Accept opens the accept modal (activity_w15_test.go)
+	if got := v.inviteActions(ch); len(got) != 2 || got[0] != core.InviteActIgnore || got[1] != core.InviteActAcceptChannel {
 		t.Fatalf("channel invite buttons %v", got)
 	}
 	if d := v.rowFor("fa-ext-dm-invite").d; d.teamIcon == "" || d.team != "Partner Co" {

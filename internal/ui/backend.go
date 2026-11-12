@@ -604,6 +604,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 	case "connection":
 		m.Connected = ev.Connected
 		changed = true
+	case "client_online": // isClientOnline changed: the switcher's offline notice reads it (core/online.go)
+		a.Invalidate()
 	case "permissions": // permissions/info answered (core.ChannelGrant): the topic's Edit reads it
 		a.Invalidate()
 	case "megaphone": // a megaphone space changed: the join banner's gate reads them (joinbanner.go)

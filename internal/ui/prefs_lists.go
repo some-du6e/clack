@@ -156,6 +156,9 @@ func (p *prefsModal) hiddenSection(f *prefsForm) {
 		id := id
 		shown++
 		f.listRowIcon("hidden."+id, avatar, name, "Unhide user", func() {
+			if c != nil {
+				c.ResetUnhidden(id) // unhideUserApi resets their messages shown anyway
+			}
 			var keep []string
 			for _, x := range ids {
 				if x != id {

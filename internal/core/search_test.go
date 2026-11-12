@@ -304,3 +304,64 @@ func TestSearchRelaxation(t *testing.T) {
 		t.Errorf("an unfiltered search has relaxation %d", r.Unfiltered)
 	}
 }
+
+// The Channels and People tabs' filters reach their requests as
+// getChannelSearchApiArguments and getPeopleSearchApiArguments (client-boot
+// rZ6M, build d3de3a487b1c) send them, and the People tab keeps the
+// response's Title and Location facets.
+func TestSearchTabFilters(t *testing.T) {
+	s := SearchSession{ID: "S", ReqID: "R", QueryID: "Q"}
+	for typ, want := range map[string]string{"": "all", "all": "all", "public": "private_exclude", "private": "private",
+		"archived": "archived", "shared": "external_shared"} {
+		p := channelTabParams(ChannelTabOpts{Query: "x", ChannelType: typ, Session: s}, false, false)
+		if p.Get("channel_type") != want {
+			t.Errorf("Channel type %q: channel_type %q, want %q", typ, p.Get("channel_type"), want)
+		}
+	}
+	// All channels: Channels you've joined is search_only_my_channels,
+	// Other channels exclude_my_channels (+!!search_hide_my_channels)
+	if p := channelTabParams(ChannelTabOpts{Query: "x", Session: s}, true, false); p.Get("search_only_my_channels") != "true" || p.Get("exclude_my_channels") != "0" {
+		t.Errorf("Channels you've joined: %v", p)
+	}
+	if p := channelTabParams(ChannelTabOpts{Query: "x", Session: s}, false, true); p.Get("exclude_my_channels") != "1" {
+		t.Errorf("Other channels: %v", p)
+	}
+	p := peopleTabParams(PeopleTabOpts{Query: "x", Session: s, Titles: []string{"Engineer", "Designer"},
+		Locations: []string{"New York"}, AccountType: "guests", Celebrations: []string{"new_hire"}}, true)
+	for k, v := range map[string]string{"profile_title": "Engineer,Designer", "profile_location": "New York",
+		"account_type": "4,5,8", "profile_celebration": "new_hire", "hide_deactivated_users": "1"} {
+		if p.Get(k) != v {
+			t.Errorf("people filters: %s = %q, want %q", k, p.Get(k), v)
+		}
+	}
+	if p := peopleTabParams(PeopleTabOpts{Query: "x", Session: s, AccountType: "all"}, false); p.Has("account_type") {
+		t.Errorf("Any account type sends account_type %q", p.Get("account_type"))
+	}
+
+	a, fs := canvasApp(t)
+	ctx := context.Background()
+	pp, err := a.SearchPeopleTabOpts(ctx, PeopleTabOpts{Query: fakeslack.SearchPeopleWord, Session: s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pp.Titles) == 0 || len(pp.Locations) == 0 {
+		t.Fatalf("people facets: titles %v, locations %v", pp.Titles, pp.Locations)
+	}
+	for i := 1; i < len(pp.Locations); i++ {
+		if pp.Locations[i].Count > pp.Locations[i-1].Count {
+			t.Errorf("locations not by count: %v", pp.Locations)
+		}
+	}
+	all := pp.Total
+	one, err := a.SearchPeopleTabOpts(ctx, PeopleTabOpts{Query: fakeslack.SearchPeopleWord, Session: s, Titles: []string{pp.Titles[0].Value}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Total != pp.Titles[0].Count || one.Total >= all {
+		t.Errorf("Title %q: %d of %d people, facet says %d", pp.Titles[0].Value, one.Total, all, pp.Titles[0].Count)
+	}
+	forms := fs.SearchForms("search.modules.people")
+	if last := forms[len(forms)-1]; last.Get("profile_title") != pp.Titles[0].Value {
+		t.Errorf("profile_title sent %q", last.Get("profile_title"))
+	}
+}

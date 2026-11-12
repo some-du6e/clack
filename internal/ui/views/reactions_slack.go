@@ -38,12 +38,18 @@ type actBar struct {
 	b   *base
 	m   *core.Message
 	key string // Slack's reaction key, "message-<ts>-<channel>"
+	// noAdd is --add_button_hidden (.c-reaction_add display: none), as
+	// Activity's rows render the bar (SKIQ ActivityRowContentReactions)
+	noAdd bool
 }
 
 // actReactions lays msg's ReactionBar out: the pills left to right,
 // wrapping, then the add-reaction button.
-func (b *base) actReactions(gtx C, msg *core.Message) D {
-	a := &actBar{b: b, m: msg, key: "message-" + msg.TS + "-" + msg.Channel}
+func (b *base) actReactions(gtx C, msg *core.Message) D { return b.actReactionsBar(gtx, msg, false) }
+
+// actReactionsBar is actReactions, without the add button when noAdd.
+func (b *base) actReactionsBar(gtx C, msg *core.Message, noAdd bool) D {
+	a := &actBar{b: b, m: msg, key: "message-" + msg.TS + "-" + msg.Channel, noAdd: noAdd}
 	return slackc.Component(gtx, "ReactionBar", a, (*actBar).props, (*actBar).layout)
 }
 
@@ -61,7 +67,9 @@ func (a *actBar) props() slackc.Props {
 		pl := &actReact{b: a.b, r: r, key: a.key}
 		kids = append(kids, slackc.Child("Reaction", pl.props(), pl.layout))
 	}
-	kids = append(kids, slackc.Child("ReactionAddButton", a.addProps(), a.layoutAdd))
+	if !a.noAdd {
+		kids = append(kids, slackc.Child("ReactionAddButton", a.addProps(), a.layoutAdd))
+	}
 	self := ""
 	if c := a.b.h.Core(); c != nil {
 		self = c.Self().ID
@@ -89,7 +97,11 @@ func (a *actBar) layout(gtx C, p slackc.Props) D {
 			return a.b.actFlow(gtx, len(items), func(gtx C, i int) D { return slackc.LayoutElement(gtx, items[i]) })
 		}
 		n := len(a.m.Reactions)
-		return a.b.actFlow(gtx, n+1, func(gtx C, i int) D {
+		all := n + 1
+		if a.noAdd {
+			all = n
+		}
+		return a.b.actFlow(gtx, all, func(gtx C, i int) D {
 			if i < n {
 				return a.b.actReaction(gtx, a.m, &a.m.Reactions[i])
 			}

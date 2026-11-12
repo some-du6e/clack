@@ -183,6 +183,19 @@ type row struct {
 	avDrawn    string      // the avatar's picture: a CSS background-image wins
 	bgDrawn    color.NRGBA // MessageBackground's fill (labels' tints, hover)
 	nameShown  string      // the sender label: ::before + name (unless font-size 0) + ::after
+
+	// a hidden sender's message (hidden_msg.go): HiddenMessageBody's
+	// contents line, whether it mentions the viewer (for rev), its link
+	// and the link's text last frame (tests); avHidden, the avatar drew
+	// HiddenUserAvatar
+	hidView     *richview.View
+	hidKey      string
+	hidRev      uint32
+	hidChecked  bool
+	hidMention  bool
+	hidLink     widget.Clickable
+	hidLinkText string
+	avHidden    bool
 }
 
 // chanCard is one CodeChannelEntityCard under a message.
@@ -240,6 +253,9 @@ type rowCtx struct {
 	// activeThread: the row is the root of the thread open in the side pane
 	// (thread_root_selected_state, active_thread.go)
 	activeThread bool
+	// hiddenUser: the sender is someone the viewer hid (isUserHidden);
+	// unhidden: this message was shown anyway (hidden_msg.go)
+	hiddenUser, unhidden bool
 }
 
 // padX is the gutter's side padding: 20 in a channel, 16 in a thread
@@ -1102,8 +1118,13 @@ func (r *row) layoutAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions
 
 func (r *row) avatarButton(gtx layout.Context, url string, size image.Point) layout.Dimensions {
 	r.memberMenuOn(gtx, &r.avatarCtx)
+	r.avHidden = r.rc.hiddenUser
 	d := r.avatarBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		drawAvatar(gtx, r.rc.h, url, image.Rectangle{Max: size}, r.rc.c)
+		if r.avHidden { // BaseAvatar's isUserHidden: HiddenUserAvatar (hidden_msg.go)
+			drawHiddenAvatar(gtx, image.Rectangle{Max: size}, r.rc.c)
+		} else {
+			drawAvatar(gtx, r.rc.h, url, image.Rectangle{Max: size}, r.rc.c)
+		}
 		return layout.Dimensions{Size: size}
 	})
 	contextArea(gtx, &r.avatarCtx, d.Size)
@@ -1203,6 +1224,14 @@ func strutBaseline(gtx layout.Context) int { return cssBaseline(gtx, 15, 22) }
 func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 	rc := r.rc
 	m := &r.m
+	if rc.hiddenUser && r.edit == nil {
+		// a hidden sender (hidden_msg.go): HiddenMessageBody, or the
+		// message shown anyway under "Name hidden"
+		defer r.hideSender(rc)()
+		if !rc.unhidden {
+			return r.hiddenColumn(gtx)
+		}
+	}
 	cw := gtx.Constraints.Max.X
 	y := 0
 	broadcast := m.Broadcast && !rc.thread && m.ThreadTS != "" && m.ThreadTS != m.TS
@@ -1329,6 +1358,12 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 	} else {
 		r.reactRects = r.reactRects[:0]
 		r.addRect = image.Rectangle{}
+	}
+
+	// a message shown anyway: HiddenMessageBody's "Hide message" under
+	// the body, before MessageTombstoneContent's reply bar
+	if rc.hiddenUser && r.edit == nil {
+		y += r.hideMessageLink(gtx, y)
 	}
 
 	// thread bar
@@ -1469,6 +1504,12 @@ func (av *replyAv) layout(gtx layout.Context, p slackc.Props) layout.Dimensions 
 		}
 	}
 	url := ""
+	if app := rc.h.Core(); app != nil && app.UserHidden(id) {
+		// ReplyBarAvatar's BaseAvatar: HiddenUserAvatar (hidden_msg.go)
+		av.drawn = hiddenAvatarDrawn
+		drawHiddenAvatar(gtx, image.Rect(0, 0, av.sz, av.sz), rc.c)
+		return layout.Dimensions{Size: image.Pt(av.sz, av.sz)}
+	}
 	if app := rc.h.Core(); app != nil {
 		switch u, ok := app.User(id); {
 		case core.LooksLikeBotID(id): // ReplyBarAvatar's botId: reply_user_icons, agent_identity_overrides, the bot's icon
@@ -1586,6 +1627,11 @@ func (r *row) layoutThreadSender(gtx layout.Context, p slackc.Props) layout.Dime
 
 // nameLine draws "Name [APP] [status] 3:04 PM", baselines aligned.
 func (r *row) nameLine(gtx layout.Context, withTS bool) layout.Dimensions {
+	return r.nameLineGap(gtx, withTS, dp(gtx, mt.tsGap))
+}
+
+// nameLineGap is nameLine with gap px between the sender and the time.
+func (r *row) nameLineGap(gtx layout.Context, withTS bool, gap int) layout.Dimensions {
 	w := gtx.Constraints.Max.X
 	lh := dp(gtx, mt.nameLine)
 	g := gtx
@@ -1600,7 +1646,7 @@ func (r *row) nameLine(gtx layout.Context, withTS bool) layout.Dimensions {
 		m := op.Record(gtx.Ops)
 		d := r.layoutTimestamp(gtx, nil)
 		call := m.Stop()
-		t := op.Offset(image.Pt(nd.Size.X+dp(gtx, mt.tsGap), baseline-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
+		t := op.Offset(image.Pt(nd.Size.X+gap, baseline-(d.Size.Y-d.Baseline))).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()
 	}

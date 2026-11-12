@@ -7,6 +7,7 @@ package icons
 var slackRef = map[string]string{
 	// the search switcher's toolbar (search.go)
 	"quick-switch":       "quick-switch",
+	"emoji-celebration":  "emoji-celebration", // More > Celebration (gap-w6)
 	"posts":              "posts",
 	"app-directory":      "app-directory",
 	"surface":            "surface",
@@ -30,9 +31,14 @@ var slackRef = map[string]string{
 	// Simplified layout mode (bbm.go)
 	"sign-out":        "sign-out",
 	"caret-left-full": "caret-left-full",
-	"bell":            "notifications",
-	"bell-filled":     "notifications-filled",
-	"bell-off":        "notifications-off",
+	// HiddenMessageBody's links (hidden_msg.go)
+	"caret-right-full": "caret-right-full",
+	"caret-down-full":  "caret-down-full",
+	// HiddenUserAvatar's icon (profile.go)
+	"user-hide":   "user-hide",
+	"bell":        "notifications",
+	"bell-filled": "notifications-filled",
+	"bell-off":    "notifications-off",
 
 	"notifications-all-new-posts": "notifications-all-new-posts",
 	"blocks":                      "blocks",
@@ -178,6 +184,7 @@ var slackRef = map[string]string{
 	"lock-filled":                 "lock-filled",
 	"magic-wand":                  "magic-wand",
 	"mail":                        "email",
+	"email-up":                    "email-up",
 	"map":                         "map",
 	"mark-as-read":                "mark-as-read",
 	"mark-unread":                 "mark-as-unread",
