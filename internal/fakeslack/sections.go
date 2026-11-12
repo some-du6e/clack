@@ -69,7 +69,11 @@ func (s *Server) sectionsLocked() []*fakeSection {
 		if i == 0 {
 			typ = "stars"
 		}
-		st.list = append(st.list, &fakeSection{ID: fmt.Sprintf("L0FAKE%02d", i), Name: n, Type: typ, base: ids[lo:hi]})
+		base := ids[lo:hi:hi]
+		if i == 2 && s.Size.FileChannels { // a pinned canvas and list (file_channels.go)
+			base = append(append([]string(nil), base...), fileChannelSectionIDs()...)
+		}
+		st.list = append(st.list, &fakeSection{ID: fmt.Sprintf("L0FAKE%02d", i), Name: n, Type: typ, base: base})
 	}
 	st.list = append(st.list, &fakeSection{ID: "L0FAKECH", Type: "channels"},
 		&fakeSection{ID: "L0FAKEDM", Type: "direct_messages"}, &fakeSection{ID: "L0FAKETMP", Type: "temporary_channels"})

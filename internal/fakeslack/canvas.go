@@ -92,6 +92,11 @@ func (s *Server) canvasStore() *canvasStore {
 	}
 	add(&FakeCanvas{ID: CanvasDM, Title: "Our plans", Channel: dm, Creator: SelfID, Doc: canvas.Doc{Blocks: canvas.ParseMarkdown(
 		"Things to do together:\n\n1. Pick a date\n2. Book tickets", nil)}})
+	if s.Size.FileChannels { // the file channels' canvases (file_channels.go)
+		for _, c := range fileChannelCanvases() {
+			add(c)
+		}
+	}
 	v, _ := canvasStores.LoadOrStore(s, cs)
 	return v.(*canvasStore)
 }

@@ -99,6 +99,10 @@ type Size struct {
 	// the methods and events their cards and flexpane use
 	// (workobjects.go).
 	WorkObjects bool
+	// FileChannels adds canvases' and lists' hidden conversations to
+	// users.conversations, two of them in the Projects section
+	// (file_channels.go).
+	FileChannels bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -517,6 +521,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
+	}
+	if sz.FileChannels {
+		s.addFileChannels() // file_channels.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)

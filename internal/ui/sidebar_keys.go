@@ -674,7 +674,7 @@ func (a *App) sbActivate(gtx layout.Context, row *sbRow, space, shift bool) {
 			a.sbEditClick(row.key, shift)
 			return
 		}
-		a.Navigate("c/" + row.key)
+		a.openSidebarConv(row.key)
 	case sbAction:
 		a.sidebarActionAt(row.key, a.sbRowCenter(gtx, row))
 	}

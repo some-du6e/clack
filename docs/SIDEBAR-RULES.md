@@ -63,6 +63,15 @@ Clack ports these rules from Slack's own web client, not from guesses. The imple
   - Newest first.
 - The sidebar's Direct messages already sends app DMs to Apps (`uSoP` getDefaultSectionType with `qSRE` isAppOrBot). Slack also drops the Slackbot DM from the sidebar while its Slackbot link shows (`OpEF` shouldHideSlackbotDmFromSidebar); Clack has no Slackbot link, so it stays.
 
+## Canvases and lists (file channels)
+
+Implementation: `internal/core/sidebar_docs.go`, `internal/ui/sidebar_docs.go`. Tests: `internal/core/sidebar_docs_test.go`, `internal/ui/sidebar_docs_test.go` (fakeslack `Size.FileChannels`). Build fa938a086569 (2026-11-12).
+
+- **What they are** (read-only `conversations.info` on the real account, flags only): every standalone canvas and list has a hidden conversation for its comments, the file's id with `F` swapped for `C` (`I3+E`). It is `is_file`, `is_channel`, `is_private`, `is_thread_only`, `is_org_shared`, named after the file's title (spaces, capitals, `:emoji:`). Commenting makes the viewer a member, so `users.conversations` lists it among the private channels.
+- **Candidates** (`lJBI`): a file channel (`EK7S` jT: `is_file`) stays only when `O2By` GH is on (`lists_pin_to_sidebar`, `programmable_sidebar` or `sidebar_ia6`) and a section lists it, it is starred or it is temporary; the open conversation always stays. Otherwise it isn't in the sidebar, its unread totals, or the snapshot the switcher, pickers and `#` autocomplete read (they also skip `is_file`, `I3y6` isValidViewableChannel).
+- **Row** (`PZNh`, `m7We` getSidebarDocumentType): a list is a document row; a canvas is one only with `programmable_sidebar`. Other file channels draw as private channels. Icons (`UGOO`): canvas `canvas`; list `lists` with `programmable_sidebar`, else the font's `bullet-list`. A document row's name goes through FormatTextWithEmoji (`Un00`, `G6jU`), so `:shortcodes:` draw as emoji. The name (`W+Ke`) is the canvas's title (a channel canvas: "#channel canvas" / "Canvas for DM with …"); a list's is the channel name.
+- **Click** (`r5i1` openFileChannelFromSidebar, GH on): a list opens the list view; a canvas opens the canvas view with `programmable_sidebar` or `sidebar_ia6`; anything else opens the conversation. The row is selected while its document is the main view (`x6Wj`).
+
 ## Not ported
 
 - Drafts and huddles keeping a row visible (core has no such state).

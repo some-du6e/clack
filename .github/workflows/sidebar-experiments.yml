@@ -2,6 +2,8 @@ name: sidebar-experiments
 # The sidebar package of docs/EXPERIMENTS.md against internal/fakeslack at
 # 1440x900: the text filter (sidebar_text_filter, _m2, _m3), temporary
 # mutes (temp_mute), the draft pencil's tooltip and menu, organize mode,
+# canvases' and lists' file channels (lists_pin_to_sidebar,
+# programmable_sidebar),
 # each experiment flipped, every state saved as a screenshot. Synthetic
 # only: nothing here talks to Slack.
 on:
@@ -19,6 +21,8 @@ on:
       - "internal/core/section_move.go"
       - "internal/ui/section_huddle_test.go"
       - "internal/ui/huddleui/sidebar_suffix.go"
+      - "internal/core/sidebar_docs*.go"
+      - "internal/fakeslack/file_channels.go"
       - ".github/workflows/sidebar-experiments.yml"
   workflow_dispatch:
 
@@ -42,14 +46,14 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core and the fake
-        run: go test -count=1 -v -run 'TestSidebarTextFilter|TestTempMute|TestDNDEndHour|TestExperimentReadsListed' ./internal/core/
+        run: go test -count=1 -v -run 'TestSidebarTextFilter|TestTempMute|TestDNDEndHour|TestExperimentReadsListed|TestFileChannel|TestEmojiText' ./internal/core/
       - name: sidebar, bell menu + screenshots
         env:
           PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestSidebarTextFilter|TestTempMute|TestSidebarDraft|TestSectionMoveToast|TestChannelBellMenu$|TestChannelNotifyAdvancedSettings$|TestSectionHuddleIndicator$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestSidebarTextFilter|TestTempMute|TestSidebarDraft|TestSectionMoveToast|TestChannelBellMenu$|TestChannelNotifyAdvancedSettings$|TestSectionHuddleIndicator$|TestSidebarDoc' ./internal/ui/
           xvfb-run -a go test -count=1 -v -run 'TestActiveThreadRoot' ./internal/ui/messages/
           ls -l "$PREVIEW_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
