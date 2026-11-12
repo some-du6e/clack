@@ -354,6 +354,25 @@ jobs:
           CLACK_WINDOWS_TOAST_TESTS: "1"
           CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
         run: go test -count=1 -v -timeout 15m -run '^TestWindowsToast' ./internal/ui
+      # The taskbar button (gap-w19, internal/desktop/taskbar_windows.go,
+      # internal/ui/dock.go): Slack's unread badge as the overlay icon
+      # through ITaskbarList3 (S_OK, and the HICON's pixels read back), the
+      # frame flash as the shell hears it (HSHELL_FLASH through
+      # RegisterShellHookWindow), the "idle" flash's show-inactive and
+      # minimize of a window hidden to the tray, GetLastInputInfo's idle
+      # time after a SendInput, and App.Run's own window doing all of it
+      # from Clack's count, close and notification paths. Screenshots of
+      # the taskbar go in toast-shots.
+      - name: taskbar (the unread badge overlay, the frame flash, windowFlashBehavior's close and revive)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TASKBAR_TESTS: "1"
+          CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
+          BADGE_SHOTS_DIR: ${{ runner.temp }}\toast-shots
+        run: |
+          go test -count=1 -v -timeout 10m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos' ./internal/desktop
+          go test -count=1 -v -timeout 15m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray)$' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

@@ -118,6 +118,23 @@ func TestPrefsAuditShots(t *testing.T) {
 		}
 		for e.a.dismissTop() {
 		}
+		// gap-w19: Notifications' Windows block (WindowsAppearancePref) as
+		// Windows draws it, then with "Slack’s built-in notifications"
+		// picked (Notification position and Display)
+		winAppearanceAnyOS = true
+		pm = nil
+		e.a.showPrefs("notifications")
+		e.until("Preferences notifications (Windows)", 5*time.Second, func() bool { return pm != nil })
+		pm.scroll.y = 1 << 20 // the end; layout clamps it
+		shot("prefs-notifications-windows-" + mode)
+		e.a.Post(func() { e.a.setDesktopSetting(func(u *prefs) { u.NotificationMethod = "html" }) })
+		pm.scroll.y = 1 << 20
+		shot("prefs-notifications-windows-html-" + mode)
+		e.a.Post(func() { e.a.setDesktopSetting(func(u *prefs) { u.NotificationMethod = "" }) })
+		e.settle(100 * time.Millisecond)
+		winAppearanceAnyOS = false
+		for e.a.dismissTop() {
+		}
 		w16Shots(t, e, shot, mode, func() *prefsModal { return pm })
 		for e.a.dismissTop() {
 		}

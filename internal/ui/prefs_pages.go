@@ -195,6 +195,9 @@ func (p *prefsModal) notificationsPage(f *prefsForm) {
 	if runtime.GOOS == "darwin" { // MacAppearancePref
 		p.macAppearance(f)
 	}
+	if winAppearanceOn() { // WindowsAppearancePref (prefs_win_appearance.go)
+		p.winAppearance(f)
+	}
 }
 
 // soundItems is a sound select's menu: picking one previews it and saves.
