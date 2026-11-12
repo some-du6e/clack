@@ -182,14 +182,29 @@ func (w *window) toggleAudio(s *huddle.Session) {
 // closeMenus closes the toolbar's menus and pickers (one is open at a
 // time, as Slack's popovers close on the next click outside them).
 func (w *window) closeMenus() {
-	for _, m := range []**popups.Menu{&w.more, &w.audio, &w.video, &w.leaveMenu} {
+	for _, m := range []**popups.Menu{&w.more, &w.audio, &w.video, &w.leaveMenu, &w.lounge.menu} {
 		if *m != nil {
 			(*m).Dismiss()
 			*m = nil
 		}
 	}
 	w.closeQuick()
-	w.stick = false
+	if w.stick != nil {
+		w.stick.Dismiss()
+		w.stick = nil
+	}
+}
+
+// toggleStickers opens (or closes) the sticker caret's HuddleStickerGrid
+// above it.
+func (w *window) toggleStickers() {
+	if w.stick != nil {
+		w.stick.Dismiss()
+		w.stick = nil
+		return
+	}
+	w.closeMenus()
+	w.stick = newStickerGrid(w.c, winHost{w}, w.stickBtn.Add(image.Pt(0, w.barTop)))
 }
 
 // toggleQuick opens (or closes) the emoji button's quick picker above it.
@@ -213,13 +228,19 @@ func (w *window) closeQuick() {
 // layoutMore draws the open toolbar menus and the quick picker over the
 // window.
 func (w *window) layoutMore(gtx C) {
+	if w.stick != nil {
+		w.stick.Layout(gtx)
+		if w.stick != nil && w.stick.Dismissed() {
+			w.stick = nil
+		}
+	}
 	if w.quick != nil {
 		w.quick.Layout(gtx)
 		if w.quick != nil && w.quick.Dismissed() {
 			w.quick = nil
 		}
 	}
-	for _, m := range []**popups.Menu{&w.video, &w.leaveMenu} {
+	for _, m := range []**popups.Menu{&w.video, &w.leaveMenu, &w.lounge.menu} {
 		if *m != nil {
 			(*m).Layout(gtx)
 			if (*m).Dismissed() {

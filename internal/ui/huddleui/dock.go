@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/io/system"
 	"gioui.org/op"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/huddle"
@@ -49,12 +50,14 @@ type dockState struct {
 	micFix, micRow    widget.Clickable
 	clicks            map[string]*widget.Clickable
 	tips              map[string]*popups.TipState
-	stick             *popups.Menu
+	stick             *stickerGrid // the sticker caret's HuddleStickerGrid (hand.go)
 	audio             *popups.Menu // the mic's Audio settings menu
 	video             *popups.Menu // the camera's Video settings menu (window_camera.go)
 	leaveMenu         *popups.Menu // Leave options (leave_options.go)
 	quick             *quickPicker // the emoji button's quick picker (quickpicker.go)
 	shareAlert        alertState   // the screen share alert above the card (share.go)
+	lounge            loungeUI     // HuddleLoungeMusicBanner above the card (lounge.go)
+	resp              dockResp     // useResponsiveHuddleToolbarButtons
 }
 
 func (d *dockState) click(id string) *widget.Clickable {
@@ -91,10 +94,16 @@ func (c *Controller) DockHeight(gtx C) int {
 	if c.WindowOpen() {
 		h = gtx.Dp(dockCollapsed)
 	}
+	aw := gtx.Constraints.Max.X - 2*gtx.Dp(dockPad)
+	if l := c.dockLoungeHeight(gtx, c.h.Theme(), aw); l > 0 {
+		// the bar shows one banner type at a time, the temporary one
+		// (the lounge music) first: the warnings wait
+		return h + l + gtx.Dp(dockPad)
+	}
 	if s := c.Session(); s != nil && s.State().Mic.Problem() {
 		h += gtx.Dp(barMicRow) + gtx.Dp(4)
 	}
-	if a := c.shareAlertHeight(gtx, c.h.Theme(), gtx.Constraints.Max.X-2*gtx.Dp(dockPad)); a > 0 {
+	if a := c.shareAlertHeight(gtx, c.h.Theme(), aw); a > 0 {
 		h += a + gtx.Dp(4) // the bottom_bar alert, 4px above the card
 	}
 	return h + gtx.Dp(dockPad)
@@ -147,12 +156,18 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 
 	ink := dockInks(th)
 	y := 0
-	if micBad && s != nil { // the bottom_bar alert above the card
+	lounge := false
+	if s != nil { // HuddlesAlertBannerContainer's temporary banner (lounge.go)
+		if lh := c.layoutDockLounge(gtx, th, image.Rect(gtx.Dp(dockPad), 0, sz.X-gtx.Dp(dockPad), 0)); lh > 0 {
+			y, lounge = lh+gtx.Dp(4), true
+		}
+	}
+	if micBad && s != nil && !lounge { // the bottom_bar alert above the card
 		r := image.Rect(gtx.Dp(dockPad), 0, sz.X-gtx.Dp(dockPad), gtx.Dp(barMicRow))
 		c.dockMicAlert(gtx, th, r, st, note)
 		y = r.Max.Y + gtx.Dp(4)
 	}
-	if c.shareAlert() != "" { // HuddlesAlertBanner, entryPoint bottom_bar
+	if c.shareAlert() != "" && !lounge { // HuddlesAlertBanner, entryPoint bottom_bar
 		aw := sz.X - 2*gtx.Dp(dockPad)
 		d := at(gtx, image.Pt(gtx.Dp(dockPad), y), image.Pt(aw, sz.Y), func(gtx C) D {
 			return c.layoutShareAlertR(gtx, th, &c.dock.shareAlert, aw, 12)
@@ -231,6 +246,7 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 	})
 
 	if collapsed {
+		d.resp = dockResp{} // HuddleToolbarCenterButtons unmounts
 		// headphones + the title, 15px bold, in the left 40%
 		lr := image.Rect(inner.Min.X, inner.Min.Y, inner.Min.X+inner.Dx()*2/5, inner.Max.Y)
 		is := gtx.Dp(20)
@@ -245,21 +261,27 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 		return D{Size: sz}
 	}
 
-	// the center buttons, centered in the bar, left of the right controls
-	ctls := c.dockCtls(st)
+	// the grid's columns: minmax(0,1fr) minmax(0,2fr) minmax(max-content,
+	// 1fr), column-gap 16px; the right one holds the window button and
+	// Leave with their 4px margins
 	m := gtx.Dp(4)
-	total := 0
-	for _, k := range ctls {
-		total += dockCtlW(gtx, k)
-		if k.seg != segMain {
-			total += 2 * m
-		}
+	col1, col2 := dockColumns(inner.Dx(), inner.Max.X-(ox-m), gtx.Dp(16))
+	// HuddleToolbarCenterButtons in the middle column (text-align center;
+	// start-aligned when they overflow it), as many as
+	// useResponsiveHuddleToolbarButtons lets fit
+	now := gtx.Now
+	if now.IsZero() {
+		now = time.Now()
 	}
-	x := card.Min.X + (card.Dx()-total)/2
-	if x+total > ox-gtx.Dp(16) {
-		x = max(inner.Min.X, ox-gtx.Dp(16)-total)
+	comps := d.resp.layout(gtx, now, col2, c.dockComps(st), dockBreakpoints(c.videoAllowed()))
+	var ctls []ctl
+	for _, k := range comps {
+		ctls = append(ctls, k...)
 	}
-	leftEnd := x - gtx.Dp(16)
+	total := compsWidth(gtx, comps)
+	cx := inner.Min.X + col1 + gtx.Dp(16)
+	x := cx + max(0, (col2-total)/2)
+	leftEnd := inner.Min.X + col1
 	h := gtx.Dp(40)
 	cy := inner.Min.Y + (inner.Dy()-h)/2
 	for _, k := range ctls {
@@ -323,7 +345,6 @@ func (c *Controller) layoutDock(gtx C, th *theme.Theme, sz image.Point) D {
 	ts := gtx.Dp(40)
 	tx := inner.Min.X
 	ty := inner.Min.Y + (inner.Dy()-ts)/2
-	now := time.Now()
 	if s != nil {
 		// the speaker's ring, tile and "… is speaking" go when they stop
 		// being heard: draw again then (nothing else changes)
@@ -461,8 +482,18 @@ func (c *Controller) dockTiles(st huddle.State, now time.Time) []huddle.Particip
 
 // dockCtls is HuddleToolbarCenterButtons with the bar's state (the mute
 // button, the camera, screen share, the sticker pair, reactions, the
-// thread and ⋯).
+// thread and ⋯), every button.
 func (c *Controller) dockCtls(st huddle.State) []ctl {
+	var out []ctl
+	for _, k := range c.dockComps(st) {
+		out = append(out, k...)
+	}
+	return out
+}
+
+// dockComps is HuddleToolbarCenterButtons' k: one entry per component
+// (a segmented button is two ctls).
+func (c *Controller) dockComps(st huddle.State) [][]ctl {
 	// HuddleToolbarMuteButton inBottomBar: segmented, like the window's
 	mics := c.micCtls(st, c.dock.audio != nil && !c.dock.audio.Dismissed())
 	// HuddleToolbarCameraButton inBottomBar: segmented, its Video settings
@@ -484,14 +515,163 @@ func (c *Controller) dockCtls(st huddle.State) []ctl {
 		caret = "caret-down"
 	}
 	quick := c.dock.quick != nil && !c.dock.quick.Dismissed()
-	out := append(mics, cams...)
-	return append(out, c.shareCtl(st),
-		ctl{id: "hand", emoji: c.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain},
-		ctl{id: "stickers", icon: caret, on: stick, tip: nsHuddles.T("Choose sticker"), seg: segCaret},
-		ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: quick, tip: nsHuddles.T("Add reaction")},
-		ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")},
-		ctl{id: "more", icon: "ellipsis-vertical-filled", tip: nsHuddles.T("More actions")},
+	out := [][]ctl{mics}
+	if len(cams) > 0 { // isHuddlesVideoEnabledForOrgWorkspaces
+		out = append(out, cams)
+	}
+	return append(out, []ctl{c.shareCtl(st)},
+		[]ctl{
+			// the caret is toggled on while the grid is open or a sticker
+			// is set (isEmojiMenuOpen || P)
+			{id: "hand", emoji: c.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain},
+			{id: "stickers", icon: caret, on: stick || mine != "", tip: nsHuddles.T("Choose sticker"), seg: segCaret},
+		},
+		[]ctl{{id: "react", icon: "emoji", hover: "emoji-filled", on: quick, tip: nsHuddles.T("Add reaction")}},
+		[]ctl{{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")}},
+		[]ctl{{id: "more", icon: "ellipsis-vertical-filled", tip: nsHuddles.T("More actions")}},
 	)
+}
+
+// useResponsiveHuddleToolbarButtons (gantry-v2-async-client-boot-render
+// wjeI, build 2cd9270e786c): HuddleToolbarCenterButtons shows at most
+// maxButtons (8, less one without the camera and one without the canvas
+// button, which Clack doesn't draw) and fewer as the middle column
+// (bottomBarCenterControlsOuter) narrows, by breakpoints: with the
+// camera [486 438 342 270 222 150 78], without it [366 318 270 198 150
+// 78]. A width at or over the first shows them all; between two, one
+// fewer per step; under the last, one. sliceHuddleToolbarButtons keeps
+// the first n-1 and the last (More actions).
+//
+// The column is measured by a ResizeObserver whose callback is debounced
+// 250 ms (JjsV getResizeObserver): it stores the width and, when the
+// width grew, shows every button again (showAllButtons) before the
+// layout effect measures the row. The effect re-picks n when the row
+// overflows the column or n's breakpoint changed, and leaves "show all"
+// once n is under the maximum, so a column that grew within a step can
+// show every button while they fit.
+var (
+	dockBpsCamera   = []int{486, 438, 342, 270, 222, 150, 78} // H
+	dockBpsNoCamera = []int{366, 318, 270, 198, 150, 78}      // V
+)
+
+func dockBreakpoints(camera bool) []int {
+	if camera {
+		return dockBpsCamera
+	}
+	return dockBpsNoCamera
+}
+
+// dockRespDebounce is the observer's debounce.
+const dockRespDebounce = 250 * time.Millisecond
+
+// dockResp is the hook's state: r.current (last), numVisibleButtons,
+// showAllButtons, and the observer's last size and pending callback.
+type dockResp struct {
+	init    bool
+	max     int
+	last    int
+	visible int
+	showAll bool
+	seen    int
+	due     time.Time
+}
+
+// layout runs a frame of the hook for a column outer px wide and returns
+// the components to draw.
+func (r *dockResp) layout(gtx C, now time.Time, outer int, comps [][]ctl, bps []int) [][]ctl {
+	n := len(comps)
+	if !r.init || r.max != n {
+		*r = dockResp{init: true, max: n, visible: n, showAll: true, seen: -1}
+	}
+	if outer != r.seen { // a resize (and the observer's first callback)
+		r.seen, r.due = outer, now.Add(dockRespDebounce)
+	}
+	run := false
+	if !r.due.IsZero() {
+		if now.Before(r.due) {
+			gtx.Execute(op.InvalidateCmd{At: r.due})
+		} else {
+			r.due = time.Time{}
+			prev := r.last
+			r.last = outer
+			if outer > prev {
+				r.showAll = true
+			}
+			run = true
+		}
+	}
+	shown := func() [][]ctl {
+		if r.showAll {
+			return comps
+		}
+		return sliceComps(comps, r.visible)
+	}
+	if run { // the layout effect
+		if t, w := r.last, compsWidth(gtx, shown()); t > 0 && w > 0 {
+			a := respCount(gtx, t, n, bps)
+			if w > t || a != r.visible {
+				r.visible = a
+				if r.showAll && a != n {
+					r.showAll = false
+				}
+			}
+		}
+	}
+	return shown()
+}
+
+// respCount is the hook's breakpoint pick.
+func respCount(gtx C, width, maxButtons int, bps []int) int {
+	if len(bps) == 0 {
+		return 1
+	}
+	if width >= gtx.Dp(unit.Dp(bps[0])) {
+		return maxButtons
+	}
+	for a := 0; a < len(bps)-1; a++ {
+		if width < gtx.Dp(unit.Dp(bps[a])) && width >= gtx.Dp(unit.Dp(bps[a+1])) {
+			return maxButtons - a - 1
+		}
+	}
+	return 1
+}
+
+// sliceComps is sliceHuddleToolbarButtons.
+func sliceComps(comps [][]ctl, n int) [][]ctl {
+	if n >= len(comps) {
+		return comps
+	}
+	out := append([][]ctl(nil), comps[:max(0, n-1)]...)
+	if len(comps) > 0 {
+		out = append(out, comps[len(comps)-1])
+	}
+	return out
+}
+
+// compsWidth is bottomBarCenterControls' width: the buttons and their
+// 4px margins (a segmented pair shares one margin box).
+func compsWidth(gtx C, comps [][]ctl) int {
+	w := 0
+	for _, k := range comps {
+		for _, b := range k {
+			w += dockCtlW(gtx, b)
+		}
+		w += 2 * gtx.Dp(4)
+	}
+	return w
+}
+
+// dockColumns resolves .toolbarMainBar's grid columns for content width
+// w (px), the right column's max-content right and gap: the first and
+// middle columns' widths. The right column's minimum is its content, so
+// when a 1fr share is narrower the other two share what's left.
+func dockColumns(w, right, gap int) (col1, col2 int) {
+	free := max(0, w-2*gap)
+	fr := free / 4
+	if fr < right {
+		fr = max(0, free-right) / 3
+	}
+	return fr, 2 * fr
 }
 
 func dockCtlW(gtx C, k ctl) int {
@@ -561,17 +741,16 @@ func (c *Controller) dockClick(gtx C, id string, s *huddle.Session, st huddle.St
 		c.shareClick(s, st, ph, c.post)
 	case "hand":
 		go func() { _ = c.ToggleHand() }()
-	case "stickers": // the sticker grid's stickers, above the caret
+	case "stickers": // HuddleStickerGrid above the caret (hand.go)
 		if ph == nil {
 			return
 		}
-		var items []popups.MenuItem
-		for _, k := range stickers {
-			e := k.Emoji
-			label := c.emojiText(c.withSkinTone(e)) + "  " + nsHuddles.T(k.Label)
-			items = append(items, popups.MenuItem{Key: "sticker-" + e, Label: label, Do: func() { go func() { _ = c.PickSticker(e) }() }})
+		if c.dock.stick != nil && !c.dock.stick.Dismissed() {
+			c.dock.stick.Dismiss()
+			c.dock.stick = nil
+			break
 		}
-		c.dock.stick = popups.NewMenuOpts(ph, items, popups.MenuOpts{Width: 240, Anchor: r, Side: popups.Above})
+		c.dock.stick = newStickerGrid(c, ph, r)
 		ph.ShowOverlay(c.dock.stick)
 	case "react": // HuddleEmojiMenuTrigger: the quick picker above the button
 		if ph == nil {
