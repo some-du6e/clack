@@ -72,6 +72,7 @@ var slackRef = map[string]string{
 	"check":                       "check",
 	"check-circle":                "check-circle",
 	"check-circle-filled":         "check-circle-filled",
+	"disable":                     "disable",
 	"check-filled":                "check-filled",
 	"chevron-down":                "caret-down",
 	"chevron-left":                "caret-left",

@@ -46,6 +46,8 @@ type prefsModal struct {
 	picker    channelPicker             // Advanced > Exclude these channels (prefs_picker.go)
 	langs     langPicker                // Language & region > Spellcheck languages (prefs_spell.go)
 	lists     prefsLists                // Connected accounts and Privacy's fetched lists (prefs_lists.go)
+	manage    *manageModal              // the open manage_accounts_modal (prefs_connected.go)
+	verify    *verifyEmail              // Send Verification Email's state (prefs_verify_email.go)
 	themeTab  string                    // Appearance: "slack" or "custom" ("": Slack's default for the theme)
 	pcc       prefsColorsCache          // colors()
 	hexEd     map[string]*widget.Editor // Appearance > Custom theme hex fields

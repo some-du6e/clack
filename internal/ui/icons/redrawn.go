@@ -79,6 +79,10 @@ func init() {
 	reg("todos", registry["check-circle"].parts...)
 	reg("check-circle-filled", fl(circle(10, 10, 8.25)+" "+"M8.5 10.38 L7.57 9.07 L6.86 8.93 A1.5 1.5 0 0 0 5.25 10.25 V10.89 L7.14 13.59 A1.5 1.5 0 0 0 8.25 14.25 L9.25 14.13 L14.32 8.11 A1.5 1.5 0 0 0 14.36 6.34 A1.5 1.5 0 0 0 12.25 6 L8.5 10.38 Z"))
 	reg("todos-filled", registry["check-circle-filled"].parts...)
+	// Slack's disable (the disconnect confirmation's "What will change:"
+	// list): a 1.5px ring, outer radius 9, and the bar between its inner
+	// edges on the diagonal, 1.5px across (icons.json: evenodd)
+	reg("disable", s(circle(10, 10, 8.25)), s("M4.7 4.7 L15.3 15.3"))
 	reg("check-filled", fl("M7 16.25 A0.5 0.5 0 0 1 6.59 16 L2.83 10.59 A0.5 0.5 0 0 1 2.88 9.94 A0.5 0.5 0 0 1 3.62 9.91 L6.75 14.45 L7.42 14.34 L16.34 3.92 A0.5 0.5 0 0 1 17.09 3.85 A0.5 0.5 0 0 1 17.15 4.59 L7.5 16.05 A0.5 0.5 0 0 1 7 16.25 Z"))
 	reg("clock", s(circle(10, 10, 8.25)), s("M13.75 10.5 H10 V5.75"))
 	reg("schedule", registry["clock"].parts...)

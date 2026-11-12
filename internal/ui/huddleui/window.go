@@ -181,6 +181,7 @@ func (w *window) run() {
 			return
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
+			th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
 			// Slack's huddle components here are plugin patch points
 			// (slackc), shared with the main window: one frame at a time.
 			slackc.LockFrame()

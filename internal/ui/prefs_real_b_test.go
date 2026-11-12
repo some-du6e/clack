@@ -237,7 +237,7 @@ func TestPrefsAuditAppliedRoundTripB(t *testing.T) {
 		t.Fatal("no fetchUserAuth call")
 	}
 	rows = pageRows(t, a, p, "connected_accounts")
-	if !hasRow(rows, "list", "Google Drive") {
+	if !hasRow(rows, "list", "Google Drive · Manage") {
 		t.Fatalf("connected accounts rows %s", dumpRows(rows))
 	}
 

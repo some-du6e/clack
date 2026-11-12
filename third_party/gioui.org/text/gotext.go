@@ -304,7 +304,7 @@ func (s *shaperImpl) ResolveFace(r rune) *font.Face {
 
 // shapeText invokes the text shaper and returns the raw text data in the shaper's native
 // format. It does not wrap lines.
-func (s *shaperImpl) shapeText(ppem fixed.Int26_6, lc system.Locale, txt []rune) []shaping.Output {
+func (s *shaperImpl) shapeText(ppem fixed.Int26_6, lc system.Locale, txt []rune, features []shaping.FontFeature) []shaping.Output {
 	lcfg := langConfig{
 		Language:  language.NewLanguage(lc.Language),
 		Direction: mapDirection(lc.Direction),
@@ -325,6 +325,7 @@ func (s *shaperImpl) shapeText(ppem fixed.Int26_6, lc system.Locale, txt []rune)
 	s.outScratchBuf = s.outScratchBuf[:0]
 	for _, input := range inputs {
 		if input.Face != nil {
+			input.FontFeatures = features // Clack patch 12
 			s.outScratchBuf = append(s.outScratchBuf, s.shaper.Shape(input))
 		} else {
 			s.outScratchBuf = append(s.outScratchBuf, shaping.Output{
@@ -408,12 +409,21 @@ func (s *shaperImpl) shapeAndWrapText(params Parameters, txt []rune) (_ []shapin
 		}
 		// We only permit a single run as the truncator, regardless of whether more were generated.
 		// Just use the first one.
-		wc.Truncator = s.shapeText(params.PxPerEm, params.Locale, []rune(params.Truncator))[0]
+		tr := []rune(params.Truncator)
+		wc.Truncator = s.shapeText(params.PxPerEm, params.Locale, tr, spacingFeatures(params.LetterSpacing))[0]
+		if params.LetterSpacing != 0 {
+			trunc := []shaping.Output{wc.Truncator}
+			letterSpacing(trunc, tr, params.LetterSpacing)
+			wc.Truncator = trunc[0]
+		}
 	}
 	// Wrap outputs into lines.
-	outs := s.shapeText(params.PxPerEm, params.Locale, txt)
+	outs := s.shapeText(params.PxPerEm, params.Locale, txt, spacingFeatures(params.LetterSpacing))
 	if params.TabStop > 0 {
 		tabStops(outs, txt, params.TabStop)
+	}
+	if params.LetterSpacing != 0 {
+		letterSpacing(outs, txt, params.LetterSpacing)
 	}
 	return s.wrapper.WrapParagraph(wc, params.MaxWidth, txt, shaping.NewSliceIterator(outs))
 }
@@ -462,6 +472,84 @@ func tabStops(outs []shaping.Output, txt []rune, stop int) {
 			gl.Width, gl.Height, gl.XBearing, gl.YBearing = 0, 0, 0, 0
 		}
 	}
+}
+
+// noLigatures are the features Blink turns off when letter-spacing isn't
+// zero (font_features.cc: liga and clig, which HarfBuzz enables by
+// default, and calt). Clack patch 12.
+var noLigatures = []shaping.FontFeature{
+	{Tag: gotextot.MustNewTag("liga"), Value: 0},
+	{Tag: gotextot.MustNewTag("clig"), Value: 0},
+	{Tag: gotextot.MustNewTag("calt"), Value: 0},
+}
+
+func spacingFeatures(ls fixed.Int26_6) []shaping.FontFeature {
+	if ls == 0 {
+		return nil
+	}
+	return noLigatures
+}
+
+// letterSpacing is Blink's ShapeResult::ApplySpacingOrExpansion with
+// letter-spacing only: the last glyph of every cluster gets ls more
+// advance, unless the cluster's first rune is one Blink treats as a
+// zero-width space (TreatAsZeroWidthSpace), or the run is a cursive
+// script (IsCursiveScript) and the rune isn't a space
+// (ShapeResultSpacing::ComputeSpacing, CSS Text 4 §8.2.1). Runs get their
+// advances back in step. Clack patch 12.
+func letterSpacing(outs []shaping.Output, txt []rune, ls fixed.Int26_6) {
+	for o := range outs {
+		run := &outs[o]
+		gs := run.Glyphs
+		for g := range gs {
+			gl := &gs[g]
+			if g+1 < len(gs) && gs[g+1].ClusterIndex == gl.ClusterIndex {
+				continue // not the cluster's last glyph
+			}
+			ci := gl.ClusterIndex
+			if ci < 0 || ci >= len(txt) {
+				continue
+			}
+			r := txt[ci]
+			if zeroWidthSpace(r) || (cursiveScript(language.LookupScript(r)) && !treatAsSpace(r)) {
+				continue
+			}
+			gl.Advance += ls
+			gl.XAdvance += ls
+			run.Advance += ls
+		}
+	}
+}
+
+// treatAsSpace is Blink's unicode::TreatAsSpace.
+func treatAsSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\u00a0' }
+
+// zeroWidthSpace is Blink's unicode::TreatAsZeroWidthSpace: form feed,
+// carriage return, U+FFFC, ZWNJ, ZWJ and the default ignorable code points
+// (Unicode DerivedCoreProperties Default_Ignorable_Code_Point).
+func zeroWidthSpace(r rune) bool {
+	switch {
+	case r == '\f' || r == '\r' || r == '\ufffc' || r == '\u00ad' || r == '\u034f' || r == '\u061c':
+		return true
+	case r < 0x115f:
+		return false
+	case r <= 0x1160, r == 0x17b4 || r == 0x17b5, r >= 0x180b && r <= 0x180f,
+		r >= 0x200b && r <= 0x200f, r >= 0x202a && r <= 0x202e, r >= 0x2060 && r <= 0x206f,
+		r == 0x3164, r >= 0xfe00 && r <= 0xfe0f, r == 0xfeff, r == 0xffa0, r >= 0xfff0 && r <= 0xfff8,
+		r >= 0x1bca0 && r <= 0x1bca3, r >= 0x1d173 && r <= 0x1d17a, r >= 0xe0000 && r <= 0xe0fff:
+		return true
+	}
+	return false
+}
+
+// cursiveScript is Blink's IsCursiveScript (shape_result.cc).
+func cursiveScript(s language.Script) bool {
+	switch s {
+	case language.Arabic, language.Hanifi_Rohingya, language.Mandaic, language.Mongolian,
+		language.Nko, language.Phags_Pa, language.Syriac:
+		return true
+	}
+	return false
 }
 
 // replaceControlCharacters replaces problematic unicode

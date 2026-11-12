@@ -98,13 +98,13 @@ func (l *Loader) Load(ctx context.Context, o Option) (*Font, error) {
 		if fs[0] == nil { // the embedded Lato
 			return &Font{Option: o, Family: "Lato", Fallback: i > 0, Pending: pending}, nil
 		}
-		return &Font{Option: o, UI: build(o.Value, fs, bold, black), Family: name, Fallback: i > 0 || pending, Pending: pending}, nil
+		return &Font{Option: o, UI: build(o, fs, bold, black), Family: name, Fallback: i > 0 || pending, Pending: pending}, nil
 	}
 	// The list ran out: Chromium's standard font, then its last resort
 	// (FontFallbackList::GetFontData), then Clack's own Lato.
 	for _, fam := range lastResort(l.goos()) {
 		if fs, name := l.installed(fam); len(fs) > 0 {
-			return &Font{Option: o, UI: build(o.Value, fs, bold, black), Family: name, Fallback: true, Pending: pending}, nil
+			return &Font{Option: o, UI: build(o, fs, bold, black), Family: name, Fallback: true, Pending: pending}, nil
 		}
 	}
 	return &Font{Option: o, Family: "Lato", Fallback: true, Pending: pending}, nil
@@ -260,14 +260,14 @@ func axesOf(ld *gtot.Loader) map[string][3]float32 {
 // the slot's weight (bold and black as Slack's Theme maps them for this
 // font) and style pick a face, and a variable face is instanced at the
 // weight (clamped to its range, like a font-weight range descriptor).
-func build(name string, fs []*face, bold, black float32) *theme.UIFont {
+func build(o Option, fs []*face, bold, black float32) *theme.UIFont {
 	groups := map[int][]*face{}
 	maxG := 0
 	for _, f := range fs {
 		groups[f.group] = append(groups[f.group], f)
 		maxG = max(maxG, f.group)
 	}
-	u := &theme.UIFont{Name: name}
+	u := &theme.UIFont{Name: o.Value, Tracking: Tracks(o)}
 	for i, s := range theme.Slots {
 		u.Faces[i] = slotFace(groups[0], s, cssWeight(s.Weight, bold, black), "")
 	}

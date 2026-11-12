@@ -68,11 +68,11 @@ func (p *prefsModal) connectedList(f *prefsForm) {
 		return // Slack's spinner
 	}
 	if len(l.conn) == 0 {
-		f.para("No accounts found")
+		f.para(cwListNS.T("No accounts found"))
 		return
 	}
 	for _, ap := range l.conn {
-		f.listRow("conn."+ap.AppID, ap.Icon, ap.Name, "", nil)
+		p.connectedRow(f, ap) // ConnectedWorkflowAccount, with Manage (prefs_connected.go)
 	}
 }
 
@@ -86,15 +86,11 @@ func (p *prefsModal) blockedSection(f *prefsForm) {
 	if !l.verified {
 		email := ""
 		if c := p.a.Core(); c != nil {
-			if u, ok := c.User(p.a.model().SelfID); ok && u.Email != "" {
-				email = " (" + u.Email + ")"
+			if u, ok := c.User(p.a.model().SelfID); ok {
+				email = u.Email
 			}
 		}
-		f.para("👋")
-		f.para("To see whose invitations you’ve blocked, you’ll need to verify your email address" + email + ".")
-		f.button("verify_email", "Send Verification Email", false, nil)
-		// greyed: Slack's VerifyEmailModal flow (a code sent by email,
-		// then entered in the modal) isn't ported
+		p.verifySection(f, email) // prefs_verify_email.go
 		return
 	}
 	if len(l.blocked) == 0 {

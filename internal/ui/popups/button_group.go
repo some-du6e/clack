@@ -28,6 +28,9 @@ import (
 // grpSide is a button's place in a joined pair.
 type grpSide uint8
 
+// GrpSide is grpSide for ModalButton.Draw functions outside the package.
+type GrpSide = grpSide
+
 const (
 	grpNone  grpSide = iota
 	grpFirst         // the end (right) corners are square

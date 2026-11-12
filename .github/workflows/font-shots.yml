@@ -24,6 +24,8 @@ on:
       - "internal/woff2/**"
       - "internal/ui/uifont/**"
       - "internal/ui/theme/uifont.go"
+      - "internal/ui/theme/tracking*.go"
+      - "third_party/gioui.org/text/**"
       - "internal/ui/theme/text.go"
       - "internal/ui/theme/textgamma*.go"
       - "internal/ui/theme/textrender*_test.go"
@@ -67,6 +69,7 @@ jobs:
       - name: tests
         run: |
           go test -count=1 -v ./internal/woff2 ./internal/ui/uifont
+          go test -count=1 -v -run 'TestTrackingForSize|TestLetterSpacingShaper|TestTrackedLabelsAndEditors|TestSetTrackingFollowsUIFont' ./internal/ui/theme
           go test -count=1 -v -run 'TestFontPrefRoundTrip|TestFontPickLatestWins' ./internal/ui/
           go test -count=1 -v -run 'TestFontSwitchRelayout|TestIdle|TestFling' ./internal/ui/messages/
       - name: screenshots

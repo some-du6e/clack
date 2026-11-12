@@ -11,8 +11,8 @@ To see the whole diff against the release:
     diff -ru "$(go env GOMODCACHE)/gioui.org@v0.10.3" third_party/gioui.org
 
 It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
-`widget/text.go`, `widget/clack_spans.go`, `text/shaper.go`,
-`text/gotext.go`, `op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`,
+`widget/text.go`, `widget/label.go`, `widget/clack_spans.go`,
+`text/shaper.go`, `text/gotext.go`, `text/lru.go`, `op/op.go`, `internal/ops/ops.go`, `app/os_x11.go`,
 `app/clack_gpu.go`, `app/clack_panel.go`, `app/os.go`, `app/os_macos.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
@@ -442,3 +442,38 @@ ci's linux job `app/clack_drop_x11_test.go` under Xvfb: python-xlib as
 the XDND source (XdndEnter, two XdndPositions, XdndDrop answering the
 SelectionRequest, or XdndLeave).
 Not in `UPSTREAM.patch`.
+
+## 12. text: letter spacing (CSS letter-spacing)
+
+`text/shaper.go` (`Parameters.LetterSpacing`, `Parameters.PxPerSp`,
+`Shaper.SetTracking`, `Shaper.SetTrackingScale`), `text/lru.go` (the
+layout cache key), `text/gotext.go` (`shapeText`'s features,
+`letterSpacing`), `widget/label.go` and `widget/text.go` (`PxPerSp` from
+the context). An addition: with no tracking function and a zero
+`LetterSpacing`, text shapes as upstream does.
+
+Slack's Theme component (boot-shared `oWug`) sets
+`--custom-font-tracking-*` for San Francisco Pro and Segoe UI (System),
+Roboto Mono, Noto Sans and Meiryo, and Slack's CSS pairs each type size
+with its variable as `letter-spacing` (`body` 15px, `h1`–`h3`, and about
+2,000 rules in client-boot-styles). Gio's shaper had no letter spacing.
+
+A `LetterSpacing` (or, when it's zero, the shaper's tracking function at
+the text's size in sp, `PxPerEm / PxPerSp`) is applied the way Blink's
+`ShapeResult::ApplySpacingOrExpansion` applies letter-spacing: the last
+glyph of every cluster gets that much more advance, except clusters that
+start with a rune Blink treats as a zero-width space (form feed, CR,
+U+FFFC, ZWNJ, ZWJ, default ignorables) and non-space clusters of cursive
+scripts (Arabic, Hanifi Rohingya, Mandaic, Mongolian, N'Ko, Phags-pa,
+Syriac; CSS Text 4 §8.2.1). Like Blink's `FontFeatures`, spaced text is
+shaped with `liga`, `clig` and `calt` off. The truncator gets the same.
+This happens before line wrapping, so wrapping, carets, selections,
+`Regions` and pointer hits use the spaced advances. The spacing is part
+of the layout cache key.
+
+`PxPerSp` is set by `widget.Label` and `widget.Editor`/`Selectable` from
+the context; callers that build `Parameters` themselves either set it or
+rely on `SetTrackingScale` (the window's metric).
+
+Tests: `internal/ui/theme` `TestLetterSpacingShaper` and
+`TestTrackingForSize`. Not in `UPSTREAM.patch`.

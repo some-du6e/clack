@@ -195,6 +195,7 @@ func (p *miniPanel) run() {
 			default:
 			}
 			gtx := app.NewContext(&ops, e)
+			th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
 			// the next frame: who's talking, or sooner while the window
 			// waits for its handle and the screen to be placed on
 			next := 500 * time.Millisecond

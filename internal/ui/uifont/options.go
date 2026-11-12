@@ -28,7 +28,7 @@
 //   - The same Theme rewrites --custom-font-weight-bold to 600 and
 //     --custom-font-weight-black to 700 for San Francisco Pro (System),
 //     Segoe UI (System), Roboto Mono, Noto Sans and Meiryo (plus letter
-//     spacing tracking) and for Atkinson Hyperlegible Next (weights
+//     spacing, Tracks; theme/tracking.go) and for Atkinson Hyperlegible Next (weights
 //     only). Slack's CSS sets bold and black text through those variables
 //     (2,591 uses against ~50 literal 700/900s).
 //   - slack-kit-gantry-v2-styles' @font-face rules serve Slack-Roboto-Mono,
@@ -142,6 +142,18 @@ func Weights(o Option) (bold, black float32) {
 		return 600, 700
 	}
 	return 700, 900
+}
+
+// Tracks reports that Slack's Theme (boot-shared oWug) sets the
+// --custom-font-tracking-* letter spacing for o: San Francisco Pro and
+// Segoe UI (System), Roboto Mono, Noto Sans (labels it compares) and Meiryo
+// (value "meiryo"). Atkinson Hyperlegible Next gets the weights only.
+func Tracks(o Option) bool {
+	switch o.Label {
+	case "San Francisco Pro (System)", "Segoe UI (System)", "Roboto Mono", "Noto Sans":
+		return true
+	}
+	return o.Value == "meiryo"
 }
 
 // UsesThemeFont is Slack's "UflI".oo: the label isn't Lato's, so body

@@ -360,6 +360,7 @@ func drawTextSlots(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string,
 		MinWidth:   cs.Min.X,
 		Locale:     gtx.Locale,
 		LineHeight: fixed.I(gtx.Sp(o.LineHeight)),
+		PxPerSp:    gtx.Metric.PxPerSp, // the UI font's tracking (tracking.go)
 	}, txt)
 	m := op.Record(gtx.Ops)
 	viewport := image.Rectangle{Max: cs.Max}

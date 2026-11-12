@@ -18,7 +18,9 @@ import (
 
 	"gioui.org/gpu/headless"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 func TestPrefsAuditShots(t *testing.T) {
@@ -30,6 +32,14 @@ func TestPrefsAuditShots(t *testing.T) {
 	fs.SetPrefs(map[string]any{"vip_users": "U0VIP1"})
 	home := t.TempDir()
 	t.Setenv("CLACK_HOME", home)
+	// gap-w16: an app with workflow accounts (one domain-wide), an
+	// unverified email and its code flow, all answered here
+	w16 := newW16Hooks(fs)
+	w16.answer("apps.auth.external.userAuths.get", gdriveAuths(tok("Et1", "me@example.com", "user_oauth"), tok("Et2", "it@example.com", "dwa_user")))
+	w16.answer("users.emailVerificationStatus.get", map[string]any{"ok": true, "is_verified": false})
+	w16.answer("signup.confirmEmail", map[string]any{"ok": true})
+	w16.answer("users.listIgnoredUsers", map[string]any{"ok": true, "emails": []string{"spam@example.com"}})
+	t.Cleanup(func() { fs.SetHook(nil) })
 	e := startEnv(t, fs, home)
 	dir := os.Getenv("PREFS_AUDIT_SHOTS_DIR")
 	if dir != "" && e.gpu == nil {
@@ -104,6 +114,9 @@ func TestPrefsAuditShots(t *testing.T) {
 		}
 		for e.a.dismissTop() {
 		}
+		w16Shots(t, e, shot, mode, func() *prefsModal { return pm })
+		for e.a.dismissTop() {
+		}
 		// Linux and Windows: the app menu from the top nav's button
 		// (appmenu.go), with Help's Troubleshooting submenu
 		e.a.menu(image.Pt(e.a.px(8), e.a.px(38)), e.a.appMenuItems())
@@ -129,4 +142,47 @@ func TestPrefsAuditShots(t *testing.T) {
 		for e.a.dismissTop() {
 		}
 	}
+}
+
+// w16Shots are Connected accounts' manage-accounts modal and its
+// disconnect confirmation, and Privacy's VerifyEmailModal in each state.
+func w16Shots(t *testing.T, e *perfEnv, shot func(string), mode string, pm func() *prefsModal) {
+	t.Helper()
+	e.a.showPrefs("connected_accounts")
+	e.until("Connected accounts", 5*time.Second, func() bool { return pm() != nil && pm().lists.connDone })
+	p := pm()
+	m := p.openManageAccounts("A0GDRIVE")
+	if m == nil {
+		t.Fatal("no Google Drive row")
+	}
+	shot("prefs-connected-manage-" + mode)
+	ap, _ := p.connectedApp("A0GDRIVE")
+	p.confirmDisconnect(m, ap, "Google", core.WorkflowToken{ID: "Et1", ExternalUserID: "me@example.com", AuthModel: "user_oauth"}, false)
+	shot("prefs-connected-disconnect-" + mode)
+	for e.a.dismissTop() {
+	}
+
+	e.a.showPrefs("privacy_visibility")
+	e.until("Privacy", 5*time.Second, func() bool { return pm() != nil && pm().lists.blockDone })
+	p = pm()
+	p.sendVerificationEmail("me@example.com")
+	e.until("VerifyEmailModal", 5*time.Second, func() bool { return p.verify != nil && p.verify.modal != nil })
+	v := p.verify
+	shot("prefs-verify-email-" + mode)
+	v.paste(0, "AB1")
+	shot("prefs-verify-email-typing-" + mode)
+	v.confirmed(&slack.Error{Code: "failed"})
+	shot("prefs-verify-email-invalid-" + mode)
+	v.confirmed(&slack.Error{Code: "expired"})
+	shot("prefs-verify-email-expired-" + mode)
+	v.confirmed(&slack.Error{Code: "ratelimited"})
+	shot("prefs-verify-email-ratelimited-" + mode)
+	v.status = codeProcessing
+	v.paste(0, "AB12CD")
+	shot("prefs-verify-email-checking-" + mode)
+	v.confirmed(nil)
+	shot("prefs-verify-email-verified-" + mode)
+	v.modal.Close() // Got It
+	e.until("the blocked list", 5*time.Second, func() bool { return p.lists.blockDone })
+	shot("prefs-privacy-after-verify-" + mode)
 }

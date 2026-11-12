@@ -287,6 +287,7 @@ func (w *inviteWindow) run() {
 			return
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
+			w.th.SetTextScale(gtx.Metric.PxPerSp) // the UI font's tracking
 			w.layout(gtx)
 			e.Frame(gtx.Ops)
 		}

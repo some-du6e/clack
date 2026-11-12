@@ -163,6 +163,7 @@ func scanEditor(gtx layout.Context, sh *text.Shaper, e *widget.Editor, f font.Fo
 		PxPerEm:  fixed.I(gtx.Sp(size)),
 		MaxWidth: maxW,
 		Locale:   gtx.Locale,
+		PxPerSp:  gtx.Metric.PxPerSp,
 	}, txt)
 	for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
 		ScanGlyph(sh, g)
