@@ -214,17 +214,36 @@ func TestGroupDMRename(t *testing.T) {
 // A topic too wide for the header is --truncated; hovering it opens the
 // card with the whole topic. A header under 600px has no topic.
 func TestHeaderTopicHoverCard(t *testing.T) {
-	e, _ := previewEnv(t)
+	// The header's conversations.info (opened(), for the channel boot
+	// opens) can land after the test stores its topic, and it stores the
+	// fake's topic over it (CI flake, gap-w12 2026-11-12). Hold the member
+	// channels' conversations.info until the topic is in, so that order
+	// happens every run.
+	held := make(chan struct{})
+	var once sync.Once
+	free := func() { once.Do(func() { close(held) }) }
+	e, fs := previewEnvWith(t, func(fs *fakeslack.Server) {
+		t.Cleanup(free) // before fs.Close, which waits for held calls
+		fs.SetHook(func(method string, form url.Values) (any, bool) {
+			if method == "conversations.info" && strings.HasPrefix(form.Get("channel"), "C0FAKE") {
+				<-held
+			}
+			return nil, false
+		})
+	})
 	ch := fakeslackMemberChannel(e)
 	c := e.a.Core()
 	sc, ok := c.S.Conv(ch)
 	if !ok {
 		t.Fatal("no member channel")
 	}
-	// setTopic stores a topic and waits for the header's model to have it
-	// (resnapshot is debounced and coalesces with a pending one)
+	// setTopic sets a topic as another client would: on the server (so a
+	// conversations.info answered later agrees) and in core's store, then
+	// waits for the header's model to have it (resnapshot is debounced and
+	// coalesces with a pending one)
 	setTopic := func(topic string) {
 		t.Helper()
+		fs.SetTopic(ch, topic)
 		cv := *sc
 		cv.Topic = &slack.Purpose{Value: topic}
 		c.S.PutConv(cv)
@@ -236,7 +255,9 @@ func TestHeaderTopicHoverCard(t *testing.T) {
 		e.settle(50 * time.Millisecond)
 	}
 	setTopic(strings.Repeat("A long topic that keeps going past the header's edge, ", 6) + "the end.")
+	free()
 	e.openChannel(ch)
+	e.until("the header's reads", 10*time.Second, func() bool { return e.a.data.tabsDone[ch] })
 	e.settle(200 * time.Millisecond)
 	if !hdrTopicTruncated {
 		t.Fatal("the long topic isn't --truncated")

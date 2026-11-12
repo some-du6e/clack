@@ -25,11 +25,22 @@ import (
 )
 
 func previewEnv(t *testing.T) (*perfEnv, *fakeslack.Server) {
+	t.Helper()
+	return previewEnvWith(t, nil)
+}
+
+// previewEnvWith is previewEnv with prep run on the fake before the app
+// starts (hooks, faults the boot must already meet).
+func previewEnvWith(t *testing.T, prep func(fs *fakeslack.Server)) (*perfEnv, *fakeslack.Server) {
+	t.Helper()
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
+	if prep != nil {
+		prep(fs)
+	}
 	e := startEnv(t, fs, t.TempDir())
 	if dir := os.Getenv("PREVIEW_SHOTS_DIR"); dir != "" && e.gpu == nil {
 		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)

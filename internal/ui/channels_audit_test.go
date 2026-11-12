@@ -368,6 +368,12 @@ func TestChannelLeaveRejoin(t *testing.T) {
 		return ci != nil && !ci.Preview
 	})
 	n := len(e.a.overlays)
+	// The fake records the leave before it answers, and the leave ends
+	// (actLeave's done, a frame after the reply) by going to Threads: a
+	// reopen between the two was navigated away from, and nothing drew
+	// the channel again (CI flake, gap-w16 2026-11-12). Hold the reply so
+	// that order happens every run; wait for the leave itself to finish.
+	fs.SetFault("conversations.leave", fakeslack.Fault{ReplyDelay: 300 * time.Millisecond, Times: 1})
 	popups.ChannelMenuAction(e.a, ch, "leave")()
 	e.until("conversations.leave", 10*time.Second, func() bool { return slices.Contains(fs.LeaveCalls(), ch) })
 	for _, o := range e.a.overlays[n:] {
@@ -375,6 +381,7 @@ func TestChannelLeaveRejoin(t *testing.T) {
 			t.Error("leaving a public channel asked for confirmation")
 		}
 	}
+	e.until("the leave done (off to Threads)", 10*time.Second, func() bool { return e.a.router.Current().Channel() != ch })
 	e.openChannel(ch)
 	c = e.a.convoFor(ch, "")
 	e.until("a preview again", 20*time.Second, func() bool { return e.a.footerFor(c) == footPreview && c.jp != nil })

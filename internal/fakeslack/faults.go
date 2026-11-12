@@ -18,6 +18,10 @@ type Fault struct {
 	// AfterHandle applies Status/Error/HangUp after the call took effect
 	// (a share that happened but whose reply was lost).
 	AfterHandle bool
+	// ReplyDelay holds the answer after the call took effect: the fake's
+	// state (and what its accessors report) already changed, the client
+	// hasn't heard yet (a reply slow to come back).
+	ReplyDelay time.Duration
 	// Times is how many calls it hits (0: every call).
 	Times int
 }

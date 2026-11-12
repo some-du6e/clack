@@ -36,6 +36,11 @@ type App struct {
 	subMu sync.Mutex
 	subs  map[*sub]struct{}
 
+	// prefsMu orders every change to the raw prefs: a change copies them,
+	// sets its keys and installs the copy, and two at once lost one of
+	// them (mergePrefs, installPrefs).
+	prefsMu sync.Mutex
+
 	presSeen    map[string]time.Time
 	presWaiters []chan struct{}
 	countsTimer *time.Timer

@@ -804,6 +804,20 @@ func (s *Server) SetProperties(id string, props json.RawMessage) {
 	}
 }
 
+// SetTopic replaces a conversation's topic in what conversations.info and
+// users.conversations answer (a topic set from another client).
+func (s *Server) SetTopic(id, topic string) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for _, cs := range [][]slack.Conversation{s.convs, s.others} {
+		for i := range cs {
+			if cs[i].ID == id {
+				cs[i].Topic = &slack.Purpose{Value: topic}
+			}
+		}
+	}
+}
+
 // UserListFilters returns the filter of every edge users/list call.
 func (s *Server) UserListFilters() []string {
 	s.convMu.Lock()
@@ -1011,6 +1025,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if out == nil {
 		out = map[string]any{"ok": true}
+	}
+	if faulted && fault.ReplyDelay > 0 {
+		time.Sleep(fault.ReplyDelay)
 	}
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back
