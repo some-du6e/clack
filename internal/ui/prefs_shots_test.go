@@ -38,6 +38,7 @@ func TestPrefsAuditShots(t *testing.T) {
 	w16.answer("apps.auth.external.userAuths.get", gdriveAuths(tok("Et1", "me@example.com", "user_oauth"), tok("Et2", "it@example.com", "dwa_user")))
 	w16.answer("users.emailVerificationStatus.get", map[string]any{"ok": true, "is_verified": false})
 	w16.answer("signup.confirmEmail", map[string]any{"ok": true})
+	w16.answer("signin.confirmCode", map[string]any{"ok": false, "error": "failed"})
 	w16.answer("users.listIgnoredUsers", map[string]any{"ok": true, "emails": []string{"spam@example.com"}})
 	t.Cleanup(func() { fs.SetHook(nil) })
 	e := startEnv(t, fs, home)
@@ -171,7 +172,11 @@ func w16Shots(t *testing.T, e *perfEnv, shot func(string), mode string, pm func(
 	shot("prefs-verify-email-" + mode)
 	v.paste(0, "AB1")
 	shot("prefs-verify-email-typing-" + mode)
-	v.confirmed(&slack.Error{Code: "failed"})
+	// the rest of the code, as typing the sixth cell submits it: fakeslack
+	// answers signin.confirmCode with failed
+	v.paste(3, "2CD")
+	v.changed()
+	e.until("the invalid code", 5*time.Second, func() bool { return v.status == codeError })
 	shot("prefs-verify-email-invalid-" + mode)
 	v.confirmed(&slack.Error{Code: "expired"})
 	shot("prefs-verify-email-expired-" + mode)

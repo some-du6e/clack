@@ -14,6 +14,7 @@ import (
 	"gioui.org/io/transfer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -396,5 +397,29 @@ func TestPrefsVerifyEmailErrors(t *testing.T) {
 		if v.status != c.status || v.code() != "" || v.disabled {
 			t.Errorf("%s: status %q code %q disabled %v, want %q, cleared", c.code, v.status, v.code(), v.disabled, c.status)
 		}
+	}
+}
+
+// After a failed check the first cell takes the focus back, wherever it
+// was (here an empty cell after a three-character paste).
+func TestPrefsVerifyEmailRefocus(t *testing.T) {
+	a, _, _ := fakePrefsApp(t)
+	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
+	v := &verifyEmail{p: p, focus: -1, email: "me@example.com"}
+	for i := range v.cells {
+		v.cells[i] = widget.Editor{SingleLine: true, MaxLen: 1, Filter: codeChars, Alignment: text.Middle}
+	}
+	v.status, v.focus = codeEmpty, 0
+	e := &cellsEnv{t: t, v: v, now: time.Now()}
+	e.frames(4)
+	v.paste(0, "AB1")
+	e.frames(4)
+	if e.focused() != 3 {
+		t.Fatalf("after pasting AB1: focus %d, want 3", e.focused())
+	}
+	v.confirmed(&slack.Error{Code: "failed"})
+	e.frames(6)
+	if v.code() != "" || e.focused() != 0 {
+		t.Fatalf("after a failed check: %q, focus %d, want empty and 0", v.code(), e.focused())
 	}
 }
