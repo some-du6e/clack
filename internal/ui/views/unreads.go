@@ -31,7 +31,9 @@ package views
 //     conversation read and moves to the next header; with the list
 //     focused R on a header, ←/→ collapse and expand (→ on a message
 //     opens its thread), Shift+PageUp/PageDown move between headers and
-//     Enter on the footer marks everything read.
+//     Enter on the footer marks everything read. With nothing focused
+//     (useGlobalKeyboardShortcuts) ↑/↓, PageUp/PageDown and Home/End
+//     scroll the list (globalKeys).
 //   - Writes: conversations.mark (Mark, the header and Esc; Undo marks
 //     back to the initial cursor), unread.markRead markers (Mark All and
 //     its Undo), unread.collapse / unread.expand, users.prefs.set for the
@@ -1486,6 +1488,7 @@ func (v *Unreads) emptyEmoji(gtx C) D {
 // ---- keyboard (UnreadsList keyCommands) ----
 
 func (v *Unreads) keys(gtx C) {
+	v.globalKeys(gtx)
 	for {
 		ev, ok := gtx.Event(
 			key.FocusFilter{Target: v},
@@ -1522,6 +1525,46 @@ func (v *Unreads) keys(gtx C) {
 			v.kbMode = true
 			v.key(e)
 		}
+	}
+}
+
+// globalKeys is the list's useGlobalKeyboardShortcuts (UnreadsList passes
+// it to RIad, whose base 67/z BaseKeyboardNavigableList keeps a key
+// whose target is the page body: shouldIgnoreKeyboardShortcut). With
+// nothing focused, ↑/↓ scroll 40px (onKeyDownArrowKey), PageUp/PageDown
+// a page (onKeyDownPageUp/Down: the list height − 21) and Home/End to
+// either end (onKeyDownHome/End: scrollToOffset 0 / Infinity), without
+// making any row active.
+func (v *Unreads) globalKeys(gtx C) {
+	for gtx.Focused(nil) {
+		ev, ok := gtx.Event(
+			key.Filter{Name: key.NameUpArrow}, key.Filter{Name: key.NameDownArrow},
+			key.Filter{Name: key.NamePageUp}, key.Filter{Name: key.NamePageDown},
+			key.Filter{Name: key.NameHome}, key.Filter{Name: key.NameEnd},
+		)
+		if !ok {
+			return
+		}
+		e, ok := ev.(key.Event)
+		if !ok || e.State != key.Press || len(v.rows) == 0 {
+			continue
+		}
+		page := max(0, v.listH-gtx.Dp(21))
+		switch e.Name {
+		case key.NameUpArrow:
+			v.list.Position.Offset -= gtx.Dp(40)
+		case key.NameDownArrow:
+			v.list.Position.Offset += gtx.Dp(40)
+		case key.NamePageUp:
+			v.list.Position.Offset -= page
+		case key.NamePageDown:
+			v.list.Position.Offset += page
+		case key.NameHome:
+			v.list.Position = layout.Position{}
+		case key.NameEnd:
+			v.list.Position = layout.Position{First: len(v.rows)}
+		}
+		v.list.Position.BeforeEnd = e.Name != key.NameEnd
 	}
 }
 

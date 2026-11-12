@@ -22,6 +22,7 @@ import (
 	"image"
 	"image/color"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -799,6 +800,7 @@ type Later struct {
 	// the sections' collapsed state and dividers (later_sections.go)
 	secCollapsed [3]bool
 	secClick     [3]widget.Clickable
+	sk           todoSecKB // a keyboard list per section, the dividers' Tab stops
 }
 
 // NewLater builds the To-dos page.
@@ -809,6 +811,8 @@ func NewLater(h Host) *Later {
 	l.feeds = []*savedFeed{&l.feed}
 	l.list.Axis = layout.Vertical
 	l.kb = newVKList(&l.list)
+	l.kb.onFocus = l.todoFocused
+	l.sk.pend = -1
 	return l
 }
 
@@ -1287,16 +1291,25 @@ func (l *Later) layoutList(gtx C) D {
 	// the rows: section dividers and to-dos (later_sections.go)
 	rows := l.todoRows(todoNow())
 	n = len(rows)
-	items := make([]vkItem, 0, len(l.view))
-	for ri, r := range rows {
-		if r.kind == tdItem {
-			items = append(items, vkItem{key: laterKey(&l.view[r.item]), elem: ri, focusable: true})
+	items := l.todoSecItems(rows)
+	// TodosPage's refocus, before setItems drops a row that went
+	refocus := l.todoRefocus()
+	l.kb.setItems(items)
+	l.todoSecInit()
+	if refocus != "" {
+		l.kb.setActive(refocus, l.kb.ring)
+		l.kb.reveal(refocus)
+	}
+	if l.kb.initial == "" { // InteractiveList: the first row
+		for _, it := range items {
+			if it.focusable {
+				l.kb.initial = it.key
+				break
+			}
 		}
 	}
-	l.kb.setItems(items)
-	if l.kb.initial == "" && len(items) > 0 { // InteractiveList: the first row
-		l.kb.initial = items[0].key
-	}
+	l.sk.frame()
+	l.todoTab(gtx)
 	l.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Key: l.todoKey, Extra: todoKeyFilters(l.kb), NoGlobal: true})
 	l.kb.begin()
 	dims := l.scrollList(gtx, &l.list, n+extra, func(gtx C, i int) D {
@@ -1408,6 +1421,7 @@ type Saved struct {
 	savedBase
 	feed savedFeed
 	list widget.List
+	kb   *vkList // BookmarksPage's list keyboard (savedKeys)
 }
 
 // NewSaved builds the Saved page.
@@ -1416,6 +1430,7 @@ func NewSaved(h Host) *Saved {
 	s.feed.filter = core.SavedFilterSaved
 	s.feeds = []*savedFeed{&s.feed}
 	s.list.Axis = layout.Vertical
+	s.kb = newVKList(&s.list)
 	return s
 }
 
@@ -1475,16 +1490,47 @@ func (s *Saved) layoutList(gtx C) D {
 		extra = 1
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	s.savedKeys(gtx, items)
+	s.kb.begin()
 	dims := s.scrollList(gtx, &s.list, n+extra, func(gtx C, i int) D {
 		if i >= n {
 			return s.skeleton(gtx, 1, laterAvatar)
 		}
-		return s.itemRow(gtx, &items[i], false)
+		d := s.itemRow(gtx, &items[i], false)
+		if s.kb.ringOn(laterKey(&items[i])) {
+			// .p-saved_for_later_page__list--navigation keeps
+			// .c-virtual_list__item--focus:focus:after: inset 4px, radius 8
+			in := gtx.Dp(4)
+			s.vkRing(gtx, image.Rect(in, in, d.Size.X-in, d.Size.Y-in), gtx.Dp(8))
+		}
+		return s.kb.elem(i, d)
 	})
+	s.kb.area(gtx, image.Rectangle{Max: dims.Size})
+	s.kb.after()
 	if p := s.list.Position; p.First+p.Count >= n-3 {
 		s.loadMore(&s.feed)
 	}
 	return dims
+}
+
+// savedKeys is BookmarksPage's list (the client-saved-view chunk's Saved
+// view, 6iAL, renders eQN2 BookmarksPage; build d3de3a487b1c): an FSLM
+// with the default isFocusableItem (every row; Clack draws no
+// SAVED_PAGE_BANNER row) and no useGlobalKeyboardShortcuts. It has no
+// onItemClick: onItemKeyDown's Enter opens the item (Q.s for a message,
+// in its thread for a reply).
+func (s *Saved) savedKeys(gtx C, items []core.SavedItem) {
+	vk := make([]vkItem, len(items))
+	for i := range items {
+		vk[i] = vkItem{key: laterKey(&items[i]), elem: i, focusable: true}
+	}
+	s.kb.setItems(vk)
+	s.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{NoGlobal: true, Click: func(k string) {
+		if f, i := s.find(k); f != nil {
+			it := f.items[i]
+			s.open(&it)
+		}
+	}})
 }
 
 // ---- small widgets (To-dos/Saved) ----
@@ -1749,35 +1795,30 @@ func todoKeyFilters(tag *vkList) []key.Filter {
 	return fs
 }
 
-// todoKey is InteractiveList's onKeyDown (shared-js later-todos-ui
-// todos-page, DERT): ↑/← and ↓/→ step without wrapping, PageUp/PageDown
-// jump by pages of 10 rows, Home/End go to either end; a key first brings
-// focus back to the initial row when another one is active. Moving
-// focuses the row, which the browser scrolls into view. Then the row's
-// onKeyDown (rT, no modifiers): Enter opens the item, Delete (⌫ on a Mac)
-// clears it with an undoable "To-do cleared" toast, E toggles it complete
-// and W archived.
+// todoKey is InteractiveList's onKeyDown (boot-shared DERT; each of
+// TodosPage's sections is its own list, later_sections.go): ↑/← and ↓/→
+// step without wrapping or leaving the section, PageUp/PageDown jump by
+// pages of 10 rows, Home/End go to either end of it; a key first brings
+// focus back to the list's initial row when another one is active.
+// Moving focuses the row, which the browser scrolls into view. Then the
+// row's onKeyDown (vAPb rC, no modifiers): Enter opens the item, Delete
+// (⌫ on a Mac) clears it with an undoable "To-do cleared" toast, E
+// toggles it complete and W archived.
 func (l *Later) todoKey(e key.Event, active string) bool {
 	k := l.kb
 	plain := e.Modifiers == 0
-	ids := make([]string, len(k.items))
-	for i, it := range k.items {
-		ids[i] = it.key
-	}
-	at := -1
-	for i, id := range ids {
-		if id == k.initial {
-			at = i
-		}
-	}
+	// the keys run in the active row's section's own list
+	sec := l.kbSec()
+	ids := l.sk.keys[sec]
+	at := slices.Index(ids, l.sk.init[sec])
 	set := func(i int) {
 		if i >= 0 && i < len(ids) {
 			k.setActive(ids[i], true)
 			k.reveal(ids[i])
 		}
 	}
-	back := func() bool { // z(): refocus the initial row
-		if k.initial != k.active {
+	back := func() bool { // z(): refocus the list's initial row
+		if l.sk.init[sec] != k.active {
 			set(at)
 			return true
 		}
