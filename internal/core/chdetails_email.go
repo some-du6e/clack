@@ -583,12 +583,3 @@ func (a *App) ChannelEmailEnabledByOrg() bool {
 	}
 	return jsTruthy(a.EnterpriseOrgPref("channel_email_addresses_enabled")) // !!getOrgPref(…)
 }
-
-// jsTruthy is JavaScript's !!v for a JSON value (absent is undefined).
-func jsTruthy(raw json.RawMessage) bool {
-	switch strings.TrimSpace(string(raw)) {
-	case "", "null", "false", "0", `""`:
-		return false
-	}
-	return true
-}
