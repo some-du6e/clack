@@ -18,6 +18,13 @@ package popups
 //     of the fields full width. The fields are BEl1's list: Full name,
 //     Display name (with the workspace's username_policy rules under it),
 //     Title (locked until the header section says it's editable),
+//     Full name and Display name locked without the UPDATE_NAME and
+//     UPDATE_DISPLAY_NAME grants (eNqz mapStateToProps; the display name
+//     also on an SSO team that doesn't let people choose it, with "Display
+//     names are automatically set by your organization." and no rules) and
+//     the photo without EDIT_PROFILE_PHOTO (a lock with "Locked by an
+//     Admin" before "Profile photo", Upload Photo and Remove Photo
+//     disabled; core/profile_grants.go; build fa938a086569),
 //     Pronouns when the team has display_pronouns, Name pronunciation
 //     when the header section has the element, and Time zone (a select
 //     led by "Please select an option"). Name recording is left out:
@@ -27,10 +34,12 @@ package popups
 //     (Discard changes? Keep Editing / Close & Discard).
 //   - uploadPane (EditProfileUploadPane): "Upload Photo" opens the file
 //     chooser; the photo uploads with a spinner ("Uploading your
-//     photo…"), or a check fails: "Try a larger image", "Try a smaller
+//     photo…", or "Add a profile photo" with any profile_photo_comp
+//     group), or a check fails: "Try a larger image", "Try a smaller
 //     image", "Try another photo", "Eek" with Slack's emoji and text, and
 //     "Try a Different Image". Cancel closes.
-//   - cropPane (EditProfileCropPane): "Crop your photo", the image fitted
+//   - cropPane (EditProfileCropPane): "Crop your photo" ("Add a profile
+//     photo" with any profile_photo_comp group), the image fitted
 //     into 460px with a square selection (the largest that fits, centred:
 //     defaultCropScale 1, at least 72px) that moves and resizes from its
 //     corners, the message preview under it, Cancel (back to the form)
