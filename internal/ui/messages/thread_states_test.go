@@ -94,6 +94,13 @@ func TestReplyBarDraftsLikeSlack(t *testing.T) {
 	if got := link("b1"); got != "1 draft" {
 		t.Errorf("b1 (no replies, a draft): %q, want \"1 draft\" after the pencil", got)
 	}
+	// its description: getThreadLatestDraftText of the draft just saved
+	// (last_updated_ts is in milliseconds)
+	if r := v.s.rows[ts["b1"]]; r == nil {
+		t.Error("no b1 row")
+	} else if d := r.replyBarNoReplies(time.Now(), false); d != "Last edited today at "+clock(draftUpdated(r.draftAt)) && d != "Last edited 1 minute ago" {
+		t.Errorf("b1's description %q (draft updated %q)", d, r.draftAt)
+	}
 	// a scheduled reply joins the count
 	at := time.Now().Add(48 * time.Hour).Unix()
 	if _, err := app.SaveDraft(ctx, core.DraftOpts{Channel: tShots, ThreadTS: ts["root"], Text: "later", DateScheduled: at}); err != nil {

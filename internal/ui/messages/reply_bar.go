@@ -163,8 +163,8 @@ func (r *row) replyBarNoReplies(now time.Time, hov bool) string {
 		t := time.Unix(r.schedAt, 0)
 		return threadsNS.T("{draftScheduledDate} at {draftScheduledTime}",
 			"draftScheduledDate", i18n.ShortDatePretty(i18n.Locale(), t, now, false), "draftScheduledTime", clock(t))
-	case r.hasDraft && r.draftAt != "":
-		t := tsTime(r.draftAt)
+	case r.hasDraft && !draftUpdated(r.draftAt).IsZero():
+		t := draftUpdated(r.draftAt)
 		if sameDay(t, now) {
 			return threadsNS.T("Last edited today at {time}", "time", clock(t))
 		}
@@ -177,4 +177,14 @@ func (r *row) replyBarNoReplies(now time.Time, hov bool) string {
 // message's thread.
 func (r *row) threadOpen() bool {
 	return r.rc != nil && r.rc.list != nil && r.rc.list.activeTS == r.m.TS
+}
+
+// draftUpdated is a draft's last_updated_ts: milliseconds (the
+// client_last_updated_ts the client sends back, as views/drafts.go reads
+// it), else a ts.
+func draftUpdated(s string) time.Time {
+	if ms, err := strconv.ParseInt(s, 10, 64); err == nil && ms > 1e11 {
+		return time.UnixMilli(ms)
+	}
+	return tsTime(s)
 }

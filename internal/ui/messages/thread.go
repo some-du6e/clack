@@ -726,7 +726,7 @@ func (s *listState) flexpaneLoading(gtx layout.Context, h Host, c *colors, size 
 	inline := dp(gtx, 8) + sp + dp(gtx, 16)
 	x := (size.X-inline)/2 + dp(gtx, 8)
 	m := measure(gtx, th, ts, msg)
-	desc := dp(gtx, 4)
+	desc := dp(gtx, 6) // the image's line box below its baseline (Slack's markup: the text's ink 17px under the image)
 	hashSpinner(gtx, th.Dark, image.Rect(x, top, x+sp, top+sp), s.pendAt)
 	y := top + sp + dp(gtx, 8) + desc
 	at(gtx, (size.X-m.X)/2, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, msg) })
@@ -810,6 +810,7 @@ func (s *listState) threadsError(gtx layout.Context, h Host, c *colors, size ima
 	y += dp(gtx, 22) + dp(gtx, 16)
 	// Try Again: a primary Button (R2sM), medium
 	rec := op.Record(gtx.Ops)
+	gtx.Constraints.Min = image.Point{} // the button's own width, not the pane's
 	bd := popups.Button(gtx, th, &s.retryBtn, popups.BtnPrimary, popups.BtnMedium, threadsNS.T("Try Again"), "", 0)
 	call := rec.Stop()
 	t := op.Offset(image.Pt((size.X-bd.Size.X)/2, y)).Push(gtx.Ops)
