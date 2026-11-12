@@ -126,6 +126,13 @@ secondary kind `secWorkflow`):
   `TestMessageActionsHooksWired` (ui), `TestWorkflowDetailsData` (core),
   `TestMessageMenuWorkflowRowsLikeSlack` (popups); menu-keys-shots
   `workflow-details-{light,dark}.png`, `workflow-details-error-light.png`.
+- Glyphs: Slack's form, right-click, wrench, workspace, webhook,
+  unarchive, ai-summary, ai-sparkle and ai-agents aren't in Clack's icon
+  set yet; the view draws them from Slack's own paths (icons.json,
+  flattened with each hole wound for Clack's nonzero fill,
+  `ui/workflow_glyphs.go`), and slackbot-color from its SVG
+  (`TestWorkflowDetailsGlyphsResolve`). Porting them into the icon set
+  (centrelines and edge bands held to Slack's ink by icon-shots) is left.
 - Left out: Share and Edit (Slack's share-workflow dialog and Workflow
   Builder), the ⋮ menu's builder rows (edit, unpublish, copy, export, add
   to channel), Connections (third-party steps' accounts), the VIP badge

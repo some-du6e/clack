@@ -119,6 +119,18 @@ func (p *wfDetailsPane) load() {
 				wf = &w
 			}
 		}
+		// the managers and the bot user as members (LinkifyMembers and the
+		// VIP button read member objects)
+		ids := append([]string{}, t.Collaborators...)
+		if wf != nil {
+			ids = append(ids, wf.Collaborators...)
+		}
+		if t.BotUserID != "" {
+			ids = append(ids, t.BotUserID)
+		}
+		if len(ids) > 0 {
+			c.EnsureUsers(ctx, ids)
+		}
 		p.mu.Lock()
 		p.loaded, p.t, p.wf = true, t, wf
 		if err != nil {
@@ -365,10 +377,10 @@ func (p *wfDetailsPane) info(gtx layout.Context, s wfShortcut) layout.Dimensions
 		})
 		y += d.Size.Y + gap
 	}
-	if icon, label := wfTriggerType(s.kind); icon != "" {
+	if glyph, label := wfTriggerType(s.kind); glyph != "" {
 		// WorkflowTriggerTypeLabel (.triggerDetails: 13px, 8px gap)
 		at(gtx, image.Pt(pad, y), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-			return icons.Get(icon)(gtx, unit.Dp(20), c.Fg)
+			return wfDrawGlyph(gtx, glyph, 20, c.Fg)
 		})
 		at(gtx, image.Pt(pad+gtx.Dp(28), y), image.Pt(max(1, iw-gtx.Dp(28)), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, gtx.Dp(20), func(gtx layout.Context) layout.Dimensions {
@@ -415,8 +427,9 @@ func (p *wfDetailsPane) info(gtx layout.Context, s wfShortcut) layout.Dimensions
 
 // wfTriggerType is getTriggerTypeIcon and getTriggerTypeLabel for the
 // trigger kinds Clack keeps (a link trigger has neither; an event
-// trigger's event type isn't kept, so it has none either).
-func wfTriggerType(kind string) (icon, label string) {
+// trigger's event type isn't kept, so it has none either): the glyph
+// (wfDrawGlyph) and the label.
+func wfTriggerType(kind string) (glyph, label string) {
 	switch kind {
 	case "scheduled":
 		return "clock", wfShortNS.T("Starts on a schedule")
@@ -444,10 +457,10 @@ func (p *wfDetailsPane) information(gtx layout.Context, s wfShortcut) layout.Dim
 		return th.Label(gtx, 13, theme.Bold, sec, wfDetailsNS.T("Information"))
 	})
 	y += d.Size.Y
-	item := func(icon, text string) {
+	item := func(glyph, text string) {
 		y += gap
 		at(gtx, image.Pt(pad, y), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-			return icons.Get(icon)(gtx, unit.Dp(20), sec)
+			return wfDrawGlyph(gtx, glyph, 20, sec)
 		})
 		d := at(gtx, image.Pt(pad+gtx.Dp(28), y), image.Pt(max(1, iw-gtx.Dp(28)), gtx.Dp(200)), func(gtx layout.Context) layout.Dimensions {
 			return th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 20, Weight: theme.Regular, Color: sec}, text)
@@ -514,12 +527,12 @@ func (p *wfDetailsPane) stepsSection(gtx layout.Context, s wfShortcut) layout.Di
 		return th.Label(gtx, 13, theme.Bold, c.Fg, wfDetailsNS.T("Steps"))
 	})
 	y += d.Size.Y + gap
-	icon, label := wfTriggerType(s.kind)
-	if icon == "" {
-		icon, label = "right-click", wfDetailsNS.T("When someone clicks the workflow link")
+	glyph, label := wfTriggerType(s.kind)
+	if glyph == "" {
+		glyph, label = "right-click", wfDetailsNS.T("When someone clicks the workflow link")
 	}
 	d = at(gtx, image.Pt(pad, y), image.Pt(iw, gtx.Dp(400)), func(gtx layout.Context) layout.Dimensions {
-		return p.entityList(gtx, []wfEntity{{icon: icon, theme: "aquarium", label: label}})
+		return p.entityList(gtx, []wfEntity{{glyph: glyph, theme: "aquarium", label: label}})
 	})
 	y += d.Size.Y + gap
 	at(gtx, image.Pt(pad+(iw-gtx.Dp(20))/2, y), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
@@ -533,16 +546,16 @@ func (p *wfDetailsPane) stepsSection(gtx layout.Context, s wfShortcut) layout.Di
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
-// wfEntity is one step entity (WorkflowStepEntity): its icon in a themed
-// 32px tile and its label.
-type wfEntity struct{ icon, theme, label string }
+// wfEntity is one step entity (WorkflowStepEntity): its glyph in a
+// themed 32px tile and its label.
+type wfEntity struct{ glyph, theme, label string }
 
 // stepEntity is renderStepEntities' entity for a step: the callback's
-// icon (8uOE) and theme (Eu1t), "branch" for a switch.
+// glyph (8uOE) and theme (Eu1t), "branch" for a switch.
 func stepEntity(st core.WorkflowStep) wfEntity {
-	e := wfEntity{icon: wfStepIcon(st.CallbackID), theme: wfStepTheme(st.CallbackID), label: st.Title}
+	e := wfEntity{glyph: wfStepGlyph(st.CallbackID), theme: wfStepTheme(st.CallbackID), label: st.Title}
 	if st.Type == "switch" {
-		e.icon = "branch"
+		e.glyph = "branch"
 	}
 	return e
 }
@@ -685,7 +698,7 @@ func (p *wfDetailsPane) entityList(gtx layout.Context, ents []wfEntity) layout.D
 		}
 		is := gtx.Dp(20)
 		at(gtx, image.Pt(pad+(ts-is)/2, ty+(ts-is)/2), image.Pt(is, is), func(gtx layout.Context) layout.Dimensions {
-			return icons.Get(e.icon)(gtx, unit.Dp(20), fg)
+			return wfDrawGlyph(gtx, e.glyph, 20, fg)
 		})
 		tx := pad + ts + pad
 		at(gtx, image.Pt(tx, y), image.Pt(max(1, w-tx-pad), h), func(gtx layout.Context) layout.Dimensions {
@@ -696,8 +709,9 @@ func (p *wfDetailsPane) entityList(gtx layout.Context, ents []wfEntity) layout.D
 	return layout.Dimensions{Size: r.Max}
 }
 
-// wfStepIcon is 8uOE's icon for a step's callback id.
-func wfStepIcon(cb string) string {
+// wfStepGlyph is 8uOE's SvgIcon name for a step's callback id
+// (wfDrawGlyph draws it).
+func wfStepGlyph(cb string) string {
 	switch cb {
 	case "send_message":
 		return "message"
@@ -724,7 +738,7 @@ func wfStepIcon(cb string) string {
 	case "ai_answer":
 		return "ai-sparkle"
 	case "send_slackbot_prompt", "send_prompt_to_agent":
-		return "slackbot-color"
+		return wfSlackbotGlyph
 	case "open_3p_agent_conversation":
 		return "ai-agents"
 	case "create_code_channel":

@@ -685,7 +685,9 @@ func (f *flagDialog) submitted(gtx layout.Context, th *theme.Theme, cl *Colors) 
 			})
 		})
 	}
-	return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 48))} // margin_bottom_300
+	// margin_bottom_300 (48px) under it, with no footer: the modal adds 28
+	// under a body without buttons, so 20 more here
+	return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 20))}
 }
 
 // speedBump is the c-modal_speed_bump over the dialog while it is up: the
@@ -762,7 +764,7 @@ func (f *flagDialog) speedBump(gtx layout.Context) {
 	for _, b := range []*ModalButton{f.bumpGo, f.bumpCancel} {
 		b := b
 		ring := f.modal.ringOn(gtx, &b.click)
-		call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+		call, d := record(loose(gtx, image.Pt(iw, dp(gtx, 36))), func(gtx layout.Context) layout.Dimensions {
 			return button(gtx, th, &b.click, b.Kind, BtnMedium, b.Label, "", 80, ring)
 		})
 		x -= d.Size.X

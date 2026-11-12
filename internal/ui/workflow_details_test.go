@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -53,10 +54,10 @@ func TestWorkflowDetailsPaneLikeSlack(t *testing.T) {
 	if got := p.managers(s); got == "" {
 		t.Error("no managers")
 	}
-	if e := stepEntity(s.steps[0]); e.icon != "form" || e.theme != "jade" {
+	if e := stepEntity(s.steps[0]); e.glyph != "form" || e.theme != "jade" {
 		t.Errorf("open_form entity %+v", e)
 	}
-	if e := stepEntity(s.steps[1]); e.icon != "branch" {
+	if e := stepEntity(s.steps[1]); e.glyph != "branch" {
 		t.Errorf("switch entity %+v", e)
 	}
 	for k := 0; k < 4; k++ {
@@ -98,4 +99,33 @@ func TestWorkflowDetailsPaneLikeSlack(t *testing.T) {
 		t.Error("the close button left the pane open")
 	}
 	_ = core.FlexpaneTripContext
+}
+
+// Every glyph the details view can draw resolves: Slack's own paths in
+// wfGlyphs, the Slackbot logo, or a registered icon (the icon set's
+// TestIconRefsExist covers icons.Get; these go through wfDrawGlyph).
+func TestWorkflowDetailsGlyphsResolve(t *testing.T) {
+	cbs := []string{"send_message", "send_dm", "open_form", "create_channel", "archive_channel", "unarchive_channel", "add_pin",
+		"remove_pin", "update_channel_topic", "invite_user_to_channel", "create_usergroup", "summarize_channel", "search_summary",
+		"ai_answer", "send_slackbot_prompt", "send_prompt_to_agent", "open_3p_agent_conversation", "create_code_channel", "loop_step", "somebody_elses_step"}
+	for _, cb := range cbs {
+		if g := wfStepGlyph(cb); !wfHasGlyph(g) {
+			t.Errorf("%s: %q doesn't resolve", cb, g)
+		}
+	}
+	for _, k := range []string{"scheduled", "webhook", "external", "service"} {
+		if g, l := wfTriggerType(k); !wfHasGlyph(g) || l == "" {
+			t.Errorf("%s: %q / %q", k, g, l)
+		}
+	}
+	for _, g := range []string{"right-click", "wrench", "workspace", "branch", "arrow-down", "refresh"} {
+		if !wfHasGlyph(g) {
+			t.Errorf("%q doesn't resolve", g)
+		}
+	}
+	for name, d := range wfGlyphs {
+		if !strings.HasPrefix(d, "M") || !strings.HasSuffix(d, "Z") {
+			t.Errorf("%s: not a closed polygon path", name)
+		}
+	}
 }
