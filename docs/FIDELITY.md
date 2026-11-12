@@ -195,7 +195,7 @@ from Gio patch 11 (third_party/gioui.org/CLACK_PATCHES.md §11).
 
 | element | Slack | Clack before | Clack now |
 |---|---|---|---|
-| drop target | one `FileDragDrop` per pane: MESSAGE_PANE around the primary view body (list and composer), THREAD around the thread flexpane body; each its own drag state | none (Gio had no OS drop events) | each convo `layoutConvo` lays out (channel, split card, thread) registers its window rectangle; the one under the pointer shows its overlay |
+| drop target | one `FileDragDrop` per pane: MESSAGE_PANE around the primary view body (list and composer), THREAD around the thread flexpane body (not its header); each its own drag state | none (Gio had no OS drop events) | each convo `layoutConvo` lays out (channel, split card, thread) registers its window rectangle, a thread's from under its 49px header; the one under the pointer shows its overlay |
 | disabled pane | `disabled: G\|\|$` on the message pane: no overlay, no drop | n/a | a preview or archived channel (its footer replaces the composer) registers no zone |
 | overlay box | z-index 200, `inset: -1px 0 0`, `rgba(var(--sk_primary_background), .95)`, flex-centred | n/a | the same, drawn as the pane's last layer (white light, #1a1d21 dark at .95) |
 | entrance | message pane: `messagePaneDragOverlayOverlayTransition` .12s ease (background 0 → .95, opacity 0 → 1); thread: `threadDragOverlayFadeIn`, which the CSS never defines (no fade) | n/a | the same; reduced motion draws the last frame |
@@ -219,5 +219,7 @@ instead); the Later, Files and canvas drop targets. Tests:
 `internal/ui/drop_overlay_test.go` (the overlay follows the pane, leaves,
 the pane's composer gets the files, Shift shares them, an archived
 channel takes nothing), `third_party/gioui.org/app/clack_drop_test.go`,
-and the windows-applog job's real OLE drag (`clack_drop_windows_test.go`).
+the windows-applog job's real OLE drag from another process
+(`clack_drop_windows_test.go`) and the linux job's XDND drag on Xvfb
+(`clack_drop_x11_test.go`). Screenshots: files-shots' `drop-*.png`.
 

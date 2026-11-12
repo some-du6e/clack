@@ -434,7 +434,11 @@ draws something.
 Tests: `app/clack_drop_test.go` (order, folding, the decoration offset,
 drops before a ConfigEvent, URI lists; ci's linux job), and on ci's
 windows-applog job `app/clack_drop_windows_test.go`: PowerShell C#
-`DoDragDrop` of a WinForms `DataObject` (CF_HDROP) from another process
-onto a real Gio window with an IDropSource that moves the cursor and
-drops or cancels, and a `WM_DROPFILES` with an HDROP built in-process.
+drags like Explorer from another process (the left button down on its
+own window, then `DoDragDrop` of a WinForms `DataObject` with CF_HDROP,
+the cursor moved onto a real Gio window and on by 10, 5 px, then a drop
+or a cancel), and a `WM_DROPFILES` with an HDROP built in-process; on
+ci's linux job `app/clack_drop_x11_test.go` under Xvfb: python-xlib as
+the XDND source (XdndEnter, two XdndPositions, XdndDrop answering the
+SelectionRequest, or XdndLeave).
 Not in `UPSTREAM.patch`.
