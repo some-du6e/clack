@@ -92,7 +92,8 @@ type verifyEmail struct {
 	verified   bool // N
 	disabled   bool // I: the cells while checking
 	cells      [6]widget.Editor
-	focus      int // a FocusCmd to send (-1: none)
+	prev       [6]string // each cell's text as last seen: SetText's own ChangeEvent (Gio reports it once the cell has the focus) isn't typing
+	focus      int       // a FocusCmd to send (-1: none)
 	focusTries int
 	lastCode   string // the code onFillCode last saw
 	newCode    widget.Clickable
@@ -187,6 +188,7 @@ func (v *verifyEmail) open() {
 	v.status, v.verified, v.disabled, v.lastCode = codeEmpty, false, false, ""
 	for i := range v.cells {
 		v.cells[i] = widget.Editor{SingleLine: true, MaxLen: 1, Filter: codeChars, Alignment: text.Middle}
+		v.prev[i] = ""
 	}
 	v.focus, v.focusTries = 0, 0 // componentDidMount: focusInput(0)
 	cancel := &popups.ModalButton{Label: scNS.T("Cancel"), Kind: popups.BtnOutline,
@@ -244,6 +246,7 @@ func (v *verifyEmail) complete() bool {
 func (v *verifyEmail) clear() {
 	for i := range v.cells {
 		v.cells[i].SetText("")
+		v.prev[i] = ""
 	}
 	v.lastCode = ""
 	v.focus, v.focusTries = 0, 0
@@ -477,12 +480,17 @@ func (v *verifyEmail) update(gtx layout.Context) {
 			if _, ok := ev.(widget.ChangeEvent); !ok {
 				continue
 			}
-			changed = true
 			t := ed.Text()
 			if up := strings.ToUpper(t); up != t {
 				ed.SetText(up)
 				ed.SetCaret(1, 1)
+				t = up
 			}
+			if t == v.prev[i] {
+				continue // an echo of SetText (paste, clear, the uppercase above)
+			}
+			v.prev[i] = t
+			changed = true
 			if t != "" && !v.complete() && i < len(v.cells)-1 {
 				v.focus, v.focusTries = i+1, 0
 			}
@@ -522,6 +530,7 @@ func (v *verifyEmail) paste(i int, s string) {
 	n := min(len(rs), len(v.cells)-i)
 	for k := 0; k < n; k++ {
 		v.cells[i+k].SetText(string(rs[k]))
+		v.prev[i+k] = string(rs[k])
 	}
 	v.focus, v.focusTries = min(len(v.cells)-1, i+n), 0
 }
