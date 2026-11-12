@@ -14,7 +14,8 @@ package popups
 // Dividers 1px rgba(29,28,29,.13) inset 16. Message cards: 1px border,
 // radius 8, avatar 36, name 15/900, "# channel" 13px, time right, text 15px
 // with rgba(255,198,0,.18) term highlights. Footer 45 tall: ▲▼ light key
-// chips + "Select", right "Give feedback" link.
+// chips + "Select", right "Give feedback" link; offline, the "No
+// connection." notice in their place (srOfflineNotice).
 
 import (
 	"context"
