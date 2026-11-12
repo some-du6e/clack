@@ -14,6 +14,12 @@ package core
 //   - adding people to a DM: createChildChannel (6ndL wb) →
 //     conversations.createChild {channel, user_ids, migrate_history_start_ts}
 //   - Hide: hideUserById (N0zR) closes the DM and saves hidden_users
+//   - hidden people's messages (gantry-v2 build d3de3a487b1c,
+//     2026-11-12): isUserHidden (client-boot 0OuZ a), each message's
+//     "Show anyway" (the messages store's isUnhidden, client-boot z+/K
+//     setUnhiddenMessageStateInternal; reset by djmN unhideUserApi) and
+//     HiddenMessageBody's direct-mention test (checkForMentionInMessage,
+//     boot-shared c+16, as aOPx calls it)
 //   - live presence for rows that show it (UserPresence)
 
 import (
@@ -21,8 +27,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -223,8 +231,274 @@ func (a *App) AddToConversation(ctx context.Context, ch string, users []string, 
 	return v, nil
 }
 
-// UserHidden reports whether the viewer hid user (hidden_users).
-func (a *App) UserHidden(user string) bool { return slices.Contains(a.HiddenUsers(), user) }
+// UserHidden is isUserHidden (client-boot 0OuZ a): user is in the
+// viewer's hidden_users, unless the org locked hide_person_opt_out on
+// (getLockedOrgPref, 8wTz SI), which turns hiding off everywhere.
+// Message rows ask every frame, so the pref's list is parsed once per
+// value.
+func (a *App) UserHidden(user string) bool {
+	if user == "" || jsTruthy(a.EnterpriseLockedPref("hide_person_opt_out")) {
+		return false
+	}
+	raw := a.PrefString("hidden_users")
+	hs := a.hidden()
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	if hs.set == nil || hs.raw != raw {
+		hs.raw, hs.set = raw, map[string]bool{}
+		for _, id := range SearchExcludedChannels(raw) {
+			hs.set[id] = true
+		}
+	}
+	return hs.set[user]
+}
+
+// hiddenState is the hidden-people state message rows read: the parsed
+// hidden_users and the messages shown anyway.
+type hiddenState struct {
+	mu  sync.Mutex
+	raw string
+	set map[string]bool
+	// unhidden: channel/ts → the sender, for each message whose "Show
+	// anyway" was clicked (Slack's msg.isUnhidden, kept in memory only)
+	unhidden map[string]string
+}
+
+var hiddenIndex sync.Map // *App → *hiddenState
+
+func (a *App) hidden() *hiddenState {
+	v, _ := hiddenIndex.LoadOrStore(a, &hiddenState{})
+	return v.(*hiddenState)
+}
+
+// MessageUnhidden is msg.isUnhidden: the viewer clicked "Show anyway" on
+// the message at ch/ts.
+func (a *App) MessageUnhidden(ch, ts string) bool {
+	hs := a.hidden()
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	_, ok := hs.unhidden[ch+"/"+ts]
+	return ok
+}
+
+// SetMessageUnhidden is HiddenMessageBody's two links: "Show anyway"
+// (unhideMessage, z+/K FE: isUnhidden true) and "Hide message"
+// (hideMessage, Wy with isUnhidden false). user is the sender, so
+// UnhideUser can reset their messages.
+func (a *App) SetMessageUnhidden(ch, ts, user string, on bool) {
+	hs := a.hidden()
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	k := ch + "/" + ts
+	if !on {
+		delete(hs.unhidden, k)
+		return
+	}
+	if hs.unhidden == nil {
+		hs.unhidden = map[string]string{}
+	}
+	hs.unhidden[k] = user
+}
+
+// ResetUnhidden is unhideUserApi's first step: every message of user's
+// shown anyway goes back to plain (getMessagesByProps {isUnhidden, user},
+// each set isUnhidden false). Preferences' People you've hidden calls it
+// before writing the pref itself.
+func (a *App) ResetUnhidden(user string) {
+	hs := a.hidden()
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	for k, u := range hs.unhidden {
+		if u == user {
+			delete(hs.unhidden, k)
+		}
+	}
+}
+
+// MessageFromHiddenSender is isMessageFromHiddenSender (client-boot
+// eQJk): the sender is hidden and the message wasn't shown anyway.
+func (a *App) MessageFromHiddenSender(m *Message) bool {
+	return m != nil && a.UserHidden(m.User) && !a.MessageUnhidden(m.Channel, m.TS)
+}
+
+// jsTruthy is JavaScript's truthiness of a JSON value: anything but
+// absent, null, false, 0 and "".
+func jsTruthy(v json.RawMessage) bool {
+	switch strings.TrimSpace(string(v)) {
+	case "", "null", "false", "0", `""`:
+		return false
+	}
+	return true
+}
+
+// usergroupMentionRe is a user group's mention in mrkdwn (client-boot
+// jiA8 i_).
+var usergroupMentionRe = regexp.MustCompile(`<!subteam\^(S[A-Za-z0-9]{8,})(\|[^<>]*)?>`)
+
+// MentionsViewerDirectly is checkForMentionInMessage (boot-shared c+16)
+// with the options HiddenMessageBody (aOPx) passes: @here, @channel,
+// @everyone and highlight words don't count; the viewer's own mention
+// and a mention of a user group they're in do. A message with blocks is
+// read from its blocks, else from its text; then its attachments that
+// aren't link previews or forwards. pinned_item messages never mention.
+func (a *App) MentionsViewerDirectly(m *Message) bool {
+	if m == nil || m.Subtype == "pinned_item" {
+		return false
+	}
+	self := a.Self().ID
+	text := func(t string) bool {
+		if t == "" {
+			return false
+		}
+		if self != "" && mentionsMember(t, self) {
+			return true
+		}
+		for _, g := range usergroupMentionRe.FindAllStringSubmatch(t, -1) {
+			if a.S.InUsergroup(g[1]) {
+				return true
+			}
+		}
+		return false
+	}
+	var blocks []json.RawMessage
+	if len(m.Blocks) > 0 && json.Unmarshal(m.Blocks, &blocks) == nil && len(blocks) > 0 {
+		if a.blocksMention(blocks, self, text, false) {
+			return true
+		}
+	} else if text(m.Text) {
+		return true
+	}
+	var atts []struct {
+		FromURL     string            `json:"from_url"`
+		IsForwarded bool              `json:"is_forwarded"`
+		Title       string            `json:"title"`
+		Pretext     string            `json:"pretext"`
+		Text        string            `json:"text"`
+		Footer      string            `json:"footer"`
+		Blocks      []json.RawMessage `json:"blocks"`
+		Fields      []struct {
+			Value string `json:"value"`
+		} `json:"fields"`
+	}
+	if len(m.Attachments) == 0 || json.Unmarshal(m.Attachments, &atts) != nil {
+		return false
+	}
+	for _, at := range atts {
+		if at.FromURL != "" || at.IsForwarded {
+			continue
+		}
+		if text(at.Title) || text(at.Pretext) || text(at.Text) || text(at.Footer) || a.blocksMention(at.Blocks, self, text, true) {
+			return true
+		}
+		for _, f := range at.Fields {
+			if text(f.Value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// mentionsMember is getMemberMentionRegExp(id).test(t): "<@id" followed
+// by a word boundary.
+func mentionsMember(t, id string) bool {
+	for i := 0; ; {
+		j := strings.Index(t[i:], "<@"+id)
+		if j < 0 {
+			return false
+		}
+		end := i + j + 2 + len(id)
+		if end == len(t) || !isWordByte(t[end]) {
+			return true
+		}
+		i = end
+	}
+}
+
+func isWordByte(c byte) bool {
+	return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+}
+
+// blocksMention is checkForMentionInBlocks: a rich_text block's user and
+// usergroup elements (unless noRich: an attachment's blocks), a
+// section's mrkdwn text and fields, a header's text and a context's
+// elements when they are mrkdwn.
+func (a *App) blocksMention(blocks []json.RawMessage, self string, text func(string) bool, noRich bool) bool {
+	type textObj struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	mrkdwn := func(t *textObj) bool { return t != nil && t.Type == "mrkdwn" && text(t.Text) }
+	for _, raw := range blocks {
+		var b struct {
+			Type     string            `json:"type"`
+			Text     *textObj          `json:"text"`
+			Fields   []textObj         `json:"fields"`
+			Elements []json.RawMessage `json:"elements"`
+		}
+		if json.Unmarshal(raw, &b) != nil {
+			continue
+		}
+		switch b.Type {
+		case "rich_text":
+			if !noRich && a.richMention(b.Elements, self) {
+				return true
+			}
+		case "section":
+			if mrkdwn(b.Text) {
+				return true
+			}
+			for i := range b.Fields {
+				if mrkdwn(&b.Fields[i]) {
+					return true
+				}
+			}
+		case "header":
+			if mrkdwn(b.Text) {
+				return true
+			}
+		case "context":
+			for _, e := range b.Elements {
+				var t textObj
+				if json.Unmarshal(e, &t) == nil && mrkdwn(&t) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// richMention walks rich text elements (getEntitiesFromBlocks, YHGi nK)
+// for a user element naming the viewer or a usergroup element of a group
+// they're in.
+func (a *App) richMention(els []json.RawMessage, self string) bool {
+	for _, raw := range els {
+		var e struct {
+			Type        string            `json:"type"`
+			UserID      string            `json:"user_id"`
+			UsergroupID string            `json:"usergroup_id"`
+			Elements    []json.RawMessage `json:"elements"`
+		}
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		switch e.Type {
+		case "user":
+			if self != "" && e.UserID == self {
+				return true
+			}
+		case "usergroup":
+			if a.S.InUsergroup(e.UsergroupID) {
+				return true
+			}
+		}
+		if len(e.Elements) > 0 && a.richMention(e.Elements, self) {
+			return true
+		}
+	}
+	return false
+}
 
 // HideUser is hideUserById: the DM with user is closed if there is one,
 // then user joins the hidden_users pref.
@@ -241,8 +515,11 @@ func (a *App) HideUser(ctx context.Context, user, dm string) error {
 	return a.SetPref(ctx, "hidden_users", strings.Join(ids, ","))
 }
 
-// UnhideUser takes user off the hidden_users pref.
+// UnhideUser is unhideUserApi (boot-shared djmN): user's messages shown
+// anyway go back to plain (isUnhidden false), then user comes off the
+// hidden_users pref.
 func (a *App) UnhideUser(ctx context.Context, user string) error {
+	a.ResetUnhidden(user)
 	ids := slices.DeleteFunc(a.HiddenUsers(), func(id string) bool { return id == user })
 	return a.SetPref(ctx, "hidden_users", strings.Join(ids, ","))
 }
