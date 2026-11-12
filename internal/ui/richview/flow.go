@@ -580,6 +580,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				col = p.Link
 			}
 		case richtext.User, richtext.Channel, richtext.Usergroup, richtext.Broadcast:
+			if sp.Kind == richtext.User && sp.Hidden {
+				l.hiddenMember(sp, fs, k, pt) // msgcard.go
+				continue
+			}
 			kind := tUser
 			switch sp.Kind {
 			case richtext.Channel:

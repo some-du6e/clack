@@ -341,7 +341,21 @@ var usergroupMentionRe = regexp.MustCompile(`<!subteam\^(S[A-Za-z0-9]{8,})(\|[^<
 // and a mention of a user group they're in do. A message with blocks is
 // read from its blocks, else from its text; then its attachments that
 // aren't link previews or forwards. pinned_item messages never mention.
-func (a *App) MentionsViewerDirectly(m *Message) bool {
+func (a *App) MentionsViewerDirectly(m *Message) bool { return a.mentionsViewer(m, false) }
+
+// MentionsViewerInReply is checkForMentionInMessage as
+// shouldShowNotificationForChannelMessage (client-boot gMhK) asks it of a
+// reply, with only ignoreHighlightWords: the viewer's own mention, a user
+// group they're in (userGroupMembership, 3HzN nc) and @here count;
+// @channel and @everyone don't, because the message isReply (azCc n).
+func (a *App) MentionsViewerInReply(m *Message) bool { return a.mentionsViewer(m, true) }
+
+// hereMentionRe is @here in mrkdwn (client-boot p6HR $2).
+var hereMentionRe = regexp.MustCompile(`<!here\b`)
+
+// mentionsViewer is checkForMentionInMessage over the viewer's mention
+// and their user groups, plus @here when here is set.
+func (a *App) mentionsViewer(m *Message, here bool) bool {
 	if m == nil || m.Subtype == "pinned_item" {
 		return false
 	}
@@ -353,6 +367,9 @@ func (a *App) MentionsViewerDirectly(m *Message) bool {
 		if self != "" && mentionsMember(t, self) {
 			return true
 		}
+		if here && hereMentionRe.MatchString(t) {
+			return true
+		}
 		for _, g := range usergroupMentionRe.FindAllStringSubmatch(t, -1) {
 			if a.S.InUsergroup(g[1]) {
 				return true
@@ -362,7 +379,7 @@ func (a *App) MentionsViewerDirectly(m *Message) bool {
 	}
 	var blocks []json.RawMessage
 	if len(m.Blocks) > 0 && json.Unmarshal(m.Blocks, &blocks) == nil && len(blocks) > 0 {
-		if a.blocksMention(blocks, self, text, false) {
+		if a.blocksMention(blocks, self, here, text, false) {
 			return true
 		}
 	} else if text(m.Text) {
@@ -387,7 +404,7 @@ func (a *App) MentionsViewerDirectly(m *Message) bool {
 		if at.FromURL != "" || at.IsForwarded {
 			continue
 		}
-		if text(at.Title) || text(at.Pretext) || text(at.Text) || text(at.Footer) || a.blocksMention(at.Blocks, self, text, true) {
+		if text(at.Title) || text(at.Pretext) || text(at.Text) || text(at.Footer) || a.blocksMention(at.Blocks, self, here, text, true) {
 			return true
 		}
 		for _, f := range at.Fields {
@@ -420,10 +437,10 @@ func isWordByte(c byte) bool {
 }
 
 // blocksMention is checkForMentionInBlocks: a rich_text block's user and
-// usergroup elements (unless noRich: an attachment's blocks), a
-// section's mrkdwn text and fields, a header's text and a context's
-// elements when they are mrkdwn.
-func (a *App) blocksMention(blocks []json.RawMessage, self string, text func(string) bool, noRich bool) bool {
+// usergroup elements (and its "here" broadcast with here set; unless
+// noRich: an attachment's blocks), a section's mrkdwn text and fields, a
+// header's text and a context's elements when they are mrkdwn.
+func (a *App) blocksMention(blocks []json.RawMessage, self string, here bool, text func(string) bool, noRich bool) bool {
 	type textObj struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -441,7 +458,7 @@ func (a *App) blocksMention(blocks []json.RawMessage, self string, text func(str
 		}
 		switch b.Type {
 		case "rich_text":
-			if !noRich && a.richMention(b.Elements, self) {
+			if !noRich && a.richMention(b.Elements, self, here) {
 				return true
 			}
 		case "section":
@@ -470,14 +487,16 @@ func (a *App) blocksMention(blocks []json.RawMessage, self string, text func(str
 }
 
 // richMention walks rich text elements (getEntitiesFromBlocks, YHGi nK)
-// for a user element naming the viewer or a usergroup element of a group
-// they're in.
-func (a *App) richMention(els []json.RawMessage, self string) bool {
+// for a user element naming the viewer, a usergroup element of a group
+// they're in or, with here set, a broadcast element whose range is
+// "here" (checkForMentionInRichTextBlock's broadcasts.has("here")).
+func (a *App) richMention(els []json.RawMessage, self string, here bool) bool {
 	for _, raw := range els {
 		var e struct {
 			Type        string            `json:"type"`
 			UserID      string            `json:"user_id"`
 			UsergroupID string            `json:"usergroup_id"`
+			Range       string            `json:"range"`
 			Elements    []json.RawMessage `json:"elements"`
 		}
 		if json.Unmarshal(raw, &e) != nil {
@@ -492,8 +511,12 @@ func (a *App) richMention(els []json.RawMessage, self string) bool {
 			if a.S.InUsergroup(e.UsergroupID) {
 				return true
 			}
+		case "broadcast":
+			if here && e.Range == "here" {
+				return true
+			}
 		}
-		if len(e.Elements) > 0 && a.richMention(e.Elements, self) {
+		if len(e.Elements) > 0 && a.richMention(e.Elements, self, here) {
 			return true
 		}
 	}

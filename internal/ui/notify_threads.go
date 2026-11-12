@@ -14,8 +14,10 @@ import (
 //
 //   - A reply that arrives as a message (shouldShowNotificationForChannelMessage)
 //     notifies only when it mentions the viewer (checkForMentionInMessage
-//     without highlight words, where a reply's @channel and @everyone
-//     don't count and @here does); a DM's reply never does
+//     without highlight words, core MentionsViewerInReply: the viewer's
+//     <@id>, a user group they're in and @here, from the blocks or the
+//     text and the attachments; a reply's @channel and @everyone don't
+//     count, build 2cd9270e786c); a DM's reply never does
 //     (shouldShowNotificationForDirectMessage returns 6 for any reply).
 //   - Replies in threads the viewer follows come from the server as
 //     desktop_notification events (shouldShowNotificationForDesktopNotification):
@@ -30,21 +32,14 @@ import (
 //     the body outside DMs is "{sender}: {text}" (getContentForNotification).
 
 // replyNotifies is the message path's rule for replies.
-func replyNotifies(ev core.Event, self string) bool {
+func replyNotifies(app *core.App, ev core.Event) bool {
 	if !ev.Reply || ev.Msg == nil {
 		return true
 	}
 	if ev.ConvKind == "im" {
 		return false
 	}
-	return replyMentions(ev.Msg.Text, self)
-}
-
-// replyMentions is checkForMentionInMessage for a reply: the viewer named
-// (<@U…>) or @here. User groups count in Slack too, but core doesn't know
-// the viewer's groups per message.
-func replyMentions(text, self string) bool {
-	return (self != "" && strings.Contains(text, "<@"+self)) || strings.Contains(text, "<!here")
+	return app != nil && app.MentionsViewerInReply(ev.Msg)
 }
 
 // notifyChannelName is getDisplayNameForChannel for the title.

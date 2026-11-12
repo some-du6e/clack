@@ -97,6 +97,24 @@ func (l *lay) privateChannel(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	l.addPad(l.dpf(2), dc, k)
 }
 
+// hiddenMember is RollupName (boot-shared quVX) for a member the viewer
+// hid: HiddenUserIconAndName (q9bm), span.c-hidden_user_icon_and_name
+// {background-color: rgba(foreground_low, .13); color: rgba(foreground_max,
+// .7); border-radius: 3px; padding: 0 2px 1px 0} around the inline
+// user-hide icon, a no-break space and "Name hidden". Inside
+// RollupMemberButton it still opens the member's profile, underlined
+// under the pointer (.c-message__rollup_member:hover).
+func (l *lay) hiddenMember(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
+	p := &l.st.Palette
+	fg := rgba(p.Text.R, p.Text.G, p.Text.B, 0.7)
+	tg := l.d.addTarget(target{kind: tUser, id: sp.ID, underline: true})
+	l.decos = append(l.decos, deco{kind: 1, bg: p.CodeBorder, padR: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, self: true, part: pt})
+	dc := int16(len(l.decos) - 1)
+	l.addIcon("user-hide", fs.size, k, fg, dc, tg)
+	l.addText("\u00a0"+sp.Text, fs, k, fg, sp.Style, dc, tg)
+	l.addPad(l.dpf(2), dc, k)
+}
+
 // cardTime is AttachmentFooterTimestamp's compactTime: the time today,
 // "Yesterday"/"Tomorrow" next to it, else the date.
 func cardTime(ts string) string {

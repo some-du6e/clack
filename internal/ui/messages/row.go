@@ -856,7 +856,7 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 	if r.m.Tombstone {
 		return r.tombstoneLayout(gtx, rc)
 	}
-	if r.m.System && (!rc.parent || huddleSubtype(r.m.Subtype)) {
+	if r.m.System && (!rc.parent || huddleSubtype(r.m.Subtype)) && !r.hiddenSystem(rc) {
 		// ThreadRootGeneric draws a huddle root as a redesigned system
 		// message too (huddle_msg.go)
 		return r.systemLayout(gtx, rc)
@@ -1072,9 +1072,16 @@ func (r *row) layoutMessageAvatar(gtx layout.Context, p slackc.Props) layout.Dim
 }
 
 // layoutBaseMessageAvatar is BaseMessageAvatar around ConnectedBaseAvatar.
+// A redesigned system message reaches it only from a hidden sender
+// (hiddenSystem): BaseMessageAvatar (Pgsp) draws the system glyph for the
+// subtype before it looks at the sender, so the row keeps its glyph over
+// HiddenMessageBody.
 func (r *row) layoutBaseMessageAvatar(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if e, ok := slackc.PropChildren(p); ok {
 		return slackc.LayoutElement(gtx, e)
+	}
+	if r.m.System {
+		return r.systemGlyph(gtx, r.rc, 0)
 	}
 	return slackc.Component(gtx, "ConnectedBaseAvatar", r, (*row).avatarProps, (*row).layoutAvatar)
 }
@@ -2662,23 +2669,8 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	cx := dp(gtx, rc.contentX())
 	cw := w - cx - padX - dp(gtx, 20) - rc.actionsPad(gtx)
 	rec := op.Record(gtx.Ops)
-	icon := redesignedIcon(rc.h.Core(), m) // getRedesignedSystemMessageIcon (system.go)
-	iconCol := c.Text3
 	hm, huddle := r.huddleInfo(rc)
-	if huddle {
-		// HuddleSystemMessageIcon: headphones, content-hgl-2 while live
-		// (.systemIconHuddleLive__sh4y9)
-		icon = icons.Slack("headphones")
-		if hm.room.Live {
-			iconCol = c.HuddleLive
-		}
-	}
-	// .systemIcon__mZbDL: a 36px box (the avatar's), the 16px glyph
-	// centred, padding-top 2px
-	is := dp(gtx, 16)
-	at(gtx, padX+(dp(gtx, mt.avatar)-is)/2, dp(gtx, mt.padTop)+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
-		return icons.Get(icon)(gtx, unit.Dp(16), iconCol)
-	})
+	at(gtx, padX, dp(gtx, mt.padTop), func(gtx layout.Context) layout.Dimensions { return r.systemGlyph(gtx, rc, 0) })
 	r.handler.h, r.handler.m, r.handler.anchor = rc.h, m, rc.origin
 	// the column's first line (4px under the row top) and .container__OsSxI
 	// { padding: 4px 20px 4px 0 }
@@ -2723,6 +2715,11 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	} else {
 		r.reactRects = r.reactRects[:0]
 	}
+	if rc.hiddenUser {
+		// shown anyway (hiddenSystem): HiddenMessageBody's break and
+		// "Hide message" under the system message
+		y += r.systemHideLink(gtx, cx, y)
+	}
 	content := rec.Stop()
 	h := y + dp(gtx, 8)
 	if rc.hovered {
@@ -2731,6 +2728,51 @@ func (r *row) systemLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	content.Add(gtx.Ops)
 	r.height = h
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// hiddenSystem: a redesigned system message from someone the viewer hid
+// and not shown anyway. MessageTombstoneContent (kzyb) swaps the body
+// for HiddenMessageBody whatever the subtype, so the row is drawn as
+// their other messages (layoutColumn's hiddenColumn), under the glyph
+// (layoutBaseMessageAvatar). Shown anyway, it is the system message
+// with "Hide message" under it (systemHideLink).
+func (r *row) hiddenSystem(rc *rowCtx) bool {
+	return rc.hiddenUser && !rc.unhidden && r.edit == nil
+}
+
+// systemGlyph is BaseMessageAvatar's system icon in the avatar's place:
+// getRedesignedSystemMessageIcon (system.go), or HuddleSystemMessageIcon
+// (headphones, content-hgl-2 while the huddle is live,
+// .systemIconHuddleLive__sh4y9); .systemIcon__mZbDL is a 36px box (the
+// avatar's) with the 16px glyph centred and padding-top 2px. y is the
+// box's top.
+func (r *row) systemGlyph(gtx layout.Context, rc *rowCtx, y int) layout.Dimensions {
+	c := rc.c
+	icon := redesignedIcon(rc.h.Core(), &r.m)
+	iconCol := c.Text3
+	if hm, huddle := r.huddleInfo(rc); huddle {
+		icon = icons.Slack("headphones")
+		if hm.room.Live {
+			iconCol = c.HuddleLive
+		}
+	}
+	av, is := dp(gtx, mt.avatar), dp(gtx, 16)
+	at(gtx, (av-is)/2, y+dp(gtx, 2), func(gtx layout.Context) layout.Dimensions {
+		return icons.Get(icon)(gtx, unit.Dp(16), iconCol)
+	})
+	return layout.Dimensions{Size: image.Pt(av, av)}
+}
+
+// systemHideLink is a shown-anyway system message's "Hide message" line
+// (HiddenMessageBody's break, then the link: hideMessageLink) at the
+// body column x; returns its height.
+func (r *row) systemHideLink(gtx layout.Context, x, y int) int {
+	var hh int
+	at(gtx, x, 0, func(gtx layout.Context) layout.Dimensions {
+		hh = r.hideMessageLink(gtx, y)
+		return layout.Dimensions{}
+	})
+	return hh
 }
 
 // denseSystemLayout is a system message under Compact. In a channel,
@@ -2786,6 +2828,9 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	} else {
 		r.reactRects = r.reactRects[:0]
 	}
+	if rc.hiddenUser {
+		y += r.systemHideLink(gtx, cx, y) // shown anyway (hiddenSystem)
+	}
 	content := rec.Stop()
 	h := y
 	if rc.hovered {
@@ -2803,12 +2848,19 @@ func (r *row) denseSystemLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 // in c-message_kit__tombstone__text, then the reply bar. No author, no
 // timestamp, no hover actions. A plugin view (Message Logger's kept copy)
 // replaces r.m and so draws as the message instead.
+//
+// The row's padding is the gutter's (client-boot-styles):
+// .p-message_pane_message__message .c-message_kit__tombstone {padding: 8px
+// 20px} in a channel, .c-message_kit__thread_message
+// .c-message_kit__tombstone {padding: 8px 24px 8px 16px} in a thread, so
+// the square lines up with the avatars (rc.padX) and the text with the
+// bodies (the 36px icon's margin-right 8px: rc.contentX).
 func (r *row) tombstoneLayout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	c := rc.c
 	m := &r.m
 	w := gtx.Constraints.Max.X
-	padX := dp(gtx, mt.padX)
-	cx := dp(gtx, mt.contentX)
+	padX := dp(gtx, rc.padX())
+	cx := dp(gtx, rc.contentX())
 	cw := w - cx - padX
 	if rc.thread {
 		cw = w - cx - dp(gtx, 24)

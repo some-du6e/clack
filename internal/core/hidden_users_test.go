@@ -127,3 +127,45 @@ func TestMentionsViewerDirectly(t *testing.T) {
 		}
 	}
 }
+
+// TestMentionsViewerInReply: checkForMentionInMessage as
+// shouldShowNotificationForChannelMessage asks it of a reply (gMhK, only
+// ignoreHighlightWords): the viewer, a group they're in and @here count;
+// a reply's @channel and @everyone don't (isReply).
+func TestMentionsViewerInReply(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.SetMyUsergroup("SMINE0001", true)
+	rich := func(els string) json.RawMessage {
+		return json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` + els + `]}]}]`)
+	}
+	for _, c := range []struct {
+		name string
+		m    Message
+		want bool
+	}{
+		{"plain text", Message{Text: "hello"}, false},
+		{"text, me", Message{Text: "hi <@USELF>"}, true},
+		{"text, my group", Message{Text: "<!subteam^SMINE0001|@devs> look"}, true},
+		{"text, another group", Message{Text: "<!subteam^SOTHER001|@ops> look"}, false},
+		{"text, @here", Message{Text: "<!here> look"}, true},
+		{"text, @here with a label", Message{Text: "<!here|here> look"}, true},
+		{"text, @channel", Message{Text: "<!channel> look"}, false},
+		{"text, @everyone", Message{Text: "<!everyone> look"}, false},
+		{"rich text, my group", Message{Blocks: rich(`{"type":"usergroup","usergroup_id":"SMINE0001"}`)}, true},
+		{"rich text, another group", Message{Blocks: rich(`{"type":"usergroup","usergroup_id":"SOTHER001"}`)}, false},
+		{"rich text, @here", Message{Blocks: rich(`{"type":"broadcast","range":"here"}`)}, true},
+		{"rich text, @channel", Message{Blocks: rich(`{"type":"broadcast","range":"channel"}`)}, false},
+		{"rich text, @everyone", Message{Blocks: rich(`{"type":"broadcast","range":"everyone"}`)}, false},
+		{"an attachment's group", Message{Text: "see", Attachments: json.RawMessage(`[{"text":"for <!subteam^SMINE0001>"}]`)}, true},
+		{"an attachment's rich @here", Message{Text: "see", Attachments: json.RawMessage(`[{"blocks":` + string(rich(`{"type":"broadcast","range":"here"}`)) + `}]`)}, false},
+		{"pinned_item", Message{Subtype: "pinned_item", Text: "<!subteam^SMINE0001> pinned"}, false},
+	} {
+		if got := a.MentionsViewerInReply(&c.m); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// HiddenMessageBody's options still leave @here out
+	if a.MentionsViewerDirectly(&Message{Text: "<!here> look"}) {
+		t.Error("MentionsViewerDirectly counts @here")
+	}
+}

@@ -59,6 +59,12 @@ type Span struct {
 	Lock bool // the label's channel is private (lock icon before its name)
 	Off  bool // the message or channel can't be shown ("Private message", "Private channel"): not a link
 	Pre  int  // MessageMention with Lock: bytes of Text before the channel name
+
+	// Hidden (User): a member the viewer hid, in a rollup or a system
+	// message's text (RollupName, boot-shared quVX): Text is "Name hidden"
+	// and the view draws HiddenUserIconAndName (q9bm), the user-hide icon
+	// before it on a chip.
+	Hidden bool
 }
 
 // BlockKind says what a block is.

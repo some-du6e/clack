@@ -56,11 +56,13 @@ import (
 
 // hiddenSender is the row's hidden-sender state this frame: user, the
 // sender is hidden (isUserHidden); unhidden, the message was shown
-// anyway. A deleted message (the tombstone wins in kzyb), a system
-// message (Clack's system rows) and an optimistic send aren't.
+// anyway. A deleted message (the tombstone wins in kzyb) and an
+// optimistic send aren't. A system message is (kzyb reads msg.user for
+// every subtype, build 2cd9270e786c): a hidden person's joins draw
+// HiddenMessageBody under the system glyph (row.go hiddenSystem).
 func hiddenSender(h Host, m *core.Message, ch string) (user, unhidden bool) {
 	app := h.Core()
-	if app == nil || m.User == "" || m.Tombstone || m.System || m.Pending {
+	if app == nil || m.User == "" || m.Tombstone || m.Pending {
 		return false, false
 	}
 	if !app.UserHidden(m.User) {

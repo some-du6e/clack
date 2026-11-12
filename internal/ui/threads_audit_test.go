@@ -29,6 +29,7 @@ import (
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -57,8 +58,17 @@ func (n *titleNotifier) got() ([]string, []string) {
 
 func TestThreadsAuditReplyNotifications(t *testing.T) {
 	const self = "U0SELF0001"
+	ca := core.New(slack.New(slack.Creds{Token: "xoxc-test", UserID: self}), store.New(""))
+	ca.S.PutUsers([]slack.User{{ID: self, Name: "me"}})
+	ca.S.Self = slack.User{ID: self, Name: "me"}
+	ca.S.SetMyUsergroup("SMINE00001", true)
 	reply := func(kind, text string) core.Event {
 		return core.Event{Type: "message", Reply: true, ConvKind: kind, Msg: &core.Message{TS: "1700000060.000100", ThreadTS: "1700000000.000100", Text: text}}
+	}
+	richReply := func(kind, els string) core.Event {
+		ev := reply(kind, "")
+		ev.Msg.Blocks = json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` + els + `]}]}]`)
+		return ev
 	}
 	for _, c := range []struct {
 		why  string
@@ -73,8 +83,16 @@ func TestThreadsAuditReplyNotifications(t *testing.T) {
 		{"a reply's @here", reply("private", "<!here> hi"), true},
 		{"a DM's reply naming the viewer", reply("im", "hi <@"+self+">"), false},
 		{"a group DM's reply naming the viewer", reply("mpim", "hi <@"+self+">"), true},
+		// checkForMentionInMessage's user groups (gap-w20)
+		{"a reply naming the viewer's group", reply("channel", "<!subteam^SMINE00001|@devs> ship it"), true},
+		{"a reply naming another group", reply("channel", "<!subteam^SOTHER0001|@ops> ship it"), false},
+		{"a rich text reply naming the viewer's group", richReply("channel", `{"type":"usergroup","usergroup_id":"SMINE00001"}`), true},
+		{"a rich text reply naming another group", richReply("channel", `{"type":"usergroup","usergroup_id":"SOTHER0001"}`), false},
+		{"a rich text reply's @here", richReply("channel", `{"type":"broadcast","range":"here"}`), true},
+		{"a rich text reply's @channel", richReply("channel", `{"type":"broadcast","range":"channel"}`), false},
+		{"a DM's reply naming the viewer's group", reply("im", "<!subteam^SMINE00001>"), false},
 	} {
-		if got := replyNotifies(c.ev, self); got != c.want {
+		if got := replyNotifies(ca, c.ev); got != c.want {
 			t.Errorf("%s: notifies %v, Slack %v", c.why, got, c.want)
 		}
 	}

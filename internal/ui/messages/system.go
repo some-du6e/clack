@@ -28,6 +28,15 @@ import (
 //   - NaeI keeps the message's own text for joins and leaves and writes
 //     the topic, description, rename, archive and unarchive lines itself,
 //     without the actor (the row's sender says who).
+//   - A hidden person's system message (build 2cd9270e786c): Message's
+//     MessageTombstoneContent (kzyb) checks isUserHidden(msg.user) for
+//     every message, so a join by someone the viewer hid draws
+//     HiddenMessageBody like their other messages; the gutter keeps the
+//     redesigned glyph (BaseMessageAvatar, Pgsp, picks the system icon
+//     before any avatar). Shown anyway, the row is the system message
+//     again, then "Hide message". A hidden member named inside a
+//     system text or a rollup (RollupMemberButton → RollupName, quVX) is
+//     HiddenUserIconAndName (q9bm): hiddenSpan.
 //   - The glyph: getRedesignedSystemMessageIcon (BBB3), "direct-messages"
 //     for a group DM's rename, and "apps" for a join or leave by an app or
 //     bot (BaseMessageAvatar's isAppOrBotJoiner). Clack's icon set has no
@@ -114,6 +123,24 @@ func (s *listState) adjustSystem(h Host, on bool) (missing bool) {
 	return missing
 }
 
+// hiddenSpan is RollupName (boot-shared quVX) for a member the viewer
+// hid (isUserHidden): HiddenUserIconAndName (q9bm), the user-hide icon
+// and "Name hidden" (members) on a chip (richview hiddenMember).
+func hiddenSpan(id string) richtext.Span {
+	return richtext.Span{Kind: richtext.User, ID: id, Text: membersNS.T("Name hidden"), Hidden: true}
+}
+
+// hiddenKey is what isUserHidden reads (the hidden_users pref and the
+// org's hide_person_opt_out lock): when it changes, the system rows'
+// texts are written again.
+func hiddenKey(h Host) string {
+	app := h.Core()
+	if app == nil {
+		return ""
+	}
+	return app.PrefString("hidden_users") + "\x00" + string(app.EnterpriseLockedPref("hide_person_opt_out"))
+}
+
 // systemText is the line Slack writes for m: the redesigned one, or
 // NaeI's. ok false keeps the message's own text.
 func systemText(h Host, app *core.App, m *core.Message, redesigned bool) (spans []richtext.Span, missing, ok bool) {
@@ -121,6 +148,12 @@ func systemText(h Host, app *core.App, m *core.Message, redesigned bool) (spans 
 	isConversation := conv.Kind == "im" || conv.Kind == "mpim" // aK5v JM
 	txt := func(t string) { spans = append(spans, richtext.Span{Kind: richtext.Text, Text: t}) }
 	member := func(id string) {
+		if app.UserHidden(id) {
+			// RollupMemberButton's RollupName (quVX) for someone the
+			// viewer hid: HiddenUserIconAndName (hiddenSpan)
+			spans = append(spans, hiddenSpan(id))
+			return
+		}
 		name := id
 		if u, ok := app.User(id); ok && u.Name != "" {
 			name = u.Name

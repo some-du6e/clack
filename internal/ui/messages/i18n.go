@@ -15,6 +15,7 @@ var (
 	messagesNS  = i18n.NS("messages")        // UnreadDivider (VxYf)
 	savedNS     = i18n.NS("saved_for_later") // the to-do action (boot-shared Yoyn; LaZW in modern.vendor)
 	listsNS     = i18n.NS("lists")           // shouldShowAddToList's "Add to list…"
+	membersNS   = i18n.NS("members")         // HiddenUserIconAndName (q9bm): "Name hidden"
 )
 
 // tbTip is toolbar button i's label (its aria-label and tooltip) in the

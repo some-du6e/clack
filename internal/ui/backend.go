@@ -637,7 +637,7 @@ func (b *backend) maybeNotify(a *App, ev core.Event) {
 	c := m.conv(ev.Channel)
 	direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
 	if b.wantsNotify(ev.Channel, ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) &&
-		replyNotifies(ev, b.selfID) { // a reply only when it mentions the viewer (notify_threads.go)
+		replyNotifies(b.core, ev) { // a reply only when it mentions the viewer (notify_threads.go)
 		// through Taut's showNotification thunk: plugins may change or
 		// drop it (native: the desktop notification)
 		title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
