@@ -98,62 +98,197 @@ func screenshot(t *testing.T, name string) {
 	t.Logf("screenshot: %s", out)
 }
 
-// TestToastNeedsRegisteredAUMID: the registration is what makes Windows
-// keep a toast. The same toast for an id nobody registered is the
-// control.
-func TestToastNeedsRegisteredAUMID(t *testing.T) {
-	toastTests(t)
-	bare := scratchAUMID(t, false)
-	s, err := ToastSetting(bare)
-	t.Logf("unregistered %s: Setting %d (err %v)", bare, s, err)
-	bareFailed := make(chan error, 1)
-	err = ShowToast(bare, Toast{XML: ciToastXML("Clack CI", "unregistered app id", ""), Tag: "bare", Group: "ci",
-		Failed: func(err error) { bareFailed <- err }})
-	t.Logf("unregistered: Show: %v", err)
-	h, ok := inHistory(t, bare, "bare", 3*time.Second)
-	t.Logf("unregistered: in Notification Center: %t (history %v, Failed: %v)", ok, h, pending(bareFailed))
+// uiaScript is the UI Automation helper (Windows PowerShell 5.1, which
+// has .NET Framework's UIAutomationClient):
+//
+//	invoke NAME  find the element named NAME anywhere on the desktop and
+//	             invoke it (or toggle it)
+//	has TEXT     wait for an element whose name contains TEXT
+//	dump         the top-level windows, and the named elements in the
+//	             shell's notification windows
+const uiaScript = `param([string]$Mode, [string]$Name, [int]$Secs = 10)
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$A = [System.Windows.Automation.AutomationElement]
+$TS = [System.Windows.Automation.TreeScope]
+$True = [System.Windows.Automation.Condition]::TrueCondition
+$root = $A::RootElement
+function Where-Is($el) {
+  $w = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $top = $el; $p = $w.GetParent($top)
+  while ($p -ne $null -and -not $p.Equals($root)) { $top = $p; $p = $w.GetParent($top) }
+  $pn = ''
+  try { $pn = (Get-Process -Id $el.Current.ProcessId).ProcessName } catch {}
+  return $el.Current.ControlType.ProgrammaticName + " '" + $el.Current.Name + "' in [" + $top.Current.ClassName + "] '" + $top.Current.Name + "' (" + $pn + ")"
+}
+function Dump {
+  foreach ($w in $root.FindAll($TS::Children, $True)) {
+    "[" + $w.Current.ClassName + "] '" + $w.Current.Name + "' pid " + $w.Current.ProcessId
+    if ($w.Current.ClassName -like '*CoreWindow*' -or $w.Current.Name -like '*otification*') {
+      $i = 0
+      foreach ($e in $w.FindAll($TS::Descendants, $True)) {
+        if ($e.Current.Name) { "    " + $e.Current.ControlType.ProgrammaticName + " '" + $e.Current.Name + "'" }
+        $i++; if ($i -gt 400) { "    …"; break }
+      }
+    }
+  }
+}
+$deadline = (Get-Date).AddSeconds($Secs)
+switch ($Mode) {
+  'invoke' {
+    $c = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $Name)
+    while ((Get-Date) -lt $deadline) {
+      $el = $root.FindFirst($TS::Descendants, $c)
+      if ($el -ne $null) {
+        "found " + (Where-Is $el)
+        $pat = $null
+        if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) { $pat.Invoke(); "invoked"; exit 0 }
+        if ($el.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pat)) { "toggle state before: " + $pat.Current.ToggleState; $pat.Toggle(); "toggled"; exit 0 }
+        "no Invoke or Toggle pattern"; exit 2
+      }
+      Start-Sleep -Milliseconds 250
+    }
+  }
+  'has' {
+    while ((Get-Date) -lt $deadline) {
+      foreach ($e in $root.FindAll($TS::Descendants, $True)) {
+        if ($e.Current.Name -like ("*" + $Name + "*")) { "found " + (Where-Is $e); exit 0 }
+      }
+      Start-Sleep -Milliseconds 500
+    }
+  }
+  'dump' { Dump; exit 0 }
+}
+"not found: " + $Name
+Dump
+exit 1
+`
 
-	reg := scratchAUMID(t, true)
-	s, err = ToastSetting(reg)
-	if err != nil || s != ToastEnabled {
-		t.Errorf("registered %s: Setting %d, %v; want %d (Enabled)", reg, s, err, ToastEnabled)
+// uia runs uiaScript; ok is its exit status 0.
+func uia(t *testing.T, mode, name string, secs int) (string, bool) {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "uia.ps1")
+	if err := os.WriteFile(script, []byte(uiaScript), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	regFailed := make(chan error, 1)
-	if err := ShowToast(reg, Toast{XML: ciToastXML("Clack CI", "registered app id", ""), Tag: "reg", Group: "ci",
-		Failed: func(err error) { regFailed <- err }}); err != nil {
-		t.Fatalf("registered: Show: %v", err)
-	}
-	time.Sleep(700 * time.Millisecond) // the banner's slide-in
-	screenshot(t, "toast-registered")
-	h, okReg := inHistory(t, reg, "reg", 10*time.Second)
-	if !okReg {
-		t.Errorf("registered %s: the toast isn't in Notification Center (history %v, Failed: %v)", reg, h, pending(regFailed))
-	}
-	if ok {
-		t.Logf("CONTROL: Windows kept the unregistered id's toast too, so delivery alone doesn't show the registration matters")
-	} else if okReg {
-		t.Logf("CONTROL: Windows dropped the unregistered id's toast and kept the registered one")
-	}
-	if err := RemoveToasts(reg, "reg", "ci"); err != nil {
-		t.Errorf("RemoveToasts: %v", err)
-	}
-	if h, ok := inHistory(t, reg, "reg", 0); ok {
-		t.Errorf("RemoveToasts left the toast in Notification Center (%v)", h)
-	}
+	b, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
+		"-Mode", mode, "-Name", name, "-Secs", fmt.Sprint(secs)).CombinedOutput()
+	return strings.TrimSpace(string(b)), err == nil
 }
 
-// pending is what ch holds now, or nil.
-func pending(ch chan error) error {
+// notificationCenter opens the shell's Notification Center (the
+// ms-actioncenter: link), or closes it with Esc.
+func notificationCenter(t *testing.T, open bool) {
+	t.Helper()
+	var cmd *exec.Cmd
+	if open {
+		cmd = exec.Command("cmd", "/c", "start", "", "ms-actioncenter:")
+	} else {
+		cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
+			`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('{ESC}')`)
+	}
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Logf("notification center (open %t): %v %s", open, err, b)
+	}
+	time.Sleep(2 * time.Second)
+}
+
+// TestToastInNotificationCenter: what Windows does with a toast from an
+// app id nobody registered and from one with Clack's registration, as
+// Notification Center shows them; a click on the registered toast's
+// button there reaching this process; then, with Do not disturb (on on
+// the runner) turned off, the same for a banner.
+func TestToastInNotificationCenter(t *testing.T) {
+	toastTests(t)
+	nonce := fmt.Sprint(time.Now().UnixNano() % 1e6)
+	bare := scratchAUMID(t, false)
+	reg := scratchAUMID(t, true)
+	for _, id := range []string{bare, reg} {
+		s, err := ToastSetting(id)
+		t.Logf("%s: Setting %d (err %v)", id, s, err)
+	}
+	bareFailed := make(chan error, 1)
+	if err := ShowToast(bare, Toast{XML: ciToastXML("Clack CI", "unregistered app id "+nonce, ""), Tag: "bare", Group: "ci",
+		Failed: func(err error) { bareFailed <- err }}); err != nil {
+		t.Logf("unregistered: Show: %v", err)
+	}
+	got := make(chan string, 8)
+	label := "Open CI " + nonce
+	actions := `<actions><action activationType="system" arguments="dismiss" content="Dismiss"/>` +
+		`<action activationType="foreground" arguments="button-click" content="` + label + `"/></actions>`
+	if err := ShowToast(reg, Toast{XML: ciToastXML("Clack CI", "registered app id "+nonce, actions), Tag: "reg", Group: "ci",
+		Activated: func(a string) { got <- a }}); err != nil {
+		t.Fatalf("registered: Show: %v", err)
+	}
+	for _, c := range []struct{ id, tag string }{{bare, "bare"}, {reg, "reg"}} {
+		h, ok := inHistory(t, c.id, c.tag, 5*time.Second)
+		t.Logf("%s: in the history: %t (%v)", c.id, ok, h)
+	}
+	t.Logf("unregistered: Failed: %v", pending(bareFailed))
+
+	notificationCenter(t, true)
+	screenshot(t, "notification-center")
+	out, ok := uia(t, "has", "registered app id "+nonce, 10)
+	t.Logf("UI Automation, the registered toast:\n%s", out)
+	if !ok {
+		t.Errorf("Notification Center doesn't show the registered id's toast")
+	}
+	out, bareShown := uia(t, "has", "unregistered app id "+nonce, 3)
+	if bareShown {
+		t.Logf("CONTROL: Notification Center shows the unregistered id's toast too:\n%s", out)
+	} else {
+		t.Logf("CONTROL: Notification Center doesn't show the unregistered id's toast (Windows dropped it)")
+	}
+	out, ok = uia(t, "invoke", label, 10)
+	t.Logf("UI Automation, the button in Notification Center:\n%s", out)
+	if ok {
+		select {
+		case a := <-got:
+			if a != "button-click" {
+				t.Errorf("Activated with %q, want %q", a, "button-click")
+			}
+		case <-time.After(10 * time.Second):
+			t.Errorf("a click on the button in Notification Center raised no Activated event")
+		}
+	} else {
+		t.Errorf("UI Automation couldn't click %q in Notification Center", label)
+	}
+
+	// Do not disturb off, for banners
+	out, ok = uia(t, "invoke", "Do not disturb", 5)
+	t.Logf("UI Automation, Do not disturb:\n%s", out)
+	notificationCenter(t, false)
+	if !ok {
+		return
+	}
+	label2 := "Open banner " + nonce
+	actions2 := `<actions><action activationType="system" arguments="dismiss" content="Dismiss"/>` +
+		`<action activationType="foreground" arguments="banner-click" content="` + label2 + `"/></actions>`
+	if err := ShowToast(reg, Toast{XML: ciToastXML("Clack CI", "a banner "+nonce, actions2), Tag: "banner", Group: "ci",
+		Activated: func(a string) { got <- a }}); err != nil {
+		t.Fatalf("banner: Show: %v", err)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	screenshot(t, "banner")
+	out, ok = uia(t, "invoke", label2, 10)
+	t.Logf("UI Automation, the banner's button:\n%s", out)
+	if !ok {
+		t.Errorf("UI Automation couldn't click %q on the banner", label2)
+		return
+	}
 	select {
-	case err := <-ch:
-		return err
-	default:
-		return nil
+	case a := <-got:
+		if a != "banner-click" {
+			t.Errorf("Activated with %q, want %q", a, "banner-click")
+		}
+	case <-time.After(10 * time.Second):
+		t.Errorf("a click on the banner's button raised no Activated event")
 	}
 }
 
 // TestToastInstalledAUMID: Clack's own id as the installer registered it
-// (the workflow installs Clack first and sets CLACK_TOAST_INSTALLED=1).
+// (the workflow installs Clack first and sets CLACK_TOAST_INSTALLED=1):
+// its toast is in Notification Center.
 func TestToastInstalledAUMID(t *testing.T) {
 	toastTests(t)
 	if os.Getenv("CLACK_TOAST_INSTALLED") == "" {
@@ -169,92 +304,31 @@ func TestToastInstalledAUMID(t *testing.T) {
 	if st, err := os.Stat(icon); err != nil || st.Size() == 0 {
 		t.Errorf("the registration's icon %s: %v", icon, err)
 	}
-	if s, err := ToastSetting(AppUserModelID); err != nil || s != ToastEnabled {
-		t.Errorf("Setting %d, %v; want Enabled", s, err)
-	}
+	s, err := ToastSetting(AppUserModelID)
+	t.Logf("Setting %d (err %v)", s, err)
+	nonce := fmt.Sprint(time.Now().UnixNano() % 1e6)
 	defer RemoveToasts(AppUserModelID, "installed", "ci")
-	if err := ShowToast(AppUserModelID, Toast{XML: ciToastXML("Clack", "installed: the toast shows", ""), Tag: "installed", Group: "ci"}); err != nil {
+	if err := ShowToast(AppUserModelID, Toast{XML: ciToastXML("Clack", "installed "+nonce, ""), Tag: "installed", Group: "ci"}); err != nil {
 		t.Fatalf("Show: %v", err)
 	}
-	time.Sleep(700 * time.Millisecond)
-	screenshot(t, "toast-installed")
-	if h, ok := inHistory(t, AppUserModelID, "installed", 10*time.Second); !ok {
-		t.Errorf("the installed id's toast isn't in Notification Center (history %v)", h)
-	}
-}
-
-// uiaInvoke has UI Automation find the element named name anywhere on
-// the desktop and invoke it (the shell's toast window holds the toast's
-// buttons). It returns the script's output.
-func uiaInvoke(t *testing.T, name string, secs int) (string, bool) {
-	t.Helper()
-	script := filepath.Join(t.TempDir(), "invoke.ps1")
-	ps := `param([string]$Name, [int]$Secs)
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-$A = [System.Windows.Automation.AutomationElement]
-$root = $A::RootElement
-$cond = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, $Name)
-$deadline = (Get-Date).AddSeconds($Secs)
-while ((Get-Date) -lt $deadline) {
-  $el = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
-  if ($el -ne $null) {
-    $w = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-    $top = $el; $p = $w.GetParent($top)
-    while ($p -ne $null -and -not $p.Equals($root)) { $top = $p; $p = $w.GetParent($top) }
-    "found " + $el.Current.ControlType.ProgrammaticName + " '" + $el.Current.Name + "' in [" + $top.Current.ClassName + "] '" + $top.Current.Name + "', pid " + $el.Current.ProcessId + " (" + (Get-Process -Id $el.Current.ProcessId).ProcessName + ")"
-    $pat = $null
-    if ($el.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) { $pat.Invoke(); "invoked"; exit 0 }
-    "no InvokePattern"; exit 2
-  }
-  Start-Sleep -Milliseconds 250
-}
-"not found; the top-level windows:"
-foreach ($w in $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
-  "  [" + $w.Current.ClassName + "] '" + $w.Current.Name + "' pid " + $w.Current.ProcessId
-}
-exit 1
-`
-	if err := os.WriteFile(script, []byte(ps), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	b, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-Name", name, "-Secs", fmt.Sprint(secs)).CombinedOutput()
-	out := strings.TrimSpace(string(b))
-	return out, err == nil
-}
-
-// TestToastActivatedByClick: invoking a toast's button in the shell
-// raises the toast's Activated event in this process with the button's
-// arguments (activationType="foreground", no COM activator).
-func TestToastActivatedByClick(t *testing.T) {
-	toastTests(t)
-	id := scratchAUMID(t, true)
-	label := fmt.Sprintf("Open CI %d", time.Now().UnixNano()%1e6)
-	got := make(chan string, 4)
-	dismissed := make(chan int, 4)
-	actions := `<actions><action activationType="system" arguments="dismiss" content="Dismiss"/>` +
-		`<action activationType="foreground" arguments="button-click" content="` + label + `"/></actions>`
-	if err := ShowToast(id, Toast{XML: ciToastXML("Clack CI", "click test", actions), Tag: "click", Group: "ci",
-		Activated: func(a string) { got <- a }, Dismissed: func(r int) { dismissed <- r }}); err != nil {
-		t.Fatalf("Show: %v", err)
-	}
-	time.Sleep(700 * time.Millisecond)
-	screenshot(t, "toast-click-before")
-	out, ok := uiaInvoke(t, label, 20)
+	time.Sleep(1500 * time.Millisecond)
+	screenshot(t, "installed-banner")
+	notificationCenter(t, true)
+	screenshot(t, "installed-notification-center")
+	out, ok := uia(t, "has", "installed "+nonce, 10)
 	t.Logf("UI Automation:\n%s", out)
 	if !ok {
-		t.Errorf("UI Automation couldn't invoke the toast's %q button", label)
-		return
+		t.Errorf("Notification Center doesn't show the installed id's toast")
 	}
+	notificationCenter(t, false)
+}
+
+// pending is what ch holds now, or nil.
+func pending(ch chan error) error {
 	select {
-	case a := <-got:
-		if a != "button-click" {
-			t.Errorf("Activated with %q, want the button's arguments %q", a, "button-click")
-		}
-	case r := <-dismissed:
-		t.Errorf("the click dismissed the toast (reason %d) instead of activating it", r)
-	case <-time.After(15 * time.Second):
-		t.Errorf("no Activated event 15 s after the click")
+	case err := <-ch:
+		return err
+	default:
+		return nil
 	}
-	screenshot(t, "toast-click-after")
 }
