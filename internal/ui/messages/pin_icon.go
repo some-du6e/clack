@@ -51,49 +51,76 @@ const jumpGlyph = "M934 1025 991 1314C999 1354 966 1400 917 1400C880 1400 850 13
 // rgba(29,28,29,.7).
 const eyeGlyph = "M1000 0C1600 0 1900 550 1900 700C1900 850 1600 1400 1000 1400C400 1400 100 850 100 700C100 550 400 0 1000 0ZM1000 250C751 250 550 451 550 700C550 949 751 1150 1000 1150C1249 1150 1450 949 1450 700C1450 451 1249 250 1000 250ZM1246 745C1226 735 1204 730 1180 730C1097 730 1030 797 1030 880C1030 904 1035 926 1045 946C1031 949 1015 950 1000 950C862 950 750 838 750 700C750 562 862 450 1000 450C1138 450 1250 562 1250 700C1250 715 1249 730 1246 745Z"
 
+// bookmarkGlyph is the Later label's icon (a saved message that isn't a
+// to-do): MessageLabels maps "later" to the font Icon "bookmark-filled",
+// .c-icon--bookmark-filled:before{content:"\e588"}, glyph
+// icon_bookmark_filled in the same font, drawn in sk_highlight (the
+// .c-message_kit__labels--later label's colour).
+const bookmarkGlyph = "M553 -100C581 -100 612 -88 637 -62L1000 320L1363 -62C1388 -88 1419 -100 1447 -100C1502 -100 1550 -55 1550 16V1175C1550 1333 1434 1450 1275 1450H725C566 1450 450 1334 450 1175V16C450 -55 498 -100 553 -100Z"
+
 var (
-	pinOnce  sync.Once
-	pinSegs  []glyphSeg
-	jumpOnce sync.Once
-	jumpSegs []glyphSeg
-	eyeOnce  sync.Once
-	eyeSegs  []glyphSeg
+	bookmarkOnce sync.Once
+	bookmarkSegs []glyphSeg
+	pinOnce      sync.Once
+	pinSegs      []glyphSeg
+	jumpOnce     sync.Once
+	jumpSegs     []glyphSeg
+	eyeOnce      sync.Once
+	eyeSegs      []glyphSeg
 )
 
-// parseGlyph reads SVGPathPen output: absolute M/L/C/Z with implicit
-// repeats (extra pairs after M are lines).
+// parseGlyph reads SVGPathPen output: absolute M/L/H/V/C/Z with implicit
+// repeats (extra pairs after M are lines). H and V become lines from the
+// current point (the jump and bookmark glyphs use them).
 func parseGlyph(d string) []glyphSeg {
 	var out []glyphSeg
 	var nums []float32
 	var cmd byte
+	var cur, start f32.Point
 	flush := func() {
 		pt := func(i int) f32.Point { return f32.Pt(nums[i], nums[i+1]) }
+		line := func(p f32.Point) {
+			out = append(out, glyphSeg{op: 'L', p: [3]f32.Point{p}})
+			cur = p
+		}
 		switch cmd {
 		case 'M', 'L':
 			for i := 0; i+1 < len(nums); i += 2 {
-				op := cmd
-				if cmd == 'M' && i > 0 {
-					op = 'L'
+				if cmd == 'M' && i == 0 {
+					out = append(out, glyphSeg{op: 'M', p: [3]f32.Point{pt(i)}})
+					cur, start = pt(i), pt(i)
+					continue
 				}
-				out = append(out, glyphSeg{op: op, p: [3]f32.Point{pt(i)}})
+				line(pt(i))
+			}
+		case 'H':
+			for _, x := range nums {
+				line(f32.Pt(x, cur.Y))
+			}
+		case 'V':
+			for _, y := range nums {
+				line(f32.Pt(cur.X, y))
 			}
 		case 'C':
 			for i := 0; i+5 < len(nums); i += 6 {
 				out = append(out, glyphSeg{op: 'C', p: [3]f32.Point{pt(i), pt(i + 2), pt(i + 4)}})
+				cur = pt(i + 4)
 			}
 		case 'Z':
 			out = append(out, glyphSeg{op: 'Z'})
+			cur = start
 		}
 		nums = nums[:0]
 	}
-	tok := strings.FieldsFunc(strings.NewReplacer("M", " M ", "L", " L ", "C", " C ", "Z", " Z ").Replace(d), func(r rune) bool { return r == ' ' || r == ',' })
+	tok := strings.FieldsFunc(strings.NewReplacer("M", " M ", "L", " L ", "H", " H ", "V", " V ", "C", " C ", "Z", " Z ").Replace(d), func(r rune) bool { return r == ' ' || r == ',' })
 	for _, t := range tok {
 		switch t {
-		case "M", "L", "C", "Z":
+		case "M", "L", "H", "V", "C", "Z":
 			flush()
 			cmd = t[0]
 			if cmd == 'Z' {
 				flush()
+				cmd = 0 // one Z per close
 			}
 		default:
 			if v, err := strconv.ParseFloat(t, 32); err == nil {
@@ -117,6 +144,12 @@ func drawPin(gtx layout.Context, origin image.Point, em int, col color.NRGBA) {
 func drawJump(gtx layout.Context, origin image.Point, em int, col color.NRGBA) {
 	jumpOnce.Do(func() { jumpSegs = parseGlyph(jumpGlyph) })
 	drawGlyph(gtx, jumpSegs, origin, em, col)
+}
+
+// drawBookmark fills the bookmark-filled glyph like drawPin.
+func drawBookmark(gtx layout.Context, origin image.Point, em int, col color.NRGBA) {
+	bookmarkOnce.Do(func() { bookmarkSegs = parseGlyph(bookmarkGlyph) })
+	drawGlyph(gtx, bookmarkSegs, origin, em, col)
 }
 
 // drawEye fills the eye-filled glyph like drawPin.

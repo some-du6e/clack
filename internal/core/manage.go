@@ -370,6 +370,7 @@ func (a *App) DeleteFile(ctx context.Context, id string) error {
 // loadSaved builds the saved/to-do set used for Message.Saved.
 func (a *App) loadSaved(ctx context.Context) error {
 	set := map[string]bool{}
+	meta := map[string]SavedMeta{} // saved_meta.go
 	a.mu.Lock()
 	a.savedEdits = map[string]bool{}
 	a.mu.Unlock()
@@ -398,6 +399,7 @@ func (a *App) loadSaved(ctx context.Context) error {
 				switch it.ItemType {
 				case "message":
 					set[savedKey(it.ItemID, it.TS)] = true
+					meta[savedKey(it.ItemID, it.TS)] = savedMetaOf(&it)
 				case "file":
 					set[savedKey(savedFileKey, it.ItemID)] = true
 				}
@@ -412,11 +414,15 @@ func (a *App) loadSaved(ctx context.Context) error {
 	for k, on := range a.savedEdits {
 		if on {
 			set[k] = true
+			if m, ok := a.savedMeta[k]; ok { // the edit's metadata
+				meta[k] = m
+			}
 		} else {
 			delete(set, k)
+			delete(meta, k)
 		}
 	}
-	a.saved = set
+	a.saved, a.savedMeta = set, meta
 	a.mu.Unlock()
 	return nil
 }
@@ -427,6 +433,7 @@ func (a *App) markSaved(ch, ts string, on bool) {
 		a.saved[savedKey(ch, ts)] = true
 	} else {
 		delete(a.saved, savedKey(ch, ts))
+		delete(a.savedMeta, savedKey(ch, ts))
 	}
 	if a.savedEdits != nil {
 		a.savedEdits[savedKey(ch, ts)] = on
@@ -439,8 +446,9 @@ func (a *App) markSaved(ch, ts string, on bool) {
 
 // AddTodo adds a message to To-dos (dateDue unix s; 0 = now, as the client does).
 func (a *App) AddTodo(ctx context.Context, ch, ts string, dateDue int64) error {
+	created := time.Now().Unix()
 	if dateDue == 0 {
-		dateDue = time.Now().Unix()
+		dateDue = created
 	}
 	p := savedParams(ch, ts)
 	p.Set("todo_state", "to_do")
@@ -448,7 +456,7 @@ func (a *App) AddTodo(ctx context.Context, ch, ts string, dateDue int64) error {
 	if err := a.C.Call(ctx, "saved.add", p, nil); err != nil && !isCode(err, "already_saved") {
 		return err
 	}
-	a.markSaved(ch, ts, true)
+	a.setSavedMeta(ch, ts, SavedMeta{TodoState: "to_do", DateCreated: created, DateDue: dateDue})
 	return nil
 }
 
@@ -458,7 +466,11 @@ func (a *App) CompleteTodo(ctx context.Context, ch, ts string) error {
 	p.Set("todo_state", "completed")
 	p.Set("mark", "completed")
 	p.Set("date_due", "0")
-	return a.C.Call(ctx, "saved.update", p, nil)
+	if err := a.C.Call(ctx, "saved.update", p, nil); err != nil {
+		return err
+	}
+	a.patchSavedMeta(ch, ts, func(m *SavedMeta) { m.TodoState, m.DateCompleted, m.DateDue = "completed", time.Now().Unix(), 0 })
+	return nil
 }
 
 // MoveToSaved turns a to-do (or completed item) back into a plain saved item.
@@ -467,7 +479,11 @@ func (a *App) MoveToSaved(ctx context.Context, ch, ts string) error {
 	p.Set("todo_state", "saved")
 	p.Set("date_due", "0")
 	p.Set("mark", "uncompleted")
-	return a.C.Call(ctx, "saved.update", p, nil)
+	if err := a.C.Call(ctx, "saved.update", p, nil); err != nil {
+		return err
+	}
+	a.patchSavedMeta(ch, ts, func(m *SavedMeta) { m.TodoState, m.DateCompleted, m.DateDue = "saved", 0, 0 })
+	return nil
 }
 
 // MoveToTodos turns a saved item into a to-do due at dateDue (0 = now).
@@ -479,7 +495,11 @@ func (a *App) MoveToTodos(ctx context.Context, ch, ts string, dateDue int64) err
 	p.Set("todo_state", "to_do")
 	p.Set("date_due", strconv.FormatInt(dateDue, 10))
 	p.Set("mark", "uncompleted") // a completed item would otherwise stay completed
-	return a.C.Call(ctx, "saved.update", p, nil)
+	if err := a.C.Call(ctx, "saved.update", p, nil); err != nil {
+		return err
+	}
+	a.patchSavedMeta(ch, ts, func(m *SavedMeta) { m.TodoState, m.DateCompleted, m.DateDue = "to_do", 0, dateDue })
+	return nil
 }
 
 type savedRaw struct {
@@ -653,7 +673,11 @@ func (a *App) onSavedEvent(ctx context.Context, typ string, raw json.RawMessage)
 	}
 	it := savedItemOf(&e.Saved)
 	if it.Channel != "" {
-		a.markSaved(it.Channel, it.TS, typ != "saved_deleted")
+		if typ != "saved_deleted" {
+			a.setSavedMeta(it.Channel, it.TS, savedMetaOf(&e.Saved)) // saved_meta.go
+		} else {
+			a.markSaved(it.Channel, it.TS, false)
+		}
 	}
 	if typ != "saved_deleted" && it.Channel != "" {
 		got := a.hydrate(ctx, map[string][]string{it.Channel: {it.TS}})

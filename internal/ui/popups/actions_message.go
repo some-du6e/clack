@@ -21,8 +21,10 @@ import (
 // Message "More actions" menu, Slack's MessageActionsMenu (gantry-v2-
 // async-client-boot-shared 2rcC, build 4d0c78085232), its groups in
 // Slack's order: Edit message E (own, 5Ech) | Mark unread U (jFAp in the
-// conversation, JsXu in a thread), Add to saved ⇧⌘S, Add a reminder M ▸,
-// the follow row (ojBT) | Copy link L, Copy message ⌘C | Organize ▸ (the
+// conversation, JsXu in a thread), the save row ⇧⌘S (oMi4: Add to
+// saved, Remove from Saved, Move to Saved), the reminder row M ▸ (ih0g:
+// Add a reminder, Edit reminder on a to-do; actions_todo.go), the follow
+// row (ojBT) | Copy link L, Copy message ⌘C | Organize ▸ (the
 // pin row, loUg), Connect to apps ▸ | Send reply to this channel (T),
 // Remove reply from channel… (removeBroadcast), View workflow details
 // (t7), Copy workflow ID (q) | Flag this message… (ed, actions_flag.go)
@@ -143,12 +145,13 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 	if inThread {
 		markUnread.Key = "mark_thread_unread" // Slack's action ids (lq1n)
 	}
+	sa := SaveActionFor(h.Core(), &m)
 	items = append(items,
 		markUnread,
-		MenuItem{Label: "Add to saved", Icon: "bookmark-add", Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
-			actDo(h, "Saved for later", func(ctx context.Context, a *core.App) error { return a.Save(ctx, ch, ts, 0) })
+		MenuItem{Label: sa.Label, Icon: sa.Icon, Hint: shortcut.Format("Mod+Shift+S"), Keys: KeySaveTodos, Do: func() {
+			RunSaveAction(h, m) // oMi4 / aSBj (actions_todo.go)
 		}}.In(nsSaved),
-		MenuItem{Label: "Add a reminder", Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage),
+		MenuItem{Label: ReminderLabel(h.Core(), &m), Icon: "remind", Hint: nsMessage.T("M"), Keys: KeyRemind, Sub: actReminderItems(remind, func() { h.ShowOverlay(actNewReminderModal(h, ch, ts)) })}.In(nsMessage), // ih0g
 	)
 	if f, ok := actFollowItem(h, m, conv, root); ok {
 		items = append(items, f)

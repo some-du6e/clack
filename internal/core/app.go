@@ -54,13 +54,14 @@ type App struct {
 	bg     context.Context
 	stopBG context.CancelFunc
 
-	pending  map[string]*pendingSend // client_msg_id -> optimistic send
-	fileEvs  *fileEvents             // file_created seen / awaited (upload_send.go)
-	retired  map[string]string       // confirmed sends' local ts -> real ts (send.go LocalTS)
-	retiredQ []string                // retired's insertion order (bounded)
-	saved    map[string]bool         // "channel/ts" of saved / to-do messages
-	starred  map[string]bool         // starred conversation ids (stars.list)
-	starsOK  bool                    // starred was loaded
+	pending   map[string]*pendingSend // client_msg_id -> optimistic send
+	fileEvs   *fileEvents             // file_created seen / awaited (upload_send.go)
+	retired   map[string]string       // confirmed sends' local ts -> real ts (send.go LocalTS)
+	retiredQ  []string                // retired's insertion order (bounded)
+	saved     map[string]bool         // "channel/ts" of saved / to-do messages
+	savedMeta map[string]SavedMeta    // their saved metadata (saved_meta.go)
+	starred   map[string]bool         // starred conversation ids (stars.list)
+	starsOK   bool                    // starred was loaded
 	// starEdits/savedEdits, non-nil while loadStars/loadSaved is in
 	// flight, record the stars and saves made meanwhile (Star, star_added,
 	// Save), so the list read before them doesn't undo them.

@@ -406,11 +406,25 @@ func (a *App) Save(ctx context.Context, ch, ts string, dateDue int64) error {
 	if dateDue > 0 {
 		p.Set("date_due", strconv.FormatInt(dateDue, 10))
 	}
-	return a.C.Call(ctx, "saved.add", p, nil)
+	if err := a.C.Call(ctx, "saved.add", p, nil); err != nil {
+		return err
+	}
+	// the metadata until saved_added brings Slack's (saved_meta.go): a
+	// bookmark, or with a reminder a to-do due then
+	m := SavedMeta{TodoState: "saved", DateCreated: time.Now().Unix(), DateDue: dateDue}
+	if dateDue > 0 {
+		m.TodoState = "to_do"
+	}
+	a.setSavedMeta(ch, ts, m)
+	return nil
 }
 
 func (a *App) Unsave(ctx context.Context, ch, ts string) error {
-	return a.C.Call(ctx, "saved.delete", savedParams(ch, ts), nil)
+	if err := a.C.Call(ctx, "saved.delete", savedParams(ch, ts), nil); err != nil {
+		return err
+	}
+	a.markSaved(ch, ts, false)
+	return nil
 }
 
 // UpdateSaved marks a saved item completed/archived or changes its due date.
@@ -425,7 +439,26 @@ func (a *App) UpdateSaved(ctx context.Context, ch, ts string, u SavedUpdate) err
 	if u.DateDue != nil {
 		p.Set("date_due", strconv.FormatInt(*u.DateDue, 10))
 	}
-	return a.C.Call(ctx, "saved.update", p, nil)
+	if err := a.C.Call(ctx, "saved.update", p, nil); err != nil {
+		return err
+	}
+	if _, ok := a.SavedMeta(ch, ts); ok { // saved_meta.go
+		a.patchSavedMeta(ch, ts, func(m *SavedMeta) {
+			if u.Completed != nil {
+				m.DateCompleted = 0
+				if *u.Completed {
+					m.DateCompleted = time.Now().Unix()
+				}
+			}
+			if u.Archived != nil {
+				m.Archived = *u.Archived
+			}
+			if u.DateDue != nil {
+				m.DateDue = *u.DateDue
+			}
+		})
+	}
+	return nil
 }
 
 // SubscribeThread follows or unfollows a thread.

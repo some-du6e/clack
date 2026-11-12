@@ -111,6 +111,7 @@ type row struct {
 	threadBtn          widget.Clickable
 	broadcastBtn       widget.Clickable
 	labelLink          widget.Clickable // the label's link (broadcastLabel)
+	laterLink          widget.Clickable // LaterLabel's "View Saved" / "View to-dos" (laterLabelLine)
 	pinnedLink         widget.Clickable // "Pinned by {member}"'s MemberLink (pinnedRuns)
 	pinnedHov          hovercard.Trigger
 	addReact           widget.Clickable
@@ -889,14 +890,16 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 	y := dp(gtx, padTop) - dp(gtx, 4)
 
 	// MessageLabels (boot-shared meLQ) draws one primary label: ephemeral,
-	// then a broadcast, then pinned, then a custom response. Message (the
-	// channel row), ThreadRoot and ThreadReplyGeneric all wrap the row in
-	// it, so the thread pane shows pinned labels too; only
-	// ThreadReplyGeneric passes showBroadcast. A custom response gets no
-	// label line ("custom_response" === primaryLabelType renders none),
-	// only the row's tint.
+	// then a broadcast, then pinned, then Later (a saved message that
+	// isn't completed or archived, actions_rules.go laterLabelFor), then a
+	// custom response. Message (the channel row), ThreadRoot and
+	// ThreadReplyGeneric all wrap the row in it, so the thread pane shows
+	// pinned labels too; only ThreadReplyGeneric passes showBroadcast. A
+	// custom response gets no label line ("custom_response" ===
+	// primaryLabelType renders none), only the row's tint.
 	eph := ephemeral(rc, m)
 	broadcast := rc.thread && !rc.parent && m.Broadcast
+	var later bool
 	switch {
 	case eph:
 		y += r.labelLine(gtx, rc, cx, y, "eye", "Only visible to you")
@@ -904,6 +907,11 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		y += r.broadcastLabel(gtx, rc, y)
 	case m.Pinned:
 		y += r.labelRuns(gtx, rc, y, "pin", r.pinnedRuns(gtx, rc, nil)...)
+	default:
+		if ll, ok := laterLabelFor(rc.h.Core(), m, rc.now); ok {
+			later = true
+			y += r.laterLabelLine(gtx, rc, y, ll)
+		}
 	}
 	r.col = image.Pt(cx, y)
 	g := at(gtx, 0, y, func(gtx layout.Context) layout.Dimensions {
@@ -935,9 +943,10 @@ func (r *row) layoutBackground(gtx layout.Context, p slackc.Props) layout.Dimens
 		bg = c.PinnedHover
 	case m.Pinned || broadcast:
 		bg = c.Pinned
-	// --labels--custom_response {background:#1d9bd11a} comes after
-	// --hovered in Slack's stylesheet, so the tint stays under the pointer
-	case m.SlackbotCustomResponse() && !eph:
+	// --labels--custom_response, --labels--later and --labels--later_todo
+	// {background:#1d9bd11a} come after --hovered in Slack's stylesheet,
+	// so the tint stays under the pointer
+	case m.SlackbotCustomResponse() && !eph, later:
 		bg = c.CustomTint
 	case rc.hovered, eph: // ephemeral: rgba(29,28,29,.04) (c-message_kit__background--labels--ephemeral)
 		bg = c.Hover
@@ -1805,10 +1814,17 @@ func (r *row) labelLine(gtx layout.Context, rc *rowCtx, x, y int, icon, txt stri
 // the text's baseline (pin_icon.go), with the icon's CSS colour: pinned
 // #e8912d, broadcast sk_highlight, ephemeral the label's own colour.
 var labelGlyphs = map[string]func(gtx layout.Context, origin image.Point, em int, col color.NRGBA){
-	"pin":  drawPin,
-	"jump": drawJump,
-	"eye":  drawEye,
+	"pin":             drawPin,
+	"jump":            drawJump,
+	"eye":             drawEye,
+	"bookmark-filled": drawBookmark,
 }
+
+// laterIcons are the Later label's icons (meLQ ec: "later" the font's
+// bookmark-filled, "later_todo" the SVG check-circle-filled), whose label
+// is .c-message_kit__labels--later / --later_todo: the text and icon in
+// sk_highlight, bold.
+var laterIcons = map[string]bool{"bookmark-filled": true, "check-circle-filled": true}
 
 // labelWith is labelLine with a link leading the text: Slack's
 // ButtonLink (.c-message_kit__labels__link: the label's colour,
@@ -1856,7 +1872,8 @@ func (r *row) labelRuns(gtx layout.Context, rc *rowCtx, y int, icon string, runs
 		return 0
 	}
 	glyph, isGlyph := labelGlyphs[icon]
-	if !isGlyph {
+	inlineSVG := icon == "check-circle-filled" // the later_todo label's SvgIcon (inline, 1em)
+	if !isGlyph && !inlineSVG {
 		at(gtx, iconR-is, y+(lh-is)/2, func(gtx layout.Context) layout.Dimensions {
 			return icons.Get(icon)(gtx, unit.Dp(14), ls.Color(c.PinIcon))
 		})
@@ -1864,6 +1881,9 @@ func (r *row) labelRuns(gtx layout.Context, rc *rowCtx, y int, icon string, runs
 	ts := labelsTextClass.Enter(gtx, 0, 0)
 	defer ts.Leave()
 	st0 := textStyle{size: 13, col: c.Muted70, lineH: 19}
+	if laterIcons[icon] {
+		st0.col, st0.weight = c.Link, theme.Bold
+	}
 	var td layout.Dimensions
 	tx := textX
 	for _, run := range runs {
@@ -1896,7 +1916,7 @@ func (r *row) labelRuns(gtx layout.Context, rc *rowCtx, y int, icon string, runs
 		})
 		tx += td.Size.X
 	}
-	if isGlyph {
+	if isGlyph || inlineSVG {
 		// right-aligned 8px before the text, on its baseline (pin_icon.go)
 		em := dp(gtx, 13)
 		base := y + lh*3/4
@@ -1904,15 +1924,47 @@ func (r *row) labelRuns(gtx layout.Context, rc *rowCtx, y int, icon string, runs
 			base = y + td.Size.Y - td.Baseline
 		}
 		col := c.PinIcon
-		switch icon {
-		case "jump":
+		switch {
+		case icon == "jump", laterIcons[icon]:
 			col = c.Link
-		case "eye":
+		case icon == "eye":
 			col = cssText(ts, st0).col
 		}
-		glyph(gtx, image.Pt(iconR-em, base-em*glyphAscent/glyphUPM), em, ls.Color(col))
+		if inlineSVG {
+			// [data-crz] 1em square, .is-inline vertical-align -.125em
+			at(gtx, iconR-em, base+em/8-em, func(gtx layout.Context) layout.Dimensions {
+				return icons.Get(icon)(gtx, unit.Dp(13), ls.Color(col))
+			})
+		} else {
+			glyph(gtx, image.Pt(iconR-em, base-em*glyphAscent/glyphUPM), em, ls.Color(col))
+		}
 	}
 	return dp(gtx, 20)
+}
+
+// laterLabelLine draws LaterLabel (wRj5): the label, and with a link
+// "{label} · {viewLink}" (or viewBookmarksLink). "View to-dos" opens the
+// To-dos page, "View Saved" the Saved page. TodoDueLabel re-renders every
+// minute (NLD/ useMinuteRefresh): a deadline at the next minute.
+func (r *row) laterLabelLine(gtx layout.Context, rc *rowCtx, y int, ll laterLabel) int {
+	if r.laterLink.Clicked(gtx) && ll.route != "" {
+		rc.h.Navigate(ll.route)
+	}
+	if ll.route == "later" {
+		gtx.Execute(op.InvalidateCmd{At: rc.now.Truncate(time.Minute).Add(time.Minute)})
+	}
+	if ll.format == "" {
+		return r.labelRuns(gtx, rc, y, ll.icon, labelRun{text: ll.text})
+	}
+	var runs []labelRun
+	for _, p := range msgNS.RT(ll.format, "label", ll.text, ll.arg, "\x00") {
+		if p.Arg == ll.arg {
+			runs = append(runs, labelRun{text: ll.link, btn: &r.laterLink})
+			continue
+		}
+		runs = append(runs, labelRun{text: p.Text})
+	}
+	return r.labelRuns(gtx, rc, y, ll.icon, runs...)
 }
 
 // broadcastLabel is MessageLabels' broadcast label, which only
