@@ -83,7 +83,14 @@ func (c *Controller) WindowOpen() bool {
 	return c.win != nil
 }
 
+// invalidateHook, when set, sees every invalidate (the idle-frame probe,
+// idle_frames_test.go). Set before the window opens.
+var invalidateHook func(*window)
+
 func (w *window) invalidate() {
+	if h := invalidateHook; h != nil {
+		h(w)
+	}
 	w.mu.Lock()
 	ww := w.w
 	w.mu.Unlock()
@@ -141,24 +148,12 @@ func (w *window) run() {
 	if closed {
 		ww.Perform(system.ActionClose)
 	}
-	tick := time.NewTicker(250 * time.Millisecond) // speaking bars, timer, images
-	done := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-tick.C:
-				ww.Invalidate()
-			case <-done:
-				return
-			}
-		}
-	}()
+	stopTick := w.startTick()
 	var ops op.Ops
 	for {
 		switch e := ww.Event().(type) {
 		case app.DestroyEvent:
-			tick.Stop()
-			close(done)
+			stopTick()
 			if w.popout != "" {
 				w.c.popoutGone(w)
 				return
@@ -182,6 +177,24 @@ func (w *window) run() {
 			e.Frame(gtx.Ops)
 		}
 	}
+}
+
+// startTick redraws the window every 250 ms (speaking bars, timer,
+// images) until stop.
+func (w *window) startTick() (stop func()) {
+	tick := time.NewTicker(250 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-tick.C:
+				w.invalidate()
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { tick.Stop(); close(done) }
 }
 
 // AppName is the window title suffix (the ui root sets it to its own).

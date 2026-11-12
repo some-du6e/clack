@@ -341,11 +341,19 @@ func (a *App) Post(f func()) {
 // before the freeze watchdog can report it. That was the macOS launch
 // beachball. Only invalidator, on its own goroutine, may call it.
 func (a *App) Invalidate() {
+	if h := invalidateHook; h != nil {
+		h(a)
+	}
 	select {
 	case a.inval <- struct{}{}:
 	default: // one is already queued; it covers this one
 	}
 }
+
+// invalidateHook, when set, sees every Invalidate (the idle-frame probe,
+// idle_frames_test.go, names the code that keeps the window drawing). Set
+// before the App starts; any goroutine calls it.
+var invalidateHook func(*App)
 
 // invalidator forwards Invalidate requests to the window from a goroutine that
 // is never the main thread (see Invalidate).

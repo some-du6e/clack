@@ -16,7 +16,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_gpu.go`, `app/clack_panel.go`, `app/os.go`, `app/os_macos.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
-`gesture/clack_wheel.go` and these two files (`CLACK_PATCHES.md`,
+`gesture/clack_wheel.go`, `io/input/router.go` and these two files (`CLACK_PATCHES.md`,
 `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -336,3 +336,15 @@ reduced motion, and a `layout.List` animating through a real
 `input.Router`). ci's windows-applog job runs
 `internal/ui` `TestWheelFrameProbe` (frame times while notches scroll a
 long channel). Not in `UPSTREAM.patch`.
+
+## 10. io/input: ExecuteHook
+
+`io/input/router.go`, `Source.Execute`.
+
+A package variable, `input.ExecuteHook`, that sees every command a
+`Source` executes, on the caller's stack, before the router does. Nil by
+default: one load per command. Clack's idle-frame probe
+(`internal/ui` `TestIdleFrames`) sets it to record who asked for each
+`op.InvalidateCmd`, since the router only keeps the earliest wake-up time
+and not where it came from. Nothing else uses it. Not in
+`UPSTREAM.patch`.
