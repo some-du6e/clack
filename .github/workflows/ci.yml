@@ -324,6 +324,17 @@ jobs:
           if (Test-Path $key) { throw "uninstall left $key" }
           for ($i = 0; $i -lt 20 -and (Test-Path $png); $i++) { Start-Sleep -Milliseconds 500 }
           if (Test-Path $png) { throw "uninstall left $png" }
+      # Clack's own toasts (internal/ui notify_windows_test.go): the WinRT
+      # notifier shows a fakeslack DM's toast, UI Automation types into its
+      # reply box and clicks a second DM's toast in Notification Center, and
+      # Clack sends the reply and opens the DM.
+      - name: Clack's toasts (a fakeslack DM's toast clicked opens the DM; the reply box sends)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+          CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
+        run: go test -count=1 -v -timeout 15m -run '^TestWindowsToast' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

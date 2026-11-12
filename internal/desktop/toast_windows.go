@@ -56,6 +56,9 @@ var (
 	iidIToastNotificationFactory         = guid(0x04124b20, 0x82c6, 0x4229, 0xb1, 0x09, 0xfd, 0x9e, 0xd4, 0x66, 0x2b, 0x53)
 	iidIToastNotification2               = guid(0x9dfb9fd1, 0x143a, 0x490e, 0x90, 0xbf, 0xb9, 0xfb, 0xa7, 0x13, 0x2d, 0xe7)
 	iidIToastActivatedEventArgs          = guid(0xe3bf92f3, 0xc197, 0x436f, 0x82, 0x65, 0x06, 0x25, 0x82, 0x4f, 0x8d, 0xac)
+	iidIToastActivatedEventArgs2         = guid(0xab7da512, 0xcc61, 0x568e, 0x81, 0xbe, 0x30, 0x4a, 0xc3, 0x10, 0x38, 0xfa)
+	iidIPropertyValue                    = guid(0x4bd682dd, 0x7554, 0x40e9, 0x9a, 0x9b, 0x82, 0x65, 0x4e, 0xde, 0x7e, 0x62)
+	iidIMapStringObject                  = guid(0x1b0d3570, 0x0877, 0x5ec2, 0x8a, 0x2c, 0x3b, 0x95, 0x39, 0x50, 0x6a, 0xca) // IMap<String, Object>: the ValueSet
 	iidIToastDismissedEventArgs          = guid(0x3f89d935, 0xd9cb, 0x4538, 0xa0, 0xf0, 0xff, 0xe7, 0x65, 0x99, 0x38, 0xf8)
 	iidIToastFailedEventArgs             = guid(0x35176862, 0xcfd4, 0x44f8, 0xad, 0x64, 0xf5, 0x00, 0xfd, 0x89, 0x6c, 0x3b)
 	iidIToastNotificationHistory         = guid(0x5caddc63, 0x01d3, 0x4c97, 0x98, 0x6f, 0x05, 0x33, 0x48, 0x3f, 0xee, 0x14)
@@ -91,9 +94,13 @@ const (
 	vtToast2PutGroup                   = 8
 	vtToast2GetGroup                   = 9
 	vtActivatedArguments               = 6 // IToastActivatedEventArgs
-	vtDismissedReason                  = 6 // IToastDismissedEventArgs
-	vtFailedErrorCode                  = 6 // IToastFailedEventArgs
-	vtHistoryRemoveGroupWithId         = 7 // IToastNotificationHistory
+	vtActivated2UserInput              = 6 // IToastActivatedEventArgs2
+	vtMapLookup                        = 6 // IMap<String, Object>
+	vtMapHasKey                        = 8
+	vtPropertyGetString                = 19 // IPropertyValue
+	vtDismissedReason                  = 6  // IToastDismissedEventArgs
+	vtFailedErrorCode                  = 6  // IToastFailedEventArgs
+	vtHistoryRemoveGroupWithId         = 7  // IToastNotificationHistory
 	vtHistoryRemoveGroupedTagWithId    = 8
 	vtHistoryClearWithId               = 12
 	vtHistory2GetHistoryWithId         = 7 // IToastNotificationHistory2
@@ -433,9 +440,10 @@ type Toast struct {
 	Tag, Group string
 	// Activated gets the activation's arguments: the toast's launch
 	// attribute after a click on its body, or the button's arguments
-	// (activationType="foreground"). It comes only while this process
-	// runs. Any goroutine.
-	Activated func(args string)
+	// (activationType="foreground"), and the text of the inputs named in
+	// Inputs. It comes only while this process runs. Any goroutine.
+	Activated func(args string, inputs map[string]string)
+	Inputs    []string // <input id="…"> to read back (UserInput)
 	// Dismissed gets a ToastDismissalReason. Any goroutine.
 	Dismissed func(reason int)
 	// Failed: Windows didn't show it. Any goroutine.
@@ -487,17 +495,17 @@ func ShowToast(aumid string, t Toast) error {
 				return err
 			}
 		}
-		activated, dismissed, fail := t.Activated, t.Dismissed, t.Failed
+		activated, dismissed, fail, inputs := t.Activated, t.Dismissed, t.Failed, t.Inputs
 		hs := []struct {
 			slot int
 			iid  windows.GUID
 			f    func(args *rtObject)
 		}{
 			{vtToastAddActivated, iidActivatedHandler, func(args *rtObject) {
-				s := activationArgs(args)
+				s, in := activationArgs(args), userInput(args, inputs)
 				go finish(lt)
 				if activated != nil {
-					go activated(s)
+					go activated(s, in)
 				}
 			}},
 			{vtToastAddDismissed, iidDismissedHandler, func(args *rtObject) {
@@ -617,6 +625,55 @@ func activationArgs(args *rtObject) string {
 	}
 	defer h.free()
 	return h.String()
+}
+
+// userInput is IToastActivatedEventArgs2.UserInput's text for ids.
+func userInput(args *rtObject, ids []string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	a, err := args.query(&iidIToastActivatedEventArgs2)
+	if err != nil {
+		return nil
+	}
+	defer a.release()
+	set, err := a.out(vtActivated2UserInput)
+	if err != nil {
+		return nil
+	}
+	defer set.release()
+	m, err := set.query(&iidIMapStringObject)
+	if err != nil {
+		return nil
+	}
+	defer m.release()
+	out := map[string]string{}
+	for _, id := range ids {
+		_ = withHString(id, func(k hstring) error {
+			var has bool
+			if hr := m.call(vtMapHasKey, uintptr(k), uintptr(unsafe.Pointer(&has))); failed(hr) || !has {
+				return nil
+			}
+			v, err := m.out(vtMapLookup, uintptr(k))
+			if err != nil {
+				return nil
+			}
+			defer v.release()
+			pv, err := v.query(&iidIPropertyValue)
+			if err != nil {
+				return nil
+			}
+			defer pv.release()
+			var h hstring
+			if hr := pv.call(vtPropertyGetString, uintptr(unsafe.Pointer(&h))); failed(hr) {
+				return nil
+			}
+			out[id] = h.String()
+			h.free()
+			return nil
+		})
+	}
+	return out
 }
 
 func dismissalReason(args *rtObject) int {
