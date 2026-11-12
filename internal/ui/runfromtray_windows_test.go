@@ -5,6 +5,8 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -43,9 +45,9 @@ type trayTestCWP struct {
 // Gio sends DestroyEvent from WM_DESTROY, while DestroyWindow is still
 // running (WM_NCDESTROY comes after it, then the HWND goes), so App.Run
 // can return before the window is gone: on the runner by 0.3 to 3.4 ms,
-// in 19 of 50 runs. Two hooks on the window's thread make that gap every
-// run's and give the test the moment DestroyWindow returned:
-// trayTestOnSend holds the window's WM_NCDESTROY for
+// in 19 of 50 runs. Two hooks on the window's thread, set just before
+// Quit (steps 1-4 run without them), make that gap every run's and give
+// the test the moment DestroyWindow returned: trayTestOnSend holds the window's WM_NCDESTROY for
 // trayTestNCDestroyHold; trayTestOnGet sees the thread's next message
 // read after it (GetMessage's WM_QUIT, which WM_DESTROY posted), which
 // can only come once DestroyWindow returned to the message loop.
@@ -99,6 +101,20 @@ const (
 	trayTestWMNCDestroy   = 0x0082
 	trayTestNCDestroyHold = 100 * time.Millisecond
 )
+
+// trayTestStacks is the goroutines in Gio's app package or the App, for a
+// timeout's message.
+func trayTestStacks() string {
+	buf := make([]byte, 4<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	var keep []string
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, "gioui.org/app.") || strings.Contains(g, "internal/ui.(*App)") {
+			keep = append(keep, g)
+		}
+	}
+	return strings.Join(keep, "\n\n")
+}
 
 // TestCloseToTrayWindow is runFromTray on a real Windows desktop
 // (CLACK_WINDOWS_TRAY_TESTS=1, ci's windows-applog job): App.Run's own
@@ -164,25 +180,10 @@ func TestCloseToTrayWindow(t *testing.T) {
 			default:
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("timed out waiting for %s", what)
+				t.Fatalf("timed out waiting for %s\n%s", what, trayTestStacks())
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
-	}
-	tid, err := windows.GetWindowThreadProcessId(windows.HWND(hwnd), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gone := make(chan struct{})
-	trayTestDestroy.mu.Lock()
-	trayTestDestroy.hwnd, trayTestDestroy.nc, trayTestDestroy.gone = hwnd, false, gone
-	trayTestDestroy.mu.Unlock()
-	for _, hk := range []struct{ id, proc uintptr }{{trayTestWHCallWndProc, trayTestOnSend}, {trayTestWHGetMessage, trayTestOnGet}} {
-		h, _, err := trayTestSetHook.Call(hk.id, hk.proc, 0, uintptr(tid))
-		if h == 0 {
-			t.Fatalf("SetWindowsHookEx(%d): %v", hk.id, err)
-		}
-		defer trayTestUnhook.Call(h)
 	}
 	visible := func() bool { r, _, _ := trayTestIsVisible.Call(hwnd); return r != 0 }
 	exists := func() bool { r, _, _ := trayTestIsWindow.Call(hwnd); return r != 0 }
@@ -208,7 +209,7 @@ func TestCloseToTrayWindow(t *testing.T) {
 	select {
 	case <-ran:
 	case <-time.After(10 * time.Second):
-		t.Fatal("work posted while hidden didn't run")
+		t.Fatalf("work posted while hidden didn't run\n%s", trayTestStacks())
 	}
 	a.Invalidate()
 	time.Sleep(time.Second)
@@ -231,6 +232,21 @@ func TestCloseToTrayWindow(t *testing.T) {
 	}
 
 	// 5. Quit Clack while hidden: the window closes and Run returns
+	tid, err := windows.GetWindowThreadProcessId(windows.HWND(hwnd), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := make(chan struct{})
+	trayTestDestroy.mu.Lock()
+	trayTestDestroy.hwnd, trayTestDestroy.nc, trayTestDestroy.gone = hwnd, false, gone
+	trayTestDestroy.mu.Unlock()
+	for _, hk := range []struct{ id, proc uintptr }{{trayTestWHCallWndProc, trayTestOnSend}, {trayTestWHGetMessage, trayTestOnGet}} {
+		h, _, err := trayTestSetHook.Call(hk.id, hk.proc, 0, uintptr(tid))
+		if h == 0 {
+			t.Fatalf("SetWindowsHookEx(%d): %v", hk.id, err)
+		}
+		defer trayTestUnhook.Call(h)
+	}
 	a.Quit()
 	select {
 	case err := <-done:
@@ -238,12 +254,12 @@ func TestCloseToTrayWindow(t *testing.T) {
 			t.Errorf("Run: %v", err)
 		}
 	case <-time.After(60 * time.Second):
-		t.Fatal("Quit didn't end Run")
+		t.Fatalf("Quit didn't end Run\n%s", trayTestStacks())
 	}
 	select {
 	case <-gone: // DestroyWindow returned
 	case <-time.After(60 * time.Second):
-		t.Fatal("the window's thread never read a message after its WM_NCDESTROY")
+		t.Fatalf("the window's thread never read a message after its WM_NCDESTROY\n%s", trayTestStacks())
 	}
 	if exists() {
 		t.Error("the window outlived Quit")
