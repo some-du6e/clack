@@ -213,8 +213,23 @@ func (m *InviteModal) Guest() bool { return m.typ.Guest() }
 // Type is the picked invite type.
 func (m *InviteModal) Type() core.InviteType { return m.typ }
 
+// teamName is the workspace's name, read again until it is known (the
+// modal can open before the team loads).
+func (m *InviteModal) teamName() string {
+	if m.team != "" {
+		return m.team
+	}
+	if a := m.h.Core(); a != nil {
+		a.S.RLock()
+		m.team = strings.TrimSpace(a.S.TeamName)
+		a.S.RUnlock()
+	}
+	return m.team
+}
+
 // Title is InviteForm's title (tS).
 func (m *InviteModal) Title() string {
+	m.teamName()
 	if m.Requesting() {
 		return nsInviteWS.T("Request invitations to {workspaceName}", "workspaceName", m.team)
 	}
@@ -620,7 +635,7 @@ func (m *InviteModal) refilterChannels() {
 
 func (m *InviteModal) showSummary(res []core.InviteResult, requesting bool) {
 	m.modal.Close()
-	openInviteSummary(m.h, m.source, m.team, res, requesting, m.chans)
+	openInviteSummary(m.h, m.source, m.teamName(), res, requesting, m.chans)
 }
 
 // ---- events ----
@@ -1542,7 +1557,9 @@ func openInviteSummary(h Host, source, team string, res []core.InviteResult, req
 		return true
 	}}
 	done := &ModalButton{Label: nsAddToSlack.T("Done"), Kind: BtnPrimary, Do: func() bool { return true }}
-	s.modal = NewModal(h, ModalOpts{Width: 520, HeadH: 8, Body: s.layout, Buttons: []*ModalButton{more, done}, AutoFocus: done,
+	// .p-add_to_slack_confirmation__base_modal hides the header, the
+	// close button with it (Escape and Done close it)
+	s.modal = NewModal(h, ModalOpts{Width: 520, HeadH: 8, NoClose: true, Body: s.layout, Buttons: []*ModalButton{more, done}, AutoFocus: done,
 		FooterLeft: s.footerLeft})
 	h.ShowOverlay(s)
 	return s
