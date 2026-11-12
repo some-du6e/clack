@@ -1544,6 +1544,26 @@ func TestSearchShots(t *testing.T) {
 		d.press(key.NameTab)
 		shot(d, "search-popover-toolbar-focus-"+mode)
 
+		// gap-w5: setText (↓ onto a recent search shows it in the box, its
+		// in: ref a token), then the offline notice
+		e.fs.SetSearchHistory("alpha launch", "roadmap in:<#"+chs[1]+"|"+e.h.a.ConvRef(chs[1]).Name+">")
+		stp := NewSearchPopover(e.h, "", image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: stp, dark: dark}
+		d.until(t, "the snapshot for setText", func() bool { return stp.snapOK })
+		stp.history.Click()
+		d.until(t, "the recent searches", func() bool { return len(srTitles(stp.rows, srRQuery)) == 2 })
+		d.press(key.NameDownArrow)
+		shot(d, "search-popover-settext-"+mode)
+		d.press(key.NameDownArrow)
+		shot(d, "search-popover-settext-token-"+mode)
+		onl := srClientOnline
+		srClientOnline = func(Host) bool { return false }
+		ofp := NewSearchPopover(e.h, fakeslack.SearchWord, image.Rectangle{})
+		d = &srDrv{size: image.Pt(1280, 800), w: ofp, dark: dark}
+		d.until(t, "offline suggestions", func() bool { return ofp.snapOK && len(ofp.rows) > 0 })
+		shot(d, "search-popover-offline-"+mode)
+		srClientOnline = onl
+
 		fm := openSearchFeedback(e.h, srFeedbackOpts{feedbackType: "omniswitcher", query: fakeslack.SearchWord})
 		fm.Pick(1)
 		fm.SetText("The channel I was looking for didn't come up.")
