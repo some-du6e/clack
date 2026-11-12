@@ -24,8 +24,8 @@ calls; no content was kept.
 | Results: Messages | `search.modules.messages` | the base args\* + search_exclude_bots and search_only_my_channels (the user prefs), spell_correction FUZZY_MATCH, search_only_team "", facets_result_count 5, query_refinement_suggestions_version 1, recent_channels, sort score/timestamp, sort_dir desc/asc, max_filter_suggestions 10, request_context `{"active_cid","recent_filter_in","recent_filter_from"}`, search_tab_filter, search_tab_sort; Exact matches only adds search_exact_matches_only; Exclude archived (search_explore_freshness_signals) channel_type exclude_archived. The answer's unfiltered_result_count / unfiltered_result_filter drive "Search without filters" |
 | Results: DMs | `search.modules.dms` | the base args, count 40 |
 | Results: Files / Canvases | `search.modules.files` | the base args (count 0 when only counting), the two prefs, search_only_team, facets_result_count, sort: the Sort select (getSortParams; Most relevant score desc by default), timestamp desc when only counting, max_filter_suggestions, request_context, search_tab_*; Canvases queries `type:quip <q>` |
-| Results: Channels | `search.modules.channels` | the base args, count 20, search_only_my_channels, channel_type all, external_shared_team_ids, exclude_my_channels 0, request_context, spell_correction, sort: the Sort select (relevant desc by default; name, created, member_count asc/desc), search_only_team |
-| Results: People | `search.modules.people` | the base args, count 20, tz, external_shared_team_ids, custom_fields `{}`, hide_deactivated_users 0, request_context, spell_correction, sort: the Sort select (relevant desc by default; name asc/desc), search_only_team, profile_* "" |
+| Results: Channels | `search.modules.channels` | the base args, count 20, search_only_my_channels (the pref), channel_type (Channel type: all, private_exclude for Public, private, archived, external_shared for External), external_shared_team_ids, exclude_my_channels (+!!search_hide_my_channels: All channels > Other channels), request_context, spell_correction, sort: the Sort select (relevant desc by default; name, created, member_count asc/desc), search_only_team |
+| Results: People | `search.modules.people` | the base args, count 20, tz, external_shared_team_ids, custom_fields `{}`, hide_deactivated_users (+!!search_hide_deactivated_users), request_context, spell_correction, sort: the Sort select (relevant desc by default; name asc/desc), search_only_team, profile_title / profile_location (the Title and Location pills, comma-joined), profile_celebration (More > Celebration), profile_division / profile_department "", account_type unless Any account type (cX/T Dx: owners "0,1", guests "4,5,8", …). The answer's filter_suggestions title / location ({value, facet_count, checked}) are the pills' Suggestions |
 | ⌘F search in channel | `search.modules.messages` | query `in:<#C> <q>`, count 10, search_context search_in_channel, search_exclude_bots false, sort score/desc, timestamp/desc or timestamp/asc |
 | Give feedback (popover, results page, no-results state) | `feedback.submitEnterpriseSearchFeedback` | type `feedback`, feedback_type `omniswitcher` or `search`, text, contact, category, query, payload (JSON), is_test false |
 | Give feedback (search in channel) | `search.feedback` | client_token, type `search`, payload (JSON); Slack opens its dialog for the token |
@@ -84,11 +84,10 @@ include:
   "Display options: Show as a left sidebar".
 - Slackbot / AI answers on the results page and in the popover.
 - Help Center rows in the blank slate, and the setup tip card.
-- The Messages pill's four-colour Slack logo (icons are owned elsewhere;
-  it uses the monochrome slack-logo).
-- Filters on the Channels and People tabs (channel_type, profile fields);
-  Files, Canvases and DMs have Slack's pills since exp-search, and every
-  tab but DMs its Sort select.
+- The Organizations filter (Channels' pill, People's More row): it lists
+  the connected orgs, which core doesn't load. The Title and Location
+  menus have no search field yet (gap-w6 built the rest of both tabs'
+  filters).
 - in:'s group DMs, sections and workspaces; the toolbar's Open in new
   window (Clack has one window); an emoji filter value's image (it reads
   as ":name:").
