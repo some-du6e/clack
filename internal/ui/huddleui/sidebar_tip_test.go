@@ -222,7 +222,7 @@ func TestSidebarTooltipShots(t *testing.T) {
 				theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, th.C.SidebarBg)
 				rowH := gtx.Dp(28)
 				defer op.Offset(image.Pt(0, gtx.Constraints.Max.Y-rowH-gtx.Dp(8))).Push(gtx.Ops).Pop()
-				right := gtx.Constraints.Max.X - gtx.Dp(14)
+				right := gtx.Constraints.Max.X/2 + gtx.Dp(60) // room for the tip on both sides
 				l := draw(gtx, right, rowH)
 				fs := gtx.Dp(hdrFace)
 				anchor := image.Rect(l, (rowH-fs)/2, l+fs+fs*19/20, (rowH+fs)/2)
