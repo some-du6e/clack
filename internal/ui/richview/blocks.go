@@ -276,6 +276,9 @@ func (l *lay) block(b *richtext.Block, x, y, w int, edited bool) int {
 // blocks lays out bs at (x, y) in width w and returns the height.
 func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 	y0 := y
+	if top && !l.inAtt {
+		bs = l.arrangeWorkObjects(bs) // where MessageFiles / MessageKitAttachments draw them (workobject.go)
+	}
 	edited, editedAfter := -1, -1
 	if top && l.opts.Edited {
 		edited, editedAfter = editedPlace(bs)
@@ -334,13 +337,39 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 				files = append(files, bs[j].File)
 				j++
 			}
-			mh, shown := l.fileMeta(files, x, y, w)
+			// rearranged work objects share the files' line and toggle
+			k := j
+			if l.st.woFlags.Rearrange {
+				for k < len(bs) && isWorkObjectBlock(&bs[k]) {
+					k++
+				}
+			}
+			mh, shown := l.fileMetaWith(files, k-j, x, y, w)
 			y += mh
 			if !shown {
 				y -= l.dp(4) // collapsed: only the line
-				i, prev = j-1, j-1
+				i, prev = k-1, k-1
 				continue
 			}
+		}
+		// work object cards (workobject.go): MessageKitAttachments' group,
+		// or rearranged into MessageFiles' gallery after the files
+		if isWorkObjectBlock(b) && top && !l.inAtt {
+			var grp []*richtext.Block
+			j := i
+			for j < len(bs) && isWorkObjectBlock(&bs[j]) {
+				grp = append(grp, &bs[j])
+				j++
+			}
+			files := 0
+			if l.st.woFlags.Rearrange {
+				for k := i - 1; k >= 0 && bs[k].Kind == richtext.FileBlock; k-- {
+					files++
+				}
+			}
+			y += l.workObjectGroup(grp, x, y, w, files)
+			i, prev = j-1, j-1
+			continue
 		}
 		// Slack's FileGallery: consecutive visual files (images, videos)
 		// lay out as one media gallery.

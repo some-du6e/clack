@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/font"
 
+	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -89,12 +90,23 @@ func firstNonEmptyStr(s ...string) string {
 // fileMeta lays out the meta line for files at (x, y) and returns its
 // height (with the 4px under it) and whether the files are shown.
 func (l *lay) fileMeta(files []*richtext.File, x, y, w int) (int, bool) {
+	return l.fileMetaWith(files, 0, x, y, w)
+}
+
+// fileMetaWith is fileMeta with wos work object cards in the gallery
+// too (work_objects_rearrangement): renderMetaText counts them, "{n}
+// attachments" for more than one item.
+func (l *lay) fileMetaWith(files []*richtext.File, wos, x, y, w int) (int, bool) {
 	p := &l.st.Palette
 	expanded := l.filesExpanded(files)
 	lineH := l.dp(fileMetaLineH)
 	fs := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: lineH, col: p.Text2,
 		emoji: l.dp(16), maxLines: 1, ellipsis: true}
-	_, tw := l.plainFlow(fileMetaText(files, expanded), x, y, max(w-l.dp(24), l.dp(40)), &fs, -1)
+	label := fileMetaText(files, expanded)
+	if wos > 0 {
+		label = i18n.T("files", "{fileCount, plural, =1 {attachment} other {# attachments}}", "fileCount", len(files)+wos)
+	}
+	_, tw := l.plainFlow(label, x, y, max(w-l.dp(24), l.dp(40)), &fs, -1)
 	endX := x + tw
 	if n := len(l.d.lines); n > 0 {
 		if ln := l.d.lines[n-1]; ln.f1 > ln.f0 {

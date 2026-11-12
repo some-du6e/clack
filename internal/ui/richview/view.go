@@ -314,6 +314,9 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
 			b := &v.d.boxes[i]
+			if b.comp < 0 {
+				continue // a hover layer's: drawn with its layer (drawHoverLayers)
+			}
 			if (b.target == v.hover || b.tgTo > b.target && v.hover > b.target && v.hover <= b.tgTo) && b.hover.A > 0 {
 				switch b.kind {
 				case bBorder:
@@ -383,6 +386,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.drawCopyButtons(gtx, st)
+	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
 	if v.opts.Dim {
 		opac.Pop()
@@ -591,6 +595,9 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 	for i := range v.d.boxes {
 		if b := &v.d.boxes[i]; b.layer == 0 && b.comp == comp {
 			v.drawBox(ops, b, css)
+			if comp < 0 && b.target >= 0 && b.target == v.hover && b.hover.A > 0 { // a hover layer's hovered button
+				fillRadii(ops, b.r, [4]int{b.radius, b.radius, b.radius, b.radius}, b.hover)
+			}
 		}
 	}
 	if css {
@@ -1265,6 +1272,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tHuddleJoin:
 		if hj, ok := h.(HuddleJoiner); ok && tg.id != "" {
 			hj.JoinHuddle(tg.id)
+		}
+	case tWorkObject:
+		if wh, ok := h.(WorkObjectHandler); ok && tg.att != nil {
+			wh.WorkObject(v.woEvent(tg, anchor))
 		}
 	case tCollapse:
 		if tg.img != nil && v.collapsed != nil {

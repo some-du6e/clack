@@ -12,6 +12,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/uipref"
+	"github.com/some-du6e/clack/internal/workobject"
 )
 
 // ---------- display list ----------
@@ -134,6 +135,7 @@ const (
 	tRemove     // an unfurl's remove button (id: the attachment id)
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
+	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
 )
 
 type target struct {
@@ -163,6 +165,8 @@ type target struct {
 	// the image viewer; a right-click is the card's, as in Slack, where
 	// the image has no context menu of its own.
 	inCard bool
+	// wob is a tWorkObject footer button's primary action.
+	wob *workobject.Button
 }
 
 type hit struct {
@@ -199,6 +203,27 @@ type display struct {
 	overlayIcons []overlayIcon
 	// spinners are InfiniteSpinners drawn every frame (pending uploads)
 	spinners []spinPrim
+	// hovers are the primitives drawn only while a card is hovered (a
+	// work object card's hovered subtitle, actions bar and Refresh):
+	// those with comp == -(index+1)
+	hovers []hoverLayer
+}
+
+// hoverLayer is drawn while the View's hovered target is in card..cardTo
+// and outside skip..skipTo (the actions bar's own buttons, which hide
+// the hovered subtitle, as Slack's isActionsBarHovered does).
+type hoverLayer struct {
+	card, cardTo int16
+	skip, skipTo int16
+	bar          bool // the actions bar itself: shown over its own buttons too
+}
+
+// shown reports whether the layer draws with target t hovered.
+func (h *hoverLayer) shown(t int16) bool {
+	if t < 0 || h.card < 0 || t < h.card || t > h.cardTo {
+		return false
+	}
+	return h.bar || t < h.skip || t > h.skipTo
 }
 
 // slot is a run of interactive elements the owner draws (Options.Elements).
@@ -226,6 +251,7 @@ func (d *display) reset() {
 	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]
 	d.spinners = d.spinners[:0]
+	d.hovers = d.hovers[:0]
 }
 
 func (d *display) addTarget(t target) int16 {

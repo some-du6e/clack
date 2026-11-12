@@ -247,6 +247,14 @@ type Attachment struct {
 	ChannelTeam        string `json:"channel_team,omitempty"`
 	IsReplyUnfurl      bool   `json:"is_reply_unfurl,omitempty"`
 	IsThreadRootUnfurl bool   `json:"is_thread_root_unfurl,omitempty"`
+
+	// Work object unfurls (internal/workobject): the entity an app
+	// unfurled the link as (BOLE getWorkObject: work_object_entity, else
+	// work_object) and the app's unfurl URL (app_unfurl_url).
+	WorkObjectEntity json.RawMessage `json:"work_object_entity,omitempty"`
+	WorkObject       json.RawMessage `json:"work_object,omitempty"`
+	AppUnfurlURL     string          `json:"app_unfurl_url,omitempty"`
+	AppID            string          `json:"app_id,omitempty"`
 }
 
 // User is a (subset of a) Slack user object.

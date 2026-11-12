@@ -239,6 +239,10 @@ type Style struct {
 
 	// flatHeadings is Slack's p-header_block--flat_scale (SetFlatHeadings).
 	flatHeadings bool
+	// woFlags are the work object cards' experiments (SetWorkObjects);
+	// WorkObjects, if set, is their live state (refreshes, comments).
+	woFlags     WorkObjectFlags
+	WorkObjects WorkObjectSource
 
 	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped
