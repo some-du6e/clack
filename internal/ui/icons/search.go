@@ -9,6 +9,14 @@ package icons
 // lines whose ends hide in its frames, as move-to-split-view's is. Slack's
 // user-directory is Clack's "directories" (slack.go).
 func init() {
+	// The results page's More > Celebration (search-filters_tsx, build
+	// d3de3a487b1c): emoji-celebration, a gift box with its bow, on the
+	// centrelines of Slack's outline (IoU 0.964, ink within 2%)
+	reg("emoji-celebration",
+		s("M3.75 7 H16.25 A1 1 0 0 1 17.25 8 V10.75 H2.75 V8 A1 1 0 0 1 3.75 7 Z"),
+		s("M3.5 10.75 V16.75 A1 1 0 0 0 4.5 17.75 H15.5 A1 1 0 0 0 16.5 16.75 V10.75"), s("M10 7 V17.75"),
+		s("M10.1 6.4 C9.85 4.8 9.35 3.45 8.6 2.55 C7.85 1.7 6.6 1.45 5.5 2.1 C4.75 2.55 4.55 3.25 4.6 3.75 C4.65 4.4 4.95 4.95 5.45 5.35 C6.4 6.05 8.1 6.4 10.1 6.4 Z"),
+		s("M10.1 6.4 C10.45 5.1 11 4.4 11.4 4.1 C12.3 3.35 13.4 3.15 14.05 3.5 C14.6 3.8 14.75 4.6 14.25 5.25 C13.55 6 12.4 6.35 10.1 6.4 Z"))
 	// Search in channel: three lines of text and a magnifier
 	reg("quick-switch",
 		s("M2.25 4.25 H14.75"), s("M2.25 8 H7.75"), s("M2.25 11.75 H6.25"), s("M2.25 15.5 H7.75"),
