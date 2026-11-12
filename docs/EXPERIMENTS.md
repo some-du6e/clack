@@ -31,7 +31,7 @@ plumbing that lets Clack and its plugins follow them, and the work left, by area
 | C: not read by the client | 1000 |
 | **All assignments** | **1,609** |
 
-609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 95 today (the Clack column cites where).
+609 of the account's experiments are read by Slack's client. Of the 197 A experiments, Clack reads 117 today (the Clack column cites where; counted 2026-11-11 on branch work-objects).
 
 ## 2026-11-11 refresh (build 274f7c7f1b69)
 
