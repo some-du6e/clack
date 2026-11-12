@@ -77,6 +77,20 @@ func testWindow(t *testing.T) uintptr {
 	return hwnd
 }
 
+// flashHeard pumps the test window's messages (the flash's on and off
+// toggles run on its thread, as its timer) until the shell hears hwnd's
+// HSHELL_FLASH, or d passes.
+func flashHeard(hook *uiatest.ShellHook, hwnd uintptr, d time.Duration) bool {
+	end := time.Now().Add(d)
+	for time.Now().Before(end) {
+		pump(50 * time.Millisecond)
+		if hook.WaitFlash(hwnd, 10*time.Millisecond) {
+			return true
+		}
+	}
+	return false
+}
+
 // pump runs the thread's messages for d.
 func pump(d time.Duration) {
 	var m [48]byte
@@ -177,8 +191,7 @@ func TestTaskbarFlashAndRevive(t *testing.T) {
 	}
 	hook.Drain()
 	FlashFrame(hwnd, true)
-	pump(200 * time.Millisecond)
-	if !hook.WaitFlash(hwnd, 5*time.Second) {
+	if !flashHeard(hook, hwnd, 5*time.Second) {
 		t.Fatalf("no HSHELL_FLASH for the window after FlashFrame(true); the shell hook heard %v", hook.Seen())
 	}
 	FlashFrame(hwnd, false)
@@ -206,8 +219,7 @@ func TestTaskbarFlashAndRevive(t *testing.T) {
 	}
 	hook.Drain()
 	FlashFrame(hwnd, true)
-	pump(200 * time.Millisecond)
-	if !hook.WaitFlash(hwnd, 5*time.Second) {
+	if !flashHeard(hook, hwnd, 5*time.Second) {
 		t.Fatalf("no HSHELL_FLASH for the revived window; the shell hook heard %v", hook.Seen())
 	}
 	pump(500 * time.Millisecond)
