@@ -200,17 +200,7 @@ func TestPluginsPrefsShots(t *testing.T) {
 		// and the All pill's left edge were cut at the controls' left
 		// edge): Slack's ring, box-shadows 5px outside the field, shows
 		// whole in the panel's 28px padding
-		e.r.Queue(pointerMove(image.Pt(e.size.X/2, e.size.Y/2)))
-		e.frame()
-		e.frame()
-		org := pm.org.get(image.Pt(-1, -1))
-		if org == image.Pt(-1, -1) {
-			t.Fatal("the dialog's origin isn't known after a pointer move over it")
-		}
-		// org is the tabs' (16, 17); the page's content box is at (249, 21)
-		cx, cy := org.X+249-16, org.Y+21-17
-		field := image.Rect(cx, cy+pp.searchY, cx+pp.searchW, cy+pp.searchY+36)
-		e.click(field.Min.Add(field.Size().Div(2)))
+		pp.focusSearch = true
 		e.until("the search field focused", 5*time.Second, func() bool { return pp.searchFocused })
 		shot("plugins-search-focused-" + mode)
 		if e.gpu != nil {
@@ -218,20 +208,57 @@ func TestPluginsPrefsShots(t *testing.T) {
 			if err := e.gpu.Screenshot(img); err != nil {
 				t.Fatal(err)
 			}
-			// the ring's band left of the field, away from its corners:
-			// otl-hgl-1 and its 30% halo are blue over the dialog
-			ring := 0
-			strip := image.Rect(field.Min.X-5, field.Min.Y+8, field.Min.X, field.Max.Y-8)
-			for y := strip.Min.Y; y < strip.Max.Y; y++ {
-				for x := strip.Min.X; x < strip.Max.X; x++ {
-					if c := img.RGBAAt(x, y); int(c.B)-int(c.R) >= 20 {
-						ring++
+			// the ring is otl-hgl-1 and its 30% halo, blue over the dialog:
+			// its top band is the first long run of blue rows
+			blue := func(x, y int) bool { c := img.RGBAAt(x, y); return int(c.B)-int(c.R) >= 20 }
+			row := func(y int) (n, l, r int) {
+				l = -1
+				for x := 0; x < e.size.X; x++ {
+					if blue(x, y) {
+						n++
+						if l < 0 {
+							l = x
+						}
+						r = x
+					}
+				}
+				return
+			}
+			top, bottom, left, right := -1, -1, 0, 0
+			for y := 0; y < e.size.Y; y++ {
+				if n, l, r := row(y); n >= 400 {
+					if top < 0 {
+						top, left, right = y, l, r
+					}
+					if y-top < 70 {
+						bottom = y
 					}
 				}
 			}
-			t.Logf("%s: field %v, %d ring pixels in %v", mode, field, ring, strip)
-			if ring < strip.Dx()*strip.Dy()*3/4 {
-				t.Errorf("%s: the search field's focus ring is cut on its left: %d of %d pixels in %v", mode, ring, strip.Dx()*strip.Dy(), strip)
+			if top < 0 || bottom-top < 30 {
+				t.Fatalf("%s: no focus ring round the search field (bands %d..%d)", mode, top, bottom)
+			}
+			// its two sides, away from the corners: the top band is inset by
+			// the corner on both ends, so the right side's outer edge (on a
+			// middle row) gives the inset, and the left side should sit as
+			// far out from the band's start; that one was cut
+			_, _, outer := row((top + bottom) / 2)
+			inset := outer - right
+			band := func(x0 int) int {
+				n := 0
+				for y := top + 10; y < bottom-10; y++ {
+					for x := x0; x < x0+4; x++ {
+						if blue(x, y) {
+							n++
+						}
+					}
+				}
+				return n
+			}
+			l, r := band(left-inset), band(outer-3)
+			t.Logf("%s: ring rows %d..%d, x %d..%d; side bands %d (left) and %d (right)", mode, top, bottom, left, right, l, r)
+			if r == 0 || l < r*3/4 {
+				t.Errorf("%s: the search field's focus ring is cut on its left: side bands %d (left) vs %d (right)", mode, l, r)
 			}
 		}
 

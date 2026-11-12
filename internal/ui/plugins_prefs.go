@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 
@@ -250,6 +251,7 @@ type pluginsPage struct {
 	// content box (unscrolled), and whether it has the focus (tests)
 	searchY, searchW int
 	searchFocused    bool
+	focusSearch      bool // focus the search field in the next frame
 }
 
 func newPluginsPage(a *App, tp *tautPage, openTab func(string)) *pluginsPage {
@@ -427,6 +429,10 @@ func (pp *pluginsPage) pluginList(f *flow, ps []unifiedPlugin) {
 	fs := pp.filters(ps)
 	pp.searchY, pp.searchW = f.y, f.w
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		if pp.focusSearch {
+			gtx.Execute(key.FocusCmd{Tag: &p.query})
+			pp.focusSearch = false
+		}
 		pp.searchFocused = gtx.Focused(&p.query)
 		return tp.input(gtx, &p.query, f.w, gtx.Dp(36), "Search plugins", false)
 	})

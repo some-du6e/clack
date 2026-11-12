@@ -256,7 +256,10 @@ func TestLibraryGroups(t *testing.T) {
 		t.Error("Slick chip")
 	}
 	v.s.filter = "all"
-	if !v.matches(clear, []string{"slick", "privacy"}) || v.matches(gs[1], []string{"slick"}) {
+	// a row matches when one of its entries does, by name ("clearurls" is
+	// the Slick entry's) or description, never by a system's or a
+	// category's name alone (libraryRank)
+	if !v.matches(clear, []string{"clearurls"}) || v.matches(clear, []string{"slick", "privacy"}) || v.matches(gs[1], []string{"slick"}) {
 		t.Error("search across a row's entries")
 	}
 }

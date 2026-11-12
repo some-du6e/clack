@@ -42,11 +42,12 @@ const (
 // draws.
 var mpGreen = color.NRGBA{G: 0xff, A: 0xff}
 
-func mpAvatarPNG() []byte {
+// mpPNG is a 48px square of c.
+func mpPNG(c color.NRGBA) []byte {
 	im := image.NewNRGBA(image.Rect(0, 0, 48, 48))
 	for y := 0; y < 48; y++ {
 		for x := 0; x < 48; x++ {
-			im.SetNRGBA(x, y, mpGreen)
+			im.SetNRGBA(x, y, c)
 		}
 	}
 	var b bytes.Buffer
@@ -94,12 +95,14 @@ func TestSlickViewMentionProfilesFromLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
-	avatar := mpAvatarPNG()
+	// Verity's avatar is green; every other picture flat gray (the fake's
+	// own gradients have green corners)
+	avatar, gray := mpPNG(mpGreen), mpPNG(color.NRGBA{R: 0x88, G: 0x88, B: 0x88, A: 0xff})
 	fs.SetImages(func(path string) ([]byte, string, bool) {
 		if strings.Contains(path, "avatars.slack-edge.com") {
 			return avatar, "image/png", true
 		}
-		return nil, "", false
+		return gray, "image/png", true
 	})
 	home := t.TempDir()
 	t.Setenv("CLACK_HOME", home)

@@ -120,6 +120,12 @@ func (fh *findHarness) search(t *testing.T, q string, n int) {
 		t.Fatalf("Search in thread is %v, want Slack Kit's 36px IconButton", b)
 	}
 	fh.click(b.Min.Add(b.Size().Div(2)))
+	// the pointer leaves the button, and its tooltip goes with it (the
+	// shots show the bar's "1 of 3", not the tip over it)
+	fh.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(10, 400), Time: fh.clock + 10*time.Millisecond})
+	for k := 0; k < 3; k++ {
+		fh.frame()
+	}
 	if tv.FindBar().Empty() {
 		t.Fatal("clicking Search in thread didn't open the bar")
 	}

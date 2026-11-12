@@ -623,7 +623,12 @@ func cssEnv() css.Env {
 // --- queries (all nil-safe) ---
 
 // Active reports that some rule applies to this widget or its ancestry.
-func (s Styled) Active() bool { return s.s != nil && (s.s.set|s.s.inh) != 0 }
+func (s Styled) Active() bool {
+	// a ::before or ::after counts: a rule may give the native nothing but
+	// generated content (MentionProfiles' picture before the mention's
+	// name), which Wrap draws
+	return s.s != nil && ((s.s.set|s.s.inh) != 0 || s.s.before != nil || s.s.after != nil)
+}
 
 // Style is the computed style, or nil when no CSS is active.
 func (s Styled) Style() *css.Style {
