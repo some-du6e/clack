@@ -31,6 +31,8 @@ func TestHuddleShotsAudit(t *testing.T) {
 		t.Fatalf("title %q / %q", title, sub)
 	}
 
+	withPictures(e) // the raise-hand half of the sticker pair is Slack's emoji image
+	loadPictures(t, e, 620, 400, func(gtx C) { e.w.layout(gtx) })
 	img := render(t, "audit-window", 620, 400, func(gtx C) { e.w.layout(gtx) })
 	// the compact window: Leave ends the centred toolbar row, after ⋯
 	right := image.Rect(e.w.moreBtn.Max.X, (400-winFooterH)*shotScale, e.w.moreBtn.Max.X+100*shotScale, (400-5)*shotScale)

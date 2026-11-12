@@ -114,10 +114,13 @@ func TestHuddleShotsInvite(t *testing.T) {
 		t.Fatal(err)
 	}
 	st = s.State()
-	render(t, "invite-toolbar-hand", 620, 60, func(gtx C) {
+	withPictures(e) // the raised hand is Slack's emoji image
+	toolbar := func(gtx C) {
 		theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)
 		e.w.toolbar(gtx, st, image.Rectangle{Max: gtx.Constraints.Max})
-	})
+	}
+	loadPictures(t, e, 620, 60, toolbar)
+	render(t, "invite-toolbar-hand", 620, 60, toolbar)
 	e.w.stick = true
 	render(t, "invite-sticker-picker", 620, 320, func(gtx C) {
 		theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)

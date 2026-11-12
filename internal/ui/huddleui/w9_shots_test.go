@@ -3,10 +3,12 @@ package huddleui
 import (
 	"image"
 	"testing"
+	"time"
 
 	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/huddle"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -114,4 +116,29 @@ func TestHuddleShotsW9(t *testing.T) {
 		})
 		ov.(*quickPicker).Dismiss()
 	}
+}
+
+// withPictures gives a shot env the shots' picture cache, on the hosts
+// and the window's theme, as the real huddle window copies the main
+// theme's images (window.go run): the toolbar's raise-hand and the
+// stickers draw Slack's emoji images.
+func withPictures(e *shotEnv) {
+	e.h.imgs = imgcache.New(shotPictures, "", nil)
+	e.w.th.Images = e.h.imgs
+	e.h.th.Images = e.h.imgs
+}
+
+// loadPictures lays draw out until no picture is pending.
+func loadPictures(t *testing.T, e *shotEnv, w, h int, draw func(gtx C)) {
+	t.Helper()
+	var ops op.Ops
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); {
+		ops.Reset()
+		draw(shotCtx(&ops, w, h))
+		if e.h.imgs.Pending() == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("%d pictures still pending", e.h.imgs.Pending())
 }
