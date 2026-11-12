@@ -228,6 +228,7 @@ func TestHuddleShotsWindowCompact(t *testing.T) {
 			}
 			if people == 2 {
 				e.w.stick = true // the sticker tray
+				settle(t, e, W, H) // its emoji pictures
 				render(t, name+"-tray", W, H, func(gtx C) { e.w.layout(gtx) })
 				e.w.stick = false
 			}

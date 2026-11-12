@@ -340,7 +340,8 @@ func (w *window) stickerPill(gtx C, p huddle.Participant, sz image.Point) {
 			ls := labelSize(gtx, w.th, 13, theme.Bold, label)
 			tw := max(0, rr.Dx()-x-gtx.Dp(10))
 			defer clip.Rect(image.Rect(x, 0, x+tw, rr.Dy())).Push(gtx.Ops).Pop()
-			at(gtx, image.Pt(x, (rr.Dy()-ls.Y)/2), ls, func(gtx C) D { return w.th.Label(gtx, 13, theme.Bold, fg, label) })
+			// .p-huddle_tile_reaction__description: text-overflow ellipsis
+			at(gtx, image.Pt(x, (rr.Dy()-ls.Y)/2), image.Pt(tw, ls.Y), func(gtx C) D { return w.th.Label(gtx, 13, theme.Bold, fg, label) })
 		}
 	}
 	at(gtx, r.Min, r.Size(), func(gtx C) D {
