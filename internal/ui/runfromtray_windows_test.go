@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 
 	"gioui.org/app"
 	"gioui.org/io/event"
@@ -26,13 +28,41 @@ var (
 	trayTestPostMessage = trayTestUser32.NewProc("PostMessageW")
 	trayTestIsVisible   = trayTestUser32.NewProc("IsWindowVisible")
 	trayTestIsWindow    = trayTestUser32.NewProc("IsWindow")
+	trayTestSetHook     = trayTestUser32.NewProc("SetWindowsHookExW")
+	trayTestUnhook      = trayTestUser32.NewProc("UnhookWindowsHookEx")
+	trayTestNextHook    = trayTestUser32.NewProc("CallNextHookEx")
 )
+
+// trayTestCWP is CWPSTRUCT, what a WH_CALLWNDPROC hook gets.
+type trayTestCWP struct {
+	LParam, WParam uintptr
+	Message        uint32
+	HWND           uintptr
+}
+
+// trayTestHoldNCDestroy is a WH_CALLWNDPROC hook on the window's thread
+// that holds WM_NCDESTROY for trayTestNCDestroyHold. Gio sends
+// DestroyEvent from WM_DESTROY, while DestroyWindow is still running
+// (WM_NCDESTROY comes after it, then the HWND goes), so App.Run can
+// return before the window is gone: on the runner by 0.3 to 3.4 ms, in 19
+// of 50 runs. The hook makes that gap every run's.
+var trayTestHoldNCDestroy = syscall.NewCallback(func(code, wParam, lParam uintptr) uintptr {
+	if int32(code) == 0 && (*trayTestCWP)(unsafe.Pointer(lParam)).Message == trayTestWMNCDestroy {
+		time.Sleep(trayTestNCDestroyHold)
+	}
+	r, _, _ := trayTestNextHook.Call(0, code, wParam, lParam)
+	return r
+})
 
 const (
 	trayTestWMClose     = 0x0010
 	trayTestWMSysCmd    = 0x0112
 	trayTestSCClose     = 0xF060
 	trayTestWaitTimeout = 30 * time.Second
+
+	trayTestWHCallWndProc = 4 // WH_CALLWNDPROC
+	trayTestWMNCDestroy   = 0x0082
+	trayTestNCDestroyHold = 100 * time.Millisecond
 )
 
 // TestCloseToTrayWindow is runFromTray on a real Windows desktop
@@ -105,6 +135,15 @@ func TestCloseToTrayWindow(t *testing.T) {
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	}
+	tid, err := windows.GetWindowThreadProcessId(windows.HWND(hwnd), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h, _, err := trayTestSetHook.Call(trayTestWHCallWndProc, trayTestHoldNCDestroy, 0, uintptr(tid)); h == 0 {
+		t.Fatalf("SetWindowsHookEx: %v", err)
+	} else {
+		defer trayTestUnhook.Call(h)
 	}
 	visible := func() bool { r, _, _ := trayTestIsVisible.Call(hwnd); return r != 0 }
 	exists := func() bool { r, _, _ := trayTestIsWindow.Call(hwnd); return r != 0 }

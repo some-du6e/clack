@@ -393,3 +393,48 @@ jobs:
           TEST: TestCloseToTrayWindow
           PKG: ./internal/ui
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
+  flakes-1112b-share:
+    if: ${{ !inputs.only || startsWith('flakes-1112b-share', inputs.only) }}
+    name: "flakes-1112b TestFakeScreenShare (drop first AU: ${{ matrix.drop }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        drop: ["", "1"] # CLACK_FAKE_DROP_FIRST_AU: the fake never gets the first keyframe
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps (internal/huddle's X11 screen share needs the headers)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "TestFakeScreenShare, race detector, every run counted"
+        env:
+          CLACK_FAKE_DROP_FIRST_AU: ${{ matrix.drop }}
+          TEST: TestFakeScreenShare
+          PKG: ./internal/huddle
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race -gcflags=all=-d=checkptr=0
+
+  flakes-1112b-views:
+    if: ${{ !inputs.only || startsWith('flakes-1112b-views', inputs.only) }}
+    name: "flakes-1112b TestDetailsDMAddPeopleCustomHistory"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "TestDetailsDMAddPeopleCustomHistory, race detector, every run counted"
+        env:
+          TEST: TestDetailsDMAddPeopleCustomHistory
+          PKG: ./internal/ui/views
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race

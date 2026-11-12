@@ -47,6 +47,9 @@ type cdTestServer struct {
 	props   string // conversations.info properties (JSON)
 	org     string // enterprise.prefs.get org_prefs (JSON)
 	canSet  string // conversations.canSetProperties props (JSON list; "" the default)
+	// recorded, when set, runs after newW14Env's extra answered a call
+	// and it was recorded
+	recorded func(cdTestCall)
 }
 
 func (s *cdTestServer) seen(method string) []cdTestCall {

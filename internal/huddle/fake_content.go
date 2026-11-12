@@ -47,6 +47,7 @@ type fakeContentIn struct {
 	pliSent   atomic.Bool
 	w, h      atomic.Int32
 	mime      atomic.Value // string
+	dropFirst atomic.Bool  // BEFORE (flakes-1112b): the first access unit never arrives
 }
 
 // FakeContentShare is what the fake saw of your screen share's content
@@ -62,6 +63,7 @@ type FakeContentShare struct {
 	AudioPackets  int64
 	Frames, Keys  int64
 	KeysAfterPLI  int64
+	Packets       int64
 	W, H          int
 	Mime          string
 }
@@ -78,6 +80,7 @@ func (x *Fake) ContentShare() FakeContentShare {
 	c.mu.Unlock()
 	out.AudioPackets = c.audioPkts.Load()
 	out.Frames, out.Keys, out.KeysAfterPLI = c.frames.Load(), c.keys.Load(), c.keysPLI.Load()
+	out.Packets = c.pkts.Load()
 	out.W, out.H = int(c.w.Load()), int(c.h.Load())
 	out.Mime, _ = c.mime.Load().(string)
 	return out
@@ -282,12 +285,17 @@ func (f *fakeChime) recvContent(pc *webrtc.PeerConnection, track *webrtc.TrackRe
 	ct.mime.Store(track.Codec().MimeType)
 	sb := samplebuilder.New(1024, &codecs.H264Packet{}, track.Codec().ClockRate, samplebuilder.WithMaxTimeDelay(time.Second))
 	dec := goh264.NewDecoder()
+	drop := ct.dropFirst.Load()
 	for {
 		pkt, _, err := track.ReadRTP()
 		if err != nil {
 			return
 		}
 		ct.pkts.Add(1)
+		if drop {
+			drop = !pkt.Marker
+			continue
+		}
 		sb.Push(pkt)
 		for s := sb.Pop(); s != nil; s = sb.Pop() {
 			key := hasIDR(s.Data)
