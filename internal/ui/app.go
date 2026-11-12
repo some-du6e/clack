@@ -107,6 +107,9 @@ type Options struct {
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
+	// shaperHold (tests): the startup shaper reaches the UI goroutine only
+	// once it's closed, so the fonts load late.
+	shaperHold <-chan struct{}
 	// NoRealtime keeps Slack's realtime websocket closed whatever the
 	// saved preference says (cmd/clack -no-realtime, CLACK_NO_REALTIME=1).
 	NoRealtime bool
@@ -320,8 +323,8 @@ func New(opts Options, images *imgcache.Cache) *App {
 		// one collection serves both modes; the UI font when its files
 		// are on this computer, else Lato until it has loaded
 		sh, o, pending := startupShaper(stored)
-		if h := shaperReadyHook; h != nil {
-			h()
+		if h := a.opts.shaperHold; h != nil {
+			<-h
 		}
 		a.shaperCh <- [2]*text.Shaper{sh, sh}
 		a.timing("shapers ready", t)
@@ -375,10 +378,6 @@ func (a *App) Invalidate() {
 	default: // one is already queued; it covers this one
 	}
 }
-
-// shaperReadyHook, when set (tests), runs before the startup shaper is
-// handed to the UI goroutine: a test holds it to make the fonts load late.
-var shaperReadyHook func()
 
 // invalidateHook, when set, sees every Invalidate (the idle-frame probe,
 // idle_frames_test.go, names the code that keeps the window drawing). Set

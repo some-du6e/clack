@@ -33,6 +33,7 @@ var (
 	trayTestSetHook     = trayTestUser32.NewProc("SetWindowsHookExW")
 	trayTestUnhook      = trayTestUser32.NewProc("UnhookWindowsHookEx")
 	trayTestNextHook    = trayTestUser32.NewProc("CallNextHookEx")
+	trayTestPostThread  = trayTestUser32.NewProc("PostThreadMessageW")
 )
 
 // trayTestCWP is CWPSTRUCT, what a WH_CALLWNDPROC hook gets.
@@ -48,9 +49,9 @@ type trayTestCWP struct {
 // in 19 of 50 runs. Two hooks on the window's thread, set just before
 // Quit (steps 1-4 run without them), make that gap every run's and give
 // the test the moment DestroyWindow returned: trayTestOnSend holds the window's WM_NCDESTROY for
-// trayTestNCDestroyHold; trayTestOnGet sees the thread's next message
-// read after it (GetMessage's WM_QUIT, which WM_DESTROY posted), which
-// can only come once DestroyWindow returned to the message loop.
+// trayTestNCDestroyHold and posts the thread a WM_APP; trayTestOnGet
+// sees the thread's next message read after it, which can only come once
+// DestroyWindow returned to the message loop.
 var trayTestDestroy struct {
 	mu   sync.Mutex
 	hwnd uintptr       // the window the hooks watch
@@ -70,6 +71,10 @@ var trayTestOnSend = syscall.NewCallback(func(code, wParam, lParam uintptr) uint
 		d.mu.Unlock()
 		if ours {
 			time.Sleep(trayTestNCDestroyHold)
+			// a message for the loop to read once DestroyWindow returned:
+			// GetMessage returns posted ones before WM_QUIT, which the
+			// WH_GETMESSAGE hook didn't always see (9 runs in 50)
+			trayTestPostThread.Call(uintptr(windows.GetCurrentThreadId()), trayTestWMApp, 0, 0)
 		}
 	}
 	r, _, _ := trayTestNextHook.Call(0, code, wParam, lParam)
@@ -99,6 +104,7 @@ const (
 	trayTestWHGetMessage  = 3 // WH_GETMESSAGE
 	trayTestWHCallWndProc = 4 // WH_CALLWNDPROC
 	trayTestWMNCDestroy   = 0x0082
+	trayTestWMApp         = 0x8000
 	trayTestNCDestroyHold = 100 * time.Millisecond
 )
 
@@ -143,9 +149,7 @@ func TestCloseToTrayWindow(t *testing.T) {
 	// The fonts load only once the window is hidden, as on CI's cold first
 	// run (no "first frame painted" before the close): the hidden window
 	// draws no frame to take them, and its wake-ups ran no posted work.
-	fontsHeld, fontsGo := make(chan struct{}), make(chan struct{})
-	shaperReadyHook = func() { close(fontsHeld); <-fontsGo }
-	t.Cleanup(func() { shaperReadyHook = nil })
+	fontsGo := make(chan struct{})
 	var fontsOnce sync.Once
 	releaseFonts := func() { fontsOnce.Do(func() { close(fontsGo) }) }
 	t.Cleanup(releaseFonts)
@@ -154,7 +158,7 @@ func TestCloseToTrayWindow(t *testing.T) {
 	hwnds := make(chan uintptr, 1)
 	var frames atomic.Int64
 	images := imgcache.New(fs.Fetch, "", nil)
-	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), OnWindowEvent: func(e event.Event) {
+	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), shaperHold: fontsGo, OnWindowEvent: func(e event.Event) {
 		switch e := e.(type) {
 		case app.Win32ViewEvent:
 			if e.HWND != 0 {
@@ -206,7 +210,6 @@ func TestCloseToTrayWindow(t *testing.T) {
 		t.Fatal("the close destroyed the window")
 	}
 	until("the RunFromTray balloon", func() bool { return len(tray.got()) == 1 })
-	<-fontsHeld
 	releaseFonts()
 	if b := tray.got()[0]; b[0] != "Why didn’t Clack quit?" {
 		t.Errorf("balloon title %q", b[0])

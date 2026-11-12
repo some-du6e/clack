@@ -197,11 +197,8 @@ func TestDrainIdleRunsPosted(t *testing.T) {
 	// before the fonts load, the first frames drain (as before); once
 	// they have, the wake-up drains though no frame took them (a window
 	// closed to the tray while they loaded: CI, TestCloseToTrayWindow)
-	held, hold := make(chan struct{}), make(chan struct{})
-	shaperReadyHook = func() { close(held); <-hold }
-	t.Cleanup(func() { shaperReadyHook = nil })
-	b := New(Options{ConfigDir: t.TempDir(), NoRealtime: true}, a.images)
-	<-held
+	hold := make(chan struct{})
+	b := New(Options{ConfigDir: t.TempDir(), NoRealtime: true, shaperHold: hold}, a.images)
 	ran = false
 	b.postLazy(func() { ran = true })
 	b.drainIdle()
