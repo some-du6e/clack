@@ -157,10 +157,13 @@ public class ClackDropSource : IClackDropSource {
 
 public static class ClackDrag {
 	[StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+	[DllImport("ole32.dll")] static extern int OleInitialize(IntPtr reserved);
 	[DllImport("ole32.dll")] static extern int DoDragDrop(System.Runtime.InteropServices.ComTypes.IDataObject data, IClackDropSource src, int okEffects, out int effect);
 	[DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
 	[DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
 	public static string Run(int x, int y, string[] files, bool cancel) {
+		int ole = OleInitialize(IntPtr.Zero); // DoDragDrop needs OLE, not just an STA (CO_E_NOTINITIALIZED)
+		if (ole < 0) return String.Format("OleInitialize=0x{0:X8}", ole);
 		var list = new StringCollection();
 		list.AddRange(files);
 		var data = new DataObject();
@@ -182,7 +185,7 @@ func runOLEDrag(t *testing.T, at windows.Point, files []string, cancel bool) str
 	for _, f := range files {
 		quoted = append(quoted, "'"+strings.ReplaceAll(f, "'", "''")+"'")
 	}
-	script := "$ErrorActionPreference = 'Stop'\n" +
+	script := "$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n" +
 		"Add-Type -AssemblyName System.Windows.Forms\n" +
 		"Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'\n" + oleDragCS + "\n'@\n" +
 		fmt.Sprintf("[ClackDrag]::Run(%d, %d, @(%s), $%v)\n", at.X, at.Y, strings.Join(quoted, ", "), cancel)
