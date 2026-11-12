@@ -191,7 +191,6 @@ type App struct {
 
 	views     map[Route]View // cached primary views (instant switch)
 	viewOrder []Route
-	pageShown Route // the page layoutPage drew last (mount.go: PageLeft)
 
 	mu      sync.Mutex
 	pending []func()

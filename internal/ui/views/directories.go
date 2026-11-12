@@ -503,7 +503,7 @@ func (d *Directories) PeopleHero() (shown, button bool) {
 }
 
 // PageLeft is the route moving off Directories (the ui root's
-// layoutPage): Slack unmounts BrowsePeopleView, so the next visit reads
+// afterRoute): Slack unmounts BrowsePeopleView, so the next visit reads
 // the banner's pref again.
 func (d *Directories) PageLeft() {
 	d.pHero, d.heroOff[dirTabPeople] = dirPeopleHero{}, false
@@ -536,8 +536,8 @@ const (
 // "view_once", prefName SEEN_INITIAL_PEOPLE_BROWSER_EDUCATION) over one
 // visit to the People tab. Slack's banner sets the pref when it unmounts
 // (and on close), so it stays up for the rest of the visit; Clack's views
-// are cached, so the pref is read once when a visit starts (a new route
-// visit, PageLeft, or a switch back to the tab) and written the first
+// are cached, so the pref is read once when a visit starts (after PageLeft,
+// or on a switch back to the tab) and written the first
 // time the banner shows.
 type dirPeopleHero struct {
 	started bool // the visit read the pref

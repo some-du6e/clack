@@ -276,6 +276,9 @@ var experimentReads = map[string][]string{
 	"defer_notification_3p_streaming": on,
 	// files
 	"file_trash_updates": on,
+	// Edit profile's photo panes (ui/popups/profile_edit.go epPhotoComp):
+	// any assigned group picks "Add a profile photo"
+	"profile_photo_comp": {"on", "off", "control"},
 	// menus, selects and buttons (ui/popups/experiments.go): the v2 Button,
 	// and two session toggles (enabled for treatment or on)
 	"slack_kit_v2_button":                        on,

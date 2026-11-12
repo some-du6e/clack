@@ -84,7 +84,8 @@ func TestPeopleBrowserInvite(t *testing.T) {
 	e.a.Navigate("directories")
 	e.settle(500 * time.Millisecond)
 	if shown, _ := v.PeopleHero(); shown {
-		t.Error("the banner came back on the next visit")
+		p, _ := fs.Pref("browsers_seen_initial_people_education")
+		t.Errorf("the banner came back on the next visit (seen pref %v)", p)
 	}
 
 	// invites_only_admins without requests: no Invite People, no banner

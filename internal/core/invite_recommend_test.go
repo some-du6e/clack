@@ -25,11 +25,11 @@ func TestInviteRecommendedChannels(t *testing.T) {
 			t.Errorf("channel %+v", c)
 		}
 	}
-	calls := fs.InviteCalls()
-	if len(calls) != 1 || calls[0].Method != "conversations.recommend" {
-		t.Fatalf("calls %+v", calls)
+	calls := fs.RecommendCalls()
+	if len(calls) != 1 || len(fs.InviteCalls()) != 0 {
+		t.Fatalf("recommend calls %+v, invite calls %+v", calls, fs.InviteCalls())
 	}
-	f := calls[0].Form
+	f := calls[0]
 	if f.Get("query") != `[""]` || f.Get("source") != InviteRecommendSource || f.Get("channels_info") != "true" || f.Get("limit") != "10" {
 		t.Errorf("form %v", f)
 	}

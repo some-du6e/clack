@@ -14,7 +14,8 @@ package fakeslack
 //   - users.sharedInvites.list (mode last_active_for_user): the links made
 //     so far, newest first; users.admin.createSharedInvite makes one (30
 //     days, 400 sign-ups) unless InviteLinkError is set.
-//   - conversations.recommend (the modal's "Suggested:" channels): the ids
+//   - conversations.recommend (the modal's "Suggested:" channels, recorded
+//     in RecommendCalls, not InviteCalls): the ids
 //     SetRecommendedChannels gave, else the public channels that aren't
 //     archived or shared, the viewer's first, up to limit, with their
 //     channel objects (channels_info).
@@ -36,7 +37,8 @@ type inviteState struct {
 	calls        []InviteCall
 	links        []map[string]any
 	err, linkErr string
-	recommend    []string // nil: the default list
+	recommend    []string     // nil: the default list
+	recCalls     []url.Values // conversations.recommend's forms
 }
 
 // InviteCall is one invite method call: its method and form.
@@ -72,6 +74,14 @@ func (s *Server) SetInviteLinkError(code string) {
 	s.inv.mu.Lock()
 	s.inv.linkErr = code
 	s.inv.mu.Unlock()
+}
+
+// RecommendCalls returns conversations.recommend's forms so far (not in
+// InviteCalls).
+func (s *Server) RecommendCalls() []url.Values {
+	s.inv.mu.Lock()
+	defer s.inv.mu.Unlock()
+	return append([]url.Values(nil), s.inv.recCalls...)
 }
 
 // SetRecommendedChannels sets conversations.recommend's answer (nil: the
@@ -123,9 +133,12 @@ func (s *Server) handleInvites(method string, f url.Values) (any, bool) {
 			form[k] = append([]string(nil), v...)
 		}
 	}
-	s.inv.calls = append(s.inv.calls, InviteCall{Method: method, Form: form})
+	if method != "conversations.recommend" {
+		s.inv.calls = append(s.inv.calls, InviteCall{Method: method, Form: form})
+	}
 	switch method {
 	case "conversations.recommend":
+		s.inv.recCalls = append(s.inv.recCalls, form)
 		limit, _ := strconv.Atoi(f.Get("limit"))
 		if limit <= 0 {
 			limit = 10

@@ -325,15 +325,10 @@ func TestInviteModalSuggested(t *testing.T) {
 		t.Error("no shimmer while conversations.recommend is out")
 	}
 	ccUntil(t, m, "the recommended channels", func() bool { return !m.RecommendedLoading() })
-	var call *fakeslack.InviteCall
-	for _, c := range fs.InviteCalls() {
-		if c.Method == "conversations.recommend" {
-			call = &c
-		}
-	}
-	if call == nil || call.Form.Get("query") != `[""]` || call.Form.Get("source") != "joiner-preadd-channels" ||
-		call.Form.Get("channels_info") != "true" || call.Form.Get("limit") != "10" {
-		t.Fatalf("conversations.recommend %+v", call)
+	rc := fs.RecommendCalls()
+	if len(rc) != 1 || rc[0].Get("query") != `[""]` || rc[0].Get("source") != "joiner-preadd-channels" ||
+		rc[0].Get("channels_info") != "true" || rc[0].Get("limit") != "10" {
+		t.Fatalf("conversations.recommend %+v", rc)
 	}
 	sugg := m.Suggested()
 	if len(sugg) != 3 {

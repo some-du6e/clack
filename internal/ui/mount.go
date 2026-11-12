@@ -76,15 +76,6 @@ func (a *App) mountProfile(user string) View {
 }
 
 func (a *App) layoutPage(gtx layout.Context, r Route) layout.Dimensions {
-	if r != a.pageShown {
-		// The cached views outlive a visit; a page that keeps state for
-		// one visit (Slack's components unmount on a route change) hears
-		// that it was left.
-		if old, ok := a.views[a.pageShown].(interface{ PageLeft() }); ok {
-			old.PageLeft()
-		}
-		a.pageShown = r
-	}
 	if r == "" {
 		return layout.Dimensions{Size: gtx.Constraints.Max}
 	}
