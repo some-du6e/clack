@@ -270,8 +270,9 @@ func (a *App) List(ctx context.Context, id string) (*ListDoc, error) {
 		d.PinnedViews = old.PinnedViews
 	}
 	st.docs[id] = d
+	c := d.Clone() // under the lock: OpenList and realtime events write the cached doc
 	st.mu.Unlock()
-	return d.Clone(), nil
+	return c, nil
 }
 
 // CachedList is the last loaded state of a list (nil if never loaded).

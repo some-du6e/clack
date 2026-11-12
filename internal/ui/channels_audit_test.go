@@ -362,9 +362,9 @@ func TestChannelLeaveRejoin(t *testing.T) {
 	// it resolves the channel for its header, as a member (CI flake,
 	// 2026-11-11). Do that resolve here, every time: leaving must not leave
 	// that copy behind as the channel's only (non-preview) info.
-	e.a.data.resolved(ch)
 	e.until("the member copy resolved", 10*time.Second, func() bool {
-		ci := e.a.data.ext[ch]
+		// asks again if a "names" event forgot it meanwhile
+		ci := e.a.data.resolved(ch)
 		return ci != nil && !ci.Preview
 	})
 	n := len(e.a.overlays)
