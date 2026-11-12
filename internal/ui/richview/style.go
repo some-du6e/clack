@@ -340,6 +340,10 @@ type Options struct {
 	// HoverCard lays the doc's attachment out as Slack's link preview
 	// hover card (MessageAttachmentDefaultV3HoverCard, unfurl_hover.go).
 	HoverCard bool
+	// WorkObjectDetails lays the doc's work object out as its flexpane's
+	// Details tab (WorkObjectDetails: the full layout's fields and the
+	// "Updated …" line) instead of the card (workobject.go).
+	WorkObjectDetails bool
 	// EditedTS is the message's edited.ts: the "(edited)" label's tooltip
 	// (EditedLabel: "{date} at {time}", tooltip.go editedTip).
 	EditedTS string

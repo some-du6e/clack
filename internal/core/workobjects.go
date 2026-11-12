@@ -197,8 +197,11 @@ func (a *App) WorkObjectCardState(ch, ts, entityID string, latestComment float64
 		refreshing = r.refreshing
 		failed = r.failed && time.Now().Before(r.until)
 	}
-	if latestComment > 0 {
-		newer = latestComment > s.seen[entityID]
+	// hasNewerUnfurlComments: only once the viewer has seen the comments
+	// (the Comments tab dismissed: onCommentsTabDismissed's
+	// latestSeenTimestamp), and one is newer
+	if seen, ok := s.seen[entityID]; ok && latestComment > 0 {
+		newer = latestComment > seen
 	}
 	return
 }
@@ -618,15 +621,21 @@ func (a *App) PostWorkObjectComment(entityID, entityURL string, block json.RawMe
 	}()
 }
 
-// SeeWorkObjectComments records the comments as seen (the Comments tab
-// left, or the card mounted with them: 0Omc C / X): the badge goes.
+// SeeWorkObjectComments is onCommentsTabDismissed (0Omc C): the
+// Comments tab was left, so the latest comment (the card's, or the
+// newest in the flexpane's list) counts as seen and the badge goes.
 func (a *App) SeeWorkObjectComments(entityID string, latest float64) {
-	if entityID == "" || latest <= 0 {
+	if entityID == "" {
 		return
 	}
 	s := a.wo()
 	s.mu.Lock()
-	if s.seen[entityID] >= latest {
+	if c := s.comments[entityID]; c != nil {
+		for _, cm := range c.Comments {
+			latest = max(latest, workobject.Number(cm.Timestamp))
+		}
+	}
+	if old, ok := s.seen[entityID]; ok && old >= latest {
 		s.mu.Unlock()
 		return
 	}

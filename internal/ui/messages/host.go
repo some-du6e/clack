@@ -119,6 +119,8 @@ func styleFor(h Host) *richview.Style {
 	st := styleForTheme(h.Theme(), h.Images())
 	if app := h.Core(); app != nil {
 		st.SetFlatHeadings(flatHeadings(app))
+		st.SetWorkObjects(woStyleFlags(app)) // work object cards (workobjects.go)
+		st.WorkObjects = woSource{app}
 	}
 	return st
 }

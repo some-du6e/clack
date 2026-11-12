@@ -87,7 +87,7 @@ type WorkObjectState struct {
 
 // WorkObjectSource is the host's work object state (Style.WorkObjects).
 type WorkObjectSource interface {
-	WorkObjectState(channel, ts, entityID string) WorkObjectState
+	WorkObjectState(channel, ts string, e *workobject.Entity) WorkObjectState
 }
 
 // WorkObjectAction is what was clicked on a work object card.
@@ -383,6 +383,13 @@ func (l *lay) workObjectGroup(bs []*richtext.Block, x, y, w, files int) int {
 
 // ---- the card ----
 
+// WorkObjectClickOpensURL reports whether a click on e's card opens the
+// item (robR B) rather than its flexpane; prefs is the user's
+// work_objects_click_opens_url_prefs.
+func WorkObjectClickOpensURL(prefs string, e *workobject.Entity) bool {
+	return e != nil && woClickOpensURL(prefs, e.AppID, e.ProductName, e)
+}
+
 // woClickOpensURL is robR B for an app: the user's
 // work_objects_click_opens_url_prefs entry, else true for Google Drive,
 // Microsoft and Box apps without a preview, false for the rest.
@@ -515,7 +522,7 @@ func (l *lay) woCard(b *richtext.Block, x, y, w int, size string, capped bool) i
 	cw = max(cw, l.dp(200))
 	var st WorkObjectState
 	if src := l.st.WorkObjects; src != nil {
-		st = src.WorkObjectState(l.opts.Channel, l.opts.TS, e.EntityID)
+		st = src.WorkObjectState(l.opts.Channel, l.opts.TS, e)
 	}
 	interactive := !l.opts.HoverCard
 	product := e.ProductName
@@ -1400,7 +1407,7 @@ func (l *lay) woActionsBar(att *richtext.Attachment, opensURL, fileNoPreview boo
 // cardState is the host's state for a card in this layout.
 func (l *lay) cardState(att *richtext.Attachment) WorkObjectState {
 	if src := l.st.WorkObjects; src != nil && att.WorkObject != nil && att.WorkObject.E != nil {
-		return src.WorkObjectState(l.opts.Channel, l.opts.TS, att.WorkObject.E.EntityID)
+		return src.WorkObjectState(l.opts.Channel, l.opts.TS, att.WorkObject.E)
 	}
 	return WorkObjectState{}
 }
@@ -1459,4 +1466,164 @@ func (v *View) woEvent(tg *target, anchor image.Point) WorkObjectEvent {
 		}
 	}
 	return ev
+}
+
+// ---- the flexpane's Details tab ----
+
+// woDetails lays out WorkObjectDetails (i4MO) for the entity at (x, y)
+// in w: 20px padding (details__S9LRs), the full layout's fields
+// (ExternalWorkObjectFieldBlocks, full style; the expanded layout's when
+// there's no full one, forceFullLayoutStyle), then the updatedTsFooter
+// ("Updated …" from the entity's ts: a 1px otl-ter top border, 12px over
+// and 16px under 13px content-ter text) when there are fields to date.
+func (l *lay) woDetails(b *richtext.Block, x, y, w int) int {
+	wo := b.Att.WorkObject
+	e := wo.E
+	pad := l.dp(20)
+	y0 := y
+	y += pad
+	x += pad
+	w -= 2 * pad
+	lay := e.Full()
+	if lay == nil {
+		lay = e.Expanded()
+	}
+	if lay == nil {
+		return pad * 2
+	}
+	// container full-layout (width>=496px): label 150px and value in a row
+	row := w >= l.dp(496)
+	for i := range lay.Fields {
+		f := &lay.Fields[i]
+		if f.IsImage() && !(len(f.Images) > 0 && f.Images[0].Width > 0 && f.Images[0].Height > 0) && !woHasImagePreview(lay) {
+			continue
+		}
+		y += l.woFullField(wo, lay, i, x, y, w, row) + l.dp(20) // contentItem.full: margin-bottom 20px
+	}
+	soleImage := len(lay.Fields) == 1 && woHasImagePreview(lay)
+	if len(lay.Fields) > 0 && !soleImage {
+		if t, ok := workobject.TSTime(e.TS); ok {
+			fl := l.st.woFlags
+			bw := max(1, l.dp(1))
+			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(x, y, x+w, y+bw), fill: l.tok("otl-ter"), target: -1})
+			fs := flowStyle{face: font.Font{Typeface: l.st.Face}, size: l.sp(13), lineH: l.dpHalf(18), col: l.tok("content-ter"),
+				maxLines: 1, ellipsis: true}
+			h, _ := l.plainFlow(workobject.UpdatedLabel(woLocale(fl), t, time.Now()), x, y+bw+l.dp(12), w, &fs, -1)
+			l.plainAdd("\n")
+			y += bw + l.dp(12) + h + l.dp(16)
+		}
+	}
+	return y - y0
+}
+
+// woFullField is one field in the full style (contentItem.full: 8px
+// gap; label 15px/1.46668 content-ter, 150px wide in a row; value
+// 15px/1.46668, whole: text links, rich text as rich text, tokens that
+// wrap 4px apart) and returns its height.
+func (l *lay) woFullField(wo *richtext.WorkObject, lay *workobject.Layout, i, x, y, w int, row bool) int {
+	f := &lay.Fields[i]
+	p := &l.st.Palette
+	ls := l.woValueStyle()
+	ls.col = l.tok("content-ter")
+	gap := l.dp(8)
+	label := f.Label
+	if f.Name == "attendees" && f.IsUser() {
+		label += " (" + strconv.Itoa(len(f.Users)) + ")"
+	}
+	vx, vy, vw := x, y, w
+	lh := 0
+	if !f.IsImage() || label != "" {
+		lw := w
+		if row {
+			lw = l.dp(150)
+		}
+		ls.maxLines, ls.ellipsis = 1, true
+		h, _ := l.plainFlow(label, x, y, lw, &ls, -1)
+		l.plainAdd("\n")
+		lh = max(h, ls.lineH)
+		if row {
+			vx, vw = x+l.dp(150)+gap, max(w-l.dp(150)-gap, l.dp(40))
+		} else {
+			vy = y + lh + gap
+		}
+	}
+	vs := l.woValueStyle()
+	vh := 0
+	switch {
+	case f.IsRichText() || f.IsUnknown():
+		if bs := wo.RichField(lay.Key, i); len(bs) > 0 {
+			vh = l.blocks(bs, vx, vy, vw, false)
+		}
+	case f.Type == workobject.FieldTag:
+		vh = l.woTagsWrap(f.Tags, vx, vy, vw)
+	case f.Type == workobject.FieldEntityRef:
+		tags := make([]workobject.Tag, len(f.Refs))
+		for k, r := range f.Refs {
+			tags[k] = workobject.Tag{Text: r.Title, Color: workobject.TagInformative}
+		}
+		vh = l.woTagsWrap(tags, vx, vy, vw)
+	case f.IsUser():
+		vh = l.woUsers(wo, f.Users, vx, vy, vw)
+	case f.Type == workobject.FieldChannel:
+		cx := vx
+		for _, c := range f.Channels {
+			fs := vs
+			fs.col = p.Link
+			_, cw := l.plainFlow("#"+wo.Channel(c.ChannelID), cx, vy, max(vx+vw-cx, l.dp(20)), &fs, l.d.addTarget(target{kind: tChannel, id: c.ChannelID}))
+			cx += cw + l.dp(4)
+		}
+		vh = vs.lineH
+	case f.Type == workobject.FieldLink:
+		for _, u := range f.Links {
+			fs := vs
+			fs.col = p.Link
+			h, _ := l.plainFlow(u, vx, vy+vh, vw, &fs, l.d.addTarget(target{kind: tLink, url: richtext.SafeURL(u), underline: true, website: true}))
+			vh += h
+		}
+	case f.Type == workobject.FieldCheckbox:
+		for _, c := range f.Checks {
+			vh += l.woCheckbox(c, vx, vy+vh, vw)
+		}
+	case f.IsImage():
+		iw := vw
+		if row {
+			iw = min(iw, l.dp(320)) // previewImage: max-width 320px
+		}
+		vh = l.woImage(f, vx, vy, iw, len(lay.Fields) == 1)
+	case f.Type == workobject.FieldText:
+		h, _ := l.plainFlow(f.Text, vx, vy, vw, &vs, -1)
+		vh = max(h, vs.lineH)
+	default:
+		if f.Type == workobject.FieldTimestamp || f.Type == workobject.FieldDate {
+			vs.col = l.tok("content-sec")
+		}
+		h, _ := l.plainFlow(woFieldText(woLocale(l.st.woFlags), f, time.Now()), vx, vy, vw, &vs, -1)
+		vh = max(h, vs.lineH)
+	}
+	l.plainAdd("\n")
+	if row {
+		return max(lh, vh)
+	}
+	return vy - y + vh
+}
+
+// woTagsWrap is the flexpane's tags (flexpaneTokenArray: wrapping, 4px
+// apart) and returns their height.
+func (l *lay) woTagsWrap(tags []workobject.Tag, x, y, w int) int {
+	h := l.dp(24)
+	cx, cy := x, y
+	ts := l.woTagStyle()
+	for _, t := range tags {
+		tw := l.textWidth(t.Text, &ts) + l.dp(8)
+		if t.IconURL != "" {
+			tw += l.dp(20)
+		}
+		tw = min(tw, w)
+		if cx > x && cx+tw > x+w {
+			cx, cy = x, cy+h+l.dp(4)
+		}
+		l.woTags([]workobject.Tag{t}, cx, cy, tw)
+		cx += tw + l.dp(4)
+	}
+	return cy + h - y
 }

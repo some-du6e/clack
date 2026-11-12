@@ -354,7 +354,7 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		}
 		// work object cards (workobject.go): MessageKitAttachments' group,
 		// or rearranged into MessageFiles' gallery after the files
-		if isWorkObjectBlock(b) && top && !l.inAtt {
+		if isWorkObjectBlock(b) && top && !l.inAtt && !l.opts.WorkObjectDetails {
 			var grp []*richtext.Block
 			j := i
 			for j < len(bs) && isWorkObjectBlock(&bs[j]) {
@@ -623,7 +623,7 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 		if isWorkObjectBlock(b) {
 			// MessageAttachmentWorkObject is its own component, never
 			// MessageAttachment's (workobject.go)
-			return l.woCard(b, x, y, w, "", !l.opts.HoverCard)
+			return l.attachment(b, x, y, w)
 		}
 		if l.mode&modeAtts != 0 && !l.inAtt {
 			return l.compBlock(b, x, y, w)
