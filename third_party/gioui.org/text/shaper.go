@@ -100,6 +100,9 @@ type Parameters struct {
 	// function needs to tell the text's size in sp; zero uses the
 	// shaper's SetTrackingScale. Clack patch 12.
 	PxPerSp float32
+	// Untracked skips the shaper's tracking function: for callers that
+	// space the text themselves (Clack's CSS engine). Clack patch 12.
+	Untracked bool
 }
 
 type FontFace = giofont.FontFace
@@ -316,7 +319,7 @@ func (l *Shaper) SetTrackingScale(pxPerSp float32) { l.trackScale = pxPerSp }
 
 // letterSpacing is params' letter spacing in pixels (Clack patch 12).
 func (l *Shaper) letterSpacing(params Parameters) fixed.Int26_6 {
-	if params.LetterSpacing != 0 || l.tracking == nil {
+	if params.LetterSpacing != 0 || l.tracking == nil || params.Untracked {
 		return params.LetterSpacing
 	}
 	sc := params.PxPerSp

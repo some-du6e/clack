@@ -473,7 +473,8 @@ of the layout cache key.
 
 `PxPerSp` is set by `widget.Label` and `widget.Editor`/`Selectable` from
 the context; callers that build `Parameters` themselves either set it or
-rely on `SetTrackingScale` (the window's metric).
+rely on `SetTrackingScale` (the window's metric). `Untracked` opts out of
+the tracking function for callers that space text themselves.
 
 Tests: `internal/ui/theme` `TestLetterSpacingShaper` and
 `TestTrackingForSize`. Not in `UPSTREAM.patch`.

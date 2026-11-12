@@ -13,6 +13,10 @@ import (
 // that CSS itself (its words carry the computed letter-spacing), so
 // rootVars adds theme.TrackingVars to the design tokens while such a font
 // is the UI font. The views restyle when the font changes (View.Layout).
+// slackc's words are shaped Untracked, so the shaper's own tracking
+// (theme/tracking.go) doesn't add to the CSS's. Not done: Slack's body
+// rule gives text with no letter-spacing of its own body's 0.06pt by
+// inheritance; slackc's root style starts from the initial value.
 
 var tracked struct {
 	sync.Mutex

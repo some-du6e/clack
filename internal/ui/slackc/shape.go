@@ -143,6 +143,7 @@ func shapeNow(k faceKey, s string) *shaped {
 		MaxWidth:         1 << 24,
 		WrapPolicy:       text.WrapGraphemes,
 		DisableSpaceTrim: true,
+		Untracked:        true, // letter-spacing is the CSS's, added below (tracking.go)
 	}, s)
 	w := &shaped{str: s}
 	first := true
@@ -174,7 +175,7 @@ func spaceOf(k faceKey) spaceMetrics {
 	if m, ok := shapeCache.space[k]; ok {
 		return m
 	}
-	k.sh.LayoutString(text.Parameters{Font: k.f, PxPerEm: k.size, MaxWidth: 1 << 24, DisableSpaceTrim: true}, " ")
+	k.sh.LayoutString(text.Parameters{Font: k.f, PxPerEm: k.size, MaxWidth: 1 << 24, DisableSpaceTrim: true, Untracked: true}, " ")
 	var m spaceMetrics
 	var adv fixed.Int26_6
 	got := false

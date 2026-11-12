@@ -497,9 +497,11 @@ func (v *verifyEmail) update(gtx layout.Context) {
 // differs from the last one submits; otherwise any text clears the status.
 func (v *verifyEmail) changed() {
 	code := v.code()
-	if v.complete() && code != v.lastCode {
-		v.lastCode = code
-		v.fill(code)
+	if v.complete() {
+		if code != v.lastCode { // SetText's own ChangeEvent repeats the same code: no second check
+			v.lastCode = code
+			v.fill(code)
+		}
 		return
 	}
 	v.lastCode = ""

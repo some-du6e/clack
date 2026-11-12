@@ -184,7 +184,9 @@ func TestPrefsConnectedManage(t *testing.T) {
 	md, _ = topModal(a)
 	md.PressDefault()
 	waitFor(t, a, "the delete and the reload", func() bool {
-		return h.count("apps.auth.external.delete") == 2 && h.count("apps.auth.external.userAuths.get") >= 2 && p.lists.connDone
+		ap, ok := p.connectedApp("A0GDRIVE")
+		return h.count("apps.auth.external.delete") == 2 && h.count("apps.auth.external.userAuths.get") >= 2 &&
+			ok && len(ap.Providers) == 1 && len(ap.Providers[0].Tokens) == 1
 	})
 	waitFor(t, a, "the confirmation closed", func() bool { return len(a.overlays) == n+1 })
 	strs = drawnBy(func() { layoutTop(t, a) })

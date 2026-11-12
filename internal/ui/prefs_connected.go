@@ -480,6 +480,7 @@ func alertBoxAt(gtx layout.Context, th *theme.Theme, pos image.Point, w int, err
 // reloadConnected is resetAppAuths then fetchUserAuth: the list loads
 // again (the rows and an open manage modal follow it).
 func (p *prefsModal) reloadConnected() {
+	p.lists.conn = nil // resetAppAuths: the store empties until the fetch lands
 	p.lists.connStarted = false
 	p.loadConnected()
 }
