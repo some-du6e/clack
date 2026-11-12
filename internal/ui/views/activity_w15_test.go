@@ -188,7 +188,7 @@ func TestActivitySubtextInlineLikeSlack(t *testing.T) {
 // with the subtext inside, two lines tall
 func w15SubtextRow(t *testing.T, dark bool) {
 	v, _, e, _ := vaFakeActivity(t, dark)
-	long := strings.Repeat("a synthetic message that wraps onto a second line ", 3)
+	long := strings.Repeat("a synthetic message that wraps onto a second line ", 5)
 	v.data.mutate(func(p *core.ActivityPage) {
 		for i := range p.Items {
 			if p.Items[i].Key == "fa-channel" && p.Items[i].Msg != nil {
