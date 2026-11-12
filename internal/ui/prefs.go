@@ -23,14 +23,19 @@ type prefs struct {
 	// Slack's sidebarWidthMode ("auto", "manual"), per device as Slack
 	// keeps viewLayoutSidebarWidthIntent / Mode in localStorage
 	// (sidebar_width.go).
-	SidebarW      int    `json:"sidebar_w,omitempty"`
-	SidebarWMode  string `json:"sidebar_w_mode,omitempty"`
-	SecondaryW    int    `json:"secondary_w,omitempty"`
-	Route         string `json:"route,omitempty"`
-	LastChannel   string `json:"last_channel,omitempty"`
-	Notifications *bool  `json:"notifications,omitempty"`
-	EmojiStyle    string `json:"emoji_style,omitempty"`
-	SidebarHidden bool   `json:"sidebar_hidden,omitempty"`
+	SidebarW     int    `json:"sidebar_w,omitempty"`
+	SidebarWMode string `json:"sidebar_w_mode,omitempty"`
+	// SecondaryWActivity and SecondaryWLater are the pane's dragged widths
+	// in Activity and To-dos (Slack's …ForActivity / …ForLater intents;
+	// SecondaryW is the channel views'). 0 is auto.
+	SecondaryWActivity int    `json:"secondary_w_activity,omitempty"`
+	SecondaryWLater    int    `json:"secondary_w_later,omitempty"`
+	SecondaryW         int    `json:"secondary_w,omitempty"`
+	Route              string `json:"route,omitempty"`
+	LastChannel        string `json:"last_channel,omitempty"`
+	Notifications      *bool  `json:"notifications,omitempty"`
+	EmojiStyle         string `json:"emoji_style,omitempty"`
+	SidebarHidden      bool   `json:"sidebar_hidden,omitempty"`
 	// NoUpdateCheck turns off the GitHub Releases check (Preferences >
 	// Clack).
 	NoUpdateCheck bool `json:"no_update_check,omitempty"`
@@ -166,6 +171,13 @@ func (a *App) loadPrefs() {
 	if w := a.prefs.SecondaryW; w >= 300 && w != theme.SecondaryW {
 		a.secondary.width = w
 	}
+	a.secTabs.w = map[string]int{}
+	if w := a.prefs.SecondaryWActivity; w >= 300 {
+		a.secTabs.w["activity"] = w
+	}
+	if w := a.prefs.SecondaryWLater; w >= 300 {
+		a.secTabs.w["later"] = w
+	}
 	a.lastChannel = a.prefs.LastChannel
 	a.th.EmojiStyle = a.prefs.EmojiStyle
 	if a.prefs.PlainText != nil {
@@ -195,7 +207,8 @@ func (a *App) savePrefs() {
 	d := a.th.Dark
 	a.prefs.Dark = &d
 	a.prefs.SidebarW, a.prefs.SidebarWMode = a.sidebar.intent, a.sidebar.mode
-	a.prefs.SecondaryW = a.secondary.width
+	a.prefs.SecondaryW = a.secTabWidth("")
+	a.prefs.SecondaryWActivity, a.prefs.SecondaryWLater = a.secTabWidth("activity"), a.secTabWidth("later")
 	if r := a.router.Current(); r.Page() != "search" { // search queries stay in memory
 		a.prefs.Route = string(r)
 	}

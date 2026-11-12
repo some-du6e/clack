@@ -218,3 +218,36 @@ func TestSectionCollapseSyncsInSidebar(t *testing.T) {
 	fs.Push(map[string]any{"type": "pref_change", "name": "channel_sections", "value": `{"` + id + `":{"c":"0"}}`})
 	e.until("the heading open after pref_change", 10*time.Second, func() bool { return !a.sidebar.collapsed[id] })
 }
+
+// Activity and To-dos keep their own secondary pane width, as Slack keeps
+// secondaryWidthIntentForActivity / …ForLater beside the channel views'.
+func TestSecondaryWidthPerTab(t *testing.T) {
+	a, _ := expNavApp(t, nil)
+	a.router.Push("c/C1")
+	a.syncSecondaryTab()
+	a.secondary.width = 500 // dragged in a channel
+	a.router.Push("activity")
+	a.syncSecondaryTab()
+	if a.secondary.width != 0 {
+		t.Errorf("Activity took the channel's %d, want its own auto (0)", a.secondary.width)
+	}
+	a.secondary.width = 700 // dragged in Activity
+	a.router.Push("later")
+	a.syncSecondaryTab()
+	if a.secondary.width != 0 {
+		t.Errorf("To-dos: %d, want auto", a.secondary.width)
+	}
+	a.router.Push("c/C1")
+	a.syncSecondaryTab()
+	if a.secondary.width != 500 {
+		t.Errorf("back in the channel: %d, want 500", a.secondary.width)
+	}
+	a.router.Push("activity")
+	a.syncSecondaryTab()
+	if a.secondary.width != 700 {
+		t.Errorf("back in Activity: %d, want 700", a.secondary.width)
+	}
+	if a.secTabWidth("") != 500 || a.secTabWidth("activity") != 700 || a.secTabWidth("later") != 0 {
+		t.Errorf("saved widths %d %d %d, want 500 700 0", a.secTabWidth(""), a.secTabWidth("activity"), a.secTabWidth("later"))
+	}
+}

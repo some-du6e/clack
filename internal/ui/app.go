@@ -159,6 +159,7 @@ type App struct {
 	grad            gradient
 	sidebar         sidebarState
 	secondary       secondaryState
+	secTabs         secTabWidths // the other tabs' secondary widths (sidebar_width.go)
 	searchQuery     string
 	searchBox       searchBoxState  // the top bar's search box: press-open, clear (search_topbar.go)
 	searchPill      image.Rectangle // window coords, for anchoring the search popover
@@ -681,6 +682,7 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	// Slack's sidebar column: the window's share, or the dragged width
 	// (sidebar_width.go)
 	a.sidebar.width = a.sidebar.widthFor(float32(sz.X) / gtx.Metric.PxPerDp)
+	a.syncSecondaryTab() // Activity and To-dos keep their own pane width
 	sbW := gtx.Dp(unit.Dp(a.sidebar.width))
 	if a.sidebar.hidden || pageOwnsWorkspace(a.router.Current()) {
 		sbW = 0

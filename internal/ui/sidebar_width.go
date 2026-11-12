@@ -139,3 +139,47 @@ func (a *App) layoutSidebarResize(gtx layout.Context, x, y, h int) {
 	area := image.Rectangle{Max: sz}
 	pointerArea(g, &s.drag, area, pointer.CursorColResize)
 }
+
+// secTabWidths are the secondary pane's widths by tab: Slack keeps one
+// intent and mode for the channel views (secondaryWidthIntent), one for
+// Activity (secondaryWidthIntentForActivity, lJYS
+// setSecondaryColumnForActivity) and one for To-dos
+// (secondaryWidthIntentForLater, k0bF), each in localStorage. Clack's
+// pane keeps the current tab's in secondary.width; changing tabs swaps
+// it (syncSecondaryTab). 0 is auto.
+type secTabWidths struct {
+	cls string         // the tab whose width secondary.width holds
+	w   map[string]int // the other tabs' ("": the channel views)
+}
+
+// secTabClass is which of Slack's three secondary widths a route uses.
+func secTabClass(r Route) string {
+	switch r.Page() {
+	case "activity", "later":
+		return r.Page()
+	}
+	return ""
+}
+
+// syncSecondaryTab swaps secondary.width when the route's tab changes.
+func (a *App) syncSecondaryTab() {
+	t := &a.secTabs
+	c := secTabClass(a.router.Current())
+	if c == t.cls {
+		return
+	}
+	if t.w == nil {
+		t.w = map[string]int{}
+	}
+	t.w[t.cls] = a.secondary.width
+	a.secondary.width = t.w[c]
+	t.cls = c
+}
+
+// secTabWidth is a tab's width for ui.json.
+func (a *App) secTabWidth(cls string) int {
+	if cls == a.secTabs.cls {
+		return a.secondary.width
+	}
+	return a.secTabs.w[cls]
+}
