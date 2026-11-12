@@ -843,8 +843,16 @@ func (d *DMs) keys(gtx C) {
 		d.kb.initial = d.sel
 	}
 	d.kb.update(gtx, d.listH, vkOpts{Click: d.choose})
-	if d.showAllFocus && d.kb.focused {
-		// a click focused the list: the active row, no keyboard ring
+	if d.showAllFocus && d.kb.focused && len(d.kb.sizes) > 0 {
+		// a click focused the list (focus(): the initial row, else the
+		// first in view, once the rows are measured): no keyboard ring
+		if d.kb.active == "" {
+			if k := d.kb.initial; d.kb.validInitial(k) && d.kb.inView(k) {
+				d.kb.setActive(k, false)
+			} else {
+				d.kb.setActive(d.kb.firstInView(), false)
+			}
+		}
 		d.kb.ring, d.showAllFocus = false, false
 	}
 }

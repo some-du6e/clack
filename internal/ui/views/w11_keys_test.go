@@ -170,24 +170,27 @@ func sentKeys(t *testing.T, dark bool) {
 		fmt.Sprintf("%d.000200", now.Add(-2*time.Minute).Unix()),
 		fmt.Sprintf("%d.000300", now.AddDate(0, 0, -3).Unix()),
 	}
-	app, _ := vkFake(t, func(method string, f url.Values) (any, bool) {
-		if method == "messages.sent.list" {
-			var its []map[string]any
-			for _, x := range ts {
-				its = append(its, map[string]any{"channel_id": fakeslack.ViewsChannel, "ts": x})
-			}
-			return map[string]any{"ok": true, "items": its, "pagination": map[string]any{"page": 1, "total_count": len(ts)}}, true
-		}
-		return nil, false
-	})
-	self := app.S.SelfID()
+	var sent []slack.Message
 	for i, x := range ts {
 		thread := ""
 		if i == 1 {
 			thread = ts[2] // a reply
 		}
-		app.S.Upsert(fakeslack.ViewsChannel, slack.Message{Type: "message", User: self, TS: x, ThreadTS: thread, Text: fmt.Sprintf("synthetic sent message %d", i)})
+		sent = append(sent, slack.Message{Type: "message", User: "U0FAKE00001", TS: x, ThreadTS: thread, Text: fmt.Sprintf("synthetic sent message %d", i)})
 	}
+	app, _ := vkFake(t, func(method string, f url.Values) (any, bool) {
+		switch method {
+		case "messages.sent.list":
+			var its []map[string]any
+			for _, x := range ts {
+				its = append(its, map[string]any{"channel_id": fakeslack.ViewsChannel, "ts": x})
+			}
+			return map[string]any{"ok": true, "items": its, "pagination": map[string]any{"page": 1, "total_count": len(ts)}}, true
+		case "messages.list": // the hydration of the sent items
+			return map[string]any{"ok": true, "messages": map[string][]slack.Message{fakeslack.ViewsChannel: sent}}, true
+		}
+		return nil, false
+	})
 	h := newKBHost(app, dark)
 	d := NewDrafts(h)
 	d.tabs.Sel = draftsTabSent
