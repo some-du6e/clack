@@ -46,6 +46,9 @@ type Store struct {
 	Presence    map[string]string
 	timelines   map[string]*Timeline
 	threads     map[string][]slack.Message // key channel/ts
+	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
+	pinQ        []string                   // pins' keys, oldest first
+	pinSeq      uint64                     // pin events seen
 	CustomEmoji emoji.Custom
 	EmojiStyle  string
 	cacheDir    string
@@ -1031,10 +1034,12 @@ func (s *Store) Upsert(ch string, m slack.Message) {
 	}
 	for i := range t.Msgs {
 		if t.Msgs[i].TS == m.TS {
+			s.keepPinLocked(ch, &m, &t.Msgs[i])
 			t.Msgs[i] = m
 			return
 		}
 	}
+	s.keepPinLocked(ch, &m, nil)
 	t.Msgs = append(t.Msgs, m)
 	SortAsc(t.Msgs)
 }
@@ -1043,6 +1048,10 @@ func (s *Store) Upsert(ch string, m slack.Message) {
 func (s *Store) Mutate(ch, ts string, f func(*slack.Message)) (slack.Message, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.mutateLocked(ch, ts, f)
+}
+
+func (s *Store) mutateLocked(ch, ts string, f func(*slack.Message)) (slack.Message, bool) {
 	var out slack.Message
 	found := false
 	if t := s.timelines[ch]; t != nil {
@@ -1200,11 +1209,14 @@ func (s *Store) AddReply(ch string, m slack.Message) {
 		replaced := false
 		for i := range th {
 			if th[i].TS == m.TS {
-				th[i] = m
+				mm := m
+				s.keepPinLocked(ch, &mm, &th[i])
+				th[i] = mm
 				replaced = true
 			}
 		}
 		if !replaced {
+			s.keepPinLocked(ch, &m, nil)
 			th = append(th, m)
 			SortAsc(th)
 		}

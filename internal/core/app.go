@@ -809,12 +809,14 @@ func (a *App) loadLatestIfMissing(ctx context.Context, ch string) error {
 }
 
 func (a *App) fetchLatest(ctx context.Context, ch string) error {
+	pins := a.S.PinSeq()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {
 		return err
 	}
 	a.EnsureUsers(ctx, referencedUsers(p.Messages))
 	a.S.SetLatest(ch, p.Messages, p.HasMore)
+	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	for i := range p.Messages {
 		if needsFileInfo(&p.Messages[i]) {
 			go a.fillFiles(ch, p.Messages[i].TS)

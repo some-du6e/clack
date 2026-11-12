@@ -79,12 +79,14 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		}
 	} else {
 		source = "older"
+		pins := a.S.PinSeq()
 		p, err := a.C.History(ctx, ch, slack.HistoryOpts{Latest: before, Limit: 100})
 		if err != nil {
 			return Page{}, err
 		}
 		a.EnsureUsers(ctx, referencedUsers(p.Messages))
 		a.S.PrependOlder(ch, p.Messages, p.HasMore)
+		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 		msgs, hasMore = p.Messages, p.HasMore
 		store.SortAsc(msgs)
 	}
@@ -132,6 +134,7 @@ func (a *App) RefreshReplies(ctx context.Context, ch, ts string) ([]Message, err
 
 func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 	return a.once("r:"+ch+"/"+ts, func() error {
+		pins := a.S.PinSeq()
 		var all []slack.Message
 		cursor := ""
 		for {
@@ -147,6 +150,7 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 		}
 		a.EnsureUsers(ctx, referencedUsers(all))
 		a.S.SetThread(ch, ts, all)
+		a.S.SyncPins(ch, pins, all)
 		for i := range all {
 			if needsFileInfo(&all[i]) {
 				go a.fillFiles(ch, all[i].TS)

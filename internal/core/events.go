@@ -208,10 +208,11 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: "conv_removed", Channel: ch})
 	case "pin_added", "pin_removed":
 		var e struct {
-			ChannelID string `json:"channel_id"`
-			User      string `json:"user"` // who pinned (or unpinned) it
-			EventTS   string `json:"event_ts"`
-			Item      struct {
+			ChannelID  string            `json:"channel_id"`
+			User       string            `json:"user"` // who pinned (or unpinned) it
+			EventTS    string            `json:"event_ts"`
+			PinnedInfo *slack.PinnedInfo `json:"pinned_info"`
+			Item       struct {
 				Channel   string        `json:"channel"`
 				CreatedBy string        `json:"created_by"`
 				Created   int64         `json:"created"`
@@ -221,20 +222,18 @@ func (a *App) handle(ev slack.Event) {
 		_ = json.Unmarshal(ev.Raw, &e)
 		ch = firstNonEmpty(ch, e.ChannelID, e.Item.Channel)
 		if e.Item.Message.TS != "" {
-			// Slack's extendMessageWithPinnedInfo: pin_added sets the message's
-			// pinned_info {pinned_by, pinned_ts} (MessageLabels' "Pinned by …"),
-			// pin_removed drops it.
-			info := pinnedInfoOf(ch, e.Item.Message.PinnedInfo, firstNonEmpty(e.Item.CreatedBy, e.User), e.Item.Created, e.EventTS)
-			m, ok := a.S.Mutate(ch, e.Item.Message.TS, func(m *slack.Message) {
-				if ev.Type == "pin_added" {
-					m.PinnedTo = []string{ch}
-					m.PinnedInfo = info
-				} else {
-					m.PinnedTo = nil
-					m.PinnedInfo = nil
-				}
-			})
-			if ok {
+			// Slack's pinAdded / pinRemoved → upsertMessagePinnedStatus
+			// (boot-shared 1dqP): the message's pinned_to gains or loses the
+			// channel and pin_added sets its pinned_info {pinned_by,
+			// pinned_ts} (the event's own, MessageLabels' "Pinned by …"),
+			// whether or not the message is loaded yet. One that isn't
+			// takes the pin when it arrives (store/pins.go).
+			own := e.PinnedInfo
+			if own == nil || own.PinnedBy == "" {
+				own = e.Item.Message.PinnedInfo
+			}
+			info := pinnedInfoOf(ch, own, firstNonEmpty(e.Item.CreatedBy, e.User), e.Item.Created, e.EventTS)
+			if m, ok := a.S.SetPin(ch, e.Item.Message.TS, ev.Type == "pin_added", info); ok {
 				a.emitUpdate(ch, &m)
 			}
 		}
@@ -504,6 +503,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if json.Unmarshal(ev.Raw, &m) != nil || m.TS == "" {
 		return
 	}
+	// appendMessages merges a socket message into the stored one: a pin
+	// that came first stays (store/pins.go)
+	a.S.KeepPin(ch, &m)
 	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
 	a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
 	if needsFileInfo(&m) { // the echo of the viewer's own upload too
