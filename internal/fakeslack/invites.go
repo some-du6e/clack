@@ -14,14 +14,21 @@ package fakeslack
 //   - users.sharedInvites.list (mode last_active_for_user): the links made
 //     so far, newest first; users.admin.createSharedInvite makes one (30
 //     days, 400 sign-ups) unless InviteLinkError is set.
+//   - conversations.recommend (the modal's "Suggested:" channels): the ids
+//     SetRecommendedChannels gave, else the public channels that aren't
+//     archived or shared, the viewer's first, up to limit, with their
+//     channel objects (channels_info).
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 type inviteState struct {
@@ -29,6 +36,7 @@ type inviteState struct {
 	calls        []InviteCall
 	links        []map[string]any
 	err, linkErr string
+	recommend    []string // nil: the default list
 }
 
 // InviteCall is one invite method call: its method and form.
@@ -66,9 +74,44 @@ func (s *Server) SetInviteLinkError(code string) {
 	s.inv.mu.Unlock()
 }
 
+// SetRecommendedChannels sets conversations.recommend's answer (nil: the
+// default list, an empty slice: none).
+func (s *Server) SetRecommendedChannels(ids []string) {
+	s.inv.mu.Lock()
+	s.inv.recommend = ids
+	s.inv.mu.Unlock()
+}
+
+// recommendChannels is conversations.recommend's channel list.
+func (s *Server) recommendChannels(ids []string, limit int) []slack.Conversation {
+	out := []slack.Conversation{}
+	if ids != nil {
+		for _, id := range ids {
+			if c, ok := s.conv(id); ok && len(out) < limit {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for _, list := range [][]slack.Conversation{s.convs, s.others} {
+		for _, c := range list {
+			if len(out) == limit {
+				return out
+			}
+			if c.IsIM || c.IsMPIM || c.IsPrivate || c.IsArchived || c.IsExtShared || c.ID == "" {
+				continue
+			}
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (s *Server) handleInvites(method string, f url.Values) (any, bool) {
 	switch method {
-	case "users.admin.inviteBulk", "users.inviteRequests.create", "users.sharedInvites.list", "users.admin.createSharedInvite":
+	case "users.admin.inviteBulk", "users.inviteRequests.create", "users.sharedInvites.list", "users.admin.createSharedInvite", "conversations.recommend":
 	default:
 		return nil, false
 	}
@@ -82,6 +125,16 @@ func (s *Server) handleInvites(method string, f url.Values) (any, bool) {
 	}
 	s.inv.calls = append(s.inv.calls, InviteCall{Method: method, Form: form})
 	switch method {
+	case "conversations.recommend":
+		limit, _ := strconv.Atoi(f.Get("limit"))
+		if limit <= 0 {
+			limit = 10
+		}
+		ids := s.inv.recommend
+		s.inv.mu.Unlock() // conv takes convMu
+		chans := s.recommendChannels(ids, limit)
+		s.inv.mu.Lock()
+		return ok("channels", chans), true
 	case "users.admin.inviteBulk":
 		var recs []inviteRecordJSON
 		if json.Unmarshal([]byte(f.Get("invites")), &recs) != nil || len(recs) == 0 {

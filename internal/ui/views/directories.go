@@ -30,6 +30,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -79,8 +80,11 @@ var (
 		desc bool
 	}{{"name", false}, {"name", true}, {"member_count", true}, {"date_create", true}}
 
-	// People shows no invite hero (Slack doesn't for members who can't invite).
-	dirHeroTitle = [3]string{"", "", "Assemble your dream team"}
+	// The tabs' education banners (ExplorerEducationBanner, rhjZ). People's
+	// is BrowsePeopleView's (client-browse-people-view, build fa938a086569):
+	// shown by showPeopleEducationBanner (dirPeopleHero), its "Invite
+	// people" only for who sees the invite modal.
+	dirHeroTitle = [3]string{"Invite your team to Slack", "", "Assemble your dream team"}
 	dirHeroBody  = [3]string{
 		"Bring your team members into Slack to start working better together. Send invites via email, or get a handy link to share.",
 		"",
@@ -200,6 +204,9 @@ type Directories struct {
 	heroClose [3]widget.Clickable
 	heroBtn   [3]widget.Clickable
 	heroOff   [3]bool
+	pHero     dirPeopleHero // People's banner for this visit to the tab
+	lastTab   int
+	peopleReq int // the page loadPeople last asked for
 	fclk      map[string]*widget.Clickable
 	wantFocus int // frames left to try focusing the search box
 
@@ -344,6 +351,12 @@ func (d *Directories) titleRow(gtx C) D {
 // update runs searches (debounced), first loads, menus and pending writes.
 func (d *Directories) update(gtx C) {
 	t := d.tab.Sel
+	if t != d.lastTab {
+		if d.lastTab == dirTabPeople { // BrowsePeopleView unmounted: a new visit next time
+			d.pHero, d.heroOff[dirTabPeople] = dirPeopleHero{}, false
+		}
+		d.lastTab = t
+	}
 	d.pollOps()
 	d.watchMembership()
 	d.applyNotes()
@@ -443,7 +456,13 @@ func (d *Directories) update(gtx C) {
 			d.load(t, q)
 		}
 	}
-	if d.action[t].Clicked(gtx) || d.heroBtn[t].Clicked(gtx) {
+	action, hero := d.action[t].Clicked(gtx), d.heroBtn[t].Clicked(gtx)
+	switch {
+	case t == dirTabPeople && (action || hero):
+		// InvitePeopleButton and the banner's primaryCTAOnClick:
+		// openInviteModal({source: "people_browser"} / "people_browser_hero")
+		d.InvitePeople(hero)
+	case action || hero:
 		// Slack's channel browser "Create Channel" opens the create modal
 		if cc, ok := d.h.(interface{ OpenCreateChannel() }); ok && t == dirTabChannels {
 			cc.OpenCreateChannel()
@@ -452,8 +471,128 @@ func (d *Directories) update(gtx C) {
 		}
 	}
 	if d.heroClose[t].Clicked(gtx) {
-		d.heroOff[t] = true
+		if t == dirTabPeople { // onCloseBanner: setUserPref({pref: prefName, value: true})
+			d.ClosePeopleHero()
+		} else {
+			d.heroOff[t] = true
+		}
 	}
+}
+
+// InvitePeople is the People tab's "Invite People" (hero false) or the
+// banner's "Invite people" (hero true): openInviteModal with source
+// people_browser or people_browser_hero. Without canUserSeeInviteModal
+// neither button is drawn, so it does nothing.
+func (d *Directories) InvitePeople(hero bool) {
+	src := popups.InviteFromPeopleBrowser
+	if hero {
+		src = popups.InviteFromPeopleBrowserHero
+	}
+	if ph, ok := d.h.(popups.Host); ok && d.canSeeInvite() {
+		popups.OpenInviteModal(ph, src)
+	}
+}
+
+// PeopleHero reports whether the People banner is up, and whether it has
+// its "Invite people" button.
+func (d *Directories) PeopleHero() (shown, button bool) {
+	if d.tab.Sel != dirTabPeople || !d.showPeopleHero() {
+		return false, false
+	}
+	return true, d.canSeeInvite()
+}
+
+// PageLeft is the route moving off Directories (the ui root's
+// layoutPage): Slack unmounts BrowsePeopleView, so the next visit reads
+// the banner's pref again.
+func (d *Directories) PageLeft() {
+	d.pHero, d.heroOff[dirTabPeople] = dirPeopleHero{}, false
+}
+
+// InviteButtonShown reports InvitePeopleButton beside People's search.
+func (d *Directories) InviteButtonShown() bool { return d.canSeeInvite() }
+
+// ClosePeopleHero is the banner's close button (onCloseBanner).
+func (d *Directories) ClosePeopleHero() {
+	d.heroOff[dirTabPeople] = true
+	d.pHero.markSeen(d.h)
+}
+
+// canSeeInvite is canUserSeeInviteModal (client-boot c1OI Lz):
+// InvitePeopleButton renders nothing without it, and the People banner
+// drops its button.
+func (d *Directories) canSeeInvite() bool {
+	c := d.h.Core()
+	return c != nil && c.CanSeeInviteModal()
+}
+
+// The People banner's prefs (client-boot ogf8 N_).
+const (
+	dirPrefSeenPeopleEdu         = "browsers_seen_initial_people_education"
+	dirPrefDismissedPeopleLowEdu = "browsers_dismissed_people_low_results_education"
+)
+
+// dirPeopleHero is BrowsePeopleView's ExplorerEducationBanner (rhjZ, prefType
+// "view_once", prefName SEEN_INITIAL_PEOPLE_BROWSER_EDUCATION) over one
+// visit to the People tab. Slack's banner sets the pref when it unmounts
+// (and on close), so it stays up for the rest of the visit; Clack's views
+// are cached, so the pref is read once when a visit starts (a new route
+// visit, PageLeft, or a switch back to the tab) and written the first
+// time the banner shows.
+type dirPeopleHero struct {
+	started bool // the visit read the pref
+	seen    bool // browsers_seen_initial_people_education at the visit's start
+	wrote   bool
+}
+
+func (p *dirPeopleHero) markSeen(h Host) {
+	if p.wrote {
+		return
+	}
+	p.wrote = true
+	c := h.Core()
+	if c == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = c.SetPref(ctx, dirPrefSeenPeopleEdu, true)
+	}()
+}
+
+// showPeopleHero is showPeopleEducationBanner (client-boot ot1p vf): not
+// loading, no error, canUserInviteMembersToWorkspace (c1OI eY), and the
+// banner not seen yet, or the browser in its initial state (no query, no
+// filters) with fewer than 7 people and the low-results banner not
+// dismissed.
+func (d *Directories) showPeopleHero() bool {
+	if d.heroOff[dirTabPeople] {
+		return false
+	}
+	c := d.h.Core()
+	if c == nil || !c.CanInviteMembers() {
+		return false
+	}
+	st, loaded, err := d.people.get()
+	if !loaded || err != nil || d.people.busy() && d.peopleReq == 1 {
+		return false
+	}
+	h := &d.pHero
+	if !h.started {
+		h.started = true
+		h.seen = c.PrefBool(dirPrefSeenPeopleEdu, false)
+	}
+	if h.seen && !(d.peopleInitial() && st.total < 7 && !c.PrefBool(dirPrefDismissedPeopleLowEdu, false)) {
+		return false
+	}
+	h.markSeen(d.h)
+	return true
+}
+
+// peopleInitial is browserHasInitialState: no query and no filters.
+func (d *Directories) peopleInitial() bool {
+	return d.peopleQ == "" && d.acct.sel == 0 && len(d.titles) == 0 && len(d.locs) == 0 && d.team[dirTabPeople] == "" && d.field.custom() == nil
 }
 
 func (d *Directories) load(tab int, q string) {
@@ -486,7 +625,7 @@ func (d *Directories) load(tab int, q string) {
 // loadPeople pages the people directory (core.BrowsePeople: an empty
 // query browses everyone, sorted and filtered server-side).
 func (d *Directories) loadPeople(q string, page int) {
-	d.peopleQ = q
+	d.peopleQ, d.peopleReq = q, page
 	o := core.PeopleBrowseOpts{Query: q, Page: page, AccountType: dirAcctKeys[min(d.acct.sel, len(dirAcctKeys)-1)],
 		Team: d.team[dirTabPeople], Titles: append([]string(nil), d.titles...), Locations: append([]string(nil), d.locs...),
 		CustomFields: d.field.custom()}
@@ -733,8 +872,14 @@ func (d *Directories) body(gtx C) D {
 					layout.Flexed(1, func(gtx C) D {
 						return dirSearchField(&d.base, gtx, d.srch[t], dirFieldStyle{H: 36, Icon: 20, PadL: 12, Gap: 16, Border: dirRing(&d.base, d.p.Surface), Over: d.p.ReadFill}, &d.clear)
 					}),
-					hgap(12),
-					layout.Rigid(func(gtx C) D { return d.button(gtx, &d.action[t], btnOutline, false, nsBrowsers.T(dirActions[t])) }),
+					layout.Rigid(func(gtx C) D {
+						if t == dirTabPeople && !d.canSeeInvite() { // InvitePeopleButton: null
+							return D{}
+						}
+						return layout.Inset{Left: 12}.Layout(gtx, func(gtx C) D {
+							return d.button(gtx, &d.action[t], btnOutline, false, nsBrowsers.T(dirActions[t]))
+						})
+					}),
 				)
 			})
 		}),
@@ -754,7 +899,7 @@ func (d *Directories) body(gtx C) D {
 // heads returns the list items above the results: hero, filter bar.
 func (d *Directories) heads(t int) []W {
 	var out []W
-	if dirHeroTitle[t] != "" && !d.heroOff[t] {
+	if t == dirTabPeople && d.showPeopleHero() || t != dirTabPeople && dirHeroTitle[t] != "" && !d.heroOff[t] {
 		out = append(out, func(gtx C) D { return d.hero(gtx, t) })
 	}
 	return append(out, func(gtx C) D { return d.filterBar(gtx, t) })
@@ -779,7 +924,12 @@ func (d *Directories) hero(gtx C, t int) D {
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Bottom: 16}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Muted, 0, nsBrowsers.T(dirHeroBody[t])) })
 		}),
-		layout.Rigid(func(gtx C) D { return d.button(gtx, &d.heroBtn[t], btnOutline, false, nsBrowsers.T(dirHeroBtn[t])) }),
+		layout.Rigid(func(gtx C) D {
+			if t == dirTabPeople && !d.canSeeInvite() { // primaryCTAButtonText: undefined
+				return D{}
+			}
+			return d.button(gtx, &d.heroBtn[t], btnOutline, false, nsBrowsers.T(dirHeroBtn[t]))
+		}),
 	)
 	call := m.Stop()
 	func() {

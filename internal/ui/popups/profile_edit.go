@@ -221,6 +221,7 @@ type epField struct {
 	disabled                       bool
 	disabledTip                    string
 	rules                          string
+	policy                         string // the workspace's rules, shown unless the field is locked
 	options                        []epOption
 	ed                             widget.Editor
 	sel                            widget.Clickable
@@ -243,8 +244,14 @@ type epForm struct {
 
 	secsLoading bool
 	header      core.ProfileHeader
-	pronWas     string
-	pronSet     bool // the pronunciation editor took the header's text
+	// the admin locks (core/profile_grants.go): grantsLoading until
+	// permissions/info answers; photoLocked is isProfilePhotoUneditable
+	grantsLoading bool
+	photoLocked   bool
+	photoTip      TipState
+	photoHov      widget.Clickable // the lock's hover (its tooltip)
+	pronWas       string
+	pronSet       bool // the pronunciation editor took the header's text
 
 	saving   bool
 	saveBtn  *ModalButton
@@ -297,7 +304,57 @@ func newEPForm(e *EditProfileModal) *epForm {
 		Over: f.over,
 	})
 	f.fetchSections()
+	f.fetchGrants()
 	return f
+}
+
+// fetchGrants reads isRealNameUneditable, isDisplayNameUneditable and
+// isProfilePhotoUneditable (core.ProfileGrants). Slack has them from boot;
+// Clack asks on open, with the title's spinner up until the answer.
+func (f *epForm) fetchGrants() {
+	a := f.h.Core()
+	if a == nil {
+		return
+	}
+	if g, ok := a.CachedProfileGrants(); ok {
+		f.applyGrants(g)
+		return
+	}
+	f.grantsLoading = true
+	run(f.h, func(ctx context.Context) (core.ProfileGrants, error) {
+		return a.LoadProfileGrants(ctx), nil
+	}, func(g core.ProfileGrants, _ error) {
+		f.grantsLoading = false
+		f.applyGrants(g)
+		f.h.Invalidate()
+	})
+}
+
+// applyGrants is BEl1's isDisabled for Full name and Display name (the
+// display name also loses the workspace's rules and says why), and the
+// photo column's lock.
+func (f *epForm) applyGrants(g core.ProfileGrants) {
+	if fd := f.byName["real_name"]; fd != nil {
+		fd.disabled = !g.Name
+	}
+	if fd := f.byName["display_name"]; fd != nil {
+		fd.disabled = !g.DisplayName
+		fd.rules, fd.disabledTip = fd.policy, ""
+		if fd.disabled {
+			fd.rules = ""
+			fd.disabledTip = nsEditProfile.T("Display names are automatically set by your organization.")
+		}
+	}
+	f.photoLocked = !g.Photo
+}
+
+// PhotoLocked reports isProfilePhotoUneditable.
+func (f *epForm) PhotoLocked() bool { return f.photoLocked }
+
+// Locked reports whether field name is disabled.
+func (f *epForm) Locked(name string) bool {
+	fd := f.byName[name]
+	return fd != nil && fd.disabled
 }
 
 // buildFields is BEl1's default field list for this workspace.
@@ -322,7 +379,7 @@ func (f *epForm) buildFields() {
 	}
 	add(&epField{name: "real_name", kind: "text", label: nsEditProfile.T("Full name"), placeholder: nsEditProfile.T("Full name"),
 		disabledTip: nsEditProfile.T("Locked by an Admin")})
-	add(&epField{name: "display_name", kind: "text", label: nsEditProfile.T("Display name"), rules: policy,
+	add(&epField{name: "display_name", kind: "text", label: nsEditProfile.T("Display name"), rules: policy, policy: policy,
 		hint: nsEditProfile.T("This could be your first name, or a nickname — however you’d like people to refer to you in Slack.")})
 	add(&epField{name: "title", kind: "text", label: nsEditProfile.T("Title"), disabled: true,
 		hint: nsEditProfile.T("Let people know what you do at {teamName}.", "teamName", team)})
@@ -535,9 +592,11 @@ func (f *epForm) stops() []event.Tag {
 			add(fd)
 		}
 	}
-	out = append(out, &f.upload)
-	if f.hasPhoto() {
-		out = append(out, &f.remove)
+	if !f.photoLocked { // disabled buttons take no focus
+		out = append(out, &f.upload)
+		if f.hasPhoto() {
+			out = append(out, &f.remove)
+		}
 	}
 	for i, fd := range vis {
 		if i >= 3 {
@@ -573,10 +632,10 @@ func (f *epForm) events(gtx layout.Context) {
 			}
 		}
 	}
-	if f.upload.Clicked(gtx) {
+	if f.upload.Clicked(gtx) && !f.photoLocked {
 		f.e.pickPhoto()
 	}
-	if f.remove.Clicked(gtx) && f.hasPhoto() {
+	if f.remove.Clicked(gtx) && f.hasPhoto() && !f.photoLocked {
 		f.e.switchPane("removePane")
 	}
 }
@@ -645,21 +704,44 @@ func (f *epForm) photoColumn(gtx layout.Context, th *theme.Theme, cl *Colors, w 
 	y := 0
 	lh := dp(gtx, 22)
 	at(gtx, image.Pt(0, 0), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(w, lh)}
-		return text(gtx, th, 15, theme.Bold, cl.Fg, nsEditProfile.T("Profile photo"))
+		x := 0
+		if f.photoLocked {
+			// isProfilePhotoUneditable: the lock with "Locked by an Admin"
+			// above it (Tooltip position top), then the bold label
+			s := dp(gtx, 16)
+			r := image.Rect(0, (lh-s)/2, s, (lh-s)/2+s)
+			at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
+				d := icon(gtx, "lock", 16, cl.Fg2)
+				f.photoHov.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(s, s)} })
+				Tooltip(gtx, th, &f.photoTip, f.photoHov.Hovered(), image.Pt(s, s), Above, nsEditProfile.T("Locked by an Admin"), "")
+				return d
+			})
+			x = dp(gtx, 20)
+		}
+		return at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x), lh)}
+			return text(gtx, th, 15, theme.Bold, cl.Fg, nsEditProfile.T("Profile photo"))
+		})
 	})
 	y += lh + dp(gtx, 8)
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		return epPhoto(gtx, f.h, f.user, w)
 	})
 	y += w + dp(gtx, 8)
+	kind := BtnOutline
+	if f.photoLocked {
+		kind = BtnDisabled // disabled: isProfilePhotoUneditable
+	}
 	d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-		return FocusButton(gtx, th, &f.upload, BtnOutline, BtnMedium, nsEditProfile.T("Upload Photo"), "", float32(w)/gtx.Metric.PxPerDp, f.m.ringOn(gtx, &f.upload))
+		return FocusButton(gtx, th, &f.upload, kind, BtnMedium, nsEditProfile.T("Upload Photo"), "", float32(w)/gtx.Metric.PxPerDp, f.m.ringOn(gtx, &f.upload))
 	})
 	y += d.Size.Y
 	if f.hasPhoto() {
 		y += dp(gtx, 8)
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			if f.photoLocked { // c-link--disabled: content-ter, no pointer events
+				return epLinkButtonOff(gtx, th, cl, nsEditProfile.T("Remove Photo"), w)
+			}
 			return epLinkButton(gtx, th, cl, &f.remove, nsEditProfile.T("Remove Photo"), w, f.m.ringOn(gtx, &f.remove))
 		})
 		y += d.Size.Y
@@ -702,6 +784,18 @@ func epLinkButton(gtx layout.Context, th *theme.Theme, cl *Colors, c *widget.Cli
 			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
 				return text(gtx, th, 15, theme.Regular, cl.Link, label)
 			})
+		})
+	})
+	return layout.Dimensions{Size: image.Pt(w, lh)}
+}
+
+// epLinkButtonOff is a disabled c-link--button (c-link--disabled).
+func epLinkButtonOff(gtx layout.Context, th *theme.Theme, cl *Colors, label string, w int) layout.Dimensions {
+	lh := dp(gtx, 22)
+	tw := textW(gtx, th, 15, theme.Regular, label)
+	at(gtx, image.Pt(maxInt(0, (w-tw)/2), 0), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 15, theme.Regular, cl.Fg3, label)
 		})
 	})
 	return layout.Dimensions{Size: image.Pt(w, lh)}
@@ -862,7 +956,7 @@ func (f *epForm) drawSelect(gtx layout.Context, th *theme.Theme, cl *Colors, fd 
 func (f *epForm) over(gtx layout.Context) {
 	th := f.h.Theme()
 	cl := colorsOf(th)
-	if f.secsLoading {
+	if f.secsLoading || f.grantsLoading {
 		tw := textW(gtx, th, 22, theme.Black, nsEditProfile.T("Edit your profile"))
 		s := dp(gtx, 20)
 		at(gtx, image.Pt(dp(gtx, 28)+tw+dp(gtx, 8), (dp(gtx, 70)-s)/2), func(gtx layout.Context) layout.Dimensions {
@@ -1066,6 +1160,9 @@ func (u *epUpload) Status() string { return u.status }
 
 func (u *epUpload) title() string {
 	if u.err == nil {
+		if epPhotoComp(u.e.h) {
+			return nsEditProfile.T("Add a profile photo")
+		}
 		return nsEditProfile.T("Uploading your photo…")
 	}
 	switch {
@@ -1262,9 +1359,28 @@ func newEPCrop(e *EditProfileModal, up core.PhotoUpload, img image.Image) *epCro
 	c := &epCrop{e: e, up: up, cropBox: newCropBox(e.h, img, core.PhotoCropMinSize)}
 	cancel := &ModalButton{Label: nsEditProfile.T("Cancel"), Kind: BtnOutline, Do: func() bool { e.switchPane("formPane"); return false }}
 	save := &ModalButton{Label: nsEditProfile.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return !c.saving }, Do: func() bool { c.Save(); return false }}
-	c.m = NewModal(e.h, ModalOpts{Title: nsEditProfile.T("Crop your photo"), HeadH: 65, Body: c.layout,
+	c.m = NewModal(e.h, ModalOpts{TitleFunc: func() string { return cropTitle(e.h) }, HeadH: 65, Body: c.layout,
 		Buttons: []*ModalButton{cancel, save}, AutoFocus: save, OnClose: func() { e.done = true }})
 	return c
+}
+
+// ExpProfilePhotoComp is the experiment behind the photo panes' titles.
+const ExpProfilePhotoComp = "profile_photo_comp"
+
+// epPhotoComp is eNqz's `getGroupForUser(state, "profile_photo_comp")` read
+// as a condition: any assigned group, not just "on", picks the new titles.
+func epPhotoComp(h Host) bool {
+	a := h.Core()
+	return a != nil && a.Experiment(ExpProfilePhotoComp) != ""
+}
+
+// cropTitle is EditProfileCropPane's title: "Add a profile photo" with
+// profile_photo_comp, else "Crop your photo".
+func cropTitle(h Host) string {
+	if epPhotoComp(h) {
+		return nsEditProfile.T("Add a profile photo")
+	}
+	return nsEditProfile.T("Crop your photo")
 }
 
 // Crop is the square in image pixels as Save sends it.

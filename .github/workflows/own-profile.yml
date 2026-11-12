@@ -19,6 +19,7 @@ on:
       - "internal/ui/theme/embolden.go"
       - "internal/core/profile_sections*.go"
       - "internal/core/profile_write*.go"
+      - "internal/core/profile_grants*.go"
       - "internal/ui/popups/slick.go"
       - "internal/fakeslack/profile.go"
       - ".github/workflows/own-profile.yml"
@@ -52,7 +53,7 @@ jobs:
         run: |
           mkdir -p "$PROFILE_SHOTS_DIR"
           go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
-          go test -count=1 -v -run 'TestProfileSections|TestPeopleBrowseCustomFields|TestProfileActionCalls|TestVIPError|TestValidateProfileFieldLikeSlack|TestPhotoCropLikeSlack|TestCheckPhoto|TestSaveProfileForm|TestSetProfileSectionLikeSlack|TestProfilePhotoLikeSlack' ./internal/core
+          go test -count=1 -v -run 'TestProfileSections|TestPeopleBrowseCustomFields|TestProfileActionCalls|TestVIPError|TestValidateProfileFieldLikeSlack|TestPhotoCropLikeSlack|TestCheckPhoto|TestSaveProfileForm|TestSetProfileSectionLikeSlack|TestProfilePhotoLikeSlack|TestProfileGrantsLikeSlack' ./internal/core
           go test -count=1 -v -run 'TestEmojiTofu' ./internal/ui/richview ./internal/ui/slackc
           xvfb-run -a go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane|TestProfileNameIsRealName|TestProfileMoreMenu|TestProfilePresenceColor|TestProfileDate|TestProfileVIPToggle|TestProfileMenuViewFiles|TestProfileFieldLink|TestProfileOpenFullWithoutHooks|TestProfileViewAs|TestAppAddToChannel|TestUserGroupPane|TestProfilePaneBackButton|TestEditProfile' ./internal/ui/popups
           ls -la "$PROFILE_SHOTS_DIR"

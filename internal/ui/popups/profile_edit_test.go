@@ -277,6 +277,81 @@ func TestEditProfilePhotoLikeSlack(t *testing.T) {
 	}
 }
 
+// The admin locks (eNqz mapStateToProps): without UPDATE_NAME Full name is
+// locked ("Locked by an Admin"); without UPDATE_DISPLAY_NAME Display name
+// is locked, says "Display names are automatically set by your
+// organization." and loses the workspace's rules; without
+// EDIT_PROFILE_PHOTO the photo's label gets the lock and Upload Photo and
+// Remove Photo do nothing and take no focus. The title's spinner stays up
+// until permissions/info answers.
+func TestEditProfileLocksLikeSlack(t *testing.T) {
+	h, fs := epEnv(t, false)
+	fs.Permissions = map[string][]string{"": {}}
+	m := NewEditProfileModal(h, EditProfileOpts{})
+	f := m.Form()
+	if !f.grantsLoading {
+		t.Error("no spinner while the grants load")
+	}
+	epUntil(t, m, "the grants", func() bool { return !f.grantsLoading && !f.secsLoading })
+	if !f.Locked("real_name") || !f.Locked("display_name") || !f.PhotoLocked() {
+		t.Fatalf("locked: name %v display %v photo %v", f.Locked("real_name"), f.Locked("display_name"), f.PhotoLocked())
+	}
+	if fd := f.byName["real_name"]; fd.disabledTip != "Locked by an Admin" {
+		t.Errorf("Full name tip %q", fd.disabledTip)
+	}
+	if fd := f.byName["display_name"]; fd.disabledTip != "Display names are automatically set by your organization." || fd.rules != "" {
+		t.Errorf("Display name tip %q rules %q", fd.disabledTip, fd.rules)
+	}
+	for _, tag := range f.stops() {
+		if tag == &f.upload || tag == &f.remove || tag == &f.byName["real_name"].ed || tag == &f.byName["display_name"].ed {
+			t.Errorf("a locked control takes the focus: %T", tag)
+		}
+	}
+	f.upload.Click()
+	epFrame(m)
+	if m.Pane() != "formPane" {
+		t.Errorf("Upload Photo while locked went to %q", m.Pane())
+	}
+
+	// a second open reads the cached answer: no spinner
+	m2 := NewEditProfileModal(h, EditProfileOpts{})
+	if m2.Form().grantsLoading || !m2.Form().PhotoLocked() {
+		t.Errorf("second open: loading %v photo locked %v", m2.Form().grantsLoading, m2.Form().PhotoLocked())
+	}
+
+	// the fake's default grants: nothing locked, the rules back
+	h2, _ := epEnv(t, false)
+	m3 := NewEditProfileModal(h2, EditProfileOpts{})
+	f3 := m3.Form()
+	epUntil(t, m3, "the grants", func() bool { return !f3.grantsLoading })
+	if f3.Locked("real_name") || f3.Locked("display_name") || f3.PhotoLocked() || f3.byName["display_name"].rules == "" {
+		t.Errorf("default grants: name %v display %v photo %v rules %q", f3.Locked("real_name"), f3.Locked("display_name"), f3.PhotoLocked(), f3.byName["display_name"].rules)
+	}
+}
+
+// profile_photo_comp: any group (eNqz tests getGroupForUser's string)
+// titles the crop pane and the upload's spinner "Add a profile photo";
+// unassigned, "Crop your photo" and "Uploading your photo…".
+func TestEditProfilePhotoCompTitles(t *testing.T) {
+	h, _ := epEnv(t, false)
+	for _, c := range []struct{ group, crop, upload string }{
+		{"", "Crop your photo", "Uploading your photo…"},
+		{"on", "Add a profile photo", "Add a profile photo"},
+		{"off", "Add a profile photo", "Add a profile photo"},
+	} {
+		h.a.SetExperimentGroup(ExpProfilePhotoComp, c.group)
+		m := NewEditProfileModal(h, EditProfileOpts{})
+		m.UploadPhoto(core.UploadFile{Name: "me.png", Data: epPNG(t, 600, 400)})
+		if got := m.upl.title(); got != c.upload {
+			t.Errorf("group %q: upload title %q, want %q", c.group, got, c.upload)
+		}
+		epUntil(t, m, "the crop pane", func() bool { return m.Pane() == "cropPane" })
+		if got := m.crop.m.o.TitleFunc(); got != c.crop {
+			t.Errorf("group %q: crop title %q, want %q", c.group, got, c.crop)
+		}
+	}
+}
+
 // Screenshots, light and dark (PROFILE_SHOTS_DIR, own-profile.yml): the
 // form with an error, the speed bump, the section editor, the crop pane,
 // the remove pane and an upload error; no tofu in any of them.
@@ -302,6 +377,20 @@ func TestEditProfileShots(t *testing.T) {
 		m.UploadPhoto(core.UploadFile{Name: "tiny.png", Data: epPNG(t, 20, 20)})
 		epUntil(t, m, "the size error", func() bool { return m.upl.Status() == "error" })
 		epShot(t, h, dir, "edit-profile-upload-error-"+mode, m, func() *Modal { return m.m })
+
+		// profile_photo_comp on (the account's group): "Add a profile photo"
+		h.a.SetExperimentGroup(ExpProfilePhotoComp, "on")
+		m.UploadPhoto(core.UploadFile{Name: "me.png", Data: epPNG(t, 600, 400)})
+		epUntil(t, m, "the crop pane", func() bool { return m.Pane() == "cropPane" })
+		epShot(t, h, dir, "edit-profile-crop-photo-comp-"+mode, m, func() *Modal { return m.m })
+		h.a.ClearExperimentGroup(ExpProfilePhotoComp)
+
+		// the admin locks: Full name, Display name and the photo
+		hl, fsl := epEnv(t, dark)
+		fsl.Permissions = map[string][]string{"": {}}
+		ml := NewEditProfileModal(hl, EditProfileOpts{})
+		epUntil(t, ml, "the grants", func() bool { return !ml.Form().grantsLoading && !ml.Form().secsLoading })
+		epShot(t, hl, dir, "edit-profile-locked-"+mode, ml, func() *Modal { return ml.m })
 
 		ps, err := h.a.ProfileSections(context.Background(), fakeslack.SelfID)
 		if err != nil {
