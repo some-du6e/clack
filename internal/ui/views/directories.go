@@ -509,6 +509,12 @@ func (d *Directories) PageLeft() {
 	d.pHero, d.heroOff[dirTabPeople] = dirPeopleHero{}, false
 }
 
+// PeopleLoaded reports the People tab's first page in, not loading.
+func (d *Directories) PeopleLoaded() bool {
+	_, loaded, _ := d.people.get()
+	return loaded && !d.people.busy()
+}
+
 // InviteButtonShown reports InvitePeopleButton beside People's search.
 func (d *Directories) InviteButtonShown() bool { return d.canSeeInvite() }
 

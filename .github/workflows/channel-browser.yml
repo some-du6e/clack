@@ -48,7 +48,7 @@ jobs:
           go test -count=1 -v -run 'TestDir' ./internal/ui/views
           go test -count=1 -v -run 'TestCleanTextKeepsHangulFillers' ./internal/ui/theme
           xvfb-run -a go test -count=1 -v -run 'TestMaybeLeaveChannel' ./internal/ui/popups
-          xvfb-run -a go test -count=1 -v -run 'TestChannelBrowserFilters$|TestPeopleBrowserFacetFilters$|TestSidebarDraftPencil$|TestChannelBrowserShot$|TestPeopleBrowserInvite$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelBrowserFilters$|TestPeopleBrowserFacetFilters$|TestSidebarDraftPencil$|TestChannelBrowserShot$|TestPeopleBrowserInvite$|TestPeopleBrowserLowResultsBanner$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

@@ -9,9 +9,12 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
@@ -26,8 +29,29 @@ func lastInviteModal(a *App) *popups.InviteModal {
 	return nil
 }
 
+// peopleBrowserHook answers the People browser's search.modules.people
+// (desktop_people_browser) like a team of total people: eight synthetic
+// cards on the page.
+func peopleBrowserHook(total int) func(string, url.Values) (any, bool) {
+	return func(method string, f url.Values) (any, bool) {
+		if method != "search.modules.people" || f.Get("search_context") != "desktop_people_browser" {
+			return nil, false
+		}
+		items := []any{}
+		for i := 1; i <= 8 && i <= total; i++ {
+			name := fmt.Sprintf("Fixture Person %d", i)
+			items = append(items, map[string]any{"id": fmt.Sprintf("U0PEOPLE%02d", i), "name": fmt.Sprintf("person%d", i), "real_name": name,
+				"profile": map[string]any{"real_name": name, "display_name": name, "title": "Synthetic fixture"}})
+		}
+		return map[string]any{"ok": true, "module": "people", "items": items,
+			"pagination": map[string]any{"total_count": total, "page": 1, "page_count": (total + 49) / 50, "per_page": 50}}, true
+	}
+}
+
 func TestPeopleBrowserInvite(t *testing.T) {
 	e, fs := previewEnv(t)
+	fs.SetHook(peopleBrowserHook(100))
+	t.Cleanup(func() { fs.SetHook(nil) })
 	if v, ok := fs.Pref("browsers_seen_initial_people_education"); ok && v == true {
 		t.Fatal("the fake account starts with the banner seen")
 	}
@@ -78,7 +102,8 @@ func TestPeopleBrowserInvite(t *testing.T) {
 		t.Error("the banner left mid-visit (Slack writes the pref when it unmounts)")
 	}
 
-	// the next visit: seen, and Small has more than 6 people, so no banner
+	// the next visit: seen, and 100 people (not the low-results case), so
+	// no banner
 	e.a.Navigate("activity")
 	e.settle(200 * time.Millisecond)
 	e.a.Navigate("directories")
@@ -102,4 +127,25 @@ func TestPeopleBrowserInvite(t *testing.T) {
 		t.Errorf("a member who can't invite opened %s", m.Source())
 	}
 	e.shot("people-invite-none-light")
+}
+
+// showPeopleEducationBanner's second branch: seen already, but the
+// browser in its initial state with fewer than 7 people shows the banner
+// again, unless browsers_dismissed_people_low_results_education is set.
+func TestPeopleBrowserLowResultsBanner(t *testing.T) {
+	for _, dismissed := range []bool{false, true} {
+		e, _ := previewEnvWith(t, func(fs *fakeslack.Server) {
+			fs.SetHook(peopleBrowserHook(3))
+			fs.SetPrefs(map[string]any{"browsers_seen_initial_people_education": true,
+				"browsers_dismissed_people_low_results_education": dismissed})
+		})
+		e.a.Navigate("directories")
+		e.settle(300 * time.Millisecond)
+		v := e.a.views[Route("directories")].(*views.Directories)
+		e.until("the people", 20*time.Second, func() bool { return v.PeopleLoaded() })
+		e.settle(200 * time.Millisecond)
+		if shown, _ := v.PeopleHero(); shown == dismissed {
+			t.Errorf("3 people, low-results dismissed %v: banner %v", dismissed, shown)
+		}
+	}
 }
