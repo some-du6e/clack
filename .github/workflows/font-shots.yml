@@ -24,7 +24,10 @@ on:
       - "internal/woff2/**"
       - "internal/ui/uifont/**"
       - "internal/ui/theme/uifont.go"
+      - "internal/ui/theme/text.go"
+      - "internal/ui/theme/textgamma*.go"
       - "internal/ui/theme/textrender*_test.go"
+      - "internal/ui/theme/testdata/text-render/**"
       - "internal/ui/prefs_font*.go"
       - "internal/ui/font_shots_test.go"
       - "internal/ui/messages/font_switch_test.go"
@@ -97,7 +100,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
           CLACK_TEXT_RENDER_DIR: ${{ github.workspace }}/dist/text-render
-        run: xvfb-run -a go test -count=1 -v -run 'TestTextRenderShots$' ./internal/ui/theme/
+        run: xvfb-run -a go test -count=1 -v -run 'TestTextRenderShots$|TestTextMatchesChrome$|TestTextInk$' ./internal/ui/theme/
       - name: Slack's own Lato (public CDN, no cookie)
         run: |
           python3 -m pip install --quiet pillow numpy brotli
@@ -146,13 +149,17 @@ jobs:
           foreach ($p in @(@('SPI_GETFONTSMOOTHING', 0x004A), @('SPI_GETFONTSMOOTHINGTYPE', 0x200A), @('SPI_GETFONTSMOOTHINGCONTRAST', 0x200C), @('SPI_GETFONTSMOOTHINGORIENTATION', 0x2012))) {
             $v = [uint32]0; [void][W.U]::SystemParametersInfo($p[1], 0, [ref]$v, 0); "$($p[0]) = $v"
           }
-          if (Test-Path 'HKCU:\Software\Microsoft\Avalon.Graphics') { Get-ChildItem -Recurse 'HKCU:\Software\Microsoft\Avalon.Graphics' | Format-List | Out-String } else { 'no HKCU\Software\Microsoft\Avalon.Graphics: Chromium uses SK_GAMMA_CONTRAST and SK_GAMMA_EXPONENT (font_util_win.cc)' }
+          # Chromium reads DirectWrite's gamma/contrast only when HKCU\Software\Microsoft\Avalon.Graphics\<primary display> exists (font_util_win.cc)
+          $k = 'HKCU:\Software\Microsoft\Avalon.Graphics'
+          if (Test-Path $k) { "$k exists: values $((Get-Item $k).Property -join ', '); subkeys: $((Get-ChildItem $k | ForEach-Object PSChildName) -join ', ')"; Get-ChildItem $k | ForEach-Object { Get-ItemProperty $_.PSPath } | Format-List | Out-String } else { "no $k" }
+          Add-Type -AssemblyName System.Windows.Forms
+          "primary display: $([System.Windows.Forms.Screen]::PrimaryScreen.DeviceName)"
           Get-CimInstance Win32_VideoController | Format-List Name, DriverVersion, CurrentHorizontalResolution, CurrentVerticalResolution | Out-String
       - name: Gio's rendering of the reference cells (D3D11), and a real window's swapchain read back from the screen
         env:
           CLACK_PIXEL_TESTS: "1"
           CLACK_TEXT_RENDER_DIR: ${{ github.workspace }}\dist\text-render
-        run: go test -count=1 -v -run 'TestTextRenderShots$|TestD3D11WindowSRGB$' ./internal/ui/theme/
+        run: go test -count=1 -v -run 'TestTextRenderShots$|TestD3D11WindowSRGB$|TestTextMatchesChrome$|TestTextInk$' ./internal/ui/theme/
       - name: Slack's own Lato (public CDN, no cookie)
         run: |
           python -m pip install --quiet pillow numpy brotli

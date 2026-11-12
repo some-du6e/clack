@@ -493,9 +493,7 @@ func textArea(gtx layout.Context, th *theme.Theme, ed *widget.Editor, placeholde
 	if ed.Len() == 0 && placeholder != "" {
 		label(g, th.Shaper, textStyle{Size: 15, LineHeight: 22, Color: cl.Placeholder}, placeholder)
 	}
-	tm := op.Record(gtx.Ops)
-	paint.ColorOp{Color: th.C.Fg}.Add(gtx.Ops)
-	txt := tm.Stop()
+	txt := theme.TextMaterial(gtx, th.C.Fg)
 	sm := op.Record(gtx.Ops)
 	paint.ColorOp{Color: th.C.Selection}.Add(gtx.Ops)
 	sel := sm.Stop()

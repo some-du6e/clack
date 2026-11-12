@@ -344,8 +344,10 @@ func (s *Style) lightEmbolden(c color.NRGBA, pxPerDp float32) float32 {
 }
 
 // textColor applies LightTextFade to light glyph colors at scale pxPerDp.
+// The fade belongs to the legacy text model: under Skia's (Windows) light
+// glyphs keep their colour (theme.LegacyTextInk).
 func (s *Style) textColor(c color.NRGBA, pxPerDp float32) color.NRGBA {
-	if s.LightTextFade <= 0 || pxPerDp <= 0 {
+	if s.LightTextFade <= 0 || pxPerDp <= 0 || !theme.LegacyTextInk() {
 		return c
 	}
 	if y := (0.299*float32(c.R) + 0.587*float32(c.G) + 0.114*float32(c.B)) / 255; y >= 0.6 {

@@ -351,7 +351,7 @@ func (t *Theme) Measure(gtx layout.Context, size unit.Sp, weight font.Weight, tx
 func (t *Theme) Editor(gtx layout.Context, e *widget.Editor, size unit.Sp, col, selection color.NRGBA) layout.Dimensions {
 	f := EditorFont(Font(Regular))
 	scanEditor(gtx, t.Shaper, e, f, size)
-	d := e.Layout(gtx, t.Shaper, f, size, Material(gtx, col), Material(gtx, selection))
+	d := e.Layout(gtx, t.Shaper, f, size, TextMaterial(gtx, col), Material(gtx, selection))
 	EditorEmoji(gtx, t.Shaper, e, size, d)
 	return d
 }

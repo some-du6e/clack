@@ -44,6 +44,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 W709 = np.array([0.2126, 0.7152, 0.0722])
+DIFFS = ("clack", "win")  # variants drawn as signed differences from the reference (red: less ink, blue: more)
 
 
 def lin(c):
@@ -236,7 +237,7 @@ def main():
         if refname not in imgs:
             continue
         sres = report["scales"][t] = {}
-        main_cols = [refname] + ["gio-" + v for v in variants] + ["diff clack", "diff skia"]
+        main_cols = [refname] + ["gio-" + v for v in variants] + ["diff " + v for v in DIFFS]
         ref_cols = [b for b in browsers if b in imgs]
         main_rows, ref_rows = [], []
         md += ["## %s" % t, "",
@@ -289,8 +290,8 @@ def main():
             def crop_of(name):
                 return imgs[name][y0:y1, x0:x1] if name in imgs else None
             row = [crop_of(refname)] + [crop_of("gio-" + v) for v in variants]
-            for v in ("gio-clack", "gio-skia"):
-                row.append(diff_rgb(aligned[v] - ref)[:, x0:x1] if v in aligned else None)
+            for v in DIFFS:
+                row.append(diff_rgb(aligned["gio-" + v] - ref)[:, x0:x1] if "gio-" + v in aligned else None)
             main_rows.append(row)
             ref_rows.append([crop_of(b) for b in ref_cols])
         md.append("")

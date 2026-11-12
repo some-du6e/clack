@@ -1215,7 +1215,7 @@ func (p *painter) drawWord(sh *shaped, x, y float32, col color.NRGBA, st *css.St
 		paint.FillShape(p.ops, p.col(ts.Color), clip.Outline{Path: path}.Op())
 		s.Pop()
 	}
-	paint.FillShape(p.ops, col, clip.Outline{Path: path}.Op())
+	theme.FillText(p.ops, col, path)
 	if e := theme.EmboldenFor(col); e > 0 {
 		paint.FillShape(p.ops, col, clip.Stroke{Path: path, Width: e}.Op())
 	}

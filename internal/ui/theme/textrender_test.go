@@ -66,7 +66,7 @@ const (
 
 var (
 	trScales   = []float32{1, 1.25, 1.5, 2}
-	trVariants = []string{"clack", "raw", "skia", "skia-emb"}
+	trVariants = []string{"clack", "raw", "win", "win-bg", "skia"}
 )
 
 const (
@@ -251,32 +251,40 @@ func trDraw(gtx layout.Context, th *Theme, c trCell, variant string, s float32) 
 		w = Bold
 	}
 	o := LabelOpts{Font: Font(w), Size: unit.Sp(c.Size), MaxLines: 1, Color: trNRGBA(c.FG)}
-	k := trSkiaContrast(o.Color, 1.0) // Chromium on Windows: SK_GAMMA_CONTRAST=1.0, SK_GAMMA_SRGB
 	switch variant {
-	case "clack": // as shipped
-		if c.Ctx == "body" {
-			// richview (messages.styleForTheme): light mode strokes every
-			// body glyph by BodyEmboldenFor(Fg); dark mode adds
-			// LightEmbolden·(1-1/scale) to light glyphs; no fade.
-			// drawText scales by weightEmbolden, richview doesn't.
-			emb := BodyEmboldenFor(LightPalette.Fg)
-			if c.Mode == "dark" {
-				emb = 0
-				if y := (0.299*float32(o.Color.R) + 0.587*float32(o.Color.G) + 0.114*float32(o.Color.B)) / 255; y >= 0.6 && s > 1 {
-					emb = 0.34 * (1 - 1/s)
-				}
-			}
-			return drawText(gtx, th.Shaper, o, c.Text, emb/weightEmbolden(o.Font.Weight))
-		}
-		return th.Text(gtx, o, c.Text)
 	case "raw": // Gio's coverage, linear-light blend, nothing added
 		return trPaint(gtx, th.Shaper, o, c.Text, 0, 0)
-	case "skia": // raw plus Skia's preblend contrast, as a second paint
-		return trPaint(gtx, th.Shaper, o, c.Text, 0, k)
-	case "skia-emb": // raw grown by the contrast's ink (k/6 px per edge)
-		return trPaint(gtx, th.Shaper, o, c.Text, k/3, 0)
+	case "skia": // raw plus Skia's contrast (Windows), painted by the test: a cross-check of "win"
+		return trPaint(gtx, th.Shaper, o, c.Text, 0, skiaContrast(o.Color, skiaWinContrast))
 	}
-	panic("variant " + variant)
+	// the app's paths under the variant's model: "clack" legacy, "win"
+	// Skia's Windows model, "win-bg" the same with bgContrast
+	m := TextModelLegacy
+	if variant == "win" || variant == "win-bg" {
+		m = TextModelSkiaWin
+	} else if variant != "clack" {
+		panic("variant " + variant)
+	}
+	pm, pb := CurrentTextModel(), textBgAware.Load()
+	SetTextModel(m)
+	textBgAware.Store(variant == "win-bg")
+	defer func() { SetTextModel(pm); textBgAware.Store(pb) }()
+	if c.Ctx == "body" {
+		// richview as messages.styleForTheme sets it up: light mode
+		// strokes every body glyph by BodyEmboldenFor(Fg), dark mode
+		// grows light glyphs by LightEmbolden·(1-1/scale), no fade; and
+		// paintGlyphs passes both through GlyphEmbolden. drawText scales
+		// by weightEmbolden, richview doesn't.
+		emb := BodyEmboldenFor(LightPalette.Fg)
+		if c.Mode == "dark" {
+			emb = 0
+			if y := (0.299*float32(o.Color.R) + 0.587*float32(o.Color.G) + 0.114*float32(o.Color.B)) / 255; y >= 0.6 && s > 1 {
+				emb = 0.34 * (1 - 1/s)
+			}
+		}
+		return drawText(gtx, th.Shaper, o, c.Text, GlyphEmbolden(emb)/weightEmbolden(o.Font.Weight))
+	}
+	return th.Text(gtx, o, c.Text)
 }
 
 // trPaint lays txt out like drawText and fills its outline (grown by emb
@@ -319,23 +327,151 @@ func trPaint(gtx layout.Context, sh *text.Shaper, o LabelOpts, txt string, emb, 
 	return d
 }
 
-// trSkiaContrast is the contrast Skia's mask gamma adds to an A8 glyph
-// mask drawn in c (SkMaskGamma.cpp SkTMaskGamma_build_correcting_lut:
-// adjustedContrast = contrast·toLuma(1-src)), src being c's luminance as
-// SkScalerContext reduces it: each channel to 3 bits
-// (SkTMaskGamma::CanonicalColor, SkScalerContextRec::setLuminanceColor),
-// SkComputeLuminance (r·54+g·183+b·19)>>8 for A8 (PreprocessRec), 3 bits
-// again. Gamma 0 is sRGB (SK_GAMMA_EXPONENT's default, SkTypes.h).
-func trSkiaContrast(c color.NRGBA, contrast float64) float32 {
-	cn := func(v uint8) uint8 { b := v >> 5 << 5; return b | b>>3 | b>>6 } // sk_t_scale255<3>
-	lum := (int(cn(c.R))*54 + int(cn(c.G))*183 + int(cn(c.B))*19) >> 8
-	src := float64(cn(uint8(lum))) / 255
-	return float32(contrast * trLin(1-src))
+// TestTextMatchesChrome holds Clack's text to Chrome's: every cell of
+// trCells drawn under a text model is measured against Chrome 156's
+// screenshot of the same cell (testdata/text-render, from font-shots'
+// text-render jobs: page-<s>x.html in the embedded Lato; Chrome on the
+// Windows runner draws ClearType) the way text_render_compare.py measures
+// them: total ink, and the peaks of strokes along rows (stems) and columns
+// (bars, the strokes vertical hinting sharpens).
+//
+// Windows, Skia's model (what Clack draws there): per mode the mean ink
+// within 12% of Chrome's and the mean stem and bar peaks at most 0.06 and
+// 0.08 below; no cell's stems more than 0.1 below. The legacy model fails
+// this: its faded light text is 0.1-0.2 below in dark mode.
+// Linux, the legacy model (what Clack draws there): its distance from
+// Linux Chrome as of 2026-11-11 (dark-mode stems 0.06 below on average,
+// timestamps 0.14), so it can't drift further.
+func TestTextMatchesChrome(t *testing.T) {
+	cs := trCells()
+	th := New(false)
+	for _, r := range []struct {
+		ref        string // testdata/text-render/<ref>.png
+		variant    string // trDraw's
+		scale      float32
+		modeInk    float64 // |mean ink ratio - 1| per mode
+		modeStem   float64 // mean stem peak below Chrome's, per mode
+		modeBar    float64
+		cellStem   float64 // any cell's stem peak below Chrome's
+		cellInkMin float64
+		cellInkMax float64
+	}{
+		{"windows-chrome-1x", "win", 1, 0.12, 0.06, 0.08, 0.10, 0.80, 1.25},
+		{"windows-chrome-1.5x", "win", 1.5, 0.12, 0.06, 0.08, 0.10, 0.80, 1.25},
+		{"linux-chrome-1x", "clack", 1, 0.12, 0.08, 0.11, 0.16, 0.80, 1.20},
+	} {
+		t.Run(r.ref, func(t *testing.T) {
+			f, err := os.Open(filepath.Join("testdata", "text-render", r.ref+".png"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref, err := png.Decode(f)
+			f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			img := trRender(t, th, cs, r.scale, r.variant)
+			if ref.Bounds() != img.Bounds() {
+				t.Fatalf("reference %v, rendering %v", ref.Bounds(), img.Bounds())
+			}
+			type acc struct{ ink, stem, bar float64 }
+			modes := map[string]*acc{}
+			n := map[string]int{}
+			for _, c := range cs {
+				got, want := trMeasure(img, c, r.scale), trMeasure(ref, c, r.scale)
+				ratio, ds, db := got.ink/want.ink, got.stem-want.stem, got.bar-want.bar
+				t.Logf("%-18s ink %5.1f%%  stem %+.3f  bar %+.3f", c.Name, 100*ratio, ds, db)
+				if ds < -r.cellStem {
+					t.Errorf("%s: stems %.3f below Chrome's (limit %.2f)", c.Name, -ds, r.cellStem)
+				}
+				if ratio < r.cellInkMin || ratio > r.cellInkMax {
+					t.Errorf("%s: %.1f%% of Chrome's ink (limits %.0f-%.0f%%)", c.Name, 100*ratio, 100*r.cellInkMin, 100*r.cellInkMax)
+				}
+				a := modes[c.Mode]
+				if a == nil {
+					a = &acc{}
+					modes[c.Mode] = a
+				}
+				a.ink, a.stem, a.bar = a.ink+ratio, a.stem+ds, a.bar+db
+				n[c.Mode]++
+			}
+			for mode, a := range modes {
+				k := float64(n[mode])
+				ink, stem, bar := a.ink/k, a.stem/k, a.bar/k
+				t.Logf("%s: ink %.1f%%, stems %+.3f, bars %+.3f", mode, 100*ink, stem, bar)
+				if math.Abs(ink-1) > r.modeInk {
+					t.Errorf("%s mode: %.1f%% of Chrome's ink (limit ±%.0f%%)", mode, 100*ink, 100*r.modeInk)
+				}
+				if stem < -r.modeStem {
+					t.Errorf("%s mode: stems %.3f below Chrome's (limit %.2f)", mode, -stem, r.modeStem)
+				}
+				if bar < -r.modeBar {
+					t.Errorf("%s mode: bars %.3f below Chrome's (limit %.2f)", mode, -bar, r.modeBar)
+				}
+			}
+		})
+	}
 }
 
-func trLin(v float64) float64 {
-	if v <= 0.04045 {
-		return v / 12.92
+// trInk is one cell's measurements (text_render_compare.py's measure).
+type trInk struct{ ink, stem, bar float64 }
+
+// trMeasure measures cell c of img (a page at scale s) in sRGB-space ink:
+// 0 at the cell's background, 1 at its text colour, luminance-weighted.
+func trMeasure(img image.Image, c trCell, s float32) trInk {
+	y0, y1 := trPx(c.Y, s), trPx(c.Y+trCellH, s)
+	w, h := img.Bounds().Dx(), y1-y0
+	wt := [3]float64{0.2126, 0.7152, 0.0722}
+	var d [3]float64
+	var den float64
+	for i := range d {
+		d[i] = float64(c.FG[i]) - float64(c.BG[i])
+		den += wt[i] * d[i] * d[i]
 	}
-	return math.Pow((v+0.055)/1.055, 2.4)
+	m := make([]float64, w*h)
+	var out trInk
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			p := color.NRGBAModel.Convert(img.At(x, y0+y)).(color.NRGBA)
+			v := 0.0
+			for i, ch := range [3]uint8{p.R, p.G, p.B} {
+				v += wt[i] * d[i] * (float64(ch) - float64(c.BG[i]))
+			}
+			v /= den
+			m[y*w+x] = v
+			out.ink += max(v, 0)
+		}
+	}
+	at := func(x, y int) float64 {
+		if x < 0 || y < 0 || x >= w || y >= h {
+			return -1
+		}
+		return m[y*w+x]
+	}
+	// local maxima over 0.2: along rows (stem crossings), along columns (bars)
+	peaks := func(rows bool) float64 {
+		var sum float64
+		cnt := 0
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				v := at(x, y)
+				var prev, next float64
+				if rows {
+					prev, next = at(x-1, y), at(x+1, y)
+				} else {
+					prev, next = at(x, y-1), at(x, y+1)
+				}
+				if v > 0.2 && v >= prev && v > next {
+					sum += v
+					cnt++
+				}
+			}
+		}
+		if cnt == 0 {
+			return 0
+		}
+		return sum / float64(cnt)
+	}
+	out.stem, out.bar = peaks(true), peaks(false)
+	return out
 }
