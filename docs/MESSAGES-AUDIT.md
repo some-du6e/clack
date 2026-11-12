@@ -120,6 +120,27 @@ docs/EMBEDS.md has the full rules, read from build a84662d2d135. I didn't re-rea
 | Remove-preview x | AttachmentDeleteButton (qrgA): a 20px circle at -9/-9 on v3 cards, the rail on v1/v2, "Remove preview?" / "Remove", chat.deleteAttachment | same | **matched** |
 | Admin options | "Also block previews from this website", removing others' previews | not offered | **open**: the test account can't see them (EMBEDS.md) |
 
+## Work objects
+
+2026-11-11, branch `work-objects`. Read from the cached CDN build 4d0c78085232 (client-boot, boot-shared, boot-render and the WIP_work-objects chunks; CSS from client-boot-styles and the Slack Kit Panda classes). Shots: messages-audit-shots `work-object-*-{light,dark}.png` (richview) and `work-objects-channel-*`, `work-object-details-*`, `work-object-comments-*`, `work-object-conversations-*` (the app over fakeslack's #work-objects).
+
+| Feature | Slack (evidence) | Clack before | Status |
+|---|---|---|---|
+| Which attachments are work objects | MessageKitAttachments (jWdN) takes every attachment with `work_object_entity` / `work_object` (BOLE getWorkObject, BH+8) out of the unfurls; WorkObjectEntity (u5Hu) draws the external ones (5xtd) as ExternalWorkObjectEntity (K3AG), Tableau ones through Tableau | drawn as plain unfurls | **fixed**: `richtext.WorkObject`, `internal/workobject` (WorkObjectModel JrfS: layouts, makeField, the deprecated array format); Tableau ones draw nothing (no Tableau client) |
+| Card frame | EntityContainer (E1Jc): radius 12, 1px otl-ter, otl-sec on hover, 200–480px wide in messages | none | **fixed** (richview `workobject.go`) |
+| Header | EntityHeader (BP+t): 12px padding, the 36px product icon (radius 4, unique against app_icons) or the app's icon (radius 8) with the 18px app badge, StackedLabels (0j4o: 15px/1.5 bold title, 13px/1.25 600 subtitle in content-sec, 4px apart) | none | **fixed** |
+| Hovered subtitle | "Preview in Slack", "View latest details" (a file with no preview), "Open in {productName}" + new-window when a click opens the item (robR B, work_objects_click_opens_url_prefs); hidden while the actions bar is hovered | none | **fixed** (richview hover layers) |
+| Fields | ExternalWorkObjectFieldBlocks (zZ0S) in the expanded preview (padding 0 12 16 60; 12/24px gaps; a grid of 62/83/119/191px columns when the fields don't fit one line, HSqQ P$ dropping images with no size): text (1 line, 2 long, 4 alone), rich text (4 lines, 160 characters), tags (theme colours), users (tokens), dates, timestamps (relative), links, emails, channels, entity refs, checkboxes, images | none | **fixed**; **open**: file fields (WorkObjectFile), date_time_range and Tableau's header_with_badge don't draw |
+| Footer and refresh timestamp | EntityFooter (jKQ2): "As of today at {time}" (3uan, the message ts) or "Updated {n} min ago" (ZV2l, updated_at) with work_objects_refresh_timestamp, Refresh on hover (chat.refreshUnfurl, sSNM: "Refreshing…", "Failed to refresh" for 2s after an error or 10s), the layout's primary actions; without the experiment the header shows the time (nuF4) | none | **fixed** (`core.RefreshWorkObject`) |
+| Actions bar | ActionsBar (P/NP): Open (OpenExternalLinkButton: app_unfurl_url, else external_url), Preview/Details when a click opens the item, Share…, Comments (wo_comment_sync_client_xp), View conversations, More actions; icon-only under 400px | none | **fixed**; **open**: Share… is left out (no ShareWorkObjectModal yet) |
+| More actions menu | WorkObjectContextMenu (sqU2): Preview in Slack, Share / Copy link to {type}, the app's overflow actions under its name, Open in {productName} | none | **fixed** (`popups.NewWorkObjectMenu`); **open**: Open in new window, the click preference submenu |
+| Rearrangement | work_objects_rearrangement (cAEk U): the cards move into MessageFiles' gallery (T4f+, mixed_file_format --v3: two compact cards a row, a lone one expanded) under "N attachments"; off, they follow the attachments under MessageAttachmentWorkObjectsMetaTextWrapper (80Gy: "{header_title}", "{n} attachments", collapsible) | none | **fixed** |
+| Flexpane | WorkObjectFlexpane (yqt8, bjxP, i4MO): "Task · Tracker" header, Sync data, the 22px title and doc link, Details / Comments / Conversations tabs, the full layout's fields with "Updated …", the footer's actions; the unfurl's data until workObjects.getEntity's entity_details_present | none | **fixed** (`ui/workobject_pane.go`, `core.FetchWorkObject`); **open**: editing (forms, drafts), auth overlays, the email flexpane |
+| Comments | workObjects.getComments → entity_comments_present, workObjects.postComment → entity_comment_action_acknowledged (post, edit, delete), the read-only banner, the empty state, the card's badge once the tab was dismissed (0Omc, KKBj) | none | **fixed**; **open**: the composer is a plain input (Slack's is the full composer), thread replies, edit/delete buttons, the empty state's illustration |
+| Conversations | entities.refs.list (D+Tv), "It’s quiet. Too quiet…" | none | **fixed** (a simplified row per message); **open**: Slack's thread previews and their sort/filter |
+| Embedded preview | work_objects_embedded_preview (hZia ll): "Open in side panel" for an embed full_size_preview, WorkObjectView's iframe | none | **open**: Clack draws no web views |
+| Video previews | third_party_integrations_video_previews: WorkObjectInlineVideoPlayer for Google Drive / Microsoft videos | none | **open**: no video player |
+
 ## List lines (list.go, the list agent's)
 
 | Feature | Slack (evidence) | Clack before | Status |
