@@ -16,6 +16,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
@@ -78,7 +79,8 @@ func TestW10Shots(t *testing.T) {
 			edType(e, "second point")
 			edPress(e, key.NameReturn, key.ModShift)
 			edPress(e, key.NameReturn, 0) // leaves the list
-			edType(e, "これは＊太字＊と｀コード｀、＿斜体＿")
+			// Latin inside the full-width markers: the runner has no CJK font
+			edType(e, "Full-width ＊bold＊ and ｀code｀ and ＿italic＿")
 			edPress(e, key.NameReturn, key.ModShift)
 			edType(e, "```code line```")
 			edType(e, "after the block")
@@ -100,6 +102,7 @@ func TestW10Shots(t *testing.T) {
 
 		t.Run("link-rich-"+mode, func(t *testing.T) {
 			forgetDraft(ch)
+			h := w10ImgHost{ovHost: h, imgs: shotCache()} // the emoji from Slack's public CDN
 			c := New(h, ch, "")
 			t.Cleanup(c.Close)
 			d := NewDoc()
@@ -114,9 +117,9 @@ func TestW10Shots(t *testing.T) {
 			w, hh := 1100*scale, 760*scale
 			var ops op.Ops
 			var r input.Router
-			for i := 0; i < 6; i++ {
+			for i := 0; i < 8; i++ {
 				frame(th, &ops, &r, w, hh, func(gtx layout.Context) { o.Layout(gtx) })
-				time.Sleep(60 * time.Millisecond)
+				time.Sleep(400 * time.Millisecond) // the CDN fetch and decode
 			}
 			save(t, "w10-link-rich-"+mode, w, hh, &ops)
 		})
@@ -141,3 +144,12 @@ func TestW10Shots(t *testing.T) {
 		})
 	}
 }
+
+// w10ImgHost is ovHost with an image cache (the emoji in the link
+// dialog's rich text).
+type w10ImgHost struct {
+	*ovHost
+	imgs *imgcache.Cache
+}
+
+func (h w10ImgHost) Images() *imgcache.Cache { return h.imgs }
