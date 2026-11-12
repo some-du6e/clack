@@ -179,3 +179,47 @@ Checked against the ui-taut screenshots (`ui-taut-shots` artifact; synthetic dat
 Measured equal before and left alone: Taut's header, nav rows, search box, filter pills, group titles and plugin rows (`index.tsx:56-76`, `pluginList.tsx:15-96`); Taut's plugin page title, back link, Turn on checkbox, Settings and Data sections; every Slick tab: the hero (`settings.tsx:94-132`), cards and fields (`:141-186`, `:377-410`), the sticky toolbar, search and chips with counts (`:187-246`), plugin rows with the `User` badge, the switch and the caret (`:247-299`), the detail header with its badges (`:347-376`), notices, empty states, theme cards (`:433-521`) and the install panel (`:1262-1356`).
 
 **The Library.** It's Clack's own (see PLUGINS.md), so it borrows the parts of the UI it sits beside: Slick's section head with the actions at the right ("Official plugins" | Update all (n) | Refresh, like Themes' "Theme" | Import theme JSON…, `settings.tsx:1955-1961`), a 13px secondary intro, Slick's sticky-style toolbar (search with the 16px icon at 10px, 34px inset; chips All / Taut / Slick / Installed / Updates with counts, `:199-246`), and one card per category with Slick's category icons (`:766-776`) in Taut's and Slick's category order. Each row is a Slick plugin row (`:247-277`) with the switch replaced by the action button: name 15/700 with a `Taut` or `Slick` badge (Slick's 20px 11/700 badge, `:286-299`) plus `Hack Club only` / `Off upstream` (warn) badges, the description clamped to two lines, "By …" in 13px tertiary, the last result in Slick's 12/700 status style (`:306-314`), and Install / Update (primary small) or Settings (outline small), which opens the plugin in its own system's tab.
+
+## Drop to upload (branch `gap-w1-drop`, 2026-11-11)
+
+Files dragged onto the window from Explorer, Finder or a file manager.
+Sources: CDN build 4d0c78085232, fetched without a cookie: boot-shared
+`oCSS` (`FileDragDrop`), `cCrv` (`MessagePaneDragOverlay`), `6Uf7`
+(threads `DragOverlay`), `HgMH` (`KeyboardKey`), `Tmmu`/`lVUj` (what counts
+as a file drag), `qwL3` (`disable_file_uploads`), and client-boot-styles'
+`.p-message_pane_drag_overlay*`, `.p-thread_drag_overlay*` and their
+keyframes. The sprites are Slack's (`dragdrop_sprites@2x-ca59764.png`,
+`dragdrop_threads_sprites@2x-f3aaf0a.png`,
+`emptystate-blockedfiles@1x-6b3ea84.png`), embedded. Clack's events come
+from Gio patch 11 (third_party/gioui.org/CLACK_PATCHES.md §11).
+
+| element | Slack | Clack before | Clack now |
+|---|---|---|---|
+| drop target | one `FileDragDrop` per pane: MESSAGE_PANE around the primary view body (list and composer), THREAD around the thread flexpane body (not its header); each its own drag state | none (Gio had no OS drop events) | each convo `layoutConvo` lays out (channel, split card, thread) registers its window rectangle, a thread's from under its 49px header; the one under the pointer shows its overlay |
+| disabled pane | `disabled: G\|\|$` on the message pane: no overlay, no drop | n/a | a preview or archived channel (its footer replaces the composer) registers no zone |
+| overlay box | z-index 200, `inset: -1px 0 0`, `rgba(var(--sk_primary_background), .95)`, flex-centred | n/a | the same, drawn as the pane's last layer (white light, #1a1d21 dark at .95) |
+| entrance | message pane: `messagePaneDragOverlayOverlayTransition` .12s ease (background 0 → .95, opacity 0 → 1); thread: `threadDragOverlayFadeIn`, which the CSS never defines (no fade) | n/a | the same; reduced motion draws the last frame |
+| message pane cards | 171×171 `__anim`: `__anim_circle` (#00000003, scale .5 → 1), `card_03` (92×77 at 35,50; scale .5 rotate 5° → translateY(-30)), `card_02` (92×77 at 25,55; rotate 15° → translate(-20)), `card_01` (100×89 at 35,62; rotate -10° → translate(30)); .12s ease-in-out; the night `card_01` (0 -96) from 20:00 to 08:00 | n/a | the same pieces cut from the @2x sprite, CSS's `scale() rotate() translate()` about each box's centre |
+| thread cards | 110×155: `text_01` (top 3), `card_01` (top 30 left 10, night 0 -125), `text_02` (top 112); threadTextAnim scale .85 → 1 and 10px down, threadCard1Anim .5 → 1 and 10px down, fading in | n/a | the same |
+| title | 28px / 1.2143, weight 900, 16px above (thread 8), 8px below; "Upload to {teamName}" (`getTeamDisplayName`), thread "Upload to thread" | n/a | the same |
+| subtitle | 15px / 1.46668, `--dt_color-content-sec` (thread `rgb(var(--sk_foreground_max_solid))`), wraps; "Hold [Shift] to share immediately to {channelName}" (`#name`, a private channel bare, "with {userName}" in DMs), thread "Hold [Shift] to share immediately" | n/a | the same, word-wrapped around the chip; padding 0 16px (thread 0 50px) |
+| Shift chip | `KeyboardKey` slim: 20px tall, min 20 wide, 4px inside, margins 0 4px 4px, `base.tertiary` fill, 1px `tertiary` bottom border, radius 4, caption text | n/a | the same (13px text, as views/shortcuts.go measured the slim chip) |
+| read only | "Read only" / "Only selected team members can post in this channel." (thread: "… in this thread."), the circle and `emoji-objects` at 50px; the drop does nothing | n/a | the same, from the convo's posting restriction (read-only, thread-only, non-threadable) |
+| uploads disabled | `disable_file_uploads`: "disable_all" shows "Uploads disabled" with the blocked-files picture and drops nothing; "disable_all_except_images" says "Uploads disabled" over the cards | n/a | the same, from the team pref (`allow_box_cfs` allows all) |
+| drop | `uploadDraftFiles` (the pane's draft); with Shift `uploadFiles` with `shareData` (shared at once, draft untouched) | n/a | the pane's composer `AttachPaths` (the + menu's attach path: folders and over-limit files refused with its toasts); Shift `SharePaths`: `core.Upload` to the conversation |
+| dropEffect | "copy" on dragenter/dragover | n/a | the window answers copy (DROPEFFECT_COPY, NSDragOperationCopy, XdndActionCopy, wl copy) |
+| Esc | the OS ends the drag: dragleave | n/a | the same (DragLeave / draggingExited / XdndLeave / leave) |
+
+Not done: the huddle window's `HuddleDragOverlay`; Slack Connect's
+`can_upload_files` ("Can't upload file", "Your admins have disabled file
+upload in this Slack Connect conversation."); locked threads ("Locked
+thread"); Block Kit drags (`dragKind` "block-kit"); a drop on a message
+being edited (`messageEditUploadNewFiles`, the files go to the draft
+instead); the Later, Files and canvas drop targets. Tests:
+`internal/ui/drop_overlay_test.go` (the overlay follows the pane, leaves,
+the pane's composer gets the files, Shift shares them, an archived
+channel takes nothing), `third_party/gioui.org/app/clack_drop_test.go`,
+the windows-applog job's real OLE drag from another process
+(`clack_drop_windows_test.go`) and the linux job's XDND drag on Xvfb
+(`clack_drop_x11_test.go`). Screenshots: files-shots' `drop-*.png`.
+

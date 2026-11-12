@@ -25,6 +25,8 @@ on:
       - "internal/ui/popups/actions_context.go"
       - "internal/ui/popups/lightbox.go"
       - "internal/ui/files_shots_test.go"
+      - "internal/ui/drop_overlay.go"
+      - "internal/ui/drop_overlay_test.go"
       - "internal/ui/composer/taut.go"
       - ".github/workflows/files-shots.yml"
   workflow_dispatch:
@@ -54,14 +56,14 @@ jobs:
           go test -count=1 -v -run 'TestUploadProgressAndPrepared|TestUploadForInput|TestDraftFiles' ./internal/core/
           go test -count=1 -v -run 'TestFileMenuLaterAndDelete|TestContextMenuShapes' ./internal/ui/popups/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$|TestFileDrop|TestDropSubtitle|TestDropTiming' ./internal/ui/
       - name: screenshots
         env:
           FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FILES_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestFilesShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestFilesShots$|TestDropOverlayShots$' ./internal/ui/
           ls -la "$FILES_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

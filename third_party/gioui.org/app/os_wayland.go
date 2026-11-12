@@ -139,6 +139,13 @@ type wlSeat struct {
 	source *C.struct_wl_data_source
 	// content is the data belonging to source.
 	content []byte
+	// drag is the file drag over one of the windows (Clack patch,
+	// CLACK_PATCHES.md §11).
+	drag struct {
+		offer  *C.struct_wl_data_offer
+		win    *window
+		action C.uint32_t // the compositor's chosen action
+	}
 }
 
 type repeatState struct {
@@ -170,6 +177,7 @@ type window struct {
 	}
 	pointerBtns pointer.Buttons
 	lastPos     f32.Point
+	lastDragPos f32.Point // Clack patch (CLACK_PATCHES.md §11)
 	lastTouch   f32.Point
 	textInput   bool
 	inputHint   key.InputHint
@@ -476,7 +484,7 @@ func gio_onSeatCapabilities(data unsafe.Pointer, seat *C.struct_wl_seat, caps C.
 // content.
 func (s *wlSeat) flushOffers() {
 	for o := range s.offers {
-		if o == s.clipboard {
+		if o == s.clipboard || o == s.drag.offer { // Clack patch (CLACK_PATCHES.md §11)
 			continue
 		}
 		// We're only interested in clipboard offers.
@@ -743,6 +751,10 @@ func gio_onDataOfferSourceActions(data unsafe.Pointer, offer *C.struct_wl_data_o
 
 //export gio_onDataOfferAction
 func gio_onDataOfferAction(data unsafe.Pointer, offer *C.struct_wl_data_offer, act C.uint32_t) {
+	s := callbackLoad(data).(*wlSeat)
+	if offer == s.drag.offer { // Clack patch (CLACK_PATCHES.md §11)
+		s.drag.action = act
+	}
 }
 
 //export gio_onDataDeviceOffer
@@ -753,23 +765,129 @@ func gio_onDataDeviceOffer(data unsafe.Pointer, dataDev *C.struct_wl_data_device
 	s.offers[id] = nil
 }
 
+// Clack patch (CLACK_PATCHES.md §11): file drops on Wayland. A drag whose
+// wl_data_offer has text/uri-list over one of the windows sends
+// FileDragEnter, FileDragOver on motion and FileDragLeave on leave; the
+// window accepts the type with the copy action, as Chromium's
+// WaylandDataDragController does for a drop target. On drop it receives
+// the list through a pipe and sends FileDrop with the file: paths.
+
+const (
+	wlDndActionCopy = 1 // WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+	wlURIList       = "text/uri-list"
+)
+
 //export gio_onDataDeviceEnter
 func gio_onDataDeviceEnter(data unsafe.Pointer, dataDev *C.struct_wl_data_device, serial C.uint32_t, surf *C.struct_wl_surface, x, y C.wl_fixed_t, id *C.struct_wl_data_offer) {
 	s := callbackLoad(data).(*wlSeat)
 	s.serial = serial
+	s.endDrag(false)
+	files := false
+	for _, m := range s.offers[id] {
+		if m == wlURIList {
+			files = true
+		}
+	}
+	var w *window
+	if surf != nil {
+		if v, ok := callbackMap.Load(unsafe.Pointer(surf)); ok {
+			w, _ = v.(*window)
+		}
+	}
+	if id == nil || !files || w == nil {
+		if id != nil {
+			C.wl_data_offer_accept(id, serial, nil)
+		}
+		s.flushOffers()
+		return
+	}
+	s.drag.offer, s.drag.win, s.drag.action = id, w, 0
 	s.flushOffers()
+	cmime := C.CString(wlURIList)
+	C.wl_data_offer_accept(id, serial, cmime)
+	C.free(unsafe.Pointer(cmime))
+	C.wl_data_offer_set_actions(id, wlDndActionCopy, wlDndActionCopy)
+	w.ProcessEvent(FileDropEvent{Kind: FileDragEnter, Position: w.dragPos(x, y), Modifiers: w.dragMods()})
 }
 
 //export gio_onDataDeviceLeave
 func gio_onDataDeviceLeave(data unsafe.Pointer, dataDev *C.struct_wl_data_device) {
+	s := callbackLoad(data).(*wlSeat)
+	s.endDrag(true)
 }
 
 //export gio_onDataDeviceMotion
 func gio_onDataDeviceMotion(data unsafe.Pointer, dataDev *C.struct_wl_data_device, t C.uint32_t, x, y C.wl_fixed_t) {
+	s := callbackLoad(data).(*wlSeat)
+	if w := s.drag.win; w != nil {
+		w.ProcessEvent(FileDropEvent{Kind: FileDragOver, Position: w.dragPos(x, y), Modifiers: w.dragMods()})
+	}
 }
 
 //export gio_onDataDeviceDrop
 func gio_onDataDeviceDrop(data unsafe.Pointer, dataDev *C.struct_wl_data_device) {
+	s := callbackLoad(data).(*wlSeat)
+	w, offer := s.drag.win, s.drag.offer
+	if w == nil || offer == nil {
+		return
+	}
+	paths := parseURIList(s.receiveDrag(offer))
+	if len(paths) > 0 && s.drag.action == wlDndActionCopy {
+		C.wl_data_offer_finish(offer)
+	}
+	pos := w.lastDragPos
+	s.endDrag(false)
+	if len(paths) > 0 {
+		w.ProcessEvent(FileDropEvent{Kind: FileDrop, Position: pos, Paths: paths, Modifiers: w.dragMods()})
+	} else {
+		w.ProcessEvent(FileDropEvent{Kind: FileDragLeave})
+	}
+}
+
+// receiveDrag reads the drag offer's text/uri-list. The source writes it
+// to a pipe; the read gives up after 2 s, like a stuck clipboard source.
+func (s *wlSeat) receiveDrag(offer *C.struct_wl_data_offer) string {
+	r, wr, err := os.Pipe()
+	if err != nil {
+		return ""
+	}
+	defer r.Close()
+	cmime := C.CString(wlURIList)
+	C.wl_data_offer_receive(offer, cmime, C.int(wr.Fd()))
+	C.free(unsafe.Pointer(cmime))
+	wr.Close() // the request dup'ed it
+	if d := s.disp; d != nil {
+		C.wl_display_flush(d.disp)
+	}
+	r.SetReadDeadline(time.Now().Add(2 * time.Second))
+	b, _ := io.ReadAll(io.LimitReader(r, 4<<20))
+	return string(b)
+}
+
+// endDrag forgets the drag, with a FileDragLeave if leave is set.
+func (s *wlSeat) endDrag(leave bool) {
+	w, offer := s.drag.win, s.drag.offer
+	s.drag.win, s.drag.offer, s.drag.action = nil, nil, 0
+	if offer != nil {
+		delete(s.offers, offer)
+		callbackDelete(unsafe.Pointer(offer))
+		C.wl_data_offer_destroy(offer)
+	}
+	if leave && w != nil {
+		w.ProcessEvent(FileDropEvent{Kind: FileDragLeave})
+	}
+}
+
+func (w *window) dragPos(x, y C.wl_fixed_t) f32.Point {
+	w.lastDragPos = f32.Point{X: fromFixed(x) * float32(w.scale), Y: fromFixed(y) * float32(w.scale)}
+	return w.lastDragPos
+}
+
+func (w *window) dragMods() key.Modifiers {
+	if w.disp.xkb == nil {
+		return 0
+	}
+	return w.disp.xkb.Modifiers()
 }
 
 //export gio_onDataDeviceSelection

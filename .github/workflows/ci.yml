@@ -29,6 +29,22 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test ./...
+      # Gio patch 11 (third_party/gioui.org/CLACK_PATCHES.md): OS file-drop
+      # events through Window.Event, text/uri-list parsing (X11, Wayland)
+      - name: Gio file-drop events (vendored gioui.org/app)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'FileDrop|URIList' gioui.org/app
+      # the X11 path on a real X server: python-xlib plays a file manager's
+      # XDND source against a Gio window (enter, positions, drop, leave)
+      - name: XDND file drops on Xvfb (Gio patch 11)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_X11_DROP_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
+          xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop' gioui.org/app
       # Idle: the client left alone for 10 s per surface (channel, thread,
       # Activity, Preferences, the sidebar with unreads, the huddle window),
       # with and without reduced motion; fails past a caret's blinks plus
@@ -122,6 +138,15 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
+      # Files dragged onto a Gio window by another process through OLE
+      # (PowerShell C#: DoDragDrop with a CF_HDROP DataObject, moving the
+      # cursor), Esc's cancel, and WM_DROPFILES (Gio patch 11).
+      - name: OS file drops (IDropTarget across processes, WM_DROPFILES)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_DROP_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run 'TestOLEFileDrop|TestWMDropFiles|FileDrop|URIList' gioui.org/app
       - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
         if: ${{ !cancelled() }}
         env:

@@ -54,6 +54,7 @@ type window struct {
 	// frameDims stores the last seen window frame width and height.
 	frameDims image.Point
 	loop      *eventLoop
+	drop      *dropTarget // Clack patch (CLACK_PATCHES.md §11)
 }
 
 const _WM_WAKEUP = windows.WM_USER + iota
@@ -215,6 +216,7 @@ func (w *window) init() error {
 		return err
 	}
 	w.hwnd = hwnd
+	w.registerFileDrop() // Clack patch (CLACK_PATCHES.md §11)
 	return nil
 }
 
@@ -364,7 +366,11 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 		w.scrollEvent(wParam, lParam, false, getModifiers())
 	case windows.WM_POINTERHWHEEL:
 		w.scrollEvent(wParam, lParam, true, getModifiers())
+	case wmDropFiles: // Clack patch (CLACK_PATCHES.md §11)
+		w.dropFiles(wParam)
+		return 0
 	case windows.WM_DESTROY:
+		w.revokeFileDrop() // Clack patch (CLACK_PATCHES.md §11)
 		w.ProcessEvent(Win32ViewEvent{})
 		w.ProcessEvent(DestroyEvent{})
 		w.w = nil

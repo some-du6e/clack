@@ -19,6 +19,9 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 @property BOOL presentWithTrans;
 // firstMouse is a Clack patch (CLACK_PATCHES.md §8): see acceptsFirstMouse.
 @property BOOL firstMouse;
+// dragFiles is a Clack patch (CLACK_PATCHES.md §11): the drag over the
+// view carries file URLs.
+@property BOOL dragFiles;
 @end
 
 @implementation GioWindowDelegate
@@ -235,6 +238,70 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 	gio_onFocus(self.handle, 0);
 	return [super resignFirstResponder];
 }
+// Clack patch (CLACK_PATCHES.md §11): files dragged from Finder, as the
+// NSDraggingDestination Chromium's WebContentsViewMac gives its view.
+// Kinds match app.FileDropKind: 0 enter, 1 over, 2 leave, 3 drop.
+static NSString *dragPaths(id<NSDraggingInfo> sender) {
+	NSArray<NSURL *> *urls = [[sender draggingPasteboard] readObjectsForClasses:@[[NSURL class]]
+		options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+	if (urls.count == 0) {
+		return nil;
+	}
+	NSMutableArray<NSString *> *paths = [NSMutableArray arrayWithCapacity:urls.count];
+	for (NSURL *u in urls) {
+		if (u.path != nil) {
+			[paths addObject:u.path];
+		}
+	}
+	if (paths.count == 0) {
+		return nil;
+	}
+	unichar nul = 0;
+	return [paths componentsJoinedByString:[NSString stringWithCharacters:&nul length:1]];
+}
+static void sendDrag(GioView *view, id<NSDraggingInfo> sender, int kind, NSString *paths) {
+	NSPoint p = [view convertPoint:[sender draggingLocation] fromView:nil];
+	CGFloat height = view.bounds.size.height;
+	gio_onFileDrop(view.handle, kind, p.x, height - p.y, (__bridge CFTypeRef)paths, [NSEvent modifierFlags]);
+}
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+	NSString *paths = dragPaths(sender);
+	self.dragFiles = paths != nil;
+	if (!self.dragFiles) {
+		return NSDragOperationNone;
+	}
+	sendDrag(self, sender, 0, paths);
+	return NSDragOperationCopy;
+}
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+	if (!self.dragFiles) {
+		return NSDragOperationNone;
+	}
+	sendDrag(self, sender, 1, nil);
+	return NSDragOperationCopy;
+}
+- (void)draggingExited:(id<NSDraggingInfo>)sender {
+	if (self.dragFiles) {
+		self.dragFiles = NO;
+		sendDrag(self, sender, 2, nil);
+	}
+}
+- (BOOL)prepareForDragOperation:(id<NSDraggingInfo>)sender {
+	return self.dragFiles;
+}
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+	if (!self.dragFiles) {
+		return NO;
+	}
+	self.dragFiles = NO;
+	NSString *paths = dragPaths(sender);
+	if (paths == nil) {
+		sendDrag(self, sender, 2, nil);
+		return NO;
+	}
+	sendDrag(self, sender, 3, paths);
+	return YES;
+}
 @end
 
 // Delegates are weakly referenced from their peers. Nothing
@@ -435,6 +502,7 @@ CFTypeRef gio_createView(int presentWithTrans) {
 		view.presentWithTrans = presentWithTrans ? YES : NO;
 		view.wantsLayer = YES;
 		view.layerContentsRedrawPolicy = NSViewLayerContentsRedrawDuringViewResize;
+		[view registerForDraggedTypes:@[NSPasteboardTypeFileURL]]; // Clack patch (CLACK_PATCHES.md §11)
 
 		[[NSNotificationCenter defaultCenter] addObserver:view
 												 selector:@selector(applicationWillUnhide:)

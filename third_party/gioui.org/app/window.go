@@ -117,6 +117,7 @@ type eventSummary struct {
 	framePending bool
 	closing      *ClosingEvent
 	destroy      *DestroyEvent
+	drops        []FileDropEvent // Clack patch (CLACK_PATCHES.md §11)
 }
 
 type callbacks struct {
@@ -589,6 +590,10 @@ func (w *Window) nextEvent() (event.Event, bool) {
 		// Clear pending events after DestroyEvent is delivered.
 		*s = eventSummary{}
 		return e, true
+	case len(s.drops) > 0: // Clack patch (CLACK_PATCHES.md §11)
+		e := s.drops[0]
+		s.drops = s.drops[1:]
+		return e, true
 	case s.cfg != nil:
 		e := *s.cfg
 		s.cfg = nil
@@ -661,6 +666,12 @@ func (w *Window) processEvent(e event.Event) bool {
 		w.coalesced.destroy = &e2
 	case *ClosingEvent:
 		w.coalesced.closing = e2
+	case FileDropEvent: // Clack patch (CLACK_PATCHES.md §11)
+		// in the FrameEvent's coordinates, like the router's pointer events
+		if e2.Kind != FileDragLeave {
+			e2.Position = e2.Position.Sub(f32.Pt(float32(w.lastFrame.off.X), float32(w.lastFrame.off.Y)))
+		}
+		w.coalesced.drops = queueFileDrop(w.coalesced.drops, e2)
 	case ViewEvent:
 		if !e2.Valid() && w.gpu != nil {
 			w.ctx.Lock()

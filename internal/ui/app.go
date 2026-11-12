@@ -168,6 +168,7 @@ type App struct {
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
+	drop            dropState             // an OS file drag over the window (drop_overlay.go)
 	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
 	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
@@ -447,6 +448,8 @@ func (a *App) Run() error {
 			}
 			a.flushPrefs() // the window is gone: nothing waits on this
 			return e.Err
+		case app.FileDropEvent: // files dragged from the OS (Gio patch 11, drop_overlay.go)
+			a.fileDrop(e)
 		case app.ConfigEvent:
 			if e.Config.Focused && !a.focused {
 				a.nudgeUpdates()       // back from sleep, often: is a check due?
@@ -588,6 +591,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.syncWheelAnimation()
 	a.syncThemeTokens()
 	a.syncMenuBar()
+	a.dropZonesReset() // the panes that take OS file drops register as they lay out
 
 	if a.login != nil {
 		a.layoutWelcome(gtx) // the introduction, then the sign-in card (intro.go)
