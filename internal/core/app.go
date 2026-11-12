@@ -1169,6 +1169,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	v.WorkflowID, v.TriggerID = m.WorkflowID, m.TriggerID
 	v.AgentSession = m.AgentSession
 	v.FunctionExecutionID = m.FunctionExecutionID
+	v.Locked, v.LockedByTeam = m.IsLocked, m.LockedByTeamID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)
 	}

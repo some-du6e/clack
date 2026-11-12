@@ -74,6 +74,12 @@ type Message struct {
 	// FunctionExecutionID is a workflow step message's
 	// function_execution_id: its block actions send it (workflows.go).
 	FunctionExecutionID string
+	// Locked is a thread root's is_locked: an admin turned its replies
+	// off (Slack's p6HR isLocked), so the thread pane shows
+	// MessageInputLockedThreadRoadblock instead of the reply box
+	// (ThreadLocked, thread_lock.go). LockedByTeam is locked_by_team_id.
+	Locked       bool
+	LockedByTeam string
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the

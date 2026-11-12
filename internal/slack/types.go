@@ -57,6 +57,12 @@ type Message struct {
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`
+	// IsLocked marks a thread root whose replies an admin turned off
+	// (Slack's p6HR isLocked: `is_locked`); LockedByTeamID is the team
+	// that locked it. RTM's message_locked updates both on the stored
+	// root (core/thread_lock.go).
+	IsLocked       bool   `json:"is_locked,omitempty"`
+	LockedByTeamID string `json:"locked_by_team_id,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.

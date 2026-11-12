@@ -481,6 +481,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		a.S.Remove(ch, e.DeletedTS)
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
+	case "message_locked":
+		a.onMessageLocked(ch, ev.Raw)
+		return
 	case "message_replied":
 		if e.Message == nil {
 			return

@@ -26,6 +26,10 @@ import (
 //     separator counts 7.
 //   - ThreadsAuditFaces: seven repliers (reply_users_count 7): the reply
 //     bar's fifth face carries "+2".
+//   - ThreadsAuditLocked: is_locked (an admin turned its replies off): the
+//     pane's footer is MessageInputLockedThreadRoadblock. The oldest root,
+//     so the channel's other shots don't move. PushThreadLocked sends the
+//     socket's message_locked for any root.
 //
 // subscriptions.thread.mark is recorded (ThreadsAuditMarks) and moves the
 // thread's last_read, so a reload sees it read.
@@ -39,6 +43,7 @@ const (
 	ThreadsAuditRead      = "1762704000.000100"
 	ThreadsAuditHidden    = "1762705000.000100"
 	ThreadsAuditFaces     = "1762706000.000100"
+	ThreadsAuditLocked    = "1762699000.000100"
 )
 
 // ThreadsAuditReply is the i-th reply of a fixture thread (a minute apart).
@@ -51,6 +56,7 @@ type threadsAuditState struct {
 	mu       sync.Mutex
 	lastRead map[string]string // root -> last_read
 	marks    []ThreadMark
+	locked   map[string]bool // root -> is_locked set by PushThreadLocked
 }
 
 var threadsAuditStates sync.Map // *Server -> *threadsAuditState
@@ -84,6 +90,7 @@ type threadsAuditCase struct {
 	repliers []int
 	count    int // reply_count (0: the replies served)
 	text     string
+	locked   bool // is_locked
 }
 
 func (s *Server) threadsAuditCases() []threadsAuditCase {
@@ -99,6 +106,7 @@ func (s *Server) threadsAuditCases() []threadsAuditCase {
 		{root: ThreadsAuditRead, repliers: []int{1, 0, 1}, text: "Lunch order for Friday"},
 		{root: ThreadsAuditHidden, repliers: []int{0, 1, 0}, count: 7, text: "Photos from the trip"},
 		{root: ThreadsAuditFaces, repliers: []int{0, 1, 2, 3, 4, 5, 6}, text: "Sign-up sheet for the potluck"},
+		{root: ThreadsAuditLocked, repliers: []int{1, 2}, text: "Rules for the raffle", locked: true},
 	}
 }
 
@@ -137,6 +145,10 @@ func (s *Server) threadsAuditRoot(c threadsAuditCase) slack.Message {
 	m.LatestReply = ThreadsAuditReply(c.root, len(c.repliers)-1)
 	st := s.threadsAudit()
 	st.mu.Lock()
+	m.IsLocked = c.locked
+	if l, ok := st.locked[c.root]; ok {
+		m.IsLocked = l
+	}
 	if lr, ok := st.lastRead[c.root]; ok {
 		m.Subscribed, m.LastRead = true, lr
 	}
@@ -177,4 +189,33 @@ func (s *Server) handleThreadsAudit(method string, f url.Values) (any, bool) {
 		return ok(), true
 	}
 	return nil, false
+}
+
+// PushThreadLocked sends the socket's message_locked for root in ch, as
+// Slack's server does when an admin turns a thread's replies off or back
+// on: the fields boot-render's messageLocked (`yYRM`) reads (channel,
+// thread_ts, is_locked, locked_by_team_id). The server records it first,
+// so conversations.history and conversations.replies serve the new
+// is_locked to a client that reloads on the update.
+func (s *Server) PushThreadLocked(ch, root string, locked bool) {
+	st := s.threadsAudit()
+	st.mu.Lock()
+	if st.locked == nil {
+		st.locked = map[string]bool{}
+	}
+	st.locked[root] = locked
+	st.mu.Unlock()
+	s.histMu.Lock()
+	for i := range s.hist[ch] {
+		if s.hist[ch][i].TS == root {
+			s.hist[ch][i].IsLocked = locked
+			s.hist[ch][i].LockedByTeamID = ""
+			if locked {
+				s.hist[ch][i].LockedByTeamID = TeamID
+			}
+		}
+	}
+	s.histMu.Unlock()
+	s.Push(map[string]any{"type": "message", "subtype": "message_locked", "channel": ch, "thread_ts": root,
+		"is_locked": locked, "locked_by_team_id": TeamID, "event_ts": root})
 }
