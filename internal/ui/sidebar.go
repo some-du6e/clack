@@ -97,6 +97,10 @@ type sidebarState struct {
 	draftSlot image.Rectangle
 	draftFg   color.NRGBA
 	draftMenu bool
+	// headInd is the room the heading being laid out gave its
+	// SectionHuddleIndicator, its 4px gap included (px; 0 for none):
+	// sbHeadingControls puts ⋯ and + left of it
+	headInd int
 
 	// the keyboard (sidebar_keys.go) and organize mode
 	// (sidebar_organize.go)
@@ -576,6 +580,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	a.sidebar.draftSlot = image.Rectangle{}
+	a.sidebar.headInd = 0
 	var inner slackc.Styled
 	switch {
 	case conv != nil:
@@ -638,7 +643,11 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 				a.Navigate(r.key)
 			}
 		case sbHeading:
-			a.sbSetCollapsed(r, !a.sbCollapsed(r))
+			// the huddle stack sits outside toggleAndLabel: its click
+			// doesn't toggle the section
+			if !a.huddles().SectionIndicatorHovered(gtx, r.key) {
+				a.sbSetCollapsed(r, !a.sbCollapsed(r))
+			}
 		case sbConv:
 			if a.sidebar.edit.on { // onEditModeSelect: pick (Shift: a range)
 				a.sbEditClick(r.key, lastClickMods[btn].Contain(key.ModShift))
@@ -654,6 +663,22 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		return layout.Dimensions{Size: image.Pt(w, d.Size.Y+gtx.Dp(12))} // SpacerRow (height 12)
 	}
 	return layout.Dimensions{Size: image.Pt(w, d.Size.Y)}
+}
+
+// sbHeadingHuddle is the channel whose huddle a heading's
+// SectionHuddleIndicator shows (render SectionMenuNewInternal: X && f &&
+// n, the experiment, the section collapsed, its channelIds), "" for none.
+// A collapsed heading's channelIds are lJBI's channelsAssociatedOrdered,
+// every conversation the section holds.
+func (a *App) sbHeadingHuddle(r *sbRow) string {
+	if r.kind != sbHeading || !a.sbCollapsed(r) {
+		return ""
+	}
+	sec := a.sectionByID(r.key)
+	if sec == nil || len(sec.All) == 0 {
+		return ""
+	}
+	return a.huddles().SectionHuddle(sec.All)
 }
 
 // presenceDot draws Slack's 12px presence badge: filled green when active,
@@ -916,6 +941,15 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			rs.fg = fg
 			a.layoutConvBody(gtx, sbConvRow{a: a, r: r, btn: btn, rs: rs}, p, ix, right)
 			return layout.Dimensions{Size: image.Pt(rw, rowH)}
+		}
+		if ch := a.sbHeadingHuddle(r); ch != "" {
+			// a collapsed section with a huddle on in it: Slack's
+			// SectionHuddleIndicator ends the heading's buttonsContainer
+			// (huddleui), at the ⋯ button's right edge
+			if l := a.huddles().SectionIndicator(gtx, a.th, r.key, ch, rw, rowH); l < rw {
+				a.sidebar.headInd = rw - l + gtx.Dp(4) // the container's gap
+				right = min(right, l)
+			}
 		}
 		switch {
 		case rs.emoji != "" && icon == rs.icon:

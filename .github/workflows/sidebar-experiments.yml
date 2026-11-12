@@ -17,6 +17,8 @@ on:
       - "internal/fakeslack/closed_dms.go"
       - "internal/ui/messages/active_thread*.go"
       - "internal/core/section_move.go"
+      - "internal/ui/section_huddle_test.go"
+      - "internal/ui/huddleui/sidebar_suffix.go"
       - ".github/workflows/sidebar-experiments.yml"
   workflow_dispatch:
 
@@ -47,7 +49,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestSidebarTextFilter|TestTempMute|TestSidebarDraft|TestSectionMoveToast|TestChannelBellMenu$|TestChannelNotifyAdvancedSettings$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestSidebarTextFilter|TestTempMute|TestSidebarDraft|TestSectionMoveToast|TestChannelBellMenu$|TestChannelNotifyAdvancedSettings$|TestSectionHuddleIndicator$' ./internal/ui/
           xvfb-run -a go test -count=1 -v -run 'TestActiveThreadRoot' ./internal/ui/messages/
           ls -l "$PREVIEW_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

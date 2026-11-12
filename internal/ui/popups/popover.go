@@ -184,6 +184,14 @@ func TooltipLines(gtx layout.Context, th *theme.Theme, st *TipState, hovered boo
 	})
 }
 
+// TooltipBox is Tooltip for a body the caller draws: box lays out the
+// c-tooltip__tip's content (its padding included) at the origin and
+// returns the box's size; the tip's background, arrow and dark-mode
+// outline go under it. box runs only once the hover delay has passed.
+func TooltipBox(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, box func(gtx layout.Context) layout.Dimensions) {
+	tooltipWith(gtx, th, st, hovered, sz, side, box)
+}
+
 // tooltipWith shows the tooltip body box draws for a widget of size sz at
 // the current origin, after the hover delay.
 func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, box func(gtx layout.Context) layout.Dimensions) {

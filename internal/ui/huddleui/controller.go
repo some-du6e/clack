@@ -54,6 +54,9 @@ type liveRoom struct {
 	Channel      string
 	Participants []string
 	Start        int64
+	// Name is the call's name, the huddle's topic (HuddleChannelTooltip
+	// reads it through U4Fz; topic.go sets it).
+	Name string
 }
 
 // Controller owns the huddle you're in. Its exported methods run on the UI
@@ -662,6 +665,7 @@ type roomShape struct {
 	HasEnded     bool            `json:"has_ended"`
 	DateEnd      int64           `json:"date_end"`
 	DateStart    int64           `json:"date_start"`
+	Name         *string         `json:"name"`
 }
 
 func ids(raw json.RawMessage) []string {
@@ -736,6 +740,9 @@ func (c *Controller) Handle(ev core.Event) {
 		if r.DateStart > 0 {
 			lr.Start = r.DateStart
 		}
+		if r.Name != nil {
+			lr.Name = *r.Name
+		}
 		if r.Participants != nil {
 			lr.Participants = parts
 		} else if re.User != "" {
@@ -783,7 +790,7 @@ func (c *Controller) Seed() {
 			if !h.Active || len(h.Channels) == 0 {
 				continue
 			}
-			c.live[h.Channels[0]] = liveRoom{ID: h.ID, Channel: h.Channels[0], Participants: h.Participants, Start: h.Start}
+			c.live[h.Channels[0]] = liveRoom{ID: h.ID, Channel: h.Channels[0], Participants: h.Participants, Start: h.Start, Name: h.Name}
 		}
 		c.gen++
 		c.mu.Unlock()
