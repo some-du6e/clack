@@ -187,6 +187,13 @@ func TestSlickViewMentionProfilesFromLibrary(t *testing.T) {
 	if m.Pending || m.TS == "" {
 		t.Fatalf("the send didn't land: %+v", m)
 	}
+	// #general opens at its unread line (the fake's unreads), and the list
+	// doesn't follow a send on its own: show the newest message
+	if c := e.a.convoFor(ch, ""); c != nil {
+		if l, ok := c.list.(channelList); ok {
+			l.ScrollToBottom()
+		}
+	}
 	var img *image.RGBA
 	n := 0
 	e.until("Verity's picture in the mention pill", 20*time.Second, func() bool {
