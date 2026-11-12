@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // Preferences-dialog writes beyond SetPref, each the call Slack's web
@@ -317,7 +319,7 @@ func jsonObjectEach(raw json.RawMessage, f func(key string, v json.RawMessage)) 
 // apps.auth.external.delete (external_token_id, reason delete-user-auth),
 // after which the caller fetches the auths again (fetchUserAuth).
 func (a *App) DeleteUserAuth(ctx context.Context, externalTokenID string) error {
-	return a.C.Call(ctx, "apps.auth.external.delete", url.Values{
+	return a.C.Call(slack.NoBackoff(ctx), "apps.auth.external.delete", url.Values{ // a click: a retry after a failure is deliberate
 		"external_token_id": {externalTokenID},
 		"reason":            {"delete-user-auth"},
 	}, nil)
@@ -335,7 +337,7 @@ func (a *App) RequestEmailCode(ctx context.Context, email, locale string) error 
 	if email != "" { // ...t ? {email: t} : {}
 		v.Set("email", email)
 	}
-	return a.C.Call(ctx, "signup.confirmEmail", v, nil)
+	return a.C.Call(slack.NoBackoff(ctx), "signup.confirmEmail", v, nil) // "Request a new code" repeats it on purpose
 }
 
 // ConfirmEmailCode is VerifyEmailModal's code check (3+f0, fetcher
@@ -348,7 +350,7 @@ func (a *App) ConfirmEmailCode(ctx context.Context, email, code string) error {
 	if email != "" {
 		v.Set("email", email)
 	}
-	return a.C.Call(ctx, "signin.confirmCode", v, nil)
+	return a.C.Call(slack.NoBackoff(ctx), "signin.confirmCode", v, nil)
 }
 
 // EmailVerified is users.emailVerificationStatus.get is_verified (Privacy
