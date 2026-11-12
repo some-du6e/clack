@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The Huddles page's API (Slack's huddles-page chunk, Igs2):
@@ -27,6 +29,8 @@ type huddlePageState struct {
 	bgCalls      int
 	interCalls   []url.Values
 	historyErr   string // huddles.history answers {ok:false, error}
+	updates      []url.Values
+	people       []slack.User // the People browser's results (search.modules.people, desktop_people_browser); nil: unhandled
 }
 
 // SetHuddleHistory sets what huddles.history pages through (newest first).
@@ -41,6 +45,23 @@ func (s *Server) SetHuddleHistoryError(code string) {
 	s.hud.mu.Lock()
 	s.hud.page.historyErr = code
 	s.hud.mu.Unlock()
+}
+
+// SetPeopleBrowser makes search.modules.people answer the People browser
+// (search_context desktop_people_browser: the directory's first page,
+// which the Huddles page's DM suggestions read) with users. Unset, the
+// fake leaves that browser unhandled as before.
+func (s *Server) SetPeopleBrowser(users []slack.User) {
+	s.hud.mu.Lock()
+	s.hud.page.people = append([]slack.User{}, users...)
+	s.hud.mu.Unlock()
+}
+
+// HuddleUpdates returns the huddles.update forms so far.
+func (s *Server) HuddleUpdates() []url.Values {
+	s.hud.mu.Lock()
+	defer s.hud.mu.Unlock()
+	return append([]url.Values(nil), s.hud.page.updates...)
 }
 
 // SetHuddleInfo sets huddles.get's answer for a huddle id.
@@ -98,6 +119,23 @@ func (s *Server) SetInteraction(component, typ string, count int) {
 	}
 	s.hud.page.interactions[component+"-"+typ+"-DEFAULT"] = count
 	s.hud.mu.Unlock()
+}
+
+// defaultHuddleBackgrounds are four of Slack's huddle themes (its CDN
+// pictures, as internal/huddle's fake lists them).
+var defaultHuddleBackgrounds = []map[string]any{
+	{"id": "STAR_GAZING", "category_id": "featured", "category_name": "Featured", "category_order": 1, "name": "Stargazing",
+		"artist": "Art by Lisk Feng", "url": "https://a.slack-edge.com/f06881b/img/huddles/LiskFeng-Star_Gazing.jpg",
+		"preview_url": "https://a.slack-edge.com/f06881b/img/huddles/LiskFeng-Star_Gazing-preview.jpg"},
+	{"id": "ARIZONA", "category_id": "featured", "category_name": "Featured", "category_order": 1, "name": "Arizona",
+		"artist": "Art by Haley Tippmann", "url": "https://a.slack-edge.com/f06881b/img/huddles/HaleyTippmann-Arizona.jpg",
+		"preview_url": "https://a.slack-edge.com/f06881b/img/huddles/HaleyTippmann-Arizona-preview.jpg"},
+	{"id": "GRADIENT_03", "category_id": "colors", "category_name": "Colors", "category_order": 2, "name": "Midnight",
+		"url":         "https://a.slack-edge.com/feac618/img/huddles/midnight_fizz.jpg",
+		"preview_url": "https://a.slack-edge.com/feac618/img/huddles/midnight_fizz-preview.jpg"},
+	{"id": "LANDSCAPE_01", "category_id": "landscapes", "category_name": "Landscapes", "category_order": 3, "name": "Dunes",
+		"url":         "https://a.slack-edge.com/27f87ff/img/huddles/landscape_01.jpg",
+		"preview_url": "https://a.slack-edge.com/27f87ff/img/huddles/landscape_01-preview.jpg"},
 }
 
 func fixStrings(v any) []string {
@@ -236,13 +274,39 @@ func (s *Server) handleHuddlesPage(method string, f url.Values) (any, bool) {
 			}
 		}
 		return map[string]any{"ok": false, "error": "huddle_not_found"}, true
+	case "search.modules.people":
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if f.Get("search_context") != "desktop_people_browser" || h.page.people == nil {
+			return nil, false
+		}
+		items := make([]any, 0, len(h.page.people))
+		for _, u := range h.page.people {
+			items = append(items, u)
+		}
+		return ok("module", "people", "items", items,
+			"pagination", map[string]any{"total_count": len(items), "page": 1, "page_count": 1, "per_page": 50}), true
+	case "huddles.update":
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.page.updates = append(h.page.updates, f)
+		id := f.Get("huddle_id")
+		for _, x := range h.page.history {
+			if x["id"] == id {
+				if t := f.Get("topic"); t != "" {
+					x["name"] = t
+				}
+				return map[string]any{"ok": true}, true
+			}
+		}
+		return map[string]any{"ok": false, "error": "huddle_not_found"}, true
 	case "huddles.listBackgrounds":
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		h.page.bgCalls++
 		bs := h.page.backgrounds
 		if bs == nil {
-			bs = []map[string]any{}
+			bs = defaultHuddleBackgrounds
 		}
 		return ok("backgrounds", bs), true
 	case "users.interactions.list":

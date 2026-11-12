@@ -214,7 +214,7 @@ func (v *Huddles) liveTile(gtx C, h huddleRoom, room huddleRoom, maxCards int) D
 				l.LeaveHuddle()
 			}
 		} else {
-			v.joinOrStart(ch, &h, "huddles_page_live_huddle_card")
+			v.joinClicked(h.ID)
 		}
 	}
 	if card.Clicked(gtx) && !inner && !in {
@@ -299,7 +299,12 @@ func (v *Huddles) liveTileContent(gtx C, h huddleRoom, n int, in bool, name, rep
 			)
 			return D{Size: image.Pt(d.Size.X, d.Size.Y+gtx.Dp(8))}
 		}),
-		layout.Rigid(func(gtx C) D { return v.liveButton(gtx, btn, w, in) }),
+		layout.Rigid(func(gtx C) D {
+			if in {
+				return v.liveButton(gtx, btn, w, in)
+			}
+			return v.joinPoint(gtx, h, func(gtx C) D { return v.liveButton(gtx, btn, w, in) })
+		}),
 	)
 }
 
@@ -510,6 +515,12 @@ func (v *Huddles) channelIconAndName(ch string, history []string) (icon, name st
 		icon = "channel"
 	case "private":
 		icon = "lock"
+	}
+	if icon != "" { // getChannelDisplayName {publicChannelIncludeHashSign: false}: the icon stands for the #
+		if n := v.viewChannelName(ch, c.Name); n != "" {
+			return icon, n
+		}
+		return icon, ch
 	}
 	return icon, v.convTitle(ch, nil)
 }

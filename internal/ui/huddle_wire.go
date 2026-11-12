@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 
 	"gioui.org/layout"
 
@@ -62,6 +63,54 @@ func (a *App) OpenHuddleStart(entry string) {
 	}
 	a.ShowOverlay(popups.NewHuddleStartModal(a, a.sidebarConvs(), func(ch string) { a.huddles().Begin(ch, entry) }))
 }
+
+// OpenHuddleStartWith is HuddleInviteStartModal with one of the Huddles
+// page's suggestions picked (Slack's channelSuggestion /
+// memberSuggestionId): the conversation, or the person's DM.
+func (a *App) OpenHuddleStartWith(entry, channel, member string) {
+	if a.Core() == nil {
+		a.Toast("Sign in to start a huddle")
+		return
+	}
+	cands := a.sidebarConvs()
+	pick := channel
+	if member != "" {
+		for _, c := range a.Core().Snapshot().Convs {
+			if c.Kind == "im" && c.User == member {
+				pick = c.ID
+				break
+			}
+		}
+		if pick != "" && !slices.ContainsFunc(cands, func(c popups.SectionConv) bool { return c.ID == pick }) {
+			name := member
+			if u, ok := a.Core().User(member); ok {
+				name = u.Name
+			}
+			cands = append([]popups.SectionConv{{ID: pick, Name: name, Icon: "dms", DM: true}}, cands...)
+		}
+	}
+	m := popups.NewHuddleStartModal(a, cands, func(ch string) { a.huddles().Begin(ch, entry) })
+	if pick != "" {
+		m.Pick(pick)
+	}
+	a.ShowOverlay(m)
+}
+
+// ActiveHuddleChannel is activeHuddleChannelId: the conversation of the
+// huddle you're in ("" when none), for the Huddles page.
+func (a *App) ActiveHuddleChannel() string {
+	if s := a.huddles().Session(); s != nil {
+		return s.Channel()
+	}
+	return ""
+}
+
+// LeaveHuddle is the Huddles page's Leave (stopHuddle).
+func (a *App) LeaveHuddle() { a.huddles().Leave() }
+
+// SupportsHuddles is doesChannelSupportHuddles for the Huddles page's
+// channel suggestions.
+func (a *App) SupportsHuddles(ch string) bool { return a.huddles().SupportsHuddles(ch) }
 
 // toggleHuddle is Cmd/Ctrl+Shift+H: leave the huddle you're in, else start
 // or join the one in the conversation on screen.

@@ -124,6 +124,12 @@ func (a *App) HuddleInfo(ctx context.Context, id string) (Huddle, error) {
 	return h, nil
 }
 
+// UpdateHuddleTopic is sendNewTopic's huddles.update {huddle_id, topic}
+// (HuddlesEditTopicModal's Save).
+func (a *App) UpdateHuddleTopic(ctx context.Context, id, topic string) error {
+	return a.C.Call(ctx, "huddles.update", url.Values{"huddle_id": {id}, "topic": {topic}}, nil)
+}
+
 // HuddleBackground is one of huddles.listBackgrounds' pictures, as
 // maybeFetchBackgrounds stores it.
 type HuddleBackground struct {

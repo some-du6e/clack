@@ -530,10 +530,17 @@ func TestSlickViewBetterBlockPeople(t *testing.T) {
 // liveHuddle draws the Huddles page with a live huddle in #general.
 func (e *slickEnv) liveHuddle() *Huddles {
 	e.t.Helper()
+	start := time.Now().Add(-90 * time.Second).Unix()
+	// the live card shows once huddles.get answers (useHuddleInfo)
+	e.api.mu.Lock()
+	e.api.reply["huddles.get"] = map[string]any{"ok": true, "huddle": map[string]any{
+		"id": sRoom, "date_start": start, "participants": []string{sAlice, sBob},
+		"participant_history": []string{sAlice, sBob}, "channels": []string{sGen}}}
+	e.api.mu.Unlock()
 	v := NewHuddles(e.h)
 	e.frame(v.Layout) // subscribes
 	raw, _ := json.Marshal(map[string]any{"type": "sh_room_join", "user": sBob, "room": map[string]any{
-		"id": sRoom, "name": "", "date_start": time.Now().Add(-90 * time.Second).Unix(),
+		"id": sRoom, "name": "", "date_start": start,
 		"participants": []string{sAlice, sBob}, "channels": []string{sGen}}})
 	e.app.Inject(slack.Event{Type: "sh_room_join", Channel: json.RawMessage(strconv.Quote(sGen)), Raw: raw})
 	e.until("the live huddle", v.Layout, func() bool { return len(v.liveRooms()) == 1 })

@@ -415,8 +415,5 @@ func (v *Huddles) channelSuggestion(gtx C, c core.Conv, first, last bool) D {
 // channelDisplayName is getChannelDisplayName (W+Ke SB): #name for a
 // public channel, the person or people for a DM.
 func (v *Huddles) channelDisplayName(c core.Conv) string {
-	if c.Kind == "channel" {
-		return "#" + c.Name
-	}
 	return v.convTitle(c.ID, nil)
 }
