@@ -109,6 +109,25 @@ func (v *ProfileView) fetchSections() {
 	})
 }
 
+// refetchSections is the pane's refetch after an edit: the sections load
+// again.
+func (v *ProfileView) refetchSections() {
+	v.secs.asked = false
+	v.fetchSections()
+}
+
+// sectionOf is the section holding element e.
+func (v *ProfileView) sectionOf(e core.ProfileElement) (core.ProfileSection, bool) {
+	for _, s := range v.secs.ps.Sections {
+		for _, x := range s.Elements {
+			if x.ID == e.ID {
+				return s, true
+			}
+		}
+	}
+	return core.ProfileSection{}, false
+}
+
 // pfSectionBorder is .p-r_member_profile_section's border-top: #ddd, and
 // in the dark theme the #25272b Slack draws (sampled from the desktop app).
 func pfSectionBorder(th *theme.Theme) color.NRGBA {
@@ -155,9 +174,8 @@ func (v *ProfileView) drawSections(gtx layout.Context, th *theme.Theme, cl *Colo
 		editW := 0
 		if self && d.sec.CanEdit {
 			c := v.secs.btn("edit:" + d.sec.ID)
-			if c.Clicked(gtx) {
-				v.editUntil = gtx.Now.Add(pfEditPaneFor)
-				pfEditProfile(v.h)
+			if c.Clicked(gtx) { // onOpenEditModal(section, null): the section editor
+				OpenEditProfileSection(v.h, d.sec, "", v.refetchSections)
 			}
 			editW = textW(gtx, th, 15, theme.Bold, "Edit")
 			at(gtx, image.Pt(w-pad-editW, y), func(gtx layout.Context) layout.Dimensions {
@@ -304,9 +322,10 @@ func (v *ProfileView) addLink(e core.ProfileElement) layout.Widget {
 		th := v.h.Theme()
 		cl := colorsOf(th)
 		c := v.secs.btn("add:" + e.ID)
-		if c.Clicked(gtx) {
-			v.editUntil = gtx.Now.Add(pfEditPaneFor)
-			pfEditProfile(v.h)
+		if c.Clicked(gtx) { // onOpenEditModal(section, element.id)
+			if sec, ok := v.sectionOf(e); ok {
+				OpenEditProfileSection(v.h, sec, e.ID, v.refetchSections)
+			}
 		}
 		return pfLinkRow(gtx, th, cl, c, "Add "+e.Label, dp(gtx, 22))
 	}

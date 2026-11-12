@@ -20,6 +20,7 @@ import (
 // ProfileSection is one section of a member's full profile.
 type ProfileSection struct {
 	ID, Label string
+	SectionID string // sectionId, what users.profile.setSections takes (profile_write.go)
 	Type      string // HEADER, CONTACT, PEOPLE, AFFILIATIONS, ADDITIONAL_INFO, OTHER_SCIM_FIELDS, CUSTOM
 	CanEdit   bool
 	Elements  []ProfileElement
@@ -43,6 +44,14 @@ type ProfileElement struct {
 	Persons          []string
 	Tags             []string
 	FileID           string
+	// ElementID is elementId, the id users.profile.setSections takes;
+	// Options a text element's choices (a select in the section editor);
+	// DefaultVisibility INTERNAL or EXTERNAL_ONLY; City … Description a
+	// current location's parts.
+	ElementID                         string
+	Options                           []string
+	DefaultVisibility                 string
+	City, State, Country, Description string
 }
 
 // ProfileSections is a member's full profile layout.
@@ -84,6 +93,13 @@ type wireProfileElement struct {
 	Persons     []string        `json:"persons"`
 	Tags        json.RawMessage `json:"tags"`
 	FileID      *string         `json:"fileId"`
+	ElementID   string          `json:"elementId"`
+	Options     []string        `json:"options"`
+	Visibility  string          `json:"defaultVisibility"`
+	City        *string         `json:"city"`
+	State       *string         `json:"state"`
+	Country     *string         `json:"country"`
+	Description *string         `json:"description"`
 }
 
 type wireProfileSections struct {
@@ -93,11 +109,12 @@ type wireProfileSections struct {
 				ID       string `json:"id"`
 				IsSelf   bool   `json:"isSelf"`
 				Sections []struct {
-					ID       string               `json:"id"`
-					Label    string               `json:"label"`
-					Type     string               `json:"type"`
-					CanEdit  bool                 `json:"canEdit"`
-					Elements []wireProfileElement `json:"profileElements"`
+					ID        string               `json:"id"`
+					SectionID string               `json:"sectionId"`
+					Label     string               `json:"label"`
+					Type      string               `json:"type"`
+					CanEdit   bool                 `json:"canEdit"`
+					Elements  []wireProfileElement `json:"profileElements"`
 				} `json:"profileSections"`
 			} `json:"user"`
 		} `json:"data"`
@@ -120,7 +137,7 @@ func decodeProfileSections(b []byte) (ProfileSections, error) {
 	u := w.Result.Data.User
 	out := ProfileSections{UserID: u.ID, IsSelf: u.IsSelf}
 	for _, s := range u.Sections {
-		ps := ProfileSection{ID: s.ID, Label: s.Label, Type: s.Type, CanEdit: s.CanEdit}
+		ps := ProfileSection{ID: s.ID, SectionID: s.SectionID, Label: s.Label, Type: s.Type, CanEdit: s.CanEdit}
 		for _, e := range s.Elements {
 			pe := ProfileElement{
 				ID: e.ID, Label: e.Label, Hint: e.Hint, Typename: e.Typename, Type: e.Type,
@@ -128,7 +145,13 @@ func decodeProfileSections(b []byte) (ProfileSections, error) {
 				IsMissing: e.IsMissing, IsHidden: e.IsHidden, IsFilterable: e.IsFilterable,
 				IsScimManaged: e.IsScimManaged, EditableInUI: e.Permissions.UI,
 				Text: strOf(e.Text), Date: strOf(e.Date), URI: strOf(e.URI), DisplayText: strOf(e.DisplayText),
-				FileID: strOf(e.FileID),
+				FileID: strOf(e.FileID), ElementID: e.ElementID, Options: e.Options, DefaultVisibility: e.Visibility,
+				City: strOf(e.City), State: strOf(e.State), Country: strOf(e.Country), Description: strOf(e.Description),
+			}
+			if pe.ElementID == "" { // the id's last part ("U…:section:Ps…:Pe…"), as the section editor keys it
+				if parts := strings.Split(e.ID, ":"); len(parts) > 3 {
+					pe.ElementID = parts[3]
+				}
 			}
 			for _, p := range e.Persons {
 				if p = strings.TrimSpace(p); p != "" {

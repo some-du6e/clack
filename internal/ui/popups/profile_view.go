@@ -47,8 +47,6 @@ type ProfileView struct {
 	moreBox image.Rectangle // kebab rect in pane coords (last frame)
 	hudBox  image.Rectangle // Huddle button rect in pane coords (last frame)
 
-	editUntil time.Time // EditProfileFormPane is mounted until then
-
 	secs pfSecState // users.profile.getSections (profile_sections.go)
 
 	// "View as" (profile_preview.go)
@@ -77,8 +75,6 @@ func NewProfileView(h Host, userID string) *ProfileView {
 	return v
 }
 
-const pfEditToast = "Editing your profile isn't supported in yoloslack yet"
-
 // Layout fills the constraints with the profile.
 func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 	drain()
@@ -94,9 +90,6 @@ func (v *ProfileView) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	self := ok && pfIsSelf(v.h, u.ID)
 	v.clicks(gtx, u, ok, self)
-	if self {
-		v.editPane(gtx)
-	}
 	if ok {
 		pfTick(gtx)
 		v.fetchSections()
@@ -183,9 +176,16 @@ func (v *ProfileView) clicks(gtx layout.Context, u core.User, ok, self bool) {
 	if v.btn3.Clicked(gtx) {
 		pfToggleVIP(h, u)
 	}
-	if v.editBtn.Clicked(gtx) || v.pronBtn.Clicked(gtx) || v.nameSndBtn.Clicked(gtx) {
-		v.editUntil = gtx.Now.Add(pfEditPaneFor)
-		pfEditProfile(h)
+	// the header's Edit, "Add pronouns" and "Add name pronunciation" open
+	// the Edit profile modal on their field (DqK0 Name, PronounsAddLink,
+	// the pronunciation row)
+	for _, b := range []struct {
+		c     *widget.Clickable
+		focus string
+	}{{&v.editBtn, "real_name"}, {&v.pronBtn, "pronouns"}, {&v.nameSndBtn, "name_pronunciation"}} {
+		if b.c.Clicked(gtx) {
+			pfEditProfile(h, EditProfileOpts{Focus: b.focus, Refetch: v.refetchSections})
+		}
 	}
 	if v.moreBtn.Clicked(gtx) {
 		items := pfMoreItemsFor(h, u, false, nil, v.preview != pfPreviewNone)

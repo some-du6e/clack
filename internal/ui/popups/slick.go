@@ -13,10 +13,8 @@ import (
 	"context"
 	"image"
 	"sync/atomic"
-	"time"
 
 	"gioui.org/layout"
-	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/taut"
@@ -26,44 +24,37 @@ import (
 
 // ---- profile ----
 
-// pfEditPaneFor is how long EditProfileFormPane stays mounted after "Edit"
-// (Clack has no edit-profile form; the pane is an empty boundary that
-// lives as long as the toast standing in for it, so plugins that track the
-// form's mount, like Slick's Nicknames, see it open and close).
-const pfEditPaneFor = 4 * time.Second
+// pfEditArgs are openEditProfileModal's arguments as a plugin sees them
+// (HjJO: focusedFieldName, mode; refetch is a function and stays Go-side).
+type pfEditArgs struct {
+	FocusedFieldName string `json:"focusedFieldName,omitempty"`
+}
 
 // pfEditProfile is Slack's "Edit profile": it dispatches the
 // openEditProfileModal thunk (Nicknames wraps it) and, when the native
-// runs, shows Clack's stand-in (a toast).
-func pfEditProfile(h Host) {
+// runs, opens the Edit profile modal (profile_edit.go), which mounts
+// EditProfileFormPane while its form shows.
+func pfEditProfile(h Host, o EditProfileOpts) {
 	t := tautFor("openEditProfileModal")
 	if t == nil {
-		h.Toast(pfEditToast)
+		OpenEditProfile(h, o)
 		return
 	}
 	var native atomic.Bool
+	var focus atomic.Value
+	focus.Store(o.Focus)
 	run(h, func(ctx context.Context) (struct{}, error) {
-		return taut.Dispatch(ctx, t, "openEditProfileModal", struct{}{}, func(context.Context, struct{}) (struct{}, error) {
+		return taut.Dispatch(ctx, t, "openEditProfileModal", pfEditArgs{FocusedFieldName: o.Focus}, func(_ context.Context, a pfEditArgs) (struct{}, error) {
+			focus.Store(a.FocusedFieldName)
 			native.Store(true)
 			return struct{}{}, nil
 		})
 	}, func(_ struct{}, err error) {
 		if err != nil || native.Load() {
-			h.Toast(pfEditToast)
+			o.Focus, _ = focus.Load().(string)
+			OpenEditProfile(h, o)
 		}
 	})
-}
-
-// editPane mounts the empty EditProfileFormPane while the edit surface is up.
-func (v *ProfileView) editPane(gtx layout.Context) {
-	if !gtx.Now.Before(v.editUntil) {
-		return
-	}
-	id := v.id
-	slackc.RenderLazy(gtx, "EditProfileFormPane", func() slackc.Props {
-		return slackc.Props{"$key": "edit-profile:" + id, "memberId": id}
-	}, pfNoNative)
-	gtx.Execute(op.InvalidateCmd{At: v.editUntil})
 }
 
 // pfAppID is the app id of an app's bot user ("" for people).
