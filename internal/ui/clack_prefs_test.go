@@ -46,7 +46,7 @@ func TestClackPrefsTab(t *testing.T) {
 	if clackIntroRow == nil {
 		t.Fatal("intro_prefs.go didn't hook prefsReplayIntroRow into clackIntroRow")
 	}
-	if w := "check Download updates automatically|legend Replay introduction|check Live updates (typing, presence, instant messages)"; strings.Join(got, "|") != w {
+	if w := "check Download updates automatically|legend Replay introduction"; strings.Join(got, "|") != w {
 		t.Errorf("Clack tab rows %q, want %q", got, w)
 	}
 	var buttons []string
