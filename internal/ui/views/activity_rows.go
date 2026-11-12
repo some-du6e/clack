@@ -13,7 +13,20 @@ package views
 //     (ccoC ReminderTimeMenu, 2a23 calculateDueDateTs)
 //   - Slack Connect    Qt0R ActivityRowContentInviteActions → 3Oc+
 //     SlackConnectInviteActions (Ignore, Accept), rPCk / hCGE the Ignore
-//     modals, SlackConnectConfirmTrustModal
+//     modals, SlackConnectConfirmTrustModal; a channel invite's Accept
+//     (dcZX SlackConnectAcceptChannelInviteAction, the multi-pane accept
+//     modal in popups/sc_accept.go, g7VB and SBlm after it)
+//   - status column    the typing dots (rZx3 z8, +SIc), ahead of the
+//     unread badge
+//   - entry_extras     SKIQ ActivityRowContentReactions under a reaction
+//     row (rZx3 GY)
+//   - subtext          /ad9 ActivityMessage's inline subtext span
+//   - sticky headers   U5s4 ActivityList stickyItems (the VIP sort's
+//     section headers) and useHideActionsBehindStickyHeader
+//
+// Build d3de3a487b1c (2026-11-12) moved U5s4's components into
+// boot-shared module 5465; the ids above are the ones docs/ACTIVITY.md
+// cites.
 //   - clear all        ActivityClearAllToast (activity_clear_all_completed)
 //   - offline          Rdc4 ActivityRowLoader → DXqe InlineOfflineIndicator
 
@@ -22,14 +35,19 @@ import (
 	"errors"
 	"image"
 	"image/color"
+	"math"
 	"net"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
 	"gioui.org/font"
+	"gioui.org/gesture"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -38,8 +56,10 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -506,13 +526,7 @@ func (v *Activity) inviteActions(it *core.ActivityItem) []string {
 	if !actExternal(it.Type) || it.Invite == nil {
 		return nil
 	}
-	var out []string
-	for _, a := range it.Invite.InviteActions(v.selfID(), time.Now()) {
-		if a != core.InviteActAcceptChannel {
-			out = append(out, a)
-		}
-	}
-	return out
+	return it.Invite.InviteActions(v.selfID(), time.Now())
 }
 
 // inviteButtons is SlackConnectInviteActions' text actions
@@ -546,6 +560,8 @@ func (v *Activity) inviteClicked(it *core.ActivityItem, act string) {
 		v.ignoreForked(ph, *it)
 	case core.InviteActAcceptDM:
 		v.acceptDM(ph, *it)
+	case core.InviteActAcceptChannel:
+		v.acceptChannel(ph, *it)
 	}
 }
 
@@ -974,4 +990,446 @@ func (v *Activity) teamIcon(gtx C, d *actDesc) D {
 		return D{}
 	}
 	return layout.Inset{Left: 4, Right: 4}.Layout(gtx, func(gtx C) D { return v.avatar(gtx, d.teamIcon, 16) })
+}
+
+// ---- the typing indicator in the status column ----
+
+// actTypingTTL is removeOldTypingRecords' 6 s for other people (the
+// composer's typing line keeps the same, composer/typing.go).
+const actTypingTTL = 6 * time.Second
+
+// actTyping is the typing store the status column reads (HCiS): who is
+// typing in each conversation or thread, until when. Realtime user_typing
+// events add a record (never your own: memberIsSelf), a message from that
+// person ends it.
+type actTyping struct {
+	mu sync.Mutex
+	m  map[string]map[string]time.Time // channel + "/" + thread ts → user → until
+}
+
+// apply takes a typing or message event; it reports a change.
+func (t *actTyping) apply(ev core.Event, self string) bool {
+	k := ev.Channel + "/" + ev.ThreadTS
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	switch ev.Type {
+	case "typing":
+		if ev.UserID == "" || ev.UserID == self || ev.Channel == "" {
+			return false
+		}
+		if t.m == nil {
+			t.m = map[string]map[string]time.Time{}
+		}
+		us := t.m[k]
+		if us == nil {
+			us = map[string]time.Time{}
+			t.m[k] = us
+		}
+		us[ev.UserID] = time.Now().Add(actTypingTTL)
+		return true
+	case "message":
+		uid := ev.UserID
+		if uid == "" && ev.Msg != nil {
+			uid = ev.Msg.User
+		}
+		if us := t.m[k]; us != nil {
+			if _, ok := us[uid]; ok {
+				delete(us, uid)
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// on is HCiS rg (thread "": someone typing in the channel itself) and Oc
+// (someone typing in that thread) at now, with the soonest expiry.
+func (t *actTyping) on(ch, thread string, now time.Time) (bool, time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var next time.Time
+	for _, until := range t.m[ch+"/"+thread] {
+		if until.After(now) && (next.IsZero() || until.Before(next)) {
+			next = until
+		}
+	}
+	return !next.IsZero(), next
+}
+
+// typingOn is rZx3 z8: a DM or a channel post while someone types in the
+// conversation (not in a thread), a thread while someone types in it. (Slack
+// also needs the thread's subscription not to be off, which Clack's store
+// doesn't keep apart from "unknown", and the agent command center's
+// assistant status, which Clack doesn't have.) While it shows, the dots
+// animate: the next frame is asked for, and the record's expiry ends it.
+func (v *Activity) typingOn(gtx C, it *core.ActivityItem) bool {
+	var ch, thread string
+	switch it.Type {
+	case "dm", "channel":
+		ch = it.Channel
+	case "thread_v2":
+		ch, thread = it.Channel, it.ThreadTS
+		if thread == "" {
+			return false
+		}
+	default:
+		return false
+	}
+	if ch == "" {
+		return false
+	}
+	on, until := v.typing.on(ch, thread, gtx.Now)
+	if on {
+		next := gtx.Now.Add(actTypingFrame)
+		if until.Before(next) {
+			next = until
+		}
+		gtx.Execute(op.InvalidateCmd{At: next})
+	}
+	return on
+}
+
+// actTypingFrame paces the dots' animation (the SVG's opacity ramps).
+const actTypingFrame = 33 * time.Millisecond
+
+// typingStatus is the status slot's typing state
+// (ActivityRowContentStatusIndicatorWithResolvedReply's `if (_)`): +SIc
+// BaseChannelPrefixTyping (the three animated dots, its className
+// activity_row_content__typing_status: 15px, content-sec) in the inline,
+// standalone slot (20px tall, at least 20px wide), the tooltip "Typing…"
+// below.
+func (v *Activity) typingStatus(gtx C, r *actRow) D {
+	w, h := gtx.Dp(20), gtx.Dp(20)
+	s := gtx.Dp(15)
+	func() {
+		defer op.Offset(image.Pt((w-s)/2, (h-s)/2)).Push(gtx.Ops).Pop()
+		actTypingDots(gtx, s, v.p.Sec, v.p.Bg)
+		area := clip.Rect{Max: image.Pt(s, s)}.Push(gtx.Ops)
+		r.typeHov.Add(gtx.Ops)
+		area.Pop()
+		popups.Tooltip(gtx, v.th, &r.typeTip, r.typeHov.Update(gtx.Source), image.Pt(s, s), popups.Below, nsActivity.T("Typing…"), "")
+	}()
+	return D{Size: image.Pt(w, h)}
+}
+
+// actTypingDots draws +SIc's SVG at s px: in a 24-unit box, circles r 3 at
+// x 4, 12 and 20 (y 12), resting at opacity 1, .4 and .3; each animates
+// opacity 1 → .2 over .75 s, the second .15 s and the third .3 s after the
+// first, which starts again .25 s before the third ends (a .8 s cycle).
+// The fill is c at that opacity over bg, blended the way the browser
+// does.
+func actTypingDots(gtx C, s int, c, bg color.NRGBA) {
+	t := float64(gtx.Now.UnixMilli()%800) / 1000
+	k := float32(s) / 24
+	for i := range 3 {
+		a := actTypingOpacity(t, i)
+		col := theme.Over(theme.WithAlpha(c, uint8(a*255+0.5)), bg)
+		cx := (4 + 8*float32(i)) * k
+		rect := image.Rect(int(cx-3*k+0.5), int(9*k+0.5), int(cx+3*k+0.5), int(15*k+0.5))
+		theme.Circle(gtx, rect.Min.Add(rect.Max).Div(2), rect.Dx(), col)
+	}
+}
+
+// actTypingOpacity is dot i's opacity t seconds into the .8 s cycle.
+func actTypingOpacity(t float64, i int) float64 {
+	if p := math.Mod(t-0.15*float64(i)+0.8, 0.8); p < 0.75 {
+		return 1 - 0.8*p/0.75
+	}
+	return [3]float64{1, .4, .3}[i]
+}
+
+// ---- reactions under a reaction row (entry_extras) ----
+
+// showsReactions is rZx3 GY: a reaction entry (getActivityIconType
+// "reaction") whose message has reactions.
+func (v *Activity) showsReactions(r *actRow) bool {
+	if r.it.Type != "message_reaction" {
+		return false
+	}
+	m := r.msg()
+	return m != nil && len(m.Reactions) > 0
+}
+
+// entryExtras is ActivityRowContentMultiLine's entry_extras (a column,
+// 12px between its children): SKIQ ActivityRowContentReactions (the
+// message's MessageReactionBar, every reaction shown, the add button
+// hidden: p-activity_ia4_page__item__reactions_bar margin-top 8px,
+// --add_button_hidden; the multi-line row's margin-bottom -4px), then the
+// Slack Connect invite's text actions (Qt0R ActivityRowContentInviteActions).
+func (v *Activity) entryExtras(gtx C, r *actRow) D {
+	var kids []layout.FlexChild
+	if v.showsReactions(r) {
+		m := r.msg()
+		kids = append(kids, layout.Rigid(func(gtx C) D {
+			gtx.Constraints.Min.X = 0
+			d := layout.Inset{Top: 8}.Layout(gtx, func(gtx C) D { return v.actReactionsBar(gtx, m, true) })
+			d.Size.Y = max(0, d.Size.Y-gtx.Dp(4))
+			return d
+		}))
+	}
+	if acts := v.inviteActions(r.it); len(acts) > 0 {
+		if len(kids) > 0 {
+			kids = append(kids, layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(12))} }))
+		}
+		kids = append(kids, layout.Rigid(func(gtx C) D {
+			// the text actions' ul is align-self: center
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return layout.N.Layout(gtx, func(gtx C) D { return v.inviteButtons(gtx, r, acts) })
+		}))
+	}
+	if len(kids) == 0 {
+		return D{}
+	}
+	return col(gtx, kids...)
+}
+
+// ---- the subtext run inline ----
+
+// previewSub is ActivityMessage (/ad9) with a subtext: the
+// p-activity_ia4_page__item__activity_subtext span ("You: ", "Ana: ")
+// sits inside the line-clamped message, before its text, so a second line
+// starts under the subtext, not under the message.
+func (r *actRow) previewSub(gtx C, lines int, sub string) D {
+	st := actMsgClass.Enter(gtx, 0, 0)
+	defer st.Leave()
+	if st.Hidden() {
+		return D{}
+	}
+	draw := func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, sub) }
+	if !st.Active() {
+		return draw(gtx)
+	}
+	return st.Wrap(gtx, draw)
+}
+
+// msgBodySub is msgBodyMuted with sub run into the message (actSubtextDoc),
+// cached apart from the plain body (the same message can be another row's
+// body without a subtext).
+func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub string) D {
+	if m == nil {
+		return D{}
+	}
+	orig := m
+	m = b.viewMsg(m)
+	if len(m.Doc.Blocks) == 0 {
+		return b.body(gtx, m.Doc, sub+m.Text, maxLines)
+	}
+	key := "sub:" + m.Channel + "/" + m.TS
+	ver := sub + ":" + m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
+	if m != orig {
+		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
+	}
+	o := richview.Options{Edited: m.Edited, Muted: m.System, Secondary: muted && !m.System,
+		Channel: m.Channel, TS: m.TS, Truncate: true}
+	return b.richDoc(gtx, key, ver, actSubtextDoc(m.Doc, sub), o, maxLines)
+}
+
+// actSubtextDoc is doc with sub before its text: inline at the start of a
+// first paragraph (the span and the rich text section share the line
+// box); before any other first block (a list, a quote, a code block, an
+// attachment) it's a line of its own, as an inline span before a block
+// element is in the browser.
+func actSubtextDoc(doc richtext.Doc, sub string) richtext.Doc {
+	if sub == "" {
+		return doc
+	}
+	lead := richtext.Span{Kind: richtext.Text, Text: sub}
+	out := doc
+	out.Blocks = make([]richtext.Block, 0, len(doc.Blocks)+1)
+	if len(doc.Blocks) > 0 && doc.Blocks[0].Kind == richtext.Paragraph {
+		first := doc.Blocks[0]
+		first.Spans = append([]richtext.Span{lead}, first.Spans...)
+		out.Blocks = append(append(out.Blocks, first), doc.Blocks[1:]...)
+		return out
+	}
+	out.Blocks = append(append(out.Blocks, richtext.Block{Kind: richtext.Paragraph, Spans: []richtext.Span{lead}}), doc.Blocks...)
+	return out
+}
+
+// ---- the sticky section headers ----
+
+// actStickyHdr is the VIP sort's sticky section header (U5s4 ActivityList's
+// stickyItems e5, with layout revisions: every "non_collapsible_header",
+// i.e. "VIP unreads" and "Everything else"; RIad BaseStickyList): the
+// header of the section the list's top is in stays at the top
+// (c-virtual_list__item--sticky, z-index 199) until the next header
+// pushes it up (its sticky container ends where the next one starts).
+// While stuck it shows oDbF's stuck shadow
+// (non-collapsible__header_container--stuck:after, bordered separators:
+// 0 2px 4px #0000000a under the 1px otl-ter line). A row under it hides
+// its hover actions (useHideActionsBehindStickyHeader: the row's top
+// above the header's bottom less 2px).
+type actStickyHdr struct {
+	h    map[int]int // this frame's laid-out heights by list index
+	tops map[int]int // the last frame's tops of the visible items
+	on   bool
+	y    int // the stuck header's top in the list (0, or less when pushed)
+	vip  bool
+	hh   int
+
+	scroll gesture.Scroll
+	tag    struct{} // the header's own hit area: rows under it get no clicks
+}
+
+// actStickyH is --activity-section-header-height.
+const actStickyH unit.Dp = 42
+
+func (s *actStickyHdr) begin() {
+	if s.h == nil {
+		s.h = map[int]int{}
+	}
+	clear(s.h)
+}
+
+func (v *Activity) isHeader(i int) bool {
+	return i >= 0 && i < len(v.vis) && (v.vis[i] == actVisVIP || v.vis[i] == actVisElse)
+}
+
+// stickyHeader draws the stuck header over the list (size is the list's)
+// after the list laid out this frame.
+func (v *Activity) stickyHeader(gtx C, size image.Point) {
+	s := &v.stk
+	s.on = false
+	pos := v.list.Position
+	tops := map[int]int{}
+	y := -pos.Offset
+	for i := pos.First; i < pos.First+pos.Count; i++ {
+		tops[i] = y
+		y += s.h[i]
+	}
+	s.tops = tops
+	if !v.h.Core().ActivityLayoutRevisions() {
+		return // e5: no sticky items without the revisions
+	}
+	hdr := -1
+	for i := min(pos.First, len(v.vis)-1); i >= 0; i-- {
+		if v.isHeader(i) {
+			hdr = i
+			break
+		}
+	}
+	if hdr < 0 || hdr == pos.First && pos.Offset <= 0 {
+		return // in its place
+	}
+	s.hh = gtx.Dp(actStickyH)
+	s.y = 0
+	for i := hdr + 1; i < pos.First+pos.Count; i++ {
+		if v.isHeader(i) {
+			if t := tops[i]; t < s.hh {
+				s.y = t - s.hh
+			}
+			break
+		}
+	}
+	if s.y <= -s.hh {
+		return
+	}
+	s.on, s.vip = true, v.vis[hdr] == actVisVIP
+	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
+	defer op.Offset(image.Pt(0, s.y)).Push(gtx.Ops).Pop()
+	r := image.Rect(0, 0, size.X, s.hh)
+	// the stuck shadow below the header
+	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(2))), 0, gtx.Dp(4), argb(0x0a000000))
+	g := gtx
+	g.Constraints = layout.Exact(image.Pt(size.X, s.hh))
+	v.sectionHeader(g, s.vip)
+	// its hit area: the rows under it don't take presses, and a wheel
+	// over it still scrolls the list (gesture.Scroll, as the list's own)
+	area := clip.Rect(r).Push(gtx.Ops)
+	event.Op(gtx.Ops, &s.tag)
+	s.scroll.Add(gtx.Ops)
+	area.Pop()
+	if d := s.scroll.Update(gtx.Metric, gtx.Source, gtx.Now, gesture.Vertical,
+		pointer.ScrollRange{}, pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}); d != 0 {
+		v.list.Position.Offset += d
+		v.list.Position.BeforeEnd = true
+		gtx.Execute(op.InvalidateCmd{})
+	}
+}
+
+// underSticky reports whether list item i (a row) is under the stuck
+// header this frame (from the last frame's positions): its hover actions
+// hide.
+func (v *Activity) underSticky(gtx C, i int) bool {
+	s := &v.stk
+	if !s.on {
+		return false
+	}
+	top, ok := s.tops[i]
+	if !ok {
+		return false
+	}
+	return top < s.y+s.hh-gtx.Dp(2) && top+s.h[i] > s.y
+}
+
+// ---- accepting a Slack Connect channel invite ----
+
+// acceptChannel is SlackConnectAcceptChannelInviteAction's click (dcZX):
+// the eligibility check (core ChannelInviteEligible), then the upgrade
+// modal, the accept modal (popups/sc_accept.go; a trial adds its note
+// and "Accept and Start Trial"), or the join_channel alternative's
+// conversations.joinConnectedShared; anything else is
+// hasConnectInviteAcceptanceFailed. Grid's "accept on another
+// workspace" (SlackConnectConfirmWorkspaceModal), the start-trial modal
+// before the accept modal and the join-when-connected and join-workspace
+// alternatives aren't in Clack: Clack signs in to one workspace.
+func (v *Activity) acceptChannel(ph popups.Host, it core.ActivityItem) {
+	inv := *it.Invite
+	team, name := it.Team, strings.TrimPrefix(it.Title, "#")
+	inviter := v.inviterName(it)
+	v.write("Hmm, something went wrong. Try again? ", func(ctx context.Context, c *core.App) error {
+		el, err := c.ChannelInviteEligible(ctx, inv.Sig)
+		if err != nil {
+			return err
+		}
+		show := func(f func()) {
+			v.notes.mu.Lock()
+			v.notes.fns = append(v.notes.fns, f)
+			v.notes.mu.Unlock()
+			v.h.Invalidate()
+		}
+		switch {
+		case el.IsEligible && el.Requirements.Upgrade || el.Reason == core.SCReasonUpgradeButCannot:
+			show(func() { ph.ShowOverlay(popups.NewSCUpgradeModal(ph, inv.ID)) })
+		case el.IsEligible:
+			show(func() {
+				ph.ShowOverlay(popups.NewSCAcceptModal(ph, popups.SCAcceptOpts{Invite: inv, ChannelName: name, InvitingTeam: team,
+					RequiredAccess: el.RequiredPrivacy(), FreeTrial: el.Requirements.Trial,
+					OnAccepted: func(string, bool) { v.afterChannelAccept(ph, inv, inviter, team) }}))
+			})
+		case el.CanJoinChannel():
+			if err := c.JoinConnectedChannel(ctx, inv.Sig, inv.ID); err != nil {
+				return err
+			}
+			show(func() { v.afterChannelAccept(ph, inv, inviter, team) })
+		default:
+			return errors.New("this invitation can’t be accepted")
+		}
+		return nil
+	}, func() {})
+}
+
+// afterChannelAccept is g7VB acceptSharedInviteAndMaybeOpenWelcomeModal:
+// connectInvites.list for the invite; an approved acceptance opens the
+// channel; then SharedInviteCreatorWelcomeModal; the feed reloads (the
+// invite's row leaves it).
+func (v *Activity) afterChannelAccept(ph popups.Host, inv core.ActivityInvite, inviter, team string) {
+	v.write("", func(ctx context.Context, c *core.App) error {
+		st, err := c.ConnectChannelInvite(ctx, inv.ID)
+		v.notes.mu.Lock()
+		v.notes.fns = append(v.notes.fns, func() {
+			if err == nil && st.Found {
+				if st.Approved && st.ChannelID != "" {
+					v.h.Navigate("c/" + st.ChannelID)
+				}
+				ph.ShowOverlay(popups.NewSCWelcomeModal(ph, popups.SCWelcome{Connected: st.Approved, ChannelName: st.ChannelName,
+					InvitingTeam: firstNonEmpty(st.InvitingTeam, team), InvitingTeamID: st.InvitingTeamID, InvitingName: inviter,
+					PendingTeams: st.PendingTeams}))
+			}
+			v.load(actRefresh)
+		})
+		v.notes.mu.Unlock()
+		v.h.Invalidate()
+		return err
+	}, func() {})
 }

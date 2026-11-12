@@ -50,6 +50,12 @@ import (
 //     ignoreInvite / ignoreUser and conversations.ignoreInvite /
 //     ignoreUser; activity.clearAll {undo_key} (the clear-all toast's
 //     Undo). Every one is recorded (ActivityWrites).
+//   - The channel invite's Accept (core/connect_accept.go):
+//     conversations.sharedInviteAcceptanceEligibility (eligible unless
+//     SetChannelInviteEligibility says otherwise),
+//     conversations.acceptSharedInvite / joinConnectedShared (the
+//     invite leaves the feed) and connectInvites.list (the accepted
+//     channel, pending until SetChannelInviteApproved), all recorded.
 
 // The Activity fixture's messages, in ViewsChannel and the first DM.
 var activityMsgs = []slack.Message{
@@ -70,6 +76,10 @@ const (
 	ActivityReminderFile = "F0FAKEREM1"  // the file a reminder is about
 	ActivityInviteDM     = "I0FAKE2"     // the Slack Connect DM invite
 	ActivityInviteSig    = "sig-fake-dm"
+	// the Slack Connect channel invite (#synthetic-partners from Partner Co)
+	ActivityInviteChannel    = "I0FAKE1"
+	ActivityInviteChannelSig = "sig-fake-channel"
+	ActivityInviteChannelID  = "C0PARTNER1"
 )
 
 func init() {
@@ -122,8 +132,8 @@ func activityEntries(base string) []map[string]any {
 		e("fa-joiner", "1762701100.000100", true, map[string]any{"type": "team_joiner_invite",
 			"team_joiner_invite_payload": map[string]any{"channel_id": ViewsChannel, "user_id": "U0FAKE00002", "is_reminder": false}}),
 		e("fa-ext-invite", "1762701000.000100", true, map[string]any{"type": "external_channel_invite",
-			"invite": map[string]any{"id": "I0FAKE1", "sig": "sig-fake-channel", "invite_type": "channel", "direction": "incoming", "status": "sent",
-				"channel":       map[string]any{"id": "C0PARTNER1", "name": "synthetic-partners"},
+			"invite": map[string]any{"id": ActivityInviteChannel, "sig": ActivityInviteChannelSig, "invite_type": "channel", "direction": "incoming", "status": "sent",
+				"channel":       map[string]any{"id": ActivityInviteChannelID, "name": "synthetic-partners"},
 				"team":          map[string]any{"id": ExternalTeamID, "name": "Partner Co"},
 				"inviting_team": team(ExternalTeamID, "Partner Co", true),
 				"inviting_user": map[string]any{"id": "U0PARTNER1", "name": "pat", "profile": map[string]any{"real_name": "Pat Partner", "display_name": "pat"}}}}),
@@ -163,6 +173,14 @@ type activityState struct {
 	viewDense map[string]string // activity.views.update's density by view id
 	saved     map[string]map[string]any
 	ignored   map[string]bool // invites ignored or accepted
+
+	// the channel invite's accept: the eligibility answer a test set (nil:
+	// eligible), the name and privacy it was accepted with, and whether
+	// its acceptance is approved
+	scElig     map[string]any
+	scAccepted string
+	scPrivate  bool
+	scApproved bool
 
 	// the saved views: activity.views.create's, in order, and the default
 	// view types activity.views.hide hid
@@ -204,6 +222,25 @@ func savedID(f url.Values) string {
 		return f.Get("item_id") + "/" + f.Get("ts")
 	}
 	return f.Get("item_id")
+}
+
+// SetChannelInviteEligibility makes conversations.sharedInviteAcceptanceEligibility
+// answer el (is_eligible, reason, requirements, alternative_actions) for
+// the channel invite; nil goes back to eligible.
+func (s *Server) SetChannelInviteEligibility(el map[string]any) {
+	v := s.views()
+	v.mu.Lock()
+	v.act().scElig = el
+	v.mu.Unlock()
+}
+
+// SetChannelInviteApproved approves the channel invite's acceptance in
+// connectInvites.list (both organisations reviewed it).
+func (s *Server) SetChannelInviteApproved(on bool) {
+	v := s.views()
+	v.mu.Lock()
+	v.act().scApproved = on
+	v.mu.Unlock()
 }
 
 // handleActivity answers the Activity fixture's methods.
@@ -366,6 +403,70 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			return ok("channel", "D0PARTNER1"), true
 		}
 		return ok(), true
+	case "conversations.sharedInviteAcceptanceEligibility":
+		// the channel invite's Accept (Me1V): eligible unless a test set
+		// another answer (SetChannelInviteEligibility)
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		st := v.act()
+		el := st.scElig
+		v.mu.Unlock()
+		if f.Get("sig") != ActivityInviteChannelSig {
+			return ok("is_eligible", false, "reason", "unknown"), true
+		}
+		if el == nil {
+			return ok("is_eligible", true, "team_id", TeamID, "requirements", map[string]any{}), true
+		}
+		out := ok()
+		for k, x := range el {
+			out[k] = x
+		}
+		return out, true
+	case "conversations.acceptSharedInvite", "conversations.joinConnectedShared":
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		st := v.act()
+		if f.Get("invite_id") == ActivityInviteChannel {
+			st.scAccepted = f.Get("channel_name")
+			if st.scAccepted == "" {
+				st.scAccepted = "synthetic-partners"
+			}
+			st.scPrivate = f.Get("is_private") == "true"
+			for _, e := range activityEntries("") {
+				if inv, _ := e["item"].(map[string]any)["invite"].(map[string]any); inv != nil && inv["id"] == ActivityInviteChannel {
+					st.ignored[e["key"].(string)] = true
+				}
+			}
+		}
+		v.mu.Unlock()
+		if method == "conversations.joinConnectedShared" {
+			return ok("channel_id", ActivityInviteChannelID, "team_id", TeamID), true
+		}
+		return ok("can_open_scdm", false), true
+	case "connectInvites.list":
+		// g7VB after an accept: the invite with its acceptance (pending
+		// until a test approves it, SetChannelInviteApproved)
+		v.mu.Lock()
+		v.writes = append(v.writes, ActivityWrite{Method: method, Form: f})
+		st := v.act()
+		name, private, approved := st.scAccepted, st.scPrivate, st.scApproved
+		v.mu.Unlock()
+		var ids []string
+		_ = json.Unmarshal([]byte(f.Get("invite_ids")), &ids)
+		if len(ids) != 1 || ids[0] != ActivityInviteChannel || name == "" {
+			return ok("connect_invites", []any{}), true
+		}
+		status, reviews := "pending_approval", []any{}
+		if approved {
+			status = "approved"
+			reviews = []any{map[string]any{"reviewing_team": map[string]any{"id": TeamID}}, map[string]any{"reviewing_team": map[string]any{"id": ExternalTeamID}}}
+		}
+		return ok("connect_invites", []any{map[string]any{"id": ActivityInviteChannel, "invite_type": "channel", "direction": "incoming",
+			"invite_payload": map[string]any{"channel": map[string]any{"id": ActivityInviteChannelID, "name": name, "is_private": private}},
+			"inviting_team":  map[string]any{"id": ExternalTeamID, "name": "Partner Co"},
+			"inviting_user":  map[string]any{"id": "U0PARTNER1"},
+			"acceptances": []any{map[string]any{"approval_status": status, "accepting_team": map[string]any{"id": TeamID},
+				"accepting_user": map[string]any{"id": SelfID}, "reviews": reviews}}}}), true
 	case "activity.clearAll":
 		var cf activityClearFilters
 		hasFilters := json.Unmarshal([]byte(f.Get("filters")), &cf) == nil
