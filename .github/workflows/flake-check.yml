@@ -24,11 +24,14 @@ name: flake-check
 #                                            three others, refetching a
 #                                            channel History had loaded and
 #                                            wiping the echoed send
-#   TestListEditRoundTrip (core)             see the job's entry
+#   TestListEditRoundTrip (core)             not reproduced; it logs core's
+#                                            state if it times out again
+#                                            (diag_flakes_test.go)
 #   TestChannelLeaveRejoin (ui)              the header copy resolved while a
 #                                            member outliving the leave
 #   TestEditRoundTrip (listview)             a third-star click on a 3-star
-#                                            item sends a clear
+#                                            item sends a clear; core.List
+#                                            cloning outside its lock
 #   TestHuddleLoungeMusic (huddleui)         MusicPlaying is on before the
 #                                            song is loaded
 # Synthetic data only (internal/fakeslack, the fake Chime).

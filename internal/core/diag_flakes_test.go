@@ -1,7 +1,9 @@
 package core
 
-// DIAG flakes-1111: temporary diagnostics for TestListEditRoundTrip's
-// "list_cells_updated never applied" (CI 2026-11-11). Removed with the fix.
+// Diagnostics for TestListEditRoundTrip's "list_cells_updated never
+// applied" (CI 2026-11-11, once; not reproduced in 200 -race runs since):
+// on that timeout the test logs the raw events core saw, the cached and the
+// fake's cell, and core's goroutines. Drop them once the cause is known.
 
 import (
 	"encoding/json"
