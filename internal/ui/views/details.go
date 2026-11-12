@@ -332,7 +332,8 @@ func (d *ChannelDetails) refreshInfo() {
 
 // watch subscribes to this conversation's conv / conv_removed events, and
 // to presence_change / user_change for the loaded members (their rows read
-// presence live, so an empty note just redraws).
+// presence live, so an empty note just redraws); its permissions and
+// channel_email events and the team and org prefs redraw too.
 func (d *ChannelDetails) watch() {
 	id := d.id
 	shown := &d.presIDs
@@ -354,8 +355,12 @@ func (d *ChannelDetails) watch() {
 				}
 			}
 			return dirMemberNote{}, false
+		case ev.Type == "team_prefs" || ev.Type == "enterprise_prefs":
+			return dirMemberNote{}, true // calls_apps, disable_email_ingestion, the org's email pref: redraw
 		case ev.Channel != id:
 			return dirMemberNote{}, false
+		case ev.Type == "permissions" || ev.Type == "channel_email":
+			return dirMemberNote{}, true // the email grant, a kept address: redraw (details_email.go)
 		case ev.Type == "conv":
 			return dirMemberNote{id: id, verify: true}, true
 		case ev.Type == "conv_removed":

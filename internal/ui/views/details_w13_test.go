@@ -120,6 +120,13 @@ func newW13Env(t *testing.T, ch string, pre func(fs *fakeslack.Server)) *w13Env 
 	return env
 }
 
+// name is the details' channel as Slack's getDisplayNameForChannel
+// writes a public one.
+func (w *w13Env) name() string {
+	cv, _ := w.app.Conv(fakeslack.ViewsChannel)
+	return "#" + cv.Name
+}
+
 func (w *w13Env) prefs(js string) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(js), &m); err != nil {
@@ -145,7 +152,7 @@ func TestDetailsCallButtonLikeSlack(t *testing.T) {
 	if !vis || label != "Huddle" || caret || dis {
 		t.Fatalf("huddles only: %v %q caret %v disabled %v", vis, label, caret, dis)
 	}
-	if tip := strings.Join(w.d.CallTip(), " | "); tip != "Huddle in #views-fixtures" {
+	if tip := strings.Join(w.d.CallTip(), " | "); tip != "Huddle in "+w.name() {
 		t.Errorf("huddle-only tip %q", tip)
 	}
 	w.prefs(w13Apps)
@@ -311,7 +318,7 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 	if got := popups.CEShortAddress(addr); !strings.HasSuffix(got, "...@fakeclub.slack.example") || len(strings.Split(got, "...@")[0]) != 27 {
 		t.Errorf("short address %q", got)
 	}
-	if got := em.CopyAddress(); got != `"#views-fixtures (Slack)" <`+addr+`>` {
+	if got := em.CopyAddress(); got != `"`+w.name()+` (Slack)" <`+addr+`>` {
 		t.Errorf("copied %q", got)
 	}
 	if !slices.Contains(w.h.toasts(), "Email address copied to clipboard.") {
@@ -321,7 +328,7 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 	w.e.until(t, "the share prompt", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return strings.HasPrefix(prompt, "Now that you have set an email address for #views-fixtures")
+		return strings.HasPrefix(prompt, "Now that you have set an email address for "+w.name())
 	})
 
 	em.SwitchPane(popups.CEHelp)
@@ -336,7 +343,7 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 	u.SetEmoji("bell")
 	u.Save()
 	w.e.until(t, "the update", func() bool { return em.Dismissed() })
-	if !slices.Contains(w.h.toasts(), "Updated email icon and name for #views-fixtures") {
+	if !slices.Contains(w.h.toasts(), "Updated email icon and name for "+w.name()) {
 		t.Errorf("toasts %q", w.h.toasts())
 	}
 	var upd url.Values
