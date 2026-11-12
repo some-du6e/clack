@@ -196,6 +196,45 @@ func TestPluginsPrefsShots(t *testing.T) {
 		}
 		shot("plugins-installed-" + mode)
 
+		// the search field focused (Karim, α.37 on Windows: its focus ring
+		// and the All pill's left edge were cut at the controls' left
+		// edge): Slack's ring, box-shadows 5px outside the field, shows
+		// whole in the panel's 28px padding
+		e.r.Queue(pointerMove(image.Pt(e.size.X/2, e.size.Y/2)))
+		e.frame()
+		e.frame()
+		org := pm.org.get(image.Pt(-1, -1))
+		if org == image.Pt(-1, -1) {
+			t.Fatal("the dialog's origin isn't known after a pointer move over it")
+		}
+		// org is the tabs' (16, 17); the page's content box is at (249, 21)
+		cx, cy := org.X+249-16, org.Y+21-17
+		field := image.Rect(cx, cy+pp.searchY, cx+pp.searchW, cy+pp.searchY+36)
+		e.click(field.Min.Add(field.Size().Div(2)))
+		e.until("the search field focused", 5*time.Second, func() bool { return pp.searchFocused })
+		shot("plugins-search-focused-" + mode)
+		if e.gpu != nil {
+			img := image.NewRGBA(image.Rectangle{Max: e.size})
+			if err := e.gpu.Screenshot(img); err != nil {
+				t.Fatal(err)
+			}
+			// the ring's band left of the field, away from its corners:
+			// otl-hgl-1 and its 30% halo are blue over the dialog
+			ring := 0
+			strip := image.Rect(field.Min.X-5, field.Min.Y+8, field.Min.X, field.Max.Y-8)
+			for y := strip.Min.Y; y < strip.Max.Y; y++ {
+				for x := strip.Min.X; x < strip.Max.X; x++ {
+					if c := img.RGBAAt(x, y); int(c.B)-int(c.R) >= 20 {
+						ring++
+					}
+				}
+			}
+			t.Logf("%s: field %v, %d ring pixels in %v", mode, field, ring, strip)
+			if ring < strip.Dx()*strip.Dy()*3/4 {
+				t.Errorf("%s: the search field's focus ring is cut on its left: %d of %d pixels in %v", mode, ring, strip.Dx()*strip.Dy(), strip)
+			}
+		}
+
 		// a search nothing installed matches suggests the library's plugins
 		// that do (Clear URLs and Message Links mention links), each with
 		// its Install action

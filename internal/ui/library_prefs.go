@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -87,6 +88,8 @@ type libraryHost struct {
 	install func(ctx context.Context, e pluginlib.Entry, code, main []byte, update bool) error
 	// open shows an installed plugin's settings (nil: no settings link)
 	open func(id string)
+	// enable turns an installed plugin on (nil: installs stay as they are)
+	enable func(ctx context.Context, id string) error
 }
 
 // libraryPage is Preferences > Plugins > Plugin library (mode "browse").
@@ -167,6 +170,7 @@ func (v *libraryPage) host(system string) (libraryHost, bool) {
 					v.openTab("taut:" + id)
 				}
 			},
+			enable: func(ctx context.Context, id string) error { return t.SetEnabled(ctx, id, true) },
 		}, true
 	case pluginlib.Slick:
 		s := v.a.Slick()
@@ -192,6 +196,7 @@ func (v *libraryPage) host(system string) (libraryHost, bool) {
 					v.openTab("slick_plugins:" + id)
 				}
 			},
+			enable: func(ctx context.Context, id string) error { return s.SetEnabled(ctx, id, true) },
 		}, true
 	}
 	return libraryHost{}, false
@@ -260,6 +265,12 @@ func (v *libraryPage) installEntry(e pluginlib.Entry, update bool) {
 		if err == nil {
 			err = h.install(ctx, e, code, main, update)
 		}
+		// installing turns the plugin on (an update keeps its state), but
+		// one that doesn't work in Clack stays off: its row says why
+		works := pluginlib.CompatOf(e.System, e.ID).Status != pluginlib.CompatBroken
+		if err == nil && !update && works && h.enable != nil {
+			err = h.enable(ctx, e.ID)
+		}
 		a.Post(func() {
 			delete(v.busy, k)
 			switch {
@@ -267,8 +278,10 @@ func (v *libraryPage) installEntry(e pluginlib.Entry, update bool) {
 				v.status[k], v.failed[k] = err.Error(), true
 			case update:
 				v.status[k] = "Updated."
+			case !works:
+				v.status[k] = "Installed and left off: it doesn't work in " + AppName + "."
 			default:
-				v.status[k] = "Installed. Turn it on under Plugins."
+				v.status[k] = "Installed and turned on."
 			}
 			a.Invalidate()
 		})
@@ -417,14 +430,114 @@ func (v *libraryPage) matches(g libGroup, words []string) bool {
 	return false
 }
 
-func libraryMatches(e pluginlib.Entry, words []string) bool {
-	hay := strings.ToLower(strings.Join(append([]string{e.ID, e.Name, e.Description, e.CategoryLabel, libCategory(e).Label, systemName(e.System)}, e.Credit()...), " "))
+// libraryMatches reports whether e is a result for words: libraryRank.
+func libraryMatches(e pluginlib.Entry, words []string) bool { return libraryRank(e, words) >= 0 }
+
+// libraryRank is how well words match a library plugin, for the search
+// suggestions under Preferences > Plugins (and their "See all N
+// results") and the library's own search: the worst of each word's
+// match, -1 when one of them doesn't match. A word matches the name it
+// starts (0), a word of the name it starts (1), somewhere in the name
+// (2; the name without spaces counts, so "clearurls" is Clear URLs), or,
+// from 3 letters, a word of the description it starts (3). The ID, the
+// category, the system and the authors don't count: a category's name
+// would match everything filed under it.
+func libraryRank(e pluginlib.Entry, words []string) int {
+	if len(words) == 0 {
+		return 0
+	}
+	name := strings.ToLower(orStr(e.Name, e.ID))
+	key := libNameKey(name)
+	nameWords := searchWords(name)
+	var descWords []string
+	worst := 0
 	for _, w := range words {
-		if !strings.Contains(hay, w) {
-			return false
+		wk := libNameKey(w)
+		t := -1
+		switch {
+		case strings.HasPrefix(name, w) || wk != "" && strings.HasPrefix(key, wk):
+			t = 0
+		case wordStarts(nameWords, w):
+			t = 1
+		case strings.Contains(name, w) || wk != "" && strings.Contains(key, wk):
+			t = 2
+		case len([]rune(w)) >= 3:
+			if descWords == nil {
+				descWords = searchWords(plainMrkdwn(e.Description))
+			}
+			if wordStarts(descWords, w) {
+				t = 3
+			}
+		}
+		if t < 0 {
+			return -1
+		}
+		worst = max(worst, t)
+	}
+	return worst
+}
+
+// groupCompat is how a library row works in Clack (pluginlib.CompatOf):
+// its best entry's, since Install takes the bench's pick when both
+// systems have it.
+func groupCompat(g libGroup) pluginlib.Compat {
+	best := pluginlib.Compat{Status: pluginlib.CompatBroken + 1}
+	for _, e := range g.Entries {
+		if c := pluginlib.CompatOf(e.System, e.ID); c.Status < best.Status {
+			best = c
 		}
 	}
-	return true
+	return best
+}
+
+// groupRank is a row's best libraryRank over its systems' entries.
+func groupRank(g libGroup, words []string) int {
+	best := -1
+	for _, e := range g.Entries {
+		if r := libraryRank(e, words); r >= 0 && (best < 0 || r < best) {
+			best = r
+		}
+	}
+	return best
+}
+
+// searchWords splits s into lower-case words: at anything but letters and
+// digits, and where a capital follows a small letter ("DeArrow": de,
+// arrow).
+func searchWords(s string) []string {
+	var out []string
+	var b strings.Builder
+	var prev rune
+	flush := func() {
+		if b.Len() > 0 {
+			out = append(out, b.String())
+			b.Reset()
+		}
+	}
+	for _, r := range s {
+		switch {
+		case !unicode.IsLetter(r) && !unicode.IsDigit(r):
+			flush()
+		case unicode.IsUpper(r) && unicode.IsLower(prev):
+			flush()
+			b.WriteRune(unicode.ToLower(r))
+		default:
+			b.WriteRune(unicode.ToLower(r))
+		}
+		prev = r
+	}
+	flush()
+	return out
+}
+
+// wordStarts reports whether one of words starts with w.
+func wordStarts(words []string, w string) bool {
+	for _, x := range words {
+		if strings.HasPrefix(x, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // sourceLine is "Taut 6fe5123 · Slick f52d55d, GPLv3" as mrkdwn links.
@@ -524,6 +637,9 @@ func (v *libraryPage) body(f *flow, words []string) {
 	flush := func() {
 		if len(group) == 0 {
 			return
+		}
+		if len(words) > 0 { // a search: the best matches of a category first
+			group = rankGroups(group, words, nil)
 		}
 		rows := make([]func(gtx layout.Context, w int) layout.Dimensions, len(group))
 		for i, g := range group {
@@ -720,6 +836,15 @@ func (v *libraryPage) row(gtx layout.Context, w int, g libGroup) layout.Dimensio
 			badge("Off upstream", true)
 		}
 		y := gtx.Dp(22)
+		if c := groupCompat(g); c.Line != "" { // how it works in Clack, before Install
+			col := cl.sec
+			if c.Status == pluginlib.CompatBroken {
+				col = cl.imp
+			}
+			y += at(gtx, image.Pt(0, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: col, MaxLines: 1}, c.Line)
+			}).Size.Y
+		}
 		if desc {
 			d := ""
 			for _, e := range g.Entries {

@@ -30,6 +30,7 @@ import (
 	"github.com/some-du6e/clack/internal/slick"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 
 	"github.com/some-du6e/clack/internal/slack/tlsfp"
@@ -161,7 +162,7 @@ func (p *slickPage) layout(gtx layout.Context, tab string) layout.Dimensions {
 	}
 	st := s.Settings()
 	p.k.gtxNow = gtx
-	p.list.List.Layout(gtx, 1, func(gtx layout.Context, _ int) layout.Dimensions {
+	panelList(gtx, &p.list.List, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X-gtx.Dp(8), 1<<24)}
 		f := &flow{gtx: gtx, w: gtx.Constraints.Max.X}
 		switch {
@@ -367,10 +368,12 @@ func (p *slickPage) sinput(gtx layout.Context, e *widget.Editor, w, h, padL int,
 		bc = p.a.th.OnBg(rgbaT(0xd1d2d3, .3))
 	}
 	if gtx.Focused(e) {
-		bc = cl.otlHgl
-		theme.Border(gtx, r.Inset(-gtx.Dp(3)), rad+gtx.Dp(3), gtx.Dp(3), theme.WithAlpha(cl.otlHgl, 0x30))
+		// .c-input_text:focus: the 1px and 5px box-shadows outside the
+		// box (in the panel's padding), the border transparent
+		popups.FocusRingColors(gtx, cl.otlHgl, theme.WithAlpha(cl.otlHgl, 0x4d), r, rad)
+	} else {
+		richview.StrokeRRect(gtx.Ops, r, rad, gtx.Dp(1), bc) // a CSS border: inside the box
 	}
-	theme.Border(gtx, r, rad, gtx.Dp(1), bc)
 	size := unit.Sp(15)
 	if h < gtx.Dp(34) {
 		size = 13
@@ -777,7 +780,7 @@ func (p *slickPage) chip(gtx layout.Context, f slick.Filter, w int) layout.Dimen
 		if fill.A > 0 {
 			theme.RRect(gtx, r, h/2, fill)
 		}
-		theme.Border(gtx, r, h/2, gtx.Dp(1), bc)
+		richview.StrokeRRect(gtx.Ops, r, h/2, gtx.Dp(1), bc) // a CSS border: inside the chip
 		lw := p.a.th.Measure(gtx, 13, theme.Bold, f.Label)
 		at(gtx, image.Pt(gtx.Dp(12), 0), image.Pt(lw+2, h), func(gtx layout.Context) layout.Dimensions {
 			return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return p.k.label(gtx, 13, theme.Bold, fg, f.Label) })

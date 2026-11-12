@@ -16,7 +16,7 @@ Live verification of every Slick plugin (https://github.com/3kh0/slick at `f52d5
   These rely on the `slick` acceptance suite (CI) and source review.
 - **Source review:** each plugin's source was read against Clack's API, patch points, CSS engine and mirror before testing, to know what to look for.
 
-Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why). **Verified** says how: *live* is the 2026-11-07 run on real Slack; *CI* is the `slick` acceptance suite (internal/slick) or the `ui-slick` view tests (`TestSlickView*`, the real native views over a synthetic workspace) on `plugins-slick-pass` (2026-11-11), with no live run since.
+Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why). **Verified** says how: *live* is the 2026-11-07 run on real Slack; *CI* is the `slick` acceptance suite (internal/slick) or the `ui-slick` view tests (`TestSlickView*`, the real native views over a synthetic workspace) on `plugins-slick-pass` (2026-11-11), with no live run since. The ❌ and ⚠️ rows are also `internal/pluginlib/compat.go`'s table (`TestCompatMatchesDocs` keeps the two in step): Preferences › Plugins, the plugin library and the search suggestions show its one line under the plugin's name, and installing a ❌ plugin leaves it off.
 
 **Status:** live testing stopped on 2026-11-07 (Slack revoked sessions of an Enterprise Grid account using Clack). The 2026-11-11 pass (`plugins-slick-pass`) re-checked every ⚠️/❌ row against its source and Clack's code and marks what CI now proves; nothing below was re-run live.
 
@@ -30,7 +30,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | bChannel | ✅ | CI (`TestSlickViewbChannel*`) | Its /bchannel relay, the @ rows offering every broadcast keyword, its confirm step and the relayed send. Not run live (it posts and invites). |
 | BetterBlock | ✅ | CI (messages, popups, composer, views, shell `TestSlickViewBetterBlock*`) | Blocked people's messages, thread replies, reply-bar avatars, mentions, reactions, profile card, search, @ rows, Activity, DMs, People and sidebar DMs. Notifications go through its `showNotification` patch. |
 | BetterGifs | ✅ | CI (`TestSlickViewBetterGifs`) | Favourite stars on Giphy items in the GIF grid (GifListItem inside the GifPicker boundary). |
-| BetterHuddles | ❌ | — | Out of scope (huddle media): it replaces Slack's call with its own Chime/WebRTC client, which jsrt can't run. Its join-preview wrapper applies (`TestSlickViewBetterHuddles`). |
+| BetterHuddles | ❌ | — | It replaces Slack's call with its own Chime client over browser WebRTC, which jsrt can't run (Clack's huddles are native). Its join-preview wrapper applies (`TestSlickViewBetterHuddles`). |
 | BetterTypingIndicator | ✅ | CI (`TestSlickViewBetterTypingIndicator`) | Names on one 10.5px line in the typing bar. |
 | CallTimer | ✅ | CI (`TestSlickViewCallTimer`) | The timer in the huddle window's title and the bottom bar. Not run live (no live huddles). |
 | Censorship | ✅ | CI (acceptance check; `TestSlickViewCensorshipActivity`) | Masked in channels, threads and the Activity feed. Search cards now show its masked copy too (`MessageListItem`'s result, `search_view.go` `overText`), not yet covered by a view test. Notifications go through its `showNotification` patch. |
@@ -48,7 +48,7 @@ Legend: ✅ works as in Slick · ⚠️ partly (what's missing is listed) · ❌
 | Experiments | ✅ | CI (`experiments` workflow `TestExperimentsPluginsDriveClack`, acceptance check) | A group forced in its tab drives Clack (sidebar_section_search gates the section menu's "Search in this section"); turning it off gives the server's group back. Never set on the real account. |
 | HaikuWarning | ✅ | live (alone), CI (with ChatTabs) | "Found a haiku in your message!"; Keep editing returns the text. |
 | HcaStatus | ✅ | CI (acceptance check; `TestSlickViewHcaStatus`) | The auth.hackclub.com lookup works and its class reaches the sender; the native sender name draws its wavy underline in the unverified and over-18 colours (pixels, `hca-status.png`). |
-| HuddleMuteDetector | ❌ | — | Out of scope (huddle media). |
+| HuddleMuteDetector | ❌ | — | It patches the `displayAlertMessage` thunk for Slack's `peerMuteRequest` alert. Clack's native huddle shows its own "Someone muted you." banner without dispatching that thunk. |
 | HumanCount | ✅ | live | The header count (17, same as Slack). |
 | IgnoreTime | ✅ | CI (`TestIgnoreTimeLeavesTimesOutOfCopies`) | Its `.c-timestamp__label {user-select: none}` now keeps the times out of a multi-message copy's header lines, as in Slack. |
 | InstalledApps | ⚠️ | CI (`TestSlickViewInstalledApps`) | Its block sits in a person's full profile and around an app's AboutPage. Its main half's `session.fetch` sends no Slack cookie (security policy), so the marketplace page asks to sign in. |
@@ -161,4 +161,4 @@ Related theme fixes: importing selects the theme (`fcc7ac9`); pausing Slick keep
 | ui, slackc | Plugin elements in the top nav and sidebar resolve Slack's inverted theme scope (`sk-client-theme--light-inverted-sidebar`); a `FlexItems` native's patch lays out as its parent row's items (StreamerMode's toggle beside the help button); a native that draws nothing (Slack's null) is no flex item |
 | slackc/kit | `SvgIcon` resolves Slack's names through the icon set's own table (`eye-open`, StreamerMode's toggle, had drawn the fallback dot) |
 
-Still open: SlimMessageBox's `@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, oneko's sprite, OnlineCount, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; huddle media (out of scope); and every *CI*-only row's live re-check.
+Still open: SlimMessageBox's `@container` cases; ClearURLs' paste-time cleaning (Quill's Clipboard); CustomFonts, CustomSounds, oneko's sprite, OnlineCount, PrivateChannelMapper's pill, ShowRealUser's forwarded copies; BetterHuddles' own call client and HuddleMuteDetector's alert; and every *CI*-only row's live re-check.

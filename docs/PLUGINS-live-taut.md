@@ -8,7 +8,7 @@ Every Taut plugin (https://github.com/jeremy46231/taut at `6fe5123`, which is up
 - **CI.** `taut` (every plugin built with Taut's `build:user-plugin`, imported unmodified, started, its hooks checked, `behaviour` checks for most), `composer-taut`, `popups-taut`, `messages-taut` and `ui-taut` (the real call sites), and the plugin bench (`docs/PLUGIN-BENCH.md`: each plugin both systems ship, run in the whole client over `internal/fakeslack`).
 - **No live Slack runs** (policy for this pass). Nothing below was seen on real Slack.
 
-Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why) · n/a: not applicable.
+Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is listed) · ❌ no visible effect in Clack (why) · n/a: not applicable. The ❌ and ⚠️ rows are also `internal/pluginlib/compat.go`'s table (`TestCompatMatchesDocs` keeps the two in step): Preferences › Plugins, the plugin library and the search suggestions show its one line under the plugin's name, and installing a ❌ plugin leaves it off.
 
 ## Plugins
 
@@ -28,7 +28,7 @@ Legend: ✅ does what it does in Slack · ⚠️ partly (what's missing is liste
 | Experiments | ✅ | A Preferences tab with every experiment assignment and overrides (`Experiments.tsx:147`) | The tab lists the account's assignments; an override reaches core and changes Clack at once | TestExperimentsPluginsDriveClack. |
 | FasterSlack | ✅ | Pauses Slack's top-nav layout work while the window resizes (`FasterSlack.ts:27`, `:36`) | Nothing to pause: Clack's layout is native and has no lag; the plugin finds no `.p-ia4_top_nav__left_container` in the JS document and stands down | Nothing visible by design. |
 | HaikuWarning | ✅ (fixed) | A yellow banner over the composer while your draft is a haiku Orpheus would repeat; or a pop-up when you send (`HaikuWarning.tsx:89`, `:146`) | Both: the banner over the composer (BaseContextBarV2), styled with Slack's context bar rules, and the send check | Was ❌: the drafts slice was keyed by server draft id and only updated after a sync, so the banner never saw your text. `taut` HaikuWarning/behaviour. |
-| HuddleActivity | n/a | Logs who did what in a huddle (joins, mutes, settings) and toasts it (`HuddleActivity.tsx:108-563`) | Out of scope (huddle media): Clack's huddle has no event log or captions menus to patch | |
+| HuddleActivity | ❌ | Logs who did what in a huddle (joins, mutes, settings) and toasts it (`HuddleActivity.tsx:108-563`) | Nothing: Clack's huddles are native (audio, video, screen share), but they keep no event log for it (`startEventLog` and `stopEventLog` do nothing) and have no captions menus to patch | Was n/a. |
 | HumanCount | ✅ | The header's member count leaves apps (and optionally guests) out (`HumanCount.tsx:24`) | Same (BaseAvatarStack memberCount from `membershipCounts`) | `taut` HumanCount/behaviour, bench. |
 | IdvStatus | ✅ | Wavy red/orange underline under people who aren't IDV-eligible / are over 18 (`IdvStatus.tsx:43`, `:88`) | The class reaches the sender and the wavy underline is painted | `messages-taut` TestPluginIdvStatusSenderClick; asks identity.hackclub.com. |
 | InvisibleForward | ✅ | Slack links at the start of a message are sent invisible (`InvisibleForward.tsx:19`) | Same, on every send | `composer-taut`, `taut`. |
