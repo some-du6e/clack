@@ -194,3 +194,97 @@ func (m SectionMove) Merge(o SectionMove) SectionMove {
 	m.Count = len(m.Channels())
 	return m
 }
+
+// MoveMany is moveManyChannels (boot-shared HKiO) for one
+// performBulkChannelMove: a conversation both taken out of and put into
+// the same section moves nowhere (withoutIgnoredMovements), the custom
+// sections' share goes in one users.channelSections.channels.bulkUpdate,
+// and Starred's in stars.add / stars.remove per conversation. Count is
+// the distinct conversations left moving. (Slack also opens a closed DM
+// moved into a section; Clack's sidebar lists open DMs only, so there is
+// none to open.)
+func (a *App) MoveMany(ctx context.Context, insert, remove []SectionItems) (SectionMove, error) {
+	removing := map[string]map[string]bool{} // channel -> sections it leaves
+	for _, it := range remove {
+		for _, ch := range it.Channels {
+			if removing[ch] == nil {
+				removing[ch] = map[string]bool{}
+			}
+			removing[ch][it.Section] = true
+		}
+	}
+	ignored := map[string]map[string]bool{} // section -> channels both left and entered
+	for _, it := range insert {
+		for _, ch := range it.Channels {
+			if removing[ch][it.Section] {
+				if ignored[it.Section] == nil {
+					ignored[it.Section] = map[string]bool{}
+				}
+				ignored[it.Section][ch] = true
+			}
+		}
+	}
+	keep := func(items []SectionItems) []SectionItems {
+		var out []SectionItems
+		for _, it := range items {
+			var chs []string
+			for _, ch := range it.Channels {
+				if !ignored[it.Section][ch] {
+					chs = append(chs, ch)
+				}
+			}
+			if len(chs) > 0 {
+				out = append(out, SectionItems{it.Section, chs})
+			}
+		}
+		return out
+	}
+	rem, ins := keep(remove), keep(insert)
+	var m SectionMove
+	typeOf := map[string]string{}
+	a.S.RLock()
+	for _, s := range a.S.Sections {
+		typeOf[s.ID] = s.Type
+	}
+	a.S.RUnlock()
+	var stdIns, stdRem []SectionItems
+	for _, it := range rem {
+		switch typeOf[it.Section] {
+		case "standard":
+			stdRem = append(stdRem, it)
+		case "stars":
+			for _, ch := range it.Channels {
+				if err := a.Star(ctx, ch, false); err != nil {
+					return m, err
+				}
+				m.Unstarred = append(m.Unstarred, ch)
+			}
+			m.RemoveStars = it.Section
+		}
+	}
+	for _, it := range ins {
+		switch typeOf[it.Section] {
+		case "standard":
+			stdIns = append(stdIns, it)
+		case "stars":
+			for _, ch := range it.Channels {
+				if err := a.Star(ctx, ch, true); err != nil {
+					return m, err
+				}
+				m.Starred = append(m.Starred, ch)
+			}
+			m.InsertStars = it.Section
+		}
+	}
+	if len(stdIns)+len(stdRem) > 0 {
+		if err := a.bulkUpdateSections(ctx, stdIns, stdRem); err != nil {
+			return m, err
+		}
+		m.Insert, m.Remove = stdIns, stdRem
+	}
+	if len(m.Starred)+len(m.Unstarred) > 0 {
+		a.emit(Event{Type: "sidebar_changed"})
+	}
+	m.Count = len(m.Channels())
+	return m, nil
+}

@@ -34,6 +34,9 @@ func init() {
 		"secondary_view_default_width":         on,
 		"unread_thread_indication_in_replybar": on,
 		"workflow_execution_window":            on,
+		// the sidebar's organize mode (ui/sidebar_organize.go: SYcU
+		// OrganizeModeMenu's Leave, ConfirmLeaveChannelsModal)
+		"bulk_leave_channels_from_sidebar": on,
 	} {
 		experimentReads[name] = groups
 	}

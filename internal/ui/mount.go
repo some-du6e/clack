@@ -190,10 +190,14 @@ type MenuItem struct {
 	Divider  bool // draws a separator instead of an item
 	Header   bool // a small non-interactive heading row
 	Disabled bool
-	Checked  bool       // a radio item's check
-	Radio    bool       // Slack's radio row: the check in a left gutter, blue when checked (popups.MenuItem.Radio)
-	Sub      []MenuItem // a submenu
-	Do       func()
+	Checked  bool // a radio item's check
+	Radio    bool // Slack's radio row: the check in a left gutter, blue when checked (popups.MenuItem.Radio)
+	// Indeterminate draws a checked radio's dash instead of the check
+	// (popups.MenuItem.Indeterminate); IconURL an image in the icon's place.
+	Indeterminate bool
+	IconURL       string
+	Sub           []MenuItem // a submenu
+	Do            func()
 	// LabelText draws the label in place of the menu's own text (the
 	// font select draws each option in its font); Label stays the row's
 	// name.

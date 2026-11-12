@@ -2,7 +2,10 @@ name: section-menus
 # The sidebar section heading menus (⋯ and right-click), the rail's Create
 # menu and the section modals end to end against internal/fakeslack
 # (users.channelSections.*, channel_sections prefs, bulk mute, mark read),
-# rendered headlessly at 1440x900 with each menu saved as a screenshot.
+# the sidebar's organize mode and its Move to… menu over several
+# conversations (moveManyChannels, conversations.bulkLeave) and the move
+# error toasts, rendered headlessly at 1440x900 with each menu saved as a
+# screenshot.
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
@@ -15,6 +18,10 @@ on:
       - "internal/core/section_menu*.go"
       - "internal/core/sidebar_rules.go"
       - "internal/fakeslack/sections.go"
+      - "internal/ui/channel_move.go"
+      - "internal/ui/sidebar_organize*.go"
+      - "internal/core/section_move.go"
+      - "internal/core/bulk_leave*.go"
       - ".github/workflows/section-menus.yml"
   workflow_dispatch:
 
@@ -38,7 +45,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: core + fake tests
-        run: go test -count=1 -v -run 'TestSetSectionPref|TestSectionNameError|TestSectionLifecycle|TestMuteMany|TestMarkManyRead|TestSectionLink' ./internal/core
+        run: go test -count=1 -v -run 'TestSetSectionPref|TestSectionNameError|TestSectionLifecycle|TestMuteMany|TestMarkManyRead|TestSectionLink|TestMoveMany|TestChannelsThatCannotBeLeft|TestLeaveChannelsBulk' ./internal/core
       - name: menus, actions + screenshots
         env:
           SECTION_MENU_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -46,7 +53,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$SECTION_MENU_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestSectionMenu|TestCreateChannelEntryPoints' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestSectionMenu|TestCreateChannelEntryPoints|TestSidebarOrganizeMode$|TestSectionMoveErrorToasts$|TestSidebarMenuMove|TestSectionMoveToast$' ./internal/ui/
+          go test -count=1 -v -run 'TestChannelMenuSectionRows' ./internal/ui/popups/
           ls -l "$SECTION_MENU_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

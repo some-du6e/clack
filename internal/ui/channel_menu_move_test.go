@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,7 +51,11 @@ func TestSidebarMenuMoveChannel(t *testing.T) {
 	if !ok {
 		t.Fatalf("no Move channel row: %s", menuLabelsP(got))
 	}
-	want := menuLabels(e.a.moveToItems(ch, e.a.channelSections(ch)))
+	// a sidebar row's menu ends with organize mode's "Edit all sections"
+	want := menuLabels(e.a.moveToMenuItems([]string{ch}, moveMenuOpts{edit: true, section: e.a.sbRowSection(ch)}))
+	if !strings.HasSuffix(want, " |  | Edit all sections") {
+		t.Errorf("the row's Move channel ▸ has no Edit all sections: %s", want)
+	}
 	if l := menuLabelsP(move.Sub); l != want {
 		t.Errorf("Move channel ▸\n got %s\nwant %s", l, want)
 	}
@@ -93,9 +98,17 @@ func TestSidebarMenuMoveToNewSection(t *testing.T) {
 	if _, ok := findItem(got, "Star channel"); !ok {
 		t.Errorf("no Star channel row: %s", menuLabelsP(got))
 	}
-	it, ok := findItem(got, "Move to new section")
+	// getChannelSectionsTemplate's row without a custom section: "Move
+	// channel" (channel_ctx_menu_move_to_new_section)
+	var it popups.MenuItem
+	ok := false
+	for _, m := range got {
+		if m.Key == "move_to_new_section" {
+			it, ok = m, m.Label == "Move channel"
+		}
+	}
 	if !ok || it.Do == nil {
-		t.Fatalf("no Move to new section row: %s", menuLabelsP(got))
+		t.Fatalf("no Move channel row (move_to_new_section): %s", menuLabelsP(got))
 	}
 	it.Do()
 	if _, ok := topOverlay[*popups.CreateSectionModal](e.a); !ok {

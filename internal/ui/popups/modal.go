@@ -6,6 +6,7 @@ import (
 
 	"gioui.org/io/event"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
@@ -178,6 +179,22 @@ type ModalOpts struct {
 	// gtx.Constraints exactly the header's size (Slack's ModalHeader with
 	// other children: the screen picker's source tabs).
 	Header func(gtx layout.Context) layout.Dimensions
+	// HeaderBelow draws inside the header under its 70px title bar, PadX
+	// in, gtx.Constraints.Max.X the header's width less the padding
+	// (ModalHeader's children after ModalTitleBar: ConfirmLeaveChannelsModal's
+	// message in a ModalContentSection); the header grows by its height
+	// and HeaderBelowPad (dp).
+	HeaderBelow    func(gtx layout.Context) layout.Dimensions
+	HeaderBelowPad float32
+	// HeaderLine draws the header's 1px otl-ter bottom line (box-shadow
+	// inset 0 -1px 0 0 var(--dt_color-otl-ter)).
+	HeaderLine bool
+	// Height fixes the card's height in dp (within the window); the body
+	// takes what the header and footer leave, scrolling past it.
+	Height float32
+	// Contents paints the body and the footer with .p-about_modal__contents'
+	// background, rgb(var(--sk_foreground_min_solid)).
+	Contents bool
 	// Over draws on top of the whole card, header and footer included,
 	// in card coordinates with gtx.Constraints exactly the card's size
 	// (Slack's c-modal_speed_bump veils the dialog with its sheet; the
@@ -294,6 +311,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	if m.o.HeadH > 0 {
 		headH = dp(gtx, m.o.HeadH)
 	}
+	titleH := headH // the title bar's height (the header's without HeaderBelow)
 	subH := 0
 	titleSz, titleLH := float32(22), float32(30)
 	if m.o.Subtitle != "" {
@@ -305,6 +323,13 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 			}
 		}
 		headH += subH
+	}
+	titleH = headH
+	var belowCall op.CallOp
+	if m.o.HeaderBelow != nil {
+		var d layout.Dimensions
+		belowCall, d = record(loose(gtx, image.Pt(w-2*padX, 1<<20)), m.o.HeaderBelow)
+		headH += d.Size.Y + dp(gtx, m.o.HeaderBelowPad)
 	}
 	heroH := 0
 	if m.o.Hero != nil {
@@ -338,8 +363,12 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 	if maxBody < dp(gtx, 60) {
 		maxBody = dp(gtx, 60)
 	}
+	if m.o.Height > 0 { // a fixed card: the body has what's left
+		fixed := min(dp(gtx, m.o.Height), win.Y-2*dp(gtx, 28))
+		maxBody = max(fixed-heroH-headH-footH, dp(gtx, 60))
+	}
 	scroll := bodyH > maxBody
-	if scroll {
+	if scroll || m.o.Height > 0 {
 		bodyH = maxBody
 	}
 	h := heroH + headH + bodyH + footH
@@ -384,7 +413,17 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 						return m.o.Header(gtx)
 					})
 				}
-				ty := (headH - subH - dp(gtx, titleLH)) / 2
+				if m.o.HeaderBelow != nil {
+					macroAt(gtx, belowCall, pos.Add(image.Pt(padX, titleH)))
+				}
+				if m.o.HeaderLine {
+					fill(gtx, image.Rect(pos.X, pos.Y+headH-1, pos.X+w, pos.Y+headH), cl.Divider)
+				}
+				if m.o.Contents {
+					// .p-about_modal__contents on the content and the footer
+					fill(gtx, image.Rect(pos.X, pos.Y+headH, pos.X+w, m.rect.Dy()), cl.EmojiFoot)
+				}
+				ty := (titleH - subH - dp(gtx, titleLH)) / 2
 				at(gtx, pos.Add(image.Pt(padX, ty)), func(gtx layout.Context) layout.Dimensions {
 					maxW := w - padX - dp(gtx, 64)
 					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, titleLH))}
@@ -431,7 +470,7 @@ func (m *Modal) Layout(gtx layout.Context) layout.Dimensions {
 					})
 				}
 				if !m.o.NoClose {
-					cy := pos.Y + (headH-dp(gtx, 36))/2
+					cy := pos.Y + (titleH-dp(gtx, 36))/2
 					if heroH > 0 {
 						cy = dp(gtx, 20) // c-sk-modal__close_button: top 20px, over the hero
 					}

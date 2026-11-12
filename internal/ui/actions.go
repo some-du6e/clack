@@ -138,10 +138,14 @@ func (a *App) openTab(ch, key string) {
 	}
 }
 
-func (a *App) sidebarAction(key string) {
+func (a *App) sidebarAction(key string) { a.sidebarActionAt(key, a.ptrWin) }
+
+// sidebarActionAt runs a section footer's action, its menu at anchor
+// (window coordinates: the pointer, or the row's centre from the keyboard).
+func (a *App) sidebarActionAt(key string, anchor image.Point) {
 	switch key {
 	case "add-channels": // Slack: a menu, Create a new channel / Browse channels
-		a.openAddChannelsMenu(a.ptrWin)
+		a.openAddChannelsMenu(anchor)
 	case "browse-people":
 		a.Navigate("directories?tab=people")
 	case "add-apps":

@@ -8,10 +8,12 @@ import (
 
 	"gioui.org/font"
 	"gioui.org/gesture"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -48,6 +50,9 @@ type sbRow struct {
 	tr      i18n.NS           // label is Slack's string in this namespace ("" = data, drawn as is)
 	btn     *widget.Clickable // resolved once per rebuild (no per-frame key strings)
 	open    bool              // a heading drawn expanded whatever its state (the text filter's isCollapsed: false)
+	// disabled is a page link in organize mode (PageRow's isDisabled: .64
+	// opacity, no hover tile, no click)
+	disabled bool
 }
 
 type sidebarState struct {
@@ -92,6 +97,21 @@ type sidebarState struct {
 	draftSlot image.Rectangle
 	draftFg   color.NRGBA
 	draftMenu bool
+
+	// the keyboard (sidebar_keys.go) and organize mode
+	// (sidebar_organize.go)
+	kb   sbKeys
+	edit sbEdit
+	// origin is the sidebar's top-left in window coordinates; listTop the
+	// list's top in the sidebar
+	origin  image.Point
+	listTop int
+	// restore puts the list back at restoreTop px (focusOnExitEditMode)
+	restore    bool
+	restoreTop int
+	// builtEdit is the mode the rows were built for; improveMute
+	// improve_mute_pref's group then (sbEditRows)
+	builtEdit, improveMute bool
 }
 
 // sbLinks are the page links in Slack's order (client-channel-list-view
@@ -195,19 +215,25 @@ func (s *sidebarState) rebuild(m *model) {
 	s.rows = rows
 	s.gen++
 	s.builtFor = m.version
+	s.builtEdit = s.edit.on
 	s.rowCount = len(rows)
 }
 
 // rebuildRows is the sidebar without a text filter: the page links, their
-// divider, then every section with its footer.
+// divider, then every section with its footer. In organize mode the links
+// are disabled, a section collapsed for the mode shows nothing, an open
+// one its sbEditRows, and there are no footers or notes.
 func (s *sidebarState) rebuildRows(m *model, rows []sbRow) []sbRow {
+	edit := s.edit.on
 	for _, l := range sbLinks { // Home > "Always show in the sidebar"
 		if !strings.Contains(","+s.viewsFor+",", ","+sbViewPref[l.key]+",") {
+			l.disabled = edit
 			rows = append(rows, l)
 		}
 	}
 	rows = append(rows, sbRow{kind: sbDivider, gap: 24})
-	for i, sec := range m.Sections {
+	for i := range m.Sections {
+		sec := m.Sections[i]
 		if i > 0 {
 			rows = append(rows, sbRow{kind: sbGap, gap: 10})
 		}
@@ -220,6 +246,15 @@ func (s *sidebarState) rebuildRows(m *model, rows []sbRow) []sbRow {
 		if !seen { // first sight: Slack's saved state (channel_sections "c")
 			col = sec.Collapsed
 			s.collapsed[sec.ID] = col
+		}
+		if edit {
+			if s.edit.collapsed[sec.ID] {
+				continue
+			}
+			for _, id := range sbEditRows(m, &m.Sections[i], s.improveMute) {
+				rows = append(rows, sbRow{kind: sbConv, key: id, section: sec.ID})
+			}
+			continue
 		}
 		ids := sec.Rows
 		if col { // collapsed: Slack's unread rows (core's CollapsedChannels)
@@ -259,8 +294,11 @@ func (a *App) sbStale(m *model) bool {
 	if q != "" {
 		key += "\x00" + strconv.FormatBool(m2) + strconv.FormatBool(m3)
 	}
-	stale := s.rows == nil || s.builtFor != m.version || s.viewsFor != sbViewsKey() || s.filterFor != key
+	im := a.exp("improve_mute_pref") == "on"
+	stale := s.rows == nil || s.builtFor != m.version || s.viewsFor != sbViewsKey() || s.filterFor != key || s.builtEdit != s.edit.on ||
+		s.edit.on && s.improveMute != im
 	s.fq, s.fm2, s.fm3, s.filterFor = q, m2, m3, key
+	s.improveMute = im
 	return stale
 }
 
@@ -368,18 +406,47 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 			return a.huddles().LayoutBar(gtx, a.th)
 		})
 	}
-	at(gtx, image.Pt(0, top), image.Pt(sz.X, sz.Y-top-barH), func(gtx layout.Context) layout.Dimensions {
+	orgH := 0 // organize mode's OrganizeModeMenu, under the list (sidebar_organize.go)
+	if a.sidebar.edit.on {
+		orgH = organizeBarHeight(gtx)
+		oy := sz.Y - barH - orgH
+		at(gtx, image.Pt(0, oy), image.Pt(sz.X, orgH), func(gtx layout.Context) layout.Dimensions {
+			a.layoutOrganizeBar(gtx, gtx.Constraints.Max, a.sidebar.origin.Add(image.Pt(0, oy)))
+			return layout.Dimensions{Size: gtx.Constraints.Max}
+		})
+	}
+	listH := sz.Y - top - barH - orgH
+	a.sidebar.listTop = top
+	at(gtx, image.Pt(0, top), image.Pt(sz.X, listH), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints.Min = gtx.Constraints.Max
 		ls := clsSbList.Enter(gtx, 0, 0)
 		defer ls.Leave()
-		a.sidebar.list.Axis = layout.Vertical
-		if shown := a.sidebar.sidebarShown(p); shown != nil {
-			return a.sidebar.list.List.Layout(gtx, len(shown), func(gtx layout.Context, i int) layout.Dimensions {
-				return a.layoutSidebarRow(gtx, &a.sidebar.rows[shown[i]])
+		s := &a.sidebar
+		s.list.Axis = layout.Vertical
+		shown := s.sidebarShown(p)
+		// the keyboard's view of the rows (sidebar_keys.go), then its keys,
+		// over the list (its rows draw inside the focus area)
+		order := s.kb.order[:0]
+		if shown != nil {
+			order = append(order, shown...)
+		} else {
+			for i := range s.rows {
+				order = append(order, i)
+			}
+		}
+		a.sbLayoutRows(gtx, order)
+		s.kb.listH = listH
+		a.sbBeforeList(gtx)
+		a.sbListEvents(gtx)
+		area := a.sbListFocusArea(gtx, gtx.Constraints.Max)
+		defer area.Pop()
+		if shown != nil {
+			return s.list.List.Layout(gtx, len(shown), func(gtx layout.Context, i int) layout.Dimensions {
+				return a.layoutSidebarRow(gtx, &s.rows[shown[i]])
 			})
 		}
-		return a.sidebar.list.List.Layout(gtx, len(a.sidebar.rows), func(gtx layout.Context, i int) layout.Dimensions {
-			return a.layoutSidebarRow(gtx, &a.sidebar.rows[i])
+		return s.list.List.Layout(gtx, len(s.rows), func(gtx layout.Context, i int) layout.Dimensions {
+			return a.layoutSidebarRow(gtx, &s.rows[i])
 		})
 	})
 	// the Home header's divider (.p-ia4_home_header--with_divider: box-shadow
@@ -436,7 +503,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		})
 		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(44))}
 	case sbNoResults:
-		return a.layoutSidebarNoResults(gtx, w)
+		d := a.layoutSidebarNoResults(gtx, w)
+		a.sbFocusRing(gtx, r, d.Size)
+		return d
 	}
 
 	route := a.router.Current()
@@ -466,7 +535,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		}
 	case sbHeading:
 		clickPrefix = "sbh."
-		if a.sidebar.collapsed[r.key] && !r.open {
+		if a.sbCollapsed(r) {
 			icon = "caret-right"
 		}
 	case sbConv:
@@ -476,7 +545,9 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		}
 		indent = gtx.Dp(16)
 		label = conv.displayName()
-		sel = route.Channel() == conv.ID
+		// organize mode highlights the picks, not the open conversation
+		// (isChannelUiSelected = isEditModeSelected)
+		sel = route.Channel() == conv.ID && !a.sidebar.edit.on
 		if conv.Unread && !conv.Muted && !a.focusQuiet() { // focus mode: no bolding (focus_mode.go)
 			weight = theme.Black
 			col = c.SidebarTextUnread
@@ -533,6 +604,12 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		return at(gtx, image.Pt(pad, 0), image.Pt(w-pad*2, rowH), func(gtx layout.Context) layout.Dimensions {
 			return inner.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 				rs := sbRowState{sel: sel, label: label, icon: icon, emoji: sbEmoji(r, icon), weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
+				if conv != nil && a.sidebar.edit.on {
+					rs.edit, rs.picked = true, a.sidebar.edit.sel[conv.ID]
+					if rs.picked {
+						rs.joinUp, rs.joinDown = a.sbPickNeighbours(r)
+					}
+				}
 				if conv != nil {
 					// ConnectedChannel > Channel > ChannelContextMenu > trigger
 					rs.fg = col
@@ -557,16 +634,22 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	if clicked(btn) {
 		switch r.kind {
 		case sbLink:
-			a.Navigate(r.key)
+			if !r.disabled { // organize mode's disabled page links do nothing
+				a.Navigate(r.key)
+			}
 		case sbHeading:
-			a.sidebar.collapsed[r.key] = !a.sidebar.collapsed[r.key]
-			a.sidebar.builtFor = -1
+			a.sbSetCollapsed(r, !a.sbCollapsed(r))
 		case sbConv:
+			if a.sidebar.edit.on { // onEditModeSelect: pick (Shift: a range)
+				a.sbEditClick(r.key, lastClickMods[btn].Contain(key.ModShift))
+				break
+			}
 			a.Navigate("c/" + r.key)
 		case sbAction:
 			a.sidebarAction(r.key)
 		}
 	}
+	a.sbFocusRing(gtx, r, image.Pt(w, d.Size.Y))
 	if a.sbBBMBox(r) {
 		return layout.Dimensions{Size: image.Pt(w, d.Size.Y+gtx.Dp(12))} // SpacerRow (height 12)
 	}
@@ -647,6 +730,10 @@ type sbRowState struct {
 	suffix   string
 	rowH     int         // px
 	fg       color.NRGBA // conversation rows: the name colour
+	// organize mode: a conversation row (edit), picked, and whether the
+	// rows above / below it are picked too (their tiles join)
+	edit, picked     bool
+	joinUp, joinDown bool
 }
 
 // sidebarRowBody draws a row's tile, icon, name and badge. Conversation
@@ -659,7 +746,7 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 	pad := gtx.Dp(8)
 	sel, conv := rs.sel, rs.conv
 	box := a.sbBBMBox(r)
-	return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hovered bool) {
+	bg := func(gtx layout.Context, s image.Point, hovered bool) {
 		if conv != nil && !hovered { // the draft menu trigger sits over the row: it keeps the row hovered
 			if d := a.sidebar.drafts[conv.ID]; d != nil && d.btn.Hovered() {
 				hovered = true
@@ -678,23 +765,55 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			}
 			theme.RRect(gtx, rr, gtx.Dp(4), bg)
 			theme.Border(gtx, rr, gtx.Dp(4), max(1, gtx.Dp(1)), c.SidebarDivider)
+		case rs.picked:
+			// a pick's tile; picked neighbours join (selectedTop / Middle /
+			// Bottom square the inner corners)
+			rad := gtx.Dp(6)
+			rr := clip.RRect{Rect: image.Rectangle{Max: s}, NW: rad, NE: rad, SE: rad, SW: rad}
+			if rs.joinUp {
+				rr.NW, rr.NE = 0, 0
+			}
+			if rs.joinDown {
+				rr.SW, rr.SE = 0, 0
+			}
+			st := rr.Push(gtx.Ops)
+			paint.ColorOp{Color: c.SidebarActive}.Add(gtx.Ops)
+			paint.PaintOp{}.Add(gtx.Ops)
+			st.Pop()
 		case sel:
 			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.SidebarActive)
-		case hovered && r.kind != sbHeading:
+		case hovered && r.kind != sbHeading && !r.disabled:
 			theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.SidebarHover)
 		}
-	}, func(gtx layout.Context) layout.Dimensions {
+	}
+	body := func(gtx layout.Context) layout.Dimensions {
 		fg := rs.col
-		if sel {
+		if sel && !r.disabled || rs.picked {
 			fg = c.SidebarActiveText
 		}
 		icon := rs.icon
-		if r.kind == sbHeading && btn.Hovered() && (!a.sidebar.collapsed[r.key] || r.open) {
+		if r.kind == sbHeading && btn.Hovered() && !a.sbCollapsed(r) {
 			icon = "caret-down"
 		}
 		ix := pad + rs.indent
 		iy := (rowH - gtx.Dp(16)) / 2
 		right := rw - gtx.Dp(6)
+		if rs.edit {
+			// renderEditModeCheckbox: 1em of the row's 15px, centred in its
+			// 26px box 1px after the row's 10px padding (.64 until picked);
+			// the rest moves 24px right, the right padding 2px in
+			cbox, es := gtx.Dp(26), gtx.Dp(15)
+			cx := gtx.Dp(10) + gtx.Dp(1) + cbox/2
+			name, cc := "real-checkbox-empty", theme.WithAlpha(fg, uint8(float32(fg.A)*0.64+0.5))
+			if rs.picked {
+				name, cc = "real-checkbox-checked", fg
+			}
+			at(gtx, image.Pt(cx-es/2, (rowH-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+				return icons.Get(name)(gtx, 15, cc)
+			})
+			ix += gtx.Dp(24)
+			right -= gtx.Dp(2)
+		}
 		// BaseChannelSuffix's draft mark (showDraft: a draft here, the
 		// channel not open, and the viewer can post in it) goes just
 		// before the badge
@@ -835,5 +954,18 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			})
 		})
 		return layout.Dimensions{Size: image.Pt(rw, rowH)}
-	})
+	}
+	if r.disabled {
+		// organize mode's page link (.p-channel_sidebar__link--page--disabled):
+		// .64 opacity, the default cursor, no hover tile and no click; the
+		// open page's keeps its tile, its text content-inv-sec
+		defer paint.PushOpacity(gtx.Ops, .64).Pop()
+		m := op.Record(gtx.Ops)
+		d := body(gtx)
+		call := m.Stop()
+		bg(gtx, d.Size, false)
+		call.Add(gtx.Ops)
+		return d
+	}
+	return clickArea(gtx, btn, bg, body)
 }

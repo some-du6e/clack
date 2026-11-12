@@ -16,6 +16,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -152,6 +153,11 @@ func (a *App) draftMenuItems(id string) []MenuItem {
 				a.OpenThread(id, d.ThreadTS) // openThread with highlightRoot
 				return
 			}
+			// a channel draft other than the attached one swaps into the
+			// composer first (selectStashedDraft), then the channel opens
+			if !a.draftAttached(id, d) {
+				a.selectStashedDraft(id, d)
+			}
 			a.Navigate("c/" + id)
 		}})
 	}
@@ -204,4 +210,30 @@ func (a *App) layoutSbDraft(gtx layout.Context, id string, slot image.Rectangle,
 		hovered = d.hover.Update(gtx.Source)
 	}
 	popups.Tooltip(gtx, a.th, &d.tip, hovered, sz, popups.Above, a.draftTipText(id), "")
+}
+
+// draftAttached is isActiveChannelDraft: d is the draft ch's composer slot
+// holds (before the composer first opens, the newest, which it restores).
+func (a *App) draftAttached(ch string, d core.Draft) bool {
+	if id := composer.AttachedDraftID(ch); id != "" {
+		return id == d.ID
+	}
+	if c := a.Core(); c != nil {
+		if cur, ok := c.DraftFor(ch, ""); ok {
+			return cur.ID == d.ID
+		}
+	}
+	return false
+}
+
+// selectStashedDraft puts d in ch's composer slot (composer.SelectStashedDraft),
+// the channel's live composer included.
+func (a *App) selectStashedDraft(ch string, d core.Draft) {
+	var live *composer.Composer
+	if cv := a.convos[ch+"/"]; cv != nil {
+		if cb, ok := cv.comp.(composerBox); ok {
+			live = cb.Composer
+		}
+	}
+	composer.SelectStashedDraft(a, live, ch, d)
 }

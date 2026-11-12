@@ -40,6 +40,21 @@ func Primary(e pointer.Event) bool {
 // (the press already opened a context menu).
 func Context(c widget.Click) bool { return Mac && c.Modifiers.Contain(key.ModCtrl) }
 
+// ClickedMods is Clicked with the modifiers held for the last click.
+func ClickedMods(gtx layout.Context, btn *widget.Clickable) (bool, key.Modifiers) {
+	clicked := false
+	var mods key.Modifiers
+	for {
+		c, ok := btn.Update(gtx)
+		if !ok {
+			return clicked, mods
+		}
+		if !Context(c) {
+			clicked, mods = true, c.Modifiers
+		}
+	}
+}
+
 // Clicked is btn.Clicked without the macOS Ctrl+clicks.
 func Clicked(gtx layout.Context, btn *widget.Clickable) bool {
 	clicked := false

@@ -489,7 +489,7 @@ func TestMenuTagAndBadge(t *testing.T) {
 	}
 	m := NewMenuOpts(h, items, MenuOpts{})
 	back := menuFromTemplate(th, m.menuTemplate(items), items)
-	if back[0].Tag == nil || *back[0].Tag != (MenuTag{"Customized", "informative"}) || back[1].BadgeCount != 2 || back[1].BadgeStyle != "blue" || back[2].BadgeCount != 12 {
+	if back[0].Tag == nil || *back[0].Tag != (MenuTag{Label: "Customized", Style: "informative"}) || back[1].BadgeCount != 2 || back[1].BadgeStyle != "blue" || back[2].BadgeCount != 12 {
 		t.Errorf("round trip: %+v", back)
 	}
 	plugin := []any{slackc.Props{"key": "p", "label": "Plugin row", "badgeCount": 3.0, "tag": slackc.Props{"label": "New", "style": "success"}, "click": func() {}}}

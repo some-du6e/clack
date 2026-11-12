@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/composer"
 )
 
 func draftBlocks(text string) json.RawMessage {
@@ -92,5 +93,50 @@ func TestSidebarDraftPencilMenu(t *testing.T) {
 	e.until("back to channel drafts", 10*time.Second, func() bool { return len(a.sbDrafts(ch)) == 5 })
 	if a.sbDraftMenuOn() {
 		t.Error("draft_management_in_composer on (not treatment) turned the menu on")
+	}
+}
+
+// "Jump to draft…" opens the draft picked, not the channel's newest: a
+// channel draft other than the composer's attached one swaps into the
+// composer first (selectStashedDraft); the one it replaced stays a draft.
+func TestSidebarDraftMenuOpensPickedDraft(t *testing.T) {
+	var ch, older string
+	e, fs := filterEnv(t, func(fs *fakeslack.Server) {
+		ch = fs.ChannelIDs()[3]
+		fs.AddDraft(fakeslack.Draft{Blocks: draftBlocks("the newest draft"), Destinations: draftDest(ch, ""), LastUpdatedTS: "1762600000000"})
+		older = fs.AddDraft(fakeslack.Draft{Blocks: draftBlocks("the picked draft"), Destinations: draftDest(ch, ""), LastUpdatedTS: "1762500000000"})
+	})
+	a := e.a
+	c := a.Core()
+	c.SetExperimentGroup("draft_management_in_composer", "treatment")
+	c.SetExperimentGroup("sidebar_draft_indicator_menu_and_thread_inclusion", "on")
+	e.until("the row's drafts", 10*time.Second, func() bool { return a.data != nil && len(a.sbDrafts(ch)) == 2 })
+	items := a.draftMenuItems(ch)
+	var pick MenuItem
+	for _, it := range items {
+		if it.Label == "the picked draft" {
+			pick = it
+		}
+	}
+	if pick.Do == nil {
+		t.Fatalf("no row for the older draft: %v", items)
+	}
+	pick.Do()
+	e.frame()
+	if r := string(a.router.Current()); r != "c/"+ch {
+		t.Fatalf("the draft opened %q", r)
+	}
+	e.until("the composer laid out", 10*time.Second, func() bool {
+		cv := a.convos[ch+"/"]
+		return cv != nil && cv.comp != nil && !cv.compRect.Empty()
+	})
+	cb := a.convos[ch+"/"].comp.(composerBox)
+	if got := strings.TrimSpace(cb.DocText()); got != "the picked draft" {
+		t.Errorf("the composer shows %q, want the picked draft", got)
+	}
+	e.until("the slot attached to it", 10*time.Second, func() bool { return composer.AttachedDraftID(ch) == older })
+	// both drafts are still there (the newest one stashed, not deleted)
+	if n := len(fs.LiveDrafts()); n < 2 {
+		t.Errorf("%d drafts left after the swap, want both", n)
 	}
 }

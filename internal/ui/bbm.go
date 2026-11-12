@@ -311,6 +311,7 @@ func (a *App) layoutBBM(gtx layout.Context) image.Rectangle {
 			a.sidebar.hover = a.ptrWin.In(panel)
 			sv := clsSidebarView.Enter(gtx, 0, 0)
 			a.th.Chrome = true
+			a.sidebar.origin = panel.Min
 			atExact(gtx, panel.Min, panel.Size(), a.layoutSidebar)
 			a.th.Chrome = false
 			sv.Leave()

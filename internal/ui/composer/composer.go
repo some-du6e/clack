@@ -119,6 +119,9 @@ type Composer struct {
 	wPane, wInput layout.Widget
 	wEditor, wAtt layout.Widget
 	keyS, draftS  string
+	// attachGen is the key's swap count when this composer took its slot
+	// (stash_draft.go): behind, its saves belong to a stashed draft
+	attachGen uint64
 }
 
 // plainTextLocal is the "Format messages with markup" choice made in
@@ -265,6 +268,7 @@ func (c *Composer) init() {
 	}
 	typingHub(c.h.Core()).addHost(c.h) // listen for typing events
 	c.initIDs()
+	c.attachGen = attachGenOf(c.key())
 	c.wPane, c.wInput = c.layoutPaneBody, c.layoutInputBody
 	c.setBroadcastFn = c.setBroadcast
 	c.wEditor, c.wAtt = c.layoutEditor, c.att.Layout

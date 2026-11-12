@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -15,6 +16,10 @@ import (
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
+
+// lastClickMods are the modifiers held for each Clickable's last click seen
+// by clickArea (organize mode's Shift+click picks a range).
+var lastClickMods = map[*widget.Clickable]key.Modifiers{}
 
 // clickedSet records clicks seen by clickArea. Gio's Clickable.Layout
 // drains pending events, so clicks must be read before Layout; clickArea
@@ -33,8 +38,9 @@ func clicked(c *widget.Clickable) bool {
 // clickArea lays out w as a clickable with a pointer cursor; bg(hovered,
 // pressed) paints behind it. Check clicked(c) afterwards.
 func clickArea(gtx layout.Context, c *widget.Clickable, bg func(gtx layout.Context, sz image.Point, hovered bool), w layout.Widget) layout.Dimensions {
-	if ctxclick.Clicked(gtx, c) { // a macOS Ctrl+click is a right-click, not a click
+	if ok, mods := ctxclick.ClickedMods(gtx, c); ok { // a macOS Ctrl+click is a right-click, not a click
 		clickedSet[c] = true
+		lastClickMods[c] = mods
 	}
 	return c.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		m := op.Record(gtx.Ops)

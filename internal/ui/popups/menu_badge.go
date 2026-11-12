@@ -38,6 +38,10 @@ type MenuTag struct {
 	// "inverse-informative", "success", "urgent", "warning" or
 	// "education" ("" is "neutral", Tag's default).
 	Style string
+	// HighStyle is the style on the highlighted row ("" is "white", a
+	// {label, style} tag's); EducationTag (Yu9P's "New") goes from
+	// "inverse-education" to "education".
+	HighStyle string
 }
 
 // chipTok is one colour of a tag or badge style: the token and its light
@@ -98,6 +102,11 @@ func menuTagColors(th *theme.Theme, style string) (bg, fg color.NRGBA) {
 		// the + menu's "New" on its GIF row)
 		b = chipTok{"var(--dt_color-base-education)", rgb(0xf0f3fc), rgb(0x040b3d)}
 		f = chipTok{"var(--dt_color-content-education)", rgb(0x112377), rgb(0xe4e8f4)}
+	case "inverse-education":
+		// base.inverse.education and inverse.education (jF6I): the bell's
+		// More options "New" (Yu9P) off the highlight
+		b = chipTok{"var(--dt_color-base-inv-education)", rgb(0x2840a9), rgb(0xc7ceeb)}
+		f = chipTok{"var(--dt_color-content-inv-education)", rgb(0xf0f3fc), rgb(0x0a165a)}
 	case "white":
 		// constants.white with palettes.ocean.70 (ocean.30 in dark mode:
 		// rgb(var(--dt_color-plt-ocean-30)) is 19,87,149 there)
@@ -144,6 +153,9 @@ func drawMenuTag(gtx layout.Context, th *theme.Theme, t *MenuTag, hl bool, right
 	style := t.Style
 	if hl {
 		style = "white"
+		if t.HighStyle != "" {
+			style = t.HighStyle
+		}
 	}
 	bg, fg := menuTagColors(th, style)
 	bg = overMenu(th, bg)

@@ -48,7 +48,14 @@ type MenuItem struct {
 	// Radio is Slack's type:"radio" item (ChannelNotificationPrefMenu): the
 	// check sits in a left gutter, a checked row is link blue, the label
 	// is regular and the Subtitle wraps to two lines.
-	Radio    bool
+	Radio bool
+	// Indeterminate is Slack Kit MenuItem's indeterminate: a checked
+	// radio (or checkbox) row draws the icon font's form-checkbox-dash
+	// (c-menu_item__checkbox_dash) where the check goes (EaYn's Move to…
+	// rows when some of the conversations are in the section).
+	Indeterminate bool
+	// IconURL draws an image (a custom section's emoji) where Icon goes.
+	IconURL  string
 	External bool // draws an external-link glyph at the right
 
 	// Tag and BadgeCount are Slack Kit MenuItem's tag and badgeCount
@@ -72,6 +79,10 @@ type MenuItem struct {
 	Widget func(gtx layout.Context, highlighted bool) layout.Dimensions
 
 	Sub []MenuItem // submenu
+	// OnSubOpen runs each time the submenu opens (a submenu's onOpen: the
+	// bell's MoreOptionsSubmenu clears its "New" badge); the row's Tag
+	// leaves the open menu with it.
+	OnSubOpen func()
 
 	// LabelText, when set, draws the label (one line) in place of the
 	// menu's 15px text: the font select's options in their own fonts.
@@ -330,6 +341,10 @@ func (m *Menu) openSub(i int, kbd bool) {
 		return
 	}
 	it := m.items[i]
+	if it.OnSubOpen != nil {
+		it.OnSubOpen()
+		m.items[i].Tag = nil
+	}
 	s := &Menu{h: m.h, items: it.Sub, opts: MenuOpts{Width: m.opts.Width}, sel: -1, subIdx: -1, parent: m, kbd: kbd}
 	s.clicks = make([]widget.Clickable, len(it.Sub))
 	if kbd {
@@ -778,13 +793,25 @@ func (m *Menu) radioRow(gtx layout.Context, th *theme.Theme, cl *Colors, it *Men
 	if it.Subtitle == "" {
 		top = (sz.Y - dp(gtx, 22)) / 2
 	}
-	if it.Checked {
+	switch {
+	case it.Checked && it.Indeterminate:
+		// the dash glyph at the menu's 15px, centred where the check sits
+		at(gtx, image.Pt(dp(gtx, 8)+dp(gtx, 8)-dp(gtx, 15)/2, top+dp(gtx, 3)+dp(gtx, 8)-dp(gtx, 15)/2), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, "form-checkbox-dash", 15, fg)
+		})
+	case it.Checked:
 		at(gtx, image.Pt(dp(gtx, 8), top+dp(gtx, 3)), func(gtx layout.Context) layout.Dimensions {
 			return icon(gtx, "check", 16, fg)
 		})
 	}
 	x := dp(gtx, 24)
-	if it.Icon != "" {
+	switch {
+	case it.IconURL != "":
+		at(gtx, image.Pt(x+dp(gtx, 2), top+dp(gtx, 3)), func(gtx layout.Context) layout.Dimensions {
+			return menuImage(gtx, th, it.IconURL, dp(gtx, 16))
+		})
+		x += dp(gtx, 36)
+	case it.Icon != "":
 		at(gtx, image.Pt(x, top+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
 			return icon(gtx, it.Icon, 20, fg)
 		})
@@ -818,4 +845,15 @@ func macroAt(gtx layout.Context, call op.CallOp, p image.Point) {
 	t := op.Offset(p).Push(gtx.Ops)
 	call.Add(gtx.Ops)
 	t.Pop()
+}
+
+// menuImage draws url at size px (th's image cache; empty until loaded).
+func menuImage(gtx layout.Context, th *theme.Theme, url string, size int) layout.Dimensions {
+	sz := image.Pt(size, size)
+	if th != nil && th.Images != nil {
+		if img, ok := th.Images.Get(url, size*2); ok {
+			return theme.Image(gtx, img, sz, 0)
+		}
+	}
+	return layout.Dimensions{Size: sz}
 }

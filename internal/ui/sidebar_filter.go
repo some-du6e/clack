@@ -118,14 +118,20 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 		f.inited = true
 	}
 	// FilterInputBase: Escape empties the input and the row text (the
-	// keydown handler's clear), so it doesn't reach "Close / mark as read"
+	// keydown handler's clear), so it doesn't reach "Close / mark as read";
+	// SidebarTextFilterInput's ArrowDown focuses the first row
+	// (SIDEBAR_FIRST_VISIBLE_ROW, sidebar_keys.go)
 	shortcut.OwnEscape(&f.ed)
 	for {
-		ev, ok := gtx.Event(key.Filter{Focus: &f.ed, Name: key.NameEscape})
+		ev, ok := gtx.Event(key.Filter{Focus: &f.ed, Name: key.NameEscape}, key.Filter{Focus: &f.ed, Name: key.NameDownArrow})
 		if !ok {
 			break
 		}
 		if k, ok := ev.(key.Event); ok && k.State == key.Press {
+			if k.Name == key.NameDownArrow {
+				a.sbFocusFirstRow(gtx)
+				continue
+			}
 			f.clear()
 			gtx.Execute(op.InvalidateCmd{}) // the rows follow on the next frame
 		}

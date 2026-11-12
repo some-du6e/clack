@@ -60,6 +60,18 @@ type unreadsState struct {
 	calls     []UnreadsCall
 	dismissed map[string]bool // channel -> join banner dismissed
 	noQueue   bool            // the boot load answers no join banner (QueueJoinBanner)
+	badges    []string        // generic_new_badge's notificationData.badges (SetNewBadges)
+}
+
+// SetNewBadges makes the megaphone boot load answer the generic_new_badge
+// space with these badges (none by default: the space answers null), the
+// way Slack's server turns on a "New" tag (temp_mute_new_badge on the bell
+// menu's More options).
+func (s *Server) SetNewBadges(badges ...string) {
+	u := s.unreads()
+	u.mu.Lock()
+	u.badges = append([]string(nil), badges...)
+	u.mu.Unlock()
 }
 
 // QueueJoinBanner sets whether the megaphone boot load answers the join
@@ -273,6 +285,14 @@ func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 		ch := f.Get("channel_id")
 		for _, sp := range ev.Spaces {
 			out[sp] = nil
+			if sp == "generic_new_badge" && ch == "" {
+				u.mu.Lock()
+				if len(u.badges) > 0 {
+					out[sp] = map[string]any{"name": "new_badge_generic", "data": map[string]any{"badges": append([]string(nil), u.badges...)}}
+				}
+				u.mu.Unlock()
+				continue
+			}
 			if sp != "message_input" {
 				continue
 			}
