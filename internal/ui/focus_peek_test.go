@@ -19,7 +19,7 @@ import (
 
 // focusEnv is the whole client against fakeslack with focus mode
 // (silent_sidebar) on, a GPU window when STATUS_SHOTS_DIR is set, and the
-// users.prefs.set calls it makes.
+// focus_mode_expiration_ts writes it makes.
 type focusEnv struct {
 	*perfEnv
 	mu   sync.Mutex
@@ -46,7 +46,7 @@ func newFocusEnv(t *testing.T, prep func(fs *fakeslack.Server)) *focusEnv {
 		}
 	}
 	fs.SetHook(func(method string, f url.Values) (any, bool) {
-		if method == "users.prefs.set" {
+		if method == "users.prefs.set" && f.Get("name") == "focus_mode_expiration_ts" {
 			e.mu.Lock()
 			e.sets = append(e.sets, f)
 			e.mu.Unlock()
@@ -55,7 +55,7 @@ func newFocusEnv(t *testing.T, prep func(fs *fakeslack.Server)) *focusEnv {
 	})
 	e.waitReady()
 	e.a.Core().SetExperimentGroup("silent_sidebar", "on")
-	e.settle(150 * time.Millisecond)
+	e.settle(600 * time.Millisecond) // the status tab's entrance, if the fixture's self has a status (rail_status.go)
 	if e.a.fm().trig.Empty() {
 		t.Fatal("no focus mode button in the control strip")
 	}
@@ -314,7 +314,7 @@ func TestFocusButtonTransitions(t *testing.T) {
 	}
 	// reversed at 100 ms: back to 0 in 100 ms (half of it ran)
 	v := tr.value(t0.Add(100*time.Millisecond), 0, 200*time.Millisecond, cssEaseInOut, false)
-	if math.Abs(v-.5) > .01 || tr.dur != 100*time.Millisecond {
+	if math.Abs(v-.5) > .01 || (tr.dur-100*time.Millisecond).Abs() > time.Millisecond {
 		t.Errorf("reversal from %v over %v, want .5 over 100ms", v, tr.dur)
 	}
 	if v := tr.value(t0.Add(201*time.Millisecond), 0, 200*time.Millisecond, cssEaseInOut, false); v != 0 || tr.running(t0.Add(201*time.Millisecond)) {

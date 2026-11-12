@@ -85,6 +85,7 @@ func TestSelfStatusEmoji(t *testing.T) {
 			t.Errorf("%s: %q, want %q", what, got, want)
 		}
 	}
+	a.SetExperimentGroup("availability_prefs_section", "off")
 	setSelf("", "", false)
 	dnd(nil)
 	check("nothing", "")

@@ -46,3 +46,15 @@ func (s *Server) FocusModeDND() map[string]any {
 	}
 	return out
 }
+
+// ClearSelfStatus takes the viewer's status emoji and text off (tests of
+// the automatic status, which shows only without one). Call it before the
+// client boots.
+func (s *Server) ClearSelfStatus() {
+	ps := s.profile()
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if len(s.users) > 0 {
+		s.users[0].Profile.StatusEmoji, s.users[0].Profile.StatusText = "", ""
+	}
+}

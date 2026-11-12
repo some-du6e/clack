@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/imgcache"
-	"github.com/some-du6e/clack/internal/slack"
 )
 
 // cdnEmoji makes the client load standard emoji from Slack's public static
@@ -73,19 +73,14 @@ func (e *focusEnv) realtime(t *testing.T) {
 // (p-ia__nav__user__status_icon) while the buttons above move up 24px; off,
 // it slides back down (--exiting, .4s) and goes.
 func TestRailStatusTab(t *testing.T) {
-	e := newFocusEnv(t, nil)
+	e := newFocusEnv(t, func(fs *fakeslack.Server) { fs.ClearSelfStatus() }) // a status emoji wins over the automatic one
 	a := e.a
 	e.cdnEmoji()
 	c := a.Core()
-	if u, ok := c.S.User(c.S.SelfID()); ok && u.Profile.StatusEmoji != "" { // the fixture's own status would show first
-		cp := *u
-		cp.Profile.StatusEmoji, cp.Profile.StatusText = "", ""
-		c.S.PutUsers([]slack.User{cp})
-	}
 	c.SetExperimentGroup("availability_prefs_section", "on")
 	a.motionOverride = -1
 	e.realtime(t)
-	e.rest(100 * time.Millisecond)
+	e.rest(600 * time.Millisecond) // a cleared status's exit
 	tab := a.railStatus()
 	if tab.on || tab.exiting {
 		t.Fatal("a status tab with no status")
