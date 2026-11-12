@@ -117,21 +117,16 @@ func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext,
 			h.ShowOverlay(NewForwardModal(h, m))
 		}}.In(nsMessage))
 	}
-	todo := MenuItem{Label: "Add to-do", Icon: "todo-add", Hint: nsSaved.T("A"), Keys: KeyLaterTodos}
-	if m.Saved {
-		todo.Label, todo.Icon = "Complete to-do", "check"
-	}
-	todo = todo.In(nsSaved) // the to-do action (LaZW)
+	// the to-do action (Yoyn, actions_todo.go): "Complete to-do" on a
+	// to-do, else "Add to-do"
+	ta := TodoActionFor(h.Core(), &m)
+	todo := MenuItem{Label: ta.Label, Icon: ta.MenuIcon, Hint: nsSaved.T("A"), Keys: KeyLaterTodos}.In(nsSaved)
 	todo.Do = func() {
 		if o.OnTodo != nil {
 			o.OnTodo()
 			return
 		}
-		if m.Saved {
-			actDo(h, "", func(ctx context.Context, a *core.App) error { return a.Unsave(ctx, ch, ts) })
-			return
-		}
-		actDo(h, "", func(ctx context.Context, a *core.App) error { return a.AddTodo(ctx, ch, ts, 0) })
+		RunTodoAction(h, m)
 	}
 	return append(items, todo)
 }

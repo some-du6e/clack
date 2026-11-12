@@ -90,9 +90,12 @@ func TestMessageContextMenuThreadAction(t *testing.T) {
 	if got := first(InThreadsView, m); got != "Add reaction…|View thread|Share message…|Add to-do" {
 		t.Errorf("threads view %q", got)
 	}
+	// Saved alone isn't a to-do (Yoyn reads saved.todo_state, which this
+	// core-less host has none of): still "Add to-do" (actions_todo_test.go
+	// has the to-do)
 	r := m
 	r.ReplyCount, r.Saved = 2, true
-	if got := first(InChannel, r); got != "Add reaction…|Reply to thread|Share message…|Complete to-do" {
+	if got := first(InChannel, r); got != "Add reaction…|Reply to thread|Share message…|Add to-do" {
 		t.Errorf("with replies, saved %q", got)
 	}
 }

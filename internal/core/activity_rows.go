@@ -246,7 +246,13 @@ func (a *App) CompleteSavedItem(ctx context.Context, s SavedItem) error {
 	p.Set("todo_state", "completed")
 	p.Set("date_due", "0")
 	p.Set("reason", "manually_mark_completed")
-	return a.C.Call(ctx, "saved.update", p, nil)
+	if err := a.C.Call(ctx, "saved.update", p, nil); err != nil {
+		return err
+	}
+	if ch := firstNonEmpty(s.Channel, s.ItemID); s.ItemType == "message" && ch != "" { // the row's metadata (saved_meta.go)
+		a.patchSavedMeta(ch, s.TS, func(m *SavedMeta) { m.TodoState, m.DateCompleted, m.DateDue = "completed", time.Now().Unix(), 0 })
+	}
+	return nil
 }
 
 // SetSavedItemDue is DateDueMenuItem / RemindMenu's Clear: saved.update
@@ -255,7 +261,13 @@ func (a *App) CompleteSavedItem(ctx context.Context, s SavedItem) error {
 func (a *App) SetSavedItemDue(ctx context.Context, s SavedItem, due int64) error {
 	p := savedItemParams(s)
 	p.Set("date_due", strconv.FormatInt(due, 10))
-	return a.C.Call(ctx, "saved.update", p, nil)
+	if err := a.C.Call(ctx, "saved.update", p, nil); err != nil {
+		return err
+	}
+	if ch := firstNonEmpty(s.Channel, s.ItemID); s.ItemType == "message" && ch != "" {
+		a.patchSavedMeta(ch, s.TS, func(m *SavedMeta) { m.DateDue = due })
+	}
+	return nil
 }
 
 // ---- clear all, saved views, @channel ----

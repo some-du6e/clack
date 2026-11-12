@@ -152,7 +152,7 @@ func (s *listState) messageMenu(h Host, r *row, at image.Point) *popups.Menu {
 		Delete:  func(ctx context.Context, ch, ts string) error { return deleteMessage(ctx, app, ch, ts) },
 		OnEdit:  func() { s.startEdit(h, m.TS) },
 		OnReply: func() { h.OpenThread(m.Channel, threadRoot(&m)) },
-		OnTodo:  func() { s.toggleSaved(h, app, m) },
+		OnTodo:  func() { s.toggleTodo(h, m) },
 	})
 }
 

@@ -1353,9 +1353,6 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		}
 		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+slot)*bs
 		tip := s.tbLabel[i]
-		if i == tbTodo && r.src.Saved {
-			tip = savedNS.T("Complete to-do") // the to-do action's name for a saved message (LaZW)
-		}
 		s.tip = ""
 		tooltip(gtx, th, c, tip, image.Pt(bx+bs/2, y-dp(gtx, 4)), size)
 	}
@@ -1381,6 +1378,8 @@ func (s *listState) prepareButtons(app *core.App, r *row) {
 				continue
 			}
 			s.tbLabel[i], s.tbQAs[i] = l, qa
+		case tbTodo:
+			s.tbLabel[i] = todoAction(app, &r.src).Label // Yoyn: "Complete to-do" on a to-do
 		}
 		s.tbLabel[i] = tbTip(i, s.tbLabel[i])
 		s.tbBtns = append(s.tbBtns, i)
@@ -1449,6 +1448,10 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 	app := h.Core()
 	m := r.src
 	btn := &s.tb[i]
+	var todo popups.TodoAction
+	if i == tbTodo {
+		todo = todoAction(app, &m)
+	}
 	if btn.Clicked(gtx) {
 		anchor := s.anchor(h, image.Point{}, image.Point{})
 		switch i {
@@ -1460,7 +1463,7 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		case tbForward:
 			h.ShowOverlay(popups.NewForwardModal(h, m))
 		case tbTodo:
-			s.toggleSaved(h, app, m)
+			s.toggleTodo(h, m)
 		case tbList:
 			if la, ok := h.(ListAdder); ok {
 				la.AddMessageToList(m)
@@ -1493,12 +1496,13 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 		return layout.Dimensions{Size: image.Pt(bs, bs)}
 	}
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return s.toolbarIcon(gtx, btn, i, m.Saved, st) })
+		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return s.toolbarIcon(gtx, btn, i, todo, st) })
 	}
-	return s.toolbarIcon(gtx, btn, i, m.Saved, st)
+	return s.toolbarIcon(gtx, btn, i, todo, st)
 }
 
-func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int, saved bool, st slackc.Styled) layout.Dimensions {
+// toolbarIcon draws button i's icon; todo is the to-do action's (Yoyn).
+func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int, todo popups.TodoAction, st slackc.Styled) layout.Dimensions {
 	c := s.rc.c
 	bs := gtx.Constraints.Max.X
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1511,9 +1515,10 @@ func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int
 			isz = 21.6 // Slack scales the icon 1.2x on hover
 		}
 		ic := tbIcons[i]
-		if i == tbTodo && saved {
-			ic = "check-circle"
-			col = c.Link
+		if i == tbTodo && todo.Complete {
+			// .c-message_actions__button--complete_todo (and :hover):
+			// content-hgl-2 at font-size 24px, check-circle-filled
+			ic, col, isz = todo.HoverIcon, c.HuddleLive, 24
 		}
 		col = st.Color(col)
 		is := dp(gtx, isz)
@@ -1524,27 +1529,10 @@ func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int
 	})
 }
 
-func (s *listState) toggleSaved(h Host, app *core.App, m core.Message) {
-	saved := m.Saved
-	s.m.mutate(m.TS, func(x *core.Message) { x.Saved = !saved }) // optimistic
-	if app != nil {
-		ch, ts := m.Channel, m.TS
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			defer cancel()
-			var err error
-			if saved {
-				err = app.Unsave(ctx, ch, ts)
-			} else {
-				err = app.AddTodo(ctx, ch, ts, 0)
-			}
-			if err != nil {
-				s.m.mutate(ts, func(x *core.Message) { x.Saved = saved })
-				h.Toast("Couldn't update your to-dos")
-				h.Invalidate()
-			}
-		}()
-	}
+// toggleTodo is the to-do action's click (Oyqq, core ToggleTodo): the
+// row redraws from the saved metadata as the write starts.
+func (s *listState) toggleTodo(h Host, m core.Message) {
+	popups.RunTodoAction(h, m)
 	h.Invalidate()
 }
 

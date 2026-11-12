@@ -13,7 +13,7 @@ var (
 	reactionsNS = i18n.NS("reactions")       // ReactionTip's getTip (Qvn6)
 	tokenNS     = i18n.NS("channel_token")   // TooltipMemberName (NZA6): "You", "you"
 	messagesNS  = i18n.NS("messages")        // UnreadDivider (VxYf)
-	savedNS     = i18n.NS("saved_for_later") // the to-do action (LaZW)
+	savedNS     = i18n.NS("saved_for_later") // the to-do action (boot-shared Yoyn; LaZW in modern.vendor)
 	listsNS     = i18n.NS("lists")           // shouldShowAddToList's "Add to list…"
 )
 
