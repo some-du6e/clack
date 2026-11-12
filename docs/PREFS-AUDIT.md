@@ -381,7 +381,7 @@ Tests: `TestPrefsVerifyEmailFlow` (the enabled button and copy, the
 request's form, the modal, typing through a real input.Router: uppercase,
 a rejected dash, Backspace and →, Ctrl+V and a paste that submits, the
 check's form, an invalid code clearing the cells, success and the blocked
-list) and `TestPrefsVerifyEmailErrors` (internal/ui). Shots:
+list), `TestPrefsVerifyEmailRefocus` (the first cell takes the focus back after a failed check) and `TestPrefsVerifyEmailErrors` (internal/ui). Shots:
 `prefs-verify-email-{,typing-,invalid-,expired-,ratelimited-,checking-,verified-}{mode}`,
 `prefs-privacy-after-verify-{mode}`, and the section in
 `prefs-privacy_visibility-{mode}`. All against fakeslack: no email was
