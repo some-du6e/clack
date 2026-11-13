@@ -41,6 +41,9 @@ type backend struct {
 	// extGen counts forgetExt calls per conversation: a resolve that
 	// started before one is stale and must not land (resolved).
 	extGen map[string]int
+	// extStale marks ext entries refreshExt wants looked up again (their
+	// copy shows meanwhile).
+	extStale map[string]bool
 
 	// unsent drafts (drafts.list, refreshed on "draft" events), UI goroutine
 	// only: Slack's "✎ N" on Drafts & sent and the pencil on channel rows.
@@ -620,7 +623,11 @@ func (b *backend) handle(a *App, ev core.Event) {
 		b.resnapshot(a)
 		a.refreshVisible()
 		for id := range b.ext {
-			b.forgetExt(id) // re-resolve closed-DM headers
+			// re-resolve closed-DM headers, keeping what they show until
+			// the new answer lands: forgetting them blanked the header and
+			// the join pane of an open non-member channel for the lookup's
+			// round trip (TestChannelLinkTargets' "header conv <nil>")
+			b.refreshExt(id)
 		}
 	case "tabs":
 		delete(b.fetched, ev.Channel)
@@ -940,13 +947,15 @@ func (b *backend) tabs(ch string) []chTab { return b.tabCache[ch] }
 // (a closed DM, a channel opened from search) via core.ResolveConv, fetched
 // once in the background. UI goroutine only.
 func (b *backend) resolved(ch string) *convInfo {
-	if ci, ok := b.ext[ch]; ok {
+	ci, ok := b.ext[ch]
+	if ok && !b.extStale[ch] {
 		return ci
 	}
+	delete(b.extStale, ch)
 	if b.ext == nil {
 		b.ext = map[string]*convInfo{}
 	}
-	b.ext[ch] = nil // in flight
+	b.ext[ch] = ci // in flight (nil), or the stale copy until the answer
 	gen := b.extGen[ch]
 	a := b.app
 	go func() {
@@ -976,7 +985,25 @@ func (b *backend) resolved(ch string) *convInfo {
 			a.Invalidate()
 		})
 	}()
-	return nil
+	return ci
+}
+
+// refreshExt has ch's resolved header info looked up again on its next
+// resolved call, still returning the current copy until the answer
+// lands (a resolve in flight is dropped: it predates the change).
+// UI goroutine only.
+func (b *backend) refreshExt(ch string) {
+	if _, ok := b.ext[ch]; !ok {
+		return
+	}
+	if b.extGen == nil {
+		b.extGen = map[string]int{}
+	}
+	b.extGen[ch]++
+	if b.extStale == nil {
+		b.extStale = map[string]bool{}
+	}
+	b.extStale[ch] = true
 }
 
 // forgetExt drops ch's resolved header info (and any resolve in flight),
@@ -986,6 +1013,7 @@ func (b *backend) resolved(ch string) *convInfo {
 // UI goroutine only.
 func (b *backend) forgetExt(ch string) {
 	delete(b.ext, ch)
+	delete(b.extStale, ch)
 	if b.extGen == nil {
 		b.extGen = map[string]int{}
 	}
