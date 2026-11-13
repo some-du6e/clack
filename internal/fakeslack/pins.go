@@ -1,6 +1,7 @@
 package fakeslack
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -112,6 +113,18 @@ func (s *Server) Pin(user, ch, ts string, on bool) (ev map[string]any, code stri
 		ev["pinned_info"] = info
 	}
 	return ev, ""
+}
+
+// PostBlocksQuiet is PostQuiet for a message with Block Kit blocks (a
+// rich_text message: channel-tab slugs and the like).
+func (s *Server) PostBlocksQuiet(ch, user, text string, blocks json.RawMessage) string {
+	ts, _ := s.PostQuiet(ch, user, text)
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	if h := s.hist[ch]; len(h) > 0 && h[0].TS == ts {
+		h[0].Blocks = blocks
+	}
+	return ts
 }
 
 // PostQuiet adds a message from user to ch's history (newest) and returns

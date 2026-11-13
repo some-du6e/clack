@@ -40,6 +40,10 @@ const (
 	CodeHTMLFileID   = "F0HTML0001"
 	CodePlanCanvasID = "F0PLAN0001"
 	CodePRURL        = "https://github.com/example/app/pull/482"
+
+	// CodeDoneSummary is the done channel's summary message
+	// (code_channel.summary_message), its newest
+	CodeDoneSummary = "Upgraded every dependency to its latest minor :tada: and the suite passes."
 )
 
 func withTabz(props json.RawMessage, tabz []map[string]any) json.RawMessage {
@@ -119,8 +123,10 @@ func CodeChannelFixtures(now time.Time) CodeFixtures {
 	add(working, ts(time.Minute, 300), "processing")
 	add(conv(CodeWaitingID, "add-dark-mode", props(CodeWaitingID, "suspended", "Add a dark mode toggle",
 		map[string]any{"repo": "example/app", "branch": "dark-mode", "context_bar_items": links[:1]}, nil)), ts(20*time.Minute, 100), "suspended")
+	doneTS := ts(3*time.Hour, 100)
 	add(conv(CodeDoneID, "upgrade-deps", props(CodeDoneID, "closed", "Upgrade dependencies",
-		map[string]any{"repo": "example/app", "branch": "deps", "pr_status": "merged"}, nil)), ts(3*time.Hour, 100), "closed")
+		map[string]any{"repo": "example/app", "branch": "deps", "pr_status": "merged",
+			"summary_message": map[string]any{"message_ts": doneTS}}, nil)), doneTS, "closed")
 	add(conv(CodeIdleID, "refactor-api-client", props(CodeIdleID, "active", "Refactor the API client",
 		map[string]any{"repo": "example/app", "branch": "api-client", "pr_status": "open", "context_bar_items": links[:2]}, nil)), ts(2*time.Hour, 100), "active")
 	add(conv(CodeStaleID, "spike-search", props(CodeStaleID, "active", "Search spike",
@@ -165,6 +171,13 @@ func CodeChannelFixtures(now time.Time) CodeFixtures {
 		{Type: "message", TS: ts(4*time.Minute, 100), User: SelfID, Text: "the login page keeps redirecting to itself, can you fix it?",
 			Blocks: json.RawMessage(rt("the login page keeps redirecting to itself, can you fix it?"))},
 	}
+	// the done channel's summary: its newest message, a rich_text block
+	// with an emoji
+	f.History[CodeDoneID] = []slack.Message{agent(time.Since(time.Unix(tsUnix(doneTS), 0)), 100, CodeDoneSummary,
+		`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[`+
+			`{"type":"text","text":"Upgraded every dependency to its latest minor "},{"type":"emoji","name":"tada","unicode":"1f389"},`+
+			`{"type":"text","text":" and the suite passes."}]}]}]`)}
+	f.History[CodeDoneID][0].TS = doneTS
 	for _, c := range f.Convs {
 		if _, ok := f.History[c.ID]; !ok {
 			f.History[c.ID] = []slack.Message{agent(time.Since(time.Unix(tsUnix(f.Latest[c.ID]), 0)), 100, "On it.", rt("On it."))}

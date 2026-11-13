@@ -1,6 +1,7 @@
 name: hover-card
 # The profile hover card and Slack's ChannelHoverCard (a message's
-# #channel, a composer channel slug) and the composer's app tooltip:
+# #channel, a channel-tab slug, a composer channel slug: the code channel
+# card, the huddle badge, the rich topic) and the composer's app tooltip:
 # timing/placement unit tests, the router tests
 # per trigger location (messages, mentions, search results, channel
 # details members, Activity reactions), the member/app/external fixture
@@ -17,6 +18,10 @@ on:
       - "internal/ui/popups/profile_card.go"
       - "internal/ui/popups/app_card.go"
       - "internal/ui/popups/channel_card*.go"
+      - "internal/ui/popups/code_card*.go"
+      - "internal/core/code_card*.go"
+      - "internal/core/experiments.go"
+      - "internal/ui/huddleui/sidebar_suffix*.go"
       - "internal/ui/popups/member_tip.go"
       - "internal/core/channel_card*.go"
       - "internal/ui/channel_card_test.go"
@@ -72,7 +77,9 @@ jobs:
           go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views
           go test -count=1 -v -run 'TestRowHoverTarget' ./internal/ui/messages
           go test -count=1 -v -run 'TestMentionHoverCard' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestChannelHoverCardInChannel' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs' ./internal/ui/
+          # the shared huddle badge (the sidebar suffix and the channel card's): card-badge-*.png
+          CLACK_PIXEL_TESTS=1 CLACK_SHOTS="$HOVER_SHOTS_DIR" xvfb-run -a go test -count=1 -v -run 'TestCardBadgeLikeSidebar|TestSidebarSuffixFaces|TestSidebarSuffixTooltipHover|TestSidebarFaceCrescent|TestSidebarTooltipShots' ./internal/ui/huddleui
           ls -la "$HOVER_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -255,7 +255,7 @@ var experimentReads = map[string][]string{
 	// code channels
 	"session_channels": on, "session_channels_code_tab_pr": on, "session_channels_gh_wo": on,
 	"session_channels_inline_diff": on, "code_channels_naming": on, "session_channel_views": on,
-	"code_channels_auto_close": on,
+	"code_channels_auto_close": on, "session_channels_slug_peek": on, // (2026-11-13: a tab slug's peek replaces its channel card)
 	// agents (agent.go; plan and task blocks: ui/blockkit/agent.go)
 	"agent_member_channel_count": on, "plan_block_coding_enhancements": on, "agent_streaming_slimmer_task_cards": on,
 	"app_thread_nugget_fe": on, "app_nugget_refinement": on,

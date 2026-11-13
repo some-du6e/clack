@@ -109,6 +109,7 @@ type ChannelHoverCard struct {
 
 	topic    *richview.View // the topic as mrkdwn
 	topicKey string
+	huddle   bool // the name row drew ChannelHoverCardHuddleBadge
 
 	// the code channel card (code_card.go)
 	codeAsked bool
@@ -198,6 +199,10 @@ func (p *ChannelHoverCard) conv() (core.Conv, bool) {
 	}
 	return c.Conv(p.id)
 }
+
+// HuddleBadge reports whether the name row shows the huddle badge
+// (tests).
+func (p *ChannelHoverCard) HuddleBadge() bool { return p.huddle }
 
 // channelViewable is isChannelViewable: public, or one the viewer is in
 // (Clack keeps no record channels).
@@ -457,7 +462,8 @@ func (p *ChannelHoverCard) header(gtx layout.Context, th *theme.Theme, cl *Color
 			if mention {
 				r -= dp(gtx, 4)
 			}
-			if l := ChannelHuddleBadge(gtx, th, cv.ID, r, lineH); l != r {
+			l := ChannelHuddleBadge(gtx, th, cv.ID, r, lineH)
+			if p.huddle = l != r; p.huddle {
 				right = l
 			}
 			return layout.Dimensions{}
