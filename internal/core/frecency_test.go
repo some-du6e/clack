@@ -120,11 +120,10 @@ func TestEmojiFrecencyIDs(t *testing.T) {
 	}
 }
 
-// TestFrecencyLoadedBeforeSaving: when the boot's users.prefs.get doesn't
-// carry frecency and emoji_use (Karim's Frequently Used showed only
-// Slack's five defaults), Clack asks for them on their own (the
-// loadFrecencyPrefs request: prefs=emoji_use,frecency, reason
-// fetch-frecency-prefs) and Frequently Used is the account's. A use
+// TestFrecencyLoadedBeforeSaving: whatever the boot's full users.prefs.get
+// carries (here neither frecency nor emoji_use), Clack asks for them on
+// their own (the loadFrecencyPrefs request: prefs=emoji_use,frecency,
+// reason fetch-frecency-prefs) and Frequently Used is the account's. A use
 // recorded before they arrive is never saved over the account's
 // frecency: it waits, and is replayed over Slack's copy once it's in.
 func TestFrecencyLoadedBeforeSaving(t *testing.T) {
@@ -153,9 +152,8 @@ func TestFrecencyLoadedBeforeSaving(t *testing.T) {
 	a.SetFrecencyClock(func() time.Time { return now })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := a.Boot(ctx); err != nil {
-		t.Fatal(err)
-	}
+	booted := make(chan error, 1)
+	go func() { booted <- a.Boot(ctx) }() // the boot's prefs step waits for the fetch
 	var form url.Values
 	select {
 	case form = <-explicit:
@@ -172,6 +170,9 @@ func TestFrecencyLoadedBeforeSaving(t *testing.T) {
 		t.Fatalf("%d users.prefs.set before the account's frecency was read", n)
 	}
 	close(release)
+	if err := <-booted; err != nil {
+		t.Fatal(err)
+	}
 	saved := func() string {
 		v, _ := fs.Pref("frecency")
 		s, _ := v.(string)

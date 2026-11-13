@@ -241,6 +241,7 @@ func (a *App) installPrefs(raw map[string]json.RawMessage) {
 	old := a.S.RawPrefs
 	a.S.RUnlock()
 	a.sectionCollapsePending(old, raw) // a collapse write still waiting (section_collapse.go)
+	keepFrecency(old, raw)             // only a named fetch carries the account's frecency (frecency.go)
 	a.installPrefsLocked(raw)
 }
 

@@ -32,20 +32,48 @@ item id and by the normalized text typed before the pick. Emoji ids are
   neither pref the list is the defaults `slightly_smiling_face, heart, +1,
   100, bug`. The experiment `autocomplete_frequently_used_emojis_frecency`
   sorts by record count instead.
-- **Loading** (gap-w28, build 2cd9270e786c: bEcp, W3UT, 1TmA, the
-  loadFrecencyPrefs thunk): Slack's client has both prefs from its boot
-  and asks for them on their own only on `search_frecency` "updated".
-  Clack's boot reads users.prefs.get, which may not carry them (Karim's
-  Frequently Used showed only the five defaults, 2026-11-12). So when that
-  map lacks `frecency` or `emoji_use`, boot sends loadFrecencyPrefs'
-  request itself (`prefs=emoji_use,frecency`, reason
-  `fetch-frecency-prefs`). Until the account's frecency is in, Frequently
-  Used isn't cached, and a use is applied locally and queued, not saved: a
-  save then would replace the synced frecency with a fresh one. Once the
-  account's copy arrives the queue is replayed over it and saved
-  (core.frecencyFromServer). A recorded use doesn't drop the 4 h list
-  (bEcp's T stays). It changes when the save's `search_frecency` event
-  reloads the prefs, as in Slack.
+- **Loading** (frecency-grid, build 0e695dd18302: boot-render
+  `loadFrecencyPrefs` and `fetchDeferredData`, client-boot `RI+6`
+  getFrecencyCache, boot-shared `1TmA`; the grid account's
+  users.prefs.get, read-only, 2026-11-12): Slack's store is one pref,
+  `frecency` (tQkP `T0`), read through getUserPref and written with
+  setUserPrefByApi `{pref: "frecency"}`. The client never names
+  `frecency_jumper` or `frecency_ent_jumper`; the server picks the
+  storage. On Enterprise Grid the account's frecency is stored as
+  `frecency_ent_jumper`, and the plain `frecency` and `frecency_jumper`
+  are `""`. A full users.prefs.get (no `prefs=`) returns every key as
+  stored, so its `frecency` is `""`. A named request (`prefs=frecency` or
+  `prefs=emoji_use,frecency`) returns `frecency_ent_jumper`'s value under
+  the name `frecency`, byte for byte. Slack's client reads it only that way:
+  loadFrecencyPrefs (`prefs=emoji_use,frecency`, reason
+  `fetch-frecency-prefs`) runs in fetchDeferredData on every boot, on a slow
+  reconnect, on `search_frecency` "updated", and in loadEmoji when the
+  experiment below is on. Clack does the same on any workspace. The boot's
+  prefs step sends that request after the full map, and a full map
+  (boot, `pref_change` reload, RefreshPrefs) keeps the frecency in use and
+  drops its own (core.keepFrecency). A `pref_change` for `frecency` or
+  `emoji_use` sends the named request again. The store holds the jumper's
+  records too (channels `C…`, members `U…`, menu actions `MA…`, search
+  text keys), so the autocomplete and the jumper read the same pref.
+  **α.48's defaults:** α.48 took the boot's full map as the account's
+  frecency whenever it had both keys, so on the grid it took `""`. The
+  account has `autocomplete_frequently_used_emojis_frecency` on, and that
+  path (bEcp `M`) ranks only the frecency's own `E…` records and pads
+  with the defaults. It never reads `emoji_use`, so the 41 `emoji_use`
+  names couldn't help, and the list was the five defaults. Until the
+  account's frecency is in, Frequently Used isn't cached, and a use is
+  applied locally and queued, not saved: a save then would replace the
+  synced frecency with a fresh one. Once the account's copy arrives the
+  queue is replayed over it and saved (core.frecencyFromServer). A
+  recorded use doesn't drop the 4 h list (bEcp's T stays). It changes
+  when the save's `search_frecency` event reloads the prefs, as in Slack.
+  With the experiment on, getFrequentlyUsedEmoji returns `M` (memoized on
+  the frecency pref) before the 4 h cache, so that list follows every use
+  at once.
+- **Ids** (constructEmojiFrecencyId): `"E" + unicode` for a standard
+  emoji (`E1f44d`), `"E" + name` for a custom one (`Ethumbs-up` on the
+  grid account is Hack Club's custom `thumbs-up`). Channel and member ids
+  are bare (`C…`, `U…`), menu actions `MA` + action (`MAcopy_link`).
 - **Skin tone**: ids and `emoji_use` names are stored without the tone
   (recordEmojiFrecencyEvent resolves the picked name to its base emoji,
   W90V and Ak7A; getUsedEmojiFromPref strips `::skin-tone-N`), and the

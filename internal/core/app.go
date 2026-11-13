@@ -532,12 +532,16 @@ func (a *App) Boot(ctx context.Context) error {
 		raw, err := a.C.Prefs(ctx)
 		if err == nil {
 			a.installPrefs(raw)
-			a.frecencyAfterPrefs(raw)
 			// set_tz_automatically keeps tz in step (timezone.go)
 			go func() { _, _ = a.MaybeUpdateTimezone(a.bg) }()
 			if a.S.HasCachedPrefs() { // the first frame drew the cached copy
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
+			}
+			// loadFrecencyPrefs (fetchDeferredData), over the full map: its
+			// frecency is the plain pref, "" on Enterprise Grid (keepFrecency)
+			if err := a.ensureFrecencyLoaded(ctx); err != nil {
+				log.Printf("frecency: users.prefs.get emoji_use,frecency: %v", err)
 			}
 		}
 		return err

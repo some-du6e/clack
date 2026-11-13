@@ -260,9 +260,19 @@ func (a *App) handle(ev slack.Event) {
 		case "thread_marked", "update_thread_state", "badge_counts_updated":
 			a.refreshCountsSoon()
 		case "pref_change":
+			var pc struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(ev.Raw, &pc)
 			if raw, err := a.C.Prefs(ctx); err == nil {
 				a.installPrefs(raw)
-				a.frecencyAfterPrefs(raw)
+				if pc.Name == prefFrecency || pc.Name == prefEmojiUse {
+					// Slack upserts the event's value; the full map keeps
+					// the frecency in use, so read it as Slack serves it
+					go func() { _ = a.LoadFrecencyPrefs(a.bg) }()
+				} else {
+					a.frecencyAfterPrefs()
+				}
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}

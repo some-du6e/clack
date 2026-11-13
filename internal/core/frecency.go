@@ -67,6 +67,12 @@ func (a *App) FrecencyVersion() uint64 {
 	return a.frec.ver
 }
 
+func (a *App) frecNow() time.Time {
+	a.frec.mu.Lock()
+	defer a.frec.mu.Unlock()
+	return a.frec.clock()
+}
+
 func (f *frecencyState) clock() time.Time {
 	if f.now != nil {
 		return f.now()
@@ -153,16 +159,10 @@ func (a *App) frecencyFromServer() {
 	}
 }
 
-// frecencyAfterPrefs follows a full users.prefs.get: with both frecency
-// prefs in it the account's frecency is read; without, they're fetched on
-// their own.
-func (a *App) frecencyAfterPrefs(raw map[string]json.RawMessage) {
-	_, hasF := raw[prefFrecency]
-	_, hasU := raw[prefEmojiUse]
-	if hasF && hasU {
-		a.frecencyFromServer()
-		return
-	}
+// frecencyAfterPrefs follows a full users.prefs.get (a pref_change
+// reload): until the account's frecency is in, it is fetched on its own.
+// The full map's "frecency" never counts (keepFrecency).
+func (a *App) frecencyAfterPrefs() {
 	go func() {
 		if err := a.ensureFrecencyLoaded(a.bg); err != nil {
 			log.Printf("frecency: users.prefs.get emoji_use,frecency: %v", err)
@@ -170,10 +170,29 @@ func (a *App) frecencyAfterPrefs(raw map[string]json.RawMessage) {
 	}()
 }
 
+// keepFrecency puts the frecency in use into a full users.prefs.get map
+// (no prefs=), or drops the map's own. That map carries every pref as
+// stored, and on Enterprise Grid the plain "frecency" there is "": the
+// account's frecency is stored as frecency_ent_jumper, which Slack serves
+// under the name "frecency" only to a named request (prefs=frecency, as
+// loadFrecencyPrefs sends; byte-identical on the grid account,
+// 2026-11-12). Slack's client reads frecency only from that request
+// (fetchDeferredData at boot, slow reconnect, search_frecency "updated"),
+// so Clack does too, on any workspace.
+func keepFrecency(old, raw map[string]json.RawMessage) {
+	if raw == nil {
+		return
+	}
+	if v, ok := old[prefFrecency]; ok {
+		raw[prefFrecency] = v
+	} else {
+		delete(raw, prefFrecency)
+	}
+}
+
 // ensureFrecencyLoaded fetches emoji_use and frecency unless they're in
-// (loadFrecencyPrefs' request, reason fetch-frecency-prefs). Slack's web
-// client has them from its boot prefs; Clack's users.prefs.get at boot may
-// not carry them, so boot asks for them when they're missing.
+// (loadFrecencyPrefs' request, reason fetch-frecency-prefs), as Slack's
+// fetchDeferredData does on every boot.
 func (a *App) ensureFrecencyLoaded(ctx context.Context) error {
 	a.frec.mu.Lock()
 	if a.frec.loaded || a.frec.loading {
@@ -331,8 +350,17 @@ func (a *App) invalidateFrequentEmoji() {
 // FrequentlyUsedEmoji is getFrequentlyUsedEmoji (max 36, min 5): the
 // picker's Frequently Used names. A computed list is reused for 4 hours
 // (pushed to 15 min out when read near expiry), as in Slack, until
-// Slack's frecency prefs are reloaded.
+// Slack's frecency prefs are reloaded. With
+// autocomplete_frequently_used_emojis_frecency on, Slack returns the
+// count list (bEcp M, memoized on the frecency pref) before that cache,
+// so it follows every recorded use.
 func (a *App) FrequentlyUsedEmoji() []string {
+	if a.experiment("autocomplete_frequently_used_emojis_frecency") == "on" {
+		a.S.RLock()
+		fv := a.S.RawPrefs[prefFrecency]
+		a.S.RUnlock()
+		return frecency.FrequentlyUsed(frecency.Parse(fv), nil, a.emojiSet(), frecency.FrequentOptions{FrecencyExperiment: true}, a.frecNow())
+	}
 	f := &a.frec
 	f.mu.Lock()
 	now := f.clock()
@@ -352,8 +380,7 @@ func (a *App) FrequentlyUsedEmoji() []string {
 	f.mu.Lock()
 	loaded := f.loaded
 	f.mu.Unlock()
-	out := frecency.FrequentlyUsed(frecency.Parse(fv), frecency.EmojiUse(uv), a.emojiSet(),
-		frecency.FrequentOptions{FrecencyExperiment: a.experiment("autocomplete_frequently_used_emojis_frecency") == "on"}, now)
+	out := frecency.FrequentlyUsed(frecency.Parse(fv), frecency.EmojiUse(uv), a.emojiSet(), frecency.FrequentOptions{}, now)
 	if loaded { // before the account's frecency is in, don't keep the defaults for 4 h
 		f.mu.Lock()
 		f.freq, f.freqExp = append([]string(nil), out...), now.Add(frecency.FrequentTTL)
