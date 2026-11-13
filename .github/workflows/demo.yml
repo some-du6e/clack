@@ -13,6 +13,7 @@ on:
       - "cmd/clack/demo.go"
       - "cmd/clack/main.go"
       - "internal/ui/demo_*.go"
+      - "internal/core/**"
       - "internal/fakeslack/**"
       - "internal/slack/tlsfp/**"
       - "internal/slack/ua.go"
@@ -50,14 +51,22 @@ jobs:
         run: go test -count=1 -v -run 'TestDemo' ./cmd/clack/
       - name: smoke (headless UI on the demo)
         run: xvfb-run -a go test -count=1 -v -run 'TestDemoSmoke$' ./internal/ui/
+      # every surface (channels, threads, pages, Activity's tabs, details,
+      # profiles, canvases, lists, peeks, Preferences, huddles…): fails on
+      # any request the demo doesn't answer, any {"ok":false}, any refused
+      # image or toast (internal/ui/demo_surfaces_test.go)
+      - name: every surface answered (TestDemoSurfaces)
+        if: ${{ !cancelled() }}
+        run: xvfb-run -a go test -count=1 -timeout 15m -v -run 'TestDemoSurfaces$' ./internal/ui/
       - name: screenshots (Mesa llvmpipe)
+        if: ${{ !cancelled() }}
         env:
           CLACK_DEMO_SHOTS: ${{ github.workspace }}/dist/shots
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CLACK_DEMO_SHOTS"
-          xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestDemoShots$|TestDemoSmoke$' ./internal/ui/
+          xvfb-run -a go test -count=1 -timeout 30m -v -run 'TestDemoShots$|TestDemoSmoke$|TestDemoSurfaces$' ./internal/ui/
           ls -la "$CLACK_DEMO_SHOTS"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

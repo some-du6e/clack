@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/clack/internal/emoji"
@@ -43,6 +44,9 @@ type Session struct {
 	World *World
 
 	cancel context.CancelFunc
+
+	refusedMu sync.Mutex
+	refused   []string // Fetch's refusals, redacted (Refused)
 }
 
 // Start serves the demo workspace on a loopback port and starts the bots.
@@ -132,5 +136,16 @@ func (s *Session) Fetch(ctx context.Context, raw string) ([]byte, error) {
 			return b, nil
 		}
 	}
+	s.refusedMu.Lock()
+	s.refused = append(s.refused, slack.Redact(raw))
+	s.refusedMu.Unlock()
 	return nil, fmt.Errorf("demo: not fetching %q (offline)", slack.Redact(raw))
+}
+
+// Refused is every URL Fetch refused so far (redacted): an image the
+// demo shows from outside its fake (a CDN, an unfurl) draws as a gap.
+func (s *Session) Refused() []string {
+	s.refusedMu.Lock()
+	defer s.refusedMu.Unlock()
+	return append([]string(nil), s.refused...)
 }

@@ -340,6 +340,8 @@ type Server struct {
 	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
 	bkSuggest []url.Values      // blocks.suggestions forms
 
+	gaps gapLog // what the fake couldn't answer (answers.go)
+
 	// Calls counts requests per method (atomic adds).
 	callsMu sync.Mutex
 	Calls   map[string]*atomic.Int64
@@ -1207,6 +1209,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hooked {
 		out = s.handle(method, form, edge)
+		if _, none := out.(unanswered); none {
+			s.noteAnswer(method, form, answerNone, "")
+			out = nil
+		}
 		if method == "experiments.getByUser" {
 			out = withAccountExperiments(out) // experiments.go
 		}
@@ -1220,12 +1226,16 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back
 	}
-	if b, ok := out.([]byte); ok {
-		w.Write(b)
-		return
+	b, isBytes := out.([]byte)
+	if !isBytes {
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(out)
+		b = buf.Bytes()
 	}
-	enc := json.NewEncoder(w)
-	_ = enc.Encode(out)
+	if e, failed := failedAnswer(b); failed {
+		s.noteAnswer(method, form, answerError, e)
+	}
+	w.Write(b)
 }
 
 func ok(kv ...any) map[string]any {
@@ -1708,7 +1718,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleChannels(method, f); handled {
 		return out
 	}
-	return nil
+	return unanswered{} // answers.go
 }
 
 func (s *Server) userByID(id string) (slack.User, bool) {

@@ -116,3 +116,16 @@ func (v *Activity) PeekCount() int {
 
 // Unreads reports the Unreads filter (the tab's and the peek's).
 func (v *Activity) Unreads() bool { return v.unread.Value }
+
+// ShowTab switches to the tab strip's i'th view (All, DMs, Mentions,
+// Threads, then saved views) as a click on it does (the demo's surface
+// walk, internal/ui TestDemoSurfaces).
+func (v *Activity) ShowTab(i int) {
+	if i < 0 || i >= len(v.slots) || i == v.tabs.Sel {
+		return
+	}
+	prev := v.slot()
+	v.tabs.Sel = i
+	v.switchView(prev)
+	v.load(actFresh)
+}
