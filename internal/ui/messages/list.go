@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
@@ -164,6 +167,8 @@ type listState struct {
 	tbLabel [tbCount]string // their labels (aria-label and tooltip) for tbRow
 	tbQAs   [tbCount]string // … and data-qa
 	quick   quickBar        // one-click reactions before the buttons (quickreact.go)
+	tilt    toolbarTilt     // the buttons' hover transitions (toolbar_tilt.go)
+	tbCard  color.NRGBA     // the toolbar card's background, under the buttons' hover fade
 
 	kb kbNav // keyboard focus and the selected message (kbnav.go)
 
@@ -1254,6 +1259,9 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 			s.toolbar(gtx, h, rc, r, s.hoverIdx, size)
 		}
 	}
+	if s.tbFor < 0 { // no toolbar: the next one mounts at rest
+		s.tilt = toolbarTilt{}
+	}
 
 	// reaction tooltip
 	if s.tip == "" {
@@ -1278,34 +1286,61 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 	}
 }
 
-// tooltip draws a dark tooltip centered above anchor (bottom-center).
-func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor image.Point, bounds image.Point) {
-	ts := textStyle{size: 13, weight: theme.Bold, col: c.TooltipText, lineH: 18}
-	maxW := dp(gtx, 260)
-	sz := measure(gtx, th, ts, txt)
-	tw := sz.X
-	if tw > maxW {
-		tw = maxW
+// tooltip is a toolbar button's Tooltip (F2XN BaseTooltip, position
+// "top", TooltipTip's .c-tooltip__tip--top) at opacity alpha: the box's
+// bottom centre at anchor, which callers put 8px over the button
+// (margin-bottom: 8px); below is the box's top when it doesn't fit above
+// (tryOppositePosition: 8px under the button). The tip is padding 8px
+// 12px, radius 8, 13px/1.25 bold, centred, at most 200px wide (wrapping),
+// with the 6px arrow (a 9px square turned 45°) at the button's centre.
+func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor image.Point, below int, bounds image.Point, alpha float32) {
+	if alpha <= 0 {
+		return
 	}
-	pad := dp(gtx, 8)
-	bw, bh := tw+2*pad, dp(gtx, 18)+2*dp(gtx, 6)
-	x := anchor.X - bw/2
-	if x < dp(gtx, 4) {
-		x = dp(gtx, 4)
+	tip := slackc.BodyScope().Child(tooltipClass, 0)
+	b := tooltipBox(gtx, th, c, tip, txt, anchor, below, bounds)
+	if o := tip.Opacity(); o < 1 {
+		alpha *= max(o, 0)
 	}
-	if x+bw > bounds.X-dp(gtx, 4) {
-		x = bounds.X - dp(gtx, 4) - bw
+	bg := tip.Background(c.Tooltip)
+	if alpha < 1 {
+		// the popover's opacity, blended as the browser does (sRGB): Gio's
+		// layer opacity blends in linear light
+		fade := bg
+		fade.A = uint8(alpha*255 + .5)
+		defer paint.PushOpacity(gtx.Ops, float32(theme.LinearAlpha(fade, c.Bg).A)/255).Pop()
 	}
+	theme.TooltipShape(gtx, b.r, dp(gtx, 8), b.arrow, bg, tipGlow(th)) // theme/tooltip.go
+	t := op.Offset(b.text).Push(gtx.Ops)
+	b.call.Add(gtx.Ops)
+	t.Pop()
+}
+
+// tipBox is a laid-out toolbar tooltip: the box, its arrow, and the text
+// (recorded) and where it goes.
+type tipBox struct {
+	r     image.Rectangle
+	arrow theme.TooltipArrow
+	text  image.Point
+	call  op.CallOp
+}
+
+// tooltipBox lays tooltip's box out (tooltip has the geometry).
+func tooltipBox(gtx layout.Context, th *theme.Theme, c *colors, tip slackc.Styled, txt string, anchor image.Point, below int, bounds image.Point) tipBox {
+	ts := cssText(tip, textStyle{size: 13, weight: theme.Bold, col: c.TooltipText, lineH: 16.25})
+	padX, padY := dp(gtx, 12), dp(gtx, 8)
+	m := op.Record(gtx.Ops)
+	td := flowTip(gtx, th, []tipRun{{st: ts, txt: txt}}, dp(gtx, 200)-2*padX)
+	call := m.Stop()
+	bw, bh := td.X+2*padX, td.Y+2*padY
+	x := min(max(anchor.X-bw/2, dp(gtx, 4)), bounds.X-dp(gtx, 4)-bw)
 	y := anchor.Y - bh
+	arrow := theme.TooltipArrow{C: anchor, Half: dp(gtx, 6)}
 	if y < 0 {
-		y = anchor.Y + dp(gtx, 40)
+		y = below
+		arrow.C.Y = below
 	}
-	r := image.Rect(x, y, x+bw, y+bh)
-	theme.TooltipShape(gtx, r, dp(gtx, 6), theme.TooltipArrow{}, c.Tooltip, tipGlow(th)) // theme/tooltip.go
-	at(gtx, x+pad, y+dp(gtx, 6), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints.Max.X = tw
-		return label(gtx, th, ts, txt)
-	})
+	return tipBox{r: image.Rect(x, y, x+bw, y+bh), arrow: arrow, text: image.Pt(x+(bw-td.X)/2, y+padY), call: call}
 }
 
 func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx int, size image.Point) {
@@ -1325,6 +1360,7 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		y = dp(gtx, 4)
 	}
 	s.tbRow, s.tbSize, s.tbHov = r, size, -1
+	s.tilt.mount(r)
 	s.quick.prepare(h, s.ch, r)
 	s.prepareButtons(h.Core(), r)
 	// message_actions_truncate (L2dv calculateResponsiveActions): the
@@ -1350,22 +1386,26 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	call.Add(gtx.Ops)
 	t.Pop()
 	s.tbRect, s.tbFor = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx
+	// the hovered button's tooltip: the box 8px over the button (the card's
+	// top is 4px over it), or 8px under it
+	bs, pad := dp(gtx, mt.toolbarBtn), dp(gtx, mt.toolbarPad)
+	above, below := y+pad-dp(gtx, 8), y+pad+bs+dp(gtx, 8)
+	key, tip, cx := "", "", 0
 	if i := s.quick.hov; i >= 0 {
-		bs := dp(gtx, mt.toolbarBtn)
-		tooltip(gtx, th, c, s.quick.tip(i), image.Pt(x+dp(gtx, mt.toolbarPad)+i*bs+bs/2, y-dp(gtx, 4)), size)
+		key, tip, cx = "q"+strconv.Itoa(i), s.quick.tip(i), x+pad+i*bs+bs/2
 	}
 	if i := s.tbHov; i >= 0 {
-		bs := dp(gtx, mt.toolbarBtn)
 		slot := 0
 		for k, b := range s.tbBtns {
 			if b == i {
 				slot = k
 			}
 		}
-		bx := x + dp(gtx, mt.toolbarPad) + (len(s.quick.names)+slot)*bs
-		tip := s.tbLabel[i]
+		key, tip, cx = "b"+strconv.Itoa(i), s.tbLabel[i], x+pad+(len(s.quick.names)+slot)*bs+bs/2
 		s.tip = ""
-		tooltip(gtx, th, c, tip, image.Pt(bx+bs/2, y-dp(gtx, 4)), size)
+	}
+	if a := s.tilt.tipAlpha(gtx, key); a > 0 {
+		tooltip(gtx, th, c, tip, image.Pt(cx, above), below, size, a)
 	}
 }
 
@@ -1428,7 +1468,8 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 	pad := dp(gtx, mt.toolbarPad)
 	nq := len(s.quick.names)
 	size := image.Pt(pad*2+(nq+len(s.tbBtns))*bs, bs+2*pad)
-	shadowCard(gtx.Ops, image.Rectangle{Max: size}, dp(gtx, 12), dp(gtx, 1), st.Background(c.Bg), c.PillBorder, c.Shadow)
+	s.tbCard = st.Background(c.Bg)
+	shadowCard(gtx.Ops, image.Rectangle{Max: size}, dp(gtx, 12), dp(gtx, 1), s.tbCard, c.PillBorder, c.Shadow)
 	s.quick.hov = -1
 	for i := 0; i < nq; i++ {
 		at(gtx, pad+i*bs, pad, func(gtx layout.Context) layout.Dimensions {
@@ -1445,6 +1486,7 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 			return s.toolbarButton(gtx, i)
 		})
 	}
+	s.tilt.ask(gtx)
 	return layout.Dimensions{Size: size}
 }
 
@@ -1513,18 +1555,20 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 }
 
 // toolbarIcon draws button i's icon; todo is the to-do action's (Yoyn).
+// The hover background, the icon's colour and its scale (and Add
+// reaction…'s tilt) follow Slack's transitions (toolbar_tilt.go).
 func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int, todo popups.TodoAction, st slackc.Styled) layout.Dimensions {
 	c := s.rc.c
 	bs := gtx.Constraints.Max.X
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: image.Pt(bs, bs)}
-		col := c.ToolbarIcon
-		isz := float32(18)
-		if btn.Hovered() {
-			rrect(gtx.Ops, rr, dp(gtx, 8), st.Background(c.ToolbarHoverBg))
-			col = c.Text
-			isz = 21.6 // Slack scales the icon 1.2x on hover
+		hov := btn.Hovered()
+		move, paint := s.tilt.step(gtx, &s.tilt.tb[i], hov || gtx.Focused(btn), hov, tiltDur)
+		if paint > 0 { // from transparent: the card's colour
+			rrect(gtx.Ops, rr, dp(gtx, 8), mixColor(s.tbCard, st.Background(c.ToolbarHoverBg), paint))
 		}
+		col := mixColor(c.ToolbarIcon, c.ToolbarHoverIcon, paint)
+		isz := float32(18)
 		ic := tbIcons[i]
 		if i == tbTodo && todo.Complete {
 			// .c-message_actions__button--complete_todo (and :hover):
@@ -1533,9 +1577,13 @@ func (s *listState) toolbarIcon(gtx layout.Context, btn *widget.Clickable, i int
 		}
 		col = st.Color(col)
 		is := dp(gtx, isz)
-		at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
+		o := (bs - is) / 2
+		ctr := f32.Pt(float32(o)+float32(is)/2, float32(o)+float32(is)/2)
+		tr := op.Affine(tiltAffine(ctr, move, i == tbAddReact)).Push(gtx.Ops) // svg[data-qa=add-reaction] tilts
+		at(gtx, o, o, func(gtx layout.Context) layout.Dimensions {
 			return icons.Get(ic)(gtx, unit.Dp(isz), col)
 		})
+		tr.Pop()
 		return layout.Dimensions{Size: rr.Size()}
 	})
 }

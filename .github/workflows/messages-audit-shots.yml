@@ -13,7 +13,10 @@ name: messages-audit-shots
 # underline per hovered link, the card's time and context hovers), and
 # Later's labels on saved messages and to-dos with the toolbar's
 # Complete to-do (gap-w7), and a hidden person's messages
-# (HiddenMessageBody, Show anyway, HiddenUserAvatar; gap-w8)
+# (HiddenMessageBody, Show anyway, HiddenUserAvatar; gap-w8), and the hover
+# toolbar's Add reaction… under the pointer (the tilt, the colour fades and
+# the tooltip's delay and fade, frame by frame), drawn by this branch
+# ("after") and by a checkout of ui ("before")
 # (messages-audit-shots artifact). Nothing here talks to Slack.
 on:
   push:
@@ -37,6 +40,10 @@ on:
       - "internal/ui/messages/actions_rules.go"
       - "internal/ui/messages/later_label_test.go"
       - "internal/ui/messages/later_shots_test.go"
+      - "internal/ui/messages/toolbar_tilt.go"
+      - "internal/ui/messages/toolbar_tilt_test.go"
+      - "internal/ui/messages/toolbar_hover_shots_test.go"
+      - "internal/ui/messages/quickreact.go"
       - "internal/ui/popups/actions_todo.go"
       - "internal/ui/popups/actions_todo_test.go"
       - "internal/core/saved_meta.go"
@@ -69,6 +76,12 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # ui as it is, for the toolbar's "before" shots
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ui
+          path: before-ui
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -95,6 +108,11 @@ jobs:
           go test -count=1 -v -run 'TestWorkObject' ./internal/richtext ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestWorkObject' ./internal/ui/richview
           xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestWorkObjectFlexpane' ./internal/ui
+          # the hover toolbar (toolbar_tilt.go): the tests, then the shots
+          # here and on ui (the shots test uses only what ui has)
+          xvfb-run -a go test -count=1 -v -run 'TestCSSTransitionLikeSlack|TestTiltAffine|TestToolbarButtonColorsLikeSlack|TestToolbarHoverLikeSlack|TestToolbarHoverShots' ./internal/ui/messages
+          cp internal/ui/messages/toolbar_hover_shots_test.go before-ui/internal/ui/messages/
+          (cd before-ui && git log -1 --format='before = ui at %H' && TOOLBAR_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestToolbarHoverShots' ./internal/ui/messages)
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
