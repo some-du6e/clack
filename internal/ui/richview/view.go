@@ -633,6 +633,22 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		if st.Images != nil {
 			img, ok = st.Images.Get(im.url, im.px)
 		}
+		if ok && !im.fit {
+			if px := coverPx(img.Size(), im.r.Size(), im.px); px > im.px {
+				// cover: the copy scaled to px by its larger side is
+				// short of the box on its smaller side and would be
+				// stretched (a 1200x630 og:image in a 105x104 card thumb
+				// drawn twice too tall). The copy that covers the box's
+				// device pixels: scaled down only, drawn 1:1. Until it
+				// decodes, the short one, and the recording waits.
+				if big, bok := st.Images.Get(im.url, px); bok {
+					img = big
+				} else if static {
+					v.pending = append(v.pending, int32(i))
+				}
+				im.px = px
+			}
+		}
 		if !ok {
 			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
 			if static {

@@ -164,14 +164,37 @@ func drawImage(ops *op.Ops, img paint.ImageOp, r image.Rectangle, radii [4]int, 
 	} else if sy < s {
 		s = sy
 	}
+	if cover && s >= 1 && s < 1.02 {
+		// a copy decoded to cover the box (coverPx): drawn at its own
+		// pixels, the overhang cropped, not stretched by the rounding
+		s = 1
+	}
 	w, h := float32(sz.X)*s, float32(sz.Y)*s
-	off := f32.Pt(float32(r.Min.X)+(float32(r.Dx())-w)/2, float32(r.Min.Y)+(float32(r.Dy())-h)/2)
+	// on whole device pixels: a half-pixel offset resamples every pixel
+	off := f32.Pt(float32(math.Round(float64(float32(r.Min.X)+(float32(r.Dx())-w)/2))),
+		float32(math.Round(float64(float32(r.Min.Y)+(float32(r.Dy())-h)/2))))
 	cs := clip.RRect{Rect: r, NW: radii[0], NE: radii[1], SE: radii[2], SW: radii[3]}.Push(ops)
 	t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(s, s)).Offset(off)).Push(ops)
 	img.Add(ops)
 	paint.PaintOp{}.Add(ops)
 	t.Pop()
 	cs.Pop()
+}
+
+// coverPx is the decode size (the larger side, as imgcache scales) whose
+// copy covers box: got is the copy decoded at px. When got's larger side
+// is px (the source was scaled down) and its smaller side falls short of
+// the box, the size that scales its smaller side to the box's; else px
+// (the source is no larger, or it already covers).
+func coverPx(got, box image.Point, px int) int {
+	if got.X <= 0 || got.Y <= 0 || box.X <= 0 || box.Y <= 0 || max(got.X, got.Y) < px {
+		return px
+	}
+	s := max(float64(box.X)/float64(got.X), float64(box.Y)/float64(got.Y))
+	if s <= 1 {
+		return px
+	}
+	return int(math.Ceil(float64(px) * s))
 }
 
 // DrawImage is exported for the messages package (avatars, reaction emoji):
