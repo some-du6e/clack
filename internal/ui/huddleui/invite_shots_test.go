@@ -121,11 +121,11 @@ func TestHuddleShotsInvite(t *testing.T) {
 	}
 	loadPictures(t, e, 620, 60, toolbar)
 	render(t, "invite-toolbar-hand", 620, 60, toolbar)
-	e.w.stick = true
-	render(t, "invite-sticker-picker", 620, 320, func(gtx C) {
+	// the sticker caret's HuddleStickerGrid, above a caret at the bottom
+	sg := newStickerGrid(e.c, winHost{e.w}, image.Rect(300*shotScale, 300*shotScale, 328*shotScale, 340*shotScale))
+	render(t, "invite-sticker-picker", 620, 360, func(gtx C) {
 		theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, hudFrame)
 		e.w.stage(gtx, s, st, image.Rectangle{Max: gtx.Constraints.Max}, now)
-		e.w.stickerPicker(gtx, image.Rectangle{Max: gtx.Constraints.Max})
+		sg.Layout(gtx)
 	})
-	e.w.stick = false
 }

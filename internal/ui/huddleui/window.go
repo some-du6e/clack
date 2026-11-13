@@ -37,7 +37,7 @@ type window struct {
 	vids   videoOps
 	clicks map[string]*widget.Clickable
 	quick  *quickPicker // the emoji button's HuddleQuickEmojiPicker (quickpicker.go)
-	stick  bool         // the sticker picker (hand.go)
+	stick  *stickerGrid // the sticker caret's HuddleStickerGrid (hand.go)
 	mic    micBanner
 	notice string
 	noteAt time.Time
@@ -48,6 +48,7 @@ type window struct {
 	more      *popups.Menu    // the ⋯ More actions menu (window_menu.go)
 	moreBtn   image.Rectangle // its button, in the toolbar
 	reactBtn  image.Rectangle // the emoji button, in the toolbar
+	stickBtn  image.Rectangle // the sticker caret, in the toolbar
 	video     *popups.Menu    // the camera's Video settings menu (window_camera.go)
 	videoBtn  image.Rectangle // its caret, in the toolbar
 	leaveMenu *popups.Menu    // Leave options (leave_options.go)
@@ -57,6 +58,7 @@ type window struct {
 	barTop    int             // the toolbar's top in the window
 	cc        ccState         // the closed captions' fade (captions.go)
 	banner    banner          // HuddlesInformationalBanner (captions.go)
+	lounge    loungeUI        // HuddleLoungeMusicBanner (lounge.go)
 	tips      map[string]*popups.TipState
 
 	overlays []popups.Overlay // modals over the window (winHost.ShowOverlay; under mu)
@@ -289,9 +291,17 @@ func (w *window) layout(gtx C) {
 	// huddle timer is the Huddles page's HuddlesActiveTimer); Slick's
 	// CallTimer adds one after the title.
 
+	// HuddlesAlertBannerContainer (baby_window): the temporary banner (the
+	// lounge music's player, lounge.go), then the informational one, each
+	// margin 4px 4px 6px; between two the margins collapse to 6px
 	top := titleH
-	if bh := w.layoutBanner(gtx, s, image.Rect(gtx.Dp(4), top+gtx.Dp(4), sz.X-gtx.Dp(4), top+gtx.Dp(4)+gtx.Dp(bannerH))); bh > 0 {
-		top += gtx.Dp(4) + bh + gtx.Dp(6) // margin 4px 4px 6px
+	gap := gtx.Dp(4)
+	if lh := w.layoutLounge(gtx, s, image.Rect(gtx.Dp(4), top+gap, sz.X-gtx.Dp(4), top+gap)); lh > 0 {
+		top += gap + lh + gtx.Dp(6)
+		gap = 0
+	}
+	if bh := w.layoutBanner(gtx, s, image.Rect(gtx.Dp(4), top+gap, sz.X-gtx.Dp(4), top+gap+gtx.Dp(bannerH))); bh > 0 {
+		top += gap + bh + gtx.Dp(6) // margin 4px 4px 6px
 	}
 	stage := image.Rect(gtx.Dp(4), top, sz.X-gtx.Dp(4), sz.Y-gtx.Dp(winStageGap))
 	share := w.stageShare(st)
@@ -330,9 +340,6 @@ func (w *window) layout(gtx C) {
 	if !stage.Empty() {
 		if st.CaptionsOn {
 			w.captions(gtx, st, stage, now)
-		}
-		if w.stick {
-			w.stickerPicker(gtx, stage)
 		}
 	}
 	w.barTop = barTop
@@ -427,15 +434,7 @@ func (w *window) handle(gtx C, s *huddle.Session, st huddle.State) {
 		go func() { _ = w.c.ToggleHand() }()
 	}
 	if w.click("stickers").Clicked(gtx) { // Choose sticker
-		w.stick = !w.stick
-		w.closeQuick()
-	}
-	for _, st := range stickers {
-		if w.click("pick:" + st.Emoji).Clicked(gtx) {
-			w.stick = false
-			e := st.Emoji
-			go func() { _ = w.c.PickSticker(e) }()
-		}
+		w.toggleStickers()
 	}
 	if w.click("more").Clicked(gtx) {
 		w.toggleMore(s, st)
@@ -658,47 +657,6 @@ func overflowCount(gtx C, th *theme.Theme, r image.Rectangle, more int) {
 	at(gtx, image.Pt(b.Min.X+gtx.Dp(4), b.Min.Y+gtx.Dp(2)), ls, func(gtx C) D { return th.Label(gtx, 14, theme.Black, hudWhite, txt) })
 }
 
-// stickerPicker is the sticker picker (the emoji picker's stickers tab,
-// onlyShowStickers): Slack's stickers in a row, labelled on hover.
-func (w *window) stickerPicker(gtx C, stage image.Rectangle) {
-	bs := gtx.Dp(36)
-	pad := gtx.Dp(6)
-	wd := len(stickers)*bs + 2*pad
-	r := image.Rect((stage.Min.X+stage.Max.X-wd)/2, stage.Max.Y-bs-2*pad-gtx.Dp(6), (stage.Min.X+stage.Max.X+wd)/2, stage.Max.Y-gtx.Dp(6))
-	theme.RRect(gtx, r, gtx.Dp(10), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xf2})
-	mine := ""
-	if s := w.c.Session(); s != nil {
-		mine = stickerBase(s.Sticker())
-	}
-	hover := ""
-	for i, st := range stickers {
-		p := image.Pt(r.Min.X+pad+i*bs, r.Min.Y+pad)
-		txt := w.emojiText(w.c.withSkinTone(st.Emoji))
-		on := mine == st.Emoji
-		cl := w.click("pick:" + st.Emoji)
-		if cl.Hovered() {
-			hover = nsHuddles.T(st.Label)
-		}
-		at(gtx, p, image.Pt(bs, bs), func(gtx C) D {
-			return button(gtx, cl, image.Pt(bs, bs), func(gtx C, hov bool) {
-				switch {
-				case on:
-					theme.RRect(gtx, image.Rectangle{Max: image.Pt(bs, bs)}, gtx.Dp(8), hudBtnOn)
-				case hov:
-					theme.RRect(gtx, image.Rectangle{Max: image.Pt(bs, bs)}, gtx.Dp(8), hudBtnHover)
-				}
-			}, func(gtx C) D { centerLabel(gtx, w.th, image.Pt(bs, bs), 20, theme.Regular, hudWhite, txt); return D{} })
-		})
-	}
-	if hover != "" {
-		ls := labelSize(gtx, w.th, 13, theme.Bold, hover)
-		tp := gtx.Dp(8)
-		tr := image.Rect((r.Min.X+r.Max.X-ls.X)/2-tp, r.Min.Y-ls.Y-2*tp-gtx.Dp(4), (r.Min.X+r.Max.X+ls.X)/2+tp, r.Min.Y-gtx.Dp(4))
-		theme.RRect(gtx, tr, gtx.Dp(6), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xff})
-		at(gtx, image.Pt(tr.Min.X+tp, tr.Min.Y+tp), ls, func(gtx C) D { return w.th.Label(gtx, 13, theme.Bold, hudWhite, hover) })
-	}
-}
-
 // emojiText turns an emoji name into its character ("+1" → 👍) when Slack
 // knows one, else ":name:".
 func (w *window) emojiText(name string) string { return w.c.emojiText(name) }
@@ -763,12 +721,12 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 	}
 	hand := ctl{id: "hand", emoji: w.emojiText(face), on: mine != "", tip: handTip(mine), seg: segMain}
 	caret := "caret-up"
-	if w.stick {
+	if w.stick != nil {
 		caret = "caret-down"
 	}
-	// the caret is toggled on while the picker is open or a sticker is set
+	// the caret is toggled on while the grid is open or a sticker is set
 	// (isEmojiMenuOpen || P)
-	sticks := ctl{id: "stickers", icon: caret, on: w.stick || mine != "", tip: nsHuddles.T("Choose sticker"), seg: segCaret}
+	sticks := ctl{id: "stickers", icon: caret, on: w.stick != nil || mine != "", tip: nsHuddles.T("Choose sticker"), seg: segCaret}
 	react := ctl{id: "react", icon: "emoji", hover: "emoji-filled", on: w.quick != nil, tip: nsHuddles.T("Add reaction")}
 	thread := ctl{id: "thread", icon: "threads", tip: nsHuddles.T("Open thread")}
 	more := ctl{id: "more", icon: "ellipsis-vertical-filled", on: w.more != nil, tip: nsHuddles.T("More actions")}
@@ -827,6 +785,8 @@ func (w *window) toolbar(gtx C, st huddle.State, r image.Rectangle) {
 			w.videoBtn = image.Rect(x, y, x+cw, y+h)
 		case "react":
 			w.reactBtn = image.Rect(x, y, x+cw, y+h)
+		case "stickers":
+			w.stickBtn = image.Rect(x, y, x+cw, y+h)
 		}
 		at(gtx, image.Pt(x, y), image.Pt(cw, h), func(gtx C) D {
 			return button(gtx, cl, image.Pt(cw, h), func(gtx C, hov bool) {
