@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +93,10 @@ func mlEditDiff(t *testing.T, dark bool, mode string) {
 	e.app.Inject(slack.Event{Type: "message", Subtype: "message_changed", Channel: json.RawMessage(`"` + ch + `"`), Raw: raw})
 	e.waitFor(t, "the edit history with its removed words", frame, func() bool {
 		return e.ui.anyTree("slick-ml-edit-removed") && len(slackc.ClassStyles("slick-ml-edit-removed")) > 0
+	})
+	e.waitFor(t, "the message drawn with its new text", frame, func() bool {
+		txt := rowText(v.s.rows[ts])
+		return strings.Contains(txt, mlNew) && !strings.Contains(txt, "& extra")
 	})
 	for i := 0; i < 5; i++ {
 		frame()
