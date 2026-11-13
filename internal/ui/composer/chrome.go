@@ -563,17 +563,14 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	}
 	c.f.W, c.f.maxY, c.f.margin, c.f.hintH = W, gtx.Constraints.Max.Y, margin, hintH
 
-	// .p-threads_footer__input_container { margin: 12px 16px 0 } (0 on top
-	// under a plugin's context bar, --context_bar_showing): the reply box
-	// sits 12px under the last reply. The channel composer's top margin is
-	// 0.
-	top := 0
-	if st.Mode == modeThread && !st.SquareTop {
-		top = gtx.Dp(12)
-	}
+	// The thread pane's .p-threads_footer__input_container top margin is
+	// the composer's (Composer.layoutPaneBody: 12px, 4px under the app
+	// nugget, 0 under a context bar or in the Threads view), not the
+	// chrome's: the box starts at the chrome's top. Adding it here too put
+	// 24px between the last reply and the box (Karim, 2026-11-12).
 	bg := gtx
-	bg.Constraints = layout.Constraints{Max: image.Pt(max(W-2*margin, 0), max(gtx.Constraints.Max.Y-top, 0))}
-	t := op.Offset(image.Pt(margin, top)).Push(gtx.Ops)
+	bg.Constraints = layout.Constraints{Max: image.Pt(max(W-2*margin, 0), gtx.Constraints.Max.Y)}
+	t := op.Offset(image.Pt(margin, 0)).Push(gtx.Ops)
 	var bd layout.Dimensions
 	if e, patched := kid(inputP, "WysiwygContainer"); patched {
 		bd = slackc.LayoutElement(bg, e)
@@ -581,21 +578,8 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 		bd = slackc.Component(bg, "WysiwygContainer", c, (*chrome).wysiwygProps, (*chrome).layoutWysiwyg)
 	}
 	t.Pop()
-	if top > 0 {
-		// what the natives recorded is relative to the box's top
-		d := image.Pt(0, top)
-		for id := range c.rect {
-			if c.shown&(1<<id) != 0 {
-				c.rect[id] = c.rect[id].Add(d)
-			}
-		}
-		c.inputOff = c.inputOff.Add(d)
-		if c.f.boxOK {
-			c.f.box = c.f.box.Add(d)
-		}
-	}
-	boxH := max(bd.Size.Y, 0) + top
-	box := image.Rect(margin, top, margin+bd.Size.X, boxH)
+	boxH := max(bd.Size.Y, 0)
+	box := image.Rect(margin, 0, margin+bd.Size.X, boxH)
 	if c.f.boxOK {
 		box.Min.X, box.Max.X = c.f.box.Min.X, c.f.box.Max.X
 	}

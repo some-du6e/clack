@@ -18,6 +18,8 @@ The markup is the gantry build's (407aff01646b, client-boot-shared):
                                      with --ghost
   ThreadUnreadBannerGeneric (ntqA)   p-new_threads_banner (JwHt) in
                                      p-threads_view__bottom_banners
+  LargeOfflineIndicator (nMFb)       p-large_offline_indicator, the pane
+                                     offline with nothing loaded
   ReplyBar (v8ac)                    c-message__reply_bar: faces, the fifth
                                      with c-avatar__additional_overlay "+2",
                                      the count, the last reply, the caret
@@ -119,6 +121,18 @@ def threads_error(deleted=False):
             '<div class="p-threads_flexpane__error_contents">%s</div></div></div>' % inner)
 
 
+def large_offline():
+    # LargeOfflineIndicator (boot-shared nMFb), ThreadsFlexpane's whole body
+    # while offline with no timestamps: absolute, inset 0, over the pane
+    # under its header (591px in the 640px shot); Slack Kit's Icon (utKz)
+    # inline at size inherit is <svg data-yc6 class="is-inline">, 1em
+    # square at vertical-align -.125em (modern.vendor CSS)
+    icon = svg("cloud-offline", 28, "vertical-align:-.125em")
+    return ('<div style="height:591px;position:relative"><div class="p-large_offline_indicator">'
+            '<p class="p-large_offline_indicator__headline">%s No connection</p>'
+            '<p class="p-large_offline_indicator__caption">Go online to get the latest messages.</p></div></div>' % icon)
+
+
 def reply_bar_draft(text, icon=None):
     pre = ""
     if icon:
@@ -158,13 +172,14 @@ STATES = {
     "loading": flexpane_loading(),
     "error": threads_error(),
     "deleted": threads_error(deleted=True),
+    "offline": large_offline(),
     "reply-bar-draft": reply_bar_draft("3 replies, 1 scheduled, 1 draft"),
     "reply-bar-draft-only": reply_bar_draft("1 draft", icon="pencil"),
     "pinned-by": pinned_label("ana"),
 }
 
 # the pane-sized states (the rest fit 200px)
-HEIGHTS = {"loading": 600, "error": 600, "deleted": 600}
+HEIGHTS = {"loading": 600, "error": 600, "deleted": 600, "offline": 600}
 
 
 def page(body, dark):

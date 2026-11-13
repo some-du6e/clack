@@ -109,15 +109,16 @@ type listState struct {
 	ctx       ctxPress // this frame's context-menu press (context.go)
 	hoverIdx  int
 
-	tb       [tbCount]widget.Clickable
-	pbtn     map[string]*widget.Clickable // persistent "Message actions" buttons (persist.go)
-	tbRect   image.Rectangle
-	tbFor    int
-	jump     widget.Clickable
-	retryBtn widget.Clickable
-	helpLink widget.Clickable // ThreadsError's "drop us a line." (thread.go)
-	pendAt   time.Time        // when the thread pane started waiting for its replies (FlexpaneLoading's animation)
-	closeBtn widget.Clickable
+	tb           [tbCount]widget.Clickable
+	pbtn         map[string]*widget.Clickable // persistent "Message actions" buttons (persist.go)
+	tbRect       image.Rectangle
+	tbFor        int
+	jump         widget.Clickable
+	retryBtn     widget.Clickable
+	helpLink     widget.Clickable // ThreadsError's "drop us a line." (thread.go)
+	pendAt       time.Time        // when the thread pane started waiting for its replies (FlexpaneLoading's animation)
+	offlineDrawn bool             // the thread pane drew LargeOfflineIndicator this frame (thread.go)
+	closeBtn     widget.Clickable
 
 	tip     string
 	tipRect image.Rectangle

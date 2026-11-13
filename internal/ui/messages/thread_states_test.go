@@ -155,13 +155,15 @@ func TestThreadPaneLoadingAndErrorLikeSlack(t *testing.T) {
 	fs.SetHook(g.hook)
 	host := coreHost{app: app, th: theme.New(false)}
 
-	// isLoading: FlexpaneLoading's "Loading thread…", no skeleton rows
+	// isLoading: FlexpaneLoading's "Loading thread…", no skeleton rows,
+	// and no reply box: ThreadsFlexpane is initializing (no timestamps),
+	// so getThreadRowsAndKeys leaves out the input row (build 2cd9270e786c)
 	tv := NewThreadView(host, tShots, ts["b1"])
 	f := frameFn(tv)
 	until(t, 5*time.Second, "the fetch", f, func() bool { return g.calls.Load() > 0 })
 	ls := paneLabels(f)
-	if !drewLabel(ls, "Loading thread…") || tv.HidesComposer() {
-		t.Errorf("loading: labels %q, composer hidden %v; want \"Loading thread…\" over the pane, the composer kept", ls, tv.HidesComposer())
+	if !drewLabel(ls, "Loading thread…") || !tv.HidesComposer() {
+		t.Errorf("loading: labels %q, composer hidden %v; want \"Loading thread…\" over the pane and no reply box", ls, tv.HidesComposer())
 	}
 
 	// a failed fetchReplies: ThreadsError, and no composer
@@ -170,7 +172,10 @@ func TestThreadPaneLoadingAndErrorLikeSlack(t *testing.T) {
 	close(g.hold)
 	g.hold = nil
 	g.mu.Unlock()
-	until(t, 10*time.Second, "the error", f, func() bool { return tv.HidesComposer() })
+	until(t, 10*time.Second, "the error", f, func() bool { return tv.s.threadErrored(host) })
+	if !tv.HidesComposer() {
+		t.Error("ThreadsError keeps the reply box")
+	}
 	ls = paneLabels(f)
 	for _, want := range []string{"Couldn’t load thread", "If the problem persists, please ", "drop us a line."} {
 		if !drewLabel(ls, want) {
@@ -191,7 +196,7 @@ func TestThreadPaneLoadingAndErrorLikeSlack(t *testing.T) {
 	g.mu.Unlock()
 	tv2 := NewThreadView(host, tShots, ts["b2"])
 	f2 := frameFn(tv2)
-	until(t, 10*time.Second, "the deleted thread", f2, func() bool { return tv2.HidesComposer() })
+	until(t, 10*time.Second, "the deleted thread", f2, func() bool { return tv2.s.threadErrored(host) })
 	ls = paneLabels(f2)
 	if !drewLabel(ls, "This message was deleted.") || drewLabel(ls, "drop us a line.") || drewLabel(ls, "Couldn’t load thread") {
 		t.Errorf("thread_not_found drew %q", ls)
@@ -227,12 +232,95 @@ func TestThreadLoadingRepliesRow(t *testing.T) {
 	if d.Size.Y != 96 || !ok {
 		t.Errorf("row %v, italic labels %q", d.Size, got)
 	}
+	// the "loading-end" row stands where the input goes: no reply box
+	// until the end is reached (reachedEnd || prevReachedEnd)
+	if !tv.HidesComposer() {
+		t.Error("the reply box shows while the replies load")
+	}
 	s.snap.loaded = true
 	s.build(host, time.Now())
 	for _, it := range s.items {
 		if it.kind == itLoading {
 			t.Error("a loaded thread keeps its loading row")
 		}
+	}
+	if tv.HidesComposer() {
+		t.Error("a loaded thread has no reply box")
+	}
+}
+
+// Offline with nothing loaded (ThreadsFlexpane renderBody: isOffline &&
+// isEmpty(timestamps)): LargeOfflineIndicator (nMFb) is the pane's only
+// content, with no FlexpaneLoading and no reply box, announced once as it
+// shows; back online, the pane loads as usual.
+func TestThreadPaneOfflineLikeSlack(t *testing.T) {
+	app, fs, ts := shotsApp(t)
+	g := &repliesGate{hold: make(chan struct{})}
+	fs.SetHook(g.hook)
+	t.Cleanup(func() {
+		g.mu.Lock()
+		if g.hold != nil {
+			close(g.hold)
+			g.hold = nil
+		}
+		g.mu.Unlock()
+	})
+	var online atomic.Bool
+	prev := clientOnline
+	clientOnline = func(Host) bool { return online.Load() }
+	t.Cleanup(func() { clientOnline = prev })
+	host := coreHost{app: app, th: theme.New(false)}
+	tv := NewThreadView(host, tShots, ts["b1"])
+	f := frameFn(tv)
+	ls := paneLabels(func() { f(); f() })
+	if !drewLabel(ls, " No connection") || !drewLabel(ls, "Go online to get the latest messages.") || drewLabel(ls, "Loading thread…") {
+		t.Errorf("offline: drew %q; want LargeOfflineIndicator alone", ls)
+	}
+	if !tv.HidesComposer() {
+		t.Error("offline: the reply box shows")
+	}
+	want := []string{" No connectionGo online to get the latest messages."}
+	if got := tv.Announced(); !reflect.DeepEqual(got, want) {
+		t.Errorf("announced %q, want %q (once)", got, want)
+	}
+	// the headline and caption styles (client-boot-styles)
+	var head, capt bool
+	for _, l := range []struct {
+		txt string
+		ok  *bool
+		st  textStyle
+	}{{" No connection", &head, textStyle{size: 28, weight: theme.Black, lineH: 34}}, {"Go online to get the latest messages.", &capt, textStyle{size: 13, lineH: 18}}} {
+		labelHook = func(txt string, st textStyle) {
+			if txt == l.txt && st.size == l.st.size && st.weight == l.st.weight && st.lineH == l.st.lineH {
+				*l.ok = true
+			}
+		}
+		f()
+	}
+	labelHook = nil
+	if !head || !capt {
+		t.Errorf("headline 28px/34 Black %v, caption 13px/18 %v", head, capt)
+	}
+
+	// online again: FlexpaneLoading while the fetch is held
+	online.Store(true)
+	ls = paneLabels(f)
+	if !drewLabel(ls, "Loading thread…") || drewLabel(ls, " No connection") {
+		t.Errorf("online: drew %q, want FlexpaneLoading", ls)
+	}
+	if n := len(tv.Announced()); n != 1 {
+		t.Errorf("announced %d times", n)
+	}
+	g.mu.Lock()
+	close(g.hold)
+	g.hold = nil
+	g.mu.Unlock()
+	until(t, 10*time.Second, "the replies", f, func() bool { return tv.s.snap.loaded && !tv.HidesComposer() })
+	// loaded, offline again: the rows stay (the indicator needs no timestamps)
+	online.Store(false)
+	ls = paneLabels(f)
+	if drewLabel(ls, " No connection") || tv.HidesComposer() {
+		t.Errorf("offline with the thread loaded: drew %q, composer hidden %v", ls, tv.HidesComposer())
 	}
 }
 

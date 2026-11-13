@@ -138,6 +138,12 @@ func TestThreadsAuditStatesShots(t *testing.T) {
 			savePNG(t, filepath.Join(dir, "thread-"+name+"-"+mode+".png"), pixeltest.Render(t, tw, thH, ops))
 		}
 
+		// LargeOfflineIndicator: offline with nothing loaded
+		prevOnline := clientOnline
+		clientOnline = func(Host) bool { return false }
+		to := NewThreadView(host, tShots, ts["c1"])
+		shoot("offline", to, func() bool { return to.s.offlineDrawn })
+		clientOnline = prevOnline
 		// FlexpaneLoading while conversations.replies is held
 		tl := NewThreadView(host, tShots, ts["b1"])
 		shoot("loading", tl, func() bool { return g.calls.Load() > 0 })
@@ -147,13 +153,13 @@ func TestThreadsAuditStatesShots(t *testing.T) {
 		close(g.hold)
 		g.hold = nil
 		g.mu.Unlock()
-		shoot("error", tl, tl.HidesComposer)
+		shoot("error", tl, func() bool { return tl.s.threadErrored(host) })
 		// the deleted thread
 		g.mu.Lock()
 		g.failure = "thread_not_found"
 		g.mu.Unlock()
 		td := NewThreadView(host, tShots, ts["b2"])
-		shoot("deleted", td, td.HidesComposer)
+		shoot("deleted", td, func() bool { return td.s.threadErrored(host) })
 		g.mu.Lock()
 		g.failure = ""
 		g.mu.Unlock()
