@@ -127,6 +127,19 @@ func (t *Taut) SetHuddlePeers(present map[string]string) {
 	}
 }
 
+// HuddlePeers is the present attendee → user map plugins see (peers.byId
+// plus you).
+func (t *Taut) HuddlePeers() map[string]string {
+	h := t.huddle()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make(map[string]string, len(h.peers))
+	for a, u := range h.peers {
+		out[a] = u
+	}
+	return out
+}
+
 // HuddlePeerMessage delivers a decoded peer message to
 // api.huddles.onPeerMessage listeners. ev marshals to
 // {message, kind, senderAttendeeId, selfAttendeeId} (huddle.PeerEvent).

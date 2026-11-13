@@ -639,6 +639,13 @@ func (s *Store) UsersNamed(names []string) map[string][]string {
 	return out
 }
 
+// UserCount is how many users the store holds.
+func (s *Store) UserCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.Users)
+}
+
 // FoldName is a name as UsersNamed compares it: trimmed, without a
 // leading @, lower case.
 func FoldName(n string) string {

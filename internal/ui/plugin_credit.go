@@ -230,12 +230,14 @@ func (r creditResolver) tautAuthors(pl taut.PluginInfo) string {
 // ---- name lookups ----
 
 // creditNameTTL is how long a name lookup stands before the store is
-// asked again (members load as the session goes on).
+// asked again (a member renamed); a store holding more or fewer members
+// asks again at once (members load as the session goes on).
 const creditNameTTL = 15 * time.Second
 
 type creditNameHit struct {
-	id string // "" when nobody or several members have the name
-	at time.Time
+	id    string // "" when nobody or several members have the name
+	at    time.Time
+	users int // the store's user count then
 }
 
 var creditNames struct {
@@ -261,11 +263,12 @@ func (r creditResolver) byName(name string) string {
 	}
 	hit, ok := m[f]
 	creditNames.mu.Unlock()
-	if ok && now.Sub(hit.at) < creditNameTTL {
+	users := r.s.UserCount()
+	if ok && now.Sub(hit.at) < creditNameTTL && hit.users == users {
 		return hit.id
 	}
 	ids := r.s.UsersNamed([]string{f})[f]
-	hit = creditNameHit{at: now}
+	hit = creditNameHit{at: now, users: users}
 	if len(ids) == 1 {
 		hit.id = ids[0]
 	}

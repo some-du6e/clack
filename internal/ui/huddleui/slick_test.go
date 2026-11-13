@@ -125,7 +125,7 @@ func newHuddleCallEnv(t *testing.T) *hcEnv {
 			Toast: e.toast,
 		},
 		Log: func(level, msg string) {
-			if level == "error" || level == "warn" {
+			if level == "error" || level == "warn" || os.Getenv("CLACK_HUDDLE_JSLOG") != "" {
 				t.Logf("js %s: %s", level, msg)
 			}
 		}})
@@ -170,6 +170,11 @@ func (e *hcEnv) install(id string) {
 	}
 	if err := e.s.SetEnabled(ctx, id, true); err != nil {
 		e.t.Fatalf("enable %s: %v", id, err)
+	}
+	for _, p := range e.s.Settings().Plugins {
+		if p.ID == id && (!p.Running || p.StartError != "") {
+			e.t.Fatalf("%s didn't start: running=%v error=%q", id, p.Running, p.StartError)
+		}
 	}
 }
 
@@ -309,6 +314,7 @@ func TestSlickViewHuddleMuteDetector(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.until("you're muted", 10*time.Second, func() bool { return s.State().Muted })
+	t.Logf("peers for plugins: %v; displayAlertMessage patched: %v", e.h.tt.HuddlePeers(), e.h.tt.ThunkPatched("displayAlertMessage"))
 	// its name: profile display name, real name, else the username
 	e.until("the toast naming who muted you", 15*time.Second, func() bool {
 		return e.toastWith("Remote Example muted you.") || e.toastWith("remote muted you.")

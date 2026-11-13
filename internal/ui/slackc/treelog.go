@@ -2,8 +2,10 @@ package slackc
 
 import (
 	"fmt"
+	"image/color"
 	"log"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -147,4 +149,53 @@ func displayName(d css.Display) string {
 		return "contents"
 	}
 	return fmt.Sprint(int(d))
+}
+
+// ClassStyle is what the cascade gave a laid-out box with some class: its
+// own colour, background and text-decoration, the decorations its inline
+// ancestors propagate to its text, and the opacity its ancestors and it
+// multiply to. Like LayoutShape it carries no text. A debugging aid for
+// tests that check a plugin's CSS against Chromium (UI goroutine).
+type ClassStyle struct {
+	Component  string
+	Color      color.NRGBA
+	Background color.NRGBA
+	Decoration css.TextDecoration // the box's own
+	Propagated css.TextDecoration // its own and its ancestors'
+	Opacity    float32            // the effective (group) opacity
+	W, H       float32
+}
+
+// ClassStyles lists every laid-out box of any patched component whose
+// class list has class.
+func ClassStyles(class string) []ClassStyle {
+	var out []ClassStyle
+	var walk func(name string, list []*box)
+	walk = func(name string, list []*box) {
+		for _, k := range list {
+			if k.kind == kText {
+				continue
+			}
+			if k.n != nil && slices.Contains(k.n.Class, class) {
+				cs := ClassStyle{Component: name, Color: k.st.Color, Background: k.st.Background.Color,
+					Decoration: k.st.TextDecoration, Opacity: 1, W: k.w, H: k.h}
+				for p := k; p != nil; p = p.parent {
+					cs.Propagated |= p.st.TextDecoration
+					cs.Opacity *= p.st.Opacity
+				}
+				out = append(out, cs)
+			}
+			walk(name, k.kids)
+		}
+	}
+	for _, in := range insts {
+		if in.view == nil {
+			continue
+		}
+		walk(in.name, in.view.top)
+		for _, x := range in.view.extra {
+			walk(in.name, x.boxes)
+		}
+	}
+	return out
 }
