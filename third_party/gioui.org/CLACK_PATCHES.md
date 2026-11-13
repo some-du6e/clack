@@ -18,8 +18,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
 `app/clack_drop*.go`, `app/clack_hide*.go`, `internal/ops/clack_size.go`,
-`op/clack_size.go`, `op/clip/clack_size.go` and these two files
-(`CLACK_PATCHES.md`, `UPSTREAM.patch`).
+`op/clack_size.go`, `op/clip/clack_size.go`, `font/opentype/opentype.go`
+and these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -572,4 +572,16 @@ richview is also built against stock Gio v0.10.3 (`.github/scripts/
 gio-layer-fix.sh`), so it calls this through `gio_patch15.go`; on stock
 Gio (`gio_patch15_stock.go`) a word's outline counts 1 KB a glyph. Test:
 `internal/ui/richview` `TestWordCacheByteBudget`. Not in `UPSTREAM.patch`.
+
+## 16. font/opentype: fonts parsed in place
+
+`font/opentype/opentype.go` (`Parse`, `ParseCollection`).
+
+`Parse` and `ParseCollection` read the file through go-text's
+`opentype.NewBytesResource` (Clack's go-text patch 2,
+`third_party/typesetting/CLACK_PATCHES.md`) instead of a `bytes.Reader`,
+so the face's tables are slices of `src` rather than copies: Clack's
+embedded Lato faces held 6 MB of copied tables. `src` must not change
+after the call; Clack's fonts are embedded, or files read once and kept.
+Not in `UPSTREAM.patch`.
 

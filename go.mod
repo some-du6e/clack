@@ -59,6 +59,11 @@ require (
 // (third_party/gioui.org/CLACK_PATCHES.md). Drop when upstream has it.
 replace gioui.org => ./third_party/gioui.org
 
+// go-text/typesetting v0.3.5 parsing a font's glyphs as they're used and
+// reading in-memory fonts' tables without copying them
+// (third_party/typesetting/CLACK_PATCHES.md). Drop when upstream has both.
+replace github.com/go-text/typesetting => ./third_party/typesetting
+
 // RNNoise for the huddle microphone's noise suppression (pure Go, BSD-3).
 // Upstream v0.3.0 declares go 1.26; third_party/rnnoise-go is that release
 // with go.mod lowered to 1.24 (third_party/rnnoise-go/CLACK_PATCHES.md).

@@ -11,7 +11,6 @@
 package opentype
 
 import (
-	"bytes"
 	"fmt"
 	_ "image/png"
 
@@ -28,9 +27,10 @@ type Face struct {
 	font giofont.Font
 }
 
-// Parse constructs a Face from source bytes.
+// Parse constructs a Face from source bytes. The Face reads its tables
+// from src (Clack patch 16: no copy), so src must not change afterwards.
 func Parse(src []byte) (Face, error) {
-	ld, err := opentype.NewLoader(bytes.NewReader(src))
+	ld, err := opentype.NewLoader(opentype.NewBytesResource(src))
 	if err != nil {
 		return Face{}, err
 	}
@@ -51,7 +51,7 @@ func Parse(src []byte) (Face, error) {
 // BUG(whereswaldon): the only Variant that can be detected automatically is
 // "Mono".
 func ParseCollection(src []byte) ([]giofont.FontFace, error) {
-	lds, err := opentype.NewLoaders(bytes.NewReader(src))
+	lds, err := opentype.NewLoaders(opentype.NewBytesResource(src))
 	if err != nil {
 		return nil, err
 	}
