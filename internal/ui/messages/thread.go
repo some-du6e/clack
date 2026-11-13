@@ -74,6 +74,11 @@ func (v *ThreadView) ContentHeight() int {
 	return v.top + v.s.contentH
 }
 
+// NewestRowBottom is the window y of the newest reply's (or, with none,
+// the root's) bottom edge as of the last frame, false when it wasn't on
+// screen.
+func (v *ThreadView) NewestRowBottom() (int, bool) { return v.s.newestBottom() }
+
 // NewThreadView returns the thread pane for the thread rooted at ts.
 func NewThreadView(h Host, ch, ts string) *ThreadView { return NewThreadViewIn(h, ch, ts, "") }
 
