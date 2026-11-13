@@ -81,11 +81,11 @@ Clack's `slackc.Render(gtx, name, props, native)` has to reproduce these rules e
 | 58 | LocalTime | patch | LastSeen | popups/profile_card.go:`pfLocalTimeLabel` via `pfIconLine` | pop | drawn |
 | 59 | RimetoMemberProfileOverflowMenu | patch | AdminBackend, Nicknames | popups/profile_card.go:`pfMoreItems` (+ profile_view.go `pfPaneMenu`) | pop | drawn |
 | 60 | EditAudioButton | patch | CustomNameRecording | missing (profile_view.go only has an "Add name pronunciation" link row) | pop | **missing** |
-| 61 | CaptionsSubmenu | patch | HuddleActivity | missing (no huddle call UI) | views | **missing** |
-| 62 | CaptionsItemsMenu | patch | HuddleActivity | missing | views | **missing** |
-| 63 | HuddleMetaEvent | patch | HuddleActivity | missing (no huddle event log) | views | **missing** |
-| 64 | HuddleBaseEvent | patch | HuddleActivity | missing | views | **missing** |
-| 65 | HuddlesAlertBannerBase | patch | HuddleActivity | missing | views | **missing** |
+| 61 | CaptionsSubmenu | patch | HuddleActivity | missing (huddleui's ⋯ menu Show captions › rows are native menu items) | huddleui | **missing** |
+| 62 | CaptionsItemsMenu | patch | HuddleActivity | missing | huddleui | **missing** |
+| 63 | HuddleMetaEvent | patch | HuddleActivity | huddleui/captions_panel.go:`logRow` → `metaEvent` | huddleui | drawn |
+| 64 | HuddleBaseEvent | patch | HuddleActivity | huddleui/captions_panel.go:`baseEvent` | huddleui | drawn |
+| 65 | HuddlesAlertBannerBase | patch | HuddleActivity | huddleui/captions.go:`layoutBanner` (alert banners: `informational_user_was_muted`) | huddleui | drawn |
 | 66 | Tabs | patch | settings (Preferences) | prefs_modal.go:`prefsModal` (+ `prefsNav`) | shell | drawn, fixed sections |
 | 67 | MenuFromTemplate | patch + elements | AccountSwitcher, AdminBackend, Nicknames; menu.Menu | popups/menu.go:`Menu` (`NewMenu`, `MenuItem`) | pop | drawn |
 | 68 | MenuTrigger | elements | menu.Menu (CopyReacted, Experiments) | popups/menu.go:`NewMenuOpts` (anchor) | pop | drawn |
@@ -409,13 +409,13 @@ Taut's own infra patches these at module load, so its patches sit innermost (app
 
 ### 1.9 Huddles (HuddleActivity only)
 
-Clack has no huddle call window, event log, captions menu, or alert banners. views/huddles.go:`Huddles` is a list page, and the header "Huddle" button toasts "not supported". Every name below is **missing**. The owner is **views**, or ui-shell for the call window.
+The native huddle (internal/huddle, internal/ui/huddleui) keeps Slack's event log, and the huddle window shows it in its Captions panel while `huddleEvents.isSideBySideEnabled` (huddleui/captions_panel.go, eventlog.go); its alert banner is HuddlesAlertBannerBase. The captions menus aren't patch points yet. The owner is **huddleui**.
 
 - **CaptionsSubmenu**, **CaptionsItemsMenu** P/HuddleActivity.tsx:190-198 (loop `for name of ['CaptionsSubmenu','CaptionsItemsMenu']`). No props read. StateView wrap restoring the real `huddleEvents.isSideBySideEnabled`.
 - **HuddleMetaEvent** :251-259. Reads `event: {type, timestampMs, tautNote?}` and adds a `tautNote` prop. Plugin entries `{type:'JOIN', memberId, timestampMs, tautNote}` are merged into `state.huddleEvents.events`.
 - **HuddleBaseEvent** :260-273. Reads `tautNote` (stripped before rendering) and `children`. With a note, it replaces the children with `<span.p-huddle_event_log__meta_text>` holding the note parts.
 - **HuddlesAlertBannerBase** :276-299. Reads `bannerName` (`'informational_user_was_muted'`) and `children`, plus `state.alert.alerts[{type:'peerMuteRequest'}]`. Replaces the children with `<b><Name/> muted you.</b>`.
-- It also dispatches and patches the thunk `enqueueHuddleToast` with `{content: ReactNode, svgIconProps: {name}, duration: 5000, huddleToastType}`, so the huddle toast must accept **ReactNode content**.
+- It also dispatches and patches the thunk `enqueueHuddleToast` with `{content: ReactNode, svgIconProps: {name}, duration: 5000, huddleToastType}`. Clack's toast is text: a React element is rendered once, off-screen, for its text as the thunk's arguments cross into Go (`NATIVE_ARGS`, taut/js 03_redux.js).
 
 ### 1.10 Menus
 

@@ -61,6 +61,9 @@ func mlEditDiff(t *testing.T, dark bool, mode string) {
 		s.SetLatest(ch, []slack.Message{{Type: "message", TS: ts, User: "UBOB", Text: mlOld}}, false)
 	})
 	e.h.th = theme.New(dark)
+	// slackc's theme is the app's (slackc_wire.go): what plugin colors composite over
+	slackc.Init(slackc.Env{Theme: e.h.th, Core: e.app, Invalidate: func() {}})
+	t.Cleanup(func() { slackc.Init(slackc.Env{}) })
 	e.install(t, "MessageLogger", nil)
 	patched(t, "MessageWrapper", "MessageText", "Blocks")
 	v := NewChannelView(e.h, ch)

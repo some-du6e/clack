@@ -23,7 +23,10 @@ var frameMu sync.Mutex
 func LockFrame()   { frameMu.Lock() }
 func UnlockFrame() { frameMu.Unlock() }
 
-var subFrame bool
+var (
+	subFrame bool
+	subBg    color.NRGBA // the secondary window's background (SubFrameBg; zero: the theme's)
+)
 
 // SubFrame starts a secondary window's frame (call it with the frame lock
 // held): the element stack starts at that window's root element (classes,
@@ -32,10 +35,18 @@ var subFrame bool
 // callbacks stay queued for the main window. The returned func restores
 // the main window's state.
 func SubFrame(gtx layout.Context, classes string, fg color.NRGBA) (restore func()) {
-	saved, savedSize := stack, windowSize
+	return SubFrameBg(gtx, classes, fg, color.NRGBA{})
+}
+
+// SubFrameBg is SubFrame for a window whose background isn't the theme's
+// (the huddle window's dark frame): translucent plugin colors composite
+// over bg (srgb.go).
+func SubFrameBg(gtx layout.Context, classes string, fg, bg color.NRGBA) (restore func()) {
+	saved, savedSize, savedBg := stack, windowSize, subBg
+	subBg = bg
 	st := css.Initial(fg)
 	root := &docEl{tag: "div", class: strings.Fields(classes)}
 	stack = append(make([]stackEntry, 0, 8), stackEntry{el: root, style: &st, key: mix(hstr(fnvOff, classes) ^ uint64(fg.R)<<16 ^ uint64(fg.G)<<8 ^ uint64(fg.B))})
 	windowSize, subFrame = gtx.Constraints.Max, true
-	return func() { stack, windowSize, subFrame = saved, savedSize, false }
+	return func() { stack, windowSize, subFrame, subBg = saved, savedSize, false, savedBg }
 }

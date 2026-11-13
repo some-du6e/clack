@@ -33,6 +33,9 @@ func (p *painter) underColor() color.NRGBA {
 	if p.uset {
 		return p.under
 	}
+	if subFrame && subBg.A == 0xff {
+		return subBg
+	}
 	if th := env().Theme; th != nil && th.C.Bg.A == 0xff {
 		return th.C.Bg
 	}

@@ -191,7 +191,7 @@ func (w *window) run() {
 			// Slack's huddle components here are plugin patch points
 			// (slackc), shared with the main window: one frame at a time.
 			slackc.LockFrame()
-			restore := slackc.SubFrame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
+			restore := slackc.SubFrameBg(gtx, "p-multi_view_window p-huddle_window", hudWhite, hudFrame)
 			w.layout(gtx)
 			restore()
 			slackc.UnlockFrame()
