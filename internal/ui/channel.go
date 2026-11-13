@@ -822,6 +822,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		if clicked(btn) {
 			a.selectChannelTab(ch, i, t)
 		}
+		a.tabCtx(gtx, ch, t, image.Rect(x, 0, x+w, sz.Y)) // the tab's right-click menu (files_tab_more.go)
 		x += w + gtx.Dp(4)
 	}
 	if ci := a.model().conv(ch); ci != nil && ci.Preview {

@@ -91,6 +91,12 @@ type actForward struct {
 	copyLink bool
 	copied   bool // Copy Link's "Copied!" until its tooltip hides
 	hov      int  // the suggestion under the pointer last frame (-1 none)
+
+	// file is set for a file's share dialog (share_file.go): one
+	// destination, the file preview and its access line
+	file         *ShareFileOpts
+	overview     core.FileOverview
+	overviewDone bool
 }
 
 // Experiments the share dialog reads (jdUv, O2By jv).
@@ -197,6 +203,9 @@ func (f *actForward) canGo() bool { return len(f.chips) > 0 }
 // forwarding "Forward this message" from a public channel, else
 // "Forward this private message".
 func (f *actForward) title() string {
+	if f.file != nil {
+		return nsShare.T("Share this file") // e3 for a file
+	}
 	if !privateForwarding(f.h.Core()) {
 		return nsShare.T("Share this message")
 	}
@@ -215,6 +224,9 @@ func (f *actForward) title() string {
 func (f *actForward) copyTip() string {
 	if f.copied {
 		return nsShare.T("Copied!")
+	}
+	if f.file != nil {
+		return nsShare.T("You can also copy a link to this file. To share, paste it in any channel or conversation.")
 	}
 	if privateForwarding(f.h.Core()) {
 		return nsShare.T("You can also copy a link to this message. To forward, paste it in any channel or conversation.")
@@ -611,6 +623,9 @@ func (f *actForward) pick(i int) {
 		return
 	}
 	t := &f.all[f.match[i]]
+	if f.file != nil {
+		f.chips = f.chips[:0] // a file goes to one conversation (selectedChannelId)
+	}
 	if !f.chosen(t.id) {
 		f.chips = append(f.chips, &actFwdChip{t: t})
 	}
@@ -747,6 +762,10 @@ func (f *actForward) layout(gtx layout.Context) layout.Dimensions {
 	y += dp(gtx, 16)
 	y += put(func(gtx layout.Context) layout.Dimensions { return f.noteField(gtx, th, cl) })
 	y += dp(gtx, 16)
+	if f.file != nil {
+		y += put(func(gtx layout.Context) layout.Dimensions { return f.filePreview(gtx, th, cl) })
+		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 4))}
+	}
 	y += put(func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, f.h, f.m, false) })
 	return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 4))}
 }

@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"gioui.org/io/clipboard"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -105,9 +106,11 @@ func (b *cfLinkBrowser) hasMore() bool { return b.pages > 1 && b.page < b.pages 
 
 // cfRowClicks are a row's widgets.
 type cfRowClicks struct {
-	row, download, menu, info widget.Clickable
-	menuSize                  image.Point
-	downloadTip, menuTip      popups.TipState
+	row, download, menu, info, share widget.Clickable
+	fc                               fileClicks // the star / section button (the Files view's)
+	menuSize, infoSize               image.Point
+	downloadTip, menuTip, infoTip    popups.TipState
+	shareTip, starTip                popups.TipState
 }
 
 // ChannelFiles is a channel's Files & links tab.
@@ -143,6 +146,11 @@ type ChannelFiles struct {
 	cells []cfCell // last frame's media cells (keyboard)
 	gridW int
 	seen  time.Time
+
+	sug       cfSuggest // the search's suggestions (channel_files_more.go)
+	gridColsN int       // the media grid's columns last frame
+	gridShown int       // the cells it drew (the strip: one row)
+	starsOnce bool
 }
 
 // cfCell is a media cell's place in the grid element.
@@ -156,7 +164,7 @@ type cfCell struct {
 // NewChannelFiles builds ch's Files & links tab.
 func NewChannelFiles(h Host, ch string) *ChannelFiles {
 	v := &ChannelFiles{base: newBase(h), fv: NewFiles(h), ch: ch, typ: cfAll, rows: map[string]*cfRowClicks{},
-		search: newSearchIn(nsTabbed, "Search")}
+		search: newSearchIn(nsTabbed, "Search"), sug: cfSuggest{sel: -1}}
 	v.media.sort, v.files.sort, v.links.sort = core.ChannelFilesNewest, core.ChannelFilesNewest, core.ChannelFilesNewest
 	v.kb = newVKList(&v.list)
 	return v
@@ -363,10 +371,34 @@ func (v *ChannelFiles) update(gtx C) {
 	if v.loadMore.Clicked(gtx) {
 		v.more()
 	}
+	if !v.starsOnce {
+		// the stars the hover group shows (FileStarred / FileCollectionOf)
+		v.starsOnce = true
+		if a := v.h.Core(); a != nil {
+			if a.FileSectionsOn() {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					_ = a.FetchFileCollections(ctx)
+					v.h.Invalidate()
+				}()
+			} else {
+				v.fv.loadStarred()
+			}
+		}
+	}
+	v.sugUpdate(gtx) // the suggestion list takes its keys before the box
 	if t, changed, submit := v.search.update(gtx); submit && t != "" {
+		v.sug.open = false
 		v.runSearch(t)
-	} else if changed && t == "" && v.query != "" {
-		v.resetSearch()
+	} else if changed {
+		v.sugChanged(gtx, t)
+		if t == "" && v.query != "" {
+			v.resetSearch()
+		}
+	}
+	if v.sug.open {
+		v.buildSuggestions()
 	}
 	// the rows' buttons sit inside the row, and Gio hands their clicks to
 	// the row too: the row acts only when none of them took it (Slack's
@@ -377,8 +409,15 @@ func (v *ChannelFiles) update(gtx C) {
 			continue
 		}
 		dl, menu := c.download.Clicked(gtx), c.menu.Clicked(gtx)
-		if c.row.Clicked(gtx) && !dl && !menu {
+		share, star := c.share.Clicked(gtx), c.fc.star.Clicked(gtx)
+		if c.row.Clicked(gtx) && !dl && !menu && !share && !star {
 			v.open(*it)
+		}
+		if share {
+			v.openShare(*it)
+		}
+		if star {
+			v.star(*it, v.fv.buttonRect(&c.fc.star, c.fc.starSize))
 		}
 		if ph, ok := v.h.(popups.Host); ok && dl {
 			popups.DownloadFile(ph, cfRich(it))
@@ -393,9 +432,12 @@ func (v *ChannelFiles) update(gtx C) {
 		if c == nil {
 			continue
 		}
-		menu := c.menu.Clicked(gtx)
-		if c.row.Clicked(gtx) && !menu {
+		menu, info := c.menu.Clicked(gtx), c.info.Clicked(gtx)
+		if c.row.Clicked(gtx) && !menu && !info {
 			v.openLink(l.URL)
+		}
+		if info {
+			v.openLinkDetails(l)
 		}
 		if menu {
 			v.openLinkMenu(l, v.fv.buttonRect(&c.menu, c.menuSize))
@@ -674,7 +716,7 @@ func (v *ChannelFiles) Layout(gtx C) D {
 	if v.preview { // no inputId: no ExplorerSearch
 		return layout.Inset{Top: 20}.Layout(gtx, v.results)
 	}
-	return layout.Inset{Top: 20}.Layout(gtx, func(gtx C) D {
+	d := layout.Inset{Top: 20}.Layout(gtx, func(gtx C) D {
 		return col(gtx,
 			layout.Rigid(func(gtx C) D {
 				// .p-explorer_search__container: 16 under; __content: at
@@ -686,6 +728,8 @@ func (v *ChannelFiles) Layout(gtx C) D {
 			layout.Flexed(1, v.results),
 		)
 	})
+	v.suggestions(gtx, gtx.Dp(20)+gtx.Dp(36)) // over the results, under the box
+	return d
 }
 
 // contained lays w out at p-explorer_results__contained-result's width:
@@ -724,7 +768,12 @@ func (v *ChannelFiles) results(gtx C) D {
 		}
 	}
 	v.kb.setItems(items)
-	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick})
+	extra := make([]key.Filter, 0, len(cfGridExtra))
+	for _, f := range cfGridExtra {
+		f.Focus = v.kb
+		extra = append(extra, f)
+	}
+	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick, Key: v.gridKey, Extra: extra})
 	v.kb.begin()
 	v.cells = v.cells[:0]
 	d := v.scrollList(gtx, &v.list, len(rows), func(gtx C, i int) D {
@@ -869,6 +918,7 @@ func (v *ChannelFiles) grid(gtx C, elem int, expanded bool) D {
 		n = min(n, cols)
 	}
 	nrows := (n + cols - 1) / cols
+	v.gridColsN, v.gridShown = cols, n
 	for i := 0; i < n; i++ {
 		it := &items[i]
 		x, y := (i%cols)*(cw+gap), (i/cols)*(ch+gap)
@@ -889,10 +939,6 @@ func (v *ChannelFiles) grid(gtx C, elem int, expanded bool) D {
 	}
 	return D{Size: image.Pt(w, h)}
 }
-
-// openMedia is the media cell's handleFileContainerClick: images in the
-// viewer, videos on their page (Clack has no video player).
-func (v *ChannelFiles) openMedia(it fileItem) { v.open(it) }
 
 // mediaCell is ExplorerGridMedia: the file card's preview (cover, radius
 // 12 at the cell's focus ring, base-ter under it), a play badge on
@@ -933,7 +979,7 @@ func (v *ChannelFiles) fileRow(gtx C, it *fileItem, first, last bool) D {
 	ring := v.kb.ringOn(it.ID)
 	return c.row.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
-		hover := c.row.Hovered() || c.menu.Hovered() || c.download.Hovered()
+		hover := c.row.Hovered() || c.menu.Hovered() || c.download.Hovered() || c.share.Hovered() || c.fc.star.Hovered()
 		bw := max(1, gtx.Dp(1))
 		w := gtx.Constraints.Max.X
 		inner := gtx.Dp(36)
@@ -1073,6 +1119,13 @@ func (v *ChannelFiles) fileActions(gtx C, c *cfRowClicks, it *fileItem, right, r
 	if dl {
 		n++
 	}
+	share, star := cfShareShown(it), v.starShown(it)
+	if share {
+		n++
+	}
+	if star {
+		n++
+	}
 	gw := 2*pad + n*bs
 	gh := 2*pad + bs
 	org := image.Pt(right-gw, (rowH-gh)/2)
@@ -1086,6 +1139,30 @@ func (v *ChannelFiles) fileActions(gtx C, c *cfRowClicks, it *fileItem, right, r
 		dirAt(gtx, image.Pt(x, org.Y+pad), func(gtx C) D {
 			d := v.actionButton(gtx, &c.download, "download")
 			popups.Tooltip(gtx, th, &c.downloadTip, c.download.Hovered(), d.Size, popups.Above, nsFile.T("Download"), "")
+			return d
+		})
+		x += bs
+	}
+	if share {
+		dirAt(gtx, image.Pt(x, org.Y+pad), func(gtx C) D {
+			d := v.actionButton(gtx, &c.share, "share-message")
+			popups.Tooltip(gtx, th, &c.shareTip, c.share.Hovered(), d.Size, popups.Above, cfShareLabel(), "")
+			return d
+		})
+		x += bs
+	}
+	if star {
+		dirAt(gtx, image.Pt(x, org.Y+pad), func(gtx C) D {
+			var d D
+			if v.fv.sectionButtonShown(it) {
+				d = v.fv.sectionButton(gtx, &c.fc, it)
+			} else {
+				d = v.starAction(gtx, &c.fc.star, v.h.Core().FileStarred(it.ID))
+			}
+			c.fc.starSize = d.Size
+			if tip := v.starTip(it); tip != "" {
+				popups.Tooltip(gtx, th, &c.starTip, c.fc.star.Hovered(), d.Size, popups.Above, tip, "")
+			}
 			return d
 		})
 		x += bs
@@ -1128,7 +1205,7 @@ func (v *ChannelFiles) linkRow(gtx C, l *core.ChannelLink, first, last bool) D {
 	primary, secondary := cfLinkLabels(l)
 	return c.row.Layout(gtx, func(gtx C) D {
 		pointerCursor(gtx)
-		hover := c.row.Hovered() || c.menu.Hovered()
+		hover := c.row.Hovered() || c.menu.Hovered() || c.info.Hovered()
 		bw := max(1, gtx.Dp(1))
 		w := gtx.Constraints.Max.X
 		// one height for every row: the list variant isn't isAutoHeight, so
@@ -1169,13 +1246,19 @@ func (v *ChannelFiles) linkRow(gtx C, l *core.ChannelLink, first, last bool) D {
 		if hover {
 			bs := gtx.Dp(28) // the Entity actions bar's smedium buttons
 			pad := gtx.Dp(4)
-			gw, gh := 2*pad+bs, 2*pad+bs
+			gw, gh := 2*pad+2*bs, 2*pad+bs
 			org := image.Pt(w-bw-gtx.Dp(12)-gw, (h-gh)/2)
 			r := image.Rectangle{Min: org, Max: org.Add(image.Pt(gw, gh))}
 			rrect(gtx, r, gtx.Dp(8), v.p.Surface)
 			border(gtx, r, gtx.Dp(8), max(1, gtx.Dp(1)), v.p.Ring)
 			th := v.h.Theme()
 			dirAt(gtx, org.Add(image.Pt(pad, pad)), func(gtx C) D {
+				d := v.iconButton(gtx, &c.info, "info", 28, 18, v.p.Sec)
+				c.infoSize = d.Size
+				popups.Tooltip(gtx, th, &c.infoTip, c.info.Hovered(), d.Size, popups.Above, nsExplorerLnk.T("View link details"), "")
+				return d
+			})
+			dirAt(gtx, org.Add(image.Pt(pad+bs, pad)), func(gtx C) D {
 				d := v.iconButton(gtx, &c.menu, "kebab", 28, 18, v.p.Sec)
 				c.menuSize = d.Size
 				popups.Tooltip(gtx, th, &c.menuTip, c.menu.Hovered(), d.Size, popups.Above, nsExplorerLnk.T("More actions"), "")
