@@ -33,6 +33,7 @@ type pfHost struct {
 	*cfHost
 	pinned    []string
 	bookmarks []string
+	listed    []string // AddMessageToList (folder_tab_more_test.go)
 }
 
 func (h *pfHost) OpenPinnedMessage(ch, ts, thread string) { h.pinned = append(h.pinned, ch+"/"+ts) }
@@ -88,6 +89,8 @@ func TestChannelPinsRows(t *testing.T) {
 	e := &vaEnv{size: image.Pt(1100, 900)}
 	pfDraw(e, h, v.Layout)
 	e.until(t, "the pins", func() bool { return v.Loaded() && len(v.Items()) == 4 })
+	// useCanEditTabs on Grid: the MANAGE_CHANNEL_TABS grant (permissions/info)
+	e.until(t, "the tab grant", func() bool { return app.CanEditTabs(fakeslack.PinsChannelID) })
 	e.frame()
 	var keys []string
 	for _, it := range v.Items() {
@@ -257,7 +260,7 @@ func TestPinsFoldersShots(t *testing.T) {
 		fe.frame()
 		vaShot(t, fe, "folder-delete-link", dark)
 		dismissAll(h.filesHost)
-		fv.addMenu(image.Rect(990, 20, 1018, 48))
+		fv.addMenu(image.Rect(990, 20, 1018, 48), "bottom")
 		fe.frame()
 		vaShot(t, fe, "folder-add-menu", dark)
 		dismissAll(h.filesHost)

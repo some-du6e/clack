@@ -250,6 +250,8 @@ var experimentReads = map[string][]string{
 	"thread_root_selected_state": on, "suggested_sections_auto_sort_v2": on, "suggested_sections_auto_sort_killswitch": on, "meeting_assistant": on,
 	"mpdm_naming": on, "sc_mpdm_naming": on, "mpdm_notifications_advanced_option": on, "silent_sidebar": on,
 	"channel_ia_header_refinements": on,
+	// bookmark folders' add menu (views/folder_tab_more.go: THeG, sUmX)
+	"unified_file_picker": on, "surfaces_skills_unipicker": on,
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
 	// the Activity badge's entry types (activity_badges.go)

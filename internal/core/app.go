@@ -149,6 +149,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.emit(Event{Type: "connection", Connected: up})
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
+			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
 			go a.refreshCounts(a.bg)
 		}
 	}

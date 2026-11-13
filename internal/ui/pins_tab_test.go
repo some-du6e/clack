@@ -130,6 +130,8 @@ func TestPinsTabLikeSlack(t *testing.T) {
 	e.until("the Pins view", 5*time.Second, func() bool { return e.a.pinsTabView(ch) != nil })
 	v := e.a.pinsTab(ch)
 	e.until("the pins", 10*time.Second, func() bool { e.frame(); return v.Loaded() && len(v.Items()) == 4 })
+	// useCanEditTabs on Grid: the MANAGE_CHANNEL_TABS grant (permissions/info)
+	e.until("the tab grant", 10*time.Second, func() bool { e.frame(); return e.a.Core().CanEditTabs(ch) })
 	items := v.Items()
 	var keys []string
 	for _, it := range items {
@@ -230,10 +232,10 @@ func TestFolderTabLikeSlack(t *testing.T) {
 	e.settle(500 * time.Millisecond) // the file's files.info, the favicon
 	pfShot(e, "folder-tab")
 	rows := v.Rows()
-	if got := strings.Join(v.RowMenuLabels(rows[0]), "|"); got != "Copy link|Edit link|─|Delete link" {
+	if got := strings.Join(v.RowMenuLabels(rows[0]), "|"); got != "Copy link|Edit link|─|Move to folder|─|Delete link" {
 		t.Errorf("link menu %q", got)
 	}
-	if got := strings.Join(v.RowMenuLabels(rows[3]), "|"); got != "Copy link|─|Remove file" {
+	if got := strings.Join(v.RowMenuLabels(rows[3]), "|"); got != "Copy link|─|Move to folder|─|Remove file" {
 		t.Errorf("file menu %q", got)
 	}
 
@@ -279,7 +281,8 @@ func TestFolderTabLikeSlack(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// the title, edited in place
+	// the title, edited in place (useCanEditTabs: the Grid grant)
+	e.until("the tab grant", 10*time.Second, func() bool { e.frame(); return e.a.Core().CanEditTabs(ch) })
 	v.StartTitleEdit()
 	e.frame()
 	v.SetTitleText("Design system")

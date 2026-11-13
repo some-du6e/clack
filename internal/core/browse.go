@@ -178,6 +178,9 @@ type Tab struct {
 	// FolderBookmarkID is a folder tab's data.folder_bookmark_id: the
 	// folder bookmark whose children it shows ("" the loose bookmarks).
 	FolderBookmarkID string
+	// AppID is a tab's data.app_id (an agent's own tab: the Channel
+	// Expert's knowledge folder).
+	AppID string
 }
 
 // MemberCounts is edge users/counts. Slack's channel header shows People.
@@ -871,6 +874,7 @@ type tabRaw struct {
 		FileID           string `json:"file_id"`
 		DefaultView      string `json:"lists_channel_tab_default_refine_view_id"`
 		FolderBookmarkID string `json:"folder_bookmark_id"`
+		AppID            string `json:"app_id"`
 	} `json:"data"`
 }
 
@@ -896,7 +900,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			continue
 		}
 		t := Tab{ID: r.ID, Type: r.Type, Label: r.Label, Title: r.Label, FileID: r.Data.FileID, DefaultView: r.Data.DefaultView,
-			FolderBookmarkID: r.Data.FolderBookmarkID}
+			FolderBookmarkID: r.Data.FolderBookmarkID, AppID: r.Data.AppID}
 		if n, ok := builtinTabIDTitles[r.ID]; ok {
 			t.Title = n
 		}
@@ -1041,8 +1045,10 @@ func (a *App) MemberCounts(ctx context.Context, ch string) (MemberCounts, error)
 // channelManagerRole is the role id of Slack's channel managers.
 const channelManagerRole = "Rl0A"
 
-// Managers lists a channel's managers ("Managed by"; via
-// admin.roles.entity.listAssignments).
+// Managers lists a channel's managers ("Managed by"):
+// fetchAndUpsertChannelManagers (evGV), admin.roles.entity.listAssignments
+// {entity_id, reason "fetch-channel-managers"}; the answer replaces the
+// channel managers store (setChannelManagers, channel_managers.go).
 func (a *App) Managers(ctx context.Context, ch string) ([]string, error) {
 	var res struct {
 		Assignments []struct {
@@ -1050,7 +1056,7 @@ func (a *App) Managers(ctx context.Context, ch string) ([]string, error) {
 			Users  []string `json:"users"`
 		} `json:"role_assignments"`
 	}
-	if err := a.C.Call(ctx, "admin.roles.entity.listAssignments", url.Values{"entity_id": {ch}}, &res); err != nil {
+	if err := a.C.Call(ctx, "admin.roles.entity.listAssignments", url.Values{"entity_id": {ch}, "reason": {"fetch-channel-managers"}}, &res); err != nil {
 		return nil, err
 	}
 	out := []string{}
@@ -1066,6 +1072,7 @@ func (a *App) Managers(ctx context.Context, ch string) ([]string, error) {
 			}
 		}
 	}
+	a.setChannelManagers(ch, out)
 	a.EnsureUsers(ctx, out)
 	return out, nil
 }

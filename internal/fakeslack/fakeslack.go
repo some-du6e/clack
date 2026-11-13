@@ -389,7 +389,8 @@ type Server struct {
 
 	// Permissions are permissions/info's answers by channel_id ("" for a
 	// request without one). nil: every broadcast permission is allowed,
-	// and without a channel Edit profile's UPDATE_NAME,
+	// MANAGE_CHANNEL_TABS for a channel, and without a channel Edit
+	// profile's UPDATE_NAME,
 	// UPDATE_DISPLAY_NAME and EDIT_PROFILE_PHOTO too.
 	// Set it before the calls.
 	Permissions map[string][]string
@@ -405,6 +406,13 @@ type Server struct {
 	// name (missing: {}, enabled). Set them before the calls.
 	TeamPrefs    map[string]any
 	ChannelPrefs map[string]map[string]any
+	// ChannelManagers are admin.roles.entity.listAssignments' channel
+	// managers (role Rl0A) by channel (missing: none). Set it before the
+	// calls.
+	ChannelManagers map[string][]string
+	// PinsFolderLimit refuses #pins-gallery's bookmarks.add past that many
+	// bookmarks (too_many_bookmarks); 0: no limit (pins_folders.go).
+	PinsFolderLimit int
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
@@ -1594,6 +1602,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			v = p
 		}
 		return ok("channel_id", ch, "pref_name", name, "pref_value", v)
+	case "admin.roles.entity.listAssignments":
+		var as []map[string]any
+		if us := s.ChannelManagers[f.Get("entity_id")]; len(us) > 0 {
+			as = append(as, map[string]any{"role_id": "Rl0A", "entity_id": f.Get("entity_id"), "users": us})
+		}
+		return ok("role_assignments", as)
 	case "team.info":
 		if f.Get("team") == ExternalTeamID {
 			return ok("team", map[string]any{"id": ExternalTeamID, "name": "Partner Co", "domain": "partnerco",
@@ -1734,6 +1748,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		var ch string
 		_ = json.Unmarshal(edge["channel_id"], &ch)
 		allowed := []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}
+		if ch != "" { // a Grid member manages a channel's tabs (useCanEditTabs' MANAGE_CHANNEL_TABS)
+			allowed = append(allowed, "MANAGE_CHANNEL_TABS")
+		}
 		if ch == "" { // the team's: Edit profile's grants (core/profile_grants.go)
 			allowed = append(allowed, "UPDATE_NAME", "UPDATE_DISPLAY_NAME", "EDIT_PROFILE_PHOTO")
 		}

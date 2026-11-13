@@ -13,8 +13,12 @@ package fakeslack
 //     link, an icon link, an untitled link, a file) and two loose links.
 //   - bookmarks.list / add / edit / remove / reorder answer from that
 //     state and push bookmark_added / bookmark_updated / bookmark_removed
-//     in the gateway's shape; conversations.updateTab and removeTab
-//     change the tabs. Each call is recorded (PinsFoldersForms).
+//     in the gateway's shape; a new folder (type folder, stored as
+//     local_folder) gets its folder tab, as Slack's server adds one;
+//     reorder takes the parent_id it is given (none: the loose
+//     bookmarks); conversations.updateTab and removeTab change the tabs.
+//     Each call is recorded (PinsFoldersForms). PinsFolderLimit (0: none)
+//     refuses adds past that many bookmarks with too_many_bookmarks.
 
 import (
 	"encoding/json"
@@ -180,6 +184,9 @@ func (s *Server) handlePinsFolders(method string, f url.Values) (any, bool) {
 		}
 		return nil, false
 	}
+	if method == "search.modules.files" && f.Get("search_context") == "desktop_files_browser" {
+		return s.pfSearchFiles(f), true
+	}
 	if ch != PinsChannelID {
 		return nil, false
 	}
@@ -218,11 +225,25 @@ func (s *Server) handlePinsFolders(method string, f url.Values) (any, bool) {
 		record()
 		st.mu.Lock()
 		st.seq++
+		typ := f.Get("type")
+		if typ == "folder" { // a folder is stored as a local_folder, with its tab
+			typ = "local_folder"
+		}
 		b := map[string]any{"id": fmt.Sprintf("Bk0PINSNEW%d", st.seq), "channel_id": ch, "title": f.Get("title"),
-			"link": f.Get("link"), "type": f.Get("type"), "parent_id": f.Get("parent_id"), "rank": "z" + strconv.Itoa(st.seq),
+			"link": f.Get("link"), "type": typ, "parent_id": f.Get("parent_id"), "rank": "z" + strconv.Itoa(st.seq),
 			"date_created": pinsBaseTS + 7200, "emoji": "", "icon_url": "", "entity_id": f.Get("entity_id")}
+		n := len(st.bms)
 		st.bms = append(st.bms, b)
 		st.mu.Unlock()
+		if n+1 > s.PinsFolderLimit && s.PinsFolderLimit > 0 {
+			st.mu.Lock()
+			st.bms = st.bms[:n]
+			st.mu.Unlock()
+			return map[string]any{"ok": false, "error": "too_many_bookmarks"}, true
+		}
+		if typ == "local_folder" {
+			s.pfAddFolderTab(fmt.Sprintf("Ct0PINSNEW%d", st.seq), f.Get("title"), b["id"].(string))
+		}
 		s.Push(bookmarkEvent("bookmark_added", b))
 		return ok("bookmark", b), true
 	case "bookmarks.edit":
@@ -284,9 +305,7 @@ func (s *Server) pfReorder(f url.Values) any {
 	}
 	center := st.bms[ci]
 	center["rank"] = rankBetween(rank(f.Get("left")), rank(f.Get("right")))
-	if p := f.Get("parent_id"); p != "" {
-		center["parent_id"] = p
-	}
+	center["parent_id"] = f.Get("parent_id") // none: the channel's loose bookmarks (a move out of a folder)
 	out := map[string]any{}
 	for k, v := range center {
 		out[k] = v
@@ -323,6 +342,26 @@ func rankBetween(lo, hi string) string {
 	}
 }
 
+// pfAddFolderTab is the folder tab Slack's server adds for a new folder.
+func (s *Server) pfAddFolderTab(id, label, folder string) {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	for i := range s.convs {
+		if s.convs[i].ID != PinsChannelID {
+			continue
+		}
+		var p map[string][]map[string]any
+		if json.Unmarshal(s.convs[i].Properties, &p) != nil {
+			return
+		}
+		t := map[string]any{"id": id, "type": "folder", "label": label, "data": map[string]any{"folder_bookmark_id": folder}}
+		for _, k := range []string{"tabs", "tabz"} {
+			p[k] = append(p[k], t)
+		}
+		s.convs[i].Properties, _ = json.Marshal(p)
+	}
+}
+
 // pfTabs applies conversations.updateTab (a label) or removeTab to the
 // channel's tabs.
 func (s *Server) pfTabs(method string, f url.Values) {
@@ -353,4 +392,48 @@ func (s *Server) pfTabs(method string, f url.Values) {
 		}
 		s.convs[i].Properties, _ = json.Marshal(p)
 	}
+}
+
+// pfSearchFiles answers the unified files explorer (the folder's file
+// picker) with #pins-gallery's two files: the type: modifiers keep the
+// csv for spreadsheets and the pdf for pdfs (both for the whole set), the
+// rest of the query matches their titles. Recorded as
+// "search.modules.files".
+func (s *Server) pfSearchFiles(f url.Values) any {
+	st := s.pf()
+	st.mu.Lock()
+	st.forms["search.modules.files"] = append(st.forms["search.modules.files"], f)
+	st.mu.Unlock()
+	types := map[string]bool{}
+	var words []string
+	for _, w := range strings.Fields(f.Get("query")) {
+		if t, ok := strings.CutPrefix(w, "type:"); ok {
+			types[t] = true
+			continue
+		}
+		if strings.HasPrefix(w, "creator:") {
+			continue
+		}
+		words = append(words, strings.ToLower(w))
+	}
+	var items []slack.File
+	for _, fl := range []slack.File{s.pinsFile(PinsFileID), s.pinsFile(PinsDocFileID)} {
+		kind := "pdfs"
+		if fl.Filetype == "csv" {
+			kind = "spreadsheets"
+		}
+		if !types[kind] {
+			continue
+		}
+		match := true
+		for _, w := range words {
+			if !strings.Contains(strings.ToLower(fl.Title), w) {
+				match = false
+			}
+		}
+		if match {
+			items = append(items, fl)
+		}
+	}
+	return ok("items", items, "pagination", map[string]any{"page": 1, "page_count": 1, "total_count": len(items)})
 }

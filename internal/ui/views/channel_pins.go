@@ -27,7 +27,10 @@ package views
 //     seconds), the body, files, attachments and reactions, and
 //     MessageActions (container channel-tab-pins-peek, no quick
 //     reactions) at .p-pinned_message__actions (top 32, right −6 around
-//     the toolbar's own −16 / 17). A file is PinsListFile (JIpU: a compact
+//     the toolbar's own −16 / 17): Add reaction…, Reply in thread,
+//     Forward, the to-do action, Add to list… (boot-shared 6r+G, the
+//     message list's same action: the list-add icon, "Add to list…" from
+//     the lists namespace, the Add to list dialog) and More actions. A file is PinsListFile (JIpU: a compact
 //     Entity, the file's icon thumbnail, its name and "Shared by {name}
 //     on {date}") in .entityContainer__UP6hi.
 //   - onItemClick: a message runs openPinnedItem (Sezs: the message's
@@ -44,8 +47,10 @@ package views
 //     (.emptyContainer__HG5fM: centred, 8 apart, 32 in; the title
 //     .emptyHeading__p458z 18px Black), else the rows' total height.
 //
-// Not ported: privacy blur (privacyBlurredRow, the viewer's blur pref) and
-// the toolbar's Add to list… button.
+// Privacy blur (privacyBlurredRow, privacyBlurredContent) is drawn only
+// while privacy mode is active (fAaS QJ: the privacy_mode experiment "on"
+// and Toggle Privacy Mode's store); the account isn't in privacy_mode, so
+// Slack never blurs these rows for it and Clack has no privacy mode.
 
 import (
 	"context"
@@ -79,6 +84,12 @@ type PinOpener interface {
 	OpenPinnedMessage(ch, ts, threadTS string)
 }
 
+// ListAdder is optionally implemented by the Host: a message's "Add to
+// list…" dialog (createActionAddToList, AddToListDialog).
+type ListAdder interface {
+	AddMessageToList(m core.Message)
+}
+
 // cpRow is one pin row's widgets.
 type cpRow struct {
 	row     widget.Clickable
@@ -95,6 +106,7 @@ const (
 	cpTbReply
 	cpTbForward
 	cpTbTodo
+	cpTbList
 	cpTbMore
 	cpTbCount
 )
@@ -306,6 +318,10 @@ func (v *ChannelPins) toolbar(it core.PinsTabItem, b int, btn image.Rectangle) {
 		ph.ShowOverlay(popups.NewForwardModal(ph, m))
 	case cpTbTodo:
 		popups.RunTodoAction(ph, m)
+	case cpTbList:
+		if la, ok := v.h.(ListAdder); ok {
+			la.AddMessageToList(m)
+		}
 	case cpTbMore:
 		v.h.OpenMessageMenu(at, m)
 	}
@@ -607,7 +623,7 @@ func (v *ChannelPins) message(gtx C, it core.PinsTabItem, last bool) D {
 // actions is the pinned message's MessageActions: the hover group (4px
 // padded, radius 12, the .13 ring and shadow) 16 down and 11 in from the
 // card's top right: Add reaction, Reply in thread, Forward, the to-do
-// action, More actions.
+// action, Add to list…, More actions.
 func (v *ChannelPins) actions(gtx C, r *cpRow, it core.PinsTabItem, sz image.Point) {
 	bs, pad := gtx.Dp(32), gtx.Dp(4)
 	gw, gh := 2*pad+cpTbCount*bs, 2*pad+bs
@@ -618,9 +634,9 @@ func (v *ChannelPins) actions(gtx C, r *cpRow, it core.PinsTabItem, sz image.Poi
 	border(gtx, box, gtx.Dp(12), max(1, gtx.Dp(1)), v.p.Ring)
 	th := v.h.Theme()
 	todo := popups.TodoActionFor(v.h.Core(), it.Msg)
-	icons := [cpTbCount]string{"add-reaction", "comment-lines", "forward-msg", todo.HoverIcon, "kebab"}
+	icons := [cpTbCount]string{"add-reaction", "comment-lines", "forward-msg", todo.HoverIcon, "list-add", "kebab"}
 	tips := [cpTbCount]string{nsMessage.T("Add reaction…"), nsMessage.T("Reply in thread"), nsMessage.T("Forward message…"),
-		todo.Label, nsMessage.T("More actions")}
+		todo.Label, nsLists.T("Add to list…"), nsMessage.T("More actions")}
 	if sa, ok := popups.ShareAction(v.h.Core(), it.Msg, false); ok {
 		tips[cpTbForward] = sa.Label
 	}

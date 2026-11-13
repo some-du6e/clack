@@ -252,6 +252,26 @@ func (m *Modal) press(b *ModalButton) {
 	}
 }
 
+// Title is the modal's title (tests).
+func (m *Modal) Title() string {
+	if m.o.TitleFunc != nil {
+		return m.o.TitleFunc()
+	}
+	return m.o.Title
+}
+
+// Press presses the footer button labelled label, as a click does (tests);
+// false when there is none.
+func (m *Modal) Press(label string) bool {
+	for _, b := range m.o.Buttons {
+		if b.Label == label {
+			m.press(b)
+			return true
+		}
+	}
+	return false
+}
+
 // Dismiss closes the modal, unless CloseGuard keeps it open.
 func (m *Modal) Dismiss() {
 	if m.o.CloseGuard != nil && !m.done && !m.o.CloseGuard() {

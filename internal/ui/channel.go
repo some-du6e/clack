@@ -81,8 +81,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), v.Layout)
 		return layout.Dimensions{Size: sz}
 	}
-	if v := a.folderTabView(ch); v != nil { // a bookmark folder (pins_tab.go)
-		atExact(gtx, body.Min, body.Size(), v.Layout)
+	if t, ok := a.selectedTab(ch); ok && isFolderTab(t) { // a bookmark folder with its FileDragDrop (drop_folder.go)
+		atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
+			return a.layoutFolderTab(gtx, ch, t, a.primaryOrigin.Add(body.Min))
+		})
 		return layout.Dimensions{Size: sz}
 	}
 	cv := a.convoFor(ch, "")
@@ -643,6 +645,7 @@ type chTab struct {
 	typ              string // Slack's tab type (core.Tab.Type): files, canvas, list, …
 	fileID           string
 	folder           string // a folder tab's data.folder_bookmark_id
+	appID            string // the tab's data.app_id (the Channel Expert's folder)
 	unread           bool   // Slack's blue dot on the tab icon (unopened canvas)
 	// a list tab's default view (core.Tab DefaultView) and its name;
 	// labeled when the tab has a label of its own (useTabLabel then shows

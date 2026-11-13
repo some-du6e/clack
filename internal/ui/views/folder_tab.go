@@ -34,15 +34,17 @@ package views
 //     or the file).
 //   - More actions (FolderListBookmarkMenu): Copy link ("Link copied to
 //     clipboard"), and when the viewer may post: Edit link (links: the Add
-//     link modal titled "Edit link"), a separator, Delete link / Remove
-//     file (danger: DeleteBookmarkModal).
+//     link modal titled "Edit link"), a separator, Move to folder ▸
+//     (folder_tab_more.go), a separator, Delete link / Remove file (danger:
+//     DeleteBookmarkModal).
 //   - Reorder (FolderListDraggableBookmark) when the viewer may post: a
 //     row dragged onto another shows the drop line (2px base-inv-hgl-1,
 //     radius 4, 2 in, at the target's top when moving up, its bottom when
 //     moving down; the dragged row at .5 opacity) and drops into its
 //     place (core.ReorderFolderBookmark: onReorderBookmarkInFolder).
 //   - Empty: the header, then .emptyContainer__GsJVK (centred, 4 apart,
-//     15vh above and below) with FolderTabEmptyFolder's EmptyState: "Add
+//     15vh above and below) with the empty folder's picture
+//     (folder_tab_more.go) and FolderTabEmptyFolder's EmptyState: "Add
 //     files and links to reference later", "Everyone in {channelName} will
 //     have access to what you add here." and the add button.
 //   - The peek (FolderTabPeek, boot-shared q5Cv): the rows without header
@@ -57,11 +59,9 @@ package views
 //     organized." 13px in content-sec, then the "Add" button), else 63
 //     per row.
 //
-// Not ported: the add menu's Canvas, List, File, Upload file and Google
-// Drive items (Link only), the row menu's Move to folder, dropping files
-// onto the view, the empty state's picture, the channel knowledge
-// folder's variant, the folder peek's megaphone banner, and the
-// workflows-in-folder alert's banner art.
+// The add menu, Move to folder, uploads and drops, and the empty state's
+// picture are folder_tab_more.go. Not ported: the folder peek's megaphone
+// banner and the workflows-in-folder alert's banner art.
 
 import (
 	"context"
@@ -110,6 +110,7 @@ type BookmarkOpener interface {
 type FolderTabInfo struct {
 	ID, Label string
 	FolderID  string // data.folder_bookmark_id ("" the loose bookmarks)
+	AppID     string // data.app_id (the Channel Expert's folder: folder_tab_more.go)
 }
 
 type ftRow struct {
@@ -137,6 +138,7 @@ type FolderTab struct {
 
 	all          []core.Bookmark
 	items        []core.Bookmark
+	pending      []core.PendingFolderFile // FILES_UPLOADING rows (folder_tab_more.go)
 	loaded       bool
 	hasWorkflows bool
 
@@ -212,6 +214,7 @@ func (v *FolderTab) refresh() {
 	}
 	v.all, v.loaded = c.ChannelBookmarks(v.ch)
 	v.items, v.hasWorkflows = core.FolderRows(v.all, v.tab.FolderID)
+	v.pending = c.FolderUploads(v.ch, v.tab.FolderID)
 	if v.dragID != "" && v.dragTo >= 0 {
 		return
 	}
@@ -340,13 +343,12 @@ func (v *FolderTab) openAddLink() {
 }
 
 // addMenu is FolderCreateMenu's menu (200 wide, below the button).
-func (v *FolderTab) addMenu(btn image.Rectangle) {
+func (v *FolderTab) addMenu(btn image.Rectangle, pos string) {
 	ph, ok := v.popupHost()
 	if !ok {
 		return
 	}
-	items := []popups.MenuItem{{Key: "link", Label: nsTabbed.T("Link"), Icon: "link", Do: v.openAddLink}}
-	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: btn, Width: 200, Popover: "bottom"}))
+	ph.ShowOverlay(popups.NewMenuOpts(ph, v.AddMenuItems(), popups.MenuOpts{Anchor: btn, Width: 200, Popover: pos}))
 }
 
 // folderMenu is More folder actions: Rename folder, Delete folder.
@@ -450,7 +452,8 @@ func (v *FolderTab) rowMenuItems(b core.Bookmark) []popups.MenuItem {
 	if b.Type == "file" {
 		del = nsTabbed.T("Remove file")
 	}
-	return append(items, popups.Sep(), popups.MenuItem{Key: "delete", Label: del, Danger: true, Do: func() { v.openDelete(b) }})
+	return append(items, popups.Sep(), v.MoveMenu(b), popups.Sep(), // Move to folder (folder_tab_more.go)
+		popups.MenuItem{Key: "delete", Label: del, Danger: true, Do: func() { v.openDelete(b) }})
 }
 
 func (v *FolderTab) openRowMenu(b core.Bookmark, btn image.Rectangle) {
@@ -531,12 +534,14 @@ func (v *FolderTab) drop(id string, to int) {
 }
 
 func (v *FolderTab) update(gtx C) {
-	if v.addBtn.Clicked(gtx) {
-		if v.preview {
-			v.openAddLink()
-		} else {
-			v.addMenu(v.fv.buttonRect(&v.addBtn, v.addSize))
+	if v.addBtn.Clicked(gtx) && !v.kaLocked() { // disableAdd
+		// FolderCreateMenu's menu: below the header's button, bottom-left
+		// of the empty state's (and the peek's "Add")
+		pos := "bottom"
+		if v.preview || v.loaded && len(v.items) == 0 && len(v.pending) == 0 {
+			pos = "bottom-left"
 		}
+		v.addMenu(v.fv.buttonRect(&v.addBtn, v.addSize), pos)
 	}
 	if v.moreBtn.Clicked(gtx) {
 		v.folderMenu(v.fv.buttonRect(&v.moreBtn, v.moreSize))
@@ -657,7 +662,7 @@ func (v *FolderTab) Layout(gtx C) D {
 				}),
 			)
 		}
-		if len(v.items) == 0 {
+		if len(v.items) == 0 && len(v.pending) == 0 { // useFolderRows' isEmpty: no rows, no uploads
 			return col(gtx,
 				layout.Rigid(func(gtx C) D { return v.contained(gtx, v.header) }),
 				layout.Flexed(1, v.emptyTab),
@@ -692,7 +697,7 @@ func (v *FolderTab) header(gtx C) D {
 	// the right side: the add button, More folder actions (4 apart)
 	right := w
 	bs := gtx.Dp(28)
-	if v.canEditTabs() {
+	if v.canEditTabs() && !v.kaLocked() { // disableActions (folder_tab_more.go)
 		right -= bs
 		dirAt(gtx, image.Pt(right, (h-bs)/2), func(gtx C) D {
 			d := v.outlinedIcon(gtx, &v.moreBtn, "ellipsis-vertical-filled", bs)
@@ -702,7 +707,11 @@ func (v *FolderTab) header(gtx C) D {
 		})
 		right -= gtx.Dp(4)
 	}
-	if v.canPost() {
+	if v.canPost() && v.knowledge() { // the Channel Expert's "Add Source" (folder_tab_more.go)
+		bw := v.kaAddWidth(gtx)
+		right -= bw
+		dirAt(gtx, image.Pt(right, (h-bs)/2), func(gtx C) D { return v.kaAddButton(gtx) })
+	} else if v.canPost() {
 		right -= bs
 		dirAt(gtx, image.Pt(right, (h-bs)/2), func(gtx C) D {
 			d := v.greenPlus(gtx, &v.addBtn, bs)
@@ -724,7 +733,7 @@ func (v *FolderTab) header(gtx C) D {
 				return v.th.Editor(gtx, &v.titleEd, 22, v.p.Text, v.p.SelBg)
 			})
 		})
-	} else if v.canEditTabs() {
+	} else if v.canEditTabs() && !v.kaLocked() { // disableEdit
 		dirAt(gtx, image.Pt(tx-gtx.Dp(8)+gtx.Dp(4), 0), func(gtx C) D {
 			return v.titleBtn.Layout(gtx, func(gtx C) D {
 				pointerCursor(gtx)
@@ -837,6 +846,11 @@ func (v *FolderTab) emptyTab(gtx C) D {
 	}
 	title := nsTabbed.T("Add files and links to reference later")
 	desc := nsTabbed.T("Everyone in {channelName} will have access to what you add here.", "channelName", "#"+v.channelName())
+	if v.knowledge() { // aTvS's empty state
+		title = nsTabbed.T("Add trusted sources for the agent")
+		desc = nsTabbed.T("The Channel Expert will use the sources you add here to generate replies.")
+		v.kaFooter(gtx, sz)
+	}
 	tw := min(sz.X-gtx.Dp(32), gtx.Dp(480))
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(tw, sz.Y)}
@@ -846,6 +860,7 @@ func (v *FolderTab) emptyTab(gtx C) D {
 	m2 := op.Record(gtx.Ops)
 	t2 := v.th.Layout(g, theme.TextStyle{Size: 15, LineHeight: 22, Weight: wReg, Color: v.p.Text, Align: text.Middle}, desc)
 	c2 := m2.Stop()
+	y += v.emptyFolderPicture(gtx, sz.X/2, y) + gtx.Dp(4) // the picture, 4 above the empty state (folder_tab_more.go)
 	func() {
 		defer op.Offset(image.Pt((sz.X-t1.Size.X)/2, y)).Push(gtx.Ops).Pop()
 		c1.Add(gtx.Ops)
@@ -856,7 +871,9 @@ func (v *FolderTab) emptyTab(gtx C) D {
 		c2.Add(gtx.Ops)
 	}()
 	y += t2.Size.Y + gtx.Dp(16)
-	if v.canPost() {
+	if v.canPost() && v.knowledge() {
+		dirAt(gtx, image.Pt((sz.X-v.kaAddWidth(gtx))/2, y), func(gtx C) D { return v.kaAddButton(gtx) })
+	} else if v.canPost() {
 		bs := gtx.Dp(28)
 		dirAt(gtx, image.Pt((sz.X-bs)/2, y), func(gtx C) D {
 			d := v.greenPlus(gtx, &v.addBtn, bs)
@@ -879,8 +896,18 @@ func (v *FolderTab) results(gtx C) D {
 	v.kb.setItems(v.kbItems())
 	v.kb.update(gtx, gtx.Constraints.Max.Y, vkOpts{Click: v.kbClick})
 	v.kb.begin()
-	n := len(v.items)
+	n := len(v.items) + len(v.pending)
 	d := v.scrollList(gtx, &v.list, n, func(gtx C, i int) D {
+		if i >= len(v.items) { // the uploads after the rows (FILES_UPLOADING)
+			p := v.pending[i-len(v.items)]
+			return v.contained(gtx, func(gtx C) D {
+				d := v.pendingRow(gtx, p, i, n)
+				if i == n-1 {
+					d.Size.Y += gtx.Dp(32)
+				}
+				return d
+			})
+		}
 		b := v.items[i]
 		return v.kb.elem(i, v.contained(gtx, func(gtx C) D {
 			d := v.row(gtx, b, i, n)

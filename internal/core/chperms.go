@@ -41,7 +41,10 @@ const ExpRestrictTopicPurpose = "channel_topic_purpose_setting_restrict_to_chann
 // way the header's topic and the details' Topic and Description read them
 // together, and About's "Send emails to this channel" grant
 // (showChannelEmailAddress, chdetails_email.go).
-var chPermSet = []string{PermSetChannelTopic, PermSetChannelPurpose, PermCreateChannelEmailAddresses}
+// The tabs' check (useCanEditTabs, channel_managers.go) reads
+// MANAGE_CHANNEL_TABS and ASSIGN_CHANNEL_MANAGER from the same store.
+var chPermSet = []string{PermSetChannelTopic, PermSetChannelPurpose, PermCreateChannelEmailAddresses,
+	PermManageChannelTabs, PermAssignChannelManager}
 
 const chPermMaxAge = time.Hour
 
@@ -74,6 +77,14 @@ func (a *App) ChannelGrant(ch, perm string) bool {
 	if ch == "" {
 		return false
 	}
+	return a.grant(ch, perm)
+}
+
+// TeamGrant is getPermissionForAnyWorkspace(perm).isAllowed (QaSy yI)
+// the same way: permissions/info without a channel.
+func (a *App) TeamGrant(perm string) bool { return a.grant("", perm) }
+
+func (a *App) grant(ch, perm string) bool {
 	pc := a.chPerms()
 	pc.mu.Lock()
 	e, ok := pc.m[ch]
@@ -106,7 +117,7 @@ func (a *App) loadChannelGrants(ctx context.Context, ch string) {
 // fetchChannelGrants is fetchPermissions({channelId, permissions}).
 func (a *App) fetchChannelGrants(ctx context.Context, ch string) (map[string]bool, error) {
 	body := map[string]any{"user_id": a.S.SelfID(), "permissions": chPermSet}
-	if a.kindOf(ch) != "im" { // Slack leaves channel_id off for a 1:1 DM (aK5v LI)
+	if ch != "" && a.kindOf(ch) != "im" { // Slack leaves channel_id off for a 1:1 DM (aK5v LI)
 		body["channel_id"] = ch
 	}
 	var r struct {

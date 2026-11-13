@@ -53,6 +53,7 @@ var defaultSidebarExp = sidebarExp{filterDormant: true, improveMute: true, dmRec
 // experiments (rail.go).
 var defaultExperimentGroups = map[string]string{
 	"filter_dormant_channels": "on", "improve_mute_pref": "on", "dm_recency_sort_rollout": "without_edu",
+	"unified_file_picker": "on", // the folders' add menu (views/folder_tab_more.go), the account's group of 2026-11-13
 	// search and the switcher, as experiments.getByUser had them on
 	// 2026-11-10 (docs/EXPERIMENTS.md); the recents experiments only
 	// matter once Slack's own answer is in

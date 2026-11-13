@@ -133,7 +133,7 @@ func (m *Menu) menuTemplate(items []MenuItem) []any {
 				e["type"] = "checkbox"
 				e["checked"] = true
 			}
-			if len(it.Sub) > 0 {
+			if len(it.Sub) > 0 || it.SubCaret {
 				e["type"] = "submenu"
 				e["template"] = m.menuTemplate(it.Sub)
 			}
@@ -240,6 +240,7 @@ func menuFromTemplate(th *theme.Theme, list []any, base []MenuItem) []MenuItem {
 				bs = base[bi].Sub
 			}
 			it.Sub = menuFromTemplate(th, sub, bs)
+			it.SubCaret = typ == "submenu" && len(it.Sub) == 0
 		}
 		switch f := e["click"].(type) {
 		case slackc.JSFunc:

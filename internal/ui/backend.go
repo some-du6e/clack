@@ -818,8 +818,8 @@ func (b *backend) opened(ch string) {
 				continue
 			}
 			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread,
-				folder: t.FolderBookmarkID,
-				spans:  tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
+				folder: t.FolderBookmarkID, appID: t.AppID,
+				spans: tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string

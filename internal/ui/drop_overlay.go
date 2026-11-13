@@ -61,14 +61,23 @@ import (
 type dropState struct {
 	on    bool        // a drag carrying files is over the window
 	pos   image.Point // the pointer, window pixels
-	hover *convo      // the drop zone under the pointer
+	hover any         // the drop zone under the pointer: a *convo, or a folder tab's *folderDrop (drop_folder.go)
 	since time.Time   // when the hovered pane's overlay first drew (its animation)
 	zones []dropZone  // the panes that take drops, as last laid out
 }
 
 type dropZone struct {
-	c *convo
-	r image.Rectangle // window coordinates
+	c  *convo
+	fd *folderDrop     // a folder tab's zone (drop_folder.go) instead of c's
+	r  image.Rectangle // window coordinates
+}
+
+// key is what drop.hover holds for the zone.
+func (z dropZone) key() any {
+	if z.fd != nil {
+		return z.fd
+	}
+	return z.c
 }
 
 // fileDrop handles one app.FileDropEvent.
@@ -77,7 +86,7 @@ func (a *App) fileDrop(e app.FileDropEvent) {
 	switch e.Kind {
 	case app.FileDragEnter, app.FileDragOver:
 		a.drop.on, a.drop.pos = true, p
-		a.dropHover(a.dropZoneAt(p))
+		a.dropHover(a.dropZoneKeyAt(p))
 	case app.FileDragLeave:
 		if a.drop.on || a.drop.hover != nil {
 			a.drop.on = false
@@ -85,30 +94,49 @@ func (a *App) fileDrop(e app.FileDropEvent) {
 		}
 	case app.FileDrop:
 		// a drop can come without an enter (WM_DROPFILES)
-		c := a.dropZoneAt(p)
+		z, ok := a.dropZoneOf(p)
 		a.drop.on = false
 		a.dropHover(nil)
-		if c != nil {
-			a.dropFiles(c, e.Paths, e.Modifiers.Contain(key.ModShift))
+		switch {
+		case ok && z.fd != nil:
+			a.dropToFolder(z.fd, e.Paths) // drop_folder.go
+		case ok:
+			a.dropFiles(z.c, e.Paths, e.Modifiers.Contain(key.ModShift))
 		}
 	}
 }
 
-// dropHover shows c's overlay (nil: none), redrawing on a change.
-func (a *App) dropHover(c *convo) {
-	if a.drop.hover == c {
+// dropHover shows k's overlay (nil: none), redrawing on a change.
+func (a *App) dropHover(k any) {
+	if a.drop.hover == k {
 		return
 	}
-	a.drop.hover, a.drop.since = c, time.Time{}
+	a.drop.hover, a.drop.since = k, time.Time{}
 	a.Invalidate()
 }
 
-// dropZoneAt is the drop zone at window point p; the last laid out wins.
-func (a *App) dropZoneAt(p image.Point) *convo {
+// dropZoneOf is the drop zone at window point p; the last laid out wins.
+func (a *App) dropZoneOf(p image.Point) (dropZone, bool) {
 	for i := len(a.drop.zones) - 1; i >= 0; i-- {
 		if z := a.drop.zones[i]; p.In(z.r) {
-			return z.c
+			return z, true
 		}
+	}
+	return dropZone{}, false
+}
+
+// dropZoneKeyAt is the hover key of the zone at p (nil: none).
+func (a *App) dropZoneKeyAt(p image.Point) any {
+	if z, ok := a.dropZoneOf(p); ok {
+		return z.key()
+	}
+	return nil
+}
+
+// dropZoneAt is the conversation pane at p (nil: none or a folder tab).
+func (a *App) dropZoneAt(p image.Point) *convo {
+	if z, ok := a.dropZoneOf(p); ok && z.fd == nil {
+		return z.c
 	}
 	return nil
 }
@@ -300,7 +328,7 @@ const dropOverlayAnim = 120 * time.Millisecond
 // layoutDropOverlay draws c's overlay over its pane (size sz) when the
 // drag hovers it. It is the pane's last layer.
 func (a *App) layoutDropOverlay(gtx layout.Context, c *convo, sz image.Point) {
-	if !a.drop.on || a.drop.hover != c {
+	if !a.drop.on || c == nil || a.drop.hover != any(c) {
 		return
 	}
 	if a.drop.since.IsZero() {
@@ -355,7 +383,7 @@ func (a *App) layoutDropOverlay(gtx layout.Context, c *convo, sz image.Point) {
 	// the animation box
 	func() {
 		defer op.Offset(image.Pt((sz.X-animW)/2, top)).Push(gtx.Ops).Pop()
-		a.dropAnim(gtx, kind, thread, p, image.Pt(animW, animH))
+		a.dropAnim(gtx, kind, thread, p, image.Pt(animW, animH), color.NRGBA{A: 3})
 	}()
 	y := top + animH + titleTop
 	fg := th.C.Fg
@@ -515,7 +543,9 @@ func (a *App) dropKeyChip(gtx layout.Context, r image.Rectangle) {
 
 // dropAnim draws .p-*_drag_overlay__anim at progress p (0..1, linear
 // time; each part eases in-out over the same .12s).
-func (a *App) dropAnim(gtx layout.Context, kind dropOverlayKind, thread bool, p float64, box image.Point) {
+// circle is __anim_circle's fill (#00000003; the folder tab's
+// .animCircle__MI841 is theme-surf-pry).
+func (a *App) dropAnim(gtx layout.Context, kind dropOverlayKind, thread bool, p float64, box image.Point, circle color.NRGBA) {
 	e := cubicBezierY(0.42, 0, 0.58, 1, p) // ease-in-out
 	night := dropNightAt(gtx.Now)
 	sp := dropSprites()
@@ -527,7 +557,7 @@ func (a *App) dropAnim(gtx layout.Context, kind dropOverlayKind, thread bool, p 
 		func() {
 			defer paint.PushOpacity(gtx.Ops, float32(e)).Pop()
 			d := int(float64(box.X) * s)
-			theme.Circle(gtx, image.Pt(box.X/2, box.Y/2), d, color.NRGBA{A: 3})
+			theme.Circle(gtx, image.Pt(box.X/2, box.Y/2), d, circle)
 		}()
 	}
 	switch kind {

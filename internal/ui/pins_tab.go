@@ -49,7 +49,7 @@ func folderInfo(t chTab) views.FolderTabInfo {
 	if t.labeled {
 		label = t.label
 	}
-	return views.FolderTabInfo{ID: strings.TrimPrefix(t.key, "tab:"), Label: label, FolderID: t.folder}
+	return views.FolderTabInfo{ID: strings.TrimPrefix(t.key, "tab:"), Label: label, FolderID: t.folder, AppID: t.appID}
 }
 
 // folderTab is ch's view of folder tab t, made on first use.

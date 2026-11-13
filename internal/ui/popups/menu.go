@@ -80,6 +80,11 @@ type MenuItem struct {
 	Widget func(gtx layout.Context, highlighted bool) layout.Dimensions
 
 	Sub []MenuItem // submenu
+	// SubCaret makes the row a submenu row (the chevron) even with no Sub:
+	// a Slack submenu whose renderSubmenu draws nothing (FolderListBookmark
+	// Menu's Move to folder on a link) opens nothing, and a click on it
+	// does nothing.
+	SubCaret bool
 	// OnSubOpen runs each time the submenu opens (a submenu's onOpen: the
 	// bell's MoreOptionsSubmenu clears its "New" badge); the row's Tag
 	// leaves the open menu with it.
@@ -316,6 +321,9 @@ func (m *Menu) activate(gtx layout.Context, i int) {
 	it := m.items[i]
 	if len(it.Sub) > 0 {
 		m.openSub(i, true)
+		return
+	}
+	if it.SubCaret {
 		return
 	}
 	if !it.KeepOpen {
@@ -726,7 +734,7 @@ func (m *Menu) itemRow(gtx layout.Context, th *theme.Theme, cl *Colors, st slack
 			x += dp(gtx, 28)
 		}
 		right := sz.X - dp(gtx, 24)
-		if len(it.Sub) > 0 {
+		if len(it.Sub) > 0 || it.SubCaret {
 			right -= dp(gtx, 15)
 			at(gtx, image.Pt(right, (sz.Y-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions {
 				c := cl.Fg2
