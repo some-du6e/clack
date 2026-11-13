@@ -267,19 +267,26 @@ func TestCanvasChannelCard(t *testing.T) {
 	ctl := &e.a.hover.ctl
 	anchor := image.Rect(e.size.X-400, 220, e.size.X-340, 240) // a mention in the side panel's canvas
 	show := func() {
+		t.Helper()
 		ctl.Show(hovercard.Request{Key: "canvas-mention", ChannelID: id, Canvas: true, Delay: hovercard.CanvasShowDelay, Anchor: anchor}, time.Now())
+		e.frame()
+		c := e.a.hover.cvc
+		if c == nil || c.Rect().Empty() {
+			t.Fatal("the canvas card didn't draw on its first frame")
+		}
+		// rest on the card at once: no trigger reports here, so off the
+		// card its 250ms close would run while it loads
+		card := c.Rect()
+		e.move(f32.Pt(float32(card.Min.X+40), float32(card.Min.Y+20)))
 		e.frame()
 		e.until("the canvas card", 10*time.Second, func() bool {
 			c := e.a.hover.cvc
-			if c == nil || c.Rect().Empty() {
-				return false
+			if c == nil {
+				t.Fatal("the canvas card closed with the pointer on it")
 			}
 			st := c.State()
 			return st.Name == cv.Name && len(st.Metadata) >= 2
 		})
-		card := e.a.hover.cvc.Rect()
-		e.move(f32.Pt(float32(card.Min.X+40), float32(card.Max.Y-10))) // rest on the card: it stays
-		e.frame()
 	}
 	show()
 	c := e.a.hover.cvc
