@@ -12,6 +12,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -93,6 +94,11 @@ type Composer struct {
 
 	// editFiles0 is an edit's initialFileIds (the message's files)
 	editFiles0 []string
+
+	// field is Block Kit's rich_text_input hosting this composer (NewField)
+	field *FieldOpts
+	// Invalid draws a Block Kit field's error border (isInvalid)
+	Invalid bool
 
 	broadcast  bool
 	lastTyping time.Time
@@ -278,10 +284,53 @@ func editDraftFiles(m *core.Message) []core.DraftFile {
 	return out
 }
 
+// FieldOpts makes a composer Block Kit's rich_text_input
+// (RichTextInputElement, lazy chunk sui-block-rich-text-input): Texty
+// with useWysiwyg in a WysiwygContainer (enableEmojiButton,
+// enableComposerButton, forcePlainTextModeDisabled, numMaxLines), members,
+// channels and emoji completion, Enter for a new line
+// (enterCreatesNewlineOverride). It has no conversation: no drafts, no
+// typing, no files and no send.
+type FieldOpts struct {
+	Placeholder string // placeholder.text, else "Write something"
+	Initial     *Doc   // initial_value (or the saved value)
+	MaxLines    int    // numMaxLines: 8 unless set
+	FocusOnLoad bool
+	OnChange    func() // the text changed (onTextChange)
+}
+
+// NewField returns a composer for a Block Kit rich_text_input.
+func NewField(h Host, o FieldOpts) *Composer {
+	if o.MaxLines <= 0 {
+		o.MaxLines = 8
+	}
+	c := &Composer{h: h, api: coreAPI{h.Core()}, field: &o}
+	c.init()
+	if o.Initial != nil {
+		c.ed.SetDoc(o.Initial)
+	}
+	c.lastVer = c.ed.Version()
+	c.focusReq = o.FocusOnLoad
+	return c
+}
+
+// FieldDoc is a field composer's document.
+func (c *Composer) FieldDoc() *Doc { return c.ed.Doc() }
+
+// FieldEmpty reports whether the field holds nothing.
+func (c *Composer) FieldEmpty() bool { return c.ed.Empty() }
+
+// Focused reports whether the composer's editor has the keyboard focus.
+func (c *Composer) Focused() bool { return c.focused }
+
+// noDraft: an edit or a Block Kit field, which keep no draft, schedule
+// nothing and show no context bar.
+func (c *Composer) noDraft() bool { return c.edit != nil || c.field != nil }
+
 func (c *Composer) init() {
 	c.ed = NewEditor()
-	c.ed.Snippets = c.edit == nil      // MessageInput's enableSnippetCreation; not the edit composer
-	c.ed.CmdKCoachmark = c.edit == nil // MessageInput's onCmdKWhenSelected; the edit composer (cjbg) has none
+	c.ed.Snippets = !c.noDraft()      // MessageInput's enableSnippetCreation; not the edit composer
+	c.ed.CmdKCoachmark = !c.noDraft() // MessageInput's onCmdKWhenSelected; the edit composer (cjbg) has none
 	c.bindSlugs()
 	if c.api.a != nil {
 		warmEmoji()
@@ -303,7 +352,7 @@ func (c *Composer) init() {
 	// keys do nothing in a reply box); the channel's input and the edit
 	// composer pass none
 	c.ed.PageKeysHandled = c.ts != "" && c.edit == nil
-	if c.edit == nil { // the conversation's files, kept across composers
+	if !c.noDraft() { // the conversation's files, kept across composers
 		c.att = attachmentsFor(draftKey(c.ch, c.ts), c.h)
 		c.att.setOnChange(c.attChanged)
 		// the + menu's Workflow row (Slack has none when editing)
@@ -413,6 +462,9 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	if c.st.Shaper != th.Shaper || c.st.Shaper == nil || c.stGen != th.Gen {
 		c.st = c.editorStyle()
 		c.stGen = th.Gen
+		if c.field != nil {
+			c.st.MaxHeight = unit.Dp(c.field.MaxLines * 22) // numMaxLines of the 22px line
+		}
 	}
 	c.st.Images = c.emojiImage
 	c.st.PlaceholderText = ""
@@ -442,7 +494,7 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	c.paneP, c.inputP = nil, nil
 	var dims layout.Dimensions
 	switch {
-	case c.edit != nil:
+	case c.edit != nil || c.field != nil:
 		dims = slackc.Component(gtx, "MessageInput", c, (*Composer).inputProps, (*Composer).layoutInput)
 	case c.ts != "":
 		dims = slackc.Component(gtx, "InputContainer", c, (*Composer).paneProps, (*Composer).layoutPane)
@@ -615,6 +667,13 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	st.InCode = st.Block == CodeBlock
 	st.ShowPlaceholder = quillBlank(c.ed.Doc())
 	switch {
+	case c.field != nil:
+		st.Mode = modeField
+		st.Invalid = c.Invalid
+		st.Placeholder = c.field.Placeholder
+		if st.Placeholder == "" {
+			st.Placeholder = i18n.T("block_kit", "Write something")
+		}
 	case c.edit != nil:
 		st.Mode = modeEdit
 		st.ShowPlaceholder = false
@@ -713,11 +772,15 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvLinkDialog:
 			c.openLink()
 		case EvPasted:
-			c.att.PasteClipboardImage()
+			if c.field == nil { // Texty there has no onFilesSelected
+				c.att.PasteClipboardImage()
+			}
 		case EvPasteLimit:
 			c.pasteLimitDialog(c.ed.RefusedPaste())
 		case EvSnippet:
-			c.openSnippet(true)
+			if c.field == nil {
+				c.openSnippet(true)
+			}
 		case EvCmdKSelected:
 			c.cmdKSelected()
 		case EvPlusMenu:
@@ -749,6 +812,12 @@ func (c *Composer) changed() {
 		return
 	}
 	c.lastVer = v
+	if c.field != nil {
+		if c.field.OnChange != nil {
+			c.field.OnChange()
+		}
+		return
+	}
 	if c.edit != nil {
 		return
 	}
@@ -1085,6 +1154,11 @@ func (c *Composer) overLimit() int {
 }
 
 func (c *Composer) submit() {
+	if c.field != nil {
+		// enterCreatesNewlineOverride: Enter is a new line in the field
+		c.ed.InsertText("\n")
+		return
+	}
 	d := c.ed.Doc()
 	if c.overLimit() > 0 {
 		// isSendingDisabled (isOverMaxLength): Enter does nothing and the
@@ -1660,7 +1734,7 @@ func loadDraft(ch, ts string) *Doc {
 }
 
 func (c *Composer) saveDraft() {
-	if c.edit != nil {
+	if c.noDraft() {
 		return
 	}
 	drafts.Lock()

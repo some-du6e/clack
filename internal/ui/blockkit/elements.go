@@ -110,8 +110,8 @@ type ew struct {
 	more  tap
 	ed    *widget.Editor
 	edSet bool
-	red   *composer.Editor // rich_text_input (richinput.go)
-	files []*upFile        // file_input (richinput.go)
+	rc    *composer.Composer // rich_text_input (richinput.go)
+	files []*upFile          // file_input (richinput.go)
 
 	busy  bool
 	errAt time.Time
@@ -311,7 +311,7 @@ func (w *ew) size(gtx C, maxW int, accessory bool) image.Point {
 		}
 		return full(h36)
 	case "rich_text_input":
-		return full(w.richHeight(gtx))
+		return full(w.richHeight(gtx, maxW))
 	case "file_input":
 		return full(w.fileHeight(gtx))
 	}

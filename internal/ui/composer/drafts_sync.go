@@ -133,7 +133,7 @@ func runDraftOp(key string, op draftOp) {
 
 // syncDraftSoon (re)starts the save timer after a change (UI goroutine).
 func (c *Composer) syncDraftSoon() {
-	if c.edit != nil || c.h == nil || c.h.Core() == nil {
+	if c.noDraft() || c.h == nil || c.h.Core() == nil {
 		return
 	}
 	if c.dsync.timer == nil {
@@ -146,7 +146,7 @@ func (c *Composer) syncDraftSoon() {
 // syncDraftNow saves (or deletes, when empty) the server draft for what is
 // in the editor now (UI goroutine; the network work runs in draftOps).
 func (c *Composer) syncDraftNow() {
-	if c.edit == nil && c.attachGen != attachGenOf(c.key()) {
+	if !c.noDraft() && c.attachGen != attachGenOf(c.key()) {
 		return // a composer from before a picked draft took the slot (stash_draft.go)
 	}
 	v := c.ed.Version()
@@ -188,7 +188,7 @@ func (c *Composer) deleteServerDraft(reason string) {
 	if c.dsync.timer != nil {
 		c.dsync.timer.Stop()
 	}
-	if c.edit == nil && c.attachGen != attachGenOf(c.key()) {
+	if !c.noDraft() && c.attachGen != attachGenOf(c.key()) {
 		return // the slot is another draft's now (stash_draft.go)
 	}
 	c.dsync.synced, c.dsync.syncedAtt = c.ed.Version(), c.attVer

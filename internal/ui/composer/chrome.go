@@ -39,6 +39,10 @@ const (
 	modeChannel chromeMode = iota
 	modeThread
 	modeEdit
+	// modeField is Block Kit's rich_text_input (RichTextInputElement): the
+	// WysiwygContainer with its formatting bar, the emoji and Aa buttons,
+	// no send, no hint bar
+	modeField
 )
 
 type chromeKind uint8
@@ -97,6 +101,9 @@ type chromeState struct {
 	// disable_file_attach_after_send): the edit composer has no + and no
 	// attachments row
 	NoEditFiles bool
+	// Invalid is WysiwygContainer's isInvalid (a Block Kit field with an
+	// error): c-basic_container--invalid
+	Invalid bool
 	// Placeholder is "Message general" (channel: drawn as "Message " + the
 	// hash/lock icon + name), "Message Karim" (DM), "Reply to thread…".
 	Placeholder     string
@@ -564,7 +571,7 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	var editWarn op.CallOp
 	var editWarnD layout.Dimensions
 	switch {
-	case !edit:
+	case !edit && st.Mode != modeField:
 		hintH = gtx.Dp(24)
 	case st.OverLimit > 0:
 		// the edit's .c-message__editor__footer: "text is too long!"
@@ -751,12 +758,32 @@ func (c *chrome) layoutBox(gtx layout.Context) layout.Dimensions {
 
 	// Box: shadow, border, fill, formatting bar background. Under a
 	// plugin's context bar the top corners are square.
-	if st.Focused && !edit {
+	var red color.NRGBA
+	if st.Invalid {
+		// c-basic_container--invalid: border-color brand-core-slack-red;
+		// focused, a 1px raspberry ring and 4px more at .3 instead of the
+		// shadow
+		var ok bool
+		if red, ok = cssVarColor(css.SlackVars(th.Dark), "--dt_color-brand-core-slack-red"); !ok {
+			red = rgb(0xe01e5a)
+		}
+	}
+	switch {
+	case st.Focused && st.Invalid:
+		ring := rgb(0xe01e5a) // --sk_raspberry_red
+		ring.A = 77           // .3
+		fillRRect(gtx, box.Inset(-gtx.Dp(5)), rad+gtx.Dp(5), ring)
+		ring.A = 255
+		fillRRect(gtx, box.Inset(-gtx.Dp(1)), rad+gtx.Dp(1), ring)
+	case st.Focused && !edit:
 		crShadow(gtx, box, rad, p)
 	}
 	border := p.border
 	if st.Focused || edit {
 		border = p.borderFocus
+	}
+	if st.Invalid {
+		border = red
 	}
 	ir := max(rad-bw, 0)
 	if st.SquareTop {

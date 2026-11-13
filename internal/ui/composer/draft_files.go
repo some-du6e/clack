@@ -170,7 +170,7 @@ func (c *Composer) attChanged() {
 // server draft for its conversation once drafts are known (UI goroutine,
 // every frame; a counter compare when nothing changed).
 func (c *Composer) maybeRestoreServerDraft() {
-	if c.edit != nil || c.touched || c.api.a == nil {
+	if c.noDraft() || c.touched || c.api.a == nil {
 		return
 	}
 	g := c.api.a.DraftsGen()

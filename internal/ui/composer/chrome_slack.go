@@ -571,6 +571,11 @@ func (c *chrome) itemVisible(id crBtn) bool {
 	if c.f.fold && c.inOverflow(id) {
 		return false // in TextyButtonOverflow's row (overflow.go)
 	}
+	if c.cur.Mode == modeField {
+		// RichTextInputElement: enableEmojiButton and enableComposerButton
+		// in the footer, the formatting bar's own buttons
+		return id < crAttach || id == crAa || id == crEmoji
+	}
 	switch id {
 	case crMention, crVideo, crAudio, crShortcut:
 		return !edit
@@ -636,7 +641,7 @@ func (c *chrome) drawFoot(gtx layout.Context, id crBtn) layout.Dimensions {
 // footDivider draws divider 1 (before video/audio) or 2 (before Run
 // shortcut) in wide composers; SlimMessageBox hides them with CSS.
 func (c *chrome) footDivider(gtx layout.Context, which uint8) layout.Dimensions {
-	if c.f.fold || c.f.toolbarHidden || c.cur.Mode == modeEdit {
+	if c.f.fold || c.f.toolbarHidden || c.cur.Mode == modeEdit || c.cur.Mode == modeField {
 		return layout.Dimensions{}
 	}
 	if which == 1 && c.hidden(crVideo) && c.hidden(crAudio) || which == 2 && c.hidden(crShortcut) {
@@ -658,6 +663,9 @@ func (c *chrome) footDivider(gtx layout.Context, which uint8) layout.Dimensions 
 func (c *chrome) layoutSubmit(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	if c.cur.Mode == modeEdit {
 		return c.layoutEditButtons(gtx, c.f.h.Theme(), &c.cur)
+	}
+	if c.cur.Mode == modeField {
+		return layout.Dimensions{} // no submit group
 	}
 	if c.hidden(crSend) {
 		return layout.Dimensions{}

@@ -29,7 +29,7 @@ type liveDraft struct {
 // (leading), else 150 ms after the last edit (trailing).
 func (c *Composer) liveDraftSoon() {
 	t := currentTaut()
-	if t == nil || c.edit != nil || !t.Started() {
+	if t == nil || c.noDraft() || !t.Started() {
 		return
 	}
 	if !c.live.armed {
@@ -73,7 +73,7 @@ func (c *Composer) pushLiveDraft(t *taut.Taut) {
 func (c *Composer) clearLiveDraft() {
 	c.live.gen.Add(1)
 	c.live.armed, c.live.dirty = false, false
-	if t := currentTaut(); t != nil && c.edit == nil {
+	if t := currentTaut(); t != nil && !c.noDraft() {
 		t.ClearComposerDraft(c.draftID())
 	}
 }

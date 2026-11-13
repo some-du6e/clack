@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"strconv"
@@ -77,6 +78,7 @@ var (
 		modeChannel: slackc.Class("p-message_input_unstyled p-workspace__input"),
 		modeThread:  slackc.Class("p-message_input_unstyled p-workspace__input p-threads_footer__input"),
 		modeEdit:    slackc.Class("c-message__editor p-message_input_unstyled"),
+		modeField:   slackc.Class(""), // RichTextInputElement: the WysiwygContainer is its root
 	}
 
 	crBodyClass  = slackc.Class("c-basic_container__body")
@@ -87,6 +89,7 @@ var (
 		modeChannel: slackc.Class("c-wysiwyg_container__attachments c-pending_files"),
 		modeThread:  slackc.Class("p-message_input__attachments c-pending_files"),
 		modeEdit:    slackc.Class("c-message__editor__composer_attachments c-pending_files"),
+		modeField:   slackc.Class("c-pending_files"),
 	}
 	crBroadcastClass    = slackc.Class("p-threads_footer__input_container__broadcast_controls")
 	crFootClass         = slackc.Class("c-wysiwyg_container__footer").Mods("c-wysiwyg_container__footer--with_formatting")
@@ -342,6 +345,9 @@ func (c *Composer) initIDs() {
 	case c.edit != nil:
 		c.keyS = "edit/" + c.edit.Channel + "/" + c.edit.TS
 		c.draftS = "edit-" + c.edit.Channel + "-" + c.edit.TS
+	case c.field != nil:
+		c.keyS = fmt.Sprintf("field/%p", c)
+		c.draftS = ""
 	case c.ts != "":
 		// Slack's composer draftId: "<channel>-<threadTs>" for a thread
 		// (OwlMode parses /^([A-Z0-9]+)-(\d+\.\d+)$/), the channel id
@@ -488,7 +494,7 @@ var ContextBar func(gtx layout.Context, h Host, ch, ts string) layout.Dimensions
 var ThreadNugget func(gtx layout.Context, h Host, ch, ts string) layout.Dimensions
 
 func (c *Composer) layoutContextBar(gtx layout.Context, p slackc.Props) layout.Dimensions {
-	if c.edit != nil {
+	if c.noDraft() {
 		return layout.Dimensions{}
 	}
 	if ContextBar != nil {
@@ -621,6 +627,13 @@ func (c *Composer) inputProps() slackc.Props {
 	if c.edit != nil {
 		p["enableScheduleSendButton"] = false
 		p["enableMentionButton"] = false
+	}
+	if c.field != nil {
+		// RichTextInputElement's WysiwygContainer: enableEmojiButton,
+		// enableComposerButton, forcePlainTextModeDisabled; nothing else
+		p["enableScheduleSendButton"], p["enableMentionButton"], p["enableGifPicker"] = false, false, false
+		p["enableShortcutsButton"], p["forcePlainTextModeDisabled"] = false, true
+		p["numMaxLines"] = c.field.MaxLines
 	}
 	if c.ts != "" && c.edit == nil {
 		p["broadcastControls"] = slackc.Child("BroadcastControls", slackc.Props{
