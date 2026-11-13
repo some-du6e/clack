@@ -10,6 +10,9 @@ Scripts behind `.github/workflows/perf.yml`. The workflow compares HEAD against 
 | `summary.py <out>/<side> <sha> <ref>` | one side's full summary (`summary.md`) and its perf-history row |
 | `compare.py <out> <base> <head>` | the before/after table (`compare.md`), which leads the run page |
 | `fontcheck.py` | embedded Lato vs the faces Slack serves (public CDN, no cookie) |
+| `scale.sh <fakeslackd> <out> <side>...` | memory at the real account's scale on Linux (scale-linux job): the perfharness binary drives itself through a session against `fakeslackd -scale` |
+| `scale.ps1 -Fake <exe> -Out <dir> -Sides …` | the same on the Windows runner (scale-windows job) |
+| `scale.py <out> <platform> <sha> <ref>` | one platform's memory report (`scale.md`) and history row; `--combine` puts both on one page |
 
 ## Design
 
@@ -32,3 +35,14 @@ The run page starts with **Before/after**. It has headline rows (first paint, co
 ## perf vs bench-compare
 
 `bench-compare.yml` covers a different layer. It runs the package microbenchmarks (CSS engine, slackc, `BenchmarkListFrame`) for a branch against `ui` (by default), interleaved for N rounds, and benchstat gives confidence intervals. It finishes in minutes, and plugin/CSS work uses it while iterating (see docs/PLUGINS-components.md). `perf` is the whole-client run against the last release and takes about half an hour. They follow the same rule (both sides on one runner, interleaved), but merging them would either slow the quick loop down to perf's run time or drop perf's real-process numbers, so they stay separate. To get a branch-vs-`ui` whole-client comparison, dispatch `perf` on the branch with `base: ui`.
+
+## Memory at Hack Club scale (scale-linux, scale-windows)
+
+Karim's Clack used 1.25 GB on Windows (2026-11-12) while the process job above measured about 350 MB RSS. The process job's workspace is smaller than the real account and it only idles, so the scale jobs measure what grows with the account and with use.
+
+- **Workload.** `fakeslackd -scale` serves `fakeslack.HackClubScale`: the real account's counts (65,846 emoji.list entries with 5,846 aliases, 2,006 user groups, 32,000 users who all post, 300 channels and 120 DMs in the sidebar, three channels of 6,000 messages with images every fifth message, text in other scripts so the shaper falls back to system fonts). The homes run Karim-like plugins (ChatTabs and five Taut plugins from the published Library) and open on #announcements.
+- **Session.** `internal/ui/perfdrive.go` (perfharness builds only) drives the real window the way a person would, through `Navigate`, the picker and the lists' scroll positions. A priming start loads every directory user (`users`) and exits, so the measured start reads a metadata cache as full as a long-used one. The measured warm start then goes through `startup` (30 s settled), `picker` (open), `picker-all` (every row scrolled past), `scroll` (two long channels paged back to 3,000 messages and scrolled down through all of them), `channels` (40 more channels, 2 s each) and `idle` (10 minutes alone; `scale_idle` changes it).
+- **Numbers.** After each stage the driver writes `<stage>.mem.txt` (runtime.MemStats, the app's caches, and the OS's counters split by owner), `<stage>.heap.pprof` (after a GC: inuse_space and alloc_space), `<stage>.trimmed.txt` (the same after `debug.FreeOSMemory`) and the goroutines. On Windows the OS counters are the private working set (Task Manager's Memory column) and commit, split through `QueryWorkingSet` into the Go heap's arenas, other private memory (C heaps, Direct3D and its driver, Go's off-heap runtime, stacks) and DLLs' private pages, with the largest allocations listed. On Linux they are `/proc/self/smaps` sums: the Go heap's arenas, other anonymous memory (malloc, Mesa/llvmpipe, stacks) and file pages. The scripts also read the process from outside as each stage lands (`<stage>.external.txt`: `/proc/<pid>/status`, or `Get-Process` and the `Working Set - Private` counter).
+- **GPUs.** Neither runner has one. Linux renders with llvmpipe, so textures sit in the process's anonymous memory. Windows creates Gio's Direct3D 11 device on the Microsoft Basic Render Driver (`adapter.txt`), WARP behind a WDDM adapter, which keeps resources in system memory like an integrated GPU does. A discrete GPU would hold textures in VRAM instead. The Go heap numbers don't depend on the GPU.
+- **Report.** `scale.py` reads the profiles itself (no Go toolchain) and attributes each allocation to its owner: the first frame up the stack outside the standard library and `golang.org/x`. The `scale-report` job puts both platforms on the run page and appends a row per platform to `docs/perf-scale-history.md` on the perf-history branch. Dispatch with `jobs: scale` to run only these jobs, and `scale_base: <sha>` to measure a before side in the same job.
+
