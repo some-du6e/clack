@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/some-du6e/clack/internal/emoji"
 )
 
 // Slack's light emoji picker as a page for Chrome, next to Clack's (the
@@ -30,7 +32,8 @@ import (
 // slack.css.gz, every rule naming its classes plus the element, :root and
 // theme rules, in file order with their @media/@layer wrappers). Lato is
 // Clack's copy of the same font. The emoji are the same CDN images Clack
-// draws, in the same order. Slack's icon font (the Emoji and GIFs tab
+// draws, in the same order, at the CDN size Slack takes for a 22px emoji
+// on a 2x screen (the @2x image: emoji.ForPixels, as emoji-sharp found). Slack's icon font (the Emoji and GIFs tab
 // icons, the category icons, the search glyph) isn't included: those boxes
 // are left empty and the comparison masks them.
 
@@ -125,7 +128,7 @@ func epSlackPage(t *testing.T, dir string, p *EmojiPicker, fonts string) string 
 			w(`<div class="p-emoji_picker__row" style="%s">`, style)
 			for c, id := range r.ids {
 				w(`<button class="c-button-unstyled p-emoji_picker__list_item p-emoji_picker__list_item--a11y-not-selected" data-color-index="%d" role="gridcell"><span class="c-emoji c-emoji__medium"><img src="%s" alt="" width="22" height="22"></span></button>`,
-					(9*i+c)%6, html.EscapeString(p.idx.url(id, p.tone)))
+					(9*i+c)%6, html.EscapeString(emoji.ForPixels(p.idx.url(id, p.tone), 44)))
 			}
 			w(`</div>`)
 		}
@@ -134,7 +137,7 @@ func epSlackPage(t *testing.T, dir string, p *EmojiPicker, fonts string) string 
 	w(`</div></div></div></div>`) // scroller, list, list container, content
 	hand := ""
 	if id, ok := p.idx.lookup("hand"); ok {
-		hand = p.idx.url(id, p.tone)
+		hand = emoji.ForPixels(p.idx.url(id, p.tone), 44)
 	}
 	w(`<div class="p-emoji_picker__footer" data-qa="emoji_picker__footer"><div class="p-emoji_picker__preview"></div>`)
 	w(`<button class="c-button c-button--outline c-button--small p-emoji_picker__add_custom_emoji" type="button">Add Emoji</button>`)
