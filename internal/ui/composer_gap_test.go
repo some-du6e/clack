@@ -153,8 +153,9 @@ func (e *svEnv) inject(typ string, fields map[string]any) {
 }
 
 // gapPixels measures the gap in the screenshot, in a column right of the
-// text (the row's tint is full width): pane background from just above
-// the composer's top border up to the row's bottom edge, then the row.
+// text (the row's tint is full width): pane background (and the focus
+// shadow's faint top row) from just above the composer's top border up to
+// the row's bottom edge, then the row.
 func gapPixels(t *testing.T, name string, img *image.RGBA, comp image.Rectangle, bottom int, pinned bool) {
 	// pinned: the row is tinted, so its edge shows; otherwise only the
 	// structural check (TestComposerGap) applies.
@@ -164,7 +165,10 @@ func gapPixels(t *testing.T, name string, img *image.RGBA, comp image.Rectangle,
 		c := img.RGBAAt(x, y)
 		return color.NRGBA{c.R, c.G, c.B, c.A}
 	}
-	bg := at(comp.Min.Y - 2)
+	// the pane, clear of the focused composer's shadow (crShadow: Chrome
+	// draws one row of black at 2/255 over it above the box, within
+	// near2 of the pane; Navigate focuses the composer, focusAfterNavigate)
+	bg := at(comp.Min.Y - 4)
 	y := comp.Min.Y - 1
 	for y > comp.Min.Y-200 && near2(at(y), bg) {
 		y--

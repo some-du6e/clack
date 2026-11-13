@@ -264,7 +264,7 @@ type crPal struct {
 	yellow, emojiInk                       color.NRGBA
 	check, checkHover, checkMark           color.NRGBA
 	checkBorder, checkBorderHover, checkBg color.NRGBA
-	shadow                                 [3]color.NRGBA // rings 1..3px out
+	shadow                                 [3]color.NRGBA // the shadow rect, 1 and 2px out (crShadow)
 }
 
 // crFade is col at opacity a over an opaque under.
@@ -330,9 +330,14 @@ func crMakePal(th *theme.Theme) crPal {
 		p.check, p.checkHover, p.checkMark = rgb(0x99c8ff), rgb(0xd1e6ff), rgb(0x3b3b3b)
 		p.checkBorder, p.checkBorderHover, p.checkBg = rgb(0x858585), rgb(0xacacac), rgb(0x3b3b3b)
 	}
-	// 0 1px 3px rgba(0,0,0,.08), sampled as three rings.
-	black := color.NRGBA{A: 0xff}
-	p.shadow = [3]color.NRGBA{crFade(black, p.bg, .045), crFade(black, p.bg, .02), crFade(black, p.bg, .008)}
+	// 0 1px 3px #00000014 (.p-message_input__input_container_unstyled:
+	// focus-within) as Chrome 157 draws it around a 1px-bordered box on
+	// white: black at 12/255 on the shadow rect's own edge (the row under
+	// the box), 7/255 one px out, 2/255 two px out, nothing beyond. Above
+	// the box only the 2/255 row shows (the rect is 1px down, its first
+	// ring is under the top border): 253 over white. Measured on a page
+	// with just that box (composer-gap-light).
+	p.shadow = [3]color.NRGBA{theme.Over(color.NRGBA{A: 12}, p.bg), theme.Over(color.NRGBA{A: 7}, p.bg), theme.Over(color.NRGBA{A: 2}, p.bg)}
 	return p
 }
 
@@ -884,13 +889,14 @@ func crRGBTriple(v string) (color.NRGBA, bool) {
 }
 
 // crShadow paints a small drop shadow (0 1px 3px) around r, as opaque rings
-// pre-composited over the pane background.
+// pre-composited over the pane background: r moved down 1dp, then grown
+// by 0, 1 and 2dp (p.shadow, Chrome's values). r is painted over it.
 func crShadow(gtx layout.Context, r image.Rectangle, rad int, p *crPal) {
 	dy := gtx.Dp(1)
-	for i := len(p.shadow); i >= 1; i-- {
+	for i := len(p.shadow) - 1; i >= 0; i-- {
 		g := gtx.Dp(unit.Dp(i))
 		rr := image.Rect(r.Min.X-g, r.Min.Y-g+dy, r.Max.X+g, r.Max.Y+g+dy)
-		fillRRect(gtx, rr, rad+g, p.shadow[i-1])
+		fillRRect(gtx, rr, rad+g, p.shadow[i])
 	}
 }
 
