@@ -161,6 +161,13 @@ func (s *Server) addWorkflowsChannel() {
 	tabs, _ := json.Marshal(map[string]any{"tabs": []map[string]any{
 		{"id": "Ct0FAKEWFB", "type": "folder", "label": ""},
 		{"id": "workflows", "type": "workflows", "label": ""},
+	}, "tabz": []map[string]any{ // the store's copy a channel-tab slug resolves against (findTabInChannelProperties)
+		{"id": "Ct0FAKEWFB", "type": "folder", "label": ""},
+		{"id": "workflows", "type": "workflows", "label": ""},
+		// slugs only (not on the tab bar): a list and a canvas the
+		// fixtures serve, for their tab peeks
+		{"id": "Ct" + ListTodos, "type": "list", "label": "", "data": map[string]any{"file_id": ListTodos}},
+		{"id": "Ct" + CanvasChannel, "type": "canvas", "label": "", "data": map[string]any{"file_id": CanvasChannel}},
 	}, "channel_workflows": []map[string]any{ // the Workflows tab's featured workflows
 		{"workflow_trigger_id": TriggerDeploy, "title": "Run deploy"},
 		{"workflow_trigger_id": TriggerHidden, "title": "Payroll export"},

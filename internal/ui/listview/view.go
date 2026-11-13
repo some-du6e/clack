@@ -57,6 +57,10 @@ const (
 	Tab  Mode = iota // a channel's list tab: no top bar of its own
 	Side             // the side panel: a 49px bar with expand / more / close
 	Full             // the main view: Slack's 50px list header
+	// Peek is a channel-tab slug's ListsTabPeek (viewContext "peek",
+	// isViewOnly, hideRefinements, hideTitleHeader, disablePointerEvents):
+	// the selected view's rows alone, no bar, no live subscription.
+	Peek
 )
 
 // Actions are the shell's handlers (nil hides a button or does nothing).
@@ -300,7 +304,7 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 	if !started {
 		v.load(false)
 	}
-	if !v.live.Load() {
+	if !v.live.Load() && v.mode != Peek {
 		v.goLive()
 	}
 	v.mu.Lock()
@@ -312,7 +316,7 @@ func (v *View) Layout(gtx layout.Context) layout.Dimensions {
 	theme.Fill(gtx, image.Rectangle{Max: sz}, th.C.Bg)
 	v.styles.sync(th, v.h)
 	top := 0
-	if v.mode != Tab {
+	if v.mode == Side || v.mode == Full {
 		top = gtx.Dp(theme.HeaderH)
 		if v.mode == Full {
 			top = gtx.Dp(50)
@@ -430,8 +434,11 @@ func (v *View) barAction(key string) {
 func (v *View) layoutList(gtx layout.Context, d *core.ListDoc) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	lv := v.current(d)
-	y := v.layoutTitle(gtx, d, sz.X)
-	y += v.layoutToolbar(gtx, d, lv, y, sz.X)
+	y := 0
+	if v.mode != Peek { // hideTitleHeader, hideRefinements
+		y = v.layoutTitle(gtx, d, sz.X)
+		y += v.layoutToolbar(gtx, d, lv, y, sz.X)
+	}
 	area := image.Rect(0, y, sz.X, sz.Y)
 	v.gridAt = image.Pt(0, v.bodyTop).Add(area.Min)
 	rows := v.rowsFor(d, lv)

@@ -201,50 +201,94 @@ var slugPeekTabs = map[string]bool{
 //     (slugPeekTabs), the tab's peek; otherwise the HoverCardTrigger
 //     with the channel card (enableButtons).
 //
-// Clack doesn't draw the tab peeks, so those slugs open nothing.
+// A slug that doesn't open the card shows the tab's peek
+// (ChannelTabSlugPeek; ui/tab_slug_peek.go draws it).
 func (a *App) ChannelTabSlugCard(ch, tab string) bool {
+	_, card := a.resolveTabSlug(ch, tab)
+	return card
+}
+
+// SlugTab is the channel tab a slug resolved to: the properties.tabz
+// entry (findTabById), with its data the peeks read (Slack's tab.data:
+// fileId, listsChannelTabDefaultRefineViewId).
+type SlugTab struct {
+	ID, Type, Label string
+	FileID          string // data.file_id
+	DefaultView     string // data.lists_channel_tab_default_refine_view_id
+}
+
+// ChannelTabSlugPeek is ChannelTabSlugPeekTrigger's choice: the slug's
+// resolved tab when it shows the tab's peek (session_channels_slug_peek
+// on and isPreviewEnabled), false when it opens the channel card (or
+// nothing resolves).
+func (a *App) ChannelTabSlugPeek(ch, tab string) (SlugTab, bool) {
+	t, card := a.resolveTabSlug(ch, tab)
+	if card {
+		return SlugTab{}, false
+	}
+	return t, true
+}
+
+// resolveTabSlug is MrkdwnChannelTab + ChannelTabSlugPeekTrigger: the
+// resolved tab, and whether the slug opens the channel card.
+func (a *App) resolveTabSlug(ch, tab string) (SlugTab, bool) {
 	c, ok := a.S.Conv(ch)
 	if !ok {
 		if c, ok = a.S.ExtConv(ch); !ok {
-			return true // unknown: BaseMrkdwnChannel
+			return SlugTab{}, true // unknown: BaseMrkdwnChannel
 		}
 	}
 	private := (c.IsPrivate || c.IsGroup) && !c.IsMPIM // aK5v.Zp
 	record := recordID(c.Properties) != ""             // aK5v.rI
 	if private && !a.isMemberConv(c) && !record {
-		return true
+		return SlugTab{}, true
 	}
-	typ, found := tabzType(c.Properties, tab)
-	if !found && tab == "code" {
-		typ, found = "code", true
+	t, found := tabzTab(c.Properties, tab)
+	if !found && tab == "code" { // MrkdwnChannelTab's Code tab fallback: {id: "code", type: "code"}
+		t, found = SlugTab{ID: "code", Type: "code"}, true
 	}
 	if !found {
-		return true
+		return SlugTab{}, true
 	}
-	return !(a.experiment("session_channels_slug_peek") == "on" && slugPeekTabs[typ])
+	if !(a.experiment("session_channels_slug_peek") == "on" && slugPeekTabs[t.Type]) {
+		return t, true
+	}
+	return t, false
 }
 
 // tabzType is findTabInChannelProperties (mwX5.kt → findTabById): the
 // type of the first of properties.tabz whose id or type is id.
 func tabzType(props json.RawMessage, id string) (string, bool) {
+	t, ok := tabzTab(props, id)
+	return t.Type, ok
+}
+
+// tabzTab is findTabInChannelProperties: the first of properties.tabz
+// whose id or type is id.
+func tabzTab(props json.RawMessage, id string) (SlugTab, bool) {
 	if id == "" || len(props) == 0 {
-		return "", false
+		return SlugTab{}, false
 	}
 	var p struct {
 		Tabz []struct {
-			ID   string `json:"id"`
-			Type string `json:"type"`
+			ID    string `json:"id"`
+			Type  string `json:"type"`
+			Label string `json:"label"`
+			Data  struct {
+				FileID      string `json:"file_id"`
+				DefaultView string `json:"lists_channel_tab_default_refine_view_id"`
+			} `json:"data"`
 		} `json:"tabz"`
 	}
 	if json.Unmarshal(props, &p) != nil {
-		return "", false
+		return SlugTab{}, false
 	}
 	for _, t := range p.Tabz {
 		if t.ID == id || t.Type == id {
-			return t.Type, true
+			return SlugTab{ID: t.ID, Type: t.Type, Label: t.Label, FileID: t.Data.FileID, DefaultView: t.Data.DefaultView}, true
 		}
 	}
-	return "", false
+	return SlugTab{}, false
 }
 
 // recordID is properties.record_channel.record_id (aK5v.rI

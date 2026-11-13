@@ -1,6 +1,7 @@
 package fakeslack
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -273,8 +274,11 @@ func (s *Server) handleFiles(method string, f url.Values) (any, bool) {
 }
 
 func (s *Server) addFilesChannel() {
+	// the channel object's tabz, as Slack's store has them (a channel-tab
+	// slug's resolution reads them: findTabInChannelProperties)
+	props, _ := json.Marshal(map[string]any{"tabz": []map[string]any{{"id": FilesTabID, "type": "files", "label": ""}}})
 	s.convs = append(s.convs, slack.Conversation{ID: FilesChannelID, Name: "files-gallery", IsChannel: true, IsMember: true,
-		NumMembers: 6, ContextTeamID: TeamID, Purpose: &slack.Purpose{Value: "File fixtures."}})
+		NumMembers: 6, ContextTeamID: TeamID, Purpose: &slack.Purpose{Value: "File fixtures."}, Properties: props})
 	msgs := s.FilesHistory()
 	// history is newest first
 	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {

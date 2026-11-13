@@ -1,5 +1,6 @@
 name: hover-card
-# The profile hover card and Slack's ChannelHoverCard (a message's
+# The profile hover card, the channel-tab slug peeks, a canvas's channel
+# card and Slack's ChannelHoverCard (a message's
 # #channel, a channel-tab slug, a composer channel slug: the code channel
 # card, the huddle badge, the rich topic) and the composer's app tooltip:
 # timing/placement unit tests, the router tests
@@ -25,6 +26,12 @@ on:
       - "internal/ui/popups/member_tip.go"
       - "internal/core/channel_card*.go"
       - "internal/ui/channel_card_test.go"
+      - "internal/ui/tab_slug_peek*.go"
+      - "internal/ui/workflows_peek.go"
+      - "internal/ui/popups/tab_peek.go"
+      - "internal/ui/popups/canvas_channel_card.go"
+      - "internal/core/tab_peeks*.go"
+      - "internal/ui/views/channel_files_peek.go"
       - "internal/ui/composer/texty_tip*.go"
       - "internal/ui/popups/hover_*test.go"
       - "internal/ui/popups/search_view.go"
@@ -70,14 +77,14 @@ jobs:
         run: |
           mkdir -p "$HOVER_SHOTS_DIR"
           go test -count=1 -v ./internal/ui/hovercard
-          go test -count=1 -v -run 'TestLocality|TestAppCardAndExternal|TestChannelCard' ./internal/core
+          go test -count=1 -v -run 'TestLocality|TestAppCardAndExternal|TestChannelCard|TestChannelTabSlugPeek' ./internal/core
           go test -count=1 -v -run 'TestHoverCard|TestHoverTrigger|TestLocalTimeLabel' ./internal/ui/popups
           xvfb-run -a go test -count=1 -v -run 'TestChannelHoverCard|TestComposerMemberTip' ./internal/ui/popups
           xvfb-run -a go test -count=1 -v -run 'TestSlugChannelCardAndAppTipLikeSlack|TestSlugProfileCardLikeSlack' ./internal/ui/composer
           go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views
           go test -count=1 -v -run 'TestRowHoverTarget' ./internal/ui/messages
-          go test -count=1 -v -run 'TestMentionHoverCard' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs' ./internal/ui/
+          go test -count=1 -v -run 'TestMentionHoverCard|TestCanvasChannelAndTabSlugCards' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs|TestTabSlugPeeks|TestCanvasChannelCard' ./internal/ui/
           # the shared huddle badge (the sidebar suffix and the channel card's): card-badge-*.png
           CLACK_PIXEL_TESTS=1 CLACK_SHOTS="$HOVER_SHOTS_DIR" xvfb-run -a go test -count=1 -v -run 'TestCardBadgeLikeSidebar|TestSidebarSuffixFaces|TestSidebarSuffixTooltipHover|TestSidebarFaceCrescent|TestSidebarTooltipShots' ./internal/ui/huddleui
           ls -la "$HOVER_SHOTS_DIR"

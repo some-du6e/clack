@@ -80,6 +80,28 @@ func (v *View) ID() string { return v.id }
 // Mode is where the view is shown.
 func (v *View) Mode() Mode { return v.mode }
 
+// barred: the view has its 49px bar (the side panel, the full view).
+func (v *View) barred() bool { return v.mode == Side || v.mode == Full }
+
+// Empty reports whether the loaded canvas is empty (Quip's doc.isEmpty:
+// no title and no section with content); known is false until it loads.
+func (v *View) Empty() (empty, known bool) {
+	d := v.Doc()
+	if d == nil {
+		return false, false
+	}
+	if strings.TrimSpace(d.Info.Title) != "" {
+		return false, true
+	}
+	for i := range d.Doc.Blocks {
+		b := &d.Doc.Blocks[i]
+		if b.Kind != canvas.Paragraph || strings.TrimSpace(b.Text()) != "" {
+			return false, true
+		}
+	}
+	return true, true
+}
+
 // Title is the canvas's title once loaded ("" before).
 func (v *View) Title() string {
 	v.mu.Lock()
@@ -276,7 +298,7 @@ func (v *View) layoutCrashed(gtx layout.Context) layout.Dimensions {
 	th := v.h.Theme()
 	theme.Fill(gtx, image.Rectangle{Max: sz}, th.C.Bg)
 	top := 0
-	if v.mode != Tab { // the side panel keeps its close button, the full view its bar
+	if v.barred() { // the side panel keeps its close button, the full view its bar
 		top = gtx.Dp(theme.HeaderH)
 		v.layoutBar(gtx, v.Doc(), image.Pt(sz.X, top))
 	}
@@ -306,7 +328,7 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 		v.load(false)
 		loading = true
 	}
-	if !v.live.Load() {
+	if !v.live.Load() && v.mode != Peek {
 		v.goLive()
 	}
 	th := v.h.Theme()
@@ -318,7 +340,7 @@ func (v *View) layout(gtx layout.Context) layout.Dimensions {
 		v.rebuild(d)
 	}
 	top := 0
-	if v.mode != Tab {
+	if v.barred() {
 		top = gtx.Dp(theme.HeaderH)
 		v.layoutBar(gtx, d, image.Pt(sz.X, top))
 	}

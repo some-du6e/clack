@@ -213,7 +213,7 @@ func (v *View) makeBlocks(d *core.CanvasDoc, bs []canvas.Block, old map[string]*
 			}
 		default:
 			if doc, ok := v.richDoc(d, b); ok {
-				x.rv = richview.New(doc, richview.Options{Secondary: b.Kind == canvas.Check && b.Checked})
+				x.rv = richview.New(doc, richview.Options{Secondary: b.Kind == canvas.Check && b.Checked, Canvas: true})
 			}
 		}
 		out = append(out, x)

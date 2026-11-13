@@ -105,7 +105,7 @@ func (e *editState) btn(k string) *widget.Clickable {
 
 // canEdit: the viewer may edit the canvas.
 func (e *editState) canEdit(v *View) bool {
-	if e == nil || v.shown == nil {
+	if e == nil || v.shown == nil || v.mode == Peek {
 		return false
 	}
 	return v.shown.Info.Editable
