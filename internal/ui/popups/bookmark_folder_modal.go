@@ -193,7 +193,7 @@ func (m *CreateFolderModal) folderField(gtx layout.Context, th *theme.Theme, cl 
 	})
 	lx := ix + dp(gtx, 20) + dp(gtx, 8)
 	lh := dp(gtx, 20)
-	rrect(gtx, image.Rect(lx, (hh-lh)/2, lx+maxInt(1, dp(gtx, 1)), (hh+lh)/2), 0, cl.BtnBorder) // otl-sec
+	rrect(gtx, image.Rect(lx, (hh-lh)/2, lx+border1(gtx), (hh+lh)/2), 0, cl.BtnBorder) // otl-sec
 	x := dp(gtx, 44)
 	tw := maxInt(1, w-x-dp(gtx, 12))
 	at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
