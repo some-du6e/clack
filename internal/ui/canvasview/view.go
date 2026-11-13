@@ -55,6 +55,7 @@ type View struct {
 	tphView *richview.View // the empty title's placeholder
 	toc     *tocState      // the table of contents (toc.go)
 	access  accessState    // the View only / Comment only pill (access.go)
+	cover   coverState     // the header's Add cover (cover.go)
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -722,7 +723,7 @@ var textPlaceholders = [...]string{
 	"Words go here ",
 }
 
-// placeholderFor is Slack's getIndexFromFileId: the file id's last two
+// placeholderFor is Slack's getIndexFromFileId: the id's last two
 // characters, as a+=16*a+(c-65), modulo the count.
 func placeholderFor(id string) string {
 	a := 0
@@ -746,6 +747,17 @@ func (v *View) placeholder(rows []*blk) string {
 	b := rows[0].b
 	if b.Kind != canvas.Paragraph || !(b.Default || strings.TrimSpace(b.Text()) == "") {
 		return ""
+	}
+	return v.textPlaceholder()
+}
+
+// textPlaceholder is the canvas's textPlaceholder. Slack's QuipEmbed
+// passes getIndexFromFileId the Quip document's id (doc.id, which it also
+// hands on as quipThreadId), not the Slack file's: files.info
+// quip_thread_id, else the file id.
+func (v *View) textPlaceholder() string {
+	if v.shown != nil && v.shown.Info.QuipThreadID != "" {
+		return placeholderFor(v.shown.Info.QuipThreadID)
 	}
 	return placeholderFor(v.id)
 }
@@ -795,10 +807,10 @@ func titleSection(bs []*blk) bool {
 }
 
 // layoutHeader: the canvas title at the top of the document, below the
-// header-image band; Slack draws no byline under it. The title is the
-// document's own opening heading, tb, when it has one (drawn and edited
-// as that block, in the title section's 28px/34px black); otherwise the
-// file's title.
+// header-image band (with Add cover for editors, cover.go); Slack draws
+// no byline under it. The title is the document's own opening heading,
+// tb, when it has one (drawn and edited as that block, in the title
+// section's 28px/34px black); otherwise the file's title.
 func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, tb *blk) layout.Dimensions {
 	y := gtx.Dp(docTop)
 	if v.edit != nil && v.edit.renaming {
@@ -831,6 +843,7 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, t
 			}
 		}()
 	}
+	v.layoutCover(gtx, gtx.Constraints.Min.X, x0, gtx.Dp(docTop), y) // over the title: its hover area passes presses on
 	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, y)}
 }
 

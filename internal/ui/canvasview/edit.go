@@ -67,6 +67,15 @@ type session struct {
 	refused bool // the last save was refused: Escape now discards
 	quoted  bool // a paragraph of a quote: each line saves as a "> " section
 	press   *pressAt
+	// def: the block is Quip's unedited default content (Block.Default).
+	// Focusing it empties it (Section.hideDefaultContent, HIDE_ON_FOCUS):
+	// the editor opens empty with the caret at 0. Typing makes it an
+	// ordinary section (TextSectionOverlay.onSelectionChange →
+	// clearDefaultContent), saved as a replace; left empty, it gets its
+	// default content back and nothing is sent (unfocusDefaultContent_ →
+	// restoreDefaultContent_). defText is that content's text.
+	def     bool
+	defText string
 }
 
 // pressAt is the click that opened the session: where it landed in the
@@ -405,7 +414,12 @@ func (e *editState) start(v *View, b *blk) {
 		s.quoted = true
 		s.orig = canvas.Markdown(canvas.Block{Kind: canvas.Quote, Children: []canvas.Block{*b.b}})
 	}
-	s.ed.SetDoc(toDoc(b.b))
+	if hidden(b) {
+		s.def, s.defText = true, canvas.SpansText(b.b.Spans)
+		s.ed.SetDoc(composer.NewDoc())
+	} else {
+		s.ed.SetDoc(toDoc(b.b))
+	}
 	s.ver = s.ed.Version()
 	e.cur = s
 	v.h.Invalidate()
@@ -444,7 +458,9 @@ func (e *editState) finish(v *View) bool {
 	md := blocksMarkdown(bs)
 	var ch core.CanvasChange
 	switch {
-	case s.target != nil && md == s.orig:
+	case s.def && md == "": // restoreDefaultContent_: the line is as it was
+		return true
+	case s.target != nil && md == s.orig && !s.def:
 		return true
 	case s.target != nil && md == "":
 		if s.id == "" {
@@ -644,7 +660,10 @@ func (e *editState) events(gtx layout.Context, v *View) {
 }
 
 // belowArea is the empty space under the last block: a click there adds a
-// block (Slack: clicking under a canvas's content starts a new line).
+// block (Slack: clicking under a canvas's content starts a new line). When
+// the last block is the unedited default line, the click focuses it
+// instead, emptied (Quip's isEventBelowLastSection: the last section
+// gets hideDefaultContent and switchFocus).
 func (e *editState) belowArea(gtx layout.Context, v *View, size image.Point) {
 	if e == nil || !e.canEdit(v) {
 		return
@@ -655,6 +674,10 @@ func (e *editState) belowArea(gtx layout.Context, v *View, size image.Point) {
 			break
 		}
 		if _, ok := ev.(pointer.Event); ok && (e.cur == nil || e.cur.place == nil) {
+			if n := len(v.blocks); n > 0 && hidden(v.blocks[n-1]) && v.blocks[n-1].edOK {
+				e.start(v, v.blocks[n-1])
+				continue
+			}
 			v.StartNewBlock()
 		}
 	}
@@ -707,6 +730,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 			}
 		case composer.EvChange:
 			shortcuts(s)
+			v.cover.typed()
 		}
 	}
 	if s.focus {
@@ -728,7 +752,13 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 		lineH = gtx.Dp(titleLine)
 		st.PlaceholderText = nsCanvas.T(titlePlaceholder) // TitleSectionOverlay, until the title has text
 	} else if s.target != nil && s.target == v.placeholderRow() {
-		st.PlaceholderText = placeholderFor(v.id) // TextSectionOverlay
+		st.PlaceholderText = v.textPlaceholder() // TextSectionOverlay
+	} else if s.def {
+		// TextSectionOverlay's secondary overlay (Slack sets
+		// slashShortcutCommandsNuxEnabled): a focused default line in a
+		// canvas with other text shows its saved default content
+		// (contentForSecondaryOverlay) until something is typed
+		st.PlaceholderText = s.defText
 	}
 	st.Embolden = v.styles.body.Embolden // richview's ink, so the text doesn't go grey while edited
 	g := gtx

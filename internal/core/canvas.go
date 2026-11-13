@@ -45,6 +45,10 @@ type CanvasInfo struct {
 	CommentsN   int
 	ShowBadge   bool // never opened by the viewer (Slack's blue dot)
 	TemplateMod bool
+	// QuipThreadID is the canvas's Quip document (files.info
+	// quip_thread_id); Slack's QuipEmbed keys the empty canvas's
+	// placeholder on it (getIndexFromFileId over doc.id).
+	QuipThreadID string
 	// AccessRequested: the viewer already asked for more access
 	// (most_recent_access_request_ts; QuipAccessIndicator's "already asked")
 	AccessRequested bool
@@ -105,6 +109,7 @@ type canvasFileJSON struct {
 	OriginalW       int             `json:"original_w"`
 	OriginalH       int             `json:"original_h"`
 	AccessRequestTS json.RawMessage `json:"most_recent_access_request_ts"`
+	QuipThreadID    string          `json:"quip_thread_id"`
 }
 
 // IsCanvasFile reports whether a file (filetype/mode/pretty_type) is a canvas.
@@ -147,7 +152,8 @@ func (a *App) canvasFileInfo(ctx context.Context, id string) (*canvasFileJSON, e
 func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 	ci := CanvasInfo{ID: f.ID, Title: f.Title, Creator: firstNonEmpty(f.CanvasCreatorID, f.User), Created: f.Created,
 		Updated: f.EditTimestamp, Editable: f.Editable, Access: f.Access, Editors: f.Editors, Permalink: f.Permalink,
-		URL: f.URLPrivate, IsPublic: f.IsPublic, CommentsN: f.CommentsCount, ShowBadge: f.ShowBadge}
+		URL: f.URLPrivate, IsPublic: f.IsPublic, CommentsN: f.CommentsCount, ShowBadge: f.ShowBadge,
+		QuipThreadID: f.QuipThreadID}
 	if ci.Updated == 0 {
 		ci.Updated = f.Updated
 	}
