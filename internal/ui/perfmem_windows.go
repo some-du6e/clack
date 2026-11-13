@@ -191,14 +191,48 @@ func perfOSMem(w io.Writer) {
 		sort.Slice(s, func(i, j int) bool { return s[i].v > s[j].v })
 		return s[:min(n, len(s))]
 	}
+	// protections tell code (wazero's compiled wasm, shader JIT:
+	// PAGE_EXECUTE_*) from data
+	prot := func(p uint32) string {
+		switch p &^ (windows.PAGE_GUARD | windows.PAGE_NOCACHE | windows.PAGE_WRITECOMBINE) {
+		case windows.PAGE_READONLY:
+			return "r"
+		case windows.PAGE_READWRITE:
+			return "rw"
+		case windows.PAGE_EXECUTE_READ:
+			return "rx"
+		case windows.PAGE_EXECUTE_READWRITE:
+			return "rwx"
+		case windows.PAGE_EXECUTE:
+			return "x"
+		}
+		return fmt.Sprintf("0x%x", p)
+	}
+	var execRes uintptr
+	for k, v := range byAlloc {
+		for _, g := range regs {
+			if g.allocBase == k && g.protect&(windows.PAGE_EXECUTE|windows.PAGE_EXECUTE_READ|windows.PAGE_EXECUTE_READWRITE) != 0 {
+				execRes += v
+				break
+			}
+		}
+	}
+	fmt.Fprintf(w, "win_ws_private_other_exec %s\n", mb(execRes))
 	for _, x := range top(byAlloc, 15) {
 		var size uintptr
+		ps := map[string]uintptr{}
 		for _, g := range regs {
 			if g.allocBase == x.k {
 				size += g.size
+				ps[prot(g.protect)] += g.size
 			}
 		}
-		fmt.Fprintf(w, "win_private_alloc 0x%x resident %s committed %s\n", x.k, mb(x.v), mb(size))
+		var parts []string
+		for p, n := range ps {
+			parts = append(parts, p+" "+mb(n))
+		}
+		sort.Strings(parts)
+		fmt.Fprintf(w, "win_private_alloc 0x%x resident %s committed %s (%s)\n", x.k, mb(x.v), mb(size), strings.Join(parts, ", "))
 	}
 	for _, x := range top(byImage, 10) {
 		fmt.Fprintf(w, "win_private_image %s %s\n", perfMappedName(x.k), mb(x.v))
