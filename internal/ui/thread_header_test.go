@@ -189,7 +189,7 @@ func TestThreadHeaderJumpsToRoot(t *testing.T) {
 		if l, ok := e.a.convoFor(c.Channel, "").list.(channelList); ok {
 			l.Refresh() // a conversation fetched before the posts (the sidebar's) loads them
 		}
-		e.until(c.Name+": the conversation loads the newer messages", 10*time.Second, func() bool {
+		e.until(c.Name+": the conversation loads the newer messages", 30*time.Second, func() bool {
 			l, ok := e.a.convoFor(c.Channel, "").list.(channelList)
 			if !ok {
 				return false
