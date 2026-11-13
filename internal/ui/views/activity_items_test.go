@@ -449,7 +449,11 @@ func TestActivityReactionTextLikeSlack(t *testing.T) {
 			}
 			// a message with no preview blocks is a plain paragraph in
 			// that colour (msgBodySub); one with blocks is a rich view
-			if e2 := v.rich["sub:\x00"+m.Channel+"/"+m.TS]; e2 != nil && e2.v.Options().Color != want {
+			sub := "" // Dense runs "Reacted to:" inline in the message's doc
+			if dense {
+				sub = nsActivity.T("Reacted to:") + " "
+			}
+			if e2 := v.rich["sub:"+sub+"\x00"+m.Channel+"/"+m.TS]; e2 != nil && e2.v.Options().Color != want {
 				got := e2.v.Options().Color
 				t.Errorf("dark %v dense %v unread %v: preview colour %v, want the row's %v", dark, dense, r.unread, got, want)
 			}

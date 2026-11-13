@@ -2899,18 +2899,17 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		}
 		return v.shimmerLine(gtx, 240)
 	}
-	if d.subReact && !v.h.Core().ActivityLayoutRevisions() {
-		// QTZf ReactionContent without the layout revisions: "You:"
-		// (margin_right_25) before your message
-		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, nsActivity.T("You:")) })
-			}),
-			layout.Flexed(1, func(gtx C) D {
-				gtx.Constraints.Min.X = 0
-				return r.preview(gtx, 1)
-			}),
-		)
+	if d.subReact && (v.dense || !v.h.Core().ActivityLayoutRevisions()) {
+		// QTZf ReactionContent's span.margin_right_25 subtext ("Reacted
+		// to:" in Dense, "You:" before your message without the layout
+		// revisions) runs inline in ActivityMessage's one truncated line:
+		// the message's own text run, its colour and baseline, the 4px
+		// margin a space (Lato's at 15px: 3.9px)
+		sub := nsActivity.T("Reacted to:")
+		if !v.h.Core().ActivityLayoutRevisions() {
+			sub = nsActivity.T("You:")
+		}
+		return r.previewSub(gtx, 1, sub+" ")
 	}
 	if d.subReact {
 		// ReactionContent: "Reacted {emoji} to:" (Detailed: the emoji
@@ -2920,16 +2919,9 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		// message right after it, inline: one line box, one baseline, and
 		// ActivityMessage's Truncate with truncate 1 (one line in Detailed
 		// too, the ellipsis at the message's end)
-		var pre []layout.FlexChild
-		if v.dense {
-			pre = append(pre, layout.Rigid(func(gtx C) D {
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, nsActivity.T("Reacted to:")) })
-			}))
-		} else {
-			pre = append(pre, layout.Rigid(func(gtx C) D { return v.reactPrefix(gtx, d, col) }))
-		}
-		pre = append(pre, layout.Flexed(1, func(gtx C) D { return r.preview(gtx, 1) }))
-		return row(gtx, layout.Baseline, pre...)
+		return row(gtx, layout.Baseline,
+			layout.Rigid(func(gtx C) D { return v.reactPrefix(gtx, d, col) }),
+			layout.Flexed(1, func(gtx C) D { return r.preview(gtx, 1) }))
 	}
 	if d.subtext == "" {
 		return r.preview(gtx, lines)
