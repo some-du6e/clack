@@ -290,6 +290,25 @@ func (s *Store) EvictMembers() []string {
 	return out
 }
 
+// PutAbsentUsers is the UnknownFetchManager's upsertKnown
+// (upsertMembersForTeamId): only members the store doesn't hold yet,
+// so an answer never replaces a newer copy that arrived meanwhile (a
+// user_change, another fetch).
+func (s *Store) PutAbsentUsers(us []slack.User) {
+	if len(us) == 0 {
+		return
+	}
+	s.mu.RLock()
+	add := make([]slack.User, 0, len(us))
+	for _, u := range us {
+		if _, ok := s.Users[u.ID]; !ok && !s.members.nonexistent[u.ID] && u.ID != "" {
+			add = append(add, u)
+		}
+	}
+	s.mu.RUnlock()
+	s.PutUsers(add)
+}
+
 // PutNonexistent stores ids users/info didn't return as non-existent
 // members (upsertNonExistent: only ids the store doesn't hold).
 func (s *Store) PutNonexistent(ids []string) {

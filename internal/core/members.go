@@ -97,7 +97,7 @@ func (a *App) fetchUnknownMembers(ctx context.Context, ids []string) {
 				}
 				r = slack.MembersResult{Failed: ask, Err: fctx.Err()}
 			}
-			a.S.PutUsers(r.Users)
+			a.S.PutAbsentUsers(r.Users)         // upsertKnown
 			a.S.PutNonexistent(r.Missing)       // upsertNonExistent
 			a.S.ForgetMissing('u', r.Failed...) // asked again at the next lookup
 			users, missing, failed = len(r.Users), len(r.Missing), len(r.Failed)
