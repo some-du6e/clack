@@ -15,6 +15,7 @@ package ui
 import (
 	"fmt"
 	"image"
+	"os"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 const mcPerson = "U0FAKE00001"
@@ -67,6 +69,21 @@ func (e *perfEnv) mcState() string {
 		open, req, hasPend, pend, len(e.a.overlays), e.profileCards(), s.kind, s.user, s.view, e.a.router.Current())
 }
 
+// mcShots saves the window in light and dark (HOVER_SHOTS_DIR).
+func mcShots(t *testing.T, e *perfEnv, name string) {
+	t.Helper()
+	if e.gpu == nil {
+		return
+	}
+	for _, dark := range []bool{false, true} {
+		e.setDark(dark)
+		e.settle(300 * time.Millisecond)
+		hcShot(t, e, name+"-"+map[bool]string{false: "light", true: "dark"}[dark])
+	}
+	e.setDark(false)
+	e.settle(100 * time.Millisecond)
+}
+
 func TestMentionHoverAndClick(t *testing.T) {
 	sz := fakeslack.Small
 	sz.ThreadHeader = true
@@ -80,6 +97,13 @@ func TestMentionHoverAndClick(t *testing.T) {
 		">, cc <!subteam^" + fakeslack.WorkspaceGroupID + "|@snackcrew> today"
 	msgTS, _ := fs.PostQuiet(conv, fakeslack.ProfileID, text)
 	e := startEnv(t, fs, t.TempDir())
+	if os.Getenv("HOVER_SHOTS_DIR") != "" {
+		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
+		if err != nil {
+			t.Fatalf("headless window: %v", err)
+		}
+		e.gpu = w
+	}
 	e.waitReady()
 	e.openChannel(conv)
 	e.settle(800 * time.Millisecond)
@@ -149,6 +173,9 @@ func TestMentionHoverAndClick(t *testing.T) {
 			t.Errorf("%s: hovering opened %d click card(s)", c.name, n)
 		}
 		e.settle(300 * time.Millisecond) // the card's own loads (users.info, apps.profile.get)
+		if c.name == "app" {
+			mcShots(t, e, "mention-app-hover-card")
+		}
 
 		// click, the way a hand does: a pixel of jitter, then press and
 		// release
@@ -184,6 +211,19 @@ func TestMentionHoverAndClick(t *testing.T) {
 		}
 		if !c.opened() {
 			t.Errorf("%s: what the click opened went away: %s", c.name, e.mcState())
+		}
+		if c.name == "app" {
+			e.until("the App details' profile", 5*time.Second, func() bool {
+				v, ok := e.a.secondary.view.(*popups.AppDetailsView)
+				if !ok {
+					return false
+				}
+				_, loaded := v.Card()
+				return loaded
+			})
+			e.move(away)
+			e.settle(400 * time.Millisecond)
+			mcShots(t, e, "mention-app-details")
 		}
 		reset()
 	}
