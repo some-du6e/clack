@@ -1128,6 +1128,12 @@ func (s *Store) PutConv(c slack.Conversation) {
 		if c.LastRead == "" {
 			c.LastRead = old.LastRead
 		}
+		// a payload without is_member (users.conversations, a write's
+		// channel echo) doesn't make a member a previewer: leaving takes
+		// the conversation out of Convs first (core dropMembership)
+		if old.IsMember && !c.IsMember {
+			c.IsMember = true
+		}
 	}
 	s.Convs[c.ID] = &c
 	s.mu.Unlock()
