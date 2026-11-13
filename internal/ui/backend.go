@@ -342,7 +342,8 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc),
 			Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose,
 			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName,
-			File: c.File, FileID: c.FileID, Doc: c.Doc, NameSpans: c.NameSpans}
+			File: c.File, FileID: c.FileID, Doc: c.Doc, NameSpans: c.NameSpans,
+			Shared: c.IsShared, Teams: c.ConnectedTeams}
 		if old := m.Convs[c.ID]; old != nil {
 			// keep what opened() fetched (count, facepile) across snapshots
 			if ci.NumMembers == 0 {
@@ -364,6 +365,9 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 				ci.Bot = u.IsBot
 				if u.Name != "" {
 					ci.Name = u.Name
+				}
+				if u.External {
+					ci.PeerTeam = u.TeamID
 				}
 			}
 			ci.Self = c.User == s.Self.ID

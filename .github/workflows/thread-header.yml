@@ -17,6 +17,8 @@ on:
       - "internal/ui/host.go"
       - "internal/core/resolve.go"
       - "internal/fakeslack/threadheader.go"
+      - "internal/ui/sidebar_connect*.go"
+      - "internal/ui/popups/shared_channel_tip*.go"
       - "internal/fakeslack/agent_thread.go"
       - "internal/ui/agent_thread_test.go"
       - "internal/ui/messages/hub.go"
@@ -55,6 +57,8 @@ jobs:
         run: |
           mkdir -p "$THREAD_HEADER_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity|TestThreadHeaderJumpsToRoot' ./internal/ui/
+          # Slack Connect in the sidebar on the same fixture (slack-connect-sidebar-*.png)
+          xvfb-run -a go test -count=1 -v -run 'TestSidebarSlackConnectMarkers' ./internal/ui/
           # find in thread's bar and marks (thread-find-*.png)
           xvfb-run -a go test -count=1 -v -run 'TestThreadFindShots' ./internal/ui/messages/
       - name: an agent's edited answer in the open pane, with screenshots

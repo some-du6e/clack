@@ -423,6 +423,17 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	ns.Leave()
 	if conv.Code != nil { // BaseChannelName's code channel tooltip (codechannel.go)
 		a.codeRowTooltip(gtx, conv, label, image.Rect(tx, 0, tx+nw, rowH), trunc)
+	} else if conv.Shared { // SharedChannelTooltipContent (sidebar_connect.go)
+		a.sharedRowTooltip(gtx, conv, label, image.Rect(tx, 0, tx+nw, rowH), trunc)
+	}
+	if (kind == "im" || kind == "app") && conv.PeerTeam != "" && !trunc && !ns.Hidden() {
+		// an external DM partner's org (sidebar_connect.go), on the name's
+		// baseline: the name is drawn 1px below the row's middle
+		m := op.Record(gtx.Ops)
+		nd := a.th.Label(gtx, size, cssWeight(ns, e.weight), fg, label)
+		m.Stop()
+		base := gtx.Dp(1) + (rowH-nd.Size.Y)/2 + (nd.Size.Y - nd.Baseline)
+		nw += a.sbOrgLabel(gtx, conv, tx+nw, base, tw-nw, e.sel)
 	}
 	if conv.StatusEmoji != "" && nw+gtx.Dp(26) < tw {
 		// status emoji after the name (Slack: 16px, 6px gap)
