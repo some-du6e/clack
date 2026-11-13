@@ -5,6 +5,7 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"gioui.org/f32"
 	"gioui.org/op"
@@ -43,6 +44,7 @@ type emboldener struct {
 	mu    sync.Mutex
 	runs  map[runKey]*list.Element
 	lru   list.List // front = most recent; values *runEntry
+	bytes int       // the runs' outlines (PathBytes)
 	pts   []f32.Point
 	ops   []gtot.SegmentOp
 	shift []f32.Point
@@ -57,6 +59,7 @@ type runEntry struct {
 	key    runKey
 	glyphs []runGlyph
 	path   clip.PathSpec
+	bytes  int
 }
 
 type runGlyph struct {
@@ -65,8 +68,16 @@ type runGlyph struct {
 	oy fixed.Int26_6
 }
 
-// maxRuns bounds the emboldened-line cache (Gio's own path cache holds 1000).
-const maxRuns = 1500
+// maxRuns and maxRunBytes bound the emboldened-run cache (Gio's own path
+// cache holds 1000). Words in messages keep their emboldened outline
+// themselves (richview's shaped words), so the cache mostly serves labels,
+// which ask for theirs every frame: a screen of them is a few hundred
+// runs. Bounded by count only, a session's message words filled it with
+// 1,500 runs of up to 80 KB each, 117 MB.
+const (
+	maxRuns     = 1500
+	maxRunBytes = 16 << 20
+)
 
 func registerShaperFaces(sh *text.Shaper, faces []*gtfont.Face) {
 	slot := -1
@@ -121,12 +132,17 @@ func (e *emboldener) shape(gs []text.Glyph, w float32) (clip.PathSpec, bool) {
 	}
 	if el, ok := e.runs[k]; ok { // hash collision: replace
 		e.lru.Remove(el)
+		e.bytes -= el.Value.(*runEntry).bytes
 	}
+	re.bytes = PathBytes(path, len(gs)) + len(re.glyphs)*int(unsafe.Sizeof(runGlyph{}))
+	e.bytes += re.bytes
 	e.runs[k] = e.lru.PushFront(re)
-	for e.lru.Len() > maxRuns {
+	for e.lru.Len() > maxRuns || e.bytes > maxRunBytes && e.lru.Len() > 1 {
 		old := e.lru.Back()
 		e.lru.Remove(old)
-		delete(e.runs, old.Value.(*runEntry).key)
+		oe := old.Value.(*runEntry)
+		delete(e.runs, oe.key)
+		e.bytes -= oe.bytes
 	}
 	return path, true
 }

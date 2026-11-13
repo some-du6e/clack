@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"gioui.org/font"
+
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // The shaped-word cache is bounded by the bytes its words' glyphs and
@@ -47,7 +49,7 @@ func TestWordCacheByteBudget(t *testing.T) {
 	if again.str != "firstword" || again.adv != first.adv || len(again.glyphs) != len(first.glyphs) {
 		t.Fatalf("firstword reshaped wrong: %q adv %v (was %v)", again.str, again.adv, first.adv)
 	}
-	if p, _ := st.pathOf(again, true); pathBytes(p, len(again.glyphs)) == 0 || pathBytes(p0, len(first.glyphs)) == 0 {
+	if p, _ := st.pathOf(again, true); theme.PathBytes(p, len(again.glyphs)) == 0 || theme.PathBytes(p0, len(first.glyphs)) == 0 {
 		t.Fatal("firstword has no outline")
 	}
 }

@@ -568,10 +568,16 @@ jobs, 2026-11-12). `PathSpec.Size` is roughly what an outline holds: its
 `Ops` data and reference arrays' capacity. richview ends a generation once
 its words hold 8 MB (`maxCachedWordBytes`).
 
-richview is also built against stock Gio v0.10.3 (`.github/scripts/
-gio-layer-fix.sh`), so it calls this through `gio_patch15.go`; on stock
-Gio (`gio_patch15_stock.go`) a word's outline counts 1 KB a glyph. Test:
-`internal/ui/richview` `TestWordCacheByteBudget`. Not in `UPSTREAM.patch`.
+`internal/ui/theme`'s emboldened-run cache (1,500 runs, which held 117 MB
+on Linux, where dark text draws as emboldened outlines) ends at 16 MB the
+same way (`maxRunBytes`).
+
+richview and theme are also built against stock Gio v0.10.3
+(`.github/scripts/gio-layer-fix.sh`), so they call this through
+`theme.PathBytes` (`internal/ui/theme/gio_patch15.go`); on stock Gio
+(`gio_patch15_stock.go`) an outline counts 1 KB a glyph. Tests:
+`internal/ui/richview` `TestWordCacheByteBudget`, `internal/ui/theme`
+`TestEmboldenCacheByteBudget`. Not in `UPSTREAM.patch`.
 
 ## 16. font/opentype: fonts parsed in place
 

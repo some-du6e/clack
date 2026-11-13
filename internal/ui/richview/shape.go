@@ -174,7 +174,7 @@ func (s *Style) pathOf(w *shaped, needPath bool) (clip.PathSpec, op.CallOp) {
 		w.pathDone = true
 		if len(w.glyphs) > 0 {
 			w.path = s.Shaper.Shape(w.glyphs)
-			n := pathBytes(w.path, len(w.glyphs))
+			n := theme.PathBytes(w.path, len(w.glyphs))
 			w.bytes += n
 			s.wordBytes += n
 		}
@@ -189,7 +189,7 @@ func (s *Style) emboldenedOf(w *shaped, emb float32) (clip.PathSpec, bool) {
 		w.embW = emb
 		w.embPath, w.embOK = theme.EmboldenedShape(s.Shaper, w.glyphs, emb)
 		if w.embOK {
-			n := pathBytes(w.embPath, len(w.glyphs))
+			n := theme.PathBytes(w.embPath, len(w.glyphs))
 			w.bytes += n
 			s.wordBytes += n
 		}
