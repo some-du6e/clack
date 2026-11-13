@@ -64,6 +64,15 @@ type Evicted struct {
 	Oldest          string
 }
 
+// EvictStats is what one EvictMessages pass saw and did (core logs it).
+type EvictStats struct {
+	Timelines, Threads, Messages int
+	Kept                         int // conversations and threads skipped as on screen
+	Unknown                      int // conversations skipped as unknown
+	Candidates, Bytes            int // the messages it may evict, and their JSON size
+	Evicted                      int // messages removed
+}
+
 type evictCand struct {
 	key   string // channel, or channel/thread_ts
 	ts    string
@@ -107,6 +116,13 @@ type convFacts struct {
 // EvictMessages applies Slack's message cache budget to the cached
 // conversations and threads, and reports what it removed.
 func (s *Store) EvictMessages(in EvictInput) []Evicted {
+	out, _ := s.EvictMessagesStats(in)
+	return out
+}
+
+// EvictMessagesStats is EvictMessages with what the pass saw.
+func (s *Store) EvictMessagesStats(in EvictInput) ([]Evicted, EvictStats) {
+	var st EvictStats
 	s.mu.RLock()
 	ids := make([]string, 0, len(s.timelines))
 	for ch := range s.timelines {
@@ -154,13 +170,22 @@ func (s *Store) EvictMessages(in EvictInput) []Evicted {
 		}
 	}
 	all := func(*slack.Message) bool { return true }
+	st.Timelines, st.Threads = len(s.timelines), len(s.threads)
+	for _, t := range s.timelines {
+		st.Messages += len(t.Msgs)
+	}
+	for _, th := range s.threads {
+		st.Messages += len(th)
+	}
 	for ch, t := range s.timelines {
 		if in.Keep[ch] || len(t.Msgs) == 0 {
+			st.Kept++
 			continue
 		}
 		f, ok := facts[ch]
 		switch {
 		case !ok || !f.known:
+			st.Unknown++
 			continue // a conversation added since: next time
 		case !f.member:
 			add(ch, t.Msgs, all)
@@ -180,9 +205,11 @@ func (s *Store) EvictMessages(in EvictInput) []Evicted {
 	for k, th := range s.threads {
 		ch, _, _ := strings.Cut(k, "/")
 		if in.Keep[k] || in.Keep[ch] || len(th) == 0 {
+			st.Kept++
 			continue
 		}
 		if !facts[ch].known {
+			st.Unknown++
 			continue
 		}
 		add(k, th, all)
@@ -191,8 +218,9 @@ func (s *Store) EvictMessages(in EvictInput) []Evicted {
 	for _, c := range cands {
 		bytes += c.size
 	}
+	st.Candidates, st.Bytes = len(cands), bytes
 	if len(cands) < EvictMaximum && bytes < EvictBytesMax {
-		return nil
+		return nil, st
 	}
 	sort.SliceStable(cands, func(i, j int) bool {
 		if cands[i].order != cands[j].order {
@@ -213,6 +241,7 @@ func (s *Store) EvictMessages(in EvictInput) []Evicted {
 		r--
 	}
 	gone := map[string]map[string]bool{}
+	st.Evicted = r
 	for _, c := range cands[:r] {
 		if gone[c.key] == nil {
 			gone[c.key] = map[string]bool{}
@@ -256,7 +285,7 @@ func (s *Store) EvictMessages(in EvictInput) []Evicted {
 		}
 		return out[i].Thread < out[j].Thread
 	})
-	return out
+	return out, st
 }
 
 func (in *EvictInput) allPersistable(msgs []slack.Message) bool {

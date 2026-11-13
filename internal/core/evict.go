@@ -104,16 +104,13 @@ func (a *App) EvictMessages() []store.Evicted {
 		e, _ := a.S.Count(ch)
 		return e.LastRead
 	}
-	out := a.S.EvictMessages(in)
-	if len(out) == 0 {
-		return nil
+	out, st := a.S.EvictMessagesStats(in)
+	if st.Candidates >= store.EvictMaximum/2 || len(out) > 0 {
+		log.Printf("core: message cache: %d messages in %d conversations and %d threads (%d on screen, %d unknown); %d may go (%d KB), %d went from %d",
+			st.Messages, st.Timelines, st.Threads, st.Kept, st.Unknown, st.Candidates, st.Bytes>>10, st.Evicted, len(out))
 	}
-	n := 0
 	for _, e := range out {
-		ev := Event{Type: "evicted", Channel: e.Channel, ThreadTS: e.Thread, TS: e.Oldest}
-		a.emit(ev)
-		n++
+		a.emit(Event{Type: "evicted", Channel: e.Channel, ThreadTS: e.Thread, TS: e.Oldest})
 	}
-	log.Printf("core: message cache: trimmed %d conversations and threads to Slack's budget", n)
 	return out
 }
