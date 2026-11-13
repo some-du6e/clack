@@ -1613,44 +1613,6 @@ func fileAttachAfterSendDisabled(a *core.App) bool {
 	return ok && string(v) == "true"
 }
 
-// editFileIDs is the edit's initialFileIds: the files the message has,
-// in its order.
-func editFileIDs(m *core.Message) []string {
-	var ids []string
-	for _, b := range m.Doc.Blocks {
-		if b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != "" {
-			ids = append(ids, b.File.ID)
-		}
-	}
-	return ids
-}
-
-// editUploads resolves the files attached while editing to their ids, in
-// the chips' order: prepared uploads at once, eager uploads when they
-// finish, and files whose eager upload failed uploaded again (Slack's
-// saveMessageEditWithFiles awaits the uploads' promises).
-func editUploads(ctx context.Context, api coreAPI, b sendBatch) ([]string, error) {
-	var ids []string
-	for _, p := range b.prepared {
-		ids = append(ids, p.ID)
-	}
-	for _, pf := range b.pending {
-		r, err := pf.Wait(ctx)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, r.ID)
-	}
-	for _, f := range b.raw {
-		r, err := api.prepareUpload(ctx, f, nil)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, r.ID)
-	}
-	return ids, nil
-}
-
 func (c *Composer) finishEdit() {
 	if c.done {
 		return
