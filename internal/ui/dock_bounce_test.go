@@ -33,7 +33,7 @@ func TestDockBounceLikeSlack(t *testing.T) {
 		pref string
 		dnd  bool
 	}{{"", false}, {"short", false}, {"long", false}, {"short", true}, {"long", true}} {
-		uipref.Set(store.Prefs{MacBounce: c.pref})
+		uipref.Set(store.Prefs{MorePrefs: store.MorePrefs{MacBounce: c.pref}})
 		dnd = c.dnd
 		a.bounceDock()
 	}

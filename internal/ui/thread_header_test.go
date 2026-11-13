@@ -178,9 +178,13 @@ func TestThreadHeaderJumpsToRoot(t *testing.T) {
 			continue
 		}
 		// plenty of newer messages, so the root is off screen at the newest
+		// (pushed too: a conversation the client already holds hears of
+		// them only from realtime)
 		for n := 0; n < 40; n++ {
-			e.fs.PostQuiet(c.Channel, users[n%len(users)], "a synthetic newer message")
+			_, ev := e.fs.PostQuiet(c.Channel, users[n%len(users)], "a synthetic newer message")
+			e.fs.Push(ev)
 		}
+		e.settle(300 * time.Millisecond)
 		e.openChannel(c.Channel)
 		e.until(c.Name+": the conversation loads", 10*time.Second, func() bool {
 			l, ok := e.a.convoFor(c.Channel, "").list.(channelList)
