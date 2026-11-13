@@ -49,6 +49,10 @@ type model struct {
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
 	retryAt, olderRetryAt time.Time
+
+	// evictGen counts evict calls: sweepRows releases the rows of lists
+	// not on screen whose model was trimmed since they last looked
+	evictGen uint64
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -337,6 +341,26 @@ func (m *model) mergeNewest(page []core.Message, hasMore bool) {
 	m.setAll(append(keep, page...))
 }
 
+// evict drops the messages before oldest, or everything when oldest is ""
+// (the whole history went: the next view loads it again), as core's store
+// did. The callers hold m.mu.
+func (m *model) evict(oldest string) {
+	if oldest == "" {
+		m.msgs = nil
+		m.loaded, m.hasMore, m.lastRead = false, false, ""
+		m.fetched = time.Time{}
+	} else {
+		i := sort.Search(len(m.msgs), func(i int) bool { return !tsLess(m.msgs[i].m.TS, oldest) })
+		if i == 0 {
+			return
+		}
+		m.msgs = append([]entry(nil), m.msgs[i:]...)
+		m.hasMore = true
+	}
+	m.evictGen++
+	m.rev++
+}
+
 func (m *model) prepend(page []core.Message, hasMore bool) {
 	all := make([]core.Message, 0, len(page)+len(m.msgs))
 	all = append(all, page...)
@@ -520,6 +544,23 @@ func (hb *hub) apply(ev core.Event) bool {
 			m.mu.Unlock()
 		}
 		return len(ms) > 0
+	case "evicted":
+		// core trimmed the conversation (or thread) to Slack's message
+		// cache budget (core/evict.go): its model drops the same messages,
+		// or starts over when the whole history went, and the lists
+		// showing it let their rows go (sweepRows)
+		chm, thm := hb.models(ev.Channel, ev.ThreadTS)
+		m := chm
+		if ev.ThreadTS != "" {
+			m = thm
+		}
+		if m == nil {
+			return false
+		}
+		m.mu.Lock()
+		m.evict(ev.TS)
+		m.mu.Unlock()
+		return true
 	case "typing":
 		chm, thm := hb.models(ev.Channel, ev.ThreadTS)
 		m := chm

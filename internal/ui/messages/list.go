@@ -149,6 +149,7 @@ type listState struct {
 	sel               selection
 	sb                scrollbar
 	pendingJump       string
+	evictSeen         uint64 // the model's evictGen this list released its rows for (releaseEvicted)
 
 	// the list as the last frame left it (anchoring in layoutList)
 	laidOut   bool
@@ -211,12 +212,51 @@ func sweepRows(now time.Time) {
 		if _, _, _, _, ok := s.ordered(); ok {
 			continue // a selection may span rows off screen (copy reads their text)
 		}
+		if s.releaseEvicted() {
+			continue
+		}
 		for _, r := range s.rows {
 			if r.rv != nil && r.edit == nil && now.Sub(r.drawn) > rowIdle {
 				r.rv.Release()
 			}
 		}
 	}
+}
+
+// releaseEvicted lets a list that isn't on screen drop its rows, items and
+// copy of the messages once core trimmed its conversation (Slack's message
+// cache budget, core/evict.go): they'd only be rebuilt from the trimmed
+// model, and it starts from the newest messages (or the unread line) the
+// next time it shows, as Slack's reset histories do. Reports whether it
+// did.
+func (s *listState) releaseEvicted() bool {
+	s.m.mu.Lock()
+	gen := s.m.evictGen
+	s.m.mu.Unlock()
+	if gen == s.evictSeen || s.onScreen() {
+		return false
+	}
+	s.evictSeen = gen
+	s.rows = map[string]*row{}
+	s.items = nil
+	s.snap.msgs = nil
+	s.snap.rev = 0
+	s.list.Position = layout.Position{}
+	s.positioned, s.laidOut = false, false
+	return true
+}
+
+// onScreen reports whether s is the list last drawn in its view container.
+func (s *listState) onScreen() bool {
+	if s == lastChannel || s == lastThread {
+		return true
+	}
+	for _, p := range paneLast {
+		if p != nil && *p == s {
+			return true
+		}
+	}
+	return false
 }
 
 // lastHost is the Host of the last message list drawn. Host components

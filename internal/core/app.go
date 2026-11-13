@@ -105,6 +105,9 @@ type App struct {
 	pollSeen  map[string]string  // conversation -> counts latest|updated at the last poll
 	watchCh   string             // conversation last opened (History), refreshed every poll
 	watchTh   []watchedThread    // threads last opened (Replies), newest first
+	// accessed: when each conversation ("ch/thread_ts" for a thread) was
+	// last read, for Slack's message cache budget (evict.go)
+	accessed map[string]time.Time
 
 	// tempMuteTimer is kickOffTempMuteTimer's timer (temp_mute.go).
 	tempMuteTimer *time.Timer
@@ -628,6 +631,7 @@ func (a *App) Boot(ctx context.Context) error {
 	a.rtMu.Unlock()
 	a.startRealtime()
 	go a.pollLoop(a.bg)
+	go a.evictLoop(a.bg)             // Slack's message cache budget (evict.go)
 	go a.codeChannelCloserLoop(a.bg) // code_channels_auto_close (codechannel_close.go)
 	go a.pump()
 	go a.prefetch(a.bg)
