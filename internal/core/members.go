@@ -150,6 +150,7 @@ var AfterMembersEvict func(members int)
 func (a *App) EvictMembers() []string {
 	t0 := time.Now()
 	before, gone := a.S.MembersStats()
+	a.touchSidebarMembers()
 	ids := a.S.RunMembersPass(t0)
 	if len(ids) > 0 || before+gone >= 700 {
 		after, gone2 := a.S.MembersStats()
@@ -163,6 +164,29 @@ func (a *App) EvictMembers() []string {
 		}
 	}
 	return ids
+}
+
+// touchSidebarMembers records a hit on the members the sidebar shows (the
+// viewer, DM partners, group DMs' members): Slack's sidebar sections
+// (useCalculateSidebarSections, which reads each DM's member to hide
+// deactivated people and apps) run on every store change, so its people
+// are always among the last found when a pass sorts them. Clack's sidebar
+// rules read them at each snapshot, which may be long before the pass.
+func (a *App) touchSidebarMembers() {
+	var ids []string
+	a.S.RLock()
+	for _, c := range a.S.Convs {
+		switch {
+		case c.IsIM && c.User != "":
+			ids = append(ids, c.User)
+		case c.IsMPIM:
+			ids = append(ids, c.Members...)
+		}
+	}
+	a.S.RUnlock()
+	for _, id := range ids {
+		a.S.TouchMember(id)
+	}
 }
 
 // membersOnline is mG45 isOnline for the members pass: clientOnline (the
