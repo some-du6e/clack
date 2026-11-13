@@ -85,6 +85,25 @@ jobs:
           mkdir -p "$EMOJI_SHOTS_DIR"
           xvfb-run -a go test -p 1 -count=1 -v -run 'TestEmojiPickerShots|TestEmojiTabRow' ./internal/ui/popups 2>&1 | tee dist/emoji-picker-shots.log
           ls -la "$EMOJI_SHOTS_DIR"
+      # Slack's light picker: its markup rebuilt from the web client's
+      # source with Slack's own CSS (popups/testdata/slack-picker), drawn
+      # by Chrome, then compared with Clack's (TestEmojiPickerVsSlack)
+      - name: Slack's light picker in Chrome, against Clack's
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_EMOJI_CDN: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          EMOJI_SHOTS_DIR: ${{ github.workspace }}/dist/emoji-picker-shots
+        run: |
+          set -o pipefail
+          go test -count=1 -v -run 'TestEmojiPickerSlackPage$' ./internal/ui/popups 2>&1 | tee dist/emoji-picker-slack-page.log
+          google-chrome --version | tee -a dist/emoji-picker-slack-page.log
+          google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars --force-device-scale-factor=2 \
+            --window-size=385,542 --virtual-time-budget=8000 --user-data-dir="$RUNNER_TEMP/chrome-picker" \
+            --screenshot="$EMOJI_SHOTS_DIR/slack-picker-light.png" "file://$EMOJI_SHOTS_DIR/slack-ref/picker-light.html"
+          SLACK_PICKER_PNG="$EMOJI_SHOTS_DIR/slack-picker-light.png" xvfb-run -a go test -p 1 -count=1 -v -run 'TestEmojiPickerVsSlack$' ./internal/ui/popups 2>&1 | tee dist/emoji-picker-vs-slack.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
