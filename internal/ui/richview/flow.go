@@ -678,6 +678,9 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		case richtext.Canvas:
 			l.canvasSlug(sp, fs, k, pt)
 			continue
+		case richtext.ChannelTab:
+			l.channelTabSlug(sp, fs, k, pt) // canvasslug.go
+			continue
 		case richtext.Date:
 			if sp.URL != "" {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true})

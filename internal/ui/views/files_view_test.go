@@ -46,6 +46,10 @@ func (h *filesHost) last() string {
 func filesView(t *testing.T) (*Files, *filesHost, *vaEnv, *fakeslack.Server) {
 	t.Helper()
 	app, fs := vaFake(t)
+	// without file sections, as fakeslack's experiments.getByUser has it
+	// (the account and core's defaults have custom_file_sections on); the
+	// sections tests turn it on (sectionsView)
+	app.SetExperimentGroup("custom_file_sections", "")
 	h := &filesHost{vaHost: &vaHost{slickHost: &slickHost{app: app, th: theme.New(false)}}}
 	v := NewFiles(h)
 	e := &vaEnv{size: image.Pt(1200, 900)}

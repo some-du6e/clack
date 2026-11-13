@@ -66,6 +66,7 @@ func TestKeywordMention(t *testing.T) {
 // with vip_section_pref on it needs the pref.
 func TestPrioritySection(t *testing.T) {
 	a, _ := testApp(t)
+	a.SetExperimentGroup("vip_section_pref", "") // unassigned first (core's defaults hold the account's on)
 	a.S.PutConv(slack.Conversation{ID: "D2", IsIM: true, User: "U2"})
 	a.S.Sections = []slack.Section{{ID: "L1", Type: "channels", Next: "L3"}, {ID: "L3", Type: "direct_messages"}}
 	a.S.SetCounts(&slack.Counts{IMs: []slack.CountEntry{{ID: "D1", Latest: "20.0", LastRead: "10.0", HasUnreads: true, MentionCount: 1},

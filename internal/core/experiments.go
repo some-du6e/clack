@@ -17,24 +17,63 @@ import (
 // replace a group over what the server sent.
 //
 // Clack keeps the same three things: the server's assignments
-// (expServer), the forced groups (expForced: SetExperimentGroup, which
-// the Experiments plugins drive through Taut's experiments slice), and
-// the groups every check reads (expGroups: the server's, or the test
-// account's defaults before experiments.getByUser answers, under the
-// forced ones). A change emits Event{Type: "experiments"}, so the sidebar
+// (expServer: the call's answer, or before it the last answer the disk
+// cache kept, as Slack persists its store), the forced groups (expForced:
+// SetExperimentGroup, which the Experiments plugins drive through Taut's
+// experiments slice), and the groups every check reads (expGroups: the
+// server's, or with neither an answer nor a cache the test account's
+// defaults, under the forced ones). The server's groups always win over
+// the defaults: an answer replaces them whole, so an experiment the
+// account isn't in reads as not assigned even where a default had it. A change emits Event{Type: "experiments"}, so the sidebar
 // is rebuilt and every check reads the new group on its next frame.
 
-// setExperimentAssignments installs experiments.getByUser's answer.
+// setExperimentAssignments installs experiments.getByUser's answer, whole
+// (Slack's bulkAddExperiments replaces the store), and keeps its groups
+// for the disk cache.
 func (a *App) setExperimentAssignments(as map[string]slack.ExperimentAssignment) {
+	groups := make(map[string]string, len(as))
+	for k, v := range as {
+		groups[k] = v.Group
+	}
+	a.S.SetExperimentGroups(groups)
 	a.mu.Lock()
 	a.expServer = as
 	if a.expServer == nil {
 		a.expServer = map[string]slack.ExperimentAssignment{}
 	}
+	a.expLive = true
 	a.recomputeExperimentsLocked()
 	a.mu.Unlock()
 	a.emit(Event{Type: "experiments"})
 	a.refreshTempMutes() // temp_mute decides what a temporary mute does
+}
+
+// installCachedExperiments reads the groups the last experiments.getByUser
+// answer left in the disk cache, unless the call has answered already.
+// Slack's experiments store is persisted (client-boot 5fie,
+// persistenceEnabled) and replaced whole when the call answers, so until
+// then every check reads the account's last known groups; the test
+// account's defaults (defaultExperimentGroups) are only for a first start,
+// or a start whose call fails, with no cache.
+func (a *App) installCachedExperiments() {
+	g := a.S.CachedExperimentGroups()
+	if g == nil {
+		return
+	}
+	as := make(map[string]slack.ExperimentAssignment, len(g))
+	for k, v := range g {
+		as[k] = slack.ExperimentAssignment{Group: v}
+	}
+	a.mu.Lock()
+	if a.expLive || a.expServer != nil {
+		a.mu.Unlock()
+		return
+	}
+	a.expServer = as
+	a.recomputeExperimentsLocked()
+	a.mu.Unlock()
+	a.emit(Event{Type: "experiments"})
+	a.refreshTempMutes()
 }
 
 // setExperiments installs server groups without their records (tests).
@@ -82,9 +121,9 @@ func (a *App) recomputeExperimentsLocked() {
 }
 
 // experiment returns the viewer's group for an experiment, "" when not
-// assigned (Slack's null); before (or without) experiments.getByUser it
-// falls back to what the test account had on 2026-11-08
-// (defaultExperimentGroups).
+// assigned (Slack's null). With neither an experiments.getByUser answer
+// nor the disk cache's copy of the last one, it is the test account's
+// group (defaultExperimentGroups, TestDefaultExperimentsMatchAccount).
 func (a *App) experiment(name string) string {
 	a.mu.Lock()
 	g := a.expGroups

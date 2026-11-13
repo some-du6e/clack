@@ -192,3 +192,32 @@ func TestStandardSectionEmoji(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentsSectionFollowsExperiment: client-boot Q drops Agents sections
+// from the ordered list under agents_in_channels_improvements; what one
+// listed goes back to its default section.
+func TestAgentsSectionFollowsExperiment(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.PutConv(slack.Conversation{ID: "C2", Name: "helper", IsChannel: true})
+	ag := slack.Section{ID: "L2", Type: "agents", Name: "Agents"}
+	ag.ChannelIDsPage.ChannelIDs = []string{"C2"}
+	a.S.Sections = []slack.Section{{ID: "L1", Type: "channels", Name: "Channels", Next: "L2"}, ag}
+	close(a.ready)
+	layout := func() string {
+		var out []string
+		for _, s := range a.Snapshot().Sections {
+			if s.Type == "channels" || s.Type == "agents" {
+				out = append(out, s.Type+"="+strings.Join(s.Channels, ","))
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	a.setExperiments(map[string]string{"agents_in_channels_improvements": "off"})
+	if got := layout(); got != "channels=C1 agents=C2" {
+		t.Errorf("off: %s", got)
+	}
+	a.setExperiments(map[string]string{"agents_in_channels_improvements": "on"})
+	if got := layout(); got != "channels=C1,C2" {
+		t.Errorf("on: %s", got)
+	}
+}

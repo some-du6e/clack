@@ -41,6 +41,9 @@ type CanvasRef struct {
 	// Status is getFileStatus (S2bC): "normal", "deleted", "hidden" or
 	// "locked".
 	Status string
+	// Views is a list's views' names by id (list_metadata.views): a list
+	// tab's slug names its default view (core tab_slug.go).
+	Views map[string]string
 }
 
 // CanvasResolver is an optional Resolver extension (store.Store). ok and

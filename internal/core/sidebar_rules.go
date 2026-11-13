@@ -125,6 +125,33 @@ var defaultExperimentGroups = map[string]string{
 	"huddles_miles_davis": "on", "huddles_missed_notification": "on", "huddles_multi_device": "treatment",
 	"huddles_mva_window": "on", "huddles_screenshare_popout": "on", "huddles_screenshare_share_audio": "on",
 	"huddles_switch_microphone_helper": "on",
+	// every other experiment Clack reads, as experiments.getByUser had it
+	// on 2026-11-13 (testdata/account_experiments.json; TestDefaultExperimentsMatchAccount)
+	"a11y_no_auto_highlight_search_multi_select": "on", "agent_badge": "on", "agentforce_deprecation": "on",
+	"agents_in_channels_improvements": "on", "ai_channel_exclusions": "on",
+	"autocomplete_affinity_ml_model": "on", "autocomplete_demote_flannel_passthrough_rltv_exact_match": "on",
+	"autocomplete_frequently_used_emojis_frecency": "on", "basic_select_placeholder_option": "on",
+	"canvas_blockquote_layout": "on", "canvas_comment_only_mode": "on", "canvas_table_of_contents": "on",
+	"channel_header_with_agents": "on", "channel_join_experience_with_agents": "on",
+	"channel_topic_purpose_setting_restrict_to_channel_managers": "on", "custom_file_sections": "on",
+	"defer_notification_3p_streaming": "on", "desktop_search_recents_read": "on",
+	"desktop_search_recents_write": "on", "draft_management_in_composer": "treatment",
+	"emoji_exact_match_boost": "on", "emoji_skin_tone_picker_improvement": "on",
+	"enable_new_channel_settings": "on", "enable_wfb_ai_answer_step": "on",
+	"feat_flag_message_hide_replies": "on", "file_trash_updates": "on", "flag_custom_mpdm_names": "on",
+	"flag_xorg_external_team_check": "on", "flag_xorg_refinement": "treatment",
+	"focus_mode_custom_duration": "treatment", "force_native_notifications": "off", "frontline_users": "on",
+	"ia4_slash_command_fe": "on", "inviter_joiner_first_dm_v2": "control",
+	"invite_slash_command_in_threads": "on", "list_channel_tab_show_view_name_fe": "on",
+	"lists_channel_tabs_default_view": "on", "lists_export_enrichment": "on",
+	"lists_file_backed_templates": "on", "lists_grid_todos": "on", "mcp_ai_channel_exclusions": "on",
+	"miles_davis_themes": "on", "mpdm_default_exclude_history_clients_webapp": "on", "mpdm_naming": "on",
+	"mpdm_notifications_advanced_option": "on", "omni_date_quick_filters": "on", "profile_photo_comp": "on",
+	"schedule_send_forwards": "on", "sc_mpdm_naming": "on", "semantic_emoji_matching": "on",
+	"session_channels_inline_diff": "on", "show_as_agent": "on", "slackbot_unread_v2": "on",
+	"slackified_checkbox": "on", "slack_kit_v2_button": "on", "status_improvements": "on",
+	"unarchive_channel_banner_polish": "on", "unified_files_3p_primary_custom_sections": "on",
+	"updated_scheduled_sends_desktop": "on", "vip_section_pref": "on", "workflow_execution_window": "on",
 }
 
 func (a *App) sidebarExperiments() sidebarExp {

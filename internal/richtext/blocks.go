@@ -27,6 +27,7 @@ type bk struct {
 	UserID      string          `json:"user_id"`
 	ChannelID   string          `json:"channel_id"`
 	TabID       string          `json:"tab_id"`     // channel: a channel-tab slug
+	FromLLM     bool            `json:"from_llm"`   // channel: written by an LLM (no tab slug)
 	MessageTS   string          `json:"message_ts"` // message_mention
 	SectionID   string          `json:"section_id"` // canvas: a canvas-section link
 	HideTitle   bool            `json:"hide_title"` // canvas
@@ -169,6 +170,7 @@ type builder struct {
 	used   map[string]bool        // files already placed by a file block
 	hints  canvasHints            // the message's canvas unfurls (canvasslug.go)
 	sender string                 // the message's user (canvasfile.go: a file's owner other than them)
+	chID   string                 // the message's channel (tabslug.go: a slug to its own tab is the tab alone)
 }
 
 func parseBlocks(raw json.RawMessage) []bk {
@@ -768,6 +770,12 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 		case "usergroup":
 			out = append(out, usergroupSpan(c.r, e.UsergroupID, ""))
 		case "channel":
+			if e.TabID != "" && !e.FromLLM {
+				if sp, ok := c.channelTabSpan(e); ok { // tabslug.go
+					out = append(out, sp)
+					break
+				}
+			}
 			sp := channelSpan(c.r, e.ChannelID, "")
 			if e.TabID != "" { // a channel-tab slug: getChannelTabPermalink
 				sp.URL = "/archives/" + e.ChannelID + "/tabs/" + e.TabID

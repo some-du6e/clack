@@ -1074,6 +1074,14 @@ func (b *rtBuilder) rtSpans(l Line, spans []richtext.Span, plain bool) {
 				continue
 			}
 			b.atom(at)
+		case richtext.ChannelTab:
+			// a channel-tab slug edits as its channel's mention (the tab
+			// comes back from the message's blocks, docForMessage)
+			if plain || s.ID == "" {
+				b.text(s.Text, Attr{Style: st})
+				continue
+			}
+			b.atom(&Atom{Kind: AtomChannel, ID: s.ID, Text: rtEnsurePrefix(firstNonEmpty(s.Chan, s.ID), "#")})
 		case richtext.MessageMention:
 			// a rendered span keeps only the label, the message ts and the
 			// url: the slug comes back from its permalink (the edit

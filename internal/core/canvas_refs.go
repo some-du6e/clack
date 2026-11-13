@@ -74,9 +74,15 @@ func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2
 func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 	var r struct {
 		File struct {
-			Title       string          `json:"title"`
-			TitleBlocks json.RawMessage `json:"title_blocks"`
-			IsDeleted   bool            `json:"is_deleted"`
+			Title        string          `json:"title"`
+			TitleBlocks  json.RawMessage `json:"title_blocks"`
+			IsDeleted    bool            `json:"is_deleted"`
+			ListMetadata struct {
+				Views []struct {
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"views"`
+			} `json:"list_metadata"`
 		} `json:"file"`
 	}
 	err := a.C.Call(ctx, "files.info", url.Values{"file": {id}, "count": {"0"}}, &r)
@@ -87,7 +93,14 @@ func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 		if r.File.IsDeleted {
 			st = "deleted"
 		}
-		a.S.PutCanvasRef(id, richtext.CanvasRef{Title: r.File.Title, TitleBlocks: r.File.TitleBlocks, Status: st})
+		ref := richtext.CanvasRef{Title: r.File.Title, TitleBlocks: r.File.TitleBlocks, Status: st}
+		for _, v := range r.File.ListMetadata.Views {
+			if ref.Views == nil {
+				ref.Views = map[string]string{}
+			}
+			ref.Views[v.ID] = v.Name
+		}
+		a.S.PutCanvasRef(id, ref)
 	case errors.As(err, &se) && (se.Code == "file_not_found" || se.Code == "file_deleted"):
 		a.S.PutCanvasRef(id, richtext.CanvasRef{Status: "deleted"})
 	case errors.As(err, &se) && (se.Code == "access_denied" || se.Code == "not_allowed" || se.Code == "file_access_denied"):

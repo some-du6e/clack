@@ -48,6 +48,7 @@ func forgetGrants(a *App) {
 // the SET_CHANNEL_TOPIC / SET_CHANNEL_PURPOSE grants do, 1:1 DMs aside.
 func TestTopicPurposeRestrictedToGrants(t *testing.T) {
 	a, f := testApp(t)
+	a.SetExperimentGroup("channel_topic_purpose_setting_restrict_to_channel_managers", "") // unassigned first (core's defaults hold the account's on)
 	a.S.PutConv(slack.Conversation{ID: "C2", Name: "random", IsChannel: true, IsMember: true})
 	a.S.PutConv(slack.Conversation{ID: "C3", Name: "elsewhere", IsChannel: true})
 	a.S.PutConv(slack.Conversation{ID: "C4", Name: "old", IsChannel: true, IsMember: true, IsArchived: true})

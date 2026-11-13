@@ -55,7 +55,7 @@ func TestCodeChannelPane(t *testing.T) {
 		mm := m
 		for _, b := range richtext.FromMessage(e.ca.S, &mm).Blocks {
 			for _, sp := range b.Spans {
-				if sp.Kind == richtext.Channel {
+				if sp.Kind == richtext.Channel || sp.Kind == richtext.ChannelTab {
 					urls = append(urls, sp.URL)
 				}
 			}
