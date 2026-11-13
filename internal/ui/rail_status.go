@@ -117,8 +117,8 @@ func (a *App) railStatusTabDraw(gtx layout.Context, av image.Point, cs int, e fl
 	}
 	rad := gtx.Dp(8)
 	cl := clip.RRect{Rect: r, NW: rad, NE: rad}.Op(gtx.Ops)
-	a.grad.draw(gtx, a.winSize, image.Point{}, cl, c.ChromeA, c.ChromeB, c.SidebarButton) // surf-inv-pry, as the strip's buttons
-	defer clip.Rect(r).Push(gtx.Ops).Pop()                                                // overflow: hidden
+	a.grad.draw(gtx, a.winSize, image.Point{}, cl, c.ChromeA, c.ChromeB, c.ChromeActive) // surf-inv-pry, as the strip's buttons
+	defer clip.Rect(r).Push(gtx.Ops).Pop()                                               // overflow: hidden
 	es := gtx.Dp(16)
 	ey := int(top + float64(gtx.Dp(4))*e + .5)
 	url := t.url

@@ -121,6 +121,8 @@ var paletteTokens = []struct {
 	// mention badge (.c-badge--themed)
 	{func(p *Palette) *color.NRGBA { return &p.Badge }, Tok{"rgb(var(--dt_color-plt-aubergine-20))", "var(--dt_color-theme-base-imp)"}},
 	{func(p *Palette) *color.NRGBA { return &p.BadgeText }, Tok{"rgb(var(--dt_color-plt-aubergine-100))", "var(--dt_color-theme-content-imp)"}},
+	{func(p *Palette) *color.NRGBA { return &p.RailBadge }, Tok{"rgb(var(--dt_color-plt-aubergine-20))", "var(--dt_color-theme-base-imp)"}},
+	{func(p *Palette) *color.NRGBA { return &p.RailBadgeText }, Tok{"rgb(var(--dt_color-plt-aubergine-100))", "var(--dt_color-theme-content-imp)"}},
 
 	// primary panel: .p-view_contents--primary, body text, .c-message_kit…
 	{func(p *Palette) *color.NRGBA { return &p.Bg }, TokPaneBg},

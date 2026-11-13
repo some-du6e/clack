@@ -95,14 +95,11 @@ func (t IATheme) JSON() string {
 	return string(b)
 }
 
-// ForSave applies setIaThemePrefByApi's rule before writing: the sidebar
-// can't be inverted in dark mode or at low brightness.
+// ForSave applies setIaThemePrefByApi's rule before writing (boot-shared
+// mAaY): the sidebar can't be inverted in dark mode or unless
+// isSidebarInverted(brightness || 5), brightness > 3.
 func (t IATheme) ForSave(dark bool) IATheme {
-	b := t.Brightness
-	if b == 0 {
-		b = 5
-	}
-	t.SidebarInverted = !dark && t.SidebarInverted && b >= 3
+	t.SidebarInverted = !dark && t.SidebarInverted && darkBrightness(t.Brightness)
 	return t
 }
 
@@ -486,51 +483,77 @@ var accountFields = map[string]func(*Palette) *color.NRGBA{
 	"SidebarActive": func(p *Palette) *color.NRGBA { return &p.SidebarActive }, "SidebarActiveText": func(p *Palette) *color.NRGBA { return &p.SidebarActiveText },
 	"SidebarDivider": func(p *Palette) *color.NRGBA { return &p.SidebarDivider }, "SidebarButton": func(p *Palette) *color.NRGBA { return &p.SidebarButton },
 	"Badge": func(p *Palette) *color.NRGBA { return &p.Badge }, "BadgeText": func(p *Palette) *color.NRGBA { return &p.BadgeText },
+	"RailBadge": func(p *Palette) *color.NRGBA { return &p.RailBadge }, "RailBadgeText": func(p *Palette) *color.NRGBA { return &p.RailBadgeText },
 	"Accent": func(p *Palette) *color.NRGBA { return &p.Accent }, "Presence": func(p *Palette) *color.NRGBA { return &p.Presence },
 	"ThemeImp": func(p *Palette) *color.NRGBA { return &p.ThemeImp }, "ThemeImpText": func(p *Palette) *color.NRGBA { return &p.ThemeImpText },
 }
 
+// The light client's inverted ("dark") scopes, as Slack decides them
+// (client-boot udDV, boot-shared y4F2 useInvertedTheme, CDN build
+// f132f0e78468):
+//
+//   - isSidebarInverted(brightness) is brightness > 3 (unset counts as 5):
+//     only a dark brightness can have a dark sidebar.
+//   - The window background (.p-theme_background, oWug's Theme) is in
+//     getBackgroundMode: "light-inverted-sidebar" when the client is light,
+//     isSidebarInverted and the theme's sidebarInverted ("Darker
+//     sidebars") are both on; else the client's mode.
+//   - useInvertedTheme puts the top nav ("chrome") and the tab rail in
+//     .sk-client-theme--light-inverted-sidebar whenever a light client's
+//     brightness isSidebarInverted (the rail follows sidebarInverted only
+//     beside the workspace switcher rail, which Clack doesn't draw); the
+//     sidebar only when sidebarInverted is on as well.
+//
+// So at brightness 4–6 with Darker sidebars off, the rail and top nav keep
+// the inverted (white) text over the light mode's dark gradient while the
+// sidebar is the light scope's 90% white column; at brightness 1–3 nothing
+// inverts, whatever sidebarInverted says.
+
+// darkBrightness is udDV's isSidebarInverted.
+func darkBrightness(b int) bool {
+	if b == 0 {
+		b = 5
+	}
+	return b > 3
+}
+
+// InvertedSidebar is udDV's shouldInvertSidebar: the sidebar (and the
+// window background) are in the light-inverted-sidebar mode.
+func (t IATheme) InvertedSidebar(dark bool) bool {
+	return !dark && t.SidebarInverted && darkBrightness(t.Brightness)
+}
+
+// InvertedChrome is useInvertedTheme for "chrome" and "tab-rail" without a
+// workspace switcher rail: the top nav and the rail are in the inverted
+// scope.
+func (t IATheme) InvertedChrome(dark bool) bool {
+	return !dark && darkBrightness(t.Brightness)
+}
+
 // Fields computes the theme's colour for each Palette field it drives
 // (by field name). dark is the client mode; gradients is
-// window_background_gradients.
+// window_background_gradients. The chrome and rail fields are in the
+// chrome scope, the sidebar's in the sidebar scope and the gradient in the
+// background mode (InvertedChrome, InvertedSidebar).
 func (t IATheme) Fields(dark, gradients bool) map[string]color.NRGBA {
 	root := modeLight
 	if dark {
 		root = modeDark
 	}
-	side := root // the chrome and sidebar scope
-	if !dark && t.SidebarInverted {
+	side, chr := root, root // the sidebar's scope (and the background's), the chrome's
+	if t.InvertedSidebar(dark) {
 		side = modeInverted
 	}
-	al := func(k string) uint8 { return chromeAlpha[k][side] }
+	if t.InvertedChrome(dark) {
+		chr = modeInverted
+	}
 	out := map[string]color.NRGBA{}
 	ca, cb := t.chrome(side, gradients)
 	out["ChromeA"], out["ChromeB"], out["ChromeC"] = ca, cb, ca
-
-	pr := t.Primary
-	inv := t.contentInvPry(side)
-	out["ChromeText"], out["SearchText"], out["SidebarTextUnread"] = inv, inv, inv
-	sec := withA(t.token(pr, "content-inv-sec", side), al("content-inv-sec"))
-	out["ChromeTextDim"], out["SidebarText"] = sec, sec
-	sp := t.token(pr, "surf-inv-pry", side)
-	act := withA(sp, al("surf-inv-pry"))
-	out["ChromeActive"], out["SearchBg"], out["SidebarButton"] = act, act, act
-	out["ChromeHover"], out["SearchHover"] = withA(sp, 0x26), withA(sp, 0x55)
-	switch side {
-	case modeLight:
-		out["SidebarBg"] = withA(rgb(0xffffff), al("surf-inv-sec"))
-	case modeDark:
-		out["SidebarBg"] = withA(namedRamp("gray", true)[0], al("surf-inv-sec"))
-	default:
-		out["SidebarBg"] = withA(t.token(pr, "surf-inv-sec", side), al("surf-inv-sec"))
-	}
-	out["SidebarHover"] = withA(t.token(pr, "surf-inv-ter", side), al("surf-inv-ter"))
-	out["SidebarDivider"] = withA(t.token(pr, "otl-inv-pry", side), al("otl-inv-pry"))
-	out["SidebarActive"] = t.baseToken(t.Highlight1, "base-hgl-1", side)
-	out["SidebarActiveText"] = t.contentToken(t.Highlight1, "content-hgl-1", side)
-	out["Badge"] = t.baseToken(t.Important, "base-imp", side)
-	out["BadgeText"] = t.contentToken(t.Important, "content-imp", side)
+	t.scopeFields(out, side, false)
+	t.scopeFields(out, chr, true)
 	// the main pane is in the root mode
+	pr := t.Primary
 	out["Accent"] = t.token(pr, "base-pry", root)
 	// --dt_color-theme-base-imp / -content-imp: themed unread badges and
 	// dots (Activity's count badge, its tabs' dots)
@@ -538,6 +561,39 @@ func (t IATheme) Fields(dark, gradients bool) map[string]color.NRGBA {
 	out["ThemeImpText"] = t.token(pr, "content-imp", root)
 	out["Presence"] = t.baseToken(t.Highlight2, "base-inv-hgl-2", root)
 	return out
+}
+
+// scopeFields sets the fields one scope paints in mode m: the top nav and
+// rail's (chrome) or the sidebar's.
+func (t IATheme) scopeFields(out map[string]color.NRGBA, m themeMode, chrome bool) {
+	al := func(k string) uint8 { return chromeAlpha[k][m] }
+	pr := t.Primary
+	inv := t.contentInvPry(m)
+	sec := withA(t.token(pr, "content-inv-sec", m), al("content-inv-sec"))
+	sp := t.token(pr, "surf-inv-pry", m)
+	act := withA(sp, al("surf-inv-pry"))
+	badge, badgeText := t.baseToken(t.Important, "base-imp", m), t.contentToken(t.Important, "content-imp", m)
+	if chrome {
+		out["ChromeText"], out["SearchText"], out["ChromeTextDim"] = inv, inv, sec
+		out["ChromeActive"], out["SearchBg"] = act, act
+		out["ChromeHover"], out["SearchHover"] = withA(sp, 0x26), withA(sp, 0x55)
+		out["RailBadge"], out["RailBadgeText"] = badge, badgeText
+		return
+	}
+	out["SidebarTextUnread"], out["SidebarText"], out["SidebarButton"] = inv, sec, act
+	switch m {
+	case modeLight:
+		out["SidebarBg"] = withA(rgb(0xffffff), al("surf-inv-sec"))
+	case modeDark:
+		out["SidebarBg"] = withA(namedRamp("gray", true)[0], al("surf-inv-sec"))
+	default:
+		out["SidebarBg"] = withA(t.token(pr, "surf-inv-sec", m), al("surf-inv-sec"))
+	}
+	out["SidebarHover"] = withA(t.token(pr, "surf-inv-ter", m), al("surf-inv-ter"))
+	out["SidebarDivider"] = withA(t.token(pr, "otl-inv-pry", m), al("otl-inv-pry"))
+	out["SidebarActive"] = t.baseToken(t.Highlight1, "base-hgl-1", m)
+	out["SidebarActiveText"] = t.contentToken(t.Highlight1, "content-hgl-1", m)
+	out["Badge"], out["BadgeText"] = badge, badgeText
 }
 
 // ApplyIATheme lays the account theme over p (a LightPalette or

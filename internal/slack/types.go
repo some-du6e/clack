@@ -76,6 +76,48 @@ type Message struct {
 type MessageAgentSession struct {
 	Status           string      `json:"status,omitempty"`
 	ProcessingExpire json.Number `json:"date_status_processing_expire,omitempty"`
+	// The Agents & tools peek's fields (RkDi getAgentSessionTitle, XsVf
+	// AgentThreadPeekItem, iR00 getAgentSessionIdentityOverrideFromSession),
+	// kept raw so a shape Clack doesn't expect can't fail the message's
+	// decoding: read them with SessionTitle, BotUserIDs and Statuses.
+	RawTitle         json.RawMessage `json:"title,omitempty"`
+	RawAgentBotUsers json.RawMessage `json:"agent_bot_user_ids,omitempty"`
+	RawAgentStatuses json.RawMessage `json:"agent_statuses,omitempty"`
+}
+
+// SessionTitle is agent_session.title ("" when absent or not a string).
+func (s *MessageAgentSession) SessionTitle() string {
+	var t string
+	if s == nil || json.Unmarshal(s.RawTitle, &t) != nil {
+		return ""
+	}
+	return t
+}
+
+// BotUserIDs is agent_session.agent_bot_user_ids.
+func (s *MessageAgentSession) BotUserIDs() []string {
+	var ids []string
+	if s == nil || json.Unmarshal(s.RawAgentBotUsers, &ids) != nil {
+		return nil
+	}
+	return ids
+}
+
+// Statuses is agent_session.agent_statuses.
+func (s *MessageAgentSession) Statuses() []MessageAgentStatus {
+	var st []MessageAgentStatus
+	if s == nil || json.Unmarshal(s.RawAgentStatuses, &st) != nil {
+		return nil
+	}
+	return st
+}
+
+// MessageAgentStatus is one agent_session.agent_statuses entry.
+type MessageAgentStatus struct {
+	AgentBotUserID string `json:"agent_bot_user_id,omitempty"`
+	IconURL        string `json:"icon_url,omitempty"`
+	IconEmoji      string `json:"icon_emoji,omitempty"`
+	Username       string `json:"username,omitempty"`
 }
 
 // PinnedInfo says who pinned a message (history / messages.list).
