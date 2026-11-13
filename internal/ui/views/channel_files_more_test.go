@@ -8,6 +8,7 @@ package views
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"os"
 	"strings"
@@ -161,11 +162,18 @@ func TestChannelFilesHoverActions(t *testing.T) {
 	if v.starShown(pdf) || !v.starShown(canvas) || !v.starShown(list) {
 		t.Error("the star is for canvases and lists")
 	}
-	n0 := len(h.open())
 	v.openShare(*pdf)
 	e.frame()
-	if len(h.open()) != n0+1 {
-		t.Fatalf("%d overlays after Share, %d before", len(h.open()), n0)
+	var kinds []string
+	shown := false
+	for _, o := range h.open() {
+		kinds = append(kinds, fmt.Sprintf("%T", o))
+		if _, ok := o.(*popups.Modal); ok {
+			shown = true
+		}
+	}
+	if !shown {
+		t.Fatalf("no share dialog: overlays %v", kinds)
 	}
 	dismissAll(h.filesHost)
 	v.star(*canvas, image.Rect(900, 300, 932, 332))

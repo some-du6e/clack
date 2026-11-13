@@ -357,9 +357,16 @@ func TestChannelFilesOpen(t *testing.T) {
 	if len(h.opened) != before+1 {
 		t.Errorf("Enter on %s opened nothing", v.kb.active)
 	}
+	// the strip's cells are grid cells (channel_files_more.go): → steps,
+	// ↓ into its hidden second row is taken and the cell stays (byyT)
+	first := v.kb.active
 	kbPress(e, key.NameDownArrow, 0)
-	if v.kb.active == "" || v.kb.active == v.kb.items[0].key {
-		t.Errorf("Down left the active row at %q", v.kb.active)
+	if v.kb.active != first {
+		t.Errorf("Down in the strip moved to %q", v.kb.active)
+	}
+	kbPress(e, key.NameRightArrow, 0)
+	if v.kb.active == "" || v.kb.active == first {
+		t.Errorf("Right left the active row at %q", v.kb.active)
 	}
 }
 

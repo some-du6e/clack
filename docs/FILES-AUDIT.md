@@ -307,9 +307,7 @@ Not done, and why:
   draws files_tab_view.
 - **From huddles** (`files_and_artifacts_from_meetings`, off): the radio and
   its huddles.history-style list aren't ported.
-- **The search's autocomplete.** ExplorerSearch suggests files from the
-  channel while typing (the searcher with `entities.files.channel`); Clack
-  searches on Enter only.
+- **The search's autocomplete.** Done in round 2 (below).
 - **Hover actions Clack has no screen for:** Share (the file share dialog),
   the canvas / list star in the hover group, View link details (the link
   details flexpane) and Add to folder (the folder tabs themselves are in
@@ -325,3 +323,47 @@ Not done, and why:
   lists the tabs only).
 - **Real pages.** conversations.searchLinks' page size isn't visible from
   the client; fakeslack uses 10 so Load More is exercised.
+
+## Files & links tab, round 2 (files-links-2, 2026-11-13)
+
+The round-1 list above, worked through. Sources: CDN build 0e695dd18302,
+fetched without a cookie: `gantry-v2-async-client-boot-shared` (JG8Q
+useChannelAttachmentsExplorer's searcherOptions and onSearch, l7jR
+ExplorerSearch, drV9 Omniswitcher, 4l6z / OXCx the suggestion builder,
+tGcK the query echo, 2uBe useFileClick, gaA3 FileActions' renderShare /
+onShare / renderFavoriteCanvas / renderFavoriteList, sZ6G
+addCanvasToFavorites, XJ82 addListToFavorites, H8G4 shareFile, Zp0h
+ShareDialogCopyLinkButton, 31Gm LinkEntity / DraggableExplorerFile /
+ExplorerExpandableGrid, jAOO Grid, byyT useContainerKeyboardNavigation,
+NjKd FileShareDetailsMessageEntity, 8HEe AddOrMoveToFolderMenuItems, qSP5
+AddBookmarkModal, plzS useRemoveTab, allT removeTab, AIhO updateTabOrder,
+hm7X addTabToChannel), `client-boot` (QcwJ the searcher's getRemoteFiles,
+NQkX fetchFilesWithQuery, mwX5 the tab helpers and canEditTabs (Ln), YQEj
+the bookmarks fetchers), `gantry-v2-vendors` (Bfb3), boot-vendors (08G8
+conversations.removeTab, IdoR addTab, XLhM moveTab), the share-dialog
+chunk (zUYy), client-link-details-view (DEJt), the canvas-share-dialog
+chunk (ut+Q files.getOverview), manage-channel-tabs (Wg5J), the
+bookmarks-store chunk (H9Rh useTabSchemaToTabItems), media-viewer (viWS)
+and client-boot-styles.css. Tested against fakeslack only
+(`internal/fakeslack/channel_files_more.go`): core
+`TestChannelFileSuggestions`, `TestShareFileTo`, `TestLinkShares`,
+`TestChannelTabWrites`, `TestMoveTabAfter`, `TestCanEditTabsChecked`;
+popups `TestShareFileDialogLikeSlack`, `TestFileAccessText`,
+`TestFileGallery`; views `TestChannelFilesSuggestions`, `…HoverActions`,
+`…LinkDetails`, `…Gallery`, `…GridKeys`, `…AddToFolder`, `…ManageTabs`;
+ui `TestFilesTabHideAndLinkDetails`. The `files-view` workflow runs them
+and saves `chfiles-suggest`, `-hover-star`, `-hover-share`,
+`-link-hover`, `-share`, `-viewer`, `-link-details`, `-add-to-folder`,
+`-add-to-folder-none` and `-manage-tabs`.
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| Search suggestions | ExplorerSearch is the Omniswitcher with searcherOptions {entities.files {channel}, limit 30, tiered, frecency sort (channel-tab:suggestions-from-searcher), the type filter: All every file, Media images and videos, Files the rest, Links none} and hideAutocompleteWithEmptyQuery. The searcher's remote files are getRemoteFiles → fetchFilesWithQuery with channelId: `search.autocomplete.files {query: "in:<#C> q", include_shares: true}` (the prefix cache is skipped with a channel). The omniswitcher's post-processing puts the query echo ("Show results for:", queryUser) after the top hit. onSearch: the echo is the type-query completion (the search of round 1), a file row is useFileClick's openFile | Enter searched | the list under the box while it has text: remote files after 250 ms (Clack's omniswitcher wait for its file rows) and the tab's loaded files whose words start with the query's, by the filter, the top hit, the echo, the rest (15 rows at most); 40px rows, pseudo-selection with the Enter key, ↑/↓ (from none the first or the last, past an end none), Enter, Escape, blur closes; a file opens as a row click does |
+| Share | renderShare (share-message, "Share file…"): onShare opens openShareDialog for a file, openShareQuipModal for a canvas, openShareListsModal for a list. The dialog (zUYy, shareType file): "Share this file", one destination (selectedChannelId), the note, ShareDialogPreview over renderFileAccessMetadata (files.getOverview {file_id} on mount; "{n} users and {n} channels have access to this file.", users at least 1, "{count}+" when max-counted), Copy Link as a link (renderAsLink: the link icon, "You can also copy a link to this file. To share, paste it in any channel or conversation.", "Copied!"), Share (Forward with private_message_forwarding): shareFile = files.share {files, channel, blocks, resharing_aware, skip_dlp_user_warning false, from_share_modal false}, then navigate to the destination at ts / file_msg_ts | none | the same for files (popups/share_file.go on the forward dialog's picker and note). **Open:** a canvas's and a list's Share (their share modals aren't in Clack, so the button isn't drawn on them), the dialog's Save Draft for a file (drafts don't carry files here) |
+| Star | renderFavoriteCanvas / renderFavoriteList: star / star-filled (sunflower), "Add to starred" / "Unstar canvas" / "Unstar list"; with custom_file_sections FileSectionDropdownButton. addCanvasToFavorites toasts "Added {title} to Starred." with View outside the Files view; addListToFavorites toasts only in a child window | none | the same (the Files view's toggleStar and section menu) |
+| View link details | LinkEntity's info button: toLinkDetails → LinkDetailsView in the secondary view: "Link", the favicon and the title (h2), the URL, "First shared by {name}", "Shared {date}" / "Shared on {date}"; search.modules.messages {query: url, sort timestamp, sort_dir asc, search_context desktop_link_details} (fetchSearchModule's base args); "Conversations {count}" and one card per conversation ("Thread in {channel}", the time, the sender, the message); "No conversations found" | none | the same (views/link_details.go, ui/files_tab_more.go). The card's message is plain text with its links as labels, not the full message renderer; its replies bar isn't drawn |
+| Add to folder | LinkEntity's More actions: "Add to folder", a submenu row whose submenu (AddOrMoveToFolderMenuItems) renders nothing for a link (it needs a file in the store); its click opens AddBookmarkModal "Add link to folder" with showSetFolder: the link and title, "Folder" over a select of the channel's folders; with none the banner "We’ll add this link to a Bookmarks folder for safekeeping." and the folder made first (addBookmarkFolderForChannel: bookmarks.add {channel, title, type: folder}); then bookmarks.add {…, parent_id} and "Added {fileName} to folder {folderName}" | Copy link only | the same on pins-folders' link modal (its BookmarkLinkModal grows the Folder field). **Open:** the select's default Bookmarks folder tab and "New folder" option, and the submenu caret |
+| Media viewer | handleFileContainerClick passes fileChannelMediaInfo (the media browser's loaded files); the viewer's queue is those fileIsViewableInMediaViewer keeps (images, PDFs, playable video), opened at the clicked file | one image | the channel's loaded images, ←/→ and the arrows ("1 of 28"). **Open:** video in the viewer: Slack plays it there, Clack has no video decoder, so a video still opens its page |
+| Grid keys | jAOO Grid with byyT: ↑ the row above, ↓ the row below when it has the cell, ← / → with wrapping across rows; an unmatched key falls through to the list. All's collapsed strip keeps every media file as a key with the later rows display:none, so a move into them is taken and focus stays | ↑/↓ cell by cell | the same (vkOpts.Key) |
+| Hide / reorder tabs | the tab bar's right-click (getTabContextMenu): "Hide tab" (danger) for a built-in tab with useCanEditTabs; ManageChannelTabs: hovered rows show the visibility eye (Hide tab / Show tab, debounced 300 ms) for editable system tabs and Move tab up / down, aria-disabled where the neighbour can't move; removeTab = conversations.removeTab {id, channel_id}, addTabToChannel = conversations.addTab {type, channel_id}, updateTabOrder = conversations.moveTab {channel_id, id, after: the last tab before the new place}; a failure: "Something’s gone wrong. Mind trying again in a moment?". canEditTabs: a member, not archived, channel_managers → managers / admins / creator, on Grid without a setting the MANAGE_CHANNEL_TABS grant (edge permissions/info) | the card listed tabs | the same (ui/files_tab_more.go, views/details_tabs_manage.go, core.CanEditTabsChecked). **Open:** dragging tabs in the bar, Rename tab, Delete tab for canvas / list tabs, the menu's split / secondary view items |
+| Dragging | DraggableExplorerFile / Link are react-dnd sources (FOLDER_FILE_BOOKMARK / FOLDER_LINK_BOOKMARK) that drop onto bookmark folders; no OS drag-out | none | **open**: Clack's folder tabs (pins-folders) have no drop targets for them; Add to folder is the way in |

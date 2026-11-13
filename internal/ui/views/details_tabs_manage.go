@@ -76,6 +76,8 @@ func cdTabTitle(t core.TabState, titles map[string]string) string {
 
 func cdTabIcon(typ string) string {
 	switch typ {
+	case "channel":
+		return "dms" // Messages (cdTabRows)
 	case "canvas", "channel_canvas", "list":
 		return "canvas"
 	case "files":
