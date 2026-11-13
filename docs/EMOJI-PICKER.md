@@ -73,7 +73,7 @@ item id and by the normalized text typed before the pick. Emoji ids are
   dark.
 - The Emoji | GIFs tabs are Slack's own when the GIF picker pref is on
   (`p-emoji_and_gif_pickers_container`, GIFs from Giphy), not a plugin.
-- Category tabs 32×28 at x 10 + 34i. The active tile is
+- Category tabs 32×28 at x 10 + 34i. Grid cells (the list) are 36×32 every 37px (see "Against Slack's CSS"). The active tile is
   `sk_foreground_low_solid`. Inactive icons are `sk_foreground_high_solid`
   (#868686 / #818385); hover only darkens the icon.
 - Rows (getRowHeight): per group a 1 px empty-header-row and a 27 px
@@ -112,3 +112,45 @@ item id and by the normalized text typed before the pick. Emoji ids are
   Slack's own sprites are as drawn: the saluting face is cropped at its
   right edge (16.0 and 17.0 sets), and the dotted-line face is a dashed
   outline.
+
+## Against Slack's CSS (gap-w28)
+
+The emoji-picker workflow draws Slack's light picker in Chrome and compares
+it with Clack's (`TestEmojiPickerSlackPage`, `TestEmojiPickerVsSlack`,
+artifact `slack-vs-clack-light*`). The page is Slack's markup rebuilt from
+Zu56 (class names, nesting, screen rows) with Slack's own rules from
+kit.css and client-boot-styles (`popups/testdata/slack-picker`), the same
+emoji (the @2x images Slack loads on a 2x screen) and Lato. Slack's icon
+font isn't in it: the category icons and the search glyph are masked.
+
+Fixed from it (2026-11-13):
+
+- `.c-input_text{border:1px solid var(--dt_color-otl-pry)}`: the search
+  field's border is one CSS px of otl-pry (#7c7a7f light, #797c81 dark),
+  not one device pixel of 30 % ink. This is popups' `fieldNative`, so every
+  popups text field changed with it.
+- `.c-button--outline`'s 1px border (Add Emoji, every outline button in
+  popups): one CSS px.
+- `.p-emoji_picker__footer{border-top:1px solid #00000026}`: composited in
+  sRGB (211 over #f8f8f8). Gio's alpha blend is in linear light (231).
+- `.p-emoji_picker__list_item{width:36px;margin:0 1px -1px 0}`: a cell
+  every 37px (36 wide plus the 1px margin), not every 36. The ninth column
+  sat 8px left of Slack's. The hit test skips the margin.
+- `.p-emoji_picker__list_item{padding:.25rem 0 .2rem}` with `.c-emoji`
+  `vertical-align:top`: the image sits 4px below the cell's top, not
+  centred in its 32px.
+
+Left as they are:
+
+- The Emoji/GIFs tab underline is
+  `inset 0 -2px 0 0 var(--dt_color-theme-base-pry, var(--dt_color-otl-hgl-1))`:
+  the account theme's colour (Aubergine's #83388a in Clack). The page has no
+  account theme, so Chrome falls back to otl-hgl-1's blue.
+- The search field starts at 17.5px (`padding:14px 17.5px 7px`). Chrome
+  draws that half pixel, Clack rounds it to 18.
+- The sticky heading sits about 1.25px right of Slack's (`left:0`,
+  `margin:0 6px`, `padding:0 14px`: 20px, which is what Clack asks for).
+  The cause isn't found yet.
+- Outside the picker, 35 more popups draw 1px borders as one device pixel
+  (`r.Inset(1)`), thinner than Slack's at 125 %, 150 % and 2x. Not changed
+  here.

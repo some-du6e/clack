@@ -64,10 +64,13 @@ const (
 	epLastExtra    = 10 // the list's last emoji row is 43
 	epCellX        = 15
 	epCellW        = 36
-	epCellH        = 32
-	epImgSz        = 22
-	epCols         = 9
-	epEmbInputY    = 7 // hideTabs: .p-emoji_picker--style-v2 .p-emoji_picker__input_container padding-top
+	// .p-emoji_picker__list_item{width:36px;margin:0 1px -1px 0}: one
+	// cell every 37px (the 1px right margin between them)
+	epCellPitch = 37
+	epCellH     = 32
+	epImgSz     = 22
+	epCols      = 9
+	epEmbInputY = 7 // hideTabs: .p-emoji_picker--style-v2 .p-emoji_picker__input_container padding-top
 )
 
 // EmojiPickerSize is the picker card size in dp (361×518), for callers
@@ -956,8 +959,9 @@ func (p *EmojiPicker) hitTest(gtx layout.Context, pt image.Point) epCell {
 	if r.n == 0 || x < 0 {
 		return epNoCell
 	}
-	col := x / dp(gtx, epCellW)
-	if col >= int(r.n) {
+	pitch := dp(gtx, epCellPitch)
+	col := x / pitch
+	if col >= int(r.n) || x-col*pitch >= dp(gtx, epCellW) { // the 1px margin is no cell
 		return epNoCell
 	}
 	return epCell{i, col}
@@ -1091,8 +1095,9 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 	if lit.row < 0 {
 		lit = p.sel
 	}
+	pitch := dp(gtx, epCellPitch)
 	for j, id := range p.rowIDs(r) {
-		x := x0 + j*cw
+		x := x0 + j*pitch
 		cell := image.Rect(x, y0, x+cw, y0+ch)
 		if lit.row == i && lit.col == j {
 			rrect(gtx, cell, rad, epCellTint(int(r.si)*epCols+j))
