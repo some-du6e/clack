@@ -262,6 +262,12 @@ func TestChannelFilesSearch(t *testing.T) {
 	v.search.ed.SetText("report")
 	v.runSearch("report") // the explorer's onSearch (Enter on the type-query completion)
 	e.until(t, "the search", func() bool { return len(fs.SearchForms("search.modules.files")) >= n+2 })
+	// the links search goes out on its own goroutine: wait for it too (the
+	// release run read the unfiltered page-1 request before it landed)
+	e.until(t, "the links search", func() bool {
+		lf := fs.ChannelLinksForms()
+		return len(lf) > 0 && lf[len(lf)-1].Get("query") == "report"
+	})
 	for _, f := range fs.SearchForms("search.modules.files")[n:] {
 		if !strings.HasPrefix(f.Get("query"), "report in:<#") || f.Get("sort") != "score" {
 			t.Errorf("search form query %q sort %q", f.Get("query"), f.Get("sort"))
