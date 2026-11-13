@@ -2,7 +2,10 @@ name: channels-audit
 # The channels audit (docs/CHANNELS-AUDIT.md) rendered headlessly at
 # 1440x900 against internal/fakeslack: the header star's Move to… menu,
 # a preview channel's header, the Join… menu, channel details (About,
-# Members, Agents & apps, Settings), the channel browser, and the sidebar:
+# Members, Agents & apps, Settings; under agents_in_channels_improvements
+# the Members filter, the reworked Agents & apps tab and the invite modal
+# scoped to agents and apps, light and dark), the channel browser, and the
+# sidebar:
 # its organize mode (row selection, Move to…, Leave and its confirmation),
 # its keyboard (the filter's ArrowDown, roving focus, Shift+Tab), the move
 # error toasts, temp_mute's "New" tag and the draft menu's picked draft.
@@ -16,6 +19,9 @@ on:
       - "internal/ui/channels_audit_test.go"
       - "internal/ui/joinpane.go"
       - "internal/ui/views/details.go"
+      - "internal/ui/views/details_agents.go"
+      - "internal/ui/agents_channels_test.go"
+      - "internal/fakeslack/channel_agents.go"
       - "internal/ui/views/directories.go"
       - "internal/ui/views/spanline.go"
       - "internal/ui/popups/actions_menus.go"
@@ -56,7 +62,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestChannelLeaveRejoin$|TestChannelDetailsTabsShot$|TestSidebarTextFilter$|TestSidebarTextFilterFollowsExperiment$|TestTempMuteFollowsExperiment$|TestSidebarOrganizeMode$|TestSidebarKeyboard$|TestSectionMoveErrorToasts$|TestTempMuteNewBadge$|TestSidebarDraftMenuOpensPickedDraft$|TestSidebarDraftPencilMenu$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestChannelHeaderMoveTo$|TestChannelPreviewHeaderAndMenu$|TestChannelPreviewJoin$|TestChannelDetailsMembersAndApps$|TestChannelBrowserShot$|TestChannelBellMenu$|TestChannelTopicEditModal$|TestChannelLeaveRejoin$|TestChannelDetailsTabsShot$|TestSidebarTextFilter$|TestSidebarTextFilterFollowsExperiment$|TestTempMuteFollowsExperiment$|TestSidebarOrganizeMode$|TestSidebarKeyboard$|TestSectionMoveErrorToasts$|TestTempMuteNewBadge$|TestSidebarDraftMenuOpensPickedDraft$|TestSidebarDraftPencilMenu$|TestChannelDetailsAgentsImprovements$|TestChannelDetailsAgentsEmpty$|TestChannelDetailsAgentsOff$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

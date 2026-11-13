@@ -2064,6 +2064,14 @@ type dirDropdown struct {
 	picked int // index+1 of a pick made through onSelectionChange
 	shown  []string
 	ns     i18n.NS // labels are Slack's strings in ns ("": drawn as is)
+
+	// counts are the options' member counts, drawn at the right of each
+	// menu row (KcBz renderOption: 40px, right-aligned, foreground .7;
+	// hidden in the field); "" for none. applied tints the field as
+	// p-ia_details_popover__filter does once a non-default option is
+	// picked (#1264a3 on #1d9bd11a, a #1264a3 border).
+	counts  []string
+	applied bool
 }
 
 // text is option i's label as drawn (in the active locale when the
@@ -2226,18 +2234,23 @@ func (dd *dirDropdown) layoutSelectNative(gtx C, p slackc.Props) D {
 		r := image.Rect(0, 0, w, h)
 		rad := gtx.Dp(8)
 		rrect(gtx, r, rad, b.p.Surface)
+		fg, ic, line := st.Color(b.p.Text), b.p.Sec, b.p.Faint
+		if dd.applied {
+			rrect(gtx, r, rad, flatten(cdTileBg, b.p.Surface))
+			fg, ic, line = b.p.Link, b.p.Link, b.p.Link
+		}
 		if dd.btn.Hovered() || dd.open {
 			rrect(gtx, r, rad, b.p.Hover)
 		}
-		border(gtx, r, rad, max(1, gtx.Dp(1)), b.p.Faint)
+		border(gtx, r, rad, max(1, gtx.Dp(1)), line)
 		dirAt(gtx, image.Pt(pad, 0), func(gtx C) D {
 			gtx.Constraints = layout.Exact(image.Pt(max(0, w-2*pad-chev-gtx.Dp(4)), h))
 			if len(elem.Nodes) > 0 {
 				return layout.W.Layout(gtx, func(gtx C) D { return slackc.LayoutElement(gtx, elem) })
 			}
-			return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, st.FontSize(15), wReg, st.Color(b.p.Text), label) })
+			return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, st.FontSize(15), wReg, fg, label) })
 		})
-		dirAt(gtx, image.Pt(w-pad-chev, (h-chev)/2), func(gtx C) D { return b.icon(gtx, "chevron-down", 16, b.p.Sec) })
+		dirAt(gtx, image.Pt(w-pad-chev, (h-chev)/2), func(gtx C) D { return b.icon(gtx, "chevron-down", 16, ic) })
 		return D{Size: r.Max}
 	})
 	if dd.open {
@@ -2262,6 +2275,9 @@ func (dd *dirDropdown) menu(b *base, gtx C, btn image.Point, right bool) {
 	}()
 	itemH, padY := gtx.Dp(28), gtx.Dp(8)
 	w := gtx.Dp(280)
+	if len(dd.counts) > 0 {
+		w = gtx.Dp(300) // MembersFilter's minOptionsListWidth
+	}
 	h := 2*padY + len(dd.labels)*itemH
 	x := 0
 	if right {
@@ -2304,6 +2320,17 @@ func (dd *dirDropdown) menu(b *base, gtx C, btn image.Point, right bool) {
 						gtx.Constraints = layout.Exact(image.Pt(w-gtx.Dp(48), itemH))
 						return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, 15, wReg, fg, l) })
 					})
+					if i < len(dd.counts) && dd.counts[i] != "" {
+						cfg := theme.WithAlpha(b.p.Text, 0xb3)
+						if dd.items[i].Hovered() {
+							cfg = rgb(0xffffff)
+						}
+						cw := gtx.Dp(40)
+						dirAt(gtx, image.Pt(w-gtx.Dp(24)-cw, 0), func(gtx C) D {
+							gtx.Constraints = layout.Exact(image.Pt(cw, itemH))
+							return layout.E.Layout(gtx, func(gtx C) D { return b.label(gtx, 15, wReg, cfg, dd.counts[i]) })
+						})
+					}
 					return D{Size: image.Pt(w, itemH)}
 				})
 			})

@@ -152,6 +152,8 @@ type cdDialog struct {
 	resultsW                int
 	resultsShow             bool
 	confirmAll, confirmBack widget.Clickable
+	subtitle                string // the title bar's subtitle (c-sk-modal_title_bar__subtitle)
+	titleH                  int    // the title bar's height this frame (px)
 }
 
 func (d *ChannelDetails) openDialog(kind int) {
@@ -963,12 +965,23 @@ func (d *ChannelDetails) skModal(gtx C, full image.Point, title string, closeBtn
 	g.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, max(0, full.Y-gtx.Dp(32)))}
 	dims := layout.Flex{Axis: layout.Vertical}.Layout(g,
 		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Top: 20, Bottom: 20, Left: 28, Right: 28}.Layout(gtx, func(gtx C) D {
+			return dl.titleBar(layout.Inset{Top: 20, Bottom: 20, Left: 28, Right: 28}.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
 				gtx.Constraints.Min.Y = gtx.Dp(30)
 				return row(gtx, layout.Middle,
 					layout.Flexed(1, func(gtx C) D {
-						return dirFill(gtx, func(gtx C) D { return d.para(gtx, 22, 30, wBlack, d.p.Text, 0, title) })
+						return dirFill(gtx, func(gtx C) D {
+							if dl.subtitle == "" {
+								return d.para(gtx, 22, 30, wBlack, d.p.Text, 0, title)
+							}
+							// 13/18 content-pry, 24px from the close button, two lines at most
+							return col(gtx,
+								layout.Rigid(func(gtx C) D { return d.para(gtx, 22, 30, wBlack, d.p.Text, 0, title) }),
+								layout.Rigid(func(gtx C) D {
+									return layout.Inset{Right: 24}.Layout(gtx, func(gtx C) D { return d.para(gtx, 13, 18, wReg, d.p.Text, 2, dl.subtitle) })
+								}),
+							)
+						})
 					}),
 					layout.Rigid(func(gtx C) D {
 						if !closeBtn {
@@ -977,7 +990,7 @@ func (d *ChannelDetails) skModal(gtx C, full image.Point, title string, closeBtn
 						return layout.Inset{Left: 8, Right: -8}.Layout(gtx, func(gtx C) D { return d.iconButton(gtx, &dl.close, "close", 36, 20, d.p.Sec) })
 					}),
 				)
-			})
+			}))
 		}),
 		layout.Rigid(func(gtx C) D {
 			return layout.Inset{Left: 28, Right: 28}.Layout(gtx, func(gtx C) D {
@@ -1026,6 +1039,13 @@ func (d *ChannelDetails) skModal(gtx C, full image.Point, title string, closeBtn
 	if dl.resultsShow {
 		d.addPeopleResults(gtx)
 	}
+}
+
+// titleBar notes the title bar's height (the agents invite's results
+// menu opens under its picker, below it).
+func (dl *cdDialog) titleBar(dims D) D {
+	dl.titleH = dims.Size.Y
+	return dims
 }
 
 // cdPara is a 15/22 dialog paragraph with bold runs: parts alternate
@@ -1209,7 +1229,11 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 			d.hideLine("notifications-off", "They won’t be notified that you’ve hidden them."),
 		}, []W{cancel, d.cdDlgButton(&dl.ok, btnDanger, "Hide This Person", dl.pending)})
 	case cdDlgAddPeople:
-		d.addPeopleDialog(gtx, full, inf)
+		if a := dl.add; a != nil && a.agents {
+			d.agentInviteDialog(gtx, full, inf, a) // details_agents.go
+		} else {
+			d.addPeopleDialog(gtx, full, inf)
+		}
 	case cdDlgPosting:
 		d.postingDialog(gtx, full, inf)
 	}
@@ -1307,6 +1331,12 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 		dl.op.load(d.h, false, func(ctx context.Context) (bool, error) { return true, f(ctx) })
 	}
 	if dl.kind == cdDlgAddPeople {
+		if a := dl.add; a != nil && a.agents {
+			d.updateAgentInvite(gtx, a) // details_agents.go
+			if dl.kind != cdDlgAddPeople {
+				return
+			}
+		}
 		d.updateAddPeople(gtx, inf)
 		return
 	}
@@ -1626,6 +1656,11 @@ const (
 // cdAddPeople is the modal's state: step 0 picks people (SelectMembersForm),
 // step 1 the history (HistoryOptions).
 type cdAddPeople struct {
+	// agents: the channel invite modal scoped to agents and apps
+	// (details_agents.go), else the group DM's add people modal
+	agents     bool
+	explore    widget.Clickable // "Explore more agents and apps"
+	pickY      int              // agents: the picker's top in the dialog (px)
 	step       int
 	q          *search
 	deb        debounce
@@ -1662,8 +1697,14 @@ func (d *ChannelDetails) openAddPeople(inf core.ChannelDetails) {
 	d.histOpen(a)
 }
 
-// addRoom is how many more people fit: 9 minus everyone in it and picked.
-func (a *cdAddPeople) addRoom() int { return cdMaxGroupDM - len(a.members) - len(a.picked) }
+// addRoom is how many more people fit: 9 minus everyone in it and picked
+// (the channel invite's maxInviteLimit, 1,000, for agents and apps).
+func (a *cdAddPeople) addRoom() int {
+	if a.agents {
+		return 1000 - len(a.picked)
+	}
+	return cdMaxGroupDM - len(a.members) - len(a.picked)
+}
 
 func (d *ChannelDetails) updateAddPeople(gtx C, inf core.ChannelDetails) {
 	dl := &d.x.dlg
@@ -1922,8 +1963,12 @@ func (d *ChannelDetails) addPeoplePicker(gtx C, a *cdAddPeople) D {
 	}
 	if a.q.text() != "" {
 		// the results menu opens below the field (drawn over the dialog)
+		top := gtx.Dp(70)
+		if a.agents {
+			top = a.pickY
+		}
 		dl.resultsShow, dl.resultsW = true, w
-		dl.resultsAt = image.Pt(gtx.Dp(28), gtx.Dp(70)+r.Dy()+gtx.Dp(4))
+		dl.resultsAt = image.Pt(gtx.Dp(28), top+r.Dy()+gtx.Dp(4))
 	}
 	return D{Size: r.Size()}
 }
@@ -1941,7 +1986,11 @@ func (d *ChannelDetails) addPeopleResults(gtx C) {
 	self := d.selfID()
 	var us []core.User
 	for _, u := range res {
-		if u.IsBot || u.Deleted || u.ID == self || u.ID == "USLACKBOT" {
+		if a.agents { // isAgentsAppsRoster: agents and apps only
+			if !cdIsAgentOrApp(u) || u.Deleted || u.ID == core.SlackbotUserID {
+				continue
+			}
+		} else if u.IsBot || u.Deleted || u.ID == self || u.ID == "USLACKBOT" {
 			continue
 		}
 		us = append(us, u)
@@ -1958,6 +2007,11 @@ func (d *ChannelDetails) addPeopleResults(gtx C) {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		if !loaded || err != nil || len(us) == 0 {
 			msg := "No matches found"
+			if a.agents && loaded && !a.res.busy() { // getNoResultsText under Io
+				return layout.Inset{Left: 24, Right: 24, Top: 4, Bottom: 4}.Layout(gtx, func(gtx C) D {
+					return d.cdRichCentered(gtx, "agents-none", nsChannelInvite.RT("No agents or apps found matching {query}", "query", a.q.text()), "query")
+				})
+			}
 			if !loaded || a.res.busy() {
 				msg = "Searching…"
 			}
@@ -2004,8 +2058,12 @@ func (d *ChannelDetails) addPeopleResults(gtx C) {
 									if !in {
 										return D{}
 									}
+									already := "Already in this conversation"
+									if a.agents {
+										already = nsChannelInvite.T("Already in this channel") // getChannelInviteExceptionReason
+									}
 									return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
-										return d.label(gtx, 13, wReg, d.p.Muted, "Already in this conversation")
+										return d.label(gtx, 13, wReg, d.p.Muted, already)
 									})
 								})
 							}),

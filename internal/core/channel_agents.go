@@ -50,11 +50,12 @@ func (a *App) ChannelHeaderWithAgents() bool {
 
 // ExpAgentsInChannelsImprovements is M/qt Io (on for the test account
 // since 2026-11-13; off before): it decides whether AgentCountButton's
-// labels go through I18n, and drops Agents sections from the sidebar
-// (client-boot Q; app.go sections). Its channel details rework (Vmvo
-// ReworkedAgentsAppsTab, the Members roster's people-only scope in +VDd,
-// the invite modal's agents-and-apps scope in ANc2) isn't ported
-// (docs/EXPERIMENTS.md).
+// labels go through I18n, drops Agents sections from the sidebar
+// (client-boot Q; app.go sections), and reworks channel details
+// (views/details_agents.go): the Members roster's people-only scope in
+// +VDd (e5) with KcBz's filter minus "Agents & apps", Vmvo
+// ReworkedAgentsAppsTab, and ANc2's channel invite modal scoped to agents
+// and apps.
 const ExpAgentsInChannelsImprovements = "agents_in_channels_improvements"
 
 // AgentsInChannelsImprovements is M/qt Io.
@@ -103,6 +104,22 @@ func (a *App) ChannelAgentApps(ctx context.Context, ch string) ([]string, error)
 		}
 	}
 	return ids, nil
+}
+
+// ChannelAgentsAppsPage is a page of the reworked Agents & apps roster
+// (+VDd under e7: fetchAndUpsertMembersForChannel with filter "apps" and
+// count 50, then the next marker). The users go into the store.
+func (a *App) ChannelAgentsAppsPage(ctx context.Context, ch, marker string) ([]User, string, error) {
+	us, next, err := a.C.ChannelApps(ctx, ch, marker, 50)
+	if err != nil {
+		return nil, "", err
+	}
+	a.S.PutUsers(us)
+	out := make([]User, 0, len(us))
+	for i := range us {
+		out = append(out, a.userOf(&us[i]))
+	}
+	return out, next, nil
 }
 
 // SlackbotUserID is Slackbot's user id (s8g3 Q$).
