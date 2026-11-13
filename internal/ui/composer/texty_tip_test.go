@@ -139,10 +139,10 @@ func TestSlugProfileCardLikeSlack(t *testing.T) {
 	if !open || req.UserID != fakeslack.ProfileID || !req.Texty {
 		t.Fatalf("over a person's slug: open %v, %+v; want their card at once (Texty)", open, req)
 	}
-	// the slug's window bounds
-	slug := e.c.ed.PosRect(3)
-	if req.Anchor.Min.Y > slug.Min.Y+e.edOrigin().Y || req.Anchor.Max.Y < slug.Max.Y+e.edOrigin().Y-4 {
-		t.Errorf("anchor %v, the slug's line %v", req.Anchor, slug.Add(e.edOrigin()))
+	// the slug's window bounds: under the pointer, inside its line
+	line := e.c.ed.PosRect(3).Add(e.edOrigin())
+	if !ptr.In(req.Anchor) || req.Anchor.Min.Y < line.Min.Y || req.Anchor.Max.Y > line.Max.Y || req.Anchor.Dx() < 8 {
+		t.Errorf("anchor %v: want the slug's box under the pointer %v, in its line %v", req.Anchor, ptr, line)
 	}
 	// off the slug: closes after hideTooltipDelayed's 250ms
 	e.move(image.Pt(2, e.atomCentre(3).Y))
