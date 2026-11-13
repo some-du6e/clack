@@ -20,7 +20,7 @@ import (
 // mallocs, Mesa/llvmpipe's textures and buffers, Go's off-heap runtime
 // structures, thread stacks); file mappings by file.
 
-func perfGoArena(p uint64) bool { return p >= 0xc000000000 && p < 0x1c000000000 }
+func perfGoArena(p uint64) bool { return p >= 0xc000000000 && p < 0xc100000000 }
 
 func perfOSMem(w io.Writer) {
 	if b, err := os.ReadFile("/proc/self/status"); err == nil {

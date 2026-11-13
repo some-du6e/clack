@@ -53,8 +53,10 @@ const (
 )
 
 // perfGoArena is the address range of the Go heap's arenas on amd64 and
-// arm64 (the runtime's first arena hint, 0x00c0<<32, growing up).
-func perfGoArena(p uintptr) bool { return p >= 0xc000000000 && p < 0x1c000000000 }
+// arm64: the runtime's first arena hint, 0x00c0<<32, growing up
+// contiguously (4 GB of it: Windows may place other allocations, Direct3D's
+// heaps among them, further up).
+func perfGoArena(p uintptr) bool { return p >= 0xc000000000 && p < 0xc100000000 }
 
 type perfRegion struct {
 	base, size, allocBase uintptr
