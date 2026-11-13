@@ -121,6 +121,7 @@ type actDesc struct {
 	footIcon  string
 	footEmoji string  // reaction emoji image (replaces footIcon)
 	footAlt   string  // the reaction's ":name:", drawn when footEmoji is ""
+	footName  string  // the reaction's name, resolved again at draw (reactionEmoji)
 	footBold  bool    // footer is a bold label ("App")
 	reacted   bool    // the pill is "Reacted" followed by the emoji
 	pill      bool    // the row has a footer (text or its type icon)
@@ -1177,6 +1178,7 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 	if icon == "reaction" && it.Reaction != nil {
 		d.footEmoji = it.Reaction.URL
 		d.footAlt = actEmojiText(it.Reaction.Name)
+		d.footName = strings.Trim(it.Reaction.Name, ":")
 	}
 	d.hay = strings.ToLower(d.name + "\n" + d.prev + "\n" + d.title + "\n" + d.foot)
 	return d
@@ -2755,10 +2757,9 @@ func (v *Activity) actTypeIcon(gtx C, d *actDesc) D {
 	g.Constraints = layout.Exact(image.Pt(s, s))
 	return layout.Center.Layout(g, func(gtx C) D {
 		if d.typeIcon == "reaction" {
-			if d.footEmoji != "" {
-				return v.emojiImg(gtx, d.footEmoji, 16)
-			}
-			return v.emojiAlt(gtx, d.footAlt, 16)
+			// the img inherits the type icon's colour (content-ter) and
+			// the row's 15px font for its alt text
+			return v.reactionEmoji(gtx, d, 15, wReg, v.p.Muted)
 		}
 		return v.icon(gtx, icons.Slack(d.typeIcon), 20, v.p.Muted)
 	})
@@ -2810,17 +2811,47 @@ func actEmojiText(name string) string {
 	return ":" + strings.Trim(name, ":") + ":"
 }
 
+// reactionEmoji is the reaction's vbPY Emoji (c-emoji__small, 16px) as
+// ReactionContent and ActivityEntryTypeIcon draw it: the URL comes from the
+// emoji store at render (p.i_ reads the reaction from redux each render), so
+// a custom emoji that arrives after the feed was built still draws its
+// image; with no URL, renderEmojiFallback's alt text in the surrounding
+// font (size, weight, col).
+func (v *Activity) reactionEmoji(gtx C, d *actDesc, size unit.Sp, weight font.Weight, col color.NRGBA) D {
+	if u := v.reactionURL(d); u != "" {
+		return v.emojiImg(gtx, u, 16)
+	}
+	return v.emojiAltFont(gtx, d.footAlt, 16, size, weight, col)
+}
+
+// reactionURL is the reaction emoji's image as the store has it now, else
+// the one the item was built with.
+func (v *Activity) reactionURL(d *actDesc) string {
+	if d.footName != "" {
+		if u, _, ok := v.h.Core().Emoji(d.footName); ok && u != "" {
+			return u
+		}
+	}
+	return d.footEmoji
+}
+
 // emojiAlt is vbPY's Emoji with no image URL (a custom emoji the store
 // doesn't have): renderEmojiFallback still draws the <img>, with no src
 // and alt ":name:", and Chrome paints the alt text from the top left of
 // the size x size box (c-emoji__small, overflow hidden), clipped. A
 // ":tada_custom:" reaction reads "Reacted :ta".
 func (v *Activity) emojiAlt(gtx C, alt string, size unit.Dp) D {
+	return v.emojiAltFont(gtx, alt, size, 13, wReg, v.p.Muted)
+}
+
+// emojiAltFont is emojiAlt with the alt text in the font the <img>
+// inherits.
+func (v *Activity) emojiAltFont(gtx C, alt string, size unit.Dp, ts unit.Sp, weight font.Weight, col color.NRGBA) D {
 	sz := gtx.Dp(size)
 	lg := gtx
 	lg.Constraints = layout.Constraints{Max: image.Pt(1<<20, 1<<20)}
 	m := op.Record(gtx.Ops)
-	v.label(lg, 13, wReg, v.p.Muted, alt)
+	v.label(lg, ts, weight, col, alt)
 	call := m.Stop()
 	defer clip.Rect{Max: image.Pt(sz, sz)}.Push(gtx.Ops).Pop()
 	call.Add(gtx.Ops)
@@ -2890,19 +2921,7 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, nsActivity.T("Reacted to:")) })
 			}))
 		} else {
-			before, after := around(nsActivity, "Reacted {emoji} to:", "emoji")
-			if before != "" {
-				pre = append(pre, layout.Rigid(func(gtx C) D { return v.label(gtx, 15, wReg, col, before) }))
-			}
-			pre = append(pre, layout.Rigid(func(gtx C) D {
-				if d.footEmoji != "" {
-					return v.emojiImg(gtx, d.footEmoji, 16)
-				}
-				return v.emojiAlt(gtx, d.footAlt, 16)
-			}))
-			pre = append(pre, layout.Rigid(func(gtx C) D {
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, after) })
-			}))
+			pre = append(pre, layout.Rigid(func(gtx C) D { return v.reactPrefix(gtx, d, col) }))
 		}
 		pre = append(pre, layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }))
 		return row(gtx, layout.Middle, pre...)
@@ -2912,6 +2931,26 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 	}
 	// the subtext runs inline, inside the clamp (activity_rows.go)
 	return r.previewSub(gtx, lines, d.subtext)
+}
+
+// reactPrefix is ReactionContent's Detailed subtext with the layout
+// revisions: span.reaction_prefix (700, margin-right 4px) around "Reacted
+// {emoji} to:"; span.reaction_emoji (relative, top 3px) holds the 16px img,
+// vertical-align top in the 22px line, so 3px down: the line's middle.
+func (v *Activity) reactPrefix(gtx C, d *actDesc, col color.NRGBA) D {
+	before, after := around(nsActivity, "Reacted {emoji} to:", "emoji")
+	return row(gtx, layout.Middle,
+		layout.Rigid(func(gtx C) D {
+			if before == "" {
+				return D{}
+			}
+			return v.label(gtx, 15, wBold, col, before)
+		}),
+		layout.Rigid(func(gtx C) D { return v.reactionEmoji(gtx, d, 15, wBold, col) }),
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, col, after) })
+		}),
+	)
 }
 
 // shimmerLine is Slack's loading placeholder (applyShimmer) for a body

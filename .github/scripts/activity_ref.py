@@ -68,11 +68,24 @@ def avatar(size, radius):
             % (size, size, radius))
 
 
+def emoji_img(alt):
+    # vbPY Emoji, emojiSize small, renderEmojiFallback: an <img
+    # class="c-emoji c-emoji__small"> (16px); no image here, so Chrome paints
+    # the alt text clipped to the box, as Slack does for an unknown emoji
+    return '<img class="c-emoji c-emoji__small" alt="%s">' % html.escape(alt)
+
+
 def body(r, dense):
     sub = ""
     if r["React"]:
-        sub = "Reacted to:" if dense else "Reacted %s to:" % html.escape(r["Emoji"])
-        sub = '<span class="margin_right_25">%s</span> ' % sub
+        # QTZf ReactionContent: Dense "Reacted to:" (margin_right_25);
+        # Detailed span.reaction_prefix (700) around "Reacted {emoji} to:",
+        # the emoji in span.reaction_emoji (relative, top 3px)
+        if dense:
+            sub = '<span class="margin_right_25">Reacted to:</span> '
+        else:
+            sub = ('<span class="reaction_prefix__V6YJG">Reacted <span class="reaction_emoji__XTXNb">%s</span> to:</span>'
+                   % emoji_img(r["Emoji"]))
     elif r["Sub"]:
         sub = html.escape(r["Sub"])
     out = sub + html.escape(r["Body"])
@@ -147,7 +160,7 @@ def dense(r):
     inner = "activity_single_line_row_content__PA7hI" + (" activity_single_line_row_contentUnread__dkeKz" if r["Unread"] else "")
     icon = ""
     if r["TypeIcon"]:
-        glyph = html.escape(r["Emoji"]) if r["TypeIcon"] == "reaction" else svg(r["TypeIcon"], 20)
+        glyph = emoji_img(r["Emoji"]) if r["TypeIcon"] == "reaction" else svg(r["TypeIcon"], 20)
         icon = '<span class="activity_single_line_row_content__type_icon__RB9K6">%s</span>' % glyph
     loc = ""
     if r["LocOn"]:

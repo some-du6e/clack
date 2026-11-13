@@ -370,3 +370,54 @@ func TestActivityReactionWithoutEmojiImage(t *testing.T) {
 		t.Errorf("actEmojiText(:already_wrapped:) = %q", got)
 	}
 }
+
+// A reaction row whose custom emoji reaches the store after the feed was
+// built draws the image, not the alt text: ReactionContent and
+// ActivityEntryTypeIcon read the reaction's emoji at render (karim-1113c,
+// Karim's Dense row drew a clipped ":na" where the emoji goes). The
+// Detailed "Reacted {emoji} to:" is span.reaction_prefix, weight 700.
+func TestActivityReactionEmojiAtRender(t *testing.T) {
+	app := actFeedApp(t)
+	v := NewActivity(&slickHost{app: app, th: theme.New(false)})
+	var ops op.Ops
+	sz := image.Pt(1200, 800)
+	deadline := time.Now().Add(10 * time.Second)
+	for len(actPage(v).Items) < actFeedLen {
+		if time.Now().After(deadline) {
+			t.Fatalf("feed never loaded (%d items)", len(actPage(v).Items))
+		}
+		v.Layout(actFrame(&ops, sz))
+		time.Sleep(10 * time.Millisecond)
+	}
+	page := actPage(v)
+	known := actItem(t, v, "k-reaction")
+	late := *known
+	late.Reaction = &core.ActivityReaction{User: known.Reaction.User, Name: "late_custom"}
+	d := v.describe(&late, page.Convs)
+	if d.footEmoji != "" || v.reactionURL(&d) != "" {
+		t.Fatalf("late_custom resolved before it was added: %q / %q", d.footEmoji, v.reactionURL(&d))
+	}
+	const emojiURL = "https://emoji.slack-edge.com/T0FAKE/late_custom/0123.png"
+	app.S.CustomEmoji.Put("late_custom", emojiURL)
+	if got := v.reactionURL(&d); got != emojiURL {
+		t.Errorf("after the emoji arrived the row resolves %q, want %q", got, emojiURL)
+	}
+	// aliases resolve to their target's image, like the store does
+	app.S.CustomEmoji.Put("late_alias", "alias:late_custom")
+	al := late
+	al.Reaction = &core.ActivityReaction{User: known.Reaction.User, Name: ":late_alias:"}
+	if da := v.describe(&al, page.Convs); v.reactionURL(&da) != emojiURL {
+		t.Errorf("alias resolves %q, want %q", v.reactionURL(&da), emojiURL)
+	}
+
+	// the Detailed prefix: bold "Reacted ", the 16px emoji, bold " to:",
+	// then the 4px margin
+	gtx := actFrame(&ops, sz)
+	gtx.Constraints.Min = image.Point{}
+	before, after := around(nsActivity, "Reacted {emoji} to:", "emoji")
+	want := v.th.Measure(gtx, 15, wBold, before) + gtx.Dp(16) + v.th.Measure(gtx, 15, wBold, after) + gtx.Dp(4)
+	if got := v.reactPrefix(gtx, &d, v.p.Text).Size.X; got != want {
+		reg := v.th.Measure(gtx, 15, wReg, before) + gtx.Dp(16) + v.th.Measure(gtx, 15, wReg, after) + gtx.Dp(4)
+		t.Errorf("Reacted {emoji} to: is %dpx wide, want %d (bold; regular would be %d)", got, want, reg)
+	}
+}
