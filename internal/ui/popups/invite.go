@@ -24,8 +24,14 @@ package popups
 //     for who may invite guests or request it);
 //   - "Add to team channels" (ChannelSelect: optional for members,
 //     required for guests, whose one or several channels make them
-//     single- or multi-channel guests);
-//   - a guest's "Set an expiration date" (GuestExpirationSelect);
+//     single- or multi-channel guests), with the "Suggested:" row above
+//     the field (GXKR: conversations.recommend on mount, the first three
+//     not picked yet as informative Tags; three shimmer tags while it
+//     loads, nothing when it has none);
+//   - a guest's "Set an expiration date" (GuestExpirationSelect): No
+//     limit, 7, 30 or 60 days, or Custom, which adds the outline
+//     calendar button ("Deactivate on {date}" once a day is picked) over
+//     the date picker (tomorrow up to ten years out);
 //   - "Add a message" (CustomizeButton), which opens "Custom message:"
 //     (CustomMessage, at most 560 characters);
 //   - for a request, "Reason for request (optional)" and the note "Your
@@ -42,8 +48,8 @@ package popups
 // send", each address with its outcome, Invite More People and Done.
 //
 // Not drawn: the Google Workspace directory (it needs Google sign-in), the
-// recommended channels, the Slack Connect choice under "Invite as", the
-// custom expiration date, the email preview and the invite link's
+// Slack Connect choice under "Invite as", the org's max_guest_duration
+// limit on the expiration, the email preview and the invite link's
 // settings form.
 
 import (
@@ -84,6 +90,10 @@ const (
 	InviteFromTeamMenu   = "team_menu"
 	InviteFromCreateMenu = "sidebar_create_new_invite_people"
 	InviteFromHuddles    = "huddles_page"
+	// Directories > People: InvitePeopleButton and the education banner's
+	// "Invite people" (client-browse-people-view, build fa938a086569)
+	InviteFromPeopleBrowser     = "people_browser"
+	InviteFromPeopleBrowserHero = "people_browser_hero"
 )
 
 // CanInvite is canUserSeeInviteModal: whether the entry points show.
@@ -135,10 +145,19 @@ type InviteModal struct {
 	forceMC bool // the single channel guest's "Allow them to be added to more channels"
 	mcBox   widget.Clickable
 
-	// a guest's expiration (days; 0: no limit)
+	// a guest's expiration (days; 0: no limit; invExpCustom: Custom, on
+	// expDate, local midnight, zero until a day is picked)
 	expDays int
+	expDate time.Time
 	expBtn  widget.Clickable
 	expOv   Overlay
+	expCal  widget.Clickable // Custom's calendar button
+	calOv   Overlay
+
+	// the recommended channels (GXKR)
+	recLoading bool
+	rec        []core.Conv
+	recBtn     [3]widget.Clickable
 
 	// Add a message / Custom message
 	custom    widget.Clickable
@@ -192,8 +211,67 @@ func openInvite(h Host, source string, chans []core.Conv) *InviteModal {
 	if m.linkShown() {
 		m.fetchLink()
 	}
+	m.fetchRecommended()
 	return m
 }
+
+// fetchRecommended is useRecommendedChannels' fetch on mount
+// (fetchRecommendedChannels, limit 10).
+func (m *InviteModal) fetchRecommended() {
+	if m.h.Core() == nil {
+		return
+	}
+	m.recLoading = true
+	run(m.h, func(ctx context.Context) ([]core.Conv, error) {
+		a, err := cxApp(m.h)
+		if err != nil {
+			return nil, err
+		}
+		return a.RecommendedChannels(ctx, 10)
+	}, func(cs []core.Conv, err error) {
+		m.recLoading = false
+		if err == nil {
+			m.rec = cs
+		}
+		m.h.Invalidate()
+	})
+}
+
+// Suggested is the row's channels: the first three recommended ones not
+// picked yet (recommendedChannels' filter and slice(0, 3)).
+func (m *InviteModal) Suggested() []core.Conv {
+	picked := map[string]bool{}
+	for _, c := range m.chans {
+		picked[c.ID] = true
+	}
+	var out []core.Conv
+	for _, c := range m.rec {
+		if len(out) == 3 {
+			break
+		}
+		if !picked[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// AddSuggested is a suggested tag's onChannelClick:
+// setSelectedChannelOptions([...selected, channel]). The search text
+// stays; ChannelSelect's effect re-derives a guest's type.
+func (m *InviteModal) AddSuggested(c core.Conv) {
+	for _, x := range m.chans {
+		if x.ID == c.ID {
+			return
+		}
+	}
+	m.chans = append(m.chans, c)
+	m.chQuery = "\x00"
+	m.applyGuestChannels()
+}
+
+// RecommendedLoading reports the row's shimmer.
+func (m *InviteModal) RecommendedLoading() bool { return m.recLoading }
 
 func (m *InviteModal) Layout(gtx layout.Context) layout.Dimensions { return m.modal.Layout(gtx) }
 func (m *InviteModal) Dismissed() bool                             { return m.modal.Dismissed() }
@@ -206,6 +284,9 @@ func (m *InviteModal) Requesting() bool {
 	a := m.h.Core()
 	return a == nil || a.IsRequestingInvites(m.typ)
 }
+
+// Source is the modal's openInviteModal source (the invites' campaign).
+func (m *InviteModal) Source() string { return m.source }
 
 // Guest reports a guest invite.
 func (m *InviteModal) Guest() bool { return m.typ.Guest() }
@@ -320,7 +401,7 @@ func (m *InviteModal) SetType(t core.InviteType) {
 		return
 	}
 	m.typ = t
-	m.forceMC, m.expDays = false, 0
+	m.forceMC, m.expDays, m.expDate = false, 0, time.Time{}
 	if t.Guest() {
 		m.applyGuestChannels()
 	}
@@ -394,8 +475,59 @@ func (m *InviteModal) SetMessage(s string) {
 	m.msg.SetText(s)
 }
 
-// SetExpiration picks a guest's expiration (days; 0: no limit).
+// SetExpiration picks a guest's expiration (days; 0: no limit;
+// InviteExpiryCustom: Custom).
 func (m *InviteModal) SetExpiration(days int) { m.expDays = days }
+
+// SetCustomExpiration picks Custom and the day.
+func (m *InviteModal) SetCustomExpiration(day time.Time) {
+	m.expDays = InviteExpiryCustom
+	y, mo, d := day.Date()
+	m.expDate = time.Date(y, mo, d, 0, 0, 0, 0, day.Location())
+}
+
+// InviteExpiryCustom is GuestExpirationSelect's Custom option (value -1).
+const InviteExpiryCustom = -1
+
+// viewerLoc is the viewer's time zone (getTimezone of the current member).
+func (m *InviteModal) viewerLoc() *time.Location {
+	if a := m.h.Core(); a != nil {
+		if tz := a.Self().TZ; tz != "" {
+			if l, err := time.LoadLocation(tz); err == nil {
+				return l
+			}
+		}
+	}
+	return time.Local
+}
+
+// expiresTs is getExpirationTs (6FNz): 0 for No limit; for Custom the
+// picked day, or today when none is (getDateInTimeZone(tz)); otherwise
+// that many days from today; 11:59:59 PM that day in the viewer's zone
+// (dPI7 getEndOfDayTs).
+func (m *InviteModal) expiresTs(now time.Time) int64 {
+	loc := m.viewerLoc()
+	switch {
+	case m.expDays == 0:
+		return 0
+	case m.expDays == InviteExpiryCustom:
+		day := now.In(loc)
+		if !m.expDate.IsZero() {
+			day = m.expDate
+		}
+		y, mo, d := day.Date()
+		return time.Date(y, mo, d, 23, 59, 59, 0, loc).Unix()
+	}
+	return core.GuestExpiry(now, loc, m.expDays)
+}
+
+// ExpiresTs is the expiration_ts Send would send now (0: none).
+func (m *InviteModal) ExpiresTs(now time.Time) int64 {
+	if !m.Guest() {
+		return 0
+	}
+	return m.expiresTs(now)
+}
 
 // FormError is the banner's text ("" when none).
 func (m *InviteModal) FormError() string { return m.formErr }
@@ -454,14 +586,8 @@ func (m *InviteModal) Send() {
 		ids = append(ids, c.ID)
 	}
 	o := core.InviteOpts{Emails: st.invitable(), Type: m.typ, Channels: ids, Message: m.message(), Source: m.source}
-	if m.Guest() && m.expDays > 0 {
-		loc := time.Local
-		if a := m.h.Core(); a != nil {
-			if l, err := time.LoadLocation(a.Self().TZ); err == nil && a.Self().TZ != "" {
-				loc = l
-			}
-		}
-		o.Expires = core.GuestExpiry(time.Now(), loc, m.expDays)
+	if m.Guest() && m.expDays != 0 {
+		o.Expires = m.expiresTs(time.Now())
 	}
 	m.sending, m.formErr = true, ""
 	requesting := m.Requesting()
@@ -821,6 +947,7 @@ func (m *InviteModal) layout(gtx layout.Context) layout.Dimensions {
 			lbl = nsInviteWS.RT("<strong>Add to team channels</strong> (optional)")
 		}
 		m.label(gtx, th, cl, &y, w, lbl, nsInviteWS.T("Make sure your teammates are in the right conversations from the get go."))
+		put(func(gtx layout.Context) layout.Dimensions { return m.recommendedRow(gtx, th, cl, w) })
 		put(func(gtx layout.Context) layout.Dimensions { return m.channelField(gtx, th, cl) })
 		chanBottom = y
 		if guest {
@@ -841,9 +968,20 @@ func (m *InviteModal) layout(gtx layout.Context) layout.Dimensions {
 		if m.expBtn.Clicked(gtx) && !invOverlayOpen(m.expOv) {
 			m.openExpList(image.Rectangle{Min: org.Add(image.Pt(0, selY)), Max: org.Add(image.Pt(w, y))})
 		}
-		y += dp(gtx, 4)
+		if m.expDays == InviteExpiryCustom {
+			// .p-guest_expiration_select--custom_expiration: margin-top 12
+			y += dp(gtx, 12)
+			bY := y
+			put(func(gtx layout.Context) layout.Dimensions { return m.customExpButton(gtx, th, cl, w) })
+			if m.expCal.Clicked(gtx) && !invOverlayOpen(m.calOv) {
+				m.openCalendar(image.Rectangle{Min: org.Add(image.Pt(0, bY)), Max: org.Add(image.Pt(w, y))}, dp(gtx, 315))
+			}
+		}
+		// .p-guest_expiration_select--description: 13/18, 70% foreground,
+		// margin-top 8
+		y += dp(gtx, 8)
 		put(func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Muted, nsInviteWS.T("These guest accounts will expire at 11:59 PM on the date you select."), 0)
+			return para(gtx, th, 13, 18, theme.Regular, cl.Muted, nsInviteWS.T("These guest accounts will expire at 11:59 PM on the date you select."), 0)
 		})
 	}
 	if m.customShown() {
@@ -946,11 +1084,13 @@ func (m *InviteModal) openTypeList(r image.Rectangle) {
 	m.h.ShowOverlay(m.typOv)
 }
 
-// invExpOptions are GuestExpirationSelect's options (Custom left out).
-var invExpOptions = []int{0, 7, 30, 60}
+// invExpOptions are GuestExpirationSelect's options.
+var invExpOptions = []int{0, 7, 30, 60, InviteExpiryCustom}
 
 func invExpLabel(days int) string {
 	switch days {
+	case InviteExpiryCustom:
+		return nsInviteWS.T("Custom")
 	case 7:
 		return nsInviteWS.T("7 days")
 	case 30:
@@ -977,6 +1117,155 @@ func (m *InviteModal) openExpList(r image.Rectangle) {
 		m.h.Invalidate()
 	})
 	m.h.ShowOverlay(m.expOv)
+}
+
+// openCalendar is the Custom button's DatePicker: position "bottom" with
+// offsetY -315, days before tomorrow (getDateInTimeZone(tz, 1)) and more
+// than ten years out disabled.
+func (m *InviteModal) openCalendar(r image.Rectangle, up int) {
+	now := time.Now()
+	t := now.In(m.viewerLoc())
+	tomorrow := time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, time.Local)
+	latest := time.Date(now.Year()+10, now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	sel := m.expDate
+	if sel.IsZero() {
+		sel = tomorrow
+	}
+	m.calOv = NewDatePickerRange(m.h, r.Add(image.Pt(0, -up)), sel, tomorrow, latest, func(day time.Time) {
+		m.SetCustomExpiration(day)
+		m.h.Invalidate()
+	})
+	m.h.ShowOverlay(m.calOv)
+}
+
+// CustomExpirationText is the Custom button's text: "Deactivate on
+// {date}" (moment "LL") once a day is picked.
+func (m *InviteModal) CustomExpirationText() string {
+	if m.expDate.IsZero() {
+		return ""
+	}
+	return nsInviteWS.T("Deactivate on {date}", "date", i18n.FormatDayjs(i18n.Locale(), m.expDate, "LL"))
+}
+
+// customExpButton is .p-guest_expiration_select--custom_expiration: an
+// outline button 36px tall, full width, radius 8, a 1px otl-pry border,
+// padding 4px 12px, the 20px calendar icon and, after 8px, the 15px text.
+func (m *InviteModal) customExpButton(gtx layout.Context, th *theme.Theme, cl *Colors, w int) layout.Dimensions {
+	hh := dp(gtx, 36)
+	open := invOverlayOpen(m.calOv)
+	return clickBox(gtx, &m.expCal, nil, func(gtx layout.Context) layout.Dimensions {
+		r := image.Rect(0, 0, w, hh)
+		rad := dp(gtx, 8)
+		b := dtBorder(th)
+		if m.expCal.Hovered() {
+			b = cl.Fg2
+		}
+		if open {
+			FocusRingColors(gtx, cl.Focus, cl.FocusRing, r, rad)
+		}
+		rrect(gtx, r, rad, b)
+		rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+		x := dp(gtx, 12)
+		is := dp(gtx, 20)
+		at(gtx, image.Pt(x, (hh-is)/2+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, "calendar", 20, cl.Fg)
+		})
+		if txt := m.CustomExpirationText(); txt != "" {
+			x += is + dp(gtx, 8)
+			at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x-dp(gtx, 12)), hh)}
+				return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions {
+					return text(gtx, th, 15, theme.Regular, cl.Fg, txt)
+				})
+			})
+		}
+		return layout.Dimensions{Size: r.Max}
+	})
+}
+
+// recommendedRow is GXKR's row: "Suggested:" (13px, content-sec), then
+// a Tag per channel (informative: 24px, padding-inline 4, gap 4, radius
+// 4, 15px; plus-filled and the channel's inline entity) wrapping 2px
+// apart, 4px above the field; three shimmer tags while it loads.
+func (m *InviteModal) recommendedRow(gtx layout.Context, th *theme.Theme, cl *Colors, w int) layout.Dimensions {
+	sugg := m.Suggested()
+	if !m.recLoading && len(sugg) == 0 {
+		return layout.Dimensions{}
+	}
+	for i := range sugg {
+		if m.recBtn[i].Clicked(gtx) {
+			m.AddSuggested(sugg[i])
+			m.h.Invalidate()
+		}
+	}
+	bg, fg := menuTagColors(th, "informative")
+	tagH, pad, gap := dp(gtx, 24), dp(gtx, 4), dp(gtx, 2)
+	var items []func(gtx layout.Context) layout.Dimensions
+	items = append(items, func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, tagH, func(gtx layout.Context) layout.Dimensions {
+			return text(gtx, th, 13, theme.Regular, cl.Fg2, nsInviteWS.T("Suggested:"))
+		})
+	})
+	if m.recLoading {
+		shim := theme.WithAlpha(cl.Fg, 0x21)
+		for i := 0; i < 3; i++ {
+			items = append(items, func(gtx layout.Context) layout.Dimensions {
+				// margin_left_25, the channel icon and a 120px missing-text bar
+				x := gap
+				sz := image.Pt(gap+pad+dp(gtx, 20)+dp(gtx, 4)+dp(gtx, 120)+pad, tagH)
+				rrect(gtx, image.Rect(x, 0, sz.X, tagH), dp(gtx, 4), bg)
+				x += pad
+				at(gtx, image.Pt(x, (tagH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "channel", 20, fg) })
+				x += dp(gtx, 20) + dp(gtx, 4)
+				rrect(gtx, image.Rect(x, (tagH-dp(gtx, 8))/2, x+dp(gtx, 120), (tagH+dp(gtx, 8))/2), dp(gtx, 4), shim)
+				return layout.Dimensions{Size: sz}
+			})
+		}
+	} else {
+		for i := range sugg {
+			c, btn := sugg[i], &m.recBtn[i]
+			items = append(items, func(gtx layout.Context) layout.Dimensions {
+				return invRecTag(gtx, th, btn, c, bg, fg, w)
+			})
+		}
+	}
+	// display flex, flex-wrap, align-items center, gap 2
+	x, y, lineH := 0, 0, tagH
+	for _, it := range items {
+		call, d := record(loose(gtx, image.Pt(w, tagH)), it)
+		if x > 0 && x+d.Size.X > w {
+			x, y = 0, y+lineH+gap
+		}
+		macroAt(gtx, call, image.Pt(x, y+(lineH-d.Size.Y)/2))
+		x += d.Size.X + gap
+	}
+	return layout.Dimensions{Size: image.Pt(w, y+lineH+dp(gtx, 4))} // margin_bottom_50
+}
+
+// invRecTag is one recommended channel: a clickable informative Tag with
+// plus-filled (20) and the channel (its inline icon, 1em in a 20px box,
+// and the name, truncated to the row).
+func invRecTag(gtx layout.Context, th *theme.Theme, btn *widget.Clickable, c core.Conv, bg, fg color.NRGBA, maxW int) layout.Dimensions {
+	tagH, pad, gap := dp(gtx, 24), dp(gtx, 4), dp(gtx, 4)
+	ic := "channel"
+	if c.Kind == "private" {
+		ic = "lock"
+	}
+	nameMax := maxInt(1, maxW-2*pad-2*dp(gtx, 20)-gap)
+	call, nd := record(loose(gtx, image.Pt(nameMax, tagH)), func(gtx layout.Context) layout.Dimensions {
+		return text(gtx, th, 15, theme.Regular, fg, c.Name)
+	})
+	sz := image.Pt(pad+dp(gtx, 20)+gap+dp(gtx, 20)+nd.Size.X+pad, tagH)
+	return clickBox(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
+		rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 4), bg)
+		x := pad
+		at(gtx, image.Pt(x, (tagH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "plus-filled", 20, fg) })
+		x += dp(gtx, 20) + gap
+		at(gtx, image.Pt(x+(dp(gtx, 20)-dp(gtx, 15))/2, (tagH-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, ic, 15, fg) })
+		x += dp(gtx, 20)
+		macroAt(gtx, call, image.Pt(x, (tagH-nd.Size.Y)/2))
+		return layout.Dimensions{Size: sz}
+	})
 }
 
 // emailField is the multi-select: tokens (c-token--large: 32px, 18px

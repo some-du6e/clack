@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"image"
 	"image/png"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -312,6 +314,120 @@ func TestInviteModalGuest(t *testing.T) {
 	}
 }
 
+// ChannelSelect's "Suggested:" row (GXKR): conversations.recommend on
+// open, three shimmer tags until it answers, then the first three
+// recommended channels not picked yet; a click adds one; none answered,
+// no row.
+func TestInviteModalSuggested(t *testing.T) {
+	h, fs := invEnv(t)
+	m := OpenInviteModal(h, InviteFromPeopleBrowser)
+	if !m.RecommendedLoading() {
+		t.Error("no shimmer while conversations.recommend is out")
+	}
+	ccUntil(t, m, "the recommended channels", func() bool { return !m.RecommendedLoading() })
+	rc := fs.RecommendCalls()
+	if len(rc) != 1 || rc[0].Get("query") != `[""]` || rc[0].Get("source") != "joiner-preadd-channels" ||
+		rc[0].Get("channels_info") != "true" || rc[0].Get("limit") != "10" {
+		t.Fatalf("conversations.recommend %+v", rc)
+	}
+	sugg := m.Suggested()
+	if len(sugg) != 3 {
+		t.Fatalf("%d suggested", len(sugg))
+	}
+	m.AddSuggested(sugg[1])
+	if ch := m.Channels(); len(ch) != 1 || ch[0].ID != sugg[1].ID {
+		t.Fatalf("picked %+v", ch)
+	}
+	after := m.Suggested()
+	if len(after) != 3 || after[0].ID != sugg[0].ID || after[1].ID != sugg[2].ID {
+		t.Errorf("after the pick: %+v", after)
+	}
+	ccFrame(m)
+	// a guest: a second channel from the row makes a multi-channel guest,
+	// as a search pick does
+	m.SetType(core.InviteMultiChannelGuest)
+	m.AddSuggested(after[0])
+	if m.Type() != core.InviteMultiChannelGuest || len(m.Channels()) != 2 {
+		t.Errorf("guest with two channels: %s %d", m.Type(), len(m.Channels()))
+	}
+	m.Dismiss()
+
+	fs.SetRecommendedChannels([]string{})
+	e := OpenInviteModal(h, InviteFromTeamMenu)
+	ccUntil(t, e, "the empty answer", func() bool { return !e.RecommendedLoading() })
+	if len(e.Suggested()) != 0 {
+		t.Errorf("suggested %+v", e.Suggested())
+	}
+	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(600, 400))}
+	if d := e.recommendedRow(gtx, h.th, colorsOf(h.th), 600); d.Size.Y != 0 {
+		t.Errorf("an empty answer draws a %dpx row", d.Size.Y)
+	}
+}
+
+// GuestExpirationSelect's Custom (value -1): the calendar button,
+// "Deactivate on {date}" once a day is picked, the picker from tomorrow to
+// ten years out, and getExpirationTs: the day's 11:59:59 PM in the
+// viewer's zone, or today's with no day picked.
+func TestInviteModalCustomExpiry(t *testing.T) {
+	h, fs := invEnv(t)
+	invPrefs(t, h.a, `{"invite_requests_enabled":true}`)
+	m := OpenInviteModal(h, InviteFromTeamMenu)
+	m.SetType(core.InviteMultiChannelGuest)
+	m.SetText("guest@x.example ")
+	opts := m.inviteChannelOptions()
+	m.AddChannel(opts[0])
+	if got := invExpLabel(InviteExpiryCustom); got != "Custom" || invExpOptions[len(invExpOptions)-1] != InviteExpiryCustom {
+		t.Errorf("options %v, Custom %q", invExpOptions, got)
+	}
+	loc := m.viewerLoc()
+	now := time.Date(2026, 11, 12, 15, 4, 0, 0, loc)
+	m.SetExpiration(InviteExpiryCustom)
+	if got, want := m.ExpiresTs(now), time.Date(2026, 11, 12, 23, 59, 59, 0, loc).Unix(); got != want {
+		t.Errorf("Custom with no day: %d, want today's end %d", got, want)
+	}
+	if m.CustomExpirationText() != "" {
+		t.Errorf("text before a pick %q", m.CustomExpirationText())
+	}
+	ccFrame(m)
+	m.openCalendar(image.Rect(0, 500, 600, 536), 315)
+	cal, ok := m.calOv.(*dtCalendar)
+	if !ok {
+		t.Fatalf("calendar %T", m.calOv)
+	}
+	tl := time.Now().In(loc)
+	if want := time.Date(tl.Year(), tl.Month(), tl.Day()+1, 0, 0, 0, 0, time.Local); !cal.min.Equal(want) || cal.max.Year() != time.Now().Year()+10 {
+		t.Errorf("picker range %v to %v", cal.min, cal.max)
+	}
+	if cal.anchor.Min.Y != 500-315 {
+		t.Errorf("picker anchor %v (offsetY -315)", cal.anchor)
+	}
+	day := cal.min.AddDate(0, 0, 7) // a pickable day a week after tomorrow
+	end := time.Date(day.Year(), day.Month(), day.Day(), 23, 59, 59, 0, loc).Unix()
+	cal.pick(day)
+	if got, want := m.CustomExpirationText(), "Deactivate on "+day.Format("January 2, 2006"); got != want {
+		t.Errorf("button text %q, want %q (moment LL)", got, want)
+	}
+	if got := m.ExpiresTs(now); got != end {
+		t.Errorf("Custom on %v: %d, want %d", day, got, end)
+	}
+	ccFrame(m)
+	m.Send()
+	ccUntil(t, m, "summary", func() bool { return invLastSummary(h) != nil })
+	calls := fs.InviteCalls()
+	if f := calls[len(calls)-1].Form; f.Get("expiration_ts") != strconv.FormatInt(end, 10) {
+		t.Errorf("expiration_ts %q", f.Get("expiration_ts"))
+	}
+	// a type change resets the expiration
+	m2 := OpenInviteModal(h, InviteFromTeamMenu)
+	m2.SetType(core.InviteMultiChannelGuest)
+	m2.SetCustomExpiration(day)
+	m2.SetType(core.InviteMember)
+	m2.SetType(core.InviteMultiChannelGuest)
+	if m2.ExpiresTs(now) != 0 || m2.CustomExpirationText() != "" {
+		t.Errorf("after a type change: %d %q", m2.ExpiresTs(now), m2.CustomExpirationText())
+	}
+}
+
 // Off Grid the footer has "Copy invite link": the viewer's link, minted on
 // the first copy.
 func TestInviteModalLink(t *testing.T) {
@@ -361,9 +477,9 @@ func TestInviteShots(t *testing.T) {
 	if dir == "" {
 		t.Skip("INVITE_SHOTS_DIR not set")
 	}
-	h, _ := invEnv(t)
+	h, fsInv := invEnv(t)
 	sh := theme.NewShaper()
-	const w, hgt = 900, 820
+	const w, hgt = 900, 960
 	save := func(name string, dark bool, o Overlay) {
 		t.Helper()
 		th := theme.New(dark)
@@ -395,8 +511,30 @@ func TestInviteShots(t *testing.T) {
 		m := OpenInviteModal(h, InviteFromTeamMenu)
 		m.SetText("ada@example.com, grace@example.com, not-an-email, ada@example.com, ")
 		m.TypeText("linus@exam")
+		ccUntil(t, m, "the suggestions", func() bool { return !m.RecommendedLoading() })
 		save("invite-member-"+mode.name+".png", mode.dark, m)
 		m.Dismiss()
+
+		// the Suggested: row while it loads (the call held back) and with
+		// one suggestion picked
+		hold := make(chan struct{})
+		fsInv.SetHook(func(method string, _ url.Values) (any, bool) {
+			if method == "conversations.recommend" {
+				<-hold
+			}
+			return nil, false
+		})
+		l := OpenInviteModal(h, InviteFromPeopleBrowser)
+		l.SetText("ada@example.com ")
+		save("invite-suggested-loading-"+mode.name+".png", mode.dark, l)
+		close(hold)
+		fsInv.SetHook(nil)
+		ccUntil(t, l, "the suggestions", func() bool { return !l.RecommendedLoading() })
+		if sg := l.Suggested(); len(sg) > 0 {
+			l.AddSuggested(sg[0])
+		}
+		save("invite-suggested-"+mode.name+".png", mode.dark, l)
+		l.Dismiss()
 
 		invPrefs(t, h.a, `{"invites_only_admins":true,"invite_requests_enabled":true}`)
 		r := OpenInviteModal(h, InviteFromHuddles)
@@ -410,7 +548,11 @@ func TestInviteShots(t *testing.T) {
 		if opts := g.inviteChannelOptions(); len(opts) > 0 {
 			g.AddChannel(opts[0])
 		}
+		ccUntil(t, g, "the suggestions", func() bool { return !g.RecommendedLoading() })
 		save("invite-guest-"+mode.name+".png", mode.dark, g)
+		// Custom: the calendar button with its date
+		g.SetCustomExpiration(time.Date(2026, 11, 20, 0, 0, 0, 0, time.Local))
+		save("invite-guest-custom-"+mode.name+".png", mode.dark, g)
 		g.Dismiss()
 		r.Dismiss()
 

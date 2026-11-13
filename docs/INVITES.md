@@ -2,19 +2,23 @@
 
 Slack's invite modal as Clack draws it, with the Slack modules each part
 comes from. Build 4d0c78085232 of the public web client, from the CDN with
-no cookie. Code: `internal/core/invite.go` (rules and API),
+no cookie; gap-w27's parts (the People entry points, the suggested
+channels, Custom expiry) are from build fa938a086569, where the modal's
+code is boot-shared `w9bU` (CJ8h's content moved there). Code: `internal/core/invite.go` (rules and API),
 `internal/ui/popups/invite.go` (the dialog), `invite_tokens.go` (the email
 field), `internal/fakeslack/invites.go` (the test server's recorder).
 
 ## Entry points
 
-All three open `openInviteModal` (boot-shared `CJ8h` `nq`, exported as `A`).
+All of them open `openInviteModal` (boot-shared `CJ8h` `nq`, exported as `A`).
 
 | Where | Slack | Source (campaign) | Shown when |
 |---|---|---|---|
 | Team menu, "Invite people to {teamDisplayName}" | `/fB9` workspace menu, key `invite-people` | `team_menu` | `canUserSeeInviteModal` (`c1OI Lz`) |
 | Create menu (rail +), "Invite people" | `nx8t` `onInviteClick` | `sidebar_create_new_invite_people` | `canUserSeeInviteModal` |
 | Huddles page, "Add coworkers" | `Igs2` `HuddlesPageInviteTeammates` | `huddles_page` | the card's own rule (frontline teams without invite rights hide it) |
+| Directories > People, "Invite People" beside the search | client-browse-people-view `InvitePeopleButton` | `people_browser` | `canUserSeeInviteModal` (rendered as null otherwise) |
+| Directories > People, the education banner's "Invite people" | client-browse-people-view `BrowsePeopleView` (`primaryCTAOnClick`) | `people_browser_hero` | the banner shows by `ot1p` showPeopleEducationBanner (canUserInviteMembersToWorkspace, not seen or few people); the button needs `canUserSeeInviteModal` |
 
 Before this, the team menu row toasted "Invites aren't supported in
 yoloslack" and the Create menu row "Inviting people isn't available in
@@ -82,9 +86,28 @@ isn't ported. The order:
    single-channel guest. The box "Allow them to be added to more channels…"
    makes that a multi-channel guest, and so do two or more channels, with
    the billing note.
-5. For a guest, "**Set an expiration date**": No limit, 7, 30 or 60 days,
-   expiring at 11:59 PM that day in the viewer's time zone (`expiration_ts`,
-   `6FNz getExpirationTs`).
+   - Above the field, "Suggested:" (`GXKR`, 13px content-sec) and up to
+     three channels as clickable informative Tags (`QHiw`, recipe `jF6I`:
+     24px, padding-inline 4, gap 4, radius 4, 15px; plus-filled and the
+     channel's InlineChannelEntity), 2px apart, 4px above the field. On
+     mount it runs fetchRecommendedChannels: `conversations.recommend`
+     with `query` `[""]` (getFormData JSON-encodes objects), `source`
+     `joiner-preadd-channels`, `channels_info` `true`, `limit` 10. It
+     shows the first three that aren't picked; a click adds one (the
+     search text stays). While it loads, three shimmer tags (the channel
+     icon and a 120px bar); with none, no row. Clack's shimmer bars don't
+     animate.
+5. For a guest, "**Set an expiration date**" (`GuestExpirationSelect`): No
+   limit, 7, 30 or 60 days, or Custom, expiring at 11:59 PM that day in the
+   viewer's time zone (`expiration_ts`, `6FNz getExpirationTs`, `dPI7`
+   getEndOfDayTs). Custom adds an outline button under the select
+   (`.p-guest_expiration_select--custom_expiration`: 36px, full width,
+   radius 8, otl-pry border, 12px above, the 20px calendar icon) that opens
+   the DatePicker (position bottom, offsetY -315; tomorrow up to ten years
+   out); once a day is picked the button says "Deactivate on {date}"
+   (moment `LL`). Custom with no day picked expires today. Under it,
+   "These guest accounts will expire at 11:59 PM on the date you select."
+   (13/18, 70% foreground, 8px above).
 6. "Add a message" (`CustomizeButton`, magic-wand). It opens "**Custom
    message:**" with the placeholder "Add a personal note to your
    invitation", at most 560 characters. Paid teams only, not for requests.
@@ -126,7 +149,8 @@ invites are `InviteBulkApiInvite` records (`Smwf tw`), sent as JSON.
   `kqqh` stays in the form. Any other error goes to the summary.
 
 The tests and the shots only ever talk to `internal/fakeslack`, which
-records the calls (`InviteCalls`) and answers them. A local part with
+records the calls (`InviteCalls`, `conversations.recommend` too) and
+answers them. A local part with
 "already" gets `already_in_team`, one with "fail" gets `invite_failed`.
 `SetInviteError` fails the whole call.
 
@@ -148,11 +172,14 @@ channels) and Done (`add-to-slack` namespace).
 
 - Google Workspace directory search and its banner (they need Google
   sign-in).
-- The recommended channels above the channel select, and "Working with
-  another company? Add people using Slack Connect" under "Invite as".
-- The custom expiration date, the email preview, and the invite link's
-  settings form (`SHARED_INVITE_LINK_FORM`, "Edit link settings" for
-  admins).
+- "Working with another company? Add people using Slack Connect" under
+  "Invite as".
+- The org's `max_guest_duration` (a locked enterprise pref): Slack then
+  drops No limit and longer options, marks the label "(required)", says
+  "For your organization, this must be {n} days or less." and caps the
+  picker for non-admins.
+- The email preview, and the invite link's settings form
+  (`SHARED_INVITE_LINK_FORM`, "Edit link settings" for admins).
 - The off-Grid simplified form, the workspace picker for multi-workspace
   orgs (`WORKSPACE_SELECT`), the close speed bump, and the
   verified-email prompt.

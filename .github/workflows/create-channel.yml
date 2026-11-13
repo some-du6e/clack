@@ -44,7 +44,7 @@ jobs:
         run: |
           go test -count=1 -v -run 'TestNormalizeChannelName|TestChannelNameErrorText|TestValidateChannelName|TestCreateChannel' ./internal/core
           go test -count=1 -v -run 'TestCreateChannelModal' ./internal/ui/popups
-          go test -count=1 -v -run 'TestInviteRules|TestMemberIDByEmail|TestSendInvites|TestInviteLink' ./internal/core
+          go test -count=1 -v -run 'TestInviteRules|TestMemberIDByEmail|TestSendInvites|TestInviteLink|TestInviteRecommendedChannels' ./internal/core
           go test -count=1 -v -run 'TestInviteSplit|TestInviteTokenize|TestInviteTokenErrors|TestInviteModal' ./internal/ui/popups
       - name: flow + screenshots
         env:

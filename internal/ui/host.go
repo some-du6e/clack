@@ -132,6 +132,14 @@ var onPlace func(id, title, icon string)
 
 func (a *App) afterRoute(prev, r Route) {
 	a.leaveJoinBanner(prev, r) // maybeHideChannelJoinBanner (joinbanner.go)
+	// The cached views outlive a visit; a page that keeps state for one
+	// visit (Slack's components unmount on a route change) hears that it
+	// was left.
+	if prev != r {
+		if old, ok := a.views[prev].(interface{ PageLeft() }); ok {
+			old.PageLeft()
+		}
+	}
 	a.slickRoute(r)
 	a.bbmAfterRoute(prev, r) // Simplified layout mode's container (bbm.go)
 	if onPlace != nil {
