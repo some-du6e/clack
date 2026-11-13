@@ -24,8 +24,8 @@ package ui
 //     elsewhere it's the pointer's position clamped, "manual". Two presses
 //     within 500 ms reset it to the default ("auto", onReset).
 //
-// Activity, DMs and To-dos have Slack's wide sidebar (.38, 320 … 720) and
-// draw it themselves (views/dms.go).
+// Activity and the DMs list have Slack's wide sidebar (.38, 320 … 720),
+// with its own width and resizer (sidebar_wide.go); the views draw it.
 
 import (
 	"image"

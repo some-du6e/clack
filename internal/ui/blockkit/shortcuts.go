@@ -267,7 +267,7 @@ func (p *picker) Layout(gtx C) D {
 	at(gtx, pos, func(gtx C) D {
 		r := image.Rect(0, 0, w, h)
 		theme.Shadow(gtx, r, dp(gtx, 8), dp(gtx, 12), cl.Shadow)
-		rrect(gtx, r.Inset(-1), dp(gtx, 8)+1, cl.Ring)
+		popups.CardRing(gtx, r, dp(gtx, 8), cl.Ring, cl.Bg) // a box-shadow spread
 		rrect(gtx, r, dp(gtx, 8), cl.Bg)
 		func() {
 			defer clip.Rect(r).Push(gtx.Ops).Pop()

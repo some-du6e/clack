@@ -180,6 +180,8 @@ type App struct {
 	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
 	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
+	sbWide          sbWideState                // Activity's and the DMs list's column (sidebar_wide.go)
+	sbXWide         sbWideState                // the activity_inbox Activity column (sidebar_wide.go)
 	railRects       map[string]image.Rectangle // tests set it: layoutRail records each rail button's box
 	ptrWin          image.Point
 	autoscroll      gesture.Autoscroller // middle-click autoscroll (Gio patch 15)

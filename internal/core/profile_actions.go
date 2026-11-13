@@ -200,6 +200,29 @@ func (a *App) CachedUsergroupUsers(id string, sorted bool) ([]User, bool) {
 	return a.groupMembers(ids, sorted), true
 }
 
+// UsergroupTooltipIDs is useUserGroupMemberIdsForTooltip (boot-shared
+// rZ8h U), what the composer's @group tooltip (TextyTooltipUserGroup)
+// lists: the group's member ids as stored, in the order
+// usergroups.users.list gave them (TooltipMemberNames doesn't sort), and
+// fetch, whether the hook's effect fetches them on this hover
+// (fetchAndUpsertUserGroupMembers, UsergroupUsers): the group is active
+// (isUserGroupActive: known, no date_delete) and has no members stored
+// and none fetched yet (hasFetchedUserGroupMembers).
+func (a *App) UsergroupTooltipIDs(id string) (ids []string, fetch bool) {
+	ids, fetched := a.S.GroupUsers(id)
+	if len(ids) > 0 || fetched {
+		return ids, false
+	}
+	a.S.RLock()
+	defer a.S.RUnlock()
+	for _, g := range a.S.Groups {
+		if g.ID == id {
+			return nil, g.DateDelete == 0
+		}
+	}
+	return nil, false
+}
+
 // groupMembers resolves ids to the users the store knows, in order;
 // sorted orders them by prefLowerName, stably (lodash sortBy).
 func (a *App) groupMembers(ids []string, sorted bool) []User {

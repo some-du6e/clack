@@ -188,6 +188,7 @@ type Editor struct {
 
 	// Input state.
 	clicker    gesture.Click
+	hover      edHover // the pointer over it (editor_hover.go)
 	dragger    gesture.Drag
 	scroller   gesture.Scroll
 	dragging   bool
@@ -1052,6 +1053,7 @@ func (e *Editor) processPointer(gtx layout.Context) {
 		e.onDrag(gtx, ev)
 	}
 	e.spellContextEvents(gtx) // spellcheck.go: the right-click menu
+	e.hoverEvents(gtx)        // editor_hover.go
 }
 
 // hitPos maps a point in local (viewport) coordinates to a position.
@@ -1344,6 +1346,7 @@ func (e *Editor) Layout(gtx layout.Context, st EditorStyle) layout.Dimensions {
 	defer clip.Rect(image.Rectangle{Max: size}).Push(gtx.Ops).Pop()
 	pointer.CursorText.Add(gtx.Ops)
 	event.Op(gtx.Ops, e)
+	e.addHover(gtx) // editor_hover.go
 	key.InputHintOp{Tag: e, Hint: key.HintText}.Add(gtx.Ops)
 	e.noteLive(gtx) // editor_focus.go
 	refocus.Note(gtx, e)
