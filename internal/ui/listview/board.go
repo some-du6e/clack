@@ -72,6 +72,9 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 	sz := gtx.Constraints.Max
 	b := &v.board
 	b.hits = b.hits[:0]
+	if v.mode == Peek { // disablePointerEvents
+		b.hover = image.Pt(-1, -1)
+	}
 	gc := boardGroupCol(d, lv)
 	var groups []lists.Group
 	if gc != nil {
@@ -200,7 +203,7 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 			})
 			y += gtx.Dp(56)
 		}
-		if d.Info.Editable {
+		if d.Info.Editable && v.mode != Peek {
 			fr := image.Rect(cx, y+gtx.Dp(4), cx+cw, y+gtx.Dp(44))
 			if b.hover.In(fr) {
 				theme.RRect(gtx, fr, gtx.Dp(8), theme.WithAlpha(border, 0x60))

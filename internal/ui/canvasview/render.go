@@ -85,6 +85,7 @@ func (s *styleSet) sync(th *theme.Theme, h Host) {
 		st.Face = theme.Typeface
 		st.EmojiURL = th.EmojiURL
 		st.TextSize, st.LineHeight = size, line
+		st.EmojiSize = line // control.c54 img: the section's line height, vertical-align top
 		st.PreLine = codeLine
 		if heading {
 			st.BoldWeight = font.Black

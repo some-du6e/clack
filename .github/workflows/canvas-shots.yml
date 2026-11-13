@@ -42,7 +42,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CANVAS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestDefaultLine|TestAddCover|TestFocusSection' ./internal/ui/canvasview/
+          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestDefaultLine|TestAddCover|TestFocusSection|TestTitleEmoji|TestEmojiTrigger' ./internal/ui/canvasview/
+          go test -count=1 -v -run 'TestCanvasEmojiSource' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

@@ -255,9 +255,14 @@ func TestCanvasChannelCard(t *testing.T) {
 	e.openChannel("C0FAKE00000")
 	e.a.OpenCanvas(fakeslack.CanvasChannel)
 	e.settle(1500 * time.Millisecond)
-	id, ok := e.a.Core().ResolveCanvasMention(richtext.Channel, "#general")
-	if !ok {
-		t.Fatal("no #general in the fixtures")
+	// the canvas's channel: a public channel the viewer is in
+	id := "C0FAKE00000"
+	cv, ok := e.a.Core().Conv(id)
+	if !ok || !cv.Member {
+		t.Fatalf("fixture channel %s: %+v %v", id, cv, ok)
+	}
+	if got, ok := e.a.Core().ResolveCanvasMention(richtext.Channel, "#"+cv.Name); !ok || got != id {
+		t.Fatalf("#%s resolves to %q %v", cv.Name, got, ok)
 	}
 	ctl := &e.a.hover.ctl
 	anchor := image.Rect(e.size.X-400, 220, e.size.X-340, 240) // a mention in the side panel's canvas
@@ -270,7 +275,7 @@ func TestCanvasChannelCard(t *testing.T) {
 				return false
 			}
 			st := c.State()
-			return st.Name == "general" && len(st.Metadata) >= 2
+			return st.Name == cv.Name && len(st.Metadata) >= 2
 		})
 		card := e.a.hover.cvc.Rect()
 		e.move(f32.Pt(float32(card.Min.X+40), float32(card.Max.Y-10))) // rest on the card: it stays
