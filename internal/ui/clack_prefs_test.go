@@ -72,8 +72,9 @@ func TestClackPrefsTab(t *testing.T) {
 	if !a.autoUpdatesOn() || a.prefs.NoUpdateCheck || a.prefs.NoUpdateDownload {
 		t.Errorf("after ticking again: checks off %v, downloads off %v", a.prefs.NoUpdateCheck, a.prefs.NoUpdateDownload)
 	}
-	// the tab: right after Slack's (Advanced last), before the plugin group
-	if nav := p.extraNav(); len(nav) < 2 || nav[0].id != clackTabID || nav[0].divider || !nav[1].divider {
+	// the tab: below the divider after Slack's (Advanced last), heading
+	// Clack's own tabs with Plugins and Themes (Karim 2026-11-13)
+	if nav := p.extraNav(); len(nav) < 2 || nav[0].id != clackTabID || !nav[0].divider || nav[1].divider || nav[1].id != pluginsTabID {
 		t.Errorf("nav after Advanced: %+v", nav)
 	}
 	if prefsNav[len(prefsNav)-1].id != "advanced" {

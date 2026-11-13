@@ -47,7 +47,7 @@ type prefsColors struct {
 	field, fieldBorder, fieldFg  color.NRGBA // .c-select_button / .c-input_text
 	outline, outlineHover        color.NRGBA // .c-button--outline border, hover fill
 	primary, primaryText         color.NRGBA
-	divider                      color.NRGBA // Clack's rule above Plugins (Slick's: --dt_color-otl-ter)
+	divider                      color.NRGBA // Clack's rule above its own tabs (Slick's: --dt_color-otl-ter)
 	dark                         bool        // the native controls' color-scheme
 }
 

@@ -330,9 +330,12 @@ type Server struct {
 	// delAtts: chat.deleteAttachment calls (embeds.go)
 	delAtts []DeletedAttachment
 	hist    map[string][]slack.Message // channel -> all messages, newest first
-	pins    map[string][]fakePin       // channel -> pins, oldest first (pins.go)
-	code    codeCalls                  // code channel API calls (codechannels.go)
-	codeFx  *CodeFixtures
+	// quietReplies: replies PostReplyQuiet added, by channel/root ts,
+	// oldest first (pins.go)
+	quietReplies map[string][]slack.Message
+	pins         map[string][]fakePin // channel -> pins, oldest first (pins.go)
+	code         codeCalls            // code channel API calls (codechannels.go)
+	codeFx       *CodeFixtures
 
 	inv inviteState // the invite modal's methods (invites.go)
 
@@ -1593,6 +1596,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if msgs, found := s.galleryReplies(f.Get("ts")); found {
 				return ok("messages", msgs, "has_more", false)
 			}
+		}
+		if msgs, found := s.quietThread(f.Get("channel"), f.Get("ts")); found {
+			return ok("messages", msgs, "has_more", false)
 		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":

@@ -546,13 +546,10 @@ func (p *ProfileCard) appHeader(gtx layout.Context, th *theme.Theme, cl *Colors,
 	// icon: 64px, radius 4, white behind
 	ar := image.Rect(pad, top+(inner-av)/2, pad+av, top+(inner-av)/2+av)
 	rrect(gtx, ar, dp(gtx, 4), white)
-	if c.Icon != "" {
-		if img, ok := p.h.Images().Get(c.Icon, av); ok {
-			at(gtx, ar.Min, func(gtx layout.Context) layout.Dimensions {
-				return theme.Image(gtx, img, ar.Size(), dp(gtx, 4))
-			})
-		}
-	}
+	at(gtx, ar.Min, func(gtx layout.Context) layout.Dimensions {
+		appIcon(gtx, p.h, c, av, dp(gtx, 4)) // Slack's bundled default when the app has none
+		return layout.Dimensions{Size: ar.Size()}
+	})
 	cy := top + (inner-colH)/2
 	nmax := maxInt(1, colW-badgeW-dp(gtx, 8))
 	nd := at(gtx, image.Pt(colX, cy), func(gtx layout.Context) layout.Dimensions {
