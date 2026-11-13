@@ -241,11 +241,24 @@ func TestAutoscrollWindow(t *testing.T) {
 		return image.Point{}
 	}
 
+	// watch samples the rows every 40 ms for d and returns how far they
+	// moved, summed sample by sample (a fast scroll leaves no row on
+	// screen in both ends' snapshots)
+	watch := func(d time.Duration) (moved int) {
+		prev := rows()
+		for dl := time.Now().Add(d); time.Now().Before(dl); {
+			time.Sleep(40 * time.Millisecond)
+			cur := rows()
+			moved += movedBetween(prev, cur)
+			prev = cur
+		}
+		return moved
+	}
+
 	// 1. held, 120 px up
-	before := rows()
 	q := start()
 	asSend(t, asMouse(q.Sub(image.Pt(0, 120)), 0))
-	time.Sleep(200 * time.Millisecond)
+	moved := watch(200 * time.Millisecond)
 	var ci struct {
 		size   uint32
 		flags  uint32
@@ -270,8 +283,7 @@ func TestAutoscrollWindow(t *testing.T) {
 		}
 		t.Logf("cursor while scrolling up: %#x (system arrow/ibeam/sizens/sizeall/hand: %#x)", ci.cursor, system)
 	}
-	time.Sleep(400 * time.Millisecond)
-	moved := movedBetween(before, rows())
+	moved += watch(400 * time.Millisecond)
 	t.Logf("held 120px above for ~600ms: the messages moved %dpx", moved)
 	if moved > -100 {
 		t.Errorf("held 120px above: the messages moved %dpx, want well over 100px toward older ones", moved)
@@ -282,9 +294,7 @@ func TestAutoscrollWindow(t *testing.T) {
 	if active, _ := state(); active {
 		t.Fatal("still running after the middle button came up")
 	}
-	stopped := rows()
-	time.Sleep(300 * time.Millisecond)
-	if m := movedBetween(stopped, rows()); m != 0 {
+	if m := watch(300 * time.Millisecond); m != 0 {
 		t.Errorf("kept moving (%dpx) after the release", m)
 	}
 
@@ -295,10 +305,8 @@ func TestAutoscrollWindow(t *testing.T) {
 	if _, toggled := state(); !toggled {
 		t.Fatal("a real middle click didn't leave it toggled")
 	}
-	before = rows()
 	asSend(t, asMouse(q.Add(image.Pt(0, 90)), 0))
-	time.Sleep(600 * time.Millisecond)
-	moved = movedBetween(before, rows())
+	moved = watch(600 * time.Millisecond)
 	t.Logf("toggled, 90px below for 600ms: the messages moved %dpx", moved)
 	if moved <= 20 {
 		t.Errorf("toggled, 90px below: the messages moved %dpx, want toward newer ones", moved)
