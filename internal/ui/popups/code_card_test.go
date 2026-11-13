@@ -124,11 +124,12 @@ func TestChannelHoverCardCodeChannel(t *testing.T) {
 			if r.Dx() != 340 {
 				t.Errorf("%s: width %d", c.name, r.Dx())
 			}
-			// header 8 + 41 + 8, footer 1 + 8 + 24 + 8; the summary adds its
-			// lines, the attribution and their gaps
+			// header 8 + 41 + 8, footer 1 + 8 + 24 (or the started time's
+			// wrapped lines) + 8; the summary adds its lines, the attribution
+			// and their gaps
 			min := 57 + 41
-			if r.Dy() < min || !c.summary && r.Dy() != min {
-				t.Errorf("%s: height %d, want %d (+ the summary)", c.name, r.Dy(), min)
+			if r.Dy() < min || c.summary && r.Dy() < min+22+4+19+6 {
+				t.Errorf("%s: height %d, want at least %d (+ the summary)", c.name, r.Dy(), min)
 			}
 			chcShot(t, ops, "popups-code-card-"+c.name+"-"+mode)
 		}
@@ -204,7 +205,7 @@ func TestChannelHoverCardHuddleBadgeSlot(t *testing.T) {
 	}
 	anchor := image.Rect(400, 500, 480, 522)
 	p := NewChannelHoverCard(h, anchor, fakeslack.ThreadSharedID, true, false)
-	chcFrames(t, p, func() bool { return p.State() == ChannelCardFull })
+	chcFrames(t, p, func() bool { return p.State() == ChannelCardFull && gotRight != 0 && p.HuddleBadge() })
 	r := p.Rect()
 	if gotRight != r.Dx()-16 || gotH != 23 {
 		t.Errorf("the badge ends at %d (row %d), want the content's right edge %d in the 22.5px name row", gotRight, gotH, r.Dx()-16)

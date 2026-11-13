@@ -372,33 +372,37 @@ func (p *ChannelHoverCard) codeCard(gtx layout.Context, th *theme.Theme, cl *Col
 	faces := p.codeFaces(cv)
 	fh := dp(gtx, 24)
 	started := codeStarted(cv.Created, gtx.Now)
-	lineH := dp(gtx, 19.07)
+	x := pad
+	if len(faces) > 0 {
+		x += p.codeFacepileWidth(gtx, faces) + dp(gtx, 8)
+	}
+	// the started time wraps (.startedTime__WMzI6 has no nowrap); the row
+	// centres the facepile and the text
+	var stCall op.CallOp
+	var stD layout.Dimensions
+	if started != "" {
+		stCall, stD = record(gtx, func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, w-pad-x), 1<<20)}
+			return th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Regular, Color: codeTok(th, "content-sec"), LineHeight: 19.07}, started)
+		})
+	}
 	rowH = 0
 	if len(faces) > 0 {
 		rowH = fh
 	}
-	if started != "" {
-		rowH = max(rowH, lineH)
-	}
-	x := pad
+	rowH = max(rowH, stD.Size.Y)
 	var agents []string
 	if cv.Code != nil {
 		agents = cv.Code.AgentBotIDs
 	}
 	var pile image.Rectangle // the facepile's box, for its tooltip
 	if len(faces) > 0 {
-		o := image.Pt(x, fy+(rowH-fh)/2)
+		o := image.Pt(pad, fy+(rowH-fh)/2)
 		fw := p.codeFacepile(gtx, th, faces, o)
 		pile = image.Rectangle{Min: o, Max: o.Add(image.Pt(fw, fh))}
-		x += fw + dp(gtx, 8)
 	}
 	if started != "" {
-		at(gtx, image.Pt(x, fy+(rowH-lineH)/2), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(max(1, w-pad-x), lineH)}
-			return vcenter(gtx, lineH, func(gtx layout.Context) layout.Dimensions {
-				return th.Layout(gtx, theme.TextStyle{Size: 13, Weight: theme.Regular, Color: codeTok(th, "content-sec"), LineHeight: 19.07, MaxLines: 1}, started)
-			})
-		})
+		macroAt(gtx, stCall, image.Pt(x, fy+(rowH-stD.Size.Y)/2))
 	}
 	y = fy + rowH + dp(gtx, 8)
 
@@ -427,6 +431,11 @@ func (p *ChannelHoverCard) codeCard(gtx layout.Context, th *theme.Theme, cl *Col
 		}()
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// codeFacepileWidth is codeFacepile's width for ids.
+func (p *ChannelHoverCard) codeFacepileWidth(gtx layout.Context, ids []string) int {
+	return (min(3, len(ids))-1)*(dp(gtx, 24)-dp(gtx, 4)) + dp(gtx, 24)
 }
 
 // codeFacepile draws r6f2's facepile at p and returns its width: the
