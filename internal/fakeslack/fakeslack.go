@@ -1494,6 +1494,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		if out, handled := s.handleViews(method, f); handled { // views.go
 			return out
 		}
+	} else if method == "activity.markRead" && f.Get("key") != "" { // no feed: every single markRead reads an unread item (activity_badges.go)
+		s.readActivityBadge(f.Get("type"))
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out
