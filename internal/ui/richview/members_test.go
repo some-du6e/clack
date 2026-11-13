@@ -59,3 +59,49 @@ func TestMentionLabelFromPlugins(t *testing.T) {
 		t.Errorf("without a hook the layout recorded %d mentions and asked %d times", len(v2.d.names), calls)
 	}
 }
+
+// A mention whose member the store didn't hold when its message loaded
+// (core builds message docs without asking: core/lazy_users.go) reads the
+// member as it draws (MemberRead, Slack's getMemberById in MemberSlug):
+// each layout reads it, the parsed id stays until the member is known,
+// then the doc is laid out again with the name; a plugin's label still
+// wins. Synthetic names.
+func TestMentionReadsMemberWhenDrawn(t *testing.T) {
+	known := map[string]string{}
+	reads := 0
+	SetMemberRead(func(id string) (string, bool) {
+		reads++
+		n, ok := known[id]
+		return n, ok
+	})
+	t.Cleanup(func() { SetMemberRead(nil) })
+	st := NewStyle(themeShaper(), noImages{}, LightPalette())
+	doc := rt.Doc{Blocks: []rt.Block{{Kind: rt.Paragraph, Spans: []rt.Span{
+		{Kind: rt.Text, Text: "ping "},
+		{Kind: rt.User, Text: "@UBOB000001", ID: "UBOB000001"},
+	}}}}
+	const w = 480
+	v := layoutAt(st, doc, Options{}, w)
+	text := func() string {
+		var ops op.Ops
+		v.Layout(testGtx(&ops, w), st, &recHandler{})
+		return v.TextRange(0, v.PlainLen())
+	}
+	if got := text(); !strings.Contains(got, "@UBOB000001") {
+		t.Fatalf("unknown member: %q, want the parsed id", got)
+	}
+	n := reads
+	text()
+	if reads <= n {
+		t.Errorf("a drawn mention didn't read its member again (%d reads, then %d)", n, reads)
+	}
+	known["UBOB000001"] = "bob"
+	if got := text(); !strings.Contains(got, "@bob") || strings.Contains(got, "UBOB000001") {
+		t.Errorf("the member arrived: %q, want @bob", got)
+	}
+	SetMemberLabel(func(id string) (string, bool) { return "Bobby", id == "UBOB000001" })
+	t.Cleanup(func() { SetMemberLabel(nil) })
+	if got := text(); !strings.Contains(got, "@Bobby") {
+		t.Errorf("a plugin's label: %q, want @Bobby", got)
+	}
+}
