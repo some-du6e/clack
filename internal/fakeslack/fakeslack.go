@@ -106,6 +106,9 @@ type Size struct {
 	// AgentSessions fills ai.alpha.agents.sessions.list (the rail's
 	// Agents & tools peek, agent_sessions.go) and adds its agent.
 	AgentSessions bool
+	// AgentThread adds a DM with an agent app and a thread in it, the
+	// agent's answer edited live (agent_thread.go).
+	AgentThread bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -584,6 +587,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.FileChannels {
 		s.addFileChannels() // file_channels.go
 	}
+	if sz.AgentThread {
+		s.addAgentThread() // agent_thread.go
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
@@ -602,6 +608,7 @@ func (s *Server) Close() error {
 	pageLogs.Delete(s)
 	viewsStates.Delete(s)
 	threadsAuditStates.Delete(s)
+	agentDMStates.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -1173,6 +1180,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleAgents(method, f); handled { // agents.go
 		return out
 	}
+	if out, handled := s.handleAgentThread(method, f); handled { // agent_thread.go
+		return out
+	}
 	if out, handled := s.handleFiles(method, f); handled { // files.go
 		return out
 	}
@@ -1603,6 +1613,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	}
 	if u, ok := s.previewAgentUser(id); ok {
 		return u, true
+	}
+	if s.Size.AgentThread && id == AgentDMUserID { // agent_thread.go
+		return s.agentDMUser(), true
 	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {

@@ -340,12 +340,11 @@ func (r *row) rvOpts() richview.Options {
 	return o
 }
 
-// displaysEdited is Slack's shouldDisplayAsEdited (client-boot): an
-// edited message shows "(edited)" unless it has a bot_id (a canvas
-// document comment would need to be archived too). An app's reply that
-// its bot edited (Karim, 2026-11-12: an app's thread reply edited by its
-// own bot in the same second) shows none.
-func displaysEdited(m *core.Message) bool { return m.Edited && m.BotID == "" }
+// displaysEdited is Slack's shouldDisplayAsEdited (core.Message.DisplaysEdited):
+// no "(edited)" on a message with a bot_id. An app's reply that its bot
+// edited (Karim, 2026-11-12: an app's thread reply edited by its own bot
+// in the same second) shows none.
+func displaysEdited(m *core.Message) bool { return m.DisplaysEdited() }
 
 // editedBy is the name EditedLabel's tooltip adds ("{dateTime} by
 // {name}"): getMessageLabelValues (boot-shared XSZB) passes

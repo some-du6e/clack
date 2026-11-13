@@ -1202,26 +1202,60 @@ func (r *actRow) previewSub(gtx C, lines int, sub string) D {
 	return st.Wrap(gtx, draw)
 }
 
-// msgBodySub is msgBodyMuted with sub run into the message (actSubtextDoc),
-// cached apart from the plain body (the same message can be another row's
-// body without a subtext).
+// msgBodySub is an Activity row's ActivityMessage: Slack's
+// SimpleMessagePreview of the message (core.PreviewDoc: its section,
+// header and rich_text blocks, else its text; never a context line,
+// Block Kit, files or "(edited)"), with sub run into it (actSubtextDoc).
+// Read rows draw it in the secondary colour. Cached apart from the plain
+// body (the same message can be another row's body without a subtext).
 func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub string) D {
 	if m == nil {
 		return D{}
 	}
 	orig := m
 	m = b.viewMsg(m)
-	if len(m.Doc.Blocks) == 0 {
-		return b.body(gtx, m.Doc, sub+m.Text, maxLines)
+	doc := b.actPreviewDoc(m)
+	if len(doc.Blocks) == 0 {
+		return b.body(gtx, doc, sub+m.Text, maxLines)
 	}
-	key := "sub:" + m.Channel + "/" + m.TS
-	ver := sub + ":" + m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
+	key := "sub:" + sub + "\x00" + m.Channel + "/" + m.TS
+	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Blocks)) + ":" + strconv.Itoa(len(doc.Blocks))
 	if m != orig {
 		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
 	}
-	o := richview.Options{Edited: m.Edited, Muted: m.System, Secondary: muted && !m.System,
-		Channel: m.Channel, TS: m.TS, Truncate: true}
-	return b.richDoc(gtx, key, ver, actSubtextDoc(m.Doc, sub), o, maxLines)
+	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true}
+	return b.richDoc(gtx, key, ver, actSubtextDoc(doc, sub), o, maxLines)
+}
+
+// actPreviewDoc is m's preview document (core.PreviewDoc), m.Doc when
+// Slack's preview isn't made from its blocks. Kept per message until the
+// message changes.
+func (b *base) actPreviewDoc(m *core.Message) richtext.Doc {
+	c := b.h.Core()
+	if c == nil || len(m.Blocks) == 0 {
+		return m.Doc
+	}
+	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Blocks)) + ":" +
+		strconv.FormatUint(uint64(textHash(string(m.Blocks))), 36)
+	k := m.Channel + "/" + m.TS
+	if e, ok := b.pv[k]; ok && e.ver == ver {
+		return e.doc
+	}
+	doc, ok := c.PreviewDoc(m)
+	if !ok {
+		doc = m.Doc
+	}
+	if b.pv == nil || len(b.pv) > 2000 {
+		b.pv = map[string]pvEntry{}
+	}
+	b.pv[k] = pvEntry{ver: ver, doc: doc}
+	return doc
+}
+
+// pvEntry is one cached preview document.
+type pvEntry struct {
+	ver string
+	doc richtext.Doc
 }
 
 // actSubtextDoc is doc with sub before its text: inline at the start of a
