@@ -1176,6 +1176,25 @@ func (v *View) isChannelCard(t int16) bool {
 // (core.ChannelTabSlugCard). nil: no card.
 var TabSlugCard func(ch, tab string) bool
 
+// TabSlugPeek, set by the ui root, reports whether a channel-tab slug
+// (channel ch, tab id tab) shows its tab's peek instead of the channel
+// card (core.ChannelTabSlugPeek: ChannelTabSlugPeekTrigger with
+// session_channels_slug_peek on and a tab type with a peek). nil: none.
+var TabSlugPeek func(ch, tab string) bool
+
+// tabPeek is the tab id of the channel-tab slug t when it shows its
+// tab's peek, "" otherwise.
+func (v *View) tabPeek(t int16) string {
+	if t < 0 || int(t) >= len(v.d.targets) || TabSlugPeek == nil {
+		return ""
+	}
+	tg := &v.d.targets[t]
+	if tg.kind != tLink || tg.tab == "" || tg.id == "" || !TabSlugPeek(tg.id, tg.tab) {
+		return ""
+	}
+	return tg.tab
+}
+
 // tabOfSlug is the tab id in a channel-tab slug's link
 // (/archives/<C>/tabs/<tab>, richtext's getChannelTabPermalink).
 func tabOfSlug(u string) string {
@@ -1199,7 +1218,14 @@ func (v *View) hoverCard(st *Style, h Handler) {
 	}
 	t := v.hover
 	channel := v.hovering && v.isChannelCard(t)
-	on := v.hovering && v.isMention(t) || channel
+	if channel && v.opts.Canvas && v.d.targets[t].cardOnly {
+		channel = false // the canvas's ChannelMentionView: a tooltip, no card, for a channel it can't name
+	}
+	tab := ""
+	if v.hovering && !channel {
+		tab = v.tabPeek(t)
+	}
+	on := v.hovering && v.isMention(t) || channel || tab != ""
 	defer func() {
 		if !on {
 			v.reportPreview(c, st, h)
@@ -1218,6 +1244,14 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		if f := &v.d.frags[i]; f.target == t {
 			r = r.Union(fragRect(f))
 		}
+	}
+	if tab != "" {
+		c.ReportTabPeek(k, v.d.targets[t].id, tab, r, v.ptr) // ChannelTabSlugPeekTrigger: the tab's peek, position "top"
+		return
+	}
+	if channel && v.opts.Canvas && v.d.targets[t].kind == tChannel {
+		c.ReportCanvasChannel(k, v.d.targets[t].id, r, v.ptr) // the canvas's ChannelHovercard (CardViewHovercardTrigger)
+		return
 	}
 	if channel {
 		c.ReportChannel(k, v.d.targets[t].id, r, v.ptr) // ChannelHoverCard, position "top"

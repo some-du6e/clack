@@ -22,8 +22,10 @@ import (
 type profileHover struct {
 	ctl  hovercard.Controller
 	card *popups.ProfileCard
-	prev *popups.PreviewCard      // a link preview's hover card (Request.Preview)
-	chc  *popups.ChannelHoverCard // a channel's (Request.ChannelID)
+	prev *popups.PreviewCard       // a link preview's hover card (Request.Preview)
+	chc  *popups.ChannelHoverCard  // a channel's (Request.ChannelID)
+	tpk  *slugPeek                 // a channel-tab slug's peek (Request.Tab)
+	cvc  *popups.CanvasChannelCard // a canvas's channel mention (Request.Canvas)
 	gen  int
 	over bool // drawn above the overlays (the top one hosts the trigger)
 }
@@ -95,7 +97,7 @@ func (a *App) hoverTop() Overlay {
 // hoverOverOverlay reports whether the card belongs above the overlays
 // this frame (the top overlay hosts the triggers).
 func (a *App) hoverOverOverlay() bool {
-	if a.hover.card != nil && a.hover.card.Holding() {
+	if a.hover.card != nil && a.hover.card.Holding() || a.hover.cvc != nil && a.hover.cvc.Holding() {
 		return a.hover.over // keep it where it was while its menu is open
 	}
 	top := a.hoverTop()
@@ -131,14 +133,68 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 		h.ctl.Close()
 		h.card = nil
 	}
-	hold := h.card != nil && h.card.Holding()
+	hold := h.card != nil && h.card.Holding() || h.cvc != nil && h.cvc.Holding()
 	next := h.ctl.Frame(gtx.Now, a.hoverBlocked(), hold)
 	req, gen, open := h.ctl.Open()
 	if !open {
-		h.card, h.prev, h.chc = nil, nil, nil
+		h.card, h.prev, h.chc, h.cvc = nil, nil, nil, nil
+		h.setPeek(nil)
 		hovercard.Invalidate(gtx, next)
 		return
 	}
+	if req.Tab != "" && req.ChannelID != "" {
+		// ChannelTabSlugPeekTrigger: the tab's peek (tab_slug_peek.go)
+		h.card, h.prev, h.chc, h.cvc = nil, nil, nil, nil
+		if h.tpk == nil || h.gen != gen {
+			h.setPeek(a.newSlugPeek(req.Anchor, req.ChannelID, req.Tab))
+			h.gen = gen
+		}
+		if h.tpk == nil {
+			h.ctl.Close()
+			return
+		}
+		g := gtx
+		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
+		func() {
+			if o := h.ctl.Opacity(gtx.Now); o < 1 {
+				defer paint.PushOpacity(g.Ops, o).Pop()
+			}
+			h.tpk.Layout(g)
+		}()
+		if h.tpk.Dismissed() {
+			h.ctl.Close()
+			h.setPeek(nil)
+			return
+		}
+		h.ctl.CardArea(g, h.tpk.Rect())
+		if !next.IsZero() && !next.After(gtx.Now.Add(time.Minute)) {
+			hovercard.Invalidate(gtx, next)
+		}
+		return
+	}
+	h.setPeek(nil)
+	if req.Canvas && req.ChannelID != "" {
+		// the canvas's embedded ChannelHovercard (popups/canvas_channel_card.go)
+		h.card, h.prev, h.chc = nil, nil, nil
+		if h.cvc == nil || h.gen != gen {
+			h.cvc = popups.NewCanvasChannelCard(a, req.Anchor, req.ChannelID)
+			h.gen = gen
+		}
+		g := gtx
+		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
+		h.cvc.Layout(g)
+		if h.cvc.Dismissed() {
+			h.ctl.Close()
+			h.cvc = nil
+			return
+		}
+		h.ctl.CardArea(g, h.cvc.Rect())
+		if !next.IsZero() && !next.After(gtx.Now.Add(time.Minute)) {
+			hovercard.Invalidate(gtx, next)
+		}
+		return
+	}
+	h.cvc = nil
 	if req.ChannelID != "" {
 		// ChannelHoverCard: a message's #channel (HoverCardTrigger,
 		// position "top") or a composer slug (TextyTooltip)
@@ -218,6 +274,14 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 	hovercard.Invalidate(gtx, next)
 }
 
+// setPeek replaces the slug peek, unmounting the one it replaces.
+func (h *profileHover) setPeek(p *slugPeek) {
+	if h.tpk != nil && h.tpk != p {
+		h.tpk.closed()
+	}
+	h.tpk = p
+}
+
 // installAppCardHooks wires the hover cards' actions: About this app
 // opens the app's DM on its About tab, a slash command row types the
 // command into the open conversation's composer; the channel card's
@@ -234,6 +298,14 @@ func (a *App) installAppCardHooks() {
 	richview.TabSlugCard = func(ch, tab string) bool {
 		c := a.Core()
 		return c != nil && c.ChannelTabSlugCard(ch, tab)
+	}
+	richview.TabSlugPeek = func(ch, tab string) bool {
+		c := a.Core()
+		if c == nil {
+			return false
+		}
+		_, ok := c.ChannelTabSlugPeek(ch, tab)
+		return ok
 	}
 	popups.ComposerInsert = func(s string) bool {
 		ch := a.router.Current().Channel()

@@ -115,6 +115,19 @@ type Request struct {
 	// Channel / Join Channel, the composer's none.
 	ChannelID string
 	Buttons   bool
+	// Tab is a channel-tab slug's peek (D3FY ChannelTabSlugPeekTrigger):
+	// with session_channels_slug_peek on and a tab type that has a peek,
+	// ResolvedChannelTabSlug wraps the slug in HoverCardTrigger (0oEe:
+	// position "top", offsetY -12, the same 350ms open and 250ms close)
+	// whose card is useTabPeek's view of ChannelID's tab Tab.
+	Tab string
+	// Canvas is a channel mention inside a canvas (ChannelID): the
+	// canvas editor's CardViewHovercardTrigger opens Slack's embedded
+	// ChannelHovercard (boot-shared UyZX) after HovercardImpl's 250ms
+	// anchorMouseEnter delay (Delay), not ChannelHoverCard.
+	Canvas bool
+	// Delay replaces ShowDelay when set.
+	Delay time.Duration
 }
 
 // Controller runs the hover card's timers. It belongs to the UI goroutine.
@@ -216,6 +229,28 @@ func (c *Controller) ReportTextyChannel(key any, channelID string, local image.R
 	}
 }
 
+// ReportTabPeek says the pointer is on a channel-tab slug whose tab has
+// a peek (Request.Tab).
+func (c *Controller) ReportTabPeek(key any, channelID, tab string, local image.Rectangle, ptr f32.Point) {
+	c.ReportChannel(key, channelID, local, ptr)
+	if c.hasRep && c.rep.Key == key {
+		c.rep.Tab, c.rep.Buttons = tab, false
+	}
+}
+
+// CanvasShowDelay is the canvas hovercard's open delay (HovercardImpl's
+// anchorMouseEnter: wg(show, 250)).
+const CanvasShowDelay = 250 * time.Millisecond
+
+// ReportCanvasChannel says the pointer is on a canvas's channel mention
+// (Request.Canvas).
+func (c *Controller) ReportCanvasChannel(key any, channelID string, local image.Rectangle, ptr f32.Point) {
+	c.ReportChannel(key, channelID, local, ptr)
+	if c.hasRep && c.rep.Key == key {
+		c.rep.Canvas, c.rep.Buttons, c.rep.Delay = true, false, CanvasShowDelay
+	}
+}
+
 // ReportPreview says the pointer is on a link preview's hover trigger
 // this frame (MessageAttachmentDefaultV3 wraps the row card in
 // HoverCardTrigger: the same 350ms open and 250ms close as the profile
@@ -311,6 +346,9 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 		if !c.hasPend || c.pending.Key != rep.Key {
 			c.pending, c.hasPend = rep, true
 			c.showAt = now.Add(ShowDelay)
+			if rep.Delay > 0 {
+				c.showAt = now.Add(rep.Delay)
+			}
 			if rep.Texty {
 				c.showAt = now // a Popover from Texty's onMouseOver
 			}

@@ -133,6 +133,10 @@ type ChannelFiles struct {
 	links        cfLinkBrowser
 	started      bool
 
+	// preview is the tab's peek (files_tab_view isPreview: the channel-tab
+	// slug's FilesTabPeek, channel_files_peek.go)
+	preview bool
+
 	list  widget.List
 	kb    *vkList
 	rows  map[string]*cfRowClicks
@@ -540,6 +544,9 @@ func fileShareTS(it *fileItem) float64 {
 // rowsFor builds the explorer's rows (useChannelAttachmentsExplorer, not a
 // preview).
 func (v *ChannelFiles) rowsFor() []cfRow {
+	if v.preview {
+		return v.previewRows()
+	}
 	rows := []cfRow{{key: "controls", kind: cfrControls}}
 	loadingRow := cfRow{key: "list-loading", kind: cfrLoading}
 	empty := func(s string) cfRow { return cfRow{key: "list-empty", kind: cfrEmpty, empty: s} }
@@ -664,6 +671,9 @@ func (v *ChannelFiles) Layout(gtx C) D {
 	sz := gtx.Constraints.Max
 	fill(gtx, image.Rectangle{Max: sz}, v.p.Page) // .files_tab_view: --dt_color-base-sec
 	gtx.Constraints = layout.Exact(sz)
+	if v.preview { // no inputId: no ExplorerSearch
+		return layout.Inset{Top: 20}.Layout(gtx, v.results)
+	}
 	return layout.Inset{Top: 20}.Layout(gtx, func(gtx C) D {
 		return col(gtx,
 			layout.Rigid(func(gtx C) D {
@@ -683,6 +693,9 @@ func (v *ChannelFiles) Layout(gtx C) D {
 func (v *ChannelFiles) contained(gtx C, w W) D {
 	full := gtx.Constraints.Max.X
 	cw := min(gtx.Dp(968), max(0, full-gtx.Dp(32)))
+	if v.preview { // .files_tab_view__preview .p-explorer_results__contained-result: 100%
+		cw = full
+	}
 	g := gtx
 	g.Constraints.Min.X, g.Constraints.Max.X = cw, cw
 	m := op.Record(gtx.Ops)
@@ -953,7 +966,7 @@ func (v *ChannelFiles) fileRow(gtx C, it *fileItem, first, last bool) D {
 		if ring {
 			v.vkRing(gtx, image.Rect(0, 0, w, h), gtx.Dp(12))
 		}
-		if last {
+		if last || v.preview { // a preview row has its own bottom line
 			return D{Size: image.Pt(w, h)}
 		}
 		return D{Size: image.Pt(w, h-bw)} // the next row's top line is this row's bottom
@@ -975,6 +988,15 @@ func (v *ChannelFiles) listFrame(gtx C, sz image.Point, first, last, hover bool)
 		br = rad
 	}
 	line := theme.Over(v.p.CardLine, v.p.Surface)
+	if v.preview {
+		// .files_tab_view__preview .p-explorer_result--list .c-pillow_file:
+		// no border but a 1px otl-ter bottom, radius 0; none on the last
+		fill(gtx, r, v.p.Surface)
+		if !last {
+			fill(gtx, image.Rect(0, sz.Y-bw, sz.X, sz.Y), line)
+		}
+		return
+	}
 	in := image.Rect(bw, bw, sz.X-bw, sz.Y)
 	if last {
 		in.Max.Y -= bw
@@ -1163,7 +1185,7 @@ func (v *ChannelFiles) linkRow(gtx C, l *core.ChannelLink, first, last bool) D {
 		if ring {
 			v.vkRing(gtx, image.Rect(0, 0, w, h), gtx.Dp(12))
 		}
-		if last {
+		if last || v.preview {
 			return D{Size: image.Pt(w, h)}
 		}
 		return D{Size: image.Pt(w, h-bw)}

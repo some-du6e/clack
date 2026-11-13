@@ -38,6 +38,9 @@ func (l *lay) bodyStyle() flowStyle {
 	if l.jumbo {
 		fs.emoji = l.dp(32)
 	}
+	if l.st.EmojiSize > 0 {
+		fs.emoji = l.dp(l.st.EmojiSize)
+	}
 	return fs
 }
 

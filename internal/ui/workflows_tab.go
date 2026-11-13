@@ -49,6 +49,9 @@ type wfTabState struct {
 	tipStart               map[string]*popups.TipState
 	featureTip             popups.TipState
 	lastW                  int
+	// peek: the state is the channel-tab slug's WorkflowsPeek
+	// (workflows_peek.go): rows full width with a bottom rule
+	peek bool
 }
 
 var (
@@ -341,6 +344,9 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 	pad, is := gtx.Dp(16), gtx.Dp(36)
 	nameH, descH := gtx.Dp(22), gtx.Dp(18)
 	h := 2*pad + max(is, nameH+descH)
+	if st.peek {
+		h++ // .content__r_uvR .p-search_workflows_item: border-bottom 1px
+	}
 	r := image.Rect(0, 0, w, h)
 	rad := gtx.Dp(12)
 	hover := row.Hovered() || start.Hovered()
@@ -348,6 +354,14 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 	border := cl.Ring
 	if hover && !it.Denied {
 		border = theme.WithAlpha(cl.Fg, 0x26)
+	}
+	if st.peek {
+		// no card: the row's background, the 1px otl-ter bottom (none on
+		// the last row: .p-explorer_result--list--last)
+		theme.Fill(gtx, r, cl.Bg)
+		if !last {
+			theme.Fill(gtx, image.Rect(0, h-1, w, h), cl.Ring)
+		}
 	}
 	var radii clip.RRect
 	radii.Rect = r
@@ -357,10 +371,12 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 	if last {
 		radii.SW, radii.SE = rad, rad
 	}
-	func() {
-		defer radii.Push(gtx.Ops).Pop()
-		theme.Fill(gtx, r, border)
-	}()
+	if !st.peek {
+		func() {
+			defer radii.Push(gtx.Ops).Pop()
+			theme.Fill(gtx, r, border)
+		}()
+	}
 	inner := r
 	inner.Min.X++
 	inner.Max.X--
@@ -375,10 +391,12 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 	if last {
 		innerR.SW, innerR.SE = rad-1, rad-1
 	}
-	func() {
-		defer innerR.Push(gtx.Ops).Pop()
-		theme.Fill(gtx, inner, cl.Bg)
-	}()
+	if !st.peek {
+		func() {
+			defer innerR.Push(gtx.Ops).Pop()
+			theme.Fill(gtx, inner, cl.Bg)
+		}()
+	}
 	// the icon: the workflow app's (radius 12), or the lock in a grey box
 	at(gtx, image.Pt(pad, (h-is)/2), image.Pt(is, is), func(gtx layout.Context) layout.Dimensions {
 		if it.Denied {
@@ -427,7 +445,7 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 			return d
 		})
 	}
-	if last {
+	if last || st.peek {
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	}
 	return layout.Dimensions{Size: image.Pt(w, h-1)} // the next row's top border is this row's bottom

@@ -220,6 +220,11 @@ type Style struct {
 
 	// Body text size and line height in Sp/Dp (Slack: 15/22).
 	TextSize, LineHeight float32
+	// EmojiSize is the inline emoji's box in Dp, jumbomoji included (0:
+	// Slack's message sizes, 22 and 32 jumbo). A canvas sets its
+	// section's line height: control.c54 img is
+	// var(--section-content-line-height) square at vertical-align top.
+	EmojiSize float32
 	// EmojiURL maps a standard emoji image stem to its URL (the theme's
 	// emoji style); nil uses Slack's apple set.
 	EmojiURL func(stem string) string
@@ -340,6 +345,10 @@ type Options struct {
 	// NoHoverCards: the doc sits inside a hover card (the channel card's
 	// topic), so its mentions report no card of their own.
 	NoHoverCards bool
+	// Canvas: the doc is a canvas's. Its channel mentions open the
+	// canvas's own channel card (Slack's embedded ChannelHovercard,
+	// hovercard Request.Canvas), not the message ChannelHoverCard.
+	Canvas bool
 	// Compact uses 13px/18px text (previews, reply bars, search results).
 	Compact bool
 	// Channel and TS identify the message, for the Slack-shaped props of
