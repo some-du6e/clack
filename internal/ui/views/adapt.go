@@ -338,7 +338,11 @@ func (b *base) richDoc(gtx C, key, ver string, doc richtext.Doc, o richview.Opti
 	d := e.v.Layout(gtx, b.style(), hostHandler{b.h})
 	call := m.Stop()
 	if d.Size.Y > limit {
+		top := d.Size.Y - d.Baseline // the first line's baseline from the top stays put
 		d.Size.Y = limit
+		if d.Baseline != 0 {
+			d.Baseline = max(0, d.Size.Y-top)
+		}
 	}
 	st := clip.Rect{Max: d.Size}.Push(gtx.Ops)
 	call.Add(gtx.Ops)

@@ -1215,8 +1215,18 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 	orig := m
 	m = b.viewMsg(m)
 	doc := b.actPreviewDoc(m)
+	// the row's colour: content-pry unread, content-sec read (the message
+	// inherits it; richview's palette Text is the message list's)
+	col := b.p.Text
+	if muted {
+		col = b.p.Sec
+	}
 	if len(doc.Blocks) == 0 {
-		return b.body(gtx, doc, sub+m.Text, maxLines)
+		t := richtext.PlainText(doc)
+		if strings.TrimSpace(t) == "" {
+			t = sub + m.Text
+		}
+		return b.para(gtx, 15, 22, wReg, col, maxLines, t)
 	}
 	key := "sub:" + sub + "\x00" + m.Channel + "/" + m.TS
 	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Blocks)) + ":" + strconv.Itoa(len(doc.Blocks))
@@ -1224,6 +1234,9 @@ func (b *base) msgBodySub(gtx C, m *core.Message, muted bool, maxLines int, sub 
 		ver += ":p" + strconv.FormatUint(uint64(textHash(m.Text)), 36)
 	}
 	o := richview.Options{Muted: m.System, Secondary: muted && !m.System, Channel: m.Channel, TS: m.TS, Truncate: true}
+	if !m.System {
+		o.Color = col
+	}
 	return b.richDoc(gtx, key, ver, actSubtextDoc(doc, sub), o, maxLines)
 }
 

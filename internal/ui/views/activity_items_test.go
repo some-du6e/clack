@@ -421,3 +421,46 @@ func TestActivityReactionEmojiAtRender(t *testing.T) {
 		t.Errorf("Reacted {emoji} to: is %dpx wide, want %d (bold; regular would be %d)", got, want, reg)
 	}
 }
+
+// The reaction row's text as Slack lays it out (Karim, 2026-11-13: "Not
+// really the reaction but the text of the reaction"): ActivityMessage's
+// span takes the row's colour (content-pry unread, content-sec read; the
+// message list's dark palette Text is #b9babd, content-sec, which drew an
+// unread row's message dimmer than its "Reacted to:"), and the Detailed
+// prefix reports its baseline so the message shares its line.
+func TestActivityReactionTextLikeSlack(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		for _, dense := range []bool{false, true} {
+			v, _, e, _ := vaActivity(t, dark)
+			v.dense = dense
+			e.frame()
+			it := actItem(t, v, "k-reaction")
+			var ops op.Ops
+			gtx := actFrame(&ops, image.Pt(1100, 800))
+			v.row(gtx, it, 3)
+			r := v.rowFor(actKey(it))
+			want := v.p.Sec
+			if r.unread {
+				want = v.p.Text
+			}
+			m := r.msg()
+			if m == nil {
+				t.Fatalf("dark %v dense %v: the reaction row has no message", dark, dense)
+			}
+			// a message with no preview blocks is a plain paragraph in
+			// that colour (msgBodySub); one with blocks is a rich view
+			if e2 := v.rich["sub:\x00"+m.Channel+"/"+m.TS]; e2 != nil && e2.v.Options().Color != want {
+				got := e2.v.Options().Color
+				t.Errorf("dark %v dense %v unread %v: preview colour %v, want the row's %v", dark, dense, r.unread, got, want)
+			}
+			if dense {
+				continue
+			}
+			d := v.reactPrefix(gtx, r.cur, want)
+			lab := v.label(gtx, 15, wBold, want, "to:")
+			if d.Baseline <= 0 || d.Size.Y-d.Baseline < lab.Size.Y-lab.Baseline {
+				t.Errorf("dark %v: prefix %+v reports no baseline at or below its labels' (%+v)", dark, d, lab)
+			}
+		}
+	}
+}

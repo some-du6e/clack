@@ -197,7 +197,9 @@ def page(kind, dark):
         "<!doctype html><html><head><meta charset=utf-8><link rel=stylesheet href='file://%s'>"
         "<style>:root{%s;color-scheme:%s}html,body{margin:0;background:var(--dt_color-base-pry);"
         "font-family:Lato,sans-serif;font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}"
-        "*{box-sizing:border-box}</style></head><body class='%s'>"
+        # Slack's helper classes (the webapp's helpers CSS, not in
+        # client-boot-styles) the rows use
+        "*{box-sizing:border-box}.margin_right_25{margin-right:4px}</style></head><body class='%s'>"
         # 5465 ActivityPage's root classes (threads_v2 always: the subtext's
         # 15px), with activity_inbox on
         "<div class='p-activity_ia4_page p-activity_ia4_page--%s p-activity_ia4_page--threads_v2 p-activity_ia4_page--activity_inbox'>"
