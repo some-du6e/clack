@@ -125,7 +125,7 @@ jobs:
           dir=$(jq -r .Dir info.json)
           test -d "$dir" || { echo "::error::download failed"; cat info.json; exit 1; }
           cd "$GITHUB_WORKSPACE/third_party/typesetting"
-          patched='font/clack_glyf.go font/font.go font/glyphs.go font/metrics.go font/renderer.go font/variations.go font/opentype/clack_bytes.go font/opentype/reader.go CLACK_PATCHES.md'
+          patched='font/clack_glyf.go font/font.go font/glyphs.go font/metrics.go font/renderer.go font/variations.go font/opentype/clack_bytes.go font/opentype/reader.go fontscan/clack_mmap.go fontscan/clack_mmap_unix.go fontscan/clack_mmap_windows.go fontscan/clack_mmap_other.go fontscan/fontmap.go CLACK_PATCHES.md'
           for f in $patched; do grep -qF "\`$f\`" CLACK_PATCHES.md || [ "$f" = CLACK_PATCHES.md ] || { echo "::error::$f is patched but CLACK_PATCHES.md doesn't name it"; exit 1; }; done
           find . -type f | sed 's#^\./##' | sort | while read -r f; do
             case " $patched " in *" $f "*) continue ;; esac

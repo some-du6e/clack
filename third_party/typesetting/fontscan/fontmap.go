@@ -602,7 +602,7 @@ func (fm *FontMap) loadFont(fp Footprint) (*font.Face, error) {
 
 	// since user provided fonts are added to `faceCache`
 	// we may now assume the font is stored on the file system
-	face, err := fp.loadFromDisk()
+	face, err := fp.loadFromDiskMapped() // Clack patch 3 (clack_mmap.go)
 	if err != nil {
 		return nil, err
 	}

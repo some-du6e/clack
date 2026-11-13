@@ -11,7 +11,10 @@ drop the replace and delete this directory.
 The changed files are `font/clack_glyf.go` (new), `font/font.go`,
 `font/glyphs.go`, `font/metrics.go`, `font/renderer.go`,
 `font/variations.go`, `font/opentype/clack_bytes.go` (new),
-`font/opentype/reader.go` and this file. `supply-chain.yml`'s typesetting
+`font/opentype/reader.go`, `fontscan/clack_mmap.go`,
+`fontscan/clack_mmap_unix.go`, `fontscan/clack_mmap_windows.go`,
+`fontscan/clack_mmap_other.go` (new), `fontscan/fontmap.go` and this
+file. `supply-chain.yml`'s typesetting
 job checks every other file against the module proxy's v0.3.5.
 
 Why: the memory workflow (perf.yml's scale jobs) found the fonts holding
@@ -53,3 +56,19 @@ the binary's read-only data.
 
 Tests: `internal/ui/theme` `TestFontTablesNotCopied` and
 `TestLazyGlyphsMatchEager`.
+
+## 3. fontscan: system fonts mapped, not read
+
+`fontscan/clack_mmap*.go` and `FontMap.loadFont` in `fontscan/fontmap.go`.
+
+A face the shaper falls back to (a system font, for a script the
+collection lacks) was read from its file into the heap, table by table.
+It is now memory-mapped read-only (`syscall.Mmap` on Linux, macOS and the
+BSDs; `CreateFileMapping` and `MapViewOfFile` on Windows) and parsed in
+place through patch 2's `BytesResource`. The pages are the file's: shared
+with every other process using the font, reclaimable, and read only where
+a table or glyph is used. The mapping stays for the process's life, like
+the face in the FontMap's cache. Where mapping isn't available or fails,
+the font is read as before (`loadFromDisk`, which `assertValid` still
+uses for its one-off check). After patch 1, the copied tables of the
+fallback faces a Windows client loaded were 32 MB of its heap.

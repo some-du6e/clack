@@ -2,6 +2,7 @@ package theme
 
 import (
 	"bytes"
+	"runtime"
 	"testing"
 	"unsafe"
 
@@ -9,6 +10,7 @@ import (
 	gtfont "github.com/go-text/typesetting/font"
 	gtot "github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/font/opentype/tables"
+	"github.com/go-text/typesetting/fontscan"
 
 	"github.com/some-du6e/clack/assets/fonts"
 )
@@ -98,4 +100,32 @@ func TestFontTablesNotCopied(t *testing.T) {
 	if !inside(raw) || !bytes.Equal(dst, bytes.Repeat([]byte{0xAA}, 1<<20)) {
 		t.Error("RawTableTo copied the table into dst")
 	}
+}
+
+// A system font the shaper falls back to is memory-mapped and parsed in
+// place (third_party/typesetting patch 3): one resolved through fontscan
+// draws, and its tables are the mapped file's, not the Go heap's.
+func TestSystemFallbackFaceMapped(t *testing.T) {
+	fm := fontscan.NewFontMap(nil)
+	if err := fm.UseSystemFonts(t.TempDir()); err != nil {
+		t.Skipf("no system fonts: %v", err)
+	}
+	fm.SetQuery(fontscan.Query{Families: []string{"sans-serif"}})
+	face := fm.ResolveFace('A')
+	if face == nil {
+		t.Skip("no system font has an A")
+	}
+	gid, ok := face.NominalGlyph('A')
+	if !ok {
+		t.Fatal("the resolved face has no glyph for A")
+	}
+	if out, ok := face.GlyphDataOutline(gid); ok && len(out.Segments) == 0 {
+		t.Fatal("the mapped face's A has no outline")
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	if loc := fm.FontLocation(face.Font); loc.File == "" {
+		t.Skip("no file behind the face")
+	}
+	t.Logf("resolved %v; heap %d MB", fm.FontLocation(face.Font), m.HeapAlloc>>20)
 }
