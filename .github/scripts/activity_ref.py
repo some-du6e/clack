@@ -78,14 +78,24 @@ def emoji_img(alt):
 def body(r, dense):
     sub = ""
     if r["React"]:
-        # QTZf ReactionContent: Dense "Reacted to:" (margin_right_25);
-        # Detailed span.reaction_prefix (700) around "Reacted {emoji} to:",
-        # the emoji in span.reaction_emoji (relative, top 3px)
+        # QTZf ReactionContent hands its subtext to /ad9 ActivityMessage
+        # with truncate 1: h08e Truncate (span.c-truncate,
+        # --sk_truncate-lines 1, word-break break-all), then
+        # span.p-activity_ia4_page__item__activity_subtext around the
+        # subtext and the message text right after it (no space between).
+        # Dense "Reacted to:" in span.margin_right_25; Detailed (layout
+        # revisions) span.reaction_prefix (700, margin-right 4px) around
+        # "Reacted {emoji} to:", the emoji in span.reaction_emoji (relative,
+        # top 3px). With activity_inbox on, ActivityMessage's span has no
+        # read/unread colour class: the text takes the row's colour.
         if dense:
-            sub = '<span class="margin_right_25">Reacted to:</span> '
+            pre = '<span class="margin_right_25">Reacted to:</span>'
         else:
-            sub = ('<span class="reaction_prefix__V6YJG">Reacted <span class="reaction_emoji__XTXNb">%s</span> to:</span>'
+            pre = ('<span class="reaction_prefix__V6YJG">Reacted <span class="reaction_emoji__XTXNb">%s</span> to:</span>'
                    % emoji_img(r["Emoji"]))
+        return ('<span data-qa="activity-item-message"><span class="c-truncate" style="--sk_truncate-lines:1;word-break:break-all">'
+                '<span class="p-activity_ia4_page__item__activity_subtext">%s</span>%s</span></span>'
+                % (pre, html.escape(r["Body"])))
     elif r["Sub"]:
         sub = html.escape(r["Sub"])
     out = sub + html.escape(r["Body"])
@@ -188,12 +198,15 @@ def page(kind, dark):
         "<style>:root{%s;color-scheme:%s}html,body{margin:0;background:var(--dt_color-base-pry);"
         "font-family:Lato,sans-serif;font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}"
         "*{box-sizing:border-box}</style></head><body class='%s'>"
-        "<div class='p-activity_ia4_list p-activity_ia4_list--bordered_separators' style='width:1100px'>%s</div></body></html>"
+        # 5465 ActivityPage's root classes (threads_v2 always: the subtext's
+        # 15px), with activity_inbox on
+        "<div class='p-activity_ia4_page p-activity_ia4_page--%s p-activity_ia4_page--threads_v2 p-activity_ia4_page--activity_inbox'>"
+        "<div class='p-activity_ia4_list p-activity_ia4_list--bordered_separators' style='width:1100px'>%s</div></div></body></html>"
         % (os.path.abspath(css_path), root, "dark" if dark else "light", "sk-client-theme--dark" if dark else "",
-           "".join(rowfn(r) for r in rows)))
+           "dark" if dark else "light", "".join(rowfn(r) for r in rows)))
 
 
-for prefix, data in (("", "activity-ref-rows.json"), ("rows-", "activity-ref-rows-actions.json")):
+for prefix, data in (("", "activity-ref-rows.json"), ("rows-", "activity-ref-rows-actions.json"), ("react-", "activity-ref-rows-react.json")):
   if not os.path.exists(os.path.join(shots, data)):
     continue
   rows = json.load(open(os.path.join(shots, data)))
@@ -215,5 +228,17 @@ for prefix, data in (("", "activity-ref-rows.json"), ("rows-", "activity-ref-row
         d = ImageDraw.Draw(out)
         d.text((8, 8), "Clack (%s, %s)" % (kind, mode), fill=(255, 255, 255))
         d.text((clack.width + gap + 8, 8), "Slack markup + shipping CSS (%s, %s)" % (kind, mode), fill=(255, 255, 255))
+        if prefix == "react-":
+            # the reaction rows at 2x, Clack over Slack, so the text can be
+            # compared glyph by glyph
+            z = 2
+            c2 = clack.resize((clack.width * z, clack.height * z), Image.NEAREST)
+            s2 = slack.crop((0, 0, slack.width, clack.height)).resize((slack.width * z, clack.height * z), Image.NEAREST)
+            out = Image.new("RGB", (max(c2.width, s2.width), c2.height + s2.height + 3 * top), (128, 128, 128))
+            d = ImageDraw.Draw(out)
+            d.text((8, 8), "Clack (%s, %s), 2x" % (kind, mode), fill=(255, 255, 255))
+            out.paste(c2, (0, top))
+            d.text((8, c2.height + top + 8), "Slack markup + shipping CSS (%s, %s), 2x" % (kind, mode), fill=(255, 255, 255))
+            out.paste(s2, (0, c2.height + 2 * top))
         out.save(os.path.join(shots, "side-%s%s-%s.png" % (prefix, kind, mode)))
         print("saved side-%s%s-%s.png" % (prefix, kind, mode))

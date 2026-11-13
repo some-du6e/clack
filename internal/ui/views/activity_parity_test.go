@@ -301,6 +301,12 @@ func TestActivityDenseRowLikeSlack(t *testing.T) {
 // per kind of footer).
 var actRefKeys = []string{"k-at-user", "k-thread", "k-reaction-many", "k-dm", "k-channel", "k-invite", "k-reminder", "k-mine", "k-at-channel"}
 
+// actReactKeys are the reaction side-by-side's rows (side-react-*.png): a
+// mention, for the message text a reaction row is compared with, then the
+// reactions (Karim, 2026-11-13: "Not really the reaction but the text of
+// the reaction").
+var actReactKeys = []string{"k-at-user", "k-reaction", "k-reaction-many"}
+
 // actRefRow is one row's text as the reference page builds it
 // (.github/scripts/activity_ref.py renders it with Slack's markup and
 // shipping CSS next to Clack's screenshot).
@@ -403,6 +409,35 @@ func TestActivitySideBySide(t *testing.T) {
 	}
 	b, _ := json.MarshalIndent(rows, "", " ")
 	if err := os.WriteFile(filepath.Join(dir, "activity-ref-rows.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// the reaction rows beside a mention (activity_ref.py upscales them)
+	rows = nil
+	for _, dark := range []bool{false, true} {
+		for _, dense := range []bool{false, true} {
+			v, _, e, _ := vaActivity(t, dark)
+			v.dense = dense
+			e.frame()
+			var ops op.Ops
+			gtx := actFrame(&ops, image.Pt(w, 4000))
+			y := 0
+			for i, key := range actReactKeys {
+				it := actItem(t, v, key)
+				func() {
+					defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
+					g := gtx
+					g.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, 400)}
+					y += v.row(g, it, i+3).Size.Y
+				}()
+				if !dark && !dense {
+					rows = append(rows, actRefOf(v, it, key))
+				}
+			}
+			actSaveOps(t, &ops, w, y, filepath.Join(dir, "clack-react-"+map[bool]string{false: "detailed", true: "dense"}[dense]+"-"+map[bool]string{false: "light", true: "dark"}[dark]+".png"))
+		}
+	}
+	b, _ = json.MarshalIndent(rows, "", " ")
+	if err := os.WriteFile(filepath.Join(dir, "activity-ref-rows-react.json"), b, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// the rows' marks and buttons, on fakeslack's feed
