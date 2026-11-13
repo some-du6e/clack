@@ -280,7 +280,7 @@ func (e *perfEnv) chcRectOf(conv string, ok func(richview.LinkRect) bool) image.
 	}
 	var u image.Rectangle
 	for _, r := range l.LinkRects() {
-		if ok(r) {
+		if ok(r.LinkRect) {
 			u = u.Union(r.R)
 		}
 	}
