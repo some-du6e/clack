@@ -1164,7 +1164,8 @@ func (m *InviteModal) customExpButton(gtx layout.Context, th *theme.Theme, cl *C
 			FocusRingColors(gtx, cl.Focus, cl.FocusRing, r, rad)
 		}
 		rrect(gtx, r, rad, b)
-		rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+		bw := border1(gtx)
+		rrect(gtx, r.Inset(bw), rad-bw, cl.Bg)
 		x := dp(gtx, 12)
 		is := dp(gtx, 20)
 		at(gtx, image.Pt(x, (hh-is)/2+dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
