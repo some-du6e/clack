@@ -93,6 +93,11 @@ func init() {
 				v, _ := url.QueryUnescape(routeArg(r, "value"))
 				d.FilterByProfileField(f, v)
 			}
+			// a user group's "workspace administrator" link
+			// (popups.UserGroupView): directories?tab=people&account=admins
+			if k := routeArg(r, "account"); k != "" {
+				d.FilterByAccountType(k)
+			}
 			return d
 		case "search":
 			return popups.NewSearchView(a, r.Query())

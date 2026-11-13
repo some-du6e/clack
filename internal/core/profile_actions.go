@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -104,13 +106,7 @@ type UsergroupProfile struct {
 // group's channels and state.
 func (a *App) UsergroupProfile(ctx context.Context, id string) (UsergroupProfile, error) {
 	var out UsergroupProfile
-	a.S.RLock()
-	for _, g := range a.S.Groups {
-		if g.ID == id {
-			out.Usergroup = Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: g.UserCount}
-		}
-	}
-	a.S.RUnlock()
+	out.Usergroup = a.StoredUsergroup(id)
 	if out.Handle == "" {
 		return out, errors.New("unknown user group " + id)
 	}
@@ -122,6 +118,7 @@ func (a *App) UsergroupProfile(ctx context.Context, id string) (UsergroupProfile
 			Description string          `json:"description"`
 			UserCount   json.RawMessage `json:"user_count"`
 			DateDelete  int64           `json:"date_delete"`
+			TeamID      string          `json:"team_id"`
 			Prefs       struct {
 				Channels []string `json:"channels"`
 			} `json:"prefs"`
@@ -134,26 +131,133 @@ func (a *App) UsergroupProfile(ctx context.Context, id string) (UsergroupProfile
 		if g.ID != id {
 			continue
 		}
-		out.Usergroup = Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: int(looseInt(g.UserCount))}
+		team := firstNonEmpty(g.TeamID, out.TeamID)
+		out.Usergroup = Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: int(looseInt(g.UserCount)), TeamID: team}
 		out.Disabled = g.DateDelete != 0
 		out.Channels = g.Prefs.Channels
 	}
 	return out, nil
 }
 
-// UsergroupMembers is searchUserGroupMembers (client-channel-user-group-
-// view oXTE, "Fetch and upsert user group members via search.enterprise"):
-// people in group (is user, belongs_to_usergroup_id, plus fuzzy_with_email
-// for the "Find members" term), 100 a page from cursor ("*" first),
-// ascending, no deleted users or bots. It returns the members, the next
-// cursor ("" when done) and num_found.
+// StoredUsergroup is group id from the boot list (zero when unknown).
+func (a *App) StoredUsergroup(id string) Usergroup {
+	a.S.RLock()
+	defer a.S.RUnlock()
+	for _, g := range a.S.Groups {
+		if g.ID == id {
+			return Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: g.UserCount, TeamID: g.TeamID}
+		}
+	}
+	return Usergroup{}
+}
+
+// UsergroupUsers is fetchAndUpsertUserGroupMembers (boot-shared YdXc),
+// the members of a workspace group's User Group pane (the classic
+// UserGroupDetails that client-channel-user-group-view's
+// BaseUserGroupView picks when the group isn't OrgLevel), also what a
+// @group mention's tooltip asks (useUserGroupMemberIdsForTooltip):
+// usergroups.users.list {usergroup, team_id, limit: 100 for an org-level
+// group only, cursor}. The ids replace the group's stored members (a
+// later page appends) and come back as users sorted by
+// getPrefCompliantMemberNameLowerCase (UserGroupDetails' sortMembers),
+// with the next cursor ("" when done).
+//
+// search.enterprise's belongs_to_usergroup_id (UsergroupMembers) is the
+// org groups' path only: on a workspace group it finds nobody.
+func (a *App) UsergroupUsers(ctx context.Context, g Usergroup, cursor string) ([]User, string, error) {
+	if g.TeamID == "" {
+		return nil, "", errors.New("cannot fetch usergroup members for " + g.ID + " because there is no team_id or enterprise_id for that group")
+	}
+	p := url.Values{"usergroup": {g.ID}, "team_id": {g.TeamID}}
+	if g.OrgLevel() {
+		p.Set("limit", "100")
+	}
+	if cursor != "" {
+		p.Set("cursor", cursor)
+	}
+	var res struct {
+		Users []string `json:"users"`
+		Meta  struct {
+			NextCursor string `json:"next_cursor"`
+		} `json:"response_metadata"`
+	}
+	if err := a.C.Call(ctx, "usergroups.users.list", p, &res); err != nil {
+		return nil, "", err
+	}
+	a.S.SetGroupUsers(g.ID, res.Users, cursor != "")
+	a.EnsureUsers(ctx, res.Users)
+	return a.groupMembers(res.Users, true), res.Meta.NextCursor, nil
+}
+
+// CachedUsergroupUsers is the group's members as last fetched (Slack's
+// userGroups record keeps its users between visits), sorted like
+// UsergroupUsers; ok is false before the first fetch.
+func (a *App) CachedUsergroupUsers(id string, sorted bool) ([]User, bool) {
+	ids, ok := a.S.GroupUsers(id)
+	if !ok {
+		return nil, false
+	}
+	return a.groupMembers(ids, sorted), true
+}
+
+// groupMembers resolves ids to the users the store knows, in order;
+// sorted orders them by prefLowerName, stably (lodash sortBy).
+func (a *App) groupMembers(ids []string, sorted bool) []User {
+	a.S.RLock()
+	realNames := a.S.Prefs.DisplayRealNames
+	a.S.RUnlock()
+	type member struct {
+		u   User
+		key string
+	}
+	ms := make([]member, 0, len(ids))
+	for _, id := range ids {
+		su, ok := a.S.User(id)
+		if !ok {
+			continue
+		}
+		ms = append(ms, member{a.userOf(su), prefLowerName(su, realNames)})
+	}
+	if sorted {
+		sort.SliceStable(ms, func(i, j int) bool { return ms[i].key < ms[j].key })
+	}
+	out := make([]User, len(ms))
+	for i := range ms {
+		out[i] = ms[i].u
+	}
+	return out
+}
+
+// prefLowerName is getPrefCompliantMemberNameLowerCase (client-boot
+// vUCu V3): _real_name_normalized_lc, or _display_name_normalized_lc
+// when the viewer doesn't ask for real names and it is set.
+func prefLowerName(u *slack.User, realNames bool) string {
+	n := strings.ToLower(firstNonEmpty(u.Profile.RealNameNormalized, u.Profile.RealName, u.RealName))
+	if !realNames {
+		if d := strings.ToLower(firstNonEmpty(u.Profile.DisplayNameNormalized, u.Profile.DisplayName)); d != "" {
+			n = d
+		}
+	}
+	return n
+}
+
+// UsergroupMembers is searchAndUpsertUserGroupMembers (client-channel-
+// user-group-view oXTE, "Fetch and upsert user group members via
+// search.enterprise"), the members of an OrgLevel group's User Group
+// pane (the newer UserGroupDetails): searchUserGroupMembers' people in
+// group (is user, belongs_to_usergroup_id, plus fuzzy_with_email for the
+// "Find members" term), 100 a page from cursor ("*" first), ascending,
+// no deleted users or bots. Without a term the page replaces the group's
+// stored members (a later page appends). It returns the members, the
+// next cursor ("" when done) and num_found.
 func (a *App) UsergroupMembers(ctx context.Context, group, term, cursor string) ([]User, string, int, error) {
 	clauses := []map[string]string{{"type": "is", "value": "user"}, {"type": "belongs_to_usergroup_id", "value": group}}
 	if term != "" {
 		clauses = append(clauses, map[string]string{"type": "fuzzy_with_email", "value": term})
 	}
 	q, _ := json.Marshal(map[string]any{"type": "and", "clauses": clauses})
-	if cursor == "" {
+	first := cursor == ""
+	if first {
 		cursor = "*"
 	}
 	p := url.Values{"query": {string(q)}, "count": {"100"}, "cursor_mark": {cursor}, "include_deleted": {"0"},
@@ -168,11 +272,16 @@ func (a *App) UsergroupMembers(ctx context.Context, group, term, cursor string) 
 	}
 	a.S.PutUsers(res.Items)
 	out := make([]User, 0, len(res.Items))
+	ids := make([]string, 0, len(res.Items))
 	for i := range res.Items {
 		if res.Items[i].ID == "" {
 			continue
 		}
 		out = append(out, a.userOf(&res.Items[i]))
+		ids = append(ids, res.Items[i].ID)
+	}
+	if term == "" {
+		a.S.SetGroupUsers(group, ids, !first)
 	}
 	next := res.NextCursor
 	if next == cursor {
