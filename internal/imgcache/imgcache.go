@@ -506,6 +506,15 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error)
 		}
 		return first, frames[0].Bounds().Size(), n, a, nil
 	}
+	// A big image decodes to its full size and scales through a temporary
+	// buffer as big again (x/image/draw's kernel scaler: 32 bytes per
+	// destination column per source row) before the display-size copy is
+	// all that's kept. Eight of them at once while a channel of screenshots
+	// scrolled by held 150 MB for a moment: at most bigDecodes at a time.
+	if big := isBig(data); big {
+		bigSem <- struct{}{}
+		defer func() { <-bigSem }()
+	}
 	img, err := Decode(data)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, nil, err
@@ -513,6 +522,21 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error)
 	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)
 	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, nil
+}
+
+// bigDecodes is how many images of more than bigPixels decode at once
+// (every Cache together: they share the memory).
+const (
+	bigDecodes = 2
+	bigPixels  = 1 << 20
+)
+
+var bigSem = make(chan struct{}, bigDecodes)
+
+// isBig reports whether data's header says it has more than bigPixels.
+func isBig(data []byte) bool {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return err == nil && cfg.Width*cfg.Height > bigPixels
 }
 
 // MaxPixels bounds the decoded size of one image (width × height), so a
