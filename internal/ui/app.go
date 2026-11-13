@@ -182,7 +182,8 @@ type App struct {
 	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
 	railRects       map[string]image.Rectangle // tests set it: layoutRail records each rail button's box
 	ptrWin          image.Point
-	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
+	autoscroll      gesture.Autoscroller // middle-click autoscroll (Gio patch 15)
+	peek            railPeek             // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
 	hover           profileHover // the profile hover card (hover_card.go)
 	overlays        []Overlay
@@ -640,6 +641,7 @@ func (a *App) frame(gtx layout.Context) {
 	// first: an ancestor of every other input area (popped at the end)
 	navArea := a.navGestures(gtx)
 	defer navArea.Pop()
+	a.autoscroll.Begin(gtx.Source, gtx.Metric) // before any scroller, and before every key reader
 	a.readRootPointer(gtx)
 	a.introInput(gtx) // a replayed introduction's keys come before every shortcut
 	a.hoverBegin(gtx) // before any widget reads keys (Escape)
@@ -678,6 +680,9 @@ func (a *App) frame(gtx layout.Context) {
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
+	// middle-click autoscroll's window-wide area: over everything but the
+	// tracker
+	a.autoscroll.End(gtx.Ops, gtx.Source, sz)
 	a.rootPointer(gtx)
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took

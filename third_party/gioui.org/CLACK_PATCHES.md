@@ -17,8 +17,10 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
-`app/clack_drop*.go`, `app/clack_hide*.go` and these two files (`CLACK_PATCHES.md`,
-`UPSTREAM.patch`).
+`app/clack_drop*.go`, `app/clack_hide*.go`, `app/clack_pancursor_windows*.go`,
+`app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
+`app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go` and
+these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -551,3 +553,108 @@ HWND is never freed. `FlushEvents` now delivers nothing once a
 `DestroyEvent` went out. Tested by `internal/ui` `TestCloseToTrayWindow`
 (Quit while the window is hidden; it hung in 7 of 32 runs on 2026-11-12).
 Not in `UPSTREAM.patch`.
+
+## 15. Middle-click autoscroll
+
+`gesture/clack_autoscroll.go` (new: `Autoscroller`, `Autoscroll`,
+`AutoscrollSpeed`, `SetAutoscroll`, `AutoscrollVeto`, `AutoscrollPress`),
+`gesture/gesture.go` (`Scroll`), `io/input/clack_values.go` (new:
+`Source.Value`, `Source.SetValue`) with a `values` field in
+`io/input/router.go`, `io/pointer/pointer.go` (eleven `Cursor…Panning`
+cursors), `app/clack_pancursor_windows.go` (new) with
+`app/clack_cursors/*.cur` and their `LICENSE`, `loadCursor` and the
+cursor table in `app/os_windows.go`, `CreateIconFromResourceEx` in
+`app/internal/windows/windows.go`, and the cursor tables in
+`app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go` and
+`app/os_js.go`. Nothing changes unless an app runs an `Autoscroller`.
+
+Karim, Windows 11, 2026-11-12: "middle wheel holding no workie pls make
+equal to chromeium". Slack's Chromium on Windows scrolls when you press
+the middle button over something that scrolls. Read in Chromium main
+5ed4bb5 (2026-11-13):
+
+- When: `RuntimeEnabledFeatures::MiddleClickAutoscroll`, set on in
+  Windows by `WebViewImpl::ApplyWebPreferences`
+  (`third_party/blink/renderer/core/exported/web_view_impl.cc`); on Linux
+  only with `features::kMiddleClickAutoscroll` (chrome://flags, off,
+  because a middle click pastes there); never on macOS.
+  `gesture.SetAutoscroll` has the same defaults. Chromium doesn't look at
+  reduced motion for it (no check in `AutoscrollController` or
+  `FixedVelocityCurve`), so Clack doesn't either.
+- Start: `Node::DefaultEventHandler` (`core/dom/node.cc`) on a middle
+  mousedown: nothing in a link; otherwise the nearest box whose content
+  overflows either way (`LayoutBox::IsUserScrollable`,
+  `layout_box_hot.cc`). `AutoscrollController::StartMiddleClickAutoscroll`
+  (`core/page/autoscroll_controller.cc`) then walks up from it for the
+  first box that can scroll vertically and the first that can scroll
+  horizontally. Here every `Scroll` (so every `layout.List`, `widget.List`
+  and `widget.Editor`) offers itself on a middle press with the axes its
+  ranges allow; scrollers lay out outside in, so the last offer per axis
+  is the innermost. Widgets that read `pointer.Scroll` themselves use an
+  `Autoscroll` (`Offer` on the press, `Tick` each frame); a link calls
+  `AutoscrollVeto`.
+- Speed: `HandleMouseMoveForMiddleClickAutoscroll`, per axis: nothing
+  within `kNoMiddleClickAutoscrollRadius` (15 DIPs) of the origin, else
+  `pow(|d|, kExponent 2.2) × kMultiplier (-0.000008)`. The browser turns
+  that into a fling that never decays (`RenderWidgetHostImpl::AutoscrollFling`,
+  `ui/events/gestures/fixed_velocity_curve.cc`: offset = velocity × 5000
+  × seconds), so the speed is `0.04 × |d|^2.2` DIPs a second, 1005 at
+  100 DIPs. Distances are in dp of the frame's metric.
+- Modes: `kMiddleClickInitial` until the speed first changes
+  (`kMiddleClickHolding`); releasing the middle button while still
+  initial makes it `kMiddleClickToggled`; any release while holding
+  stops it (`HandleMouseReleaseForMiddleClickAutoscroll`). Any press
+  while it runs stops it and is swallowed (`EventHandler::HandleMousePressEvent`,
+  kHandledSuppressed); any key down stops it and every key event is
+  swallowed while it runs (`KeyboardEventManager::KeyEvent`). A scroller
+  that goes away is dropped, and with both gone it ends
+  (`StopAutoscrollIfNeeded`).
+- Cursor: Chromium paints nothing at the origin. The origin icon is the
+  cursor: `MiddleClickAutoscrollCursor` gives `kMiddlePanning` (the round
+  four-arrow `pan_middle.cur`, or its vertical or horizontal variant when
+  only one axis scrolls) until the pointer leaves the dead zone, then the
+  direction's panning cursor among the axes that scroll. On Windows those
+  are Chromium's own images (`ui/resources/cursors/pan_*.cur`,
+  `IDC_PAN_*` in `ui_unscaled_resources.grd`, loaded with `LoadCursor` by
+  `ui/base/win/win_cursor_factory.cc`). Windows has no panning cursors, so
+  Gio now ships those eleven files and makes them with
+  `CreateIconFromResourceEx(LR_DEFAULTSIZE)`, which sizes them as
+  `LoadCursor` does. Elsewhere the new cursors are the all-scroll and
+  resize cursors Chromium uses on Linux (`CursorNamesFromType`,
+  `ui/base/cursor/cursor_factory.cc`).
+
+How it runs in Gio. The app owns one `Autoscroller` per window and calls
+`Begin` before its layout and `End` after it. `Begin` stores it in the
+window's router (`Source.SetValue`), where every `Scroll` finds it through
+its `input.Source`, and reads the events of a window-wide input area that
+`End` adds last. A middle press there is pending until `End`. If a
+scroller offered itself and no link vetoed it, `End` starts it and
+executes a `pointer.GrabCmd` for the area's tag: the other handlers get
+`Cancel` (Chromium's `InvalidateClick`), and the held button's drags and
+release come to the area wherever the pointer goes. While toggled the
+area doesn't pass events through, so the click that stops it reaches
+nothing else; otherwise it passes them. A wheel turned while toggled is
+eaten by it, where Chromium would still scroll. The area carries the
+cursor. Each target `Autoscroll.Tick` moves its scroller by speed × frame
+time, within its ranges, and asks for the next frame with
+`op.InvalidateCmd` only while that moves something. With no speed (the
+dead zone) or the end in the way it asks for none, so an autoscroll left
+on at the bottom of a list costs no frames.
+
+Clack runs it in `internal/ui` `App.frame`: `Begin` first, before every
+key and pointer reader; `End` just under the window-wide pointer tracker.
+Its message lists and threads, the sidebar, views, Preferences and
+editors are `layout.List`/`widget.List`/`Scroll`s; the Lists views'
+grid, board and item page read `pointer.Scroll` and use `Autoscroll`
+(`internal/ui/listview/wheel.go`); rich text links veto.
+
+Tests: `internal/ui/autoscroll` (the speed against Chromium's arithmetic,
+holding, the dead zone, click to toggle, any click and any key stopping
+and being swallowed, a quick click, nothing to scroll, a link, off, the
+end of the list asking for no frames, a scroller going away, dp, nested
+scrollers per axis), `internal/ui` `TestAutoscrollInClack` (Clack's frame
+over a fakeslack channel and the sidebar). On ci's windows-applog job
+(`CLACK_WINDOWS_AUTOSCROLL_TESTS`): `app/clack_pancursor_windows_test.go`
+(`TestPanCursors`: every cursor loads from its file, as a cursor, with its
+hotspot) and `internal/ui` `TestAutoscrollWindow` (SendInput's middle
+button held and clicked on Clack's own window). Not in `UPSTREAM.patch`.

@@ -1037,6 +1037,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.press = -1
 				v.copyPress = 0
 			case pointer.Press:
+				if autoscrollPress(e) {
+					// Chromium starts no middle-click autoscroll on a link
+					// (Node::DefaultEventHandler, EnclosingLinkEventParentOrSelf)
+					if t := v.targetAt(e.Position); t >= 0 && int(t) < len(v.d.targets) && v.d.targets[t].kind == tLink {
+						autoscrollVeto(gtx.Source, e)
+					}
+				}
 				if !ctxclick.Primary(e) || v.inSlot(e.Position) {
 					// element widgets take their own presses; a macOS
 					// Ctrl+click opens the owner's context menu instead

@@ -1079,6 +1079,19 @@ var windowsCursor = [...]uint16{
 	pointer.CursorSouthResize:              windows.IDC_SIZENS,
 	pointer.CursorNorthEastSouthWestResize: windows.IDC_SIZENESW,
 	pointer.CursorNorthWestSouthEastResize: windows.IDC_SIZENWSE,
+	// Clack patch 15: the panning cursors, if Chromium's images
+	// (clack_pancursor_windows.go) fail to load.
+	pointer.CursorMiddlePanning:           windows.IDC_SIZEALL,
+	pointer.CursorMiddlePanningVertical:   windows.IDC_SIZEALL,
+	pointer.CursorMiddlePanningHorizontal: windows.IDC_SIZEALL,
+	pointer.CursorNorthPanning:            windows.IDC_SIZENS,
+	pointer.CursorNorthEastPanning:        windows.IDC_SIZENESW,
+	pointer.CursorEastPanning:             windows.IDC_SIZEWE,
+	pointer.CursorSouthEastPanning:        windows.IDC_SIZENWSE,
+	pointer.CursorSouthPanning:            windows.IDC_SIZENS,
+	pointer.CursorSouthWestPanning:        windows.IDC_SIZENESW,
+	pointer.CursorWestPanning:             windows.IDC_SIZEWE,
+	pointer.CursorNorthWestPanning:        windows.IDC_SIZENWSE,
 }
 
 func loadCursor(cursor pointer.Cursor) (syscall.Handle, error) {
@@ -1088,6 +1101,9 @@ func loadCursor(cursor pointer.Cursor) (syscall.Handle, error) {
 	case pointer.CursorNone:
 		return 0, nil
 	default:
+		if h, ok := loadPanCursor(cursor); ok { // Clack patch 15
+			return h, nil
+		}
 		return windows.LoadCursor(windowsCursor[cursor])
 	}
 }
