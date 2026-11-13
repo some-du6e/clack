@@ -136,9 +136,15 @@ func hubFor(h Host) *hub {
 	return hb
 }
 
+// invalidate asks the current host for a frame. hubFor swaps hb.h under
+// hubsMu on the UI goroutine while load goroutines call this, so the read
+// takes the lock too (polish-1113: -race caught it in TestChannelLinkTargets).
 func (hb *hub) invalidate() {
-	if hb.h != nil {
-		hb.h.Invalidate()
+	hubsMu.Lock()
+	h := hb.h
+	hubsMu.Unlock()
+	if h != nil {
+		h.Invalidate()
 	}
 }
 
