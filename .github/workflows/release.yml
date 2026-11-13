@@ -87,7 +87,10 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: test
-        run: go test ./...
+        # one job runs every package (ci shards internal/ui across jobs);
+        # internal/ui alone passed Go's 10m default on 2026-11-13 (v0.1.0-alpha.64's
+        # run 43503494822 timed out), so give the whole suite room
+        run: go test -timeout 30m ./...
 
   linux:
     name: linux-${{ matrix.arch }}
