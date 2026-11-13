@@ -346,8 +346,8 @@ type Server struct {
 	sessionReasons []string
 	// sessionEdits are agents.threads.pin / unpin / archive / rename (agent_sessions.go)
 	sessionEdits []url.Values
-	emoji          map[string]string
-	words          []string
+	emoji        map[string]string
+	words        []string
 
 	imgMu sync.Mutex
 	imgs  map[string][]byte

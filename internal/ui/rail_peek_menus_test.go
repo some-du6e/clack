@@ -98,6 +98,8 @@ func TestRailPeekActivityBadges(t *testing.T) {
 	e, _ := pagePeekEnvWith(t, func(fs *fakeslack.Server) {
 		fs.SetActivityBadges(map[string]int{"dm": 2, "at_user": 3, "keyword": 1, "thread_v2": 0})
 	})
+	e.a.Core().SetExperimentGroup("activity_inbox", "on") // the test account's (account_experiments.json)
+	e.settle(300 * time.Millisecond)
 	away := image.Pt(e.size.X-20, e.size.Y-20)
 	openTabPeekByHover(e, "activity", away)
 	v := pageView[*views.Activity](e, "activity")
@@ -124,7 +126,7 @@ func TestRailPeekActivityBadges(t *testing.T) {
 	if got := v.PeekBadgeCounts(); got != [3]int{} {
 		t.Errorf("badges %v without activity_inbox", got)
 	}
-	e.a.Core().ClearExperimentGroup("activity_inbox")
+	e.a.Core().SetExperimentGroup("activity_inbox", "on")
 }
 
 // Activity rows: a right-click opens the item menu over the card; the
@@ -138,19 +140,30 @@ func TestRailPeekActivityRowMenu(t *testing.T) {
 	e.until("the activity on the card", 5*time.Second, func() bool { return v.PeekCount() > 0 })
 	e.settle(300 * time.Millisecond)
 	card := p.pop.Rect()
-	row := image.Pt(card.Min.X+150, card.Min.Y+44+130)
-	e.rightClick(row)
-	m := peekMenu(e, "activity")
-	if m == nil {
-		t.Fatal("no menu after a right-click on the card's row")
+	// a row with a message (Open in home needs one): right-click down the
+	// list until its menu has the row
+	var row image.Point
+	var m *popups.Menu
+	for y := card.Min.Y + 44 + 60; y < card.Max.Y-20; y += 30 {
+		e.rightClick(image.Pt(card.Min.X+150, y))
+		mm := peekMenu(e, "activity")
+		if mm == nil {
+			continue
+		}
+		if !a.tabPeekOpen("activity") {
+			t.Fatal("the right-click closed the peek")
+		}
+		if _, ok := peekMenuItem(mm, "open_in_home"); ok {
+			row, m = image.Pt(card.Min.X+150, y), mm
+			break
+		}
+		mm.Dismiss()
+		e.frame()
 	}
-	if !a.tabPeekOpen("activity") {
-		t.Fatal("the right-click closed the peek")
+	if m == nil {
+		t.Fatal("no row's right-click menu with Open in home on the card")
 	}
 	e.railPeekShot("activity-peek-row-menu-light")
-	if _, ok := peekMenuItem(m, "open_in_home"); !ok {
-		t.Fatalf("no Open in home in %v", m.Labels())
-	}
 	checkMenuKeepsPeek(t, e, "activity", m, away)
 
 	// Open in home: maybeClosePeek
@@ -239,6 +252,8 @@ func TestRailPeekDMsRowMenu(t *testing.T) {
 func TestRailPeekLaterRowMenu(t *testing.T) {
 	e := pagePeekEnv(t)
 	a := e.a
+	a.Core().SetExperimentGroup("later_todos", "on") // the test account's
+	e.settle(300 * time.Millisecond)
 	away := image.Pt(e.size.X-20, e.size.Y-20)
 	p := openTabPeekByHover(e, "later", away)
 	l := pageView[*views.Later](e, "later")
@@ -289,6 +304,10 @@ func TestRailPeekLaterRowMenu(t *testing.T) {
 func TestRailPeekAgentsRowMenu(t *testing.T) {
 	e, fs := railPeekEnv(t)
 	a := e.a
+	// the test account's (account_experiments.json): the session strings
+	// and thread naming
+	a.Core().SetExperimentGroup("agent_ux_august2026_release_translations", "on")
+	a.Core().SetExperimentGroup("agent_channel_thread_naming", "on")
 	away := image.Pt(e.size.X-20, e.size.Y-20)
 	p := openPlatformPeek(e, away)
 	v := a.agPeek
@@ -383,6 +402,8 @@ func TestRailPeekAgentsRowMenu(t *testing.T) {
 // Light and dark shots of the menus over the cards.
 func TestRailPeekMenusShots(t *testing.T) {
 	e := pagePeekEnv(t)
+	e.a.Core().SetExperimentGroup("activity_inbox", "on")
+	e.a.Core().SetExperimentGroup("later_todos", "on")
 	away := image.Pt(e.size.X-20, e.size.Y-20)
 	for _, dark := range []bool{false, true} {
 		e.setDark(dark)

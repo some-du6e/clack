@@ -61,6 +61,9 @@ var defaultExperimentGroups = map[string]string{
 	// the Activity page's layout toggle sits in its header (5Ns/ XW; the
 	// live audit, docs/VIEWS-AUDIT.md): its density is the global pref
 	"activity_global_settings": "on",
+	// the Agents & tools peek's session menu strings and Rename
+	// (rail_peek_agents_menu.go), as the account has them (2026-11-13)
+	"agent_ux_august2026_release_translations": "on", "agent_channel_thread_naming": "on",
 	// the Activity experiments as experiments.getByUser had them on
 	// 2026-11-10 (activity_agent.go, docs/ACTIVITY.md "Experiments")
 	// (nested_secondary_view, which the detail panel's needs, is the
