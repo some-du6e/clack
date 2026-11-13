@@ -594,6 +594,11 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		headHov = a.sidebar.headingHover(r.key)
 		hovered = headHov.Update(gtx.Source)
 	}
+	if hovered && !sel && !r.disabled && col == c.SidebarText && (conv != nil || r.kind == sbLink) {
+		// :hover keeps content-inv-sec, translucent: the browser mixes it
+		// over the hover tile, not over the bare sidebar
+		col = theme.Over(a.th.C.SidebarText, c.SidebarHover)
+	}
 	hov := hoverState(hovered)
 	item := clsSbItem.EnterAttr(gtx, hov, 0, "data-item-key", r.itemKey)
 	defer item.Leave()
@@ -812,7 +817,7 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			icon = "caret-down"
 		}
 		ix := pad + rs.indent
-		iy := (rowH - gtx.Dp(16)) / 2
+		iy := (rowH - gtx.Dp(16) + 1) / 2 // align-items center, rounded (35px rows at 1.25x put a 20px icon at 8)
 		right := rw - gtx.Dp(6)
 		if rs.edit {
 			// renderEditModeCheckbox: 1em of the row's 15px, centred in its
@@ -846,13 +851,15 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				ctr := image.Pt(right-bd.Size.X/2, rowH/2)
 				theme.Circle(gtx, ctr, gtx.Dp(16)*4445/10000, c.Badge)
 			} else {
-				t := op.Offset(image.Pt(right-bd.Size.X, (rowH-bd.Size.Y)/2)).Push(gtx.Ops)
+				// .p-channel_sidebar__badge: margin-right 2px inside the
+				// row's --has-badge 6px padding
+				t := op.Offset(image.Pt(right-gtx.Dp(2)-bd.Size.X, (rowH-bd.Size.Y+1)/2)).Push(gtx.Ops)
 				call.Add(gtx.Ops)
 				t.Pop()
 			}
-			right -= bd.Size.X
+			right -= gtx.Dp(2) + bd.Size.X + gtx.Dp(4) // and .c-badge's margin-left 4px
 			if !draft {
-				right -= gtx.Dp(6)
+				right -= gtx.Dp(8) // the row's gap: 8px between the name and the suffix
 			}
 		}
 		// Drafts & sent's badges (Slack's OutboxLinkContent): "✎ N" for

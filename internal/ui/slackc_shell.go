@@ -335,7 +335,7 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		}
 	}
 	fg := e.fg
-	iy := (rowH - gtx.Dp(16)) / 2
+	iy := (rowH - gtx.Dp(16) + 1) / 2 // align-items center, rounded (sidebar.go)
 	if (kind == "im" || kind == "app") && !uipref.Get().SidebarAvatars {
 		// show_sidebar_avatars off: BaseChannelPrefix draws the presence
 		// badge in the icon's place (BaseChannelPrefixPresence)

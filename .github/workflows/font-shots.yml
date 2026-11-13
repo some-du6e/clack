@@ -25,7 +25,11 @@ name: font-shots
 # .github/scripts/sidebar_rows_ref.py renders the same rows in Slack's
 # markup under client-boot-styles with Slack's own Lato (public CDN, no
 # cookie) in headless Chrome, measures the icon, name and badge ink of
-# each and writes 400% side-by-sides (sidebar-rows-* artifacts).
+# each and writes 400% side-by-sides (sidebar-rows-* artifacts). The same jobs
+# run TestRailShots (internal/ui/rail_shots_test.go) and
+# .github/scripts/rail_ref.py: every tab rail button idle, hovered, selected,
+# after a mouse click (and Slack's keyboard focus) against Slack's tab rail
+# markup, with the badge's ring measured.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run font-shots.yml --ref <branch>)
@@ -45,6 +49,9 @@ on:
       - "internal/ui/sidebar.go"
       - "internal/ui/slackc_shell.go"
       - "internal/ui/sidebar_rows_shots_test.go"
+      - "internal/ui/rail_shots_test.go"
+      - "internal/ui/chrome.go"
+      - ".github/scripts/rail_ref.py"
       - ".github/scripts/sidebar_rows_ref.py"
       - ".github/scripts/text_render_compare.py"
       - ".github/workflows/font-shots.yml"
@@ -236,15 +243,17 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
           SIDEBAR_ROWS_DIR: ${{ github.workspace }}/dist/sidebar-rows
+          RAIL_SHOTS_DIR: ${{ github.workspace }}/dist/sidebar-rows
         run: |
           mkdir -p "$SIDEBAR_ROWS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestSidebarRowShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestSidebarRowShots$|TestRailShots$' ./internal/ui/
       - name: Slack's rows in Chrome, measured
         run: |
           python3 -m pip install --quiet pillow brotli
           python3 .github/scripts/sidebar_rows_ref.py fetch dist/slack-ref
           google-chrome --version | tee dist/sidebar-rows/browser.txt
           python3 .github/scripts/sidebar_rows_ref.py dist/sidebar-rows dist/slack-ref/client-boot-styles.cf726c4f2eaecc74.min.css internal/ui/slackc/css/slackvars.go dist/slack-ref/icons.json google-chrome linux
+          python3 .github/scripts/rail_ref.py dist/sidebar-rows dist/slack-ref/client-boot-styles.cf726c4f2eaecc74.min.css internal/ui/slackc/css/slackvars.go dist/slack-ref/icons.json google-chrome linux
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -266,9 +275,10 @@ jobs:
         env:
           CLACK_PIXEL_TESTS: "1"
           SIDEBAR_ROWS_DIR: ${{ github.workspace }}\dist\sidebar-rows
+          RAIL_SHOTS_DIR: ${{ github.workspace }}\dist\sidebar-rows
         run: |
           New-Item -ItemType Directory -Force -Path $env:SIDEBAR_ROWS_DIR | Out-Null
-          go test -count=1 -v -timeout 15m -run 'TestSidebarRowShots$' ./internal/ui/
+          go test -count=1 -v -timeout 20m -run 'TestSidebarRowShots$|TestRailShots$' ./internal/ui/
       - name: Slack's rows in Chrome, measured
         shell: pwsh
         run: |
@@ -278,6 +288,7 @@ jobs:
           $chrome = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe').'(default)'
           "chrome $((Get-Item $chrome).VersionInfo.ProductVersion)" | Tee-Object -FilePath dist/sidebar-rows/browser.txt
           python .github/scripts/sidebar_rows_ref.py dist/sidebar-rows dist/slack-ref/client-boot-styles.cf726c4f2eaecc74.min.css internal/ui/slackc/css/slackvars.go dist/slack-ref/icons.json "$chrome" windows
+          python .github/scripts/rail_ref.py dist/sidebar-rows dist/slack-ref/client-boot-styles.cf726c4f2eaecc74.min.css internal/ui/slackc/css/slackvars.go dist/slack-ref/icons.json "$chrome" windows
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

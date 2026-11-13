@@ -176,7 +176,8 @@ type App struct {
 	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
 	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
-	rzOverlayTag    int // .p-resizer-overlay (resizer.go)
+	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
+	railRects       map[string]image.Rectangle // tests set it: layoutRail records each rail button's box
 	ptrWin          image.Point
 	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
