@@ -2,6 +2,7 @@ package richview
 
 import (
 	"unicode/utf8"
+	"unsafe"
 
 	"gioui.org/font"
 	"gioui.org/op"
@@ -42,16 +43,28 @@ type shaped struct {
 	embOK   bool
 	bitmaps op.CallOp
 	color   bool // has bitmap (color emoji) glyphs
+	// bytes is roughly the memory the word holds: its glyphs, then its
+	// outlines once built (the shaped-word cache's budget, word)
+	bytes int
 }
 
 type spaceMetrics struct {
 	adv, asc, desc float32
 }
 
-// maxCachedWords is one generation of the shaped-word cache. Each word
-// carries its glyphs and outline paths; views keep the words they show, so
-// the cache only has to cover words seen recently.
-const maxCachedWords = 8000
+// A generation of the shaped-word cache ends at maxCachedWords words or
+// maxCachedWordBytes of glyphs and outlines, whichever comes first (word).
+// Each word carries its outline, about 1 KB a glyph: at the Hack Club
+// account's scale two generations of 8,000 words held 120 MB, most of it
+// outlines of words no message on screen used. Views keep the words they
+// show, so the cache only has to cover words seen recently; one screen of
+// messages is a few hundred words.
+const (
+	maxCachedWords     = 8000
+	maxCachedWordBytes = 8 << 20
+)
+
+const glyphSize = int(unsafe.Sizeof(text.Glyph{}))
 
 func f2f(v fixed.Int26_6) float32 { return float32(v) / 64 }
 
@@ -61,18 +74,20 @@ func (s *Style) word(k faceKey, str string) *shaped {
 	if w, ok := s.words[wk]; ok {
 		return w
 	}
-	if len(s.words) >= maxCachedWords {
+	if len(s.words) >= maxCachedWords || s.wordBytes >= maxCachedWordBytes {
 		// Two generations: the current one becomes the previous, the older
 		// one is dropped. Words used since the last rotation survive (they
 		// are promoted on lookup). Views keep pointers to the words they use.
 		s.prev = s.words
-		s.words = make(map[wordKey]*shaped, maxCachedWords/2)
+		s.words = make(map[wordKey]*shaped, min(len(s.prev), maxCachedWords)/2)
+		s.wordBytes = 0
 	}
 	w, ok := s.prev[wk]
 	if !ok {
 		w = s.shapeNow(k, str, false)
 	}
 	s.words[wk] = w
+	s.wordBytes += w.bytes
 	return w
 }
 
@@ -104,6 +119,7 @@ func (s *Style) shapeNow(k faceKey, str string, keepSpace bool) *shaped {
 		w.glyphs = append(w.glyphs, g)
 	}
 	w.adv = f2f(adv)
+	w.bytes = cap(w.glyphs)*glyphSize + len(str) + int(unsafe.Sizeof(shaped{}))
 	if first {
 		// Nothing shaped (empty string): take metrics from a space.
 		sp := s.spaceOf(k)
@@ -158,6 +174,9 @@ func (s *Style) pathOf(w *shaped, needPath bool) (clip.PathSpec, op.CallOp) {
 		w.pathDone = true
 		if len(w.glyphs) > 0 {
 			w.path = s.Shaper.Shape(w.glyphs)
+			n := pathBytes(w.path, len(w.glyphs))
+			w.bytes += n
+			s.wordBytes += n
 		}
 	}
 	return w.path, w.bitmaps
@@ -169,6 +188,11 @@ func (s *Style) emboldenedOf(w *shaped, emb float32) (clip.PathSpec, bool) {
 	if w.embW != emb {
 		w.embW = emb
 		w.embPath, w.embOK = theme.EmboldenedShape(s.Shaper, w.glyphs, emb)
+		if w.embOK {
+			n := pathBytes(w.embPath, len(w.glyphs))
+			w.bytes += n
+			s.wordBytes += n
+		}
 	}
 	return w.embPath, w.embOK
 }

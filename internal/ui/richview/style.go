@@ -256,7 +256,9 @@ type Style struct {
 	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped
 	prev  map[wordKey]*shaped // previous generation (see word)
-	space map[faceKey]spaceMetrics
+	// wordBytes is roughly what the current generation's words hold
+	wordBytes int
+	space     map[faceKey]spaceMetrics
 }
 
 // NewStyle builds a Style with Slack's defaults.
@@ -301,6 +303,7 @@ func (s *Style) Invalidate() {
 	for k := range s.words {
 		delete(s.words, k)
 	}
+	s.wordBytes = 0
 	for k := range s.space {
 		delete(s.space, k)
 	}

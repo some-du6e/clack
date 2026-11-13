@@ -17,8 +17,9 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
-`app/clack_drop*.go`, `app/clack_hide*.go` and these two files (`CLACK_PATCHES.md`,
-`UPSTREAM.patch`).
+`app/clack_drop*.go`, `app/clack_hide*.go`, `internal/ops/clack_size.go`,
+`op/clack_size.go`, `op/clip/clack_size.go` and these two files
+(`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -551,3 +552,24 @@ HWND is never freed. `FlushEvents` now delivers nothing once a
 `DestroyEvent` went out. Tested by `internal/ui` `TestCloseToTrayWindow`
 (Quit while the window is hidden; it hung in 7 of 32 runs on 2026-11-12).
 Not in `UPSTREAM.patch`.
+
+## 15. op: the memory a recorded path holds
+
+`internal/ops/clack_size.go` (`Ops.Size`), `op/clack_size.go`
+(`CallOp.Size`) and `op/clip/clack_size.go` (`PathSpec.Size`). An
+addition: nothing calls it but Clack.
+
+`text.Shaper.Shape` records each outline into an `op.Ops` of its own, and
+`internal/ui/richview` keeps every shaped word's outline in its word cache.
+The cache was bounded by its count only (two generations of 8,000 words),
+and at the Hack Club account's scale it held 120 MB of outlines, nearly all
+of words no message on screen used (the memory workflow, perf.yml's scale
+jobs, 2026-11-12). `PathSpec.Size` is roughly what an outline holds: its
+`Ops` data and reference arrays' capacity. richview ends a generation once
+its words hold 8 MB (`maxCachedWordBytes`).
+
+richview is also built against stock Gio v0.10.3 (`.github/scripts/
+gio-layer-fix.sh`), so it calls this through `gio_patch15.go`; on stock
+Gio (`gio_patch15_stock.go`) a word's outline counts 1 KB a glyph. Test:
+`internal/ui/richview` `TestWordCacheByteBudget`. Not in `UPSTREAM.patch`.
+
