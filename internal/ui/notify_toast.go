@@ -3,53 +3,50 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
-	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf16"
 )
 
-// The Windows toast, as Slack desktop builds it (main.bundle.cjs 4.53.276
-// win32 x64: class EH, NativeWindowsNotification.createToastNotification,
-// fed by gX, the NOTIFY IPC's payload normaliser) from the payload the
-// webapp sends (gantry-v2-async-client-boot-shared, build 2cd9270e786c:
-// gaJC desktopNotificationOptions and desktopHuddleNotificationOptions,
-// awVE's action buttons, HAag's notification ids).
+// The Windows toast, in Chrome's layout (Karim's choice, 2026-11-12: "this
+// is normal chrome's its cleaner"). Web Slack in Chrome hands the strings
+// to new Notification(title, {body, icon, tag}) (boot-shared build
+// f132f0e78468, notifyBrowser, fed by sharedNotificationOptions: the
+// title from getNotificationTitle, the body from
+// formatMessageForNotification; browserNotificationOptions' icon is the
+// webapp's img.app_icon, Slack's logo), and Chromium writes the toast
+// (chrome/browser/notifications/win/notification_template_builder.cc,
+// BuildNotificationTemplate): the title, the body, an attribution line
+// with the page's origin, the icon as appLogoOverride uncropped, the
+// buttons, and a displayTimestamp. No header line, no reply box, no
+// line limits: Windows shows the body in up to 4 lines.
 //
-// EH has two branches. With the windows_com_activation desktop feature
-// (which the server's desktop.features turns on), the toast, its header
-// and its buttons activate the app in the foreground with JSON arguments,
-// and handleToastActivation (EY) reads them back. Without it, they carry
-// slack:// links (formatSlackUrlForMessage plus &origin=notification) and
-// Windows opens the link with whichever app has slack://. Clack builds
-// the first branch: Windows hands its activation to the process that
-// showed the toast, where the second would open Slack desktop on a
-// machine that has it. Both branches draw the same toast apart from the
-// first one's reply box.
+// This deliberately differs from Slack desktop's win32 toast (class EH,
+// NativeWindowsNotification.createToastNotification in main.bundle.cjs
+// 4.53.276, which gap-w17 copied): its <header> with the workspace's name,
+// the channel's name as the title, the sender's picture cropped to a
+// circle, a 10-line body and the reply box are gone. The toast, and a
+// huddle invite's buttons, still activate Clack with the JSON arguments
+// of EH's COM-activation branch (handleToastActivation reads them back),
+// which is how a click opens the conversation.
 
 // desktopNote is a desktop notification as the webapp hands it to the
-// shell (desktopNotificationOptions, desktopHuddleNotificationOptions),
-// with gX's defaults.
+// shell (desktopNotificationOptions, desktopHuddleNotificationOptions).
 type desktopNote struct {
 	ID          string // the toast's Tag (Electron Notification id)
-	GroupID     string // its Group, and the header's id when set
-	GroupTitle  string // the header's title when set
+	GroupID     string // its Group (Notification Center's grouping; not drawn)
 	Title, Body string
 	Team        string // teamId
-	Workspace   string // win32.workspaceName: the team's name
+	Workspace   string // the team's name: the attribution line
 	Channel     string
-	ChannelName string // getDisplayNameForChannel, without the @ for DMs
 	Msg         string // msg: the message's ts, or a huddle notification's tag
 	ThreadTS    string
 	TraceID     string
-	Avatar      string // avatarImage: the sender's 192 px picture
-	Grouped     bool   // groupWindowsNotifications: the toast's title is the channel's name
-	HasReply    bool
+	When        time.Time    // the Notification's timestamp (displayTimestamp; zero: none)
 	Buttons     []noteButton // actionButtons
-	// Activated runs when the toast, its header or one of its buttons is
-	// clicked (any goroutine; nil: nothing happens).
+	// Activated runs when the toast or one of its buttons is clicked (any
+	// goroutine; nil: nothing happens).
 	Activated func(toastActivation)
 }
 
@@ -63,13 +60,12 @@ type noteButton struct {
 }
 
 // toastActivation is a click on a toast, read from its arguments by
-// handleToastActivation (the payload schemas EV, Ez and EX).
+// handleToastActivation (the payload schemas EV and Ez).
 type toastActivation struct {
-	Type string // notification (the toast), action (a button), header
+	Type string // notification (the toast), action (a button)
 	// notification
 	Team, Channel, MessageID, NotificationID, TraceID, ThreadTS string
-	Reply                                                       string // the reply box's text (userInputs.replyBox)
-	// action, header
+	// action
 	LaunchURI, ID string
 	Index         int // the button's index, -1 when absent
 }
@@ -90,10 +86,6 @@ type (
 		LaunchURI string `json:"launchUri"`
 		ID        string `json:"id"`
 		Index     int    `json:"index"`
-	}
-	toastHeaderArgs struct {
-		Type      string `json:"type"`
-		LaunchURI string `json:"launchUri"`
 	}
 )
 
@@ -167,81 +159,74 @@ func splitJSSpace(s string) []string {
 	return append(out, s[start:])
 }
 
-// toastTitle and toastBody are gX's title and body.
+// toastTitle and toastBody are the texts, capped as the shell's gX caps
+// them (Chrome passes them whole, but Windows draws 2 lines of the title
+// and 4 of the body, far short of the cap), and the body's HTML entities decoded
+// (notifyBrowser's decodeHtmlEntities, for content the server sent).
 func (n *desktopNote) toastTitle() string { return shellTruncate(n.Title, 1500, 1700) }
 func (n *desktopNote) toastBody() string  { return toastUnescape(shellTruncate(n.Body, 1500, 2000)) }
-
-// collapseTags is createToastNotification's .replace(/\>\s+\</g, "><").
-var collapseTags = regexp.MustCompile(`>[\t\n\v\f\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}]+<`)
-
-func collapse(s string) string { return collapseTags.ReplaceAllString(s, "><") }
 
 // isSlackURI is the shell's aw: a slack: link.
 func isSlackURI(s string) bool { return len(s) >= 6 && strings.EqualFold(s[:6], "slack:") }
 
-// toastXML is createToastNotification's toastXml for the COM-activation
-// branch. avatar is the sender's picture as a local file ("" for none),
-// as the shell downloads it for an unpackaged app.
-func (n *desktopNote) toastXML(avatar string) string {
+// toastXML is BuildNotificationTemplate's toast for n, without libxml's
+// indentation (Windows ignores it): <toast launch displayTimestamp>, the
+// title and body <text>s, the attribution <text>, the icon, <actions>
+// (Chromium writes the element even when it's empty) and the silent
+// <audio>. logo is Clack's icon as a local file ("" for none): the
+// webapp's Notification icon is Slack's logo, which Chromium draws as
+// appLogoOverride with hint-crop="none".
+//
+// The attribution is the workspace's name where Chrome has the page's
+// origin (app.slack.com): both say where the message came from, and
+// Clack's app line already says "Clack" where Chrome's says "Google
+// Chrome". The toast is silent, as Slack desktop's is: Clack plays
+// Slack's own message sound (notifyMessage), where Chrome's Notification
+// isn't silent and Windows would ding on top of it. Chromium's right-click
+// "notification settings" item isn't there: Clack has no handler for it.
+func (n *desktopNote) toastXML(logo string) string {
 	esc := toastEscape
-	launch := esc(jsonStringify(toastLaunchArgs{Type: "notification", TeamID: n.Team, Channel: n.Channel,
-		MessageID: n.Msg, NotificationID: n.ID, TraceID: n.TraceID, ThreadTimestamp: n.ThreadTS}))
-	header := ""
-	hid, htitle := n.GroupID, n.GroupTitle
-	if hid == "" {
-		hid = n.Team
+	var b strings.Builder
+	b.WriteString(`<toast launch="` + esc(jsonStringify(toastLaunchArgs{Type: "notification", TeamID: n.Team, Channel: n.Channel,
+		MessageID: n.Msg, NotificationID: n.ID, TraceID: n.TraceID, ThreadTimestamp: n.ThreadTS})) + `"`)
+	if !n.When.IsZero() {
+		b.WriteString(` displayTimestamp="` + n.When.UTC().Format("2006-01-02T15:04:05Z") + `"`)
 	}
-	if htitle == "" {
-		htitle = n.Workspace
+	b.WriteString(`><visual><binding template="ToastGeneric"><text>` + esc(n.toastTitle()) + `</text><text>` + esc(n.toastBody()) + `</text>`)
+	if n.Workspace != "" {
+		b.WriteString(`<text placement="attribution">` + esc(n.Workspace) + `</text>`)
 	}
-	if hid != "" && htitle != "" {
-		uri := "slack://noop"
-		if n.Team != "" {
-			uri = "slack://channel?team=" + esc(n.Team)
-		}
-		header = `<header id="` + esc(hid) + `" title="` + esc(htitle) + `" activationType="foreground" arguments="` +
-			esc(jsonStringify(toastHeaderArgs{Type: "header", LaunchURI: uri})) + `"></header>`
+	if logo != "" {
+		b.WriteString(`<image placement="appLogoOverride" src="` + esc(logo) + `" hint-crop="none"/>`)
 	}
-	title := esc(n.toastTitle())
-	if n.Grouped && n.ChannelName != "" && header != "" {
-		title = esc(n.ChannelName)
-	}
-	extras := ""
-	if avatar != "" {
-		extras = `<image placement="appLogoOverride" hint-crop="circle" src="` + esc(avatar) + `" />`
-	}
-	actions := ""
-	if len(n.Buttons) > 0 || n.HasReply {
-		var parts []string
-		if n.HasReply {
-			parts = append(parts, `<input id="replyBox" type="text" placeHolderContent="Reply"/>`,
-				`<action content="➤" hint-inputId="replyBox" activationType="foreground" arguments="`+launch+`"/>`)
-		}
-		for i, b := range n.Buttons {
-			content := esc(b.Content)
-			if b.LaunchURI == "" {
-				parts = append(parts, "\n      <action activationType=\"system\" arguments=\"dismiss\" content=\""+content+"\"/>")
+	b.WriteString(`</binding></visual>`)
+	if len(n.Buttons) == 0 {
+		b.WriteString(`<actions/>`)
+	} else {
+		b.WriteString(`<actions>`)
+		for i, bt := range n.Buttons {
+			content := esc(bt.Content)
+			if bt.LaunchURI == "" { // Windows' own dismiss, as the shell makes a button without a link
+				b.WriteString(`<action activationType="system" content="` + content + `" arguments="dismiss"/>`)
 				continue
 			}
-			uri := esc(b.LaunchURI)
+			uri := bt.LaunchURI
 			if !isSlackURI(uri) {
 				uri = "slack://noop" // guardLaunchUri
 			}
-			args := esc(jsonStringify(toastActionArgs{Type: "action", LaunchURI: strings.ReplaceAll(uri, "&amp;", "&"), ID: n.ID, Index: i}))
-			parts = append(parts, "\n      <action activationType=\"foreground\" arguments=\""+args+"\" content=\""+content+"\"/>")
+			b.WriteString(`<action activationType="foreground" content="` + content + `" arguments="` +
+				esc(jsonStringify(toastActionArgs{Type: "action", LaunchURI: uri, ID: n.ID, Index: i})) + `"/>`)
 		}
-		actions = strings.TrimSpace(collapse("\n    <actions>\n      " + strings.Join(parts, "") + "\n    </actions>"))
+		b.WriteString(`</actions>`)
 	}
-	return collapse("\n  <toast activationType=\"foreground\" launch=\"" + launch + "\">\n    " + header +
-		"\n    <visual>\n      <binding template=\"ToastGeneric\">\n        <text hint-wrap=\"false\" hint-maxLines=\"1\">" + title +
-		"</text>\n        <text hint-maxLines=\"10\" hint-style=\"bodySubtle\" hint-wrap=\"true\">" + esc(n.toastBody()) +
-		"</text>\n        " + extras + "\n      </binding>\n    </visual>\n    <audio silent=\"true\" />\n    " + actions + "\n  </toast>")
+	b.WriteString(`<audio silent="true"/></toast>`)
+	return b.String()
 }
 
-// parseToastActivation is parseActivationPayload: the arguments must be
-// one of the three payloads (Joi objects: no other keys, required strings
-// not empty, traceId may be). replyBox is the reply box's text.
-func parseToastActivation(args, replyBox string) (toastActivation, bool) {
+// parseToastActivation is parseActivationPayload for the toast's and its
+// buttons' payloads (Joi objects: no other keys, required strings not
+// empty, traceId may be).
+func parseToastActivation(args string) (toastActivation, bool) {
 	var m map[string]any
 	d := json.NewDecoder(strings.NewReader(args))
 	d.UseNumber()
@@ -285,7 +270,6 @@ func parseToastActivation(args, replyBox string) (toastActivation, bool) {
 		set(&a.TraceID, "traceId", true, true)
 		set(&a.ThreadTS, "threadTimestamp", false, false)
 		ok = ok && only("type", "teamId", "channel", "messageId", "notificationId", "traceId", "threadTimestamp")
-		a.Reply = replyBox
 	case "action":
 		set(&a.LaunchURI, "launchUri", true, false)
 		set(&a.ID, "id", true, false)
@@ -298,9 +282,6 @@ func parseToastActivation(args, replyBox string) (toastActivation, bool) {
 			a.Index = i
 		}
 		ok = ok && only("type", "launchUri", "id", "index")
-	case "header":
-		set(&a.LaunchURI, "launchUri", true, false)
-		ok = ok && only("type", "launchUri")
 	default:
 		ok = false
 	}
@@ -381,23 +362,4 @@ func shellNoteID(team, msg string) string {
 		return team + "_" + msg
 	}
 	return strconv.FormatInt(time.Now().UnixNano(), 36)
-}
-
-// avatarHosts are the hosts the shell takes a toast's pictures from
-// (verifyImageSources with module 6235's Lg list; subdomains count).
-var avatarHosts = []string{"slack-edge.com", "slack-imgs.com", "slack-edge.mil", "slack-imgs.mil", "slack-imgs-mil-dev.com",
-	"slack-edge-mil-dev.com", "slack-imgs-gov.com", "slack-imgs-gov-dev.com", "slack-edge-gov.com"}
-
-// toastImageAllowed is verifyImageSources for one URL.
-func toastImageAllowed(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return false
-	}
-	for _, d := range avatarHosts {
-		if u.Host == d || strings.HasSuffix(u.Host, "."+d) {
-			return true
-		}
-	}
-	return false
 }

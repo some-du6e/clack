@@ -2,13 +2,11 @@ package ui
 
 import (
 	"context"
-	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/some-du6e/clack/internal/i18n"
-	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -22,9 +20,8 @@ type notifier interface {
 	NotifyActions(title, body string, actions []string, on func(key string)) error
 }
 
-// noteNotifier is a notifier that shows the whole notification as
-// Slack's shell gets it (the Windows toast: its header, the sender's
-// picture, its buttons, where a click goes).
+// noteNotifier is a notifier that shows the whole notification (the
+// Windows toast: its workspace line, its buttons, where a click goes).
 type noteNotifier interface {
 	NotifyNote(n *desktopNote) error
 }
@@ -164,22 +161,6 @@ func (a *App) noteActionsOn() bool {
 	return c != nil && c.Experiment("desktop_notification_actions") == "on"
 }
 
-// noteAvatar is a user's 192 px picture (getMemberAvatar(…, 192)).
-func (a *App) noteAvatar(user string) string {
-	c := a.Core()
-	if c == nil || user == "" {
-		return ""
-	}
-	u, ok := c.User(user)
-	if !ok {
-		return ""
-	}
-	if u.Avatar192 != "" {
-		return u.Avatar192
-	}
-	return u.Avatar
-}
-
 // plainNote is a notification with nothing to open (App.Notify).
 func (a *App) plainNote() *desktopNote {
 	team, ws := a.noteTeam()
@@ -190,22 +171,13 @@ func (a *App) plainNote() *desktopNote {
 }
 
 // messageNote is desktopNotificationOptions for a message in ch (ts, in
-// the thread at thread when it's a reply) from user.
-func (a *App) messageNote(ch, ts, thread, user string) *desktopNote {
+// the thread at thread when it's a reply).
+func (a *App) messageNote(ch, ts, thread string) *desktopNote {
 	team, ws := a.noteTeam()
-	var c *convInfo
-	if a.data != nil {
-		c = a.data.m.conv(ch)
-	}
-	n := &desktopNote{Team: team, Workspace: ws, Channel: ch, ChannelName: notifyChannelName(c), Msg: ts, ThreadTS: thread,
-		Avatar: a.noteAvatar(user), HasReply: true,
-		// shouldWindowsNotificationsBeGrouped: the conversation is known and
-		// the message isn't a DM's that overrides Do Not Disturb (Clack
-		// shows none of those)
-		Grouped: c != nil}
+	n := &desktopNote{Team: team, Workspace: ws, Channel: ch, Msg: ts, ThreadTS: thread}
 	if a.noteActionsOn() {
 		n.ID = buildNotificationID(team, noteTypeMessage, messageNotificationPayload(ch, ts, thread)...)
-		n.GroupID, n.GroupTitle = buildNotificationID(team, noteTypeMessage, ch), n.ChannelName
+		n.GroupID = buildNotificationID(team, noteTypeMessage, ch)
 	} else {
 		n.ID = shellNoteID(team, ts)
 	}
@@ -218,18 +190,12 @@ func (a *App) messageNote(ch, ts, thread, user string) *desktopNote {
 // invite or a missed one.
 func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 	team, ws := a.noteTeam()
-	var c *convInfo
-	if a.data != nil {
-		c = a.data.m.conv(h.Channel)
-	}
 	now := time.Now()
-	n := &desktopNote{Team: team, Workspace: ws, Channel: h.Channel, ChannelName: notifyChannelName(c),
-		Msg: huddleNotificationTag(h.Channel, now), Avatar: a.noteAvatar(h.User)}
+	n := &desktopNote{Team: team, Workspace: ws, Channel: h.Channel, Msg: huddleNotificationTag(h.Channel, now)}
 	typ := noteTypeHuddle
 	if h.Missed {
 		// showHuddleMissedNotification's title; an invite has none
-		// (sharedHuddleNotificationOptions), and the Windows shell, unlike
-		// Linux's, puts no workspace name in its place
+		// (sharedHuddleNotificationOptions; notifyBrowser passes title "")
 		typ, n.Title = noteTypeHuddleMissed, h.Title
 	}
 	if a.noteActionsOn() {
@@ -252,9 +218,9 @@ func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 
 // toastActivated is handleToastActivation for one of Clack's toasts:
 // the toast itself (notificationClicked), a button (its launch URI as a
-// deep link; Clack runs the button's own action), the header
-// (slack://channel?team=…: the workspace). Each brings the window to
-// the front, as the shell's click and deep-link handlers do.
+// deep link; Clack runs the button's own action). Each brings the window
+// to the front, as notifyBrowser's onclick (window.focus) and the shell's
+// deep-link handler do.
 func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 	raise := func() {
 		if a.winLive.Load() != nil { // a click only comes while the window is up
@@ -263,10 +229,6 @@ func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 	}
 	switch act.Type {
 	case "notification":
-		if act.Reply != "" {
-			a.replyFromNotification(act)
-			return
-		}
 		raise()
 		a.notificationClicked(act.Channel, act.MessageID, act.ThreadTS, act.NotificationID)
 	case "action":
@@ -278,8 +240,6 @@ func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 		if isSlackURI(act.LaunchURI) {
 			a.OpenURL(act.LaunchURI)
 		}
-	case "header":
-		raise()
 	}
 }
 
@@ -307,32 +267,4 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 		route += "/t/" + thread
 	}
 	a.Navigate(route)
-}
-
-// replyFromNotification is delegate_replyToNotification: the reply box's
-// text goes to the notification's conversation (the one its id names when
-// the arguments don't), in the thread when the notification was for a
-// reply. The window stays where it is.
-func (a *App) replyFromNotification(act toastActivation) {
-	ch, thread := act.Channel, act.ThreadTS
-	if ch == "" && act.NotificationID != "" {
-		if _, typ, payload, truncated := parseNotificationID(act.NotificationID); !truncated && typ == noteTypeMessage && len(payload) > 0 {
-			ch = payload[0]
-			if thread == "" && len(payload) > 2 {
-				thread = payload[2]
-			}
-		}
-	}
-	c := a.Core()
-	if c == nil || ch == "" {
-		return
-	}
-	text := act.Reply
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := composer.SendText(ctx, c, ch, thread, text); err != nil {
-			log.Printf("notify: the reply typed into a notification wasn't sent: %v", err)
-		}
-	}()
 }
