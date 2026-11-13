@@ -416,6 +416,20 @@ func sameView(a, b *core.Message) bool {
 
 // ---- realtime ----
 
+// ApplyEvent applies a core event to app's message models now, on the
+// caller's goroutine: a reaction picked this frame (core.ReactBegin, Slack's
+// optimistic update) draws in the next frame instead of after the
+// subscription's goroutine hands it over. The subscription's copy of the
+// same event lands later and changes nothing.
+func ApplyEvent(app *core.App, ev core.Event) {
+	hubsMu.Lock()
+	hb := hubs[app]
+	hubsMu.Unlock()
+	if hb != nil && hb.apply(ev) {
+		hb.invalidate()
+	}
+}
+
 func (hb *hub) run(evs <-chan core.Event) {
 	for ev := range evs {
 		if hb.apply(ev) {

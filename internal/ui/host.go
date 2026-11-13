@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -220,6 +221,14 @@ func (a *App) focusAfterNavigate(prev, r Route) {
 		c.edit.Focus()
 	case c.comp != nil:
 		c.comp.Focus()
+	}
+}
+
+// ApplyCoreEvent shows a core event in the message views now, on the UI
+// goroutine (a reaction picked this frame; popups.React).
+func (a *App) ApplyCoreEvent(ev core.Event) {
+	if a.data != nil && a.data.core != nil {
+		messages.ApplyEvent(a.data.core, ev)
 	}
 }
 
