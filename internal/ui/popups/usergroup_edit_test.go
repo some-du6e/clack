@@ -349,7 +349,7 @@ func TestUserGroupPaneEditMembers(t *testing.T) {
 			t.Errorf("%s: %q", e.mode, x)
 		}
 		e.shot("usergroup-edit-members")
-		e.typeIn(&d.sel.ed, "fake")
+		e.typeIn(&d.sel.ed, "a") // the fake matches usernames
 		e.until("the people search", func() bool { return len(d.sel.Options()) > 0 })
 		add := d.sel.Options()[0]
 		e.press(key.NameReturn)
@@ -362,7 +362,7 @@ func TestUserGroupPaneEditMembers(t *testing.T) {
 		if ids := d.sel.IDs(); len(ids) != 6 || slices.Contains(ids, add.ID) {
 			t.Fatalf("%s Backspace twice: %v", e.mode, ids)
 		}
-		e.typeIn(&d.sel.ed, "fake")
+		e.typeIn(&d.sel.ed, "a") // the fake matches usernames
 		e.until("the people search again", func() bool { return len(d.sel.Options()) > 0 })
 		add = d.sel.Options()[0]
 		e.press(key.NameReturn)
@@ -623,11 +623,13 @@ func TestUserGroupPaneLocked(t *testing.T) {
 			t.Errorf("%s locked member ⋮ %q", e.mode, got)
 		}
 		e.menu().Dismiss()
+		e.frame() // the menu and its scrim leave the hit areas
 		e.click(e.pane("options"))
 		if got := e.menu().menu.Labels(); !slices.Equal(got, []string{"Copy group ID", "Deactivate group"}) {
 			t.Errorf("%s locked ⋮ %q", e.mode, got)
 		}
 		e.menu().Dismiss()
+		e.frame() // the menu and its scrim leave the hit areas
 		e.click(e.pane("edit-details"))
 		m, ok := e.top().(*UserGroupEditModal)
 		if !ok {

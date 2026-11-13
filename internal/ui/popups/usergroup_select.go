@@ -358,7 +358,7 @@ func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layou
 			gtx.Constraints = layout.Constraints{Min: image.Pt(ew, 0), Max: image.Pt(ew, ih)}
 			return vcenter(gtx, ih, func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Constraints{Min: image.Pt(ew, 0), Max: image.Pt(ew, ih)}
-				if s.ed.Len() == 0 && len(s.picked) == 0 {
+				if s.ed.Len() == 0 && len(s.picked) == 0 && s.placeholder != "" {
 					call, _ := record(gtx, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, fs, theme.Regular, cl.Placeholder, s.placeholder)
 					})
