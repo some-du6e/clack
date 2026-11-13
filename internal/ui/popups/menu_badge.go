@@ -119,6 +119,8 @@ func menuTagColors(th *theme.Theme, style string) (bg, fg color.NRGBA) {
 func menuBadgeColors(th *theme.Theme, style string) (bg, fg color.NRGBA) {
 	var b, f chipTok
 	switch style {
+	case "themed":
+		b, f = themedBadge[0], themedBadge[1] // channel_card.go
 	case "blue":
 		b, f = tokSurfHgl1, tokContentHgl1
 	case "white":

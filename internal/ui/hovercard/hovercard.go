@@ -17,6 +17,12 @@
 // tooltips, the sidebar's DMs, thread reply-bar facepiles (24px,
 // isInteractive false), huddle participants.
 //
+// A channel has its own card through the same controller: Slack's
+// BaseMrkdwnChannel wraps a message's #channel in HoverCardTrigger with
+// its defaults (position "top", the same delays) around ChannelHoverCard,
+// and Texty's TextyTooltip opens that card over a composer channel slug
+// (ReportChannel, ReportTextyChannel; popups.ChannelHoverCard).
+//
 // Triggers anywhere in the UI report themselves during layout (Trigger, or
 // Report for views that hit-test their own content, like richview's
 // mentions). The ui root owns one Controller: after the content is laid
@@ -100,6 +106,15 @@ type Request struct {
 	// cancels the hide); leaving both closes it after hideTooltipDelayed's
 	// 250ms, as HideDelay.
 	Texty bool
+	// ChannelID is a channel's hover card (ChannelHoverCard, boot-shared
+	// 7+JF): BaseMrkdwnChannel wraps a message's #channel in
+	// HoverCardTrigger with its defaults (position "top", offsetY -12,
+	// the same 350ms open and 250ms close), and Texty's TextyTooltip
+	// opens it over a composer's channel slug (Texty set: at once,
+	// allowance 0). Buttons is enableButtons: a message's card has View
+	// Channel / Join Channel, the composer's none.
+	ChannelID string
+	Buttons   bool
 }
 
 // Controller runs the hover card's timers. It belongs to the UI goroutine.
@@ -173,6 +188,31 @@ func (c *Controller) ReportTexty(key any, userID string, local image.Rectangle, 
 	c.ReportBot(key, userID, "", local, ptr)
 	if c.hasRep && c.rep.Key == key {
 		c.rep.Texty = true
+	}
+}
+
+// ReportChannel says the pointer is on a message's #channel this frame
+// (BaseMrkdwnChannel's renderChannelHoverCardTrigger: the card with
+// enableButtons, position "top").
+func (c *Controller) ReportChannel(key any, channelID string, local image.Rectangle, ptr f32.Point) {
+	if key == c.spent || channelID == "" {
+		return
+	}
+	off := image.Point{}
+	if c.Pointer != nil {
+		off = c.Pointer().Sub(image.Pt(int(ptr.X+.5), int(ptr.Y+.5)))
+	}
+	c.rep = Request{Key: key, ChannelID: channelID, Buttons: true, Anchor: local.Add(off)}
+	c.hasRep = true
+}
+
+// ReportTextyChannel is ReportChannel for a channel slug in the composer:
+// TextyTooltip's renderHoverCard(ChannelHoverCard) with no buttons,
+// opened from Texty's onMouseOver (Request.Texty).
+func (c *Controller) ReportTextyChannel(key any, channelID string, local image.Rectangle, ptr f32.Point) {
+	c.ReportChannel(key, channelID, local, ptr)
+	if c.hasRep && c.rep.Key == key {
+		c.rep.Texty, c.rep.Buttons = true, false
 	}
 }
 
@@ -275,8 +315,7 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 				c.showAt = now // a Popover from Texty's onMouseOver
 			}
 		} else {
-			c.pending.Anchor = rep.Anchor
-			c.pending.UserID, c.pending.BotID, c.pending.Preview = rep.UserID, rep.BotID, rep.Preview
+			c.pending = rep // the same trigger: its bounds and what it names now
 		}
 		if c.isOpen && c.hideAt.IsZero() {
 			c.hideAt = now.Add(HideDelay)
@@ -336,6 +375,13 @@ func (c *Controller) CardArea(gtx layout.Context, r image.Rectangle) {
 			case pointer.Enter, pointer.Move:
 				c.overCard = true
 			case pointer.Leave, pointer.Cancel:
+				if c.overCard && c.isOpen && c.hideAt.IsZero() {
+					// leaving the card starts the 250ms close (Frame ran
+					// before this frame's card events, so it can't), and
+					// asks for the frame that closes it
+					c.hideAt = gtx.Now.Add(HideDelay)
+					gtx.Execute(op.InvalidateCmd{At: c.hideAt})
+				}
 				c.overCard = false
 			}
 		}

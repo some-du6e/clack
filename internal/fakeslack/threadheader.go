@@ -102,6 +102,9 @@ func (s *Server) addThreadHeader() {
 	priv.IsChannel, priv.IsGroup, priv.IsPrivate = false, true, true
 	shared := ch(ThreadSharedID, "th-partner-co")
 	shared.IsExtShared = true
+	// the viewer's org and Partner Co (the channel card's external team
+	// row drops the viewer's own top-level team)
+	shared.ConnectedTeamIDs = []string{EnterpriseID, ExternalTeamID}
 	arch := ch(ThreadArchivedID, "th-old-launch")
 	arch.IsArchived = true
 	dm := slack.Conversation{ID: ThreadDMID, IsIM: true, User: u[0].ID, IsOpen: true, Created: created}

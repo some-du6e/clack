@@ -280,3 +280,129 @@ func TestPlaceTop(t *testing.T) {
 		t.Errorf("at the left edge: x %d, want 16", p.X)
 	}
 }
+
+// A message's #channel is BaseMrkdwnChannel's HoverCardTrigger: the
+// defaults (350ms open, 250ms close) and the card with buttons; moving
+// from a person to a channel swaps the cards on their own timers.
+func TestChannelTrigger(t *testing.T) {
+	c := &Controller{}
+	r := image.Rect(100, 300, 160, 320)
+	ch := func(d time.Duration) {
+		c.ReportChannel("ch", "C1", r, f32.Point{})
+		c.Frame(t0.Add(d), false, false)
+	}
+	ch(0)
+	if _, _, open := c.Open(); open {
+		t.Fatal("open without the delay")
+	}
+	if p, ok := c.Pending(); !ok || p.ChannelID != "C1" || !p.Buttons || p.Texty || p.UserID != "" {
+		t.Fatalf("pending %+v", p)
+	}
+	ch(349 * time.Millisecond)
+	if _, _, open := c.Open(); open {
+		t.Fatal("open before 350ms")
+	}
+	ch(350 * time.Millisecond)
+	req, _, open := c.Open()
+	if !open || req.ChannelID != "C1" || !req.Buttons || req.Anchor != r {
+		t.Fatalf("at 350ms: open %v %+v", open, req)
+	}
+	// onto a person: the channel's card closes 250ms later, the person's
+	// opens 350ms after the move
+	for _, d := range []time.Duration{400, 600, 649} {
+		c.Report("u", "U1", r, f32.Point{})
+		c.Frame(t0.Add(d*time.Millisecond), false, false)
+	}
+	if req, _, open := c.Open(); !open || req.ChannelID != "C1" {
+		t.Fatalf("at 649ms: %v %+v, want the channel's card still", open, req)
+	}
+	c.Report("u", "U1", r, f32.Point{})
+	c.Frame(t0.Add(650*time.Millisecond), false, false)
+	if _, _, open := c.Open(); open {
+		t.Fatal("the channel's card outlived its 250ms close")
+	}
+	c.Report("u", "U1", r, f32.Point{})
+	c.Frame(t0.Add(750*time.Millisecond), false, false)
+	if req, _, open := c.Open(); !open || req.UserID != "U1" || req.ChannelID != "" {
+		t.Fatalf("at 750ms: %v %+v, want the person's card", open, req)
+	}
+}
+
+// A composer slug's channel card is TextyTooltip's Popover: open at once,
+// no buttons, closed 250ms after the pointer leaves.
+func TestTextyChannelTrigger(t *testing.T) {
+	c := &Controller{}
+	r := image.Rect(10, 10, 60, 30)
+	c.ReportTextyChannel("slug", "C2", r, f32.Point{})
+	c.Frame(t0, false, false)
+	req, _, open := c.Open()
+	if !open || req.ChannelID != "C2" || req.Buttons || !req.Texty {
+		t.Fatalf("open %v %+v, want C2's card at once without buttons", open, req)
+	}
+	c.Frame(t0.Add(10*time.Millisecond), false, false)
+	c.Frame(t0.Add(259*time.Millisecond), false, false)
+	if _, _, open := c.Open(); !open {
+		t.Fatal("closed before 250ms")
+	}
+	c.Frame(t0.Add(260*time.Millisecond), false, false)
+	if _, _, open := c.Open(); open {
+		t.Fatal("still open 250ms after leaving")
+	}
+	// a pressed slug stays quiet until left
+	c.Pressed("slug")
+	c.ReportTextyChannel("slug", "C2", r, f32.Point{})
+	c.Frame(t0.Add(time.Second), false, false)
+	if _, _, open := c.Open(); open {
+		t.Fatal("a pressed trigger reopened")
+	}
+}
+
+// Leaving the card for nothing starts the 250ms close in that frame, and
+// asks for the frame that closes it: Frame runs before the frame's card
+// events, so without it the card stayed open until the pointer moved
+// again.
+func TestLeavingTheCardCloses(t *testing.T) {
+	var r input.Router
+	c := &Controller{}
+	card := image.Rect(100, 100, 440, 300)
+	ops := new(op.Ops)
+	now := t0
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: ops, Now: now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1000, 800)), Source: r.Source()}
+		c.Frame(now, false, false)
+		if _, _, open := c.Open(); open {
+			c.CardArea(gtx, card)
+		}
+		r.Frame(ops)
+	}
+	c.Show(Request{Key: "k", ChannelID: "C1", Anchor: image.Rect(200, 320, 260, 340)}, now)
+	frame()
+	r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(200, 200)})
+	now = now.Add(10 * time.Millisecond)
+	frame()
+	now = now.Add(time.Second)
+	frame()
+	if !c.OverCard() {
+		t.Fatal("the pointer on the card isn't over it")
+	}
+	if _, _, open := c.Open(); !open {
+		t.Fatal("closed with the pointer on the card")
+	}
+	r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(700, 600)})
+	now = now.Add(10 * time.Millisecond)
+	frame() // the Leave arrives after this frame's Frame
+	left := now
+	if _, _, open := c.Open(); !open {
+		t.Fatal("closed at once")
+	}
+	if wake, ok := r.WakeupTime(); !ok || !wake.Equal(left.Add(HideDelay)) {
+		t.Fatalf("wakeup %v %v, want the close at %v", wake, ok, left.Add(HideDelay))
+	}
+	now = left.Add(HideDelay)
+	frame()
+	if _, _, open := c.Open(); open {
+		t.Fatal("still open 250ms after the pointer left the card")
+	}
+}

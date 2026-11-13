@@ -20,7 +20,8 @@ import (
 type profileHover struct {
 	ctl  hovercard.Controller
 	card *popups.ProfileCard
-	prev *popups.PreviewCard // a link preview's hover card (Request.Preview)
+	prev *popups.PreviewCard      // a link preview's hover card (Request.Preview)
+	chc  *popups.ChannelHoverCard // a channel's (Request.ChannelID)
 	gen  int
 	over bool // drawn above the overlays (the top one hosts the trigger)
 }
@@ -132,10 +133,38 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 	next := h.ctl.Frame(gtx.Now, a.hoverBlocked(), hold)
 	req, gen, open := h.ctl.Open()
 	if !open {
-		h.card, h.prev = nil, nil
+		h.card, h.prev, h.chc = nil, nil, nil
 		hovercard.Invalidate(gtx, next)
 		return
 	}
+	if req.ChannelID != "" {
+		// ChannelHoverCard: a message's #channel (HoverCardTrigger,
+		// position "top") or a composer slug (TextyTooltip)
+		h.card, h.prev = nil, nil
+		if h.chc == nil || h.gen != gen {
+			h.chc = popups.NewChannelHoverCard(a, req.Anchor, req.ChannelID, req.Buttons, req.Texty)
+			h.gen = gen
+		}
+		g := gtx
+		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
+		func() {
+			if o := h.ctl.Opacity(gtx.Now); o < 1 {
+				defer paint.PushOpacity(g.Ops, o).Pop()
+			}
+			h.chc.Layout(g)
+		}()
+		if h.chc.Dismissed() { // View Channel: closeCard
+			h.ctl.Close()
+			h.chc = nil
+			return
+		}
+		h.ctl.CardArea(g, h.chc.Rect())
+		if !next.IsZero() && !next.After(gtx.Now.Add(time.Minute)) {
+			hovercard.Invalidate(gtx, next)
+		}
+		return
+	}
+	h.chc = nil
 	if pc, ok := req.Preview.(popups.PreviewContent); ok {
 		// MessageAttachmentDefaultV3's HoverCardTrigger: the preview's
 		// card in popups' frame, position "top"

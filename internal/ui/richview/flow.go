@@ -141,6 +141,12 @@ const (
 	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
 )
 
+// cardOnly reports whether target t is a hover card trigger only (no
+// link: target.cardOnly).
+func (d *display) cardOnly(t int16) bool {
+	return t >= 0 && int(t) < len(d.targets) && d.targets[t].cardOnly
+}
+
 type target struct {
 	kind targetKind
 	url  string
@@ -166,6 +172,13 @@ type target struct {
 	// (the message card's context line, .context__pPPwj a:hover)
 	inset bool
 	att   *richtext.Attachment // tExpand: the attachment to expand
+	// cardOnly: a channel the viewer can't see (BaseMissingChannel's
+	// chip): not a link, but BaseMrkdwnChannel still wraps it in the
+	// channel hover card's trigger
+	cardOnly bool
+	// cardless: a channel target that opens no hover card (a work
+	// object's channel field)
+	cardless bool
 	// inCard: a tImage inside a v3 link card (unfurl.go). A click opens
 	// the image viewer; a right-click is the card's, as in Slack, where
 	// the image has no context menu of its own.
@@ -613,7 +626,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL})
 			} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID, self: sp.Self})
-			}
+			} // a hidden channel with a fallback name: plain text, no card (BaseMrkdwnChannel returns the span before the trigger)
 			bg, fg := p.MentionBg, p.MentionText
 			if sp.Self {
 				// c-member_slug--mention / c-mrkdwn__user_group--mention
@@ -982,12 +995,12 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 				d.boxes = append(d.boxes, box{kind: bBorder, r: rr, radius: dc.radius, fill: dc.bg, stroke: dc.border, bw: l.dp(1), target: -1, part: dc.part})
 			default:
 				bx := box{kind: bFill, r: rr, radius: dc.radius, fill: dc.bg, target: dc.target, comp: dc.comp, part: dc.part}
-				if dc.kind == 1 && !dc.self {
+				if dc.kind == 1 && !dc.self && !l.d.cardOnly(dc.target) {
 					bx.hover = l.st.Palette.MentionHoverBg
 				}
 				d.boxes = append(d.boxes, bx)
 			}
-			if dc.target >= 0 {
+			if dc.target >= 0 && !d.cardOnly(dc.target) {
 				d.hits = append(d.hits, hit{r: rr, t: dc.target})
 			}
 		}
