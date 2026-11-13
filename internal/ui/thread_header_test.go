@@ -172,7 +172,7 @@ func TestThreadHeaderFromActivity(t *testing.T) {
 func TestThreadHeaderJumpsToRoot(t *testing.T) {
 	e := threadHeaderEnv(t, false)
 	other := e.fs.ChannelIDs()[0]
-	users := e.fs.UserIDs()
+	users := e.fs.UserIDs()[1:4] // the DMs' members (threadHeaderUsers)
 	for i, c := range e.fs.ThreadHeaderCases() {
 		if c.Channel == other {
 			continue
@@ -186,9 +186,16 @@ func TestThreadHeaderJumpsToRoot(t *testing.T) {
 		}
 		e.settle(300 * time.Millisecond)
 		e.openChannel(c.Channel)
-		e.until(c.Name+": the conversation loads", 10*time.Second, func() bool {
+		if l, ok := e.a.convoFor(c.Channel, "").list.(channelList); ok {
+			l.Refresh() // a conversation fetched before the posts (the sidebar's) loads them
+		}
+		e.until(c.Name+": the conversation loads the newer messages", 10*time.Second, func() bool {
 			l, ok := e.a.convoFor(c.Channel, "").list.(channelList)
-			return ok && len(l.VisibleRows()) > 0
+			if !ok {
+				return false
+			}
+			msgs, loaded, _ := l.LayoutSig()
+			return loaded && msgs > 40
 		})
 		// at the newest message (a DM opens at its first unread, which can
 		// sit next to the root)
