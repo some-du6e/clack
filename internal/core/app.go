@@ -44,13 +44,14 @@ type App struct {
 	// them (mergePrefs, installPrefs).
 	prefsMu sync.Mutex
 
-	presSeen    map[string]time.Time
-	presWaiters []chan struct{}
-	countsTimer *time.Timer
-	actBadges   map[string]int // client.counts activity_v2 (activity_badges.go)
-	cmdCache    []slack.Command
-	cmdAt       time.Time
-	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
+	presSeen     map[string]time.Time
+	presWaiters  []chan struct{}
+	countsTimer  *time.Timer
+	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
+	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
+	cmdCache     []slack.Command
+	cmdAt        time.Time
+	cmdFailed    failedCommands // executeCommand's recently failed (command.go)
 
 	files *fileCache
 

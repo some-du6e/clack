@@ -52,6 +52,16 @@ func (c *Client) Conversations(ctx context.Context) ([]Conversation, error) {
 			if ch.IsArchived && !ch.IsIM && !ch.IsMPIM {
 				continue
 			}
+			// users.conversations lists the viewer's own conversations and
+			// its channel objects don't carry is_member (conversations.list
+			// and .info do). Slack's store has is_member on them (JUrK
+			// isMember reads it), and Clack's rules read it too: without it
+			// every public channel was "one you only preview", and the
+			// hover toolbar lost Reply in thread (RpcX canReplyOrComment;
+			// Karim, 2026-11-13).
+			if !ch.IsIM && !ch.IsMPIM {
+				ch.IsMember = true
+			}
 			all = append(all, ch)
 		}
 		if r.Meta.NextCursor == "" {
