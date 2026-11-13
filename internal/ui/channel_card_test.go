@@ -106,7 +106,7 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 	e.openChannel(conv)
 	e.settle(800 * time.Millisecond)
 	ctl := &e.a.hover.ctl
-	away := f32.Pt(float32(e.size.X-40), 60) // the header, clear of the message's other links
+	away := f32.Pt(float32(e.a.primaryOrigin.X)-60, float32(e.size.Y)/2) // the sidebar: no hover cards there
 	leave := func() {
 		e.move(away)
 		time.Sleep(hovercard.HideDelay + 50*time.Millisecond)
@@ -166,7 +166,7 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 	shotBoth("channel-card-shared", func(c *popups.ChannelHoverCard) bool { return len(c.Items()) == 3 && c.Items()[1] != "" })
 	card = e.a.hover.chc.Rect()
 	// onto the card and resting there: it stays
-	e.move(f32.Pt(float32(card.Min.X+30), float32(card.Min.Y+20)))
+	e.move(f32.Pt(float32(card.Max.X-30), float32(card.Min.Y+20))) // clear of the senders' avatars and names under it
 	time.Sleep(hovercard.HideDelay + 100*time.Millisecond)
 	e.frame()
 	if _, _, open := ctl.Open(); !open {
@@ -179,8 +179,9 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 	}
 	time.Sleep(hovercard.HideDelay + 50*time.Millisecond)
 	e.frame()
-	if _, _, open := ctl.Open(); open {
-		t.Fatal("still open after the pointer left")
+	if req, _, open := ctl.Open(); open {
+		p, pend := ctl.Pending()
+		t.Fatalf("still open after the pointer left for %v: %+v (over the card %v; pending %v %+v)", away, req, ctl.OverCard(), pend, p)
 	}
 	// Escape closes it
 	e.chcOpen(t, conv, fakeslack.ThreadSharedID)
