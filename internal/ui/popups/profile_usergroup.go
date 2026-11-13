@@ -87,6 +87,44 @@ type UserGroupView struct {
 	seq               int
 	rows              map[string]*widget.Clickable
 	paneW             int
+
+	// the editor parts (usergroup_edit.go): the viewer's rights for the
+	// group's team, and the store generation and record last seen
+	rights       core.UsergroupRights
+	rightsAsked  bool
+	rightsOK     bool
+	ugGen        uint64
+	snap         ugSnap
+	snapSet      bool
+	editMembers  widget.Clickable
+	editChannels widget.Clickable
+	editDetails  widget.Clickable
+	copyID       widget.Clickable
+	options      widget.Clickable
+	optionsTip   TipState
+	enableBtn    widget.Clickable
+	addMembers   widget.Clickable
+	addChannels  widget.Clickable
+	dashLink     widget.Clickable
+	rowTips      map[string]*TipState
+	// hits are the editor buttons' last rects in pane coordinates (tests
+	// click them through the router)
+	hits map[string]image.Rectangle
+}
+
+// ugSnap is what of a stored group makes the classic pane refetch its
+// members when it changes (componentDidUpdate compares the userGroup
+// record without its member fetch state): everything but the members and
+// their count.
+type ugSnap struct {
+	g        core.Usergroup
+	disabled bool
+}
+
+func ugSnapOf(p core.UsergroupProfile) ugSnap {
+	g := p.Usergroup
+	g.UserCount = 0
+	return ugSnap{g: g, disabled: p.Disabled}
 }
 
 // NewUserGroupView builds the pane for group id.
@@ -148,12 +186,80 @@ func (v *UserGroupView) startMembers() {
 		return
 	}
 	v.started, v.org = true, v.g.OrgLevel()
+	v.loadRights()
+	v.ugGen = c.S.UsergroupGen()
+	if p, ok := c.StoredUsergroupProfile(v.id); ok {
+		v.snap, v.snapSet = ugSnapOf(p), true
+	}
 	if us, ok := c.CachedUsergroupUsers(v.id, !v.org); ok {
 		v.members = v.shown(us)
 	}
 	if v.org {
 		v.loadMembers("", "")
 	} else {
+		v.loadUsers()
+	}
+}
+
+// loadRights reads the viewer's rights for the group's team (core.
+// UsergroupRights: canEditUserGroupsInWorkspace and its kin).
+func (v *UserGroupView) loadRights() {
+	c := v.h.Core()
+	if c == nil || v.rightsAsked {
+		return
+	}
+	v.rightsAsked = true
+	team, h := v.g.TeamID, v.h
+	if r, ok := c.CachedUsergroupRights(team); ok {
+		v.rights, v.rightsOK = r, true
+		return
+	}
+	run(h, func(ctx context.Context) (core.UsergroupRights, error) { return c.UsergroupRights(ctx, team), nil },
+		func(r core.UsergroupRights, _ error) {
+			v.rights, v.rightsOK = r, true
+			h.Invalidate()
+		})
+}
+
+// watch follows the stored group (subteam_updated, an edit's answer):
+// its members and count, its default channels, and, when the record
+// itself changed, the classic pane's member refetch (componentDidUpdate's
+// fetchUserGroupMembers).
+func (v *UserGroupView) watch() {
+	c := v.h.Core()
+	if c == nil || !v.started {
+		return
+	}
+	gen := c.S.UsergroupGen()
+	if gen == v.ugGen {
+		return
+	}
+	v.ugGen = gen
+	p, ok := c.StoredUsergroupProfile(v.id)
+	if !ok {
+		return
+	}
+	if chans, known := c.S.GroupChannels(v.id); known {
+		_ = chans
+		v.g.Channels, v.g.Groups = p.Channels, p.Groups
+	}
+	if v.org {
+		return
+	}
+	if us, ok := c.CachedUsergroupUsers(v.id, true); ok && !v.loading {
+		v.members = us
+		v.g.UserCount = p.UserCount
+	}
+	snap := ugSnapOf(p)
+	if !v.snapSet || snap == v.snap {
+		v.snap, v.snapSet = snap, true
+		return
+	}
+	v.snap = snap
+	n, chans, groups, extra := v.g.UserCount, v.g.Channels, v.g.Groups, v.g.AdditionalChannels
+	v.g = p
+	v.g.UserCount, v.g.Channels, v.g.Groups, v.g.AdditionalChannels = n, chans, groups, extra
+	if !p.Disabled {
 		v.loadUsers()
 	}
 }
@@ -257,6 +363,8 @@ func (v *UserGroupView) Layout(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	v.paneW = sz.X
 	v.fetch()
+	v.watch()
+	v.editorClicks(gtx)
 	if v.closeBtn.Clicked(gtx) {
 		v.h.CloseSecondary()
 	}
@@ -339,9 +447,19 @@ func (v *UserGroupView) body(gtx layout.Context, th *theme.Theme, cl *Colors, w,
 			return para(gtx, th, 13, 18, theme.Bold, cl.Fg2, "@"+v.g.Handle, 0)
 		})
 	}
+	if v.org && v.rights.OrgDash { // ManageUserGroupLink (the Groups dashboard)
+		y += dp(gtx, 12)
+		y += v.dashAlert(gtx, th, cl, pad, y, inner)
+	}
 	y += dp(gtx, 12)
 	if v.g.Disabled { // UserGroupTabs: isActive
+		if !v.org && v.rights.Create { // renderEnableGroupButton
+			y += v.enableSection(gtx, th, cl, w, y)
+		}
 		return layout.Dimensions{Size: image.Pt(w, y)}
+	}
+	if v.editable() { // renderActions: UserGroupsDetailsActionBar
+		y += v.actionBar(gtx, th, cl, w, y)
 	}
 	// the tab menu
 	y += dp(gtx, 12)
@@ -357,6 +475,7 @@ func (v *UserGroupView) body(gtx layout.Context, th *theme.Theme, cl *Colors, w,
 		cw := textW(gtx, th, 13, theme.Regular, count)
 		tw := lw + dp(gtx, 6) + cw
 		sel := v.tab == i
+		v.hit("tab:"+strconv.Itoa(i), image.Rect(x, y, x+tw, y+tabH).Add(image.Pt(0, dp(gtx, 49)-v.list.Position.Offset)))
 		at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, &v.tabBtns[i], nil, func(gtx layout.Context) layout.Dimensions {
 				fg := cl.Fg2
@@ -418,6 +537,10 @@ func (v *UserGroupView) membersTab(gtx layout.Context, th *theme.Theme, cl *Colo
 		return layout.Dimensions{Size: image.Pt(w, y+dp(gtx, 60))}
 	}
 	if len(v.members) == 0 {
+		if !v.org && v.rights.Edit { // renderEmptyMemberState for an editor
+			return v.emptyAction(gtx, th, cl, w, y, "Nobody’s in this group",
+				ugWords(nsUG.T("You can add a few people with the button below.")), nsUG.T("Add Members"), &v.addMembers)
+		}
 		if !v.org { // the classic renderEmptyMemberState (no edit rights)
 			if v.adminLink.Clicked(gtx) { // openPeopleBrowser({filters: {accountType: admins}})
 				v.h.Navigate("directories?tab=people&account=admins")
@@ -428,16 +551,20 @@ func (v *UserGroupView) membersTab(gtx layout.Context, th *theme.Theme, cl *Colo
 		if v.searchQ != "" {
 			return v.empty(gtx, th, cl, w, y, "No results found", nil)
 		}
+		if v.rights.OrgDash { // EmptyMembersState with canUserAccessGroupsInOrgDash
+			return v.empty(gtx, th, cl, w, y, "Nobody’s in this group", v.dashWords())
+		}
 		return v.empty(gtx, th, cl, w, y, "Nobody’s in this group", ugWords("Contact an org administrator to add members."))
 	}
 	rowH := dp(gtx, 60)
 	for _, u := range v.members {
 		u := u
 		c := v.row("member:" + u.ID)
-		if c.Clicked(gtx) {
+		more := v.row("more:" + u.ID)
+		moreClicked := more.Clicked(gtx)                       // the ⋮ sits in the row: its click isn't the row's
+		if c.Clicked(gtx) && !moreClicked && !more.Pressed() { // onViewMemberProfile
 			pfOpenFull(v.h, u.ID)
 		}
-		more := v.row("more:" + u.ID)
 		ry := y
 		at(gtx, image.Pt(0, ry), func(gtx layout.Context) layout.Dimensions {
 			return clickBox(gtx, c, func(gtx layout.Context, sz image.Point, hovered bool) {
@@ -472,20 +599,26 @@ func (v *UserGroupView) membersTab(gtx layout.Context, th *theme.Theme, cl *Colo
 		}
 		y += rowH
 		fill(gtx, image.Rect(0, y-1, w, y), cl.Ring)
-		if !v.org {
+		if !v.org && !v.editable() {
 			continue // the classic row's ⋮ is isContextButtonVisible: editors only
 		}
-		// the row's ⋮ (MemberRow's context button): "View profile"
-		if more.Clicked(gtx) {
+		// the row's ⋮ (MemberRow's context button): "View profile"; the
+		// classic pane's renderListItemOptionsMenu adds "Remove from
+		// group…" when canRemoveItem
+		if moreClicked {
 			r := image.Rect(w-pad-dp(gtx, 28), ry+(rowH-dp(gtx, 28))/2, w-pad, ry+(rowH+dp(gtx, 28))/2)
-			id := u.ID
 			v.h.ShowOverlay(&pfPaneMenu{h: v.h, plain: true, paneW: v.paneW,
 				box:   r.Add(image.Pt(0, dp(gtx, 49)-v.list.Position.Offset)),
-				items: []MenuItem{{Label: "View profile", Do: func() { pfOpenFull(v.h, id) }}}})
+				items: v.memberItems(u)})
 		}
+		v.hit("more:"+u.ID, image.Rect(w-pad-dp(gtx, 28), ry+(rowH-dp(gtx, 28))/2, w-pad, ry+(rowH+dp(gtx, 28))/2).Add(image.Pt(0, dp(gtx, 49)-v.list.Position.Offset)))
 		at(gtx, image.Pt(w-pad-dp(gtx, 28), ry+(rowH-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(dp(gtx, 28), dp(gtx, 28))}
-			return Button(gtx, th, more, BtnOutline, BtnSmall, "", "kebab", 0)
+			d := Button(gtx, th, more, BtnOutline, BtnSmall, "", "kebab", 0)
+			if !v.org { // the classic row's tooltip, renderTooltip: "More actions"
+				Tooltip(gtx, th, v.rowTip("more:"+u.ID), more.Hovered(), d.Size, Above, nsUG.T("More actions"), "")
+			}
+			return d
 		})
 	}
 	// loadPost: the next page once the end is in view
@@ -496,16 +629,27 @@ func (v *UserGroupView) membersTab(gtx layout.Context, th *theme.Theme, cl *Colo
 }
 
 func (v *UserGroupView) channelsTab(gtx layout.Context, th *theme.Theme, cl *Colors, w, y int) layout.Dimensions {
-	if len(v.g.Channels) == 0 {
+	chans := v.g.Channels
+	if !v.org {
+		chans = v.g.DefaultChannels() // getUserGroupDefaultChannels: channels, then the private ones
+	}
+	if len(chans) == 0 {
+		if !v.org && v.rights.Edit { // renderEmptyChannelState for an editor
+			return v.emptyAction(gtx, th, cl, w, y, "No default channels",
+				ugWords("All members of a user group are automatically added to its default channels."), nsUG.T("Add Default Channels"), &v.addChannels)
+		}
 		if !v.org { // the classic renderEmptyChannelState (no edit rights)
 			return v.empty(gtx, th, cl, w, y, "No default channels", ugWords("All members of a user group are automatically added to its default channels."))
+		}
+		if v.rights.OrgDash {
+			return v.empty(gtx, th, cl, w, y, "No channels are connected to this group", v.dashWords())
 		}
 		return v.empty(gtx, th, cl, w, y, "No channels are connected to this group", ugWords("Contact an org administrator to add channels."))
 	}
 	pad := dp(gtx, 16)
 	rowH := dp(gtx, 60)
 	c := v.h.Core()
-	for _, id := range v.g.Channels {
+	for _, id := range chans {
 		cv := core.Conv{ID: id, Name: id, Kind: "channel"}
 		if c != nil {
 			if r := c.ConvRef(id); r.Name != "" {
@@ -513,7 +657,9 @@ func (v *UserGroupView) channelsTab(gtx layout.Context, th *theme.Theme, cl *Col
 			}
 		}
 		b := v.row("channel:" + id)
-		if b.Clicked(gtx) { // ChannelRow: Open channel
+		more := v.row("chmore:" + id)
+		moreClicked := more.Clicked(gtx)
+		if b.Clicked(gtx) && !moreClicked && !more.Pressed() { // ChannelRow: Open channel
 			v.h.Navigate("c/" + id)
 		}
 		ry := y
@@ -534,6 +680,23 @@ func (v *UserGroupView) channelsTab(gtx layout.Context, th *theme.Theme, cl *Col
 		})
 		y += rowH
 		fill(gtx, image.Rect(0, y-1, w, y), cl.Ring)
+		if v.org || !v.editable() {
+			continue
+		}
+		// the classic channel row's ⋮: "Open channel", "Remove from group…"
+		if moreClicked {
+			r := image.Rect(w-pad-dp(gtx, 28), ry+(rowH-dp(gtx, 28))/2, w-pad, ry+(rowH+dp(gtx, 28))/2)
+			v.h.ShowOverlay(&pfPaneMenu{h: v.h, plain: true, paneW: v.paneW,
+				box:   r.Add(image.Pt(0, dp(gtx, 49)-v.list.Position.Offset)),
+				items: v.channelItems(cv)})
+		}
+		v.hit("chmore:"+id, image.Rect(w-pad-dp(gtx, 28), ry+(rowH-dp(gtx, 28))/2, w-pad, ry+(rowH+dp(gtx, 28))/2).Add(image.Pt(0, dp(gtx, 49)-v.list.Position.Offset)))
+		at(gtx, image.Pt(w-pad-dp(gtx, 28), ry+(rowH-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(dp(gtx, 28), dp(gtx, 28))}
+			d := Button(gtx, th, more, BtnOutline, BtnSmall, "", "kebab", 0)
+			Tooltip(gtx, th, v.rowTip("chmore:"+id), more.Hovered(), d.Size, Above, nsUG.T("More actions"), "")
+			return d
+		})
 	}
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }

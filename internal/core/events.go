@@ -288,19 +288,13 @@ func (a *App) handle(ev slack.Event) {
 			a.S.SetMyUsergroup(e.SubteamID, ev.Type == "subteam_self_added")
 			a.emit(Event{Type: "names"})
 		}
-		if e.Subteam.ID != "" && e.Subteam.Handle != "" {
-			a.S.Lock()
-			a.S.Usergroups[e.Subteam.ID] = e.Subteam.Handle
-			found := false
-			for i := range a.S.Groups {
-				if a.S.Groups[i].ID == e.Subteam.ID {
-					a.S.Groups[i], found = e.Subteam, true
-				}
-			}
-			if !found {
-				a.S.Groups = append(a.S.Groups, e.Subteam)
-			}
-			a.S.Unlock()
+		if e.Subteam.ID != "" && e.Subteam.Handle != "" && ev.Type != "subteam_members_changed" {
+			// subteamUpdated (known groups only) / subteamCreated
+			// (usergroup_edit.go). subteamMembersChanged returns at once in
+			// the desktop client (isSonic, client-boot QWaK): the User
+			// Group pane refetches the members when subteam_updated
+			// changes the group.
+			a.noteUsergroupEvent(ev.Raw, ev.Type == "subteam_created")
 		}
 	case "saved_added", "saved_updated", "saved_deleted":
 		a.onSavedEvent(ctx, ev.Type, ev.Raw)

@@ -362,6 +362,12 @@ type Server struct {
 	// UPDATE_DISPLAY_NAME and EDIT_PROFILE_PHOTO too.
 	// Set it before the calls.
 	Permissions map[string][]string
+	// UsergroupEditor makes the viewer an editor of the workspace's user
+	// groups: permissions/info allows EDIT_USER_GROUPS, CREATE_USER_GROUPS
+	// and DELETE_USER_GROUPS (usergroups.go). UsergroupOrgAdmin allows the
+	// org ones (the org dashboard's Groups page). Set them before the
+	// calls.
+	UsergroupEditor, UsergroupOrgAdmin bool
 	// TeamPrefs is team.prefs.get's prefs (nil: none; Slack's client then
 	// never warns before @channel and has no large-channel limit), and
 	// ChannelPrefs channels.prefs.get's pref_value by channel and pref
@@ -1263,7 +1269,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
-	if out, handled := s.handleUsergroups(method, f); handled { // usergroups.go (before search.go: belongs_to_usergroup_id)
+	if out, handled := s.handleUsergroups(method, f, edge); handled { // usergroups.go (before search.go: belongs_to_usergroup_id)
 		return out
 	}
 	if out, handled := s.handleSearch(method, f); handled { // search.go
