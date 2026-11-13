@@ -183,3 +183,105 @@ func TestReactionPickDrawsAtOnce(t *testing.T) {
 
 // dpPx is a dp at the test's scale (1).
 func dpPx(v float32) int { return int(v + .5) }
+
+// TestReactionPillClickDrawsAtOnce: a click on an existing pill
+// (changeReactionFromUserAction → submitAddOrRemoveReaction, no plugin
+// wrapping either) changes it in the next frame while reactions.add or
+// reactions.remove is still held (fakeslack Fault.ReplyDelay): adding to
+// someone else's pill, and taking the viewer's own off, on a channel
+// message and on a thread reply.
+func TestReactionPillClickDrawsAtOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reply bool
+		emoji string
+		add   bool
+		count int // after the click
+	}{
+		{"add to a pill", false, "+1", true, 2},
+		{"remove the viewer's", false, "grin", false, 1},
+		{"add on a reply", true, "+1", true, 2},
+		{"remove on a reply", true, "grin", false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app, fs, ts := esApp(t)
+			root := ts["status"]
+			reply := root[:len(root)-1] + "9"
+			if tc.reply {
+				fs.SetHook(func(method string, form url.Values) (any, bool) {
+					if method != "conversations.replies" {
+						return nil, false
+					}
+					return map[string]any{"ok": true, "has_more": false, "messages": []any{
+						map[string]any{"type": "message", "ts": root, "thread_ts": root, "user": "UCARA0001", "text": "Back Monday", "reply_count": 1},
+						map[string]any{"type": "message", "ts": reply, "thread_ts": root, "user": "UANA00001", "text": "see you", "reactions": []any{
+							map[string]any{"name": "grin", "count": 2, "users": []any{"UANA00001", fakeslack.SelfID}},
+							map[string]any{"name": "+1", "count": 1, "users": []any{"UCARA0001"}},
+						}},
+					}}, true
+				})
+				t.Cleanup(func() { fs.SetHook(nil) })
+			}
+			method := "reactions.remove"
+			if tc.add {
+				method = "reactions.add"
+			}
+			fs.SetFault(method, fakeslack.Fault{ReplyDelay: 4 * time.Second})
+			t.Cleanup(func() { fs.SetFault(method, fakeslack.Fault{}) })
+
+			th := theme.New(false)
+			imgs := imgcache.New((&rpFetch{}).fetch, "", nil)
+			host := identityHost{coreHost: coreHost{app: app, th: th}, imgs: imgs}
+			var s *listState
+			var lay func(gtx layout.Context) layout.Dimensions
+			target := ts["inline"] // grin: the viewer's and UANA's; +1: UCARA's
+			if tc.reply {
+				v := NewThreadView(host, esChan, root)
+				s, lay, target = v.s, v.Layout, reply
+			} else {
+				v := NewChannelView(host, esChan)
+				v.Preview = true
+				s, lay = v.s, v.Layout
+			}
+			ops := new(op.Ops)
+			frame := func() {
+				ops.Reset()
+				gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(700, 420)), Now: time.Now()}
+				lay(gtx)
+			}
+			until(t, 5*time.Second, "the row's pills", frame, func() bool {
+				r := s.rows[target]
+				return r != nil && itemHeight(s, target) > 0 && len(r.m.Reactions) == 2
+			})
+			pill := func() (count int, self bool) {
+				for _, re := range s.rows[target].m.Reactions {
+					if re.Name == tc.emoji {
+						return re.Count, re.Self
+					}
+				}
+				return 0, false
+			}
+			if n, self := pill(); self == tc.add || n != tc.count-map[bool]int{true: 1, false: -1}[tc.add] {
+				t.Fatalf("setup: %s count %d, the viewer's %v", tc.emoji, n, self)
+			}
+			start := time.Now()
+			s.react(host, s.rows[target], tc.emoji, tc.add, fakeslack.SelfID)
+			frame() // the next frame
+			if n, self := pill(); n != tc.count || self != tc.add {
+				t.Fatalf("the frame after the click: %s count %d, the viewer's %v; want %d, %v", tc.emoji, n, self, tc.count, tc.add)
+			}
+			if time.Since(start) > 2*time.Second {
+				t.Fatal("the check ran after the hold")
+			}
+			// the call went out, and after its answer nothing moves
+			until(t, 10*time.Second, method, frame, func() bool { return fs.CallCount(method) > 0 })
+			time.Sleep(4200 * time.Millisecond)
+			for range 3 {
+				frame()
+			}
+			if n, self := pill(); n != tc.count || self != tc.add {
+				t.Errorf("after the reply: %s count %d, the viewer's %v", tc.emoji, n, self)
+			}
+		})
+	}
+}

@@ -103,7 +103,7 @@ var lightColors = Colors{
 	EmojiHover:  rgba(0xf7e922, .7),
 	EmojiSelect: rgba(0x9bdf58, .7),
 	Focus:       rgb(0x1264a3), FocusRing: rgba(0x1264a3, .3),
-	InputBorder: rgba(0x1d1c1d, .3),
+	InputBorder: rgb(0x7c7a7f), // --dt_color-otl-pry (kit.css, light)
 	Aubergine:   rgb(0x83388a),
 	TabFg:       rgb(0x1d1c1d), TabFg2: rgb(0x454447), TabIcon: rgb(0x616061), TabLine: rgba(0x5e5d60, .13),
 	EmojiBg: rgb(0xffffff), EmojiFoot: rgb(0xf8f8f8), EmojiCatIcon: rgb(0x616061),
@@ -136,7 +136,7 @@ var darkColors = Colors{
 	EmojiHover:  rgba(0xf7e922, .5),
 	EmojiSelect: rgba(0x9bdf58, .5),
 	Focus:       rgb(0x1d9bd1), FocusRing: rgba(0x1d9bd1, .3),
-	InputBorder: rgba(0xd1d2d3, .3),
+	InputBorder: rgb(0x797c81), // --dt_color-otl-pry (kit.css, dark)
 	Aubergine:   rgb(0xd29bd6),
 	TabFg:       rgb(0xf8f8f8), TabFg2: rgb(0xb9babd), TabIcon: rgb(0xababad), TabLine: rgba(0x797c81, .30),
 	// .sk-client-theme--dark: 26,29,33 / 34,37,41 / 129,131,133
@@ -777,8 +777,10 @@ func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widg
 			}
 		}
 		if border.A > 0 {
+			// .c-button--outline's 1px border: one CSS px
+			bw := maxInt(1, dp(gtx, 1))
 			rrectGrp(gtx, r, dp(gtx, rad), grp, border)
-			rrectGrp(gtx, r.Inset(1), dp(gtx, rad)-1, grp, b)
+			rrectGrp(gtx, r.Inset(bw), dp(gtx, rad)-bw, grp, b)
 		} else {
 			rrectGrp(gtx, r, dp(gtx, rad), grp, b)
 		}
@@ -890,8 +892,11 @@ func fieldNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, ed *widg
 		rrect(gtx, r.Inset(-one), rad+one, cl.Focus)
 		rrect(gtx, r, rad, bg)
 	} else {
+		// .c-input_text: border 1px solid var(--dt_color-otl-pry), one CSS
+		// px (two device pixels at 2x)
+		bw := maxInt(1, dp(gtx, 1))
 		rrect(gtx, r, rad, cl.InputBorder)
-		rrect(gtx, r.Inset(1), rad-1, bg)
+		rrect(gtx, r.Inset(bw), rad-bw, bg)
 	}
 	x := dp(gtx, 12)
 	if leadIcon != "" {
