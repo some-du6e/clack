@@ -296,6 +296,7 @@ and saves the shots (`chfiles-*`).
 | Clicks | handleFileContainerClick, source CHANNEL_TAB: canvases and lists open (openCanvas / openList: the side panel), images in the media viewer; links window.open | n/a | the same; PDFs, video, audio and the rest open their page in the browser (openFile, as the Files view) |
 | Row ⋯ | FileActions' hover group: Download (hosted files), Share, the canvas / list star, More actions (getFileActionsMenuItems); LinkEntity: View link details (info) and More actions: Copy link ("Link copied to clipboard"), Add to folder ▸ | n/a | Download and More actions (the Files view's menu items); links: More actions with Copy link |
 | Keyboard | the explorer's virtual list (↑/↓, Home/End, PageUp/PageDown, Enter) and the grid's arrow keys | n/a | vlist_keys.go over the rows; the media cells are rows of their own (↑/↓ walk them in order) |
+| Tab permalinks | getChannelTabPermalink /archives/<C>/tabs/<id> opens that tab | the channel, on Messages | the channel, then the tab once the tab bar has it (canvas, list, Workflows and Files & links tabs) |
 | Search | ExplorerSearch: Enter on the type-query completion sets the query on all three browsers (All keeps the sort, others take Most relevant); clearing resets them | n/a | Enter searches, clearing the text resets |
 
 Not done, and why:
@@ -319,7 +320,6 @@ Not done, and why:
   Videos open their page (no player).
 - **The grid's 2-D arrow keys.** ↑/↓ step through the cells one by one.
 - **Dragging** files and links into folders (DraggableExplorerFile/Link).
-- **Tab links.** /archives/<C>/tabs/files opens the channel, not the tab.
 - **Manage tabs:** reordering and hiding the tab aren't wired (the card
   lists the tabs only).
 - **Real pages.** conversations.searchLinks' page size isn't visible from
