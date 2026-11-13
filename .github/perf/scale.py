@@ -126,6 +126,21 @@ def owner(stack):
     return stack[-1] if stack else "?"
 
 
+CLACK = "github.com/some-du6e/clack/"
+
+
+def clack_owner(stack):
+    """The first Clack frame up the stack, after the library frame that
+    allocated: "ui.(*App).Run > gio/gpu" for Gio's renderer."""
+    lib = owner(stack)
+    if lib.startswith(CLACK):
+        return short(lib)
+    for fn in stack:
+        if fn.startswith(CLACK):
+            return "%s > %s" % (short(fn), area(lib))
+    return short(lib)
+
+
 def area(fn):
     m = re.match(r"github\.com/some-du6e/clack/internal/((?:ui/)?[a-z0-9_]+(?:/[a-z0-9_]+)?)", fn)
     if m:
@@ -158,9 +173,8 @@ def heap_tables(path, idx="inuse_space", n=25):
         x = v.get(idx, 0)
         if x <= 0:
             continue
-        o = owner(fr)
-        by_area[area(o)] += x
-        by_owner[short(o)] += x
+        by_area[area(owner(fr))] += x
+        by_owner[clack_owner(fr)] += x
         total += x
     return by_area.most_common(n), by_owner.most_common(n), total, None
 

@@ -123,6 +123,10 @@ type Size struct {
 	// drawing), which Lato lacks: the text shaper falls back to the
 	// system's fonts for them.
 	Intl bool
+	// LongURLs gives avatars the length and shape of Slack's
+	// (avatars.slack-edge.com/<date>/<id>_<hash>_<size>.jpg, ~90
+	// characters), as a real directory's profiles have.
+	LongURLs bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -139,7 +143,7 @@ var Small = Size{Emoji: 500, Users: 100, Channels: 30, DMs: 5, Usergroups: 20, H
 // images) and text in other scripts. perf.yml's scale jobs measure the
 // client's memory against it (fakeslackd -scale).
 var HackClubScale = Size{Emoji: 60000, Aliases: 5846, Users: 32000, Channels: 300, DMs: 120, Usergroups: 2006,
-	History: 600, Unread: 60, Authors: 32000, LongChannels: 3, LongHistory: 6000, Intl: true}
+	History: 600, Unread: 60, Authors: 32000, LongChannels: 3, LongHistory: 6000, Intl: true, LongURLs: true}
 
 // LongChannelIDs are the channels with LongHistory messages.
 func (s *Server) LongChannelIDs() []string {
@@ -671,6 +675,10 @@ func (s *Server) generate() {
 		handle := strings.ToLower(first + "." + last)
 		hash := fmt.Sprintf("%012x", r.Int63())
 		img := func(px int) string {
+			if s.Size.LongURLs { // no extra draws: the shape of a real avatar URL from the hash above
+				return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/2024-0" + strconv.Itoa(1+i%9) + "-1" + strconv.Itoa(i%10) +
+					"/" + strconv.Itoa(5400000000000+i) + "_" + hash + "a1b2c3d4_" + strconv.Itoa(px) + ".png"
+			}
 			return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/u" + strconv.Itoa(i) + ".png"
 		}
 		u := slack.User{ID: id, TeamID: TeamID, Name: handle, RealName: first + " " + last, TZ: "America/New_York",
