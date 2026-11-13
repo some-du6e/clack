@@ -136,7 +136,7 @@ func TestW28CmdKCoachmark(t *testing.T) {
 		t.Fatalf("anchor %v %v: want the composer box's top-left", at, ok)
 	}
 	// a press on the card stays open; on the overlay it closes
-	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
 	lines := cmdKLines(gtx, h.th, cmdKRuns(gtx, h.th), gtx.Dp(cmdKW-2*cmdKPadX))
 	card := cmdKCardRect(gtx, at, cmdKCardSize(gtx, lines))
 	press := func(p image.Point) {
@@ -213,7 +213,7 @@ func TestW28CmdKCopyAndGeometry(t *testing.T) {
 	}
 	shortcut.GOOS = "windows"
 
-	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	gtx := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
 	if r := cmdKCardRect(gtx, image.Pt(100, 500), image.Pt(360, 90)); r != image.Rect(100, 426, 460, 516) {
 		t.Errorf("card %v, want (100,426)-(460,516): top 500+20-94", r)
 	}

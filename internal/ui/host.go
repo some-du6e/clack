@@ -203,6 +203,9 @@ func (a *App) focusAfterNavigate(prev, r Route) {
 	if ch == "" || prev == r || r.Thread() != "" || r.Message() != "" {
 		return
 	}
+	if a.data == nil || a.data.core == nil {
+		return // no workspace (a shell under test): nothing to mount
+	}
 	for _, o := range a.overlays {
 		if !o.Dismissed() {
 			return
