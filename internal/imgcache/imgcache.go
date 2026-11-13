@@ -68,10 +68,14 @@ type Cache struct {
 
 	// Two fetch lanes: avatars and emoji (DiskOK URLs, a few KB each) never
 	// wait behind message images, files and unfurls, which can take the
-	// whole 45 s timeout each.
-	sem      chan struct{}
-	smallSem chan struct{}
-	ctx      context.Context
+	// whole 45 s timeout each. Each lane is a queue that at most
+	// laneWorkers goroutines work through, in the order the images were
+	// asked for (under mu). A goroutine per request waiting its turn cost
+	// 8 KB of stack each: scrolling the emoji picker through Hack Club's
+	// 65,000 emoji parked 30,000 of them, 250 MB.
+	queue   [2][]key
+	workers [2]int
+	ctx     context.Context
 
 	wakeAt time.Time // the next repaint: an animation frame (anim.go) or a retry
 	wakeT  *time.Timer
@@ -175,8 +179,6 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		maxBytes:   DefaultLimit,
 		inflight:   map[key]bool{},
 		failed:     map[key]failure{},
-		sem:        make(chan struct{}, 8),
-		smallSem:   make(chan struct{}, 8),
 		ctx:        context.Background(),
 		diskLimit:  DiskLimit,
 	}
@@ -425,17 +427,45 @@ func (c *Cache) startLocked(k key) {
 		return
 	}
 	c.inflight[k] = true
-	go c.load(k)
+	lane := laneOther
+	if DiskOK(k.url) {
+		lane = laneSmall
+	}
+	c.queue[lane] = append(c.queue[lane], k)
+	if c.workers[lane] < laneWorkers {
+		c.workers[lane]++
+		go c.work(lane)
+	}
+}
+
+// The fetch lanes (Cache.queue) and how many loads each runs at once.
+const (
+	laneSmall   = 0 // avatars and emoji (DiskOK)
+	laneOther   = 1 // message images, files, unfurls
+	laneWorkers = 8
+)
+
+// work loads the lane's queued images in order until it is empty.
+func (c *Cache) work(lane int) {
+	for {
+		c.mu.Lock()
+		q := c.queue[lane]
+		if len(q) == 0 {
+			c.queue[lane] = nil // a drained burst's array goes too
+			c.workers[lane]--
+			c.mu.Unlock()
+			return
+		}
+		k := q[0]
+		q[0] = key{}
+		c.queue[lane] = q[1:]
+		c.mu.Unlock()
+		c.load(k)
+	}
 }
 
 func (c *Cache) load(k key) {
-	sem := c.sem
-	if DiskOK(k.url) {
-		sem = c.smallSem
-	}
-	sem <- struct{}{}
 	op, sz, n, an, px, err := c.loadImage(k)
-	<-sem
 	c.mu.Lock()
 	delete(c.inflight, k)
 	if err != nil {
@@ -595,6 +625,15 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, []*ima
 		}
 		return first, frames[0].Bounds().Size(), n, a, frames, nil
 	}
+	// A big image decodes to its full size and scales through a temporary
+	// buffer as big again (x/image/draw's kernel scaler: 32 bytes per
+	// destination column per source row) before the display-size copy is
+	// all that's kept. Eight of them at once while a channel of screenshots
+	// scrolled by held 150 MB for a moment: at most bigDecodes at a time.
+	if big := isBig(data); big {
+		bigSem <- struct{}{}
+		defer func() { <-bigSem }()
+	}
 	img, err := Decode(data)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
@@ -602,6 +641,21 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, []*ima
 	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)
 	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, []*image.RGBA{rgba}, nil
+}
+
+// bigDecodes is how many images of more than bigPixels decode at once
+// (every Cache together: they share the memory).
+const (
+	bigDecodes = 2
+	bigPixels  = 1 << 20
+)
+
+var bigSem = make(chan struct{}, bigDecodes)
+
+// isBig reports whether data's header says it has more than bigPixels.
+func isBig(data []byte) bool {
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	return err == nil && cfg.Width*cfg.Height > bigPixels
 }
 
 // MaxPixels bounds the decoded size of one image (width × height), so a

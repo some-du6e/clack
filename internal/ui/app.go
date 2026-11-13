@@ -37,6 +37,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/nativemenu"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -948,6 +949,7 @@ func (a *App) updateTitle() {
 // ---- overlays & toast ----
 
 func (a *App) layoutOverlays(gtx layout.Context) {
+	popups.ForgetDismissed() // closed popups (their stacking order still named them)
 	live := a.overlays[:0]
 	panes := a.overlayPane[:0]
 	for i, o := range a.overlays {

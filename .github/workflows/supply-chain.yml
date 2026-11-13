@@ -102,6 +102,37 @@ jobs:
           done
           echo "all vendored files match $(jq -r .Version "$d/info.json") ($(jq -r .Sum "$d/info.json"))"
 
+  typesetting:
+    # third_party/typesetting is go-text/typesetting v0.3.5 from the Go
+    # module proxy (its non-test files), file for file, except the files
+    # third_party/typesetting/CLACK_PATCHES.md lists as changed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: vendored go-text matches the proxy's v0.3.5 (but for Clack's patches)
+        run: |
+          set -euo pipefail
+          d=$(mktemp -d)
+          cd "$d"
+          go mod init check >/dev/null 2>&1
+          GOFLAGS=-mod=mod go mod download -json github.com/go-text/typesetting@v0.3.5 > info.json
+          dir=$(jq -r .Dir info.json)
+          test -d "$dir" || { echo "::error::download failed"; cat info.json; exit 1; }
+          cd "$GITHUB_WORKSPACE/third_party/typesetting"
+          patched='font/clack_glyf.go font/font.go font/glyphs.go font/metrics.go font/renderer.go font/variations.go font/opentype/clack_bytes.go font/opentype/reader.go fontscan/clack_mmap.go fontscan/clack_mmap_unix.go fontscan/clack_mmap_windows.go fontscan/clack_mmap_other.go fontscan/fontmap.go CLACK_PATCHES.md'
+          for f in $patched; do grep -qF "\`$f\`" CLACK_PATCHES.md || [ "$f" = CLACK_PATCHES.md ] || { echo "::error::$f is patched but CLACK_PATCHES.md doesn't name it"; exit 1; }; done
+          find . -type f | sed 's#^\./##' | sort | while read -r f; do
+            case " $patched " in *" $f "*) continue ;; esac
+            cmp "$f" "$dir/$f"
+          done
+          echo "every unpatched vendored file matches $(jq -r .Version "$d/info.json") ($(jq -r .Sum "$d/info.json"))"
+
   workflows:
     runs-on: ubuntu-latest
     steps:

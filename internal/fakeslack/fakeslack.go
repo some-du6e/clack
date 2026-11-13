@@ -112,6 +112,36 @@ type Size struct {
 	// AgentThread adds a DM with an agent app and a thread in it, the
 	// agent's answer edited live (agent_thread.go).
 	AgentThread bool
+
+	// The memory workflow's real-account scale (HackClubScale). Zero
+	// values keep the sizes above exactly as they were, so no other
+	// fixture's random draws move.
+	//
+	// Aliases is how many emoji.list entries are "alias:" ones (0:
+	// Emoji/100).
+	Aliases int
+	// Authors spreads message senders, mentions, reactions and thread
+	// participants over the first Authors users of the directory (0: the
+	// first 400), as a big public channel's are.
+	Authors int
+	// LongChannels channels after the first (C0FAKE00001…) have
+	// LongHistory messages instead of History.
+	LongChannels, LongHistory int
+	// Intl puts other scripts and symbols in some messages (CJK, Hangul,
+	// Cyrillic, Arabic, Hebrew, Devanagari, Thai, Greek, arrows and box
+	// drawing), which Lato lacks: the text shaper falls back to the
+	// system's fonts for them.
+	Intl bool
+	// LongURLs gives avatars the length and shape of Slack's
+	// (avatars.slack-edge.com/<date>/<id>_<hash>_<size>.jpg, ~90
+	// characters), as a real directory's profiles have.
+	LongURLs bool
+	// ReadCursors puts client.counts' read cursors on the generated
+	// histories' clock (2026-11-07): a channel is read up to its newest
+	// message, one with unreads up to a day before, as an account that
+	// reads its channels has them. Without it every cursor is a year older
+	// than every message (the other fixtures' screenshots are drawn so).
+	ReadCursors bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -119,6 +149,35 @@ var HackClub = Size{Emoji: 65000, Users: 3000, Channels: 400, DMs: 40, Usergroup
 
 // Small is for unit tests.
 var Small = Size{Emoji: 500, Users: 100, Channels: 30, DMs: 5, Usergroups: 20, History: 120, Unread: 3}
+
+// HackClubScale is the Hack Club Enterprise Grid at one real account's
+// counts (2026-11-12, counts only): 65,846 emoji.list entries (60,000
+// images and 5,846 aliases), 2,006 user groups, a directory of tens of
+// thousands of people who all post, 300 joined channels and 120 DMs in
+// the sidebar, three channels with 6,000 messages each (a fifth of them
+// images) and text in other scripts. perf.yml's scale jobs measure the
+// client's memory against it (fakeslackd -scale).
+var HackClubScale = Size{Emoji: 60000, Aliases: 5846, Users: 32000, Channels: 300, DMs: 120, Usergroups: 2006,
+	History: 600, Unread: 60, Authors: 32000, LongChannels: 3, LongHistory: 6000, Intl: true, LongURLs: true,
+	ReadCursors: true}
+
+// LongChannelIDs are the channels with LongHistory messages.
+func (s *Server) LongChannelIDs() []string {
+	var out []string
+	for i := 1; i <= s.Size.LongChannels && i < s.Size.Channels; i++ {
+		out = append(out, fmt.Sprintf("C0FAKE%05d", i))
+	}
+	return out
+}
+
+// UserIDs are the directory's ids, in order.
+func (s *Server) UserIDs() []string {
+	out := make([]string, len(s.users))
+	for i, u := range s.users {
+		out[i] = u.ID
+	}
+	return out
+}
 
 const (
 	TeamID       = "T0FAKE0001"
@@ -692,6 +751,10 @@ func (s *Server) generate() {
 		handle := strings.ToLower(first + "." + last)
 		hash := fmt.Sprintf("%012x", r.Int63())
 		img := func(px int) string {
+			if s.Size.LongURLs { // no extra draws: the shape of a real avatar URL from the hash above
+				return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/2024-0" + strconv.Itoa(1+i%9) + "-1" + strconv.Itoa(i%10) +
+					"/" + strconv.Itoa(5400000000000+i) + "_" + hash + "a1b2c3d4_" + strconv.Itoa(px) + ".png"
+			}
 			return s.URL + "img/" + strconv.Itoa(px) + "x" + strconv.Itoa(px) + "/u" + strconv.Itoa(i) + ".png"
 		}
 		u := slack.User{ID: id, TeamID: TeamID, Name: handle, RealName: first + " " + last, TZ: "America/New_York",
@@ -711,7 +774,11 @@ func (s *Server) generate() {
 	}
 	s.setupSelfProfile() // profile.go: no random draws
 	// emoji
-	s.emoji = make(map[string]string, s.Size.Emoji+s.Size.Emoji/100)
+	aliases := s.Size.Emoji / 100
+	if s.Size.Aliases > 0 {
+		aliases = s.Size.Aliases
+	}
+	s.emoji = make(map[string]string, s.Size.Emoji+aliases)
 	var names []string
 	for len(names) < s.Size.Emoji {
 		n := word(1+r.Intn(3)) + []string{"", "-" + word(1), "_" + strconv.Itoa(r.Intn(100)), "-parrot", "-yay"}[r.Intn(5)]
@@ -723,7 +790,7 @@ func (s *Server) generate() {
 		s.emoji[n] = s.URL + "img/64x64/" + TeamID + "/" + url.PathEscape(n) + "/" + fmt.Sprintf("%016x", r.Uint64()) + "." + ext
 		names = append(names, n)
 	}
-	for i := 0; i < s.Size.Emoji/100; i++ {
+	for i := 0; i < aliases; i++ {
 		s.emoji["alias-"+word(2)+strconv.Itoa(i)] = "alias:" + names[r.Intn(len(names))]
 	}
 	// conversations
@@ -928,7 +995,28 @@ func (s *Server) sentence(r *rand.Rand, n int) string {
 	return b.String()
 }
 
-func (s *Server) userAt(r *rand.Rand) slack.User { return s.users[r.Intn(min(len(s.users), 400))] }
+func (s *Server) userAt(r *rand.Rand) slack.User {
+	n := 400
+	if s.Size.Authors > 0 {
+		n = s.Size.Authors
+	}
+	return s.users[r.Intn(min(len(s.users), n))]
+}
+
+// intlText is synthetic text in scripts Lato lacks (Intl): greetings and
+// symbols, nothing from a real workspace.
+var intlText = []string{"こんにちは、みなさん", "你好，世界", "안녕하세요 여러분", "Привет всем", "مرحبا بالجميع", "שלום לכולם",
+	"नमस्ते दोस्तों", "สวัสดีครับ", "Γειά σου κόσμε", "→ ✓ ★ ♥ ⚡ ∞ ≠ ≤", "(╯°□°)╯︵ ┻━┻", "¯\\_(ツ)_/¯", "ありがとう！🙏", "日本語のテスト"}
+
+// historyLen is how many messages ch has (LongChannels get LongHistory).
+func (s *Server) historyLen(ch string) int {
+	if s.Size.LongChannels > 0 && strings.HasPrefix(ch, "C0FAKE") {
+		if i, err := strconv.Atoi(ch[6:]); err == nil && i >= 1 && i <= s.Size.LongChannels {
+			return s.Size.LongHistory
+		}
+	}
+	return s.Size.History
+}
 
 // history builds (once) a channel's messages, newest first.
 func (s *Server) history(ch string) []slack.Message {
@@ -938,7 +1026,7 @@ func (s *Server) history(ch string) []slack.Message {
 	}
 	r := rand.New(rand.NewSource(seed))
 	base := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix()
-	n := s.Size.History
+	n := s.historyLen(ch)
 	out := make([]slack.Message, 0, n)
 	// the channels a message can link, read under convMu: a join, a leave
 	// or SetTopic changes s.convs while a page is built (-race, flake-check
@@ -1002,6 +1090,11 @@ func (s *Server) history(ch string) []slack.Message {
 				parts = append(parts, wd)
 				els = append(els, map[string]any{"type": "text", "text": wd + " "})
 			}
+		}
+		if s.Size.Intl && r.Intn(12) == 0 { // other scripts (Intl): the shaper's font fallback
+			t := intlText[r.Intn(len(intlText))]
+			parts = append(parts, t)
+			els = append(els, map[string]any{"type": "text", "text": t + " "})
 		}
 		m.Text = strings.Join(parts, " ")
 		if r.Intn(10) < 7 { // most modern messages carry rich_text blocks
@@ -1228,9 +1321,16 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		var chans, ims []slack.CountEntry
 		for i, c := range s.convs {
 			e := slack.CountEntry{ID: c.ID, LastRead: "1762500000.000000", Latest: "1762516800.000000"}
+			if s.Size.ReadCursors {
+				base := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix() // history's clock
+				e.LastRead, e.Latest = fmt.Sprintf("%d.000000", base), fmt.Sprintf("%d.000000", base)
+			}
 			if i%(max(1, s.Size.Channels/max(1, s.Size.Unread))) == 1 {
 				e.HasUnreads = true
 				e.LastRead = "1762400000.000000"
+				if s.Size.ReadCursors {
+					e.LastRead = fmt.Sprintf("%d.000000", time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC).Unix())
+				}
 				if i%3 == 0 {
 					e.MentionCount = 1 + i%4
 				}

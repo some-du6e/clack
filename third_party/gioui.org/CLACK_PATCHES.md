@@ -19,8 +19,12 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
 `app/clack_drop*.go`, `app/clack_hide*.go`, `app/clack_pancursor_windows*.go`,
 `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
-`app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go` and
-these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
+`app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
+`internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`,
+`font/opentype/opentype.go`, `io/input/pointer.go`, `io/input/key.go`,
+`io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
+`text/clack_release_test.go` and these two files (`CLACK_PATCHES.md`,
+`UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -658,3 +662,84 @@ over a fakeslack channel and the sidebar). On ci's windows-applog job
 (`TestPanCursors`: every cursor loads from its file, as a cursor, with its
 hotspot) and `internal/ui` `TestAutoscrollWindow` (SendInput's middle
 button held and clicked on Clack's own window). Not in `UPSTREAM.patch`.
+
+## 16. op: the memory a recorded path holds
+
+`internal/ops/clack_size.go` (`Ops.Size`), `op/clack_size.go`
+(`CallOp.Size`) and `op/clip/clack_size.go` (`PathSpec.Size`). An
+addition: nothing calls it but Clack.
+
+`text.Shaper.Shape` records each outline into an `op.Ops` of its own, and
+`internal/ui/richview` keeps every shaped word's outline in its word cache.
+The cache was bounded by its count only (two generations of 8,000 words),
+and at the Hack Club account's scale it held 120 MB of outlines, nearly all
+of words no message on screen used (the memory workflow, perf.yml's scale
+jobs, 2026-11-12). `PathSpec.Size` is roughly what an outline holds: its
+`Ops` data and reference arrays' capacity. richview ends a generation once
+its words hold 8 MB (`maxCachedWordBytes`).
+
+`internal/ui/theme`'s emboldened-run cache (1,500 runs, which held 117 MB
+on Linux, where dark text draws as emboldened outlines) ends at 16 MB the
+same way (`maxRunBytes`).
+
+richview and theme are also built against stock Gio v0.10.3
+(`.github/scripts/gio-layer-fix.sh`), so they call this through
+`theme.PathBytes` (`internal/ui/theme/gio_patch16.go`); on stock Gio
+(`gio_patch16_stock.go`) an outline counts 1 KB a glyph. Tests:
+`internal/ui/richview` `TestWordCacheByteBudget`, `internal/ui/theme`
+`TestEmboldenCacheByteBudget`. Not in `UPSTREAM.patch`.
+
+## 17. font/opentype: fonts parsed in place
+
+`font/opentype/opentype.go` (`Parse`, `ParseCollection`).
+
+`Parse` and `ParseCollection` read the file through go-text's
+`opentype.NewBytesResource` (Clack's go-text patch 2,
+`third_party/typesetting/CLACK_PATCHES.md`) instead of a `bytes.Reader`,
+so the face's tables are slices of `src` rather than copies: Clack's
+embedded Lato faces held 6 MB of copied tables. `src` must not change
+after the call; Clack's fonts are embedded, or files read once and kept.
+Not in `UPSTREAM.patch`.
+
+## 18. Per-frame buffers let go of earlier frames' references
+
+`io/input/router.go`, `io/input/pointer.go`, `io/input/key.go` and
+`gpu/gpu.go` (`drawOps.reset`).
+
+The router rebuilds its hit tree, pointer areas, focus order and key
+filters every frame into the same arrays (`s = s[:0]`, then appends), and
+trims its state history the same way; the renderer collects its image and
+path ops so too. Truncating leaves the entries past the new length in place,
+so after a frame with more handlers or paints than the next, the tail kept
+the earlier frame's tags, and whatever owns them, reachable: a closed emoji
+picker (its 10 MB index; Gio's tag is a field of the picker), the rows and
+slackc boxes of a long channel scrolled away, and the pixels of images the
+image cache had already dropped. Each buffer is now cleared before it is
+truncated, as `ops.Reset` already does for an `Ops` list's references. Only
+memory changes: every buffer is refilled with fresh values, and nothing reads
+past its length.
+
+Tests: `io/input` `TestRouterReleasesTagsOfEarlierFrames` (a focused, hovered
+handler's owner is collectable three frames after it was last laid out),
+`gpu` `TestDrawOpsReleaseImagesOfEarlierFrames` (an image a shorter frame no
+longer paints is collectable), both on ci's linux job; `internal/ui`
+`TestClosedEmojiPickerReleased` (the whole client: a closed picker is
+collectable three frames later). Not in `UPSTREAM.patch`.
+
+## 19. text: the Shaper lets go of the text it shaped
+
+`text/shaper.go` (`Shaper.layoutText`).
+
+`Shaper.Layout` reads its text through a `bufio.Reader` it keeps, and
+`LayoutString` keeps the string it iterated; both stayed until the next call
+of the same kind. Clack shares one Shaper per theme, and an editor shapes
+through a reader over its own `textView`, so the last editor that shaped
+stayed reachable with whatever owns it: a closed emoji picker's search field
+kept the picker and its 10 MB index (found by `internal/ui`
+`TestClosedEmojiPickerReleased`, which names the chain:
+`App.th.Shaper.reader.rd`). The reader is reset to nil and the string
+dropped once the text is read; the lines and glyphs `NextGlyph` reads are
+the Shaper's own.
+
+Test: `text` `TestShaperReleasesSource`, on ci's linux job. Not in
+`UPSTREAM.patch`.

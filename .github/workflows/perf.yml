@@ -50,12 +50,31 @@ on:
         description: "baseline (tag, branch or sha); empty = newest v* release tag before HEAD"
         required: false
         default: ""
+      jobs:
+        description: "all, or scale (only the Hack Club-scale memory jobs)"
+        required: false
+        default: "all"
+      scale_base:
+        description: "scale jobs: also measure this commit (sha, branch or tag) as the before side; empty = HEAD only"
+        required: false
+        default: ""
+      scale_idle:
+        description: "scale jobs: how long the idle stage leaves the client alone"
+        required: false
+        default: "10m"
+      scale_platforms:
+        description: "scale jobs: both, linux or windows"
+        required: false
+        default: "both"
 
 permissions:
   contents: write # perf-history branch
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+  # the scale jobs' driver (perfharness builds only), overlaid on a
+  # scale_base tree so both sides run the same session
+  SCALE_HARNESS: internal/ui/perfdrive.go internal/ui/perfmem_linux.go internal/ui/perfmem_windows.go internal/ui/perfmem_other.go internal/ui/messages/perf_harness.go internal/ui/popups/perf_harness.go internal/imgcache/perf_harness.go
 
 concurrency:
   group: perf-${{ github.ref }}
@@ -63,6 +82,7 @@ concurrency:
 
 jobs:
   perf:
+    if: ${{ inputs.jobs != 'scale' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -178,3 +198,226 @@ jobs:
           fi
           cat perf-out/head/history-row.md >> "$f"
           cd ../hist && git add docs/perf-history.md && git commit -qm "perf: ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}" && git push -q origin perf-history
+
+  # Memory at the real account's scale (Karim's 2026-11-12 report: 1.25 GB
+  # on Windows). fakeslackd -scale serves fakeslack.HackClubScale (65,846
+  # emoji.list entries, 32,000 users, 2,006 user groups, 300 channels, long
+  # channels with images, other scripts), and the perfharness binary drives
+  # itself through a session (internal/ui/perfdrive.go): startup, the emoji
+  # picker opened and scrolled through, long channels paged back and
+  # scrolled, 40 more channels, then 10 minutes idle. Each stage records
+  # the Go runtime's MemStats, the OS's counters (Linux /proc smaps by
+  # owner; Windows' private working set by owner through QueryWorkingSet)
+  # and a heap profile (inuse_space and alloc_space). Design notes:
+  # .github/perf/README.md.
+  scale-linux:
+    if: ${{ inputs.scale_platforms != 'windows' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix: # a before side (scale_base) runs on a runner of its own, in parallel
+        side: ${{ fromJSON(inputs.scale_base != '' && '["head","base"]' || '["head"]') }}
+    env:
+      CLACK_PERF_IDLE: ${{ inputs.scale_idle || '10m' }}
+      # llvmpipe draws a 1440x900 frame in about a second: the picker and
+      # the long channels move twice as far a frame here as on Windows
+      CLACK_PERF_PICKER_STEP: "16"
+      CLACK_PERF_SCROLL_STEP: "12"
+      SIDE: ${{ matrix.side }}
+      SCALE_BASE: ${{ inputs.scale_base }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: deps (Gio, Xvfb, Mesa llvmpipe)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0 mesa-utils
+      - name: build (HEAD's fakeslackd; the side's perfharness client from its own tree)
+        run: |
+          mkdir -p "scale-out/$SIDE"
+          go build -o scale-out/fakeslackd ./internal/fakeslack/fakeslackd
+          tree=.
+          if [ "$SIDE" = base ]; then
+            sha=$(git rev-parse -q --verify "$SCALE_BASE^{commit}" || git rev-parse -q --verify "origin/$SCALE_BASE^{commit}") || { echo "::error::scale_base $SCALE_BASE not found"; exit 1; }
+            git worktree add -q --detach "$RUNNER_TEMP/scale-base" "$sha"
+            tree=$RUNNER_TEMP/scale-base
+            echo "$SCALE_BASE ($(git rev-parse --short "$sha"))" > scale-out/base-label.txt
+            # HEAD's driver drives both sides (the same session), when it
+            # compiles against the base tree
+            for f in $SCALE_HARNESS; do [ -f "$f" ] && mkdir -p "$tree/$(dirname "$f")" && cp "$f" "$tree/$f"; done
+          fi
+          if ! (cd "$tree" && CGO_ENABLED=1 go build -tags perfharness -trimpath -o "$GITHUB_WORKSPACE/scale-out/$SIDE/clack-perf" ./cmd/clack); then
+            [ "$SIDE" = base ] || exit 1
+            echo "::warning::HEAD's scale driver doesn't compile against the base tree: the base's own drives it"
+            (cd "$tree" && git checkout -q -- . && CGO_ENABLED=1 go build -tags perfharness -trimpath -o "$GITHUB_WORKSPACE/scale-out/$SIDE/clack-perf" ./cmd/clack)
+          fi
+      - name: the published plugin Library (ChatTabs and Taut plugins, as Karim runs them)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p scale-out/library
+          for i in 1 2 3; do gh release download plugins -R "$GITHUB_REPOSITORY" -D scale-out/library --clobber -p 'index.json' -p 'taut-*.js' -p 'slick-ChatTabs*.js' && break; sleep 20; done
+          ls scale-out/library | wc -l
+      - name: the session (prime, then warm start through idle)
+        run: .github/perf/scale.sh scale-out/fakeslackd scale-out "$SIDE"
+      - name: report
+        if: ${{ !cancelled() }}
+        run: |
+          export RUN_DATE=$(date -u +%Y-%m-%d)
+          [ -f scale-out/base-label.txt ] && export BASE_LABEL="$(cat scale-out/base-label.txt)"
+          python3 .github/perf/scale.py scale-out linux "$GITHUB_SHA" "$GITHUB_REF_NAME"
+          for st in startup picker-all scroll channels idle; do
+            f=scale-out/$SIDE/scale/warm/$st.heap.pprof
+            [ -f "$f" ] && go tool pprof -top -sample_index=inuse_space -nodecount=40 "scale-out/$SIDE/clack-perf" "$f" > "${f%.pprof}.top.txt" 2>&1 || true
+          done
+          cat scale-out/scale.md >> "$GITHUB_STEP_SUMMARY"
+          cat scale-out/scale.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: scale-linux-${{ matrix.side }}
+          path: |
+            scale-out/
+            !scale-out/fakeslackd
+            !scale-out/*/clack-perf
+            !scale-out/library
+
+  scale-windows:
+    if: ${{ inputs.scale_platforms != 'linux' }}
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        side: ${{ fromJSON(inputs.scale_base != '' && '["head","base"]' || '["head"]') }}
+    env:
+      CLACK_PERF_IDLE: ${{ inputs.scale_idle || '10m' }}
+      SIDE: ${{ matrix.side }}
+      SCALE_BASE: ${{ inputs.scale_base }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # CGO off as in ci's windows-applog (no C toolchain on the runner);
+      # releases link miniaudio with mingw, which only a huddle starts.
+      - name: build (HEAD's fakeslackd; the side's perfharness client from its own tree)
+        shell: pwsh
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force "scale-out\$($env:SIDE)" | Out-Null
+          go install github.com/tc-hib/go-winres@v0.3.3
+          $winres = Join-Path (go env GOPATH) 'bin\go-winres.exe'
+          go build -o scale-out\fakeslackd.exe .\internal\fakeslack\fakeslackd
+          if ($LASTEXITCODE -ne 0) { throw 'fakeslackd' }
+          $tree = (Get-Location).Path
+          if ($env:SIDE -eq 'base') {
+            $sha = git rev-parse -q --verify "$($env:SCALE_BASE)^{commit}"
+            if (-not $sha) { $sha = git rev-parse -q --verify "origin/$($env:SCALE_BASE)^{commit}" }
+            if (-not $sha) { throw "scale_base $($env:SCALE_BASE) not found" }
+            git worktree add -q --detach "$env:RUNNER_TEMP\scale-base" $sha
+            $tree = "$env:RUNNER_TEMP\scale-base"
+            "$($env:SCALE_BASE) ($($sha.Substring(0, 7)))" | Out-File -Encoding utf8 scale-out\base-label.txt
+            # HEAD's driver drives both sides (the same session), when it
+            # compiles against the base tree
+            foreach ($f in ($env:SCALE_HARNESS -split ' ')) { if ($f -and (Test-Path $f)) { Copy-Item $f (Join-Path $tree $f) -Force } }
+          }
+          $out = "$env:GITHUB_WORKSPACE\scale-out\$($env:SIDE)\clack-perf.exe"
+          Push-Location $tree
+          & $winres make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version 0.0.0-perf
+          go build -tags perfharness -trimpath -ldflags="-H windowsgui" -o $out .\cmd\clack
+          if ($LASTEXITCODE -ne 0) {
+            if ($env:SIDE -ne 'base') { throw "clack-perf ($($env:SIDE))" }
+            Write-Host "::warning::HEAD's scale driver doesn't compile against the base tree: the base's own drives it"
+            git checkout -q -- .
+            go build -tags perfharness -trimpath -ldflags="-H windowsgui" -o $out .\cmd\clack
+            if ($LASTEXITCODE -ne 0) { throw 'clack-perf (base)' }
+          }
+          Pop-Location
+      - name: the published plugin Library (ChatTabs and Taut plugins, as Karim runs them)
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p scale-out/library
+          for i in 1 2 3; do gh release download plugins -R "$GITHUB_REPOSITORY" -D scale-out/library --clobber -p 'index.json' -p 'taut-*.js' -p 'slick-ChatTabs*.js' && break; sleep 20; done
+          ls scale-out/library | wc -l
+      - name: the session (prime, then warm start through idle)
+        shell: pwsh
+        run: '& .github\perf\scale.ps1 -Fake scale-out\fakeslackd.exe -Out (Resolve-Path scale-out).Path -Sides $env:SIDE'
+      - name: report
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          export RUN_DATE=$(date -u +%Y-%m-%d)
+          [ -f scale-out/base-label.txt ] && export BASE_LABEL="$(tr -d '\r\357\273\277' < scale-out/base-label.txt)"
+          python .github/perf/scale.py scale-out windows "$GITHUB_SHA" "$GITHUB_REF_NAME"
+          for st in startup picker-all scroll channels idle; do
+            f=scale-out/$SIDE/scale/warm/$st.heap.pprof
+            [ -f "$f" ] && go tool pprof -top -sample_index=inuse_space -nodecount=40 "scale-out/$SIDE/clack-perf.exe" "$f" > "${f%.pprof}.top.txt" 2>&1 || true
+          done
+          cat scale-out/scale.md >> "$GITHUB_STEP_SUMMARY"
+          cat scale-out/scale.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: scale-windows-${{ matrix.side }}
+          path: |
+            scale-out/
+            !scale-out/fakeslackd.exe
+            !scale-out/*/clack-perf.exe
+            !scale-out/library
+
+  # Both platforms on one page, and a row each in docs/perf-scale-history.md
+  # on the perf-history branch (pushes, and dispatches of the scale jobs).
+  scale-report:
+    needs: [scale-linux, scale-windows]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: scale-art
+      - name: report and history
+        run: |
+          export RUN_DATE=$(date -u +%Y-%m-%d)
+          # one tree per platform with both sides, then each platform's report
+          for p in linux windows; do
+            mkdir -p "merged/$p"
+            for d in scale-art/scale-$p-*; do [ -d "$d" ] && cp -r "$d"/. "merged/$p/"; done
+            [ -f "merged/$p/base-label.txt" ] && export BASE_LABEL="$(tr -d '\r\357\273\277' < "merged/$p/base-label.txt")"
+            [ -d "merged/$p/head" ] && python3 .github/perf/scale.py "merged/$p" "$p" "$GITHUB_SHA" "$GITHUB_REF_NAME" || true
+          done
+          python3 .github/perf/scale.py --combine merged/linux merged/windows > scale.md || true
+          cat scale.md >> "$GITHUB_STEP_SUMMARY"
+          git config user.name "clack-perf"
+          git config user.email "clack-perf@users.noreply.github.com"
+          git fetch -q origin perf-history || true
+          if git rev-parse -q --verify origin/perf-history >/dev/null; then
+            git worktree add -q ../hist origin/perf-history && (cd ../hist && git checkout -q -B perf-history)
+          else
+            git worktree add -q --detach ../hist && (cd ../hist && git switch -q --orphan perf-history)
+          fi
+          f=../hist/docs/perf-scale-history.md
+          mkdir -p ../hist/docs
+          if [ ! -f "$f" ]; then
+            printf '# Clack memory at Hack Club scale\n\nOne row per platform per run of perf.yml'"'"'s scale jobs (fakeslackd -scale: 65,846 emoji entries, 32k users, 2,006 user groups, 300 channels, long channels with images). The stages are the driver'"'"'s (internal/ui/perfdrive.go); memory is the private working set on Windows (Task Manager'"'"'s Memory column; no GPU on the runner: the Basic Render Driver) and private RSS on Linux (llvmpipe).\n\n| date | commit | branch | platform | startup | picker scrolled | long channels | +40 channels | idle 10 min | idle Go heap | idle stacks |\n|---|---|---|---|---|---|---|---|---|---|---|\n' > "$f"
+          fi
+          for p in linux windows; do
+            [ -f merged/$p/scale-row.md ] && cat merged/$p/scale-row.md >> "$f"
+          done
+          cd ../hist && git add docs/perf-scale-history.md && git commit -qm "perf scale: ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}" || exit 0
+          for i in 1 2 3; do git push -q origin perf-history && exit 0; git pull -q --rebase origin perf-history; done
+

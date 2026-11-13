@@ -97,6 +97,8 @@ func (k *keyHandler) Reset() {
 }
 
 func (q *keyQueue) Reset() {
+	clear(q.order) // Clack patch 18: the last frame's focusable tags go
+	clear(q.dirOrder)
 	q.order = q.order[:0]
 	q.dirOrder = q.dirOrder[:0]
 }

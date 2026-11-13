@@ -1,0 +1,87 @@
+# Memory
+
+Karim's Clack (alpha.45) used 1,248 MB on Windows on 2026-11-12, idle, by Task Manager's Memory column (the private working set). This page is how Clack's memory is measured, what held it, and the budget each cache now keeps.
+
+## Measuring it
+
+perf.yml's scale jobs (`jobs: scale` on a dispatch; also every push to ui and main) run the real binary at the real account's scale and record what holds the memory at each stage of a session. `.github/perf/README.md` has the details.
+
+- **Workload.** `fakeslackd -scale` serves `fakeslack.HackClubScale`, the Hack Club Enterprise Grid at the account's counts: 65,846 emoji.list entries (5,846 of them aliases), 2,006 user groups, 32,000 users (all in the metadata cache), 300 channels and 120 DMs in the sidebar, three channels of 6,000 messages with an image every fifth, and text in other scripts. The homes run Karim-like plugins (ChatTabs and five Taut plugins).
+- **Session.** The perfharness driver (`internal/ui/perfdrive.go`) goes through: startup settled, the emoji picker opened, the picker scrolled through every row, two long channels paged back to 3,000 messages and scrolled through, 40 more channels opened, then 10 minutes idle.
+- **Numbers.** After each stage: runtime.MemStats, the OS's counters split by owner (Windows: private working set and commit through `QueryWorkingSet`, split into the Go heap's arenas, other private memory and DLLs; Linux: `/proc/self/smaps` sums), the app's caches, and a heap profile. `scale.py` attributes each allocation to the Clack code that asked for it.
+- **History.** `docs/perf-scale-history.md` on the perf-history branch has a row per platform per run.
+
+Neither runner has a GPU. On Windows, Gio's Direct3D 11 device runs on the Microsoft Basic Render Driver (WARP), which keeps textures and buffers in the process's private memory, as an integrated GPU's shared memory does; a discrete GPU keeps them in VRAM. The Go heap doesn't depend on the GPU.
+
+## Budgets
+
+Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`): about once an hour, when the objects it may evict reach `cacheSizeMaximum` it keeps the newest `cacheSizeTarget` and removes the rest. Clack follows Slack's numbers where Slack has a cache, and bounds its own caches by bytes.
+
+| cache | budget | from |
+|---|---|---|
+| messages (store timelines and threads, the lists' models and rows, the plugin mirror) | 3,000 evictable messages or 3 MB of JSON, trimmed to 2,000 or 2 MB; evictable: read messages of conversations not on screen, everything in conversations the viewer isn't in, whole histories of quiet conversations not read for an hour; oldest first, recently read conversations last. Checked every 2 minutes (`core.EvictEvery`); a conversation read in the last 10 minutes is kept whole; a pass that lets 1,000 or more go is collected 2 s later (`core.AfterEvict`) | Slack's `messages` CacheManager (`getUnusedMessages`, `evictUncountedChannelHistories`) |
+| decoded images (`imgcache`) | 64 MB, unused for 60 s dropped | Clack |
+| downloaded files (`core.Fetch`, memory only) | 48 MB, unused for 5 minutes dropped | Clack |
+| image loads waiting | a queue per lane, 8 loads at a time | Clack |
+| shaped words (`richview`) | two generations, each up to 8,000 words or 8 MB of glyphs and outlines | Clack |
+| native styles (`slackc`) | two generations of 2,048 | Clack |
+| Gio's shaped lines and outlines | 1,000 each per shaper | Gio |
+| emboldened runs (`theme`) | 1,500 runs or 16 MB of outlines | Clack |
+| emoji picker index | dropped 5 minutes after the last use | Clack |
+| font glyphs | parsed as they're used; in-memory fonts' tables read in place | go-text patches (`third_party/typesetting`) |
+| Go heap | soft limit 768 MiB (`GOMEMLIMIT` wins); a backstop, not a budget | Go runtime |
+| users saved in `meta.json` | the viewer and the 1,000 fetched most recently (`store.MaxSavedUsers`); anyone else is fetched when a message, mention or profile needs them | Slack keeps no directory between starts |
+
+Slack's other managers: `members` 700 → 500 (by last access), `channels` 200 → 100, `files` 250 → 200. Within a session Clack still keeps every user it fetched; bounding that like Slack's members cache is the next cut (it needs every lookup to fetch a missing user, which not all of the ~110 call sites do yet).
+
+## What held the memory (2026-11-13)
+
+perf.yml run 43397108627: the session above at Hack Club scale, both sides in the same run against the same fakeslackd and driven by the same driver. "Before" is ui as of 2026-11-12 (968e4619) with only the measurement added (ac9e898b); "after" is mem-diet at 27364e0c. Windows, idle 10 minutes after the session, the heap profile's live Go heap by the Clack code that allocated it:
+
+| what | before | after | what changed |
+|---|---|---|---|
+| word outlines (richview's shaped-word cache) | 112 MB | 9 MB | a byte budget per generation (Gio patch 16) |
+| native styles (slackc) | 104 MB | 11 MB | two generations of 2,048 |
+| messages: documents, rows, models, store, plugin trees | 133 MB | 56 MB | Slack's message cache budget |
+| plugin JS engine (wasm heap) | 107 MB | 107 MB | nothing: plugins read the mirrored messages, and wasm memory never shrinks |
+| fonts | 68 MB | 12 MB | glyphs parsed as used, embedded fonts read in place, fallback fonts mapped (go-text patches) |
+| users and emoji | 58 MB | 57 MB | at startup 32,000 users → 6,800 (1,000 from meta.json, the rest fetched as messages needed them); by the idle stage the session had fetched 25,600 again |
+| saving meta.json | 64 MB | 0 | users streamed to the file one at a time (the snapshot caught a save) |
+| downloaded files | 42 MB | 3 MB | 5-minute sweep |
+| goroutine structs | 14 MB | 0 | image loads in a queue (the picker scroll had parked 30,000 goroutines, 294 MB of stacks) |
+| emoji picker index | 8 MB | 0.5 MB | a closed picker is let go (below), so its index goes 5 minutes after the last use |
+| emboldened runs | 10 MB | 4 MB | 16 MB budget |
+| decoded images | 3 MB | 2 MB | |
+| everything else | 42 MB | 29 MB | |
+| **live Go heap** | **764 MB** | **291 MB** | |
+
+A closed emoji picker (and so its index) stayed reachable three ways, each holding the last of something: the theme's shared text shaper kept the reader of the last editor it shaped (Gio patch 19), Gio's router and renderer refilled per-frame arrays without clearing what a longer earlier frame left past the end (patch 18: tags, and images' pixels), and the popups stacking order kept the last frame's overlays (`popups.ForgetDismissed`). `internal/ui` `TestClosedEmojiPickerReleased` checks it, and names the chain of fields when something still holds one.
+
+Before and after, the same run:
+
+| Windows | startup | picker scrolled | long channels | +40 channels | idle 10 min | idle, after GC + trim |
+|---|---|---|---|---|---|---|
+| private working set, before | 367 MB | 763 MB | 1,976 MB | 1,542 MB | 669 MB | 663 MB |
+| private working set, after | 313 MB | 477 MB | 1,068 MB | 958 MB | 389 MB | 384 MB |
+| commit, before | 329 MB | 1,082 MB | 2,106 MB | 2,371 MB | 1,414 MB | 1,254 MB |
+| commit, after | 268 MB | 595 MB | 1,101 MB | 1,117 MB | 775 MB | 631 MB |
+| live Go heap, before | 135 MB | 209 MB | 761 MB | 966 MB | 786 MB | |
+| live Go heap, after | 83 MB | 155 MB | 491 MB | 578 MB | 271 MB | |
+
+| Linux (llvmpipe) | startup | picker scrolled | long channels | +40 channels | idle 10 min | idle, after GC + trim |
+|---|---|---|---|---|---|---|
+| private, before | 335 MB | 471 MB | 1,414 MB | 1,358 MB | 1,018 MB | 963 MB |
+| private, after | 311 MB | 642 MB | 805 MB | 910 MB | 651 MB | 612 MB |
+| live Go heap, before | 143 MB | 276 MB | 569 MB | 617 MB | 609 MB | |
+| live Go heap, after | 97 MB | 236 MB | 492 MB | 458 MB | 290 MB | |
+
+Karim's 1,248 MB is about the before side's commit: with memory to spare Windows doesn't trim a working set, so Task Manager's column reads close to commit. After a collection the after side commits 631 MB at idle: the Go heap's arenas 359 MB (271 MB of live objects and 80 MB free inside spans that still hold some: Go doesn't move objects) and 253 MB of private memory outside the Go heap (322 MB on the before side; 154 MB at startup on both). On the runner most of that is most likely the Direct3D device on WARP, which grows with what was drawn (the picker, the long channels) and keeps in the process the textures and buffers a GPU holds in its own memory; Clack's own C code (huddle audio and video) runs only in a huddle.
+
+The idle numbers move between runs with where the snapshot falls against the last message cache pass: the 40 channels opened before the idle stage leave the 10-minute keep window right at the snapshot, and a pass that lets 4,000–5,000 messages go can run seconds before it (since 27364e0c that pass is collected 2 s later). The same session in four runs:
+
+| run | after side | private working set, as is / after GC | commit, as is / after GC | live Go heap | before side (ac9e898b): working set / commit after GC |
+|---|---|---|---|---|---|
+| 43370191533 | 78cda359 | 462 / 458 MB | 691 / 667 MB | 264 MB | (not run) |
+| 43374716594 | aedc7606 | 547 / 542 MB | 714 / 703 MB | 302 MB | 624 / 1,151 MB |
+| 43391221183 | 0d66c025 | 396 / 390 MB | 800 / 659 MB | 280 MB | 649 / 1,246 MB |
+| 43397108627 | 27364e0c | 389 / 384 MB | 775 / 631 MB | 271 MB | 663 / 1,254 MB |

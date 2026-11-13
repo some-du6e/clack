@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -20,8 +21,9 @@ const MaxFetch = 64 << 20
 // slack.Client.Download; Slack's CDNs (slack-edge.com avatars and emoji,
 // slack-imgs.com) are fetched with no credentials. Anything else, such as a
 // remote file's url_private on the sender's own host, is refused.
-// Results are kept in a memory-only LRU (256 MB) and never written to
-// disk; concurrent requests for the same URL share one download.
+// Results are kept in a memory-only LRU (fileCacheBytes, swept of what
+// nothing asked for in fileIdle) and never written to disk; concurrent
+// requests for the same URL share one download.
 func (a *App) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) {
 	authed := a.C.CredentialsOK(rawURL)
 	if !authed && !slack.PublicFetchURL(rawURL) {
@@ -96,6 +98,29 @@ type fileCache struct {
 type fileItem struct {
 	key string
 	fileEntry
+	used time.Time // the last get or put (sweep)
+}
+
+// fileIdle: downloads nothing asked for in this long leave the cache
+// (sweep, from core's eviction loop), as the image cache lets decoded
+// images go after a minute: an idle client keeps what it showed lately.
+const fileIdle = 5 * time.Minute
+
+// sweep drops the entries last used before cutoff.
+func (c *fileCache) sweep(cutoff time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for el := c.order.Back(); el != nil; {
+		prev := el.Prev()
+		if it := el.Value.(*fileItem); it.used.Before(cutoff) {
+			c.order.Remove(el)
+			delete(c.items, it.key)
+			c.size -= len(it.data)
+		} else {
+			break // the list is in order of use: the rest are newer
+		}
+		el = prev
+	}
 }
 
 func newFileCache(max int) *fileCache {
@@ -107,7 +132,9 @@ func (c *fileCache) get(k string) (fileEntry, bool) {
 	defer c.mu.Unlock()
 	if el, ok := c.items[k]; ok {
 		c.order.MoveToFront(el)
-		return el.Value.(*fileItem).fileEntry, true
+		it := el.Value.(*fileItem)
+		it.used = time.Now()
+		return it.fileEntry, true
 	}
 	return fileEntry{}, false
 }
@@ -122,7 +149,7 @@ func (c *fileCache) put(k string, e fileEntry) {
 		c.size -= len(el.Value.(*fileItem).data)
 		c.order.Remove(el)
 	}
-	c.items[k] = c.order.PushFront(&fileItem{key: k, fileEntry: e})
+	c.items[k] = c.order.PushFront(&fileItem{key: k, fileEntry: e, used: time.Now()})
 	c.size += len(e.data)
 	for c.size > c.max {
 		el := c.order.Back()

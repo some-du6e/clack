@@ -43,7 +43,13 @@ func (a *App) dismissTop() bool {
 		if d, ok := o.(dismisser); ok {
 			d.Dismiss()
 		}
-		a.overlays = append(a.overlays[:i], a.overlays[i+1:]...)
+		// the slot past the end goes too, as layoutOverlays clears it: an
+		// overlay left there stays reachable (a closed emoji picker held
+		// its 10 MB index until another overlay took the slot)
+		n := len(a.overlays)
+		copy(a.overlays[i:], a.overlays[i+1:])
+		a.overlays[n-1] = nil
+		a.overlays = a.overlays[:n-1]
 		if i < len(a.overlayPane) {
 			a.overlayPane = append(a.overlayPane[:i], a.overlayPane[i+1:]...)
 		}

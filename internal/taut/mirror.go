@@ -300,6 +300,13 @@ func (m *mirror) onEvent(ev core.Event) {
 		if ev.Type == "message" && ev.Msg != nil && ev.Msg.User != "" {
 			m.stopTyping(ev.Channel, ev.Msg.ThreadTS, ev.Msg.User)
 		}
+	case "evicted":
+		// core trimmed the conversation to Slack's message cache budget
+		// (core/evict.go): the JS side drops what it cached of it, as
+		// Slack's store drops the evicted messages
+		m.invalidate("messages", ev.Channel)
+		m.invalidate("channelHistory")
+		m.invalidate("reactions")
 	case "typing":
 		m.startTyping(ev.Channel, ev.ThreadTS, ev.UserID)
 	case "marked":

@@ -320,6 +320,8 @@ var (
 	nsMu      sync.Mutex
 	nsVersion uint64
 	nsCache   = map[nsKey]*nativeStyle{}
+	nsPrev    map[nsKey]*nativeStyle // the previous generation (lookupNative)
+	nsSeq     uint64                 // natives computed: every key is new
 	nsDark    bool
 )
 
@@ -333,12 +335,18 @@ type nsKey struct {
 	parent uint64
 }
 
-// maxNativeStyles bounds the native style cache.
-const maxNativeStyles = 1 << 15
+// maxNativeStyles is one generation of the native style cache. Natives
+// under per-row host nodes (and their parts) add entries per message row,
+// each with its computed styles (~4 KB): one generation of 32,768 held
+// 77 MB after a long channel was scrolled, two of 4,096 still 36 MB. Two
+// generations of 2,048 cover every native a frame draws (a few hundred),
+// which a lookup promotes to the current one.
+const maxNativeStyles = 1 << 11
 
 func resetNativeStyles() {
 	nsMu.Lock()
 	nsCache = map[nsKey]*nativeStyle{}
+	nsPrev = nil
 	nsMu.Unlock()
 }
 
@@ -484,9 +492,15 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 	nsMu.Lock()
 	if ver != nsVersion || dark != nsDark {
 		nsCache = map[nsKey]*nativeStyle{}
+		nsPrev = nil
 		nsVersion, nsDark = ver, dark
 	}
 	ns := nsCache[k]
+	if ns == nil {
+		if ns = nsPrev[k]; ns != nil {
+			nsCache[k] = ns // still drawn: into the current generation
+		}
+	}
 	nsMu.Unlock()
 	if ns != nil {
 		return ns
@@ -534,12 +548,16 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 			ns.after = &s
 		}
 	}
-	ns.key = mix(uint64(len(nsCache)+1)*0x9e3779b97f4a7c15 ^ k.parent)
 	nsMu.Lock()
+	// a key no other native has had (a children's lookup must never find
+	// the entry of a native from an older generation)
+	nsSeq++
+	ns.key = mix(nsSeq*0x9e3779b97f4a7c15 ^ k.parent)
 	if len(nsCache) >= maxNativeStyles {
 		// natives under per-row host nodes (and their parts) add entries
-		// per row: start over rather than grow without bound
-		nsCache = map[nsKey]*nativeStyle{}
+		// per row: the older generation goes rather than grow without bound
+		nsPrev = nsCache
+		nsCache = make(map[nsKey]*nativeStyle, maxNativeStyles/2)
 	}
 	nsCache[k] = ns
 	nsMu.Unlock()

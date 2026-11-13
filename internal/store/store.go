@@ -8,7 +8,9 @@
 package store
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -85,6 +87,10 @@ type Store struct {
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
+
+	// userSeen is when each user was last fetched (unix seconds; from the
+	// disk cache for users it restored): what SaveCache keeps.
+	userSeen map[string]int64
 
 	// gen counts changes to what the disk cache holds; SaveCache writes
 	// only when it (or the emoji map's version) moved since the last load
@@ -549,13 +555,41 @@ func (s *Store) RUnlock() { s.mu.RUnlock() }
 // ---- users ----
 
 func (s *Store) PutUsers(us []slack.User) {
+	now := time.Now().Unix()
 	s.mu.Lock()
+	if s.userSeen == nil {
+		s.userSeen = map[string]int64{}
+	}
 	for i := range us {
 		u := us[i]
 		if old, ok := s.Users[u.ID]; ok && old.Presence != "" {
 			u.Presence = old.Presence
 		}
 		s.Users[u.ID] = &u
+		s.userSeen[u.ID] = now
+	}
+	s.mu.Unlock()
+	if len(us) > 0 {
+		s.gen.Add(1)
+	}
+}
+
+// putUserPtrs is PutUsers for users the store may keep as they are (the
+// metadata cache's, decoded one by one: no second copy), fetched at the
+// times seen says.
+func (s *Store) putUserPtrs(us []*slack.User, seen map[string]int64) {
+	s.mu.Lock()
+	if s.userSeen == nil {
+		s.userSeen = map[string]int64{}
+	}
+	for _, u := range us {
+		if old, ok := s.Users[u.ID]; ok && old.Presence != "" {
+			u.Presence = old.Presence
+		}
+		s.Users[u.ID] = u
+		if _, newer := s.userSeen[u.ID]; !newer {
+			s.userSeen[u.ID] = seen[u.ID]
+		}
 	}
 	s.mu.Unlock()
 	if len(us) > 0 {
@@ -1376,7 +1410,19 @@ type diskCache struct {
 	Prefs       *Prefs             `json:"prefs,omitempty"`
 	Names       map[string]string  `json:"channel_names,omitempty"` // channels outside the sidebar
 	Bots        map[string]BotInfo `json:"bots,omitempty"`
+	// UserSeen is when each saved user was last fetched (unix seconds):
+	// the next save keeps the MaxSavedUsers most recent.
+	UserSeen map[string]int64 `json:"user_seen,omitempty"`
 }
+
+// MaxSavedUsers bounds the users meta.json keeps: the most recently fetched
+// (and the viewer). Slack's client keeps no directory between starts (its
+// members cache holds 700, trimmed to 500, and fetches anyone else when a
+// message, mention or profile needs them, as EnsureUsers and the name
+// resolver do here); a start restoring every user a long-used Clack ever
+// saw held tens of thousands in memory, 48 MB at the Hack Club account's
+// scale.
+const MaxSavedUsers = 1000
 
 // sameGroups reports whether gs (minus deleted groups) equals s.Groups.
 func (s *Store) sameGroups(gs []slack.Usergroup) bool {
@@ -1484,16 +1530,18 @@ func (s *Store) LoadCache() {
 	if s.cacheDir == "" || s.dropped.Load() {
 		return
 	}
-	b, err := os.ReadFile(filepath.Join(s.cacheDir, "meta.json"))
+	f, err := os.Open(filepath.Join(s.cacheDir, "meta.json"))
 	if err != nil {
 		return
 	}
 	var d diskCache
-	if json.Unmarshal(b, &d) != nil {
+	var users []*slack.User
+	err = readDiskCache(bufio.NewReaderSize(f, 64<<10), &d, func(u *slack.User) { users = append(users, u) })
+	f.Close()
+	if err != nil {
 		return
 	}
-	b = nil
-	s.PutUsers(d.Users)
+	s.putUserPtrs(users, d.UserSeen)
 	if d.EmojiPacked != "" {
 		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
 	} else if len(d.Emoji) > 0 {
@@ -1634,15 +1682,34 @@ func (s *Store) SaveCache() error {
 	for k, v := range s.bots {
 		d.Bots[k] = v
 	}
+	// the stored users are never changed in place (PutUsers replaces
+	// them), so they're written after the lock is let go: the viewer and
+	// the MaxSavedUsers most recently fetched
+	users := make([]*slack.User, 0, len(s.Users))
 	for _, u := range s.Users {
-		d.Users = append(d.Users, *u)
+		users = append(users, u)
+	}
+	if len(users) > MaxSavedUsers {
+		self := s.Self.ID
+		sort.Slice(users, func(i, j int) bool {
+			if (users[i].ID == self) != (users[j].ID == self) {
+				return users[i].ID == self
+			}
+			if a, b := s.userSeen[users[i].ID], s.userSeen[users[j].ID]; a != b {
+				return a > b
+			}
+			return users[i].ID < users[j].ID
+		})
+		users = users[:MaxSavedUsers]
+	}
+	d.UserSeen = make(map[string]int64, len(users))
+	for _, u := range users {
+		if t := s.userSeen[u.ID]; t != 0 {
+			d.UserSeen[u.ID] = t
+		}
 	}
 	s.mu.RUnlock()
-	b, err := json.Marshal(d)
-	if err != nil {
-		return err
-	}
-	if err := writeAtomic(s.cacheDir, "meta.json", b); err != nil {
+	if err := writeAtomicStream(s.cacheDir, "meta.json", func(w io.Writer) error { return writeDiskCache(w, &d, users) }); err != nil {
 		return err
 	}
 	s.saved, s.savedGen, s.savedEmo = true, gen, emo

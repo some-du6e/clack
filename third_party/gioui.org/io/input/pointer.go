@@ -599,6 +599,12 @@ func (q *pointerQueue) hit(areaIdx int, p f32.Point) (bool, pointer.Cursor) {
 }
 
 func (q *pointerQueue) reset() {
+	// Clack patch 18: the tree is rebuilt every frame into the same
+	// arrays; cleared first, a longer earlier frame's nodes don't keep
+	// their tags (and whatever owns them: a closed popup, rows scrolled
+	// away) reachable past the end of a shorter one.
+	clear(q.hitTree)
+	clear(q.areas)
 	q.hitTree = q.hitTree[:0]
 	q.areas = q.areas[:0]
 	q.semantic.idsAssigned = false

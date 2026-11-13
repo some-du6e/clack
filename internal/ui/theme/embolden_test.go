@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -98,5 +99,48 @@ func BenchmarkEmboldenedShapeMiss(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		e.build(gs, 0.45)
+	}
+}
+
+// The emboldened-run cache is bounded by its outlines' bytes as well as by
+// count (maxRunBytes: message words filled 1,500 runs with 117 MB): a
+// stream of distinct runs keeps it under the budget, and its byte count
+// is the sum of what it holds.
+func TestEmboldenCacheByteBudget(t *testing.T) {
+	sh := NewShaperFor(false)
+	v, _ := shaperFaces.Load(sh)
+	e := v.(*emboldener)
+	line := func(i int) []text.Glyph {
+		sh.LayoutString(text.Parameters{Font: Font(Regular), PxPerEm: fixed.I(15), MaxWidth: 1 << 20},
+			fmt.Sprintf("The quick brown fox %d jumps over the lazy dog %d times", i, i*7))
+		var gs []text.Glyph
+		for g, ok := sh.NextGlyph(); ok; g, ok = sh.NextGlyph() {
+			gs = append(gs, g)
+		}
+		return gs
+	}
+	most := 0
+	for i := 0; i < 3000; i++ {
+		if _, ok := EmboldenedShape(sh, line(i), 0.45); !ok {
+			t.Fatal("EmboldenedShape on a theme shaper: not ok")
+		}
+		e.mu.Lock()
+		most = max(most, e.bytes)
+		e.mu.Unlock()
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	sum := 0
+	for el := e.lru.Front(); el != nil; el = el.Next() {
+		sum += el.Value.(*runEntry).bytes
+	}
+	if sum != e.bytes {
+		t.Errorf("the cache counts %d bytes, its runs hold %d", e.bytes, sum)
+	}
+	if most > maxRunBytes+(1<<20) {
+		t.Errorf("the cache held %d bytes, budget %d", most, maxRunBytes)
+	}
+	if e.lru.Len() > maxRuns || e.lru.Len() < 10 {
+		t.Errorf("%d runs cached", e.lru.Len())
 	}
 }
