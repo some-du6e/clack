@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
+	"unsafe"
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
@@ -165,6 +167,16 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 	e.settle(300 * time.Millisecond) // the partner's icon
 	shotBoth("channel-card-shared", func(c *popups.ChannelHoverCard) bool { return len(c.Items()) == 3 && c.Items()[1] != "" })
 	card = e.a.hover.chc.Rect()
+	// off the link straight to the sidebar: 250ms later it's gone
+	e.move(away)
+	time.Sleep(hovercard.HideDelay + 50*time.Millisecond)
+	e.frame()
+	if req, _, open := ctl.Open(); open {
+		t.Fatalf("still open after leaving the link for %v: %+v (the link's view hovered: %v)", away, req, keyViewHovered(req.Key))
+	}
+	r = e.chcOpen(t, conv, fakeslack.ThreadSharedID)
+	e.until("the shared card", 5*time.Second, func() bool { return e.a.hover.chc != nil })
+	card = e.a.hover.chc.Rect()
 	// onto the card and resting there: it stays
 	e.move(f32.Pt(float32(card.Max.X-30), float32(card.Min.Y+20))) // clear of the senders' avatars and names under it
 	time.Sleep(hovercard.HideDelay + 100*time.Millisecond)
@@ -181,7 +193,7 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 	e.frame()
 	if req, _, open := ctl.Open(); open {
 		p, pend := ctl.Pending()
-		t.Fatalf("still open after the pointer left for %v: %+v (over the card %v; pending %v %+v)", away, req, ctl.OverCard(), pend, p)
+		t.Fatalf("still open after the pointer left for %v: %+v (over the card %v; pending %v %+v; the link's view hovered: %v)", away, req, ctl.OverCard(), pend, p, keyViewHovered(req.Key))
 	}
 	// Escape closes it
 	e.chcOpen(t, conv, fakeslack.ThreadSharedID)
@@ -235,4 +247,18 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 	if _, _, open := ctl.Open(); open {
 		t.Error("View Channel left the card open")
 	}
+}
+
+// keyViewHovered reports whether the richview behind a mention's trigger
+// key (richview's mentionKey{v, t}) thinks the pointer is on it.
+func keyViewHovered(k any) string {
+	rv := reflect.ValueOf(k)
+	if rv.Kind() != reflect.Struct || rv.NumField() == 0 {
+		return "not a mention key"
+	}
+	f := rv.Field(0)
+	if f.Kind() != reflect.Pointer || f.IsNil() {
+		return "no view"
+	}
+	return fmt.Sprint((*richview.View)(unsafe.Pointer(f.Pointer())).Pointer())
 }
