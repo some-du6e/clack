@@ -41,9 +41,9 @@ func badgeEnv(t *testing.T, counts map[string]int) *perfEnv {
 		}
 	}
 	e.waitReady()
-	if !e.a.model().Rail.ActivityInbox {
-		t.Fatal("activity_inbox is off: the rail isn't Slack's inbox rail")
-	}
+	// the account's (fakeslack's experiments.getByUser doesn't list it)
+	e.a.Core().SetExperimentGroup("activity_inbox", "on")
+	e.until("the inbox rail", 5*time.Second, func() bool { return e.a.model().Rail.ActivityInbox })
 	return e
 }
 
