@@ -69,11 +69,10 @@ type sidebarState struct {
 	// model that predates a toggle
 	acctCollapsed map[string]bool
 	rowCount      int
-	drag          gesture.Drag
-	dragX         float32
-	dragW         float32
 	hover         bool            // pointer over the sidebar (.p-channel_sidebar:hover)
 	headTags      map[string]*int // section headings' right-click tags (create_channel.go)
+	headHovers    map[string]*gesture.Hover
+	headCtl       string // the heading whose ⋯ (and +) this frame drew, "" for none
 
 	// Drafts & sent's badge list: hovering it shows Slack's tooltip
 	// ("N Drafts" / "N Scheduled", to the right).
@@ -343,6 +342,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	}
 	c := a.sidebarPalette()
 	m := a.model()
+	a.sidebar.headCtl = ""
 	a.tickSidebarFilter(gtx)
 	if a.sbStale(m) {
 		a.sidebar.rebuild(m)
@@ -585,7 +585,21 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	if btn == nil {
 		btn = a.clicks.get(clickPrefix + r.key)
 	}
-	hov := hoverState(btn.Hovered())
+	hovered := btn.Hovered()
+	var headHov *gesture.Hover
+	if r.kind == sbHeading {
+		// a heading's :hover is the whole row's, its ⋯ and + buttons
+		// included (registered over them below): the row's own button
+		// loses the pointer to them
+		headHov = a.sidebar.headingHover(r.key)
+		hovered = headHov.Update(gtx.Source)
+	}
+	if hovered && !sel && !r.disabled && col == c.SidebarText && (conv != nil || r.kind == sbLink) {
+		// :hover keeps content-inv-sec, translucent: the browser mixes it
+		// over the hover tile, not over the bare sidebar
+		col = theme.Over(a.th.C.SidebarText, c.SidebarHover)
+	}
+	hov := hoverState(hovered)
 	item := clsSbItem.EnterAttr(gtx, hov, 0, "data-item-key", r.itemKey)
 	defer item.Leave()
 	if item.Hidden() {
@@ -620,7 +634,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	d := item.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
 		return at(gtx, image.Pt(pad, 0), image.Pt(w-pad*2, rowH), func(gtx layout.Context) layout.Dimensions {
 			return inner.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
-				rs := sbRowState{sel: sel, label: label, icon: icon, emoji: sbEmoji(r, icon), weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
+				rs := sbRowState{hovered: hovered, sel: sel, label: label, icon: icon, emoji: sbEmoji(r, icon), weight: weight, col: col, mentions: mentions, indent: indent, conv: conv, suffix: suffix, rowH: rowH}
 				if conv != nil && a.sidebar.edit.on {
 					rs.edit, rs.picked = true, a.sidebar.edit.sel[conv.ID]
 					if rs.picked {
@@ -646,7 +660,13 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		}
 	}
 	if r.kind == sbHeading {
-		a.sbHeadingControls(gtx, r, btn.Hovered(), image.Pt(w, d.Size.Y))
+		a.sbHeadingControls(gtx, r, hovered, image.Pt(w, d.Size.Y))
+		// the row's hover, over its buttons, passing every event through
+		pass := pointer.PassOp{}.Push(gtx.Ops)
+		area := clip.Rect{Max: image.Pt(w, d.Size.Y)}.Push(gtx.Ops)
+		headHov.Add(gtx.Ops)
+		area.Pop()
+		pass.Pop()
 	}
 	if clicked(btn) {
 		switch r.kind {
@@ -718,6 +738,7 @@ var _ color.NRGBA
 
 // sbRowState is what layoutSidebarRow resolved for a row.
 type sbRowState struct {
+	hovered  bool // the row is hovered (a heading: anywhere in it, its buttons too)
 	sel      bool
 	label    string
 	icon     string
@@ -792,11 +813,11 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			fg = c.SidebarActiveText
 		}
 		icon := rs.icon
-		if r.kind == sbHeading && btn.Hovered() && !a.sbCollapsed(r) {
+		if r.kind == sbHeading && rs.hovered && !a.sbCollapsed(r) {
 			icon = "caret-down"
 		}
 		ix := pad + rs.indent
-		iy := (rowH - gtx.Dp(16)) / 2
+		iy := (rowH - gtx.Dp(16) + 1) / 2 // align-items center, rounded (35px rows at 1.25x put a 20px icon at 8)
 		right := rw - gtx.Dp(6)
 		if rs.edit {
 			// renderEditModeCheckbox: 1em of the row's 15px, centred in its
@@ -830,13 +851,15 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				ctr := image.Pt(right-bd.Size.X/2, rowH/2)
 				theme.Circle(gtx, ctr, gtx.Dp(16)*4445/10000, c.Badge)
 			} else {
-				t := op.Offset(image.Pt(right-bd.Size.X, (rowH-bd.Size.Y)/2)).Push(gtx.Ops)
+				// .p-channel_sidebar__badge: margin-right 2px inside the
+				// row's --has-badge 6px padding
+				t := op.Offset(image.Pt(right-gtx.Dp(2)-bd.Size.X, (rowH-bd.Size.Y+1)/2)).Push(gtx.Ops)
 				call.Add(gtx.Ops)
 				t.Pop()
 			}
-			right -= bd.Size.X
+			right -= gtx.Dp(2) + bd.Size.X + gtx.Dp(4) // and .c-badge's margin-left 4px
 			if !draft {
-				right -= gtx.Dp(6)
+				right -= gtx.Dp(8) // the row's gap: 8px between the name and the suffix
 			}
 		}
 		// Drafts & sent's badges (Slack's OutboxLinkContent): "✎ N" for

@@ -68,6 +68,9 @@ func init() {
 	reg("caret-up", fl("M13.75 12 H6.25 L10 7.5 L13.75 12 Z"))
 	// Slack's channel
 	reg("hash", s("M11.25 17.21 L13.75 2.75"), s("M3.75 6.75 H17.25"), s("M6.5 17.2 L9 2.75"), s("M16.25 13.75 H2.75"))
+	// Slack's channel-filled: the sidebar's # for an unread channel
+	// (BaseChannelPrefixIcon), 2-unit lines
+	reg("hash-filled", sw(2, "M9 3 L6.5 17"), sw(2, "M13.75 3 L11.25 17"), sw(2, "M4 7 H17"), sw(2, "M3 13.5 H16"))
 	reg("channel-add", s("M11.25 12.75 H1.75"), s("M3.5 16.21 L6 3.75"), s("M8 16.21 L10.5 3.75"), s("M12.25 7.25 H2.75"), s("M15.75 12.5 V7.5"), s("M13.25 10 H18.25"))
 	reg("channel-plus", registry["channel-add"].parts...)
 	// Slack's channel-section

@@ -335,7 +335,7 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		}
 	}
 	fg := e.fg
-	iy := (rowH - gtx.Dp(16)) / 2
+	iy := (rowH - gtx.Dp(16) + 1) / 2 // align-items center, rounded (sidebar.go)
 	if (kind == "im" || kind == "app") && !uipref.Get().SidebarAvatars {
 		// show_sidebar_avatars off: BaseChannelPrefix draws the presence
 		// badge in the icon's place (BaseChannelPrefixPresence)
@@ -368,6 +368,12 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 			icon = "lock"
 		case kind == "mpim":
 			icon = "people"
+		default:
+			// BaseChannelPrefixIcon: an unread channel that isn't muted
+			// (the row's --unread, bold) gets channel-filled
+			if e.weight == theme.Black && conv.Unread && !conv.Muted {
+				icon = "hash-filled"
+			}
 		}
 		is := clsSbIcon.Enter(gtx, 0, 0)
 		if !is.Hidden() {

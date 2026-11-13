@@ -40,11 +40,9 @@ import (
 	"time"
 
 	"gioui.org/app"
-	"gioui.org/gesture"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 
@@ -112,11 +110,8 @@ type splitState struct {
 
 	def, maxW float32 // this frame's default and largest widths (dp)
 
-	drag     gesture.Drag
-	dragOff  float32 // the press's distance from the column's left edge (px)
-	resizing bool
-	lastDown time.Time // the handle's last press: another within 500ms resets
-	hover    bool
+	rz    colResizer // the column's resizer (resizer.go)
+	hover bool
 
 	minW int      // the window minimum width last applied (dp), 0: Clack's own
 	data *backend // the session the pane's conversations belong to
@@ -362,7 +357,7 @@ func (a *App) splitColumn(gtx layout.Context, eb, sbW int) (int, int) {
 	win := dp(a.winSize.X)
 	// a window resize ends a "sticky" width (setSplitStickyAutoResetOnResize)
 	if w := int(win + .5); w != s.winW {
-		if s.winW != 0 && s.mode == "sticky" && !s.resizing {
+		if s.winW != 0 && s.mode == "sticky" && !s.rz.dragging() {
 			s.mode = "auto"
 		}
 		s.winW = w
@@ -380,7 +375,7 @@ func (a *App) splitColumn(gtx layout.Context, eb, sbW int) (int, int) {
 	if s.width > 0 && (s.mode == "sticky" || s.mode == "manual") {
 		w = clampF(float32(s.width), splitMinW, maxW)
 	}
-	if !s.resizing && (s.mode == "" || s.mode == "auto") {
+	if !s.rz.dragging() && (s.mode == "" || s.mode == "auto") {
 		// the default sticks until the window resizes (DUQ2)
 		s.width, s.mode = int(w+.5), "sticky"
 		a.saveSplitWidth()
@@ -515,70 +510,56 @@ func (a *App) layoutSplitView(gtx layout.Context, route Route) layout.Dimensions
 	return d
 }
 
-// layoutSplitResize is the split column's resizer (BaseResizer, className
-// p-ia4_client__resizer--split): 8px on the card's left edge, a 2px
-// highlight line while hovered or dragged, Slack's 300–1000 limits, a
-// snap to the default within 15px and a reset on a double click.
-func (a *App) layoutSplitResize(gtx layout.Context, col, card image.Rectangle) {
+// splitResizeEvents applies the split column's resizer (BaseResizer,
+// fromRight) before the shell sizes the columns: the width is the
+// distance from the column's left edge, as dragged, to its right edge
+// (right, px in the shell's frame), Slack's 300–1000 limits, a snap to
+// the default within 15px and a reset on a double click. The default and
+// the largest width are last frame's (splitColumn).
+func (a *App) splitResizeEvents(gtx layout.Context, right int) {
 	s := &a.split
 	pd := gtx.Metric.PxPerDp
 	for {
-		e, ok := s.drag.Update(gtx.Metric, gtx.Source, gesture.Horizontal)
+		e, ok := s.rz.next(gtx)
 		if !ok {
 			break
 		}
-		switch e.Kind {
-		case pointer.Press:
-			if !s.lastDown.IsZero() && gtx.Now.Sub(s.lastDown) < 500*time.Millisecond {
-				// onReset: the default width, "auto"
-				s.lastDown = time.Time{}
-				s.width, s.mode, s.resizing = int(s.def+.5), "auto", false
-				a.saveSplitWidth()
-				a.Invalidate()
-				continue
-			}
-			s.lastDown = gtx.Now
-			s.dragOff, s.resizing = float32(a.ptrWin.X-col.Min.X), true
-		case pointer.Drag:
-			if !s.resizing {
-				continue
-			}
-			// fromRight: the width is the pointer's distance from the
-			// column's right edge (window coordinates, so the moving
-			// handle doesn't matter)
-			w := (float32(col.Max.X-a.ptrWin.X) + s.dragOff) / pd
+		switch e.kind {
+		case resizeReset: // onReset: the default width, "auto"
+			s.width, s.mode = int(s.def+.5), "auto"
+			a.saveSplitWidth()
+		case resizeMove:
+			w := (float32(right) - e.pos) / pd
 			mode := "manual"
 			if w >= s.def-splitSnap && w <= s.def+splitSnap {
 				w, mode = s.def, "auto" // calculateColumnWidth's snap
 			} else {
 				w = clampF(w, splitMinW, s.maxW)
 			}
-			if int(w+.5) != s.width || mode != s.mode {
-				s.width, s.mode = int(w+.5), mode
-				a.Invalidate()
+			s.width, s.mode = int(w+.5), mode
+		case resizeEnd:
+			if s.mode == "auto" { // the default then sticks (DUQ2)
+				s.mode = "sticky"
 			}
-		case pointer.Release, pointer.Cancel:
-			if s.resizing {
-				s.resizing = false
-				if s.mode == "auto" { // the default then sticks (DUQ2)
-					s.mode = "sticky"
-				}
-				a.saveSplitWidth()
-			}
+			a.saveSplitWidth()
 		}
 	}
+}
+
+// layoutSplitResize is the split column's resizer (className
+// p-ia4_client__resizer--split): 8px on the card's left edge, a 2px
+// highlight line while hovered or dragged.
+func (a *App) layoutSplitResize(gtx layout.Context, col, card image.Rectangle) {
+	s := &a.split
 	hw := gtx.Dp(splitHandleW)
 	r := image.Rect(card.Min.X-hw/2, card.Min.Y, card.Min.X+hw-hw/2, card.Max.Y)
-	if s.hover || s.resizing {
+	if s.hover || s.rz.dragging() {
 		// .p-resizer:hover:after for --split: 2px, highlight accent, with a
 		// 1px ring
 		lx := card.Min.X - gtx.Dp(2)
 		theme.Fill(gtx, image.Rect(lx-gtx.Dp(1), card.Min.Y, lx+gtx.Dp(3), card.Max.Y), a.th.C.Link)
 	}
-	func() {
-		defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-		pointerArea(gtx, &s.drag, image.Rectangle{Max: r.Size()}, pointer.CursorColResize)
-	}()
+	s.rz.area(gtx, r, col.Min.X)
 	s.hover = a.ptrOK && a.ptrWin.In(r) && len(a.overlays) == 0
 }
 
