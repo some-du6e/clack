@@ -349,7 +349,8 @@ func TestLoungeBannerLikeSlack(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.c.PlaySong("jazz")
-	avWaitFor(t, "jazz", func() bool { return e.c.MusicPlaying() })
+	// the song pref saves asynchronously and the trigger reads it
+	avWaitFor(t, "jazz", func() bool { return e.c.MusicPlaying() && e.c.trackName() == "Smooth Jazz" })
 
 	// the dock (window closed): the player alone above the card, and the
 	// stop button there works too
