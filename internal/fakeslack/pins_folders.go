@@ -21,8 +21,8 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
-	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -264,9 +264,9 @@ func (s *Server) handlePinsFolders(method string, f url.Values) (any, bool) {
 	return nil, false
 }
 
-// pfReorder moves center between left and right in its folder and
-// re-ranks the folder ("a0", "a1", …), pushing bookmark_updated for each
-// bookmark whose rank changed; it answers with the center's bookmark.
+// pfReorder gives center a rank between left's and right's (the
+// neighbours it was dropped between), as Slack's server does, leaving the
+// rest as they are; it pushes bookmark_updated for it and answers with it.
 func (s *Server) pfReorder(f url.Values) any {
 	st := s.pf()
 	st.mu.Lock()
@@ -275,42 +275,52 @@ func (s *Server) pfReorder(f url.Values) any {
 		st.mu.Unlock()
 		return map[string]any{"ok": false, "error": "not_found"}
 	}
+	rank := func(id string) string {
+		if i := st.find(id); i >= 0 && id != "" {
+			r, _ := st.bms[i]["rank"].(string)
+			return r
+		}
+		return ""
+	}
 	center := st.bms[ci]
-	parent, _ := center["parent_id"].(string)
-	var in []map[string]any
-	for _, b := range st.bms {
-		if p, _ := b["parent_id"].(string); p == parent && b["type"] != "local_folder" && b["id"] != center["id"] {
-			in = append(in, b)
-		}
-	}
-	sort.SliceStable(in, func(i, j int) bool { return in[i]["rank"].(string) < in[j]["rank"].(string) })
-	at := len(in)
-	if r := f.Get("right"); r != "" {
-		at = slices.IndexFunc(in, func(b map[string]any) bool { return b["id"] == r })
-	} else if l := f.Get("left"); l != "" {
-		at = slices.IndexFunc(in, func(b map[string]any) bool { return b["id"] == l }) + 1
-	}
-	if at < 0 {
-		at = len(in)
-	}
-	in = slices.Insert(in, at, center)
-	var changed []map[string]any
-	for i, b := range in {
-		r := fmt.Sprintf("a%d", i)
-		if b["rank"] != r {
-			b["rank"] = r
-			changed = append(changed, b)
-		}
+	center["rank"] = rankBetween(rank(f.Get("left")), rank(f.Get("right")))
+	if p := f.Get("parent_id"); p != "" {
+		center["parent_id"] = p
 	}
 	out := map[string]any{}
 	for k, v := range center {
 		out[k] = v
 	}
 	st.mu.Unlock()
-	for _, b := range changed {
-		s.Push(bookmarkEvent("bookmark_updated", b))
-	}
+	s.Push(bookmarkEvent("bookmark_updated", out))
 	return ok("bookmark", out)
+}
+
+const rankDigits = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+// rankBetween is a rank that sorts after lo and before hi ("" for
+// either: no bound).
+func rankBetween(lo, hi string) string {
+	var out []byte
+	for i := 0; ; i++ {
+		a := 0
+		if i < len(lo) {
+			a = strings.IndexByte(rankDigits, lo[i])
+		}
+		b := len(rankDigits)
+		if hi != "" && i < len(hi) {
+			b = strings.IndexByte(rankDigits, hi[i])
+		}
+		if a == b {
+			out = append(out, rankDigits[a])
+			continue
+		}
+		if b-a > 1 {
+			return string(append(out, rankDigits[(a+b)/2]))
+		}
+		out = append(out, rankDigits[a])
+		hi = "" // past this digit only lo bounds it
+	}
 }
 
 // pfTabs applies conversations.updateTab (a label) or removeTab to the

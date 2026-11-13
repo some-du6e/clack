@@ -46,6 +46,9 @@ func pfEnv(t *testing.T, shotsEnv string) (*perfEnv, *fakeslack.Server) {
 		e.gpu = w
 	}
 	e.waitReady()
+	// live updates: the pin and bookmark events come over the socket
+	go e.a.Core().SetRealtime(true)
+	e.until("the socket", 15*time.Second, func() bool { return e.a.data.m.Connected })
 	return e, fs
 }
 
