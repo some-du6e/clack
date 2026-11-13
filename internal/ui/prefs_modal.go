@@ -576,22 +576,6 @@ func (p *prefsModal) page(gtx layout.Context, sec string) layout.Dimensions {
 	})
 }
 
-// setEmojiStyle goes through setUserPrefByApi (Slack's emoji_style pref),
-// applied locally.
-func (a *App) setEmojiStyle(s string) {
-	a.dispatch("setUserPrefByApi", map[string]any{"pref": "emoji_style", "value": s},
-		func(ctx context.Context, args map[string]any) (any, error) {
-			v := argStr(args, "value")
-			a.Post(func() {
-				a.th.EmojiStyle = v
-				a.prefs.EmojiStyle = v
-				a.savePrefs()
-				a.Invalidate()
-			})
-			return nil, nil
-		})
-}
-
 // openPrefsMenu is the fallback when popups isn't linked.
 func (a *App) openPrefsMenu() {
 	a.menu(image.Pt(a.px(300), a.px(90)), []MenuItem{

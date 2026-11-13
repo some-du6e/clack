@@ -156,6 +156,17 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_KEY_TESTS: "1"
         run: go test -count=1 -v -timeout 5m -run 'TestWinKeyText' gioui.org/app
+      # Karim's 2026-11-12 report came from Windows (gap-w29): the thread
+      # pane's reply box 12px under the last reply, laid out with the
+      # Windows build's fonts and text shaping on internal/fakeslack (no
+      # GPU here: the geometry, not the pixels; threads-audit has those).
+      - name: thread reply box gap (layout, fakeslack)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          go test -count=1 -v -run '^TestThreadComposerTopMargin$' ./internal/ui/composer
+          go test -count=1 -v -timeout 10m -run '^TestThreadsAuditReplyGap$' ./internal/ui
       - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
         if: ${{ !cancelled() }}
         env:

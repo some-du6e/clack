@@ -53,6 +53,8 @@ func TestFakeCamera(t *testing.T) {
 	fk := NewFake(clip, t.Errorf)
 	defer fk.Close()
 	f := fk.f
+	f.cam.dropFirst.Store(true)  // the first keyframe lost (TestFakeScreenShare): the fake asks for another
+	f.cam.dropPLIKey.Store(true) // and the one answering its PLI: it asks again
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := Join(ctx, Options{
@@ -77,7 +79,7 @@ func TestFakeCamera(t *testing.T) {
 	c := &f.cam
 	info := func() string {
 		return s.State().Camera.State.String() + "; fake got " + itoa64(c.pkts.Load()) + " packets, " + itoa64(c.frames.Load()) +
-			" pictures, " + itoa64(c.keys.Load()) + " keyframes (" + itoa64(c.keysPLI.Load()) + " after PLI); " + s.Stats()
+			" pictures (" + itoa64(c.undecodable.Load()) + " undecodable, " + itoa64(c.keyReqs.Load()) + " keyframe requests), " + itoa64(c.keys.Load()) + " keyframes (" + itoa64(c.keysPLI.Load()) + " after PLI); " + s.Stats()
 	}
 	waitFor(t, 20*time.Second, "camera video at the fake", func() bool {
 		return s.State().Camera.State == CameraOn && c.frames.Load() >= 10 && c.keysPLI.Load() >= 1

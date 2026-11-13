@@ -21,11 +21,8 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
-	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
-	"github.com/thesyncim/goh264"
 )
 
 const (
@@ -182,19 +179,14 @@ type FakeAwareness struct {
 // fakeCamIn is what the fake saw of your camera: the SUBSCRIBE send side
 // and the H.264 RTP on the camera m-section, decoded.
 type fakeCamIn struct {
-	mu      sync.Mutex
-	duplex  uint32
-	desc    []streamDesc // video send streams of the last SUBSCRIBE
-	subs    []subscribeSeen
-	pkts    atomic.Int64
-	frames  atomic.Int64
-	keys    atomic.Int64
-	keysPLI atomic.Int64 // keyframes after the fake's PLI
-	pliSent atomic.Bool
-	w, h    atomic.Int32
-	pt      atomic.Int32
-	ssrc    atomic.Uint32
-	mime    atomic.Value // string
+	mu     sync.Mutex
+	duplex uint32
+	desc   []streamDesc // video send streams of the last SUBSCRIBE
+	subs   []subscribeSeen
+	fakeVideoIn
+	pt   atomic.Int32
+	ssrc atomic.Uint32
+	mime atomic.Value // string
 }
 
 type subscribeSeen struct {
@@ -495,14 +487,11 @@ func (f *fakeChime) negotiate(offer string, recv []uint32) (string, uint32, erro
 	}
 	first := f.pc == nil
 	if first {
-		m := &webrtc.MediaEngine{}
-		if err := m.RegisterDefaultCodecs(); err != nil {
+		api, err := fakeAPI()
+		if err != nil {
 			return "", 0, err
 		}
-		se := webrtc.SettingEngine{}
-		se.SetIncludeLoopbackCandidate(true)
-		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-		f.api = webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(se))
+		f.api = api
 		pc, err := f.api.NewPeerConnection(webrtc.Configuration{})
 		if err != nil {
 			return "", 0, err
@@ -661,49 +650,21 @@ func (f *fakeChime) onTrack(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
 	}
 }
 
-// recvCamera decodes your camera like a Chime receiver would, and after a
-// few pictures asks for a keyframe (PLI) to check you answer it.
+// recvCamera decodes your camera like a Chime receiver would
+// (fakeVideoIn.recv).
 func (f *fakeChime) recvCamera(track *webrtc.TrackRemote) {
 	c := &f.cam
 	c.pt.Store(int32(track.PayloadType()))
 	c.ssrc.Store(uint32(track.SSRC()))
 	c.mime.Store(track.Codec().MimeType)
-	sb := samplebuilder.New(512, &codecs.H264Packet{}, track.Codec().ClockRate, samplebuilder.WithMaxTimeDelay(time.Second))
-	dec := goh264.NewDecoder()
-	for {
-		pkt, _, err := track.ReadRTP()
-		if err != nil {
-			return
+	c.recv(track, 512, func() {
+		f.mu.Lock()
+		pc := f.pc
+		f.mu.Unlock()
+		if pc != nil {
+			_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())}})
 		}
-		c.pkts.Add(1)
-		sb.Push(pkt)
-		for s := sb.Pop(); s != nil; s = sb.Pop() {
-			key := hasIDR(s.Data)
-			frames, err := dec.DecodeFrames(s.Data)
-			if err != nil {
-				continue
-			}
-			for _, fr := range frames {
-				c.frames.Add(1)
-				c.w.Store(int32(fr.Width))
-				c.h.Store(int32(fr.Height))
-			}
-			if key {
-				c.keys.Add(1)
-				if c.pliSent.Load() {
-					c.keysPLI.Add(1)
-				}
-			}
-			if c.frames.Load() >= 5 && c.pliSent.CompareAndSwap(false, true) {
-				f.mu.Lock()
-				pc := f.pc
-				f.mu.Unlock()
-				if pc != nil {
-					_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())}})
-				}
-			}
-		}
-	}
+	})
 }
 
 func (s *Session) audioInCount() int64 {

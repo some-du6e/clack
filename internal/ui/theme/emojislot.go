@@ -96,7 +96,7 @@ func (t *Theme) textWithSlots(gtx layout.Context, o LabelOpts, segs []segment, f
 	d := drawTextSlots(gtx, t.Shaper, o, s, EmboldenFor(o.Color), sd)
 	es := gtx.Sp(o.Size * 6 / 5) // the single-line size: 18px next to 15px text
 	for _, p := range sd.pos {
-		img, ok := t.Images.Get(t.EmojiURL(p.stem), es*2)
+		img, ok := t.Images.Get(t.EmojiURL(p.stem), es)
 		if !ok {
 			continue
 		}

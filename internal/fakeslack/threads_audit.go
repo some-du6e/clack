@@ -30,6 +30,9 @@ import (
 //     pane's footer is MessageInputLockedThreadRoadblock. The oldest root,
 //     so the channel's other shots don't move. PushThreadLocked sends the
 //     socket's message_locked for any root.
+//   - ThreadsAuditOne: reply_count 2 with one reply served, the viewer's
+//     (the short thread of Karim's 2026-11-12 gap report): the reply box
+//     sits under it. Older than ThreadsAuditLocked for the same reason.
 //
 // subscriptions.thread.mark is recorded (ThreadsAuditMarks) and moves the
 // thread's last_read, so a reload sees it read.
@@ -44,6 +47,7 @@ const (
 	ThreadsAuditHidden    = "1762705000.000100"
 	ThreadsAuditFaces     = "1762706000.000100"
 	ThreadsAuditLocked    = "1762699000.000100"
+	ThreadsAuditOne       = "1762698000.000100"
 )
 
 // ThreadsAuditReply is the i-th reply of a fixture thread (a minute apart).
@@ -107,6 +111,7 @@ func (s *Server) threadsAuditCases() []threadsAuditCase {
 		{root: ThreadsAuditHidden, repliers: []int{0, 1, 0}, count: 7, text: "Photos from the trip"},
 		{root: ThreadsAuditFaces, repliers: []int{0, 1, 2, 3, 4, 5, 6}, text: "Sign-up sheet for the potluck"},
 		{root: ThreadsAuditLocked, repliers: []int{1, 2}, text: "Rules for the raffle", locked: true},
+		{root: ThreadsAuditOne, repliers: []int{-1}, count: 2, text: "Has anyone seen the spare charger?"},
 	}
 }
 

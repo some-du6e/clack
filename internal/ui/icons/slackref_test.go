@@ -141,6 +141,7 @@ var slackRef = map[string]string{
 	"glasses-filled":              "glasses-filled",
 	"globe":                       "globe",
 	"hash":                        "channel",
+	"hash-filled":                 "channel-filled",
 	"headphones":                  "headphones",
 	"headphones-filled":           "headphones-filled",
 	"heart":                       "heart",

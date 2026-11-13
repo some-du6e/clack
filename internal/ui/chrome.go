@@ -454,6 +454,9 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		lines := a.railLabelLines(gtx, t)
 		th := gtx.Dp(unit.Dp(railTabH(len(lines))))
 		org := image.Pt(gtx.Dp(9), y)
+		if a.railRects != nil { // tests: each button's box, window px
+			a.railRects[t.key] = image.Rectangle{Min: org, Max: org.Add(image.Pt(gtx.Dp(52), th))}
+		}
 		// More is a PeekTrigger: hovering opens its menu (rail_peek.go),
 		// and it keeps the hover tile while the menu shows
 		// (.p-peek_trigger--is-peek-visible)
@@ -466,25 +469,37 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
 				sel := active == t.key
 				tile := image.Rect(gtx.Dp(8), gtx.Dp(8), gtx.Dp(44), gtx.Dp(44))
-				if sel {
+				// .p-tab_rail__button__icon: hover, :active, --active and a
+				// visible peek all fill it theme-surf-inv-pry
+				if sel || btn.Hovered() || peek {
 					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeActive)
-				} else if btn.Hovered() || peek {
-					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeHover)
 				}
 				name := t.icon
 				if sel && icons.Has(name+"-filled") {
 					name += "-filled"
 				}
-				at(gtx, image.Pt(tile.Min.X+gtx.Dp(8), tile.Min.Y+gtx.Dp(8)), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get(name)(gtx, 20, c.ChromeText)
+				// .p-tab_rail__button:hover (and a visible peek) scales
+				// __icon_inner to 1.15 about its centre: the 20px icon
+				// draws at 23
+				isz := unit.Dp(20)
+				if btn.Hovered() || peek {
+					isz = 23
+				}
+				io := (tile.Dx() - gtx.Dp(isz) + 1) / 2
+				at(gtx, tile.Min.Add(image.Pt(io, io)), image.Pt(gtx.Dp(isz), gtx.Dp(isz)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get(name)(gtx, isz, c.ChromeText)
 				})
 				// unread badge / dot on the tile's top-right corner.
 				if n, dot := a.railBadge(t.key); n > 0 {
-					at(gtx, image.Pt(tile.Max.X-gtx.Dp(10), tile.Min.Y-gtx.Dp(5)), image.Pt(gtx.Dp(40), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+					// .p-tab_rail__button .c-badge: top 4px, right 2px
+					bw := a.railCountWidth(gtx, n)
+					at(gtx, image.Pt(gtx.Dp(52)-gtx.Dp(2)-bw, gtx.Dp(4)), image.Pt(bw, gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
 						return a.railCount(gtx, n)
 					})
 				} else if dot {
-					theme.Circle(gtx, image.Pt(tile.Max.X-gtx.Dp(2), tile.Min.Y+gtx.Dp(2)), gtx.Dp(8), c.ChromeText)
+					// .p-unread_dot: 6px, theme-base-imp; in the rail button
+					// top 12px, right 12px (centre 37, 15 of the 52px box)
+					theme.Circle(gtx, image.Pt(gtx.Dp(37), gtx.Dp(15)), gtx.Dp(6), c.Badge)
 				}
 				return layout.Dimensions{Size: image.Pt(gtx.Dp(52), th)}
 			})
@@ -598,24 +613,40 @@ func (a *App) chromeButton(gtx layout.Context, org image.Point, c *widget.Clicka
 	})
 }
 
-// railCount draws the small count bubble on a rail tile.
+// railCount draws a rail tab's count: Slack's Badge (client-boot, Ex) as
+// useGetMentions renders it on the rail, <span class="c-badge c-badge--circle
+// c-badge--themed">, maxCount 99 ("99+", c-badge--max). .c-badge--circle is
+// 16px tall, 10px bold text (line-height 1) with 5px side padding,
+// --max 7px; .c-badge--themed fills it theme-base-imp under
+// theme-content-imp. Nothing rings it: no border, outline or shadow (the
+// 2px rail-coloured ring Clack drew read as a border over the hover and
+// selected tiles). The caller places it (.p-tab_rail__button .c-badge:
+// top 4px, right 2px of the 52px button).
 func (a *App) railCount(gtx layout.Context, n int) layout.Dimensions {
 	c := &a.th.C
-	txt := itoa(n)
-	h := gtx.Dp(18)
-	tw := a.th.Measure(gtx, 11, theme.Bold, txt)
-	w := tw + gtx.Dp(10)
-	if w < h {
-		w = h
+	txt, pad := itoa(n), gtx.Dp(5)
+	if n > 99 {
+		txt, pad = "99+", gtx.Dp(7)
 	}
-	theme.RRect(gtx, image.Rect(0, 0, w, h).Inset(-gtx.Dp(2)), h/2+gtx.Dp(2), c.ChromeB)
+	h := gtx.Dp(16)
+	tw := a.th.Measure(gtx, 10, theme.Bold, txt)
+	w := tw + 2*pad
 	theme.RRect(gtx, image.Rect(0, 0, w, h), h/2, c.Badge)
-	at(gtx, image.Pt((w-tw)/2, 0), image.Pt(w, h), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(pad, 0), image.Pt(tw+2, h), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 11, theme.Bold, c.BadgeText, txt)
+			return a.th.Label(gtx, 10, theme.Bold, c.BadgeText, txt)
 		})
 	})
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// railCountWidth is railCount's width for n (px).
+func (a *App) railCountWidth(gtx layout.Context, n int) int {
+	txt, pad := itoa(n), gtx.Dp(5)
+	if n > 99 {
+		txt, pad = "99+", gtx.Dp(7)
+	}
+	return a.th.Measure(gtx, 10, theme.Bold, txt) + 2*pad
 }
 
 // teamIcon draws the workspace icon (image, or initials on aubergine).

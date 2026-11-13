@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,7 +82,11 @@ func newW14Env(t *testing.T, srv *cdTestServer, ch string, extra w14Extra) (*cdT
 			if body, ok := extra(call.method, call.form, call.edge); ok {
 				srv.mu.Lock()
 				srv.calls = append(srv.calls, call)
+				after := srv.recorded
 				srv.mu.Unlock()
+				if after != nil {
+					after(call)
+				}
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write([]byte(body))
 				return
@@ -350,11 +355,17 @@ func TestDetailsAddAppOpensBrowser(t *testing.T) {
 
 // historyExtra answers conversations.history: the first message at
 // oldest, and for the preview three messages from the day after it.
-func historyExtra(oldest time.Time, tooMany *bool) w14Extra {
+func historyExtra(oldest time.Time, tooMany *atomic.Bool, probeAfter <-chan struct{}) w14Extra {
 	return func(method string, form url.Values, _ map[string]any) (string, bool) {
 		switch method {
 		case "conversations.history":
 			if form.Get("oldest") == core.HistoryFromBeginning && form.Get("limit") == "1" {
+				if probeAfter != nil { // the first-message read arrives after the preview's
+					select {
+					case <-probeAfter:
+					case <-time.After(10 * time.Second):
+					}
+				}
 				return `{"ok":true,"messages":[{"type":"message","user":"U1","text":"first","ts":"` + strconv.FormatInt(oldest.Unix(), 10) + `.000100"}]}`, true
 			}
 			var ms []string
@@ -364,7 +375,7 @@ func historyExtra(oldest time.Time, tooMany *bool) w14Extra {
 			}
 			return `{"ok":true,"messages":[` + strings.Join(ms, ",") + `]}`, true
 		case "conversations.createChild":
-			if tooMany != nil && *tooMany {
+			if tooMany != nil && tooMany.Load() {
 				return `{"ok":false,"error":"too_many_messages"}`, true
 			}
 		}
@@ -402,15 +413,32 @@ func TestDetailsDMAddPeopleCustomHistory(t *testing.T) {
 	slack.BackoffBase = time.Millisecond
 	now := time.Now()
 	oldest := dayStart(now.AddDate(0, 0, -10)).Add(9 * time.Hour)
-	tooMany := false
-	srv := &cdTestServer{}
-	e, _ := newW14Env(t, srv, "D1", historyExtra(oldest, &tooMany))
+	var tooMany atomic.Bool
+	// The modal's first read (limit 1, at open) and the history step's
+	// preview (From today) are both in flight once Next is clicked; CI
+	// once saw the preview arrive first. Make that order every run.
+	previewIn := make(chan struct{})
+	var previewOnce sync.Once
+	srv := &cdTestServer{recorded: func(c cdTestCall) {
+		if c.method == "conversations.history" && c.form.Get("limit") == "200" {
+			previewOnce.Do(func() { close(previewIn) })
+		}
+	}}
+	e, _ := newW14Env(t, srv, "D1", historyExtra(oldest, &tooMany, previewIn))
 	a := e.toHistoryStep()
 	if got := historyOptions(a); !slices.Equal(got, []int{cdHistNone, cdHistToday, cdHistAll, cdHistCustom}) {
 		t.Errorf("options %v", got)
 	}
-	if p := srv.seen("conversations.history"); len(p) == 0 || p[0].form.Get("oldest") != core.HistoryFromBeginning || p[0].form.Get("limit") != "1" {
-		t.Errorf("first fetch %v", p)
+	// the modal's first read (fetchPreviewHistory, limit 1), sent once,
+	// in whichever order it and the preview arrive
+	probes := 0
+	for _, c := range srv.seen("conversations.history") {
+		if c.form.Get("oldest") == core.HistoryFromBeginning && c.form.Get("limit") == "1" {
+			probes++
+		}
+	}
+	if probes != 1 {
+		t.Errorf("%d first-message reads, want 1: %v", probes, srv.seen("conversations.history"))
 	}
 	a.histClk[cdHistCustom].Click()
 	e.frame()
@@ -445,7 +473,7 @@ func TestDetailsDMAddPeopleCustomHistory(t *testing.T) {
 		t.Errorf("preview rows %+v", rows)
 	}
 
-	tooMany = true
+	tooMany.Store(true)
 	e.d.x.dlg.ok.Click()
 	e.until("the speed bump", func() bool { return a.hx.tooMany })
 	a.hx.bumpOK.Click()
@@ -453,7 +481,7 @@ func TestDetailsDMAddPeopleCustomHistory(t *testing.T) {
 	if a.hx.tooMany || e.d.x.dlg.kind != cdDlgAddPeople {
 		t.Fatalf("OK left the bump %v / dialog %d", a.hx.tooMany, e.d.x.dlg.kind)
 	}
-	tooMany = false
+	tooMany.Store(false)
 	n := len(srv.seen("conversations.createChild"))
 	time.Sleep(5 * time.Millisecond) // past the shortened backoff
 	e.d.x.dlg.ok.Click()
@@ -468,7 +496,7 @@ func TestDetailsDMAddPeopleCustomHistory(t *testing.T) {
 func TestDetailsDMAddPeopleHistoryFromToday(t *testing.T) {
 	now := time.Now()
 	srv := &cdTestServer{}
-	e, _ := newW14Env(t, srv, "D1", historyExtra(dayStart(now).Add(time.Minute), nil))
+	e, _ := newW14Env(t, srv, "D1", historyExtra(dayStart(now).Add(time.Minute), nil, nil))
 	a := e.toHistoryStep()
 	if got := historyOptions(a); !slices.Equal(got, []int{cdHistNone, cdHistAll}) || a.hist != cdHistAll {
 		t.Errorf("options %v, hist %d; want none and all, all selected", got, a.hist)

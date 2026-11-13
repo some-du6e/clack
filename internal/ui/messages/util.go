@@ -151,6 +151,9 @@ func threadTimeIn(l string, t, now time.Time, s, m float64) string {
 // threadsNS is Slack's "threads" I18n (BZhr's reply bar strings).
 var threadsNS = i18n.NS("threads")
 
+// offlineNS is LargeOfflineIndicator's (nMFb) I18n.
+var offlineNS = i18n.NS("offline_mode")
+
 // lastReply is the reply bar's getThreadLatestReplyText (client-boot-shared
 // BZhr): today, "Last reply today at 3:23 PM" ("Today at 3:23 PM" with
 // one reply); else "Last reply" and toTimeAgo ("Last reply 16 hours ago",

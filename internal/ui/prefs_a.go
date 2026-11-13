@@ -371,7 +371,7 @@ func (p *prefsModal) skinTonePicker(f *prefsForm) {
 			}, func(gtx layout.Context) layout.Dimensions {
 				at(gtx, image.Pt((h-es)/2, (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
 					if url != "" {
-						if img, ok := a.images.Get(url, es*2); ok {
+						if img, ok := a.images.Get(url, es); ok {
 							return theme.Image(gtx, img, image.Pt(es, es), 0)
 						}
 					}

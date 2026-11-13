@@ -571,7 +571,7 @@ func (a *App) inlineSpans(gtx layout.Context, spans []richtext.Span, size unit.S
 				break
 			}
 			at(gtx, image.Pt(x, (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
-				if img, ok := a.images.Get(s.URL, es*2); ok {
+				if img, ok := a.images.Get(s.URL, es); ok {
 					return theme.Image(gtx, img, image.Pt(es, es), 0)
 				}
 				return layout.Dimensions{Size: image.Pt(es, es)}

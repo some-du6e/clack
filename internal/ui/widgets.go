@@ -108,7 +108,7 @@ func (a *App) badge(gtx layout.Context, n int, bg, fg color.NRGBA) layout.Dimens
 	txt := itoa(n)
 	h := gtx.Dp(18)
 	tw := a.th.Measure(gtx, 12, theme.Bold, txt)
-	w := tw + gtx.Dp(14)
+	w := tw + gtx.Dp(18) // .c-badge--pill: padding 0 9px
 	if w < h {
 		w = h
 	}

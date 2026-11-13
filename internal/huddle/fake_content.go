@@ -16,10 +16,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp/codecs"
 	"github.com/pion/webrtc/v4"
-	"github.com/pion/webrtc/v4/pkg/media/samplebuilder"
-	"github.com/thesyncim/goh264"
 )
 
 // The content attendee's streams as the fake's INDEX and audio info list
@@ -40,13 +37,8 @@ type fakeContentIn struct {
 	token   string
 
 	audioPkts atomic.Int64
-	pkts      atomic.Int64
-	frames    atomic.Int64
-	keys      atomic.Int64
-	keysPLI   atomic.Int64
-	pliSent   atomic.Bool
-	w, h      atomic.Int32
-	mime      atomic.Value // string
+	fakeVideoIn
+	mime atomic.Value // string
 }
 
 // FakeContentShare is what the fake saw of your screen share's content
@@ -62,6 +54,9 @@ type FakeContentShare struct {
 	AudioPackets  int64
 	Frames, Keys  int64
 	KeysAfterPLI  int64
+	Packets       int64 // video RTP packets
+	Undecodable   int64 // access units that didn't decode
+	KeyRequests   int64 // the PLIs those asked for
 	W, H          int
 	Mime          string
 }
@@ -78,6 +73,7 @@ func (x *Fake) ContentShare() FakeContentShare {
 	c.mu.Unlock()
 	out.AudioPackets = c.audioPkts.Load()
 	out.Frames, out.Keys, out.KeysAfterPLI = c.frames.Load(), c.keys.Load(), c.keysPLI.Load()
+	out.Packets, out.Undecodable, out.KeyRequests = c.pkts.Load(), c.undecodable.Load(), c.keyReqs.Load()
 	out.W, out.H = int(c.w.Load()), int(c.h.Load())
 	out.Mime, _ = c.mime.Load().(string)
 	return out
@@ -232,15 +228,10 @@ func (f *fakeChime) negotiateContent(offer string) (string, error) {
 	pc := ct.pc
 	ct.mu.Unlock()
 	if pc == nil {
-		m := &webrtc.MediaEngine{}
-		if err := m.RegisterDefaultCodecs(); err != nil {
+		api, err := fakeAPI()
+		if err != nil {
 			return "", err
 		}
-		se := webrtc.SettingEngine{}
-		se.SetIncludeLoopbackCandidate(true)
-		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-		api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(se))
-		var err error
 		if pc, err = api.NewPeerConnection(webrtc.Configuration{}); err != nil {
 			return "", err
 		}
@@ -268,7 +259,7 @@ func (f *fakeChime) negotiateContent(offer string) (string, error) {
 }
 
 // recvContent counts the content attendee's audio and decodes its video
-// like a receiver, asking for a keyframe (PLI) after a few pictures.
+// like a receiver (fakeVideoIn.recv).
 func (f *fakeChime) recvContent(pc *webrtc.PeerConnection, track *webrtc.TrackRemote) {
 	ct := &f.content
 	if track.Kind() == webrtc.RTPCodecTypeAudio {
@@ -280,35 +271,7 @@ func (f *fakeChime) recvContent(pc *webrtc.PeerConnection, track *webrtc.TrackRe
 		}
 	}
 	ct.mime.Store(track.Codec().MimeType)
-	sb := samplebuilder.New(1024, &codecs.H264Packet{}, track.Codec().ClockRate, samplebuilder.WithMaxTimeDelay(time.Second))
-	dec := goh264.NewDecoder()
-	for {
-		pkt, _, err := track.ReadRTP()
-		if err != nil {
-			return
-		}
-		ct.pkts.Add(1)
-		sb.Push(pkt)
-		for s := sb.Pop(); s != nil; s = sb.Pop() {
-			key := hasIDR(s.Data)
-			frames, err := dec.DecodeFrames(s.Data)
-			if err != nil {
-				continue
-			}
-			for _, fr := range frames {
-				ct.frames.Add(1)
-				ct.w.Store(int32(fr.Width))
-				ct.h.Store(int32(fr.Height))
-			}
-			if key {
-				ct.keys.Add(1)
-				if ct.pliSent.Load() {
-					ct.keysPLI.Add(1)
-				}
-			}
-			if ct.frames.Load() >= 5 && ct.pliSent.CompareAndSwap(false, true) {
-				_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())}})
-			}
-		}
-	}
+	ct.recv(track, 1024, func() {
+		_ = pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())}})
+	})
 }

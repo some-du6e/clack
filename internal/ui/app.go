@@ -107,6 +107,9 @@ type Options struct {
 	// OnWindowEvent sees every window event before the UI (cmd/clack:
 	// window icons from the platform view events).
 	OnWindowEvent func(e event.Event)
+	// shaperHold (tests): the startup shaper reaches the UI goroutine only
+	// once it's closed, so the fonts load late.
+	shaperHold <-chan struct{}
 	// NoRealtime keeps Slack's realtime websocket closed whatever the
 	// saved preference says (cmd/clack -no-realtime, CLACK_NO_REALTIME=1).
 	NoRealtime bool
@@ -176,6 +179,8 @@ type App struct {
 	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
 	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
+	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
+	railRects       map[string]image.Rectangle // tests set it: layoutRail records each rail button's box
 	ptrWin          image.Point
 	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
@@ -321,6 +326,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 		// one collection serves both modes; the UI font when its files
 		// are on this computer, else Lato until it has loaded
 		sh, o, pending := startupShaper(stored)
+		if h := a.opts.shaperHold; h != nil {
+			<-h
+		}
 		a.shaperCh <- [2]*text.Shaper{sh, sh}
 		a.timing("shapers ready", t)
 		a.Invalidate() // the first frames painted the background only
@@ -668,6 +676,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutToast(gtx)
 	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
 	a.rootPointer(gtx)
+	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
@@ -682,7 +691,10 @@ func (a *App) layoutShell(gtx layout.Context) image.Rectangle {
 	railW := gtx.Dp(theme.RailW)
 	inset := gtx.Dp(theme.PanelInset)
 	// Slack's sidebar column: the window's share, or the dragged width
-	// (sidebar_width.go)
+	// (sidebar_width.go); the resizers' drags first, so the columns follow
+	// the pointer in this frame (resizer.go)
+	a.sidebarResizeEvents(gtx, railW)
+	a.splitResizeEvents(gtx, sz.X-inset)
 	a.sidebar.width = a.sidebar.widthFor(float32(sz.X) / gtx.Metric.PxPerDp)
 	a.syncSecondaryTab() // Activity and To-dos keep their own pane width
 	sbW := gtx.Dp(unit.Dp(a.sidebar.width))
@@ -786,6 +798,7 @@ func (a *App) layoutPrimary(gtx layout.Context) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	secW := 0
 	if a.secondary.open() && !a.bbmOn() { // the mode shows one container (bbm.go)
+		a.secondaryResizeEvents(gtx, sz.X) // its drags first: the pane follows in this frame (resizer.go)
 		secW = a.secondaryWidth(gtx, sz.X) // secondary.go
 		a.secondary.drawnW = secW
 		if a.secondary.expanded && a.secondary.kind == secCode {

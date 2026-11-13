@@ -6,6 +6,18 @@ name: emoji-picker
 # GPU renderer (Mesa llvmpipe) with the emoji images from Slack's public
 # static CDN (a.slack-edge.com, no cookie). Nothing here talks to a real
 # Slack workspace.
+#
+# emoji-sharp-linux / emoji-sharp-windows: standard emoji against Chrome.
+# TestEmojiRenderShots (internal/ui/theme/emojirender_test.go) draws :grin:
+# and others at 22px (message text) and 32px (jumbomoji), both sets, both
+# modes, at 1, 1.25, 1.5 and 2x through Gio (Mesa llvmpipe; D3D11 on
+# Windows), now and the old way (Slack's 22px image stretched by the GPU),
+# and writes each scale as a page of the <img> URLs Slack's client loads
+# there (@2x above 1x); headless Chrome screenshots them and
+# .github/scripts/emoji_render_compare.py measures edge sharpness and
+# difference per cell and writes 400% side-by-sides. TestEmojiSharpShots
+# (internal/ui/messages) shoots a channel with three :grin: (jumbomoji),
+# inline emoji, reactions and a status emoji at 100%, 125% and 150%.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run emoji-picker.yml --ref <branch>)
@@ -13,12 +25,25 @@ on:
       - "internal/frecency/**"
       - "internal/core/frecency*.go"
       - "internal/emoji/**"
+      - "internal/imgcache/**"
+      - "internal/ui/theme/emoji*"
+      - "internal/ui/theme/theme.go"
+      - "internal/ui/theme/text.go"
+      - "internal/ui/messages/emoji_sharp*"
+      - "internal/ui/richview/emoji.go"
+      - "internal/ui/slackc/paint.go"
+      - ".github/scripts/emoji_render_compare.py"
       - "internal/ui/popups/emoji*"
       - "internal/ui/popups/style.go"
       - "internal/ui/messages/quickreact*"
       - "internal/fakeslack/fakeslack.go"
       - ".github/workflows/emoji-picker.yml"
   workflow_dispatch:
+    inputs:
+      only:
+        description: "emoji-sharp: run only the emoji-sharp jobs"
+        required: false
+        default: ""
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config xvfb libgl1-mesa-dri libegl-mesa0
@@ -28,6 +53,7 @@ permissions:
 
 jobs:
   emoji-picker:
+    if: ${{ inputs.only != 'emoji-sharp' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -66,3 +92,105 @@ jobs:
           path: |
             dist/emoji-picker-shots
             dist/*.log
+
+  emoji-sharp-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: emoji set and sizes (unit)
+        run: go test -count=1 -v -run 'TestForPixels|TestStyleFollowsPlatform|TestStandardEmojiLoadsCoveringSize|TestPrefs$' ./internal/emoji ./internal/imgcache ./internal/store
+      - name: Gio's rendering (Mesa llvmpipe), and the channel shots
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_EMOJI_CDN: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          CLACK_EMOJI_RENDER_DIR: ${{ github.workspace }}/dist/emoji-render
+          EMOJI_SHARP_SHOTS_DIR: ${{ github.workspace }}/dist/emoji-sharp-shots
+        run: |
+          xvfb-run -a go test -count=1 -v -run 'TestEmojiRenderShots$' ./internal/ui/theme/
+          xvfb-run -a go test -count=1 -v -run 'TestEmojiSharpShots$' ./internal/ui/messages/
+      - name: Chrome's rendering of the same pages
+        run: |
+          set -euo pipefail
+          d="$GITHUB_WORKSPACE/dist/emoji-render"
+          google-chrome --version | tee "$d/browsers.txt"
+          read -r w h scales < <(python3 -c 'import json,sys;c=json.load(open(sys.argv[1]));print(c["width"],c["height"]," ".join("%g"%s for s in c["scales"]))' "$d/cases.json")
+          for s in $scales; do
+            prof=$(mktemp -d)
+            google-chrome --headless=new --no-sandbox --disable-gpu --hide-scrollbars --user-data-dir="$prof" \
+              --force-device-scale-factor="$s" --window-size="$w,$h" --virtual-time-budget=5000 \
+              --screenshot="$d/chrome-${s}x.png" "file://$d/page-${s}x.html" 2>/dev/null
+            test -s "$d/chrome-${s}x.png"
+          done
+      - name: compare
+        run: |
+          python3 -m pip install --quiet pillow numpy
+          python3 .github/scripts/emoji_render_compare.py dist/emoji-render linux
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: emoji-sharp-linux
+          path: |
+            dist/emoji-render
+            dist/emoji-sharp-shots
+
+  emoji-sharp-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: emoji set and sizes (unit)
+        run: go test -count=1 -v -run 'TestForPixels|TestStyleFollowsPlatform|TestStandardEmojiLoadsCoveringSize|TestPrefs$' ./internal/emoji ./internal/imgcache ./internal/store
+      - name: Gio's rendering (D3D11), and the channel shots
+        env:
+          CLACK_PIXEL_TESTS: "1"
+          CLACK_EMOJI_CDN: "1"
+          CLACK_EMOJI_RENDER_DIR: ${{ github.workspace }}\dist\emoji-render
+          EMOJI_SHARP_SHOTS_DIR: ${{ github.workspace }}\dist\emoji-sharp-shots
+        run: |
+          go test -count=1 -v -run 'TestEmojiRenderShots$' ./internal/ui/theme/
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -count=1 -v -run 'TestEmojiSharpShots$' ./internal/ui/messages/
+      - name: Chrome's rendering of the same pages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $d = (Resolve-Path dist\emoji-render).Path
+          $chrome = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe').'(default)'
+          "chrome $((Get-Item $chrome).VersionInfo.ProductVersion)" | Tee-Object -FilePath "$d\browsers.txt"
+          $c = Get-Content "$d\cases.json" -Raw | ConvertFrom-Json
+          $url = 'file:///' + ($d -replace '\\', '/')
+          foreach ($s in $c.scales) {
+            $out = "$d\chrome-${s}x.png"
+            $a = @('--headless=new', '--hide-scrollbars', "--user-data-dir=$env:RUNNER_TEMP\prof-emoji-$s", "--force-device-scale-factor=$s", "--window-size=$($c.width),$($c.height)", '--virtual-time-budget=5000', "--screenshot=$out", "$url/page-${s}x.html")
+            $p = Start-Process -FilePath $chrome -ArgumentList $a -PassThru
+            if (-not $p.WaitForExit(120000)) { $p.Kill(); throw "chrome ${s}x: timed out" }
+            for ($i = 0; $i -lt 40 -and -not (Test-Path $out); $i++) { Start-Sleep -Milliseconds 250 }
+            if (-not (Test-Path $out)) { throw "chrome ${s}x: no screenshot" }
+          }
+          Get-ChildItem $d -Filter 'chrome-*' | Format-Table Name, Length | Out-String
+      - name: compare
+        run: |
+          python -m pip install --quiet pillow numpy
+          python .github/scripts/emoji_render_compare.py dist/emoji-render windows
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: emoji-sharp-windows
+          path: |
+            dist/emoji-render
+            dist/emoji-sharp-shots

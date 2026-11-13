@@ -3,11 +3,14 @@ package imgcache
 import (
 	"bytes"
 	"context"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -107,5 +110,56 @@ func TestSweepDropsIdleEntries(t *testing.T) {
 	}
 	if _, ok := c.entries[key{url: "b"}]; !ok {
 		t.Fatal("the recently used entry was dropped")
+	}
+}
+
+// A standard emoji drawn bigger than its URL's CDN size loads the size
+// that covers it (Slack's @2x) and is scaled down to the pixels asked for;
+// when that variant fails, the URL as given still loads.
+func TestStandardEmojiLoadsCoveringSize(t *testing.T) {
+	const b = "https://a.slack-edge.com/production-standard-emoji-assets/16.0/"
+	var mu sync.Mutex
+	var got []string
+	done := make(chan struct{}, 8)
+	c := New(func(ctx context.Context, u string) ([]byte, error) {
+		mu.Lock()
+		got = append(got, u)
+		mu.Unlock()
+		switch u {
+		case b + "google-medium/1f601.png":
+			return pngBytes(22, 22), nil
+		case b + "google-medium/1f601@2x.png":
+			return pngBytes(44, 44), nil
+		case b + "google-small/1f44d.png":
+			return pngBytes(16, 16), nil
+		}
+		return nil, errors.New("404")
+	}, "", func() { done <- struct{}{} })
+	wait := func() {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timeout")
+		}
+	}
+	med := b + "google-medium/1f601.png"
+	c.Get(med, 28) // 22px at 125%
+	wait()
+	if sz, ok := c.Size(med, 28); !ok || sz != image.Pt(28, 28) {
+		t.Fatalf("size = %v %v, want 28×28 (44px scaled down, not 22px stretched)", sz, ok)
+	}
+	c.Get(med, 22)
+	wait()
+	if sz, _ := c.Size(med, 22); sz != image.Pt(22, 22) {
+		t.Fatalf("size at 100%% = %v", sz)
+	}
+	thumbs := b + "google-small/1f44d.png" // no @2x served: falls back
+	c.Get(thumbs, 30)
+	wait()
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{b + "google-medium/1f601@2x.png", med, b + "google-small/1f44d@2x.png", thumbs}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("fetched %v, want %v", got, want)
 	}
 }

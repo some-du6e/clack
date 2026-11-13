@@ -183,7 +183,7 @@ func (s *Store) PutName(id, name string) {
 // Prefs are the user preferences the UI needs for rendering.
 type Prefs struct {
 	MorePrefs               // prefs_more.go
-	EmojiStyle       string `json:"emoji_style"` // apple | google
+	EmojiStyle       string `json:"emoji_style"` // emoji.Style(): Slack's set follows the platform, no pref picks it
 	EmojiMode        string `json:"emoji_mode,omitempty"`
 	SkinTone         string `json:"skin_tone,omitempty"`
 	Time24           bool   `json:"time24"`
@@ -413,13 +413,9 @@ func ParsePrefs(raw map[string]json.RawMessage) (Prefs, map[string]bool) {
 			p.HiddenViews = append(p.HiddenViews, k)
 		}
 	}
-	// Slack calls the Google set "android"/"google"; everything else is Apple.
-	switch p.EmojiMode {
-	case "android", "google":
-		p.EmojiStyle = "google"
-	default:
-		p.EmojiStyle = "apple"
-	}
+	// Slack's getEmojiMode: emoji_mode only says "as_text" or "default";
+	// the image set is Apple's on macOS and Google's everywhere else.
+	p.EmojiStyle = emoji.Style()
 	var use struct {
 		Recent []string `json:"recent"`
 	}
@@ -521,9 +517,7 @@ func (s *Store) SetPrefs(p Prefs, muted map[string]bool) {
 	}
 	s.Prefs = p
 	s.Muted = muted
-	if p.EmojiStyle != "" {
-		s.EmojiStyle = p.EmojiStyle
-	}
+	s.EmojiStyle = emoji.Style() // not p's: a cached older build's "apple" stays out
 	s.mu.Unlock()
 	s.gen.Add(1)
 }
@@ -534,8 +528,8 @@ func New(cacheDir string) *Store {
 		Counts: map[string]*slack.CountEntry{}, Usergroups: map[string]string{},
 		Presence:  map[string]string{},
 		timelines: map[string]*Timeline{}, threads: map[string][]slack.Message{},
-		cacheDir: cacheDir, EmojiStyle: "apple", Muted: map[string]bool{},
-		Prefs: Prefs{EmojiStyle: "apple", Jumbomoji: true, ShowTyping: true, Muted: []string{}},
+		cacheDir: cacheDir, EmojiStyle: emoji.Style(), Muted: map[string]bool{},
+		Prefs: Prefs{EmojiStyle: emoji.Style(), Jumbomoji: true, ShowTyping: true, Muted: []string{}},
 	}
 }
 

@@ -172,7 +172,7 @@ var DarkPalette = Palette{
 
 	SidebarBg:         rgba(0x101214, 0x99),
 	SidebarText:       rgba(0xe3ceeb, 0xcc),
-	SidebarTextUnread: rgb(0xffffff),
+	SidebarTextUnread: rgb(0xf8f8f8), // --dt_color-theme-content-inv-pry: gray-100 (sidebar-rows side-by-sides)
 	SidebarHover:      rgba(0xefe1f5, 0x14),
 	SidebarActive:     rgb(0x7d3986),
 	SidebarActiveText: rgb(0xefe1f5),

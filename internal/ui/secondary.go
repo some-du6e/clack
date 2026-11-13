@@ -2,12 +2,8 @@ package ui
 
 import (
 	"image"
-	"time"
 
-	"gioui.org/gesture"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -48,12 +44,7 @@ type secondaryState struct {
 	findFocus bool
 	// drawnW is the pane's width last frame, px (screenshots crop it)
 	drawnW int
-	drag   gesture.Drag
-	dragX  float32
-	// lastPress is the resizer's last press (a second within 500 ms
-	// resets the width); reset: this press did, the drag is ignored
-	lastPress time.Time
-	reset     bool
+	rz     colResizer // the pane's resizer (resizer.go)
 	// prev is the view a profile opened over, Slack's view.prev (the
 	// FlexpaneBackButton's target; OpenUserProfile)
 	prev *secondaryState
@@ -366,50 +357,43 @@ func (a *App) secondaryDefault(gtx layout.Context, panel int) int {
 	return int(float32(panel)*.4 + .5)
 }
 
-// layoutSecondaryResize is the pane's BaseResizer (client-boot-shared
-// 7M48): dragging its left edge sets a manual width within 300 and the
-// region minus the primary's 300, snapping to the default width within
-// 15px of it (mode "auto"); two presses within 500 ms reset it to the
-// default. x is the pane's left edge in the panel, h its height.
-func (a *App) layoutSecondaryResize(gtx layout.Context, x, h int) {
+// secondaryResizeEvents applies the pane's BaseResizer (client-boot-shared
+// 7M48, fromRight) before the panel sizes the pane: dragging its left edge
+// sets a manual width within 300 and the region minus the primary's 300,
+// snapping to the default width within 15px of it (mode "auto"); two
+// presses within 500 ms reset it to the default. panel is the panel's
+// width, px; positions are in its frame.
+func (a *App) secondaryResizeEvents(gtx layout.Context, panel int) {
 	s := &a.secondary
-	panel := gtx.Constraints.Max.X
 	px := gtx.Metric.PxPerDp
-	cur := float32(panel-x) / px // the width drawn, dp
 	def := float32(a.secondaryDefault(gtx, panel)) / px
 	hi := float32(panel)/px - 300
 	for {
-		e, ok := s.drag.Update(gtx.Metric, gtx.Source, gesture.Horizontal)
+		e, ok := s.rz.next(gtx)
 		if !ok {
 			break
 		}
-		switch e.Kind {
-		case pointer.Press:
-			if !s.lastPress.IsZero() && gtx.Now.Sub(s.lastPress) < 500*time.Millisecond {
-				s.width, s.lastPress, s.reset = 0, time.Time{}, true // onReset: the default, "auto"
-				a.savePrefs()
-				continue
-			}
-			s.lastPress, s.reset = gtx.Now, false
-			s.dragX = e.Position.X
-		case pointer.Drag:
-			if s.reset {
-				continue
-			}
-			w := cur - (e.Position.X-s.dragX)/px
+		switch e.kind {
+		case resizeReset: // onReset: the default, "auto"
+			s.width = 0
+			a.savePrefs()
+		case resizeMove:
+			w := (float32(panel) - e.pos) / px
 			switch {
 			case w >= def-15 && w <= def+15: // calculateColumnWidth: snap to the default
 				s.width = 0
 			default:
 				s.width = int(min(max(w, theme.SecondaryMin), max(hi, theme.SecondaryMin)) + .5)
 			}
-		case pointer.Release, pointer.Cancel:
+		case resizeEnd:
 			a.savePrefs()
 		}
 	}
-	// .p-resizer: an 8px strip on the pane's edge (live: 8 wide, 4 into
-	// the pane)
-	r := image.Rect(x-gtx.Dp(4), 0, x+gtx.Dp(4), h)
-	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
-	pointerArea(gtx, &s.drag, image.Rectangle{Max: r.Size()}, pointer.CursorColResize)
+}
+
+// layoutSecondaryResize is the pane's resizer handle, .p-resizer: an 8px
+// strip on the pane's edge (live: 8 wide, 4 into the pane). x is the
+// pane's left edge in the panel, h its height.
+func (a *App) layoutSecondaryResize(gtx layout.Context, x, h int) {
+	a.secondary.rz.area(gtx, image.Rect(x-gtx.Dp(4), 0, x+gtx.Dp(4), h), x)
 }

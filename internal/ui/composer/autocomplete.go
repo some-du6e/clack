@@ -803,7 +803,7 @@ func buildEmojiIndex(stdJSON []byte, custom map[string]string) *emojiIndex {
 		if !ok {
 			return
 		}
-		byName[n] = emojiEnt{name: n, url: emoji.CDN + "apple-medium/" + img + ".png", uni: uni}
+		byName[n] = emojiEnt{name: n, url: emoji.URL(img, ""), uni: uni}
 	}
 	for _, e := range f.Emoji {
 		for _, n := range e.Names {
@@ -826,7 +826,7 @@ func buildEmojiIndex(stdJSON []byte, custom map[string]string) *emojiIndex {
 			byName[n] = emojiEnt{name: n, url: v, custom: true}
 		case v == "":
 			if img, uni, ok := emoji.Standard(target); ok {
-				byName[n] = emojiEnt{name: n, url: emoji.CDN + "apple-medium/" + img + ".png", uni: uni, custom: true}
+				byName[n] = emojiEnt{name: n, url: emoji.URL(img, ""), uni: uni, custom: true}
 			}
 		}
 	}

@@ -67,7 +67,7 @@ var slackIconNames = map[string]string{
 	"add-emoji":                  "add-reaction",
 	"smile":                      "emoji",
 	"emoji-smile":                "emoji",
-	"hash-filled":                "hash",
+	"channel-filled":             "hash-filled",
 	"private":                    "lock",
 	"padlock":                    "lock",
 	"lock-open":                  "lock",
