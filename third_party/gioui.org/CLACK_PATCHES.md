@@ -537,3 +537,17 @@ shows it, maximized stays maximized; `TestCaretBlinkFromOS`: the runner's
 blink time set to 800 ms, 530 ms and `INFINITE` with `SetCaretBlinkTime`,
 then put back), and `internal/ui` `TestCloseToTrayWindow` (Clack's own
 window). Not in `UPSTREAM.patch`.
+
+## 14. app: nothing delivered after DestroyEvent
+
+`app/os.go` (`eventLoop.destroyed`, `FlushEvents`). While
+`deliverEvent` waits to hand the app its `DestroyEvent`, its `select` may
+run a pending invalidate first (Go picks among ready cases at random):
+`callbacks.Invalidate` queues a wakeup after `nextEvent` cleared the
+queue for the `DestroyEvent`. The app returns at the `DestroyEvent`, and
+`FlushEvents` went on to deliver that wakeup to nobody, forever. On
+Windows that is inside `WM_DESTROY`: `DestroyWindow` never returns and the
+HWND is never freed. `FlushEvents` now delivers nothing once a
+`DestroyEvent` went out. Tested by `internal/ui` `TestCloseToTrayWindow`
+(Quit while the window is hidden; it hung in 7 of 32 runs on 2026-11-12).
+Not in `UPSTREAM.patch`.

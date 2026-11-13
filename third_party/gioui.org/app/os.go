@@ -143,6 +143,9 @@ func (o Orientation) String() string {
 // window event loops must run on a separate thread.
 type eventLoop struct {
 	win *callbacks
+	// destroyed: the DestroyEvent went out (Clack patch, CLACK_PATCHES.md
+	// §14); the client reads no more events.
+	destroyed bool
 	// wakeup is the callback to wake up the event loop.
 	wakeup func()
 	// driverFuncs is a channel of functions to run the next
@@ -305,12 +308,20 @@ func (e *eventLoop) FlushEvents() {
 	}
 	e.delivering = true
 	defer func() { e.delivering = false }()
-	for {
+	for !e.destroyed {
 		evt, ok := e.win.nextEvent()
 		if !ok {
 			break
 		}
 		e.deliverEvent(evt)
+		// Clack patch (CLACK_PATCHES.md §14): nothing after a
+		// DestroyEvent. The client stops reading at it, and an
+		// invalidate deliverEvent ran while waiting to send it queued a
+		// wakeup that would wait for the client forever, inside
+		// WM_DESTROY on Windows (the HWND never went).
+		if _, ok := evt.(DestroyEvent); ok {
+			e.destroyed = true
+		}
 	}
 }
 

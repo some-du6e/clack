@@ -59,6 +59,10 @@ name: flake-check
 #                                            loading after the window was
 #                                            hidden: no frame took them and
 #                                            drainIdle ran no posted work
+#                                            and (a Gio bug, patch 14) a
+#                                            wakeup queued while DestroyEvent
+#                                            waited, delivered to nobody:
+#                                            WM_DESTROY never returned
 #   TestFakeScreenShare, TestFakeCamera      the only keyframe lost (written
 #     (huddle)                               before pion's SRTP was up) and
 #                                            the fake asked for one only
@@ -117,6 +121,7 @@ on:
       - "internal/core/reads.go"
       - "internal/fakeslack/faults.go"
       - "third_party/gioui.org/app/clack_drop_windows_test.go"
+      - "third_party/gioui.org/app/os.go"
       - "internal/ui/runfromtray_windows_test.go"
       - "internal/ui/runfromtray.go"
       - "internal/ui/runfromtray_test.go"
