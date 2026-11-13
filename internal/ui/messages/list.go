@@ -868,6 +868,10 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 		return
 	}
 	key := reactionKey(&r.src)
+	if t := tautOf(); t == nil || (!t.ThunkPatched("changeReactionFromUserAction") && !t.ThunkPatched("submitAddOrRemoveReaction")) {
+		s.reactNow(h, app, key, name, add, self)
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -888,6 +892,45 @@ func (s *listState) react(h Host, r *row, name string, add bool, self string) {
 			})
 		if err != nil {
 			h.Toast("Couldn't update reaction")
+		}
+	}()
+}
+
+// reactNow is a pill's click with neither reaction thunk wrapped:
+// changeReactionFromUserAction's frecency record and
+// submitAddOrRemoveReaction's optimistic update happen here, on the UI
+// goroutine, so the pill changes in the next frame while
+// reactions.add/remove is out (core.ReactBegin; the views showing the
+// message get the update now, ApplyEvent). The call runs after; a failure
+// is rolled back by core and toasted.
+func (s *listState) reactNow(h Host, app *core.App, key, name string, add bool, self string) {
+	ch, ts, ok := parseRxnKey(key)
+	if !ok {
+		return
+	}
+	on := add
+	if on {
+		app.RecordEmojiFrecency(name, "") // recordEmojiFrecencyEvent {emojiName, text: ""}
+	}
+	ev, call := app.ReactBegin(ch, ts, name, on)
+	local := false
+	if ev != nil {
+		ApplyEvent(app, *ev)
+	} else if s.hasOwnReaction(key, name) != on {
+		// a message core doesn't hold (submitReaction's own update)
+		s.mutateReaction(h, ts, name, on, self)
+		local = true
+	}
+	h.Invalidate()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := call(ctx); err != nil {
+			if local {
+				s.mutateReaction(h, ts, name, !on, self)
+			}
+			h.Toast("Couldn't update reaction")
+			h.Invalidate()
 		}
 	}()
 }
