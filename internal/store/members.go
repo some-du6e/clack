@@ -79,8 +79,8 @@ type memberCache struct {
 	nonexistent map[string]bool
 }
 
-// init is the CacheManager's constructor, at the first lookup (Slack
-// makes the manager at the first getMemberById with a team).
+// membersInit is the CacheManager's constructor, at the first lookup
+// (Slack makes the manager at the first getMemberById with a team).
 func (s *Store) membersInit() *memberCache {
 	m := &s.members
 	m.once.Do(func() {
@@ -91,8 +91,8 @@ func (s *Store) membersInit() *memberCache {
 	return m
 }
 
-// MembersOnline is mG45 isOnline for the members pass (core sets it:
-// the machine has a network and the realtime socket is up). nil: online.
+// SetMembersOnline sets mG45 isOnline for the members pass (core: the
+// machine has a network and the session wasn't ended). nil: online.
 func (s *Store) SetMembersOnline(f func() bool) {
 	s.mu.Lock()
 	s.membersOnline = f
