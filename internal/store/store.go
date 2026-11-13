@@ -8,7 +8,9 @@
 package store
 
 import (
+	"bufio"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -548,6 +550,22 @@ func (s *Store) PutUsers(us []slack.User) {
 			u.Presence = old.Presence
 		}
 		s.Users[u.ID] = &u
+	}
+	s.mu.Unlock()
+	if len(us) > 0 {
+		s.gen.Add(1)
+	}
+}
+
+// putUserPtrs is PutUsers for users the store may keep as they are (the
+// metadata cache's, decoded one by one: no second copy).
+func (s *Store) putUserPtrs(us []*slack.User) {
+	s.mu.Lock()
+	for _, u := range us {
+		if old, ok := s.Users[u.ID]; ok && old.Presence != "" {
+			u.Presence = old.Presence
+		}
+		s.Users[u.ID] = u
 	}
 	s.mu.Unlock()
 	if len(us) > 0 {
@@ -1401,16 +1419,18 @@ func (s *Store) LoadCache() {
 	if s.cacheDir == "" || s.dropped.Load() {
 		return
 	}
-	b, err := os.ReadFile(filepath.Join(s.cacheDir, "meta.json"))
+	f, err := os.Open(filepath.Join(s.cacheDir, "meta.json"))
 	if err != nil {
 		return
 	}
 	var d diskCache
-	if json.Unmarshal(b, &d) != nil {
+	var users []*slack.User
+	err = readDiskCache(bufio.NewReaderSize(f, 64<<10), &d, func(u *slack.User) { users = append(users, u) })
+	f.Close()
+	if err != nil {
 		return
 	}
-	b = nil
-	s.PutUsers(d.Users)
+	s.putUserPtrs(users)
 	if d.EmojiPacked != "" {
 		s.CustomEmoji.Set(unpackEmoji(d.EmojiPacked))
 	} else if len(d.Emoji) > 0 {
@@ -1551,15 +1571,14 @@ func (s *Store) SaveCache() error {
 	for k, v := range s.bots {
 		d.Bots[k] = v
 	}
+	// the stored users are never changed in place (PutUsers replaces
+	// them), so they're written after the lock is let go
+	users := make([]*slack.User, 0, len(s.Users))
 	for _, u := range s.Users {
-		d.Users = append(d.Users, *u)
+		users = append(users, u)
 	}
 	s.mu.RUnlock()
-	b, err := json.Marshal(d)
-	if err != nil {
-		return err
-	}
-	if err := writeAtomic(s.cacheDir, "meta.json", b); err != nil {
+	if err := writeAtomicStream(s.cacheDir, "meta.json", func(w io.Writer) error { return writeDiskCache(w, &d, users) }); err != nil {
 		return err
 	}
 	s.saved, s.savedGen, s.savedEmo = true, gen, emo
