@@ -83,7 +83,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestActivityRailBadge' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestActivityRailBadge|TestTitleDockTaskbarAgreeLikeSlack' ./internal/ui/
       - name: side-by-sides with Slack's CSS
         run: |
           python3 -m pip install --quiet pillow

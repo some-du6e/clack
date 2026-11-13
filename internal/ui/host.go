@@ -392,7 +392,7 @@ func (a *App) windowTitle() string {
 		b.WriteString(" - ")
 	}
 	b.WriteString(a.teamName())
-	if n := a.unreadItems(); n > 0 {
+	if n := a.desktopUnreads().Count; n > 0 { // DocumentTitle: appBadgeCount
 		b.WriteString(" - ")
 		b.WriteString(itoa(n))
 		if n == 1 {
@@ -408,21 +408,16 @@ func (a *App) windowTitle() string {
 	return b.String()
 }
 
-// unreadItems counts mentions + unread DMs (what Slack calls new items).
-func (a *App) unreadItems() int {
+// desktopUnreads is Slack's getDesktopUnreads: the app badge count
+// (getAppBadgeCount) the window title, the Dock and the taskbar overlay
+// all show, and whether the Dock shows "•" without one (core app_badge.go).
+func (a *App) desktopUnreads() core.DesktopUnreads {
 	m := a.model()
-	n := 0
-	for _, c := range m.Convs {
-		if c.Muted {
-			continue
-		}
-		if c.Mentions > 0 {
-			n += c.Mentions
-		} else if c.Unread && (c.Kind == "im" || c.Kind == "mpim") {
-			n++
-		}
+	bullet := !uipref.Get().NoMacBullet
+	if a.data == nil || a.data.core == nil {
+		return core.DesktopUnreads{Count: m.HomeCount, HasUnreads: m.HomeUnread || m.DMUnread, Bullet: bullet}
 	}
-	return n
+	return a.data.core.DesktopUnreads(m.HomeCount, m.HomeUnread || m.DMUnread, bullet)
 }
 
 // pageIcon is a page's Recent places icon.
