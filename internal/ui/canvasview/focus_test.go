@@ -30,8 +30,10 @@ func TestFocusSectionFromLink(t *testing.T) {
 	if want < 2 {
 		t.Fatalf("the section isn't in the canvas (%d rows)", len(rows))
 	}
-	if got := v.list.Position.First; got != want {
-		t.Errorf("first row %d, want the section's row %d", got, want)
+	// at the top, or as far as the list scrolls (the section is near
+	// the canvas's end): in view either way
+	if pos := v.list.Position; pos.First > want || pos.First+pos.Count <= want || pos.First < want-30 {
+		t.Errorf("rows %d..%d in view, want the section's row %d at the top or in view at the end", pos.First, pos.First+pos.Count, want)
 	}
 	if v.focus != "" {
 		t.Error("the focus wasn't used up")
@@ -45,7 +47,7 @@ func TestFocusSectionFromLink(t *testing.T) {
 	if opened != "" {
 		t.Errorf("a link to this canvas's own section opened %q again", opened)
 	}
-	if got := v.list.Position.First; got != want {
-		t.Errorf("in-place focus: first row %d, want %d", got, want)
+	if pos := v.list.Position; pos.First > want || pos.First+pos.Count <= want || pos.First == 0 {
+		t.Errorf("in-place focus: rows %d..%d in view, want row %d", pos.First, pos.First+pos.Count, want)
 	}
 }

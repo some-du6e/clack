@@ -164,10 +164,11 @@ func (b *bk) styleString() string {
 
 // builder carries state while converting one message.
 type builder struct {
-	r     Resolver
-	files map[string]*slack.File // message files by id, for file blocks
-	used  map[string]bool        // files already placed by a file block
-	hints canvasHints            // the message's canvas unfurls (canvasslug.go)
+	r      Resolver
+	files  map[string]*slack.File // message files by id, for file blocks
+	used   map[string]bool        // files already placed by a file block
+	hints  canvasHints            // the message's canvas unfurls (canvasslug.go)
+	sender string                 // the message's user (canvasfile.go: a file's owner other than them)
 }
 
 func parseBlocks(raw json.RawMessage) []bk {

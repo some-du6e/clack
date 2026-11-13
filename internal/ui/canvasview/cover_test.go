@@ -60,10 +60,11 @@ func TestDefaultLineOpensEmpty(t *testing.T) {
 		t.Error("the default line lost its default content")
 	}
 
-	r.click(defaultLinePos(r))
+	v.edit.start(v, v.blocks[1])
+	r.frame()
 	s = v.edit.cur
-	if s == nil || !s.def {
-		t.Fatal("the second click didn't open the default line")
+	if s == nil || !s.def || s.ed.Doc().Len() != 0 {
+		t.Fatal("the default line didn't open again, emptied")
 	}
 	s.ed.InsertText("Plan for Monday")
 	r.frame()

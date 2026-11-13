@@ -103,8 +103,9 @@ func (s *Server) canvasStore() *canvasStore {
 			add(c)
 		}
 	}
-	if s.Size.Gallery { // the canvas-section link's canvas (canvas_section.go)
+	if s.Size.Gallery { // the canvas-section link's canvas (canvas_section.go), the app's FAQ (canvas_file.go)
 		add(s.sectionCanvas())
+		add(s.faqCanvas())
 	}
 	v, _ := canvasStores.LoadOrStore(s, cs)
 	return v.(*canvasStore)

@@ -134,6 +134,7 @@ type File struct {
 	PrettyType         string          `json:"pretty_type"`
 	Size               int64           `json:"size"`
 	Mode               string          `json:"mode"`
+	TitleBlocks        json.RawMessage `json:"title_blocks,omitempty"` // canvases: the title as rich text (emoji)
 	URLPrivate         string          `json:"url_private"`
 	URLPrivateDownload string          `json:"url_private_download"`
 	Permalink          string          `json:"permalink"`

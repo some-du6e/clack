@@ -326,6 +326,10 @@ func (c *builder) canvasAnchor(a *slack.Attachment, att *Attachment) {
 		an.FooterTitle, an.FooterFromBlocks = name, fromBlocks
 	}
 	att.Anchor = an
+	// no author row: QuipAnchorLink takes authorName / authorIcon and
+	// draws neither (the server's author_name is the real name, a lone
+	// zero-width space for some people)
+	att.AuthorName, att.AuthorSubname, att.AuthorIcon, att.AuthorLink = "", "", "", ""
 	att.FromURL = SafeURL(firstNonEmpty(a.FromURL, a.OriginalURL))
 	att.OriginalURL = SafeURL(a.OriginalURL)
 	att.TS = tsSeconds(a.TS)

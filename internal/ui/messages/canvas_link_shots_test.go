@@ -24,6 +24,8 @@ import (
 
 	"gioui.org/op"
 
+	"github.com/some-du6e/clack/internal/canvas"
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
@@ -143,5 +145,105 @@ func TestCanvasLinkShots(t *testing.T) {
 		}
 		o := v.s.origin.Y
 		savePNG(t, filepath.Join(dir, "canvas-links-"+mode+".png"), crop(img, max(y0+o-8, 0), min(y1+o+8, h)))
+	}
+}
+
+// A canvas shared as an app's message file, in the shape of a live app
+// reply (keys and types only): a mrkdwn section linking the canvas and
+// two buttons, files[0] the canvas owned by ana (not the app), edited by
+// the app's bot in the same second. Slack shows no "(edited)" (a bot_id
+// message never does, shouldDisplayAsEdited), "ana | Canvas ▾" over the
+// card, the lagoon tile, the title with its emoji, "Canvas", and the
+// canvas's opening sections cut at 240px.
+func TestCanvasFileShots(t *testing.T) {
+	dir := os.Getenv("MESSAGES_AUDIT_SHOTS_DIR")
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		app, fs, _ := shotsApp(t)
+		s := app.S
+		s.SetEmojiList(map[string]string{"faq-q": fs.URL + "img/64x64/faqq.png"})
+		const file = "F0CANVFAQ09"
+		sp := func(t string) []richtext.Span { return []richtext.Span{{Kind: richtext.Text, Text: t}} }
+		d := canvas.Doc{Blocks: []canvas.Block{
+			{ID: "temp:C:Q1", Kind: canvas.Heading1, Spans: sp("FAQ")},
+			{ID: "temp:C:Q2", Kind: canvas.Heading2, Spans: sp("Getting started")},
+			{ID: "temp:C:Q3", Kind: canvas.Paragraph, Spans: []richtext.Span{{Kind: richtext.Text, Text: "Read the "},
+				{Kind: richtext.Link, Text: "setup guide", URL: "https://example.invalid/setup"}, {Kind: richtext.Text, Text: " and run "},
+				{Kind: richtext.Text, Text: "make setup", Style: richtext.Code}, {Kind: richtext.Text, Text: " once."}}},
+			{ID: "temp:C:Q4", Kind: canvas.Heading2, Spans: sp("Asking for help")},
+			{ID: "temp:C:Q5", Kind: canvas.Paragraph, Spans: sp("Say what you tried and what you expected to happen.")},
+			{ID: "temp:C:Q6", Kind: canvas.Bullet, Spans: sp("Include the error text")},
+			{ID: "temp:C:Q7", Kind: canvas.Bullet, Spans: sp("Say which version you run")},
+			{ID: "temp:C:Q8", Kind: canvas.Heading2, Spans: sp("Common problems")},
+			{ID: "temp:C:Q9", Kind: canvas.Paragraph, Spans: sp("If the build fails, clear the cache and try again.")},
+		}}
+		s.PutCanvasPreview(file, core.CanvasPreviewBlocks(d))
+		day := time.Now()
+		ts := fmt.Sprintf("%d.350659", time.Date(day.Year(), day.Month(), day.Day(), 10, 5, 0, 0, time.Local).Unix())
+		sec := strings.Split(ts, ".")[0]
+		link := "https://fakeclub.enterprise.slack.com/docs/T0FAKE/" + file
+		raw := `{"type":"message","ts":"` + ts + `","user":"UDEPLOYAPP","bot_id":"B0DEPLOY1","upload":false,"display_as_bot":false,
+			"text":"Check <` + link + `|the FAQ> first.","edited":{"user":"B0DEPLOY1","ts":"` + sec + `.000000"},
+			"blocks":[{"type":"section","block_id":"a","text":{"type":"mrkdwn","text":"Thanks for asking! Check <` + link + `|the FAQ> first.","verbatim":false}},
+			{"type":"actions","block_id":"b","elements":[
+			{"type":"button","action_id":"mark_resolved","text":{"type":"plain_text","text":"Mark resolved","emoji":true},"style":"primary","value":"r"},
+			{"type":"button","action_id":"ask_ai","text":{"type":"plain_text","text":"Ask the bot","emoji":true},"value":"a"}]}],
+			"files":[{"id":"` + file + `","created":1762500000,"timestamp":1762500000,"mimetype":"application/vnd.slack-docs","filetype":"quip",
+			"pretty_type":"Canvas","user":"UANA00001","editable":true,"size":3782,"mode":"quip","is_external":false,"external_type":"",
+			"is_public":true,"display_as_bot":false,"username":"","name":"_faq_q__FAQ","title":":faq-q: FAQ",
+			"url_private":"` + fs.URL + `files-pri/T0FAKE-` + file + `/canvas","permalink":"` + link + `","has_rich_preview":false,
+			"file_access":"visible","canvas_creator_id":"UANA00001",
+			"title_blocks":[{"type":"rich_text","block_id":"t","elements":[{"type":"rich_text_section","elements":[{"type":"emoji","name":"faq-q"},{"type":"text","text":" FAQ"}]}]}]}]}`
+		var m slack.Message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatal(err)
+		}
+		var msgs []slack.Message
+		if tl := s.Timeline(tShots); tl != nil {
+			msgs = append(msgs, tl.Msgs...)
+		}
+		s.SetLatest(tShots, append(msgs, m), false)
+		th := theme.New(dark)
+		host := identityHost{coreHost: coreHost{app: app, th: th}, imgs: imgcache.New(fs.Fetch, "", nil)}
+		const w, h = 1100, 1500
+		v := NewChannelView(host, tShots)
+		v.Preview = true
+		ops := new(op.Ops)
+		f := func() { shotFrame(v, th, w, h, ops) }
+		loadList(v, f)
+		until(t, 5*time.Second, "the app's canvas message", f, func() bool { return v.s.rows[ts] != nil && itemHeight(v.s, ts) > 0 })
+		for i := 0; i < 60; i++ {
+			f()
+			time.Sleep(10 * time.Millisecond)
+		}
+		f()
+		r := v.s.rows[ts]
+		if !r.m.Edited || r.rvOpts().Edited {
+			t.Errorf("%s: edited %v, (edited) shown %v; want an edited message with no label (bot_id)", mode, r.m.Edited, r.rvOpts().Edited)
+		}
+		var cf *richtext.File
+		for _, b := range r.m.Doc.Blocks {
+			if b.File != nil && richtext.IsCanvasFile(b.File) {
+				cf = b.File
+			}
+		}
+		if cf == nil || cf.Uploader != "ana" || richtext.PlainSpans(cf.TitleSpans) != ":faq-q: FAQ" || len(cf.CanvasPreview) == 0 {
+			t.Fatalf("%s: the canvas file %+v", mode, cf)
+		}
+		if dir == "" {
+			continue
+		}
+		img := pixeltest.Render(t, w, h, ops)
+		y0, y1 := -1, 0
+		for i, it := range v.s.items {
+			if it.kind == itMsg && it.key == ts && i < len(v.s.pos) && i < len(v.s.heights) {
+				y0, y1 = v.s.pos[i], v.s.pos[i]+v.s.heights[i]
+			}
+		}
+		if y0 < 0 {
+			t.Fatalf("%s: no row", mode)
+		}
+		o := v.s.origin.Y
+		savePNG(t, filepath.Join(dir, "canvas-file-"+mode+".png"), crop(img, max(y0+o-8, 0), min(y1+o+8, h)))
 	}
 }

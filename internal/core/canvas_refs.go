@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -20,8 +21,8 @@ import (
 // reason: "conditional-fetching"}, Slack's
 // fetchAndUpsertCanvasSectionRichText (client-boot AYsF): its sections'
 // rich_text_blocks[0] are the sections' rich text.
-func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2]string) []string {
-	if len(files)+len(sections) == 0 {
+func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2]string, previews []string) []string {
+	if len(files)+len(sections)+len(previews) == 0 {
 		return nil
 	}
 	var mu sync.Mutex
@@ -36,6 +37,17 @@ func (a *App) resolveCanvases(ctx context.Context, files []string, sections [][2
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			if a.resolveCanvasRef(ctx, id) {
+				add(id)
+			}
+		}(id)
+	}
+	for _, id := range previews {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if a.resolveCanvasPreview(ctx, id) {
 				add(id)
 			}
 		}(id)
@@ -117,4 +129,100 @@ func (a *App) resolveCanvasSections(ctx context.Context, fid string, secs []stri
 		}
 	}
 	return true
+}
+
+// resolveCanvasPreview reads canvas id's HTML export (files.info's
+// url_private, as Canvas does, without the embedded files) for a message
+// card's preview (richtext canvasfile.go).
+func (a *App) resolveCanvasPreview(ctx context.Context, id string) bool {
+	f, err := a.canvasFileInfo(ctx, id)
+	if err != nil || f.URLPrivate == "" {
+		var se *slack.Error
+		if err == nil || errors.As(err, &se) {
+			a.S.PutCanvasPreview(id, nil) // no export to show: the card has no preview
+			return true
+		}
+		log.Printf("canvas preview %s: %v", id, err)
+		a.S.ForgetCanvas(id)
+		return false
+	}
+	src, err := a.downloadCanvas(ctx, f.URLPrivate)
+	if err != nil {
+		log.Printf("canvas preview %s: %v", id, err)
+		a.S.ForgetCanvas(id)
+		return false
+	}
+	doc, err := canvas.Parse(src)
+	if err != nil {
+		a.S.PutCanvasPreview(id, nil)
+		return true
+	}
+	a.resolveCanvasSpans(&doc)
+	a.S.PutCanvasPreview(id, CanvasPreviewBlocks(doc))
+	return true
+}
+
+// canvasPreviewMax is useQuipBlocks' slice: 11 blocks, the title's
+// header among them.
+const canvasPreviewMax = 11
+
+// CanvasPreviewBlocks is a canvas's Block Kit thumbnail as Slack's
+// FileQuip draws it with hideTitle: its first 11 sections, the title
+// section dropped. Headings are header blocks; paragraphs, lists, quotes
+// and code are rich text; dividers stay; tables, images, embeds, files
+// and layouts aren't in the preview.
+func CanvasPreviewBlocks(d canvas.Doc) []richtext.Block {
+	bs := d.Blocks
+	n := 0
+	var out []richtext.Block
+	title := len(bs) > 0 && bs[0].Kind == canvas.Heading1
+	for i := 0; i < len(bs) && n < canvasPreviewMax; i++ {
+		b := bs[i]
+		n++
+		if i == 0 && title {
+			continue // hideTitle: the title's header
+		}
+		switch b.Kind {
+		case canvas.Heading1, canvas.Heading2, canvas.Heading3:
+			out = append(out, richtext.Block{Kind: richtext.Header, Spans: b.Spans, Level: headingLevel(b.Kind)})
+		case canvas.Paragraph:
+			if b.Default || len(b.Spans) == 0 {
+				continue // unedited default content and empty lines draw nothing
+			}
+			out = append(out, richtext.Block{Kind: richtext.Paragraph, Spans: b.Spans})
+		case canvas.Bullet, canvas.Numbered, canvas.Check:
+			lst := richtext.Block{Kind: richtext.List, Ordered: b.Kind == canvas.Numbered, Indent: b.Level}
+			for ; i < len(bs) && bs[i].Kind == b.Kind && bs[i].Level == b.Level && n <= canvasPreviewMax; i++ {
+				lst.Items = append(lst.Items, bs[i].Spans)
+				n++
+			}
+			i--
+			n--
+			out = append(out, lst)
+		case canvas.Code:
+			out = append(out, richtext.Block{Kind: richtext.Preformatted, Spans: []richtext.Span{{Kind: richtext.Text, Text: b.Code}}})
+		case canvas.Quote:
+			var sp []richtext.Span
+			for j, k := range b.Children {
+				if j > 0 {
+					sp = append(sp, richtext.Span{Kind: richtext.Break})
+				}
+				sp = append(sp, k.Spans...)
+			}
+			out = append(out, richtext.Block{Kind: richtext.Quote, Spans: sp})
+		case canvas.Divider:
+			out = append(out, richtext.Block{Kind: richtext.Divider})
+		}
+	}
+	return out
+}
+
+func headingLevel(k canvas.Kind) int {
+	switch k {
+	case canvas.Heading1:
+		return 1
+	case canvas.Heading2:
+		return 2
+	}
+	return 3
 }

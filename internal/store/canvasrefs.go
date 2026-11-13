@@ -15,9 +15,10 @@ import (
 type canvasRefs struct {
 	mu      sync.Mutex
 	refs    map[string]richtext.CanvasRef
-	secs    map[string]json.RawMessage // file id + "_" + section id
-	seen    map[string]bool            // asked for already
-	pending []string                   // "f"+file id | "s"+file id+"_"+section id
+	secs    map[string]json.RawMessage  // file id + "_" + section id
+	prev    map[string][]richtext.Block // file id -> a message card's preview (richtext canvasfile.go)
+	seen    map[string]bool             // asked for already
+	pending []string                    // "f"+file id | "s"+file id+"_"+section id | "p"+file id
 }
 
 var canvasRefsOf sync.Map // *Store -> *canvasRefs
@@ -27,7 +28,7 @@ func (s *Store) canvasRefs() *canvasRefs {
 		return v.(*canvasRefs)
 	}
 	v, _ := canvasRefsOf.LoadOrStore(s, &canvasRefs{refs: map[string]richtext.CanvasRef{},
-		secs: map[string]json.RawMessage{}, seen: map[string]bool{}})
+		secs: map[string]json.RawMessage{}, prev: map[string][]richtext.Block{}, seen: map[string]bool{}})
 	return v.(*canvasRefs)
 }
 
@@ -56,6 +57,26 @@ func (s *Store) CanvasSection(fileID, sectionID string) (json.RawMessage, bool) 
 	return r, ok
 }
 
+// CanvasPreview is richtext.CanvasPreviewer: a canvas's preview blocks.
+func (s *Store) CanvasPreview(fileID string) ([]richtext.Block, bool) {
+	c := s.canvasRefs()
+	c.mu.Lock()
+	b, ok := c.prev[fileID]
+	c.mu.Unlock()
+	if !ok {
+		s.noteCanvas("p" + fileID)
+	}
+	return b, ok
+}
+
+// PutCanvasPreview records a canvas's preview blocks (nil: none).
+func (s *Store) PutCanvasPreview(fileID string, b []richtext.Block) {
+	c := s.canvasRefs()
+	c.mu.Lock()
+	c.prev[fileID] = b
+	c.mu.Unlock()
+}
+
 // PutCanvasRef records what files.info said about a canvas.
 func (s *Store) PutCanvasRef(fileID string, r richtext.CanvasRef) {
 	c := s.canvasRefs()
@@ -79,6 +100,7 @@ func (s *Store) ForgetCanvas(fileID string) {
 	c := s.canvasRefs()
 	c.mu.Lock()
 	delete(c.seen, "f"+fileID)
+	delete(c.seen, "p"+fileID)
 	for k := range c.seen {
 		if len(k) > len(fileID)+1 && k[0] == 's' && k[1:len(fileID)+1] == fileID && k[len(fileID)+1] == '_' {
 			delete(c.seen, k)
@@ -106,9 +128,9 @@ func (s *Store) noteCanvas(key string) {
 	s.missMu.Unlock()
 }
 
-// TakeMissingCanvases returns and clears the canvases and sections
-// lookups missed (sections as file id and section id pairs).
-func (s *Store) TakeMissingCanvases() (files []string, sections [][2]string) {
+// TakeMissingCanvases returns and clears the canvases, sections and
+// previews lookups missed (sections as file id and section id pairs).
+func (s *Store) TakeMissingCanvases() (files []string, sections [][2]string, previews []string) {
 	c := s.canvasRefs()
 	c.mu.Lock()
 	keys := c.pending
@@ -118,6 +140,8 @@ func (s *Store) TakeMissingCanvases() (files []string, sections [][2]string) {
 		switch k[0] {
 		case 'f':
 			files = append(files, k[1:])
+		case 'p':
+			previews = append(previews, k[1:])
 		case 's':
 			for i := 1; i < len(k); i++ {
 				if k[i] == '_' {
