@@ -72,7 +72,7 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 				col := c.ToolbarIcon
 				if btn.Hovered() {
 					rrect(gtx.Ops, image.Rectangle{Max: image.Pt(bs, bs)}, dp(gtx, 8), c.ToolbarHoverBg)
-					col = c.Text
+					col = c.ToolbarHoverIcon // rgba(var(--sk_primary_foreground))
 				}
 				is := dp(gtx, 16)
 				at(gtx, (bs-is)/2, (bs-is)/2, func(gtx layout.Context) layout.Dimensions {
@@ -82,7 +82,7 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 			})
 		})
 		if btn.Hovered() {
-			tooltip(gtx, th, c, "Message actions", image.Pt(x+bs/2, y-dp(gtx, 4)), size)
+			tooltip(gtx, th, c, "Message actions", image.Pt(x+bs/2, y-dp(gtx, 8)), y+bs+dp(gtx, 8), size, 1)
 		}
 	}
 }

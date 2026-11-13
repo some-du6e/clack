@@ -668,7 +668,7 @@ func (b *backend) maybeNotify(a *App, ev core.Event) {
 		// drop it (native: the desktop notification)
 		title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
 		msg := notificationMessage(a.Taut(), ev)
-		note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS, ev.Msg.User) // the toast's payload (notify.go)
+		note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS) // the toast's payload (notify.go)
 		a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 			func(ctx context.Context, args map[string]any) (any, error) {
 				if t, b, ok := notificationText(args, msg, body); ok {

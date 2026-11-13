@@ -5,7 +5,9 @@ import (
 	"strconv"
 	"strings"
 
+	"gioui.org/f32"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/emoji"
@@ -114,17 +116,24 @@ func (s *listState) quickButton(gtx layout.Context, i int) layout.Dimensions {
 	bs := gtx.Constraints.Max.X
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		rr := image.Rectangle{Max: image.Pt(bs, bs)}
-		es := dp(gtx, 18)
-		if btn.Hovered() {
+		hov := btn.Hovered()
+		// the emoji is the button's <img>: scale(1.2) rotate(4deg) over
+		// 80 ms; the plain button's background has no transition
+		move, _ := s.tilt.step(gtx, &s.tilt.quick[i], hov || gtx.Focused(btn), hov, 0)
+		if hov {
 			rrect(gtx.Ops, rr, dp(gtx, 8), c.ToolbarHoverBg)
-			es = dp(gtx, 22)
 		}
+		es := dp(gtx, 18)
 		url := ""
 		if app := s.rc.h.Core(); app != nil {
 			url, _, _ = app.Emoji(name)
 		}
 		o := (bs - es) / 2
-		if !drawEmoji(gtx, s.rc.h, url, image.Rect(o, o, o+es, o+es)) {
+		ctr := f32.Pt(float32(o)+float32(es)/2, float32(o)+float32(es)/2)
+		tr := op.Affine(tiltAffine(ctr, move, true)).Push(gtx.Ops)
+		drawn := drawEmojiAt(gtx, s.rc.h, url, image.Rect(o, o, o+es, o+es), int(float64(es)*tiltScale+.5))
+		tr.Pop()
+		if !drawn {
 			at(gtx, dp(gtx, 2), (bs-dp(gtx, 18))/2, func(gtx layout.Context) layout.Dimensions {
 				return label(gtx, s.rc.th, textStyle{size: 11, col: c.Text, lineH: 18}, ":"+name+":")
 			})

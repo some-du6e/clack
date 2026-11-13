@@ -1,9 +1,6 @@
 package ui
 
 import (
-	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"log"
 	"os"
 	"path/filepath"
@@ -13,29 +10,30 @@ import (
 
 	"github.com/some-du6e/clack/assets/icon"
 	"github.com/some-du6e/clack/internal/desktop"
-	"github.com/some-du6e/clack/internal/imgcache"
 )
 
-// toastNotifier shows Slack's Windows toasts (notify_toast.go) through
-// WinRT, as Clack's app id (internal/desktop).
+// toastNotifier shows Clack's Windows toasts (notify_toast.go: Chrome's
+// layout) through WinRT, as Clack's app id (internal/desktop).
 type toastNotifier struct {
 	once  sync.Once
-	cache string // the pictures' folder: Slack's %TEMP%\Notification Cache, Clack's own
+	cache string // the toasts' pictures: Clack's icon, the logo Chrome's toast shows
 	aumid string
-	fetch func(ctx context.Context, url string) ([]byte, error)
+	logo  string // Clack's icon in cache ("" when it couldn't be written)
 }
 
 func newNotifier() notifier {
-	return &toastNotifier{aumid: desktop.AppUserModelID, fetch: imgcache.PublicFetch}
+	return &toastNotifier{aumid: desktop.AppUserModelID}
 }
 
-// toastAvatarDir is the folder for the toasts' pictures (Slack's is
-// "${temp}/Notification Cache", which Slack desktop empties at start).
-func toastAvatarDir() string { return filepath.Join(os.TempDir(), "Clack Notification Cache") }
+// toastPicturesDir is the folder for the toasts' pictures (Chromium's
+// NotificationImageRetainer keeps its in the profile; Clack's goes in the
+// temp folder, as Slack desktop's "Notification Cache" did).
+func toastPicturesDir() string { return filepath.Join(os.TempDir(), "Clack Notification Cache") }
 
 // ready registers Clack's app id, which Windows needs before it shows a
-// toast (desktop.EnsureAppUserModelID), and empties the pictures' folder
-// as the shell does at start. Once, before the first toast.
+// toast (desktop.EnsureAppUserModelID), empties the pictures' folder (an
+// older Clack saved senders' pictures there) and writes Clack's icon for
+// the toasts' logo. Once, before the first toast.
 func (t *toastNotifier) ready() {
 	t.once.Do(func() {
 		if t.aumid == desktop.AppUserModelID {
@@ -46,7 +44,7 @@ func (t *toastNotifier) ready() {
 			}
 		}
 		if t.cache == "" {
-			t.cache = toastAvatarDir()
+			t.cache = toastPicturesDir()
 		}
 		if es, err := os.ReadDir(t.cache); err == nil {
 			for _, e := range es {
@@ -54,6 +52,10 @@ func (t *toastNotifier) ready() {
 					_ = os.Remove(filepath.Join(t.cache, e.Name()))
 				}
 			}
+		}
+		p := filepath.Join(t.cache, "clack.png")
+		if err := os.MkdirAll(t.cache, 0o700); err == nil && os.WriteFile(p, icon.PNG128, 0o600) == nil {
+			t.logo = filepath.ToSlash(p)
 		}
 	})
 }
@@ -83,20 +85,22 @@ func (t *toastNotifier) NotifyActions(title, body string, actions []string, on f
 	return t.NotifyNote(n)
 }
 
-// NotifyNote shows n's toast: createToastNotification's XML with the
-// sender's picture downloaded first (downloadImages), its id as the
-// toast's tag and its group id as the group (Electron's Notification id
-// and groupId), and its clicks back to n.Activated.
+// NotifyNote shows n's toast: its XML (Chrome's layout, stamped now, as a
+// Notification without a timestamp is), its id as the toast's tag and its
+// group id as the group (Electron's Notification id and groupId), and its
+// clicks back to n.Activated.
 func (t *toastNotifier) NotifyNote(n *desktopNote) error {
 	t.ready()
-	avatar := t.avatarFile(n.Avatar)
 	if n.ID == "" {
 		n.ID = shellNoteID(n.Team, n.Msg)
 	}
+	if n.When.IsZero() {
+		n.When = time.Now()
+	}
 	act := n.Activated
-	err := desktop.ShowToast(t.aumid, desktop.Toast{XML: n.toastXML(avatar), Tag: n.ID, Group: n.GroupID, Inputs: []string{"replyBox"},
-		Activated: func(args string, in map[string]string) {
-			a, ok := parseToastActivation(args, in["replyBox"])
+	err := desktop.ShowToast(t.aumid, desktop.Toast{XML: n.toastXML(t.logo), Tag: n.ID, Group: n.GroupID,
+		Activated: func(args string, _ map[string]string) {
+			a, ok := parseToastActivation(args)
 			if !ok {
 				log.Printf("notify: a toast's activation arguments didn't parse")
 				return
@@ -111,33 +115,4 @@ func (t *toastNotifier) NotifyNote(n *desktopNote) error {
 		log.Printf("notify: toast: %v", err)
 	}
 	return err
-}
-
-// avatarFile is downloadImages for avatarImage: the picture saved as
-// <md5 of its URL>.png in the pictures' folder (an unpackaged app's
-// toast can't load a web address), after verifyImageSources' host check.
-// "" when there is none or it didn't download; the toast then shows
-// Clack's icon.
-func (t *toastNotifier) avatarFile(raw string) string {
-	if raw == "" || !toastImageAllowed(raw) || t.fetch == nil {
-		return ""
-	}
-	sum := md5.Sum([]byte(raw))
-	p := filepath.Join(t.cache, hex.EncodeToString(sum[:])+".png")
-	if st, err := os.Stat(p); err == nil && st.Size() > 0 {
-		return filepath.ToSlash(p)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	b, err := t.fetch(ctx, raw)
-	if err != nil || len(b) == 0 {
-		return ""
-	}
-	if err := os.MkdirAll(t.cache, 0o700); err != nil {
-		return ""
-	}
-	if err := os.WriteFile(p, b, 0o600); err != nil {
-		return ""
-	}
-	return filepath.ToSlash(p)
 }
