@@ -157,7 +157,7 @@ func (s *Server) handleChannelFilesMore(method string, f url.Values) (any, bool)
 		m := s.cfmore()
 		m.mu.Lock()
 		ts := strconv.Itoa(filesBaseTS+90000+len(m.shares)) + ".000100"
-		m.shares = append(m.shares, TabShare{Args: f, TS: ts})
+		m.shares = append(m.shares, TabShare{Args: withoutToken(f), TS: ts})
 		m.mu.Unlock()
 		return ok("file_msg_ts", ts), true
 	case "search.modules.messages":
@@ -206,10 +206,8 @@ func (s *Server) handleChannelFilesMore(method string, f url.Values) (any, bool)
 		m := s.cfmore()
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		w := url.Values{"method": {method}}
-		for k, v := range f {
-			w[k] = v
-		}
+		w := withoutToken(f)
+		w.Set("method", method)
 		m.writes = append(m.writes, w)
 		tabs := m.galleryTabs()
 		find := func(id string) int {
@@ -272,6 +270,18 @@ func (s *Server) galleryTabsJSON() []any {
 			c[k] = v
 		}
 		out = append(out, c)
+	}
+	return out
+}
+
+// withoutToken is a copy of f without the auth token (the API's, not the
+// method's args).
+func withoutToken(f url.Values) url.Values {
+	out := url.Values{}
+	for k, v := range f {
+		if k != "token" {
+			out[k] = append([]string(nil), v...)
+		}
 	}
 	return out
 }
