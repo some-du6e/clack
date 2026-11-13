@@ -172,7 +172,10 @@ func TestThreadPaneLoadingAndErrorLikeSlack(t *testing.T) {
 	close(g.hold)
 	g.hold = nil
 	g.mu.Unlock()
-	until(t, 10*time.Second, "the error", f, func() bool { return tv.HidesComposer() })
+	until(t, 10*time.Second, "the error", f, func() bool { return tv.s.threadErrored(host) })
+	if !tv.HidesComposer() {
+		t.Error("ThreadsError keeps the reply box")
+	}
 	ls = paneLabels(f)
 	for _, want := range []string{"Couldn’t load thread", "If the problem persists, please ", "drop us a line."} {
 		if !drewLabel(ls, want) {
@@ -193,7 +196,7 @@ func TestThreadPaneLoadingAndErrorLikeSlack(t *testing.T) {
 	g.mu.Unlock()
 	tv2 := NewThreadView(host, tShots, ts["b2"])
 	f2 := frameFn(tv2)
-	until(t, 10*time.Second, "the deleted thread", f2, func() bool { return tv2.HidesComposer() })
+	until(t, 10*time.Second, "the deleted thread", f2, func() bool { return tv2.s.threadErrored(host) })
 	ls = paneLabels(f2)
 	if !drewLabel(ls, "This message was deleted.") || drewLabel(ls, "drop us a line.") || drewLabel(ls, "Couldn’t load thread") {
 		t.Errorf("thread_not_found drew %q", ls)

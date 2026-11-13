@@ -153,13 +153,13 @@ func TestThreadsAuditStatesShots(t *testing.T) {
 		close(g.hold)
 		g.hold = nil
 		g.mu.Unlock()
-		shoot("error", tl, tl.HidesComposer)
+		shoot("error", tl, func() bool { return tl.s.threadErrored(host) })
 		// the deleted thread
 		g.mu.Lock()
 		g.failure = "thread_not_found"
 		g.mu.Unlock()
 		td := NewThreadView(host, tShots, ts["b2"])
-		shoot("deleted", td, td.HidesComposer)
+		shoot("deleted", td, func() bool { return td.s.threadErrored(host) })
 		g.mu.Lock()
 		g.failure = ""
 		g.mu.Unlock()
