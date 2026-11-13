@@ -22,14 +22,61 @@ func (a *App) setActivityBadges(m map[string]int) {
 	a.mu.Unlock()
 }
 
-// onActivityBadges takes badge_counts_updated's activity_v2.
+// onActivityBadges takes badge_counts_updated's activity_v2. Under
+// activity_inbox Slack applies it as it is and stops there (render 37DU
+// handleBadgeCountsUpdatedRTMEvent: updateActivityV2BadgeCounts, no
+// client.counts), so the rail's badge moves with the event; the UI hears
+// "activity_badges".
 func (a *App) onActivityBadges(raw json.RawMessage) {
 	var e struct {
 		ActivityV2 map[string]int `json:"activity_v2"`
 	}
 	if json.Unmarshal(raw, &e) == nil && e.ActivityV2 != nil {
 		a.setActivityBadges(e.ActivityV2)
+		a.emit(Event{Type: "activity_badges"})
 	}
+}
+
+// decActivityBadges is P0K2 decrementBadgeCounts after
+// markItemsReadAcrossLists: each unread item marked read takes one off
+// its type's count (never below 0), before the server's
+// badge_counts_updated confirms it.
+func (a *App) decActivityBadges(items []ActivityItem) {
+	a.mu.Lock()
+	changed := false
+	if a.actBadges != nil {
+		cp := make(map[string]int, len(a.actBadges))
+		for k, v := range a.actBadges {
+			cp[k] = v
+		}
+		for _, it := range items {
+			if !it.Unread || it.Type == "" {
+				continue
+			}
+			if n := cp[it.Type]; n > 0 {
+				cp[it.Type] = n - 1
+				changed = true
+			}
+		}
+		if changed {
+			a.actBadges = cp
+		}
+	}
+	a.mu.Unlock()
+	if changed {
+		a.emit(Event{Type: "activity_badges"})
+	}
+}
+
+// ActivityBadgeCount is the rail's Activity badge under activity_inbox:
+// 3x6A getActivityBadgeCount, which with the inbox on (5Ns/ Lh) is H, the
+// activity_v2 counts of the badged entry types summed without
+// message_reaction (the All tab's count). yEMG hands it to the rail's
+// Activity tab (ActivityTabContent, InjD useGetMentions); 0 before
+// client.counts answered (unreadActivityV2BadgeCounts starts {}).
+func (a *App) ActivityBadgeCount() int {
+	c, _ := a.ActivityTabCounts()
+	return c[0]
 }
 
 // activityBadgeTypes is 3x6A H's set: the entry types the All tab's count
@@ -49,6 +96,12 @@ func (a *App) activityBadgeTypes() map[string]bool {
 	if a.ActivityInbox() && !a.PrefBool("activity_dms_opt_out", false) {
 		t["dm"] = true // 5Ns/ Vn
 	}
+	if a.experiment("code_review_requested_in_activity") == "on" {
+		t["code_review_requested"] = true // ysZt f
+	}
+	if a.experiment("inviter_joiner_first_dm_v2") == "treatment" {
+		t["team_joiner_invite"] = true // vydz wy inviterJoinerFirstDmIsTreatment
+	}
 	return t
 }
 
@@ -67,8 +120,9 @@ func (a *App) ActivityTabCounts() (counts [4]int, ok bool) {
 	if m == nil {
 		return counts, false
 	}
+	types := a.activityBadgeTypes()
 	for k, n := range m {
-		if k != "message_reaction" && a.activityBadgeTypes()[k] {
+		if k != "message_reaction" && types[k] {
 			counts[0] += n
 		}
 	}

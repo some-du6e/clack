@@ -459,6 +459,12 @@ func (b *backend) mpimName(c *core.Conv, self string) string {
 	return strings.Join(names, ", ")
 }
 
+// activityBadgeMoved reports whether core's Activity badge differs from
+// the rail's (recount then picks it up).
+func (b *backend) activityBadgeMoved() bool {
+	return b.m.Rail.ActivityInbox && b.core != nil && b.core.ActivityBadgeCount() != b.m.ActivityCount
+}
+
 // recount derives the rail badges from conv counts.
 func (b *backend) recount() {
 	m := &b.m
@@ -482,6 +488,12 @@ func (b *backend) recount() {
 		}
 	}
 	m.HomeCount += m.DMCount
+	if m.Rail.ActivityInbox && b.core != nil {
+		// Slack's rail reads activity_v2 under activity_inbox, not the
+		// channels' mentions: thread replies and @channel count there too
+		// (core ActivityBadgeCount)
+		m.ActivityCount = b.core.ActivityBadgeCount()
+	}
 	if b.app != nil {
 		b.app.updateDock()
 	}
@@ -560,6 +572,11 @@ func (b *backend) handle(a *App, ev core.Event) {
 				}
 			}
 		}
+		// client.counts' activity_v2 can move with no conversation's
+		// count changing (a thread reply): the rail's badge reads it
+		changed = changed || b.activityBadgeMoved()
+	case "activity_badges": // badge_counts_updated or a mark read (core activity_badges.go)
+		changed = b.activityBadgeMoved()
 	case "presence":
 		for _, c := range m.Convs {
 			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) {

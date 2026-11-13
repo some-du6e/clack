@@ -283,7 +283,8 @@ type Page struct {
 // typing, marked, presence, user, conv, conv_removed, counts, connection,
 // emoji_changed, sidebar_changed, prefs, huddle, resync, poll (realtime
 // is off or down: refetch what is open), realtime (live updates turned
-// on/off, in Connected), plus raw
+// on/off, in Connected), activity_badges (the Activity badge counts
+// moved: ActivityBadgeCount), plus raw
 // passthroughs (thread_marked, update_thread_state, dnd_updated,
 // dnd_updated_user, pref_change, badge_counts_updated) in Raw.
 type Event struct {

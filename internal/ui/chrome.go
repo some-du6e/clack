@@ -601,7 +601,7 @@ func (a *App) chromeButton(gtx layout.Context, org image.Point, c *widget.Clicka
 // railCount draws the small count bubble on a rail tile.
 func (a *App) railCount(gtx layout.Context, n int) layout.Dimensions {
 	c := &a.th.C
-	txt := itoa(n)
+	txt := railCountText(n)
 	h := gtx.Dp(18)
 	tw := a.th.Measure(gtx, 11, theme.Bold, txt)
 	w := tw + gtx.Dp(10)
@@ -616,6 +616,15 @@ func (a *App) railCount(gtx layout.Context, n int) layout.Dimensions {
 		})
 	})
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// railCountText is the tabs' Badge text (InjD useGetMentions: S1+c Ex
+// with maxCount 99): the count, or "99+" past it.
+func railCountText(n int) string {
+	if n > 99 {
+		return "99+"
+	}
+	return itoa(n)
 }
 
 // teamIcon draws the workspace icon (image, or initials on aubergine).
