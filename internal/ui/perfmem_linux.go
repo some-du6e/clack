@@ -38,7 +38,7 @@ func perfOSMem(w io.Writer) {
 		return
 	}
 	defer f.Close()
-	type acc struct{ rss, priv, anon uint64 }
+	type acc struct{ rss, priv, dirty, anon uint64 }
 	cat := map[string]*acc{}
 	files := map[string]*acc{}
 	var cur, curFile *acc
@@ -102,6 +102,9 @@ func perfOSMem(w io.Writer) {
 			if curFile != nil {
 				curFile.priv += v
 			}
+			if fs[0] == "Private_Dirty:" {
+				cur.dirty += v
+			}
 		case "Anonymous:":
 			cur.anon += v
 		}
@@ -115,12 +118,21 @@ func perfOSMem(w io.Writer) {
 	var priv uint64
 	for _, k := range names {
 		a := cat[k]
-		priv += a.priv
+		// the counterpart of Windows' private working set: memory only
+		// this process holds that no file backs (anonymous and shared
+		// memory, and file pages it wrote to); clean pages of the binary
+		// and libraries are the file's, as Windows counts its images
+		if k == "file" {
+			priv += a.dirty
+		} else {
+			priv += a.priv
+		}
 		fmt.Fprintf(w, "linux_rss_%s %s\nlinux_private_%s %s\n", k, mb(a.rss), k, mb(a.priv))
 	}
-	// the counterpart of Windows' private working set: resident pages no
-	// other process shares
 	fmt.Fprintf(w, "linux_private_total %s\n", mb(priv))
+	if f := cat["file"]; f != nil {
+		fmt.Fprintf(w, "linux_dirty_file %s\n", mb(f.dirty))
+	}
 	type kv struct {
 		k string
 		v *acc

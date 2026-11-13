@@ -229,7 +229,7 @@ def stage_rows(d, platform):
             r["rss"] = mb(mem.get("linux_VmRSS"))
             r["go_res"] = mb(mem.get("linux_rss_anon_go_arenas"))
             r["other_res"] = (mb(mem.get("linux_rss_anon_other")) or 0) + (mb(mem.get("linux_rss_anon_brk_heap")) or 0)
-            r["img_res"] = mb(mem.get("linux_private_file"))
+            r["img_res"] = mb(mem.get("linux_dirty_file")) if mem.get("linux_dirty_file") else mb(mem.get("linux_private_file"))
         rows.append(r)
     return rows
 
@@ -241,7 +241,7 @@ def side_report(base, side, platform):
     rows = stage_rows(p, platform) + stage_rows(d, platform)
     if not rows:
         return ["_%s: no stage files (the driver didn't run; a tree without internal/ui/perfdrive.go)_" % side, ""], {}
-    total_name = "private working set" if platform == "windows" else "private (RSS not shared)"
+    total_name = "private working set" if platform == "windows" else "private (anonymous + dirty)"
     extra = " commit |" if platform == "windows" else ""
     out.append("| stage | %s | after GC + trim |%s Go heap resident | other private (C, driver, GPU) | DLL/file private | Go heap live (after GC) | Go heap unreturned | stacks | users | messages (store / lists) | images |" % (total_name, extra))
     out.append("|---|---|---|" + ("---|" if extra else "") + "---|---|---|---|---|---|---|---|---|")
