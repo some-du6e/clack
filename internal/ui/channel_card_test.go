@@ -381,6 +381,18 @@ func TestChannelHoverCardCodeHuddleTabs(t *testing.T) {
 		t.Errorf("code card width %d", w)
 	}
 	e.settle(300 * time.Millisecond) // the faces
+	// the facepile's tooltip (F2XN, 150ms) over the card's own button
+	if fp := e.a.hover.chc.FacepileRect(); fp.Empty() {
+		t.Error("no facepile on the done card")
+	} else {
+		e.move(f32.Pt(float32(fp.Min.X+fp.Dx()/2), float32(fp.Min.Y+fp.Dy()/2)))
+		time.Sleep(250 * time.Millisecond)
+		e.frame()
+		e.frame()
+		if !e.a.hover.chc.FacepileTipShowing(time.Now()) {
+			t.Error("no tooltip on the facepile after 250ms")
+		}
+	}
 	shotBoth("channel-card-code-done", done)
 	leave()
 

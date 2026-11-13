@@ -116,6 +116,7 @@ type ChannelHoverCard struct {
 	codeBtn   widget.Clickable
 	faceHover gesture.Hover
 	faceTip   TipState
+	pile      image.Rectangle // the facepile, card coordinates
 }
 
 // NewChannelHoverCard is the card for the channel id over anchor (window

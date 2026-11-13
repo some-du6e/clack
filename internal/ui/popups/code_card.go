@@ -381,12 +381,16 @@ func (p *ChannelHoverCard) codeCard(gtx layout.Context, th *theme.Theme, cl *Col
 		rowH = max(rowH, lineH)
 	}
 	x := pad
+	var agents []string
+	if cv.Code != nil {
+		agents = cv.Code.AgentBotIDs
+	}
+	var pile image.Rectangle // the facepile's box, for its tooltip
 	if len(faces) > 0 {
-		var agents []string
-		if cv.Code != nil {
-			agents = cv.Code.AgentBotIDs
-		}
-		x += p.codeFacepile(gtx, th, faces, agents, image.Pt(x, fy+(rowH-fh)/2)) + dp(gtx, 8)
+		o := image.Pt(x, fy+(rowH-fh)/2)
+		fw := p.codeFacepile(gtx, th, faces, o)
+		pile = image.Rectangle{Min: o, Max: o.Add(image.Pt(fw, fh))}
+		x += fw + dp(gtx, 8)
 	}
 	if started != "" {
 		at(gtx, image.Pt(x, fy+(rowH-lineH)/2), func(gtx layout.Context) layout.Dimensions {
@@ -398,8 +402,8 @@ func (p *ChannelHoverCard) codeCard(gtx layout.Context, th *theme.Theme, cl *Col
 	}
 	y = fy + rowH + dp(gtx, 8)
 
-	// the card is the button: a click anywhere navigates (the facepile's
-	// tooltip area passes the pointer through)
+	// the card is the button: a click anywhere navigates; the facepile's
+	// tooltip area lies above it and passes the pointer through
 	sz := image.Pt(w, y)
 	func() {
 		defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
@@ -410,15 +414,27 @@ func (p *ChannelHoverCard) codeCard(gtx layout.Context, th *theme.Theme, cl *Col
 			return layout.Dimensions{Size: sz}
 		})
 	}()
+	p.pile = pile
+	if !pile.Empty() {
+		func() {
+			defer op.Offset(pile.Min).Push(gtx.Ops).Pop()
+			func() {
+				defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+				defer clip.Rect{Max: pile.Size()}.Push(gtx.Ops).Pop()
+				p.faceHover.Add(gtx.Ops)
+			}()
+			Tooltip(gtx, th, &p.faceTip, p.faceHover.Update(gtx.Source), pile.Size(), Above, p.codeFaceTip(faces, agents), "")
+		}()
+	}
 	return layout.Dimensions{Size: sz}
 }
 
 // codeFacepile draws r6f2's facepile at p and returns its width: the
 // first three of ids as 24px avatars (corners 4px, a 2px base-pry ring
 // with 6px corners, each 4px over the one before), the last one under
-// c-avatar__additional_overlay ("+N", "9+") when there are more, and the
-// tooltip over it.
-func (p *ChannelHoverCard) codeFacepile(gtx layout.Context, th *theme.Theme, ids, agents []string, at0 image.Point) int {
+// c-avatar__additional_overlay ("+N", "9+") when there are more (its
+// tooltip is codeCard's, above the card's button).
+func (p *ChannelHoverCard) codeFacepile(gtx layout.Context, th *theme.Theme, ids []string, at0 image.Point) int {
 	s := dp(gtx, 24)
 	ring := dp(gtx, 2)
 	step := s - dp(gtx, 4)
@@ -463,19 +479,7 @@ func (p *ChannelHoverCard) codeFacepile(gtx layout.Context, th *theme.Theme, ids
 			}
 		}()
 	}
-	w := (len(shown)-1)*step + s
-	tip := p.codeFaceTip(ids, agents)
-	func() {
-		defer op.Offset(at0).Push(gtx.Ops).Pop()
-		sz := image.Pt(w, s)
-		func() {
-			defer pointer.PassOp{}.Push(gtx.Ops).Pop()
-			defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
-			p.faceHover.Add(gtx.Ops)
-		}()
-		Tooltip(gtx, th, &p.faceTip, p.faceHover.Update(gtx.Source), sz, Above, tip, "")
-	}()
-	return w
+	return (len(shown)-1)*step + s
 }
 
 // inlineName draws InlineChannelEntity with boldIcon at (x, y) in a line
@@ -510,6 +514,18 @@ func (p *ChannelHoverCard) inlineName(gtx layout.Context, th *theme.Theme, cl *C
 	})
 	return min(d.Size.X, maxW)
 }
+
+// FacepileRect is the code card's facepile in window coordinates (tests;
+// empty when it has none).
+func (p *ChannelHoverCard) FacepileRect() image.Rectangle {
+	if p.pile.Empty() {
+		return image.Rectangle{}
+	}
+	return p.pile.Add(p.rect.Min)
+}
+
+// FacepileTipShowing reports whether the facepile's tooltip shows (tests).
+func (p *ChannelHoverCard) FacepileTipShowing(now time.Time) bool { return p.faceTip.Showing(now) }
 
 // codeClicks runs the card's button: the channel, and the card closes
 // (its trigger goes with the view).
