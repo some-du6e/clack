@@ -280,3 +280,79 @@ func TestPlaceTop(t *testing.T) {
 		t.Errorf("at the left edge: x %d, want 16", p.X)
 	}
 }
+
+// A message's #channel is BaseMrkdwnChannel's HoverCardTrigger: the
+// defaults (350ms open, 250ms close) and the card with buttons; moving
+// from a person to a channel swaps the cards on their own timers.
+func TestChannelTrigger(t *testing.T) {
+	c := &Controller{}
+	r := image.Rect(100, 300, 160, 320)
+	ch := func(d time.Duration) {
+		c.ReportChannel("ch", "C1", r, f32.Point{})
+		c.Frame(t0.Add(d), false, false)
+	}
+	ch(0)
+	if _, _, open := c.Open(); open {
+		t.Fatal("open without the delay")
+	}
+	if p, ok := c.Pending(); !ok || p.ChannelID != "C1" || !p.Buttons || p.Texty || p.UserID != "" {
+		t.Fatalf("pending %+v", p)
+	}
+	ch(349 * time.Millisecond)
+	if _, _, open := c.Open(); open {
+		t.Fatal("open before 350ms")
+	}
+	ch(350 * time.Millisecond)
+	req, _, open := c.Open()
+	if !open || req.ChannelID != "C1" || !req.Buttons || req.Anchor != r {
+		t.Fatalf("at 350ms: open %v %+v", open, req)
+	}
+	// onto a person: the channel's card closes 250ms later, the person's
+	// opens 350ms after the move
+	for _, d := range []time.Duration{400, 600, 649} {
+		c.Report("u", "U1", r, f32.Point{})
+		c.Frame(t0.Add(d*time.Millisecond), false, false)
+	}
+	if req, _, open := c.Open(); !open || req.ChannelID != "C1" {
+		t.Fatalf("at 649ms: %v %+v, want the channel's card still", open, req)
+	}
+	c.Report("u", "U1", r, f32.Point{})
+	c.Frame(t0.Add(650*time.Millisecond), false, false)
+	if _, _, open := c.Open(); open {
+		t.Fatal("the channel's card outlived its 250ms close")
+	}
+	c.Report("u", "U1", r, f32.Point{})
+	c.Frame(t0.Add(750*time.Millisecond), false, false)
+	if req, _, open := c.Open(); !open || req.UserID != "U1" || req.ChannelID != "" {
+		t.Fatalf("at 750ms: %v %+v, want the person's card", open, req)
+	}
+}
+
+// A composer slug's channel card is TextyTooltip's Popover: open at once,
+// no buttons, closed 250ms after the pointer leaves.
+func TestTextyChannelTrigger(t *testing.T) {
+	c := &Controller{}
+	r := image.Rect(10, 10, 60, 30)
+	c.ReportTextyChannel("slug", "C2", r, f32.Point{})
+	c.Frame(t0, false, false)
+	req, _, open := c.Open()
+	if !open || req.ChannelID != "C2" || req.Buttons || !req.Texty {
+		t.Fatalf("open %v %+v, want C2's card at once without buttons", open, req)
+	}
+	c.Frame(t0.Add(10*time.Millisecond), false, false)
+	c.Frame(t0.Add(259*time.Millisecond), false, false)
+	if _, _, open := c.Open(); !open {
+		t.Fatal("closed before 250ms")
+	}
+	c.Frame(t0.Add(260*time.Millisecond), false, false)
+	if _, _, open := c.Open(); open {
+		t.Fatal("still open 250ms after leaving")
+	}
+	// a pressed slug stays quiet until left
+	c.Pressed("slug")
+	c.ReportTextyChannel("slug", "C2", r, f32.Point{})
+	c.Frame(t0.Add(time.Second), false, false)
+	if _, _, open := c.Open(); open {
+		t.Fatal("a pressed trigger reopened")
+	}
+}

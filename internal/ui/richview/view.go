@@ -423,7 +423,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	}
 	for i := range v.d.frags {
 		f := &v.d.frags[i]
-		if f.target >= 0 {
+		if f.target >= 0 && (int(f.target) >= len(v.d.targets) || !v.d.targets[f.target].cardOnly) {
 			s := clip.Rect(fragRect(f)).Push(gtx.Ops)
 			pointer.CursorPointer.Add(gtx.Ops)
 			s.Pop()
@@ -1059,7 +1059,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				}
 				v.press = v.targetAt(e.Position)
 				v.pressPos = e.Position
-				if c := hovercard.Default(); c != nil && v.isMention(v.press) {
+				if c := hovercard.Default(); c != nil && (v.isMention(v.press) || v.isChannelCard(v.press)) {
 					c.Pressed(mentionKey{v, v.press}) // Slack's handleClick closes the card
 				}
 				v.pressPreview(e.Position)
@@ -1138,6 +1138,16 @@ func (v *View) isMention(t int16) bool {
 	return t >= 0 && int(t) < len(v.d.targets) && v.d.targets[t].kind == tUser && v.d.targets[t].id != ""
 }
 
+// isChannelCard reports whether t is a #channel with Slack's channel
+// hover card (BaseMrkdwnChannel's HoverCardTrigger).
+func (v *View) isChannelCard(t int16) bool {
+	if t < 0 || int(t) >= len(v.d.targets) {
+		return false
+	}
+	tg := &v.d.targets[t]
+	return tg.kind == tChannel && tg.id != "" && !tg.cardless
+}
+
 // hoverCard reports the @mention under the pointer to the profile hover
 // card: Slack's MemberLink is a ProfileHoverTrigger, anchored at the
 // mention's bounds (all its line boxes when it wraps).
@@ -1150,7 +1160,8 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		return // the hover card's own content triggers nothing
 	}
 	t := v.hover
-	on := v.hovering && v.isMention(t)
+	channel := v.hovering && v.isChannelCard(t)
+	on := v.hovering && v.isMention(t) || channel
 	defer func() {
 		if !on {
 			v.reportPreview(c, st, h)
@@ -1169,6 +1180,10 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		if f := &v.d.frags[i]; f.target == t {
 			r = r.Union(fragRect(f))
 		}
+	}
+	if channel {
+		c.ReportChannel(k, v.d.targets[t].id, r, v.ptr) // ChannelHoverCard, position "top"
+		return
 	}
 	c.Report(k, v.d.targets[t].id, r, v.ptr)
 }
@@ -1205,6 +1220,9 @@ func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e poin
 		return false
 	}
 	tg := v.d.targets[t]
+	if tg.cardOnly {
+		return false // a chip, not a link
+	}
 	text := v.targetText(t)
 	var l slackc.NativeLink
 	switch tg.kind {
@@ -1252,6 +1270,9 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 
 // activateTarget is a click on tg (text: what it draws).
 func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Handler) {
+	if tg.cardOnly {
+		return // not a link
+	}
 	switch tg.kind {
 	case tLink, tCard:
 		if tg.url == "" {

@@ -64,6 +64,9 @@ func (v *View) HitAt(p f32.Point) Hit {
 		return h
 	}
 	tg := &v.d.targets[t]
+	if tg.cardOnly {
+		return h // a chip, not a link
+	}
 	switch tg.kind {
 	case tLink:
 		h.Kind, h.URL = HitLink, tg.url
@@ -153,6 +156,9 @@ func (v *View) LinkRects() []LinkRect {
 			continue
 		}
 		tg := &v.d.targets[f.target]
+		if tg.cardOnly {
+			continue
+		}
 		var k HitKind
 		switch tg.kind {
 		case tLink:

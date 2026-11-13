@@ -1145,6 +1145,8 @@ func (a *App) conv(c *slack.Conversation) Conv {
 	v.TempUntil = a.temp[c.ID]
 	a.mu.Unlock()
 	v.Preview = a.isPreviewConv(c)
+	v.Member = a.isMemberConv(c)
+	v.ConnectedTeams = a.connectedTeams(c)
 	if cc := codeChannelOf(c); cc != nil {
 		v.Code, v.CodeStatus, v.AgentName = cc, a.codeStatusOf(c, cc), a.AgentName(cc)
 	}

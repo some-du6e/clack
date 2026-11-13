@@ -204,3 +204,69 @@ func TestTextyTooltipShots(t *testing.T) {
 		}
 	}
 }
+
+// A channel slug opens Slack's ChannelHoverCard through the root's hover
+// card at once and without buttons (TextyTooltip); an app's slug shows
+// renderComposerAppHoverCard's fallback, the member tooltip, at once,
+// and hides it off the slug; a person's never does.
+func TestSlugChannelCardAndAppTipLikeSlack(t *testing.T) {
+	e := newGroupTipEnv(t, false, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	e.app.EnsureUsers(ctx, []string{fakeslack.ProfileID, fakeslack.AppUserID})
+	var ptr image.Point
+	e.windowIs(&ptr)
+	prev := hovercard.Default()
+	ctl := &hovercard.Controller{Pointer: func() image.Point { return ptr }}
+	hovercard.SetDefault(ctl)
+	t.Cleanup(func() { hovercard.SetDefault(prev) })
+	ch := e.c.ch
+	e.setDoc(&Atom{Kind: AtomChannel, ID: ch, Text: "#general"})
+	e.moveWin(&ptr, e.atomCentre(3))
+	ctl.Frame(e.now, false, false)
+	req, _, open := ctl.Open()
+	if !open || req.ChannelID != ch || !req.Texty || req.Buttons || req.UserID != "" {
+		t.Fatalf("over a channel slug: open %v, %+v; want %s's card at once, no buttons", open, req, ch)
+	}
+	if !ptr.In(req.Anchor) {
+		t.Errorf("anchor %v doesn't hold the pointer %v", req.Anchor, ptr)
+	}
+	mt := &e.c.ttip.mtip
+	if mt.Showing(e.now) {
+		t.Error("the member tooltip over a channel slug")
+	}
+	e.moveWin(&ptr, image.Pt(2, e.atomCentre(3).Y))
+	ctl.Frame(e.now.Add(300*time.Millisecond), false, false)
+	if _, _, open := ctl.Open(); open {
+		t.Error("the channel card stayed 300ms after leaving the slug")
+	}
+
+	e.setDoc(&Atom{Kind: AtomUser, ID: fakeslack.AppUserID, Text: "@app"})
+	e.moveWin(&ptr, e.atomCentre(3))
+	if !mt.Showing(e.now) {
+		t.Fatal("no member tooltip over an app's slug (a Popover from onMouseOver: no delay)")
+	}
+	if pl := mt.Placed(); pl.Pos != theme.TipTop || pl.Box.Empty() {
+		t.Errorf("placed %s %v, want over the slug", pl.Pos, pl.Box)
+	}
+	ctl.Frame(e.now.Add(time.Second), false, false)
+	if req, _, open := ctl.Open(); open {
+		t.Errorf("an app's slug opened a hover card %+v", req)
+	}
+	if dir := os.Getenv("HOVER_SHOTS_DIR"); dir != "" {
+		img := pixeltest.Render(t, e.size.X, e.size.Y, &e.ops)
+		if f, err := os.Create(filepath.Join(dir, "composer-app-slug-tip.png")); err == nil {
+			_ = png.Encode(f, img)
+			f.Close()
+		}
+	}
+	e.moveWin(&ptr, image.Pt(2, e.atomCentre(3).Y))
+	if mt.Showing(e.now) {
+		t.Error("the member tooltip stays off the slug")
+	}
+	e.setDoc(&Atom{Kind: AtomUser, ID: fakeslack.ProfileID, Text: "@prof"})
+	e.moveWin(&ptr, e.atomCentre(3))
+	if mt.Showing(e.now) {
+		t.Error("the member tooltip over a person's slug")
+	}
+}

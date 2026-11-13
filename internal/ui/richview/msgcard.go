@@ -89,11 +89,17 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 func (l *lay) privateChannel(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
 	p := &l.st.Palette
 	fg := rgba(p.Text.R, p.Text.G, p.Text.B, 0.7)
-	l.decos = append(l.decos, deco{kind: 1, bg: p.CodeBorder, padR: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: -1, face: k, self: true, part: pt})
+	// not a link, but the chip sits in the channel hover card's trigger
+	// (BaseMrkdwnChannel: renderChannelHoverCardTrigger(non-existent))
+	tg := int16(-1)
+	if sp.ID != "" {
+		tg = l.d.addTarget(target{kind: tChannel, id: sp.ID, cardOnly: true})
+	}
+	l.decos = append(l.decos, deco{kind: 1, bg: p.CodeBorder, padR: l.dpf(2), padB: l.dpf(1), radius: l.dp(3), target: tg, face: k, self: true, part: pt})
 	dc := int16(len(l.decos) - 1)
-	l.addIcon("lock", fs.size, k, fg, dc, -1)
+	l.addIcon("lock", fs.size, k, fg, dc, tg)
 	l.addPad(l.dpf(3), dc, k) // gap 4 (the icon item ends with 1px)
-	l.addText(sp.Text, fs, k, fg, sp.Style, dc, -1)
+	l.addText(sp.Text, fs, k, fg, sp.Style, dc, tg)
 	l.addPad(l.dpf(2), dc, k)
 }
 

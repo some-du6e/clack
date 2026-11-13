@@ -1001,7 +1001,7 @@ func (l *lay) woField(wo *richtext.WorkObject, lay *workobject.Layout, f *workob
 		cx := x
 		for _, c := range f.Channels {
 			name := "#" + wo.Channel(c.ChannelID)
-			tg := l.d.addTarget(target{kind: tChannel, id: c.ChannelID})
+			tg := l.d.addTarget(target{kind: tChannel, id: c.ChannelID, cardless: true})
 			fs := vs
 			fs.col = p.Link
 			_, cw := l.plainFlow(name, cx, y, max(x+w-cx, l.dp(20)), &fs, tg)
@@ -1578,7 +1578,7 @@ func (l *lay) woFullField(wo *richtext.WorkObject, lay *workobject.Layout, i, x,
 		for _, c := range f.Channels {
 			fs := vs
 			fs.col = p.Link
-			_, cw := l.plainFlow("#"+wo.Channel(c.ChannelID), cx, vy, max(vx+vw-cx, l.dp(20)), &fs, l.d.addTarget(target{kind: tChannel, id: c.ChannelID}))
+			_, cw := l.plainFlow("#"+wo.Channel(c.ChannelID), cx, vy, max(vx+vw-cx, l.dp(20)), &fs, l.d.addTarget(target{kind: tChannel, id: c.ChannelID, cardless: true}))
 			cx += cw + l.dp(4)
 		}
 		vh = vs.lineH

@@ -187,6 +187,13 @@ type Conv struct {
 	// Preview: a channel the viewer isn't in (Slack's isPreview), shown
 	// with JoinChannelPane instead of the composer (preview.go).
 	Preview bool
+	// Member: the viewer is in it (Slack's isMember, JUrK bl: is_member,
+	// or in the viewer's conversations; DMs and group DMs always).
+	Member bool
+	// ConnectedTeams are the other organizations in a Slack Connect
+	// channel (connectedTeamIds: connected_team_ids without the viewer's
+	// top-level team, each once), in the API's order.
+	ConnectedTeams []string
 	// TempUntil: a temporary membership's expiration_ts ("Join…"), 0 when
 	// the membership is permanent.
 	TempUntil int64

@@ -452,6 +452,10 @@ type Conversation struct {
 	// InternalTeamIDs are the org's workspaces with access to the channel
 	// (Enterprise Grid; the details "Workspaces with access" field).
 	InternalTeamIDs []string `json:"internal_team_ids,omitempty"`
+	// ConnectedTeamIDs are a Slack Connect channel's connected teams
+	// (connected_team_ids; Slack's setConnectedTeamIds keeps them minus
+	// the viewer's own top-level team).
+	ConnectedTeamIDs []string `json:"connected_team_ids,omitempty"`
 
 	// Posting permissions as the server states them; nil when absent, and
 	// then they come from properties.posting_restricted_to /
