@@ -60,6 +60,10 @@ func (s *Server) listStore() *listStore {
 	}
 	ls := &listStore{byID: map[string]*FakeList{}, comments: map[string][]slack.Message{}}
 	now := time.Now().Unix()
+	if s.Size.NoFixtureDocs {
+		v, _ := listStores.LoadOrStore(s, ls)
+		return v.(*listStore)
+	}
 	k := kitchenList(now)
 	ls.byID[k.ID] = k
 	t := todoList(now)
@@ -270,7 +274,7 @@ func (s *Server) listFile(l *FakeList) map[string]any {
 		"filetype": "list", "pretty_type": "List", "mode": "list", "user": l.Creator, "created": l.Created, "timestamp": l.Created,
 		"updated": l.Updated, "edit_timestamp": l.Updated, "editable": true, "access": "owner",
 		"editors": []string{l.Creator, SelfID}, "last_editor": SelfID,
-		"permalink": "https://fake.slack.com/lists/" + TeamID + "/" + l.ID,
+		"permalink": s.permalinkHost() + "/lists/" + TeamID + "/" + l.ID,
 		"is_public": true, "comments_count": 0, "size": 0,
 		"list_metadata":         json.RawMessage(meta),
 		"url_private_download":  s.URL + "files-pri/" + TeamID + "-" + l.ID + "/download/" + listSlug(l.Title),

@@ -90,6 +90,10 @@ func TestDemoRefusesNonLoopbackHosts(t *testing.T) {
 	if b, err := s.Fetch(ctx, u); err != nil || len(b) == 0 {
 		t.Errorf("standard emoji drawn locally: %d bytes, %v", len(b), err)
 	}
+	// Slack's static images (huddle backgrounds, Slackbot) are drawn, not fetched
+	if b, err := s.Fetch(ctx, "https://a.slack-edge.com/bv1-13-br/slackbot_72-5b8ea22.png"); err != nil || len(b) == 0 {
+		t.Errorf("Slack's static image drawn locally: %d bytes, %v", len(b), err)
+	}
 	if _, err := s.Fetch(ctx, "https://example.com/cat.png"); err == nil {
 		t.Error("Fetch fetched a non-demo URL")
 	}

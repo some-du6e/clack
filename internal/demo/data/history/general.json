@@ -10,7 +10,9 @@
      {"at": "+11m", "by": "dale", "text": "@jordan Fire exits are left of the copier and behind the water cooler. The one behind the water cooler is a closet but I've reported it."}
    ]},
   {"at": "-4 10:15", "by": "gordon", "text": "@channel :trophy: The QUILLIES are BACK. Nominations are open for the 4th annual Quillfeather Excellence in Paper Awards. Categories include *Most Reams Moved*, *Best Customer Voice*, *Least Likely To Jam The Printer* and a mystery category I'm still workshopping. Ceremony is Friday when Denise from Regional visits. Nominate here: <https://quillfeather.example/quillies|quillies form>",
-   "reactions": ["quillie priya dale ruth kip nadia jordan", "trophy priya", "eyes bev", "thinking_face theo"]},
+   "reactions": ["quillie priya dale ruth kip nadia jordan", "trophy priya", "eyes bev", "thinking_face theo"],
+   "unfurls": [{"url": "https://quillfeather.example/quillies", "service": "Quillfeather Intranet", "title": "The Quillies 2026: nominations",
+     "text": "Nominate a coworker for the 4th annual Quillfeather Excellence in Paper Awards. Voting closes Thursday at 5pm.", "image": "quillies-card"}]},
   {"at": "-4 10:22", "by": "priya", "text": "Is \"Most Reams Moved\" decided by numbers or by vibes. Asking for a leaderboard.", "reactions": ["eyes dale", "stonks-paper priya"]},
   {"at": "-4 10:24", "by": "gordon", "text": "Numbers AND vibes. The Quillies are a holistic experience :pray:", "reactions": ["face_palm priya"]},
   {"at": "-4 14:30", "by": "ruth", "text": "Friendly reminder that everyone needs to complete *Feelings & Forklifts: Module 3* by end of day Friday :slightly_smiling_face: It's about 40 minutes and there's a quiz at the end. The quiz is also friendly!", "reactions": ["+1 marisol jordan", "melting_face kip"]},

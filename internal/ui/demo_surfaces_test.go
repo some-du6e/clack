@@ -26,7 +26,9 @@ import (
 
 // demoGapOK are gaps a real workspace answers the same way: a request
 // Slack itself refuses here, with the error it gives. Each needs a reason.
-var demoGapOK = map[string]string{}
+var demoGapOK = map[string]string{
+	"users.emailtoken.get error:no_emailtoken": "Slack's answer for an account with no email forwarding address (core reads it as none)",
+}
 
 // demoForeignMarkers are fakeslack's own ids and fixture text: an answer
 // with one of them shows the fake's workspace through the demo's.
@@ -48,27 +50,9 @@ func demoSurfaceSteps(s *demo.Session) []demoStep {
 		e.a.overlays = nil
 		e.a.CloseSecondary()
 	}
-	// every conversation in the sidebar, and a thread in each that has one
-	for _, c := range s.WS.Convs {
-		c := c
-		name := c.Name
-		if name == "" {
-			name = c.ID
-		}
-		add("conv-"+name, func(e *perfEnv, s *demo.Session) {
-			closeAll(e)
-			e.openChannel(c.ID)
-		})
-		for parent := range s.WS.Replies[c.ID] {
-			parent := parent
-			add("thread-"+name, func(e *perfEnv, s *demo.Session) {
-				e.a.OpenThread(c.ID, parent)
-			})
-			break
-		}
-	}
-	// the pages
-	for _, p := range []string{"home", "unreads", "threads", "dms", "later", "saved", "drafts", "drafts?tab=scheduled", "files",
+	// the pages first: visiting every conversation reads it, and
+	// Unreads and Activity should show the demo as it starts
+	for _, p := range []string{"unreads", "threads", "dms", "later", "saved", "drafts", "drafts?tab=scheduled", "files",
 		"huddles", "directories?tab=people", "directories?tab=channels", "directories?tab=usergroups", "directories?tab=external",
 		"search?q=paper", "search?q=from%3A%40gordon"} {
 		p := p
@@ -89,6 +73,29 @@ func demoSurfaceSteps(s *demo.Session) []demoStep {
 			}
 		})
 	}
+	// every conversation in the sidebar, and a thread in each that has one
+	for _, c := range s.WS.Convs {
+		c := c
+		name := c.Name
+		if name == "" {
+			name = c.ID
+		}
+		add("conv-"+name, func(e *perfEnv, s *demo.Session) {
+			closeAll(e)
+			e.openChannel(c.ID)
+		})
+		var parents []string
+		for parent := range s.WS.Replies[c.ID] {
+			parents = append(parents, parent)
+		}
+		sort.Strings(parents)
+		if len(parents) > 0 {
+			parent := parents[len(parents)-1] // the newest thread
+			add("thread-"+name, func(e *perfEnv, s *demo.Session) {
+				e.a.OpenThread(c.ID, parent)
+			})
+		}
+	}
 	// channel details, every tab, and the Files tab
 	for _, tab := range []string{"About", "Members", "Agents & apps", "Automations", "Tabs", "Settings"} {
 		tab := tab
@@ -98,15 +105,6 @@ func demoSurfaceSteps(s *demo.Session) []demoStep {
 			e.a.OpenDetailsTab(demo.GeneralID, tab)
 		})
 	}
-	add("channel-files-tab", func(e *perfEnv, s *demo.Session) {
-		closeAll(e)
-		e.a.openChannelTab(demo.GeneralID, "files")
-	})
-	add("channel-workflows-tab", func(e *perfEnv, s *demo.Session) {
-		closeAll(e)
-		e.openChannel(demo.GeneralID)
-		e.a.openWorkflowsTab(demo.GeneralID)
-	})
 	add("search-in-channel", func(e *perfEnv, s *demo.Session) {
 		closeAll(e)
 		e.openChannel(demo.GeneralID)
@@ -198,6 +196,19 @@ func demoSurfaceSteps(s *demo.Session) []demoStep {
 		closeAll(e)
 		s.World.PostPoll(demo.LunchID)
 		e.openChannel(demo.LunchID)
+	})
+	// last: a channel's Files & links tab stays open on it
+	for _, ch := range []string{demo.GeneralID, demo.ConnectID, demo.WareID} {
+		ch := ch
+		add("channel-files-tab-"+ch, func(e *perfEnv, s *demo.Session) {
+			closeAll(e)
+			e.a.openChannelTab(ch, "files")
+		})
+	}
+	add("channel-workflows-tab", func(e *perfEnv, s *demo.Session) {
+		closeAll(e)
+		e.openChannel(demo.GeneralID)
+		e.a.openWorkflowsTab(demo.GeneralID)
 	})
 	return steps
 }

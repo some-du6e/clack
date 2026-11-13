@@ -62,9 +62,9 @@ type World struct {
 	polls     map[string]*pollState // "ch/ts"
 	sections  []*liveSection
 	secSeq    int
-	huddle    *ringState      // the pending huddle invite, if any
-	saved     map[string]bool // saved.add: "ch/ts"
-	savedAt   map[string]int64
+	huddle    *ringState            // the pending huddle invite, if any
+	live      *liveHuddle           // the huddle running in #party-planning-crew (world_huddle.go)
+	saved     map[string]*savedItem // "ch/ts" (world_saved.go)
 	bookmarks map[string][]map[string]any
 }
 
@@ -89,7 +89,7 @@ func newWorld(fs *fakeslack.Server, ws *Workspace, opts Options) *World {
 	w := &World{fs: fs, ws: ws, opts: opts, t0: time.Now(), rnd: rand.New(rand.NewSource(opts.Seed)),
 		users: map[string]*slack.User{}, hist: map[string][]slack.Message{}, replies: map[string]map[string][]slack.Message{},
 		pins: map[string][]livePin{}, lastRead: map[string]string{}, seedRead: map[string]string{}, seedMent: map[string]int{},
-		threadRd: map[string]string{}, polls: map[string]*pollState{}, saved: map[string]bool{}, savedAt: map[string]int64{},
+		threadRd: map[string]string{}, polls: map[string]*pollState{}, saved: map[string]*savedItem{},
 		bookmarks: map[string][]map[string]any{}}
 	s, err := loadScripts()
 	if err != nil {
@@ -145,6 +145,7 @@ func (w *World) seed() {
 		}
 		w.replies[ch] = m
 	}
+	w.seedHuddleLocked()
 	for ch, tss := range ws.Pins {
 		for _, ts := range tss {
 			by := SelfID
@@ -174,6 +175,8 @@ func (w *World) seed() {
 	w.startTS = microTS(now)
 	w.seedSections()
 	w.seedActivity()
+	w.seedSavedLocked()
+	w.seedActivityExtrasLocked()
 }
 
 // Start installs the hooks, puts the workspace's canvases, lists and
@@ -194,6 +197,10 @@ func (w *World) Start(ctx context.Context) {
 		for _, l := range w.ws.Lists {
 			w.fs.AddList(l)
 		}
+		w.fs.SetUsergroups(w.ws.Usergroups) // the org's groups (fakeslack's handlers serve them)
+		w.fs.SetHuddleHistory(w.huddleHistory())
+		// the viewer's account prefs: Jordan works from the Wexley Falls branch
+		w.fs.SetPrefs(map[string]any{"tz": branchTZ})
 		for _, s := range w.ws.Scheduled {
 			dest := map[string]any{"channel_id": s.Channel}
 			if s.ThreadTS != "" {

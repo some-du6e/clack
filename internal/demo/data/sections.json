@@ -1,7 +1,7 @@
 [
   {"id": "L0DEMOSTAR", "name": "Starred", "type": "stars", "channels": ["general", "dm-marisol"]},
   {"id": "L0DEMOSALE", "name": "Sales floor", "emoji": ":chart_with_upwards_trend:", "type": "standard",
-   "channels": ["sales-leaderboard", "warehouse", "lunch-orders"]},
+   "channels": ["sales-leaderboard", "warehouse", "papertrail-freight", "lunch-orders"]},
   {"id": "L0DEMOCOMM", "name": "Committees", "emoji": ":tada:", "type": "standard",
    "channels": ["party-planning-crew", "kudos", "secret-santa-2026"]},
   {"id": "L0DEMOCHAN", "name": "Channels", "type": "channels"},

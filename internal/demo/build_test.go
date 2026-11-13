@@ -300,6 +300,58 @@ func checkWorkspace(t *testing.T, ws *Workspace, now time.Time) {
 	if len(ws.Bots) != 2 {
 		t.Errorf("%d bots", len(ws.Bots))
 	}
+	// Slack Connect: the shared channel has Papertrail Freight's people,
+	// who are in no other channel
+	sc := convs[ConnectID]
+	ext := 0
+	for _, m := range sc.Members {
+		if u, _ := ws.UserByID(m); u.TeamID == PartnerTeamID {
+			ext++
+		}
+	}
+	if !sc.IsExtShared || ext < 2 || len(sc.ConnectedTeamIDs) == 0 || sc.ConnectedTeamIDs[0] != PartnerTeamID {
+		t.Errorf("Slack Connect channel: ext_shared %v, %d external members, connected %v", sc.IsExtShared, ext, sc.ConnectedTeamIDs)
+	}
+	for _, c := range ws.Convs {
+		if c.ID == ConnectID {
+			continue
+		}
+		for _, m := range c.Members {
+			if u, _ := ws.UserByID(m); u.TeamID == PartnerTeamID {
+				t.Errorf("%s: external member %s outside the shared channel", c.ID, m)
+			}
+		}
+	}
+	// the org's user groups: members are people, the viewer is in some
+	mine := 0
+	for _, g := range ws.Usergroups {
+		if g.Group.ID == "" || g.Group.Handle == "" || len(g.Members) == 0 {
+			t.Errorf("user group %+v", g.Group)
+		}
+		for _, m := range g.Members {
+			if !users[m] {
+				t.Errorf("user group %s: unknown member %s", g.Group.Handle, m)
+			}
+			if m == SelfID {
+				mine++
+			}
+		}
+	}
+	if len(ws.Usergroups) < 4 || mine < 2 {
+		t.Errorf("%d user groups, the viewer in %d", len(ws.Usergroups), mine)
+	}
+	// the unfurls carry a picture
+	unfurls := 0
+	eachMsg(ws, func(_ string, m slack.Message) {
+		for _, a := range m.Attachments {
+			if a.FromURL != "" && a.ImageURL != "" {
+				unfurls++
+			}
+		}
+	})
+	if unfurls < 2 {
+		t.Errorf("%d unfurls with a picture", unfurls)
+	}
 }
 
 func eachMsg(ws *Workspace, f func(ch string, m slack.Message)) {
@@ -351,9 +403,12 @@ func imageURLs(ws *Workspace) []string {
 			}
 			add(f.ThumbPDF)
 		}
+		for _, a := range m.Attachments { // the unfurls
+			add(a.ImageURL, a.ServiceIcon)
+		}
 	})
 	for _, px := range []string{"34", "44", "68", "88", "102", "132", "230"} {
-		add(testBase + "img/" + imgTeam + px + ".png")
+		add(testBase+"img/"+imgTeam+px+".png", testBase+"img/"+imgPartner+px+".png")
 	}
 	var out []string
 	for u := range set {

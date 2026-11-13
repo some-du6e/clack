@@ -64,7 +64,9 @@ func Start(opts Options) (*Session, error) {
 		opts.Logf = func(string, ...any) {}
 	}
 	// a nearly empty generated workspace: the world answers the rest
-	fs, err := fakeslack.Start(fakeslack.Size{Users: 3}) // generate() reads users[2]
+	// no fixture canvases or lists of the fake's own; permalinks on the
+	// demo's host
+	fs, err := fakeslack.Start(fakeslack.Size{Users: 3, NoFixtureDocs: true, ActivityViews: true, PermalinkHost: "https://" + TeamDomain + ".slack.com"}) // generate() reads users[2]
 	if err != nil {
 		return nil, err
 	}
@@ -125,8 +127,9 @@ func CheckLoopback(raw string) error {
 }
 
 // Fetch is the image cache's fetcher for a demo session: the fake's own
-// URLs over loopback, Slack's standard emoji drawn locally (art), and
-// nothing else, ever (no CDN, no image proxy, no unfurl).
+// URLs over loopback, Slack's standard emoji and static images drawn
+// locally (art), and nothing else, ever (no CDN, no image proxy, no
+// unfurl).
 func (s *Session) Fetch(ctx context.Context, raw string) ([]byte, error) {
 	if strings.HasPrefix(raw, s.FS.URL) {
 		return s.FS.Fetch(ctx, raw)
@@ -135,6 +138,9 @@ func (s *Session) Fetch(ctx context.Context, raw string) ([]byte, error) {
 		if b, ok := StandardEmoji(raw); ok {
 			return b, nil
 		}
+	}
+	if b, ok := SlackAsset(raw); ok { // Slack's static images, drawn here
+		return b, nil
 	}
 	s.refusedMu.Lock()
 	s.refused = append(s.refused, slack.Redact(raw))

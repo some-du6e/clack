@@ -32,6 +32,14 @@ const (
 	SantaID   = "C0DEMOSNTA" // #secret-santa-2026 (private)
 	CodeID    = "C0DEMOCODE" // #inkwell-order-portal (Inkwell's code channel)
 	GroupDMID = "G0DEMOMPIM" // priya, dale, kip and you
+	ConnectID = "C0DEMOCONN" // #papertrail-freight (Slack Connect with Papertrail Freight)
+
+	// Papertrail Freight: the carrier the branch shares a Slack Connect
+	// channel with (people.json "team": "papertrail")
+	PartnerTeamID     = "T0DEMOPTRL"
+	PartnerTeamName   = "Papertrail Freight"
+	PartnerTeamDomain = "papertrail-freight"
+	partnerTeamKey    = "papertrail"
 
 	InkwellID    = "U0DEMOINKW" // the AI coding agent (an app's bot user)
 	InkwellBotID = "B0DEMOINKW"
@@ -75,6 +83,8 @@ type Workspace struct {
 	Canvases  []fakeslack.FakeCanvas // fakeslack.AddCanvas'd at start
 	Lists     []fakeslack.FakeList   // fakeslack.AddList'd at start
 	Scheduled []Scheduled            // fakeslack.AddDraft'd at start
+	// Usergroups are the org's user groups (fakeslack.SetUsergroups)
+	Usergroups []fakeslack.UsergroupFixture
 }
 
 // Person is one cast member as data/people.json writes them.
@@ -92,10 +102,13 @@ type Person struct {
 	// over time.
 	Status   Status   `json:"status"`
 	Statuses []Status `json:"statuses"`
-	Self     bool     `json:"self,omitempty"`
-	Bot      bool     `json:"bot,omitempty"`
-	Admin    bool     `json:"admin,omitempty"`
-	Avatar   Avatar   `json:"avatar"`
+	// Team is "papertrail" for Papertrail Freight's people (a Slack
+	// Connect org); "" is Quillfeather.
+	Team   string `json:"team,omitempty"`
+	Self   bool   `json:"self,omitempty"`
+	Bot    bool   `json:"bot,omitempty"`
+	Admin  bool   `json:"admin,omitempty"`
+	Avatar Avatar `json:"avatar"`
 }
 
 // Status is a custom status.

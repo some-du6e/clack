@@ -79,6 +79,9 @@ func (s *Server) canvasStore() *canvasStore {
 	kd, _ := canvas.Parse(kitchenHTML)
 	now := time.Now().Unix()
 	add := func(c *FakeCanvas) {
+		if s.Size.NoFixtureDocs {
+			return
+		}
 		c.Created, c.Updated, c.Access = now-86400*3, now-3600, map[string]string{}
 		if c.Creator == "" {
 			c.Creator = "U0FAKE00001"
@@ -231,7 +234,7 @@ func (s *Server) canvasFile(c *FakeCanvas) map[string]any {
 		"editors":              []string{c.Creator, SelfID},
 		"url_private":          s.URL + "files-pri/" + TeamID + "-" + c.ID + "/canvas",
 		"url_private_download": s.URL + "files-pri/" + TeamID + "-" + c.ID + "/download/canvas",
-		"permalink":            "https://fake.slack.com/docs/" + TeamID + "/" + c.ID,
+		"permalink":            s.permalinkHost() + "/docs/" + TeamID + "/" + c.ID,
 		"is_public":            true, "comments_count": 0, "show_badge": false, "size": len(c.Title),
 		"title_blocks": []any{}, "quip_thread_id": "FAKE" + c.ID[len(c.ID)-4:],
 		"channels": []string{}, "groups": []string{}, "ims": []string{}}
@@ -336,19 +339,19 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 				"filetype": "png", "pretty_type": "PNG", "mode": "hosted", "user": "U0FAKE00001",
 				"url_private": img(1280, 720), "thumb_1024": img(1024, 576), "thumb_1024_w": 1024, "thumb_1024_h": 576,
 				"thumb_360": img(360, 203), "original_w": 1280, "original_h": 720,
-				"permalink": "https://fake.slack.com/files/U0FAKE00001/" + id + "/diagram.png"}), true
+				"permalink": s.permalinkHost() + "/files/U0FAKE00001/" + id + "/diagram.png"}), true
 		case CanvasFile:
 			return ok("file", map[string]any{"id": id, "name": "report.pdf", "title": "Quarterly report", "mimetype": "application/pdf",
 				"filetype": "pdf", "pretty_type": "PDF", "mode": "hosted", "user": "U0FAKE00002", "size": 248000,
 				"url_private": s.URL + "files-pri/" + TeamID + "-" + id + "/report.pdf",
-				"permalink":   "https://fake.slack.com/files/U0FAKE00002/" + id + "/report.pdf"}), true
+				"permalink":   s.permalinkHost() + "/files/U0FAKE00002/" + id + "/report.pdf"}), true
 		}
 		if id == CodeHTMLFileID && s.Size.CodeChannels { // the code channel's html view (codechannels.go)
 			return ok("file", map[string]any{"id": id, "name": "report.html", "title": "Login redirect report", "mimetype": "text/html",
 				"filetype": "html", "pretty_type": "HTML", "mode": "hosted", "user": CodeAgentID, "size": 2048,
 				"url_private":          s.URL + "files-pri/" + TeamID + "-" + id + "/report.html",
 				"url_private_download": s.URL + "files-pri/" + TeamID + "-" + id + "/download/report.html",
-				"permalink":            "https://fake.slack.com/files/" + CodeAgentID + "/" + id + "/report.html"}), true
+				"permalink":            s.permalinkHost() + "/files/" + CodeAgentID + "/" + id + "/report.html"}), true
 		}
 		cs.mu.Lock()
 		defer cs.mu.Unlock()
@@ -565,7 +568,7 @@ func (s *Server) embedUploads(bs []canvas.Block) []canvas.Block {
 		if b.Kind != canvas.Image || b.Image == nil {
 			continue
 		}
-		const host = "https://fake.slack.com/files/"
+		host := s.permalinkHost() + "/files/"
 		u := b.Image.URL
 		if !strings.HasPrefix(u, host) {
 			continue
@@ -667,7 +670,11 @@ func (s *Server) seedCanvasShare() {
 		return
 	}
 	cs.shared = true
-	c := cs.byID[CanvasShared]
+	c, okc := cs.byID[CanvasShared]
+	if !okc { // Size.NoFixtureDocs
+		cs.mu.Unlock()
+		return
+	}
 	file := s.canvasFile(c)
 	cs.mu.Unlock()
 	b, _ := json.Marshal(file)

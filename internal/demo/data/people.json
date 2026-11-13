@@ -136,6 +136,27 @@
     "avatar": {"bg": "#118ab2", "skin": "#c68642", "hair": "#4a2c2a", "style": "afro", "extra": "headset", "accent": "#ef476f"}
   },
   {
+    "id": "U0DEMOINES", "handle": "ines", "name": "Ines Calloway", "title": "Account Manager, Papertrail Freight", "pronouns": "she/her",
+    "tz": "America/Chicago", "team": "papertrail",
+    "persona": "Papertrail Freight's account manager for Quillfeather (Slack Connect). Upbeat, precise about delivery windows, signs off with a truck.",
+    "status": {"emoji": ":truck:", "text": "On the road to Wexley Falls"},
+    "statuses": [
+      {"emoji": ":calendar:", "text": "Quarterly reviews all week"},
+      {"emoji": ":package:", "text": "Peak season. Pray for us"}
+    ],
+    "avatar": {"bg": "#f4a261", "skin": "#8d5524", "hair": "#1b1b1b", "style": "curly", "extra": "glasses", "accent": "#264653"}
+  },
+  {
+    "id": "U0DEMOBRAM", "handle": "bram", "name": "Bram Oyelaran", "title": "Dispatch Coordinator, Papertrail Freight", "pronouns": "he/him",
+    "tz": "Europe/Lisbon", "team": "papertrail",
+    "persona": "Papertrail's dispatcher in the Lisbon office (Slack Connect). Dry, fast, loves a spreadsheet and a tracking number.",
+    "status": {"emoji": ":earth_africa:", "text": "Lisbon hours"},
+    "statuses": [
+      {"emoji": ":clipboard:", "text": "Rebuilding the route board"}
+    ],
+    "avatar": {"bg": "#2a9d8f", "skin": "#c68642", "hair": "#3d2817", "style": "short", "extra": "headset", "accent": "#e9c46a"}
+  },
+  {
     "id": "U0DEMOINKW", "handle": "inkwell", "name": "Inkwell", "title": "AI coding agent", "pronouns": "",
     "tz": "America/New_York", "bot": true,
     "persona": "The AI coding agent the branch is trying out. Polite, precise, works in code channels.",

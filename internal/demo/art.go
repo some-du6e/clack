@@ -19,6 +19,8 @@ const (
 	imgEmoji  = "demo/emoji/"  // <name>.png
 	imgFile   = "demo/file/"   // <key>/<w>x<h>.png
 	imgTeam   = "demo/team/"   // <px>.png
+	// Papertrail Freight's icon (the Slack Connect org): <px>.png
+	imgPartner = "demo/partner/"
 )
 
 // maxPx bounds a requested size: nothing the demo shows is bigger, and a
@@ -46,6 +48,12 @@ func Image(path string) ([]byte, string, bool) {
 			return nil, "", false
 		}
 		b = cached(path, func() []byte { return drawTeam(px) })
+	case strings.HasPrefix(path, imgPartner):
+		px, err := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(path, imgPartner), ".png"))
+		if err != nil || px <= 0 || px > maxPx {
+			return nil, "", false
+		}
+		b = cached(path, func() []byte { return drawPartnerTeam(px) })
 	case strings.HasPrefix(path, imgEmoji):
 		name := strings.TrimSuffix(strings.TrimPrefix(path, imgEmoji), ".png")
 		b = cached(path, func() []byte {

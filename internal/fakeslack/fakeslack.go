@@ -41,13 +41,23 @@ import (
 
 // Size sets how big the workspace is.
 type Size struct {
-	Emoji      int // custom emoji (aliases come on top: Emoji/100)
-	Users      int // users in the directory (all cached on a warm start)
-	Channels   int // channels the viewer is a member of
-	DMs        int
-	Usergroups int
-	History    int // messages per channel (conversations.history pages through them)
-	Unread     int // channels with unreads (core prefetches these)
+	// NoFixtureDocs leaves out the fake's own canvases and lists (Launch
+	// plan, Launch tracker, Team to-dos…): a workspace built on the fake
+	// (internal/demo) brings its own with AddCanvas and AddList.
+	NoFixtureDocs bool
+	// PermalinkHost is the workspace host permalinks point at
+	// ("https://quillfeather.slack.com"); "" is https://fake.slack.com.
+	PermalinkHost string
+	// ActivityViews answers Activity's saved views (activity.views, its
+	// writes, activity.prefs.update) without the rest of Views' fixtures.
+	ActivityViews bool
+	Emoji         int // custom emoji (aliases come on top: Emoji/100)
+	Users         int // users in the directory (all cached on a warm start)
+	Channels      int // channels the viewer is a member of
+	DMs           int
+	Usergroups    int
+	History       int // messages per channel (conversations.history pages through them)
+	Unread        int // channels with unreads (core prefetches these)
 	// Identity adds #identity-fixtures: one message per bot/app sender
 	// case (identity.go). Off by default so other fixtures don't shift.
 	Identity bool
@@ -1153,6 +1163,14 @@ func (s *Server) history(ch string) []slack.Message {
 	return out
 }
 
+// permalinkHost is Size.PermalinkHost, else https://fake.slack.com.
+func (s *Server) permalinkHost() string {
+	if s.Size.PermalinkHost != "" {
+		return strings.TrimSuffix(s.Size.PermalinkHost, "/")
+	}
+	return "https://fake.slack.com"
+}
+
 // ---- HTTP ----
 
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
@@ -1497,7 +1515,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		switch method {
 		case "users.emailtoken.create":
 			s.emailTokens = append(s.emailTokens, map[string]any{"token_id": 1000 + len(s.emailTokens),
-				"token": "fake", "email_address": "fake-" + strconv.Itoa(len(s.emailTokens)) + "@fake.slack.com"})
+				"token": "fake", "email_address": "fake-" + strconv.Itoa(len(s.emailTokens)) + "@" + strings.TrimPrefix(s.permalinkHost(), "https://")})
 			return ok("token_id", s.emailTokens[len(s.emailTokens)-1]["token_id"], "token", "fake",
 				"email_address", s.emailTokens[len(s.emailTokens)-1]["email_address"])
 		case "users.emailtoken.delete":
@@ -1711,6 +1729,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 	} else if method == "activity.markRead" && f.Get("key") != "" { // no feed: every single markRead reads an unread item (activity_badges.go)
 		s.readActivityBadge(f.Get("type"))
+	}
+	if !s.Size.Views && s.Size.ActivityViews && (method == "activity.views" || method == "activity.prefs.update" || strings.HasPrefix(method, "activity.views.")) {
+		if out, handled := s.handleActivity(method, f); handled { // activity.go: the saved views alone
+			return out
+		}
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out

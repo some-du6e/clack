@@ -62,6 +62,15 @@
   {"at": "1h50m", "by": "kip", "text": "new idea: uber but for staples. you tap the app and someone walks over and staples your thing", "reactions": ["thinking_face gordon", "x marisol"]},
   {"at": "1h48m", "by": "marisol", "text": "That's me. I'm the app.", "reactions": ["joy bev nadia priya", "crown kip"]},
   {"at": "14m", "by": "nadia", "text": "It happened again. My yogurt is gone. The sign-in sheet says \"Mr. Yogurt\".", "reactions": ["yogurt-alert nadia bev kip", "rotating_light dale"]},
+  {"at": "-1 12:40", "by": "nadia", "text": "not a conspiracy but <https://pulpandpaperweekly.example/2026/11/vending-machines-are-learning|read this> and tell me the vending machine isn't watching us",
+   "reactions": ["eyes kip bev", "joy priya"],
+   "unfurls": [{"url": "https://pulpandpaperweekly.example/2026/11/vending-machines-are-learning", "service": "Pulp & Paper Weekly",
+     "title": "Office vending machines now \"learn\" your snack habits, vendors say",
+     "text": "A new generation of break-room machines suggests snacks based on time of day. Experts say the pretzels were inevitable.", "image": "vending-news"}],
+   "replies": [
+     {"at": "+6m", "by": "theo", "text": "It's not on the network. I checked. Twice."},
+     {"at": "+9m", "by": "nadia", "text": "that's exactly what a networked vending machine would want you to think"}
+   ]},
   {"at": "12m", "by": "dale", "text": "Nobody leave the building.", "reactions": ["safety-whistle dale", "joy kip"]},
   {"at": "11m", "by": "priya", "text": "I have a 2pm.", "reactions": ["sweat_smile bev"]},
   {"at": "8m", "by": "kip", "text": "mr yogurt is giving main character energy ngl"},

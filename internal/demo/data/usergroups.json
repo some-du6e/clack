@@ -1,0 +1,14 @@
+[
+  {"id": "S0DEMOSALES", "handle": "sales", "name": "Sales team", "description": "Everyone who sells paper (and Dale, who sells honey on the side)", "created_by": "gordon", "age_days": 1400,
+   "members": ["priya", "dale", "nadia", "kip", "jordan", "gordon"], "channels": ["sales-leaderboard", "general"]},
+  {"id": "S0DEMOPARTY", "handle": "party-committee", "name": "Party Planning Committee", "description": "Budget, balloons and the annual karaoke veto", "created_by": "marisol", "age_days": 980,
+   "members": ["marisol", "bev", "kip", "ruth", "jordan"], "channels": ["party-planning-crew"]},
+  {"id": "S0DEMOWARE", "handle": "warehouse-crew", "name": "Warehouse crew", "description": "Loading dock, forklifts and Big Linda", "created_by": "wendell", "age_days": 1900,
+   "members": ["wendell", "dale", "theo"], "channels": ["warehouse"]},
+  {"id": "S0DEMOSAFE", "handle": "safety", "name": "Safety committee", "description": "Fire drills, first aid kits and Dale's binder", "created_by": "dale", "age_days": 700,
+   "members": ["dale", "wendell", "ruth"], "channels": ["warehouse", "general"]},
+  {"id": "S0DEMOHELP", "handle": "it-dept", "name": "IT", "description": "Ping before you reboot anything", "created_by": "theo", "age_days": 1890,
+   "members": ["theo"], "channels": ["it-help"]},
+  {"id": "S0DEMOADMN", "handle": "admins", "name": "Admins", "description": "", "created_by": "gordon", "age_days": 2210, "auto_type": "admin",
+   "members": ["gordon", "theo"]}
+]

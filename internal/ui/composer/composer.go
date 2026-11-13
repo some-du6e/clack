@@ -615,7 +615,11 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 				st.Placeholder = msgInputNS.T("Jot something down") // isSelfDm
 			} else {
 				// the chrome draws a channel's #/lock icon before the name
-				st.Placeholder, st.PlaceholderPre, st.PlaceholderPost = placeholderText(cv.Name)
+				name := cv.Name
+				if cv.Kind == "mpim" {
+					name = c.groupDMName(cv)
+				}
+				st.Placeholder, st.PlaceholderPre, st.PlaceholderPost = placeholderText(name)
 				st.PlaceholderMsg = !st.IsDM
 			}
 		}
@@ -1607,3 +1611,27 @@ func (c *Composer) AttachFile(name string, data []byte) { c.att.Add(name, data) 
 
 // Attached is the number of files attached now.
 func (c *Composer) Attached() int { return c.att.Len() }
+
+// groupDMName is a group DM's name as the sidebar shows it: its custom
+// name (mpdm_naming), else the other members' names, so the placeholder
+// reads "Message Priya Raman, Dale Hurst, Kip Marlowe" and never the
+// server's "mpdm-priya--dale--kip--jordan-1".
+func (c *Composer) groupDMName(cv core.Conv) string {
+	if ca := c.h.Core(); ca != nil {
+		if n, ok := ca.MpdmCustomName(cv.ID); ok {
+			return n
+		}
+	}
+	self := c.api.self().ID
+	us := c.api.users(cv.Members)
+	var names []string
+	for _, id := range cv.Members {
+		if u, ok := us[id]; ok && id != self && u.Name != "" {
+			names = append(names, u.Name)
+		}
+	}
+	if len(names) == 0 {
+		return strings.TrimPrefix(cv.Name, "mpdm-")
+	}
+	return strings.Join(names, ", ")
+}

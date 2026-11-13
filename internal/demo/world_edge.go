@@ -30,6 +30,8 @@ func (w *World) edge(method string, body map[string]json.RawMessage) (any, bool)
 		return out
 	}
 	switch method {
+	case "edge/huddles/list":
+		return w.activeHuddles(), true
 	case "edge/users/info":
 		res, failed := []slack.User{}, []string{}
 		w.mu.Lock()
