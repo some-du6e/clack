@@ -337,10 +337,11 @@ type nsKey struct {
 
 // maxNativeStyles is one generation of the native style cache. Natives
 // under per-row host nodes (and their parts) add entries per message row,
-// each with its computed style (~2 KB): one generation of 32,768 held
-// 77 MB after a long channel was scrolled. Two generations of 4,096 cover
-// every native a frame draws, which a lookup promotes to the current one.
-const maxNativeStyles = 1 << 12
+// each with its computed styles (~4 KB): one generation of 32,768 held
+// 77 MB after a long channel was scrolled, two of 4,096 still 36 MB. Two
+// generations of 2,048 cover every native a frame draws (a few hundred),
+// which a lookup promotes to the current one.
+const maxNativeStyles = 1 << 11
 
 func resetNativeStyles() {
 	nsMu.Lock()

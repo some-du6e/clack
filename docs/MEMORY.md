@@ -24,7 +24,7 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 | downloaded files (`core.Fetch`, memory only) | 48 MB, unused for 5 minutes dropped | Clack |
 | image loads waiting | a queue per lane, 8 loads at a time | Clack |
 | shaped words (`richview`) | two generations, each up to 8,000 words or 8 MB of glyphs and outlines | Clack |
-| native styles (`slackc`) | two generations of 4,096 | Clack |
+| native styles (`slackc`) | two generations of 2,048 | Clack |
 | Gio's shaped lines and outlines | 1,000 each per shaper | Gio |
 | emboldened runs (`theme`) | 1,500 runs or 16 MB of outlines | Clack |
 | emoji picker index | dropped 5 minutes after the last use | Clack |
