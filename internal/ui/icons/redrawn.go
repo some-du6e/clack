@@ -273,6 +273,10 @@ func init() {
 	// its pieces (the toolbar's share button while you share)
 	reg("screen-off", s("M16.5 1.75 L3 16.75"), s("M12.25 3 H3.25 A1 1 0 0 0 2.25 4 V12.6"), s("M17.75 4.2 V12.5 A1 1 0 0 1 16.75 13.5 H9"), s("M10 13.5 V17"), s("M5.9 17 H15"))
 	reg("screen-share", s("M17.41 13.25 A2.5 2.5 0 0 0 17.75 12 V4.5 A2.07 2.07 0 0 0 17.36 3.25 A4.19 4.19 0 0 0 16.06 3 H3.94 A2.31 2.31 0 0 0 2.5 3.39 A4.19 4.19 0 0 0 2.25 4.69 V11.81 A2.5 2.5 0 0 0 2.61 13.25 L3.75 13.5 H16.25 A3.45 3.45 0 0 0 17.41 13.25 Z"), s("M10 13.5 V17"), s("M5 17 H15"), fl("M11.75 8 L8.5 9.61 V6.36 L11.75 8 Z"))
+	// Slack's screen-share-collab-on (icons.json: a pointer with six rays;
+	// the folder peek's empty state), as centrelines
+	reg("screen-share-collab-on", s("M9.25 8.27 L16 15.02 L11.64 15.02 L9.25 18.13 Z"), s("M9.25 1.77 V3.77"), s("M12.84 5.18 L14.25 3.77"),
+		s("M14.25 8.77 H16.25"), s("M5.67 5.18 L4.25 3.77"), s("M2.25 8.77 H4.25"), s("M5.71 12.36 L4.3 13.77"))
 	reg("search", s("M14 14 L17.75 17.75"), s("M12.89 14.5 C14.25 13.44 15.32 12 15.6 10.25 A6.86 6.86 0 0 0 14.5 5.11 A6.8 6.8 0 0 0 5.31 3.35 A6.75 6.75 0 1 0 12.89 14.5 Z"))
 	reg("search-filled", sw(2, circle(9, 9, 6.5)), sw(2.05, "M17.5 17.5 L14 14"))
 	// Slack's send-filled

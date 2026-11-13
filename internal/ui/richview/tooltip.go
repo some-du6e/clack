@@ -97,6 +97,11 @@ func editedByTip(dateTime, name string) string {
 	return i18n.T("message_kit", "{dateTime} by {name}", "name", name, "dateTime", dateTime)
 }
 
+// FullTimestamp is getFullTimestamp without the seconds (n8t9
+// {includeSeconds: false}): Timestamp's full label, "{date} at {time}"
+// (the Pins tab's message times).
+func FullTimestamp(ts string, now time.Time) string { return editedTip(ts, now) }
+
 // fullTimestamp is getFullTimestamp (boot-shared n8t9), the tooltip of a
 // message card's time (AttachmentFooterTimestamp with compactTime: delay
 // 300): editedTip's "{date} at {time}" with the seconds.

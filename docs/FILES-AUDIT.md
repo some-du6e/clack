@@ -312,7 +312,8 @@ Not done, and why:
   searches on Enter only.
 - **Hover actions Clack has no screen for:** Share (the file share dialog),
   the canvas / list star in the hover group, View link details (the link
-  details flexpane) and Add to folder (bookmark folders). The file ⋯ menu
+  details flexpane) and Add to folder (the folder tabs themselves are in
+  docs/CHANNELS-AUDIT.md "Pins tab and bookmark folders"). The file ⋯ menu
   is the Files view's subset, in that view's order, not hYuM's non-unified
   order.
 - **The media viewer's paging.** Slack passes fileChannelMediaInfo so the

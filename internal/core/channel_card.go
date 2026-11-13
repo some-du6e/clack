@@ -215,6 +215,7 @@ type SlugTab struct {
 	ID, Type, Label string
 	FileID          string // data.file_id
 	DefaultView     string // data.lists_channel_tab_default_refine_view_id
+	FolderID        string // data.folder_bookmark_id
 }
 
 // ChannelTabSlugPeek is ChannelTabSlugPeekTrigger's choice: the slug's
@@ -277,6 +278,7 @@ func tabzTab(props json.RawMessage, id string) (SlugTab, bool) {
 			Data  struct {
 				FileID      string `json:"file_id"`
 				DefaultView string `json:"lists_channel_tab_default_refine_view_id"`
+				FolderID    string `json:"folder_bookmark_id"`
 			} `json:"data"`
 		} `json:"tabz"`
 	}
@@ -285,7 +287,8 @@ func tabzTab(props json.RawMessage, id string) (SlugTab, bool) {
 	}
 	for _, t := range p.Tabz {
 		if t.ID == id || t.Type == id {
-			return SlugTab{ID: t.ID, Type: t.Type, Label: t.Label, FileID: t.Data.FileID, DefaultView: t.Data.DefaultView}, true
+			return SlugTab{ID: t.ID, Type: t.Type, Label: t.Label, FileID: t.Data.FileID, DefaultView: t.Data.DefaultView,
+				FolderID: t.Data.FolderID}, true
 		}
 	}
 	return SlugTab{}, false

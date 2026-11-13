@@ -239,6 +239,14 @@ func (a *App) handle(ev slack.Event) {
 				a.emitUpdate(ch, &m)
 			}
 		}
+		// the Pins tab's rows (prependPinnedItem / removePinnedItem while
+		// they're loaded, channel_pins.go)
+		var it struct {
+			Item pinsListItem `json:"item"`
+		}
+		if json.Unmarshal(ev.Raw, &it) == nil {
+			a.pinsTabEvent(ch, ev.Type == "pin_added", it.Item)
+		}
 	case "thread_marked", "update_thread_state", "dnd_updated", "dnd_updated_user", "pref_change", "badge_counts_updated",
 		"channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		if ev.Type == "dnd_updated" {
@@ -320,7 +328,12 @@ func (a *App) handle(ev slack.Event) {
 		// client made, renamed, hid or deleted one); ActivityViewsEvent
 		// reads them
 		a.emit(Event{Type: "activity", Name: ev.Type, Raw: ev.Raw})
-	case "bookmark_added", "bookmark_removed", "channel_updated", "channel_tab_added", "channel_tab_removed":
+	case "bookmark_added", "bookmark_removed", "bookmark_updated", "channel_updated", "channel_tab_added", "channel_tab_removed":
+		if strings.HasPrefix(ev.Type, "bookmark_") { // the folders' bookmarks store (bookmark_folders.go)
+			if c := a.bookmarkEvent(ev.Type, ev.Raw); c != "" && ch == "" {
+				ch = c
+			}
+		}
 		if ev.Type == "channel_updated" { // properties (a code channel's agent session) merge in
 			for _, id := range a.onChannelUpdated(ev.Raw) {
 				if c, ok := a.Conv(id); ok {

@@ -38,23 +38,28 @@ func (s *Server) handlePins(method string, f url.Values) (any, bool) {
 		s.Push(ev)
 		return ok(), true
 	case "pins.list":
-		ch := f.Get("channel")
-		s.histMu.Lock()
-		defer s.histMu.Unlock()
-		h := s.histLocked(ch)
-		items := []map[string]any{}
-		ps := s.pins[ch]
-		for i := len(ps) - 1; i >= 0; i-- { // newest pin first
-			for _, m := range h {
-				if m.TS == ps[i].ts {
-					items = append(items, map[string]any{"type": "message", "channel": ch, "created": ps[i].at,
-						"created_by": ps[i].by, "message": m})
-				}
-			}
-		}
-		return ok("items", items), true
+		return s.handlePinsList(f.Get("channel"))
 	}
 	return nil, false
+}
+
+// handlePinsList is pins.list for ch: its pinned messages, newest pin
+// first.
+func (s *Server) handlePinsList(ch string) (map[string]any, bool) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	h := s.histLocked(ch)
+	items := []map[string]any{}
+	ps := s.pins[ch]
+	for i := len(ps) - 1; i >= 0; i-- { // newest pin first
+		for _, m := range h {
+			if m.TS == ps[i].ts {
+				items = append(items, map[string]any{"type": "message", "channel": ch, "created": ps[i].at,
+					"created_by": ps[i].by, "message": m})
+			}
+		}
+	}
+	return ok("items", items), true
 }
 
 // Pin pins (on) or unpins message ts of ch as user, as pins.add /

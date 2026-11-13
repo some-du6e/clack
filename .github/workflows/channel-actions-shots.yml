@@ -2,7 +2,8 @@ name: channel-actions-shots
 # The channel menus' actions rendered headlessly at 1440x900 against
 # internal/fakeslack: the sidebar row menu's section rows (Move channel ▸),
 # a section's Share directly dialog (and its empty state), and the mute
-# write. Synthetic only: nothing here talks to Slack.
+# write; the channel Pins tab and its bookmark folder tabs (pins_tab_test.go).
+# Synthetic only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run channel-actions-shots.yml --ref <branch>)
@@ -16,6 +17,9 @@ on:
       - "internal/ui/popups/share_section.go"
       - "internal/ui/popups/actions_menus.go"
       - "internal/core/section_menu.go"
+      - "internal/ui/pins_tab*.go"
+      - "internal/ui/views/channel_pins.go"
+      - "internal/ui/views/folder_tab.go"
       - ".github/workflows/channel-actions-shots.yml"
   workflow_dispatch:
 
@@ -44,7 +48,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$PREVIEW_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestShareSectionDirectly$|TestShareSectionLimits$|TestSidebarMenuMoveChannel$|TestSidebarMenuMoveToNewSection$|TestChannelMenuHooksInstalled$|TestBackendSetMutedWritesSlackPref$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestShareSectionDirectly$|TestShareSectionLimits$|TestSidebarMenuMoveChannel$|TestSidebarMenuMoveToNewSection$|TestChannelMenuHooksInstalled$|TestBackendSetMutedWritesSlackPref$|TestPinsTabLikeSlack$|TestFolderTabLikeSlack$' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
