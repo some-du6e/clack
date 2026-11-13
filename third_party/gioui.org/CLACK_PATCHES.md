@@ -21,8 +21,9 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
 `internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`,
-`font/opentype/opentype.go` and these two files (`CLACK_PATCHES.md`,
-`UPSTREAM.patch`).
+`font/opentype/opentype.go`, `io/input/pointer.go`, `io/input/key.go`,
+`io/input/clack_release_test.go`, `gpu/clack_release_test.go` and these two
+files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -698,3 +699,28 @@ so the face's tables are slices of `src` rather than copies: Clack's
 embedded Lato faces held 6 MB of copied tables. `src` must not change
 after the call; Clack's fonts are embedded, or files read once and kept.
 Not in `UPSTREAM.patch`.
+
+## 18. Per-frame buffers let go of earlier frames' references
+
+`io/input/router.go`, `io/input/pointer.go`, `io/input/key.go` and
+`gpu/gpu.go` (`drawOps.reset`).
+
+The router rebuilds its hit tree, pointer areas, focus order and key
+filters every frame into the same arrays (`s = s[:0]`, then appends), and
+trims its state history the same way; the renderer collects its image and
+path ops so too. Truncating leaves the entries past the new length in place,
+so after a frame with more handlers or paints than the next, the tail kept
+the earlier frame's tags, and whatever owns them, reachable: a closed emoji
+picker (its 10 MB index; Gio's tag is a field of the picker), the rows and
+slackc boxes of a long channel scrolled away, and the pixels of images the
+image cache had already dropped. Each buffer is now cleared before it is
+truncated, as `ops.Reset` already does for an `Ops` list's references. Only
+memory changes: every buffer is refilled with fresh values, and nothing reads
+past its length.
+
+Tests: `io/input` `TestRouterReleasesTagsOfEarlierFrames` (a focused, hovered
+handler's owner is collectable three frames after it was last laid out),
+`gpu` `TestDrawOpsReleaseImagesOfEarlierFrames` (an image a shorter frame no
+longer paints is collectable), both on ci's linux job; `internal/ui`
+`TestClosedEmojiPickerReleased` (the whole client: a closed picker is
+collectable three frames later). Not in `UPSTREAM.patch`.

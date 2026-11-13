@@ -893,6 +893,14 @@ func (r *renderer) drawLayers(layers []opacityLayer, ops []imageOp) {
 
 func (d *drawOps) reset(viewport image.Point) {
 	d.viewport = viewport
+	// Clack patch 18: the ops are collected every frame into the same
+	// arrays; cleared first, a longer earlier frame's entries don't keep
+	// what they point at (images' pixels, path vertices) reachable past
+	// the end of a shorter one.
+	clear(d.imageOps)
+	clear(d.pathOps)
+	clear(d.pathOpCache)
+	clear(d.layers)
 	d.imageOps = d.imageOps[:0]
 	d.pathOps = d.pathOps[:0]
 	d.pathOpCache = d.pathOpCache[:0]
@@ -1116,10 +1124,12 @@ loop:
 			if bounds.Min == (image.Point{}) && bounds.Max == d.viewport && rect && mat.opaque && (mat.material == materialColor) && len(d.opacityStack) == 0 {
 				// The image is a uniform opaque color and takes up the whole screen.
 				// Scrap images up to and including this image and set clear color.
+				clear(d.imageOps) // Clack patch 18
 				d.imageOps = d.imageOps[:0]
 				// The opacity stack is empty, so every layer recorded so far
 				// has ended and is covered by this image. Drop them as well;
 				// their op ranges index the scrapped imageOps.
+				clear(d.layers) // Clack patch 18
 				d.layers = d.layers[:0]
 				d.clearColor = mat.color.Opaque()
 				d.clear = true

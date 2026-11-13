@@ -34,6 +34,11 @@ jobs:
       - name: Gio file-drop events (vendored gioui.org/app)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'FileDrop|URIList' gioui.org/app
+      # Gio patch 18: the router's and the renderer's per-frame buffers let
+      # go of earlier frames' tags and images
+      - name: Gio frames release what earlier frames held (vendored gioui.org/io/input, gpu)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'ReleasesTagsOfEarlierFrames|ReleaseImagesOfEarlierFrames' gioui.org/io/input gioui.org/gpu
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave)
       - name: XDND file drops on Xvfb (Gio patch 11)

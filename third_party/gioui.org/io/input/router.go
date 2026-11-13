@@ -228,6 +228,8 @@ func (s Source) Event(filters ...event.Filter) (event.Event, bool) {
 
 func (q *Router) Event(filters ...event.Filter) (event.Event, bool) {
 	// Merge filters into scratch filters.
+	clear(q.scratchFilters) // Clack patch 18: no tags kept past the end
+	clear(q.key.scratchFilter)
 	q.scratchFilters = q.scratchFilters[:0]
 	q.key.scratchFilter = q.key.scratchFilter[:0]
 	for _, f := range filters {
@@ -343,7 +345,9 @@ func (q *Router) collapseState(idx int) {
 	for _, ch := range q.changes[1 : idx+1] {
 		first.events = append(first.events, ch.events...)
 	}
+	n := len(q.changes)
 	q.changes = append(q.changes[:1], q.changes[idx+1:]...)
+	clear(q.changes[len(q.changes):n]) // Clack patch 18: the moved entries' old slots
 }
 
 // Frame completes the current frame and starts a new with the
@@ -357,10 +361,13 @@ func (q *Router) Frame(frame *op.Ops) {
 			for _, ch := range q.changes[1:] {
 				remaining = append(remaining, ch.event)
 			}
-			q.changes = append(q.changes[:0], stateChange{state: q.changes[0].state})
+			first := stateChange{state: q.changes[0].state}
+			clear(q.changes) // Clack patch 18: the replaced states' tags and events go
+			q.changes = append(q.changes[:0], first)
 		} else {
 			// Collapse state.
 			state := q.changes[n-1].state
+			clear(q.changes) // Clack patch 18
 			q.changes = append(q.changes[:0], stateChange{state: state})
 		}
 	}
@@ -379,6 +386,7 @@ func (q *Router) Frame(frame *op.Ops) {
 		h.key.Reset()
 	}
 	q.key.filter, q.key.nextFilter = q.key.nextFilter, q.key.filter
+	clear(q.key.nextFilter) // Clack patch 18
 	q.key.nextFilter = q.key.nextFilter[:0]
 	var ops *ops.Ops
 	if frame != nil {
@@ -520,6 +528,7 @@ func (q *Router) execute(c Command) {
 				}
 			}
 			if len(q.changes) > 1 {
+				clear(q.changes[1:]) // Clack patch 18
 				q.changes = q.changes[:1]
 			}
 			q.changeState(nil, ch.state, ch.events)
