@@ -30,10 +30,13 @@ type File struct {
 	Thumb, URL, Permalink   string
 	ThumbW, ThumbH          int
 	Size, Created, Modified int64
-	Channels                []string // channels, groups and DMs it is shared in
-	Mode                    string   // hosted | external | quip | list | tombstone | …
-	IsCanvas, IsList        bool
-	IsImage                 bool
+	// Timestamp is the search item's timestamp (when it was shared), the
+	// Files & links tab's sort key with Created as the fallback.
+	Timestamp        int64
+	Channels         []string // channels, groups and DMs it is shared in
+	Mode             string   // hosted | external | quip | list | tombstone | …
+	IsCanvas, IsList bool
+	IsImage          bool
 	// LastRead is when the viewer last opened it (last_read: milliseconds
 	// or seconds, 0 never), for the collections' Last viewed sort.
 	LastRead int64
@@ -263,13 +266,15 @@ type browseFileRaw struct {
 	IMs        []string        `json:"ims"`
 	Mode       string          `json:"mode"`
 	IsDeleted  bool            `json:"is_deleted"`
+	FileAccess string          `json:"file_access"`
 }
 
 func (r *browseFileRaw) file() File {
 	f := File{ID: r.ID, Name: stripHighlight.Replace(r.Name), Title: stripHighlight.Replace(r.Title),
 		Filetype: r.Filetype, PrettyType: r.PrettyType, Mime: r.Mimetype, User: r.User,
 		Thumb: firstNonEmpty(r.Thumb360, r.ThumbPDF, r.ThumbVideo), URL: r.URLPrivate, Permalink: r.Permalink,
-		ThumbW: r.Thumb360W, ThumbH: r.Thumb360H, Size: r.Size, Created: r.Created, Modified: r.Updated, Mode: r.Mode}
+		ThumbW: r.Thumb360W, ThumbH: r.Thumb360H, Size: r.Size, Created: r.Created, Modified: r.Updated, Mode: r.Mode,
+		Timestamp: r.Timestamp}
 	if f.Created == 0 {
 		f.Created = r.Timestamp
 	}

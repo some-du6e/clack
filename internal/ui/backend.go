@@ -798,7 +798,7 @@ func (b *backend) opened(ch string) {
 			if label == "" {
 				continue
 			}
-			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID, unread: t.Unread,
+			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread,
 				spans: tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
 			bms = append(bms, t.Bookmarks...)
 		}
@@ -1003,7 +1003,9 @@ func tabIcon(typ string) string {
 	case "folder":
 		return "bookmark"
 	case "files":
-		return "files"
+		// useTabIconProps with resources_channel_tab off: canvas-browser
+		// (canvas-browser-filled when selected)
+		return "canvas-browser"
 	case "workflows":
 		return "workflow"
 	}
