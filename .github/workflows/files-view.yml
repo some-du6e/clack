@@ -54,6 +54,7 @@ on:
       - "internal/ui/popups/share_file.go"
       - "internal/ui/popups/share_file_test.go"
       - "internal/ui/popups/lightbox_gallery.go"
+      - "internal/ui/popups/bookmark_modals.go"
       - "internal/ui/files_tab_more.go"
       - "internal/ui/files_tab_more_test.go"
       - ".github/workflows/files-view.yml"

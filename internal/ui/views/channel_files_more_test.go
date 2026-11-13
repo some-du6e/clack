@@ -30,8 +30,10 @@ func (h *cfHost) OpenLinkDetails(url, title, icon string) {
 }
 func (h *cfHost) OpenMediaGallery(items []popups.GalleryItem, idx int) {
 	h.opened = append(h.opened, "gallery:"+items[idx].File.ID+"/"+itoaTest(len(items)))
-	if lb := popups.NewFileGallery(h, items, idx); lb != nil {
-		h.ShowOverlay(lb)
+	if h.showGallery { // the shots draw it; elsewhere it would take the keys
+		if lb := popups.NewFileGallery(h, items, idx); lb != nil {
+			h.ShowOverlay(lb)
+		}
 	}
 }
 
@@ -159,10 +161,11 @@ func TestChannelFilesHoverActions(t *testing.T) {
 	if v.starShown(pdf) || !v.starShown(canvas) || !v.starShown(list) {
 		t.Error("the star is for canvases and lists")
 	}
+	n0 := len(h.open())
 	v.openShare(*pdf)
 	e.frame()
-	if len(h.open()) != 1 {
-		t.Fatalf("%d overlays after Share", len(h.open()))
+	if len(h.open()) != n0+1 {
+		t.Fatalf("%d overlays after Share, %d before", len(h.open()), n0)
 	}
 	dismissAll(h.filesHost)
 	v.star(*canvas, image.Rect(900, 300, 932, 332))
@@ -322,6 +325,7 @@ func TestChannelFilesMoreShots(t *testing.T) {
 	}
 	for _, dark := range []bool{false, true} {
 		v, h, e, _ := cfView(t, dark)
+		h.showGallery = true
 		h.Core().SetExperimentGroup("custom_file_sections", "")
 		settle := func() {
 			for range 25 {
@@ -461,5 +465,61 @@ func TestChannelFilesManageTabs(t *testing.T) {
 		}
 		e.frame()
 		vaShot(t, e, "chfiles-manage-tabs", dark)
+	}
+}
+
+// Add to folder (LinkEntity): the "Add link to folder" modal with the
+// link, its title and the channel's folders; Save is bookmarks.add with
+// parent_id. With no folders a Bookmarks folder is made first.
+func TestChannelFilesAddToFolder(t *testing.T) {
+	v, h, e, fs := cfView(t, false)
+	a := h.Core()
+	ch := fakeslack.FilesChannelID
+	a.ChannelBookmarks(ch)
+	e.until(t, "the bookmarks", func() bool { _, ok := a.ChannelBookmarks(ch); return ok })
+	l := v.links.links[0]
+	v.addLinkToFolder(l)
+	e.frame()
+	ov := h.open()
+	m, ok := ov[len(ov)-1].(*popups.BookmarkLinkModal)
+	if !ok {
+		t.Fatalf("overlay %T", ov[len(ov)-1])
+	}
+	if m.Folder() != fakeslack.GalleryFolder {
+		t.Errorf("folder %q", m.Folder())
+	}
+	e.frame()
+	vaShot(t, e, "chfiles-add-to-folder", false)
+	m.Save()
+	e.until(t, "bookmarks.add", func() bool { return len(fs.GalleryBookmarkAdds()) == 1 && m.Dismissed() })
+	got := fs.GalleryBookmarkAdds()[0]
+	for k, want := range map[string]string{"channel": ch, "link": l.URL, "title": l.Title, "type": "link", "parent_id": fakeslack.GalleryFolder} {
+		if got.Get(k) != want {
+			t.Errorf("%s = %q, want %q", k, got.Get(k), want)
+		}
+	}
+	e.until(t, "the toast", func() bool {
+		ts := h.toasts()
+		return len(ts) > 0 && ts[len(ts)-1] == "Added "+l.Title+" to folder Launch docs"
+	})
+	// no folders: the banner, then the folder and the link in it
+	v2, h2, e2, fs2 := cfView(t, false)
+	fs2.SetGalleryFolders(true)
+	a2 := h2.Core()
+	a2.ChannelBookmarks(ch)
+	e2.until(t, "no bookmarks", func() bool { _, ok := a2.ChannelBookmarks(ch); return ok })
+	v2.addLinkToFolder(v2.links.links[1])
+	e2.frame()
+	ov2 := h2.open()
+	m2 := ov2[len(ov2)-1].(*popups.BookmarkLinkModal)
+	if m2.Folder() != "" {
+		t.Errorf("a folder picked with none: %q", m2.Folder())
+	}
+	vaShot(t, e2, "chfiles-add-to-folder-none", false)
+	m2.Save()
+	e2.until(t, "the folder and the link", func() bool { return len(fs2.GalleryBookmarkAdds()) == 2 })
+	adds := fs2.GalleryBookmarkAdds()
+	if adds[0].Get("type") != "folder" || adds[0].Get("title") != "Bookmarks" || adds[1].Get("type") != "link" || adds[1].Get("parent_id") == "" {
+		t.Errorf("adds %v", adds)
 	}
 }

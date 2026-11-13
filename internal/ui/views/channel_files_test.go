@@ -37,7 +37,8 @@ import (
 // cfHost is filesHost with the fake's pictures (thumbs and favicons).
 type cfHost struct {
 	*filesHost
-	imgs *imgcache.Cache
+	imgs        *imgcache.Cache
+	showGallery bool // OpenMediaGallery shows the viewer (channel_files_more_test.go)
 }
 
 func (h *cfHost) Images() *imgcache.Cache { return h.imgs }
@@ -342,7 +343,7 @@ func TestChannelFilesOpen(t *testing.T) {
 	}
 	cw := min(968, e.size.X-32)
 	e.click(image.Pt((e.size.X-cw)/2+40, cfListY+top+40))
-	if got := h.last(); !strings.HasPrefix(got, "lightbox:") {
+	if got := h.last(); !strings.HasPrefix(got, "gallery:") { // the viewer with fileChannelMediaInfo (channel_files_more.go)
 		t.Errorf("media cell opened %q", got)
 	}
 	// keyboard: the list holds focus after the click; Home, then Enter on

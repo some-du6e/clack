@@ -529,6 +529,9 @@ func (v *ChannelFiles) openLinkMenu(l core.ChannelLink, btn image.Rectangle) {
 		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(link))})
 		v.h.Toast(nsExplorerLnk.T("Link copied to clipboard"))
 	}}}
+	if v.ch != "" { // the channel's "Add to folder" (channel_files_more.go)
+		items = append(items, popups.MenuItem{Label: nsExplorerLnk.T("Add to folder"), Do: func() { v.addLinkToFolder(l) }})
+	}
 	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: btn, Width: 240,
 		Popover: "right-bottom", OffsetX: 4, TryOpposite: true}))
 }

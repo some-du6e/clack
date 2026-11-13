@@ -165,3 +165,35 @@ func (a *App) LinkShares(ctx context.Context, link string) ([]LinkShare, error) 
 	a.EnsureUsers(ctx, users)
 	return out, nil
 }
+
+// AddBookmarkFolder is addBookmarkFolderForChannel without a bookmark to
+// move in (YQEj callAddBookmarksFolderForChannelId): bookmarks.add
+// {channel, title, type: folder}; the folder goes into the store. The Add
+// link to folder modal makes the "Bookmarks" folder this way when the
+// channel has none.
+func (a *App) AddBookmarkFolder(ctx context.Context, ch, title string) (Bookmark, error) {
+	var res struct {
+		Bookmark bookmarkRaw `json:"bookmark"`
+	}
+	if err := a.C.Call(ctx, "bookmarks.add", url.Values{"channel": {ch}, "title": {title}, "type": {"folder"}}, &res); err != nil {
+		return Bookmark{}, err
+	}
+	b := a.bookmarkOf(res.Bookmark)
+	if b.ID != "" {
+		a.putBookmark(ch, b)
+	}
+	return b, nil
+}
+
+// ChannelFolders are the channel's bookmark folders (the store's folder
+// bookmarks by rank), loaded or not.
+func (a *App) ChannelFolders(ch string) []Bookmark {
+	all, _ := a.ChannelBookmarks(ch)
+	var out []Bookmark
+	for _, b := range all {
+		if b.Type == "folder" {
+			out = append(out, b)
+		}
+	}
+	return out
+}

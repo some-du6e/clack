@@ -627,3 +627,56 @@ func (v *ChannelFiles) starTip(it *fileItem) string {
 	}
 	return nsFile.T("Unstar canvas")
 }
+
+// ---- Add to folder ----
+
+// addLinkToFolder is LinkEntity's "Add to folder" click: AddBookmarkModal
+// with modalHeaderTitle "Add link to folder", the link (initialLink) and
+// its title (initialPreview), showSetFolder over the channel's folders.
+// With none it says the link goes to a Bookmarks folder and makes it
+// first (addBookmarkFolderForChannel: bookmarks.add type folder); then
+// bookmarks.add {channel, link, title, type: link, parent_id}
+// (core.AddFolderLink), and "Added {fileName} to folder {folderName}"
+// for 5 s. Slack's row is a submenu (AddOrMoveToFolderMenuItems), but for
+// a link that renders nothing (it lists only for a file in the store), so
+// Clack draws the row without one.
+func (v *ChannelFiles) addLinkToFolder(l core.ChannelLink) {
+	ph, ok := v.h.(popups.Host)
+	a := v.h.Core()
+	if !ok || a == nil {
+		return
+	}
+	ch := v.ch
+	var opts []popups.FolderOption
+	titles := map[string]string{}
+	for _, f := range a.ChannelFolders(ch) {
+		opts = append(opts, popups.FolderOption{ID: f.ID, Title: f.Title})
+		titles[f.ID] = f.Title
+	}
+	h := v.h
+	toast := ""
+	m := popups.NewBookmarkLinkModal(ph, popups.BookmarkLinkOpts{Title: nsExplorerLnk.T("Add link to folder"), Link: l.URL,
+		Name: l.Title, ShowFolder: true, Folders: opts,
+		SaveIn: func(ctx context.Context, link, name, folder string) error {
+			fname := titles[folder]
+			if folder == "" {
+				f, err := a.AddBookmarkFolder(ctx, ch, nsTabbed.T("Bookmarks"))
+				if err != nil {
+					return err
+				}
+				folder, fname = f.ID, f.Title
+			}
+			b, err := a.AddFolderLink(ctx, ch, folder, link, name)
+			if err != nil {
+				return err
+			}
+			what := b.Title
+			if what == "" {
+				what = link
+			}
+			toast = nsTabbed.T("Added {fileName} to folder {folderName}", "fileName", what, "folderName", fname)
+			return nil
+		}})
+	m.OnSaved = func() { h.Toast(toast) } // on the UI goroutine, after the save
+	ph.ShowOverlay(m)
+}

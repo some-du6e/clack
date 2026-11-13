@@ -41,10 +41,12 @@ type TabShare struct {
 }
 
 type cfMore struct {
-	mu     sync.Mutex
-	tabs   []map[string]any // #files-gallery's properties.tabs (nil: the default)
-	writes []url.Values     // conversations.removeTab / addTab / moveTab, with "method"
-	shares []TabShare
+	mu      sync.Mutex
+	folders []map[string]any // #files-gallery's bookmarks (nil: GalleryFolder)
+	adds    []url.Values     // its bookmarks.add calls
+	tabs    []map[string]any // #files-gallery's properties.tabs (nil: the default)
+	writes  []url.Values     // conversations.removeTab / addTab / moveTab, with "method"
+	shares  []TabShare
 }
 
 var cfMores sync.Map // *Server -> *cfMore
@@ -119,8 +121,59 @@ func (s *Server) tabFile(id string) map[string]any {
 	return nil
 }
 
+// GalleryFolder is #files-gallery's bookmark folder.
+const GalleryFolder = "Bk0FILESFOLD1"
+
+// SetGalleryFolders empties #files-gallery's bookmarks (no folders).
+func (s *Server) SetGalleryFolders(none bool) {
+	m := s.cfmore()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.folders = []map[string]any{}
+	if !none {
+		m.folders = nil
+	}
+}
+
+// GalleryBookmarkAdds are #files-gallery's bookmarks.add calls.
+func (s *Server) GalleryBookmarkAdds() []url.Values {
+	m := s.cfmore()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]url.Values(nil), m.adds...)
+}
+
+func (m *cfMore) galleryBookmarks() []map[string]any {
+	if m.folders == nil {
+		m.folders = []map[string]any{{"id": GalleryFolder, "channel_id": FilesChannelID, "title": "Launch docs", "link": "",
+			"type": "folder", "parent_id": "", "rank": "a", "date_created": filesBaseTS, "emoji": "", "icon_url": "", "entity_id": ""}}
+	}
+	return m.folders
+}
+
 func (s *Server) handleChannelFilesMore(method string, f url.Values) (any, bool) {
 	switch method {
+	case "bookmarks.list", "bookmarks.add":
+		if f.Get("channel") != FilesChannelID {
+			return nil, false
+		}
+		m := s.cfmore()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		bms := m.galleryBookmarks()
+		if method == "bookmarks.list" {
+			out := make([]any, 0, len(bms))
+			for _, b := range bms {
+				out = append(out, b)
+			}
+			return ok("bookmarks", out), true
+		}
+		m.adds = append(m.adds, withoutToken(f))
+		b := map[string]any{"id": "Bk0FILESNEW" + strconv.Itoa(len(m.adds)), "channel_id": FilesChannelID, "title": f.Get("title"),
+			"link": f.Get("link"), "type": f.Get("type"), "parent_id": f.Get("parent_id"), "rank": "z" + strconv.Itoa(len(m.adds)),
+			"date_created": filesBaseTS + 100, "emoji": "", "icon_url": "", "entity_id": ""}
+		m.folders = append(bms, b)
+		return ok("bookmark", b), true
 	case "search.autocomplete.files":
 		in, _, words := channelFilesQuery(f.Get("query"))
 		if in != FilesChannelID {
