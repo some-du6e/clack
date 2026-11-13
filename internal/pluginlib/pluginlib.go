@@ -66,8 +66,9 @@ type File struct {
 
 // Author is a credited plugin author.
 type Author struct {
-	Name string `json:"name"`
-	URL  string `json:"url,omitempty"`
+	Name    string `json:"name"`
+	URL     string `json:"url,omitempty"`
+	SlackID string `json:"slackId,omitempty"` // Hack Club Slack member id, when upstream names one
 }
 
 // Entry is one plugin in the Library.
