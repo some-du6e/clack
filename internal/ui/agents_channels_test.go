@@ -54,10 +54,12 @@ func openAgentsDetails(t *testing.T, e *perfEnv, ch string) *views.ChannelDetail
 // darkShot saves name and name-dark.
 func (e *perfEnv) darkShot(name string) {
 	e.shot(name)
-	e.a.setDark(true)
+	e.a.th.SetDark(true)
+	e.a.Invalidate()
 	e.settle(300 * time.Millisecond)
 	e.shot(name + "-dark")
-	e.a.setDark(false)
+	e.a.th.SetDark(false)
+	e.a.Invalidate()
 	e.settle(200 * time.Millisecond)
 }
 
@@ -169,14 +171,18 @@ func TestChannelDetailsAgentsImprovements(t *testing.T) {
 	}
 	e.darkShot("agents-io-invite")
 	d.SetAgentInviteQuery("poll")
-	e.settle(800 * time.Millisecond)
-	e.shot("agents-io-invite-results")
 	var poll core.User
 	e.until("Poll Maker in the store", 10*time.Second, func() bool {
+		e.frame()
 		u, ok := e.a.Core().User(fakeslack.OutsideAppID)
 		poll = u
 		return ok
 	})
+	e.settle(500 * time.Millisecond)
+	e.darkShot("agents-io-invite-results")
+	d.SetAgentInviteQuery("nobody-matches-this")
+	e.settle(1200 * time.Millisecond)
+	e.shot("agents-io-invite-none")
 	d.AddPerson(poll)
 	d.SetAgentInviteQuery("")
 	e.settle(300 * time.Millisecond)

@@ -661,63 +661,64 @@ func (d *ChannelDetails) agentRosterRow(gtx C, u core.User, self string, out boo
 	}
 	full, disp := cdMemberNames(u, self)
 	body := func(gtx C) D {
-		if out {
-			fill(gtx, image.Rectangle{Max: image.Pt(gtx.Constraints.Max.X, gtx.Dp(cdRosterRowH))}, d.p.ReadFill)
-		}
-		gtx.Constraints.Min.Y = gtx.Dp(cdRosterRowH)
-		return layout.Inset{Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
-			return layout.W.Layout(gtx, func(gtx C) D {
-				gtx.Constraints.Min.X = gtx.Constraints.Max.X
-				return row(gtx, layout.Middle,
-					layout.Rigid(func(gtx C) D { return d.avatar(gtx, u.Avatar, 36) }),
-					hgap(12),
-					layout.Flexed(1, func(gtx C) D {
-						return dirFill(gtx, func(gtx C) D {
-							return layout.Inset{Top: -4, Bottom: -4}.Layout(gtx, func(gtx C) D {
-								return col(gtx,
-									layout.Rigid(func(gtx C) D {
-										return row(gtx, layout.Middle,
-											layout.Rigid(func(gtx C) D {
-												nd := d.para(gtx, 15, 22, wBold, d.p.Text, 1, full)
-												d.memberTrigger(u.ID).Layout(gtx, u.ID, nd.Size)
-												return nd
-											}),
-											layout.Rigid(func(gtx C) D {
-												return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return cdAppBadge(&d.base, gtx, badge) })
-											}),
-											layout.Rigid(func(gtx C) D {
-												if disp == "" {
-													return D{}
-												}
-												return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Text, 1, disp) })
-											}),
-										)
-									}),
-									layout.Rigid(func(gtx C) D {
-										if u.Title == "" {
-											return D{}
-										}
-										return d.para(gtx, 15, 22, wReg, d.p.Sec, 1, u.Title)
-									}),
-								)
-							})
+		m := op.Record(gtx.Ops)
+		dims := layout.Inset{Top: 12, Bottom: 12, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D { return d.avatar(gtx, u.Avatar, 36) }),
+				hgap(12),
+				layout.Flexed(1, func(gtx C) D {
+					return dirFill(gtx, func(gtx C) D {
+						return layout.Inset{Top: -4, Bottom: -4}.Layout(gtx, func(gtx C) D {
+							return col(gtx,
+								layout.Rigid(func(gtx C) D {
+									return row(gtx, layout.Middle,
+										layout.Rigid(func(gtx C) D {
+											nd := d.para(gtx, 15, 22, wBold, d.p.Text, 1, full)
+											d.memberTrigger(u.ID).Layout(gtx, u.ID, nd.Size)
+											return nd
+										}),
+										layout.Rigid(func(gtx C) D {
+											return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return cdAppBadge(&d.base, gtx, badge) })
+										}),
+										layout.Rigid(func(gtx C) D {
+											if disp == "" {
+												return D{}
+											}
+											return layout.Inset{Left: 4}.Layout(gtx, func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Text, 1, disp) })
+										}),
+									)
+								}),
+								layout.Rigid(func(gtx C) D {
+									if u.Title == "" {
+										return D{}
+									}
+									return d.para(gtx, 15, 22, wReg, d.p.Sec, 1, u.Title)
+								}),
+							)
 						})
-					}),
-					layout.Rigid(func(gtx C) D {
-						if !out {
-							return D{}
-						}
-						if ag.adding == u.ID {
-							return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, "…") })
-						}
-						b := dirClick(ag.addBtns, u.ID)
-						return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
-							return d.button(gtx, b, btnOutline, true, nsChannelDetails.T("Add to Channel"))
-						})
-					}),
-				)
-			})
+					})
+				}),
+				layout.Rigid(func(gtx C) D {
+					if !out {
+						return D{}
+					}
+					if ag.adding == u.ID {
+						return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return d.label(gtx, 13, wReg, d.p.Muted, "…") })
+					}
+					b := dirClick(ag.addBtns, u.ID)
+					return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D {
+						return d.button(gtx, b, btnOutline, true, nsChannelDetails.T("Add to Channel"))
+					})
+				}),
+			)
 		})
+		call := m.Stop()
+		if out { // p-ia_details_popover__members_list_item_member--non-channel
+			fill(gtx, image.Rectangle{Max: dims.Size}, d.p.ReadFill)
+		}
+		call.Add(gtx.Ops)
+		return dims
 	}
 	return d.hoverable(gtx, c, false, 0, body)
 }
