@@ -491,6 +491,12 @@ func (l *Shaper) layoutText(params Parameters, str string, txt io.Reader) {
 			}
 		}
 	}
+	// Clack patch 19: the text's source goes once it is read. The Shaper is
+	// shared, so the last editor that shaped through a reader (its
+	// textView) stayed reachable, and whatever owns it: a closed popup's
+	// search field kept the whole popup.
+	l.reader.Reset(nil)
+	l.iterString = ""
 }
 
 // layoutParagraph shapes and wraps a paragraph using the provided parameters.

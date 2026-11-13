@@ -22,8 +22,9 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
 `internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`,
 `font/opentype/opentype.go`, `io/input/pointer.go`, `io/input/key.go`,
-`io/input/clack_release_test.go`, `gpu/clack_release_test.go` and these two
-files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
+`io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
+`text/clack_release_test.go` and these two files (`CLACK_PATCHES.md`,
+`UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
 
@@ -724,3 +725,21 @@ handler's owner is collectable three frames after it was last laid out),
 longer paints is collectable), both on ci's linux job; `internal/ui`
 `TestClosedEmojiPickerReleased` (the whole client: a closed picker is
 collectable three frames later). Not in `UPSTREAM.patch`.
+
+## 19. text: the Shaper lets go of the text it shaped
+
+`text/shaper.go` (`Shaper.layoutText`).
+
+`Shaper.Layout` reads its text through a `bufio.Reader` it keeps, and
+`LayoutString` keeps the string it iterated; both stayed until the next call
+of the same kind. Clack shares one Shaper per theme, and an editor shapes
+through a reader over its own `textView`, so the last editor that shaped
+stayed reachable with whatever owns it: a closed emoji picker's search field
+kept the picker and its 10 MB index (found by `internal/ui`
+`TestClosedEmojiPickerReleased`, which names the chain:
+`App.th.Shaper.reader.rd`). The reader is reset to nil and the string
+dropped once the text is read; the lines and glyphs `NextGlyph` reads are
+the Shaper's own.
+
+Test: `text` `TestShaperReleasesSource`, on ci's linux job. Not in
+`UPSTREAM.patch`.
