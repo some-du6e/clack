@@ -30,21 +30,26 @@ import (
 
 // CanvasInfo is a canvas's header: what files.info says about the file.
 type CanvasInfo struct {
-	ID, Title   string
-	TitleSpans  []richtext.Span // title_blocks (emoji in titles)
-	Creator     string          // user id (canvas_creator_id, else user)
-	Created     int64           // unix seconds
-	Updated     int64           // last edit (edit_timestamp, else updated)
-	Editable    bool            // the viewer may edit
-	Access      string          // read | write | owner …
-	Editors     []string        // users who edited
-	Permalink   string
-	URL         string // url_private: the HTML export
-	Channels    []string
-	IsPublic    bool
-	CommentsN   int
-	ShowBadge   bool // never opened by the viewer (Slack's blue dot)
-	TemplateMod bool
+	ID, Title string
+	// TitleSpans: the title as Slack's QuipTitleParsedId draws it, from
+	// title_blocks, else (TitleFromText) the title string with its
+	// :shortcodes: as emoji (FormatTextWithEmoji, 16px c-emoji__small);
+	// nil for a plain title.
+	TitleSpans    []richtext.Span
+	TitleFromText bool
+	Creator       string   // user id (canvas_creator_id, else user)
+	Created       int64    // unix seconds
+	Updated       int64    // last edit (edit_timestamp, else updated)
+	Editable      bool     // the viewer may edit
+	Access        string   // read | write | owner …
+	Editors       []string // users who edited
+	Permalink     string
+	URL           string // url_private: the HTML export
+	Channels      []string
+	IsPublic      bool
+	CommentsN     int
+	ShowBadge     bool // never opened by the viewer (Slack's blue dot)
+	TemplateMod   bool
 	// QuipThreadID is the canvas's Quip document (files.info
 	// quip_thread_id); Slack's QuipEmbed keys the empty canvas's
 	// placeholder on it (getIndexFromFileId over doc.id).
@@ -173,6 +178,9 @@ func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 	}
 	if ci.Title == "" {
 		ci.Title = "Untitled"
+	}
+	if len(ci.TitleSpans) == 0 { // QuipTitleParsedId's string path: FormatTextWithEmoji
+		ci.TitleSpans, ci.TitleFromText = richtext.EmojiText(a.S, ci.Title), true
 	}
 	return ci
 }

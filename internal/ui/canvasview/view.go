@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 	"runtime/debug"
 	"strings"
@@ -434,9 +435,61 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 	tx := gtx.Dp(18)
 	at(gtx, image.Pt(tx, 0), image.Pt(max(0, x-tx-gtx.Dp(4)), size.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, size.Y, func(gtx layout.Context) layout.Dimensions {
+			if d != nil && len(d.Info.TitleSpans) > 0 { // QuipTitleParsedId: emoji drawn
+				return v.titleLine(gtx, d.Info.TitleSpans, d.Info.TitleFromText, 18, c.Fg, size.Y)
+			}
 			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Black), Size: 18, Color: c.Fg, MaxLines: 1}, title)
 		})
 	})
+}
+
+// titleLine draws a title's spans on one line in Lato Black, ellipsized
+// (QuipTitleParsedId's truncate: lines 1): text as text, custom emoji as
+// images, 16px from the title string (FormatTextWithEmoji's small
+// c-emoji, small) or 22px from title_blocks (rich text's medium c-emoji),
+// centred on the line.
+func (v *View) titleLine(gtx layout.Context, spans []richtext.Span, fromText bool, size unit.Sp, col color.NRGBA, h int) layout.Dimensions {
+	th := v.h.Theme()
+	maxW := gtx.Constraints.Max.X
+	es := gtx.Dp(22)
+	if fromText {
+		es = gtx.Dp(16)
+	}
+	x := 0
+	for _, s := range spans {
+		if x >= maxW || s.Kind == richtext.Break {
+			break
+		}
+		if s.Kind == richtext.Emoji && s.URL != "" {
+			if x+es > maxW {
+				break
+			}
+			url := s.URL
+			at(gtx, image.Pt(x, (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+				if img, ok := v.h.Images().Get(url, es*2); ok {
+					return theme.Image(gtx, img, image.Pt(es, es), 0)
+				}
+				return layout.Dimensions{Size: image.Pt(es, es)}
+			})
+			x += es
+			continue
+		}
+		txt := strings.ReplaceAll(s.Text, "\n", " ")
+		if txt == "" {
+			continue
+		}
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(maxW-x, h)}
+		m := op.Record(gtx.Ops)
+		dim := th.Text(g, theme.LabelOpts{Font: theme.Font(theme.Black), Size: size, Color: col, MaxLines: 1}, txt)
+		call := m.Stop()
+		func() {
+			defer op.Offset(image.Pt(x, (h-dim.Size.Y)/2)).Push(gtx.Ops).Pop()
+			call.Add(gtx.Ops)
+		}()
+		x += dim.Size.X
+	}
+	return layout.Dimensions{Size: image.Pt(min(x, maxW), h)}
 }
 
 // editedAgo is QuipLastUpdatedReminder's time: always relative

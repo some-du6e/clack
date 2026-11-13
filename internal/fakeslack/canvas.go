@@ -50,6 +50,12 @@ type FakeCanvas struct {
 	// "comment" make a canvas the viewer can't edit (QuipAccessIndicator)
 	ViewerAccess    string
 	AccessRequested bool // files.requestPermission was sent (most_recent_access_request_ts)
+	// HTML, when set, is the export served verbatim until the first edit
+	// (a real export's markup, which canvas.HTML doesn't reproduce); Doc
+	// must be its parse, so section ids match. TitleBlocks is files.info's
+	// title_blocks (default: none).
+	HTML        string
+	TitleBlocks []any
 }
 
 type canvasStore struct {
@@ -140,7 +146,7 @@ func (s *Server) EditCanvasAsOther(id, markdown string) {
 	cs := s.canvasStore()
 	cs.mu.Lock()
 	if c, ok := cs.byID[id]; ok {
-		c.Doc.Blocks = append(c.Doc.Blocks, canvas.ParseMarkdown(markdown, s.names())...)
+		c.Doc.Blocks, c.HTML = append(c.Doc.Blocks, canvas.ParseMarkdown(markdown, s.names())...), ""
 		c.Updated = time.Now().Unix()
 	}
 	cs.mu.Unlock()
@@ -227,6 +233,9 @@ func (s *Server) canvasFile(c *FakeCanvas) map[string]any {
 		"channels": []string{}, "groups": []string{}, "ims": []string{}}
 	if c.ViewerAccess != "" {
 		f["access"] = c.ViewerAccess
+	}
+	if c.TitleBlocks != nil {
+		f["title_blocks"] = c.TitleBlocks
 	}
 	if c.AccessRequested {
 		f["most_recent_access_request_ts"] = c.Updated
@@ -476,7 +485,7 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 				return map[string]any{"ok": false, "error": errc}, true
 			}
 		}
-		c.Updated = time.Now().Unix()
+		c.Updated, c.HTML = time.Now().Unix(), ""
 		cs.mu.Unlock()
 		go s.pushDocumentUpdate(id)
 		return ok(), true
@@ -682,7 +691,10 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 	c, okc := cs.byID[id]
 	var page string
 	if okc {
-		page = canvas.HTML(c.Doc, cs.secID)
+		page = c.HTML
+		if page == "" {
+			page = canvas.HTML(c.Doc, cs.secID)
+		}
 	}
 	cs.mu.Unlock()
 	if !okc {

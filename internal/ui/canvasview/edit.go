@@ -337,7 +337,10 @@ func (e *editState) commitRename(v *View) {
 		return
 	}
 	d := *v.shown
-	d.Info.Title, d.Info.TitleSpans = title, nil
+	d.Info.Title, d.Info.TitleSpans, d.Info.TitleFromText = title, nil, false
+	if a := v.h.Core(); a != nil { // until the refetch brings title_blocks
+		d.Info.TitleSpans, d.Info.TitleFromText = richtext.EmojiText(a.S, title), true
+	}
 	v.mu.Lock()
 	v.doc = &d
 	v.mu.Unlock()
