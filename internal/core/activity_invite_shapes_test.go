@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -153,5 +154,62 @@ func TestActivityRealtimeOddShapeArrives(t *testing.T) {
 				t.Errorf("ping-2: joiner %q", it.Actor)
 			}
 		}
+	}
+}
+
+// Karim, 2026-11-13: "i have like 27 notifs and it shows 3 sometimes".
+// With ~30 unread mentions over pages of 20 (and string invites in the
+// feed, which used to fail a page and stop the paging), every entry
+// comes back by its cursor, Unreads on and off, and the rail's badge
+// (activity_v2 summed over the badged types) is the number of unread
+// rows of those types the list shows.
+func TestActivityBadgeAgreesWithPagedList(t *testing.T) {
+	a, fs := actFake(t)
+	fs.SetActivityInviteIDs(true)
+	const bulk = 30
+	fs.SetActivityBulk(bulk)
+	ctx := context.Background()
+	all := func(unread bool) []ActivityItem {
+		var out []ActivityItem
+		cursor := ""
+		for range 20 {
+			p, err := a.Activity(ctx, ActivityOpts{View: "all", Unread: unread, Limit: 20, Cursor: cursor})
+			if err != nil {
+				t.Fatalf("unread %v, cursor %q: %v", unread, cursor, err)
+			}
+			out = append(out, p.Items...)
+			if p.Next == "" {
+				return out
+			}
+			cursor = p.Next
+		}
+		t.Fatal("the feed never ended")
+		return nil
+	}
+	for _, unread := range []bool{false, true} {
+		items := all(unread)
+		n := 0
+		for _, it := range items {
+			if strings.HasPrefix(it.Key, "fa-bulk-") {
+				n++
+			}
+		}
+		if n != bulk {
+			t.Errorf("unread %v: %d of the %d bulk mentions over %d rows", unread, n, bulk, len(items))
+		}
+		if len(items) < bulk+5 {
+			t.Errorf("unread %v: %d rows", unread, len(items))
+		}
+	}
+	a.refreshCounts(ctx)
+	types := a.activityBadgeTypes()
+	want := 0
+	for _, it := range all(false) {
+		if it.Unread && types[it.Type] && it.Type != "message_reaction" {
+			want++
+		}
+	}
+	if got := a.ActivityBadgeCount(); got != want || got < bulk {
+		t.Errorf("badge %d, the list's unread badged rows %d (bulk %d)", got, want, bulk)
 	}
 }

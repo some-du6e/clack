@@ -92,3 +92,39 @@ func TestActivityRealtimeMentionAppearsAtOnce(t *testing.T) {
 		}
 	}
 }
+
+// ~30 unread mentions over pages of 20, with string invites in the feed:
+// the list keeps paging as it scrolls (infinite scroll, Slack's limit
+// 20) until every entry is in, with Unreads off and on.
+func TestActivityPagedListShowsEveryEntry(t *testing.T) {
+	app, fs := vaFake(t)
+	fs.SetActivityInviteIDs(true)
+	fs.SetActivityBulk(30)
+	h := &vaHost{slickHost: &slickHost{app: app, th: theme.New(false)}}
+	v := NewActivity(h)
+	e := &vaEnv{size: image.Pt(1200, 900)}
+	e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+	for _, unread := range []bool{false, true} {
+		if unread {
+			v.unread.Value = true
+			v.load(actFresh)
+		}
+		bulk := func() int {
+			n := 0
+			for _, it := range actPage(v).Items {
+				if len(it.Key) > 8 && it.Key[:8] == "fa-bulk-" {
+					n++
+				}
+			}
+			return n
+		}
+		e.until(t, "every page", func() bool {
+			// scroll to the end: the list asks for the next page there
+			v.list.Position.First = len(v.vis)
+			return bulk() == 30 && actPage(v).Next == ""
+		})
+		if _, _, err := v.data.get(); err != nil || v.failedCursor != "" {
+			t.Errorf("unread %v: paging failed (%v, cursor %q)", unread, err, v.failedCursor)
+		}
+	}
+}

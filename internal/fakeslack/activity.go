@@ -2,6 +2,7 @@ package fakeslack
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"slices"
 	"sort"
@@ -177,6 +178,7 @@ type activityState struct {
 	saved     map[string]map[string]any
 	ignored   map[string]bool // invites ignored or accepted
 	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
+	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -250,6 +252,36 @@ func (s *Server) SetActivityInviteIDs(on bool) {
 	v.mu.Unlock()
 }
 
+// SetActivityBulk adds n unread at_user entries after the fixture's
+// (older), makes activity.feed answer in pages of its limit with a
+// next_cursor, as the server does, and sets client.counts' activity_v2
+// to the feed's unread entries by type (what the server counts). Karim
+// saw a badge of 27 over a list of 3, 2026-11-13.
+func (s *Server) SetActivityBulk(n int) {
+	v := s.views()
+	v.mu.Lock()
+	v.act().bulk = n
+	v.mu.Unlock()
+	counts := map[string]int{}
+	for _, e := range append(activityEntries(""), activityBulk(n)...) {
+		if e["is_unread"] == true {
+			counts[e["item"].(map[string]any)["type"].(string)]++
+		}
+	}
+	s.SetActivityBadges(counts)
+}
+
+// activityBulk is SetActivityBulk's entries, newest first.
+func activityBulk(n int) []map[string]any {
+	out := make([]map[string]any, 0, n)
+	for i := range n {
+		ts := fmt.Sprintf("%d.000100", 1762590000-i*10)
+		out = append(out, map[string]any{"key": fmt.Sprintf("fa-bulk-%02d", i), "feed_ts": ts, "is_unread": true, "is_bot": false,
+			"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": "1762700100.000100", "channel": ViewsChannel, "author_user_id": "U0FAKE00001"}}})
+	}
+	return out
+}
+
 // SetChannelInviteApproved approves the channel invite's acceptance in
 // connectInvites.list (both organisations reviewed it).
 func (s *Server) SetChannelInviteApproved(on bool) {
@@ -277,7 +309,12 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		v.mu.Lock()
 		st := v.act()
 		var items []map[string]any
-		for _, e := range activityEntries(s.URL) {
+		entries := activityEntries(s.URL)
+		bulk := st.bulk
+		if bulk > 0 {
+			entries = append(entries, activityBulk(bulk)...)
+		}
+		for _, e := range entries {
 			key := e["key"].(string)
 			typ := e["item"].(map[string]any)["type"].(string)
 			if len(types) > 0 && !types[typ] {
@@ -310,7 +347,22 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			items = append(items, e)
 		}
 		v.mu.Unlock()
-		return ok("items", items, "response_metadata", map[string]any{"next_cursor": ""}), true
+		next := ""
+		if bulk > 0 {
+			// pages of limit, the cursor an offset
+			off, _ := strconv.Atoi(strings.TrimPrefix(f.Get("cursor"), "o:"))
+			limit, _ := strconv.Atoi(f.Get("limit"))
+			if limit <= 0 {
+				limit = 20
+			}
+			off = min(off, len(items))
+			end := min(off+limit, len(items))
+			if end < len(items) {
+				next = "o:" + strconv.Itoa(end)
+			}
+			items = items[off:end]
+		}
+		return ok("items", items, "response_metadata", map[string]any{"next_cursor": next}), true
 	case "messages.list":
 		var want []struct {
 			Channel    string   `json:"channel"`
