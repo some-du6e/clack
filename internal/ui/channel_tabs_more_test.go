@@ -11,6 +11,7 @@ import (
 	"gioui.org/f32"
 	"gioui.org/io/key"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -51,8 +52,9 @@ func TestChannelTabsMoreMenu(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
+	fs.Permissions = map[string][]string{fakeslack.PinsChannelID: {core.PermManageChannelTabs}} // useCanEditTabs: Edit tabs, Hide tab
 	e := startEnv(t, fs, t.TempDir())
-	e.size = image.Pt(640, 760)
+	e.size = image.Pt(560, 760) // only Messages fits: Pins goes into More
 	if os.Getenv("PREVIEW_SHOTS_DIR") != "" {
 		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
