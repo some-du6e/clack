@@ -85,8 +85,11 @@ type Composer struct {
 	// SaveEdit, when set, saves an inline edit instead of core.Edit
 	// (ui/messages routes it through taut.Dispatch("commitMessageEdit")).
 	// The blocks are the composer's own; plugin send transforms are the
-	// saver's job (commitMessageEdit's native applies them).
-	SaveEdit func(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error
+	// saver's job (commitMessageEdit's native applies them). fileIDs is
+	// nil for an edit whose files didn't change (saveMessageEdit), else
+	// every file the message keeps, in order (saveMessageEditWithFiles:
+	// chat.update's file_ids).
+	SaveEdit func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error
 
 	broadcast  bool
 	lastTyping time.Time
@@ -590,6 +593,7 @@ func (c *Composer) chromeState(gtx layout.Context) chromeState {
 	case c.edit != nil:
 		st.Mode = modeEdit
 		st.ShowPlaceholder = false
+		st.NoEditFiles = fileAttachAfterSendDisabled(c.api.a)
 	case c.ts != "":
 		st.Mode = modeThread
 		// Slack's MessageInput: "Reply to thread…" under the
@@ -692,8 +696,10 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 		case EvCmdKSelected:
 			c.cmdKSelected()
 		case EvPlusMenu:
-			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its button
-			if c.edit == nil && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {
+			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its
+			// button (the edit composer's too, unless
+			// fileAttachAfterSendDisabled)
+			if (c.edit == nil || !c.cs.NoEditFiles) && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {
 				c.att.Menu(c.ui.rect[crAttach].Add(c.Origin).Add(image.Pt(0, c.top)), c.plusMenu())
 			}
 		case EvNavBack, EvNavForward:
@@ -798,7 +804,12 @@ func (c *Composer) handleActions(gtx layout.Context) {
 // Text snippet row's snippet dialog (create-text-snippet, the same dialog
 // Ctrl+Shift+Enter opens with the message).
 func (c *Composer) plusMenu() plusMenu {
-	pm := plusMenu{ch: c.ch, snippet: func() { c.openSnippet(false) }}
+	pm := plusMenu{ch: c.ch}
+	if c.edit == nil {
+		// useComposerIAFormatter: no Text snippet (nor Workflow) when
+		// isMessageEdited && isEditMessageShortcutsButton
+		pm.snippet = func() { c.openSnippet(false) }
+	}
 	if _, ok := c.h.(gifHost); ok && gifPickerOn(c.api.a) && c.edit == nil {
 		pm.gif = c.openGifPicker
 	}
@@ -1078,6 +1089,10 @@ func (c *Composer) submit() {
 		// cjbg: a message with files (fileIdsToSave) saves the emptied
 		// comment instead of offering to delete
 	}
+	if c.edit != nil && c.att.Len() > 0 {
+		c.saveEditWithFiles(c.prepareSend(d))
+		return
+	}
 	doc := c.prepareSend(d)
 	text := doc.Mrkdwn()
 	blocks := doc.RichTextBlocks()
@@ -1090,7 +1105,7 @@ func (c *Composer) submit() {
 			ctx := context.Background()
 			var err error
 			if save != nil {
-				err = save(ctx, m.Channel, m.TS, text, blocks)
+				err = save(ctx, m.Channel, m.TS, text, blocks, nil)
 			} else {
 				text, blocks := transformBlocks(ctx, text, blocks)
 				err = api.edit(ctx, m.Channel, m.TS, text, blocks)
@@ -1445,6 +1460,94 @@ func (c *Composer) later(f func()) {
 	restoreQ.fns = append(restoreQ.fns, f)
 	restoreQ.Unlock()
 	c.h.Invalidate()
+}
+
+// saveEditWithFiles is cjbg's maybeSave for an edit that attached files
+// (prepareAndSaveEditMessage → saveMessageEditWithFiles): the edit
+// composer closes at once, the eager uploads (attachUploadToMessage's
+// uploadPromise) finish, then chat.update goes out with file_ids, the
+// message's own files followed by the new ones. A failed upload or save
+// toasts and leaves the message as it was (Slack restores the edit).
+func (c *Composer) saveEditWithFiles(doc *Doc) {
+	m := c.edit
+	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
+	b := c.att.takeForSend()
+	keep := editFileIDs(m)
+	save, api := c.SaveEdit, c.api
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		added, err := editUploads(ctx, api, b)
+		if err == nil {
+			ids := append(append([]string{}, keep...), added...)
+			if save != nil {
+				err = save(ctx, m.Channel, m.TS, text, blocks, ids)
+			} else {
+				text, blocks := transformBlocks(ctx, text, blocks)
+				err = api.editWithFiles(ctx, m.Channel, m.TS, text, blocks, ids)
+			}
+		}
+		if err != nil {
+			c.later(func() { c.h.Toast("Couldn't save your edit: " + err.Error()) })
+		}
+	}()
+	c.finishEdit()
+}
+
+// TakesEditFiles reports whether files dropped on this edit composer's
+// pane go to the edit (FileDragDrop: messageEditUploadNewFiles while a
+// message is being edited, unless fileAttachAfterSendDisabled).
+func (c *Composer) TakesEditFiles() bool {
+	return c.edit != nil && !c.done && !fileAttachAfterSendDisabled(c.api.a)
+}
+
+// fileAttachAfterSendDisabled is Slack's +sRp: the team pref
+// disable_file_attach_after_send is true (files can't be added to a sent
+// message).
+func fileAttachAfterSendDisabled(a *core.App) bool {
+	if a == nil {
+		return false
+	}
+	v, ok := a.TeamPref("disable_file_attach_after_send")
+	return ok && string(v) == "true"
+}
+
+// editFileIDs is the edit's initialFileIds: the files the message has,
+// in its order.
+func editFileIDs(m *core.Message) []string {
+	var ids []string
+	for _, b := range m.Doc.Blocks {
+		if b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != "" {
+			ids = append(ids, b.File.ID)
+		}
+	}
+	return ids
+}
+
+// editUploads resolves the files attached while editing to their ids, in
+// the chips' order: prepared uploads at once, eager uploads when they
+// finish, and files whose eager upload failed uploaded again (Slack's
+// saveMessageEditWithFiles awaits the uploads' promises).
+func editUploads(ctx context.Context, api coreAPI, b sendBatch) ([]string, error) {
+	var ids []string
+	for _, p := range b.prepared {
+		ids = append(ids, p.ID)
+	}
+	for _, pf := range b.pending {
+		r, err := pf.Wait(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, r.ID)
+	}
+	for _, f := range b.raw {
+		r, err := api.prepareUpload(ctx, f, nil)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, r.ID)
+	}
+	return ids, nil
 }
 
 func (c *Composer) finishEdit() {

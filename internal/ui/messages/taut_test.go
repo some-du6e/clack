@@ -322,7 +322,7 @@ func TestTautThunkShapes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	blocks := json.RawMessage(`[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"edited"}]}]}]`)
-	if err := commitEdit(ctx, app, tGen, tsMine, "edited", blocks); err != nil {
+	if err := commitEdit(ctx, app, tGen, tsMine, "edited", blocks, nil); err != nil {
 		t.Fatal(err)
 	}
 	if ups := api.called("chat.update"); len(ups) != 1 || ups[0].Get("text") != "edited (shape ok)" || ups[0].Get("ts") != tsMine {

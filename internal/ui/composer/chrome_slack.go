@@ -574,6 +574,9 @@ func (c *chrome) itemVisible(id crBtn) bool {
 	switch id {
 	case crMention, crVideo, crAudio, crShortcut:
 		return !edit
+	case crAttach:
+		// cjbg enableShortcutsButton: !fileAttachAfterSendDisabled
+		return !edit || !c.cur.NoEditFiles
 	case crFootMore:
 		return !edit && c.f.fold
 	}

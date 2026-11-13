@@ -25,6 +25,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/composer"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -135,6 +136,9 @@ func (v *ThreadView) Edit(ts string) { v.s.startEdit(v.h, ts) }
 
 // Leave closes any inline editor in the thread.
 func (v *ThreadView) Leave() { v.s.closeEdits() }
+
+// EditComposer is the reply being edited inline here, or nil.
+func (v *ThreadView) EditComposer() *composer.Composer { return v.s.editComposer() }
 
 // Typing returns the "X is typing" text for this thread.
 func (v *ThreadView) Typing() string { return typingText(v.s.snap.typing) }

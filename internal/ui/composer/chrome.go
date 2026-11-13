@@ -93,6 +93,10 @@ type chromeState struct {
 	ChannelName   string
 	Private, IsDM bool
 	Group         bool // a group DM (IsDM too): "Also send to the group"
+	// NoEditFiles is cjbg's fileAttachAfterSendDisabled (the team pref
+	// disable_file_attach_after_send): the edit composer has no + and no
+	// attachments row
+	NoEditFiles bool
 	// Placeholder is "Message general" (channel: drawn as "Message " + the
 	// hash/lock icon + name), "Message Karim" (DM), "Reply to thread…".
 	Placeholder     string

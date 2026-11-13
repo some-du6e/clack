@@ -21,6 +21,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -156,11 +157,31 @@ func (a *App) dropFiles(c *convo, paths []string, shift bool) {
 	if !ok {
 		return
 	}
+	if ed := dropEdit(c); ed != nil {
+		// a message being edited in this pane takes the files, Shift or
+		// not (messageEditUploadNewFiles, action 124)
+		ed.AttachPaths(paths)
+		return
+	}
 	if shift {
 		at.SharePaths(paths) // uploadFiles with shareData
 		return
 	}
 	at.AttachPaths(paths) // uploadDraftFiles
+}
+
+// dropEdit is the pane's inline edit when a drop goes to it
+// (FileDragDrop's isMessageEdited && !fileAttachAfterSendDisabled), else
+// nil.
+func dropEdit(c *convo) *composer.Composer {
+	l, ok := c.list.(interface{ EditComposer() *composer.Composer })
+	if !ok {
+		return nil
+	}
+	if ed := l.EditComposer(); ed != nil && ed.TakesEditFiles() {
+		return ed
+	}
+	return nil
 }
 
 // dropCanPost is userCanPostInChannel (the message pane) or

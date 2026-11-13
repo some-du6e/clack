@@ -1771,8 +1771,8 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		h.Invalidate()
 	})
 	app := h.Core()
-	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
-		return commitEdit(ctx, app, ch, ts, text, blocks)
+	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
+		return commitEdit(ctx, app, ch, ts, text, blocks, fileIDs)
 	}
 	s.scrollTo(m.TS)
 	h.Invalidate()
@@ -1933,6 +1933,17 @@ func (s *listState) groupEntry(h Host, idx []int) entry {
 }
 
 // closeEdits drops any open inline editor (leaving the conversation).
+// editComposer is the list's open inline edit, if any (Slack has one per
+// window: isMessageEdited).
+func (s *listState) editComposer() *composer.Composer {
+	for _, r := range s.rows {
+		if r.edit != nil && !r.edit.Done() {
+			return r.edit
+		}
+	}
+	return nil
+}
+
 func (s *listState) closeEdits() {
 	t := tautOf()
 	for _, r := range s.rows {

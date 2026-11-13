@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"gioui.org/layout"
+
+	"github.com/some-du6e/clack/internal/ui/composer"
 )
 
 // ChannelView is a conversation's message list, anchored at the bottom.
@@ -67,6 +69,10 @@ func (v *ChannelView) Layout(gtx layout.Context) layout.Dimensions {
 // Leave closes any inline editor (the ui root may call it when navigating
 // away; switching to another conversation does it automatically).
 func (v *ChannelView) Leave() { v.s.closeEdits() }
+
+// EditComposer is the message being edited inline here, or nil
+// (FileDragDrop's isMessageEdited / messageEditData).
+func (v *ChannelView) EditComposer() *composer.Composer { return v.s.editComposer() }
 
 // lastChannel/lastThread are the conversations drawn most recently; when
 // another one is drawn, the previous one was left and its inline editor is

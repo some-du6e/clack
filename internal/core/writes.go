@@ -42,6 +42,13 @@ func (a *App) Edit(ctx context.Context, ch, ts, text string, blocks json.RawMess
 	return a.C.Update(ctx, ch, ts, text, blocks)
 }
 
+// EditWithFiles saves an edit whose files changed (Slack's
+// saveMessageEditWithFiles): chat.update with file_ids, the files the
+// message keeps after the edit followed by those added while editing.
+func (a *App) EditWithFiles(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
+	return a.C.UpdateWithFiles(ctx, ch, ts, text, blocks, fileIDs)
+}
+
 // Delete deletes a message.
 func (a *App) Delete(ctx context.Context, ch, ts string) error { return a.C.Delete(ctx, ch, ts) }
 

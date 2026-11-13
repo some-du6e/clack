@@ -684,7 +684,11 @@ func (c *Composer) layoutInput(gtx layout.Context, p slackc.Props) layout.Dimens
 
 func (c *Composer) layoutInputBody(gtx layout.Context) layout.Dimensions {
 	c.drewInput = true
-	return c.ui.Layout(gtx, c.h, c.cs, c.wEditor, c.wAtt, c.inputP)
+	att := c.wAtt
+	if c.edit != nil && c.cs.NoEditFiles {
+		att = nil // cjbg renderInput: !fileAttachAfterSendDisabled && the attachments
+	}
+	return c.ui.Layout(gtx, c.h, c.cs, c.wEditor, att, c.inputP)
 }
 
 func (c *Composer) layoutEditor(gtx layout.Context) layout.Dimensions {
