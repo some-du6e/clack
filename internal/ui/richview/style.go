@@ -331,6 +331,15 @@ type Options struct {
 	Secondary bool
 	// MaxWidth caps the content width in Dp (0 = no cap beyond the constraints).
 	MaxWidth float32
+	// MaxLines clamps a paragraph to that many lines with an ellipsis
+	// (Slack's multiline_ellipsis_N, -webkit-line-clamp; 0: no clamp).
+	MaxLines int
+	// NoEmojiTips drops the emoji's :name: tooltips (Slack's showTooltips
+	// false on the mrkdwn renderer).
+	NoEmojiTips bool
+	// NoHoverCards: the doc sits inside a hover card (the channel card's
+	// topic), so its mentions report no card of their own.
+	NoHoverCards bool
 	// Compact uses 13px/18px text (previews, reply bars, search results).
 	Compact bool
 	// Channel and TS identify the message, for the Slack-shaped props of

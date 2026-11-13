@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/text"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -110,6 +111,41 @@ func sbFaceSteps(n, s int) []int {
 // row. The faces and the badge each carry HuddleChannelTooltip. Main
 // window goroutine.
 func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, rowH int, sel bool) int {
+	// BaseChannelSuffixHuddleIcon: myHuddleChannelId is your huddle's
+	// channel (isMessagingClient), the stack withTooltip, the badge's
+	// tooltip on (lw/3's default), huddleFakeMaskSvg 2×20
+	return c.Badge(gtx, th, ch, right, rowH, BadgeLook{Selected: sel, Mine: c.In(ch), MaskH: 20, Tips: true})
+}
+
+// BadgeLook is where a huddle badge sits and how that place draws it.
+type BadgeLook struct {
+	// Selected: on the selected sidebar row (.p-channel_sidebar__channel
+	// --selected recolours the badge and the fake mask).
+	Selected bool
+	// Mine: the badge without --other, myHuddleChannelId being this
+	// channel (the sidebar passes your huddle's channel; the channel hover
+	// card passes none, so its badge is always --other).
+	Mine bool
+	// MaskH is the fake mask svg's height: 20 (the sidebar's
+	// huddleFakeMaskSvg) or 19 (p-search_autocomplete__huddle_fake_mask_svg,
+	// the channel card's); its 20px path is cut off below that.
+	MaskH float32
+	// Tips: the stack and the badge show HuddleChannelTooltip (the
+	// sidebar's withTooltip; the card turns both off).
+	Tips bool
+}
+
+// Badge draws the huddle badge Slack's sidebar row suffix and channel
+// hover card share when a huddle is on in ch, ending at right (current
+// coordinates, rowH tall): HuddleAvatarStack (excludeIcon,
+// excludeMemberOverflowCount: two x_small faces, margin-left 8px), the
+// 2px fake mask, then HuddleSidebarLinkPeerCountBadge. The badge's
+// margin-left -1px and left 1px (relative) paint it flush with the mask
+// while its flow box overlaps the mask by 1px, and its margin-right 4px
+// ends the run: the painted badge ends 3px before right. It returns the
+// left edge (the stack's margin included), right itself when there's no
+// huddle. Main window goroutine.
+func (c *Controller) Badge(gtx C, th *theme.Theme, ch string, right, rowH int, look BadgeLook) int {
 	people := c.activeMembers(ch)
 	if _, live := c.Live(ch); !live && !c.In(ch) || len(people) == 0 {
 		return right
@@ -118,23 +154,24 @@ func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, row
 	bg, ink := k.bg, k.ink
 	theme.SetColor(th.Tokens, &bg, "var(--dt_color-theme-base-inv-hgl-1)")
 	theme.SetColor(th.Tokens, &ink, "var(--dt_color-content-inv-pry)")
-	in := c.In(ch)
-	if sel {
+	if look.Selected {
 		bg, ink = k.selOtherBg, k.selOtherInk
-		if in {
+		if look.Mine {
 			bg, ink = k.selBg, k.selInk
 		}
 	}
 	hs := c.hdrState(ch)
-	right -= gtx.Dp(4) // margin-right
 	num := strconv.Itoa(len(people))
 	nw := th.Measure(gtx, 13, theme.Bold, num)
 	is := gtx.Dp(16)
 	h := gtx.Dp(20)
 	w := max(gtx.Dp(36), gtx.Dp(6)+is+gtx.Dp(2)+nw+gtx.Dp(6))
-	x0 := right - w
+	// flow: margin-right 4px, the box w wide with margin-left -1px; paint:
+	// left 1px
+	x1 := right - gtx.Dp(4) + gtx.Dp(1)
+	x0 := x1 - w
 	y0 := (rowH - h) / 2
-	r := image.Rect(x0, y0, right, y0+h)
+	r := image.Rect(x0, y0, x1, y0+h)
 	segFill(gtx, r, segCaret, gtx.Dp(4), bg) // corners 0 4px 4px 0
 	cx := r.Min.X + (w-(is+gtx.Dp(2)+nw))/2
 	at(gtx, image.Pt(cx, y0+(h-is)/2), image.Pt(is, is), func(gtx C) D { return icons.Get("headphones")(gtx, 16, ink) })
@@ -143,29 +180,49 @@ func (c *Controller) SidebarSuffix(gtx C, th *theme.Theme, ch string, right, row
 		at(gtx, image.Pt(0, (h-m.Y)/2), m, func(gtx C) D { return th.Label(gtx, 13, theme.Bold, ink, num) })
 		return D{Size: image.Pt(nw, h)}
 	})
-	c.sbTipArea(gtx, th, &hs.sbBadge, r, ch, false) // lw/3's withTooltip
+	if look.Tips {
+		c.sbTipArea(gtx, th, &hs.sbBadge, r, ch, false) // lw/3's withTooltip
+	} else {
+		hs.sbBadge = sbTip{}
+	}
 	right = x0
-	// the fake mask: its path clipped to its 2×20 box
+	// the fake mask: its path clipped to its 2×MaskH box, at the top of
+	// the run (the flex row stretches; the svg has its own height)
 	mw := gtx.Dp(2)
+	mh := gtx.Dp(unit.Dp(look.MaskH))
 	func() {
 		defer op.Offset(image.Pt(right-mw, y0)).Push(gtx.Ops).Pop()
-		defer clip.Rect{Max: image.Pt(mw, h)}.Push(gtx.Ops).Pop()
-		sc := float32(h) / 20
+		defer clip.Rect{Max: image.Pt(mw, mh)}.Push(gtx.Ops).Pop()
+		sc := float32(gtx.Dp(20)) / 20
 		defer clip.Outline{Path: icons.ClipPath(gtx, sbFakeMask, sc)}.Op().Push(gtx.Ops).Pop()
-		theme.Fill(gtx, image.Rect(0, 0, mw, h), bg)
+		theme.Fill(gtx, image.Rect(0, 0, mw, mh), bg)
 	}()
 	right -= mw
 	if c.transitioning(ch) {
 		hs.sbFaces = sbTip{} // the stack is gone, and its tooltip with it
 		return right
 	}
-	return c.sbStack(gtx, th, &hs.sbFaces, ch, people, right, rowH, false) - gtx.Dp(8) // margin-left 8px
+	t := &hs.sbFaces
+	if !look.Tips {
+		*t = sbTip{}
+		t = nil
+	}
+	return c.sbStack(gtx, th, t, ch, people, right, rowH, false) - gtx.Dp(8) // margin-left 8px
+}
+
+// CardBadge is ChannelHoverCardHuddleBadge (boot-shared 7+JF) ending at
+// right in a row rowH tall: when a huddle is on in ch (isMessagingClient
+// and getChannelHasActiveHuddle), Badge without tooltips, never
+// selected, always --other, with the 2×19 fake mask. It returns the left
+// edge, right when there's no huddle.
+func (c *Controller) CardBadge(gtx C, th *theme.Theme, ch string, right, rowH int) int {
+	return c.Badge(gtx, th, ch, right, rowH, BadgeLook{MaskH: 19})
 }
 
 // sbStack draws HuddleAvatarStackContent (excludeIcon,
 // excludeMemberOverflowCount, x_small faces) for ch ending at right with
-// its tooltip (withTooltip; includeChannelNameInTooltip is withChannel),
-// and returns its left edge.
+// its tooltip (withTooltip, nil t: none; includeChannelNameInTooltip is
+// withChannel), and returns its left edge.
 func (c *Controller) sbStack(gtx C, th *theme.Theme, t *sbTip, ch string, people []string, right, rowH int, withChannel bool) int {
 	fs := gtx.Dp(hdrFace)
 	n := min(len(people), sbMaxFaces)
@@ -176,7 +233,9 @@ func (c *Controller) sbStack(gtx C, th *theme.Theme, t *sbTip, ch string, people
 		p := image.Pt(fx+steps[i], (rowH-fs)/2)
 		c.sbFace(gtx, th, u, p, fs, i > 0)
 	}
-	c.sbTipArea(gtx, th, t, image.Rect(fx, (rowH-fs)/2, right, (rowH+fs)/2), ch, withChannel)
+	if t != nil { // withTooltip
+		c.sbTipArea(gtx, th, t, image.Rect(fx, (rowH-fs)/2, right, (rowH+fs)/2), ch, withChannel)
+	}
 	return fx
 }
 

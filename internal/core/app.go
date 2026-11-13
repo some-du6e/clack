@@ -24,8 +24,9 @@ type App struct {
 	S   *store.Store
 	RTM *slack.RTM
 
-	prio      prioState // the VIP unreads section's open conversation (prefs_a.go)
-	acs       acState   // the composer autocomplete's frecency, model and history (autocomplete.go)
+	prio      prioState  // the VIP unreads section's open conversation (prefs_a.go)
+	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
+	acs       acState    // the composer autocomplete's frecency, model and history (autocomplete.go)
 	ready     chan struct{}
 	bootErr   error
 	mu        sync.Mutex

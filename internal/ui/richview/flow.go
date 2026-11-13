@@ -179,6 +179,10 @@ type target struct {
 	// cardless: a channel target that opens no hover card (a work
 	// object's channel field)
 	cardless bool
+	// tab: a channel-tab slug's tab id (a tLink whose id is the channel):
+	// the slug opens the channel hover card when TabSlugCard says Slack's
+	// would
+	tab string
 	// inCard: a tImage inside a v3 link card (unfurl.go). A click opens
 	// the image viewer; a right-click is the card's, as in Slack, where
 	// the image has no context menu of its own.
@@ -562,7 +566,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			p0, p1 := l.plainAdd(alt)
 			ep := fs.emoji
 			var tip int16
-			if sp.ID != "" { // Slack's emoji tooltip: the :name: (with ::skin-tone-N)
+			if sp.ID != "" && !l.opts.NoEmojiTips { // Slack's emoji tooltip: the :name: (with ::skin-tone-N)
 				l.d.tips = append(l.d.tips, ":"+sp.ID+":")
 				tip = int16(len(l.d.tips))
 			}
@@ -623,7 +627,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			}
 			if sp.Kind == richtext.Channel && sp.URL != "" && !sp.Off {
 				// a channel-tab slug (tab_id): the link opens the tab
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL})
+				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, id: sp.ID, tab: tabOfSlug(sp.URL)})
 			} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
 				tg = l.d.addTarget(target{kind: kind, id: sp.ID, self: sp.Self})
 			} // a hidden channel with a fallback name: plain text, no card (BaseMrkdwnChannel returns the span before the trigger)
