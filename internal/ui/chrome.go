@@ -462,10 +462,10 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
 				sel := active == t.key
 				tile := image.Rect(gtx.Dp(8), gtx.Dp(8), gtx.Dp(44), gtx.Dp(44))
-				if sel {
+				// .p-tab_rail__button__icon: hover, :active, --active and a
+				// visible peek all fill it theme-surf-inv-pry
+				if sel || btn.Hovered() || peek {
 					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeActive)
-				} else if btn.Hovered() || peek {
-					a.chrome(gtx, org, tile, gtx.Dp(8), c.ChromeHover)
 				}
 				name := t.icon
 				if sel && icons.Has(name+"-filled") {
@@ -490,7 +490,9 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 						return a.railCount(gtx, n)
 					})
 				} else if dot {
-					theme.Circle(gtx, image.Pt(tile.Max.X-gtx.Dp(2), tile.Min.Y+gtx.Dp(2)), gtx.Dp(8), c.ChromeText)
+					// .p-unread_dot: 6px, theme-base-imp; in the rail button
+					// top 12px, right 12px (centre 37, 15 of the 52px box)
+					theme.Circle(gtx, image.Pt(gtx.Dp(37), gtx.Dp(15)), gtx.Dp(6), c.Badge)
 				}
 				return layout.Dimensions{Size: image.Pt(gtx.Dp(52), th)}
 			})

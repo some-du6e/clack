@@ -140,8 +140,7 @@ def page(shot, cells, bg, rules):
                    % (scope, i * 120 + 6, button(b, st)) for i, (b, st) in enumerate(cells))
     return ("<!doctype html><html><head><meta charset=utf-8><link rel=stylesheet href='%s'>"
             "<style>:root{%s;color-scheme:%s}%s%s html,body{margin:0;background:%s;font-family:Singer-Lato,Lato,sans-serif;"
-            "font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}"
-            ".p-unread_dot{position:absolute;width:8px;height:8px;border-radius:50%%;background:currentColor}</style></head>"
+            "font-size:15px;line-height:1.46668;-webkit-font-smoothing:antialiased}*{box-sizing:border-box}</style></head>"
             "<body class='%s'>%s</body></html>"
             % (file_url(css_path), root, "dark" if dark else "light", inv, rules, bg, "sk-client-theme--dark" if dark else "", body))
 
