@@ -10,7 +10,8 @@ name: composer-audit-shots
 # bar's window bounds; gap-w10's full-width markers, the fence that ends
 # a code line, Up out of a leading code block, lists inside a quote,
 # Down in an empty box, the reply box's page keys, the offline help, the
-# link dialog's rich text and the native spellcheck menu) on the synthetic workspace
+# link dialog's rich text and the native spellcheck menu; edit-replies'
+# edit round-trip of every rich_text element and the message slug) on the synthetic workspace
 # and internal/fakeslack, then draws the composer headlessly through
 # Gio's GPU renderer (Mesa llvmpipe) in light and dark and uploads the
 # screenshots (composer-audit-shots). Nothing here talks to Slack.
@@ -44,7 +45,7 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: composer audit tests
         run: |
-          go test -count=1 -v -run 'TestSlackLength|TestOverLimitBlocksSend|TestClipButtonsNeedARecorder|TestShortcutAndMentionButtons|TestEmptyEditAsksToDelete|TestMarkdownShortcutsLikeSlack|TestComposerKeysLikeSlack|TestComposerEditingKeysLikeSlack|TestScheduleMenuRows|TestFormattingTogglePref|TestPasteLimit|TestAutoformat|TestLiveMarkup|TestEnter|TestBackspace|TestAffinityFeaturesFollowExperiment|TestScheduleDialogLikeSlack|TestSnippetDialogLikeSlack|TestSnippetTypeOptions|TestPasteLimitCreatesSnippet|TestPlusMenuRows|TestScheduledSendBar|TestSlashListKeysByApp|TestFloatBarPosition|TestFloatBarShowsLikeSlack|TestFloatBarWindowBounds|TestConvertMarkdown|TestGif|TestNoGifRowWithoutThePicker|TestPlusMenuMacHints|TestEditFileDetailsLikeSlack|TestAltTextSpeedBumpLikeSlack|TestSnippetTabStops|TestSnippetTabKey|TestSnippetHighlightClasses|TestSnippetShareWarning|TestSnippetConvPicker|TestW10|TestSpellContextMenu' ./internal/ui/composer
+          go test -count=1 -v -run 'TestSlackLength|TestOverLimitBlocksSend|TestClipButtonsNeedARecorder|TestShortcutAndMentionButtons|TestEmptyEditAsksToDelete|TestMarkdownShortcutsLikeSlack|TestComposerKeysLikeSlack|TestComposerEditingKeysLikeSlack|TestScheduleMenuRows|TestFormattingTogglePref|TestPasteLimit|TestAutoformat|TestLiveMarkup|TestEnter|TestBackspace|TestAffinityFeaturesFollowExperiment|TestScheduleDialogLikeSlack|TestSnippetDialogLikeSlack|TestSnippetTypeOptions|TestPasteLimitCreatesSnippet|TestPlusMenuRows|TestScheduledSendBar|TestSlashListKeysByApp|TestFloatBarPosition|TestFloatBarShowsLikeSlack|TestFloatBarWindowBounds|TestConvertMarkdown|TestGif|TestNoGifRowWithoutThePicker|TestPlusMenuMacHints|TestEditFileDetailsLikeSlack|TestAltTextSpeedBumpLikeSlack|TestSnippetTabStops|TestSnippetTabKey|TestSnippetHighlightClasses|TestSnippetShareWarning|TestSnippetConvPicker|TestW10|TestSpellContextMenu|TestEditRoundTripEveryElement|TestEditDateAndColorLikeSlack|TestEditComposerMessageSlug|TestDocFromRichtextMessageMention' ./internal/ui/composer
       - name: the send button and Enter through the window (whole app on fakeslack)
         run: go test -count=1 -v -run 'TestSendButtonClicks' ./internal/ui
       - name: screenshots (Mesa llvmpipe)
@@ -55,7 +56,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$COMPOSER_AUDIT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestComposerAuditShots|TestExpComposerShots|TestComposer2Shots|TestW10Shots' ./internal/ui/composer
+          xvfb-run -a go test -count=1 -v -run 'TestComposerAuditShots|TestExpComposerShots|TestComposer2Shots|TestW10Shots|TestEditComposerSlugShots' ./internal/ui/composer
           ls -la "$COMPOSER_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

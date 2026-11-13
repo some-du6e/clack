@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
@@ -1062,6 +1063,19 @@ func (b *rtBuilder) rtSpans(l Line, spans []richtext.Span, plain bool) {
 				continue
 			}
 			b.atom(at)
+		case richtext.MessageMention:
+			// a rendered span keeps only the label, the message ts and the
+			// url: the slug comes back from its permalink (the edit
+			// composer reads the message's blocks, docForMessage)
+			if pl, ok := core.ParsePermalink(s.URL); ok && pl.Kind == "message" && !plain {
+				b.atom(&Atom{Kind: AtomMessage, ID: pl.TS, Channel: pl.ChannelID, Thread: pl.ThreadTS, URL: s.URL, Text: s.Text})
+				continue
+			}
+			if s.URL != "" {
+				b.text(s.URL, Attr{Style: st}) // the bare url autolinks again
+				continue
+			}
+			b.text(s.Text, Attr{Style: st})
 		default: // Text, Date, unknown
 			b.text(s.Text, Attr{Style: st})
 		}
