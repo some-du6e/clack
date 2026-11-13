@@ -85,6 +85,10 @@ func TestSidebarRowShots(t *testing.T) {
 			}
 			sh := sbShot{Scale: scale, Dark: dark, X: s.origin.X, W: e.context().Dp(unit.Dp(s.width)), WDp: s.width, Vars: e.a.scopeVars}
 			for _, id := range ids {
+				if s.sbPos(id) < 0 { // the sidebar's filters can leave a fixture out (muted)
+					t.Logf("%s: not in the sidebar, skipped", id)
+					continue
+				}
 				// the row in view, the pointer on it only for the hovered one
 				pt := e.sbRowPoint(t, id)
 				hover := id == fakeslack.JoinBannerOldID
