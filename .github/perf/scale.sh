@@ -95,6 +95,6 @@ for s in "${sides[@]}"; do
   cp "$work/creds.json" "$home/creds.json"
   seed "$home"
   run "$s" "$home" prime "users,exit" 900
-  run "$s" "$home" warm "${CLACK_PERF_WARM_SCRIPT:-startup,picker,picker-all,scroll,channels,idle}" 4200
+  run "$s" "$home" warm "${CLACK_PERF_WARM_SCRIPT:-startup,picker,picker-all,scroll,channels,idle}" 6600
 done
 exit 0

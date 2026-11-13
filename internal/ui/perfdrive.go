@@ -21,10 +21,12 @@ package ui
 //	            cache then holds them all for the next start
 //	startup     CLACK_PERF_SETTLE (30 s) after core is ready
 //	picker      the emoji picker opened (its first screen drawn)
-//	picker-all  … and scrolled through every row of it
+//	picker-all  … and scrolled through every row of it, CLACK_PERF_PICKER_STEP
+//	            (8) rows a frame
 //	scroll      each CLACK_PERF_LONG channel (default two of fakeslack's
 //	            long ones) paged back to CLACK_PERF_MSGS (3000) messages,
-//	            then scrolled down through all of them
+//	            then scrolled down through all of them, CLACK_PERF_SCROLL_STEP
+//	            (6) rows a frame
 //	channels    CLACK_PERF_CHANNELS (40) more channels opened one after
 //	            another, 2 s each
 //	idle        left alone for CLACK_PERF_IDLE (10m)
@@ -239,10 +241,11 @@ func perfPicker(a *App, all bool, logf func(string, ...any)) {
 			top = a.overlays[n-1]
 		}
 	})
+	step := perfInt("CLACK_PERF_PICKER_STEP", 8) // under a screen of rows: every row is drawn
 	steps := 0
 	for ; steps < 20000; steps++ {
 		var end, ok bool
-		perfOnUI(a, func() { end, ok = popups.PerfScrollPicker(top, 8) })
+		perfOnUI(a, func() { end, ok = popups.PerfScrollPicker(top, step) })
 		if !ok || end {
 			break
 		}
@@ -283,10 +286,11 @@ func perfScroll(a *App, logf func(string, ...any)) {
 			}
 		}
 		// … and down through every row
+		step := perfInt("CLACK_PERF_SCROLL_STEP", 6)
 		steps := 0
 		for ; steps < 100000; steps++ {
 			end := false
-			perfOnUI(a, func() { end = messages.PerfScrollDown(ch, 6) })
+			perfOnUI(a, func() { end = messages.PerfScrollDown(ch, step) })
 			if end {
 				break
 			}

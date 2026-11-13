@@ -212,6 +212,10 @@ jobs:
         side: ${{ fromJSON(inputs.scale_base != '' && '["head","base"]' || '["head"]') }}
     env:
       CLACK_PERF_IDLE: ${{ inputs.scale_idle || '10m' }}
+      # llvmpipe draws a 1440x900 frame in about a second: the picker and
+      # the long channels move twice as far a frame here as on Windows
+      CLACK_PERF_PICKER_STEP: "16"
+      CLACK_PERF_SCROLL_STEP: "12"
       SIDE: ${{ matrix.side }}
       SCALE_BASE: ${{ inputs.scale_base }}
     steps:
