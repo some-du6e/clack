@@ -306,8 +306,8 @@ func TestSlickViewHuddleMuteDetector(t *testing.T) {
 	e := newHuddleCallEnv(t)
 	e.install("HuddleMuteDetector")
 	fk := e.join()
-	e.until("the other person in the huddle's peers", 15*time.Second, func() bool {
-		return e.c.Session() != nil && e.c.Session().UserOf(huddle.FakeRemoteAttendee) == huddle.FakeRemoteUser
+	e.until("the other person in the huddle's peers (as plugins see them)", 15*time.Second, func() bool {
+		return e.h.tt.HuddlePeers()[huddle.FakeRemoteAttendee] == huddle.FakeRemoteUser
 	})
 	s := e.c.Session()
 	if err := fk.PeerMessage(huddle.FakeRemoteAttendee, &huddle.PeerMessage{MuteRequest: &huddle.MuteRequest{PeerID: s.SelfAttendee()}}); err != nil {

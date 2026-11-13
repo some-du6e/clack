@@ -110,8 +110,10 @@ func (p *painter) img(b *box, r rectF) {
 		img.Filter = paint.FilterNearest
 	}
 	t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(sx, sy)).Offset(f32.Pt(ox, oy))).Push(p.ops)
+	o := p.groupLayer()
 	img.Add(p.ops)
 	paint.PaintOp{}.Add(p.ops)
+	o()
 	t.Pop()
 	cs.Pop()
 }
@@ -134,7 +136,9 @@ func (p *painter) svg(b *box, r rectF) {
 		sty = p.v.svgStyFn
 	}
 	t := op.Offset(image.Pt(int(math.Round(float64(r.x0))), int(math.Round(float64(r.y0))))).Push(p.ops)
+	o := p.groupLayer()
 	b.svg.paint(p.ops, f32.Pt(r.x1-r.x0, r.y1-r.y0), root, sty, mc)
+	o()
 	t.Pop()
 }
 

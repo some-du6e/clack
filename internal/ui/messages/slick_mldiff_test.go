@@ -133,7 +133,7 @@ func mlEditDiff(t *testing.T, dark bool, mode string) {
 	// background) at .62 over the pane, blended in sRGB
 	bg := e.h.th.C.Bg
 	tint := mlOver(bg, mlRemovedBg, 0.62)
-	ink := mlOver(tint, mlRemovedFg, 0.62)
+	ink := mlOver(bg, mlRemovedFg, 0.62) // the group's text covers its own background: text at .62 over the pane
 	green := mlOver(bg, mlAddedFg, 0.62)
 	newPx := func(match func(c color.NRGBA) bool) (n int) {
 		b := after.Bounds()

@@ -340,7 +340,7 @@ func TestTautHuddleActivity(t *testing.T) {
 func renderHuddleWindow(t *testing.T, e *hcEnv, w, h int) *image.RGBA {
 	t.Helper()
 	var ops op.Ops
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 20; i++ { // a second at the shot's scale: patched roots lay out again at it
 		ops.Reset()
 		gtx := shotCtx(&ops, w, h)
 		slackc.LockFrame()

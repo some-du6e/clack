@@ -285,7 +285,10 @@ func (w *window) baseEvent(gtx C, th *theme.Theme, p slackc.Props, textCol color
 		avatar(gtx, th, w.c.h.Images(), w.c.avatarURL(member, av), image.Pt(av, av), gtx.Dp(8))
 		return D{Size: image.Pt(av, av)}
 	})
-	name := w.c.displayName(member)
+	name := ""
+	if member != "" { // the member name selector has nothing for no member (a plugin's line)
+		name = w.c.displayName(member)
+	}
 	nd := at(gtx, image.Pt(tx, padY), image.Pt(tw, gtx.Dp(22)), func(gtx C) D {
 		return th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: th.C.Fg, MaxLines: 1}, name)
 	})
