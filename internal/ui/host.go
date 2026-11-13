@@ -526,19 +526,56 @@ func (a *App) OpenEmojiGifPicker(anchor image.Rectangle, onPick func(name string
 // aK, L1Ms getTargetContainer). The profile card is the hover card only
 // (HoverCardTrigger 0oEe: openOnClick off, and a click closes it).
 //
-// A bot user (not Slackbot) keeps the app card: Slack's openProfile opens
-// the app's App details view (toAppDetails), which Clack doesn't have.
+// An app opens its App details flexpane instead (toAppDetails): MemberSlug
+// does when getBotIdFromMember (GzI9) finds the member's bot, which needs
+// isAppOrBot (is_app_user, is_bot or USLACK) and profile.bot_id, unless
+// the member is an Agentforce agent or the channel-expert app. A member
+// the store doesn't hold yet has no bot id there, so Slack's click opens
+// toProfile, as here.
 func (a *App) OpenProfile(anchor image.Point, userID string) {
 	if userID == "" {
 		return
 	}
 	if c := a.Core(); c != nil {
-		if u, ok := c.User(userID); ok && u.IsBot && userID != "USLACKBOT" {
-			a.OpenProfileCard(anchor, userID)
+		if u, ok := c.User(userID); ok && memberBotID(u) != "" && !u.Agentforce {
+			a.OpenAppDetails(userID, memberBotID(u))
 			return
 		}
 	}
 	a.OpenUserProfile(userID)
+}
+
+// memberBotID is getBotIdFromMember: an app or bot member's
+// profile.bot_id ("" for a person).
+func memberBotID(u core.User) string {
+	if !(u.IsBot || u.AppUser || u.ID == "USLACK") || u.Deleted {
+		return ""
+	}
+	return u.BotID
+}
+
+// OpenAppDetails shows an app's App details view in the secondary pane
+// (toAppDetails: popups.AppDetailsView) for its bot user userID and bot
+// botID. Like a profile, it keeps a thread or search it opened over as
+// its back stack.
+func (a *App) OpenAppDetails(userID, botID string) {
+	cur := a.secondary
+	if cur.kind == secProfile && cur.user == userID && cur.open() {
+		if _, ok := cur.view.(*popups.AppDetailsView); ok {
+			return
+		}
+	}
+	var prev *secondaryState
+	if cur.open() && cur.kind != secProfile && (cur.kind == secSearch || a.navSrc != srcPrimary) {
+		p := cur
+		prev = &p
+	}
+	if cur.kind == secThread && cur.open() {
+		a.leaveThreadRoute(cur.channel, cur.ts)
+	}
+	a.secondary = secondaryState{kind: secProfile, user: userID, width: cur.width, prev: prev}
+	a.secondary.view = popups.NewAppDetailsView(a, userID, botID)
+	a.Invalidate()
 }
 
 // OpenProfileCard opens the profile card as a click popover: Slack's

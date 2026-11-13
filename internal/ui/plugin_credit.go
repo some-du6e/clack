@@ -23,6 +23,7 @@ package ui
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -147,16 +148,47 @@ func (r creditResolver) mention(p creditPerson) string {
 	return mrkdwnEscape(name)
 }
 
-// list is people as mentions or names, joined with ", ".
+// list is people as mentions or names, joined with ", ", each person
+// once (Karim 2026-11-13: "By @Jeremy, @Rowan, @Rowan"), in order.
 func (r creditResolver) list(people []creditPerson) string {
+	people = r.dedupe(people)
 	out := make([]string, 0, len(people))
+	for _, p := range people {
+		out = append(out, r.mention(p))
+	}
+	return strings.Join(out, ", ")
+}
+
+// creditKey is who p is: their member id here when they resolve to one,
+// else their folded name.
+func (r creditResolver) creditKey(p creditPerson) string {
+	if id := r.id(p); id != "" {
+		return "id:" + id
+	}
+	if f := store.FoldName(p.Name); f != "" {
+		return "name:" + f
+	}
+	return "id:" + p.SlackID
+}
+
+// dedupe drops empty people and repeats of someone listed before (the
+// same resolved member, or the same name when unresolved), keeping the
+// first's place.
+func (r creditResolver) dedupe(people []creditPerson) []creditPerson {
+	seen := map[string]bool{}
+	out := make([]creditPerson, 0, len(people))
 	for _, p := range people {
 		if strings.TrimSpace(p.Name) == "" && p.SlackID == "" {
 			continue
 		}
-		out = append(out, r.mention(p))
+		k := r.creditKey(p)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, p)
 	}
-	return strings.Join(out, ", ")
+	return out
 }
 
 // mrkdwnPeople splits a mrkdwn author list (Slick's `<@U…>, <@U…|name>`,
@@ -201,6 +233,12 @@ func (r creditResolver) mrkdwn(s string) string {
 // libraryCredit is a library entry's authors as mentions or names, else
 // its upstream contributors.
 func (r creditResolver) libraryCredit(e pluginlib.Entry) string {
+	return r.list(libraryPeople(e))
+}
+
+// libraryPeople is a library entry's authors, else its upstream
+// contributors.
+func libraryPeople(e pluginlib.Entry) []creditPerson {
 	var people []creditPerson
 	for _, a := range e.Authors {
 		if a.Name != "" || a.SlackID != "" {
@@ -212,7 +250,7 @@ func (r creditResolver) libraryCredit(e pluginlib.Entry) string {
 			people = append(people, creditPerson{Name: c})
 		}
 	}
-	return r.list(people)
+	return people
 }
 
 // tautAuthors is an installed Taut plugin's authors.
@@ -276,4 +314,73 @@ func (r creditResolver) byName(name string) string {
 	m[f] = hit
 	creditNames.mu.Unlock()
 	return hit.id
+}
+
+// ---- About's contributors ----
+
+// aboutLeads are who About credits first: Jeremy made Taut and Rowan
+// Slick, the two plugin systems Clack runs.
+var aboutLeads = []string{"jeremy", "rowan"}
+
+// contributors is everyone who made or contributed to a plugin, as
+// mentions or names, each once: the library's authors and upstream
+// contributors (entries) and the installed plugins' authors (more),
+// Jeremy and Rowan first, then the rest by name.
+func (r creditResolver) contributors(entries []pluginlib.Entry, more []creditPerson) string {
+	var lead []creditPerson
+	for _, k := range aboutLeads {
+		for _, a := range taut.KnownAuthors() {
+			if strings.EqualFold(a.Name, k) {
+				lead = append(lead, creditPerson{Name: a.Name, URL: a.URL, SlackID: a.SlackID})
+			}
+		}
+	}
+	var rest []creditPerson
+	for _, e := range entries {
+		for _, a := range e.Authors {
+			rest = append(rest, creditPerson{Name: a.Name, URL: a.URL, SlackID: a.SlackID})
+		}
+		for _, c := range e.Contributors {
+			rest = append(rest, creditPerson{Name: c})
+		}
+	}
+	rest = append(rest, more...)
+	leadKeys := map[string]bool{}
+	for _, p := range lead {
+		leadKeys[r.creditKey(p)] = true
+	}
+	rest = r.dedupe(rest)
+	others := rest[:0]
+	for _, p := range rest {
+		if !leadKeys[r.creditKey(p)] {
+			others = append(others, p)
+		}
+	}
+	sort.SliceStable(others, func(i, j int) bool {
+		return store.FoldName(others[i].Name) < store.FoldName(others[j].Name)
+	})
+	return r.list(append(lead, others...))
+}
+
+// installedPeople is the installed Taut and Slick plugins' authors.
+func (a *App) installedPeople() []creditPerson {
+	var out []creditPerson
+	if t := a.Taut(); t != nil {
+		for _, c := range t.Settings().Categories {
+			for _, pl := range c.Plugins {
+				if len(pl.Authors) == 0 {
+					out = append(out, mrkdwnPeople(pl.AuthorsMrkdwn)...)
+				}
+				for _, au := range pl.Authors {
+					out = append(out, creditPerson{Name: au.Name, URL: au.URL, SlackID: au.SlackID})
+				}
+			}
+		}
+	}
+	if sl := a.Slick(); sl != nil {
+		for _, pl := range sl.Settings().Plugins {
+			out = append(out, mrkdwnPeople(pl.Authors)...)
+		}
+	}
+	return out
 }

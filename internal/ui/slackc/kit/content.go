@@ -16,12 +16,12 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/text"
 
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -36,9 +36,6 @@ func init() {
 	add(characterCount, "CharacterCount")
 	add(emojiMenuTrigger, "Connect(EmojiMenuTrigger)", "EmojiMenuTrigger")
 }
-
-// hoverDelay is how long the pointer rests before a hover card opens.
-const hoverDelay = 500 * time.Millisecond
 
 // ---- pointer tracking (hover, click, origin) ----
 
@@ -101,21 +98,6 @@ func (p *ctPointer) register(gtx layout.Context, sz image.Point, pass, hand bool
 	}
 }
 
-// hoverDue reports, once per hover, that the pointer has rested for d
-// (scheduling a frame for when it will).
-func (p *ctPointer) hoverDue(gtx layout.Context, d time.Duration) bool {
-	if !p.hovered || p.fired {
-		return false
-	}
-	due := p.since.Add(d)
-	if gtx.Now.Before(due) {
-		gtx.Execute(op.InvalidateCmd{At: due})
-		return false
-	}
-	p.fired = true
-	return true
-}
-
 // ---- Avatar ----
 
 type avatarState struct {
@@ -123,6 +105,7 @@ type avatarState struct {
 	org  origin
 	tip  popups.TipState
 	card bool
+	hov  hovercard.Trigger // showCard: the profile hover card
 }
 
 // iconKeys are Slack's image set keys, smallest first.
@@ -243,9 +226,6 @@ func avatar(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if interactive && st.ptr.clicked {
 		open(envOf().OpenProfile)
 	}
-	if interactive && size >= 36 && p.Bool("showCard") && st.ptr.hoverDue(gtx, hoverDelay) {
-		open(envOf().OpenProfileCard)
-	}
 
 	r := image.Rectangle{Max: sz}
 	drawn := false
@@ -261,6 +241,11 @@ func avatar(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		theme.RRect(gtx, r, avatarRadius(px), cl.Skeleton)
 	}
 	st.ptr.register(gtx, sz, !interactive, interactive && userID != "")
+	if interactive && size >= 36 && p.Bool("showCard") {
+		// ProfileHoverTrigger around the avatar: Slack's hover card after
+		// its 350ms, closed by the click (hovercard)
+		st.hov.LayoutBot(gtx, userID, p.StrOr("botId", ""), sz)
+	}
 	if p.Bool("showTooltip") && name != "" {
 		popups.Tooltip(gtx, th, &st.tip, st.ptr.hovered, sz, popups.Above, name, "")
 	}
@@ -270,40 +255,19 @@ func avatar(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 // ---- ProfileHoverTrigger ----
 
 type hoverTriggerState struct {
-	ptr ctPointer
-	org origin
+	hov hovercard.Trigger
 }
 
+// profileHoverTrigger is ProfileHoverTrigger (boot-render SmYd) around
+// its children: Slack's profile hover card (memberId, or serviceId for a
+// bot) through the ui root's hover card, after HoverCardTrigger's 350ms,
+// above the trigger; a click closes it and goes to the children's own
+// handlers (openOnClick is off). Karim 2026-11-13: plugin credit pills
+// that "doesnt do anything" on hover.
 func profileHoverTrigger(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	st := stateOf[hoverTriggerState](h)
-	st.ptr.update(gtx, &st.org)
 	d := h.Children(gtx)
-	id := h.Props.StrOr("memberId", "")
-	if id != "" {
-		side, _ := position(h.Props.StrOr("position", ""), popups.Below)
-		open := func() {
-			f := envOf().OpenProfileCard
-			if f == nil {
-				return
-			}
-			var a image.Point
-			switch side {
-			case popups.Right:
-				a = image.Pt(d.Size.X+dp(gtx, 8), 0)
-			case popups.Above:
-				a = image.Pt(0, -dp(gtx, 4))
-			default:
-				a = image.Pt(0, d.Size.Y+dp(gtx, 4))
-			}
-			f(st.org.toWin(a), id)
-		}
-		// HoverCardTrigger (boot-shared 0oEe) opens on hover only; a click
-		// goes to the children's own handlers (openOnClick is off)
-		if st.ptr.hoverDue(gtx, hoverDelay) {
-			open()
-		}
-	}
-	st.ptr.register(gtx, d.Size, true, false)
+	st.hov.LayoutBot(gtx, h.Props.StrOr("memberId", ""), h.Props.StrOr("serviceId", ""), d.Size)
 	return d
 }
 

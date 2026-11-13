@@ -254,6 +254,14 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
+      # A copy as Slack's desktop app makes it: text, "HTML Format" and the
+      # custom types (slack/html, slack/texty) in Chromium's web custom data.
+      - name: rich copy (CF_UNICODETEXT, HTML Format, Chromium Web Custom MIME Data Format)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -run 'TestWinRichCopy|TestEncodeCustom|TestCFHTML' ./internal/ui/richclip
       # Files dragged onto a Gio window by another process through OLE
       # (PowerShell C#: DoDragDrop with a CF_HDROP DataObject, moving the
       # cursor), Esc's cancel, and WM_DROPFILES (Gio patch 11).
