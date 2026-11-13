@@ -265,7 +265,7 @@ func (p *convPicker) Layout(gtx layout.Context) layout.Dimensions {
 	}
 	r := image.Rect(x, y, x+w, y+h)
 	rad := gtx.Dp(6)
-	fillRRect(gtx, r.Inset(-1), rad+1, cl.Ring)
+	popups.CardRing(gtx, r, rad, cl.Ring, th.C.Bg) // a box-shadow spread
 	fillRRect(gtx, r, rad, th.C.Bg)
 	shield := clip.Rect(r).Push(gtx.Ops)
 	event.Op(gtx.Ops, &p.block)

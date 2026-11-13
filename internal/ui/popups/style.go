@@ -499,17 +499,18 @@ func softShadow(gtx layout.Context, r image.Rectangle, radius, dy, blur int, c c
 	}
 }
 
-// card paints a popover card: shadow, 1px ring, background.
+// card paints a popover card: shadow, 1px ring (a box-shadow spread:
+// card_ring.go), background.
 func card(gtx layout.Context, cl *Colors, r image.Rectangle, radius int) {
 	softShadow(gtx, r, radius, dp(gtx, 4), dp(gtx, 12), cl.Shadow)
-	rrect(gtx, r.Inset(-1), radius+1, cl.Ring)
+	cardRing(gtx, r, radius, cl.Ring, cl.Bg)
 	rrect(gtx, r, radius, cl.Bg)
 }
 
 // modalCard paints a modal card (bigger shadow).
 func modalCard(gtx layout.Context, cl *Colors, r image.Rectangle, radius int) {
 	softShadow(gtx, r, radius, dp(gtx, 18), dp(gtx, 48), cl.ModalShadow)
-	rrect(gtx, r.Inset(-1), radius+1, cl.Ring)
+	cardRing(gtx, r, radius, cl.Ring, cl.ModalBg)
 	rrect(gtx, r, radius, cl.ModalBg)
 }
 
@@ -537,8 +538,8 @@ func styledCard(gtx layout.Context, st slackc.Styled, cl *Colors, pos, sz image.
 	return styledCardLook(gtx, st, lk, pos, sz, radius, body)
 }
 
-// cardLook is a card's native paint: fill, 1px ring, and its shadow
-// around a rect.
+// cardLook is a card's native paint: fill, 1px ring (cardRing), and its
+// shadow around a rect.
 type cardLook struct {
 	fill, ring color.NRGBA
 	shadow     func(gtx layout.Context, r image.Rectangle, radius int)
@@ -550,7 +551,7 @@ func styledCardLook(gtx layout.Context, st slackc.Styled, lk cardLook, pos, sz i
 		local := image.Rectangle{Max: sz}
 		if !st.Active() {
 			lk.shadow(gtx, local, radius)
-			rrect(gtx, local.Inset(-1), radius+1, lk.ring)
+			cardRing(gtx, local, radius, lk.ring, lk.fill)
 			rrect(gtx, local, radius, lk.fill)
 			body(gtx)
 			return layout.Dimensions{Size: sz}
@@ -559,7 +560,7 @@ func styledCardLook(gtx layout.Context, st slackc.Styled, lk cardLook, pos, sz i
 		box := image.Rectangle{Max: sz.Add(image.Pt(2*bw, 2*bw))}
 		if !st.Has("box-shadow") {
 			lk.shadow(gtx, box, radius+bw)
-			stroke(gtx, box.Inset(-1), radius+bw+1, 1, lk.ring)
+			cardRing(gtx, box, radius+bw, lk.ring, lk.fill)
 		}
 		pxd := gtx.Metric.PxPerDp
 		if pxd == 0 {

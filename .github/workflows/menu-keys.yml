@@ -23,6 +23,7 @@ on:
       - "internal/ui/popups/experiments.go"
       - "internal/ui/popups/exp_menus*_test.go"
       - "internal/ui/popups/border_snap_test.go"
+      - "internal/ui/popups/card_ring*.go"
       - "internal/ui/popups/optionlist.go"
       - "internal/ui/theme/tooltip*.go"
       - "internal/ui/theme/button*.go"
@@ -110,7 +111,8 @@ jobs:
           ls -l "$EXP_MENUS_SHOTS_DIR"
       # popup borders: 1 CSS px snapped as Chromium snaps border widths
       # (floor, at least one device pixel), the drawn width per scale, and
-      # borders-<mode>-<125|200>-<before|after>.png
+      # borders-<mode>-<125|200>-<before|after>.png; popover card rings: a
+      # box-shadow spread, unsnapped (card_ring.go), card-ring-*.png
       - name: popup borders in CSS pixels
         env:
           BORDER_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -119,7 +121,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$BORDER_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestBorderWidthSnapsAsChromium|TestPopupBordersAreCSSPixels|TestPopupBorderDrawnWidth|TestPopupBorderShots' ./internal/ui/popups
+          xvfb-run -a go test -count=1 -v -run 'TestBorderWidthSnapsAsChromium|TestPopupBordersAreCSSPixels|TestPopupBorderDrawnWidth|TestPopupBorderShots|TestCardRingLikeChromium|TestPopoverCardsUseTheRing|TestCardRingShots' ./internal/ui/popups
           ls -l "$BORDER_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

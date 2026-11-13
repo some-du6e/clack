@@ -481,7 +481,7 @@ func softShadow(gtx layout.Context, r image.Rectangle, radius, dy, blur int, c c
 // card paints a popover card: shadow, 1px ring, background.
 func card(gtx layout.Context, cl *colors, r image.Rectangle, radius int) {
 	softShadow(gtx, r, radius, dp(gtx, 4), dp(gtx, 12), cl.Shadow)
-	theme.RRect(gtx, r.Inset(-1), radius+1, cl.Ring)
+	popups.CardRing(gtx, r, radius, cl.Ring, cl.Bg) // a box-shadow spread (popups/card_ring.go)
 	theme.RRect(gtx, r, radius, cl.Bg)
 }
 

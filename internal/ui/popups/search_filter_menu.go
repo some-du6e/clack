@@ -391,10 +391,7 @@ func (p *SearchPopover) acLayout(gtx layout.Context, th *theme.Theme, cl *Colors
 		m := dp(gtx, 10)
 		defer clip.Rect(image.Rect(r.Min.X-m, r.Min.Y+1, r.Max.X+m, r.Max.Y+m)).Push(gtx.Ops).Pop()
 		softShadow(gtx, r, rad, dp(gtx, 4), dp(gtx, 12), rgba(0x000000, .08))
-		func() {
-			defer shape(r.Inset(-1), rad+1).Push(gtx.Ops).Pop()
-			fill(gtx, r.Inset(-1), cl.Ring)
-		}()
+		cardRingCorners(gtx, r, [4]int{0, 0, rad, rad}, cl.Ring, cl.Bg) // card_ring.go
 		func() {
 			defer shape(r, rad).Push(gtx.Ops).Pop()
 			fill(gtx, r, cl.Bg)
