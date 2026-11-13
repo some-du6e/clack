@@ -110,6 +110,9 @@ func TestChannelFilesFake(t *testing.T) {
 	if len(lf) != 3 {
 		t.Fatalf("%d searchLinks calls", len(lf))
 	}
+	for _, f := range lf {
+		f.Del("token") // the client's credential, not one of the fetcher's args
+	}
 	wantForm(t, "links", lf[0], map[string]string{"channel_id": fakeslack.FilesChannelID, "page": "1", "sort": "timestamp", "sort_dir": "desc"})
 	wantForm(t, "links oldest", lf[1], map[string]string{"channel_id": fakeslack.FilesChannelID, "page": "2", "sort": "timestamp", "sort_dir": "asc"})
 	wantForm(t, "links search", lf[2], map[string]string{"channel_id": fakeslack.FilesChannelID, "page": "1", "query": "roadmap",

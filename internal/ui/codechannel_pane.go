@@ -121,6 +121,7 @@ func (a *App) openChannelTab(ch, tab string) {
 		}
 	}
 	a.Navigate("c/" + ch)
+	a.wantTabLink(ch, tab) // the tab opens once the tab bar has it (files_tab.go)
 }
 
 // channelTabOfLink parses getChannelTabPermalink's /archives/<C>/tabs/<id>.

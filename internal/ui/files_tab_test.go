@@ -88,4 +88,13 @@ func TestFilesTabOpens(t *testing.T) {
 	if e.a.filesTabView(ch) != nil {
 		t.Error("the Files & links view stayed after Messages")
 	}
+	// the tab's permalink (getChannelTabPermalink) opens the tab
+	if !e.a.OpenChannelTabLink("https://fake.slack.com/archives/" + ch + "/tabs/" + fakeslack.FilesTabID) {
+		t.Fatal("a tab permalink wasn't taken")
+	}
+	e.frame()
+	e.frame()
+	if e.a.filesTabView(ch) == nil {
+		t.Error("the tab permalink didn't open Files & links")
+	}
 }
