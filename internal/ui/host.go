@@ -9,6 +9,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -182,9 +183,59 @@ func (a *App) afterRoute(prev, r Route) {
 	if r.Page() != "search" {
 		a.searchQuery = ""
 	}
+	a.focusAfterNavigate(prev, r)
 	a.savePrefsSoon()
 	a.Invalidate()
 }
+
+// focusAfterNavigate is Slack's TRANSITION_FOCUS_NAVIGATE_LISTENER
+// (client-boot, build 2cd9270e786c): after a navigation the focus moves
+// to the view that changed, unless an overlay is open (n7.ZV) or the view
+// asked for preventMoveFocus (toChannel's default is false). For a
+// channel in the primary view getFocusKeyForView (IWmV) picks
+// MESSAGE_PANE_MESSAGE_INPUT, or the message list for a permalink (ts) or
+// a remembered list focus (lastFocusTs); shouldForceFocus (odUS) forces
+// it where you can post (9a8+ C: canUserPostInChannel), and MessagePane-
+// Input's onFocusTransition focuses the input. A preview or an archived
+// channel has a footer in place of the input, so nothing takes the focus.
+// Threads (r.Thread) are OpenThread's.
+func (a *App) focusAfterNavigate(prev, r Route) {
+	ch := r.Channel()
+	if ch == "" || prev == r || r.Thread() != "" || r.Message() != "" {
+		return
+	}
+	if a.data == nil || a.data.core == nil {
+		return // no workspace (a shell under test): nothing to mount
+	}
+	for _, o := range a.overlays {
+		if !o.Dismissed() {
+			return
+		}
+	}
+	c := a.convoFor(ch, "")
+	if a.footerFor(c) != footNone {
+		return
+	}
+	switch {
+	case c.edit != nil && !c.edit.Done():
+		c.edit.Focus()
+	case c.comp != nil:
+		c.comp.Focus()
+	}
+}
+
+// ApplyCoreEvent shows a core event in the message views now, on the UI
+// goroutine (a reaction picked this frame; popups.React).
+func (a *App) ApplyCoreEvent(ev core.Event) {
+	if a.data != nil && a.data.core != nil {
+		messages.ApplyEvent(a.data.core, ev)
+	}
+}
+
+// OpenQuickSwitcher opens the jumper. The composer calls it after Mod+K
+// with text selected: Slack's SlackKeyboard binding shows the coachmark
+// (onCmdKWhenSelected) and returns true, so the key goes on to the jumper.
+func (a *App) OpenQuickSwitcher() { a.openSwitcher() }
 
 // activeRail maps the current route to a rail tab.
 func (a *App) activeRail() string {

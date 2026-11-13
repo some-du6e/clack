@@ -174,7 +174,10 @@ func afBlockPrefix(rs []rune) (BlockKind, bool) {
 // List autofill also runs on a quote line (its binding only excludes
 // list, code and code-block lines) and then sets border "1" with the list
 // (`l = s?.blockquote ? "1" : "0"`, convertShortcutToBlockFormat): the
-// quote line becomes a list item inside the quote (Line.Quoted).
+// quote line becomes a list item inside the quote (Line.Quoted). "```"
+// there is buildLocalCodeBlockMarkdownChangeDelta's: the code block gets
+// border 1 when the line is a quote or the line above is a code line
+// with a border (u = c?.blockquote || d?.["code-block"] && d.border >= 1).
 func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 	caret = d.clamp(caret)
 	line := d.LineOf(caret)
@@ -192,8 +195,11 @@ func autoformatBlock(d *Doc, caret int) (newCaret int, k BlockKind, ok bool) {
 		}
 	}
 	k, ok = afBlockPrefix(d.Runes[ls:caret])
-	if !ok || quoted && k == CodeBlock {
+	if !ok {
 		return caret, Para, false
+	}
+	if k == CodeBlock && line > 0 && d.Lines[line-1].Kind == CodeBlock && d.Lines[line-1].Quoted {
+		quoted = true
 	}
 	d.Delete(ls, caret)
 	d.Lines[line] = Line{Kind: k, Quoted: quoted}
@@ -339,6 +345,9 @@ func autoformatFence(d *Doc, caret int) (newCaret int, ok bool) {
 		return caret, false
 	}
 	start := caret - 3
+	// on a quote line the code block is inside the quote (border 1: the
+	// format at the fence is blockquote)
+	quoted := d.Lines[line].Kind == Quote
 	d.Delete(start, caret)
 	// "hello ```" keeps "hello": the space before the fence goes too.
 	cut := start
@@ -348,11 +357,11 @@ func autoformatFence(d *Doc, caret int) (newCaret int, ok bool) {
 	d.Delete(cut, start)
 	if cut == ls {
 		// Only whitespace before the fence: the line itself becomes code.
-		d.Lines[line] = Line{Kind: CodeBlock}
+		d.Lines[line] = Line{Kind: CodeBlock, Quoted: quoted}
 		return ls, true
 	}
 	d.Insert(cut, "\n", Attr{})
-	d.Lines[line+1] = Line{Kind: CodeBlock}
+	d.Lines[line+1] = Line{Kind: CodeBlock, Quoted: quoted}
 	// The code block starts plain: drop inline styles carried over from
 	// the text after the caret.
 	end := d.LineEnd(line + 1)

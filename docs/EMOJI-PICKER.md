@@ -32,6 +32,24 @@ item id and by the normalized text typed before the pick. Emoji ids are
   neither pref the list is the defaults `slightly_smiling_face, heart, +1,
   100, bug`. The experiment `autocomplete_frequently_used_emojis_frecency`
   sorts by record count instead.
+- **Loading** (gap-w28, build 2cd9270e786c: bEcp, W3UT, 1TmA, the
+  loadFrecencyPrefs thunk): Slack's client has both prefs from its boot
+  and asks for them on their own only on `search_frecency` "updated".
+  Clack's boot reads users.prefs.get, which may not carry them (Karim's
+  Frequently Used showed only the five defaults, 2026-11-12). So when that
+  map lacks `frecency` or `emoji_use`, boot sends loadFrecencyPrefs'
+  request itself (`prefs=emoji_use,frecency`, reason
+  `fetch-frecency-prefs`). Until the account's frecency is in, Frequently
+  Used isn't cached, and a use is applied locally and queued, not saved: a
+  save then would replace the synced frecency with a fresh one. Once the
+  account's copy arrives the queue is replayed over it and saved
+  (core.frecencyFromServer). A recorded use doesn't drop the 4 h list
+  (bEcp's T stays). It changes when the save's `search_frecency` event
+  reloads the prefs, as in Slack.
+- **Skin tone**: ids and `emoji_use` names are stored without the tone
+  (recordEmojiFrecencyEvent resolves the picked name to its base emoji,
+  W90V and Ak7A; getUsedEmojiFromPref strips `::skin-tone-N`), and the
+  grid draws Frequently Used with the active tone, as every group.
 - **Cache**: a computed list is reused for 4 h, and a read within 15 min of
   expiry pushes it out to now + 15 min. Reloading the frecency prefs (the
   `search_frecency` "updated" RTM event: users.prefs.get

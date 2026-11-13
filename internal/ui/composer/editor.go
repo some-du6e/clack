@@ -109,6 +109,10 @@ const (
 	EvPasteLimit // a paste over 50,000 characters was refused (onPasteLimit)
 	EvSnippet    // Mod+Shift+Enter: the snippet dialog with the message (MessageInput.onEnter)
 	EvDownEmpty  // Down in an empty editor (onDownArrowWhenEmpty); the caret still moves (it can't)
+	// Mod+K with text selected, when CmdKCoachmark is set
+	// (onCmdKWhenSelected): the composer shows the coachmark and opens
+	// the jumper
+	EvCmdKSelected
 )
 
 // EditorEvent is reported by Editor.Update.
@@ -175,6 +179,12 @@ type Editor struct {
 
 	events  []EditorEvent
 	filters []event.Filter
+	// filtersSel is filters plus Mod+K, read while text is selected and
+	// CmdKCoachmark is set; otherwise Mod+K goes on to the shell's jumper.
+	filtersSel []event.Filter
+	// CmdKCoachmark is MessageInput's onCmdKWhenSelected (not the edit
+	// composer's).
+	CmdKCoachmark bool
 
 	// Input state.
 	clicker    gesture.Click
@@ -263,6 +273,8 @@ func (e *Editor) init() {
 	}
 	if e.filters == nil {
 		e.filters = e.keyFilters()
+		e.filtersSel = append(append(make([]event.Filter, 0, len(e.filters)+1), e.filters...),
+			key.Filter{Focus: e, Name: "K", Required: key.ModShortcut})
 	}
 }
 

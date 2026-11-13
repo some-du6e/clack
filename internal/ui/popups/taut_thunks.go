@@ -179,12 +179,23 @@ func React(h Host, ch, ts, name string, add bool) {
 	}
 	args := tautReactArgs{ReactionKey: reactionKey(ch, ts), Name: name, Add: add}
 	t := tautFor("submitAddOrRemoveReaction")
-	// core.React shows the change at once and rolls it back on failure;
-	// the toast says why.
+	// Unwrapped, submitAddOrRemoveReaction's optimistic update happens
+	// here, on the UI goroutine: the pill is drawn in the next frame, while
+	// reactions.add is out (core.ReactBegin; the views showing the message
+	// get the update now, ApplyCoreEvent). The call rolls it back on
+	// failure; the toast says why.
+	var call func(context.Context) error
+	if t == nil {
+		var ev *core.Event
+		ev, call = a.ReactBegin(ch, ts, name, add)
+		if ap, ok := h.(interface{ ApplyCoreEvent(core.Event) }); ok && ev != nil {
+			ap.ApplyCoreEvent(*ev)
+		}
+		h.Invalidate()
+	}
 	run(h, func(ctx context.Context) (struct{}, error) {
 		if t == nil {
-			_, err := native(ctx, args)
-			return struct{}{}, err
+			return struct{}{}, call(ctx)
 		}
 		_, err := taut.Dispatch(ctx, t, "submitAddOrRemoveReaction", args, native)
 		return struct{}{}, tautErr(err)

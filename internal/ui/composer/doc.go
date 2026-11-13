@@ -88,10 +88,12 @@ type Attr struct {
 type Line struct {
 	Kind   BlockKind
 	Indent int // list nesting level, 0-based
-	// Quoted is a list item inside a quote: Quill's "border" line format
-	// 1 on a list (BorderAttributor, boot-shared KT9Q), which list
-	// autofill sets when it runs on a quote line, and rich_text_list's
-	// border: 1. Only list lines carry it.
+	// Quoted is a list item or a code line inside a quote: Quill's
+	// "border" line format 1 (BorderAttributor, boot-shared KT9Q) on a
+	// list or a code-block, which list autofill and the ``` shortcut set
+	// on a quote line, the block formatter's toggles set and clear
+	// (ToggleLineKind), and rich_text_list's and rich_text_preformatted's
+	// border: 1. Only list and code lines carry it.
 	Quoted bool
 }
 
@@ -376,27 +378,76 @@ func (d *Doc) SetLineKind(from, to int, k BlockKind) {
 		}
 		d.Lines[i].Kind = k
 		if k != Bullet && k != Ordered {
-			d.Lines[i].Indent, d.Lines[i].Quoted = 0, false
+			d.Lines[i].Indent = 0
+		}
+		if k != Bullet && k != Ordered && k != CodeBlock {
+			d.Lines[i].Quoted = false
 		}
 	}
 }
 
-// ToggleLineKind sets lines [from, to] to k, or back to Para if they all
-// already are k.
+// bordered reports whether k can carry the quote border (Line.Quoted).
+func bordered(k BlockKind) bool { return k == Bullet || k == Ordered || k == CodeBlock }
+
+// ToggleLineKind sets lines [from, to] to k, or takes k off if they all
+// already have it: the block formatter (boot-shared, getBlockFormatsOfLine
+// and its set*/remove*OnLine). A bordered list or code line counts as a
+// quote too (the blockquote check). So:
+//
+//   - a quote on a list or code line sets its border (setBlockQuoteOnLine:
+//     formatLine "border" "1"), and taking the quote off clears it;
+//   - a list or code block on a quote line becomes one inside the quote
+//     ({blockquote: false, border: "1", ...}), and keeps the border of a
+//     bordered line (border: o.border > 0 ? o.border : undefined);
+//   - taking a list or code block off a bordered line leaves the quote
+//     ({border: "0", blockquote: true}).
 func (d *Doc) ToggleLineKind(from, to int, k BlockKind) {
 	if from > to {
 		from, to = to, from
 	}
+	has := func(l Line) bool {
+		if k == Quote {
+			return l.Kind == Quote || l.Quoted && bordered(l.Kind)
+		}
+		return l.Kind == k
+	}
 	all := true
 	for i := from; i <= to && i < len(d.Lines); i++ {
-		if d.Lines[i].Kind != k {
+		if i >= 0 && !has(d.Lines[i]) {
 			all = false
 		}
 	}
-	if all {
-		k = Para
+	for i := from; i <= to && i < len(d.Lines); i++ {
+		if i < 0 {
+			continue
+		}
+		l := &d.Lines[i]
+		switch {
+		case k == Quote && bordered(l.Kind):
+			l.Quoted = !all
+		case k == Quote && all:
+			*l = Line{}
+		case k == Quote:
+			*l = Line{Kind: Quote}
+		case bordered(k) && all:
+			if l.Quoted {
+				*l = Line{Kind: Quote}
+			} else {
+				*l = Line{}
+			}
+		case bordered(k):
+			q := l.Kind == Quote || l.Quoted && bordered(l.Kind)
+			indent := 0
+			if rtIsList(k) && rtIsList(l.Kind) {
+				indent = l.Indent
+			}
+			*l = Line{Kind: k, Indent: indent, Quoted: q}
+		case all:
+			*l = Line{}
+		default:
+			d.SetLineKind(i, i, k)
+		}
 	}
-	d.SetLineKind(from, to, k)
 }
 
 // Text returns the plain text with atoms as their display text.

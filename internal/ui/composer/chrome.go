@@ -244,13 +244,11 @@ var crFmtOrder = [...]crBtn{crBold, crItalic, crUnderline, crStrike, crPara, crL
 
 var crFmtSep = [len(crFmtOrder)]bool{5: true, 8: true}
 
-// crFootOverflow is what the footer's ⋯ holds on narrow composers.
-var crFootOverflow = [...]crBtn{crVideo, crAudio, crShortcut}
-
-// crFootCollapseW is the box width under which the footer folds video,
-// audio and Run shortcut into ⋯. Slack folds them at 582 and 383 wide but
-// not at 998; the exact breakpoint is unmeasured.
-const crFootCollapseW = 600
+// crFootOverflow is what the footer's ⋯ holds on narrow composers, in
+// TextyButtons' order: the composer, emoji and mention buttons once the
+// toolbar is under 65, 105 and 160px (crFootMoves), the clip buttons, Run
+// shortcut (overflow.go).
+var crFootOverflow = [...]crBtn{crAa, crEmoji, crMention, crVideo, crAudio, crShortcut}
 
 // crPal is the chrome's colors, pre-composited where Slack's are
 // translucent (Gio blends in linear light; theme.Over matches browsers).
@@ -317,8 +315,14 @@ func crMakePal(th *theme.Theme) crPal {
 	p.sendDiv = crFade(c.SendText, c.Send, .4)
 	p.sendDisIcon = crFade(ink, p.bg, .3)
 	p.sendDisDiv = crFade(p.footHover, p.bg, .3)
-	p.yellow = rgb(0xecb22e)
+	p.yellow = rgb(0xecb22e) // --dt_color-brand-core-slack-yellow
+	// the hovered emoji button's icon: the button's hover colour
+	// (content-pry) in light, .sk-client-theme--dark …--emoji:hover
+	// {color: var(--dt_color-constants-black)} in dark
 	p.emojiInk = rgb(0x1d1c1d)
+	if th.Dark {
+		p.emojiInk = rgb(0x000000)
+	}
 	// Chrome's native checkbox (Slack doesn't style this one).
 	p.check, p.checkHover, p.checkMark = rgb(0x0075ff), rgb(0x005cc8), rgb(0xffffff)
 	p.checkBorder, p.checkBorderHover, p.checkBg = rgb(0x767676), rgb(0x4f4f4f), rgb(0xffffff)
@@ -362,6 +366,8 @@ type chrome struct {
 	fpal    crPal       // this frame's colors: pal with CSS overrides
 	base    image.Point // composer-local position of the current gtx origin
 	footNat int         // the footer row's own width as last laid out (a row-flex body, layoutBox)
+	sufW    int         // the submit group's width as last laid out (the toolbar's width, overflow.go)
+	more    crMore      // TextyButtonOverflow's open state (overflow.go)
 	pxPerDp float32
 	wBox    layout.Widget
 	wFoot   [crNumBtn]layout.Widget
@@ -459,6 +465,8 @@ func (c *chrome) actionFor(id crBtn, anchor image.Rectangle) chromeAction {
 // update turns last frame's pointer input into actions. It runs before
 // anything is laid out: Clickable.Layout drops unread clicks.
 func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
+	c.moreOutside(gtx, st) // overflow.go
+	c.more.shown = false
 	for {
 		e, ok := c.bg.Update(gtx.Source)
 		if !ok {
@@ -473,28 +481,27 @@ func (c *chrome) update(gtx layout.Context, h Host, st *chromeState) {
 			continue
 		}
 		switch id {
-		case crFmtMore, crFootMore:
+		case crFmtMore:
 			c.openMore(h, st, id)
+		case crFootMore:
+			c.toggleMore() // TextyButtonOverflow's toggle (overflow.go)
+		case crMention, crShortcut:
+			// MentionButton's and SlashCommandsButton's handlers close
+			// the overflow (eH.current.close())
+			c.more.open = false
+			c.emit(c.actionFor(id, c.rect[id]))
 		default:
 			c.emit(c.actionFor(id, c.rect[id]))
 		}
 	}
 }
 
-// openMore shows the ⋯ overflow menu; its items queue the same actions the
-// hidden buttons would.
+// openMore shows the formatting bar's ⋯ menu; its items queue the same
+// actions the hidden buttons would. (The footer's ⋯ is TextyButtonOverflow's
+// row of buttons, overflow.go.)
 func (c *chrome) openMore(h Host, st *chromeState, id crBtn) {
 	anchor := c.rect[id]
-	var ids []crBtn
-	if id == crFmtMore {
-		ids = crFmtOrder[len(crFmtOrder)-c.fmtHidden:]
-	} else {
-		for _, b := range crFootOverflow {
-			if c.f.hide&(1<<b) == 0 {
-				ids = append(ids, b)
-			}
-		}
-	}
+	ids := crFmtOrder[len(crFmtOrder)-c.fmtHidden:]
 	if len(ids) == 0 {
 		return
 	}
@@ -533,7 +540,7 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 	c.cur = st
 	c.fpal = *p
 	c.pxPerDp = gtx.Metric.PxPerDp
-	c.f = crFrame{h: h, inputP: inputP, input: input, att: attachments, barBg: p.bar, hide: st.Hide, minOverflow: 1}
+	c.f = crFrame{h: h, inputP: inputP, input: input, att: attachments, barBg: p.bar, hide: st.Hide, minOverflow: crOverflowDefault}
 
 	edit := st.Mode == modeEdit
 	W := gtx.Constraints.Max.X
@@ -920,6 +927,13 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 			label = "Hide formatting"
 		}
 	}
+	if id == crEmoji && c.f.h != nil && gifPickerOn(c.f.h.Core()) {
+		// EmojiToolbarButton: emoji_button "Add emoji and GIFs" when the
+		// GIF picker is on (XC3J BH && enableGifPicker), else "Emoji"
+		label = emojiButtonNS.T("Add emoji and GIFs")
+	} else if id == crEmoji {
+		label = emojiButtonNS.T("Emoji")
+	}
 	if label == "" {
 		return
 	}
@@ -1105,7 +1119,10 @@ func (c *chrome) layoutFooter(gtx layout.Context, x0, x1, top int) {
 	// beside the editor the footer is as wide as its buttons: Slack's
 	// overflow test sees the display: contents toolbar as 0 wide there
 	// and folds nothing
-	c.f.narrow = !c.f.oneLine && x1-x0+2*gtx.Dp(1) < gtx.Dp(crFootCollapseW)
+	c.f.eq = 0
+	if !c.f.oneLine {
+		c.f.eq = c.toolbarWidth(gtx, x1-x0)
+	}
 	c.f.fold = c.foldFooter()
 	c.f.sufX = x1 - gtx.Dp(6)
 	org := image.Pt(x0, y)
@@ -1154,15 +1171,50 @@ func (c *chrome) footButton(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	}
 	ic = c.f.btn.Color(ic)
 	if id == crEmoji && hov {
+		// EmojiToolbarButton (boot-shared FLB+): on hover the :after disc
+		// (1em of the 18px icon font, slack-yellow or the skin tone's
+		// colour) and .is-second's emoji-filled at scale(1.05)
+		// rotate(15deg), with no transition
 		is := gtx.Dp(18)
 		t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
-		crIconEmojiHover(gtx, is, p.yellow, p.emojiInk)
+		crIconEmojiHover(gtx, is, crEmojiDisc(c.skinTone(), p.yellow), p.emojiInk)
 		t.Pop()
 	} else {
 		c.icon(gtx, st, id, r, ic)
 	}
 	c.hit(gtx, id, r, !dis)
 	c.tooltip(gtx, th, st, id, r)
+}
+
+// crEmojiDisc is the hovered emoji button's disc: .c-wysiwyg_container__
+// button--emoji.skin-tone-N:after for preferred_skin_tone 2–6, else
+// slack-yellow.
+func crEmojiDisc(tone string, yellow color.NRGBA) color.NRGBA {
+	switch tone {
+	case "2":
+		return rgb(0xffdbbe)
+	case "3":
+		return rgb(0xe6b892)
+	case "4":
+		return rgb(0xd4a37c)
+	case "5":
+		return rgb(0xc18e65)
+	case "6":
+		return rgb(0xb47f55)
+	}
+	return yellow
+}
+
+// skinTone is preferred_skin_tone ("" when unset or offline).
+func (c *chrome) skinTone() string {
+	if c.f.h == nil {
+		return ""
+	}
+	a := c.f.h.Core()
+	if a == nil {
+		return ""
+	}
+	return a.Prefs().SkinTone
 }
 
 // attachButton is the round + (rgba(29,28,29,.06), hover .13 + dark icon).
@@ -1411,6 +1463,9 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 	}
 	crText(gtx, th.Shaper, org.X, org.Y, tw, s, ph)
 }
+
+// emojiButtonNS is EmojiToolbarButton's "emoji_button" I18n.
+var emojiButtonNS = i18n.NS("emoji_button")
 
 // msgInputNS is Slack's "msg_input" I18n: MessageInput's placeholder
 // (getPlaceholderText, txEg).

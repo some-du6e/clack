@@ -35,7 +35,8 @@ type crFrame struct {
 	barBg                  color.NRGBA // formatting bar background (CSS)
 	hide                   uint32      // buttons turned off (crBtn bits)
 	minOverflow            int
-	narrow, fold           bool
+	eq                     int // .c-texty_buttons' offsetWidth (TextyButtons' containerOffsetWidth), px; 0 beside the editor
+	fold                   bool
 	oneLine                bool // the footer sits beside the editor (layoutBox)
 	rowH, textH, attH      int  // layoutBox's editor row, text area and attachments heights
 	toolbarHidden          bool
@@ -294,22 +295,23 @@ func (c *chrome) textyButtonsProps() slackc.Props {
 	p := c.props()
 	putEnableFlags(p, c.cur.Hide)
 	p["collapseToolbarControls"] = false
-	p["minButtonsForOverflow"] = 1
+	// MessageInput passes minButtonsForOverflow only to Slackbot's
+	// composer (eT ? 2 : void 0), so TextyButtonOverflow's default of 5
+	// applies
 	p["textyRef"] = map[string]any{"current": nil}
 	p["children"] = []any{slackc.Child("TextyButtonOverflow", c.overflowProps(), c.layoutOverflow)}
 	return p
 }
 
 // layoutTextyButtons honours enable*Button (SlimMessageBox, OwlMode) and
-// minButtonsForOverflow (the ⋯ menu folds video, audio and Run shortcut
-// on narrow composers once at least that many would fold).
+// minButtonsForOverflow (TextyButtonOverflow's threshold, overflow.go).
 func (c *chrome) layoutTextyButtons(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	c.f.hide = c.cur.Hide
-	c.f.minOverflow = 1
+	c.f.minOverflow = crOverflowDefault
 	if p != nil {
 		c.f.hide |= hideBits(p)
 		if n, ok := p.Num("minButtonsForOverflow"); ok {
-			c.f.minOverflow = max(int(n), 1)
+			c.f.minOverflow = int(n)
 		}
 	}
 	c.f.fold = c.foldFooter()
@@ -322,19 +324,6 @@ func (c *chrome) layoutTextyButtons(gtx layout.Context, p slackc.Props) layout.D
 		return slackc.LayoutElement(gtx, e)
 	}
 	return slackc.Component(gtx, "TextyButtonOverflow", c, (*chrome).overflowProps, (*chrome).layoutOverflow)
-}
-
-func (c *chrome) foldFooter() bool {
-	if !c.f.narrow || c.cur.Mode == modeEdit {
-		return false
-	}
-	n := 0
-	for _, id := range crFootOverflow {
-		if !c.hidden(id) {
-			n++
-		}
-	}
-	return n > 0 && n >= c.f.minOverflow
 }
 
 // overflowProps: children are the footer buttons as slots (plugins find,
@@ -364,13 +353,16 @@ func (c *chrome) overflowProps() slackc.Props {
 			return c.layoutSubmit(gtx, p)
 		}))
 	}
-	return slackc.Props{
-		"$key":                  c.cur.Key,
-		"containerOffsetWidth":  float64(c.f.x1-c.f.x0) * float64(px),
-		"minButtonsForOverflow": c.f.minOverflow,
-		"textyHasFocus":         c.cur.Focused,
-		"children":              kids,
+	pr := slackc.Props{
+		"$key":                 c.cur.Key,
+		"containerOffsetWidth": float64(c.f.eq) * float64(px),
+		"textyHasFocus":        c.cur.Focused,
+		"children":             kids,
 	}
+	if c.f.minOverflow != crOverflowDefault {
+		pr["minButtonsForOverflow"] = c.f.minOverflow
+	}
+	return pr
 }
 
 func (c *chrome) itemProps(it crItem) slackc.Props {
@@ -398,7 +390,7 @@ func (c *chrome) layoutOverflow(gtx layout.Context, p slackc.Props) layout.Dimen
 		return c.layoutRow(gtx, slackc.Element{}, false)
 	}
 	if n, ok := p.Num("minButtonsForOverflow"); ok {
-		c.f.minOverflow = max(int(n), 1)
+		c.f.minOverflow = int(n)
 		c.f.fold = c.foldFooter()
 	}
 	e, _ := slackc.PropChildren(p)
@@ -484,6 +476,18 @@ func (c *chrome) layoutRow(gtx layout.Context, kids slackc.Element, patched bool
 		}
 	}
 	sx := W - gtx.Dp(6) - tot
+	if c.sufW != tot && !c.f.oneLine {
+		// the toolbar's width follows the submit group (TextyButtons'
+		// ResizeObserver, the character count beside the send button):
+		// fold again with this width next frame if it changes the fold
+		c.sufW = tot
+		eq := c.f.eq
+		c.f.eq = c.toolbarWidth(gtx, c.f.x1-c.f.x0)
+		if c.foldFooter() != c.f.fold {
+			c.f.h.Invalidate()
+		}
+		c.f.eq = eq
+	}
 	if !c.f.fold { // a folded row's width would flip a row-flex layout back and forth
 		c.footNat = x + tot + gtx.Dp(6) // the row at its own width
 	}
@@ -550,7 +554,11 @@ func (c *chrome) rowNative(gtx layout.Context, it crItem) layout.Dimensions {
 	if it.div != 0 {
 		return c.footDivider(gtx, it.div)
 	}
-	return c.footItem(gtx, it.id)
+	d := c.footItem(gtx, it.id)
+	if it.id == crFootMore && d.Size.X > 0 {
+		c.layoutMoreRow(gtx, image.Rectangle{Max: d.Size}) // overflow.go
+	}
+	return d
 }
 
 // itemVisible: what the footer shows in this mode, fold state and with
@@ -560,11 +568,12 @@ func (c *chrome) itemVisible(id crBtn) bool {
 		return false
 	}
 	edit := c.cur.Mode == modeEdit
+	if c.f.fold && c.inOverflow(id) {
+		return false // in TextyButtonOverflow's row (overflow.go)
+	}
 	switch id {
-	case crMention:
+	case crMention, crVideo, crAudio, crShortcut:
 		return !edit
-	case crVideo, crAudio, crShortcut:
-		return !edit && !c.f.fold
 	case crFootMore:
 		return !edit && c.f.fold
 	}

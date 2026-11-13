@@ -283,3 +283,70 @@ func TestReactAlreadyReacted(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+// TestReactBeginEchoBeforeReply: ReactBegin is the optimistic half alone
+// (popups.React shows its update in the frame of the pick): a custom
+// emoji on a thread reply changes the stored reply at once, with the
+// emoji's URL; the realtime echo of the viewer's own reaction landing
+// before reactions.add answers counts once, and so does the reply after it.
+func TestReactBeginEchoBeforeReply(t *testing.T) {
+	e := newReactEnv(t)
+	const pic = "https://emoji.slack-edge.com/T0FAKE/verity/0a1b2c.png"
+	e.a.S.CustomEmoji.Set(map[string]string{"verity": pic})
+	root, reply := e.ts, "9999999998.000002"
+	e.a.S.SetThread(e.ch, root, []slack.Message{
+		{Type: "message", TS: root, ThreadTS: root, User: "U0OTHER001", Text: "root", ReplyCount: 1},
+		{Type: "message", TS: reply, ThreadTS: root, User: "U0OTHER001", Text: "a reply"},
+	})
+	storedReply := func() slack.Message {
+		th, _ := e.a.S.Thread(e.ch, root)
+		for _, m := range th {
+			if m.TS == reply {
+				return m
+			}
+		}
+		t.Fatal("the reply left the store")
+		return slack.Message{}
+	}
+	count := func() (int, bool) {
+		for _, r := range storedReply().Reactions {
+			if r.Name == "verity" {
+				return r.Count, len(r.Users) == 1 && r.Users[0] == fakeslack.SelfID
+			}
+		}
+		return 0, false
+	}
+	ev, call := e.a.ReactBegin(e.ch, reply, ":verity:", true)
+	if ev == nil || ev.Msg == nil || ev.TS != reply || ev.ThreadTS != root {
+		t.Fatalf("ReactBegin's update %+v", ev)
+	}
+	if r, ok := reaction(*ev.Msg, "verity"); !ok || !r.Self || r.Count != 1 || r.URL != pic {
+		t.Fatalf("the update's pill %+v (ok %v), want the viewer's with %s", r, ok, pic)
+	}
+	done := make(chan error, 1)
+	go func() { done <- call(context.Background()) }()
+	if f := e.call(t); f.Get("name") != "verity" || f.Get("timestamp") != reply {
+		t.Fatalf("reactions.add form %v", f)
+	}
+	// the echo first, while the call is out
+	e.a.handle(rtm("reaction_added", map[string]any{"user": fakeslack.SelfID, "reaction": "verity",
+		"item": map[string]any{"type": "message", "channel": e.ch, "ts": reply}}))
+	if n, self := count(); n != 1 || !self {
+		t.Fatalf("after the early echo: count %d, the viewer's %v", n, self)
+	}
+	e.answer <- map[string]any{"ok": true}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if n, self := count(); n != 1 || !self {
+		t.Fatalf("after the reply: count %d, the viewer's %v", n, self)
+	}
+	// a second pick of the same: nothing changes, nothing to show
+	if ev, call := e.a.ReactBegin(e.ch, reply, "verity", true); ev != nil {
+		t.Errorf("already reacted, yet an update %+v", ev)
+	} else {
+		go func() { _ = call(context.Background()) }()
+		e.call(t)
+		e.answer <- map[string]any{"ok": false, "error": "already_reacted"}
+	}
+}

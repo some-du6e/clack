@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/layout"
+	"gioui.org/unit"
+
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -27,30 +30,94 @@ func TestHideBits(t *testing.T) {
 	}
 }
 
+// TestFoldFooter is TextyButtonOverflow's choice (overflow.go): with
+// MessageInput's default minButtonsForOverflow (5) and TextyButtons' 15
+// slots it folds under a 580px toolbar; under 5 the threshold is 220;
+// over 15 nothing folds; with no real button to fold (no clips, Run
+// shortcut off) it doesn't, until the mention button moves in at 160.
 func TestFoldFooter(t *testing.T) {
 	var c chrome
+	c.pxPerDp = 1
 	c.cur.Mode = modeChannel
-	c.f.minOverflow = 1
+	c.f.minOverflow = crOverflowDefault
+	for _, tc := range []struct {
+		eq   int
+		fold bool
+	}{{0, false}, {998, false}, {580, false}, {579, true}, {300, true}} {
+		c.f.eq = tc.eq
+		if got := c.foldFooter(); got != tc.fold {
+			t.Errorf("toolbar %d wide: fold %v, want %v", tc.eq, got, tc.fold)
+		}
+	}
+	c.f.minOverflow = 2 // Slackbot's composer: 220
+	for _, tc := range []struct {
+		eq   int
+		fold bool
+	}{{300, false}, {220, false}, {219, true}} {
+		c.f.eq = tc.eq
+		if got := c.foldFooter(); got != tc.fold {
+			t.Errorf("minButtonsForOverflow 2, toolbar %d: fold %v, want %v", tc.eq, got, tc.fold)
+		}
+	}
+	c.f.minOverflow = 16 // more than the 15 slots: never
+	c.f.eq = 100
 	if c.foldFooter() {
-		t.Fatal("wide composer folded")
+		t.Error("folded with fewer slots than minButtonsForOverflow")
 	}
-	c.f.narrow = true
-	if !c.foldFooter() {
-		t.Fatal("narrow composer didn't fold")
-	}
-	c.f.minOverflow = 5 // Slack's default: a group of 3 never folds
-	if c.foldFooter() {
-		t.Fatal("folded fewer than minButtonsForOverflow")
-	}
-	c.f.minOverflow = 1
+	c.f.minOverflow = crOverflowDefault
 	c.f.hide = 1<<crVideo | 1<<crAudio | 1<<crShortcut
+	c.f.eq = 300
 	if c.foldFooter() {
-		t.Fatal("folded with nothing to fold")
+		t.Error("folded with nothing to fold")
+	}
+	c.f.eq = 159 // the mention button moves into the overflow
+	if !c.foldFooter() || !c.inOverflow(crMention) || c.inOverflow(crEmoji) {
+		t.Errorf("at 159: fold %v, mention in %v, emoji in %v", c.foldFooter(), c.inOverflow(crMention), c.inOverflow(crEmoji))
+	}
+	c.f.eq = 64
+	var buf [len(crFootOverflow)]crBtn
+	if got := c.overflowButtons(buf[:0]); len(got) != 3 || got[0] != crAa || got[1] != crEmoji || got[2] != crMention {
+		t.Errorf("at 64 the row holds %v, want Aa, emoji, mention", got)
 	}
 	c.f.hide = 0
 	c.cur.Mode = modeEdit
+	c.f.eq = 300
 	if c.foldFooter() {
-		t.Fatal("edit composer folded")
+		t.Error("edit composer folded")
+	}
+}
+
+// TestToolbarWidth is the footer's flex layout measured in Chrome with
+// Slack's rules (overflow.go): the toolbar is the box's content width less
+// 106px with the 60px send group; a 686px box (684 inside its border)
+// gives 580, so the footer folds below 686. A wider submit group (the
+// character count) narrows it; no + prefix leaves it 0.
+func TestToolbarWidth(t *testing.T) {
+	gtx := layout.Context{Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}}
+	var c chrome
+	c.pxPerDp = 1
+	c.cur.Mode = modeChannel
+	c.f.minOverflow = crOverflowDefault
+	for _, tc := range []struct{ box, eq int }{{998, 892}, {700, 594}, {686, 580}, {685, 579}, {582, 476}, {300, 194}} {
+		if got := c.toolbarWidth(gtx, tc.box-2); got != tc.eq {
+			t.Errorf("box %d: toolbar %d, want %d (Chrome)", tc.box, got, tc.eq)
+		}
+	}
+	c.f.eq = c.toolbarWidth(gtx, 686-2)
+	if c.foldFooter() {
+		t.Error("686px box folded")
+	}
+	c.f.eq = c.toolbarWidth(gtx, 685-2)
+	if !c.foldFooter() {
+		t.Error("685px box didn't fold")
+	}
+	c.sufW = 60 + 4 + 40 // a 40px count beside the send group
+	if got := c.toolbarWidth(gtx, 998-2); got != 892-44 {
+		t.Errorf("with the count: toolbar %d, want %d", got, 892-44)
+	}
+	c.cur.Hide = 1 << crAttach
+	if got := c.toolbarWidth(gtx, 998-2); got != 0 {
+		t.Errorf("no prefix: toolbar %d, want 0 (the spacer takes the room)", got)
 	}
 }
 
