@@ -91,6 +91,9 @@ type Composer struct {
 	// chat.update's file_ids).
 	SaveEdit func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error
 
+	// editFiles0 is an edit's initialFileIds (the message's files)
+	editFiles0 []string
+
 	broadcast  bool
 	lastTyping time.Time
 	typingOn   bool // typing reported since the composer was last empty
@@ -250,7 +253,29 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 	c.ed.SetDoc(docForMessage(m, r))
 	c.lastVer = c.ed.Version()
 	c.focusReq = true
+	// editComposerFiles: the message's files (the edit's initialFileIds)
+	// sit in the edit's attachments row, removable like new ones
+	c.editFiles0 = editFileIDs(&mm)
+	c.att.restoreFiles(editDraftFiles(&mm))
 	return c
+}
+
+// editDraftFiles is the message's files as restorable chips (an id and a
+// thumbnail: nothing to upload again).
+func editDraftFiles(m *core.Message) []core.DraftFile {
+	var out []core.DraftFile
+	for _, b := range m.Doc.Blocks {
+		f := b.File
+		if b.Kind != richtext.FileBlock || f == nil || f.ID == "" {
+			continue
+		}
+		df := core.DraftFile{ID: f.ID, Name: f.Name, Title: f.Title, Mimetype: f.Mime, PrettyType: f.PrettyType, Size: f.Size}
+		if f.Thumb != nil && (f.IsImage || f.IsVideo) {
+			df.Thumb = f.Thumb.URL
+		}
+		out = append(out, df)
+	}
+	return out
 }
 
 func (c *Composer) init() {
@@ -1050,17 +1075,6 @@ func (c *Composer) deleteEmptiedEdit() {
 	popups.ConfirmDelete(c.h, *c.edit)
 }
 
-// editHasFiles reports whether the message being edited shares files
-// (maybeSave keeps them and saves an empty comment).
-func editHasFiles(m *core.Message) bool {
-	for _, b := range m.Doc.Blocks {
-		if b.Kind == richtext.FileBlock {
-			return true
-		}
-	}
-	return false
-}
-
 // overLimit is how far the message is past the 12,000-character limit
 // (charlimit.go), counted once per document change.
 func (c *Composer) overLimit() int {
@@ -1082,14 +1096,15 @@ func (c *Composer) submit() {
 		if c.edit == nil {
 			return
 		}
-		if !editHasFiles(c.edit) {
-			c.deleteEmptiedEdit()
-			return
-		}
-		// cjbg: a message with files (fileIdsToSave) saves the emptied
-		// comment instead of offering to delete
+		// cjbg maybeSave: an emptied message with no files left in the
+		// edit (fileIdsToSave; the message's own files are chips here
+		// too, hidden but kept under fileAttachAfterSendDisabled, where
+		// a message with sent files saves the emptied comment) offers to
+		// delete
+		c.deleteEmptiedEdit()
+		return
 	}
-	if c.edit != nil && c.att.Len() > 0 {
+	if c.edit != nil && c.editFilesChanged() {
 		c.saveEditWithFiles(c.prepareSend(d))
 		return
 	}
@@ -1462,24 +1477,41 @@ func (c *Composer) later(f func()) {
 	c.h.Invalidate()
 }
 
-// saveEditWithFiles is cjbg's maybeSave for an edit that attached files
+// editFilesChanged is prepareAndSaveEditMessage's C: the edit's files
+// differ from the message's (one removed, reordered or added, or an
+// upload pending), so Save goes through saveMessageEditWithFiles.
+func (c *Composer) editFilesChanged() bool {
+	a := c.att
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.chips) != len(c.editFiles0) {
+		return true
+	}
+	for i, ch := range a.chips {
+		if ch.data != nil || ch.prepared == nil || ch.prepared.ID != c.editFiles0[i] {
+			return true
+		}
+	}
+	return false
+}
+
+// saveEditWithFiles is cjbg's maybeSave for an edit whose files changed
 // (prepareAndSaveEditMessage → saveMessageEditWithFiles): the edit
 // composer closes at once, the eager uploads (attachUploadToMessage's
 // uploadPromise) finish, then chat.update goes out with file_ids, the
-// message's own files followed by the new ones. A failed upload or save
-// toasts and leaves the message as it was (Slack restores the edit).
+// files left in the edit in their order: the message's own that weren't
+// removed, then the new ones. A failed upload or save toasts and leaves
+// the message as it was (Slack restores the edit).
 func (c *Composer) saveEditWithFiles(doc *Doc) {
 	m := c.edit
 	text, blocks := doc.Mrkdwn(), doc.RichTextBlocks()
-	b := c.att.takeForSend()
-	keep := editFileIDs(m)
+	files := c.att.takeForEdit()
 	save, api := c.SaveEdit, c.api
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		added, err := editUploads(ctx, api, b)
+		ids, err := editUploads(ctx, api, files)
 		if err == nil {
-			ids := append(append([]string{}, keep...), added...)
 			if save != nil {
 				err = save(ctx, m.Channel, m.TS, text, blocks, ids)
 			} else {
@@ -1492,6 +1524,75 @@ func (c *Composer) saveEditWithFiles(doc *Doc) {
 		}
 	}()
 	c.finishEdit()
+}
+
+// editFileIDs is the edit's initialFileIds: the files the message has,
+// in its order.
+func editFileIDs(m *core.Message) []string {
+	var ids []string
+	for _, b := range m.Doc.Blocks {
+		if b.Kind == richtext.FileBlock && b.File != nil && b.File.ID != "" {
+			ids = append(ids, b.File.ID)
+		}
+	}
+	return ids
+}
+
+// editFile is one file an edit saves: an id already known, an eager
+// upload to wait for, or bytes to upload (the eager upload failed).
+type editFile struct {
+	id  string
+	pf  *core.PendingFile
+	raw *core.UploadFile
+}
+
+// takeForEdit takes every chip, in order, for an edit's save.
+func (a *attachments) takeForEdit() []editFile {
+	a.mu.Lock()
+	var out []editFile
+	for _, c := range a.chips {
+		switch {
+		case c.prepared != nil:
+			out = append(out, editFile{id: c.prepared.ID})
+		case c.pf != nil && c.prepErr == nil && a.h.Core() != nil:
+			c.pf.Title = c.title
+			out = append(out, editFile{pf: c.pf})
+		default:
+			out = append(out, editFile{raw: &core.UploadFile{Name: c.name, Title: c.title, Data: c.data}})
+		}
+	}
+	a.chips, a.total = nil, 0
+	a.mu.Unlock()
+	a.h.Invalidate()
+	pendingChanged()
+	return out
+}
+
+// editUploads resolves an edit's files to their ids, in order: known ids
+// at once, eager uploads when they finish, and files whose eager upload
+// failed uploaded again (saveMessageEditWithFiles awaits the uploads'
+// promises).
+func editUploads(ctx context.Context, api coreAPI, files []editFile) ([]string, error) {
+	ids := []string{}
+	for _, f := range files {
+		switch {
+		case f.id != "":
+			ids = append(ids, f.id)
+		case f.pf != nil:
+			r, err := f.pf.Wait(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, r.ID)
+		default:
+			r, err := api.prepareUpload(ctx, *f.raw, nil)
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, r.ID)
+		}
+	}
+	return ids, nil
 }
 
 // TakesEditFiles reports whether files dropped on this edit composer's

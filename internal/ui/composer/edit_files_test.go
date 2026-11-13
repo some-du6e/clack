@@ -116,10 +116,14 @@ func TestEditAttachesFiles(t *testing.T) {
 		t.Errorf("blocks %s (%v), want the message's rich_text", u.Get("blocks"), err)
 	}
 
-	// a message that already has a file keeps it, first
+	// a message that already has a file keeps it, first; the edit shows
+	// it in its attachments row (editComposerFiles)
 	c2 := NewEdit(h, msg("1762700000.000200", "F0KEEP"), func() {})
 	t.Cleanup(c2.Close)
 	frame(c2)
+	if c2.att.Len() != 1 || c2.att.chips[0].prepared == nil || c2.att.chips[0].prepared.ID != "F0KEEP" || c2.att.chips[0].data != nil {
+		t.Fatalf("the edit's attachments %d, want the message's F0KEEP as a sent file", c2.att.Len())
+	}
 	c2.att.Add("second.png", imgSynthPNG(t, 64, 64))
 	frame(c2)
 	c2.submit()
@@ -136,6 +140,30 @@ func TestEditAttachesFiles(t *testing.T) {
 	u = update(3)
 	if _, has := u["file_ids"]; has {
 		t.Errorf("a text-only edit sent file_ids %q", u.Get("file_ids"))
+	}
+
+	// removing one of the message's files (onRemoveEditFile) saves the
+	// rest; removing the last with text left sends an empty file_ids
+	c5 := NewEdit(h, msg("1762700000.000500", "F0ONE", "F0TWO"), func() {})
+	t.Cleanup(c5.Close)
+	frame(c5)
+	if c5.att.Len() != 2 {
+		t.Fatalf("%d files in the edit, want 2", c5.att.Len())
+	}
+	c5.att.remove(c5.att.chips[0])
+	c5.submit()
+	if u = update(4); u.Get("file_ids") != "F0TWO" {
+		t.Errorf("file_ids %q after removing F0ONE, want F0TWO", u.Get("file_ids"))
+	}
+	c6 := NewEdit(h, msg("1762700000.000600", "F0ONE"), func() {})
+	t.Cleanup(c6.Close)
+	frame(c6)
+	c6.att.remove(c6.att.chips[0])
+	c6.submit()
+	if u = update(5); u.Get("file_ids") != "" {
+		t.Errorf("file_ids %q after removing the only file, want empty", u.Get("file_ids"))
+	} else if _, has := u["file_ids"]; !has {
+		t.Error("no file_ids after removing the only file (the file would stay)")
 	}
 
 	// disable_file_attach_after_send: no + in the edit composer, and drops
