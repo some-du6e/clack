@@ -1104,6 +1104,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
+	if out, handled := s.handleUsergroups(method, f); handled { // usergroups.go (before search.go: belongs_to_usergroup_id)
+		return out
+	}
 	if out, handled := s.handleSearch(method, f); handled { // search.go
 		return out
 	}
@@ -1356,13 +1359,6 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return map[string]any{"ok": false, "error": "app_not_found"}
 	case "emoji.list":
 		return ok("emoji", s.emoji)
-	case "usergroups.list":
-		var gs []slack.Usergroup
-		for i := 0; i < s.Size.Usergroups; i++ {
-			gs = append(gs, slack.Usergroup{ID: fmt.Sprintf("S0FAKE%05d", i), Handle: s.usergroupHandle(i),
-				Name: title(s.words[(i*7)%len(s.words)]), Description: s.words[(i*3)%len(s.words)], UserCount: i % 50})
-		}
-		return ok("usergroups", gs)
 	case "client.getWebSocketURL":
 		ws := "ws" + strings.TrimPrefix(s.URL, "http") + "ws"
 		return ok("primary_websocket_url", ws, "fallback_websocket_url", ws, "routing_context", "fake")

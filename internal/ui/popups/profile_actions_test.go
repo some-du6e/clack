@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -395,56 +396,133 @@ func TestAppAddToChannel(t *testing.T) {
 	}
 }
 
-// The user group pane: the header, Members from search.enterprise (the
-// group clause, 100 a page from "*", ascending) with Find members, and the
-// Channels tab from usergroups.search's prefs.channels.
+// The User Group pane on the fake's two group kinds, light and dark
+// (client-channel-user-group-view's BaseUserGroupView):
+//   - a workspace group lists usergroups.users.list's members, sorted, with
+//     no search box and no search.enterprise call (on the real grid that
+//     query finds nobody: "Nobody’s in this group" for a group of 29);
+//   - an org-level group lists search.enterprise's, under "Find members";
+//   - a failed fetch on a workspace group reads "Nobody’s in this group",
+//     as Slack's (no error state); an empty workspace group says so too, with the "workspace
+//     administrator" link to the people browser's admins, and its Channels
+//     tab says "No default channels".
 func TestUserGroupPane(t *testing.T) {
-	h, fs := pfEnv(t)
-	h.a.S.SetUsergroups([]slack.Usergroup{{ID: "S0PFTEST", Handle: "wranglers", Name: "Wranglers", Description: "Fixture wranglers", UserCount: 2}})
-	var calls pfCalls
-	fs.SetHook(func(method string, form url.Values) (any, bool) {
-		switch method {
-		case "usergroups.search":
-			calls.add(method, form)
-			return map[string]any{"ok": true, "usergroups": []map[string]any{{"id": "S0PFTEST", "handle": "wranglers", "name": "Wranglers",
-				"description": "Fixture wranglers", "user_count": 2, "date_delete": 0, "prefs": map[string]any{"channels": []string{"C0PFCHAN"}}}}}, true
-		case "search.enterprise":
-			calls.add(method, form)
-			return map[string]any{"ok": true, "num_found": 2, "items": []map[string]any{
-				{"id": fakeslack.ProfileID, "name": "robin", "profile": map[string]any{"display_name": "robin", "real_name": "Robin Example", "title": "Synthetic Fixture Wrangler"}},
-				{"id": fakeslack.SelfID, "name": "me", "profile": map[string]any{"display_name": "me", "real_name": "Self Person"}},
-			}}, true
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		h, fs := pfEnv(t)
+		h.th.SetDark(dark)
+		gs, err := h.a.C.Usergroups(context.Background())
+		if err != nil {
+			t.Fatal(err)
 		}
-		return nil, false
-	})
-	v := NewUserGroupView(h, "S0PFTEST")
-	sz := image.Pt(pvW, 900)
-	frame := func(shot string) []string {
-		return pfFrame(t, h.th, sz, shot, func(gtx layout.Context) { v.Layout(gtx) })
-	}
-	frame("")
-	pfUntil(t, "the members", func() bool { return v.loaded && len(v.members) == 2 })
-	x := frame("usergroup-pane-light")
-	for _, want := range []string{"User Group", "Wranglers", "Fixture wranglers", "@wranglers", "Members", "Channels", "Find members", "robin", "Synthetic Fixture Wrangler"} {
-		if !hasText(x, want) {
-			t.Errorf("%q not drawn", want)
+		h.a.S.SetUsergroups(gs)
+		var calls pfCalls
+		var failList atomic.Bool
+		fs.SetHook(func(method string, form url.Values) (any, bool) {
+			calls.add(method, form)
+			if method == "usergroups.users.list" && failList.Load() {
+				return map[string]any{"ok": false, "error": "fatal_error"}, true
+			}
+			return nil, false
+		})
+		sz := image.Pt(pvW, 900)
+		frame := func(v *UserGroupView, shot string) []string {
+			return pfFrame(t, h.th, sz, shot, func(gtx layout.Context) { v.Layout(gtx) })
 		}
-	}
-	se := calls.get("search.enterprise")
-	if len(se) == 0 {
-		t.Fatal("no search.enterprise")
-	}
-	f := se[0]
-	if f.Get("count") != "100" || f.Get("cursor_mark") != "*" || f.Get("sort_dir") != "asc" ||
-		!strings.Contains(f.Get("query"), `"belongs_to_usergroup_id"`) || !strings.Contains(f.Get("query"), `"S0PFTEST"`) {
-		t.Errorf("search.enterprise: %v", f)
-	}
-	if us := calls.get("usergroups.search"); len(us) != 1 || us[0].Get("keyword") != "wranglers" || us[0].Get("count") != "1" {
-		t.Errorf("usergroups.search: %v", us)
-	}
-	v.tab = 1
-	x = frame("")
-	if hasText(x, "Find members") || !slices.ContainsFunc(x, func(s string) bool { return strings.Contains(s, "C0PFCHAN") }) {
-		t.Errorf("channels tab: %q", x)
+
+		// a workspace group
+		v := NewUserGroupView(h, fakeslack.WorkspaceGroupID)
+		frame(v, "")
+		pfUntil(t, mode+" workspace members", func() bool { return v.loaded && v.started && !v.loading && len(v.members) == 6 })
+		x := frame(v, "usergroup-pane-"+mode)
+		for _, want := range []string{"User Group", "Snack crew", "Synthetic workspace group", "@snackcrew", "Members", "6", "Channels"} {
+			if !hasText(x, want) {
+				t.Errorf("%s workspace group: %q not drawn", mode, want)
+			}
+		}
+		for _, bad := range []string{"Find members", "Nobody’s in this group"} {
+			if hasText(x, bad) {
+				t.Errorf("%s workspace group: %q drawn", mode, bad)
+			}
+		}
+		for i := 1; i < len(v.members); i++ {
+			p, _ := h.a.S.User(v.members[i-1].ID)
+			q, _ := h.a.S.User(v.members[i].ID)
+			if strings.ToLower(store.PrefName(p, false)) > strings.ToLower(store.PrefName(q, false)) {
+				t.Errorf("%s: members not sorted: %q before %q", mode, store.PrefName(p, false), store.PrefName(q, false))
+			}
+		}
+		if l := calls.get("usergroups.users.list"); len(l) != 1 || l[0].Get("usergroup") != fakeslack.WorkspaceGroupID ||
+			l[0].Get("team_id") != fakeslack.TeamID || l[0].Has("limit") {
+			t.Errorf("%s usergroups.users.list: %v", mode, l)
+		}
+		if se := calls.get("search.enterprise"); len(se) != 0 {
+			t.Errorf("%s workspace group asked search.enterprise: %v", mode, se)
+		}
+		if us := calls.get("usergroups.search"); len(us) != 1 || us[0].Get("keyword") != "snackcrew" || us[0].Get("count") != "1" {
+			t.Errorf("%s usergroups.search: %v", mode, us)
+		}
+		v.tab = 1
+		if x = frame(v, ""); !hasText(x, "No default channels") || hasText(x, "No channels are connected to this group") {
+			t.Errorf("%s workspace channels tab: %q", mode, x)
+		}
+
+		// an org-level group
+		o := NewUserGroupView(h, fakeslack.OrgGroupID)
+		frame(o, "")
+		pfUntil(t, mode+" org members", func() bool { return o.loaded && o.started && !o.loading && len(o.members) == 4 })
+		x = frame(o, "usergroup-org-pane-"+mode)
+		for _, want := range []string{"Org crew", "@orgcrew", "Find members"} {
+			if !hasText(x, want) {
+				t.Errorf("%s org group: %q not drawn", mode, want)
+			}
+		}
+		se := calls.get("search.enterprise")
+		if len(se) == 0 || !strings.Contains(se[0].Get("query"), `"belongs_to_usergroup_id"`) || !strings.Contains(se[0].Get("query"), fakeslack.OrgGroupID) ||
+			se[0].Get("count") != "100" || se[0].Get("cursor_mark") != "*" || se[0].Get("sort_dir") != "asc" {
+			t.Errorf("%s org search.enterprise: %v", mode, se)
+		}
+		for _, m := range o.members {
+			if m.ID == fakeslack.DeactivatedID {
+				t.Errorf("%s org group lists the deactivated member", mode)
+			}
+		}
+
+		// an empty workspace group, then its admin link
+		e := NewUserGroupView(h, "S0FAKE00000")
+		frame(e, "")
+		pfUntil(t, mode+" empty group", func() bool { return e.loaded && e.started && !e.loading })
+		x = frame(e, "usergroup-empty-pane-"+mode)
+		for _, want := range []string{"Nobody’s in this group", "Contact", "workspace administrator", "members."} {
+			if !hasText(x, want) {
+				t.Errorf("%s empty group: %q not drawn", mode, want)
+			}
+		}
+		e.adminLink.Click()
+		frame(e, "")
+		h.mu.Lock()
+		navs := slices.Clone(h.navs)
+		h.mu.Unlock()
+		if !slices.Contains(navs, "directories?tab=people&account=admins") {
+			t.Errorf("%s admin link: navs %v", mode, navs)
+		}
+
+		// a failed fetch with nothing cached: Slack's classic pane has no
+		// error state, so it reads "Nobody’s in this group"
+		failList.Store(true)
+		f := NewUserGroupView(h, "S0FAKE00008")
+		frame(f, "")
+		pfUntil(t, mode+" failed fetch", func() bool { return f.loaded && f.started && !f.loading })
+		if x = frame(f, ""); !hasText(x, "Nobody’s in this group") || !f.failed {
+			t.Errorf("%s failed fetch: failed=%v, %q", mode, f.failed, x)
+		}
+		// and with members cached from before, it keeps them
+		w := NewUserGroupView(h, fakeslack.WorkspaceGroupID)
+		frame(w, "")
+		pfUntil(t, mode+" cached members", func() bool { return w.loaded && w.started && !w.loading })
+		if len(w.members) != 6 || w.failed {
+			t.Errorf("%s failed refetch: %d members, failed=%v", mode, len(w.members), w.failed)
+		}
+		failList.Store(false)
 	}
 }

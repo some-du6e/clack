@@ -59,6 +59,10 @@ type Store struct {
 	// userGroupMembership: usergroups.membership, subteam_self_added and
 	// subteam_self_removed; memory only)
 	MyGroups map[string]bool
+	// groupUsers is each user group's member ids as last fetched (the
+	// users field Slack's bulkAddMembersToGroup / appendMembersToGroup,
+	// client-boot CjnZ, keep on a userGroups record; memory only).
+	groupUsers map[string][]string
 	// Muted is the set of muted conversation ids (from prefs).
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
@@ -1370,6 +1374,29 @@ func (s *Store) SetMyUsergroup(id string, in bool) {
 		delete(s.MyGroups, id)
 	}
 	s.gen.Add(1)
+}
+
+// GroupUsers is group id's member ids as last fetched (nil, false
+// before the first fetch).
+func (s *Store) GroupUsers(id string) ([]string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids, ok := s.groupUsers[id]
+	return ids, ok
+}
+
+// SetGroupUsers is bulkAddMembersToGroup: ids replace group id's members.
+// With appendPage it is appendMembersToGroup (a later page).
+func (s *Store) SetGroupUsers(id string, ids []string, appendPage bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.groupUsers == nil {
+		s.groupUsers = map[string][]string{}
+	}
+	if appendPage {
+		ids = append(append([]string(nil), s.groupUsers[id]...), ids...)
+	}
+	s.groupUsers[id] = append([]string{}, ids...)
 }
 
 // InUsergroup is richtext.UsergroupMember: whether the viewer is in group

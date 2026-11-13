@@ -508,6 +508,10 @@ type Usergroup struct {
 	Description string `json:"description"`
 	UserCount   int    `json:"user_count"`
 	DateDelete  int64  `json:"date_delete"`
+	// TeamID is the group's team: a T… workspace id for a workspace
+	// group, an E… enterprise id for an org-level one (Slack's
+	// getUserGroupTeamId, client-boot gMz2).
+	TeamID string `json:"team_id,omitempty"`
 }
 
 // Usergroups lists the workspace's groups (the team host has them; the
