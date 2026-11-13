@@ -375,6 +375,13 @@ func (c *Controller) CardArea(gtx layout.Context, r image.Rectangle) {
 			case pointer.Enter, pointer.Move:
 				c.overCard = true
 			case pointer.Leave, pointer.Cancel:
+				if c.overCard && c.isOpen && c.hideAt.IsZero() {
+					// leaving the card starts the 250ms close (Frame ran
+					// before this frame's card events, so it can't), and
+					// asks for the frame that closes it
+					c.hideAt = gtx.Now.Add(HideDelay)
+					gtx.Execute(op.InvalidateCmd{At: c.hideAt})
+				}
 				c.overCard = false
 			}
 		}

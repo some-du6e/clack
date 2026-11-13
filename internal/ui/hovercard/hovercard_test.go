@@ -356,3 +356,53 @@ func TestTextyChannelTrigger(t *testing.T) {
 		t.Fatal("a pressed trigger reopened")
 	}
 }
+
+// Leaving the card for nothing starts the 250ms close in that frame, and
+// asks for the frame that closes it: Frame runs before the frame's card
+// events, so without it the card stayed open until the pointer moved
+// again.
+func TestLeavingTheCardCloses(t *testing.T) {
+	var r input.Router
+	c := &Controller{}
+	card := image.Rect(100, 100, 440, 300)
+	ops := new(op.Ops)
+	now := t0
+	frame := func() {
+		ops.Reset()
+		gtx := layout.Context{Ops: ops, Now: now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+			Constraints: layout.Exact(image.Pt(1000, 800)), Source: r.Source()}
+		c.Frame(now, false, false)
+		if _, _, open := c.Open(); open {
+			c.CardArea(gtx, card)
+		}
+		r.Frame(ops)
+	}
+	c.Show(Request{Key: "k", ChannelID: "C1", Anchor: image.Rect(200, 320, 260, 340)}, now)
+	frame()
+	r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(200, 200)})
+	now = now.Add(10 * time.Millisecond)
+	frame()
+	now = now.Add(time.Second)
+	frame()
+	if !c.OverCard() {
+		t.Fatal("the pointer on the card isn't over it")
+	}
+	if _, _, open := c.Open(); !open {
+		t.Fatal("closed with the pointer on the card")
+	}
+	r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(700, 600)})
+	now = now.Add(10 * time.Millisecond)
+	frame() // the Leave arrives after this frame's Frame
+	left := now
+	if _, _, open := c.Open(); !open {
+		t.Fatal("closed at once")
+	}
+	if wake, ok := r.WakeupTime(); !ok || !wake.Equal(left.Add(HideDelay)) {
+		t.Fatalf("wakeup %v %v, want the close at %v", wake, ok, left.Add(HideDelay))
+	}
+	now = left.Add(HideDelay)
+	frame()
+	if _, _, open := c.Open(); open {
+		t.Fatal("still open 250ms after the pointer left the card")
+	}
+}
