@@ -61,7 +61,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
-          go test -count=1 -v -run 'TestActivityItemShapes|TestActivityFakeslack|TestActivityClearBefore|TestActivityFeedParams|TestActivityDensityRoundTrip|TestActivityInvite|TestActivityReminderWrites|TestActivityClearAllViewsAndSuppress|TestActivityRepliedReacted|TestConnectChannelAccept' ./internal/core
+          go test -count=1 -v -run 'TestActivityItemShapes|TestActivityFakeslack|TestActivityClearBefore|TestActivityFeedParams|TestActivityDensityRoundTrip|TestActivityInvite|TestActivityReminderWrites|TestActivityClearAllViewsAndSuppress|TestActivityRepliedReacted|TestConnectChannelAccept|TestActivityStringInvite|TestActivityOddEntries|TestActivityRealtimeOddShape' ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestActivity' ./internal/ui/views
       - name: the Activity tab in the whole window
         # the inbox with an item open beside it in the app's secondary
