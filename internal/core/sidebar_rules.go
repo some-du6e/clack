@@ -75,6 +75,7 @@ var defaultExperimentGroups = map[string]string{
 	// agents and code channels (exp-agents-code, the account on 2026-11-10): the
 	// member count, plan and task blocks, auto-closing stale code channels
 	"agent_member_channel_count": "on", "plan_block_coding_enhancements": "on", "code_channels_auto_close": "on",
+	"session_channels_slug_peek":         "on", // 2026-11-13: a channel-tab slug with a peek opens no channel card
 	"agent_streaming_slimmer_task_cards": "on", "app_thread_nugget_fe": "on", "app_nugget_refinement": "on",
 	// Advanced > "Enable smart quotes and symbols" shows in the live dialog
 	// (iZ.w gates it), so composer_smart_symbols is on
