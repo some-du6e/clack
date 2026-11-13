@@ -361,10 +361,12 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		})
 	} else {
 		icon := "hash"
-		switch kind {
-		case "private":
+		switch {
+		case conv.Doc != "": // a canvas or list (core/sidebar_docs.go)
+			icon = a.sbDocIcon(conv.Doc)
+		case kind == "private":
 			icon = "lock"
-		case "mpim":
+		case kind == "mpim":
 			icon = "people"
 		default:
 			// BaseChannelPrefixIcon: an unread channel that isn't muted
@@ -397,8 +399,21 @@ func (e sbEntity) layout(gtx layout.Context, p slackc.Props) layout.Dimensions {
 		if nw > tw {
 			nw = tw
 		}
+		spans := conv.NameSpans
+		if label != conv.displayName() {
+			spans = nil // a plugin renamed the row: its text, as given
+		}
+		if spans != nil { // a document's name: FormatTextWithEmoji (sidebar_docs.go)
+			nw, trunc = a.sbSpansWidth(gtx, spans, size, weight), false
+			if nw > tw {
+				nw, trunc = tw, true
+			}
+		}
 		at(gtx, image.Pt(tx, gtx.Dp(1)), image.Pt(nw, rowH) /* Slack: text 1px below center */, func(gtx layout.Context) layout.Dimensions {
 			return ns.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
+				if spans != nil {
+					return a.sbSpans(gtx, spans, size, weight, nfg, rowH)
+				}
 				return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 					return a.th.Label(gtx, size, weight, nfg, label)
 				})

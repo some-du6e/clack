@@ -433,7 +433,14 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 	}
 
 	y := top + gtx.Dp(61)
-	show, overflow := a.railFit(gtx, height-gtx.Dp(61)-gtx.Dp(164))
+	// the status tab over the avatar (rail_status.go) makes the user
+	// button 24px taller as it comes in: the strip above it moves up
+	te, tshow := a.railStatusFrame(gtx)
+	lift := 0
+	if tshow {
+		lift = int(float64(gtx.Dp(24))*te + .5)
+	}
+	show, overflow := a.railFit(gtx, height-gtx.Dp(61)-gtx.Dp(164)-lift)
 	a.railOverflow = overflow
 	active := a.activeRail()
 	for _, k := range overflow { // the active tab is under More: More is active (Zxh6)
@@ -528,18 +535,18 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 	if !a.focusModeOn() {
 		by += gtx.Dp(52) // the strip keeps its bottom
 	}
-	newY := by
+	newY := by - lift
 	for _, k := range []string{"rail.new", "rail.focus"} {
 		k := k
 		if k == "rail.focus" {
 			if a.focusModeOn() {
-				a.focusButton(gtx, image.Pt(x0, by), cs)
+				a.focusButton(gtx, image.Pt(x0, by-lift), cs)
 				by += gtx.Dp(52)
 			}
 			continue
 		}
 		icon := "plus"
-		org := image.Pt(x0, by)
+		org := image.Pt(x0, by-lift)
 		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 			btn := a.clicks.get(k)
 			bg := c.SidebarButton
@@ -563,8 +570,13 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		org := image.Pt(x0, newY) // the + button (first in the strip)
 		a.openCreateMenu(image.Rectangle{Min: org, Max: org.Add(image.Pt(cs, cs))})
 	}
-	at(gtx, image.Pt(x0, by), image.Pt(cs+gtx.Dp(8), cs+gtx.Dp(8)), func(gtx layout.Context) layout.Dimensions {
+	if tshow { // under the avatar (.c-avatar is positioned and comes later)
+		a.railStatusTabDraw(gtx, image.Pt(x0, by), cs, te)
+	}
+	// the user button: the tab's part above the avatar, then the avatar
+	at(gtx, image.Pt(x0, by-lift), image.Pt(cs+gtx.Dp(8), cs+gtx.Dp(8)+lift), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, a.clicks.get("rail.me"), nil, func(gtx layout.Context) layout.Dimensions {
+			defer op.Offset(image.Pt(0, lift)).Push(gtx.Ops).Pop()
 			a.avatar(gtx, a.selfAvatar(), a.selfName(), cs, gtx.Dp(8))
 			// presence ring: 20px circle at the bottom-right, chrome-colored ring.
 			pc := image.Pt(cs-gtx.Dp(4), cs-gtx.Dp(4))
@@ -575,7 +587,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				theme.Circle(gtx, pc, gtx.Dp(10), c.ChromeTextDim)
 				theme.Circle(gtx, pc, gtx.Dp(5), c.ChromeB)
 			}
-			return layout.Dimensions{Size: image.Pt(cs, cs)}
+			return layout.Dimensions{Size: image.Pt(cs, cs+lift)}
 		})
 	})
 	if clicked(a.clicks.get("rail.me")) {

@@ -297,6 +297,9 @@ func (s channelSources) rankChannels(q string) []acItem {
 		})
 	}
 	for _, c := range s.convs {
+		if c.File { // a canvas's or list's conversation isn't a channel to mention (core/sidebar_docs.go)
+			continue
+		}
 		add(c.ID, c.Name, c.Kind, true, c.IsArchived, false)
 	}
 	for _, h := range s.hits {

@@ -99,6 +99,10 @@ type Size struct {
 	// the methods and events their cards and flexpane use
 	// (workobjects.go).
 	WorkObjects bool
+	// FileChannels adds canvases' and lists' hidden conversations to
+	// users.conversations, two of them in the Projects section
+	// (file_channels.go).
+	FileChannels bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -517,6 +521,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
+	}
+	if sz.FileChannels {
+		s.addFileChannels() // file_channels.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -1229,6 +1236,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "users.prefs.set":
 		if n := f.Get("name"); n != "" {
 			s.setPref(n, f.Get("value"))
+			if n == "focus_mode_expiration_ts" {
+				s.focusModeWritten(f.Get("value")) // focus_mode.go
+			}
 		} else if ps := f.Get("prefs"); ps != "" { // setMultipleUserPrefsByApi
 			var kv map[string]any
 			if json.Unmarshal([]byte(ps), &kv) != nil {

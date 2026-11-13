@@ -227,10 +227,10 @@ func TestHuddleShotsWindowCompact(t *testing.T) {
 				t.Fatalf("%s: the sticker pill isn't the theme's background (%d px)", name, n)
 			}
 			if people == 2 {
-				e.w.stick = true   // the sticker tray
-				settle(t, e, W, H) // its emoji pictures
+				e.w.toggleStickers() // HuddleStickerGrid
+				settle(t, e, W, H)   // its emoji pictures
 				render(t, name+"-tray", W, H, func(gtx C) { e.w.layout(gtx) })
-				e.w.stick = false
+				e.w.closeMenus()
 			}
 		}
 	}

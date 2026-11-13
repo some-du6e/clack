@@ -754,7 +754,7 @@ func (a *App) prefetch(ctx context.Context) {
 		if !e.HasUnreads && e.MentionCount == 0 {
 			continue
 		}
-		if _, ok := a.S.Convs[id]; !ok || a.S.Muted[id] {
+		if c, ok := a.S.Convs[id]; !ok || a.S.Muted[id] || IsFileChannel(c) {
 			continue
 		}
 		cs = append(cs, cand{id, e.Latest, e.MentionCount})
@@ -930,12 +930,49 @@ func (a *App) snapshotNow() Snapshot {
 	a.mu.Unlock()
 	self, _ := a.User(selfID)
 	secs, counts := a.sections(convs), a.Counts()
+	convs = sidebarFileConvs(convs, secs)
 	return Snapshot{
 		Self: self, Team: team, Convs: convs, Sections: secs, Counts: counts,
 		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
 		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID, Rail: a.Rail(),
 		FilterNames: a.filterNames(convs, secs, counts),
 	}
+}
+
+// sidebarFileConvs drops the file channels (sidebar_docs.go) no section
+// shows: Slack's candidates leave them out, so they aren't channels to
+// count, switch to or pick.
+func sidebarFileConvs(convs []Conv, secs []Section) []Conv {
+	var shown map[string]bool
+	var out []Conv
+	for i, c := range convs {
+		if !c.File {
+			if out != nil {
+				out = append(out, c)
+			}
+			continue
+		}
+		if shown == nil {
+			shown = map[string]bool{}
+			for _, s := range secs {
+				for _, l := range [][]string{s.Channels, s.All, s.CollapsedChannels, s.HiddenRead, s.HiddenMuted, s.HiddenDormant, s.HiddenUnread} {
+					for _, id := range l {
+						shown[id] = true
+					}
+				}
+			}
+		}
+		if out == nil {
+			out = append(make([]Conv, 0, len(convs)), convs[:i]...)
+		}
+		if shown[c.ID] {
+			out = append(out, c)
+		}
+	}
+	if out == nil {
+		return convs
+	}
+	return out
 }
 
 // BootErr is the error Boot returned, if any.
@@ -959,7 +996,7 @@ func (a *App) userOf(u *slack.User) User {
 		DisplaySet: strings.TrimSpace(u.Profile.DisplayName) != "",
 		Avatar:     avatarURL(u, 72, viewer), Avatar192: avatarURL(u, 192, viewer), Avatar512: avatarURL(u, 512, viewer),
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
-		StatusEmoji: u.Profile.StatusEmoji, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
+		StatusEmoji: u.Profile.StatusEmoji, StatusCanonical: u.Profile.StatusTextCanonical, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,
 		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Color: u.Color,
 		Huddle: u.Profile.HuddleState == "in_a_huddle", Agent: u.AgentStatus == "consistently_an_agent",
@@ -1097,6 +1134,7 @@ func (a *App) conv(c *slack.Conversation) Conv {
 	if cc := codeChannelOf(c); cc != nil {
 		v.Code, v.CodeStatus, v.AgentName = cc, a.codeStatusOf(c, cc), a.AgentName(cc)
 	}
+	a.fileChannelConv(c, &v) // a canvas's or list's conversation (sidebar_docs.go)
 	return v
 }
 
@@ -1354,6 +1392,10 @@ func (a *App) sections(convs []Conv) []Section {
 		return ok && (c.IsIM || c.IsMPIM)
 	}
 	visibleDM := func(id string) bool { return id == sel || !isDMKind(id) || a.dmCandidate(id) }
+	// a canvas's or list's conversation (sidebar_docs.go, lJBI): only with
+	// GH on and where a section, a star or a temporary join puts it, or
+	// while it is the open conversation
+	fileRows := a.fileChannelsInSidebarOn()
 	// External Connections (uSoP getChannelSectionType): with
 	// should_show_connect_section on and a slack_connect section, every
 	// externally shared conversation outside a custom section goes there;
@@ -1427,7 +1469,13 @@ func (a *App) sections(convs []Conv) []Section {
 			if secOf[id] != s.ID {
 				continue // Slack files it in another section (starred first)
 			}
-			if _, ok := a.sidebarConv(id); ok && !assigned[id] {
+			if c, ok := a.sidebarConv(id); ok && !assigned[id] {
+				if IsFileChannel(c) {
+					if !fileRows && id != sel {
+						continue
+					}
+					a.ensureSidebarFile(FileOfChannel(id))
+				}
 				sv.Channels = append(sv.Channels, id)
 				assigned[id] = true
 			}
@@ -1477,6 +1525,12 @@ func (a *App) sections(convs []Conv) []Section {
 	for _, c := range convs {
 		if assigned[c.ID] {
 			continue
+		}
+		if c.File { // lJBI: no default section for a file channel, unless it is open
+			if c.ID != sel {
+				continue
+			}
+			a.ensureSidebarFile(c.FileID)
 		}
 		if c.Code != nil && c.ID != sel && a.codeChannelClosed(c.ID) {
 			continue // lJBI keeps a closed record channel only when a section lists it, or starred or temporary (codechannel_close.go)

@@ -618,6 +618,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.winSize = sz
 	a.syncWheelAnimation()
 	a.syncThemeTokens()
+	a.focusFadeFrame(gtx) // focus mode's view transition (focus_fade.go)
 	a.syncMenuBar()
 	a.dropZonesReset() // the panes that take OS file drops register as they lay out
 

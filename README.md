@@ -2,7 +2,7 @@
 
 # Clack
 
-Clack (formerly yoloslack) is a fast Slack client for the desktop, written in Go with a native, GPU-rendered window ([Gio](https://gioui.org)). There is no browser, no JavaScript and no Electron: one small binary draws every pixel itself. It copies the 2026 Slack desktop client and is built for the Hack Club Slack (Enterprise Grid). Other workspaces work too.
+Clack is a fast Slack client for the desktop, written in Go with a native, GPU-rendered window ([Gio](https://gioui.org)). There is no browser, no JavaScript and no Electron: one small binary draws every pixel itself. It copies the 2026 Slack desktop client and is built for the Hack Club Slack (Enterprise Grid). Other workspaces work too.
 
 ## Install
 

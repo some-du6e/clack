@@ -96,6 +96,15 @@ type avState struct {
 	musicT     *time.Timer
 	musicOn    bool
 	musicStart time.Time // the alone timer's start (tests)
+
+	// HuddleLoungeMusicBanner's per-huddle state (lounge.go):
+	// hasUserStoppedLoungeMusic (Turn off music; a song pick clears it),
+	// isLoungeMusicBannerDismissed (the info line's 15 s are up), and the
+	// mounted banner's timer (its surface and deadline).
+	stopped   bool
+	infoGone  bool
+	infoOwner string
+	infoUntil time.Time
 }
 
 // Hooks the tests swap.
@@ -110,6 +119,7 @@ func (c *Controller) sessionStarted(s *huddle.Session) {
 	c.av.mu.Lock()
 	c.av.s = s
 	c.av.together, c.av.alone, c.av.musicOn = false, false, false
+	c.av.stopped, c.av.infoGone, c.av.infoOwner, c.av.infoUntil = false, false, "", time.Time{}
 	watching := c.av.lockStop != nil
 	c.av.mu.Unlock()
 	if !watching {
@@ -334,19 +344,22 @@ func (c *Controller) musicTick(s *huddle.Session, st huddle.State) {
 }
 
 // startMusic is the alone notice going active: the song plays, looped, on
-// your speakers only, if huddles_play_music_when_last is on.
+// your speakers only, if huddles_play_music_when_last is on and you
+// haven't turned it off in this huddle (jaWE's O, hasUserStoppedLoungeMusic).
+// HuddleLoungeMusicBanner shows while it plays (lounge.go).
 func (c *Controller) startMusic(s *huddle.Session) {
 	app := c.h.Core()
 	if app == nil || !app.PrefBool("huddles_play_music_when_last", false) {
 		return
 	}
 	c.av.mu.Lock()
-	if c.av.s != s || !c.av.alone || c.av.musicOn {
+	if c.av.s != s || !c.av.alone || c.av.musicOn || c.av.stopped {
 		c.av.mu.Unlock()
 		return
 	}
 	c.av.musicOn = true
 	c.av.mu.Unlock()
+	c.changed() // the banner
 	file := c.loungeSong()
 	pcm, err := loadMusic(file)
 	if err != nil {
@@ -364,9 +377,13 @@ func (c *Controller) startMusic(s *huddle.Session) {
 
 func (c *Controller) stopMusic(s *huddle.Session) {
 	c.av.mu.Lock()
+	was := c.av.musicOn
 	c.av.musicOn = false
 	c.av.mu.Unlock()
 	s.PlayLocal(nil, false)
+	if was {
+		c.changed() // the banner goes
+	}
 }
 
 // MusicPlaying reports whether the lounge music is on (tests, the bar).

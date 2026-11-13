@@ -148,6 +148,11 @@ func (b *backend) start(a *App) {
 		}
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
+		go func() { // fetchUserDndInfo for the current member: the rail's status tab (rail_status.go)
+			if b.core.LoadDND(b.ctx) == nil {
+				a.Invalidate()
+			}
+		}()
 		a.Post(func() {
 			b.apply(a, snap)
 			applog.Mark("sidebar-live", fmt.Sprintf("%d convs", len(snap.Convs)))
@@ -331,7 +336,8 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
 			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc),
 			Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose,
-			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName}
+			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName,
+			File: c.File, FileID: c.FileID, Doc: c.Doc, NameSpans: c.NameSpans}
 		if old := m.Convs[c.ID]; old != nil {
 			// keep what opened() fetched (count, facepile) across snapshots
 			if ci.NumMembers == 0 {
@@ -935,7 +941,8 @@ func (b *backend) resolved(ch string) *convInfo {
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic, NumMembers: c.NumMembers,
 			TopicSpans: firstSpans(c.TopicDoc), Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose,
-			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName}
+			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName,
+			File: c.File, FileID: c.FileID, Doc: c.Doc, NameSpans: c.NameSpans}
 		if c.Kind == "im" {
 			if u, ok := b.core.User(c.User); ok {
 				ci.Name, ci.Avatar, ci.Bot, ci.Active = u.Name, u.Avatar, u.IsBot, u.Presence == "active"

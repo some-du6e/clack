@@ -18,6 +18,7 @@ const (
 	ExpAVButtonPermissions = "huddles_av_button_permission_handling" // yc: the mic button's OS permission
 	ExpAwarenessTimestamp  = "huddles_awareness_timestamp"           // gG: awareness entries carry their time
 	ExpMilesDavis          = "huddles_miles_davis"                   // fJ: the Miles Davis lounge songs
+	ExpMusic               = "huddles_music"                         // lV: the DJ'ing sticker in the grid
 	ExpMissedNotification  = "huddles_missed_notification"           // Z0: "Huddle missed", MISSED badges
 	ExpMultiDevice         = "huddles_multi_device"                  // pL (treatment): a huddle on two devices
 	ExpScreensharePopout   = "huddles_screenshare_popout"            // fD: a shared screen in its own window
