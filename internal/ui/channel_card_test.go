@@ -90,7 +90,7 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
-	conv := fs.ChannelIDs()[1]
+	conv := fakeslack.ThreadPublicID // one fixture message: the posted one is newest and in view
 	fs.PostQuiet(conv, fakeslack.ProfileID, "Notes in <#"+fakeslack.ThreadSharedID+"> and <#"+fakeslack.ThreadElsewhereID+
 		">, the old ones in <#"+fakeslack.ThreadArchivedID+">")
 	e := startEnv(t, fs, t.TempDir())
