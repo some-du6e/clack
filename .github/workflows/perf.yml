@@ -68,6 +68,9 @@ permissions:
 
 env:
   GIO_DEPS: libwayland-dev libx11-dev libx11-xcb-dev libxkbcommon-x11-dev libgles2-mesa-dev libegl1-mesa-dev libffi-dev libxcursor-dev libvulkan-dev pkg-config
+  # the scale jobs' driver (perfharness builds only), overlaid on a
+  # scale_base tree so both sides run the same session
+  SCALE_HARNESS: internal/ui/perfdrive.go internal/ui/perfmem_linux.go internal/ui/perfmem_windows.go internal/ui/perfmem_other.go internal/ui/messages/perf_harness.go internal/ui/popups/perf_harness.go internal/imgcache/perf_harness.go
 
 concurrency:
   group: perf-${{ github.ref }}
@@ -238,8 +241,15 @@ jobs:
             git worktree add -q --detach "$RUNNER_TEMP/scale-base" "$sha"
             tree=$RUNNER_TEMP/scale-base
             echo "$SCALE_BASE ($(git rev-parse --short "$sha"))" > scale-out/base-label.txt
+            # HEAD's driver drives both sides (the same session), when it
+            # compiles against the base tree
+            for f in $SCALE_HARNESS; do [ -f "$f" ] && mkdir -p "$tree/$(dirname "$f")" && cp "$f" "$tree/$f"; done
           fi
-          (cd "$tree" && CGO_ENABLED=1 go build -tags perfharness -trimpath -o "$GITHUB_WORKSPACE/scale-out/$SIDE/clack-perf" ./cmd/clack)
+          if ! (cd "$tree" && CGO_ENABLED=1 go build -tags perfharness -trimpath -o "$GITHUB_WORKSPACE/scale-out/$SIDE/clack-perf" ./cmd/clack); then
+            [ "$SIDE" = base ] || exit 1
+            echo "::warning::HEAD's scale driver doesn't compile against the base tree: the base's own drives it"
+            (cd "$tree" && git checkout -q -- . && CGO_ENABLED=1 go build -tags perfharness -trimpath -o "$GITHUB_WORKSPACE/scale-out/$SIDE/clack-perf" ./cmd/clack)
+          fi
       - name: the published plugin Library (ChatTabs and Taut plugins, as Karim runs them)
         continue-on-error: true
         env:
@@ -312,12 +322,21 @@ jobs:
             git worktree add -q --detach "$env:RUNNER_TEMP\scale-base" $sha
             $tree = "$env:RUNNER_TEMP\scale-base"
             "$($env:SCALE_BASE) ($($sha.Substring(0, 7)))" | Out-File -Encoding utf8 scale-out\base-label.txt
+            # HEAD's driver drives both sides (the same session), when it
+            # compiles against the base tree
+            foreach ($f in ($env:SCALE_HARNESS -split ' ')) { if ($f -and (Test-Path $f)) { Copy-Item $f (Join-Path $tree $f) -Force } }
           }
           $out = "$env:GITHUB_WORKSPACE\scale-out\$($env:SIDE)\clack-perf.exe"
           Push-Location $tree
           & $winres make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version 0.0.0-perf
           go build -tags perfharness -trimpath -ldflags="-H windowsgui" -o $out .\cmd\clack
-          if ($LASTEXITCODE -ne 0) { throw "clack-perf ($($env:SIDE))" }
+          if ($LASTEXITCODE -ne 0) {
+            if ($env:SIDE -ne 'base') { throw "clack-perf ($($env:SIDE))" }
+            Write-Host "::warning::HEAD's scale driver doesn't compile against the base tree: the base's own drives it"
+            git checkout -q -- .
+            go build -tags perfharness -trimpath -ldflags="-H windowsgui" -o $out .\cmd\clack
+            if ($LASTEXITCODE -ne 0) { throw 'clack-perf (base)' }
+          }
           Pop-Location
       - name: the published plugin Library (ChatTabs and Taut plugins, as Karim runs them)
         continue-on-error: true
