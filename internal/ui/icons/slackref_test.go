@@ -22,6 +22,7 @@ var slackRef = map[string]string{
 	"agents-filled":      "ai-agents-filled",
 	"apps":               "apps",
 	"archive":            "archive",
+	"unarchive":          "unarchive",
 	"archive-filled":     "archive-filled",
 	"arrow-down":         "arrow-down",
 	"arrow-up":           "arrow-up",
