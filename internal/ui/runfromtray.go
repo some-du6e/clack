@@ -171,7 +171,12 @@ func (a *App) hideWindow() bool {
 // no frames, and posted work (the backend's events, notifications) would
 // otherwise wait for the window to come back. UI goroutine.
 func (a *App) drainIdle() {
-	if a.th.Shaper == nil { // fonts still loading: the first frames drain
+	// Fonts still loading: the first frames drain. The loader's
+	// Invalidate brings a wake-up when they're ready, and a window
+	// already hidden or minimized draws no frame to take them, so take
+	// them here (without, closing to the tray before they loaded left
+	// posted work waiting until the window came back).
+	if a.th.Shaper == nil && !a.takeShaper() {
 		return
 	}
 	a.mu.Lock()
