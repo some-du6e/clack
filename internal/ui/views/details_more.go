@@ -2113,10 +2113,9 @@ func (d *ChannelDetails) settingsVisible() bool {
 
 // updateAddApps opens the apps browser (popups.OpenAppsBrowser, Slack's
 // openAppsBrowserModal with addAppsVariant) from the Integrations tab's
-// "Add an App" and from Agents & apps' "Add agents and apps" (the latter
-// while agents_in_channels_improvements is off, as for the test account;
-// on, Slack opens the channel invite modal scoped to agents and apps,
-// which Clack doesn't have, so the browser opens then too).
+// "Add an App" and from Agents & apps' "Add agents and apps" while
+// agents_in_channels_improvements is off (on, the reworked tab opens the
+// channel invite modal scoped to agents and apps; details_agents.go).
 func (d *ChannelDetails) updateAddApps(gtx C) {
 	if !d.addApp.Clicked(gtx) {
 		return
