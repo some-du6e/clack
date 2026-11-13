@@ -52,7 +52,18 @@ type BookmarkLinkOpts struct {
 	// Save writes the bookmark; an error keeps the modal open with
 	// Slack's message.
 	Save func(ctx context.Context, link, name string) error
+	// ShowFolder is showSetFolder (LinkEntity's "Add link to folder",
+	// files-links-2): under Name, "Folder" over a select of Folders (the
+	// first picked); with none, the info banner "We’ll add this link to a
+	// Bookmarks folder for safekeeping." and SaveIn gets folder "" (the
+	// caller makes the folder first, addBookmarkFolderForChannel).
+	ShowFolder bool
+	Folders    []FolderOption
+	SaveIn     func(ctx context.Context, link, name, folder string) error
 }
+
+// FolderOption is one of showSetFolder's folders.
+type FolderOption struct{ ID, Title string }
 
 // BookmarkLinkModal is AddBookmarkModal for a link.
 type BookmarkLinkModal struct {
@@ -68,6 +79,24 @@ type BookmarkLinkModal struct {
 	cancel   *ModalButton
 	OnSaved  func()
 	linkSeen string
+	folder   int // the picked FolderOption
+	selBtn   widget.Clickable
+	selRect  image.Rectangle
+}
+
+// Folder is the picked folder's id ("" for none).
+func (m *BookmarkLinkModal) Folder() string {
+	if m.folder >= 0 && m.folder < len(m.o.Folders) {
+		return m.o.Folders[m.folder].ID
+	}
+	return ""
+}
+
+// PickFolder picks Folders[i] (tests; the select's onSelectionChange).
+func (m *BookmarkLinkModal) PickFolder(i int) {
+	if i >= 0 && i < len(m.o.Folders) {
+		m.folder = i
+	}
 }
 
 // NewBookmarkLinkModal builds it.
@@ -131,7 +160,7 @@ func NormalizeBookmarkLink(s string) (string, bool) {
 
 // Save runs the write.
 func (m *BookmarkLinkModal) Save() {
-	if !m.CanSave() || m.o.Save == nil {
+	if !m.CanSave() || m.o.Save == nil && m.o.SaveIn == nil {
 		return
 	}
 	link, ok := NormalizeBookmarkLink(m.link.Text())
@@ -141,7 +170,13 @@ func (m *BookmarkLinkModal) Save() {
 	}
 	name := strings.TrimSpace(m.name.Text())
 	m.pending = true
-	run(m.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, m.o.Save(ctx, link, name) },
+	folder := m.Folder()
+	run(m.h, func(ctx context.Context) (struct{}, error) {
+		if m.o.ShowFolder && m.o.SaveIn != nil {
+			return struct{}{}, m.o.SaveIn(ctx, link, name, folder)
+		}
+		return struct{}{}, m.o.Save(ctx, link, name)
+	},
 		func(_ struct{}, err error) {
 			m.pending = false
 			if err != nil {
@@ -217,6 +252,9 @@ func (m *BookmarkLinkModal) layout(gtx layout.Context) layout.Dimensions {
 		na = nsTabbedCh.T("Link name can’t be longer than 257 characters.")
 	}
 	block(nsTabbedCh.T("Name"), &m.name, nsTabbedCh.T("Ex. Project tracker"), na)
+	if m.o.ShowFolder {
+		y = m.folderField(gtx, th, cl, w, y)
+	}
 	if m.err != "" {
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
@@ -388,4 +426,56 @@ func NewDeleteFolderModal(h Host, n int, folder, channel string, del func()) *Mo
 	return NewModal(h, ModalOpts{Title: title, AutoFocus: ok, Body: func(gtx layout.Context) layout.Dimensions {
 		return para(gtx, th, 15, 22, theme.Regular, colorsOf(th).Fg, body, 0)
 	}, Buttons: []*ModalButton{{Label: nsTabbedCh.T("Cancel"), Kind: BtnOutline}, ok}})
+}
+
+// folderField is showSetFolder's part: "Folder" over the BasicSelect
+// (44 tall, the picked folder's title, caret-down; a click opens the
+// options list), or with no folders the boxed info banner.
+func (m *BookmarkLinkModal) folderField(gtx layout.Context, th *theme.Theme, cl *Colors, w, y int) int {
+	if len(m.o.Folders) == 0 {
+		pad := dp(gtx, 12)
+		call, d := record(loose(gtx, image.Pt(w-2*pad, 1<<20)), func(gtx layout.Context) layout.Dimensions {
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, i18n.Plain(nsTabbedCh.RT("We’ll add this link to a <strong>Bookmarks</strong> folder for safekeeping. ")), 0)
+		})
+		r := image.Rect(0, y, w, y+d.Size.Y+2*pad)
+		rrect(gtx, r, dp(gtx, 8), cl.Ring)
+		rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), cl.BgAlt)
+		macroAt(gtx, call, image.Pt(pad, y+pad))
+		return r.Max.Y + dp(gtx, 20)
+	}
+	if m.selBtn.Clicked(gtx) {
+		labels := make([]string, len(m.o.Folders))
+		for i, f := range m.o.Folders {
+			labels[i] = f.Title
+		}
+		m.h.ShowOverlay(NewSelectList(m.h, m.selRect, labels, m.folder, SelectListOpts{}, func(i int) { m.PickFolder(i) }))
+	}
+	d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+		return para(gtx, th, 15, 22, theme.Bold, cl.Fg, nsTabbedCh.T("Folder"), 1)
+	})
+	y += d.Size.Y + dp(gtx, 8)
+	ih := dp(gtx, 44)
+	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+		return m.selBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			sz := image.Pt(w, ih)
+			r := image.Rectangle{Max: sz}
+			stroke(gtx, r, dp(gtx, 8), border1(gtx), cl.BtnBorder)
+			title := ""
+			if m.folder >= 0 && m.folder < len(m.o.Folders) {
+				title = m.o.Folders[m.folder].Title
+			}
+			at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
+				gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 48), ih)}
+				return vcenter(gtx, ih, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 18, theme.Regular, cl.Fg, title) })
+			})
+			at(gtx, image.Pt(w-dp(gtx, 12)-dp(gtx, 20), (ih-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+				return icon(gtx, "caret-down", 20, cl.Fg)
+			})
+			pointerCursor(gtx, sz)
+			return layout.Dimensions{Size: sz}
+		})
+	})
+	m.selRect = image.Rect(0, y, w, y+ih).Add(dtModalOrigin(gtx, m.modal)) // window coordinates
+	return y + ih + dp(gtx, 20)
 }

@@ -661,6 +661,9 @@ func (lb *Lightbox) header(gtx layout.Context, th *theme.Theme, panel image.Rect
 		return
 	}
 	m := lb.m
+	if f := lb.cur().file; m.User == "" && f != nil {
+		m.User = f.User // a gallery's file (NewFileGallery): its sharer
+	}
 	name := m.Name
 	av := m.Avatar
 	if u, ok := lookupUser(lb.h, m.User); ok {

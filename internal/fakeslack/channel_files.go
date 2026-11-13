@@ -159,6 +159,9 @@ func (s *Server) handleChannelFiles(method string, f url.Values) (any, bool) {
 	if !s.Size.Files {
 		return nil, false
 	}
+	if out, handled := s.handleChannelFilesMore(method, f); handled { // channel_files_more.go
+		return out, true
+	}
 	switch method {
 	case "conversations.info":
 		if f.Get("channel") != FilesChannelID {
@@ -171,7 +174,7 @@ func (s *Server) handleChannelFiles(method string, f url.Values) (any, bool) {
 		b, _ := json.Marshal(c)
 		var m map[string]any
 		_ = json.Unmarshal(b, &m)
-		m["properties"] = map[string]any{"tabs": []any{map[string]any{"id": FilesTabID, "type": "files", "label": ""}}}
+		m["properties"] = map[string]any{"tabs": s.galleryTabsJSON()} // stateful (channel_files_more.go)
 		addCounts(m, c, f)
 		return ok("channel", m), true
 	case "search.modules.files":

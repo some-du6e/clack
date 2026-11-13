@@ -2200,7 +2200,21 @@ func (d *ChannelDetails) tabsItems() []W {
 		})
 	}
 	rows := []W{head}
+	titles := map[string]string{}
+	if ts, ok, err := d.tabList.get(); ok && err == nil {
+		for _, t := range ts {
+			titles[t.ID] = t.Title
+		}
+	}
+	var managed []W
+	if cdGroup(d.kind) != "im" {
+		managed = d.manageTabRows(titles) // details_tabs_manage.go: hide, show and reorder
+	}
+	rows = append(rows, managed...)
 	for _, t := range tabRows {
+		if managed != nil {
+			break
+		}
 		t := t
 		rows = append(rows, func(gtx C) D {
 			gtx.Constraints.Min.Y = gtx.Dp(46)

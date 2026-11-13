@@ -9,7 +9,9 @@ name: files-view
 # layouts, the menus, the dialogs, the empty states and the pagination
 # row), light and dark; and the channel's Files & links tab ("Files & links
 # tab": search.modules.files / conversations.searchLinks, the rows, the
-# radios, Sort, Load More, the menus, the keyboard and its shots).
+# radios, Sort, Load More, the menus, the keyboard and its shots; round 2:
+# the search's suggestions, Share, the star, View link details, the media
+# viewer's gallery, the grid's arrows and hiding / moving tabs).
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
@@ -41,6 +43,20 @@ on:
       - "internal/fakeslack/channel_files.go"
       - "internal/ui/files_tab.go"
       - "internal/ui/files_tab_test.go"
+      - "internal/core/channel_files_more.go"
+      - "internal/core/channel_files_more_test.go"
+      - "internal/core/channel_tabs_edit.go"
+      - "internal/fakeslack/channel_files_more.go"
+      - "internal/ui/views/channel_files_more.go"
+      - "internal/ui/views/channel_files_more_test.go"
+      - "internal/ui/views/link_details.go"
+      - "internal/ui/views/details_tabs_manage.go"
+      - "internal/ui/popups/share_file.go"
+      - "internal/ui/popups/share_file_test.go"
+      - "internal/ui/popups/lightbox_gallery.go"
+      - "internal/ui/popups/bookmark_modals.go"
+      - "internal/ui/files_tab_more.go"
+      - "internal/ui/files_tab_more_test.go"
       - ".github/workflows/files-view.yml"
   workflow_dispatch:
 
@@ -70,7 +86,8 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$VIEWS_SHOTS_DIR"
-          go test -count=1 -v -run 'TestFilesView|TestListCreate|TestChannelFiles' ./internal/core
+          go test -count=1 -v -run 'TestFilesView|TestListCreate|TestChannelFiles|TestChannelFileSuggestions|TestShareFileTo|TestLinkShares|TestChannelTabWrites|TestMoveTabAfter|TestCanEditTabsChecked' ./internal/core
+          go test -count=1 -v -run 'TestShareFileDialogLikeSlack|TestFileAccessText|TestFileGallery' ./internal/ui/popups
           go test -count=1 -v -run 'TestFilesRecentlyViewed|TestFilesTab' ./internal/ui
           xvfb-run -a go test -count=1 -v -run 'TestFilesView|TestFilesEmpty|TestFilesSidebar|TestChannelFiles' ./internal/ui/views
           ls -la "$VIEWS_SHOTS_DIR"

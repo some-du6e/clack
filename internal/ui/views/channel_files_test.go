@@ -37,7 +37,8 @@ import (
 // cfHost is filesHost with the fake's pictures (thumbs and favicons).
 type cfHost struct {
 	*filesHost
-	imgs *imgcache.Cache
+	imgs        *imgcache.Cache
+	showGallery bool // OpenMediaGallery shows the viewer (channel_files_more_test.go)
 }
 
 func (h *cfHost) Images() *imgcache.Cache { return h.imgs }
@@ -342,7 +343,7 @@ func TestChannelFilesOpen(t *testing.T) {
 	}
 	cw := min(968, e.size.X-32)
 	e.click(image.Pt((e.size.X-cw)/2+40, cfListY+top+40))
-	if got := h.last(); !strings.HasPrefix(got, "lightbox:") {
+	if got := h.last(); !strings.HasPrefix(got, "gallery:") { // the viewer with fileChannelMediaInfo (channel_files_more.go)
 		t.Errorf("media cell opened %q", got)
 	}
 	// keyboard: the list holds focus after the click; Home, then Enter on
@@ -356,9 +357,16 @@ func TestChannelFilesOpen(t *testing.T) {
 	if len(h.opened) != before+1 {
 		t.Errorf("Enter on %s opened nothing", v.kb.active)
 	}
+	// the strip's cells are grid cells (channel_files_more.go): → steps,
+	// ↓ into its hidden second row is taken and the cell stays (byyT)
+	first := v.kb.active
 	kbPress(e, key.NameDownArrow, 0)
-	if v.kb.active == "" || v.kb.active == v.kb.items[0].key {
-		t.Errorf("Down left the active row at %q", v.kb.active)
+	if v.kb.active != first {
+		t.Errorf("Down in the strip moved to %q", v.kb.active)
+	}
+	kbPress(e, key.NameRightArrow, 0)
+	if v.kb.active == "" || v.kb.active == first {
+		t.Errorf("Right left the active row at %q", v.kb.active)
 	}
 }
 
