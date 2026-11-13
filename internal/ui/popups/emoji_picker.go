@@ -1098,7 +1098,10 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 			rrect(gtx, cell, rad, epCellTint(int(r.si)*epCols+j))
 		}
 		if img, ok := im.Get(p.idx.url(id, p.tone), isz); ok {
-			t := op.Offset(image.Pt(x+(cw-isz)/2, y0+(ch-isz)/2)).Push(gtx.Ops)
+			// .p-emoji_picker__list_item{padding:.25rem 0 .2rem}: the
+			// image sits 4px below the cell's top (.c-emoji vertical-align
+			// top), not centred in its 32px
+			t := op.Offset(image.Pt(x+(cw-isz)/2, y0+dp(gtx, 4))).Push(gtx.Ops)
 			containImage(gtx, img, image.Pt(isz, isz))
 			t.Pop()
 		}
@@ -1146,7 +1149,9 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 	// .p-emoji_picker__footer: sk_foreground_min_solid, border-top 1px
 	// #00000026 in both modes
 	fill(gtx, image.Rect(0, 0, w, h), cl.EmojiFoot)
-	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), rgba(0x000000, .15))
+	// composited as the browser does (in sRGB): Gio's own alpha blend is
+	// in linear light and lands lighter (231 for Slack's 211 over #f8f8f8)
+	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), theme.Over(rgba(0x000000, .15), cl.EmojiFoot))
 
 	right := p.layoutTone(gtx, th, cl, w, h)
 
