@@ -1075,7 +1075,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				}
 				v.press = v.targetAt(e.Position)
 				v.pressPos = e.Position
-				if c := hovercard.Default(); c != nil && (v.isMention(v.press) || v.isChannelCard(v.press)) {
+				if c := hovercard.Default(); c != nil && (v.isMention(v.press) || v.isChannelCard(v.press) || v.isURLCard(v.press)) {
 					c.Pressed(mentionKey{v, v.press}) // Slack's handleClick closes the card
 				}
 				v.pressPreview(e.Position)
@@ -1168,6 +1168,27 @@ func (v *View) isChannelCard(t int16) bool {
 	return tg.kind == tChannel && tg.id != "" && !tg.cardless
 }
 
+// isURLCard reports whether t is a message link whose hover opens
+// UrlHoverCard: BaseMrkdwnLink's renderDefaultLink wraps a link that
+// shows a tooltip (rich text's Link passes showTooltip for every valid
+// URL; mrkdwn's renderLink its showTooltips) in UrlHoverCardTrigger with
+// truncated_url_hover_card on (URLHoverCard). A canvas's links are
+// Quip's, not BaseMrkdwnLink.
+func (v *View) isURLCard(t int16) bool {
+	if t < 0 || int(t) >= len(v.d.targets) || URLHoverCard == nil || v.opts.Canvas {
+		return false
+	}
+	tg := &v.d.targets[t]
+	return tg.kind == tLink && tg.urlCard && tg.url != "" && URLHoverCard(tg.url)
+}
+
+// URLHoverCard, set by the ui root, reports whether a message link to
+// url opens UrlHoverCard (kQRT: experimentTruncatedUrlHoverCardGroupOn,
+// for a link renderDefaultLink draws: an external link, not a message
+// permalink, whose hover is the message preview, nor a Slack action or
+// javascript: link). nil: none does.
+var URLHoverCard func(url string) bool
+
 // TabSlugCard, set by the ui root, reports whether a channel-tab slug
 // (channel ch, tab id tab) opens Slack's channel hover card: NY16's
 // MrkdwnChannelTab falls back to BaseMrkdwnChannel's trigger for a tab it
@@ -1226,6 +1247,8 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		tab = v.tabPeek(t)
 	}
 	on := v.hovering && v.isMention(t) || channel || tab != ""
+	urlCard := v.hovering && !on && v.isURLCard(t)
+	on = on || urlCard
 	defer func() {
 		if !on {
 			v.reportPreview(c, st, h)
@@ -1244,6 +1267,10 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		if f := &v.d.frags[i]; f.target == t {
 			r = r.Union(fragRect(f))
 		}
+	}
+	if urlCard {
+		c.ReportURL(k, v.d.targets[t].url, r, v.ptr) // UrlHoverCardTrigger: UrlHoverCard, position "top"
+		return
 	}
 	if tab != "" {
 		c.ReportTabPeek(k, v.d.targets[t].id, tab, r, v.ptr) // ChannelTabSlugPeekTrigger: the tab's peek, position "top"

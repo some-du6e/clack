@@ -5,12 +5,16 @@ import (
 	"image/color"
 	"time"
 
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -92,6 +96,13 @@ type MenuItem struct {
 	Do       func()
 	DoCtx    func(gtx layout.Context) // like Do, with the frame context (clipboard)
 	KeepOpen bool                     // don't close the menu after Do
+
+	// Context is the row's right-click (or macOS Ctrl+click), with the
+	// pointer in window coordinates: the tab bar's More menu opens the
+	// tab's context menu there (useTabsOverflowMenuRenderer's
+	// onContextMenuCapture under channel_tab_overflow_right_click). The
+	// menu stays open and the row stays highlighted.
+	Context func(at image.Point)
 }
 
 // Sep is a separator row.
@@ -179,6 +190,8 @@ type Menu struct {
 	nExtra  int            // trailing rows a plugin added as Menu children
 	ctxH    *taut.GoHandle // ContextMenuTriggerWithKeyboardFocus.getTemplate
 	ctxDone bool           // asked a patched getTemplate
+
+	rowCtx int // the right-click area's tag (MenuItem.Context)
 }
 
 // NewMenu opens a menu with its top-left corner at anchor (flipping at the
@@ -598,6 +611,43 @@ func (m *Menu) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors, pos i
 		y += hs[i]
 	}
 	cs.Pop()
+	m.rowContext(gtx, pos, local) // above the rows, passing their presses on
+}
+
+// rowContext runs MenuItem.Context for a right-click on its row (last
+// frame's rows) and, when any row has one, takes right-clicks over the
+// card (pos its window position, local its box at the origin).
+func (m *Menu) rowContext(gtx layout.Context, pos image.Point, local image.Rectangle) {
+	has := false
+	for i := range m.items {
+		if m.items[i].Context != nil {
+			has = true
+		}
+	}
+	if !has {
+		return
+	}
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &m.rowCtx, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		e, ok := ev.(pointer.Event)
+		if !ok || !ctxclick.Press(e) {
+			continue
+		}
+		p := image.Pt(int(e.Position.X), int(e.Position.Y)).Add(pos)
+		for i, r := range m.rows {
+			if i < len(m.items) && p.In(r) && m.items[i].Context != nil {
+				m.sel, m.kbd = i, false
+				m.items[i].Context(p)
+				break
+			}
+		}
+	}
+	defer clip.Rect(local).Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, &m.rowCtx)
 }
 
 func (m *Menu) row(gtx layout.Context, th *theme.Theme, cl *Colors, i int, sz image.Point) layout.Dimensions {

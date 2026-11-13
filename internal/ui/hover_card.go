@@ -2,12 +2,15 @@ package ui
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"time"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op/paint"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -26,6 +29,7 @@ type profileHover struct {
 	chc  *popups.ChannelHoverCard  // a channel's (Request.ChannelID)
 	tpk  *slugPeek                 // a channel-tab slug's peek (Request.Tab)
 	cvc  *popups.CanvasChannelCard // a canvas's channel mention (Request.Canvas)
+	urc  *popups.URLHoverCard      // a message link's UrlHoverCard (Request.URL)
 	gen  int
 	over bool // drawn above the overlays (the top one hosts the trigger)
 }
@@ -137,11 +141,35 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 	next := h.ctl.Frame(gtx.Now, a.hoverBlocked(), hold)
 	req, gen, open := h.ctl.Open()
 	if !open {
-		h.card, h.prev, h.chc, h.cvc = nil, nil, nil, nil
+		h.card, h.prev, h.chc, h.cvc, h.urc = nil, nil, nil, nil, nil
 		h.setPeek(nil)
 		hovercard.Invalidate(gtx, next)
 		return
 	}
+	if req.URL != "" {
+		// UrlHoverCardTrigger: the link's UrlHoverCard, position "top"
+		// (popups/url_card.go)
+		h.card, h.prev, h.chc, h.cvc = nil, nil, nil, nil
+		h.setPeek(nil)
+		if h.urc == nil || h.gen != gen {
+			h.urc = popups.NewURLHoverCard(a, req.Anchor, req.URL)
+			h.gen = gen
+		}
+		g := gtx
+		g.Constraints = layout.Constraints{Max: gtx.Constraints.Max}
+		func() {
+			if o := h.ctl.Opacity(gtx.Now); o < 1 {
+				defer paint.PushOpacity(g.Ops, o).Pop()
+			}
+			h.urc.Layout(g)
+		}()
+		h.ctl.CardArea(g, h.urc.Rect())
+		if !next.IsZero() && !next.After(gtx.Now.Add(time.Minute)) {
+			hovercard.Invalidate(gtx, next)
+		}
+		return
+	}
+	h.urc = nil
 	if req.Tab != "" && req.ChannelID != "" {
 		// ChannelTabSlugPeekTrigger: the tab's peek (tab_slug_peek.go)
 		h.card, h.prev, h.chc, h.cvc = nil, nil, nil, nil
@@ -295,6 +323,10 @@ func (a *App) installAppCardHooks() {
 	popups.ChannelHuddleBadge = func(gtx layout.Context, th *theme.Theme, ch string, right, rowH int) int {
 		return a.huddles().CardBadge(gtx, th, ch, right, rowH)
 	}
+	richview.URLHoverCard = func(u string) bool {
+		c := a.Core()
+		return c != nil && c.URLHoverCardExperiment() && urlHoverCardLink(u)
+	}
 	richview.TabSlugCard = func(ch, tab string) bool {
 		c := a.Core()
 		return c != nil && c.ChannelTabSlugCard(ch, tab)
@@ -348,4 +380,28 @@ func (a *App) openAppTab(uid, tab string) {
 			}
 		})
 	}()
+}
+
+// urlHoverCardLink reports whether BaseMrkdwnLink draws u with
+// renderDefaultLink's UrlHoverCardTrigger: a URL isUrl accepts (rich
+// text's Link passes showTooltip only then) whose getUrlType is
+// "external" or "messages", and not a message permalink (ef: its hover is
+// the message preview, OS), a Slack action link ("(Disabled)" text or a
+// doSlackAction button) or javascript: (a plain button).
+func urlHoverCardLink(u string) bool {
+	p, err := url.Parse(strings.TrimSpace(u))
+	if err != nil || p.Scheme == "" {
+		return false
+	}
+	switch strings.ToLower(p.Scheme) {
+	case "javascript", "slack-action":
+		return false
+	}
+	if strings.HasPrefix(u, "api::") {
+		return false
+	}
+	if pl, ok := core.ParsePermalink(u); ok && pl.Kind == "message" {
+		return false
+	}
+	return true
 }
