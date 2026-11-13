@@ -331,6 +331,26 @@ func stacked(gtx layout.Context, o any) {
 	stackCur = append(stackCur, o)
 }
 
+// ForgetDismissed lets go of the closed overlays the stack still holds. The
+// stack keeps the overlays of the last frame that drew one (and its
+// backing arrays older ones) until another is laid out, so a closed
+// overlay stayed reachable while none was open: a closed emoji picker
+// kept the full index (12 MB at Hack Club scale) past epIndexIdle. A
+// closed overlay is never laid out again (Layout returns first when done),
+// and every reader of the stack skips one (isTop compares, the pump and
+// overModal skip dismissed overlays), so nil in its place reads the same.
+// The root calls it once a frame.
+func ForgetDismissed() {
+	for _, s := range [2][]any{stackCur, stackPrev} {
+		for i, o := range s {
+			if d, ok := o.(interface{ Dismissed() bool }); ok && d.Dismissed() {
+				s[i] = nil
+			}
+		}
+		clear(s[len(s):cap(s)]) // read by nobody: the next frame appends over them
+	}
+}
+
 // isTop reports whether o was the topmost popups overlay last frame (true
 // when nothing was recorded yet).
 func isTop(o any) bool {
