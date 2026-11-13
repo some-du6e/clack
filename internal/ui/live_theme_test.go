@@ -49,8 +49,15 @@ func TestLiveThemeSwitchMatchesFresh(t *testing.T) {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		for _, sc := range scenes {
 			t.Run(sc.name+"-to-"+mode, func(t *testing.T) {
+				sz := fakeslack.Small
+				sz.Views = true
+				fs, err := fakeslack.Start(sz) // one server: the same synthetic data in both
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = fs.Close() })
 				shot := func(start bool) *image.RGBA {
-					e := newActShell(t)
+					e := newActShellOn(t, fs)
 					e.a.th.SetDark(start)
 					e.frames(2)
 					e.a.Navigate("c/" + fakeslack.ViewsChannel)
@@ -58,7 +65,12 @@ func TestLiveThemeSwitchMatchesFresh(t *testing.T) {
 						cv := e.a.convos[fakeslack.ViewsChannel+"/"]
 						return cv != nil && cv.comp != nil && !cv.compRect.Empty()
 					})
-					if c, ok := e.a.convos[fakeslack.ViewsChannel+"/"].comp.(interface{ InsertText(string) }); ok {
+					// the draft outlives a shell (it's the process's): type into
+					// an empty box only
+					if c, ok := e.a.convos[fakeslack.ViewsChannel+"/"].comp.(interface {
+						InsertText(string)
+						DocText() string
+					}); ok && c.DocText() == "" {
 						c.InsertText("typed in the composer")
 					}
 					e.frames(10)
