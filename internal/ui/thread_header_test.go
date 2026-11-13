@@ -161,3 +161,63 @@ func TestThreadHeaderFromActivity(t *testing.T) {
 		})
 	}
 }
+
+// Karim (karim-1113c): "clicking # clack up there doesnt bring u to the
+// correct msg". The thread header's name is the root's permalink: the
+// channel (or DM) opens scrolled to the root and flashes it, the thread
+// pane staying open. A conversation already mounted in the background,
+// last left at its newest message and with messages that arrived since,
+// rebuilt on the jump and its scroll anchoring put it back at the old
+// spot, nowhere near the root.
+func TestThreadHeaderJumpsToRoot(t *testing.T) {
+	e := threadHeaderEnv(t, false)
+	other := e.fs.ChannelIDs()[0]
+	users := e.fs.UserIDs()
+	for i, c := range e.fs.ThreadHeaderCases() {
+		if c.Channel == other {
+			continue
+		}
+		// plenty of newer messages, so the root is off screen at the newest
+		for n := 0; n < 40; n++ {
+			e.fs.PostQuiet(c.Channel, users[n%len(users)], "a synthetic newer message")
+		}
+		e.openChannel(c.Channel)
+		e.until(c.Name+": the conversation loads", 10*time.Second, func() bool {
+			l, ok := e.a.convoFor(c.Channel, "").list.(channelList)
+			return ok && len(l.VisibleRows()) > 0
+		})
+		e.toLatest()
+		visible := func() bool {
+			l, _ := e.a.convoFor(c.Channel, "").list.(channelList)
+			for _, r := range l.VisibleRows() {
+				if r.Key == fakeslack.ThreadRootTS {
+					return true
+				}
+			}
+			return false
+		}
+		if visible() {
+			t.Fatalf("%s: the root is on screen at the newest message; the test needs it off screen", c.Name)
+		}
+		// away, while more messages arrive
+		e.openChannel(other)
+		for n := 0; n < 3; n++ {
+			_, ev := e.fs.PostQuiet(c.Channel, users[n%len(users)], "a synthetic message while away")
+			e.fs.Push(ev)
+		}
+		e.settle(300 * time.Millisecond)
+		e.a.OpenThread(c.Channel, fakeslack.ThreadRootTS)
+		r := e.waitThreadHeader(c)
+		e.clickAt(r.Min.Add(r.Size().Div(2)), time.Duration(i+1)*time.Second)
+		want := Route("c/" + c.Channel + "/m/" + fakeslack.ThreadRootTS)
+		e.until(c.Name+": the click navigates", 5*time.Second, func() bool { return e.a.router.Current() == want })
+		e.until(c.Name+": the root on screen", 10*time.Second, visible)
+		e.settle(500 * time.Millisecond)
+		if !visible() {
+			t.Errorf("%s: the root scrolled away after the jump", c.Name)
+		}
+		if s := e.a.secondary; s.kind != secThread || s.channel != c.Channel || s.ts != fakeslack.ThreadRootTS {
+			t.Errorf("%s: the thread pane didn't stay open (secondary %v %s/%s)", c.Name, s.kind, s.channel, s.ts)
+		}
+	}
+}

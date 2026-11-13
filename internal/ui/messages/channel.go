@@ -127,17 +127,23 @@ func (v *ChannelView) NewestRowBottom() (int, bool) { return v.s.newestBottom() 
 
 // Highlight scrolls to ts and flashes it (permalinks, search results,
 // route "c/<id>/m/<ts>"). Older messages are paged in until ts is loaded.
+// The jump stays pending until the list's next sync places it: a list
+// mounted in the background (the thread header's channel link with the
+// channel not on screen) rebuilds with the messages that arrived since it
+// last showed, and that rebuild's scroll anchoring, or an eviction's
+// reset, would otherwise put it back where it was last left.
 func (v *ChannelView) Highlight(ts string) {
 	v.s.highlight, v.s.highlightAt = ts, time.Now()
 	v.s.positioned = true
 	v.s.jumpPages = 0
+	v.s.pendingJump = ts
 	for i, it := range v.s.items {
-		if it.kind == itMsg && v.s.snap.msgs[it.idx].m.TS == ts {
+		if it.kind == itMsg && it.idx < len(v.s.snap.msgs) && v.s.snap.msgs[it.idx].m.TS == ts {
+			// there now; the next sync places it again after any rebuild
 			v.s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
-			return
+			break
 		}
 	}
-	v.s.pendingJump = ts
 }
 
 // Refresh refetches the newest messages in the background.
