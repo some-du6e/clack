@@ -478,9 +478,13 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				at(gtx, image.Pt(tile.Min.X+gtx.Dp(8), tile.Min.Y+gtx.Dp(8)), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(name)(gtx, 20, c.ChromeText)
 				})
-				// unread badge / dot on the tile's top-right corner.
+				// unread badge / dot on the tile's top-right corner. The
+				// badge's right edge is fixed (.p-tab_rail__button .c-badge
+				// {top:4px; right:2px}, absolute in the 52px tab), so 10
+				// and 99+ grow left, inside the tab, not past its clip.
 				if n, dot := a.railBadge(t.key); n > 0 {
-					at(gtx, image.Pt(tile.Max.X-gtx.Dp(10), tile.Min.Y-gtx.Dp(5)), image.Pt(gtx.Dp(40), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+					w := a.railCountW(gtx, n)
+					at(gtx, image.Pt(gtx.Dp(52)-gtx.Dp(2)-w, gtx.Dp(4)), image.Pt(w, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
 						return a.railCount(gtx, n)
 					})
 				} else if dot {
@@ -599,15 +603,17 @@ func (a *App) chromeButton(gtx layout.Context, org image.Point, c *widget.Clicka
 }
 
 // railCount draws the small count bubble on a rail tile.
+// railCountW is railCount's pill width.
+func (a *App) railCountW(gtx layout.Context, n int) int {
+	return max(a.th.Measure(gtx, 11, theme.Bold, railCountText(n))+gtx.Dp(10), gtx.Dp(18))
+}
+
 func (a *App) railCount(gtx layout.Context, n int) layout.Dimensions {
 	c := &a.th.C
 	txt := railCountText(n)
 	h := gtx.Dp(18)
 	tw := a.th.Measure(gtx, 11, theme.Bold, txt)
-	w := tw + gtx.Dp(10)
-	if w < h {
-		w = h
-	}
+	w := a.railCountW(gtx, n)
 	theme.RRect(gtx, image.Rect(0, 0, w, h).Inset(-gtx.Dp(2)), h/2+gtx.Dp(2), c.ChromeB)
 	theme.RRect(gtx, image.Rect(0, 0, w, h), h/2, c.Badge)
 	at(gtx, image.Pt((w-tw)/2, 0), image.Pt(w, h), func(gtx layout.Context) layout.Dimensions {
