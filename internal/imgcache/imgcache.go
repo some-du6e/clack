@@ -359,9 +359,10 @@ func (c *Cache) Get(url string, sizePx int) (paint.ImageOp, bool) {
 		return op, true
 	}
 	if e := c.deriveLocked(k); e != nil {
-		// the exact decode replaces it when the disk tier has the bytes
-		// (a read, no network); otherwise the scaled copy stays
-		e.interim = c.dir != "" && DiskOK(k.url)
+		// the exact decode replaces it: always for a standard emoji's own
+		// CDN size, else when the disk tier has the bytes (a read, no
+		// network); otherwise the scaled copy stays
+		e.interim = e.interim || c.dir != "" && DiskOK(k.url)
 		c.putLocked(e)
 		c.evict()
 		if e.interim {
@@ -520,7 +521,10 @@ func (c *Cache) deriveLocked(k key) *entry {
 	if src == nil || src.size.X*src.size.Y*len(src.px) > deriveMaxPx {
 		return nil
 	}
-	e := &entry{k: k, used: time.Now().Unix()}
+	// a standard emoji whose two sizes are different CDN assets (emoji-
+	// sharp's ForPixels): the scaled copy only shows until k's own asset
+	// arrives
+	e := &entry{k: k, used: time.Now().Unix(), interim: emoji.ForPixels(k.url, k.size) != emoji.ForPixels(k.url, src.k.size)}
 	for _, f := range src.px {
 		e.px = append(e.px, Scale(f, k.size))
 	}

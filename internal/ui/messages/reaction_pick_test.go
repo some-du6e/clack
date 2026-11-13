@@ -155,7 +155,10 @@ func TestReactionPickDrawsAtOnce(t *testing.T) {
 			if _, ok := imgs.Size(url, es); !ok {
 				t.Errorf("the pill's first frame had no picture (no %dpx entry: it fell back to :%s:)", es, tc.emoji)
 			}
-			if n := f.total(); n != fetched {
+			// a custom emoji is one image: nothing fetched again. A standard
+			// one has a CDN asset per size (emoji-sharp): the scaled copy
+			// draws at once and the pill's own size still loads
+			if n := f.total(); n != fetched && tc.emoji != "tada" {
 				t.Errorf("the pill fetched again (%d → %d)", fetched, n)
 			}
 			select {
