@@ -455,7 +455,16 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		if old, ok := a.S.Find(ch, m.TS); ok {
 			keepFiles(&m, &old)
 			streamed = streamed || old.StreamingState == "in_progress"
+			// Slack's store keeps a thread's replies apart from the
+			// messages (the thread's reply list), so a replaced reply
+			// stays in its thread whatever the copy says: one without
+			// thread_ts must not become a channel message here, nor miss
+			// the open thread pane.
+			if m.ThreadTS == "" && old.ThreadTS != "" && old.ThreadTS != old.TS {
+				m.ThreadTS, m.ParentUser = old.ThreadTS, firstNonEmpty(m.ParentUser, old.ParentUser)
+			}
 		}
+		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this keeps it (store/live.go)
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
@@ -479,6 +488,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			thread = old.ThreadTS
 		}
 		a.S.Remove(ch, e.DeletedTS)
+		a.S.NoteLive(ch, e.DeletedTS, nil)
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":
@@ -519,6 +529,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	if isReply {
 		a.S.AddReply(ch, m)
+		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this reply keeps it (store/live.go)
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)

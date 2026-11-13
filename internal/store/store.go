@@ -50,6 +50,9 @@ type Store struct {
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
+	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
+	liveQ       []string                   // live's keys, oldest first
+	liveSeq     uint64                     // realtime message changes seen
 	CustomEmoji emoji.Custom
 	EmojiStyle  string
 	cacheDir    string

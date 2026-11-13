@@ -4,8 +4,9 @@ name: thread-header
 # conversation core doesn't hold, against internal/fakeslack's thread
 # header fixtures; find in thread (find_in_thread: the header's Search in
 # thread, the bar, search.inline, the marks); then window and pane
-# screenshots per kind, light and dark, rendered headlessly. Synthetic
-# only: nothing here talks to Slack.
+# screenshots per kind, light and dark, rendered headlessly; an agent
+# app's answer edited live in the open pane (fakeslack's AgentThread).
+# Synthetic only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run thread-header.yml --ref <branch>)
@@ -16,6 +17,10 @@ on:
       - "internal/ui/host.go"
       - "internal/core/resolve.go"
       - "internal/fakeslack/threadheader.go"
+      - "internal/fakeslack/agent_thread.go"
+      - "internal/ui/agent_thread_test.go"
+      - "internal/ui/messages/hub.go"
+      - "internal/store/live.go"
       - ".github/workflows/thread-header.yml"
   workflow_dispatch:
 
@@ -52,6 +57,17 @@ jobs:
           xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity' ./internal/ui/
           # find in thread's bar and marks (thread-find-*.png)
           xvfb-run -a go test -count=1 -v -run 'TestThreadFindShots' ./internal/ui/messages/
+      - name: an agent's edited answer in the open pane, with screenshots
+        env:
+          THREAD_HEADER_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p "$THREAD_HEADER_SHOTS_DIR"
+          # agent-thread-working-*.png, agent-thread-answer-*.png
+          xvfb-run -a go test -count=1 -v -run 'TestAgentThread' ./internal/ui/
+          go test -count=1 -v -run 'TestAgentThread|TestAgentAnswer|TestActivityThreadReply' ./internal/core/
+          go test -count=1 -v -run 'TestPreviewFromMessage' ./internal/richtext/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

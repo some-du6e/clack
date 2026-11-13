@@ -45,6 +45,9 @@ type model struct {
 	jump     string      // a reply to scroll to (taut jumpToReply), consumed by views
 	// newestMissing: the window misses the newest page (snap.newestMissing)
 	newestMissing bool
+	// live: messages an event changed (true: deleted) while a load was
+	// out; the load's answer, read before them, keeps them (keepLive)
+	live map[string]bool
 
 	// failed loads back off (see backoff); no retries at all after auth fails
 	fails, olderFails     int
@@ -204,8 +207,10 @@ func (hb *hub) ensureLoaded(m *model) {
 			m.mu.Lock()
 			m.loading = false
 			m.err = err
+			live := m.takeLive()
 			if err == nil {
 				m.setAll(msgs)
+				m.keepLive(live)
 				m.loaded = true
 				m.fetched = time.Now()
 				m.fails, m.retryAt = 0, time.Time{}
@@ -219,8 +224,10 @@ func (hb *hub) ensureLoaded(m *model) {
 			m.mu.Lock()
 			m.loading = false
 			m.err = err
+			live := m.takeLive()
 			if err == nil {
 				m.mergeNewest(p.Messages, p.HasMore)
+				m.keepLive(live)
 				if !m.loaded {
 					m.lastRead = p.LastRead
 				}
@@ -383,6 +390,52 @@ func (m *model) upsert(msg core.Message) {
 	m.msgs[i] = entry{m: msg, rev: m.bump()}
 }
 
+// noteLive records that an event changed (or deleted) ts while a load is
+// out (callers hold m.mu).
+func (m *model) noteLive(ts string, gone bool) {
+	if !m.loading || ts == "" {
+		return
+	}
+	if m.live == nil {
+		m.live = map[string]bool{}
+	}
+	m.live[ts] = gone
+}
+
+// takeLive is what the events changed during the load that just answered:
+// each message's current entry, nil for one deleted (callers hold m.mu).
+func (m *model) takeLive() map[string]*entry {
+	if len(m.live) == 0 {
+		m.live = nil
+		return nil
+	}
+	out := make(map[string]*entry, len(m.live))
+	for ts, gone := range m.live {
+		if i := m.find(ts); !gone && i >= 0 {
+			e := m.msgs[i]
+			out[ts] = &e
+		} else if gone {
+			out[ts] = nil
+		}
+	}
+	m.live = nil
+	return out
+}
+
+// keepLive puts back what the events changed during a load after its
+// answer replaced the list: Slack's message_changed replaces the stored
+// message at once, so an answer read before an edit (or a delete, or a
+// new reply) mustn't show the old state again (callers hold m.mu).
+func (m *model) keepLive(live map[string]*entry) {
+	for ts, e := range live {
+		if e == nil {
+			m.remove(ts)
+		} else {
+			m.upsert(e.m)
+		}
+	}
+}
+
 func (m *model) remove(ts string) {
 	if i := m.find(ts); i >= 0 {
 		m.msgs = append(m.msgs[:i], m.msgs[i+1:]...)
@@ -461,6 +514,7 @@ func (hb *hub) apply(ev core.Event) bool {
 			chm.mu.Lock()
 			if ev.Type == "message" || chm.find(ev.Msg.TS) >= 0 || chm.visible(ev.Msg) {
 				chm.upsert(*ev.Msg)
+				chm.noteLive(ev.Msg.TS, false)
 				if ev.Type == "message" {
 					delete(chm.typing, ev.Msg.User)
 				}
@@ -472,6 +526,7 @@ func (hb *hub) apply(ev core.Event) bool {
 		if thm != nil {
 			thm.mu.Lock()
 			thm.upsert(*ev.Msg)
+			thm.noteLive(ev.Msg.TS, false)
 			if ev.Type == "message" {
 				delete(thm.typing, ev.Msg.User)
 			}
@@ -484,6 +539,7 @@ func (hb *hub) apply(ev core.Event) bool {
 			if _, t2 := hb.models(ev.Channel, ev.Msg.TS); t2 != nil {
 				t2.mu.Lock()
 				t2.upsert(*ev.Msg)
+				t2.noteLive(ev.Msg.TS, false)
 				t2.rev++
 				t2.mu.Unlock()
 				changed = true
@@ -531,6 +587,7 @@ func (hb *hub) apply(ev core.Event) bool {
 				m.remove(ev.TS)
 				m.rev++
 			}
+			m.noteLive(ev.TS, true)
 			m.mu.Unlock()
 		}
 		return len(ms) > 0
