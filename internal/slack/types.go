@@ -262,6 +262,27 @@ type Attachment struct {
 	WorkObject       json.RawMessage `json:"work_object,omitempty"`
 	AppUnfurlURL     string          `json:"app_unfurl_url,omitempty"`
 	AppID            string          `json:"app_id,omitempty"`
+
+	// Canvas-section unfurls (MessageAttachmentQuipAnchorLink): the
+	// canvas and the section the link points at.
+	FileID          string           `json:"file_id,omitempty"`
+	DocumentSection *DocumentSection `json:"document_section,omitempty"`
+}
+
+// DocumentSection is a canvas-section unfurl's section: its id and who
+// wrote it (snippet).
+type DocumentSection struct {
+	SectionID string `json:"section_id"`
+	Snippet   struct {
+		Authors []struct {
+			UserID             string `json:"user_id"`
+			IsAuthor           bool   `json:"is_author"`
+			IsRecentEditor     bool   `json:"is_recent_editor"`
+			IsMostRecentEditor bool   `json:"is_most_recent_editor"`
+		} `json:"authors"`
+		SectionEditedTS int64    `json:"section_edited_ts"`
+		FileIDs         []string `json:"file_ids"`
+	} `json:"snippet"`
 }
 
 // User is a (subset of a) Slack user object.

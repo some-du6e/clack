@@ -69,8 +69,8 @@ func (c *coverState) typed() {
 }
 
 // visible is the strip's target state.
-func (c *coverState) visible() bool {
-	return c.inBand || c.btn.Hovered() || c.btn.Focused() || c.inTitle && !c.keyed
+func (c *coverState) visible(gtx layout.Context) bool {
+	return c.inBand || c.btn.Hovered() || gtx.Focused(&c.btn) || c.inTitle && !c.keyed
 }
 
 // opacity is the strip's opacity at now: CSS's opacity transition, .25s
@@ -128,7 +128,7 @@ func (v *View) layoutCover(gtx layout.Context, w, x0, titleTop, titleBottom int)
 	if c.btn.Clicked(gtx) {
 		v.h.Toast(cantCover)
 	}
-	if vis := c.visible(); vis != c.shown {
+	if vis := c.visible(gtx); vis != c.shown {
 		c.from, _ = c.opacity(gtx.Now)
 		c.shown, c.at = vis, gtx.Now
 	}

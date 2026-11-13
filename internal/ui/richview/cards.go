@@ -98,6 +98,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	if a.MsgCard {
 		return l.msgCard(b, x, y, w)
 	}
+	if a.Anchor != nil { // MessageAttachmentQuipAnchorLink (canvasslug.go)
+		return l.quipAnchor(b, x, y, w)
+	}
 	if !shown(a) {
 		return 0
 	}

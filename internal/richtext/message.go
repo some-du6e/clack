@@ -22,6 +22,7 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 		return Doc{Blocks: []Block{tombstone("This message was deleted.")}}
 	}
 	c := &builder{r: r}
+	c.hintsFrom(m)
 	if len(m.Files) > 0 {
 		c.files = make(map[string]*slack.File, len(m.Files))
 		c.used = map[string]bool{}
@@ -293,6 +294,10 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 	}
 	att.Legacy = true
 	blk := Block{Kind: AttachmentBlock, Att: att}
+	if a.DocumentSection != nil && a.FileID != "" { // MessageAttachmentQuipAnchorLink
+		c.canvasAnchor(a, att)
+		return blk, true
+	}
 	if a.IsMsgUnfurl {
 		c.msgCard(a, att)
 	} else if a.IsShare {

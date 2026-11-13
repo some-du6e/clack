@@ -57,6 +57,7 @@ type View struct {
 	toc     *tocState      // the table of contents (toc.go)
 	access  accessState    // the View only / Comment only pill (access.go)
 	cover   coverState     // the header's Add cover (cover.go)
+	focus   string         // a section to scroll to once drawn (FocusSection)
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -710,6 +711,12 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 		title, rows = blocks[0], blocks[1:]
 	}
 	ph := v.placeholder(rows)
+	if v.focus != "" && v.shown != nil {
+		if i := rowOf(rows, v.focus); i >= 0 {
+			v.list.Position = layout.Position{First: i + 1} // row 0 is the header
+		}
+		v.focus = "" // a section no longer in the canvas: it opens at the top
+	}
 	n := len(rows) + 2     // header, blocks, bottom space
 	defer v.layoutTOC(gtx) // over the blocks, under the toolbars
 	dims := v.list.Layout(gtx, n, func(gtx layout.Context, i int) (dims layout.Dimensions) {
@@ -746,6 +753,48 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 	})
 	v.toc.listDone(v.list.Position)
 	return dims
+}
+
+// FocusSection scrolls section id to the top of the view once the canvas
+// is drawn: Quip's focusSection, which openCanvas runs for a link to a
+// canvas section (a canvas slug or a canvas-section card's link carries
+// it as focus_section_id).
+func (v *View) FocusSection(id string) {
+	if id == "" {
+		return
+	}
+	v.focus = id
+	v.h.Invalidate()
+}
+
+// rowOf is the index of the row holding section id (the row itself, or a
+// quote's, callout's or layout's section inside it), or -1.
+func rowOf(rows []*blk, id string) int {
+	var has func(b *blk) bool
+	has = func(b *blk) bool {
+		if b.b != nil && b.b.ID == id {
+			return true
+		}
+		for _, k := range b.kids {
+			if has(k) {
+				return true
+			}
+		}
+		for _, c := range b.cols {
+			for _, k := range c {
+				if has(k) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i, b := range rows {
+		if has(b) {
+			return i
+		}
+	}
+	return -1
 }
 
 // titlePlaceholder is Slack's title placeholder (titlePlaceholder in

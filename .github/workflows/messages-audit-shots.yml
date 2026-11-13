@@ -34,6 +34,10 @@ on:
       - "internal/ui/richview/decoration_test.go"
       - "internal/ui/messages/links_shots_test.go"
       - "internal/richtext/msgmention.go"
+      - "internal/richtext/canvasslug*.go"
+      - "internal/ui/richview/canvasslug*.go"
+      - "internal/ui/messages/canvas_link_shots_test.go"
+      - "internal/fakeslack/canvas_section.go"
       - "internal/ui/messages/actions_rules.go"
       - "internal/ui/messages/later_label_test.go"
       - "internal/ui/messages/later_shots_test.go"
@@ -83,11 +87,11 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$MESSAGES_AUDIT_SHOTS_DIR"
-          go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard' ./internal/richtext
+          go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard|TestCanvasSlug' ./internal/richtext
           go test -count=1 -v -run 'TestMemberName' ./internal/store
           go test -count=1 -v -run 'TestMessageKeepsEditor|TestSavedMeta|TestToggleTodoLikeSlack|TestUserHiddenLikeSlack|TestMentionsViewerDirectly|TestMentionsViewerInReply' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots|TestHiddenSender|TestHiddenMessageMentionContents|TestHiddenSystem|TestHiddenJoinsSummaryLikeSlack|TestTombstoneColumnLikeSlack' ./internal/ui/messages
+          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined|TestCanvasSlugClick|TestCanvasAnchorCard' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots|TestHiddenSender|TestHiddenMessageMentionContents|TestHiddenSystem|TestHiddenJoinsSummaryLikeSlack|TestTombstoneColumnLikeSlack|TestCanvasLinkShots' ./internal/ui/messages
           # the to-do and reminder rows (gap-w7)
           xvfb-run -a go test -count=1 -v -run 'TestTodoAndReminderLabelsLikeSlack|TestTodoActionClickToasts|TestTodoToastText|TestSaveRowLikeSlack|TestMessageContextMenuThreadAction' ./internal/ui/popups
           # work object cards and their flexpane (docs/MESSAGES-AUDIT.md, Work objects)

@@ -103,6 +103,9 @@ func (s *Server) canvasStore() *canvasStore {
 			add(c)
 		}
 	}
+	if s.Size.Gallery { // the canvas-section link's canvas (canvas_section.go)
+		add(s.sectionCanvas())
+	}
 	v, _ := canvasStores.LoadOrStore(s, cs)
 	return v.(*canvasStore)
 }
@@ -255,12 +258,30 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 	switch method {
 	case "files.info", "files.open", "files.close", "canvases.edit", "canvases.create", "conversations.canvases.create",
 		"canvases.access.set", "canvases.delete", "canvases.sections.lookup", "conversations.info", "conversations.history",
-		"search.modules.files", "files.requestPermission":
+		"search.modules.files", "files.requestPermission", "quip.getCanvasBulkSectionIdsData":
 	default:
 		return nil, false
 	}
 	cs := s.canvasStore()
 	switch method {
+	case "quip.getCanvasBulkSectionIdsData": // canvas_section.go
+		var ids []string
+		if raw := f.Get("section_ids"); strings.HasPrefix(raw, "[") {
+			_ = json.Unmarshal([]byte(raw), &ids)
+		} else if raw != "" {
+			ids = strings.Split(raw, ",")
+		}
+		cs.mu.Lock()
+		c, okc := cs.byID[f.Get("file_id")]
+		var secs []any
+		if okc {
+			secs = bulkSections(c, ids)
+		}
+		cs.mu.Unlock()
+		if !okc {
+			return map[string]any{"ok": false, "error": "file_not_found"}, true
+		}
+		return ok("sections", secs), true
 	case "conversations.info": // channels with a canvas tab
 		ch := f.Get("channel")
 		cs.mu.Lock()

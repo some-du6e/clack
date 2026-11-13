@@ -12,6 +12,7 @@ on:
       - "internal/fakeslack/canvas*"
       - "internal/fakeslack/canvases/**"
       - "internal/core/canvas*.go"
+      - "internal/ui/icons/canvas*.go"
       - ".github/workflows/canvas-shots.yml"
   workflow_dispatch:
 
@@ -41,7 +42,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CANVAS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit' ./internal/ui/canvasview/
+          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestDefaultLine|TestAddCover|TestFocusSection' ./internal/ui/canvasview/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

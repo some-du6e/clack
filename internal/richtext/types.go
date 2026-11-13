@@ -44,6 +44,12 @@ const (
 	// channel's lock before the channel name, Off is the disabled pill
 	// ("Private message").
 	MessageMention
+	// Canvas is a rich_text canvas element (canvasslug.go): Slack's
+	// canvas slug. ID is the file id, URL the link that opens it (with
+	// the section as focus_section_id), Icon the slug's icon, Parts its
+	// label (text and emoji) and Text that label as plain text; Off is
+	// the disabled slug (a deleted canvas).
+	Canvas
 )
 
 // Span is one run of inline content.
@@ -59,6 +65,11 @@ type Span struct {
 	Lock bool // the label's channel is private (lock icon before its name)
 	Off  bool // the message or channel can't be shown ("Private message", "Private channel"): not a link
 	Pre  int  // MessageMention with Lock: bytes of Text before the channel name
+
+	// Canvas (canvasslug.go): the slug's icon and label (behind a
+	// pointer, so Spans stay comparable).
+	Icon  string
+	Parts *SpanParts
 
 	// Hidden (User): a member the viewer hid, in a rollup or a system
 	// message's text (RollupName, boot-shared quVX): Text is "Name hidden"
@@ -252,6 +263,11 @@ type Attachment struct {
 	CardMember bool
 	CardAuthor string
 	CardAvatar string
+
+	// Anchor is a canvas-section unfurl (document_section, canvasslug.go):
+	// Slack draws it as MessageAttachmentQuipAnchorLink, Text being the
+	// section's blocks.
+	Anchor *CanvasAnchor
 
 	// WorkObject is the attachment's work object (workobject.go): Slack
 	// draws such an attachment as MessageAttachmentWorkObject, an entity

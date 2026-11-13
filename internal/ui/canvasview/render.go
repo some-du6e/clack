@@ -763,6 +763,10 @@ type handler struct{ v *View }
 func (r *handler) OpenURL(u string) {
 	v := r.v
 	if id := CanvasLinkID(u); id != "" && v.act.Canvas != nil {
+		if sec := CanvasLinkSection(u); id == v.id && sec != "" {
+			v.FocusSection(sec) // openCanvas on the open canvas: focusSection
+			return
+		}
 		v.act.Canvas(id)
 		return
 	}
@@ -825,6 +829,19 @@ func CanvasLinkID(raw string) string {
 		return parts[1]
 	}
 	return ""
+}
+
+// CanvasLinkSection is a canvas link's focus_section_id (the section it
+// points at), or "".
+func CanvasLinkSection(raw string) string {
+	if CanvasLinkID(raw) == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("focus_section_id")
 }
 
 func isID(s string, first byte) bool {
