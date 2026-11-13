@@ -87,6 +87,14 @@ var shotInstalled = []shotPlugin{
 	{pluginlib.Taut, "Oneko", "Oneko", "A cat that follows your cursor", "fun", false, false},
 }
 
+// shotAuthors credit the library's plugins: a member by the id the data
+// carries, one by name, and a name nobody in the workspace has.
+var shotAuthors = []pluginlib.Author{{Name: "Robin", SlackID: fakeslack.ProfileID}, {Name: "Avery Admin", URL: "https://example.com/avery"}, {Name: "Synthetic Author", URL: "https://example.com"}}
+
+// shotCredit is shotAuthors as the rows draw them: two mentions and a
+// plain name (plugin_credit.go), never a link.
+var shotCredit = "<@" + fakeslack.ProfileID + "|Robin>, <@" + fakeslack.AdminID + "|Avery Admin>, Synthetic Author"
+
 // publishShotLibrary writes a synthetic index: Clear URLs and Silent
 // Typing exist in both systems (Silent Typing is installed in Taut).
 func publishShotLibrary(l *libServer) {
@@ -97,7 +105,7 @@ func publishShotLibrary(l *libServer) {
 	silent := synthTaut("SilentTyping", "Silent Typing", "Don't tell others when you're typing", "messageBox", false)
 	entry := func(sys, id, name, desc, cat string, code []byte) pluginlib.Entry {
 		return pluginlib.Entry{System: sys, ID: id, Name: name, Description: desc, Category: cat,
-			Authors: []pluginlib.Author{{Name: "Synthetic Author"}}, File: pluginlib.File{File: sys + "-" + id + ".js", SHA256: pluginlib.Hash(code)}}
+			Authors: shotAuthors, File: pluginlib.File{File: sys + "-" + id + ".js", SHA256: pluginlib.Hash(code)}}
 	}
 	ix := pluginlib.Index{Schema: 1, Sources: src, Plugins: []pluginlib.Entry{
 		entry(pluginlib.Taut, "ClearURLs", "Clear URLs", "Removes tracking parameters from links you send", "messageBox", []byte("a")),
@@ -269,6 +277,17 @@ func TestPluginsPrefsShots(t *testing.T) {
 		e.until("library suggestions", 30*time.Second, func() bool {
 			return pp.lib.ix != nil && len(pp.lib.suggest([]string{"links"})) == 2
 		})
+		// their credits are @mentions (Karim 2026-11-12: never links)
+		e.a.Core().EnsureUsers(ctx, []string{fakeslack.ProfileID, fakeslack.AdminID})
+		e.until("members loaded for the credits", 30*time.Second, func() bool {
+			_, ok := e.a.Core().S.User(fakeslack.AdminID)
+			return ok
+		})
+		for _, g := range pp.lib.suggest([]string{"links"}) {
+			if c := groupCredit(e.a.credits(), g); c != shotCredit {
+				t.Errorf("%s: %s's credit %q, want %q", mode, g.first().Name, c, shotCredit)
+			}
+		}
 		shot("plugins-search-suggestions-" + mode)
 		pp.s.query.SetText("")
 

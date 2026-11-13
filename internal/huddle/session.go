@@ -119,6 +119,7 @@ type State struct {
 	Participants []Participant // you first, then by join order
 	Videos       []Video
 	Captions     []Caption    // most recent last
+	Log          []LogEvent   // the event log's other events, in order (transcribe.go)
 	Camera       CameraStatus // yours (SetCamera)
 	Share        ShareStatus  // your screen share (StartShare)
 	// Invites are the people the huddle rang who aren't in it (yet), in
@@ -170,6 +171,10 @@ type Options struct {
 	// OnPeer receives every peer message (data-channel, awareness and
 	// transcript catch-up topics), for Taut's api.huddles.onPeerMessage.
 	OnPeer func(PeerEvent)
+	// OnTranscription gets each status Chime's transcription reports
+	// (started, interrupted, resumed, stopped, failed), as Slack's
+	// processAwsTranscription sees them.
+	OnTranscription func(status string)
 	// OnEnd is called once when the session ends (err nil = you left).
 	OnEnd func(err error)
 	// Experiments are the Slack experiments the session follows
@@ -226,8 +231,9 @@ type Session struct {
 	byAtt         map[string]string // attendee id -> people key (user id, or "U…/<attendee>" for a second device)
 	streamAt      map[uint32]string // audio stream id -> attendee id
 	sources       map[uint32]streamDesc
-	lines         []Caption // the event log's events (transcribe.go)
-	events        bool      // the event log is on (startEventLog)
+	lines         []Caption  // the event log's events (transcribe.go)
+	meta          []LogEvent // its non-transcription events (transcribe.go)
+	events        bool       // the event log is on (startEventLog)
 	eventsLoading bool
 	sinks         map[string]*videoSink // by video key
 	cam           camPipe               // your camera (videosend.go)
@@ -435,6 +441,7 @@ func (s *Session) State() State {
 		return st.Videos[i].Key < st.Videos[j].Key
 	})
 	st.Captions = append(st.Captions, s.lines...)
+	st.Log = append(st.Log, s.meta...)
 	st.Camera = cam
 	st.Share = share
 	return st
@@ -590,6 +597,7 @@ func (s *Session) React(emoji, url string) error {
 		s.mu.Lock()
 		p := s.person(s.o.SelfID)
 		p.Reaction, p.ReactedAt = emoji, time.Now()
+		s.pushEventLocked("SEND_REACTION", s.o.SelfID, emoji) // sendReaction
 		s.mu.Unlock()
 		s.changed()
 	}
@@ -1376,9 +1384,16 @@ func (s *Session) onAudioInfo(info []audioStreamInfo) {
 		// (isAttendeeOfTypeContent); yours present means your share
 		// started (DefaultContentShareController's contentShareDidStart)
 		if att := firstNonEmpty(st.AttendeeID, s.streamAt[st.StreamID]); strings.HasSuffix(att, "#content") {
+			owner := strings.TrimSuffix(att, "#content")
 			if st.AttendeeID != "" {
+				if s.streamAt[st.StreamID] == "" { // SCREENSHARE_START (onPeerVideoTileUpdate / onSelfVideoTileUpdate, isContent)
+					s.pushEventLocked("SCREENSHARE_START", firstNonEmpty(userOfExternal(st.ExternalUserID), s.userOf(owner)), "")
+				}
 				s.streamAt[st.StreamID] = st.AttendeeID
 			} else if !st.HasMuted {
+				if s.streamAt[st.StreamID] != "" { // SCREENSHARE_STOP (onVideoTileRemoved)
+					s.pushEventLocked("SCREENSHARE_STOP", s.userOf(owner), "")
+				}
 				delete(s.streamAt, st.StreamID)
 			}
 			if strings.TrimSuffix(att, "#content") == self {
@@ -1398,6 +1413,9 @@ func (s *Session) onAudioInfo(info []audioStreamInfo) {
 				continue
 			}
 			p := s.people[k]
+			if !p.InMedia && st.AttendeeID != self { // onPeerJoined: JOIN
+				s.pushEventLocked("JOIN", p.UserID, "")
+			}
 			p.InMedia = true
 			if st.HasMuted && !p.Self {
 				p.Muted = st.Muted
@@ -1413,6 +1431,9 @@ func (s *Session) onAudioInfo(info []audioStreamInfo) {
 			delete(s.streamAt, st.StreamID)
 			if k := s.byAtt[att]; k != "" {
 				if p := s.people[k]; p != nil {
+					if p.InMedia && att != self { // onPeerLeft: LEAVE
+						s.pushEventLocked("LEAVE", p.UserID, "")
+					}
 					p.InMedia = false
 					if strings.Contains(k, "/") { // a second device left: drop its tile
 						delete(s.people, k)
@@ -1504,6 +1525,7 @@ func (s *Session) onData(m dataMessage) {
 		s.mu.Lock()
 		if p := s.people[key]; p != nil {
 			p.Reaction, p.ReactedAt = pm.Reacji.Emoji, time.Now()
+			s.pushEventLocked("SEND_REACTION", p.UserID, pm.Reacji.Emoji) // onPeerReacji
 		}
 		s.mu.Unlock()
 		s.changed()
@@ -1520,6 +1542,9 @@ func (s *Session) onTranscript(b []byte) {
 	res, status := decodeTranscript(b)
 	if status != "" {
 		s.logf("huddle: transcription %s", status)
+		if s.o.OnTranscription != nil {
+			s.o.OnTranscription(status)
+		}
 	}
 	if len(res) == 0 {
 		return

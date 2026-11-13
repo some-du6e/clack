@@ -18,6 +18,8 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/pluginlib"
+	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
@@ -205,10 +207,13 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	if lp.sourceLine() != "<https://github.com/jeremy46231/taut/tree/6fe5123e3b4cffaa|Taut 6fe5123> and <https://github.com/3kh0/slick/tree/f52d55dbd458feb0|Slick f52d55d>" {
 		t.Errorf("source line %q", lp.sourceLine())
 	}
-	if c := libraryCredit(es[1]); c != "<https://jeremywoolley.com|Jeremy>, Rowan" {
+	if c := (creditResolver{}).libraryCredit(es[1]); c != "Jeremy, Rowan" { // outside the Hack Club Slack: names, never links
 		t.Errorf("taut credit %q", c)
 	}
-	if c := libraryCredit(es[0]); c != "synthetic-dev" {
+	if c := (creditResolver{hc: true}).libraryCredit(es[1]); c != "<@U06UYA5GMB5|Jeremy>, <@U080A3QP42C|Rowan>" {
+		t.Errorf("taut credit in the Hack Club Slack %q", c)
+	}
+	if c := (creditResolver{}).libraryCredit(es[0]); c != "synthetic-dev" {
 		t.Errorf("slick credit (contributors) %q", c)
 	}
 	lp.s.filter = pluginlib.Slick
@@ -354,22 +359,57 @@ func TestLibraryMergesTautAndSlick(t *testing.T) {
 	}
 }
 
-// Taut shows authors as Slack mentions in the Hack Club Slack and as names
-// (linked to their page) anywhere else, joined with ", ".
-func TestTautAuthorsMrkdwn(t *testing.T) {
+// Plugin credits draw as Slack user mentions (plugin_credit.go): a Slack
+// id from the data in the Hack Club Slack (or wherever that member is
+// loaded), a unique member name match for people the data names without
+// one, and plain text, never a link, for anyone else.
+func TestPluginCreditMentions(t *testing.T) {
+	st := store.New("")
+	st.PutUsers([]slack.User{
+		{ID: "U0ECHO0001", Name: "echo", Profile: slack.Profile{DisplayName: "Echo", RealName: "Echo Example"}},
+		{ID: "U0TWIN0001", Name: "twin1", Profile: slack.Profile{DisplayName: "Twin"}},
+		{ID: "U0TWIN0002", Name: "twin2", Profile: slack.Profile{DisplayName: "twin"}},
+		{ID: "U0GONE0001", Name: "gone", Deleted: true, Profile: slack.Profile{DisplayName: "Gone"}},
+		{ID: "U0BOT00001", Name: "botty", IsBot: true, Profile: slack.Profile{DisplayName: "Botty"}},
+		{ID: "U0WORK0001", Name: "jeremy", Profile: slack.Profile{DisplayName: "Jeremy"}}, // a namesake, not Taut's Jeremy
+		{ID: "U0PAGE0001", Name: "page", Profile: slack.Profile{DisplayName: "Paige"}},
+	})
+	hc, here := creditResolver{s: st, hc: true}, creditResolver{s: st}
 	pl := taut.PluginInfo{Authors: []taut.Author{{Name: "Jeremy", SlackID: "U06UYA5GMB5", URL: "https://jeremywoolley.com"}, {Name: "adryd", URL: "https://adryd.com"}, {Name: "A <b>"}}}
-	if got := tautAuthorsMrkdwn(pl, true); got != "<@U06UYA5GMB5|Jeremy>, <https://adryd.com|adryd>, A &lt;b&gt;" {
+	if got := hc.tautAuthors(pl); got != "<@U06UYA5GMB5|Jeremy>, adryd, A &lt;b&gt;" {
 		t.Errorf("hack club: %q", got)
 	}
-	if got := tautAuthorsMrkdwn(pl, false); got != "<https://jeremywoolley.com|Jeremy>, <https://adryd.com|adryd>, A &lt;b&gt;" {
+	if got := here.tautAuthors(pl); got != "Jeremy, adryd, A &lt;b&gt;" { // Taut's Jeremy isn't U0WORK0001
 		t.Errorf("elsewhere: %q", got)
 	}
 	old := taut.PluginInfo{AuthorsMrkdwn: "<@U06UYA5GMB5>, <@U0NOBODY01|Someone>, <@U0NOBODY02>"}
-	if got := tautAuthorsMrkdwn(old, false); got != "<https://jeremywoolley.com|Jeremy>, Someone, a Hack Club Slack member" {
+	if got := here.tautAuthors(old); got != "Jeremy, Someone, a Hack Club Slack member" {
 		t.Errorf("mrkdwn elsewhere: %q", got)
 	}
-	if got := tautAuthorsMrkdwn(old, true); got != "<@U06UYA5GMB5|Jeremy>, <@U0NOBODY01|Someone>, <@U0NOBODY02>" {
+	if got := hc.tautAuthors(old); got != "<@U06UYA5GMB5|Jeremy>, <@U0NOBODY01|Someone>, <@U0NOBODY02>" {
 		t.Errorf("mrkdwn in the Hack Club Slack: %q", got)
+	}
+	// contributors and Slick's names: one live human member with the name
+	e := pluginlib.Entry{Contributors: []string{"echo example", "Twin", "Gone", "Botty", "Nobody Here"}}
+	if got := here.libraryCredit(e); got != "<@U0ECHO0001|echo example>, Twin, Gone, Botty, Nobody Here" {
+		t.Errorf("contributors: %q", got)
+	}
+	// an id the data carries that this workspace has; a /team/ URL
+	e = pluginlib.Entry{Authors: []pluginlib.Author{{Name: "Echo", SlackID: "U0ECHO0001"}, {Name: "Paige", URL: "https://acme.slack.com/team/U0PAGE0001"},
+		{Name: "Ghost", URL: "https://acme.slack.com/team/U0NOPE0001"}, {Name: "Club", URL: "https://hackclub.slack.com/team/U0CLUB0001"}, {Name: "Site", URL: "https://example.com"}}}
+	if got := here.libraryCredit(e); got != "<@U0ECHO0001|Echo>, <@U0PAGE0001|Paige>, Ghost, Club, Site" {
+		t.Errorf("ids here: %q", got)
+	}
+	if got := hc.libraryCredit(e); got != "<@U0ECHO0001|Echo>, <@U0PAGE0001|Paige>, Ghost, <@U0CLUB0001|Club>, Site" {
+		t.Errorf("ids in the Hack Club Slack: %q", got)
+	}
+	if got := here.mrkdwn("<@U0ECHO0001>, Paige and <@U0NOBODY03|Nemo>"); got != "<@U0ECHO0001|Echo>, <@U0PAGE0001|Paige>, Nemo" {
+		t.Errorf("slick authors: %q", got)
+	}
+	for _, got := range []string{here.tautAuthors(pl), hc.tautAuthors(pl), here.libraryCredit(e), hc.libraryCredit(e)} {
+		if strings.Contains(got, "http") {
+			t.Errorf("a credit links somewhere: %q", got)
+		}
 	}
 	if got := tautMrkdwnHere("say hi in <#C0A057686SF>", true); got != "say hi in <#C0A057686SF|taut>" {
 		t.Errorf("channel in the Hack Club Slack: %q", got)

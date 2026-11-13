@@ -159,6 +159,7 @@ type fakeChime struct {
 	content  fakeContentIn // your screen share's "#content" attendee (fake_content.go)
 	aware    fakeAware
 	solo     atomic.Bool // SoloRoom: nobody else in the meeting
+	others   fakePeers   // more people (fake_peers.go)
 }
 
 // fakeAware is the awareness traffic: what you sent, and how the fake's

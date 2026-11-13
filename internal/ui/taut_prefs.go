@@ -423,9 +423,9 @@ func (p *tautPage) pluginScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		f.gap(4)
 	}
 	// Taut's PluginHeader: one small mrkdwn line, "Messages · by <authors> ·
-	// user plugin `Id`" (authors are mentions in the Hack Club Slack)
+	// user plugin `Id`" (authors are mentions, plugin_credit.go)
 	meta := []string{mrkdwnEscape(tautGroup(pluginlib.Taut, pl.Category, pl.IsUser).Label)}
-	if a := tautAuthorsMrkdwn(pl, t.IsHackClub()); a != "" {
+	if a := p.a.credits().tautAuthors(pl); a != "" {
 		meta = append(meta, "by "+a)
 	}
 	if pl.IsUser {
@@ -1438,7 +1438,7 @@ func (p *tautPage) followConfig(path string) {
 // authors (none listed while nothing is installed).
 func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
-	hc := t.IsHackClub()
+	cr := p.a.credits()
 	p.subScreen(f, "About", "Plugins")
 	p.legend(f, AppName+" "+appVersion())
 	f.put(0, func(gtx layout.Context) layout.Dimensions {
@@ -1460,7 +1460,7 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	for _, c := range s.Categories {
 		for _, pl := range c.Plugins {
 			l := "*" + mrkdwnEscape(pl.Name) + "*"
-			if a := tautAuthorsMrkdwn(pl, hc); a != "" {
+			if a := cr.tautAuthors(pl); a != "" {
 				l += " by " + a
 			}
 			line("credit."+pl.ID, l)
@@ -1470,7 +1470,7 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 		for _, pl := range sl.Settings().Plugins {
 			l := "*" + mrkdwnEscape(pl.Name) + "*"
 			if pl.Authors != "" {
-				l += " by " + tautMrkdwnHere(pl.Authors, hc)
+				l += " by " + cr.mrkdwn(pl.Authors)
 			}
 			line("credit.slick."+pl.ID, l)
 		}

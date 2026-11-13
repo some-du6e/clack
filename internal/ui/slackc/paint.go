@@ -39,15 +39,25 @@ type painter struct {
 	hasXf   bool
 	filt    []css.Filter // color filters in effect (grayscale…)
 	inDefer bool
+
+	// sRGB compositing (srgb.go): the color under what is painted now, as
+	// painted (uset false: the theme's background), and the opacity group
+	// in effect: its opacity (0: none) and the color under it.
+	under  color.NRGBA
+	uset   bool
+	gAlpha float32
+	gUnder color.NRGBA
 }
 
 var noClip = rectF{-inf, -inf, inf, inf}
 
+// col is c as painted: the color filters in effect, then composited as
+// Chromium does (srgb.go).
 func (p *painter) col(c color.NRGBA) color.NRGBA {
 	for i := len(p.filt) - 1; i >= 0; i-- {
 		c = applyFilter(p.filt[i], c)
 	}
-	return c
+	return p.srgb(c)
 }
 
 func applyFilter(f css.Filter, c color.NRGBA) color.NRGBA {
@@ -308,10 +318,9 @@ func (p *painter) paintBox(b *box, x, y float32) {
 		}
 		p.clip = noClip
 	}
-	var ostack paint.OpacityStack
+	saveG, saveGU := p.gAlpha, p.gUnder
 	if st.Opacity < 1 {
-		ostack = paint.PushOpacity(p.ops, st.Opacity)
-		pushed |= 2
+		p.enterGroup(st.Opacity) // srgb.go: flattened, as Chromium's group composites
 	}
 	f := st.Filter
 	nf := len(p.filt)
@@ -326,9 +335,7 @@ func (p *painter) paintBox(b *box, x, y float32) {
 		p.content(b, x, y)
 	}
 	p.filt = p.filt[:nf]
-	if pushed&2 != 0 {
-		ostack.Pop()
-	}
+	p.gAlpha, p.gUnder = saveG, saveGU
 	if pushed&1 != 0 {
 		tstack.Pop()
 	}
@@ -410,9 +417,12 @@ func (p *painter) content(b *box, x, y float32) {
 			p.focusArea(b, r)
 		}
 	}
+	saveU, saveUSet := p.under, p.uset
+	defer func() { p.under, p.uset = saveU, saveUSet }()
 	if visible {
 		p.shadows(b, r, rad, false)
 		p.background(b, r, rad)
+		p.coverWith(st.Background.Color) // what the box's content is painted over
 		p.border(b, r, rad)
 		p.shadows(b, r, rad, true)
 		if b.listMarker > 0 {
@@ -897,8 +907,10 @@ func (p *painter) bgImage(b *box, r rectF, rad [4]float32) {
 	for j := 0; j < ny; j++ {
 		for i := 0; i < nx; i++ {
 			t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(iw/float32(sz.X), ih/float32(sz.Y))).Offset(f32.Pt(x+float32(i)*iw, y+float32(j)*ih))).Push(p.ops)
+			o := p.groupLayer()
 			img.Add(p.ops)
 			paint.PaintOp{}.Add(p.ops)
+			o()
 			t.Pop()
 		}
 	}
@@ -1401,8 +1413,10 @@ func (p *painter) emoji(url string, x, base, es float32) {
 	top := base - es*0.8
 	s := float32(n) / float32(sz.X)
 	t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(s, s)).Offset(f32.Pt(float32(math.Round(float64(x))), float32(math.Round(float64(top)))))).Push(p.ops)
+	o := p.groupLayer()
 	img.Add(p.ops)
 	paint.PaintOp{}.Add(p.ops)
+	o()
 	t.Pop()
 }
 
@@ -1454,6 +1468,8 @@ func (p *painter) native(b *box, x, y float32) {
 		return
 	}
 	t := op.Offset(image.Pt(int(math.Round(float64(x))), int(math.Round(float64(y))))).Push(p.ops)
+	o := p.groupLayer()
 	b.natCall.Add(p.ops)
+	o()
 	t.Pop()
 }

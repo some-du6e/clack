@@ -575,15 +575,20 @@ function defineThunk(name, impl) {
 const THUNK_CHANGES = {
   maybePersistPendingFileData: ['pendingFileUploads', 'files'],
   editFileApi: ['pendingFileUploads', 'files'],
+  maybeFetchBackgrounds: ['huddlesCanvas'],
 }
+
+/** per thunk, what its arguments become before they cross into Go (after every plugin's wrap) */
+const NATIVE_ARGS = {}
+const nativeArgs = (name, args) => (NATIVE_ARGS[name] ? NATIVE_ARGS[name](args) : args)
 
 /** a thunk whose work is Clack's native implementation, run in Go */
 function nativeThunk(name) {
   const changes = THUNK_CHANGES[name]
-  if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(args))))
+  if (!changes) return defineThunk(name, async (args) => decode(await go('thunk', name, await encodeAsync(nativeArgs(name, args)))))
   return defineThunk(name, async (args) => {
     try {
-      return decode(await go('thunk', name, await encodeAsync(args)))
+      return decode(await go('thunk', name, await encodeAsync(nativeArgs(name, args))))
     } finally {
       T.invalidate(changes.map((slice) => ({ slice })))
     }
@@ -657,8 +662,8 @@ const tellGoThunks = batcher(() => goOr(null, 'patchedThunks', patchedThunkNames
 /** Go → JS: runs thunk `name` through every patch, with Go's native work (callable `nativeId`) at the core */
 T.dispatchThunk = async (name, args, nativeId, sync) => {
   const native = sync
-    ? withMeta(name, (...a) => () => decode(go('callNativeSync', nativeId, encode(a))))
-    : withMeta(name, (...a) => async () => decode(await go('callNative', nativeId, await encodeAsync(a))))
+    ? withMeta(name, (...a) => () => decode(go('callNativeSync', nativeId, encode(nativeArgs(name, a)))))
+    : withMeta(name, (...a) => async () => decode(await go('callNative', nativeId, await encodeAsync(nativeArgs(name, a)))))
   let creator = native
   for (const { match, wrap } of thunkWraps) {
     let ok = false

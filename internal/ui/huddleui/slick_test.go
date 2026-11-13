@@ -59,6 +59,33 @@ type hcEnv struct {
 	mu    sync.Mutex
 	trees map[uint64][]byte
 	ops   op.Ops
+
+	tmu    sync.Mutex
+	toasts []string // enqueueHuddleToast's texts
+}
+
+func (e *hcEnv) toast(text, icon string, d time.Duration) {
+	e.tmu.Lock()
+	e.toasts = append(e.toasts, text)
+	e.tmu.Unlock()
+}
+
+// toastWith reports whether some toast had every sub.
+func (e *hcEnv) toastWith(subs ...string) bool {
+	e.tmu.Lock()
+	defer e.tmu.Unlock()
+	for _, t := range e.toasts {
+		ok := true
+		for _, s := range subs {
+			if !strings.Contains(t, s) {
+				ok = false
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 func newHuddleCallEnv(t *testing.T) *hcEnv {
@@ -95,9 +122,10 @@ func newHuddleCallEnv(t *testing.T) *hcEnv {
 				_ = slackc.Deliver(root, tree)
 			},
 			SetPatched: slackc.SetPatched, CallGo: slackc.CallGo, SetStyle: slackc.SetStyle, RemoveStyle: slackc.RemoveStyle,
+			Toast: e.toast,
 		},
 		Log: func(level, msg string) {
-			if level == "error" {
+			if level == "error" || level == "warn" || os.Getenv("CLACK_HUDDLE_JSLOG") != "" {
 				t.Logf("js %s: %s", level, msg)
 			}
 		}})
@@ -143,6 +171,11 @@ func (e *hcEnv) install(id string) {
 	if err := e.s.SetEnabled(ctx, id, true); err != nil {
 		e.t.Fatalf("enable %s: %v", id, err)
 	}
+	for _, p := range e.s.Settings().Plugins {
+		if p.ID == id && (!p.Running || p.StartError != "") {
+			e.t.Fatalf("%s didn't start: running=%v error=%q", id, p.Running, p.StartError)
+		}
+	}
 }
 
 // join joins the fake meeting the way Controller.Start does, without an
@@ -157,8 +190,7 @@ func (e *hcEnv) join() *huddle.Fake {
 	e.t.Cleanup(fk.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	s, err := huddle.Join(ctx, huddle.Options{Client: fk.Caller(), SelfID: huddle.FakeSelfUser, Device: huddle.NewToneDevice(440),
-		Logf: e.t.Logf, OnChange: e.c.onSession}, hcChannel)
+	s, err := huddle.Join(ctx, e.c.testOptions(fk), hcChannel)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -166,7 +198,7 @@ func (e *hcEnv) join() *huddle.Fake {
 	e.c.mu.Lock()
 	e.c.s = s
 	e.c.mu.Unlock()
-	e.h.tt.SetActiveHuddle(s.RoomID(), hcChannel, s.SelfAttendee(), huddle.FakeSelfUser)
+	e.c.bindTaut(e.h.tt, s, hcChannel)
 	return fk
 }
 
@@ -196,6 +228,9 @@ func (e *hcEnv) until(what string, d time.Duration, cond func() bool) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	e.tmu.Lock()
+	e.t.Logf("toasts: %q", e.toasts)
+	e.tmu.Unlock()
 	e.mu.Lock()
 	for root, tr := range e.trees {
 		s := string(tr)
@@ -261,5 +296,27 @@ func TestSlickViewLetMeSee(t *testing.T) {
 	})
 	e.until("the drawing layer over the shared screen, shown", 25*time.Second, func() bool {
 		return e.tree(`"n":"BaseDrawRenderer"`, `"display":"contents"`)
+	})
+}
+
+// HuddleMuteDetector: when someone mutes you, Slack's displayAlertMessage
+// (peerMuteRequest, with who did it) reaches its thunk patch, which looks
+// them up in the huddle's peers and toasts "{name} muted you.".
+func TestSlickViewHuddleMuteDetector(t *testing.T) {
+	e := newHuddleCallEnv(t)
+	e.install("HuddleMuteDetector")
+	fk := e.join()
+	e.until("the other person in the huddle's peers (as plugins see them)", 15*time.Second, func() bool {
+		return e.h.tt.HuddlePeers()[huddle.FakeRemoteAttendee] == huddle.FakeRemoteUser
+	})
+	s := e.c.Session()
+	if err := fk.PeerMessage(huddle.FakeRemoteAttendee, &huddle.PeerMessage{MuteRequest: &huddle.MuteRequest{PeerID: s.SelfAttendee()}}); err != nil {
+		t.Fatal(err)
+	}
+	e.until("you're muted", 10*time.Second, func() bool { return s.State().Muted })
+	t.Logf("peers for plugins: %v; displayAlertMessage patched: %v", e.h.tt.HuddlePeers(), e.h.tt.ThunkPatched("displayAlertMessage"))
+	// its name: profile display name, real name, else the username
+	e.until("the toast naming who muted you", 15*time.Second, func() bool {
+		return e.toastWith("Remote Example muted you.") || e.toastWith("remote muted you.")
 	})
 }

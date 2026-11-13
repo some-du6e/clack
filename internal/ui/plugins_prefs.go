@@ -712,6 +712,11 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 			return tp.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.fg2, MaxLines: 1}, d)
 		}).Size.Y
 	}
+	if c := groupCredit(tp.a.credits(), g); c != "" { // the library row's "By …", as mentions
+		y += at(gtx, image.Pt(x, y), image.Pt(tw, gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+			return tp.mrkdwn(gtx, "suggest.by."+libKey(e), "By "+c, true, cl.fg3)
+		}).Size.Y
+	}
 	if status != "" {
 		col := cl.fg3
 		if failed {
@@ -729,6 +734,20 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 		act.do()
 	}
 	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
+// groupCredit is a library group's credits (each entry's, once), as
+// mentions or names.
+func groupCredit(cr creditResolver, g libGroup) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, e := range g.Entries {
+		if c := cr.libraryCredit(e); c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // libraryScreen is the plugin library as one of Taut's sub-screens: the

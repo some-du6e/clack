@@ -85,9 +85,11 @@ try {
   const m = /PLUGIN_CATEGORIES\s*=\s*\{([^}]*)\}/.exec(src);
   if (m) for (const [, k, v] of m[1].matchAll(/(\w+)\s*:\s*'([^']*)'/g)) tautCats[k] = v;
 } catch {}
+// an author with the Hack Club Slack member id upstream gives them, so Clack can draw a mention
+const author = (a) => ({ name: String(a.name), ...(a.url ? { url: String(a.url) } : {}), ...(/^[UW][A-Z0-9]+$/.test(a.slackId ?? '') ? { slackId: a.slackId } : {}) });
 const tautAuthor = (a) => {
-  if (typeof a === 'string') return tautAuthors[a] ? { name: tautAuthors[a].name, ...(tautAuthors[a].url ? { url: tautAuthors[a].url } : {}) } : { name: a };
-  if (a && typeof a === 'object' && a.name) return { name: String(a.name), ...(a.url ? { url: String(a.url) } : {}) };
+  if (typeof a === 'string') return tautAuthors[a] ? author(tautAuthors[a]) : { name: a };
+  if (a && typeof a === 'object' && a.name) return author(a);
   return null;
 };
 const tautSources = new Map(
@@ -151,10 +153,14 @@ for (const f of readdirSync(slickBuilt).filter((f) => f.endsWith('.js') && !f.en
   }
   const id = str(C?.id) || base;
   const category = str(C?.category) || 'other';
+  // Slick credits as mrkdwn mentions (`<@U…>` or `<@U…|name>`), or plain names
   const authors = str(C?.authors)
     .split(/\s*,\s*|\s+and\s+/)
     .filter(Boolean)
-    .map((name) => ({ name }));
+    .map((part) => {
+      const m = /^<@([UW][A-Z0-9]+)(?:\|([^>]*))?>$/.exec(part);
+      return m ? { name: m[2] || m[1], slackId: m[1] } : { name: part };
+    });
   const mainPath = path.join(slickBuilt, `${base}.main.js`);
   plugins.push({
     system: 'slick',

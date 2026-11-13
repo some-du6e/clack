@@ -5,7 +5,8 @@ name: ui-taut
 # with its options, React editors and data panels; Browse, the Plugin
 # library over a local synthetic index), Themes and Plugin settings
 # (custom CSS, config.json, About) rendered headlessly over a synthetic
-# workspace. Screenshots (synthetic data only) are uploaded as an artifact;
+# workspace, and Taut's huddle plugins on the native call over the fake
+# Chime (internal/ui/huddleui). Screenshots (synthetic data only) are uploaded as an artifact;
 # the built plugins (GPLv3) are never committed.
 on:
   push:
@@ -15,6 +16,8 @@ on:
       - "internal/ui/slackc/**"
       - "internal/taut/**"
       - "internal/slick/**"
+      - "internal/ui/huddleui/**"
+      - "internal/huddle/**"
       - ".github/workflows/ui-taut.yml"
   workflow_dispatch:
     inputs:
@@ -99,6 +102,8 @@ jobs:
         run: |
           mkdir -p "$TAUT_SHOTS_DIR"
           xvfb-run -a go test -count=1 -timeout 25m -v -run 'TestTaut|TestSlick|TestDeepLink|TestLibrary' ./internal/ui/
+          # Taut's huddle plugins on the native call over the fake Chime (loopback only)
+          xvfb-run -a go test -count=1 -timeout 10m -v -run 'TestTautHuddle' ./internal/ui/huddleui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

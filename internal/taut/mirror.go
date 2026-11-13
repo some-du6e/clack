@@ -747,9 +747,9 @@ func (m *mirror) get(slice, key string) any {
 		}
 		return m.search
 	case "huddlesCanvas":
-		return map[string]any{"backgrounds": []any{}}
+		return m.t.huddlesCanvasSlice()
 	case "alert":
-		return map[string]any{"alerts": []any{}}
+		return m.t.alertSlice()
 	case "unreadCounts":
 		counts := a.Counts()
 		total, chans := 0, 0

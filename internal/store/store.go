@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -599,6 +600,58 @@ func DisplayName(u *slack.User) string {
 		return n
 	}
 	return u.Name
+}
+
+// UsersNamed finds the members called each of names (folded with
+// FoldName): a live, human member whose display name, real name or
+// username is that name. One pass over the users for all of them.
+func (s *Store) UsersNamed(names []string) map[string][]string {
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		if f := FoldName(n); f != "" {
+			want[f] = true
+		}
+	}
+	out := map[string][]string{}
+	if len(want) == 0 {
+		return out
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id, u := range s.Users {
+		if u == nil || u.Deleted || u.IsBot {
+			continue
+		}
+		seen := ""
+		for _, n := range [...]string{u.Profile.DisplayName, u.Profile.RealName, u.RealName, u.Name} {
+			if f := FoldName(n); f != "" && f != seen && want[f] {
+				out[f] = append(out[f], id)
+				seen = f
+			}
+		}
+	}
+	for f, ids := range out { // one id per member
+		sort.Strings(ids)
+		out[f] = slices.Compact(ids)
+	}
+	return out
+}
+
+// UserCount is how many users the store holds.
+func (s *Store) UserCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.Users)
+}
+
+// FoldName is a name as UsersNamed compares it: trimmed, without a
+// leading @, lower case.
+func FoldName(n string) string {
+	n = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(n), "@"))
+	if n == "\u200b" {
+		return ""
+	}
+	return strings.ToLower(n)
 }
 
 // PrefName is Slack's getPrefCompliantMemberNamePure (client-boot vUCu):
