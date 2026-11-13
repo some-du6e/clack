@@ -88,7 +88,11 @@ func (p *ProfileCard) isApp(u core.User, ok bool) bool {
 }
 
 // pfHuman is isMemberHuman: not an app or bot user (qSRE isAppOrBot).
-func pfHuman(u core.User) bool { return !(u.IsBot || u.AppUser || u.ID == "USLACK") }
+// Slackbot's member is is_bot false in Slack's data, so it's human there;
+// core.User marks it IsBot (userOf), hence its id here.
+func pfHuman(u core.User) bool {
+	return pfIsSlackbot(u) || !(u.IsBot || u.AppUser || u.ID == "USLACK")
+}
 
 // loadApp fetches the card once.
 func (p *ProfileCard) loadApp() {

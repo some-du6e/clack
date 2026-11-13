@@ -295,7 +295,7 @@ func TestBotCardNoLocalTime(t *testing.T) {
 		{core.User{ID: "U1", IsBot: true}, false},
 		{core.User{ID: "U2", AppUser: true}, false}, // is_app_user without is_bot
 		{core.User{ID: "USLACK"}, false},
-		{core.User{ID: fakeslack.SlackbotID}, true}, // USLACKBOT: the member card's "Built by Slack"
+		{core.User{ID: fakeslack.SlackbotID, IsBot: true}, true}, // USLACKBOT (core marks it IsBot): the member card's "Built by Slack"
 		{core.User{ID: "U3"}, true},
 	} {
 		if got := pfHuman(c.u); got != c.human {

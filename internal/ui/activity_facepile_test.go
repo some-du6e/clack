@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"encoding/json"
 	"image"
 	"testing"
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // An Activity item's conversation, opened beside the inbox, draws its
@@ -30,10 +32,26 @@ func TestActivityItemFacepileLoads(t *testing.T) {
 			}
 			ch := fakeslack.ViewsChannel
 			delete(e.a.data.fetched, ch) // newActShell skips the header reads; this test wants them
+			// ch's members are people the store has never seen
+			fresh := []slack.User{
+				{ID: "U0FACEPIL01", TeamID: fakeslack.TeamID, Name: "pat", Profile: slack.Profile{RealName: "Pat Example", Image72: "https://avatars.invalid/pat-72.png"}},
+				{ID: "U0FACEPIL02", TeamID: fakeslack.TeamID, Name: "sam", Profile: slack.Profile{RealName: "Sam Example", Image72: "https://avatars.invalid/sam-72.png"}},
+				{ID: "U0FACEPIL03", TeamID: fakeslack.TeamID, Name: "lee", Profile: slack.Profile{RealName: "Lee Example", Image72: "https://avatars.invalid/lee-72.png"}},
+			}
+			e.fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
+				var chans []string
+				var filter string
+				_ = json.Unmarshal(body["channels"], &chans)
+				_ = json.Unmarshal(body["filter"], &filter)
+				if method != "edge/users/list" || len(chans) != 1 || chans[0] != ch || filter == "apps" {
+					return nil, false
+				}
+				return map[string]any{"ok": true, "results": fresh, "next_marker": ""}, true
+			})
 			known := map[string]bool{}
-			for _, id := range e.fs.UserIDs() {
-				if _, ok := e.ca.S.RawUser(id); ok {
-					known[id] = true
+			for _, u := range fresh {
+				if _, ok := e.ca.S.RawUser(u.ID); ok {
+					known[u.ID] = true
 				}
 			}
 			if c := e.a.model().conv(ch); c == nil || len(c.Members) > 0 {
@@ -69,8 +87,8 @@ func TestActivityItemFacepileLoads(t *testing.T) {
 					t.Errorf("facepile member %s has no avatar", id)
 				}
 			}
-			if uncached == 0 {
-				t.Errorf("every facepile member %v was in the store before the item opened", e.a.model().conv(ch).Members)
+			if uncached != len(fresh) {
+				t.Errorf("facepile %v, want the %d members the read returned, none of them in the store before", e.a.model().conv(ch).Members, len(fresh))
 			}
 		})
 	}
