@@ -131,3 +131,42 @@ func TestMetaCacheStreams(t *testing.T) {
 		t.Fatalf("a file cut short loaded %d users and %d emoji", len(s3.Users), s3.CustomEmoji.Len())
 	}
 }
+
+// meta.json keeps the viewer and the MaxSavedUsers users fetched most
+// recently, with when they were fetched (Slack keeps no directory between
+// starts; anyone else is fetched again when needed).
+func TestSaveCacheKeepsRecentUsers(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	s.Self = slack.User{ID: "U0SELF"}
+	var us []slack.User
+	for i := 0; i < MaxSavedUsers+500; i++ {
+		us = append(us, slack.User{ID: fmt.Sprintf("U%05d", i)})
+	}
+	us = append(us, slack.User{ID: "U0SELF"})
+	s.PutUsers(us)
+	s.mu.Lock()
+	for i := 0; i < MaxSavedUsers+500; i++ {
+		s.userSeen[fmt.Sprintf("U%05d", i)] = int64(1762000000 + i) // the higher, the more recent
+	}
+	s.userSeen["U0SELF"] = 1 // the viewer stays however old
+	s.mu.Unlock()
+	if err := s.SaveCache(); err != nil {
+		t.Fatal(err)
+	}
+	s2 := New(dir)
+	s2.LoadCache()
+	if len(s2.Users) != MaxSavedUsers {
+		t.Fatalf("restored %d users, want %d", len(s2.Users), MaxSavedUsers)
+	}
+	if s2.Users["U0SELF"] == nil {
+		t.Error("the viewer wasn't saved")
+	}
+	newest := fmt.Sprintf("U%05d", MaxSavedUsers+499)
+	if s2.Users[newest] == nil || s2.Users["U00000"] != nil {
+		t.Errorf("kept the oldest instead of the newest: newest %v, oldest %v", s2.Users[newest] != nil, s2.Users["U00000"] != nil)
+	}
+	if s2.userSeen[newest] != int64(1762000000+MaxSavedUsers+499) {
+		t.Errorf("the fetch time came back as %d", s2.userSeen[newest])
+	}
+}

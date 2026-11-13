@@ -31,4 +31,6 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 | font glyphs | parsed as they're used; in-memory fonts' tables read in place | go-text patches (`third_party/typesetting`) |
 | Go heap | soft limit 512 MiB (`GOMEMLIMIT` wins); a backstop, not a budget | Go runtime |
 
-Slack's other managers: `members` 700 → 500 (by last access), `channels` 200 → 100, `files` 250 → 200. Clack keeps every user it has seen (and saves them to `meta.json`); the members bound is the next cut.
+| users saved in `meta.json` | the viewer and the 1,000 fetched most recently (`store.MaxSavedUsers`); anyone else is fetched when a message, mention or profile needs them | Slack keeps no directory between starts |
+
+Slack's other managers: `members` 700 → 500 (by last access), `channels` 200 → 100, `files` 250 → 200. Within a session Clack still keeps every user it fetched; bounding that like Slack's members cache is the next cut (it needs every lookup to fetch a missing user, which not all of the ~110 call sites do yet).

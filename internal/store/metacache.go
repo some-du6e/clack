@@ -69,6 +69,8 @@ func readDiskCache(r io.Reader, d *diskCache, user func(*slack.User)) error {
 			err = dec.Decode(&d.Names)
 		case "bots":
 			err = dec.Decode(&d.Bots)
+		case "user_seen":
+			err = dec.Decode(&d.UserSeen)
 		default:
 			var skip json.RawMessage
 			err = dec.Decode(&skip)
@@ -142,6 +144,10 @@ func writeDiskCache(w io.Writer, d *diskCache, users []*slack.User) error {
 	if len(d.Bots) > 0 {
 		put(`,"bots":`)
 		val(d.Bots)
+	}
+	if len(d.UserSeen) > 0 {
+		put(`,"user_seen":`)
+		val(d.UserSeen)
 	}
 	put("}")
 	if err != nil {
