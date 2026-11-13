@@ -69,7 +69,13 @@ func (e *ugEnv) last(m string) url.Values {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if got := e.forms[m]; len(got) > 0 {
-		return got[len(got)-1]
+		f := url.Values{}
+		for k, v := range got[len(got)-1] {
+			if k != "token" { // the client's own
+				f[k] = v
+			}
+		}
+		return f
 	}
 	return nil
 }

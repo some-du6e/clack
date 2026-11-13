@@ -59,7 +59,13 @@ func newUGRT(t *testing.T, editor, dark bool, id string) *ugRT {
 		h.a.Inject(slack.Event{Type: typ, Raw: b})
 	}
 	fs.SetHook(func(m string, f url.Values) (any, bool) {
-		e.calls.add(m, f)
+		g := url.Values{}
+		for k, v := range f {
+			if k != "token" { // the client's own
+				g[k] = v
+			}
+		}
+		e.calls.add(m, g)
 		return nil, false
 	})
 	gs, err := h.a.C.Usergroups(context.Background())
@@ -102,7 +108,7 @@ func (e *ugRT) frame() []string {
 	}
 	st := stop()
 	if st.Notdef > 0 {
-		e.t.Errorf("%d .notdef glyphs", st.Notdef)
+		e.t.Errorf("%s: %d .notdef glyphs in %q", e.mode, st.Notdef, st.Texts)
 	}
 	e.r.Frame(&e.ops)
 	drain()
@@ -168,10 +174,12 @@ func (e *ugRT) typeIn(ed interface{ Len() int }, s string) {
 // top is the newest open overlay.
 func (e *ugRT) top() Overlay {
 	os := e.overlays()
-	if len(os) == 0 {
-		return nil
+	for i := len(os) - 1; i >= 0; i-- {
+		if _, ok := os[i].(*pump); !ok { // run()'s async pump
+			return os[i]
+		}
 	}
-	return os[len(os)-1]
+	return nil
 }
 
 // menu is the open pane menu.
@@ -260,6 +268,7 @@ func (e *ugRT) ready(members int) {
 	e.until("the pane", func() bool {
 		return e.v.loaded && e.v.started && !e.v.loading && e.v.rightsOK && len(e.v.members) == members
 	})
+	e.texts() // the frames that draw what the answers brought
 }
 
 var ugEditorTexts = []string{"Edit Members", "Edit Channels", "Edit Details", "Copy Group ID", "Enable group", "Add Members", "Add Default Channels"}
