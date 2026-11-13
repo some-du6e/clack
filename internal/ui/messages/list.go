@@ -1156,12 +1156,20 @@ func (s *listState) layoutItemContent(gtx layout.Context, h Host, rc *rowCtx, i 
 	if rc.hovered {
 		for k := range r.pills {
 			if k < len(r.reactRects) && k < len(r.groups) && r.pills[k].btn.Hovered() {
-				s.tipG = r.groupTip(h, k, rc.selfID) // the pill's group (reaction_groups.go)
-				s.tip = s.tipG.text()
 				s.tipRect = r.reactRects[k] // row-local; positioned in overlays
 				s.tipItem = i
 				if key := s.items[i].key + "\x00" + r.groups[k].name; key != s.tipKey {
 					s.tipKey, s.tipAt = key, rc.now
+				}
+				// ReactionTip mounts once the tooltip shows, and its
+				// TooltipMemberName reads the reactors (getMemberById,
+				// which asks for a missing one) only then: before the
+				// delay the tip is pending, and nobody is looked up
+				if rc.now.Before(s.tipAt.Add(reactionTipDelay)) {
+					s.tipG, s.tip = groupTip{}, tipPending
+				} else {
+					s.tipG = r.groupTip(h, k, rc.selfID) // the pill's group (reaction_groups.go)
+					s.tip = s.tipG.text()
 				}
 			}
 		}

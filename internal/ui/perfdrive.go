@@ -385,6 +385,11 @@ func perfAppCounts(a *App, w io.Writer) {
 		}
 		fmt.Fprintf(w, "app_users %d\napp_convs %d\napp_usergroups %d\napp_custom_emoji %d\napp_timelines %d\napp_timeline_msgs %d\n",
 			users, convs, groups, c.S.CustomEmoji.Len(), len(tls), msgs)
+		// the ids sent to users/info so far, where the client counts them
+		// (an interface, so the driver still builds on an older side)
+		if ua, ok := any(c).(interface{ UsersAsked() int64 }); ok {
+			fmt.Fprintf(w, "app_users_asked %d\n", ua.UsersAsked())
+		}
 	}
 	if a.images != nil {
 		e, b, l := a.images.PerfStats()

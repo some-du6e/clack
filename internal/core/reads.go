@@ -85,7 +85,6 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 		if err != nil {
 			return Page{}, err
 		}
-		a.EnsureUsers(ctx, referencedUsers(p.Messages))
 		a.S.PrependOlder(ch, p.Messages, p.HasMore)
 		a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 		msgs, hasMore = p.Messages, p.HasMore
@@ -98,7 +97,7 @@ func (a *App) History(ctx context.Context, ch, before string) (Page, error) {
 	}
 	e, _ := a.S.Count(ch)
 	page.LastRead = e.LastRead
-	a.SubscribePresence(referencedUsers(msgs))
+	a.SubscribePresence(rowUsers(msgs))
 	return page, nil
 }
 
@@ -122,7 +121,7 @@ func (a *App) Replies(ctx context.Context, ch, ts string) ([]Message, error) {
 		}
 		msgs, _ = a.S.Thread(ch, ts)
 	}
-	a.SubscribePresence(referencedUsers(msgs))
+	a.SubscribePresence(rowUsers(msgs))
 	return a.messages(ch, msgs), nil
 }
 
@@ -150,7 +149,7 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 			}
 			cursor = next
 		}
-		a.EnsureUsers(ctx, referencedUsers(all))
+		// the replies' people are asked for as rows draw them (lazy_users.go)
 		// a reply changed, deleted or posted while the request was out
 		// keeps the socket's copy (store/live.go)
 		a.S.SetThreadSince(ch, ts, all, live)
@@ -200,7 +199,7 @@ func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[stri
 			all = append(all, m)
 		}
 	}
-	a.EnsureUsers(ctx, referencedUsers(all))
+	// the messages' people are asked for as rows draw them (lazy_users.go)
 	return out, err == nil
 }
 
@@ -626,15 +625,8 @@ func (a *App) Pins(ctx context.Context, ch string) ([]Pin, error) {
 	if err := a.C.Call(ctx, "pins.list", url.Values{"channel": {ch}}, &res); err != nil {
 		return nil, err
 	}
-	var msgs []slack.Message
-	ids := []string{}
-	for _, it := range res.Items {
-		if it.Message != nil {
-			msgs = append(msgs, *it.Message)
-		}
-		ids = append(ids, it.CreatedBy)
-	}
-	a.EnsureUsers(ctx, append(ids, referencedUsers(msgs)...))
+	// pins.list fetches nobody (shouldSkipMemberFetch): the pins' rows ask
+	// for their people and "Pinned by" as they draw (lazy_users.go)
 	out := make([]Pin, 0, len(res.Items))
 	for _, it := range res.Items {
 		out = append(out, Pin{Type: it.Type, Created: it.Created, CreatedBy: it.CreatedBy, Msg: a.messagePtr(ch, it.Message)})
@@ -812,7 +804,7 @@ func (a *App) Threads(ctx context.Context, cursor string, limit int) (ThreadsPag
 		all = append(all, t.LatestReplies...)
 		all = append(all, t.UnreadReplies...)
 	}
-	a.EnsureUsers(ctx, referencedUsers(all))
+	// the threads' people are asked for as rows draw them (lazy_users.go)
 	out := ThreadsPage{HasMore: res.HasMore, Next: res.MaxTS, TotalUnread: res.TotalUnreadReplies}
 	chans := map[string]bool{}
 	for _, t := range res.Threads {
@@ -922,18 +914,16 @@ func (a *App) DMs(ctx context.Context, cursor string) (DMPage, error) {
 		return DMPage{}, err
 	}
 	all := append(append([]dmRaw(nil), res.IMs...), res.MPIMs...)
-	var msgs []slack.Message
 	ids := []string{}
 	for _, d := range all {
-		if d.Message != nil {
-			msgs = append(msgs, *d.Message)
-		}
 		if d.Channel != nil {
 			ids = append(ids, d.Channel.User)
 			ids = append(ids, d.Channel.Members...)
 		}
 	}
-	ids = append(ids, referencedUsers(msgs)...)
+	// the DMs' people first: dmsTabShows reads them (deleted members and
+	// bots are left out); the latest messages' people are asked for as
+	// the rows draw them (lazy_users.go)
 	a.EnsureUsers(ctx, ids)
 	out := DMPage{Next: res.Meta.NextCursor}
 	for _, d := range all {

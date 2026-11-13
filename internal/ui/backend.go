@@ -111,6 +111,7 @@ func (b *backend) start(a *App) {
 	b.started = true
 	b.app = a
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	installMemberRead(b.core) // mentions ask for their members as they draw (lazy_users.go)
 	ch, unsub := b.core.Subscribe()
 	b.unsub = unsub
 	go func() {
@@ -267,6 +268,7 @@ func (b *backend) stop() <-chan struct{} {
 	s, t := b.slick, b.taut
 	b.detachTaut()
 	b.stopBlockkit()
+	uninstallMemberRead(b.core)
 	if b.cancel != nil {
 		b.cancel()
 	}

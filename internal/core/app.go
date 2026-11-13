@@ -24,6 +24,8 @@ type App struct {
 	S   *store.Store
 	RTM *slack.RTM
 
+	usersAsked usersAsked // ids users/info was asked for (lazy_users.go)
+
 	prio      prioState  // the VIP unreads section's open conversation (prefs_a.go)
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
 	acs       acState    // the composer autocomplete's frecency, model and history (autocomplete.go)
@@ -747,6 +749,7 @@ func (a *App) EnsureUsers(ctx context.Context, ids []string) {
 	if len(miss) == 0 {
 		return
 	}
+	a.usersAsked.Add(int64(len(miss)))
 	us, err := a.C.UsersInfoParallel(ctx, miss)
 	if err != nil {
 		log.Printf("users/info: %v", err)
@@ -833,7 +836,7 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 	if err != nil {
 		return err
 	}
-	a.EnsureUsers(ctx, referencedUsers(p.Messages))
+	// its people are asked for as rows draw them (lazy_users.go)
 	a.S.SetLatest(ch, p.Messages, p.HasMore)
 	a.S.SyncPins(ch, pins, p.Messages) // a pin event newer than the answer (store/pins.go)
 	for i := range p.Messages {
@@ -1277,7 +1280,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		v.Reactions = append(v.Reactions, rv)
 	}
 	v.Reactions = a.overlayReactions(ch, m.TS, v.Reactions)
-	v.Doc = richtext.FromMessage(a.S, m)
+	v.Doc = richtext.FromMessage(msgNames{a.S}, m) // mentions ask as they draw (lazy_users.go)
 	return v
 }
 
@@ -1817,29 +1820,6 @@ func (a *App) Presence(ctx context.Context, ids []string) map[string]string {
 		out, missing = a.presenceMap(ids)
 	}
 	return out
-}
-
-// referencedUsers collects user ids a message list needs for rendering.
-func referencedUsers(msgs []slack.Message) []string {
-	var ids []string
-	for i := range msgs {
-		m := &msgs[i]
-		ids = append(ids, m.User)
-		ids = append(ids, m.ReplyUsers...)
-		if m.Edited != nil {
-			ids = append(ids, m.Edited.User)
-		}
-		for _, re := range m.Reactions {
-			ids = append(ids, re.Users...)
-		}
-		for _, mm := range mentionRe.FindAllStringSubmatch(m.Text, -1) {
-			ids = append(ids, mm[1])
-		}
-		if m.Root != nil {
-			ids = append(ids, m.Root.User)
-		}
-	}
-	return ids
 }
 
 func firstNonEmpty(s ...string) string {

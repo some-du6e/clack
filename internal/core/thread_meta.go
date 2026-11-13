@@ -85,7 +85,7 @@ func (a *App) onMessageReplied(ctx context.Context, ch string, raw json.RawMessa
 	if latest == "" {
 		latest = r.latest()
 	}
-	a.EnsureUsers(ctx, m.ReplyUsers)
+	// the reply bar asks for its avatars' people as it draws (lazy_users.go)
 	if upd, ok := a.S.Mutate(ch, m.TS, func(x *slack.Message) {
 		// makeThreadObject: reply_count parseInt(...) || 0; the rest as sent
 		x.ReplyCount, x.ReplyUsers, x.LatestReply = m.ReplyCount, m.ReplyUsers, latest

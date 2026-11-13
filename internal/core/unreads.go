@@ -64,7 +64,7 @@ func (a *App) UnreadHistory(ctx context.Context, ch, oldest string) (UnreadPage,
 	if err := a.C.Call(ctx, "conversations.history", p, &r); err != nil {
 		return UnreadPage{}, err
 	}
-	a.EnsureUsers(ctx, referencedUsers(r.Messages))
+	// its people are asked for as rows draw them (lazy_users.go)
 	msgs := append([]slack.Message(nil), r.Messages...)
 	store.SortAsc(msgs)
 	return UnreadPage{Messages: a.timeline(ch, msgs), HasMore: r.HasMore}, nil

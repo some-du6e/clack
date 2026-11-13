@@ -567,8 +567,23 @@ func linkSpan(href, label string) Span {
 	return Span{Kind: Text, Text: label}
 }
 
+// MentionNamer is an optional Resolver method for user mentions: the
+// member's name if it is already known, without reading the member for
+// display (no fetch of a missing one). Slack's mention reads its member
+// when it renders (MemberSlug's getMemberById), not when the message
+// loads, so core builds message docs with it and the view asks for the
+// mentions it draws (richview's MemberRead).
+type MentionNamer interface {
+	MentionName(id string) string
+}
+
 func userSpan(r Resolver, id, label string) Span {
-	name := r.UserName(id)
+	var name string
+	if mn, ok := r.(MentionNamer); ok {
+		name = mn.MentionName(id)
+	} else {
+		name = r.UserName(id)
+	}
 	if name == "" {
 		name = label
 	}

@@ -35,6 +35,6 @@ func (a *App) OlderReplies(ctx context.Context, ch, ts, latest string, limit int
 			out = append(out, m)
 		}
 	}
-	a.EnsureUsers(ctx, referencedUsers(out))
+	// the replies' people are asked for as rows draw them (lazy_users.go)
 	return a.messages(ch, out), r.HasMore, nil
 }

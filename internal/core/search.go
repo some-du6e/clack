@@ -346,7 +346,7 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 			hits = append(hits, hit{ch, m, aux.Permalink})
 		}
 	}
-	a.EnsureUsers(ctx, referencedUsers(msgs))
+	// the results' people are asked for as their rows draw (lazy_users.go)
 	for i := range hits {
 		v := a.message(hits[i].ch, &hits[i].m)
 		v.Permalink = hits[i].link
