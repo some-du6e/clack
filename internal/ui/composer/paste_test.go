@@ -344,3 +344,57 @@ func TestPasteLinkTransforms(t *testing.T) {
 	e.pasteHTML("x", `<a href="https://e.test/a?utm=1">x</a>`)
 	phCheck(t, "transformed", e.doc, "p [x](https://e.test/a)")
 }
+
+// pasteAtoms lists a Doc's atoms as "kind:id:text".
+func pasteAtoms(d *Doc) []string {
+	if d == nil {
+		return nil
+	}
+	var out []string
+	for _, a := range d.Attrs {
+		if at := a.Atom; at != nil {
+			out = append(out, fmt.Sprintf("%d:%s:%s", at.Kind, at.ID, at.Text))
+		}
+	}
+	return out
+}
+
+// A mention copied from a message (Slack's slack/html: MemberSlug's
+// data-stringify marks; Copy message's slack/texty delta) pastes as a
+// mention, as Texty's mention matcher makes it; the cleaned text/html
+// (no marks) and other apps' links stay text (Karim 2026-11-13: "one is
+// a mention while the other isnt").
+func TestPasteKeepsMentions(t *testing.T) {
+	slack := `<meta charset="utf-8">hey <a target="_blank" class="c-link c-member_slug c-member_slug--link" data-member-id="U0FAKE00001" ` +
+		`data-member-label="@karim" data-stringify-type="mention" data-stringify-id="U0FAKE00001" data-stringify-label="@karim" href="/team/U0FAKE00001">@karim</a>` +
+		` and <span data-stringify-type="mention" data-stringify-id="S0FAKEWKSP" data-stringify-label="@snackcrew">@snackcrew</span>, ` +
+		`<span data-stringify-type="mention" data-stringify-id="BKhere" data-stringify-label="@here">@here</span>!`
+	d := docFromHTML(slack)
+	want := []string{
+		fmt.Sprintf("%d:U0FAKE00001:@karim", AtomUser), fmt.Sprintf("%d:S0FAKEWKSP:@snackcrew", AtomUsergroup), fmt.Sprintf("%d:here:@here", AtomBroadcast),
+	}
+	if got := pasteAtoms(d); strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("slack/html atoms %q, want %q", got, want)
+	}
+	if d == nil || strings.Count(string(d.Runes), string(ObjRune)) != 3 || !strings.HasPrefix(string(d.Runes), "hey ") || !strings.HasSuffix(string(d.Runes), "!") {
+		t.Errorf("slack/html text %q", string(d.Runes))
+	}
+	clean := `<div style="margin: 0"><a target="_blank" href="/team/U0FAKE00001" style="color: #1264a3">@karim</a> hi</div>`
+	if got := pasteAtoms(docFromHTML(clean)); len(got) != 0 {
+		t.Errorf("the cleaned html made atoms %q", got)
+	}
+	texty := `{"ops":[{"insert":"cc "},{"insert":"@karim","attributes":{"slackmention":{"id":"U0FAKE00001","label":"@karim","mention":false,"unverified":false}}},` +
+		`{"insert":" now","attributes":{"bold":true}},{"insert":"\n"}]}`
+	h := textyHTML(texty)
+	if h == "" {
+		t.Fatal("slack/texty made no html")
+	}
+	d = docFromHTML(h)
+	if got := pasteAtoms(d); len(got) != 1 || got[0] != fmt.Sprintf("%d:U0FAKE00001:@karim", AtomUser) {
+		t.Errorf("slack/texty atoms %q (html %q)", got, h)
+	}
+	phCheck(t, "slack/texty text", d, "p cc "+string(ObjRune)+"* now*")
+	if textyHTML(`not json`) != "" || textyHTML(`{"ops":[]}`) != "" {
+		t.Error("textyHTML took junk")
+	}
+}

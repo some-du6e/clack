@@ -4,14 +4,12 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"io"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"gioui.org/f32"
-	"gioui.org/io/clipboard"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -1028,7 +1026,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 			switch e.Name {
 			case "C":
 				if s := v.SelectedText(); s != "" {
-					gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(s))})
+					a, b := v.selRange()
+					sh, ch := v.HTMLRange(a, b)
+					CopyRich(gtx, s, sh, ch) // Slack's copy handler (copyrich.go)
 				}
 			case "A":
 				v.selA, v.selB = 0, int32(len(v.d.plain))

@@ -553,3 +553,59 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+
+  # TestToastInNotificationCenter's banner Show failing with 0x803e0105
+  # (the notification platform is unavailable) right after the test turns
+  # Do not disturb off: the probe logs what Show returns after each switch
+  # and after the platform's service restarts, on Server 2025 and on a
+  # Windows 11 client; the count runs the test once on each of 10 fresh
+  # runners (each run switches Do not disturb, so -count would alternate it).
+  toast-1113-probe:
+    if: ${{ !inputs.only || startsWith('toast-1113-probe', inputs.only) }}
+    name: "toast-1113 probe (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Show after Do not disturb switches and a platform restart
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+          CLACK_WINDOWS_TOAST_PROBE: "1"
+        run: go test -count=1 -v -timeout 15m -run '^TestToastPlatformProbe$' ./internal/desktop
+
+  toast-1113-count:
+    if: ${{ !inputs.only || startsWith('toast-1113-count', inputs.only) }}
+    name: "toast-1113 TestToastInNotificationCenter (run ${{ matrix.run }})"
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "TestToastInNotificationCenter, once on a fresh runner"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-shell
+          CLACK_WINDOWS_TOAST_TESTS: "1"
+          COUNT: "1"
+          TEST: TestToastInNotificationCenter
+          PKG: ./internal/desktop
+          FLAKE_TAIL: "60"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"

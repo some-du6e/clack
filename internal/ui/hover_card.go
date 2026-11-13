@@ -223,27 +223,8 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 // command into the open conversation's composer; the channel card's
 // huddle badge and the channel-tab slugs' card rule.
 func (a *App) installAppCardHooks() {
-	popups.OpenAppAbout = func(uid string) {
-		if a.data == nil || a.data.core == nil {
-			return
-		}
-		c := a.data.core
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			cv, err := c.OpenDM(ctx, uid)
-			a.Post(func() {
-				if err != nil || cv.ID == "" {
-					a.Toast("Couldn't open the app")
-					return
-				}
-				a.Navigate("c/" + cv.ID)
-				if dm := blockkit.AppDMFor(a, cv.ID); dm != nil {
-					dm.SetTab("about")
-				}
-			})
-		}()
-	}
+	popups.OpenAppAbout = func(uid string) { a.openAppTab(uid, "about") }
+	popups.OpenAppTab = a.openAppTab
 	// ChannelHoverCardHuddleBadge is the sidebar suffix's badge (huddleui
 	// Badge), and a channel-tab slug opens the channel card where Slack's
 	// does (core.ChannelTabSlugCard)
@@ -270,4 +251,29 @@ func (a *App) installAppCardHooks() {
 		ins.InsertText(s)
 		return true
 	}
+}
+
+// openAppTab opens the app's DM (its bot user uid) on a tab: "about"
+// (the app card's About this app), "home" or "messages" (App details'
+// buttons; Slack's openAppSpace with tabId).
+func (a *App) openAppTab(uid, tab string) {
+	if a.data == nil || a.data.core == nil {
+		return
+	}
+	c := a.data.core
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cv, err := c.OpenDM(ctx, uid)
+		a.Post(func() {
+			if err != nil || cv.ID == "" {
+				a.Toast("Couldn't open the app")
+				return
+			}
+			a.Navigate("c/" + cv.ID)
+			if dm := blockkit.AppDMFor(a, cv.ID); dm != nil {
+				dm.SetTab(tab)
+			}
+		})
+	}()
 }

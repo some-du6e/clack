@@ -13,9 +13,10 @@ import (
 // The macOS Dock icon, as Slack's desktop app drives it from the web
 // client's badge state (boot-render eow, the shell's app.dock):
 //
-//   - the badge is the app badge count (mentions and DMs) when there is
-//     one; otherwise, with mac_ssb_bullet (default on), "•" while
-//     anything is unread; otherwise nothing;
+//   - the badge is getDesktopUnreads' unreadHighlights, the app badge
+//     count (getAppBadgeCount: under activity_inbox the Activity badge, not
+//     Home's; core app_badge.go) when there is one; otherwise, with
+//     mac_ssb_bullet (default on), "•" while hasUnreads; otherwise nothing;
 //   - each notification bounces the icon when mac_ssb_bounce is set:
 //     "short" once, "long" until Clack is brought forward.
 //
@@ -23,8 +24,8 @@ import (
 // process drives it (main.bundle.cjs from the win32 nupkg's app.asar):
 //
 //   - SET_BADGE_EPIC (@1171101): the overlay icon is the teams' summed
-//     unreadHighlights (the same count as the Dock's badge, Clack's
-//     HomeCount; 0 for slackbotStandalone, which Clack never is), set
+//     unreadHighlights (the same count as the Dock's badge and the window
+//     title's "N new items"; 0 for slackbotStandalone, which Clack never is), set
 //     when it changes and again on FOREGROUND_APP; vc puts Slack's
 //     unread-badge image for it on the main window with the tooltip "You
 //     have unread messages" (desktop_browser), and clears it at 0
@@ -75,8 +76,8 @@ func (a *App) updateDock() {
 	if runtime.GOOS != "darwin" && !dockAnyOS {
 		return
 	}
-	m := a.model()
-	l := dockBadgeLabel(m.HomeCount, m.HomeUnread || m.DMUnread, !uipref.Get().NoMacBullet)
+	du := a.desktopUnreads()
+	l := dockBadgeLabel(du.Count, du.HasUnreads, du.Bullet)
 	if l == a.dock.label && a.dock.set {
 		return
 	}
@@ -161,7 +162,7 @@ func (a *App) updateTaskbar(force bool) {
 	if hwnd == 0 {
 		return
 	}
-	n := a.model().HomeCount
+	n := a.desktopUnreads().Count // unreadHighlights, the Dock's count
 	d := &a.dock
 	if !force && d.tbSet && d.tbHWND == hwnd && d.tbCount == n {
 		return

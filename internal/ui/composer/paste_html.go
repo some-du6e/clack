@@ -203,6 +203,19 @@ func (c *phConv) start(tag string, attrs map[string]string, selfClosing bool) {
 	if phVoid[tag] || selfClosing {
 		return
 	}
+	if at := phMention(attrs); at != nil && !c.skipping() {
+		// Texty's mention matcher ([data-stringify-type="mention"], boot-
+		// shared KT9Q): the label as a mention (getStringifyId, -Label, 0BIN);
+		// its text goes with it
+		c.ensureLine()
+		c.emitSpace()
+		c.b.atom(at)
+		c.content = true
+		if len(c.stack) < phMaxDepth {
+			c.stack = append(c.stack, phElem{tag: tag, ind: -1, skip: true})
+		}
+		return
+	}
 	el := phElem{tag: tag, ind: -1}
 	styleAttr := strings.ToLower(attrs["style"])
 	css := phCSSDecls(styleAttr)
@@ -517,6 +530,40 @@ func (c *phConv) emit(s string, a Attr) {
 	if len(d.Runes) > phMaxRunes {
 		c.over = true
 	}
+}
+
+// phMention is a Slack mention element as the composer's atom: Slack's
+// copy marks each with data-stringify-type="mention", data-stringify-id
+// and data-stringify-label (MemberSlug, UserGroupElement, broadcasts),
+// and Texty's paste matcher makes the label a slackmention with the id.
+// nil for anything else, or a mention without both.
+func phMention(attrs map[string]string) *Atom {
+	if attrs["data-stringify-type"] != "mention" {
+		return nil
+	}
+	id, label := strings.TrimSpace(attrs["data-stringify-id"]), strings.TrimSpace(attrs["data-stringify-label"])
+	if id == "" || label == "" || len(id) > 64 || len(label) > 256 {
+		return nil
+	}
+	return mentionAtom(id, label)
+}
+
+// mentionAtom is a slackmention's id and label as an atom: a member, a
+// user group (S…) or a broadcast (BKhere, BKchannel, BKeveryone).
+func mentionAtom(id, label string) *Atom {
+	switch {
+	case strings.HasPrefix(id, "BK"):
+		switch r := strings.TrimPrefix(id, "BK"); r {
+		case "here", "channel", "everyone":
+			return &Atom{Kind: AtomBroadcast, ID: r, Text: "@" + r}
+		}
+		return nil
+	case strings.HasPrefix(id, "S"):
+		return &Atom{Kind: AtomUsergroup, ID: id, Text: label}
+	case strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W"):
+		return &Atom{Kind: AtomUser, ID: id, Text: label}
+	}
+	return nil
 }
 
 // phTagStyle is the inline format a tag implies.

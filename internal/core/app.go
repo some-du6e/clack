@@ -44,13 +44,14 @@ type App struct {
 	// them (mergePrefs, installPrefs).
 	prefsMu sync.Mutex
 
-	presSeen    map[string]time.Time
-	presWaiters []chan struct{}
-	countsTimer *time.Timer
-	actBadges   map[string]int // client.counts activity_v2 (activity_badges.go)
-	cmdCache    []slack.Command
-	cmdAt       time.Time
-	cmdFailed   failedCommands // executeCommand's recently failed (command.go)
+	presSeen     map[string]time.Time
+	presWaiters  []chan struct{}
+	countsTimer  *time.Timer
+	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
+	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
+	cmdCache     []slack.Command
+	cmdAt        time.Time
+	cmdFailed    failedCommands // executeCommand's recently failed (command.go)
 
 	files *fileCache
 
@@ -97,6 +98,7 @@ type App struct {
 	// answers) and the forced groups ("" reads as not assigned)
 	expServer map[string]slack.ExperimentAssignment
 	expForced map[string]string
+	expLive   bool // experiments.getByUser answered (the disk cache's copy no longer applies)
 
 	// Realtime (Slack's websocket gateway) is opt-in; see SetRealtime.
 	rtMu      sync.Mutex
@@ -467,6 +469,7 @@ func (a *App) Boot(ctx context.Context) error {
 	go func() {
 		s := time.Now()
 		a.S.LoadCache()
+		a.installCachedExperiments() // Slack's persisted experiments store (experiments.go)
 		tCache = time.Since(s)
 		close(cacheDone)
 	}()
@@ -1280,7 +1283,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		v.Reactions = append(v.Reactions, rv)
 	}
 	v.Reactions = a.overlayReactions(ch, m.TS, v.Reactions)
-	v.Doc = richtext.FromMessage(msgNames{a.S}, m) // mentions ask as they draw (lazy_users.go)
+	v.Doc = richtext.FromMessageIn(msgNames{a.S}, m, ch) // mentions ask as they draw (lazy_users.go); in ch, a slug to one of ch's tabs is the tab alone
 	return v
 }
 
@@ -1400,6 +1403,19 @@ func (a *App) sections(convs []Conv) []Section {
 	secs := append([]slack.Section(nil), a.S.Sections...)
 	a.S.RUnlock()
 	ordered := orderSections(secs)
+	// orderedChannelSectionList (client-boot Q): with
+	// agents_in_channels_improvements on, Agents sections leave the list
+	// (and lJBI's isAgent map is empty, so nothing is filed there); what
+	// one listed goes to its default section.
+	if a.AgentsInChannelsImprovements() {
+		kept := ordered[:0:0]
+		for _, s := range ordered {
+			if s.Type != "agents" {
+				kept = append(kept, s)
+			}
+		}
+		ordered = kept
+	}
 	// Slack's local sections (client-boot z/Q): with session_channels on, a
 	// missing Code channels section is made on the client and spliced in
 	// at the front of the ordered list.

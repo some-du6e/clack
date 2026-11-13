@@ -11,7 +11,9 @@ permissions:
   contents: read
 
 jobs:
-  linux:
+  # gofmt, vet and the linux binary. The linux work that used to be one
+  # job (21 min, all of it serial) is these linux-* jobs, in parallel.
+  linux-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -27,8 +29,82 @@ jobs:
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - name: vet
         run: go vet ./...
-      - name: test
-        run: go test ./...
+      - name: build
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-linux-amd64 ./cmd/clack
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: clack-linux-amd64
+          path: dist/clack-linux-amd64
+
+  # `go test ./...`, split: internal/ui's and internal/ui/messages' top-level
+  # tests hashed by name into 4 shards (test-shard.py), every other package
+  # in the rest shard. linux-coverage checks the shards ran every test.
+  linux-test:
+    runs-on: ubuntu-latest
+    name: linux-test (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/4, 2/4, 3/4, 4/4, rest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: test (${{ matrix.shard }})
+        env:
+          SHARD: ${{ matrix.shard }}
+          HEAVY: github.com/some-du6e/clack/internal/ui,github.com/some-du6e/clack/internal/ui/messages
+        run: |
+          if [ "$SHARD" = rest ]; then set -- --rest; else set -- --shard "$SHARD"; fi
+          python3 .github/scripts/test-shard.py run --heavy "$HEAVY" "$@" --out "$RUNNER_TEMP/shard"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: test-shard-${{ strategy.job-index }}
+          path: ${{ runner.temp }}/shard
+          retention-days: 7
+
+  # Fails unless every package finished in its shard and each of the
+  # split packages' tests ran exactly once across the shards.
+  linux-coverage:
+    needs: linux-test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: test-shard-*
+          path: ${{ runner.temp }}/shards
+      - name: every test ran in some shard
+        run: python3 .github/scripts/test-shard.py check "$RUNNER_TEMP"/shards/test-shard-*
+
+  # Gio patches on the vendored gioui.org, Xvfb and Mesa's llvmpipe
+  linux-gio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       # Gio patch 11 (third_party/gioui.org/CLACK_PATCHES.md): OS file-drop
       # events through Window.Event, text/uri-list parsing (X11, Wayland)
       - name: Gio file-drop events (vendored gioui.org/app)
@@ -51,15 +127,6 @@ jobs:
         run: |
           sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq xvfb libgl1-mesa-dri libegl-mesa0 python3-xlib
           xvfb-run -a go test -count=1 -v -timeout 5m -run 'TestXDNDFileDrop' gioui.org/app
-      # Idle: the client left alone for 10 s per surface (channel, thread,
-      # Activity, Preferences, the sidebar with unreads, the huddle window),
-      # with and without reduced motion; fails past a caret's blinks plus
-      # a clock tick, and logs who asked for every frame.
-      - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
-        if: ${{ !cancelled() }}
-        env:
-          CLACK_IDLE_FRAMES: "1"
-        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
       - name: pixel tests (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -77,22 +144,60 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: .github/scripts/gio-layer-fix.sh xvfb-run -a
+
+  linux-race-taut:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: plugins start in parallel with boot (race detector; the JS engine is one wasm instance)
+        run: go test -race -count=1 -timeout 30m ./internal/taut ./internal/slick
+
+  linux-race-boot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: sign-out stops all traffic (50 runs, race detector)
         run: go test -race -count=50 -run 'TestAuthFailedStopsCore$' ./internal/core
-      - name: plugins start in parallel with boot (race detector; the JS engine is one wasm instance)
-        run: |
-          go test -race -count=1 -timeout 30m ./internal/taut ./internal/slick
-          go test -race -count=20 -run 'TestPluginsStartBeforeBoot$' ./internal/taut
-      - name: build
-        if: ${{ !cancelled() }}
-        run: |
-          mkdir -p dist
-          CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o dist/clack-linux-amd64 ./cmd/clack
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ !cancelled() }}
+      - name: plugins start in parallel with boot, 20 runs (race detector)
+        run: go test -race -count=20 -run 'TestPluginsStartBeforeBoot$' ./internal/taut
+
+  linux-idle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          name: clack-linux-amd64
-          path: dist/clack-linux-amd64
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      # Idle: the client left alone for 10 s per surface (channel, thread,
+      # Activity, Preferences, the sidebar with unreads, the huddle window),
+      # with and without reduced motion; fails past a caret's blinks plus
+      # a clock tick, and logs who asked for every frame.
+      - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_IDLE_FRAMES: "1"
+        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
 
   windows:
     runs-on: ubuntu-latest
@@ -119,8 +224,13 @@ jobs:
           name: clack-windows-amd64
           path: dist/clack-windows-amd64.exe
 
+
   # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating;
-  # Clack's slack:// registration and the single-instance hand-off
+  # the OS hooks, the clipboard, OS file drops, typed text, the reply box gap.
+  # The windows-applog steps run in four windows-* jobs, each on its own
+  # runner and desktop session; the steps that change the runner's
+  # registry, shell and Notification Center state (windows-shell) keep
+  # their order.
   windows-applog:
     runs-on: windows-latest
     steps:
@@ -144,6 +254,14 @@ jobs:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
         run: go test -count=1 -v -run 'TestWinClipboard|TestDIBToPNG|TestParseHDROP|TestRichCopy' ./internal/ui/composer
+      # A copy as Slack's desktop app makes it: text, "HTML Format" and the
+      # custom types (slack/html, slack/texty) in Chromium's web custom data.
+      - name: rich copy (CF_UNICODETEXT, HTML Format, Chromium Web Custom MIME Data Format)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_CLIPBOARD_TESTS: "1"
+        run: go test -count=1 -v -run 'TestWinRichCopy|TestEncodeCustom|TestCFHTML' ./internal/ui/richclip
       # Files dragged onto a Gio window by another process through OLE
       # (PowerShell C#: DoDragDrop with a CF_HDROP DataObject, moving the
       # cursor), Esc's cancel, and WM_DROPFILES (Gio patch 11).
@@ -173,6 +291,19 @@ jobs:
         run: |
           go test -count=1 -v -run '^TestThreadComposerTopMargin$' ./internal/ui/composer
           go test -count=1 -v -timeout 10m -run '^TestThreadsAuditReplyGap$' ./internal/ui
+
+  # Clack's slack:// registration and the single-instance hand-off, close to
+  # the tray, toasts, the taskbar
+  windows-shell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - name: slack:// handler (HKCU registration, the shell's list of slack:// handlers, the hand-off over the instance socket)
         if: ${{ !cancelled() }}
         env:
@@ -398,7 +529,7 @@ jobs:
           BADGE_SHOTS_DIR: ${{ runner.temp }}\toast-shots
         run: |
           go test -count=1 -v -timeout 10m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos' ./internal/desktop
-          go test -count=1 -v -timeout 15m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray)$' ./internal/ui
+          go test -count=1 -v -timeout 15m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray|TestTitleDockTaskbarAgreeLikeSlack)$' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -406,6 +537,17 @@ jobs:
           path: ${{ runner.temp }}/toast-shots
           if-no-files-found: ignore
 
+
+  windows-scroll:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
       # Wheel scrolling on Windows: frame times while synthetic mouse-wheel
       # notches scroll a long fakeslack channel at 60 Hz (layout, and the
       # Direct3D 11 render when the runner has a device). The numbers are
@@ -432,13 +574,25 @@ jobs:
           go test -count=1 -v ./internal/ui/autoscroll
           go test -count=1 -v -timeout 10m -run '^(TestAutoscrollWindow|TestAutoscrollInClack)$' ./internal/ui
 
-      # The idle-frame budget on Windows (see the linux job's step).
+
+  windows-idle:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # The idle-frame budget on Windows (see linux-idle).
       - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}
         env:
           CGO_ENABLED: "0"
           CLACK_IDLE_FRAMES: "1"
         run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
+
 
   macos:
     runs-on: macos-latest
@@ -455,7 +609,7 @@ jobs:
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
           go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
           go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
-          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine' ./internal/ui
+          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine|TestTitleDockTaskbarAgreeLikeSlack' ./internal/ui
           go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
           go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey

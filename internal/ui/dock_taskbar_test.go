@@ -67,6 +67,9 @@ func fakeTaskbar(t *testing.T) *taskbarRec {
 // flash (rj's flashFrame(false)).
 func TestTaskbarOverlayFollowsCount(t *testing.T) {
 	a, _, _ := fakePrefsApp(t)
+	// without activity_inbox the count is the unread highlights (Home's);
+	// with it, the Activity badge (TestTitleDockTaskbarAgreeLikeSlack)
+	a.Core().SetExperimentGroup("activity_inbox", "off")
 	r := fakeTaskbar(t)
 	m := a.model()
 	m.HomeCount = 3

@@ -855,6 +855,14 @@ func (a *App) Saved(ctx context.Context, filter, cursor string) (SavedPage, erro
 		}
 	}
 	got, answered := a.hydrateOK(ctx, want)
+	var counts struct {
+		Overdue *int `json:"uncompleted_overdue_count"`
+	}
+	if json.Unmarshal(res.Counts, &counts) == nil && counts.Overdue != nil {
+		a.mu.Lock()
+		a.savedOverdue = *counts.Overdue
+		a.mu.Unlock()
+	}
 	out := SavedPage{Counts: res.Counts, Next: res.Meta.NextCursor}
 	chans := map[string]bool{}
 	a.mu.Lock()

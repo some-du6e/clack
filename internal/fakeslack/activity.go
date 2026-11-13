@@ -2,6 +2,7 @@ package fakeslack
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"slices"
 	"sort"
@@ -130,7 +131,10 @@ func activityEntries(base string) []map[string]any {
 		e("fa-reminder", "1762701200.000100", true, map[string]any{"type": "saved_reminder",
 			"saved_reminder_payload": map[string]any{"item_type": "message", "item_id": ViewsChannel, "item_id_2": "1762700100.000100"}}),
 		e("fa-joiner", "1762701100.000100", true, map[string]any{"type": "team_joiner_invite",
-			"team_joiner_invite_payload": map[string]any{"channel_id": ViewsChannel, "user_id": "U0FAKE00002", "is_reminder": false}}),
+			// item.invite is the joiner's user id (Slack's senderId and the
+			// row's avatar), a string like every feed item's invite
+			"invite":                     "U0FAKE00002",
+			"team_joiner_invite_payload": map[string]any{"channel_id": ViewsChannel, "is_reminder": false}}),
 		e("fa-ext-invite", "1762701000.000100", true, map[string]any{"type": "external_channel_invite",
 			"invite": map[string]any{"id": ActivityInviteChannel, "sig": ActivityInviteChannelSig, "invite_type": "channel", "direction": "incoming", "status": "sent",
 				"channel":       map[string]any{"id": ActivityInviteChannelID, "name": "synthetic-partners"},
@@ -173,6 +177,8 @@ type activityState struct {
 	viewDense map[string]string // activity.views.update's density by view id
 	saved     map[string]map[string]any
 	ignored   map[string]bool // invites ignored or accepted
+	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
+	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -234,6 +240,48 @@ func (s *Server) SetChannelInviteEligibility(el map[string]any) {
 	v.mu.Unlock()
 }
 
+// SetActivityInviteIDs makes the feed send each external invite's
+// item.invite as the connect invite's id, a string, the way Slack's feed
+// does (Karim's All + Unreads failed on it, 2026-11-13); connectInvites.list
+// (direction incoming, no invite_ids) then answers the invites
+// themselves, as Slack's inbox reads them.
+func (s *Server) SetActivityInviteIDs(on bool) {
+	v := s.views()
+	v.mu.Lock()
+	v.act().inviteIDs = on
+	v.mu.Unlock()
+}
+
+// SetActivityBulk adds n unread at_user entries after the fixture's
+// (older), makes activity.feed answer in pages of its limit with a
+// next_cursor, as the server does, and sets client.counts' activity_v2
+// to the feed's unread entries by type (what the server counts). Karim
+// saw a badge of 27 over a list of 3, 2026-11-13.
+func (s *Server) SetActivityBulk(n int) {
+	v := s.views()
+	v.mu.Lock()
+	v.act().bulk = n
+	v.mu.Unlock()
+	counts := map[string]int{}
+	for _, e := range append(activityEntries(""), activityBulk(n)...) {
+		if e["is_unread"] == true {
+			counts[e["item"].(map[string]any)["type"].(string)]++
+		}
+	}
+	s.SetActivityBadges(counts)
+}
+
+// activityBulk is SetActivityBulk's entries, newest first.
+func activityBulk(n int) []map[string]any {
+	out := make([]map[string]any, 0, n)
+	for i := range n {
+		ts := fmt.Sprintf("%d.000100", 1762590000-i*10)
+		out = append(out, map[string]any{"key": fmt.Sprintf("fa-bulk-%02d", i), "feed_ts": ts, "is_unread": true, "is_bot": false,
+			"item": map[string]any{"type": "at_user", "message": map[string]any{"ts": "1762700100.000100", "channel": ViewsChannel, "author_user_id": "U0FAKE00001"}}})
+	}
+	return out
+}
+
 // SetChannelInviteApproved approves the channel invite's acceptance in
 // connectInvites.list (both organisations reviewed it).
 func (s *Server) SetChannelInviteApproved(on bool) {
@@ -261,7 +309,12 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		v.mu.Lock()
 		st := v.act()
 		var items []map[string]any
-		for _, e := range activityEntries(s.URL) {
+		entries := activityEntries(s.URL)
+		bulk := st.bulk
+		if bulk > 0 {
+			entries = append(entries, activityBulk(bulk)...)
+		}
+		for _, e := range entries {
 			key := e["key"].(string)
 			typ := e["item"].(map[string]any)["type"].(string)
 			if len(types) > 0 && !types[typ] {
@@ -286,10 +339,30 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 				continue
 			}
 			e["is_archived"] = st.archived[key]
+			if it := e["item"].(map[string]any); st.inviteIDs {
+				if inv, _ := it["invite"].(map[string]any); inv != nil {
+					it["invite"] = inv["id"]
+				}
+			}
 			items = append(items, e)
 		}
 		v.mu.Unlock()
-		return ok("items", items, "response_metadata", map[string]any{"next_cursor": ""}), true
+		next := ""
+		if bulk > 0 {
+			// pages of limit, the cursor an offset
+			off, _ := strconv.Atoi(strings.TrimPrefix(f.Get("cursor"), "o:"))
+			limit, _ := strconv.Atoi(f.Get("limit"))
+			if limit <= 0 {
+				limit = 20
+			}
+			off = min(off, len(items))
+			end := min(off+limit, len(items))
+			if end < len(items) {
+				next = "o:" + strconv.Itoa(end)
+			}
+			items = items[off:end]
+		}
+		return ok("items", items, "response_metadata", map[string]any{"next_cursor": next}), true
 	case "messages.list":
 		var want []struct {
 			Channel    string   `json:"channel"`
@@ -471,6 +544,33 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		v.mu.Unlock()
 		var ids []string
 		_ = json.Unmarshal([]byte(f.Get("invite_ids")), &ids)
+		if len(ids) == 0 && f.Get("direction") == "incoming" {
+			// the inbox's fetch (slack-connect-fetch-invites-for-activity-feed):
+			// every incoming invite, channel and note in invite_payload
+			var out []any
+			for _, e := range activityEntries(s.URL) {
+				inv, _ := e["item"].(map[string]any)["invite"].(map[string]any)
+				if inv == nil {
+					continue
+				}
+				cp := map[string]any{}
+				for k, x := range inv {
+					cp[k] = x
+				}
+				pl := map[string]any{}
+				if ch, ok := cp["channel"]; ok {
+					pl["channel"] = ch
+					delete(cp, "channel")
+				}
+				if m, ok := cp["message"]; ok {
+					pl["message"] = m
+					delete(cp, "message")
+				}
+				cp["invite_payload"] = pl
+				out = append(out, cp)
+			}
+			return ok("connect_invites", out), true
+		}
 		if len(ids) != 1 || ids[0] != ActivityInviteChannel || name == "" {
 			return ok("connect_invites", []any{}), true
 		}

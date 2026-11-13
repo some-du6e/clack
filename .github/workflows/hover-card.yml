@@ -39,6 +39,9 @@ on:
       - "internal/ui/host.go"
       - "internal/ui/secondary.go"
       - "internal/ui/profile_click_test.go"
+      - "internal/ui/mention_click_test.go"
+      - "internal/ui/popups/app_details.go"
+      - "internal/ui/popups/app_icon.go"
       - "internal/fakeslack/**"
       - ".github/workflows/hover-card.yml"
   workflow_dispatch:
@@ -77,7 +80,7 @@ jobs:
           go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views
           go test -count=1 -v -run 'TestRowHoverTarget' ./internal/ui/messages
           go test -count=1 -v -run 'TestMentionHoverCard' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestMentionHoverAndClick|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs' ./internal/ui/
           # the shared huddle badge (the sidebar suffix and the channel card's): card-badge-*.png
           CLACK_PIXEL_TESTS=1 CLACK_SHOTS="$HOVER_SHOTS_DIR" xvfb-run -a go test -count=1 -v -run 'TestCardBadgeLikeSidebar|TestSidebarSuffixFaces|TestSidebarSuffixTooltipHover|TestSidebarFaceCrescent|TestSidebarTooltipShots' ./internal/ui/huddleui
           ls -la "$HOVER_SHOTS_DIR"

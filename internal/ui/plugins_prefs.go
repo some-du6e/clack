@@ -739,15 +739,11 @@ func (pp *pluginsPage) suggestionRow(gtx layout.Context, w int, g libGroup) layo
 // groupCredit is a library group's credits (each entry's, once), as
 // mentions or names.
 func groupCredit(cr creditResolver, g libGroup) string {
-	var out []string
-	seen := map[string]bool{}
+	var people []creditPerson
 	for _, e := range g.Entries {
-		if c := cr.libraryCredit(e); c != "" && !seen[c] {
-			seen[c] = true
-			out = append(out, c)
-		}
+		people = append(people, libraryPeople(e)...)
 	}
-	return strings.Join(out, ", ")
+	return cr.list(people) // each person once across the systems' entries
 }
 
 // libraryScreen is the plugin library as one of Taut's sub-screens: the

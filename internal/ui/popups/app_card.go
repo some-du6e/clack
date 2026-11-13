@@ -29,9 +29,10 @@ import (
 //   - BaseAppProfileCardHeader: padding 24 (60 on top with the external
 //     banner), white text on the app's color (app_card_color, default
 //     #2C2D30) under linear-gradient(136.53deg, white 5% → 20%); the 64px
-//     icon (radius 4, white behind), then a column 16px in (margin-bottom
-//     8, centered): the bold name, the inverse APP badge 8px after it,
-//     the tagline (15px, two lines). AppExternalTeamBanner across the top
+//     icon (radius 4, white behind) at the top of the row, then a column
+//     16px in (margin-bottom 8, centered): the bold name, the inverse APP
+//     badge 8px after it (surf-pry behind white text), the tagline (15px,
+//     two lines). "This app is unavailable" is italic. AppExternalTeamBanner across the top
 //     for another org's app: #1d1c1d, padding 8, the 20px team icon (radius
 //     3, 2px white ring, 8px each side), the team name 13px bold.
 //   - a separator (no padding above), "This app is unavailable" when the
@@ -212,7 +213,9 @@ func (p *ProfileCard) appContent(gtx layout.Context, th *theme.Theme, cl *Colors
 	if inactive {
 		d := at(gtx, image.Pt(dp(gtx, 24), y+dp(gtx, 4)), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 48), 1<<20)}
-			return para(gtx, th, 15, 22, theme.Regular, theme.WithAlpha(cl.Fg, 0xb3), "This app is unavailable", 0)
+			// .p-app_profile_card__disabled_message: foreground_max .7, italic
+			gtx.Constraints.Min = image.Point{}
+			return th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Regular, Italic: true, Color: theme.WithAlpha(cl.Fg, 0xb3)}, "This app is unavailable")
 		})
 		y += d.Size.Y + dp(gtx, 8)
 	}
@@ -543,16 +546,15 @@ func (p *ProfileCard) appHeader(gtx layout.Context, th *theme.Theme, cl *Colors,
 	if c.External {
 		p.appExternalBanner(gtx, th, w)
 	}
-	// icon: 64px, radius 4, white behind
-	ar := image.Rect(pad, top+(inner-av)/2, pad+av, top+(inner-av)/2+av)
+	// icon: 64px, radius 4, white behind, at the top of the header's
+	// flex row (a 64px img in a stretch row: a taller title column
+	// doesn't move it)
+	ar := image.Rect(pad, top, pad+av, top+av)
 	rrect(gtx, ar, dp(gtx, 4), white)
-	if c.Icon != "" {
-		if img, ok := p.h.Images().Get(c.Icon, av); ok {
-			at(gtx, ar.Min, func(gtx layout.Context) layout.Dimensions {
-				return theme.Image(gtx, img, ar.Size(), dp(gtx, 4))
-			})
-		}
-	}
+	at(gtx, ar.Min, func(gtx layout.Context) layout.Dimensions {
+		appIcon(gtx, p.h, c, av, dp(gtx, 4)) // Slack's bundled default when the app has none
+		return layout.Dimensions{Size: ar.Size()}
+	})
 	cy := top + (inner-colH)/2
 	nmax := maxInt(1, colW-badgeW-dp(gtx, 8))
 	nd := at(gtx, image.Pt(colX, cy), func(gtx layout.Context) layout.Dimensions {
@@ -564,7 +566,13 @@ func (p *ProfileCard) appHeader(gtx layout.Context, th *theme.Theme, cl *Colors,
 	// .c-app_badge--inverse: 14 tall, 10px bold, padding 1px 3px, radius 2
 	bx, bh := colX+nd.Size.X+dp(gtx, 8), dp(gtx, 14)
 	by := cy + (lineH-bh)/2
-	rrect(gtx, image.Rect(bx, by, bx+badgeW, by+bh), dp(gtx, 2), rgba(0x1d1c1d, 0.06))
+	// .c-app_badge's --dt_color-surf-pry (#1d1c1d0f light, #f8f8f80f
+	// dark); --inverse only makes the text white
+	badgeBg := rgba(0x1d1c1d, 0x0f/255.0)
+	if th.Dark {
+		badgeBg = rgba(0xf8f8f8, 0x0f/255.0)
+	}
+	rrect(gtx, image.Rect(bx, by, bx+badgeW, by+bh), dp(gtx, 2), badgeBg)
 	at(gtx, image.Pt(bx+dp(gtx, 3), by), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 10, theme.Bold, white, "APP")

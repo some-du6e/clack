@@ -270,7 +270,8 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 		return map[string]any{"id": AppAppID, "name": "Deploy Bot", "desc": "Ships builds and posts release notes",
 			"app_card_color": "1264a3", "app_user_id": AppUserID, "team_id": TeamID, "enterprise_id": EnterpriseID,
 			"is_xoxa_app": false, "is_slack_integration": false, "is_workflow_app": false, "is_directory_published": false,
-			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot"},
+			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot", "memberships_count": 12},
+			"developer_name": "Fake Club Tools", "long_desc": "Deploy Bot builds a branch when you ask it to and posts the release notes in the channel once the deploy is done.",
 			"auth":     map[string]any{"created_by": AdminID, "date_created": "1700000000"},
 			"commands": map[string]any{"deploy": map[string]any{"desc": "Deploy a branch", "usage": "[branch]"}}}, true
 	case bot == ExternalAppBotID || app == ExternalAppAppID:
@@ -330,9 +331,12 @@ type Server struct {
 	// delAtts: chat.deleteAttachment calls (embeds.go)
 	delAtts []DeletedAttachment
 	hist    map[string][]slack.Message // channel -> all messages, newest first
-	pins    map[string][]fakePin       // channel -> pins, oldest first (pins.go)
-	code    codeCalls                  // code channel API calls (codechannels.go)
-	codeFx  *CodeFixtures
+	// quietReplies: replies PostReplyQuiet added, by channel/root ts,
+	// oldest first (pins.go)
+	quietReplies map[string][]slack.Message
+	pins         map[string][]fakePin // channel -> pins, oldest first (pins.go)
+	code         codeCalls            // code channel API calls (codechannels.go)
+	codeFx       *CodeFixtures
 
 	inv inviteState // the invite modal's methods (invites.go)
 
@@ -1324,7 +1328,13 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		s.convMu.Lock()
 		cs := append([]slack.Conversation(nil), s.convs...)
 		s.convMu.Unlock()
-		return ok("channels", append(cs, s.Created()...), "response_metadata", map[string]string{"next_cursor": ""})
+		cs = append(cs, s.Created()...)
+		// Slack's users.conversations objects have no is_member (they are
+		// all the viewer's): leave it out, as the real answer does
+		for i := range cs {
+			cs[i].IsMember = false
+		}
+		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
 		var chans, ims []slack.CountEntry
 		for i, c := range s.convs {
@@ -1416,48 +1426,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			}
 		}
 		return ok("ims", ims, "mpims", mpims)
-	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
-		g := func(group string) map[string]any { return map[string]any{"group": group} }
-		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
-			"dm_recency_sort_rollout": g("without_edu"), "reskin_custom_responses": g("on"), "temp_join_channel": g("on"),
-			"sidebar_section_search": g("on"), "add_channels_channel_sections_slackathon": g("on"), "mute_channel_edu": g("on"),
-			"session_channels": g("on"), "session_channel_views": g("on"), "code_channels_naming": g("on"),
-			"session_channels_slug_peek": g("on"), // a slug to a tab with a peek shows the peek, not the channel card
-			"code_channels_auto_close":   g("on"), "agent_member_channel_count": g("on"), "plan_block_coding_enhancements": g("on"),
-			"agent_streaming_slimmer_task_cards": g("on"), "composer_smart_symbols": g("on"),
-			"app_thread_nugget_fe": g("on"), "app_nugget_refinement": g("on"),
-			"agents_in_dm_sidebar": g("on"), "agents_in_dm_sidebar_pref": g("on"),
-			"suggested_sections_auto_sort_v2": g("on"),
-			"lists_tabbing_navigation":        g("on"),
-			// channel details' Agents & apps / Automations tabs and Settings'
-			// tab permissions (views/details.go, details_more.go)
-			"channel_details_agents_apps_tab": g("on"), "move_channel_tabs_settings": g("on"),
-			// focus mode and the Availability section (see core's defaultExperimentGroups)
-			"silent_sidebar": g("on"), "availability_prefs_section": g("on"),
-			// search and the switcher (2026-11-10). desktop_search_recents_read
-			// and _write (on for the account) stay unassigned here so other
-			// tests' calls don't change; the recents tests force them.
-			"omni_quick_message_results": g("on"), "search_autocomplete_promote_exact_name_matches": g("treatment_5"),
-			"fe_nav_first_apply_post_processing_rules": g("treatment"), "omni_date_quick_filters": g("on"),
-			"srp_card_explore": g("on"), "search_file_channel_messages": g("on"),
-			"work_objects_message_search_xp_v2": g("on"),
-			// work object cards (core/workobjects.go), as the account had them on 2026-11-10
-			"work_objects_rearrangement": g("on"), "work_objects_refresh_timestamp": g("on"), "wo_comment_sync_client_xp": g("on"),
-			"work_objects_embedded_preview": g("on"), "third_party_integrations_video_previews": g("on"),
-			// message rows (see core's defaultExperimentGroups)
-			"system_messages_redesign_m1": g("on"), "flat_message_heading_scale": g("on"), "portable_content_composer": g("treatment"),
-			"message_actions_truncate": g("on"), "unread_thread_indication_in_replybar": g("on"), "agent_identity_overrides": g("on"),
-			"forward_message_card": g("on"), "giphy_fixed_width": g("on"), "truncated_url_hover_card": g("on"),
-			// the sidebar text filter and temporary mutes (core sidebar_filter.go, temp_mute.go)
-			"sidebar_text_filter": g("on"), "sidebar_text_filter_m2": g("on"), "sidebar_text_filter_m3": g("on"),
-			"temp_mute": g("on"), "manage_conversations_strings": g("on"), "thread_root_selected_state": g("on"),
-			// the sidebar's organize mode gets Leave (ui/sidebar_organize.go)
-			"bulk_leave_channels_from_sidebar": g("on"),
-			// the thread pane (core's defaultExperimentGroups, live 2026-11-10)
-			"nested_secondary_view": g("on"), "secondary_view_default_width": g("on"), "smaller_secondary_headers": g("on"),
-			// views and navigation (core/views_experiments.go), as the account had them on 2026-11-10
-			"desktop_history_menu": g("on"), "desktop_history_recents_read": g("on"), "keyboard_shortcuts_search": g("on"),
-			"view_header_overflow_borders": g("on"), "lists_in_later": g("on")})
+	case "experiments.getByUser": // the account's experiments (experiments.go)
+		as := map[string]any{}
+		for name, group := range sidebarExperiments {
+			as[name] = map[string]any{"group": group}
+		}
+		return ok("assignments", as)
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))
@@ -1593,6 +1567,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if msgs, found := s.galleryReplies(f.Get("ts")); found {
 				return ok("messages", msgs, "has_more", false)
 			}
+		}
+		if msgs, found := s.quietThread(f.Get("channel"), f.Get("ts")); found {
+			return ok("messages", msgs, "has_more", false)
 		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":
