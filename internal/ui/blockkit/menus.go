@@ -362,7 +362,7 @@ func (m *selectMenu) refresh() {
 				snap := h.Core().Snapshot()
 				var its []item
 				for _, c := range snap.Convs {
-					if c.IsArchived || !convAllowed(c.Kind, channelsOnly, filter) {
+					if c.IsArchived || c.File || !convAllowed(c.Kind, channelsOnly, filter) {
 						continue
 					}
 					label := "#" + c.Name

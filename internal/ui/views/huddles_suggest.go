@@ -342,7 +342,7 @@ func (v *Huddles) channelSuggestions() []core.Conv {
 		if len(out) >= 3 {
 			break
 		}
-		in := c.Kind == "im" || c.Kind == "mpim" || (!c.Preview && !c.IsArchived && (c.Kind == "channel" || c.Kind == "private"))
+		in := c.Kind == "im" || c.Kind == "mpim" || (!c.Preview && !c.IsArchived && !c.File && (c.Kind == "channel" || c.Kind == "private"))
 		if !in {
 			continue
 		}

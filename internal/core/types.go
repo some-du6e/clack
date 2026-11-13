@@ -196,6 +196,14 @@ type Conv struct {
 	Code       *CodeChannel
 	CodeStatus string
 	AgentName  string
+	// File is set for a canvas's or list's hidden conversation (a file
+	// channel, sidebar_docs.go): FileID is its file. Doc is how the sidebar
+	// row draws it ("canvas" | "list", "" for a private channel row), and a
+	// document row's name draws NameSpans (its :emoji: as images).
+	File      bool
+	FileID    string
+	Doc       string
+	NameSpans []richtext.Span
 }
 
 // ConvRef describes a conversation that may not be in the sidebar

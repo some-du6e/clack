@@ -563,7 +563,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		label = conv.displayName()
 		// organize mode highlights the picks, not the open conversation
 		// (isChannelUiSelected = isEditModeSelected)
-		sel = route.Channel() == conv.ID && !a.sidebar.edit.on
+		sel = (route.Channel() == conv.ID || sbDocSelected(conv, route)) && !a.sidebar.edit.on
 		if conv.Unread && !conv.Muted && !a.focusQuiet() { // focus mode: no bolding (focus_mode.go)
 			weight = theme.Black
 			col = c.SidebarTextUnread
@@ -665,7 +665,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 				a.sbEditClick(r.key, lastClickMods[btn].Contain(key.ModShift))
 				break
 			}
-			a.Navigate("c/" + r.key)
+			a.openSidebarConv(r.key) // a canvas or list row opens its document (sidebar_docs.go)
 		case sbAction:
 			a.sidebarAction(r.key)
 		}

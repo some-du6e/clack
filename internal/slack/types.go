@@ -357,6 +357,9 @@ type Conversation struct {
 	IsMember    bool   `json:"is_member,omitempty"`
 	IsExtShared bool   `json:"is_ext_shared,omitempty"`
 	IsOrgShared bool   `json:"is_org_shared,omitempty"`
+	// IsFile: a canvas's or list's hidden comment conversation (its id
+	// is the file's with F → C; core/sidebar_docs.go).
+	IsFile bool `json:"is_file,omitempty"`
 	// IsOrgMandatory: a channel everyone in the org is in (Slack's gx
 	// is_general || is_org_mandatory: it can't be left).
 	IsOrgMandatory bool            `json:"is_org_mandatory,omitempty"`
