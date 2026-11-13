@@ -66,11 +66,19 @@ func TestAutoscrollInClack(t *testing.T) {
 	ev := func(k pointer.Kind, p image.Point, b pointer.Buttons) {
 		e.r.Queue(pointer.Event{Kind: k, Source: pointer.Mouse, Position: pt(p), Buttons: b, Time: time.Since(e.start)})
 	}
-	run := func(d time.Duration) {
+	// run draws frames for d and returns how far the messages moved,
+	// summed frame by frame (in a short window a fast scroll leaves no
+	// row on screen in both ends' snapshots)
+	run := func(d time.Duration) (moved int) {
+		prev := rows()
 		for dl := time.Now().Add(d); time.Now().Before(dl); {
 			e.frame()
+			cur := rows()
+			moved += movedBetween(prev, cur)
+			prev = cur
 			time.Sleep(time.Second / 60)
 		}
+		return moved
 	}
 	as := &e.a.autoscroll
 	// start presses the middle button at the first of pts where it starts
@@ -95,15 +103,13 @@ func TestAutoscrollInClack(t *testing.T) {
 	candidates := []image.Point{lp, lp.Add(image.Pt(0, 37)), lp.Add(image.Pt(0, -41)), image.Pt(e.size.X-60, lp.Y)}
 
 	// held: 120 dp above the origin scrolls toward older messages
-	before := rows()
 	p := start("the messages", candidates...)
 	ev(pointer.Move, p.Sub(image.Pt(0, 120)), pointer.ButtonTertiary)
 	e.frame()
 	if c := e.r.Cursor(); c != pointer.CursorNorthPanning {
 		t.Errorf("cursor while scrolling up: %v, want NorthPanning", c)
 	}
-	run(400 * time.Millisecond)
-	moved := movedBetween(before, rows())
+	moved := run(400 * time.Millisecond)
 	t.Logf("held 120dp above for 400ms: the messages moved %dpx (Chromium's speed there: %.0f px/s)", moved, gesture.AutoscrollSpeed(120))
 	if moved > -100 {
 		t.Errorf("the messages moved %dpx in 400ms, want well over 100px toward older ones", moved)
@@ -113,9 +119,7 @@ func TestAutoscrollInClack(t *testing.T) {
 	if as.Active() {
 		t.Fatalf("still running after releasing the held button")
 	}
-	stopped := rows()
-	run(150 * time.Millisecond)
-	if m := movedBetween(stopped, rows()); m != 0 {
+	if m := run(150 * time.Millisecond); m != 0 {
 		t.Errorf("the messages kept moving (%dpx) after the release", m)
 	}
 
@@ -128,9 +132,7 @@ func TestAutoscrollInClack(t *testing.T) {
 		t.Fatalf("a middle click left it toggled %v, active %v; want toggled", as.Toggled(), as.Active())
 	}
 	ev(pointer.Move, p.Add(image.Pt(0, 80)), 0)
-	before = rows()
-	run(300 * time.Millisecond)
-	if m := movedBetween(before, rows()); m <= 0 {
+	if m := run(300 * time.Millisecond); m <= 0 {
 		t.Errorf("toggled, 80dp below: the messages moved %dpx, want toward newer ones", m)
 	}
 	e.r.Queue(key.Event{Name: key.NameEscape, State: key.Press}, key.Event{Name: key.NameEscape, State: key.Release})
