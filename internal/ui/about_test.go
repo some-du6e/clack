@@ -73,10 +73,10 @@ func TestAboutIsAboutClack(t *testing.T) {
 	if strings.Contains(got, "No plugins installed") {
 		t.Errorf("About still says no plugins are installed:\n%s", got)
 	}
-	if strings.Contains(got, "Compatible with") {
-		t.Errorf("About still lists per-plugin credits:\n%s", got)
-	}
-	if i, j := strings.Index(got, "Jeremy"), strings.Index(got, "Rowan"); i < 0 || j < i {
-		t.Errorf("About's contributors don't start with Jeremy then Rowan:\n%s", got)
+	// the contributors line About draws (mrkdwn, which DrawHook doesn't
+	// see): Jeremy and Rowan first, whoever the installed plugins credit
+	who := strings.Split(a.credits().contributors(nil, a.installedPeople()), ", ")
+	if len(who) < 2 || !strings.Contains(who[0], "Jeremy") || !strings.Contains(who[1], "Rowan") {
+		t.Errorf("About's contributors: %q", who)
 	}
 }

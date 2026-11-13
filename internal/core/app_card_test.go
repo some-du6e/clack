@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,6 +68,16 @@ func TestAppCardAndExternal(t *testing.T) {
 	if c.Name != "Deploy Bot" || c.Tagline == "" || c.Color != "1264a3" || c.Icon == "" || !c.Active ||
 		c.InstallerID != fakeslack.AdminID || c.AppUserID != fakeslack.AppUserID || c.External || len(c.Commands) != 1 || c.Commands[0].Name != "/deploy" {
 		t.Fatalf("app card %+v", c)
+	}
+	// App details' fields (ToML: desc, long_desc, developer_name,
+	// bot_user.memberships_count; messages tab on by default)
+	if c.Desc != "Ships builds and posts release notes" || c.Developer != "Fake Club Tools" || !strings.HasPrefix(c.LongDesc, "Deploy Bot builds") ||
+		c.Memberships != 12 || !c.MessagesTab || c.HomeTab || c.Installed == nil || !*c.Installed || c.IconDefault {
+		t.Errorf("app details fields %+v", c)
+	}
+	none := a.appCardOf([]byte(`{"id":"A1","name":"test","icons":{"image_192":"https://a.slack-edge.com/80588/img/apps/default_new_app_icon.png"},"app_home_metadata":{"messages_tab_enabled":false,"home_tab_enabled":true}}`), "B1")
+	if !none.IconDefault || none.MessagesTab || !none.HomeTab || none.Installed != nil {
+		t.Errorf("default icon, tabs: %+v", none)
 	}
 	if got, ok := a.CachedAppCard("", fakeslack.AppBotID); !ok || got.Name != c.Name {
 		t.Fatal("card not cached by bot id")

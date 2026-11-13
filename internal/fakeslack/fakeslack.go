@@ -270,7 +270,8 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 		return map[string]any{"id": AppAppID, "name": "Deploy Bot", "desc": "Ships builds and posts release notes",
 			"app_card_color": "1264a3", "app_user_id": AppUserID, "team_id": TeamID, "enterprise_id": EnterpriseID,
 			"is_xoxa_app": false, "is_slack_integration": false, "is_workflow_app": false, "is_directory_published": false,
-			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot"},
+			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot", "memberships_count": 12},
+			"developer_name": "Fake Club Tools", "long_desc": "Deploy Bot builds a branch when you ask it to and posts the release notes in the channel once the deploy is done.",
 			"auth":     map[string]any{"created_by": AdminID, "date_created": "1700000000"},
 			"commands": map[string]any{"deploy": map[string]any{"desc": "Deploy a branch", "usage": "[branch]"}}}, true
 	case bot == ExternalAppBotID || app == ExternalAppAppID:

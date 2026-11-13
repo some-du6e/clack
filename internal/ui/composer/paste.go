@@ -6,6 +6,8 @@ import (
 
 	"gioui.org/layout"
 	"gioui.org/op"
+
+	"github.com/some-du6e/clack/internal/ui/richclip"
 )
 
 // Paste keeps formatting, like Slack's composer: Ctrl/Cmd+V reads the
@@ -37,6 +39,18 @@ func startClipHTML() *clipRead {
 		defer close(r.done)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
+		// Slack's own copy first (slack/texty, then slack/html, in
+		// Chromium's web custom data: paste_texty.go), then text/html
+		if m, _ := richclip.ReadCustom(ctx); m != nil {
+			if h := textyHTML(m["slack/texty"]); h != "" {
+				r.html = h
+				return
+			}
+			if h := m["slack/html"]; h != "" && len(h) <= phMaxHTML {
+				r.html = h
+				return
+			}
+		}
 		b, err := clipReadHTML(ctx)
 		if err == nil && len(b) > 0 && len(b) <= phMaxHTML {
 			r.html = clipHTMLText(b)

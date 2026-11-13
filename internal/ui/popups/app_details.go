@@ -403,7 +403,11 @@ func (v *AppDetailsView) header(gtx layout.Context, th *theme.Theme, cl *Colors,
 	by := ty + (nameLH-bh)/2
 	// .c-app_badge: content-sec on surf-pry, 10px bold, padding 1px 3px,
 	// radius 2
-	rrect(gtx, image.Rect(bx, by, bx+badgeW, by+bh), dp(gtx, 2), cl.BgAlt)
+	badgeBg := rgba(0x1d1c1d, 0x0f/255.0) // --dt_color-surf-pry
+	if th.Dark {
+		badgeBg = rgba(0xf8f8f8, 0x0f/255.0)
+	}
+	rrect(gtx, image.Rect(bx, by, bx+badgeW, by+bh), dp(gtx, 2), badgeBg)
 	at(gtx, image.Pt(bx+dp(gtx, 3), by), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 10, theme.Bold, cl.Fg2, "APP")
