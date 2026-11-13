@@ -138,6 +138,12 @@ func TestThreadsAuditStatesShots(t *testing.T) {
 			savePNG(t, filepath.Join(dir, "thread-"+name+"-"+mode+".png"), pixeltest.Render(t, tw, thH, ops))
 		}
 
+		// LargeOfflineIndicator: offline with nothing loaded
+		prevOnline := clientOnline
+		clientOnline = func(Host) bool { return false }
+		to := NewThreadView(host, tShots, ts["c1"])
+		shoot("offline", to, func() bool { return to.s.offlineDrawn })
+		clientOnline = prevOnline
 		// FlexpaneLoading while conversations.replies is held
 		tl := NewThreadView(host, tShots, ts["b1"])
 		shoot("loading", tl, func() bool { return g.calls.Load() > 0 })

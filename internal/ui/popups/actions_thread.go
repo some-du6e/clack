@@ -48,5 +48,5 @@ func NewThreadHeaderMenu(h Host, anchor image.Rectangle, root core.Message, subs
 			items = append(items, Sep(), it)
 		}
 	}
-	return NewMenuOpts(h, items, MenuOpts{Anchor: anchor, AlignRight: true})
+	return NewMenuOpts(h, items, MenuOpts{Anchor: anchor, Popover: "bottom-left"})
 }

@@ -60,7 +60,8 @@ type ThreadView struct {
 	find                      threadFind             // find in thread (thread_find.go)
 	// announced is what Slack's announcer API would have said (a live
 	// region; Clack has no screen-reader bridge yet): tests read it.
-	announced []string
+	announced   []string
+	offlineSaid bool // LargeOfflineIndicator was up last frame (announced as it showed)
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
@@ -200,7 +201,14 @@ func (v *ThreadView) pane(gtx layout.Context, size image.Point) layout.Dimension
 	v.findTick(g)
 	v.s.findWords, v.s.findTS = v.find.words, v.findCurrent()
 	shown(&lastThread, v.s)
+	v.s.offlineDrawn = false
 	v.s.layoutList(g, v.h, v.Origin.Add(image.Pt(0, top)))
+	if v.s.offlineDrawn != v.offlineSaid { // AsAnnouncerAPIMessage: once as it mounts
+		v.offlineSaid = v.s.offlineDrawn
+		if v.offlineSaid {
+			v.announced = append(v.announced, offlineAnnouncement())
+		}
+	}
 	v.layoutBanner(g, g.Constraints.Max) // "N new replies" (thread_banner.go)
 	if v.find.active {
 		v.layoutFindBar(g, th, c, size.X) // over p-threads_flexpane__content's top right
@@ -659,13 +667,19 @@ func (v *ThreadView) closeButton(gtx layout.Context, c *colors, st slackc.Styled
 // threadPending draws the pane while it has no messages yet, as
 // ThreadsFlexpane does (CDN build 4d0c78085232):
 //
+//   - isOffline with no timestamps (renderBody's first case, build
+//     2cd9270e786c; isOffline is !isClientOnline, mG45 Pb): the pane's
+//     only content is LargeOfflineIndicator (offlineIndicator below): no
+//     list, so no reply input, and no FlexpaneLoading.
 //   - isLoading (no timestamps yet): FlexpaneLoading (usav) with the
 //     loadingMessage "Loading thread…" (the threads I18n): .p-flexpane_loading,
 //     absolute 200px from the pane's top, centred, 13px in
 //     rgba(sk_foreground_high, .5), Slack's loading_hash_animation (40px,
 //     margin 0 16px 8px 8px; the _dark one in the dark theme), a line
-//     break, then the message. The list's only row is the input, so the
-//     composer sits under the header (ContentHeight).
+//     break, then the message. The list has no rows: getThreadRowsAndKeys
+//     leaves out the input while initializing (set while the timestamps
+//     are empty and fetchReplies hasn't answered), so there is no reply
+//     box (HidesComposer).
 //   - a failed fetchReplies (isThreadErrored): ThreadsError, the pane's
 //     only content (no list, no composer): .p-threads_flexpane__error, a
 //     column centred in the pane: :mag: at 64px (margin-bottom 16),
@@ -678,6 +692,10 @@ func (v *ThreadView) closeButton(gtx layout.Context, c *colors, st slackc.Styled
 //
 // False leaves the pane to the list (signed out: its sign-in prompt).
 func (s *listState) threadPending(gtx layout.Context, h Host, c *colors, size image.Point) bool {
+	if s.threadOffline(h) {
+		s.offlineIndicator(gtx, h, c, size)
+		return true
+	}
 	if s.snap.err != nil && !s.snap.loading {
 		if app := h.Core(); app != nil && app.SignedOut() {
 			return false
@@ -710,9 +728,84 @@ func (s *listState) threadLoading() bool {
 	return s.thread && !s.snap.loaded && len(s.snap.msgs) == 0 && (s.snap.err == nil || s.snap.loading)
 }
 
-// HidesComposer: ThreadsError replaces the whole pane, its reply input
-// included.
-func (v *ThreadView) HidesComposer() bool { return v.s.threadErrored(v.h) }
+// HidesComposer reports that Slack's thread list has no "input" row, the
+// reply box (getThreadRowsAndKeys, boot-shared, build 2cd9270e786c):
+//
+//   - with no timestamps, while initializing: ThreadsFlexpane starts with
+//     initializing = isEmpty(timestamps) and fetchReplies clears it, so a
+//     loading thread has no reply box;
+//   - with timestamps, until reachedEnd or prevReachedEnd: the
+//     "loading-end" row takes its place. Clack fetches every page at once,
+//     and a model stays loaded once it was (both ends reached);
+//   - ThreadsError or LargeOfflineIndicator replaces the whole pane.
+//
+// Signed out, the list's sign-in prompt keeps the old composer.
+func (v *ThreadView) HidesComposer() bool {
+	s := v.s
+	if !s.thread || s.snap.loaded {
+		return false
+	}
+	if s.threadOffline(v.h) {
+		return true
+	}
+	if s.snap.err != nil && !s.snap.loading {
+		return s.threadErrored(v.h) // with the root known, the list keeps the box
+	}
+	return true
+}
+
+// clientOnline is isClientOnline (core.App.ClientOnline; tests replace it).
+var clientOnline = func(h Host) bool {
+	app := h.Core()
+	return app == nil || app.ClientOnline()
+}
+
+// threadOffline is renderBody's isOffline && isEmpty(timestamps).
+func (s *listState) threadOffline(h Host) bool {
+	return s.thread && !s.snap.loaded && len(s.snap.msgs) == 0 && !clientOnline(h)
+}
+
+// offlineAnnouncement is LargeOfflineIndicator's AsAnnouncerAPIMessage:
+// the indicator's textContent. The icon has no text and the paragraphs
+// join without a space.
+func offlineAnnouncement() string {
+	return " " + offlineNS.T("No connection") + offlineNS.T("Go online to get the latest messages.")
+}
+
+// offlineIndicator is LargeOfflineIndicator (boot-shared nMFb), the
+// offline_mode I18n: .p-large_offline_indicator (absolute, inset 0: the
+// pane under its header; a centred flex column) holds two paragraphs:
+// __headline, 28px/1.2143 Black, the cloud-offline icon then " No
+// connection"; __caption, 13px/1.38463, "Go
+// online to get the latest messages." Neither sets a colour (the pane's
+// content-pry) or a margin, so each keeps the client's p margin (0 0 1rem,
+// as .github/scripts/threads_ref.py draws Slack's markup): flex items'
+// margins don't collapse, the column is 34+16+18+16px tall. The icon is
+// Slack Kit's Icon (gantry-v2-vendors utKz) at size "inherit", inline:
+// <svg data-yc6 class="is-inline">, [data-yc6] { width: 1em; height: 1em }
+// and .is-inline { vertical-align: -.125em } (modern.vendor CSS), so 28px
+// with its bottom 3.5px under Lato's baseline (27.8px down the 34px line):
+// its top 3px down the line.
+func (s *listState) offlineIndicator(gtx layout.Context, h Host, c *colors, size image.Point) {
+	th := h.Theme()
+	head := textStyle{size: 28, weight: theme.Black, col: c.Text, lineH: 34}
+	capt := textStyle{size: 13, col: c.Text, lineH: 18}
+	hl := " " + offlineNS.T("No connection")
+	cl := offlineNS.T("Go online to get the latest messages.")
+	is := dp(gtx, 28)
+	hw := is + measure(gtx, th, head, hl).X
+	cw := measure(gtx, th, capt, cl).X
+	headH, capH, mb := dp(gtx, 34), dp(gtx, 18), dp(gtx, 16)
+	y := (size.Y - (headH + mb + capH + mb)) / 2
+	x := (size.X - hw) / 2
+	at(gtx, x, y+(headH-is)/2, func(gtx layout.Context) layout.Dimensions {
+		return icons.Get("cloud-offline")(gtx, unit.Dp(28), c.Text)
+	})
+	at(gtx, x+is, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, head, hl) })
+	y += headH + mb
+	at(gtx, (size.X-cw)/2, y, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, capt, cl) })
+	s.offlineDrawn = true
+}
 
 // flexpaneLoading is FlexpaneLoading with "Loading thread…".
 func (s *listState) flexpaneLoading(gtx layout.Context, h Host, c *colors, size image.Point) {
