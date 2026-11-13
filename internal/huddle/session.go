@@ -171,6 +171,10 @@ type Options struct {
 	// OnPeer receives every peer message (data-channel, awareness and
 	// transcript catch-up topics), for Taut's api.huddles.onPeerMessage.
 	OnPeer func(PeerEvent)
+	// OnTranscription gets each status Chime's transcription reports
+	// (started, interrupted, resumed, stopped, failed), as Slack's
+	// processAwsTranscription sees them.
+	OnTranscription func(status string)
 	// OnEnd is called once when the session ends (err nil = you left).
 	OnEnd func(err error)
 	// Experiments are the Slack experiments the session follows
@@ -1538,6 +1542,9 @@ func (s *Session) onTranscript(b []byte) {
 	res, status := decodeTranscript(b)
 	if status != "" {
 		s.logf("huddle: transcription %s", status)
+		if s.o.OnTranscription != nil {
+			s.o.OnTranscription(status)
+		}
 	}
 	if len(res) == 0 {
 		return

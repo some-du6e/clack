@@ -68,14 +68,14 @@ var ThunkCatalogue = []ThunkSpec{
 	{"joinChannel", "{channelId}", "ui (join button)", "joining (core.Join)"},
 	{"openPrefsModal", "{activeSection?}", "ui (shell)", "opening Preferences"},
 	{"enqueueHuddleToast", "{content, svgIconProps, duration}", "ui (toasts)", "a huddle toast"},
-	{"maybeFetchBackgrounds", "{huddleId}", "ui/views (huddles)", "huddle themes; Clack has none"},
+	{"maybeFetchBackgrounds", "{huddleId}", "ui/huddleui (themes)", "huddle themes (huddles.listBackgrounds) into huddlesCanvas.backgrounds"},
 	{"startEventLog", "{}", "ui/views (huddles)", "huddle event log"},
 	{"stopEventLog", "{}", "ui/views (huddles)", "huddle event log"},
 	{"stopHuddle", "{}", "ui/views (huddles)", "leaving a huddle"},
 	{"displayAlertMessage", "{alert, …}", "ui (alerts)", "an alert banner"},
 	{"processAwsTranscription", "{type, …}", "ui/views (huddles)", "huddle captions"},
-	{"roomsStartTranscriptionFetcher", "{callId, reason}", "ui/views (huddles)", "huddle captions on"},
-	{"roomsStopTranscriptionFetcher", "{callId, reason}", "ui/views (huddles)", "huddle captions off"},
+	{"roomsStartTranscriptionFetcher", "{callId, reason}", "ui/huddleui (the session)", "rooms.startTranscription for the call"},
+	{"roomsStopTranscriptionFetcher", "{callId, reason}", "ui/huddleui (the session)", "rooms.stopTranscription for the call"},
 	{"logExperimentExposure", "{name}", "none", "Clack logs no exposures"},
 	{"handleMessageImmediatelyWithoutPreprocessing", "rtm event", "taut (rtm)", "realtime events"},
 	{"blocksFormatFetcher", "{blocks, reason}", "ui/composer (markdown mode)", "blocks.format"},
@@ -447,7 +447,8 @@ func (tt *thunkTable) installDefaults() {
 	n["roomsStopTranscriptionFetcher"] = func(ctx context.Context, a []json.RawMessage) (any, error) {
 		return t.huddleTranscription(ctx, a, false)
 	}
-	for _, name := range []string{"maybeFetchBackgrounds", "startEventLog", "stopEventLog", "stopHuddle", "displayAlertMessage", "currentUserEndedTyping", "startHuddle",
+	n["maybeFetchBackgrounds"] = func(ctx context.Context, a []json.RawMessage) (any, error) { return t.huddleBackgrounds(ctx) }
+	for _, name := range []string{"startEventLog", "stopEventLog", "stopHuddle", "displayAlertMessage", "currentUserEndedTyping", "startHuddle",
 		"processAwsTranscription", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing"} {
 		n[name] = func(ctx context.Context, a []json.RawMessage) (any, error) { return nil, nil }
 	}

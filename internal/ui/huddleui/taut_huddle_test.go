@@ -138,6 +138,7 @@ func (e *tautCallEnv) joinTaut() (*huddle.Fake, *huddle.Session) {
 	}
 	fk := huddle.NewFake(clip, e.t.Errorf)
 	e.t.Cleanup(fk.Close)
+	e.c.Client = fk.Caller() // huddles.listBackgrounds and the transcription calls
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	s, err := huddle.Join(ctx, e.c.testOptions(fk), hcChannel)
@@ -153,10 +154,12 @@ func (e *tautCallEnv) joinTaut() (*huddle.Fake, *huddle.Session) {
 }
 
 // testOptions are the session options a test join uses: the fake's
-// caller, a tone microphone, and the controller's own peer handling.
+// caller, a silent microphone (a tone would be "speaking while muted"
+// once someone mutes you, whose banner goes first), and the controller's
+// own peer handling.
 func (c *Controller) testOptions(fk *huddle.Fake) huddle.Options {
-	return huddle.Options{Client: fk.Caller(), SelfID: huddle.FakeSelfUser, Device: huddle.NewToneDevice(440),
-		Logf: func(string, ...any) {}, OnChange: c.onSession, OnPeer: c.onPeerEvent}
+	return huddle.Options{Client: fk.Caller(), SelfID: huddle.FakeSelfUser, Device: huddle.NewToneDevice(0),
+		Logf: func(string, ...any) {}, OnChange: c.onSession, OnPeer: c.onPeerEvent, OnTranscription: c.onTranscriptionStatus}
 }
 
 // logHas reports whether the log, as plugins present it, has an event of
@@ -210,8 +213,11 @@ func (e *tautCallEnv) wait(what string, d time.Duration, cond func() bool) {
 	e.until(what, 0, cond) // logs the trees and fails
 }
 
-func roomUpdate(name string) slack.Event {
+func roomUpdate(name, theme string) slack.Event {
 	room := map[string]any{"id": huddle.FakeRoomID, "channels": []string{hcChannel}, "name": name}
+	if theme != "" {
+		room["background_id"] = theme
+	}
 	raw, _ := json.Marshal(map[string]any{"type": "sh_room_update", "user": huddle.FakeRemoteUser, "room": room})
 	return slack.Event{Type: "sh_room_update", Raw: raw}
 }
@@ -287,14 +293,28 @@ func TestTautHuddleActivity(t *testing.T) {
 	})
 
 	// the huddle is renamed (the room's sh_room_update): a line and a toast
-	e.h.app.Inject(roomUpdate("Standup"))
+	e.h.app.Inject(roomUpdate("Standup", ""))
 	e.frame()
 	time.Sleep(200 * time.Millisecond)
-	e.h.app.Inject(roomUpdate("Retro"))
+	e.h.app.Inject(roomUpdate("Retro", ""))
 	e.wait("“renamed the huddle” in the log", 10*time.Second, func() bool {
 		return e.logHas("JOIN", huddle.FakeRemoteUser, `renamed the huddle to \"Retro\".`)
 	})
 	e.wait("the rename toast", 10*time.Second, func() bool { return e.toastWith(remoteNm, `renamed the huddle to "Retro".`) })
+
+	// a huddle theme: its name from maybeFetchBackgrounds (huddles.listBackgrounds)
+	e.h.app.Inject(roomUpdate("Retro", "ARIZONA"))
+	e.wait("“changed the huddle theme to Arizona.” in the log", 15*time.Second, func() bool {
+		return e.logHas("JOIN", huddle.FakeRemoteUser, "changed the huddle theme to Arizona.")
+	})
+	e.wait("the theme toast", 10*time.Second, func() bool { return e.toastWith(remoteNm, "changed the huddle theme to Arizona.") })
+
+	// Chime says the transcription started: processAwsTranscription, 3 s later the line
+	if err := fk.TranscriptionStatus("started"); err != nil {
+		t.Fatal(err)
+	}
+	e.wait("“Transcription started.” in the log", 15*time.Second, func() bool { return e.logHas("JOIN", "", "Transcription started.") })
+	e.wait("its toast", 10*time.Second, func() bool { return e.toastWith("Transcription started.") })
 
 	// the third person leaves: Slack's LEAVE
 	if err := fk.PeerLeave(third); err != nil {

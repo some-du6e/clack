@@ -503,11 +503,12 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		AGC: agc, NoiseSuppression: ns,
 		// "Blur your video background when you’re in a huddle with your
 		// camera on" (prefs.video.effect, huddle/videofx.go)
-		VideoEffect: c.videoEffect(),
-		Logf:        log.Printf,
-		OnChange:    c.onSession,
-		OnPeer:      c.onPeerEvent,
-		OnEnd:       func(err error) { go c.ended(err) },
+		VideoEffect:     c.videoEffect(),
+		Logf:            log.Printf,
+		OnChange:        c.onSession,
+		OnPeer:          c.onPeerEvent,
+		OnTranscription: c.onTranscriptionStatus,
+		OnEnd:           func(err error) { go c.ended(err) },
 	}
 	if c.Tweak != nil {
 		c.Tweak(&o)

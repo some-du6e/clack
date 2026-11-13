@@ -278,6 +278,7 @@ func TestPluginsPrefsShots(t *testing.T) {
 			return pp.lib.ix != nil && len(pp.lib.suggest([]string{"links"})) == 2
 		})
 		// their credits are @mentions (Karim 2026-11-12: never links)
+		e.a.Core().EnsureUsers(ctx, []string{fakeslack.ProfileID, fakeslack.AdminID})
 		e.until("members loaded for the credits", 30*time.Second, func() bool {
 			_, ok := e.a.Core().S.User(fakeslack.AdminID)
 			return ok

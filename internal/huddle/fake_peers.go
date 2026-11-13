@@ -146,3 +146,35 @@ func (x *Fake) PeerMessage(from string, m *PeerMessage) error {
 	})
 	return nil
 }
+
+// TranscriptionStatus sends Chime's transcription status event (started,
+// interrupted, resumed, stopped, failed) on the transcript topic.
+func (x *Fake) TranscriptionStatus(status string) error {
+	send, err := x.f.liveSend()
+	if err != nil {
+		return err
+	}
+	n := 0
+	for i, s := range [...]string{"", "started", "interrupted", "resumed", "stopped", "failed"} {
+		if s == status {
+			n = i
+		}
+	}
+	if n == 0 {
+		return errors.New("fake chime: unknown transcription status")
+	}
+	var tw pbw
+	tw.msg(1, func(w *pbw) { // events
+		w.msg(1, func(w *pbw) { w.uint(1, uint64(n)) }) // status.type
+	})
+	send(ftDataMessage, func(w *pbw) {
+		w.msg(23, func(w *pbw) {
+			w.msg(1, func(w *pbw) {
+				w.str(1, TopicTranscript)
+				w.bytes(2, tw.b)
+				w.str(4, "aws:chime")
+			})
+		})
+	})
+	return nil
+}

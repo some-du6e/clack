@@ -1686,8 +1686,8 @@ T.huddleAction = (a) => {
 }
 
 // enqueueHuddleToast's content can be a React element (HuddleActivity's names): Clack's
-// toast is text, so the element is rendered once, off-screen, for its text. This wrap is
-// registered first, so it runs next to the native thunk, after every plugin's.
+// toast is text, so the element is rendered once, off-screen, for its text, as the
+// arguments cross into Go (after every plugin's wrap).
 function huddleToastText(options) {
   const el = options?.content
   if (!el || typeof el !== 'object' || !G.React?.isValidElement?.(el)) return options
@@ -1705,7 +1705,7 @@ function huddleToastText(options) {
   }
   return { ...options, content: text }
 }
-patchThunk('enqueueHuddleToast', (original) => (options, ...rest) => original(huddleToastText(options), ...rest))
+NATIVE_ARGS.enqueueHuddleToast = ([options, ...rest]) => [huddleToastText(options), ...rest]
 const getActiveHuddleCallId = withMeta('getActiveHuddleCallId', () => activeHuddle.get()?.callId)
 const getActiveHuddleChannelId = withMeta('getActiveHuddleChannelId', () => activeHuddle.get()?.channelId)
 const sendReactionMessage = withMeta('sendReactionMessage', (payload) => ({ type: 'SEND_REACTION_MESSAGE', payload }))

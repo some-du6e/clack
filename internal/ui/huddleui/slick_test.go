@@ -125,7 +125,7 @@ func newHuddleCallEnv(t *testing.T) *hcEnv {
 			Toast: e.toast,
 		},
 		Log: func(level, msg string) {
-			if level == "error" {
+			if level == "error" || level == "warn" {
 				t.Logf("js %s: %s", level, msg)
 			}
 		}})
@@ -223,6 +223,9 @@ func (e *hcEnv) until(what string, d time.Duration, cond func() bool) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	e.tmu.Lock()
+	e.t.Logf("toasts: %q", e.toasts)
+	e.tmu.Unlock()
 	e.mu.Lock()
 	for root, tr := range e.trees {
 		s := string(tr)

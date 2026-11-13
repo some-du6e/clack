@@ -2,8 +2,10 @@ package huddleui
 
 import (
 	"context"
+	"errors"
 	"image"
 	"net/url"
+	"sort"
 	"sync"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 // bgTheme is one huddles.listBackgrounds entry.
 type bgTheme struct {
 	ID, Name, URL, PreviewURL string
+	Category                  string // category_name
 }
 
 // bgCatalog is the themes, fetched once per huddle.
@@ -79,17 +82,50 @@ func (c *Controller) themeURL(room, id string) string {
 
 // fetchThemes is maybeFetchBackgrounds: huddles.listBackgrounds.
 func (c *Controller) fetchThemes(room string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	_, _ = c.loadThemes(ctx, room)
+}
+
+// themes are the huddle themes for plugins' maybeFetchBackgrounds: the
+// fetched ones, else a fetch now.
+func (c *Controller) themes(ctx context.Context, room string) ([]bgTheme, error) {
+	b := &c.bg
+	b.mu.Lock()
+	var have []bgTheme
+	if b.room == room && b.byID != nil {
+		for _, t := range b.byID {
+			have = append(have, t)
+		}
+	}
+	b.mu.Unlock()
+	if have != nil {
+		sort.Slice(have, func(i, j int) bool { return have[i].ID < have[j].ID })
+		return have, nil
+	}
+	return c.loadThemes(ctx, room)
+}
+
+// loadThemes asks huddles.listBackgrounds and keeps the answer for room.
+func (c *Controller) loadThemes(ctx context.Context, room string) ([]bgTheme, error) {
 	var res struct {
 		Backgrounds []struct {
 			ID         string `json:"id"`
 			Name       string `json:"name"`
 			URL        string `json:"url"`
 			PreviewURL string `json:"preview_url"`
+			Category   string `json:"category_name"`
 		} `json:"backgrounds"`
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	err := c.client().Call(ctx, "huddles.listBackgrounds", url.Values{}, &res)
+	cl := c.client()
+	if cl == nil {
+		return nil, errors.New("huddle: no Slack client")
+	}
+	err := cl.Call(ctx, "huddles.listBackgrounds", url.Values{}, &res)
+	var out []bgTheme
+	for _, t := range res.Backgrounds {
+		out = append(out, bgTheme{ID: t.ID, Name: t.Name, URL: t.URL, PreviewURL: t.PreviewURL, Category: t.Category})
+	}
 	b := &c.bg
 	b.mu.Lock()
 	b.busy = false
@@ -98,8 +134,8 @@ func (c *Controller) fetchThemes(room string) {
 			b.retryAt = time.Now().Add(bgRetry)
 		} else {
 			b.byID = map[string]bgTheme{}
-			for _, t := range res.Backgrounds {
-				b.byID[t.ID] = bgTheme{ID: t.ID, Name: t.Name, URL: t.URL, PreviewURL: t.PreviewURL}
+			for _, t := range out {
+				b.byID[t.ID] = t
 			}
 		}
 	}
@@ -107,6 +143,7 @@ func (c *Controller) fetchThemes(room string) {
 	if err == nil {
 		c.changed()
 	}
+	return out, err
 }
 
 // bgShown is what the window draws: the picture last loaded (k in

@@ -37,6 +37,14 @@ func (c *Controller) bindTaut(tt *taut.Taut, s *huddle.Session, channel string) 
 			}
 			return s.Transcription(ctx, on)
 		},
+		Backgrounds: func(ctx context.Context) ([]taut.HuddleBackground, error) {
+			ts, err := c.themes(ctx, s.RoomID())
+			out := make([]taut.HuddleBackground, 0, len(ts))
+			for _, t := range ts {
+				out = append(out, taut.HuddleBackground{ID: t.ID, Name: t.Name, Category: t.Category})
+			}
+			return out, err
+		},
 	})
 	tt.SetActiveHuddle(s.RoomID(), channel, s.SelfAttendee(), c.selfID())
 	c.feedLog(tt, s, s.State(), true)
@@ -99,6 +107,27 @@ func logEvents(st huddle.State) []map[string]any {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i]["timestampMs"].(int64) < out[j]["timestampMs"].(int64) })
 	return out
+}
+
+// onTranscriptionStatus is a status of the call's transcription, which
+// Slack hands its processAwsTranscription thunk ({type, eventTimeMs}): a
+// plugin wrapping it (HuddleActivity's "Transcription started.") sees it.
+// Clack's own captions come from the session, so the native does nothing.
+func (c *Controller) onTranscriptionStatus(status string) {
+	tt := c.taut()
+	if tt == nil {
+		return
+	}
+	type statusArgs struct {
+		Type        string `json:"type"`
+		EventTimeMs int64  `json:"eventTimeMs"`
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = taut.Dispatch(ctx, tt, "processAwsTranscription", statusArgs{Type: status, EventTimeMs: time.Now().UnixMilli()},
+			func(ctx context.Context, _ statusArgs) (any, error) { return nil, nil })
+	}()
 }
 
 // ---- alerts ----

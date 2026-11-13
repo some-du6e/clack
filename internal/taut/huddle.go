@@ -26,9 +26,10 @@ type huddleState struct {
 	peers    map[string]string // attendee -> user (present)
 	left     map[string]string // attendee -> user (left)
 	log      HuddleLog
-	extra    []map[string]any // events plugins pushed (pushNonTranscriptionEvent from JS)
-	pushed   int              // how many of log's non-transcription events the action stream has seen
-	alerts   []map[string]any // Slack's alert.alerts
+	extra    []map[string]any   // events plugins pushed (pushNonTranscriptionEvent from JS)
+	pushed   int                // how many of log's non-transcription events the action stream has seen
+	alerts   []map[string]any   // Slack's alert.alerts
+	themes   []HuddleBackground // huddlesCanvas.backgrounds (maybeFetchBackgrounds)
 	hooks    HuddleHooks
 	react    func(emoji, kind, url string) bool
 
@@ -178,6 +179,15 @@ type HuddleHooks struct {
 	// Transcription is roomsStartTranscriptionFetcher (true) /
 	// roomsStopTranscriptionFetcher for callID.
 	Transcription func(ctx context.Context, callID string, on bool) error
+	// Backgrounds is maybeFetchBackgrounds: the huddle themes
+	// (huddles.listBackgrounds), for huddlesCanvas.backgrounds.
+	Backgrounds func(ctx context.Context) ([]HuddleBackground, error)
+}
+
+// HuddleBackground is a huddle theme as huddlesCanvas.backgrounds keeps
+// it ({id, name, category: {name}}).
+type HuddleBackground struct {
+	ID, Name, Category string
 }
 
 // SetHuddleHooks installs the native huddle's event log hooks.
@@ -294,6 +304,41 @@ func (t *Taut) huddlePushEvent(a []json.RawMessage) (any, error) {
 		t.mirror.invalidate("huddleEvents")
 	}
 	return nil, nil
+}
+
+// huddleBackgrounds is maybeFetchBackgrounds ({huddleId}): the themes
+// into huddlesCanvas.backgrounds.
+func (t *Taut) huddleBackgrounds(ctx context.Context) (any, error) {
+	h := t.huddle()
+	h.mu.Lock()
+	hook := h.hooks.Backgrounds
+	h.mu.Unlock()
+	if hook == nil {
+		return nil, nil
+	}
+	bs, err := hook(ctx)
+	if err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
+	h.themes = bs
+	h.mu.Unlock()
+	if t.Started() {
+		t.mirror.invalidate("huddlesCanvas")
+	}
+	return nil, nil
+}
+
+// huddlesCanvasSlice is Slack's huddlesCanvas state: the themes.
+func (t *Taut) huddlesCanvasSlice() map[string]any {
+	h := t.huddle()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	bs := make([]any, 0, len(h.themes))
+	for _, b := range h.themes {
+		bs = append(bs, map[string]any{"id": b.ID, "name": b.Name, "category": map[string]any{"name": b.Category}})
+	}
+	return map[string]any{"backgrounds": bs}
 }
 
 // huddleTranscription runs roomsStartTranscriptionFetcher (on) or
