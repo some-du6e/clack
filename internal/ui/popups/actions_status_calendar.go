@@ -439,7 +439,7 @@ func (s *actStatus) calContent(gtx layout.Context, th *theme.Theme, cl *Colors) 
 			return theme.Image(gtx, img, r.Size(), dp(gtx, 4))
 		})
 	}
-	stroke(gtx, r, dp(gtx, 4), maxInt(1, dp(gtx, 1)), rgba(0x000000, .1))
+	stroke(gtx, r, dp(gtx, 4), border1(gtx), rgba(0x000000, .1))
 	return layout.Dimensions{Size: image.Pt(w, r.Max.Y)}
 }
 

@@ -1054,7 +1054,7 @@ func (m *InviteModal) emailField(gtx layout.Context, th *theme.Theme, cl *Colors
 		return layout.Dimensions{Size: r.Max}
 	})
 	func() {
-		defer clip.Rect(r.Inset(1)).Push(gtx.Ops).Pop()
+		defer clip.Rect(r.Inset(border1(gtx))).Push(gtx.Ops).Pop()
 		macroAt(gtx, content, image.Pt(padX, padY+(hgt-2*padY-cd.Size.Y)/2*boolInt(cd.Size.Y < hgt-2*padY)))
 	}()
 	return layout.Dimensions{Size: r.Max}
@@ -1127,7 +1127,7 @@ func inviteToken(gtx layout.Context, th *theme.Theme, cl *Colors, rm *widget.Cli
 
 // inviteDashed draws a 1px dashed border around r (border: 1px dashed).
 func inviteDashed(gtx layout.Context, r image.Rectangle, rad int, c color.NRGBA) {
-	dash, gapW, t := dp(gtx, 3), dp(gtx, 3), maxInt(1, dp(gtx, 1))
+	dash, gapW, t := dp(gtx, 3), dp(gtx, 3), border1(gtx)
 	for x := r.Min.X + rad; x < r.Max.X-rad; x += dash + gapW {
 		e := minInt(x+dash, r.Max.X-rad)
 		fill(gtx, image.Rect(x, r.Min.Y, e, r.Min.Y+t), c)
@@ -1258,7 +1258,7 @@ func (m *InviteModal) channelSuggestions(gtx layout.Context, th *theme.Theme, cl
 	rh, pad := dp(gtx, 36), dp(gtx, 6)
 	r := image.Rect(0, 0, w, len(m.chMatch)*rh+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Ring)
-	rrect(gtx, r.Inset(1), dp(gtx, 8)-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), cl.Bg)
 	for i := range m.chMatch {
 		if m.chSugg[i].Hovered() {
 			m.chHL = i
@@ -1312,7 +1312,7 @@ func (m *InviteModal) guestWarning(gtx layout.Context, th *theme.Theme, cl *Colo
 					at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions { return icon(gtx, "check", 16, cl.HighText) })
 				} else {
 					rrect(gtx, r, dp(gtx, 4), cl.BtnBorder)
-					rrect(gtx, r.Inset(1), dp(gtx, 4)-1, cl.Bg)
+					rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 4)-border1(gtx), cl.Bg)
 				}
 				d := at(gtx, image.Pt(box+dp(gtx, 8), 0), func(gtx layout.Context) layout.Dimensions {
 					gtx.Constraints = layout.Constraints{Max: image.Pt(w-box-dp(gtx, 8), 1<<20)}
@@ -1430,7 +1430,7 @@ func inviteBanner(gtx layout.Context, th *theme.Theme, cl *Colors, w int, txt st
 	})
 	r := image.Rect(0, 0, w, d.Size.Y+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Danger)
-	rrect(gtx, r.Inset(1), dp(gtx, 8)-1, woTok(th, "surf-imp"))
+	rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), woTok(th, "surf-imp"))
 	at(gtx, image.Pt(pad, pad+(dp(gtx, 22)-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 		return icon(gtx, "warning", 20, cl.Danger)
 	})

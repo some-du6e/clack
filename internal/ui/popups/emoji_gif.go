@@ -351,7 +351,7 @@ func (p *EmojiPicker) gifTile(gtx layout.Context, cl *Colors, gf Gif, k, t, rad 
 		if g.tiles[k].Hovered() {
 			rrect(gtx, image.Rectangle{Max: sz}, rad, rgba(0x000000, .12))
 		}
-		stroke(gtx, image.Rectangle{Max: sz}, rad, maxInt(1, dp(gtx, 1)), cl.Ring)
+		stroke(gtx, image.Rectangle{Max: sz}, rad, border1(gtx), cl.Ring)
 		return layout.Dimensions{Size: sz}
 	})
 }

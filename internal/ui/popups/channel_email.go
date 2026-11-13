@@ -843,7 +843,7 @@ func ceSelectBox(gtx layout.Context, th *theme.Theme, cl *Colors, c *widget.Clic
 		focusRing(gtx, cl, r, rad)
 	}
 	rrect(gtx, r, rad, dtBorder(th))
-	rrect(gtx, r.Inset(1), rad-1, cl.ModalBg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.ModalBg)
 	at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-dp(gtx, 40)), h)}
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
@@ -913,7 +913,7 @@ func (u *ceUpdate) preview(gtx layout.Context, th *theme.Theme, cl *Colors, w in
 	my := pad + 2*nameH + dp(gtx, 4)
 	bar := image.Rect(x, my, x+nw, my+dp(gtx, 36))
 	rrectTop(gtx, bar, top, tbg)
-	rrectTop(gtx, bar.Inset(1), top-1, cl.ModalBg)
+	rrectTop(gtx, bar.Inset(border1(gtx)), top-border1(gtx), cl.ModalBg)
 	// mask-image: linear-gradient(#000 30%, #0000 100%)
 	from := float32(h) * 0.3
 	paint.LinearGradientOp{Stop1: f32.Pt(0, from), Stop2: f32.Pt(0, float32(h)),

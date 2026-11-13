@@ -376,7 +376,7 @@ func (c *CreateChannelModal) layoutName(gtx layout.Context, th *theme.Theme, cl 
 		gtx.Constraints = layout.Exact(image.Pt(w, ih))
 		d := field(gtx, th, &c.ed, nsCreateCh.T(ccPlaceholder), "hash", 44, 18)
 		if errText != "" {
-			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), maxInt(1, dp(gtx, 1)), ccErrColor(th, cl))
+			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), border1(gtx), ccErrColor(th, cl))
 		}
 		// .c-input_character_count--large: the characters left, 18px,
 		// content-sec (content-imp when negative), on the input's bg
@@ -434,7 +434,7 @@ func radio(gtx layout.Context, cl *Colors, on bool) layout.Dimensions {
 		theme.Circle(gtx, c, dp(gtx, 8), rgb(0xffffff))
 	} else {
 		theme.Circle(gtx, c, sz, theme.WithAlpha(cl.Fg, 0x80))
-		theme.Circle(gtx, c, sz-2*maxInt(1, dp(gtx, 1)), cl.Bg)
+		theme.Circle(gtx, c, sz-2*border1(gtx), cl.Bg)
 	}
 	return layout.Dimensions{Size: image.Pt(sz, sz)}
 }

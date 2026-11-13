@@ -159,7 +159,7 @@ func (v *SearchView) woToggle(gtx layout.Context, th *theme.Theme, cl *Colors, x
 	}
 	m := image.Rect(mx, y, mx+bw, y+h)
 	rrect(gtx, m, dp(gtx, 8), cl.Bg)
-	theme.Border(gtx, m, dp(gtx, 8), max(1, dp(gtx, 1)), woTok(th, "otl-sec"))
+	theme.Border(gtx, m, dp(gtx, 8), border1(gtx), woTok(th, "otl-sec"))
 	for i, b := range []struct {
 		c    *widget.Clickable
 		icon string

@@ -1260,7 +1260,7 @@ func pfBtn(gtx layout.Context, th *theme.Theme, size BtnSize, s pfBtnSpec, w int
 			}
 		}
 		rrect(gtx, r, rad, cl.BtnBorder)
-		rrect(gtx, r.Inset(1), maxInt(0, rad-1), bg)
+		rrect(gtx, r.Inset(border1(gtx)), maxInt(0, rad-border1(gtx)), bg)
 		nat := iw + tw + cw + 2*pad
 		x := pad + (w-nat)/2 // natural: icon, label and caret centered as a group
 		cx := x + iw + tw + dp(gtx, 6)

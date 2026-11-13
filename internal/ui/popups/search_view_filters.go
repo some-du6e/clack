@@ -374,8 +374,8 @@ func (v *SearchView) pillRow(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 			// p-search_filter__divider: 1x24, margin 0 12px, otl-ter
 			x += dp(gtx, 4)
 			ph := dp(gtx, 28)
-			fill(gtx, image.Rect(x, y+(ph-dp(gtx, 24))/2, x+maxInt(1, dp(gtx, 1)), y+(ph+dp(gtx, 24))/2), cl.Divider)
-			x += maxInt(1, dp(gtx, 1)) + dp(gtx, 12)
+			fill(gtx, image.Rect(x, y+(ph-dp(gtx, 24))/2, x+border1(gtx), y+(ph+dp(gtx, 24))/2), cl.Divider)
+			x += border1(gtx) + dp(gtx, 12)
 		}
 		s := specs[i]
 		x += v.pill(gtx, th, cl, srPillOf(f), x, y, s.icon, s.label, s.chevron, s.active) + gap

@@ -473,7 +473,7 @@ func (m *ChannelNotifyModal) layout(gtx layout.Context) layout.Dimensions {
 	if !s.Muted {
 		place(func(gtx layout.Context) int { return m.overrides(gtx, th, cl, s, w) })
 		place(func(gtx layout.Context) int { // hr.divider: margin 4px 20px
-			line := maxInt(1, dp(gtx, 1))
+			line := border1(gtx)
 			fill(gtx, image.Rect(0, dp(gtx, 4), w, dp(gtx, 4)+line), cl.Divider)
 			return dp(gtx, 8) + line
 		})

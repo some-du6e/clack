@@ -97,7 +97,7 @@ func Checkbox(gtx layout.Context, th *theme.Theme, on, indeterminate, disabled b
 			if disabled {
 				bg = cl.Disabled
 			}
-			rrect(gtx, r.Inset(1), rad-1, st.Background(bg))
+			rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), st.Background(bg))
 		}
 		return layout.Dimensions{Size: r.Max}
 	})
@@ -185,9 +185,9 @@ func Pill(gtx layout.Context, th *theme.Theme, c *widget.Clickable, iconName, la
 		}
 		fg = st.Color(fg)
 		rrect(gtx, r, rad, border)
-		rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+		rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 		if bg = st.Background(bg); bg != cl.Bg {
-			rrect(gtx, r.Inset(1), rad-1, bg)
+			rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), bg)
 		}
 		in := pillInnerCls.Enter(gtx, 0, 0)
 		in.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {

@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"io"
+	"math"
 	"strings"
 	"sync"
 
@@ -347,6 +348,32 @@ func ApplyTokens(c *Colors, th *theme.Theme) {
 // ---- small layout helpers ----
 
 func dp(gtx layout.Context, v float32) int { return gtx.Dp(unit.Dp(v)) }
+
+// borderW is a CSS border css px wide in device pixels, snapped as
+// Chromium snaps border widths (StyleBuilderConverter::ConvertBorderWidth
+// → ClampLineWidth): a width under one device pixel draws one, any other
+// is floored to whole device pixels. One CSS px is 1 at 1x, 1.25x, 1.5x
+// and 1.75x, 2 at 2x and 2.5x, 3 at 3x; Gio's Dp rounds (2 at 1.5x).
+// The epsilon keeps a scale like 1.9999999 (a float32 PxPerDp) at 2.
+func borderW(gtx layout.Context, css float32) int {
+	px := float64(css) * float64(gtx.Metric.PxPerDp)
+	switch {
+	case px <= 0:
+		return 0
+	case px < 1 || !cssBorders:
+		return 1
+	}
+	return int(math.Floor(px + 1e-4))
+}
+
+// border1 is a 1px solid CSS border (borderW 1): every border Slack draws
+// as 1px in CSS, which reads thinner than Slack's at 2x when drawn as one
+// device pixel.
+func border1(gtx layout.Context) int { return borderW(gtx, 1) }
+
+// cssBorders off draws every border1 as one device pixel, the way the
+// popups drew them before polish-1113 (the border shots' "before").
+var cssBorders = true
 
 // at lays out w with its origin at p (constraints unchanged).
 func at(gtx layout.Context, p image.Point, w layout.Widget) layout.Dimensions {
@@ -778,7 +805,7 @@ func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widg
 		}
 		if border.A > 0 {
 			// .c-button--outline's 1px border: one CSS px
-			bw := maxInt(1, dp(gtx, 1))
+			bw := border1(gtx)
 			rrectGrp(gtx, r, dp(gtx, rad), grp, border)
 			rrectGrp(gtx, r.Inset(bw), dp(gtx, rad)-bw, grp, b)
 		} else {
@@ -793,7 +820,7 @@ func buttonNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, c *widg
 				div = theme.OtlTer(th)
 			}
 			inset := dp(gtx, 4) // height calc(100% - 8px), centred
-			fill(gtx, image.Rect(w-max(1, dp(gtx, 1)), inset, w, hh-inset), div)
+			fill(gtx, image.Rect(w-border1(gtx), inset, w, hh-inset), div)
 		}
 		x := (w - tw - iw) / 2
 		if iconName != "" {
@@ -894,7 +921,7 @@ func fieldNative(gtx layout.Context, th *theme.Theme, st slackc.Styled, ed *widg
 	} else {
 		// .c-input_text: border 1px solid var(--dt_color-otl-pry), one CSS
 		// px (two device pixels at 2x)
-		bw := maxInt(1, dp(gtx, 1))
+		bw := border1(gtx)
 		rrect(gtx, r, rad, cl.InputBorder)
 		rrect(gtx, r.Inset(bw), rad-bw, bg)
 	}

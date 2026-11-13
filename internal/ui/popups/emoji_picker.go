@@ -830,7 +830,7 @@ func (p *EmojiPicker) layoutBody(gtx layout.Context, th *theme.Theme, cl *Colors
 // --dt_color-otl-ter line.
 func (p *EmojiPicker) layoutTop(gtx layout.Context, th *theme.Theme, cl *Colors, w int) {
 	hh := dp(gtx, epTopH)
-	fill(gtx, image.Rect(0, hh-maxInt(1, dp(gtx, 1)), w, hh), theme.Over(cl.TabLine, cl.EmojiBg))
+	fill(gtx, image.Rect(0, hh-border1(gtx), w, hh), theme.Over(cl.TabLine, cl.EmojiBg))
 	half := w / 2
 	for i := 0; i < 2; i++ {
 		x0, tw := 0, half
@@ -1156,7 +1156,7 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 	fill(gtx, image.Rect(0, 0, w, h), cl.EmojiFoot)
 	// composited as the browser does (in sRGB): Gio's own alpha blend is
 	// in linear light and lands lighter (231 for Slack's 211 over #f8f8f8)
-	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), theme.Over(rgba(0x000000, .15), cl.EmojiFoot))
+	fill(gtx, image.Rect(0, 0, w, border1(gtx)), theme.Over(rgba(0x000000, .15), cl.EmojiFoot))
 
 	right := p.layoutTone(gtx, th, cl, w, h)
 

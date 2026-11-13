@@ -83,7 +83,7 @@ func sectionNameField(gtx layout.Context, h Host, th *theme.Theme, cl *Colors, e
 			return emojiButton(gtx, h, cl, btn, emoji, ih-dp(gtx, 8))
 		})
 		if alert != "" {
-			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), maxInt(1, dp(gtx, 1)), ccErrColor(th, cl))
+			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), border1(gtx), ccErrColor(th, cl))
 		}
 		return d
 	})
@@ -646,7 +646,7 @@ func (m *CreateSectionModal) layoutConvs(gtx layout.Context, th *theme.Theme, cl
 					bg = cl.BgHover
 				}
 				rrect(gtx, image.Rect(0, 0, tw, th22), th22/2, bg)
-				stroke(gtx, image.Rect(0, 0, tw, th22), th22/2, maxInt(1, dp(gtx, 1)), cl.BtnBorder)
+				stroke(gtx, image.Rect(0, 0, tw, th22), th22/2, border1(gtx), cl.BtnBorder)
 				at(gtx, image.Pt(dp(gtx, 10), 0), func(gtx layout.Context) layout.Dimensions {
 					return vcenter(gtx, th22, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 13, theme.Bold, cl.Fg, s) })
 				})

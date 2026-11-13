@@ -691,7 +691,7 @@ func (s *emojiAddModal) intro(gtx layout.Context, th *theme.Theme, cl *Colors, w
 func (s *emojiAddModal) tile(gtx layout.Context, r image.Rectangle, bg, ring, ic color.NRGBA) {
 	rad := dp(gtx, 2)
 	rrect(gtx, r, rad, ring)
-	rrect(gtx, r.Inset(1), maxInt(0, rad-1), bg)
+	rrect(gtx, r.Inset(border1(gtx)), maxInt(0, rad-border1(gtx)), bg)
 	if s.data != nil {
 		in := r.Inset(dp(gtx, 4))
 		at(gtx, in.Min, func(gtx layout.Context) layout.Dimensions {
@@ -781,7 +781,7 @@ func (s *emojiAddModal) nameField(gtx layout.Context, th *theme.Theme, cl *Color
 		}
 		rrect(gtx, r, rad, border)
 	}
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 
 	pad := dp(gtx, 12)
 	colonW := textW(gtx, th, 15, theme.Regular, ":")

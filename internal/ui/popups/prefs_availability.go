@@ -334,7 +334,7 @@ func (p *avPrefs) layout(gtx layout.Context) layout.Dimensions {
 	bh := dp(gtx, 700-76-28) // the Modal adds 28 below a buttonless body
 
 	// header border (full modal width)
-	fill(gtx, image.Rect(-padX, 0, bw+padX, maxInt(1, dp(gtx, 1))), cl.Ring)
+	fill(gtx, image.Rect(-padX, 0, bw+padX, border1(gtx)), cl.Ring)
 
 	// left nav
 	nx, nw := dp(gtx, 16)-padX, dp(gtx, 205)
@@ -450,7 +450,7 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 			hrY = sub + dp(gtx, 19+13)
 		}
 	}
-	fill(gtx, image.Rect(cx, hrY, bw, hrY+maxInt(1, dp(gtx, 1))), pl.hr)
+	fill(gtx, image.Rect(cx, hrY, bw, hrY+border1(gtx)), pl.hr)
 	off := hrY - dp(gtx, 236) // what follows moves down with the rows
 
 	avText(gtx, th, cx, off+dp(gtx, 268), 15, cw, "Automatic statuses", true)
@@ -489,7 +489,7 @@ func (p *avPrefs) page(gtx layout.Context, org image.Point, cx, bw int) int {
 			return clickBox(gtx, &p.checks[i], nil, draw)
 		})
 	}
-	fill(gtx, image.Rect(cx, off+dp(gtx, 463), bw, off+dp(gtx, 463)+maxInt(1, dp(gtx, 1))), pl.hr)
+	fill(gtx, image.Rect(cx, off+dp(gtx, 463), bw, off+dp(gtx, 463)+border1(gtx)), pl.hr)
 
 	avText(gtx, th, cx, off+dp(gtx, 495), 15, cw, "Additional options", true)
 	avText(gtx, th, cx, off+dp(gtx, 529), 15, cw, "Turn on focus mode when:", true)

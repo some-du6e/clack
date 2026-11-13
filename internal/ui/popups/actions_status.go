@@ -1066,7 +1066,7 @@ func (s *actStatus) content(gtx layout.Context, th *theme.Theme, cl *Colors, fw,
 				border = cl.Fg2
 			}
 			rrect(gtx, r, dp(gtx, 8), border)
-			rrect(gtx, r.Inset(1), dp(gtx, 8)-1, cl.Bg)
+			rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), cl.Bg)
 			at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, cw-dp(gtx, 52)), sh)}
 				return vcenter(gtx, sh, func(gtx layout.Context) layout.Dimensions {
@@ -1171,14 +1171,15 @@ func (s *actStatus) replyBox(gtx layout.Context, th *theme.Theme, cl *Colors, x,
 	} else {
 		rrect(gtx, r, rad, cl.InputBorder)
 	}
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
-	tb := image.Rect(r.Min.X+1, r.Min.Y+1, r.Max.X-1, r.Min.Y+tbH)
-	rrect(gtx, tb, rad-1, cl.BgAlt)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
+	b1 := border1(gtx)
+	tb := image.Rect(r.Min.X+b1, r.Min.Y+b1, r.Max.X-b1, r.Min.Y+tbH)
+	rrect(gtx, tb, rad-b1, cl.BgAlt)
 	fill(gtx, image.Rect(tb.Min.X, tb.Min.Y+rad, tb.Max.X, tb.Max.Y), cl.BgAlt)
 	ix := r.Min.X + dp(gtx, 3)
 	for _, name := range actReplyTools {
 		if name == "" {
-			fill(gtx, image.Rect(ix+dp(gtx, 4), tb.Min.Y+dp(gtx, 9), ix+dp(gtx, 4)+maxInt(1, dp(gtx, 1)), tb.Max.Y-dp(gtx, 9)), cl.Divider)
+			fill(gtx, image.Rect(ix+dp(gtx, 4), tb.Min.Y+dp(gtx, 9), ix+dp(gtx, 4)+border1(gtx), tb.Max.Y-dp(gtx, 9)), cl.Divider)
 			ix += dp(gtx, 8)
 			continue
 		}
@@ -1262,7 +1263,7 @@ func (s *actStatus) inputNative(gtx layout.Context, th *theme.Theme, cl *Colors)
 	} else {
 		rrect(gtx, r, rad, cl.InputBorder)
 	}
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 
 	bs := dp(gtx, 28)
 	bp := image.Pt(dp(gtx, 7), (hh-bs)/2)
@@ -1461,7 +1462,7 @@ func actCheckbox(gtx layout.Context, cl *Colors, p image.Point, on bool) {
 		return
 	}
 	rrect(gtx, r, rad, theme.WithAlpha(cl.Fg, 0x80))
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 }
 
 // ---- "Tip:" hint pill ----

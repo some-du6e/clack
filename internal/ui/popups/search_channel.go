@@ -283,7 +283,7 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 	at(gtx, image.Pt(sz.X-dp(gtx, 12)-dp(gtx, 28), (hh-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
 		return iconButton(gtx, &v.closeBtn, "close", 28, 20, cl.Fg2, cl.BgHover, 8)
 	})
-	fill(gtx, image.Rect(0, hh, sz.X, hh+maxInt(1, dp(gtx, 1))), cl.Divider)
+	fill(gtx, image.Rect(0, hh, sz.X, hh+border1(gtx)), cl.Divider)
 
 	// the search box
 	y := hh + dp(gtx, 12)
@@ -294,7 +294,7 @@ func (v *SearchInChannel) Layout(gtx layout.Context) layout.Dimensions {
 	if gtx.Focused(&v.ed) {
 		bc = cl.Focus
 	}
-	stroke(gtx, box, dp(gtx, 8), maxInt(1, dp(gtx, 1)), bc)
+	stroke(gtx, box, dp(gtx, 8), border1(gtx), bc)
 	at(gtx, image.Pt(box.Min.X+dp(gtx, 10), y+(bh-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
 		return icon(gtx, "search", 16, cl.Fg2)
 	})
@@ -409,7 +409,7 @@ func (v *SearchInChannel) body(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			return at(gtx, image.Pt((w-bw)/2, dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
 				return clickBox(gtx, &v.allBtn, nil, func(gtx layout.Context) layout.Dimensions {
 					r := image.Rect(0, 0, bw, bh)
-					stroke(gtx, r, dp(gtx, 8), maxInt(1, dp(gtx, 1)), cl.BtnBorder)
+					stroke(gtx, r, dp(gtx, 8), border1(gtx), cl.BtnBorder)
 					at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
 						return vcenter(gtx, bh, func(gtx layout.Context) layout.Dimensions {
 							return text(gtx, th, 15, theme.Bold, cl.Fg, label)
@@ -541,7 +541,7 @@ func (v *SearchInChannel) row(gtx layout.Context, th *theme.Theme, cl *Colors, i
 					bg = cl.BgHover
 				}
 				rrect(gtx, r, dp(gtx, 12), bg)
-				stroke(gtx, r, dp(gtx, 12), maxInt(1, dp(gtx, 1)), cl.Divider)
+				stroke(gtx, r, dp(gtx, 12), border1(gtx), cl.Divider)
 				srDrawHiddenAvatar(gtx, th, image.Pt(dp(gtx, 12), dp(gtx, 12)), 36, bg)
 				srDrawHiddenHead(gtx, th, cl, m, tx, dp(gtx, 10), cw-dp(gtx, 12), lh)
 				srDrawRich(gtx, th, cl, htoks, tx, dp(gtx, 10)+lh, lh)
@@ -557,7 +557,7 @@ func (v *SearchInChannel) row(gtx layout.Context, th *theme.Theme, cl *Colors, i
 				bg = cl.BgHover
 			}
 			rrect(gtx, r, dp(gtx, 12), bg)
-			stroke(gtx, r, dp(gtx, 12), maxInt(1, dp(gtx, 1)), cl.Divider)
+			stroke(gtx, r, dp(gtx, 12), border1(gtx), cl.Divider)
 			at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions {
 				return avatar(gtx, v.h, av, 36)
 			})

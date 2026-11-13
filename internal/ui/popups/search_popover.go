@@ -2126,7 +2126,7 @@ func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *
 			at(gtx, c.Sub(image.Pt(dd/2, dd/2)), func(gtx layout.Context) layout.Dimensions {
 				if picked && r.presence != "active" {
 					// the --selected row whitens a non-active presence ring
-					stroke(gtx, image.Rect(0, 0, dd, dd), dd/2, maxInt(1, dp(gtx, 1)), fg)
+					stroke(gtx, image.Rect(0, 0, dd, dd), dd/2, border1(gtx), fg)
 					return layout.Dimensions{Size: image.Pt(dd, dd)}
 				}
 				return presenceDot(gtx, th, r.presence == "active", 7)
@@ -2134,7 +2134,7 @@ func (p *SearchPopover) suggestionLeft(gtx layout.Context, th *theme.Theme, cl *
 		}
 	case r.boxed:
 		rb := image.Rect(lx, ly, lx+box, ly+box)
-		stroke(gtx, rb, dp(gtx, 6), maxInt(1, dp(gtx, 1)), cl.BtnBorder)
+		stroke(gtx, rb, dp(gtx, 6), border1(gtx), cl.BtnBorder)
 		is := dp(gtx, 16)
 		at(gtx, image.Pt(lx+(box-is)/2, ly+(box-is)/2), func(gtx layout.Context) layout.Dimensions {
 			return icon(gtx, r.icon, 16, fg)
@@ -2212,7 +2212,7 @@ func srEnterChip(gtx layout.Context, th *theme.Theme, cl *Colors, right, h int) 
 	w, ch := tw+dp(gtx, 12), dp(gtx, 20)
 	r := image.Rect(right-w, (h-ch)/2, right, (h+ch)/2)
 	rrect(gtx, r, dp(gtx, 4), cl.Ring)
-	rrect(gtx, r.Inset(1), dp(gtx, 4)-1, cl.BgAlt)
+	rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 4)-border1(gtx), cl.BgAlt)
 	at(gtx, image.Pt(r.Min.X+dp(gtx, 6), r.Min.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 13, theme.Regular, cl.Fg, nsPrefs.T("Enter"))
@@ -2261,7 +2261,7 @@ func (p *SearchPopover) msgRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			bg = cl.Selected
 		}
 		rrect(gtx, cr, rad, cl.Ring)
-		rrect(gtx, cr.Inset(1), rad-1, bg)
+		rrect(gtx, cr.Inset(border1(gtx)), rad-border1(gtx), bg)
 		ax := cr.Min.X + dp(gtx, 13)
 		at(gtx, image.Pt(ax, cr.Min.Y+(cr.Dy()-dp(gtx, 36))/2), func(gtx layout.Context) layout.Dimensions {
 			return srAvatar(gtx, p.h, r.msg, av, 36, rp)

@@ -761,7 +761,7 @@ func actFocusBox(gtx layout.Context, cl *Colors, r image.Rectangle, focused bool
 	} else {
 		rrect(gtx, r, rad, cl.InputBorder)
 	}
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 }
 
 // picker draws the "Add a channel or person" field with chips.
@@ -862,7 +862,7 @@ func (f *actForward) suggestions(gtx layout.Context, th *theme.Theme, cl *Colors
 	lh := minInt(n*rh, dp(gtx, actFwdListMax))
 	r := image.Rect(0, 0, w, lh+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Ring)
-	rrect(gtx, r.Inset(1), dp(gtx, 8)-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), cl.Bg)
 	// onMouseEnteredOption makes the row under the pointer active;
 	// onMouseLeftOption clears it (clearActive: the pseudo-active row
 	// comes back under a11y_no_auto_highlight_search_multi_select)

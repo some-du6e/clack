@@ -620,7 +620,7 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			border = cl.Focus
 		}
 		rrect(gtx, box, dp(gtx, 4), border)
-		rrect(gtx, box.Inset(1), dp(gtx, 4)-1, cl.Bg)
+		rrect(gtx, box.Inset(border1(gtx)), dp(gtx, 4)-border1(gtx), cl.Bg)
 		bh := box.Dy()
 		x := box.Min.X + dp(gtx, 12)
 		right := box.Max.X - dp(gtx, 12)

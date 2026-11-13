@@ -1513,7 +1513,7 @@ func (v *SearchView) pagination(gtx layout.Context, th *theme.Theme, cl *Colors,
 				if c.Hovered() && !disabled {
 					rrect(gtx, r, btn/2, cl.BgHover)
 				}
-				stroke(gtx, r, btn/2, maxInt(1, dp(gtx, 1)), cl.BtnBorder)
+				stroke(gtx, r, btn/2, border1(gtx), cl.BtnBorder)
 				is := dp(gtx, 16)
 				at(gtx, image.Pt((btn-is)/2, (btn-is)/2), func(gtx layout.Context) layout.Dimensions {
 					return icon(gtx, name, 16, fg)
@@ -1571,7 +1571,7 @@ func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i,
 				bg = cl.BgHover
 			}
 			rrect(gtx, r, dp(gtx, 12), bg)
-			stroke(gtx, r, dp(gtx, 12), maxInt(1, dp(gtx, 1)), cl.Divider)
+			stroke(gtx, r, dp(gtx, 12), border1(gtx), cl.Divider)
 			tile := dp(gtx, 36)
 			ty := (r.Dy() - tile) / 2
 			ic := "files"
@@ -1795,7 +1795,7 @@ func (v *SearchView) cardNative(gtx layout.Context, th *theme.Theme, cl *Colors,
 		bg = cl.BgHover
 	}
 	rrect(gtx, r, rad, cl.Divider)
-	rrect(gtx, r.Inset(1), rad-1, bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), bg)
 	// whole-card click target below the content (siblings, not nested, so
 	// "Show more" and the reply chip don't also open the message)
 	{
@@ -2035,7 +2035,7 @@ func (v *SearchView) cardHidden(gtx layout.Context, th *theme.Theme, cl *Colors,
 		bg = cl.BgHover
 	}
 	rrect(gtx, r, rad, cl.Divider)
-	rrect(gtx, r.Inset(1), rad-1, bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), bg)
 	{
 		g := gtx
 		g.Constraints = layout.Exact(sz)
@@ -2075,7 +2075,7 @@ func (v *SearchView) hoverBar(gtx layout.Context, th *theme.Theme, cl *Colors, c
 	}
 	softShadow(gtx, r, rad, dp(gtx, 1), dp(gtx, 3), sh)
 	rrect(gtx, r, rad, cl.Ring)
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 	// the bar's own area swallows presses between the buttons
 	at(gtx, r.Min, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(r.Size())
@@ -2210,7 +2210,7 @@ func (v *SearchView) replyChip(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		if hovered {
 			bg = cl.BgHover
 		}
-		rrect(gtx, r.Inset(1), h/2-1, bg)
+		rrect(gtx, r.Inset(border1(gtx)), h/2-border1(gtx), bg)
 	}, func(gtx layout.Context) layout.Dimensions {
 		at(gtx, image.Pt(dp(gtx, 8), (h-dp(gtx, 14))/2), func(gtx layout.Context) layout.Dimensions {
 			return icon(gtx, "threads", 14, cl.Fg2)

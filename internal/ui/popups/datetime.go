@@ -243,7 +243,7 @@ func dtFieldIn(gtx layout.Context, th *theme.Theme, look dtLook, btn *widget.Cli
 		if disabled {
 			bg = cl.BgAlt
 		}
-		rrect(gtx, r.Inset(1), rad-1, bg)
+		rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), bg)
 		fg := cl.Fg
 		if disabled {
 			fg = cl.Muted
@@ -764,7 +764,7 @@ func (c *dtCalendar) drawBody(gtx layout.Context, th *theme.Theme, cl *Colors, s
 			}
 			d := dp(gtx, 34)
 			ctr := image.Pt(s.X/2, s.Y/2)
-			lw := maxInt(1, dp(gtx, 1))
+			lw := border1(gtx)
 			if sel {
 				rrect(gtx, box, dp(gtx, 4), cl.Highlight)
 				if isToday { // --is_today.--is_selected:after: a white ring
@@ -810,7 +810,7 @@ func (c *dtCalendar) drawBody(gtx layout.Context, th *theme.Theme, cl *Colors, s
 	}
 	// grid lines in one pass over the cells (every day cell gets all four
 	// edges, so the last row is closed like Slack's).
-	lw := maxInt(1, dp(gtx, 1))
+	lw := border1(gtx)
 	for i, n := range grid {
 		if n == 0 {
 			continue
@@ -878,7 +878,7 @@ func (c *dtCalendar) rangeCell(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		if !start && !end && !off {
 			fg = tokContentHgl1.of(th)
 		}
-		d, lw := dp(gtx, 32), maxInt(1, dp(gtx, 1))
+		d, lw := dp(gtx, 32), border1(gtx)
 		r := image.Rect(dp(gtx, 5), dp(gtx, 5), dp(gtx, 5)+d, dp(gtx, 5)+d)
 		stroke(gtx, r, d/2, lw, dtTokOtlHgl1.of(th))
 	}

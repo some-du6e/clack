@@ -71,19 +71,19 @@ func buttonV2Grp(gtx layout.Context, th *theme.Theme, c *widget.Clickable, kind 
 			FocusRingColors4(gtx, solid, theme.WithAlpha(solid, 0x4d), r, rad)
 		}
 		if pal.Border.A > 0 {
-			in := r.Inset(max(1, dp(gtx, 1)))
+			in := r.Inset(border1(gtx))
 			if grp == grpLast { // _notFirst: borderInlineStartWidth 0
 				in.Min.X = r.Min.X
 			}
 			rrectGrp(gtx, r, rad, grp, pal.Border)
-			rrectGrp(gtx, in, max(0, rad-1), grp, bg)
+			rrectGrp(gtx, in, max(0, rad-border1(gtx)), grp, bg)
 		} else {
 			rrectGrp(gtx, r, rad, grp, bg)
 		}
 		if grp == grpFirst && (variation == "primary" || variation == "danger") {
 			// inGroup _notLast: a 1px end border, jade.60 (dark jade.30)
 			// on primary, flamingo.40 (dark flamingo.50) on danger
-			fill(gtx, image.Rect(r.Max.X-max(1, dp(gtx, 1)), 0, r.Max.X, r.Max.Y), v2GroupDivider(th, variation))
+			fill(gtx, image.Rect(r.Max.X-border1(gtx), 0, r.Max.X, r.Max.Y), v2GroupDivider(th, variation))
 		}
 		x := (sz.X - tw - iw) / 2
 		if iconName != "" {

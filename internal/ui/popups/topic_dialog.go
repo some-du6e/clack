@@ -153,7 +153,7 @@ func (d *TopicDialog) layout(gtx layout.Context) layout.Dimensions {
 		rrect(gtx, r, rad, cl.ModalBg)
 	} else {
 		rrect(gtx, r, rad, cl.InputBorder)
-		rrect(gtx, r.Inset(maxInt(1, dp(gtx, 1))), rad-1, cl.ModalBg)
+		rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.ModalBg)
 	}
 	at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 8)), func(gtx layout.Context) layout.Dimensions {
 		call.Add(gtx.Ops)

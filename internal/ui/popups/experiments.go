@@ -97,8 +97,8 @@ func enterKeyChip(gtx layout.Context, th *theme.Theme, right, h int) int {
 	w := max(ch, textW(gtx, th, 13, theme.Regular, label)+2*dp(gtx, 4))
 	r := image.Rect(right-w, (h-ch)/2, right, (h-ch)/2+ch)
 	rad := dp(gtx, 4)
-	rrect(gtx, r, rad, edge)                                                               // the bottom border shows under the face
-	rrect(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Max.Y-max(1, dp(gtx, 1))), rad, bg) // the face
+	rrect(gtx, r, rad, edge)                                                         // the bottom border shows under the face
+	rrect(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Max.Y-border1(gtx)), rad, bg) // the face
 	at(gtx, image.Pt(r.Min.X+(w-textW(gtx, th, 13, theme.Regular, label))/2, r.Min.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, ch, func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 13, theme.Regular, fg, label)

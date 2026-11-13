@@ -200,8 +200,8 @@ func (p *ProfileCard) appContent(gtx layout.Context, th *theme.Theme, cl *Colors
 		if above {
 			y += dp(gtx, 8)
 		}
-		fill(gtx, image.Rect(0, y, w, y+maxInt(1, dp(gtx, 1))), cl.Divider)
-		y += maxInt(1, dp(gtx, 1)) + dp(gtx, 8)
+		fill(gtx, image.Rect(0, y, w, y+border1(gtx)), cl.Divider)
+		y += border1(gtx) + dp(gtx, 8)
 	}
 	sep(false)
 	self := core.User{}

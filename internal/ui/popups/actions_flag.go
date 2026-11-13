@@ -757,7 +757,7 @@ func (f *flagDialog) speedBump(gtx layout.Context) {
 		defer clip.RRect{Rect: sheet, SE: rad, SW: rad}.Push(gtx.Ops).Pop()
 		fill(gtx, sheet, cl.ModalBg)
 	}()
-	fill(gtx, image.Rect(0, top, sz.X, top+maxInt(1, dp(gtx, 1))), theme.OtlTer(th))
+	fill(gtx, image.Rect(0, top, sz.X, top+border1(gtx)), theme.OtlTer(th))
 	macroAt(gtx, textCall, image.Pt(px, top+py))
 	x := sz.X - px
 	by := top + py + td.Size.Y + dp(gtx, 24)

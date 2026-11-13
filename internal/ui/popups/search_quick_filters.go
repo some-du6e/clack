@@ -345,7 +345,7 @@ func (p *SearchPopover) qfToggleRow() {
 // srQFPillW is a pill's width: 1px borders, padding 0 11, the 14px icon
 // and its 4px gap, the 12px bold label; at least 32.
 func srQFPillW(gtx layout.Context, th *theme.Theme, label string, icon bool) int {
-	w := 2*max(1, dp(gtx, 1)) + 2*dp(gtx, 11) + textW(gtx, th, 12, theme.Bold, label)
+	w := 2*border1(gtx) + 2*dp(gtx, 11) + textW(gtx, th, 12, theme.Bold, label)
 	if icon {
 		w += dp(gtx, 14) + dp(gtx, 4)
 	}
@@ -403,7 +403,7 @@ func (p *SearchPopover) qfLayout(gtx layout.Context, th *theme.Theme, cl *Colors
 func (p *SearchPopover) qfPill(gtx layout.Context, th *theme.Theme, btn *widget.Clickable, sz image.Point, ic, label string, active bool) layout.Dimensions {
 	return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		box := image.Rectangle{Max: sz}
-		rad, bw := dp(gtx, 8), max(1, dp(gtx, 1))
+		rad, bw := dp(gtx, 8), border1(gtx)
 		bg, edge, fg := tokCtrPry.of(th), tokOtlTer.of(th), tokContentSec.of(th)
 		if btn.Hovered() {
 			// .c-button--outline:hover's base-sec under

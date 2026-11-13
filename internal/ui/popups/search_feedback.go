@@ -296,7 +296,7 @@ func srInputBox(gtx layout.Context, cl *Colors, box image.Rectangle, focused boo
 		return
 	}
 	rrect(gtx, box, rad, cl.InputBorder)
-	rrect(gtx, box.Inset(1), rad-1, cl.ModalBg)
+	rrect(gtx, box.Inset(border1(gtx)), rad-border1(gtx), cl.ModalBg)
 }
 
 // textarea is .c-input_textarea: 104px tall, radius 8, padding 8 12 4,

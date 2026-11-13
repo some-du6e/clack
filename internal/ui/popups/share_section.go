@@ -802,7 +802,7 @@ func (m *ShareSectionModal) alert(gtx layout.Context, th *theme.Theme, cl *Color
 	})
 	r := image.Rect(0, 0, w, d.Size.Y+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Danger)
-	rrect(gtx, r.Inset(1), dp(gtx, 8)-1, theme.Mix(cl.Bg, cl.Danger, 0.08))
+	rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), theme.Mix(cl.Bg, cl.Danger, 0.08))
 	at(gtx, image.Pt(pad, pad+(dp(gtx, 22)-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
 		return icon(gtx, "warning", 20, cl.Danger)
 	})
@@ -894,7 +894,7 @@ func (m *ShareSectionModal) suggestions(gtx layout.Context, th *theme.Theme, cl 
 	rh, pad := dp(gtx, 36), dp(gtx, 6)
 	r := image.Rect(0, 0, w, len(m.match)*rh+2*pad)
 	rrect(gtx, r, dp(gtx, 8), cl.Ring)
-	rrect(gtx, r.Inset(1), dp(gtx, 8)-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), cl.Bg)
 	for i := range m.match {
 		if m.sugg[i].Hovered() {
 			m.hl = i
@@ -1005,7 +1005,7 @@ func (m *ShareSectionModal) channelList(gtx layout.Context, th *theme.Theme, cl 
 	rh := dp(gtx, 32)
 	box := image.Rect(0, y, w, y+rh*len(m.ordered)+dp(gtx, 19)-dp(gtx, 8))
 	rrect(gtx, box, dp(gtx, 8), cl.InputBorder)
-	rrect(gtx, box.Inset(1), dp(gtx, 8)-1, cl.Bg)
+	rrect(gtx, box.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), cl.Bg)
 	y += dp(gtx, 6)
 	workspace := m.workspace
 	for _, id := range m.ordered {

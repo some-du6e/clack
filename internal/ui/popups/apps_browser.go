@@ -398,7 +398,7 @@ func (b *AppsBrowser) filter(gtx layout.Context, th *theme.Theme, cl *Colors) la
 	}
 	rrect(gtx, r, rad, cl.Bg)
 	if !focused {
-		stroke(gtx, r, rad, max(1, dp(gtx, 1)), cl.InputBorder)
+		stroke(gtx, r, rad, border1(gtx), cl.InputBorder)
 	}
 	func() {
 		defer op.Offset(image.Pt(dp(gtx, 10), (h-dp(gtx, 20))/2)).Push(gtx.Ops).Pop()
@@ -500,7 +500,7 @@ func (b *AppsBrowser) appRow(gtx layout.Context, th *theme.Theme, cl *Colors, a 
 			})
 		})
 		r := image.Rectangle{Max: d.Size}
-		one := max(1, dp(gtx, 1))
+		one := border1(gtx)
 		if rc.Hovered() || bc.Hovered() { // .p-apps_browser__app--selected
 			rad := dp(gtx, 6)
 			rrect(gtx, r, rad, abLowSolid(cl))

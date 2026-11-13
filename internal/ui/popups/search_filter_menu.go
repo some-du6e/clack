@@ -599,7 +599,7 @@ func (p *SearchPopover) acRow(gtx layout.Context, th *theme.Theme, cl *Colors, i
 			c := image.Pt(x+box/2, rowH/2)
 			at(gtx, c.Sub(image.Pt(d/2, d/2)), func(gtx layout.Context) layout.Dimensions {
 				if sel && it.presence != "active" {
-					stroke(gtx, image.Rect(0, 0, d, d), d/2, max(1, dp(gtx, 1)), fg)
+					stroke(gtx, image.Rect(0, 0, d, d), d/2, border1(gtx), fg)
 					return layout.Dimensions{Size: image.Pt(d, d)}
 				}
 				return presenceDot(gtx, th, it.presence == "active", 9)
@@ -616,7 +616,7 @@ func (p *SearchPopover) acRow(gtx layout.Context, th *theme.Theme, cl *Colors, i
 // primary background, content-sec text, a 1px otl-ter line above).
 func (p *SearchPopover) acFooter(gtx layout.Context, th *theme.Theme, cl *Colors, r image.Rectangle) {
 	fill(gtx, r, cl.Bg)
-	fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Min.Y+max(1, dp(gtx, 1))), cl.Divider)
+	fill(gtx, image.Rect(r.Min.X, r.Min.Y, r.Max.X, r.Min.Y+border1(gtx)), cl.Divider)
 	x := r.Min.X + dp(gtx, 20)
 	h := r.Dy()
 	glyph := func(name string, s float32) {

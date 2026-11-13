@@ -748,7 +748,7 @@ func (f *epForm) drawField(gtx layout.Context, th *theme.Theme, cl *Colors, fd *
 			d = field(gtx, th, &fd.ed, ph, "", 44, 18)
 		}
 		if !fd.err.OK() {
-			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), maxInt(1, dp(gtx, 1)), ccErrColor(th, cl))
+			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), border1(gtx), ccErrColor(th, cl))
 		}
 		if fd.disabled && fd.disabledTip != "" {
 			fd.hov.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(w, ih)} })
@@ -841,7 +841,7 @@ func (f *epForm) drawSelect(gtx layout.Context, th *theme.Theme, cl *Colors, fd 
 		focusRing(gtx, cl, r, rad)
 	}
 	rrect(gtx, r, rad, dtBorder(th))
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 	label := fd.options[sel].label
 	at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-dp(gtx, 48)), ih)}
@@ -932,7 +932,7 @@ func epSpeedBump(gtx layout.Context, h Host, m *Modal, veil *int, keep, discard 
 		defer clip.RRect{Rect: sheet, SE: rad, SW: rad}.Push(gtx.Ops).Pop()
 		fill(gtx, sheet, BasePryOf(th))
 	}()
-	fill(gtx, image.Rect(0, top, sz.X, top+maxInt(1, dp(gtx, 1))), theme.OtlTer(th))
+	fill(gtx, image.Rect(0, top, sz.X, top+border1(gtx)), theme.OtlTer(th))
 	macroAt(gtx, call, image.Pt(px, top+py))
 	by := top + py + td.Size.Y + dp(gtx, 24)
 	x := sz.X - px
@@ -1353,7 +1353,7 @@ func (c *cropBox) drawCropper(gtx layout.Context, iw, ih int) {
 	for _, p := range []image.Point{sel.Min, {sel.Max.X, sel.Min.Y}, {sel.Min.X, sel.Max.Y}, sel.Max} {
 		r := image.Rect(p.X-hs/2, p.Y-hs/2, p.X+hs/2, p.Y+hs/2)
 		fill(gtx, r, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xb3})
-		fill(gtx, r.Inset(1), color.NRGBA{A: 0x33})
+		fill(gtx, r.Inset(border1(gtx)), color.NRGBA{A: 0x33})
 	}
 	defer clip.Rect{Max: image.Pt(iw, ih)}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, &c.drag)
@@ -1866,7 +1866,7 @@ func (s *EditSectionModal) layout(gtx layout.Context) layout.Dimensions {
 	px := dp(gtx, 28)
 	iw := maxInt(1, w-2*px)
 	line := pfSectionBorder(th)
-	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), line)
+	fill(gtx, image.Rect(0, 0, w, border1(gtx)), line)
 	y := dp(gtx, 20)
 	for _, e := range s.els {
 		if !s.drawn(e) {
@@ -1877,8 +1877,8 @@ func (s *EditSectionModal) layout(gtx layout.Context) layout.Dimensions {
 		})
 		y += d.Size.Y + dp(gtx, 20)
 	}
-	fill(gtx, image.Rect(0, y, w, y+maxInt(1, dp(gtx, 1))), line)
-	return layout.Dimensions{Size: image.Pt(w, y+maxInt(1, dp(gtx, 1)))}
+	fill(gtx, image.Rect(0, y, w, y+border1(gtx)), line)
+	return layout.Dimensions{Size: image.Pt(w, y+border1(gtx))}
 }
 
 func (s *EditSectionModal) label(gtx layout.Context, th *theme.Theme, cl *Colors, e *esElem, label string, w int) int {
@@ -1919,7 +1919,7 @@ func (s *EditSectionModal) drawElem(gtx layout.Context, th *theme.Theme, cl *Col
 			return esMultiline(gtx, th, cl, ed, placeholder, w, h, bg)
 		})
 		if !err.OK() {
-			stroke(gtx, image.Rect(0, y, w, y+h), dp(gtx, 8), maxInt(1, dp(gtx, 1)), ccErrColor(th, cl))
+			stroke(gtx, image.Rect(0, y, w, y+h), dp(gtx, 8), border1(gtx), ccErrColor(th, cl))
 		}
 		y += h
 		if !err.OK() {
@@ -2007,7 +2007,7 @@ func esMultiline(gtx layout.Context, th *theme.Theme, cl *Colors, ed *widget.Edi
 		rrect(gtx, r, rad, bg)
 	} else {
 		rrect(gtx, r, rad, cl.InputBorder)
-		rrect(gtx, r.Inset(1), rad-1, bg)
+		rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), bg)
 	}
 	at(gtx, image.Pt(dp(gtx, 12), dp(gtx, 10)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Min: image.Pt(w-dp(gtx, 24), 0), Max: image.Pt(w-dp(gtx, 24), h-dp(gtx, 20))}
@@ -2030,7 +2030,7 @@ func esSelectBox(gtx layout.Context, th *theme.Theme, cl *Colors, c *widget.Clic
 		focusRing(gtx, cl, r, rad)
 	}
 	rrect(gtx, r, rad, dtBorder(th))
-	rrect(gtx, r.Inset(1), rad-1, cl.Bg)
+	rrect(gtx, r.Inset(border1(gtx)), rad-border1(gtx), cl.Bg)
 	col := cl.Fg
 	if placeholder {
 		col = cl.Placeholder

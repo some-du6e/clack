@@ -279,7 +279,7 @@ func (p *EmojiPicker) layoutTonePopover(gtx layout.Context, th *theme.Theme, cl 
 	if !improved {
 		innerW = maxInt(rowW, textW(gtx, th, 10.88, theme.Bold, lbl))
 	}
-	b := maxInt(1, dp(gtx, 1))
+	b := border1(gtx)
 	bw := innerW + 2*pad.X + 2*b
 	bh := labelH + ch + 2*pad.Y + 2*b
 	t := u.toggle.Add(image.Pt(0, foot))

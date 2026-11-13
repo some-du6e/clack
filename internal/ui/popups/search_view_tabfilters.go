@@ -901,7 +901,7 @@ func srFacetCheckbox(gtx layout.Context, p image.Point, on bool) {
 		return
 	}
 	rrect(gtx, r, rad, rgb(0xa0a0a2))
-	rrect(gtx, r.Inset(1), max(rad-1, 0), rgb(0xffffff))
+	rrect(gtx, r.Inset(border1(gtx)), max(rad-border1(gtx), 0), rgb(0xffffff))
 }
 
 // srFacetInput is the medium select input with the search icon in r.

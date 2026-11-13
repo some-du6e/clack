@@ -486,7 +486,7 @@ func (c *SCAcceptModal) layoutName(gtx layout.Context, th *theme.Theme, cl *Colo
 		gtx.Constraints = layout.Exact(image.Pt(w, ih))
 		d := field(gtx, th, &c.ed, "", "", 36, 15)
 		if errText != "" {
-			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), maxInt(1, dp(gtx, 1)), ccErrColor(th, cl))
+			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), border1(gtx), ccErrColor(th, cl))
 		}
 		return d
 	})
@@ -594,7 +594,7 @@ func (c *SCAcceptModal) errorAlert(gtx layout.Context, th *theme.Theme, cl *Colo
 	})
 	r := image.Rectangle{Max: d.Size}
 	rrect(gtx, r, dp(gtx, 8), theme.WithAlpha(ec, 0x14))
-	stroke(gtx, r, dp(gtx, 8), maxInt(1, dp(gtx, 1)), theme.WithAlpha(ec, 0x80))
+	stroke(gtx, r, dp(gtx, 8), border1(gtx), theme.WithAlpha(ec, 0x80))
 	call.Add(gtx.Ops)
 	return d
 }
