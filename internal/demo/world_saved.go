@@ -1,6 +1,7 @@
 package demo
 
 import (
+	"encoding/json"
 	"net/url"
 	"sort"
 	"strconv"
@@ -139,6 +140,26 @@ func (w *World) savedList(f url.Values) any {
 	return okMap("saved_items", items, "counts", map[string]any{"uncompleted_count": counts["uncompleted"],
 		"uncompleted_overdue_count": counts["overdue"], "archived_count": counts["archived"], "completed_count": counts["completed"],
 		"total_count": len(w.saved)}, "response_metadata", map[string]any{"next_cursor": ""})
+}
+
+// savedGet answers saved.get {items}: the reminder rows' saved items
+// (items that aren't saved are left out, as Slack leaves them).
+func (w *World) savedGet(f url.Values) any {
+	var keys []struct {
+		ItemID   string `json:"item_id"`
+		ItemType string `json:"item_type"`
+		TS       string `json:"ts"`
+	}
+	_ = json.Unmarshal([]byte(f.Get("items")), &keys)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	items := []any{}
+	for _, k := range keys {
+		if it, ok := w.saved[k.ItemID+"/"+k.TS]; ok && (k.ItemType == "" || k.ItemType == "message") {
+			items = append(items, it.json())
+		}
+	}
+	return okMap("saved_items", items)
 }
 
 // savedWrite answers saved.add / delete / update and pushes the event.

@@ -61,6 +61,8 @@ func (w *World) more(method string, f url.Values) (any, bool) {
 		return okMap("account_types", []any{}), true
 	case "users.emailVerificationStatus.get":
 		return okMap("is_verified", true), true
+	case "users.listIgnoredUsers": // no blocked Slack Connect invitations
+		return okMap("emails", []string{}, "users", []string{}), true
 	case "apps.auth.external.userAuths.get":
 		return okMap("apps", map[string]any{}), true
 	case "users.priority.getRecommendations": // the VIP page's suggestions

@@ -136,7 +136,7 @@
     "avatar": {"bg": "#118ab2", "skin": "#c68642", "hair": "#4a2c2a", "style": "afro", "extra": "headset", "accent": "#ef476f"}
   },
   {
-    "id": "U0DEMOINES", "handle": "ines", "name": "Ines Calloway", "title": "Account Manager, Papertrail Freight", "pronouns": "she/her",
+    "id": "U0DEMOINES", "handle": "ines", "name": "Ines Carvalho", "title": "Account Manager, Papertrail Freight", "pronouns": "she/her",
     "tz": "America/Chicago", "team": "papertrail",
     "persona": "Papertrail Freight's account manager for Quillfeather (Slack Connect). Upbeat, precise about delivery windows, signs off with a truck.",
     "status": {"emoji": ":truck:", "text": "On the road to Wexley Falls"},

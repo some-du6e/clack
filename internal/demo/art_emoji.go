@@ -2,7 +2,8 @@ package demo
 
 // The demo's emoji, drawn: simple flat versions of the standard emoji
 // people use most (the demo is offline, so Slack's CDN images are never
-// fetched), a neutral face for the rest, and Quillfeather's custom emoji.
+// fetched), the rest drawn from their names (art_emoji_gen.go), and
+// Quillfeather's custom emoji.
 // Every drawing is in a 100x100 unit space and readable at 22px: bold
 // silhouettes, a darker rim, few details.
 
@@ -39,7 +40,7 @@ func drawStandardEmoji(name, stem string, px int) []byte {
 	if f, ok := stdArt[name]; ok {
 		f(c)
 	} else {
-		fallbackEmoji(c, stem)
+		genEmoji(c, stdName(stem), stem) // art_emoji_gen.go
 	}
 	return c.png()
 }

@@ -192,6 +192,8 @@ func (w *World) api(method string, f url.Values) (any, bool) {
 		return w.threadMark(f), true
 	case "saved.list":
 		return w.savedList(f), true
+	case "saved.get":
+		return w.savedGet(f), true
 	case "saved.add", "saved.delete", "saved.update":
 		return w.savedWrite(method, f), true
 	case "later.list":

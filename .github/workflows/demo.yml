@@ -66,7 +66,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$CLACK_DEMO_SHOTS"
-          xvfb-run -a go test -count=1 -timeout 30m -v -run 'TestDemoShots$|TestDemoSmoke$|TestDemoSurfaces$' ./internal/ui/
+          go test -count=1 -v -run 'TestEmojiSheet$' ./internal/demo/
+          xvfb-run -a go test -count=1 -timeout 30m -v -run 'TestDemoShots$|TestDemoSmoke$|TestDemoSurfaces$|TestDemoReadmeShots$' ./internal/ui/
           ls -la "$CLACK_DEMO_SHOTS"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
