@@ -17,7 +17,11 @@ on:
       - "internal/core/drafts.go"
       - "internal/core/reads.go"
       - "internal/core/channel_pins*.go"
-      - "internal/core/bookmark_folders.go"
+      - "internal/core/bookmark_folders*.go"
+      - "internal/core/channel_managers*.go"
+      - "internal/ui/popups/bookmark_folder_modal.go"
+      - "internal/ui/views/folder_tab*.go"
+      - "internal/ui/views/file_picker*.go"
       - "internal/fakeslack/pins_folders.go"
       - "internal/ui/popups/bookmark_modals.go"
       - "internal/ui/popups/modal.go"
@@ -50,8 +54,8 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$VIEWS_SHOTS_DIR"
-          go test -count=1 -v -run 'TestUnscheduleDraft|TestActivityFeedParams|TestPinsTabLikeSlack|TestBookmarkFoldersLikeSlack|TestFolderRowsShouldShow' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestThreadsTimeLikeSlack|TestDraftsTimesLikeSlack|TestDraftsDeleteDialog|TestActivityEmptyStates|TestActivitySelectOptions|TestActivitySettingsMenu|TestThreadsUpToDateDivider|TestThreadsEmptyState|TestDraftsScheduledActions|TestViewsAuditShotsDark|TestThreadsKeysLikeSlack|TestThreadsRealtimeLikeSlack|TestDraftsKeysAndRealtimeLikeSlack|TestTodosKeysAndRealtimeLikeSlack|TestUnreadsHomeEndLikeSlack|TestThreadsHeaderGroups|TestKeyboardShortcutsSearchGroups|TestTodosSectionsGroups|TestThreadsShowMoreReplies|TestTodosSectionListsLikeSlack|TestSentKeysLikeSlack|TestSavedKeysLikeSlack|TestUnreadsGlobalScrollLikeSlack|TestDMsUnreadsEmptyLikeSlack|TestThreadsTypedTextLikeSlack|TestThreadsEnterFocusesTheRootLikeSlack|TestThreadsShowMoreFocusLikeSlack|TestTodosFocusedRowActionsLikeSlack|TestSavedFocusedRowActionsLikeSlack|TestTodosTombstoneEnterLikeSlack|TestLaterRemoveCopyLikeSlack|TestTodosViewSelectsLikeSlack|TestChannelPinsRows|TestFolderTabRows|TestPinsFoldersShots' ./internal/ui/views
+          go test -count=1 -v -run 'TestUnscheduleDraft|TestActivityFeedParams|TestPinsTabLikeSlack|TestBookmarkFoldersLikeSlack|TestFolderRowsShouldShow|TestCanEditTabsLikeSlack|TestChannelManagersPersist|TestPinsRefetchAfterSlowReconnect|TestFolderMoveUploadLikeSlack' ./internal/core
+          xvfb-run -a go test -count=1 -v -run 'TestThreadsTimeLikeSlack|TestDraftsTimesLikeSlack|TestDraftsDeleteDialog|TestActivityEmptyStates|TestActivitySelectOptions|TestActivitySettingsMenu|TestThreadsUpToDateDivider|TestThreadsEmptyState|TestDraftsScheduledActions|TestViewsAuditShotsDark|TestThreadsKeysLikeSlack|TestThreadsRealtimeLikeSlack|TestDraftsKeysAndRealtimeLikeSlack|TestTodosKeysAndRealtimeLikeSlack|TestUnreadsHomeEndLikeSlack|TestThreadsHeaderGroups|TestKeyboardShortcutsSearchGroups|TestTodosSectionsGroups|TestThreadsShowMoreReplies|TestTodosSectionListsLikeSlack|TestSentKeysLikeSlack|TestSavedKeysLikeSlack|TestUnreadsGlobalScrollLikeSlack|TestDMsUnreadsEmptyLikeSlack|TestThreadsTypedTextLikeSlack|TestThreadsEnterFocusesTheRootLikeSlack|TestThreadsShowMoreFocusLikeSlack|TestTodosFocusedRowActionsLikeSlack|TestSavedFocusedRowActionsLikeSlack|TestTodosTombstoneEnterLikeSlack|TestLaterRemoveCopyLikeSlack|TestTodosViewSelectsLikeSlack|TestChannelPinsRows|TestFolderTabRows|TestPinsFoldersShots|TestFolderTabMoveLikeSlack|TestFolderCreateAndMoveLikeSlack|TestFolderUploadLikeSlack|TestFolderFilePickerLikeSlack|TestPinsAddToListButton|TestFoldersMoreShots' ./internal/ui/views
           ls -la "$VIEWS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

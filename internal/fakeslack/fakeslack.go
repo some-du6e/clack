@@ -407,6 +407,9 @@ type Server struct {
 	// managers (role Rl0A) by channel (missing: none). Set it before the
 	// calls.
 	ChannelManagers map[string][]string
+	// PinsFolderLimit refuses #pins-gallery's bookmarks.add past that many
+	// bookmarks (too_many_bookmarks); 0: no limit (pins_folders.go).
+	PinsFolderLimit int
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it

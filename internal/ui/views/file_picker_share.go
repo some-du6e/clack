@@ -156,4 +156,3 @@ func newShareIntoFolderModal(h Host, ph popups.Host, ch, folder string, f core.F
 		Buttons: []*popups.ModalButton{cancel, share}})
 	return s.modal
 }
-

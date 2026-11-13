@@ -6,6 +6,7 @@ package core
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -318,5 +319,110 @@ func TestPinsRefetchAfterSlowReconnect(t *testing.T) {
 	waitPins(t, a, "the refetched pins", func(items []PinsTabItem) bool { return len(items) == 4 })
 	if f := fs.PinsFoldersForms("pins.list"); len(f) != 2 || f[1].Get("reason") != "fetchPinsList" {
 		t.Fatalf("pins.list after the slow reconnect: %v", f)
+	}
+}
+
+// onMoveBookmark (bookmarks.reorder {channel, parent_id, center,
+// bookmark_type, entity_id}, no neighbours; none for the loose folder),
+// addBookmarkFolderForChannel (bookmarks.add {channel, title, type
+// folder}), uploadFilesToChannelFolder (the cap; each file uploaded,
+// files.info with its reason, bookmarks.add type file into the folder)
+// and a picked file's bookmarks.add with its access_level.
+func TestFolderMoveUploadLikeSlack(t *testing.T) {
+	a, fs, _ := pfApp(t)
+	ch := fakeslack.PinsChannelID
+	ctx := context.Background()
+	all := waitBookmarks(t, a, "the bookmarks", func(b []Bookmark) bool { return len(b) == 8 })
+	var doc Bookmark
+	for _, b := range all {
+		if b.ID == "Bk0PINSF1" {
+			doc = b
+		}
+	}
+	// into the empty folder
+	if err := a.MoveFolderBookmark(ctx, ch, doc, fakeslack.PinsEmptyFolderID); err != nil {
+		t.Fatal(err)
+	}
+	rf := fs.PinsFoldersForms("bookmarks.reorder")
+	if len(rf) != 1 || rf[0].Get("parent_id") != fakeslack.PinsEmptyFolderID || rf[0].Get("center") != doc.ID ||
+		rf[0].Get("bookmark_type") != "file" || rf[0].Get("entity_id") != fakeslack.PinsDocFileID || rf[0].Has("left") || rf[0].Has("right") {
+		t.Fatalf("move: bookmarks.reorder %v", rf)
+	}
+	all = waitBookmarks(t, a, "the moved file", func(b []Bookmark) bool {
+		rows, _ := FolderRows(b, fakeslack.PinsEmptyFolderID)
+		return len(rows) == 1 && rows[0].ID == doc.ID
+	})
+	// out to the channel's loose Bookmarks folder
+	for _, b := range all {
+		if b.ID == doc.ID {
+			doc = b
+		}
+	}
+	if err := a.MoveFolderBookmark(ctx, ch, doc, ""); err != nil {
+		t.Fatal(err)
+	}
+	if rf := fs.PinsFoldersForms("bookmarks.reorder"); len(rf) != 2 || rf[1].Has("parent_id") {
+		t.Fatalf("move to Bookmarks: bookmarks.reorder %v", rf)
+	}
+	waitBookmarks(t, a, "the loose file", func(b []Bookmark) bool {
+		rows, _ := FolderRows(b, "")
+		return slices.ContainsFunc(rows, func(r Bookmark) bool { return r.ID == doc.ID })
+	})
+
+	// a new folder
+	f, err := a.AddBookmarkFolder(ctx, ch, "Specs")
+	if err != nil || f.Type != "local_folder" || f.Title != "Specs" {
+		t.Fatalf("AddBookmarkFolder = %+v, %v", f, err)
+	}
+	af := fs.PinsFoldersForms("bookmarks.add")
+	if l := af[len(af)-1]; l.Get("type") != "folder" || l.Get("title") != "Specs" || l.Get("reason") != "bookmarks-add-folder-api" || l.Has("link") {
+		t.Errorf("folder bookmarks.add %v", l)
+	}
+
+	// the cap
+	if err := a.CheckFolderUpload(ctx, ch, MaxTabItems); err != ErrTooManyBookmarks {
+		t.Errorf("CheckFolderUpload at the cap = %v", err)
+	}
+	if err := a.CheckFolderUpload(ctx, ch, 2); err != nil {
+		t.Errorf("CheckFolderUpload = %v", err)
+	}
+	// two files into Specs
+	failed := a.UploadFilesToFolder(ctx, ch, f.ID, []UploadFile{
+		{Name: "notes.txt", Title: "notes.txt", Data: []byte("synthetic notes")},
+		{Name: "plan.md", Title: "plan.md", Data: []byte("# synthetic plan")},
+	})
+	if len(failed) != 0 {
+		t.Fatalf("failed uploads %v", failed)
+	}
+	if p := a.FolderUploads(ch, f.ID); len(p) != 0 {
+		t.Errorf("pending after the uploads: %v", p)
+	}
+	all = waitBookmarks(t, a, "the uploaded files", func(b []Bookmark) bool {
+		rows, _ := FolderRows(b, f.ID)
+		return len(rows) == 2
+	})
+	n := 0
+	for _, l := range fs.PinsFoldersForms("bookmarks.add") {
+		if l.Get("type") == "file" && l.Get("parent_id") == f.ID {
+			n++
+			if l.Get("entity_id") == "" || l.Get("link") == "" || l.Get("reason") != "bookmarks-add-api" {
+				t.Errorf("file bookmarks.add %v", l)
+			}
+		}
+	}
+	if n != 2 {
+		t.Errorf("%d file bookmarks.add into Specs, want 2", n)
+	}
+
+	// a picked canvas with its access level
+	if _, err := a.AddFolderFile(ctx, ch, f.ID, File{ID: "F0CANVAS01", Title: "Plan", Permalink: "https://example.com/docs/F0CANVAS01", IsCanvas: true}, "read"); err != nil {
+		t.Fatal(err)
+	}
+	af = fs.PinsFoldersForms("bookmarks.add")
+	if l := af[len(af)-1]; l.Get("access_level") != "read" || l.Get("entity_id") != "F0CANVAS01" || l.Get("type") != "file" {
+		t.Errorf("picked bookmarks.add %v", l)
+	}
+	if !a.FolderShareDirect(ch, File{Channels: []string{ch}}) || a.FolderShareDirect(ch, File{Mode: "hosted"}) || !a.FolderShareDirect(ch, File{Mode: "external"}) {
+		t.Error("FolderShareDirect: shared here or external add at once, else the prompt")
 	}
 }

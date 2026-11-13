@@ -33,6 +33,7 @@ type pfHost struct {
 	*cfHost
 	pinned    []string
 	bookmarks []string
+	listed    []string // AddMessageToList (folder_tab_more_test.go)
 }
 
 func (h *pfHost) OpenPinnedMessage(ch, ts, thread string) { h.pinned = append(h.pinned, ch+"/"+ts) }

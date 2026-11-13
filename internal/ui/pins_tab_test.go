@@ -230,10 +230,10 @@ func TestFolderTabLikeSlack(t *testing.T) {
 	e.settle(500 * time.Millisecond) // the file's files.info, the favicon
 	pfShot(e, "folder-tab")
 	rows := v.Rows()
-	if got := strings.Join(v.RowMenuLabels(rows[0]), "|"); got != "Copy link|Edit link|─|Delete link" {
+	if got := strings.Join(v.RowMenuLabels(rows[0]), "|"); got != "Copy link|Edit link|─|Move to folder|─|Delete link" {
 		t.Errorf("link menu %q", got)
 	}
-	if got := strings.Join(v.RowMenuLabels(rows[3]), "|"); got != "Copy link|─|Remove file" {
+	if got := strings.Join(v.RowMenuLabels(rows[3]), "|"); got != "Copy link|─|Move to folder|─|Remove file" {
 		t.Errorf("file menu %q", got)
 	}
 
