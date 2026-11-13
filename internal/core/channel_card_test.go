@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -101,12 +103,25 @@ func TestChannelCardConvFields(t *testing.T) {
 		t.Errorf("people %d %v, want users/counts' 1100", n, ok)
 	}
 	cached := a.S.Timeline(fakeslack.ThreadSharedID) != nil
-	before := fs.CallCount("conversations.history")
+	var mu sync.Mutex
+	limit1 := 0
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
+		if method == "conversations.history" && form.Get("channel") == fakeslack.ThreadSharedID && form.Get("limit") == "1" {
+			mu.Lock()
+			limit1++
+			mu.Unlock()
+		}
+		return nil, false
+	})
+	t.Cleanup(func() { fs.SetHook(nil) })
 	ts, err := a.ChannelLatestTS(ctx, fakeslack.ThreadSharedID)
 	if err != nil || ts != fakeslack.ThreadRootTS {
 		t.Errorf("latest %q %v, want the fixture's root %s", ts, err, fakeslack.ThreadRootTS)
 	}
-	if after := fs.CallCount("conversations.history"); cached && after != before || !cached && after != before+1 {
-		t.Errorf("conversations.history calls %d → %d (history cached: %v): want one limit-1 read only when core holds none", before, after, cached)
+	mu.Lock()
+	n := limit1
+	mu.Unlock()
+	if cached && n != 0 || !cached && n != 1 {
+		t.Errorf("%d conversations.history limit-1 reads (history cached: %v): want one only when core holds none", n, cached)
 	}
 }

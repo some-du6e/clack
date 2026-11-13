@@ -236,6 +236,10 @@ func TestSlugChannelCardAndAppTipLikeSlack(t *testing.T) {
 		t.Error("the member tooltip over a channel slug")
 	}
 	e.moveWin(&ptr, image.Pt(2, e.atomCentre(3).Y))
+	ctl.Frame(e.now, false, false) // left: the 250ms close starts
+	if _, _, open := ctl.Open(); !open {
+		t.Error("closed at once; Texty waits 250ms")
+	}
 	ctl.Frame(e.now.Add(300*time.Millisecond), false, false)
 	if _, _, open := ctl.Open(); open {
 		t.Error("the channel card stayed 300ms after leaving the slug")

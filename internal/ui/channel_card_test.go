@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"os"
 	"slices"
@@ -39,9 +40,24 @@ func (e *perfEnv) chcLink(conv, ch string) image.Rectangle {
 // opens (350ms) and returns the trigger's box.
 func (e *perfEnv) chcOpen(t *testing.T, conv, ch string) image.Rectangle {
 	t.Helper()
-	r := e.chcLink(conv, ch)
+	var r image.Rectangle
+	dl := time.Now().Add(5 * time.Second)
+	for r = e.chcLink(conv, ch); r.Empty() && time.Now().Before(dl); r = e.chcLink(conv, ch) {
+		e.frame()
+		time.Sleep(20 * time.Millisecond)
+	}
 	if r.Empty() {
-		t.Fatalf("no link to %s in the channel", ch)
+		var seen []string
+		if c := e.a.convos[conv+"/"]; c != nil {
+			if l, ok := c.list.(channelList); ok {
+				for _, lr := range l.LinkRects() {
+					seen = append(seen, fmt.Sprintf("%s %d %s %v", lr.TS, lr.Kind, lr.ID, lr.R))
+				}
+			}
+		} else {
+			seen = append(seen, "no conversation view")
+		}
+		t.Fatalf("no link to %s in %s; links: %q; route %q", ch, conv, seen, e.a.router.Current().Channel())
 	}
 	mid := f32.Pt(float32(r.Min.X+r.Dx()/2), float32(r.Min.Y+r.Dy()/2))
 	e.move(mid)
