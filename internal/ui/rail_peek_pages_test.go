@@ -17,6 +17,14 @@ import (
 
 func pagePeekEnv(t *testing.T) *perfEnv {
 	t.Helper()
+	e, _ := pagePeekEnvWith(t, nil)
+	return e
+}
+
+// pagePeekEnvWith is pagePeekEnv with setup run on the fake before the
+// client starts.
+func pagePeekEnvWith(t *testing.T, setup func(fs *fakeslack.Server)) (*perfEnv, *fakeslack.Server) {
+	t.Helper()
 	sz := fakeslack.Small
 	sz.Views, sz.DMsTab = true, true // the Activity inbox's feed, client.dms
 	fs, err := fakeslack.Start(sz)
@@ -25,6 +33,9 @@ func pagePeekEnv(t *testing.T) *perfEnv {
 	}
 	t.Cleanup(func() { fs.Close() })
 	fs.SetPrefs(map[string]any{"has_starred_item": true}) // the Later tab (OpEF shouldShowLaterLink)
+	if setup != nil {
+		setup(fs)
+	}
 	e := startEnv(t, fs, t.TempDir())
 	if os.Getenv("RAIL_PEEK_SHOTS_DIR") != "" && e.gpu == nil {
 		if w, err := pixeltest.NewWindow(e.size.X, e.size.Y); err == nil {
@@ -35,7 +46,7 @@ func pagePeekEnv(t *testing.T) *perfEnv {
 	}
 	e.waitReady()
 	e.settle(600 * time.Millisecond)
-	return e
+	return e, fs
 }
 
 // tabTrigger waits for key's tab button in the rail.

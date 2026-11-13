@@ -255,6 +255,8 @@ var experimentReads = map[string][]string{
 	// the Activity badge's entry types (activity_badges.go)
 	"code_review_requested_in_activity": on, "inviter_joiner_first_dm_v2": {"treatment"},
 	"agentforce_deprecation": on, "agent_tasks": on, "later_todos": on, "agents_landing_page": on, "agentic_ia": on,
+	// the Agents & tools peek's session menu (rail_peek_agents_menu.go: M/qt Kw, HLQ9 GL)
+	"agent_ux_august2026_release_translations": on, "agent_channel_thread_naming": on,
 	// activity (activity_agent.go: 5Ns/, M/qt ji; nested_secondary_view is
 	// the secondary views' below)
 	"activity_entry_layout_revisions_2": on, "activity_inbox_remove_persistent_detail_panel": on,

@@ -38,6 +38,16 @@ import (
 //     (.p-peek_trigger--is-peek-visible).
 //   - A row in the card closes it (PeekContext maybeClosePeek) before it
 //     navigates.
+//   - The card's content div tracks the pointer (onMouseEnter /
+//     onMouseLeave set eu), and while eu is set the safe area holds
+//     whatever the pointer does. A row's menu is rendered from inside the
+//     card (a portal in its React tree), so React's enter/leave treat the
+//     menu as part of it: going from the card into its menu leaves eu set,
+//     and leaving the menu for the window clears it. A menu that closes
+//     under the pointer (an item's click) gets no mouseleave at all (the
+//     next mouseover has no relatedTarget), so eu stays set until the
+//     pointer comes back onto the card and leaves it. When the peek
+//     closes, the menus it opened unmount with it.
 
 const (
 	tabPeekDelay    = 300 * time.Millisecond // PeekTrigger's default triggerDelay
@@ -71,6 +81,10 @@ type tabPeekState struct {
 	checkedAt  time.Time
 	pending    image.Point
 	hasPending bool
+
+	inside    bool    // eu: the pointer is in the card's React tree (its menus included)
+	over      bool    // the pointer was on the card or one of its menus at the last move
+	lastChild Overlay // the card's menu under the pointer at the last move
 
 	content tabPeekContent
 }
@@ -219,7 +233,9 @@ func (a *App) openTabPeek(key string) {
 			if p.pop != pop {
 				return
 			}
+			a.closeTabPeekChildren(pop) // its menus unmount with it
 			p.hasPrev, p.hasPending = false, false
+			p.inside, p.over, p.lastChild = false, false, nil
 			if p.hov && !p.pressed { // eI: Escape with the pointer still on the button
 				p.dismissed = true
 			}
@@ -228,6 +244,7 @@ func (a *App) openTabPeek(key string) {
 	})
 	p.pop = pop
 	p.hasPrev, p.hasPending, p.checkedAt = false, false, time.Time{}
+	p.inside, p.over, p.lastChild = false, false, nil
 	c.opened()
 	a.ShowOverlay(pop)
 }
@@ -264,6 +281,9 @@ func (a *App) tabPeekPointer(pe pointer.Event) {
 		}
 		moved := pt != p.lastPtr
 		p.lastPtr = pt
+		if open {
+			a.tabPeekTrack(p, pt)
+		}
 		if moved && pt.In(p.trig) && !open && !p.pressed { // eF after an Escape
 			switch {
 			case p.dismissed:
@@ -297,12 +317,64 @@ func (a *App) tabPeekCheck(p *tabPeekState, pt image.Point) {
 	if !a.tabPeekOpen(p.key) {
 		return
 	}
-	if !(p.pop.InsideCard(pt) || railPeekSafe(pt, p.trig, p.pop.Rect(), p.prev, p.hasPrev)) {
+	if !(p.inside || p.pop.InsideCard(pt) || railPeekSafe(pt, p.trig, p.pop.Rect(), p.prev, p.hasPrev)) {
 		p.pop.Dismiss()
 		a.Invalidate()
 		return
 	}
 	p.prev, p.hasPrev = pt, true
+}
+
+// tabPeekChildren are the menus open above key's card (a.overlays is
+// bottom to top): what its rows opened, inside the PeekView's React tree
+// in Slack.
+func (a *App) tabPeekChildren(pop *popups.Popover) []*popups.Menu {
+	var out []*popups.Menu
+	above := false
+	for _, o := range a.overlays {
+		if o == Overlay(pop) {
+			above = true
+			continue
+		}
+		if m, ok := o.(*popups.Menu); ok && above && !m.Dismissed() {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// closeTabPeekChildren dismisses the menus pop's rows opened.
+func (a *App) closeTabPeekChildren(pop *popups.Popover) {
+	for _, m := range a.tabPeekChildren(pop) {
+		m.Dismiss()
+	}
+}
+
+// tabPeekTrack is the card's onMouseEnter / onMouseLeave (eu) for a move
+// to pt, with React's enter/leave over the card and the menus it opened.
+func (a *App) tabPeekTrack(p *tabPeekState, pt image.Point) {
+	var child Overlay
+	for _, m := range a.tabPeekChildren(p.pop) {
+		if m.Contains(pt) {
+			child = m
+		}
+	}
+	now := child != nil || p.pop.InsideCard(pt)
+	switch {
+	case now: // onMouseEnter (or still inside)
+		p.inside = true
+	case p.over && p.lastChild != nil && p.lastChild.Dismissed():
+		// the menu closed under the pointer: no mouseleave, eu stays set
+	case p.over: // onMouseLeave
+		p.inside = false
+	}
+	p.over, p.lastChild = now, child
+}
+
+// tabPeekInside reports the open tab peek's eu (tests).
+func (a *App) tabPeekInside(key string) bool {
+	p, ok := a.tpeeks.m[key]
+	return ok && p.inside
 }
 
 // tabPeekEndFrame runs after the rail: a trigger no tab drew this frame

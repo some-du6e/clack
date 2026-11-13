@@ -18,15 +18,19 @@ import (
 	"sync"
 	"time"
 
+	"gioui.org/io/event"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -168,7 +172,9 @@ type dmsEntry struct {
 // dmsRow is the persistent per-row widget state.
 type dmsRow struct {
 	dlRowState
-	todo, more widget.Clickable
+	todo, more, markRead widget.Clickable
+	moreSz               int // the ⋮'s size last frame (px): the menu's anchor
+	ctx                  int // the row's right-click target (DmsListAll's context menu)
 
 	// This frame's row, read by the DmsListItem and DmsChannel boundaries.
 	v       *DMs
@@ -499,12 +505,24 @@ func (d *DMs) update(gtx C) {
 		gtx.Execute(key.FocusCmd{Tag: &d.find.ed})
 	}
 	for id, r := range d.rows {
-		if r.todo.Clicked(gtx) {
-			d.addTodo(id)
+		// the hover actions and the context menu (dms_menu.go)
+		i, ok := d.index[id]
+		if r.markRead.Clicked(gtx) && ok {
+			d.dmMarkRead(&d.items[i])
 		}
-		if r.more.Clicked(gtx) {
-			if i, ok := d.index[id]; ok && d.items[i].Conv.User != "" {
-				openProfileCard(d.h, image.Point{}, d.items[i].Conv.User) // the row's ⋮: Clack's card, not a person click
+		if r.todo.Clicked(gtx) && ok {
+			d.dmToggleTodo(&d.items[i])
+		}
+		if r.more.Clicked(gtx) && ok {
+			d.dmMenuOpen(&d.items[i], &r.more)
+		}
+		for {
+			ev, got := gtx.Event(pointer.Filter{Target: &r.ctx, Kinds: pointer.Press})
+			if !got {
+				break
+			}
+			if e, isPtr := ev.(pointer.Event); isPtr && ctxclick.Press(e) && ok {
+				d.dmMenuOpen(&d.items[i], nil)
 			}
 		}
 		if r.click.Clicked(gtx) {
@@ -1066,15 +1084,22 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 		bg = d.c.tint
 	}
 
+	// WbG1 Actions with isDmTab: Mark as read while unread, the to-do
+	// button, More actions (dms_menu.go)
 	var bar W
 	if dm.Latest != nil {
 		bar = func(gtx C) D {
-			btns := []layout.FlexChild{
-				layout.Rigid(func(gtx C) D { return d.iconButton(gtx, &r.todo, "check-circle", 32, 18, d.p.Sec) }),
+			var btns []layout.FlexChild
+			if dmsUnread(dm) {
+				btns = append(btns, layout.Rigid(func(gtx C) D { return d.iconButton(gtx, &r.markRead, "mark-as-read", 32, 18, d.p.Sec) }))
 			}
-			if dm.Conv.User != "" {
-				btns = append(btns, layout.Rigid(func(gtx C) D { return d.iconButton(gtx, &r.more, "more", 32, 18, d.p.Sec) }))
+			if icon, _, ok := d.dmTodo(dm); ok {
+				btns = append(btns, layout.Rigid(func(gtx C) D { return d.iconButton(gtx, &r.todo, icon, 32, 18, d.p.Sec) }))
 			}
+			btns = append(btns, layout.Rigid(func(gtx C) D {
+				r.moreSz = gtx.Dp(32)
+				return d.iconButton(gtx, &r.more, "ellipsis-vertical-filled", 32, 18, d.p.Sec)
+			}))
 			return d.dlActionBar(gtx, btns...)
 		}
 	}
@@ -1138,10 +1163,17 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 			)
 		})
 	}
-	return d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: d.c.tint, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
+	rd := d.dlHoverRow(gtx, &r.dlRowState, dlRowOpts{Bg: bg, HoverBg: d.c.tint, Rule: d.c.rule, Bar: bar, BarTop: 4, BarRight: 12, Content: func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return slackc.Component(gtx, "DmsChannel", r, (*dmsRow).channelProps, (*dmsRow).layoutChannel)
 	}})
+	// renderContextMenuForItem: a right-click anywhere on the row
+	cs := clip.Rect{Max: rd.Size}.Push(gtx.Ops)
+	pass := pointer.PassOp{}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &r.ctx)
+	pass.Pop()
+	cs.Pop()
+	return rd
 }
 
 // nameLine is line 1 of a row: bold name (truncated), optional " (you)"

@@ -103,16 +103,83 @@ func (s *Server) handleAgentSessions(method string, f url.Values) (any, bool) {
 		}
 		return s.recentlyRun(), true
 	}
-	if method != "ai.alpha.agents.sessions.list" {
+	switch method {
+	case "agents.threads.pin", "agents.threads.unpin", "agents.threads.archive", "agents.threads.rename":
+		// the session menu's writes (boot-vendors LSN0 / KDGJ / ek0Z /
+		// d+ht): {channel, thread_ts (threads only), reason[, name]}
+		if f.Get("channel") == "" {
+			return fail("channel_not_found"), true
+		}
+		if method == "agents.threads.rename" && f.Get("name") == "" {
+			return fail("invalid_name"), true
+		}
+		e := url.Values{"method": {method}}
+		for k, v := range f {
+			if k != "token" {
+				e[k] = v
+			}
+		}
+		s.convMu.Lock()
+		s.sessionEdits = append(s.sessionEdits, e)
+		s.convMu.Unlock()
+		return ok(), true
+	case "ai.alpha.agents.sessions.list":
+	default:
 		return nil, false
 	}
 	s.convMu.Lock()
 	s.sessionReasons = append(s.sessionReasons, f.Get("reason"))
+	edits := append([]url.Values(nil), s.sessionEdits...)
 	s.convMu.Unlock()
 	if !s.Size.AgentSessions {
 		return ok("sessions", []any{}), true
 	}
-	return ok("sessions", s.agentSessions()), true
+	return ok("sessions", applySessionEdits(s.agentSessions(), edits)), true
+}
+
+// applySessionEdits lays the pins, archives and renames so far over the
+// fixtures: what the server would list now.
+func applySessionEdits(ss []map[string]any, edits []url.Values) []map[string]any {
+	for _, e := range edits {
+		ch, ts := e.Get("channel"), e.Get("thread_ts")
+		for _, m := range ss {
+			id, rts := "", ""
+			var root map[string]any
+			if r, ok := m["thread"].(map[string]any); ok {
+				root = r
+				id, _ = r["channel"].(string)
+				rts, _ = r["ts"].(string)
+			} else {
+				id, _ = m["channel_id"].(string)
+			}
+			if id != ch || rts != ts {
+				continue
+			}
+			switch e.Get("method") {
+			case "agents.threads.pin":
+				m["is_pinned"] = true
+			case "agents.threads.unpin":
+				m["is_pinned"] = false
+			case "agents.threads.archive":
+				m["is_archived"] = true
+			case "agents.threads.rename":
+				if root != nil {
+					if as, ok := root["agent_session"].(map[string]any); ok {
+						as["title"] = e.Get("name")
+					}
+				}
+			}
+		}
+	}
+	return ss
+}
+
+// AgentSessionEdits are the agents.threads.* writes so far, each with its
+// "method".
+func (s *Server) AgentSessionEdits() []url.Values {
+	s.convMu.Lock()
+	defer s.convMu.Unlock()
+	return append([]url.Values(nil), s.sessionEdits...)
 }
 
 // AgentSessionsReasons are the reasons ai.alpha.agents.sessions.list was

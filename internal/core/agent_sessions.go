@@ -214,3 +214,58 @@ func (a *App) RecentlyRunTriggers(ctx context.Context) ([]WorkflowTrigger, error
 	a.Interactive().putTriggers(out...)
 	return out, nil
 }
+
+// The agent session menu's writes (boot-shared 3DaI useSessionActions,
+// n5nG useRenameAgentThread; methods from boot-vendors LSN0, KDGJ, ek0Z,
+// d+ht): {channel, thread_ts for a thread session, reason}.
+
+func sessionForm(ch, threadTS, reason string) url.Values {
+	f := url.Values{"channel": {ch}, "reason": {reason}}
+	if threadTS != "" {
+		f.Set("thread_ts", threadTS)
+	}
+	return f
+}
+
+// PinAgentSession is pinAgentSession: agents.threads.pin, or unpin when
+// pinned is false (reason agent_session_sidebar).
+func (a *App) PinAgentSession(ctx context.Context, ch, threadTS string, pinned bool) error {
+	m := "agents.threads.unpin"
+	if pinned {
+		m = "agents.threads.pin"
+	}
+	err := a.C.Call(ctx, m, sessionForm(ch, threadTS, "agent_session_sidebar"), nil)
+	logCall(m, ch+" "+threadTS, err)
+	return err
+}
+
+// ArchiveAgentSession is archiveAgentSession (the menu's Close
+// conversation): agents.threads.archive (reason agent_session_sidebar).
+func (a *App) ArchiveAgentSession(ctx context.Context, ch, threadTS string) error {
+	err := a.C.Call(ctx, "agents.threads.archive", sessionForm(ch, threadTS, "agent_session_sidebar"), nil)
+	logCall("agents.threads.archive", ch+" "+threadTS, err)
+	return err
+}
+
+// RenameAgentThread is useRenameAgentThread's renameThread:
+// agents.threads.rename {channel, thread_ts, name, reason
+// rename_agent_thread}. The error's code picks the modal's message.
+func (a *App) RenameAgentThread(ctx context.Context, ch, threadTS, name string) error {
+	f := sessionForm(ch, threadTS, "rename_agent_thread")
+	f.Set("name", name)
+	err := a.C.Call(ctx, "agents.threads.rename", f, nil)
+	logCall("agents.threads.rename", ch+" "+threadTS, err)
+	return err
+}
+
+// SessionWithAgentApp is +RDp's B (Qek0 dy) for a session's channel: a DM
+// whose person is an agent app (its app profile's legacy_app.is_agent_app,
+// once the profile is loaded); such sessions can't be renamed.
+func (a *App) SessionWithAgentApp(ch string) bool {
+	c, ok := a.S.Conv(ch)
+	if !ok || c.User == "" {
+		return false
+	}
+	card, ok := a.CachedAppCard(c.User, "")
+	return ok && card.AgentApp
+}
