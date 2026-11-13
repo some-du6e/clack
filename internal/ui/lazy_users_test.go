@@ -70,6 +70,7 @@ func TestReactorsFetchedOnTooltip(t *testing.T) {
 	c := e.a.Core()
 	e.openChannel(ch)
 	e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 0 })
+	e.toLatest() // the channel opens at its first unread; the message is the newest
 	var pill messages.ReactionRect
 	e.until("the reaction pill", 20*time.Second, func() bool {
 		cv := e.a.convos[ch+"/"]

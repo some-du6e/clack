@@ -17,10 +17,12 @@ import (
 func TestMissingNamesAreRecorded(t *testing.T) {
 	a, _ := testApp(t)
 	a.S.TakeMissing() // drop anything recorded by setup
+	// a user mention isn't asked for when its message is converted: the
+	// view asks as it draws the mention (lazy_users.go, richview MemberRead)
 	a.message("C1", &slack.Message{TS: "1.0", User: "U1", Text: "see <#C0A9ZZZZ> and <@U0NOPE> and <#C1>"})
 	chans, users, _ := a.S.TakeMissing()
-	if strings.Join(chans, ",") != "C0A9ZZZZ" || strings.Join(users, ",") != "U0NOPE" {
-		t.Errorf("missing chans=%v users=%v", chans, users)
+	if strings.Join(chans, ",") != "C0A9ZZZZ" || len(users) != 0 {
+		t.Errorf("missing chans=%v users=%v, want the channel and no users", chans, users)
 	}
 	a.message("C1", &slack.Message{TS: "2.0", User: "U1", Text: "<#C0A9ZZZZ> again"})
 	if c, _, _ := a.S.TakeMissing(); len(c) != 0 {
