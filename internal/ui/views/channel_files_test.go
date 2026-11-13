@@ -245,9 +245,9 @@ func TestChannelFilesRadiosAndPaging(t *testing.T) {
 	if lf := fs.ChannelLinksForms(); lf[len(lf)-1].Get("sort_dir") != "asc" {
 		t.Errorf("links sort_dir %q", lf[len(lf)-1].Get("sort_dir"))
 	}
-	// the Links card in All
+	// the Links card in All, once the re-sorted links' page 1 is back
 	v.setType(cfAll)
-	v.links.page = 1 // as if only page 1 were loaded
+	e.until(t, "the re-sorted links", func() bool { return !v.links.data.busy() && v.links.page == 1 && v.links.pages == 2 })
 	if r := v.rowsFor(); r[len(r)-1].kind != cfrMoreTypes {
 		t.Fatalf("no cards: %v", cfKinds(r))
 	}
