@@ -242,16 +242,24 @@ def side_report(base, side, platform):
     if not rows:
         return ["_%s: no stage files (the driver didn't run; a tree without internal/ui/perfdrive.go)_" % side, ""], {}
     total_name = "private working set" if platform == "windows" else "private (RSS not shared)"
-    out.append("| stage | %s | after GC + trim | Go heap resident | other private (C, driver, GPU) | DLL/file private | Go heap live | Go heap unreturned | stacks | users | messages (store / lists) | images |" % total_name)
-    out.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    extra = " commit |" if platform == "windows" else ""
+    out.append("| stage | %s | after GC + trim |%s Go heap resident | other private (C, driver, GPU) | DLL/file private | Go heap live (after GC) | Go heap unreturned | stacks | users | messages (store / lists) | images |" % (total_name, extra))
+    out.append("|---|---|---|" + ("---|" if extra else "") + "---|---|---|---|---|---|---|---|---|")
     for r in rows:
-        m = r["mem"]
-        out.append("| %s | **%s** | %s | %s | %s | %s | %s | %s | %s | %s | %s / %s | %s (%s) |" % (
-            STAGE_NAMES.get(r["stage"], r["stage"]), fmt_mb(r["total"]), fmt_mb(r["total_trim"]), fmt_mb(r["go_res"]),
-            fmt_mb(r["other_res"]), fmt_mb(r["img_res"]), fmt_mb(mb(m.get("go_heap_alloc"))), fmt_mb(mb(m.get("go_heap_unreturned"))),
+        m, tr = r["mem"], r["trim"]
+        live = mb(tr.get("go_heap_alloc")) or mb(m.get("go_heap_alloc"))
+        commit = (" %s |" % fmt_mb(r.get("commit"))) if extra else ""
+        out.append("| %s | **%s** | %s |%s %s | %s | %s | %s | %s | %s | %s | %s / %s | %s (%s) |" % (
+            STAGE_NAMES.get(r["stage"], r["stage"]), fmt_mb(r["total"]), fmt_mb(r["total_trim"]), commit, fmt_mb(r["go_res"]),
+            fmt_mb(r["other_res"]), fmt_mb(r["img_res"]), fmt_mb(live), fmt_mb(mb(m.get("go_heap_unreturned"))),
             fmt_mb(mb(m.get("go_stack_inuse"))), m.get("app_users", "—"), m.get("app_timeline_msgs", "—"), m.get("app_model_msgs", "—"),
             fmt_mb(mb(m.get("app_img_bytes"))), m.get("app_img_entries", "—")))
     out.append("")
+    if platform == "windows":
+        out.append("Windows may trim an idle process's working set (pages go to the standby list or the page file), so "
+                   "the private working set can fall while commit, what the process holds, stays: Task Manager's Memory "
+                   "column on a machine with RAM to spare reads closer to commit.")
+        out.append("")
     if platform == "windows":
         r = rows[-1]["mem"]
         allocs = [l for l in open(os.path.join(d if os.path.exists(os.path.join(d, rows[-1]["stage"] + ".mem.txt")) else p, rows[-1]["stage"] + ".mem.txt"), encoding="utf-8", errors="replace")
