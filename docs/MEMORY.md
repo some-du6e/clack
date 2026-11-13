@@ -26,7 +26,7 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 | shaped words (`richview`) | two generations, each up to 8,000 words or 8 MB of glyphs and outlines | Clack |
 | native styles (`slackc`) | two generations of 4,096 | Clack |
 | Gio's shaped lines and outlines | 1,000 each per shaper | Gio |
-| emboldened lines (`theme`) | 1,500 | Clack |
+| emboldened runs (`theme`) | 1,500 runs or 16 MB of outlines | Clack |
 | emoji picker index | dropped 5 minutes after the last use | Clack |
 | font glyphs | parsed as they're used; in-memory fonts' tables read in place | go-text patches (`third_party/typesetting`) |
 | Go heap | soft limit 512 MiB (`GOMEMLIMIT` wins); a backstop, not a budget | Go runtime |
