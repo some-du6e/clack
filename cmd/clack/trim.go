@@ -25,8 +25,10 @@ const memoryLimit = 768 << 20
 // pages up to its heap goal (2x the live heap), so after boot (megabytes of
 // JSON) or a burst of scrolling the process would sit at its peak while
 // idle. Every 5 s for the first minute, then every 30 s, when more than 16 MB is free but
-// unreturned, run one FreeOSMemory (a GC plus scavenge, ~10-30 ms of
-// background CPU). ReadMemStats alone costs microseconds.
+// unreturned, or the heap holds much more than the last collection left
+// live and none ran for a minute, run one FreeOSMemory (a GC plus
+// scavenge, ~10-30 ms of background CPU). ReadMemStats alone costs
+// microseconds.
 func trimMemory() {
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(memoryLimit)
@@ -46,7 +48,12 @@ func trimMemory() {
 			}
 			time.Sleep(d)
 			runtime.ReadMemStats(&m)
-			if m.HeapIdle-m.HeapReleased > 16<<20 {
+			// what's live is about half the goal the last collection set
+			// (GOGC 100): far more than that allocated, with no collection
+			// in a minute, is mostly garbage nothing will collect soon while
+			// the window idles (a message cache pass let go of 200 MB)
+			garbage := m.HeapAlloc > m.NextGC/2+64<<20 && time.Since(time.Unix(0, int64(m.LastGC))) > time.Minute
+			if m.HeapIdle-m.HeapReleased > 16<<20 || garbage {
 				debug.FreeOSMemory()
 			}
 		}
