@@ -121,6 +121,47 @@ The users account for 34 to 36 MB of those differences. The rest moves from run 
 
 What the after side's idle heap still holds (Windows / Linux): the plugin JS engine 105 / 88 MB (below), messages 34 / 51 MB (Slack's message budget), fonts, outlines and runs about 30 / 50 MB, the emoji map 8 / 12 MB, the GPU's vertex cache and the spell checker's dictionary a few MB each. Outside the Go heap the renderer's private memory (Direct3D on WARP, llvmpipe) is 179 / 218 MB of the working set, now the largest single owner.
 
+## Fetching members as Slack does (2026-11-13)
+
+Until the hourly pass the members cache doesn't bound anything, so what fills it is what the session fetches. Clack used to fetch everyone a loaded page names: each message's sender, reply users, editor, reactors and text mentions, for every history page (prefetch included), thread, search page, pins list and Threads view, before storing it. Slack fetches none of them at load time (client-boot build 3889f0c93d30):
+
+- Its history and replies fetchers (QJKZ `fetchHistory`, `fetchReplies`, both with `no_user_profile`) pass the messages to `processIncomingMessages` (udbq), which asks for no member. The legacy API's `ensureModelForLegacy` skips the member fetch for `activity.mentions`, `conversations.history`, `pins.list` and `unread.history` (`shouldSkipMemberFetch`).
+- `ensureMembersArePresent` (iog+) has 16 callers, and none of them is a message list: the unread threads popover's rows, autocomplete's affinity pool, agents, user groups, Quip, meeting headers.
+- A member is asked for by `getMemberById` (gIKW) in the component that shows it, as that component renders: the sender, a mention (MemberSlug), the reply bar's avatars, a pin's "Pinned by". A reaction's users are read only by the tooltip (ReactionTip Qvn6's TooltipMemberName NZA6), which mounts when the tooltip shows.
+
+What Clack does now (`core/lazy_users.go`):
+
+| where | fetched before | now |
+|---|---|---|
+| history pages, prefetch, older pages, history previews, the Unreads view | sender, reply users, editor, reactors, mentions | nobody: rows ask as they draw |
+| threads (`conversations.replies`, both callers), search results, pins, Threads view, saved and activity messages (`messages.list`) | the same | nobody |
+| `message_changed`, `message_replied` (reply users), `reaction_added` (the reactor) | the ids in the event | nobody |
+| a new socket message | the same five | sender, reply users and mentions: its notification names them before any row draws |
+| user mentions in message text | fetched with the page | `richview.MemberRead` reads each drawn mention's member every frame (a miss is asked for; the text is laid out again when the name arrives) |
+| a reaction's users | fetched with the page | when its tooltip is due (300 ms on the pill), not on the first hover frame |
+| the reply bar's avatars, the sender, "Pinned by" | fetched with the page | already looked up as they draw |
+| the DMs tab | DM people and the latest messages' people | DM people only: `dmsTabShows` leaves out deleted members and bots |
+| Activity's authors and actors, typing, profiles, lists, canvases, files, huddles, drafts, channel details, the sidebar's DM people at boot | as before | unchanged: not message lists (Activity's rows are described for every item at once; Slack's sidebar reads every DM's members on each store change) |
+
+Clack has no read receipts. `internal/ui` `TestReactorsFetchedOnTooltip` opens a channel with a reaction from people nothing else names, checks users/info was asked for none of them, rests on the pill, checks they're asked for only once the tooltip is due, and that the tooltip then names them. `internal/ui/richview` `TestMentionReadsMemberWhenDrawn` covers the mention hook. `TestEvictedMembersComeBack` (flake-check `members`, run 43448597706) still sees every view draw its people again after an eviction.
+
+### Measured
+
+perf.yml run 43448329808 (`jobs: scale`, `scale_base: 3bb45cbd`, idle 10 minutes, so every stage is before the hourly pass): both sides in the same run against the same fakeslackd, with the same driver. "Before" is ui at 3bb45cbd; "after" is lazy-users at 502bb8b1. Users held is what the store holds (about 1,050 of them read from meta.json); users asked is what the session sent to users/info (`app_users_asked`, which the before side doesn't count: its fetches are about the held count less 1,050). Live Go heap is after a collection.
+
+| | startup | long channels scrolled | +40 channels | idle 10 min |
+|---|---|---|---|---|
+| Linux: users held, before → after | 6,845 → 1,125 | 22,493 → 11,870 | 25,637 → 12,429 | 25,637 → 12,429 |
+| Linux: users asked, after | 76 | 10,821 | 11,380 | 11,380 |
+| Linux: `PutUsers` heap, before → after | 4.5 MB → under 1 MB | 18.5 → 10.0 MB | | 21.0 → 10.5 MB |
+| Linux: live Go heap, before → after | 93 → 95 MB | 492 → 468 MB | 460 → 416 MB | 293 → 254 MB |
+| Windows: users held, before → after | 6,813 → 1,126 | 22,451 → 14,173 | 25,648 → 14,534 | 25,648 → 14,534 |
+| Windows: users asked, after | 77 | 13,128 | 13,489 | 13,489 |
+| Windows: `PutUsers` heap, before → after | 3.5 MB → under 1 MB | 20.1 → 10.1 MB | | 23.6 → 9.1 MB |
+| Windows: live Go heap, before → after | 84 → 86 MB | 542 → 481 MB | 489 → 458 MB | 293 → 278 MB |
+
+At startup the session now fetches 76 people instead of about 5,800: the people the first screen draws, not those of the 24 prefetched channels. After the long channels it fetches half as many (the senders, mentions and reply users of the 6,000 messages it scrolled past, no reactors). The users' own heap halves. The rest of the live heap moves from run to run as the earlier sections describe (messages, the plugin engine); the startup heap is the same within noise. Linux scrolls twice as far a frame (`CLACK_PERF_SCROLL_STEP`), so it draws fewer of the rows and fetches fewer people than Windows.
+
 ## The plugin engine's high-water mark (2026-11-13)
 
 The plugin JS engine is one wasm instance (wazero), and wasm memory grows but never shrinks: what it held at its busiest stays for the session. In the scale session it holds about 25 MB at startup and 80–100 MB from the long-channels or the 40-channels stage on (it lands anywhere in that range from run to run and side to side; the same session, the same code). What fills it is LastSeen's `readStore`, which every 15 s (while a LastSeen surface is mounted and `watchActivity` is on) walks every message of every conversation in `state.messages`: the mirror turns each conversation it reads into JS objects (`messageJSON`, plus the prototype copy Slack's slices have) and keeps them until a change invalidates them. At the 40-channels stage the store holds about 10,000 messages in 63 conversations (two 3,000-message channels and 40 just read, all kept whole as on screen), and the JS heap holds them at once.
