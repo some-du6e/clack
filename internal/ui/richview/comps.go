@@ -39,8 +39,23 @@ const (
 var (
 	richBlockClass   = slackc.Class("p-rich_text_block")
 	richSectionClass = slackc.Class("p-rich_text_section")
-	memberClass      = slackc.Class("c-link c-member_slug c-member_slug--link", "data-stringify-type", "mention").Tag("a")
-	channelClass     = slackc.Class("c-link c-inline_channel_entity", "data-stringify-type", "mention").Tag("a")
+	// MemberSlug (boot-shared ld4x, build 32bb3cc8205b): a Link (a.c-link)
+	// with c-member_slug, c-member_slug--{clientTheme}, --link, and
+	// --mention when it's the viewer (memberSlugClass picks the def).
+	memberClass      = slackc.Class("c-link c-member_slug c-member_slug--light c-member_slug--link", "data-stringify-type", "mention").Tag("a")
+	memberSelfClass  = slackc.Class("c-link c-member_slug c-member_slug--light c-member_slug--link c-member_slug--mention", "data-stringify-type", "mention").Tag("a")
+	memberDarkClass  = slackc.Class("c-link c-member_slug c-member_slug--dark c-member_slug--link", "data-stringify-type", "mention").Tag("a")
+	memberDSelfClass = slackc.Class("c-link c-member_slug c-member_slug--dark c-member_slug--link c-member_slug--mention", "data-stringify-type", "mention").Tag("a")
+	// BaseMrkdwnChannel (boot-shared lH2I) for a rich text channel
+	// element (NY16): a Link with c-mrkdwn__channel c-member_slug,
+	// internal_channel_link and c-member_slug--link while it links,
+	// data-qa channel_link and data-stringify-type channel. Clack's
+	// c-inline_channel_entity (InlineChannelEntity, client-boot X3qV, a
+	// real component other surfaces use) stays on it with its
+	// c-channel_entity__name: Taut's and Slick's StreamerMode select
+	// message channel mentions by it.
+	channelClass     = slackc.Class("c-link c-mrkdwn__channel c-member_slug internal_channel_link c-member_slug--link c-inline_channel_entity", "data-qa", "channel_link", "data-stringify-type", "channel").Tag("a")
+	channelOffClass  = slackc.Class("c-mrkdwn__channel c-member_slug").Tag("span") // not a link: a channel the viewer can't see
 	channelNameClass = slackc.Class("c-channel_entity__name").Tag("span")
 	attachmentClass  = slackc.Class("c-message_attachment")
 	shareClass       = slackc.Class("c-message_attachment__body c-message_kit__attachment_message")
@@ -415,7 +430,7 @@ func (c *compRef) layoutSlug(gtx layout.Context, p slackc.Props) layout.Dimensio
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
-	s := memberClass.Enter(gtx, 0, 0)
+	s := memberSlugClass(c.box().span.Self, c.v.dark).Enter(gtx, 0, 0)
 	defer s.Leave()
 	// a ::before box (content '', a size: MentionProfiles' picture) sits
 	// inside the slug's pill, before the name, as CSS has it: the flow
@@ -457,7 +472,7 @@ func (c *compRef) layoutChannel(gtx layout.Context, p slackc.Props) layout.Dimen
 			gtx.Execute(op.InvalidateCmd{})
 		}
 	}
-	s := channelClass.Enter(gtx, 0, 0)
+	s := channelClassFor(&c.box().span).Enter(gtx, 0, 0)
 	defer s.Leave()
 	if s.Hidden() {
 		return layout.Dimensions{}
@@ -815,4 +830,36 @@ func (c *compRef) layoutFile(gtx layout.Context, _ slackc.Props) layout.Dimensio
 	s := fileClass.Enter(gtx, 0, 0)
 	defer s.Leave()
 	return c.styled(gtx, s)
+}
+
+// memberSlugClass is a user mention's MemberSlug def: the theme's
+// c-member_slug--light / --dark, and --mention for the viewer.
+func memberSlugClass(self, dark bool) *slackc.ClassDef {
+	switch {
+	case dark && self:
+		return memberDSelfClass
+	case dark:
+		return memberDarkClass
+	case self:
+		return memberSelfClass
+	}
+	return memberClass
+}
+
+// channelClassFor is a channel mention's BaseMrkdwnChannel def: a link,
+// or the plain span for a channel the viewer can't see.
+func channelClassFor(sp *richtext.Span) *slackc.ClassDef {
+	if sp.Off {
+		return channelOffClass
+	}
+	return channelClass
+}
+
+// usergroupClassFor is a user group mention's UserGroup def (--mention
+// when the viewer is in the group).
+func usergroupClassFor(self bool) *slackc.ClassDef {
+	if self {
+		return usergroupSelfClass
+	}
+	return usergroupClass
 }

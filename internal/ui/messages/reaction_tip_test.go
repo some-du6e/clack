@@ -66,19 +66,19 @@ func TestReactionTipText(t *testing.T) {
 func TestReactionTooltipDraws(t *testing.T) {
 	th := theme.New(false)
 	c := colorsFor(th)
-	const w, h = 400, 300
+	const w, h = 480, 300
 	var ops op.Ops
 	paint.FillShape(&ops, c.Bg, clip.Rect{Max: image.Pt(w, h)}.Op())
 	gtx := layout.Context{Ops: &ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(w, h)), Now: time.Now()}
 	long := "You, Alice Example, Bob Example and 12 others reacted with :large_green_circle:"
-	anchor := image.Pt(380, 250) // near the right edge: kept inside
-	reactionTooltip(gtx, nilHost{}, th, c, long, "", anchor, image.Pt(w, h))
+	anchor := image.Pt(458, 250) // 6px over a pill near the right edge: kept inside
+	reactionTooltip(gtx, nilHost{}, th, c, long, "", image.Rect(440, 256, 476, 280), image.Rect(0, 0, w, h))
 	img := pixeltest.Render(t, w, h, &ops)
 	box := image.Rect(0, 0, w, anchor.Y)
 	if n := pixeltest.Count(img, box, c.Tooltip, 4); n < 3000 {
 		t.Fatalf("tooltip box %d px", n)
 	}
-	if n := pixeltest.Count(img, image.Rect(w-4, 0, w, h), c.Tooltip, 4); n > 0 {
+	if n := pixeltest.Count(img, image.Rect(w-3, 0, w, h), c.Tooltip, 4); n > 0 { // keepInBounds: allowanceX 3
 		t.Errorf("tooltip runs off the window's right edge (%d px)", n)
 	}
 	if n := pixeltest.Count(img, box, rgb(0xffffff), 2); n < 64*64-80 {

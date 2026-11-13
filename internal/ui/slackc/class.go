@@ -51,6 +51,15 @@ func Class(classes string, attrs ...string) *ClassDef {
 	return &ClassDef{tag: "div", classes: strings.Fields(classes), attrs: attrs}
 }
 
+// ClassAttr is the def's class attribute ("c-link c-member_slug …").
+func (d *ClassDef) ClassAttr() string { return strings.Join(d.classes, " ") }
+
+// TagName is the def's tag ("div" unless Tag set one).
+func (d *ClassDef) TagName() string { return d.tag }
+
+// Attrs is a copy of the def's static attributes, name/value pairs.
+func (d *ClassDef) Attrs() []string { return append([]string(nil), d.attrs...) }
+
 // Tag sets the element's tag name (default "div"), e.g. "button", "span".
 func (d *ClassDef) Tag(tag string) *ClassDef { d.tag = tag; return d }
 

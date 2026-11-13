@@ -40,11 +40,17 @@ import (
 // Slack's elements inside a message body (live client classes and
 // data-stringify-type attributes, docs/PLUGINS-props-live.md).
 var (
-	listBulletClass  = slackc.Class("p-rich_text_list p-rich_text_list__bullet", "data-stringify-type", "unordered-list").Tag("ul")
-	listOrderedClass = slackc.Class("p-rich_text_list p-rich_text_list__ordered", "data-stringify-type", "ordered-list").Tag("ol")
+	// RichTextList, RichTextPreformatted, RichTextQuote (boot-shared 2xBI,
+	// 8jHQ; build 32bb3cc8205b): every list carries p-rich_text_list--nested
+	// (classnames' third argument is that string; client-boot-styles'
+	// .p-rich_text_list--nested>li is the list item's indent) and
+	// data-list-tree; a code block is pre[data-copy-code-block]; a quote
+	// is blockquote[type=cite]
+	listBulletClass  = slackc.Class("p-rich_text_list p-rich_text_list__bullet p-rich_text_list--nested", "data-stringify-type", "unordered-list", "data-list-tree", "true").Tag("ul")
+	listOrderedClass = slackc.Class("p-rich_text_list p-rich_text_list__ordered p-rich_text_list--nested", "data-stringify-type", "ordered-list", "data-list-tree", "true").Tag("ol")
 	listItemClass    = slackc.Class("").Tag("li")
-	quoteClass       = slackc.Class("c-mrkdwn__quote", "data-stringify-type", "quote").Tag("blockquote")
-	preClass         = slackc.Class("c-mrkdwn__pre", "data-stringify-type", "pre").Tag("pre")
+	quoteClass       = slackc.Class("c-mrkdwn__quote", "type", "cite", "data-stringify-type", "quote").Tag("blockquote")
+	preClass         = slackc.Class("c-mrkdwn__pre", "data-copy-code-block", "true", "data-stringify-type", "pre").Tag("pre")
 	headerClass      = slackc.Class("p-header_block")
 	sectionBlkClass  = slackc.Class("p-section_block")
 	sectionTextClass = slackc.Class("p-section_block__text")
@@ -56,13 +62,29 @@ var (
 	boldClass      = slackc.Class("", "data-stringify-type", "bold").Tag("b")
 	italicClass    = slackc.Class("", "data-stringify-type", "italic").Tag("i")
 	strikeClass    = slackc.Class("", "data-stringify-type", "strike").Tag("s")
-	underlineClass = slackc.Class("").Tag("u")
+	underlineClass = slackc.Class("", "data-stringify-type", "underline").Tag("u")
 	codeClass      = slackc.Class("c-mrkdwn__code", "data-stringify-type", "code").Tag("code")
 	linkClass      = slackc.Class("c-link", "data-stringify-link", "true", "target", "_blank", "rel", "noopener noreferrer").Tag("a")
-	usergroupClass = slackc.Class("c-mrkdwn__subteam c-mrkdwn__subteam--link", "data-stringify-type", "mention").Tag("span")
-	broadcastClass = slackc.Class("c-mrkdwn__broadcast c-mrkdwn__broadcast--link c-mrkdwn__broadcast--mention", "data-stringify-type", "mention").Tag("span")
-	emojiClass     = slackc.Class("c-emoji c-emoji__medium c-emoji--inline", "data-qa", "emoji").Tag("span")
-	highlightClass = slackc.Class("c-search__highlight").Tag("span")
+	// DraggableMrkdwnLink (boot-shared kQRT): a message's link with a url
+	// sits in span.c-mrkdwn__draggable-link (live DOM:
+	// docs/PLUGINS-props-live.md)
+	draggableLinkClass = slackc.Class("c-mrkdwn__draggable-link").Tag("span")
+	// UserGroup (boot-shared fg3x): a Link (a.c-link) with
+	// c-mrkdwn__user_group, --link, and --mention when the viewer is in
+	// the group; data-stringify-type mention.
+	usergroupClass     = slackc.Class("c-link c-mrkdwn__user_group c-mrkdwn__user_group--link", "data-stringify-type", "mention").Tag("a")
+	usergroupSelfClass = slackc.Class("c-link c-mrkdwn__user_group c-mrkdwn__user_group--link c-mrkdwn__user_group--mention", "data-stringify-type", "mention").Tag("a")
+	// MrkdwnBroadcastCommand (boot-shared Potv): a span with --link and
+	// --mention; its data-stringify-text is the text, not a type.
+	broadcastClass = slackc.Class("c-mrkdwn__broadcast c-mrkdwn__broadcast--link c-mrkdwn__broadcast--mention").Tag("span")
+	// DateCommand (boot-shared cnmt): span.c-mrkdwn__date, or a Link
+	// (a.c-link) when the element has a url; data-qa mrkdwn_date.
+	dateClass     = slackc.Class("c-mrkdwn__date", "data-qa", "mrkdwn_date").Tag("span")
+	dateLinkClass = slackc.Class("c-link", "data-qa", "mrkdwn_date").Tag("a")
+	emojiClass    = slackc.Class("c-emoji c-emoji__medium c-emoji--inline", "data-qa", "emoji").Tag("span")
+	// WithFormattingStyles (boot-shared UqHX): a highlight word
+	// (client_highlight) is span.c-mrkdwn__highlight
+	highlightClass = slackc.Class("c-mrkdwn__highlight").Tag("span")
 	// a find in thread match (WithFormattingStyles: instead of the
 	// keyword's span)
 	findHighlightClass = slackc.Class("c-mrkdwn__highlight--find-in-thread").Tag("span")
@@ -236,43 +258,15 @@ func (l *lay) partFor(p *partPath) uint8 {
 }
 
 // spanPart is the part of a span in the current container: Slack's
-// inline element chain (link, then b, i, s, u, code).
+// chain for an inline element (WithFormattingStyles, boot-shared UqHX,
+// around the element): code outermost, then the highlight, b, u, i, s,
+// and the element (a link, a mention, a date, an emoji) innermost.
 func (l *lay) spanPart(sp *richtext.Span) uint8 {
 	if l.css == nil {
 		return 0
 	}
 	p := l.ctr
-	switch sp.Kind {
-	case richtext.Link:
-		p = p.with(linkClass)
-	case richtext.Date:
-		if sp.URL != "" {
-			p = p.with(linkClass)
-		}
-	case richtext.User:
-		p = p.with(memberClass)
-	case richtext.Channel:
-		p = p.with(channelClass)
-	case richtext.Usergroup:
-		p = p.with(usergroupClass)
-	case richtext.Broadcast:
-		p = p.with(broadcastClass)
-	case richtext.Emoji, richtext.InlineImage:
-		p = p.with(emojiClass)
-	}
 	st := sp.Style
-	if st&richtext.Bold != 0 {
-		p = p.with(boldClass)
-	}
-	if st&richtext.Italic != 0 {
-		p = p.with(italicClass)
-	}
-	if st&richtext.Strike != 0 {
-		p = p.with(strikeClass)
-	}
-	if st&richtext.Underline != 0 {
-		p = p.with(underlineClass)
-	}
 	if st&richtext.Code != 0 {
 		p = p.with(codeClass)
 	}
@@ -280,6 +274,41 @@ func (l *lay) spanPart(sp *richtext.Span) uint8 {
 		p = p.with(findHighlightClass)
 	} else if st&richtext.Highlight != 0 {
 		p = p.with(highlightClass)
+	}
+	if st&richtext.Bold != 0 {
+		p = p.with(boldClass)
+	}
+	if st&richtext.Underline != 0 {
+		p = p.with(underlineClass)
+	}
+	if st&richtext.Italic != 0 {
+		p = p.with(italicClass)
+	}
+	if st&richtext.Strike != 0 {
+		p = p.with(strikeClass)
+	}
+	switch sp.Kind {
+	case richtext.Link:
+		if sp.URL != "" {
+			p = p.with(draggableLinkClass)
+		}
+		p = p.with(linkClass)
+	case richtext.Date:
+		if sp.URL != "" {
+			p = p.with(dateLinkClass)
+		} else {
+			p = p.with(dateClass)
+		}
+	case richtext.User:
+		p = p.with(memberSlugClass(sp.Self, l.st != nil && l.st.Palette.Dark))
+	case richtext.Channel:
+		p = p.with(channelClassFor(sp))
+	case richtext.Usergroup:
+		p = p.with(usergroupClassFor(sp.Self))
+	case richtext.Broadcast:
+		p = p.with(broadcastClass)
+	case richtext.Emoji, richtext.InlineImage:
+		p = p.with(emojiClass)
 	}
 	return l.partFor(&p)
 }

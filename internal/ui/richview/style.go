@@ -117,6 +117,9 @@ type Palette struct {
 	TooltipGlow                 color.NRGBA // the dark mode tooltip outline (none in light)
 	FooterSep                   color.NRGBA // content-inv-sec: a v3 footer's own color (its " | ")
 	HuddleJoinBorder            color.NRGBA // plt-jade-20: a huddle message's Join Huddle border (huddle.go)
+	// Dark is the dark theme: MemberSlug's c-member_slug--{clientTheme}
+	// (light otherwise).
+	Dark bool
 }
 
 func rgb(r, g, b uint8) color.NRGBA { return color.NRGBA{R: r, G: g, B: b, A: 255} }
@@ -202,6 +205,7 @@ func DarkPalette() Palette {
 	p.TooltipBg, p.TooltipText, p.TooltipGlow = theme.DarkPalette.Tooltip, theme.DarkPalette.TooltipText, theme.DarkPalette.TooltipGlow
 	p.FooterSep = rgb(0xb9, 0xba, 0xbd)
 	p.HuddleJoinBorder = rgb(0, 85, 61)
+	p.Dark = true
 	return p.flat()
 }
 

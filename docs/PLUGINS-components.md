@@ -828,12 +828,16 @@ return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { … }) // opaci
 | richview content | Slack element path (under the View's parent, `.c-message_kit__blocks` in a row) |
 |---|---|
 | paragraph text | `.p-rich_text_block > .p-rich_text_section` |
-| bold, italic, strike, underline, inline code | `… > b[data-stringify-type=bold]`, `i`, `s`, `u`, `code.c-mrkdwn__code` (nested in that order) |
-| link (and a dated link) | `… > a.c-link` |
-| user / channel mention, usergroup, @here | `a.c-link.c-member_slug.c-member_slug--link`, `a.c-link.c-inline_channel_entity`, `span.c-mrkdwn__subteam--link`, `span.c-mrkdwn__broadcast--mention` |
+| bold, italic, strike, underline, inline code, highlight word | WithFormattingStyles (boot-shared UqHX), outermost first: `code.c-mrkdwn__code`, `span.c-mrkdwn__highlight` (or `span.c-mrkdwn__highlight--find-in-thread`), `b[data-stringify-type=bold]`, `u[data-stringify-type=underline]`, `i`, `s`, then the element |
+| link | `… > span.c-mrkdwn__draggable-link > a.c-link[data-stringify-link]` (kQRT DraggableMrkdwnLink) |
+| date | `span.c-mrkdwn__date[data-qa=mrkdwn_date]`, or `a.c-link[data-qa=mrkdwn_date]` with a url (cnmt DateCommand) |
+| user mention | `a.c-link.c-member_slug.c-member_slug--light.c-member_slug--link` (`--dark` in the dark theme, `.c-member_slug--mention` for you; ld4x MemberSlug) |
+| channel mention | `a.c-link.c-mrkdwn__channel.c-member_slug.internal_channel_link.c-member_slug--link[data-qa=channel_link][data-stringify-type=channel]` (lH2I BaseMrkdwnChannel), also `.c-inline_channel_entity > span.c-channel_entity__name`, which StreamerMode selects; `span.c-mrkdwn__channel.c-member_slug` for a channel you can't see |
+| user group | `a.c-link.c-mrkdwn__user_group.c-mrkdwn__user_group--link[data-stringify-type=mention]`, `.c-mrkdwn__user_group--mention` when you're in it (fg3x UserGroup; Clack's old `c-mrkdwn__subteam` was never Slack's) |
+| @here, @channel | `span.c-mrkdwn__broadcast.c-mrkdwn__broadcast--link.c-mrkdwn__broadcast--mention` (Potv) |
 | emoji | `span.c-emoji.c-emoji__medium.c-emoji--inline[data-qa=emoji]` |
-| list item, its marker | `.p-rich_text_block > ul.p-rich_text_list.p-rich_text_list__bullet` (or `ol…__ordered`) `> li` |
-| quote, code block | `.p-rich_text_block > blockquote.c-mrkdwn__quote`, `> pre.c-mrkdwn__pre` |
+| list item, its marker | `.p-rich_text_block > ul.p-rich_text_list.p-rich_text_list__bullet.p-rich_text_list--nested[data-list-tree]` (or `ol…__ordered`) `> li` |
+| quote, code block | `.p-rich_text_block > blockquote.c-mrkdwn__quote[type=cite]`, `> pre.c-mrkdwn__pre[data-copy-code-block]` |
 | "(edited)" | `<container> > span.c-message__edited_label` |
 | Block Kit header / section / context | `.p-header_block`; `.p-section_block > .p-section_block__text > span.p-mrkdwn_element`; `.p-context_block > span.p-mrkdwn_element` |
 | attachment card | `.c-message_attachment` `> .c-message_attachment__pretext`, `__service_name`, `__author_name`, `__title (> a.c-link)`, `__text (> rich text blocks)`, `__fields`, `__footer` |

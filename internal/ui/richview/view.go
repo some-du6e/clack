@@ -76,10 +76,12 @@ type View struct {
 	clickAt  time.Duration
 	clickN   int
 	hovering bool
-	ptr      f32.Point  // last pointer position (view coordinates)
-	tipFrag  int        // emoji frag under the pointer, -1 none
-	tipAt    time.Time  // when the pointer reached it (gtx.Now)
-	hovMen   mentionKey // the @mention last reported to the hover card
+	ptr      f32.Point       // last pointer position (view coordinates)
+	tipFrag  int             // emoji frag under the pointer, -1 none
+	tipAt    time.Time       // when the pointer reached it (gtx.Now)
+	tipOrg   theme.TipOrigin // the view's window origin, so tooltips keep inside the window
+	dark     bool            // the last layout's Palette.Dark (MemberSlug's c-member_slug--dark)
+	hovMen   mentionKey      // the @mention last reported to the hover card
 	hovOn    bool
 	// the link preview whose hover trigger was last reported, and each
 	// preview's hover card content (unfurl_hover.go)
@@ -250,6 +252,7 @@ func (v *View) selRange() (int32, int32) {
 
 // Layout draws the doc at the constraints' max width and returns its size.
 func (v *View) Layout(gtx layout.Context, st *Style, h Handler) layout.Dimensions {
+	v.dark = st != nil && st.Palette.Dark
 	w := gtx.Constraints.Max.X
 	if v.opts.MaxWidth > 0 {
 		if mw := gtx.Dp(dpUnit(v.opts.MaxWidth)); mw < w {
@@ -1020,6 +1023,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.hovering = true
 				v.hover = v.targetAt(e.Position)
 				v.ptr = e.Position
+				v.tipOrg.Learn(e.Position)
 				if b := v.copyButtonAt(e.Position) + 1; b != v.copyHot {
 					v.copyHot, v.copyTipAt = b, gtx.Now
 				}
@@ -1213,14 +1217,13 @@ func (v *View) clickLink(gtx layout.Context, t int16, anchor image.Point, e poin
 			l.Attrs["class"] = "c-link p-rich_text_slug"
 		}
 	case tUser:
-		l.Attrs = map[string]string{"class": "c-link c-member_slug c-member_slug--link", "data-member-id": tg.id, "data-stringify-type": "mention",
+		l.Attrs = map[string]string{"class": memberSlugClass(tg.self, v.dark).ClassAttr(), "data-member-id": tg.id, "data-stringify-type": "mention",
 			"href": "/team/" + tg.id}
 	case tChannel:
-		l.Attrs = map[string]string{"class": "c-link c-inline_channel_entity", "data-channel-id": tg.id, "data-stringify-type": "mention",
+		l.Attrs = map[string]string{"class": channelClass.ClassAttr(), "data-channel-id": tg.id, "data-qa": "channel_link", "data-stringify-type": "channel",
 			"href": "/archives/" + tg.id}
 	case tUsergroup:
-		l.Tag = "span"
-		l.Attrs = map[string]string{"class": "c-mrkdwn__subteam c-mrkdwn__subteam--link", "data-usergroup-id": tg.id}
+		l.Attrs = map[string]string{"class": usergroupClassFor(tg.self).ClassAttr(), "data-user-group-id": tg.id, "data-stringify-type": "mention"}
 	default:
 		return false
 	}

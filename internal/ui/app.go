@@ -319,6 +319,9 @@ func New(opts Options, images *imgcache.Cache) *App {
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
 	// the composer's floating formatting bar keeps inside the window
 	composer.WindowSize = func() image.Point { return a.winSize }
+	// and so does every tooltip (theme/tooltip_place.go)
+	theme.WindowSize = func() image.Point { return a.winSize }
+	theme.WindowPointer = func() (image.Point, bool) { return a.ptrWin, a.ptrOK }
 
 	a.startSpell()                                // spellcheck_wire.go
 	a.startLocale()                               // locale_wire.go

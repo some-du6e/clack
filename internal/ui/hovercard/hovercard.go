@@ -91,6 +91,15 @@ type Request struct {
 	// HoverCardTrigger, position "top"): what the trigger hands the root
 	// to draw instead of a profile card (richview.Preview).
 	Preview any
+	// Texty is a person's slug in the composer: TextyTooltip's
+	// renderHoverCard (boot-shared, build 32bb3cc8205b) opens
+	// renderMemberProfileHoverCard({hideButtons, hideCoveragePlanLink})
+	// from Texty's onMouseOver, so with no show delay, in a Popover at
+	// "top" with offsetY -12 and allowance 0 (no tryOppositePosition).
+	// Leaving the slug for the card keeps it (onHoverCardMouseEnter
+	// cancels the hide); leaving both closes it after hideTooltipDelayed's
+	// 250ms, as HideDelay.
+	Texty bool
 }
 
 // Controller runs the hover card's timers. It belongs to the UI goroutine.
@@ -157,6 +166,14 @@ func (c *Controller) ReportBot(key any, userID, botID string, local image.Rectan
 	}
 	c.rep = Request{Key: key, UserID: userID, BotID: botID, Anchor: local.Add(off)}
 	c.hasRep = true
+}
+
+// ReportTexty is Report for a person's slug in the composer (Request.Texty).
+func (c *Controller) ReportTexty(key any, userID string, local image.Rectangle, ptr f32.Point) {
+	c.ReportBot(key, userID, "", local, ptr)
+	if c.hasRep && c.rep.Key == key {
+		c.rep.Texty = true
+	}
 }
 
 // ReportPreview says the pointer is on a link preview's hover trigger
@@ -254,6 +271,9 @@ func (c *Controller) Frame(now time.Time, blocked, hold bool) time.Time {
 		if !c.hasPend || c.pending.Key != rep.Key {
 			c.pending, c.hasPend = rep, true
 			c.showAt = now.Add(ShowDelay)
+			if rep.Texty {
+				c.showAt = now // a Popover from Texty's onMouseOver
+			}
 		} else {
 			c.pending.Anchor = rep.Anchor
 			c.pending.UserID, c.pending.BotID, c.pending.Preview = rep.UserID, rep.BotID, rep.Preview

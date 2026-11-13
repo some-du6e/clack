@@ -108,7 +108,7 @@ func TestMessagesAuditShots(t *testing.T) {
 				}
 				gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(w, h)), Now: time.Now()}
 				reactionTooltip(gtx, host, th, colorsFor(th), reactionTip(host, &re, fakeslack.SelfID), url,
-					image.Pt((pill.Min.X+pill.Max.X)/2, pill.Min.Y-6), image.Pt(w, h))
+					pill, image.Rect(0, 0, w, h))
 				tipAt = pill
 			}
 		}

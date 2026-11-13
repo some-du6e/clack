@@ -221,12 +221,22 @@ type TipState struct {
 	// defaults to delay 150; some callers pass longer ones).
 	Delay time.Duration
 	// NoDelay shows it in the frame the hover starts: a Popover opened
-	// from a mouseover handler, not a BaseTooltip (Texty's tooltips).
+	// from a mouseover handler, not a BaseTooltip.
 	NoDelay bool
+	// Texty is a TextyTooltip Popover (Texty's mouseover opens it): no
+	// delay, allowance 0 and no tryOppositePosition (theme.TextyTip).
+	Texty bool
+	// org is the target's window origin, so the tooltip keeps inside the
+	// window (theme.PlaceTooltip); last is where it was drawn (tests).
+	org  theme.TipOrigin
+	last theme.TipPlace
 	// MaxWidth, when set, wraps the label at that width with each line
 	// centred (c-tooltip__tip: max-width 200px, text-align center).
 	MaxWidth unit.Dp
 }
+
+// Placed is where the tooltip last drew, in its widget's coordinates.
+func (st *TipState) Placed() theme.TipPlace { return st.last }
 
 // Showing reports whether the tooltip is up at now: hovered for its delay.
 func (st *TipState) Showing(now time.Time) bool {
@@ -236,7 +246,7 @@ func (st *TipState) Showing(now time.Time) bool {
 // delay is the tooltip's hover delay.
 func (st *TipState) delay() time.Duration {
 	switch {
-	case st.NoDelay:
+	case st.NoDelay, st.Texty:
 		return 0
 	case st.Delay > 0:
 		return st.Delay
@@ -283,8 +293,12 @@ func TooltipBox(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool,
 }
 
 // tooltipWith shows the tooltip body box draws for a widget of size sz at
-// the current origin, after the hover delay.
+// the current origin, after the hover delay, placed as Slack's
+// BaseTooltip places it (theme.PlaceTooltip: the 8px gap, keepInBounds'
+// 3px inside the window, the flip to the opposite side, the arrow on the
+// widget).
 func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool, sz image.Point, side Side, box func(gtx layout.Context) layout.Dimensions) {
+	st.org.Track(gtx, image.Rectangle{Max: sz})
 	if !hovered {
 		st.hovered = false
 		return
@@ -298,41 +312,34 @@ func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool
 		return
 	}
 	call, d := record(gtx, box)
-	gap := dp(gtx, 8)
-	var p image.Point
-	switch side {
-	case Above:
-		p = image.Pt((sz.X-d.Size.X)/2, -gap-d.Size.Y)
-	case Right:
-		p = image.Pt(sz.X+gap, (sz.Y-d.Size.Y)/2)
-	case Left:
-		p = image.Pt(-gap-d.Size.X, (sz.Y-d.Size.Y)/2)
-	case BelowRight:
-		p = image.Pt(sz.X-d.Size.X, sz.Y+gap)
-	default:
-		p = image.Pt((sz.X-d.Size.X)/2, sz.Y+gap)
+	o := theme.BaseTooltip(gtx, side.tipPos())
+	if st.Texty {
+		o = theme.TextyTip(side.tipPos())
 	}
+	pl := theme.PlaceTooltip(gtx, image.Rectangle{Max: sz}, d.Size, st.org.Bounds(), o)
+	st.last = pl
 	cl := colorsOf(th)
 	m := op.Record(gtx.Ops)
-	// arrow
-	ar := dp(gtx, 6)
-	var ac image.Point
-	switch side {
-	case Above:
-		ac = image.Pt(sz.X/2, -gap)
-	case Right:
-		ac = image.Pt(sz.X+gap, sz.Y/2)
-	case Left:
-		ac = image.Pt(-gap, sz.Y/2)
-	default:
-		ac = image.Pt(sz.X/2, sz.Y+gap)
-	}
 	// the box and its arrow, outlined together in dark mode
 	// (theme/tooltip.go), then the text
-	theme.TooltipShape(gtx, image.Rectangle{Min: p, Max: p.Add(d.Size)}, dp(gtx, 8),
-		theme.TooltipArrow{C: ac, Half: ar}, cl.Tooltip, tipGlow(th))
-	macroAt(gtx, call, p)
+	theme.TooltipShape(gtx, pl.Box, dp(gtx, 8), pl.Arrow, cl.Tooltip, tipGlow(th))
+	macroAt(gtx, call, pl.Box.Min)
 	op.Defer(gtx.Ops, m.Stop())
+}
+
+// tipPos is a Side's TooltipTip position.
+func (s Side) tipPos() string {
+	switch s {
+	case Above:
+		return theme.TipTop
+	case Right:
+		return theme.TipRight
+	case Left:
+		return theme.TipLeft
+	case BelowRight:
+		return theme.TipBottomRight
+	}
+	return theme.TipBottom
 }
 
 // tipGlow is the dark mode tooltip outline (theme's TooltipGlow; none in

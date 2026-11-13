@@ -275,17 +275,21 @@ func (w *window) toolbarTip(gtx C, bar image.Rectangle) {
 	if w.cam.tip == "" {
 		return
 	}
-	a := w.cam.tipAnchor.Add(bar.Min)
-	ts := labelSize(gtx, w.th, 12, theme.Bold, w.cam.tip)
+	hudTip(gtx, w.th, w.cam.tip, w.cam.tipAnchor.Add(bar.Min), gtx.Constraints.Max, theme.TipTop)
+	w.cam.tip = ""
+}
+
+// hudTip draws a huddle window toolbar tooltip for target (window
+// coordinates) at pos, placed by theme.PlaceTooltip like every other
+// tooltip (8px from the control, kept inside the win-sized window, the
+// opposite side when there's no room).
+func hudTip(gtx C, th *theme.Theme, tip string, target image.Rectangle, win image.Point, pos string) {
+	ts := labelSize(gtx, th, 12, theme.Bold, tip)
 	pad := gtx.Dp(8)
-	r := image.Rect(0, 0, ts.X+2*pad, ts.Y+pad)
-	r = r.Add(image.Pt((a.Min.X+a.Max.X-r.Dx())/2, a.Min.Y-r.Dy()-gtx.Dp(6)))
-	if r.Min.X < gtx.Dp(4) {
-		r = r.Add(image.Pt(gtx.Dp(4)-r.Min.X, 0))
-	}
+	pl := theme.PlaceTooltip(gtx, target, image.Pt(ts.X+2*pad, ts.Y+pad), image.Rectangle{Max: win}, theme.BaseTooltip(gtx, pos))
+	r := pl.Box
 	theme.RRect(gtx, r, gtx.Dp(6), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xf2})
 	at(gtx, image.Pt(r.Min.X+pad, r.Min.Y+pad/2), ts, func(gtx C) D {
-		return w.th.Label(gtx, 12, theme.Bold, hudWhite, w.cam.tip)
+		return th.Label(gtx, 12, theme.Bold, hudWhite, tip)
 	})
-	w.cam.tip = ""
 }

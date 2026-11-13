@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"strconv"
+	"strings"
 	"time"
 
 	"gioui.org/io/event"
@@ -49,18 +50,24 @@ func (t *hoverTracker) layout(gtx layout.Context, sz image.Point) bool {
 
 type tooltipState struct {
 	hover hoverTracker
+	org   origin
 	since time.Time
 	on    bool
 }
 
-// tooltip: tip (string or element), position (top default; bottom, left,
-// right), offsetY, delay (ms), zIndex (always on top here), children.
-// Drawn like popups.Tooltip: #1d1c1d card, radius 8, padding 8 12,
-// 13px/700, a diamond arrow, 8px from the trigger.
+// tooltip: tip (string or element), position (top default; Slack's
+// TooltipTip positions: top, top-left, top-right, bottom, bottom-left,
+// bottom-right, left, right), offsetX / offsetY, delay (ms), zIndex
+// (always on top here), children. Drawn like popups.Tooltip: #1d1c1d
+// card, radius 8, padding 8 12, 13px/700, a diamond arrow, and placed as
+// BaseTooltip places it (theme.PlaceTooltip: 8px from the trigger,
+// keepInBounds 3px inside the window, the opposite side when there's no
+// room; offsetY adds to the top as getInitialPosition's does).
 func tooltip(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	st := stateOf[tooltipState](h)
 	d := h.Children(gtx)
 	hovered := st.hover.layout(gtx, d.Size)
+	st.org.track(gtx, image.Rectangle{Max: d.Size})
 	if !hovered || !h.HasElement("tip") {
 		st.on = false
 		return d
@@ -79,10 +86,12 @@ func tooltip(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	}
 	th := thm()
 	cl := colorsOf(th)
-	side, _ := position(h.Props.StrOr("position", "top"), popups.Above)
-	extra := 0
+	o := theme.BaseTooltip(gtx, tipPosition(h.Props.StrOr("position", "top")))
+	if v, ok := h.Props.Num("offsetX"); ok {
+		o.OffsetX = dp(gtx, float32(v))
+	}
 	if v, ok := h.Props.Num("offsetY"); ok {
-		extra = dp(gtx, float32(v))
+		o.OffsetY = dp(gtx, float32(v))
 	}
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
 	maxW := dp(gtx, 320)
@@ -90,35 +99,39 @@ func tooltip(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		return textOrElement(gtx, h, "tip", th, 13, 18, theme.Bold, cl.TooltipText, 0)
 	})
 	box := image.Pt(cs.Size.X+2*padX, cs.Size.Y+2*padY)
-	gap := dp(gtx, 8)
-	var p, ac image.Point
-	switch side {
-	case popups.Below:
-		p = image.Pt((d.Size.X-box.X)/2, d.Size.Y+gap+extra)
-		ac = image.Pt(d.Size.X/2, d.Size.Y+gap+extra)
-	case popups.Right:
-		p = image.Pt(d.Size.X+gap, (d.Size.Y-box.Y)/2+extra)
-		ac = image.Pt(d.Size.X+gap, d.Size.Y/2+extra)
-	case popups.Left:
-		p = image.Pt(-gap-box.X, (d.Size.Y-box.Y)/2+extra)
-		ac = image.Pt(-gap, d.Size.Y/2+extra)
-	default:
-		p = image.Pt((d.Size.X-box.X)/2, -gap-box.Y-extra)
-		ac = image.Pt(d.Size.X/2, -gap-extra)
+	var bounds image.Rectangle
+	if st.org.ok {
+		bounds = theme.WindowBounds(st.org.get())
 	}
+	pl := theme.PlaceTooltip(gtx, image.Rectangle{Max: d.Size}, box, bounds, o)
 	m := op.Record(gtx.Ops)
 	// box and arrow, outlined together in dark mode (theme/tooltip.go)
 	var glow color.NRGBA
 	if th != nil {
 		glow = th.C.TooltipGlow
 	}
-	theme.TooltipShape(gtx, image.Rectangle{Min: p, Max: p.Add(box)}, dp(gtx, 8), theme.TooltipArrow{C: ac, Half: dp(gtx, 6)}, cl.Tooltip, glow)
-	at(gtx, p, func(gtx layout.Context) layout.Dimensions {
+	theme.TooltipShape(gtx, pl.Box, dp(gtx, 8), pl.Arrow, cl.Tooltip, glow)
+	at(gtx, pl.Box.Min, func(gtx layout.Context) layout.Dimensions {
 		callAt(gtx, content, image.Pt(padX, padY))
 		return layout.Dimensions{Size: box}
 	})
 	op.Defer(gtx.Ops, m.Stop())
 	return d
+}
+
+// tipPosition is a Tooltip position prop as TooltipTip's position
+// ("above" / "below" too); anything else is "top".
+func tipPosition(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	switch s {
+	case theme.TipTop, theme.TipTopLeft, theme.TipTopRight, theme.TipBottom, theme.TipBottomLeft, theme.TipBottomRight, theme.TipLeft, theme.TipRight:
+		return s
+	case "above":
+		return theme.TipTop
+	case "below":
+		return theme.TipBottom
+	}
+	return theme.TipTop
 }
 
 // ---- Popover ----

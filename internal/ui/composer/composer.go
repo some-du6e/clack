@@ -30,6 +30,7 @@ type Composer struct {
 	h      Host
 	api    coreAPI
 	gtip   groupTip // the @group slug tooltip (group_tip.go)
+	ttip   textyTip // an emoji's title tooltip (texty_tip.go)
 	ch, ts string
 	edit   *core.Message // edit mode: the message being edited
 	// unsendBy is when the message just sent stops being unsendable

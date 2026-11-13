@@ -8,6 +8,7 @@ import (
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // PersistActions reports whether messages always show their collapsed
@@ -82,7 +83,7 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 			})
 		})
 		if btn.Hovered() {
-			tooltip(gtx, th, c, "Message actions", image.Pt(x+bs/2, y-dp(gtx, 8)), y+bs+dp(gtx, 8), size, 1)
+			tooltip(gtx, th, c, "Message actions", rr, theme.WindowBounds(s.origin), 1)
 		}
 	}
 }
