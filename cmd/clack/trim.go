@@ -9,6 +9,15 @@ import (
 
 func init() { startTrim = trimMemory }
 
+// memoryLimit is the Go runtime's soft memory limit (debug.SetMemoryLimit),
+// a backstop and not how Clack stays small: the caches are bounded on
+// their own (the memory workflow, perf.yml's scale jobs, measures them).
+// With GOGC at 100 the heap may grow to twice what's live before the
+// collector runs; near the limit it runs sooner instead. If what's live
+// ever exceeds it, the runtime's GC CPU limit (half the CPU) lets the heap
+// grow rather than thrash. GOMEMLIMIT, when set, wins.
+const memoryLimit = 512 << 20
+
 // trimMemory hands freed heap back to the OS. The Go runtime keeps freed
 // pages up to its heap goal (2x the live heap), so after boot (megabytes of
 // JSON) or a burst of scrolling the process would sit at its peak while
@@ -16,6 +25,9 @@ func init() { startTrim = trimMemory }
 // unreturned, run one FreeOSMemory (a GC plus scavenge, ~10-30 ms of
 // background CPU). ReadMemStats alone costs microseconds.
 func trimMemory() {
+	if os.Getenv("GOMEMLIMIT") == "" {
+		debug.SetMemoryLimit(memoryLimit)
+	}
 	if os.Getenv("CLACK_NOTRIM") != "" {
 		return
 	}
