@@ -232,6 +232,18 @@ var macosCursorID = [...]byte{
 	pointer.CursorSouthResize:              23,
 	pointer.CursorNorthEastSouthWestResize: 24,
 	pointer.CursorNorthWestSouthEastResize: 25,
+	// Clack patch 14: the panning cursors: the all-scroll and resize cursors.
+	pointer.CursorMiddlePanning:           6,
+	pointer.CursorMiddlePanningVertical:   6,
+	pointer.CursorMiddlePanningHorizontal: 6,
+	pointer.CursorNorthPanning:            22,
+	pointer.CursorNorthEastPanning:        15,
+	pointer.CursorEastPanning:             21,
+	pointer.CursorSouthEastPanning:        17,
+	pointer.CursorSouthPanning:            23,
+	pointer.CursorSouthWestPanning:        16,
+	pointer.CursorWestPanning:             20,
+	pointer.CursorNorthWestPanning:        14,
 }
 
 // windowSetCursor updates the cursor from the current one to a new one

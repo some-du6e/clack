@@ -21,6 +21,16 @@ type wheelScroll struct {
 	// whole pixels
 	ax, ay float64
 	px, py int
+	// middle-click autoscroll (Gio patch 14, gesture/clack_autoscroll.go)
+	auto gesture.Autoscroll
+}
+
+// press offers the view to the middle-click autoscroll that press pe may
+// start; maxX and maxY are how far it scrolls (0: it can't that way).
+func (s *wheelScroll) press(gtx layout.Context, pe pointer.Event, maxX, maxY int) {
+	if gesture.AutoscrollPress(pe) {
+		s.auto.Offer(gtx.Source, pe, maxX > 0, maxY > 0)
+	}
 }
 
 // event is the distance to move now for scroll event pe, with the view
@@ -44,9 +54,17 @@ func (s *wheelScroll) event(gtx layout.Context, pe pointer.Event, x, y, maxX, ma
 	return dx, dy
 }
 
-// tick is the distance the animation moved since the last frame; it asks
-// for the next frame while it runs.
-func (s *wheelScroll) tick(gtx layout.Context) (dx, dy int) {
+// tick is the distance the animation, or a middle-click autoscroll, moved
+// since the last frame, with the view at (x, y) of at most (maxX, maxY);
+// it asks for the next frame while either runs.
+func (s *wheelScroll) tick(gtx layout.Context, x, y, maxX, maxY int) (dx, dy int) {
+	rx := pointer.ScrollRange{Min: -x, Max: max(0, maxX-x)}
+	ry := pointer.ScrollRange{Min: -y, Max: max(0, maxY-y)}
+	if d := s.auto.Tick(gtx.Source, gtx.Now, rx, ry); d.X != 0 || d.Y != 0 {
+		s.w.Stop() // the wheel's animation gives way
+		s.ax, s.ay, s.px, s.py = 0, 0, 0, 0
+		return d.X, d.Y
+	}
 	if !s.w.Active() {
 		return 0, 0
 	}

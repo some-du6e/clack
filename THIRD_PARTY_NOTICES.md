@@ -26,6 +26,7 @@ Clack is MIT licensed (see `LICENSE`). It includes or links the following third-
 | [godbus/dbus](https://github.com/godbus/dbus) | Linux notifications, screen-lock events | BSD-2-Clause |
 | [wlynxg/anet](https://github.com/wlynxg/anet) | network interfaces | BSD-3-Clause |
 | [google/uuid](https://github.com/google/uuid) | ids | BSD-3-Clause |
+| [Chromium](https://chromium.googlesource.com/chromium/src)'s panning cursors, `ui/resources/cursors/pan_*.cur` (`third_party/gioui.org/app/clack_cursors`) | middle-click autoscroll's cursors on Windows (Gio patch 14) | BSD-3-Clause (`third_party/gioui.org/app/clack_cursors/LICENSE`) |
 | Go standard library and `golang.org/x/*` | everything | BSD-3-Clause |
 
 ## LGPL-2.1 (goh264)

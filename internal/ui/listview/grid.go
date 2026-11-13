@@ -146,7 +146,7 @@ func (v *View) layoutGrid(gtx layout.Context, d *core.ListDoc, lv *lists.View, r
 	maxY := max(0, totalH-sz.Y)
 	maxX := max(0, g.x0+totalW+gtx.Dp(32)-sz.X)
 	v.gridEvents(gtx, d, maxX, maxY)
-	if dx, dy := g.wheel.tick(gtx); dx != 0 || dy != 0 {
+	if dx, dy := g.wheel.tick(gtx, g.scrollX, g.scrollY, maxX, maxY); dx != 0 || dy != 0 {
 		g.scrollX = min(max(0, g.scrollX+dx), maxX)
 		g.scrollY = min(max(0, g.scrollY+dy), maxY)
 	}
@@ -505,6 +505,7 @@ func (v *View) gridEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {
 		case pointer.Leave:
 			g.hover = -1
 		case pointer.Press:
+			g.wheel.press(gtx, pe, maxX, maxY)
 			g.press, g.pressed = pe.Position, true
 			v.learnOrigin(pe.Position)
 		case pointer.Release:

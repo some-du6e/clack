@@ -180,6 +180,28 @@ const (
 	// CursorNorthWestSouthEastResize is for top-left to bottom-right diagonal resizing.
 	// Usually displayed as a double ended arrow on the corresponding diagonal.
 	CursorNorthWestSouthEastResize
+
+	// Clack patch 14: middle-click autoscroll's cursors, Chromium's
+	// panning cursors (ui/base/cursor/mojom/cursor_type.mojom). Windows
+	// draws Chromium's own images (ui/resources/cursors/pan_*.cur);
+	// elsewhere they are the all-scroll and resize cursors Chromium uses
+	// on Linux (ui/base/cursor/cursor_factory.cc CursorNamesFromType).
+
+	// CursorMiddlePanning is the autoscroll origin: scrolling both ways.
+	CursorMiddlePanning
+	// CursorMiddlePanningVertical is the origin of an up-and-down autoscroll.
+	CursorMiddlePanningVertical
+	// CursorMiddlePanningHorizontal is the origin of a sideways autoscroll.
+	CursorMiddlePanningHorizontal
+	// CursorNorthPanning and the rest show an autoscroll's direction.
+	CursorNorthPanning
+	CursorNorthEastPanning
+	CursorEastPanning
+	CursorSouthEastPanning
+	CursorSouthPanning
+	CursorSouthWestPanning
+	CursorWestPanning
+	CursorNorthWestPanning
 )
 
 const (
@@ -402,6 +424,28 @@ func (c Cursor) String() string {
 		return "NorthEastSouthWestResize"
 	case CursorNorthWestSouthEastResize:
 		return "NorthWestSouthEastResize"
+	case CursorMiddlePanning:
+		return "MiddlePanning"
+	case CursorMiddlePanningVertical:
+		return "MiddlePanningVertical"
+	case CursorMiddlePanningHorizontal:
+		return "MiddlePanningHorizontal"
+	case CursorNorthPanning:
+		return "NorthPanning"
+	case CursorNorthEastPanning:
+		return "NorthEastPanning"
+	case CursorEastPanning:
+		return "EastPanning"
+	case CursorSouthEastPanning:
+		return "SouthEastPanning"
+	case CursorSouthPanning:
+		return "SouthPanning"
+	case CursorSouthWestPanning:
+		return "SouthWestPanning"
+	case CursorWestPanning:
+		return "WestPanning"
+	case CursorNorthWestPanning:
+		return "NorthWestPanning"
 	default:
 		panic("unknown Type")
 	}

@@ -401,6 +401,20 @@ jobs:
           CLACK_BENCH_GPU: "1"
         run: go test -count=1 -v -timeout 30m -run '^TestWheelFrameProbe$' ./internal/ui
 
+      # Middle-click autoscroll (Gio patch 14), on by default on Windows as
+      # in Chromium: the router tests, Chromium's panning cursors made from
+      # their .cur files, and SendInput's real middle button held and
+      # clicked over a long fakeslack channel in Clack's own window.
+      - name: middle-click autoscroll (TestPanCursors, internal/ui/autoscroll, SendInput on Clack's window)
+        if: ${{ !cancelled() }}
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_AUTOSCROLL_TESTS: "1"
+        run: |
+          go test -count=1 -v -run '^TestPanCursors$' gioui.org/app
+          go test -count=1 -v ./internal/ui/autoscroll
+          go test -count=1 -v -timeout 10m -run '^(TestAutoscrollWindow|TestAutoscrollInClack)$' ./internal/ui
+
       # The idle-frame budget on Windows (see the linux job's step).
       - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}

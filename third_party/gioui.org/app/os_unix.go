@@ -97,4 +97,17 @@ var xCursor = [...]string{
 	pointer.CursorSouthResize:              "bottom_side",
 	pointer.CursorNorthEastSouthWestResize: "fd_double_arrow",
 	pointer.CursorNorthWestSouthEastResize: "bd_double_arrow",
+	// Clack patch 14: the panning cursors as Chromium shows them on Linux
+	// (ui/base/cursor/cursor_factory.cc: all-scroll/fleur, n-resize/top_side, …).
+	pointer.CursorMiddlePanning:           "fleur",
+	pointer.CursorMiddlePanningVertical:   "fleur",
+	pointer.CursorMiddlePanningHorizontal: "fleur",
+	pointer.CursorNorthPanning:            "top_side",
+	pointer.CursorNorthEastPanning:        "top_right_corner",
+	pointer.CursorEastPanning:             "right_side",
+	pointer.CursorSouthEastPanning:        "bottom_right_corner",
+	pointer.CursorSouthPanning:            "bottom_side",
+	pointer.CursorSouthWestPanning:        "bottom_left_corner",
+	pointer.CursorWestPanning:             "left_side",
+	pointer.CursorNorthWestPanning:        "top_left_corner",
 }

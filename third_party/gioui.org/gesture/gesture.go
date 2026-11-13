@@ -127,6 +127,8 @@ type Scroll struct {
 	wheel    WheelCurve
 	wheelPos float64
 	wheelPx  int
+	// Clack patch 14: middle-click autoscroll (clack_autoscroll.go).
+	auto Autoscroll
 }
 
 type ScrollState uint8
@@ -293,6 +295,16 @@ func (s *Scroll) Update(cfg unit.Metric, q input.Source, t time.Time, axis Axis,
 		}
 		switch e.Kind {
 		case pointer.Press:
+			if AutoscrollPress(e) { // Clack patch 14
+				cx, cy := scrollx != (pointer.ScrollRange{}), scrolly != (pointer.ScrollRange{})
+				switch axis {
+				case Horizontal:
+					cy = false
+				case Vertical:
+					cx = false
+				}
+				s.auto.Offer(q, e, cx, cy)
+			}
 			if s.dragging {
 				break
 			}
@@ -361,6 +373,25 @@ func (s *Scroll) Update(cfg unit.Metric, q input.Source, t time.Time, axis Axis,
 		}
 	}
 	total += s.flinger.Tick(t)
+	// Clack patch 14: middle-click autoscroll moves it at its speed
+	rx, ry := scrollx, scrolly
+	switch axis {
+	case Horizontal:
+		ry = pointer.ScrollRange{}
+	case Vertical:
+		rx = pointer.ScrollRange{}
+	}
+	if d := s.auto.Tick(q, t, rx, ry); d != (image.Point{}) {
+		s.Stop() // a running fling or wheel animation gives way
+		switch axis {
+		case Horizontal:
+			total += d.X
+		case Vertical:
+			total += d.Y
+		default:
+			total += d.X + d.Y
+		}
+	}
 	if s.wheel.Active() {
 		s.wheelPos += s.wheel.Tick(t)
 		n := int(math.Round(s.wheelPos)) - s.wheelPx
