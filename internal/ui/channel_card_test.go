@@ -28,12 +28,13 @@ func (e *perfEnv) chcLink(conv, ch string) image.Rectangle {
 	if !ok {
 		return image.Rectangle{}
 	}
+	var u image.Rectangle // the link's fragments (its icon, its name), as the trigger unions them
 	for _, r := range l.LinkRects() {
 		if r.Kind == richview.HitChannel && r.ID == ch {
-			return r.R
+			u = u.Union(r.R)
 		}
 	}
-	return image.Rectangle{}
+	return u
 }
 
 // chcOpen rests the pointer on the #channel link to ch until its card
@@ -105,7 +106,7 @@ func TestChannelHoverCardInChannel(t *testing.T) {
 	e.openChannel(conv)
 	e.settle(800 * time.Millisecond)
 	ctl := &e.a.hover.ctl
-	away := f32.Pt(float32(e.size.X-40), float32(e.size.Y-40))
+	away := f32.Pt(float32(e.size.X-40), 60) // the header, clear of the message's other links
 	leave := func() {
 		e.move(away)
 		time.Sleep(hovercard.HideDelay + 50*time.Millisecond)
