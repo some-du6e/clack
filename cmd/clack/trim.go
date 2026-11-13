@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"runtime/debug"
 	"time"
+
+	"github.com/some-du6e/clack/internal/core"
 )
 
 func init() { startTrim = trimMemory }
@@ -21,6 +23,11 @@ func init() { startTrim = trimMemory }
 // GOMEMLIMIT, when set, wins.
 const memoryLimit = 768 << 20
 
+// evictCollect: a cache pass that let this many messages go is collected
+// at once (core.AfterEvict); about 30 MB of documents, rows and plugin
+// state at Hack Club scale.
+const evictCollect = 1000
+
 // trimMemory hands freed heap back to the OS. The Go runtime keeps freed
 // pages up to its heap goal (2x the live heap), so after boot (megabytes of
 // JSON) or a burst of scrolling the process would sit at its peak while
@@ -35,6 +42,16 @@ func trimMemory() {
 	}
 	if os.Getenv("CLACK_NOTRIM") != "" {
 		return
+	}
+	// a message cache pass that let many messages go: collect once the
+	// lists have dropped their rows too (a frame or two), so the memory
+	// goes back now; the loop below would wait for a minute without a
+	// collection (a pass let go of 150 MB seconds before the scale run's
+	// idle snapshot)
+	core.AfterEvict = func(n int) {
+		if n >= evictCollect {
+			time.AfterFunc(2*time.Second, debug.FreeOSMemory)
+		}
 	}
 	go func() {
 		var m runtime.MemStats

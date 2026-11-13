@@ -18,6 +18,12 @@ import (
 // growing for an hour.
 var EvictEvery = 2 * time.Minute
 
+// AfterEvict, when set, is called after a cache pass let messages go, with
+// how many (on the pass's goroutine): cmd/clack collects then, so their
+// memory goes back to the OS within seconds instead of at the next
+// collection.
+var AfterEvict func(messages int)
+
 // evictOnScreen: a conversation read this recently is kept whole, as if on
 // screen (a list on screen refreshes its conversation every 30 s, the
 // split view shows a second one): one left a few minutes ago comes back
@@ -132,6 +138,9 @@ func (a *App) EvictMessages() []store.Evicted {
 	}
 	for _, e := range out {
 		a.emit(Event{Type: "evicted", Channel: e.Channel, ThreadTS: e.Thread, TS: e.Oldest})
+	}
+	if f := AfterEvict; f != nil && st.Evicted > 0 {
+		f(st.Evicted)
 	}
 	return out
 }
