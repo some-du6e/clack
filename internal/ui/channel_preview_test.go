@@ -20,6 +20,7 @@ import (
 
 	"gioui.org/io/key"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
@@ -242,6 +243,28 @@ func TestChannelLinkTargets(t *testing.T) {
 		})
 		if ci := e.a.convOf(lc.ID); ci == nil || ci.Name == "" || ci.Name == lc.ID {
 			t.Errorf("%s: header conv %+v", lc.Name, ci)
+		}
+		// core's "names" (its resolveLoop naming a mention or a member,
+		// boot's usergroups.membership) lands at any time: the flake
+		// (gap-w28, ci 43355727051) was one landing between the footer and
+		// the header check, which dropped a channel outside the sidebar's
+		// header info until a new lookup answered. Every run gets one here;
+		// the header and the footer stay throughout.
+		e.a.data.handle(e.a, core.Event{Type: "names"})
+		for k := 0; k < 3; k++ {
+			if ci := e.a.convOf(lc.ID); ci == nil || ci.Name == "" || ci.Name == lc.ID {
+				t.Errorf("%s: after core's names (frame %d) header conv %+v", lc.Name, k, ci)
+				break
+			}
+			if got := e.a.footerFor(c); got != f {
+				t.Errorf("%s: after core's names (frame %d) the footer is %v, want %v", lc.Name, k, got, f)
+				break
+			}
+			e.frame()
+		}
+		e.settle(300 * time.Millisecond) // the lookup again answers
+		if ci := e.a.convOf(lc.ID); ci == nil || ci.Name == "" || ci.Name == lc.ID || e.a.footerFor(c) != f {
+			t.Errorf("%s: after the names' lookup header conv %+v, footer %v", lc.Name, ci, e.a.footerFor(c))
 		}
 	}
 }
