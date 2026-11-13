@@ -28,7 +28,11 @@ func TestFakeScreenShare(t *testing.T) {
 	}
 	fk := NewFake(clip, t.Errorf)
 	defer fk.Close()
-	fk.f.content.dropFirst.Store(os.Getenv("CLACK_FAKE_DROP_FIRST_AU") != "") // BEFORE: the first keyframe lost
+	// The first keyframe never arrives (CI: 0 pictures in 20 s), nor the
+	// one answering the fake's PLI (CI: no keyframe after it): the
+	// receiver asks for another each time.
+	fk.f.content.dropFirst.Store(true)
+	fk.f.content.dropPLIKey.Store(true) // and the one answering its PLI: it asks again
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := Join(ctx, Options{
@@ -52,7 +56,7 @@ func TestFakeScreenShare(t *testing.T) {
 	info := func() string {
 		c := fk.ContentShare()
 		return s.State().Share.State.String() + " " + s.State().Share.Err + "; fake content: " + itoa64(int64(c.Joins)) + " joins, " + itoa64(c.Packets) + " video packets, " +
-			itoa64(c.Frames) + " pictures, " + itoa64(c.Keys) + " keyframes (" + itoa64(c.KeysAfterPLI) + " after PLI), " +
+			itoa64(c.Frames) + " pictures (" + itoa64(c.Undecodable) + " undecodable, " + itoa64(c.KeyRequests) + " keyframe requests), " + itoa64(c.Keys) + " keyframes (" + itoa64(c.KeysAfterPLI) + " after PLI), " +
 			itoa64(c.AudioPackets) + " audio packets; " + s.Stats()
 	}
 	waitFor(t, 20*time.Second, "the share at the fake", func() bool {

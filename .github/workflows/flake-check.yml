@@ -59,11 +59,18 @@ name: flake-check
 #                                            loading after the window was
 #                                            hidden: no frame took them and
 #                                            drainIdle ran no posted work
-#   TestFakeScreenShare, TestFakeCamera      the only keyframe lost (written
-#     (huddle)                               before pion's SRTP was up) and
-#                                            the fake asked for one only
-#                                            after 5 pictures; it now asks
-#                                            when it can't decode
+#                                            and (a Gio bug, patch 14) a
+#                                            wakeup queued while DestroyEvent
+#                                            waited, delivered to nobody:
+#                                            WM_DESTROY never returned
+#   TestFakeScreenShare, TestFakeCamera      a keyframe (~350 KB at once)
+#     (huddle)                               lost on loopback: the first, or
+#                                            the one answering the fake's
+#                                            PLI. The fake asked only once,
+#                                            after 5 pictures, and had no
+#                                            NACK; now it NACKs, asks when it
+#                                            can't decode and asks again
+#                                            until its PLI is answered
 #   TestDetailsDMAddPeopleCustomHistory      the first-message read and the
 #     (ui/views)                             preview both in flight; the
 #                                            test wanted the read first
@@ -117,10 +124,12 @@ on:
       - "internal/core/reads.go"
       - "internal/fakeslack/faults.go"
       - "third_party/gioui.org/app/clack_drop_windows_test.go"
+      - "third_party/gioui.org/app/os.go"
       - "internal/ui/runfromtray_windows_test.go"
       - "internal/ui/runfromtray.go"
       - "internal/ui/runfromtray_test.go"
       - "internal/huddle/fake_video.go"
+      - "internal/huddle/videosend_test.go"
       - "internal/huddle/share_test.go"
       - "internal/ui/views/details_w14_test.go"
       - "internal/ui/views/views_keys_test.go"
