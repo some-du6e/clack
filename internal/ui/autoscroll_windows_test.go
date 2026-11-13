@@ -58,6 +58,14 @@ func asMouse(p image.Point, flags uint32) asTestInput {
 	return in
 }
 
+// asWheel is a wheel turn of delta (WHEEL_DELTA 120 a notch, negative
+// toward the user) at screen point p.
+func asWheel(p image.Point, delta int32) asTestInput {
+	in := asMouse(p, 0x0800) // MOUSEEVENTF_WHEEL
+	binary.LittleEndian.PutUint32(in.u[8:], uint32(delta))
+	return in
+}
+
 func asSend(t *testing.T, ins ...asTestInput) {
 	t.Helper()
 	n, _, err := asTestSendInput.Call(uintptr(len(ins)), uintptr(unsafe.Pointer(&ins[0])), unsafe.Sizeof(ins[0]))
@@ -200,6 +208,19 @@ func TestAutoscrollWindow(t *testing.T) {
 	asTestClientToScreen.Call(hwnd, uintptr(unsafe.Pointer(&pt)))
 	p := image.Pt(int(pt.X), int(pt.Y))
 	t.Logf("window point %v, screen %v", win, p)
+
+	// mid-channel, so there is room both ways (it may open at the top of
+	// what's loaded): the wheel to the bottom, then six notches up
+	for i := 0; i < 30; i++ {
+		asSend(t, asWheel(p, -120))
+		time.Sleep(30 * time.Millisecond)
+	}
+	time.Sleep(800 * time.Millisecond)
+	for i := 0; i < 6; i++ {
+		asSend(t, asWheel(p, 120))
+		time.Sleep(30 * time.Millisecond)
+	}
+	time.Sleep(time.Second)
 
 	// start: middle down at the first point where it starts (a link
 	// under the pointer rightly doesn't)

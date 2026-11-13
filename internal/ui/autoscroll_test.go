@@ -35,6 +35,17 @@ func TestAutoscrollInClack(t *testing.T) {
 	e.openChannel(ch)
 	e.until("history", 20*time.Second, func() bool { return e.loadedMessages(ch) > 30 })
 	e.settle(500 * time.Millisecond)
+	// mid-channel, so there is room both ways (it may open at the top of
+	// what's loaded): the bottom, then 1200px up
+	for i := 0; i < 40; i++ {
+		e.scroll(e.listPoint(), 400)
+		e.frame()
+	}
+	for i := 0; i < 4; i++ {
+		e.scroll(e.listPoint(), -300)
+		e.frame()
+	}
+	e.settle(300 * time.Millisecond)
 
 	rows := func() map[string]int {
 		c := e.a.convos[ch+"/"]

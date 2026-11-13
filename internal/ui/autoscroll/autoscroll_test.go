@@ -88,6 +88,7 @@ func newEnv(t *testing.T) *env {
 var size = image.Pt(300, 400)
 
 func (e *env) frame(at time.Time) {
+	e.r.WakeupTime() // the router keeps a wake-up until it's read: only this frame's count
 	e.ops.Reset()
 	gtx := layout.Context{Ops: &e.ops, Now: at, Metric: e.metric, Constraints: layout.Exact(size), Source: e.r.Source()}
 	e.as.Begin(gtx.Source, gtx.Metric)
@@ -158,6 +159,7 @@ func TestHoldScrollsAndReleaseStops(t *testing.T) {
 	if c := e.r.Cursor(); c != pointer.CursorMiddlePanningVertical {
 		t.Errorf("cursor at the origin %v, want MiddlePanningVertical (the list scrolls up and down only)", c)
 	}
+	e.frame(e.at(0)) // the grab's Cancels to the other handlers are one frame's events
 	if e.wants() {
 		t.Errorf("asked for frames before the pointer left the origin")
 	}
