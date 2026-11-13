@@ -28,6 +28,10 @@ import (
 // Slack itself refuses here, with the error it gives. Each needs a reason.
 var demoGapOK = map[string]string{}
 
+// demoForeignMarkers are fakeslack's own ids and fixture text: an answer
+// with one of them shows the fake's workspace through the demo's.
+var demoForeignMarkers = []string{"U0FAKE", "C0FAKE", "D0FAKE", "G0FAKE", "S0FAKE", "W0FAKE", "Fake Club", "Synthetic", "fake.slack.com", "Snack crew"}
+
 // demoStep is one surface of the walk.
 type demoStep struct {
 	name string

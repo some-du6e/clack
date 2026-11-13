@@ -1235,6 +1235,9 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if e, failed := failedAnswer(b); failed {
 		s.noteAnswer(method, form, answerError, e)
 	}
+	if m := s.foreignIn(b); m != "" {
+		s.noteAnswer(method, form, answerForeign, m)
+	}
 	w.Write(b)
 }
 

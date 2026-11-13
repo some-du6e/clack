@@ -1,6 +1,7 @@
 package fakeslack
 
 import (
+	"bytes"
 	"encoding/json"
 	"sort"
 	"sync"
@@ -21,6 +22,10 @@ type AnswerKind string
 const (
 	answerNone  AnswerKind = "unanswered" // no hook or handler knew the method
 	answerError AnswerKind = "error"      // {"ok":false,...}
+	// answerForeign: the answer carries one of WatchForeign's markers (a
+	// workspace built on the fake, like the demo, showing the fake's own
+	// generated users, channels or fixture text)
+	answerForeign AnswerKind = "foreign"
 )
 
 // Gap is one request the fake couldn't serve.
@@ -35,8 +40,35 @@ type Gap struct {
 }
 
 type gapLog struct {
-	mu   sync.Mutex
-	gaps []Gap
+	mu      sync.Mutex
+	gaps    []Gap
+	markers [][]byte // WatchForeign
+}
+
+// WatchForeign records, from now on, every answer containing one of
+// markers as a Gap of kind "foreign" (Error: the marker).
+func (s *Server) WatchForeign(markers ...string) {
+	g := s.gapLog()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.markers = nil
+	for _, m := range markers {
+		g.markers = append(g.markers, []byte(m))
+	}
+}
+
+// foreignIn is the first watched marker in an answer ("" none).
+func (s *Server) foreignIn(b []byte) string {
+	g := s.gapLog()
+	g.mu.Lock()
+	ms := g.markers
+	g.mu.Unlock()
+	for _, m := range ms {
+		if bytes.Contains(b, m) {
+			return string(m)
+		}
+	}
+	return ""
 }
 
 func (s *Server) gapLog() *gapLog { return &s.gaps }
