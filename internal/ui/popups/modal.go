@@ -93,6 +93,10 @@ func (b *ModalButton) tooltip(gtx layout.Context, th *theme.Theme, sz image.Poin
 // ModalOpts configure a modal.
 type ModalOpts struct {
 	Title string
+	// HoverCards: the body has profile hover triggers (Preferences' plugin
+	// credits: Taut's MemberSlug pills), so the ui root keeps hover cards
+	// working over the modal and draws them above it (Modal.HoverCards).
+	HoverCards bool
 	// TitleFunc, when set, is asked for the title every frame (a title
 	// that changes while the modal is open).
 	TitleFunc func() string
@@ -618,3 +622,6 @@ func (m *Modal) OldDialog() *Modal {
 	m.o.CloseFirst = true
 	return m
 }
+
+// HoverCards reports ModalOpts.HoverCards (the ui root's hoverHost).
+func (m *Modal) HoverCards() bool { return m.o.HoverCards }

@@ -595,3 +595,26 @@ func TestLibraryInstallTurnsOn(t *testing.T) {
 		t.Errorf("BetterHuddles: %q", st)
 	}
 }
+
+// A plugin both systems ship credits each person once, in order (Karim
+// 2026-11-13: Copy Reacted read "By @Jeremy, @Rowan, @Rowan"): by the
+// member they resolve to, else by name.
+func TestGroupCreditDedupes(t *testing.T) {
+	st := store.New("")
+	st.PutUsers([]slack.User{{ID: "U0ECHO0001", Name: "echo", Profile: slack.Profile{DisplayName: "Echo", RealName: "Echo Example"}}})
+	g := libGroup{Entries: []pluginlib.Entry{
+		{System: pluginlib.Taut, Authors: []pluginlib.Author{{Name: "Jeremy", SlackID: "U06UYA5GMB5"}, {Name: "Rowan", SlackID: "U080A3QP42C"}}},
+		{System: pluginlib.Slick, Authors: []pluginlib.Author{{Name: "rowan", SlackID: "U080A3QP42C"}, {Name: "Echo"}}},
+		{System: pluginlib.Slick, Contributors: []string{"echo example", "Jeremy", "Nemo", "nemo"}},
+	}}
+	hc, here := creditResolver{s: st, hc: true}, creditResolver{s: st}
+	if got := groupCredit(hc, g); got != "<@U06UYA5GMB5|Jeremy>, <@U080A3QP42C|Rowan>, <@U0ECHO0001|Echo>, Nemo" {
+		t.Errorf("hack club: %q", got)
+	}
+	if got := groupCredit(here, g); got != "Jeremy, Rowan, <@U0ECHO0001|Echo>, Nemo" {
+		t.Errorf("elsewhere: %q", got)
+	}
+	if got := here.mrkdwn("<@U0ECHO0001>, Echo and <@U0ECHO0001|Echo Example>"); got != "<@U0ECHO0001|Echo>" {
+		t.Errorf("one member three ways: %q", got)
+	}
+}

@@ -53,6 +53,8 @@ type tautPage struct {
 	handles map[string]*taut.GoHandle
 	subGen  int // App.tautGen the subs were mounted for
 
+	aboutAsked bool // About read the plugin library's index for its credits
+
 	// async state
 	busy    string
 	errText string
@@ -1433,9 +1435,12 @@ func (p *tautPage) followConfig(path string) {
 }
 
 // aboutScreen is Plugins > About: Clack itself (its name and version,
-// what it is, its repository), then the credits: a line each for the two
-// plugin systems Clack runs plugins from, and the installed plugins'
-// authors (none listed while nothing is installed).
+// what it is, its repository), then the credits: what makes plugins work
+// (Clack's native plugin compatibility layer running Taut's and Slick's
+// plugins, docs/PLUGINS.md) and everyone who made or contributed to one,
+// as mention pills with the profile hover card, Jeremy (Taut) and Rowan
+// (Slick) first (Karim 2026-11-13). Each plugin's own credit is on its
+// page ("by …").
 func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	cl := p.colors()
 	cr := p.a.credits()
@@ -1446,45 +1451,40 @@ func (p *tautPage) aboutScreen(f *flow, t *taut.Taut, s taut.Settings) {
 	})
 	p.fieldGap(f)
 	p.legend(f, "Credits")
-	n := 0
-	line := func(key, s string) {
-		if n > 0 {
-			f.gap(6) // .taut-settings__credits gap
+	f.put(0, func(gtx layout.Context) layout.Dimensions {
+		return p.mrkdwn(gtx, "credit.layer", aboutLayer, false, cl.fg)
+	})
+	var entries []pluginlib.Entry
+	if lib := p.a.pluginLib(); lib != nil {
+		if ix := lib.Cached(); ix != nil {
+			entries = ix.Plugins
+		} else if !p.aboutAsked {
+			p.aboutAsked = true // the index once, for its author data
+			a := p.a
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer cancel()
+				if _, err := lib.Index(ctx, false); err == nil {
+					a.Post(a.Invalidate)
+				}
+			}()
 		}
-		n++
-		f.put(0, func(gtx layout.Context) layout.Dimensions { return p.mrkdwn(gtx, key, s, false, cl.fg) })
 	}
-	for _, c := range aboutSystems {
-		line("credit.system."+c[0], c[1])
-	}
-	for _, c := range s.Categories {
-		for _, pl := range c.Plugins {
-			l := "*" + mrkdwnEscape(pl.Name) + "*"
-			if a := cr.tautAuthors(pl); a != "" {
-				l += " by " + a
-			}
-			line("credit."+pl.ID, l)
-		}
-	}
-	if sl := p.a.Slick(); sl != nil {
-		for _, pl := range sl.Settings().Plugins {
-			l := "*" + mrkdwnEscape(pl.Name) + "*"
-			if pl.Authors != "" {
-				l += " by " + cr.mrkdwn(pl.Authors)
-			}
-			line("credit.slick."+pl.ID, l)
-		}
+	if who := cr.contributors(entries, p.a.installedPeople()); who != "" {
+		f.gap(6) // .taut-settings__credits gap
+		f.put(0, func(gtx layout.Context) layout.Dimensions {
+			return p.mrkdwn(gtx, "credit.people", who, false, cl.fg)
+		})
 	}
 }
 
 // aboutClack is About's line on Clack (the README's), with its repository.
 const aboutClack = "A fast Slack client for the desktop, written in Go with a native, GPU-rendered window. <https://github.com/some-du6e/clack|github.com/some-du6e/clack>"
 
-// aboutSystems are About's credit lines for the plugin systems.
-var aboutSystems = [][2]string{
-	{"taut", "Compatible with <https://github.com/jeremy46231/taut|Taut> plugins"},
-	{"slick", "Compatible with <https://github.com/3kh0/slick|Slick> plugins"},
-}
+// aboutLayer is About's credit for plugins: what Clack's plugin
+// compatibility layer is (docs/PLUGINS.md, PLUGINS-slick.md) and whose
+// work it stands on.
+const aboutLayer = "Clack runs <https://github.com/jeremy46231/taut|Taut> and <https://github.com/3kh0/slick|Slick> plugins unmodified through its native plugin compatibility layer: their code runs in Clack's own JavaScript engine with Taut's plugin API over Clack's client, and the Slack components they patch are drawn by Clack. That's possible thanks to the work of everyone who made Taut, Slick and their plugins:"
 
 // ---- helpers ----
 
