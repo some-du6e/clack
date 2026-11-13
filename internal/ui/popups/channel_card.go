@@ -446,13 +446,12 @@ func (p *ChannelHoverCard) header(gtx layout.Context, th *theme.Theme, cl *Color
 			})
 		})
 	})
-	h := lineH
+	h := lineH + dp(gtx, 4) // the name row's margin_bottom_25
 	topic := strings.TrimSpace(richtext.PlainText(richtext.Doc{Blocks: cv.TopicDoc}))
 	if topic == "" {
 		topic = strings.TrimSpace(cv.Topic)
 	}
 	if topic != "" {
-		h += dp(gtx, 4) // margin_bottom_25
 		d := at(gtx, image.Pt(x, y+h), func(gtx layout.Context) layout.Dimensions {
 			return para(loose(gtx, image.Pt(w, 1<<20)), th, 15, 22, theme.Regular, cl.Fg, topic, 2)
 		})

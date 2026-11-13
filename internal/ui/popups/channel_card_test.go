@@ -101,7 +101,7 @@ func chcShot(t *testing.T, ops *op.Ops, name string) {
 func TestChannelHoverCardStates(t *testing.T) {
 	for _, dark := range []bool{false, true} {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
-		h, _ := chcEnv(t, dark)
+		h, fs := chcEnv(t, dark)
 		anchor := image.Rect(400, 500, 480, 522)
 		cases := []struct {
 			name, id string
@@ -115,6 +115,7 @@ func TestChannelHoverCardStates(t *testing.T) {
 			{"archived", fakeslack.ThreadArchivedID, ChannelCardFull, "View Channel", 0, ""},
 			{"private", fakeslack.ThreadPrivateID, ChannelCardFull, "View Channel", 2, ""},
 			{"no-access", "C0NOPE00001", ChannelCardNoAccess, "", 0, ""},
+			{"topic", fs.ChannelIDs()[2], ChannelCardFull, "View Channel", 2, ""}, // a generated channel: its topic under the name
 		}
 		for _, c := range cases {
 			p := NewChannelHoverCard(h, anchor, c.id, true, false)
@@ -156,7 +157,7 @@ func TestChannelHoverCardStates(t *testing.T) {
 			if r.Max.Y != anchor.Min.Y-hovercard.OffsetY || r.Min.X+r.Dx()/2 != anchor.Min.X+anchor.Dx()/2 {
 				t.Errorf("%s: card %v, want it centred 12px above %v", c.name, r, anchor)
 			}
-			chcShot(t, ops, "channel-card-"+c.name+"-"+mode)
+			chcShot(t, ops, "popups-channel-card-"+c.name+"-"+mode)
 		}
 		// the composer's (TextyTooltip): no buttons, the same body
 		p := NewChannelHoverCard(h, anchor, fakeslack.ThreadSharedID, false, true)

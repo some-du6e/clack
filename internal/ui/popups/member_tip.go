@@ -157,7 +157,9 @@ func MemberTip(gtx layout.Context, h Host, userID string) layout.Dimensions {
 }
 
 // memberBadgeBg is .c-app_badge's background, --dt_color-surf-pry (the
-// theme's, else Slack's #fff / #1a1d21).
+// theme's, else Slack's #1d1c1d0f / #f8f8f80f), over the tip as the page
+// composites it.
 func memberBadgeBg(th *theme.Theme) color.NRGBA {
-	return chipTok{"var(--dt_color-surf-pry)", rgb(0xffffff), rgb(0x1a1d21)}.of(th)
+	c := chipTok{"var(--dt_color-surf-pry)", rgba(0x1d1c1d, 0x0f/255.0), rgba(0xf8f8f8, 0x0f/255.0)}.of(th)
+	return theme.Over(c, colorsOf(th).Tooltip)
 }
