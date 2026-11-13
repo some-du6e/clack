@@ -688,7 +688,9 @@ func (c *Composer) layoutInputBody(gtx layout.Context) layout.Dimensions {
 }
 
 func (c *Composer) layoutEditor(gtx layout.Context) layout.Dimensions {
-	return c.ed.Layout(gtx, c.st)
+	d := c.ed.Layout(gtx, c.st)
+	c.layoutGroupTip(gtx) // Texty's @group tooltip (group_tip.go)
+	return d
 }
 
 // ---- CSS values the natives read ----

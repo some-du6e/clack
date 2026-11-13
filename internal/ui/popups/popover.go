@@ -220,6 +220,9 @@ type TipState struct {
 	// Delay overrides TipDelay for this tooltip (Slack's BaseTooltip
 	// defaults to delay 150; some callers pass longer ones).
 	Delay time.Duration
+	// NoDelay shows it in the frame the hover starts: a Popover opened
+	// from a mouseover handler, not a BaseTooltip (Texty's tooltips).
+	NoDelay bool
 	// MaxWidth, when set, wraps the label at that width with each line
 	// centred (c-tooltip__tip: max-width 200px, text-align center).
 	MaxWidth unit.Dp
@@ -227,11 +230,18 @@ type TipState struct {
 
 // Showing reports whether the tooltip is up at now: hovered for its delay.
 func (st *TipState) Showing(now time.Time) bool {
-	delay := TipDelay
-	if st.Delay > 0 {
-		delay = st.Delay
+	return st.hovered && !now.Before(st.since.Add(st.delay()))
+}
+
+// delay is the tooltip's hover delay.
+func (st *TipState) delay() time.Duration {
+	switch {
+	case st.NoDelay:
+		return 0
+	case st.Delay > 0:
+		return st.Delay
 	}
-	return st.hovered && !now.Before(st.since.Add(delay))
+	return TipDelay
 }
 
 // TipDelay is how long the pointer must rest before a tooltip shows.
@@ -283,11 +293,7 @@ func tooltipWith(gtx layout.Context, th *theme.Theme, st *TipState, hovered bool
 		st.hovered = true
 		st.since = gtx.Now
 	}
-	delay := TipDelay
-	if st.Delay > 0 {
-		delay = st.Delay
-	}
-	if wait := st.since.Add(delay); gtx.Now.Before(wait) {
+	if wait := st.since.Add(st.delay()); gtx.Now.Before(wait) {
 		gtx.Execute(op.InvalidateCmd{At: wait})
 		return
 	}
