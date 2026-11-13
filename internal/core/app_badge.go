@@ -69,3 +69,7 @@ func (a *App) SavedOverdueCount() int {
 	defer a.mu.Unlock()
 	return a.savedOverdue
 }
+
+// The experiment the app badge reads (TestExperimentReadsListed): swdb G$
+// todo badging, which puts the overdue to-dos in the count.
+func init() { experimentReads["slack6_todo_badging"] = on }

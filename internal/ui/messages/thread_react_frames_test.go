@@ -2,6 +2,7 @@ package messages
 
 import (
 	"encoding/json"
+	"fmt"
 	"image"
 	"net/url"
 	"testing"
@@ -102,6 +103,8 @@ func TestThreadReactionChangesOnlyItsMessage(t *testing.T) {
 			if c.reply {
 				target = r2
 			}
+			rx := func() string { return fmt.Sprint(s.rows[target].m.Reactions) }
+			beforeRx := rx()
 			// the change
 			if c.own {
 				s.react(host, s.rows[target], c.emoji, c.add, fakeslack.SelfID)
@@ -126,8 +129,9 @@ func TestThreadReactionChangesOnlyItsMessage(t *testing.T) {
 				time.Sleep(15 * time.Millisecond)
 			}
 			after := frames[len(frames)-1]
-			if after[target].h == before[target].h {
-				t.Fatalf("the reacted row's height didn't change (%d): the reaction never drew", before[target].h)
+			// a first pill grows the row; a second pill or a count doesn't
+			if rx() == beforeRx {
+				t.Fatalf("the reacted row's reactions didn't change (%s): the reaction never drew", beforeRx)
 			}
 			for i, g := range frames {
 				for _, k := range all {
