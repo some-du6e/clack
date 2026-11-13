@@ -43,6 +43,21 @@ type frecencyState struct {
 
 	now func() time.Time // tests
 	ver uint64           // bumped whenever the frecency pref changes
+
+	// loaded: the account's frecency has been read from Slack (a
+	// users.prefs.get that had it, or the explicit emoji_use,frecency
+	// fetch). Until then a use is applied locally and queued, not saved:
+	// a save then would replace the account's synced frecency with a
+	// fresh one. The queue is replayed over Slack's copy once it's in.
+	loaded  bool
+	loading bool
+	queued  []frecQueued
+}
+
+// frecQueued is a use recorded before the account's frecency was read.
+type frecQueued struct {
+	id, text string
+	at       time.Time
 }
 
 // FrecencyVersion counts changes to the frecency pref (for caches).
@@ -80,7 +95,21 @@ func (a *App) RecordFrecency(id, text string) {
 	}
 	a.frec.mu.Lock()
 	now := a.frec.clock()
+	loaded := a.frec.loaded
+	if !loaded {
+		a.frec.queued = append(a.frec.queued, frecQueued{id: id, text: text, at: now})
+	}
 	a.frec.mu.Unlock()
+	a.applyFrecency(id, text, now)
+	if !loaded {
+		go func() { _ = a.ensureFrecencyLoaded(a.bg) }()
+		return
+	}
+	a.saveFrecencySoon()
+}
+
+// applyFrecency records one use in the local frecency pref.
+func (a *App) applyFrecency(id, text string, now time.Time) {
 	a.prefsMu.Lock() // a merge in flight would install a copy without this record (mergePrefs)
 	a.S.Lock()
 	c := frecency.Parse(a.S.RawPrefs[prefFrecency])
@@ -102,8 +131,62 @@ func (a *App) RecordFrecency(id, text string) {
 	}
 	a.frec.mu.Lock()
 	a.frec.ver++
+	// the Frequently Used cache stays (bEcp T): Slack's list follows a use
+	// when the save's search_frecency "updated" reloads the prefs
 	a.frec.mu.Unlock()
-	a.saveFrecencySoon()
+}
+
+// frecencyFromServer marks the account's frecency read (raw came from
+// Slack and had it, or the explicit fetch answered) and replays the uses
+// recorded before, over Slack's copy, then saves them.
+func (a *App) frecencyFromServer() {
+	a.frec.mu.Lock()
+	a.frec.loaded = true
+	q := a.frec.queued
+	a.frec.queued = nil
+	a.frec.mu.Unlock()
+	for _, u := range q {
+		a.applyFrecency(u.id, u.text, u.at)
+	}
+	if len(q) > 0 {
+		a.saveFrecencySoon()
+	}
+}
+
+// frecencyAfterPrefs follows a full users.prefs.get: with both frecency
+// prefs in it the account's frecency is read; without, they're fetched on
+// their own.
+func (a *App) frecencyAfterPrefs(raw map[string]json.RawMessage) {
+	_, hasF := raw[prefFrecency]
+	_, hasU := raw[prefEmojiUse]
+	if hasF && hasU {
+		a.frecencyFromServer()
+		return
+	}
+	go func() {
+		if err := a.ensureFrecencyLoaded(a.bg); err != nil {
+			log.Printf("frecency: users.prefs.get emoji_use,frecency: %v", err)
+		}
+	}()
+}
+
+// ensureFrecencyLoaded fetches emoji_use and frecency unless they're in
+// (loadFrecencyPrefs' request, reason fetch-frecency-prefs). Slack's web
+// client has them from its boot prefs; Clack's users.prefs.get at boot may
+// not carry them, so boot asks for them when they're missing.
+func (a *App) ensureFrecencyLoaded(ctx context.Context) error {
+	a.frec.mu.Lock()
+	if a.frec.loaded || a.frec.loading {
+		a.frec.mu.Unlock()
+		return nil
+	}
+	a.frec.loading = true
+	a.frec.mu.Unlock()
+	err := a.LoadFrecencyPrefs(ctx)
+	a.frec.mu.Lock()
+	a.frec.loading = false
+	a.frec.mu.Unlock()
+	return err
 }
 
 // EmojiFrecencyID is recordEmojiFrecencyEvent's id for an emoji name
@@ -211,6 +294,7 @@ func (a *App) LoadFrecencyPrefs(ctx context.Context) error {
 	}
 	a.mergePrefs(set)
 	a.invalidateFrequentEmoji()
+	a.frecencyFromServer()
 	return nil
 }
 
@@ -263,12 +347,14 @@ func (a *App) FrequentlyUsedEmoji() []string {
 	f.mu.Unlock()
 
 	a.S.RLock()
-	loaded := a.S.RawPrefs != nil
 	fv, uv := a.S.RawPrefs[prefFrecency], a.S.RawPrefs[prefEmojiUse]
 	a.S.RUnlock()
+	f.mu.Lock()
+	loaded := f.loaded
+	f.mu.Unlock()
 	out := frecency.FrequentlyUsed(frecency.Parse(fv), frecency.EmojiUse(uv), a.emojiSet(),
 		frecency.FrequentOptions{FrecencyExperiment: a.experiment("autocomplete_frequently_used_emojis_frecency") == "on"}, now)
-	if loaded { // before users.prefs.get answers, don't keep the defaults for 4 h
+	if loaded { // before the account's frecency is in, don't keep the defaults for 4 h
 		f.mu.Lock()
 		f.freq, f.freqExp = append([]string(nil), out...), now.Add(frecency.FrequentTTL)
 		f.mu.Unlock()

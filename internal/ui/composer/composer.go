@@ -47,6 +47,7 @@ type Composer struct {
 	// coachmark goes when its composer isn't drawn).
 	cmdK    *cmdKCoachmark
 	drawnAt time.Time
+	stGen   uint64 // th.Gen st's colours were taken at
 	// focus dropped by Gio without a blur (restoreDroppedFocus)
 	focusPress    uint64 // pressCount when last seen focused
 	focusRestored bool   // asked for it back once since
@@ -377,8 +378,12 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	c.maybeRestoreServerDraft()
 	syncHooks()
 	th := c.h.Theme()
-	if c.st.Shaper != th.Shaper || c.st.Shaper == nil {
+	// the style's colours are the theme's: rebuild them when it changes
+	// (th.Gen: a live Light/Dark switch or new stylesheet tokens; the two
+	// modes may share one shaper, so the shaper alone doesn't say)
+	if c.st.Shaper != th.Shaper || c.st.Shaper == nil || c.stGen != th.Gen {
 		c.st = c.editorStyle()
+		c.stGen = th.Gen
 	}
 	c.st.Images = c.emojiImage
 	c.st.PlaceholderText = ""

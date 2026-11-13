@@ -262,6 +262,7 @@ func (a *App) handle(ev slack.Event) {
 		case "pref_change":
 			if raw, err := a.C.Prefs(ctx); err == nil {
 				a.installPrefs(raw)
+				a.frecencyAfterPrefs(raw)
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}

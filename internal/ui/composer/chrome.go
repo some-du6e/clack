@@ -315,8 +315,14 @@ func crMakePal(th *theme.Theme) crPal {
 	p.sendDiv = crFade(c.SendText, c.Send, .4)
 	p.sendDisIcon = crFade(ink, p.bg, .3)
 	p.sendDisDiv = crFade(p.footHover, p.bg, .3)
-	p.yellow = rgb(0xecb22e)
+	p.yellow = rgb(0xecb22e) // --dt_color-brand-core-slack-yellow
+	// the hovered emoji button's icon: the button's hover colour
+	// (content-pry) in light, .sk-client-theme--dark …--emoji:hover
+	// {color: var(--dt_color-constants-black)} in dark
 	p.emojiInk = rgb(0x1d1c1d)
+	if th.Dark {
+		p.emojiInk = rgb(0x000000)
+	}
 	// Chrome's native checkbox (Slack doesn't style this one).
 	p.check, p.checkHover, p.checkMark = rgb(0x0075ff), rgb(0x005cc8), rgb(0xffffff)
 	p.checkBorder, p.checkBorderHover, p.checkBg = rgb(0x767676), rgb(0x4f4f4f), rgb(0xffffff)
@@ -921,6 +927,13 @@ func (c *chrome) tooltip(gtx layout.Context, th *theme.Theme, st *chromeState, i
 			label = "Hide formatting"
 		}
 	}
+	if id == crEmoji && c.f.h != nil && gifPickerOn(c.f.h.Core()) {
+		// EmojiToolbarButton: emoji_button "Add emoji and GIFs" when the
+		// GIF picker is on (XC3J BH && enableGifPicker), else "Emoji"
+		label = emojiButtonNS.T("Add emoji and GIFs")
+	} else if id == crEmoji {
+		label = emojiButtonNS.T("Emoji")
+	}
 	if label == "" {
 		return
 	}
@@ -1158,15 +1171,50 @@ func (c *chrome) footButton(gtx layout.Context, th *theme.Theme, p *crPal, st *c
 	}
 	ic = c.f.btn.Color(ic)
 	if id == crEmoji && hov {
+		// EmojiToolbarButton (boot-shared FLB+): on hover the :after disc
+		// (1em of the 18px icon font, slack-yellow or the skin tone's
+		// colour) and .is-second's emoji-filled at scale(1.05)
+		// rotate(15deg), with no transition
 		is := gtx.Dp(18)
 		t := op.Offset(r.Min.Add(image.Pt((r.Dx()-is)/2, (r.Dy()-is)/2))).Push(gtx.Ops)
-		crIconEmojiHover(gtx, is, p.yellow, p.emojiInk)
+		crIconEmojiHover(gtx, is, crEmojiDisc(c.skinTone(), p.yellow), p.emojiInk)
 		t.Pop()
 	} else {
 		c.icon(gtx, st, id, r, ic)
 	}
 	c.hit(gtx, id, r, !dis)
 	c.tooltip(gtx, th, st, id, r)
+}
+
+// crEmojiDisc is the hovered emoji button's disc: .c-wysiwyg_container__
+// button--emoji.skin-tone-N:after for preferred_skin_tone 2–6, else
+// slack-yellow.
+func crEmojiDisc(tone string, yellow color.NRGBA) color.NRGBA {
+	switch tone {
+	case "2":
+		return rgb(0xffdbbe)
+	case "3":
+		return rgb(0xe6b892)
+	case "4":
+		return rgb(0xd4a37c)
+	case "5":
+		return rgb(0xc18e65)
+	case "6":
+		return rgb(0xb47f55)
+	}
+	return yellow
+}
+
+// skinTone is preferred_skin_tone ("" when unset or offline).
+func (c *chrome) skinTone() string {
+	if c.f.h == nil {
+		return ""
+	}
+	a := c.f.h.Core()
+	if a == nil {
+		return ""
+	}
+	return a.Prefs().SkinTone
 }
 
 // attachButton is the round + (rgba(29,28,29,.06), hover .13 + dark icon).
@@ -1415,6 +1463,9 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 	}
 	crText(gtx, th.Shaper, org.X, org.Y, tw, s, ph)
 }
+
+// emojiButtonNS is EmojiToolbarButton's "emoji_button" I18n.
+var emojiButtonNS = i18n.NS("emoji_button")
 
 // msgInputNS is Slack's "msg_input" I18n: MessageInput's placeholder
 // (getPlaceholderText, txEg).
