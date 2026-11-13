@@ -108,9 +108,16 @@ func genEmoji(c *cv, name, stem string) {
 		c.fill(shade(hex(col), -0.3), sh().heart(50, 54, 46))
 		c.fill(hex(col), sh().heart(50, 54, 43))
 		c.fill(alpha(white, 0.45), sh().ellipseRot(28, 34, 9, 5, -0.7))
+	case name == "hankey" || name == "poop":
+		c.fill(hex("#5d4037"), sh().ellipse(50, 80, 40, 14).ellipse(50, 60, 30, 12).ellipse(50, 42, 20, 10).circle(54, 26, 9))
+		c.fill(hex("#795548"), sh().ellipse(50, 78, 37, 11).ellipse(50, 58, 27, 9).ellipse(50, 41, 17, 7))
+		c.fill(white, sh().circle(40, 60, 6).circle(60, 60, 6))
+		c.fill(featC, sh().circle(41, 61, 3).circle(61, 61, 3))
+	case has(name, "_cat", "cat_") || in(v, 0x1f638, 0x1f640):
+		genAnimal(c, "fox cat")
 	case (has(name, "circle", "square", "diamond") && !has(name, "face")) || in(v, 0x1f7e0, 0x1f7eb):
 		genShape(c, name)
-	case in(v, 0x1f600, 0x1f64f) && !in(v, 0x1f645, 0x1f64f) || in(v, 0x1f910, 0x1f92f) || in(v, 0x1f970, 0x1f97a) ||
+	case in(v, 0x1f600, 0x1f64f) && !in(v, 0x1f645, 0x1f64f) || v == 0x263a || v == 0x2639 || in(v, 0x1f910, 0x1f92f) || in(v, 0x1f970, 0x1f97a) ||
 		in(v, 0x1fae0, 0x1fae8) || (has(name, "face") && !has(name, "clock", "moon", "sun", "cat", "dog", "monkey", "pig", "cow", "mouse", "rabbit", "horse", "tiger", "dragon", "wolf", "fox", "bear", "panda", "frog", "unicorn")):
 		genFace(c, name)
 	case in(v, 0x1f466, 0x1f487) || in(v, 0x1f645, 0x1f64e) || in(v, 0x1f9d1, 0x1f9df) || in(v, 0x1f934, 0x1f93e) ||

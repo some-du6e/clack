@@ -2,18 +2,20 @@ package ui
 
 // TestDemoReadmeShots takes the README's screenshots (docs/screenshots/):
 // `clack demo`'s made-up workspace, light and dark, in a 1440x900 window:
-// the main window (#general), a thread, Activity and a huddle (the one
-// running in #party-planning-crew). CLACK_DEMO_SHOTS only; the files land
+// the main window (#sales-leaderboard), a thread, Activity and a huddle
+// (the one running in #party-planning-crew). CLACK_DEMO_SHOTS only; the files land
 // in $CLACK_DEMO_SHOTS/readme. Synthetic only: the demo runs fakeslack
 // on loopback and everything in it is invented.
 
 import (
+	"image"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/some-du6e/clack/internal/demo"
+	"github.com/some-du6e/clack/internal/ui/views"
 )
 
 func TestDemoReadmeShots(t *testing.T) {
@@ -32,16 +34,21 @@ func TestDemoReadmeShots(t *testing.T) {
 			e.setDark(dark)
 			e.until("the demo sidebar", 30*time.Second, func() bool { return e.sidebarHas(demo.GeneralID) && e.sidebarHas(demo.CodeID) })
 			shot := func(name string) {
+				e.movePtr(image.Pt(1000, 55))     // on the banner: no row hovered
 				e.settle(1500 * time.Millisecond) // avatars, emoji and pictures in
 				e.shotTo(t, dir, "demo-"+name+"-"+mode)
 			}
 			// Activity first: visiting the channels reads them
 			e.a.Navigate("activity")
 			e.until("Activity", 20*time.Second, func() bool { return e.a.views[Route("activity")] != nil })
+			e.settle(time.Second)
+			if v, ok := e.a.views[Route("activity")].(*views.Activity); ok {
+				v.StepItem(1, false) // the newest item, open beside the feed
+			}
 			shot("activity")
-			// the main window: #general at its newest messages
-			e.openChannel(demo.GeneralID)
-			e.until("#general", 20*time.Second, func() bool { return e.loadedMessages(demo.GeneralID) >= 10 })
+			// the main window: #sales-leaderboard at its newest messages
+			e.openChannel(demo.SalesID)
+			e.until("#sales-leaderboard", 20*time.Second, func() bool { return e.loadedMessages(demo.SalesID) >= 10 })
 			e.toLatest()
 			shot("main")
 			// a thread: #it-help's busiest
