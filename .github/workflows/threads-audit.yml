@@ -64,7 +64,7 @@ jobs:
       - name: core, the pane and the reply bar
         run: |
           go test -count=1 -v -run 'TestThreadLastRead|TestDesktopNotificationForwarded|TestThreadLocked|TestHideRepliesExperiment' ./internal/core
-          go test -count=1 -v -run 'TestThreadsAudit|TestReplyBar|TestThreadHeader|TestThreadPane|TestThreadLoadingRepliesRow|TestThreadJumpToUnread' ./internal/ui/messages
+          go test -count=1 -v -run 'TestThreadsAudit|TestReplyBar|TestThreadHeader|TestThreadPane|TestThreadLoadingRepliesRow|TestThreadJumpToUnread|TestThreadReactionChangesOnlyItsMessage|TestReactionPillClickDrawsAtOnce|TestReactionPickDrawsAtOnce|TestToolbarReplyInBootedChannel|TestToolbarThreadAndShareLikeSlack' ./internal/ui/messages
       - name: notifications, width, Escape, with screenshots
         env:
           THREADS_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots

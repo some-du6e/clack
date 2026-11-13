@@ -537,6 +537,9 @@ func (hb *hub) apply(ev core.Event) bool {
 		if ev.Msg == nil {
 			return false
 		}
+		if ev.Type == "update" && ev.Name == core.UpdateReactions {
+			return hb.applyReactions(ev)
+		}
 		thread := ev.Msg.ThreadTS
 		chm, thm := hb.models(ev.Channel, thread)
 		changed := false
@@ -694,6 +697,40 @@ func (hb *hub) apply(ev core.Event) bool {
 		return true
 	}
 	return false
+}
+
+// applyReactions is a reaction change: each model holding the message
+// takes its reactions and keeps the rest of its copy (Slack's reactions
+// reducer), so the thread pane's root, loaded by conversations.replies,
+// isn't swapped for the channel timeline's copy. A model without the
+// message gains nothing.
+func (hb *hub) applyReactions(ev core.Event) bool {
+	ts := ev.Msg.TS
+	hb.mu.Lock()
+	var ms []*model
+	if m := hb.chans[ev.Channel]; m != nil {
+		ms = append(ms, m)
+	}
+	for _, m := range hb.thread {
+		if m.ch == ev.Channel {
+			ms = append(ms, m)
+		}
+	}
+	hb.mu.Unlock()
+	changed := false
+	for _, m := range ms {
+		m.mu.Lock()
+		if i := m.find(ts); i >= 0 {
+			msg := m.msgs[i].m
+			msg.Reactions = ev.Msg.Reactions
+			m.msgs[i] = entry{m: msg, rev: m.bump()}
+			m.noteLive(ts, false)
+			m.rev++
+			changed = true
+		}
+		m.mu.Unlock()
+	}
+	return changed
 }
 
 func (hb *hub) usersRev() uint64 {
