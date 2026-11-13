@@ -447,8 +447,8 @@ func (v *UserGroupView) body(gtx layout.Context, th *theme.Theme, cl *Colors, w,
 			return para(gtx, th, 13, 18, theme.Bold, cl.Fg2, "@"+v.g.Handle, 0)
 		})
 	}
-	if v.org && v.rights.OrgDash { // ManageUserGroupLink (the Groups dashboard)
-		y += dp(gtx, 12)
+	if v.org && v.rightsOK { // UserGroupHeader's ManageUserGroupLink (userGroupDetailsManageGroupAlert: margin-top 24)
+		y += dp(gtx, 24)
 		y += v.dashAlert(gtx, th, cl, pad, y, inner)
 	}
 	y += dp(gtx, 12)
@@ -701,10 +701,16 @@ func (v *UserGroupView) channelsTab(gtx layout.Context, th *theme.Theme, cl *Col
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
-// ugWord is a word of an empty state's line; link makes it a link.
+// ugWord is a word of an empty state's or alert's line; link makes it a
+// link, icon draws a 16px icon after it (a space between, inside the
+// link: the Groups Dashboard's new-window icon), glue puts it right
+// after the word before (the period after a link).
 type ugWord struct {
 	s    string
 	link *widget.Clickable
+	icon string
+	glue bool
+	hgl  bool // userGroupDetailsManageGroupAlertLink: content-hgl-1, no underline
 }
 
 func ugWords(s string) []ugWord {
@@ -713,6 +719,84 @@ func ugWords(s string) []ugWord {
 		out = append(out, ugWord{s: f})
 	}
 	return out
+}
+
+// ugWordW is wd's width.
+func ugWordW(gtx layout.Context, th *theme.Theme, wd ugWord) int {
+	w := textW(gtx, th, 15, theme.Regular, wd.s)
+	if wd.icon != "" {
+		w += textW(gtx, th, 15, theme.Regular, " ") + dp(gtx, 16)
+	}
+	return w
+}
+
+// ugFlow lays words out in 22px lines no wider than inner from (x, y),
+// each line centred when center is set, and returns their height.
+func ugFlow(gtx layout.Context, th *theme.Theme, cl *Colors, words []ugWord, x, y, inner int, center bool) int {
+	space := textW(gtx, th, 15, theme.Regular, " ")
+	lh := dp(gtx, 22)
+	var lines [][]ugWord
+	lineW := 0
+	for _, wd := range words {
+		ww := ugWordW(gtx, th, wd)
+		gap := space
+		if wd.glue {
+			gap = 0
+		}
+		if n := len(lines); n > 0 && (wd.glue || lineW+gap+ww <= inner) {
+			lines[n-1] = append(lines[n-1], wd)
+			lineW += gap + ww
+			continue
+		}
+		lines = append(lines, []ugWord{wd})
+		lineW = ww
+	}
+	for _, ln := range lines {
+		lw := 0
+		for i, wd := range ln {
+			if i > 0 && !wd.glue {
+				lw += space
+			}
+			lw += ugWordW(gtx, th, wd)
+		}
+		lx := x
+		if center {
+			lx += maxInt(0, (inner-lw)/2)
+		}
+		for i, wd := range ln {
+			wd := wd
+			if i > 0 && !wd.glue {
+				lx += space
+			}
+			ww := ugWordW(gtx, th, wd)
+			at(gtx, image.Pt(lx, y), func(gtx layout.Context) layout.Dimensions {
+				draw := func(gtx layout.Context) layout.Dimensions {
+					fg := cl.Fg
+					switch {
+					case wd.hgl:
+						fg = woTok(th, "content-hgl-1")
+					case wd.link != nil:
+						fg = cl.Link
+					}
+					gtx.Constraints = layout.Constraints{Max: image.Pt(ww, lh)}
+					vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 15, theme.Regular, fg, wd.s) })
+					if wd.icon != "" {
+						at(gtx, image.Pt(ww-dp(gtx, 16), (lh-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+							return icon(gtx, wd.icon, 16, fg)
+						})
+					}
+					return layout.Dimensions{Size: image.Pt(ww, lh)}
+				}
+				if wd.link != nil {
+					return clickBox(gtx, wd.link, nil, draw)
+				}
+				return draw(gtx)
+			})
+			lx += ww
+		}
+		y += lh
+	}
+	return len(lines) * lh
 }
 
 // empty is the panes' EmptyState (gkKy): the 18/900 header (margin-bottom
@@ -729,53 +813,6 @@ func (v *UserGroupView) empty(gtx layout.Context, th *theme.Theme, cl *Colors, w
 	if len(sub) == 0 {
 		return layout.Dimensions{Size: image.Pt(w, y)}
 	}
-	space := textW(gtx, th, 15, theme.Regular, " ")
-	lh := dp(gtx, 22)
-	var lines [][]ugWord
-	lineW := 0
-	for _, wd := range sub {
-		ww := textW(gtx, th, 15, theme.Regular, wd.s)
-		if n := len(lines); n > 0 && lineW+space+ww <= inner {
-			lines[n-1] = append(lines[n-1], wd)
-			lineW += space + ww
-			continue
-		}
-		lines = append(lines, []ugWord{wd})
-		lineW = ww
-	}
-	for _, ln := range lines {
-		lw := 0
-		for i, wd := range ln {
-			if i > 0 {
-				lw += space
-			}
-			lw += textW(gtx, th, 15, theme.Regular, wd.s)
-		}
-		x := pad + maxInt(0, (inner-lw)/2)
-		for _, wd := range ln {
-			wd := wd
-			ww := textW(gtx, th, 15, theme.Regular, wd.s)
-			at(gtx, image.Pt(x, y), func(gtx layout.Context) layout.Dimensions {
-				draw := func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints = layout.Constraints{Max: image.Pt(ww, lh)}
-					return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-						if wd.link != nil {
-							return text(gtx, th, 15, theme.Regular, cl.Link, wd.s)
-						}
-						return text(gtx, th, 15, theme.Regular, cl.Fg, wd.s)
-					})
-				}
-				if wd.link != nil {
-					return clickBox(gtx, wd.link, nil, func(gtx layout.Context) layout.Dimensions {
-						draw(gtx)
-						return layout.Dimensions{Size: image.Pt(ww, lh)}
-					})
-				}
-				return draw(gtx)
-			})
-			x += ww + space
-		}
-		y += lh
-	}
+	y += ugFlow(gtx, th, cl, sub, pad, y, inner, true)
 	return layout.Dimensions{Size: image.Pt(w, y+pad)}
 }

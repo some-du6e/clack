@@ -19,21 +19,25 @@ import (
 )
 
 // ugSelect is the user group dialogs' LazyFilterSelect in multi mode
-// (client-boot uUBF h → o17d ControlledMultiSelect): the picked options
-// as c-token chips inside the input, the filter text after them, and the
-// searcher's options in a list under it (rows optionsRowHeight 32px).
+// (client-boot uUBF h → o17d ControlledMultiSelect → ASH1
+// MultiSelectInput): the picked options as c-token chips inside the
+// input, the filter text after them, and the searcher's options in a list
+// under it (rows optionsRowHeight 32px, at most maxListHeight 240px).
 //
-//   - large (Edit members, size LARGE): .c-select_input--large, 44px,
-//     12px padding, 18px text, medium tokens (26px, 15px names, the
-//     avatar a 26px square on the token's left); the box grows with the
+//   - large (Edit members, size LARGE): multiSelectInput.large, min-height
+//     44, 18px text, padding 0 32px 4px 4px; tokens get the select's size
+//     (Token renders c-token--${size}): c-token--large, 32px with 18px
+//     names, the avatar a 32px square at its left; the box grows with the
 //     tokens up to maxHeight (148) and scrolls past it.
-//   - otherwise (the default channel picker, MEDIUM): 36px, 0 12px, 15px
-//     text, small tokens (22px, 13px).
+//   - otherwise (the default channel picker, MEDIUM): min-height 36, 15px
+//     text, padding 0 28px 4px 4px; c-token--medium, 26px with 15px names.
 //
-// A click on a token selects it (.c-token--selected, base-inv-hgl-1);
-// Backspace or Delete removes the selected token, and Backspace in an
-// empty filter selects the last one. Up and Down move the active option,
-// Enter picks it, Escape closes the list.
+// Each token ends with its remove icon (close, removeToken). A click on a
+// token selects it (.c-token--selected, base-inv-hgl-1); Backspace with
+// the caret at the filter's start selects the last token, then removes
+// the selected one and selects the one before it (onBackspace); Delete
+// removes the selected token. Up and Down move the active option, Enter
+// picks it, Escape closes the list.
 type ugSelect struct {
 	h           Host
 	large       bool
@@ -49,6 +53,7 @@ type ugSelect struct {
 	picked   []ugOption
 	sel      int // the selected token, -1 for none
 	tokClk   []widget.Clickable
+	rmClk    []widget.Clickable
 	optClk   []widget.Clickable
 	boxClk   widget.Clickable
 	list     layout.List
@@ -180,8 +185,11 @@ func (s *ugSelect) events(gtx layout.Context) {
 			key.Filter{Focus: &s.ed, Name: key.NameDownArrow},
 			key.Filter{Focus: &s.ed, Name: key.NameEscape},
 		}
-		if s.ed.Len() == 0 {
-			filters = append(filters, key.Filter{Focus: &s.ed, Name: key.NameDeleteBackward}, key.Filter{Focus: &s.ed, Name: key.NameDeleteForward})
+		if a, b := s.ed.Selection(); s.ed.Len() == 0 || s.sel >= 0 || a == 0 && b == 0 { // isCaretAtStartOfFilterQuery
+			filters = append(filters, key.Filter{Focus: &s.ed, Name: key.NameDeleteBackward})
+		}
+		if s.sel >= 0 {
+			filters = append(filters, key.Filter{Focus: &s.ed, Name: key.NameDeleteForward})
 		}
 		if s.open && len(opts) > 0 {
 			filters = append(filters, key.Filter{Focus: &s.ed, Name: key.NameReturn}, key.Filter{Focus: &s.ed, Name: key.NameEnter})
@@ -207,9 +215,16 @@ func (s *ugSelect) events(gtx layout.Context) {
 		case key.NameEscape:
 			s.open = false
 		case key.NameDeleteBackward, key.NameDeleteForward:
+			// MultiSelectInput's onBackspace: no token selected selects the
+			// last; else it goes and the one before it is selected (none
+			// after the first). onDelete removes the selected token.
 			switch {
 			case s.sel >= 0 && s.sel < len(s.picked):
-				s.Remove(s.picked[s.sel].ID)
+				i := s.sel
+				s.Remove(s.picked[i].ID)
+				if ke.Name == key.NameDeleteBackward && i > 0 {
+					s.sel = i - 1
+				}
 			case ke.Name == key.NameDeleteBackward && len(s.picked) > 0:
 				s.sel = len(s.picked) - 1
 			}
@@ -236,8 +251,15 @@ func (s *ugSelect) events(gtx layout.Context) {
 			}
 		}
 	}
+	for i := range s.rmClk { // the token's remove icon
+		if i < len(s.picked) && s.rmClk[i].Clicked(gtx) {
+			s.Remove(s.picked[i].ID)
+			gtx.Execute(key.FocusCmd{Tag: &s.ed})
+			break
+		}
+	}
 	for i := range s.tokClk {
-		if i < len(s.picked) && s.tokClk[i].Clicked(gtx) {
+		if i < len(s.picked) && s.tokClk[i].Clicked(gtx) && !s.rmPressed(i) {
 			s.sel = i
 			gtx.Execute(key.FocusCmd{Tag: &s.ed})
 		}
@@ -267,19 +289,31 @@ func (s *ugSelect) events(gtx layout.Context) {
 	}
 }
 
-// tokenW is a token's width for o.
-func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
-	fs, side := float32(13), dp(gtx, 22)
+// rmPressed reports token i's remove icon took the press.
+func (s *ugSelect) rmPressed(i int) bool { return i < len(s.rmClk) && s.rmClk[i].Pressed() }
+
+// tokenGeom is the token's measures for the select's size (the token
+// gets the select's own size: c-token--medium, 26px with 15px names, or
+// --large, 32px with 18px names; the remove icon takes the token's
+// font-size, 18 or 20).
+func (s *ugSelect) tokenGeom(gtx layout.Context) (h int, fs float32, ic int, memberPad int) {
 	if s.large {
-		fs, side = 15, dp(gtx, 26)
+		return dp(gtx, 32), 18, dp(gtx, 20), dp(gtx, 8)
 	}
-	w := dp(gtx, 4) + textW(gtx, th, fs, theme.Bold, o.Label) + dp(gtx, 4) + dp(gtx, 4) // inner padding 0 4, token padding-right 4
+	return dp(gtx, 26), 15, dp(gtx, 18), dp(gtx, 6)
+}
+
+// tokenW is a token's width for o: a member's avatar square, the inner
+// label (padding-left 6 or 8, right 4), the remove icon and the token's
+// 4px right padding; a channel's (c-token_channel, no padding) inner 0 4
+// with its 16px icon 2px before the name, then the remove icon.
+func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
+	h, fs, ic, mp := s.tokenGeom(gtx)
+	lw := textW(gtx, th, fs, theme.Bold, o.Label)
 	if s.member {
-		w += side + dp(gtx, 2)
-	} else {
-		w += dp(gtx, 16) + dp(gtx, 2)
+		return h + mp + lw + dp(gtx, 4) + ic + dp(gtx, 4)
 	}
-	return w
+	return dp(gtx, 4) + dp(gtx, 16) + dp(gtx, 2) + lw + dp(gtx, 4) + ic
 }
 
 // layout draws the select in the constraint width and handles input;
@@ -287,16 +321,20 @@ func (s *ugSelect) tokenW(gtx layout.Context, th *theme.Theme, o ugOption) int {
 func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	s.events(gtx)
 	w := gtx.Constraints.Max.X
-	fs, minH, padX := float32(15), dp(gtx, 36), dp(gtx, 12)
-	tokH := dp(gtx, 22)
+	// multiSelectInput: min-height 36 (large 44), padding 0 28px 4px 4px
+	// (large: right 32), 15px (large 18px); with nothing picked (initial)
+	// padding-left 12
+	fs, minH, padX, padR := float32(15), dp(gtx, 36), dp(gtx, 12), dp(gtx, 28)
 	if s.large {
-		fs, minH, tokH = 18, dp(gtx, 44), dp(gtx, 26)
+		fs, minH, padR = 18, dp(gtx, 44), dp(gtx, 32)
 	}
+	tokH, _, _, _ := s.tokenGeom(gtx)
 	for len(s.tokClk) < len(s.picked) {
 		s.tokClk = append(s.tokClk, widget.Clickable{})
+		s.rmClk = append(s.rmClk, widget.Clickable{})
 	}
 	// flow: tokens (margin 4px 0 0 4px), then the input
-	inner := maxInt(1, w-2*dp(gtx, 4)-dp(gtx, 8))
+	inner := maxInt(1, w-dp(gtx, 4)-padR)
 	x, y, rowH := 0, 0, tokH+dp(gtx, 4)
 	type place struct{ x, y, w int }
 	places := make([]place, len(s.picked))
@@ -345,7 +383,7 @@ func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layou
 			o, p, i := o, places[i], i
 			at(gtx, image.Pt(p.x, p.y), func(gtx layout.Context) layout.Dimensions {
 				return s.tokClk[i].Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-					return s.token(gtx, th, cl, o, p.w, tokH, i == s.sel)
+					return s.token(gtx, th, cl, o, p.w, tokH, i == s.sel, i)
 				})
 			})
 		}
@@ -353,7 +391,7 @@ func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layou
 		if len(s.picked) == 0 {
 			ih = minH
 		}
-		ew := maxInt(1, w-ix-padX)
+		ew := maxInt(1, w-ix-padR)
 		at(gtx, image.Pt(ix, iy+ifInt(len(s.picked) > 0, dp(gtx, 4), 0)), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Min: image.Pt(ew, 0), Max: image.Pt(ew, ih)}
 			return vcenter(gtx, ih, func(gtx layout.Context) layout.Dimensions {
@@ -389,42 +427,60 @@ func (s *ugSelect) layout(gtx layout.Context, th *theme.Theme, cl *Colors) layou
 }
 
 // token is a c-token: surf-hgl-1, radius 4, bold label; selected:
-// base-inv-hgl-1 with content-inv-pry text.
-func (s *ugSelect) token(gtx layout.Context, th *theme.Theme, cl *Colors, o ugOption, w, h int, selected bool) layout.Dimensions {
+// base-inv-hgl-1 with content-inv-pry text. Its remove icon (close,
+// removeToken) sits after the label.
+func (s *ugSelect) token(gtx layout.Context, th *theme.Theme, cl *Colors, o ugOption, w, h int, selected bool, i int) layout.Dimensions {
 	bg, fg := ugSurfHgl1(th), cl.Fg
 	if selected {
-		bg, fg = cl.Highlight, cl.HighText
+		bg, fg = woTok(th, "base-inv-hgl-1"), woTok(th, "content-inv-pry")
 	}
 	rrect(gtx, image.Rect(0, 0, w, h), dp(gtx, 4), bg)
+	_, fs, ic, mp := s.tokenGeom(gtx)
 	x := 0
-	fs := float32(13)
-	if s.large {
-		fs = 15
-	}
 	if s.member {
-		at(gtx, image.Point{}, func(gtx layout.Context) layout.Dimensions {
-			return avatar(gtx, s.h, o.Avatar, float32(h)/gtx.Metric.PxPerDp)
-		})
-		x = h + dp(gtx, 2)
+		func() { // c-token__avatar: the left corners round, the right square
+			defer clipRRect(gtx, image.Rect(0, 0, h+dp(gtx, 4), h), dp(gtx, 4)).Pop()
+			defer clipRRect(gtx, image.Rect(0, 0, h, h), 0).Pop()
+			avatar(gtx, s.h, o.Avatar, float32(h)/gtx.Metric.PxPerDp)
+		}()
+		x = h + mp
 	} else {
-		ic := "hash"
+		icn := "hash"
 		if o.Conv.Kind == "private" {
-			ic = "lock"
+			icn = "lock"
 		}
-		at(gtx, image.Pt(dp(gtx, 4), (h-dp(gtx, 14))/2), func(gtx layout.Context) layout.Dimensions {
-			return icon(gtx, ic, 14, fg)
+		at(gtx, image.Pt(dp(gtx, 4), (h-dp(gtx, 16))/2), func(gtx layout.Context) layout.Dimensions {
+			return icon(gtx, icn, 16, fg)
 		})
-		x = dp(gtx, 4) + dp(gtx, 14) + dp(gtx, 2)
+		x = dp(gtx, 4) + dp(gtx, 16) + dp(gtx, 2)
 	}
-	at(gtx, image.Pt(x+dp(gtx, 4), 0), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, w-x-dp(gtx, 8)), h)}
+	lw := textW(gtx, th, fs, theme.Bold, o.Label)
+	at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, lw), h)}
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, fs, theme.Bold, fg, o.Label) })
 	})
+	rx := x + lw + dp(gtx, 4)
+	if i < len(s.rmClk) {
+		at(gtx, image.Pt(rx, (h-ic)/2), func(gtx layout.Context) layout.Dimensions {
+			return clickBox(gtx, &s.rmClk[i], func(gtx layout.Context, sz image.Point, hovered bool) {
+				if hovered { // removeToken:hover: surf-pry (selected: surf-inv)
+					c := woTok(th, "surf-pry")
+					if selected {
+						c = woTok(th, "surf-inv")
+					}
+					rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 4), c)
+				}
+			}, func(gtx layout.Context) layout.Dimensions {
+				icon(gtx, "close", float32(ic)/gtx.Metric.PxPerDp, fg)
+				return layout.Dimensions{Size: image.Pt(ic, ic)}
+			})
+		})
+	}
 	return layout.Dimensions{Size: image.Pt(w, h)}
 }
 
-// drawOptions is the select's c-select_options_list under the box:
-// 32px rows, the active one base-inv-hgl-1 with white text; members
+// drawOptions is the select's c-select_options_list under the box,
+// at most 240px of 32px rows (maxListHeight), the active one base-inv-hgl-1 with white text; members
 // show their avatar, name and real name, channels their icon and name.
 func (s *ugSelect) drawOptions(gtx layout.Context, th *theme.Theme, cl *Colors, w, top int) {
 	opts := s.Options()
@@ -443,7 +499,7 @@ func (s *ugSelect) drawOptions(gtx layout.Context, th *theme.Theme, cl *Colors, 
 	if n == 0 {
 		n = 1 // "No matches found" / "Searching…"
 	}
-	listH := minInt(n, 8)*rowH + 2*pad
+	listH := minInt(n*rowH, dp(gtx, 240)) + 2*pad // renderList: maxListHeight 240, then it scrolls
 	m := op.Record(gtx.Ops)
 	func() {
 		defer op.Offset(image.Pt(0, top+dp(gtx, 4))).Push(gtx.Ops).Pop()
@@ -511,12 +567,7 @@ func (s *ugSelect) drawOptions(gtx layout.Context, th *theme.Theme, cl *Colors, 
 }
 
 // ugSurfHgl1 is --dt_color-surf-hgl-1 (the token's fill).
-func ugSurfHgl1(th *theme.Theme) color.NRGBA {
-	if th.Dark {
-		return rgba(0x1d9bd1, .18)
-	}
-	return rgba(0x1d9bd1, .1)
-}
+func ugSurfHgl1(th *theme.Theme) color.NRGBA { return woTok(th, "surf-hgl-1") }
 
 func ifInt(c bool, a, b int) int {
 	if c {

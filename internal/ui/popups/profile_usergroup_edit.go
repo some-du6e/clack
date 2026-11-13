@@ -53,10 +53,13 @@ import (
 // updateDescription) or subteam_updated, which makes the pane refetch the
 // members (UserGroupView.watch). A failed call leaves everything as it was.
 //
-// The org-level pane edits nothing; for a viewer with the org dashboard's
-// Groups page (canUserAccessGroupsInOrgDash) ManageUserGroupLink reads "To
-// manage this group, go to the Groups Dashboard ↗." and the empty states
-// point there too.
+// The org-level pane edits nothing. Its header ends with
+// ManageUserGroupLink (24px under the handle, a borderless base-ter
+// alert): "To manage this group, go to the Groups Dashboard" (the link in
+// content-hgl-1 with its 16px new-window icon, then a period) for a
+// viewer with the org dashboard's Groups page (canUserAccessGroupsInOrgDash),
+// whose empty states point there too; "This group is managed by
+// administrators." for everyone else.
 
 // editable is userGroupIsEditable.
 func (v *UserGroupView) editable() bool {
@@ -347,75 +350,45 @@ func (v *UserGroupView) dashURL() string {
 }
 
 // dashWords is "To manage this group, go to the <Link>Groups
-// Dashboard</Link>" with its new-window link and the period after it.
+// Dashboard</Link>": the link (its text, a space and the 16px new-window
+// icon) and the period right after it.
 func (v *UserGroupView) dashWords() []ugWord {
 	var out []ugWord
 	for _, p := range nsUG.RT("To manage this group, go to the <Link>Groups Dashboard</Link>") {
 		for _, f := range splitWords(p.Text) {
 			if p.Tag != "" {
-				out = append(out, ugWord{s: f, link: &v.dashLink})
+				out = append(out, ugWord{s: f, link: &v.dashLink, hgl: true})
 			} else {
 				out = append(out, ugWord{s: f})
 			}
 		}
 	}
 	if n := len(out); n > 0 {
-		out[n-1].s += " ↗"
-		out = append(out, ugWord{s: "."})
+		out[n-1].icon = "new-window"
+		out = append(out, ugWord{s: ".", glue: true})
 	}
 	return out
 }
 
-// dashAlert is ManageUserGroupLink's alert (level default, no icon) for
-// an org dashboard viewer; it returns its height.
+// dashAlert is ManageUserGroupLink's Alert (level default, type boxed,
+// no icon): the Groups Dashboard link for a viewer with the org
+// dashboard's Groups page, "This group is managed by administrators." for
+// everyone else. c-alert--boxed is 15/22 with padding 12px 16px;
+// --level_default fills base-ter with radius 8, and the alert's class
+// clears its border (border-color: transparent). It returns its height.
 func (v *UserGroupView) dashAlert(gtx layout.Context, th *theme.Theme, cl *Colors, x, y, w int) int {
-	words := v.dashWords()
-	pad, padX := dp(gtx, 12), dp(gtx, 16) // c-alert--boxed: padding 12px 16px
-	lh := dp(gtx, 22)
-	space := textW(gtx, th, 15, theme.Regular, " ")
-	lines, lw := 1, 0
+	words := ugWords(nsUG.T("This group is managed by administrators."))
+	if v.rights.OrgDash {
+		words = v.dashWords()
+	}
+	pad, padX := dp(gtx, 12), dp(gtx, 16)
 	inner := maxInt(1, w-2*padX)
-	type spot struct{ x, y int }
-	spots := make([]spot, len(words))
-	for i, wd := range words {
-		ww := textW(gtx, th, 15, theme.Regular, wd.s)
-		if lw > 0 && lw+space+ww > inner {
-			lines++
-			lw = 0
-		} else if lw > 0 {
-			lw += space
-		}
-		spots[i] = spot{lw, (lines - 1) * lh}
-		lw += ww
-	}
-	h := lines*lh + 2*pad
-	box := image.Rect(x, y, x+w, y+h)
-	if th.Dark { // c-alert--level_default: base-ter, light-dark(transparent, otl-sec) border
-		rrect(gtx, box, dp(gtx, 8), cl.InputBorder)
-		rrect(gtx, box.Inset(border1(gtx)), dp(gtx, 8)-border1(gtx), epDisabledBg(th, cl))
-	} else {
-		rrect(gtx, box, dp(gtx, 8), epDisabledBg(th, cl))
-	}
-	for i, wd := range words {
-		wd, sp := wd, spots[i]
-		ww := textW(gtx, th, 15, theme.Regular, wd.s)
-		at(gtx, image.Pt(x+padX+sp.x, y+pad+sp.y), func(gtx layout.Context) layout.Dimensions {
-			draw := func(gtx layout.Context) layout.Dimensions {
-				fg := cl.Fg
-				if wd.link != nil {
-					fg = cl.Link
-				}
-				return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 15, theme.Regular, fg, wd.s) })
-			}
-			if wd.link == nil {
-				return draw(gtx)
-			}
-			return clickBox(gtx, wd.link, nil, func(gtx layout.Context) layout.Dimensions {
-				draw(gtx)
-				return layout.Dimensions{Size: image.Pt(ww, lh)}
-			})
-		})
-	}
+	call, d := record(gtx, func(gtx layout.Context) layout.Dimensions {
+		return layout.Dimensions{Size: image.Pt(inner, ugFlow(gtx, th, cl, words, 0, 0, inner, false))}
+	})
+	h := d.Size.Y + 2*pad
+	rrect(gtx, image.Rect(x, y, x+w, y+h), dp(gtx, 8), woTok(th, "base-ter"))
+	macroAt(gtx, call, image.Pt(x+padX, y+pad))
 	return h
 }
 

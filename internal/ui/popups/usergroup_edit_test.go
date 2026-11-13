@@ -362,8 +362,8 @@ func TestUserGroupPaneEditMembers(t *testing.T) {
 		e.shot("usergroup-edit-members-picked")
 		e.press(key.NameDeleteBackward) // selects the last token
 		e.press(key.NameDeleteBackward) // removes it
-		if ids := d.sel.IDs(); len(ids) != 6 || slices.Contains(ids, add.ID) {
-			t.Fatalf("%s Backspace twice: %v", e.mode, ids)
+		if ids := d.sel.IDs(); len(ids) != 6 || slices.Contains(ids, add.ID) || d.sel.sel != 5 {
+			t.Fatalf("%s Backspace twice: %v, selected %d (want the one before it, 5)", e.mode, ids, d.sel.sel)
 		}
 		e.typeIn(&d.sel.ed, "a") // the fake matches usernames
 		e.until("the people search again", func() bool { return len(d.sel.Options()) > 0 })
@@ -391,7 +391,7 @@ func TestUserGroupPaneEditMembers(t *testing.T) {
 		e.click(e.pane("edit-members"))
 		d = e.top().(*UserGroupMembersModal)
 		e.until("the members fetch", func() bool { return d.Loaded() && e.r.Source().Focused(&d.sel.ed) })
-		for range 2 * 7 {
+		for range 7 + 1 { // onBackspace: select the last, then each press removes one and selects the one before
 			e.press(key.NameDeleteBackward)
 		}
 		x := e.texts()
@@ -665,5 +665,52 @@ func TestUserGroupPaneEmptyEditor(t *testing.T) {
 	w.ready(0)
 	if x := w.texts(); hasText(x, "Add Members") || !hasText(x, "workspace administrator") {
 		t.Errorf("viewer's empty group %q", x)
+	}
+}
+
+// An org-level group's header (the newer pane's UserGroupHeader) ends
+// with ManageUserGroupLink: "This group is managed by administrators."
+// for a viewer without the org dashboard's Groups page, "To manage this
+// group, go to the Groups Dashboard." (a link with its new-window icon)
+// for one with it, whose empty states point there too. Neither gets an
+// editor action.
+func TestUserGroupPaneOrgManagedAlert(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		e := newUGRT(t, false, dark, fakeslack.OrgGroupID)
+		e.ready(4)
+		x := e.texts()
+		for _, want := range []string{"Org crew", "@orgcrew", "This", "group", "is", "managed", "by", "administrators.", "Find members"} {
+			if !hasText(x, want) {
+				t.Errorf("%s viewer: %q not drawn", e.mode, want)
+			}
+		}
+		for _, bad := range append([]string{"Groups", "Dashboard"}, ugEditorTexts...) {
+			if hasText(x, bad) {
+				t.Errorf("%s viewer: %q drawn", e.mode, bad)
+			}
+		}
+		e.shot("usergroup-org-managed")
+
+		a := newUGRT(t, false, dark, fakeslack.OrgGroupID)
+		a.fs.UsergroupOrgAdmin = true
+		a.ready(4)
+		x = a.texts()
+		for _, want := range []string{"To", "manage", "go", "the", "Groups", "Dashboard", "."} {
+			if !hasText(x, want) {
+				t.Errorf("%s org admin: %q not drawn", a.mode, want)
+			}
+		}
+		if hasText(x, "administrators.") {
+			t.Errorf("%s org admin: the viewers' sentence drawn", a.mode)
+		}
+		for _, bad := range ugEditorTexts {
+			if hasText(x, bad) {
+				t.Errorf("%s org admin: %q drawn", a.mode, bad)
+			}
+		}
+		if !a.v.rights.OrgDash || a.v.dashURL() != "https://app.slack.com/manage/"+fakeslack.EnterpriseID+"/people/groups/"+fakeslack.OrgGroupID+"/details" {
+			t.Errorf("%s org admin: OrgDash %v, link %s", a.mode, a.v.rights.OrgDash, a.v.dashURL())
+		}
+		a.shot("usergroup-org-dashboard")
 	}
 }
