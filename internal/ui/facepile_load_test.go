@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -81,13 +82,25 @@ func TestHeaderFacepileRetriesFailedRead(t *testing.T) {
 		t.Fatalf("no unopened member channel (%q) and a second one (%q)", ch, other)
 	}
 	var failed atomic.Int32
-	failed.Store(1)
-	fs.SetFault("edge/users/list", fakeslack.Fault{Error: "ratelimited", Times: 1}) // FORCED OLD FAULT (polish-1113c demo commit)
+	fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
+		if method != "edge/users/list" {
+			return nil, false
+		}
+		var chans []string
+		var filter string
+		_ = json.Unmarshal(body["channels"], &chans)
+		_ = json.Unmarshal(body["filter"], &filter)
+		if len(chans) == 1 && chans[0] == ch && filter == "everyone AND NOT bots AND NOT apps" && failed.CompareAndSwap(0, 1) {
+			return map[string]any{"ok": false, "error": "ratelimited"}, true
+		}
+		return nil, false
+	})
 	// another channel's people read, sent before ch's (what a Times: 1
 	// fault on every users/list used to spend itself on)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	_, _, err := e.a.Core().Members(ctx, other, "", true)
-	t.Logf("%s's members read: %v", other, err)
+	if _, _, err := e.a.Core().Members(ctx, other, "", true); err != nil {
+		t.Fatalf("%s's members read: %v", other, err)
+	}
 	cancel()
 	e.openChannel(ch)
 	e.until("ch's failed members read", 10*time.Second, func() bool { return failed.Load() == 1 })

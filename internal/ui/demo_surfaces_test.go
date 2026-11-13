@@ -115,7 +115,7 @@ func demoSurfaceSteps(s *demo.Session) []demoStep {
 		p := p
 		add("profile-"+p.Handle, func(e *perfEnv, s *demo.Session) {
 			closeAll(e)
-			e.a.OpenUserProfile(p.ID)
+			e.a.OpenProfile(image.Point{}, p.ID) // a bot gets App details, as a click on its name does
 		})
 	}
 	for _, id := range []string{"U0DEMOGORD", demo.InkwellID, demo.PulseID} {

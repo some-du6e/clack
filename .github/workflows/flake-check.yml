@@ -78,6 +78,16 @@ name: flake-check
 #     (ui/views)                             test picking Delete's row and
 #                                            the keys; the test's saved.list
 #                                            put the completed to-do back
+# and polish-1113c's (50 runs, the race forced every run; the old fault
+# failed 50 of 50 in run 43502002431):
+#   TestHeaderFacepileRetriesFailedRead (ui) the one-shot users/list fault
+#                                            went to whichever read came
+#                                            first: boot's open channel's
+#                                            header read, sent after
+#                                            waitReady, took it and the
+#                                            test's channel read worked; the
+#                                            fault now fails only that
+#                                            channel's people read
 #                                            (the server drops it)
 # and polish-1113's (50 runs each, the race forced every run):
 #   TestChannelLinkTargets (ui)              core's "names" event (a mention
