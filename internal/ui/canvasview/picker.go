@@ -162,6 +162,11 @@ func (p *picker) convertTyped(v *View, s *session) {
 		return
 	}
 	s.ed.InsertAtom(start, c, &composer.Atom{Kind: composer.AtomEmoji, ID: name, Text: ":" + name + ":", URL: u, Uni: t})
+	// the control replaces the match alone (emojiControlMatch): no space
+	// after it, as InsertAtom adds for a picked suggestion
+	if after := cursor(s.ed); after > 0 && s.ed.Doc().Runes[after-1] == ' ' {
+		s.ed.Replace(after-1, after, "")
+	}
 	d = s.ed.Doc()
 	p.prevN, p.prevC = len(d.Runes), cursor(s.ed)
 	p.on, p.items = false, nil

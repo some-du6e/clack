@@ -123,8 +123,8 @@ func TestTitleEmoji(t *testing.T) {
 		pick := v.edit.pick.items[0].id
 		v.edit.pick.accept, v.edit.pick.acceptSet = 0, true
 		frame()
-		// a typed shortcode
-		typ(" :tada:")
+		// a typed shortcode (the picked emoji left a space after it)
+		typ(":tada:")
 		var atoms []string
 		d := ed.Doc()
 		for i := range d.Runes {
@@ -137,6 +137,9 @@ func TestTitleEmoji(t *testing.T) {
 		}
 		if strings.Contains(string(d.Runes), ":tada:") {
 			t.Error(":tada: stayed text")
+		}
+		if c := cursor(ed); c != d.Len() || d.Runes[c-1] == ' ' {
+			t.Errorf("caret %d of %d after the converted emoji (a space added?)", c, d.Len())
 		}
 		s.shot("canvas-title-emoji-editing-"+mode, s.frame(func(gtx layout.Context) { v.Layout(gtx) }))
 		v.edit.finish(v)
