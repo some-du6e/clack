@@ -147,7 +147,7 @@ func (s *Server) handleListsAdd(method string, f url.Values) (any, bool) {
 			blocks, _ := json.Marshal(lists.TextBlocks(name))
 			r.SetField(lists.Field{Key: p.Key, ColumnID: p.ID, Text: &name, RichText: blocks})
 		}
-		link := "https://fake.slack.com/archives/" + ch + "/p" + strings.ReplaceAll(ts, ".", "")
+		link := s.permalinkHost() + "/archives/" + ch + "/p" + strings.ReplaceAll(ts, ".", "")
 		r.SetField(lists.Field{Key: msgCol.Key, ColumnID: msgCol.ID, Message: []lists.MessageValue{{Value: link, ChannelID: ch, TS: ts}}})
 		l.Records = append(l.Records, r)
 		l.Updated = now

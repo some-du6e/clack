@@ -1,0 +1,39 @@
+[
+  {"at": "-4 08:15", "by": "ines", "text": "Morning Quillfeather! :wave: Quick heads-up for the holiday weeks: we're adding a Saturday pickup on Dec 13 and Dec 20 for anyone shipping before the break. Same dock, same 10am window. :truck:",
+   "reactions": ["raised_hands wendell dale", "truck gordon"],
+   "replies": [
+     {"at": "+12m", "by": "wendell", "text": "We'll take the 13th. Two pallets of 24lb bond and whatever Dale's binder weighs."},
+     {"at": "+15m", "by": "dale", "text": "The binder is 3.4 lbs and ships with me."},
+     {"at": "+20m", "by": "ines", "text": "Noted: two pallets, zero binders. :memo:"}
+   ]},
+  {"at": "-3 10:02", "by": "bram", "text": "Tuesday's pickup is in. Tracking for the Greenbrook Dental order: PTF-88213-WX. ETA Thursday before noon.",
+   "reactions": ["white_check_mark wendell nadia"]},
+  {"at": "-3 10:30", "by": "nadia", "text": "@bram thank you! Greenbrook called twice already this morning. I told them the paper is \"in motion\". Is it in motion?",
+   "replies": [
+     {"at": "+4m", "by": "bram", "text": "It is in motion. It is currently on the I-80 in a very nice truck."},
+     {"at": "+6m", "by": "nadia", "text": "I'll tell them it's in a very nice truck. They'll love that"}
+   ]},
+  {"at": "-2 09:45", "by": "wendell", "text": "Dock 3 door is getting fixed Thursday morning. Use dock 2 for the 10am pickup, it's the one with the yellow line.",
+   "files": [{"image": "dock-map", "name": "dock_2_this_week.png"}],
+   "pinned": "wendell", "reactions": ["+1 ines bram dale"]},
+  {"at": "-2 14:10", "by": "ines", "text": "Attaching the updated rate card for Q1. The holiday surcharge drops off Jan 6 :tada:",
+   "files": [{"pdf": "rate-card", "name": "Papertrail_Rate_Card_Q1.pdf", "pages": 3}],
+   "reactions": ["tada gordon", "moneybag dale"]},
+  {"at": "-2 14:22", "by": "gordon", "text": "Ines, as I always say, a good carrier is like a good handshake: firm, on time, and not too sweaty. Thank you for being our handshake. :handshake:",
+   "reactions": ["joy ines bram", "okayest-boss dale"],
+   "replies": [
+     {"at": "+9m", "by": "ines", "text": "That's going on the Papertrail breakroom wall. :joy:"}
+   ]},
+  {"at": "-1 11:05", "by": "bram", "text": "We had a pallet show up in Lisbon labelled \"QUILLFEATHER — DO NOT OPEN — BIG LINDA'S\". I assume this is not ours to keep.",
+   "reactions": ["scream nadia kip", "big-linda wendell"],
+   "replies": [
+     {"at": "+3m", "by": "wendell", "text": "That is Big Linda's spare battery. It should be in Ohio."},
+     {"at": "+10m", "by": "bram", "text": "Rerouted. It will be in Ohio Monday. It had a lovely holiday."},
+     {"at": "+12m", "by": "jordan", "text": "how did a forklift battery get to Portugal"},
+     {"at": "+14m", "by": "bram", "text": "Logistics is a journey, Jordan."}
+   ]},
+  {"at": "2h", "by": "ines", "text": "@jordan welcome aboard! I'm your contact at Papertrail for anything shipping. If an order needs to go out same day, ping me here before 9am Central and I'll make it happen. :truck:",
+   "reactions": ["wave wendell nadia"]},
+  {"at": "40m", "by": "bram", "text": "Thursday pickup confirmed for 10:00 at dock 2: 4 pallets, 1 crate marked fragile (the good stapler?)",
+   "reactions": ["eyes dale"]}
+]

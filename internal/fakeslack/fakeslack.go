@@ -41,13 +41,23 @@ import (
 
 // Size sets how big the workspace is.
 type Size struct {
-	Emoji      int // custom emoji (aliases come on top: Emoji/100)
-	Users      int // users in the directory (all cached on a warm start)
-	Channels   int // channels the viewer is a member of
-	DMs        int
-	Usergroups int
-	History    int // messages per channel (conversations.history pages through them)
-	Unread     int // channels with unreads (core prefetches these)
+	// NoFixtureDocs leaves out the fake's own canvases and lists (Launch
+	// plan, Launch tracker, Team to-dos…): a workspace built on the fake
+	// (internal/demo) brings its own with AddCanvas and AddList.
+	NoFixtureDocs bool
+	// PermalinkHost is the workspace host permalinks point at
+	// ("https://quillfeather.slack.com"); "" is https://fake.slack.com.
+	PermalinkHost string
+	// ActivityViews answers Activity's saved views (activity.views, its
+	// writes, activity.prefs.update) without the rest of Views' fixtures.
+	ActivityViews bool
+	Emoji         int // custom emoji (aliases come on top: Emoji/100)
+	Users         int // users in the directory (all cached on a warm start)
+	Channels      int // channels the viewer is a member of
+	DMs           int
+	Usergroups    int
+	History       int // messages per channel (conversations.history pages through them)
+	Unread        int // channels with unreads (core prefetches these)
 	// Identity adds #identity-fixtures: one message per bot/app sender
 	// case (identity.go). Off by default so other fixtures don't shift.
 	Identity bool
@@ -348,6 +358,8 @@ type Server struct {
 	bkMu      sync.Mutex
 	bkActions []BlockActionCall // blocks.actions, in order (bkgallery_elements.go)
 	bkSuggest []url.Values      // blocks.suggestions forms
+
+	gaps gapLog // what the fake couldn't answer (answers.go)
 
 	// Calls counts requests per method (atomic adds).
 	callsMu sync.Mutex
@@ -1161,6 +1173,14 @@ func (s *Server) history(ch string) []slack.Message {
 	return out
 }
 
+// permalinkHost is Size.PermalinkHost, else https://fake.slack.com.
+func (s *Server) permalinkHost() string {
+	if s.Size.PermalinkHost != "" {
+		return strings.TrimSuffix(s.Size.PermalinkHost, "/")
+	}
+	return "https://fake.slack.com"
+}
+
 // ---- HTTP ----
 
 func (s *Server) api(w http.ResponseWriter, r *http.Request) {
@@ -1217,6 +1237,10 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	}
 	if !hooked {
 		out = s.handle(method, form, edge)
+		if _, none := out.(unanswered); none {
+			s.noteAnswer(method, form, answerNone, "")
+			out = nil
+		}
 		if method == "experiments.getByUser" {
 			out = withAccountExperiments(out) // experiments.go
 		}
@@ -1230,12 +1254,19 @@ func (s *Server) api(w http.ResponseWriter, r *http.Request) {
 	if faulted && fault.AfterHandle && s.applyFault(w, fault) {
 		return // handled, but the client never hears back
 	}
-	if b, ok := out.([]byte); ok {
-		w.Write(b)
-		return
+	b, isBytes := out.([]byte)
+	if !isBytes {
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(out)
+		b = buf.Bytes()
 	}
-	enc := json.NewEncoder(w)
-	_ = enc.Encode(out)
+	if e, failed := failedAnswer(b); failed {
+		s.noteAnswer(method, form, answerError, e)
+	}
+	if m := s.foreignIn(b); m != "" {
+		s.noteAnswer(method, form, answerForeign, m)
+	}
+	w.Write(b)
 }
 
 func ok(kv ...any) map[string]any {
@@ -1500,7 +1531,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		switch method {
 		case "users.emailtoken.create":
 			s.emailTokens = append(s.emailTokens, map[string]any{"token_id": 1000 + len(s.emailTokens),
-				"token": "fake", "email_address": "fake-" + strconv.Itoa(len(s.emailTokens)) + "@fake.slack.com"})
+				"token": "fake", "email_address": "fake-" + strconv.Itoa(len(s.emailTokens)) + "@" + strings.TrimPrefix(s.permalinkHost(), "https://")})
 			return ok("token_id", s.emailTokens[len(s.emailTokens)-1]["token_id"], "token", "fake",
 				"email_address", s.emailTokens[len(s.emailTokens)-1]["email_address"])
 		case "users.emailtoken.delete":
@@ -1724,6 +1755,11 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	} else if method == "activity.markRead" && f.Get("key") != "" { // no feed: every single markRead reads an unread item (activity_badges.go)
 		s.readActivityBadge(f.Get("type"))
 	}
+	if !s.Size.Views && s.Size.ActivityViews && (method == "activity.views" || method == "activity.prefs.update" || strings.HasPrefix(method, "activity.views.")) {
+		if out, handled := s.handleActivity(method, f); handled { // activity.go: the saved views alone
+			return out
+		}
+	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out
 	}
@@ -1736,7 +1772,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleChannels(method, f); handled {
 		return out
 	}
-	return nil
+	return unanswered{} // answers.go
 }
 
 func (s *Server) userByID(id string) (slack.User, bool) {

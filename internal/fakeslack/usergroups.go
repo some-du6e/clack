@@ -53,7 +53,36 @@ type fixtureGroup struct {
 	channels []string
 }
 
+// UsergroupFixture is a user group a workspace built on the fake (the
+// demo) brings instead of the fixed ones (SetUsergroups).
+type UsergroupFixture struct {
+	Group    slack.Usergroup
+	Members  []string
+	Channels []string // default channels (prefs.channels / prefs.groups)
+}
+
+// SetUsergroups replaces the fixed groups (snackcrew, orgcrew, admins)
+// with gs; nil goes back to them. Set it before the calls.
+func (s *Server) SetUsergroups(gs []UsergroupFixture) {
+	e := s.ugEdits()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.own = nil
+	for _, g := range gs {
+		g.Group.UserCount = len(g.Members)
+		e.own = append(e.own, fixtureGroup{g: g.Group, members: slices.Clone(g.Members), channels: slices.Clone(g.Channels)})
+	}
+	e.ownSet = gs != nil
+}
+
 func (s *Server) fixtureGroups() []fixtureGroup {
+	e := s.ugEdits()
+	e.mu.Lock()
+	own, set := e.own, e.ownSet
+	e.mu.Unlock()
+	if set {
+		return own
+	}
 	return []fixtureGroup{
 		{g: slack.Usergroup{ID: WorkspaceGroupID, Handle: "snackcrew", Name: "Snack crew", Description: "Synthetic workspace group",
 			UserCount: 6, TeamID: TeamID},
@@ -77,8 +106,10 @@ type ugState struct {
 }
 
 type ugEdits struct {
-	mu sync.Mutex
-	m  map[string]*ugState
+	mu     sync.Mutex
+	m      map[string]*ugState
+	own    []fixtureGroup // SetUsergroups
+	ownSet bool
 }
 
 var ugEditIndex sync.Map // *Server → *ugEdits

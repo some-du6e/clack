@@ -47,6 +47,7 @@ func (e *engine) start(ctx context.Context) {
 	w.goLoop(e.statuses)
 	w.goLoop(e.pollLoop)
 	w.goLoop(e.huddleLoop)
+	w.goLoop(e.liveHuddleLoop)
 	w.goLoop(e.agentLoop)
 }
 

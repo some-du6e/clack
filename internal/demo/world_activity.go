@@ -72,7 +72,7 @@ func (w *World) addActivityLocked(typ, ch, ts, thread, actor, reaction string) [
 		e.Item = map[string]any{"type": typ, "message": msg, "reaction": map[string]any{"user": actor, "name": reaction}}
 		msg["author_user_id"], msg["user"] = SelfID, SelfID
 	default:
-		msg["is_broadcast"] = typ != "at_user"
+		msg["is_broadcast"] = typ == "at_channel"
 		e.Item = map[string]any{"type": typ, "message": msg}
 	}
 	if e.bundle != "" {
@@ -114,6 +114,8 @@ func (w *World) activityForPostLocked(ch string, m slack.Message, parent *slack.
 		return w.addActivityLocked("at_user", ch, m.TS, m.ThreadTS, m.User, "")
 	case strings.Contains(m.Text, "<!channel") || strings.Contains(m.Text, "<!here"):
 		return w.addActivityLocked("at_channel", ch, m.TS, m.ThreadTS, m.User, "")
+	case w.mentionsMyGroup(m.Text):
+		return w.addActivityLocked("at_user_group", ch, m.TS, m.ThreadTS, m.User, "")
 	case parent != nil && w.inThreadLocked(ch, parent):
 		return w.addActivityLocked("thread_v2", ch, m.TS, parent.TS, m.User, "")
 	case c != nil && c.IsIM && parent == nil:
@@ -123,6 +125,16 @@ func (w *World) activityForPostLocked(ch string, m slack.Message, parent *slack.
 		return w.addActivityLocked("dm", ch, m.TS, "", m.User, "")
 	}
 	return nil
+}
+
+// mentionsMyGroup: text pings a user group the viewer is in.
+func (w *World) mentionsMyGroup(text string) bool {
+	for _, g := range w.ws.Usergroups {
+		if strings.Contains(text, "<!subteam^"+g.Group.ID) && hasStr(g.Members, SelfID) {
+			return true
+		}
+	}
+	return false
 }
 
 // inThreadLocked: the viewer started or replied in the thread.
@@ -171,6 +183,8 @@ func (w *World) seedActivity() {
 					cs = append(cs, cand{"at_user", ch, m.TS, m.ThreadTS, m.User, ""})
 				case strings.Contains(m.Text, "<!channel") || strings.Contains(m.Text, "<!here"):
 					cs = append(cs, cand{"at_channel", ch, m.TS, m.ThreadTS, m.User, ""})
+				case w.mentionsMyGroup(m.Text):
+					cs = append(cs, cand{"at_user_group", ch, m.TS, m.ThreadTS, m.User, ""})
 				}
 			}
 			if m.User == SelfID {

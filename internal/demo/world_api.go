@@ -22,10 +22,14 @@ func (w *World) api(method string, f url.Values) (any, bool) {
 		return okMap("url", w.ws.Base, "team", TeamName, "user", w.selfHandle(), "team_id", TeamID, "user_id", SelfID,
 			"enterprise_id", fakeslack.EnterpriseID, "is_enterprise_install", false), true
 	case "team.info":
-		if t := f.Get("team"); t != "" && t != TeamID {
-			return nil, false
+		switch t := f.Get("team"); t {
+		case "", TeamID, fakeslack.EnterpriseID: // the enterprise is Quillfeather's own org
+			return okMap("team", w.teamInfo()), true
+		case PartnerTeamID:
+			return okMap("team", w.partnerTeamInfo()), true
+		default:
+			return failMap("team_not_found"), true
 		}
-		return okMap("team", w.teamInfo()), true
 	case "users.conversations":
 		return w.usersConversations(f), true
 	case "conversations.info":
@@ -188,6 +192,8 @@ func (w *World) api(method string, f url.Values) (any, bool) {
 		return w.threadMark(f), true
 	case "saved.list":
 		return w.savedList(f), true
+	case "saved.get":
+		return w.savedGet(f), true
 	case "saved.add", "saved.delete", "saved.update":
 		return w.savedWrite(method, f), true
 	case "later.list":
@@ -206,8 +212,6 @@ func (w *World) api(method string, f url.Values) (any, bool) {
 		return w.searchChannels(f), true
 	case "search.modules.people":
 		return w.searchPeople(f), true
-	case "usergroups.list":
-		return okMap("usergroups", []any{}), true
 	case "blocks.actions":
 		return w.blockAction(f)
 	case "client.codeChannels.getDiff", "client.codeChannels.getPullRequest", "client.codeChannels.getBlockKitView",
@@ -218,8 +222,14 @@ func (w *World) api(method string, f url.Values) (any, bool) {
 	case "rooms.inviteResponse":
 		w.bots.onInviteResponse(f)
 		return nil, false // fakeslack records and answers it
+	case "search.modules.files":
+		return w.searchFiles(f)
+	case "files.info":
+		return w.fileInfo(f)
+	case "conversations.searchLinks":
+		return w.searchLinks(f), true
 	}
-	return nil, false
+	return w.more(method, f)
 }
 
 func jsonUnmarshal(s string, v any) error { return json.Unmarshal([]byte(s), v) }
@@ -242,6 +252,18 @@ func (w *World) teamInfo() map[string]any {
 	return map[string]any{"id": TeamID, "name": TeamName, "domain": TeamDomain, "email_domain": "quillfeather.example",
 		"url": "https://" + TeamDomain + ".slack.com/", "icon": icon, "enterprise_id": fakeslack.EnterpriseID,
 		"enterprise_name": TeamName, "avatar_base_url": w.ws.Base + "img/"}
+}
+
+// partnerTeamInfo is Papertrail Freight, the Slack Connect org.
+func (w *World) partnerTeamInfo() map[string]any {
+	icon := map[string]any{"image_default": false}
+	for _, px := range []int{34, 44, 68, 88, 102, 132, 230} {
+		icon["image_"+strconv.Itoa(px)] = w.ws.Base + "img/" + imgPartner + strconv.Itoa(px) + ".png"
+	}
+	icon["image_original"] = w.ws.Base + "img/" + imgPartner + "230.png"
+	return map[string]any{"id": PartnerTeamID, "name": PartnerTeamName, "domain": PartnerTeamDomain,
+		"email_domain": "papertrail-freight.example", "url": "https://" + PartnerTeamDomain + ".slack.com/", "icon": icon,
+		"is_verified": true, "date_created": w.now().AddDate(-6, 0, 0).Unix(), "avatar_base_url": w.ws.Base + "img/"}
 }
 
 // ---- conversations ----
@@ -981,45 +1003,6 @@ func (w *World) star(ch string, on bool) any {
 	}
 	w.fs.Push(map[string]any{"type": typ, "user": SelfID, "item": map[string]any{"type": "channel", "channel": ch}})
 	w.fs.Push(map[string]any{"type": "channel_sections_channels_upserted", "channel_section_id": s.ID})
-	return okMap()
-}
-
-func (w *World) savedList(f url.Values) any {
-	items := []any{}
-	if f.Get("filter") != "todo_with_completed" {
-		w.mu.Lock()
-		type sv struct {
-			key string
-			at  int64
-		}
-		var all []sv
-		for k := range w.saved {
-			all = append(all, sv{k, w.savedAt[k]})
-		}
-		w.mu.Unlock()
-		sort.Slice(all, func(i, j int) bool { return all[i].at > all[j].at })
-		for _, s := range all {
-			ch, ts, _ := strings.Cut(s.key, "/")
-			items = append(items, map[string]any{"item_id": ch, "item_type": "message", "ts": ts, "state": "in_progress",
-				"todo_state": "", "date_created": s.at, "date_due": 0, "date_completed": 0, "is_archived": false, "date_updated": s.at})
-		}
-	}
-	return okMap("saved_items", items, "counts", map[string]any{"uncompleted_count": len(items), "uncompleted_overdue_count": 0,
-		"archived_count": 0, "completed_count": 0, "total_count": len(items)}, "response_metadata", map[string]any{"next_cursor": ""})
-}
-
-func (w *World) savedWrite(method string, f url.Values) any {
-	key := f.Get("item_id") + "/" + f.Get("ts")
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	switch method {
-	case "saved.add":
-		w.saved[key] = true
-		w.savedAt[key] = w.now().Unix()
-	case "saved.delete":
-		delete(w.saved, key)
-		delete(w.savedAt, key)
-	}
 	return okMap()
 }
 

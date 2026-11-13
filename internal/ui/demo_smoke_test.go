@@ -35,6 +35,9 @@ func demoEnv(t *testing.T, opts demo.Options) (*perfEnv, *demo.Session) {
 		t.Fatal(err)
 	}
 	t.Cleanup(s.Close)
+	// the fake's own generated people, channels and fixture text must never
+	// show through the demo (TestDemoSurfaces fails on them)
+	s.FS.WatchForeign(demoForeignMarkers...)
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "ui.json"), []byte(`{"realtime":true}`), 0o600); err != nil {
 		t.Fatal(err)

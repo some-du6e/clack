@@ -37,7 +37,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 )
 
-//go:embed data/people.json data/channels.json data/sections.json data/emoji.json data/canvases.json data/lists.json data/scheduled.json data/history/*.json data/canvases/*.md
+//go:embed data/people.json data/channels.json data/sections.json data/emoji.json data/canvases.json data/lists.json data/scheduled.json data/usergroups.json data/history/*.json data/canvases/*.md
 var content embed.FS
 
 // Content ids other parts of the demo refer to.
@@ -81,6 +81,20 @@ type msgSpec struct {
 	Blocks    json.RawMessage `json:"blocks"`
 	Subtype   string          `json:"subtype"`
 	Replies   []msgSpec       `json:"replies"`
+	// Unfurls are link previews, as Slack attaches them to a message
+	// that links somewhere (the demo fetches nothing: they're written
+	// here, images drawn by art_files.go)
+	Unfurls []unfurlSpec `json:"unfurls"`
+}
+
+// unfurlSpec is one link preview: {"url", "title", "text", "service",
+// "image": a picture key}.
+type unfurlSpec struct {
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+	Text    string `json:"text"`
+	Service string `json:"service"`
+	Image   string `json:"image"`
 }
 
 type fileSpec struct {
@@ -167,7 +181,7 @@ func Build(base string, now time.Time) (*Workspace, error) {
 		convID: map[string]string{}, convName: map[string]string{}}
 	b.ws = &Workspace{Now: now, Base: base, History: map[string][]slack.Message{},
 		Replies: map[string]map[string][]slack.Message{}, Pins: map[string][]string{}, Unread: map[string]Unread{}}
-	steps := []func() error{b.people, b.emoji, b.convs, b.histories, b.timestamps, b.sections, b.canvases, b.lists, b.scheduled}
+	steps := []func() error{b.people, b.emoji, b.convs, b.histories, b.timestamps, b.sections, b.canvases, b.lists, b.scheduled, b.usergroups}
 	for _, f := range steps {
 		if err := f(); err != nil {
 			return nil, err
@@ -270,6 +284,10 @@ func (b *builder) user(p *Person) slack.User {
 	if !p.Bot {
 		u.Profile.Email = p.Handle + "@quillfeather.example"
 	}
+	if p.Team == partnerTeamKey { // Slack Connect: their own org
+		u.TeamID, u.Profile.Team = PartnerTeamID, PartnerTeamID
+		u.Profile.Email = p.Handle + "@papertrail-freight.example"
+	}
 	switch p.ID {
 	case InkwellID:
 		u.Profile.BotID, u.Profile.APIAppID, u.AgentStatus = InkwellBotID, InkwellAppID, "consistently_an_agent"
@@ -371,7 +389,7 @@ func (b *builder) convs() error {
 	}
 	var humans []string
 	for _, p := range b.ws.People {
-		if !p.Bot {
+		if !p.Bot && p.Team == "" {
 			humans = append(humans, p.Handle)
 		}
 	}
@@ -419,12 +437,16 @@ func (b *builder) convs() error {
 			return &slack.Purpose{Value: v, Creator: creator, LastSet: created.Unix()}
 		}
 		switch s.Kind {
-		case "channel", "private", "code":
+		case "channel", "private", "code", "connect":
 			c.IsChannel, c.IsMember, c.IsGeneral, c.IsPrivate = true, true, s.General, s.Kind == "private"
 			c.NumMembers, c.Members = len(ids), ids
 			c.Topic, c.Purpose = purpose(s.Topic), purpose(s.Purpose)
 			if s.Kind == "code" {
 				c.Properties = b.codeProps()
+			}
+			if s.Kind == "connect" { // Slack Connect with Papertrail Freight
+				c.IsExtShared = true
+				c.ConnectedTeamIDs = []string{PartnerTeamID}
 			}
 		case "im":
 			uid, err := b.id(s.User)
@@ -570,6 +592,9 @@ func (b *builder) resolveText(s string) string {
 			if p, ok := b.byHandle[name]; ok {
 				return sm[1] + "<@" + p.ID + ">"
 			}
+			if id, ok := groupHandles()[name]; ok {
+				return sm[1] + "<!subteam^" + id + "|@" + name + ">"
+			}
 		}
 		return m
 	})
@@ -679,6 +704,29 @@ func (b *builder) message(ch string, s msgSpec, parent *pendingMsg, seq *int) (*
 	}
 	if len(m.Files) > 0 && m.Subtype == "" && !p.Bot {
 		m.Upload = true
+	}
+	for i, u := range s.Unfurls {
+		if u.URL == "" || u.Title == "" {
+			return nil, errors.New("an unfurl needs url and title")
+		}
+		a := slack.Attachment{ID: i + 1, Title: u.Title, TitleLink: u.URL, Text: u.Text, Fallback: u.Service + ": " + u.Title,
+			FromURL: u.URL, OriginalURL: u.URL, ServiceName: u.Service}
+		switch { // the sites' icons: the two organisations' own
+		case strings.Contains(u.URL, "quillfeather"):
+			a.ServiceIcon = b.base + "img/" + imgTeam + "32.png"
+		case strings.Contains(u.URL, "papertrail"):
+			a.ServiceIcon = b.base + "img/" + imgPartner + "32.png"
+		}
+		if u.Image != "" {
+			sz, ok := fileSizes[u.Image]
+			if !ok {
+				return nil, fmt.Errorf("unfurl: no picture %q", u.Image)
+			}
+			w, h := 800, 800*sz[1]/sz[0]
+			a.ImageURL, a.ImageWidth, a.ImageHeight = b.fileURL(u.Image, w, h), w, h
+			a.ImageBytes = int64(w * h / 6)
+		}
+		m.Attachments = append(m.Attachments, a)
 	}
 	pm := &pendingMsg{ch: ch, t: t, seq: *seq, msg: m, parent: parent}
 	if s.Edited != "" {
@@ -1051,6 +1099,66 @@ func todoMeta(id, icon string) lists.Meta {
 	return lists.Meta{Schema: schema, TodoMode: true, DefaultView: view, Icon: icon,
 		Views: []lists.View{{ID: view, Name: "All items", Type: lists.ViewTable, Position: "0001", Columns: vcols, IsAllItems: true,
 			ShowCompleted: &yes, Sorts: []lists.Sort{}, Filters: []lists.Filter{}}}}
+}
+
+// groupSpec is one user group in data/usergroups.json.
+type groupSpec struct {
+	ID          string   `json:"id"`
+	Handle      string   `json:"handle"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	CreatedBy   string   `json:"created_by"`
+	AgeDays     int      `json:"age_days"`
+	AutoType    string   `json:"auto_type"`
+	Members     []string `json:"members"`
+	Channels    []string `json:"channels"`
+}
+
+// groupHandles is data/usergroups.json's handle -> id (for "@handle" in
+// text, which resolves before the groups are built).
+func groupHandles() map[string]string {
+	var gs []groupSpec
+	out := map[string]string{}
+	if readJSON("usergroups.json", &gs) == nil {
+		for _, g := range gs {
+			out[g.Handle] = g.ID
+		}
+	}
+	return out
+}
+
+// usergroups reads data/usergroups.json: the org's user groups, served by
+// the fake's own user group handlers (fakeslack.SetUsergroups).
+func (b *builder) usergroups() error {
+	var gs []groupSpec
+	if err := readJSON("usergroups.json", &gs); err != nil {
+		return err
+	}
+	for _, g := range gs {
+		if _, err := b.id(g.CreatedBy); err != nil {
+			return fmt.Errorf("usergroup %s: %w", g.Handle, err)
+		}
+		updated := b.now.AddDate(0, 0, -g.AgeDays/3).Unix()
+		ug := slack.Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, TeamID: TeamID,
+			AutoType: g.AutoType, DateUpdate: updated}
+		fx := fakeslack.UsergroupFixture{Group: ug}
+		for _, h := range g.Members {
+			id, err := b.id(h)
+			if err != nil {
+				return fmt.Errorf("usergroup %s: %w", g.Handle, err)
+			}
+			fx.Members = append(fx.Members, id)
+		}
+		for _, c := range g.Channels {
+			id, ok := b.convID[c]
+			if !ok {
+				return fmt.Errorf("usergroup %s: no channel #%s", g.Handle, c)
+			}
+			fx.Channels = append(fx.Channels, id)
+		}
+		b.ws.Usergroups = append(b.ws.Usergroups, fx)
+	}
+	return nil
 }
 
 func (b *builder) scheduled() error {

@@ -85,9 +85,18 @@ Every commit is also built on the [Actions](../../actions/workflows/ci.yml) page
 
 ## What it looks like
 
-There are no screenshots in this repo on purpose: any real screenshot would show other people's messages, and the repo is public. In words:
+These are screenshots of `clack demo` ([Try the demo](#try-the-demo)), so everyone and everything in them is made up: Quillfeather Paper Co., its people, their messages and the files they share. No real workspace appears in this repo. CI takes them (`TestDemoReadmeShots` in the demo workflow) and they live in [docs/screenshots](docs/screenshots).
 
-- **The window** is Slack's 2026 layout on Slack's aubergine background (the same radial-plus-conic gradient). Along the top is a 40 px bar with back/forward/history buttons, a wide "Search Hack Club" pill and a help button.
+| | Light | Dark |
+|---|---|---|
+| The main window | ![#sales-leaderboard in light mode](docs/screenshots/demo-main-light.png) | ![#sales-leaderboard in dark mode](docs/screenshots/demo-main-dark.png) |
+| A thread | ![a thread in #it-help, light](docs/screenshots/demo-thread-light.png) | ![a thread in #it-help, dark](docs/screenshots/demo-thread-dark.png) |
+| Activity | ![Activity, light](docs/screenshots/demo-activity-light.png) | ![Activity, dark](docs/screenshots/demo-activity-dark.png) |
+| A huddle | ![the huddle in #party-planning-crew, light](docs/screenshots/demo-huddle-light.png) | ![the huddle in #party-planning-crew, dark](docs/screenshots/demo-huddle-dark.png) |
+
+In words:
+
+- **The window** is Slack's 2026 layout on Slack's aubergine background (the same radial-plus-conic gradient). Along the top is a 40 px bar with back/forward/history buttons, a wide "Search <workspace>" pill and a help button.
 - **The left rail** (70 px) has the workspace icon, then Home, DMs, Activity, Files, To-dos and Agents & tools with unread badges. At the bottom sit a + button, the light/dark toggle and your avatar with a presence dot.
 - **The sidebar** (resizable, 232 px by default) starts with the team name in heavy type, settings and compose buttons, and a "Find a conversation…" box. Below that come Threads, Huddles, Drafts & sent, Saved and Directories, then your sections (Starred, Channels, Direct messages, Apps, custom ones). Unread conversations are bold white, mentions get lilac badges, and DMs show avatars, presence and status emoji.
 - **The main panel** is white (or #1a1d21 in dark mode) with rounded corners. Its header has the star, channel name, topic, member facepile with count, a Huddle split button, notifications, search and a kebab menu. Under it are the channel's tabs (Messages plus canvases, lists and bookmarks), the message list (grouped rows, reactions, threads, unfurls, files and images, day dividers, hover action bar) and the rich composer (formatting toolbar, @ # : / autocomplete, attachments, "X is typing…").
@@ -110,13 +119,13 @@ clack demo --help
 `clack --demo` works too. The demo opens the normal Clack window signed in to **Quillfeather Paper Co.**, the Wexley Falls branch of a small paper distributor. You're Jordan, the new hire in week 2. Everyone and everything in it is made up:
 
 - **A dozen coworkers** with drawn avatars, titles, pronouns and statuses, among them a branch manager who invents awards, a top seller and her honey-selling rival, a weary one-person IT department with a moody printer, and an intern with a new startup idea every day.
-- **Channels** #general, #random, #sales-leaderboard, #party-planning-crew, #it-help, #warehouse, #lunch-orders, #kudos, a private #secret-santa-2026 and a code channel. There are also DMs, a group DM, and custom sidebar sections.
-- **A few days of backstory** with threads, reactions, custom emoji, generated images and a PDF, a canvas, a list, pinned messages, a scheduled message and an @channel or two.
+- **Channels** #general, #random, #sales-leaderboard, #party-planning-crew, #it-help, #warehouse, #lunch-orders, #kudos, a private #secret-santa-2026, a code channel and #papertrail-freight, a Slack Connect channel shared with two people from Papertrail Freight, the branch's carrier. There are also DMs, a group DM, custom sidebar sections and user groups (@sales, @party-committee, @warehouse-crew…).
+- **A few days of backstory** with threads, reactions, custom emoji, drawn pictures and PDFs, link previews, canvases and a list, pinned messages, a scheduled message, saved messages and to-dos (one overdue), and an @channel or two. Activity has mentions, group mentions, thread replies, reactions, DMs, a list assignment, a reminder and a channel invite; the Files & links tabs, search and the Huddles page's history all have content.
 - **Scripted bots**, all local with no AI service involved:
   - People post on a timer, with banter that runs across channels. They reply in threads when you post or mention them, react to your messages, show "is typing…" and change their statuses.
   - **Inkwell**, an AI coding agent app, streams its "Thinking…" plan into #inkwell-order-portal, a code channel with a diff and a pull request view.
   - **Pulse** posts polls whose buttons work.
-  - Now and then someone rings you for a huddle. The demo has no audio, so joining doesn't connect.
+  - A huddle is already going in #party-planning-crew when you arrive, and people drop in and out of it. Now and then someone rings you for a huddle. The demo has no audio, so joining doesn't connect.
   - Your Activity feed fills up as it all happens.
 
 The demo is offline and can't reach Slack. It runs its own fake Slack server (internal/fakeslack) inside the process on 127.0.0.1. Before anything else starts, the process makes itself loopback-only: every connection to a host other than localhost is refused and proxies are ignored. It keeps its settings in its own folder (`clack-demo` next to Clack's config folder, or `CLACK_DEMO_HOME`), so it never reads or writes your credentials, cache or preferences. A **Demo workspace** banner stays above the workspace, and the window title says (Demo). The bots' scripts and the workspace live in `internal/demo/data`.
