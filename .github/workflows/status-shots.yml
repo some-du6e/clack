@@ -3,7 +3,7 @@ name: status-shots
 # reply), Preferences > Availability's custom working days, focus mode
 # (its popover, the button, the rail's status tab and their animations),
 # the rail tabs' hover peeks (Agents & tools, DMs, Activity, Later,
-# Files) and Darker sidebars' theme
+# Files; the Activity badges and the rows' menus) and Darker sidebars' theme
 # scopes: their fakeslack tests, and screenshots of the modal and the page
 # in light and dark through Gio's GPU renderer (Mesa llvmpipe), with emoji
 # from Slack's public static CDN (a.slack-edge.com, no cookie). Nothing
@@ -23,6 +23,9 @@ on:
       - "internal/ui/rail_tab_peek*"
       - "internal/ui/views/peek.go"
       - "internal/ui/views/*_peek.go"
+      - "internal/ui/views/dms_menu.go"
+      - "internal/ui/views/later_menu.go"
+      - "internal/ui/popups/agent_thread_name.go"
       - "internal/ui/theme_scope.go"
       - "internal/ui/theme/account*"
       - "internal/core/agent_sessions*"
@@ -72,8 +75,8 @@ jobs:
           mkdir -p "$STATUS_SHOTS_DIR" "$RAIL_PEEK_SHOTS_DIR"
           xvfb-run -a go test -p 1 -count=1 -v -run 'TestStatusShots|TestStatusCalendarShots|TestAvailabilityCustomDaysShots' ./internal/ui/popups 2>&1 | tee dist/status-shots.log
           xvfb-run -a go test -p 1 -count=1 -v -run 'TestFocusPopoverShots|TestFocusCustomShots|TestFocusPeekHover|TestFocusPeekDuration|TestFocusButtonTransitions|TestRailStatusTab' ./internal/ui 2>&1 | tee -a dist/status-shots.log
-          xvfb-run -a go test -p 1 -count=1 -v -run 'TestRailPeekAgentsHover|TestRailPeekAgentsClickThrough|TestDarkerSidebarsShots' ./internal/ui 2>&1 | tee -a dist/status-shots.log
-          xvfb-run -a go test -p 1 -count=1 -v -run 'TestRailPeekDMs|TestRailPeekActivity|TestRailPeekLater|TestRailPeekFiles|TestRailPeekPagesShots' ./internal/ui 2>&1 | tee -a dist/status-shots.log
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestRailPeekAgentsHover|TestRailPeekAgentsClickThrough|TestRailPeekAgentsRowMenu|TestDarkerSidebarsShots' ./internal/ui 2>&1 | tee -a dist/status-shots.log
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestRailPeekDMs|TestRailPeekActivity|TestRailPeekLater|TestRailPeekFiles|TestRailPeekPagesShots|TestRailPeekMenusShots' ./internal/ui 2>&1 | tee -a dist/status-shots.log
           ls -la "$STATUS_SHOTS_DIR" "$RAIL_PEEK_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -33,6 +33,7 @@ type peekPal struct {
 	contImp  color.NRGBA // --dt_color-theme-content-imp
 	skel     color.NRGBA // --dt_color-base-ter
 	otlTer   color.NRGBA // --dt_color-otl-ter
+	otlSec   color.NRGBA // --dt_color-otl-sec
 	maxSolid color.NRGBA // rgb(var(--sk_foreground_max_solid))
 }
 
@@ -56,6 +57,7 @@ func peekPalOf(th *theme.Theme) peekPal {
 			contImp:  rgb(0x200221),
 			skel:     rgb(0x212428),
 			otlTer:   argb(0x4d797c81),
+			otlSec:   argb(0x80797c81),
 			maxSolid: rgb(0xababad),
 		}
 	} else {
@@ -73,6 +75,7 @@ func peekPalOf(th *theme.Theme) peekPal {
 			contImp:  rgb(0xf9edff),
 			skel:     rgb(0xeaeaea),
 			otlTer:   argb(0x215e5d60),
+			otlSec:   argb(0x735e5d60),
 			maxSolid: rgb(0x616061),
 		}
 	}
@@ -93,6 +96,7 @@ func peekPalOf(th *theme.Theme) peekPal {
 	set(&p.contImp, "var(--dt_color-theme-content-imp)")
 	set(&p.skel, "var(--dt_color-base-ter)")
 	set(&p.otlTer, "var(--dt_color-otl-ter)")
+	set(&p.otlSec, "var(--dt_color-otl-sec)")
 	set(&p.maxSolid, "rgb(var(--sk_foreground_max_solid))")
 	base, hov := p.bg, color.NRGBA{}
 	if dark {

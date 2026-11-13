@@ -67,8 +67,9 @@ import (
 //     closes the peek and runs handleWorkflowItemClick: Clack has no
 //     Workflow Builder, so it's toWorkflowDetails for everyone.
 //
-// Not ported: the rows' ⋮ menu (Copy link, Close, Pin, Mute, Rename, Open
-// in split view / new window), the "agents" unified view (agent_peek_view
+// A session row's ⋮ (AgentSessionMenuButton) is rail_peek_agents_menu.go.
+//
+// Not ported: the "agents" unified view (agent_peek_view
 // with Agentforce agents), the workflows view's Create button and the
 // peek's view container forcing the Platform tab for what it opens.
 
@@ -93,6 +94,7 @@ type agentsPeek struct {
 	lastTab               string
 	openedAt              time.Time
 	sessionsErr, wfErr    error
+	mn                    agentsPeekMenu // the rows' ⋮ (rail_peek_agents_menu.go)
 }
 
 func (a *App) agentsPeekView() *agentsPeek {
@@ -499,8 +501,9 @@ func (v *agentsPeek) sessionRow(gtx layout.Context, s core.AgentSession, w int, 
 		textH += gtx.Dp(19)
 	}
 	h := gtx.Dp(12)*2 + max(tile, gtx.Dp(22+19))
-	return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-		if b.Hovered() {
+	mb := v.menuBtn(key)
+	d := clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
+		if b.Hovered() || mb.Hovered() { // .row:hover (the ⋮ is in the row)
 			theme.Fill(gtx, image.Rect(0, 0, w, h), p.rowHover)
 		}
 		ty := (h - tile) / 2
@@ -549,6 +552,9 @@ func (v *agentsPeek) sessionRow(gtx layout.Context, s core.AgentSession, w int, 
 		}
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	})
+	// the ⋮ above the row's button, not inside it (its clicks stay its own)
+	v.sessionMenuButton(gtx, s, key, w, h, b.Hovered(), p)
+	return d
 }
 
 // skeletonRow is PeekSessionEntityRowSkeleton i at y.

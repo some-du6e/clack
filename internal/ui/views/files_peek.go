@@ -20,8 +20,13 @@ package views
 //   - A row opens the file (handleFileContainerClick, source
 //     SLACK_DOCS_TAB_PEEK), then closes the peek.
 //
-// Not ported: AgentCanvasPeekSection ("Created by agents": Clack has no
-// agent canvas ids), the 3p custom sections' starred copy.
+// Not ported: AgentCanvasPeekSection ("Created by agents"): it renders
+// only with unviewed_agent_created_canvas_shelf (7MA4 wM), which the
+// account isn't assigned, and needs canvases.agents.list, the
+// agent_canvas_created event and the AgentCanvasShelf view behind "See
+// all" (docs/SIDEBAR-RULES.md). Also the 3p custom sections' starred copy.
+// The rows have no context menu (FileContainer gets no onContextMenu);
+// their ⋯ stays as the Files tab's.
 
 import (
 	"context"

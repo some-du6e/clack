@@ -791,7 +791,13 @@ func (v *Activity) itemMenu(ph popups.Host, it core.ActivityItem, key string, un
 		if thread != "" {
 			route += "/t/" + thread
 		}
-		g := []popups.MenuItem{{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() { v.h.Navigate(route) }}}
+		// open_in_home ends with maybeClosePeek: from the rail's peek the
+		// card closes too
+		closePeek := v.peekCloser()
+		g := []popups.MenuItem{{Key: "open_in_home", Label: nsActivity.T("Open in home"), Icon: "home", Do: func() {
+			closePeek()
+			v.h.Navigate(route)
+		}}}
 		// open_in_split_view (not in Simplified layout mode): the thread or
 		// the channel, with the ⌘⌥-click hint
 		if split, ok := popups.SplitViewItem(ph, route, true); ok {
@@ -840,7 +846,7 @@ func (v *Activity) notifyDescription(ch string, muted bool) string {
 // a paid team, the DM's person when they can be a VIP (not a bot, not
 // you, not deactivated): "Add to VIP" / "Remove from VIP" → users.priority
 // add / remove, then "Added {name} to VIPs" / "Removed {name} from VIPs".
-func (v *Activity) vipItem(ph popups.Host, ch string) (popups.MenuItem, bool) {
+func (v *base) vipItem(ph popups.Host, ch string) (popups.MenuItem, bool) {
 	c := v.h.Core()
 	if !c.PaidTeam() || ch == "" {
 		return popups.MenuItem{}, false

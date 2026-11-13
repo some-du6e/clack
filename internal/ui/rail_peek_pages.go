@@ -18,8 +18,8 @@ import (
 //     DmsListAll compact in peek mode; views/dms_peek.go).
 //   - Activity: gOQ8 ActivityPeekTrigger on the Activity tab, and on Home
 //     while Activity lives in Home (activity_in_home_prototype) and Home
-//     isn't active ("Activity", the Unreads toggle, the Activity page;
-//     views/activity_peek.go).
+//     isn't active ("Activity", the unread badges under the inbox, the
+//     Unreads toggle, the Activity page; views/activity_peek.go).
 //   - Later: s1p9 LaterPeekView (the tab's name and "{count} in progress",
 //     LaterPeekContent; views/later_peek.go).
 //   - Files: j33M UnifiedFilesPeekView ("Files", the Starred toggle,
@@ -149,6 +149,20 @@ func (p *pageTabPeek) layout(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, hh, func(gtx layout.Context) layout.Dimensions {
 			ts := theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Black, Color: pl.fg, MaxLines: 1}
 			d := a.th.Layout(gtx, ts, title)
+			if l, ok := v.(interface {
+				LayoutPeekLead(gtx layout.Context) layout.Dimensions
+			}); ok { // the Activity peek's badges (.margin_left_50: 8px after the title)
+				x := d.Size.X + gtx.Dp(8)
+				if w := tw - x; w > 0 {
+					call, ld := measured(gtx, func(gtx layout.Context) layout.Dimensions {
+						gtx.Constraints = layout.Constraints{Max: image.Pt(w, hh)}
+						return l.LayoutPeekLead(gtx)
+					})
+					if ld.Size.X > 0 {
+						place(gtx, call, image.Pt(x, (d.Size.Y-ld.Size.Y)/2))
+					}
+				}
+			}
 			if sub != "" {
 				x := d.Size.X + gtx.Dp(8)
 				at(gtx, image.Pt(x, gtx.Dp(2)), image.Pt(max(1, tw-x), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {

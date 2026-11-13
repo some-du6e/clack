@@ -36,6 +36,8 @@ type AppCard struct {
 	// app_profile as legacy_app): isAppShownAsAgent, the AGENT badge's
 	// app rule (badge.go).
 	ShownAsAgent bool
+	// AgentApp is legacy_app.is_agent_app (SM2u isAgentAppProfile).
+	AgentApp bool
 
 	// What the App details flexpane reads (popups.AppDetailsView): the raw
 	// desc (the header's line under the name), long_desc (ToML's
@@ -206,6 +208,7 @@ func (a *App) appCardOf(raw json.RawMessage, botID string) AppCard {
 		IsPublished   bool   `json:"is_directory_published"`
 		IsDistributed bool   `json:"is_distributed"`
 		ShownAsAgent  bool   `json:"is_shown_as_agent"`
+		AgentApp      bool   `json:"is_agent_app"`
 		LongDesc      string `json:"long_desc"`
 		Developer     string `json:"developer_name"`
 		IsInstalled   *bool  `json:"is_installed"`
@@ -237,7 +240,7 @@ func (a *App) appCardOf(raw json.RawMessage, botID string) AppCard {
 	_ = json.Unmarshal(raw, &r)
 	c := AppCard{AppID: r.ID, BotID: botID, Name: r.Name, Tagline: r.Desc, Color: strings.TrimPrefix(r.Color, "#"),
 		HomeTeamID: r.TeamID, HomeOrgID: r.EnterpriseID, Workflow: r.IsWorkflow,
-		Published: r.IsPublished, Distributed: r.IsDistributed, AppType: "xoxp", ShownAsAgent: r.ShownAsAgent,
+		Published: r.IsPublished, Distributed: r.IsDistributed, AppType: "xoxp", ShownAsAgent: r.ShownAsAgent, AgentApp: r.AgentApp,
 		Desc: r.Desc, LongDesc: r.LongDesc, Developer: r.Developer, Installed: r.IsInstalled, MessagesTab: true}
 	if m := r.HomeMeta; m != nil {
 		if m.MessagesTab != nil {

@@ -203,6 +203,18 @@ func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
 // the first frame).
 func (m *Menu) Rect() image.Rectangle { return m.root().rect }
 
+// Contains reports whether window point pt is on the menu's card or one
+// of its open submenus' (edges included), as last laid out.
+func (m *Menu) Contains(pt image.Point) bool {
+	for s := m.root(); s != nil; s = s.sub {
+		r := s.rect
+		if !r.Empty() && pt.X >= r.Min.X && pt.X <= r.Max.X && pt.Y >= r.Min.Y && pt.Y <= r.Max.Y {
+			return true
+		}
+	}
+	return false
+}
+
 // Peeking reports whether the menu is still a hover peek (MenuOpts.Peek,
 // not pinned).
 func (m *Menu) Peeking() bool { return m.root().opts.Peek }

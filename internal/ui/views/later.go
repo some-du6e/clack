@@ -148,6 +148,7 @@ type laterRow struct {
 	dlRowState
 	done, remind, toSaved, toTodos, unsave, more, clearDue widget.Clickable
 	presets                                                [len(laterPresets)]widget.Clickable
+	moreSz                                                 int // the ⋮'s size last frame (px): its menu's anchor
 }
 
 // laterDone is a finished write, reported back to the UI goroutine.
@@ -469,10 +470,8 @@ func (s *savedBase) rowActions(gtx C) {
 			s.write1(it, true, nsLater.T("Saved item cleared"), func(ctx context.Context, c *core.App) error {
 				return c.Unsave(ctx, ch, ts)
 			})
-		case more:
-			if it.Msg != nil {
-				s.h.OpenMessageMenu(image.Point{}, *it.Msg)
-			}
+		case more: // ActionsMenu: SavedItemActionsMenu (later_menu.go)
+			s.savedMenuOpen(it, r, &r.more)
 		case preset >= 0:
 			// A reminder makes the item a to-do due then (it leaves Saved).
 			at := laterPresets[preset].at(time.Now())
@@ -597,9 +596,11 @@ func (s *savedBase) rowBar(gtx C, it *core.SavedItem, r *laterRow, todo bool) D 
 	default: // to-do: Mark complete, Set reminder, Move to Saved
 		btns = append(btns, ib(&r.done, "check"), ib(&r.remind, "clock"), ib(&r.toSaved, "bookmark"))
 	}
-	if it.Msg != nil {
-		btns = append(btns, ib(&r.more, "more"))
-	}
+	// ActionsMenu: "More actions", ellipsis-vertical-filled
+	btns = append(btns, layout.Rigid(func(gtx C) D {
+		r.moreSz = gtx.Dp(32)
+		return s.iconButton(gtx, &r.more, "ellipsis-vertical-filled", 32, 18, s.p.Text)
+	}))
 	return s.dlActionBar(gtx, btns...)
 }
 
