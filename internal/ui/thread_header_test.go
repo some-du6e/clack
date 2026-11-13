@@ -190,7 +190,14 @@ func TestThreadHeaderJumpsToRoot(t *testing.T) {
 			l, ok := e.a.convoFor(c.Channel, "").list.(channelList)
 			return ok && len(l.VisibleRows()) > 0
 		})
-		e.toLatest()
+		// at the newest message (a DM opens at its first unread, which can
+		// sit next to the root)
+		for range 3 {
+			if l, ok := e.a.convoFor(c.Channel, "").list.(channelList); ok {
+				l.ScrollToBottom()
+			}
+			e.settle(200 * time.Millisecond)
+		}
 		visible := func() bool {
 			l, _ := e.a.convoFor(c.Channel, "").list.(channelList)
 			for _, r := range l.VisibleRows() {
@@ -201,7 +208,8 @@ func TestThreadHeaderJumpsToRoot(t *testing.T) {
 			return false
 		}
 		if visible() {
-			t.Fatalf("%s: the root is on screen at the newest message; the test needs it off screen", c.Name)
+			l, _ := e.a.convoFor(c.Channel, "").list.(channelList)
+			t.Fatalf("%s: the root is on screen at the newest message (rows %+v); the test needs it off screen", c.Name, l.VisibleRows())
 		}
 		// away, while more messages arrive
 		e.openChannel(other)
