@@ -30,19 +30,15 @@ func TestToastPlatformProbe(t *testing.T) {
 	var kept *rtObject // the notifier the first Show made, kept as Clack keeps it
 	_ = onRT(func() error { kept = rt.notif[id]; return nil })
 	t.Logf("platform: %s", platformPIDs())
+	since := time.Now()
 	for i := 1; i <= 4; i++ {
-		notificationCenter(t, true)
-		dnd, err := uiatest.Act(func(e uiatest.Element) bool {
-			return strings.Contains(strings.ToLower(e.Name), "do not disturb") && e.Window != ""
-		}, 5*time.Second)
-		if err != nil {
-			t.Fatalf("toggle %d: Do not disturb: %v", i, err)
-		}
+		closeDND, how := switchDND(t)
 		at := time.Now()
-		t.Logf("toggle %d (%s), then Notification Center left open", i, dnd)
+		t.Logf("toggle %d (%s), then the switch's window left open", i, how)
 		probeTimeline(t, id, kept, fmt.Sprintf("toggle %d", i), at, 20*time.Second)
-		notificationCenter(t, false)
+		closeDND()
 		t.Logf("after toggle %d: %s", i, platformPIDs())
+		t.Logf("events since the probe started:\n%s", wpnEvents(since))
 	}
 	// the platform starting: its per-user service stopped and started
 	before := platformPIDs()
@@ -55,6 +51,47 @@ func TestToastPlatformProbe(t *testing.T) {
 	// the same notifier, a minute on
 	time.Sleep(30 * time.Second)
 	probeTimeline(t, id, kept, "service restart +60s", time.Now(), 2*time.Second)
+}
+
+// switchDND flips Do not disturb: its button in Notification Center (as
+// TestToastInNotificationCenter does), or else its switch on Settings'
+// Notifications page. It returns how to close what it opened.
+func switchDND(t *testing.T) (func(), string) {
+	t.Helper()
+	dnd := func(e uiatest.Element) bool {
+		return strings.Contains(strings.ToLower(e.Name), "do not disturb") && e.Window != ""
+	}
+	notificationCenter(t, true)
+	if e, err := uiatest.Act(dnd, 10*time.Second); err == nil {
+		return func() { notificationCenter(t, false) }, "Notification Center: " + e.String()
+	} else {
+		t.Logf("Notification Center has no Do not disturb button (%v):\n%s", err, uiatest.Dump(80))
+	}
+	notificationCenter(t, false)
+	if b, err := exec.Command("cmd", "/c", "start", "", "ms-settings:notifications").CombinedOutput(); err != nil {
+		t.Logf("ms-settings:notifications: %v %s", err, b)
+	}
+	e, err := uiatest.Act(dnd, 20*time.Second)
+	if err != nil {
+		t.Fatalf("Settings has no Do not disturb switch either (%v):\n%s", err, uiatest.Dump(80))
+	}
+	return func() { _ = exec.Command("taskkill", "/IM", "SystemSettings.exe", "/F").Run() }, "Settings: " + e.String()
+}
+
+// wpnEvents: the System and Application log entries since since that
+// name the notification platform (the service manager's stops, starts and
+// crashes, Windows Error Reporting's).
+func wpnEvents(since time.Time) string {
+	ps := fmt.Sprintf(`$t = [datetime]::Parse('%s'); `+
+		`Get-WinEvent -FilterHashtable @{LogName='System','Application'; StartTime=$t} -ErrorAction SilentlyContinue | `+
+		`Where-Object { $_.Message -match 'Wpn|notification' } | Sort-Object TimeCreated | `+
+		`ForEach-Object { "$($_.TimeCreated.ToString('HH:mm:ss.fff')) $($_.LogName)/$($_.ProviderName) $($_.Id): $(($_.Message -split "`+"`"+`n")[0..3] -join ' | ')" }`,
+		since.Format("2006-01-02T15:04:05"))
+	out, err := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps).CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("%v %s", err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func probeToast(body string) Toast {
