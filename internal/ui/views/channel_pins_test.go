@@ -89,6 +89,8 @@ func TestChannelPinsRows(t *testing.T) {
 	e := &vaEnv{size: image.Pt(1100, 900)}
 	pfDraw(e, h, v.Layout)
 	e.until(t, "the pins", func() bool { return v.Loaded() && len(v.Items()) == 4 })
+	// useCanEditTabs on Grid: the MANAGE_CHANNEL_TABS grant (permissions/info)
+	e.until(t, "the tab grant", func() bool { return app.CanEditTabs(fakeslack.PinsChannelID) })
 	e.frame()
 	var keys []string
 	for _, it := range v.Items() {

@@ -7,6 +7,7 @@ package views
 // and dark screenshots (VIEWS_SHOTS_DIR, the views-audit workflow).
 
 import (
+	"encoding/json"
 	"image"
 	"os"
 	"strings"
@@ -66,6 +67,7 @@ func TestFolderTabMoveLikeSlack(t *testing.T) {
 	e := &vaEnv{size: image.Pt(1100, 900)}
 	pfDraw(e, h, v.Layout)
 	e.until(t, "the rows", func() bool { return v.Loaded() && len(v.Rows()) == 4 })
+	e.until(t, "the tab grant", func() bool { return app.CanEditTabs(fakeslack.PinsChannelID) })
 	if got := subLabels(v.AddMenuItems()); got != "File, canvas, or list|Link|Upload file" {
 		t.Errorf("add menu %q", got)
 	}
@@ -257,7 +259,7 @@ func TestFoldersMoreShots(t *testing.T) {
 		fv := NewFolderTab(h, fakeslack.PinsChannelID, FolderTabInfo{ID: fakeslack.PinsFolderTabID, Label: "Design docs", FolderID: fakeslack.PinsFolderID})
 		fe := &vaEnv{size: image.Pt(1100, 760)}
 		pfDraw(fe, h, fv.Layout)
-		fe.until(t, "the folder", func() bool { return fv.Loaded() && len(fv.Rows()) == 4 })
+		fe.until(t, "the folder", func() bool { return fv.Loaded() && len(fv.Rows()) == 4 && app.CanEditTabs(fakeslack.PinsChannelID) })
 		settle(fe)
 		fv.addMenu(image.Rect(990, 20, 1018, 48), "bottom")
 		fe.frame()
@@ -314,5 +316,35 @@ func TestFoldersMoreShots(t *testing.T) {
 		settle(pe)
 		vaShot(t, pe, "folder-picker-share", dark)
 		dismissAll(h.filesHost)
+	}
+}
+
+// The Channel Expert's folder (the team's default_channel_knowledge_agent
+// owns the tab): aTvS's empty state, no Link, and for a viewer who isn't
+// an admin or a channel manager the add button, title and folder actions
+// locked.
+func TestFolderKnowledgeVariant(t *testing.T) {
+	app, fs := pfCore(t)
+	app.SetExperimentGroup("unified_file_picker", "on")
+	app.SetTeamPrefs(map[string]json.RawMessage{"default_channel_knowledge_agent": json.RawMessage(`{"app_id":"A0EXPERT01","bot_user_id":"B0EXPERT01"}`)})
+	h := pfHostFor(t, app, fs, false)
+	v := NewFolderTab(h, fakeslack.PinsChannelID, FolderTabInfo{ID: fakeslack.PinsEmptyTabID, Label: "Later", FolderID: fakeslack.PinsEmptyFolderID, AppID: "A0EXPERT01"})
+	e := &vaEnv{size: image.Pt(1100, 760)}
+	pfDraw(e, h, v.Layout)
+	e.until(t, "the folder", func() bool { return v.Loaded() })
+	if on, locked := v.Knowledge(); !on || !locked {
+		t.Errorf("knowledge %v locked %v, want both (not an admin, not a manager)", on, locked)
+	}
+	if got := subLabels(v.AddMenuItems()); got != "File, canvas, or list|Upload file" {
+		t.Errorf("add menu %q (no Link)", got)
+	}
+	if !v.DropDisabled() {
+		t.Error("drops into a locked Channel Expert folder")
+	}
+	e.frame()
+	vaShot(t, e, "folder-knowledge-empty", false)
+	other := NewFolderTab(h, fakeslack.PinsChannelID, FolderTabInfo{ID: fakeslack.PinsEmptyTabID, Label: "Later", FolderID: fakeslack.PinsEmptyFolderID})
+	if on, _ := other.Knowledge(); on {
+		t.Error("an ordinary folder reads as the Channel Expert's")
 	}
 }

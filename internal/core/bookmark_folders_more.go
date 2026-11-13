@@ -30,6 +30,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/url"
@@ -263,4 +264,59 @@ func (a *App) FolderFileInfo(ctx context.Context, f File) (File, error) {
 // locations), or an external file (not fileIsHosted).
 func (a *App) FolderShareDirect(ch string, f File) bool {
 	return a.FolderUploadSkipsPrompt(ch) || slices.Contains(f.Channels, ch) || f.Mode == "external"
+}
+
+// ---- the Channel Expert's knowledge folder ----
+
+// KnowledgeAgentAppID is the workspace's Channel Expert app
+// (WFcP wL: the team pref default_channel_knowledge_agent's app_id; "" for
+// none).
+func (a *App) KnowledgeAgentAppID() string {
+	raw, ok := a.TeamPref("default_channel_knowledge_agent")
+	if !ok {
+		return ""
+	}
+	var v struct {
+		AppID string `json:"app_id"`
+	}
+	_ = json.Unmarshal(raw, &v)
+	return v.AppID
+}
+
+// IsKnowledgeFolder is FolderTabView's y: the folder tab is the channel's
+// Channel Expert folder (j9If nj getAgentforceChannelExpertFolderTab: the
+// tab's data.app_id, or its folder bookmark's app_id, is the agent's).
+func (a *App) IsKnowledgeFolder(ch, tabAppID, folderID string) bool {
+	agent := a.KnowledgeAgentAppID()
+	if agent == "" || folderID == "" {
+		return false
+	}
+	if tabAppID == agent {
+		return true
+	}
+	all, _ := a.ChannelBookmarks(ch)
+	for _, b := range all {
+		if b.ID == folderID {
+			return b.AppID == agent
+		}
+	}
+	return false
+}
+
+// CanEditAgentSources is hWVz C: on Grid, an org-shared channel needs an
+// org admin, any other a workspace admin acting in it; a channel manager
+// may anyway.
+func (a *App) CanEditAgentSources(ch string) bool {
+	c, ok := a.S.Conv(ch)
+	if !ok {
+		if c, ok = a.S.ExtConv(ch); !ok {
+			return false
+		}
+	}
+	admin := a.selfIsWorkspaceAdmin()
+	if a.IsEnterprise() && c.IsOrgShared && !c.IsIM && !c.IsMPIM {
+		u, _ := a.S.User(a.S.SelfID())
+		admin = u != nil && u.EnterpriseUser != nil && (u.EnterpriseUser.IsAdmin || u.EnterpriseUser.IsOwner)
+	}
+	return admin || a.isChannelManager(ch)
 }

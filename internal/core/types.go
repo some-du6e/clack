@@ -491,6 +491,7 @@ type Bookmark struct {
 	ID, Title, Link, Emoji, EmojiURL, Icon, Type, EntityID, Rank, ParentID string
 	Created                                                                int64
 	ShortcutID                                                             string // a workflow bookmark's trigger (type shortcut)
+	AppID                                                                  string // app_id: the app that owns it (the Channel Expert's folder)
 }
 
 // ChannelDetails is the channel-details view.

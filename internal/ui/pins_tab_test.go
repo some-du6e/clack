@@ -130,6 +130,8 @@ func TestPinsTabLikeSlack(t *testing.T) {
 	e.until("the Pins view", 5*time.Second, func() bool { return e.a.pinsTabView(ch) != nil })
 	v := e.a.pinsTab(ch)
 	e.until("the pins", 10*time.Second, func() bool { e.frame(); return v.Loaded() && len(v.Items()) == 4 })
+	// useCanEditTabs on Grid: the MANAGE_CHANNEL_TABS grant (permissions/info)
+	e.until("the tab grant", 10*time.Second, func() bool { e.frame(); return e.a.Core().CanEditTabs(ch) })
 	items := v.Items()
 	var keys []string
 	for _, it := range items {
@@ -279,7 +281,8 @@ func TestFolderTabLikeSlack(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// the title, edited in place
+	// the title, edited in place (useCanEditTabs: the Grid grant)
+	e.until("the tab grant", 10*time.Second, func() bool { e.frame(); return e.a.Core().CanEditTabs(ch) })
 	v.StartTitleEdit()
 	e.frame()
 	v.SetTitleText("Design system")

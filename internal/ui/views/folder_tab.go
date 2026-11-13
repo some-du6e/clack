@@ -110,6 +110,7 @@ type BookmarkOpener interface {
 type FolderTabInfo struct {
 	ID, Label string
 	FolderID  string // data.folder_bookmark_id ("" the loose bookmarks)
+	AppID     string // data.app_id (the Channel Expert's folder: folder_tab_more.go)
 }
 
 type ftRow struct {
@@ -533,7 +534,7 @@ func (v *FolderTab) drop(id string, to int) {
 }
 
 func (v *FolderTab) update(gtx C) {
-	if v.addBtn.Clicked(gtx) {
+	if v.addBtn.Clicked(gtx) && !v.kaLocked() { // disableAdd
 		// FolderCreateMenu's menu: below the header's button, bottom-left
 		// of the empty state's (and the peek's "Add")
 		pos := "bottom"
@@ -696,7 +697,7 @@ func (v *FolderTab) header(gtx C) D {
 	// the right side: the add button, More folder actions (4 apart)
 	right := w
 	bs := gtx.Dp(28)
-	if v.canEditTabs() {
+	if v.canEditTabs() && !v.kaLocked() { // disableActions (folder_tab_more.go)
 		right -= bs
 		dirAt(gtx, image.Pt(right, (h-bs)/2), func(gtx C) D {
 			d := v.outlinedIcon(gtx, &v.moreBtn, "ellipsis-vertical-filled", bs)
@@ -706,7 +707,11 @@ func (v *FolderTab) header(gtx C) D {
 		})
 		right -= gtx.Dp(4)
 	}
-	if v.canPost() {
+	if v.canPost() && v.knowledge() { // the Channel Expert's "Add Source" (folder_tab_more.go)
+		bw := v.kaAddWidth(gtx)
+		right -= bw
+		dirAt(gtx, image.Pt(right, (h-bs)/2), func(gtx C) D { return v.kaAddButton(gtx) })
+	} else if v.canPost() {
 		right -= bs
 		dirAt(gtx, image.Pt(right, (h-bs)/2), func(gtx C) D {
 			d := v.greenPlus(gtx, &v.addBtn, bs)
@@ -728,7 +733,7 @@ func (v *FolderTab) header(gtx C) D {
 				return v.th.Editor(gtx, &v.titleEd, 22, v.p.Text, v.p.SelBg)
 			})
 		})
-	} else if v.canEditTabs() {
+	} else if v.canEditTabs() && !v.kaLocked() { // disableEdit
 		dirAt(gtx, image.Pt(tx-gtx.Dp(8)+gtx.Dp(4), 0), func(gtx C) D {
 			return v.titleBtn.Layout(gtx, func(gtx C) D {
 				pointerCursor(gtx)
@@ -841,6 +846,11 @@ func (v *FolderTab) emptyTab(gtx C) D {
 	}
 	title := nsTabbed.T("Add files and links to reference later")
 	desc := nsTabbed.T("Everyone in {channelName} will have access to what you add here.", "channelName", "#"+v.channelName())
+	if v.knowledge() { // aTvS's empty state
+		title = nsTabbed.T("Add trusted sources for the agent")
+		desc = nsTabbed.T("The Channel Expert will use the sources you add here to generate replies.")
+		v.kaFooter(gtx, sz)
+	}
 	tw := min(sz.X-gtx.Dp(32), gtx.Dp(480))
 	g := gtx
 	g.Constraints = layout.Constraints{Max: image.Pt(tw, sz.Y)}
@@ -861,7 +871,9 @@ func (v *FolderTab) emptyTab(gtx C) D {
 		c2.Add(gtx.Ops)
 	}()
 	y += t2.Size.Y + gtx.Dp(16)
-	if v.canPost() {
+	if v.canPost() && v.knowledge() {
+		dirAt(gtx, image.Pt((sz.X-v.kaAddWidth(gtx))/2, y), func(gtx C) D { return v.kaAddButton(gtx) })
+	} else if v.canPost() {
 		bs := gtx.Dp(28)
 		dirAt(gtx, image.Pt((sz.X-bs)/2, y), func(gtx C) D {
 			d := v.greenPlus(gtx, &v.addBtn, bs)

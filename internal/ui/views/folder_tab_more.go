@@ -43,6 +43,19 @@ package views
 //     folder; a failure is ShareFileAsFolderItemErrorDialog. A link has no
 //     file object, so Slack's submenu renders nothing for it: the row is
 //     there with its caret and opens nothing.
+//   - The Channel Expert's folder (FolderTabView's y: the tab is the
+//     workspace's default_channel_knowledge_agent's, core.IsKnowledgeFolder)
+//     reads aTvS: the header's add button is a small "Add Source" button
+//     (plus, base-inv-hgl-2 in the peek's style), the add menu has no Link,
+//     the empty state says "Add trusted sources for the agent" / "The
+//     Channel Expert will use the sources you add here to generate
+//     replies." over .emptyFooter__DhB7Z's "Only channel managers can edit
+//     agent sources." (13px content-ter, centred, 10 above the bottom);
+//     and for a viewer who can't edit agent sources (hWVz C) the add button
+//     is disabled with "Ask a channel manager to update agent sources", and
+//     the title and More folder actions are gone (disableEdit,
+//     disableActions). The picker's file types and results filter for it
+//     (ld lQ, _t) aren't ported.
 
 import (
 	"bytes"
@@ -127,7 +140,9 @@ func (v *FolderTab) AddMenuItems() []popups.MenuItem {
 	if c != nil && c.Experiment("unified_file_picker") == "on" {
 		items = append(items, popups.MenuItem{Key: "file", Label: v.fileRowLabel(), Icon: "canvas-browser", Do: v.openPicker})
 	}
-	items = append(items, popups.MenuItem{Key: "link", Label: nsTabbed.T("Link"), Icon: "link", Do: v.openAddLink})
+	if !v.knowledge() { // disableLinks: the Channel Expert's folder takes files only
+		items = append(items, popups.MenuItem{Key: "link", Label: nsTabbed.T("Link"), Icon: "link", Do: v.openAddLink})
+	}
 	if v.uploadsAllowed() {
 		items = append(items, popups.MenuItem{Key: "upload", Label: nsTabbed.T("Upload file"), Icon: "laptop", Do: v.pickUpload})
 	}
@@ -424,3 +439,74 @@ func (v *FolderTab) emptyFolderPicture(gtx C, cx, y int) int {
 	}
 	return sz.Y
 }
+
+// knowledge reports whether the tab is the Channel Expert's folder.
+func (v *FolderTab) knowledge() bool {
+	c := v.h.Core()
+	return c != nil && c.IsKnowledgeFolder(v.ch, v.tab.AppID, v.tab.FolderID)
+}
+
+// kaLocked is aTvS's disable flags: the Channel Expert's folder for a
+// viewer who can't edit its sources.
+func (v *FolderTab) kaLocked() bool {
+	if !v.knowledge() {
+		return false
+	}
+	c := v.h.Core()
+	return c == nil || !c.CanEditAgentSources(v.ch)
+}
+
+func (v *FolderTab) kaAddWidth(gtx C) int {
+	return gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + v.th.Measure(gtx, 13, wBold, nsTabbed.T("Add Source")) + gtx.Dp(12)
+}
+
+// kaAddButton is FolderCreateMenu's labelled button (addFileLabel "Add
+// Source", size small), disabled with its tooltip when locked.
+func (v *FolderTab) kaAddButton(gtx C) D {
+	label := nsTabbed.T("Add Source")
+	bw, bh := v.kaAddWidth(gtx), gtx.Dp(28)
+	locked := v.kaLocked()
+	d := v.addBtn.Layout(gtx, func(gtx C) D {
+		if !locked {
+			pointerCursor(gtx)
+		}
+		r := image.Rect(0, 0, bw, bh)
+		bg, fg := v.p.Surface, v.p.Text
+		if v.addBtn.Hovered() && !locked {
+			bg = theme.Over(v.p.Hover, v.p.Surface)
+		}
+		rrect(gtx, r, gtx.Dp(8), bg)
+		border(gtx, r, gtx.Dp(8), max(1, gtx.Dp(1)), v.p.SegLine)
+		if locked {
+			fg = v.p.Muted
+		}
+		dirAt(gtx, image.Pt(gtx.Dp(8), (bh-gtx.Dp(16))/2), func(gtx C) D { return v.icon(gtx, "plus", 16, fg) })
+		dirAt(gtx, image.Pt(gtx.Dp(28), 0), func(gtx C) D {
+			return vmid(gtx, bh, func(gtx C) D {
+				return v.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Weight: wBold, Color: fg, MaxLines: 1}, label)
+			})
+		})
+		return D{Size: r.Max}
+	})
+	v.addSize = d.Size
+	if locked {
+		popups.Tooltip(gtx, v.h.Theme(), &v.addTip, v.addBtn.Hovered(), d.Size, popups.Above, nsTabbed.T("Ask a channel manager to update agent sources"), "")
+	}
+	return d
+}
+
+// kaFooter is .emptyFooter__DhB7Z at the empty view's bottom.
+func (v *FolderTab) kaFooter(gtx C, sz image.Point) {
+	t := nsTabbed.T("Only channel managers can edit agent sources.")
+	tw := v.th.Measure(gtx, 13, wReg, t)
+	dirAt(gtx, image.Pt((sz.X-tw)/2, sz.Y-gtx.Dp(10)-gtx.Dp(18)), func(gtx C) D {
+		return v.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Weight: wReg, Color: v.p.Muted, MaxLines: 1}, t)
+	})
+}
+
+// DropDisabled is FileDragDrop's disabled: the Channel Expert's folder
+// for a viewer who can't edit its sources.
+func (v *FolderTab) DropDisabled() bool { return v.kaLocked() }
+
+// Knowledge reports the Channel Expert variant (tests).
+func (v *FolderTab) Knowledge() (on, locked bool) { return v.knowledge(), v.kaLocked() }

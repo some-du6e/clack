@@ -73,11 +73,12 @@ type bookmarkRaw struct {
 	Rank        string `json:"rank"`
 	ParentID    string `json:"parent_id"`
 	ShortcutID  string `json:"shortcut_id"`
+	AppID       string `json:"app_id"`
 }
 
 func (a *App) bookmarkOf(b bookmarkRaw) Bookmark {
 	v := Bookmark{ID: b.ID, Title: b.Title, Link: b.Link, Emoji: b.Emoji, Icon: b.IconURL, Type: b.Type,
-		EntityID: b.EntityID, Created: b.DateCreated, Rank: b.Rank, ParentID: b.ParentID, ShortcutID: b.ShortcutID}
+		EntityID: b.EntityID, Created: b.DateCreated, Rank: b.Rank, ParentID: b.ParentID, ShortcutID: b.ShortcutID, AppID: b.AppID}
 	if b.Emoji != "" {
 		v.EmojiURL, _, _ = a.S.Emoji(strings.Trim(b.Emoji, ":"))
 	}

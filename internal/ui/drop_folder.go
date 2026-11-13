@@ -66,6 +66,9 @@ func (a *App) layoutFolderTab(gtx layout.Context, ch string, t chTab, origin ima
 	d := ft.Layout(gtx)
 	fd := a.folderDropFor(ch, t, ft)
 	sz := gtx.Constraints.Max
+	if ft.DropDisabled() { // disabled: no overlay, no drop
+		return d
+	}
 	a.drop.zones = append(a.drop.zones, dropZone{fd: fd, r: image.Rectangle{Min: origin, Max: origin.Add(sz)}})
 	a.layoutFolderDropOverlay(gtx, fd, sz)
 	return d

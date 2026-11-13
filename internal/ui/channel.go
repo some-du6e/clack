@@ -645,6 +645,7 @@ type chTab struct {
 	typ              string // Slack's tab type (core.Tab.Type): files, canvas, list, …
 	fileID           string
 	folder           string // a folder tab's data.folder_bookmark_id
+	appID            string // the tab's data.app_id (the Channel Expert's folder)
 	unread           bool   // Slack's blue dot on the tab icon (unopened canvas)
 	// a list tab's default view (core.Tab DefaultView) and its name;
 	// labeled when the tab has a label of its own (useTabLabel then shows

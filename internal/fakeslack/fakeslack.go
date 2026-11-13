@@ -387,7 +387,8 @@ type Server struct {
 
 	// Permissions are permissions/info's answers by channel_id ("" for a
 	// request without one). nil: every broadcast permission is allowed,
-	// and without a channel Edit profile's UPDATE_NAME,
+	// MANAGE_CHANNEL_TABS for a channel, and without a channel Edit
+	// profile's UPDATE_NAME,
 	// UPDATE_DISPLAY_NAME and EDIT_PROFILE_PHOTO too.
 	// Set it before the calls.
 	Permissions map[string][]string
@@ -1745,6 +1746,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		var ch string
 		_ = json.Unmarshal(edge["channel_id"], &ch)
 		allowed := []string{"CAN_AT_CHANNEL", "CAN_AT_EVERYONE"}
+		if ch != "" { // a Grid member manages a channel's tabs (useCanEditTabs' MANAGE_CHANNEL_TABS)
+			allowed = append(allowed, "MANAGE_CHANNEL_TABS")
+		}
 		if ch == "" { // the team's: Edit profile's grants (core/profile_grants.go)
 			allowed = append(allowed, "UPDATE_NAME", "UPDATE_DISPLAY_NAME", "EDIT_PROFILE_PHOTO")
 		}

@@ -178,6 +178,9 @@ type Tab struct {
 	// FolderBookmarkID is a folder tab's data.folder_bookmark_id: the
 	// folder bookmark whose children it shows ("" the loose bookmarks).
 	FolderBookmarkID string
+	// AppID is a tab's data.app_id (an agent's own tab: the Channel
+	// Expert's knowledge folder).
+	AppID string
 }
 
 // MemberCounts is edge users/counts. Slack's channel header shows People.
@@ -871,6 +874,7 @@ type tabRaw struct {
 		FileID           string `json:"file_id"`
 		DefaultView      string `json:"lists_channel_tab_default_refine_view_id"`
 		FolderBookmarkID string `json:"folder_bookmark_id"`
+		AppID            string `json:"app_id"`
 	} `json:"data"`
 }
 
@@ -896,7 +900,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			continue
 		}
 		t := Tab{ID: r.ID, Type: r.Type, Label: r.Label, Title: r.Label, FileID: r.Data.FileID, DefaultView: r.Data.DefaultView,
-			FolderBookmarkID: r.Data.FolderBookmarkID}
+			FolderBookmarkID: r.Data.FolderBookmarkID, AppID: r.Data.AppID}
 		if n, ok := builtinTabIDTitles[r.ID]; ok {
 			t.Title = n
 		}
