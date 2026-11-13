@@ -30,7 +30,7 @@ import (
 )
 
 // ugRT drives the User Group pane and its overlays through a Gio
-// router: the pane at the right of the window under the top bar, where
+// router: the pane at the right of a 1000px window under the top bar, where
 // the pane menus expect it, overlays on top in the full window. The
 // fake's realtime events go straight into core (subteam_updated after
 // each edit), and every call is recorded.
@@ -52,7 +52,7 @@ func newUGRT(t *testing.T, editor, dark bool, id string) *ugRT {
 	h, fs := pfEnv(t)
 	h.th.SetDark(dark)
 	fs.UsergroupEditor = editor
-	e := &ugRT{t: t, h: h, fs: fs, win: image.Pt(pvW+theme.PanelInset, 900), mode: map[bool]string{false: "light", true: "dark"}[dark]}
+	e := &ugRT{t: t, h: h, fs: fs, win: image.Pt(1000, 900), mode: map[bool]string{false: "light", true: "dark"}[dark]}
 	fs.Emit = func(ev map[string]any) {
 		b, _ := json.Marshal(ev)
 		typ, _ := ev["type"].(string)
@@ -99,7 +99,7 @@ func (e *ugRT) frame() []string {
 		Constraints: layout.Exact(e.win), Source: e.r.Source()}
 	paint.Fill(&e.ops, colorsOf(e.h.th).Bg)
 	stop := theme.StartTofuScan()
-	at(gtx, image.Pt(0, theme.TopNavH), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(e.paneX(), theme.TopNavH), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(pvW, e.win.Y-theme.TopNavH-theme.PanelInset))
 		return e.v.Layout(gtx)
 	})
@@ -154,8 +154,11 @@ func (e *ugRT) click(r image.Rectangle) {
 
 // pane is a pane widget's rect in window coordinates.
 func (e *ugRT) pane(key string) image.Rectangle {
-	return e.v.Hit(key).Add(image.Pt(0, theme.TopNavH))
+	return e.v.Hit(key).Add(image.Pt(e.paneX(), theme.TopNavH))
 }
+
+// paneX is the pane's left edge: at the window's right, PanelInset in.
+func (e *ugRT) paneX() int { return e.win.X - theme.PanelInset - pvW }
 
 func (e *ugRT) press(name key.Name) {
 	e.r.Queue(key.Event{Name: name, State: key.Press}, key.Event{Name: name, State: key.Release})

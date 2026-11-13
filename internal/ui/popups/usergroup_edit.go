@@ -691,12 +691,14 @@ func (e *UserGroupEditModal) footer(gtx layout.Context) layout.Dimensions {
 	th := e.h.Theme()
 	cl := colorsOf(th)
 	s := nsUG.T("User Group ID: {id}", "id", e.g.ID)
-	tw := textW(gtx, th, 13, theme.Regular, s)
 	bh := dp(gtx, 28)
+	space := textW(gtx, th, 13, theme.Regular, " ")
+	tw := minInt(textW(gtx, th, 13, theme.Regular, s), maxInt(1, gtx.Constraints.Max.X-space-bh)) // the button stays in the room left of the footer's buttons
 	at(gtx, image.Pt(0, (bh-dp(gtx, 18))/2), func(gtx layout.Context) layout.Dimensions {
+		gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 18))}
 		return para(gtx, th, 13, 18, theme.Regular, cl.Fg2, s, 1)
 	})
-	bx := tw + textW(gtx, th, 13, theme.Regular, " ")
+	bx := tw + space
 	at(gtx, image.Pt(bx, 0), func(gtx layout.Context) layout.Dimensions {
 		d := iconButton(gtx, &e.copyClk, "copy", 28, 16, cl.Fg2, cl.BgHover, 6)
 		tip := nsUG.T("Copy user group id")
@@ -910,19 +912,28 @@ func (e *UserGroupEditModal) sectionToggle(gtx layout.Context, th *theme.Theme, 
 	bw := maxInt(1, w-iw-dp(gtx, 12)-dp(gtx, 20))
 	title := nsUG.T("Add group channels as a section in Home")
 	sub := nsUG.T("Organize the channels into a section in the Home sidebar for all group members.")
+	// __title is a flex row (gap 4, align-items center): the text shrinks
+	// beside the micro "New" tag
 	tc, td := record(gtx, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(bw, 1<<20)}
+		newTag := e.badgeCount < 4
+		tagW := 0
+		if newTag {
+			tagW = menuTagWidth(gtx, th, nsUG.T("New")) + dp(gtx, 4)
+		}
+		textMax := maxInt(1, bw-tagW)
+		gtx.Constraints = layout.Constraints{Max: image.Pt(textMax, 1<<20)}
 		d := para(gtx, th, 15, 22, theme.Bold, cl.Fg, title, 0)
-		if e.badgeCount < 4 {
-			tw := minInt(bw, textW(gtx, th, 15, theme.Bold, title))
-			ln := maxInt(0, d.Size.Y/dp(gtx, 22)-1) * dp(gtx, 22)
-			at(gtx, image.Pt(0, ln), func(gtx layout.Context) layout.Dimensions {
-				right := tw + dp(gtx, 4) + menuTagWidth(gtx, th, "New")
-				drawMenuTag(gtx, th, &MenuTag{Label: nsUG.T("New"), Style: "education"}, false, minInt(bw, right), dp(gtx, 22))
+		if newTag {
+			tw := minInt(textMax, textW(gtx, th, 15, theme.Bold, title))
+			if d.Size.Y > dp(gtx, 22) {
+				tw = textMax // a wrapped text fills its flex item
+			}
+			at(gtx, image.Pt(0, 0), func(gtx layout.Context) layout.Dimensions {
+				drawMenuTag(gtx, th, &MenuTag{Label: nsUG.T("New"), Style: "education"}, false, tw+tagW, d.Size.Y)
 				return layout.Dimensions{}
 			})
 		}
-		return d
+		return layout.Dimensions{Size: image.Pt(bw, d.Size.Y)}
 	})
 	sc, sd := record(gtx, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(bw, 1<<20)}
