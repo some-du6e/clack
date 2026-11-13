@@ -1,7 +1,6 @@
 package messages
 
 import (
-	"context"
 	"encoding/json"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
@@ -363,8 +362,7 @@ func (r *row) editedBy() string {
 	if u, ok := app.User(id); ok && u.Name != "" {
 		return u.Name
 	}
-	ensureUser(r.rc.h, id)
-	return ""
+	return "" // the lookup asked for the member; "names" draws it again
 }
 
 // dimPending reports whether a pending row is drawn at .5. Slack's
@@ -449,9 +447,8 @@ func (r *row) resolve(rc *rowCtx) {
 			if u.IsBot {
 				r.bot = true
 			}
-		} else {
-			ensureUser(rc.h, m.User)
-		}
+		} // else the lookup asked for the member: an unknown member (its
+		// id) until users/info answers and "names" resolves the row again
 	}
 	// plugins' member patches (patchSlice('members'): Nicknames…), as
 	// Slack's sender reads the member from the store; a message's own
@@ -495,26 +492,17 @@ func (r *row) huddleInfo(rc *rowCtx) (huddleMsg, bool) {
 	return r.hm, r.hmOK
 }
 
-var askedUsers = map[string]bool{}
-
-// ensureUser asks core for a missing user once (UI goroutine only).
-func ensureUser(h Host, id string) {
-	if askedUsers[id] || h.Core() == nil {
-		return
-	}
-	askedUsers[id] = true
-	app := h.Core()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		app.EnsureUsers(ctx, []string{id})
-		h.Invalidate()
-	}()
-}
-
 // layout draws the row at full width and returns its size.
 func (r *row) layout(gtx layout.Context, rc *rowCtx) layout.Dimensions {
 	r.rc = rc
+	// Slack's sender reads its member through getMemberById on every
+	// render, so the members cache keeps whoever is on screen
+	// (store/members.go); the row resolved it earlier and only touches it
+	if r.m.User != "" {
+		if app := rc.h.Core(); app != nil {
+			app.S.TouchMember(r.m.User)
+		}
+	}
 	if rc.parent {
 		return slackc.Component(gtx, "ThreadRootGeneric", r, (*row).wrapperProps, (*row).layoutWrapper)
 	}
@@ -1529,9 +1517,7 @@ func (av *replyAv) layout(gtx layout.Context, p slackc.Props) layout.Dimensions 
 			url = app.ReplyBarBotAvatar(&av.r.m, id, 2*int(mt.threadAvatar))
 		case ok:
 			url = u.Avatar
-		default:
-			ensureUser(rc.h, id)
-		}
+		} // else asked for: the unknown avatar until "names"
 	}
 	av.drawn = url
 	drawAvatar(gtx, rc.h, url, image.Rect(0, 0, av.sz, av.sz), rc.c)
@@ -3162,9 +3148,7 @@ func reactionTipLine(h Host, re *core.Reaction, selfID string, cut bool) string 
 		if app := h.Core(); app != nil {
 			if u, ok := app.User(id); ok && u.Name != "" {
 				n = u.Name
-			} else {
-				ensureUser(h, id)
-			}
+			} // else asked for (the lookup); the id until "names"
 		}
 		names = append(names, n)
 	}
@@ -3269,9 +3253,7 @@ func (r *row) pinnedRuns(gtx layout.Context, rc *rowCtx, runs []labelRun) []labe
 		if app := rc.h.Core(); app != nil {
 			if u, ok := app.User(by); ok && u.Name != "" {
 				name = u.Name
-			} else {
-				ensureUser(rc.h, by)
-			}
+			} // else asked for: "Pinned" until "names"
 		}
 	}
 	if name == "" {
@@ -3300,8 +3282,7 @@ func pinnedLabel(rc *rowCtx, by string) string {
 	if app := rc.h.Core(); app != nil {
 		if u, ok := app.User(by); ok && u.Name != "" {
 			return msgNS.T("Pinned by {member}", "member", u.Name)
-		}
-		ensureUser(rc.h, by)
+		} // else asked for: "Pinned" until "names"
 	}
 	return msgNS.T("Pinned")
 }

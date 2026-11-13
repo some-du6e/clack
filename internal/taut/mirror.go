@@ -307,6 +307,23 @@ func (m *mirror) onEvent(ev core.Event) {
 		m.invalidate("messages", ev.Channel)
 		m.invalidate("channelHistory")
 		m.invalidate("reactions")
+	case "members_evicted":
+		// core trimmed the members cache (store/members.go): the JS side
+		// drops them, as Slack's store does (bulkRemoveMembersById)
+		m.invalidate("members", ev.Users...)
+		m.invalidate("presence", ev.Users...)
+	case "names":
+		// members (and names) core fetched for lookups that missed: the
+		// ones the JS side read as absent are there now
+		var ids []string
+		for _, id := range ev.Users {
+			if strings.HasPrefix(id, "U") || strings.HasPrefix(id, "W") {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) > 0 {
+			m.invalidate("members", ids...)
+		}
 	case "typing":
 		m.startTyping(ev.Channel, ev.ThreadTS, ev.UserID)
 	case "marked":
@@ -545,7 +562,11 @@ func (m *mirror) get(slice, key string) any {
 		m.watch("channels", key, m.channelFP(key))
 		return m.channel(c)
 	case "members":
-		u, ok := a.S.User(key)
+		// state.members[id]: a read of the store as it is, which (unlike
+		// getMemberById) neither counts as a hit for the members cache nor
+		// asks for a member it doesn't hold; an evicted member is gone
+		// from it as from Slack's (memberFP's change invalidates it)
+		u, ok := a.S.RawUser(key)
 		if !ok {
 			return nil
 		}
@@ -1230,7 +1251,7 @@ func fpMsg(h hashWriter, sm *slack.Message) {
 }
 
 func (m *mirror) memberFP(id string) uint64 {
-	u, ok := m.t.app.S.User(id)
+	u, ok := m.t.app.S.RawUser(id)
 	if !ok {
 		return 0
 	}

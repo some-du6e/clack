@@ -91,6 +91,11 @@ type Store struct {
 	// userSeen is when each user was last fetched (unix seconds; from the
 	// disk cache for users it restored): what SaveCache keeps.
 	userSeen map[string]int64
+	// members is Slack's members cache (members.go): when each member
+	// was last found, the ids users/info didn't return, and the pass that
+	// trims them to MembersTarget.
+	members       memberCache
+	membersOnline func() bool
 
 	// gen counts changes to what the disk cache holds; SaveCache writes
 	// only when it (or the emoji map's version) moved since the last load
@@ -106,8 +111,13 @@ type Store struct {
 
 	missMu     sync.Mutex
 	missSeen   map[string]bool
-	missing    []string // "c"+id | "u"+id | "b"+id
+	missing    []string // "c"+id | "b"+id
 	missNotify chan struct{}
+	// missUsers are the users lookups missed, asked for by core's member
+	// fetcher (Slack's UnknownFetchManager, core/members.go) on its own
+	// schedule
+	missUsers  []string
+	userNotify chan struct{}
 }
 
 // PutName remembers the name of a conversation outside the sidebar.
@@ -171,11 +181,9 @@ func (s *Store) HuddleTextOpts(channel string) richtext.HuddleTextOpts {
 }
 
 // UserAvatar is richtext.AvatarResolver: a user's 48px picture ("" when
-// unknown).
+// unknown, which asks for the member).
 func (s *Store) UserAvatar(id string) string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if u, ok := s.Users[id]; ok {
+	if u, ok := s.User(id); ok && u != nil {
 		return u.Profile.Image48
 	}
 	return ""
@@ -567,6 +575,7 @@ func (s *Store) PutUsers(us []slack.User) {
 		}
 		s.Users[u.ID] = &u
 		s.userSeen[u.ID] = now
+		s.storedLocked(u.ID)
 	}
 	s.mu.Unlock()
 	if len(us) > 0 {
@@ -590,6 +599,7 @@ func (s *Store) putUserPtrs(us []*slack.User, seen map[string]int64) {
 		if _, newer := s.userSeen[u.ID]; !newer {
 			s.userSeen[u.ID] = seen[u.ID]
 		}
+		s.storedLocked(u.ID)
 	}
 	s.mu.Unlock()
 	if len(us) > 0 {
@@ -597,14 +607,39 @@ func (s *Store) putUserPtrs(us []*slack.User, seen map[string]int64) {
 	}
 }
 
+// storedLocked is an upsert's part of the members cache (s.mu held for
+// writing): the member has a lastAccess cell and isn't non-existent.
+func (s *Store) storedLocked(id string) {
+	s.cellLocked(id)
+	delete(s.members.nonexistent, id)
+}
+
+// User is Slack's getMemberById: the member, recording the hit for the
+// members cache (members.go). A member the store doesn't hold is asked
+// for (users/info in the background; "names" follows) and reads as
+// missing until then; one users/info said doesn't exist reads as missing
+// without being asked for again.
 func (s *Store) User(id string) (*slack.User, bool) {
+	now := time.Now().UnixMilli()
+	s.mu.RLock()
+	u, known := s.lookupLocked(id, now)
+	s.mu.RUnlock()
+	s.afterLookup(id, known)
+	return u, u != nil
+}
+
+// RawUser is getRawMemberById: the member if the store holds it, without
+// recording a hit or asking for a missing one (logic over the cache, not
+// something shown).
+func (s *Store) RawUser(id string) (*slack.User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	u, ok := s.Users[id]
 	return u, ok
 }
 
-// MissingUsers filters ids to those not yet known.
+// MissingUsers filters ids to those not yet known (ensureMembersArePresent:
+// a non-existent member counts as known).
 func (s *Store) MissingUsers(ids []string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -615,7 +650,7 @@ func (s *Store) MissingUsers(ids []string) []string {
 			continue
 		}
 		seen[id] = true
-		if _, ok := s.Users[id]; !ok {
+		if _, ok := s.Users[id]; !ok && !s.members.nonexistent[id] {
 			out = append(out, id)
 		}
 	}
@@ -756,10 +791,7 @@ func avatarTeam(u *slack.User, viewerTeam string) string {
 // ---- richtext.Resolver ----
 
 func (s *Store) UserName(id string) string {
-	u, ok := s.User(id)
-	if !ok {
-		s.noteMissing('u', id)
-	}
+	u, _ := s.User(id) // a miss is asked for
 	return DisplayName(u)
 }
 
@@ -769,9 +801,8 @@ func (s *Store) UserName(id string) string {
 // isUserHidden). ok is false for a member not loaded yet, which is noted
 // to be fetched.
 func (s *Store) MemberName(id string) (string, bool) {
-	u, ok := s.User(id)
+	u, ok := s.User(id) // a miss is asked for
 	if !ok || u == nil {
-		s.noteMissing('u', id)
 		return "", false
 	}
 	s.mu.RLock()
@@ -788,9 +819,8 @@ func (s *Store) MemberName(id string) (string, bool) {
 // member tokens Slack draws with forceRealName print it (a work object's
 // user fields), else their display name; "" for a member not loaded yet.
 func (s *Store) MemberRealName(id string) string {
-	u, ok := s.User(id)
+	u, ok := s.User(id) // a miss is asked for
 	if !ok || u == nil {
-		s.noteMissing('u', id)
 		return ""
 	}
 	if n := firstNonEmptyName(u.Profile.RealName, u.RealName); n != "" {
@@ -847,13 +877,17 @@ func (s *Store) ChannelName(id string) string {
 		c, ok = s.ext[id]
 	}
 	if ok {
-		defer s.mu.RUnlock()
 		if c.IsIM {
-			if u, ok := s.Users[c.User]; ok {
+			partner, name := c.User, c.Name
+			u, known := s.lookupLocked(partner, time.Now().UnixMilli())
+			s.mu.RUnlock()
+			s.afterLookup(partner, known)
+			if u != nil {
 				return DisplayName(u)
 			}
-			s.noteMissing('u', c.User)
+			return name
 		}
+		defer s.mu.RUnlock()
 		return c.Name
 	}
 	n, named := s.names[id]
@@ -867,8 +901,11 @@ func (s *Store) ChannelName(id string) string {
 
 // ---- unresolved ids (resolved in the background by core) ----
 
-// noteMissing records an id that rendering could not name. Ids are only
-// recorded once per session (see TakeMissing).
+// noteMissing records an id that rendering could not name. Channels and
+// bots are recorded once per session (see TakeMissing); a user is
+// recorded once while it is asked for, and again once it was evicted
+// from the members cache (members.go) or its lookup failed
+// (ForgetMissing).
 func (s *Store) noteMissing(kind byte, id string) {
 	if id == "" {
 		return
@@ -885,19 +922,34 @@ func (s *Store) noteMissing(kind byte, id string) {
 	}
 	key := string(kind) + id
 	s.missMu.Lock()
-	if s.missSeen == nil {
-		s.missSeen = map[string]bool{}
-		s.missNotify = make(chan struct{}, 1)
-	}
+	s.missInitLocked()
 	if !s.missSeen[key] {
 		s.missSeen[key] = true
-		s.missing = append(s.missing, key)
+		ch := s.missNotify
+		if kind == 'u' {
+			s.missUsers = append(s.missUsers, id)
+			ch = s.userNotify
+		} else {
+			s.missing = append(s.missing, key)
+		}
 		select {
-		case s.missNotify <- struct{}{}:
+		case ch <- struct{}{}:
 		default:
 		}
 	}
 	s.missMu.Unlock()
+}
+
+func (s *Store) missInitLocked() {
+	if s.missSeen == nil {
+		s.missSeen = map[string]bool{}
+	}
+	if s.missNotify == nil {
+		s.missNotify = make(chan struct{}, 1)
+	}
+	if s.userNotify == nil {
+		s.userNotify = make(chan struct{}, 1)
+	}
 }
 
 // NoteMissingBot records a bot id whose name/icon is unknown.
@@ -907,19 +959,31 @@ func (s *Store) NoteMissingBot(id string) {
 	}
 }
 
-// MissingNotify fires (coalesced) when new unresolved ids were recorded.
+// MissingNotify fires (coalesced) when new unresolved channel, bot or
+// canvas ids were recorded.
 func (s *Store) MissingNotify() <-chan struct{} {
 	s.missMu.Lock()
 	defer s.missMu.Unlock()
-	if s.missNotify == nil {
-		s.missSeen = map[string]bool{}
-		s.missNotify = make(chan struct{}, 1)
-	}
+	s.missInitLocked()
 	return s.missNotify
+}
+
+// MissingUsersNotify fires (coalesced) when lookups missed new users.
+func (s *Store) MissingUsersNotify() <-chan struct{} {
+	s.missMu.Lock()
+	defer s.missMu.Unlock()
+	s.missInitLocked()
+	return s.userNotify
 }
 
 // TakeMissing returns and clears the unresolved channel, user and bot ids.
 func (s *Store) TakeMissing() (chans, users, bots []string) {
+	chans, bots = s.TakeMissingNames()
+	return chans, s.TakeMissingUsers(), bots
+}
+
+// TakeMissingNames returns and clears the unresolved channel and bot ids.
+func (s *Store) TakeMissingNames() (chans, bots []string) {
 	s.missMu.Lock()
 	keys := s.missing
 	s.missing = nil
@@ -928,13 +992,20 @@ func (s *Store) TakeMissing() (chans, users, bots []string) {
 		switch k[0] {
 		case 'c':
 			chans = append(chans, k[1:])
-		case 'u':
-			users = append(users, k[1:])
 		case 'b':
 			bots = append(bots, k[1:])
 		}
 	}
 	return
+}
+
+// TakeMissingUsers returns and clears the users lookups missed.
+func (s *Store) TakeMissingUsers() []string {
+	s.missMu.Lock()
+	ids := s.missUsers
+	s.missUsers = nil
+	s.missMu.Unlock()
+	return ids
 }
 
 // ForgetMissing lets ids be recorded (and resolved) again, e.g. after a
@@ -1416,12 +1487,12 @@ type diskCache struct {
 }
 
 // MaxSavedUsers bounds the users meta.json keeps: the most recently fetched
-// (and the viewer). Slack's client keeps no directory between starts (its
-// members cache holds 700, trimmed to 500, and fetches anyone else when a
-// message, mention or profile needs them, as EnsureUsers and the name
-// resolver do here); a start restoring every user a long-used Clack ever
-// saw held tens of thousands in memory, 48 MB at the Hack Club account's
-// scale.
+// (and the viewer). Slack persists its members store between starts
+// (ukWt: persistenceEnabled), which its members cache keeps to 700,
+// trimmed to 500 (members.go), and fetches anyone else when a message,
+// mention or profile needs them, as EnsureUsers and the member fetcher do
+// here; a start restoring every user a long-used Clack ever saw held tens
+// of thousands in memory, 48 MB at the Hack Club account's scale.
 const MaxSavedUsers = 1000
 
 // sameGroups reports whether gs (minus deleted groups) equals s.Groups.

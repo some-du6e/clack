@@ -714,37 +714,14 @@ func firstNonEmptyS(s ...string) string {
 	return ""
 }
 
-// UsersInfoParallel resolves many users via the edge cache in parallel batches.
+// UsersInfoParallel resolves many users via the edge cache: MembersInfo's
+// chunks of 100, two at a time, pending ids asked again (Slack's
+// fetchMembersById, which ensureMembersArePresent and the unknown member
+// fetcher both use). The error is the first request's that failed.
 func (c *Client) UsersInfoParallel(ctx context.Context, ids []string) ([]User, error) {
-	const batch = 100
-	if len(ids) <= batch {
-		return c.UsersInfo(ctx, ids)
+	if len(ids) == 0 {
+		return nil, nil
 	}
-	var mu sync.Mutex
-	var out []User
-	var firstErr error
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4)
-	for i := 0; i < len(ids); i += batch {
-		j := i + batch
-		if j > len(ids) {
-			j = len(ids)
-		}
-		part := ids[i:j]
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			us, err := c.UsersInfo(ctx, part)
-			mu.Lock()
-			out = append(out, us...)
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
-	return out, firstErr
+	r := c.MembersInfo(ctx, ids)
+	return r.Users, r.Err
 }

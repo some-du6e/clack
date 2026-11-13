@@ -16,12 +16,13 @@ import (
 // Background name resolution.
 //
 // Rendering records ids it could not name: channel mentions outside the
-// sidebar, users not in the directory cache, bots without a profile. This
-// loop resolves them in batches (edge channels/info for channels,
-// conversations.info for DMs, edge users/info for users, bots.info for
-// bots), caches the names as metadata and emits
-// Event{Type:"names", Users: <resolved ids>} so views re-render (re-read
-// History/Replies; Docs are rebuilt from the store).
+// sidebar, users not in the members cache, bots without a profile. This
+// loop resolves channels and bots in batches (edge channels/info for
+// channels, conversations.info for DMs, bots.info for bots), caches the
+// names as metadata and emits Event{Type:"names", Users: <resolved ids>}
+// so views re-render (re-read History/Replies; Docs are rebuilt from the
+// store). Users go to the member fetcher (members.go), which emits the
+// same event.
 
 func (a *App) resolveLoop(ctx context.Context) {
 	notify := a.S.MissingNotify()
@@ -32,15 +33,16 @@ func (a *App) resolveLoop(ctx context.Context) {
 		case <-notify:
 		}
 		time.Sleep(150 * time.Millisecond) // coalesce a burst (a page of messages)
-		chans, users, bots := a.S.TakeMissing()
+		// users go to the member fetcher (members.go), on Slack's schedule
+		chans, bots := a.S.TakeMissingNames()
 		files, sections, previews := a.S.TakeMissingCanvases()
-		if len(chans)+len(users)+len(bots)+len(files)+len(sections)+len(previews) == 0 {
+		if len(chans)+len(bots)+len(files)+len(sections)+len(previews) == 0 {
 			continue
 		}
 		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		var ids []string
-		if len(chans)+len(users)+len(bots) > 0 {
-			ids = a.resolve(rctx, chans, users, bots)
+		if len(chans)+len(bots) > 0 {
+			ids = a.resolve(rctx, chans, nil, bots)
 		}
 		ids = append(ids, a.resolveCanvases(rctx, files, sections, previews)...) // canvas_refs.go
 		cancel()

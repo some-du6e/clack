@@ -582,8 +582,7 @@ func avatarURL(h Host, p slackc.Props, user, def string) string {
 	if u, ok := h.Core().User(id); ok {
 		return u.Avatar
 	}
-	ensureUser(h, id)
-	return ""
+	return "" // asked for by the lookup
 }
 
 func iconURL(ic slackc.Props) string {

@@ -111,9 +111,7 @@ func pfRestriction(h Host, id string) (restricted, ultra bool) {
 	if c == nil || id == "" {
 		return false, false
 	}
-	c.S.RLock()
-	defer c.S.RUnlock()
-	if u := c.S.Users[id]; u != nil {
+	if u, ok := c.S.User(id); ok { // a miss is asked for ("names" redraws)
 		return u.IsRestricted || u.IsUltraRestricted, u.IsUltraRestricted
 	}
 	return false, false
