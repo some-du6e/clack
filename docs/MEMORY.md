@@ -19,7 +19,7 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 
 | cache | budget | from |
 |---|---|---|
-| messages (store timelines and threads, the lists' models and rows, the plugin mirror) | 3,000 evictable messages or 3 MB of JSON, trimmed to 2,000 or 2 MB; evictable: read messages of conversations not on screen, everything in conversations the viewer isn't in, whole histories of quiet conversations not read for an hour; oldest first, recently read conversations last. Checked every 2 minutes (`core.EvictEvery`) | Slack's `messages` CacheManager (`getUnusedMessages`, `evictUncountedChannelHistories`) |
+| messages (store timelines and threads, the lists' models and rows, the plugin mirror) | 3,000 evictable messages or 3 MB of JSON, trimmed to 2,000 or 2 MB; evictable: read messages of conversations not on screen, everything in conversations the viewer isn't in, whole histories of quiet conversations not read for an hour; oldest first, recently read conversations last. Checked every 2 minutes (`core.EvictEvery`); a conversation read in the last 10 minutes is kept whole | Slack's `messages` CacheManager (`getUnusedMessages`, `evictUncountedChannelHistories`) |
 | decoded images (`imgcache`) | 64 MB, unused for 60 s dropped | Clack |
 | downloaded files (`core.Fetch`, memory only) | 48 MB, unused for 5 minutes dropped | Clack |
 | image loads waiting | a queue per lane, 8 loads at a time | Clack |

@@ -18,10 +18,11 @@ import (
 // growing for an hour.
 var EvictEvery = 2 * time.Minute
 
-// evictOnScreen: a conversation read this recently is treated as on screen
-// (a list on screen refreshes its conversation every 30 s, the split view
-// shows a second one).
-const evictOnScreen = time.Minute
+// evictOnScreen: a conversation read this recently is kept whole, as if on
+// screen (a list on screen refreshes its conversation every 30 s, the
+// split view shows a second one): one left a few minutes ago comes back
+// where it was. Slack checks only hourly, which keeps the same messages.
+const evictOnScreen = 10 * time.Minute
 
 // noteAccess records that ch (or "ch/thread_ts") was read now (Slack's
 // recordHit on every message read; the comparator and the whole-history
