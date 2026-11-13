@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -227,7 +228,7 @@ func TestPrefs(t *testing.T) {
 		"emoji_use":                   json.RawMessage(`"{\"+1\":5,\"tada\":9,\"eyes\":5}"`),
 	}
 	p, muted := ParsePrefs(raw)
-	if p.EmojiStyle != "google" || !p.Time24 || !p.DisplayRealNames || p.Jumbomoji || !p.HideInactiveConvs {
+	if p.EmojiStyle != emoji.Style() || !p.Time24 || !p.DisplayRealNames || p.Jumbomoji || !p.HideInactiveConvs {
 		t.Errorf("prefs = %+v", p)
 	}
 	if strings.Join(p.Muted, ",") != "C1,C3" || !muted["C1"] || muted["C2"] || !muted["C3"] {
@@ -237,13 +238,14 @@ func TestPrefs(t *testing.T) {
 		t.Errorf("frequent = %v", p.FrequentEmoji)
 	}
 	d, _ := ParsePrefs(map[string]json.RawMessage{})
-	if d.EmojiStyle != "apple" || !d.Jumbomoji || d.Muted == nil {
+	if d.EmojiStyle != emoji.Style() || !d.Jumbomoji || d.Muted == nil {
 		t.Errorf("default prefs = %+v", d)
 	}
 	s := New("")
+	p.EmojiStyle = "apple" // a disk cache from a build that mapped emoji_mode
 	s.SetPrefs(p, muted)
-	if s.EmojiStyle != "google" {
-		t.Error("SetPrefs did not set emoji style")
+	if s.EmojiStyle != emoji.Style() {
+		t.Errorf("emoji style = %q, want the platform's %q (Slack: apple on macOS, google elsewhere)", s.EmojiStyle, emoji.Style())
 	}
 }
 

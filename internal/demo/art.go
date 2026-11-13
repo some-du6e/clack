@@ -81,8 +81,8 @@ func cutPx(s string) (string, int, bool) {
 	return name, px, true
 }
 
-// emojiPx is the size emoji are drawn at: Slack's own are 64px
-// ("apple-medium"), and the client scales them down to the line.
+// emojiPx is the size the demo draws every standard emoji at, whichever
+// CDN size the URL names; the client scales it down to the line.
 const emojiPx = 64
 
 var (
@@ -101,7 +101,9 @@ func StandardEmoji(raw string) ([]byte, bool) {
 	if !ok || !strings.HasSuffix(file, ".png") {
 		return nil, false
 	}
-	stem := strings.ToLower(strings.TrimSuffix(file, ".png"))
+	// the image cache asks for the size that covers the pixels drawn
+	// (emoji.ForPixels: "google-large/1f601@2x.png")
+	stem := strings.ToLower(strings.TrimSuffix(strings.TrimSuffix(file, ".png"), "@2x"))
 	stdOnce.Do(func() {
 		stdNames = map[string]string{}
 		for _, n := range standardDrawn {

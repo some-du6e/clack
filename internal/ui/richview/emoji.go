@@ -149,5 +149,5 @@ func (s *Style) emojiURL(stem string) string {
 	if s.EmojiURL != nil {
 		return s.EmojiURL(stem)
 	}
-	return emoji.CDN + "apple-medium/" + stem + ".png"
+	return emoji.URL(stem, "")
 }

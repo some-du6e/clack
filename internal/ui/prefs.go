@@ -34,7 +34,6 @@ type prefs struct {
 	Route              string `json:"route,omitempty"`
 	LastChannel        string `json:"last_channel,omitempty"`
 	Notifications      *bool  `json:"notifications,omitempty"`
-	EmojiStyle         string `json:"emoji_style,omitempty"`
 	SidebarHidden      bool   `json:"sidebar_hidden,omitempty"`
 	// NoUpdateCheck turns off the GitHub Releases check (Preferences >
 	// Clack).
@@ -191,7 +190,6 @@ func (a *App) loadPrefs() {
 		a.secTabs.w["later"] = w
 	}
 	a.lastChannel = a.prefs.LastChannel
-	a.th.EmojiStyle = a.prefs.EmojiStyle
 	if a.prefs.PlainText != nil {
 		composer.SetPlainTextMode(*a.prefs.PlainText)
 	}
@@ -333,7 +331,7 @@ func (a *App) setComposerUpArrow(v int) {
 // off by default, so the composer formats markup live.
 func (a *App) plainTextOn() bool { return composer.PlainTextMode(a.Core()) }
 
-// togglePlainText flips it through setUserPrefByApi (like emoji_style),
+// togglePlainText flips it through setUserPrefByApi,
 // applied locally and kept in ui.json.
 func (a *App) togglePlainText() {
 	v := !a.plainTextOn()

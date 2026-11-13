@@ -128,7 +128,7 @@ func (a *App) layoutHeaderStar(gtx layout.Context, ch string, conv *convInfo, po
 			}, func(gtx layout.Context) layout.Dimensions {
 				es := gtx.Dp(16)
 				at(gtx, image.Pt((box-es)/2, (box-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
-					if img, ok := a.images.Get(emoji, es*2); ok {
+					if img, ok := a.images.Get(emoji, es); ok {
 						return theme.Image(gtx, img, image.Pt(es, es), 0)
 					}
 					return layout.Dimensions{Size: image.Pt(es, es)}

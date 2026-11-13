@@ -857,7 +857,7 @@ func macroAt(gtx layout.Context, call op.CallOp, p image.Point) {
 func menuImage(gtx layout.Context, th *theme.Theme, url string, size int) layout.Dimensions {
 	sz := image.Pt(size, size)
 	if th != nil && th.Images != nil {
-		if img, ok := th.Images.Get(url, size*2); ok {
+		if img, ok := th.Images.Get(url, size); ok {
 			return theme.Image(gtx, img, sz, 0)
 		}
 	}

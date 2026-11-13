@@ -932,7 +932,7 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			// the hover caret still replaces it
 			es := gtx.Dp(16)
 			at(gtx, image.Pt(ix, iy), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
-				if img, ok := a.images.Get(rs.emoji, es*2); ok {
+				if img, ok := a.images.Get(rs.emoji, es); ok {
 					return theme.Image(gtx, img, image.Pt(es, es), 0)
 				}
 				return layout.Dimensions{Size: image.Pt(es, es)}

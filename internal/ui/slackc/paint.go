@@ -1386,7 +1386,11 @@ func (p *painter) emoji(url string, x, base, es float32) {
 	if im == nil || url == "" {
 		return
 	}
-	img, ok := im.Get(url, int(es*2))
+	// Chromium snaps an <img> to device pixels; the cache scales the
+	// image to that size (from the CDN size that covers it), so it draws
+	// 1:1 instead of being stretched by the GPU's linear filter.
+	n := int(math.Round(float64(es)))
+	img, ok := im.Get(url, n)
 	if !ok {
 		return
 	}
@@ -1395,8 +1399,8 @@ func (p *painter) emoji(url string, x, base, es float32) {
 		return
 	}
 	top := base - es*0.8
-	s := es / float32(sz.X)
-	t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(s, s)).Offset(f32.Pt(x, float32(math.Round(float64(top)))))).Push(p.ops)
+	s := float32(n) / float32(sz.X)
+	t := op.Affine(f32.AffineId().Scale(f32.Point{}, f32.Pt(s, s)).Offset(f32.Pt(float32(math.Round(float64(x))), float32(math.Round(float64(top)))))).Push(p.ops)
 	img.Add(p.ops)
 	paint.PaintOp{}.Add(p.ops)
 	t.Pop()

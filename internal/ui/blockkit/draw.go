@@ -525,7 +525,7 @@ func drawRuns(gtx C, th *theme.Theme, h Host, fs float32, col color.NRGBA, runs 
 		if r.url != "" {
 			es := dp(gtx, btnEmoji)
 			if h != nil && h.Images() != nil {
-				if img, ok := h.Images().Get(r.url, es*2); ok {
+				if img, ok := h.Images().Get(r.url, es); ok {
 					at(gtx, image.Pt(x, (lh-es)/2), func(gtx C) D { return theme.Image(gtx, img, image.Pt(es, es), 0) })
 				}
 			}
