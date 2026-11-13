@@ -36,6 +36,18 @@ func (a *App) noteAccess(key string) {
 	a.mu.Unlock()
 }
 
+// noteLoaded records that key's newest page was just fetched: for the
+// comparator and the hour a quiet history is kept it counts as an access,
+// but never as on screen.
+func (a *App) noteLoaded(key string) {
+	a.mu.Lock()
+	if a.loaded == nil {
+		a.loaded = map[string]time.Time{}
+	}
+	a.loaded[key] = time.Now()
+	a.mu.Unlock()
+}
+
 func (a *App) evictLoop(ctx context.Context) {
 	t := time.NewTicker(EvictEvery)
 	defer t.Stop()
@@ -58,12 +70,21 @@ func (a *App) EvictMessages() []store.Evicted {
 	now := time.Now()
 	in := store.EvictInput{Now: now, Accessed: map[string]time.Time{}, Keep: map[string]bool{}, Pending: map[string]bool{}}
 	a.mu.Lock()
+	for k, at := range a.loaded {
+		if now.Sub(at) > store.EvictRecent+time.Hour {
+			delete(a.loaded, k)
+			continue
+		}
+		in.Accessed[k] = at // loaded: kept an hour like a read, never "on screen"
+	}
 	for k, at := range a.accessed {
 		if now.Sub(at) > store.EvictRecent+time.Hour {
 			delete(a.accessed, k) // forgetAccessesBefore
 			continue
 		}
-		in.Accessed[k] = at
+		if prev, ok := in.Accessed[k]; !ok || at.After(prev) {
+			in.Accessed[k] = at
+		}
 		if now.Sub(at) < evictOnScreen {
 			in.Keep[k] = true
 		}

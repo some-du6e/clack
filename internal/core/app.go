@@ -106,8 +106,9 @@ type App struct {
 	watchCh   string             // conversation last opened (History), refreshed every poll
 	watchTh   []watchedThread    // threads last opened (Replies), newest first
 	// accessed: when each conversation ("ch/thread_ts" for a thread) was
-	// last read, for Slack's message cache budget (evict.go)
-	accessed map[string]time.Time
+	// last read, and loaded when its newest page was last fetched, for
+	// Slack's message cache budget (evict.go)
+	accessed, loaded map[string]time.Time
 
 	// tempMuteTimer is kickOffTempMuteTimer's timer (temp_mute.go).
 	tempMuteTimer *time.Timer
@@ -814,6 +815,10 @@ func (a *App) loadLatestIfMissing(ctx context.Context, ch string) error {
 }
 
 func (a *App) fetchLatest(ctx context.Context, ch string) error {
+	// a history just loaded (a prefetch, a refresh) counts as read for the
+	// message cache budget: Slack resets a quiet conversation's history
+	// only an hour after it was last used (evict.go)
+	a.noteLoaded(ch)
 	pins := a.S.PinSeq()
 	p, err := a.C.History(ctx, ch, slack.HistoryOpts{Limit: 50})
 	if err != nil {

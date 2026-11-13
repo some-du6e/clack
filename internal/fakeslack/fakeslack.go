@@ -127,6 +127,12 @@ type Size struct {
 	// (avatars.slack-edge.com/<date>/<id>_<hash>_<size>.jpg, ~90
 	// characters), as a real directory's profiles have.
 	LongURLs bool
+	// ReadCursors puts client.counts' read cursors on the generated
+	// histories' clock (2026-11-07): a channel is read up to its newest
+	// message, one with unreads up to a day before, as an account that
+	// reads its channels has them. Without it every cursor is a year older
+	// than every message (the other fixtures' screenshots are drawn so).
+	ReadCursors bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -143,7 +149,8 @@ var Small = Size{Emoji: 500, Users: 100, Channels: 30, DMs: 5, Usergroups: 20, H
 // images) and text in other scripts. perf.yml's scale jobs measure the
 // client's memory against it (fakeslackd -scale).
 var HackClubScale = Size{Emoji: 60000, Aliases: 5846, Users: 32000, Channels: 300, DMs: 120, Usergroups: 2006,
-	History: 600, Unread: 60, Authors: 32000, LongChannels: 3, LongHistory: 6000, Intl: true, LongURLs: true}
+	History: 600, Unread: 60, Authors: 32000, LongChannels: 3, LongHistory: 6000, Intl: true, LongURLs: true,
+	ReadCursors: true}
 
 // LongChannelIDs are the channels with LongHistory messages.
 func (s *Server) LongChannelIDs() []string {
@@ -1233,9 +1240,16 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		var chans, ims []slack.CountEntry
 		for i, c := range s.convs {
 			e := slack.CountEntry{ID: c.ID, LastRead: "1762500000.000000", Latest: "1762516800.000000"}
+			if s.Size.ReadCursors {
+				base := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC).Unix() // history's clock
+				e.LastRead, e.Latest = fmt.Sprintf("%d.000000", base), fmt.Sprintf("%d.000000", base)
+			}
 			if i%(max(1, s.Size.Channels/max(1, s.Size.Unread))) == 1 {
 				e.HasUnreads = true
 				e.LastRead = "1762400000.000000"
+				if s.Size.ReadCursors {
+					e.LastRead = fmt.Sprintf("%d.000000", time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC).Unix())
+				}
 				if i%3 == 0 {
 					e.MentionCount = 1 + i%4
 				}
