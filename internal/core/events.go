@@ -58,7 +58,8 @@ func (a *App) handle(ev slack.Event) {
 		add := ev.Type == "reaction_added"
 		changed := false
 		m, ok := a.S.Mutate(e.Item.Channel, e.Item.TS, func(m *slack.Message) { changed = applyReaction(m, e.Reaction, e.User, add) || changed })
-		a.EnsureUsers(ctx, []string{e.User})
+		// the reactor isn't fetched: only the reaction's tooltip names it
+		// (ReactionTip's TooltipMemberName, lazy_users.go)
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
 			a.emitUpdate(e.Item.Channel, &m)
 		}
@@ -450,8 +451,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		if e.Message == nil {
 			return
 		}
-		m := *e.Message
-		a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
+		m := *e.Message // its rows ask for its people as they draw (lazy_users.go)
 		// Slack's messageChanged is replaceMessages (replace: true, client-boot
 		// z+/K processAndMergeMessages): the event's message replaces the
 		// stored one wholesale, thread metadata included. When a thread's
@@ -516,7 +516,10 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	// that came first stays (store/pins.go)
 	a.S.KeepPin(ch, &m)
 	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
-	a.EnsureUsers(ctx, referencedUsers([]slack.Message{m}))
+	// the "message" event names its sender for the notification (and the
+	// mentions in its text), so the people are fetched before it goes out;
+	// not its reactions' (a new message has none) (lazy_users.go)
+	a.EnsureUsers(ctx, rowUsers([]slack.Message{m}))
 	if needsFileInfo(&m) { // the echo of the viewer's own upload too
 		go a.fillFiles(ch, m.TS)
 	}

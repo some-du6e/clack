@@ -41,6 +41,38 @@ func (s *listState) fileRects() []FileRect {
 	return out
 }
 
+// ReactionRect is a reaction pill on screen (its group's), in window
+// coordinates.
+type ReactionRect struct {
+	TS   string // the message
+	Name string // the group's emoji name
+	R    image.Rectangle
+}
+
+// ReactionRects lists the reaction pills of the visible messages as of
+// the last frame, in window coordinates.
+func (v *ChannelView) ReactionRects() []ReactionRect { return v.s.reactionRects() }
+
+func (s *listState) reactionRects() []ReactionRect {
+	var out []ReactionRect
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].kind != itMsg || i >= len(s.heights) || s.heights[i] <= 0 {
+			continue
+		}
+		r := s.rows[s.items[i].key]
+		if r == nil {
+			continue
+		}
+		off := s.origin.Add(image.Pt(0, s.pos[i]))
+		for k := range r.reactRects {
+			if k < len(r.groups) {
+				out = append(out, ReactionRect{TS: r.src.TS, Name: r.groups[k].name, R: r.reactRects[k].Add(off)})
+			}
+		}
+	}
+	return out
+}
+
 // ImageRect is an image's clickable box on screen (an image block, an
 // attachment image), in window coordinates.
 type ImageRect struct {

@@ -23,6 +23,10 @@ var tooltipClass = slackc.Class("c-tooltip__tip c-tooltip__tip--top", "role", "t
 // short rest as its emoji tooltips (richview.EmojiTipDelay).
 const reactionTipDelay = 300 * time.Millisecond
 
+// tipPending is the list's tip while a pill is hovered but its tooltip
+// hasn't shown yet (nothing is drawn and no reactor looked up).
+const tipPending = "\x00pending"
+
 // reactionTooltip is Slack's ReactionTip (boot-shared Qvn6) in its
 // Tooltip (F2XN, position "top") for one reaction: txt is reactionTip's
 // (whose count picks the width: tipCountFor), url its emoji.

@@ -84,6 +84,7 @@ func (a *App) fetchUnknownMembers(ctx context.Context, ids []string) {
 	ask := a.S.MissingUsers(ids) // fetchMembersForTeamId: not the ones the store holds by now
 	var users, missing, failed int
 	if len(ask) > 0 {
+		a.usersAsked.Add(int64(len(ask)))
 		for attempt := 1; ; attempt++ {
 			fctx, cancel := context.WithTimeout(ctx, memberTimeout)
 			r := a.C.MembersInfo(fctx, ask)

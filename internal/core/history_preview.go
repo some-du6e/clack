@@ -43,7 +43,7 @@ func (a *App) HistoryPreview(ctx context.Context, ch, oldest string, limit int) 
 	if err != nil {
 		return nil, err
 	}
-	a.EnsureUsers(ctx, referencedUsers(p.Messages))
+	// its people are asked for as rows draw them (lazy_users.go)
 	var msgs []slack.Message
 	for _, m := range p.Messages {
 		if !m.Hidden { // getRowsAndKeys drops hidden messages (p6HR isHidden)

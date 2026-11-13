@@ -234,6 +234,14 @@ def stage_rows(d, platform):
     return rows
 
 
+def users_cell(m):
+    # app_users_asked: the ids the session sent to users/info (lazy-users
+    # on); an older side doesn't count them
+    held = m.get("app_users", "—")
+    asked = m.get("app_users_asked")
+    return "%s (%s)" % (held, asked) if asked is not None else str(held)
+
+
 def side_report(base, side, platform):
     d = os.path.join(base, side, "scale", "warm")
     p = os.path.join(base, side, "scale", "prime")
@@ -243,7 +251,7 @@ def side_report(base, side, platform):
         return ["_%s: no stage files (the driver didn't run; a tree without internal/ui/perfdrive.go)_" % side, ""], {}
     total_name = "private working set" if platform == "windows" else "private (anonymous + dirty)"
     extra = " commit |" if platform == "windows" else ""
-    out.append("| stage | %s | after GC + trim |%s Go heap resident | other private (C, driver, GPU) | DLL/file private | Go heap live (after GC) | Go heap unreturned | stacks | users | messages (store / lists) | images |" % (total_name, extra))
+    out.append("| stage | %s | after GC + trim |%s Go heap resident | other private (C, driver, GPU) | DLL/file private | Go heap live (after GC) | Go heap unreturned | stacks | users held (asked of users/info) | messages (store / lists) | images |" % (total_name, extra))
     out.append("|---|---|---|" + ("---|" if extra else "") + "---|---|---|---|---|---|---|---|---|")
     for r in rows:
         m, tr = r["mem"], r["trim"]
@@ -252,7 +260,7 @@ def side_report(base, side, platform):
         out.append("| %s | **%s** | %s |%s %s | %s | %s | %s | %s | %s | %s | %s / %s | %s (%s) |" % (
             STAGE_NAMES.get(r["stage"], r["stage"]), fmt_mb(r["total"]), fmt_mb(r["total_trim"]), commit, fmt_mb(r["go_res"]),
             fmt_mb(r["other_res"]), fmt_mb(r["img_res"]), fmt_mb(live), fmt_mb(mb(m.get("go_heap_unreturned"))),
-            fmt_mb(mb(m.get("go_stack_inuse"))), m.get("app_users", "—"), m.get("app_timeline_msgs", "—"), m.get("app_model_msgs", "—"),
+            fmt_mb(mb(m.get("go_stack_inuse"))), users_cell(m), m.get("app_timeline_msgs", "—"), m.get("app_model_msgs", "—"),
             fmt_mb(mb(m.get("app_img_bytes"))), m.get("app_img_entries", "—")))
     out.append("")
     if platform == "windows":
