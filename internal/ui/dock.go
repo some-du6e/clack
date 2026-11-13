@@ -43,6 +43,8 @@ import (
 var (
 	dockBadge  = desktop.SetDockBadge
 	dockBounce = desktop.BounceDock
+	// doNotDisturb is the shell's DND check before a bounce
+	doNotDisturb = desktop.DoNotDisturb
 
 	taskbarOverlay  = desktop.SetTaskbarOverlay
 	frameFlash      = desktop.FlashFrame
@@ -82,17 +84,33 @@ func (a *App) updateDock() {
 	dockBadge(l)
 }
 
-// bounceDock is a notification's bounce (MacAppearancePref).
+// bounceDock is a notification's bounce. The web client's
+// maybeBounceDockIcon (boot-shared; every notification path calls it:
+// messages, alerts, Saved for later reminders, the activity summary,
+// calendar): nothing unless mac_ssb_bounce is set; "long" is the shell's
+// dock.bounceIndefinitely, any other value dock.bounceOnce. The macOS
+// shell's SLACK_BOUNCE_DOCK handler (main.bundle.cjs 4.53.276) then skips
+// it while Do Not Disturb or a Focus is on (macos-notification-state's
+// getDoNotDisturb) and otherwise calls app.dock.bounce("critical" or
+// "informational"), never cancelled: AppKit stops it when Clack comes
+// forward.
 func (a *App) bounceDock() {
 	if runtime.GOOS != "darwin" && !dockAnyOS {
 		return
 	}
-	switch uipref.Get().MacBounce {
-	case "short":
-		dockBounce(false)
-	case "long":
-		dockBounce(true)
+	bounce, critical := dockBounceKind(uipref.Get().MacBounce)
+	if !bounce || doNotDisturb() {
+		return
 	}
+	dockBounce(critical)
+}
+
+// dockBounceKind is maybeBounceDockIcon's choice for mac_ssb_bounce.
+func dockBounceKind(pref string) (bounce, critical bool) {
+	if pref == "" {
+		return false, false
+	}
+	return true, pref == "long"
 }
 
 type dockState struct {
@@ -271,14 +289,17 @@ func (p *prefsModal) macAppearance(f *prefsForm) {
 		}
 	}
 	l := p.ra.bounce
-	f.option("pref.mac_ssb_bounce", "Bounce Slack’s icon when receiving a notification", "", r != "", false, func() {
+	// o (gMhK areGlobalDesktopNotificationsDisabled): with desktop
+	// notifications set to Nothing both rows are disabled
+	off := uipref.Get().GlobalDesktop == "nothing"
+	f.optionAt("pref.mac_ssb_bounce", "Bounce Slack’s icon when receiving a notification", "", r != "", false, !off, func() {
 		v := ""
 		if r == "" {
 			v = l
 		}
 		p.setPref("mac_ssb_bounce", v)
 	})
-	f.optionAt("pref.mac_ssb_bounce_short", "Only bounce it once", "", l == "short", false, r != "", func() {
+	f.optionAt("pref.mac_ssb_bounce_short", "Only bounce it once", "", l == "short", false, r != "" && !off, func() {
 		v := "long"
 		if l != "short" {
 			v = "short"
