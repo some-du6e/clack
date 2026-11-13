@@ -36,7 +36,7 @@ type pfHost struct {
 }
 
 func (h *pfHost) OpenPinnedMessage(ch, ts, thread string) { h.pinned = append(h.pinned, ch+"/"+ts) }
-func (h *pfHost) OpenBookmark(ch string, b core.Bookmark)  { h.bookmarks = append(h.bookmarks, b.Link) }
+func (h *pfHost) OpenBookmark(ch string, b core.Bookmark) { h.bookmarks = append(h.bookmarks, b.Link) }
 
 func pfCore(t *testing.T) (*core.App, *fakeslack.Server) {
 	t.Helper()
