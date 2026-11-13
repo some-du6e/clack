@@ -9,11 +9,16 @@ package messages
 // once the primary view is that conversation. A conversation core
 // doesn't know, or knows without a name (the bare "#" Karim saw on a
 // thread opened from Activity), is looked up first: the header never
-// draws a placeholder.
+// draws a placeholder. A DM with an app (its bot user known only through
+// users.info, a real name and no display name) names the app; a group DM
+// with a custom name shows it under mpdm_naming.
 
 import (
 	"context"
+	"encoding/json"
 	"image"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +69,7 @@ func headerEnv(t *testing.T) (*core.App, *fakeslack.Server) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("boot timed out")
 	}
+	app.SetExperimentGroup("mpdm_naming", "on") // the named group DM's name (on for the account)
 	return app, fs
 }
 
@@ -178,4 +184,94 @@ func TestThreadHeaderResolvesTheConversation(t *testing.T) {
 	if _, member := app.S.Conv(fakeslack.ThreadPublicID); !member {
 		t.Error("looking the member channel up took it out of the member set")
 	}
+}
+
+// The DM partner's and group DM members' names are Slack's
+// getPrefCompliantMemberName: the real name under display_real_names,
+// "Name hidden" for a hidden user; mpdm_naming off lists a named group
+// DM's members again. An app's DM opened inside that DM hides the name
+// like any conversation (ThreadSubtitle: the app DM's view is a Channel
+// view).
+func TestThreadHeaderMemberNames(t *testing.T) {
+	app, fs := headerEnv(t)
+	cases := map[string]fakeslack.ThreadHeaderCase{}
+	for _, c := range fs.ThreadHeaderCases() {
+		cases[c.Name] = c
+	}
+	open := func(c fakeslack.ThreadHeaderCase, primary string) (*ThreadView, func()) {
+		h := &headerHost{coreHost: coreHost{app: app, th: theme.New(false)}, primary: primary}
+		tv := NewThreadView(h, c.Channel, fakeslack.ThreadRootTS)
+		frame, _ := headerFrames(tv)
+		return tv, frame
+	}
+	check := func(what string, c fakeslack.ThreadHeaderCase) {
+		t.Helper()
+		tv, frame := open(c, "activity")
+		r := waitHeader(t, tv, frame, c)
+		t.Logf("%s: %v", what, r)
+	}
+
+	// the app DM, opened from Activity and inside the DM
+	app2 := cases["app-dm"]
+	check("app DM from Activity", app2)
+	if u, ok := app.User(fakeslack.ThreadAppUserID); !ok || !u.IsBot || u.DisplayName != "" {
+		t.Fatalf("the app's bot user: %+v %v", u, ok)
+	}
+	tv, frame := open(app2, app2.Channel)
+	for k := 0; k < 5; k++ {
+		frame()
+	}
+	if sub, _, ok := tv.HeaderName(); ok {
+		t.Errorf("the app DM's own thread names %+v (Slack hides it in the DM)", sub)
+	}
+
+	dm, group := cases["dm"], cases["group-dm"]
+	dmConv, _ := app.Conv(dm.Channel)
+	partner, _ := app.User(dmConv.User)
+
+	// display_real_names: the real name
+	app.S.Lock()
+	app.S.Prefs.DisplayRealNames = true
+	app.S.Unlock()
+	if partner.RealName == "" || partner.RealName == partner.DisplayName {
+		t.Fatalf("the DM partner's real name %q doesn't differ from %q", partner.RealName, partner.DisplayName)
+	}
+	real := dm
+	real.Text = partner.RealName
+	check("display_real_names", real)
+	app.S.Lock()
+	app.S.Prefs.DisplayRealNames = false
+	app.S.Unlock()
+
+	// a hidden user
+	raw := map[string]json.RawMessage{}
+	app.S.RLock()
+	for k, v := range app.S.RawPrefs {
+		raw[k] = v
+	}
+	app.S.RUnlock()
+	b, _ := json.Marshal(partner.ID)
+	raw["hidden_users"] = b
+	app.S.SetRawPrefs(raw)
+	hidden := dm
+	hidden.Text = "Name hidden"
+	check("hidden user", hidden)
+	hiddenGroup := group
+	others := strings.Split(group.Tip, ", ")
+	for i, n := range others {
+		if n == partner.Name {
+			others[i] = "Name hidden"
+		}
+	}
+	sort.Slice(others, func(i, j int) bool { return strings.ToLower(others[i]) < strings.ToLower(others[j]) })
+	hiddenGroup.Tip = strings.Join(others, ", ")
+	check("hidden user in a group DM", hiddenGroup)
+	delete(raw, "hidden_users")
+	app.S.SetRawPrefs(raw)
+
+	// mpdm_naming off: the named group DM lists its members
+	app.SetExperimentGroup("mpdm_naming", "off")
+	named := cases["named-group-dm"]
+	named.Text, named.Tip = group.Text, group.Tip
+	check("mpdm_naming off", named)
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
@@ -151,5 +152,46 @@ func TestAgentThreadPaneEditDuringLoad(t *testing.T) {
 	e.settle(2 * time.Second) // a refresh after the load keeps it too
 	if txt, _, _ := e.threadView(fakeslack.AgentDMID, fakeslack.AgentDMRootTS).RowText(fakeslack.AgentDMAnswerTS); txt != "pong" {
 		t.Errorf("after settling the answer draws %q", txt)
+	}
+}
+
+// The pane's header in the agent app's DM (polish-1113: Karim's
+// "Thread gorkie" was with Activity in the primary view, the agent-thread
+// shots with the DM there). Slack's ThreadSubtitle hides the name when
+// the primary view is the thread's own conversation, which an app DM is
+// (EnsureAppViewType gives it a Channel view): "Thread" alone. Opened
+// from Activity it names the app's bot user by its real name (no display
+// name, the way users.info answers an app's bot user).
+func TestAgentThreadHeader(t *testing.T) {
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		t.Run(mode, func(t *testing.T) {
+			e := agentThreadEnv(t, dark)
+			e.openChannel(fakeslack.AgentDMID)
+			e.a.OpenThread(fakeslack.AgentDMID, fakeslack.AgentDMRootTS)
+			e.until("the pane in the DM", 20*time.Second, func() bool {
+				return e.threadView(fakeslack.AgentDMID, fakeslack.AgentDMRootTS) != nil
+			})
+			e.settle(800 * time.Millisecond)
+			if sub, _, ok := e.threadView(fakeslack.AgentDMID, fakeslack.AgentDMRootTS).HeaderName(); ok {
+				t.Errorf("in the app's DM the header names %+v (Slack hides it)", sub)
+			}
+			e.threadHeaderShot("agent-thread-header-dm-" + mode)
+
+			e.a.Navigate("activity")
+			e.a.OpenThread(fakeslack.AgentDMID, fakeslack.AgentDMRootTS)
+			var got messages.HeaderSubtitle
+			var shown bool
+			e.until("the header names the app from Activity", 20*time.Second, func() bool {
+				if tv := e.threadView(fakeslack.AgentDMID, fakeslack.AgentDMRootTS); tv != nil {
+					got, _, shown = tv.HeaderName()
+					if shown && got.Text == "" {
+						t.Fatalf("the header drew %+v (a placeholder)", got)
+					}
+				}
+				return shown && got.Text == "Pip" && got.Icon == "" && got.Link
+			})
+			e.threadHeaderShot("agent-thread-header-activity-" + mode)
+		})
 	}
 }

@@ -47,6 +47,7 @@ func threadHeaderEnv(t *testing.T, dark bool) *perfEnv {
 		e.gpu = w
 	}
 	e.waitReady()
+	e.a.Core().SetExperimentGroup("mpdm_naming", "on") // the named group DM's name (on for the account)
 	if dark {
 		e.a.setDark(true)
 	}

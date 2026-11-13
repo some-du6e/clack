@@ -1620,6 +1620,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	if s.Size.AgentThread && id == AgentDMUserID { // agent_thread.go
 		return s.agentDMUser(), true
 	}
+	if s.Size.ThreadHeader && id == ThreadAppUserID { // threadheader.go
+		return s.threadHeaderApp(), true
+	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {
 			return s.users[n], true

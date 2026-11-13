@@ -254,7 +254,15 @@ type HeaderSubtitle struct {
 
 // subtitle is what the header shows after "Thread", false for nothing:
 // ThreadSubtitle hides it (hideChannelName) when the primary view shows
-// the thread's own channel, and Clack draws nothing until core knows the
+// the thread's own channel. That holds for a DM with an app or bot too:
+// EnsureAppViewType (client-boot) turns an app DM's AppSpace view back
+// into a Channel view unless the app is the workspace's Slack channel
+// expert (UDTh isAppSlackChannelExpert), so a thread opened in the app's
+// own DM says "Thread" alone and one opened from Activity "Thread
+// <app>". Slack Connect channels draw like any channel: InlineChannelEntity
+// gets no truncateWidth here, and ChannelTeam only names the team for an
+// Enterprise Grid channel from another workspace. Clack draws nothing
+// until core knows the
 // conversation's name (Slack draws its "Loading…" shimmer then): an
 // unknown or nameless conversation, as a thread opened from Activity can
 // be, is looked up through core (ResolveConv) and an unknown DM partner
@@ -274,13 +282,27 @@ func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
 	}
 	switch cv.Kind {
 	case "im":
-		u, ok := app.User(cv.User)
-		if !ok || u.Name == "" {
+		// memberName is getPrefCompliantMemberName (client-boot vUCu sE):
+		// "Name hidden" for a hidden user, the display name unless
+		// display_real_names is on, else the real name. An app's bot user
+		// (users.info; an app DM, Slackbot's too) has no display name, so
+		// it's the real name: Slack draws no handle or bot_profile name, and
+		// nothing for a member with neither name.
+		if _, ok := app.User(cv.User); !ok {
 			ensureUser(v.h, cv.User)
 			return HeaderSubtitle{}, false
 		}
-		return HeaderSubtitle{Text: u.Name}, true
+		n, _ := app.S.MemberName(cv.User)
+		if n == "" {
+			return HeaderSubtitle{}, false
+		}
+		return HeaderSubtitle{Text: n}, true
 	case "mpim":
+		// a group DM with a custom name shows it (hasCustomMpdmName &&
+		// mpimName: tpcx JM, mpdm_naming)
+		if n, ok := app.MpdmCustomName(cv.ID); ok {
+			return HeaderSubtitle{Text: n}, true
+		}
 		for _, id := range cv.Members {
 			if _, ok := app.User(id); !ok {
 				ensureUser(v.h, id)
@@ -334,8 +356,10 @@ func mpimMembers(app *core.App, cv core.Conv) (int, string) {
 		if id == self.ID {
 			continue
 		}
-		if u, ok := app.User(id); ok && u.Name != "" {
-			names = append(names, u.Name)
+		// getMpimDisplayNameAlphabetical: each member's pref-compliant
+		// name ("Name hidden" for a hidden one)
+		if n, ok := app.S.MemberName(id); ok && n != "" {
+			names = append(names, n)
 		}
 	}
 	if n == 0 {

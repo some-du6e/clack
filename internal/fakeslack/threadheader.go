@@ -1,6 +1,7 @@
 package fakeslack
 
 import (
+	"encoding/json"
 	"net/url"
 	"strconv"
 	"strings"
@@ -14,7 +15,10 @@ import (
 // viewer is in (users.conversations lists it, the client drops archived
 // channels from the sidebar, so the header has to look it up), and
 // ThreadElsewhereID a channel outside the viewer's conversations, as a
-// thread opened from Activity can be.
+// thread opened from Activity can be. ThreadAppDMID is a DM with an app's
+// bot user that users.list doesn't hold (users.info answers it), with a
+// real name and no display name, the way an app's bot user comes back;
+// ThreadNamedGroupDMID a group DM with a custom name.
 const (
 	ThreadPublicID    = "C0THPUBLIC1"
 	ThreadPrivateID   = "C0THPRIVAT1"
@@ -23,6 +27,10 @@ const (
 	ThreadDMID        = "D0THDIRECT1"
 	ThreadGroupDMID   = "C0THGROUPD1"
 	ThreadElsewhereID = "C0THELSEWH1"
+
+	ThreadAppDMID        = "D0THAPPDM01"
+	ThreadAppUserID      = "U0THAPPBOT1" // the app's bot user, "Launch Bot"
+	ThreadNamedGroupDMID = "C0THNAMEDG1"
 
 	// ThreadRootTS roots each fixture's thread; ThreadReplyTS(i) are its
 	// replies.
@@ -34,7 +42,8 @@ func ThreadReplyTS(i int) string { return []string{"1762516060.000100", "1762516
 
 // ThreadHeaderCase is one fixture: its conversation and what Slack's
 // header shows after "Thread" (Icon is the SvgIcon name, "" for DMs; Tip
-// the tooltip, group DMs only).
+// the tooltip, group DMs only). The named group DM shows its name under
+// mpdm_naming, which a test turns on (core's SetExperimentGroup).
 type ThreadHeaderCase struct {
 	Name           string
 	Channel        string
@@ -55,7 +64,17 @@ func (s *Server) ThreadHeaderCases() []ThreadHeaderCase {
 		{Name: "group-dm", Channel: ThreadGroupDMID, Text: "Direct message with 3 others",
 			Tip: sortedJoin(u[0].Name, u[1].Name, u[2].Name), InConversation: true},
 		{Name: "elsewhere", Channel: ThreadElsewhereID, Text: "th-elsewhere", Icon: "channel"},
+		{Name: "app-dm", Channel: ThreadAppDMID, Text: "Launch Bot", InConversation: true},
+		{Name: "named-group-dm", Channel: ThreadNamedGroupDMID, Text: "th-launch-crew", InConversation: true},
 	}
+}
+
+// threadHeaderApp is the app DM's bot user (users.info only): real_name
+// set, display_name empty, its handle the app's lowercase name.
+func (s *Server) threadHeaderApp() slack.User {
+	p := slack.Profile{RealName: "Launch Bot", Team: TeamID, Fields: json.RawMessage(`{}`), BotID: "B0THAPPBOT1",
+		APIAppID: "A0THAPPBOT1"}
+	return slack.User{ID: ThreadAppUserID, TeamID: TeamID, Name: "launchbot", RealName: "Launch Bot", IsBot: true, Profile: p}
 }
 
 // threadHeaderUsers are the generated users the DMs are with (display
@@ -90,7 +109,10 @@ func (s *Server) addThreadHeader() {
 	group := slack.Conversation{ID: ThreadGroupDMID, Name: "mpdm-" + strings.Join(handles, "--") + "-1", IsMPIM: true,
 		IsGroup: true, IsPrivate: true, IsOpen: true, Created: created,
 		Members: []string{SelfID, u[0].ID, u[1].ID, u[2].ID}}
-	s.convs = append(s.convs, pub, priv, shared, arch, dm, group)
+	app := slack.Conversation{ID: ThreadAppDMID, IsIM: true, User: ThreadAppUserID, IsOpen: true, Created: created}
+	named := group
+	named.ID, named.Name, named.Properties = ThreadNamedGroupDMID, "th-launch-crew", json.RawMessage(`{"has_custom_mpdm_name":true}`)
+	s.convs = append(s.convs, pub, priv, shared, arch, dm, group, app, named)
 	other := ch(ThreadElsewhereID, "th-elsewhere")
 	other.IsMember = false
 	s.others = append(s.others, other)
