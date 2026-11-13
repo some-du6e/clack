@@ -449,6 +449,9 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 	switch b.Kind {
 	case richtext.Paragraph:
 		fs := l.bodyStyle()
+		if l.opts.MaxLines > 0 {
+			fs.maxLines, fs.ellipsis = l.opts.MaxLines, true
+		}
 		l.addSpans(b.Spans, &fs)
 		if edited {
 			l.addEdited()

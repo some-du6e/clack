@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"gioui.org/gesture"
 	"gioui.org/layout"
 	"gioui.org/widget"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
+	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -37,17 +40,19 @@ import (
 //     viewer isn't in it): "You don’t have access to this channel (ex.
 //     it’s private or in a workspace you’re not a part of), so its name
 //     isn’t shown" (padding 16).
-//   - a code channel (agent_channel record) under session_channels: the
-//     CodeChannelSummary card instead (not drawn by Clack yet: see
-//     ChannelHoverCard.Layout).
+//   - a code channel (agent_channel record) under session_channels:
+//     CodeChannelEntityCard instead (code_card.go).
 //   - else, padding 16: the header (margin-bottom 12) is a row
 //     (margin-bottom 4, centred) of the name, flex 1 in text_subtitle
 //     (18px/1.25, weight 900) with ellipsis, InlineChannelEntity with
 //     boldIcon (getChannelIconType: archive / archive-filled, lock-filled,
-//     channel-filled; a 20px inline box, 2+2px before the name), then the
-//     huddle badge and the mention count (Badge style themed:
-//     theme-base-imp / theme-content-imp) 4px apart; under it the topic
-//     (topic.value, not the purpose) in two lines at most
+//     channel-filled; a 20px inline box, 2+2px before the name), then a
+//     group (gap 4px between what it holds) of the huddle badge
+//     (ChannelHoverCardHuddleBadge: huddleui's Badge, ChannelHuddleBadge)
+//     and the mention count (Badge style themed: theme-base-imp /
+//     theme-content-imp); under it the topic (topic.value, not the
+//     purpose) as mrkdwn (i0IN with noHighlights, noJumbomoji,
+//     showTooltips false: emoji, mentions and links) in two lines at most
 //     (multiline_ellipsis_2 break_word). An archived channel stops there;
 //     any other gets a column (gap 4) of ChannelHoverCardBodyItems
 //     (display flex: the 20px icon nudged 2px down, the text 8px after
@@ -69,6 +74,11 @@ import (
 // ChannelJoinHook, set by the ui root, joins a channel the way Slack's
 // joinChannel thunk does (conversations.join); nil uses core directly.
 var ChannelJoinHook func(ch string, done func(error))
+
+// ChannelHuddleBadge, set by the ui root, draws ChannelHoverCardHuddleBadge
+// for ch ending at right in a row rowH tall (huddleui's CardBadge) and
+// returns its left edge, right when no huddle is on there; nil draws none.
+var ChannelHuddleBadge func(gtx layout.Context, th *theme.Theme, ch string, right, rowH int) int
 
 var (
 	nsTeam = i18n.NS("team")
@@ -96,13 +106,25 @@ type ChannelHoverCard struct {
 	btn     widget.Clickable
 	others  widget.Clickable // the "N other teams" run (its tooltip)
 	otherTp TipState
+
+	topic    *richview.View // the topic as mrkdwn
+	topicKey string
+	huddle   bool // the name row drew ChannelHoverCardHuddleBadge
+
+	// the code channel card (code_card.go)
+	codeAsked bool
+	codeBtn   widget.Clickable
+	faceHover gesture.Hover
+	faceTip   TipState
+	pile      image.Rectangle // the facepile, card coordinates
 }
 
 // NewChannelHoverCard is the card for the channel id over anchor (window
 // coordinates). buttons is enableButtons; texty is TextyTooltip's Popover
 // (allowance 0, no opposite position).
 func NewChannelHoverCard(h Host, anchor image.Rectangle, id string, buttons, texty bool) *ChannelHoverCard {
-	return &ChannelHoverCard{h: h, anchor: anchor, id: id, buttons: buttons, texty: texty, otherTp: TipState{Delay: 150 * time.Millisecond}}
+	return &ChannelHoverCard{h: h, anchor: anchor, id: id, buttons: buttons, texty: texty, otherTp: TipState{Delay: 150 * time.Millisecond},
+		faceTip: TipState{Delay: 150 * time.Millisecond}}
 }
 
 // Rect is the drawn card (window coordinates).
@@ -121,9 +143,10 @@ const (
 	ChannelCardLoading  ChannelCardState = iota // "Loading…"
 	ChannelCardNoAccess                         // the no-access text
 	ChannelCardFull                             // name, topic, items, buttons
+	ChannelCardCode                             // CodeChannelEntityCard (code_card.go)
 )
 
-// State reports which of Slack's three cards is drawn.
+// State reports which of Slack's cards is drawn.
 func (p *ChannelHoverCard) State() ChannelCardState {
 	cv, ok := p.conv()
 	switch {
@@ -131,6 +154,8 @@ func (p *ChannelHoverCard) State() ChannelCardState {
 		return ChannelCardLoading
 	case !ok || !channelViewable(cv):
 		return ChannelCardNoAccess
+	case p.codeChannelCard(cv):
+		return ChannelCardCode
 	}
 	return ChannelCardFull
 }
@@ -138,7 +163,7 @@ func (p *ChannelHoverCard) State() ChannelCardState {
 // Button is the action the card offers ("" without buttons).
 func (p *ChannelHoverCard) Button() string {
 	cv, ok := p.conv()
-	if !p.buttons || !ok || !channelViewable(cv) {
+	if !p.buttons || !ok || !channelViewable(cv) || p.codeChannelCard(cv) {
 		return ""
 	}
 	if channelCardView(cv) {
@@ -151,7 +176,7 @@ func (p *ChannelHoverCard) Button() string {
 // external teams; "" for one still loading.
 func (p *ChannelHoverCard) Items() []string {
 	cv, ok := p.conv()
-	if !ok || cv.IsArchived {
+	if !ok || cv.IsArchived || p.codeChannelCard(cv) {
 		return nil
 	}
 	c := p.h.Core()
@@ -175,6 +200,10 @@ func (p *ChannelHoverCard) conv() (core.Conv, bool) {
 	}
 	return c.Conv(p.id)
 }
+
+// HuddleBadge reports whether the name row shows the huddle badge
+// (tests).
+func (p *ChannelHoverCard) HuddleBadge() bool { return p.huddle }
 
 // channelViewable is isChannelViewable: public, or one the viewer is in
 // (Clack keeps no record channels).
@@ -241,7 +270,7 @@ func (p *ChannelHoverCard) load(cv core.Conv, ok bool) {
 		})
 		return
 	}
-	if !channelViewable(cv) || cv.IsArchived {
+	if !channelViewable(cv) || cv.IsArchived || p.codeChannelCard(cv) {
 		return
 	}
 	if !p.latestAsked {
@@ -281,6 +310,7 @@ func (p *ChannelHoverCard) Layout(gtx layout.Context) layout.Dimensions {
 	cv, ok := p.conv()
 	p.load(cv, ok)
 	p.clicks(gtx, cv, ok)
+	p.codeClicks(gtx)
 
 	w := dp(gtx, 340)
 	if mw := win.X - 2*dp(gtx, hovercard.AllowanceX); w > mw && !p.texty {
@@ -356,6 +386,9 @@ func (p *ChannelHoverCard) content(gtx layout.Context, th *theme.Theme, cl *Colo
 	if !ok || !channelViewable(cv) {
 		return msg(nsTeam.T("You don’t have access to this channel (ex. it’s private or in a workspace you’re not a part of), so its name isn’t shown"))
 	}
+	if p.codeChannelCard(cv) {
+		return p.codeCard(gtx, th, cl, cv, w) // the HoverCard without padding_100
+	}
 	y := pad
 	y += p.header(gtx, th, cl, cv, pad, y, inner)
 	y += dp(gtx, 12) // the header's margin-bottom
@@ -412,15 +445,30 @@ func channelCardIcon(cv core.Conv) string {
 func (p *ChannelHoverCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, cv core.Conv, x, y, w int) int {
 	lineH := dp(gtx, 22.5) // 18px × 1.25
 	right := x + w
-	// the right group: huddle badge (not drawn: see the doc), then the
-	// mention count
+	// the right group (gap 4px between its children): the huddle badge,
+	// then the mention count
+	mention := false
 	if c := p.h.Core(); c != nil {
 		if n := c.Count(cv.ID).Mentions; n > 0 {
+			mention = true
 			at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-				right = drawMenuBadge(gtx, th, n, "themed", false, right, lineH) - dp(gtx, 4)
+				right = drawMenuBadge(gtx, th, n, "themed", false, right, lineH)
 				return layout.Dimensions{}
 			})
 		}
+	}
+	if ChannelHuddleBadge != nil {
+		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			r := right
+			if mention {
+				r -= dp(gtx, 4)
+			}
+			l := ChannelHuddleBadge(gtx, th, cv.ID, r, lineH)
+			if p.huddle = l != r; p.huddle {
+				right = l
+			}
+			return layout.Dimensions{}
+		})
 	}
 	nameW := max(1, right-x)
 	name := cv.Name // a DM's or group DM's: DeprecatedChannelName
@@ -446,19 +494,83 @@ func (p *ChannelHoverCard) header(gtx layout.Context, th *theme.Theme, cl *Color
 			})
 		})
 	})
-	h := lineH + dp(gtx, 4) // the name row's margin_bottom_25
-	topic := strings.TrimSpace(richtext.PlainText(richtext.Doc{Blocks: cv.TopicDoc}))
-	if topic == "" {
-		topic = strings.TrimSpace(cv.Topic)
-	}
-	if topic != "" {
+	h := lineH + dp(gtx, 4)                // the name row's margin_bottom_25
+	if strings.TrimSpace(cv.Topic) != "" { // getChannelTopicText
 		d := at(gtx, image.Pt(x, y+h), func(gtx layout.Context) layout.Dimensions {
-			return para(loose(gtx, image.Pt(w, 1<<20)), th, 15, 22, theme.Regular, cl.Fg, topic, 2)
+			return p.topicView(gtx, th, cl, cv, w)
 		})
 		h += d.Size.Y
 	}
 	return h
 }
+
+// topicView draws the topic w wide: i0IN's mrkdwn (emoji, mentions and
+// links through richview, no keyword highlights, no jumbomoji, no emoji
+// tooltips) in multiline_ellipsis_2's two lines. The topic's blocks run
+// as one paragraph (the clamp is the whole box's), and its mentions open
+// no card of their own. Without the message rows' style (RichStyle) it is
+// the plain text.
+func (p *ChannelHoverCard) topicView(gtx layout.Context, th *theme.Theme, cl *Colors, cv core.Conv, w int) layout.Dimensions {
+	var st *richview.Style
+	if RichStyle != nil {
+		st = RichStyle(p.h)
+	}
+	if st == nil {
+		topic := strings.TrimSpace(richtext.PlainText(richtext.Doc{Blocks: cv.TopicDoc}))
+		if topic == "" {
+			topic = strings.TrimSpace(cv.Topic)
+		}
+		return para(loose(gtx, image.Pt(w, 1<<20)), th, 15, 22, theme.Regular, cl.Fg, topic, 2)
+	}
+	if p.topic == nil || p.topicKey != cv.Topic {
+		var spans []richtext.Span
+		for i, b := range cv.TopicDoc {
+			if i > 0 {
+				spans = append(spans, richtext.Span{Kind: richtext.Break})
+			}
+			spans = append(spans, topicSpans(b)...)
+		}
+		if len(spans) == 0 {
+			spans = []richtext.Span{{Kind: richtext.Text, Text: cv.Topic}}
+		}
+		doc := richtext.Doc{Blocks: []richtext.Block{{Kind: richtext.Paragraph, Spans: spans}}}
+		p.topic = richview.New(doc, richview.Options{MaxLines: 2, NoEmojiTips: true, NoHoverCards: true})
+		p.topicKey = cv.Topic
+	}
+	gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+	return p.topic.Layout(gtx, st, topicHandler{p.h})
+}
+
+// topicSpans are a topic block's inline spans (a list's items and a
+// quote's lines one after another, line breaks between them).
+func topicSpans(b richtext.Block) []richtext.Span {
+	out := append([]richtext.Span(nil), b.Spans...)
+	for _, it := range b.Items {
+		if len(out) > 0 {
+			out = append(out, richtext.Span{Kind: richtext.Break})
+		}
+		out = append(out, it...)
+	}
+	for _, c := range b.Children {
+		if len(out) > 0 {
+			out = append(out, richtext.Span{Kind: richtext.Break})
+		}
+		out = append(out, topicSpans(c)...)
+	}
+	return out
+}
+
+// topicHandler routes clicks in the topic: links open, a member opens
+// their profile, a channel goes there.
+type topicHandler struct{ h Host }
+
+func (t topicHandler) OpenURL(u string)                  { _ = openurl.Open(u) }
+func (t topicHandler) OpenUser(id string, a image.Point) { t.h.OpenProfile(a, id) }
+func (t topicHandler) OpenChannel(id string)             { t.h.Navigate("c/" + id) }
+func (t topicHandler) OpenUsergroup(string, image.Point) {}
+func (t topicHandler) OpenImage(img richtext.Image)      { _ = openurl.Open(img.URL) }
+func (t topicHandler) OpenFile(f *richtext.File)         {}
+func (t topicHandler) Button(b richtext.Button)          {}
 
 // items draws the body items' column (gap 4) at (x, y) and returns its
 // height.

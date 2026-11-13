@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"strconv"
 	"strings"
@@ -169,4 +170,93 @@ func ordinalDay(d int) string {
 		return s + "rd"
 	}
 	return s + "th"
+}
+
+// slugPeekTabs are the tab types with a peek (client-boot mwX5's P,
+// isPreviewEnabled): under session_channels_slug_peek a slug to one of
+// them shows the tab's peek (D3FY ChannelTabSlugPeekTrigger, useTabPeek)
+// instead of the channel hover card.
+var slugPeekTabs = map[string]bool{
+	"agent_sessions": true, "agent_view": true, "automations": true, "bookmarks": true, "canvas": true, "channel": true,
+	"code": true, "code_channel_pull_request": true, "external_files": true, "files": true, "folder": true, "list": true,
+	"native_file": true, "pins": true, "record_overview": true, "record_summary": true, "workflows": true,
+	"record_related_list": true, "record_related_conversations": true, "salesforce_list_view": true,
+}
+
+// ChannelTabSlugCard reports whether a channel-tab slug (a rich_text
+// channel element with a tab_id) opens Slack's ChannelHoverCard, as
+// boot-shared NY16 wires it (build 3889f0c93d30):
+//
+//   - MrkdwnChannelTab resolves the tab: the first of the channel's
+//     properties.tabz whose id or type is the tab id
+//     (findTabInChannelProperties), else a code channel's artifact tab
+//     (getCodeChannelArtifactTabForTabId: artifact tabs aren't on for the
+//     account, so none), else the Code tab for "code". With the channel
+//     known and either public, joined or a record channel, and the tab
+//     resolved, it's ResolvedChannelTabSlug; anything else falls back to
+//     BaseMrkdwnChannel (lH2I), whose HoverCardTrigger opens the card.
+//   - ResolvedChannelTabSlug renders renderChannelTabSlugPeek (zDOB),
+//     which D3FY's ChannelTabSlugPeekTrigger fills: with
+//     session_channels_slug_peek on and a tab type that has a peek
+//     (slugPeekTabs), the tab's peek; otherwise the HoverCardTrigger
+//     with the channel card (enableButtons).
+//
+// Clack doesn't draw the tab peeks, so those slugs open nothing.
+func (a *App) ChannelTabSlugCard(ch, tab string) bool {
+	c, ok := a.S.Conv(ch)
+	if !ok {
+		if c, ok = a.S.ExtConv(ch); !ok {
+			return true // unknown: BaseMrkdwnChannel
+		}
+	}
+	private := (c.IsPrivate || c.IsGroup) && !c.IsMPIM // aK5v.Zp
+	record := recordID(c.Properties) != ""             // aK5v.rI
+	if private && !a.isMemberConv(c) && !record {
+		return true
+	}
+	typ, found := tabzType(c.Properties, tab)
+	if !found && tab == "code" {
+		typ, found = "code", true
+	}
+	if !found {
+		return true
+	}
+	return !(a.experiment("session_channels_slug_peek") == "on" && slugPeekTabs[typ])
+}
+
+// tabzType is findTabInChannelProperties (mwX5.kt → findTabById): the
+// type of the first of properties.tabz whose id or type is id.
+func tabzType(props json.RawMessage, id string) (string, bool) {
+	if id == "" || len(props) == 0 {
+		return "", false
+	}
+	var p struct {
+		Tabz []struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+		} `json:"tabz"`
+	}
+	if json.Unmarshal(props, &p) != nil {
+		return "", false
+	}
+	for _, t := range p.Tabz {
+		if t.ID == id || t.Type == id {
+			return t.Type, true
+		}
+	}
+	return "", false
+}
+
+// recordID is properties.record_channel.record_id (aK5v.rI
+// isRecordChannel tests it).
+func recordID(props json.RawMessage) string {
+	var p struct {
+		Record struct {
+			ID string `json:"record_id"`
+		} `json:"record_channel"`
+	}
+	if len(props) == 0 || json.Unmarshal(props, &p) != nil {
+		return ""
+	}
+	return p.Record.ID
 }

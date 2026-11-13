@@ -1139,13 +1139,35 @@ func (v *View) isMention(t int16) bool {
 }
 
 // isChannelCard reports whether t is a #channel with Slack's channel
-// hover card (BaseMrkdwnChannel's HoverCardTrigger).
+// hover card (BaseMrkdwnChannel's HoverCardTrigger), or a channel-tab
+// slug whose card Slack shows (TabSlugCard).
 func (v *View) isChannelCard(t int16) bool {
 	if t < 0 || int(t) >= len(v.d.targets) {
 		return false
 	}
 	tg := &v.d.targets[t]
+	if tg.kind == tLink && tg.tab != "" {
+		return tg.id != "" && TabSlugCard != nil && TabSlugCard(tg.id, tg.tab)
+	}
 	return tg.kind == tChannel && tg.id != "" && !tg.cardless
+}
+
+// TabSlugCard, set by the ui root, reports whether a channel-tab slug
+// (channel ch, tab id tab) opens Slack's channel hover card: NY16's
+// MrkdwnChannelTab falls back to BaseMrkdwnChannel's trigger for a tab it
+// can't resolve, and ResolvedChannelTabSlug's ChannelTabSlugPeekTrigger
+// shows the tab's own peek instead of the card for a tab type with one
+// (core.ChannelTabSlugCard). nil: no card.
+var TabSlugCard func(ch, tab string) bool
+
+// tabOfSlug is the tab id in a channel-tab slug's link
+// (/archives/<C>/tabs/<tab>, richtext's getChannelTabPermalink).
+func tabOfSlug(u string) string {
+	_, tab, ok := strings.Cut(u, "/tabs/")
+	if !ok {
+		return ""
+	}
+	return tab
 }
 
 // hoverCard reports the @mention under the pointer to the profile hover
@@ -1156,7 +1178,7 @@ func (v *View) hoverCard(st *Style, h Handler) {
 	if c == nil {
 		return
 	}
-	if v.opts.HoverCard {
+	if v.opts.HoverCard || v.opts.NoHoverCards {
 		return // the hover card's own content triggers nothing
 	}
 	t := v.hover

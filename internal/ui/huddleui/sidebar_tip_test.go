@@ -141,7 +141,8 @@ func TestSidebarSuffixTooltipHover(t *testing.T) {
 	if hs.sbBadge.tip.Showing(t0.Add(160 * time.Millisecond)) {
 		t.Error("the badge's tooltip showed while the faces were hovered")
 	}
-	// the badge: 4px in from the right edge, 36px wide
+	// the badge: painted 3px in from the right edge (margin-right 4px,
+	// left 1px), 36px wide
 	badgeX := (220 - 6 - 4 - 18) * shotScale
 	move(badgeX)
 	t1 := t0.Add(time.Second)

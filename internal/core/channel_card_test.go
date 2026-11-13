@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strconv"
 	"strings"
@@ -123,5 +124,99 @@ func TestChannelCardConvFields(t *testing.T) {
 	mu.Unlock()
 	if cached && n != 0 || !cached && n != 1 {
 		t.Errorf("%d conversations.history limit-1 reads (history cached: %v): want one only when core holds none", n, cached)
+	}
+}
+
+// Which channel-tab slugs open the channel card (NY16 → zDOB/D3FY): a
+// tab with a peek under session_channels_slug_peek doesn't; a tab the
+// channel doesn't have, one without a peek, any tab with the experiment
+// off, and a channel nobody knows do.
+func TestChannelCardTabSlug(t *testing.T) {
+	sz := fakeslack.Small
+	sz.CodeChannels = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	a := New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	t.Cleanup(a.Shutdown)
+	if err := a.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if g := a.Experiment("session_channels_slug_peek"); g != "on" {
+		t.Fatalf("session_channels_slug_peek %q, want the account's on", g)
+	}
+	ch := fakeslack.CodeWorkingID
+	for _, c := range []struct {
+		tab  string
+		card bool
+	}{
+		{"code", false},                            // the Code tab: CodeTabPeek
+		{fakeslack.CodeHTMLViewID, false},          // agent_view: AgentViewTabPeek
+		{"Ct" + fakeslack.CodePlanCanvasID, false}, // canvas: CanvasTabPeek
+		{"agent_view", false},                      // findTabById matches a type too
+		{"Ct0GONE000001", true},                    // not one of its tabs: BaseMrkdwnChannel
+	} {
+		if got := a.ChannelTabSlugCard(ch, c.tab); got != c.card {
+			t.Errorf("tab %q: card %v, want %v", c.tab, got, c.card)
+		}
+	}
+	if !a.ChannelTabSlugCard("C0NOPE00001", "code") {
+		t.Error("an unknown channel's slug: no card (BaseMrkdwnChannel shows it)")
+	}
+	// a tab type without a peek (huddles)
+	if got, ok := tabzType(json.RawMessage(`{"tabz":[{"id":"Ct1","type":"huddles"}]}`), "Ct1"); !ok || got != "huddles" || slugPeekTabs[got] {
+		t.Errorf("huddles tab: %q %v", got, ok)
+	}
+	a.SetExperimentGroup("session_channels_slug_peek", "")
+	if !a.ChannelTabSlugCard(ch, "code") {
+		t.Error("slug peek off: the Code tab's slug has no card")
+	}
+}
+
+// useCodeChannelSummaryText: summary_message.message_ts, read from the
+// store only (nothing until the history is loaded), as the last rich_text
+// block's plain text with unicode emoji and the sender's name.
+func TestChannelCardCodeSummary(t *testing.T) {
+	sz := fakeslack.Small
+	sz.CodeChannels = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	a := New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	t.Cleanup(a.Shutdown)
+	if err := a.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if s, ok := a.CodeChannelSummary(fakeslack.CodeDoneID); ok && a.S.Timeline(fakeslack.CodeDoneID) == nil {
+		t.Errorf("a summary %+v before the history loaded (Slack reads its store only)", s)
+	}
+	if _, err := a.History(ctx, fakeslack.CodeDoneID, ""); err != nil {
+		t.Fatal(err)
+	}
+	a.EnsureUsers(ctx, []string{fakeslack.CodeAgentID})
+	s, ok := a.CodeChannelSummary(fakeslack.CodeDoneID)
+	if !ok || s.Text != "Upgraded every dependency to its latest minor 🎉 and the suite passes." || s.Author != "Codebot" || s.TS == "" {
+		t.Errorf("summary %+v %v", s, ok)
+	}
+	if _, ok := a.CodeChannelSummary(fakeslack.CodeWorkingID); ok {
+		t.Error("the working channel has no summary_message")
+	}
+	if got := normalizePreview("a\n\n\nb\n"); got != "a\nb" {
+		t.Errorf("normalizePreview %q", got)
+	}
+	if err := a.LoadChannelTopMembers(ctx, fakeslack.CodeDoneID); err != nil {
+		t.Fatal(err)
+	}
+	if ms, ok := a.ChannelTopMembers(fakeslack.CodeDoneID); !ok || len(ms) == 0 {
+		t.Errorf("top members %q %v", ms, ok)
+	}
+	if f := fs.UserListFilters(); len(f) == 0 || f[len(f)-1] != "everyone AND NOT bots AND NOT apps" {
+		t.Errorf("users/list filters %q", f)
 	}
 }

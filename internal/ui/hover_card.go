@@ -11,7 +11,9 @@ import (
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // profileHover is the profile hover card (Slack's ProfileHoverTrigger):
@@ -216,9 +218,10 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 	hovercard.Invalidate(gtx, next)
 }
 
-// installAppCardHooks wires the app hover card's actions: About this app
+// installAppCardHooks wires the hover cards' actions: About this app
 // opens the app's DM on its About tab, a slash command row types the
-// command into the open conversation's composer.
+// command into the open conversation's composer; the channel card's
+// huddle badge and the channel-tab slugs' card rule.
 func (a *App) installAppCardHooks() {
 	popups.OpenAppAbout = func(uid string) {
 		if a.data == nil || a.data.core == nil {
@@ -240,6 +243,16 @@ func (a *App) installAppCardHooks() {
 				}
 			})
 		}()
+	}
+	// ChannelHoverCardHuddleBadge is the sidebar suffix's badge (huddleui
+	// Badge), and a channel-tab slug opens the channel card where Slack's
+	// does (core.ChannelTabSlugCard)
+	popups.ChannelHuddleBadge = func(gtx layout.Context, th *theme.Theme, ch string, right, rowH int) int {
+		return a.huddles().CardBadge(gtx, th, ch, right, rowH)
+	}
+	richview.TabSlugCard = func(ch, tab string) bool {
+		c := a.Core()
+		return c != nil && c.ChannelTabSlugCard(ch, tab)
 	}
 	popups.ComposerInsert = func(s string) bool {
 		ch := a.router.Current().Channel()
