@@ -390,6 +390,7 @@ func TestPrefsSkinToneHandsAndMilesDavis(t *testing.T) {
 		}
 		return false
 	}
+	ca.SetExperimentGroup("miles_davis_themes", "") // unassigned first (core's defaults hold the account's on)
 	if has(pageRows(t, a, p, "appearance"), theme.MilesDavisGroup) {
 		t.Fatal("Miles Davis themes without the experiment")
 	}

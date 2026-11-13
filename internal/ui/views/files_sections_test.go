@@ -64,9 +64,11 @@ func rowKeys(v *Files) string {
 // With custom_file_sections the sidebar lists files.collections.list: the
 // divider, the starred collection (empty: its row), then the custom
 // section with its canvas; the header's ⋮ is useFileCollectionMenuTemplate.
+// Deleted sits after Lists: file_trash_updates is on for the account
+// (core's defaults), which always shows it (TestFilesViewDeletedNav).
 func TestFilesViewSectionsSidebar(t *testing.T) {
 	v, h, e, fs, id := sectionsView(t)
-	want := "all canvases lists file-collections-divider coll:" + fakeslack.StarredCollectionID +
+	want := "all canvases lists horizontal-divider deleted file-collections-divider coll:" + fakeslack.StarredCollectionID +
 		" empty-collection-" + fakeslack.StarredCollectionID + " coll:" + id + " " + fakeslack.CanvasShared + "-" + id
 	if got := rowKeys(v); !strings.HasSuffix(got, want) {
 		t.Errorf("rows %q\nwant …%q", got, want)

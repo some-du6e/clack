@@ -16,6 +16,7 @@ import (
 func TestQuickReactionsFollowPrefs(t *testing.T) {
 	t.Cleanup(uipref.Reset)
 	app, _ := newTestApp(t)
+	app.SetExperimentGroup("autocomplete_frequently_used_emojis_frecency", "") // emoji_use's counts (core's defaults hold the account's on)
 	h := coreHost{app: app, th: theme.New(false)}
 	r := &row{}
 	var q quickBar

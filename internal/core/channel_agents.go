@@ -48,9 +48,13 @@ func (a *App) ChannelHeaderWithAgents() bool {
 	return a.experiment(ExpChannelHeaderWithAgents) == "on"
 }
 
-// ExpAgentsInChannelsImprovements is M/qt Io (off on the test account):
-// among other things it decides whether AgentCountButton's labels go
-// through I18n.
+// ExpAgentsInChannelsImprovements is M/qt Io (on for the test account
+// since 2026-11-13; off before): it decides whether AgentCountButton's
+// labels go through I18n, and drops Agents sections from the sidebar
+// (client-boot Q; app.go sections). Its channel details rework (Vmvo
+// ReworkedAgentsAppsTab, the Members roster's people-only scope in +VDd,
+// the invite modal's agents-and-apps scope in ANc2) isn't ported
+// (docs/EXPERIMENTS.md).
 const ExpAgentsInChannelsImprovements = "agents_in_channels_improvements"
 
 // AgentsInChannelsImprovements is M/qt Io.

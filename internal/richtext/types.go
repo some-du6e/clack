@@ -50,6 +50,14 @@ const (
 	// label (text and emoji) and Text that label as plain text; Off is
 	// the disabled slug (a deleted canvas).
 	Canvas
+	// ChannelTab is a resolved channel-tab slug (a channel element with a
+	// tab_id; tabslug.go): Slack's ResolvedChannelTabSlug pill. ID is the
+	// channel, URL its tab link, Icon the tab's icon, Text the label
+	// ("Canvas in #general", or the tab alone in its own channel), Pre the
+	// bytes of Text before the channel's name, ChIcon the channel's icon
+	// drawn there instead of "#" (lock, code, archive, …) and Chan the
+	// channel's name.
+	ChannelTab
 )
 
 // Span is one run of inline content.
@@ -64,12 +72,16 @@ type Span struct {
 	// Additions (MessageMention and Channel; channel.go):
 	Lock bool // the label's channel is private (lock icon before its name)
 	Off  bool // the message or channel can't be shown ("Private message", "Private channel"): not a link
-	Pre  int  // MessageMention with Lock: bytes of Text before the channel name
+	Pre  int  // MessageMention with Lock, ChannelTab: bytes of Text before the channel name
 
 	// Canvas (canvasslug.go): the slug's icon and label (behind a
 	// pointer, so Spans stay comparable).
 	Icon  string
 	Parts *SpanParts
+
+	// ChannelTab (tabslug.go): the channel's icon before its name ("" for
+	// "#name") and the channel's name.
+	ChIcon, Chan string
 
 	// Hidden (User): a member the viewer hid, in a rollup or a system
 	// message's text (RollupName, boot-shared quVX): Text is "Name hidden"

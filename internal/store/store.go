@@ -69,6 +69,15 @@ type Store struct {
 	// users field Slack's bulkAddMembersToGroup / appendMembersToGroup,
 	// client-boot CjnZ, keep on a userGroups record; memory only).
 	groupUsers map[string][]string
+	// groupChannels is each user group's default channels (Slack's
+	// getUserGroupDefaultChannels, client-boot PWhS UN: prefs.channels
+	// then prefs.groups) as usergroups.search or subteam_updated last
+	// gave them (memory only).
+	groupChannels map[string][]string
+	// ugGen counts changes to a user group's record, members or channels
+	// (the User Group pane watches it, as Slack's pane re-renders on its
+	// userGroups record).
+	ugGen atomic.Uint64
 	// Muted is the set of muted conversation ids (from prefs).
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
@@ -84,6 +93,7 @@ type Store struct {
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
+	experiments map[string]string                 // the last experiments.getByUser groups (diskCache.Experiments)
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
@@ -158,6 +168,18 @@ func (s *Store) ChannelAccess(id string) richtext.ChannelAccess {
 // ExperimentGroup reads a Slack experiment's group for richtext's
 // experiment-dependent text (core sets it to its Experiment).
 var ExperimentGroup func(s *Store, name string) string
+
+// TabSlug resolves a channel-tab slug for richtext (core sets it to its
+// ChannelTabSlug); nil leaves every slug the plain channel mention.
+var TabSlug func(s *Store, channelID, tabID string) (richtext.TabSlug, bool)
+
+// ChannelTabSlug is richtext.ChannelTabResolver.
+func (s *Store) ChannelTabSlug(channelID, tabID string) (richtext.TabSlug, bool) {
+	if TabSlug == nil {
+		return richtext.TabSlug{}, false
+	}
+	return TabSlug(s, channelID, tabID)
+}
 
 // HuddleTextOpts is richtext.HuddleResolver: a huddle_thread message's
 // conversation (a DM and its other member, a group DM) and the
@@ -1484,6 +1506,11 @@ type diskCache struct {
 	// UserSeen is when each saved user was last fetched (unix seconds):
 	// the next save keeps the MaxSavedUsers most recent.
 	UserSeen map[string]int64 `json:"user_seen,omitempty"`
+	// Experiments is the last experiments.getByUser answer, name -> group:
+	// Slack's experiments store is persisted too (client-boot 5fie,
+	// persistenceEnabled), so checks read the account's groups before the
+	// call answers again.
+	Experiments map[string]string `json:"experiments,omitempty"`
 }
 
 // MaxSavedUsers bounds the users meta.json keeps: the most recently fetched
@@ -1508,6 +1535,34 @@ func (s *Store) sameGroups(gs []slack.Usergroup) bool {
 		i++
 	}
 	return i == len(s.Groups)
+}
+
+// SetExperimentGroups keeps experiments.getByUser's groups for the disk
+// cache (name -> group).
+func (s *Store) SetExperimentGroups(g map[string]string) {
+	cp := make(map[string]string, len(g))
+	for k, v := range g {
+		cp[k] = v
+	}
+	s.mu.Lock()
+	s.experiments = cp
+	s.mu.Unlock()
+	s.gen.Add(1)
+}
+
+// CachedExperimentGroups returns the experiment groups the disk cache (or
+// the last SetExperimentGroups) holds, nil when there are none.
+func (s *Store) CachedExperimentGroups() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.experiments == nil {
+		return nil
+	}
+	out := make(map[string]string, len(s.experiments))
+	for k, v := range s.experiments {
+		out[k] = v
+	}
+	return out
 }
 
 // HasCachedPrefs reports whether prefs came from the disk cache.
@@ -1569,7 +1624,94 @@ func (s *Store) SetGroupUsers(id string, ids []string, appendPage bool) {
 	if appendPage {
 		ids = append(append([]string(nil), s.groupUsers[id]...), ids...)
 	}
+	old, had := s.groupUsers[id]
 	s.groupUsers[id] = append([]string{}, ids...)
+	if !had || !slices.Equal(old, ids) {
+		s.ugGen.Add(1)
+	}
+}
+
+// UsergroupGen counts changes to user group records, members and
+// default channels.
+func (s *Store) UsergroupGen() uint64 { return s.ugGen.Load() }
+
+// GroupChannels is group id's default channels as last known (nil, false
+// before usergroups.search or subteam_updated gave them).
+func (s *Store) GroupChannels(id string) ([]string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids, ok := s.groupChannels[id]
+	return ids, ok
+}
+
+// SetGroupChannels records group id's default channels.
+func (s *Store) SetGroupChannels(id string, ids []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.groupChannels == nil {
+		s.groupChannels = map[string][]string{}
+	}
+	old, had := s.groupChannels[id]
+	s.groupChannels[id] = append([]string{}, ids...)
+	if !had || !slices.Equal(old, ids) {
+		s.ugGen.Add(1)
+	}
+}
+
+// PutUsergroup is bulkAddGroups for one group (subteam_updated,
+// subteam_created): g replaces the stored record with its id (members
+// and default channels are kept apart, so they stay), or joins the list.
+func (s *Store) PutUsergroup(g slack.Usergroup) {
+	if g.ID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	found := false
+	for i := range s.Groups {
+		if s.Groups[i].ID == g.ID {
+			if s.Groups[i] == g {
+				return
+			}
+			s.Groups[i], found = g, true
+		}
+	}
+	if !found {
+		s.Groups = append(s.Groups, g)
+	}
+	if g.Handle != "" {
+		s.Usergroups[g.ID] = g.Handle
+	}
+	s.gen.Add(1)
+	s.ugGen.Add(1)
+}
+
+// SetUsergroupCount is bulkAddMembersToGroup's user_count: the number of
+// members it stored.
+func (s *Store) SetUsergroupCount(id string, n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Groups {
+		if s.Groups[i].ID == id && s.Groups[i].UserCount != n {
+			s.Groups[i].UserCount = n
+			s.gen.Add(1)
+			s.ugGen.Add(1)
+		}
+	}
+}
+
+// SetUsergroupDescription is updateDescription (client-boot CjnZ ub):
+// the description usergroups.update sent, once it answered ok.
+func (s *Store) SetUsergroupDescription(id, desc string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Groups {
+		if s.Groups[i].ID == id && s.Groups[i].Description != desc {
+			s.Groups[i].Description = desc
+			s.gen.Add(1)
+			s.ugGen.Add(1)
+		}
+	}
 }
 
 // InUsergroup is richtext.UsergroupMember: whether the viewer is in group
@@ -1595,6 +1737,7 @@ func (s *Store) SetUsergroups(gs []slack.Usergroup) {
 		s.Usergroups[g.ID] = g.Handle
 	}
 	s.gen.Add(1)
+	s.ugGen.Add(1)
 }
 
 func (s *Store) LoadCache() {
@@ -1637,6 +1780,9 @@ func (s *Store) LoadCache() {
 	}
 	if len(d.Bots) > 0 {
 		s.bots = d.Bots
+	}
+	if d.Experiments != nil {
+		s.experiments = d.Experiments
 	}
 	s.mu.Unlock()
 	if d.Prefs != nil {
@@ -1752,6 +1898,9 @@ func (s *Store) SaveCache() error {
 	}
 	for k, v := range s.bots {
 		d.Bots[k] = v
+	}
+	if s.experiments != nil {
+		d.Experiments = s.experiments // replaced whole, never changed in place
 	}
 	// the stored users are never changed in place (PutUsers replaces
 	// them), so they're written after the lock is let go: the viewer and

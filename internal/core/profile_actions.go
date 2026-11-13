@@ -98,6 +98,11 @@ type UsergroupProfile struct {
 	Usergroup
 	Disabled bool     // date_delete set: "<name> (Deactivated)", no tabs
 	Channels []string // prefs.channels: the Channels tab
+	// Groups are prefs.groups, the private default channels
+	// (DefaultChannels lists both).
+	Groups []string
+	// AdditionalChannels are prefs.additional_channels (internal spaces).
+	AdditionalChannels []string
 }
 
 // UsergroupProfile finds group id: the boot list first, then
@@ -119,9 +124,10 @@ func (a *App) UsergroupProfile(ctx context.Context, id string) (UsergroupProfile
 			UserCount   json.RawMessage `json:"user_count"`
 			DateDelete  int64           `json:"date_delete"`
 			TeamID      string          `json:"team_id"`
-			Prefs       struct {
-				Channels []string `json:"channels"`
-			} `json:"prefs"`
+			AutoType    string          `json:"auto_type"`
+			DateUpdate  int64           `json:"date_update"`
+			IsSection   bool            `json:"is_section"`
+			Prefs       usergroupPrefs  `json:"prefs"`
 		} `json:"usergroups"`
 	}
 	if err := a.C.Call(ctx, "usergroups.search", url.Values{"keyword": {out.Handle}, "count": {"1"}}, &res); err != nil {
@@ -132,9 +138,12 @@ func (a *App) UsergroupProfile(ctx context.Context, id string) (UsergroupProfile
 			continue
 		}
 		team := firstNonEmpty(g.TeamID, out.TeamID)
-		out.Usergroup = Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: int(looseInt(g.UserCount)), TeamID: team}
+		out.Usergroup = Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: int(looseInt(g.UserCount)),
+			TeamID: team, AutoType: g.AutoType, IsSection: g.IsSection, Updated: g.DateUpdate}
 		out.Disabled = g.DateDelete != 0
-		out.Channels = g.Prefs.Channels
+		out.Channels, out.Groups, out.AdditionalChannels = g.Prefs.Channels, g.Prefs.Groups, g.Prefs.AdditionalChannels
+		// fetchAndUpsertUserGroup: the answer joins the store (bulkAddGroups)
+		a.S.SetGroupChannels(g.ID, out.DefaultChannels())
 	}
 	return out, nil
 }
@@ -145,7 +154,7 @@ func (a *App) StoredUsergroup(id string) Usergroup {
 	defer a.S.RUnlock()
 	for _, g := range a.S.Groups {
 		if g.ID == id {
-			return Usergroup{ID: g.ID, Handle: g.Handle, Name: g.Name, Description: g.Description, UserCount: g.UserCount, TeamID: g.TeamID}
+			return usergroupOf(g)
 		}
 	}
 	return Usergroup{}
@@ -185,6 +194,9 @@ func (a *App) UsergroupUsers(ctx context.Context, g Usergroup, cursor string) ([
 		return nil, "", err
 	}
 	a.S.SetGroupUsers(g.ID, res.Users, cursor != "")
+	if cursor == "" {
+		a.S.SetUsergroupCount(g.ID, len(res.Users)) // bulkAddMembersToGroup's user_count
+	}
 	a.EnsureUsers(ctx, res.Users)
 	return a.groupMembers(res.Users, true), res.Meta.NextCursor, nil
 }

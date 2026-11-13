@@ -237,6 +237,7 @@ func TestEditProfileSectionLikeSlack(t *testing.T) {
 // remove pane deletes it. A tiny image stops at "Try a larger image".
 func TestEditProfilePhotoLikeSlack(t *testing.T) {
 	h, _ := epEnv(t, false)
+	h.a.SetExperimentGroup(ExpProfilePhotoComp, "") // unassigned: "Uploading your photo…" (core's defaults hold the account's on)
 	m := NewEditProfileModal(h, EditProfileOpts{})
 	f := m.Form()
 	if f.hasPhoto() {
