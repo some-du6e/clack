@@ -158,8 +158,7 @@ func systemText(h Host, app *core.App, m *core.Message, redesigned bool) (spans 
 		if u, ok := app.User(id); ok && u.Name != "" {
 			name = u.Name
 		} else {
-			ensureUser(h, id)
-			missing = true
+			missing = true // asked for by the lookup; drawn again at "names"
 		}
 		spans = append(spans, richtext.Span{Kind: richtext.User, ID: id, Text: name})
 	}

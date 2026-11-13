@@ -148,6 +148,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		}
 	}
 	a.RTM.OnHello = a.onHello
+	s.SetMembersOnline(a.membersOnline)
 	appsByStore.Store(s, a)
 	store.ExperimentGroup = experimentForStore
 	return a
@@ -641,7 +642,9 @@ func (a *App) Boot(ctx context.Context) error {
 	go a.codeChannelCloserLoop(a.bg) // code_channels_auto_close (codechannel_close.go)
 	go a.pump()
 	go a.prefetch(a.bg)
-	go a.resolveLoop(a.bg) // unresolved channel/user/bot names
+	go a.resolveLoop(a.bg) // unresolved channel/bot names
+	go a.memberLoop(a.bg)  // members lookups missed (members.go)
+	go a.membersLoop(a.bg) // the members cache's pass (members.go)
 	if a.C.Creds.EnterpriseID != "" {
 		go func() { _ = a.LoadEnterprisePrefs(a.bg) }() // enterprise_prefs.go
 	}
@@ -1083,6 +1086,20 @@ func (a *App) User(id string) (User, bool) {
 		return User{}, false
 	}
 	return a.userOf(u), true
+}
+
+// MemberAvatar is getProfileImageForMember: member id's picture for a
+// size px slot ("" while the member isn't known: the lookup asks for it,
+// and "names" follows).
+func (a *App) MemberAvatar(id string, size int) string {
+	if id == "" {
+		return ""
+	}
+	u, ok := a.S.User(id)
+	if !ok {
+		return ""
+	}
+	return avatarURL(u, size, firstNonEmpty(a.C.Creds.Team, a.S.TeamID))
 }
 
 // Self returns the signed-in user.

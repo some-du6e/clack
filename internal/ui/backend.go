@@ -70,10 +70,6 @@ type backend struct {
 	// sidebar lives in ext. UI goroutine only.
 	side map[string]*chSide
 
-	avMu    sync.Mutex
-	avatars map[string]string
-	asked   map[string]time.Time // when backend.avatar may ask core for the user again
-
 	snapMu      sync.Mutex
 	snapPending bool
 
@@ -86,7 +82,7 @@ type backend struct {
 // directory is the store's.
 func newBackend(c *core.App, cacheDir string) *backend {
 	b := &backend{core: c, pluginsReady: make(chan struct{}), tabCache: map[string][]chTab{}, bookmarks: map[string][]core.Bookmark{},
-		fetched: map[string]time.Time{}, side: map[string]*chSide{}, avatars: map[string]string{}, asked: map[string]time.Time{}}
+		fetched: map[string]time.Time{}, side: map[string]*chSide{}}
 	b.m.Convs = map[string]*convInfo{}
 	return b
 }
@@ -594,9 +590,6 @@ func (b *backend) handle(a *App, ev core.Event) {
 		}
 	case "user":
 		if ev.User != nil {
-			b.avMu.Lock()
-			b.avatars[ev.User.ID] = ev.User.Avatar
-			b.avMu.Unlock()
 			if ev.User.ID == b.selfID {
 				m.SelfName, m.SelfAvatar = ev.User.Name, ev.User.Avatar
 			}
@@ -617,11 +610,18 @@ func (b *backend) handle(a *App, ev core.Event) {
 	case "auth_failed":
 		// core stopped all traffic on a dead session: back to sign-in
 		a.sessionEnded()
+	case "members_evicted":
+		// the members cache let members go (core/members.go): the sidebar
+		// and the views read theirs again, as Slack's components re-render
+		// on the removal; one still shown is asked for ("names" follows)
+		b.resnapshot(a)
+		a.Invalidate()
 	case "names":
 		// core resolved channel/user/bot names in the background: re-read
 		// the visible conversations so mentions and headers re-render.
 		b.resnapshot(a)
 		a.refreshVisible()
+		a.Invalidate()
 		for id := range b.ext {
 			// re-resolve closed-DM headers, keeping what they show until
 			// the new answer lands: forgetting them blanked the header and
@@ -820,12 +820,7 @@ func (b *backend) opened(ch string) {
 					if u.Deleted || u.IsBot {
 						continue
 					}
-					members = append(members, u.ID)
-					if u.Avatar != "" {
-						b.avMu.Lock()
-						b.avatars[u.ID] = u.Avatar
-						b.avMu.Unlock()
-					} // else avatar() resolves it via core.User / EnsureUsers
+					members = append(members, u.ID) // avatar() draws them from the members cache
 				}
 			}
 		}
@@ -1071,51 +1066,12 @@ func (b *backend) openTab(ch, key string) {
 }
 
 func (b *backend) avatar(id string) string {
-	b.avMu.Lock()
-	url := b.avatars[id]
-	b.avMu.Unlock()
-	if url != "" {
-		return url
-	}
-	if u, ok := b.core.User(id); ok && u.Avatar != "" {
-		b.avMu.Lock()
-		b.avatars[id] = u.Avatar
-		b.avMu.Unlock()
-		return u.Avatar
-	}
-	// unknown: fetch the profile (users.info); the next frame picks it up
-	// from core. A read that fails (the user is still unknown after it) is
-	// asked again after avatarAskAgain, as long as something still draws
-	// this avatar, instead of leaving a placeholder for the session.
-	now := time.Now()
-	b.avMu.Lock()
-	if b.asked == nil {
-		b.asked = map[string]time.Time{}
-	}
-	ask := now.After(b.asked[id])
-	if ask {
-		b.asked[id] = now.Add(avatarAskAgain)
-	}
-	b.avMu.Unlock()
-	if ask && b.ctx != nil {
-		a, ctx := b.app, b.ctx
-		go func() {
-			b.core.EnsureUsers(ctx, []string{id})
-			if _, ok := b.core.User(id); !ok && ctx.Err() == nil && a != nil {
-				// still unknown: repaint when another ask is due
-				time.AfterFunc(avatarAskAgain, a.Invalidate)
-			}
-			if a != nil {
-				a.Invalidate()
-			}
-		}()
-	}
-	return ""
+	// getProfileImageForMember reads the member through getMemberById:
+	// drawing the avatar keeps its member in the members cache
+	// (store/members.go), and one it doesn't hold (never fetched, or
+	// evicted) is asked for, the default picture until "names" redraws it
+	return b.core.MemberAvatar(id, 72)
 }
-
-// avatarAskAgain is how long backend.avatar waits before asking core for a
-// user whose last users.info failed.
-const avatarAskAgain = 15 * time.Second
 
 // ---- writes ----
 

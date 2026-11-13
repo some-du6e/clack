@@ -162,9 +162,7 @@ func hostMemberLink(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if app := hostCore(); app != nil {
 		if u, ok := app.User(id); ok && u.Name != "" {
 			name = u.Name
-		} else if !ok && lastHost != nil {
-			ensureUser(lastHost, id)
-		}
+		} // else asked for by the lookup: the id until "names"
 	}
 	th := h.Theme()
 	c := colorsFor(th)
