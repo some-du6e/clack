@@ -223,6 +223,9 @@ type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
+	actBadgeMu sync.Mutex
+	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
+
 	// OnPost, when set, runs inside chat.postMessage before it answers,
 	// with the posted form and the new message (tests push the realtime
 	// echo from it, so it reaches the client before the reply). Set it
@@ -1178,6 +1181,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				chans = append(chans, e)
 			}
 		}
+		if av := s.activityV2(); av != nil { // activity_badges.go
+			return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2}, "activity_v2", av)
+		}
 		return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
 	case "sidebar.dms": // every generated DM is open; AddClosedDM's aren't
 		var ims, mpdms []map[string]any
@@ -1503,6 +1509,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		if out, handled := s.handleViews(method, f); handled { // views.go
 			return out
 		}
+	} else if method == "activity.markRead" && f.Get("key") != "" { // no feed: every single markRead reads an unread item (activity_badges.go)
+		s.readActivityBadge(f.Get("type"))
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out

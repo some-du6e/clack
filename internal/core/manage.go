@@ -532,6 +532,7 @@ func (a *App) MarkActivityRead(ctx context.Context, items ...ActivityItem) error
 		if err := a.C.Call(ctx, "activity.markRead", url.Values{"type": {it.Type}, "feed_ts": {it.FeedTS}, "key": {it.Key}}, nil); err != nil {
 			return err
 		}
+		a.decActivityBadges([]ActivityItem{it}) // the rail's badge (activity_badges.go)
 	}
 	return nil
 }

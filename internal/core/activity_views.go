@@ -318,7 +318,11 @@ func actBulkEntries(items []ActivityItem, ts bool) string {
 // (ActivityFilterBulkAction, useActivityItemShortcuts): activity.markRead
 // {reason: bulk_mark_read, entries: [{type, key, feed_ts}]}.
 func (a *App) MarkActivityReadBulk(ctx context.Context, items ...ActivityItem) error {
-	return a.C.Call(ctx, "activity.markRead", url.Values{"reason": {"bulk_mark_read"}, "entries": {actBulkEntries(items, false)}}, nil)
+	if err := a.C.Call(ctx, "activity.markRead", url.Values{"reason": {"bulk_mark_read"}, "entries": {actBulkEntries(items, false)}}, nil); err != nil {
+		return err
+	}
+	a.decActivityBadges(items) // the rail's badge (activity_badges.go)
+	return nil
 }
 
 // MarkActivityUnreadBulk is "Mark selected as unread": activity.markUnread

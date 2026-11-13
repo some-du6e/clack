@@ -492,7 +492,10 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				at(gtx, tile.Min.Add(image.Pt(io, io)), image.Pt(gtx.Dp(isz), gtx.Dp(isz)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(name)(gtx, isz, c.ChromeText)
 				})
-				// unread badge / dot on the tile's top-right corner.
+				// unread badge / dot on the tile's top-right corner. The
+				// badge's right edge is fixed (.p-tab_rail__button .c-badge
+				// {top:4px; right:2px}, absolute in the 52px tab), so 10
+				// and 99+ grow left, inside the tab, not past its clip.
 				if n, dot := a.railBadge(t.key); n > 0 {
 					// .p-tab_rail__button .c-badge: top 4px, right 2px
 					bw := a.railCountWidth(gtx, n)
@@ -715,4 +718,13 @@ func teamInitials(name string) string {
 		return string(rs)
 	}
 	return strings.ToUpper(string(out))
+}
+
+// railCountText is the tabs' Badge text (InjD useGetMentions: S1+c Ex
+// with maxCount 99): the count, or "99+" past it.
+func railCountText(n int) string {
+	if n > 99 {
+		return "99+"
+	}
+	return itoa(n)
 }
