@@ -238,12 +238,11 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 	mm := m
 	c.edit = &mm
 	c.init()
-	d := DocFromRichtext(m.Doc.Blocks)
-	if d == nil || d.Len() == 0 {
-		d = NewDoc()
-		d.Insert(0, m.Text, Attr{})
+	var r AtomResolver
+	if c.api.a != nil {
+		r = c.api.resolver()
 	}
-	c.ed.SetDoc(d)
+	c.ed.SetDoc(docForMessage(m, r))
 	c.lastVer = c.ed.Version()
 	c.focusReq = true
 	return c
@@ -1245,14 +1244,59 @@ func (c *Composer) tryUnsend() bool {
 }
 
 // DocForMessage is a message's contents as composer text (Slack's
-// getDeltaForMessageObject): its rich text, else its text.
-func DocForMessage(m core.Message) *Doc {
+// getDeltaForMessageObject): its rich text, else its text. r names the
+// atoms (nil: their ids).
+func DocForMessage(m core.Message, r AtomResolver) *Doc { return docForMessage(m, r) }
+
+// docForMessage is getDeltaForMessageObject (boot-shared +LRL, build
+// fa938a086569) without plain-text, markdown or opaque-block mode: the
+// message's own rich_text blocks through convertBlocksToDelta (V/2c),
+// else its text. Every element keeps what it is: a message_mention is the
+// message slug again (formatMessageSlugAttributesForDelta: its url,
+// author, channel and thread), a link its text with the url (the url as
+// the text when it has none), a mention, emoji or broadcast its atom, a
+// date its fallback and a color its value. The rendered document is only
+// a fallback for a message without blocks: its spans no longer carry what
+// a slug points at (Karim's edit, 2026-11-12, showed a message_mention as
+// the plain label "clod in #clack" and saved it without the link).
+func docForMessage(m core.Message, r AtomResolver) *Doc {
+	if raw := richTextOnly(m.Blocks); raw != nil {
+		if d, err := DocFromBlocksJSON(raw, r); err == nil && d != nil && d.Len() > 0 {
+			return d
+		}
+	}
 	d := DocFromRichtext(m.Doc.Blocks)
 	if d == nil || d.Len() == 0 {
 		d = NewDoc()
 		d.Insert(0, m.Text, Attr{})
 	}
 	return d
+}
+
+// richTextOnly keeps a message's rich_text blocks (getDeltaForMessageObject's
+// blocks.filter(type === rich_text)); nil when it has none.
+func richTextOnly(blocks json.RawMessage) json.RawMessage {
+	var bs []json.RawMessage
+	if len(blocks) == 0 || json.Unmarshal(blocks, &bs) != nil {
+		return nil
+	}
+	var keep []json.RawMessage
+	for _, b := range bs {
+		var t struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(b, &t) == nil && t.Type == "rich_text" {
+			keep = append(keep, b)
+		}
+	}
+	if len(keep) == 0 {
+		return nil
+	}
+	out, err := json.Marshal(keep)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 // sendJob is one outgoing message; run happens off the UI goroutine.

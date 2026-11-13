@@ -151,8 +151,10 @@ func TestPendingReplyAndTS(t *testing.T) {
 	if len(th) != 2 || th[1].TS != "9999999999.000005" {
 		t.Errorf("thread after reply: %v", tss(th))
 	}
-	if root, _ := a.S.Find("C1", "9999999999.000001"); root.ReplyCount != 1 {
-		t.Errorf("parent not bumped: %d", root.ReplyCount)
+	// Slack's client doesn't count the reply itself: the parent's
+	// metadata waits for message_replied (thread_meta.go)
+	if root, _ := a.S.Find("C1", "9999999999.000001"); root.ReplyCount != 0 {
+		t.Errorf("parent bumped locally: %d", root.ReplyCount)
 	}
 	if tl := a.S.Timeline("C1"); len(tl.Msgs) != 1 {
 		t.Error("thread reply leaked into the channel timeline")

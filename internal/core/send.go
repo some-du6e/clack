@@ -186,9 +186,6 @@ func (a *App) confirmPending(ch string, m *slack.Message) bool {
 	})
 	a.S.Remove(ch, p.ts)
 	a.putLocal(ch, *m)
-	if !isTopLevel(m) {
-		a.bumpParent(ch, m)
-	}
 	v := a.message(ch, m)
 	a.emit(Event{Type: "sent", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, ReplacesTS: p.ts, ClientMsgID: cid,
 		UserID: m.User, Msg: &v, Reply: !isTopLevel(m), ConvKind: a.kindOf(ch)})
@@ -285,24 +282,6 @@ func (a *App) isLocalTS(ts string) bool {
 		}
 	}
 	return false
-}
-
-// bumpParent updates a thread parent's reply metadata for a new reply.
-func (a *App) bumpParent(ch string, m *slack.Message) {
-	if upd, ok := a.S.Mutate(ch, m.ThreadTS, func(x *slack.Message) {
-		x.ReplyCount++
-		x.LatestReply = m.TS
-		for _, u := range x.ReplyUsers {
-			if u == m.User {
-				return
-			}
-		}
-		if m.User != "" {
-			x.ReplyUsers = append(x.ReplyUsers, m.User)
-		}
-	}); ok {
-		a.emitUpdate(ch, &upd)
-	}
 }
 
 // wasConfirmed reports whether m is the (late) echo of an already confirmed send.
