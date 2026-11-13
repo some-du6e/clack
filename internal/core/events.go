@@ -484,19 +484,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		a.onMessageLocked(ch, ev.Raw)
 		return
 	case "message_replied":
-		if e.Message == nil {
-			return
-		}
-		m := *e.Message
-		a.EnsureUsers(ctx, m.ReplyUsers)
-		if upd, ok := a.S.Mutate(ch, m.TS, func(x *slack.Message) {
-			x.ReplyCount, x.ReplyUsers, x.LatestReply = m.ReplyCount, m.ReplyUsers, m.LatestReply
-			if m.ReplyUsersN > 0 {
-				x.ReplyUsersN = m.ReplyUsersN
-			}
-		}); ok {
-			a.emitUpdate(ch, &upd)
-		}
+		a.onMessageReplied(ctx, ch, ev.Raw) // thread_meta.go
 		return
 	}
 	var m slack.Message
@@ -512,6 +500,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		go a.fillFiles(ch, m.TS)
 	}
 	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
+	// a broadcast's root carries its parent's reply metadata; a plain
+	// reply leaves the parent to message_replied (thread_meta.go)
+	a.mergeBroadcastRoot(ch, &m, ev.Raw)
 	// Echo of our own optimistic send: swap the pending row instead of
 	// announcing a second message.
 	if a.confirmPending(ch, &m) {
@@ -527,7 +518,6 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	if isReply {
 		a.S.AddReply(ch, m)
-		a.bumpParent(ch, &m) // message_replied may lag
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)

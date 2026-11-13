@@ -128,6 +128,12 @@ func TestRealtimeSendEchoOneMessage(t *testing.T) {
 					ev[k] = v
 				}
 				fs.Push(ev)
+				if tc.threadRoot { // Slack's gateway follows a reply with its parent's message_replied
+					fs.Push(map[string]any{"type": "message", "subtype": "message_replied", "hidden": true, "channel": ch,
+						"event_ts": msg["ts"], "message": map[string]any{"type": "message", "ts": parent, "thread_ts": parent,
+							"user": "U0FAKE00001", "reply_count": 1, "reply_users": []string{fakeslack.SelfID}, "reply_users_count": 1,
+							"latest_reply": msg["ts"]}})
+				}
 			}
 			var mu sync.Mutex
 			var posted map[string]any
@@ -173,6 +179,7 @@ func TestRealtimeSendEchoOneMessage(t *testing.T) {
 				if n := countWhere(timelineOf(a, ch), func(m *slack.Message) bool { return m.Text == text }); n != 0 {
 					t.Errorf("the thread reply also shows in the channel (%d)", n)
 				}
+				log.wait(t, "message_replied", func([]Event) bool { p, _ := a.S.Find(ch, parent); return p.LatestReply == got.TS })
 				if p, _ := a.S.Find(ch, parent); p.ReplyCount != 1 {
 					t.Errorf("parent reply_count %d, want 1", p.ReplyCount)
 				}
