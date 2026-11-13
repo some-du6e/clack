@@ -98,6 +98,9 @@ type Size struct {
 	// PreviewAgents puts agents and apps into #lounge-preview, the
 	// channel the viewer previews (preview_agents.go).
 	PreviewAgents bool
+	// ChannelAgents gives #agents-lab people, an agent and apps, and
+	// #no-agents people only (channel_agents.go).
+	ChannelAgents bool
 	// WorkObjects adds #work-objects: app unfurls as work objects and
 	// the methods and events their cards and flexpane use
 	// (workobjects.go).
@@ -312,9 +315,11 @@ type Server struct {
 	// conversations.info answers them with is_member false, and
 	// conversations.join moves them into convs (Joins records each call).
 	convMu sync.Mutex
-	others []slack.Conversation
-	Joins  []JoinCall
-	Leaves []string // conversations.leave calls (LeaveCalls)
+	// caInvites: conversations.invite into the ChannelAgents channels
+	caInvites map[string][]string
+	others    []slack.Conversation
+	Joins     []JoinCall
+	Leaves    []string // conversations.leave calls (LeaveCalls)
 	// BulkLeaves are conversations.bulkLeave calls' channels (BulkLeaveCalls)
 	BulkLeaves [][]string
 	// listFilters: every edge users/list filter (UserListFilters).
@@ -819,6 +824,7 @@ func (s *Server) generate() {
 		c.IsPrivate = r.Intn(10) == 0
 		s.convs = append(s.convs, c)
 	}
+	s.channelAgentsConvs() // channel_agents.go
 	for i := 0; i < s.Size.DMs && i+1 < len(s.users); i++ {
 		s.convs = append(s.convs, slack.Conversation{ID: fmt.Sprintf("D0FAKE%05d", i), IsIM: true, User: s.users[i+1].ID,
 			IsOpen: true, Created: now - int64(r.Intn(1e7)), Priority: r.Float64()})
@@ -1626,7 +1632,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				}
 			}
 		}
-		return ok("results", res)
+		return ok("results", s.channelAgentsSearch(q, res))
 	case "edge/channels/search":
 		var q string
 		_ = json.Unmarshal(edge["query"], &q)
@@ -1641,6 +1647,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		return ok("results", res)
 	case "edge/users/counts":
+		if out, handled := s.channelAgentsCounts(edge); handled { // channel_agents.go
+			return out
+		}
 		if out, handled := s.previewAgentCounts(edge); handled { // preview_agents.go
 			return out
 		}
@@ -1654,6 +1663,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		s.convMu.Lock()
 		s.listFilters = append(s.listFilters, filter)
 		s.convMu.Unlock()
+		if out, handled := s.channelAgentsList(edge, filter); handled { // channel_agents.go
+			return out
+		}
 		if filter == "apps" {
 			if out, handled := s.previewAgentList(edge); handled { // preview_agents.go
 				return out
@@ -1718,6 +1730,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleProfileWrites(method, f); handled { // profile.go
 		return out
 	}
+	if out, handled := s.handleChannelAgents(method, f); handled { // channel_agents.go
+		return out
+	}
 	if out, handled := s.handleChannels(method, f); handled {
 		return out
 	}
@@ -1747,6 +1762,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 		return s.codeFx.Agent, true
 	}
 	if u, ok := s.previewAgentUser(id); ok {
+		return u, true
+	}
+	if u, ok := s.channelAgentUser(id); ok { // channel_agents.go
 		return u, true
 	}
 	if s.Size.AgentThread && id == AgentDMUserID { // agent_thread.go

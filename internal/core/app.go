@@ -1022,7 +1022,7 @@ func (a *App) userOf(u *slack.User) User {
 		Title: u.Profile.Title, Pronouns: u.Profile.Pronouns, Email: u.Profile.Email, StatusText: u.Profile.StatusText,
 		StatusEmoji: u.Profile.StatusEmoji, StatusCanonical: u.Profile.StatusTextCanonical, StatusExp: u.Profile.StatusExpiration, TZ: u.TZ, TZOffset: u.TZOffset,
 		TZLabel: u.TZLabel, IsBot: u.IsBot || u.ID == "USLACKBOT", Deleted: u.Deleted, IsAdmin: u.IsAdmin,
-		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Color: u.Color,
+		IsOwner: u.IsOwner, Guest: u.IsRestricted || u.IsUltraRestricted, Frontline: u.RestrictedUserType == "frontline_worker", Color: u.Color,
 		Huddle: u.Profile.HuddleState == "in_a_huddle", Agent: u.AgentStatus == "consistently_an_agent",
 		HuddleChannel: u.Profile.HuddleChannel, HuddleExpires: u.Profile.HuddleExpires,
 		Stranger: u.IsStranger, BotID: u.Profile.BotID, AppID: u.Profile.APIAppID,

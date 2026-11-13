@@ -6,9 +6,10 @@ package popups
 // addAppsVariant, from the Integrations tab's "Add an App"
 // (about-channel-modal IntegrationsSection) and from Agents & apps' "Add
 // agents and apps" while agents_in_channels_improvements is off
-// (agents-apps-tab +xuY; on, Slack opens the channel invite modal scoped
-// to agents and apps instead, which Clack doesn't have). The reads are
-// core/apps_index.go.
+// (agents-apps-tab +xuY; on, that opens the channel invite modal scoped
+// to agents and apps, and this browser opens from its "Explore more
+// agents and apps" and the empty tab's "Browse Agents and Apps":
+// views/details_agents.go). The reads are core/apps_index.go.
 //
 //   - AppsBrowserModal: a FullScreenModal (.c-fullscreen_modal: the
 //     window in sk_primary_background; the close button 64×64 at top 48,

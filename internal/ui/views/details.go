@@ -173,6 +173,8 @@ type ChannelDetails struct {
 
 	cl cdCall  // details_call.go: Start a Call ▾
 	em cdEmail // details_email.go: Send emails to this channel
+
+	agents *cdAgents // details_agents.go: agents_in_channels_improvements
 }
 
 // NewChannelDetails opens the details dialog for a conversation.
@@ -431,8 +433,11 @@ var cdEditWhat = map[int]string{cdEditTopic: "topic", cdEditPurpose: "descriptio
 // The root's Esc calls it through the overlay's Dismiss.
 func (d *ChannelDetails) Escape() bool {
 	switch {
-	case d.memFilter.open || d.tabsPerm.open || d.notifMenu.open:
+	case d.memFilter.open || d.tabsPerm.open || d.notifMenu.open || (d.agents != nil && d.agents.filt.open):
 		d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
+		if d.agents != nil {
+			d.agents.filt.open = false
+		}
 	case d.escapeDialog():
 	case d.editing:
 		d.editing, d.editErr = false, ""
@@ -697,8 +702,14 @@ func (d *ChannelDetails) update(gtx C) {
 	if d.tab.update(gtx) {
 		d.editing, d.confirmLeave = false, false
 		d.memFilter.open, d.tabsPerm.open, d.notifMenu.open = false, false, false
+		if d.agents != nil {
+			d.agents.filt.open = false
+		}
 	}
 	d.memFilter.update(gtx)
+	if d.agents != nil {
+		d.agents.filt.update(gtx)
+	}
 
 	if !d.info.started() {
 		d.loadInfo()
@@ -1313,7 +1324,8 @@ func cdBtn(b *base, gtx C, c *widget.Clickable, icon, label string, caret bool, 
 func (d *ChannelDetails) bodyArea(gtx C) D {
 	k := d.tabKinds[min(d.tab.Sel, len(d.tabKinds)-1)]
 	bg := d.p.ReadFill
-	if k == cdMembers {
+	reworked := k == cdApps && d.agentsImproved() // p-about_modal__contents--reworked-agents: base-pry
+	if k == cdMembers || reworked {
 		bg = d.p.Surface
 	}
 	fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, bg)
@@ -1331,10 +1343,13 @@ func (d *ChannelDetails) bodyArea(gtx C) D {
 	switch k {
 	case cdMembers:
 		return d.membersTab(gtx)
+	case cdApps:
+		if reworked {
+			return d.reworkedAgentsTab(gtx, inf) // details_agents.go
+		}
+		items = d.appsItems()
 	case cdAbout:
 		items = d.aboutItems(inf)
-	case cdApps:
-		items = d.appsItems()
 	case cdAutomations:
 		items = d.automationsItems() // details_automations.go
 	case cdTabs:
@@ -1726,6 +1741,7 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 	if !d.members.started() {
 		d.loadMembers("")
 	}
+	d.membersSearch()
 	q, _, _ := d.find.update(gtx)
 	mp, loaded, err := d.members.get()
 	if len(mp.users) != d.presN {
@@ -1737,12 +1753,21 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 		d.presN = len(mp.users)
 	}
 	busy := d.members.busy()
-	users := d.filtered(mp.users, q, d.memFilter.sel)
+	improved := d.agentsImproved()
+	filter, kind, hasFilter := &d.memFilter, d.memFilter.sel, true
+	var users []core.User
+	if improved { // e5: KcBz without "Agents & apps" (details_agents.go)
+		filter, kind, hasFilter = d.membersFilter()
+		d.ag().kind = kind
+		users = d.filteredImproved(mp.users, q, kind)
+	} else {
+		users = d.filtered(mp.users, q, d.memFilter.sel)
+	}
 	if d.moreMembers.Clicked(gtx) && mp.next != "" && !busy {
 		d.loadMembers(mp.next)
 		busy = true
 	}
-	filtering := q != "" || d.memFilter.sel != 0
+	filtering := q != "" || kind != 0
 	inv := 0
 	if d.inviting {
 		inv = 1
@@ -1761,6 +1786,10 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 		// list scrolls.
 		layout.Rigid(func(gtx C) D {
 			dims := layout.Inset{Top: 16, Bottom: 16, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
+				if !hasFilter { // a free team's roster has no filter: the search fills the row
+					gtx.Constraints.Min.X = gtx.Constraints.Max.X
+					return dirSearchField(&d.base, gtx, d.find, dirFieldStyle{H: 36, Icon: 16, PadL: 8, Gap: 8, Border: d.p.Faint, Over: d.p.Surface}, nil)
+				}
 				return row(gtx, layout.Middle,
 					layout.Rigid(func(gtx C) D {
 						gtx.Constraints.Max.X = min(gtx.Dp(316), max(0, gtx.Constraints.Max.X-gtx.Dp(208)))
@@ -1768,7 +1797,7 @@ func (d *ChannelDetails) membersTab(gtx C) D {
 						return dirSearchField(&d.base, gtx, d.find, dirFieldStyle{H: 36, Icon: 16, PadL: 8, Gap: 8, Border: d.p.Faint, Over: d.p.Surface}, nil)
 					}),
 					hgap(8),
-					layout.Rigid(func(gtx C) D { return d.memFilter.layoutSelect(&d.base, gtx, 200) }),
+					layout.Rigid(func(gtx C) D { return filter.layoutSelect(&d.base, gtx, 200) }),
 				)
 			})
 			if p := l.Position; p.First > 0 || p.Offset > 0 {
@@ -1867,10 +1896,7 @@ func (d *ChannelDetails) filtered(us []core.User, q string, sel int) []core.User
 func (d *ChannelDetails) addMembersRow(gtx C) D {
 	return d.hoverable(gtx, &d.addPeopleRow, false, 0, func(gtx C) D {
 		return layout.Inset{Top: 12, Bottom: 12, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
-			label := "Add people or agents"
-			if cdGroup(d.kind) != "channel" {
-				label = "Add people" // a group DM takes no agents
-			}
+			label := d.membersAddLabel()
 			return d.cdTileRow(gtx, "user-plus", func(gtx C) D { return d.label(gtx, 15, wBold, d.p.Text, label) })
 		})
 	})
@@ -2003,6 +2029,8 @@ func (d *ChannelDetails) membersFooter(gtx C, q string, filtering, loaded bool, 
 		return layout.Inset{Top: 8, Bottom: 16, Left: cdPadX, Right: cdPadX}.Layout(gtx, func(gtx C) D {
 			return d.button(gtx, &d.moreMembers, btnOutline, true, "Load more members")
 		})
+	case filtering && shown == 0 && d.agentsImproved():
+		return d.membersEmptyImproved(gtx, q, d.ag().kind)
 	case filtering && shown == 0 && q != "":
 		return msg("No one matches “" + q + "”.")
 	case filtering && shown == 0:

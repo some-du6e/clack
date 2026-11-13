@@ -135,8 +135,11 @@ type User struct {
 	TZOffset                         int
 	IsBot, Deleted, IsAdmin, IsOwner bool
 	Guest                            bool
-	Color, Presence                  string // Presence: active | away | ""
-	Huddle                           bool
+	// Frontline: restricted_user_type "frontline_worker" (Slack's eX W
+	// isFrontlineUser; the Members tab's Frontline filter).
+	Frontline       bool
+	Color, Presence string // Presence: active | away | ""
+	Huddle          bool
 	// HuddleChannel and HuddleExpires are profile.huddle_state_channel_id
 	// and huddle_state_expiration_ts: the huddle's channel and when the
 	// state lapses (Slack shows the sender's headphones only while both
