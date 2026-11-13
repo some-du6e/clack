@@ -232,10 +232,13 @@ func TestDesktopSessionPersists(t *testing.T) {
 	var mu sync.Mutex
 	writes := 0
 	c.PersistSession(func(nc Creds) error {
+		// count the write once the file is there: the wait below reads it
+		// as soon as writes > 0 (ci 43413422669 read it mid-write)
+		err := WriteCreds(path, nc)
 		mu.Lock()
 		writes++
 		mu.Unlock()
-		return WriteCreds(path, nc)
+		return err
 	})
 	for i := 0; i < 5; i++ {
 		if err := c.Call(context.Background(), "plain.method", nil, nil); err != nil {
