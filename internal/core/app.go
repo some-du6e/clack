@@ -416,6 +416,7 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 }
 
 func (a *App) emit(ev Event) {
+	a.pinsTabSee(ev) // the Pins tab's message copies (channel_pins.go)
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
 	for s := range a.subs {

@@ -4,7 +4,9 @@ name: views-audit
 # keyboard and realtime updates too) on internal/fakeslack's
 # views fixtures and the synthetic activity feed, headlessly through Gio's
 # GPU renderer (Mesa llvmpipe), and uploads light and dark screenshots of
-# each state (views-audit-shots). Nothing here talks to Slack.
+# each state (views-audit-shots); and the channel Pins tab and bookmark
+# folders (their rows, menus, modals and peeks) on #pins-gallery. Nothing
+# here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run views-audit.yml --ref <branch>)
@@ -14,6 +16,10 @@ on:
       - "internal/fakeslack/drafts.go"
       - "internal/core/drafts.go"
       - "internal/core/reads.go"
+      - "internal/core/channel_pins*.go"
+      - "internal/core/bookmark_folders.go"
+      - "internal/fakeslack/pins_folders.go"
+      - "internal/ui/popups/bookmark_modals.go"
       - "internal/ui/popups/modal.go"
       - ".github/workflows/views-audit.yml"
   workflow_dispatch:
@@ -44,8 +50,8 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$VIEWS_SHOTS_DIR"
-          go test -count=1 -v -run 'TestUnscheduleDraft|TestActivityFeedParams' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestThreadsTimeLikeSlack|TestDraftsTimesLikeSlack|TestDraftsDeleteDialog|TestActivityEmptyStates|TestActivitySelectOptions|TestActivitySettingsMenu|TestThreadsUpToDateDivider|TestThreadsEmptyState|TestDraftsScheduledActions|TestViewsAuditShotsDark|TestThreadsKeysLikeSlack|TestThreadsRealtimeLikeSlack|TestDraftsKeysAndRealtimeLikeSlack|TestTodosKeysAndRealtimeLikeSlack|TestUnreadsHomeEndLikeSlack|TestThreadsHeaderGroups|TestKeyboardShortcutsSearchGroups|TestTodosSectionsGroups|TestThreadsShowMoreReplies|TestTodosSectionListsLikeSlack|TestSentKeysLikeSlack|TestSavedKeysLikeSlack|TestUnreadsGlobalScrollLikeSlack|TestDMsUnreadsEmptyLikeSlack|TestThreadsTypedTextLikeSlack|TestThreadsEnterFocusesTheRootLikeSlack|TestThreadsShowMoreFocusLikeSlack|TestTodosFocusedRowActionsLikeSlack|TestSavedFocusedRowActionsLikeSlack|TestTodosTombstoneEnterLikeSlack|TestLaterRemoveCopyLikeSlack|TestTodosViewSelectsLikeSlack' ./internal/ui/views
+          go test -count=1 -v -run 'TestUnscheduleDraft|TestActivityFeedParams|TestPinsTabLikeSlack|TestBookmarkFoldersLikeSlack|TestFolderRowsShouldShow' ./internal/core
+          xvfb-run -a go test -count=1 -v -run 'TestThreadsTimeLikeSlack|TestDraftsTimesLikeSlack|TestDraftsDeleteDialog|TestActivityEmptyStates|TestActivitySelectOptions|TestActivitySettingsMenu|TestThreadsUpToDateDivider|TestThreadsEmptyState|TestDraftsScheduledActions|TestViewsAuditShotsDark|TestThreadsKeysLikeSlack|TestThreadsRealtimeLikeSlack|TestDraftsKeysAndRealtimeLikeSlack|TestTodosKeysAndRealtimeLikeSlack|TestUnreadsHomeEndLikeSlack|TestThreadsHeaderGroups|TestKeyboardShortcutsSearchGroups|TestTodosSectionsGroups|TestThreadsShowMoreReplies|TestTodosSectionListsLikeSlack|TestSentKeysLikeSlack|TestSavedKeysLikeSlack|TestUnreadsGlobalScrollLikeSlack|TestDMsUnreadsEmptyLikeSlack|TestThreadsTypedTextLikeSlack|TestThreadsEnterFocusesTheRootLikeSlack|TestThreadsShowMoreFocusLikeSlack|TestTodosFocusedRowActionsLikeSlack|TestSavedFocusedRowActionsLikeSlack|TestTodosTombstoneEnterLikeSlack|TestLaterRemoveCopyLikeSlack|TestTodosViewSelectsLikeSlack|TestChannelPinsRows|TestFolderTabRows|TestPinsFoldersShots' ./internal/ui/views
           ls -la "$VIEWS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

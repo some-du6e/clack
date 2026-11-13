@@ -175,6 +175,9 @@ type Tab struct {
 	// name in the list's list_metadata.views (getListViewById), "" when
 	// the list has no such view.
 	DefaultView, ViewName string
+	// FolderBookmarkID is a folder tab's data.folder_bookmark_id: the
+	// folder bookmark whose children it shows ("" the loose bookmarks).
+	FolderBookmarkID string
 }
 
 // MemberCounts is edge users/counts. Slack's channel header shows People.
@@ -865,8 +868,9 @@ type tabRaw struct {
 	Label      string `json:"label"`
 	IsDisabled bool   `json:"is_disabled"`
 	Data       struct {
-		FileID      string `json:"file_id"`
-		DefaultView string `json:"lists_channel_tab_default_refine_view_id"`
+		FileID           string `json:"file_id"`
+		DefaultView      string `json:"lists_channel_tab_default_refine_view_id"`
+		FolderBookmarkID string `json:"folder_bookmark_id"`
 	} `json:"data"`
 }
 
@@ -891,7 +895,8 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 		if r.IsDisabled {
 			continue
 		}
-		t := Tab{ID: r.ID, Type: r.Type, Label: r.Label, Title: r.Label, FileID: r.Data.FileID, DefaultView: r.Data.DefaultView}
+		t := Tab{ID: r.ID, Type: r.Type, Label: r.Label, Title: r.Label, FileID: r.Data.FileID, DefaultView: r.Data.DefaultView,
+			FolderBookmarkID: r.Data.FolderBookmarkID}
 		if n, ok := builtinTabIDTitles[r.ID]; ok {
 			t.Title = n
 		}

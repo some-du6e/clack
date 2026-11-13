@@ -651,7 +651,7 @@ func (a *App) Bookmarks(ctx context.Context, ch string) ([]Bookmark, error) {
 			ShortcutID  string `json:"shortcut_id"`
 		} `json:"bookmarks"`
 	}
-	if err := a.C.Call(ctx, "bookmarks.list", url.Values{"channel_id": {ch}, "channel": {ch}, "include_folders": {"true"}}, &res); err != nil {
+	if err := a.C.Call(ctx, "bookmarks.list", bookmarksListArgs(ch), &res); err != nil {
 		return nil, err
 	}
 	out := make([]Bookmark, 0, len(res.Bookmarks))

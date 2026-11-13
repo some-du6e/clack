@@ -298,6 +298,10 @@ func localTime(u core.User, now time.Time) string {
 	return clock(now.UTC().Add(time.Duration(u.TZOffset) * time.Second))
 }
 
+// Permalink is a message's link (getMessagePermalink): the workspace's
+// archives URL, with thread_ts and cid for a reply.
+func Permalink(h Host, ch, ts, threadTS string) string { return permalink(h, ch, ts, threadTS) }
+
 // permalink builds a message link from the team domain.
 func permalink(h Host, ch, ts, threadTS string) string {
 	u := "https://" + teamDomain(h) + ".slack.com/archives/" + ch + "/p" + strings.ReplaceAll(ts, ".", "")

@@ -29,14 +29,38 @@ func (a *App) tabPeekBodyMore(p *slugPeek, ch string, t core.SlugTab) tabPeekBod
 		return &listTabPeek{a: a, p: p, ch: ch, tab: t}
 	case "workflows":
 		return a.workflowsPeek(p, ch)
+	case "bookmarks": // PinsTabPeekV2: the Pins tab's rows in preview
+		return &pinsTabPeek{v: views.NewChannelPinsPeek(a, ch)}
+	case "folder": // FolderTabPeek: the folder's rows in preview
+		return &folderTabPeek{v: views.NewFolderTabPeek(a, ch, views.FolderTabInfo{ID: t.ID, Label: t.Label, FolderID: t.FolderID})}
 	}
 	// "channel", "pins" and the types without a case render an empty
-	// fragment. "bookmarks" (PinsTabPeekV2: the Pins tab's rows) and
-	// "folder" (FolderTabPeek: the bookmark folder's rows) are those tabs'
-	// own views in preview, and Clack has neither view yet (the Pins and
-	// bookmark-folder tabs open their bookmarks menu), so they show
-	// nothing either.
+	// fragment.
 	return nil
+}
+
+// ---- PinsTabPeekV2 / FolderTabPeek ----
+
+// pinsTabPeek is PinsTabPeekV2 (views/channel_pins.go): contentHeight 315
+// loading, 220 empty, else the rows' height.
+type pinsTabPeek struct{ v *views.ChannelPins }
+
+func (b *pinsTabPeek) height(gtx layout.Context) (int, bool) { return b.v.PeekHeight(gtx), true }
+
+func (b *pinsTabPeek) layout(gtx layout.Context) layout.Dimensions {
+	gtx.Constraints.Min = gtx.Constraints.Max
+	return b.v.Layout(gtx)
+}
+
+// folderTabPeek is FolderTabPeek (views/folder_tab.go): contentHeight 315
+// loading, 250 empty, else 63 a row.
+type folderTabPeek struct{ v *views.FolderTab }
+
+func (b *folderTabPeek) height(gtx layout.Context) (int, bool) { return b.v.PeekHeight(gtx), true }
+
+func (b *folderTabPeek) layout(gtx layout.Context) layout.Dimensions {
+	gtx.Constraints.Min = gtx.Constraints.Max
+	return b.v.Layout(gtx)
 }
 
 // unmounter is a body with work when the peek goes away.

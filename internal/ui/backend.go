@@ -647,6 +647,8 @@ func (b *backend) handle(a *App, ev core.Event) {
 		a.Invalidate()
 	case "work_objects": // the work object store moved (cards' refresh and comments, the flexpane)
 		a.Invalidate()
+	case "pins_tab", "bookmarks": // the Pins tab's rows, the folders' bookmarks (core/channel_pins.go, bookmark_folders.go)
+		a.Invalidate()
 	}
 	if changed {
 		b.recount()
@@ -808,7 +810,8 @@ func (b *backend) opened(ch string) {
 				continue
 			}
 			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread,
-				spans: tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
+				folder: t.FolderBookmarkID,
+				spans:  tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
@@ -1037,25 +1040,13 @@ func tabIcon(typ string) string {
 	return "canvas"
 }
 
-// openTab opens a channel tab. Canvases and lists open in the browser
-// (no native canvas editor yet); the Bookmarks tab lists its links.
+// openTab opens a channel tab that has no view of its own in the body:
+// a canvas or list tab Clack can't draw opens in the browser. (Pins and
+// folder tabs are body tabs: pins_tab.go.)
 func (b *backend) openTab(ch, key string) {
 	for _, t := range b.tabCache[ch] {
 		if t.key != key {
 			continue
-		}
-		if (t.icon == "bookmark" || t.icon == "pin") && len(b.bookmarks[ch]) > 0 && b.app != nil {
-			var items []MenuItem
-			for _, bm := range b.bookmarks[ch] {
-				bm := bm
-				items = append(items, MenuItem{Label: bm.Title, Icon: "link", Do: func() {
-					if !b.app.tripBookmark(ch, bm) { // a workflow bookmark runs (workflows_wire.go)
-						openURL(bm.Link)
-					}
-				}})
-			}
-			b.app.menu(b.app.PointerPos(), items)
-			return
 		}
 		if t.fileID != "" && b.domain != "" {
 			openURL("https://" + b.domain + ".slack.com/docs/" + b.teamID + "/" + t.fileID)

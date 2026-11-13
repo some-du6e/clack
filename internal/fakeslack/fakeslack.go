@@ -112,6 +112,9 @@ type Size struct {
 	// AgentThread adds a DM with an agent app and a thread in it, the
 	// agent's answer edited live (agent_thread.go).
 	AgentThread bool
+	// PinsFolders adds #pins-gallery: the Pins tab's pinned messages and
+	// file, and bookmark folders with their methods (pins_folders.go).
+	PinsFolders bool
 
 	// The memory workflow's real-account scale (HackClubScale). Zero
 	// values keep the sizes above exactly as they were, so no other
@@ -657,6 +660,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
+	}
+	if sz.PinsFolders {
+		s.addPinsChannel() // pins_folders.go
 	}
 	if sz.FileChannels {
 		s.addFileChannels() // file_channels.go
@@ -1242,6 +1248,9 @@ func ok(kv ...any) map[string]any {
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
 	if out, handled := s.handleAgentSessions(method, f); handled { // agent_sessions.go
+		return out
+	}
+	if out, handled := s.handlePinsFolders(method, f); handled { // pins_folders.go
 		return out
 	}
 	if s.Size.Workflows { // first: search.go answers search.autocomplete.triggers with none

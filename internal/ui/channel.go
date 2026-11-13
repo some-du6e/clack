@@ -74,6 +74,14 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), v.Layout)
 		return layout.Dimensions{Size: sz}
 	}
+	if v := a.pinsTabView(ch); v != nil { // the Pins tab (pins_tab.go)
+		atExact(gtx, body.Min, body.Size(), v.Layout)
+		return layout.Dimensions{Size: sz}
+	}
+	if v := a.folderTabView(ch); v != nil { // a bookmark folder (pins_tab.go)
+		atExact(gtx, body.Min, body.Size(), v.Layout)
+		return layout.Dimensions{Size: sz}
+	}
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
 		mp := clsMessagePane.Enter(gtx, 0, 0)
@@ -631,7 +639,8 @@ type chTab struct {
 	key, label, icon string
 	typ              string // Slack's tab type (core.Tab.Type): files, canvas, list, …
 	fileID           string
-	unread           bool // Slack's blue dot on the tab icon (unopened canvas)
+	folder           string // a folder tab's data.folder_bookmark_id
+	unread           bool   // Slack's blue dot on the tab icon (unopened canvas)
 	// a list tab's default view (core.Tab DefaultView) and its name;
 	// labeled when the tab has a label of its own (useTabLabel then shows
 	// it, no view name)
@@ -836,7 +845,7 @@ func (a *App) selectChannelTab(ch string, i int, t chTab) {
 	if t.key == "messages" {
 		a.chTab[ch] = 0
 	} else if bodyTab(t) {
-		a.chTab[ch] = i // the canvas, list, Workflows or Files & links tab opens in the channel's body
+		a.chTab[ch] = i // the canvas, list, Workflows, Files & links, Pins or folder tab opens in the channel's body
 	} else {
 		a.chTab[ch] = 0
 		a.openTab(ch, t.key)
@@ -844,9 +853,10 @@ func (a *App) selectChannelTab(ch string, i int, t chTab) {
 }
 
 // bodyTab: the tab's view is drawn in the channel's body (a canvas or list
-// tab, workflows_tab.go, files_tab.go).
+// tab, workflows_tab.go, files_tab.go, Pins and folders: pins_tab.go).
 func bodyTab(t chTab) bool {
-	return (t.icon == "canvas" || t.icon == "list-tab") && t.fileID != "" || t.icon == "workflow" || isFilesTab(t)
+	return (t.icon == "canvas" || t.icon == "list-tab") && t.fileID != "" || t.icon == "workflow" || isFilesTab(t) ||
+		isPinsTab(t) || isFolderTab(t)
 }
 
 // convTitle is the header name: channel name, DM partner, or group list.

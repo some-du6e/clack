@@ -32,6 +32,9 @@ on:
       - "internal/ui/popups/canvas_channel_card.go"
       - "internal/core/tab_peeks*.go"
       - "internal/ui/views/channel_files_peek.go"
+      - "internal/ui/views/channel_pins.go"
+      - "internal/ui/views/folder_tab.go"
+      - "internal/ui/pins_tab_test.go"
       - "internal/ui/composer/texty_tip*.go"
       - "internal/ui/popups/hover_*test.go"
       - "internal/ui/popups/search_view.go"
@@ -87,7 +90,7 @@ jobs:
           go test -count=1 -v -run 'TestHoverTrigger' ./internal/ui/views
           go test -count=1 -v -run 'TestRowHoverTarget' ./internal/ui/messages
           go test -count=1 -v -run 'TestMentionHoverCard|TestCanvasChannelAndTabSlugCards' ./internal/ui/richview
-          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestMentionHoverAndClick|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs|TestTabSlugPeeks|TestCanvasChannelCard' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestHoverCardInChannel|TestHoverCardOverDialog|TestPersonClickOpensProfilePane|TestMentionHoverAndClick|TestChannelHoverCardInChannel|TestChannelHoverCardCodeHuddleTabs|TestTabSlugPeeks|TestCanvasChannelCard|TestPinsFolderSlugPeeks' ./internal/ui/
           # the shared huddle badge (the sidebar suffix and the channel card's): card-badge-*.png
           CLACK_PIXEL_TESTS=1 CLACK_SHOTS="$HOVER_SHOTS_DIR" xvfb-run -a go test -count=1 -v -run 'TestCardBadgeLikeSidebar|TestSidebarSuffixFaces|TestSidebarSuffixTooltipHover|TestSidebarFaceCrescent|TestSidebarTooltipShots' ./internal/ui/huddleui
           ls -la "$HOVER_SHOTS_DIR"
