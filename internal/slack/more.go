@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,11 +36,16 @@ type ExperimentAssignment struct {
 }
 
 // ExperimentAssignments returns the viewer's assignments with their records.
+// It asks as Slack's desktop app does (client-boot fetchExperimentsData:
+// ssb_platform and ssb_release_channel when isDesktop): on macOS and
+// Windows the answer then holds the desktop_release_* rollouts too.
+// web_client_version is the page's versionTs, which Clack has no page for.
 func (c *Client) ExperimentAssignments(ctx context.Context) (map[string]ExperimentAssignment, error) {
 	var r struct {
 		Assignments map[string]json.RawMessage `json:"assignments"`
 	}
-	if err := c.Call(ctx, "experiments.getByUser", nil, &r); err != nil {
+	p := url.Values{"ssb_platform": {SSBPlatform(runtime.GOOS)}, "ssb_release_channel": {"prod"}}
+	if err := c.Call(ctx, "experiments.getByUser", p, &r); err != nil {
 		return nil, err
 	}
 	out := make(map[string]ExperimentAssignment, len(r.Assignments))
@@ -51,6 +57,16 @@ func (c *Client) ExperimentAssignments(ctx context.Context) (map[string]Experime
 		out[k] = ExperimentAssignment{Group: a.Group, Raw: raw}
 	}
 	return out, nil
+}
+
+// SSBPlatform is Electron's process.platform for a GOOS, what Slack's
+// desktop app sends as ssb_platform (Gggg getDesktopPlatform; releaseChannel
+// defaults to "prod").
+func SSBPlatform(goos string) string {
+	if goos == "windows" {
+		return "win32"
+	}
+	return goos
 }
 
 // SidebarDM is one direct message or group DM from sidebar.dms.

@@ -50,6 +50,36 @@ func (l *lay) canvasSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) 
 	l.addPad(pad, dc, k)
 }
 
+// channelTabSlug lays out a resolved channel-tab slug (richtext
+// tabslug.go): Slack's ResolvedChannelTabSlug, a RichTextSlug like the
+// canvas slug: the tab's icon (4px gap), then the label, with the
+// channel's icon (lock, code, …; a space after it) where its name starts
+// instead of "#". It links to the tab (the span's URL) and, like the
+// plain slug, opens the channel hover card when TabSlugCard says so.
+func (l *lay) channelTabSlug(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
+	p := &l.st.Palette
+	bg, fg := p.MentionBg, p.MentionText
+	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, id: sp.ID, tab: tabOfSlug(sp.URL), slug: true})
+	pad, padV := l.dpf(2), l.dpf(1)
+	l.decos = append(l.decos, deco{kind: 1, bg: bg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
+	dc := int16(len(l.decos) - 1)
+	l.addPad(pad, dc, k)
+	if sp.Icon != "" {
+		l.addIcon(sp.Icon, fs.size, k, fg, dc, tg)
+		l.addPad(l.dpf(3), dc, k) // svg margin-right 4 (the icon item ends with 1px)
+	}
+	txt := sp.Text
+	if sp.ChIcon != "" && sp.Pre > 0 && sp.Pre <= len(txt) {
+		l.addText(txt[:sp.Pre], fs, k, fg, sp.Style, dc, tg)
+		l.addIcon(sp.ChIcon, fs.size, k, fg, dc, tg)
+		txt = " " + txt[sp.Pre:]
+	}
+	if txt != "" {
+		l.addText(txt, fs, k, fg, sp.Style, dc, tg)
+	}
+	l.addPad(pad, dc, k)
+}
+
 // quipAnchor lays out a canvas-section unfurl (document_section):
 // MessageAttachmentQuipAnchorLink in renderV1Attachment's card. The 4px
 // bar, then the section's blocks (c-message_attachment__row), then

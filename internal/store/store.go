@@ -84,6 +84,7 @@ type Store struct {
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
+	experiments map[string]string                 // the last experiments.getByUser groups (diskCache.Experiments)
 	ext         map[string]*slack.Conversation    // non-sidebar conversations
 	access      map[string]richtext.ChannelAccess // edge channels/info answers for mentioned channels
 	bots        map[string]BotInfo
@@ -158,6 +159,18 @@ func (s *Store) ChannelAccess(id string) richtext.ChannelAccess {
 // ExperimentGroup reads a Slack experiment's group for richtext's
 // experiment-dependent text (core sets it to its Experiment).
 var ExperimentGroup func(s *Store, name string) string
+
+// TabSlug resolves a channel-tab slug for richtext (core sets it to its
+// ChannelTabSlug); nil leaves every slug the plain channel mention.
+var TabSlug func(s *Store, channelID, tabID string) (richtext.TabSlug, bool)
+
+// ChannelTabSlug is richtext.ChannelTabResolver.
+func (s *Store) ChannelTabSlug(channelID, tabID string) (richtext.TabSlug, bool) {
+	if TabSlug == nil {
+		return richtext.TabSlug{}, false
+	}
+	return TabSlug(s, channelID, tabID)
+}
 
 // HuddleTextOpts is richtext.HuddleResolver: a huddle_thread message's
 // conversation (a DM and its other member, a group DM) and the
@@ -1484,6 +1497,11 @@ type diskCache struct {
 	// UserSeen is when each saved user was last fetched (unix seconds):
 	// the next save keeps the MaxSavedUsers most recent.
 	UserSeen map[string]int64 `json:"user_seen,omitempty"`
+	// Experiments is the last experiments.getByUser answer, name -> group:
+	// Slack's experiments store is persisted too (client-boot 5fie,
+	// persistenceEnabled), so checks read the account's groups before the
+	// call answers again.
+	Experiments map[string]string `json:"experiments,omitempty"`
 }
 
 // MaxSavedUsers bounds the users meta.json keeps: the most recently fetched
@@ -1508,6 +1526,34 @@ func (s *Store) sameGroups(gs []slack.Usergroup) bool {
 		i++
 	}
 	return i == len(s.Groups)
+}
+
+// SetExperimentGroups keeps experiments.getByUser's groups for the disk
+// cache (name -> group).
+func (s *Store) SetExperimentGroups(g map[string]string) {
+	cp := make(map[string]string, len(g))
+	for k, v := range g {
+		cp[k] = v
+	}
+	s.mu.Lock()
+	s.experiments = cp
+	s.mu.Unlock()
+	s.gen.Add(1)
+}
+
+// CachedExperimentGroups returns the experiment groups the disk cache (or
+// the last SetExperimentGroups) holds, nil when there are none.
+func (s *Store) CachedExperimentGroups() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.experiments == nil {
+		return nil
+	}
+	out := make(map[string]string, len(s.experiments))
+	for k, v := range s.experiments {
+		out[k] = v
+	}
+	return out
 }
 
 // HasCachedPrefs reports whether prefs came from the disk cache.
@@ -1638,6 +1684,9 @@ func (s *Store) LoadCache() {
 	if len(d.Bots) > 0 {
 		s.bots = d.Bots
 	}
+	if d.Experiments != nil {
+		s.experiments = d.Experiments
+	}
 	s.mu.Unlock()
 	if d.Prefs != nil {
 		muted := map[string]bool{}
@@ -1752,6 +1801,9 @@ func (s *Store) SaveCache() error {
 	}
 	for k, v := range s.bots {
 		d.Bots[k] = v
+	}
+	if s.experiments != nil {
+		d.Experiments = s.experiments // replaced whole, never changed in place
 	}
 	// the stored users are never changed in place (PutUsers replaces
 	// them), so they're written after the lock is let go: the viewer and
