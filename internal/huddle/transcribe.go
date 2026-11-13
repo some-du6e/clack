@@ -38,7 +38,7 @@ func (s *Session) StartEventLog(ctx context.Context) error {
 		s.mu.Unlock()
 		return nil
 	}
-	s.events, s.eventsLoading, s.lines = true, true, nil
+	s.events, s.eventsLoading, s.lines, s.meta = true, true, nil, nil
 	s.mu.Unlock()
 	s.changed()
 	err := s.transcription(ctx, "rooms.startTranscription")
@@ -53,7 +53,7 @@ func (s *Session) StartEventLog(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	if err != nil {
-		s.events, s.lines = false, nil // disableEventLog
+		s.events, s.lines, s.meta = false, nil, nil // disableEventLog
 	}
 	s.eventsLoading = false
 	if s.events {
@@ -78,7 +78,7 @@ func (s *Session) StopEventLog(ctx context.Context) error {
 		s.mu.Unlock()
 		return nil
 	}
-	s.events, s.eventsLoading, s.lines = false, true, nil
+	s.events, s.eventsLoading, s.lines, s.meta = false, true, nil, nil
 	s.mu.Unlock()
 	s.changed()
 	err := s.transcription(ctx, "rooms.stopTranscription")
@@ -95,6 +95,61 @@ func (s *Session) EventLog() (on, loading bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.events, s.eventsLoading
+}
+
+// SetEventLog is Slack's enableEventLog / disableEventLog actions on
+// their own, without the transcription the thunks start or stop (a
+// plugin keeping the log open, HuddleActivity): the log turns on or off
+// and its events are dropped either way (the 4xZR reducer returns the
+// initial state with enabled set).
+func (s *Session) SetEventLog(on bool) {
+	s.mu.Lock()
+	if s.events == on && !s.eventsLoading && len(s.lines) == 0 && len(s.meta) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	s.events, s.eventsLoading, s.lines, s.meta = on, false, nil, nil
+	s.mu.Unlock()
+	s.changed()
+}
+
+// Transcription is roomsStartTranscriptionFetcher (on) or
+// roomsStopTranscriptionFetcher: rooms.startTranscription or
+// rooms.stopTranscription for this call, leaving the event log as it is.
+// Blocks on the Web API.
+func (s *Session) Transcription(ctx context.Context, on bool) error {
+	if on {
+		return s.transcription(ctx, "rooms.startTranscription")
+	}
+	return s.transcription(ctx, "rooms.stopTranscription")
+}
+
+// LogEvent is one of the event log's non-transcription events, as
+// Slack's call handlers push them (pushNonTranscriptionEvent, client-boot
+// 4xZR U$) while the log is on: JOIN and LEAVE (onPeerJoined,
+// onPeerLeft), SCREENSHARE_START and SCREENSHARE_STOP (the video tile
+// handlers, a content tile), SEND_REACTION (sendReaction, onPeerReacji;
+// Emoji is the reaction).
+type LogEvent struct {
+	Type     string
+	MemberID string
+	At       time.Time
+	Emoji    string
+}
+
+// maxLogEvents caps the log (Slack keeps every event while it's on).
+const maxLogEvents = 2000
+
+// pushEventLocked is pushNonTranscriptionEvent: a no-op while the log is
+// off. Callers hold mu.
+func (s *Session) pushEventLocked(typ, user, emoji string) {
+	if !s.events || user == "" {
+		return
+	}
+	if len(s.meta) >= maxLogEvents {
+		s.meta = append(s.meta[:0], s.meta[len(s.meta)-maxLogEvents/2:]...)
+	}
+	s.meta = append(s.meta, LogEvent{Type: typ, MemberID: user, At: time.Now(), Emoji: emoji})
 }
 
 func (s *Session) transcription(ctx context.Context, method string) error {

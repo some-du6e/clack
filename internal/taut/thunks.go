@@ -440,8 +440,15 @@ func (tt *thunkTable) installDefaults() {
 		}
 		return false, nil
 	}
+	// the transcription fetchers reach the native huddle (huddle.go)
+	n["roomsStartTranscriptionFetcher"] = func(ctx context.Context, a []json.RawMessage) (any, error) {
+		return t.huddleTranscription(ctx, a, true)
+	}
+	n["roomsStopTranscriptionFetcher"] = func(ctx context.Context, a []json.RawMessage) (any, error) {
+		return t.huddleTranscription(ctx, a, false)
+	}
 	for _, name := range []string{"maybeFetchBackgrounds", "startEventLog", "stopEventLog", "stopHuddle", "displayAlertMessage", "currentUserEndedTyping", "startHuddle",
-		"processAwsTranscription", "roomsStartTranscriptionFetcher", "roomsStopTranscriptionFetcher", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing"} {
+		"processAwsTranscription", "logExperimentExposure", "handleMessageImmediatelyWithoutPreprocessing"} {
 		n[name] = func(ctx context.Context, a []json.RawMessage) (any, error) { return nil, nil }
 	}
 	tt.natives = n

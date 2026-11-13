@@ -16,6 +16,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/huddle"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -223,6 +224,7 @@ func passHover(gtx C, cl *widget.Clickable, sz image.Point) D {
 // 4px from the top) with its icon and a close button. Clack shows the
 // "user_was_muted" one: someone's mute request reached you.
 type banner struct {
+	name       string // Slack's bannerName (HuddlesAlertBannerBase), e.g. informational_user_was_muted
 	text, icon string
 	link       string // a link after the text ("Undo")
 	do         func() // the link's action (the window's goroutine)
@@ -231,6 +233,21 @@ type banner struct {
 
 // showBanner opens the banner (any goroutine).
 func (c *Controller) showBanner(text, icon string) { c.showBannerLink(text, icon, "", nil) }
+
+// showNamedBanner is showBanner for an alert's banner, by Slack's
+// bannerName (an alert banner keeps its alert in alert.alerts).
+func (c *Controller) showNamedBanner(name, text, icon string) {
+	c.mu.Lock()
+	w := c.win
+	c.mu.Unlock()
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.banner = banner{name: name, text: text, icon: icon, at: time.Now()}
+	w.mu.Unlock()
+	w.invalidate()
+}
 
 // showBannerLink is showBanner with a link after the text.
 func (c *Controller) showBannerLink(text, icon, link string, do func()) {
@@ -243,6 +260,7 @@ func (c *Controller) showBannerLink(text, icon, link string, do func()) {
 	w.mu.Lock()
 	w.banner = banner{text: text, icon: icon, link: link, do: do, at: time.Now()}
 	w.mu.Unlock()
+	c.clearAlerts() // another banner took the alert's place
 	w.invalidate()
 }
 
@@ -278,6 +296,9 @@ func (w *window) layoutBanner(gtx C, s *huddle.Session, r image.Rectangle) int {
 		w.mu.Lock()
 		w.banner = banner{}
 		w.mu.Unlock()
+		if b.name != "" {
+			w.c.clearAlerts() // dismissAlert
+		}
 		return 0
 	}
 	if b.do != nil && w.click("banner-link").Clicked(gtx) {
@@ -310,10 +331,32 @@ func (w *window) layoutBanner(gtx C, s *huddle.Session, r image.Rectangle) int {
 	at(gtx, image.Pt(x, r.Min.Y+(h-is)/2), image.Pt(is, is), func(gtx C) D {
 		return icons.Get(b.icon)(gtx, 20, hudWhite)
 	})
-	at(gtx, image.Pt(x+is+gtx.Dp(8), r.Min.Y+(h-ts.Y)/2), ts, func(gtx C) D {
-		return w.th.Label(gtx, 15, theme.Bold, hudWhite, b.text)
-	})
 	bs := gtx.Dp(28)
+	if b.name != "" {
+		// an alert's banner is Slack's HuddlesAlertBannerBase (a plugin
+		// patch point: HuddleActivity names who muted you), its text the
+		// children
+		tx := x + is + gtx.Dp(8)
+		tw := max(0, r.Max.X-bs-gtx.Dp(10)-gtx.Dp(8)-tx)
+		props := slackc.Props{"$key": "huddle-alert-banner", "bannerName": b.name, "entryPoint": "baby_window", "children": b.text}
+		tg := gtx
+		tg.Constraints = layout.Constraints{Max: image.Pt(tw, h)}
+		m := op.Record(gtx.Ops)
+		d := slackc.Render(tg, "HuddlesAlertBannerBase", props, func(gtx C, p slackc.Props) D {
+			if e, ok := slackc.PropChildren(p); ok {
+				return slackc.LayoutElementText(gtx, e, slackc.InheritText{Size: 15, LineHeight: 22, Weight: 700, Color: hudWhite})
+			}
+			return w.th.Label(gtx, 15, theme.Bold, hudWhite, p.StrOr("children", b.text))
+		})
+		call := m.Stop()
+		st := op.Offset(image.Pt(tx, r.Min.Y+(h-d.Size.Y)/2)).Push(gtx.Ops)
+		call.Add(gtx.Ops)
+		st.Pop()
+	} else {
+		at(gtx, image.Pt(x+is+gtx.Dp(8), r.Min.Y+(h-ts.Y)/2), ts, func(gtx C) D {
+			return w.th.Label(gtx, 15, theme.Bold, hudWhite, b.text)
+		})
+	}
 	at(gtx, image.Pt(r.Max.X-bs-gtx.Dp(10), r.Min.Y+(h-bs)/2), image.Pt(bs, bs), func(gtx C) D {
 		return button(gtx, w.click("banner-close"), image.Pt(bs, bs), func(gtx C, hov bool) {
 			if hov {

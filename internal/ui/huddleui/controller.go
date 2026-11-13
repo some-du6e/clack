@@ -83,7 +83,9 @@ type Controller struct {
 
 	mu      sync.Mutex
 	s       *huddle.Session
-	joining string // channel being joined
+	logFP   logFP        // the event log taut last got (eventlog.go)
+	alerts  huddleAlerts // displayAlertMessage's alerts (eventlog.go)
+	joining string       // channel being joined
 	live    map[string]liveRoom
 	seeded  bool
 	gen     uint64 // bumps on every change, for cheap redraw checks
@@ -314,10 +316,7 @@ func (c *Controller) Start(channel string) {
 			c.changed()
 			return
 		}
-		if tt != nil {
-			tt.SetHuddleReaction(func(emoji, kind, url string) bool { return s.React(emoji, url) == nil })
-			tt.SetActiveHuddle(s.RoomID(), channel, s.SelfAttendee(), c.selfID())
-		}
+		c.bindTaut(tt, s, channel) // reactions, the active huddle, the event log (eventlog.go)
 		c.sessionStarted(s)
 		if pj != nil && pj.camera { // the preview's camera stays on
 			s.SetCamera(true)
@@ -507,21 +506,27 @@ func (c *Controller) options(app *core.App) huddle.Options {
 		VideoEffect: c.videoEffect(),
 		Logf:        log.Printf,
 		OnChange:    c.onSession,
-		OnPeer: func(ev huddle.PeerEvent) {
-			if tt := c.taut(); tt != nil {
-				tt.HuddlePeerMessage(ev)
-			}
-			if ev.Message != nil && ev.Message.MuteRequest != nil && ev.Message.MuteRequest.PeerID == ev.SelfAttendeeID {
-				// HuddlesInformationalBanner "user_was_muted" (microphone-slash)
-				c.showBanner(nsHuddles.T("Someone muted you."), "mic-off")
-			}
-		},
-		OnEnd: func(err error) { go c.ended(err) },
+		OnPeer:      c.onPeerEvent,
+		OnEnd:       func(err error) { go c.ended(err) },
 	}
 	if c.Tweak != nil {
 		c.Tweak(&o)
 	}
 	return o
+}
+
+// onPeerEvent is a data-channel peer message from someone in the call:
+// plugins get it (api.huddles.onPeerMessage), and a mute request at you
+// is Slack's onPeerMuteRequest: displayAlertMessage, whose
+// peerMuteRequest alert is the "user_was_muted" banner (the session has
+// muted your microphone).
+func (c *Controller) onPeerEvent(ev huddle.PeerEvent) {
+	if tt := c.taut(); tt != nil {
+		tt.HuddlePeerMessage(ev)
+	}
+	if ev.Message != nil && ev.Message.MuteRequest != nil && ev.Message.MuteRequest.PeerID == ev.SelfAttendeeID {
+		c.displayAlert("peerMuteRequest", ev.SenderAttendeeID)
+	}
 }
 
 // onSession runs on session goroutines when the huddle's state changed.
@@ -542,6 +547,7 @@ func (c *Controller) onSession() {
 				}
 			}
 			tt.SetHuddlePeers(peers)
+			c.feedLog(tt, s, st, false)
 		}
 	}
 	c.mu.Lock()
@@ -635,7 +641,12 @@ func (c *Controller) ended(err error) {
 	if tt != nil {
 		tt.SetActiveHuddle("", "", "", "")
 		tt.SetHuddleReaction(nil)
+		tt.SetHuddleHooks(taut.HuddleHooks{})
 	}
+	c.clearAlerts()
+	c.mu.Lock()
+	c.logFP = logFP{}
+	c.mu.Unlock()
 	if m, ok := endedModal(err); ok {
 		c.showErrModal(m)
 	}
