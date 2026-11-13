@@ -53,7 +53,8 @@ func TestFakeCamera(t *testing.T) {
 	fk := NewFake(clip, t.Errorf)
 	defer fk.Close()
 	f := fk.f
-	f.cam.dropFirst.Store(true) // the first keyframe lost (TestFakeScreenShare): the fake asks for another
+	f.cam.dropFirst.Store(true)  // the first keyframe lost (TestFakeScreenShare): the fake asks for another
+	f.cam.dropPLIKey.Store(true) // and the one answering its PLI: it asks again
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := Join(ctx, Options{

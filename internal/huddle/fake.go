@@ -487,14 +487,11 @@ func (f *fakeChime) negotiate(offer string, recv []uint32) (string, uint32, erro
 	}
 	first := f.pc == nil
 	if first {
-		m := &webrtc.MediaEngine{}
-		if err := m.RegisterDefaultCodecs(); err != nil {
+		api, err := fakeAPI()
+		if err != nil {
 			return "", 0, err
 		}
-		se := webrtc.SettingEngine{}
-		se.SetIncludeLoopbackCandidate(true)
-		se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
-		f.api = webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(se))
+		f.api = api
 		pc, err := f.api.NewPeerConnection(webrtc.Configuration{})
 		if err != nil {
 			return "", 0, err

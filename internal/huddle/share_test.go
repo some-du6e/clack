@@ -28,10 +28,11 @@ func TestFakeScreenShare(t *testing.T) {
 	}
 	fk := NewFake(clip, t.Errorf)
 	defer fk.Close()
-	// The first keyframe never arrives, as when it was written between
-	// pion's DTLS transport saying connected and SRTP starting (CI, 0
-	// pictures for 20 s): the receiver asks for another.
+	// The first keyframe never arrives (CI: 0 pictures in 20 s), nor the
+	// one answering the fake's PLI (CI: no keyframe after it): the
+	// receiver asks for another each time.
 	fk.f.content.dropFirst.Store(true)
+	fk.f.content.dropPLIKey.Store(true) // and the one answering its PLI: it asks again
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := Join(ctx, Options{
