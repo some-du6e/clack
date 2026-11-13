@@ -118,7 +118,7 @@ func (p *prefsModal) messageExample(f *prefsForm, dense bool, name, avatar strin
 			es := gtx.Dp(22) // .c-emoji__medium, vertical-align top
 			if co := a.Core(); co != nil {
 				if url, _, _ := co.Emoji(pt.emoji); url != "" {
-					if img, ok := a.images.Get(url, es*2); ok {
+					if img, ok := a.images.Get(url, es); ok {
 						at(gtx, image.Pt(x, y), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
 							return theme.Image(gtx, img, image.Pt(es, es), 0)
 						})

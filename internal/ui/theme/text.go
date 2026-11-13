@@ -236,11 +236,7 @@ func (t *Theme) text(gtx layout.Context, o LabelOpts, txt string, scan bool) lay
 
 // EmojiURL is the CDN image for an emoji image stem in the theme's style.
 func (t *Theme) EmojiURL(stem string) string {
-	style := t.EmojiStyle
-	if style == "" {
-		style = "apple"
-	}
-	return emoji.CDN + style + "-medium/" + stem + ".png"
+	return emoji.URL(stem, t.EmojiStyle) // "": the platform's set
 }
 
 func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) layout.Dimensions {
@@ -310,7 +306,7 @@ func (t *Theme) textWithEmoji(gtx layout.Context, o LabelOpts, segs []segment) l
 			if y < 0 {
 				y = 0
 			}
-			if img, ok := t.Images.Get(t.EmojiURL(p.emoji), es*2); ok {
+			if img, ok := t.Images.Get(t.EmojiURL(p.emoji), es); ok {
 				st := op.Offset(image.Pt(p.x, y)).Push(gtx.Ops)
 				Image(gtx, img, image.Pt(es, es), 0)
 				st.Pop()

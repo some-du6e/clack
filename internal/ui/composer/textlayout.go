@@ -830,7 +830,7 @@ func (l *tlLayout) emojiURL(stem string) string {
 	if t := theme.ForShaper(l.sh); t != nil {
 		return t.EmojiURL(stem)
 	}
-	return emoji.CDN + "apple-medium/" + stem + ".png"
+	return emoji.URL(stem, "")
 }
 
 // vx is the x of caret position q on visual line li.

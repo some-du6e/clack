@@ -61,7 +61,8 @@ type Theme struct {
 	// Images, when set (the ui root sets the app's imgcache), lets labels
 	// draw unicode emoji as Slack CDN images.
 	Images EmojiImages
-	// EmojiStyle is Slack's emoji set preference: "apple" (default) or "google".
+	// EmojiStyle is the emoji set, "apple" or "google"; "" (the app's) is
+	// Slack's for this platform (emoji.Style: Apple's only on macOS).
 	EmojiStyle string
 
 	// Restyle, when set, adjusts each freshly selected palette before

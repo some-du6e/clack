@@ -39,6 +39,7 @@ import (
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
+	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -441,7 +442,14 @@ func (c *Cache) evict() {
 }
 
 func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error) {
-	data, save, err := c.raw(k.url)
+	// A standard emoji loads the CDN size that covers k.size device pixels
+	// (Slack's @2x choice; emoji.ForPixels), so it is only ever scaled
+	// down. The URL as given is the fallback.
+	src := emoji.ForPixels(k.url, k.size)
+	data, save, err := c.raw(src)
+	if err != nil && src != k.url {
+		data, save, err = c.raw(k.url)
+	}
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, nil, err
 	}

@@ -171,14 +171,12 @@ type emojiIndex struct {
 	sID    []int32
 }
 
-func epStdURL(style, stem string) string {
-	return emoji.CDN + style + "-medium/" + stem + ".png"
-}
+func epStdURL(style, stem string) string { return emoji.URL(stem, style) }
 
 // epBuild builds the index. custom maps name -> URL or "alias:target".
 func epBuild(std *epStdTable, style string, custom map[string]string) *emojiIndex {
 	if style == "" {
-		style = "apple"
+		style = emoji.Style()
 	}
 	nStd := len(std.names)
 	x := &emojiIndex{key: epKey{len(custom), style}, std: std, nStd: nStd}
@@ -564,12 +562,9 @@ func epNoteUse() {
 	})
 }
 
-func epStyle(h Host) string {
-	if h != nil && h.Core() != nil && h.Core().Prefs().EmojiStyle == "google" {
-		return "google"
-	}
-	return "apple"
-}
+// epStyle is Slack's set for this platform (emoji.Style: Apple's on
+// macOS, Google's elsewhere); no pref picks it.
+func epStyle(Host) string { return emoji.Style() }
 
 func epStdIndex(style string) *emojiIndex {
 	epCacheMu.Lock()

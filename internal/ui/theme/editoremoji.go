@@ -126,7 +126,7 @@ func EditorEmoji(gtx layout.Context, sh *text.Shaper, e *widget.Editor, size uni
 		if len(regs) == 0 {
 			continue
 		}
-		img, ok := t.Images.Get(t.EmojiURL(r.Stem), es*2)
+		img, ok := t.Images.Get(t.EmojiURL(r.Stem), es)
 		if !ok {
 			continue // loading: the blank slot holds its place
 		}

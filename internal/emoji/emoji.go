@@ -31,7 +31,7 @@ func StandardData() []byte {
 }
 
 // CDN is where Slack serves its standard emoji images.
-const CDN = "https://a.slack-edge.com/production-standard-emoji-assets/16.0/"
+const CDN = assetBase + "16.0/"
 
 type std struct {
 	Names []string          `json:"n"`
@@ -95,14 +95,15 @@ func Standard(name string) (image, text string, ok bool) {
 	return image, unicodeText(uni), true
 }
 
-// StandardURL returns the Slack CDN image URL for a standard emoji.
+// StandardURL returns the Slack CDN image URL for a standard emoji, in
+// style ("" for Style(): Google's set except on macOS).
 func StandardURL(name, style, size string) (string, bool) {
 	img, _, ok := Standard(name)
 	if !ok {
 		return "", false
 	}
 	if style == "" {
-		style = "apple"
+		style = Style()
 	}
 	if size == "" {
 		size = "medium"
