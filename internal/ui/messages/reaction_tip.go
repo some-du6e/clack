@@ -26,13 +26,14 @@ const reactionTipDelay = 300 * time.Millisecond
 // reactionTooltip is Slack's ReactionTip (boot-shared Qvn6) in its
 // Tooltip (F2XN, position "top") for one reaction: txt is reactionTip's
 // (whose count picks the width: tipCountFor), url its emoji.
-func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt, url string, anchor, bounds image.Point) {
-	reactionGroupTooltip(gtx, h, th, c, &groupTip{lines: []string{txt}, urls: []string{url}, wide: tipCountFor(txt) > 9}, anchor, bounds)
+func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt, url string, pill, bounds image.Rectangle) {
+	reactionGroupTooltip(gtx, h, th, c, &groupTip{lines: []string{txt}, urls: []string{url}, wide: tipCountFor(txt) > 9}, pill, bounds)
 }
 
 // reactionGroupTooltip is Slack's ReactionTip (boot-shared Qvn6) in its
-// Tooltip (F2XN, position "top") for a pill's group, centred above anchor
-// (6px over the pill: list.go):
+// Tooltip (F2XN, position "top") for a pill's group, placed over the pill
+// by theme.PlaceTooltip inside bounds (the window in the list's
+// coordinates):
 //
 //   - .c-tooltip__tip: padding 8px 12px, radius 8, 13px/1.25 bold, centred,
 //     max-width 200px ("small"), 400px ("large": Reaction's count past 9
@@ -49,7 +50,7 @@ func reactionTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, txt
 //     ("reacted with :name:", regular weight, inverse.secondary) inline,
 //     wrapped as one paragraph. Where the subtitle sits is the locale's
 //     (getTip's rich strings: ja-JP's follows the name with no space).
-func reactionGroupTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, gt *groupTip, anchor, bounds image.Point) {
+func reactionGroupTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors, gt *groupTip, pill, bounds image.Rectangle) {
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
 	maxW := dp(gtx, 200)
 	if gt.wide {
@@ -97,24 +98,16 @@ func reactionGroupTooltip(gtx layout.Context, h Host, th *theme.Theme, c *colors
 
 	w := max(textW, emojiW) + 2*padX
 	hgt := padY + emojiH + textH + padY
-	// the box's bottom 8px over the pill (anchor is 6px over it)
-	bottom := anchor.Y + dp(gtx, 6) - dp(gtx, 8)
-	x := min(max(anchor.X-w/2, dp(gtx, 4)), bounds.X-dp(gtx, 4)-w)
-	y := bottom - hgt
-	flip := y < 0
-	if flip {
-		y = anchor.Y + dp(gtx, 40)
-	}
-	r := image.Rect(x, y, x+w, y+hgt)
+	// 8px over the pill, kept inside the window, under it when there's no
+	// room above; the arrow on the pill's centre
+	pl := theme.PlaceTooltip(gtx, pill, image.Pt(w, hgt), bounds, theme.BaseTooltip(gtx, theme.TipTop))
+	r := pl.Box
+	x, y := r.Min.X, r.Min.Y
 	if o := tip.Opacity(); o < 1 {
 		defer paint.PushOpacity(gtx.Ops, max(o, 0)).Pop()
 	}
 	bg := tip.Background(c.Tooltip)
-	var arrow theme.TooltipArrow
-	if !flip {
-		// the arrow's visible half: 6px under the box at the pill's centre
-		arrow = theme.TooltipArrow{C: image.Pt(anchor.X, r.Max.Y), Half: dp(gtx, 6)}
-	}
+	arrow := pl.Arrow
 	// box and arrow, outlined together in dark mode (theme/tooltip.go)
 	theme.TooltipShape(gtx, r, dp(gtx, 8), arrow, bg, tipGlow(th))
 	ty := y + padY

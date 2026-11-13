@@ -69,6 +69,9 @@ type ProfileCard struct {
 	moreLocal                          image.Rectangle // kebab rect, card coords
 	huddleLocal                        image.Rectangle // Huddle button rect, card coords
 	key                                string          // slackc instance key
+	// texty is the composer's slug card (NewTextyHoverCard): Texty's
+	// Popover placement and hideButtons
+	texty bool
 }
 
 // NewProfileCard opens the card with its top-left corner at anchor (window
@@ -111,9 +114,24 @@ func (p *ProfileCard) IsApp() bool {
 	return p.isApp(u, ok)
 }
 
+// NewTextyHoverCard is the card over a person's slug in the composer
+// (TextyTooltip's renderHoverCard → renderMemberProfileHoverCard,
+// boot-shared build 32bb3cc8205b): MemberProfileHoverCard with
+// hideButtons, in a Popover at "top" over the slug with offsetY -12 and
+// allowance 0, no opposite position.
+func NewTextyHoverCard(h Host, anchor image.Rectangle, userID string) *ProfileCard {
+	p := NewHoverCard(h, anchor, userID, "")
+	p.texty = true
+	return p
+}
+
 // place is the card's top-left for a card of size sz: hover cards above
 // the trigger (hovercard.Place), click cards at the click.
 func (p *ProfileCard) place(gtx layout.Context, sz, win image.Point) image.Point {
+	if p.texty {
+		pt, _ := theme.KeepInBounds(p.anchorR, sz, image.Rectangle{Max: win}, theme.TipTop, 0, -dp(gtx, hovercard.OffsetY), 0, 0, false)
+		return pt
+	}
 	if p.hover {
 		return hovercard.Place(p.anchorR, sz, win, dp(gtx, hovercard.OffsetY), dp(gtx, hovercard.AllowanceX), dp(gtx, hovercard.AllowanceY))
 	}
@@ -218,7 +236,7 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 				"$key":                     p.key + ":outer",
 				"memberId":                 u.ID,
 				"shouldStopPropagation":    false,
-				"hideButtons":              false,
+				"hideButtons":              p.texty,
 				"disableMemberProfileLink": false,
 				"children":                 slackc.Child("MemberProfileHoverCard", hover(), content),
 			}
@@ -292,7 +310,7 @@ func (p *ProfileCard) hoverProps(th *theme.Theme, cl *Colors, u core.User, w int
 		"$key":                     p.key,
 		"memberId":                 u.ID,
 		"closeProfileCard":         p.Dismiss,
-		"hideButtons":              false,
+		"hideButtons":              p.texty,
 		"disableMemberProfileLink": false,
 		"shouldStopPropagation":    false,
 		"header": slackc.Child("MemberProfileBaseEntity", p.entityProps(u), func(gtx layout.Context, _ slackc.Props) layout.Dimensions {
@@ -390,7 +408,7 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 		})
 		y += d.Size.Y
 	}
-	if !slackbot {
+	if !slackbot && !p.texty { // MemberProfileHoverCard: q = isSlackbot || hideButtons
 		margin(dp(gtx, 12))
 		d := at(gtx, image.Pt(pad, y), func(gtx layout.Context) layout.Dimensions {
 			return p.buttons(gtx, th, u, inner)

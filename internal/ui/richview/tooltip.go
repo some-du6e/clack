@@ -13,6 +13,7 @@ import (
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -154,9 +155,9 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	}
 	f := &v.d.frags[v.tipFrag]
 	// the trigger's box: an emoji image, or the label's word (its line box)
-	cxf, top := f.x+float32(f.size)/2, f.y
+	target := image.Rect(int(f.x), f.y, int(f.x+float32(f.size)+.5), f.y+f.size)
 	if f.kind == fText {
-		cxf, top = f.x+f.w/2, f.top
+		target = image.Rect(int(f.x), f.top, int(f.x+f.w+.5), f.bot)
 	}
 	if name == editedTipKey {
 		now := gtx.Now
@@ -178,12 +179,10 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	sh := st.word(k, name)
 	padX, padY, lh := l.dp(12), l.dp(8), l.dp(18)
 	bw, bh := int(sh.adv+0.999)+2*padX, lh+2*padY
-	cx := int(cxf)
-	gap, ar := l.dp(8), l.dp(6)
-	r := image.Rect(cx-bw/2, top-gap-bh, cx-bw/2+bw, top-gap)
-	if r.Min.X < 0 {
-		r = r.Add(image.Pt(-r.Min.X, 0))
-	}
+	// BaseTooltip "top": 8px over the trigger, kept inside the window,
+	// under it when there's no room (theme/tooltip_place.go)
+	pl := placeTip(gtx, &l, target, image.Pt(bw, bh), v.tipOrg.Bounds())
+	r := pl.Box
 	p := &st.Palette
 	// Slack's tooltip is a portal under <body> (.c-tooltip__tip), so a
 	// row's rules don't reach it but a plugin's tooltip rule does.
@@ -193,9 +192,9 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 	if o < 1 {
 		opac = paint.PushOpacity(gtx.Ops, max(o, 0))
 	}
-	// the box and its arrow (centred on the box's bottom edge, 6px of it
-	// under the box), outlined together in dark mode (theme/tooltip.go)
-	theme.TooltipShape(gtx, r, l.dp(8), theme.TooltipArrow{C: image.Pt(cx, r.Max.Y), Half: ar}, bg, p.TooltipGlow)
+	// the box and its arrow (on the trigger's centre, 6px of it outside
+	// the box), outlined together in dark mode (theme/tooltip.go)
+	theme.TooltipShape(gtx, r, l.dp(8), pl.Arrow, bg, p.TooltipGlow)
 	bm := st.spaceOf(k)
 	base := r.Min.Y + padY + int((float32(lh)-(bm.asc+bm.desc))/2+bm.asc+0.5)
 	t := op.Offset(image.Pt(r.Min.X+padX, base)).Push(gtx.Ops)
@@ -209,6 +208,15 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 		opac.Pop()
 	}
 	op.Defer(gtx.Ops, m.Stop())
+}
+
+// placeTip is theme.PlaceTooltip for a BaseTooltip at "top" in the view's
+// layout scale (8px over the trigger, kept 3px inside the window bounds,
+// under it when there's no room above, the arrow on its centre).
+func placeTip(gtx layout.Context, l *lay, target image.Rectangle, box image.Point, bounds image.Rectangle) theme.TipPlace {
+	g := gtx
+	g.Metric = unit.Metric{PxPerDp: l.scale, PxPerSp: l.spx}
+	return theme.PlaceTooltip(g, target, box, bounds, theme.BaseTooltip(g, theme.TipTop))
 }
 
 // tooltipStyle is the emoji tooltip's colors and opacity: Slack's, or a

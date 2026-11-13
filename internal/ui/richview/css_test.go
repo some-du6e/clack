@@ -120,8 +120,11 @@ func TestCSSInheritedColorStopsAtNativeColors(t *testing.T) {
 	if c := runs["codeword"].Color; c != (color.NRGBA{R: 0xff, B: 0xff, A: 0xff}) {
 		t.Errorf("code: %v, want the same-specificity later rule's magenta", c)
 	}
-	if c := runs["@groupword"].Color; c != base["@groupword"].Color {
-		t.Errorf("usergroup: %v; * (0,0,0) mustn't beat Slack's own rule", c)
+	// a user group is a.c-link in Slack (UserGroup's Link), so the
+	// specific .c-link rule reaches it, but * (0,0,0) mustn't beat Slack's
+	// own .c-mrkdwn__user_group--link
+	if c := runs["@groupword"].Color; c != (color.NRGBA{B: 0xff, A: 0xff}) {
+		t.Errorf("usergroup: %v, want the .c-link rule's blue (never *'s cyan)", c)
 	}
 	if c := runs["plainword"].Color; c != (color.NRGBA{G: 0xff, B: 0xff, A: 0xff}) {
 		t.Errorf("plain: %v, want * (it matches the section directly)", c)

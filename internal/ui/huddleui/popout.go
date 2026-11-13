@@ -203,12 +203,7 @@ func (w *window) layoutPopout(gtx C, s *huddle.Session, st huddle.State) {
 		x += bs + gtx.Dp(4)
 	}
 	if tip != "" { // the top toolbar's tooltips sit under it
-		ts := labelSize(gtx, w.th, 12, theme.Bold, tip)
-		tp := gtx.Dp(8)
-		r := image.Rect(0, 0, ts.X+2*tp, ts.Y+tp)
-		r = r.Add(image.Pt(min((tipAt.Min.X+tipAt.Max.X-r.Dx())/2, sz.X-r.Dx()-gtx.Dp(4)), tipAt.Max.Y+gtx.Dp(6)))
-		theme.RRect(gtx, r, gtx.Dp(6), color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xf2})
-		at(gtx, image.Pt(r.Min.X+tp, r.Min.Y+tp/2), ts, func(gtx C) D { return w.th.Label(gtx, 12, theme.Bold, hudWhite, tip) })
+		hudTip(gtx, w.th, tip, tipAt, sz, theme.TipBottom)
 	}
 	// the huddle toolbar (isPopout)
 	w.barTop = sz.Y - barH

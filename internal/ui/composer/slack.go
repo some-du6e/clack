@@ -689,7 +689,7 @@ func (c *Composer) layoutInputBody(gtx layout.Context) layout.Dimensions {
 
 func (c *Composer) layoutEditor(gtx layout.Context) layout.Dimensions {
 	d := c.ed.Layout(gtx, c.st)
-	c.layoutGroupTip(gtx) // Texty's @group tooltip (group_tip.go)
+	c.layoutTextyTip(gtx) // Texty's tooltips and hover cards (texty_tip.go)
 	return d
 }
 

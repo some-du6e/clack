@@ -70,7 +70,7 @@ func TestMessagesAuditGapShots(t *testing.T) {
 				pill := r.reactRects[0].Add(image.Pt(0, v.s.pos[i]))
 				gt := r.groupTip(host, 0, fakeslack.SelfID)
 				gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(w, h)), Now: time.Now()}
-				reactionGroupTooltip(gtx, host, th, colorsFor(th), &gt, image.Pt((pill.Min.X+pill.Max.X)/2, pill.Min.Y-6), image.Pt(w, h))
+				reactionGroupTooltip(gtx, host, th, colorsFor(th), &gt, pill, image.Rect(0, 0, w, h))
 				pillAt = pill
 			}
 		}

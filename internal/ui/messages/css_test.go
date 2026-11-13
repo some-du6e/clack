@@ -214,7 +214,7 @@ func TestCSSReactionTooltip(t *testing.T) {
 				got = ts.col
 			}
 		}
-		reactionTooltip(gtx, nilHost{}, th, c, txt, "", image.Pt(200, 250), image.Pt(400, 300))
+		reactionTooltip(gtx, nilHost{}, th, c, txt, "", image.Rect(190, 256, 210, 280), image.Rect(0, 0, 400, 300))
 		labelHook = nil
 		labelMu.Unlock()
 		row.Leave()

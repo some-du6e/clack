@@ -150,6 +150,8 @@ type target struct {
 	btn  *richtext.Button
 	// underline on hover (links)
 	underline bool
+	// self: a mention of the viewer or of a group they're in (--mention)
+	self bool
 	// slug: a message_mention pill (.p-rich_text_slug), never underlined,
 	// not even by the "underline links" preference
 	slug bool
@@ -610,7 +612,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				// a channel-tab slug (tab_id): the link opens the tab
 				tg = l.d.addTarget(target{kind: tLink, url: sp.URL})
 			} else if sp.Kind != richtext.Broadcast && !sp.Off { // Off: a channel the viewer can't see, not a link
-				tg = l.d.addTarget(target{kind: kind, id: sp.ID})
+				tg = l.d.addTarget(target{kind: kind, id: sp.ID, self: sp.Self})
 			}
 			bg, fg := p.MentionBg, p.MentionText
 			if sp.Self {

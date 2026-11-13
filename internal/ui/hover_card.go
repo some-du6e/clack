@@ -160,7 +160,11 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 	}
 	h.prev = nil
 	if h.card == nil || h.gen != gen {
-		h.card = popups.NewHoverCard(a, req.Anchor, req.UserID, req.BotID)
+		if req.Texty {
+			h.card = popups.NewTextyHoverCard(a, req.Anchor, req.UserID)
+		} else {
+			h.card = popups.NewHoverCard(a, req.Anchor, req.UserID, req.BotID)
+		}
 		h.gen = gen
 	}
 	g := gtx

@@ -41,13 +41,17 @@ func (e *Editor) hoverEvents(gtx layout.Context) {
 	}
 }
 
+// HoverPoint is the pointer over the editor in viewport px (HoverAtom's
+// coordinates); false when it's elsewhere.
+func (e *Editor) HoverPoint() (image.Point, bool) { return e.hover.pt, e.hover.in }
+
 // addHover registers the pointer tracker over the editor's clip area.
 func (e *Editor) addHover(gtx layout.Context) { event.Op(gtx.Ops, &e.hover) }
 
-// HoverAtom is the mention pill (a user, channel, user group or
-// broadcast atom; not an emoji) under the pointer and its box in the
-// editor's viewport px, as Layout last drew it. None while text is
-// selected (showTooltip returns when the selection has a length).
+// HoverAtom is the atom under the pointer (a mention pill: a user,
+// channel, user group or broadcast; or an emoji, Texty's img.emoji) and
+// its box in the editor's viewport px, as Layout last drew it. None while
+// text is selected (showTooltip returns when the selection has a length).
 func (e *Editor) HoverAtom() (*Atom, image.Rectangle, bool) {
 	if !e.hover.in || !e.ensureLayout() {
 		return nil, image.Rectangle{}, false
@@ -62,7 +66,7 @@ func (e *Editor) HoverAtom() (*Atom, image.Rectangle, bool) {
 			continue
 		}
 		a := e.doc.Attrs[i].Atom
-		if a == nil || a.Kind == AtomEmoji {
+		if a == nil {
 			continue
 		}
 		if r, ok := e.lay.atomBox(i, pt); ok {

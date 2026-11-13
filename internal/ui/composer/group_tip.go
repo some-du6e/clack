@@ -48,7 +48,7 @@ type groupTip struct {
 // pointer, the editor laid out at the origin.
 func (c *Composer) layoutGroupTip(gtx layout.Context) {
 	g := &c.gtip
-	g.tip.NoDelay = true
+	g.tip.Texty = true
 	app := c.api.a
 	at, r, ok := c.ed.HoverAtom()
 	id := ""

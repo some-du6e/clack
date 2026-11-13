@@ -16,6 +16,7 @@ import (
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // Copying code, ported from Slack's web client (build a84662d2d135,
@@ -236,24 +237,18 @@ func (v *View) copyTip(gtx layout.Context, st *Style, br image.Rectangle, tip st
 	sh := st.word(k, tip)
 	padX, padY, lh := l.dp(12), l.dp(8), l.dp(18)
 	bw, bh := int(sh.adv+0.999)+2*padX, lh+2*padY
-	cx := (br.Min.X + br.Max.X) / 2
-	gap, ar := l.dp(8), l.dp(6)
-	r := image.Rect(cx-bw/2, br.Min.Y-gap-bh, cx-bw/2+bw, br.Min.Y-gap)
+	// the shared tooltip placement and shape (theme/tooltip_place.go,
+	// theme/tooltip.go): 8px over the button, kept inside the window, the
+	// arrow on the button, outlined in dark mode
+	pl := placeTip(gtx, &l, br, image.Pt(bw, bh), v.tipOrg.Bounds())
+	r := pl.Box
 	bg, fg, o := tooltipStyle(&st.Palette)
 	m := op.Record(gtx.Ops)
 	var opac paint.OpacityStack
 	if o < 1 {
 		opac = paint.PushOpacity(gtx.Ops, max(o, 0))
 	}
-	paint.FillShape(gtx.Ops, bg, clip.UniformRRect(r, l.dp(8)).Op(gtx.Ops))
-	var path clip.Path
-	path.Begin(gtx.Ops)
-	ax, ay := float32(cx), float32(br.Min.Y-gap)
-	path.MoveTo(f32.Pt(ax-float32(ar), ay-float32(ar)))
-	path.LineTo(f32.Pt(ax+float32(ar), ay-float32(ar)))
-	path.LineTo(f32.Pt(ax, ay))
-	path.Close()
-	paint.FillShape(gtx.Ops, bg, clip.Outline{Path: path.End()}.Op())
+	theme.TooltipShape(gtx, r, l.dp(8), pl.Arrow, bg, st.Palette.TooltipGlow)
 	bm := st.spaceOf(k)
 	base := r.Min.Y + padY + int((float32(lh)-(bm.asc+bm.desc))/2+bm.asc+0.5)
 	t := op.Offset(image.Pt(r.Min.X+padX, base)).Push(gtx.Ops)

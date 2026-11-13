@@ -30,11 +30,11 @@ const nativeCSS = `
 .c-link { color: N }
 .c-member_slug--link { color: N; background-color: N }
 .c-inline_channel_entity { color: N; background-color: N }
-.c-mrkdwn__subteam--link { color: N; background-color: N }
+.c-mrkdwn__user_group--link { color: N; background-color: N }
 .c-mrkdwn__broadcast--mention { color: N; background-color: N; font-weight: N }
 .c-mrkdwn__code { color: N; background-color: N }
 .c-mrkdwn__pre { background-color: N }
-.c-search__highlight { background-color: N }
+.c-mrkdwn__highlight { background-color: N }
 .c-message__edited_label { color: N }
 .c-message__body--tombstone { color: N }
 .c-reaction { color: N; background-color: N }

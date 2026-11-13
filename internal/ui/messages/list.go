@@ -1355,7 +1355,7 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 			gtx.Execute(op.InvalidateCmd{At: wait})
 		} else {
 			r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
-			reactionGroupTooltip(gtx, h, th, c, &s.tipG, image.Pt((r.Min.X+r.Max.X)/2, r.Min.Y-dp(gtx, 6)), size)
+			reactionGroupTooltip(gtx, h, th, c, &s.tipG, r, theme.WindowBounds(s.origin))
 		}
 	}
 
@@ -1371,18 +1371,19 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 }
 
 // tooltip is a toolbar button's Tooltip (F2XN BaseTooltip, position
-// "top", TooltipTip's .c-tooltip__tip--top) at opacity alpha: the box's
-// bottom centre at anchor, which callers put 8px over the button
-// (margin-bottom: 8px); below is the box's top when it doesn't fit above
-// (tryOppositePosition: 8px under the button). The tip is padding 8px
-// 12px, radius 8, 13px/1.25 bold, centred, at most 200px wide (wrapping),
-// with the 6px arrow (a 9px square turned 45°) at the button's centre.
-func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, anchor image.Point, below int, bounds image.Point, alpha float32) {
+// "top", TooltipTip's .c-tooltip__tip--top) for the button target at
+// opacity alpha, placed by theme.PlaceTooltip inside bounds (the window
+// in the list's coordinates): 8px over the button, keepInBounds' 3px
+// inside the window, under the button when there's no room above
+// (tryOppositePosition), the arrow on the button's centre. The tip is
+// padding 8px 12px, radius 8, 13px/1.25 bold, centred, at most 200px wide
+// (wrapping), with the 6px arrow (a 9px square turned 45°).
+func tooltip(gtx layout.Context, th *theme.Theme, c *colors, txt string, target, bounds image.Rectangle, alpha float32) {
 	if alpha <= 0 {
 		return
 	}
 	tip := slackc.BodyScope().Child(tooltipClass, 0)
-	b := tooltipBox(gtx, th, c, tip, txt, anchor, below, bounds)
+	b := tooltipBox(gtx, th, c, tip, txt, target, bounds)
 	if o := tip.Opacity(); o < 1 {
 		alpha *= max(o, 0)
 	}
@@ -1410,21 +1411,16 @@ type tipBox struct {
 }
 
 // tooltipBox lays tooltip's box out (tooltip has the geometry).
-func tooltipBox(gtx layout.Context, th *theme.Theme, c *colors, tip slackc.Styled, txt string, anchor image.Point, below int, bounds image.Point) tipBox {
+func tooltipBox(gtx layout.Context, th *theme.Theme, c *colors, tip slackc.Styled, txt string, target, bounds image.Rectangle) tipBox {
 	ts := cssText(tip, textStyle{size: 13, weight: theme.Bold, col: c.TooltipText, lineH: 16.25})
 	padX, padY := dp(gtx, 12), dp(gtx, 8)
 	m := op.Record(gtx.Ops)
 	td := flowTip(gtx, th, []tipRun{{st: ts, txt: txt}}, dp(gtx, 200)-2*padX)
 	call := m.Stop()
 	bw, bh := td.X+2*padX, td.Y+2*padY
-	x := min(max(anchor.X-bw/2, dp(gtx, 4)), bounds.X-dp(gtx, 4)-bw)
-	y := anchor.Y - bh
-	arrow := theme.TooltipArrow{C: anchor, Half: dp(gtx, 6)}
-	if y < 0 {
-		y = below
-		arrow.C.Y = below
-	}
-	return tipBox{r: image.Rect(x, y, x+bw, y+bh), arrow: arrow, text: image.Pt(x+(bw-td.X)/2, y+padY), call: call}
+	pl := theme.PlaceTooltip(gtx, target, image.Pt(bw, bh), bounds, theme.BaseTooltip(gtx, theme.TipTop))
+	r := pl.Box
+	return tipBox{r: r, arrow: pl.Arrow, text: image.Pt(r.Min.X+(bw-td.X)/2, r.Min.Y+padY), call: call}
 }
 
 func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx int, size image.Point) {
@@ -1470,10 +1466,8 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	call.Add(gtx.Ops)
 	t.Pop()
 	s.tbRect, s.tbFor = image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x, y).Add(d.Size)}, idx
-	// the hovered button's tooltip: the box 8px over the button (the card's
-	// top is 4px over it), or 8px under it
+	// the hovered button's tooltip (the card's top is 4px over the button)
 	bs, pad := dp(gtx, mt.toolbarBtn), dp(gtx, mt.toolbarPad)
-	above, below := y+pad-dp(gtx, 8), y+pad+bs+dp(gtx, 8)
 	key, tip, cx := "", "", 0
 	if i := s.quick.hov; i >= 0 {
 		key, tip, cx = "q"+strconv.Itoa(i), s.quick.tip(i), x+pad+i*bs+bs/2
@@ -1489,7 +1483,8 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 		s.tip = ""
 	}
 	if a := s.tilt.tipAlpha(gtx, key); a > 0 {
-		tooltip(gtx, th, c, tip, image.Pt(cx, above), below, size, a)
+		btn := image.Rect(cx-bs/2, y+pad, cx-bs/2+bs, y+pad+bs)
+		tooltip(gtx, th, c, tip, btn, theme.WindowBounds(s.origin), a)
 	}
 }
 

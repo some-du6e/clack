@@ -114,14 +114,15 @@ func TestToolbarButtonColorsLikeSlack(t *testing.T) {
 		ops := new(op.Ops)
 		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(900, 700))}
 		tip := slackc.BodyScope().Child(tooltipClass, 0)
-		b := tooltipBox(gtx, th, c, tip, "Add reaction…", image.Pt(500, 100), 160, image.Pt(900, 700))
+		win := image.Rect(0, 0, 900, 700)
+		b := tooltipBox(gtx, th, c, tip, "Add reaction…", image.Rect(486, 108, 514, 136), win)
 		if b.r.Max.Y != 100 || b.r.Dy() < 32 || b.r.Dy() > 33 || b.arrow != (theme.TooltipArrow{C: image.Pt(500, 100), Half: 6}) {
 			t.Errorf("dark %v: tooltip %v arrow %+v, want a 32px box (8px 12px padding, 16.25 line) ending at the anchor, the 6px arrow at it", tc.dark, b.r, b.arrow)
 		}
 		if w := b.r.Dx(); w < 24+60 || w > 200 || b.text.X-b.r.Min.X != 12 || b.text.Y-b.r.Min.Y != 8 {
 			t.Errorf("dark %v: tooltip width %d, text at %v", tc.dark, w, b.text)
 		}
-		if b := tooltipBox(gtx, th, c, tip, "Add reaction…", image.Pt(500, 10), 60, image.Pt(900, 700)); b.r.Min.Y != 60 || b.arrow.C.Y != 60 {
+		if b := tooltipBox(gtx, th, c, tip, "Add reaction…", image.Rect(486, 18, 514, 46), win); b.r.Min.Y != 54 || b.arrow.C.Y != 54 {
 			t.Errorf("dark %v: no room above: %v %+v, want the box 8px under the button", tc.dark, b.r, b.arrow)
 		}
 	}
