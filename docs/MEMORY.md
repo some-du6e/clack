@@ -29,7 +29,7 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 | emboldened runs (`theme`) | 1,500 runs or 16 MB of outlines | Clack |
 | emoji picker index | dropped 5 minutes after the last use | Clack |
 | font glyphs | parsed as they're used; in-memory fonts' tables read in place | go-text patches (`third_party/typesetting`) |
-| Go heap | soft limit 512 MiB (`GOMEMLIMIT` wins); a backstop, not a budget | Go runtime |
+| Go heap | soft limit 768 MiB (`GOMEMLIMIT` wins); a backstop, not a budget | Go runtime |
 
 | users saved in `meta.json` | the viewer and the 1,000 fetched most recently (`store.MaxSavedUsers`); anyone else is fetched when a message, mention or profile needs them | Slack keeps no directory between starts |
 

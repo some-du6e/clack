@@ -13,10 +13,13 @@ func init() { startTrim = trimMemory }
 // a backstop and not how Clack stays small: the caches are bounded on
 // their own (the memory workflow, perf.yml's scale jobs, measures them).
 // With GOGC at 100 the heap may grow to twice what's live before the
-// collector runs; near the limit it runs sooner instead. If what's live
-// ever exceeds it, the runtime's GC CPU limit (half the CPU) lets the heap
-// grow rather than thrash. GOMEMLIMIT, when set, wins.
-const memoryLimit = 512 << 20
+// collector runs; near the limit it runs sooner instead. It sits above
+// the heaviest session the scale jobs drive (two 3,000-message channels
+// loaded at once: about 500 MB live), so it never makes the collector run
+// nonstop while scrolling; if what's live ever exceeds it, the runtime's
+// GC CPU limit (half the CPU) lets the heap grow rather than thrash.
+// GOMEMLIMIT, when set, wins.
+const memoryLimit = 768 << 20
 
 // trimMemory hands freed heap back to the OS. The Go runtime keeps freed
 // pages up to its heap goal (2x the live heap), so after boot (megabytes of
