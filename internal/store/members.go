@@ -283,10 +283,37 @@ func (s *Store) EvictMembers() []string {
 		delete(s.members.nonexistent, c.id)
 		delete(s.members.access, c.id) // forget
 	}
+	// Go's maps keep the room of their largest size: a pass that let most
+	// of them go copies what's left into maps of its size (as Slack's
+	// removeObjects makes a new object for the store)
+	if cut > len(cs)-cut {
+		s.Users = resized(s.Users)
+		s.userSeen = resized(s.userSeen)
+		s.members.access = resized(s.members.access)
+		s.members.nonexistent = resized(s.members.nonexistent)
+	}
 	s.mu.Unlock()
 	s.ForgetMissing('u', out...)
+	if cut > len(cs)-cut {
+		s.missMu.Lock()
+		s.missSeen = resized(s.missSeen)
+		s.missMu.Unlock()
+	}
 	s.gen.Add(1)
 	slices.Sort(out)
+	return out
+}
+
+// resized copies m into a map made for its length (maps.Clone may keep
+// the old one's room).
+func resized[K comparable, V any](m map[K]V) map[K]V {
+	if m == nil {
+		return nil
+	}
+	out := make(map[K]V, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
 	return out
 }
 
