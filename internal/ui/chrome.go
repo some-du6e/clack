@@ -461,6 +461,9 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		if t.key == "browse" {
 			a.railMoreFrame(gtx, image.Rectangle{Min: org, Max: org.Add(image.Pt(gtx.Dp(52), th))}, btn.Hovered())
 			peek = a.railPeekOpen()
+		} else if a.hasTabPeek(t.key) { // a TabPeekTrigger (rail_tab_peek.go)
+			a.tabPeekFrame(gtx, t.key, image.Rectangle{Min: org, Max: org.Add(image.Pt(gtx.Dp(52), th))}, btn.Hovered(), active == t.key)
+			peek = a.tabPeekOpen(t.key)
 		}
 		at(gtx, org, image.Pt(gtx.Dp(52), th), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
@@ -512,6 +515,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		}
 		y += th
 	}
+	a.tabPeekEndFrame()
 
 	// control strip: + (new), Slack's focus mode button when the account
 	// has it (SilentSidebarTrigger, focus_mode.go), avatar with presence.
@@ -534,7 +538,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		org := image.Pt(x0, by-lift)
 		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 			btn := a.clicks.get(k)
-			bg := c.SidebarButton
+			bg := c.ChromeActive // theme-surf-inv-pry in the rail's scope
 			if btn.Hovered() {
 				bg = c.SearchHover
 			}
@@ -609,10 +613,10 @@ func (a *App) railCount(gtx layout.Context, n int) layout.Dimensions {
 		w = h
 	}
 	theme.RRect(gtx, image.Rect(0, 0, w, h).Inset(-gtx.Dp(2)), h/2+gtx.Dp(2), c.ChromeB)
-	theme.RRect(gtx, image.Rect(0, 0, w, h), h/2, c.Badge)
+	theme.RRect(gtx, image.Rect(0, 0, w, h), h/2, c.RailBadge) // the rail's theme scope
 	at(gtx, image.Pt((w-tw)/2, 0), image.Pt(w, h), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 11, theme.Bold, c.BadgeText, txt)
+			return a.th.Label(gtx, 11, theme.Bold, c.RailBadgeText, txt)
 		})
 	})
 	return layout.Dimensions{Size: image.Pt(w, h)}

@@ -99,6 +99,9 @@ type Size struct {
 	// the methods and events their cards and flexpane use
 	// (workobjects.go).
 	WorkObjects bool
+	// AgentSessions fills ai.alpha.agents.sessions.list (the rail's
+	// Agents & tools peek, agent_sessions.go) and adds its agent.
+	AgentSessions bool
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -243,8 +246,10 @@ type Server struct {
 	BulkLeaves [][]string
 	// listFilters: every edge users/list filter (UserListFilters).
 	listFilters []string
-	emoji       map[string]string
-	words       []string
+	// sessionReasons are ai.alpha.agents.sessions.list's reasons (agent_sessions.go)
+	sessionReasons []string
+	emoji          map[string]string
+	words          []string
 
 	imgMu sync.Mutex
 	imgs  map[string][]byte
@@ -1060,6 +1065,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleAgentSessions(method, f); handled { // agent_sessions.go
+		return out
+	}
 	if s.Size.Workflows { // first: search.go answers search.autocomplete.triggers with none
 		if out, handled := s.handleWorkflows(method, f, edge); handled { // workflows.go
 			return out
@@ -1516,6 +1524,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 				return u, true
 			}
 		}
+	}
+	if s.Size.AgentSessions && id == AgentSessionsBotID { // agent_sessions.go
+		return s.agentSessionsUser(), true
 	}
 	if s.codeFx != nil && id == s.codeFx.Agent.ID {
 		return s.codeFx.Agent, true

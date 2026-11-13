@@ -225,9 +225,12 @@ type App struct {
 	winSize          image.Point
 	sbBase           color.NRGBA
 	sbPal            theme.Palette
-	styleVer         uint64    // slackc.Styles.Version the palette was derived at
-	acct             acctTheme // the Slack account's theme (theme_account.go)
-	scopeInv         bool      // the chrome is in Slack's inverted theme scope (theme_scope.go)
+	styleVer         uint64      // slackc.Styles.Version the palette was derived at
+	acct             acctTheme   // the Slack account's theme (theme_account.go)
+	scopeInv         bool        // the chrome is in Slack's inverted theme scope (theme_scope.go)
+	scopeInvSide     bool        // and the sidebar
+	tpeeks           tabPeeks    // the rail tabs' hover peeks (rail_tab_peek.go)
+	agPeek           *agentsPeek // Agents & tools' (rail_peek_agents.go)
 	scopeVars        map[string]string
 	shaperCh         chan [2]*text.Shaper
 	font             fontState             // Appearance > Font (prefs_font.go)

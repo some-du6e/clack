@@ -121,6 +121,7 @@ func (a *App) railMoreClick() {
 // (clicked) an ordinary menu.
 func (a *App) openRailMorePeek(clicked bool) {
 	p := &a.peek
+	a.closeOtherPeeks("browse") // one activePeekId
 	items := a.railMoreItems()
 	var m *popups.Menu
 	m = popups.NewMenuOpts(a, toPopupItems(items), popups.MenuOpts{
