@@ -1348,9 +1348,17 @@ func (c *chrome) layoutEditButtons(gtx layout.Context, th *theme.Theme, st *chro
 
 // ---- thread broadcast row ----
 
-// layoutBroadcast draws "☐ Also send to #channel": 26px row, padding-top 8,
-// a 13px native-style checkbox at 13.5, 12px/18 text at 70% ink with the
-// channel in bold behind a 12px # (or lock).
+// layoutBroadcast draws BroadcastControls (63o2): "☐ Also send to
+// #channel" in div.p-threads_footer__input_container__broadcast_controls
+// (padding-top 8px, 70% ink) holding a c-label--inline label (12px/18px,
+// padding-left 13.5px). The label is a baseline-aligned flex row: the
+// native 13px checkbox (c-input_checkbox, margin-right 12px) first, its
+// bottom edge on the text's baseline (a checkbox's synthesized baseline),
+// then c-label__text (400, top -1px). The channel is an InlineChannelEntity
+// with class "bold": InlineChannelIcon's "channel" (or "lock") SvgIcon at
+// 1em (12px), is-inline's vertical-align -0.125em, margin-right 2px, then
+// the name, all 700. A DM reads "Also send as direct message", a group DM
+// "Also send to the group".
 func (c *chrome) layoutBroadcast(gtx layout.Context, th *theme.Theme, p *crPal, st *chromeState, x0, x1, top int) {
 	cx := x0 + gtx.Dp(13.5)
 	cy := top + gtx.Dp(8)
@@ -1358,39 +1366,44 @@ func (c *chrome) layoutBroadcast(gtx layout.Context, th *theme.Theme, p *crPal, 
 	hov := c.btn[crBroadcast].Hovered()
 	bs := crBroadcastClass.Enter(gtx, 0, 0)
 	defer bs.Leave()
-	crCheckbox(gtx, image.Rect(cx, cy, cx+cs, cy+cs), st.Broadcast, hov, p)
 
 	s := textStyle{Size: bs.FontSize(12), LineHeight: 18, Color: bs.Color(p.hint), MaxLines: 1}
 	x := cx + cs + gtx.Dp(12)
 	maxX := x1 - gtx.Dp(12)
-	var end int
+	ty := cy - gtx.Dp(1) // c-label--inline .c-label__text: top -1px
+	txt := "Also send to"
 	if st.IsDM || st.ChannelName == "" {
-		// BroadcastControls (63o2): "Also send to the group" in a group
-		// DM, "Also send as direct message" in a DM
-		txt := "Also send to channel"
+		txt = "Also send to channel"
 		switch {
 		case st.Group:
 			txt = "Also send to the group"
 		case st.IsDM:
 			txt = "Also send as direct message"
 		}
-		d := crText(gtx, th.Shaper, x, cy, maxX-x, s, txt)
-		end = x + d.Size.X
-	} else {
-		d := crText(gtx, th.Shaper, x, cy, maxX-x, s, "Also send to")
-		x += d.Size.X + c.space(gtx, th.Shaper, 1)
+	}
+	call, d := crRec(gtx, th.Shaper, maxX-x, s, txt)
+	base := d.Size.Y - d.Baseline // the baseline within the 18px line
+	crCheckbox(gtx, image.Rect(cx, cy+base-cs, cx+cs, cy+base), st.Broadcast, hov, p)
+	t := op.Offset(image.Pt(x, ty)).Push(gtx.Ops)
+	call.Add(gtx.Ops)
+	t.Pop()
+	end := x + d.Size.X
+	if !st.IsDM && st.ChannelName != "" {
+		x = end + c.space(gtx, th.Shaper, 1)
 		is := gtx.Dp(12)
-		// vertical-align -1.5px against the 12px text
-		t := op.Offset(image.Pt(x, cy+(gtx.Dp(18)-is)/2+gtx.Dp(1))).Push(gtx.Ops)
+		// is-inline: an inline-block 1em box whose bottom sits 0.125em
+		// below the baseline
+		iy := ty + base + gtx.Dp(1.5) - is
+		t := op.Offset(image.Pt(x, iy)).Push(gtx.Ops)
+		name := "channel"
 		if st.Private {
-			drawLockIcon(gtx, is, p.hint)
-		} else {
-			drawHashIcon(gtx, is, p.hint)
+			name = "lock"
 		}
+		icons.GetSlack(name)(gtx, unit.Dp(float32(is)/gtx.Metric.PxPerDp), s.Color)
 		t.Pop()
 		x += is + gtx.Dp(2)
 		s.Weight = theme.Bold
-		d = crText(gtx, th.Shaper, x, cy, maxX-x, s, st.ChannelName)
+		d = crText(gtx, th.Shaper, x, ty, maxX-x, s, st.ChannelName)
 		end = x + d.Size.X
 	}
 	c.hit(gtx, crBroadcast, image.Rect(cx, cy, max(end, cx+cs), top+gtx.Dp(26)), true)
