@@ -57,6 +57,20 @@ var trayTestDestroy struct {
 	hwnd uintptr       // the window the hooks watch
 	nc   bool          // its WM_NCDESTROY was sent
 	gone chan struct{} // closed at the thread's first message read after that
+	// the hooks, which trayTestOnGet removes then, on the window's thread:
+	// at its exit Windows destroys the thread's other windows (IME), and
+	// a hook called then is a Go callback on an exiting thread (the test
+	// process died at Quit)
+	hooks []uintptr
+}
+
+// trayTestUnhookAll removes the hooks still set; d.mu is held.
+func trayTestUnhookAll() {
+	d := &trayTestDestroy
+	for _, h := range d.hooks {
+		trayTestUnhook.Call(h)
+	}
+	d.hooks = nil
 }
 
 var trayTestOnSend = syscall.NewCallback(func(code, wParam, lParam uintptr) uintptr {
@@ -88,6 +102,7 @@ var trayTestOnGet = syscall.NewCallback(func(code, wParam, lParam uintptr) uintp
 		if d.nc && d.gone != nil {
 			close(d.gone)
 			d.gone = nil
+			trayTestUnhookAll()
 		}
 		d.mu.Unlock()
 	}
@@ -251,16 +266,24 @@ func TestCloseToTrayWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	gone := make(chan struct{})
-	trayTestDestroy.mu.Lock()
-	trayTestDestroy.hwnd, trayTestDestroy.nc, trayTestDestroy.gone = hwnd, false, gone
-	trayTestDestroy.mu.Unlock()
+	d := &trayTestDestroy
+	d.mu.Lock()
+	d.hwnd, d.nc, d.gone = hwnd, false, gone
 	for _, hk := range []struct{ id, proc uintptr }{{trayTestWHCallWndProc, trayTestOnSend}, {trayTestWHGetMessage, trayTestOnGet}} {
 		h, _, err := trayTestSetHook.Call(hk.id, hk.proc, 0, uintptr(tid))
 		if h == 0 {
+			trayTestUnhookAll()
+			d.mu.Unlock()
 			t.Fatalf("SetWindowsHookEx(%d): %v", hk.id, err)
 		}
-		defer trayTestUnhook.Call(h)
+		d.hooks = append(d.hooks, h)
 	}
+	d.mu.Unlock()
+	defer func() { // a failure before the window went: its thread still runs
+		d.mu.Lock()
+		trayTestUnhookAll()
+		d.mu.Unlock()
+	}()
 	a.Quit()
 	select {
 	case err := <-done:
