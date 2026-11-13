@@ -28,6 +28,10 @@ const memoryLimit = 768 << 20
 // state at Hack Club scale.
 const evictCollect = 1000
 
+// membersCollect: a members pass that let this many members go is
+// collected at once (core.AfterMembersEvict); a member is about 2 KB.
+const membersCollect = 1000
+
 // trimMemory hands freed heap back to the OS. The Go runtime keeps freed
 // pages up to its heap goal (2x the live heap), so after boot (megabytes of
 // JSON) or a burst of scrolling the process would sit at its peak while
@@ -50,6 +54,13 @@ func trimMemory() {
 	// idle snapshot)
 	core.AfterEvict = func(n int) {
 		if n >= evictCollect {
+			time.AfterFunc(2*time.Second, debug.FreeOSMemory)
+		}
+	}
+	// a members pass (Slack's members cache: down to 500 once 700 are
+	// held) that let thousands go after an hour of scrolling: the same
+	core.AfterMembersEvict = func(n int) {
+		if n >= membersCollect {
 			time.AfterFunc(2*time.Second, debug.FreeOSMemory)
 		}
 	}

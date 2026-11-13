@@ -59,6 +59,19 @@ seed() { # home: ui.json and the plugins
   echo "plugins: ChatTabs + ${tauts[*]}" > "$out/scale-plugins.txt"
 }
 
+# idle_seconds <go duration>: CLACK_PERF_IDLE (10m, 70m, 1h10m) in seconds
+# (600 when it doesn't parse): the warm session's limit grows with a longer
+# idle stage (scale_idle), so it still gets its snapshot.
+idle_seconds() {
+  local d=$1 n=0 v u
+  while [[ $d =~ ^([0-9]+)([hms])(.*)$ ]]; do
+    v=${BASH_REMATCH[1]} u=${BASH_REMATCH[2]} d=${BASH_REMATCH[3]}
+    case $u in h) n=$((n + 3600 * v)) ;; m) n=$((n + 60 * v)) ;; s) n=$((n + v)) ;; esac
+  done
+  [ "$n" -gt 0 ] || n=600
+  echo "$n"
+}
+
 # run <side> <home> <name> <script> <timeout-s>
 run() {
   local s=$1 home=$2 name=$3 script=$4 limit=$5
@@ -95,6 +108,6 @@ for s in "${sides[@]}"; do
   cp "$work/creds.json" "$home/creds.json"
   seed "$home"
   run "$s" "$home" prime "users,exit" 900
-  run "$s" "$home" warm "${CLACK_PERF_WARM_SCRIPT:-startup,picker,picker-all,scroll,channels,idle}" 6600
+  run "$s" "$home" warm "${CLACK_PERF_WARM_SCRIPT:-startup,picker,picker-all,scroll,channels,idle}" $((6000 + $(idle_seconds "${CLACK_PERF_IDLE:-10m}")))
 done
 exit 0

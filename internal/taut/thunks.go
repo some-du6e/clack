@@ -363,7 +363,15 @@ func (tt *thunkTable) installDefaults() {
 		},
 		"getChannelMembershipInfoForUsers": app().membershipInfo,
 		"ensureMembersArePresent": func(ctx context.Context, a []json.RawMessage) (any, error) {
-			t.app.EnsureUsers(ctx, argObj(a).strs("memberIds"))
+			ids := argObj(a).strs("memberIds")
+			t.app.EnsureUsers(ctx, ids)
+			// the upsert is a store change: the JS side reads what it held
+			// as absent again (Taut's getMember waits on it), as Slack's
+			// selectors see the members ensureMembersArePresent upserted
+			if len(ids) > 0 {
+				t.mirror.invalidate("members", ids...)
+				t.mirror.send() // ahead of the thunk's answer on the JS thread
+			}
 			return nil, nil
 		},
 		"fetchRawChannelsById": t.fetchRawChannels,

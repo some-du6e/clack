@@ -5,7 +5,6 @@ package kit
 // RichTextInput lives in richinput.go.
 
 import (
-	"context"
 	"encoding/json"
 	"image"
 	"reflect"
@@ -126,26 +125,6 @@ type avatarState struct {
 	card bool
 }
 
-// ensured remembers users already requested, so unknown ids are fetched
-// once instead of every frame.
-var ensured sync.Map
-
-func ensureUser(id string) {
-	c := envOf().Core
-	if c == nil || id == "" {
-		return
-	}
-	if _, loaded := ensured.LoadOrStore(id, true); loaded {
-		return
-	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		c.EnsureUsers(ctx, []string{id})
-		invalidate()
-	}()
-}
-
 // iconKeys are Slack's image set keys, smallest first.
 var iconKeys = []int{24, 32, 34, 36, 44, 48, 64, 68, 72, 88, 102, 132, 192, 230, 512, 1024}
 
@@ -213,9 +192,7 @@ func avatarSource(p slackc.Props, px int) (url, name string) {
 						url = u.Avatar192
 					}
 				}
-			} else {
-				ensureUser(id)
-			}
+			} // else the lookup asked for the member: "names" draws it again
 		}
 		return url, name
 	}

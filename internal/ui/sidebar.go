@@ -491,6 +491,23 @@ func (a *App) sbBBMBox(r *sbRow) bool {
 	return a.bbmOn() && (r.kind == sbConv || r.kind == sbLink)
 }
 
+// sbTouchMembers: a DM's row (a group DM's, its members) reads its
+// members through getMemberById on every render in Slack, so the members
+// cache keeps the sidebar's people (store/members.go); the row drew them
+// from the last snapshot and only touches them.
+func (a *App) sbTouchMembers(conv *convInfo) {
+	c := a.Core()
+	if c == nil {
+		return
+	}
+	if conv.User != "" {
+		c.S.TouchMember(conv.User)
+	}
+	for _, id := range conv.Members {
+		c.S.TouchMember(id)
+	}
+}
+
 func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 	c := &a.sbPal
 	w := gtx.Constraints.Max.X
@@ -561,6 +578,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		}
 		indent = gtx.Dp(16)
 		label = conv.displayName()
+		a.sbTouchMembers(conv)
 		// organize mode highlights the picks, not the open conversation
 		// (isChannelUiSelected = isEditModeSelected)
 		sel = (route.Channel() == conv.ID || sbDocSelected(conv, route)) && !a.sidebar.edit.on

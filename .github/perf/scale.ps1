@@ -50,6 +50,20 @@ function Seed-Home([string]$h) {
   "plugins: ChatTabs + $($tauts -join ' ')" | Out-File (Join-Path $Out 'scale-plugins.txt')
 }
 
+# Idle-Seconds is CLACK_PERF_IDLE (a Go duration: 10m, 70m, 1h10m) in
+# seconds, 600 when unset: the warm session's limit is an hour more, so a
+# longer idle stage (scale_idle) still gets its snapshot.
+function Idle-Seconds([string]$d) {
+  if (-not $d) { return 600 }
+  $n = 0
+  foreach ($m in [regex]::Matches($d, '(\d+)(h|m|s)')) {
+    $v = [int]$m.Groups[1].Value
+    switch ($m.Groups[2].Value) { 'h' { $n += 3600 * $v } 'm' { $n += 60 * $v } 's' { $n += $v } }
+  }
+  if ($n -le 0) { return 600 }
+  return $n
+}
+
 function Run-Clack([string]$side, [string]$home_, [string]$name, [string]$script, [int]$limit) {
   $d = Join-Path $Out "$side\scale\$name"
   New-Item -ItemType Directory -Force $d | Out-Null
@@ -103,7 +117,7 @@ try {
     Seed-Home $h
     Run-Clack $s $h 'prime' 'users,exit' 900
     $warm = if ($env:CLACK_PERF_WARM_SCRIPT) { $env:CLACK_PERF_WARM_SCRIPT } else { 'startup,picker,picker-all,scroll,channels,idle' }
-    Run-Clack $s $h 'warm' $warm 4200
+    Run-Clack $s $h 'warm' $warm (3600 + (Idle-Seconds $env:CLACK_PERF_IDLE))
   }
 } finally {
   Stop-Process -Id $fp.Id -Force -ErrorAction SilentlyContinue

@@ -289,8 +289,7 @@ func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
 		// it's the real name: Slack draws no handle or bot_profile name, and
 		// nothing for a member with neither name.
 		if _, ok := app.User(cv.User); !ok {
-			ensureUser(v.h, cv.User)
-			return HeaderSubtitle{}, false
+			return HeaderSubtitle{}, false // asked for; "names" draws it
 		}
 		n, _ := app.S.MemberName(cv.User)
 		if n == "" {
@@ -303,12 +302,7 @@ func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
 		if n, ok := app.MpdmCustomName(cv.ID); ok {
 			return HeaderSubtitle{Text: n}, true
 		}
-		for _, id := range cv.Members {
-			if _, ok := app.User(id); !ok {
-				ensureUser(v.h, id)
-			}
-		}
-		n, names := mpimMembers(app, cv)
+		n, names := mpimMembers(app, cv) // members it misses are asked for
 		return HeaderSubtitle{Text: "Direct message with " + strconv.Itoa(n-1) + " others", Tip: names}, true
 	}
 	// getChannelIconType: archived (or frozen) first, then private, else

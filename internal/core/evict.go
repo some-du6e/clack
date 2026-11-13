@@ -67,6 +67,10 @@ func (a *App) evictLoop(ctx context.Context) {
 		if a.files != nil {
 			a.files.sweep(time.Now().Add(-fileIdle))
 		}
+		// the members cache's check (store/members.go) runs on every
+		// lookup; this one stands in for the reads Slack's mounted
+		// components make on any store change while Clack draws nothing
+		a.S.MaybeScheduleMembers()
 	}
 }
 

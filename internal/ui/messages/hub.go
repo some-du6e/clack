@@ -652,7 +652,13 @@ func (hb *hub) apply(ev core.Event) bool {
 		m.rev++
 		m.mu.Unlock()
 		return true
-	case "user", "presence", "emoji_changed", "prefs":
+	case "user", "presence", "emoji_changed", "prefs", "names", "members_evicted":
+		// names: core fetched members (and names) a lookup missed, an
+		// evicted member's among them (store/members.go): the rows that
+		// drew them unknown resolve again. members_evicted: the members
+		// cache let some go, and the rows read their members again, as
+		// Slack's re-render on bulkRemoveMembersById (one that still
+		// draws an evicted member asks for it)
 		hb.mu.Lock()
 		hb.userRv++
 		hb.mu.Unlock()
