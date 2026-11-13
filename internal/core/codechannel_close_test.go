@@ -130,7 +130,11 @@ func TestStaleCodeChannelRules(t *testing.T) {
 		t.Error("the selected closed code channel isn't shown")
 	}
 	a.SetSelected("CSEL")
+	// under the fake's lock: SetSelected's maybeReopenViewedCodeChannel
+	// may still be calling it (ci 43418168216 crashed on the map)
+	f.mu.Lock()
 	f.reply["conversations.close"] = `{"ok":false,"error":"channel_not_found"}`
+	f.mu.Unlock()
 	if err := a.CloseCodeChannel(context.Background(), "COLDER"); err == nil {
 		t.Error("the failed close reported no error")
 	}
