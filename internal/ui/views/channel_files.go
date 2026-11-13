@@ -1095,7 +1095,7 @@ func (v *ChannelFiles) actionButton(gtx C, c *widget.Clickable, icon string) D {
 }
 
 // linkRow is LinkEntity in the list (compact Entity with its border,
-// renderedInListVariant): 12px padding, a 24px favicon (else link 20),
+// renderedInListVariant, as tall as a file row): 12px padding, a 24px favicon (else link 20),
 // 12px, the primary label (title, else the host) over the secondary (the
 // host when titled, else path + query, "" for "/"; "Open in browser" on
 // hover), More actions on hover.
@@ -1109,10 +1109,13 @@ func (v *ChannelFiles) linkRow(gtx C, l *core.ChannelLink, first, last bool) D {
 		hover := c.row.Hovered() || c.menu.Hovered()
 		bw := max(1, gtx.Dp(1))
 		w := gtx.Constraints.Max.X
-		lh := gtx.Dp(22)
-		h := 2*gtx.Dp(12) + lh + bw
+		// one height for every row: the list variant isn't isAutoHeight, so
+		// a link without a second line keeps the row's height, its label
+		// centred
+		h := 2*gtx.Dp(12) + gtx.Dp(36) + bw
+		textH := gtx.Dp(22)
 		if secondary != "" {
-			h += gtx.Dp(18)
+			textH += gtx.Dp(18)
 		}
 		if last {
 			h += bw
@@ -1127,7 +1130,7 @@ func (v *ChannelFiles) linkRow(gtx C, l *core.ChannelLink, first, last bool) D {
 		if hover && sec != "" {
 			sec = nsExplorerLnk.T("Open in browser")
 		}
-		dirAt(gtx, image.Pt(tx, bw+gtx.Dp(12)), func(gtx C) D {
+		dirAt(gtx, image.Pt(tx, bw+(h-bw-textH)/2), func(gtx C) D {
 			gtx.Constraints.Max.X = tw
 			return col(gtx,
 				layout.Rigid(func(gtx C) D {

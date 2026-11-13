@@ -433,9 +433,11 @@ func TestChannelFilesShots(t *testing.T) {
 		}
 		settle()
 		vaShot(t, e, "chfiles-all", dark)
-		rows := v.rowsFor()
-		for _, r := range rows {
-			if r.kind == cfrFile {
+		// a file row's hover (Files: the action text and FileActions)
+		v.setType(cfFiles)
+		settle()
+		for _, r := range v.rowsFor() {
+			if r.kind == cfrFile && r.file.Mode == "hosted" {
 				top, _, _ := v.kb.top(r.key)
 				e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(e.size.X/2), float32(cfListY+top+20))})
 				break
@@ -470,6 +472,7 @@ func TestChannelFilesShots(t *testing.T) {
 		vaShot(t, e, "chfiles-sort", dark)
 		v.sortOpen = false
 		v.setType(cfAll)
+		v.search.ed.SetText("zzz-nothing")
 		v.runSearch("zzz-nothing")
 		settle()
 		vaShot(t, e, "chfiles-empty", dark)
