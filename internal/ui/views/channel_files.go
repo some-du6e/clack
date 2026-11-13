@@ -1279,6 +1279,9 @@ func (v *ChannelFiles) pagination(gtx C) D {
 			if busy {
 				kind = popups.BtnDisabled
 			}
+			// c-button--medium: 36 tall, 0 12px, 15px Bold, as wide as its label
+			bw := v.th.Measure(gtx, 15, wBold, label) + 2*gtx.Dp(12) + 2*max(1, gtx.Dp(1))
+			gtx.Constraints.Min.X, gtx.Constraints.Max.X = bw, bw
 			return popups.Button(gtx, v.h.Theme(), &v.loadMore, kind, popups.BtnMedium, label, "", 0)
 		})
 	})
