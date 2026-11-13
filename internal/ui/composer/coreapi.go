@@ -69,6 +69,10 @@ func (c coreAPI) edit(ctx context.Context, ch, ts, text string, blocks json.RawM
 	return c.a.Edit(ctx, ch, ts, text, blocks)
 }
 
+func (c coreAPI) editWithFiles(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
+	return c.a.EditWithFiles(ctx, ch, ts, text, blocks, fileIDs)
+}
+
 func (c coreAPI) typing(ch, threadTS string) { c.a.Typing(ch, threadTS) }
 
 func (c coreAPI) typingErr(ch, threadTS string) error { return c.a.Typing(ch, threadTS) }

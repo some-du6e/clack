@@ -153,7 +153,7 @@ func TestEditComposerMessageSlug(t *testing.T) {
 	saved := make(chan [2]string, 1)
 	c := NewEdit(h, m, func() {})
 	t.Cleanup(c.Close)
-	c.SaveEdit = func(_ context.Context, _, _, text string, blocks json.RawMessage) error {
+	c.SaveEdit = func(_ context.Context, _, _, text string, blocks json.RawMessage, _ []string) error {
 		saved <- [2]string{text, string(blocks)}
 		return nil
 	}

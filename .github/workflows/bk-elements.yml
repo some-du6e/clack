@@ -47,7 +47,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$BK_ELEMENTS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestGalleryElementShots' ./internal/ui/blockkit
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestGalleryElementShots|TestRichTextInputStrikeSubmits' ./internal/ui/blockkit
           ls -l "$BK_ELEMENTS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

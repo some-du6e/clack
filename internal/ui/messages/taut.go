@@ -84,24 +84,35 @@ func markRead(ctx context.Context, app *core.App, ch, ts string) error {
 	return err
 }
 
-// commitEditArgs is Slack's commitMessageEdit {channelId, ts, blocks, text}.
+// commitEditArgs is Slack's commitMessageEdit {channelId, ts, blocks,
+// text, fileIds}; fileIds only from saveMessageEditWithFiles.
 type commitEditArgs struct {
 	ChannelID string          `json:"channelId"`
 	TS        string          `json:"ts"`
 	Blocks    json.RawMessage `json:"blocks,omitempty"`
 	Text      string          `json:"text,omitempty"`
+	FileIDs   *[]string       `json:"fileIds,omitempty"` // nil: unchanged; empty: every file removed
 }
 
 // commitEdit saves an inline edit (composer.SaveEdit) through Slack's
 // commitMessageEdit; the native applies the plugins' send transforms like
 // saveMessageEdit and calls core.Edit.
-func commitEdit(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage) error {
+// fileIDs (non-nil) is an edit that attached files: chat.update's
+// file_ids.
+func commitEdit(ctx context.Context, app *core.App, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
 	t := tautOf()
-	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", commitEditArgs{ChannelID: ch, TS: ts, Blocks: blocks, Text: text},
+	args := commitEditArgs{ChannelID: ch, TS: ts, Blocks: blocks, Text: text}
+	if fileIDs != nil {
+		args.FileIDs = &fileIDs
+	}
+	_, err := taut.Dispatch(ctx, t, "commitMessageEdit", args,
 		func(ctx context.Context, a commitEditArgs) (any, error) {
 			b := a.Blocks
 			if t != nil && len(b) > 0 && t.HasSendTransforms() {
 				b = t.TransformSendBlocks(ctx, b)
+			}
+			if a.FileIDs != nil {
+				return nil, app.EditWithFiles(ctx, a.ChannelID, a.TS, a.Text, b, *a.FileIDs)
 			}
 			return nil, app.Edit(ctx, a.ChannelID, a.TS, a.Text, b)
 		})

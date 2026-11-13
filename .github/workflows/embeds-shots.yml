@@ -91,7 +91,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$EMBEDS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestEmbedsCardShots$' ./internal/ui/richview/
+          xvfb-run -a go test -count=1 -v -run 'TestEmbedsCardShots$|TestUnfurlThumbSharp$' ./internal/ui/richview/
           xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestEmbedsShots$|TestEmbedsPreviewHover$' ./internal/ui/
           ls -la "$EMBEDS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

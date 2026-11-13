@@ -86,8 +86,8 @@ func (s *Stack) fields() []FieldInfo {
 		switch {
 		case w.ed != nil:
 			fi.Text = w.ed.Text()
-		case w.red != nil:
-			fi.Text = w.red.Doc().Text()
+		case w.rc != nil:
+			fi.Text = w.rc.FieldDoc().Text()
 		}
 		if v != nil {
 			if e.Type == "rich_text_input" {

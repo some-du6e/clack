@@ -39,6 +39,10 @@ const (
 	Tab  Mode = iota // a channel's canvas tab: no bar, a floating More options
 	Side             // the side panel: a 49px bar with expand / more / close
 	Full             // the main view: a header like a channel's
+	// Peek is a channel-tab slug's CanvasTabPeek (QuipEmbedWithEntityId
+	// with isPreview): no bar, no floating actions, editing disabled, and
+	// no live document (the embed doesn't mount its files.open watcher).
+	Peek
 )
 
 // Actions are the shell's handlers for the header buttons (nil hides one).

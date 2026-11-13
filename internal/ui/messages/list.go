@@ -393,11 +393,13 @@ func (s *listState) sync(h Host, now time.Time) {
 	dk := y*10000 + int(mo)*100 + d
 	dense := uipref.Get().Dense
 	if !changed && s.built == s.snap.rev && dk == s.dayKey && s.dense == dense && s.items != nil {
+		s.placeJump(now)
 		return
 	}
-	// Scroll anchoring: remember the first visible message and its y.
+	// Scroll anchoring: remember the first visible message and its y (not
+	// while a jump is pending: it places the list itself)
 	anchorTS, anchorY := "", 0
-	if s.list.Position.BeforeEnd && s.positioned {
+	if s.list.Position.BeforeEnd && s.positioned && s.pendingJump == "" {
 		for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
 			if s.items[i].kind == itMsg && i < len(s.pos) {
 				// items still index the previous snapshot; key is the ts
@@ -415,17 +417,7 @@ func (s *listState) sync(h Host, now time.Time) {
 		s.list.Position.First = i
 		s.list.Position.Offset = -anchorY
 	}
-	if s.pendingJump != "" {
-		for i, it := range s.items {
-			if it.kind == itMsg && s.snap.msgs[it.idx].m.TS == s.pendingJump {
-				s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
-				s.positioned = true
-				s.pendingJump = ""
-				s.highlightAt = now
-				break
-			}
-		}
-	}
+	s.placeJump(now)
 	// Confirmed sends keep their row (and its layout) under the real ts.
 	for _, rn := range s.snap.renames {
 		if r, ok := s.rows[rn[0]]; ok {
@@ -1771,8 +1763,8 @@ func (s *listState) openEdit(h Host, m core.Message) {
 		h.Invalidate()
 	})
 	app := h.Core()
-	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
-		return commitEdit(ctx, app, ch, ts, text, blocks)
+	r.edit.SaveEdit = func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
+		return commitEdit(ctx, app, ch, ts, text, blocks, fileIDs)
 	}
 	s.scrollTo(m.TS)
 	h.Invalidate()
@@ -1933,6 +1925,35 @@ func (s *listState) groupEntry(h Host, idx []int) entry {
 }
 
 // closeEdits drops any open inline editor (leaving the conversation).
+// editComposer is the list's open inline edit, if any (Slack has one per
+// window: isMessageEdited).
+func (s *listState) editComposer() *composer.Composer {
+	for _, r := range s.rows {
+		if r.edit != nil && !r.edit.Done() {
+			return r.edit
+		}
+	}
+	return nil
+}
+
+// placeJump puts a pending jump's message near the top of the view
+// (two rows above it) once the built items hold it, and flashes it from
+// then.
+func (s *listState) placeJump(now time.Time) {
+	if s.pendingJump == "" {
+		return
+	}
+	for i, it := range s.items {
+		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == s.pendingJump {
+			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+			s.positioned = true
+			s.pendingJump = ""
+			s.highlightAt = now
+			return
+		}
+	}
+}
+
 func (s *listState) closeEdits() {
 	t := tautOf()
 	for _, r := range s.rows {

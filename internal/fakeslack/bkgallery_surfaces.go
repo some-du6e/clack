@@ -258,6 +258,20 @@ func SurfInputs() map[string]any {
 	})
 }
 
+// SurfQuickCheckView is a person check modal like Karim's 2026-11-13 one
+// (synthetic wording): one rich_text_input whose label asks for a
+// formatted word.
+const SurfQuickCheckView = "VSURF00005"
+
+// SurfQuickCheck is that view; the input's block id is "check".
+func SurfQuickCheck() map[string]any {
+	return surfView(SurfQuickCheckView, SurfQuickCheckView, "", "Quick check", "Submit", "Cancel", "q1", []any{
+		map[string]any{"type": "section", "block_id": "intro", "text": md("Fill in each box the way its label says.")},
+		map[string]any{"type": "input", "block_id": "check", "label": pt("Type the word \"mango\" and strike it through"),
+			"element": map[string]any{"type": "rich_text_input", "action_id": "v"}},
+	})
+}
+
 func surfConfirm(updated bool) map[string]any {
 	if updated {
 		return surfView("VSURF00002", SurfTicketView, SurfTicketView, "Ticket created", "Finish", "Back", "h3", []any{

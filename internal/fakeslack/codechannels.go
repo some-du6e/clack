@@ -117,7 +117,8 @@ func CodeChannelFixtures(now time.Time) CodeFixtures {
 		map[string]any{"date_status_processing_expire": now.Add(time.Hour).Unix()}))
 	working.Properties = withTabz(working.Properties, []map[string]any{ // the channel tabs a code channel's views are (pX9p)
 		{"id": "code", "type": "code", "label": "Code"},
-		{"id": CodeHTMLViewID, "type": "agent_view", "label": "Preview"},
+		{"id": CodeHTMLViewID, "type": "agent_view", "label": "Preview", "data": map[string]any{"file_id": CodeHTMLFileID}},
+		{"id": "V0SUMMARY", "type": "agent_view", "label": "Summary"}, // agent_session_views' block_kit view
 		{"id": "Ct" + CodePlanCanvasID, "type": "canvas", "label": "", "data": map[string]any{"file_id": CodePlanCanvasID}},
 	})
 	add(working, ts(time.Minute, 300), "processing")

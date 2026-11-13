@@ -46,6 +46,7 @@ type FakeCanvas struct {
 	Creator            string
 	Access             map[string]string // channel -> level (canvases.access.set)
 	Opened             int               // files.open calls
+	MarkedRead         []string          // files.markRead calls' reasons
 	// ViewerAccess is the viewer's own access ("" = owner): "read" or
 	// "comment" make a canvas the viewer can't edit (QuipAccessIndicator)
 	ViewerAccess    string
@@ -359,6 +360,15 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 			return ok("file", s.canvasFile(c), "comments", []any{}), true
 		}
 		return nil, false
+	case "files.markRead": // markFileRead (a canvas preview's unmount: reason mark-read-preview)
+		cs.mu.Lock()
+		defer cs.mu.Unlock()
+		c, okc := cs.byID[f.Get("file_id")]
+		if !okc {
+			return nil, false
+		}
+		c.MarkedRead = append(c.MarkedRead, f.Get("reason"))
+		return ok(), true
 	case "files.open", "files.close":
 		cs.mu.Lock()
 		defer cs.mu.Unlock()
@@ -732,4 +742,15 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(page))
+}
+
+// CanvasCalls are a canvas's files.open count and files.markRead reasons.
+func (s *Server) CanvasCalls(id string) (opened int, markedRead []string) {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if c, ok := cs.byID[id]; ok {
+		return c.Opened, append([]string(nil), c.MarkedRead...)
+	}
+	return 0, nil
 }

@@ -117,7 +117,7 @@ func (v *View) layoutGrid(gtx layout.Context, d *core.ListDoc, lv *lists.View, r
 			g.lines = append(g.lines, gridLine{kind: lineNew, y: y, h: gtx.Dp(rowH), group: group})
 			y += gtx.Dp(rowH)
 		}
-		if d.Info.Editable {
+		if d.Info.Editable && v.mode != Peek { // the peek is isViewOnly
 			g.lines = append(g.lines, gridLine{kind: lineAdd, y: y, h: gtx.Dp(addRowH), group: group})
 			y += gtx.Dp(addRowH)
 		}
@@ -516,6 +516,9 @@ func (v *View) gridEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {
 			g.pressed = false
 			v.gridClick(gtx, d, int(pe.Position.X), int(pe.Position.Y))
 		}
+	}
+	if v.mode == Peek { // disablePointerEvents: no row hovers
+		g.hover = -1
 	}
 }
 

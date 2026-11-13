@@ -12,6 +12,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/canvasview"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 func init() {
@@ -297,4 +298,18 @@ func (a *App) shareCanvasAccess(id, ch, name string) {
 		{Label: i18n.T("file-permissions", "Can edit"), Icon: "edit", Do: func() { share("write") }},
 		{Label: i18n.T("file-permissions", "Can view"), Icon: "eye", Do: func() { share("read") }},
 	})
+}
+
+// CanvasEmoji is the canvas editor's ":" typeahead (canvasview
+// EmojiSearch): the emoji search's matches, with the user's skin tone.
+func (a *App) CanvasEmoji(query string, limit int) []canvasview.EmojiHit {
+	var out []canvasview.EmojiHit
+	for _, m := range popups.SearchEmoji(a, query, limit) {
+		name := m.Toned
+		if name == "" {
+			name = m.Name
+		}
+		out = append(out, canvasview.EmojiHit{Name: name, URL: m.URL})
+	}
+	return out
 }

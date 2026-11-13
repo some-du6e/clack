@@ -105,7 +105,7 @@ func (e *editState) btn(k string) *widget.Clickable {
 
 // canEdit: the viewer may edit the canvas.
 func (e *editState) canEdit(v *View) bool {
-	if e == nil || v.shown == nil {
+	if e == nil || v.shown == nil || v.mode == Peek {
 		return false
 	}
 	return v.shown.Info.Editable
@@ -752,6 +752,7 @@ func (e *editState) layoutEditor(gtx layout.Context, v *View, b *blk, top, w int
 	st := editorStyle(th, kind, v.h)
 	if s.target != nil && titleSection(v.blocks) && v.blocks[0] == s.target {
 		st.TextSize, st.LineHeight = titleSize, titleLine // the title section
+		st.EmojiSize = titleLine                          // its emoji: 34px (data-section-style 48 control.c54 img)
 		lineH = gtx.Dp(titleLine)
 		st.PlaceholderText = nsCanvas.T(titlePlaceholder) // TitleSectionOverlay, until the title has text
 	} else if s.target != nil && s.target == v.placeholderRow() {
@@ -835,7 +836,7 @@ func editorStyle(th *theme.Theme, k canvas.Kind, h Host) composer.EditorStyle {
 	st.MentionColor, st.MentionBg, st.BroadcastColor, st.BroadcastBg = c.Mention, c.MentionBg, c.Fg, c.SelfMention
 	st.PlaceholderText = "" // Slack's empty line hint offers "/" commands, which Clack has no menu for
 	st.MaxHeight = 0
-	st.EmojiSize = 20
+	st.EmojiSize = unit.Dp(lineFor(k)) // control.c54 img: the section's line height (as render.go draws it)
 	if im := h.Images(); im != nil {
 		st.Images = im.Get
 	}

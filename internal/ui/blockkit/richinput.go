@@ -7,10 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
+	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/composer"
@@ -19,127 +17,77 @@ import (
 
 // ---- rich_text_input ----
 //
-// Slack's rich_text_input is the composer's editor in a field: bold /
-// italic / strike / code with the usual shortcuts and markdown, lists,
-// quotes, code blocks, links, mentions and emoji. Its value is one
-// rich_text block (rich_text_value). Enter adds a line (the form submits
-// with the button or Ctrl+Enter).
+// Slack's rich_text_input (RichTextInputElement, the lazy chunk
+// sui-block-rich-text-input) is the message composer's box: Texty with
+// useWysiwyg inside a WysiwygContainer with enableEmojiButton and
+// enableComposerButton, so it has the formatting bar (shown or hidden
+// with Aa and the user's msg_input_formatting_bar_state, like the message
+// composer's), the markdown and keyboard shortcuts, members, channels and
+// emoji completion, and the emoji and Aa buttons in its footer; at most 8
+// lines (numMaxLines) before it scrolls; placeholder.text or "Write
+// something". Enter adds a line (enterCreatesNewlineOverride). Its value
+// is one rich_text block (rich_text_value), dispatched on each change
+// with on_character_entered.
 
-func (w *ew) richEditor() *composer.Editor {
-	if w.red != nil {
-		return w.red
+func (w *ew) richField() *composer.Composer {
+	if w.rc != nil {
+		return w.rc
 	}
-	w.red = composer.NewEditor()
 	v := w.value()
 	init := v.Rich
 	if len(init) == 0 && len(w.e.InitialValue) > 0 && w.e.InitialValue[0] == '{' {
 		init = w.e.InitialValue
 	}
+	o := composer.FieldOpts{Placeholder: textOf(w.e.Placeholder), FocusOnLoad: w.e.FocusOnLoad}
 	if len(init) > 0 {
 		if c := w.o.host().Core(); c != nil {
 			if d, err := composer.DocFromBlocksJSON(json.RawMessage("["+string(init)+"]"), c.S); err == nil && d != nil {
-				w.red.SetDoc(d)
+				o.Initial = d
 			}
 		}
 	}
-	return w.red
+	o.OnChange = func() { w.richChanged() }
+	w.rc = composer.NewField(w.o.host(), o)
+	return w.rc
 }
 
-func (w *ew) richHeight(gtx C) int {
-	h := dp(gtx, 104)
-	if w.red != nil {
-		h = max(h, w.red.ContentHeight()+2*dp(gtx, 8))
+// richChanged is onTextChange: the value is the field's rich_text, and
+// on_character_entered dispatches it.
+func (w *ew) richChanged() {
+	c, v := w.rc, w.value()
+	if c.FieldEmpty() {
+		v.Rich, v.Text = nil, ""
+	} else {
+		v.Rich, v.Text = mergeRichText(c.FieldDoc().RichTextBlocks()), ""
 	}
-	return min(h, dp(gtx, 320))
+	if s, ok := w.o.(*Surface); ok {
+		s.clearErr(w.bid)
+	}
+	if w.dispatchOn("on_character_entered") {
+		w.send(actionPayload(w.bid, w.e, v))
+	}
+	w.o.changed()
 }
 
-// editorStyle is the composer's look with the theme's colors.
-func editorStyle(th *theme.Theme, h Host, placeholder string) composer.EditorStyle {
-	st := composer.DefaultEditorStyle(th.Shaper)
-	p := &th.C
-	cl := colorsOf(th)
-	st.Color, st.Caret = cl.InputText, cl.InputText
-	st.LinkColor, st.MentionColor, st.MentionBg = p.Link, p.Mention, p.MentionBg
-	st.BroadcastColor, st.BroadcastBg = p.Mention, p.SelfMention
-	st.CodeColor, st.CodeBg, st.CodeBorder = p.CodeFg, p.CodeBg, p.CodeBorder
-	st.PreBg, st.PreBorder, st.QuoteBar = p.PreBg, p.CodeBorder, p.QuoteBar
-	st.Selection, st.Placeholder = p.Selection, cl.Placeholder
-	st.PlaceholderText = placeholder
-	st.MaxHeight = 300
-	st.Images = func(u string, px int) (paint.ImageOp, bool) {
-		if u == "" || h.Images() == nil {
-			return paint.ImageOp{}, false
-		}
-		return h.Images().Get(u, px)
-	}
-	return st
+// richHeight is the field's height at maxW, from a measuring pass (no
+// input) of the composer, so the input block's height is the box's.
+func (w *ew) richHeight(gtx C, maxW int) int {
+	c := w.richField()
+	m := op.Record(gtx.Ops)
+	g := gtx.Disabled()
+	g.Constraints = layout.Constraints{Min: image.Pt(maxW, 0), Max: image.Pt(maxW, 1<<20)}
+	d := c.Layout(g)
+	m.Stop()
+	return d.Size.Y
 }
 
 func (w *ew) layoutRich(gtx C, sz image.Point) {
-	th := w.th()
-	cl := colorsOf(th)
-	ed := w.richEditor()
-	v := w.value()
-	if w.e.FocusOnLoad && !w.edSet {
-		w.edSet = true
-		ed.Focus(gtx)
-	}
-	for {
-		e, ok := ed.Update(gtx)
-		if !ok {
-			break
-		}
-		switch e.Kind {
-		case composer.EvSubmit:
-			ed.InsertText("\n")
-		case composer.EvChange:
-			if ed.Empty() {
-				v.Rich, v.Text = nil, ""
-			} else {
-				v.Rich, v.Text = mergeRichText(ed.Doc().RichTextBlocks()), ""
-			}
-			if s, ok := w.o.(*Surface); ok {
-				s.clearErr(w.bid)
-			}
-			if w.dispatchOn("on_character_entered") {
-				w.send(actionPayload(w.bid, w.e, v))
-			}
-			w.o.changed()
-		}
-	}
-	r := image.Rectangle{Max: sz}
-	rad := dp(gtx, 8)
-	bw := max(1, dp(gtx, 1))
-	w.focusedD, w.box = ed.Focused(gtx), sz
-	switch {
-	case ed.Focused(gtx):
-		ring := dp(gtx, 4)
-		rrect(gtx, r.Inset(-ring), rad+ring, cl.FocusRing)
-		outline(gtx, r, rad, bw, cl.Focus, cl.Bg)
-	case w.errored():
-		outline(gtx, r, rad, bw, cl.ErrorText, cl.Bg)
-	default:
-		outline(gtx, r, rad, bw, cl.SelectBorder, cl.Bg)
-	}
-	// a click anywhere in the box focuses the field, as Slack's (the
-	// editor fills the inner box and places the caret itself; this
-	// covers the padding around it)
-	if w.main.clicked(gtx, w.o.host()) {
-		ed.Focus(gtx)
-	}
-	func() {
-		defer clip.Rect(r).Push(gtx.Ops).Pop()
-		w.main.g.Add(gtx.Ops)
-		pointer.CursorText.Add(gtx.Ops)
-	}()
-	padX, padY := dp(gtx, 12), dp(gtx, 8)
-	inner := image.Pt(sz.X-2*padX, sz.Y-2*padY)
-	at(gtx, image.Pt(padX, padY), func(gtx C) D {
-		// Min fills the box: the editor's input area was its text's
-		// height, so a click under the first line did nothing
-		gtx.Constraints = layout.Constraints{Min: inner, Max: inner}
-		return ed.Layout(gtx, editorStyle(th, w.o.host(), textOf(w.e.Placeholder)))
-	})
+	c := w.richField()
+	c.Invalid = w.errored() // WysiwygContainer isInvalid: the error border
+	g := gtx
+	g.Constraints = layout.Constraints{Min: image.Pt(sz.X, 0), Max: image.Pt(sz.X, max(sz.Y, 1<<20))}
+	c.Layout(g)
+	w.focusedD, w.box = c.Focused(), sz
 }
 
 // mergeRichText turns the composer's blocks (rich_text runs plus header

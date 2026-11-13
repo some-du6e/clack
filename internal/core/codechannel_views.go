@@ -213,7 +213,11 @@ func (d *CodeDiff) Totals() (add, del int, ok bool) {
 // answering {diff}. Slack refetches when code_channel.diff_file_version
 // changes.
 func (a *App) CodeChannelDiff(ctx context.Context, ch string) (*CodeDiff, error) {
-	raw, err := a.C.Raw(ctx, "client.codeChannels.getDiff", url.Values{"channel_id": {ch}, "reason": {"code_tab_view"}})
+	return a.codeChannelDiff(ctx, ch, "code_tab_view")
+}
+
+func (a *App) codeChannelDiff(ctx context.Context, ch, reason string) (*CodeDiff, error) {
+	raw, err := a.C.Raw(ctx, "client.codeChannels.getDiff", url.Values{"channel_id": {ch}, "reason": {reason}})
 	if err != nil {
 		return nil, err
 	}

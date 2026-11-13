@@ -97,7 +97,7 @@ func (b *scheduledBar) shown(msgs []core.ScheduledMessage, loaded bool, now time
 // otherwise).
 func (c *Composer) layoutScheduledBar(gtx layout.Context) layout.Dimensions {
 	a := c.api.a
-	if a == nil || c.edit != nil {
+	if a == nil || c.noDraft() {
 		return layout.Dimensions{}
 	}
 	if c.ts == "" {

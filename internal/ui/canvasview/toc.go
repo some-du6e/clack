@@ -92,7 +92,11 @@ func newTOC() *tocState {
 }
 
 // tocOn: the drawer is mounted (canvas_table_of_contents on).
-func (v *View) tocOn() bool { return v.exp("canvas_table_of_contents") }
+func (v *View) tocOn() bool {
+	// QuipEmbed renders the TableOfContentsDrawer only outside a preview
+	// (tZ && !l && !isPreview)
+	return v.mode != Peek && v.exp("canvas_table_of_contents")
+}
 
 // tocEntries builds the entries from the blocks (rebuilt when they change).
 func (v *View) tocEntries() []tocEntry {

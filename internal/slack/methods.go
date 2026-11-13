@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -183,6 +184,20 @@ func (c *Client) Post(ctx context.Context, o PostOpts) (*Message, error) {
 
 func (c *Client) Update(ctx context.Context, ch, ts, text string, blocks json.RawMessage) error {
 	p := url.Values{"channel": {ch}, "ts": {ts}, "text": {text}, "link_names": {"true"}}
+	if len(blocks) > 0 {
+		p.Set("blocks", string(blocks))
+	}
+	return c.Call(ctx, "chat.update", p, nil)
+}
+
+// UpdateWithFiles is chat.update as Slack's commitMessageEdit sends it
+// for saveMessageEditWithFiles (an edit that added or removed files):
+// file_ids is every file the message keeps, in order, as a comma list
+// (getFormData joins string arrays; an empty list clears them), with
+// skip_dlp_user_warning false.
+func (c *Client) UpdateWithFiles(ctx context.Context, ch, ts, text string, blocks json.RawMessage, fileIDs []string) error {
+	p := url.Values{"channel": {ch}, "ts": {ts}, "text": {text}, "link_names": {"true"},
+		"skip_dlp_user_warning": {"false"}, "file_ids": {strings.Join(fileIDs, ",")}}
 	if len(blocks) > 0 {
 		p.Set("blocks", string(blocks))
 	}

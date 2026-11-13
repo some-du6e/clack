@@ -54,7 +54,7 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$THREAD_HEADER_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity|TestThreadHeaderJumpsToRoot' ./internal/ui/
           # find in thread's bar and marks (thread-find-*.png)
           xvfb-run -a go test -count=1 -v -run 'TestThreadFindShots' ./internal/ui/messages/
       - name: an agent's edited answer in the open pane, with screenshots

@@ -419,7 +419,7 @@ func TestChannelHoverCardCodeHuddleTabs(t *testing.T) {
 	shotBoth("channel-card-huddle", huddleOn)
 	leave()
 
-	// the Code tab's slug: its peek (not drawn by Clack), no channel card
+	// the Code tab's slug: its peek (tab_slug_peek_test.go), no channel card
 	slug := func(tab string) image.Rectangle {
 		var r image.Rectangle
 		e.until("the slug to "+tab, 5*time.Second, func() bool {
@@ -432,13 +432,16 @@ func TestChannelHoverCardCodeHuddleTabs(t *testing.T) {
 	}
 	r := slug("code")
 	e.move(f32.Pt(float32(r.Min.X+r.Dx()/2), float32(r.Min.Y+r.Dy()/2)))
-	if p, ok := ctl.Pending(); ok {
-		t.Errorf("the Code tab's slug started a card: %+v", p)
+	if p, ok := ctl.Pending(); ok && (p.Tab != "code" || p.Buttons) {
+		t.Errorf("the Code tab's slug started a channel card: %+v", p)
 	}
 	time.Sleep(hovercard.ShowDelay + 50*time.Millisecond)
 	e.frame()
-	if req, _, open := ctl.Open(); open {
+	if req, _, open := ctl.Open(); open && req.Tab != "code" {
 		t.Errorf("the Code tab's slug opened %+v (Slack shows the tab's peek)", req)
+	}
+	if e.a.hover.chc != nil {
+		t.Error("the Code tab's slug drew the channel card")
 	}
 	leave()
 	// a tab the channel doesn't have: BaseMrkdwnChannel's channel card

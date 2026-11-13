@@ -138,7 +138,7 @@ func (c *chrome) overflowButtons(dst []crBtn) []crBtn {
 // a real button to fold, the slots reach minButtonsForOverflow and the
 // toolbar is narrower than the threshold.
 func (c *chrome) foldFooter() bool {
-	if c.cur.Mode == modeEdit {
+	if c.cur.Mode == modeEdit || c.cur.Mode == modeField {
 		return false // the edit composer's toolbar has nothing to fold
 	}
 	var buf [len(crFootOverflow)]crBtn
