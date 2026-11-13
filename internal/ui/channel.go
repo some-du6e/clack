@@ -32,6 +32,9 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 	sz := gtx.Constraints.Max
 	c := &a.th.C
 	conv := a.model().conv(ch)
+	if a.data != nil {
+		a.data.shown(ch) // the header's reads for a pane that didn't navigate here
+	}
 	if conv == nil && a.data != nil {
 		conv = a.data.resolved(ch) // closed DM / channel outside the sidebar
 	}

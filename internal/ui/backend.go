@@ -69,6 +69,10 @@ type backend struct {
 	// finishes before boot's first snapshot, and a channel outside the
 	// sidebar lives in ext. UI goroutine only.
 	side map[string]*chSide
+	// drawn is when layoutChannel last drew each conversation (shown):
+	// a pane that embeds one keeps its failed header reads retried.
+	// UI goroutine only.
+	drawn map[string]time.Time
 
 	snapMu      sync.Mutex
 	snapPending bool
@@ -913,8 +917,44 @@ func (b *backend) applySide(c *convInfo, onlyMissing bool) {
 	}
 }
 
+// shown is opened for a conversation a pane draws without navigating
+// to it: layoutChannel calls it every frame for the Activity page's
+// opened item (Panes.ChannelPane, the persistent detail panel) and the
+// secondary column's conversation (OpenChannelSecondary), whose headers
+// otherwise never read their member facepile, topic or tabs: the
+// facepile stayed the loading tiles (polish-1113c). It reads once; after
+// a failed members read retryOpened's backoff owns the next read. UI
+// goroutine only.
+func (b *backend) shown(ch string) {
+	if ch == "" {
+		return
+	}
+	if b.drawn == nil {
+		b.drawn = map[string]time.Time{}
+	}
+	b.drawn[ch] = time.Now()
+	if _, read := b.fetched[ch]; read {
+		return // read or reading (opened's own guard rereads on the next navigation)
+	}
+	if sd := b.side[ch]; sd != nil && sd.fails > 0 {
+		return
+	}
+	b.opened(ch)
+}
+
+// stillShown reports whether ch is the open conversation, or a pane drew
+// it in the last second.
+func (b *backend) stillShown(ch string) bool {
+	if b.app != nil && b.app.router.Current().Channel() == ch {
+		return true
+	}
+	t, ok := b.drawn[ch]
+	return ok && time.Since(t) < time.Second
+}
+
 // retryOpened reads the channel's header again after a failed members
-// read, if it's still the open conversation by then.
+// read, if it's still the open conversation by then, or still drawn in
+// a pane (shown).
 func (b *backend) retryOpened(ch string, fails int) {
 	a := b.app
 	if a == nil || b.ctx == nil {
@@ -931,7 +971,7 @@ func (b *backend) retryOpened(ch string, fails int) {
 			return
 		}
 		a.Post(func() {
-			if a.router.Current().Channel() == ch {
+			if b.stillShown(ch) {
 				b.opened(ch)
 			}
 		})
