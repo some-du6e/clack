@@ -379,8 +379,14 @@ func (v *Huddles) layoutChannelSuggestions(gtx C) D {
 	return D{Size: image.Pt(w, top+y+gtx.Dp(10)+gtx.Dp(20))}
 }
 
-// channelSuggestion is HuddlesPageChannelSuggestion: 56px, padding 10px
-// 12px, sk_primary_background between #0000001a sides and an inset line
+// channelSuggestion is HuddlesPageChannelSuggestion: a DM or group DM
+// among the suggestions is drawn as a channel is, under "Channels": the
+// "channel" icon and getChannelDisplayName (the person, or the people).
+// Slack's selector (zq6z getChannelHuddleSuggestionsForNUX over 6Z4k h3,
+// Opi6 isUserInChannel: aK5v isIm || isMpim || a member of the team's
+// channel) keeps them, and the row (Igs2, build of 2026-11-12) has one
+// icon, name "channel", for every kind (checked for polish-1113c, after
+// an audit read it as a Clack slip). 56px, padding 10px 12px, sk_primary_background between #0000001a sides and an inset line
 // below (the first row's top line and corners 12, the last's), the 36px
 // tile (foreground_soft .06, radius 8) with the channel icon, the name
 // (15px bold, 8px after), "Start Huddle" on hover at the right.

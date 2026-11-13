@@ -261,3 +261,59 @@ func TestHoverCardPresenceRule(t *testing.T) {
 		t.Error("presence on a deactivated member or a bot")
 	}
 }
+
+// A bot or app user's card has no local time row: Slack's hover card
+// (ProfileHoverCard, useProfileHoverApp) and click card
+// (ProfileCardTrigger's ProfileCardContainer) both open the app card for
+// a member that isn't human (qSRE isAppOrBot: is_app_user, is_bot, the
+// USLACK id), and LocalTime (A05L via dD/2) draws nothing for a member
+// with neither a tz nor a tz_offset.
+func TestBotCardNoLocalTime(t *testing.T) {
+	h := hcEnv(t)
+	if u, ok := lookupUser(h, fakeslack.AppUserID); !ok || !u.IsBot {
+		t.Fatalf("fixture %s: %+v", fakeslack.AppUserID, u)
+	}
+	click := NewProfileCard(h, image.Pt(300, 300), fakeslack.AppUserID)
+	r := hcLoad(t, click, "the click card's app card", func() bool { return click.app.card != nil })
+	if !click.IsApp() || r.Dx() != 320 {
+		t.Errorf("a bot user's click card: app=%v %v, want Slack's 320-wide app card", click.IsApp(), r)
+	}
+	b := NewBotProfileCard(h, image.Pt(300, 300), fakeslack.AppBotID)
+	hcLoad(t, b, "the bot-only click card", func() bool { return b.app.card != nil })
+	if !b.IsApp() {
+		t.Error("a bot_id-only click card isn't the app card")
+	}
+	person := NewProfileCard(h, image.Pt(300, 300), fakeslack.ProfileID)
+	if hcLayout(t, person); person.IsApp() {
+		t.Error("a person's click card is the app card")
+	}
+
+	for _, c := range []struct {
+		u     core.User
+		human bool
+	}{
+		{core.User{ID: "U1", IsBot: true}, false},
+		{core.User{ID: "U2", AppUser: true}, false}, // is_app_user without is_bot
+		{core.User{ID: "USLACK"}, false},
+		{core.User{ID: fakeslack.SlackbotID, IsBot: true}, true}, // USLACKBOT (core marks it IsBot): the member card's "Built by Slack"
+		{core.User{ID: "U3"}, true},
+	} {
+		if got := pfHuman(c.u); got != c.human {
+			t.Errorf("pfHuman(%+v) = %v, want %v", c.u, got, c.human)
+		}
+	}
+	for _, c := range []struct {
+		u     core.User
+		clock bool
+	}{
+		{core.User{TZ: "Europe/Berlin", TZOffset: 3600}, true},
+		{core.User{TZOffset: -18000}, true},
+		{core.User{TZ: "Europe/London"}, true}, // offset 0, but a tz
+		{core.User{}, false},                   // no tz, offset 0: getMemberTimezoneOffset 0 is falsy
+		{core.User{TZ: "undefined"}, false},
+	} {
+		if got := pfHasClock(c.u); got != c.clock {
+			t.Errorf("pfHasClock(%+v) = %v, want %v", c.u, got, c.clock)
+		}
+	}
+}

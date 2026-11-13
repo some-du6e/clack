@@ -203,8 +203,11 @@ func (p *ProfileCard) Layout(gtx layout.Context) layout.Dimensions {
 		p.asked = true
 		pfEnsure(p.h, p.id, func(found bool) { p.missing = !found })
 	}
-	if p.hover && p.isApp(u, ok) {
+	if p.isApp(u, ok) { // a click card too (ProfileCardContainer: the app card when !memberIsHuman)
 		p.rect = p.layoutApp(gtx, th, cl, win)
+		if !p.hover {
+			keyTarget(gtx, p, p.rect)
+		}
 		return layout.Dimensions{Size: win}
 	}
 	if ok {
@@ -893,9 +896,13 @@ func pfIsSelf(h Host, id string) bool {
 	return h.Core() != nil && id != "" && h.Core().Self().ID == id
 }
 
-// pfHasClock reports whether u has a meaningful local time.
+// pfHasClock is LocalTime's (A05L) condition: useProfileMemberLocalTime
+// (dD/2) leaves the label empty, and LocalTime renders null, unless the
+// member has a tz (getMemberTimezone: not "" or "undefined") or a
+// non-zero tz_offset. No is_bot rule: a bot never reaches the member card
+// (isApp), and a person with neither field gets no row.
 func pfHasClock(u core.User) bool {
-	return u.TZ != "" || u.TZOffset != 0 || !u.IsBot
+	return (u.TZ != "" && u.TZ != "undefined") || u.TZOffset != 0
 }
 
 func pfHasStatus(u core.User, now time.Time) bool {

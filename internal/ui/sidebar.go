@@ -79,6 +79,8 @@ type sidebarState struct {
 	outboxHover gesture.Hover
 	outboxTip   popups.TipState
 	codeTips    map[string]*codeRowTip // code channel rows' name tooltips (codechannel.go)
+	sharedTips  map[string]*codeRowTip // shared channel rows' name tooltips (sidebar_connect.go)
+	teamAsked   map[string]bool        // external teams asked for (sidebar_connect.go)
 
 	// ChannelSidebar (slick_shell.go)
 	gen       int   // bumped by every rebuild

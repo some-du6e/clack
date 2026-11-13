@@ -86,6 +86,10 @@ type Size struct {
 	// ThreadHeader adds one thread in a conversation of each kind the
 	// thread pane's header names differently (threadheader.go).
 	ThreadHeader bool
+	// SlackConnectDM (with ThreadHeader) adds an open DM with ExternalID,
+	// Partner Co's member: the sidebar's external DM row
+	// (SlackConnectDMID).
+	SlackConnectDM bool
 	// ThreadsAudit adds #th-audit: one thread per way the thread pane
 	// marks unread replies, opens and counts (threads_audit.go).
 	ThreadsAudit bool
@@ -229,6 +233,7 @@ const (
 	AppAppID          = "A0FAKEAPPA"
 	ExternalID        = "U0FAKEXTRN"
 	ExternalTeamID    = "T0PARTNER1"
+	SlackConnectDMID  = "D0FAKEXTRN" // Size.SlackConnectDM: the DM with ExternalID
 	ExternalAppUserID = "U0FAKEXAPP"
 	ExternalAppBotID  = "B0FAKEXAPP"
 	ExternalAppAppID  = "A0FAKEXAPP"

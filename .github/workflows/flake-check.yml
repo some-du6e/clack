@@ -78,6 +78,16 @@ name: flake-check
 #     (ui/views)                             test picking Delete's row and
 #                                            the keys; the test's saved.list
 #                                            put the completed to-do back
+# and polish-1113c's (50 runs, the race forced every run; the old fault
+# failed 50 of 50 in run 43502002431):
+#   TestHeaderFacepileRetriesFailedRead (ui) the one-shot users/list fault
+#                                            went to whichever read came
+#                                            first: boot's open channel's
+#                                            header read, sent after
+#                                            waitReady, took it and the
+#                                            test's channel read worked; the
+#                                            fault now fails only that
+#                                            channel's people read
 #                                            (the server drops it)
 # and polish-1113's (50 runs each, the race forced every run):
 #   TestChannelLinkTargets (ui)              core's "names" event (a mention
@@ -133,6 +143,7 @@ on:
       - "internal/core/reads.go"
       - "internal/fakeslack/faults.go"
       - "third_party/gioui.org/app/clack_drop_windows_test.go"
+      - "internal/ui/facepile_load_test.go"
       - "third_party/gioui.org/app/os.go"
       - "internal/ui/runfromtray_windows_test.go"
       - "internal/ui/runfromtray.go"
@@ -537,6 +548,32 @@ jobs:
       matrix:
         include:
           - test: TestChannelLinkTargets # core's names forced between the footer and the header check
+            pkg: ./internal/ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }}, race detector, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" -race
+
+  flakes-1113c:
+    if: ${{ !inputs.only || startsWith('flakes-1113c', inputs.only) }}
+    name: "flakes-1113c ${{ matrix.test }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - test: TestHeaderFacepileRetriesFailedRead # another channel's users/list sent after the fault is armed
             pkg: ./internal/ui
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

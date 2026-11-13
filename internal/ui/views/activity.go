@@ -2899,32 +2899,29 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 		}
 		return v.shimmerLine(gtx, 240)
 	}
-	if d.subReact && !v.h.Core().ActivityLayoutRevisions() {
-		// QTZf ReactionContent without the layout revisions: "You:"
-		// (margin_right_25) before your message
-		return row(gtx, layout.Middle,
-			layout.Rigid(func(gtx C) D {
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, nsActivity.T("You:")) })
-			}),
-			layout.Flexed(1, func(gtx C) D {
-				gtx.Constraints.Min.X = 0
-				return r.preview(gtx, 1)
-			}),
-		)
+	if d.subReact && (v.dense || !v.h.Core().ActivityLayoutRevisions()) {
+		// QTZf ReactionContent's span.margin_right_25 subtext ("Reacted
+		// to:" in Dense, "You:" before your message without the layout
+		// revisions) runs inline in ActivityMessage's one truncated line:
+		// the message's own text run, its colour and baseline, the 4px
+		// margin a space (Lato's at 15px: 3.9px)
+		sub := nsActivity.T("Reacted to:")
+		if !v.h.Core().ActivityLayoutRevisions() {
+			sub = nsActivity.T("You:")
+		}
+		return r.previewSub(gtx, 1, sub+" ")
 	}
 	if d.subReact {
 		// ReactionContent: "Reacted {emoji} to:" (Detailed: the emoji
-		// drawn where the locale puts it), "Reacted to:" (Dense)
-		var pre []layout.FlexChild
-		if v.dense {
-			pre = append(pre, layout.Rigid(func(gtx C) D {
-				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, col, nsActivity.T("Reacted to:")) })
-			}))
-		} else {
-			pre = append(pre, layout.Rigid(func(gtx C) D { return v.reactPrefix(gtx, d, col) }))
-		}
-		pre = append(pre, layout.Flexed(1, func(gtx C) D { return r.preview(gtx, lines) }))
-		return row(gtx, layout.Middle, pre...)
+		// drawn where the locale puts it), "Reacted to:" (Dense), in
+		// span.p-activity_ia4_page__item__activity_subtext (15px under the
+		// page's threads_v2, weight initial, the row's colour) and the
+		// message right after it, inline: one line box, one baseline, and
+		// ActivityMessage's Truncate with truncate 1 (one line in Detailed
+		// too, the ellipsis at the message's end)
+		return row(gtx, layout.Baseline,
+			layout.Rigid(func(gtx C) D { return v.reactPrefix(gtx, d, col) }),
+			layout.Flexed(1, func(gtx C) D { return r.preview(gtx, 1) }))
 	}
 	if d.subtext == "" {
 		return r.preview(gtx, lines)
@@ -2937,20 +2934,47 @@ func (v *Activity) actBody(gtx C, r *actRow, lines int, col color.NRGBA) D {
 // revisions: span.reaction_prefix (700, margin-right 4px) around "Reacted
 // {emoji} to:"; span.reaction_emoji (relative, top 3px) holds the 16px img,
 // vertical-align top in the 22px line, so 3px down: the line's middle.
+//
+// It reports the text's baseline, so the message after it shares the
+// line: the emoji's top is 3px below the 22px line box's top, the
+// labels sit in that line box's middle (half-leading).
 func (v *Activity) reactPrefix(gtx C, d *actDesc, col color.NRGBA) D {
 	before, after := around(nsActivity, "Reacted {emoji} to:", "emoji")
-	return row(gtx, layout.Middle,
-		layout.Rigid(func(gtx C) D {
-			if before == "" {
-				return D{}
-			}
-			return v.label(gtx, 15, wBold, col, before)
-		}),
-		layout.Rigid(func(gtx C) D { return v.reactionEmoji(gtx, d, 15, wBold, col) }),
-		layout.Rigid(func(gtx C) D {
-			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wBold, col, after) })
-		}),
-	)
+	lg := gtx
+	lg.Constraints.Min = image.Point{}
+	rec := func(w W) (D, op.CallOp) {
+		m := op.Record(gtx.Ops)
+		dd := w(lg)
+		return dd, m.Stop()
+	}
+	var bd D
+	var bc op.CallOp
+	if before != "" {
+		bd, bc = rec(func(gtx C) D { return v.label(gtx, 15, wBold, col, before) })
+	}
+	ed, ec := rec(func(gtx C) D { return v.reactionEmoji(gtx, d, 15, wBold, col) })
+	ad, ac := rec(func(gtx C) D { return v.label(gtx, 15, wBold, col, after) })
+	lh := max(bd.Size.Y, ad.Size.Y)
+	asc := ad.Size.Y - ad.Baseline   // the labels' baseline from their top
+	lineTop := (lh - gtx.Dp(22)) / 2 // the 22px line box around the labels
+	eTop := lineTop + gtx.Dp(3)
+	top := min(0, eTop) // shift everything down if the emoji pokes above
+	put := func(c op.CallOp, x, y int) {
+		st := op.Offset(image.Pt(x, y-top)).Push(gtx.Ops)
+		c.Add(gtx.Ops)
+		st.Pop()
+	}
+	x := 0
+	if before != "" {
+		put(bc, x, 0)
+		x += bd.Size.X
+	}
+	put(ec, x, eTop)
+	x += ed.Size.X
+	put(ac, x, 0)
+	x += ad.Size.X + gtx.Dp(4) // reaction_prefix margin-right 4px
+	h := max(lh, eTop+ed.Size.Y) - top
+	return D{Size: image.Pt(x, h), Baseline: h - (asc - top)}
 }
 
 // shimmerLine is Slack's loading placeholder (applyShimmer) for a body

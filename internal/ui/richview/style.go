@@ -334,6 +334,12 @@ type Options struct {
 	// keeps mentions as pills: read Activity rows. Muted is for system
 	// messages, which also turn member mentions into plain names.
 	Secondary bool
+	// Color, when set, is the body's text colour: an Activity row's
+	// message takes the row's colour (ActivityMessage's span has no colour
+	// of its own with activity_inbox, so it inherits the row's
+	// content-pry or content-sec), which the message list's palette Text
+	// isn't in dark mode (#b9babd there, content-pry #f8f8f8).
+	Color color.NRGBA
 	// MaxWidth caps the content width in Dp (0 = no cap beyond the constraints).
 	MaxWidth float32
 	// MaxLines clamps a paragraph to that many lines with an ellipsis

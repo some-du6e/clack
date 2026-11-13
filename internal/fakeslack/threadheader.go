@@ -116,6 +116,9 @@ func (s *Server) addThreadHeader() {
 	named := group
 	named.ID, named.Name, named.Properties = ThreadNamedGroupDMID, "th-launch-crew", json.RawMessage(`{"has_custom_mpdm_name":true}`)
 	s.convs = append(s.convs, pub, priv, shared, arch, dm, group, app, named)
+	if s.Size.SlackConnectDM {
+		s.convs = append(s.convs, slack.Conversation{ID: SlackConnectDMID, IsIM: true, User: ExternalID, IsOpen: true, Created: created})
+	}
 	other := ch(ThreadElsewhereID, "th-elsewhere")
 	other.IsMember = false
 	s.others = append(s.others, other)

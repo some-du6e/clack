@@ -1,8 +1,11 @@
 package ui
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,22 +54,56 @@ func TestHeaderFacepileReadBeforeBoot(t *testing.T) {
 // A failed members read (edge users/list rate limited) is tried again
 // while the channel is open, instead of leaving the loading tiles until
 // the channel is opened again two minutes later.
+//
+// The fault fails only ch's people read, once. A plain
+// SetFault("edge/users/list", Times: 1) went to whichever users/list came
+// first: boot's open channel's header read (C0FAKE00000), when waitReady
+// returned before it was sent, took the fault, and ch's read worked
+// (release run 43492399437, "the failed read set members"). The test
+// now sends such a read itself after arming the fault, so that order
+// happens every run.
 func TestHeaderFacepileRetriesFailedRead(t *testing.T) {
 	e, fs := previewEnv(t)
-	ch := ""
+	ch, other := "", ""
 	for _, s := range e.a.model().Sections {
 		for _, id := range s.Rows {
 			c := e.a.model().conv(id)
-			if _, read := e.a.data.fetched[id]; ch == "" && !read && c != nil && c.Kind == "channel" && !c.Preview && c.NumMembers > 0 {
+			if c == nil || c.Kind != "channel" || c.Preview || c.NumMembers == 0 {
+				continue
+			}
+			if _, read := e.a.data.fetched[id]; ch == "" && !read {
 				ch = id
+			} else if other == "" && id != ch {
+				other = id
 			}
 		}
 	}
-	if ch == "" {
-		t.Fatal("no unopened member channel")
+	if ch == "" || other == "" {
+		t.Fatalf("no unopened member channel (%q) and a second one (%q)", ch, other)
 	}
-	fs.SetFault("edge/users/list", fakeslack.Fault{Error: "ratelimited", Times: 1})
+	var failed atomic.Int32
+	fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
+		if method != "edge/users/list" {
+			return nil, false
+		}
+		var chans []string
+		var filter string
+		_ = json.Unmarshal(body["channels"], &chans)
+		_ = json.Unmarshal(body["filter"], &filter)
+		if len(chans) == 1 && chans[0] == ch && filter == "everyone AND NOT bots AND NOT apps" && failed.CompareAndSwap(0, 1) {
+			return map[string]any{"ok": false, "error": "ratelimited"}, true
+		}
+		return nil, false
+	})
+	// another channel's people read, sent before ch's (what a Times: 1
+	// fault on every users/list used to spend itself on)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if _, _, err := e.a.Core().Members(ctx, other, "", true); err != nil {
+		t.Fatalf("%s's members read: %v", other, err)
+	}
+	cancel()
 	e.openChannel(ch)
+	e.until("ch's failed members read", 10*time.Second, func() bool { return failed.Load() == 1 })
 	e.settle(300 * time.Millisecond)
 	if c := e.a.model().conv(ch); c == nil || len(c.Members) > 0 {
 		t.Fatalf("the failed read set members: %+v", c)

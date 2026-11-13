@@ -82,6 +82,12 @@ type convInfo struct {
 	FileID    string
 	Doc       string
 	NameSpans []richtext.Span
+	// Slack Connect (sidebar_connect.go): Shared is is_ext_shared, Teams
+	// the other organizations (core.Conv.ConnectedTeams); PeerTeam is a
+	// DM partner's team when they're external (isExternal, another org).
+	Shared   bool
+	Teams    []string
+	PeerTeam string
 }
 
 // mentionTotal is the workspace's mention count (unmuted conversations'

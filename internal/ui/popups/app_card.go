@@ -73,13 +73,25 @@ type appState struct {
 	cmds          [3]widget.Clickable
 }
 
-// isApp is useProfileHoverApp: Slack opens AppHoverCard for a member that
-// isn't human (a bot user other than Slackbot) and for a bot with no user.
+// isApp is useProfileHoverApp (hover cards, ProfileHoverCard SmYd) and
+// ProfileCardTrigger's ProfileCardContainer (click cards, boot-render
+// D3FY): both open the app card for a member that isn't human and for a
+// bot with no member, and the member card (with its LocalTime row) only
+// for a human. Human is ztJE isMemberHuman: not isAppOrBot (qSRE:
+// is_app_user, is_bot, or the USLACK id); Slackbot (USLACKBOT, is_bot
+// false) is human there and keeps the member card's "Built by Slack".
 func (p *ProfileCard) isApp(u core.User, ok bool) bool {
 	if p.id == "" {
 		return p.bot != ""
 	}
-	return ok && !pfIsSlackbot(u) && (u.IsBot || u.BotID != "")
+	return ok && !pfHuman(u)
+}
+
+// pfHuman is isMemberHuman: not an app or bot user (qSRE isAppOrBot).
+// Slackbot's member is is_bot false in Slack's data, so it's human there;
+// core.User marks it IsBot (userOf), hence its id here.
+func pfHuman(u core.User) bool {
+	return pfIsSlackbot(u) || !(u.IsBot || u.AppUser || u.ID == "USLACK")
 }
 
 // loadApp fetches the card once.
