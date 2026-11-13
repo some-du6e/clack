@@ -270,7 +270,8 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 		return map[string]any{"id": AppAppID, "name": "Deploy Bot", "desc": "Ships builds and posts release notes",
 			"app_card_color": "1264a3", "app_user_id": AppUserID, "team_id": TeamID, "enterprise_id": EnterpriseID,
 			"is_xoxa_app": false, "is_slack_integration": false, "is_workflow_app": false, "is_directory_published": false,
-			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot"},
+			"is_installed": true, "icons": icons("app"), "bot_user": map[string]any{"id": AppUserID, "username": "deploybot", "memberships_count": 12},
+			"developer_name": "Fake Club Tools", "long_desc": "Deploy Bot builds a branch when you ask it to and posts the release notes in the channel once the deploy is done.",
 			"auth":     map[string]any{"created_by": AdminID, "date_created": "1700000000"},
 			"commands": map[string]any{"deploy": map[string]any{"desc": "Deploy a branch", "usage": "[branch]"}}}, true
 	case bot == ExternalAppBotID || app == ExternalAppAppID:
@@ -330,9 +331,12 @@ type Server struct {
 	// delAtts: chat.deleteAttachment calls (embeds.go)
 	delAtts []DeletedAttachment
 	hist    map[string][]slack.Message // channel -> all messages, newest first
-	pins    map[string][]fakePin       // channel -> pins, oldest first (pins.go)
-	code    codeCalls                  // code channel API calls (codechannels.go)
-	codeFx  *CodeFixtures
+	// quietReplies: replies PostReplyQuiet added, by channel/root ts,
+	// oldest first (pins.go)
+	quietReplies map[string][]slack.Message
+	pins         map[string][]fakePin // channel -> pins, oldest first (pins.go)
+	code         codeCalls            // code channel API calls (codechannels.go)
+	codeFx       *CodeFixtures
 
 	inv inviteState // the invite modal's methods (invites.go)
 
@@ -1563,6 +1567,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if msgs, found := s.galleryReplies(f.Get("ts")); found {
 				return ok("messages", msgs, "has_more", false)
 			}
+		}
+		if msgs, found := s.quietThread(f.Get("channel"), f.Get("ts")); found {
+			return ok("messages", msgs, "has_more", false)
 		}
 		return ok("messages", []any{}, "has_more", false)
 	case "conversations.info":

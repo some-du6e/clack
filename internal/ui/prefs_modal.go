@@ -178,19 +178,21 @@ func (p *prefsModal) close() {
 	}
 }
 
-// extraNav is Clack's own tab (Preferences > Clack), then its plugin tabs
-// (Plugins, Themes: Taut and Slick as one system, plugins_prefs.go) below
-// a divider, then the
-// plugins' own Preferences tabs, drawn after Slack's tabs[] (kept out of
-// tabsProps: plugins patching Tabs expect "advanced" last). Themes is
-// Slick's and only shows while Slick runs.
+// extraNav is Clack's own tabs below a divider after Slack's tabs[]:
+// Clack (Preferences > Clack), then the plugin tabs (Plugins, Themes:
+// Taut and Slick as one system, plugins_prefs.go), then the plugins' own
+// Preferences tabs, all kept out of tabsProps (plugins patching Tabs
+// expect "advanced" last). Themes is Slick's and only shows while Slick
+// runs. Karim (2026-11-13): Clack's tab goes "down there with the custom"
+// ones, not among Slack's.
 func (p *prefsModal) extraNav() []navExtra {
-	out := []navExtra{clackNav} // clack_prefs.go: right after Advanced, like a Taut tab
-	for i, t := range pluginNav {
+	c := clackNav // clack_prefs.go
+	c.divider = true
+	out := []navExtra{c}
+	for _, t := range pluginNav {
 		if t.id == themesTabID && p.a.Slick() == nil {
 			continue
 		}
-		t.divider = i == 0
 		out = append(out, t)
 	}
 	for _, t := range p.a.tautTabs {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -149,4 +150,54 @@ func (s *Server) PostQuiet(ch, user, text string) (ts string, ev map[string]any)
 	s.hist[ch] = append([]slack.Message{m}, h...)
 	return ts, map[string]any{"type": "message", "channel": ch, "user": user, "text": text, "ts": ts, "event_ts": ts,
 		"client_msg_id": m.ClientMsgID}
+}
+
+// PostReplyQuiet adds a reply from user to the thread under root (a
+// message of ch's history, which gets the reply metadata) and returns its
+// ts. conversations.replies then serves the root and its replies.
+func (s *Server) PostReplyQuiet(ch, root, user, text string) string {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	h := s.histLocked(ch)
+	k := ch + "/" + root
+	sec := time.Now().Unix()
+	if a, _, ok := strings.Cut(root, "."); ok {
+		if rs, _ := strconv.ParseInt(a, 10, 64); rs >= sec {
+			sec = rs + 1
+		}
+	}
+	n := len(s.quietReplies[k])
+	ts := fmt.Sprintf("%d.%06d", sec+int64(n), 100)
+	m := slack.Message{Type: "message", TS: ts, User: user, Text: text, ThreadTS: root, ClientMsgID: "quiet-" + ts}
+	if s.quietReplies == nil {
+		s.quietReplies = map[string][]slack.Message{}
+	}
+	s.quietReplies[k] = append(s.quietReplies[k], m)
+	for i := range h {
+		if h[i].TS == root {
+			h[i].ThreadTS = root
+			h[i].ReplyCount = n + 1
+			h[i].LatestReply = ts
+			if !slices.Contains(h[i].ReplyUsers, user) {
+				h[i].ReplyUsers = append(h[i].ReplyUsers, user)
+			}
+		}
+	}
+	return ts
+}
+
+// quietThread is conversations.replies for a thread PostReplyQuiet made.
+func (s *Server) quietThread(ch, root string) ([]slack.Message, bool) {
+	s.histMu.Lock()
+	defer s.histMu.Unlock()
+	rs, ok := s.quietReplies[ch+"/"+root]
+	if !ok {
+		return nil, false
+	}
+	for _, m := range s.hist[ch] {
+		if m.TS == root {
+			return append([]slack.Message{m}, rs...), true
+		}
+	}
+	return rs, true
 }

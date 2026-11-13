@@ -13,6 +13,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/openurl"
+	"github.com/some-du6e/clack/internal/ui/richclip"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -162,7 +163,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 			copyText(gtx, link()) // copyLink (5FS0): the clipboard only, no toast
 		}}.In(nsMessage),
 		MenuItem{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
-			copyText(gtx, actMsgText(m))
+			copyMessage(gtx, m)
 		}}.In(nsMessage),
 		Sep(),
 	)
@@ -516,6 +517,24 @@ func actSnapshot(h Host) (core.Snapshot, bool) {
 }
 
 // actMsgText is the copyable text of m.
+// copyMessage is Copy message (messageActionsCopyTextAction, boot-shared
+// 4EhV): the text, and the message as the composer's delta
+// ("slack/texty", richclip.TextyDelta), which a paste in Slack's
+// composer or Clack's turns back into the message with its mentions.
+// Where the platform has no rich clipboard, the text alone.
+func copyMessage(gtx layout.Context, m core.Message) {
+	text := actMsgText(m)
+	if !richclip.Supported() || text == "" {
+		copyText(gtx, text)
+		return
+	}
+	c := richclip.Copy{Text: text}
+	if t := richclip.TextyDelta(m.Doc); t != "" {
+		c.Custom = map[string]string{"slack/texty": t}
+	}
+	go func() { _ = richclip.Write(context.Background(), c) }()
+}
+
 func actMsgText(m core.Message) string {
 	if s := richtext.PlainText(m.Doc); strings.TrimSpace(s) != "" {
 		return s

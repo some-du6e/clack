@@ -36,6 +36,25 @@ type AppCard struct {
 	// app_profile as legacy_app): isAppShownAsAgent, the AGENT badge's
 	// app rule (badge.go).
 	ShownAsAgent bool
+
+	// What the App details flexpane reads (popups.AppDetailsView): the raw
+	// desc (the header's line under the name), long_desc (ToML's
+	// profile.description, the Description section), developer_name
+	// ("by …"), bot_user.memberships_count (installation.memberships_count:
+	// "Active in N channels and DMs"), app_home_metadata's
+	// messages_tab_enabled (supportsDmInteraction, default on) and
+	// home_tab_enabled (shouldShowAppHome), and is_installed (nil when the
+	// API leaves it out).
+	// IconDefault: the app has no icon of its own (no image_N, icons
+	// is_default, or Slack's default_new_app_icon URL), so Slack's
+	// getAppIcon falls back to its bundled default_new_app_icon-936d613.png
+	// and Clack draws its bundled copy instead of fetching one.
+	IconDefault bool
+
+	Desc, LongDesc, Developer string
+	Memberships               int
+	MessagesTab, HomeTab      bool
+	Installed                 *bool
 }
 
 // TopTeam is the app's top-level team (getAppTopLevelTeamId:
@@ -174,23 +193,33 @@ func (a *App) fetchAppCard(ctx context.Context, botID, appID string) (AppCard, e
 func (a *App) appCardOf(raw json.RawMessage, botID string) AppCard {
 	type icons map[string]any
 	var r struct {
-		ID            string                         `json:"id"`
-		Name          string                         `json:"name"`
-		Desc          string                         `json:"desc"`
-		Color         string                         `json:"app_card_color"`
-		AppUserID     string                         `json:"app_user_id"`
-		TeamID        string                         `json:"team_id"`
-		EnterpriseID  string                         `json:"enterprise_id"`
-		IsXoxa        bool                           `json:"is_xoxa_app"`
-		IsSlack       bool                           `json:"is_slack_integration"`
-		IsWorkflow    bool                           `json:"is_workflow_app"`
-		IsPublished   bool                           `json:"is_directory_published"`
-		IsDistributed bool                           `json:"is_distributed"`
-		ShownAsAgent  bool                           `json:"is_shown_as_agent"`
-		Icons         icons                          `json:"icons"`
-		CommandsAny   json.RawMessage                `json:"commands"`
-		BotUser       *struct{ ID, Username string } `json:"bot_user"`
-		Auth          *struct {
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		Desc          string `json:"desc"`
+		Color         string `json:"app_card_color"`
+		AppUserID     string `json:"app_user_id"`
+		TeamID        string `json:"team_id"`
+		EnterpriseID  string `json:"enterprise_id"`
+		IsXoxa        bool   `json:"is_xoxa_app"`
+		IsSlack       bool   `json:"is_slack_integration"`
+		IsWorkflow    bool   `json:"is_workflow_app"`
+		IsPublished   bool   `json:"is_directory_published"`
+		IsDistributed bool   `json:"is_distributed"`
+		ShownAsAgent  bool   `json:"is_shown_as_agent"`
+		LongDesc      string `json:"long_desc"`
+		Developer     string `json:"developer_name"`
+		IsInstalled   *bool  `json:"is_installed"`
+		HomeMeta      *struct {
+			MessagesTab *bool `json:"messages_tab_enabled"`
+			HomeTab     *bool `json:"home_tab_enabled"`
+		} `json:"app_home_metadata"`
+		Icons       icons           `json:"icons"`
+		CommandsAny json.RawMessage `json:"commands"`
+		BotUser     *struct {
+			ID, Username string
+			Memberships  int `json:"memberships_count"`
+		} `json:"bot_user"`
+		Auth *struct {
 			CreatedBy string `json:"created_by"`
 			Revoked   any    `json:"revoked"`
 		} `json:"auth"`
@@ -208,7 +237,17 @@ func (a *App) appCardOf(raw json.RawMessage, botID string) AppCard {
 	_ = json.Unmarshal(raw, &r)
 	c := AppCard{AppID: r.ID, BotID: botID, Name: r.Name, Tagline: r.Desc, Color: strings.TrimPrefix(r.Color, "#"),
 		HomeTeamID: r.TeamID, HomeOrgID: r.EnterpriseID, Workflow: r.IsWorkflow,
-		Published: r.IsPublished, Distributed: r.IsDistributed, AppType: "xoxp", ShownAsAgent: r.ShownAsAgent}
+		Published: r.IsPublished, Distributed: r.IsDistributed, AppType: "xoxp", ShownAsAgent: r.ShownAsAgent,
+		Desc: r.Desc, LongDesc: r.LongDesc, Developer: r.Developer, Installed: r.IsInstalled, MessagesTab: true}
+	if m := r.HomeMeta; m != nil {
+		if m.MessagesTab != nil {
+			c.MessagesTab = *m.MessagesTab
+		}
+		c.HomeTab = m.HomeTab != nil && *m.HomeTab
+	}
+	if r.BotUser != nil {
+		c.Memberships = r.BotUser.Memberships
+	}
 	switch {
 	case r.IsXoxa:
 		c.AppType = "xoxa"
@@ -251,6 +290,7 @@ func (a *App) appCardOf(raw json.RawMessage, botID string) AppCard {
 			break
 		}
 	}
+	c.IconDefault = c.Icon == "" || jsonTrue(ic["is_default"]) || strings.Contains(c.Icon, "default_new_app_icon")
 	// commands: Slack's API sends an object keyed by name or an array
 	var arr []struct{ Name, Desc, Usage string }
 	if json.Unmarshal(r.CommandsAny, &arr) != nil {

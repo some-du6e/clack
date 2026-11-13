@@ -264,9 +264,8 @@ func TestLibraryGroups(t *testing.T) {
 	}
 }
 
-// After Slack's tabs: Clack's own tab (Preferences > Clack, where a Taut
-// tab lands), a divider, Plugins and Themes (while Slick runs), then the
-// plugins' own tabs. The old ids land on their new homes: the plugin
+// After Slack's tabs: a divider, then Clack's own tabs (Preferences >
+// Clack, Plugins, Themes while Slick runs), then the plugins' own tabs. The old ids land on their new homes: the plugin
 // library, or Plugins > Advanced for Plugin settings.
 func TestPluginNav(t *testing.T) {
 	a, _ := ttApp(t, t.TempDir())
@@ -277,7 +276,7 @@ func TestPluginNav(t *testing.T) {
 	nav := func() string {
 		var ids []string
 		for i, it := range pm.extraNav() {
-			if it.divider != (i == 1) { // Plugins starts the plugin group
+			if it.divider != (i == 0) { // Clack starts Clack's group (Karim 2026-11-13)
 				t.Errorf("tab %s divider %v", it.id, it.divider)
 			}
 			if !icons.Has(it.icon) {

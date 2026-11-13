@@ -8,8 +8,8 @@ package ui
 // secondary container (client-boot +zKh aK, L1Ms). The card is the hover
 // card only (HoverCardTrigger 0oEe: openOnClick off). From inside the
 // thread pane the profile keeps the thread as its back stack (view.prev,
-// client-boot IoL+) and FlexpaneBackButton returns to it. A bot user
-// keeps Clack's app card (Slack's App details view isn't in Clack).
+// client-boot IoL+) and FlexpaneBackButton returns to it. An app's bot
+// user opens its App details view (toAppDetails).
 // Against internal/fakeslack (synthetic; nothing talks to Slack). With
 // HOVER_SHOTS_DIR set (the hover-card workflow) each state is saved.
 
@@ -143,16 +143,24 @@ func TestPersonClickOpensProfilePane(t *testing.T) {
 	e.settle(600 * time.Millisecond)
 	hcShot(t, e, "profile-back-to-thread")
 
-	// a bot user keeps the app card
+	// an app's bot user opens its App details (toAppDetails), no card
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	e.a.data.core.EnsureUsers(ctx, []string{fakeslack.AppUserID})
 	e.a.OpenProfile(image.Pt(int(x0)+200, 300), fakeslack.AppUserID)
 	e.frame()
-	if n := e.profileCards(); n != 1 {
-		t.Errorf("a bot user: %d profile cards, want its app card", n)
+	if n := e.profileCards(); n != 0 {
+		t.Errorf("a bot user: %d profile cards, want none", n)
 	}
-	if e.a.secondary.kind == secProfile && e.a.secondary.user == fakeslack.AppUserID {
-		t.Error("a bot user's profile opened in the pane")
+	if !e.appDetailsOpen(fakeslack.AppUserID) {
+		t.Errorf("a bot user: secondary pane %d %q (%T), want its App details", e.a.secondary.kind, e.a.secondary.user, e.a.secondary.view)
 	}
+}
+
+// appDetailsOpen reports whether the secondary pane shows uid's App
+// details view.
+func (e *perfEnv) appDetailsOpen(uid string) bool {
+	s := e.a.secondary
+	v, ok := s.view.(*popups.AppDetailsView)
+	return ok && s.open() && v.UserID() == uid
 }

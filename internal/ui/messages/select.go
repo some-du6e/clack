@@ -1,18 +1,18 @@
 package messages
 
 import (
+	"html"
 	"image"
-	"io"
 	"strings"
 	"time"
 
 	"gioui.org/f32"
-	"gioui.org/io/clipboard"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
@@ -200,17 +200,38 @@ func (s *listState) rowSelection(i int, r *row) (int32, int32) {
 // messages as "Name  3:04 PM" header lines followed by their text, like
 // Slack's copy of a multi-message selection.
 func (s *listState) selectedText(h Host) string {
+	t, _, _ := s.selectedRich(h)
+	return t
+}
+
+// selectedRich is the selection as Slack's copy puts it on the clipboard
+// (richview.CopyRich): its text, and its slack/html and text/html, each
+// message's body with its mentions' marks (richview.HTMLRange) and the
+// header lines as text.
+func (s *listState) selectedRich(h Host) (text, slackHTML, cleanHTML string) {
 	i0, o0, i1, o1, ok := s.ordered()
 	if !ok {
-		return ""
+		return "", "", ""
 	}
 	if i0 == i1 {
 		if r := s.rows[s.items[i0].key]; r != nil {
-			return r.rv.TextRange(o0, o1)
+			sh, ch := r.rv.HTMLRange(o0, o1)
+			return r.rv.TextRange(o0, o1), sh, ch
 		}
-		return ""
+		return "", "", ""
 	}
-	var b strings.Builder
+	var b, sb, cb strings.Builder
+	line := func(t string) {
+		b.WriteString(t)
+		e := html.EscapeString(t)
+		sb.WriteString(e)
+		cb.WriteString(e)
+	}
+	brk := func() {
+		b.WriteByte('\n')
+		sb.WriteString("<br>")
+		cb.WriteString("<br>")
+	}
 	for i := i0; i <= i1; i++ {
 		it := s.items[i]
 		if it.kind != itMsg {
@@ -228,19 +249,24 @@ func (s *listState) selectedText(h Host) string {
 			z = o1
 		}
 		if b.Len() > 0 {
-			b.WriteByte('\n')
+			brk()
 		}
 		if it.header && (i > i0 || a == 0) {
-			b.WriteString(r.senderName())
+			line(r.senderName())
 			if timeSelectable() {
-				b.WriteString("  ")
-				b.WriteString(clock(tsTime(r.m.TS)))
+				line("  " + clock(tsTime(r.m.TS)))
 			}
-			b.WriteByte('\n')
+			brk()
 		}
 		b.WriteString(r.rv.TextRange(a, z))
+		sh, ch := r.rv.HTMLRange(a, z)
+		sb.WriteString(strings.TrimPrefix(sh, `<meta charset="utf-8">`))
+		cb.WriteString(ch)
 	}
-	return b.String()
+	if b.Len() == 0 {
+		return "", "", ""
+	}
+	return b.String(), `<meta charset="utf-8">` + sb.String(), cb.String()
 }
 
 // tsLabelClass is the timestamp's text (Timestamp's
@@ -278,8 +304,8 @@ func (s *listState) selKeys(gtx layout.Context, h Host) {
 			}
 			switch e.Name {
 			case "C":
-				if t := s.selectedText(h); t != "" {
-					gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(t))})
+				if t, sh, ch := s.selectedRich(h); t != "" {
+					richview.CopyRich(gtx, t, sh, ch) // Slack's copy handler: text, html, slack/html
 				}
 			case key.NameEscape:
 				s.clearSelection()

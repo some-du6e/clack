@@ -1,15 +1,16 @@
 package ui
 
 // Preferences > Clack: Clack's own settings (updates, Replay
-// introduction), out of Slack's Advanced page. The tab sits where a
-// Taut plugin's registered tab lands: after Slack's tabs[] (Advanced
-// stays last there), drawn with the same nav item (Slack's c-tabs__tab,
-// a 15px Slack svgIcon at 9,7). Clack's plugin tabs follow it below
-// their divider.
+// introduction), out of Slack's Advanced page. The tab heads Clack's own
+// tabs below the divider after Slack's tabs[] (Advanced stays last
+// there), drawn with the same nav item (Slack's c-tabs__tab, a 15px
+// Slack svgIcon at 9,7); Plugins and Themes follow it (Karim
+// 2026-11-13: "clack should go down there with the custom" tabs).
 
 const clackTabID = "clack"
 
-// clackNav is the Clack tab's nav entry (extraNav puts it first).
+// clackNav is the Clack tab's nav entry (extraNav puts it first, under
+// the divider).
 var clackNav = navExtra{id: clackTabID, label: AppName, icon: "info"}
 
 // clackIntroRow is the tab's second row, Replay introduction: branch

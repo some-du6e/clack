@@ -2191,7 +2191,7 @@ func srResultItems(h Host, m core.Message) []MenuItem {
 			h.Toast("Link copied")
 		}}.In(nsMessage),
 		MenuItem{Label: "Copy message", Icon: "text-format", Hint: shortcut.Format("Mod+C"), Keys: KeyCopyText, DoCtx: func(gtx layout.Context) {
-			copyText(gtx, actMsgText(m))
+			copyMessage(gtx, m)
 		}}.In(nsMessage),
 		Sep(),
 		MenuItem{Label: "Connect to apps", Sub: []MenuItem{{Label: "No apps", Disabled: true}}}.In(nsMessage),
