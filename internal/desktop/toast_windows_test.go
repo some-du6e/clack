@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -191,8 +192,8 @@ func TestToastInNotificationCenter(t *testing.T) {
 	label := "Open banner " + nonce
 	actions := `<actions><action activationType="system" arguments="dismiss" content="Dismiss"/>` +
 		`<action activationType="foreground" arguments="banner-click" content="` + label + `"/></actions>`
-	if err := ShowToast(reg, Toast{XML: ciToastXML("Clack CI", "a banner "+nonce, actions), Tag: "banner", Group: "ci",
-		Activated: activated}); err != nil {
+	if err := showOncePlatformUp(t, reg, Toast{XML: ciToastXML("Clack CI", "a banner "+nonce, actions), Tag: "banner", Group: "ci",
+		Activated: activated}, 30*time.Second); err != nil {
 		t.Fatalf("banner: Show: %v", err)
 	}
 	time.Sleep(1500 * time.Millisecond)
@@ -204,6 +205,39 @@ func TestToastInNotificationCenter(t *testing.T) {
 	}
 	t.Logf("clicked %s", e)
 	wantActivated(t, got, "banner-click", "a click on the banner's button")
+}
+
+// The notification platform's errors while its per-user service
+// (WpnUserService_*) restarts: WPN_E_PLATFORM_UNAVAILABLE, and
+// RPC_S_CALL_FAILED from a call that was in flight when it went.
+const (
+	hrPlatformUnavailable = 0x803e0105
+	hrRPCCallFailed       = 0x800706be
+)
+
+// showOncePlatformUp is ShowToast, tried again with backoff (up to d)
+// while the notification platform is down. On the Server 2025 runner,
+// switching Do not disturb crashes svchost.exe_WpnUserService (Application
+// Error 1000, then the service manager's 7031, restarting it after 1, 2,
+// 4, 8 s), and Show fails until it is back: 0.6 to 8.2 s after the switch
+// (flake-check's toast-1113 probe). The kept notifier works again then.
+// Windows 11 doesn't crash (the probe on windows-11-arm: 4 switches, no
+// failed Show, the same service pid), so Clack's own path doesn't retry.
+func showOncePlatformUp(t *testing.T, aumid string, toast Toast, d time.Duration) error {
+	t.Helper()
+	start, wait := time.Now(), 250*time.Millisecond
+	for n := 1; ; n++ {
+		err := ShowToast(aumid, toast)
+		var hr HResultError
+		if err == nil || !errors.As(err, &hr) || (hr != hrPlatformUnavailable && hr != hrRPCCallFailed) || time.Since(start)+wait > d {
+			if n > 1 {
+				t.Logf("Show: %d tries over %v while the notification platform came back: %v", n, time.Since(start).Round(time.Millisecond), err)
+			}
+			return err
+		}
+		time.Sleep(wait)
+		wait = min(2*wait, 2*time.Second)
+	}
 }
 
 // wantActivated waits for an Activated event with args.
