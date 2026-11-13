@@ -28,6 +28,8 @@ type bk struct {
 	ChannelID   string          `json:"channel_id"`
 	TabID       string          `json:"tab_id"`     // channel: a channel-tab slug
 	MessageTS   string          `json:"message_ts"` // message_mention
+	SectionID   string          `json:"section_id"` // canvas: a canvas-section link
+	HideTitle   bool            `json:"hide_title"` // canvas
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
@@ -162,9 +164,11 @@ func (b *bk) styleString() string {
 
 // builder carries state while converting one message.
 type builder struct {
-	r     Resolver
-	files map[string]*slack.File // message files by id, for file blocks
-	used  map[string]bool        // files already placed by a file block
+	r      Resolver
+	files  map[string]*slack.File // message files by id, for file blocks
+	used   map[string]bool        // files already placed by a file block
+	hints  canvasHints            // the message's canvas unfurls (canvasslug.go)
+	sender string                 // the message's user (canvasfile.go: a file's owner other than them)
 }
 
 func parseBlocks(raw json.RawMessage) []bk {
@@ -773,6 +777,8 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 			out = append(out, richEmoji(c.r, e))
 		case "message_mention":
 			out = append(out, messageMentionSpan(c.r, e))
+		case "canvas":
+			out = append(out, c.canvasSpan(e))
 		case "broadcast":
 			out = append(out, broadcastSpan(firstNonEmpty(e.Range, "here")))
 		case "date":

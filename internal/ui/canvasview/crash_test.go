@@ -142,6 +142,18 @@ func TestShortCanvasClickUnderThenOnTitle(t *testing.T) {
 	if len(v.blocks) != 2 {
 		t.Fatalf("%d blocks", len(v.blocks))
 	}
+	// Quip's isEventBelowLastSection: a click under the unedited default
+	// line focuses it, emptied (no new block)
+	r.click(450, 330)
+	if s := v.edit.cur; s == nil || s.target != v.blocks[1] || !s.def || len(v.blocks) != 2 {
+		t.Fatalf("the click under the default line: blocks %d, session %+v", len(v.blocks), s)
+	}
+	v.edit.discard(v)
+	r.frame()
+	// the crash's path: a last line with text, where a click under it
+	// starts a new block
+	v.blocks[1].b.Default = false
+	r.frame()
 	for round, title := range []f32.Point{{X: 700, Y: 118}, {X: 600, Y: 110}} { // the title's line, under the 100px header band
 		r.click(450, 330) // under the text: a new block
 		if v.edit.cur == nil || v.edit.cur.place == nil || len(v.blocks) != 3 {

@@ -329,7 +329,9 @@ func (l *lay) blocks(bs []richtext.Block, x, y, w int, top bool) int {
 		// MessageFiles' FilesMetaTextWrapper (filemeta.go): the title
 		// line over the message's files, unless the placeholder's
 		// PendingFilesAtom line ("Uploading…") is there instead
-		if b.Kind == richtext.FileBlock && top && !l.inAtt && l.mode&modeAtts == 0 && !l.opts.CompactFiles && b.File != nil &&
+		// (also while MessageFile is a component: FilesMetaTextWrapper
+		// wraps MessageFile, whoever draws the file)
+		if b.Kind == richtext.FileBlock && top && !l.inAtt && !l.opts.CompactFiles && b.File != nil &&
 			(i == 0 || bs[i-1].Kind != richtext.FileStatus && bs[i-1].Kind != richtext.FileBlock) {
 			var files []*richtext.File
 			j := i

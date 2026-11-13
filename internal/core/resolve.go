@@ -33,11 +33,16 @@ func (a *App) resolveLoop(ctx context.Context) {
 		}
 		time.Sleep(150 * time.Millisecond) // coalesce a burst (a page of messages)
 		chans, users, bots := a.S.TakeMissing()
-		if len(chans)+len(users)+len(bots) == 0 {
+		files, sections, previews := a.S.TakeMissingCanvases()
+		if len(chans)+len(users)+len(bots)+len(files)+len(sections)+len(previews) == 0 {
 			continue
 		}
 		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		ids := a.resolve(rctx, chans, users, bots)
+		var ids []string
+		if len(chans)+len(users)+len(bots) > 0 {
+			ids = a.resolve(rctx, chans, users, bots)
+		}
+		ids = append(ids, a.resolveCanvases(rctx, files, sections, previews)...) // canvas_refs.go
 		cancel()
 		if len(ids) > 0 {
 			a.emit(Event{Type: "names", Users: ids})

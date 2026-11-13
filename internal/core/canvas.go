@@ -30,21 +30,30 @@ import (
 
 // CanvasInfo is a canvas's header: what files.info says about the file.
 type CanvasInfo struct {
-	ID, Title   string
-	TitleSpans  []richtext.Span // title_blocks (emoji in titles)
-	Creator     string          // user id (canvas_creator_id, else user)
-	Created     int64           // unix seconds
-	Updated     int64           // last edit (edit_timestamp, else updated)
-	Editable    bool            // the viewer may edit
-	Access      string          // read | write | owner …
-	Editors     []string        // users who edited
-	Permalink   string
-	URL         string // url_private: the HTML export
-	Channels    []string
-	IsPublic    bool
-	CommentsN   int
-	ShowBadge   bool // never opened by the viewer (Slack's blue dot)
-	TemplateMod bool
+	ID, Title string
+	// TitleSpans: the title as Slack's QuipTitleParsedId draws it, from
+	// title_blocks, else (TitleFromText) the title string with its
+	// :shortcodes: as emoji (FormatTextWithEmoji, 16px c-emoji__small);
+	// nil for a plain title.
+	TitleSpans    []richtext.Span
+	TitleFromText bool
+	Creator       string   // user id (canvas_creator_id, else user)
+	Created       int64    // unix seconds
+	Updated       int64    // last edit (edit_timestamp, else updated)
+	Editable      bool     // the viewer may edit
+	Access        string   // read | write | owner …
+	Editors       []string // users who edited
+	Permalink     string
+	URL           string // url_private: the HTML export
+	Channels      []string
+	IsPublic      bool
+	CommentsN     int
+	ShowBadge     bool // never opened by the viewer (Slack's blue dot)
+	TemplateMod   bool
+	// QuipThreadID is the canvas's Quip document (files.info
+	// quip_thread_id); Slack's QuipEmbed keys the empty canvas's
+	// placeholder on it (getIndexFromFileId over doc.id).
+	QuipThreadID string
 	// AccessRequested: the viewer already asked for more access
 	// (most_recent_access_request_ts; QuipAccessIndicator's "already asked")
 	AccessRequested bool
@@ -105,6 +114,7 @@ type canvasFileJSON struct {
 	OriginalW       int             `json:"original_w"`
 	OriginalH       int             `json:"original_h"`
 	AccessRequestTS json.RawMessage `json:"most_recent_access_request_ts"`
+	QuipThreadID    string          `json:"quip_thread_id"`
 }
 
 // IsCanvasFile reports whether a file (filetype/mode/pretty_type) is a canvas.
@@ -147,7 +157,8 @@ func (a *App) canvasFileInfo(ctx context.Context, id string) (*canvasFileJSON, e
 func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 	ci := CanvasInfo{ID: f.ID, Title: f.Title, Creator: firstNonEmpty(f.CanvasCreatorID, f.User), Created: f.Created,
 		Updated: f.EditTimestamp, Editable: f.Editable, Access: f.Access, Editors: f.Editors, Permalink: f.Permalink,
-		URL: f.URLPrivate, IsPublic: f.IsPublic, CommentsN: f.CommentsCount, ShowBadge: f.ShowBadge}
+		URL: f.URLPrivate, IsPublic: f.IsPublic, CommentsN: f.CommentsCount, ShowBadge: f.ShowBadge,
+		QuipThreadID: f.QuipThreadID}
 	if ci.Updated == 0 {
 		ci.Updated = f.Updated
 	}
@@ -167,6 +178,9 @@ func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 	}
 	if ci.Title == "" {
 		ci.Title = "Untitled"
+	}
+	if len(ci.TitleSpans) == 0 { // QuipTitleParsedId's string path: FormatTextWithEmoji
+		ci.TitleSpans, ci.TitleFromText = richtext.EmojiText(a.S, ci.Title), true
 	}
 	return ci
 }

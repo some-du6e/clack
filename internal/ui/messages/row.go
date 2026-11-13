@@ -331,14 +331,21 @@ func (r *row) setDoc() {
 // rvOpts are the body's richview options.
 func (r *row) rvOpts() richview.Options {
 	own := r.rc != nil && r.rc.selfID != "" && r.m.User == r.rc.selfID && r.m.Subtype != "pinned_item" && !r.m.Pending
-	o := richview.Options{Edited: r.m.Edited, Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
+	o := richview.Options{Edited: displaysEdited(&r.m), Muted: r.m.System, Dim: r.dimPending(), Channel: r.m.Channel, TS: r.m.TS, Truncate: r.truncate, Own: own,
 		FindFocused: r.findFocused}
-	if r.m.Edited {
+	if o.Edited {
 		o.EditedTS = r.m.EditedTS // the "(edited)" label's tooltip: the edit's time
 		o.EditedBy = r.editedBy()
 	}
 	return o
 }
+
+// displaysEdited is Slack's shouldDisplayAsEdited (client-boot): an
+// edited message shows "(edited)" unless it has a bot_id (a canvas
+// document comment would need to be archived too). An app's reply that
+// its bot edited (Karim, 2026-11-12: an app's thread reply edited by its
+// own bot in the same second) shows none.
+func displaysEdited(m *core.Message) bool { return m.Edited && m.BotID == "" }
 
 // editedBy is the name EditedLabel's tooltip adds ("{dateTime} by
 // {name}"): getMessageLabelValues (boot-shared XSZB) passes

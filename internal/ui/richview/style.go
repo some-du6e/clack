@@ -252,6 +252,10 @@ type Style struct {
 	// WorkObjects, if set, is their live state (refreshes, comments).
 	woFlags     WorkObjectFlags
 	WorkObjects WorkObjectSource
+	// PrivateForwarding is the team's private_message_forwarding pref
+	// (Db0x; nil: off): a canvas-section card then hides its "View
+	// section" permalink (AttachmentFooter).
+	PrivateForwarding func() bool
 
 	gen   uint32 // from styleGens on SetPalette/Invalidate; Views re-record when it changes
 	words map[wordKey]*shaped

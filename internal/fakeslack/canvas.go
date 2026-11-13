@@ -50,6 +50,12 @@ type FakeCanvas struct {
 	// "comment" make a canvas the viewer can't edit (QuipAccessIndicator)
 	ViewerAccess    string
 	AccessRequested bool // files.requestPermission was sent (most_recent_access_request_ts)
+	// HTML, when set, is the export served verbatim until the first edit
+	// (a real export's markup, which canvas.HTML doesn't reproduce); Doc
+	// must be its parse, so section ids match. TitleBlocks is files.info's
+	// title_blocks (default: none).
+	HTML        string
+	TitleBlocks []any
 }
 
 type canvasStore struct {
@@ -97,6 +103,10 @@ func (s *Server) canvasStore() *canvasStore {
 			add(c)
 		}
 	}
+	if s.Size.Gallery { // the canvas-section link's canvas (canvas_section.go), the app's FAQ (canvas_file.go)
+		add(s.sectionCanvas())
+		add(s.faqCanvas())
+	}
 	v, _ := canvasStores.LoadOrStore(s, cs)
 	return v.(*canvasStore)
 }
@@ -140,7 +150,7 @@ func (s *Server) EditCanvasAsOther(id, markdown string) {
 	cs := s.canvasStore()
 	cs.mu.Lock()
 	if c, ok := cs.byID[id]; ok {
-		c.Doc.Blocks = append(c.Doc.Blocks, canvas.ParseMarkdown(markdown, s.names())...)
+		c.Doc.Blocks, c.HTML = append(c.Doc.Blocks, canvas.ParseMarkdown(markdown, s.names())...), ""
 		c.Updated = time.Now().Unix()
 	}
 	cs.mu.Unlock()
@@ -228,6 +238,9 @@ func (s *Server) canvasFile(c *FakeCanvas) map[string]any {
 	if c.ViewerAccess != "" {
 		f["access"] = c.ViewerAccess
 	}
+	if c.TitleBlocks != nil {
+		f["title_blocks"] = c.TitleBlocks
+	}
 	if c.AccessRequested {
 		f["most_recent_access_request_ts"] = c.Updated
 	}
@@ -246,12 +259,30 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 	switch method {
 	case "files.info", "files.open", "files.close", "canvases.edit", "canvases.create", "conversations.canvases.create",
 		"canvases.access.set", "canvases.delete", "canvases.sections.lookup", "conversations.info", "conversations.history",
-		"search.modules.files", "files.requestPermission":
+		"search.modules.files", "files.requestPermission", "quip.getCanvasBulkSectionIdsData":
 	default:
 		return nil, false
 	}
 	cs := s.canvasStore()
 	switch method {
+	case "quip.getCanvasBulkSectionIdsData": // canvas_section.go
+		var ids []string
+		if raw := f.Get("section_ids"); strings.HasPrefix(raw, "[") {
+			_ = json.Unmarshal([]byte(raw), &ids)
+		} else if raw != "" {
+			ids = strings.Split(raw, ",")
+		}
+		cs.mu.Lock()
+		c, okc := cs.byID[f.Get("file_id")]
+		var secs []any
+		if okc {
+			secs = bulkSections(c, ids)
+		}
+		cs.mu.Unlock()
+		if !okc {
+			return map[string]any{"ok": false, "error": "file_not_found"}, true
+		}
+		return ok("sections", secs), true
 	case "conversations.info": // channels with a canvas tab
 		ch := f.Get("channel")
 		cs.mu.Lock()
@@ -476,7 +507,7 @@ func (s *Server) handleCanvases(method string, f url.Values) (any, bool) {
 				return map[string]any{"ok": false, "error": errc}, true
 			}
 		}
-		c.Updated = time.Now().Unix()
+		c.Updated, c.HTML = time.Now().Unix(), ""
 		cs.mu.Unlock()
 		go s.pushDocumentUpdate(id)
 		return ok(), true
@@ -682,7 +713,10 @@ func (s *Server) filesPri(w http.ResponseWriter, r *http.Request) {
 	c, okc := cs.byID[id]
 	var page string
 	if okc {
-		page = canvas.HTML(c.Doc, cs.secID)
+		page = c.HTML
+		if page == "" {
+			page = canvas.HTML(c.Doc, cs.secID)
+		}
 	}
 	cs.mu.Unlock()
 	if !okc {

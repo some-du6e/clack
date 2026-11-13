@@ -121,6 +121,7 @@ func styleFor(h Host) *richview.Style {
 		st.SetFlatHeadings(flatHeadings(app))
 		st.SetWorkObjects(woStyleFlags(h, app)) // work object cards (workobjects.go)
 		st.WorkObjects = woSource{app}
+		st.PrivateForwarding = func() bool { v, _ := app.TeamPref("private_message_forwarding"); return string(v) == "true" }
 	}
 	return st
 }
