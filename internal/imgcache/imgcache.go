@@ -67,10 +67,14 @@ type Cache struct {
 
 	// Two fetch lanes: avatars and emoji (DiskOK URLs, a few KB each) never
 	// wait behind message images, files and unfurls, which can take the
-	// whole 45 s timeout each.
-	sem      chan struct{}
-	smallSem chan struct{}
-	ctx      context.Context
+	// whole 45 s timeout each. Each lane is a queue that at most
+	// laneWorkers goroutines work through, in the order the images were
+	// asked for (under mu). A goroutine per request waiting its turn cost
+	// 8 KB of stack each: scrolling the emoji picker through Hack Club's
+	// 65,000 emoji parked 30,000 of them, 250 MB.
+	queue   [2][]key
+	workers [2]int
+	ctx     context.Context
 
 	wakeAt time.Time // the next repaint: an animation frame (anim.go) or a retry
 	wakeT  *time.Timer
@@ -166,8 +170,6 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		maxBytes:   DefaultLimit,
 		inflight:   map[key]bool{},
 		failed:     map[key]failure{},
-		sem:        make(chan struct{}, 8),
-		smallSem:   make(chan struct{}, 8),
 		ctx:        context.Background(),
 		diskLimit:  DiskLimit,
 	}
@@ -398,17 +400,45 @@ func (c *Cache) startLocked(k key) {
 		return
 	}
 	c.inflight[k] = true
-	go c.load(k)
+	lane := laneOther
+	if DiskOK(k.url) {
+		lane = laneSmall
+	}
+	c.queue[lane] = append(c.queue[lane], k)
+	if c.workers[lane] < laneWorkers {
+		c.workers[lane]++
+		go c.work(lane)
+	}
+}
+
+// The fetch lanes (Cache.queue) and how many loads each runs at once.
+const (
+	laneSmall   = 0 // avatars and emoji (DiskOK)
+	laneOther   = 1 // message images, files, unfurls
+	laneWorkers = 8
+)
+
+// work loads the lane's queued images in order until it is empty.
+func (c *Cache) work(lane int) {
+	for {
+		c.mu.Lock()
+		q := c.queue[lane]
+		if len(q) == 0 {
+			c.queue[lane] = nil // a drained burst's array goes too
+			c.workers[lane]--
+			c.mu.Unlock()
+			return
+		}
+		k := q[0]
+		q[0] = key{}
+		c.queue[lane] = q[1:]
+		c.mu.Unlock()
+		c.load(k)
+	}
 }
 
 func (c *Cache) load(k key) {
-	sem := c.sem
-	if DiskOK(k.url) {
-		sem = c.smallSem
-	}
-	sem <- struct{}{}
 	op, sz, n, an, err := c.loadImage(k)
-	<-sem
 	c.mu.Lock()
 	delete(c.inflight, k)
 	if err != nil {
