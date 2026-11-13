@@ -35,7 +35,7 @@ func TestDemoReadmeShots(t *testing.T) {
 			e.until("the demo sidebar", 30*time.Second, func() bool { return e.sidebarHas(demo.GeneralID) && e.sidebarHas(demo.CodeID) })
 			shot := func(name string) {
 				e.movePtr(image.Pt(1000, 55))     // on the banner: no row hovered
-				e.settle(1500 * time.Millisecond) // avatars, emoji and pictures in
+				e.settle(2500 * time.Millisecond) // avatars, emoji and pictures in
 				e.shotTo(t, dir, "demo-"+name+"-"+mode)
 			}
 			// Activity first: visiting the channels reads them

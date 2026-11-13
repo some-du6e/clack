@@ -138,9 +138,79 @@ func genEmoji(c *cv, name, stem string) {
 		genSky(c, name)
 	case has(name, "arrow") || in(v, 0x2190, 0x21ff) || in(v, 0x27a1, 0x27bf) || in(v, 0x2b05, 0x2b07):
 		genArrow(c, name)
+	case genObject(c, name):
 	default:
 		genTile(c, name)
 	}
+}
+
+// genObject draws a common office object by name (false: not one).
+func genObject(c *cv, n string) bool {
+	brown, grey, dark := hex("#8d5524"), hex("#90a4ae"), hex("#37474f")
+	switch {
+	case has(n, "briefcase"):
+		c.fill(shade(brown, -0.3), sh().rrect(30, 18, 40, 22, 8))
+		c.fill(hex("#f6efd9"), sh().rrect(38, 24, 24, 14, 4))
+		c.fill(shade(brown, -0.3), sh().rrect(8, 32, 84, 58, 10))
+		c.fill(brown, sh().rrect(11, 35, 78, 52, 8))
+		c.fill(hex("#fdd835"), sh().rrect(44, 52, 12, 10, 2))
+	case has(n, "envelope", "email", "incoming_envelope", "mailbox"):
+		c.fill(grey, sh().rrect(8, 22, 84, 58, 6))
+		c.fill(white, sh().rrect(11, 25, 78, 52, 4))
+		c.fill(grey, sh().polyline(4, 12, 28, 50, 56, 88, 28))
+	case has(n, "mag"):
+		c.fill(dark, sh().line(60, 60, 86, 86, 12))
+		c.fill(dark, sh().circle(42, 42, 30))
+		c.fill(hex("#bbdefb"), sh().circle(42, 42, 23))
+	case has(n, "bell"):
+		c.fill(shade(hex("#fdd835"), -0.25), sh().blob(50, 10, 76, 28, 80, 70, 92, 80, 8, 80, 20, 70, 24, 28))
+		c.fill(hex("#fdd835"), sh().blob(50, 14, 72, 30, 76, 70, 86, 77, 14, 77, 24, 70, 28, 30))
+		c.fill(shade(hex("#fdd835"), -0.3), sh().circle(50, 86, 8))
+	case has(n, "key") && !has(n, "keyboard", "keycap"):
+		c.fill(hex("#f9a825"), sh().ring(32, 50, 18, 9).rect(48, 45, 44, 10).rect(76, 55, 8, 14).rect(64, 55, 7, 10))
+	case has(n, "gear"):
+		g := sh()
+		for i := 0; i < 8; i++ {
+			a := float64(i) / 8 * 2 * math.Pi
+			g.circle(50+36*math.Cos(a), 50+36*math.Sin(a), 9)
+		}
+		c.fill(grey, g.circle(50, 50, 34))
+		c.fill(white, sh().circle(50, 50, 12))
+	case has(n, "book", "notebook", "ledger"):
+		for i, col := range []string{"#e53935", "#1e88e5", "#43a047"} {
+			x := 14 + float64(i)*26
+			c.fill(shade(hex(col), -0.3), sh().rrect(x, 14, 22, 74, 3))
+			c.fill(hex(col), sh().rrect(x+2, 16, 18, 70, 2))
+			c.fill(alpha(white, 0.7), sh().rect(x+4, 24, 14, 4))
+		}
+	case has(n, "clipboard"):
+		c.fill(brown, sh().rrect(16, 12, 68, 84, 8))
+		c.fill(white, sh().rrect(22, 22, 56, 68, 4))
+		c.fill(grey, sh().rrect(36, 6, 28, 14, 4).rect(30, 36, 40, 4).rect(30, 50, 40, 4).rect(30, 64, 28, 4))
+	case has(n, "scissors"):
+		c.fill(grey, sh().line(30, 20, 66, 70, 7).line(70, 20, 34, 70, 7))
+		c.fill(hex("#e53935"), sh().ring(28, 78, 12, 7).ring(72, 78, 12, 7))
+	case n == "link":
+		c.fill(grey, xf(sh().ring(-14, 0, 16, 8).ring(14, 0, 16, 8), 50, 50, 1.2, -math.Pi/4))
+	case has(n, "pencil", "memo"):
+		c.fill(hex("#fdd835"), xf(sh().rect(-30, -8, 54, 16), 50, 50, 1.2, -math.Pi/4))
+		c.fill(hex("#f48fb1"), xf(sh().rrect(-40, -8, 12, 16, 4), 50, 50, 1.2, -math.Pi/4))
+		c.fill(hex("#ffe0b2"), xf(sh().poly(24, -8, 40, 0, 24, 8), 50, 50, 1.2, -math.Pi/4))
+	case has(n, "camera"):
+		c.fill(dark, sh().rrect(8, 28, 84, 58, 10).rrect(30, 18, 24, 14, 4))
+		c.fill(grey, sh().circle(50, 57, 20))
+		c.fill(hex("#263238"), sh().circle(50, 57, 13))
+	case has(n, "microphone", "studio_microphone"):
+		c.fill(grey, sh().rrect(36, 8, 28, 52, 14))
+		c.fill(dark, sh().arc(50, 44, 24, 0, math.Pi, 5).rect(47, 68, 6, 18).rect(32, 84, 36, 6))
+	case has(n, "medal"):
+		c.fill(hex("#1e88e5"), sh().poly(30, 4, 46, 4, 58, 44, 42, 44).poly(70, 4, 54, 4, 42, 44, 58, 44))
+		c.fill(hex("#f9a825"), sh().circle(50, 66, 26))
+		c.fill(hex("#fdd835"), sh().circle(50, 66, 20))
+	default:
+		return false
+	}
+	return true
 }
 
 // ---- smileys ----
