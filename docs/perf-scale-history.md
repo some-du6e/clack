@@ -7,3 +7,5 @@ One row per platform per run of perf.yml's scale jobs (fakeslackd -scale: 65,846
 | 2026-11-13 | `ac9e898` | mem-diet | linux | 390 MB | 646 MB | 1644 MB | 1206 MB | — | — | — |
 | 2026-11-13 | `ac9e898` | mem-diet | windows | 303 MB | 885 MB | 1067 MB | 1136 MB | 680 MB | 795 MB | 2 MB |
 | 2026-11-13 | `3b864ed` | mem-diet | windows | 307 MB | 453 MB | 926 MB | 838 MB | 540 MB | 423 MB | 2 MB |
+| 2026-11-13 | `c853691` | mem-diet | linux | 314 MB | 641 MB | 902 MB | 910 MB | 926 MB | 368 MB | 1 MB |
+| 2026-11-13 | `c853691` | mem-diet | windows | 278 MB | 475 MB | 927 MB | 1070 MB | 474 MB | 490 MB | 2 MB |
