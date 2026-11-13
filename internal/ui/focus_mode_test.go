@@ -208,6 +208,7 @@ func TestFocusCustomDuration(t *testing.T) {
 		}
 		return out
 	}
+	ca.SetExperimentGroup("focus_mode_custom_duration", "") // unassigned (core's defaults hold the account's treatment)
 	if k := keys(); len(k) != 4 {
 		t.Errorf("unassigned: %v", k)
 	}
