@@ -115,7 +115,7 @@ func (f *actForward) drawCopyLink(gtx layout.Context, th *theme.Theme, c *widget
 		})
 		if c.Hovered() {
 			uy := (h+dp(gtx, 15))/2 + dp(gtx, 1)
-			fill(gtx, image.Rect(is+dp(gtx, 4), uy, sz.X, uy+maxInt(1, dp(gtx, 1))), cl.Link)
+			fill(gtx, image.Rect(is+dp(gtx, 4), uy, sz.X, uy+border1(gtx)), cl.Link)
 		}
 		if ring {
 			focusRing(gtx, cl, image.Rectangle{Max: sz}, dp(gtx, 4))
@@ -165,7 +165,7 @@ func fileAccessText(ov core.FileOverview) string {
 // filePreview is ShareDialogPreview's file over the access line.
 func (f *actForward) filePreview(gtx layout.Context, th *theme.Theme, cl *Colors) layout.Dimensions {
 	w := gtx.Constraints.Max.X
-	bw := maxInt(1, dp(gtx, 1))
+	bw := border1(gtx)
 	rad := dp(gtx, 8)
 	call, d := record(loose(gtx, image.Pt(w-2*bw, 1<<20)), func(gtx layout.Context) layout.Dimensions {
 		if f.file.Preview == nil {
