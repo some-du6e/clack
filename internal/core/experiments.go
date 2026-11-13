@@ -263,7 +263,8 @@ var experimentReads = map[string][]string{
 	"huddles_av_button_permission_handling": on, "huddles_awareness_timestamp": on, "huddles_miles_davis": on,
 	"huddles_missed_notification": on, "huddles_multi_device": {"treatment"}, "huddles_screenshare_popout": on,
 	"huddles_switch_microphone_helper": on, "huddles_noise_suppression_awareness": on, "huddles_screenshare_share_audio": on,
-	"huddles_new_grids": on,
+	"huddles_new_grids":    on,
+	"huddles_status_ultra": on, // the rail's status emoji drops the huddle's headphones (dnd.go SelfStatusEmoji)
 	// search and the switcher (search*.go, popups/search_*)
 	"desktop_search_recents_read": on, "desktop_search_recents_write": on, "omni_quick_message_results": on,
 	"search_autocomplete_promote_exact_name_matches": {"treatment_3", "treatment_5"},

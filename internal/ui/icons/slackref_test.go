@@ -204,6 +204,7 @@ var slackRef = map[string]string{
 	"mobile-filled":               "mobile-filled",
 	"moon":                        "moon",
 	"moon-filled":                 "moon-filled",
+	"ai-sparkle-alt-filled":       "ai-sparkle-alt-filled",
 	"more":                        "ellipsis-horizontal-filled",
 	"mute":                        "sound-off",
 	"new-window":                  "new-window",

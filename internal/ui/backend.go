@@ -148,6 +148,11 @@ func (b *backend) start(a *App) {
 		}
 		snap := b.core.Snapshot()
 		log.Printf("ui: core ready %v after boot start (%d convs)", time.Since(t0).Round(time.Millisecond), len(snap.Convs))
+		go func() { // fetchUserDndInfo for the current member: the rail's status tab (rail_status.go)
+			if b.core.LoadDND(b.ctx) == nil {
+				a.Invalidate()
+			}
+		}()
 		a.Post(func() {
 			b.apply(a, snap)
 			applog.Mark("sidebar-live", fmt.Sprintf("%d convs", len(snap.Convs)))

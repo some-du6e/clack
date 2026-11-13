@@ -3,12 +3,14 @@ package popups
 import (
 	"image"
 	"image/color"
+	"math"
 	"strings"
 	"time"
 
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/paint"
 	gtext "gioui.org/text"
 	"gioui.org/unit"
 
@@ -27,6 +29,26 @@ type PopoverOpts struct {
 	OnClose func()
 	// Modal dims the window behind the popover.
 	Modal bool
+
+	// Popover places the card as Slack's Popover does at that position
+	// ("right-top", "bottom-left", …; slack_place.go) with OffsetX /
+	// OffsetY (dp) and keepInBounds' AllowanceX / AllowanceY (dp; 0 is
+	// Slack's 16 / 10), instead of Side and Gap.
+	Popover                string
+	OffsetX, OffsetY       float32
+	AllowanceX, AllowanceY float32
+	// Peek opens the card as a PeekTrigger's hover peek (boot-shared
+	// 20Sq): .p-peek_trigger__overlay is only as big as the card until it's
+	// --clickable, so there is no scrim (the window under it keeps its
+	// pointer and clicks), and shouldFocusAfterRender is off for a hover
+	// open, so it doesn't take the keyboard focus. Its owner closes it
+	// (the safe area, Escape through the window's dismissTop).
+	Peek bool
+	// AnimateIn is .p-peek_card--animate-in: the card slides in from 8px
+	// to the left (.16s cubic-bezier(.25,1,.5,1)) while it fades in (.16s
+	// cubic-bezier(.33,1,.68,1)). NoMotion is prefers-reduced-motion
+	// (animation: none).
+	AnimateIn, NoMotion bool
 }
 
 // Popover is a card with arbitrary content anchored to a rectangle; it
@@ -40,6 +62,7 @@ type Popover struct {
 	block   blocker
 	rect    image.Rectangle
 	focus   bool
+	opened  time.Time // the first frame (AnimateIn)
 }
 
 // NewPopover builds a popover; show it with h.ShowOverlay.
@@ -63,7 +86,7 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	cl := colorsOf(th)
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{} // robust to roots passing Exact constraints
-	if !p.focus {
+	if !p.focus && !p.o.Peek {
 		gtx.Execute(key.FocusCmd{Tag: p})
 		p.focus = true
 	}
@@ -74,7 +97,7 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	if p.o.Modal {
 		fill(gtx, image.Rectangle{Max: win}, cl.Backdrop)
 	}
-	if p.scrim.Layout(gtx) {
+	if !p.o.Peek && p.scrim.Layout(gtx) {
 		p.Dismiss()
 		return layout.Dimensions{}
 	}
@@ -103,8 +126,33 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 		a.Min.X -= g
 		a.Max.X += g
 	}
-	pos := place(a, d.Size, win, m, p.o.Side)
+	var pos image.Point
+	if p.o.Popover != "" {
+		ax, ay := p.o.AllowanceX, p.o.AllowanceY
+		if ax == 0 {
+			ax = 16
+		}
+		if ay == 0 {
+			ay = 10
+		}
+		pos = slackPlace(p.o.Anchor, d.Size, win, p.o.Popover, dp(gtx, p.o.OffsetX), dp(gtx, p.o.OffsetY), dp(gtx, ax), dp(gtx, ay), false)
+	} else {
+		pos = place(a, d.Size, win, m, p.o.Side)
+	}
 	p.rect = image.Rectangle{Min: pos, Max: pos.Add(d.Size)}
+	if p.opened.IsZero() {
+		p.opened = gtx.Now
+	}
+	if p.o.AnimateIn && !p.o.NoMotion {
+		if el := gtx.Now.Sub(p.opened); el < PeekAnimateIn {
+			x := float64(el) / float64(PeekAnimateIn)
+			slide := cubicBezierY(.25, 1, .5, 1, x)
+			fade := cubicBezierY(.33, 1, .68, 1, x)
+			pos.X += int(math.Round(float64(dp(gtx, -8)) * (1 - slide)))
+			defer paint.PushOpacity(gtx.Ops, float32(fade)).Pop()
+			gtx.Execute(op.InvalidateCmd{}) // a frame per vsync until it's in
+		}
+	}
 	rad := p.o.Radius
 	if rad == 0 {
 		rad = 8
@@ -122,6 +170,38 @@ func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 		})
 	}
 	return layout.Dimensions{Size: win}
+}
+
+// PeekAnimateIn is .p-peek_card--animate-in's duration.
+const PeekAnimateIn = 160 * time.Millisecond
+
+// InsideCard reports whether window point pt is on the card as last laid
+// out (edges included, as pointInsideBounds).
+func (p *Popover) InsideCard(pt image.Point) bool {
+	r := p.rect
+	return !r.Empty() && pt.X >= r.Min.X && pt.X <= r.Max.X && pt.Y >= r.Min.Y && pt.Y <= r.Max.Y
+}
+
+// cubicBezierY is the CSS cubic-bezier(x1, y1, x2, y2) timing function at
+// x (0..1).
+func cubicBezierY(x1, y1, x2, y2, x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	if x >= 1 {
+		return 1
+	}
+	bez := func(a, b, t float64) float64 { return 3*a*t*(1-t)*(1-t) + 3*b*t*t*(1-t) + t*t*t }
+	lo, hi, t := 0.0, 1.0, x
+	for i := 0; i < 40; i++ {
+		t = (lo + hi) / 2
+		if bez(x1, x2, t) < x {
+			lo = t
+		} else {
+			hi = t
+		}
+	}
+	return bez(y1, y2, t)
 }
 
 // ---- Tooltip ----
