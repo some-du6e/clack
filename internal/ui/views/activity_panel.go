@@ -10,9 +10,10 @@ package views
 //     (nested_secondary_view, not under agentic_ia) and the experiment:
 //     the inbox is the Primary view at the full width and an opened item
 //     is a secondary view beside it (Activity.main).
-//   - Otherwise the inbox lives in the Sidebar container, the column the
-//     DMs tab's list uses (Clack's measurements of it: 38% of the
-//     workspace, 300 to 640px), with its own colors (the
+//   - Otherwise the inbox lives in the Sidebar container, the Host's
+//     wide sidebar (WideSidebar: extra wide under activity_inbox, the
+//     ActivityInbox tab; the DMs list's wide one without), with its own
+//     colors (the
 //     p-view_contents--sidebar rules keep the tabs content-sec /
 //     content-pry), and Primary always shows something: the item opened
 //     (a click navigates Primary, no split view: GMkG eG is false), or
@@ -112,18 +113,14 @@ func (v *Activity) pageWidth(gtx C) int {
 	return gtx.Constraints.Max.X
 }
 
-// actSidebarW is the Sidebar container's width (dms.go's measurements).
-func actSidebarW(gtx C, total int) int {
-	w := int(float32(total) * dmsPaneFrac)
-	w = max(min(w, gtx.Dp(dmsPaneMax)), gtx.Dp(dmsPaneMin))
-	return min(w, total)
-}
-
 // persistentLayout draws the page in the sidebar column and Primary
 // beside it.
 func (v *Activity) persistentLayout(gtx C) {
 	size := gtx.Constraints.Max
-	lw := actSidebarW(gtx, size.X)
+	// the Host's wide sidebar (host.go): extra wide for the inbox
+	// (zfm1 tabHasExtraWideSidebar: ActivityInbox)
+	extra := v.h.Core().ActivityInbox()
+	lw := wideSidebarWidth(gtx, v.h, size.X, extra)
 	v.pageW = lw
 	func() {
 		g := gtx
@@ -147,6 +144,7 @@ func (v *Activity) persistentLayout(gtx C) {
 		}
 		v.activityEmpty(g)
 	}()
+	wideSidebarHandle(gtx, v.h, lw, size.Y, extra)
 }
 
 // activityEmpty is ActivityEmptyView.

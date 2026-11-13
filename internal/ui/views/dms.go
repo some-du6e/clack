@@ -35,7 +35,8 @@ import (
 const (
 	// list width: Slack's wide sidebar (Activity, DMs, To-dos; zfm1
 	// tabHasWideSidebar, W2CY isWideWidth): .38 of the space beside the
-	// rail within 320 … 720 (519 of the 1366 workspace)
+	// rail within 320 … 720 (519 of the 1366 workspace). The app's
+	// resizer and saved width are the Host's (WideSidebar, host.go).
 	dmsPaneFrac         = 0.38
 	dmsPaneMin  unit.Dp = 320
 	dmsPaneMax  unit.Dp = 720
@@ -267,10 +268,9 @@ func (d *DMs) Layout(gtx C) D {
 	d.frame()
 	d.dmsColors()
 	size := gtx.Constraints.Max
-	lw := int(float32(size.X) * dmsPaneFrac)
-	lw = max(min(lw, gtx.Dp(dmsPaneMax)), gtx.Dp(dmsPaneMin))
-	lw = min(lw, size.X)
+	lw := wideSidebarWidth(gtx, d.h, size.X, false) // the Host's wide sidebar (host.go)
 	gtx.Constraints = layout.Exact(size)
+	defer wideSidebarHandle(gtx, d.h, lw, size.Y, false)
 	return row(gtx, layout.Start,
 		layout.Rigid(func(gtx C) D {
 			// The column color: the chrome with the sidebar tint, flattened.

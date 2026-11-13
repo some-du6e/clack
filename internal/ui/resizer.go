@@ -1,7 +1,8 @@
 package ui
 
 // colResizer is the pointer side of Slack's BaseResizer (client-boot-shared
-// 7M48), shared by the sidebar, secondary pane and split view handles.
+// 7M48), shared by the sidebar, wide sidebar, secondary pane and split
+// view handles.
 //
 // BaseResizer listens for mousemove and mouseup on the document, not the
 // handle: once a press lands on the 8px strip, every move anywhere in the
@@ -124,7 +125,8 @@ func (r *colResizer) live() bool {
 // everything through (the handle's grab already has the pointer).
 func (a *App) resizeOverlay(gtx layout.Context) {
 	sb, sec, sp := a.sidebar.rz.live(), a.secondary.rz.live(), a.split.rz.live()
-	if !sb && !sec && !sp {
+	wide, xwide := a.sbWide.rz.live(), a.sbXWide.rz.live()
+	if !sb && !sec && !sp && !wide && !xwide {
 		return
 	}
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()

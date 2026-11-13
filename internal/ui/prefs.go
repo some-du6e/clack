@@ -25,6 +25,16 @@ type prefs struct {
 	// (sidebar_width.go).
 	SidebarW     int    `json:"sidebar_w,omitempty"`
 	SidebarWMode string `json:"sidebar_w_mode,omitempty"`
+	// SidebarWideW and SidebarWideWMode are Activity's and the DMs
+	// list's column (Slack's wide sidebar): its own dragged width and
+	// mode, per device like viewLayoutSidebarWideWidthIntent / Mode
+	// (sidebar_wide.go).
+	SidebarWideW     int    `json:"sidebar_wide_w,omitempty"`
+	SidebarWideWMode string `json:"sidebar_wide_w_mode,omitempty"`
+	// SidebarXWideW and SidebarXWideWMode are the extra wide column's
+	// (Activity under activity_inbox; viewLayoutSidebarExtraWideWidth…).
+	SidebarXWideW     int    `json:"sidebar_extra_wide_w,omitempty"`
+	SidebarXWideWMode string `json:"sidebar_extra_wide_w_mode,omitempty"`
 	// SecondaryWActivity and SecondaryWLater are the pane's dragged widths
 	// in Activity and To-dos (Slack's …ForActivity / …ForLater intents;
 	// SecondaryW is the channel views'). 0 is auto.
@@ -176,7 +186,9 @@ func (a *App) loadPrefs() {
 	if a.prefs.Dark != nil {
 		a.th.SetDark(*a.prefs.Dark)
 	}
-	a.sidebar.loadWidth(a.prefs.SidebarW, a.prefs.SidebarWMode) // sidebar_width.go
+	a.sidebar.loadWidth(a.prefs.SidebarW, a.prefs.SidebarWMode)   // sidebar_width.go
+	a.sbWide.load(a.prefs.SidebarWideW, a.prefs.SidebarWideWMode) // sidebar_wide.go
+	a.sbXWide.load(a.prefs.SidebarXWideW, a.prefs.SidebarXWideWMode)
 	// a width the user dragged to ("manual"); builds before the auto
 	// width saved their fixed 400 default, which is auto now
 	if w := a.prefs.SecondaryW; w >= 300 && w != theme.SecondaryW {
@@ -217,6 +229,8 @@ func (a *App) savePrefs() {
 	d := a.th.Dark
 	a.prefs.Dark = &d
 	a.prefs.SidebarW, a.prefs.SidebarWMode = a.sidebar.intent, a.sidebar.mode
+	a.prefs.SidebarWideW, a.prefs.SidebarWideWMode = a.sbWide.intent, a.sbWide.mode
+	a.prefs.SidebarXWideW, a.prefs.SidebarXWideWMode = a.sbXWide.intent, a.sbXWide.mode
 	a.prefs.SecondaryW = a.secTabWidth("")
 	a.prefs.SecondaryWActivity, a.prefs.SecondaryWLater = a.secTabWidth("activity"), a.secTabWidth("later")
 	if r := a.router.Current(); r.Page() != "search" { // search queries stay in memory

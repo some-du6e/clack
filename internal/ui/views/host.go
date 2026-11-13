@@ -87,6 +87,43 @@ type NestedSecondary interface {
 	NestedSecondaryView() bool
 }
 
+// WideSidebar is optionally implemented by the Host: Slack's wide
+// sidebar columns, the grid's sidebar at W2CY's wide sizes with their own
+// saved widths and the sidebar's BaseResizer on the right edge. Activity's
+// and the DMs list's column is that sidebar: zfm1 tabHasWideSidebar
+// (Activity, DMs; viewLayoutSidebarWideWidthIntent / Mode), or with extra
+// true tabHasExtraWideSidebar (ActivityInbox, the Activity tab under
+// activity_inbox; viewLayoutSidebarExtraWideWidthIntent / Mode).
+type WideSidebar interface {
+	// WideSidebarWidth applies the resizer's drags and returns the
+	// column's width (px) in a region total px wide whose left edge is
+	// the gtx frame's x = 0 (the panel beside the tab rail). Call it
+	// before laying out the column, every frame the column shows.
+	WideSidebarWidth(gtx C, total int, extra bool) int
+	// WideSidebarHandle draws the resizer on the column's right edge at
+	// x (px, the same frame), h px tall. Call it after the column and
+	// what's beside it, so it is on top.
+	WideSidebarHandle(gtx C, x, h int, extra bool)
+}
+
+// wideSidebarWidth is the wide column's width in a region total px wide:
+// the Host's, or W2CY's wide auto width without one (no resizer).
+func wideSidebarWidth(gtx C, h Host, total int, extra bool) int {
+	if w, ok := h.(WideSidebar); ok {
+		return w.WideSidebarWidth(gtx, total, extra)
+	}
+	w := int(float32(total) * dmsPaneFrac)
+	w = max(min(w, gtx.Dp(dmsPaneMax)), gtx.Dp(dmsPaneMin))
+	return min(w, total)
+}
+
+// wideSidebarHandle draws the Host's resizer at x, if it has one.
+func wideSidebarHandle(gtx C, h Host, x, ht int, extra bool) {
+	if w, ok := h.(WideSidebar); ok {
+		w.WideSidebarHandle(gtx, x, ht, extra)
+	}
+}
+
 // nestedSecondary is kl02 W7 for h.
 func nestedSecondary(h Host) bool {
 	if n, ok := h.(NestedSecondary); ok {
