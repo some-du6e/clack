@@ -70,6 +70,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), v.Layout)
 		return layout.Dimensions{Size: sz}
 	}
+	if v := a.filesTabView(ch); v != nil { // the Files & links tab (files_tab.go)
+		atExact(gtx, body.Min, body.Size(), v.Layout)
+		return layout.Dimensions{Size: sz}
+	}
 	cv := a.convoFor(ch, "")
 	atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
 		mp := clsMessagePane.Enter(gtx, 0, 0)
@@ -625,6 +629,7 @@ func oneLine(s string) string {
 
 type chTab struct {
 	key, label, icon string
+	typ              string // Slack's tab type (core.Tab.Type): files, canvas, list, …
 	fileID           string
 	unread           bool // Slack's blue dot on the tab icon (unopened canvas)
 	// a list tab's default view (core.Tab DefaultView) and its name;
@@ -741,9 +746,13 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	sz := gtx.Constraints.Max
 	c := &a.th.C
 	x := gtx.Dp(16)
-	cur := a.chTab[ch]
 	viewNames := a.Core() != nil && a.Core().Experiment("list_channel_tab_show_view_name_fe") == "on"
-	for i, t := range a.channelTabs(ch) {
+	all := a.channelTabs(ch)
+	if id := a.takeTabLink(ch, all); id >= 0 && bodyTab(all[id]) { // a tab permalink (files_tab.go)
+		a.selectChannelTab(ch, id, all[id])
+	}
+	cur := a.chTab[ch]
+	for i, t := range all {
 		i, t := i, t
 		t.label = i18n.T("tabbed-channel", t.label) // the standard tabs are Slack's; a bookmark's own name misses and stays
 		if viewNames {
@@ -802,17 +811,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			})
 		})
 		if clicked(btn) {
-			if a.chTab == nil {
-				a.chTab = map[string]int{}
-			}
-			if t.key == "messages" {
-				a.chTab[ch] = 0
-			} else if (t.icon == "canvas" || t.icon == "list-tab") && t.fileID != "" || t.icon == "workflow" { // workflows_tab.go
-				a.chTab[ch] = i // the canvas or list opens in the channel's body
-			} else {
-				a.chTab[ch] = 0
-				a.openTab(ch, t.key)
-			}
+			a.selectChannelTab(ch, i, t)
 		}
 		x += w + gtx.Dp(4)
 	}
@@ -826,6 +825,28 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		a.addTabMenu(ch) // mount_features_canvas.go
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// selectChannelTab is a tab's click: Messages, a body tab (a canvas or
+// list, Workflows, Files & links) or one that opens elsewhere.
+func (a *App) selectChannelTab(ch string, i int, t chTab) {
+	if a.chTab == nil {
+		a.chTab = map[string]int{}
+	}
+	if t.key == "messages" {
+		a.chTab[ch] = 0
+	} else if bodyTab(t) {
+		a.chTab[ch] = i // the canvas, list, Workflows or Files & links tab opens in the channel's body
+	} else {
+		a.chTab[ch] = 0
+		a.openTab(ch, t.key)
+	}
+}
+
+// bodyTab: the tab's view is drawn in the channel's body (a canvas or list
+// tab, workflows_tab.go, files_tab.go).
+func bodyTab(t chTab) bool {
+	return (t.icon == "canvas" || t.icon == "list-tab") && t.fileID != "" || t.icon == "workflow" || isFilesTab(t)
 }
 
 // convTitle is the header name: channel name, DM partner, or group list.

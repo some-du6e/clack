@@ -1141,6 +1141,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			return out
 		}
 	}
+	if out, handled := s.handleChannelFiles(method, f); handled { // channel_files.go (before search.go)
+		return out
+	}
 	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
 		return out
 	}
