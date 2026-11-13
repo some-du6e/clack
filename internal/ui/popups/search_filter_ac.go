@@ -628,6 +628,9 @@ func (r *srACRanker) rank(q string, remote map[string]core.User, people, channel
 			items = append(items, srACItem{kind: srAIChannel, id: id, label: name, private: kind == "private"})
 		}
 		for _, cv := range r.c.Snapshot().Convs {
+			if cv.File { // a canvas's or list's conversation (core/sidebar_docs.go)
+				continue
+			}
 			add(cv.ID, cv.Name, cv.Kind, true, cv.IsArchived, false)
 		}
 		for _, h := range hits {

@@ -74,6 +74,14 @@ type convInfo struct {
 	Code       *core.CodeChannel
 	CodeStatus string
 	AgentName  string
+	// File: a canvas's or list's conversation (core.Conv.File); FileID is
+	// its file. Doc ("canvas" | "list") makes its sidebar row a document
+	// row: the document's icon, NameSpans as its name (emoji drawn), and
+	// a click opens the document (sidebar_docs.go).
+	File      bool
+	FileID    string
+	Doc       string
+	NameSpans []richtext.Span
 }
 
 // mentionTotal is the workspace's mention count (unmuted conversations'

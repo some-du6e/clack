@@ -274,7 +274,7 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 		return lookupUser(p.h, id)
 	}
 	for _, cv := range snap.Convs {
-		if cv.IsArchived {
+		if cv.IsArchived || cv.File { // a canvas's or list's conversation isn't a channel to switch to (I3y6 isValidViewableChannel)
 			continue
 		}
 		cnt := snap.Counts[cv.ID]

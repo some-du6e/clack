@@ -118,6 +118,9 @@ func (a *App) selectionShapesSidebar(id string) bool {
 	if a.codeChannelClosed(id) { // a closed code channel shows only while selected
 		return true
 	}
+	if IsFileChannel(c) { // a canvas's or list's conversation shows while open (sidebar_docs.go)
+		return true
+	}
 	a.S.RLock()
 	p := a.S.Prefs
 	muted := a.S.Muted[id]

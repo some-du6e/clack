@@ -495,6 +495,12 @@ func (a *App) sectionContextItems(sec *sbSection) []MenuItem {
 }
 
 func convIcon(c *convInfo) string {
+	switch {
+	case c.Doc == "list":
+		return "bullet-list"
+	case c.Doc == "canvas":
+		return "canvas"
+	}
 	switch c.Kind {
 	case "private":
 		return "lock"
