@@ -1324,7 +1324,13 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		s.convMu.Lock()
 		cs := append([]slack.Conversation(nil), s.convs...)
 		s.convMu.Unlock()
-		return ok("channels", append(cs, s.Created()...), "response_metadata", map[string]string{"next_cursor": ""})
+		cs = append(cs, s.Created()...)
+		// Slack's users.conversations objects have no is_member (they are
+		// all the viewer's): leave it out, as the real answer does
+		for i := range cs {
+			cs[i].IsMember = false
+		}
+		return ok("channels", cs, "response_metadata", map[string]string{"next_cursor": ""})
 	case "client.counts":
 		var chans, ims []slack.CountEntry
 		for i, c := range s.convs {

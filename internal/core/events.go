@@ -61,7 +61,8 @@ func (a *App) handle(ev slack.Event) {
 		// the reactor isn't fetched: only the reaction's tooltip names it
 		// (ReactionTip's TooltipMemberName, lazy_users.go)
 		if ok && changed { // the echo of the viewer's own (optimistic) reaction changes nothing
-			a.emitUpdate(e.Item.Channel, &m)
+			v := a.message(e.Item.Channel, &m)
+			a.emit(Event{Type: "update", Name: UpdateReactions, Channel: e.Item.Channel, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v})
 		}
 	case "ai_assistant_status", "ai_assistant_threads_suggested_prompts":
 		a.onAssistant(ctx, ev) // agent.go

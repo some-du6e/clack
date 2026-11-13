@@ -119,6 +119,15 @@ func (a *App) ReactBegin(ch, ts, name string, add bool) (ev *Event, call func(ct
 	}
 }
 
+// UpdateReactions names an "update" that changed only the message's
+// reactions (reaction_added / reaction_removed, the viewer's optimistic
+// reaction). Slack's reactions reducer touches nothing else, so a view
+// keeps the rest of the copy it holds: the store's copy can be another
+// conversation's (Mutate returns the channel timeline's copy of a thread
+// root, which a thread pane didn't load: Karim, 2026-11-13, "reactions
+// make the entire thread flicker").
+const UpdateReactions = "reactions"
+
 // applyOwnReaction changes the stored message and tells subscribers; it
 // returns the "update" it emitted (nil: nothing changed).
 func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
@@ -128,7 +137,7 @@ func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
 		return nil
 	}
 	v := a.message(ch, &m)
-	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v}
+	ev := Event{Type: "update", Name: UpdateReactions, Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v}
 	a.emit(ev)
 	return &ev
 }

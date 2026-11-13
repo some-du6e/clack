@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
+	"net/url"
 	"strings"
 	"sync"
 )
@@ -101,8 +103,14 @@ type actInvite struct {
 	Team         *actTeam  `json:"team"`
 	InvitingTeam *actTeam  `json:"inviting_team"`
 	Message      string    `json:"message"`
-	Status       string    `json:"status"` // "revoked", "expired", ...
-	Acceptances  []struct {
+	// connectInvites.list keeps the channel and the note in
+	// invite_payload (v+N2 getInviteChannel, getInviteMessage)
+	InvitePayload *struct {
+		Channel *actNamed `json:"channel"`
+		Message string    `json:"message"`
+	} `json:"invite_payload"`
+	Status      string `json:"status"` // "revoked", "expired", ...
+	Acceptances []struct {
 		ApprovalStatus string `json:"approval_status"`
 		AcceptingUser  struct {
 			ID string `json:"id"`
@@ -117,6 +125,41 @@ type actInvite struct {
 			Email       string `json:"email"`
 		} `json:"profile"`
 	} `json:"inviting_user"`
+}
+
+// actInviteRef is item.invite. Slack's client reads it as an id: /29I
+// passes e.item?.invite through untouched, rZx3 takes it as the sender
+// (senderId: t.invite) and ActivityTeamJoinerInvite as the avatar's
+// userId for team_joiner_invite, and for external invites it looks the
+// invite up in the connectInvites store (rZx3 sn/j_: oC
+// getConnectInviteById(state, e.invite)). So the feed sends a string:
+// the joiner's user id, or the connect invite's id. Older payloads carry
+// the whole invite object, which is kept. Anything else is no invite.
+type actInviteRef struct {
+	ID  string
+	Obj *actInvite
+}
+
+func (r *actInviteRef) UnmarshalJSON(b []byte) error {
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		r.ID = s
+		return nil
+	}
+	var o actInvite
+	if err := json.Unmarshal(b, &o); err == nil || isTypeError(err) {
+		if strings.HasPrefix(strings.TrimSpace(string(b)), "{") {
+			r.Obj, r.ID = &o, o.ID
+		}
+	}
+	return nil
+}
+
+// isTypeError is a JSON value of another type than the Go field: the
+// decoder skips that field and fills the rest.
+func isTypeError(err error) bool {
+	var te *json.UnmarshalTypeError
+	return errors.As(err, &te)
 }
 
 type activityRaw struct {
@@ -156,7 +199,7 @@ type activityRaw struct {
 		CodeReview    *actPayload     `json:"code_review_requested_payload"`
 		TeamJoiner    *actPayload     `json:"team_joiner_invite_payload"`
 		Prejoin       *actPayload     `json:"prejoin_dm_welcome_party_payload"`
-		Invite        *actInvite      `json:"invite"`
+		Invite        actInviteRef    `json:"invite"`
 		List          *actListPayload `json:"list_payload"`
 		ListEdit      *actListPayload `json:"list_edit_payload"`
 		ListMention   *actListPayload `json:"list_user_mention_payload"`
@@ -178,13 +221,38 @@ type activityRaw struct {
 		} `json:"generic_system_alert_payload"`
 	} `json:"item"`
 	item json.RawMessage // the raw item, for activityGuess
+	skip bool            // not an object: no entry
 }
 
+var activityOddSeen sync.Map
+
+// UnmarshalJSON never fails on an entry's shape. Slack's client reads
+// entries with optional chaining (/29I e.item?.…), so a field of an
+// unexpected type is just an unexpected value there; here the decoder
+// skips that one field and keeps the rest (one odd item used to fail
+// activity.feed's whole page: "cannot unmarshal string into Go struct
+// field .items.item.invite of type core.actInvite", Karim 2026-11-13,
+// and dropped a realtime entry silently).
 func (r *activityRaw) UnmarshalJSON(b []byte) error {
+	if strings.TrimSpace(string(b)) == "null" {
+		*r = activityRaw{skip: true}
+		return nil
+	}
 	type plain activityRaw
 	var p plain
 	if err := json.Unmarshal(b, &p); err != nil {
-		return err
+		if !isTypeError(err) {
+			return err
+		}
+		var te *json.UnmarshalTypeError
+		errors.As(err, &te)
+		if !strings.HasPrefix(strings.TrimSpace(string(b)), "{") {
+			*r = activityRaw{skip: true}
+			return nil
+		}
+		if _, seen := activityOddSeen.LoadOrStore(te.Field, true); !seen {
+			log.Printf("activity: entry field %s is %s, not %s (skipped that field)", te.Field, te.Value, te.Type)
+		}
 	}
 	var raw struct {
 		Item json.RawMessage `json:"item"`
@@ -263,36 +331,19 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 			ref = &msgRef{Channel: p.ChannelID, TS: ts}
 		}
 	}
-	if inv := in.Invite; inv != nil {
-		// the channel isn't in this workspace yet: name only (Slack leaves
-		// channelId unset for external invites)
-		if inv.Channel != nil {
-			it.Title = inv.Channel.Name
+	if id := in.Invite.ID; in.Invite.Obj == nil && id != "" {
+		switch in.Type {
+		case "team_joiner_invite":
+			// the joiner (rZx3 senderId: t.invite; the row's avatar)
+			it.Actor = id
+		default:
+			// a connect invite's id: activityItems reads the invite
+			// from connectInvites.list, as Slack's store has it
+			it.InviteID = id
 		}
-		team := inv.InvitingTeam
-		if team == nil {
-			team = inv.Team
-		}
-		ci := &ActivityInvite{ID: inv.ID, Sig: inv.Sig, Kind: inv.InviteType, Direction: inv.Direction,
-			Status: inv.Status, DateInvalid: inv.DateInvalid}
-		if team != nil {
-			it.Team = team.Name
-			ci.TeamID, ci.TeamVerified, ci.TeamCreated = team.ID, team.IsVerified, team.DateCreated
-			ci.TeamIcon = firstNonEmpty(team.Icon.Image34, team.Icon.Image44, team.Icon.Image68)
-		}
-		for _, ac := range inv.Acceptances {
-			ci.Acceptances = append(ci.Acceptances, InviteAcceptance{User: ac.AcceptingUser.ID, Status: ac.ApprovalStatus})
-		}
-		it.Text, it.InviteStatus = inv.Message, inv.Status
-		if u := inv.InvitingUser; u != nil {
-			it.Actor = firstNonEmpty(it.Actor, u.ID)
-			it.ActorName = firstNonEmpty(u.Profile.DisplayName, u.Profile.RealName, u.Name)
-			ci.InviterEmail = u.Profile.Email
-			ci.InviterName = firstNonEmpty(u.Profile.RealName, u.Profile.DisplayName, u.Name)
-		}
-		if ci.ID != "" {
-			it.Invite = ci
-		}
+	}
+	if inv := in.Invite.Obj; inv != nil {
+		actInviteFill(&it, inv)
 	}
 	for _, l := range []*actListPayload{in.List, in.ListEdit, in.ListMention, in.ListTodo, in.ListApproval} {
 		if l != nil {
@@ -334,6 +385,90 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 		it.Author = firstNonEmpty(ref.AuthorUserID, ref.User)
 	}
 	return it, ref
+}
+
+// actInviteFill puts a connect invite (the feed's object, or
+// connectInvites.list's) on its item.
+func actInviteFill(it *ActivityItem, inv *actInvite) {
+	ch, msg := inv.Channel, inv.Message
+	if pl := inv.InvitePayload; pl != nil {
+		if ch == nil {
+			ch = pl.Channel
+		}
+		msg = firstNonEmpty(msg, pl.Message)
+	}
+	// the channel isn't in this workspace yet: name only (Slack leaves
+	// channelId unset for external invites)
+	if ch != nil {
+		it.Title = ch.Name
+	}
+	team := inv.InvitingTeam
+	if team == nil {
+		team = inv.Team
+	}
+	ci := &ActivityInvite{ID: inv.ID, Sig: inv.Sig, Kind: inv.InviteType, Direction: inv.Direction,
+		Status: inv.Status, DateInvalid: inv.DateInvalid}
+	if team != nil {
+		it.Team = team.Name
+		ci.TeamID, ci.TeamVerified, ci.TeamCreated = team.ID, team.IsVerified, team.DateCreated
+		ci.TeamIcon = firstNonEmpty(team.Icon.Image34, team.Icon.Image44, team.Icon.Image68)
+	}
+	for _, ac := range inv.Acceptances {
+		ci.Acceptances = append(ci.Acceptances, InviteAcceptance{User: ac.AcceptingUser.ID, Status: ac.ApprovalStatus})
+	}
+	it.Text, it.InviteStatus = msg, inv.Status
+	if u := inv.InvitingUser; u != nil {
+		it.Actor = firstNonEmpty(it.Actor, u.ID)
+		it.ActorName = firstNonEmpty(u.Profile.DisplayName, u.Profile.RealName, u.Name)
+		ci.InviterEmail = u.Profile.Email
+		ci.InviterName = firstNonEmpty(u.Profile.RealName, u.Profile.DisplayName, u.Name)
+	}
+	if ci.ID != "" {
+		it.Invite, it.InviteID = ci, ci.ID
+	}
+}
+
+// activityInvites reads the connect invites the feed names only by id:
+// Slack's inbox, when the page has an external invite, runs
+// fetchAndUpsertConnectInvites (connectInvites.list, direction incoming,
+// channel and im invites, reason slack-connect-fetch-invites-for-activity-feed)
+// and the rows look the invite up by id. An invite it doesn't return
+// stays nil: the row draws InviteAvatar's envelope and no actions, as
+// Slack's does.
+func (a *App) activityInvites(ctx context.Context, items []ActivityItem) {
+	need := false
+	for i := range items {
+		if items[i].Invite == nil && items[i].InviteID != "" {
+			need = true
+		}
+	}
+	if !need {
+		return
+	}
+	var r struct {
+		ConnectInvites []json.RawMessage `json:"connect_invites"`
+	}
+	types, _ := json.Marshal([]string{"channel", "im"})
+	if err := a.C.Call(ctx, "connectInvites.list", url.Values{"direction": {"incoming"}, "invite_types": {string(types)},
+		"reason": {"slack-connect-fetch-invites-for-activity-feed"}}, &r); err != nil {
+		log.Printf("activity: connectInvites.list: %v", err)
+		return
+	}
+	byID := map[string]*actInvite{}
+	for _, raw := range r.ConnectInvites {
+		var ref actInviteRef
+		_ = ref.UnmarshalJSON(raw)
+		if ref.Obj != nil && ref.Obj.ID != "" {
+			byID[ref.Obj.ID] = ref.Obj
+		}
+	}
+	for i := range items {
+		if it := &items[i]; it.Invite == nil && it.InviteID != "" {
+			if inv := byID[it.InviteID]; inv != nil {
+				actInviteFill(it, inv)
+			}
+		}
+	}
 }
 
 // activityGuess finds the first object in an unknown item that names a
@@ -438,6 +573,9 @@ func (a *App) activityItems(ctx context.Context, raws []activityRaw) []ActivityI
 	items := make([]ActivityItem, 0, len(raws))
 	want := map[string][]string{}
 	for i := range raws {
+		if raws[i].skip {
+			continue
+		}
 		it, ref := activityItem(&raws[i])
 		if ref != nil && it.Channel != "" && it.TS != "" {
 			want[it.Channel] = append(want[it.Channel], it.TS)
@@ -450,6 +588,7 @@ func (a *App) activityItems(ctx context.Context, raws []activityRaw) []ActivityI
 		}
 		items = append(items, it)
 	}
+	a.activityInvites(ctx, items)
 	got := a.hydrate(ctx, want)
 	ids := []string{}
 	for i := range items {

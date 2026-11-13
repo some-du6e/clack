@@ -574,6 +574,10 @@ type ActivityItem struct {
 	// Invite is a Slack Connect invitation's connect invite (nil for
 	// anything else, or a feed entry without one).
 	Invite *ActivityInvite
+	// InviteID is the entry's item.invite for an external invite: the
+	// connect invite's id (Slack's activityItem.invite), set with or
+	// without the invite itself.
+	InviteID string
 }
 
 // ActivityInvite is the part of a Slack Connect invite the Activity row

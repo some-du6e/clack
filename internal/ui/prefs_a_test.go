@@ -161,6 +161,8 @@ func TestPrefsAuditAppliedRoundTripDock(t *testing.T) {
 	dockBadge = func(l string) { badge = append(badge, l) }
 	dockBounce = func(c bool) { bounces = append(bounces, c) }
 	t.Cleanup(func() { dockAnyOS, dockBadge, dockBounce = false, oldB, oldN })
+	// the count without activity_inbox: the unread highlights (Home's)
+	a.Core().SetExperimentGroup("activity_inbox", "off")
 	p := &prefsModal{a: a, clicks: map[string]*widget.Clickable{}}
 	snap := func() { uipref.Set(ca.Prefs()) }
 	m := a.model()
