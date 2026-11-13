@@ -144,6 +144,10 @@ on:
       - "internal/ui/views/views_keys_test.go"
       - "internal/ui/channel_preview_test.go"
       - "internal/ui/backend.go"
+      - "internal/store/members.go"
+      - "internal/core/members.go"
+      - "internal/slack/members.go"
+      - "internal/ui/members_evict_test.go"
 
 permissions:
   contents: read
@@ -179,6 +183,30 @@ jobs:
           go test -cpu 1 -count=$COUNT -run 'TestCreateChannel$|TestExtrasKeepEditsMadeMeanwhile$' ./internal/core
           go test -cpu 1 -count=$COUNT -run 'TestDraftKeepsAttachedFiles$' ./internal/ui/composer
           go test -cpu 1 -count=$COUNT -timeout 30m -run 'TestGalleryElementPayloads$' ./internal/ui/blockkit
+
+  # the members cache (store/members.go) and its unknown member fetcher
+  # (core/members.go): eviction order, the pass's schedule, users/info's
+  # chunks and pending ids, and every main view drawing its people again
+  # after all but the viewer were evicted (one verbose run, then COUNT)
+  members:
+    if: ${{ !inputs.only || startsWith('members', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: store, core, slack (race detector)
+        run: go test -race -count=$COUNT -run 'TestMembers|TestUnknownMembersFetched$' ./internal/store ./internal/core ./internal/slack
+      - name: ui (evicted members drawn again in every main view)
+        run: |
+          go test -count=1 -v -timeout 20m -run 'TestEvictedMembersComeBack$' ./internal/ui
+          go test -count=$COUNT -timeout 60m -run 'TestEvictedMembersComeBack$' ./internal/ui
 
   image-send:
     if: ${{ !inputs.only || startsWith('image-send', inputs.only) }}

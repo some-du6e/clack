@@ -1487,12 +1487,12 @@ type diskCache struct {
 }
 
 // MaxSavedUsers bounds the users meta.json keeps: the most recently fetched
-// (and the viewer). Slack's client keeps no directory between starts (its
-// members cache holds 700, trimmed to 500, and fetches anyone else when a
-// message, mention or profile needs them, as EnsureUsers and the name
-// resolver do here); a start restoring every user a long-used Clack ever
-// saw held tens of thousands in memory, 48 MB at the Hack Club account's
-// scale.
+// (and the viewer). Slack persists its members store between starts
+// (ukWt: persistenceEnabled), which its members cache keeps to 700,
+// trimmed to 500 (members.go), and fetches anyone else when a message,
+// mention or profile needs them, as EnsureUsers and the member fetcher do
+// here; a start restoring every user a long-used Clack ever saw held tens
+// of thousands in memory, 48 MB at the Hack Club account's scale.
 const MaxSavedUsers = 1000
 
 // sameGroups reports whether gs (minus deleted groups) equals s.Groups.

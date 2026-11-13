@@ -19,6 +19,7 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 
 | cache | budget | from |
 |---|---|---|
+| members (the users the store holds; the plugin mirror's `members`) | 700 members, trimmed to 500: the viewer and whoever lookups found most recently (message and sidebar rows touch theirs as they draw); ids users/info didn't return count. Checked on a lookup (and every 2 minutes) once an hour ±20% has passed since the last pass, while online; a member it let go is fetched again at its next lookup (below) | Slack's `members` CacheManager (`compare_members_store_cache_objects`) and UnknownFetchManager |
 | messages (store timelines and threads, the lists' models and rows, the plugin mirror) | 3,000 evictable messages or 3 MB of JSON, trimmed to 2,000 or 2 MB; evictable: read messages of conversations not on screen, everything in conversations the viewer isn't in, whole histories of quiet conversations not read for an hour; oldest first, recently read conversations last. Checked every 2 minutes (`core.EvictEvery`); a conversation read in the last 10 minutes is kept whole; a pass that lets 1,000 or more go is collected 2 s later (`core.AfterEvict`) | Slack's `messages` CacheManager (`getUnusedMessages`, `evictUncountedChannelHistories`) |
 | decoded images (`imgcache`) | 64 MB, unused for 60 s dropped | Clack |
 | downloaded files (`core.Fetch`, memory only) | 48 MB, unused for 5 minutes dropped | Clack |
@@ -30,9 +31,9 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 | emoji picker index | dropped 5 minutes after the last use | Clack |
 | font glyphs | parsed as they're used; in-memory fonts' tables read in place | go-text patches (`third_party/typesetting`) |
 | Go heap | soft limit 768 MiB (`GOMEMLIMIT` wins); a backstop, not a budget | Go runtime |
-| users saved in `meta.json` | the viewer and the 1,000 fetched most recently (`store.MaxSavedUsers`); anyone else is fetched when a message, mention or profile needs them | Slack keeps no directory between starts |
+| users saved in `meta.json` | the viewer and the 1,000 fetched most recently (`store.MaxSavedUsers`); anyone else is fetched when a message, mention or profile needs them | Slack persists its members store (`ukWt` persistenceEnabled), which its members cache bounds |
 
-Slack's other managers: `members` 700 → 500 (by last access), `channels` 200 → 100, `files` 250 → 200. Within a session Clack still keeps every user it fetched; bounding that like Slack's members cache is the next cut (it needs every lookup to fetch a missing user, which not all of the ~110 call sites do yet).
+Slack's other managers: `channels` 200 → 100, `files` 250 → 200.
 
 ## What held the memory (2026-11-13)
 

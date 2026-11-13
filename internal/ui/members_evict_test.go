@@ -29,10 +29,12 @@ func TestEvictedMembersComeBack(t *testing.T) {
 	t.Cleanup(func() { fs.Close() })
 	ids := fs.UserIDs()
 	now := time.Now()
+	// a huddle in a DM: its row is titled with the people in it
+	// (truncatedNames)
 	fs.SetHuddleHistory([]fakeslack.HuddleFixture{
 		{"id": "R0EVICTH001", "date_start": now.Add(-3 * time.Hour).Unix(), "date_end": now.Add(-3*time.Hour).Unix() + 20*60,
-			"has_ended": true, "channels": []string{fs.ChannelIDs()[0]}, "channel_type": "public", "participants": []string{},
-			"participant_history": []string{fakeslack.SelfID, ids[3], ids[4], ids[5]}},
+			"has_ended": true, "channels": []string{"D0FAKE00000"}, "channel_type": "im", "participants": []string{},
+			"participant_history": []string{fakeslack.SelfID, ids[7], ids[8], ids[9]}},
 	})
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
@@ -69,12 +71,7 @@ func TestEvictedMembersComeBack(t *testing.T) {
 		e.settle(2 * time.Second) // the view's loads
 		names, idsOf := memberStrings(c.S)
 		before := frameStrings(e)
-		want := map[string]bool{}
-		for s := range before {
-			if names[s] {
-				want[s] = true
-			}
-		}
+		want := drawnOf(before, names)
 		if len(want) == 0 {
 			t.Errorf("%s: no member names drawn", v.name)
 			continue
@@ -90,9 +87,10 @@ func TestEvictedMembersComeBack(t *testing.T) {
 		dl := time.Now().Add(20 * time.Second)
 		for {
 			after = frameStrings(e)
+			got := drawnOf(after, want)
 			var missing []string
 			for s := range want {
-				if !after[s] {
+				if !got[s] {
 					missing = append(missing, s)
 				}
 			}
@@ -108,9 +106,10 @@ func TestEvictedMembersComeBack(t *testing.T) {
 		e.settle(500 * time.Millisecond) // anything still unknown is asked for by now
 		after = frameStrings(e)
 		var asIDs []string
-		for s := range after {
-			if idsOf[s] && !before[s] {
-				asIDs = append(asIDs, s)
+		was := drawnOf(before, idsOf)
+		for id := range drawnOf(after, idsOf) {
+			if !was[id] {
+				asIDs = append(asIDs, id)
 			}
 		}
 		if len(asIDs) > 0 {
@@ -143,6 +142,24 @@ func memberStrings(s *store.Store) (names, ids map[string]bool) {
 		}
 	}
 	return names, ids
+}
+
+// drawnOf is which of names the drawn strings show: drawn alone, or
+// inside a longer string (a huddle's "A, B, C" title).
+func drawnOf(drawn, names map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	for d := range drawn {
+		if names[d] {
+			out[d] = true
+			continue
+		}
+		for n := range names {
+			if len(n) >= 5 && strings.Contains(d, n) {
+				out[n] = true
+			}
+		}
+	}
+	return out
 }
 
 func userCount(s *store.Store) int {
