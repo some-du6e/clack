@@ -73,14 +73,15 @@ const (
 	scMinimize       = 0xF020
 )
 
-// taskbar is TaskbarHost's taskbar_: created on first use, on the
-// window's thread, and kept.
-var taskbar *rtObject
-
-func initTaskbar() error {
-	if taskbar != nil {
-		return nil
-	}
+// newTaskbar creates an ITaskbarList3 for the calling thread. It's made
+// per call, not kept: a COM object from an apartment-threaded thread is
+// only valid on that thread while its apartment lives, and a package-wide
+// one kept from the first window's thread was called from a later
+// window's thread once that one had gone (an access violation in
+// SetOverlayIcon, flake-check's TestCloseToTrayWindow, run 43450803946).
+// Thread ids are reused, so a per-thread cache isn't safe either; badge
+// changes are rare, so creating it each time costs nothing that matters.
+func newTaskbar() (*rtObject, error) {
 	// Gio's window thread is an OLE apartment already; elsewhere (a test's
 	// own thread) this makes it one. S_FALSE and RPC_E_CHANGED_MODE are fine.
 	_ = windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED)
@@ -88,14 +89,13 @@ func initTaskbar() error {
 	hr, _, _ := procCoCreateInstance.Call(uintptr(unsafe.Pointer(&clsidTaskbarList)), 0, windows.CLSCTX_INPROC_SERVER,
 		uintptr(unsafe.Pointer(&iidITaskbarList3)), uintptr(unsafe.Pointer(&p)))
 	if failed(hr) || p == nil {
-		return fmt.Errorf("CoCreateInstance(CLSID_TaskbarList): %w", HResultError(hr))
+		return nil, fmt.Errorf("CoCreateInstance(CLSID_TaskbarList): %w", HResultError(hr))
 	}
 	if hr := p.call(vtTaskbarHrInit); failed(hr) {
 		p.release()
-		return fmt.Errorf("ITaskbarList3::HrInit: %w", HResultError(hr))
+		return nil, fmt.Errorf("ITaskbarList3::HrInit: %w", HResultError(hr))
 	}
-	taskbar = p
-	return nil
+	return p, nil
 }
 
 // SetTaskbarOverlay is Slack's vc for count: the badge image as hwnd's
@@ -103,9 +103,11 @@ func initTaskbar() error {
 // the overlay cleared (createEmpty: a null icon and ""). The window's
 // thread.
 func SetTaskbarOverlay(hwnd uintptr, count int, description string) error {
-	if err := initTaskbar(); err != nil {
+	taskbar, err := newTaskbar()
+	if err != nil {
 		return err
 	}
+	defer taskbar.release()
 	var icon uintptr
 	if count > 0 {
 		img, err := BadgeOverlay(count)
