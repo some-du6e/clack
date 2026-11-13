@@ -19,6 +19,14 @@ package core
 //     "fetchPinsList"} (htKN xs → bm9n pinsListFetcher), the messages and
 //     files into their stores, addPinnedItems in the answer's order (each
 //     identifier once), LOADED; on failure NOT_LOADED.
+//   - The refetcher's freshness (LoZG _maybeResetState): every connect
+//     that isn't a fast reconnect bumps the socket store's
+//     slowConnectionCount (client-boot QXYt connected(isFast), the socket
+//     manager's FAST_RECONNECTING); when the count differs from the one the
+//     refetcher last saw (1 at first), every channel's pins are stale
+//     (markStaleAfterSlowReconnect defaults to yes). The next read, which
+//     for the open tab is the next store update since useSelector reruns
+//     on every dispatch, runs clearPinnedItems and fetchPinsList again.
 //   - pin_added / pin_removed (boot-render pinAdded / pinRemoved): while
 //     the channel's pins are LOADED, prependPinnedItem (the new pin first,
 //     unless it's there) or removePinnedItem.
@@ -38,6 +46,7 @@ import (
 	"net/url"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
@@ -80,6 +89,8 @@ type pinsTabState struct {
 	mu   sync.Mutex
 	chs  map[string]*pinsTabChan
 	seen map[string]bool // fetched once (the refetcher's fresh ids)
+	// slow is the slowConnectionCount the refetcher last saw (0: none yet)
+	slow int
 }
 
 type pinsTabChan struct {
@@ -101,6 +112,7 @@ func (a *App) pinsTab() *pinsTabState {
 func (a *App) PinsTab(ch string) (items []PinsTabItem, loaded bool) {
 	st := a.pinsTab()
 	st.mu.Lock()
+	a.pinsResetAfterSlowReconnectLocked(st)
 	if !st.seen[ch] {
 		st.seen[ch] = true
 		st.chs[ch] = &pinsTabChan{state: pinsLoading} // clearPinnedItems, setLoadingState LOADING
@@ -134,6 +146,53 @@ func (a *App) liveMessage(ch, ts string) (*Message, bool) {
 		return nil, false
 	}
 	return a.messagePtr(ch, &m), true
+}
+
+// slowConnections is the socket store's slowConnectionCount.
+var slowConnections sync.Map // *App → *atomic.Int64
+
+func (a *App) slowConnectionCount() *atomic.Int64 {
+	v, _ := slowConnections.LoadOrStore(a, new(atomic.Int64))
+	return v.(*atomic.Int64)
+}
+
+// socketConnected is the socket store's connected(isFast): a slow
+// connect bumps slowConnectionCount. The open Pins tabs read again (the
+// store update reruns their selectors), and so refetch when the count
+// moved.
+func (a *App) socketConnected(fast bool) {
+	if fast {
+		return
+	}
+	a.slowConnectionCount().Add(1)
+	v, ok := pinsTabs.Load(a)
+	if !ok {
+		return
+	}
+	st := v.(*pinsTabState)
+	st.mu.Lock()
+	chs := make([]string, 0, len(st.chs))
+	for ch := range st.chs {
+		chs = append(chs, ch)
+	}
+	st.mu.Unlock()
+	for _, ch := range chs {
+		a.emit(Event{Type: "pins_tab", Channel: ch})
+	}
+}
+
+// pinsResetAfterSlowReconnectLocked is _maybeResetState: a
+// slowConnectionCount other than the one last seen marks every channel's
+// pins stale. st.mu is held.
+func (a *App) pinsResetAfterSlowReconnectLocked(st *pinsTabState) {
+	if st.slow == 0 {
+		st.slow = 1
+	}
+	n := max(int(a.slowConnectionCount().Load()), 1)
+	if n != st.slow {
+		st.slow = n
+		clear(st.seen)
+	}
 }
 
 // RefetchPinsTab marks ch's pins stale, so the next read fetches them
@@ -325,29 +384,7 @@ func (a *App) UnpinFromTab(ctx context.Context, it PinsTabItem) error {
 	return err
 }
 
-// CanEditTabs is useCanEditTabs (+n5q → mwX5 Ln) as far as Clack keeps
-// the inputs: the viewer is in the channel and may post there (o/IU
-// canUserPostInChannel: not archived), and with who_can_manage_tabs
-// channel_managers only an admin or owner (Clack keeps no channel
-// managers per channel outside the details view; Ln lets them too).
-func (a *App) CanEditTabs(ch string) bool {
-	c, ok := a.S.Conv(ch)
-	if !ok {
-		if c, ok = a.S.ExtConv(ch); !ok {
-			return false
-		}
-	}
-	if !a.isMemberConv(c) || c.IsArchived {
-		return false
-	}
-	if ParseChannelProps(c.Properties).WhoCanManageTabs == "channel_managers" {
-		a.S.RLock()
-		self := a.S.Self
-		a.S.RUnlock()
-		return self.IsAdmin || self.IsOwner
-	}
-	return true
-}
+// CanEditTabs: channel_managers.go.
 
 // CanEditBookmarks is the folder menus' gate: canUserPostInChannel and
 // isMemberOfChannel (o/IU c, JUrK bl).

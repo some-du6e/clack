@@ -34,10 +34,19 @@ type RTM struct {
 	next         atomic.Int64
 	reconnectURL string
 	fails        int
+	// fast: the current connection came from the gateway's reconnect_url
+	// (Slack's FAST_RECONNECTING; any other connect is a slow one)
+	fast atomic.Bool
 
 	// OnHello runs after every (re)connect, e.g. to resend subscriptions.
 	OnHello func()
 }
+
+// LastConnectFast reports whether the current (or last) connection was a
+// fast reconnect: dialled at the reconnect_url the gateway handed out,
+// where Slack's socket manager is FAST_RECONNECTING. Slack counts every
+// other connect in slowConnectionCount.
+func (r *RTM) LastConnectFast() bool { return r.fast.Load() }
 
 func (c *Client) NewRTM() *RTM {
 	return &RTM{c: c, Events: make(chan Event, 1024)}
@@ -92,6 +101,7 @@ func (r *RTM) Run(ctx context.Context) {
 func (r *RTM) once(ctx context.Context) error {
 	u := r.reconnectURL
 	r.reconnectURL = ""
+	r.fast.Store(u != "")
 	if u == "" {
 		u = r.c.WebSocketURL(ctx, r.fails%3 == 2) // every third failure, try the backup gateway
 	}

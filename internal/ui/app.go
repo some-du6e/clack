@@ -176,9 +176,10 @@ type App struct {
 	chBodyW         int             // >0: layoutChannel's messages+composer width (nested secondary pane)
 	convos          map[string]*convo
 	convoOrder      []string
-	drop            dropState             // an OS file drag over the window (drop_overlay.go)
-	chAgents        map[string]*agentApps // channels' agents and apps (agent_count.go)
-	agentCountRect  image.Rectangle       // the main header's AgentCountButton, window coords (tests)
+	drop            dropState              // an OS file drag over the window (drop_overlay.go)
+	folderDrops     map[string]*folderDrop // the folder tabs' drop zones (drop_folder.go)
+	chAgents        map[string]*agentApps  // channels' agents and apps (agent_count.go)
+	agentCountRect  image.Rectangle        // the main header's AgentCountButton, window coords (tests)
 	ptrTag          int
 	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
 	sbWide          sbWideState                // Activity's and the DMs list's column (sidebar_wide.go)
@@ -997,6 +998,8 @@ type toastState struct {
 	parts   []i18n.Part
 	iconCol color.NRGBA
 	rich    bool
+	// linkHref is where the parts' <link> run goes (ToastLink)
+	linkHref string
 }
 
 // Toast shows a short message at the bottom of the window.

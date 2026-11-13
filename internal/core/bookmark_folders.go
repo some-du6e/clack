@@ -152,6 +152,10 @@ func bookmarksListArgs(ch string) url.Values {
 		"reason": {"bookmarks-list-api"}}
 }
 
+// ShouldShowBookmark is ukRh: whether a folder's or the channel's list
+// shows b.
+func ShouldShowBookmark(all []Bookmark, b Bookmark) bool { return shouldShowBookmark(all, b) }
+
 // shouldShowBookmark is ukRh.
 func shouldShowBookmark(all []Bookmark, b Bookmark) bool {
 	switch b.Type {

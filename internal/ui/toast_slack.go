@@ -75,6 +75,14 @@ func (a *App) ToastParts(parts []i18n.Part, icon string, iconCol color.NRGBA, d 
 	a.Invalidate()
 }
 
+// ToastLink is ToastParts whose <link> run (Slack's Link with an onClick,
+// as AddOrMoveToFolderMenuItems' "Moved {fileName} to folder
+// <link>{folderName}</link>") opens href: a slack:// link navigates.
+func (a *App) ToastLink(parts []i18n.Part, href string, d time.Duration) {
+	a.ToastParts(parts, "", color.NRGBA{}, d)
+	a.toast.linkHref = href
+}
+
 // slackRed is --dt_color-brand-core-slack-red (.sk_raspberry_red).
 var slackRed = color.NRGBA{R: 0xe0, G: 0x1e, B: 0x5a, A: 0xff}
 
@@ -149,8 +157,11 @@ func (a *App) wrapToastParts(gtx layout.Context, parts []i18n.Part, maxW int) ([
 			wt = theme.Bold
 		}
 		href := ""
-		if p.Tag == "a" {
+		switch {
+		case p.Tag == "a":
 			href = toastHelpURL
+		case p.Tag == "link" && a.toast.linkHref != "":
+			href = a.toast.linkHref
 		}
 		for i, f := range strings.Split(p.Text, " ") {
 			if i > 0 {

@@ -403,6 +403,10 @@ type Server struct {
 	// name (missing: {}, enabled). Set them before the calls.
 	TeamPrefs    map[string]any
 	ChannelPrefs map[string]map[string]any
+	// ChannelManagers are admin.roles.entity.listAssignments' channel
+	// managers (role Rl0A) by channel (missing: none). Set it before the
+	// calls.
+	ChannelManagers map[string][]string
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
@@ -1592,6 +1596,12 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			v = p
 		}
 		return ok("channel_id", ch, "pref_name", name, "pref_value", v)
+	case "admin.roles.entity.listAssignments":
+		var as []map[string]any
+		if us := s.ChannelManagers[f.Get("entity_id")]; len(us) > 0 {
+			as = append(as, map[string]any{"role_id": "Rl0A", "entity_id": f.Get("entity_id"), "users": us})
+		}
+		return ok("role_assignments", as)
 	case "team.info":
 		if f.Get("team") == ExternalTeamID {
 			return ok("team", map[string]any{"id": ExternalTeamID, "name": "Partner Co", "domain": "partnerco",

@@ -257,7 +257,7 @@ func TestPinsFoldersShots(t *testing.T) {
 		fe.frame()
 		vaShot(t, fe, "folder-delete-link", dark)
 		dismissAll(h.filesHost)
-		fv.addMenu(image.Rect(990, 20, 1018, 48))
+		fv.addMenu(image.Rect(990, 20, 1018, 48), "bottom")
 		fe.frame()
 		vaShot(t, fe, "folder-add-menu", dark)
 		dismissAll(h.filesHost)

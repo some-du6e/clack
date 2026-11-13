@@ -81,8 +81,10 @@ func (a *App) layoutChannel(gtx layout.Context, ch string) layout.Dimensions {
 		atExact(gtx, body.Min, body.Size(), v.Layout)
 		return layout.Dimensions{Size: sz}
 	}
-	if v := a.folderTabView(ch); v != nil { // a bookmark folder (pins_tab.go)
-		atExact(gtx, body.Min, body.Size(), v.Layout)
+	if t, ok := a.selectedTab(ch); ok && isFolderTab(t) { // a bookmark folder with its FileDragDrop (drop_folder.go)
+		atExact(gtx, body.Min, body.Size(), func(gtx layout.Context) layout.Dimensions {
+			return a.layoutFolderTab(gtx, ch, t, a.primaryOrigin.Add(body.Min))
+		})
 		return layout.Dimensions{Size: sz}
 	}
 	cv := a.convoFor(ch, "")

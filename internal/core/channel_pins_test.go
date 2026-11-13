@@ -281,3 +281,42 @@ func TestFolderRowsShouldShow(t *testing.T) {
 		t.Error("an empty Workflows folder is shown")
 	}
 }
+
+// The pins refetcher (LoZG, no maxAge) keeps a channel's pins until a
+// slow reconnect: a fast reconnect (the gateway's reconnect_url) leaves
+// them, any other connect bumps slowConnectionCount and the next read
+// clears the rows and runs pins.list again.
+func TestPinsRefetchAfterSlowReconnect(t *testing.T) {
+	a, fs, l := pfApp(t)
+	ch := fakeslack.PinsChannelID
+	a.PinsTab(ch)
+	waitPins(t, a, "the pins", func(items []PinsTabItem) bool { return len(items) == 4 })
+	if n := len(fs.PinsFoldersForms("pins.list")); n != 1 {
+		t.Fatalf("%d pins.list calls, want 1", n)
+	}
+	a.socketConnected(true)
+	if _, loaded := a.PinsTab(ch); !loaded {
+		t.Fatal("a fast reconnect made the pins stale")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := len(fs.PinsFoldersForms("pins.list")); n != 1 {
+		t.Fatalf("a fast reconnect refetched: %d pins.list calls", n)
+	}
+	before := len(l.all())
+	a.socketConnected(false)
+	l.wait(t, "the pins_tab event after the slow reconnect", func(evs []Event) bool {
+		for _, ev := range evs[min(before, len(evs)):] {
+			if ev.Type == "pins_tab" && ev.Channel == ch {
+				return true
+			}
+		}
+		return false
+	})
+	if items, loaded := a.PinsTab(ch); loaded || len(items) != 0 {
+		t.Fatalf("after a slow reconnect the first read is loading with no rows (clearPinnedItems): loaded %v, %d rows", loaded, len(items))
+	}
+	waitPins(t, a, "the refetched pins", func(items []PinsTabItem) bool { return len(items) == 4 })
+	if f := fs.PinsFoldersForms("pins.list"); len(f) != 2 || f[1].Get("reason") != "fetchPinsList" {
+		t.Fatalf("pins.list after the slow reconnect: %v", f)
+	}
+}

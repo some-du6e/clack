@@ -1041,8 +1041,10 @@ func (a *App) MemberCounts(ctx context.Context, ch string) (MemberCounts, error)
 // channelManagerRole is the role id of Slack's channel managers.
 const channelManagerRole = "Rl0A"
 
-// Managers lists a channel's managers ("Managed by"; via
-// admin.roles.entity.listAssignments).
+// Managers lists a channel's managers ("Managed by"):
+// fetchAndUpsertChannelManagers (evGV), admin.roles.entity.listAssignments
+// {entity_id, reason "fetch-channel-managers"}; the answer replaces the
+// channel managers store (setChannelManagers, channel_managers.go).
 func (a *App) Managers(ctx context.Context, ch string) ([]string, error) {
 	var res struct {
 		Assignments []struct {
@@ -1050,7 +1052,7 @@ func (a *App) Managers(ctx context.Context, ch string) ([]string, error) {
 			Users  []string `json:"users"`
 		} `json:"role_assignments"`
 	}
-	if err := a.C.Call(ctx, "admin.roles.entity.listAssignments", url.Values{"entity_id": {ch}}, &res); err != nil {
+	if err := a.C.Call(ctx, "admin.roles.entity.listAssignments", url.Values{"entity_id": {ch}, "reason": {"fetch-channel-managers"}}, &res); err != nil {
 		return nil, err
 	}
 	out := []string{}
@@ -1066,6 +1068,7 @@ func (a *App) Managers(ctx context.Context, ch string) ([]string, error) {
 			}
 		}
 	}
+	a.setChannelManagers(ch, out)
 	a.EnsureUsers(ctx, out)
 	return out, nil
 }
