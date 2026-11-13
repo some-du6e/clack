@@ -172,6 +172,12 @@ type savedBase struct {
 	watching bool
 	retry    widget.Clickable
 
+	// the rail's Later peek (later_peek.go): peeking while the card draws
+	// the list, its scroll position and the close a row runs first
+	peeking   bool
+	plist     widget.List
+	peekClose func()
+
 	w     watcher
 	mu    sync.Mutex
 	done  []laterDone
@@ -436,6 +442,8 @@ func (s *savedBase) rowActions(gtx C) {
 		it := f.items[i]
 		ch, ts := it.Channel, it.TS
 		switch {
+		case click && s.peeking:
+			s.openFromPeek(&it)
 		case click:
 			s.open(&it)
 		case done:
@@ -548,6 +556,10 @@ func (s *savedBase) itemRow(gtx C, it *core.SavedItem, todo bool, rs laterRowSt)
 		below = func(gtx C) D { return s.remindMenu(gtx, it, r) }
 	}
 	hov, bg := s.p.Hover, color.NRGBA{}
+	barTop, barRight := unit.Dp(8), unit.Dp(16)
+	if s.peeking { // .p-peek_card__later_list .p-saved_item__actions: top 12, right 12
+		barTop, barRight = 12, 12
+	}
 	if rs.selected {
 		bg = s.th.C.SelfMention // --dt_color-surf-hgl-3
 		hov = bg
@@ -564,8 +576,8 @@ func (s *savedBase) itemRow(gtx C, it *core.SavedItem, todo bool, rs laterRowSt)
 		},
 		Below:    below,
 		Bar:      bar,
-		BarTop:   8,
-		BarRight: 16,
+		BarTop:   barTop,
+		BarRight: barRight,
 	})
 }
 
@@ -639,7 +651,12 @@ func (s *savedBase) itemBody(gtx C, it *core.SavedItem) D {
 					return row(gtx, layout.Baseline,
 						layout.Rigid(func(gtx C) D { return s.para(gtx, 15, 22, wBlack, s.p.Text, 1, name) }),
 						hgap(8),
-						layout.Rigid(func(gtx C) D { return s.label(gtx, 13, wReg, s.p.Muted, listTime(tsTime(m.TS))) }),
+						layout.Rigid(func(gtx C) D {
+							if s.peeking { // .p-peek_card__later_list … .c-timestamp: display none
+								return D{}
+							}
+							return s.label(gtx, 13, wReg, s.p.Muted, listTime(tsTime(m.TS)))
+						}),
 					)
 				}),
 				layout.Rigid(func(gtx C) D { return s.msgBody(gtx, m, false, 3) }),

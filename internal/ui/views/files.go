@@ -143,6 +143,8 @@ type Files struct {
 	editName widget.Editor // Edit file details' File name
 
 	del filesDeleted // the Deleted page (files_deleted.go)
+
+	pk filesPeek // the rail's Files peek (files_peek.go)
 }
 
 type fileClicks struct {

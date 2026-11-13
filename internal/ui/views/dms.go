@@ -105,6 +105,10 @@ var dmsDark = dmsPal{
 // sRGB (flatten) over the opaque column color: the chrome with the
 // shell's sidebar tint on top. Rows then draw opaque colors only.
 func (d *DMs) dmsColors() {
+	if d.peeking {
+		d.c = dmsCardColors(d.th)
+		return
+	}
 	d.c = dmsLight
 	if d.th == nil {
 		return
@@ -222,6 +226,14 @@ type DMs struct {
 
 	kb    *vkList // DmsList's virtual list keyboard (vlist_keys.go)
 	listH int     // the list's height last frame
+
+	// The rail's DMs peek (dms_peek.go): peeking while the card draws
+	// the list, its own scroll position and the close it runs before a
+	// row navigates (maybeClosePeek).
+	peeking   bool
+	plist     widget.List
+	peekView  []dmsEntry
+	peekClose func()
 
 	w     watcher
 	evMu  sync.Mutex
@@ -464,7 +476,9 @@ func (d *DMs) update(gtx C) {
 		// "Show all DMs": the ALL filter (setDmsFilter), then the list
 		// takes focus (transitionFocusTo DmsList)
 		d.unreads.Value = false
-		d.kb.focusIt, d.showAllFocus = true, true
+		if !d.peeking { // the peek's list never takes the focus
+			d.kb.focusIt, d.showAllFocus = true, true
+		}
 	}
 	if d.unreads.Value != d.lastUnr {
 		d.lastUnr, d.dirty = d.unreads.Value, true
@@ -494,6 +508,10 @@ func (d *DMs) update(gtx C) {
 			}
 		}
 		if r.click.Clicked(gtx) {
+			if d.peeking { // DmsList's onItemClick: maybeClosePeek, then the DM in the DMs tab
+				d.openFromPeek(id)
+				continue
+			}
 			d.choose(id) // the press focused the list (vkList)
 		}
 	}
@@ -517,12 +535,14 @@ func (d *DMs) update(gtx C) {
 			}
 		}
 	}
-	d.keys(gtx)
+	if !d.peeking { // the hover peek never takes the keyboard
+		d.keys(gtx)
+	}
 
 	// With Panes, Slack opens the newest DM on the right. Showing a
 	// conversation marks it read, so only do that when the newest DM has
 	// nothing unread; otherwise wait for the user to pick one.
-	if d.sel == "" && !d.autoSel && len(d.items) > 0 {
+	if d.sel == "" && !d.autoSel && len(d.items) > 0 && !d.peeking { // isPeekView: no preselect
 		if _, ok := d.h.(Panes); ok {
 			d.autoSel = true
 			if !dmsUnread(&d.items[0]) {
@@ -1016,7 +1036,7 @@ func (d *DMs) layoutRows(gtx C, p slackc.Props) D {
 // right-aligned (13px), up to two preview lines, 1px bottom rule.
 func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 	r := d.rowState(dm.Channel)
-	sel := dm.Channel == d.sel
+	sel := dm.Channel == d.sel && !d.peeking // isActive: eg === s.id && !isPeekView
 	unread := dmsUnread(dm) && !sel
 	ring := d.ringColor(sel || r.hovered)
 
@@ -1094,10 +1114,14 @@ func (d *DMs) dmRow(gtx C, dm *core.DM) D {
 									if ms.Hidden() {
 										return D{}
 									}
-									if !ms.Active() {
-										return d.para(gtx, 15, dmsLine, wReg, prevC, 2, txt)
+									lines := 2
+									if d.peeking { // .p-peek_card--dms .p-recent_page__message .c-truncate: one line
+										lines = 1
 									}
-									return ms.Wrap(gtx, func(gtx C) D { return d.para(gtx, 15, dmsLine, wReg, ms.Color(prevC), 2, txt) })
+									if !ms.Active() {
+										return d.para(gtx, 15, dmsLine, wReg, prevC, lines, txt)
+									}
+									return ms.Wrap(gtx, func(gtx C) D { return d.para(gtx, 15, dmsLine, wReg, ms.Color(prevC), lines, txt) })
 								}),
 								layout.Rigid(func(gtx C) D {
 									if !unread || dm.Count.Mentions <= 0 {

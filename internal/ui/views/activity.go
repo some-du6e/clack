@@ -304,6 +304,7 @@ type Activity struct {
 
 	data     async[core.ActivityPage]
 	list     widget.List
+	pk       actPeek // the rail's Activity peek (activity_peek.go)
 	rows     map[string]*actRow
 	override map[string]bool // local read state: true = read, false = unread
 	cleared  map[string]bool
@@ -1868,7 +1869,10 @@ func (v *Activity) footer(gtx C, failed bool) D {
 func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	key := actKey(it)
 	r := v.rowFor(key)
-	if r.click.Clicked(gtx) {
+	clicked := r.click.Clicked(gtx)
+	if clicked && v.pk.peeking { // the peek's row: maybeClosePeek, then the item in Activity
+		v.openFromPeek(it, key, r)
+	} else if clicked {
 		// a click opens the row, in triage mode too (its checkbox picks
 		// it); the list's focus moves to it
 		v.focusKey = key

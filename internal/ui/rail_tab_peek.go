@@ -97,6 +97,10 @@ func (a *App) tabPeekContentFor(key string) tabPeekContent {
 	switch key {
 	case "platform":
 		return a.agentsPeekView()
+	case "dms", "activity", "later", "files", "home": // rail_peek_pages.go
+		if a.hasTabPeek(key) {
+			return a.pagePeek(key)
+		}
 	}
 	return nil
 }
@@ -106,6 +110,10 @@ func (a *App) hasTabPeek(key string) bool {
 	switch key {
 	case "platform": // AutomationsPeekTrigger: canUserViewWorkflows && the payment tier (B4i3 MA)
 		return true
+	case "dms", "activity", "later", "files": // DmsPeekTrigger, ActivityPeekTrigger, LaterPeekTrigger, UnifiedFilesPeekTrigger
+		return true
+	case "home": // Zxh6's Home renderWrapper: ActivityPeekTrigger while Activity lives in Home
+		return a.activityInHome()
 	}
 	return false
 }
