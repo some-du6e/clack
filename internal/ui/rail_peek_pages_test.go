@@ -17,7 +17,9 @@ import (
 
 func pagePeekEnv(t *testing.T) *perfEnv {
 	t.Helper()
-	fs, err := fakeslack.Start(fakeslack.Small)
+	sz := fakeslack.Small
+	sz.Views, sz.DMsTab = true, true // the Activity inbox's feed, client.dms
+	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +190,7 @@ func TestRailPeekActivity(t *testing.T) {
 	if a.hasTabPeek("home") {
 		t.Error("Home has a peek without activity_in_home_prototype")
 	}
-	e.click(image.Pt(card.Min.X+150, card.Min.Y+44+40))
+	e.click(image.Pt(card.Min.X+150, card.Min.Y+44+130)) // past a first day divider (50px)
 	e.frame()
 	e.frame()
 	if a.tabPeekOpen("activity") {
@@ -296,8 +298,13 @@ func TestRailPeekPagesOneAtATime(t *testing.T) {
 	a := e.a
 	away := image.Pt(e.size.X-20, e.size.Y-20)
 	keys := []string{"dms", "activity", "later", "files"}
+	openTabPeekByHover(e, keys[0], away)
 	for i, k := range keys {
-		openTabPeekByHover(e, k, away)
+		if i > 0 { // the pointer still on the first button: k's opens over it
+			tabTrigger(e, k)
+			a.openTabPeek(k)
+			e.frame()
+		}
 		for _, o := range keys[:i] {
 			if a.tabPeekOpen(o) {
 				t.Errorf("%s's peek still open with %s's", o, k)

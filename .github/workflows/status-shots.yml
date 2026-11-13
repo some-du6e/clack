@@ -27,6 +27,7 @@ on:
       - "internal/ui/theme/account*"
       - "internal/core/agent_sessions*"
       - "internal/fakeslack/agent_sessions*"
+      - "internal/fakeslack/activity.go"
       - ".github/workflows/status-shots.yml"
   workflow_dispatch:
 

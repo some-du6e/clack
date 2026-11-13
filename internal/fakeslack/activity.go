@@ -337,6 +337,24 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 			return ok(), true
 		}
 		return ok("view", out), true
+	case "saved.list": // the reminder rows' saved items: to-dos for the to-do filters, nothing else saved
+		v.mu.Lock()
+		st := v.act()
+		items := []map[string]any{}
+		if strings.HasPrefix(f.Get("filter"), "todo") {
+			keys := make([]string, 0, len(st.saved))
+			for k := range st.saved {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				if it := st.saved[k]; it["todo_state"] != "" && it["todo_state"] != nil {
+					items = append(items, it)
+				}
+			}
+		}
+		v.mu.Unlock()
+		return ok("saved_items", items, "counts", map[string]any{"todo_count": len(items)}), true
 	case "saved.get":
 		var want []struct {
 			ItemID   string `json:"item_id"`

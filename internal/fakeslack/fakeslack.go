@@ -64,6 +64,9 @@ type Size struct {
 	// Views adds the rail list views' fixtures (views.go): followed
 	// threads, scheduled drafts, recorded activity writes.
 	Views bool
+	// DMsTab answers client.dms (the DMs tab and its peek) with the open
+	// generated DMs and their latest messages, newest first.
+	DMsTab bool
 	// Embeds adds #embeds-gallery: one message per way Slack draws a
 	// link preview (embeds.go).
 	Embeds bool
@@ -1265,6 +1268,46 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		}
 		s.convMu.Unlock()
 		return ok("ims", ims, "mpdms", mpdms)
+	case "client.dms": // DmsListAll (Size.DMsTab): the open DMs with their latest message, newest first
+		if !s.Size.DMsTab {
+			return ok("ims", []any{}, "mpims", []any{})
+		}
+		type dmRow struct {
+			id   string
+			conv slack.Conversation
+		}
+		var rows []dmRow
+		s.convMu.Lock()
+		for _, c := range s.convs {
+			if (c.IsIM || c.IsMPIM) && !closedDM(c) {
+				rows = append(rows, dmRow{c.ID, c})
+			}
+		}
+		s.convMu.Unlock()
+		type dmOut struct {
+			ts   string
+			item map[string]any
+			im   bool
+		}
+		var outs []dmOut
+		for _, r := range rows {
+			item := map[string]any{"id": r.id, "channel": r.conv}
+			ts := "0000000000.000000"
+			if h := s.history(r.id); len(h) > 0 { // newest first
+				item["message"], ts = h[0], h[0].TS
+			}
+			outs = append(outs, dmOut{ts, item, r.conv.IsIM})
+		}
+		sort.SliceStable(outs, func(i, j int) bool { return outs[i].ts > outs[j].ts })
+		ims, mpims := []any{}, []any{}
+		for _, o := range outs {
+			if o.im {
+				ims = append(ims, o.item)
+			} else {
+				mpims = append(mpims, o.item)
+			}
+		}
+		return ok("ims", ims, "mpims", mpims)
 	case "experiments.getByUser": // the sidebar experiments as a real account has them (2026-11-08)
 		g := func(group string) map[string]any { return map[string]any{"group": group} }
 		return ok("assignments", map[string]any{"filter_dormant_channels": g("on"), "improve_mute_pref": g("on"),
