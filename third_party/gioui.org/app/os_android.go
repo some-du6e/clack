@@ -1435,6 +1435,18 @@ var androidCursor = [...]uint16{
 	pointer.CursorSouthResize:              1015, // TYPE_VERTICAL_DOUBLE_ARROW
 	pointer.CursorNorthEastSouthWestResize: 1016, // TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW
 	pointer.CursorNorthWestSouthEastResize: 1017, // TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW
+	// Clack patch 15: the panning cursors: the all-scroll and resize cursors.
+	pointer.CursorMiddlePanning:           1013, // TYPE_ALL_SCROLL,
+	pointer.CursorMiddlePanningVertical:   1013, // TYPE_ALL_SCROLL,
+	pointer.CursorMiddlePanningHorizontal: 1013, // TYPE_ALL_SCROLL,
+	pointer.CursorNorthPanning:            1015, // TYPE_VERTICAL_DOUBLE_ARROW,
+	pointer.CursorNorthEastPanning:        1016, // TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW,
+	pointer.CursorEastPanning:             1014, // TYPE_HORIZONTAL_DOUBLE_ARROW,
+	pointer.CursorSouthEastPanning:        1017, // TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW,
+	pointer.CursorSouthPanning:            1015, // TYPE_VERTICAL_DOUBLE_ARROW,
+	pointer.CursorSouthWestPanning:        1016, // TYPE_TOP_RIGHT_DIAGONAL_DOUBLE_ARROW,
+	pointer.CursorWestPanning:             1014, // TYPE_HORIZONTAL_DOUBLE_ARROW,
+	pointer.CursorNorthWestPanning:        1017, // TYPE_TOP_LEFT_DIAGONAL_DOUBLE_ARROW,
 }
 
 func setCursor(env *C.JNIEnv, view C.jobject, cursor pointer.Cursor) {

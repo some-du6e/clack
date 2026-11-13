@@ -67,7 +67,7 @@ func TestLazyGlyphsMatchEager(t *testing.T) {
 }
 
 // An embedded font's tables are read in place (third_party/typesetting
-// patch 2, Gio patch 16): what the loader hands out are slices of the
+// patch 2, Gio patch 17): what the loader hands out are slices of the
 // embedded bytes, and a buffer passed for reuse is never written.
 func TestFontTablesNotCopied(t *testing.T) {
 	b := fonts.Regular

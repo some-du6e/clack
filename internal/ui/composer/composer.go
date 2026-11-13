@@ -42,6 +42,12 @@ type Composer struct {
 	att      *attachments
 	st       EditorStyle
 	focusReq bool
+	// cmdK is the Mod+K coachmark while it shows (cmdk_coachmark.go);
+	// drawnAt is the frame the composer was last laid out in (the
+	// coachmark goes when its composer isn't drawn).
+	cmdK    *cmdKCoachmark
+	drawnAt time.Time
+	stGen   uint64 // th.Gen st's colours were taken at
 	// focus dropped by Gio without a blur (restoreDroppedFocus)
 	focusPress    uint64 // pressCount when last seen focused
 	focusRestored bool   // asked for it back once since
@@ -232,12 +238,11 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 	mm := m
 	c.edit = &mm
 	c.init()
-	d := DocFromRichtext(m.Doc.Blocks)
-	if d == nil || d.Len() == 0 {
-		d = NewDoc()
-		d.Insert(0, m.Text, Attr{})
+	var r AtomResolver
+	if c.api.a != nil {
+		r = c.api.resolver()
 	}
-	c.ed.SetDoc(d)
+	c.ed.SetDoc(docForMessage(m, r))
 	c.lastVer = c.ed.Version()
 	c.focusReq = true
 	return c
@@ -245,7 +250,8 @@ func NewEdit(h Host, m core.Message, onDone func()) *Composer {
 
 func (c *Composer) init() {
 	c.ed = NewEditor()
-	c.ed.Snippets = c.edit == nil // MessageInput's enableSnippetCreation; not the edit composer
+	c.ed.Snippets = c.edit == nil      // MessageInput's enableSnippetCreation; not the edit composer
+	c.ed.CmdKCoachmark = c.edit == nil // MessageInput's onCmdKWhenSelected; the edit composer (cjbg) has none
 	c.bindSlugs()
 	if c.api.a != nil {
 		warmEmoji()
@@ -367,11 +373,16 @@ func (c *Composer) prepareSend(d *Doc) *Doc {
 // edit composers draw just the box.
 func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	runRestores()
+	c.drawnAt = gtx.Now
 	c.maybeRestoreServerDraft()
 	syncHooks()
 	th := c.h.Theme()
-	if c.st.Shaper != th.Shaper || c.st.Shaper == nil {
+	// the style's colours are the theme's: rebuild them when it changes
+	// (th.Gen: a live Light/Dark switch or new stylesheet tokens; the two
+	// modes may share one shaper, so the shaper alone doesn't say)
+	if c.st.Shaper != th.Shaper || c.st.Shaper == nil || c.stGen != th.Gen {
 		c.st = c.editorStyle()
+		c.stGen = th.Gen
 	}
 	c.st.Images = c.emojiImage
 	c.st.PlaceholderText = ""
@@ -676,6 +687,8 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			c.pasteLimitDialog(c.ed.RefusedPaste())
 		case EvSnippet:
 			c.openSnippet(true)
+		case EvCmdKSelected:
+			c.cmdKSelected()
 		case EvPlusMenu:
 			// onPlusMenuShortcut: forcePlusMenuOpen, the + menu at its button
 			if c.edit == nil && c.ui.rect[crAttach] != (image.Rectangle{}) && !c.ui.hidden(crAttach) {
@@ -1231,14 +1244,59 @@ func (c *Composer) tryUnsend() bool {
 }
 
 // DocForMessage is a message's contents as composer text (Slack's
-// getDeltaForMessageObject): its rich text, else its text.
-func DocForMessage(m core.Message) *Doc {
+// getDeltaForMessageObject): its rich text, else its text. r names the
+// atoms (nil: their ids).
+func DocForMessage(m core.Message, r AtomResolver) *Doc { return docForMessage(m, r) }
+
+// docForMessage is getDeltaForMessageObject (boot-shared +LRL, build
+// fa938a086569) without plain-text, markdown or opaque-block mode: the
+// message's own rich_text blocks through convertBlocksToDelta (V/2c),
+// else its text. Every element keeps what it is: a message_mention is the
+// message slug again (formatMessageSlugAttributesForDelta: its url,
+// author, channel and thread), a link its text with the url (the url as
+// the text when it has none), a mention, emoji or broadcast its atom, a
+// date its fallback and a color its value. The rendered document is only
+// a fallback for a message without blocks: its spans no longer carry what
+// a slug points at (Karim's edit, 2026-11-12, showed a message_mention as
+// the plain label "clod in #clack" and saved it without the link).
+func docForMessage(m core.Message, r AtomResolver) *Doc {
+	if raw := richTextOnly(m.Blocks); raw != nil {
+		if d, err := DocFromBlocksJSON(raw, r); err == nil && d != nil && d.Len() > 0 {
+			return d
+		}
+	}
 	d := DocFromRichtext(m.Doc.Blocks)
 	if d == nil || d.Len() == 0 {
 		d = NewDoc()
 		d.Insert(0, m.Text, Attr{})
 	}
 	return d
+}
+
+// richTextOnly keeps a message's rich_text blocks (getDeltaForMessageObject's
+// blocks.filter(type === rich_text)); nil when it has none.
+func richTextOnly(blocks json.RawMessage) json.RawMessage {
+	var bs []json.RawMessage
+	if len(blocks) == 0 || json.Unmarshal(blocks, &bs) != nil {
+		return nil
+	}
+	var keep []json.RawMessage
+	for _, b := range bs {
+		var t struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(b, &t) == nil && t.Type == "rich_text" {
+			keep = append(keep, b)
+		}
+	}
+	if len(keep) == 0 {
+		return nil
+	}
+	out, err := json.Marshal(keep)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 // sendJob is one outgoing message; run happens off the UI goroutine.

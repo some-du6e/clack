@@ -460,6 +460,12 @@ func (b *backend) mpimName(c *core.Conv, self string) string {
 	return strings.Join(names, ", ")
 }
 
+// activityBadgeMoved reports whether core's Activity badge differs from
+// the rail's (recount then picks it up).
+func (b *backend) activityBadgeMoved() bool {
+	return b.m.Rail.ActivityInbox && b.core != nil && b.core.ActivityBadgeCount() != b.m.ActivityCount
+}
+
 // recount derives the rail badges from conv counts.
 func (b *backend) recount() {
 	m := &b.m
@@ -483,6 +489,12 @@ func (b *backend) recount() {
 		}
 	}
 	m.HomeCount += m.DMCount
+	if m.Rail.ActivityInbox && b.core != nil {
+		// Slack's rail reads activity_v2 under activity_inbox, not the
+		// channels' mentions: thread replies and @channel count there too
+		// (core ActivityBadgeCount)
+		m.ActivityCount = b.core.ActivityBadgeCount()
+	}
 	if b.app != nil {
 		b.app.updateDock()
 	}
@@ -561,6 +573,11 @@ func (b *backend) handle(a *App, ev core.Event) {
 				}
 			}
 		}
+		// client.counts' activity_v2 can move with no conversation's
+		// count changing (a thread reply): the rail's badge reads it
+		changed = changed || b.activityBadgeMoved()
+	case "activity_badges": // badge_counts_updated or a mark read (core activity_badges.go)
+		changed = b.activityBadgeMoved()
 	case "presence":
 		for _, c := range m.Convs {
 			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) {
@@ -651,7 +668,7 @@ func (b *backend) maybeNotify(a *App, ev core.Event) {
 		// drop it (native: the desktop notification)
 		title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
 		msg := notificationMessage(a.Taut(), ev)
-		note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS, ev.Msg.User) // the toast's payload (notify.go)
+		note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS) // the toast's payload (notify.go)
 		a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
 			func(ctx context.Context, args map[string]any) (any, error) {
 				if t, b, ok := notificationText(args, msg, body); ok {
@@ -781,7 +798,7 @@ func (b *backend) opened(ch string) {
 			if label == "" {
 				continue
 			}
-			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, fileID: t.FileID, unread: t.Unread,
+			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread,
 				spans: tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
 			bms = append(bms, t.Bookmarks...)
 		}
@@ -986,7 +1003,9 @@ func tabIcon(typ string) string {
 	case "folder":
 		return "bookmark"
 	case "files":
-		return "files"
+		// useTabIconProps with resources_channel_tab off: canvas-browser
+		// (canvas-browser-filled when selected)
+		return "canvas-browser"
 	case "workflows":
 		return "workflow"
 	}

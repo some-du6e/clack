@@ -173,6 +173,7 @@ func (t *Taut) installHost(r *runtime) {
 		return nil, nil
 	})
 	sync("huddleEventLog", t.huddleEventLog)
+	sync("huddlePushEvent", t.huddlePushEvent)
 	sync("huddleReaction", t.huddleReaction)
 
 	// ---- data ----

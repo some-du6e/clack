@@ -187,8 +187,12 @@ func (p *prefsModal) customTheme(f *prefsForm, cur theme.IATheme) {
 	f.option("gradients", "Window gradient", "Blend Window background and Selected items colors together in window backgrounds.", a.accountGradients(), false, func() {
 		a.setWindowGradients(!a.accountGradients())
 	})
-	// ThemeSidebarInvertedCheckBox: hidden in dark mode and at low brightness
-	if !a.th.Dark && cur.Brightness >= 3 {
+	// ThemeSidebarInvertedCheckBox (prefs-dialog chunk, build f132f0e78468):
+	// hidden in dark mode and unless isSidebarInverted(brightness || 5),
+	// brightness > 3 (InvertedChrome). Brightness 3 used to show it here,
+	// and checking it drew a dark sidebar Slack never draws over the pale
+	// shade-10 gradient (the washed-out pink sidebar and rail).
+	if cur.InvertedChrome(a.th.Dark) {
 		f.option("inverted", "Darker sidebars", "Use this setting to choose whether you want light or dark sidebars.", cur.SidebarInverted, false, func() {
 			t := a.accountTheme()
 			t.SidebarInverted = !t.SidebarInverted

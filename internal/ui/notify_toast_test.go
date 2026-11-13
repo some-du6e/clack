@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"io"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -18,11 +17,13 @@ import (
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 )
 
-// The Windows toast against Slack's own code. testdata/toast_slack.json
-// holds sample payloads and what Slack desktop's shell made of them: gX,
-// ch, buildNotificationId and EH.createToastNotification's toastXml
-// (windows_com_activation on), each cut out of main.bundle.cjs 4.53.276
-// win32 (and boot-shared HAag) and run in node.
+// The Windows toast. testdata/toast_slack.json holds sample payloads and
+// what Slack desktop's shell made of them: gX, ch, buildNotificationId and
+// EH.createToastNotification's toastXml (windows_com_activation on), each
+// cut out of main.bundle.cjs 4.53.276 win32 (and boot-shared HAag) and run
+// in node. Clack's toast now takes Chrome's layout instead (Karim,
+// 2026-11-12), from Chromium's notification_template_builder.cc; Slack's
+// XML still supplies the activation payloads Clack reads back.
 
 type toastSlackData struct {
 	Samples struct {
@@ -77,42 +78,101 @@ func loadToastSlack(t *testing.T) toastSlackData {
 	return d
 }
 
-// TestToastXMLMatchesSlack: Clack's toast XML for each payload is the
-// shell's, byte for byte, and parses as XML.
-func TestToastXMLMatchesSlack(t *testing.T) {
-	d := loadToastSlack(t)
-	if len(d.Samples.Toasts) < 6 {
-		t.Fatalf("%d samples", len(d.Samples.Toasts))
+// chromeToast is Chromium's BuildNotificationTemplate output (its
+// unittests' kExpectedXml, without libxml's indentation) for a toast with
+// the title, the body, an attribution line, Clack's icon as the logo,
+// buttons and silent audio.
+func chromeToast(launch, stamp, title, body, attribution, logo, actions string) string {
+	x := `<toast launch="` + launch + `"`
+	if stamp != "" {
+		x += ` displayTimestamp="` + stamp + `"`
 	}
-	for name, s := range d.Samples.Toasts {
+	x += `><visual><binding template="ToastGeneric"><text>` + title + `</text><text>` + body + `</text>`
+	if attribution != "" {
+		x += `<text placement="attribution">` + attribution + `</text>`
+	}
+	if logo != "" {
+		x += `<image placement="appLogoOverride" src="` + logo + `" hint-crop="none"/>`
+	}
+	if actions == "" {
+		x += `</binding></visual><actions/>`
+	} else {
+		x += `</binding></visual><actions>` + actions + `</actions>`
+	}
+	return x + `<audio silent="true"/></toast>`
+}
+
+// TestToastXMLChromeLayout: a message's toast is Chrome's: the title as
+// the webapp wrote it ("New message in #general", not the channel's name),
+// the body, the workspace where Chrome has the origin, Clack's icon as an
+// uncropped logo, the time; no header, no reply box, no line limits. A
+// huddle invite keeps its buttons, and every toast parses as XML.
+func TestToastXMLChromeLayout(t *testing.T) {
+	d := loadToastSlack(t)
+	when := time.Date(2026, 11, 12, 18, 4, 5, 0, time.FixedZone("x", 3600))
+	note := func(name string) *desktopNote {
+		s := d.Samples.Toasts[name]
 		p := s.Payload
 		body := p.Body
 		if body == "" {
 			body = p.Content
 		}
-		n := &desktopNote{ID: p.ID, GroupID: p.GroupID, GroupTitle: p.GroupTitle, Title: p.Title, Body: body, Team: p.TeamID,
-			Workspace: s.State.Workspaces[p.TeamID].Name, Channel: p.Channel, ChannelName: p.ChannelName, Msg: p.Msg,
-			ThreadTS: p.ThreadTS, TraceID: p.TraceID, Grouped: p.Grouped, HasReply: p.Channel != ""}
-		if p.HasReply != nil {
-			n.HasReply = *p.HasReply // gX: hasReply, else !!channel
-		}
+		n := &desktopNote{ID: p.ID, GroupID: p.GroupID, Title: p.Title, Body: body, Team: p.TeamID,
+			Workspace: s.State.Workspaces[p.TeamID].Name, Channel: p.Channel, Msg: p.Msg, ThreadTS: p.ThreadTS, TraceID: p.TraceID, When: when}
 		for _, b := range p.Buttons {
 			n.Buttons = append(n.Buttons, noteButton{Content: b.Content, LaunchURI: b.LaunchURI})
 		}
-		got, want := n.toastXML(p.Avatar), d.Slack.XML[name]
-		if got != want {
-			t.Errorf("%s:\n got %s\nwant %s", name, got, want)
-		}
-		dec := xml.NewDecoder(strings.NewReader(got))
-		for {
-			if _, err := dec.Token(); err == io.EOF {
-				break
-			} else if err != nil {
-				t.Errorf("%s: not XML: %v", name, err)
-				break
+		return n
+	}
+	// the launch arguments are Slack's (EH's toast), escaped once more for the attribute
+	launch := func(name string) string { return toastAttrsRaw(d.Slack.XML[name], "launch") }
+	logo := "C:/Users/ci/AppData/Local/Temp/Clack Notification Cache/clack.png"
+
+	ch := note("channel")
+	if got, want := ch.toastXML(logo), chromeToast(launch("channel"), "2026-11-12T17:04:05Z", "New message in #general",
+		"Ada: hello &lt;world&gt; &amp; &quot;friends&quot; it&apos;s", "Fake Workspace", logo, ""); got != want {
+		t.Errorf("channel:\n got %s\nwant %s", got, want)
+	}
+	reply := note("reply")
+	if got, want := reply.toastXML(""), chromeToast(launch("reply"), "2026-11-12T17:04:05Z", "New message from Ada",
+		"a reply &amp; more", "Fake &amp; Co", "", ""); got != want {
+		t.Errorf("reply:\n got %s\nwant %s", got, want)
+	}
+	hud := note("huddle")
+	join := `{&quot;type&quot;:&quot;action&quot;,&quot;launchUri&quot;:&quot;slack://huddle?id=D0FAKEDM001&amp;team=T0FAKE0001&quot;,&quot;id&quot;:&quot;T0FAKE0001_huddle_D0FAKEDM001_29541168&quot;,&quot;index&quot;:1}`
+	if got, want := hud.toastXML(logo), chromeToast(launch("huddle"), "2026-11-12T17:04:05Z", "", "Ada is inviting you to a huddle",
+		"Fake Workspace", logo, `<action activationType="system" content="Dismiss" arguments="dismiss"/>`+
+			`<action activationType="foreground" content="Join" arguments="`+join+`"/>`); got != want {
+		t.Errorf("huddle:\n got %s\nwant %s", got, want)
+	}
+	plain := note("plain")
+	plain.When = time.Time{}
+	if got, want := plain.toastXML(""), chromeToast(launch("plain"), "", "Clack", "plain", "", "", ""); got != want {
+		t.Errorf("plain:\n got %s\nwant %s", got, want)
+	}
+	if got := toastAttrs(t, note("nonslack").toastXML(""), "action", "arguments"); len(got) != 1 || !strings.Contains(got[0], `"launchUri":"slack://noop"`) {
+		t.Errorf("a non-slack: button: %q, want guardLaunchUri's slack://noop", got)
+	}
+
+	for name := range d.Samples.Toasts {
+		x := note(name).toastXML(logo)
+		for _, gone := range []string{"<header", "<input", "hint-maxLines", "hint-style", "hint-crop=\"circle\"", "activationType=\"foreground\" launch"} {
+			if strings.Contains(x, gone) {
+				t.Errorf("%s: Chrome's toast has no %s: %s", name, gone, x)
 			}
 		}
+		if n := len(toastAttrs(t, x, "text", "")); n < 2 || n > 3 {
+			t.Errorf("%s: %d <text>s, want the title, the body and at most the attribution", name, n)
+		}
 	}
+}
+
+// toastAttrsRaw is attr's first value on <toast> in x as written (still
+// escaped).
+func toastAttrsRaw(x, attr string) string {
+	_, rest, _ := strings.Cut(x, " "+attr+`="`)
+	v, _, _ := strings.Cut(rest, `"`)
+	return v
 }
 
 // TestToastTruncateMatchesSlack: the shell's ch (words, the cap, UTF-16
@@ -151,7 +211,7 @@ func TestNotificationIDMatchesSlack(t *testing.T) {
 }
 
 // toastAttrs is every attribute named attr on elem in a toast's XML, as
-// Windows hands it back (unescaped).
+// Windows hands it back (unescaped); attr "" lists each elem once.
 func toastAttrs(t *testing.T, x, elem, attr string) []string {
 	t.Helper()
 	var out []string
@@ -165,6 +225,10 @@ func toastAttrs(t *testing.T, x, elem, attr string) []string {
 			t.Fatalf("toast XML: %v", err)
 		}
 		if se, ok := tok.(xml.StartElement); ok && se.Name.Local == elem {
+			if attr == "" { // the element itself
+				out = append(out, "")
+				continue
+			}
 			for _, a := range se.Attr {
 				if a.Name.Local == attr {
 					out = append(out, a.Value)
@@ -179,26 +243,23 @@ func toastAttrs(t *testing.T, x, elem, attr string) []string {
 func TestToastActivationArgs(t *testing.T) {
 	d := loadToastSlack(t)
 	launch := toastAttrs(t, d.Slack.XML["reply"], "toast", "launch")
-	a, ok := parseToastActivation(launch[0], "")
+	a, ok := parseToastActivation(launch[0])
 	if !ok || a.Type != "notification" || a.Team != "T0FAKE0001" || a.Channel != "D0FAKEDM001" || a.MessageID != "1762520100.000400" ||
 		a.ThreadTS != "1762520099.000300" || a.NotificationID != "T0FAKE0001|msg|D0FAKEDM001|1762520100.000400|1762520099.000300" {
 		t.Errorf("launch: %+v %t", a, ok)
-	}
-	reply := toastAttrs(t, d.Slack.XML["reply"], "action", "arguments")
-	if a, ok := parseToastActivation(reply[0], "on my way"); !ok || a.Reply != "on my way" || a.Channel != "D0FAKEDM001" {
-		t.Errorf("the reply button: %+v %t", a, ok)
 	}
 	acts := toastAttrs(t, d.Slack.XML["huddle"], "action", "arguments")
 	if len(acts) != 2 || acts[0] != "dismiss" {
 		t.Fatalf("huddle actions %q", acts)
 	}
-	if a, ok := parseToastActivation(acts[1], ""); !ok || a.Type != "action" || a.Index != 1 ||
+	if a, ok := parseToastActivation(acts[1]); !ok || a.Type != "action" || a.Index != 1 ||
 		a.LaunchURI != "slack://huddle?id=D0FAKEDM001&team=T0FAKE0001" || a.ID != "T0FAKE0001_huddle_D0FAKEDM001_29541168" {
 		t.Errorf("Join: %+v %t", a, ok)
 	}
+	// Clack's toast has no header; its arguments no longer parse
 	hdr := toastAttrs(t, d.Slack.XML["channel"], "header", "arguments")
-	if a, ok := parseToastActivation(hdr[0], ""); !ok || a.Type != "header" || a.LaunchURI != "slack://channel?team=T0FAKE0001" {
-		t.Errorf("header: %+v %t", a, ok)
+	if a, ok := parseToastActivation(hdr[0]); ok {
+		t.Errorf("header: read as %+v", a)
 	}
 	for _, bad := range []string{
 		``, `dismiss`, `[]`, `{"type":"nope"}`,
@@ -211,18 +272,18 @@ func TestToastActivationArgs(t *testing.T) {
 		`{"type":"action","launchUri":"","id":"n"}`,
 		`{"type":"header","launchUri":"slack://x","id":"n"}`,
 	} {
-		if a, ok := parseToastActivation(bad, ""); ok {
+		if a, ok := parseToastActivation(bad); ok {
 			t.Errorf("%s: read as %+v", bad, a)
 		}
 	}
-	if a, ok := parseToastActivation(`{"type":"action","launchUri":"slack://x","id":"n"}`, ""); !ok || a.Index != -1 {
+	if a, ok := parseToastActivation(`{"type":"action","launchUri":"slack://x","id":"n"}`); !ok || a.Index != -1 {
 		t.Errorf("an action with no index: %+v %t", a, ok)
 	}
 }
 
 // storeTeam gives the store the signed-in team a booted session has
-// (fakeApp doesn't boot), and returns its id: Slack's toast needs one
-// (the header; handleToastActivation requires a teamId).
+// (fakeApp doesn't boot), and returns its id: the toast needs one (the
+// attribution line; handleToastActivation requires a teamId).
 func storeTeam(ca *core.App) string {
 	ca.S.Lock()
 	defer ca.S.Unlock()
@@ -298,7 +359,7 @@ func (r *noteRec) wait(t *testing.T, a *App, n int) *desktopNote {
 }
 
 // click is the toast's activation as Windows would hand it back: the
-// toast's launch arguments, a button's, or the header's.
+// toast's launch arguments or a button's.
 func click(t *testing.T, a *App, n *desktopNote, elem string, i int) {
 	t.Helper()
 	attr := "arguments"
@@ -309,7 +370,7 @@ func click(t *testing.T, a *App, n *desktopNote, elem string, i int) {
 	if i >= len(args) {
 		t.Fatalf("the toast has %d %s elements: %s", len(args), elem, n.toastXML(""))
 	}
-	act, ok := parseToastActivation(args[i], "")
+	act, ok := parseToastActivation(args[i])
 	if !ok {
 		t.Fatalf("%s %d: arguments %q don't parse", elem, i, args[i])
 	}
@@ -319,22 +380,28 @@ func click(t *testing.T, a *App, n *desktopNote, elem string, i int) {
 
 // TestToastClickOpensConversation: a message's toast carries Slack's
 // payload, and a click on it opens the conversation (a reply's, its
-// thread); the header only raises the window.
+// thread).
 func TestToastClickOpensConversation(t *testing.T) {
 	a, ca, _, rec := noteApp(t)
 	team := storeTeam(ca)
 	msg := noteMsg("1762520099.000300", "", "hello")
 	a.data.handle(a, core.Event{Type: "message", Channel: "D0NOTE0001", TS: msg.TS, ConvKind: "im", Msg: msg})
 	n := rec.wait(t, a, 1)
-	if n.Channel != "D0NOTE0001" || n.Msg != msg.TS || !n.HasReply || n.Title != "New message from Ada" || n.Body != "hello" {
+	if n.Channel != "D0NOTE0001" || n.Msg != msg.TS || n.Title != "New message from Ada" || n.Body != "hello" || n.Workspace != "Fake Workspace" {
 		t.Errorf("the note: %+v", n)
+	}
+	x := n.toastXML("")
+	if got := toastAttrs(t, x, "input", ""); len(got) != 0 {
+		t.Errorf("a message's toast has %d inputs, want no reply box: %s", len(got), x)
+	}
+	if got := toastAttrs(t, x, "action", ""); len(got) != 0 {
+		t.Errorf("a message's toast has %d actions, want none (Chrome's): %s", len(got), x)
+	}
+	if got := toastAttrs(t, x, "text", "placement"); len(got) != 1 || got[0] != "attribution" || !strings.Contains(x, `<text placement="attribution">Fake Workspace</text>`) {
+		t.Errorf("the attribution line: %q in %s", got, x)
 	}
 	if n.ID != team+"_"+msg.TS || n.GroupID != "" {
 		t.Errorf("unassigned desktop_notification_actions: id %q group %q, want the shell's %q", n.ID, n.GroupID, team+"_"+msg.TS)
-	}
-	click(t, a, n, "header", 0)
-	if r := a.router.Current(); r.Channel() == "D0NOTE0001" {
-		t.Errorf("the header opened %s", r)
 	}
 	click(t, a, n, "toast", 0)
 	if r := a.router.Current(); r.Channel() != "D0NOTE0001" || r.Thread() != "" {
@@ -355,43 +422,6 @@ func TestToastClickOpensConversation(t *testing.T) {
 	}
 }
 
-// TestToastReplySends: the reply box sends to the conversation, in the
-// thread for a reply's toast (delegate_replyToNotification), and leaves
-// the window where it was.
-func TestToastReplySends(t *testing.T) {
-	a, _, fs, rec := noteApp(t)
-	posted := make(chan url.Values, 4)
-	fs.OnPost = func(f url.Values, _ map[string]any) { posted <- f }
-	reply := noteMsg("1762520100.000400", "1762520099.000300", "<!here> look")
-	a.data.handle(a, core.Event{Type: "message", Channel: "C0NOTE0001", TS: reply.TS, ConvKind: "channel", Msg: reply, Reply: true, Mention: true})
-	n := rec.wait(t, a, 1)
-	before := a.router.Current()
-	args := toastAttrs(t, n.toastXML(""), "action", "arguments")
-	if len(args) != 1 {
-		t.Fatalf("a message's toast has %d actions, want the reply's ➤", len(args))
-	}
-	act, ok := parseToastActivation(args[0], "on my way")
-	if !ok {
-		t.Fatalf("the reply's arguments: %q", args[0])
-	}
-	n.Activated(act)
-	a.drain()
-	select {
-	case f := <-posted:
-		if f.Get("channel") != "C0NOTE0001" || f.Get("thread_ts") != reply.ThreadTS || f.Get("text") != "on my way" {
-			t.Errorf("posted %v", f)
-		}
-		if !strings.Contains(f.Get("blocks"), `"on my way"`) {
-			t.Errorf("blocks %s", f.Get("blocks"))
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("the reply wasn't sent")
-	}
-	if r := a.router.Current(); r != before {
-		t.Errorf("the reply moved the window to %q", r)
-	}
-}
-
 // TestToastHuddleInvite: an invite's toast has no title, Slack's buttons
 // (Dismiss, Join; Decline too under desktop_notification_actions, as a
 // second dismiss), and Join joins.
@@ -407,7 +437,7 @@ func TestToastHuddleInvite(t *testing.T) {
 	two := []huddleui.NotifyAction{{Key: "Dismiss", Label: "Dismiss"}, {Key: "Join", Label: "Join", URI: "slack://huddle?id=D0NOTE0001&team=" + team, Do: join}}
 	a.notifyActions(inv(two))
 	n := rec.wait(t, a, 1)
-	if n.Title != "" || n.Body != "Ada is inviting you to a huddle" || n.HasReply || !strings.HasPrefix(n.Msg, "huddle_D0NOTE0001_") || n.ID != team+"_"+n.Msg {
+	if n.Title != "" || n.Body != "Ada is inviting you to a huddle" || !strings.HasPrefix(n.Msg, "huddle_D0NOTE0001_") || n.ID != team+"_"+n.Msg {
 		t.Errorf("the invite's note: %+v", n)
 	}
 	x := n.toastXML("")

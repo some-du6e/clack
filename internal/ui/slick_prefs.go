@@ -874,9 +874,11 @@ func (p *slickPage) detail(f *flow, s *slick.Slick, st slick.Settings) {
 		if pl.User {
 			item(func(gtx layout.Context) layout.Dimensions { return p.badge(gtx, "User plugin", "", false) })
 		}
-		if a := p.mentions(pl.Authors); a != "" {
+		if a := p.a.credits().mrkdwn(pl.Authors); a != "" { // mentions (plugin_credit.go)
 			item(func(gtx layout.Context) layout.Dimensions {
-				return vcenter(gtx, gtx.Dp(20), func(gtx layout.Context) layout.Dimensions { return p.k.label(gtx, 13, theme.Regular, cl.ter, "By "+a) })
+				return vcenter(gtx, gtx.Dp(20), func(gtx layout.Context) layout.Dimensions {
+					return p.k.mrkdwn(gtx, "by."+pl.ID, "By "+a, true, cl.ter)
+				})
 			})
 		}
 		y += gtx.Dp(20)

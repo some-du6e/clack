@@ -464,6 +464,9 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		if t.key == "browse" {
 			a.railMoreFrame(gtx, image.Rectangle{Min: org, Max: org.Add(image.Pt(gtx.Dp(52), th))}, btn.Hovered())
 			peek = a.railPeekOpen()
+		} else if a.hasTabPeek(t.key) { // a TabPeekTrigger (rail_tab_peek.go)
+			a.tabPeekFrame(gtx, t.key, image.Rectangle{Min: org, Max: org.Add(image.Pt(gtx.Dp(52), th))}, btn.Hovered(), active == t.key)
+			peek = a.tabPeekOpen(t.key)
 		}
 		at(gtx, org, image.Pt(gtx.Dp(52), th), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, btn, nil, func(gtx layout.Context) layout.Dimensions {
@@ -489,7 +492,10 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				at(gtx, tile.Min.Add(image.Pt(io, io)), image.Pt(gtx.Dp(isz), gtx.Dp(isz)), func(gtx layout.Context) layout.Dimensions {
 					return icons.Get(name)(gtx, isz, c.ChromeText)
 				})
-				// unread badge / dot on the tile's top-right corner.
+				// unread badge / dot on the tile's top-right corner. The
+				// badge's right edge is fixed (.p-tab_rail__button .c-badge
+				// {top:4px; right:2px}, absolute in the 52px tab), so 10
+				// and 99+ grow left, inside the tab, not past its clip.
 				if n, dot := a.railBadge(t.key); n > 0 {
 					// .p-tab_rail__button .c-badge: top 4px, right 2px
 					bw := a.railCountWidth(gtx, n)
@@ -499,7 +505,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 				} else if dot {
 					// .p-unread_dot: 6px, theme-base-imp; in the rail button
 					// top 12px, right 12px (centre 37, 15 of the 52px box)
-					theme.Circle(gtx, image.Pt(gtx.Dp(37), gtx.Dp(15)), gtx.Dp(6), c.Badge)
+					theme.Circle(gtx, image.Pt(gtx.Dp(37), gtx.Dp(15)), gtx.Dp(6), c.RailBadge) // the rail's theme scope
 				}
 				return layout.Dimensions{Size: image.Pt(gtx.Dp(52), th)}
 			})
@@ -527,6 +533,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		}
 		y += th
 	}
+	a.tabPeekEndFrame()
 
 	// control strip: + (new), Slack's focus mode button when the account
 	// has it (SilentSidebarTrigger, focus_mode.go), avatar with presence.
@@ -549,7 +556,7 @@ func (a *App) layoutRail(gtx layout.Context, top, height int) {
 		org := image.Pt(x0, by-lift)
 		at(gtx, org, image.Pt(cs, cs), func(gtx layout.Context) layout.Dimensions {
 			btn := a.clicks.get(k)
-			bg := c.SidebarButton
+			bg := c.ChromeActive // theme-surf-inv-pry in the rail's scope
 			if btn.Hovered() {
 				bg = c.SearchHover
 			}
@@ -631,10 +638,10 @@ func (a *App) railCount(gtx layout.Context, n int) layout.Dimensions {
 	h := gtx.Dp(16)
 	tw := a.th.Measure(gtx, 10, theme.Bold, txt)
 	w := tw + 2*pad
-	theme.RRect(gtx, image.Rect(0, 0, w, h), h/2, c.Badge)
+	theme.RRect(gtx, image.Rect(0, 0, w, h), h/2, c.RailBadge) // the rail's theme scope
 	at(gtx, image.Pt(pad, 0), image.Pt(tw+2, h), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 10, theme.Bold, c.BadgeText, txt)
+			return a.th.Label(gtx, 10, theme.Bold, c.RailBadgeText, txt)
 		})
 	})
 	return layout.Dimensions{Size: image.Pt(w, h)}
@@ -711,4 +718,13 @@ func teamInitials(name string) string {
 		return string(rs)
 	}
 	return strings.ToUpper(string(out))
+}
+
+// railCountText is the tabs' Badge text (InjD useGetMentions: S1+c Ex
+// with maxCount 99): the count, or "99+" past it.
+func railCountText(n int) string {
+	if n > 99 {
+		return "99+"
+	}
+	return itoa(n)
 }

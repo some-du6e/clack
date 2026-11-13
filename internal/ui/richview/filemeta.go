@@ -21,6 +21,8 @@ import (
 // and the collapse button (caret-down-filled / caret-right-filled, 1em,
 // the text color).
 //
+//	the file's owner and " | " first when someone other than the sender
+//	  owns the one file (renderUploader: "BetterClient | Canvas")
 //	one image, snippet or video, or any collapsed file: its title
 //	one other file, expanded: pretty_type ("PDF"; "Video", "Audio",
 //	  "Post" for Arugula)
@@ -72,6 +74,8 @@ func fileMetaText(files []*richtext.File, expanded bool) string {
 		return "Audio"
 	case f.PrettyType == "Arugula":
 		return "Post"
+	case richtext.IsCanvasFile(f): // renderSingleFileTitle: isCanvas
+		return "Canvas"
 	case f.PrettyType != "":
 		return f.PrettyType
 	}
@@ -106,7 +110,19 @@ func (l *lay) fileMetaWith(files []*richtext.File, wos, x, y, w int) (int, bool)
 	if wos > 0 {
 		label = i18n.T("files", "{fileCount, plural, =1 {attachment} other {# attachments}}", "fileCount", len(files)+wos)
 	}
-	_, tw := l.plainFlow(label, x, y, max(w-l.dp(24), l.dp(40)), &fs, -1)
+	k := l.faceFor(fs.face, fs.size, 0)
+	if l.curPart != 0 {
+		k = l.partFace(k, l.curPart)
+	}
+	if f := files[0]; len(files) == 1 && wos == 0 && f.Uploader != "" {
+		// renderUploader: the owner (a member link in the text's color)
+		// and the separator (sk_primary_foreground .33)
+		ut := l.d.addTarget(target{kind: tUser, id: f.UploaderID, underline: true})
+		l.addText(f.Uploader, &fs, k, fs.col, 0, -1, ut)
+		l.addText(" | ", &fs, k, rgba(p.Text.R, p.Text.G, p.Text.B, 0.33), 0, -1, -1)
+	}
+	l.addText(label, &fs, k, fs.col, 0, -1, -1)
+	_, tw := l.flow(x, y, max(w-l.dp(24), l.dp(40)), &fs)
 	endX := x + tw
 	if n := len(l.d.lines); n > 0 {
 		if ln := l.d.lines[n-1]; ln.f1 > ln.f0 {

@@ -29,3 +29,16 @@ func (d *Directories) FilterByProfileField(id, value string) {
 	d.field = dirField{id: id, value: value}
 	d.ShowTab(dirTabPeople)
 }
+
+// FilterByAccountType opens the People tab with its account type filter
+// on key ("admins": route directories?tab=people&account=admins), what
+// Slack's openPeopleBrowser({filters: {accountType}}) does for a user
+// group pane's "workspace administrator" link.
+func (d *Directories) FilterByAccountType(key string) {
+	for i, k := range dirAcctKeys {
+		if k == key && k != "" {
+			d.acct.sel = i
+		}
+	}
+	d.ShowTab(dirTabPeople)
+}

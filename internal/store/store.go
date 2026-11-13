@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,6 +52,9 @@ type Store struct {
 	pins        map[string]pinRec          // key channel/ts: pin events (pins.go)
 	pinQ        []string                   // pins' keys, oldest first
 	pinSeq      uint64                     // pin events seen
+	live        map[string]liveRec         // key channel/ts: realtime message changes (live.go)
+	liveQ       []string                   // live's keys, oldest first
+	liveSeq     uint64                     // realtime message changes seen
 	CustomEmoji emoji.Custom
 	EmojiStyle  string
 	cacheDir    string
@@ -61,6 +65,10 @@ type Store struct {
 	// userGroupMembership: usergroups.membership, subteam_self_added and
 	// subteam_self_removed; memory only)
 	MyGroups map[string]bool
+	// groupUsers is each user group's member ids as last fetched (the
+	// users field Slack's bulkAddMembersToGroup / appendMembersToGroup,
+	// client-boot CjnZ, keep on a userGroups record; memory only).
+	groupUsers map[string][]string
 	// Muted is the set of muted conversation ids (from prefs).
 	Muted map[string]bool
 	// Prefs is the curated set of user prefs that change rendering.
@@ -629,6 +637,58 @@ func DisplayName(u *slack.User) string {
 		return n
 	}
 	return u.Name
+}
+
+// UsersNamed finds the members called each of names (folded with
+// FoldName): a live, human member whose display name, real name or
+// username is that name. One pass over the users for all of them.
+func (s *Store) UsersNamed(names []string) map[string][]string {
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		if f := FoldName(n); f != "" {
+			want[f] = true
+		}
+	}
+	out := map[string][]string{}
+	if len(want) == 0 {
+		return out
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for id, u := range s.Users {
+		if u == nil || u.Deleted || u.IsBot {
+			continue
+		}
+		seen := ""
+		for _, n := range [...]string{u.Profile.DisplayName, u.Profile.RealName, u.RealName, u.Name} {
+			if f := FoldName(n); f != "" && f != seen && want[f] {
+				out[f] = append(out[f], id)
+				seen = f
+			}
+		}
+	}
+	for f, ids := range out { // one id per member
+		sort.Strings(ids)
+		out[f] = slices.Compact(ids)
+	}
+	return out
+}
+
+// UserCount is how many users the store holds.
+func (s *Store) UserCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.Users)
+}
+
+// FoldName is a name as UsersNamed compares it: trimmed, without a
+// leading @, lower case.
+func FoldName(n string) string {
+	n = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(n), "@"))
+	if n == "\u200b" {
+		return ""
+	}
+	return strings.ToLower(n)
 }
 
 // PrefName is Slack's getPrefCompliantMemberNamePure (client-boot vUCu):
@@ -1416,6 +1476,29 @@ func (s *Store) SetMyUsergroup(id string, in bool) {
 		delete(s.MyGroups, id)
 	}
 	s.gen.Add(1)
+}
+
+// GroupUsers is group id's member ids as last fetched (nil, false
+// before the first fetch).
+func (s *Store) GroupUsers(id string) ([]string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids, ok := s.groupUsers[id]
+	return ids, ok
+}
+
+// SetGroupUsers is bulkAddMembersToGroup: ids replace group id's members.
+// With appendPage it is appendMembersToGroup (a later page).
+func (s *Store) SetGroupUsers(id string, ids []string, appendPage bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.groupUsers == nil {
+		s.groupUsers = map[string][]string{}
+	}
+	if appendPage {
+		ids = append(append([]string(nil), s.groupUsers[id]...), ids...)
+	}
+	s.groupUsers[id] = append([]string{}, ids...)
 }
 
 // InUsergroup is richtext.UsergroupMember: whether the viewer is in group

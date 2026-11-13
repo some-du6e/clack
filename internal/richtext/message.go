@@ -21,7 +21,8 @@ func FromMessage(r Resolver, m *slack.Message) Doc {
 	if m.Subtype == "message_deleted" || m.Subtype == "tombstone" {
 		return Doc{Blocks: []Block{tombstone("This message was deleted.")}}
 	}
-	c := &builder{r: r}
+	c := &builder{r: r, sender: m.User}
+	c.hintsFrom(m)
 	if len(m.Files) > 0 {
 		c.files = make(map[string]*slack.File, len(m.Files))
 		c.used = map[string]bool{}
@@ -123,7 +124,17 @@ func (c *builder) fileBlock(f *slack.File) Block {
 	case "hidden_by_limit":
 		return tombstone("This file is hidden because it is older than the workspace's visible history.")
 	}
-	return Block{Kind: FileBlock, File: convertFile(f)}
+	out := convertFile(f)
+	c.canvasFile(f, out) // canvasfile.go
+	if f.User != "" && c.sender != "" && f.User != c.sender {
+		out.UploaderID = f.User
+		if mn, ok := c.r.(MemberNamer); ok {
+			out.Uploader, _ = mn.MemberName(f.User)
+		} else {
+			out.Uploader = strings.TrimPrefix(c.r.UserName(f.User), "@")
+		}
+	}
+	return Block{Kind: FileBlock, File: out}
 }
 
 func convertFile(f *slack.File) *File {
@@ -293,6 +304,10 @@ func (c *builder) attachment(a *slack.Attachment) (Block, bool) {
 	}
 	att.Legacy = true
 	blk := Block{Kind: AttachmentBlock, Att: att}
+	if a.DocumentSection != nil && a.FileID != "" { // MessageAttachmentQuipAnchorLink
+		c.canvasAnchor(a, att)
+		return blk, true
+	}
 	if a.IsMsgUnfurl {
 		c.msgCard(a, att)
 	} else if a.IsShare {

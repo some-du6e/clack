@@ -46,7 +46,6 @@ type actShellEnv struct {
 
 func newActShell(t *testing.T) *actShellEnv {
 	t.Helper()
-	t.Setenv("CLACK_HOME", t.TempDir())
 	sz := fakeslack.Small
 	sz.Views = true
 	fs, err := fakeslack.Start(sz)
@@ -54,6 +53,14 @@ func newActShell(t *testing.T) *actShellEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = fs.Close() })
+	return newActShellOn(t, fs)
+}
+
+// newActShellOn is newActShell over an already started fakeslack (Views
+// on): two shells on one server see the same synthetic data.
+func newActShellOn(t *testing.T, fs *fakeslack.Server) *actShellEnv {
+	t.Helper()
+	t.Setenv("CLACK_HOME", t.TempDir())
 	s := store.New("")
 	s.Lock()
 	s.TeamID, s.TeamName = fakeslack.TeamID, "Synthetic Club"

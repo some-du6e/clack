@@ -98,6 +98,9 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 	if a.MsgCard {
 		return l.msgCard(b, x, y, w)
 	}
+	if a.Anchor != nil { // MessageAttachmentQuipAnchorLink (canvasslug.go)
+		return l.quipAnchor(b, x, y, w)
+	}
 	if !shown(a) {
 		return 0
 	}
@@ -626,6 +629,8 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 		return l.audio(f, x, y, w)
 	case f.IsSnippet || f.Preview != "":
 		return l.snippet(f, x, y, w)
+	case richtext.IsCanvasFile(f):
+		return l.canvasFile(f, x, y, w) // canvasfile.go
 	}
 	return l.genericFile(f, x, y, w)
 }

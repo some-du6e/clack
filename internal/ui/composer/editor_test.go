@@ -619,13 +619,25 @@ func TestPendingStyleAndShortcuts(t *testing.T) {
 	if e.ActiveBlock() != Bullet {
 		t.Fatalf("bullet: %v", e.ActiveBlock())
 	}
+	// on a list line the quote is the list's border (setBlockQuoteOnLine:
+	// formatLine "border" "1"); a second press takes it off
+	edPress(e, "(", key.ModShortcut|key.ModShift)
+	if l := e.doc.Lines[0]; e.ActiveBlock() != Bullet || !l.Quoted {
+		t.Fatalf("quote on a list: %v %+v", e.ActiveBlock(), l)
+	}
+	edPress(e, "(", key.ModShortcut|key.ModShift)
+	if e.doc.Lines[0].Quoted {
+		t.Fatal("the second quote press left the border")
+	}
+	edPress(e, key.NameEscape, 0)
+	e.SetBlock(Para)
 	edPress(e, "(", key.ModShortcut|key.ModShift)
 	if e.ActiveBlock() != Quote {
 		t.Fatalf("quote: %v", e.ActiveBlock())
 	}
 	edPress(e, "C", key.ModShortcut|key.ModShift|key.ModAlt)
-	if e.ActiveBlock() != CodeBlock {
-		t.Fatalf("code block: %v", e.ActiveBlock())
+	if e.ActiveBlock() != CodeBlock || !e.doc.Lines[0].Quoted {
+		t.Fatalf("code block on a quote: %v %+v, want a quoted code line", e.ActiveBlock(), e.doc.Lines[0])
 	}
 	e.events = nil
 	edPress(e, "U", key.ModShortcut|key.ModShift)

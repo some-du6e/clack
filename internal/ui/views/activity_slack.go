@@ -146,7 +146,10 @@ func (v *Activity) kindDest(ch, kind string) actDest {
 	return destUnknown
 }
 
-// appConv reports a DM with an app or bot (gA's App destination).
+// appConv reports a DM with an app or bot (gA's App destination, rZx3 in
+// build fa938a086569: OePe K, a DM whose member is a bot; s0AY D, the
+// Slackbot DM; ZgxJ K, the USLACK system notifications DM). An agent's
+// DM is one: its row reads "App" where a channel's name would be.
 func (v *Activity) appConv(it *core.ActivityItem, kind string) bool {
 	if it.Type == "bot_dm" || it.Type == "bot_dm_bundle" {
 		return true
@@ -158,7 +161,7 @@ func (v *Activity) appConv(it *core.ActivityItem, kind string) bool {
 	if !ok || c.User == "" {
 		return false
 	}
-	if c.User == "USLACKBOT" {
+	if c.User == "USLACKBOT" || c.User == "USLACK" {
 		return true
 	}
 	u, ok := v.h.Core().User(c.User)

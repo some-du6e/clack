@@ -260,8 +260,19 @@ func (a *App) handle(ev slack.Event) {
 		case "thread_marked", "update_thread_state", "badge_counts_updated":
 			a.refreshCountsSoon()
 		case "pref_change":
+			var pc struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal(ev.Raw, &pc)
 			if raw, err := a.C.Prefs(ctx); err == nil {
 				a.installPrefs(raw)
+				if pc.Name == prefFrecency || pc.Name == prefEmojiUse {
+					// Slack upserts the event's value; the full map keeps
+					// the frecency in use, so read it as Slack serves it
+					go func() { _ = a.LoadFrecencyPrefs(a.bg) }()
+				} else {
+					a.frecencyAfterPrefs()
+				}
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}
@@ -454,7 +465,16 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		if old, ok := a.S.Find(ch, m.TS); ok {
 			keepFiles(&m, &old)
 			streamed = streamed || old.StreamingState == "in_progress"
+			// Slack's store keeps a thread's replies apart from the
+			// messages (the thread's reply list), so a replaced reply
+			// stays in its thread whatever the copy says: one without
+			// thread_ts must not become a channel message here, nor miss
+			// the open thread pane.
+			if m.ThreadTS == "" && old.ThreadTS != "" && old.ThreadTS != old.TS {
+				m.ThreadTS, m.ParentUser = old.ThreadTS, firstNonEmpty(m.ParentUser, old.ParentUser)
+			}
 		}
+		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this keeps it (store/live.go)
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
@@ -478,25 +498,14 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 			thread = old.ThreadTS
 		}
 		a.S.Remove(ch, e.DeletedTS)
+		a.S.NoteLive(ch, e.DeletedTS, nil)
 		a.emit(Event{Type: "delete", Channel: ch, TS: e.DeletedTS, ThreadTS: thread})
 		return
 	case "message_locked":
 		a.onMessageLocked(ch, ev.Raw)
 		return
 	case "message_replied":
-		if e.Message == nil {
-			return
-		}
-		m := *e.Message
-		a.EnsureUsers(ctx, m.ReplyUsers)
-		if upd, ok := a.S.Mutate(ch, m.TS, func(x *slack.Message) {
-			x.ReplyCount, x.ReplyUsers, x.LatestReply = m.ReplyCount, m.ReplyUsers, m.LatestReply
-			if m.ReplyUsersN > 0 {
-				x.ReplyUsersN = m.ReplyUsersN
-			}
-		}); ok {
-			a.emitUpdate(ch, &upd)
-		}
+		a.onMessageReplied(ctx, ch, ev.Raw) // thread_meta.go
 		return
 	}
 	var m slack.Message
@@ -512,6 +521,9 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		go a.fillFiles(ch, m.TS)
 	}
 	isReply := m.ThreadTS != "" && m.ThreadTS != m.TS
+	// a broadcast's root carries its parent's reply metadata; a plain
+	// reply leaves the parent to message_replied (thread_meta.go)
+	a.mergeBroadcastRoot(ch, &m, ev.Raw)
 	// Echo of our own optimistic send: swap the pending row instead of
 	// announcing a second message.
 	if a.confirmPending(ch, &m) {
@@ -527,7 +539,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	}
 	if isReply {
 		a.S.AddReply(ch, m)
-		a.bumpParent(ch, &m) // message_replied may lag
+		a.S.NoteLive(ch, m.TS, &m) // a replies answer older than this reply keeps it (store/live.go)
 	}
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.Upsert(ch, m)

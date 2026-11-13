@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 )
 
@@ -77,7 +78,8 @@ func rtLines(d *Doc, keepLists bool) []rtSpan {
 			l = d.Lines[n]
 		}
 		if l.Kind != Bullet && l.Kind != Ordered {
-			l.Indent, l.Quoted = 0, false
+			l.Indent = 0
+			l.Quoted = l.Quoted && l.Kind == CodeBlock // only lists and code carry the border
 		} else if l.Indent < 0 {
 			l.Indent = 0
 		}
@@ -369,7 +371,11 @@ func (d *Doc) rtElements(ls []rtSpan) []any {
 			if rtOnlyEmpty(g) {
 				txt = strings.Repeat("\n", len(g.lines))
 			}
-			els = append(els, rtOutPre{Type: "rich_text_preformatted", Elements: []any{rtOutText{Type: "text", Text: txt}}})
+			pre := rtOutPre{Type: "rich_text_preformatted", Elements: []any{rtOutText{Type: "text", Text: txt}}}
+			if g.line.Quoted {
+				pre.Border = 1 // a code block inside a quote (the line's border format)
+			}
+			els = append(els, pre)
 		default: // Para, Quote
 			typ := "rich_text_section"
 			if g.line.Kind == Quote {
@@ -702,7 +708,13 @@ func (d *Doc) Mrkdwn() string {
 				out = append(out, rtDividerMrkdwn)
 			}
 		case CodeBlock:
-			out = append(out, "```")
+			if g.line.Quoted {
+				// convertBlocksToMrkdwnDelta (boot-shared ew6K): a
+				// preformatted block with border >= 1 starts "> "
+				out = append(out, "> ```")
+			} else {
+				out = append(out, "```")
+			}
 			for _, s := range g.lines {
 				out = append(out, rtEscape(d.rtPlain(s.start, s.end)))
 			}
@@ -1003,7 +1015,7 @@ func DocFromRichtext(blocks []richtext.Block) *Doc {
 		case richtext.Quote:
 			b.rtSpans(Line{Kind: Quote}, bl.Spans, false)
 		case richtext.Preformatted:
-			b.rtSpans(Line{Kind: CodeBlock}, bl.Spans, true)
+			b.rtSpans(Line{Kind: CodeBlock, Quoted: bl.Border}, bl.Spans, true)
 		case richtext.List:
 			l := Line{Kind: Bullet, Indent: bl.Indent, Quoted: bl.Border}
 			if bl.Ordered {
@@ -1062,6 +1074,19 @@ func (b *rtBuilder) rtSpans(l Line, spans []richtext.Span, plain bool) {
 				continue
 			}
 			b.atom(at)
+		case richtext.MessageMention:
+			// a rendered span keeps only the label, the message ts and the
+			// url: the slug comes back from its permalink (the edit
+			// composer reads the message's blocks, docForMessage)
+			if pl, ok := core.ParsePermalink(s.URL); ok && pl.Kind == "message" && !plain {
+				b.atom(&Atom{Kind: AtomMessage, ID: pl.TS, Channel: pl.ChannelID, Thread: pl.ThreadTS, URL: s.URL, Text: s.Text})
+				continue
+			}
+			if s.URL != "" {
+				b.text(s.URL, Attr{Style: st}) // the bare url autolinks again
+				continue
+			}
+			b.text(s.Text, Attr{Style: st})
 		default: // Text, Date, unknown
 			b.text(s.Text, Attr{Style: st})
 		}
@@ -1236,7 +1261,7 @@ func DocFromBlocksJSON(raw json.RawMessage, r AtomResolver) (*Doc, error) {
 			case "rich_text_quote":
 				b.rtJSONInline(Line{Kind: Quote}, el.Elements, r, false)
 			case "rich_text_preformatted":
-				b.rtJSONInline(Line{Kind: CodeBlock}, el.Elements, r, true)
+				b.rtJSONInline(Line{Kind: CodeBlock, Quoted: el.Border > 0}, el.Elements, r, true)
 			case "rich_text_list":
 				l := Line{Kind: Bullet, Indent: el.Indent, Quoted: el.Border > 0}
 				if el.styleString() == "ordered" {

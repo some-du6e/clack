@@ -335,7 +335,7 @@ func (a *App) layoutSidebar(gtx layout.Context) layout.Dimensions {
 // list. Under a patch it draws only the rows p's rows still list.
 func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dimensions {
 	sz := gtx.Constraints.Max
-	sbst := clsSidebar.Enter(gtx, hoverState(a.sidebar.hover), a.scopeMod())
+	sbst := clsSidebar.Enter(gtx, hoverState(a.sidebar.hover), a.sidebarScopeMod())
 	defer sbst.Leave()
 	if sbst.Hidden() {
 		return layout.Dimensions{Size: sz}
@@ -780,7 +780,7 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 			// .22, its dark-ramp value), theme-surf-ter on hover (drawn as
 			// the sidebar hover over it)
 			rr := image.Rectangle{Max: s}
-			bg := theme.Over(theme.WithAlpha(a.th.C.ChromeHover, 0x38), a.sbBase)
+			bg := theme.Over(theme.WithAlpha(a.th.C.SidebarButton, 0x38), a.sbBase) // the sidebar scope's surf-inv-pry
 			if hovered {
 				bg = theme.Over(a.th.C.SidebarHover, bg)
 			}

@@ -85,6 +85,56 @@ func TestIAThemeNamedOchin(t *testing.T) {
 	}
 }
 
+// Slack's scopes (udDV isSidebarInverted / getBackgroundMode, y4F2
+// useInvertedTheme): a light client at a dark brightness puts the top nav
+// and rail in the inverted scope whether or not Darker sidebars is on;
+// the sidebar and the window gradient follow sidebarInverted; at
+// brightness 3 or less nothing inverts.
+func TestIAThemeInvertedScopes(t *testing.T) {
+	ochin := mustTheme(t, `{"primary":{"palette":"ocean"},"highlight1":{"palette":"ocean"},"highlight2":{"palette":"cilantro"},"important":{"palette":"mojito"},"brightness":5,"sidebarInverted":false,"useCustomHex":false}`)
+	if !ochin.InvertedChrome(false) || ochin.InvertedSidebar(false) || ochin.InvertedChrome(true) {
+		t.Fatalf("ochin scopes: chrome %v sidebar %v", ochin.InvertedChrome(false), ochin.InvertedSidebar(false))
+	}
+	f := ochin.Fields(false, true)
+	inv := namedRamp("ocean", false)
+	for k, want := range map[string]color.NRGBA{
+		"ChromeText":    hx(0xffffff),                  // content-inv-pry, inverted
+		"ChromeTextDim": withA(inv[1], 0xe6),           // content-inv-sec: ocean-5 at .9
+		"ChromeActive":  withA(inv[0], 0x40),           // surf-inv-pry: ocean-0 at .25
+		"RailBadge":     namedRamp("mojito", false)[3], // base-imp inverted: mojito-20
+		"SidebarText":   hxa(0x122a59, 0xcc),           // the sidebar stays light
+		"Badge":         hx(0x1a8343),                  // and its badge: mojito-70
+		"ChromeA":       hx(0x1264a3),                  // the gradient in the light mode
+	} {
+		if f[k] != want {
+			t.Errorf("ochin %s = %v, want %v", k, f[k], want)
+		}
+	}
+	// Ochin with Darker sidebars: the sidebar and gradient invert too
+	ochin.SidebarInverted = true
+	f = ochin.Fields(false, true)
+	if f["SidebarTextUnread"] != hx(0xffffff) || f["ChromeA"] != inv[shadeIndex("80")] {
+		t.Errorf("ochin inverted: unread %v chrome %v", f["SidebarTextUnread"], f["ChromeA"])
+	}
+	// brightness 3 with Darker sidebars stored: Slack inverts nothing (the
+	// pale shade-10 gradient keeps the light scope's dark text)
+	low := DefaultIATheme
+	low.Brightness = 3
+	if low.InvertedChrome(false) || low.InvertedSidebar(false) {
+		t.Fatal("brightness 3 inverts")
+	}
+	f = low.Fields(false, true)
+	aub := namedRamp("aubergine", false)
+	if f["ChromeA"] != aub[shadeIndex("10")] || f["ChromeText"] != aub[11] || f["SidebarTextUnread"] != aub[11] || f["SidebarBg"] != hxa(0xffffff, 0xe6) {
+		t.Errorf("brightness 3: chrome %v text %v unread %v bg %v", f["ChromeA"], f["ChromeText"], f["SidebarTextUnread"], f["SidebarBg"])
+	}
+	// the default theme's fields are Clack's measured palette (unchanged)
+	d := DefaultIATheme.Fields(false, true)
+	if d["RailBadge"] != LightPalette.RailBadge || d["RailBadgeText"] != LightPalette.RailBadgeText {
+		t.Errorf("default rail badge %v %v", d["RailBadge"], d["RailBadgeText"])
+	}
+}
+
 func TestIAThemeDarkAndBrightness(t *testing.T) {
 	th := mustTheme(t, `{"primary":{"palette":"ocean"},"highlight1":{"palette":"ocean"},"highlight2":{"palette":"cilantro"},"important":{"palette":"mojito"},"brightness":5}`)
 	f := th.Fields(true, true)
@@ -173,14 +223,14 @@ func TestParseIATheme(t *testing.T) {
 	if back != ThemePresets[3].Theme {
 		t.Errorf("JSON round trip: %+v", back)
 	}
-	// setIaThemePrefByApi's rule: no inverted sidebar in dark mode or below brightness 3
+	// setIaThemePrefByApi's rule: no inverted sidebar in dark mode or at brightness 3 or less
 	if ThemePresets[0].Theme.ForSave(true).SidebarInverted {
 		t.Error("ForSave(dark) kept sidebarInverted")
 	}
 	low := ThemePresets[0].Theme
-	low.Brightness = 2
+	low.Brightness = 3 // isSidebarInverted is brightness > 3
 	if low.ForSave(false).SidebarInverted {
-		t.Error("ForSave(brightness 2) kept sidebarInverted")
+		t.Error("ForSave(brightness 3) kept sidebarInverted")
 	}
 }
 

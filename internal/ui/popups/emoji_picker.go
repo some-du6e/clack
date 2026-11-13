@@ -64,10 +64,13 @@ const (
 	epLastExtra    = 10 // the list's last emoji row is 43
 	epCellX        = 15
 	epCellW        = 36
-	epCellH        = 32
-	epImgSz        = 22
-	epCols         = 9
-	epEmbInputY    = 7 // hideTabs: .p-emoji_picker--style-v2 .p-emoji_picker__input_container padding-top
+	// .p-emoji_picker__list_item{width:36px;margin:0 1px -1px 0}: one
+	// cell every 37px (the 1px right margin between them)
+	epCellPitch = 37
+	epCellH     = 32
+	epImgSz     = 22
+	epCols      = 9
+	epEmbInputY = 7 // hideTabs: .p-emoji_picker--style-v2 .p-emoji_picker__input_container padding-top
 )
 
 // EmojiPickerSize is the picker card size in dp (361×518), for callers
@@ -956,8 +959,9 @@ func (p *EmojiPicker) hitTest(gtx layout.Context, pt image.Point) epCell {
 	if r.n == 0 || x < 0 {
 		return epNoCell
 	}
-	col := x / dp(gtx, epCellW)
-	if col >= int(r.n) {
+	pitch := dp(gtx, epCellPitch)
+	col := x / pitch
+	if col >= int(r.n) || x-col*pitch >= dp(gtx, epCellW) { // the 1px margin is no cell
 		return epNoCell
 	}
 	return epCell{i, col}
@@ -1091,14 +1095,18 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 	if lit.row < 0 {
 		lit = p.sel
 	}
+	pitch := dp(gtx, epCellPitch)
 	for j, id := range p.rowIDs(r) {
-		x := x0 + j*cw
+		x := x0 + j*pitch
 		cell := image.Rect(x, y0, x+cw, y0+ch)
 		if lit.row == i && lit.col == j {
 			rrect(gtx, cell, rad, epCellTint(int(r.si)*epCols+j))
 		}
 		if img, ok := im.Get(p.idx.url(id, p.tone), isz); ok {
-			t := op.Offset(image.Pt(x+(cw-isz)/2, y0+(ch-isz)/2)).Push(gtx.Ops)
+			// .p-emoji_picker__list_item{padding:.25rem 0 .2rem}: the
+			// image sits 4px below the cell's top (.c-emoji vertical-align
+			// top), not centred in its 32px
+			t := op.Offset(image.Pt(x+(cw-isz)/2, y0+dp(gtx, 4))).Push(gtx.Ops)
 			containImage(gtx, img, image.Pt(isz, isz))
 			t.Pop()
 		}
@@ -1146,7 +1154,9 @@ func (p *EmojiPicker) layoutFooter(gtx layout.Context, th *theme.Theme, cl *Colo
 	// .p-emoji_picker__footer: sk_foreground_min_solid, border-top 1px
 	// #00000026 in both modes
 	fill(gtx, image.Rect(0, 0, w, h), cl.EmojiFoot)
-	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), rgba(0x000000, .15))
+	// composited as the browser does (in sRGB): Gio's own alpha blend is
+	// in linear light and lands lighter (231 for Slack's 211 over #f8f8f8)
+	fill(gtx, image.Rect(0, 0, w, maxInt(1, dp(gtx, 1))), theme.Over(rgba(0x000000, .15), cl.EmojiFoot))
 
 	right := p.layoutTone(gtx, th, cl, w, h)
 

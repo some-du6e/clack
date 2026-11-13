@@ -32,13 +32,19 @@ import (
 // epShotEnv is a picker host over a core booted on fakeslack. With
 // CLACK_EMOJI_CDN set the image cache fetches the emoji from Slack's
 // public static CDN (a.slack-edge.com, no cookie); otherwise no network.
-func epShotEnv(t *testing.T, dark bool) *tzHost {
+func epShotEnv(t *testing.T, dark bool) *tzHost { return epShotEnvWith(t, dark, nil) }
+
+// epShotEnvWith is epShotEnv with setup run on the fake before the boot.
+func epShotEnvWith(t *testing.T, dark bool, setup func(*fakeslack.Server)) *tzHost {
 	t.Helper()
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fs.Close() })
+	if setup != nil {
+		setup(fs)
+	}
 	a := core.New(slack.New(fs.Creds()), store.New(t.TempDir()))
 	t.Cleanup(a.Shutdown)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -98,6 +104,52 @@ func TestEmojiPickerFrequentlyUsed(t *testing.T) {
 	}
 	if hits := c.Hits("roc", time.Now()); hits["E1f680"] == nil || !hits["E1f680"].Exact {
 		t.Errorf("search text not recorded: %+v", hits)
+	}
+}
+
+// On Enterprise Grid the account's frecency is frecency_ent_jumper,
+// served as "frecency" only to the named request (the full
+// users.prefs.get has frecency ""). With the account's
+// autocomplete_frequently_used_emojis_frecency on, the picker's Frequently
+// Used row is that frecency's emoji records by count, padded with the
+// defaults (α.48 showed only the defaults), and a pick shows in the next
+// picker at once.
+func TestEmojiPickerFrequentlyUsedGrid(t *testing.T) {
+	h := epShotEnvWith(t, false, func(fs *fakeslack.Server) { fs.UseGridFrecency() })
+	h.a.SetExperimentGroup("autocomplete_frequently_used_emojis_frecency", "on")
+	// the custom-inclusive index (thumbs-up is the grid's custom emoji)
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		drain()
+		if _, full := epIndexFor(h); full {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the custom emoji index never landed")
+		}
+	}
+	row := func() []string {
+		p := NewEmojiPicker(h, nil)
+		var got []string
+		for _, id := range p.lists[epGroupFrequent] {
+			got = append(got, p.idx.names[id])
+		}
+		return got
+	}
+	if got, want := row(), []string{"rocket", "+1", "wave", "thumbs-up", "slightly_smiling_face"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Frequently Used = %v, want %v", got, want)
+	}
+	p := NewEmojiPicker(h, nil)
+	p.query = "tad"
+	id, ok := p.idx.lookup("tada")
+	if !ok {
+		t.Fatal("no tada")
+	}
+	p.lists[epGroupSearch] = []int32{id}
+	p.searching = true
+	p.rows = []epRow{{list: epGroupSearch}, {list: epGroupSearch, n: 1}}
+	p.pickCell(epCell{1, 0}, false)
+	if got, want := row(), []string{"rocket", "+1", "wave", "tada", "thumbs-up"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("Frequently Used after picking tada = %v, want %v", got, want)
 	}
 }
 

@@ -182,27 +182,6 @@ func tautMrkdwnHere(s string, hackClub bool) string {
 	})
 }
 
-// tautAuthorsMrkdwn is a plugin's authors as Taut shows them: mentions in
-// the Hack Club Slack, else names (linked when they have a page), joined
-// with ", ".
-func tautAuthorsMrkdwn(pl taut.PluginInfo, hackClub bool) string {
-	if len(pl.Authors) == 0 {
-		return tautMrkdwnHere(pl.AuthorsMrkdwn, hackClub)
-	}
-	out := make([]string, 0, len(pl.Authors))
-	for _, a := range pl.Authors {
-		switch {
-		case hackClub && a.SlackID != "":
-			out = append(out, "<@"+a.SlackID+"|"+a.Name+">")
-		case a.URL != "":
-			out = append(out, "<"+a.URL+"|"+mrkdwnEscape(a.Name)+">")
-		default:
-			out = append(out, mrkdwnEscape(a.Name))
-		}
-	}
-	return strings.Join(out, ", ")
-}
-
 // mrkdwnEscape keeps a plain name from being read as markup.
 func mrkdwnEscape(s string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)

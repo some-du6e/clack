@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -532,6 +533,7 @@ func (a *App) MarkActivityRead(ctx context.Context, items ...ActivityItem) error
 		if err := a.C.Call(ctx, "activity.markRead", url.Values{"type": {it.Type}, "feed_ts": {it.FeedTS}, "key": {it.Key}}, nil); err != nil {
 			return err
 		}
+		a.decActivityBadges([]ActivityItem{it}) // the rail's badge (activity_badges.go)
 	}
 	return nil
 }
@@ -689,6 +691,22 @@ func (a *App) onSavedEvent(ctx context.Context, typ string, raw json.RawMessage)
 	a.emit(Event{Type: "saved", Name: name, Channel: it.Channel, TS: it.TS, Saved: &it, Raw: raw})
 }
 
+// activityLiveTypes is activityUpdatedV2's J (boot-shared, build
+// fa938a086569): the entry types a realtime activity_updated may add to
+// the inbox. The server also pushes entries Slack's client never shows,
+// such as thread_reply (one per reply in a followed thread, next to the
+// thread's thread_v2 bundle); getActivityIconType draws an unknown type
+// with the @ glyph, so letting one through gave every reply a second,
+// mention-looking row (Karim, 2026-11-12).
+var activityLiveTypes = []string{"thread_v2", "at_user", "at_user_group", "at_channel", "at_everyone", "keyword",
+	"message_reaction", "internal_channel_invite", "quietly_added_to_channel", "external_channel_invite",
+	"external_dm_invite", "unjoined_channel_mention", "code_review_requested", "list_record_assigned",
+	"list_record_edited", "list_user_mentioned", "list_todo_notification", "list_approval_request",
+	"list_approval_reviewed", "bot_dm_bundle", "saved_reminder", "dm", "channel", "mpdm", "team_joiner_invite",
+	"generic_system_alert", "prejoin_dm_welcome_party_alert"}
+
+func activityLiveType(t string) bool { return slices.Contains(activityLiveTypes, t) }
+
 func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage) {
 	var e struct {
 		Subtype string      `json:"subtype"`
@@ -697,6 +715,12 @@ func (a *App) onActivityEvent(ctx context.Context, raw json.RawMessage) {
 	}
 	_ = json.Unmarshal(raw, &e)
 	ev := Event{Type: "activity", Name: e.Subtype, ID: firstNonEmpty(e.Key, e.Entry.Key), Raw: raw}
+	if e.Subtype == "activity_updated" && !activityLiveType(e.Entry.Item.Type) {
+		// activityUpdatedV2: "received invalid activity_updated event with
+		// entryType …", dropped before any store sees it
+		log.Printf("activity: dropped an activity_updated %q entry", e.Entry.Item.Type)
+		return
+	}
 	if e.Entry.Key != "" || e.Entry.Item.Type != "" {
 		items := a.activityItems(ctx, []activityRaw{e.Entry})
 		if len(items) == 1 {

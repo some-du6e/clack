@@ -30,7 +30,7 @@ func (a *App) UnsendLast(ch, threadTS string, put func(*composer.Doc)) {
 		}
 		a.Post(func() {
 			unsend := func() {
-				put(composer.DocForMessage(m))
+				put(composer.DocForMessage(m, svc.S))
 				go func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 					defer cancel()

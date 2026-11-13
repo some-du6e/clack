@@ -1,9 +1,7 @@
 package ui
 
 import (
-	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,8 +27,7 @@ func huddleNotificationFor(ch string) huddleui.Notification {
 // the real notifier (WinRT, under a scratch app id registered as Clack
 // registers its own) shows a fakeslack DM's toast; UI Automation
 // (internal/desktop/uiatest) clicks it in the shell, and Clack opens the
-// DM; a reply typed into a toast's box is sent to the fake.
-// CLACK_TOAST_SHOTS names a folder for screenshots.
+// DM. CLACK_TOAST_SHOTS names a folder for screenshots.
 
 func uiNotificationCenter(t *testing.T, open bool) {
 	t.Helper()
@@ -63,9 +60,7 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	if os.Getenv("CLACK_WINDOWS_TOAST_TESTS") == "" {
 		t.Skip("set CLACK_WINDOWS_TOAST_TESTS=1 to show real toasts (the windows-applog job)")
 	}
-	a, ca, fs, _ := noteApp(t)
-	posted := make(chan url.Values, 4)
-	fs.OnPost = func(f url.Values, _ map[string]any) { posted <- f }
+	a, ca, _, _ := noteApp(t)
 	id := fmt.Sprintf("%s.uici%d", desktop.AppUserModelID, time.Now().UnixNano()%1e9)
 	if _, err := desktop.RegisterAppUserModelID(id, "Clack", filepath.Join(t.TempDir(), "clack.png"), icon.PNG128); err != nil {
 		t.Fatal(err)
@@ -111,38 +106,12 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	time.Sleep(800 * time.Millisecond)
 	uiScreenshot(t, "clack-dm-banner")
 
-	// the reply box, when a banner shows it (Do not disturb hides banners)
-	reply := "on my way " + nonce
-	if e, err := uiatest.SetValue(func(e uiatest.Element) bool {
+	// Chrome's layout: no reply box on the banner, when one shows (Do not
+	// disturb hides banners)
+	if e, err := uiatest.Find(func(e uiatest.Element) bool {
 		return strings.Contains(e.Name, "Reply") || strings.Contains(e.Help, "Reply")
-	}, reply, 6*time.Second); err == nil {
-		t.Logf("typed into %s", e)
-		if e, err := uiatest.Act(func(e uiatest.Element) bool { return e.Name == "➤" }, 4*time.Second); err == nil {
-			t.Logf("clicked %s", e)
-			// the click comes back through App.Post, which the frame loop
-			// runs: drain while waiting
-			deadline := time.Now().Add(15 * time.Second)
-		wait:
-			for {
-				a.drain()
-				select {
-				case f := <-posted:
-					if f.Get("channel") != "D0NOTE0001" || f.Get("text") != reply || f.Get("thread_ts") != "" {
-						t.Errorf("the toast's reply posted %v", f)
-					}
-					break wait
-				case <-time.After(50 * time.Millisecond):
-				}
-				if time.Now().After(deadline) {
-					t.Errorf("the reply typed into the toast wasn't sent")
-					break
-				}
-			}
-		} else {
-			t.Logf("UI Automation couldn't press the reply's ➤: %v", err)
-		}
-	} else {
-		t.Logf("no reply box on the screen (%v):\n%s", err, uiatest.Dump(40))
+	}, 3*time.Second); err == nil {
+		t.Errorf("the toast has a reply box (%s); Chrome's has none", e)
 	}
 
 	// a second DM: clicked in Notification Center, Clack opens it
@@ -200,9 +169,10 @@ func setWindowsTheme(t *testing.T, dark bool) {
 	time.Sleep(2 * time.Second)
 }
 
-// TestWindowsToastShots: a DM's toast (the sender's picture, the header,
-// the reply box) and a huddle invite's (Dismiss, Join) as Windows draws
-// them, light and dark, as banners and in Notification Center.
+// TestWindowsToastShots: a DM's toast and a channel message's in Chrome's
+// layout (the title, the body, the workspace line, Clack's icon), and a
+// huddle invite's (Dismiss, Join), as Windows draws them, light and dark,
+// as banners and in Notification Center.
 func TestWindowsToastShots(t *testing.T) {
 	if os.Getenv("CLACK_WINDOWS_TOAST_TESTS") == "" || os.Getenv("CLACK_TOAST_SHOTS") == "" {
 		t.Skip("set CLACK_WINDOWS_TOAST_TESTS=1 and CLACK_TOAST_SHOTS (the windows-applog job)")
@@ -217,33 +187,42 @@ func TestWindowsToastShots(t *testing.T) {
 		_ = desktop.UnregisterAppUserModelID(id)
 		setWindowsTheme(t, false)
 	})
-	// the sender's picture: Clack's icon standing in for a Slack CDN avatar
-	tn := &toastNotifier{aumid: id, cache: t.TempDir(), fetch: func(_ context.Context, raw string) ([]byte, error) {
-		return icon.PNG128, nil
-	}}
+	tn := &toastNotifier{aumid: id, cache: t.TempDir()}
 	for _, dark := range []bool{false, true} {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		setWindowsTheme(t, dark)
-		dm := a.messageNote("D0NOTE0001", "1762520099.00030"+map[bool]string{false: "1", true: "2"}[dark], "", "")
-		dm.Avatar = "https://avatars.slack-edge.com/ci/ada_192.png"
-		dm.Title, dm.Body, dm.ChannelName, dm.Grouped, dm.Workspace = "New message from Ada", "are we still on for lunch?", "Ada", true, "Fake Workspace"
+		dm := a.messageNote("D0NOTE0001", "1762520099.00030"+map[bool]string{false: "1", true: "2"}[dark], "")
+		dm.Title, dm.Body, dm.Workspace = "New message from Ada", "are we still on for lunch?", "Fake Workspace"
 		if err := tn.NotifyNote(dm); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(1500 * time.Millisecond)
 		uiScreenshot(t, "toast-dm-"+mode)
-		// Windows shows one banner at a time: the DM's goes first
+		// Windows shows one banner at a time: each goes before the next
+		_ = desktop.RemoveToasts(id, "", "")
+		time.Sleep(700 * time.Millisecond)
+		chm := a.messageNote("C0NOTE0001", "1762520100.00040"+map[bool]string{false: "1", true: "2"}[dark], "")
+		chm.Title, chm.Workspace = "New message in #clack", "Fake Workspace"
+		chm.Body = "Ada: the notification now looks like the one Chrome shows for web Slack: the title, up to four lines of " +
+			"the message, and the workspace underneath, with no header line and no reply box. This sentence runs long on purpose."
+		if err := tn.NotifyNote(chm); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(1500 * time.Millisecond)
+		uiScreenshot(t, "toast-channel-"+mode)
 		_ = desktop.RemoveToasts(id, "", "")
 		time.Sleep(700 * time.Millisecond)
 		inv := a.huddleNote(huddleNotificationFor("D0NOTE0001"))
 		inv.Body, inv.Workspace = "Ada is inviting you to a huddle", "Fake Workspace"
-		inv.Avatar = "https://avatars.slack-edge.com/ci/ada_192.png"
 		if err := tn.NotifyNote(inv); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(1500 * time.Millisecond)
 		uiScreenshot(t, "toast-huddle-"+mode)
-		if err := tn.NotifyNote(dm); err != nil { // both, for Notification Center
+		if err := tn.NotifyNote(dm); err != nil { // all three, for Notification Center
+			t.Fatal(err)
+		}
+		if err := tn.NotifyNote(chm); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(500 * time.Millisecond)

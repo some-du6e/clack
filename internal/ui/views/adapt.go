@@ -299,7 +299,8 @@ func (b *base) msgBodyLive(gtx C, m *core.Message, compact, muted bool, maxLines
 	// pills like Slack; Muted is for system messages.
 	// Activity, Threads and Later are Slack's activity / all_threads /
 	// starred_message block contexts: long sections truncate.
-	o := richview.Options{Edited: m.Edited, Compact: compact, Muted: m.System, Secondary: muted && !m.System,
+	// "(edited)": shouldDisplayAsEdited (none on an app's message)
+	o := richview.Options{Edited: m.DisplaysEdited(), Compact: compact, Muted: m.System, Secondary: muted && !m.System,
 		Channel: m.Channel, TS: m.TS, Truncate: true}
 	if live {
 		o.Elements = b.liveElements(m)

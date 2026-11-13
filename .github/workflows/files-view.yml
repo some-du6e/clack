@@ -7,7 +7,10 @@ name: files-view
 # Recently viewed, Bulk manage, the "+" / "New" menus and paging, against
 # internal/fakeslack, plus screenshots of all of it (the sidebar's both
 # layouts, the menus, the dialogs, the empty states and the pagination
-# row), light and dark. Synthetic only: nothing here talks to Slack.
+# row), light and dark; and the channel's Files & links tab ("Files & links
+# tab": search.modules.files / conversations.searchLinks, the rows, the
+# radios, Sort, Load More, the menus, the keyboard and its shots).
+# Synthetic only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run files-view.yml --ref <branch>)
@@ -31,6 +34,13 @@ on:
       - "internal/core/files_view.go"
       - "internal/core/files_view_test.go"
       - "internal/fakeslack/files_view.go"
+      - "internal/ui/views/channel_files.go"
+      - "internal/ui/views/channel_files_test.go"
+      - "internal/core/channel_files.go"
+      - "internal/core/channel_files_test.go"
+      - "internal/fakeslack/channel_files.go"
+      - "internal/ui/files_tab.go"
+      - "internal/ui/files_tab_test.go"
       - ".github/workflows/files-view.yml"
   workflow_dispatch:
 
@@ -60,9 +70,9 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
         run: |
           mkdir -p "$VIEWS_SHOTS_DIR"
-          go test -count=1 -v -run 'TestFilesView|TestListCreate' ./internal/core
-          go test -count=1 -v -run 'TestFilesRecentlyViewed' ./internal/ui
-          xvfb-run -a go test -count=1 -v -run 'TestFilesView|TestFilesEmpty|TestFilesSidebar' ./internal/ui/views
+          go test -count=1 -v -run 'TestFilesView|TestListCreate|TestChannelFiles' ./internal/core
+          go test -count=1 -v -run 'TestFilesRecentlyViewed|TestFilesTab' ./internal/ui
+          xvfb-run -a go test -count=1 -v -run 'TestFilesView|TestFilesEmpty|TestFilesSidebar|TestChannelFiles' ./internal/ui/views
           ls -la "$VIEWS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -2232,9 +2232,9 @@ func (r *actRow) preview(gtx C, lines int) D {
 		return D{}
 	}
 	if !st.Active() {
-		return r.v.msgBodyMuted(gtx, r.msg(), false, !r.unread, lines)
+		return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, "")
 	}
-	return st.Wrap(gtx, func(gtx C) D { return r.v.msgBodyMuted(gtx, r.msg(), false, !r.unread, lines) })
+	return st.Wrap(gtx, func(gtx C) D { return r.v.msgBodySub(gtx, r.msg(), !r.unread, lines, "") })
 }
 
 func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
@@ -3363,7 +3363,7 @@ func (b *base) actPaneBody(gtx C, m *core.Message) D {
 		return b.body(gtx, m.Doc, m.Text, 0)
 	}
 	ver := m.EditedTS + ":" + strconv.Itoa(len(m.Text)) + ":" + strconv.Itoa(len(m.Doc.Blocks))
-	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, ver, m.Doc, richview.Options{Edited: m.Edited, Muted: m.System}, 0)
+	return b.richDoc(gtx, "pane:"+m.Channel+"/"+m.TS, ver, m.Doc, richview.Options{Edited: m.DisplaysEdited(), Muted: m.System}, 0)
 }
 
 // actPill is one reaction: 24px pill, 16px emoji, 11px bold count; blue

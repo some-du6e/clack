@@ -1672,6 +1672,40 @@ const enableEventLog = withMeta('enableEventLog', () => ({ type: 'ENABLE_EVENT_L
 const disableEventLog = withMeta('disableEventLog', () => ({ type: 'DISABLE_EVENT_LOG' }))
 onAction('ENABLE_EVENT_LOG', (a) => (goOr(null, 'huddleEventLog', true), a))
 onAction('DISABLE_EVENT_LOG', (a) => (goOr(null, 'huddleEventLog', false), a))
+// Slack's call handlers push the log's other events (JOIN, LEAVE, SCREENSHARE_START/STOP,
+// SEND_REACTION; client-boot 4xZR U$): Go posts them here from the native session, and a
+// plugin's own push joins the log
+const pushNonTranscriptionEvent = withMeta('pushNonTranscriptionEvent', (payload) => ({ type: 'PUSH_NON_TRANSCRIPTION_EVENT', payload }))
+onAction('PUSH_NON_TRANSCRIPTION_EVENT', (a) => (a.$clack || goOr(null, 'huddlePushEvent', encode(a.payload)), a))
+T.huddleAction = (a) => {
+  try {
+    dispatch({ ...a, $clack: true })
+  } catch (err) {
+    error('a huddle action threw', err)
+  }
+}
+
+// enqueueHuddleToast's content can be a React element (HuddleActivity's names): Clack's
+// toast is text, so the element is rendered once, off-screen, for its text, as the
+// arguments cross into Go (after every plugin's wrap).
+function huddleToastText(options) {
+  const el = options?.content
+  if (!el || typeof el !== 'object' || !G.React?.isValidElement?.(el)) return options
+  let text = ''
+  try {
+    const RD = G.__jr?.require?.('react-dom')
+    const box = G.document?.createElement?.('div')
+    if (RD && box) {
+      RD.render(el, box)
+      text = String(box.textContent ?? '').replace(/\s+/g, ' ').trim()
+      RD.unmountComponentAtNode(box)
+    }
+  } catch (err) {
+    warn('a huddle toast could not be rendered', err)
+  }
+  return { ...options, content: text }
+}
+NATIVE_ARGS.enqueueHuddleToast = ([options, ...rest]) => [huddleToastText(options), ...rest]
 const getActiveHuddleCallId = withMeta('getActiveHuddleCallId', () => activeHuddle.get()?.callId)
 const getActiveHuddleChannelId = withMeta('getActiveHuddleChannelId', () => activeHuddle.get()?.channelId)
 const sendReactionMessage = withMeta('sendReactionMessage', (payload) => ({ type: 'SEND_REACTION_MESSAGE', payload }))
@@ -1763,6 +1797,7 @@ defineModule('slack-exports', {
   Delta,
   enableEventLog,
   disableEventLog,
+  pushNonTranscriptionEvent,
   getActiveHuddleCallId,
   getActiveHuddleChannelId,
   sendReactionMessage,

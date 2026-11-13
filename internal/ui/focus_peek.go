@@ -222,7 +222,7 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 		case hov: // :hover: content-inv-pry
 			bgT, fgT = theme.Over(c.SearchHover, base), c.ChromeText
 		default: // surf-inv-pry, content-inv-sec
-			bgT = theme.Over(c.SidebarButton, base)
+			bgT = theme.Over(c.ChromeActive, base) // the rail scope's surf-inv-pry
 			fgT = theme.Over(c.ChromeTextDim, bgT)
 		}
 		bg := p.bg.value(now, bgT, 125*time.Millisecond, stripEase, false)
@@ -246,7 +246,7 @@ func (a *App) focusButton(gtx layout.Context, org image.Point, cs int) {
 		ts := op.Affine(tr).Push(gtx.Ops) // the button only: its tooltip stays upright
 		d := clickArea(gtx, &f.btn, func(gtx layout.Context, sz image.Point, _ bool) {
 			if !active && bg == bgT && !hov { // settled: the strip's own chrome composite
-				a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, c.SidebarButton)
+				a.chrome(gtx, org, image.Rectangle{Max: sz}, sz.X/2, c.ChromeActive)
 				return
 			}
 			theme.RRect(gtx, image.Rectangle{Max: sz}, sz.X/2, bg)
@@ -408,6 +408,7 @@ func (a *App) openFocusPopover(btn image.Rectangle) {
 		f.subtitle = focusSubtitles[rand.Intn(len(focusSubtitles))] // getRandomSubtitle
 	}
 	f.opened = true
+	a.closeOtherPeeks("focus") // one activePeekId
 	var pop *popups.Popover
 	pop = popups.NewPopover(a, a.focusCard, popups.PopoverOpts{
 		Anchor: btn, Popover: "right-top", OffsetX: 12, OffsetY: 15, Width: 320, Radius: 12,

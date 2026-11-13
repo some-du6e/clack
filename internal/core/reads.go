@@ -136,7 +136,7 @@ func (a *App) RefreshReplies(ctx context.Context, ch, ts string) ([]Message, err
 
 func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 	return a.once("r:"+ch+"/"+ts, func() error {
-		pins := a.S.PinSeq()
+		pins, live := a.S.PinSeq(), a.S.LiveSeq()
 		var all []slack.Message
 		cursor := ""
 		for {
@@ -151,7 +151,10 @@ func (a *App) fetchThread(ctx context.Context, ch, ts string) error {
 			cursor = next
 		}
 		a.EnsureUsers(ctx, referencedUsers(all))
-		a.S.SetThread(ch, ts, all)
+		// a reply changed, deleted or posted while the request was out
+		// keeps the socket's copy (store/live.go)
+		a.S.SetThreadSince(ch, ts, all, live)
+		all, _ = a.S.Thread(ch, ts)
 		a.S.SyncPins(ch, pins, all)
 		for i := range all {
 			if needsFileInfo(&all[i]) {
@@ -243,6 +246,7 @@ func (a *App) installPrefs(raw map[string]json.RawMessage) {
 	old := a.S.RawPrefs
 	a.S.RUnlock()
 	a.sectionCollapsePending(old, raw) // a collapse write still waiting (section_collapse.go)
+	keepFrecency(old, raw)             // only a named fetch carries the account's frecency (frecency.go)
 	a.installPrefsLocked(raw)
 }
 

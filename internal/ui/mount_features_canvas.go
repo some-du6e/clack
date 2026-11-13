@@ -112,13 +112,21 @@ func (a *App) OpenCanvas(id string) {
 // OpenCanvasFull shows a canvas in the main view ("Open in full view").
 func (a *App) OpenCanvasFull(id string) { a.Navigate("docs/" + id) }
 
-// OpenCanvasLink opens a canvas link natively; false if url isn't one.
+// OpenCanvasLink opens a canvas link natively; false if url isn't one. A
+// link to a section (focus_section_id: a canvas slug, a canvas-section
+// card) opens the canvas focused on it, as Slack's openCanvas does with a
+// sectionId (focusSection when the canvas is already open).
 func (a *App) OpenCanvasLink(url string) bool {
 	id := canvasview.CanvasLinkID(url)
 	if id == "" {
 		return false
 	}
 	a.OpenCanvas(id)
+	if sec := canvasview.CanvasLinkSection(url); sec != "" {
+		if v, ok := a.secondary.view.(*canvasview.View); ok && v.ID() == id {
+			v.FocusSection(sec)
+		}
+	}
 	return true
 }
 

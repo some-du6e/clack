@@ -68,6 +68,7 @@ func (a *App) readRootPointer(gtx layout.Context) {
 			}
 			a.navButtons(pe)
 			a.railPeekPointer(pe)  // the More peek's safe area (rail_peek.go)
+			a.tabPeekPointer(pe)   // the tab peeks' (rail_tab_peek.go)
 			a.focusPeekPointer(pe) // the focus mode peek's (focus_peek.go)
 			a.splitPointer(pe)     // click modifiers, the split view's focus (split.go)
 			a.globalPointer(gtx, pe)

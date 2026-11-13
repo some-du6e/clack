@@ -205,6 +205,14 @@ func (e *Editor) shortcut(gtx layout.Context, name key.Name, shift, alt bool) bo
 		return e.ConvertMarkdown()
 	case "I":
 		e.ToggleStyle(Italic)
+	case "K":
+		// SlackKeyboard {key:"K", shortKey:true}: with a selection,
+		// onCmdKWhenSelected; the binding returns true, so the jumper
+		// opens as well (the composer opens it)
+		if shift || alt || !e.CmdKCoachmark || e.anchor == e.caret {
+			return false
+		}
+		e.emit(EvCmdKSelected)
 	case "O":
 		if shift || alt {
 			return false
@@ -592,6 +600,13 @@ func (e *Editor) deleteBackward(word, toLine bool) {
 			// "outdent backspace": a nested item outdents a level first
 			e.begin(edOther, true)
 			ln.Indent--
+			e.commit()
+			return
+		case ln.Kind == CodeBlock && ls == d.LineEnd(line) && ln.Quoted:
+			// "backspace empty code block with border": format border "0"
+			// (the line stays code; the next Backspace takes that)
+			e.begin(edOther, true)
+			ln.Quoted = false
 			e.commit()
 			return
 		case ln.Kind == CodeBlock && ls != d.LineEnd(line):

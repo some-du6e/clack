@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -116,5 +117,77 @@ func TestEmojiFrecencyIDs(t *testing.T) {
 	}
 	if EmojiFrecencyName("E1f44d-1f3fc") != "+1" || EmojiFrecencyName("Epartyparrot") != "partyparrot" || EmojiFrecencyName("C1") != "" {
 		t.Error("EmojiFrecencyName")
+	}
+}
+
+// TestFrecencyLoadedBeforeSaving: whatever the boot's full users.prefs.get
+// carries (here neither frecency nor emoji_use), Clack asks for them on
+// their own (the loadFrecencyPrefs request: prefs=emoji_use,frecency,
+// reason fetch-frecency-prefs) and Frequently Used is the account's. A use
+// recorded before they arrive is never saved over the account's
+// frecency: it waits, and is replayed over Slack's copy once it's in.
+func TestFrecencyLoadedBeforeSaving(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	release := make(chan struct{})
+	explicit := make(chan url.Values, 4)
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
+		if method != "users.prefs.get" {
+			return nil, false
+		}
+		if form.Get("prefs") == "" { // the full map, without the frecency prefs
+			return map[string]any{"ok": true, "prefs": map[string]any{"dark_mode": "light"}}, true
+		}
+		explicit <- form
+		<-release
+		return nil, false // fakeslack's own answer: the account's prefs
+	})
+	defer fs.SetHook(nil)
+	a := New(slack.New(fs.Creds()), store.New(t.TempDir()))
+	defer a.Shutdown()
+	now := time.UnixMilli(1_790_000_000_000) // TestFrecencyFakeslack's clock
+	a.SetFrecencyClock(func() time.Time { return now })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	booted := make(chan error, 1)
+	go func() { booted <- a.Boot(ctx) }() // the boot's prefs step waits for the fetch
+	var form url.Values
+	select {
+	case form = <-explicit:
+	case <-time.After(10 * time.Second):
+		t.Fatal("no users.prefs.get for emoji_use,frecency")
+	}
+	if form.Get("prefs") != "emoji_use,frecency" || form.Get("reason") != "fetch-frecency-prefs" {
+		t.Errorf("the fetch's form %v", form)
+	}
+	// a use while the fetch is out: shown locally, not saved
+	a.RecordEmojiFrecency("rocket", "")
+	time.Sleep(300 * time.Millisecond)
+	if n := fs.CallCount("users.prefs.set"); n != 0 {
+		t.Fatalf("%d users.prefs.set before the account's frecency was read", n)
+	}
+	close(release)
+	if err := <-booted; err != nil {
+		t.Fatal(err)
+	}
+	saved := func() string {
+		v, _ := fs.Pref("frecency")
+		s, _ := v.(string)
+		return s
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(saved(), `"E1f680"`) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	// the account's records kept, rocket added over them
+	if s := saved(); !strings.Contains(s, `"E1f680"`) || !strings.Contains(s, `"C0GENERAL"`) || !strings.Contains(s, `"E1f44d"`) {
+		t.Fatalf("saved frecency %s: want the account's records with rocket added", s)
+	}
+	want := []string{"+1", "tada", "fire", "rocket", "smile"}
+	if got := a.FrequentlyUsedEmoji(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Frequently Used = %v, want %v (the account's, not the defaults)", got, want)
 	}
 }

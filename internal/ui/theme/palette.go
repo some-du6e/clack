@@ -28,6 +28,9 @@ type Palette struct {
 	// Badges.
 	Badge     color.NRGBA // mention count pill
 	BadgeText color.NRGBA
+	// RailBadge and RailBadgeText are the rail's count pill, in the
+	// chrome's theme scope (the sidebar's can be the light one; Fields).
+	RailBadge, RailBadgeText color.NRGBA
 
 	// Primary content panel.
 	Bg           color.NRGBA
@@ -112,8 +115,10 @@ var LightPalette = Palette{
 	SidebarDivider:    rgba(0xf9edff, 0x33),
 	SidebarButton:     rgba(0xf9edff, 0x40),
 
-	Badge:     rgb(0xeabdfb),
-	BadgeText: rgb(0x39063a),
+	Badge:         rgb(0xeabdfb),
+	BadgeText:     rgb(0x39063a),
+	RailBadge:     rgb(0xeabdfb),
+	RailBadgeText: rgb(0x39063a),
 
 	Bg:           rgb(0xffffff),
 	BgHover:      rgb(0xf8f8f8),
@@ -180,8 +185,10 @@ var DarkPalette = Palette{
 	SidebarButton:     rgba(0xefe1f5, 0x40),
 	WorkspaceBorder:   rgba(0xefe1f5, 0x26),
 
-	Badge:     rgb(0xeabdfb),
-	BadgeText: rgb(0x39063a),
+	Badge:         rgb(0xeabdfb),
+	BadgeText:     rgb(0x39063a),
+	RailBadge:     rgb(0xeabdfb),
+	RailBadgeText: rgb(0x39063a),
 
 	Bg:           rgb(0x1a1d21),
 	BgHover:      rgb(0x222529),

@@ -542,6 +542,11 @@ func (a *App) Boot(ctx context.Context) error {
 				p := a.Prefs()
 				a.emit(Event{Type: "prefs", Prefs: &p})
 			}
+			// loadFrecencyPrefs (fetchDeferredData), over the full map: its
+			// frecency is the plain pref, "" on Enterprise Grid (keepFrecency)
+			if err := a.ensureFrecencyLoaded(ctx); err != nil {
+				log.Printf("frecency: users.prefs.get emoji_use,frecency: %v", err)
+			}
 		}
 		return err
 	}

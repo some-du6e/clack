@@ -76,6 +76,48 @@ type Message struct {
 type MessageAgentSession struct {
 	Status           string      `json:"status,omitempty"`
 	ProcessingExpire json.Number `json:"date_status_processing_expire,omitempty"`
+	// The Agents & tools peek's fields (RkDi getAgentSessionTitle, XsVf
+	// AgentThreadPeekItem, iR00 getAgentSessionIdentityOverrideFromSession),
+	// kept raw so a shape Clack doesn't expect can't fail the message's
+	// decoding: read them with SessionTitle, BotUserIDs and Statuses.
+	RawTitle         json.RawMessage `json:"title,omitempty"`
+	RawAgentBotUsers json.RawMessage `json:"agent_bot_user_ids,omitempty"`
+	RawAgentStatuses json.RawMessage `json:"agent_statuses,omitempty"`
+}
+
+// SessionTitle is agent_session.title ("" when absent or not a string).
+func (s *MessageAgentSession) SessionTitle() string {
+	var t string
+	if s == nil || json.Unmarshal(s.RawTitle, &t) != nil {
+		return ""
+	}
+	return t
+}
+
+// BotUserIDs is agent_session.agent_bot_user_ids.
+func (s *MessageAgentSession) BotUserIDs() []string {
+	var ids []string
+	if s == nil || json.Unmarshal(s.RawAgentBotUsers, &ids) != nil {
+		return nil
+	}
+	return ids
+}
+
+// Statuses is agent_session.agent_statuses.
+func (s *MessageAgentSession) Statuses() []MessageAgentStatus {
+	var st []MessageAgentStatus
+	if s == nil || json.Unmarshal(s.RawAgentStatuses, &st) != nil {
+		return nil
+	}
+	return st
+}
+
+// MessageAgentStatus is one agent_session.agent_statuses entry.
+type MessageAgentStatus struct {
+	AgentBotUserID string `json:"agent_bot_user_id,omitempty"`
+	IconURL        string `json:"icon_url,omitempty"`
+	IconEmoji      string `json:"icon_emoji,omitempty"`
+	Username       string `json:"username,omitempty"`
 }
 
 // PinnedInfo says who pinned a message (history / messages.list).
@@ -134,6 +176,7 @@ type File struct {
 	PrettyType         string          `json:"pretty_type"`
 	Size               int64           `json:"size"`
 	Mode               string          `json:"mode"`
+	TitleBlocks        json.RawMessage `json:"title_blocks,omitempty"` // canvases: the title as rich text (emoji)
 	URLPrivate         string          `json:"url_private"`
 	URLPrivateDownload string          `json:"url_private_download"`
 	Permalink          string          `json:"permalink"`
@@ -262,6 +305,27 @@ type Attachment struct {
 	WorkObject       json.RawMessage `json:"work_object,omitempty"`
 	AppUnfurlURL     string          `json:"app_unfurl_url,omitempty"`
 	AppID            string          `json:"app_id,omitempty"`
+
+	// Canvas-section unfurls (MessageAttachmentQuipAnchorLink): the
+	// canvas and the section the link points at.
+	FileID          string           `json:"file_id,omitempty"`
+	DocumentSection *DocumentSection `json:"document_section,omitempty"`
+}
+
+// DocumentSection is a canvas-section unfurl's section: its id and who
+// wrote it (snippet).
+type DocumentSection struct {
+	SectionID string `json:"section_id"`
+	Snippet   struct {
+		Authors []struct {
+			UserID             string `json:"user_id"`
+			IsAuthor           bool   `json:"is_author"`
+			IsRecentEditor     bool   `json:"is_recent_editor"`
+			IsMostRecentEditor bool   `json:"is_most_recent_editor"`
+		} `json:"authors"`
+		SectionEditedTS int64    `json:"section_edited_ts"`
+		FileIDs         []string `json:"file_ids"`
+	} `json:"snippet"`
 }
 
 // User is a (subset of a) Slack user object.
@@ -309,34 +373,39 @@ type EnterpriseUser struct {
 }
 
 type Profile struct {
-	Title              string          `json:"title,omitempty"`
-	Email              string          `json:"email,omitempty"` // only visible for self on Hack Club
-	Phone              string          `json:"phone,omitempty"`
-	RealName           string          `json:"real_name,omitempty"`
-	DisplayName        string          `json:"display_name,omitempty"`
-	FirstName          string          `json:"first_name,omitempty"`
-	LastName           string          `json:"last_name,omitempty"`
-	Pronouns           string          `json:"pronouns,omitempty"`
-	StatusText         string          `json:"status_text,omitempty"`
-	StatusEmoji        string          `json:"status_emoji,omitempty"`
-	StatusEmojiDisplay json.RawMessage `json:"status_emoji_display_info,omitempty"`
-	StatusExpiration   int64           `json:"status_expiration,omitempty"`
-	AvatarHash         string          `json:"avatar_hash,omitempty"`
-	Image24            string          `json:"image_24,omitempty"`
-	Image32            string          `json:"image_32,omitempty"`
-	Image48            string          `json:"image_48,omitempty"`
-	Image72            string          `json:"image_72,omitempty"`
-	Image192           string          `json:"image_192,omitempty"`
-	Image512           string          `json:"image_512,omitempty"`
-	ImageOriginal      string          `json:"image_original,omitempty"`
-	IsCustomImage      bool            `json:"is_custom_image,omitempty"`
-	Team               string          `json:"team,omitempty"`
-	Fields             json.RawMessage `json:"fields,omitempty"`
-	HuddleState        string          `json:"huddle_state,omitempty"`
-	HuddleChannel      string          `json:"huddle_state_channel_id,omitempty"`
-	HuddleExpires      int64           `json:"huddle_state_expiration_ts,omitempty"`
-	BotID              string          `json:"bot_id,omitempty"`
-	APIAppID           string          `json:"api_app_id,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Email       string `json:"email,omitempty"` // only visible for self on Hack Club
+	Phone       string `json:"phone,omitempty"`
+	RealName    string `json:"real_name,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	// RealNameNormalized and DisplayNameNormalized are the names folded
+	// to ASCII: Slack's _real_name_normalized_lc / _display_name_normalized_lc
+	// sort keys are their lower case.
+	RealNameNormalized    string          `json:"real_name_normalized,omitempty"`
+	DisplayNameNormalized string          `json:"display_name_normalized,omitempty"`
+	FirstName             string          `json:"first_name,omitempty"`
+	LastName              string          `json:"last_name,omitempty"`
+	Pronouns              string          `json:"pronouns,omitempty"`
+	StatusText            string          `json:"status_text,omitempty"`
+	StatusEmoji           string          `json:"status_emoji,omitempty"`
+	StatusEmojiDisplay    json.RawMessage `json:"status_emoji_display_info,omitempty"`
+	StatusExpiration      int64           `json:"status_expiration,omitempty"`
+	AvatarHash            string          `json:"avatar_hash,omitempty"`
+	Image24               string          `json:"image_24,omitempty"`
+	Image32               string          `json:"image_32,omitempty"`
+	Image48               string          `json:"image_48,omitempty"`
+	Image72               string          `json:"image_72,omitempty"`
+	Image192              string          `json:"image_192,omitempty"`
+	Image512              string          `json:"image_512,omitempty"`
+	ImageOriginal         string          `json:"image_original,omitempty"`
+	IsCustomImage         bool            `json:"is_custom_image,omitempty"`
+	Team                  string          `json:"team,omitempty"`
+	Fields                json.RawMessage `json:"fields,omitempty"`
+	HuddleState           string          `json:"huddle_state,omitempty"`
+	HuddleChannel         string          `json:"huddle_state_channel_id,omitempty"`
+	HuddleExpires         int64           `json:"huddle_state_expiration_ts,omitempty"`
+	BotID                 string          `json:"bot_id,omitempty"`
+	APIAppID              string          `json:"api_app_id,omitempty"`
 
 	// StatusTextCanonical is the preset a status came from ("Out of
 	// office"), whatever its text says.

@@ -50,7 +50,7 @@ fit is dropped as before.
 already in memory. A `Resource` that also has `Bytes() []byte` now hands
 out slices of those bytes for uncompressed tables (WOFF's zlib tables are
 still inflated into new buffers) and never writes into `dst`.
-`gioui.org/font/opentype.Parse` and `ParseCollection` (Gio patch 16)
+`gioui.org/font/opentype.Parse` and `ParseCollection` (Gio patch 17)
 parse through `NewBytesResource`, so the embedded Lato's tables stay in
 the binary's read-only data.
 

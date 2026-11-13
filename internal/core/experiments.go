@@ -213,6 +213,8 @@ var experimentReads = map[string][]string{
 	"channel_ia_header_refinements": on,
 	// rail (rail.go)
 	"unified_global_triage": on, "activity_in_home_prototype": on, "activity_inbox": on, "activity_with_sidebar": on,
+	// the Activity badge's entry types (activity_badges.go)
+	"code_review_requested_in_activity": on, "inviter_joiner_first_dm_v2": {"treatment"},
 	"agentforce_deprecation": on, "agent_tasks": on, "later_todos": on, "agents_landing_page": on, "agentic_ia": on,
 	// activity (activity_agent.go: 5Ns/, M/qt ji; nested_secondary_view is
 	// the secondary views' below)

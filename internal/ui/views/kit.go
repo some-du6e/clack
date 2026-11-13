@@ -320,6 +320,8 @@ type base struct {
 	tmemo map[string]*memoEntry
 	// addBtns are the messages' add-reaction buttons (reactions_slack.go)
 	addBtns map[string]*widget.Clickable
+	// pv caches Activity's preview documents (activity_rows.go)
+	pv map[string]pvEntry
 }
 
 func newBase(h Host) base { return base{h: h, rich: richCache{}} }

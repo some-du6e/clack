@@ -10,7 +10,10 @@ name: composer-audit-shots
 # bar's window bounds; gap-w10's full-width markers, the fence that ends
 # a code line, Up out of a leading code block, lists inside a quote,
 # Down in an empty box, the reply box's page keys, the offline help, the
-# link dialog's rich text and the native spellcheck menu) on the synthetic workspace
+# link dialog's rich text and the native spellcheck menu; gap-w28's Mod+K
+# coachmark, quoted code blocks, the footer's fold point and overflow row
+# and Navigate focusing the composer; edit-replies' edit round-trip of
+# every rich_text element and the message slug) on the synthetic workspace
 # and internal/fakeslack, then draws the composer headlessly through
 # Gio's GPU renderer (Mesa llvmpipe) in light and dark and uploads the
 # screenshots (composer-audit-shots). Nothing here talks to Slack.
@@ -44,9 +47,9 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: composer audit tests
         run: |
-          go test -count=1 -v -run 'TestSlackLength|TestOverLimitBlocksSend|TestClipButtonsNeedARecorder|TestShortcutAndMentionButtons|TestEmptyEditAsksToDelete|TestMarkdownShortcutsLikeSlack|TestComposerKeysLikeSlack|TestComposerEditingKeysLikeSlack|TestScheduleMenuRows|TestFormattingTogglePref|TestPasteLimit|TestAutoformat|TestLiveMarkup|TestEnter|TestBackspace|TestAffinityFeaturesFollowExperiment|TestScheduleDialogLikeSlack|TestSnippetDialogLikeSlack|TestSnippetTypeOptions|TestPasteLimitCreatesSnippet|TestPlusMenuRows|TestScheduledSendBar|TestSlashListKeysByApp|TestFloatBarPosition|TestFloatBarShowsLikeSlack|TestFloatBarWindowBounds|TestConvertMarkdown|TestGif|TestNoGifRowWithoutThePicker|TestPlusMenuMacHints|TestEditFileDetailsLikeSlack|TestAltTextSpeedBumpLikeSlack|TestSnippetTabStops|TestSnippetTabKey|TestSnippetHighlightClasses|TestSnippetShareWarning|TestSnippetConvPicker|TestW10|TestSpellContextMenu' ./internal/ui/composer
+          go test -count=1 -v -run 'TestSlackLength|TestOverLimitBlocksSend|TestClipButtonsNeedARecorder|TestShortcutAndMentionButtons|TestEmptyEditAsksToDelete|TestMarkdownShortcutsLikeSlack|TestComposerKeysLikeSlack|TestComposerEditingKeysLikeSlack|TestScheduleMenuRows|TestFormattingTogglePref|TestPasteLimit|TestAutoformat|TestLiveMarkup|TestEnter|TestBackspace|TestAffinityFeaturesFollowExperiment|TestScheduleDialogLikeSlack|TestSnippetDialogLikeSlack|TestSnippetTypeOptions|TestPasteLimitCreatesSnippet|TestPlusMenuRows|TestScheduledSendBar|TestSlashListKeysByApp|TestFloatBarPosition|TestFloatBarShowsLikeSlack|TestFloatBarWindowBounds|TestConvertMarkdown|TestGif|TestNoGifRowWithoutThePicker|TestPlusMenuMacHints|TestEditFileDetailsLikeSlack|TestAltTextSpeedBumpLikeSlack|TestSnippetTabStops|TestSnippetTabKey|TestSnippetHighlightClasses|TestSnippetShareWarning|TestSnippetConvPicker|TestW10|TestSpellContextMenu|TestW28|TestFoldFooter|TestToolbarWidth|TestEditRoundTripEveryElement|TestEditDateAndColorLikeSlack|TestEditComposerMessageSlug|TestDocFromRichtextMessageMention' ./internal/ui/composer
       - name: the send button and Enter through the window (whole app on fakeslack)
-        run: go test -count=1 -v -run 'TestSendButtonClicks' ./internal/ui
+        run: go test -count=1 -v -run 'TestSendButtonClicks|TestW28NavigateFocusesComposer' ./internal/ui
       - name: screenshots (Mesa llvmpipe)
         env:
           COMPOSER_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -55,8 +58,20 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$COMPOSER_AUDIT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestComposerAuditShots|TestExpComposerShots|TestComposer2Shots|TestW10Shots' ./internal/ui/composer
+          xvfb-run -a go test -count=1 -v -run 'TestComposerAuditShots|TestExpComposerShots|TestComposer2Shots|TestW10Shots|TestW28Shots|TestComposerFollowsLiveThemeSwitch|TestEditComposerSlugShots' ./internal/ui/composer
           ls -la "$COMPOSER_AUDIT_SHOTS_DIR"
+      # a live Light/Dark switch against a fresh start in that mode: the
+      # sidebar, messages, the composer, the emoji picker, a menu, a modal
+      - name: live theme switch vs a fresh start (Mesa llvmpipe)
+        if: ${{ !cancelled() }}
+        env:
+          LIVE_THEME_SHOTS_DIR: ${{ github.workspace }}/dist/shots/live-theme
+          CLACK_PIXEL_TESTS: "1"
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$LIVE_THEME_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestLiveThemeSwitchMatchesFresh' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

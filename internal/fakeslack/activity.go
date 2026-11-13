@@ -511,6 +511,9 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		switch method {
 		case "activity.markRead":
 			if k := f.Get("key"); k != "" {
+				if !st.read[k] {
+					s.readActivityBadge(f.Get("type")) // activity_badges.go
+				}
 				st.read[k] = true
 			}
 			for _, e := range bulk {

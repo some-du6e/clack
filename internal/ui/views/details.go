@@ -2133,7 +2133,7 @@ type cdTabRow struct{ icon, label, note string }
 
 var cdTabRows = []cdTabRow{
 	{"dms", "Messages", "Always shown"},
-	{"files", "Files & links", ""},
+	{"canvas-browser", "Files & links", ""},
 	{"pin", "Pins", ""},
 	{"workflow", "Workflows", "Hidden"},
 }
@@ -2742,7 +2742,7 @@ func cdTabsRows(ts []core.Tab) []cdTabRow {
 		case "canvas", "channel_canvas", "list":
 			icon = "canvas"
 		case "files":
-			icon = "files"
+			icon = "canvas-browser" // useTabIconProps (resources_channel_tab off)
 		case "bookmarks":
 			icon = "pin"
 		case "folder":

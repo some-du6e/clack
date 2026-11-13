@@ -59,7 +59,8 @@ type Cache struct {
 
 	mu       sync.Mutex
 	entries  map[key]*list.Element
-	lru      *list.List // front = most recent
+	byURL    map[string]map[int]*list.Element // entries per URL, by size (derive)
+	lru      *list.List                       // front = most recent
 	bytes    int
 	maxBytes int
 	inflight map[key]bool
@@ -134,6 +135,13 @@ type entry struct {
 	n    int   // decoded bytes
 	used int64 // unix seconds of the last Get (idle eviction)
 	anim *anim // frames of an animated GIF (anim.go), else nil
+	// px are the decoded pixels (the frames of an animation), the same
+	// memory the ImageOps upload from: another size of the URL is scaled
+	// from them at once (derive)
+	px []*image.RGBA
+	// interim: scaled from another size of the URL; the exact decode is
+	// loading and replaces it
+	interim bool
 }
 
 // IdleAfter: images not asked for in this long are dropped by a sweep every
@@ -166,6 +174,7 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		dir:        diskDir,
 		invalidate: invalidate,
 		entries:    map[key]*list.Element{},
+		byURL:      map[string]map[int]*list.Element{},
 		lru:        list.New(),
 		maxBytes:   DefaultLimit,
 		inflight:   map[key]bool{},
@@ -189,6 +198,7 @@ func (c *Cache) SetDir(dir string) {
 	}
 	c.dir = dir
 	c.entries = map[key]*list.Element{}
+	c.byURL = map[string]map[int]*list.Element{}
 	c.lru.Init()
 	c.bytes = 0
 	c.failed = map[key]failure{}
@@ -291,9 +301,7 @@ func (c *Cache) sweep(cutoff int64) {
 	for el := c.lru.Back(); el != nil; {
 		prev := el.Prev()
 		if e := el.Value.(*entry); e.used < cutoff {
-			c.lru.Remove(el)
-			delete(c.entries, e.k)
-			c.bytes -= e.n
+			c.dropLocked(el)
 		}
 		el = prev
 	}
@@ -346,6 +354,25 @@ func (c *Cache) Get(url string, sizePx int) (paint.ImageOp, bool) {
 		op := e.op
 		if a := e.anim; a != nil {
 			i, next := a.frameAt(now)
+			op = a.frames[i]
+			c.wakeLocked(next)
+		}
+		c.mu.Unlock()
+		return op, true
+	}
+	if e := c.deriveLocked(k); e != nil {
+		// the exact decode replaces it: always for a standard emoji's own
+		// CDN size, else when the disk tier has the bytes (a read, no
+		// network); otherwise the scaled copy stays
+		e.interim = e.interim || c.dir != "" && DiskOK(k.url)
+		c.putLocked(e)
+		c.evict()
+		if e.interim {
+			c.startLocked(k)
+		}
+		op := e.op
+		if a := e.anim; a != nil {
+			i, next := a.frameAt(time.Now())
 			op = a.frames[i]
 			c.wakeLocked(next)
 		}
@@ -438,7 +465,7 @@ func (c *Cache) work(lane int) {
 }
 
 func (c *Cache) load(k key) {
-	op, sz, n, an, err := c.loadImage(k)
+	op, sz, n, an, px, err := c.loadImage(k)
 	c.mu.Lock()
 	delete(c.inflight, k)
 	if err != nil {
@@ -451,9 +478,8 @@ func (c *Cache) load(k key) {
 		c.wakeLocked(f.retry) // the surface asks again when the retry is due
 	} else {
 		delete(c.failed, k)
-		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix(), anim: an}
-		c.entries[k] = c.lru.PushFront(e)
-		c.bytes += n
+		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix(), anim: an, px: px}
+		c.putLocked(e) // over an interim one (derive)
 		c.evict()
 	}
 	inv := c.invalidate
@@ -463,15 +489,108 @@ func (c *Cache) load(k key) {
 
 func (c *Cache) evict() {
 	for c.bytes > c.maxBytes && c.lru.Len() > 1 {
-		el := c.lru.Back()
-		e := el.Value.(*entry)
-		c.lru.Remove(el)
-		delete(c.entries, e.k)
-		c.bytes -= e.n
+		c.dropLocked(c.lru.Back())
 	}
 }
 
-func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error) {
+// putLocked adds e as the most recent entry, replacing one at its key.
+func (c *Cache) putLocked(e *entry) {
+	if old, ok := c.entries[e.k]; ok {
+		c.dropLocked(old)
+	}
+	el := c.lru.PushFront(e)
+	c.entries[e.k] = el
+	if c.byURL == nil {
+		c.byURL = map[string]map[int]*list.Element{}
+	}
+	m := c.byURL[e.k.url]
+	if m == nil {
+		m = map[int]*list.Element{}
+		c.byURL[e.k.url] = m
+	}
+	m[e.k.size] = el
+	c.bytes += e.n
+}
+
+// dropLocked removes entry el.
+func (c *Cache) dropLocked(el *list.Element) {
+	e := el.Value.(*entry)
+	c.lru.Remove(el)
+	if c.entries[e.k] == el {
+		delete(c.entries, e.k)
+	}
+	if m := c.byURL[e.k.url]; m != nil && m[e.k.size] == el {
+		delete(m, e.k.size)
+		if len(m) == 0 {
+			delete(c.byURL, e.k.url)
+		}
+	}
+	c.bytes -= e.n
+}
+
+// deriveLocked makes k from an exact decode of the same URL at a size at
+// least as large (the smallest such; size 0 is the original), scaled down
+// at once, so a surface asking for a new size of an image another one
+// already shows draws it on its first frame (the picker's emoji in a
+// reaction pill, a 16px and a 24px avatar). Get loads the exact decode for
+// k over it when the disk tier holds the bytes. nil when there's none.
+func (c *Cache) deriveLocked(k key) *entry {
+	if k.size <= 0 {
+		return nil
+	}
+	var src *entry
+	for sz, el := range c.byURL[k.url] {
+		e := el.Value.(*entry)
+		if e.interim || len(e.px) == 0 || (sz != 0 && sz < k.size) {
+			continue
+		}
+		if src == nil || sizeBetter(sz, src.k.size) {
+			src = e
+		}
+	}
+	if src == nil || src.size.X*src.size.Y*len(src.px) > deriveMaxPx {
+		return nil
+	}
+	// a standard emoji whose two sizes are different CDN assets (emoji-
+	// sharp's ForPixels): the scaled copy only shows until k's own asset
+	// arrives
+	e := &entry{k: k, used: time.Now().Unix(), interim: emoji.ForPixels(k.url, k.size) != emoji.ForPixels(k.url, src.k.size)}
+	for _, f := range src.px {
+		e.px = append(e.px, Scale(f, k.size))
+	}
+	e.size = e.px[0].Bounds().Size()
+	for _, f := range e.px {
+		e.n += len(f.Pix)
+	}
+	e.op = paint.NewImageOp(e.px[0])
+	if a := src.anim; a != nil && len(e.px) == len(a.frames) {
+		na := &anim{start: a.start, ends: a.ends, total: a.total}
+		for _, f := range e.px {
+			na.frames = append(na.frames, paint.NewImageOp(f))
+		}
+		e.anim = na
+	}
+	return e
+}
+
+// deriveMaxPx bounds the source pixels derive scales on the UI goroutine
+// (all frames): emoji and avatars, not photos.
+const deriveMaxPx = 512 * 512
+
+// sizeBetter reports whether a decode at size a is a better source than
+// one at b for scaling down: the smaller of two sized decodes, a sized one
+// over the original (0).
+func sizeBetter(a, b int) bool {
+	switch {
+	case a == 0:
+		return false
+	case b == 0:
+		return true
+	}
+	return a < b
+}
+
+func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, []*image.RGBA, error) {
 	// A standard emoji loads the CDN size that covers k.size device pixels
 	// (Slack's @2x choice; emoji.ForPixels), so it is only ever scaled
 	// down. The URL as given is the fallback.
@@ -481,20 +600,20 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error)
 		data, save, err = c.raw(k.url)
 	}
 	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, nil, err
+		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 	}
 	if isGIF(data) {
 		if err := checkSize(data); err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, err
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 		}
 		frames, delays, err := decodeGIF(data, k.size, k.size <= 0 || k.size > MaxAnimPx)
 		if err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, err
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 		}
 		save()
 		first := paint.NewImageOp(frames[0])
 		if len(frames) == 1 {
-			return first, frames[0].Bounds().Size(), len(frames[0].Pix), nil, nil
+			return first, frames[0].Bounds().Size(), len(frames[0].Pix), nil, frames[:1], nil
 		}
 		a := &anim{start: time.Now()}
 		n := 0
@@ -504,7 +623,7 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error)
 			a.ends = append(a.ends, a.total)
 			n += len(f.Pix)
 		}
-		return first, frames[0].Bounds().Size(), n, a, nil
+		return first, frames[0].Bounds().Size(), n, a, frames, nil
 	}
 	// A big image decodes to its full size and scales through a temporary
 	// buffer as big again (x/image/draw's kernel scaler: 32 bytes per
@@ -517,11 +636,11 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, error)
 	}
 	img, err := Decode(data)
 	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, nil, err
+		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 	}
 	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)
-	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, nil
+	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, []*image.RGBA{rgba}, nil
 }
 
 // bigDecodes is how many images of more than bigPixels decode at once

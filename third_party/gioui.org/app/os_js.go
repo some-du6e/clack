@@ -935,6 +935,18 @@ var webCursor = [...]string{
 	pointer.CursorSouthResize:              "s-resize",
 	pointer.CursorNorthEastSouthWestResize: "nesw-resize",
 	pointer.CursorNorthWestSouthEastResize: "nwse-resize",
+	// Clack patch 15: the panning cursors: the all-scroll and resize cursors.
+	pointer.CursorMiddlePanning:           "all-scroll",
+	pointer.CursorMiddlePanningVertical:   "all-scroll",
+	pointer.CursorMiddlePanningHorizontal: "all-scroll",
+	pointer.CursorNorthPanning:            "n-resize",
+	pointer.CursorNorthEastPanning:        "ne-resize",
+	pointer.CursorEastPanning:             "e-resize",
+	pointer.CursorSouthEastPanning:        "se-resize",
+	pointer.CursorSouthPanning:            "s-resize",
+	pointer.CursorSouthWestPanning:        "sw-resize",
+	pointer.CursorWestPanning:             "w-resize",
+	pointer.CursorNorthWestPanning:        "nw-resize",
 }
 
 func (w *window) SetCursor(cursor pointer.Cursor) {

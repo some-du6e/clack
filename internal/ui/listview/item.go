@@ -252,7 +252,7 @@ func (it *Item) Layout(gtx layout.Context) layout.Dimensions {
 	h := it.layoutContent(gtx, d, rec, comments, cload, body.X)
 	call := m.Stop()
 	maxS := max(0, h-body.Y+gtx.Dp(80))
-	_, dy := it.wheel.tick(gtx)
+	_, dy := it.wheel.tick(gtx, 0, it.scroll, 0, maxS)
 	it.scroll = min(max(0, it.scroll+dy), maxS)
 	it.maxScroll = maxS
 	func() {
@@ -567,6 +567,7 @@ func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 			_, dy := it.wheel.event(gtx, pe, 0, it.scroll, 0, it.maxScroll, false)
 			it.scroll += dy
 		case pointer.Press:
+			it.wheel.press(gtx, pe, 0, it.maxScroll)
 			it.press, it.pressed = pe.Position, true
 		case pointer.Release:
 			mv := pe.Position.Sub(it.press)

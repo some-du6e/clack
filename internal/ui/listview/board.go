@@ -111,7 +111,7 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 	maxX := max(0, x0+len(groups)*(lw+gtx.Dp(laneGap))+gtx.Dp(16)-sz.X)
 	maxY := max(0, tallest+gtx.Dp(16)-sz.Y)
 	v.boardEvents(gtx, d, maxX, maxY)
-	if dx, dy := b.wheel.tick(gtx); dx != 0 || dy != 0 {
+	if dx, dy := b.wheel.tick(gtx, b.scrollX, b.scrollY, maxX, maxY); dx != 0 || dy != 0 {
 		b.scrollX += dx
 		b.scrollY += dy
 	}
@@ -303,6 +303,7 @@ func (v *View) boardEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) 
 		case pointer.Leave:
 			b.hover = image.Pt(-1, -1)
 		case pointer.Press:
+			b.wheel.press(gtx, pe, maxX, maxY)
 			b.press, b.pressed = pe.Position, true
 		case pointer.Release:
 			moved := pe.Position.Sub(b.press)

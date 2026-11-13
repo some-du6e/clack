@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"image"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -107,6 +108,9 @@ func (e *Editor) nextKeyEvent(gtx layout.Context) (event.Event, bool) {
 		e.missed = e.missed[1:]
 		return ev, true
 	}
+	if e.CmdKCoachmark && e.anchor != e.caret {
+		return gtx.Event(e.filtersSel...)
+	}
 	return gtx.Event(e.filters...)
 }
 
@@ -118,14 +122,24 @@ func (e *Editor) nextKeyEvent(gtx layout.Context) (event.Event, bool) {
 // been meant to move the focus.
 var pressEpoch struct {
 	sync.Mutex
-	n uint64
+	n  uint64
+	at image.Point // where the last one was (NotePointer's position)
 }
 
 // NotePress records a pointer press anywhere in the window.
 func NotePress() {
 	pressEpoch.Lock()
 	pressEpoch.n++
+	pressEpoch.at = winPointer
 	pressEpoch.Unlock()
+}
+
+// lastPress is the last press's window position (the footer overflow's
+// outside-mousedown test, overflow.go).
+func lastPress() image.Point {
+	pressEpoch.Lock()
+	defer pressEpoch.Unlock()
+	return pressEpoch.at
 }
 
 func pressCount() uint64 {

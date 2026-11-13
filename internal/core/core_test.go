@@ -233,12 +233,16 @@ func TestRealtimeEvents(t *testing.T) {
 	}
 
 	a.handle(rtm("message", map[string]any{"channel": "C1", "ts": "102.000000", "user": "U2", "text": "reply", "thread_ts": "100.000001"}))
+	if rep := next(t, evs, "message"); !rep.Reply {
+		t.Error("reply not flagged")
+	}
+	// the parent's metadata is the server's message_replied (thread_meta.go)
+	a.handle(rtm("message", map[string]any{"channel": "C1", "subtype": "message_replied", "hidden": true, "ts": "102.000000",
+		"message": map[string]any{"type": "message", "ts": "100.000001", "thread_ts": "100.000001", "user": "U1", "text": "root",
+			"reply_count": 1, "reply_users": []string{"U2"}, "reply_users_count": 1, "latest_reply": "102.000000"}}))
 	up := next(t, evs, "update")
 	if up.Msg.TS != "100.000001" || up.Msg.ReplyCount != 1 || up.Msg.LatestReply != "102.000000" {
 		t.Errorf("parent update: %+v", up.Msg)
-	}
-	if rep := next(t, evs, "message"); !rep.Reply {
-		t.Error("reply not flagged")
 	}
 
 	a.handle(rtm("reaction_added", map[string]any{"user": "U2", "reaction": "eyes", "item": map[string]any{"channel": "C1", "ts": "101.000000"}}))

@@ -53,6 +53,8 @@ type Router struct {
 	commands []Command
 	// transfers is the pending transfer.DataEvent.Open functions.
 	transfers []io.ReadCloser
+	// Clack patch 15: per-window values for gestures (Source.Value).
+	values map[any]any
 	// deferring is set if command execution and event delivery is deferred
 	// to the next frame.
 	deferring bool

@@ -786,14 +786,11 @@ func (a *App) sbFocusColor() color.NRGBA {
 }
 
 // sbInverted reports whether the sidebar is Slack's light-inverted-sidebar
-// theme scope: a light client with the theme's dark sidebar (focus mode's
-// silent theme included).
+// theme scope: a light client with the theme's dark sidebar at a dark
+// brightness (theme.IATheme.InvertedSidebar; focus mode's silent theme
+// included).
 func (a *App) sbInverted() bool {
-	t := a.accountTheme()
-	if ft, ok := a.focusTheme(); ok {
-		t = ft
-	}
-	return !a.th.Dark && t.SidebarInverted
+	return a.scopeTheme().InvertedSidebar(a.th.Dark)
 }
 
 // sbBeforeList applies, once the rows are laid out for this frame, what

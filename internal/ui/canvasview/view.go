@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image"
+	"image/color"
 	"log"
 	"runtime/debug"
 	"strings"
@@ -55,6 +56,8 @@ type View struct {
 	tphView *richview.View // the empty title's placeholder
 	toc     *tocState      // the table of contents (toc.go)
 	access  accessState    // the View only / Comment only pill (access.go)
+	cover   coverState     // the header's Add cover (cover.go)
+	focus   string         // a section to scroll to once drawn (FocusSection)
 
 	queue []func() // post: run on the UI goroutine at the next frame
 
@@ -433,9 +436,61 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 	tx := gtx.Dp(18)
 	at(gtx, image.Pt(tx, 0), image.Pt(max(0, x-tx-gtx.Dp(4)), size.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, size.Y, func(gtx layout.Context) layout.Dimensions {
+			if d != nil && len(d.Info.TitleSpans) > 0 { // QuipTitleParsedId: emoji drawn
+				return v.titleLine(gtx, d.Info.TitleSpans, d.Info.TitleFromText, 18, c.Fg, size.Y)
+			}
 			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Black), Size: 18, Color: c.Fg, MaxLines: 1}, title)
 		})
 	})
+}
+
+// titleLine draws a title's spans on one line in Lato Black, ellipsized
+// (QuipTitleParsedId's truncate: lines 1): text as text, custom emoji as
+// images, 16px from the title string (FormatTextWithEmoji's small
+// c-emoji, small) or 22px from title_blocks (rich text's medium c-emoji),
+// centred on the line.
+func (v *View) titleLine(gtx layout.Context, spans []richtext.Span, fromText bool, size unit.Sp, col color.NRGBA, h int) layout.Dimensions {
+	th := v.h.Theme()
+	maxW := gtx.Constraints.Max.X
+	es := gtx.Dp(22)
+	if fromText {
+		es = gtx.Dp(16)
+	}
+	x := 0
+	for _, s := range spans {
+		if x >= maxW || s.Kind == richtext.Break {
+			break
+		}
+		if s.Kind == richtext.Emoji && s.URL != "" {
+			if x+es > maxW {
+				break
+			}
+			url := s.URL
+			at(gtx, image.Pt(x, (h-es)/2), image.Pt(es, es), func(gtx layout.Context) layout.Dimensions {
+				if img, ok := v.h.Images().Get(url, es*2); ok {
+					return theme.Image(gtx, img, image.Pt(es, es), 0)
+				}
+				return layout.Dimensions{Size: image.Pt(es, es)}
+			})
+			x += es
+			continue
+		}
+		txt := strings.ReplaceAll(s.Text, "\n", " ")
+		if txt == "" {
+			continue
+		}
+		g := gtx
+		g.Constraints = layout.Constraints{Max: image.Pt(maxW-x, h)}
+		m := op.Record(gtx.Ops)
+		dim := th.Text(g, theme.LabelOpts{Font: theme.Font(theme.Black), Size: size, Color: col, MaxLines: 1}, txt)
+		call := m.Stop()
+		func() {
+			defer op.Offset(image.Pt(x, (h-dim.Size.Y)/2)).Push(gtx.Ops).Pop()
+			call.Add(gtx.Ops)
+		}()
+		x += dim.Size.X
+	}
+	return layout.Dimensions{Size: image.Pt(min(x, maxW), h)}
 }
 
 // editedAgo is QuipLastUpdatedReminder's time: always relative
@@ -656,6 +711,12 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 		title, rows = blocks[0], blocks[1:]
 	}
 	ph := v.placeholder(rows)
+	if v.focus != "" && v.shown != nil {
+		if i := rowOf(rows, v.focus); i >= 0 {
+			v.list.Position = layout.Position{First: i + 1} // row 0 is the header
+		}
+		v.focus = "" // a section no longer in the canvas: it opens at the top
+	}
 	n := len(rows) + 2     // header, blocks, bottom space
 	defer v.layoutTOC(gtx) // over the blocks, under the toolbars
 	dims := v.list.Layout(gtx, n, func(gtx layout.Context, i int) (dims layout.Dimensions) {
@@ -694,6 +755,48 @@ func (v *View) layoutDoc(gtx layout.Context, d *core.CanvasDoc) layout.Dimension
 	return dims
 }
 
+// FocusSection scrolls section id to the top of the view once the canvas
+// is drawn: Quip's focusSection, which openCanvas runs for a link to a
+// canvas section (a canvas slug or a canvas-section card's link carries
+// it as focus_section_id).
+func (v *View) FocusSection(id string) {
+	if id == "" {
+		return
+	}
+	v.focus = id
+	v.h.Invalidate()
+}
+
+// rowOf is the index of the row holding section id (the row itself, or a
+// quote's, callout's or layout's section inside it), or -1.
+func rowOf(rows []*blk, id string) int {
+	var has func(b *blk) bool
+	has = func(b *blk) bool {
+		if b.b != nil && b.b.ID == id {
+			return true
+		}
+		for _, k := range b.kids {
+			if has(k) {
+				return true
+			}
+		}
+		for _, c := range b.cols {
+			for _, k := range c {
+				if has(k) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for i, b := range rows {
+		if has(b) {
+			return i
+		}
+	}
+	return -1
+}
+
 // titlePlaceholder is Slack's title placeholder (titlePlaceholder in
 // client-boot-shared's canvas options), which Quip's TitleSectionOverlay
 // draws over an empty title section.
@@ -722,7 +825,7 @@ var textPlaceholders = [...]string{
 	"Words go here ",
 }
 
-// placeholderFor is Slack's getIndexFromFileId: the file id's last two
+// placeholderFor is Slack's getIndexFromFileId: the id's last two
 // characters, as a+=16*a+(c-65), modulo the count.
 func placeholderFor(id string) string {
 	a := 0
@@ -746,6 +849,17 @@ func (v *View) placeholder(rows []*blk) string {
 	b := rows[0].b
 	if b.Kind != canvas.Paragraph || !(b.Default || strings.TrimSpace(b.Text()) == "") {
 		return ""
+	}
+	return v.textPlaceholder()
+}
+
+// textPlaceholder is the canvas's textPlaceholder. Slack's QuipEmbed
+// passes getIndexFromFileId the Quip document's id (doc.id, which it also
+// hands on as quipThreadId), not the Slack file's: files.info
+// quip_thread_id, else the file id.
+func (v *View) textPlaceholder() string {
+	if v.shown != nil && v.shown.Info.QuipThreadID != "" {
+		return placeholderFor(v.shown.Info.QuipThreadID)
 	}
 	return placeholderFor(v.id)
 }
@@ -795,10 +909,10 @@ func titleSection(bs []*blk) bool {
 }
 
 // layoutHeader: the canvas title at the top of the document, below the
-// header-image band; Slack draws no byline under it. The title is the
-// document's own opening heading, tb, when it has one (drawn and edited
-// as that block, in the title section's 28px/34px black); otherwise the
-// file's title.
+// header-image band (with Add cover for editors, cover.go); Slack draws
+// no byline under it. The title is the document's own opening heading,
+// tb, when it has one (drawn and edited as that block, in the title
+// section's 28px/34px black); otherwise the file's title.
 func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, tb *blk) layout.Dimensions {
 	y := gtx.Dp(docTop)
 	if v.edit != nil && v.edit.renaming {
@@ -831,6 +945,7 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, t
 			}
 		}()
 	}
+	v.layoutCover(gtx, gtx.Constraints.Min.X, x0, gtx.Dp(docTop), y) // over the title: its hover area passes presses on
 	return layout.Dimensions{Size: image.Pt(gtx.Constraints.Min.X, y)}
 }
 

@@ -86,35 +86,51 @@ func (r *reactState) pendingFor(ch, ts string) map[string]bool {
 // (another "update") and its error returned for the UI's toast.
 // already_reacted / no_reaction count as success.
 func (a *App) React(ctx context.Context, ch, ts, name string, add bool) error {
+	_, call := a.ReactBegin(ch, ts, name, add)
+	return call(ctx)
+}
+
+// ReactBegin is React's local half, Slack's optimistic update in
+// submitAddOrRemoveReaction: the store changes and "update" is emitted
+// now, and the returned event is that update, for a caller that shows it
+// in this frame instead of waiting for the subscription (nil when nothing
+// changed: already reacted, or the message isn't held). call sends
+// reactions.add/remove and rolls the change back if it fails.
+func (a *App) ReactBegin(ch, ts, name string, add bool) (ev *Event, call func(ctx context.Context) error) {
 	name = strings.Trim(name, ":")
 	self := a.S.SelfID()
 	k := rxnKey{ch, ts, name}
 	seq := a.rxn.begin(k, add)
-	changed := a.applyOwnReaction(ch, ts, name, self, add)
-
-	err := a.C.React(ctx, ch, ts, name, add)
-	if isCode(err, "already_reacted", "no_reaction") {
-		err = nil
-	}
-	if err != nil {
-		if a.rxn.end(k, seq) && changed {
-			a.applyOwnReaction(ch, ts, name, self, !add)
+	ev = a.applyOwnReaction(ch, ts, name, self, add)
+	changed := ev != nil
+	return ev, func(ctx context.Context) error {
+		err := a.C.React(ctx, ch, ts, name, add)
+		if isCode(err, "already_reacted", "no_reaction") {
+			err = nil
 		}
-		return err
+		if err != nil {
+			if a.rxn.end(k, seq) && changed {
+				a.applyOwnReaction(ch, ts, name, self, !add)
+			}
+			return err
+		}
+		time.AfterFunc(reactGrace, func() { a.rxn.end(k, seq) })
+		return nil
 	}
-	time.AfterFunc(reactGrace, func() { a.rxn.end(k, seq) })
-	return nil
 }
 
-// applyOwnReaction changes the stored message and tells subscribers;
-// it reports whether anything changed.
-func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) bool {
+// applyOwnReaction changes the stored message and tells subscribers; it
+// returns the "update" it emitted (nil: nothing changed).
+func (a *App) applyOwnReaction(ch, ts, name, self string, add bool) *Event {
 	changed := false
 	m, ok := a.S.Mutate(ch, ts, func(m *slack.Message) { changed = applyReaction(m, name, self, add) || changed })
-	if ok && changed {
-		a.emitUpdate(ch, &m)
+	if !ok || !changed {
+		return nil
 	}
-	return changed
+	v := a.message(ch, &m)
+	ev := Event{Type: "update", Channel: ch, TS: m.TS, ThreadTS: m.ThreadTS, Msg: &v}
+	a.emit(ev)
+	return &ev
 }
 
 // applyReaction adds or removes user's name reaction on m, counting each

@@ -584,6 +584,9 @@ func qLineAttrs(l Line) qAttrs {
 	case Quote:
 		return qAttrs{"blockquote": true}
 	case CodeBlock:
+		if l.Quoted {
+			return qAttrs{"code-block": true, "border": 1}
+		}
 		return qAttrs{"code-block": true}
 	case Header1, Header2, Header3:
 		return qAttrs{"header": int(l.Kind-Header1) + 1}
@@ -691,7 +694,7 @@ func qToDoc(q qDelta) (*Doc, []int) {
 
 func qLine(at qAttrs) Line {
 	if truthy(at["code-block"]) {
-		return Line{Kind: CodeBlock}
+		return Line{Kind: CodeBlock, Quoted: attrInt(at["border"]) >= 1}
 	}
 	switch at["list"] {
 	case "bullet", "ordered":

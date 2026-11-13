@@ -28,7 +28,7 @@ type Face struct {
 }
 
 // Parse constructs a Face from source bytes. The Face reads its tables
-// from src (Clack patch 16: no copy), so src must not change afterwards.
+// from src (Clack patch 17: no copy), so src must not change afterwards.
 func Parse(src []byte) (Face, error) {
 	ld, err := opentype.NewLoader(opentype.NewBytesResource(src))
 	if err != nil {

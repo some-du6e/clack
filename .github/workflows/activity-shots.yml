@@ -16,6 +16,8 @@ on:
     paths:
       - "internal/ui/views/activity*.go"
       - "internal/ui/activity_shell_test.go"
+      - "internal/ui/activity_badge_test.go"
+      - "internal/fakeslack/activity_badges.go"
       - "internal/ui/secondary_channel.go"
       - "internal/core/activity*.go"
       - "internal/core/testdata/activity_feed.json"
@@ -71,6 +73,17 @@ jobs:
         run: |
           mkdir -p "$ACTIVITY_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestActivityShellShots|TestActivityItemOpensBesideTheInbox|TestActivityGlobalShortcutsLikeSlack' ./internal/ui/
+      - name: the rail's Activity badge
+        # activity_v2 at boot, badge_counts_updated, client.counts and a
+        # mark read; light and dark rail crops with 1, 9, 10 and 99+
+        # (activity_badge_test.go)
+        env:
+          ACTIVITY_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          mkdir -p "$ACTIVITY_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestActivityRailBadge' ./internal/ui/
       - name: side-by-sides with Slack's CSS
         run: |
           python3 -m pip install --quiet pillow

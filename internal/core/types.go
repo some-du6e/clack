@@ -291,7 +291,8 @@ type Page struct {
 // typing, marked, presence, user, conv, conv_removed, counts, connection,
 // emoji_changed, sidebar_changed, prefs, huddle, resync, poll (realtime
 // is off or down: refetch what is open), realtime (live updates turned
-// on/off, in Connected), plus raw
+// on/off, in Connected), activity_badges (the Activity badge counts
+// moved: ActivityBadgeCount), plus raw
 // passthroughs (thread_marked, update_thread_state, dnd_updated,
 // dnd_updated_user, pref_change, badge_counts_updated) in Raw.
 type Event struct {
@@ -436,6 +437,25 @@ type ChannelPage struct {
 type Usergroup struct {
 	ID, Handle, Name, Description string
 	UserCount                     int
+	// TeamID is team_id: a workspace's T… id, or an E… enterprise id for
+	// an org-level group (OrgLevel).
+	TeamID string
+}
+
+// OrgLevel is Slack's 9tRe d: the group's team_id looks like an
+// enterprise id (looksLikeEnterpriseTeamId, client-boot ZSpp:
+// /^E[A-Z0-9]{8,}$/). The User Group pane picks its members path by it.
+func (g Usergroup) OrgLevel() bool {
+	t := g.TeamID
+	if len(t) < 9 || t[0] != 'E' {
+		return false
+	}
+	for _, r := range t[1:] {
+		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
+			return false
+		}
+	}
+	return true
 }
 
 type Pin struct {

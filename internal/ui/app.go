@@ -183,7 +183,8 @@ type App struct {
 	rzOverlayTag    int                        // .p-resizer-overlay (resizer.go)
 	railRects       map[string]image.Rectangle // tests set it: layoutRail records each rail button's box
 	ptrWin          image.Point
-	peek            railPeek // the rail's More PeekTrigger (rail_peek.go)
+	autoscroll      gesture.Autoscroller // middle-click autoscroll (Gio patch 15)
+	peek            railPeek             // the rail's More PeekTrigger (rail_peek.go)
 	ptrOK           bool
 	hover           profileHover // the profile hover card (hover_card.go)
 	overlays        []Overlay
@@ -231,9 +232,12 @@ type App struct {
 	winSize          image.Point
 	sbBase           color.NRGBA
 	sbPal            theme.Palette
-	styleVer         uint64    // slackc.Styles.Version the palette was derived at
-	acct             acctTheme // the Slack account's theme (theme_account.go)
-	scopeInv         bool      // the chrome is in Slack's inverted theme scope (theme_scope.go)
+	styleVer         uint64      // slackc.Styles.Version the palette was derived at
+	acct             acctTheme   // the Slack account's theme (theme_account.go)
+	scopeInv         bool        // the chrome is in Slack's inverted theme scope (theme_scope.go)
+	scopeInvSide     bool        // and the sidebar
+	tpeeks           tabPeeks    // the rail tabs' hover peeks (rail_tab_peek.go)
+	agPeek           *agentsPeek // Agents & tools' (rail_peek_agents.go)
 	scopeVars        map[string]string
 	shaperCh         chan [2]*text.Shaper
 	font             fontState             // Appearance > Font (prefs_font.go)
@@ -638,6 +642,7 @@ func (a *App) frame(gtx layout.Context) {
 	// first: an ancestor of every other input area (popped at the end)
 	navArea := a.navGestures(gtx)
 	defer navArea.Pop()
+	a.autoscroll.Begin(gtx.Source, gtx.Metric) // before any scroller, and before every key reader
 	a.readRootPointer(gtx)
 	a.introInput(gtx) // a replayed introduction's keys come before every shortcut
 	a.hoverBegin(gtx) // before any widget reads keys (Escape)
@@ -676,6 +681,9 @@ func (a *App) frame(gtx layout.Context) {
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
 	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
+	// middle-click autoscroll's window-wide area: over everything but the
+	// tracker
+	a.autoscroll.End(gtx.Ops, gtx.Source, sz)
 	a.rootPointer(gtx)
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took

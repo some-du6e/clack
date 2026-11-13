@@ -65,6 +65,7 @@ type window struct {
 	posts    []func()         // winHost.post (under mu)
 
 	shareAlert alertState // the screen share alert's link and close (share.go)
+	panel      panelState // the Captions side panel (captions_panel.go)
 	theme      bgShown    // the huddle theme on the stage (background.go)
 
 	tweak func(*huddle.State) // tests: edits each frame's state
@@ -192,7 +193,7 @@ func (w *window) run() {
 			// Slack's huddle components here are plugin patch points
 			// (slackc), shared with the main window: one frame at a time.
 			slackc.LockFrame()
-			restore := slackc.SubFrame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
+			restore := slackc.SubFrameBg(gtx, "p-multi_view_window p-huddle_window", hudWhite, hudFrame)
 			w.layout(gtx)
 			restore()
 			slackc.UnlockFrame()
@@ -234,6 +235,21 @@ const (
 )
 
 func (w *window) layout(gtx C) {
+	// the Captions side panel, while the event log's side-by-side view is
+	// on (captions_panel.go): the call keeps the rest of the window
+	if pw := w.captionsPanelW(gtx); pw > 0 {
+		full := gtx.Constraints.Max
+		g := gtx
+		g.Constraints = layout.Exact(image.Pt(full.X-pw, full.Y))
+		w.layoutCall(g)
+		w.captionsPanel(gtx, image.Rect(full.X-pw, 0, full.X, full.Y))
+		return
+	}
+	w.layoutCall(gtx)
+}
+
+// layoutCall is the call: everything but the side panel.
+func (w *window) layoutCall(gtx C) {
 	w.runPosts()
 	sz := gtx.Constraints.Max
 	theme.Fill(gtx, image.Rectangle{Max: sz}, hudFrame)

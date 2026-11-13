@@ -103,6 +103,12 @@ type Size struct {
 	// users.conversations, two of them in the Projects section
 	// (file_channels.go).
 	FileChannels bool
+	// AgentSessions fills ai.alpha.agents.sessions.list (the rail's
+	// Agents & tools peek, agent_sessions.go) and adds its agent.
+	AgentSessions bool
+	// AgentThread adds a DM with an agent app and a thread in it, the
+	// agent's answer edited live (agent_thread.go).
+	AgentThread bool
 
 	// The memory workflow's real-account scale (HackClubScale). Zero
 	// values keep the sizes above exactly as they were, so no other
@@ -279,6 +285,9 @@ type Server struct {
 	Size Size
 	URL  string // http://127.0.0.1:port/
 
+	actBadgeMu sync.Mutex
+	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
+
 	// OnPost, when set, runs inside chat.postMessage before it answers,
 	// with the posted form and the new message (tests push the realtime
 	// echo from it, so it reaches the client before the reply). Set it
@@ -306,8 +315,10 @@ type Server struct {
 	BulkLeaves [][]string
 	// listFilters: every edge users/list filter (UserListFilters).
 	listFilters []string
-	emoji       map[string]string
-	words       []string
+	// sessionReasons are ai.alpha.agents.sessions.list's reasons (agent_sessions.go)
+	sessionReasons []string
+	emoji          map[string]string
+	words          []string
 
 	imgMu sync.Mutex
 	imgs  map[string][]byte
@@ -355,6 +366,8 @@ type Server struct {
 
 	prefsMu sync.Mutex
 	prefs   map[string]any // users.prefs.get; users.prefs.set writes it
+	// entFrecency: the frecency pref is Enterprise Grid's (UseGridFrecency)
+	entFrecency bool
 
 	// drafts and uploads (drafts.go)
 	draftMu sync.Mutex
@@ -493,12 +506,61 @@ func (s *Server) SetPrefs(kv map[string]any) {
 	}
 }
 
+// Enterprise Grid's frecency prefs (users.prefs.get on a grid account,
+// 2026-11-12): the plain "frecency" and "frecency_jumper" are "", and the
+// account's frecency is stored as frecency_ent_jumper. Slack serves that
+// one under the name "frecency" to a named request (prefs=frecency or
+// prefs=emoji_use,frecency, byte for byte), and a full users.prefs.get
+// carries every key as stored.
+const prefEntFrecency = "frecency_ent_jumper"
+
+// GridFrecency and GridEmojiUse are UseGridFrecency's prefs, shaped like
+// the grid account's: emoji records ("E"+unicode, a toned wave, the
+// custom thumbs-up as "E"+name, _reduced), a search-text key, and the
+// channel, member and menu-action records the jumper shares the store
+// with. Visits are a few days before 1_790_000_000_000 ms.
+const (
+	GridFrecency = `{"E1f680":{"id":"E1f680","count":5,"visits":[1789900000000,1789950000000]},` +
+		`"roc":{"id":"E1f680","count":2,"visits":[1789950000000]},` +
+		`"E1f44d":{"id":"E1f44d","count":3,"visits":[1789800000000]},` +
+		`"E1f44b-1f3fd":{"id":"E1f44b-1f3fd","count":2,"visits":[1789700000000]},` +
+		`"Ethumbs-up":{"id":"Ethumbs-up","count":1,"visits":[1789600000000],"_reduced":true},` +
+		`"C0GENERAL":{"id":"C0GENERAL","count":9,"visits":[1789960000000]},` +
+		`"gen":[{"id":"C0GENERAL","count":3,"visits":[1789960000000]},{"id":"MAcopy_link","count":1,"visits":[1789900000000]}],` +
+		`"U0FAKE00001":{"id":"U0FAKE00001","count":4,"visits":[1789940000000]},` +
+		`"MAcopy_link":{"id":"MAcopy_link","count":3,"visits":[1789930000000]}}`
+	GridEmojiUse = `{"smile":10,"eyes":9,"heart":4}`
+)
+
+// UseGridFrecency makes the account an Enterprise Grid one for frecency:
+// frecency and frecency_jumper "", frecency_ent_jumper GridFrecency,
+// emoji_use GridEmojiUse, a custom "thumbs-up" emoji, and the name
+// "frecency" in a named users.prefs.get and in users.prefs.set meaning
+// frecency_ent_jumper. Call it before the calls.
+func (s *Server) UseGridFrecency() {
+	s.prefsMu.Lock()
+	s.entFrecency = true
+	s.prefs["frecency"], s.prefs["frecency_jumper"] = "", ""
+	s.prefs[prefEntFrecency], s.prefs["emoji_use"] = GridFrecency, GridEmojiUse
+	s.prefsMu.Unlock()
+	s.emoji["thumbs-up"] = s.URL + "img/64x64/" + TeamID + "/thumbs-up/00000000000000aa.png"
+}
+
+// prefKey is where a pref named in a request is stored.
+func (s *Server) prefKey(name string) string {
+	if s.entFrecency && name == "frecency" {
+		return prefEntFrecency
+	}
+	return name
+}
+
 // setPref is users.prefs.set: Slack keeps a pref's type, so a value
 // written as "true" to a boolean pref reads back as true. New keys keep
 // the form string, except "true"/"false" and integers.
 func (s *Server) setPref(name, value string) {
 	s.prefsMu.Lock()
 	defer s.prefsMu.Unlock()
+	name = s.prefKey(name)
 	var v any = value
 	switch s.prefs[name].(type) {
 	case bool:
@@ -584,6 +646,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.FileChannels {
 		s.addFileChannels() // file_channels.go
 	}
+	if sz.AgentThread {
+		s.addAgentThread() // agent_thread.go
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
@@ -602,6 +667,7 @@ func (s *Server) Close() error {
 	pageLogs.Delete(s)
 	viewsStates.Delete(s)
 	threadsAuditStates.Delete(s)
+	agentDMStates.Delete(s)
 	if s.srv == nil {
 		return nil
 	}
@@ -1160,10 +1226,16 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleAgentSessions(method, f); handled { // agent_sessions.go
+		return out
+	}
 	if s.Size.Workflows { // first: search.go answers search.autocomplete.triggers with none
 		if out, handled := s.handleWorkflows(method, f, edge); handled { // workflows.go
 			return out
 		}
+	}
+	if out, handled := s.handleChannelFiles(method, f); handled { // channel_files.go (before search.go)
+		return out
 	}
 	if out, handled := s.handleFilesView(method, f); handled { // files_view.go
 		return out
@@ -1186,6 +1258,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	if out, handled := s.handleCanvases(method, f); handled { // canvas.go
 		return out
 	}
+	if out, handled := s.handleUsergroups(method, f); handled { // usergroups.go (before search.go: belongs_to_usergroup_id)
+		return out
+	}
 	if out, handled := s.handleSearch(method, f); handled { // search.go
 		return out
 	}
@@ -1199,6 +1274,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return out
 	}
 	if out, handled := s.handleAgents(method, f); handled { // agents.go
+		return out
+	}
+	if out, handled := s.handleAgentThread(method, f); handled { // agent_thread.go
 		return out
 	}
 	if out, handled := s.handleFiles(method, f); handled { // files.go
@@ -1270,6 +1348,9 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 				chans = append(chans, e)
 			}
 		}
+		if av := s.activityV2(); av != nil { // activity_badges.go
+			return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2}, "activity_v2", av)
+		}
 		return ok("channels", chans, "ims", ims, "mpims", []any{}, "threads", map[string]any{"has_unreads": true, "mention_count": 2})
 	case "sidebar.dms": // every generated DM is open; AddClosedDM's aren't
 		var ims, mpdms []map[string]any
@@ -1328,8 +1409,16 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 	case "users.prefs.get":
 		s.prefsMu.Lock()
 		m := make(map[string]any, len(s.prefs))
-		for k, v := range s.prefs {
-			m[k] = v
+		if names := f.Get("prefs"); names != "" { // only the named prefs, as Slack answers
+			for _, n := range strings.Split(names, ",") {
+				if v, ok := s.prefs[s.prefKey(n)]; ok {
+					m[n] = v
+				}
+			}
+		} else {
+			for k, v := range s.prefs {
+				m[k] = v
+			}
 		}
 		s.prefsMu.Unlock()
 		return ok("prefs", m)
@@ -1442,13 +1531,6 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		return map[string]any{"ok": false, "error": "app_not_found"}
 	case "emoji.list":
 		return ok("emoji", s.emoji)
-	case "usergroups.list":
-		var gs []slack.Usergroup
-		for i := 0; i < s.Size.Usergroups; i++ {
-			gs = append(gs, slack.Usergroup{ID: fmt.Sprintf("S0FAKE%05d", i), Handle: s.usergroupHandle(i),
-				Name: title(s.words[(i*7)%len(s.words)]), Description: s.words[(i*3)%len(s.words)], UserCount: i % 50})
-		}
-		return ok("usergroups", gs)
 	case "client.getWebSocketURL":
 		ws := "ws" + strings.TrimPrefix(s.URL, "http") + "ws"
 		return ok("primary_websocket_url", ws, "fallback_websocket_url", ws, "routing_context", "fake")
@@ -1595,6 +1677,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		if out, handled := s.handleViews(method, f); handled { // views.go
 			return out
 		}
+	} else if method == "activity.markRead" && f.Get("key") != "" { // no feed: every single markRead reads an unread item (activity_badges.go)
+		s.readActivityBadge(f.Get("type"))
 	}
 	if out, handled := s.handleDrafts(method, f); handled {
 		return out
@@ -1624,11 +1708,17 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 			}
 		}
 	}
+	if s.Size.AgentSessions && id == AgentSessionsBotID { // agent_sessions.go
+		return s.agentSessionsUser(), true
+	}
 	if s.codeFx != nil && id == s.codeFx.Agent.ID {
 		return s.codeFx.Agent, true
 	}
 	if u, ok := s.previewAgentUser(id); ok {
 		return u, true
+	}
+	if s.Size.AgentThread && id == AgentDMUserID { // agent_thread.go
+		return s.agentDMUser(), true
 	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {

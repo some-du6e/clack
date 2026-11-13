@@ -32,22 +32,29 @@ func rgba(v uint32, a float32) color.NRGBA {
 
 // colors are the message-pane colors measured from the 2026 client.
 type colors struct {
-	Bg, Hover, Text, Text2, Text3                     color.NRGBA
-	Edited, PinIcon, Muted70, TimeSystem              color.NRGBA
-	Pinned, PinnedHover, Highlight, ActiveThread      color.NRGBA
-	CustomTint                                        color.NRGBA // .c-message_kit__background--labels--custom_response
-	Important                                         color.NRGBA // --dt_color-content-imp (the reply bar's Unread)
-	BadgeBg, BadgeText                                color.NRGBA
-	ReactBg, ReactHoverBorder                         color.NRGBA
-	ReactSelfBg, ReactSelfHoverBg                     color.NRGBA
-	ReactSelfBorder, ReactSelfText                    color.NRGBA
-	Link, NewLine, DayLine, PillBorder                color.NRGBA
-	Shadow, ToolbarIcon, ToolbarHoverBg               color.NRGBA
-	Tooltip, TooltipText, Skeleton                    color.NRGBA
-	ThreadBorder, ThreadBg, JumpBg                    color.NRGBA
-	JumpText, FailedText, BorderStrong                color.NRGBA
-	SystemText, HeaderBorder, CloseHover              color.NRGBA
-	Editing, ScrollThumb, ScrollThumbHover, Selection color.NRGBA
+	Bg, Hover, Text, Text2, Text3                color.NRGBA
+	Edited, PinIcon, Muted70, TimeSystem         color.NRGBA
+	Pinned, PinnedHover, Highlight, ActiveThread color.NRGBA
+	CustomTint                                   color.NRGBA // .c-message_kit__background--labels--custom_response
+	Important                                    color.NRGBA // --dt_color-content-imp (the reply bar's Unread)
+	BadgeBg, BadgeText                           color.NRGBA
+	ReactBg, ReactHoverBorder                    color.NRGBA
+	ReactSelfBg, ReactSelfHoverBg                color.NRGBA
+	ReactSelfBorder, ReactSelfText               color.NRGBA
+	Link, NewLine, DayLine, PillBorder           color.NRGBA
+	// .c-message_actions__button (client-boot-styles cf726c4f): the icon
+	// rgba(var(--sk_foreground_max_solid)), and under the pointer
+	// rgba(var(--sk_foreground_min), .04) behind
+	// rgba(var(--sk_primary_foreground)); the theme's values (kit.css
+	// .sk-client-theme--light / --dark): 97,96,97 · 29,28,29 · 29,28,29 and
+	// 171,171,173 · 232,232,232 · 209,210,211 (flatten pre-blends the
+	// background over the pane, as the toolbar's card is)
+	Shadow, ToolbarIcon, ToolbarHoverBg, ToolbarHoverIcon color.NRGBA
+	Tooltip, TooltipText, Skeleton                        color.NRGBA
+	ThreadBorder, ThreadBg, JumpBg                        color.NRGBA
+	JumpText, FailedText, BorderStrong                    color.NRGBA
+	SystemText, HeaderBorder, CloseHover                  color.NRGBA
+	Editing, ScrollThumb, ScrollThumbHover, Selection     color.NRGBA
 	// huddle messages (huddle_msg.go): the live system icon
 	// (content-hgl-2), Join Huddle (c-button--primary: base-inv-hgl-2 and
 	// its -hover overlay), HuddleMsgAvatar's tile (rgba(fg_low,.13), live
@@ -74,7 +81,7 @@ var lightColors = colors{
 	ReactSelfBg: rgb(0xe3f8ff), ReactSelfHoverBg: rgb(0xe3f8ff),
 	ReactSelfBorder: rgb(0x1264a3), ReactSelfText: rgb(0x1264a3),
 	Link: rgb(0x1264a3), NewLine: rgb(0xe01e5a), DayLine: rgb(0xdddddd), PillBorder: rgba(0x1d1c1d, 0.13),
-	Shadow: rgba(0x000000, 0.08), ToolbarIcon: rgb(0x616061), ToolbarHoverBg: rgba(0x1d1c1d, 0.04),
+	Shadow: rgba(0x000000, 0.08), ToolbarIcon: rgb(0x616061), ToolbarHoverBg: rgba(0x1d1c1d, 0.04), ToolbarHoverIcon: rgb(0x1d1c1d),
 	Tooltip: theme.LightPalette.Tooltip, TooltipText: theme.LightPalette.TooltipText, Skeleton: rgb(0xeaeaea), // theme/tooltip.go
 	ThreadBorder: rgba(0x1d1c1d, 0.13), ThreadBg: rgb(0xffffff), JumpBg: rgb(0x1264a3),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0x1d1c1d, 0.3),
@@ -102,7 +109,7 @@ var darkColors = colors{
 	ReactSelfBg: rgb(0x0a77a7), ReactSelfHoverBg: rgb(0x0a77a7),
 	ReactSelfBorder: color.NRGBA{}, ReactSelfText: rgb(0xf8f8f8),
 	Link: rgb(0x1d9bd1), NewLine: rgb(0xe01e5a), DayLine: rgba(0xe8e8e8, 0.13), PillBorder: rgba(0xe8e8e8, 0.13),
-	Shadow: rgba(0x000000, 0.3), ToolbarIcon: rgb(0xababad), ToolbarHoverBg: rgb(0x222529),
+	Shadow: rgba(0x000000, 0.3), ToolbarIcon: rgb(0xababad), ToolbarHoverBg: rgba(0xe8e8e8, 0.04), ToolbarHoverIcon: rgb(0xd1d2d3),
 	Tooltip: theme.DarkPalette.Tooltip, TooltipText: theme.DarkPalette.TooltipText, Skeleton: rgb(0x2c2d30), // theme/tooltip.go
 	ThreadBorder: rgba(0xe8e8e8, 0.13), ThreadBg: rgb(0x1a1d21), JumpBg: rgb(0x1d9bd1),
 	JumpText: rgb(0xffffff), FailedText: rgb(0xe01e5a), BorderStrong: rgba(0xe8e8e8, 0.3),
@@ -349,6 +356,18 @@ func drawEmoji(gtx layout.Context, h Host, url string, r image.Rectangle) bool {
 		return true
 	}
 	return false
+}
+
+// drawEmojiAt is drawEmoji with the picture decoded at px (sharper under
+// a transform that grows it), else at r's size while that loads.
+func drawEmojiAt(gtx layout.Context, h Host, url string, r image.Rectangle, px int) bool {
+	if url != "" && h.Images() != nil && px != r.Dx() {
+		if img, ok := h.Images().Get(url, px); ok {
+			richview.DrawImage(gtx.Ops, img, r, 0, false)
+			return true
+		}
+	}
+	return drawEmoji(gtx, h, url, r)
 }
 
 func shaperOf(h Host) *text.Shaper { return h.Theme().Shaper }

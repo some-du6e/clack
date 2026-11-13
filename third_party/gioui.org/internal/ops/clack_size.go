@@ -3,7 +3,7 @@
 package ops
 
 // Size is roughly how much memory o holds: its data and reference arrays'
-// capacity (Clack patch 15, CLACK_PATCHES.md).
+// capacity (Clack patch 16, CLACK_PATCHES.md).
 func (o *Ops) Size() int {
 	if o == nil {
 		return 0

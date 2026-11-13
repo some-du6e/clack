@@ -806,17 +806,12 @@ func (v *libraryPage) row(gtx layout.Context, w int, g libGroup) layout.Dimensio
 	tx, gap := gtx.Dp(16), gtx.Dp(14)
 	tw := w - tx - gtx.Dp(12) - bw - gap
 	var desc, hc, off bool
-	var credits []string
-	seen := map[string]bool{}
 	for _, e := range g.Entries {
 		desc = desc || e.Description != ""
 		hc = hc || e.HackClubOnly
 		off = off || e.UpstreamDisabled
-		if c := libraryCredit(e); c != "" && !seen[c] {
-			seen[c] = true
-			credits = append(credits, c)
-		}
 	}
+	credit := groupCredit(p.a.credits(), g) // mentions (plugin_credit.go)
 	textCol := func(gtx layout.Context) layout.Dimensions {
 		nd := p.a.th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: cl.pry, MaxLines: 1}, e0.Name)
 		bx := min(nd.Size.X, tw) + gtx.Dp(8)
@@ -856,10 +851,10 @@ func (v *libraryPage) row(gtx layout.Context, w int, g libGroup) layout.Dimensio
 				return p.a.th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Color: cl.sec, MaxLines: 2, Wrap: text.WrapWords}, plainMrkdwn(d))
 			}).Size.Y
 		}
-		if len(credits) > 0 {
+		if credit != "" {
 			y += gtx.Dp(4)
 			y += at(gtx, image.Pt(0, y), image.Pt(tw, 1<<20), func(gtx layout.Context) layout.Dimensions {
-				return k.mrkdwn(gtx, "lib.by."+key, "By "+strings.Join(credits, ", "), true, cl.ter)
+				return k.mrkdwn(gtx, "lib.by."+key, "By "+credit, true, cl.ter)
 			}).Size.Y
 		}
 		for _, e := range g.Entries {
@@ -909,27 +904,6 @@ func (v *libraryPage) row(gtx layout.Context, w int, g libGroup) layout.Dimensio
 		act.do()
 	}
 	return layout.Dimensions{Size: image.Pt(w, h)}
-}
-
-// libraryCredit is an entry's authors as mrkdwn names (linked when they
-// have a page), else its upstream contributors.
-func libraryCredit(e pluginlib.Entry) string {
-	var out []string
-	for _, a := range e.Authors {
-		switch {
-		case a.Name == "":
-		case strings.HasPrefix(a.URL, "https://"):
-			out = append(out, "<"+a.URL+"|"+mrkdwnEscape(a.Name)+">")
-		default:
-			out = append(out, mrkdwnEscape(a.Name))
-		}
-	}
-	if len(out) == 0 {
-		for _, c := range e.Contributors {
-			out = append(out, mrkdwnEscape(c))
-		}
-	}
-	return strings.Join(out, ", ")
 }
 
 func shortSHA(s string) string {

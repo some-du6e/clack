@@ -255,3 +255,72 @@ Not done, and why:
   canvas or list and marks its row. Clack's docs/ and lists/ routes belong
   to Home, so a file row never shows as selected.
 
+
+## Files & links tab (files-links-tab, 2026-11-12)
+
+Karim: "files and links arent implemented?" The channel header had the
+tab, but clicking it toasted "This tab opens in Slack". Sources: CDN build
+0e695dd18302 (boot-shared 0fb3750ed9646c84), fetched without a cookie:
+`gantry-v2-async-client-boot-shared` (3ztk files_tab_view, JG8Q
+useChannelAttachmentsExplorer, WiAq, yKEr Explorer, 31Gm explorer rows,
+uahl ContextualFile, UZv6 / ae8D / XWLGa the pillow's detail line, YnzN
+getActionText, gaA3 FileActions, hYuM, 6kKb handleFileContainerClick,
+jAOO the grid), `client-boot` (XjMX fetchBrowserEntity /
+fetchChannelLinks, rZ6M fetchSearchModule, d4lr / d81O the query tokens,
+ogf8 the browser constants, biaa, 6qU2), the tab-view chunk (5Itp
+useTabView, ResourcesTabView), `client-channel-files-view` (All files &
+links) and `client-boot-styles.css`. The account's groups came from
+experiments.getByUser (read only): `resources_channel_tab` and
+`files_and_artifacts_from_meetings` unassigned (off),
+`channel_links_in_files_tab` and `desktop_channel_links_in_files_tab` on.
+Tested against fakeslack only: `internal/fakeslack/channel_files.go` puts a
+files tab in #files-gallery's tab bar and answers the tab's reads from the
+gallery's files, a canvas, a list and 14 links (`TestChannelFiles*` in core
+and views, `TestFilesTabOpens` in ui). The `files-view` workflow runs them
+and saves the shots (`chfiles-*`).
+
+| Area | Slack (source) | Clack before | Clack now |
+|---|---|---|---|
+| Which view | useTabView: Xy.Files is ResourcesTabView with `resources_channel_tab` on, else files_tab_view (3ztk) | a toast | files_tab_view (the account's group) |
+| Tab label and icon | ChannelTabLabel: "Resources" with resources_channel_tab, else "Files & links"; useTabIconProps: `files` / `files-filled` with it, else `canvas-browser` / `canvas-browser-filled` (selected) | "Files & links", the `files` glyph | "Files & links", canvas-browser; canvas-browser-filled while selected (a new glyph, held to Slack's by TestIconsMatchSlack). The Manage tabs card uses canvas-browser too |
+| Reads | three browsers: media (`channel-files`, {in, fileType: images, videos}), files ({in, excludedFileType: images, videos, folder}), links (`channel-links`). The file ones are search.modules.files: the filters as modifiers after the words (`in:<#C|name> type:images type:videos`, `-type:images -type:videos -type:folder`), search_context desktop_files_channel_tab, count 50, highlight/extracts on, getSortParams' sort / sort_dir. Links: conversations.searchLinks {channel_id, page, query, sort, sort_dir} | none | the same calls (`core.ChannelFiles`, `core.ChannelLinks`), with Clack's usual omissions (no `_x_reason`, no `team`, as the Files browser) |
+| Most relevant for links | fetchChannelLinks' switch matches QX.NEWEST / OLDEST and n5.RELEVANT ("relevant"); the browser's Most relevant is QX.RELEVANT ("score"), so it falls to timestamp desc | n/a | the same |
+| Layout | .files_tab_view: base-sec, 20px down; ExplorerSearch "Search" (16 under); results at most 968 wide in 16px gutters | n/a | the same |
+| Controls | "Attachment type" radios All / Files / Media / Links (+ From huddles under files_and_artifacts_from_meetings), Sort right: Newest / Oldest, Most relevant first with a search outside All; active off Newest. Back to All with Most relevant puts the files browser on Newest | n/a | the same, without From huddles (off) |
+| All | without a search: "Photos and videos" + See all, one row of the media grid (140px cells, 16 apart, columns floor(w / 156)), 16px; then files and links in one list by share time (with a search the media join it); "More results by type" cards (Files / Media / Links, 42 tall, radius 12) for browsers with more pages | n/a | the same |
+| Media / Files / Links | that browser alone, every grid row or list row, ExplorerLoadMoreButton "Load More" (outline, medium) while pages remain | n/a | the same |
+| Empty | "No files or links found for this channel." / `No results for "{query}" in this channel.`; per type "No media found…", "No files found…", "No links found…" and their `No … results for "{query}"` forms, in .p-explorer_empty_state (200 tall, 18px Black) | n/a | the same |
+| Loading | listLoadingFragment: seven result skeletons | n/a | seven skeleton rows |
+| File rows | DraggableExplorerFile → ContextualFile: the pillow (12px padding, shared 1px otl-ter lines, radius 12 at the ends), title, "Shared by {name} on {date}" / "today" / "yesterday" (FileEntityUserTimestamp, displaySharedBy); the action text on hover (getActionText) | n/a | the same; the action text is the action Clack takes: Open canvas / Open list, View {type} in Slack for images, Open in browser otherwise |
+| Link rows | LinkEntity: favicon 24 (else link 20), title or host, then the host (titled) or path + query; "Open in browser" on hover | n/a | the same |
+| Clicks | handleFileContainerClick, source CHANNEL_TAB: canvases and lists open (openCanvas / openList: the side panel), images in the media viewer; links window.open | n/a | the same; PDFs, video, audio and the rest open their page in the browser (openFile, as the Files view) |
+| Row ⋯ | FileActions' hover group: Download (hosted files), Share, the canvas / list star, More actions (getFileActionsMenuItems); LinkEntity: View link details (info) and More actions: Copy link ("Link copied to clipboard"), Add to folder ▸ | n/a | Download and More actions (the Files view's menu items); links: More actions with Copy link |
+| Keyboard | the explorer's virtual list (↑/↓, Home/End, PageUp/PageDown, Enter) and the grid's arrow keys | n/a | vlist_keys.go over the rows; the media cells are rows of their own (↑/↓ walk them in order) |
+| Tab permalinks | getChannelTabPermalink /archives/<C>/tabs/<id> opens that tab | the channel, on Messages | the channel, then the tab once the tab bar has it (canvas, list, Workflows and Files & links tabs) |
+| Search | ExplorerSearch: Enter on the type-query completion sets the query on all three browsers (All keeps the sort, others take Most relevant); clearing resets them | n/a | Enter searches, clearing the text resets |
+
+Not done, and why:
+
+- **ResourcesTabView** (`resources_channel_tab`: "Files & links" with View
+  all, "Media", "Recent huddles", and the All files & links page). The
+  account doesn't have it; Clack reads no experiment for it and always
+  draws files_tab_view.
+- **From huddles** (`files_and_artifacts_from_meetings`, off): the radio and
+  its huddles.history-style list aren't ported.
+- **The search's autocomplete.** ExplorerSearch suggests files from the
+  channel while typing (the searcher with `entities.files.channel`); Clack
+  searches on Enter only.
+- **Hover actions Clack has no screen for:** Share (the file share dialog),
+  the canvas / list star in the hover group, View link details (the link
+  details flexpane) and Add to folder (bookmark folders). The file ⋯ menu
+  is the Files view's subset, in that view's order, not hYuM's non-unified
+  order.
+- **The media viewer's paging.** Slack passes fileChannelMediaInfo so the
+  viewer pages through the channel's media; Clack's opens the one image.
+  Videos open their page (no player).
+- **The grid's 2-D arrow keys.** ↑/↓ step through the cells one by one.
+- **Dragging** files and links into folders (DraggableExplorerFile/Link).
+- **Manage tabs:** reordering and hiding the tab aren't wired (the card
+  lists the tabs only).
+- **Real pages.** conversations.searchLinks' page size isn't visible from
+  the client; fakeslack uses 10 so Load More is exercised.

@@ -470,6 +470,7 @@ var (
 	_GetWindowLong32              = user32.NewProc("GetWindowLongW")
 	_GetWindowPlacement           = user32.NewProc("GetWindowPlacement")
 	_LoadCursor                   = user32.NewProc("LoadCursorW")
+	_CreateIconFromResourceEx     = user32.NewProc("CreateIconFromResourceEx") // Clack patch 15
 	_LoadImage                    = user32.NewProc("LoadImageW")
 	_MonitorFromPoint             = user32.NewProc("MonitorFromPoint")
 	_MonitorFromRect              = user32.NewProc("MonitorFromRect")
@@ -867,6 +868,22 @@ func LoadCursor(curID uint16) (syscall.Handle, error) {
 	h, _, err := _LoadCursor.Call(0, uintptr(curID))
 	if h == 0 {
 		return 0, fmt.Errorf("LoadCursorW failed: %v", err)
+	}
+	return syscall.Handle(h), nil
+}
+
+// CreateIconFromResourceEx makes a cursor (icon false) or an icon from
+// a resource's bytes: for a cursor, the hotspot's x and y as two WORDs,
+// then the image. Zero cx and cy with LR_DEFAULTSIZE make it the system's
+// cursor size, as LoadCursor does. Clack patch 15.
+func CreateIconFromResourceEx(res []byte, icon bool, cx, cy int, flags uint32) (syscall.Handle, error) {
+	fIcon := uintptr(0)
+	if icon {
+		fIcon = 1
+	}
+	h, _, err := _CreateIconFromResourceEx.Call(uintptr(unsafe.Pointer(&res[0])), uintptr(len(res)), fIcon, 0x00030000, uintptr(cx), uintptr(cy), uintptr(flags))
+	if h == 0 {
+		return 0, fmt.Errorf("CreateIconFromResourceEx failed: %v", err)
 	}
 	return syscall.Handle(h), nil
 }

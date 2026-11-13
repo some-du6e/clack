@@ -163,3 +163,49 @@ func TestStandardEmojiLoadsCoveringSize(t *testing.T) {
 		t.Errorf("fetched %v, want %v", got, want)
 	}
 }
+
+// TestDeriveSmallerSizeAtOnce: a size of a URL another size of which is
+// decoded is drawn by the first Get (scaled down from it, no fetch): a
+// reaction pill showing the emoji the picker loaded. A larger size isn't
+// made by upscaling; it loads.
+func TestDeriveSmallerSizeAtOnce(t *testing.T) {
+	var mu sync.Mutex
+	fetches := 0
+	fetch := func(context.Context, string) ([]byte, error) {
+		mu.Lock()
+		fetches++
+		mu.Unlock()
+		img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+		var b bytes.Buffer
+		_ = png.Encode(&b, img)
+		return b.Bytes(), nil
+	}
+	c := New(fetch, "", nil)
+	const u = "https://emoji.slack-edge.com/T0/verity/0a1b2c.png"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, ok := c.Get(u, 44); ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the 44px decode never arrived")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	op, ok := c.Get(u, 16)
+	if !ok || op.Size().X > 16 || op.Size().X == 0 {
+		t.Fatalf("16px at once: ok %v, size %v", ok, op.Size())
+	}
+	if sz, ok := c.Size(u, 16); !ok || sz.X != 16 {
+		t.Errorf("16px entry %v %v", sz, ok)
+	}
+	if _, ok := c.Get(u, 96); ok {
+		t.Error("96px drawn from a 44px decode (upscaled)")
+	}
+	time.Sleep(50 * time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	if fetches != 2 { // 44px, then 96px; 16px fetched nothing
+		t.Errorf("%d fetches, want 2", fetches)
+	}
+}
