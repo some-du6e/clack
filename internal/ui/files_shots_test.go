@@ -197,7 +197,9 @@ func TestFilesShots(t *testing.T) {
 
 // fileInView is the #files-gallery message name's first file box,
 // scrolled whole into view between the header and the composer (the
-// rects are the rows' layout boxes, not clipped by the list).
+// rects are the rows' layout boxes, not clipped by the list); a box taller
+// than the pane, with its top in view. Off screen, the list scrolls
+// toward it: older messages are above.
 func (e *perfEnv) fileInView(t *testing.T, name string) messages.FileRect {
 	t.Helper()
 	ts := ""
@@ -207,20 +209,29 @@ func (e *perfEnv) fileInView(t *testing.T, name string) messages.FileRect {
 		}
 	}
 	var fr messages.FileRect
-	for i := 0; i < 12; i++ {
-		fr = messages.FileRect{}
-		e.until(name+"'s file on screen", 10*time.Second, func() bool {
-			if rs := rectsOf(e.channelFiles(fakeslack.FilesChannelID), ts); len(rs) > 0 {
-				fr = rs[0]
+	for i := 0; i < 40; i++ {
+		e.frame()
+		all := e.channelFiles(fakeslack.FilesChannelID)
+		rs := rectsOf(all, ts)
+		if len(rs) == 0 {
+			dy := float32(-500) // up: the channel opens at its latest
+			for _, r := range all {
+				if r.TS < ts {
+					dy = 500 // something older is showing: it's below
+					break
+				}
 			}
-			return fr.File != nil
-		})
+			e.scroll(e.listPoint(), dy)
+			e.settle(150 * time.Millisecond)
+			continue
+		}
+		fr = rs[0]
 		tall := fr.R.Dy() > e.size.Y-330 // taller than the pane: its top in view
 		if fr.R.Min.Y >= 150 && (fr.R.Max.Y <= e.size.Y-180 || tall && fr.R.Min.Y <= 260) {
 			return fr
 		}
 		e.scroll(e.listPoint(), float32(fr.R.Min.Y-220))
-		e.settle(250 * time.Millisecond)
+		e.settle(200 * time.Millisecond)
 	}
 	t.Fatalf("%s's file stays at %v", name, fr.R)
 	return fr

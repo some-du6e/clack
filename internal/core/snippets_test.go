@@ -69,13 +69,16 @@ func TestExpandSnippet(t *testing.T) {
 }
 
 // TestSnippetDisplayCut: content past 12,800 characters is cut for
-// display (is_truncated) even when the server sent it whole.
+// display (is_truncated) even when the server sent it whole, as
+// html-truncate does it: 400 lines of 99 characters keep 130 (node, on
+// Slack's module), while 200 such lines stay whole (what is left after
+// the cut is shorter than the limit).
 func TestSnippetDisplayCut(t *testing.T) {
 	a, f := testApp(t)
 	m := snippetMsg()
 	a.S.SetLatest("C1", []slack.Message{m}, false)
 	line := `<div><pre>` + strings.Repeat("x", 99) + `</pre></div>`
-	html := `<div class="CodeMirror"><div class="CodeMirror-code">` + strings.Repeat(line, 200) + `</div></div>`
+	html := `<div class="CodeMirror"><div class="CodeMirror-code">` + strings.Repeat(line, 400) + `</div></div>`
 	f.reply["files.info"] = string(raw(map[string]any{"ok": true, "file": map[string]any{"id": "F1"},
 		"content_highlight_html": html, "content_highlight_html_truncated": false}))
 	evs, stop := a.Subscribe()
@@ -83,7 +86,7 @@ func TestSnippetDisplayCut(t *testing.T) {
 	a.ExpandFile("C1", m.TS, "F1")
 	next(t, evs, "update")
 	sn := docSnippet(t, next(t, evs, "update").Msg)
-	if !sn.Expanded || !sn.ContentTruncated || sn.Content == nil || len(sn.Content.Lines) >= 200 || len(sn.Content.Lines) < 120 {
+	if !sn.Expanded || !sn.ContentTruncated || sn.Content == nil || len(sn.Content.Lines) != 130 {
 		n := 0
 		if sn.Content != nil {
 			n = len(sn.Content.Lines)

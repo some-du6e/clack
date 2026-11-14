@@ -110,6 +110,7 @@ func TestSnippetCollapsed(t *testing.T) {
 	h := &actHandler{}
 	hs := newHarness(doc(fileBlock(f)), h)
 	hs.w = 600
+	hs.v.SetOptions(Options{CompactFiles: true}) // no meta line over it
 	hs.frame()
 	if hs.v.d.size.Y != 1+200+1 {
 		t.Errorf("collapsed height %d", hs.v.d.size.Y)
@@ -141,6 +142,7 @@ func TestSnippetCollapsed(t *testing.T) {
 	h = &actHandler{}
 	hs = newHarness(doc(fileBlock(short)), h)
 	hs.w = 600
+	hs.v.SetOptions(Options{CompactFiles: true})
 	hs.frame()
 	if len(hs.v.d.pills) != 0 || len(boxesOf(&hs.v.d, bFade)) != 0 {
 		t.Errorf("a short snippet: %d pills", len(hs.v.d.pills))
@@ -170,6 +172,7 @@ func TestSnippetExpanded(t *testing.T) {
 	h := &actHandler{}
 	hs := newHarness(doc(fileBlock(f)), h)
 	hs.w = 600
+	hs.v.SetOptions(Options{CompactFiles: true})
 	hs.frame()
 	findFrag(t, &hs.v.d, "v29")
 	note := findFrag(t, &hs.v.d, "truncated")
@@ -199,7 +202,7 @@ func TestSnippetExpanded(t *testing.T) {
 	}
 
 	f.Expanded, f.Expanding, f.Content = false, true, nil
-	hs.v.Set(doc(fileBlock(f)), Options{})
+	hs.v.Set(doc(fileBlock(f)), Options{CompactFiles: true})
 	hs.frame()
 	if pl := hs.v.d.pills[0]; !pl.expanding || pl.btn.Dx() != 16 || pl.btn.Dy() != 16 {
 		t.Errorf("expanding: %+v", pl)

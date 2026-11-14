@@ -328,8 +328,10 @@ func (l *lay) snippet(f *richtext.File, x, y, w int) int {
 	ns := flowStyle{face: font.Font{Typeface: l.st.Mono}, size: l.sp(13), lineH: lh, col: Over(num, p.Panel), emoji: l.dp(13), maxLines: 1, noSelect: true}
 	nk := l.faceFor(ns.face, ns.size, 0)
 	ly := top
+	cut := false // lines under the 200px: hidden, the box is the 200px
 	for i, ln := range lines {
 		if ly >= limit {
+			cut = true
 			break
 		}
 		pt, pb := snippetPads(i, len(lines))
@@ -337,7 +339,8 @@ func (l *lay) snippet(f *richtext.File, x, y, w int) int {
 		rows := 1 << 20
 		if collapsed {
 			if rows = (limit - ty) / lh; rows < 1 {
-				break // under the 200px: hidden
+				cut = true
+				break
 			}
 		}
 		n := strconv.Itoa(i + 1)
@@ -379,6 +382,9 @@ func (l *lay) snippet(f *richtext.File, x, y, w int) int {
 		ly = ty + h + l.dp(pb)
 	}
 	bottom := min(ly, limit)
+	if cut {
+		bottom = limit
+	}
 	cb := image.Rect(left, top, right, bottom) // .c-pillow_file__snippet
 	rr := l.dp(12) - bw
 	gut, rule := rgba(29, 28, 29, 0.04), rgba(29, 28, 29, 0.13)
@@ -441,6 +447,7 @@ func (l *lay) snippet(f *richtext.File, x, y, w int) int {
 		h += l.snippetTruncated(f, x, bottom, cw)
 		lastTg = int16(len(l.d.targets) - 1)
 	}
+	h += bw // the pillow's bottom border
 	r := image.Rect(x, y, x+cw, y+h)
 	l.d.boxes[bi].r = r
 	l.d.boxes[bi].tgTo = lastTg
@@ -453,7 +460,7 @@ func (l *lay) snippet(f *richtext.File, x, y, w int) int {
 }
 
 // snippetTruncated lays out .c-pillow_file__snippet__truncated at y under
-// the snippet and returns its height.
+// the snippet and returns its height (inside the pillow's border).
 func (l *lay) snippetTruncated(f *richtext.File, x, y, cw int) int {
 	p := &l.st.Palette
 	bw := l.dp(1)
@@ -478,7 +485,7 @@ func (l *lay) snippetTruncated(f *richtext.File, x, y, cw int) int {
 	}
 	ty := y + bw + l.dp(4)
 	h, _ := l.flow(x+bw+l.dp(8), ty, cw-2*bw-2*l.dp(8), &fs)
-	return bw + l.dp(4) + max(h, fs.lineH) + l.dp(4) + bw
+	return bw + l.dp(4) + max(h, fs.lineH) + l.dp(4)
 }
 
 // drawPills draws the hovered snippets' pills.
