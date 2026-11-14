@@ -40,9 +40,10 @@ func TestInviteNotificationButtons(t *testing.T) {
 	if len(n.Actions) != 2 || n.Actions[0].Key != "join" || n.Actions[1].Key != "decline" {
 		t.Errorf("the Linux buttons changed: %+v", n.Actions)
 	}
-	// sharedHuddleNotificationOptions' subtitle (macOS shows it): a DM's partner
-	if n.Subtitle != "remote" {
-		t.Errorf("the DM invite's subtitle %q, want the partner's name", n.Subtitle)
+	// sharedHuddleNotificationOptions' subtitle (macOS shows it): a DM's
+	// partner, by the name Slack shows (core's display name)
+	if who := e.c.displayName(huddle.FakeRemoteUser); n.Subtitle != who {
+		t.Errorf("the DM invite's subtitle %q, want the partner's name %q", n.Subtitle, who)
 	}
 
 	e.app.SetExperimentGroup(expNotificationActions, "on")
