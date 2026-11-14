@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The explorer search's suggestions are fetchFilesWithQuery with the
@@ -169,5 +170,52 @@ func TestMoveTabAfter(t *testing.T) {
 		if id != c.id || after != c.after || ok != c.ok {
 			t.Errorf("%d→%d: %q %q %v, want %q %q %v", c.from, c.to, id, after, ok, c.id, c.after, c.ok)
 		}
+	}
+}
+
+// useCanEditTabs against fakeslack's Grid (files-links-2's check, now the
+// one CanEditTabs): a member of a live channel may edit with the
+// MANAGE_CHANNEL_TABS grant; without it, archived, or under
+// channel_managers for a member who manages nothing, no. The grant is
+// read from the permission store, so each case waits for its answer.
+func TestCanEditTabsOnGrid(t *testing.T) {
+	ch := fakeslack.FilesChannelID
+	member := slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true}
+	app := func(grant bool) *App {
+		a, fs := channelFilesFake(t)
+		// the fake grants MANAGE_CHANNEL_TABS for any channel by default
+		// (pins-folders' tests rely on it): withhold it explicitly
+		fs.Permissions = map[string][]string{ch: {}}
+		if grant {
+			fs.Permissions = map[string][]string{ch: {PermManageChannelTabs}}
+		}
+		return a
+	}
+	a := app(false)
+	if a.CanEditTabs(ch) {
+		t.Error("an unknown conversation is editable")
+	}
+	a.S.PutConv(member)
+	waitGrants(t, a, ch)
+	if a.CanEditTabs(ch) {
+		t.Error("on Grid without MANAGE_CHANNEL_TABS a member edits tabs")
+	}
+	a = app(true)
+	a.S.PutConv(member)
+	waitGrants(t, a, ch)
+	if !a.CanEditTabs(ch) {
+		t.Error("a member with MANAGE_CHANNEL_TABS can't edit tabs")
+	}
+	archived := member
+	archived.IsArchived = true
+	a.S.PutConv(archived)
+	if a.CanEditTabs(ch) {
+		t.Error("an archived channel's tabs are editable")
+	}
+	managed := member
+	managed.Creator, managed.Properties = "U0SOMEONE", json.RawMessage(`{"who_can_manage_tabs":"channel_managers"}`)
+	a.S.PutConv(managed)
+	if a.CanEditTabs(ch) {
+		t.Error("channel_managers: a member who manages nothing can edit")
 	}
 }
