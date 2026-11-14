@@ -313,6 +313,14 @@ func init() {
 	reg("status-member", s(circle(10, 10, 3.75)))
 	reg("ring", registry["status-member"].parts...)
 	reg("stop-filled", fl("M6.19 4.25 H13.81 A2 2 0 0 1 15.35 5 L15.75 5.79 V13.81 A2 2 0 0 1 15 15.35 L14.21 15.75 H6.19 A2 2 0 0 1 4.65 15 L4.25 14.2 V6 A2 2 0 0 1 6.19 4.25 Z"))
+	// Slack's subtask, subtask-progress and subtask-complete (the lists'
+	// SubtasksProgressSummary, uzTK): the branch's two arms on their
+	// centrelines; each end a 1.5 ring, or a disc with a check cut out
+	// (the hole wound the other way, its outline 1.47 out from the
+	// check's centreline: the check's 0.75 plus fl's band)
+	reg("subtask", subtaskArms, s(circle(14.875, 5.125, 3.375)), s(circle(14.875, 14.875, 3.375)))
+	reg("subtask-progress", subtaskArms, subtaskDone1, s(circle(14.875, 14.875, 3.375)))
+	reg("subtask-complete", subtaskArms, subtaskDone1, subtaskDone2)
 	reg("sun", s("M10 3.75 V1.75"), s("M4.55 4.55 L5.57 5.57"), s("M15.45 4.55 L14.43 5.57"), s(circle(10, 10, 3.25)), s("M3.75 10 H1.75"), s("M18.25 10 H16.25"), s("M15.5 15.5 L14.45 14.45"), s("M4.55 15.45 L5.5 14.5"), s("M10 16.25 V18.25"))
 	reg("sun-filled", s("M10 3.75 V1.75"), s("M14.45 5.55 L15.45 4.55"), s("M4.55 4.55 L5.58 5.58"), fl(circle(10, 10, 3.25)), s("M3.75 10 H1.75"), s("M18.25 10 H16.25"), s("M15.5 15.5 L14.45 14.45"), s("M4.5 15.5 L5.5 14.5"), s("M10 16.25 V18.25"))
 	reg("tag", s("M10 2.39 L9.34 2.63 L4.42 7 L4.25 8.19 L4.39 17.45 L6 17.84 H14 C14.5 17.75 15.32 17.81 15.56 17.19 L15.75 16.11 V8 L15.5 6.86 L10.64 2.61 L10 2.39 Z"), disc(10, 7.09, 1.5), s("M12.25 11.84 H7.75"), s("M12.25 14.34 H7.75"))
@@ -354,3 +362,9 @@ func init() {
 func with(name string, more ...part) []part {
 	return append(append([]part{}, registry[name].parts...), more...)
 }
+
+var (
+	subtaskArms  = s("M2.25 1.75 V11 A4 4 0 0 0 6.25 15 H11 M2.25 5.25 H11")
+	subtaskDone1 = fl(circle(14.875, 5.125, 3.406) + " " + "M13.45 7.33 L13.67 7.50 L13.92 7.63 L14.05 7.68 L14.33 7.73 L14.61 7.73 L14.75 7.71 L14.89 7.68 L15.15 7.57 L15.39 7.42 L15.49 7.32 L17.57 5.30 L17.76 5.08 L17.90 4.83 L17.99 4.56 L18.02 4.27 L18.00 3.98 L17.92 3.71 L17.78 3.45 L17.60 3.23 L17.38 3.04 L17.26 2.96 L17.00 2.85 L16.72 2.79 L16.43 2.79 L16.28 2.80 L16.14 2.84 L15.88 2.94 L15.63 3.10 L14.47 4.22 L14.30 4.10 L14.04 3.96 L13.76 3.88 L13.48 3.86 L13.19 3.89 L12.92 3.98 L12.66 4.12 L12.44 4.31 L12.27 4.53 L12.13 4.79 L12.09 4.93 L12.03 5.21 L12.03 5.35 L12.04 5.50 L12.10 5.78 L12.21 6.04 L12.38 6.28 Z")
+	subtaskDone2 = fl(circle(14.875, 14.875, 3.406) + " " + "M12.38 16.03 L13.55 17.17 L13.79 17.32 L14.05 17.43 L14.19 17.46 L14.33 17.48 L14.61 17.48 L14.89 17.43 L15.15 17.32 L15.27 17.25 L15.49 17.07 L17.57 15.05 L17.76 14.83 L17.90 14.58 L17.99 14.31 L18.02 14.02 L18.00 13.73 L17.92 13.46 L17.78 13.20 L17.60 12.98 L17.38 12.79 L17.26 12.71 L17.00 12.60 L16.72 12.54 L16.57 12.53 L16.28 12.55 L16.14 12.59 L15.88 12.69 L15.63 12.85 L14.47 13.97 L14.30 13.85 L14.04 13.71 L13.76 13.63 L13.48 13.61 L13.19 13.64 L12.92 13.73 L12.66 13.87 L12.44 14.06 L12.27 14.28 L12.13 14.54 L12.09 14.68 L12.03 14.96 L12.03 15.10 L12.04 15.25 L12.10 15.53 L12.21 15.79 Z")
+)

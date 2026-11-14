@@ -197,6 +197,9 @@ func (a *App) OpenListItem(listID, recID string) {
 	}
 	act := a.listActions()
 	act.Close = a.CloseSecondary
+	// SubtaskSubtitle's isOpenInList: the primary view is the list
+	act.InList = func(id string) bool { return string(a.router.Current()) == "lists/"+id }
+	act.OpenList = a.OpenList
 	a.secondary = secondaryState{kind: secDetails, channel: a.router.Current().Channel(), width: w}
 	a.secondary.view = listview.NewItem(a, listID, recID, act)
 	a.Invalidate()

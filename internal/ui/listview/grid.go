@@ -16,6 +16,7 @@ import (
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -24,7 +25,7 @@ type gridState struct {
 	scrollX, scrollY int
 	wheel            wheelScroll
 	hover            int // line under the pointer (-1 none)
-	hoverX           int
+	hoverX, hoverY   int
 	press            f32.Point
 	pressed          bool
 	tag              int
@@ -51,6 +52,12 @@ type gridState struct {
 	copied    string   // tests: what went to the clipboard
 	origin    image.Point
 	originOK  bool
+
+	// the primary cell's buttons under lists_sub_tasks (subtasks.go):
+	// last frame's rects, one tooltip per kind
+	acts   []gridAct
+	tips   [actKinds]popups.TipState
+	tipHit [actKinds]bool
 }
 
 type lineKind uint8
@@ -164,6 +171,7 @@ func (v *View) layoutGrid(gtx layout.Context, d *core.ListDoc, lv *lists.View, r
 		firstW = g.cols[0].w
 	}
 	// rows (behind the sticky header)
+	g.acts = g.acts[:0]
 	for i := range g.lines {
 		ln := &g.lines[i]
 		ty := ln.y - g.scrollY
@@ -172,6 +180,7 @@ func (v *View) layoutGrid(gtx layout.Context, d *core.ListDoc, lv *lists.View, r
 		}
 		v.layoutLine(gtx, d, lv, ln, i, ty, firstW, groupCol)
 	}
+	v.endTips(gtx)
 	// the sticky header row
 	theme.Fill(gtx, image.Rect(0, 0, sz.X, g.headH), c.Bg)
 	hc := shade(th, "gray-70")
@@ -406,14 +415,27 @@ func (v *View) layoutLine(gtx layout.Context, d *core.ListDoc, lv *lists.View, l
 			if gc.c.Type == lists.TodoCompleted { // a centred circle (p-grid_cell--completed)
 				px, cw = (gc.w-gtx.Dp(20))/2, gtx.Dp(20)
 			}
-			if i == 0 && g.hover == idx && !v.edit.active {
+			subs := i == 0 && v.subTasksOn() // ListPrimaryColumnActions' new layout (subtasks.go)
+			var ps primaryStatic
+			switch {
+			case subs:
+				ps = v.primaryStatic(gtx, d, rec)
+				end := gx + gc.w - staticRight(gtx, ps.todo) - ps.w
+				if g.hover == idx && !v.edit.active {
+					end = min(end, gx+gc.w-gtx.Dp(10+32))
+				}
+				cw = min(cw, end-(gx+px))
+			case i == 0 && g.hover == idx && !v.edit.active:
 				cw -= gtx.Dp(60) // room for "Open"
 			}
 			at(gtx, image.Pt(gx+px, 0), image.Pt(max(0, cw), ln.h), func(gtx layout.Context) layout.Dimensions {
 				v.drawCell(gtx, gc.c, f, max(0, cw), ln.h, cellOpts{primary: i == 0 && gc.c.IsPrimary, wrap: lists.Wraps(lv, gc.c), self: self})
 				return layout.Dimensions{Size: gtx.Constraints.Max}
 			})
-			if i == 0 && g.hover == idx && !v.edit.active {
+			switch {
+			case subs:
+				v.drawPrimaryActs(gtx, rec, ps, gx, gc.w, ln.h, ty, g.hover == idx && v.mode != Peek)
+			case i == 0 && g.hover == idx && !v.edit.active:
 				v.openButton(gtx, gx+gc.w-gtx.Dp(64), ln.h)
 			}
 			if i > 0 {
@@ -501,7 +523,7 @@ func (v *View) gridEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {
 			g.hover = v.lineAt(int(pe.Position.Y))
 		case pointer.Move:
 			g.hover = v.lineAt(int(pe.Position.Y))
-			g.hoverX = int(pe.Position.X)
+			g.hoverX, g.hoverY = int(pe.Position.X), int(pe.Position.Y)
 			v.learnOrigin(pe.Position)
 		case pointer.Leave:
 			g.hover = -1
@@ -563,6 +585,12 @@ func (v *View) gridClick(gtx layout.Context, d *core.ListDoc, x, y int) {
 	default:
 		return
 	}
+	if a, ok := g.actAt(x, y); ok && a.rec == ln.row.Rec.ID { // the primary cell's buttons (subtasks.go)
+		if v.act.OpenItem != nil {
+			v.act.OpenItem(v.id, a.rec)
+		}
+		return
+	}
 	if v.edit.active {
 		done := v.edit.done
 		v.edit.done = nil
@@ -589,7 +617,7 @@ func (v *View) gridClick(gtx layout.Context, d *core.ListDoc, x, y int) {
 		if x < gx || x >= gx+gc.w {
 			continue
 		}
-		if ci == 0 && x >= gx+gc.w-gtx.Dp(68) {
+		if ci == 0 && !v.subTasksOn() && x >= gx+gc.w-gtx.Dp(68) {
 			if v.act.OpenItem != nil {
 				v.act.OpenItem(v.id, ln.row.Rec.ID)
 			}

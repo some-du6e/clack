@@ -78,6 +78,11 @@ type Actions struct {
 	People    func() []string                    // people to offer in a person field (besides the list's)
 	OpenFile  func(id string)                    // an attachment
 	OpenRoute func(channel, ts, threadTS string) // a message cell
+	// InList reports whether the list is the primary view (a subtask's
+	// pane then leaves "in {list}" out of SubtaskSubtitle); OpenList
+	// opens the list (that link).
+	InList   func(listID string) bool
+	OpenList func(listID string)
 	// SectionButton is the header's FileSectionDropdownButton
 	// (custom_file_sections, section_button.go): ok false hides it; look
 	// is its face (SectionStar …), emoji the collection's emoji image.
