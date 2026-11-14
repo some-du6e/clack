@@ -533,11 +533,11 @@ func layoutPreview(gtx C, th *theme.Theme, c *Controller, v previewView, cl *pre
 			})
 		}
 		tx = x0 + facesW + dp(8)
-		drawSpans(gtx, th, lines[:min(2, len(lines))], image.Pt(tx, ty), k.text)
+		drawSpans(gtx, th, lines[:min(2, len(lines))], image.Pt(tx, ty), k.text, k.bg)
 	} else {
 		lines := wrapSpans(gtx, th, 15, v.Title, textW)
 		w := spansWidth(gtx, th, lines)
-		drawSpans(gtx, th, lines[:min(2, len(lines))], image.Pt(tb.Min.X+(tb.Dx()-w)/2, ty), k.text)
+		drawSpans(gtx, th, lines[:min(2, len(lines))], image.Pt(tb.Min.X+(tb.Dx()-w)/2, ty), k.text, k.bg)
 	}
 
 	// the content panel
@@ -767,10 +767,10 @@ func spansWidth(gtx C, th *theme.Theme, lines [][]span) int {
 }
 
 // drawSpans draws wrapped 15/22 lines from p.
-func drawSpans(gtx C, th *theme.Theme, lines [][]span, p image.Point, col color.NRGBA) {
+func drawSpans(gtx C, th *theme.Theme, lines [][]span, p image.Point, col, bg color.NRGBA) {
 	lineH := gtx.Dp(22)
 	for i, ln := range lines {
-		drawSpanLine(gtx, th, 15, defaultEntInk(col), ln, p.X, p.Y+i*lineH, lineH)
+		drawSpanLine(gtx, th, 15, defaultEntInk(col, bg), ln, p.X, p.Y+i*lineH, lineH)
 	}
 }
 

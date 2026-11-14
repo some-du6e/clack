@@ -12,6 +12,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
 // A channel as Slack's InlineChannelEntity draws it (internal/ui/chanent
@@ -71,14 +72,16 @@ func (b *base) chanEntity(gtx C, e chanent.Ent, size unit.Sp, w font.Weight, col
 // privateChip is BaseMissingChannel's non-existent chip
 // (c-missing_channel--private): the lock and the label 4px apart in
 // rgba(foreground_max, .7) over rgba(foreground_low, .13), radius 3,
-// padding 0 2px 1px 0, in the surrounding font.
+// padding 0 2px 1px 0, in the surrounding font. The alphas are the
+// browser's (sRGB) blend over the page (theme.LinearAlpha: Gio blends in
+// linear light, which made the dark chip a solid grey).
 func (b *base) privateChip(gtx C, e chanent.Ent, size unit.Sp, w font.Weight) D {
 	ink := color.NRGBA{R: 29, G: 28, B: 29, A: 255} // --sk_foreground_max / _low, light
 	if b.th.Dark {
 		ink = color.NRGBA{R: 232, G: 232, B: 232, A: 255}
 	}
-	fg, bg := ink, ink
-	fg.A, bg.A = 179, 33 // .7, .13
+	fg := theme.LinearAlpha(theme.WithAlpha(ink, 179), b.p.Bg) // .7
+	bg := theme.LinearAlpha(theme.WithAlpha(ink, 33), b.p.Bg)  // .13
 	m := op.Record(gtx.Ops)
 	d := layout.Inset{Right: 2, Bottom: 1}.Layout(gtx, func(gtx C) D {
 		return row(gtx, layout.Middle,

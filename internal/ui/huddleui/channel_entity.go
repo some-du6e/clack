@@ -108,9 +108,11 @@ type entInk struct {
 	text, chipText, chipBg color.NRGBA
 }
 
-// defaultEntInk is entInk over text col.
-func defaultEntInk(col color.NRGBA) entInk {
-	return entInk{text: col, chipText: theme.WithAlpha(col, 179), chipBg: theme.WithAlpha(col, 33)}
+// defaultEntInk is entInk for text col on surface bg: the chip's .7 and
+// .13 as a browser blends them (theme.LinearAlpha: Gio blends in linear
+// light, which made the dark chip a solid grey).
+func defaultEntInk(col, bg color.NRGBA) entInk {
+	return entInk{text: col, chipText: theme.LinearAlpha(theme.WithAlpha(col, 179), bg), chipBg: theme.LinearAlpha(theme.WithAlpha(col, 33), bg)}
 }
 
 // drawEnt draws e at size in wt with its left at x, in a line lineH tall

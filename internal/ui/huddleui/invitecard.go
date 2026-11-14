@@ -154,7 +154,7 @@ func layoutCard(gtx C, th *theme.Theme, c *Controller, v inviteView, st *cardSta
 		return D{Size: image.Pt(av, av)}
 	})
 	for i, ln := range lines {
-		drawSpanLine(gtx, th, 15, defaultEntInk(k.text), ln, x+textX, y+i*lineH, lineH)
+		drawSpanLine(gtx, th, 15, defaultEntInk(k.text, k.bg), ln, x+textX, y+i*lineH, lineH)
 	}
 	y += textH + gtx.Dp(12)
 	for _, b := range btns {
