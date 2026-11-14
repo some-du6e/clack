@@ -244,7 +244,7 @@ Troubleshooting >
 	a.data = nil
 	a.syncTray()
 	got := menuText(tr.items(), "")
-	if strings.Contains(got, team) || strings.Contains(got, "&Preferences") || strings.Contains(got, "Check for Updates") {
+	if strings.Contains(got, "\n"+team+" +\n") || strings.HasPrefix(got, team+" +\n") || strings.Contains(got, "&Preferences") || strings.Contains(got, "Check for Updates") {
 		t.Fatalf("signed out, no updates:\n%s", got)
 	}
 	if !strings.HasPrefix(got, "&Launch Control >") || !strings.HasSuffix(got, "&Quit <Ctrl+Q> +\n") {

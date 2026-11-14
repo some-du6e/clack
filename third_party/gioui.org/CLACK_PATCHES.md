@@ -947,14 +947,20 @@ had flashed up and taken the focus.
 places, sizes and styles the window (`SetWindowPos` with `SWP_NOACTIVATE`)
 but leaves out the `ShowWindow`, and `newWindow` doesn't call
 `SetForegroundWindow` or `SetFocus`. The window is then hidden as
-`Window.Hide` leaves one (§13): it draws no frames, `Invalidate` still
-wakes the app, options that leave the mode alone keep it hidden (§20), and
-`Perform(system.ActionRaise)` shows it (`SW_SHOWNORMAL`, or `SW_SHOW` for a
-maximized mode), after which it paints. Elsewhere the option does nothing.
+`Window.Hide` leaves one (§13): it draws only the frames Gio's `update`
+draws on its own `WM_WINDOWPOSCHANGED` and `WM_STYLECHANGED` (the
+creation's two, and two for each option that changes it while hidden, as
+for a window hidden to the tray; Electron also paints a `show: false`
+window's first frame, `paintWhenInitiallyHidden`), `Invalidate` draws
+nothing but still wakes the app, options that leave the mode alone keep it
+hidden (§20), and `Perform(system.ActionRaise)` shows it (`SW_SHOWNORMAL`,
+or `SW_SHOW` for a maximized mode), after which it paints. Elsewhere the
+option does nothing.
 
 Tests: `app/clack_hide_windows_test.go` `TestStartHidden` (not visible and
-not the foreground window after its creation, no frames, wake-ups, a title
-change keeps it hidden, `ActionRaise` shows and draws it, the close works),
+not the foreground window after its creation, no frames from `Invalidate`
+but wake-ups, a title change keeps it hidden, `ActionRaise` shows and draws
+it, the close works),
 and `internal/ui` `TestTrayWindow` (Clack's own window launched on login),
 on ci's windows-shell job (`CLACK_WINDOWS_TRAY_TESTS`). Not in
 `UPSTREAM.patch`.

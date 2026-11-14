@@ -502,9 +502,11 @@ jobs:
           CLACK_WINDOWS_TRAY_TESTS: "1"
           CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
         run: |
-          go test -count=1 -v -timeout 10m -run '^TestStartHidden$' gioui.org/app
-          go test -count=1 -v -timeout 10m -run '^(TestTrayIconFromICO|TestTrayMenuItems|TestTrayShell|TestJumpList|TestFocusAssistRead|TestLaunchOnLoginRunValue|TestFitCenteredLikeSlack|TestFocusAssistOnLikeSlack)$' ./internal/desktop
-          go test -count=1 -v -timeout 15m -run '^(TestTrayWindow|TestTrayStateLikeSlack|TestTrayIconFollowsUnreads|TestTrayMenuLikeSlack|TestLaunchOnLoginTrayAndPrefs|TestJumpListLikeSlack|TestAppActions|TestResetWindow|TestStartHiddenLikeSlack|TestSoundPlaybackHoldsTheSound)$' ./internal/ui
+          rc=0
+          go test -count=1 -v -timeout 10m -run '^TestStartHidden$' gioui.org/app || rc=1
+          go test -count=1 -v -timeout 10m -run '^(TestTrayIconFromICO|TestTrayMenuItems|TestTrayShell|TestJumpList|TestFocusAssistRead|TestLaunchOnLoginRunValue|TestFitCenteredLikeSlack|TestFocusAssistOnLikeSlack)$' ./internal/desktop || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestTrayWindow|TestTrayStateLikeSlack|TestTrayIconFollowsUnreads|TestTrayMenuLikeSlack|TestLaunchOnLoginTrayAndPrefs|TestJumpListLikeSlack|TestAppActions|TestResetWindow|TestStartHiddenLikeSlack|TestSoundPlaybackHoldsTheSound)$' ./internal/ui || rc=1
+          exit $rc
       # The real exe: Clack.exe --startup (the Run value) with Keep in
       # Background, the default, keeps its window hidden; the jump list's
       # Move Clack to Current Display (a second launch with
@@ -577,12 +579,20 @@ jobs:
             $ok = $false
             for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
               foreach ($f in Get-ChildItem $dir -Filter '*.customDestinations-ms' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $since }) {
-                $text = [System.Text.Encoding]::Unicode.GetString([System.IO.File]::ReadAllBytes($f.FullName))
-                if (@($want | Where-Object { -not $text.Contains($_) }).Count -eq 0) { $ok = $true; Write-Host "the jump list: $($f.Name)" }
+                $b = [System.IO.File]::ReadAllBytes($f.FullName)
+                # UTF-16 strings sit at even or odd offsets: read it both ways
+                $texts = @([System.Text.Encoding]::Unicode.GetString($b), [System.Text.Encoding]::Unicode.GetString($b, 1, $b.Length - 1))
+                if (@($want | Where-Object { $w = $_; -not @($texts | Where-Object { $_.Contains($w) }) }).Count -eq 0) { $ok = $true; Write-Host "the jump list: $($f.Name)" }
               }
               if (-not $ok) { Start-Sleep -Milliseconds 500 }
             }
-            if (-not $ok) { throw "no saved jump list with $($want -join ', ')" }
+            if (-not $ok) {
+              $adv = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -ErrorAction SilentlyContinue
+              Write-Host "Start_TrackDocs: $($adv.Start_TrackDocs)"
+              Get-ChildItem $dir -ErrorAction SilentlyContinue | Format-Table Name, Length, LastWriteTime | Out-String | Write-Host
+              Get-Content $log | Select-String -SimpleMatch 'jump list', 'desktop:', 'ui: ' | Select-Object -Last 40 | ForEach-Object { $_.Line }
+              throw "no saved jump list with $($want -join ', ')"
+            }
           } finally {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             $p.WaitForExit(15000) | Out-Null

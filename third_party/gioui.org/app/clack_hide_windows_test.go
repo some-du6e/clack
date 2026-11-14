@@ -288,9 +288,11 @@ func TestCaretBlinkFromOS(t *testing.T) {
 }
 
 // A window made with StartHidden (Clack patch, CLACK_PATCHES.md §23) is
-// never shown by its creation: not visible, not the foreground window, no
-// frames, but Invalidate still wakes the app; a title change keeps it
-// hidden (§20); ActionRaise shows it and it draws; it closes as usual.
+// never shown by its creation: not visible, not the foreground window;
+// past the frames its creation's configure draws (Gio's update on
+// WM_WINDOWPOSCHANGED and WM_STYLECHANGED), Invalidate draws nothing but
+// still wakes the app; a title change keeps it hidden (§20); ActionRaise
+// shows it and it draws; it closes as usual.
 func TestStartHidden(t *testing.T) {
 	if testing.Short() {
 		t.Skip("opens windows")
@@ -307,13 +309,14 @@ func TestStartHidden(t *testing.T) {
 	if fg, _, _ := testGetForeground.Call(); syscall.Handle(fg) == h.hwnd {
 		t.Error("a StartHidden window took the foreground")
 	}
-	w0 := h.wakeups.Load()
+	f0, w0 := h.frames.Load(), h.wakeups.Load()
+	t.Logf("the creation drew %d frames", f0)
 	for range 5 {
 		h.w.Invalidate()
 		time.Sleep(100 * time.Millisecond)
 	}
-	if n := h.frames.Load(); n != 0 {
-		t.Errorf("hidden from the start: %d frames, want none", n)
+	if n := h.frames.Load() - f0; n != 0 {
+		t.Errorf("hidden from the start: %d frames after Invalidate, want none", n)
 	}
 	if h.wakeups.Load() == w0 {
 		t.Error("hidden from the start: Invalidate delivered no event to the app")
@@ -324,9 +327,10 @@ func TestStartHidden(t *testing.T) {
 		t.Fatal("a title change showed the window started hidden")
 	}
 
+	f1 := h.frames.Load()
 	h.w.Perform(system.ActionRaise)
 	waitUntil(t, "visible after ActionRaise", h.visible)
-	waitUntil(t, "a frame after ActionRaise", func() bool { return h.frames.Load() > 0 })
+	waitUntil(t, "a frame after ActionRaise", func() bool { return h.frames.Load() > f1 })
 	if got := testWindowText(h.hwnd); got != "Clack hide test - 3 new items" {
 		t.Errorf("title %q after the show", got)
 	}

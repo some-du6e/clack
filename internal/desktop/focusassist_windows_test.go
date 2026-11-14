@@ -3,6 +3,7 @@
 package desktop
 
 import (
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -18,6 +19,11 @@ import (
 // disturb) each profile set through IQuietHoursSettings shows in the WNF
 // state, FocusAssist and FocusAssistActive (a9), and Clack among the
 // priority-only profile's apps counts as priority. All of it is put back.
+//
+// On Windows Server 2025 a Do not disturb switch can crash the service
+// behind IQuietHoursSettings (WpnUserService, restarted after 1 to 8 s):
+// the next call fails with an RPC error and the switch may be lost, so
+// the switches are retried until the service is back.
 
 const quietHoursUnrestricted = "Microsoft.QuietHoursProfile.Unrestricted"
 
@@ -71,6 +77,54 @@ func quietHours(f func(s *rtObject) error) error {
 	})
 }
 
+// rpcGone reports whether err is the COM server gone (crashed, or not
+// back yet): RPC_S_CALL_FAILED, RPC_S_SERVER_UNAVAILABLE,
+// RPC_E_DISCONNECTED, CO_E_SERVER_EXEC_FAILURE.
+func rpcGone(err error) bool {
+	var hr HResultError
+	if !errors.As(err, &hr) {
+		return false
+	}
+	switch uint32(hr) {
+	case 0x800706BE, 0x800706BA, 0x80010108, 0x80080005:
+		return true
+	}
+	return false
+}
+
+// untilServer retries f while the QuietHours server is gone, up to 30 s.
+func untilServer(t *testing.T, what string, f func() error) error {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		err := f()
+		if err == nil || !rpcGone(err) || time.Now().After(deadline) {
+			return err
+		}
+		t.Logf("%s: %v; the service is restarting, again", what, err)
+		time.Sleep(time.Second)
+	}
+}
+
+// switchProfile sets the profile and waits for the WNF state to say
+// mode, setting it again when a crash lost the switch.
+func switchProfile(t *testing.T, id string, mode int) {
+	t.Helper()
+	for try := 0; try < 4; try++ {
+		if err := untilServer(t, "put_UserSelectedProfile("+id+")", func() error { return setQuietHoursProfile(id) }); err != nil {
+			t.Fatalf("put_UserSelectedProfile(%s): %v", id, err)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for focusAssistWNF() != mode && time.Now().Before(deadline) {
+			time.Sleep(50 * time.Millisecond)
+		}
+		if focusAssistWNF() == mode {
+			return
+		}
+		t.Logf("%s: the WNF state is still %d (want %d); setting it again", id, focusAssistWNF(), mode)
+	}
+}
+
 func setQuietHoursProfile(id string) error {
 	return quietHours(func(s *rtObject) error {
 		p, err := windows.UTF16PtrFromString(id)
@@ -104,6 +158,19 @@ func allowApp(aumid string, add bool) error {
 	})
 }
 
+// priorityAnswer is FocusAssistPriority for Clack once the server answers.
+func priorityAnswer(t *testing.T) int {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		p := FocusAssistPriority(AppUserModelID)
+		if p != FocusAssistFailed || time.Now().After(deadline) {
+			return p
+		}
+		time.Sleep(time.Second)
+	}
+}
+
 func TestFocusAssistModes(t *testing.T) {
 	trayShellTests(t)
 	if os.Getenv("CLACK_WINDOWS_FOCUS_ASSIST_TESTS") == "" {
@@ -119,10 +186,10 @@ func TestFocusAssistModes(t *testing.T) {
 	}
 	t.Logf("the runner's profile: %s", orig)
 	t.Cleanup(func() {
-		if err := setQuietHoursProfile(orig); err != nil {
+		if err := untilServer(t, "putting "+orig+" back", func() error { return setQuietHoursProfile(orig) }); err != nil {
 			t.Errorf("putting %s back: %v", orig, err)
 		}
-		_ = allowApp(AppUserModelID, false)
+		_ = untilServer(t, "RemoveAllowedApp", func() error { return allowApp(AppUserModelID, false) })
 		resetFocusAssistCache()
 	})
 	_ = allowApp(AppUserModelID, false)
@@ -134,13 +201,7 @@ func TestFocusAssistModes(t *testing.T) {
 		{quietHoursAlarmsOnly, FocusAssistAlarmsOnly},
 		{quietHoursUnrestricted, FocusAssistOff},
 	} {
-		if err := setQuietHoursProfile(c.profile); err != nil {
-			t.Fatalf("put_UserSelectedProfile(%s): %v", c.profile, err)
-		}
-		deadline := time.Now().Add(5 * time.Second)
-		for focusAssistWNF() != c.mode && time.Now().Before(deadline) {
-			time.Sleep(50 * time.Millisecond)
-		}
+		switchProfile(t, c.profile, c.mode)
 		if got := focusAssistWNF(); got != c.mode {
 			t.Errorf("%s: the WNF state is %d, want %d", c.profile, got, c.mode)
 		}
@@ -154,13 +215,11 @@ func TestFocusAssistModes(t *testing.T) {
 	}
 
 	// priority only, with Clack among the profile's apps: not muted
-	if err := setQuietHoursProfile(quietHoursPriorityOnly); err != nil {
-		t.Fatal(err)
-	}
-	if err := allowApp(AppUserModelID, true); err != nil {
+	switchProfile(t, quietHoursPriorityOnly, FocusAssistPriorityOnly)
+	if err := untilServer(t, "AddAllowedApp", func() error { return allowApp(AppUserModelID, true) }); err != nil {
 		t.Fatalf("AddAllowedApp: %v", err)
 	}
-	if got := FocusAssistPriority(AppUserModelID); got != 1 {
+	if got := priorityAnswer(t); got != 1 {
 		t.Errorf("isPriority with Clack allowed: %d, want 1", got)
 	}
 	resetFocusAssistCache()
@@ -168,13 +227,14 @@ func TestFocusAssistModes(t *testing.T) {
 		t.Error("priority only with Clack allowed counts as muted")
 	}
 	// the cache: a change within 5 s isn't seen
-	if err := allowApp(AppUserModelID, false); err != nil {
+	asked := time.Now()
+	if err := untilServer(t, "RemoveAllowedApp", func() error { return allowApp(AppUserModelID, false) }); err != nil {
 		t.Fatalf("RemoveAllowedApp: %v", err)
 	}
-	if FocusAssistActive() {
+	if time.Since(asked) < 4*time.Second && FocusAssistActive() {
 		t.Error("the 5 s cache didn't hold the last answer")
 	}
-	if got := FocusAssistPriority(AppUserModelID); got != 0 {
+	if got := priorityAnswer(t); got != 0 {
 		t.Errorf("isPriority after the removal: %d, want 0", got)
 	}
 	resetFocusAssistCache()
