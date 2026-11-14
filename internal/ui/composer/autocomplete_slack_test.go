@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"gioui.org/io/key"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
@@ -232,6 +235,107 @@ func TestAutocompleteSlackCommandsAndEmoji(t *testing.T) {
 	app.RecordEmojiFrecency("sweat_smile", ":smi")
 	got = acSettle(t, newAutocompleteFor(t, app), ":smi", func(n []string) bool { return len(n) > 0 && n[0] == "sweat_smile" })
 	t.Logf(":smi after picks: %v", got)
+}
+
+// ":tu" then Tab (Karim, 2026-11-14) through the composer: Slack's own
+// ranking (a node harness over build efbd526e8fb3, the cases in
+// internal/acrank/emoji_slack_test.go) puts tulip first and root_vegetable
+// second (only its keyword "turnip" matches), and never offers +1 for
+// "tu", however often it's used: a query under 3 letters may skip no
+// letters and none of +1's keywords starts with "tu". ":thu" does reach
+// it ("thumbsup"), first once its uses count; ":like" reaches it by
+// keyword. A pick stored under ":tu" moves an emoji to the top.
+func TestAutocompleteSlackEmojiTu(t *testing.T) {
+	app, _ := acSlackApp(t)
+	noThumbs := func(rows []string) bool { return acIndex(rows, "+1") < 0 && acIndex(rows, "thumbsup") < 0 }
+	// with the remote model in, root_vegetable is second (the fallback
+	// model puts turkey there)
+	got := acSettle(t, newAutocompleteFor(t, app), ":tu", func(n []string) bool { return len(n) > 1 && n[1] == "root_vegetable" })
+	t.Logf(":tu cold: %v", got)
+	if got[0] != "tulip" || !noThumbs(got) {
+		t.Errorf(":tu: Slack's tulip first, no +1: %v", got)
+	}
+	for _, want := range []string{"turkey", "turtle", "flag-tc", "poultry_leg"} {
+		if acIndex(got, want) < 0 {
+			t.Errorf(":tu: %s (keyword or name match) missing: %v", want, got)
+		}
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":like", func(n []string) bool { return len(n) > 1 })
+	if acIndex(got, "+1") < 0 {
+		t.Errorf(":like: +1 by its keyword: %v", got)
+	}
+
+	// +1 used a lot: reactions record its id key only (text ""), picks
+	// under ":thu" the text too
+	for i := 0; i < 20; i++ {
+		app.RecordEmojiFrecency("+1", "")
+	}
+	for i := 0; i < 3; i++ {
+		app.RecordEmojiFrecency("thumbsup", ":thu")
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":tu", func(n []string) bool { return len(n) > 1 })
+	t.Logf(":tu with +1 frecent: %v", got)
+	if got[0] != "tulip" || !noThumbs(got) {
+		t.Errorf(":tu with +1 frecent: still tulip first, no +1: %v", got)
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":thu", func(n []string) bool { return len(n) > 0 && n[0] == "thumbsup" })
+	t.Logf(":thu with +1 frecent: %v", got)
+
+	// picks under ":tu" itself
+	for i := 0; i < 3; i++ {
+		app.RecordEmojiFrecency("turtle", ":tu")
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":tu", func(n []string) bool { return len(n) > 0 && n[0] == "turtle" })
+	if got[1] != "tulip" || !noThumbs(got) {
+		t.Errorf(":tu after turtle picks: turtle, then tulip: %v", got)
+	}
+}
+
+// A frecency that lands while ":tu" is open counts before Tab acts.
+// Slack's copy of the pref (turtle picked under "tu") arrives through
+// loadFrecencyPrefs after the rows are shown, and nothing is typed. The
+// Tab's Update ranks the list again (the frecency version changed), so
+// it takes turtle, not the stale first row (tulip).
+func TestAutocompleteSlackRanksAgainWhenFrecencyLands(t *testing.T) {
+	app, fs := acSlackApp(t)
+	// the model first, so that only the frecency changes below
+	deadline := time.Now().Add(5 * time.Second)
+	for app.AutocompleteModelVersion() == 0 && time.Now().Before(deadline) {
+		app.AutocompleteModel()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if app.AutocompleteModelVersion() == 0 {
+		t.Fatal("search.autocomplete.model never landed")
+	}
+	ac := newAutocompleteFor(t, app)
+	d := acDocOf(":tu")
+	ac.Live = func() (*Doc, int) { return d, d.Len() }
+	ac.Update(d, d.Len())
+	items, _ := ac.Items()
+	if len(items) < 2 || items[0].Name != "tulip" {
+		t.Fatalf(":tu before the frecency: %v", acNames(items))
+	}
+
+	now := time.Now()
+	ms := func(d time.Duration) int64 { return now.Add(-d).UnixMilli() }
+	fr := fmt.Sprintf(`{"tu":{"id":"E1f422","count":3,"visits":[%d,%d,%d]},"E1f422":{"id":"E1f422","count":3,"visits":[%d,%d,%d]}}`,
+		ms(time.Hour), ms(3*time.Hour), ms(30*time.Hour), ms(time.Hour), ms(3*time.Hour), ms(30*time.Hour))
+	fs.mu.Lock()
+	fs.reply["users.prefs.get"] = map[string]any{"ok": true, "prefs": map[string]any{"frecency": fr, "emoji_use": "{}"}}
+	fs.mu.Unlock()
+	if err := app.LoadFrecencyPrefs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if items, _ := ac.Items(); items[0].Name != "tulip" {
+		t.Fatalf("rows changed without an Update: %v", acNames(items))
+	}
+	if !ac.Key(key.NameTab, 0) {
+		t.Fatal("Tab not taken")
+	}
+	it, _, _, ok := ac.Accepted()
+	if !ok || it.Name != "turtle" {
+		t.Errorf("Tab after the frecency landed took %q (ok %v), want turtle", it.Name, ok)
+	}
 }
 
 func newAutocompleteFor(t *testing.T, app *core.App) *Autocomplete {

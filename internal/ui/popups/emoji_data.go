@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/emoji"
 )
 
@@ -84,6 +85,12 @@ type epStdTable struct {
 	skins  []int16     // index into skin, -1 none
 	skin   [][5]string // file stems for tones 2..6
 	byName map[string]int32
+	// keywords are Slack's keywords of each emoji, normalized
+	// (emoji.Keywords of the primary name; the ":" autocomplete's
+	// matchKeywords); order lists the ids in Slack's consolidated order
+	// (getConsolidatedEmoji), names Slack doesn't list last
+	keywords [][]string
+	order    []int32
 }
 
 var (
@@ -150,6 +157,23 @@ func epParseStd(b []byte) *epStdTable {
 			}
 		}
 	}
+	t.keywords = make([][]string, len(t.names))
+	t.order = make([]int32, len(t.names))
+	pos := make([]int, len(t.names))
+	for i, ns := range t.names {
+		if kws := emoji.Keywords(ns[0]); len(kws) > 0 {
+			norm := make([]string, len(kws))
+			for j, k := range kws {
+				norm[j] = acrank.Normalize(k)
+			}
+			t.keywords[i] = norm
+		}
+		t.order[i] = int32(i)
+		if pos[i] = emoji.SlackOrder(ns[0]); pos[i] < 0 {
+			pos[i] = 1<<20 + i
+		}
+	}
+	sort.SliceStable(t.order, func(a, b int) bool { return pos[t.order[a]] < pos[t.order[b]] })
 	return t
 }
 

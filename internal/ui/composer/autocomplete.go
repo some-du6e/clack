@@ -141,10 +141,12 @@ type Autocomplete struct {
 	teamName string
 	pending  *acAccept
 
-	// item cache key: recompute when the trigger or the async data change
-	itemsFor acTrigger
-	itemsGen uint64
-	itemsOK  bool
+	// item cache key: recompute when the trigger, the async data or the
+	// ranking inputs (the frecency pref, the model) change
+	itemsFor  acTrigger
+	itemsGen  uint64
+	itemsRank acRankKey
+	itemsOK   bool
 
 	// local sources, refreshed from the snapshot
 	snapAt   time.Time
@@ -334,7 +336,8 @@ func (ac *Autocomplete) Update(d *Doc, caret int) {
 	ac.mu.Lock()
 	gen := ac.gen
 	ac.mu.Unlock()
-	if ac.itemsOK && ac.itemsFor.Kind == t.Kind && ac.itemsFor.Query == t.Query && ac.itemsGen == gen {
+	rk := ac.rankKey()
+	if ac.itemsOK && ac.itemsFor.Kind == t.Kind && ac.itemsFor.Query == t.Query && ac.itemsGen == gen && ac.itemsRank == rk {
 		return
 	}
 	ac.refresh()
@@ -350,7 +353,7 @@ func (ac *Autocomplete) Update(d *Doc, caret int) {
 	ac.itemsVer++
 	ac.watchPresence()
 	ac.pluginRank(t, ac.items)
-	ac.itemsFor, ac.itemsGen, ac.itemsOK = t, gen, true
+	ac.itemsFor, ac.itemsGen, ac.itemsRank, ac.itemsOK = t, gen, rk, true
 	// async rows landed: keep the row the user picked selected
 	if selID != "" {
 		for i, it := range ac.items {
@@ -529,14 +532,34 @@ func (ac *Autocomplete) refresh() {
 	}
 }
 
-// rankCtxLocked is the ranking context with the current frecency (a
-// pick changes it at once).
+// rankCtxLocked is the ranking context with the current frecency and
+// model: a pick or a frecency reload changes the one, the
+// search.autocomplete.model answer the other, and Slack's Sorter reads
+// both on every search, not from a snapshot.
 func (ac *Autocomplete) rankCtxLocked() rankCtx {
 	r := ac.rk
 	if ac.h != nil && ac.h.Core() != nil {
-		r.frec = ac.h.Core().FrecencyCache()
+		a := ac.h.Core()
+		r.frec = a.FrecencyCache()
+		r.weights = a.AutocompleteModel()
 	}
 	return r
+}
+
+// acRankKey versions the ranking inputs that land after a list is shown:
+// the frecency pref (a reload from Slack, a pick) and the model.
+type acRankKey struct{ frec, model uint64 }
+
+// rankKey is the current acRankKey. An open list whose inputs changed is
+// ranked again on the next Update (each frame, and Key before a Tab or
+// Enter acts), as Slack's tiered search sorts its rows again when more
+// lands.
+func (ac *Autocomplete) rankKey() acRankKey {
+	if ac.h == nil || ac.h.Core() == nil {
+		return acRankKey{}
+	}
+	a := ac.h.Core()
+	return acRankKey{a.FrecencyVersion(), a.AutocompleteModelVersion()}
 }
 
 // load starts the async loads trigger t needs.

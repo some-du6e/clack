@@ -141,9 +141,12 @@ func scoreEmojiName(e, t string) emojiScore {
 }
 
 // matchEmoji is filterEmoji/scanEmojiNames over the emoji's names
-// (normalized); the best scoring name wins, ties keep the first.
-// Keyword matches aren't ported (Clack has no emoji keyword table).
-func matchEmoji(e *entry, q string) bool {
+// (normalized); the best scoring name wins, ties keep the first. When no
+// name matches, matchKeywords lets a keyword in (any finite score from
+// the Searcher's fuzzy matcher m): the row scores Inf, carries the names
+// scan's last result (its ratio and combo breaks are model features) and
+// shows the emoji's own name (formatEmojiResult over matchEmoji's d).
+func matchEmoji(e *entry, q string, m *Matcher) bool {
 	c := e.c
 	if q == "" {
 		e.score = 0
@@ -165,11 +168,51 @@ func matchEmoji(e *entry, q string) bool {
 		}
 	}
 	if math.IsInf(best.score, 1) {
-		return false
+		if m == nil || !keywordMatches(c.Keywords, m) {
+			return false
+		}
+		e.score, e.emojiScore = Inf, Inf
+		e.emojiRatio, e.emojiCombo = best.ratio, best.combo
+		e.emojiBest = c.Name
+		return true
 	}
 	e.score, e.emojiScore = best.score, best.score
 	e.emojiRatio, e.emojiCombo = best.ratio, best.combo
 	e.emojiBest = bestName
 	e.exact, e.emojiExact = exact, exact
 	return true
+}
+
+// keywordMatches is matchEmoji's t.keywords.some(k => Inf >
+// matcher.normalizeAndScore(k)).
+func keywordMatches(kws []string, m *Matcher) bool {
+	for _, k := range kws {
+		if !math.IsInf(m.NormalizeAndScore(k), 1) {
+			return true
+		}
+	}
+	return false
+}
+
+// KeywordsMayMatch is a cheap test in front of the keyword match, for
+// callers gathering candidates: some keyword (normalized) holds every
+// letter of q (the normalized query) but its separators, which the fuzzy
+// matcher requires of any match (containsAllLetters).
+func KeywordsMayMatch(kws []string, q []rune) bool {
+	if len(q) == 0 {
+		return false
+	}
+next:
+	for _, k := range kws {
+		for i, r := range q {
+			if isSep(r) && (i != 0 || len(q) > 1) {
+				continue
+			}
+			if !strings.ContainsRune(k, r) {
+				continue next
+			}
+		}
+		return true
+	}
+	return false
 }
