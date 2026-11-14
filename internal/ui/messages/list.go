@@ -1364,7 +1364,10 @@ func (s *listState) overlays(gtx layout.Context, h Host, rc *rowCtx, size image.
 			gtx.Execute(op.InvalidateCmd{At: wait})
 		} else {
 			r := s.tipRect.Add(image.Pt(0, s.pos[s.tipItem]))
+			// deferred: the tip may reach past the pane, over the sidebar
+			m := op.Record(gtx.Ops)
 			reactionGroupTooltip(gtx, h, th, c, &s.tipG, r, theme.WindowBounds(s.origin))
+			op.Defer(gtx.Ops, m.Stop())
 		}
 	}
 
