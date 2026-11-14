@@ -28,7 +28,8 @@ import (
 // plugins patching the rows: every gallery tile opens the image viewer on
 // its own file (the "+ N" tile on the file under it), a video and the
 // file cards (audio, PDF, snippet, zip, documents) open the file, and a
-// right click on a tile opens the file menu.
+// right click on a tile opens the file menu. A snippet's pillow has no
+// click (a collapsed one's click expands it).
 
 type fileClickHost struct {
 	coreHost
@@ -169,6 +170,12 @@ func fileClicks(t *testing.T, label string, h *fileClickHost, v clickView, size 
 					t.Errorf("%s: clicking %s at %v didn't open the image viewer", name, want.ID, p)
 				} else if u := h.viewer[len(h.viewer)-1]; u != want.URLPrivate {
 					t.Errorf("%s: the viewer opened %s, want %s", name, u, want.URLPrivate)
+				}
+			case want.Mode == "snippet":
+				// PillowFile has no onClick for a snippet (isExpandable);
+				// a collapsed one expands instead (snippet.go)
+				if gotV != nv || len(*opened) != nu {
+					t.Errorf("%s: clicking the snippet %s opened %v (viewer %v)", name, want.ID, (*opened)[nu:], gotV != nv)
 				}
 			default:
 				if gotV != nv {

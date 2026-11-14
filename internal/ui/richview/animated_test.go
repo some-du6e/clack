@@ -52,9 +52,9 @@ const (
 )
 
 func gifDoc() (rt.Doc, *rt.File) {
-	f := &rt.File{ID: "F1", Name: "party.gif", Mime: "image/gif", Type: "gif", IsImage: true, OrigW: 498, OrigH: 280,
+	f := &rt.File{ID: "F1", Name: "party.gif", Mime: "image/gif", Type: "gif", Mode: "hosted", IsImage: true, OrigW: 498, OrigH: 280,
 		Thumb: &rt.Image{URL: gifThumb, W: 480, H: 270}, Still: &rt.Image{URL: gifStill, W: 498, H: 280}, Deanimate: true}
-	g := &rt.File{ID: "F2", Name: "shot.png", Mime: "image/png", Type: "png", IsImage: true, OrigW: 1200, OrigH: 700,
+	g := &rt.File{ID: "F2", Name: "shot.png", Mime: "image/png", Type: "png", Mode: "hosted", IsImage: true, OrigW: 1200, OrigH: 700,
 		Thumb: &rt.Image{URL: pngThumb, W: 720, H: 420}}
 	return doc(rt.Block{Kind: rt.FileBlock, File: f}, para(txt("and")), rt.Block{Kind: rt.FileBlock, File: g}), f
 }
@@ -93,7 +93,8 @@ func TestAnimatedImageDrawnEveryFrame(t *testing.T) {
 // the GIF file draws its deanimated still (recorded), as
 // PlayPauseAnimations with Slack's Play button; a click plays the
 // animated thumb through GetPlaying, another stops it; hovering the tile
-// shows FileActions' Expand at top 8, right 8, which opens the file.
+// shows its FileActions at top 8, right 8 (gallery_v3), Expand between
+// Download and More actions, and Expand opens the file.
 func TestStillPlayButtonAndExpand(t *testing.T) {
 	uipref.Set(store.Prefs{NoAnimations: true})
 	defer uipref.Reset()
@@ -108,8 +109,16 @@ func TestStillPlayButtonAndExpand(t *testing.T) {
 	if tile.url != gifStill || tile.play || len(hs.v.liveImgs) != 0 {
 		t.Fatalf("animations off: the tile draws %q (play %v, live %v), want the still", tile.url, tile.play, hs.v.liveImgs)
 	}
-	if len(hs.v.d.plays) != 1 || len(hs.v.d.expands) != 1 {
-		t.Fatalf("%d play buttons, %d Expand buttons; want one each (the PNG has neither)", len(hs.v.d.plays), len(hs.v.d.expands))
+	expands := 0
+	for _, b := range hs.v.d.bars {
+		for _, bt := range b.btns {
+			if bt.act == FileExpand {
+				expands++
+			}
+		}
+	}
+	if len(hs.v.d.plays) != 1 || expands != 1 || len(hs.v.d.expands) != 0 {
+		t.Fatalf("%d play buttons, %d Expand buttons (%d attachment ones); want one each (the PNG has neither)", len(hs.v.d.plays), expands, len(hs.v.d.expands))
 	}
 	mid := tile.r.Min.Add(tile.r.Max).Div(2)
 	p := f32.Pt(float32(mid.X), float32(mid.Y))
@@ -118,14 +127,27 @@ func TestStillPlayButtonAndExpand(t *testing.T) {
 		t.Fatal("no PlayPauseAnimations under the tile's middle")
 	}
 
-	// Expand: top 8, right 8, 32px, while the tile is hovered
-	bar, btn := hs.v.expandBar(0)
-	if btn.Dx() != 32 || bar.Max.X != tile.r.Max.X-8 && bar.Max.X != hs.v.d.expands[0].card.Max.X-8 || bar.Min.Y != hs.v.d.expands[0].card.Min.Y+8 {
-		t.Errorf("Expand %v in tile %v", btn, hs.v.d.expands[0].card)
+	// FileActions: top 8, right 8, while the tile is hovered: Download
+	// (28px, 2px after it), Expand (32px), More actions (28px)
+	var acts []FileAction
+	var btn image.Rectangle
+	for _, r := range hs.v.FileActionRects() {
+		acts = append(acts, r.Action)
+		if r.Action == FileExpand {
+			btn = r.R
+		}
+	}
+	card := hs.v.d.bars[0].card
+	group, rs := hs.v.barRects(0)
+	if len(acts) != 3 || acts[0] != FileDownload || acts[1] != FileExpand || acts[2] != FileMore {
+		t.Fatalf("the tile's buttons %v, want Download, Expand, More actions", acts)
+	}
+	if group.Max.X != card.Max.X-8 || group.Min.Y != card.Min.Y+8 || btn.Dx() != 32 || rs[0].Dx() != 28 || rs[1].Min.X != rs[0].Max.X+2 || rs[2].Dx() != 28 {
+		t.Errorf("group %v buttons %v in tile %v", group, rs, card)
 	}
 	bp := f32.Pt(float32(btn.Min.X+btn.Dx()/2), float32(btn.Min.Y+btn.Dy()/2))
 	hs.send(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: bp})
-	if hs.v.expandAt(hs.st, bp) != 0 {
+	if bar, b, ok := hs.v.barAt(bp); !ok || bar != 0 || hs.v.d.bars[0].btns[b].act != FileExpand {
 		t.Fatal("no Expand under the pointer")
 	}
 	hs.send(press(bp, time.Second), release(bp, time.Second+20*time.Millisecond))

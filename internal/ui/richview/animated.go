@@ -23,14 +23,13 @@ package richview
 //   - With the image's click taken by that, its viewer opens from an
 //     Expand button shown while the image is hovered: FileActions'
 //     renderExpand (gaA3: a GIF or PNG with deanimate; zoom-in,
-//     "Expand"), the gallery image's c-file__actions--image
-//     (gallery_v3: top 8, right 8, the group without background or
-//     padding), a plain MessageActionButton (smedium 32px, the 18px
-//     glyph); AttachmentImageActions' Expand (NANx: search, "Expand",
-//     only while its PlayPauseAnimations is on), a 32px icon button in its
-//     c-message_actions__group at top 10, right 10. The bars' other
-//     buttons (Download, Share, Open in new window, More actions) aren't
-//     drawn by Clack yet: the bar holds the button alone.
+//     "Expand"), a plain MessageActionButton (smedium 32px, the 18px
+//     glyph) in the gallery image's FileActions between Download and
+//     More actions (file_actions.go); AttachmentImageActions' Expand
+//     (NANx: search, "Expand", only while its PlayPauseAnimations is
+//     on), a 32px icon button in its c-message_actions__group at top 10,
+//     right 10, alone (its Download, Share and More actions aren't drawn
+//     by Clack yet).
 
 import (
 	"image"
@@ -65,14 +64,13 @@ type playCtl struct {
 	known bool   // a file's deanimate says it animates; else the decoded image does
 }
 
-// expandBtn is an Expand button, shown while card is hovered.
+// expandBtn is an attachment image's Expand button, shown while card is
+// hovered (a file's is in its FileActions: file_actions.go).
 type expandBtn struct {
 	card  image.Rectangle // the image's box
 	inset int             // Dp from its top and right
-	group bool            // in a c-message_actions__group (attachments); else bare (gallery_v3)
-	file  *richtext.File  // opens the file's viewer, or
-	img   *richtext.Image // the image's
-	play  int             // the playCtl it shows with (only while that's on), -1: always
+	img   *richtext.Image // opens the image's viewer
+	play  int             // the playCtl it shows with (only while that's on)
 }
 
 // playable makes image i (just added) a PlayPauseAnimations: drawn
@@ -93,16 +91,14 @@ func (l *lay) fileStill(f *richtext.File) *richtext.Image {
 	return f.Still
 }
 
-// fileControls adds a gallery tile's PlayPauseAnimations and Expand
-// (animations off) for file f, its image at imgs index i in tile r.
+// fileControls adds a gallery tile's PlayPauseAnimations (animations
+// off) for file f, its image at imgs index i in tile r; its Expand is in
+// the tile's FileActions (galleryBar).
 func (l *lay) fileControls(f *richtext.File, i int, r image.Rectangle) {
 	if !l.noAnim || f.IsVideo || f.Thumb == nil || !f.Deanimate {
 		return
 	}
 	l.playable(i, f.Thumb.URL, true)
-	if t := strings.ToLower(f.Type); (t == "gif" || t == "png") && !l.opts.NoHoverCards && !l.opts.Canvas {
-		l.d.expands = append(l.d.expands, expandBtn{card: r, inset: 8, file: f, play: -1})
-	}
 }
 
 // imageControls adds an attachment's or image block's PlayPauseAnimations
@@ -113,7 +109,7 @@ func (l *lay) imageControls(img *richtext.Image, i int, r image.Rectangle) {
 	}
 	p := l.playable(i, img.URL, false)
 	if !l.opts.NoHoverCards && !l.opts.Canvas {
-		l.d.expands = append(l.d.expands, expandBtn{card: r, inset: 10, group: true, img: img, play: p})
+		l.d.expands = append(l.d.expands, expandBtn{card: r, inset: 10, img: img, play: p})
 	}
 }
 
@@ -250,8 +246,8 @@ func (v *View) drawPlays(gtx layout.Context, st *Style) {
 	}
 }
 
-// expandOn reports whether Expand button i shows: its image hovered (and
-// for an attachment, its PlayPauseAnimations on).
+// expandOn reports whether Expand button i shows: its image hovered and
+// its PlayPauseAnimations on.
 func (v *View) expandOn(st *Style, i int) bool {
 	e := &v.d.expands[i]
 	if !v.hovering || !image.Pt(int(v.ptr.X), int(v.ptr.Y)).In(e.card) {
@@ -263,11 +259,7 @@ func (v *View) expandOn(st *Style, i int) bool {
 // expandBar is button i's group and the button in it.
 func (v *View) expandBar(i int) (bar, btn image.Rectangle) {
 	e := &v.d.expands[i]
-	in, s := v.px(e.inset), v.px(32)
-	pad := 0
-	if e.group {
-		pad = v.px(4)
-	}
+	in, s, pad := v.px(e.inset), v.px(32), v.px(4)
 	bar = image.Rect(e.card.Max.X-in-s-2*pad, e.card.Min.Y+in, e.card.Max.X-in, e.card.Min.Y+in+s+2*pad)
 	return bar, bar.Inset(pad)
 }
@@ -283,16 +275,13 @@ func (v *View) expandAt(st *Style, p f32.Point) int {
 	return -1
 }
 
-// expand opens button i's viewer (FileActions' onExpand: openViewer;
-// AttachmentImageActions' onExpand: the image's media viewer).
+// expand opens button i's viewer (AttachmentImageActions' onExpand: the
+// image's media viewer).
 func (v *View) expand(i int, h Handler) {
 	if h == nil || i < 0 || i >= len(v.d.expands) {
 		return
 	}
-	switch e := &v.d.expands[i]; {
-	case e.file != nil:
-		h.OpenFile(e.file)
-	case e.img != nil:
+	if e := &v.d.expands[i]; e.img != nil {
 		h.OpenImage(*e.img)
 	}
 }
@@ -305,44 +294,27 @@ func (v *View) drawExpands(gtx layout.Context, st *Style) {
 	}
 	p := &st.Palette
 	pt := image.Pt(int(v.ptr.X), int(v.ptr.Y))
+	icon, hoverIcon, hoverBg := actionBtnColors(p.Dark)
+	bg := rgb(255, 255, 255)
+	if p.Dark {
+		bg = rgb(26, 29, 33)
+	}
+	hoverBg = Over(hoverBg, bg) // over the group's opaque card
 	for i := range v.d.expands {
 		if !v.expandOn(st, i) {
 			continue
 		}
-		e := &v.d.expands[i]
 		bar, btn := v.expandBar(i)
-		if e.group { // c-message_actions__group: primary background, a 1px foreground_low .13 ring, 0 1px 3px #00000014
-			bg, ring := rgb(255, 255, 255), rgba(29, 28, 29, 0.13)
-			if p.Dark {
-				bg, ring = rgb(26, 29, 33), rgba(232, 232, 232, 0.13)
-			}
-			rad := v.px(12)
-			paint.FillShape(gtx.Ops, rgba(0, 0, 0, 0x14/255.0), clip.UniformRRect(bar.Add(image.Pt(0, v.px(1))).Inset(-v.px(1)), rad).Op(gtx.Ops))
-			paint.FillShape(gtx.Ops, ring, clip.UniformRRect(bar.Inset(-max(1, v.px(1))), rad+v.px(1)).Op(gtx.Ops))
-			paint.FillShape(gtx.Ops, bg, clip.UniformRRect(bar, rad).Op(gtx.Ops))
-		}
-		// c-message_actions__button: content-sec at .75; :hover
-		// foreground_min .04 and primary_foreground
+		v.groupCard(gtx, p, bar) // c-message_actions__group
 		hot := pt.In(btn)
-		col := p.Text3
+		col := icon
 		if hot {
-			hov := rgba(29, 28, 29, 0.04)
-			if p.Dark {
-				hov = rgba(232, 232, 232, 0.04)
-			}
-			paint.FillShape(gtx.Ops, hov, clip.UniformRRect(btn, v.px(8)).Op(gtx.Ops))
-			col = p.Text
+			paint.FillShape(gtx.Ops, hoverBg, clip.UniformRRect(btn, v.px(8)).Op(gtx.Ops))
+			col = hoverIcon
 		}
-		name, tip := "zoom-in", i18n.T("file", "Expand")
-		if e.img != nil {
-			name, tip = "search", i18n.T("attachment_media", "Expand")
-		}
-		ip := v.px(18)
-		ir := image.Rectangle{Min: btn.Min.Add(image.Pt((btn.Dx()-ip)/2, (btn.Dy()-ip)/2))}
-		ir.Max = ir.Min.Add(image.Pt(ip, ip))
-		v.secIcon(gtx, name, ir, col)
+		v.barIcon(gtx, "search", btn, 18, col)
 		if hot {
-			v.copyTip(gtx, st, btn, tip)
+			v.copyTip(gtx, st, btn, i18n.T("attachment_media", "Expand"))
 		}
 	}
 }

@@ -20,10 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/f32"
+
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
@@ -187,6 +191,182 @@ func TestFilesShots(t *testing.T) {
 			e.a.ShowOverlay(popups.NewLightbox(e.a, *docFiles(six)[1].Thumb, six))
 			e.filesShot("files-viewer-" + mode)
 			e.a.dismissTop()
+		})
+	}
+}
+
+// fileInView is the #files-gallery message name's first file box,
+// scrolled whole into view between the header and the composer (the
+// rects are the rows' layout boxes, not clipped by the list).
+func (e *perfEnv) fileInView(t *testing.T, name string) messages.FileRect {
+	t.Helper()
+	ts := ""
+	for _, fc := range e.fs.FilesCases() {
+		if fc.Name == name {
+			ts = fc.TS
+		}
+	}
+	var fr messages.FileRect
+	for i := 0; i < 12; i++ {
+		fr = messages.FileRect{}
+		e.until(name+"'s file on screen", 10*time.Second, func() bool {
+			if rs := rectsOf(e.channelFiles(fakeslack.FilesChannelID), ts); len(rs) > 0 {
+				fr = rs[0]
+			}
+			return fr.File != nil
+		})
+		tall := fr.R.Dy() > e.size.Y-330 // taller than the pane: its top in view
+		if fr.R.Min.Y >= 150 && (fr.R.Max.Y <= e.size.Y-180 || tall && fr.R.Min.Y <= 260) {
+			return fr
+		}
+		e.scroll(e.listPoint(), float32(fr.R.Min.Y-220))
+		e.settle(250 * time.Millisecond)
+	}
+	t.Fatalf("%s's file stays at %v", name, fr.R)
+	return fr
+}
+
+// fileActions is the FileActions shown now on message ts's file: the
+// buttons' actions in order and their boxes.
+func (e *perfEnv) fileActions(ts string) ([]richview.FileAction, []image.Rectangle) {
+	var acts []richview.FileAction
+	var rs []image.Rectangle
+	if c := e.a.convos[fakeslack.FilesChannelID+"/"]; c != nil {
+		if l, ok := c.list.(channelList); ok {
+			for _, r := range l.FileActionRects() {
+				if r.TS == ts {
+					acts = append(acts, r.Action)
+					rs = append(rs, r.R)
+				}
+			}
+		}
+	}
+	return acts, rs
+}
+
+// TestFileSnippetExpand: the viewer's long snippet in #files-gallery is
+// collapsed with its FileActions (Download, Edit, Share, View file
+// details, More actions) on hover; a click on it calls files.info and
+// shows the whole highlighted content with Collapse first in the bar and
+// the truncation note (the fake server cut it); Show less collapses it.
+func TestFileSnippetExpand(t *testing.T) {
+	e := filesEnv(t, image.Pt(1440, 900), false)
+	long := e.filesMsg("long snippet")
+	f := docFiles(long)[0]
+	if !f.IsSnippet || f.Highlight == nil || len(f.Highlight.Lines) != 12 || f.LinesMore != 28 || f.Expanded {
+		t.Fatalf("long snippet %+v", f)
+	}
+	fr := e.fileInView(t, "long snippet")
+	mid := fr.R.Min.Add(fr.R.Max).Div(2)
+	e.move(f32.Pt(float32(mid.X), float32(mid.Y)))
+	e.settle(200 * time.Millisecond)
+	acts, _ := e.fileActions(long.TS)
+	want := []richview.FileAction{richview.FileDownload, richview.FileEdit, richview.FileShare, richview.FileDetails, richview.FileMore}
+	if !sameActs(acts, want) {
+		t.Errorf("collapsed snippet's FileActions %v, want %v", acts, want)
+	}
+	n := e.fs.CallCount("files.info")
+	e.clickAt(mid, time.Second)
+	e.until("the snippet expanded", 10*time.Second, func() bool {
+		m := e.filesMsg("long snippet")
+		g := docFiles(m)[0]
+		return g.Expanded && g.Content != nil && len(g.Content.Lines) == 40
+	})
+	if e.fs.CallCount("files.info") <= n {
+		t.Error("no files.info for the content")
+	}
+	g := docFiles(e.filesMsg("long snippet"))[0]
+	if !g.ContentTruncated {
+		t.Error("the server's content_highlight_html_truncated isn't kept")
+	}
+	e.settle(300 * time.Millisecond)
+	fr = e.fileInView(t, "long snippet")
+	e.move(f32.Pt(float32(fr.R.Min.X+80), float32(fr.R.Min.Y+60)))
+	e.settle(200 * time.Millisecond)
+	acts, _ = e.fileActions(long.TS)
+	if len(acts) == 0 || acts[0] != richview.FileCollapse {
+		t.Errorf("expanded snippet's FileActions %v, want Collapse first", acts)
+	}
+	e.a.data.core.CollapseFile(fakeslack.FilesChannelID, long.TS, f.ID)
+	e.until("the snippet collapsed", 5*time.Second, func() bool { return !docFiles(e.filesMsg("long snippet"))[0].Expanded })
+}
+
+func sameActs(a, b []richview.FileAction) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestFileActionsShots saves the file cards' hover states, light and
+// dark (FILES_SHOTS_DIR, the files-shots workflow): a highlighted snippet
+// with its FileActions and a button's tooltip, the viewer's long snippet
+// collapsed (Show more) and expanded (Show less, the truncation note), a
+// PDF pillow and a gallery image with theirs.
+func TestFileActionsShots(t *testing.T) {
+	if os.Getenv("FILES_SHOTS_DIR") == "" {
+		t.Skip("FILES_SHOTS_DIR not set (the files-shots workflow sets it)")
+	}
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		t.Run(mode, func(t *testing.T) {
+			e := filesEnv(t, image.Pt(1440, 900), dark)
+			defer e.shutdown()
+			hover := func(name string, dx, dy int) messages.FileRect {
+				fr := e.fileInView(t, name)
+				x, y := fr.R.Min.X+dx, fr.R.Min.Y+dy
+				if dx < 0 {
+					x = fr.R.Max.X + dx
+				}
+				e.move(f32.Pt(float32(x), float32(y)))
+				e.settle(300 * time.Millisecond)
+				return fr
+			}
+			// fib.py: the bar, and More actions' tooltip (top-right)
+			hover("snippet", 120, 40)
+			e.filesShot("files-snippet-hover-" + mode)
+			m := e.filesMsg("snippet")
+			if _, rs := e.fileActions(m.TS); len(rs) > 0 {
+				c := rs[len(rs)-1].Min.Add(rs[len(rs)-1].Max).Div(2)
+				e.move(f32.Pt(float32(c.X), float32(c.Y)))
+				e.settle(800 * time.Millisecond)
+				e.filesShot("files-snippet-tooltip-" + mode)
+			} else {
+				t.Error("fib.py shows no FileActions")
+			}
+			// the long one: collapsed under the fade with Show more
+			fr := hover("long snippet", 120, 80)
+			e.filesShot("files-snippet-collapsed-" + mode)
+			mid := fr.R.Min.Add(fr.R.Max).Div(2)
+			e.clickAt(mid, time.Second)
+			e.until("the snippet expanded", 10*time.Second, func() bool {
+				g := docFiles(e.filesMsg("long snippet"))[0]
+				return g.Expanded && g.Content != nil
+			})
+			e.settle(500 * time.Millisecond)
+			// expanded: its bottom (Show less, the truncation note)
+			fr = e.fileInView(t, "long snippet")
+			if fr.R.Max.Y > e.size.Y-180 {
+				e.scroll(e.listPoint(), float32(fr.R.Max.Y-(e.size.Y-240)))
+				e.settle(300 * time.Millisecond)
+			}
+			for _, r := range rectsOf(e.channelFiles(fakeslack.FilesChannelID), e.filesMsg("long snippet").TS) {
+				e.move(f32.Pt(float32(r.R.Min.X+120), float32(r.R.Max.Y-60)))
+			}
+			e.settle(300 * time.Millisecond)
+			e.filesShot("files-snippet-expanded-" + mode)
+			e.a.data.core.CollapseFile(fakeslack.FilesChannelID, e.filesMsg("long snippet").TS, docFiles(e.filesMsg("long snippet"))[0].ID)
+			e.settle(300 * time.Millisecond)
+			// a PDF pillow and a gallery image
+			hover("pdf", 60, 30)
+			e.filesShot("files-pdf-hover-" + mode)
+			hover("one image", 60, 60)
+			e.filesShot("files-image-hover-" + mode)
 		})
 	}
 }

@@ -41,6 +41,31 @@ func (s *listState) fileRects() []FileRect {
 	return out
 }
 
+// FileActionRect is a shown FileActions button on screen (the hovered
+// file's), in window coordinates.
+type FileActionRect struct {
+	TS string // the message
+	richview.FileActionRect
+}
+
+// FileActionRects lists the buttons of the FileActions the pointer shows
+// now, as of the last frame, in window coordinates.
+func (v *ChannelView) FileActionRects() []FileActionRect { return v.s.fileActionRects() }
+
+// FileActionRects is ChannelView.FileActionRects for the thread.
+func (v *ThreadView) FileActionRects() []FileActionRect { return v.s.fileActionRects() }
+
+func (s *listState) fileActionRects() []FileActionRect {
+	var out []FileActionRect
+	s.eachBody(func(ts string, off image.Point, rv *richview.View) {
+		for _, r := range rv.FileActionRects() {
+			r.R = r.R.Add(off)
+			out = append(out, FileActionRect{TS: ts, FileActionRect: r})
+		}
+	})
+	return out
+}
+
 // ReactionRect is a reaction pill on screen (its group's), in window
 // coordinates.
 type ReactionRect struct {

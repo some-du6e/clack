@@ -174,6 +174,8 @@ type builder struct {
 	hints  canvasHints            // the message's canvas unfurls (canvasslug.go)
 	sender string                 // the message's user (canvasfile.go: a file's owner other than them)
 	chID   string                 // the message's channel (tabslug.go: a slug to its own tab is the tab alone)
+	// msgCh and msgTS are the message (its files' expandables)
+	msgCh, msgTS string
 }
 
 func parseBlocks(raw json.RawMessage) []bk {

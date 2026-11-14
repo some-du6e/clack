@@ -28,10 +28,11 @@ import (
 //     actionsBar__Nlq8R: top 8px, right 8px, on hover) has the same
 //     button (size smedium, 32px) in place of its star.
 //
-// The bars' other buttons (Share, file references, More actions) aren't
-// drawn by Clack yet: the bar holds the button alone. The button's face
-// is the shell's (FileSectionFace: views.SectionButtonFor) and a click
-// opens FileSectionMoveToMenu (FileSectionOpener).
+// A canvas's button is one of its pillow's FileActions (file_actions.go);
+// the list entity's bar holds the button alone (ListEntityActionsBar's
+// other buttons aren't drawn by Clack yet). The button's face is the
+// shell's (FileSectionFace: views.SectionButtonFor) and a click opens
+// FileSectionMoveToMenu (FileSectionOpener).
 
 // FileSectionFace is the button's face for a file: Starred's filled star
 // on sunflower, the section's emoji, the section icon, or the star; ok
@@ -118,62 +119,67 @@ func (v *View) drawFileSecs(gtx layout.Context, st *Style) {
 		if !pt.In(s.card) {
 			continue
 		}
-		look, emojiURL, ok := FileSectionFace(s.f.ID)
-		if !ok {
+		if _, _, ok := FileSectionFace(s.f.ID); !ok {
 			continue
 		}
 		bar, btn := v.secBar(s)
-		// the group: primary background, a 1px foreground_low .13 ring
-		// and 0 1px 3px #00000014
-		bg, ring := rgb(255, 255, 255), rgba(29, 28, 29, 0.13)
-		if p.Dark {
-			bg, ring = rgb(26, 29, 33), rgba(232, 232, 232, 0.13)
-		}
-		rad := v.px(12)
-		paint.FillShape(gtx.Ops, rgba(0, 0, 0, 0x14/255.0), clip.UniformRRect(bar.Add(image.Pt(0, v.px(1))).Inset(-v.px(1)), rad).Op(gtx.Ops))
-		paint.FillShape(gtx.Ops, ring, clip.UniformRRect(bar.Inset(-max(1, v.px(1))), rad+v.px(1)).Op(gtx.Ops))
-		paint.FillShape(gtx.Ops, bg, clip.UniformRRect(bar, rad).Op(gtx.Ops))
+		v.groupCard(gtx, p, bar)
 		hot := pt.In(btn)
-		switch look {
-		case SectionLookStarred:
-			c := secSun0
-			if hot {
-				c = secSun5
-			}
-			r := btn.Add(image.Pt(0, v.px(1)))
-			paint.FillShape(gtx.Ops, c, clip.UniformRRect(r, v.px(8)).Op(gtx.Ops))
-			ip := v.px(20)
-			ir := image.Rectangle{Min: r.Min.Add(image.Pt((r.Dx()-ip)/2, (r.Dy()-ip)/2))}
-			ir.Max = ir.Min.Add(image.Pt(ip, ip))
-			v.secIcon(gtx, "star-filled", ir, secSun70)
-		default:
-			// c-message_actions__button: content-sec; :hover foreground_min
-			// .04 and primary_foreground
-			col := p.Text3
-			if hot {
-				hov := rgba(29, 28, 29, 0.04)
-				if p.Dark {
-					hov = rgba(232, 232, 232, 0.04)
-				}
-				paint.FillShape(gtx.Ops, hov, clip.UniformRRect(btn, v.px(8)).Op(gtx.Ops))
-				col = p.Text
-			}
-			ip := v.px(s.btn/2 + 2) // calc(.5 * size + 2px)
-			ir := image.Rectangle{Min: btn.Min.Add(image.Pt((btn.Dx()-ip)/2, (btn.Dy()-ip)/2))}
-			ir.Max = ir.Min.Add(image.Pt(ip, ip))
-			switch {
-			case look == SectionLookEmoji && emojiURL != "" && st.Images != nil:
-				if img, ok := st.Images.Get(emojiURL, ip*2); ok {
-					drawImage(gtx.Ops, img, ir, [4]int{}, false)
-				}
-			case look == SectionLookIcon:
-				v.secIcon(gtx, "section", ir, col)
-			default:
-				v.secIcon(gtx, "star", ir, col)
-			}
-		}
+		v.drawSectionBtn(gtx, st, s.f, btn, hot)
 		if hot {
 			v.copyTip(gtx, st, btn, "Move file")
+		}
+	}
+}
+
+// drawSectionBtn draws FileSectionDropdownButton's face for f in btn
+// (hot: hovered): Starred's filled star on sunflower, the section's
+// emoji or icon, or the star (calc(.5 * size + 2px)).
+func (v *View) drawSectionBtn(gtx layout.Context, st *Style, f *richtext.File, btn image.Rectangle, hot bool) {
+	if FileSectionFace == nil {
+		return
+	}
+	p := &st.Palette
+	look, emojiURL, ok := FileSectionFace(f.ID)
+	if !ok {
+		return
+	}
+	switch look {
+	case SectionLookStarred:
+		c := secSun0
+		if hot {
+			c = secSun5
+		}
+		r := btn.Add(image.Pt(0, v.px(1)))
+		paint.FillShape(gtx.Ops, c, clip.UniformRRect(r, v.px(8)).Op(gtx.Ops))
+		ip := v.px(20)
+		ir := image.Rectangle{Min: r.Min.Add(image.Pt((r.Dx()-ip)/2, (r.Dy()-ip)/2))}
+		ir.Max = ir.Min.Add(image.Pt(ip, ip))
+		v.secIcon(gtx, "star-filled", ir, secSun70)
+	default:
+		// c-message_actions__button: content-sec; :hover foreground_min
+		// .04 and primary_foreground
+		col := p.Text3
+		if hot {
+			hov := rgba(29, 28, 29, 0.04)
+			if p.Dark {
+				hov = rgba(232, 232, 232, 0.04)
+			}
+			paint.FillShape(gtx.Ops, hov, clip.UniformRRect(btn, v.px(8)).Op(gtx.Ops))
+			col = p.Text
+		}
+		ip := btn.Dx()/2 + v.px(2) // calc(.5 * size + 2px)
+		ir := image.Rectangle{Min: btn.Min.Add(image.Pt((btn.Dx()-ip)/2, (btn.Dy()-ip)/2))}
+		ir.Max = ir.Min.Add(image.Pt(ip, ip))
+		switch {
+		case look == SectionLookEmoji && emojiURL != "" && st.Images != nil:
+			if img, ok := st.Images.Get(emojiURL, ip*2); ok {
+				drawImage(gtx.Ops, img, ir, [4]int{}, false)
+			}
+		case look == SectionLookIcon:
+			v.secIcon(gtx, "section", ir, col)
+		default:
+			v.secIcon(gtx, "star", ir, col)
 		}
 	}
 }
