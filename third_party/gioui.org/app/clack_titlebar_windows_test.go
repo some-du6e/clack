@@ -539,13 +539,18 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 	r, size := c.rects()
 	wr := windows.GetWindowRect(c.hwnd)
 
-	// first the middle of the window, away from the caption: the cursor
-	// may already rest on a button's centre from an earlier step (a move
-	// to where it is moves nothing), and Gio has seen the pointer over
-	// the window before the buttons are hovered
+	// first two points in the window, away from the caption: the cursor
+	// may already rest where a move goes (an earlier step left it on a
+	// button's centre, or on the window's middle), and a move to where it
+	// is gives the window no pointer input, only the legacy WM_MOUSEMOVE
+	// Windows makes after an activation, which Gio doesn't read. It can't
+	// be on both points, so the second move always moves it, and Gio has
+	// seen the pointer over the window before the buttons are hovered.
 	mid := image.Pt(size.X/2, size.Y/2)
 	mark := captionTraceMark("move to the window's middle")
 	n := c.seen.Load()
+	sendInput(t, []testInput{mouseInput(c.screen(image.Pt(size.X/3, size.Y*2/3)), mouseMove)})
+	time.Sleep(100 * time.Millisecond) // two moves, not one coalesced
 	sendInput(t, []testInput{mouseInput(c.screen(mid), mouseMove)})
 	c.waitFor(t, "the pointer over the window's middle", mark, func() bool {
 		p, _ := c.pointer.Load().(image.Point)
