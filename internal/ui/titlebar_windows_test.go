@@ -244,7 +244,11 @@ func TestTitleBarWindow(t *testing.T) {
 	cx, _, _ := asTestGetSystemMetrics.Call(0)
 	cy, _, _ := asTestGetSystemMetrics.Call(1)
 	ww, wh := min(int(cx)-40, 1200), min(int(cy)-60, 760)
-	tbSetWindowPos.Call(hwnd, 0, 16, 16, uintptr(ww), uintptr(wh), 0x0004|0x0010) // SWP_NOZORDER|SWP_NOACTIVATE
+	// topmost: SetForegroundWindow can be refused (the foreground lock),
+	// and a window an earlier step left in front takes the cursor's moves
+	// (Gio's TestHiddenTitleBarButtonsInput, flake-fix-gio-sequence); the
+	// input goes the same way to a topmost window
+	tbSetWindowPos.Call(hwnd, ^uintptr(0) /* HWND_TOPMOST */, 16, 16, uintptr(ww), uintptr(wh), 0x0010) // SWP_NOACTIVATE
 	settle()
 	asTestSetForeground.Call(hwnd)
 

@@ -806,7 +806,7 @@ jobs:
   # other steps' failures are only counted.
   flake-fix-gio-sequence:
     if: ${{ !inputs.only || startsWith('flake-fix-gio-sequence', inputs.only) }}
-    name: "flake-fix windows-applog's gioui.org/app steps in a row (runner ${{ matrix.runner }})"
+    name: "flake-fix windows-applog's window steps in a row (runner ${{ matrix.runner }})"
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -820,23 +820,30 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: "OS file drops, typed text, the title bar: COUNT rounds"
+      - name: "OS file drops, typed text, the title bar (Gio's, Clack's window): COUNT rounds"
         shell: bash
         env:
           CGO_ENABLED: "0" # as in ci's windows-applog
           CLACK_WINDOWS_DROP_TESTS: "1"
           CLACK_WINDOWS_KEY_TESTS: "1"
           CLACK_WINDOWS_TITLEBAR_TESTS: "1"
+          CLACK_TITLEBAR_SHOTS: ${{ runner.temp }}\titlebar-shots
         run: |
           go test -c -o "$RUNNER_TEMP/gioapp.test.exe" gioui.org/app
-          cd third_party/gioui.org/app # where go test runs it
+          go test -c -o "$RUNNER_TEMP/ui.test.exe" ./internal/ui
           titlebar=0
           other=0
           for i in $(seq "$COUNT"); do
-            for run in 'TestOLEFileDrop|TestWMDropFiles|FileDrop|URIList' 'TestWinKeyText' 'TestCaptionHit|TestHiddenTitleBar'; do
-              if ! "$RUNNER_TEMP/gioapp.test.exe" -test.v -test.count=1 -test.timeout 10m -test.run "$run" > "$RUNNER_TEMP/round.log" 2>&1; then
+            # ci's order: the drops, typed text, then the title bar step
+            # (Gio's tests, then Clack's window)
+            for run in 'app:TestOLEFileDrop|TestWMDropFiles|FileDrop|URIList' 'app:TestWinKeyText' 'app:TestCaptionHit|TestHiddenTitleBar' 'ui:^TestTitleBarWindow$'; do
+              case "$run" in # where go test runs each
+                app:*) bin="$RUNNER_TEMP/gioapp.test.exe"; dir="$GITHUB_WORKSPACE/third_party/gioui.org/app" ;;
+                ui:*) bin="$RUNNER_TEMP/ui.test.exe"; dir="$GITHUB_WORKSPACE/internal/ui" ;;
+              esac
+              if ! (cd "$dir" && "$bin" -test.v -test.count=1 -test.timeout 10m -test.run "${run#*:}") > "$RUNNER_TEMP/round.log" 2>&1; then
                 case "$run" in
-                  TestCaptionHit*) titlebar=$((titlebar + 1)) ;;
+                  *TestCaptionHit* | *TestTitleBarWindow*) titlebar=$((titlebar + 1)) ;;
                   *) other=$((other + 1)) ;;
                 esac
                 echo "::group::round $i: $run failed"
@@ -845,5 +852,5 @@ jobs:
               fi
             done
           done
-          echo "::notice title=windows-applog's gioui.org/app steps::the title bar failed $titlebar of $COUNT rounds; the drops and typed text $other times"
+          echo "::notice title=windows-applog's window steps::the title bar tests failed $titlebar times in $COUNT rounds; the drops and typed text $other times"
           exit $(( titlebar > 0 ))

@@ -38,7 +38,19 @@ import (
 var (
 	testSendMessage        = testUser32.NewProc("SendMessageW")
 	testSendMessageTimeout = testUser32.NewProc("SendMessageTimeoutW")
+	testGetClassName       = testUser32.NewProc("GetClassNameW")
+	testGetWindowThreadPID = testUser32.NewProc("GetWindowThreadProcessId")
 )
+
+// testWindowName is a window's class, title and process, for a stall's
+// message.
+func testWindowName(h uintptr) string {
+	buf := make([]uint16, 128)
+	n, _, _ := testGetClassName.Call(h, uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	var pid uint32
+	testGetWindowThreadPID.Call(h, uintptr(unsafe.Pointer(&pid)))
+	return fmt.Sprintf("%#x (class %q, title %q, pid %d)", h, syscall.UTF16ToString(buf[:n]), testWindowText(syscall.Handle(h)), pid)
+}
 
 // captionTrace records the window messages and the Gio pointer events
 // around the caption, for a failure's message.
@@ -289,10 +301,10 @@ func (c *captionTestWindow) diag() string {
 	r, _, _ := testSendMessageTimeout.Call(uintptr(c.hwnd), 0 /* WM_NULL */, 0, 0, 0x2 /* SMTO_ABORTIFHUNG */, 2000, uintptr(unsafe.Pointer(&res)))
 	fmt.Fprintf(&b, "; WM_NULL answered %v in %v", r != 0, time.Since(start).Round(time.Millisecond))
 	if p, ok := windows.GetCursorPos(); ok {
-		fmt.Fprintf(&b, "; the cursor at %v, over %#x (the window %#x, capture %#x)", p, windows.WindowFromPoint(p), c.hwnd, windows.GetCapture())
+		fmt.Fprintf(&b, "; the cursor at %v, over %s (the window %#x, pid %d, capture %#x)", p, testWindowName(uintptr(windows.WindowFromPoint(p))), c.hwnd, os.Getpid(), windows.GetCapture())
 	}
 	fg, _, _ := testGetForeground.Call()
-	fmt.Fprintf(&b, "; foreground %#x", fg)
+	fmt.Fprintf(&b, "; foreground %s", testWindowName(fg))
 	buf := make([]byte, 1<<20)
 	buf = buf[:runtime.Stack(buf, true)]
 	fmt.Fprintf(&b, "\n%s", buf)
@@ -535,6 +547,11 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 	titleBarTests(t)
 	c := newCaptionTestWindow(t, HiddenTitleBar(true))
 	defer c.close(t)
+	// Above every other window: SetForegroundWindow can be refused (the
+	// foreground lock), and a window an earlier step left in front got
+	// the cursor's moves (flake-fix-gio-sequence, 1 round in 90). The
+	// input goes the same way to a topmost window.
+	windows.SetWindowPos(c.hwnd, windows.HWND_TOPMOST, 0, 0, 0, 0, windows.SWP_NOMOVE|windows.SWP_NOSIZE)
 	testSetForegroundWindow.Call(uintptr(c.hwnd))
 	r, size := c.rects()
 	wr := windows.GetWindowRect(c.hwnd)
