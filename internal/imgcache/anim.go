@@ -19,10 +19,10 @@ import (
 //     dropped before stills when it's tight), so playing it again needs
 //     no download: Slack's image proxy and Giphy aren't cached anywhere
 //     else.
-//   - Playing is a player: it starts the first time Get draws the GIF and
-//     goes again as soon as nothing has drawn it for animGrace past its
-//     frame's due time (scrolled away, the view closed, the window
-//     hidden). A player that fits in animKeepBytes keeps all its frames
+//   - Playing is a player: it starts once Get has drawn the GIF for
+//     animSettle (a fast scroll's GIFs never start) and goes again as soon
+//     as nothing has drawn it for animGrace past its frame's due time
+//     (scrolled away, the view closed, the window hidden). A player that fits in animKeepBytes keeps all its frames
 //     (custom emoji, avatars, small GIFs: no work per frame); a larger one
 //     streams, holding its canvas and three frames, and composes each
 //     frame on a worker just before it's due (gifstream.go).
@@ -48,6 +48,9 @@ const (
 	// animGrace: a player nothing drew this long after its frame was due
 	// is off screen, and goes.
 	animGrace = time.Second
+	// animSettle: a GIF plays once it has been drawn this long: one a
+	// fast scroll only flies past shows its still and starts nothing.
+	animSettle = 150 * time.Millisecond
 	// animRetry: how long a GIF that didn't fit the budget (or stopped
 	// for room) shows its still before it asks again.
 	animRetry = 3 * time.Second
@@ -154,8 +157,16 @@ func (c *Cache) frameLocked(e *entry, now time.Time, forced bool) paint.ImageOp 
 	if e.frames < 2 || !c.animate && !forced {
 		return e.op
 	}
+	if now.Sub(e.seenAt) > animGrace { // back on screen
+		e.seenFrom = now
+	}
+	e.seenAt = now
 	p := e.play
 	if p == nil {
+		if settled := e.seenFrom.Add(animSettle); !forced && now.Before(settled) {
+			c.wakeLocked(settled)
+			return e.op
+		}
 		c.startPlayLocked(e, now, forced)
 		return e.op
 	}

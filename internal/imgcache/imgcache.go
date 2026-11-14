@@ -158,6 +158,9 @@ type entry struct {
 	play     *player
 	starting bool
 	retry    time.Time
+	// seenFrom..seenAt: the stretch Get has drawn it without a gap of
+	// animGrace (a player starts once it's animSettle long)
+	seenFrom, seenAt time.Time
 }
 
 // IdleAfter: images not asked for in this long are dropped by a sweep every
