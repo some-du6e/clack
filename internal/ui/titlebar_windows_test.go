@@ -347,6 +347,12 @@ func TestTitleBarWindow(t *testing.T) {
 	bgAt := func(g wcoGeo, i int) image.Point { return image.Pt(g.bg[i].Min.X+int(3*s), g.bg[i].Min.Y+int(3*s)) }
 	maxBg, closeBg := bgAt(g, 1), bgAt(g, 2)
 	scr := func(p image.Point) image.Point { return image.Pt(org.X+p.X, org.Y+p.Y) }
+	// the content first: the cursor may already rest on close's centre
+	// (where the last run's close click left it, flake-check's
+	// flake-fix: 9 of 10 runs in one process never hovered), and a move
+	// to where the cursor is gives the window no input at all
+	asSend(t, asMouse(scr(image.Pt(W/2, int(300*s))), 0))
+	time.Sleep(200 * time.Millisecond)
 	asSend(t, asMouse(scr(wcoCentre(g.bounds[2])), 0))
 	hc := settled(func(img *image.RGBA) bool { return tbNear(at(img, closeBg), red, 12) })
 	tbSave(t, "titlebar-light-close-hover", hc)
