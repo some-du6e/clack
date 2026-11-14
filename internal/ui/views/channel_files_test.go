@@ -39,7 +39,14 @@ type cfHost struct {
 	*filesHost
 	imgs        *imgcache.Cache
 	showGallery bool // OpenMediaGallery shows the viewer (channel_files_more_test.go)
+	folderTabs  []FolderTabInfo
 }
+
+// FolderTabs is FolderTabsHost (the folder select's default folder tab).
+func (h *cfHost) FolderTabs(string) []FolderTabInfo { return h.folderTabs }
+
+// OpenFolderTab is FolderTabsHost's other half (nothing here).
+func (h *cfHost) OpenFolderTab(string, string) {}
 
 func (h *cfHost) Images() *imgcache.Cache { return h.imgs }
 

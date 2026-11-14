@@ -118,6 +118,7 @@ type BookmarkLinkModal struct {
 	banner   bool        // no folders and no default tab (tB)
 	newName  widget.Editor
 	selBtn   widget.Clickable
+	openSel  bool // OpenFolderSelect: the select opens next frame (tests)
 	editLink widget.Clickable
 	selRect  image.Rectangle
 }
@@ -160,6 +161,13 @@ func (m *BookmarkLinkModal) PickFolder(i int) {
 		m.sel = m.opts[i].value
 	}
 }
+
+// OpenFolderSelect opens the folder select's list on the next frame
+// (tests).
+func (m *BookmarkLinkModal) OpenFolderSelect() { m.openSel = true }
+
+// Naming reports "Folder Name" showing (tests).
+func (m *BookmarkLinkModal) Naming() bool { return m.naming() }
 
 // EditFolderName is the banner's "Edit folder name" (tests).
 func (m *BookmarkLinkModal) EditFolderName() {
@@ -643,7 +651,8 @@ func (m *BookmarkLinkModal) folderField(gtx layout.Context, th *theme.Theme, cl 
 		return r.Max.Y + dp(gtx, 20)
 	}
 	if !m.banner && len(m.opts) > 0 {
-		if m.selBtn.Clicked(gtx) {
+		if m.selBtn.Clicked(gtx) || m.openSel {
+			m.openSel = false
 			labels := make([]string, len(m.opts))
 			cur := -1
 			o := SelectListOpts{Dividers: map[int]bool{}, Icons: map[int]string{}}
