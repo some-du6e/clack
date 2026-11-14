@@ -68,11 +68,12 @@ func dockBadgeLabel(count int, unread, bullet bool) string {
 }
 
 // updateDock sets the badge from the model when it changed: the Dock's
-// on macOS, the taskbar overlay on Windows.
+// on macOS, the taskbar overlay and the tray icon on Windows.
 func (a *App) updateDock() {
 	if runtime.GOOS == "windows" || taskbarAnyOS {
 		a.updateTaskbar(false)
 	}
+	a.updateTrayIcon(false) // Windows: the tray's icon and tooltip (tray.go)
 	if runtime.GOOS != "darwin" && !dockAnyOS {
 		return
 	}

@@ -5,17 +5,35 @@ Needs rsvg-convert and Pillow; uses optipng when it is installed.
 
     python3 assets/icon/gen_svg.py   # only after changing the design
     python3 assets/icon/build.py
+    python3 assets/icon/build.py tray   # only the Windows shell's icons
 
 16 and 24 px come from the thicker clack-small.svg; everything else from
 clack.svg. The .icns is drawn from clack-macos.svg (Apple's icon grid).
+
+The Windows shell's icons are drawn here, not from a master:
+
+  - clack-tray-{rest,unread,highlight}.ico, the notification-area icon's
+    states (Slack desktop's resources/slack-taskbar-{rest,unread,
+    highlight}.ico, which TrayHandler swaps by unread state). Slack's are
+    its mark in white with a half-black halo, 16, 20, 24 and 32 px DIB
+    frames; unread and highlight add a dot at the bottom right (cyan,
+    pink) in a dark ring. These are Clack's small glyph drawn the same
+    way, with the dot where Slack's sits in each frame size.
+  - screen.ico, the jump list's "Move Clack to Current Display" task
+    (Slack's resources/screen.ico): a white monitor outline, 16 to 256 px.
 """
 import io
 import os
+import re
 import shutil
 import struct
 import subprocess
+import sys
 
 from PIL import Image
+
+sys.dont_write_bytecode = True  # no __pycache__ next to the masters
+import gen_svg  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SMALL = 24  # sizes up to this use the small-size variant
@@ -61,10 +79,12 @@ def bmp_frame(im):
 
 
 def write_ico(path, sizes):
-    frames = []
-    for n in sizes:
-        im = full(n)
-        frames.append((n, png_bytes(im) if n >= 256 else bmp_frame(im)))
+    write_frames(path, [(n, full(n)) for n in sizes])
+
+
+def write_frames(path, images):
+    """An .ico of (size, image) frames: PNG at 256, DIBs below."""
+    frames = [(n, png_bytes(im) if n >= 256 else bmp_frame(im)) for n, im in images]
     out = struct.pack("<HHH", 0, 1, len(frames))
     offset = 6 + 16 * len(frames)
     for n, data in frames:
@@ -74,6 +94,71 @@ def write_ico(path, sizes):
     out += b"".join(data for _, data in frames)
     with open(path, "wb") as fh:
         fh.write(out)
+
+
+def render_svg(svg, n):
+    out = subprocess.run(["rsvg-convert", "-w", str(n), "-h", str(n)], input=svg.encode(),
+                         check=True, capture_output=True).stdout
+    return Image.open(io.BytesIO(out)).convert("RGBA")
+
+
+def f(v):
+    return f"{v:.3f}".rstrip("0").rstrip(".")
+
+
+# The small glyph's bounding box on the 1024 canvas (rendered alpha).
+GLYPH_BOX = (142, 166, 866, 834)
+# Slack's dot in each tray frame (measured from 4.53.276's
+# slack-taskbar-unread.ico): centre, fill radius, ring width, in px.
+TRAY_DOTS = {16: (11, 4, 1), 20: (13.5, 4.5, 1.25), 24: (16.5, 5.5, 1.5), 32: (22, 8, 2)}
+# The dot's fill, top to bottom (the same frames' gradients).
+TRAY_FILL = {"unread": ("#00E0F9", "#00C9F5"), "highlight": ("#F74194", "#F33171")}
+TRAY_SIZES = (16, 20, 24, 32)
+
+
+def tray_svg(state, n):
+    """The tray icon for state at n px: the white glyph over a halo of
+    n/16 px at half black, then the dot in its 80% black ring."""
+    halo = n / 16
+    w, h = GLYPH_BOX[2] - GLYPH_BOX[0], GLYPH_BOX[3] - GLYPH_BOX[1]
+    s = (n - 2 * halo) / max(w, h)
+    cx, cy = (GLYPH_BOX[0] + GLYPH_BOX[2]) / 2, (GLYPH_BOX[1] + GLYPH_BOX[3]) / 2
+    tf = f"translate({f(n / 2 - cx * s)} {f(n / 2 - cy * s)}) scale({f(s)})"
+    white = gen_svg.glyph(True).replace(gen_svg.ACCENT, gen_svg.GLYPH)
+    grow = 2 * halo / s
+    dark = re.sub(r'stroke-width="([0-9.]+)"', lambda m: f'stroke-width="{f(float(m.group(1)) + grow)}"', white)
+    dark = dark.replace(gen_svg.GLYPH, "#000000")
+    parts = [f'<g opacity="0.5" transform="{tf}">{dark}</g>', f'<g transform="{tf}">{white}</g>']
+    if state != "rest":
+        c, r, ring = TRAY_DOTS[n]
+        top, bottom = TRAY_FILL[state]
+        parts.append('<defs><linearGradient id="dot" x1="0" y1="0" x2="0" y2="1">'
+                     f'<stop offset="0" stop-color="{top}"/><stop offset="1" stop-color="{bottom}"/>'
+                     '</linearGradient></defs>')
+        parts.append(f'<circle cx="{f(c)}" cy="{f(c)}" r="{f(r + ring / 2)}" fill="none" stroke="#000000" '
+                     f'stroke-opacity="0.8" stroke-width="{f(ring)}"/>')
+        parts.append(f'<circle cx="{f(c)}" cy="{f(c)}" r="{f(r)}" fill="url(#dot)"/>')
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n} {n}" width="{n}" height="{n}">'
+            + "".join(parts) + "</svg>")
+
+
+# Slack's screen.ico at 256 px: the screen's outline from (19, 32) to
+# (236, 185) in a 19 px stroke, the stand 26 px wide down to the base, a
+# 19 px line from x 67 to 187 at y 220.
+SCREEN_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">'
+              '<g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">'
+              '<rect x="28.5" y="41.5" width="198" height="134" rx="14" stroke-width="19"/>'
+              '<path d="M127.5 176V211" stroke-width="26" stroke-linecap="butt"/>'
+              '<path d="M77 220.5H177" stroke-width="19"/>'
+              '</g></svg>')
+
+
+def write_shell_icons():
+    for state in ("rest", "unread", "highlight"):
+        write_frames(os.path.join(HERE, f"clack-tray-{state}.ico"),
+                     [(n, render_svg(tray_svg(state, n), n)) for n in TRAY_SIZES])
+    write_frames(os.path.join(HERE, "screen.ico"),
+                 [(n, render_svg(SCREEN_SVG, n)) for n in (256, 128, 64, 48, 32, 16)])
 
 
 def rle_literal(data):
@@ -108,6 +193,9 @@ def write_icns(path):
 
 
 def main():
+    write_shell_icons()
+    if sys.argv[1:] == ["tray"]:
+        return
     for n in (16, 24, 32, 48, 64, 128, 256, 512, 1024):
         full(n).save(os.path.join(HERE, f"clack-{n}.png"), optimize=True)
     write_ico(os.path.join(HERE, "clack.ico"), (16, 24, 32, 48, 64, 128, 256))

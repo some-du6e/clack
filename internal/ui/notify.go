@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
@@ -45,9 +46,10 @@ func (a *App) Notify(title, body string) { a.notifyShow(title, body, nil) }
 // Slack's desktopNotificationOptions hands the shell desktop_sound (a
 // global notification pref) and the shell plays it with the banner,
 // unless mute_sounds (canPlayMessageSound), Do Not Disturb (canPlaySound)
-// or the value is "none". n is the payload for a notifier that shows it
-// (messageNote, made on the UI goroutine before the showNotification
-// thunk ran).
+// or the value is "none", and on Windows unless the shell says no
+// (soundPlayback: Clack's toasts off, or Focus Assist on). n is the
+// payload for a notifier that shows it (messageNote, made on the UI
+// goroutine before the showNotification thunk ran).
 func (a *App) notifyMessage(title, body string, n *desktopNote) {
 	if !a.notifyShow(title, body, n) {
 		return
@@ -60,11 +62,24 @@ func (a *App) notifyMessage(title, body string, n *desktopNote) {
 	go func() { // dnd.info the first time: off the UI goroutine
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if !c.DNDActive(ctx) {
+		if !c.DNDActive(ctx) && soundPlayback() {
 			huddleui.PlaySlackSound(file)
 		}
 	}()
 }
+
+// soundPlayback is the shell's answer to SHOULD_PLAY_SOUND, which the web
+// client asks before a notification sound (main.bundle.cjs 4.53.276
+// win32 @1376514): checkNotificationState("sound playback") (dt
+// @1003789), isWindowsToastNotificationEnabled() && !isFocusAssistActive()
+// (Clack's notificationPresentationCheck is Slack's default, null, and
+// its notificationPlayback "web"). Elsewhere both always allow it. It
+// may wait up to 2 s for Focus Assist: never the UI goroutine. Tests swap
+// it.
+var soundPlayback = func() bool { return toastsEnabled() && !focusAssistActive() }
+
+// focusAssistActive is desktop's (tests swap it).
+var focusAssistActive = desktop.FocusAssistActive
 
 // messageSound is the desktop_sound file to play ("" unset: Slack's
 // default, Knock Brush).

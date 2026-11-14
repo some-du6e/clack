@@ -210,6 +210,10 @@ func main() {
 	regURL := flag.Bool("register-url-handler", false, "make Clack the slack:// link handler for this user and exit")
 	unregURL := flag.Bool("unregister-url-handler", false, "remove Clack's slack:// handler registration (Windows) and exit")
 	noRealtime := flag.Bool("no-realtime", os.Getenv("CLACK_NO_REALTIME") != "", "never open Slack's realtime connection (poll instead), whatever Preferences says; also CLACK_NO_REALTIME=1")
+	// The Run key's launch on login (desktop.StartupFlag, Slack's
+	// --startup): with the tray's Launch Control > Keep in Background the
+	// window stays in the notification area.
+	startup := flag.Bool(strings.TrimPrefix(desktop.StartupFlag, "--"), false, "started by Launch on login: stay in the notification area when the tray's Launch Control says Keep in Background (Windows)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: clack [flags] [slack://link]\n       clack login [slack://…/magic-login/… | workspace]   (sign in with a Slack link, or paste a token and d cookie)\n       clack demo [--speed N] [--reset]   (a built-in fake workspace, offline; clack demo --help)\n\n")
 		flag.PrintDefaults()
@@ -293,7 +297,7 @@ func main() {
 			old.PersistSession(nil)
 		}
 	}
-	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started, NoRealtime: *noRealtime,
+	opts := ui.Options{ConfigDir: cfg, Dark: *dark, Started: started, NoRealtime: *noRealtime, InvokedOnStartup: *startup,
 		LogDir: logs.Dir(), LogTail: logs.Tail, Spellcheck: true,
 		SignOut: func() {
 			setLive(nil)
@@ -317,6 +321,11 @@ func main() {
 	}
 	if desktop.LaunchOnLoginSupported() {
 		opts.LaunchOnLogin, opts.SetLaunchOnLogin = desktop.LaunchOnLogin, desktop.SetLaunchOnLogin
+		go func() { // an older Clack's Run value, without --startup
+			if err := desktop.RefreshLaunchOnLogin(); err != nil {
+				log.Printf("desktop: launch on login: %v", err)
+			}
+		}()
 	}
 	if registered != nil {
 		// again when Open Slack sign-in is clicked, in case the start's
@@ -448,7 +457,10 @@ func main() {
 	var tray *desktop.Tray
 	if runtime.GOOS == "windows" { // Slack's notification-area icon
 		var terr error
-		if tray, terr = desktop.StartTray("Clack", a.Raise, a.Quit); terr != nil {
+		icons := desktop.TrayIcons{desktop.TrayRest: icon.TrayRest, desktop.TrayUnread: icon.TrayUnread, desktop.TrayHighlight: icon.TrayHighlight}
+		// a click is FOREGROUND_APP; the menu, the icon's state and the
+		// tooltip come from the UI (ui/tray.go)
+		if tray, terr = desktop.StartTray(ui.TrayTooltip(0, false), icons, a.Raise); terr != nil {
 			log.Printf("desktop: tray: %v", terr)
 		} else {
 			a.SetTray(tray) // closing the window leaves Clack here (runFromTray)

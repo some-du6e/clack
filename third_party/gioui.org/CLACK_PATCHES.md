@@ -928,6 +928,44 @@ around it, from `clackMsgTrace`, a hook only the tests set).
 `internal/ui` `TestTitleBarWindow` is Clack's window on the same job. Not
 in `UPSTREAM.patch`.
 
+## 23. app: StartHidden, a window created without being shown (Windows)
+
+`app/clack_hide.go` (new: `StartHidden`), `app/os.go`
+(`Config.startHidden`) and `app/os_windows.go` (`window.startedHidden`;
+`Configure`'s first run; `newWindow`'s focus). An addition: a window
+without the option shows as before.
+
+Slack's desktop window starts hidden when Launch on Login started the app
+(`--startup`, `environment.invokedOnStartup`) and the tray's Launch Control
+says Keep in Background (`hideOnStartup`, true by default): `sf`
+(`main.bundle.cjs` 4.53.276 win32 @929699) keeps the BrowserWindow, created
+with `show: false`, unshown until the tray icon brings the app forward.
+Gio's first `Configure` ends in `ShowWindow`, and `newWindow` then takes
+the foreground and the focus, so a window could only be hidden after it
+had flashed up and taken the focus.
+
+`StartHidden(true)` among a window's first options: that first `Configure`
+places, sizes and styles the window (`SetWindowPos` with `SWP_NOACTIVATE`)
+but leaves out the `ShowWindow`, and `newWindow` doesn't call
+`SetForegroundWindow` or `SetFocus`. The window is then hidden as
+`Window.Hide` leaves one (§13): it draws only the frames Gio's `update`
+draws on its own `WM_WINDOWPOSCHANGED` and `WM_STYLECHANGED` (the
+creation's two, and two for each option that changes it while hidden, as
+for a window hidden to the tray; Electron also paints a `show: false`
+window's first frame, `paintWhenInitiallyHidden`), `Invalidate` draws
+nothing but still wakes the app, options that leave the mode alone keep it
+hidden (§20), and `Perform(system.ActionRaise)` shows it (`SW_SHOWNORMAL`,
+or `SW_SHOW` for a maximized mode), after which it paints. Elsewhere the
+option does nothing.
+
+Tests: `app/clack_hide_windows_test.go` `TestStartHidden` (not visible and
+not the foreground window after its creation, no frames from `Invalidate`
+but wake-ups, a title change keeps it hidden, `ActionRaise` shows and draws
+it, the close works),
+and `internal/ui` `TestTrayWindow` (Clack's own window launched on login),
+on ci's windows-shell job (`CLACK_WINDOWS_TRAY_TESTS`). Not in
+`UPSTREAM.patch`.
+
 ## 24. app: HiddenTitleBar and TrafficLightPosition on macOS, and Window.Hide there
 
 `app/clack_titlebar.go` (`HiddenTitleBar`'s macOS part, new

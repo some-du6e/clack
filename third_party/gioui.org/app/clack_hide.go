@@ -2,6 +2,8 @@
 
 package app
 
+import "gioui.org/unit"
+
 // Clack patch (CLACK_PATCHES.md §13): hiding a window, for Slack's
 // runFromTray. Slack's main process answers a click on the close button
 // with preventDefault and BrowserWindow.hide (MAIN_WINDOW_CLOSE), so the
@@ -34,4 +36,17 @@ func (w *Window) Hide() bool {
 		}
 	})
 	return ok
+}
+
+// StartHidden is a Clack patch (CLACK_PATCHES.md §23): the window is
+// created without being shown, as an Electron BrowserWindow made with
+// show: false that nothing shows yet (Slack's main window when Launch on
+// Login started it and Launch Control says Keep in Background). It draws
+// no frames and takes no focus until Perform(system.ActionRaise) shows it.
+// Windows only; elsewhere the window shows as usual. It only takes effect
+// when the window is created.
+func StartHidden(enabled bool) Option {
+	return func(_ unit.Metric, cnf *Config) {
+		cnf.startHidden = enabled
+	}
 }

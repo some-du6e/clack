@@ -25,3 +25,6 @@ func SystemIdleTime() int { return 0 }
 
 // ToastsEnabled is Windows' ToastNotifier.Setting.
 func ToastsEnabled() bool { return true }
+
+// MoveToCurrentDisplay is Windows' MOVE_WINDOW_TO_PRIMARY_SCREEN move.
+func MoveToCurrentDisplay(uintptr) bool { return false }
