@@ -184,6 +184,9 @@ func TestCanEditTabsChecked(t *testing.T) {
 		t.Error("an unknown conversation is editable")
 	}
 	a.S.PutConv(slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true})
+	// the fake grants MANAGE_CHANNEL_TABS for any channel by default
+	// (pins-folders' tests rely on it): withhold it explicitly here
+	fs.Permissions = map[string][]string{ch: {}}
 	if a.CanEditTabsChecked(ctx, ch) {
 		t.Error("on Grid without MANAGE_CHANNEL_TABS a member edits tabs")
 	}
