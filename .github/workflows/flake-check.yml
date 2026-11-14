@@ -108,6 +108,36 @@ name: flake-check
 #                                            real bug: Gio patch 20). The
 #                                            test now changes the count
 #                                            after each close and revive
+# and flake-fix's (2026-11-14: first ci attempts that failed and passed
+# on a rerun; the flake-fix-* jobs, each on two fresh runners):
+#   TestTaskbarWindow (ui, windows-shell)    the "always" flash, posted from
+#                                            notificationShown's goroutine
+#                                            while the notification's wake-up
+#                                            was still being handled, lost
+#                                            its Invalidate on the minimized
+#                                            window (no frames to cover it):
+#                                            Gio patch 26; and Clack drained
+#                                            posted work on wake-ups only,
+#                                            though Gio hands an Invalidate's
+#                                            wake-up out as any event
+#   TestFocusAssistModes (desktop)           a Do not disturb switch crashed
+#                                            WpnUserService just after an
+#                                            AddAllowedApp, which was lost
+#                                            without an error; the cache
+#                                            check assumed it had worked
+#   TestTitleBarWindow (ui, windows-applog)  close's hover red sampled at a
+#                                            fixed 500 ms, mid-fade
+#   TestHiddenTitleBarButtonsInput (gio)     frames stopped after a caption
+#                                            button's input (diagnosed by
+#                                            the stall dump this job prints)
+#   TestQueuedLoadsDontParkGoroutines        the start order of 2000 loads
+#     (imgcache)                             released at once is the
+#                                            scheduler's; released one at a
+#                                            time it is exact
+#   TestStartWritesFileAndTail (applog)      Tail's 1 s wait for 300 queued
+#                                            lines on Windows' disk (94 were
+#                                            in), and the Fatal skipped Close:
+#                                            TempDir couldn't remove the file
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -170,6 +200,13 @@ on:
       - "internal/core/members.go"
       - "internal/slack/members.go"
       - "internal/ui/members_evict_test.go"
+      - "internal/imgcache/queue_test.go"
+      - "internal/applog/applog_test.go"
+      - "internal/desktop/focusassist_windows_test.go"
+      - "internal/ui/titlebar_windows_test.go"
+      - "third_party/gioui.org/app/window.go"
+      - "third_party/gioui.org/app/clack_hide_windows_test.go"
+      - "third_party/gioui.org/app/clack_titlebar_windows_test.go"
 
 permissions:
   contents: read
@@ -679,3 +716,77 @@ jobs:
           PKG: ./internal/desktop
           FLAKE_TAIL: "60"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
+  # flake-fix (2026-11-14): each test that failed a first ci attempt, on two
+  # fresh runners (a first attempt's state: the cursor where ci's earlier
+  # steps left it, a notification service never crashed), COUNT runs each
+  flake-fix-windows:
+    if: ${{ !inputs.only || startsWith('flake-fix-windows', inputs.only) }}
+    name: "flake-fix ${{ matrix.test }} (runner ${{ matrix.runner }})"
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2]
+        test: [TestTaskbarWindow, TestTitleBarWindow, TestHiddenTitleBarButtonsInput, TestInvalidateWhileHandlingWakesHidden, TestFocusAssistModes, TestStartWritesFileAndTail]
+        include:
+          - test: TestTaskbarWindow
+            pkg: ./internal/ui
+          - test: TestTitleBarWindow
+            pkg: ./internal/ui
+          - test: TestHiddenTitleBarButtonsInput
+            pkg: gioui.org/app
+          - test: TestInvalidateWhileHandlingWakesHidden
+            pkg: gioui.org/app
+          - test: TestFocusAssistModes
+            pkg: ./internal/desktop
+          - test: TestStartWritesFileAndTail
+            pkg: ./internal/applog
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "${{ matrix.test }}, every run counted"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows jobs
+          CLACK_WINDOWS_TASKBAR_TESTS: "1"
+          CLACK_WINDOWS_TITLEBAR_TESTS: "1"
+          CLACK_WINDOWS_TRAY_TESTS: "1"
+          CLACK_WINDOWS_FOCUS_ASSIST_TESTS: "1"
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+          FLAKE_TAIL: "300"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
+  flake-fix-linux:
+    if: ${{ !inputs.only || startsWith('flake-fix-linux', inputs.only) }}
+    name: "flake-fix ${{ matrix.test }} (${{ matrix.flags }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: TestQueuedLoadsDontParkGoroutines, pkg: ./internal/imgcache, flags: "-race" }
+          - { test: TestQueuedLoadsDontParkGoroutines, pkg: ./internal/imgcache, flags: "-cpu=1,2,4,8" }
+          - { test: TestTailWaitsForQueuedLines, pkg: ./internal/applog, flags: "-race" }
+          - { test: TestInvalidateWhileHandlingAWakeup, pkg: gioui.org/app, flags: "-race" }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }} ${{ matrix.flags }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" ${{ matrix.flags }}

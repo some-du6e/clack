@@ -121,6 +121,12 @@ jobs:
       - name: Gio hover-only input (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'HoverOnly' gioui.org/io/input
+      # Gio patch 26: an Invalidate made while the client handles a wake-up
+      # gets a wake-up of its own (hidden and minimized windows draw no
+      # frame to cover it); the real windows are windows-shell's
+      - name: Gio wakes the client for every Invalidate (vendored gioui.org/app)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestInvalidateWhileHandlingAWakeup' gioui.org/app
       # Gio patch 22: what each point of a window with a hidden title bar
       # is (the caption buttons, the top band, the caption, the client);
       # the Windows codes on real windows are windows-applog's. Patch 24:
@@ -300,11 +306,14 @@ jobs:
       # GPU here: the geometry, not the pixels; threads-audit has those).
       - name: thread reply box gap (layout, fakeslack)
         if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
         env:
           CGO_ENABLED: "0"
         run: |
-          go test -count=1 -v -run '^TestThreadComposerTopMargin$' ./internal/ui/composer
-          go test -count=1 -v -timeout 10m -run '^TestThreadsAuditReplyGap$' ./internal/ui
+          rc=0
+          go test -count=1 -v -run '^TestThreadComposerTopMargin$' ./internal/ui/composer || rc=1
+          go test -count=1 -v -timeout 10m -run '^TestThreadsAuditReplyGap$' ./internal/ui || rc=1
+          exit $rc
       # Slack's frameless window (gap 2, W34). Gio patch 22's HiddenTitleBar
       # on real windows: no caption over the client area, WM_NCHITTEST for
       # the caption buttons (HTMAXBUTTON: Snap Layouts), the caption and the
@@ -322,8 +331,10 @@ jobs:
           CLACK_WINDOWS_TITLEBAR_TESTS: "1"
           CLACK_TITLEBAR_SHOTS: ${{ runner.temp }}\titlebar-shots
         run: |
-          go test -count=1 -v -timeout 10m -run 'TestCaptionHit|TestHiddenTitleBar' gioui.org/app
-          go test -count=1 -v -timeout 15m -run '^(TestTitleBarWindow|TestMainWindowOptions|TestWcoGeometry|TestWcoThemeText)$' ./internal/ui
+          rc=0
+          go test -count=1 -v -timeout 10m -run 'TestCaptionHit|TestHiddenTitleBar' gioui.org/app || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestTitleBarWindow|TestMainWindowOptions|TestWcoGeometry|TestWcoThemeText)$' ./internal/ui || rc=1
+          exit $rc
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -496,16 +507,20 @@ jobs:
       # back), the RunFromTray balloon through Shell_NotifyIcon, and
       # App.Run's own window signed in to internal/fakeslack hiding on
       # SC_CLOSE / WM_CLOSE, running posted work while hidden, coming back
-      # on Raise and closing on Quit.
+      # on Raise and closing on Quit. Gio patch 26: an Invalidate made while
+      # the app handles a hidden or minimized window's wake-up gets its own.
       - name: close to the tray (Window.Hide, the tray balloon, runFromTray in App.Run, the caret blink time)
         if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
         env:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_TRAY_TESTS: "1"
         run: |
-          go test -count=1 -v -timeout 10m -run 'TestHideAndRaise|TestHideWithoutDriver|TestCaretBlinkFromOS|TestOptionKeepsHiddenAndMinimized' gioui.org/app
-          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop
-          go test -count=1 -v -timeout 15m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui
+          rc=0
+          go test -count=1 -v -timeout 10m -run 'TestHideAndRaise|TestHideWithoutDriver|TestCaretBlinkFromOS|TestOptionKeepsHiddenAndMinimized|TestInvalidateWhileHandling' gioui.org/app || rc=1
+          go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui || rc=1
+          exit $rc
 
       # Slack's notification-area icon, its menu and the taskbar's jump
       # list (gap 8, W39: internal/desktop tray_windows.go,
@@ -530,7 +545,7 @@ jobs:
         run: |
           rc=0
           go test -count=1 -v -timeout 10m -run '^TestStartHidden$' gioui.org/app || rc=1
-          go test -count=1 -v -timeout 10m -run '^(TestTrayIconFromICO|TestTrayMenuItems|TestTrayShell|TestJumpList|TestFocusAssistRead|TestLaunchOnLoginRunValue|TestFitCenteredLikeSlack|TestFocusAssistOnLikeSlack)$' ./internal/desktop || rc=1
+          go test -count=1 -v -timeout 10m -run '^(TestTrayIconFromICO|TestTrayMenuItems|TestTrayShell|TestJumpList|TestFocusAssistRead|TestLaunchOnLoginRunValue|TestFitCenteredLikeSlack|TestFocusAssistOnLikeSlack|TestFocusAssistActiveCachesLikeSlack)$' ./internal/desktop || rc=1
           go test -count=1 -v -timeout 15m -run '^(TestTrayWindow|TestTrayStateLikeSlack|TestTrayIconFollowsUnreads|TestTrayMenuLikeSlack|TestLaunchOnLoginTrayAndPrefs|TestJumpListLikeSlack|TestAppActions|TestResetWindow|TestStartHiddenLikeSlack|TestSoundPlaybackHoldsTheSound)$' ./internal/ui || rc=1
           exit $rc
       # The real exe: Clack.exe --startup (the Run value) with Keep in
@@ -704,19 +719,26 @@ jobs:
       # the taskbar go in toast-shots.
       - name: taskbar (the unread badge overlay, the frame flash, windowFlashBehavior's close and revive)
         if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
         env:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_TASKBAR_TESTS: "1"
           CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
           BADGE_SHOTS_DIR: ${{ runner.temp }}\toast-shots
         run: |
-          go test -count=1 -v -timeout 10m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos' ./internal/desktop
-          go test -count=1 -v -timeout 15m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray|TestTitleDockTaskbarAgreeLikeSlack)$' ./internal/ui
+          rc=0
+          go test -count=1 -v -timeout 10m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos' ./internal/desktop || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray|TestTitleDockTaskbarAgreeLikeSlack)$' ./internal/ui || rc=1
+          exit $rc
       # Focus Assist's modes set through IQuietHoursSettings, each read back
       # through the WNF state as Slack's windows-focus-assist reads it, and
       # Clack as a priority app. It switches the runner's Do not disturb,
-      # which restarts the notification service on Server 2025, so it runs
-      # after every toast and taskbar step; it puts the profile back.
+      # which crashes the notification service on Server 2025 (restarted
+      # within seconds; a change made just before can be lost), so it runs
+      # last, in its own process, after every toast and taskbar step; it
+      # makes each change again until it reads back, skips if the service
+      # stays down, and puts the profile back. The cache and Slack's muting
+      # rule are TestFocusAssistActiveCachesLikeSlack's (the tray step).
       - name: Focus Assist's modes (Do not disturb switched through IQuietHoursSettings, then put back)
         if: ${{ !cancelled() }}
         shell: bash
@@ -761,13 +783,16 @@ jobs:
       # clicked over a long fakeslack channel in Clack's own window.
       - name: middle-click autoscroll (TestPanCursors, internal/ui/autoscroll, SendInput on Clack's window)
         if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
         env:
           CGO_ENABLED: "0"
           CLACK_WINDOWS_AUTOSCROLL_TESTS: "1"
         run: |
-          go test -count=1 -v -run '^TestPanCursors$' gioui.org/app
-          go test -count=1 -v ./internal/ui/autoscroll
-          go test -count=1 -v -timeout 10m -run '^(TestAutoscrollWindow|TestAutoscrollInClack)$' ./internal/ui
+          rc=0
+          go test -count=1 -v -run '^TestPanCursors$' gioui.org/app || rc=1
+          go test -count=1 -v ./internal/ui/autoscroll || rc=1
+          go test -count=1 -v -timeout 10m -run '^(TestAutoscrollWindow|TestAutoscrollInClack)$' ./internal/ui || rc=1
+          exit $rc
 
 
   windows-idle:
