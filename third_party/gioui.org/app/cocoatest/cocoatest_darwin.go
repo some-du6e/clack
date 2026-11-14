@@ -233,10 +233,10 @@ func SetTopLeft(view uintptr, x, y float64) {
 	C.cocoatest_set_top_left(C.uintptr_t(view), C.CGFloat(x), C.CGFloat(y))
 }
 
-// Zoom sends the window zoom:, as Window > Zoom (and an Option-click on
-// the green button) does; a plain click on that button goes full screen.
-// Main thread.
-func Zoom(view uintptr) { C.cocoatest_zoom(C.uintptr_t(view)) }
+// ZoomWindow sends the window zoom:, as Window > Zoom (and an
+// Option-click on the green button) does; a plain click on that button
+// (Press Zoom) goes full screen. Main thread.
+func ZoomWindow(view uintptr) { C.cocoatest_zoom(C.uintptr_t(view)) }
 
 // ToggleFullScreen sends the window toggleFullScreen:, as the green
 // button and View > Toggle Full Screen do. Main thread.

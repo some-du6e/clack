@@ -1103,7 +1103,7 @@ window before the mode, its size limits in every mode, a first full
 screen once the window is on the screen; `newWindow` doesn't cascade a
 placed window; `gio_onWindowMove`), `app/os_macos.m` (`windowDidMove:`)
 and `app/cocoatest/` (`Window.ScreenFrame`, `Screens`, `SetTopLeft`,
-`Zoom`). Additions, but for the macOS size limits (below).
+`ZoomWindow`). Additions, but for the macOS size limits (below).
 
 Slack reopens its main window where it was (gap 9). Its settings keep
 `mainWindowSettings`: bounds, maximized, fullScreen (and on macOS the

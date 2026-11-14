@@ -107,7 +107,7 @@ func TestBoundsMac(t *testing.T) {
 	if b := h.config().Bounds(); !b.In(prim.Bounds) || b.Dx() < r.Dx() || h.config().Display() != prim {
 		t.Errorf("maximized: bounds %v on %+v, want a frame bigger than %v on the primary", b, h.config().Display(), r)
 	}
-	cocoatest.OnMain(func() { cocoatest.Zoom(h.view) })
+	cocoatest.OnMain(func() { cocoatest.ZoomWindow(h.view) })
 	macWaitUntil(t, "unzoomed to r", func() bool { s := h.state(); return !s.Zoomed && macRect(s.ScreenFrame) == r })
 	h.destroy(t)
 

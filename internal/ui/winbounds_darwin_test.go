@@ -178,7 +178,7 @@ func TestMacWindowBounds(t *testing.T) {
 	})
 
 	// 3.
-	onMain(func() { cocoatest.Zoom(ma.view) })
+	onMain(func() { cocoatest.ZoomWindow(ma.view) })
 	ma.until(t, "zoomed", func() bool { return ma.state().Zoomed })
 	want := defaultWindowBounds(prim)
 	ma.until(t, "ui.json maximized", func() bool {
@@ -209,7 +209,7 @@ func TestMacWindowBoundsOffScreen(t *testing.T) {
 	}
 	ma := runMacBoundsApp(t, seed)
 	ma.until(t, "zoomed", func() bool { return ma.state().Zoomed })
-	onMain(func() { cocoatest.Zoom(ma.view) })
+	onMain(func() { cocoatest.ZoomWindow(ma.view) })
 	ma.until(t, "unzoomed onto the screen", func() bool { return !ma.state().Zoomed && ma.frame() == want })
 	ma.until(t, "ui.json with the bounds on the screen", func() bool {
 		s := ma.saved()
