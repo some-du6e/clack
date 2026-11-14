@@ -59,7 +59,7 @@ jobs:
           xvfb-run -a go test -count=1 -v ./internal/ui/globalkey ./internal/ui/screenlock
       - name: incoming invites and raise hand (race)
         # against fakeslack and the fake Chime only: nothing rings anyone
-        run: go test -race -gcflags=all=-d=checkptr=0 -count=1 -v -run 'TestIncomingInvite|TestRaiseHand|TestPendingStatus' ./internal/ui/huddleui
+        run: go test -race -gcflags=all=-d=checkptr=0 -count=1 -v -run 'TestIncomingInvite|TestRaiseHand|TestPendingStatus|TestHuddleLink' ./internal/ui/huddleui
       - name: pictures (Mesa llvmpipe)
         env:
           CLACK_PIXEL_TESTS: "1"

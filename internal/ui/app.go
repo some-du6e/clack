@@ -676,6 +676,9 @@ func (a *App) frame(gtx layout.Context) {
 		primary = a.layoutShell(gtx)
 	}
 	a.layoutHuddleDock(gtx) // Slack's huddle bottom bar, under the rail and workspace
+	// the Huddles page's useMarkHuddlesNotifications (its unread invites
+	// are marked seen 600 ms after it sees a new one; huddleui)
+	a.huddles().HuddlesPage(a.router.Current().Page() == "huddles")
 
 	ia.Leave()
 	client.Leave()

@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -158,4 +159,37 @@ func (s *Server) handleHuddles(method string, f url.Values) (any, bool) {
 		return ok("channel", slack.Conversation{ID: id, IsIM: true, User: users}), true
 	}
 	return nil, false
+}
+
+// PushHuddleInvite sends the huddle_invite Slack's server sends whoever
+// is being rung: sender is inviting the signed-in user to the call in ch
+// (Slack's huddleInviteRtmHandler reads channel_id, call_id,
+// sender_user_id, team_id). No call exists anywhere: the room is the
+// test's to describe with PushHuddleRoom.
+func (s *Server) PushHuddleInvite(ch, call, sender string) {
+	s.Push(map[string]any{"type": "huddle_invite", "channel_id": ch, "call_id": call, "sender_user_id": sender, "team_id": TeamID,
+		"event_ts": fmt.Sprintf("%d.000300", time.Now().Unix())})
+}
+
+// PushHuddleInviteCancel sends huddle_invite_cancel for ch (the caller
+// hung up before you answered).
+func (s *Server) PushHuddleInviteCancel(ch string) {
+	s.Push(map[string]any{"type": "huddle_invite_cancel", "channel_id": ch, "event_ts": fmt.Sprintf("%d.000400", time.Now().Unix())})
+}
+
+// PushHuddleRoom sends an sh_room_* event (sh_room_join, sh_room_update,
+// sh_room_leave) for a huddle in ch with these participants, started at
+// start (Unix seconds), and pending (user → status: pending,
+// joining_soon) as its pending_invitees when non-nil.
+func (s *Server) PushHuddleRoom(event, ch, call string, participants []string, start int64, pending map[string]string) {
+	room := map[string]any{"id": call, "channels": []string{ch}, "participants": participants, "date_start": start, "name": ""}
+	if pending != nil {
+		room["pending_invitees"] = pending
+	}
+	user := ""
+	if len(participants) > 0 {
+		user = participants[0]
+	}
+	s.Push(map[string]any{"type": event, "user": user, "channel_id": ch, "huddle": map[string]any{"channel_id": ch}, "room": room,
+		"event_ts": fmt.Sprintf("%d.000500", time.Now().Unix())})
 }

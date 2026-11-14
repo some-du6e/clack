@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -49,6 +50,10 @@ import (
 //   - The invite goes away on huddle_invite_cancel, when the room's
 //     pending_invitees no longer list you (the ring timed out on Slack's
 //     side), when the huddle empties or ends, and when you answer it.
+//     Every one of those is clearInviteForChannelId (ZRDf u8), which also
+//     drops the channel's unread invites (huddles_link.go); so do starting
+//     a huddle there (the orchestrator's start) and the end of your huddle
+//     there (its cleanup).
 
 // Slack's invite entry points (DF8l's su enum).
 const (
@@ -196,6 +201,7 @@ func (c *Controller) onInvite(raw json.RawMessage) {
 	if json.Unmarshal(raw, &ev) != nil || ev.Channel == "" || ev.Call == "" {
 		return
 	}
+	team := c.teamID() // the invite's teamId: the conversation's team, else the focused workspace (both this one)
 	c.mu.Lock()
 	if c.s != nil && c.s.Channel() == ev.Channel && c.s.RoomID() == ev.Call {
 		c.mu.Unlock()
@@ -214,6 +220,8 @@ func (c *Controller) onInvite(raw json.RawMessage) {
 	old := c.inv
 	inv := &incoming{Channel: ev.Channel, Call: ev.Call, Sender: ev.Sender, Team: ev.Team, At: time.Now(), status: "pending"}
 	c.inv = inv
+	// upsertInvite: the active invite, and one more unread invite
+	c.unread = append(c.unread, unreadInvite{Team: team, Channel: ev.Channel, Call: ev.Call, At: inv.At})
 	c.gen++
 	c.mu.Unlock()
 	if old != nil {
@@ -366,13 +374,23 @@ func (c *Controller) inviteMissed(inv *incoming) {
 			map[string]string{notifyView: "slack://channel?team=" + c.teamID() + "&id=" + ch}, map[string]func(){notifyView: view})})
 }
 
-// clearInvite is clearInviteForChannelId: the window closes, the card
-// goes, the sound stops.
+// clearInvite is clearInviteForChannelId: the channel's unread invites
+// go, and when the active invite is there, the window closes, the card
+// goes and the sound stops.
 func (c *Controller) clearInvite(ch string) {
 	c.mu.Lock()
 	inv := c.inv
-	if inv == nil || (ch != "" && inv.Channel != ch) {
+	if ch == "" && inv != nil {
+		ch = inv.Channel
+	}
+	n := len(c.unread)
+	c.unread = slices.DeleteFunc(c.unread, func(u unreadInvite) bool { return u.Channel == ch })
+	dropped := len(c.unread) != n
+	if inv == nil || inv.Channel != ch {
 		c.mu.Unlock()
+		if dropped {
+			c.changed()
+		}
 		return
 	}
 	c.inv = nil
