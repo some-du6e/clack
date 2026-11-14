@@ -939,6 +939,22 @@ type dtTimeList struct {
 type selectMode struct {
 	noAuto  bool
 	hovered int // the row under the pointer last frame (-1 none)
+	// dividers and icons by option (SelectListOpts)
+	dividers map[int]bool
+	icons    map[int]string
+}
+
+// divider reports row i (a list row) as a divider.
+func (t *dtTimeList) divider(i int) bool {
+	return t.sm != nil && i >= 0 && i < len(t.slots) && t.slots[i] >= 0 && t.sm.dividers[t.slots[i]]
+}
+
+// rowHeight is getRowHeight: 16 for a divider, else optionsRowHeight.
+func (t *dtTimeList) rowHeight(gtx layout.Context, i int) int {
+	if t.divider(i) {
+		return dp(gtx, 16)
+	}
+	return dp(gtx, 28)
 }
 
 func dtNewTimeList(h Host, anchor image.Rectangle, value, from int, onPick func(int)) *dtTimeList {
@@ -975,7 +991,7 @@ func dtNewTimeListStep(h Host, anchor image.Rectangle, value, from, step int, on
 }
 
 func (t *dtTimeList) pick(i int) {
-	if i < 0 || i >= len(t.slots) {
+	if i < 0 || i >= len(t.slots) || t.divider(i) {
 		return
 	}
 	t.Dismiss()
@@ -1002,6 +1018,9 @@ func (t *dtTimeList) move(d int) {
 		i = t.list.Position.First - d
 	}
 	i += d
+	for t.divider(i) { // a divider is never the active row
+		i += d
+	}
 	if i < 0 {
 		i = 0
 	}
@@ -1033,7 +1052,7 @@ func (t *dtTimeList) pseudoRow() int {
 func (t *dtTimeList) selectHover() {
 	hov := -1
 	for i := range t.clicks {
-		if t.clicks[i].Hovered() {
+		if t.clicks[i].Hovered() && !t.divider(i) {
 			hov = i
 		}
 	}
@@ -1113,7 +1132,11 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 	cl := colorsOf(th)
 	rowH, padY := dp(gtx, 28), dp(gtx, 12)
 	w := maxInt(dp(gtx, 138), t.anchor.Dx())
-	listH := minInt(len(t.slots)*rowH, dp(gtx, 264)-2*padY)
+	total := 0
+	for i := range t.slots {
+		total += t.rowHeight(gtx, i)
+	}
+	listH := minInt(total, dp(gtx, 264)-2*padY)
 	t.rows = listH / maxInt(1, rowH)
 	sz := image.Pt(w, listH+2*padY)
 	a := t.anchor
@@ -1133,6 +1156,11 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 	at(gtx, pos.Add(image.Pt(0, padY)), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, listH))
 		return t.list.Layout(gtx, len(t.slots), func(gtx layout.Context, i int) layout.Dimensions {
+			if t.divider(i) { // .c-select_options__divider: an hr, margin 5px 0
+				dh := t.rowHeight(gtx, i)
+				fill(gtx, image.Rect(0, dp(gtx, 5), w, dp(gtx, 5)+border1(gtx)), cl.Ring)
+				return layout.Dimensions{Size: image.Pt(w, dh)}
+			}
 			gtx.Constraints = layout.Exact(image.Pt(w, rowH))
 			return clickBox(gtx, &t.clicks[i], nil, func(gtx layout.Context) layout.Dimensions {
 				s := image.Pt(w, rowH)
@@ -1160,8 +1188,16 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 					fill(gtx, image.Rectangle{Max: s}, cl.Highlight)
 					fg = cl.HighText
 				}
-				at(gtx, image.Pt(dp(gtx, 24), 0), func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-dp(gtx, 24)), rowH)}
+				lx := dp(gtx, 24)
+				if t.sm != nil && t.slots[i] >= 0 && t.sm.icons[t.slots[i]] != "" {
+					// renderOption: display_flex gap_50 align_items_center
+					at(gtx, image.Pt(lx, (rowH-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+						return icon(gtx, t.sm.icons[t.slots[i]], 20, fg)
+					})
+					lx += dp(gtx, 20+4)
+				}
+				at(gtx, image.Pt(lx, 0), func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints = layout.Constraints{Max: image.Pt(maxInt(1, right-lx), rowH)}
 					return vcenter(gtx, rowH, func(gtx layout.Context) layout.Dimensions {
 						return text(gtx, th, 15, theme.Regular, fg, t.labels[i])
 					})
@@ -1171,7 +1207,7 @@ func (t *dtTimeList) Layout(gtx layout.Context) layout.Dimensions {
 		})
 	})
 	// scrollbar
-	if total := len(t.slots) * rowH; total > listH {
+	if total > listH {
 		top := t.list.Position.First*rowH + t.list.Position.Offset
 		thumb := maxInt(dp(gtx, 24), listH*listH/total)
 		ty := pos.Y + padY + (listH-thumb)*minInt(top, total-listH)/maxInt(1, total-listH)

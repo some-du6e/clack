@@ -20,15 +20,12 @@ package ui
 //     getTabContextMenu) at the pointer, the row staying highlighted.
 //     Otherwise the right-click does nothing there.
 //
-// Dragging tabs into and out of the menu isn't ported (Clack's tab bar
-// has no drag and drop).
+// Dragging tabs onto More, into its menu and out of it is tab_drag.go's.
 
 import (
-	"context"
 	"image"
 	"image/color"
 	"sync"
-	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
@@ -75,9 +72,18 @@ func tabsLastVisible(ws []int, x0, gap, right, reserve int) int {
 
 // tabsMore is the More tab's state for one channel's bar.
 type tabsMore struct {
-	tag    int         // its press, for the window position
-	off    image.Point // window − local, from the last press
-	hidden []int       // the hidden tabs' indexes (tests)
+	tag    int          // its press, for the window position
+	off    image.Point  // window − local, from the last press
+	hidden []int        // the hidden tabs' indexes (tests)
+	menu   *popups.Menu // the menu last opened
+}
+
+// openMenu is the More menu while it is open.
+func (st *tabsMore) openMenu() *popups.Menu {
+	if st.menu == nil || st.menu.Dismissed() {
+		return nil
+	}
+	return st.menu
 }
 
 var tabsMoreState sync.Map // *App -> map[string]*tabsMore (UI goroutine only)
@@ -170,26 +176,15 @@ func (a *App) layoutTabsMore(gtx layout.Context, ch string, all []chTab, last, c
 }
 
 // openTabsMore opens the More tab's menu below anchor (window
-// coordinates, Popover "bottom-left").
-func (a *App) openTabsMore(ch string, all []chTab, last, cur int, anchor image.Rectangle) {
-	items := a.tabsMoreItems(ch, all, last, cur, false)
-	show := func(items []popups.MenuItem) {
-		a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Anchor: anchor, Width: 200, Popover: "bottom-left",
-			MenuClass: "c-channel_tabs_overflow_menu"}))
-	}
-	c := a.Core()
-	if c == nil {
-		show(items)
-		return
-	}
-	// Edit tabs needs useCanEditTabs, which may read the channel's
-	// managers first
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		edit := c.CanEditTabsChecked(ctx, ch)
-		a.Post(func() { show(a.tabsMoreItems(ch, all, last, cur, edit)) })
-	}()
+// coordinates, Popover "bottom-left"); Edit tabs reads useCanEditTabs
+// (core.CanEditTabs). It returns the menu (tab_drag.go drags on it).
+func (a *App) openTabsMore(ch string, all []chTab, last, cur int, anchor image.Rectangle) *popups.Menu {
+	edit := a.Core() != nil && a.Core().CanEditTabs(ch)
+	m := popups.NewMenuOpts(a, a.tabsMoreItems(ch, all, last, cur, edit), popups.MenuOpts{Anchor: anchor, Width: 200,
+		Popover: "bottom-left", MenuClass: "c-channel_tabs_overflow_menu"})
+	a.tabsMoreFor(ch).menu = m
+	a.ShowOverlay(m)
+	return m
 }
 
 // tabsMoreItems is useTabsOverflowMenuRenderer's template: the hidden

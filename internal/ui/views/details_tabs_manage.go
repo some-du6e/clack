@@ -19,10 +19,17 @@ package views
 //     moves): updateTabOrder, conversations.moveTab {channel_id, id,
 //     after: the last tab before its new place}.
 //
+//   - Rename tab (edit) for a canvas or folder tab (not the Channel
+//     Expert's): RenameTabModal without isRenameFolder ("Rename tab", "Tab
+//     name"), views/tab_edit.go;
+//   - for an editable tab that isn't a system one (a canvas, list or
+//     folder) the visibility slot is trash "Delete tab": useRemoveTab with
+//     its confirmations (tab_edit.go).
+//
+// The actions show when useCanEditTabs (core.CanEditTabs, read each frame:
+// it fills in when the grant answers) and the tab is editable or movable.
 // A failed write shows "Something’s gone wrong. Mind trying again in a
-// moment?" under the list. Rename tab (canvases and folders) and Delete
-// tab (a canvas or list tab: removeTab with its file) aren't drawn: Clack
-// has neither flow.
+// moment?" under the list.
 
 import (
 	"context"
@@ -38,7 +45,6 @@ import (
 
 type cdManageTabs struct {
 	order   async[[]core.TabState]
-	can     async[bool]
 	clk     map[string]*widget.Clickable
 	visAt   map[string]time.Time // the visibility buttons' last runs (debounce)
 	errored atomic.Bool          // a write failed (the error alert)
@@ -111,12 +117,11 @@ func (d *ChannelDetails) manageTabRows(titles map[string]string) []W {
 	}
 	if !m.order.started() {
 		m.order.load(d.h, false, func(ctx context.Context) ([]core.TabState, error) { return c.TabOrder(ctx, id) })
-		m.can.load(d.h, false, func(ctx context.Context) (bool, error) { return c.CanEditTabsChecked(ctx, id), nil })
 	}
 	if _, ok, err := m.order.get(); !ok || err != nil {
 		return nil
 	}
-	can, _, _ := m.can.get()
+	can := c.CanEditTabs(id)
 	order := m.manageOrder()
 	var rows []W
 	for i := range order {
@@ -137,9 +142,20 @@ func (d *ChannelDetails) manageTabRow(gtx C, m *cdManageTabs, order []core.TabSt
 	t := order[i]
 	row0 := dirClick(m.clk, "row:"+t.ID)
 	vis, up, down := dirClick(m.clk, "vis:"+t.ID), dirClick(m.clk, "up:"+t.ID), dirClick(m.clk, "down:"+t.ID)
+	ren := dirClick(m.clk, "rename:"+t.ID)
+	sys := core.EditableSystemTab(t.Type)
+	trash := core.EditableTab(t.Type) && !sys                              // the slot's trash "Delete tab"
+	rename := (t.Type == "canvas" || t.Type == "folder") && !d.agentTab(t) // Q
+	if ren.Clicked(gtx) && can && rename {
+		OpenRenameTab(d.h, d.id, d.editTab(t, titles), false)
+	}
+	if vis.Clicked(gtx) && can && trash && gtx.Now.Sub(m.visAt[t.ID]) > 300*time.Millisecond {
+		m.visAt[t.ID] = gtx.Now
+		RemoveTab(d.h, d.id, d.editTab(t, titles))
+	}
 	canUp := i > 0 && cdMovable(t) && cdMovable(order[i-1])
 	canDown := i+1 < len(order) && cdMovable(t) && cdMovable(order[i+1])
-	if vis.Clicked(gtx) && cdSystemTabs[t.Type] && gtx.Now.Sub(m.visAt[t.ID]) > 300*time.Millisecond {
+	if vis.Clicked(gtx) && sys && cdSystemTabs[t.Type] && gtx.Now.Sub(m.visAt[t.ID]) > 300*time.Millisecond {
 		m.visAt[t.ID] = gtx.Now
 		d.toggleTabVisible(m, t)
 	}
@@ -149,10 +165,10 @@ func (d *ChannelDetails) manageTabRow(gtx C, m *cdManageTabs, order []core.TabSt
 	if down.Clicked(gtx) && canDown {
 		d.moveTab(m, order, i, i+1)
 	}
-	actions := can && (cdSystemTabs[t.Type] || cdMovable(t)) && !core.StaticTab(t)
+	actions := can && (core.EditableTab(t.Type) || cdMovable(t)) && !core.StaticTab(t)
 	return row0.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.Y = gtx.Dp(46)
-		hover := row0.Hovered() || vis.Hovered() || up.Hovered() || down.Hovered()
+		hover := row0.Hovered() || vis.Hovered() || up.Hovered() || down.Hovered() || ren.Hovered()
 		return layout.Inset{Left: 28, Right: 32}.Layout(gtx, func(gtx C) D {
 			return layout.Center.Layout(gtx, func(gtx C) D {
 				gtx.Constraints.Min.X = gtx.Constraints.Max.X
@@ -174,7 +190,13 @@ func (d *ChannelDetails) manageTabRow(gtx C, m *cdManageTabs, order []core.TabSt
 							return D{}
 						}
 						var ch []layout.FlexChild
-						if cdSystemTabs[t.Type] {
+						if rename {
+							ch = append(ch, layout.Rigid(func(gtx C) D { return d.iconButton(gtx, ren, "edit", 28, 18, d.p.Sec) }))
+						}
+						if trash {
+							ch = append(ch, layout.Rigid(func(gtx C) D { return d.iconButton(gtx, vis, "trash", 28, 18, d.p.Sec) }))
+						}
+						if sys && cdSystemTabs[t.Type] {
 							eye := "eye-open" // "Hide tab"
 							if t.Disabled {
 								eye = "eye-closed" // "Show tab"
@@ -262,4 +284,19 @@ func (d *ChannelDetails) moveTab(m *cdManageTabs, order []core.TabState, from, t
 		}
 		m.order.load(d.h, true, func(ctx context.Context) ([]core.TabState, error) { return c.TabOrder(ctx, id) })
 	}()
+}
+
+// editTab is the card's row as the rename and remove flows take it.
+func (d *ChannelDetails) editTab(t core.TabState, titles map[string]string) EditTab {
+	e := EditTab{ID: t.ID, Type: t.Type, Label: t.Label, FileID: t.FileID, FolderID: t.FolderID}
+	if t.FileID != "" {
+		e.FileTitle = titles[t.ID]
+	}
+	return e
+}
+
+// agentTab is K: the channel's Channel Expert folder tab (no rename).
+func (d *ChannelDetails) agentTab(t core.TabState) bool {
+	c := d.h.Core()
+	return c != nil && t.Type == "folder" && c.IsKnowledgeFolder(d.id, t.AppID, t.FolderID)
 }

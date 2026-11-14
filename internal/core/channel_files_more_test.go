@@ -173,34 +173,49 @@ func TestMoveTabAfter(t *testing.T) {
 	}
 }
 
-// useCanEditTabs: a member of a live channel may edit; archived or not a
-// member, no; channel_managers keeps it to admins, managers and the
-// creator.
-func TestCanEditTabsChecked(t *testing.T) {
-	a, fs := channelFilesFake(t)
-	ctx := context.Background()
+// useCanEditTabs against fakeslack's Grid (files-links-2's check, now the
+// one CanEditTabs): a member of a live channel may edit with the
+// MANAGE_CHANNEL_TABS grant; without it, archived, or under
+// channel_managers for a member who manages nothing, no. The grant is
+// read from the permission store, so each case waits for its answer.
+func TestCanEditTabsOnGrid(t *testing.T) {
 	ch := fakeslack.FilesChannelID
-	if a.CanEditTabsChecked(ctx, ch) {
+	member := slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true}
+	app := func(grant bool) *App {
+		a, fs := channelFilesFake(t)
+		// the fake grants MANAGE_CHANNEL_TABS for any channel by default
+		// (pins-folders' tests rely on it): withhold it explicitly
+		fs.Permissions = map[string][]string{ch: {}}
+		if grant {
+			fs.Permissions = map[string][]string{ch: {PermManageChannelTabs}}
+		}
+		return a
+	}
+	a := app(false)
+	if a.CanEditTabs(ch) {
 		t.Error("an unknown conversation is editable")
 	}
-	a.S.PutConv(slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true})
-	// the fake grants MANAGE_CHANNEL_TABS for any channel by default
-	// (pins-folders' tests rely on it): withhold it explicitly here
-	fs.Permissions = map[string][]string{ch: {}}
-	if a.CanEditTabsChecked(ctx, ch) {
+	a.S.PutConv(member)
+	waitGrants(t, a, ch)
+	if a.CanEditTabs(ch) {
 		t.Error("on Grid without MANAGE_CHANNEL_TABS a member edits tabs")
 	}
-	fs.Permissions = map[string][]string{ch: {PermManageChannelTabs}}
-	if !a.CanEditTabsChecked(ctx, ch) {
+	a = app(true)
+	a.S.PutConv(member)
+	waitGrants(t, a, ch)
+	if !a.CanEditTabs(ch) {
 		t.Error("a member with MANAGE_CHANNEL_TABS can't edit tabs")
 	}
-	a.S.PutConv(slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true, IsArchived: true})
-	if a.CanEditTabsChecked(ctx, ch) {
+	archived := member
+	archived.IsArchived = true
+	a.S.PutConv(archived)
+	if a.CanEditTabs(ch) {
 		t.Error("an archived channel's tabs are editable")
 	}
-	a.S.PutConv(slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true, Creator: "U0SOMEONE",
-		Properties: json.RawMessage(`{"who_can_manage_tabs":"channel_managers"}`)})
-	if a.CanEditTabsChecked(ctx, ch) {
+	managed := member
+	managed.Creator, managed.Properties = "U0SOMEONE", json.RawMessage(`{"who_can_manage_tabs":"channel_managers"}`)
+	a.S.PutConv(managed)
+	if a.CanEditTabs(ch) {
 		t.Error("channel_managers: a member who manages nothing can edit")
 	}
 }

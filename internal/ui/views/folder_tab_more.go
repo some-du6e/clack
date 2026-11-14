@@ -238,17 +238,8 @@ func (v *FolderTab) moveTargets(b core.Bookmark) []moveTarget {
 	tabOf := func(folderID string) int {
 		return slices.IndexFunc(tabs, func(t FolderTabInfo) bool { return t.FolderID == folderID })
 	}
-	var folders []core.Bookmark
-	for _, f := range v.all {
-		if f.Type == "local_folder" && f.ParentID == "" && core.ShouldShowBookmark(v.all, f) {
-			folders = append(folders, f)
-		}
-	}
+	folders := foldersForChannel(v.all, tabs)
 	title := func(f core.Bookmark) string { return firstNonEmpty(f.Title, f.Link) }
-	slices.SortStableFunc(folders, func(a, c core.Bookmark) int {
-		return strings.Compare(strings.ToLower(title(a)), strings.ToLower(title(c)))
-	})
-	slices.SortStableFunc(folders, func(a, c core.Bookmark) int { return tabOf(a.ID) - tabOf(c.ID) })
 	def := slices.IndexFunc(tabs, func(t FolderTabInfo) bool { return t.FolderID == "" }) // SwCK folderIndex
 	at := def
 	var out []moveTarget
@@ -274,6 +265,39 @@ func (v *FolderTab) moveTargets(b core.Bookmark) []moveTarget {
 		out = slices.Insert(out, at, moveTarget{name: name, tabID: tabs[def].ID})
 	}
 	return out
+}
+
+// foldersForChannel is useFoldersForChannel (t8EV): the channel's shown
+// top-level folders, by title, then by their tabs' order (tabs: the folder
+// tabs in the bar's order; a folder without a tab comes first, as its
+// findIndex is -1).
+func foldersForChannel(all []core.Bookmark, tabs []FolderTabInfo) []core.Bookmark {
+	tabOf := func(folderID string) int {
+		return slices.IndexFunc(tabs, func(t FolderTabInfo) bool { return t.FolderID == folderID })
+	}
+	var folders []core.Bookmark
+	for _, f := range all {
+		if f.Type == "local_folder" && f.ParentID == "" && core.ShouldShowBookmark(all, f) {
+			folders = append(folders, f)
+		}
+	}
+	title := func(f core.Bookmark) string { return firstNonEmpty(f.Title, f.Link) }
+	slices.SortStableFunc(folders, func(a, c core.Bookmark) int {
+		return strings.Compare(strings.ToLower(title(a)), strings.ToLower(title(c)))
+	})
+	slices.SortStableFunc(folders, func(a, c core.Bookmark) int { return tabOf(a.ID) - tabOf(c.ID) })
+	return folders
+}
+
+// defaultFolderTab is useChannelDefaultFolderTab (SwCK): the folder tab
+// without a folder id, its label ("Bookmarks" without one) and its index
+// among the folder tabs; ok false when there is none.
+func defaultFolderTab(tabs []FolderTabInfo) (label string, at int, ok bool) {
+	at = slices.IndexFunc(tabs, func(t FolderTabInfo) bool { return t.FolderID == "" })
+	if at < 0 {
+		return "", -1, false
+	}
+	return firstNonEmpty(tabs[at].Label, nsTabbed.T("Bookmarks")), at, true
 }
 
 // MoveMenu is the row menu's Move to folder row for b.

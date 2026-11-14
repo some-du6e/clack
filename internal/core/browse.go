@@ -952,8 +952,8 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			}
 			if deleted {
 				t.Title, t.Deleted = "Deleted file", true
-			} else if title != "" {
-				t.Title = title
+			} else if title != "" && t.Label == "" {
+				t.Title = title // a tab's own label wins (RenameTabModal: "Clear text to default to file name")
 			}
 			if t.Type == "list" && t.DefaultView != "" {
 				t.ViewName = views[t.DefaultView]

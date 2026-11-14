@@ -221,6 +221,12 @@ func NewMenuOpts(h Host, items []MenuItem, o MenuOpts) *Menu {
 // the first frame).
 func (m *Menu) Rect() image.Rectangle { return m.root().rect }
 
+// RowRects are the root card's item rows in window coordinates, as last
+// laid out (the tab bar's More menu takes drags on them).
+func (m *Menu) RowRects() []image.Rectangle {
+	return append([]image.Rectangle(nil), m.root().rows...)
+}
+
 // Contains reports whether window point pt is on the menu's card or one
 // of its open submenus' (edges included), as last laid out.
 func (m *Menu) Contains(pt image.Point) bool {

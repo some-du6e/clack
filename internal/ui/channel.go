@@ -9,8 +9,10 @@ import (
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 
@@ -652,6 +654,7 @@ type chTab struct {
 	// it, no view name)
 	defaultView, viewName string
 	labeled               bool
+	rawLabel              string // the tab's own label (core.Tab.Label; "" none)
 	// spans is the label with its :emoji: codes resolved (Slack draws a
 	// canvas tab's title through its Emoji text renderer), bold; nil for a
 	// label without emoji.
@@ -767,6 +770,14 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		a.selectChannelTab(ch, id, all[id])
 	}
 	cur := a.chTab[ch]
+	canEdit := a.Core() != nil && a.Core().CanEditTabs(ch)
+	if ci := a.model().conv(ch); ci != nil && ci.Preview {
+		canEdit = false
+	}
+	a.tabDragEvents(gtx, ch, canEdit) // tab_drag.go: last frame's tab rects
+	drag := a.tabDrag()
+	rects := make([]tabRect, 0, len(all))
+	dropAt, dropOK := a.dragTarget(drag) // last frame's rects: the folder centre's fill goes under its tab
 	ws := make([]int, len(all))
 	lws := make([]int, len(all))
 	for i := range all {
@@ -791,6 +802,20 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		}
 		lw, w := lws[i], ws[i]
 		btn := a.clicks.get("tab." + ch + "." + t.key)
+		id := strings.TrimPrefix(t.key, "tab:")
+		if t.key == "messages" {
+			id = "channel"
+		}
+		rects = append(rects, tabRect{key: t.key, id: id, typ: t.typ, label: t.label, fileID: t.fileID, folder: t.folder, idx: i,
+			r: image.Rect(x, 0, x+w, sz.Y), drag: canEdit && t.key != "messages" && core.DraggableTab(id, t.typ)})
+		source := drag.dragging && drag.src.key == t.key
+		if dropOK && !dropAt.inMenu && dropAt.key == t.key && dropAt.typ == "folder" && drag.posOf(dropAt) == "center" {
+			a.fillDropTarget(gtx, image.Rect(x, 0, x+w, sz.Y), 0xff) // .channel_tab_folder_hovered
+		}
+		var fade paint.OpacityStack
+		if source {
+			fade = paint.PushOpacity(gtx.Ops, .5) // channel_tab_is_dragging
+		}
 		at(gtx, image.Pt(x, 0), image.Pt(w, sz.Y), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hov bool) {
 				if hov && i != cur {
@@ -800,51 +825,35 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 					theme.Fill(gtx, image.Rect(0, s.Y-gtx.Dp(2), s.X, s.Y), c.Accent)
 				}
 			}, func(gtx layout.Context) layout.Dimensions {
-				col := c.FgMuted
-				if i == cur {
-					col = c.Fg
-					if a.th.Dark {
-						col = color.NRGBA{R: 0xf8, G: 0xf8, B: 0xf8, A: 0xff} // Slack: --dt_color-content-pry
-					}
-				}
-				icon := t.icon
-				if t.key == "messages" && i == cur {
-					icon = "messages-filled" // Slack fills the active Messages bubble
-				} else if i == cur && icons.Has(icon+"-filled") {
-					icon += "-filled" // and the active Home (app DMs) etc.
-				}
-				at(gtx, image.Pt(gtx.Dp(8), (sz.Y-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-					return icons.Get(icon)(gtx, 16, col)
-				})
-				if t.unread {
-					// Slack's p-channel_tab_unread_badge: 12px, 2px ring in the
-					// header background around the blue dot, on the icon's corner.
-					ctr := image.Pt(gtx.Dp(8+16-2), (sz.Y-gtx.Dp(16))/2+gtx.Dp(2))
-					theme.Circle(gtx, ctr, gtx.Dp(12), c.Bg)
-					theme.Circle(gtx, ctr, gtx.Dp(8), c.Link)
-				}
-				at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, sz.Y), func(gtx layout.Context) layout.Dimensions {
-					if t.spans != nil {
-						return a.inlineSpans(gtx, t.spans, 13, col, sz.Y)
-					}
-					return vcenter(gtx, sz.Y, func(gtx layout.Context) layout.Dimensions {
-						return a.th.Label(gtx, 13, theme.Bold, col, t.label)
-					})
-				})
+				a.tabContent(gtx, t, lw, sz.Y, i == cur)
 				return layout.Dimensions{Size: image.Pt(w, sz.Y)}
 			})
 		})
-		if clicked(btn) {
+		if source {
+			fade.Pop()
+		}
+		if clicked(btn) && !drag.swallow { // a drop isn't a click
 			a.selectChannelTab(ch, i, t)
 		}
 		a.tabCtx(gtx, ch, t, image.Rect(x, 0, x+w, sz.Y)) // the tab's right-click menu (files_tab_more.go)
 		x += w + gtx.Dp(4)
 	}
+	if n := len(rects); n > 0 {
+		rects[n-1].last = true
+	}
+	drag.rects, drag.all, drag.last, drag.cur = rects, all, last, cur
+	drag.more = image.Rectangle{}
 	if last < len(all)-1 {
+		mr := image.Rect(x, 0, x+a.tabsMoreWidth(gtx), sz.Y)
+		drag.more = mr
+		if drag.overMore() { // draggable_overflow_menu_hovered: base-ter, radius 4 4 1 1
+			a.fillDropTarget(gtx, mr, 0xff)
+		}
 		x += a.layoutTabsMore(gtx, ch, all, last, cur, x, sz) + gtx.Dp(4)
 	} else {
 		a.tabsMoreFor(ch).hidden = nil
 	}
+	a.tabDragOverlay(gtx, sz)
 	if ci := a.model().conv(ch); ci != nil && ci.Preview {
 		return layout.Dimensions{Size: sz} // Slack: no "+" (add a tab) for a channel you aren't in
 	}
@@ -855,6 +864,43 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		a.addTabMenu(ch) // mount_features_canvas.go
 	}
 	return layout.Dimensions{Size: sz}
+}
+
+// tabContent is a tab's icon (filled when active), unread dot and label
+// (lw wide), h tall.
+func (a *App) tabContent(gtx layout.Context, t chTab, lw, h int, active bool) {
+	c := &a.th.C
+	col := c.FgMuted
+	if active {
+		col = c.Fg
+		if a.th.Dark {
+			col = color.NRGBA{R: 0xf8, G: 0xf8, B: 0xf8, A: 0xff} // Slack: --dt_color-content-pry
+		}
+	}
+	icon := t.icon
+	if t.key == "messages" && active {
+		icon = "messages-filled" // Slack fills the active Messages bubble
+	} else if active && icons.Has(icon+"-filled") {
+		icon += "-filled" // and the active Home (app DMs) etc.
+	}
+	at(gtx, image.Pt(gtx.Dp(8), (h-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+		return icons.Get(icon)(gtx, 16, col)
+	})
+	if t.unread {
+		// Slack's p-channel_tab_unread_badge: 12px, 2px ring in the
+		// header background around the blue dot, on the icon's corner.
+		ctr := image.Pt(gtx.Dp(8+16-2), (h-gtx.Dp(16))/2+gtx.Dp(2))
+		theme.Circle(gtx, ctr, gtx.Dp(12), c.Bg)
+		theme.Circle(gtx, ctr, gtx.Dp(8), c.Link)
+	}
+	at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, h), func(gtx layout.Context) layout.Dimensions {
+		if t.spans != nil {
+			return a.inlineSpans(gtx, t.spans, 13, col, h)
+		}
+		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+			return a.th.Label(gtx, 13, theme.Bold, col, t.label)
+		})
+	})
 }
 
 // selectChannelTab is a tab's click: Messages, a body tab (a canvas or

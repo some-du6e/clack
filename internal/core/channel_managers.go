@@ -157,7 +157,12 @@ func (a *App) canEditChannelManagers(ch string, member bool) bool {
 }
 
 // CanEditTabs is useCanEditTabs (+n5q → mwX5 Ln): who may add, rename,
-// reorder and remove the channel's tabs and folders.
+// reorder and remove the channel's tabs and folders. It is the one check
+// every tab editor reads (the tab bar's menu and drags, Manage tabs, the
+// folders, Pins). It never blocks: the grant and the managers come from
+// their stores, and a "permissions" event follows their answers, so a
+// view that reads it each frame updates when they land (Slack's hook
+// re-renders the same way).
 func (a *App) CanEditTabs(ch string) bool {
 	c, ok := a.S.Conv(ch)
 	if !ok {
@@ -171,7 +176,7 @@ func (a *App) CanEditTabs(ch string) bool {
 		}
 	}
 	member := a.isMemberConv(c)
-	if !member || c.IsArchived {
+	if !member || c.IsArchived || !a.PostingFor(c).CanPost() { // JUrK bl, o/IU c (read-only, thread-only, archived)
 		return false
 	}
 	who := ParseChannelProps(c.Properties).WhoCanManageTabs

@@ -79,7 +79,7 @@ func TestChannelTabsMoreMenu(t *testing.T) {
 	var want []string
 	for _, i := range hidden {
 		want = append(want, tabs[i].label)
-		if builtinTabIDs[strings.TrimPrefix(tabs[i].key, "tab:")] && builtin < 0 {
+		if core.KnownTabID(strings.TrimPrefix(tabs[i].key, "tab:")) && builtin < 0 {
 			builtin = i
 		}
 	}

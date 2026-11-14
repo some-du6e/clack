@@ -165,16 +165,3 @@ func (a *App) LinkShares(ctx context.Context, link string) ([]LinkShare, error) 
 	a.EnsureUsers(ctx, users)
 	return out, nil
 }
-
-// ChannelFolders are the channel's bookmark folders (the store's folder
-// bookmarks by rank), loaded or not.
-func (a *App) ChannelFolders(ch string) []Bookmark {
-	all, _ := a.ChannelBookmarks(ch)
-	var out []Bookmark
-	for _, b := range all {
-		if b.Type == "folder" {
-			out = append(out, b)
-		}
-	}
-	return out
-}

@@ -819,7 +819,7 @@ func (b *backend) opened(ch string) {
 			}
 			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread,
 				folder: t.FolderBookmarkID, appID: t.AppID,
-				spans: tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != ""})
+				spans: tabLabelSpans(label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != "", rawLabel: t.Label})
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
@@ -848,7 +848,7 @@ func (b *backend) opened(ch string) {
 			}
 		}
 		a.Post(func() {
-			b.tabCache[ch] = tabs
+			a.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
 			b.bookmarks[ch] = bms
 			if b.tabsDone == nil {
 				b.tabsDone = map[string]bool{}
