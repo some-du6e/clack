@@ -169,6 +169,12 @@ type prefs struct {
 	// InspectTool turns on the inspect tool's shortcut (inspect_wire.go),
 	// like CLACK_INSPECT=1: a developer setting with no UI, set by hand.
 	InspectTool bool `json:"inspect_tool,omitempty"`
+	// MainWindow is Slack's mainWindowSettings: where the main window was
+	// (its frame in Gio patch 25's screen coordinates: physical pixels on
+	// Windows, points on macOS; on Linux its size in dp), and whether it
+	// was maximized or full screen. The next launch opens it there, on a
+	// display that is still connected (winbounds.go).
+	MainWindow *mainWindowSettings `json:"main_window_settings,omitempty"`
 }
 
 func (a *App) prefsPath() string {
@@ -246,6 +252,7 @@ func (a *App) savePrefs() {
 	}
 	a.prefs.LastChannel = a.lastChannel
 	a.prefs.SidebarHidden = a.sidebar.hidden
+	a.winSaveDue = false // the bytes below carry mainWindowSettings
 	b, _ := json.MarshalIndent(a.prefs, "", "  ")
 	a.prefsSave.save(p, b)
 }

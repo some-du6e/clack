@@ -19,6 +19,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
 `app/clack_drop*.go`, `app/clack_hide*.go`, `app/clack_pancursor_windows*.go`,
 `app/clack_titlebar*.go`, `app/internal/windows/clack_titlebar.go`,
+`app/clack_bounds*.go`, `app/internal/windows/clack_bounds.go`,
 `app/cocoatest/`, `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
 `internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`,
@@ -1085,3 +1086,130 @@ AppKit's own from the main queue included, ever takes the window out
 again, so the full-screen hide is untested there). `internal/ui`
 `TestMacWindowCloseHides` is Clack's window on the same job. Not in
 `UPSTREAM.patch`.
+
+## 25. app: Bounds, Displays, and where a window is (Windows, macOS)
+
+`app/clack_bounds.go` (new: `Bounds`, `Config.Bounds`, `Config.Display`,
+`Display`, `Displays`), `app/clack_bounds_windows.go`,
+`app/clack_bounds_macos.go` and `app/clack_bounds_other.go` (new: each
+platform's `displays` and the window's place), `app/internal/windows/clack_bounds.go`
+(new: `EnumDisplayMonitors`, a monitor's information and effective DPI, a
+thread's per-monitor DPI awareness), `app/os.go` (`Config.bounds`,
+`boundsSet`, `display`), `app/os_windows.go` (`newWindow` and `init`
+create the window at the bounds; `update` reports them; `Configure`'s
+`Windowed` frame; `window.hiddenShow` and `Perform`'s `ActionRaise`),
+`app/os_macos.go` (`updateWindowMode` reports them; `Configure` places the
+window before the mode, its size limits in every mode, a first full
+screen once the window is on the screen; `newWindow` doesn't cascade a
+placed window; `gio_onWindowMove`), `app/os_macos.m` (`windowDidMove:`)
+and `app/cocoatest/` (`Window.ScreenFrame`, `Screens`, `SetTopLeft`,
+`Zoom`). Additions, but for the macOS size limits (below).
+
+Slack reopens its main window where it was (gap 9). Its settings keep
+`mainWindowSettings`: bounds, maximized, fullScreen (and on macOS the
+window's Space, through its own native module). `MAIN_WINDOW_ACTIONS`
+(win32 `main.bundle.cjs` 4.53.276 @1146194) saves them a second after the
+window is maximized, unmaximized, restored, resized, moved, shown,
+focused or blurred, a maximized window's bounds replaced by the default
+bounds on its display (`rV(screen.getDisplayMatching(win.getBounds()))`).
+The window is created at the bounds (`{...bounds, fullscreen}`, @1143722),
+`validateBoundsForDisplay` (@1146420) keeps them on a display that is
+still connected, and `INITIALIZE_MAIN_WINDOW` maximizes it (or makes it
+full screen) before showing it. Gio had no way to place a window, to read
+where it is, or to list the displays: every Clack launch opened at
+1440×900 wherever the OS put it.
+
+- `Bounds(r)` places a window: r is its frame, the OS frame included, in
+  the OS's screen coordinates, which `Display` and `Config.Bounds` use
+  too. On Windows, physical pixels of the virtual screen (the primary
+  monitor's top left at the origin), the frame `GetWindowRect`'s with the
+  invisible resize borders; given with the first options, the window is
+  created there (`CreateWindowEx`'s position and size, where Gio passed
+  `CW_USEDEFAULT`), so it starts with the DPI of the monitor it opens on: a
+  `SetWindowPos` onto a monitor of another DPI afterwards would rescale it
+  through `WM_DPICHANGED` (Electron calls `SetPosition` twice for that,
+  its "dirty workaround" for electron#10862). On macOS, points from the
+  primary screen's top left with y down, as Electron's `NativeWindowMac`
+  `GetBounds` and `SetBounds` flip an `NSWindow` frame against
+  `NSScreen.screens[0]`; the size is raised to the window's minimum, as
+  `SetBounds` does (`setFrame:display:` doesn't check it), and a placed
+  window isn't cascaded. Like `Size`, the option sets the mode to
+  `Windowed`, so a `Maximized` or `Fullscreen` option after it maximizes
+  or fills the display the window was placed on, and a maximized window
+  restores to r (Windows' restored rectangle; AppKit's user frame). Later,
+  it moves and sizes a windowed window. On Windows a visible maximized or
+  minimized window is restored first (`SW_SHOWNOACTIVATE`), since the
+  `SW_SHOWNORMAL` after it would put the restored rectangle back over the
+  new one (Chromium's `SetBoundsInternal` takes `WS_MAXIMIZE` off for the
+  same reason); on macOS a full-screen window ignores it, as Electron's
+  `SetBounds` does.
+- `Config.Bounds` is the window's frame in a `ConfigEvent` (Windows:
+  `update`, on every `WM_WINDOWPOSCHANGED`; macOS: each draw, and a move,
+  which draws nothing, through the delegate's `windowDidMove:`), maximized
+  and full screen included. It is empty while the window isn't on the
+  screen: minimized (its place is the taskbar's or the Dock's: Windows'
+  `GetWindowRect` of an iconic window is the icon's), hidden by
+  `Window.Hide`, or started hidden. `Config.Display` is the display the
+  window is on, Electron's `getDisplayMatching(getBounds())`: Windows'
+  `MonitorFromWindow(MONITOR_DEFAULTTONEAREST)` (Chromium's ScreenWin
+  matches with `MonitorFromRect` and the same flag), macOS's
+  `NSWindow.screen`. Reading it there keeps a save off AppKit's main
+  thread, which the client's event handling holds.
+- `Displays()` is Electron's `screen.getAllDisplays()`: each display's
+  bounds, its work area (without the taskbar and app bars, or the menu
+  bar and the Dock), its scale (screen units per DIP: the effective DPI
+  over 96 on Windows, 1 on macOS) and whether it is the primary. Windows
+  enumerates the monitors (`EnumDisplayMonitors`, `GetMonitorInfo`,
+  `GetDpiForMonitor`) on a thread made per-monitor DPI aware for the call,
+  as Gio's window threads are, so the rectangles are physical; macOS reads
+  `NSScreen.screens` (frames and visible frames, flipped as Chromium's
+  `ScreenMac` flips them, the primary first) on the main thread, waiting
+  for it, so not from inside the window's event handling. Elsewhere it is
+  nil: X11 and Wayland windows go where the window manager or the
+  compositor puts them, so `Bounds` does nothing there and `Config.Bounds`
+  stays empty.
+- Windows, `StartHidden` (§23) with `Maximized` or `Fullscreen`: the
+  first `Configure` leaves out the `ShowWindow(SW_SHOWMAXIMIZED)` it would
+  have made and keeps it (`window.hiddenShow`) for the `ActionRaise` that
+  shows the window, which comes out maximized or full screen. Before, it
+  showed restored: a hidden window isn't maximized until it is shown, and
+  `ActionRaise` read `Windowed` from it. (Slack's `maximize()` shows the
+  window, then hides it again.) An option that changes the mode while it is
+  hidden shows it as before, and the kept show goes.
+- macOS, the size limits: `Configure` set `contentMinSize` and
+  `contentMaxSize` only for `Windowed`, so a window opened maximized (now
+  that one can open where it was) had no minimum until a later windowed
+  option; they apply in every mode. A first `Fullscreen` option runs
+  before `newWindow` orders the window front, and goes full screen once it
+  is on the screen (`toggleFullScreen:` on the next turn of the run loop).
+
+Clack's main window uses all of it (`internal/ui/winbounds.go`, W40):
+Slack's default bounds (`rV`), `validateBoundsForDisplay`, the minimum
+size and the save rule over `Displays`, `Config.Bounds` and
+`Config.Display`, kept in ui.json's `main_window_settings`; Linux, where
+Gio lists no displays (and doesn't see a window manager's maximize on X11),
+keeps the window's size in dp and nothing else. Read in Electron 45-x-y
+(`shell/browser/native_window_mac.mm`, `shell/browser/native_window.cc`)
+and Chromium main (`ui/display/win/screen_win.cc`,
+`ui/display/mac/screen_mac.mm`, `ui/display/display_finder.cc`,
+`ui/views/win/hwnd_message_handler.cc`).
+
+Tests: on ci's windows-applog job (`CLACK_WINDOWS_BOUNDS_TESTS`)
+`app/clack_bounds_windows_test.go`: `TestDisplaysWindows` (the runner's
+monitor as `GetSystemMetrics` and `SPI_GETWORKAREA` give it, primary, at
+the system DPI) and `TestBoundsWindows` (created at the bounds, which the
+`ConfigEvent` reports with the monitor; a move from another thread; none
+while minimized and back after `ActionRaise`; a later `Bounds` on a
+windowed and on a maximized window; created maximized, restoring to the
+bounds; created full screen; started hidden and maximized: no bounds, then
+shown maximized by `ActionRaise`, restoring to the bounds). On ci's macos
+job (`CLACK_MACOS_WINDOW_TESTS`) `app/clack_bounds_darwin_test.go`:
+`TestDisplaysMac` (`NSScreen.screens`, flipped, the primary at the
+origin) and `TestBoundsMac` (opened at the bounds in points with the
+screen it's on; `setFrameTopLeftPoint:`'s move reported; a later `Bounds`;
+the minimum; opened maximized: zoomed on the screen, `zoom:` back to the
+bounds; opened full screen, last, since the runner never leaves it).
+`internal/ui` `TestWindowBoundsWindow`, `TestWindowBoundsOffScreenWindow`
+and `TestWindowBoundsFullScreenWindow` (Windows) and `TestMacWindowBounds`,
+`TestMacWindowBoundsOffScreen` and `TestMacWindowBoundsFullScreen` (macOS)
+are Clack's window on the same jobs. Not in `UPSTREAM.patch`.

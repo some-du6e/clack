@@ -515,6 +515,8 @@ func (w *window) updateWindowMode() {
 	}
 	w.config.Mode = Windowed
 	window := C.windowForView(w.view)
+	// Clack patch (CLACK_PATCHES.md §25): where the window is.
+	w.config.bounds, w.config.display = windowPlacement(window)
 	if window == 0 {
 		return
 	}
@@ -545,13 +547,35 @@ func (w *window) Configure(options []Option) {
 
 	mask := C.getWindowStyleMask(window)
 	fullscreen := mask&C.NSWindowStyleMaskFullScreen != 0
+	// Clack patch (CLACK_PATCHES.md §25): the size limits hold in every
+	// mode (they were only set for Windowed, so a window opened maximized
+	// had no minimum), and Bounds places the window before the mode
+	// changes, so a maximize or full screen happens on the display it was
+	// placed on. Electron's setBounds does nothing in full screen.
+	w.config.MinSize = cnf.MinSize
+	minPt := cnf.MinSize.Div(int(screenScale))
+	C.setMinSize(window, C.CGFloat(minPt.X), C.CGFloat(minPt.Y))
+	w.config.MaxSize = cnf.MaxSize
+	if maxPt := cnf.MaxSize.Div(int(screenScale)); maxPt != (image.Point{}) {
+		C.setMaxSize(window, C.CGFloat(maxPt.X), C.CGFloat(maxPt.Y))
+	}
+	if cnf.boundsSet && !fullscreen {
+		setWindowBounds(window, cnf.bounds)
+	}
 	switch cnf.Mode {
 	case Fullscreen:
 		if C.isWindowMiniaturized(window) != 0 {
 			C.unhideWindow(window)
 		}
 		if !fullscreen {
-			C.toggleFullScreen(window)
+			if C.isWindowVisible(window) == 0 && !w.hidden {
+				// Clack patch (CLACK_PATCHES.md §25): a window's first
+				// options run before it is ordered front; it goes full
+				// screen once it is on the screen.
+				C.toggleFullScreenLater(window)
+			} else {
+				C.toggleFullScreen(window)
+			}
 		}
 	case Minimized:
 		C.hideWindow(window)
@@ -574,19 +598,20 @@ func (w *window) Configure(options []Option) {
 			C.toggleFullScreen(window)
 		}
 		w.setTitle(cnf.Title)
-		w.config.Size = cnf.Size
-		cnf.Size = cnf.Size.Div(int(screenScale))
-		C.setSize(window, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y))
-		w.config.MinSize = cnf.MinSize
-		cnf.MinSize = cnf.MinSize.Div(int(screenScale))
-		C.setMinSize(window, C.CGFloat(cnf.MinSize.X), C.CGFloat(cnf.MinSize.Y))
-		w.config.MaxSize = cnf.MaxSize
-		cnf.MaxSize = cnf.MaxSize.Div(int(screenScale))
-		if cnf.MaxSize != (image.Point{}) {
-			C.setMaxSize(window, C.CGFloat(cnf.MaxSize.X), C.CGFloat(cnf.MaxSize.Y))
-		}
-		if C.isWindowZoomed(window) != 0 {
-			C.zoomWindow(window)
+		if !cnf.boundsSet {
+			w.config.Size = cnf.Size
+			cnf.Size = cnf.Size.Div(int(screenScale))
+			C.setSize(window, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y))
+			if C.isWindowZoomed(window) != 0 {
+				C.zoomWindow(window)
+			}
+		} else {
+			// Clack patch (CLACK_PATCHES.md §25): placed above; the size
+			// until a draw reads it, for an option before that draw.
+			w.config.Size = image.Point{
+				X: int(float32(C.viewWidth(w.view))*screenScale + .5),
+				Y: int(float32(C.viewHeight(w.view))*screenScale + .5),
+			}
 		}
 	}
 	style := C.NSWindowStyleMask(C.NSWindowStyleMaskTitled | C.NSWindowStyleMaskResizable | C.NSWindowStyleMaskMiniaturizable | C.NSWindowStyleMaskClosable)
@@ -979,6 +1004,20 @@ func gio_onDraw(h C.uintptr_t) {
 	w.draw()
 }
 
+// gio_onWindowMove is a Clack patch (CLACK_PATCHES.md §25): a move
+// changes Config.Bounds (and maybe Config.Display), which only a draw
+// read before; a move draws nothing.
+//
+//export gio_onWindowMove
+func gio_onWindowMove(h C.uintptr_t) {
+	w := windowFor(h)
+	cnf := w.config
+	w.updateWindowMode()
+	if w.config != cnf {
+		w.ProcessEvent(ConfigEvent{Config: w.config})
+	}
+}
+
 //export gio_onFocus
 func gio_onFocus(h C.uintptr_t, focus C.int) {
 	w := windowFor(h)
@@ -1310,12 +1349,14 @@ func newWindow(win *callbacks, options []Option) {
 		// Release our reference now that the NSWindow has it.
 		C.CFRelease(w.view)
 		w.Configure(options)
-		if nextTopLeft.x == 0 && nextTopLeft.y == 0 {
-			// cascadeTopLeftFromPoint treats (0, 0) as a no-op,
-			// and just returns the offset we need for the first window.
+		if !cnf.boundsSet { // Clack patch (CLACK_PATCHES.md §25): Bounds placed it
+			if nextTopLeft.x == 0 && nextTopLeft.y == 0 {
+				// cascadeTopLeftFromPoint treats (0, 0) as a no-op,
+				// and just returns the offset we need for the first window.
+				nextTopLeft = C.cascadeTopLeftFromPoint(window, nextTopLeft)
+			}
 			nextTopLeft = C.cascadeTopLeftFromPoint(window, nextTopLeft)
 		}
-		nextTopLeft = C.cascadeTopLeftFromPoint(window, nextTopLeft)
 		C.makeFirstResponder(window, w.view)
 		// makeKeyAndOrderFront assumes ownership of our window reference.
 		if cnf.panel {

@@ -27,6 +27,7 @@ typedef struct {
 	int hasOpaqueForMove;
 	int visible, zoomed, miniaturized, fullScreen, key, appActive;
 	char title[256];
+	cocoatest_rect screenFrame;
 } cocoatest_window;
 
 void cocoatest_state(uintptr_t view, cocoatest_window *s);
@@ -42,6 +43,9 @@ void cocoatest_on_main(uintptr_t h);
 void cocoatest_track(uintptr_t view);
 void cocoatest_alive(int *view, int *window);
 void cocoatest_toggle_full_screen(uintptr_t view);
+int cocoatest_screens(cocoatest_rect *frames, cocoatest_rect *visible, int limit);
+void cocoatest_set_top_left(uintptr_t view, CGFloat x, CGFloat y);
+void cocoatest_zoom(uintptr_t view);
 */
 import "C"
 
@@ -86,6 +90,10 @@ type Window struct {
 	Key              bool // the key window
 	AppActive        bool // NSApp is the active app
 	Title            string
+	// ScreenFrame is the window's frame on the screen in Electron's
+	// coordinates: points from the primary screen's top left, y down
+	// (Clack patch, CLACK_PATCHES.md §25).
+	ScreenFrame Rect
 }
 
 func rect(r C.cocoatest_rect) Rect {
@@ -114,6 +122,7 @@ func State(view uintptr) Window {
 		Key:                 s.key != 0,
 		AppActive:           s.appActive != 0,
 		Title:               C.GoString(&s.title[0]),
+		ScreenFrame:         rect(s.screenFrame),
 	}
 	for i := range w.Buttons {
 		w.ButtonsHidden[i] = s.buttonsHidden[i] != 0
@@ -201,6 +210,33 @@ func KeyEquivalent(key string, mods int) bool {
 	defer C.free(unsafe.Pointer(cs))
 	return C.cocoatest_key_equivalent(cs, C.int(mods)) != 0
 }
+
+// Screen is a screen's frame and visible frame (its work area), in
+// Window.ScreenFrame's coordinates (Clack patch, CLACK_PATCHES.md §25).
+type Screen struct{ Frame, Visible Rect }
+
+// Screens lists NSScreen.screens, the primary first. Main thread.
+func Screens() []Screen {
+	var f, v [32]C.cocoatest_rect
+	n := int(C.cocoatest_screens(&f[0], &v[0], C.int(len(f))))
+	ss := make([]Screen, n)
+	for i := range ss {
+		ss[i] = Screen{Frame: rect(f[i]), Visible: rect(v[i])}
+	}
+	return ss
+}
+
+// SetTopLeft moves the window's top left corner to (x, y), in
+// Window.ScreenFrame's coordinates (setFrameTopLeftPoint:, as a drag of
+// the window would). Main thread.
+func SetTopLeft(view uintptr, x, y float64) {
+	C.cocoatest_set_top_left(C.uintptr_t(view), C.CGFloat(x), C.CGFloat(y))
+}
+
+// Zoom sends the window zoom:, as Window > Zoom (and an Option-click on
+// the green button) does; a plain click on that button goes full screen.
+// Main thread.
+func Zoom(view uintptr) { C.cocoatest_zoom(C.uintptr_t(view)) }
 
 // ToggleFullScreen sends the window toggleFullScreen:, as the green
 // button and View > Toggle Full Screen do. Main thread.

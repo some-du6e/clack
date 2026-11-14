@@ -268,6 +268,8 @@ type App struct {
 	resetPending     bool                       // a reset-window waits for the window
 	quitting         atomic.Bool                // Quit: the next close isn't runFromTray's (Slack's app.isQuitting)
 	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
+	winPlace         bool                       // Gio places the window here (Windows, macOS): mainWindowSettings keeps its bounds (winbounds.go)
+	winSaveDue       bool                       // mainWindowSettings changed since ui.json was last written
 	hideHook         func() bool                // tests: replaces Window.Hide (runfromtray.go)
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
 	update           updateState                // "Update available" banner
@@ -442,6 +444,8 @@ func (a *App) Run() error {
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)
+	// where it was: Slack's mainWindowSettings (winbounds.go)
+	a.win.Option(a.mainWindowPlace()...)
 	if a.startHidden() { // Keep in Background after a login launch (tray.go)
 		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
 		a.win.Option(app.StartHidden(true))
@@ -511,6 +515,9 @@ func (a *App) Run() error {
 				case <-time.After(5 * time.Second):
 				}
 			}
+			if a.winSaveDue { // a move or resize savePrefsSoon hasn't written yet
+				a.savePrefs()
+			}
 			a.flushPrefs() // the window is gone: nothing waits on this
 			return e.Err
 		case *app.ClosingEvent:
@@ -523,6 +530,7 @@ func (a *App) Run() error {
 			a.fileDrop(e)
 		case app.ConfigEvent:
 			a.winMode = e.Config.Mode
+			a.noteWindowPlace(e.Config) // mainWindowSettings (winbounds.go)
 			if e.Config.Focused && !a.focused {
 				a.nudgeUpdates()       // back from sleep, often: is a check due?
 				a.loginWindowFocused() // a sign-in link copied in the browser (login.go)

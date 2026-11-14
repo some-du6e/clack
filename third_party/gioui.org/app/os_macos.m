@@ -231,6 +231,14 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 	}
 	gio_onDraw(view.handle);
 }
+// Clack patch (CLACK_PATCHES.md §25): a move changes the window's
+// Config.Bounds.
+- (void)windowDidMove:(NSNotification *)notification {
+	NSWindow *window = (NSWindow *)[notification object];
+	if ([window.contentView isKindOfClass:[GioView class]]) {
+		gio_onWindowMove(((GioView *)window.contentView).handle);
+	}
+}
 - (void)windowDidChangeScreen:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
 	CGDirectDisplayID dispID = [[[window screen] deviceDescription][@"NSScreenNumber"] unsignedIntValue];
