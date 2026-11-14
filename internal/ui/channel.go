@@ -767,20 +767,29 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		a.selectChannelTab(ch, id, all[id])
 	}
 	cur := a.chTab[ch]
-	for i, t := range all {
-		i, t := i, t
+	ws := make([]int, len(all))
+	lws := make([]int, len(all))
+	for i := range all {
+		t := &all[i]
 		t.label = i18n.T("tabbed-channel", t.label) // the standard tabs are Slack's; a bookmark's own name misses and stays
 		if viewNames {
-			t = withListViewName(t)
+			*t = withListViewName(*t)
 		}
-		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
+		lws[i] = a.th.Measure(gtx, 13, theme.Bold, t.label)
 		if t.spans != nil {
-			lw = a.spansWidth(gtx, t.spans, 13)
+			lws[i] = a.spansWidth(gtx, t.spans, 13)
 		}
-		w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lw + gtx.Dp(8)
-		if x+w > sz.X-gtx.Dp(48) {
+		ws[i] = gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lws[i] + gtx.Dp(8)
+	}
+	// measureVisibleTabs: all of them, or those 80px clear of the bar's
+	// end, then the More tab (channel_tabs_more.go)
+	last := tabsLastVisible(ws, x, gtx.Dp(4), sz.X-gtx.Dp(48), gtx.Dp(tabsOverflowReserve))
+	for i, t := range all {
+		i, t := i, t
+		if i > last {
 			break
 		}
+		lw, w := lws[i], ws[i]
 		btn := a.clicks.get("tab." + ch + "." + t.key)
 		at(gtx, image.Pt(x, 0), image.Pt(w, sz.Y), func(gtx layout.Context) layout.Dimensions {
 			return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hov bool) {
@@ -830,6 +839,11 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		}
 		a.tabCtx(gtx, ch, t, image.Rect(x, 0, x+w, sz.Y)) // the tab's right-click menu (files_tab_more.go)
 		x += w + gtx.Dp(4)
+	}
+	if last < len(all)-1 {
+		x += a.layoutTabsMore(gtx, ch, all, last, cur, x, sz) + gtx.Dp(4)
+	} else {
+		a.tabsMoreFor(ch).hidden = nil
 	}
 	if ci := a.model().conv(ch); ci != nil && ci.Preview {
 		return layout.Dimensions{Size: sz} // Slack: no "+" (add a tab) for a channel you aren't in

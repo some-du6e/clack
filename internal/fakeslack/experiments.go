@@ -47,6 +47,9 @@ var sidebarExperiments = map[string]string{
 	// views and navigation (core/views_experiments.go), as the account had them on 2026-11-10
 	"desktop_history_menu": "on", "desktop_history_recents_read": "on", "keyboard_shortcuts_search": "on",
 	"view_header_overflow_borders": "on", "lists_in_later": "on",
+	// exp-wave-3 (core/exp_wave3.go): the tab bar's More menu rows'
+	// right-click
+	"channel_tab_overflow_right_click": "treatment",
 }
 
 // AccountExperimentGroups returns the groups fakeslack's

@@ -1,14 +1,18 @@
 package ui
 
 import (
+	"context"
 	"image"
+	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"gioui.org/layout"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -39,7 +43,9 @@ import (
 //     longer returns them); macmenu.go keeps Back and Forward.
 //
 // desktop_history_recents_read (Fpm/ Q) merges visits.list into the
-// recents (qsEE B7); Clack keeps its own recents only (docs/EXPERIMENTS.md).
+// recents the menu and the dialog read (qsEE B7: historyRecents), and
+// opening either refreshes visits.list (WAHR refreshHistoryMenuVisits).
+// The desktop History menu keeps the client's recents.
 //
 // Clack's places are its routes: a conversation (any c/<id>… route is the
 // channel's place; threads only count apart under agentic_ia,
@@ -71,12 +77,99 @@ func historyPlaceKey(r Route) string {
 	return string(r)
 }
 
-// historyPlaces is Dx: the recents, one per place (its latest visit),
-// at most max (0: all).
+// historyPlaces is Dx over the history menu's recents (historyRecents):
+// one per place (its latest visit), at most max (0: all).
 func (a *App) historyPlaces(max int) []visit {
+	return historyPlacesOf(a.historyRecents(), max)
+}
+
+// historyRecents is what HistoryButtons and ModalMoreHistory read: the
+// client's recents, merged with visits.list under
+// desktop_history_recents_read (tLXx L, qsEE B7). For each visit after
+// the last Clear history: a place the recents have is bumped to the
+// visit's time when that is newer (a copy of its newest recent), and one
+// they lack is added when it's a conversation the client knows (Be's
+// loadedVisitIds; B7's A makes entries for channels, canvases and lists,
+// and Clack's routes name canvases and lists by their tab, not the file,
+// so those visits are left out). A thread's visit is its channel's
+// (includeThreads is agentic IA's). Then newest first.
+func (a *App) historyRecents() []visit {
+	rec := a.router.Recents()
+	c := a.Core()
+	if c == nil || !c.HistoryRecentsRead() {
+		return rec
+	}
+	visits := c.HistoryVisits()
+	if len(visits) == 0 {
+		return rec
+	}
+	newest := map[string]visit{} // u: getPlaceKey → the newest recent (search views skipped)
+	for _, v := range rec {
+		if v.Route.Page() == "search" {
+			continue
+		}
+		k := historyPlaceKey(v.Route)
+		if k == "" {
+			continue
+		}
+		if o, ok := newest[k]; !ok || v.At.After(o.At) {
+			newest[k] = v
+		}
+	}
+	cleared := a.router.Cleared()
+	var extra []visit
+	for _, vs := range visits {
+		at := time.UnixMilli(vs.Timestamp)
+		if !at.After(cleared) {
+			continue // e.timestamp <= clearedAtMs
+		}
+		var r Route
+		if p := core.SlackPageRoute(vs.ID); p != "" {
+			r = Route(p)
+		} else if vs.ObjectType == core.NavChannel || vs.ObjectType == core.NavDM || vs.ObjectType == core.NavThread {
+			r = Route("c/" + vs.ID)
+		} else {
+			continue
+		}
+		if h, ok := newest[historyPlaceKey(r)]; ok {
+			if !h.At.Before(at) {
+				continue // Number(h.ts) >= e.timestamp
+			}
+			extra = append(extra, visit{Route: h.Route, At: at})
+			continue
+		}
+		if r.Page() != "c" || a.model().conv(vs.ID) == nil {
+			continue // not loaded (Be), or not a channel
+		}
+		extra = append(extra, visit{Route: r, At: at})
+	}
+	if len(extra) == 0 {
+		return rec
+	}
+	out := append(append([]visit(nil), rec...), extra...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	return out
+}
+
+// refreshHistoryVisits is useHistoryMenuVisits' effect: opening the menu
+// or the dialog runs refreshHistoryMenuVisits.
+func (a *App) refreshHistoryVisits() {
+	c := a.Core()
+	if c == nil || !c.HistoryRecentsRead() {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		c.RefreshHistoryVisits(ctx)
+	}()
+}
+
+// historyPlacesOf is Dx: recents, one per place, at most max (0: all).
+func historyPlacesOf(recents []visit, max int) []visit {
 	var out []visit
 	seen := map[string]bool{}
-	for _, v := range a.router.Recents() {
+	for _, v := range recents {
 		if max > 0 && len(out) >= max {
 			break
 		}
@@ -283,6 +376,7 @@ func historyConvIcon(c *convInfo) string {
 func (a *App) openHistoryMenu(btn image.Rectangle) {
 	// .p-ia4_history_menu{position:relative;left:-18px} and, in the
 	// desktop app, --desktop{top:-8px}
+	a.refreshHistoryVisits()
 	anchor := btn.Add(image.Pt(-a.px(18), -a.px(8)))
 	a.ShowOverlay(popups.NewMenuOpts(a, a.historyItems(), popups.MenuOpts{Anchor: anchor, Width: historyMenuW,
 		MenuClass: "p-ia4_history_menu p-ia4_history_menu--desktop"}))
@@ -333,6 +427,7 @@ func containsStr(xs []string, s string) bool {
 // openShowAllHistory is openShowAllHistoryModal: every place in the
 // recents, in the History dialog.
 func (a *App) openShowAllHistory() {
+	a.refreshHistoryVisits()
 	d := &historyDialog{a: a, rows: a.historyDialogRows(a.historyPlaces(0))}
 	d.m = popups.NewModal(a, popups.ModalOpts{Title: "History", Width: 520, Body: d.body, Over: d.over, Flush: true})
 	a.ShowOverlay(d.m)
@@ -441,7 +536,7 @@ func historyOSLabelText(s string) string {
 // isOSMenu, from Dx with maxItems 16) and whether "Show full history"
 // follows them (15 shown, more than 15 places).
 func (a *App) historyOSRecents() (out []visit, labels []string, more bool) {
-	places := a.historyPlaces(historyOSMax + 1)
+	places := historyPlacesOf(a.router.Recents(), historyOSMax+1)
 	for _, v := range places {
 		if len(out) >= historyOSMax {
 			break

@@ -67,6 +67,7 @@ type router struct {
 	stack   []Route
 	pos     int
 	recents []visit
+	cleared time.Time // the last Clear history (the visits merge's clearedAtMs)
 }
 
 // visit is one entry of the recents.
@@ -95,7 +96,10 @@ func (h *router) note(r Route) {
 func (h *router) Recents() []visit { return h.recents }
 
 // ClearRecents is the History dialog's Clear history.
-func (h *router) ClearRecents() { h.recents = nil }
+func (h *router) ClearRecents() { h.recents, h.cleared = nil, time.Now() }
+
+// Cleared is when Clear history last ran (zero: never this session).
+func (h *router) Cleared() time.Time { return h.cleared }
 
 func (h *router) Current() Route {
 	if len(h.stack) == 0 {

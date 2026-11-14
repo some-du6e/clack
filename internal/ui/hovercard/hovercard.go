@@ -126,6 +126,12 @@ type Request struct {
 	// ChannelHovercard (boot-shared UyZX) after HovercardImpl's 250ms
 	// anchorMouseEnter delay (Delay), not ChannelHoverCard.
 	Canvas bool
+	// URL is a link's UrlHoverCard (boot-shared cXYm): with
+	// truncated_url_hover_card on, BaseMrkdwnLink's renderDefaultLink
+	// wraps an external link that shows a tooltip in UrlHoverCardTrigger
+	// (kQRT), HoverCardTrigger (0oEe) at position "top" with its
+	// defaults: offsetY -12, the 350ms open and 250ms close.
+	URL string
 	// Delay replaces ShowDelay when set.
 	Delay time.Duration
 }
@@ -264,6 +270,20 @@ func (c *Controller) ReportPreview(key any, card any, local image.Rectangle, ptr
 		off = c.Pointer().Sub(image.Pt(int(ptr.X+.5), int(ptr.Y+.5)))
 	}
 	c.rep = Request{Key: key, Preview: card, Anchor: local.Add(off)}
+	c.hasRep = true
+}
+
+// ReportURL says the pointer is on a message link whose hover opens
+// UrlHoverCard this frame (Request.URL).
+func (c *Controller) ReportURL(key any, url string, local image.Rectangle, ptr f32.Point) {
+	if key == c.spent || url == "" {
+		return
+	}
+	off := image.Point{}
+	if c.Pointer != nil {
+		off = c.Pointer().Sub(image.Pt(int(ptr.X+.5), int(ptr.Y+.5)))
+	}
+	c.rep = Request{Key: key, URL: url, Anchor: local.Add(off)}
 	c.hasRep = true
 }
 
