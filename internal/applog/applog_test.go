@@ -295,15 +295,37 @@ func TestCloseWaitsForOpenWarning(t *testing.T) {
 	}
 }
 
+// closeForCleanup closes l and waits for its writer to let go of the file
+// before TempDir's cleanup removes the directory (it runs after this
+// cleanup): Windows can't remove an open file, and a Close that timed out
+// leaves the writer to close it later.
+func closeForCleanup(t *testing.T, l *Logger) {
+	t.Cleanup(func() {
+		l.Close(30 * time.Second)
+		select {
+		case <-l.w.done:
+		case <-time.After(30 * time.Second):
+			t.Error("the log writer didn't close the file in 30 s")
+		}
+	})
+}
+
 func TestStartWritesFileAndTail(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("CLACK_LOG_DIR", dir)
 	var stderr syncBuf
 	prevOut, prevFlags := log.Writer(), log.Flags()
 	l := Start(&stderr)
+	closeForCleanup(t, l)
 	defer func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) }()
 	for i := 0; i < 300; i++ {
 		log.Printf("tail line %d d=cookieSECRET", i)
+	}
+	// Tail waits a second at most for what's queued (TestTailWaitsForQueuedLines);
+	// 300 single-line writes can take longer on ci's Windows runner (94
+	// were in after a second, 2026-11-14), so they're waited for here
+	if !l.w.Flush(30 * time.Second) {
+		t.Fatal("the log writer didn't write 300 lines in 30 s")
 	}
 	tail := l.Tail(200)
 	if len(tail) != 200 || !strings.HasSuffix(tail[199], "tail line 299 d=REDACTED") || !strings.HasSuffix(tail[0], "tail line 100 d=REDACTED") {
@@ -312,7 +334,7 @@ func TestStartWritesFileAndTail(t *testing.T) {
 	if !l.Writing() || l.Path() != filepath.Join(dir, FileName) || l.Dir() != dir {
 		t.Errorf("Writing %v, Path %q, Dir %q", l.Writing(), l.Path(), l.Dir())
 	}
-	l.Close(2 * time.Second)
+	l.Close(30 * time.Second)
 	b, err := os.ReadFile(filepath.Join(dir, FileName))
 	if err != nil {
 		t.Fatal(err)
@@ -328,6 +350,56 @@ func TestStartWritesFileAndTail(t *testing.T) {
 	}
 }
 
+// Tail waits for the lines queued before it, then reads the file: a bug
+// report's tail ends with what was logged just before it. The disk stalls
+// on the first line until Tail's flush is queued behind the others.
+func TestTailWaitsForQueuedLines(t *testing.T) {
+	dir := t.TempDir()
+	r, err := openRotating(filepath.Join(dir, FileName), maxSize, keepFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := &gatedFile{w: r, gate: make(chan struct{}), entered: make(chan struct{}, 1)}
+	a := NewAsync(func() (io.WriteCloser, error) { return g, nil }, nil, 64)
+	l := &Logger{dir: dir, w: a}
+	closeForCleanup(t, l)
+	a.Write([]byte("queued 0\n"))
+	select {
+	case <-g.entered: // the writer holds line 0 at the stalled disk
+	case <-time.After(10 * time.Second):
+		t.Fatal("the writer never wrote")
+	}
+	for i := 1; i < 5; i++ {
+		a.Write([]byte(fmt.Sprintf("queued %d\n", i)))
+	}
+	go func() {
+		for len(a.ch) < 5 { // lines 1 to 4, and Tail's flush
+			time.Sleep(time.Millisecond)
+		}
+		close(g.gate)
+	}()
+	if tail := l.Tail(5); len(tail) != 5 || first(tail) != "queued 0" || last(tail) != "queued 4" {
+		t.Errorf("Tail(5) with five lines queued: %q", tail)
+	}
+}
+
+// gatedFile is a log file whose writes wait for gate.
+type gatedFile struct {
+	w       io.WriteCloser
+	gate    chan struct{}
+	entered chan struct{}
+}
+
+func (g *gatedFile) Write(p []byte) (int, error) {
+	select {
+	case g.entered <- struct{}{}:
+	default:
+	}
+	<-g.gate
+	return g.w.Write(p)
+}
+func (g *gatedFile) Close() error { return g.w.Close() }
+
 func TestTailAcrossRotation(t *testing.T) {
 	dir := t.TempDir()
 	r, err := openRotating(filepath.Join(dir, FileName), 200, 3)
@@ -336,6 +408,7 @@ func TestTailAcrossRotation(t *testing.T) {
 	}
 	a := NewAsync(func() (io.WriteCloser, error) { return r, nil }, nil, 64)
 	l := &Logger{dir: dir, w: a}
+	closeForCleanup(t, l)
 	for i := 0; i < 12; i++ {
 		a.Write([]byte(fmt.Sprintf("rotated %02d %s\n", i, strings.Repeat("y", 20))))
 	}
