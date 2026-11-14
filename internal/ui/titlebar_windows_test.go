@@ -329,28 +329,45 @@ func TestTitleBarWindow(t *testing.T) {
 	tbSave(t, "titlebar-light", light)
 	checkSymbols(light, "light", color.RGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff})
 
-	// close hovered: Windows' red; maximize hovered: darker
+	// close hovered: Windows' red; maximize hovered: darker. The hover
+	// fades in and out over 150 ms of frames (wcoHoverFade), and a frame
+	// on the runner's WARP device can take 100 ms or more: a capture at a
+	// fixed 500 ms caught close half way to its red ({173 13 49},
+	// 2026-11-14). settled captures until the strip shows the end of the
+	// fade, up to 5 s, and the checks read that capture.
+	settled := func(ok func(*image.RGBA) bool) *image.RGBA {
+		t.Helper()
+		for dl := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+			if img := strip(); ok(img) || time.Now().After(dl) {
+				return img
+			}
+		}
+	}
+	red := color.RGBA{R: 0xe8, G: 0x11, B: 0x23, A: 0xff}
 	bgAt := func(g wcoGeo, i int) image.Point { return image.Pt(g.bg[i].Min.X+int(3*s), g.bg[i].Min.Y+int(3*s)) }
 	maxBg, closeBg := bgAt(g, 1), bgAt(g, 2)
 	scr := func(p image.Point) image.Point { return image.Pt(org.X+p.X, org.Y+p.Y) }
 	asSend(t, asMouse(scr(wcoCentre(g.bounds[2])), 0))
-	time.Sleep(500 * time.Millisecond)
-	hc := strip()
+	hc := settled(func(img *image.RGBA) bool { return tbNear(at(img, closeBg), red, 12) })
 	tbSave(t, "titlebar-light-close-hover", hc)
-	if c := at(hc, closeBg); !tbNear(c, color.RGBA{R: 0xe8, G: 0x11, B: 0x23, A: 0xff}, 12) {
+	if c := at(hc, closeBg); !tbNear(c, red, 12) {
 		t.Errorf("close hovered: %v, want #E81123", c)
 	}
 	asSend(t, asMouse(scr(wcoCentre(g.bounds[1])), 0))
-	time.Sleep(1500 * time.Millisecond) // long enough for Windows 11's Snap Layouts flyout
-	hm := strip()
+	moved := time.Now()
+	lightMax := tbLuma(at(light, maxBg))
+	hm := settled(func(img *image.RGBA) bool {
+		return tbLuma(at(img, maxBg)) < lightMax && !tbNear(at(img, closeBg), red, 30)
+	})
 	tbSave(t, "titlebar-light-maximize-hover", hm)
-	tbSave(t, "titlebar-snap-layouts", tbCapture(t, image.Rect(org.X+W/2, org.Y, org.X+W, org.Y+int(360*s))))
-	if before, after := tbLuma(at(light, maxBg)), tbLuma(at(hm, maxBg)); after >= before {
-		t.Errorf("maximize hovered: luma %d, not darker than %d (black at 0x1A over a light frame)", after, before)
+	if after := tbLuma(at(hm, maxBg)); after >= lightMax {
+		t.Errorf("maximize hovered: luma %d, not darker than %d (black at 0x1A over a light frame)", after, lightMax)
 	}
-	if c := at(hm, closeBg); tbNear(c, color.RGBA{R: 0xe8, G: 0x11, B: 0x23, A: 0xff}, 30) {
+	if c := at(hm, closeBg); tbNear(c, red, 30) {
 		t.Errorf("close still red (%v) once the pointer left it", c)
 	}
+	time.Sleep(time.Until(moved.Add(1500 * time.Millisecond))) // long enough for Windows 11's Snap Layouts flyout
+	tbSave(t, "titlebar-snap-layouts", tbCapture(t, image.Rect(org.X+W/2, org.Y, org.X+W, org.Y+int(360*s))))
 
 	// 4. maximize, restore
 	zoomed := func() bool { r, _, _ := tbIsZoomed.Call(hwnd); return r != 0 }
@@ -414,11 +431,11 @@ func TestTitleBarWindow(t *testing.T) {
 	checkSymbols(dark, "dark", color.RGBA{R: 0xd1, G: 0xd2, B: 0xd3, A: 0xff})
 	maxBg = bgAt(g, 1)
 	asSend(t, asMouse(scr(wcoCentre(g.bounds[1])), 0))
-	time.Sleep(500 * time.Millisecond)
-	dm := strip()
+	darkMax := tbLuma(at(dark, maxBg))
+	dm := settled(func(img *image.RGBA) bool { return tbLuma(at(img, maxBg)) > darkMax })
 	tbSave(t, "titlebar-dark-maximize-hover", dm)
-	if before, after := tbLuma(at(dark, maxBg)), tbLuma(at(dm, maxBg)); after <= before {
-		t.Errorf("dark: maximize hovered luma %d, not lighter than %d (white at 0x1A over a dark frame)", after, before)
+	if after := tbLuma(at(dm, maxBg)); after <= darkMax {
+		t.Errorf("dark: maximize hovered luma %d, not lighter than %d (white at 0x1A over a dark frame)", after, darkMax)
 	}
 
 	// close: the window goes to the tray (runFromTray), Raise brings it back
