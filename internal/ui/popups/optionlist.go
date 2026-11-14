@@ -25,6 +25,12 @@ type SelectListOpts struct {
 	// "--{Placeholder}--" (getOptionsList's sk-select-placeholder row),
 	// and picking it clears the selection: onPick(-1). "" never lists it.
 	Placeholder string
+	// Dividers are the options that are SelectOptionsList's divider rows
+	// (type "divider": 16 tall, an hr with margin 5px 0, not an option);
+	// their labels are "". Icons go before an option's label (the folder
+	// select's "New folder": plus 20 and gap_50).
+	Dividers map[int]bool
+	Icons    map[int]string
 }
 
 // NewSelectList is a basic select's listbox, Slack Kit's
@@ -52,7 +58,7 @@ func NewSelectList(h Host, anchor image.Rectangle, labels []string, sel int, o S
 		}
 	}
 	t := &dtTimeList{h: h, anchor: anchor, labels: rows, slots: slots, sel: row, cur: -1, onPick: onPick,
-		sm: &selectMode{noAuto: noAuto, hovered: -1}}
+		sm: &selectMode{noAuto: noAuto, hovered: -1, dividers: o.Dividers, icons: o.Icons}}
 	t.list.Axis = layout.Vertical
 	t.clicks = make([]widget.Clickable, len(rows))
 	if !noAuto && row >= 0 {

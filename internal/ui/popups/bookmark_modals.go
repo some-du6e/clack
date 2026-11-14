@@ -17,9 +17,10 @@ package popups
 //     cannot be undone." (a file: "…remove <b>{fileName}</b> from …"),
 //     Cancel and Delete (Remove), a boxed error on failure ("Sorry could
 //     not delete link, Please retry." / "…file…").
-//   - RenameTabModal (O1Cc isRenameFolder): "Rename folder", "Folder name"
-//     over the label (over 256: "Folder name can’t be longer than 256
-//     characters."), Cancel and Save (updateTabLabel).
+//   - RenameTabModal (O1Cc): "Rename tab" or, with isRenameFolder, "Rename
+//     folder"; "Tab name" / "Folder name" over the label (over 256: "… name
+//     can’t be longer than 256 characters."), the clear button, a canvas's
+//     hint, Cancel and Save (updateTabLabel).
 //   - TabDeleteConfirmationModal (plzS) for a folder with bookmarks: "Are
 //     you sure you want to delete this folder with {n} item(s)?", "Deleting
 //     <b>{folderName}</b> from <b>{channelName}</b> will unshare any files
@@ -52,14 +53,46 @@ type BookmarkLinkOpts struct {
 	// Save writes the bookmark; an error keeps the modal open with
 	// Slack's message.
 	Save func(ctx context.Context, link, name string) error
-	// ShowFolder is showSetFolder (LinkEntity's "Add link to folder",
-	// files-links-2): under Name, "Folder" over a select of Folders (the
-	// first picked); with none, the info banner "We’ll add this link to a
-	// Bookmarks folder for safekeeping." and SaveIn gets folder "" (the
-	// caller makes the folder first, addBookmarkFolderForChannel).
-	ShowFolder bool
-	Folders    []FolderOption
-	SaveIn     func(ctx context.Context, link, name, folder string) error
+	// ShowFolder is showSetFolder (LinkEntity's "Add link to folder"):
+	// under Name, "Folder" over a select of Folders (useFoldersForChannel's
+	// order), the channel's default folder tab (SwCK: the folder tab with
+	// no folder id, DefaultFolder its label) spliced in at DefaultAt among
+	// them, and with NewFolder (useCanEditTabs) a divider and "New folder"
+	// (plus). The default folder tab is picked first, else the first
+	// folder. "New folder" shows "Folder Name" (folder icon, placeholder
+	// "Bookmarks") for the folder to make. With no folders and no default
+	// tab the select is the info banner "We’ll add this link to a Bookmarks
+	// folder for safekeeping." with its "Edit folder name" link (which
+	// shows "Folder Name" emptied), and the folder to make is "Bookmarks".
+	// SaveIn gets the pick: the caller makes a new folder first
+	// (addBookmarkFolderForChannel).
+	ShowFolder    bool
+	Folders       []FolderOption
+	DefaultFolder string // the default folder tab's label ("" none)
+	DefaultAt     int
+	NewFolder     bool
+	SaveIn        func(ctx context.Context, link, name string, pick FolderPick) error
+}
+
+// FolderPick is the folder a link goes to: an existing folder (ID), the
+// channel's loose bookmarks (Default: parent_id ""), or a new folder
+// named New.
+type FolderPick struct {
+	ID      string
+	Default bool
+	New     string
+}
+
+// Folder option values (qSP5 eR, eL).
+const (
+	folderOptNew     = "new_folder"
+	folderOptDefault = "default_folder"
+)
+
+// folderOpt is one of the select's options.
+type folderOpt struct {
+	value, label string
+	divider      bool
 }
 
 // FolderOption is one of showSetFolder's folders.
@@ -79,24 +112,83 @@ type BookmarkLinkModal struct {
 	cancel   *ModalButton
 	OnSaved  func()
 	linkSeen string
-	folder   int // the picked FolderOption
+	opts     []folderOpt // the select's options (t$)
+	sel      string      // the picked option's value (tM)
+	editName bool        // the banner's "Edit folder name" was clicked (tL)
+	banner   bool        // no folders and no default tab (tB)
+	newName  widget.Editor
 	selBtn   widget.Clickable
+	editLink widget.Clickable
 	selRect  image.Rectangle
 }
 
-// Folder is the picked folder's id ("" for none).
+// Folder is the picked folder's id ("" for none, the default folder or a
+// new one).
 func (m *BookmarkLinkModal) Folder() string {
-	if m.folder >= 0 && m.folder < len(m.o.Folders) {
-		return m.o.Folders[m.folder].ID
+	if m.sel == folderOptNew || m.sel == folderOptDefault {
+		return ""
+	}
+	return m.sel
+}
+
+// FolderOptions are the select's labels, "─" a divider (tests).
+func (m *BookmarkLinkModal) FolderOptions() []string {
+	var out []string
+	for _, o := range m.opts {
+		if o.divider {
+			out = append(out, "─")
+			continue
+		}
+		out = append(out, o.label)
+	}
+	return out
+}
+
+// Picked is the selected option's label (tests).
+func (m *BookmarkLinkModal) Picked() string {
+	for _, o := range m.opts {
+		if o.value == m.sel && !o.divider {
+			return o.label
+		}
 	}
 	return ""
 }
 
-// PickFolder picks Folders[i] (tests; the select's onSelectionChange).
+// PickFolder picks the select's option i (tests; onSelectionChange).
 func (m *BookmarkLinkModal) PickFolder(i int) {
-	if i >= 0 && i < len(m.o.Folders) {
-		m.folder = i
+	if i >= 0 && i < len(m.opts) && !m.opts[i].divider {
+		m.sel = m.opts[i].value
 	}
+}
+
+// EditFolderName is the banner's "Edit folder name" (tests).
+func (m *BookmarkLinkModal) EditFolderName() {
+	m.editName = true
+	m.newName.SetText("")
+}
+
+// SetFolderName types into "Folder Name" (tests).
+func (m *BookmarkLinkModal) SetFolderName(s string) { m.newName.SetText(s) }
+
+// naming is tq: "Folder Name" shows (New folder picked, or the banner's
+// Edit folder name).
+func (m *BookmarkLinkModal) naming() bool { return m.sel == folderOptNew || m.editName }
+
+// folderOK is tW: something to save into.
+func (m *BookmarkLinkModal) folderOK() bool {
+	n := m.newName.Len() > 0
+	return m.naming() && n || !m.naming() && m.sel != "" || m.banner && n
+}
+
+// pick is the save's folder (the submit's parentId).
+func (m *BookmarkLinkModal) pick() FolderPick {
+	if name := m.newName.Text(); m.naming() && name != "" || m.banner {
+		return FolderPick{New: name}
+	}
+	if m.sel == folderOptDefault {
+		return FolderPick{Default: true}
+	}
+	return FolderPick{ID: m.sel}
 }
 
 // NewBookmarkLinkModal builds it.
@@ -104,6 +196,28 @@ func NewBookmarkLinkModal(h Host, o BookmarkLinkOpts) *BookmarkLinkModal {
 	m := &BookmarkLinkModal{h: h, o: o}
 	m.link.SingleLine, m.link.Submit = true, true
 	m.name.SingleLine, m.name.Submit = true, true
+	m.newName.SingleLine, m.newName.Submit = true, true
+	if o.ShowFolder {
+		for _, f := range o.Folders {
+			m.opts = append(m.opts, folderOpt{value: f.ID, label: f.Title})
+		}
+		if o.DefaultFolder != "" {
+			at := min(max(o.DefaultAt, 0), len(m.opts))
+			m.opts = append(m.opts[:at], append([]folderOpt{{value: folderOptDefault, label: o.DefaultFolder}}, m.opts[at:]...)...)
+			m.sel = folderOptDefault
+		} else if len(o.Folders) > 0 {
+			m.sel = o.Folders[0].ID
+		}
+		if o.NewFolder {
+			if len(m.opts) > 0 {
+				m.opts = append(m.opts, folderOpt{divider: true})
+			}
+			m.opts = append(m.opts, folderOpt{value: folderOptNew, label: nsTabbedCh.T("New folder")})
+		}
+		if m.banner = len(o.Folders) == 0 && o.DefaultFolder == ""; m.banner {
+			m.newName.SetText(nsTabbedCh.T("Bookmarks"))
+		}
+	}
 	m.link.SetText(o.Link)
 	m.name.SetText(o.Name)
 	label := nsTabbedCh.T("Add")
@@ -113,7 +227,13 @@ func NewBookmarkLinkModal(h Host, o BookmarkLinkOpts) *BookmarkLinkModal {
 	m.cancel = &ModalButton{Label: nsTabbedCh.T("Cancel"), Kind: BtnOutline}
 	m.primary = &ModalButton{Label: label, Kind: BtnPrimary, Enabled: m.CanSave, Do: func() bool { m.Save(); return false }}
 	m.modal = NewModal(h, ModalOpts{Title: o.Title, Body: m.layout, Buttons: []*ModalButton{m.cancel, m.primary},
-		FocusStops: func() []event.Tag { return []event.Tag{&m.link, &m.name} }})
+		FocusStops: func() []event.Tag {
+			stops := []event.Tag{&m.link, &m.name}
+			if m.o.ShowFolder && m.naming() {
+				stops = append(stops, &m.newName)
+			}
+			return stops
+		}})
 	return m
 }
 
@@ -132,10 +252,11 @@ func (m *BookmarkLinkModal) tooLong() (link, name bool) {
 	return utf8.RuneCountInString(m.link.Text()) > 2049, utf8.RuneCountInString(m.name.Text()) > 257
 }
 
-// CanSave: a link, neither field too long, nothing in flight.
+// CanSave: a link, neither field too long, nothing in flight, and with
+// the folder select somewhere to save into.
 func (m *BookmarkLinkModal) CanSave() bool {
 	l, n := m.tooLong()
-	return strings.TrimSpace(m.link.Text()) != "" && !l && !n && !m.pending
+	return strings.TrimSpace(m.link.Text()) != "" && !l && !n && !m.pending && (!m.o.ShowFolder || m.folderOK())
 }
 
 // NormalizeBookmarkLink is the modal's linkify step: the link as Slack
@@ -170,10 +291,10 @@ func (m *BookmarkLinkModal) Save() {
 	}
 	name := strings.TrimSpace(m.name.Text())
 	m.pending = true
-	folder := m.Folder()
+	pick := m.pick()
 	run(m.h, func(ctx context.Context) (struct{}, error) {
 		if m.o.ShowFolder && m.o.SaveIn != nil {
-			return struct{}{}, m.o.SaveIn(ctx, link, name, folder)
+			return struct{}{}, m.o.SaveIn(ctx, link, name, pick)
 		}
 		return struct{}{}, m.o.Save(ctx, link, name)
 	},
@@ -195,7 +316,7 @@ func (m *BookmarkLinkModal) layout(gtx layout.Context) layout.Dimensions {
 		gtx.Execute(key.FocusCmd{Tag: &m.link})
 		m.focused = true
 	}
-	for _, ed := range []*widget.Editor{&m.link, &m.name} {
+	for _, ed := range []*widget.Editor{&m.link, &m.name, &m.newName} {
 		for {
 			e, ok := ed.Update(gtx)
 			if !ok {
@@ -318,27 +439,52 @@ func NewDeleteBookmarkModal(h Host, file bool, what, folder string, del func(ctx
 	return m
 }
 
-// RenameTabModal is the folder's "Rename folder".
+// RenameTabModal is RenameTabModal (O1Cc): "Rename tab" (or "Rename
+// folder" with isRenameFolder), "Tab name" / "Folder name" over the
+// field, which starts with the tab's label (or its file's title) all
+// selected; a clear button (close-circle-filled, "Clear text") inside it
+// while it has text; for a canvas the hint "Clear text to default to file
+// name" under it; over 256 characters "Tab name can’t be longer than 256
+// characters." (the folder's wording for a folder). Enter or Save is
+// updateTabLabel and closes the modal; Save is disabled for an empty name
+// (but on a canvas, which goes back to its file's name) or a long one.
 type RenameTabModal struct {
 	h       Host
 	modal   *Modal
 	ed      widget.Editor
-	label0  string
+	clear   widget.Clickable
+	o       RenameTabOpts
 	focused bool
 	pending bool
-	save    func(ctx context.Context, label string) error
+}
+
+// RenameTabOpts open the rename modal.
+type RenameTabOpts struct {
+	Label  string // the field's start: the tab's label, else its file's title
+	Folder bool   // isRenameFolder: the folder's wording
+	Canvas bool   // a canvas tab: an empty name resets it, with the hint
+	Save   func(ctx context.Context, label string) error
 }
 
 // NewRenameFolderModal opens "Rename folder" with the folder's label.
 func NewRenameFolderModal(h Host, label string, save func(ctx context.Context, label string) error) *RenameTabModal {
-	m := &RenameTabModal{h: h, label0: label, save: save}
+	return NewRenameTabModal(h, RenameTabOpts{Label: label, Folder: true, Save: save})
+}
+
+// NewRenameTabModal opens the rename modal.
+func NewRenameTabModal(h Host, o RenameTabOpts) *RenameTabModal {
+	m := &RenameTabModal{h: h, o: o}
 	m.ed.SingleLine, m.ed.Submit = true, true
-	m.ed.SetText(label)
-	m.ed.SetCaret(len([]rune(label)), len([]rune(label)))
+	m.ed.SetText(o.Label)
+	m.ed.SetCaret(len([]rune(o.Label)), 0) // forceSelectAll
 	ok := &ModalButton{Label: nsTabbedCh.T("Save"), Kind: BtnPrimary, Enabled: m.canSave, Do: func() bool { m.Save(); return false }}
-	m.modal = NewModal(h, ModalOpts{Title: nsTabbedCh.T("Rename folder"), Body: m.layout,
+	title := nsTabbedCh.T("Rename tab")
+	if o.Folder {
+		title = nsTabbedCh.T("Rename folder")
+	}
+	m.modal = NewModal(h, ModalOpts{Title: title, Body: m.layout,
 		Buttons:    []*ModalButton{{Label: nsTabbedCh.T("Cancel"), Kind: BtnOutline}, ok},
-		FocusStops: func() []event.Tag { return []event.Tag{&m.ed} }})
+		FocusStops: func() []event.Tag { return []event.Tag{&m.ed, &m.clear} }})
 	return m
 }
 
@@ -349,8 +495,21 @@ func (m *RenameTabModal) Dismiss()                                    { m.modal.
 // SetLabel types into the field (tests).
 func (m *RenameTabModal) SetLabel(s string) { m.ed.SetText(s) }
 
+// Label is the field's text (tests).
+func (m *RenameTabModal) Label() string { return m.ed.Text() }
+
+// Title is the modal's title (tests).
+func (m *RenameTabModal) Title() string { return m.modal.o.Title }
+
+// ClearButton is the field's clear button (tests).
+func (m *RenameTabModal) ClearButton() *widget.Clickable { return &m.clear }
+
+// CanSave is the Save button's state.
+func (m *RenameTabModal) CanSave() bool { return m.canSave() }
+
 func (m *RenameTabModal) canSave() bool {
-	return !m.pending && utf8.RuneCountInString(m.ed.Text()) <= 256
+	n := utf8.RuneCountInString(m.ed.Text())
+	return !m.pending && n <= 256 && (n > 0 || m.o.Canvas)
 }
 
 // Save is updateTabLabel with the field's label.
@@ -359,14 +518,10 @@ func (m *RenameTabModal) Save() {
 		return
 	}
 	label := m.ed.Text()
-	if label == m.label0 {
-		m.modal.Dismiss()
-		return
-	}
 	m.pending = true
-	run(m.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, m.save(ctx, label) }, func(_ struct{}, err error) {
+	m.modal.Dismiss() // the modal closes as the write goes out (closeModal after the dispatch)
+	run(m.h, func(ctx context.Context) (struct{}, error) { return struct{}{}, m.o.Save(ctx, label) }, func(_ struct{}, err error) {
 		m.pending = false
-		m.modal.Dismiss()
 	})
 }
 
@@ -384,30 +539,53 @@ func (m *RenameTabModal) layout(gtx layout.Context) layout.Dimensions {
 			m.Save()
 		}
 	}
+	if m.clear.Clicked(gtx) { // Clear text: empty, and the field keeps the focus
+		m.ed.SetText("")
+		gtx.Execute(key.FocusCmd{Tag: &m.ed})
+	}
 	th := m.h.Theme()
 	cl := colorsOf(th)
 	w := gtx.Constraints.Max.X
+	name, long := nsTabbedCh.T("Tab name"), nsTabbedCh.T("Tab name can’t be longer than 256 characters.")
+	if m.o.Folder {
+		name, long = nsTabbedCh.T("Folder name"), nsTabbedCh.T("Folder name can’t be longer than 256 characters.")
+	}
 	d := at(gtx, image.Point{}, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-		return para(gtx, th, 15, 22, theme.Bold, cl.Fg, nsTabbedCh.T("Folder name"), 1)
+		return para(gtx, th, 15, 22, theme.Bold, cl.Fg, name, 1)
 	})
 	y := d.Size.Y + dp(gtx, 8)
 	ih := dp(gtx, 44)
-	long := utf8.RuneCountInString(m.ed.Text()) > 256
+	tooLong := utf8.RuneCountInString(m.ed.Text()) > 256
 	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(w, ih))
 		d := field(gtx, th, &m.ed, "", "", 44, 18)
-		if long {
+		if tooLong {
 			stroke(gtx, image.Rect(0, 0, w, ih), dp(gtx, 8), border1(gtx), ccErrColor(th, cl))
+		}
+		if m.ed.Len() > 0 {
+			// .clearButton__m92BY: the smedium icon button at the field's right
+			bs := dp(gtx, 28)
+			at(gtx, image.Pt(w-dp(gtx, 8)-bs, (ih-bs)/2), func(gtx layout.Context) layout.Dimensions {
+				return iconButton(gtx, &m.clear, "close-circle-filled", 28, 18, cl.Fg3, cl.BgHover, 6)
+			})
 		}
 		return d
 	})
 	y += ih
-	if long {
+	switch {
+	case tooLong:
 		y += dp(gtx, 4)
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-			return para(gtx, th, 13, 18, theme.Regular, ccErrColor(th, cl), nsTabbedCh.T("Folder name can’t be longer than 256 characters."), 0)
+			return para(gtx, th, 13, 18, theme.Regular, ccErrColor(th, cl), long, 0)
+		})
+		y += d.Size.Y
+	case m.o.Canvas: // hintText
+		y += dp(gtx, 4)
+		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+			return para(gtx, th, 13, 18, theme.Regular, cl.Fg3, nsTabbedCh.T("Clear text to default to file name"), 0)
 		})
 		y += d.Size.Y
 	}
@@ -429,13 +607,34 @@ func NewDeleteFolderModal(h Host, n int, folder, channel string, del func()) *Mo
 }
 
 // folderField is showSetFolder's part: "Folder" over the BasicSelect
-// (44 tall, the picked folder's title, caret-down; a click opens the
-// options list), or with no folders the boxed info banner.
+// (44 tall, the picked option's title, caret-down; a click opens the
+// options list), "Folder Name" when a new folder is being named, or with
+// no folders the boxed info banner with "Edit folder name".
 func (m *BookmarkLinkModal) folderField(gtx layout.Context, th *theme.Theme, cl *Colors, w, y int) int {
-	if len(m.o.Folders) == 0 {
+	if m.editLink.Clicked(gtx) {
+		m.EditFolderName()
+		gtx.Execute(key.FocusCmd{Tag: &m.newName})
+	}
+	if m.banner && !m.editName {
 		pad := dp(gtx, 12)
 		call, d := record(loose(gtx, image.Pt(w-2*pad, 1<<20)), func(gtx layout.Context) layout.Dimensions {
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg, i18n.Plain(nsTabbedCh.RT("We’ll add this link to a <strong>Bookmarks</strong> folder for safekeeping. ")), 0)
+			sentence := i18n.Plain(nsTabbedCh.RT("We’ll add this link to a <strong>Bookmarks</strong> folder for safekeeping. "))
+			d := para(gtx, th, 15, 22, theme.Regular, cl.Fg, sentence, 0)
+			// the Link-styled "Edit folder name" right after the sentence
+			// (inline when it fits on the line)
+			lp := image.Pt(0, d.Size.Y)
+			edit := nsTabbedCh.T("Edit folder name")
+			if sw := th.Measure(gtx, 15, theme.Regular, sentence); d.Size.Y <= dp(gtx, 22) && sw+th.Measure(gtx, 15, theme.Regular, edit) <= gtx.Constraints.Max.X {
+				lp = image.Pt(sw, 0)
+			}
+			lk := at(gtx, lp, func(gtx layout.Context) layout.Dimensions {
+				return m.editLink.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+					d := text(gtx, th, 15, theme.Regular, cl.Link, edit)
+					pointerCursor(gtx, d.Size)
+					return d
+				})
+			})
+			return layout.Dimensions{Size: image.Pt(max(d.Size.X, lp.X+lk.Size.X), max(d.Size.Y, lp.Y+lk.Size.Y))}
 		})
 		r := image.Rect(0, y, w, y+d.Size.Y+2*pad)
 		rrect(gtx, r, dp(gtx, 8), cl.Ring)
@@ -443,39 +642,69 @@ func (m *BookmarkLinkModal) folderField(gtx layout.Context, th *theme.Theme, cl 
 		macroAt(gtx, call, image.Pt(pad, y+pad))
 		return r.Max.Y + dp(gtx, 20)
 	}
-	if m.selBtn.Clicked(gtx) {
-		labels := make([]string, len(m.o.Folders))
-		for i, f := range m.o.Folders {
-			labels[i] = f.Title
-		}
-		m.h.ShowOverlay(NewSelectList(m.h, m.selRect, labels, m.folder, SelectListOpts{}, func(i int) { m.PickFolder(i) }))
-	}
-	d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
-		return para(gtx, th, 15, 22, theme.Bold, cl.Fg, nsTabbedCh.T("Folder"), 1)
-	})
-	y += d.Size.Y + dp(gtx, 8)
-	ih := dp(gtx, 44)
-	at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-		return m.selBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			sz := image.Pt(w, ih)
-			r := image.Rectangle{Max: sz}
-			stroke(gtx, r, dp(gtx, 8), border1(gtx), cl.BtnBorder)
-			title := ""
-			if m.folder >= 0 && m.folder < len(m.o.Folders) {
-				title = m.o.Folders[m.folder].Title
+	if !m.banner && len(m.opts) > 0 {
+		if m.selBtn.Clicked(gtx) {
+			labels := make([]string, len(m.opts))
+			cur := -1
+			o := SelectListOpts{Dividers: map[int]bool{}, Icons: map[int]string{}}
+			for i, f := range m.opts {
+				labels[i] = f.label
+				if f.divider {
+					o.Dividers[i] = true
+				}
+				if f.value == folderOptNew {
+					o.Icons[i] = "plus"
+				}
+				if f.value == m.sel && !f.divider {
+					cur = i
+				}
 			}
-			at(gtx, image.Pt(dp(gtx, 12), 0), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(w-dp(gtx, 48), ih)}
-				return vcenter(gtx, ih, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 18, theme.Regular, cl.Fg, title) })
-			})
-			at(gtx, image.Pt(w-dp(gtx, 12)-dp(gtx, 20), (ih-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, "caret-down", 20, cl.Fg)
-			})
-			pointerCursor(gtx, sz)
-			return layout.Dimensions{Size: sz}
+			m.h.ShowOverlay(NewSelectList(m.h, m.selRect, labels, cur, o, func(i int) { m.PickFolder(i) }))
+		}
+		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+			return para(gtx, th, 15, 22, theme.Bold, cl.Fg, nsTabbedCh.T("Folder"), 1)
 		})
-	})
-	m.selRect = image.Rect(0, y, w, y+ih).Add(dtModalOrigin(gtx, m.modal)) // window coordinates
-	return y + ih + dp(gtx, 20)
+		y += d.Size.Y + dp(gtx, 8)
+		ih := dp(gtx, 44)
+		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			return m.selBtn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				sz := image.Pt(w, ih)
+				r := image.Rectangle{Max: sz}
+				stroke(gtx, r, dp(gtx, 8), border1(gtx), cl.BtnBorder)
+				x := dp(gtx, 12)
+				if m.sel == folderOptNew { // renderSelectedOption: the plus too
+					at(gtx, image.Pt(x, (ih-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions { return icon(gtx, "plus", 20, cl.Fg) })
+					x += dp(gtx, 24)
+				}
+				at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+					gtx.Constraints = layout.Constraints{Max: image.Pt(w-x-dp(gtx, 36), ih)}
+					return vcenter(gtx, ih, func(gtx layout.Context) layout.Dimensions { return text(gtx, th, 18, theme.Regular, cl.Fg, m.Picked()) })
+				})
+				at(gtx, image.Pt(w-dp(gtx, 12)-dp(gtx, 20), (ih-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
+					return icon(gtx, "caret-down", 20, cl.Fg)
+				})
+				pointerCursor(gtx, sz)
+				return layout.Dimensions{Size: sz}
+			})
+		})
+		m.selRect = image.Rect(0, y, w, y+ih).Add(dtModalOrigin(gtx, m.modal)) // window coordinates
+		y += ih + dp(gtx, 20)
+	}
+	if m.naming() {
+		// "Folder Name": the folder icon box (imageIconFolder) before the
+		// input, placeholder "Bookmarks"
+		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(w, 1<<20)}
+			return para(gtx, th, 15, 22, theme.Bold, cl.Fg, nsTabbedCh.T("Folder Name"), 1)
+		})
+		y += d.Size.Y + dp(gtx, 8)
+		ih := dp(gtx, 44)
+		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Exact(image.Pt(w, ih))
+			return field(gtx, th, &m.newName, nsTabbedCh.T("Bookmarks"), "folder", 44, 18)
+		})
+		y += ih + dp(gtx, 20)
+	}
+	return y
 }

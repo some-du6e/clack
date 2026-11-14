@@ -26,6 +26,12 @@ func TestCanEditTabsLikeSlack(t *testing.T) {
 	if a.CanEditTabs("C3") || a.CanEditTabs("C9") {
 		t.Error("an archived or unknown channel's tabs are editable")
 	}
+	ro := true // canUserPostInChannel: a read-only (announcement) channel
+	a.S.PutConv(slack.Conversation{ID: "C4", Name: "announce", IsChannel: true, IsMember: true, IsReadOnly: &ro})
+	a.S.PutConv(slack.Conversation{ID: "C5", Name: "elsewhere", IsChannel: true})
+	if a.CanEditTabs("C4") || a.CanEditTabs("C5") {
+		t.Error("a member who can't post, or a non-member, may edit the tabs")
+	}
 	waitGrants(t, a, "C2")
 	if a.CanEditTabs("C2") {
 		t.Error("channel_managers on a paid team: the creator who isn't a manager may edit")

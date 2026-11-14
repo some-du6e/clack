@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
-	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The explorer search's suggestions are fetchFilesWithQuery with the
@@ -170,34 +169,5 @@ func TestMoveTabAfter(t *testing.T) {
 		if id != c.id || after != c.after || ok != c.ok {
 			t.Errorf("%d→%d: %q %q %v, want %q %q %v", c.from, c.to, id, after, ok, c.id, c.after, c.ok)
 		}
-	}
-}
-
-// useCanEditTabs: a member of a live channel may edit; archived or not a
-// member, no; channel_managers keeps it to admins, managers and the
-// creator.
-func TestCanEditTabsChecked(t *testing.T) {
-	a, fs := channelFilesFake(t)
-	ctx := context.Background()
-	ch := fakeslack.FilesChannelID
-	if a.CanEditTabsChecked(ctx, ch) {
-		t.Error("an unknown conversation is editable")
-	}
-	a.S.PutConv(slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true})
-	if a.CanEditTabsChecked(ctx, ch) {
-		t.Error("on Grid without MANAGE_CHANNEL_TABS a member edits tabs")
-	}
-	fs.Permissions = map[string][]string{ch: {PermManageChannelTabs}}
-	if !a.CanEditTabsChecked(ctx, ch) {
-		t.Error("a member with MANAGE_CHANNEL_TABS can't edit tabs")
-	}
-	a.S.PutConv(slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true, IsArchived: true})
-	if a.CanEditTabsChecked(ctx, ch) {
-		t.Error("an archived channel's tabs are editable")
-	}
-	a.S.PutConv(slack.Conversation{ID: ch, Name: "files-gallery", IsChannel: true, IsMember: true, Creator: "U0SOMEONE",
-		Properties: json.RawMessage(`{"who_can_manage_tabs":"channel_managers"}`)})
-	if a.CanEditTabsChecked(ctx, ch) {
-		t.Error("channel_managers: a member who manages nothing can edit")
 	}
 }
