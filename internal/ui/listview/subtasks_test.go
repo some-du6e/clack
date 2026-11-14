@@ -215,6 +215,7 @@ func TestSubtasks(t *testing.T) {
 	if !ok {
 		t.Fatal("no parent row")
 	}
+	mid = mid.Add(v.gridAt) // the router's coordinates
 	e.move(w, mid)
 	if len(v.grid.acts) != 0 {
 		t.Errorf("off: primary-cell buttons %v", v.grid.acts)
@@ -248,7 +249,7 @@ func TestSubtasks(t *testing.T) {
 	if sr.Max.X != v.grid.x0+v.grid.cols[0].w-8-34 {
 		t.Errorf("summary ends at %d, want the cell's right less 42", sr.Max.X)
 	}
-	e.click(w, sr.Min.Add(image.Pt(10, sr.Dy()/2)))
+	e.click(w, sr.Min.Add(image.Pt(10, sr.Dy()/2)).Add(v.gridAt))
 	if got := e.lastOpened(); got != todoParent {
 		t.Errorf("summary click opened %q", got)
 	}

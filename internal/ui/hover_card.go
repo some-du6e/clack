@@ -327,6 +327,7 @@ func (a *App) installAppCardHooks() {
 		c := a.Core()
 		return c != nil && c.URLHoverCardExperiment() && urlHoverCardLink(u)
 	}
+	richview.FileSectionFace = a.fileSectionFace // custom_file_sections on message file cards
 	richview.TabSlugCard = func(ch, tab string) bool {
 		c := a.Core()
 		return c != nil && c.ChannelTabSlugCard(ch, tab)

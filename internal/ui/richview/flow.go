@@ -223,6 +223,7 @@ type display struct {
 	slots    []slot    // interactive element runs drawn by Options.Elements
 	tips     []string  // emoji tooltips (":name:"), frag.tip-1
 	codes    []codeRun // inline code runs and code blocks (codecopy.go)
+	fileSecs []fileSec // file cards with a section button (filesection.go)
 	removes  []removeBtn
 	cards    []v3Card // v3 cards: context menu, hover card (unfurl_hover.go)
 	// overlayIcons paint over images (unfurl.go's video buttons)

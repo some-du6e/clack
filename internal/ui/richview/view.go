@@ -95,6 +95,9 @@ type View struct {
 	copiedAt  time.Time
 	copyTipAt time.Time
 	copyHot   int
+	// the file cards' section buttons (filesection.go): card index+1
+	// under the press, and under the pointer
+	secPress, secHot int
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -392,6 +395,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.drawCopyButtons(gtx, st)
+	v.drawFileSecs(gtx, st)
 	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
 	if v.opts.Dim {
@@ -1043,6 +1047,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if b := v.copyButtonAt(e.Position) + 1; b != v.copyHot {
 					v.copyHot, v.copyTipAt = b, gtx.Now
 				}
+				if b := v.fileSecAt(e.Position) + 1; b != v.secHot {
+					v.secHot, v.copyTipAt = b, gtx.Now
+				}
 				if f := v.emojiAt(e.Position); f != v.tipFrag {
 					v.tipFrag, v.tipAt = f, gtx.Now
 				}
@@ -1071,6 +1078,10 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				}
 				if b := v.copyButtonAt(e.Position); b >= 0 { // a code block's copy button
 					v.copyPress = b + 1
+					continue
+				}
+				if b := v.fileSecAt(e.Position); b >= 0 && v.hovering { // a file card's section button
+					v.secPress = b + 1
 					continue
 				}
 				v.press = v.targetAt(e.Position)
@@ -1115,6 +1126,17 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					v.selB = v.offsetAt(e.Position)
 				}
 			case pointer.Release:
+				if b := v.secPress; b != 0 {
+					v.secPress = 0
+					if v.fileSecAt(e.Position)+1 == b && h != nil {
+						if o, ok := h.(FileSectionOpener); ok {
+							s := &v.d.fileSecs[b-1]
+							_, btn := v.secBar(s)
+							o.OpenFileSection(s.f, btn.Add(v.Origin))
+						}
+					}
+					continue
+				}
 				if b := v.copyPress; b != 0 {
 					v.copyPress = 0
 					if v.copyButtonAt(e.Position)+1 == b {
