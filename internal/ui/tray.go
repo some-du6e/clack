@@ -170,6 +170,9 @@ func (a *App) syncTray() {
 // updateTrayMenu is createTrayMenu when its inputs changed (force: always,
 // for a new tray).
 func (a *App) updateTrayMenu(force bool) {
+	if !trayOS() {
+		return
+	}
 	t, ok := a.trayIcon().(trayShell)
 	if !ok {
 		return
