@@ -308,6 +308,11 @@ func (v *Activity) moreTab(gtx C, x, h, last, cur int) int {
 			lo.moreOff = v.pointerAt().Sub(image.Pt(int(e.Position.X+.5), int(e.Position.Y+.5)))
 		}
 	}
+	// before its Layout, which drains the clickable's events
+	if lo.moreBtn.Clicked(gtx) {
+		// moreOff is the tab's window origin (its press: window − local)
+		v.openMoreMenu(last, cur, image.Rectangle{Max: image.Pt(w, h)}.Add(lo.moreOff))
+	}
 	func() {
 		defer op.Offset(image.Pt(x, 0)).Push(gtx.Ops).Pop()
 		g := gtx
@@ -345,10 +350,6 @@ func (v *Activity) moreTab(gtx C, x, h, last, cur int) int {
 		pass.Pop()
 		area.Pop()
 	}()
-	if lo.moreBtn.Clicked(gtx) {
-		// moreOff is the tab's window origin (its press: window − local)
-		v.openMoreMenu(last, cur, image.Rectangle{Max: image.Pt(w, h)}.Add(lo.moreOff))
-	}
 	return gtx.Dp(8) + w
 }
 
