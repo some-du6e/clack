@@ -172,6 +172,9 @@ type Size struct {
 	// reads its channels has them. Without it every cursor is a year older
 	// than every message (the other fixtures' screenshots are drawn so).
 	ReadCursors bool
+	// GIFs adds #gif-wall (GIFWallID) with this many messages, each a
+	// large animated GIF (gifs.go): the GIF memory test's channel.
+	GIFs int
 }
 
 // HackClub approximates the Hack Club Slack seen from one account.
@@ -716,6 +719,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.AgentThread {
 		s.addAgentThread() // agent_thread.go
+	}
+	if sz.GIFs > 0 {
+		s.addGIFWall() // gifs.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
@@ -1945,6 +1951,11 @@ func (s *Server) img(w http.ResponseWriter, r *http.Request) {
 			w.Write(b)
 			return
 		}
+	}
+	if b, ct, ok := gifImage(strings.TrimPrefix(r.URL.Path, "/img/")); ok { // animated GIFs and their stills (gifs.go)
+		w.Header().Set("Content-Type", ct)
+		w.Write(b)
+		return
 	}
 	s.imgMu.Lock()
 	b, okc := s.imgs[r.URL.Path]

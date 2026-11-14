@@ -262,6 +262,15 @@ type File struct {
 	// upload is still being processed). Slack's web client doesn't draw by
 	// it; Clack only reads it to spot unprocessed uploads.
 	MediaDisplayType string `json:"media_display_type,omitempty"`
+	// An animated GIF's animated thumbs (thumb_360_w/h and thumb_480_w/h
+	// are their sizes too; FileImageThumbnail plays them in messages) and
+	// its first frame as a still at the original's size (deanimate is
+	// what Accessibility > "Allow animations" off draws, and what its play
+	// button and Expand go by; deanimate_gif is the older name).
+	Thumb360GIF  string `json:"thumb_360_gif,omitempty"`
+	Thumb480GIF  string `json:"thumb_480_gif,omitempty"`
+	Deanimate    string `json:"deanimate,omitempty"`
+	DeanimateGIF string `json:"deanimate_gif,omitempty"`
 
 	// Clack only, never on the wire. Pending marks a file of the viewer's
 	// optimistic send whose upload hasn't finished (Slack's pendingUpload

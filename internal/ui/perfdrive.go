@@ -30,6 +30,13 @@ package ui
 //	channels    CLACK_PERF_CHANNELS (40) more channels opened one after
 //	            another, 2 s each
 //	idle        left alone for CLACK_PERF_IDLE (10m)
+//	gifs        CLACK_PERF_GIF_CHANNEL (fakeslackd -gifs's #gif-wall: large
+//	            animated GIFs) paged back to its first message, scrolled
+//	            down through every row CLACK_PERF_GIF_STEP (2) rows a
+//	            frame, then left showing its newest for CLACK_PERF_GIF_REST
+//	            (10 s): only the GIFs on screen play
+//	gifs-left   back to the first channel for CLACK_PERF_GIF_LEFT (10 s):
+//	            the GIFs' players let go
 //	exit        the metadata cache saved, then exit (a priming run)
 //
 // The driver only calls what a person's clicks and wheel would: Navigate,
@@ -151,6 +158,11 @@ func perfDrive(a *App, dir string) {
 		case "idle":
 			perfOnUI(a, func() { a.Navigate("c/" + perfFirstChannel(a)) })
 			time.Sleep(perfDur("CLACK_PERF_IDLE", 10*time.Minute))
+		case "gifs":
+			perfGIFs(a, logf)
+		case "gifs-left":
+			perfOnUI(a, func() { a.Navigate("c/" + perfFirstChannel(a)) })
+			time.Sleep(perfDur("CLACK_PERF_GIF_LEFT", 10*time.Second))
 		case "exit":
 			logf("saving the metadata cache and exiting")
 			var done <-chan struct{}
@@ -301,6 +313,43 @@ func perfScroll(a *App, logf func(string, ...any)) {
 	time.Sleep(10 * time.Second)
 }
 
+// perfGIFs is the gifs stage: #gif-wall paged back and scrolled through,
+// then shown.
+func perfGIFs(a *App, logf func(string, ...any)) {
+	ch := perfOpt("CLACK_PERF_GIF_CHANNEL", "C0GIFWALL01")
+	perfOnUI(a, func() { a.Navigate("c/" + ch) })
+	if !perfWait("history "+ch, 60*time.Second, func() bool {
+		n := 0
+		perfOnUI(a, func() { n, _, _, _ = messages.PerfList(ch) })
+		return n > 0
+	}) {
+		return // a fakeslackd without -gifs
+	}
+	var n int
+	for dl := time.Now().Add(5 * time.Minute); time.Now().Before(dl); time.Sleep(150 * time.Millisecond) {
+		var more, loading bool
+		perfOnUI(a, func() {
+			n, more, loading, _ = messages.PerfList(ch)
+			messages.PerfScrollTop(ch)
+		})
+		if !more && !loading {
+			break
+		}
+	}
+	step := perfInt("CLACK_PERF_GIF_STEP", 2) // a GIF's row is tall
+	steps := 0
+	for ; steps < 20000; steps++ {
+		end := false
+		perfOnUI(a, func() { end = messages.PerfScrollDown(ch, step) })
+		if end {
+			break
+		}
+		time.Sleep(60 * time.Millisecond)
+	}
+	logf("gifs: %s %d messages, %d steps down", ch, n, steps)
+	time.Sleep(perfDur("CLACK_PERF_GIF_REST", 10*time.Second))
+}
+
 func perfChannels(a *App, logf func(string, ...any)) {
 	long := map[string]bool{}
 	for _, ch := range strings.Split(perfOpt("CLACK_PERF_LONG", "C0FAKE00001,C0FAKE00002,C0FAKE00003"), ",") {
@@ -394,6 +443,15 @@ func perfAppCounts(a *App, w io.Writer) {
 	if a.images != nil {
 		e, b, l := a.images.PerfStats()
 		fmt.Fprintf(w, "app_img_entries %d\napp_img_bytes %.1f MB\napp_img_limit %.1f MB\n", e, float64(b)/(1<<20), float64(l)/(1<<20))
+		// animated GIFs (imgcache/anim.go), where the side has them (an
+		// interface: the driver still builds on an older side)
+		if s, ok := any(a.images).(interface {
+			PerfAnimStats() (players, playerBytes, animated, encodedBytes int)
+		}); ok {
+			p, pb, an, enc := s.PerfAnimStats()
+			fmt.Fprintf(w, "app_img_players %d\napp_img_player_bytes %.1f MB\napp_img_animated %d\napp_img_gif_bytes %.1f MB\n",
+				p, float64(pb)/(1<<20), an, float64(enc)/(1<<20))
+		}
 	}
 	var lists, rows, laid, models, msgs int
 	perfOnUI(a, func() { lists, rows, laid, models, msgs = messages.PerfCounts() })

@@ -299,6 +299,9 @@ func init() {
 		s("M14.25 8.77 H16.25"), s("M5.67 5.18 L4.25 3.77"), s("M2.25 8.77 H4.25"), s("M5.71 12.36 L4.3 13.77"))
 	reg("search", s("M14 14 L17.75 17.75"), s("M12.89 14.5 C14.25 13.44 15.32 12 15.6 10.25 A6.86 6.86 0 0 0 14.5 5.11 A6.8 6.8 0 0 0 5.31 3.35 A6.75 6.75 0 1 0 12.89 14.5 Z"))
 	reg("search-filled", sw(2, circle(9, 9, 6.5)), sw(2.05, "M17.5 17.5 L14 14"))
+	// Slack's zoom-in (FileActions' Expand with animations off), as
+	// centrelines: the lens's 6–7.5 ring, its handle and the plus
+	reg("zoom-in", s(circle(9, 9, 6.75)), s("M14 14 L17.75 17.75"), s("M9 6 V12"), s("M6 9 H12"))
 	// Slack's send-filled
 	reg("send", fl("M17.75 9.94 L2.25 17.75 V12.71 L2.75 12 L3.33 11.64 L10.5 11.43 A1.5 1.5 0 0 0 11.75 10.11 A1.5 1.5 0 0 0 10.56 8.45 L3.31 8.25 L2.75 7.86 L2.25 7.16 V2.31 L17.75 9.94 Z"))
 	// Slack's send-to-list

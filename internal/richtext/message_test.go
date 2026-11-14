@@ -69,7 +69,7 @@ func TestFiles(t *testing.T) {
 		{Kind: FileBlock, File: &File{ID: "F2", Name: "b.jpg", Title: "Holiday", Mime: "image/jpeg", URL: "https://files.slack.com/files-pri/T1-F2/b.jpg", IsImage: true, OrigW: 2000, OrigH: 1000,
 			Thumb: &Image{URL: "https://files.slack.com/files-tmb/T1-F2-x/b_480.jpg", Alt: "b.jpg", W: 480, H: 240, Proxy: true}}},
 		{Kind: FileBlock, File: &File{ID: "F3", Name: "c.gif", Mime: "image/gif", Size: 5000, URL: "https://files.slack.com/files-pri/T1-F3/c.gif", IsImage: true, OrigW: 200, OrigH: 100,
-			Thumb: &Image{URL: "https://files.slack.com/files-pri/T1-F3/c.gif", Alt: "c.gif", W: 200, H: 100, Proxy: true}}},
+			Thumb: &Image{URL: "https://files.slack.com/files-tmb/T1-F3-x/c_360.png", Alt: "c.gif", W: 200, H: 100, Proxy: true}}},
 		{Kind: FileBlock, File: &File{ID: "F4", Name: "v.mp4", Mime: "video/mp4", URL: "https://files.slack.com/files-tmb/T1-F4-x/v.mp4", IsVideo: true, OrigW: 1280, OrigH: 720,
 			Thumb: &Image{URL: "https://files.slack.com/files-tmb/T1-F4-x/v_thumb.jpg", Alt: "v.mp4", W: 1280, H: 720, Proxy: true}}},
 		{Kind: FileBlock, File: &File{ID: "F5", Name: "clip", Mime: "audio/webm", URL: "https://files.slack.com/files-pri/T1-F5/clip", IsAudio: true, DurationMS: 5000, Subtype: "slack_audio"}},
@@ -87,6 +87,46 @@ func TestFiles(t *testing.T) {
 		eq(t, "file "+want[i].kindName(), d.Blocks[i], want[i])
 	}
 	eq(t, "files plain", PlainText(Doc{Blocks: d.Blocks[:2]}), "a.png\nHoliday")
+}
+
+// An animated GIF plays its animated thumb in a message (FileImageThumbnail's
+// getThumbSrcForFile at maxSize 720: thumb_480_gif first), and draws its
+// deanimated copy with Accessibility > "Allow animations" off.
+func TestAnimatedGIFFile(t *testing.T) {
+	d := doc(t, `{"ts":"1.0","text":"","files":[
+		{"id":"F1","name":"party.gif","mimetype":"image/gif","filetype":"gif","size":900000,"created":1700000000,
+		 "url_private":"https://files.slack.com/files-pri/T1-F1/party.gif",
+		 "thumb_360":"https://files.slack.com/files-tmb/T1-F1-x/party_360.png","thumb_360_w":360,"thumb_360_h":203,
+		 "thumb_480":"https://files.slack.com/files-tmb/T1-F1-x/party_480.png","thumb_480_w":480,"thumb_480_h":270,
+		 "thumb_360_gif":"https://files.slack.com/files-tmb/T1-F1-x/party_360.gif",
+		 "thumb_480_gif":"https://files.slack.com/files-tmb/T1-F1-x/party_480.gif",
+		 "deanimate":"https://files.slack.com/files-tmb/T1-F1-x/party_deanimate.png",
+		 "deanimate_gif":"https://files.slack.com/files-tmb/T1-F1-x/party_deanimate_gif.png",
+		 "original_w":498,"original_h":280},
+		{"id":"F2","name":"old.gif","mimetype":"image/gif","filetype":"gif","created":1500000000,
+		 "url_private":"https://files.slack.com/files-pri/T1-F2/old.gif",
+		 "thumb_360":"https://files.slack.com/files-tmb/T1-F2-x/old_360.gif","thumb_360_w":300,"thumb_360_h":200,
+		 "thumb_160":"https://files.slack.com/files-tmb/T1-F2-x/old_160.png","original_w":300,"original_h":200}
+	]}`)
+	if len(d.Blocks) != 2 {
+		t.Fatalf("%d blocks", len(d.Blocks))
+	}
+	f := d.Blocks[0].File
+	if f.Thumb == nil || f.Thumb.URL != "https://files.slack.com/files-tmb/T1-F1-x/party_480.gif" || f.Thumb.W != 480 || f.Thumb.H != 270 {
+		t.Errorf("thumb %+v, want thumb_480_gif at 480×270", f.Thumb)
+	}
+	if f.Still == nil || f.Still.URL != "https://files.slack.com/files-tmb/T1-F1-x/party_deanimate.png" || f.Still.W != 498 || f.Still.H != 280 || !f.Deanimate {
+		t.Errorf("still %+v (deanimate %v), want deanimate at the original's 498×280", f.Still, f.Deanimate)
+	}
+	// before 2022-06-04 thumb_360 may itself be the animation: Slack
+	// plays it, and the still is a smaller static thumb
+	g := d.Blocks[1].File
+	if g.Thumb == nil || g.Thumb.URL != "https://files.slack.com/files-tmb/T1-F2-x/old_360.gif" {
+		t.Errorf("old GIF thumb %+v", g.Thumb)
+	}
+	if g.Still == nil || g.Still.URL != "https://files.slack.com/files-tmb/T1-F2-x/old_160.png" || g.Deanimate {
+		t.Errorf("old GIF still %+v (deanimate %v), want thumb_160", g.Still, g.Deanimate)
+	}
 }
 
 func TestFileBlockUsesMessageFile(t *testing.T) {

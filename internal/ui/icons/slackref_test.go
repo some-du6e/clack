@@ -243,6 +243,7 @@ var slackRef = map[string]string{
 	"screen-off":                  "screen-off",
 	"screen-share":                "screen-share",
 	"search":                      "search",
+	"zoom-in":                     "zoom-in", // FileActions' Expand (richview/animated.go)
 	"search-filled":               "search-filled",
 	"send":                        "send-filled",
 	"settings":                    "settings",

@@ -77,6 +77,9 @@ func (a *App) applyAccountPrefs(p core.Prefs) {
 	a.sw.themeFinal = true // the account's own prefs are known (startup.go)
 	a.applySpellPref()     // webapp_spellcheck (spellcheck_wire.go)
 	a.applyLocalePref()    // locale (locale_wire.go)
+	// Accessibility > "Allow animations" (a11y_animations): off, GIFs
+	// draw their stills (imgcache/anim.go, richview/animated.go)
+	a.images.SetAnimate(!p.NoAnimations)
 	a.setAcct(acctFromPrefs(p.IATheme, p.NoWindowGradients))
 	// Kept per device in ui.json, like the theme Slack's desktop keeps in
 	// localStorage for its loading screen: the next start's first frame

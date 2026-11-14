@@ -23,10 +23,10 @@ import os
 import re
 import sys
 
-STAGES = ["users", "startup", "picker", "picker-all", "scroll", "channels", "idle"]
+STAGES = ["users", "startup", "picker", "picker-all", "scroll", "channels", "idle", "gifs", "gifs-left"]
 STAGE_NAMES = {"users": "cold start, 32k users loaded", "startup": "warm start, settled", "picker": "emoji picker open",
                "picker-all": "picker scrolled through", "scroll": "long channels scrolled", "channels": "40 more channels",
-               "idle": "idle 10 min"}
+               "idle": "idle 10 min", "gifs": "#gif-wall's 300 GIFs scrolled, resting", "gifs-left": "#gif-wall left 10 s"}
 
 
 # ---- pprof (profile.proto) ----
@@ -234,6 +234,15 @@ def stage_rows(d, platform):
     return rows
 
 
+def img_note(m):
+    # the decoded images' entries, and (a side with GIF players) the
+    # animated GIFs playing and their bytes
+    n = str(m.get("app_img_entries", "—"))
+    if m.get("app_img_players") is not None:
+        n += ", %s playing: %s" % (m.get("app_img_players"), fmt_mb(mb(m.get("app_img_player_bytes"))))
+    return n
+
+
 def users_cell(m):
     # app_users_asked: the ids the session sent to users/info (lazy-users
     # on); an older side doesn't count them
@@ -261,7 +270,7 @@ def side_report(base, side, platform):
             STAGE_NAMES.get(r["stage"], r["stage"]), fmt_mb(r["total"]), fmt_mb(r["total_trim"]), commit, fmt_mb(r["go_res"]),
             fmt_mb(r["other_res"]), fmt_mb(r["img_res"]), fmt_mb(live), fmt_mb(mb(m.get("go_heap_unreturned"))),
             fmt_mb(mb(m.get("go_stack_inuse"))), users_cell(m), m.get("app_timeline_msgs", "—"), m.get("app_model_msgs", "—"),
-            fmt_mb(mb(m.get("app_img_bytes"))), m.get("app_img_entries", "—")))
+            fmt_mb(mb(m.get("app_img_bytes"))), img_note(m)))
     out.append("")
     if platform == "windows":
         out.append("Windows may trim an idle process's working set (pages go to the standby list or the page file), so "

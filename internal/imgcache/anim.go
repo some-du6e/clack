@@ -165,7 +165,11 @@ func (c *Cache) frameLocked(e *entry, now time.Time, forced bool) paint.ImageOp 
 	if forced {
 		p.forced = true
 	}
+	was := p.cur
 	wake := p.advance(now)
+	if p.cur != was {
+		c.advances++
+	}
 	if p.ended {
 		c.endLocked(e, p)
 		return p.curOp

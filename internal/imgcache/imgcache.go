@@ -83,9 +83,10 @@ type Cache struct {
 	// animations (anim.go): whether Get plays them (SetAnimate), the
 	// entries with a player playing, and the sweep that stops them once
 	// nothing draws them
-	animate bool
-	playing map[*entry]struct{}
-	animT   *time.Timer
+	animate  bool
+	playing  map[*entry]struct{}
+	animT    *time.Timer
+	advances uint64 // frames the players moved on (Stats)
 }
 
 // failure is a key's failed load: how many in a row, and when Get may try
@@ -399,6 +400,16 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	return c.frameLocked(e, now, forced), true
 }
 
+// Loaded reports whether some size of url is decoded.
+func (c *Cache) Loaded(url string) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.byURL[url]) > 0
+}
+
 // entryLocked is k's entry, or nil.
 func (c *Cache) entryLocked(k key) *entry {
 	if el, ok := c.entries[k]; ok {
@@ -413,8 +424,10 @@ func (c *Cache) entryLocked(k key) *entry {
 type Stats struct {
 	Entries, Bytes, Limit int
 	Players, PlayerBytes  int
-	Animated              int // entries of animated GIFs, playing or not
-	EncodedBytes          int // animated GIFs' encoded bytes kept for playing again
+	Animated              int         // entries of animated GIFs, playing or not
+	EncodedBytes          int         // animated GIFs' encoded bytes kept for playing again
+	Advances              uint64      // frames the players have moved on, ever
+	LargestFrame          image.Point // the largest frame a player plays now
 }
 
 // Stats reports the memory tier.
@@ -424,7 +437,7 @@ func (c *Cache) Stats() Stats {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := Stats{Entries: len(c.entries), Bytes: c.bytes, Limit: c.maxBytes}
+	s := Stats{Entries: len(c.entries), Bytes: c.bytes, Limit: c.maxBytes, Advances: c.advances}
 	for el := c.lru.Front(); el != nil; el = el.Next() {
 		e := el.Value.(*entry)
 		if e.frames > 1 {
@@ -436,6 +449,9 @@ func (c *Cache) Stats() Stats {
 		if p := e.play; p != nil {
 			s.Players++
 			s.PlayerBytes += p.n
+			if p.size.X*p.size.Y > s.LargestFrame.X*s.LargestFrame.Y {
+				s.LargestFrame = p.size
+			}
 		}
 	}
 	return s

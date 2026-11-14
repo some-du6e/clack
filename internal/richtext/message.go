@@ -176,6 +176,10 @@ func convertFile(f *slack.File) *File {
 	case strings.HasPrefix(mime, "image/"):
 		out.IsImage = true
 		out.Thumb = imageThumb(f)
+		if st := stillThumb(f); st != nil && (out.Thumb == nil || st.URL != out.Thumb.URL) {
+			out.Still = st
+		}
+		out.Deanimate = f.Deanimate != ""
 	case strings.HasPrefix(mime, "video/"):
 		out.IsVideo = true
 		out.URL = SafeURL(firstNonEmpty(f.MP4, f.URLPrivate))
@@ -201,15 +205,27 @@ func convertFile(f *slack.File) *File {
 
 // imageThumb picks the thumbnail Slack shows inline (thumb_1024 first, then
 // the next largest) with its pixel size: Slack sizes inline images from the
-// 1024 thumb's dimensions, up to the gallery width. Animated GIFs use the
-// original. Small images have no thumb past their own size (a 223px
-// screenshot stops at thumb_360, which is the original's size), so the
-// original (url_private) comes next and the small thumbs last: Slack's
-// fileIsImage draws any image/* file with an image filetype or a
-// thumb_360 inline, whatever its other thumbs.
+// 1024 thumb's dimensions, up to the gallery width. An animated GIF plays
+// its animated thumb (FileImageThumbnail's getThumbSrcForFile at maxSize
+// 720, 2HRR: thumb_480_gif, then thumb_360_gif); one without either draws
+// its static thumbs, as in Slack. Small images have no thumb past their
+// own size (a 223px screenshot stops at thumb_360, which is the
+// original's size), so the original (url_private) comes next and the
+// small thumbs last: Slack's fileIsImage draws any image/* file with an
+// image filetype or a thumb_360 inline, whatever its other thumbs.
 func imageThumb(f *slack.File) *Image {
-	if strings.EqualFold(f.Mimetype, "image/gif") && f.URLPrivate != "" && (f.Size == 0 || f.Size <= 8<<20) {
-		return image(f.URLPrivate, f.Name, f.OriginalW, f.OriginalH)
+	for _, g := range []struct {
+		u    string
+		w, h int
+		side int
+	}{{f.Thumb480GIF, f.Thumb480W, f.Thumb480H, 480}, {f.Thumb360GIF, f.Thumb360W, f.Thumb360H, 360}} {
+		if g.u != "" {
+			w, h := g.w, g.h
+			if w == 0 || h == 0 {
+				w, h = fitSide(f.OriginalW, f.OriginalH, g.side)
+			}
+			return image(g.u, f.Name, w, h)
+		}
 	}
 	type cand struct {
 		u    string
@@ -229,6 +245,49 @@ func imageThumb(f *slack.File) *Image {
 	}
 	for _, c := range cs {
 		if c.u == "" {
+			continue
+		}
+		w, h := c.w, c.h
+		if w == 0 || h == 0 {
+			w, h = fitSide(f.OriginalW, f.OriginalH, c.side)
+		}
+		return image(c.u, f.Name, w, h)
+	}
+	return nil
+}
+
+// stillThumb is what Slack draws for f with Accessibility > "Allow
+// animations" off (getThumbSrcForFile with suppressAnimations, 2HRR), for
+// the GIFs, PNGs and WebPs it applies to: the deanimated copy (at the
+// original's size), else a static thumb, thumb_360 only for files made
+// after Slack's thumb_360 stopped animating (mayThumb360BeAnimated:
+// created before 2022-06-04). nil: none, or not one of those types.
+func stillThumb(f *slack.File) *Image {
+	switch strings.ToLower(f.Filetype) {
+	case "gif", "png", "webp":
+	default:
+		return nil
+	}
+	if f.Deanimate != "" {
+		return image(f.Deanimate, f.Name, f.OriginalW, f.OriginalH)
+	}
+	if f.DeanimateGIF != "" {
+		return image(f.DeanimateGIF, f.Name, f.OriginalW, f.OriginalH)
+	}
+	for _, c := range []struct {
+		u    string
+		w, h int
+		side int
+		ok   bool
+	}{
+		{f.Thumb1024, f.Thumb1024W, f.Thumb1024H, 1024, true},
+		{f.Thumb960, f.Thumb960W, f.Thumb960H, 960, true},
+		{f.Thumb720, f.Thumb720W, f.Thumb720H, 720, true},
+		{f.Thumb480, f.Thumb480W, f.Thumb480H, 480, true},
+		{f.Thumb360, f.Thumb360W, f.Thumb360H, 360, f.Created >= 1654300800},
+		{f.Thumb160, 0, 0, 160, true},
+	} {
+		if c.u == "" || !c.ok {
 			continue
 		}
 		w, h := c.w, c.h

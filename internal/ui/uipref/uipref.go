@@ -55,11 +55,12 @@ func Gen() uint32 { return gen.Load() + uint32(i18n.Gen()) }
 type lkey struct {
 	jumbo, underline, swatch, noInt, noImg, noText, real, t24 bool
 	large, dense                                              bool // obey_inline_img_limit, messages_theme
+	noAnim                                                    bool // a11y_animations off: GIFs' stills and play buttons
 }
 
 func layoutKey(p *store.Prefs) lkey {
 	return lkey{p.Jumbomoji, p.UnderlineLinks, p.HideHexSwatch, p.NoInternalImgs, p.NoInlineImgs, p.NoTextPreviews, p.DisplayRealNames, p.Time24,
-		p.LargeImgs, p.Dense}
+		p.LargeImgs, p.Dense, p.NoAnimations}
 }
 
 // Clock is a message time the way Slack shows it: "3:04 PM", or "15:04"
