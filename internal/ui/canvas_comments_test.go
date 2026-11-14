@@ -13,6 +13,7 @@ import (
 	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/canvasview"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -217,11 +218,15 @@ func TestCanvasChannelCardRows(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	const file, sec, ch = "F0CANVMNT01", "temp:C:MNT0001", "C0FAKE00000"
-	bs := canvas.ParseMarkdown("Talk in ![](#"+ch+") today.", nil)
-	bs[0].ID = sec
-	fs.AddCanvas(fakeslack.FakeCanvas{ID: file, Title: "Mentions", Doc: canvas.Doc{Blocks: bs}})
 	e := startEnv(t, fs, t.TempDir())
 	e.waitReady()
+	cv, ok := e.a.Core().Conv(ch)
+	if !ok {
+		t.Fatalf("no %s", ch)
+	}
+	// the export names the channel ("#general"); Clack resolves it back
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: file, Title: "Mentions", Doc: canvas.Doc{Blocks: []canvas.Block{{ID: sec, Kind: canvas.Paragraph,
+		Spans: []richtext.Span{{Kind: richtext.Text, Text: "Talk in "}, {Kind: richtext.Channel, ID: ch, Text: "#" + cv.Name}, {Kind: richtext.Text, Text: " today."}}}}}})
 	e.a.Core().SetContentReporting(true)
 	e.openChannel(ch)
 	e.a.OpenCanvas(file)
