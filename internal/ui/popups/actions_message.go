@@ -464,7 +464,12 @@ func confirmRemoveBroadcast(h Host, m core.Message, channel bool) {
 func ConfirmDelete(h Host, m core.Message) { confirmDelete(h, m, nil) }
 
 func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts string) error) {
-	Confirm(h, nsMsgEdit.T("Delete message"), nsMsgEdit.T("Are you sure you want to delete this message? This cannot be undone."), nsMsgEdit.T("Delete"), true,
+	// 6Qou getTitleText / getPrimaryBodyText: a canvas comment says so
+	title, body := "Delete message", "Are you sure you want to delete this message? This cannot be undone."
+	if a := h.Core(); a != nil && a.IsCanvasComment(&m) {
+		title, body = "Delete comment", "Are you sure you want to delete this comment? This cannot be undone."
+	}
+	Confirm(h, nsMsgEdit.T(title), nsMsgEdit.T(body), nsMsgEdit.T("Delete"), true,
 		func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, h, m, true) },
 		func() {
 			ch, ts := m.Channel, m.TS

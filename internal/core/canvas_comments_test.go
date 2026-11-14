@@ -144,6 +144,18 @@ func TestCanvasComments(t *testing.T) {
 		t.Error("comment access reacts without canvas_comment_only_mode")
 	}
 
+	// isCanvasComment: a file channel of a known canvas
+	if a.IsCanvasComment(&Message{Channel: fakeslack.FileChanLaunch, TS: fakeslack.CommentOpen}) {
+		t.Error("a comment counts as a canvas comment before the canvas is known")
+	}
+	a.rememberCanvasInfo(CanvasInfo{ID: fakeslack.CanvasChannel})
+	if !a.IsCanvasComment(&Message{Channel: fakeslack.FileChanLaunch, TS: "1762510100.000200", ThreadTS: fakeslack.CommentOpen}) {
+		t.Error("a comment in the Launch plan's file channel isn't a canvas comment")
+	}
+	if a.IsCanvasComment(&Message{Channel: "C0FAKE00000", TS: "1.000001"}) {
+		t.Error("an ordinary channel's message is a canvas comment")
+	}
+
 	// Resolve all threads
 	if err := a.ResolveAllComments(ctx, fakeslack.CanvasChannel); err != nil {
 		t.Fatal(err)

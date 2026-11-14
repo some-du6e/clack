@@ -262,6 +262,27 @@ func (a *App) rememberCanvasInfo(i CanvasInfo) {
 	cs.mu.Unlock()
 }
 
+// IsCanvasComment is isCanvasComment (C3jk l → z1wc k): m is in a file
+// channel whose file is a canvas (known from its files.info, or from the
+// thread's root being a comment root).
+func (a *App) IsCanvasComment(m *Message) bool {
+	if m == nil || !strings.HasPrefix(m.Channel, "C") {
+		return false
+	}
+	if c, ok := a.S.Conv(m.Channel); ok && !IsFileChannel(c) {
+		return false
+	}
+	if _, ok := a.KnownCanvasInfo(FileOfChannel(m.Channel)); ok {
+		return true
+	}
+	root := m.ThreadTS
+	if root == "" {
+		root = m.TS
+	}
+	r, ok := a.S.Find(m.Channel, root)
+	return ok && r.Subtype == SubtypeCommentRoot
+}
+
 // CanAddReaction is canAddReaction's file channel rule (vtEK): a message
 // in a canvas's file channel can take a reaction when the canvas is
 // writeable, or commentable under canvas_comment_only_mode. Until the
