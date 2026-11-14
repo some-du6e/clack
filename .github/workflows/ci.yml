@@ -647,7 +647,8 @@ jobs:
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
           go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
           go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
-          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine|TestTitleDockTaskbarAgreeLikeSlack' ./internal/ui
+          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine|TestTitleDockTaskbarAgreeLikeSlack|TestMacOptions|TestMacActivation|TestMacNotifier' ./internal/ui
+          go test -count=1 -v -run 'TestUserNotification' ./internal/desktop
           go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
           go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
@@ -665,6 +666,69 @@ jobs:
           go test -count=1 -v -run 'TestNoExecOnUIPaths|TestOSPrefersDarkOffUI|TestOSSchemeFollow|TestWatchdogReport|TestTakeShaperDoesNotWait|TestAccountTheme|TestAppearancePageDraws|TestFormatWithMarkupPref' ./internal/ui
           go test -count=1 -timeout 20m -v -run 'TestStartupStatesNeverBlock|TestStartupWithHangingTools|TestEveryExecSetsWaitDelay' ./internal/ui
           go test -count=1 -v -run 'Paste|TestAttRunHangingChild' ./internal/ui/composer
+      # docs/GAPS-2026-11-14.md gap 1 (W33). usernotifyprobe's tests run
+      # from Clack.app bundles built the way release.yml builds one, each with
+      # its own bundle id so each starts undecided. TestUserNotifyProbe logs
+      # what UNUserNotificationCenter answers each kind of bundle (the PROBE
+      # lines, and usernoted's log after them): reports, not checks.
+      # TestShowUserNotificationInBundle checks internal/desktop's notifier
+      # from the release's ad-hoc signed bundle and must pass.
+      - name: notifications from ad-hoc signed bundles (UNUserNotificationCenter)
+        if: ${{ !cancelled() }}
+        run: |
+          set -u +e
+          go test -c -o build/unprobe.test ./internal/desktop/usernotifyprobe || exit 1
+          go test -c -o build/unprobe-rebuilt.test -ldflags "-X github.com/some-du6e/clack/internal/desktop/usernotifyprobe.build=2" ./internal/desktop/usernotifyprobe || exit 1
+          sw_vers
+          echo "user $(id -un) ($(id -u)); console owner $(stat -f %Su /dev/console)"
+          # bundle DIR ID SIGN [BINARY]: a Clack.app as release.yml makes one,
+          # the probe's test binary as its executable. SIGN adhoc is the
+          # release's codesign --sign - over the bundle; linker leaves only the
+          # Go linker's signature on the binary (Info.plist not bound).
+          bundle() {
+            app=build/$1/Clack.app
+            mkdir -p $app/Contents/MacOS $app/Contents/Resources
+            cp ${4:-build/unprobe.test} $app/Contents/MacOS/clack
+            cp assets/icon/clack.icns $app/Contents/Resources/clack.icns
+            sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > $app/Contents/Info.plist
+            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $2" $app/Contents/Info.plist
+            printf 'APPL????' > $app/Contents/PkgInfo
+            if [ "$3" = adhoc ]; then
+              codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements $app
+            fi
+            codesign -dv --verbose=2 $app 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|CDHash|Signature|TeamIdentifier|Info.plist|Sealed|Runtime)' | sed "s/^/  $1: /"
+          }
+          probe() { # DIR VARIANT STEPS
+            build/$1/Clack.app/Contents/MacOS/clack -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=$2 -probe.steps=$3 -probe.wait=10s
+            echo "  exit $?"
+          }
+          echo "== show: internal/desktop's notifier from the release's bundle"
+          bundle show io.github.some-du6e.clack.probe-show adhoc
+          build/show/Clack.app/Contents/MacOS/clack -test.v -test.timeout 4m -test.run '^TestShowUserNotificationInBundle$' -probe.show
+          shown=$?
+          echo "== bare: the test binary outside any bundle"
+          build/unprobe.test -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=bare -probe.steps=provisional
+          echo "== adhoc-prompt: Clack's bundle id, signed as the release is, run from Contents/MacOS"
+          bundle adhoc io.github.some-du6e.clack adhoc
+          probe adhoc adhoc-prompt prompt,post
+          echo "== adhoc-provisional: the same with provisional authorization (no prompt)"
+          bundle prov io.github.some-du6e.clack.probe-provisional adhoc
+          probe prov adhoc-provisional provisional,post
+          echo "== adhoc-update: that bundle with a rebuilt binary in place (a new cdhash, as an update has)"
+          bundle prov io.github.some-du6e.clack.probe-provisional adhoc build/unprobe-rebuilt.test
+          probe prov adhoc-update none
+          echo "== linker-provisional: no bundle signature"
+          bundle linker io.github.some-du6e.clack.probe-linker linker
+          probe linker linker-provisional provisional,post
+          echo "== adhoc-open: launched through LaunchServices (open), as Finder and the Dock launch it"
+          bundle open io.github.some-du6e.clack.probe-open adhoc
+          out=$(mktemp -d)
+          open -W -n --stdout "$out/open.out" --stderr "$out/open.err" build/open/Clack.app --args -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=adhoc-open -probe.steps=prompt,post -probe.wait=10s
+          echo "  open exit $?"
+          cat "$out/open.out" "$out/open.err"
+          echo "== usernoted's log"
+          log show --last 10m --style compact --predicate 'process == "usernoted" OR subsystem BEGINSWITH "com.apple.UserNotifications"' | grep -i -E 'some-du6e|clack|unprobe' | tail -200
+          exit $shown
       - name: build
         if: ${{ !cancelled() }}
         run: |
