@@ -27,9 +27,10 @@ import (
 type acState struct {
 	mu sync.Mutex
 
-	model   acrank.Weights
-	modelAt time.Time
-	modelIn bool
+	model    acrank.Weights
+	modelAt  time.Time
+	modelIn  bool
+	modelVer uint64 // bumped when a model lands
 
 	history map[string]float64 // conversation id → unix seconds last opened
 
@@ -92,7 +93,17 @@ func (a *App) fetchAutocompleteModel() {
 	}
 	if w, ok := acrank.ParseModel(raw); ok {
 		st.model = w
+		st.modelVer++
 	}
+}
+
+// AutocompleteModelVersion counts the models that have landed (for
+// caches of ranked lists).
+func (a *App) AutocompleteModelVersion() uint64 {
+	st := a.ac()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.modelVer
 }
 
 // AutocompleteAffinity returns search.autocomplete.offlineFeatures'

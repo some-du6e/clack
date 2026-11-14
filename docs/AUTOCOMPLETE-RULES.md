@@ -37,6 +37,13 @@ channel and thread users.
   fetch upserts into the store, then the whole local set is matched and
   sorted again and replaces the rows. A loading row appears only when there
   are no local rows after 300 ms, and the search times out at 10 s.
+- **Ranking inputs that land later.** Slack's Sorter reads the frecency
+  pref and the model on every search. Clack reads both on every compute,
+  not from the 5 s snapshot. It also ranks an open list again when either
+  changes (`FrecencyVersion`, `AutocompleteModelVersion`), on the next
+  frame or on the Tab or Enter itself. Before this, a model or frecency
+  that arrived after the first keystroke stayed out of the rows until the
+  query changed.
 - **Empty query.** `allowEmptyQuery` gives every candidate score 0. Desktop
   skips the server for an empty query.
 - **Local candidates.** `@` uses every member in the store

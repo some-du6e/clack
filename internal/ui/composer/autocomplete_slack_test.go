@@ -1,6 +1,7 @@
 package composer
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"gioui.org/io/key"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/slack"
@@ -285,6 +288,53 @@ func TestAutocompleteSlackEmojiTu(t *testing.T) {
 	got = acSettle(t, newAutocompleteFor(t, app), ":tu", func(n []string) bool { return len(n) > 0 && n[0] == "turtle" })
 	if got[1] != "tulip" || !noThumbs(got) {
 		t.Errorf(":tu after turtle picks: turtle, then tulip: %v", got)
+	}
+}
+
+// A frecency that lands while ":tu" is open counts before Tab acts.
+// Slack's copy of the pref (turtle picked under "tu") arrives through
+// loadFrecencyPrefs after the rows are shown, and nothing is typed. The
+// Tab's Update ranks the list again (the frecency version changed), so
+// it takes turtle, not the stale first row (tulip).
+func TestAutocompleteRanksAgainWhenFrecencyLands(t *testing.T) {
+	app, fs := acSlackApp(t)
+	// the model first, so that only the frecency changes below
+	deadline := time.Now().Add(5 * time.Second)
+	for app.AutocompleteModelVersion() == 0 && time.Now().Before(deadline) {
+		app.AutocompleteModel()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if app.AutocompleteModelVersion() == 0 {
+		t.Fatal("search.autocomplete.model never landed")
+	}
+	ac := newAutocompleteFor(t, app)
+	d := acDocOf(":tu")
+	ac.Live = func() (*Doc, int) { return d, d.Len() }
+	ac.Update(d, d.Len())
+	items, _ := ac.Items()
+	if len(items) < 2 || items[0].Name != "tulip" {
+		t.Fatalf(":tu before the frecency: %v", acNames(items))
+	}
+
+	now := time.Now()
+	ms := func(d time.Duration) int64 { return now.Add(-d).UnixMilli() }
+	fr := fmt.Sprintf(`{"tu":{"id":"E1f422","count":3,"visits":[%d,%d,%d]},"E1f422":{"id":"E1f422","count":3,"visits":[%d,%d,%d]}}`,
+		ms(time.Hour), ms(3*time.Hour), ms(30*time.Hour), ms(time.Hour), ms(3*time.Hour), ms(30*time.Hour))
+	fs.mu.Lock()
+	fs.reply["users.prefs.get"] = map[string]any{"ok": true, "prefs": map[string]any{"frecency": fr, "emoji_use": "{}"}}
+	fs.mu.Unlock()
+	if err := app.LoadFrecencyPrefs(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if items, _ := ac.Items(); items[0].Name != "tulip" {
+		t.Fatalf("rows changed without an Update: %v", acNames(items))
+	}
+	if !ac.Key(key.NameTab, 0) {
+		t.Fatal("Tab not taken")
+	}
+	it, _, _, ok := ac.Accepted()
+	if !ok || it.Name != "turtle" {
+		t.Errorf("Tab after the frecency landed took %q (ok %v), want turtle", it.Name, ok)
 	}
 }
 
