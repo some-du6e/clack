@@ -781,7 +781,9 @@ func (p *prefsModal) privacyPage(f *prefsForm) {
 	f.hr()
 	f.subheading("People you’ve hidden")
 	f.para("You won’t get notifications or see messages from these people.")
-	f.link("hidden_help", "Learn more", slackHelp("16905395872019"))
+	// a HelpLink: underlined under a11y_underline_button_link (GpYL
+	// maybeRenderHiddenUsersSection's showUnderlineLink, CX15 bF)
+	f.linkU("hidden_help", "Learn more", slackHelp("16905395872019"), a.Core() != nil && a.Core().UnderlineButtonLinks())
 	p.hiddenSection(f)
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -33,6 +34,8 @@ type View struct {
 	id   string
 	mode Mode
 	act  Actions
+
+	sectionTip popups.TipState // the header's section button (section_button.go)
 
 	mu      sync.Mutex
 	doc     *core.CanvasDoc
@@ -456,6 +459,10 @@ func (v *View) layoutBar(gtx layout.Context, d *core.CanvasDoc, size image.Point
 		}
 	}
 	tx := gtx.Dp(18)
+	if v.sectionButtonShown() { // FileSectionDropdownButton, then 8px (margin_right_50)
+		v.layoutSectionButton(gtx, image.Pt(tx, (size.Y-gtx.Dp(28))/2))
+		tx += gtx.Dp(28 + 8)
+	}
 	at(gtx, image.Pt(tx, 0), image.Pt(max(0, x-tx-gtx.Dp(4)), size.Y), func(gtx layout.Context) layout.Dimensions {
 		return vcenter(gtx, size.Y, func(gtx layout.Context) layout.Dimensions {
 			if d != nil && len(d.Info.TitleSpans) > 0 { // QuipTitleParsedId: emoji drawn

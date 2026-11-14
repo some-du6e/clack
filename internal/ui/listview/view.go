@@ -33,6 +33,7 @@ import (
 	"github.com/some-du6e/clack/internal/lists"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -77,6 +78,15 @@ type Actions struct {
 	People    func() []string                    // people to offer in a person field (besides the list's)
 	OpenFile  func(id string)                    // an attachment
 	OpenRoute func(channel, ts, threadTS string) // a message cell
+	// SectionButton is the header's FileSectionDropdownButton
+	// (custom_file_sections, section_button.go): ok false hides it; look
+	// is its face (SectionStar …), emoji the collection's emoji image.
+	SectionButton func() (look int, emoji string, ok bool)
+	// SectionMenu opens its FileSectionMoveToMenu under btn (window
+	// coordinates); SectionItems is the same menu's rows for a submenu
+	// (MenuItem.Ext), built by the shell.
+	SectionMenu  func(btn image.Rectangle)
+	SectionItems func() any
 }
 
 // MenuItem is one row of a menu.
@@ -87,13 +97,18 @@ type MenuItem struct {
 	Divider     bool       // a separator instead of a row
 	Danger      bool       // a destructive row ("Delete list")
 	Sub         []MenuItem // a submenu ("Download CSV" ▸)
-	Do          func()
+	// Ext is a submenu the shell built (Actions.SectionItems), opaque
+	// here; it takes Sub's place.
+	Ext any
+	Do  func()
 }
 
 // View is one open list.
 type View struct {
 	ctl
 	mode Mode
+
+	sectionTip popups.TipState // the header's section button (section_button.go)
 
 	mu      sync.Mutex
 	doc     *core.ListDoc
@@ -390,6 +405,10 @@ func (v *View) layoutBar(gtx layout.Context, d *core.ListDoc, size image.Point) 
 		})
 	}
 	ix := gtx.Dp(12)
+	if v.sectionButtonShown() { // FileSectionDropdownButton, then 8px
+		v.layoutSectionButton(gtx, image.Pt(ix, (size.Y-gtx.Dp(28))/2))
+		ix += gtx.Dp(28 + 8)
+	}
 	isz := gtx.Dp(20)
 	if d != nil && d.Meta.Icon != "" {
 		at(gtx, image.Pt(ix, (size.Y-isz)/2), image.Pt(isz, isz), func(gtx layout.Context) layout.Dimensions {
