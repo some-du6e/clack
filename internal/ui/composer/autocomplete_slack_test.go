@@ -296,7 +296,7 @@ func TestAutocompleteSlackEmojiTu(t *testing.T) {
 // loadFrecencyPrefs after the rows are shown, and nothing is typed. The
 // Tab's Update ranks the list again (the frecency version changed), so
 // it takes turtle, not the stale first row (tulip).
-func TestAutocompleteRanksAgainWhenFrecencyLands(t *testing.T) {
+func TestAutocompleteSlackRanksAgainWhenFrecencyLands(t *testing.T) {
 	app, fs := acSlackApp(t)
 	// the model first, so that only the frecency changes below
 	deadline := time.Now().Add(5 * time.Second)
