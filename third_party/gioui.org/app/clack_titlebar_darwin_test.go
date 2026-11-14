@@ -196,13 +196,30 @@ func (h *macTestWindow) closeWindow(t *testing.T) {
 	}
 }
 
-func (h *macTestWindow) destroy(t *testing.T) {
+// destroy closes the window, the close not aborted: ActionClose (Quit), or
+// with redButton the close button, and waits for its DestroyEvent.
+func (h *macTestWindow) destroy(t *testing.T) { h.destroyBy(t, false) }
+
+func (h *macTestWindow) destroyBy(t *testing.T, redButton bool) {
 	t.Helper()
-	h.w.Perform(system.ActionClose)
+	how := "ActionClose"
+	if redButton {
+		how = "the close button"
+		cocoatest.OnMain(func() { cocoatest.Press(h.view, cocoatest.Close) })
+	} else {
+		h.w.Perform(system.ActionClose)
+	}
+	select {
+	case <-h.closing:
+	case <-h.done:
+		return
+	case <-time.After(10 * time.Second):
+		t.Fatalf("%s: no ClosingEvent (window %+v)", how, h.state())
+	}
 	select {
 	case <-h.done:
 	case <-time.After(10 * time.Second):
-		t.Fatal("the window didn't close")
+		t.Fatalf("%s: a ClosingEvent, not aborted, but no DestroyEvent (window %+v)", how, h.state())
 	}
 }
 
@@ -242,7 +259,7 @@ func TestHiddenTitleBarMac(t *testing.T) {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
 	}
 	h := newMacTestWindow(t, func() bool { return false })
-	defer h.destroy(t)
+	defer h.destroyBy(t, true) // the red button, not aborted: the window goes
 	s := h.state()
 	t.Logf("window: %+v", s)
 	if !s.FullSizeContent || !s.TitlebarTransparent || !s.TitleHidden || !s.TabbingDisallowed {
@@ -441,7 +458,15 @@ func TestHideLeavesFullscreenMac(t *testing.T) {
 		t.Errorf("full screen: title hidden %v, transparent title bar %v; want AppKit's own title bar", s.TitleHidden, s.TitlebarTransparent)
 	}
 	h.closeWindow(t)
-	macWaitUntil(t, "out of full screen and ordered out", func() bool { s := h.state(); return !s.FullScreen && !s.Visible })
+	last := time.Now()
+	macWaitUntil(t, "out of full screen and ordered out", func() bool {
+		s := h.state()
+		if time.Since(last) > time.Second {
+			last = time.Now()
+			t.Logf("leaving: full screen %v visible %v title hidden %v", s.FullScreen, s.Visible, s.TitleHidden)
+		}
+		return !s.FullScreen && !s.Visible
+	})
 	f0 := h.frames.Load()
 	h.w.Perform(system.ActionRaise)
 	macWaitUntil(t, "visible after ActionRaise", func() bool { return h.state().Visible })

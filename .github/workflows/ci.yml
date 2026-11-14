@@ -657,27 +657,6 @@ jobs:
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
-      # docs/GAPS-2026-11-14.md gaps 3 and 4 (W35). Gio patch 23 on real
-      # NSWindows: the hidden title bar (content under it, the traffic
-      # lights at {12, 12} through a title change, a resize and a key
-      # change), where AppKit sends a click in the title bar band, a
-      # double-click on a drag area per AppleActionOnDoubleClick, Hide and
-      # the shows after it, Hide in full screen. Then Clack's own window:
-      # the red button and ⌘W hide it, the Dock's reopen and the app's
-      # activation show it, ⌘Q quits it while hidden. TestMain runs app.Main
-      # on the main goroutine for these (CLACK_MACOS_WINDOW_TESTS).
-      - name: macOS window (Gio patch 23, W35)
-        if: ${{ !cancelled() }}
-        env:
-          CLACK_MACOS_WINDOW_TESTS: "1"
-        run: |
-          set +e
-          sw_vers
-          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestHideLeavesFullscreenMac' gioui.org/app
-          gio=$?
-          go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
-          ui=$?
-          exit $((gio | ui))
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -752,6 +731,27 @@ jobs:
           echo "== usernoted's log"
           log show --last 10m --style compact --predicate 'process == "usernoted" OR subsystem BEGINSWITH "com.apple.UserNotifications"' | grep -i -E 'some-du6e|clack|unprobe' | tail -200
           exit $shown
+      # docs/GAPS-2026-11-14.md gaps 3 and 4 (W35). Gio patch 23 on real
+      # NSWindows: the hidden title bar (content under it, the traffic
+      # lights at {12, 12} through a title change, a resize and a key
+      # change), where AppKit sends a click in the title bar band, a
+      # double-click on a drag area per AppleActionOnDoubleClick, Hide and
+      # the shows after it, Hide in full screen. Then Clack's own window:
+      # the red button and ⌘W hide it, the Dock's reopen and the app's
+      # activation show it, ⌘Q quits it while hidden. TestMain runs app.Main
+      # on the main goroutine for these (CLACK_MACOS_WINDOW_TESTS).
+      - name: macOS window (Gio patch 23, W35)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: |
+          set +e
+          sw_vers
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestHideLeavesFullscreenMac' gioui.org/app
+          gio=$?
+          go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
+          ui=$?
+          exit $((gio | ui))
       - name: build
         if: ${{ !cancelled() }}
         run: |

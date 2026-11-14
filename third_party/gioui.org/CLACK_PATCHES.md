@@ -19,7 +19,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
 `app/clack_drop*.go`, `app/clack_hide*.go`, `app/clack_pancursor_windows*.go`,
 `app/clack_titlebar*.go`, `app/internal/windows/clack_titlebar.go`,
-`app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
+`app/cocoatest/`, `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
 `internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`,
 `io/input/clack_hover.go`, `io/input/clack_hover_test.go`,
@@ -511,8 +511,9 @@ not hide a window.
   (Electron's `hide()`), `SetWindowPos` with `SWP_HIDEWINDOW |
   SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOREPOSITION | SWP_NOSIZE |
   SWP_NOZORDER`, not `ShowWindow(SW_HIDE)`, which activates another window
-  itself. Other platforms return false and do nothing (Clack then lets the
-  close go on). It may be called while handling a `ClosingEvent`: the
+  itself. macOS hides since §23 (`orderOut:`). Other platforms return false
+  and do nothing (Clack then lets the close go on). It may be called while
+  handling a `ClosingEvent`: the
   window thread runs `Window.Run` functions while it waits for the app to
   take the next event.
 - A hidden window draws no frames, as a minimized one doesn't: `runLoop`
@@ -926,3 +927,103 @@ caption maximizes; a failure prints the window messages and Gio events
 around it, from `clackMsgTrace`, a hook only the tests set).
 `internal/ui` `TestTitleBarWindow` is Clack's window on the same job. Not
 in `UPSTREAM.patch`.
+
+## 23. app: HiddenTitleBar and TrafficLightPosition on macOS, and Window.Hide there
+
+`app/clack_titlebar.go` (`HiddenTitleBar`'s macOS part, new
+`TrafficLightPosition`, `titlebarDoubleClickAction`), `app/os.go`
+(`Config.trafficLight`), `app/os_macos.go` (`Configure`, `updateWindowMode`,
+`gio_onMouse`'s click count and double-click, `hide`, `shown`, `draw`,
+`SetAnimating`, `Perform`'s `ActionRaise`, `newWindow`), `app/os_macos.m`
+(`GioView`'s `titlebarHidden`, traffic-light and `orderedOut` properties,
+`_opaqueRectForWindowMoveWhenInTitlebar`, `viewDidChangeEffectiveAppearance`;
+`GioWindowDelegate`'s resize, key, main, full-screen and occlusion methods;
+`gio_createWindow`'s `hiddenTitlebar`; `redrawTrafficLights`),
+`app/clack_hide.go` (the doc) and `app/cocoatest/` (new: the tests' AppKit
+helpers). An addition: a window without the options behaves as before,
+and `Window.Hide` hides on macOS where it returned false.
+
+Slack's main window on macOS is frameless (mac `main.bundle.cjs` 4.53.276
+@1145075: `frame: false`, `titleBarStyle: "hidden"`): the page runs under
+the title bar, which shows no title, and the traffic lights stay, at
+`{x, Math.floor(y / 2)}` of the `trafficLightPosition` setting (clamped
+to 0..40 by `sg`, @974771). The setting is `{x: 14, y: 22}` (@1117788)
+until the web client's top nav writes `{x: 12, y: 24}`
+(`injectCustomTitlebarStyling`, boot-render), so the window opens with
+the buttons at `{12, 12}` from then on. Closing it hides it
+(`MAIN_WINDOW_CLOSE`, @1148845: `BrowserWindow.hide()`, after leaving full
+screen). Gio's `Decorated(false)` on macOS hid the buttons with the title
+bar, a decorated window kept its title bar, which Clack's top nav sat
+under (gap 4), and nothing could hide a window, so a close quit Clack
+(gap 3).
+
+`HiddenTitleBar(true)` on a decorated macOS window is Electron's
+`titleBarStyle: "hidden"` (`NativeWindowMac`'s constructor, Electron
+45-x-y):
+
+- The window is created with `NSWindowStyleMaskFullSizeContentView`, so its
+  content is the size asked for and covers the title bar; the title bar is
+  transparent with its title hidden, and window tabs are off (Electron's
+  `NSWindowTabbingModeDisallowed` for a frameless window). The buttons
+  stay. `Config.Decorated` stays true, so Gio draws no decorations of its
+  own. In full screen the title bar AppKit reveals is an ordinary one with
+  the title (`NotifyWindowEnterFullScreen`), hidden again as the window
+  leaves it.
+- `GioView` answers its bounds to AppKit's
+  `_opaqueRectForWindowMoveWhenInTitlebar`, as Chromium's
+  `BridgedContentView` does: under a transparent title bar the window
+  server drags the window from whatever a view doesn't report as opaque,
+  without asking the app. So every click in the title bar band reaches the
+  view, and an `ActionMove` area drags the window as before
+  (`performWindowDragWithEvent:`).
+- The release of a double-click on an `ActionMove` area does what System
+  Settings' "Double-click a window's title bar to" says, as Chromium's
+  `NativeWidgetMacNSWindow` `sendEvent:` does for custom draggable areas:
+  `AppleActionOnDoubleClick` unset or `Maximize` zooms (`performZoom:`),
+  `Minimize` minimizes, `Fill` fills (`_zoomFill:`, macOS 15), anything
+  else does nothing. No native title bar sees these clicks, since the view
+  takes them all.
+
+`TrafficLightPosition(x, y)` is Electron's `trafficLightPosition`, laid
+out as its `WindowButtonsProxy` `redraw` does: the buttons' title bar
+container becomes their height plus 2y tall at the window's top and the
+buttons sit x from the left edge (from the right in a right-to-left title
+bar), centred in it. AppKit lays the title bar out again after a resize, a
+title or style change, the buttons' visibility (macOS 26), a key or main
+window change and a theme change, so the window moves them back after
+each, as Electron does; the container hides while the window leaves full
+screen and comes back moved.
+
+`Window.Hide` is `NativeWindowMac::Hide` (`orderOut:`). A full-screen
+window first leaves full screen and is ordered out at
+`windowDidExitFullScreen:`, as Slack's `hx` awaits `leave-full-screen`
+before it hides (the mode is `Windowed` from then on, so an option given
+meanwhile doesn't send it back). A hidden window draws no frames (Gio's
+Metal layer waits for a drawable without a timeout) and keeps its display
+link stopped; the app still gets its wake-ups. `ActionRaise` shows it, and
+so does any other order-front (the occlusion change that follows): it
+draws again.
+
+Clack's main window uses all three on macOS (`internal/ui/titlebar_darwin.go`,
+W35). Read in Electron 45-x-y (`shell/browser/native_window_mac.mm`,
+`shell/browser/ui/cocoa/window_buttons_proxy.mm`,
+`electron_ns_window.mm`, `electron_ns_window_delegate.mm`) and Chromium
+main (`components/remote_cocoa/app_shim/bridged_content_view.mm`,
+`native_widget_mac_nswindow.mm`).
+
+Tests: `app/clack_titlebar_test.go` (`TestHiddenTitleBarOption`'s
+`TrafficLightPosition`, `TestTitlebarDoubleClickAction`) on ci's linux-gio
+job, and on its macos job (`CLACK_MACOS_WINDOW_TESTS`: `TestMain` runs
+`Main` on the main goroutine) `app/clack_titlebar_darwin_test.go`:
+`TestHiddenTitleBarMac` (full-size content, the window the size asked
+for, a transparent title bar with no title and no tabs, the buttons at
+{12, 12} after a title change, a resize and a key change, `Decorated`
+still true, `_opaqueRectForWindowMoveWhenInTitlebar` the whole view, where
+AppKit sends clicks in the title bar band and on the close button, a click
+on a widget in the band the widget's), `TestTitlebarDoubleClickMac`
+(synthesized double-clicks with each `AppleActionOnDoubleClick`),
+`TestHideMac` (the red button's aborted close hides, no frames but
+wake-ups, `ActionRaise` and an order-front outside Gio show it, a close
+destroys a hidden window) and `TestHideLeavesFullscreenMac`. `internal/ui`
+`TestMacWindowCloseHides` is Clack's window on the same job. Not in
+`UPSTREAM.patch`.

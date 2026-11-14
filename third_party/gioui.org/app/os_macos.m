@@ -116,6 +116,27 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 	}
 }
 
+// gio_closeWindow is ActionClose. Clack patch (CLACK_PATCHES.md §23):
+// performClose: never asks windowShouldClose: of a window with a hidden
+// title bar, visible or not (the macOS 26 runner), so such a window does
+// what performClose: does itself, as Electron's ElectronNSWindow does for a
+// window without a title bar and Chromium does for every programmatic
+// close: ask the delegate, then close.
+void gio_closeWindow(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		if (!hasHiddenTitlebar(window)) {
+			[window performClose:nil];
+			return;
+		}
+		id<NSWindowDelegate> del = window.delegate;
+		if ([del respondsToSelector:@selector(windowShouldClose:)] && ![del windowShouldClose:window]) {
+			return;
+		}
+		[window close];
+	}
+}
+
 @implementation GioWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow *)window {
 	GioView *view = (GioView *)window.contentView;
@@ -158,7 +179,16 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 		redrawTrafficLights(window);
 		setTrafficLightsVisible(window, YES);
 	}
-	gio_onExitedFullScreen(view.handle, 1);
+	// a Hide waiting for this goes on the next turn of the run loop, as
+	// Slack's awaited leave-full-screen does: AppKit is still finishing the
+	// transition, which orders the window back in
+	__weak GioView *weak = view;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		GioView *v = weak;
+		if (v != nil) {
+			gio_onExitedFullScreen(v.handle, 1);
+		}
+	});
 }
 - (void)windowDidFailToExitFullScreen:(NSWindow *)window {
 	if (hasHiddenTitlebar(window)) { // still full screen: AppKit's title bar
