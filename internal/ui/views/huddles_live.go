@@ -539,10 +539,18 @@ func (v *Huddles) channelIconAndName(ch string, history []string) (icon, name st
 		icon = "lock"
 	}
 	if icon != "" { // getChannelDisplayName {publicChannelIncludeHashSign: false}: the icon stands for the #
-		if n := v.viewChannelName(ch, c.Name); n != "" {
+		if n := v.viewChannelName(ch, c.Name); n != "" && n != ch {
 			return icon, n
 		}
-		return icon, ch
+		// a channel the store can't name (a stub named by its id): what
+		// the lookup finds (core.InlineChannel), never the id
+		switch ic := app.InlineChannel(ch); ic.State {
+		case core.ChannelKnown:
+			return icon, v.viewChannelName(ch, ic.Name)
+		case core.ChannelNonExistent:
+			return "", v.truncatedNames(history)
+		}
+		return icon, unknownChannelName()
 	}
 	return icon, v.convTitle(ch, nil)
 }

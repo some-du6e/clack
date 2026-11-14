@@ -198,7 +198,10 @@ func (a *App) resolveBots(ctx context.Context, ids []string) []string {
 // links), whose IM partner is then fetched. Results are cached in memory.
 // A known channel without a name (a partial object some reply carried) is
 // looked up again, like Slack's getChannelById fetching an unknown stub;
-// a member conversation keeps its place in the sidebar's set.
+// a member conversation keeps its place in the sidebar's set. One
+// conversations.info doesn't know (channel_not_found: a private channel
+// the viewer isn't in, another workspace's) is recorded as hidden, the
+// non-existent object Slack's fetch leaves (channel_lookup.go).
 func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 	if c, ok := a.Conv(id); ok && named(c) {
 		return c, true
@@ -209,6 +212,9 @@ func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 		c, err = a.C.ConversationInfo(ctx, id)
 		return err
 	})
+	if isCode(err, "channel_not_found") {
+		a.S.SetChannelAccess(id, richtext.ChannelHidden)
+	}
 	if err != nil || c == nil {
 		if v, ok := a.Conv(id); ok && (named(v) || err != nil) { // a concurrent caller stored it, or it stays partial
 			return v, true

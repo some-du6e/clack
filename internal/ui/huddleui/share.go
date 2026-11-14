@@ -278,7 +278,7 @@ func (c *Controller) layoutShareAlertR(gtx C, th *theme.Theme, st *alertState, w
 		if p.Tag == "a" {
 			linkText = p.Text
 		}
-		spans = append(spans, span{p.Text, bold})
+		spans = append(spans, span{Text: p.Text, Bold: bold})
 	}
 	lines := wrapSpans(gtx, th, 13, spans, tw)
 	lineH := gtx.Sp(18)

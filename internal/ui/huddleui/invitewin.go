@@ -87,6 +87,7 @@ func invInkFor(th *theme.Theme) invInk {
 // inviteView is what the invite window and card draw (a snapshot).
 type inviteView struct {
 	Channel, Sender, Text  string
+	Line                   []span // Text with the channel's entity (one line), nil for a DM's
 	Faces                  []inviteFace
 	JoiningSoon, Busy      bool
 	Note                   string
@@ -144,9 +145,20 @@ func (c *Controller) view(inv *incoming) inviteView {
 				"inviteSenderMemberName", sender, "firstOtherMemberName", c.displayName(active[0]), "numRemaining", len(active)-1)
 		}
 	default:
-		v.Text = sender + " in " + c.channelTitle(inv.Channel)
+		// "{inviteSenderMemberName} in {channelName}", the channel an
+		// InlineChannelEntity (channel_entity.go)
+		line := sender + " in " + entMark
 		if i18n.Locale() != i18n.EnUS {
-			v.Text = nsHuddles.T("Huddle in {channelName}", "channelName", c.channelTitle(inv.Channel)) // no "{sender} in {channel}" string: the place
+			line = nsHuddles.T("Huddle in {channelName}", "channelName", entMark) // no "{sender} in {channel}" string: the place
+		}
+		e, isCh := c.channelEnt(inv.Channel)
+		pre, post, _ := splitMark(line)
+		if isCh {
+			ent := e
+			v.Line = []span{{Text: pre, Bold: true}, {Text: e.Text, Bold: true, Ent: &ent}, {Text: post, Bold: true}}
+			v.Text = pre + e.Title() + post
+		} else {
+			v.Text = pre + c.channelTitle(inv.Channel) + post
 		}
 	}
 	// the facepile: you (joining soon), the sender, the others in it
@@ -174,7 +186,11 @@ func (c *Controller) view(inv *incoming) inviteView {
 		v.CardText = boldSpans("Join huddle with {allMemberNames}", "allMemberNames", joinNames(append([]string{sender}, mpimOthers...)))
 		v.SenderAvatar = len(mpimOthers) + 1
 	default:
-		v.CardText = boldSpans("{senderName} is inviting you to a huddle in {channelName}", "senderName", sender, "channelName", c.channelTitle(inv.Channel))
+		if e, ok := c.channelEnt(inv.Channel); ok { // InlineChannelEntity, boldIcon
+			v.CardText = entSpans(boldSpans("{senderName} is inviting you to a huddle in {channelName}", "senderName", sender, "channelName", entMark), e)
+		} else {
+			v.CardText = boldSpans("{senderName} is inviting you to a huddle in {channelName}", "senderName", sender, "channelName", c.channelTitle(inv.Channel))
+		}
 	}
 	return v
 }
@@ -418,6 +434,20 @@ func layoutInviteWindow(gtx C, th *theme.Theme, c *Controller, v inviteView, dec
 	ty := y + face + gtx.Dp(4)
 	func() {
 		defer clip.Rect(image.Rect(body.Min.X, ty, body.Max.X, ty+tsz.Y)).Push(gtx.Ops).Pop()
+		if v.Line != nil {
+			// the channel's InlineChannelEntity in the line (its lock, the
+			// loading bar, the chip on surf-inv-pry: .p-huddle_invite_window_text
+			// .c-missing_channel--private); a line too long for the window
+			// is the plain text, cut with "…"
+			lw := 0
+			for _, s := range v.Line {
+				lw += spanWidth(gtx, th, 18, s)
+			}
+			if lw <= body.Dx() {
+				drawSpanLine(gtx, th, 18, entInk{text: k.text, chipText: k.text, chipBg: k.btn}, v.Line, (sz.X-lw)/2, ty, tsz.Y)
+				return
+			}
+		}
 		at(gtx, image.Pt((sz.X-tw)/2, ty), image.Pt(max(tw, tsz.X), tsz.Y), func(gtx C) D {
 			return th.Label(gtx, 18, theme.Bold, k.text, ellipsize(gtx, th, 18, theme.Bold, txt, body.Dx()))
 		})

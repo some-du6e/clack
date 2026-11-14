@@ -29,6 +29,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -880,30 +881,31 @@ func (c *Controller) avatarURL(id string, px int) string {
 	return u.Avatar
 }
 
-// channelTitle is "#name" for channels, the person's name for DMs.
+// channelTitle names a conversation in text: the person for a DM, a group
+// DM's name; a channel getDisplayNameForChannel's text ("#name", a private
+// channel's bare name, "unknown-channel" while core looks it up:
+// channel_entity.go), never its id.
 func (c *Controller) channelTitle(ch string) string {
-	app := c.h.Core()
-	if app == nil {
-		return ch
-	}
-	conv, ok := app.Conv(ch)
-	if !ok {
-		return ch
-	}
-	switch conv.Kind {
-	case "im":
-		if n := c.userName(conv.User); n != "" {
-			return n
-		}
-	case "mpim":
-		if conv.Name != "" {
-			return conv.Name
+	if app := c.h.Core(); app != nil {
+		if conv, ok := app.Conv(ch); ok {
+			switch conv.Kind {
+			case "im":
+				if n := c.userName(conv.User); n != "" {
+					return n
+				}
+				return c.displayName(conv.User)
+			case "mpim":
+				if conv.Name != "" && conv.Name != ch {
+					return conv.Name
+				}
+				return c.dmNames(ch)
+			}
 		}
 	}
-	if conv.Name != "" {
-		return "#" + conv.Name
+	if e, ok := c.channelEnt(ch); ok {
+		return e.Disp
 	}
-	return ch
+	return chanent.UnknownName()
 }
 
 // orderedParticipants is the state's list with you first.
