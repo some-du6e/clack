@@ -681,6 +681,7 @@ func (d *ChannelDetails) writing() bool {
 
 // update handles keys, clicks and finished writes before drawing.
 func (d *ChannelDetails) update(gtx C) {
+	d.inviteOnOpen()
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
 		if !ok {

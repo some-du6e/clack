@@ -88,6 +88,8 @@ func CommandFailureText(err error, command string) string {
 		cmd = ce.Command
 	}
 	switch {
+	case ce.Kind == CmdCustom: // CUSTOM_ERROR: the client's own text
+		return ce.Feedback
 	case ce.Kind == CmdRestricted:
 		return "*" + cmd + "* failed because you are not allowed to perform that action. Talk to your Workspace Owner."
 	case ce.Kind == CmdUnknown:

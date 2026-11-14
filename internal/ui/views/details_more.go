@@ -99,6 +99,8 @@ type cdExtra struct {
 	teamPerms                async[map[string]bool] // the team's CREATE_PRIVATE_CHANNEL
 	unarch                   async[bool]            // submitUnarchive
 	unarchiving              bool
+	inviteAsk                bool             // InviteOnOpen: Add people once loaded
+	inviteUsers              []string         // its picked people
 	hidePrefs                widget.Clickable // HideUserConfirmationModal's "preferences"
 	mpdmName                 widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
 	postRow, postLearn       widget.Clickable // Posting permissions (details_posting.go)

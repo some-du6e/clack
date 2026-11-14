@@ -761,4 +761,7 @@ type CommandResult struct {
 	// KeepInput is chat.command's keep_input: the composer gets the
 	// command back.
 	KeepInput bool
+	// Invite is the local /invite's request for the channel's invite
+	// modal (invite_command.go).
+	Invite *InviteModalRequest
 }

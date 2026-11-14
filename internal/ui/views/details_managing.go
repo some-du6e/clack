@@ -279,6 +279,33 @@ func (d *ChannelDetails) deleteFooter() []W {
 	}}
 }
 
+// InviteOnOpen opens Add people with users picked once the details have
+// loaded: the local /invite's invite modal for the channel (Slack's
+// openInviteToChannelModal with initialSelectedMemberIds, or the invite
+// shortcut's with none; core/invite_command.go).
+func (d *ChannelDetails) InviteOnOpen(users []string) {
+	d.x.inviteAsk, d.x.inviteUsers = true, users
+	d.h.Invalidate()
+}
+
+func (d *ChannelDetails) inviteOnOpen() {
+	if !d.x.inviteAsk {
+		return
+	}
+	inf, ok, _ := d.info.get()
+	if !ok || d.x.dlg.kind != cdDlgNone {
+		return
+	}
+	d.x.inviteAsk = false
+	d.openAddPeople(inf)
+	c := d.h.Core()
+	for _, id := range d.x.inviteUsers {
+		if u, ok := c.User(id); ok {
+			d.AddPerson(u)
+		}
+	}
+}
+
 // isPrivateConv reports a private channel (ArchiveChannelModalContents'
 // channelType "private").
 func isPrivateConv(cv core.Conv) bool { return strings.EqualFold(cv.Kind, "private") }
