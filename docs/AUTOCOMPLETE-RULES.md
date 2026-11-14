@@ -44,6 +44,18 @@ channel and thread users.
   frame or on the Tab or Enter itself. Before this, a model or frecency
   that arrived after the first keystroke stayed out of the rows until the
   query changed.
+- **The custom emoji index.** Slack lists `:` from its emoji store, which
+  holds the workspace's custom emoji the whole time. Clack indexes them
+  (65,908 on Hack Club, ~170 ms) off the UI goroutine on first use and
+  again after the index's 5-minute idle drop (`popups.epIndexIdle`).
+  `:tu` is the first query the list answers (the token needs 2 letters),
+  so until that index landed its rows came from the standard set alone,
+  and nothing ranked them again when it landed. Karim's `:tu` then Tab
+  took tulip (2026-11-14). Now `:` or `:t` starts the index
+  (`popups.EnsureEmojiIndex`), an open list ranks again when an index
+  lands (`popups.EmojiIndexGen` in the rank key), and a Tab or Enter on
+  a `:` token waits for a build in flight (at most 1 s) before it takes
+  a row. The search box's `has:`/`hasmy:` emoji rows also rank again.
 - **Empty query.** `allowEmptyQuery` gives every candidate score 0. Desktop
   skips the server for an empty query.
 - **Local candidates.** `@` uses every member in the store
@@ -104,6 +116,19 @@ letter substrings score 2, but it is off for Hack Club.
   HCGG registers for the default locale), standard emoji only, in
   `internal/emoji/keywords.json.gz`. "turnip" brings `root_vegetable` to
   `:tu`, "like" brings `+1` to `:like`.
+- **Custom emoji and aliases.** `getConsolidatedEmoji` (Ak7A) adds the
+  custom emoji after the standard ones: a custom image is a row (id
+  `"E"+name`, no keywords), and a custom alias (emoji.list
+  `"alias:target"`, stored as `{isAlias, aliasOf}` by "upsert emoji from
+  flannel") is one more name of its target. Its exact name is then an
+  exact match (score 0, +400 with `emoji_exact_match_boost`), first, shown
+  as the alias. Clack's index does the same (`epBuild`: aliases on their
+  target, chains followed). In Karim's workspace `tu` is
+  `"alias:thumbs-up"`, and `thumbs-up` is a custom image (not `+1`). The
+  harness over the whole workspace (593 matches) lists `tu`
+  (thumbs-up), tuba, tube, tuff, tuna, tunk, stu, then tulip.
+  `emoji_ac_test.go` and `emoji_slack_test.go` pin Slack's rows for
+  synthetic custom sets.
 - **List order.** The emoji are listed in `getConsolidatedEmoji` order
   (Ak7A), which the keyword file also stores. Two Inf scores compare as
   NaN in the sorter (`a.score − b.score`), and the sort treats NaN as a

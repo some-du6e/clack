@@ -1,6 +1,7 @@
 package popups
 
 import (
+	"image"
 	"os"
 	"strings"
 	"testing"
@@ -163,4 +164,37 @@ func TestAutocompleteEmojiAliasNames(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The search box's has: emoji rows (srACEmoji, the same Searcher) rank
+// again when the index of the workspace's custom emoji lands, like the
+// composer's ":" list: the rows shown while it built came from the
+// standard set, without the custom alias tu.
+func TestAutocompleteEmojiSearchHasRanksAgain(t *testing.T) {
+	e := srNewEnv(t, false)
+	const thumbsUp = "https://e.test/thumbs-up.png"
+	e.h.a.S.CustomEmoji.Set(map[string]string{"thumbs-up": thumbsUp, "tu": "alias:thumbs-up",
+		"tuxedo-cat": "https://e.test/tuxedo-cat.png", "tuna-can": "https://e.test/tuna-can.png",
+		"turbo-snail": "https://e.test/turbo-snail.png", "tulip-row": "https://e.test/tulip-row.png"})
+	p := NewSearchPopover(e.h, "", image.Rectangle{})
+	d := &srDrv{size: image.Pt(1280, 800), w: p}
+	d.frame()
+	d.frame()
+	srType(d, p, "has::tu")
+	firstEmoji := func() (srACItem, bool) {
+		for _, it := range p.ac.items {
+			if it.kind == srAIEmoji {
+				return it, true
+			}
+		}
+		return srACItem{}, false
+	}
+	d.until(t, "the has: emoji rows", func() bool {
+		_, ok := firstEmoji()
+		return p.ac.m.typ == "has" && ok
+	})
+	d.until(t, "tu (thumbs-up) first among the has: emoji", func() bool {
+		it, _ := firstEmoji()
+		return it.id == "tu" && it.emojiURL == thumbsUp
+	})
 }

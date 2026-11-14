@@ -245,7 +245,9 @@ func TestAutocompleteSlackCommandsAndEmoji(t *testing.T) {
 // "tu", however often it's used: a query under 3 letters may skip no
 // letters and none of +1's keywords starts with "tu". ":thu" does reach
 // it ("thumbsup"), first once its uses count; ":like" reaches it by
-// keyword. A pick stored under ":tu" moves an emoji to the top.
+// keyword. A pick stored under ":tu" moves an emoji to the top. (In
+// Karim's workspace tu is also a custom alias, which Slack lists first:
+// TestAutocompleteSlackEmojiCustomAlias.)
 func TestAutocompleteSlackEmojiTu(t *testing.T) {
 	app, _ := acSlackApp(t)
 	noThumbs := func(rows []string) bool { return acIndex(rows, "+1") < 0 && acIndex(rows, "thumbsup") < 0 }
@@ -368,8 +370,9 @@ func acEmojiIndexed(t *testing.T, h *slickHost, name string) {
 // TestAutocompleteEmojiCustomAlias pins Slack's rows for this set). The
 // workspace's custom emoji (65,908 on Hack Club) are indexed off the UI
 // goroutine: on first use, and again after the full index's 5-minute
-// idle drop. ":tu" is the first query the ":" list answers, so it was
-// ranked over the standard set alone (tulip first), and Tab took that.
+// idle drop. ":tu" is the first query the ":" list answers, so it opens
+// on the standard set alone (tulip first). Tab used to take that row;
+// it waits for the index now and takes tu.
 func TestAutocompleteSlackEmojiCustomAlias(t *testing.T) {
 	app, _ := acSlackApp(t)
 	const thumbsUp = "https://e.test/thumbs-up.png"
@@ -430,5 +433,38 @@ func TestAutocompleteSlackEmojiIndexLands(t *testing.T) {
 	items, _ = ac.Items()
 	if len(items) == 0 || items[0].Name != "tum" || items[0].Atom == nil || items[0].Atom.URL != thumbsUp {
 		t.Errorf(":tum after the index landed: %v, want tum (thumbs-up) first", acNames(items))
+	}
+}
+
+// An emoji token starts the index of the custom emoji before the list
+// opens: ":" or ":t" (too short to list) starts it, so the list that
+// opens at ":tu" is usually ranked with the custom alias from its first
+// frame.
+func TestAutocompleteSlackEmojiIndexWarms(t *testing.T) {
+	app, _ := acSlackApp(t)
+	h := &slickHost{app: app}
+	const thumbsUp = "https://e.test/thumbs-up.png"
+	app.S.CustomEmoji.Set(map[string]string{"thumbs-up": thumbsUp, "tu": "alias:thumbs-up",
+		"tuba": "https://e.test/tuba.png", "tube": "https://e.test/tube.png"})
+	ac := newAutocomplete(h, tChGen)
+	t.Cleanup(ac.Close)
+	gen := popups.EmojiIndexGen()
+	d := acDocOf("hi :t")
+	ac.Update(d, d.Len())
+	if ac.Open() {
+		t.Fatalf(":t opened a list: %v", acNames(ac.items))
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for popups.EmojiIndexGen() == gen && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if popups.EmojiIndexGen() == gen {
+		t.Fatal(`":t" didn't start indexing the custom emoji`)
+	}
+	d = acDocOf("hi :tu")
+	ac.Update(d, d.Len())
+	items, _ := ac.Items()
+	if len(items) == 0 || items[0].Name != "tu" || items[0].Atom == nil || items[0].Atom.URL != thumbsUp {
+		t.Errorf(":tu after :t: %v, want tu (thumbs-up) first", acNames(items))
 	}
 }
