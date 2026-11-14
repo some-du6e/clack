@@ -17,6 +17,20 @@ static NSWindow *windowOf(uintptr_t view) {
 	return ((__bridge NSView *)(void *)view).window;
 }
 
+// primaryHeight is the primary screen's height, which Electron flips
+// screen coordinates against (Clack patch, CLACK_PATCHES.md §25).
+static CGFloat primaryHeight(void) {
+	NSScreen *s = [NSScreen screens].firstObject;
+	return s != nil ? NSHeight(s.frame) : 0;
+}
+
+// flipped is r (screen coordinates, origin at the primary screen's bottom
+// left) from the primary screen's top left, y down.
+static cocoatest_rect flipped(NSRect r) {
+	cocoatest_rect o = {r.origin.x, primaryHeight() - NSMaxY(r), r.size.width, r.size.height};
+	return o;
+}
+
 // topLeft is r (window coordinates, origin at the bottom left) with its
 // origin at the window's top left.
 static cocoatest_rect topLeft(NSWindow *w, NSRect r) {
@@ -72,6 +86,7 @@ void cocoatest_state(uintptr_t viewRef, cocoatest_window *s) {
 		if (t != NULL) {
 			strlcpy(s->title, t, sizeof(s->title));
 		}
+		s->screenFrame = flipped(w.frame);
 	}
 }
 
@@ -190,6 +205,33 @@ int cocoatest_key_equivalent(const char *key, int mods) {
 									 isARepeat:NO
 									   keyCode:0];
 		return [NSApp.mainMenu performKeyEquivalent:e] ? 1 : 0;
+	}
+}
+
+int cocoatest_screens(cocoatest_rect *frames, cocoatest_rect *visible, int limit) {
+	@autoreleasepool {
+		int n = 0;
+		for (NSScreen *s in [NSScreen screens]) {
+			if (n == limit) {
+				break;
+			}
+			frames[n] = flipped(s.frame);
+			visible[n] = flipped(s.visibleFrame);
+			n++;
+		}
+		return n;
+	}
+}
+
+void cocoatest_set_top_left(uintptr_t view, CGFloat x, CGFloat y) {
+	@autoreleasepool {
+		[windowOf(view) setFrameTopLeftPoint:NSMakePoint(x, primaryHeight() - y)];
+	}
+}
+
+void cocoatest_zoom(uintptr_t view) {
+	@autoreleasepool {
+		[windowOf(view) zoom:nil];
 	}
 }
 

@@ -62,6 +62,10 @@ type window struct {
 	// startedHidden: that Configure left the window hidden (StartHidden).
 	// Clack patch (CLACK_PATCHES.md §23).
 	startedHidden bool
+	// hiddenShow is the show that Configure left out for a window started
+	// hidden maximized or full screen (SW_SHOWMAXIMIZED), for the
+	// ActionRaise that shows it. Clack patch (CLACK_PATCHES.md §25).
+	hiddenShow int32
 	// mousePID is the mouse's pointer ID, for a pointer.Leave from a
 	// message that has none; ncPressed: a press on a caption button went
 	// to the program. Clack patch (CLACK_PATCHES.md §22).
@@ -122,7 +126,11 @@ func newWindow(win *callbacks, options []Option) {
 		}
 		w.loop = newEventLoop(w.w, w.wakeup)
 		w.w.SetDriver(w)
-		err := w.init()
+		// Clack patch (CLACK_PATCHES.md §25): a window placed by its
+		// first options is created there.
+		var place Config
+		place.apply(unit.Metric{}, options)
+		err := w.init(place)
 		done <- struct{}{}
 		if err != nil {
 			w.ProcessEvent(DestroyEvent{Err: err})
@@ -195,7 +203,7 @@ func initResources() error {
 
 const dwExStyle = windows.WS_EX_APPWINDOW | windows.WS_EX_WINDOWEDGE
 
-func (w *window) init() error {
+func (w *window) init(place Config) error {
 	var resErr error
 	resources.once.Do(func() {
 		resErr = initResources()
@@ -205,13 +213,20 @@ func (w *window) init() error {
 	}
 	const dwStyle = windows.WS_OVERLAPPEDWINDOW
 
+	x, y, cx, cy := int32(windows.CW_USEDEFAULT), int32(windows.CW_USEDEFAULT), int32(windows.CW_USEDEFAULT), int32(windows.CW_USEDEFAULT)
+	if b := place.bounds; place.boundsSet {
+		// Clack patch (CLACK_PATCHES.md §25): created where Bounds puts
+		// it, so it opens with that monitor's DPI; SetWindowPos onto a
+		// monitor of another DPI would rescale it (WM_DPICHANGED).
+		x, y, cx, cy = int32(b.Min.X), int32(b.Min.Y), int32(b.Dx()), int32(b.Dy())
+	}
 	hwnd, err := windows.CreateWindowEx(
 		dwExStyle,
 		resources.class,
 		"",
 		dwStyle|windows.WS_CLIPSIBLINGS|windows.WS_CLIPCHILDREN,
-		windows.CW_USEDEFAULT, windows.CW_USEDEFAULT,
-		windows.CW_USEDEFAULT, windows.CW_USEDEFAULT,
+		x, y,
+		cx, cy,
 		0,
 		0,
 		resources.handle,
@@ -252,6 +267,9 @@ func (w *window) update() {
 			Y: int(r.Bottom - r.Top),
 		}.Sub(w.config.Size)
 	}
+
+	// Clack patch (CLACK_PATCHES.md §25): where the window is.
+	w.config.bounds, w.config.display = w.placement()
 
 	w.borderSize = image.Pt(
 		windows.GetSystemMetrics(windows.SM_CXSIZEFRAME),
@@ -1049,6 +1067,18 @@ func (w *window) Configure(options []Option) {
 			// Enable drop shadows when we draw decorations.
 			windows.DwmExtendFrameIntoClientArea(w.hwnd, windows.Margins{-1, -1, -1, -1})
 		}
+		if b := cnf.bounds; cnf.boundsSet {
+			// Clack patch (CLACK_PATCHES.md §25): the frame Bounds asks
+			// for, in place of the size and the current position. A
+			// maximized or minimized window is restored first, without
+			// the focus: ShowWindow(SW_SHOWNORMAL) below would otherwise
+			// put its restored rectangle back over this one (Chromium's
+			// SetBounds takes WS_MAXIMIZE off for the same reason).
+			x, y, width, height = int32(b.Min.X), int32(b.Min.Y), int32(b.Dx()), int32(b.Dy())
+			if w.configured && windows.IsWindowVisible(w.hwnd) && (windows.IsIconic(w.hwnd) || windows.GetWindowPlacement(w.hwnd).IsMaximized()) {
+				windows.ShowWindow(w.hwnd, windows.SW_SHOWNOACTIVATE)
+			}
+		}
 
 	case Fullscreen:
 		swpStyle |= windows.SWP_NOMOVE | windows.SWP_NOSIZE
@@ -1096,8 +1126,14 @@ func (w *window) Configure(options []Option) {
 	windows.SetWindowLong(w.hwnd, windows.GWL_STYLE, style)
 	if hide {
 		w.startedHidden = true
+		if showMode == windows.SW_SHOWMAXIMIZED {
+			// Clack patch (CLACK_PATCHES.md §25): started hidden maximized
+			// or full screen, it shows that way when ActionRaise shows it.
+			w.hiddenShow = showMode
+		}
 		return
 	}
+	w.hiddenShow = 0
 	if cnf.panel && showMode == windows.SW_SHOWNORMAL {
 		showMode = windows.SW_SHOWNOACTIVATE // Clack patch (CLACK_PATCHES.md §8)
 	}
@@ -1249,6 +1285,12 @@ func (w *window) Perform(acts system.Action) {
 				cmd := int32(windows.SW_SHOWNORMAL)
 				if w.config.Mode == Maximized {
 					cmd = windows.SW_SHOW
+				}
+				if s := w.hiddenShow; s != 0 {
+					// Clack patch (CLACK_PATCHES.md §25): a window started
+					// hidden maximized or full screen (StartHidden and
+					// one of those modes) shows in it.
+					cmd, w.hiddenShow = s, 0
 				}
 				windows.ShowWindow(w.hwnd, cmd)
 			}

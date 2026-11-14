@@ -63,6 +63,14 @@ type Config struct {
 	// trafficLight is a Clack patch (CLACK_PATCHES.md §24): see
 	// TrafficLightPosition.
 	trafficLight trafficLight
+	// bounds, boundsSet and display are a Clack patch (CLACK_PATCHES.md
+	// §25): the window's frame (Config.Bounds) and the display it is on
+	// (Config.Display), which the drivers fill in; boundsSet marks the
+	// options of one Configure that carry the Bounds option, and is never
+	// part of a window's config.
+	bounds    image.Rectangle
+	boundsSet bool
+	display   Display
 }
 
 // ConfigEvent is sent whenever the configuration of a Window changes.

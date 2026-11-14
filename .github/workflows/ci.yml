@@ -330,6 +330,30 @@ jobs:
           name: titlebar-shots
           path: ${{ runner.temp }}/titlebar-shots
           if-no-files-found: ignore
+      # The window opens where it was (gap 9, W40). Gio patch 25 on real
+      # windows: Displays against GetSystemMetrics and SPI_GETWORKAREA, a
+      # window created at Bounds, its ConfigEvents' bounds through a move, a
+      # minimize and a restore, a later Bounds on a windowed and a
+      # maximized window, created maximized, full screen, and hidden then
+      # shown maximized. Then App.Run's own window (fakeslack), each launch
+      # with ui.json seeded: opened at the saved bounds, a move and a
+      # maximize written back, Quit; saved maximized off every display,
+      # opened maximized and restored onto the display; saved full screen.
+      - name: the window's place (Bounds and Displays, Slack's mainWindowSettings)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_BOUNDS_TESTS: "1"
+        run: |
+          rc=0
+          go test -count=1 -v -timeout 10m -run '^(TestDisplaysWindows|TestBoundsWindows)$' gioui.org/app || rc=1
+          go test -c -o "$RUNNER_TEMP/ui-bounds.test.exe" ./internal/ui || exit 1
+          cd internal/ui
+          for t in TestWindowBoundsWindow TestWindowBoundsOffScreenWindow TestWindowBoundsFullScreenWindow; do
+            "$RUNNER_TEMP/ui-bounds.test.exe" -test.v -test.count=1 -test.timeout 10m -test.run "^$t\$" || rc=1
+          done
+          exit $rc
 
   # Clack's slack:// registration and the single-instance hand-off, close to
   # the tray, the tray's states and menu, the jump list, Focus Assist,
@@ -883,6 +907,28 @@ jobs:
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?
           exit $((gio | ui))
+      # docs/GAPS-2026-11-14.md gap 9 (W40). Gio patch 25 on real NSWindows:
+      # Displays against NSScreen, a window opened at Bounds (points from
+      # the primary screen's top left), its ConfigEvents' bounds through a
+      # move, a later Bounds and the minimum, opened maximized (zoomed on
+      # the screen, unzoomed to the frame) and full screen. Then App.Run's
+      # own window, each launch with ui.json seeded: opened at the saved
+      # bounds, a move and a zoom written back, Quit; saved maximized off
+      # every screen; saved full screen (last: the runner never leaves it).
+      - name: macOS window place (Gio patch 25, W40)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 10m -run '^(TestDisplaysMac|TestBoundsMac)$' gioui.org/app || rc=1
+          go test -c -o "$RUNNER_TEMP/ui-bounds.test" ./internal/ui || exit 1
+          cd internal/ui
+          for t in TestMacWindowBounds TestMacWindowBoundsOffScreen TestMacWindowBoundsFullScreen; do
+            "$RUNNER_TEMP/ui-bounds.test" -test.v -test.count=1 -test.timeout 10m -test.run "^$t\$" || rc=1
+          done
+          exit $rc
       - name: build
         if: ${{ !cancelled() }}
         run: |
