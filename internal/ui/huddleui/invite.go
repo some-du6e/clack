@@ -115,6 +115,10 @@ type Notification struct {
 	Channel, User, Call string
 	Missed              bool
 	Buttons             []NotifyAction
+	// Subtitle is sharedHuddleNotificationOptions' subtitle: the invite's
+	// conversation by its display name (macOS shows it; a missed one has
+	// none).
+	Subtitle string
 }
 
 // NotifyAction is one of a notification's buttons. URI is its
@@ -333,19 +337,50 @@ func (c *Controller) inviteNotification(inv *incoming) Notification {
 	}
 	ch := inv.Channel
 	join := func() { c.post(func() { c.joinInviteIn(ch, "") }) }
+	decline := func() { c.post(func() { c.respondInviteIn(ch, "decline") }) }
 	// desktopHuddleNotificationOptions: Dismiss, Join (slack://huddle…),
 	// and Decline only under desktop_notification_actions (m.slice(0,-1)
 	// otherwise). Decline has no launch URI: on Windows it only closes
-	// the toast.
+	// the toast; on macOS the press reaches handleNotificationAction,
+	// which declines the active invite when it's this conversation's
+	// (respondInviteIn checks).
 	buttons := c.notifyButtons(nsGrowl, []string{notifyDismiss, notifyJoin, notifyDecline},
-		map[string]string{notifyJoin: "slack://huddle?id=" + ch + "&team=" + c.teamID()}, map[string]func(){notifyJoin: join})
+		map[string]string{notifyJoin: "slack://huddle?id=" + ch + "&team=" + c.teamID()},
+		map[string]func(){notifyJoin: join, notifyDecline: decline})
 	if !c.on(expNotificationActions) {
 		buttons = buttons[:2]
 	}
 	return Notification{Title: c.workspaceName(), Body: body, PlainBody: plain, Actions: []NotifyAction{
 		{Key: "join", Label: nsHuddles.T("Join"), Do: join},
-		{Key: "decline", Label: nsHuddles.T("Decline"), Do: func() { c.post(func() { c.respondInviteIn(ch, "decline") }) }},
-	}, Channel: ch, User: inv.Sender, Call: inv.Call, Buttons: buttons}
+		{Key: "decline", Label: nsHuddles.T("Decline"), Do: decline},
+	}, Channel: ch, User: inv.Sender, Call: inv.Call, Buttons: buttons, Subtitle: c.inviteSubtitle(ch)}
+}
+
+// inviteSubtitle is sharedHuddleNotificationOptions' subtitle:
+// getDisplayNameForChannel (imIncludeAtSign off) for a conversation that
+// exists: a DM's partner, a group DM's members, a channel's "#name" (a
+// private one's bare name). Nothing for one core doesn't know.
+func (c *Controller) inviteSubtitle(ch string) string {
+	if app := c.h.Core(); app != nil {
+		if conv, ok := app.Conv(ch); ok {
+			switch conv.Kind {
+			case "im":
+				return c.channelTitle(ch)
+			case "mpim": // the sidebar's name: mpdm_naming's, else the others' names
+				if n, ok := app.MpdmCustomName(ch); ok {
+					return n
+				}
+				if n := c.dmNames(ch); n != "" {
+					return n
+				}
+				return strings.TrimPrefix(conv.Name, "mpdm-")
+			}
+		}
+	}
+	if e, ok := c.channelEnt(ch); ok && e.Exists {
+		return e.Disp
+	}
+	return ""
 }
 
 // inviteMissed is handleHuddleMissedCallNotification, 30 s on.

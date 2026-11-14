@@ -40,6 +40,11 @@ func TestInviteNotificationButtons(t *testing.T) {
 	if len(n.Actions) != 2 || n.Actions[0].Key != "join" || n.Actions[1].Key != "decline" {
 		t.Errorf("the Linux buttons changed: %+v", n.Actions)
 	}
+	// sharedHuddleNotificationOptions' subtitle (macOS shows it): a DM's
+	// partner, by the name Slack shows (core's display name)
+	if who := e.c.displayName(huddle.FakeRemoteUser); n.Subtitle != who {
+		t.Errorf("the DM invite's subtitle %q, want the partner's name %q", n.Subtitle, who)
+	}
 
 	e.app.SetExperimentGroup(expNotificationActions, "on")
 	e.app.SetExperimentGroup(ExpMissedNotification, "on")
@@ -53,10 +58,14 @@ func TestInviteNotificationButtons(t *testing.T) {
 	if got := keys(n.Buttons); got != want {
 		t.Errorf("under desktop_notification_actions: %s, want %s", got, want)
 	}
+	// a press of Decline (macOS: handleNotificationAction) declines
+	if n.Buttons[2].Do == nil || n.Subtitle != "#huddle-test" {
+		t.Errorf("Decline acts: %t; the channel invite's subtitle %q, want #huddle-test", n.Buttons[2].Do != nil, n.Subtitle)
+	}
 	waitFor(t, "the missed notice", func() bool { return len(e.h.notifications()) == 3 })
 	m := e.h.notifications()[2]
 	want = "Dismiss=Dismiss|, View=View|slack://channel?team=" + team + "&id=" + hcChannel
-	if got := keys(m.Buttons); got != want || !m.Missed || m.User != huddle.FakeSelfUser || m.Channel != hcChannel {
-		t.Errorf("missed: %+v buttons %s, want %s", m, got, want)
+	if got := keys(m.Buttons); got != want || !m.Missed || m.User != huddle.FakeSelfUser || m.Channel != hcChannel || m.Subtitle != "" {
+		t.Errorf("missed: %+v buttons %s, want %s and no subtitle", m, got, want)
 	}
 }

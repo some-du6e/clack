@@ -1,7 +1,6 @@
-//go:build !linux && !windows
+//go:build !linux && !windows && !darwin
 
 package ui
 
-// newNotifier: macOS has no notifier yet (UNUserNotificationCenter wants
-// the signed bundle; docs/GAPS-2026-11-12.md gap 1).
+// newNotifier: no desktop notifications on this OS.
 func newNotifier() notifier { return nopNotifier{} }

@@ -1,0 +1,573 @@
+{
+ "about": "Slack desktop 4.53.276 darwin main.bundle.cjs: ld, h6 and class h0 cut out and run in node (mac_truth.js) on these payloads, with notificationPlayback web; slack holds the options h0 gives Electron's Notification and the event h0 emits for each Electron event (close, click, reply \"on my way\", action:i)",
+ "samples": {
+  "dm": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "title": "New message from Ada",
+    "subtitle": "",
+    "content": "hello &amp; bye",
+    "body": "hello &amp; bye",
+    "teamId": "T0FAKETEAM",
+    "userId": "U0SELF",
+    "channel": "D0NOTE0001",
+    "channelName": "Ada",
+    "msg": "1762520099.000300",
+    "id": "T0FAKETEAM_1762520099.000300",
+    "silent": true,
+    "hasReply": true
+   }
+  },
+  "thread": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "title": "New message in #general",
+    "subtitle": "",
+    "body": "Ada: look",
+    "content": "Ada: look",
+    "teamId": "T0FAKETEAM",
+    "channel": "C0NOTE0001",
+    "channelName": "#general",
+    "msg": "1762520100.000400",
+    "thread_ts": "1762520099.000300",
+    "id": "T0FAKETEAM|msg|C0NOTE0001|1762520100.000400|1762520099.000300",
+    "groupId": "T0FAKETEAM|msg|C0NOTE0001",
+    "groupTitle": "#general",
+    "silent": true,
+    "hasReply": true
+   }
+  },
+  "long": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "title": "New message in #channel0 channel1 channel2 channel3 channel4 channel5 channel6 channel7 channel8 channel9 channel10 channel11 channel12 channel13 channel14 channel15 channel16 channel17 channel18 channel19 channel20 channel21 channel22 channel23 channel24 channel25 channel26 channel27 channel28 channel29 channel30 channel31 channel32 channel33 channel34 channel35 channel36 channel37 channel38 channel39 channel40 channel41 channel42 channel43 channel44 channel45 channel46 channel47 channel48 channel49 channel50 channel51 channel52 channel53 channel54 channel55 channel56 channel57 channel58 channel59 channel60 channel61 channel62 channel63 channel64 channel65 channel66 channel67 channel68 channel69 channel70 channel71 channel72 channel73 channel74 channel75 channel76 channel77 channel78 channel79 channel80 channel81 channel82 channel83 channel84 channel85 channel86 channel87 channel88 channel89 channel90 channel91 channel92 channel93 channel94 channel95 channel96 channel97 channel98 channel99 channel100 channel101 channel102 channel103 channel104 channel105 channel106 channel107 channel108 channel109 channel110 channel111 channel112 channel113 channel114 channel115 channel116 channel117 channel118 channel119 channel120 channel121 channel122 channel123 channel124 channel125 channel126 channel127 channel128 channel129 channel130 channel131 channel132 channel133 channel134 channel135 channel136 channel137 channel138 channel139 channel140 channel141 channel142 channel143 channel144 channel145 channel146 channel147 channel148 channel149 channel150 channel151 channel152 channel153 channel154 channel155 channel156 channel157 channel158 channel159 channel160 channel161 channel162 channel163 channel164 channel165 channel166 channel167 channel168 channel169 channel170 channel171 channel172 channel173 channel174 channel175 channel176 channel177 channel178 channel179 channel180 channel181 channel182 channel183 channel184 channel185 channel186 channel187 channel188 channel189 channel190 channel191 channel192 channel193 channel194 channel195 channel196 channel197 channel198 channel199 channel200 channel201 channel202 channel203 channel204 channel205 channel206 channel207 channel208 channel209 channel210 channel211 channel212 channel213 channel214 channel215 channel216 channel217 channel218 channel219 channel220 channel221 channel222 channel223 channel224 channel225 channel226 channel227 channel228 channel229 channel230 channel231 channel232 channel233 channel234 channel235 channel236 channel237 channel238 channel239 channel240 channel241 channel242 channel243 channel244 channel245 channel246 channel247 channel248 channel249 channel250 channel251 channel252 channel253 channel254 channel255 channel256 channel257 channel258 channel259",
+    "body": "Ada: word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40 word41 word42 word43 word44 word45 word46 word47 word48 word49 word50 word51 word52 word53 word54 word55 word56 word57 word58 word59 word60 word61 word62 word63 word64 word65 word66 word67 word68 word69 word70 word71 word72 word73 word74 word75 word76 word77 word78 word79 word80 word81 word82 word83 word84 word85 word86 word87 word88 word89 word90 word91 word92 word93 word94 word95 word96 word97 word98 word99 word100 word101 word102 word103 word104 word105 word106 word107 word108 word109 word110 word111 word112 word113 word114 word115 word116 word117 word118 word119 word120 word121 word122 word123 word124 word125 word126 word127 word128 word129 word130 word131 word132 word133 word134 word135 word136 word137 word138 word139 word140 word141 word142 word143 word144 word145 word146 word147 word148 word149 word150 word151 word152 word153 word154 word155 word156 word157 word158 word159 word160 word161 word162 word163 word164 word165 word166 word167 word168 word169 word170 word171 word172 word173 word174 word175 word176 word177 word178 word179 word180 word181 word182 word183 word184 word185 word186 word187 word188 word189 word190 word191 word192 word193 word194 word195 word196 word197 word198 word199 word200 word201 word202 word203 word204 word205 word206 word207 word208 word209 word210 word211 word212 word213 word214 word215 word216 word217 word218 word219 word220 word221 word222 word223 word224 word225 word226 word227 word228 word229 word230 word231 word232 word233 word234 word235 word236 word237 word238 word239 word240 word241 word242 word243 word244 word245 word246 word247 word248 word249 word250 word251 word252 word253 word254 word255 word256 word257 word258 word259 word260 word261 word262 word263 word264 word265 word266 word267 word268 word269 word270 word271 word272 word273 word274 word275 word276 word277 word278 word279 word280 word281 word282 word283 word284 word285 word286 word287 word288 word289 word290 word291 word292 word293 word294 word295 word296 word297 word298 word299 word300 word301 word302 word303 word304 word305 word306 word307 word308 word309 word310 word311 word312 word313 word314 word315 word316 word317 word318 word319 word320 word321 word322 word323 word324 word325 word326 word327 word328 word329 word330 word331 word332 word333 word334 word335 word336 word337 word338 word339 word340 word341 word342 word343 word344 word345 word346 word347 word348 word349 word350 word351 word352 word353 word354 word355 word356 word357 word358 word359 word360 word361 word362 word363 word364 word365 word366 word367 word368 word369 word370 word371 word372 word373 word374 word375 word376 word377 word378 word379 word380 word381 word382 word383 word384 word385 word386 word387 word388 word389 word390 word391 word392 word393 word394 word395 word396 word397 word398 word399 &lt;b&gt; &amp; &quot;q&quot; &#39;s",
+    "teamId": "T0FAKETEAM",
+    "channel": "C0NOTE0001",
+    "msg": "1762520101.000500",
+    "id": "T0FAKETEAM_1762520101.000500",
+    "silent": true,
+    "hasReply": true
+   }
+  },
+  "invite": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "subtitle": "#general",
+    "content": "Ada is inviting you to a huddle in #general",
+    "body": "Ada is inviting you to a huddle in #general",
+    "teamId": "T0FAKETEAM",
+    "channel": "C0NOTE0001",
+    "channelName": "#general",
+    "msg": "huddle_C0NOTE0001_29374512",
+    "id": "T0FAKETEAM_huddle_C0NOTE0001_29374512",
+    "hasReply": false,
+    "silent": true,
+    "actionButtons": [
+     {
+      "content": "Dismiss",
+      "launchUri": ""
+     },
+     {
+      "content": "Join",
+      "launchUri": "slack://huddle?id=C0NOTE0001&team=T0FAKETEAM"
+     }
+    ]
+   }
+  },
+  "invite_actions": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "subtitle": "Ada",
+    "content": "Ada is inviting you to a huddle",
+    "body": "Ada is inviting you to a huddle",
+    "teamId": "T0FAKETEAM",
+    "channel": "D0NOTE0001",
+    "channelName": "Ada",
+    "msg": "huddle_D0NOTE0001_29374512",
+    "id": "T0FAKETEAM|huddle|D0NOTE0001|R0FAKECALL1",
+    "hasReply": false,
+    "silent": true,
+    "actionButtons": [
+     {
+      "content": "Dismiss",
+      "launchUri": ""
+     },
+     {
+      "content": "Join",
+      "launchUri": "slack://huddle?id=D0NOTE0001&team=T0FAKETEAM"
+     },
+     {
+      "content": "Decline",
+      "launchUri": ""
+     }
+    ]
+   }
+  },
+  "missed": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "title": "Huddle missed",
+    "content": "Ada invited you to a huddle",
+    "body": "Ada invited you to a huddle",
+    "teamId": "T0FAKETEAM",
+    "channel": "D0NOTE0001",
+    "channelName": "Ada",
+    "msg": "huddle_D0NOTE0001_29374513",
+    "id": "T0FAKETEAM|hudmiss|D0NOTE0001|R0FAKECALL1",
+    "hasReply": false,
+    "silent": true,
+    "actionButtons": [
+     {
+      "content": "Dismiss",
+      "launchUri": ""
+     },
+     {
+      "content": "View",
+      "launchUri": "slack://channel?team=T0FAKETEAM&id=D0NOTE0001"
+     }
+    ]
+   }
+  },
+  "blank_close": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "title": "Buttons",
+    "body": "the first has no text",
+    "teamId": "T0FAKETEAM",
+    "channel": "C0NOTE0001",
+    "msg": "1762520102.000600",
+    "id": "T0FAKETEAM_1762520102.000600",
+    "hasReply": true,
+    "silent": true,
+    "actionButtons": [
+     {
+      "content": "",
+      "launchUri": ""
+     },
+     {
+      "content": "",
+      "launchUri": "slack://noop"
+     }
+    ]
+   }
+  },
+  "plain": {
+   "state": {
+    "settings": {
+     "notificationPlayback": "web"
+    },
+    "workspaces": {
+     "T0FAKETEAM": {
+      "name": "Fake & Co"
+     }
+    },
+    "webapp": {
+     "teams": {
+      "T0FAKETEAM": {
+       "notificationPrefs": {
+        "muteSounds": false,
+        "notificationSound": "knock_brush.mp3"
+       }
+      }
+     }
+    }
+   },
+   "payload": {
+    "title": "",
+    "body": "no channel, no title",
+    "teamId": "T0FAKETEAM",
+    "id": "T0FAKETEAM_x"
+   }
+  }
+ },
+ "slack": {
+  "dm": {
+   "options": {
+    "title": "New message from Ada",
+    "subtitle": "",
+    "body": "hello & bye",
+    "actions": [],
+    "hasReply": true,
+    "sound": "none",
+    "silent": true,
+    "id": "T0FAKETEAM_1762520099.000300"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "close",
+     "value": {}
+    }
+   }
+  },
+  "thread": {
+   "options": {
+    "title": "New message in #general",
+    "subtitle": "",
+    "body": "Ada: look",
+    "actions": [],
+    "hasReply": true,
+    "sound": "none",
+    "silent": true,
+    "id": "T0FAKETEAM|msg|C0NOTE0001|1762520100.000400|1762520099.000300",
+    "groupId": "T0FAKETEAM|msg|C0NOTE0001",
+    "groupTitle": "#general"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "close",
+     "value": {}
+    }
+   }
+  },
+  "long": {
+   "options": {
+    "title": "New message in #channel0 channel1 channel2 channel3 channel4 channel5 channel6 channel7 channel8 channel9 channel10 channel11 channel12 channel13 channel14 channel15 channel16 channel17 channel18 channel19 channel20 channel21 channel22 channel23 channel24 channel25 channel26 channel27 channel28 channel29 channel30 channel31 channel32 channel33 channel34 channel35 channel36 channel37 channel38 channel39 channel40 channel41 channel42 channel43 channel44 channel45 channel46 channel47 channel48 channel49 channel50 channel51 channel52 channel53 channel54 channel55 channel56 channel57 channel58 channel59 channel60 channel61 channel62 channel63 channel64 channel65 channel66 channel67 channel68 channel69 channel70 channel71 channel72 channel73 channel74 channel75 channel76 channel77 channel78 channel79 channel80 channel81 channel82 channel83 channel84 channel85 channel86 channel87 channel88 channel89 channel90 channel91 channel92 channel93 channel94 channel95 channel96 channel97 channel98 channel99 channel100 channel101 channel102 channel103 channel104 channel105 channel106 channel107 channel108 channel109 channel110 channel111 channel112 channel113 channel114 channel115 channel116 channel117 channel118 channel119 channel120 channel121 channel122 channel123 channel124 channel125 channel126 channel127 channel128 channel129 channel130 channel131 channel132 channel133 channel134 channel135 channel136 channel137 channel138 channel139 channel140 channel141 channel142 channel143 channel144…",
+    "body": "Ada: word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40 word41 word42 word43 word44 word45 word46 word47 word48 word49 word50 word51 word52 word53 word54 word55 word56 word57 word58 word59 word60 word61 word62 word63 word64 word65 word66 word67 word68 word69 word70 word71 word72 word73 word74 word75 word76 word77 word78 word79 word80 word81 word82 word83 word84 word85 word86 word87 word88 word89 word90 word91 word92 word93 word94 word95 word96 word97 word98 word99 word100 word101 word102 word103 word104 word105 word106 word107 word108 word109 word110 word111 word112 word113 word114 word115 word116 word117 word118 word119 word120 word121 word122 word123 word124 word125 word126 word127 word128 word129 word130 word131 word132 word133 word134 word135 word136 word137 word138 word139 word140 word141 word142 word143 word144 word145 word146 word147 word148 word149 word150 word151 word152 word153 word154 word155 word156 word157 word158 word159 word160 word161 word162 word163 word164 word165 word166 word167 word168 word169 word170 word171 word172 word173 word174 word175 word176 word177 word178 word179 word180 word181 word182 word183 word184 word185 word186 word187 word188 word189 word190 word191 word192 word193 word194 word195 word196 word197 word198 word199 word200…",
+    "actions": [],
+    "hasReply": true,
+    "sound": "none",
+    "silent": true,
+    "id": "T0FAKETEAM_1762520101.000500"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "close",
+     "value": {}
+    }
+   }
+  },
+  "invite": {
+   "options": {
+    "title": "Fake & Co",
+    "subtitle": "#general",
+    "body": "Ada is inviting you to a huddle in #general",
+    "closeButtonText": "Dismiss",
+    "actions": [
+     {
+      "type": "button",
+      "text": "Join"
+     }
+    ],
+    "hasReply": false,
+    "sound": "none",
+    "silent": true,
+    "id": "T0FAKETEAM_huddle_C0NOTE0001_29374512"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "action",
+     "value": 0
+    },
+    "action:0": {
+     "type": "action",
+     "value": 1
+    }
+   }
+  },
+  "invite_actions": {
+   "options": {
+    "title": "Fake & Co",
+    "subtitle": "Ada",
+    "body": "Ada is inviting you to a huddle",
+    "closeButtonText": "Dismiss",
+    "actions": [
+     {
+      "type": "button",
+      "text": "Join"
+     },
+     {
+      "type": "button",
+      "text": "Decline"
+     }
+    ],
+    "hasReply": false,
+    "sound": "none",
+    "silent": true,
+    "id": "T0FAKETEAM|huddle|D0NOTE0001|R0FAKECALL1"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "action",
+     "value": 0
+    },
+    "action:0": {
+     "type": "action",
+     "value": 1
+    },
+    "action:1": {
+     "type": "action",
+     "value": 2
+    }
+   }
+  },
+  "missed": {
+   "options": {
+    "title": "Huddle missed",
+    "body": "Ada invited you to a huddle",
+    "closeButtonText": "Dismiss",
+    "actions": [
+     {
+      "type": "button",
+      "text": "View"
+     }
+    ],
+    "hasReply": false,
+    "sound": "none",
+    "silent": true,
+    "id": "T0FAKETEAM|hudmiss|D0NOTE0001|R0FAKECALL1"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "action",
+     "value": 0
+    },
+    "action:0": {
+     "type": "action",
+     "value": 1
+    }
+   }
+  },
+  "blank_close": {
+   "options": {
+    "title": "Buttons",
+    "body": "the first has no text",
+    "closeButtonText": "Close",
+    "actions": [
+     {
+      "type": "button",
+      "text": ""
+     }
+    ],
+    "hasReply": false,
+    "sound": "none",
+    "silent": true,
+    "id": "T0FAKETEAM_1762520102.000600"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "action",
+     "value": 0
+    },
+    "action:0": {
+     "type": "action",
+     "value": 1
+    }
+   }
+  },
+  "plain": {
+   "options": {
+    "title": "Fake & Co",
+    "body": "no channel, no title",
+    "actions": [],
+    "hasReply": false,
+    "sound": "none",
+    "silent": false,
+    "id": "T0FAKETEAM_x"
+   },
+   "events": {
+    "click": {
+     "type": "click",
+     "value": {}
+    },
+    "reply": {
+     "type": "reply",
+     "value": "on my way"
+    },
+    "close": {
+     "type": "close",
+     "value": {}
+    }
+   }
+  }
+ }
+}
