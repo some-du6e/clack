@@ -355,10 +355,17 @@ func (c *Controller) previewTitle(ch string) (title []span, faces []string, join
 			faces = []string{dmUser}
 		}
 	default:
+		// the channel is InlineChannelEntity, boldIcon (channel_entity.go)
+		place := func(src string) []span {
+			if e, ok := c.channelEnt(ch); ok {
+				return entSpans(boldSpans(src, "channelName", entMark), e)
+			}
+			return boldSpans(src, "channelName", c.channelTitle(ch))
+		}
 		if len(there) == 0 {
-			title = boldSpans("Start huddle in {channelName}", "channelName", c.channelTitle(ch))
+			title = place("Start huddle in {channelName}")
 		} else {
-			title = append(boldSpans("Join huddle in {channelName}", "channelName", c.channelTitle(ch)), span{". ", false})
+			title = append(place("Join huddle in {channelName}"), span{Text: ". "})
 			names := make([]string, 0, 2)
 			for _, u := range there[:min(2, len(there))] {
 				names = append(names, c.displayName(u))
@@ -752,11 +759,7 @@ func spansWidth(gtx C, th *theme.Theme, lines [][]span) int {
 	for _, ln := range lines {
 		lw := 0
 		for _, s := range ln {
-			wt := theme.Regular
-			if s.Bold {
-				wt = theme.Bold
-			}
-			lw += labelSize(gtx, th, 15, wt, s.Text).X
+			lw += spanWidth(gtx, th, 15, s)
 		}
 		w = max(w, lw)
 	}
@@ -767,17 +770,7 @@ func spansWidth(gtx C, th *theme.Theme, lines [][]span) int {
 func drawSpans(gtx C, th *theme.Theme, lines [][]span, p image.Point, col color.NRGBA) {
 	lineH := gtx.Dp(22)
 	for i, ln := range lines {
-		x := p.X
-		for _, s := range ln {
-			wt := theme.Regular
-			if s.Bold {
-				wt = theme.Bold
-			}
-			ls := labelSize(gtx, th, 15, wt, s.Text)
-			txt := s.Text
-			at(gtx, image.Pt(x, p.Y+i*lineH+(lineH-ls.Y)/2), ls, func(gtx C) D { return th.Label(gtx, 15, wt, col, txt) })
-			x += ls.X
-		}
+		drawSpanLine(gtx, th, 15, defaultEntInk(col), ln, p.X, p.Y+i*lineH, lineH)
 	}
 }
 

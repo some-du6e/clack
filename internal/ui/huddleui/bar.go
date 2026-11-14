@@ -183,8 +183,12 @@ func (c *Controller) StartTip(gtx C, th *theme.Theme, ch string, hovered bool, s
 				if names := c.dmNames(ch); names != "" {
 					tip = nsHuddles.T("Start huddle with {dmPersons}", "dmPersons", names)
 				}
-			case conv.Name != "":
-				tip = nsHuddles.T("Start huddle in {channelName}", "channelName", "#"+conv.Name)
+			default:
+				// getDisplayNameForChannel's text (a tip can't draw the
+				// lock): "#name", a private channel's bare name
+				if e, ok := c.channelEnt(ch); ok && e.Exists && !e.Loading() {
+					tip = nsHuddles.T("Start huddle in {channelName}", "channelName", e.Disp)
+				}
 			}
 		}
 	}

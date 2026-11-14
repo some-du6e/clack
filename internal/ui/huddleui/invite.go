@@ -322,7 +322,12 @@ func (c *Controller) inviteNotification(inv *incoming) Notification {
 				}
 			case "im":
 			default:
-				body = nsGrowl.T("{memberName} is inviting you to a huddle in {channelDisplayName}", "memberName", who, "channelDisplayName", c.channelTitle(inv.Channel))
+				// getDisplayNameForChannel, for a channel that exists
+				// (isExistent): one core can't name yet is the stub, and the
+				// body leaves the place out
+				if e, ok := c.channelEnt(inv.Channel); ok && e.Exists {
+					body = nsGrowl.T("{memberName} is inviting you to a huddle in {channelDisplayName}", "memberName", who, "channelDisplayName", e.Disp)
+				}
 			}
 		}
 	}

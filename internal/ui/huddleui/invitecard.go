@@ -4,12 +4,12 @@ import (
 	"image"
 	"strings"
 
-	"gioui.org/font"
 	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -34,10 +34,13 @@ type cardState struct {
 	join, soon, decline widget.Clickable
 }
 
-// span is a run of text, bold or not.
+// span is a run of text, bold or not; Ent, when set, is the channel's
+// InlineChannelEntity drawn in the run's place (its icon, the loading
+// bar, the Private channel chip: channel_entity.go), Text its text.
 type span struct {
 	Text string
 	Bold bool
+	Ent  *chanent.Ent
 }
 
 func (c *Controller) cardInvite() *incoming {
@@ -151,16 +154,7 @@ func layoutCard(gtx C, th *theme.Theme, c *Controller, v inviteView, st *cardSta
 		return D{Size: image.Pt(av, av)}
 	})
 	for i, ln := range lines {
-		lx := x + textX
-		for _, s := range ln {
-			wt := theme.Regular
-			if s.Bold {
-				wt = theme.Bold
-			}
-			ls := labelSize(gtx, th, 15, wt, s.Text)
-			at(gtx, image.Pt(lx, y+i*lineH+(lineH-ls.Y)/2), ls, func(gtx C) D { return th.Label(gtx, 15, wt, k.text, s.Text) })
-			lx += ls.X
-		}
+		drawSpanLine(gtx, th, 15, defaultEntInk(k.text), ln, x+textX, y+i*lineH, lineH)
 	}
 	y += textH + gtx.Dp(12)
 	for _, b := range btns {
@@ -227,27 +221,29 @@ func wrapSpans(gtx C, th *theme.Theme, size unit.Sp, spans []span, w int) [][]sp
 	var b strings.Builder
 	n := 0
 	for _, s := range spans {
+		if s.Ent != nil {
+			// the channel's entity is one piece: it never breaks inside
+			unit = append(unit, s)
+			if n += len([]rune(s.Text)); breaks[n] {
+				units, unit = append(units, unit), nil
+			}
+			continue
+		}
 		for _, r := range s.Text {
 			b.WriteRune(r)
 			if n++; breaks[n] {
-				unit = append(unit, span{b.String(), s.Bold})
+				unit = append(unit, span{Text: b.String(), Bold: s.Bold})
 				b.Reset()
 				units, unit = append(units, unit), nil
 			}
 		}
 		if b.Len() > 0 {
-			unit = append(unit, span{b.String(), s.Bold})
+			unit = append(unit, span{Text: b.String(), Bold: s.Bold})
 			b.Reset()
 		}
 	}
 	if len(unit) > 0 {
 		units = append(units, unit)
-	}
-	weight := func(b bool) font.Weight {
-		if b {
-			return theme.Bold
-		}
-		return theme.Regular
 	}
 	var lines [][]span
 	var cur []span
@@ -256,16 +252,16 @@ func wrapSpans(gtx C, th *theme.Theme, size unit.Sp, spans []span, w int) [][]sp
 		uw, fit := 0, 0 // the unit's width, and without its trailing spaces
 		for i, p := range u {
 			if i == len(u)-1 {
-				fit = uw + labelSize(gtx, th, size, weight(p.Bold), strings.TrimRight(p.Text, " ")).X
+				fit = uw + spanWidth(gtx, th, size, span{Text: strings.TrimRight(p.Text, " "), Bold: p.Bold, Ent: p.Ent})
 			}
-			uw += labelSize(gtx, th, size, weight(p.Bold), p.Text).X
+			uw += spanWidth(gtx, th, size, p)
 		}
 		if cw > 0 && cw+fit > w {
 			lines = append(lines, cur)
 			cur, cw = nil, 0
 		}
 		for _, p := range u {
-			if k := len(cur); k > 0 && cur[k-1].Bold == p.Bold {
+			if k := len(cur); k > 0 && cur[k-1].Bold == p.Bold && cur[k-1].Ent == nil && p.Ent == nil {
 				cur[k-1].Text += p.Text
 			} else {
 				cur = append(cur, p)

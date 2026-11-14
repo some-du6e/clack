@@ -72,7 +72,13 @@ const inviteCall = "R0INVITE01"
 
 func newInviteEnv(t *testing.T, prefs map[string]any) *inviteEnv {
 	t.Helper()
-	fs, err := fakeslack.Start(fakeslack.Small)
+	return newInviteEnvSize(t, fakeslack.Small, prefs)
+}
+
+// newInviteEnvSize is newInviteEnv over a fakeslack of size sz.
+func newInviteEnvSize(t *testing.T, sz fakeslack.Size, prefs map[string]any) *inviteEnv {
+	t.Helper()
+	fs, err := fakeslack.Start(sz)
 	if err != nil {
 		t.Fatal(err)
 	}
