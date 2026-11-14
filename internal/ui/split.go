@@ -417,12 +417,13 @@ func (a *App) splitMinWindowW() float32 {
 
 // syncSplitWindow raises the window's minimum width to Slack's while the
 // split view shows, widening a narrower window as the desktop app does,
-// and puts Clack's own minimum (Run: 800×500) back once it closes.
+// and puts the window's own minimum (mainMinW×mainMinH) back once it
+// closes.
 func (a *App) syncSplitWindow(gtx layout.Context) {
 	want := 0
 	if a.splitOpen() {
 		want = int(a.splitMinWindowW()*a.zoomFactor() + .5)
-		if want <= 800 {
+		if want <= mainMinW {
 			want = 0
 		}
 	}
@@ -432,10 +433,10 @@ func (a *App) syncSplitWindow(gtx layout.Context) {
 	}
 	a.split.minW = want
 	if want == 0 {
-		a.win.Option(app.MinSize(800, 500))
+		a.win.Option(app.MinSize(mainMinW, mainMinH))
 		return
 	}
-	a.win.Option(app.MinSize(unit.Dp(want), 500))
+	a.win.Option(app.MinSize(unit.Dp(want), mainMinH))
 	// the window's own dp (Run's sizes are before View > Zoom)
 	base := gtx.Metric.PxPerDp / a.zoomFactor()
 	if base <= 0 {

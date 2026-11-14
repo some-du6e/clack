@@ -54,6 +54,9 @@ type Config struct {
 	decoHeight unit.Dp
 	// panel is a Clack patch (CLACK_PATCHES.md §8): see Panel.
 	panel bool
+	// hiddenTitleBar is a Clack patch (CLACK_PATCHES.md §22): see
+	// HiddenTitleBar.
+	hiddenTitleBar bool
 }
 
 // ConfigEvent is sent whenever the configuration of a Window changes.

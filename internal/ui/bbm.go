@@ -15,6 +15,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"math"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -358,6 +359,9 @@ func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 	if tn.Hidden() {
 		return
 	}
+	// Windows: the nav is the window's caption (titlebar.go); BBM hides
+	// the native UI spacer there (nativeAppMenuButtonSpacerStyle)
+	a.wcoNavAreas(gtx, width, h, 0, false)
 	// the wrapper: 1200 wide, centred; leftContainerMargin /
 	// rightContainerMargin are 8px below a 1208px window (26v2 s(e)).
 	ww := min(width, gtx.Dp(bbmMaxW))
@@ -365,6 +369,17 @@ func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 	x1 := x0 + ww
 	if width < gtx.Dp(1208) {
 		x0, x1 = gtx.Dp(8), width-gtx.Dp(8)
+	}
+	if a.wcoOn() {
+		// rightContainerMargin is s(138/zoom) with the caption buttons:
+		// at least 8 below 1208px, less what the centring gives above
+		css := float32(width) / gtx.Metric.PxPerDp
+		o := float32(math.Round(float64(wcoReserveW / a.zoomFactor())))
+		m, end := max(o, 8), width
+		if css >= 1208 {
+			m, end = max(o-(css-bbmMaxW)/2, 0), x0+ww
+		}
+		x1 = end - gtx.Dp(unit.Dp(m))
 	}
 	bh := gtx.Dp(28)
 	y := (h - bh) / 2

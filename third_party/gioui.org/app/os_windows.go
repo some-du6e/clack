@@ -59,6 +59,11 @@ type window struct {
 	// configured: the first Configure (newWindow's, which shows the
 	// window) ran. Clack patch (CLACK_PATCHES.md §20).
 	configured bool
+	// mousePID is the mouse's pointer ID, for a pointer.Leave from a
+	// message that has none; ncPressed: a press on a caption button went
+	// to the program. Clack patch (CLACK_PATCHES.md §22).
+	mousePID  pointer.ID
+	ncPressed bool
 }
 
 const _WM_WAKEUP = windows.WM_USER + iota
@@ -353,6 +358,12 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 		w.config.Focused = false
 		w.ProcessEvent(ConfigEvent{Config: w.config})
 	case windows.WM_NCHITTEST:
+		if w.hiddenTitle() { // Clack patch (CLACK_PATCHES.md §22)
+			x, y := coordsFromlParam(lParam)
+			np := windows.Point{X: int32(x), Y: int32(y)}
+			windows.ScreenToClient(w.hwnd, &np)
+			return w.hiddenTitleHitTest(int(np.X), int(np.Y), lParam)
+		}
 		if w.config.Decorated {
 			// Let the system handle it.
 			break
@@ -388,6 +399,13 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 		windows.PostQuitMessage(0)
 		return 0
 	case windows.WM_NCCALCSIZE:
+		if w.hiddenTitle() {
+			// Clack patch (CLACK_PATCHES.md §22): lParam is the
+			// NCCALCSIZE_PARAMS whose first rectangle is the window's
+			// (wParam TRUE), or that rectangle (FALSE).
+			w.hiddenTitleCalcSize((*windows.Rect)(unsafe.Pointer(lParam)))
+			return 0
+		}
 		if w.config.Decorated {
 			// Let Windows handle decorations.
 			break
@@ -426,6 +444,11 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 		if w.config.Decorated {
 			frameDims = w.frameDims
 		}
+		if w.hiddenTitle() {
+			// Clack patch (CLACK_PATCHES.md §22): the restored frame,
+			// also while maximized (frameDims is the maximized one then)
+			frameDims = w.hiddenTitleFrame()
+		}
 		if p := w.config.MinSize; p.X > 0 || p.Y > 0 {
 			p = p.Add(frameDims)
 			mm.PtMinTrackSize = windows.Point{
@@ -439,6 +462,28 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 				X: int32(p.X),
 				Y: int32(p.Y),
 			}
+		}
+		return 0
+	case windows.WM_NCPOINTERUPDATE, windows.WM_NCPOINTERDOWN, windows.WM_NCPOINTERUP:
+		// Clack patch (CLACK_PATCHES.md §22): the caption buttons' input
+		// reaches the program's widgets.
+		if w.hiddenTitle() && w.hiddenTitlePointer(msg, wParam, lParam) {
+			return 0
+		}
+	case windows.WM_POINTERLEAVE:
+		if w.hiddenTitle() { // Clack patch (CLACK_PATCHES.md §22)
+			pid := getPointerIDwParam(wParam)
+			if pi, err := windows.GetPointerInfo(uint32(pid)); err == nil && pi.PointerType == windows.PT_MOUSE {
+				w.hiddenTitleLeave(pid)
+			}
+		}
+	case windows.WM_NCMOUSELEAVE:
+		if w.hiddenTitle() { // Clack patch (CLACK_PATCHES.md §22)
+			w.hiddenTitleLeave(w.mousePID)
+		}
+	case _WM_CLACK_FRAME:
+		if w.hiddenTitle() { // Clack patch (CLACK_PATCHES.md §22)
+			w.refreshFrame()
 		}
 		return 0
 	case windows.WM_SETCURSOR:
@@ -668,6 +713,7 @@ func (w *window) pointerUpdate(pi windows.PointerInfo, pid pointer.ID, kind poin
 	src := pointer.Touch
 	if pi.PointerType == windows.PT_MOUSE {
 		src = pointer.Mouse
+		w.mousePID = pid // Clack patch (CLACK_PATCHES.md §22)
 	}
 
 	x, y := coordsFromlParam(lParam)
@@ -925,6 +971,7 @@ func (w *window) Configure(options []Option) {
 	w.config.MinSize = cnf.MinSize
 	w.config.MaxSize = cnf.MaxSize
 	w.config.panel = cnf.panel
+	w.config.hiddenTitleBar = cnf.hiddenTitleBar // Clack patch (CLACK_PATCHES.md §22)
 	windows.SetWindowText(w.hwnd, cnf.Title)
 
 	style := windows.GetWindowLong(w.hwnd, windows.GWL_STYLE)
@@ -968,7 +1015,13 @@ func (w *window) Configure(options []Option) {
 		wr := windows.GetWindowRect(w.hwnd)
 		x = wr.Left
 		y = wr.Top
-		if cnf.Decorated {
+		if cnf.Decorated && cnf.hiddenTitleBar {
+			// Clack patch (CLACK_PATCHES.md §22): the borders on the
+			// left, right and bottom, no caption.
+			f := w.hiddenTitleFrame()
+			width += int32(f.X)
+			height += int32(f.Y)
+		} else if cnf.Decorated {
 			// Compute client size and position. Note that the client size is
 			// equal to the window size when we are in control of decorations.
 			r := windows.Rect{

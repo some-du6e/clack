@@ -174,13 +174,19 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	if tn.Hidden() {
 		return
 	}
+	// Windows: the nav is the window's caption (titlebar.go): its drag
+	// areas under every widget, and the caption buttons' 138px at the end
+	// of the right container
+	wco := a.wcoNavReserve(gtx)
+	a.wcoNavAreas(gtx, width, h, wco, true)
+	sx, sw := a.topNavSearch(gtx, primaryX, width, wco)
 	left := clsTopNavLeft.Enter(gtx, 0, 0)
 	a.appMenuButton(gtx, h) // appmenu.go: Linux and Windows
 	// history buttons: 26×26, 6px gaps, right-aligned 9px before the search.
 	b := gtx.Dp(26)
 	gap := gtx.Dp(6)
 	y := (h - b) / 2
-	x := primaryX - gtx.Dp(9) - b
+	x := sx - gtx.Dp(9) - b
 	for i := 2; i >= 0; i-- {
 		name := [...]string{"back", "forward", "history"}[i]
 		btn := a.clicks.get("nav." + name)
@@ -202,23 +208,13 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	}
 	left.Leave()
 	if clicked(a.clicks.get("nav.history")) { // the rightmost of the three
-		hx := primaryX - gtx.Dp(9) - b
+		hx := sx - gtx.Dp(9) - b
 		a.openHistoryMenu(image.Rect(hx, y, hx+b, y+b))
 	}
 
-	// search pill: starts at the primary panel's left edge. Slack's middle
-	// container is flex 2 1 0 (max 1000px) beside a right container of
-	// flex 1 0 auto (~88px of buttons): ⅔ of what's left after the 4px
-	// right padding, the sidebar edge and those 88px.
-	sw := (width - gtx.Dp(4) - primaryX - gtx.Dp(88)) * 2 / 3
-	if max := gtx.Dp(1000); sw > max {
-		sw = max
-	}
-	if sw < gtx.Dp(200) {
-		sw = gtx.Dp(200)
-	}
+	// search pill (topNavSearch)
 	sh := gtx.Dp(28)
-	sorg := image.Pt(primaryX, (h-sh)/2)
+	sorg := image.Pt(sx, (h-sh)/2)
 	a.searchPill = image.Rectangle{Min: sorg, Max: sorg.Add(image.Pt(sw, sh))}
 	at(gtx, sorg, image.Pt(sw, sh), func(gtx layout.Context) layout.Dimensions {
 		d := clickArea(gtx, a.clicks.get("nav.search"), func(gtx layout.Context, sz image.Point, hovered bool) {
@@ -257,17 +253,56 @@ func (a *App) layoutTopNav(gtx layout.Context, primaryX, width int) {
 	// help button at the right edge: Slack's HelpButton. Plugins add
 	// buttons before it (StreamerMode, Taut's What's new), so lay it out
 	// right-aligned in the space after the search pill.
-	horg := image.Pt(width-gtx.Dp(34), y)
+	// The Windows controls (wco px) end the right container.
+	horg := image.Pt(width-gtx.Dp(34)-wco, y)
 	rs := clsTopNavRight.Enter(gtx, 0, 0)
 	call, d := measured(gtx, func(gtx layout.Context) layout.Dimensions {
-		gtx.Constraints = layout.Constraints{Max: image.Pt(max(width-gtx.Dp(8)-(sorg.X+sw+gtx.Dp(8)), b), h)}
+		gtx.Constraints = layout.Constraints{Max: image.Pt(max(width-gtx.Dp(8)-wco-(sorg.X+sw+gtx.Dp(8)), b), h)}
 		return slackc.Component(gtx, "HelpButton", navHelp{a: a, org: horg, b: b}, nil, navHelp.layout)
 	})
 	rs.Leave()
-	place(gtx, call, image.Pt(width-gtx.Dp(8)-d.Size.X, (h-d.Size.Y)/2))
+	place(gtx, call, image.Pt(width-gtx.Dp(8)-wco-d.Size.X, (h-d.Size.Y)/2))
 	if clicked(a.clicks.get("nav.help")) {
 		a.helpClick() // update_ui.go: the Help flexpane while an update waits
 	}
+}
+
+// topNavSearch is the search box's x and width (px). Slack's middle
+// container is flex 2 1 0 (min 40px, max 1000px) beside a right container
+// of flex 1 0 auto (~88px of buttons, and on Windows the 138px windows
+// controls, wco px): ⅔ of what's left after the nav's 4px right padding,
+// the left container and the right container's own width. The left
+// container is the sidebar's edge (flex none, flexBasis
+// leftContainerWidth) except in a window narrower than 668px (668 +
+// 138/zoom with the windows controls: TopNav's leftContainerInlineStyle)
+// or wider than 2000px, where it grows too (flex 1 0 0, never under the
+// history buttons it holds) after .p-ia4_top_nav__native_ui_spacer (2 ×
+// 12px + 52px / zoom).
+func (a *App) topNavSearch(gtx layout.Context, primaryX, width, wco int) (x, w int) {
+	right := gtx.Dp(88) + wco
+	css := float32(width) / gtx.Metric.PxPerDp
+	narrowAt := float32(wcoNarrowW)
+	if wco > 0 {
+		narrowAt += wcoReserveW / a.zoomFactor()
+	}
+	x = primaryX
+	if css < narrowAt || css > wcoWideW {
+		spacer := gtx.Dp(wcoNativeUIPad) + int(math.Round(float64(wcoNativeUIW*a.wcoScale(gtx))))
+		free := max(width-gtx.Dp(4)-spacer-right, 0)
+		left, mid := free/4, free/2 // grow 1 : 2 : 1
+		if mid > gtx.Dp(1000) {
+			mid = gtx.Dp(1000)
+			left = (free - mid) / 2
+		}
+		if minLeft := gtx.Dp(26*3 + 6*2 + 9); left < minLeft { // the history buttons
+			left = minLeft
+			mid = min((free-left)*2/3, gtx.Dp(1000))
+		}
+		x, w = spacer+left, mid
+	} else {
+		w = min((width-gtx.Dp(4)-primaryX-right)*2/3, gtx.Dp(1000))
+	}
+	return x, max(w, gtx.Dp(200))
 }
 
 // ---- tab rail (70px) ----
