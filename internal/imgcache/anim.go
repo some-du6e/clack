@@ -265,10 +265,11 @@ func (c *Cache) startPlay(k key, forced bool) {
 		return
 	}
 	switch {
-	case held > 0 && held <= c.maxBytes/8: // the entry keeps them for next time
+	case held > 0 && held <= c.maxBytes/(2*gifShare): // the entry keeps them for next time
 		e.gif = src
 		e.n += held
 		c.bytes += held
+		c.keptGIFLocked(e)
 	case held > 0 && !p.keep: // only the player holds them, while it plays
 		p.n += held
 	}
@@ -421,23 +422,15 @@ func (c *Cache) animSweep() {
 	}
 }
 
-// fitLocked makes room for need more bytes by evicting what nobody drew
-// in the last animGrace, least recently used first, and reports whether
-// they fit.
+// fitLocked makes room for need more bytes by letting go of what nobody
+// drew in the last animGrace (shedLocked), and reports whether they fit.
+// A player wanting over half the budget doesn't start (nothing is evicted
+// for it): it shows its still.
 func (c *Cache) fitLocked(need int, now time.Time) bool {
-	ms := now.UnixMilli()
-	for c.bytes+need > c.maxBytes {
-		el := c.lru.Back()
-		if el == nil {
-			return false
-		}
-		e := el.Value.(*entry)
-		if ms-e.used < animGrace.Milliseconds() {
-			return false // the rest is on screen
-		}
-		c.dropLocked(el)
+	if need > c.maxBytes/2 {
+		return false
 	}
-	return true
+	return c.shedLocked(c.maxBytes-need, now)
 }
 
 // SetAnimate turns playing on or off for Get: Slack's Accessibility >

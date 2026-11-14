@@ -87,6 +87,7 @@ type Cache struct {
 	playing  map[*entry]struct{}
 	animT    *time.Timer
 	advances uint64 // frames the players moved on (Stats)
+	gifBytes int    // the entries' encoded GIF bytes (e.gif): at most gifShare of the budget
 }
 
 // failure is a key's failed load: how many in a row, and when Get may try
@@ -216,6 +217,7 @@ func (c *Cache) SetDir(dir string) {
 	for el := c.lru.Front(); el != nil; el = el.Next() {
 		c.releaseLocked(el.Value.(*entry))
 	}
+	c.gifBytes = 0
 	c.entries = map[key]*list.Element{}
 	c.byURL = map[string]map[int]*list.Element{}
 	c.lru.Init()
@@ -554,12 +556,15 @@ func (c *Cache) load(k key) {
 		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().UnixMilli(), px: px}
 		if an != nil {
 			e.frames = len(an.ix.frames)
-			if len(an.data) <= c.maxBytes/8 { // the bytes for playing it (anim.go)
+			if len(an.data) <= c.maxBytes/(2*gifShare) { // the bytes for playing it (anim.go)
 				e.gif = an
 				e.n += len(an.data)
 			}
 		}
 		c.putLocked(e) // over an interim one (derive)
+		if e.gif != nil {
+			c.keptGIFLocked(e)
+		}
 		c.evict()
 	}
 	inv := c.invalidate
@@ -573,21 +578,9 @@ func (c *Cache) load(k key) {
 // playing on screen (the largest first; each draws its still until
 // animRetry has passed), and only then, as before, images on screen.
 func (c *Cache) evict() {
-	if c.bytes <= c.maxBytes {
-		return
-	}
 	now := time.Now()
-	ms := now.UnixMilli()
-	cold := func(e *entry) bool { return ms-e.used >= animGrace.Milliseconds() }
-	for el := c.lru.Back(); el != nil && c.bytes > c.maxBytes; el = el.Prev() {
-		if e := el.Value.(*entry); cold(e) && e.gif != nil && e.play == nil {
-			e.n -= len(e.gif.data)
-			c.bytes -= len(e.gif.data)
-			e.gif = nil
-		}
-	}
-	for c.bytes > c.maxBytes && c.lru.Len() > 1 && cold(c.lru.Back().Value.(*entry)) {
-		c.dropLocked(c.lru.Back())
+	if c.shedLocked(c.maxBytes, now) {
+		return
 	}
 	for c.bytes > c.maxBytes && len(c.playing) > 0 {
 		var big *entry
@@ -603,6 +596,27 @@ func (c *Cache) evict() {
 	for c.bytes > c.maxBytes && c.lru.Len() > 1 {
 		c.dropLocked(c.lru.Back())
 	}
+}
+
+// shedLocked brings the decoded bytes down to target by letting go of
+// what nobody drew in the last animGrace, least recently used first:
+// animated GIFs' encoded bytes before stills. It reports whether they got
+// there.
+func (c *Cache) shedLocked(target int, now time.Time) bool {
+	if c.bytes <= target {
+		return true
+	}
+	ms := now.UnixMilli()
+	cold := func(e *entry) bool { return ms-e.used >= animGrace.Milliseconds() }
+	for el := c.lru.Back(); el != nil && c.bytes > target && c.gifBytes > 0; el = el.Prev() {
+		if e := el.Value.(*entry); cold(e) && e.play == nil {
+			c.dropGIFLocked(e)
+		}
+	}
+	for c.bytes > target && c.lru.Len() > 1 && cold(c.lru.Back().Value.(*entry)) {
+		c.dropLocked(c.lru.Back())
+	}
+	return c.bytes <= target
 }
 
 // putLocked adds e as the most recent entry, replacing one at its key.
@@ -624,10 +638,42 @@ func (c *Cache) putLocked(e *entry) {
 	c.bytes += e.n
 }
 
+// gifShare is the most of the budget animated GIFs' encoded bytes (kept
+// for playing them again) take; past it the least recently used go
+// first, the ones playing last. The rest of the budget is pixels.
+const gifShare = 4 // a quarter
+
+// keptGIFLocked counts e's encoded bytes (just kept) and lets go of older
+// ones past the budget's gifShare.
+func (c *Cache) keptGIFLocked(e *entry) {
+	c.gifBytes += len(e.gif.data)
+	for el := c.lru.Back(); el != nil && c.gifBytes > c.maxBytes/gifShare; el = el.Prev() {
+		if o := el.Value.(*entry); o != e && o.play == nil {
+			c.dropGIFLocked(o)
+		}
+	}
+}
+
+// dropGIFLocked lets go of e's encoded bytes (a player draws its still
+// again after fetching them anew).
+func (c *Cache) dropGIFLocked(e *entry) {
+	if e.gif == nil {
+		return
+	}
+	n := len(e.gif.data)
+	e.n -= n
+	c.bytes -= n
+	c.gifBytes -= n
+	e.gif = nil
+}
+
 // dropLocked removes entry el.
 func (c *Cache) dropLocked(el *list.Element) {
 	e := el.Value.(*entry)
 	c.releaseLocked(e)
+	if e.gif != nil {
+		c.gifBytes -= len(e.gif.data)
+	}
 	c.lru.Remove(el)
 	if c.entries[e.k] == el {
 		delete(c.entries, e.k)

@@ -443,6 +443,18 @@ func TestGIFBurstStaysInBudget(t *testing.T) {
 		if s.Bytes > limit {
 			t.Fatalf("%d bytes over the %d budget: %+v", s.Bytes, limit, s)
 		}
+		c.mu.Lock()
+		sum := 0
+		for el := c.lru.Front(); el != nil; el = el.Next() {
+			if e := el.Value.(*entry); e.gif != nil {
+				sum += len(e.gif.data)
+			}
+		}
+		kept := c.gifBytes
+		c.mu.Unlock()
+		if sum != kept || kept > limit/gifShare {
+			t.Fatalf("encoded GIF bytes: entries hold %d, counted %d (at most %d)", sum, kept, limit/gifShare)
+		}
 	}
 	draw := func(us []string, d time.Duration) {
 		for dl := time.Now().Add(d); time.Now().Before(dl); time.Sleep(8 * time.Millisecond) {
