@@ -1277,7 +1277,7 @@ func (v *View) hoverCard(st *Style, h Handler) {
 		return
 	}
 	if channel && v.opts.Canvas && v.d.targets[t].kind == tChannel {
-		c.ReportCanvasChannel(k, v.d.targets[t].id, r, v.ptr) // the canvas's ChannelHovercard (CardViewHovercardTrigger)
+		c.ReportCanvasMention(k, v.d.targets[t].id, v.opts.CanvasFile, v.opts.CanvasSection, r, v.ptr) // the canvas's ChannelHovercard (CardViewHovercardTrigger)
 		return
 	}
 	if channel {

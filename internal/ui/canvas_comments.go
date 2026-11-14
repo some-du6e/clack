@@ -88,3 +88,62 @@ func (a *App) OpenCommentThread(file, ch, ts string) {
 
 // SecondaryOrigin is views.SecondaryOriginer: the pane's window origin.
 func (a *App) SecondaryOrigin() image.Point { return a.secondaryOrigin }
+
+// canvasViews are the live views of canvas file: the side panel's, the
+// full view's and the channel tabs'.
+func (a *App) canvasViews(file string) []*canvasview.View {
+	var out []*canvasview.View
+	add := func(v View) {
+		if cv, ok := v.(*canvasview.View); ok && cv.ID() == file {
+			out = append(out, cv)
+		}
+	}
+	add(a.secondary.view)
+	if p := a.secondary.prev; p != nil {
+		add(p.view)
+	}
+	add(a.views[Route("docs/"+file)])
+	if m, ok := canvasTabs.Load(a); ok {
+		for _, v := range m.(map[string]*canvasview.View) {
+			add(v)
+		}
+	}
+	return out
+}
+
+// CanvasPermalink is popups.CanvasMentions: the canvas's permalink, from
+// a view that loaded it, else the last files.info read.
+func (a *App) CanvasPermalink(file string) string {
+	for _, v := range a.canvasViews(file) {
+		if d := v.Doc(); d != nil && d.Info.Permalink != "" {
+			return d.Info.Permalink
+		}
+	}
+	if c := a.Core(); c != nil {
+		if i, ok := c.KnownCanvasInfo(file); ok {
+			return i.Permalink
+		}
+	}
+	return ""
+}
+
+// CanvasMentionRemovable is popups.CanvasMentions (Remove mention).
+func (a *App) CanvasMentionRemovable(file, section, channel string) bool {
+	for _, v := range a.canvasViews(file) {
+		if v.MentionRemovable(section, channel) {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveCanvasMention is popups.CanvasMentions (Remove mention): one view
+// saves; the others follow the document_update.
+func (a *App) RemoveCanvasMention(file, section, channel string) {
+	for _, v := range a.canvasViews(file) {
+		if v.MentionRemovable(section, channel) {
+			v.RemoveMention(section, channel)
+			return
+		}
+	}
+}

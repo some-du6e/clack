@@ -4,6 +4,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"net/url"
 	"strings"
 	"time"
 
@@ -56,14 +57,25 @@ import (
 //     object in the hovercard context, "View channel details" ("View
 //     conversation details" for a DM or group DM: openChannelDetails) and
 //     "Copy name" (copyChannelNameById: the name with its #), both
-//     disabled for an unknown or non-existent channel. Clack's canvas has
-//     no comment threads, reactions, inline-control edits (Display as,
-//     Remove mention) or anchor links (Report to Slack), so those rows,
-//     which need the editor's own section state, aren't offered.
+//     disabled for an unknown or non-existent channel; then, after a
+//     separator, Report to Slack (getReportSectionMenuTemplate: with
+//     isReportToSlackEnabled, the section's anchor link — the canvas's
+//     permalink with focus_section_id — on the team's
+//     /help/requests/report-content?u=…&type=canvas_section), and after
+//     another, Remove mention (getRemoveSectionMenuTemplate, when the
+//     control isRemovable: the section saved without the mention,
+//     canvasview/mention.go). The rows Quip writes through its binary
+//     edit-document — Add a comment / View comments and Add a reaction /
+//     View reactions (a highlight control, the comment thread's anchor)
+//     and Display as (the control's unfurl type) — aren't offered:
+//     canvases.edit has no form for them (docs/CANVASES.md "Comments").
 type CanvasChannelCard struct {
 	h      Host
 	anchor image.Rectangle
 	id     string
+	// file and section are the canvas and the section the mention is in
+	// ("" when the trigger didn't say)
+	file, section string
 
 	rect image.Rectangle
 	done bool
@@ -80,7 +92,34 @@ type CanvasChannelCard struct {
 // NewCanvasChannelCard is the card for the channel id over anchor (the
 // mention's bounds, window coordinates).
 func NewCanvasChannelCard(h Host, anchor image.Rectangle, id string) *CanvasChannelCard {
-	return &CanvasChannelCard{h: h, anchor: anchor, id: id, moreTip: TipState{Delay: 60 * time.Millisecond}}
+	return NewCanvasMentionCard(h, anchor, id, "", "")
+}
+
+// NewCanvasMentionCard is NewCanvasChannelCard for the mention in canvas
+// file's section.
+func NewCanvasMentionCard(h Host, anchor image.Rectangle, id, file, section string) *CanvasChannelCard {
+	return &CanvasChannelCard{h: h, anchor: anchor, id: id, file: file, section: section, moreTip: TipState{Delay: 60 * time.Millisecond}}
+}
+
+// CanvasMentions is optionally implemented by the Host: the canvas a
+// mention is in, for the card's section rows.
+type CanvasMentions interface {
+	// CanvasPermalink is canvas file's permalink ("" when unknown).
+	CanvasPermalink(file string) string
+	// CanvasMentionRemovable and RemoveCanvasMention are Remove mention.
+	CanvasMentionRemovable(file, section, channel string) bool
+	RemoveCanvasMention(file, section, channel string)
+}
+
+// SectionLink is a canvas section's anchor link: the permalink with
+// focus_section_id appended (URL.searchParams.append, so the id is
+// percent-encoded), as Quip's getUrl builds it.
+func SectionLink(permalink, section string) string {
+	sep := "?"
+	if strings.Contains(permalink, "?") {
+		sep = "&"
+	}
+	return permalink + sep + "focus_section_id=" + url.QueryEscape(section)
 }
 
 // Rect is the drawn card (window coordinates).
@@ -215,7 +254,7 @@ func (p *CanvasChannelCard) MenuItems() []MenuItem {
 	if cv.Kind != "im" && cv.Kind != "mpim" {
 		name = "#" + name // publicChannelIncludeHashSign, privateChannelUseHashSign
 	}
-	return []MenuItem{
+	items := []MenuItem{
 		MenuItem{Key: "view_channel_details", Label: label, Disabled: unknown, Do: func() {
 			p.done = true
 			if OpenChannelDetails != nil {
@@ -226,6 +265,26 @@ func (p *CanvasChannelCard) MenuItems() []MenuItem {
 			copyText(gtx, name)
 		}}.In(nsMenu),
 	}
+	cm, _ := p.h.(CanvasMentions)
+	if cm == nil || p.file == "" || p.section == "" {
+		return items
+	}
+	file, section := p.file, p.section
+	if link := cm.CanvasPermalink(file); link != "" && actReporting(p.h) {
+		items = append(items, MenuItem{Separator: true},
+			MenuItem{Key: "remove", Label: "Report to Slack", Do: func() { // getReportSectionMenuTemplate's key and data-qa
+				p.done = true
+				reportSection(p.h, SectionLink(link, section))
+			}}.In(nsFiles))
+	}
+	if cm.CanvasMentionRemovable(file, section, id) {
+		items = append(items, MenuItem{Separator: true},
+			MenuItem{Key: "remove", Label: "Remove mention", Do: func() {
+				p.done = true
+				cm.RemoveCanvasMention(file, section, id)
+			}}.In(nsFiles))
+	}
+	return items
 }
 
 // Layout draws the card in the window (gtx at the window origin).

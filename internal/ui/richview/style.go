@@ -355,6 +355,10 @@ type Options struct {
 	// canvas's own channel card (Slack's embedded ChannelHovercard,
 	// hovercard Request.Canvas), not the message ChannelHoverCard.
 	Canvas bool
+	// CanvasFile and CanvasSection are the canvas and the section the doc
+	// is (Canvas only): the channel card's section rows (Report to Slack,
+	// Remove mention) act on them.
+	CanvasFile, CanvasSection string
 	// Compact uses 13px/18px text (previews, reply bars, search results).
 	Compact bool
 	// Channel and TS identify the message, for the Slack-shaped props of

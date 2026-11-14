@@ -205,7 +205,7 @@ func (a *App) hoverCardFrame(gtx layout.Context) {
 		// the canvas's embedded ChannelHovercard (popups/canvas_channel_card.go)
 		h.card, h.prev, h.chc = nil, nil, nil
 		if h.cvc == nil || h.gen != gen {
-			h.cvc = popups.NewCanvasChannelCard(a, req.Anchor, req.ChannelID)
+			h.cvc = popups.NewCanvasMentionCard(a, req.Anchor, req.ChannelID, req.CanvasFile, req.CanvasSection)
 			h.gen = gen
 		}
 		g := gtx

@@ -409,6 +409,21 @@ func reportMessage(h Host, link string) {
 	}
 }
 
+// reportSection is getReportSectionMenuTemplate's click: the team's
+// /help/requests/report-content?u=<the section's anchor link>&type=canvas_section.
+func reportSection(h Host, link string) {
+	base := "https://" + teamDomain(h) + ".slack.com/"
+	if a := h.Core(); a != nil && a.TeamURL() != "" {
+		base = a.TeamURL()
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	if err := openReport(base + "help/requests/report-content?u=" + link + "&type=canvas_section"); err != nil {
+		h.Toast("Couldn't open the link: " + errText(err))
+	}
+}
+
 // jsEncodeURI is JavaScript's encodeURI: everything but the URI's
 // reserved and unreserved characters is percent-encoded (so a
 // permalink's ?thread_ts=…&cid=… stays as it is, as in Slack).

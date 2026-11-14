@@ -228,7 +228,7 @@ func (r *row) commentRootLayout(gtx layout.Context, rc *rowCtx) layout.Dimension
 	}
 	y -= dp(gtx, 4) // .p-quip_comment_root__body margin-bottom -4px
 	content := rec.Stop()
-	rrect(gtx.Ops, image.Rect(padL, padT, padL+bar, max(y, padT+dp(gtx, 8))), dp(gtx, 8), barCol)
+	rrect(gtx.Ops, image.Rect(padL, padT, padL+bar, max(y, padT+dp(gtx, 8))), bar/2, barCol) // radius 8, clamped to the 4px width
 	content.Add(gtx.Ops)
 	r.reactRects = r.reactRects[:0]
 	r.addRect = image.Rectangle{}

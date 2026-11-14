@@ -586,8 +586,8 @@ func (v *CanvasComments) rootRow(gtx C, m *core.Message, hovered bool) D {
 			bd = v.msgBody(g, m, false, 0)
 		}
 		call := rec.Stop()
-		h := max(bd.Size.Y-gtx.Dp(4), gtx.Dp(8)) // .p-quip_comment_root__body margin-bottom -4px
-		rrect(gtx, image.Rect(0, 0, bar, h), gtx.Dp(8), v.tok("base-ter"))
+		h := max(bd.Size.Y-gtx.Dp(4), gtx.Dp(8))                       // .p-quip_comment_root__body margin-bottom -4px
+		rrect(gtx, image.Rect(0, 0, bar, h), bar/2, v.tok("base-ter")) // radius 8, clamped to the 4px width
 		t := op.Offset(image.Pt(bar+gtx.Dp(12), 0)).Push(gtx.Ops)
 		call.Add(gtx.Ops)
 		t.Pop()

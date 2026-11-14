@@ -10,8 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/canvas"
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/canvasview"
+	"github.com/some-du6e/clack/internal/ui/hovercard"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
@@ -112,8 +116,11 @@ func TestCanvasComments(t *testing.T) {
 			// the filter menu: Unread
 			e.click(rectMid(s.FilterRect()))
 			e.settle(200 * time.Millisecond)
+			if len(e.a.overlays) == 0 {
+				t.Fatal("the Filter button opened no menu")
+			}
 			e.commentShot(t, "canvas-comments-filter-"+mode)
-			e.key("Escape", 0)
+			e.a.overlays = nil
 			e.frame()
 			s.SetFilter(core.CommentsUnread)
 			s = e.commentStream(t)
@@ -195,5 +202,78 @@ func TestCanvasCommentsEmpty(t *testing.T) {
 	s := e.commentStream(t)
 	if len(s.Roots()) != 0 {
 		t.Fatalf("%d roots on a canvas without comments", len(s.Roots()))
+	}
+}
+
+// The canvas channel card's section rows: with content reporting on,
+// Report to Slack; on a section Clack can save without it, Remove
+// mention, which saves the section without the mention (canvases.edit
+// replace). A section Clack can't save (the kitchen sink's underlined
+// paragraph) offers no Remove mention.
+func TestCanvasChannelCardRows(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	const file, sec, ch = "F0CANVMNT01", "temp:C:MNT0001", "C0FAKE00000"
+	bs := canvas.ParseMarkdown("Talk in ![](#"+ch+") today.", nil)
+	bs[0].ID = sec
+	fs.AddCanvas(fakeslack.FakeCanvas{ID: file, Title: "Mentions", Doc: canvas.Doc{Blocks: bs}})
+	e := startEnv(t, fs, t.TempDir())
+	e.waitReady()
+	e.a.Core().SetContentReporting(true)
+	e.openChannel(ch)
+	e.a.OpenCanvas(file)
+	e.until("the canvas's mention", 15*time.Second, func() bool { return e.a.CanvasMentionRemovable(file, sec, ch) })
+	if e.a.CanvasPermalink(file) == "" {
+		t.Fatal("no permalink for the open canvas")
+	}
+	ctl := &e.a.hover.ctl
+	anchor := image.Rect(e.size.X-400, 220, e.size.X-340, 240)
+	ctl.Show(hovercard.Request{Key: "canvas-mention-rows", ChannelID: ch, Canvas: true, CanvasFile: file, CanvasSection: sec,
+		Delay: hovercard.CanvasShowDelay, Anchor: anchor}, time.Now())
+	e.frame()
+	c := e.a.hover.cvc
+	if c == nil {
+		t.Fatal("no canvas card")
+	}
+	items := c.MenuItems()
+	var labels []string
+	for _, it := range items {
+		if it.Separator {
+			labels = append(labels, "─")
+			continue
+		}
+		labels = append(labels, it.Label)
+	}
+	if got := strings.Join(labels, "|"); got != "View channel details|Copy name|─|Report to Slack|─|Remove mention" {
+		t.Fatalf("menu %q", got)
+	}
+	if l := popups.SectionLink("https://x.slack.com/docs/T1/"+file, sec); l != "https://x.slack.com/docs/T1/"+file+"?focus_section_id=temp%3AC%3AMNT0001" {
+		t.Errorf("section link %q", l)
+	}
+	items[len(items)-1].Do()
+	e.until("the section saved without the mention", 10*time.Second, func() bool {
+		for _, ed := range fs.CanvasEdits() {
+			if cs := ed.Get("changes"); strings.Contains(cs, sec) && strings.Contains(cs, "replace") {
+				if strings.Contains(cs, "![](#") {
+					t.Fatalf("the mention is still in %s", cs)
+				}
+				return true
+			}
+		}
+		return false
+	})
+
+	// the kitchen sink's mention sits in a paragraph with underline
+	e.a.OpenCanvas(fakeslack.CanvasChannel)
+	e.until("the kitchen sink", 15*time.Second, func() bool {
+		v, ok := e.a.secondary.view.(*canvasview.View)
+		return ok && v.ID() == fakeslack.CanvasChannel && v.Doc() != nil
+	})
+	e.settle(300 * time.Millisecond)
+	if e.a.CanvasMentionRemovable(fakeslack.CanvasChannel, "temp:C:KS1p1", ch) {
+		t.Error("Remove mention on a section Clack can't save")
 	}
 }
