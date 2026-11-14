@@ -166,6 +166,9 @@ type User struct {
 	DisplayName, FirstName, LastName string
 	EnterpriseID                     string
 	Teams                            []string
+	// EnterpriseAdmin is enterprise_user.is_admin (Xfgd FQ
+	// isCurrentUserEnterpriseAdmin, for the viewer).
+	EnterpriseAdmin bool
 	// BotID and AppID are a bot user's profile.bot_id and api_app_id
 	// (Slack opens AppHoverCard for them instead of the member card).
 	BotID, AppID string

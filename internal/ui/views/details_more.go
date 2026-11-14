@@ -57,7 +57,8 @@ const (
 
 // cdSettingsPerms are the permissions.info checks the Settings tab needs.
 var cdSettingsPerms = []string{core.PermRenameChannel, core.PermManageChannelPermission,
-	core.PermEditChannelAIExclusions, core.PermManageChannelTabs, core.PermManageChannelPosting}
+	core.PermEditChannelAIExclusions, core.PermManageChannelTabs, core.PermManageChannelPosting,
+	core.PermConvertPrivateToPublic}
 
 // Stacked dialog kinds.
 const (
@@ -70,7 +71,8 @@ const (
 	cdDlgHide
 	cdDlgAddPeople
 	cdDlgSharing
-	cdDlgPosting // PostingPermissionsModal (details_posting.go)
+	cdDlgPosting  // PostingPermissionsModal (details_posting.go)
+	cdDlgToPublic // ConvertChannelToPublicModal (details_convert_public.go)
 )
 
 // cdExtra is the dialog state behind the Slack parts above.
@@ -85,6 +87,8 @@ type cdExtra struct {
 	memPermRow, guestPermRow      widget.Clickable
 	suggest, huddleLearn, aiLearn widget.Clickable
 	copyNames, copyEmails         widget.Clickable
+	toPublicRow                   widget.Clickable // Change to a public channel (details_convert_public.go)
+	hidePrefs                     widget.Clickable // HideUserConfirmationModal's "preferences"
 	mpdmName                      widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
 	postRow, postLearn            widget.Clickable // Posting permissions (details_posting.go)
 	postSub                       async[core.PostingPrefs]
@@ -215,6 +219,10 @@ func (d *ChannelDetails) settingsSections(inf core.ChannelDetails) []string {
 	if (e == "channel" || e == "mpdm") && c.C != nil && c.C.Creds.EnterpriseID != "" {
 		out = append(out, cdSecCopyMembers)
 	}
+	// managing-this-channel: the rows Clack has (details_convert_public.go)
+	if d.toPublicOpt(inf).show {
+		out = append(out, cdSecManaging)
+	}
 	return out
 }
 
@@ -329,6 +337,8 @@ func (d *ChannelDetails) slackSettingsItems(inf core.ChannelDetails, name W) []W
 			card(d.memberSuggestField)
 		case cdSecCopyMembers:
 			card(d.copyMembersRows()...)
+		case cdSecManaging:
+			card(d.toPublicRow(inf))
 		}
 	}
 	if len(items) == 0 {
@@ -1224,7 +1234,7 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 		d.skModal(gtx, full, "Hide "+dl.userName+"?", true, []W{
 			d.hideLine("user-hide", "Their messages in channels will be hidden from you, and you won’t be notified when they mention or DM you."),
 			cdSpace(12),
-			d.hideLine("settings", "You can always unhide them later in preferences."),
+			d.hideLinkLine(),
 			cdSpace(12),
 			d.hideLine("notifications-off", "They won’t be notified that you’ve hidden them."),
 		}, []W{cancel, d.cdDlgButton(&dl.ok, btnDanger, "Hide This Person", dl.pending)})
@@ -1236,7 +1246,52 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 		}
 	case cdDlgPosting:
 		d.postingDialog(gtx, full, inf)
+	case cdDlgToPublic:
+		d.skModal(gtx, full, "Change to a public channel?", true, d.toPublicBody(inf, name),
+			[]W{cancel, d.cdDlgButton(&dl.ok, btnPrimary, "Change to Public", dl.pending)})
 	}
+}
+
+// cdHiddenHelpArticle is HideUserConfirmationModal's and Privacy &
+// visibility's HelpLink (articleId 0xf60181da113).
+const cdHiddenHelpArticle = "https://slack.com/help/articles/16905395872019"
+
+// hideLinkLine is the modal's settings row: "You can always unhide them
+// later in <Link>preferences</Link>.", the link a HelpLink, underlined
+// under a11y_underline_button_link with underline_links (CX15 bF).
+func (d *ChannelDetails) hideLinkLine() W {
+	return func(gtx C) D {
+		if d.x.hidePrefs.Clicked(gtx) {
+			hostHandler{d.h}.OpenURL(cdHiddenHelpArticle)
+		}
+		ul := d.h.Core().UnderlineButtonLinks()
+		return row(gtx, layout.Start,
+			layout.Rigid(func(gtx C) D {
+				return layout.Inset{Top: 1, Right: 12}.Layout(gtx, func(gtx C) D { return d.icon(gtx, "settings", 20, d.p.Sec) })
+			}),
+			layout.Flexed(1, func(gtx C) D {
+				return row(gtx, layout.Baseline,
+					layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Text, 1, "You can always unhide them later in ") }),
+					layout.Rigid(func(gtx C) D { return cdHelpLink(&d.base, gtx, &d.x.hidePrefs, 15, "preferences", ul) }),
+					layout.Rigid(func(gtx C) D { return d.para(gtx, 15, 22, wReg, d.p.Text, 1, ".") }),
+				)
+			}),
+		)
+	}
+}
+
+// cdHelpLink is HelpLink's BaseLink: the link blue, underlined on hover,
+// or always with underline (underlineStyle "underline").
+func cdHelpLink(b *base, gtx C, c *widget.Clickable, size unit.Sp, label string, underline bool) D {
+	return c.Layout(gtx, func(gtx C) D {
+		pointerCursor(gtx)
+		dims := b.para(gtx, size, 22, wReg, b.p.Link, 1, label)
+		if underline || c.Hovered() { // 1px, just under the baseline
+			y := dims.Size.Y - dims.Baseline + gtx.Dp(1)
+			fill(gtx, image.Rect(0, y, dims.Size.X, y+gtx.Dp(1)), b.p.Link)
+		}
+		return dims
+	})
 }
 
 // hideLine is one of HideUserConfirmationModal's icon rows.
@@ -1386,6 +1441,8 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 		case cdDlgHide:
 			uid, dm := dl.userID, dl.dmID
 			start(func(ctx context.Context) error { return c.HideUser(ctx, uid, dm) })
+		case cdDlgToPublic:
+			start(func(ctx context.Context) error { return c.ConvertToPublic(ctx, id) })
 		}
 	}
 	if !dl.pending {
@@ -1464,6 +1521,13 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 		}
 		d.closed = true
 		d.h.Navigate("dms")
+	case cdDlgToPublic:
+		if err != nil {
+			dl.err = toPublicError(err)
+			return
+		}
+		d.closeDialog()
+		d.refreshInfo()
 	}
 }
 
@@ -2176,7 +2240,8 @@ func (d *ChannelDetails) updateSlackParts(gtx C, inf core.ChannelDetails, loaded
 // Members row in a group DM), vip, hide, ai-use, guests, member-perms,
 // suggest, new-tab, ok, cancel, back, conversation-name (a group DM's
 // "Conversation name" Edit), posting (Settings › Posting permissions),
-// save, add-app ("Add an App" / "Add agents and apps").
+// save, add-app ("Add an App" / "Add agents and apps"), to-public
+// (Settings › Change to a public channel).
 func (d *ChannelDetails) Press(name string) {
 	cs := map[string]*widget.Clickable{
 		"leave": &d.leaveRow, "vip": &d.vip, "hide": &d.hide, "ai-use": &d.x.aiRow, "guests": &d.x.guestRow,
@@ -2184,6 +2249,7 @@ func (d *ChannelDetails) Press(name string) {
 		"ok": &d.x.dlg.ok, "cancel": &d.x.dlg.cancel, "back": &d.x.dlg.back,
 		"conversation-name": &d.x.mpdmName, "sharing": &d.x.sharingRow,
 		"posting": &d.x.postRow, "save": &d.x.dlg.ok, "add-app": &d.addApp,
+		"to-public": &d.x.toPublicRow,
 	}
 	if name == "add-people" {
 		if cdGroup(d.kind) == "im" {
@@ -2228,6 +2294,8 @@ func (d *ChannelDetails) Dialog() string {
 		return "posting"
 	case cdDlgHide:
 		return "hide"
+	case cdDlgToPublic:
+		return "to-public"
 	case cdDlgAddPeople:
 		if d.x.dlg.add != nil && d.x.dlg.add.step == 1 {
 			return "add-people-history"

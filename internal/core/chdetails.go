@@ -43,6 +43,7 @@ const (
 	PermManageChannelPosting    = "MANAGE_CHANNEL_POSTING_PERMISSIONS"
 	PermEditChannelAIExclusions = "EDIT_CHANNEL_AI_EXCLUSIONS"
 	PermManageChannelTabs       = "MANAGE_CHANNEL_TABS"
+	PermConvertPrivateToPublic  = "CONVERT_PRIVATE_TO_PUBLIC" // vcMK YD: Change to a public channel
 )
 
 // Account types of conversations.permissions.accountTypes.*.

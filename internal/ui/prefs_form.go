@@ -394,7 +394,11 @@ var prefsOpenURL = openURL
 func slackHelp(id string) string { return "https://slack.com/help/articles/" + id }
 
 // link is a 15px link on its own line (Slack's "Learn more", "Get help").
-func (f *prefsForm) link(key, label, url string) {
+func (f *prefsForm) link(key, label, url string) { f.linkU(key, label, url, false) }
+
+// linkU is link, underlined when underline is set (a HelpLink's
+// underlineStyle "underline": a11y_underline_button_link, CX15 bF).
+func (f *prefsForm) linkU(key, label, url string, underline bool) {
 	label = pt(label)
 	gtx, a := f.gtx, f.p.a
 	f.record("link", "link."+key, label, false, true)
@@ -402,7 +406,13 @@ func (f *prefsForm) link(key, label, url string) {
 	w := a.th.Measure(gtx, 15, theme.Regular, label)
 	at(gtx, image.Pt(0, f.y), image.Pt(w, gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 		return clickArea(gtx, b, nil, func(gtx layout.Context) layout.Dimensions {
-			return a.th.Label(gtx, 15, theme.Regular, f.p.colors().link, label)
+			col := f.p.colors().link
+			dims := a.th.Label(gtx, 15, theme.Regular, col, label)
+			if underline {
+				y := dims.Size.Y - dims.Baseline + gtx.Dp(1)
+				theme.Fill(gtx, image.Rect(0, y, dims.Size.X, y+gtx.Dp(1)), col)
+			}
+			return dims
 		})
 	})
 	if clicked(b) {

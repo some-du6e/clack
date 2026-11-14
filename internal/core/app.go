@@ -1036,7 +1036,7 @@ func (a *App) userOf(u *slack.User) User {
 		DisplayName: strings.TrimSpace(u.Profile.DisplayName), FirstName: u.Profile.FirstName, LastName: u.Profile.LastName,
 	}
 	if eu := u.EnterpriseUser; eu != nil {
-		v.EnterpriseID, v.Teams = eu.EnterpriseID, eu.Teams
+		v.EnterpriseID, v.Teams, v.EnterpriseAdmin = eu.EnterpriseID, eu.Teams, eu.IsAdmin
 	}
 	v.TeamID, v.External = a.locality(u)
 	if v.RealName == "​" {
