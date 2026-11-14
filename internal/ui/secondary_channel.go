@@ -55,41 +55,36 @@ func (a *App) OpenChannelSecondary(ch string) {
 	}
 	s := &a.secondary
 	if s.kind == secChannel && s.channel == ch && !s.hidden {
+		s.at = "" // the conversation itself again (OpenMessageSecondary sets it after)
 		return
 	}
-	a.secondary = secondaryState{kind: secChannel, channel: ch, width: s.width}
+	a.secondary = secondaryState{kind: secChannel, channel: ch, width: s.width, page: a.router.Current().Page()}
 	a.secondary.view = &secConvPane{a: a, ch: ch}
 	a.Invalidate()
 }
 
-// ViewTodo is LaterLabel's "View to-dos" (boot-shared wRj5 f): the To-dos
-// tab (setActiveTab todo), the to-do highlighted (setHighlightId) and,
-// without agentic IA (swdb TT), the message opened with forceTab Later: a
-// reply in its thread (jpad UX, highlightRoot), anything else in its
+// ViewTodo is LaterLabel's "View to-dos" (boot-shared wRj5 f) and the
+// rail's Later peek's rows: the To-dos tab (setActiveTab todo, the to-do
+// highlighted: setHighlightId, which only the old SavedItem rows read)
+// and, without agentic IA (swdb TT), the message opened with forceTab
+// Later: with a thread_ts (MessageLabels passes the message's; the peek's
+// jumpToSavedMessage its getMessageThreadTs) in its thread at the
+// message (jpad UX: replyTs, highlightTs, highlightRoot), else in its
 // conversation at the message (R9). The To-dos page is the primary view
 // here, so the message goes in the secondary column beside it, as Palc
 // puts a record there when the LaterList is the primary view; the page
-// selects the row while the column shows it (views.Later.SelectTodo).
+// selects the row while the column shows it (SecondaryAt). Slack's tab
+// switch is async, so the navigation still starts from the page the
+// label was clicked on (jumpToThreadReply's prevViewSet: openThreadAt).
 func (a *App) ViewTodo(ch, ts, thread string) {
-	if ch == "" || ts == "" {
-		a.Navigate("later")
-		return
-	}
+	prev := a.router.Current()
 	a.Navigate("later")
-	if thread != "" {
-		a.OpenThread(ch, thread)
-	} else {
-		a.OpenChannelSecondary(ch)
-		if h, ok := a.convoFor(ch, "").list.(interface{ Highlight(string) }); ok {
-			h.Highlight(ts)
-		}
-	}
-	if mkPage == nil {
-		return
-	}
-	r := Route("later")
-	if v, ok := a.view(r, func() View { return mkPage(a, r) }).(interface{ SelectTodo(ch, ts, thread string) }); ok {
-		v.SelectTodo(ch, ts, thread)
+	switch {
+	case ch == "" || ts == "":
+	case thread != "":
+		a.openThreadAt(ch, thread, ts, prev)
+	default:
+		a.OpenMessageSecondary(ch, ts)
 	}
 }
 
@@ -113,7 +108,7 @@ func (a *App) OpenDetailSecondary(key string, draw layout.Widget) {
 	if key == "" || draw == nil {
 		return
 	}
-	a.secondary = secondaryState{kind: secActivity, width: a.secondary.width}
+	a.secondary = secondaryState{kind: secActivity, width: a.secondary.width, page: a.router.Current().Page()}
 	a.secondary.view = &secDetailPane{key: key, draw: draw}
 	a.Invalidate()
 }
@@ -125,12 +120,14 @@ func (a *App) SecondaryShowsDetail(key string) bool {
 	return ok && a.secondary.kind == secActivity && a.secondary.open() && p.key == key
 }
 
-// leaveActivitySecondary closes what the Activity tab opened beside the
-// inbox when the route leaves the tab (GMkG opens it with forceTab
-// ActivityInbox: it is the tab's, not the next page's). A thread stays as
-// any thread pane does (afterRoute).
-func (a *App) leaveActivitySecondary(r Route) {
-	if k := a.secondary.kind; (k == secChannel || k == secActivity) && r.Page() != "activity" {
+// leavePageSecondary closes the conversation or Activity item a page
+// opened beside itself when the route leaves that page: the Activity
+// tab's (GMkG opens them with forceTab ActivityInbox), To-dos' (the Later
+// tab's view set: L1Ms, View to-dos' forceTab Later) and the Saved page's
+// (the Home tab's Primary changes) are the tab's, not the next page's. A
+// thread stays as any thread pane does (afterRoute).
+func (a *App) leavePageSecondary(r Route) {
+	if k := a.secondary.kind; (k == secChannel || k == secActivity) && r.Page() != a.secondary.page {
 		a.secondary = secondaryState{width: a.secondary.width}
 	}
 }

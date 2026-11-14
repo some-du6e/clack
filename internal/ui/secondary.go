@@ -31,8 +31,16 @@ type secondaryState struct {
 	ts      string
 	user    string
 	view    View
-	width   int  // dp; 0 is Slack's auto width (secondaryWidth)
-	hidden  bool // Ctrl+. toggles without forgetting what was open
+	// at is the message the view was opened at: a conversation's startTs
+	// (OpenMessageSecondary, jpad R9) or a thread's replyTs (OpenThreadAt,
+	// toThread); a saved item's row is selected while the column shows it
+	// (SecondaryAt)
+	at string
+	// page is the page that opened a conversation or an Activity item
+	// beside itself, whose tab it belongs to (leavePageSecondary)
+	page   string
+	width  int  // dp; 0 is Slack's auto width (secondaryWidth)
+	hidden bool // Ctrl+. toggles without forgetting what was open
 	// expanded is the code channel pane's "Expand view": Slack switches the
 	// window to single-column mode, the pane taking the whole panel.
 	expanded bool
@@ -80,6 +88,7 @@ func (a *App) OpenThread(channel, ts string) {
 		return
 	}
 	if a.secondary.kind == secThread && a.secondary.channel == channel && a.secondary.ts == ts && !a.secondary.hidden {
+		a.secondary.at = "" // the thread itself again: no replyTs (OpenThreadAt sets it after)
 		return
 	}
 	a.secondary = secondaryState{kind: secThread, channel: channel, ts: ts, width: a.secondary.width}
@@ -312,6 +321,12 @@ func (a *App) layoutSecondary(gtx layout.Context) layout.Dimensions {
 // space beside the rail less 100; then, when the primary view would keep
 // 300 or less, a nested column gives way down to 260 and a plain one
 // takes what is left beside 300 (never under 260).
+//
+// Beside the To-dos or Saved list (b2oS isSavedListLayoutClamped,
+// later_beside.go) the auto and the manual width both stop where the list
+// would keep less than 320 (getLaterSavedListMinWidth, IgMS o0), and a
+// nested column gives way once the To-dos list would keep 320 or less
+// (primaryMinWidthOverride, primaryFloor).
 func (a *App) secondaryWidth(gtx layout.Context, panel int) int {
 	w := a.secondaryDefault(gtx, panel)
 	if a.secondary.width > 0 {
@@ -322,10 +337,18 @@ func (a *App) secondaryWidth(gtx layout.Context, panel int) int {
 	if nested {
 		hi = panel + a.sidebarPx(gtx) - gtx.Dp(100)
 	}
-	w = max(gtx.Dp(theme.SecondaryMin), min(w, hi))
-	if panel-w <= gtx.Dp(300) {
+	lo := gtx.Dp(theme.SecondaryMin)
+	if a.savedListClamped() {
+		hi = max(lo, min(hi, panel-gtx.Dp(320))) // SwVo q(eP, 300, b)
+	}
+	w = max(lo, min(w, hi))
+	floor := gtx.Dp(300)
+	if nested {
+		floor = max(floor, a.primaryFloor(gtx))
+	}
+	if panel-w <= floor {
 		if nested {
-			w = max(min(w, panel-gtx.Dp(300)), gtx.Dp(260))
+			w = max(min(w, panel-floor), gtx.Dp(260))
 		} else {
 			w = max(panel-gtx.Dp(300), gtx.Dp(260))
 		}
@@ -346,8 +369,13 @@ func (a *App) sidebarPx(gtx layout.Context) int {
 // minus the sidebar being the primary panel the pane shares; without it
 // .3 of the region, the sidebar included. kl02 k5 only counts under the
 // nested view (isNestedSecondaryViewEnabled), and the Activity tab
-// (wrZz isActivityTab) takes half the region in every group.
+// (wrZz isActivityTab) takes half the region in every group. Beside the
+// To-dos or Saved list (isSavedListLayoutClamped) it is 55% of the region
+// (defaultWidthPercentageOfRegionOverride .55), the Activity tab's too.
 func (a *App) secondaryDefault(gtx layout.Context, panel int) int {
+	if a.savedListClamped() {
+		return int(float32(panel)*.55 + .5)
+	}
 	if a.router.Current().Page() == "activity" {
 		return int(float32(panel)*.5 + .5)
 	}
@@ -362,12 +390,17 @@ func (a *App) secondaryDefault(gtx layout.Context, panel int) int {
 // sets a manual width within 300 and the region minus the primary's 300,
 // snapping to the default width within 15px of it (mode "auto"); two
 // presses within 500 ms reset it to the default. panel is the panel's
-// width, px; positions are in its frame.
+// width, px; positions are in its frame. Beside the To-dos list the
+// primary keeps 320 (the layout's secondary maxWidth, eK - eW, then
+// q(eP, 300, …) beside a clamped list: secondaryWidth).
 func (a *App) secondaryResizeEvents(gtx layout.Context, panel int) {
 	s := &a.secondary
 	px := gtx.Metric.PxPerDp
 	def := float32(a.secondaryDefault(gtx, panel)) / px
 	hi := float32(panel)/px - 300
+	if a.savedListClamped() || a.nestedSecondary() && a.primaryFloor(gtx) > gtx.Dp(300) {
+		hi = float32(panel)/px - 320
+	}
 	for {
 		e, ok := s.rz.next(gtx)
 		if !ok {

@@ -150,6 +150,42 @@ func (v *ThreadView) Typing() string { return typingText(v.s.snap.typing) }
 // ScrollToBottom jumps to the newest reply.
 func (v *ThreadView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 
+// JumpTo is the thread metadata Slack's jumpToThreadReply sets when the
+// pane opens at a message (client-boot 6IaZ over CSo3 GC, from toThread's
+// replyTs and uiState.highlightTs): the list starts at ts (startTs) and,
+// with flash, ts is highlighted (highlightTs) the way a permalink's
+// message is (ChannelView.Highlight). The thread loads whole
+// (conversations.replies, every page), so a ts it doesn't hold is
+// dropped once it's in, and the pane keeps its own start position.
+func (v *ThreadView) JumpTo(ts string, flash bool) {
+	s := v.s
+	s.highlight = ""
+	if flash {
+		s.highlight, s.highlightAt = ts, time.Now()
+	}
+	s.pendingJump = ts
+	for i, it := range s.items {
+		if it.kind == itMsg && it.idx < len(s.snap.msgs) && s.snap.msgs[it.idx].m.TS == ts {
+			// there now; the next sync places it again after any rebuild
+			s.list.Position = layout.Position{BeforeEnd: true, First: max(0, i-2)}
+			s.positioned = true
+			break
+		}
+	}
+}
+
+// Highlighted is the message the pane highlights now (JumpTo's flash),
+// "" for none.
+func (v *ThreadView) Highlighted() string {
+	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < 4*time.Second {
+		return s.highlight
+	}
+	return ""
+}
+
+// JumpPending is the message a jump waits to place ("" for none).
+func (v *ThreadView) JumpPending() string { return v.s.pendingJump }
+
 // Layout draws the header and the list: Slack's Serialized(ThreadsFlexpane).
 func (v *ThreadView) Layout(gtx layout.Context) layout.Dimensions {
 	return slackc.Component(gtx, "Serialized(ThreadsFlexpane)", v, (*ThreadView).flexpaneProps, (*ThreadView).layoutPane)

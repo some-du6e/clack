@@ -848,6 +848,11 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 			s.pendingJump = "" // not in this conversation (or too far back)
 		}
 	}
+	if s.pendingJump != "" && s.thread && s.snap.loaded && !s.snap.loading && s.built == s.snap.rev {
+		// a thread loads whole (ThreadView.JumpTo): sync() placed the
+		// jump if the thread holds it, so it isn't coming
+		s.pendingJump = ""
+	}
 	s.pendingDateJump(now) // a day pill's "Jump to…" (banners.go)
 	// infinite scroll up
 	if !s.thread && p.First <= 2 && s.snap.hasMore && !s.snap.older && s.snap.loaded && now.Sub(s.lastOlder) > time.Second {

@@ -1997,13 +1997,12 @@ func (r *row) labelRuns(gtx layout.Context, rc *rowCtx, y int, icon string, runs
 func (r *row) laterLabelLine(gtx layout.Context, rc *rowCtx, y int, ll laterLabel) int {
 	if r.laterLink.Clicked(gtx) && ll.route != "" {
 		// "View to-dos" (wRj5 f) also selects the to-do and opens its
-		// message beside the page, on a host that can (ui App.ViewTodo)
+		// message beside the page, on a host that can (ui App.ViewTodo):
+		// in its thread when it has a thread_ts (MessageLabels meLQ
+		// passes the message's, so a root with replies opens its thread
+		// too), else in the conversation
 		if vt, ok := rc.h.(interface{ ViewTodo(ch, ts, thread string) }); ok && ll.route == "later" {
-			th := ""
-			if m := &r.m; m.ThreadTS != "" && m.ThreadTS != m.TS {
-				th = m.ThreadTS
-			}
-			vt.ViewTodo(r.m.Channel, r.m.TS, th)
+			vt.ViewTodo(r.m.Channel, r.m.TS, r.m.ThreadTS)
 		} else {
 			rc.h.Navigate(ll.route)
 		}

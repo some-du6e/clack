@@ -91,8 +91,11 @@ func (l *Later) LayoutPeek(gtx C) D {
 	return D{Size: size}
 }
 
-// openFromPeek is a row's click on the card: close the peek, then the
-// message in the To-dos tab (the page shows it beside its list).
+// openFromPeek is a row's click on the card (SavedItem 2vyW, after
+// rowClick's tombstone check): close the peek (maybeClosePeek), then
+// jumpToSavedMessage in the To-dos tab (forceTabWhenNavigating Later):
+// the page shows the message beside its list, in its thread when it has
+// a thread_ts (laterThreadTS, later_beside.go).
 func (s *savedBase) openFromPeek(it *core.SavedItem) {
 	if s.peekClose != nil {
 		s.peekClose()
@@ -100,12 +103,8 @@ func (s *savedBase) openFromPeek(it *core.SavedItem) {
 	if it.Channel == "" {
 		return
 	}
-	thread := ""
-	if m := it.Msg; m != nil && m.ThreadTS != "" && m.ThreadTS != m.TS {
-		thread = m.ThreadTS
-	}
 	if v, ok := s.h.(interface{ ViewTodo(ch, ts, thread string) }); ok { // the To-dos tab, the message beside it
-		v.ViewTodo(it.Channel, it.TS, thread)
+		v.ViewTodo(it.Channel, it.TS, laterThreadTS(it))
 		return
 	}
 	s.open(it)

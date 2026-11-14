@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"image"
 	"net/url"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +33,7 @@ type w26Host struct {
 	*kbHost
 	focused          []string // FocusMessage calls: channel/ts
 	secCh, secThread string   // what the secondary column shows
+	secAt            string   // the message it was opened at (SavedSecondary)
 }
 
 func (h *w26Host) FocusMessage(ch, ts string) {
@@ -40,9 +42,19 @@ func (h *w26Host) FocusMessage(ch, ts string) {
 	h.mu.Unlock()
 }
 
-func (h *w26Host) OpenChannelSecondary(ch string) { h.secCh, h.secThread = ch, "" }
+func (h *w26Host) OpenChannelSecondary(ch string) { h.secCh, h.secThread, h.secAt = ch, "", "" }
 func (h *w26Host) SecondaryShows(ch, ts string) bool {
 	return ch != "" && ch == h.secCh && ts == h.secThread
+}
+
+// SavedSecondary: the column a To-dos or Saved row opens its message in.
+func (h *w26Host) OpenMessageSecondary(ch, ts string) { h.secCh, h.secThread, h.secAt = ch, "", ts }
+func (h *w26Host) OpenThreadAt(ch, thread, ts string) { h.secCh, h.secThread, h.secAt = ch, thread, ts }
+func (h *w26Host) SecondaryAt() (string, string) {
+	if h.secCh == "" || h.secAt == "" {
+		return "", ""
+	}
+	return h.secCh, h.secAt
 }
 func (h *w26Host) OpenDetailSecondary(string, layout.Widget) {}
 func (h *w26Host) SecondaryShowsDetail(string) bool          { return false }
@@ -322,7 +334,7 @@ func TestSavedFocusedRowActionsLikeSlack(t *testing.T) {
 
 // A tombstoned to-do's Enter dispatches openLaterRemoveModal (Kivd):
 // LaterRemoveModal, whose Remove unsaves it; a to-do whose message is
-// there opens it as before.
+// there opens it, beside the page (rv: jumpToSavedMessage).
 func TestTodosTombstoneEnterLikeSlack(t *testing.T) {
 	w26Modes(t, func(t *testing.T, dark bool) {
 		app, log := laterItems(t, "to_do", 1, true)
@@ -357,15 +369,28 @@ func TestTodosTombstoneEnterLikeSlack(t *testing.T) {
 		}
 		listY := e.size.Y - l.kb.viewH
 		kbClickRow(t, e, l.kb, live, listY)
+		if ch, ts := h.SecondaryAt(); ch != fakeslack.ViewsChannel || ts != w26LiveTS {
+			t.Fatalf("a click on the live to-do opened %q/%q beside the page", ch, ts)
+		}
+		h.secCh, h.secAt = "", ""
 		navs := len(h.navs)
 		kbPress(e, key.NameReturn, 0)
-		if nav, _ := h.last(); len(h.navs) == navs || nav != "c/"+fakeslack.ViewsChannel {
-			t.Errorf("Enter on a live to-do went to %q", nav)
+		if ch, ts := h.SecondaryAt(); ch != fakeslack.ViewsChannel || ts != w26LiveTS || len(h.navs) != navs {
+			t.Errorf("Enter on a live to-do: beside the page %q/%q, navigated to %q", ch, ts, h.navs[navs:])
 		}
 		if len(h.open()) != 0 {
 			t.Fatal("Enter on a live to-do opened a dialog")
 		}
-		kbClickRow(t, e, l.kb, gone, listY)
+		// the tombstoned to-do by the keyboard (a click opens the modal
+		// itself: TestTodosRowClickLikeSlack)
+		step, ids := key.Name(key.NameDownArrow), l.sk.keys[todoSecInProgress]
+		if slices.Index(ids, gone) < slices.Index(ids, live) {
+			step = key.NameUpArrow
+		}
+		kbPress(e, step, 0)
+		if l.kb.active != gone {
+			t.Fatalf("the arrow went to %q, want the tombstoned to-do %q", l.kb.active, gone)
+		}
 		navs = len(h.navs)
 		kbPress(e, key.NameReturn, 0)
 		m := actLastModal(h.vaHost)
@@ -406,9 +431,9 @@ func TestLaterRemoveCopyLikeSlack(t *testing.T) {
 	}
 }
 
-// "View to-dos" (wRj5): the to-do whose message the secondary column
-// shows is rowSelected (surf-hgl-3); a collapsed section holding it
-// opens; closing the column clears it.
+// "View to-dos" (wRj5, ui App.ViewTodo): the to-do whose message the
+// secondary column shows is rowSelected (surf-hgl-3); a collapsed section
+// holding it opens; closing the column clears it.
 func TestTodosViewSelectsLikeSlack(t *testing.T) {
 	w26Modes(t, func(t *testing.T, dark bool) {
 		app, _ := laterItems(t, "to_do", 3, false)
@@ -422,8 +447,7 @@ func TestTodosViewSelectsLikeSlack(t *testing.T) {
 		it := l.view[1]
 		l.secCollapsed[todoSecInProgress] = true
 		e.frame()
-		h.OpenChannelSecondary(it.Channel)
-		l.SelectTodo(it.Channel, it.TS, "")
+		h.OpenMessageSecondary(it.Channel, it.TS) // the column at the message (jpad R9)
 		e.frame()
 		e.frame()
 		e.frame()

@@ -163,7 +163,7 @@ func (a *App) afterRoute(prev, r Route) {
 			a.data.core.RecordRecentNavigation(id, "")
 		}
 	}
-	a.leaveActivitySecondary(r) // secondary_channel.go
+	a.leavePageSecondary(r) // secondary_channel.go
 	if prev.Channel() != ch {
 		// leaving a channel closes its thread/details pane (Slack keeps the
 		// pane only within the same conversation).

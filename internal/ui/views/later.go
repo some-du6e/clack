@@ -443,10 +443,8 @@ func (s *savedBase) rowActions(gtx C) {
 		it := f.items[i]
 		ch, ts := it.Channel, it.TS
 		switch {
-		case click && s.peeking:
-			s.openFromPeek(&it)
-		case click:
-			s.open(&it)
+		case click: // ZrhC F (later_beside.go)
+			s.rowClick(&it)
 		case done:
 			s.toggleDone(f, i)
 		case remind:
@@ -520,23 +518,6 @@ func (s *savedBase) write1(it core.SavedItem, remove bool, okMsg string, f func(
 	s.write(k, okMsg, true, f)
 }
 
-// open jumps to the saved message: the thread for replies, else the
-// conversation.
-func (s *savedBase) open(it *core.SavedItem) {
-	if it.ItemType == "list_record" {
-		s.openListRecord(it) // later_records.go
-		return
-	}
-	if it.Channel == "" {
-		return
-	}
-	if m := it.Msg; m != nil && m.ThreadTS != "" && m.ThreadTS != m.TS {
-		s.h.OpenThread(it.Channel, m.ThreadTS)
-		return
-	}
-	s.h.Navigate("c/" + it.Channel)
-}
-
 // ---- rows ----
 
 // itemRow: padding 12/20/12/16, 1px rule, 36px avatar + 8px gap; context
@@ -547,8 +528,8 @@ func (s *savedBase) open(it *core.SavedItem) {
 // rs.focus is the row's hasFocus (LaterTodoRow kmjU, BookmarksPage eQN2
 // eM: hasFocus || hasFocusWithin): the actions (z03r) take
 // p-saved_item__actions--active and show as on hover. rs.selected is
-// rowSelected (the to-do shown beside the page): .rowSelected__pKHOV,
-// surf-hgl-3 with no hover blend.
+// rowSelected (the message shown beside the page: selectedKey):
+// .rowSelected__pKHOV, surf-hgl-3 with no hover blend.
 func (s *savedBase) itemRow(gtx C, it *core.SavedItem, todo bool, rs laterRowSt) D {
 	r := s.rowState(laterKey(it))
 	var bar, below W
@@ -843,7 +824,7 @@ type Later struct {
 	secClick     [3]widget.Clickable
 	sk           todoSecKB // a keyboard list per section, the dividers' Tab stops
 
-	sel todoSel // the to-do "View to-dos" showed beside the page (later_sections.go)
+	sel todoSel // the selected to-do's section and scroll (later_sections.go)
 }
 
 // NewLater builds the To-dos page.
@@ -1537,11 +1518,13 @@ func (s *Saved) layoutList(gtx C) D {
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
 	s.savedKeys(gtx, items)
 	s.kb.begin()
+	sel := s.selectedKey() // the row the column shows (later_beside.go)
 	dims := s.scrollList(gtx, &s.list, n+extra, func(gtx C, i int) D {
 		if i >= n {
 			return s.skeleton(gtx, 1, laterAvatar)
 		}
-		d := s.itemRow(gtx, &items[i], false, laterRowSt{focus: s.kb.hasFocus(laterKey(&items[i]))})
+		k := laterKey(&items[i])
+		d := s.itemRow(gtx, &items[i], false, laterRowSt{focus: s.kb.hasFocus(k), selected: k == sel})
 		if s.kb.ringOn(laterKey(&items[i])) {
 			// .p-saved_for_later_page__list--navigation keeps
 			// .c-virtual_list__item--focus:focus:after: inset 4px, radius 8

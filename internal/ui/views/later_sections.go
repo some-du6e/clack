@@ -111,9 +111,9 @@ func (l *Later) todoCounts(inprog, done int) todoCounts {
 	return out
 }
 
-// todoSectioned is the sectioned page: later_todos.
-func (l *Later) todoSectioned() bool {
-	c := l.h.Core()
+// todoSectioned is the sectioned page: later_todos (6owI tj).
+func (s *savedBase) todoSectioned() bool {
+	c := s.h.Core()
 	return c != nil && c.Experiment("later_todos") == "on"
 }
 
@@ -552,38 +552,30 @@ func (l *Later) todoDividerFocus(gtx C, sec int) bool {
 
 // ---- the selected to-do and the tombstone (gap-w26) ----
 
-// todoSel is the to-do "View to-dos" showed beside the page. Slack's row
-// isSelected (vAPb rk) is the to-do whose message the sibling view
-// (primary or secondary, getSiblingView) shows (qb0V b1
-// isSavedMessageSelectedInPrimaryView); Clack's rows open their message
-// in the channel instead of beside the page, so only LaterLabel's "View
-// to-dos" (wRj5) shows one there, and the selection lasts while the
-// secondary column still shows it.
+// todoSel is vAPb's memory for the selected to-do: its rS / rT refs, the
+// to-do whose collapsed section the page opened and the one it scrolled
+// to. The selected row (rk, and the row's own isSelected: Wowu over qb0V
+// Ub) is the to-do whose message the sibling view (primary or secondary,
+// getSiblingView) shows: here the secondary column, where a row's click
+// (later_beside.go) and LaterLabel's "View to-dos" (wRj5, ui
+// App.ViewTodo) open it.
 type todoSel struct {
-	key, ch, thread string // laterKey, the conversation, the thread for a reply
-	opened, shown   bool   // vAPb's rS / rT refs: the section opened, the row scrolled to
+	key           string // laterKey
+	opened, shown bool   // the section opened, the row scrolled to
 }
 
-// SelectTodo is LaterLabel's "View to-dos" landing on the page
-// (setActiveTab todo, setHighlightId) with the message opened beside it
-// in the secondary column (thread for a reply, else ""): the to-do's row
-// is selected once the column shows it.
-func (l *Later) SelectTodo(ch, ts, thread string) {
-	l.sel = todoSel{key: ch + "/" + ts, ch: ch, thread: thread}
-	l.h.Invalidate()
-}
-
-// todoSelection is the selected row's key ("" when the column no longer
-// shows its message) and vAPb's effect on it: a collapsed section holding
-// it opens (setTodoSectionCollapsed false, once per selection), then the
-// row scrolls into view, block nearest (t3), once.
+// todoSelection is the selected row's key ("" while the column shows no
+// to-do's message) and vAPb's effect on it: a collapsed section holding it
+// opens (setTodoSectionCollapsed false, once per to-do), then the row
+// scrolls into view, block nearest (t3), once. The refs outlive the
+// selection: the same to-do selected again does neither.
 func (l *Later) todoSelection(rows []todoRow) string {
-	if l.sel.key == "" {
+	k := l.selectedKey()
+	if k == "" {
 		return ""
 	}
-	sh, ok := l.h.(ActivitySecondary)
-	if !ok || !sh.SecondaryShows(l.sel.ch, l.sel.thread) {
-		return ""
+	if k != l.sel.key {
+		l.sel = todoSel{key: k}
 	}
 	at := slices.IndexFunc(l.view, func(it core.SavedItem) bool { return laterKey(&it) == l.sel.key })
 	if at < 0 {
@@ -635,27 +627,28 @@ func laterTombstoned(it *core.SavedItem) bool {
 // deleted. Remove it from To-dos?" (U4's "… you saved …" for a saved
 // item, whose title stays "Remove saved item"); without it "Remove saved
 // item" and "{removedActionText} Remove it from Later?". Cancel, then
-// Remove (danger), which unsaves the message.
-func (l *Later) openRemoveModal(it core.SavedItem) bool {
+// Remove (danger), which unsaves the message. To-dos' Enter and a To-dos,
+// Saved or peek row's click run it (later_beside.go rowClick).
+func (s *savedBase) openRemoveModal(it core.SavedItem) bool {
 	if !laterTombstoned(&it) {
 		return false
 	}
-	ph, ok := l.h.(popups.Host)
+	ph, ok := s.h.(popups.Host)
 	if !ok {
 		return false
 	}
-	title, body := laterRemoveCopy(&it, l.todoSectioned())
+	title, body := laterRemoveCopy(&it, s.todoSectioned())
 	k, ch, ts := laterKey(&it), it.Channel, it.TS
 	ph.ShowOverlay(popups.NewModal(ph, popups.ModalOpts{
 		Title: title,
 		Body: func(gtx C) D {
-			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return l.para(gtx, 15, 22, wReg, l.p.Text, 0, body) })
+			return layout.Inset{Bottom: 8}.Layout(gtx, func(gtx C) D { return s.para(gtx, 15, 22, wReg, s.p.Text, 0, body) })
 		},
 		Buttons: []*popups.ModalButton{
 			{Label: nsLater.T("Cancel"), Kind: popups.BtnOutline},
 			{Label: nsLater.T("Remove"), Kind: popups.BtnDanger, Do: func() bool {
-				l.remove(k)
-				l.write(k, "", true, func(ctx context.Context, c *core.App) error { return c.Unsave(ctx, ch, ts) })
+				s.remove(k)
+				s.write(k, "", true, func(ctx context.Context, c *core.App) error { return c.Unsave(ctx, ch, ts) })
 				return true
 			}},
 		},
