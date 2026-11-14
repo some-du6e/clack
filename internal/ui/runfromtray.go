@@ -36,13 +36,20 @@ type trayRef struct{ t TrayIcon }
 // SetTray tells the App a notification-area icon is running (nil: none),
 // so closing the window keeps Clack running there (Preferences > Advanced
 // > "Leave app running in notification area when the window is closed").
-// Any goroutine.
+// A desktop.Tray also gets Slack's icon states, tooltip and menu
+// (tray.go). Any goroutine.
 func (a *App) SetTray(t TrayIcon) {
 	if t == nil {
 		a.tray.Store(nil)
 		return
 	}
 	a.tray.Store(&trayRef{t})
+	if _, ok := t.(trayShell); ok { // its icon, tooltip and menu (tray.go)
+		a.Post(func() {
+			a.updateTrayIcon(true)
+			a.updateTrayMenu(true)
+		})
+	}
 }
 
 func (a *App) trayIcon() TrayIcon {

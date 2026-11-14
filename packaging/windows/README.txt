@@ -50,6 +50,16 @@ Notifications
   activator, so Windows can't start Clack from a toast it left in
   Notification Center. Uninstalling removes the key and the icon.
 
+Notification area and taskbar
+  While Clack runs, its icon sits in the notification area and shows
+  whether you have unread messages or mentions; click it to bring Clack
+  forward, right-click it for its menu. The menu's Launch Control starts
+  Clack when you sign in to Windows (Launch on Login). Clack then stays in
+  the notification area (Keep in Background, the default) unless you pick
+  Show Clack Immediately. Right-clicking Clack's taskbar button lists your
+  workspace and Move Clack to Current Display, which brings the window to
+  the screen you're on.
+
 SmartScreen
   Clack is not code-signed, so Windows may say it "protected your PC".
   Click "More info", then "Run anyway".

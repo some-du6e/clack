@@ -12,3 +12,10 @@ func LaunchOnLogin() bool { return false }
 
 // SetLaunchOnLogin is Linux and Windows only.
 func SetLaunchOnLogin(bool) error { return errors.New("desktop: no launch on login on this platform") }
+
+// StartupFlag is Windows' launch-on-login switch (autostart_windows.go);
+// this OS's autostart entry doesn't pass it.
+const StartupFlag = "--startup"
+
+// RefreshLaunchOnLogin is Windows' Run value upgrade: nothing to do here.
+func RefreshLaunchOnLogin() error { return nil }

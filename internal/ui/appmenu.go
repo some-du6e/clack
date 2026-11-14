@@ -23,13 +23,19 @@ import (
 // outside macOS.
 
 // troubleshootingMenu is Help > Troubleshooting (Slack's hj: Report
-// Issue…, the hardware acceleration toggle, Show Logs in File Manager,
-// the net and verbose logs, Copy Installation ID, Clear Cache and Restart,
-// Reset App Data…), the items Clack has: the logs, and in place of Copy
-// Installation ID its own Copy Diagnostics and freeze reports.
+// Issue…, the hardware acceleration toggle, Show Logs in File Manager
+// (in Explorer on Windows: fP @1032970 in the win32 bundle), the net and
+// verbose logs, Copy Installation ID, Clear Cache and Restart, Reset App
+// Data…), the items Clack has: the logs, and in place of Copy
+// Installation ID its own Copy Diagnostics and freeze reports. The
+// Windows tray shows the same submenu (tray.go).
 func (a *App) troubleshootingMenu(on func(func()) func()) menubar.Item {
+	logs := "Show Logs in File Manager"
+	if runtime.GOOS == "windows" {
+		logs = "Show Logs in Explorer"
+	}
 	return menubar.Item{ID: "menuitem-troubleshooting", Title: "Troubleshooting", Sub: []menubar.Item{
-		{ID: "menuitem-logs", Title: "Show Logs in File Manager", Do: a.showLogs},
+		{ID: "menuitem-logs", Title: logs, Do: a.showLogs},
 		{ID: "menuitem-freeze-reports", Title: "Show Freeze Reports", Do: a.showFreezeReports},
 		{ID: "menuitem-copy-diagnostics", Title: "Copy Diagnostics", Do: on(a.copyDiagnostics)},
 	}}

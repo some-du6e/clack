@@ -876,17 +876,18 @@ func (p *prefsModal) launchOnLoginRow(f *prefsForm) {
 		f.off("launchOnStartup", "Launch app on login", "", false, false)
 		return
 	}
-	if p.launchOn == nil { // a file or registry read: once per dialog
+	if p.launchOn == nil || p.launchAt != a.launch.gen { // a file or registry read: once per dialog, and after the tray's Launch on Login
 		v := a.opts.LaunchOnLogin()
-		p.launchOn = &v
+		p.launchOn, p.launchAt = &v, a.launch.gen
+		a.launch.on, a.launch.known = v, true
 	}
 	on := *p.launchOn
 	f.option("launch_on_login", "Launch app on login", "", on, false, func() {
-		if err := a.opts.SetLaunchOnLogin(!on); err != nil {
+		if err := a.setLaunchOnLogin(!on); err != nil {
 			a.Toast("Couldn’t change Launch app on login: " + err.Error())
 			return
 		}
 		v := !on
-		p.launchOn = &v
+		p.launchOn, p.launchAt = &v, a.launch.gen
 	})
 }

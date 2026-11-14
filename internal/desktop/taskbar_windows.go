@@ -286,3 +286,107 @@ func ToastsEnabled() bool {
 	s, err := ToastSetting(AppUserModelID)
 	return err != nil || s == ToastEnabled
 }
+
+var (
+	procMonitorFromPoint = user32.NewProc("MonitorFromPoint")
+	procGetMonitorInfoW  = user32.NewProc("GetMonitorInfoW")
+	procGetWindowRect    = user32.NewProc("GetWindowRect")
+	procGetDpiForWindow  = user32.NewProc("GetDpiForWindow") // Windows 10 1607 and later
+	procGetWindowLongW   = user32.NewProc("GetWindowLongW")
+	procSetWindowLongW   = user32.NewProc("SetWindowLongW")
+	procSetWindowPos     = user32.NewProc("SetWindowPos")
+	shcore               = windows.NewLazySystemDLL("shcore.dll")
+	procGetDpiForMonitor = shcore.NewProc("GetDpiForMonitor") // Windows 8.1 and later
+)
+
+const (
+	monitorDefaultToNearest = 2
+	mdtEffectiveDPI         = 0
+	gwlStyle                = -16
+	wsMaximize              = 0x01000000
+	swpNoZOrder             = 0x0004
+	swpNoActivate           = 0x0010
+)
+
+type monitorInfo struct {
+	Size  uint32
+	Mon   winRect
+	Work  winRect
+	Flags uint32
+}
+
+// MoveToCurrentDisplay is MOVE_WINDOW_TO_PRIMARY_SCREEN's move (Slack's
+// u0 @988237, which the jump list's "Move Slack to Current Display" task
+// and slack://app?action=reset-window dispatch): the window's bounds
+// fitted into the work area of the display nearest the cursor, keeping
+// their aspect ratio (rH @806941), centred in it but not above or left of
+// it (rG @807329), then setPosition and setSize (Chromium's
+// HWNDMessageHandler::SetBoundsInternal, which clears WS_MAXIMIZE first).
+// Slack works in DIPs, so the size keeps its DIPs on the new display.
+// Slack then maximizes the window; the caller does that. The window's
+// thread; false when Windows wouldn't say where the window or the display
+// is.
+func MoveToCurrentDisplay(hwnd uintptr) bool {
+	var p point
+	if r, _, _ := procGetCursorPos.Call(uintptr(unsafe.Pointer(&p))); r == 0 {
+		return false
+	}
+	// MonitorFromPoint takes the POINT by value: on 64-bit, x and y in one
+	// register; on 32-bit, two stack words.
+	var mon uintptr
+	if unsafe.Sizeof(uintptr(0)) == 8 {
+		mon, _, _ = procMonitorFromPoint.Call(uintptr(uint64(uint32(p.X))|uint64(uint32(p.Y))<<32), monitorDefaultToNearest)
+	} else {
+		mon, _, _ = procMonitorFromPoint.Call(uintptr(p.X), uintptr(p.Y), monitorDefaultToNearest)
+	}
+	if mon == 0 {
+		return false
+	}
+	mi := monitorInfo{}
+	mi.Size = uint32(unsafe.Sizeof(mi))
+	if r, _, _ := procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi))); r == 0 {
+		return false
+	}
+	var wr winRect
+	if r, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&wr))); r == 0 {
+		return false
+	}
+	w, h := float64(wr.Right-wr.Left), float64(wr.Bottom-wr.Top)
+	if w <= 0 || h <= 0 {
+		return false
+	}
+	if from, to := windowDPI(hwnd), monitorDPI(mon); from > 0 && to > 0 && from != to {
+		w, h = w*float64(to)/float64(from), h*float64(to)/float64(from)
+	}
+	x, y, fw, fh := fitCentered(w, h, mi.Work)
+	if style, _, _ := procGetWindowLongW.Call(hwnd, uintptr(gwlStyleIndex())); style&wsMaximize != 0 {
+		procSetWindowLongW.Call(hwnd, uintptr(gwlStyleIndex()), style&^wsMaximize)
+	}
+	r, _, _ := procSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), uintptr(fw), uintptr(fh), swpNoActivate|swpNoZOrder)
+	return r != 0
+}
+
+// gwlStyleIndex is GWL_STYLE as the int the call takes.
+func gwlStyleIndex() int32 { return gwlStyle }
+
+// windowDPI is the window's DPI (GetDpiForWindow), 0 if unknown.
+func windowDPI(hwnd uintptr) uint32 {
+	if procGetDpiForWindow.Find() != nil {
+		return 0
+	}
+	d, _, _ := procGetDpiForWindow.Call(hwnd)
+	return uint32(d)
+}
+
+// monitorDPI is the display's effective DPI (GetDpiForMonitor), 0 if
+// unknown.
+func monitorDPI(mon uintptr) uint32 {
+	if procGetDpiForMonitor.Find() != nil {
+		return 0
+	}
+	var dx, dy uint32
+	if hr, _, _ := procGetDpiForMonitor.Call(mon, mdtEffectiveDPI, uintptr(unsafe.Pointer(&dx)), uintptr(unsafe.Pointer(&dy))); failed(hr) {
+		return 0
+	}
+	return dx
+}

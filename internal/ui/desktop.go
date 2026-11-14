@@ -36,6 +36,9 @@ func (a *App) OpenURL(uri string) {
 // openDeepLink is the shell's slack:// handler: it navigates (or opens a
 // profile) on the UI goroutine and reports whether it understood uri.
 func (a *App) openDeepLink(uri string) bool {
+	if act := appAction(uri); act != "" { // slack://app?action=… (tray.go)
+		return a.runAppAction(act)
+	}
 	if ch, tab := channelTabOfLink(uri); ch != "" { // slack://channel?id=…&tab=…
 		a.Post(func() { a.openChannelTab(ch, tab) })
 		return true
