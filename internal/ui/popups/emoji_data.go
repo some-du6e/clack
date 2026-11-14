@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/acrank"
@@ -561,13 +562,18 @@ func (s *epSearcher) emit(x *emojiIndex, rows []int32, r, limit int) bool {
 // style.
 
 var (
-	epCacheMu  sync.Mutex
-	epFull     *emojiIndex
-	epStdIdx   = map[string]*emojiIndex{}
-	epBuilding = map[epKey]bool{}
+	epCacheMu sync.Mutex
+	epFull    *emojiIndex
+	epStdIdx  = map[string]*emojiIndex{}
+	// epBuilding holds the builds in flight; each channel closes once its
+	// index is installed
+	epBuilding = map[epKey]chan struct{}{}
 
 	epLastUse  time.Time // guarded by epCacheMu
 	epReleaser sync.Once
+
+	// epFullGen counts the full indexes installed (EmojiIndexGen)
+	epFullGen atomic.Uint64
 )
 
 // epIndexIdle: the full index (65k custom emoji on Hack Club, ~10 MB) is
@@ -614,9 +620,17 @@ func epStdIndex(style string) *emojiIndex {
 
 // epIndexFor returns the best available index for h and whether it is
 // complete (includes the current custom emoji). When it isn't, a build is
-// started off the UI goroutine; h is invalidated when it lands. Must be
-// called on the UI goroutine.
+// started off the UI goroutine; the build installs the index itself (so
+// EnsureEmojiIndex can wait for it) and h is invalidated when it lands.
+// Must be called on the UI goroutine.
 func epIndexFor(h Host) (*emojiIndex, bool) {
+	x, ok, _ := epIndexBuild(h)
+	return x, ok
+}
+
+// epIndexBuild is epIndexFor, plus the channel of the build it is waiting
+// on (nil when complete).
+func epIndexBuild(h Host) (*emojiIndex, bool, chan struct{}) {
 	epNoteUse()
 	epNoteCore(h)
 	style := epStyle(h)
@@ -625,39 +639,69 @@ func epIndexFor(h Host) (*emojiIndex, bool) {
 		custom = h.Core().CustomEmoji()
 	}
 	if len(custom) == 0 {
-		return epStdIndex(style), true
+		return epStdIndex(style), true, nil
 	}
 	key := epKey{len(custom), style}
 	epCacheMu.Lock()
 	full := epFull
-	building := epBuilding[key]
-	if full == nil || full.key != key {
-		epBuilding[key] = true
+	if full != nil && full.key == key {
+		epCacheMu.Unlock()
+		return full, true, nil
+	}
+	done, building := epBuilding[key]
+	if !building {
+		done = make(chan struct{})
+		epBuilding[key] = done
 	}
 	epCacheMu.Unlock()
-	if full != nil && full.key == key {
-		return full, true
-	}
 	if !building {
 		std := epStandard()
-		run(h, func(ctx context.Context) (*emojiIndex, error) {
-			return epBuild(std, style, custom), nil
-		}, func(x *emojiIndex, _ error) {
+		run(h, func(ctx context.Context) (struct{}, error) {
+			x := epBuild(std, style, custom)
 			epCacheMu.Lock()
 			delete(epBuilding, key)
-			if x != nil {
-				epFull = x
-			}
+			epFull = x
+			epFullGen.Add(1)
 			epCacheMu.Unlock()
+			close(done)
+			return struct{}{}, nil
+		}, func(struct{}, error) {
 			if h != nil {
 				h.Invalidate()
 			}
 		})
 	}
 	if full != nil && full.key.style == style {
-		return full, false // stale but close: better than standard only
+		return full, false, done // stale but close: better than standard only
 	}
-	return epStdIndex(style), false
+	return epStdIndex(style), false, done
+}
+
+// EmojiIndexGen counts the full emoji indexes (the standard set with the
+// workspace's custom emoji) that have landed. The ":" lists rank again
+// when it changes: rows ranked while the index was building came from the
+// standard set alone, or from the index before the latest emoji_changed.
+func EmojiIndexGen() uint64 { return epFullGen.Load() }
+
+// EnsureEmojiIndex makes sure the emoji index for h holds h's custom
+// emoji. It starts the build when none runs (as the first picker or ":"
+// list does: it takes ~170 ms for Hack Club's 65,908) and waits at most
+// wait for it. It reports whether the index is complete. UI goroutine
+// only; the wait blocks it.
+func EnsureEmojiIndex(h Host, wait time.Duration) bool {
+	_, ok, done := epIndexBuild(h)
+	if ok || wait <= 0 || done == nil {
+		return ok
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
+		return false
+	}
+	_, ok = epIndexFor(h)
+	return ok
 }
 
 // ---- exported API for the composer ----

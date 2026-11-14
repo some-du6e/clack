@@ -186,3 +186,74 @@ func TestEmojiKeywordMatch(t *testing.T) {
 }
 
 func isInf(f float64) bool { return f > 1e308 }
+
+// The same harness with custom emoji in the set, as getConsolidatedEmoji
+// (Ak7A) merges them after the standard ones: a custom emoji is a row
+// with id "E"+name and no keywords, a custom alias one more name of its
+// target. In Karim's workspace tu is "alias:thumbs-up", a custom image,
+// so ":tu" is an exact name: score 0, +400 exact bonus (100, and 300 for
+// emoji_exact_match_boost), first, shown as the alias. Synthetic custom
+// emoji only.
+func TestEmojiAutocompleteSlackOracleCustomAlias(t *testing.T) {
+	std := slackEmojiCands(t)
+	custom := Cand{Kind: Emoji, ID: "Ethumbs-up", Name: "thumbs-up", Names: []string{"thumbs-up", "tu"}}
+	withAlias := func(target string, aliases ...string) []Cand {
+		cs := append([]Cand(nil), std...)
+		for i := range cs {
+			if cs[i].Name == target {
+				cs[i].Names = append(append([]string(nil), cs[i].Names...), aliases...)
+				return cs
+			}
+		}
+		t.Fatalf("no %s", target)
+		return nil
+	}
+	karim := append(append([]Cand(nil), std...), custom)
+	more := append(withAlias("tada", "yay"), custom,
+		Cand{Kind: Emoji, ID: "Eturbo", Name: "turbo", Names: []string{"turbo"}},
+		Cand{Kind: Emoji, ID: "Etux", Name: "tux", Names: []string{"tux"}})
+	noAlias := append([]Cand(nil), more...)
+	noAlias[len(std)].Names = []string{"thumbs-up"}
+	toPlusOne := withAlias("+1", "tu")
+
+	remote := remoteWeights(t)
+	tuRemote := []string{"tulip", "root_vegetable", "turkey", "turtle", "tumbler_glass", "lotus", "student", "cactus", "bathtub", "test_tube", "stuck_out_tongue", "studio_microphone", "stuffed_flatbread", "flag-tc", "flag-tm", "flag-tn", "flag-tr", "flag-tv", "poultry_leg", "bath", "auto_rickshaw", "mammoth", "male-student", "fortune_cookie"}
+	tuFallback := []string{"tulip", "turkey", "turtle", "tumbler_glass", "lotus", "student", "cactus", "stuck_out_tongue", "studio_microphone", "stuffed_flatbread", "bathtub", "stuck_out_tongue_closed_eyes", "stuck_out_tongue_winking_eye", "test_tube", "fortune_cookie", "statue_of_liberty", "male-student", "man_in_tuxedo", "congratulations", "female-student", "man-gesturing-no", "man-gesturing-ok", "woman_in_tuxedo", "man_with_turban"}
+	cases := []struct {
+		name, q string
+		cands   []Cand
+		w       Weights
+		want    []string
+		best    string // the first row's shown name ("" no exact row)
+	}{
+		{"tu, Karim's alias", "tu", karim, remote, append([]string{"thumbs-up"}, tuRemote...), "tu"},
+		{"tu, Karim's alias, fallback model", "tu", karim, FallbackWeights, append([]string{"thumbs-up"}, tuFallback...), "tu"},
+		{"tu with more custom emoji", "tu", more, remote,
+			[]string{"thumbs-up", "tux", "tulip", "turbo", "root_vegetable", "turkey", "turtle", "tumbler_glass", "lotus", "student", "cactus", "bathtub", "test_tube", "stuck_out_tongue", "studio_microphone", "stuffed_flatbread", "flag-tc", "flag-tm", "flag-tn", "flag-tr", "flag-tv", "poultry_leg", "bath", "auto_rickshaw", "mammoth"}, "tu"},
+		{"tu without the alias", "tu", noAlias, remote,
+			[]string{"tux", "tulip", "turbo", "root_vegetable", "turkey", "turtle", "tumbler_glass", "lotus", "student", "cactus", "bathtub", "test_tube", "stuck_out_tongue", "studio_microphone", "stuffed_flatbread", "flag-tc", "flag-tm", "flag-tn", "flag-tr", "flag-tv", "poultry_leg", "bath", "auto_rickshaw", "mammoth", "male-student"}, ""},
+		{"tu, an alias of +1", "tu", toPlusOne, remote, append([]string{"+1"}, tuRemote...), "tu"},
+		{"tu, an alias of +1, fallback model", "tu", toPlusOne, FallbackWeights, append([]string{"+1"}, tuFallback...), "tu"},
+		{"yay, an alias of tada", "yay", more, remote, []string{"tada", "clap", "smiley"}, "yay"},
+	}
+	for _, c := range cases {
+		o := Options{Source: SourceTexty, Limit: 25, Weights: c.w, Now: tSlackNow,
+			Passthrough: true, DemotePassthrough: true, EmojiExactBoost: true, ExactNameGroup: "treatment_5"}
+		rs := Rank(c.q, c.cands, o)
+		got := names(c.cands, rs)
+		if !eq(got, c.want) {
+			t.Errorf("%s: :%s\n got  %v\n want %v", c.name, c.q, got, c.want)
+			continue
+		}
+		r := rs[0]
+		if c.best == "" {
+			if r.Exact {
+				t.Errorf("%s: an exact first row without the alias: %+v", c.name, r)
+			}
+			continue
+		}
+		if r.BestName != c.best || !r.Exact || r.Score != 0 || r.FrecencyScore != 400 {
+			t.Errorf("%s: first row %+v, want %s exact at score 0, frecency 400 (the exact bonus)", c.name, r, c.best)
+		}
+	}
+}

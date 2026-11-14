@@ -45,6 +45,7 @@ type srACState struct {
 	pseudo    bool   // nothing selected yet: row 0 is the gray pseudo-selection
 	dismissed string // Escape closed the menu for this match (srACMatch.key)
 	rk        *srACRanker
+	emojiGen  uint64 // EmojiIndexGen when the rows were ranked
 
 	users map[string]map[string]core.User // the server's people per query
 	chans map[string][]core.ChannelHit    // the server's channels per query
@@ -121,10 +122,16 @@ func (p *SearchPopover) acUpdate() {
 	a.dismissed = ""
 	if m != a.m {
 		a.m = m
+		a.emojiGen = epFullGen.Load()
 		a.items = p.acItems(m)
 		a.sel, a.pseudo, a.scroll, a.pressed = 0, true, true, 0
 		a.list.Position = layout.Position{}
 		p.acFetch(m)
+	} else if m.kind == srACFilter && (m.typ == "has" || m.typ == "hasmy") && a.emojiGen != epFullGen.Load() {
+		// the emoji rows were ranked while the index of the custom emoji
+		// was building: rank them again now that it has landed
+		a.emojiGen = epFullGen.Load()
+		p.acRefresh(m.value)
 	}
 	a.open = len(a.items) > 0
 }
