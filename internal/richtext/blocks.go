@@ -31,6 +31,8 @@ type bk struct {
 	MessageTS   string          `json:"message_ts"` // message_mention
 	SectionID   string          `json:"section_id"` // canvas: a canvas-section link
 	HideTitle   bool            `json:"hide_title"` // canvas
+	RecordID    string          `json:"record_id"`  // list_record: an item link
+	ViewID      string          `json:"view_id"`    // list_record: a list view link
 	AuthorID    string          `json:"author_id"`  // message_mention
 	UsergroupID string          `json:"usergroup_id"`
 	TeamID      string          `json:"team_id"`
@@ -787,6 +789,10 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 			out = append(out, messageMentionSpan(c.r, e))
 		case "canvas":
 			out = append(out, c.canvasSpan(e))
+		case "list_record": // listslug.go
+			if sp, ok := c.listRecordSpan(e); ok {
+				out = append(out, sp)
+			}
 		case "broadcast":
 			out = append(out, broadcastSpan(firstNonEmpty(e.Range, "here")))
 		case "date":

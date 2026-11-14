@@ -74,6 +74,10 @@ type Size struct {
 	// Views adds the rail list views' fixtures (views.go): followed
 	// threads, scheduled drafts, recorded activity writes.
 	Views bool
+	// ListRecordsInLater answers saved.list with the saved list records
+	// alone (lists_records.go): two of Launch tracker's items, one a
+	// to-do with a reminder, one saved.
+	ListRecordsInLater bool
 	// DMsTab answers client.dms (the DMs tab and its peek) with the open
 	// generated DMs and their latest messages, newest first.
 	DMsTab bool

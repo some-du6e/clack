@@ -44,6 +44,9 @@ type CanvasRef struct {
 	// Views is a list's views' names by id (list_metadata.views): a list
 	// tab's slug names its default view (core tab_slug.go).
 	Views map[string]string
+	// Kind is the file's kind as files.info said: "canvas", "list" or ""
+	// (search_file_channel_messages reads a file channel as its file).
+	Kind string
 }
 
 // CanvasResolver is an optional Resolver extension (store.Store). ok and

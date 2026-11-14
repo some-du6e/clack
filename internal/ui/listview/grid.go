@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -505,9 +506,16 @@ func (v *View) gridEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {
 		case pointer.Leave:
 			g.hover = -1
 		case pointer.Press:
+			v.learnOrigin(pe.Position)
+			if ctxclick.Press(pe) { // the row's BaseRecordContextMenu (records.go)
+				g.pressed = false
+				if i := v.lineAt(int(pe.Position.Y)); i >= 0 && g.lines[i].kind == lineRow {
+					v.openRecordMenu(d, g.lines[i].row.Rec)
+				}
+				continue
+			}
 			g.wheel.press(gtx, pe, maxX, maxY)
 			g.press, g.pressed = pe.Position, true
-			v.learnOrigin(pe.Position)
 		case pointer.Release:
 			if !g.pressed || pe.Position.Sub(g.press).X*pe.Position.Sub(g.press).X+pe.Position.Sub(g.press).Y*pe.Position.Sub(g.press).Y > 36 {
 				g.pressed = false

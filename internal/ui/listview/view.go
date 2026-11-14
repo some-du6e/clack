@@ -82,6 +82,7 @@ type Actions struct {
 // MenuItem is one row of a menu.
 type MenuItem struct {
 	Label, Icon string
+	Subtitle    string // a second line under the label (a submenu row's description)
 	Disabled    bool
 	Divider     bool       // a separator instead of a row
 	Danger      bool       // a destructive row ("Delete list")

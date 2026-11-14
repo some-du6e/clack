@@ -1,6 +1,6 @@
 # Slack's experiments in Clack
 
-<!-- Generated from the experiments inventory (branch experiments, 2026-11-10); the method below. Refreshed by hand on 2026-11-11 (branch exp-wave-2): see "2026-11-11 refresh"; drift against the account on 2026-11-13 (branch exp-drift): see "2026-11-13 drift"; wave 3 (branch exp-wave-3): see "2026-11-13 wave 3"; wave 4 (branch exp-wave-4): see "2026-11-13 wave 4". -->
+<!-- Generated from the experiments inventory (branch experiments, 2026-11-10); the method below. Refreshed by hand on 2026-11-11 (branch exp-wave-2): see "2026-11-11 refresh"; drift against the account on 2026-11-13 (branch exp-drift): see "2026-11-13 drift"; wave 3 (branch exp-wave-3): see "2026-11-13 wave 3"; wave 4 (branch exp-wave-4): see "2026-11-13 wave 4"; lists-records: see "2026-11-13 lists-records". -->
 
 Slack turns features on per account with experiments. Clack should behave the way
 Slack's desktop client does in whatever group the account is in. This is the inventory
@@ -137,7 +137,7 @@ exp-wave-3's next ones, in its order. Reads are in `internal/core/exp_wave4.go`;
 
 | Experiment | Group | What it changes | Status |
 |---|---|---|---|
-| `lists_in_later` | `on` | "Remind me about this" / "Edit reminder" on a list record's menus; Later's ListRecord row translates "List item" | not ported: Clack has no record context menu (Yja+ ListRecordContextMenu, 2kGA's header menu) to put it in, and no list_record rows in Later |
+| `lists_in_later` | `on` | "Remind me about this" / "Edit reminder" on a list record's menus; Later's ListRecord row translates "List item" | ported on branch lists-records (see "2026-11-13 lists-records") |
 | `huddles_discovery_calls` | `treatment` | CallMenu's "New: Try a huddle…" and "Show me how" | settled, nothing to draw: eksF D7 needs the HUDDLE_CALL_NUDGES_BANNER interactions loaded, and nothing in this build loads them, so Slack never shows the line |
 | `agent_channel_thread_naming` | `on` | a channel thread whose root has an agent_session: the session's title in the header, with Edit thread name | ported (`TestThreadAgentTitle`, `thread-agent-title-*.png`) |
 | `agent_dm_thread_naming` | `on` | an agent app's DM thread: agent_session or assistant_app_thread title, editable; no subtitle | ported (`TestThreadAgentTitle`, `thread-agent-dm-title-*.png`) |
@@ -152,6 +152,22 @@ Next, in rank order:
 3. `huddles_link_v2` (sidebar): YCI0's badge of unviewed huddle invites (`WG`) on the Huddles link while in a huddle, and useMarkHuddlesNotifications; needs invite notifications and the link's facepile.
 4. The nugget-off path of `agent_ui_loading_state` / `ai_apps_loading`: AgentCheckingDetailsLoader under a channel message and the thread's AiMessageShimmer row, only seen with app_thread_nugget_fe forced off (Taut, Slick).
 5. `invite_slash_command_multi`, `a11y_underline_button_link` and the larger features, as wave 3 listed them.
+
+## 2026-11-13 lists-records (branch lists-records, build fa938a086569)
+
+wave 4's first two "next" items, with the Lists pieces they were blocked on. Reads are in `internal/core/lists_records.go`.
+
+| Experiment | Group | What it changes | Status |
+|---|---|---|---|
+| `lists_in_later` | `on` | the record menus' RemindMeAboutThisMenuItem (Jf4A): "Remind me about this", or "Edit reminder" with the reminder's description ("Due in 3 hours", "Overdue by 2 days", "Archived", "Completed"), and ReminderTimeMenu (ccoC: In 30 mins, In 1 hour, In 3 hours, Tomorrow / Monday at 9:00 AM, Custom…, Clear reminder); addReminderToRecord's saved.add / saved.update {mark unarchived or uncompleted} / saved.delete {item_type list_record, item_id: the list, ts: the record}; Later's ListRecord row's "List item" | ported (`TestRecordContextMenu`, `TestRecordPaneMenu`, `TestListRecordReminderCalls`, `TestListRecordMenusShots`, `list-record-*.png`) |
+| `search_file_channel_messages` | `on` | BaseMrkdwnChannel (lH2I): a file channel whose file the client holds draws as renderFileChannelSlug's canvas or list slug; search names it with the file | ported (`TestFileChannelFile`, `TestFileChannelSlugs`, `TestListSlugShots`, `list-slugs-*.png`) |
+
+What came with them, in every group:
+
+- **The record menus.** The grid row's and board card's right-click menu is BaseRecordContextMenu (Yja+, "Item actions"): Open item, View comment(s) / Add comment, Copy link to item ("Link copied to clipboard"), Duplicate item (lists.records.create {duplicated_record_id}), Remind me about this ▸, Archive item (lists.records.archive {list_id, ids}), Delete item (danger); the last two only when the list isn't view-only, Archive not on a subtask. The item pane has ListRecordDetailActions (2kGA) under the title: Add Comment (or "{n} Comments"; it focuses the thread's composer) and the 34px More actions ⋮ (BaseListRecordOverflowMenuTrigger): Copy link to item, Remind me about this ▸, Archive item, Delete item. Left out, as Clack has no screen or state for them: Open subtasks, Open in new window, Share item, View history, Report to Slack, Get notifications ▸ (record and thread subscriptions aren't loaded), the grid's Copy and Paste ▸, Move item ▸, Insert item ▸, Field options ▸, Group options, and the Add Comment button's commenter avatars.
+- **Later's ListRecord row** (nckZ): "List item" with the reminder chip, then the list's file entity: the lists icon, the list's title, and the item's name (two lines; "Untitled item"). It opens the item's pane. The row's hover actions stay off for list records (Clack's are the messages' ones).
+- **The list slug** (0MEu ListRecord with QFv5 getListSlugAttributes): a rich_text `list_record` element {file_id, record_id?, view_id?} is the RichTextSlug the canvas slug is, labelled with the list's title, "{list}: {view}", the item's primary field cut at 25 characters, "Untitled item", "Deleted item", "Item not found", "Deleted list view", "Deleted list", "Private list" or "Access denied", with the lists / list-item / trash / lock icon; a deleted list, item or view is disabled. Slack draws nothing until the list is loaded (and a shimmer until the item is); Clack's resolve loop fetches both (`core/lists_records.go` resolveListRecords) and draws nothing meanwhile. Slack has no hover card for it.
+- `add-comment` joins the icons (the comment bubble with a plus, `ui/icons/redrawn.go`).
 
 ## How Clack follows them
 
@@ -230,7 +246,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `activity_global_settings` | `on` | client-boot `5Ns/` export `XW` | Activity settings are global (layout toggle in header) | reads it: `core/manage.go:592`, `core/manage.go:610` |
 | `exclude_automations_filter` | `on` | client-boot `5Ns/` export `UK` (gantry vQqF, lCwf, m+ho, fNIs) | the filter menu and the new view get "Notifications from": People, apps, and agents / People only / Apps and agents only (exclude_automations / automations_only; People only disables Apps, Apps and agents only DMs and Reminders and closes the mention sub-filters); Unreads moves to the additional filters | reads it: `core/activity_agent.go:56`, `ui/views/activity_filters.go`, `ui/views/activity_views.go` |
 | `slackbot_unread_v2` | `on` | client-boot `I87A` export `m0` | Slackbot DM unreads v2 in Activity | reads it: `ui/views/activity_slack.go:265` |
-| `lists_in_later` | `on` | client-boot `Hm0j` isListsInLaterExperimentEnabled (export `v`); boot-shared `Jf4A` RemindMeAboutThisMenuItem, boot-render `nckZ` ListRecord | list records' menus (grid row, record details) get "Remind me about this" / "Edit reminder", which puts the record in Later; Later's ListRecord row only translates its "List item" label | missing (exp-wave-4 looked): the item sits in the grid row's ListRecordContextMenu (Yja+: Open item, subtasks, … Save for later 6VLn, Remind me Jf4A, copy/paste, move, insert, delete) and in the record details' header menu (2kGA); Clack has neither menu (listview has the list's More actions only), and its Later has no list_record rows, whose only change is translating "List item" |
+| `lists_in_later` | `on` | client-boot `Hm0j` isListsInLaterExperimentEnabled (export `v`); boot-shared `Jf4A` RemindMeAboutThisMenuItem, boot-render `nckZ` ListRecord | list records' menus (grid row, record details) get "Remind me about this" / "Edit reminder", which puts the record in Later; Later's ListRecord row only translates its "List item" label | reads it: `core/lists_records.go` ListsInLater (Hm0j v), `ui/listview/records.go` (the record menus' Remind me about this ▸, Jf4A / ccoC; saved.add / saved.update / saved.delete with item_type list_record), `ui/views/later_records.go` (Later's ListRecord row, nckZ) (branch lists-records) |
 | `autocomplete_demote_flannel_passthrough_rltv_exact_match` | `on` | client-boot `LRGb` | passthrough results demoted below exact matches | reads it: `ui/composer/autocomplete_rank.go:78` |
 | `autocomplete_frequently_used_emojis_frecency` | `on` | gantry-v2-async-client-boot-render `zuQH` | frequently used emoji by frecency | reads it: `core/frecency.go:273` |
 | `composer_smart_symbols` | `on` | gantry-v2-async-client-boot-shared `YGxP` isComposerSmartSymbolsOn | smart quotes and symbols, and its Advanced pref | reads it: `ui/prefs_pages.go:780`, `ui/composer/coreapi.go:54` |
@@ -294,7 +310,7 @@ Impact: 5 = on every screen for every user, 1 = a rare corner. Slack evidence: t
 | `list_channel_tab_show_view_name_fe` | `on` | client-boot `mwX5` export `uT`; boot-shared `83sY` useTabLabel | a list tab without its own label reads "<list>: <default view>" | reads it: `ui/channel.go` withListViewName (the view's name: `core/browse.go` Tabs) |
 | `lists_channel_tabs_default_view` | `on` | client-boot `mwX5` export `Wy`; boot-shared `kXBb`, `K7k9` | a list opened from its channel tab starts on the tab's default view (listsChannelTabDefaultRefineViewId) | reads it: `ui/mount_features_lists.go` listTabView |
 | `omni_merged_follow_ups` | `control` | client-boot `3D8U` export `$z` | control: follow-ups not merged | default: in `control` Slack keeps its default, as Clack does |
-| `search_file_channel_messages` | `on` | gantry-v2-async-client-boot-shared `lH2I` BaseMrkdwnChannel mapStateToProps, render `zuQH` renderFileChannelSlug | on: a conversation that is a canvas's or list's file channel reads as that canvas or list, when the file is loaded | missing: needs Slack's file store; Clack keeps no file metadata, so it draws the channel name, as Slack does for a file it hasn't loaded |
+| `search_file_channel_messages` | `on` | gantry-v2-async-client-boot-shared `lH2I` BaseMrkdwnChannel mapStateToProps, render `zuQH` renderFileChannelSlug | on: a conversation that is a canvas's or list's file channel reads as that canvas or list, when the file is loaded | reads it: `core/lists_records.go` FileChannelFile (lH2I I); a file channel whose file the client holds (files.info answered, the sidebar's file store, an open list) draws as the canvas or list slug (`richtext/listslug.go` fileChannelSpan, renderFileChannelSlug) in mrkdwn and rich_text mentions, and search results name it with the file's icon and title (`ui/popups/search_popover.go` srWhereOf) (branch lists-records) |
 | `srp_card_explore` | `on` | gantry-v2-async-client-boot-shared `+zqw` `Ui`, `Wzwx` SearchResult (SearchMessageClampedBody, SearchReactionsTooltip); search-view `UK4f` SearchResultsCardDensitySwitcher (employees only) | on: the results card's density design: the body up to 132px with a fade and Show more, at most two attachments, reactions on the card | missing: Clack's card is the one-line card measured 2026-11-08; the density card needs the card's block renderer |
 | `work_objects_message_search_xp_v2` | `on` | client-boot `PEUt` `YR`; `rZ6M` (search.modules.workObjects), `6/pc`; search-view `UK4f` UnifiedSearchRefinementWorkObject, WorkObjectResults, WorkObjectLayoutToggle | on: a message search also asks search.modules.workObjects, and each app whose work objects matched gets a source with its results (dense/detailed toggle; Most relevant, Newest, Oldest) | reads it: `core/search_workobjects.go`, `ui/popups/search_workobjects.go` (a source per app, WorkObjectResults, the dense/detailed toggle, the messages sort) |
 | `defer_notification_3p_streaming` | `on` | gantry-v2-async-client-boot-render `zuQH` maybeShowNotification, messageChanged | notifications for streaming app messages wait until the stream ends | reads it: `ui/backend.go:515`, `ui/backend.go:598` (core marks the settling update StreamDone) |
@@ -412,8 +428,7 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Later (2)
 
 - Files: internal/ui/views/ (Later), internal/core/rail.go, internal/lists/
-- To do (1): `lists_in_later` (the record menus' "Remind me about this" lives in the Lists code; Later's ListRecord row)
-- Clack reads already (1): `later_todos` (and To-dos' sections, `ui/views/later_sections.go`)
+- Clack reads already (2): `later_todos` (and To-dos' sections, `ui/views/later_sections.go`), `lists_in_later` (branch lists-records: the record menus' Remind me about this, Later's ListRecord rows)
 
 ### Composer and autocomplete (14)
 
@@ -438,7 +453,8 @@ Each package is one area, for one agent. "Files" are where the work lands; sever
 ### Search and the switcher (10)
 
 - Files: internal/ui/popups/search_*, internal/core/search*.go
-- To do (4): `fe_nav_first_apply_post_processing_rules`, `search_file_channel_messages`, `srp_card_explore`, `work_objects_message_search_xp_v2`
+- To do (3): `fe_nav_first_apply_post_processing_rules`, `srp_card_explore`, `work_objects_message_search_xp_v2`
+- Done (branch lists-records, 2026-11-13): `search_file_channel_messages` (file channels read as their canvas or list)
 - Clack reads already (5): `search_autocomplete_promote_exact_name_matches`, `desktop_search_recents_read`, `desktop_search_recents_write`, `omni_quick_message_results`, `omni_date_quick_filters`. It also reads `search_explore_freshness_signals` (not assigned, so More's Exclude archived stays hidden, as in Slack).
 
 ### Preferences, status and focus (10)

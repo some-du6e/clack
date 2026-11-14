@@ -44,6 +44,16 @@ func (s *Store) CanvasRef(fileID string) (richtext.CanvasRef, bool) {
 	return r, ok
 }
 
+// KnownCanvasRef is a file's CanvasRef if files.info already answered
+// for it, without asking for it.
+func (s *Store) KnownCanvasRef(fileID string) (richtext.CanvasRef, bool) {
+	c := s.canvasRefs()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r, ok := c.refs[fileID]
+	return r, ok
+}
+
 // CanvasSection is richtext.CanvasResolver's section lookup.
 func (s *Store) CanvasSection(fileID, sectionID string) (json.RawMessage, bool) {
 	c := s.canvasRefs()
