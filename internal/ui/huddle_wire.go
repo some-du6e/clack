@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 	"slices"
+	"strings"
 
 	"gioui.org/layout"
 
@@ -19,6 +20,33 @@ func (a *App) huddles() *huddleui.Controller {
 		a.hudLive.Store(a.hud)
 	}
 	return a.hud
+}
+
+// sbHuddleSync asks core for new sections when the conversations with a
+// huddle on change (huddleui HuddleChannels, which core's sidebar rules
+// read through SetHuddleChannels): Slack's lJBI keeps a closed DM with
+// one and keeps a row its section's filter would hide (huddleChannelIds).
+// The controller's Gen says cheaply whether anything moved. UI goroutine,
+// each sidebar frame.
+func (a *App) sbHuddleSync() {
+	if a.data == nil || a.hud == nil {
+		return
+	}
+	s := &a.sidebar
+	g := a.hud.Gen()
+	if g == s.hudGen {
+		return
+	}
+	s.hudGen = g
+	ids := make([]string, 0, 4)
+	for id := range a.hud.HuddleChannels() {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	if k := strings.Join(ids, ","); k != s.hudKey {
+		s.hudKey = k
+		a.data.resnapshot(a)
+	}
 }
 
 // imagesReady is the image cache's repaint callback (any goroutine): the

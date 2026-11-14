@@ -46,6 +46,10 @@ type sbSection struct {
 	All                                                  []string
 	HiddenRead, HiddenMuted, HiddenDormant, HiddenUnread []string
 	Filter, Sort                                         string
+	// StarredBanner (Starred only) is core's showEmptyStarredSectionBanner:
+	// the open, empty section's banner row and its heading's "New" badge
+	// (sidebar_starred.go)
+	StarredBanner bool
 }
 
 type convInfo struct {

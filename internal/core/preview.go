@@ -111,7 +111,7 @@ func (a *App) selectionShapesSidebar(id string) bool {
 		return ext
 	}
 	if c.IsIM || c.IsMPIM {
-		if !a.dmCandidate(id) {
+		if !a.dmCandidate(id, a.sidebarKeeps()) {
 			return true
 		}
 	}

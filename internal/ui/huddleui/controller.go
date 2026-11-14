@@ -172,6 +172,37 @@ func (c *Controller) Live(channel string) (liveRoom, bool) {
 	return r, ok && len(r.Participants) > 0
 }
 
+// HuddleChannels is Slack's huddleChannelIds (client-boot b0mi jg, read by
+// the sidebar's lJBI): every conversation whose huddle has someone in it,
+// yours included, the rows Badge draws the huddle suffix on. Core's
+// sidebar rules read it (core SetHuddleChannels). Safe from any goroutine.
+func (c *Controller) HuddleChannels() map[string]bool {
+	c.mu.Lock()
+	out := make(map[string]bool, len(c.live)+1)
+	for ch, r := range c.live {
+		if len(r.Participants) > 0 {
+			out[ch] = true
+		}
+	}
+	mine := c.joining
+	if c.s != nil {
+		mine = c.s.Channel()
+	}
+	c.mu.Unlock()
+	if mine != "" && !out[mine] && len(c.activeMembers(mine)) > 0 {
+		out[mine] = true
+	}
+	return out
+}
+
+// Gen changes whenever the controller's state does (cheap; the sidebar
+// checks it to notice HuddleChannels moving). Safe from any goroutine.
+func (c *Controller) Gen() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen
+}
+
 // LiveCount is the number of people in channel's huddle (0 = none), for the
 // sidebar's headphones badge.
 func (c *Controller) LiveCount(channel string) int {

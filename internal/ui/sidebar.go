@@ -122,6 +122,17 @@ type sidebarState struct {
 	// builtEdit is the mode the rows were built for; improveMute
 	// improve_mute_pref's group then (sbEditRows)
 	builtEdit, improveMute bool
+
+	// the Starred section's "New" badge (sidebar_starred.go): the section
+	// whose heading carries it and the one it holds collapsed ("" for
+	// none, as of the last sbStale), and whether its heading was clicked
+	// (MGQu's local state)
+	starBadgeID, starForcedID string
+	starClicked               bool
+	// the huddles the rows were built for (huddle_wire.go sbHuddleSync):
+	// the controller's Gen when last checked and its HuddleChannels then
+	hudGen uint64
+	hudKey string
 }
 
 // sbLinks are the page links in Slack's order (client-channel-list-view
@@ -184,6 +195,10 @@ func sectionIcon(typ string) string {
 		return "code"
 	case "priority": // VIP unreads: getIconPrefix's vip glyph
 		return "vip"
+	case "slack_connect": // External connections (iNkd getSectionIconName)
+		return "buildings"
+	case "temporary_channels":
+		return "hourglass"
 	}
 	return "list-view"
 }
@@ -221,7 +236,7 @@ func (s *sidebarState) rebuild(m *model) {
 			r.itemKey = r.key
 		case sbAction:
 			r.itemKey = "sectionFooter-" + r.section + "-" + r.key
-		case sbNoResults:
+		case sbNoResults, sbNote:
 			r.itemKey = r.key
 		}
 	}
@@ -273,6 +288,9 @@ func (s *sidebarState) rebuildRows(m *model, rows []sbRow) []sbRow {
 			}
 			continue
 		}
+		if s.starForcedID != "" && sec.ID == s.starForcedID { // the "New" badge holds Starred collapsed (sidebar_starred.go)
+			col = true
+		}
 		ids := sec.Rows
 		if col { // collapsed: Slack's unread rows (core's CollapsedChannels)
 			ids = sec.CollapsedRows
@@ -288,8 +306,11 @@ func (s *sidebarState) rebuildRows(m *model, rows []sbRow) []sbRow {
 		}
 		switch sec.Type {
 		case "stars":
-			if len(sec.Rows) == 0 {
-				rows = append(rows, sbRow{kind: sbNote, label: "Drag and drop important stuff here"})
+			// EmptyStarredSectionRow: an open Starred section with no rows
+			// while core's showEmptyStarredSectionBanner holds (not in
+			// organize mode or under the text filter: neither gets here)
+			if len(sec.Rows) == 0 && sec.StarredBanner {
+				rows = append(rows, sbRow{kind: sbNote, key: sbStarredBannerKey, label: "Drag and drop important stuff here", tr: "channel_sidebar", section: sec.ID})
 			}
 		case "channels":
 			rows = append(rows, sbRow{kind: sbAction, key: "add-channels", label: "Add channels", icon: "channel-plus", tr: "channel_sidebar"})
@@ -312,10 +333,12 @@ func (a *App) sbStale(m *model) bool {
 		key += "\x00" + strconv.FormatBool(m2) + strconv.FormatBool(m3)
 	}
 	im := a.exp("improve_mute_pref") == "on"
+	badge, forced := a.sbStarredBadge(m)
 	stale := s.rows == nil || s.builtFor != m.version || s.viewsFor != sbViewsKey() || s.filterFor != key || s.builtEdit != s.edit.on ||
-		s.edit.on && s.improveMute != im
+		s.edit.on && s.improveMute != im || s.starBadgeID != badge || s.starForcedID != forced
 	s.fq, s.fm2, s.fm3, s.filterFor = q, m2, m3, key
 	s.improveMute = im
+	s.starBadgeID, s.starForcedID = badge, forced
 	return stale
 }
 
@@ -346,6 +369,7 @@ func (a *App) layoutSidebarNative(gtx layout.Context, p slackc.Props) layout.Dim
 	m := a.model()
 	a.sidebar.headCtl = ""
 	a.tickSidebarFilter(gtx)
+	a.sbHuddleSync() // a huddle starting or ending moves rows (core's sidebar rules read the huddles)
 	if a.sbStale(m) {
 		a.sidebar.rebuild(m)
 		for i := range a.sidebar.rows {
@@ -528,15 +552,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 		theme.Fill(gtx, image.Rect(m, m, w-m, m+gtx.Dp(1)), theme.Over(color.NRGBA{R: 232, G: 232, B: 232, A: 0x21}, a.sbBase))
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	case sbNote:
-		// Slack: 13px note under the empty Starred heading; the row is
-		// 44px with the text in its first 26px.
-		lh := gtx.Dp(26)
-		at(gtx, image.Pt(pad+gtx.Dp(24), 0), image.Pt(w-pad*2-gtx.Dp(24), lh), func(gtx layout.Context) layout.Dimensions {
-			return vcenter(gtx, lh, func(gtx layout.Context) layout.Dimensions {
-				return a.th.Label(gtx, 13, theme.Regular, c.SidebarText, r.label)
-			})
-		})
-		return layout.Dimensions{Size: image.Pt(w, gtx.Dp(44))}
+		return a.layoutStarredBanner(gtx, r, w, pad)
 	case sbNoResults:
 		d := a.layoutSidebarNoResults(gtx, w)
 		a.sbFocusRing(gtx, r, d.Size)
@@ -705,6 +721,7 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			// doesn't toggle the section
 			if !a.huddles().SectionIndicatorHovered(gtx, r.key) {
 				a.sbSetCollapsed(r, !a.sbCollapsed(r))
+				a.sbStarredHeadingClicked(r) // handleSectionHeaderClick: then onBadgeClick
 			}
 		case sbConv:
 			if a.sidebar.edit.on { // onEditModeSelect: pick (Shift: a range)
@@ -1005,8 +1022,11 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 		weight := cssWeight(ns, rs.weight)
 		nfg := ns.Color(fg)
 		nw := a.th.Measure(gtx, size, weight, rs.label)
-		if nw > tw {
-			nw = tw
+		// the Starred heading's "New" (sidebar_starred.go) follows the
+		// label, which ellipsizes first
+		tagW := a.sbStarredTagWidth(gtx, r)
+		if nw > tw-tagW {
+			nw = max(0, tw-tagW)
 		}
 		at(gtx, image.Pt(tx, gtx.Dp(1)), image.Pt(nw, rowH) /* Slack: text 1px below center */, func(gtx layout.Context) layout.Dimensions {
 			return ns.Wrap(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1015,6 +1035,9 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				})
 			})
 		})
+		if tagW > 0 {
+			a.layoutStarredTag(gtx, tx+nw, rowH)
+		}
 		return layout.Dimensions{Size: image.Pt(rw, rowH)}
 	}
 	if r.disabled {

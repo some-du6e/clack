@@ -701,6 +701,9 @@ func (a *App) sbCollapsed(row *sbRow) bool {
 	if a.sidebar.edit.on {
 		return a.sidebar.edit.collapsed[row.key]
 	}
+	if row.kind == sbHeading && row.key != "" && row.key == a.sidebar.starForcedID { // the "New" badge's hold (sidebar_starred.go)
+		return true
+	}
 	return a.sidebar.collapsed[row.key]
 }
 
