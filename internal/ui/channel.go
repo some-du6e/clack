@@ -777,6 +777,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	a.tabDragEvents(gtx, ch, canEdit) // tab_drag.go: last frame's tab rects
 	drag := a.tabDrag()
 	rects := make([]tabRect, 0, len(all))
+	dropAt, dropOK := a.dragTarget(drag) // last frame's rects: the folder centre's fill goes under its tab
 	ws := make([]int, len(all))
 	lws := make([]int, len(all))
 	for i := range all {
@@ -808,6 +809,9 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		rects = append(rects, tabRect{key: t.key, id: id, typ: t.typ, label: t.label, fileID: t.fileID, folder: t.folder, idx: i,
 			r: image.Rect(x, 0, x+w, sz.Y), drag: canEdit && t.key != "messages" && core.DraggableTab(id, t.typ)})
 		source := drag.dragging && drag.src.key == t.key
+		if dropOK && !dropAt.inMenu && dropAt.key == t.key && dropAt.typ == "folder" && drag.posOf(dropAt) == "center" {
+			a.fillDropTarget(gtx, image.Rect(x, 0, x+w, sz.Y), 0xff) // .channel_tab_folder_hovered
+		}
 		var fade paint.OpacityStack
 		if source {
 			fade = paint.PushOpacity(gtx.Ops, .5) // channel_tab_is_dragging

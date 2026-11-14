@@ -562,7 +562,7 @@ func (a *App) dropIndicator(gtx layout.Context, tgt tabRect, pos string) {
 func (a *App) tabDragOverlay(gtx layout.Context, sz image.Point) {
 	d := a.tabDrag()
 	tgt, hasTgt := a.dragTarget(d)
-	if hasTgt && !tgt.inMenu && !tgt.more {
+	if hasTgt && !tgt.inMenu && !tgt.more && !(tgt.typ == "folder" && d.posOf(tgt) == "center") { // that one is under the tab (channel.go)
 		a.dropIndicator(gtx, tgt, d.posOf(tgt))
 	}
 	func() {
