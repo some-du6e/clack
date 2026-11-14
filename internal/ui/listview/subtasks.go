@@ -518,9 +518,9 @@ func (it *Item) subtaskSection(gtx layout.Context, d *core.ListDoc, rec *lists.R
 			at(gtx, nr.Min, image.Pt(nr.Dx(), gtx.Dp(22)), func(gtx layout.Context) layout.Dimensions {
 				gtx.Constraints.Max.X = nr.Dx()
 				d := th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Bold), Size: 15, Color: fg, MaxLines: 1}, name)
-				if completed && d.Size.X > 0 {
-					ly := gtx.Dp(11)
-					theme.Fill(gtx, image.Rect(0, ly, d.Size.X, ly+max(1, gtx.Dp(1))), fg)
+				if tw := min(th.Measure(gtx, 15, theme.Bold, name), nr.Dx()); completed && tw > 0 {
+					ly := gtx.Dp(11) // line-through: the text's width only
+					theme.Fill(gtx, image.Rect(0, ly, tw, ly+max(1, gtx.Dp(1))), fg)
 				}
 				return d
 			})
