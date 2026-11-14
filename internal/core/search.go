@@ -288,6 +288,11 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 		module = ModDMs
 	}
 	p := messageSearchParams(o, a.PrefBool("search_exclude_bots", false), a.PrefBool("search_only_my_channels", false))
+	if module == ModMessages {
+		// the messages module's loading (search_suggest.go)
+		a.ssugg.loading.Add(1)
+		defer a.ssugg.loading.Add(-1)
+	}
 	var raw json.RawMessage
 	if err := a.C.Call(ctx, "search.modules."+module, p, &raw); err != nil {
 		return SearchResult{}, err
@@ -312,6 +317,9 @@ func (a *App) SearchMessages(ctx context.Context, o SearchOpts) (SearchResult, e
 		SortForcedToRecent: module == ModMessages && strings.TrimSpace(string(res.SortForcedToRecent)) == "true"}
 	if res.Unfiltered > 0 && res.UnfilteredFilter != nil { // the relaxation selector's count && filter
 		out.Unfiltered, out.UnfilteredFilter = res.Unfiltered, res.UnfilteredFilter
+	}
+	if o.FetchSuggestions && module == ModMessages && o.InChannel == "" {
+		a.noteSuggestions(p.Get("query"), out) // parseSuggestions (search_suggest.go)
 	}
 	if out.Page == 0 {
 		out.Page, _ = strconv.Atoi(p.Get("page"))

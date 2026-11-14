@@ -236,6 +236,15 @@ func (s *Server) handleUnreads(method string, f url.Values) (any, bool) {
 				return ok("notifications", out), true
 			}
 		}
+		// recordAndClearNewBadge's dismissal (new_badge_generic, step =
+		// the badge) is recorded in any fake too
+		if method == "megaphone.setNotificationAsSeen" && f.Get("notification") == "new_badge_generic" {
+			u := s.unreads()
+			u.mu.Lock()
+			u.calls = append(u.calls, UnreadsCall{Method: method, Form: f})
+			u.mu.Unlock()
+			return ok(), true
+		}
 		return nil, false
 	}
 	u := s.unreads()

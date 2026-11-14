@@ -172,6 +172,21 @@ func drawMenuTag(gtx layout.Context, th *theme.Theme, t *MenuTag, hl bool, right
 	return r.Min.X
 }
 
+// MicroTagWidth is a micro Tag's width for label (recipe jF6I isMicro:
+// 12px regular, padding-inline 4px).
+func MicroTagWidth(gtx layout.Context, th *theme.Theme, label string) int {
+	return menuTagWidth(gtx, th, label)
+}
+
+// DrawMicroTag draws t as a micro Tag (20px tall, radius 4) at the
+// origin, centred in gtx.Constraints.Max.Y: EducationTag's isMicro "New"
+// outside a menu (Activity's sort button).
+func DrawMicroTag(gtx layout.Context, th *theme.Theme, t *MenuTag) layout.Dimensions {
+	w, h := menuTagWidth(gtx, th, t.Label), gtx.Constraints.Max.Y
+	drawMenuTag(gtx, th, t, false, w, h)
+	return layout.Dimensions{Size: image.Pt(w, h)}
+}
+
 // menuBadgeWidth is the c-badge pill's width for n.
 func menuBadgeWidth(gtx layout.Context, th *theme.Theme, n int) int {
 	s, capped := badgeText(n)

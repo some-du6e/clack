@@ -19,6 +19,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -29,6 +30,7 @@ type dirPickOpt struct {
 	header       bool // a group heading ("Your workspaces", "Suggestions")
 	clear        bool // "Clear all"
 	group        bool // an option under a heading
+	loading      bool // a loading row (BaseMissingChannel: the hash, MissingText's bar)
 }
 
 // dirPick is SearchFilterSearchSelect: a 280px c-menu under its pill (at
@@ -98,7 +100,7 @@ func (p *dirPick) update(gtx C) (dirPickOpt, bool) {
 	for i := range p.shown {
 		if i < len(p.rows) && p.rows[i].Clicked(gtx) {
 			o := p.shown[i]
-			if o.header {
+			if o.header || o.loading {
 				continue
 			}
 			if !p.multi {
@@ -263,6 +265,10 @@ func (p *dirPick) row(b *base, gtx C, o dirPickOpt, sz image.Point, selected, ac
 	label := o.label
 	dirAt(gtx, image.Pt(x, 0), func(gtx C) D {
 		gtx.Constraints = layout.Exact(image.Pt(max(0, tw), sz.Y))
+		if o.loading {
+			e := chanent.Ent{Text: "#", Bar: chanent.BarWidth(o.value)}
+			return layout.W.Layout(gtx, func(gtx C) D { return b.chanEntity(gtx, e, 15, weight, fg) })
+		}
 		return layout.W.Layout(gtx, func(gtx C) D { return b.label(gtx, 15, weight, fg, label) })
 	})
 	return D{Size: sz}

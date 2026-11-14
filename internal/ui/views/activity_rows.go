@@ -1177,6 +1177,15 @@ func (v *Activity) entryExtras(gtx C, r *actRow) D {
 			return layout.N.Layout(gtx, func(gtx C) D { return v.inviteButtons(gtx, r, acts) })
 		}))
 	}
+	// an agent entry's actions block (activity_leftovers.go: rZx3 Rq)
+	if m := r.it.Msg; m != nil {
+		if bid, blk, ok := r.agentActions(m); ok {
+			if len(kids) > 0 {
+				kids = append(kids, layout.Rigid(func(gtx C) D { return D{Size: image.Pt(0, gtx.Dp(12))} }))
+			}
+			kids = append(kids, layout.Rigid(func(gtx C) D { return v.agentActions(gtx, r, m, bid, blk) }))
+		}
+	}
 	if len(kids) == 0 {
 		return D{}
 	}
@@ -1301,11 +1310,17 @@ func actSubtextDoc(doc richtext.Doc, sub string) richtext.Doc {
 // header of the section the list's top is in stays at the top
 // (c-virtual_list__item--sticky, z-index 199) until the next header
 // pushes it up (its sticky container ends where the next one starts).
-// While stuck it shows oDbF's stuck shadow
-// (non-collapsible__header_container--stuck:after, bordered separators:
-// 0 2px 4px #0000000a under the 1px otl-ter line). A row under it hides
-// its hover actions (useHideActionsBehindStickyHeader: the row's top
-// above the header's bottom less 2px).
+// oDbF marks a header --stuck while an IntersectionObserver on the
+// scroller (rootMargin -1px at the top, threshold 1) sees less than all
+// of it: at the top, pushed up, or not yet in. The mark is the :after's
+// box-shadows, but the bordered container is contain: paint, which clips
+// the outer two (the base-pry line above, 0 2px 4px #0000000a below) to
+// its padding box: what shows is the inset 0 -1px 0 otl-ter line just
+// above its 1px otl-ter border, fading in and out over 80ms
+// (cubic-bezier(.36,.19,.29,1)). The list's lead-in (leadIn) keeps the
+// first header 9px down at scroll 0, so it isn't stuck there. A row under
+// the stuck header hides its hover actions (useHideActionsBehindStickyHeader:
+// the row's top above the header's bottom less 2px).
 type actStickyHdr struct {
 	h    map[int]int // this frame's laid-out heights by list index
 	tops map[int]int // the last frame's tops of the visible items
@@ -1313,6 +1328,12 @@ type actStickyHdr struct {
 	y    int // the stuck header's top in the list (0, or less when pushed)
 	vip  bool
 	hh   int
+	lead int // the lead-in above list item 0 this frame (leadIn)
+
+	// the --stuck mark's fade, by header (0 VIP unreads, 1 Everything
+	// else): whether it's stuck, and since when
+	stuck [2]bool
+	since [2]time.Time
 
 	scroll gesture.Scroll
 	tag    struct{} // the header's own hit area: rows under it get no clicks
@@ -1320,6 +1341,9 @@ type actStickyHdr struct {
 
 // actStickyH is --activity-section-header-height.
 const actStickyH unit.Dp = 42
+
+// actStuckFade is the stuck mark's transition: opacity 80ms.
+const actStuckFade = 80 * time.Millisecond
 
 func (s *actStickyHdr) begin() {
 	if s.h == nil {
@@ -1332,8 +1356,77 @@ func (v *Activity) isHeader(i int) bool {
 	return i >= 0 && i < len(v.vis) && (v.vis[i] == actVisVIP || v.vis[i] == actVisElse)
 }
 
+// leadIn is the space above the list's first item: the 1px
+// top-anchor-hack item (p-activity_page__top_anchor_hack_item, a
+// transparent 1px border: mMdU's list always starts with it) under the
+// scroll child's padding-top var(--activity-first-item-lead-in, 4px),
+// which --refreshed_separators (layout revisions) makes 8px and
+// --unified_global_triage 0; the peek (p-activity_ia4_page--peek) has no
+// padding.
+func (v *Activity) leadIn(gtx C) int {
+	px := max(1, gtx.Dp(1))
+	if v.pk.peeking {
+		return px
+	}
+	c := v.h.Core()
+	switch {
+	case c.UnifiedGlobalTriage():
+	case c.ActivityLayoutRevisions():
+		px += gtx.Dp(8)
+	default:
+		px += gtx.Dp(4)
+	}
+	return px
+}
+
+// actBezier is a CSS cubic-bezier(x1, y1, x2, y2) at x in [0, 1].
+func actBezier(x1, y1, x2, y2, x float64) float64 {
+	if x <= 0 {
+		return 0
+	}
+	if x >= 1 {
+		return 1
+	}
+	at := func(a, b, t float64) float64 { u := 1 - t; return 3*u*u*t*a + 3*u*t*t*b + t*t*t }
+	lo, hi, t := 0.0, 1.0, x
+	for range 30 {
+		if v := at(x1, x2, t); math.Abs(v-x) < 1e-5 {
+			break
+		} else if v < x {
+			lo = t
+		} else {
+			hi = t
+		}
+		t = (lo + hi) / 2
+	}
+	return at(y1, y2, t)
+}
+
+// stuckAlpha is header k's mark opacity now; anim reports the fade still
+// running.
+func (s *actStickyHdr) stuckAlpha(k int, now time.Time) (a float32, anim bool) {
+	t := float64(now.Sub(s.since[k])) / float64(actStuckFade)
+	e := float32(actBezier(.36, .19, .29, 1, t))
+	if !s.stuck[k] {
+		e = 1 - e
+	}
+	return e, t < 1
+}
+
+// stuckMark draws the mark (the :after's inset line) for a header whose
+// box is hh tall at y, at opacity a.
+func (v *Activity) stuckMark(gtx C, y, w, hh int, a float32) {
+	if a <= 0 {
+		return
+	}
+	one := max(1, gtx.Dp(1))
+	c := v.p.Border
+	c.A = uint8(float32(c.A)*a + .5)
+	fill(gtx, image.Rect(0, y+hh-2*one, w, y+hh-one), c)
+}
+
 // stickyHeader draws the stuck header over the list (size is the list's)
-// after the list laid out this frame.
+// after the list laid out this frame, and the stuck marks.
 func (v *Activity) stickyHeader(gtx C, size image.Point) {
 	s := &v.stk
 	s.on = false
@@ -1348,6 +1441,23 @@ func (v *Activity) stickyHeader(gtx C, size image.Point) {
 	if !v.h.Core().ActivityLayoutRevisions() {
 		return // e5: no sticky items without the revisions
 	}
+	s.hh = gtx.Dp(actStickyH)
+	one := max(1, gtx.Dp(1))
+	// a header box's top in its place (item 0's lead-in is above it)
+	natTop := func(i int) int {
+		if i == 0 {
+			return tops[i] + s.lead
+		}
+		return tops[i]
+	}
+	kind := func(i int) int {
+		if v.vis[i] == actVisVIP {
+			return 0
+		}
+		return 1
+	}
+	// the section the list's top is in: the last header at or above the
+	// first item laid out
 	hdr := -1
 	for i := min(pos.First, len(v.vis)-1); i >= 0; i-- {
 		if v.isHeader(i) {
@@ -1355,41 +1465,72 @@ func (v *Activity) stickyHeader(gtx C, size image.Point) {
 			break
 		}
 	}
-	if hdr < 0 || hdr == pos.First && pos.Offset <= 0 {
-		return // in its place
-	}
-	s.hh = gtx.Dp(actStickyH)
-	s.y = 0
-	for i := hdr + 1; i < pos.First+pos.Count; i++ {
-		if v.isHeader(i) {
-			if t := tops[i]; t < s.hh {
-				s.y = t - s.hh
+	stuckKind := -1
+	if hdr >= 0 {
+		top := -1 // above the list
+		if hdr == pos.First {
+			top = natTop(hdr)
+		}
+		if top <= 0 {
+			// sticky: at the top, until the next header pushes it up
+			s.y = 0
+			for i := hdr + 1; i < pos.First+pos.Count; i++ {
+				if v.isHeader(i) {
+					if t := natTop(i); t < s.hh {
+						s.y = t - s.hh
+					}
+					break
+				}
 			}
-			break
+			s.on, s.vip = s.y > -s.hh, v.vis[hdr] == actVisVIP
+		}
+		if top < one {
+			stuckKind = kind(hdr) // less than all of it inside the root's 1px-in top
 		}
 	}
-	if s.y <= -s.hh {
-		return
+	anim := false
+	for k := range s.stuck {
+		if on := k == stuckKind; on != s.stuck[k] {
+			s.stuck[k], s.since[k] = on, gtx.Now
+		}
 	}
-	s.on, s.vip = true, v.vis[hdr] == actVisVIP
 	defer clip.Rect{Max: size}.Push(gtx.Ops).Pop()
-	defer op.Offset(image.Pt(0, s.y)).Push(gtx.Ops).Pop()
-	r := image.Rect(0, 0, size.X, s.hh)
-	// the stuck shadow below the header
-	theme.Shadow(gtx, r.Add(image.Pt(0, gtx.Dp(2))), 0, gtx.Dp(4), argb(0x0a000000))
-	g := gtx
-	g.Constraints = layout.Exact(image.Pt(size.X, s.hh))
-	v.sectionHeader(g, s.vip)
-	// its hit area: the rows under it don't take presses, and a wheel
-	// over it still scrolls the list (gesture.Scroll, as the list's own)
-	area := clip.Rect(r).Push(gtx.Ops)
-	event.Op(gtx.Ops, &s.tag)
-	s.scroll.Add(gtx.Ops)
-	area.Pop()
-	if d := s.scroll.Update(gtx.Metric, gtx.Source, gtx.Now, gesture.Vertical,
-		pointer.ScrollRange{}, pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}); d != 0 {
-		v.list.Position.Offset += d
-		v.list.Position.BeforeEnd = true
+	// the marks of the headers in their places (fading out, or stuck at
+	// less than 1px down)
+	for i := pos.First; i < pos.First+pos.Count; i++ {
+		if !v.isHeader(i) || s.on && i == hdr {
+			continue
+		}
+		a, run := s.stuckAlpha(kind(i), gtx.Now)
+		anim = anim || run
+		v.stuckMark(gtx, natTop(i), size.X, s.hh, a)
+	}
+	if s.on {
+		func() {
+			defer op.Offset(image.Pt(0, s.y)).Push(gtx.Ops).Pop()
+			r := image.Rect(0, 0, size.X, s.hh)
+			g := gtx
+			g.Constraints = layout.Exact(image.Pt(size.X, s.hh))
+			v.sectionHeader(g, s.vip)
+			a, run := s.stuckAlpha(kind(hdr), gtx.Now)
+			anim = anim || run
+			v.stuckMark(gtx, 0, size.X, s.hh, a)
+			// its hit area: the rows under it don't take presses, and a
+			// wheel over it still scrolls the list (gesture.Scroll, as the
+			// list's own)
+			area := clip.Rect(r).Push(gtx.Ops)
+			event.Op(gtx.Ops, &s.tag)
+			s.scroll.Add(gtx.Ops)
+			area.Pop()
+			if d := s.scroll.Update(gtx.Metric, gtx.Source, gtx.Now, gesture.Vertical,
+				pointer.ScrollRange{}, pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}); d != 0 {
+				v.list.Position.Offset += d
+				v.list.Position.BeforeEnd = true
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}()
+	}
+	if anim {
 		gtx.Execute(op.InvalidateCmd{})
 	}
 }

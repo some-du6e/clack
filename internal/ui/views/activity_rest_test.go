@@ -234,8 +234,18 @@ func TestActivityCustomViewsLikeSlack(t *testing.T) {
 	if v.lastViewModal.alert() != "There’s already a view with this name." || v.lastViewModal.canSave() {
 		t.Errorf("taken name: %q", v.lastViewModal.alert())
 	}
-	actLastModal(h).Dismiss()
+	// a name typed: closing asks first (fNIs's speed bump), Discard closes
+	taken := actLastModal(h)
+	taken.Dismiss()
 	e.frame()
+	if !v.lastViewModal.bump.Up() || taken.Dismissed() {
+		t.Fatal("closing with a name typed didn't ask")
+	}
+	v.lastViewModal.bump.Discard()
+	e.frame()
+	if !taken.Dismissed() {
+		t.Fatal("Discard didn't close the modal")
+	}
 	// Rename the shown view
 	vw, _ := v.customView()
 	v.openViewModal(actRenameView, vw)

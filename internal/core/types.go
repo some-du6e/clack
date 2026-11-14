@@ -418,6 +418,10 @@ type SearchOpts struct {
 	// rZ6M getSearchParams, O8Qt's search in channel), so the server
 	// mustn't force the results newest first.
 	DisableSortOverride bool
+	// FetchSuggestions is fetchAll's fetchSuggestions: a new search (A+yj,
+	// the search box or a filter) whose messages answer merges its
+	// filter_suggestions into the window's (search_suggest.go).
+	FetchSuggestions bool
 }
 
 type SearchResult struct {

@@ -216,6 +216,16 @@ type actRow struct {
 	agentUntil time.Time
 	agentHov   gesture.Hover
 	agentTip   popups.TipState
+
+	// The agent entry's Block Kit actions (activity_leftovers.go): its
+	// element host, the block's size last frame and the press target over
+	// the buttons it drew.
+	actRq   actRowActions
+	actEls  *actActionsEls
+	actSize image.Point
+	actTag  struct{}
+	// where the hover bar went last (its top on the row, its right inset)
+	barY, barRight int
 }
 
 // Activity is the Activity view.
@@ -387,6 +397,9 @@ type Activity struct {
 	// activity_rows.go); stk the sticky section header (Eojr e5).
 	typing actTyping
 	stk    actStickyHdr
+	// lo is the tab strip's More, the tooltips and the sort button's
+	// "new" badge (activity_leftovers.go).
+	lo actLeftovers
 }
 
 // NewActivity builds the Activity view; it loads on first Layout.
@@ -1372,7 +1385,7 @@ func (v *Activity) head(gtx C) D {
 					if !v.headerSort() {
 						return D{}
 					}
-					return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.iconButton(gtx, &v.sortBtn, "sort", 28, 20, v.p.Sec) })
+					return layout.Inset{Left: 8}.Layout(gtx, v.sortTrigger) // activity_leftovers.go
 				}),
 				hgap(8),
 				layout.Rigid(func(gtx C) D { return v.iconButton(gtx, &v.kebab, "more", 28, 20, v.p.Sec) }),
@@ -1390,10 +1403,14 @@ func (v *Activity) head(gtx C) D {
 				g := gtx
 				g.Constraints.Min = image.Point{}
 				plusCol := v.p.Sec
+				tip := nsActivity.T("Add new view")
 				if v.viewCount() >= actMaxViews {
 					plusCol = v.p.Faint // isAddTabDisabled: 15 views
+					tip = nsActivity.T("You can only save up to {maxTabCount} tabs. Delete one to save a new tab.", "maxTabCount", actMaxViews)
 				}
-				v.iconButton(g, &v.plus, "plus", 24, 16, plusCol)
+				pd := v.iconButton(g, &v.plus, "plus", 24, 16, plusCol)
+				// CustomAddTabItem's tooltip, above it (eT tooltipText)
+				popups.Tooltip(g, v.th, &v.lo.plusTip, v.plus.Hovered(), pd.Size, popups.Above, tip, "")
 				st.Pop()
 				v.plusX = gtx.Dp(16) + x
 				return D{Size: image.Pt(gtx.Constraints.Max.X, d.Size.Y)}
@@ -1769,7 +1786,18 @@ func (v *Activity) items(gtx C) D {
 	v.listFocusEvents(gtx)
 	area := v.listFocusArea(gtx, image.Rectangle{Max: gtx.Constraints.Max})
 	v.stk.begin()
+	lead := v.leadIn(gtx) // activity_rows.go
+	v.stk.lead = lead
 	d := v.scrollList(gtx, &v.list, n+1, func(gtx C, i int) D {
+		if i == 0 && lead > 0 {
+			// the lead-in above the first item, outside its hit area
+			st := op.Offset(image.Pt(0, lead)).Push(gtx.Ops)
+			d := v.listItem(gtx, &page, i, n, failed)
+			st.Pop()
+			d.Size.Y += lead
+			v.stk.h[i] = d.Size.Y
+			return d
+		}
 		d := v.listItem(gtx, &page, i, n, failed)
 		v.stk.h[i] = d.Size.Y
 		return d
@@ -1941,7 +1969,14 @@ func (v *Activity) footer(gtx C, failed bool) D {
 func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	key := actKey(it)
 	r := v.rowFor(key)
-	clicked := r.click.Clicked(gtx)
+	// a click on an agent entry's action button (activity_leftovers.go)
+	// marks the row read and doesn't open it (ControlledClick skips a
+	// BUTTON target)
+	onActions := v.agentActionsClicked(gtx, r)
+	clicked := r.click.Clicked(gtx) && !onActions
+	if onActions && v.isUnread(it, key) {
+		v.markRead(it, key)
+	}
 	if clicked && v.pk.peeking { // the peek's row: maybeClosePeek, then the item in Activity
 		v.openFromPeek(it, key, r)
 	} else if clicked {
@@ -2044,20 +2079,28 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		}
 	}
 	if (sel || focused || r.click.Hovered() || r.bar.Hovered()) && !v.underSticky(gtx, i) {
-		y := -gtx.Dp(25)
-		if v.dense {
+		// activity_multi_line_row_content__actions_toggle, inside the
+		// content box (the container's 12px padding): top 2px,
+		// translateY(-100%), above the row; --firstEntry (the row after
+		// the top-anchor-hack item, list item 0) top 4px with no
+		// transform, inside it; --peek top -4px, right 0, inside it
+		y, right := -gtx.Dp(25), gtx.Dp(16)
+		switch {
+		case v.dense:
 			// activity_single_line_row_content__actions_toggle: centred on
 			// the row (top 50%, translateY(-50%)), right -4px
 			y = (d.Size.Y - gtx.Dp(40)) / 2
-		} else if i == v.list.Position.First {
-			// Keep the first visible row's bar inside the list's clip.
-			y = min(max(y, v.list.Position.Offset), d.Size.Y-gtx.Dp(40))
+		case v.pk.peeking:
+			y, right = gtx.Dp(12-4), gtx.Dp(20)
+		case i == 0:
+			y = gtx.Dp(12 + 4)
 		}
 		barW := d.Size.X
 		if v.triage() {
 			barW -= gtx.Dp(actTriageEnd) // the card's right edge
 		}
-		v.hoverBar(gtx, r, unread, barW, y)
+		r.barY, r.barRight = y, right
+		v.hoverBar(gtx, r, unread, barW, y, right)
 	}
 	return d
 }
@@ -3099,7 +3142,7 @@ func (v *Activity) actAvatarOf(gtx C, d *actDesc, size unit.Dp) D {
 // hoverBar is the row's floating action bar (ActivityRowContentActions):
 // at the top-right, straddling the row's top border; 32x32 buttons with
 // 18px icons, 4px padding, as many as the item has (hoverButtons).
-func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y int) {
+func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y, right int) {
 	btns := v.hoverButtons(r.it, unread)
 	if len(btns) == 0 {
 		return
@@ -3108,7 +3151,7 @@ func (v *Activity) hoverBar(gtx C, r *actRow, unread bool, rowW, y int) {
 	if len(btns) > 0 && btns[0] == actBtnComplete {
 		bw += gtx.Dp(12) // markCompleteIconButton: margin-right 12px
 	}
-	x := max(0, rowW-bw-gtx.Dp(16))
+	x := max(0, rowW-bw-right)
 	defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(bw, bh))

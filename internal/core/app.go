@@ -92,6 +92,7 @@ type App struct {
 	drafts     draftCache           // the viewer's server drafts (drafts.go), memory only
 	dnd        dndState             // the viewer's Do Not Disturb (dnd.go)
 	mega       megaphoneState       // megaphone spaces, global and per channel (megaphone.go)
+	ssugg      searchSuggState      // the window's last search's filter suggestions (search_suggest.go)
 	selected   string               // the open conversation (SetSelected, preview.go)
 	temp       map[string]int64     // temporary memberships: channel -> expiration_ts (preview.go)
 

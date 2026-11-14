@@ -374,38 +374,48 @@ var actRowIcons = [len(actFilters)]string{"", "mentions", "threads", "", "emoji"
 // tabMenus handles the tabs' context menus: custom views' Rename view /
 // Delete view, the default views' (not All) Hide view.
 func (v *Activity) tabMenus(gtx C) {
-	ph, ok := v.h.(popups.Host)
-	if !ok {
-		return
-	}
 	for i := range v.tabCtx {
 		for {
 			ev, ok := gtx.Event(pointer.Filter{Target: &v.tabCtx[i], Kinds: pointer.Press})
 			if !ok {
 				break
 			}
-			e, ok := ev.(pointer.Event)
-			if !ok || !ctxclick.Press(e) || i >= len(v.slots) {
-				continue
-			}
-			slot := v.slots[i]
-			var items []popups.MenuItem
-			switch {
-			case slot >= actSlotN:
-				vw := v.slotView(slot)
-				items = []popups.MenuItem{
-					{Key: "rename", Label: nsActivity.T("Rename view"), Do: func() { v.openViewModal(actRenameView, vw) }},
-					{Key: "delete", Label: nsActivity.T("Delete view"), Danger: true, Do: func() { v.confirmDeleteView(vw) }},
-				}
-			case slot > 0:
-				typ := actTabIDs[slot]
-				items = []popups.MenuItem{{Key: "hide", Label: nsActivity.T("Hide view"), Danger: true, Do: func() { v.confirmHideView(typ) }}}
-			}
-			if len(items) > 0 {
-				at := v.pointerAt()
-				ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, Width: 0}))
+			if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+				v.tabMenuAt(i, v.pointerAt())
 			}
 		}
+	}
+}
+
+// tabMenuItems is tab i's context menu (GuYW contextMenuTemplate).
+func (v *Activity) tabMenuItems(i int) []popups.MenuItem {
+	if i >= len(v.slots) {
+		return nil
+	}
+	slot := v.slots[i]
+	switch {
+	case slot >= actSlotN:
+		vw := v.slotView(slot)
+		return []popups.MenuItem{
+			{Key: "rename", Label: nsActivity.T("Rename view"), Do: func() { v.openViewModal(actRenameView, vw) }},
+			{Key: "delete", Label: nsActivity.T("Delete view"), Danger: true, Do: func() { v.confirmDeleteView(vw) }},
+		}
+	case slot > 0:
+		typ := actTabIDs[slot]
+		return []popups.MenuItem{{Key: "hide", Label: nsActivity.T("Hide view"), Danger: true, Do: func() { v.confirmHideView(typ) }}}
+	}
+	return nil
+}
+
+// tabMenuAt opens tab i's context menu at (window coordinates): from the
+// tab, or from its row in the More menu.
+func (v *Activity) tabMenuAt(i int, at image.Point) {
+	ph, ok := v.h.(popups.Host)
+	if !ok {
+		return
+	}
+	if items := v.tabMenuItems(i); len(items) > 0 {
+		ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, Width: 0}))
 	}
 }
 
@@ -985,7 +995,9 @@ func (v *Activity) sortMenu(at image.Point) {
 		{Key: "activity-sort-newest", Label: nsActivity.T("Newest"), Radio: true, Checked: !vip, Do: func() { v.setSort(false) }},
 		{Key: "activity-sort-vip", Label: nsActivity.T("VIP unreads on top"), Radio: true, Checked: vip, Do: func() { v.setSort(true) }},
 	}
-	ph.ShowOverlay(popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, AlignRight: true, Width: 240}))
+	m := popups.NewMenuOpts(ph, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at}, AlignRight: true, Width: 240})
+	v.lo.sortMenu = m // onPopoverOpen: sortTriggerActive (activity_leftovers.go)
+	ph.ShowOverlay(m)
 }
 
 // actVIPOrder is the ActivityList selector Q with VIP unreads on top:
@@ -1013,16 +1025,19 @@ func (v *Activity) actVIPOrder(page *core.ActivityPage) (order []int, split int)
 	return append(first, rest...), len(first)
 }
 
-// sectionHeader is ActivitySectionHeader (oDbF) in the bordered list with
-// layout revisions: 42px (--activity-section-header-height), base-pry
+// sectionHeader is ActivitySectionHeader (oDbF). With layout revisions
+// (the bordered list): 42px (--activity-section-header-height), base-pry
 // under a 1px otl-ter border, the 20px tile (6px radius) with the 16px
-// icon, 12px, the 13px/18px bold label in content-sec, 20px in: "VIP
-// unreads" (the important tile: campfire-0 under campfire-30) and
-// "Everything else" (base-ter under content-sec).
+// icon, the 13px/18px bold label in content-sec: "VIP unreads" with the
+// importance icon (F: a vip / priority header key, mark-as-important-filled
+// on campfire-0 under campfire-30), 20px in (score_entries_header), and
+// "Everything else" (notifications-filled on base-ter under content-sec),
+// 20px in, 16px in Dense (the label's :has(section_header_title--dense));
+// the title's gap 12px, 4px in Dense. Without them oDbF draws neither
+// tile nor line (F needs A): padding 8px above (--with_top_spacing) and
+// below the label, which sits 24px in.
 func (v *Activity) sectionHeader(gtx C, vip bool) D {
-	w, h := gtx.Constraints.Max.X, gtx.Dp(42)
-	fill(gtx, image.Rect(0, 0, w, h), v.p.Bg)
-	fill(gtx, image.Rect(0, h-max(1, gtx.Dp(1)), w, h), v.p.Border)
+	w := gtx.Constraints.Max.X
 	label, icon := nsActivity.T("Everything else"), "notifications-filled"
 	bg, fg := v.p.Track, v.p.Sec
 	if vip {
@@ -1032,9 +1047,21 @@ func (v *Activity) sectionHeader(gtx C, vip bool) D {
 			bg, fg = rgb(0x321600), rgb(0x954700)
 		}
 	}
+	x, gap, tile := v.sectionHeaderMetrics(gtx, vip)
+	if !tile {
+		func() {
+			defer op.Offset(image.Pt(x, gtx.Dp(8))).Push(gtx.Ops).Pop()
+			g := gtx
+			g.Constraints = layout.Constraints{Max: image.Pt(max(0, w-x), gtx.Dp(18))}
+			v.label(g, 13, wBold, v.p.Sec, label)
+		}()
+		return D{Size: image.Pt(w, gtx.Dp(8+18+8))}
+	}
+	h := gtx.Dp(42)
+	fill(gtx, image.Rect(0, 0, w, h), v.p.Bg)
+	fill(gtx, image.Rect(0, h-max(1, gtx.Dp(1)), w, h), v.p.Border)
 	t := gtx.Dp(20)
 	y := (h - t) / 2
-	x := gtx.Dp(20)
 	func() {
 		defer op.Offset(image.Pt(x, y)).Push(gtx.Ops).Pop()
 		rrect(gtx, image.Rect(0, 0, t, t), gtx.Dp(6), bg)
@@ -1042,12 +1069,30 @@ func (v *Activity) sectionHeader(gtx C, vip bool) D {
 		v.icon(gtx, icon, 16, fg)
 	}()
 	func() {
-		defer op.Offset(image.Pt(x+t+gtx.Dp(12), (h-gtx.Dp(18))/2)).Push(gtx.Ops).Pop()
+		defer op.Offset(image.Pt(x+t+gap, (h-gtx.Dp(18))/2)).Push(gtx.Ops).Pop()
 		g := gtx
-		g.Constraints = layout.Constraints{Max: image.Pt(max(0, w-x-t-gtx.Dp(32)), gtx.Dp(18))}
+		g.Constraints = layout.Constraints{Max: image.Pt(max(0, w-x-t-gap-gtx.Dp(12)), gtx.Dp(18))}
 		v.label(g, 13, wBold, v.p.Sec, label)
 	}()
 	return D{Size: image.Pt(w, h)}
+}
+
+// sectionHeaderMetrics is the header's label inset and the title's gap
+// (px), and whether it draws its tile (the importance icon on VIP
+// unreads): with layout revisions 20px in (16px for Everything else in
+// Dense), the gap 12px (4px in Dense); without them 24px in, no tile.
+func (v *Activity) sectionHeaderMetrics(gtx C, vip bool) (x, gap int, tile bool) {
+	if !v.h.Core().ActivityLayoutRevisions() {
+		return gtx.Dp(24), 0, false
+	}
+	x, gap = gtx.Dp(20), gtx.Dp(12)
+	if v.dense {
+		gap = gtx.Dp(4)
+		if !vip {
+			x = gtx.Dp(16)
+		}
+	}
+	return x, gap, true
 }
 
 // ---- the settings menu's Sort and Density sections (vzfm) ----
@@ -1284,6 +1329,10 @@ type actViewModal struct {
 	focused bool
 	err     string // Slack's error code from the last save
 	pending bool
+	// bump is the footer's "Discard changes?" speed bump (eo,
+	// forceSpeedBumpEnabled while changed); cancel the footer's Cancel
+	bump   *popups.SpeedBump
+	cancel *popups.ModalButton
 
 	emojiBtn, clearBtn widget.Clickable
 
@@ -1326,9 +1375,24 @@ func (v *Activity) openViewModal(kind int, vw core.ActivityView) {
 		title = nsActivity.T("Rename this view")
 	}
 	save := &popups.ModalButton{Label: nsActivity.T("Save"), Kind: popups.BtnPrimary, Enabled: m.canSave, Do: func() bool { m.save(); return false }}
+	// eo: ModalSpeedBump with the modal's changes (Z); Discard (es)
+	// closes it, Keep Editing goes back to it
+	m.bump = popups.NewSpeedBump(nsActivity.T("Discard changes?"),
+		nsActivity.T("If you close without saving, you’ll lose all the changes you’ve made."),
+		nsActivity.T("Keep Editing"), nsActivity.T("Discard"), m.changed, func() { m.modal.Close() })
+	// the footer's Cancel is a ModalCloseButton: closeModal, which the
+	// speed bump stops while there are changes
+	m.cancel = &popups.ModalButton{Label: nsActivity.T("Cancel"), Kind: popups.BtnOutline, Do: func() bool { m.modal.Dismiss(); return false }}
 	m.modal = popups.NewModal(ph, popups.ModalOpts{Title: title, Subtitle: sub, Width: 520, Body: m.layout,
-		Buttons:    []*popups.ModalButton{{Label: nsActivity.T("Cancel"), Kind: popups.BtnOutline}, save},
-		FocusStops: func() []event.Tag { return []event.Tag{&m.ed} }})
+		Buttons: []*popups.ModalButton{m.cancel, save},
+		FocusStops: func() []event.Tag {
+			if st := m.bump.Stops(); st != nil {
+				return st
+			}
+			return []event.Tag{&m.ed}
+		},
+		CloseGuard: m.bump.Guard, Over: m.bump.Layout})
+	m.bump.Attach(m.modal)
 	v.lastViewModal = m
 	ph.ShowOverlay(m.modal)
 }
@@ -1336,12 +1400,14 @@ func (v *Activity) openViewModal(kind int, vw core.ActivityView) {
 // name is the name the modal saves.
 func (m *actViewModal) name() string { return m.ed.Text() }
 
-// changed is fNIs Q: the new tab's state, the name or the emoji changed.
+// changed is fNIs Z: a new tab whose state isn't the default (sTqq wn:
+// its filters, layout, sort, name or emoji), a name changed from the
+// view's own, or the emoji changed.
 func (m *actViewModal) changed() bool {
-	if m.kind == actCreateTab && (m.st.any() || m.dense || m.vipSort) {
+	if m.kind == actCreateTab && (m.st.any() || m.dense || m.vipSort || m.name() != "" || m.emoji != "") {
 		return true
 	}
-	return m.name() != m.name0 && m.name() != "" || m.emoji != m.emoji0
+	return m.name0 != "" && m.name() != m.name0 || m.emoji != m.emoji0
 }
 
 // alert is the text under the input: Slack's answer, a taken name (ea),
@@ -1388,7 +1454,7 @@ func (m *actViewModal) save() {
 			m.err = code
 			return
 		}
-		m.modal.Dismiss()
+		m.modal.Close() // ee({force: true}): no speed bump after a save
 		v.h.Toast(nsActivity.T(`"{name}" has been saved successfully.`, "name", name))
 	}
 	switch m.kind {

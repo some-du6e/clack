@@ -741,7 +741,8 @@ on, the VIP sort's "VIP unreads" / "Everything else" headers are sticky
 items (`stickyZIndex` 199). The header of the section at the top of the
 list stays there until the next header pushes it up (its sticky container
 ends where the next one starts). While stuck it shows oDbF's `--stuck`
-shadow (`0 2px 4px #0000000a` under its 1px `otl-ter` line). A wheel over
+mark: the inset `otl-ter` line over its 1px border ("Leftovers 2": the
+container's `contain: paint` clips the `0 2px 4px` drop shadow). A wheel over
 it still scrolls the list (gesture.Scroll, added to the list's position),
 and the rows under it get no presses. A row under it hides its hover
 actions (`useHideActionsBehindStickyHeader`: the row's top above the
@@ -831,27 +832,173 @@ activity-sticky-push, activity-channel-invite-row,
 activity-accept-workspace / -name / -privacy / -welcome / -upgrade,
 each `-light` and `-dark`.
 
+## Leftovers 2 (2026-11-14, branch `activity-leftovers`)
+
+Read from Slack's public CDN build `2c0d02ca130f` (`client-boot.bbd3a8c1f7bb6f10`,
+`gantry-v2-async-client-boot-shared.54b29d3cf4bf04bc`,
+`gantry-v2-async-client-boot-render.ffcc7d4c4df423eb`,
+`gantry-v2-vendors.35f66ae0b68a99f2`) and fa938a086569's
+`client-boot-styles`, no cookie. In this build the Activity list and rows
+are boot-shared module `mMdU` (5465 in d3de3a487b1c). Nothing was opened
+in a live Slack client; every write is tested against internal/fakeslack.
+
+**The lead-in.** mMdU's list always starts with a `top-anchor-hack` item,
+a 1px transparent border (`p-activity_page__top_anchor_hack_item`). Above
+it the scroll child has `padding-top: var(--activity-first-item-lead-in,
+4px)`, which `--refreshed_separators` (layout revisions) sets to 8px and
+`--unified_global_triage` to 0. The peek (`p-activity_ia4_page--peek`)
+gets no padding. With the account's groups the first row sits 9px down at
+scroll 0, and a press in those 9px is on no row. The first row's hover bar
+is `actions_toggleFirstEntry` (top 4px, no transform), 16px into the row,
+because the lead-in would clip it above the row. In the peek every row's
+bar is `--peek` (top -4px, right 0). Clack used to keep the first visible
+row's bar inside the list; Slack's scroller clips it, and now Clack's does
+too.
+
+**The stuck mark.** oDbF watches each section header with an
+IntersectionObserver on the scroller (rootMargin -1px at the top,
+threshold 1) and marks it `--stuck` while less than all of it is inside.
+A header at y=0 counts, and that's what the lead-in prevents at scroll 0:
+"VIP unreads" starts 9px down and only sticks once the list has scrolled
+9px. The `--stuck:after` box-shadow has three parts, but the bordered
+container is `contain: paint`, which clips the :after's outer shadows to
+its padding box. What shows is the inset `0 -1px 0 otl-ter` line right
+above the header's own 1px border, so the bottom line doubles; it fades
+in and out over 80ms (cubic-bezier(.36,.19,.29,1)). Clack drew the clipped
+`0 2px 4px` drop shadow before. It draws the inset line now.
+
+**The importance icon.** Neither build (2c0d02ca130f, fa938a086569) has a
+per-row importance mark: no priority or importance glyph in mMdU's rows,
+their status column or footer, and none in the item menu template either
+(`aiCatchUp`'s ai-sparkle is "Catch up available"). The importance icon is
+ActivitySectionHeader's. A header whose key is in agdG `Im`
+(`vip_collapsible_header`, `priority_collapsible_header`) gets
+`mark-as-important-filled` on the campfire tile, and only with layout
+revisions (`F = A && …`). Its label is `score_entries_header`, 20px in.
+"Everything else" is 20px in, 16px in Dense (the label's
+`:has(section_header_title--dense)`), and the title's gap is 12px, 4px in
+Dense. Clack used the Detailed metrics in Dense. Without the revisions
+there's no tile and no line: 8px above and below the 13px/18px label,
+24px in.
+
+**Agent entries' actions.** rZx3 `Rq` is behind `agent_command_center`
+(HLQ9 `Lq`, not behind the inbox; the account isn't assigned, which reads
+as off). When the row's message is the entry's own (no feed_ts, or the
+message's ts is it) and has exactly one actions block, every element a
+button whose value is at most 50 characters (JavaScript's length, UTF-16
+units), the Detailed row shows that block alone in entry_extras, after
+the reactions and the invite actions. x48o renders it with
+`blocksContainerContext: "activity_actions"`, which isn't one of the
+contexts that disable elements (the body's "activity" is), so the buttons
+are live and send blocks.actions for the message. The wrapper's
+onClickCapture marks an unread row read, and ActivityItem's
+ControlledClick doesn't open the row when the click lands on a BUTTON.
+Dense rows don't have it. Clack draws the block through richview with
+blockkit's element host for the message and skips the row's own click on
+the buttons (`blockkit.Message.RunRects`).
+
+**The In picker's suggestions.** With no query IKpm lists what's picked,
+"Clear all" past one, "Recent", then "Suggestions": yLIV `Gb(state,
+window).in`, the window's search filter suggestions. Every new search
+(A+yj: fetchSuggestions defaults to true) runs rZ6M parseSuggestions on the
+messages answer. The request's own in: and from: go first, checked, then
+the five with the most results among the answer's and the last ones, one
+per id. getChannelOrMemberById drops ids the store doesn't know, and
+picked ones are left out. While a messages search runs and there are none
+yet, the group is three loading rows (BaseMissingChannel: the hash and
+MissingText's bar). A person picked filters by their DM (WJ+z
+addFilterChannelId). The new view's "In" is the same component and lists
+the same rows. Clack's core keeps the suggestions (`SearchSuggestions`,
+`SearchMessagesLoading`; the search view's page-1 messages searches set
+`SearchOpts.FetchSuggestions`). Clack's loading rows take no clicks;
+Slack's would add their dummy value as a filter.
+
+**The tab strip's More.** 6IMW DraggableDroppableTabs measures after each
+resize (measureVisibleTabs). When every tab button fits (its right edge
+within the strip plus 1px) all of them show; otherwise only those whose
+right edge is 80px clear, the first at least. More and the "+" follow the
+last one shown and the hidden tabs sit after them (visibility hidden, no
+pointer events), so showing everything again takes the More and "+"
+widths more room. Each tab button keeps `margin-right: 4px`; All's
+doesn't, because its wrapper also holds the children div. Clack's strip
+had no such margin. More is a `c-tabs__tab c-tabs__tab_overflow`: margin-left
+8px, "More" (tabbed-channel) and caret-down at 1em (13px) inside 8px of
+padding, content-sec, content-pry with the top-rounded `theme-surf-sec`
+fill while hovered, and the shown tab's underline while that tab is in
+its menu. The menu (useTabsOverflowMenuRenderer,
+`c-channel_tabs_overflow_menu`, 200px, bottom-left) lists the hidden tabs
+as radio rows with their labels (`.c-menu_item__label
+.p-activity_ia4_page__tab_label`: the 16px icon or emoji, 4px, the name;
+without layout revisions a default view's count after it), checked when
+shown. With `channel_tab_overflow_right_click` a right-click on a row
+opens that tab's context menu.
+
+**"Discard changes?"** fNIs sets `forceSpeedBumpEnabled` while the modal
+has changes (`Z`): a new view whose state isn't sTqq `wn` (its filters,
+unreads, layout, sort, name or emoji), a name changed from the view's own,
+or a changed emoji. Every close then shows ModalSpeedBump in the footer
+instead: the close button, Escape, a click outside and the footer's Cancel
+(a ModalCloseButton). It reads "Discard changes?" (18px black) over "If
+you close without saving, you’ll lose all the changes you’ve made.", with
+Keep Editing (outline, focused) and Discard (danger). Keep Editing goes
+back, and so does Escape on it; Discard closes without saving. A save
+closes with `{force: true}`, so no speed bump after it. popups'
+`SpeedBump` draws it, and Edit profile's speed bump now shares its sheet.
+
+**The sort button's new badge.** KJvs useActivitySortNewBadge needs
+`activity_global_settings` and `activity_sort_new_badge` in the
+megaphone's generic_new_badge space (NWiV ap). Then the header's sort
+trigger is `sortTriggerGlow`: a 1px otl-education border, a `0 0 2px`
+plt-indigo-30 glow, padding 0 8px, content-pry, no hover fill, the 20px
+sort icon, 4px, and EducationTag's micro inverse "New" (Tag jF6I isMicro:
+20px tall, 12px). Its menu's close runs recordAndClearNewBadge: the badge
+leaves the list and `megaphone.setNotificationAsSeen {notification:
+new_badge_generic, action: dismiss, step: activity_sort_new_badge, reason:
+record-notification-event}` goes out (a4xD `NEW_BADGE_GENERIC`). Without
+the badge the trigger is 28px square, base-ter while hovered or open
+(`sortTriggerActive`). Its tooltip is "Sort by", below.
+
+**Tooltips.** ActivityFilterBulkAction's buttons have theirs on top. With
+the activity inbox, Mark selected as read shows "Alt+U" and Clear selected
+"Alt+C" ("Option" on a Mac); both show their labels when they're icons
+alone (under 415px). Clear everything and Mark selected as unread show
+their labels. CustomAddTabItem's "+" says "Add new view", or "You can only
+save up to 15 tabs. Delete one to save a new tab." at the limit, on top.
+
+**Tests and screenshots.** Core: `TestSearchSuggestionsMergeLikeSlack`,
+`TestSearchSuggestionsAgainstFake`. Views: `TestActivityLeadInLikeSlack`,
+`TestActivityVIPHeaderNotStuckAtTopLikeSlack`,
+`TestActivityImportanceIconLikeSlack`, `TestActivityAgentActionsRulesLikeSlack`,
+`TestActivityAgentActionsLikeSlack`, `TestActivityInPickerSuggestionsLikeSlack`,
+`TestActivityStripMeasureLikeSlack`, `TestActivityTabsMoreLikeSlack`,
+`TestActivityDiscardChangesLikeSlack`, `TestActivitySortNewBadgeLikeSlack`,
+`TestActivityBulkTooltipsLikeSlack`. fakeslack's `SetActivityAgentActions`
+adds an agent's DM entry (fa-agent) whose message has one actions block of
+two buttons. The activity-shots artifact adds activity-lead-in(-hover),
+activity-vip-top / -stuck, activity-importance(-dense),
+activity-agent-actions(-read), activity-in-loading / -suggestions,
+activity-create-view-in-suggestions, activity-tabs-more / -menu /
+-selected, activity-discard and activity-sort-new / -open / -after, each
+`-light` and `-dark`, plus activity-bulk-tooltip-light and
+activity-plus-tooltip-light.
+
 ## Not done
 
-- The importance icon; Block Kit action buttons under app messages
-  (5465's `k`: `activity_actions` blocks under an agent's entry).
 - The channel accept's other workspaces, start-trial modal and other
   alternatives (see "Leftovers"); the trust modal's illustration.
-- Summarize thread, Open in new window (see above); the priority /
-  importance rows.
+- Summarize thread, Open in new window (see above).
 - With activity_entry_layout_revisions_2 off Slack draws its older rows
   (Pck2 ActivityRowContentDense / ActivityRowContentDetailed, with
   ActivityRowContentTimestampAndActionsWithResolvedReply's text badges);
   Clack keeps the revised rows in that group (the tabs, dividers,
   tooltips, reactions and line caps do follow it).
-- The list's 8px lead-in above the first row
-  (`--activity-first-item-lead-in`); with it Slack's VIP header isn't
-  stuck at scroll 0.
-- The In picker's "Suggestions" without a query (the last search's "in"
-  suggestions: Clack's search keeps them per search view).
-- "Discard changes?" when closing Create a new view with changes; the
-  sort button's "new" badge; tooltips on the bulk buttons and the "+";
-  the tab strip's overflow ("More") when the tabs don't fit.
+- Dragging tabs onto More, into its menu and out of it (DroppableOverflowMenuTab
+  opens its menu after 500ms under a drag).
+- The stuck mark's fade under `prefers-reduced-motion` (Slack drops the
+  transition; views can't read the OS setting).
+- The "+" tab itself: Slack draws `plus-filled` in a 32px tab with a
+  28px hover circle that turns 135° while its menu is open; Clack keeps
+  its 24px icon button (only the tooltip is new).
 - `s` (snooze) and the other keys that act on snoozable items: Clack has
   no snooze.
 - The rest of activity_in_home_prototype (Activity moved into Home, the
