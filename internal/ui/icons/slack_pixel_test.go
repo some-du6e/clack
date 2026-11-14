@@ -184,9 +184,10 @@ var inkTol = [2]float64{0.10, 0.06} // 1x, 2x
 // on the 18px pixel grid, where Gio's StrokeGamma (the +0.23 px a light
 // stroke is widened by, averaged over edge positions) lands whole in the
 // next row: form-checkbox-dash's 2-unit bar has its edges 0.1 px off the
-// grid, and reads ~12% heavy in light at 1x while 2x is within 1% (its
-// geometry is the font's to 0.998 IoU).
-var phase1x = map[string]float64{"form-checkbox-dash": 0.14}
+// grid and reads 1.095 in light at 1x (icon-shots run 43570785892), at the
+// edge of the 10%, while 2x is within 1% and its geometry is the font's to
+// 0.998 IoU.
+var phase1x = map[string]float64{"form-checkbox-dash": 0.12}
 
 const shapeTol = 0.35
 
