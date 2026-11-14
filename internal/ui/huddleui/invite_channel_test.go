@@ -126,8 +126,8 @@ func TestInvitePrivateChannelTitle(t *testing.T) {
 		checkPrivate(t, e.inviteView(), who)
 		drawInvite(t, e.c, e.inviteView())
 		waitFor(t, "the notification", func() bool { return len(e.h.notifications()) == 1 })
-		if n := e.h.notifications()[0]; n.Body != who+" is inviting you to a huddle in th-secret-plans" {
-			t.Errorf("notification %q, Slack's getDisplayNameForChannel: the bare name", n.Body)
+		if n := e.h.notifications()[0]; n.Body != who+" is inviting you to a huddle in th-secret-plans" || n.Subtitle != "th-secret-plans" {
+			t.Errorf("notification %q, subtitle %q; Slack's getDisplayNameForChannel: the bare name", n.Body, n.Subtitle)
 		}
 		// the preview's title and the huddle button's tip
 		title, _, _ := e.c.previewTitle(priv)
@@ -149,8 +149,8 @@ func TestInvitePrivateChannelTitle(t *testing.T) {
 		e.shown("the invite")
 		who := e.c.displayName(huddle.FakeRemoteUser)
 		waitFor(t, "the notification", func() bool { return len(e.h.notifications()) == 1 })
-		if n := e.h.notifications()[0]; n.Body != who+" is inviting you to a huddle" || strings.Contains(n.Body, priv) {
-			t.Errorf("notification %q, Slack %q (no channel until it exists)", n.Body, who+" is inviting you to a huddle")
+		if n := e.h.notifications()[0]; n.Body != who+" is inviting you to a huddle" || strings.Contains(n.Body, priv) || n.Subtitle != "" {
+			t.Errorf("notification %q, subtitle %q; Slack %q and none (no channel until it exists)", n.Body, n.Subtitle, who+" is inviting you to a huddle")
 		}
 		v := e.inviteView()
 		if _, ent := lineText(v.Line); ent == nil || !ent.Ent.Loading() || strings.Contains(v.Text, priv) {
