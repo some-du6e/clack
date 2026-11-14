@@ -272,6 +272,9 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 	}
 
 	w := win.(*window)
+	if clackMsgTrace != nil { // Clack patch (CLACK_PATCHES.md §22): tests
+		clackMsgTrace(hwnd, msg, wParam, lParam)
+	}
 
 	switch msg {
 	case windows.WM_UNICHAR:

@@ -6,8 +6,10 @@ package app
 
 import (
 	"encoding/binary"
+	"fmt"
 	"image"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +19,8 @@ import (
 	syscall "golang.org/x/sys/windows"
 
 	"gioui.org/app/internal/windows"
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/io/system"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -31,6 +35,70 @@ import (
 // (SendInput, which moves the runner's real cursor).
 
 var testSendMessage = testUser32.NewProc("SendMessageW")
+
+// captionTrace records the window messages and the Gio pointer events
+// around the caption, for a failure's message.
+var captionTrace struct {
+	mu    sync.Mutex
+	hwnds map[syscall.Handle]bool
+	lines []string
+	t0    time.Time
+}
+
+var captionTraceNames = map[uint32]string{
+	0x0021: "WM_MOUSEACTIVATE", 0x0112: "WM_SYSCOMMAND", 0x00A0: "WM_NCMOUSEMOVE",
+	0x00A1: "WM_NCLBUTTONDOWN", 0x00A2: "WM_NCLBUTTONUP", 0x00A3: "WM_NCLBUTTONDBLCLK",
+	0x0200: "WM_MOUSEMOVE", 0x0201: "WM_LBUTTONDOWN", 0x0202: "WM_LBUTTONUP",
+	0x0215: "WM_CAPTURECHANGED", 0x0241: "WM_NCPOINTERUPDATE", 0x0242: "WM_NCPOINTERDOWN",
+	0x0243: "WM_NCPOINTERUP", 0x0245: "WM_POINTERUPDATE", 0x0246: "WM_POINTERDOWN",
+	0x0247: "WM_POINTERUP", 0x0249: "WM_POINTERENTER", 0x024A: "WM_POINTERLEAVE",
+	0x024B: "WM_POINTERACTIVATE", 0x024C: "WM_POINTERCAPTURECHANGED", 0x02A2: "WM_NCMOUSELEAVE",
+	0x02A3: "WM_MOUSELEAVE", 0x0008: "WM_KILLFOCUS", 0x0007: "WM_SETFOCUS", 0x001F: "WM_CANCELMODE",
+}
+
+func captionTraceAdd(format string, args ...any) {
+	captionTrace.mu.Lock()
+	defer captionTrace.mu.Unlock()
+	if len(captionTrace.lines) < 4000 {
+		captionTrace.lines = append(captionTrace.lines, fmt.Sprintf("%6dms ", time.Since(captionTrace.t0).Milliseconds())+fmt.Sprintf(format, args...))
+	}
+}
+
+func init() {
+	clackMsgTrace = func(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) {
+		name, ok := captionTraceNames[msg]
+		if !ok {
+			return
+		}
+		captionTrace.mu.Lock()
+		ours := captionTrace.hwnds[hwnd]
+		captionTrace.mu.Unlock()
+		if !ours {
+			return
+		}
+		x, y := coordsFromlParam(lParam)
+		captionTraceAdd("%-24s wParam %#x (id %d hit %d) lParam (%d, %d)", name, wParam, wParam&0xffff, wParam>>16&0xffff, x, y)
+	}
+}
+
+// captionTraceMark starts a stretch of the trace; captionTraceSince is
+// what came after it.
+func captionTraceMark(what string) int {
+	captionTrace.mu.Lock()
+	n := len(captionTrace.lines)
+	captionTrace.mu.Unlock()
+	captionTraceAdd("---- %s", what)
+	return n
+}
+
+func captionTraceSince(n int) string {
+	captionTrace.mu.Lock()
+	defer captionTrace.mu.Unlock()
+	if n > len(captionTrace.lines) {
+		n = len(captionTrace.lines)
+	}
+	return strings.Join(captionTrace.lines[n:], "\n")
+}
 
 func titleBarTests(t *testing.T) {
 	t.Helper()
@@ -77,10 +145,17 @@ func newCaptionTestWindow(t *testing.T, opts ...Option) *captionTestWindow {
 		defer close(c.done)
 		var ops op.Ops
 		var btns [4]widget.Clickable
+		logTag := new(int)
 		for {
 			switch e := c.w.Event().(type) {
 			case Win32ViewEvent:
 				if e.HWND != 0 {
+					captionTrace.mu.Lock()
+					if captionTrace.hwnds == nil {
+						captionTrace.hwnds, captionTrace.t0 = map[syscall.Handle]bool{}, time.Now()
+					}
+					captionTrace.hwnds[syscall.Handle(e.HWND)] = true
+					captionTrace.mu.Unlock()
 					select {
 					case hwnds <- syscall.Handle(e.HWND):
 					default:
@@ -90,8 +165,18 @@ func newCaptionTestWindow(t *testing.T, opts ...Option) *captionTestWindow {
 				c.mode.Store(int32(e.Config.Mode))
 			case FrameEvent:
 				gtx := NewContext(&ops, e)
+				for {
+					ev, ok := gtx.Event(pointer.Filter{Target: logTag, Kinds: pointer.Press | pointer.Release | pointer.Cancel | pointer.Leave | pointer.Enter})
+					if !ok {
+						break
+					}
+					if pe, ok := ev.(pointer.Event); ok {
+						captionTraceAdd("gio %v at %v buttons %v id %d", pe.Kind, pe.Position, pe.Buttons, pe.PointerID)
+					}
+				}
 				for i := range btns {
 					for btns[i].Clicked(gtx) {
+						captionTraceAdd("gio click %s", captionTestNames[i])
 						c.clicks <- captionTestNames[i]
 					}
 				}
@@ -123,6 +208,12 @@ func newCaptionTestWindow(t *testing.T, opts ...Option) *captionTestWindow {
 					off.Pop()
 					c.hover[i].Store(btns[i].Hovered())
 				}
+				// the trace's pass-through logger over everything
+				pass := pointer.PassOp{}.Push(gtx.Ops)
+				la := clip.Rect{Max: e.Size}.Push(gtx.Ops)
+				event.Op(gtx.Ops, logTag)
+				la.Pop()
+				pass.Pop()
 				c.mu.Lock()
 				c.r, c.size = r, e.Size
 				c.mu.Unlock()
@@ -337,7 +428,7 @@ const (
 	mouseUp   = 0x4
 )
 
-func (c *captionTestWindow) expectClick(t *testing.T, want string) {
+func (c *captionTestWindow) expectClick(t *testing.T, want string, mark int) {
 	t.Helper()
 	select {
 	case got := <-c.clicks:
@@ -345,7 +436,7 @@ func (c *captionTestWindow) expectClick(t *testing.T, want string) {
 			t.Errorf("clicked %s, want %s", got, want)
 		}
 	case <-time.After(5 * time.Second):
-		t.Errorf("no click on %s", want)
+		t.Errorf("no click on %s; messages and Gio events since the press:\n%s", want, captionTraceSince(mark))
 	}
 }
 
@@ -384,8 +475,9 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 
 	for _, i := range []int{2, 3, 1, 0} {
 		p := c.screen(centre(r[i]))
+		mark := captionTraceMark("click " + captionTestNames[i])
 		sendInput(t, []testInput{mouseInput(p, mouseMove), mouseInput(p, mouseDown), mouseInput(p, mouseUp)})
-		c.expectClick(t, captionTestNames[i])
+		c.expectClick(t, captionTestNames[i], mark)
 		time.Sleep(600 * time.Millisecond) // past the double-click time between buttons
 	}
 	if c.zoomed() {

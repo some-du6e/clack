@@ -37,8 +37,9 @@ import (
 //   - Pointer input over the caption buttons arrives as WM_NCPOINTER*
 //     messages. It is delivered to the program as client pointer events
 //     (Chromium routes the non-client mouse messages to the caption
-//     button views); a press there takes the capture, as a client press
-//     does, so the rest of the click comes as client messages. The press
+//     button views); the pointer stays the window's while pressed, so
+//     the rest of the click comes as non-client or client pointer
+//     messages, and a release ends the press wherever it lands. The press
 //     is not passed on: DefWindowProc would paint classic caption buttons
 //     and run the button itself. Moves over the caption and the borders
 //     reach the program too (hover ends over them), and still go on to
@@ -51,6 +52,10 @@ import (
 // _WM_CLACK_FRAME asks the window to recompute its non-client area (an
 // auto-hide taskbar appeared or went away while it was maximized).
 const _WM_CLACK_FRAME = windows.WM_USER + 0x60
+
+// clackMsgTrace, set by tests before a window opens, sees every message
+// windowProc gets for a known window (on the window's thread).
+var clackMsgTrace func(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr)
 
 // hiddenTitle reports whether the window has a hidden title bar now: the
 // option on a decorated window with its caption style (not full screen).
@@ -176,7 +181,6 @@ func (w *window) hiddenTitlePointer(msg uint32, wParam, lParam uintptr) bool {
 		if !button {
 			return false // move, resize, double-click, the system menu
 		}
-		windows.SetCapture(w.hwnd)
 		w.ncPressed = true
 		w.ncPointerEvent(pi, pid, pointer.Press, lParam)
 		return true
@@ -187,7 +191,6 @@ func (w *window) hiddenTitlePointer(msg uint32, wParam, lParam uintptr) bool {
 			return false
 		}
 		w.ncPressed = false
-		windows.ReleaseCapture()
 		w.ncPointerEvent(pi, pid, pointer.Release, lParam)
 		return true
 	}
