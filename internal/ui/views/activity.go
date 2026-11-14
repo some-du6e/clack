@@ -35,6 +35,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/chanent"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -145,12 +146,17 @@ type actDesc struct {
 	// whenNarrow is when's narrow variant (timestamp_variant_narrow: a
 	// container 285px or narrower, the Dense timestamp)
 	whenNarrow string
-	title      string // conversation title
-	topic      string
-	thread     string // thread ts the item opens into
-	invite     bool
-	dm         bool
-	hay        string // lower-cased search haystack
+	title      string // conversation title ("" while a channel's name loads)
+	// ent is a channel conversation's InlineChannelEntity (entOn), which
+	// the footer (ft.ent) and the Dense location (locEnt) draw
+	ent    chanent.Ent
+	entOn  bool
+	locEnt bool
+	topic  string
+	thread string // thread ts the item opens into
+	invite bool
+	dm     bool
+	hay    string // lower-cased search haystack
 }
 
 type actRow struct {
@@ -435,6 +441,19 @@ func (v *Activity) watchItems() {
 				v.h.Invalidate()
 				continue
 			}
+			if ev.Type == "names" {
+				// core looked a conversation up (LookupConv) or named
+				// channels in the background: the rows waiting for a
+				// channel's name read it again, as Slack's entities
+				// render again once the fetch upserts the channel
+				if actConvIDs(ev.Users) {
+					v.notes.mu.Lock()
+					v.notes.fns = append(v.notes.fns, v.namesIn)
+					v.notes.mu.Unlock()
+					v.h.Invalidate()
+				}
+				continue
+			}
 			if ev.Type != "activity" {
 				continue
 			}
@@ -465,6 +484,29 @@ func (v *Activity) watchItems() {
 			v.h.Invalidate()
 		}
 	}()
+}
+
+// actConvIDs reports whether ids hold a conversation's (a "names" event
+// after a channel lookup; the member fetcher's carry users).
+func actConvIDs(ids []string) bool {
+	for _, id := range ids {
+		if strings.HasPrefix(id, "C") || strings.HasPrefix(id, "G") || strings.HasPrefix(id, "D") {
+			return true
+		}
+	}
+	return false
+}
+
+// namesIn describes again the rows whose channel was still loading
+// (the unknown stub's bar), keeping their widgets: core has the channel
+// now, or knows it can't have it.
+func (v *Activity) namesIn() {
+	for _, r := range v.rows {
+		if r.built && r.d.entOn && r.d.ent.Loading() {
+			r.built = false
+			v.dirty = true
+		}
+	}
 }
 
 // applyPatches updates loaded rows from realtime activity items: the
@@ -1004,11 +1046,21 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 	d.when, d.whenNarrow = actWhen(time.Now(), d.at, false), actWhen(time.Now(), d.at, true) // activity_time.go
 	kind := ""
 	if it.Channel != "" {
-		d.title = v.convTitle(it.Channel, refs)
-		if r, ok := refs[it.Channel]; ok {
-			kind = r.Kind
+		ref, ok := refs[it.Channel]
+		if ok {
+			kind = ref.Kind
 		} else {
 			kind = v.h.Core().ConvRef(it.Channel).Kind
+		}
+		if isDMKind(kind) || strings.HasPrefix(it.Channel, "D") {
+			d.title = v.convTitle(it.Channel, refs)
+		} else {
+			// a channel is InlineChannelEntity (channel_entity.go), never
+			// its id: one the store can't name yet is looked up, and the
+			// row is described again once it's in (namesIn)
+			ref.ID = it.Channel
+			d.ent, d.entOn = v.refEnt(ref), true
+			d.title = d.ent.Title()
 		}
 		if c, ok := v.h.Core().Conv(it.Channel); ok {
 			d.topic = oneLine(c.Topic)
@@ -1115,8 +1167,13 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 			d.name, d.avatar = actor, actorAv
 		}
 		// "invited you to <#{channelId}|{channelName}>": the channel
-		// token drawn as its title
-		body(strings.Replace(nsActivity.T("invited you to <#{channelId}|{channelName}>", "channelId", "\x00", "channelName", "\x01"), "<#\x00|\x01>", d.title, 1))
+		// token drawn as its label, getDisplayNameForChannel's ("#name",
+		// a private channel's bare name, "unknown-channel")
+		label := d.title
+		if d.entOn {
+			label = d.ent.Disp
+		}
+		body(strings.Replace(nsActivity.T("invited you to <#{channelId}|{channelName}>", "channelId", "\x00", "channelName", "\x01"), "<#\x00|\x01>", label, 1))
 		d.tile = d.avatar == ""
 	case it.Type == "shared_workspace_invite":
 		body("")
@@ -1172,6 +1229,16 @@ func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef)
 	d.pill = d.footText || d.footIcon != ""
 	d.foot = d.ft.text()
 	d.loc, d.locIcon, d.locOn = v.location(it, dest, d.title)
+	// a channel destination is its InlineChannelEntity: the icon (a
+	// private channel's lock) and the name, the loading bar, the Private
+	// channel chip (chanEntity)
+	d.ft.ent = d.ft.ent && d.entOn
+	if d.ft.ent {
+		d.ft.nameIcon = d.ent.Icon
+	}
+	if d.locEnt = d.locOn && d.entOn && dest == destChannel; d.locEnt {
+		d.locIcon = d.ent.Icon
+	}
 	if dest != destUnknown {
 		d.typeIcon = actIconName(icon)
 	}
@@ -1232,6 +1299,9 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		r := v.rowFor(key)
 		if !r.built || r.gen != i18n.Gen() || patchedViews {
 			r.d, r.built, r.gen = v.describe(it, page.Convs), true, i18n.Gen()
+			if v.selOK && key == v.selKey {
+				v.selDesc = r.d // the preview's header names the channel too
+			}
 		}
 		// the store-backed marks (drafts, your replies and reactions,
 		// the reminder's saved item) follow every rebuild
@@ -2720,6 +2790,9 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 								if unread {
 									w = wBold
 								}
+								if d.locEnt { // the channel's InlineChannelEntity
+									return layout.W.Layout(gtx, func(gtx C) D { return v.chanEntity(gtx, d.ent, 13, w, v.p.Muted) })
+								}
 								return row(gtx, layout.Middle,
 									layout.Rigid(func(gtx C) D {
 										if d.locIcon == "" {
@@ -2784,12 +2857,16 @@ func (v *Activity) actFooter(gtx C, d *actDesc, unread bool) D {
 		if f.pre != "" {
 			ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, f.pre) }))
 		}
-		if f.nameIcon != "" {
+		switch {
+		case f.ent:
+			// the channel's InlineChannelEntity, bold (footer_name)
+			ch = append(ch, layout.Rigid(func(gtx C) D { return v.chanEntity(gtx, d.ent, 13, wBold, v.p.Muted) }))
+		case f.nameIcon != "":
 			ch = append(ch, layout.Rigid(func(gtx C) D {
 				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(f.nameIcon), 13, v.p.Muted) })
 			}))
 		}
-		if f.name != "" {
+		if f.name != "" && !f.ent {
 			ch = append(ch, layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wBold, v.p.Muted, f.name) }))
 		}
 		if f.post != "" {

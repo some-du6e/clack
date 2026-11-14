@@ -132,16 +132,16 @@ func (b *base) refTitle(r core.ConvRef) string {
 		}
 		return mpimName(r.Name)
 	case "channel", "private":
-		name := b.viewChannelName(r.ID, r.Name)
-		if name == "" {
-			return r.ID
-		}
-		return "#" + name
+		// getDisplayNameForChannel (channel_entity.go): "#name", a
+		// private channel's bare name; a channel the store can't name yet
+		// is looked up (core.InlineChannel) and reads formatChannelName's
+		// "unknown-channel" meanwhile, never its id
+		return b.refEnt(r).Disp
 	}
-	if r.Name != "" {
+	if r.Name != "" && r.Name != r.ID {
 		return "#" + r.Name
 	}
-	return r.ID
+	return unknownChannelName()
 }
 
 // isDMKind reports whether a conversation kind is a direct message.

@@ -6,7 +6,11 @@ name: icon-shots
 # rasterized the way Chrome does, in the composer's light and dark inks at
 # 1x and 2x (TestIconsMatchSlack: every icon the code draws, within 6% of
 # Slack's ink at 2x and 10% at 1x; contact sheets icons-vs-slack-{dark,light}-{1,2}x.png and
-# icons-vs-slack.tsv in the icon-shots artifact). Also screenshots the composer's
+# icons-vs-slack.tsv in the icon-shots artifact). The glyphs of Slack's icon
+# font (slack-icons-v2-05e8fec.woff2, dumped by .github/scripts/
+# slack_icon_font.py) and the illustrations Slack ships as SVG files
+# (TestArtMatchesSlack: art-vs-slack-*.png) come from the same public CDN,
+# fetched without cookies. Also screenshots the composer's
 # formatting bar (TestFormatBarShots) and the emoji picker's Emoji | GIFs
 # row (TestEmojiTabRow). The ui-slick job adds the same row with BetterGifs
 # installed (emoji-tabs-bettergifs-*.png in ui-slick-theme-shots).
@@ -17,6 +21,13 @@ on:
       - "internal/ui/icons/**"
       - "internal/ui/theme/**"
       - "internal/ui/composer/chrome*.go"
+      - "internal/ui/composer/autocomplete_view.go"
+      - "internal/ui/huddleui/connection.go"
+      - "internal/ui/huddleui/invitewin.go"
+      - "internal/ui/focus_mode.go"
+      - "internal/ui/slackc/kit/controls.go"
+      - "internal/ui/popups/profile_card.go"
+      - ".github/scripts/slack_icon_font.py"
       - "internal/ui/composer/formatbar_shot_test.go"
       - "internal/ui/popups/emoji*.go"
       - "internal/ui/popups/style.go"
@@ -51,17 +62,31 @@ jobs:
           curl -sfL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors -o /tmp/slack-icons/icons.json https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/icons.json
           curl -sfL --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors https://raw.githubusercontent.com/IzieStratt/slack-datamine-plus/main/build/meta.json | head -c 300; echo
           python3 -c "import json;d=json.load(open('/tmp/slack-icons/icons.json'));print(len(d['icons']),'icons')"
+      - name: Slack's icon font and illustrations (public CDN)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/slack-icons/art
+          cdn=https://a.slack-edge.com/bv1-13-br
+          get() { curl -sfL --compressed --retry 20 --retry-delay 30 --retry-max-time 900 --retry-all-errors -o "$1" "$2"; }
+          get /tmp/slack-icons/slack-icons-v2-05e8fec.woff2 "$cdn/slack-icons-v2-05e8fec.woff2"
+          get /tmp/slack-icons/art/focus-d8ca34d.svg "$cdn/focus-d8ca34d.svg"
+          get /tmp/slack-icons/art/slack_logo_mark-8890ba0.svg "$cdn/slack_logo_mark-8890ba0.svg"
+          python3 -m pip install --quiet fonttools brotli
+          python3 "$GITHUB_WORKSPACE/.github/scripts/slack_icon_font.py" /tmp/slack-icons/slack-icons-v2-05e8fec.woff2 /tmp/slack-icons/font.json
+          ls -l /tmp/slack-icons /tmp/slack-icons/art
       - name: icons vs Slack, formatting bar, emoji tab row
         env:
           CLACK_PIXEL_TESTS: "1"
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
           CLACK_SLACK_ICONS: /tmp/slack-icons/icons.json
+          CLACK_SLACK_ICON_FONT: /tmp/slack-icons/font.json
+          CLACK_SLACK_ART: /tmp/slack-icons/art
           ICON_SHOTS_DIR: ${{ github.workspace }}/dist/icon-shots
         run: |
           set -o pipefail
           mkdir -p dist "$ICON_SHOTS_DIR"
-          xvfb-run -a go test -p 1 -count=1 -v -run 'TestIconsMatchSlack|TestIconCoverage|TestIconRefsExist|TestStrokeGamma|TestSlackNames|TestFormatBarShots|TestEmojiTabRow|TestBroadcastRowShots' \
+          xvfb-run -a go test -p 1 -count=1 -v -run 'TestIconsMatchSlack|TestArtMatchesSlack|TestArtParts|TestArtRefsExist|TestIconCoverage|TestIconRefsExist|TestStrokeGamma|TestSlackNames|TestFormatBarShots|TestEmojiTabRow|TestBroadcastRowShots' \
             ./internal/ui/icons/ ./internal/ui/theme/ ./internal/ui/composer/ ./internal/ui/popups/ 2>&1 | tee dist/icon-shots.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

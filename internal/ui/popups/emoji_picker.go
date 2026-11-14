@@ -5,7 +5,9 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -14,6 +16,7 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -188,6 +191,7 @@ type EmojiPicker struct {
 	cats    [epNumGroups]widget.Clickable
 	catTips [epNumGroups]TipState
 	addBtn  widget.Clickable
+	gifsBtn widget.Clickable // EmojiListNoResults' Search GIFs Instead
 	toneBtn widget.Clickable
 	toneUI  epToneUI // the skin tone popover (emoji_tone.go)
 	tone    int
@@ -372,7 +376,7 @@ func (p *EmojiPicker) setQuery(gtx layout.Context, q string) {
 		if len(p.lists[epGroupSearch]) > 0 {
 			p.sel = epCell{1, 0}
 		}
-		p.emptyMsg = nsEmojiPicker.T("No emoji to show") // the picker's empty search (Zu56)
+		p.emptyMsg = nsGifPicker.T("No emoji to show") // EmojiListNoResults (Zu56): the gif-picker namespace
 	}
 	p.rowsDirty = true
 	p.ensureRows(gtx)
@@ -905,7 +909,7 @@ func (p *EmojiPicker) layoutCats(gtx layout.Context, th *theme.Theme, cl *Colors
 					col = cl.Fg
 				}
 				at(gtx, image.Pt((sz.X-ig)/2, (sz.Y-ig)/2), func(gtx layout.Context) layout.Dimensions {
-					return emojiGlyph(gtx, i, 20, col)
+					return icons.Get(epTabIcons[i])(gtx, 20, col)
 				})
 				return layout.Dimensions{Size: sz}
 			})
@@ -1115,16 +1119,84 @@ func (p *EmojiPicker) layoutRow(gtx layout.Context, i int) layout.Dimensions {
 }
 
 func (p *EmojiPicker) layoutEmpty(gtx layout.Context, th *theme.Theme, cl *Colors, w, h int) {
-	ig := dp(gtx, 32)
-	maxW := w - 2*dp(gtx, 16)
-	tw := minInt(textW(gtx, th, 15, theme.Regular, p.emptyMsg), maxW)
-	y := h/2 - dp(gtx, 36)
-	at(gtx, image.Pt((w-ig)/2, y), func(gtx layout.Context) layout.Dimensions {
-		return emojiGlyph(gtx, epGlyphSearch, 32, cl.Subtle)
-	})
-	at(gtx, image.Pt((w-tw)/2, y+ig+dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions {
-		return text(loose(gtx, image.Pt(tw+1, dp(gtx, 24))), th, 15, theme.Regular, cl.Fg2, p.emptyMsg)
-	})
+	// EmojiListNoResults (Zu56): searchGifsInstead is passed inside the
+	// Emoji | GIFs tabs (Y5Hl's noResultsSearchForGifWithQuery), so the
+	// button shows unless the picker is embedded without them
+	var btn *widget.Clickable
+	if !p.embedded {
+		btn = &p.gifsBtn
+		if btn.Clicked(gtx) {
+			p.searchGifsInstead(gtx)
+			return
+		}
+	}
+	p.noResults(gtx, th, cl, w, h, p.emptyMsg, nsGifPicker.T("Like your smarts, your search is unmatched."), btn, nsGifPicker.T("Search GIFs Instead"))
+}
+
+// searchGifsInstead is EmojiListNoResults' button (Y5Hl's
+// noResultsSearchForGifWithQuery): the GIFs tab, searching the emoji
+// query.
+func (p *EmojiPicker) searchGifsInstead(gtx layout.Context) {
+	q := p.query
+	p.setGifMode(true)
+	g := &p.gif
+	g.ed.SetText(q)
+	n := utf8.RuneCountInString(q)
+	g.ed.SetCaret(n, n)
+	g.typed, g.due = q, gtx.Now
+	gtx.Execute(op.InvalidateCmd{})
+}
+
+// noResults is the pickers' empty search (EmojiListNoResults, Zu56; the
+// GIF picker's, xVsA): .p-emoji_picker_no_results / .p-gif_picker__no_results,
+// a column centred in the list with 16px gaps: the face_with_monocle emoji
+// (vbPY's default c-emoji__medium, 22px), the header (15px/1.46668,
+// Black) over the subtext (15px), centred in the picker's text colour,
+// and the medium outline button when btn is set.
+func (p *EmojiPicker) noResults(gtx layout.Context, th *theme.Theme, cl *Colors, w, h int, header, sub string, btn *widget.Clickable, label string) {
+	gap, isz, lh := dp(gtx, 16), dp(gtx, 22), dp(gtx, 22)
+	var bcall op.CallOp
+	var bd layout.Dimensions
+	if btn != nil {
+		m := op.Record(gtx.Ops)
+		bd = button(loose(gtx, image.Pt(w, dp(gtx, 36))), th, btn, BtnOutline, BtnMedium, label, "", 0, false)
+		bcall = m.Stop()
+	}
+	textH := lh
+	if sub != "" {
+		textH += lh
+	}
+	total := isz + gap + textH
+	if btn != nil {
+		total += gap + bd.Size.Y
+	}
+	y := (h - total) / 2
+	if id, ok := p.idx.byName["face_with_monocle"]; ok && p.h.Images() != nil {
+		if img, ok := p.h.Images().Get(p.idx.url(id, 0), isz); ok {
+			t := op.Offset(image.Pt((w-isz)/2, y)).Push(gtx.Ops)
+			containImage(gtx, img, image.Pt(isz, isz))
+			t.Pop()
+		}
+	}
+	y += isz + gap
+	line := func(s string, wt font.Weight) {
+		tw := minInt(textW(gtx, th, 15, wt, s), w)
+		at(gtx, image.Pt((w-tw)/2, y), func(gtx layout.Context) layout.Dimensions {
+			return vcenter(loose(gtx, image.Pt(tw+1, lh)), lh, func(gtx layout.Context) layout.Dimensions {
+				return text(gtx, th, 15, wt, cl.Fg, s)
+			})
+		})
+		y += lh
+	}
+	line(header, theme.Black)
+	if sub != "" {
+		line(sub, theme.Regular)
+	}
+	if btn != nil {
+		t := op.Offset(image.Pt((w-bd.Size.X)/2, y+gap)).Push(gtx.Ops)
+		bcall.Add(gtx.Ops)
+		t.Pop()
+	}
 }
 
 // epTints are .p-emoji_picker__list_item[data-color-index] :hover and

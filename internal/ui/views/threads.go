@@ -776,8 +776,9 @@ func (v *Threads) cardFor(t *thrItem, convs map[string]core.ConvRef) *thrCard {
 		c = &thrCard{msgs: map[string]*thrMsg{}, itemKey: t.Channel + "-" + t.Root.TS}
 		v.cards[t.key] = c
 	}
-	if c.built && (c.name == t.Channel || c.name == "#"+t.Channel) {
-		// Built before core knew the conversation (early boot): retry.
+	if c.built && (c.name == t.Channel || c.name == "#"+t.Channel || c.name == unknownChannelName() || c.name == "#"+unknownChannelName()) {
+		// Built before core knew the conversation (early boot, or a
+		// channel it's still looking up: convTitle's placeholder): retry.
 		if n := v.convTitle(t.Channel, convs); n != c.name {
 			c.built = false
 		}

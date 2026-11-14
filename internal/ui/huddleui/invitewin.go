@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"gioui.org/app"
-	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/system"
 	"gioui.org/op"
@@ -88,6 +87,7 @@ func invInkFor(th *theme.Theme) invInk {
 // inviteView is what the invite window and card draw (a snapshot).
 type inviteView struct {
 	Channel, Sender, Text  string
+	Line                   []span // Text with the channel's entity (one line), nil for a DM's
 	Faces                  []inviteFace
 	JoiningSoon, Busy      bool
 	Note                   string
@@ -145,9 +145,20 @@ func (c *Controller) view(inv *incoming) inviteView {
 				"inviteSenderMemberName", sender, "firstOtherMemberName", c.displayName(active[0]), "numRemaining", len(active)-1)
 		}
 	default:
-		v.Text = sender + " in " + c.channelTitle(inv.Channel)
+		// "{inviteSenderMemberName} in {channelName}", the channel an
+		// InlineChannelEntity (channel_entity.go)
+		line := sender + " in " + entMark
 		if i18n.Locale() != i18n.EnUS {
-			v.Text = nsHuddles.T("Huddle in {channelName}", "channelName", c.channelTitle(inv.Channel)) // no "{sender} in {channel}" string: the place
+			line = nsHuddles.T("Huddle in {channelName}", "channelName", entMark) // no "{sender} in {channel}" string: the place
+		}
+		e, isCh := c.channelEnt(inv.Channel)
+		pre, post, _ := splitMark(line)
+		if isCh {
+			ent := e
+			v.Line = []span{{Text: pre, Bold: true}, {Text: e.Text, Bold: true, Ent: &ent}, {Text: post, Bold: true}}
+			v.Text = pre + e.Title() + post
+		} else {
+			v.Text = pre + c.channelTitle(inv.Channel) + post
 		}
 	}
 	// the facepile: you (joining soon), the sender, the others in it
@@ -175,7 +186,11 @@ func (c *Controller) view(inv *incoming) inviteView {
 		v.CardText = boldSpans("Join huddle with {allMemberNames}", "allMemberNames", joinNames(append([]string{sender}, mpimOthers...)))
 		v.SenderAvatar = len(mpimOthers) + 1
 	default:
-		v.CardText = boldSpans("{senderName} is inviting you to a huddle in {channelName}", "senderName", sender, "channelName", c.channelTitle(inv.Channel))
+		if e, ok := c.channelEnt(inv.Channel); ok { // InlineChannelEntity, boldIcon
+			v.CardText = entSpans(boldSpans("{senderName} is inviting you to a huddle in {channelName}", "senderName", sender, "channelName", entMark), e)
+		} else {
+			v.CardText = boldSpans("{senderName} is inviting you to a huddle in {channelName}", "senderName", sender, "channelName", c.channelTitle(inv.Channel))
+		}
 	}
 	return v
 }
@@ -379,10 +394,9 @@ func layoutInviteWindow(gtx C, th *theme.Theme, c *Controller, v inviteView, dec
 					col.A /= 2
 				}
 				s := gtx.Dp(20)
+				// HuddleInviteWindowWithPreviewContent (boot-shared KgK6):
+				// the SvgIcons close, hourglass and headphones at 20
 				at(gtx, image.Pt((bd-s)/2, (bd-s)/2), image.Pt(s, s), func(gtx C) D {
-					if b.icon == "hourglass" {
-						return hourglass(gtx, 20, col)
-					}
 					return icons.Get(b.icon)(gtx, 20, col)
 				})
 				return D{Size: image.Pt(bd, bd)}
@@ -420,6 +434,20 @@ func layoutInviteWindow(gtx C, th *theme.Theme, c *Controller, v inviteView, dec
 	ty := y + face + gtx.Dp(4)
 	func() {
 		defer clip.Rect(image.Rect(body.Min.X, ty, body.Max.X, ty+tsz.Y)).Push(gtx.Ops).Pop()
+		if v.Line != nil {
+			// the channel's InlineChannelEntity in the line (its lock, the
+			// loading bar, the chip on surf-inv-pry: .p-huddle_invite_window_text
+			// .c-missing_channel--private); a line too long for the window
+			// is the plain text, cut with "…"
+			lw := 0
+			for _, s := range v.Line {
+				lw += spanWidth(gtx, th, 18, s)
+			}
+			if lw <= body.Dx() {
+				drawSpanLine(gtx, th, 18, entInk{text: k.text, chipText: k.text, chipBg: k.btn}, v.Line, (sz.X-lw)/2, ty, tsz.Y)
+				return
+			}
+		}
 		at(gtx, image.Pt((sz.X-tw)/2, ty), image.Pt(max(tw, tsz.X), tsz.Y), func(gtx C) D {
 			return th.Label(gtx, 18, theme.Bold, k.text, ellipsize(gtx, th, 18, theme.Bold, txt, body.Dx()))
 		})
@@ -498,38 +526,4 @@ func ellipsize(gtx C, th *theme.Theme, size unit.Sp, wt font.Weight, txt string,
 		}
 	}
 	return "…"
-}
-
-// hourglass is Slack's hourglass glyph (the Be there soon button), drawn
-// here on the icon set's 20×20 grid and 1.5px stroke.
-func hourglass(gtx C, size unit.Dp, col color.NRGBA) D {
-	px := float32(gtx.Dp(size))
-	u := px / 20
-	pt := func(x, y float32) f32.Point { return f32.Pt(x*u, y*u) }
-	var p clip.Path
-	p.Begin(gtx.Ops)
-	p.MoveTo(pt(4.75, 2.75))
-	p.LineTo(pt(15.25, 2.75))
-	p.MoveTo(pt(4.75, 17.25))
-	p.LineTo(pt(15.25, 17.25))
-	p.MoveTo(pt(6.25, 2.75))
-	p.LineTo(pt(6.25, 5.5))
-	p.CubeTo(pt(6.25, 7.6), pt(9.25, 8.9), pt(9.25, 10))
-	p.CubeTo(pt(9.25, 11.1), pt(6.25, 12.4), pt(6.25, 14.5))
-	p.LineTo(pt(6.25, 17.25))
-	p.MoveTo(pt(13.75, 2.75))
-	p.LineTo(pt(13.75, 5.5))
-	p.CubeTo(pt(13.75, 7.6), pt(10.75, 8.9), pt(10.75, 10))
-	p.CubeTo(pt(10.75, 11.1), pt(13.75, 12.4), pt(13.75, 14.5))
-	p.LineTo(pt(13.75, 17.25))
-	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: 1.5 * u}.Op())
-	// the sand
-	var q clip.Path
-	q.Begin(gtx.Ops)
-	q.MoveTo(pt(8, 15.75))
-	q.LineTo(pt(12, 15.75))
-	q.LineTo(pt(10, 13.5))
-	q.Close()
-	paint.FillShape(gtx.Ops, col, clip.Outline{Path: q.End()}.Op())
-	return D{Size: image.Pt(int(px), int(px))}
 }

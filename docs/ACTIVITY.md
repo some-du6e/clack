@@ -101,6 +101,20 @@ list, invite, workspace_invite, file). The destination is bold
 | saved_reminder | Reminder from **#channel** (message, file, canvas, list item), else Reminder |
 | list items with an item | Mention in **▤ {list}** |
 
+The channel in the footer and the Dense location is VeYL's destination,
+an `InlineChannelEntity` (client-boot X3qV; `internal/ui/chanent`): the
+hash and the name for a public channel (Clack draws `#name` as text), the
+lock-filled icon and the bare name for a private one (no `#`), archive /
+archive-filled and "name (archived)" for an archived one. A channel the
+store can't name (not loaded, or a stub named by its id) is Slack's
+unknown stub: the hash and MissingText's loading bar (8px, base-ter, 80,
+120 or 160px) while core looks it up (`core.LookupConv`, getChannelById's
+fetch), then the row is described again with the name on core's "names";
+one conversations.info doesn't know is BaseMissingChannel's chip, the lock
+and "Private channel". The raw id never shows. An invite's text
+("invited you to <#C|label>") takes getDisplayNameForChannel's label:
+`#name`, a private channel's bare name, `unknown-channel`.
+
 Icon kinds (Gjwd `getActivityIconType`): mentions and code review →
 at_mention (`mentions`), bot DMs → app, dm/mpdm → dm, threads → thread,
 invitations and joiners → invite (`paper-plane`), reactions → reaction,

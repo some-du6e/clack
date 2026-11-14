@@ -299,6 +299,9 @@ func (v *Activity) destName(it *core.ActivityItem, dest actDest, title string) s
 type actFoot struct {
 	pre, name, post string
 	nameIcon        string // an icon inside the name (a list's lists icon)
+	// ent: the name is the channel's InlineChannelEntity (the row's
+	// actDesc.ent: its icon, the loading bar, the Private channel chip)
+	ent bool
 }
 
 func (f actFoot) text() string { return f.pre + f.name + f.post }
@@ -326,7 +329,7 @@ func (v *Activity) footerText(it *core.ActivityItem, dest actDest, title string)
 			icon = "file" // FileName: the file icon, inline, before the title
 		}
 	}
-	f := actFoot{name: g, nameIcon: icon}
+	f := actFoot{name: g, nameIcon: icon, ent: dest == destChannel}
 	// getFooterContent's strings: the bold destination is {source} or
 	// {channel}, placed where the locale puts it
 	switch {

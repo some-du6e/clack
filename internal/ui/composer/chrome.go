@@ -1324,7 +1324,9 @@ func (c *chrome) layoutSend(gtx layout.Context, p *crPal, st *chromeState) layou
 		fillRect(gtx, image.Rect(dx, gtx.Dp(4), dx+max(gtx.Dp(1), 1), gtx.Dp(24)), div)
 	}
 	t := op.Offset(image.Pt(rs.Min.X+gtx.Dp(8), (h-is)/2)).Push(gtx.Ops)
-	crIconSend(gtx, is, icol)
+	// SendButton (boot-shared ABuu): the IconButton's send-filled (Clack's
+	// send) at size small's 16
+	icons.Get("send")(gtx, 16, icol)
 	t.Pop()
 	if sched {
 		t = op.Offset(image.Pt(rc.Min.X+(cw-is)/2, (h-is)/2)).Push(gtx.Ops)
@@ -1449,8 +1451,10 @@ func crCheckbox(gtx layout.Context, r image.Rectangle, on, hov bool, p *crPal) {
 			col = p.checkHover
 		}
 		fillRRect(gtx, r, rad, col)
+		// a native <input type=checkbox>: Chrome's own tick
+		// (NativeThemeBase::PaintCheckbox, icons' chrome-check)
 		t := op.Offset(r.Min).Push(gtx.Ops)
-		crIconCheck(gtx, r.Dx(), p.checkMark)
+		icons.Get("chrome-check")(gtx, unit.Dp(float32(r.Dx())/gtx.Metric.PxPerDp), p.checkMark)
 		t.Pop()
 		return
 	}
@@ -1486,10 +1490,15 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 		}
 		box := gtx.Dp(20)
 		if st.Private {
-			is := gtx.Dp(16)
-			t := op.Offset(image.Pt(x-gtx.Dp(4)+(box-is)/2, org.Y+(gtx.Dp(22)-is)/2)).Push(gtx.Ops)
-			drawLockIcon(gtx, is, p.ph)
+			// txEg's private icon: the icon font's lock-o (U+E029) at size
+			// inherit under .c-texty_input__placeholder_icon--private's
+			// 14px, a 1em inline box with no margins, the glyph's em box
+			// centred on Chrome's 22px line
+			is := gtx.Dp(14)
+			t := op.Offset(image.Pt(x, org.Y+(gtx.Dp(22)-is)/2)).Push(gtx.Ops)
+			icons.Get("lock-o")(gtx, 14, p.ph)
 			t.Pop()
+			x += is
 		} else {
 			// Slack's c-icon--hash-small: the icon font's U+E125 at the
 			// c-icon:before 20px in a 20px inline box with -4px margins
@@ -1502,8 +1511,8 @@ func (c *chrome) placeholder(gtx layout.Context, th *theme.Theme, p *crPal, st *
 			t := op.Offset(image.Pt(x-gtx.Dp(4), base-gtx.Dp(16))).Push(gtx.Ops)
 			icons.Get("hash-small")(gtx, 20, p.ph)
 			t.Pop()
+			x += box - 2*gtx.Dp(4)
 		}
-		x += box - 2*gtx.Dp(4)
 		nd := crText(gtx, th.Shaper, x, org.Y, org.X+tw-x, s, st.ChannelName)
 		if post := st.PlaceholderPost; post != "" {
 			x += nd.Size.X

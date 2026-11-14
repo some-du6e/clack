@@ -26,18 +26,18 @@ func boldSpans(src string, args ...any) []span {
 	for s != "" {
 		i := strings.IndexByte(s, 1)
 		if i < 0 {
-			out = append(out, span{s, false})
+			out = append(out, span{Text: s})
 			break
 		}
 		if i > 0 {
-			out = append(out, span{s[:i], false})
+			out = append(out, span{Text: s[:i]})
 		}
 		j := strings.IndexByte(s[i:], 2)
 		if j < 0 {
-			out = append(out, span{s[i+1:], true})
+			out = append(out, span{Text: s[i+1:], Bold: true})
 			break
 		}
-		out = append(out, span{s[i+1 : i+j], true})
+		out = append(out, span{Text: s[i+1 : i+j], Bold: true})
 		s = s[i+j+1:]
 	}
 	return out

@@ -34,8 +34,8 @@ func TestWrapSpansCJK(t *testing.T) {
 	w := gtx.Dp(200)
 	for _, in := range [][]span{
 		// the ja-JP card: "{sender}さんから{channel}でのハドルミーティングに招待されました"
-		{{"Remote Example", true}, {"さんから ", false}, {"#huddle-test", true}, {" でのハドルミーティングに招待されました。", false}},
-		{{"Remote Example", true}, {" is inviting you to a huddle in ", false}, {"#huddle-test", true}},
+		{{Text: "Remote Example", Bold: true}, {Text: "さんから "}, {Text: "#huddle-test", Bold: true}, {Text: " でのハドルミーティングに招待されました。"}},
+		{{Text: "Remote Example", Bold: true}, {Text: " is inviting you to a huddle in "}, {Text: "#huddle-test", Bold: true}},
 	} {
 		lines := wrapSpans(gtx, th, 15, in, w)
 		if len(lines) < 2 {

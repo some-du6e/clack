@@ -35,6 +35,7 @@ type App struct {
 	connected bool
 	online    onlineState // isClientOnline: the machine has a network (online.go)
 	inflight  map[string]*call
+	lookups   convLookups // LookupConv (channel_lookup.go)
 
 	subMu sync.Mutex
 	subs  map[*sub]struct{}

@@ -305,38 +305,88 @@ var slackRef = map[string]string{
 	"buildings":             "buildings",
 	"buildings-filled":      "buildings-filled",
 	"email-invite":          "email-invite",
+
+	// the emoji picker's category tabs (client-boot VEl9's tS), the huddle
+	// invite window's Be there soon (KgK6) and Slackbot's presence (TpPD
+	// getPresenceIconName)
+	"emoji-nature":           "emoji-nature",
+	"emoji-food":             "emoji-food",
+	"emoji-travel":           "emoji-travel",
+	"emoji-activities":       "emoji-activities",
+	"emoji-symbols":          "emoji-symbols",
+	"emoji-flag":             "emoji-flag",
+	"hourglass":              "hourglass",
+	"status-slackbot-filled": "status-slackbot-filled",
+}
+
+// fontRef names, for each glyph of Slack's icon font the set draws (the
+// y8g2 Icon's c-icon--* classes, where Slack draws one instead of an
+// SvgIcon; iconfont.go), its codepoint in slack-icons-v2-05e8fec.
+// TestIconsMatchSlack holds each to the font's outline, which the
+// icon-shots workflow dumps from the CDN's font.
+var fontRef = map[string]rune{
+	"stop-screen-sharing":   0xE096,
+	"hash-small":            0xE125,
+	"bullet-list":           0xE157,
+	"plus-small":            0xE281,
+	"times-small":           0xE294,
+	"times-circle-medium":   0xE229,
+	"disable-font":          0xE149,
+	"chevron-medium-down":   0xE256,
+	"chevron-medium-right":  0xE254,
+	"star-font":             0xE500,
+	"real-checkbox-empty":   0xE322,
+	"real-checkbox-checked": 0xE323,
+	"form-checkbox-dash":    0xE706,
+	"pencil-glyph":          0xE024,
+	"scheduled-send-glyph":  0xE07A,
+	"arrow-up-medium":       0xE292,
+	"arrow-down-medium":     0xE293,
+	"enter-font":            0xE302,
+	"broadcast":             0xE106,
+	"lock-o":                0xE029,
+}
+
+// inlineRef holds the icons drawn after a glyph Slack paints itself
+// rather than from its icon set: inline SVGs in the web client's modules
+// and Chrome's native form controls. Each is the reference's shapes as
+// <path>s in the 20-unit view (rects with their rx as arcs, circles as
+// two arcs); TestIconsMatchSlack holds the icon to it like the others.
+var inlineRef = map[string]struct{ src, body string }{
+	// boot-shared TgjK useDetermineTroubleshootingIcon: four rects 2.5
+	// wide (rx .5), and the no-connection × (stroke 1.5, round caps)
+	"huddle-connection":   {"TgjK", `<path fill="currentColor" d="M2.5 14 H4 A0.5 0.5 0 0 1 4.5 14.5 V16.5 A0.5 0.5 0 0 1 4 17 H2.5 A0.5 0.5 0 0 1 2 16.5 V14.5 A0.5 0.5 0 0 1 2.5 14Z M7 11 H8.5 A0.5 0.5 0 0 1 9 11.5 V16.5 A0.5 0.5 0 0 1 8.5 17 H7 A0.5 0.5 0 0 1 6.5 16.5 V11.5 A0.5 0.5 0 0 1 7 11Z M11.5 7 H13 A0.5 0.5 0 0 1 13.5 7.5 V16.5 A0.5 0.5 0 0 1 13 17 H11.5 A0.5 0.5 0 0 1 11 16.5 V7.5 A0.5 0.5 0 0 1 11.5 7Z M16 3 H17.5 A0.5 0.5 0 0 1 18 3.5 V16.5 A0.5 0.5 0 0 1 17.5 17 H16 A0.5 0.5 0 0 1 15.5 16.5 V3.5 A0.5 0.5 0 0 1 16 3Z"/>`},
+	"huddle-connection-x": {"TgjK", `<path d="M3 4L8 9" stroke="currentColor" stroke-width="1.5"/><path d="M8 4L3 9" stroke="currentColor" stroke-width="1.5"/>`},
+	// Chromium's NativeThemeBase::PaintCheckbox on a 20-unit box: the
+	// tick (4,10) (8,14) (16,4) stroked 3.2 wide, butt caps and a miter
+	// join, as its outline
+	"chrome-check": {"PaintCheckbox", `<path fill="currentColor" d="M8.133 16.395 L17.249 5 L14.751 3 L7.867 11.605 L5.131 8.869 L2.869 11.131 Z"/>`},
+	// boot-shared Y5Hl EmojiIcon's active ink: the ring and the face
+	"emoji-tab-active": {"EmojiIcon", `<path fill="currentColor" d="M10 1C14.97 1 19 5.03 19 10C19 14.97 14.97 19 10 19C5.03 19 1 14.97 1 10C1 5.03 5.03 1 10 1ZM10 2.5C5.86 2.5 2.5 5.86 2.5 10C2.5 14.14 5.86 17.5 10 17.5C14.14 17.5 17.5 14.14 17.5 10C17.5 5.86 14.14 2.5 10 2.5Z"/><path fill="currentColor" d="M8.12202 8.31307C7.33104 8.06157 6.89556 7.22006 7.14705 6.42908C7.39855 5.6381 8.24007 5.20261 9.03105 5.45411C9.82203 5.70561 10.2575 6.54713 10.006 7.33811C9.75452 8.12909 8.913 8.56457 8.12202 8.31307ZM12.887 9.82812C12.096 9.57662 11.6605 8.73511 11.912 7.94413C12.1635 7.15315 13.005 6.71766 13.796 6.96916C14.587 7.22066 15.0225 8.06218 14.771 8.85316C14.5195 9.64414 13.6779 10.0796 12.887 9.82812ZM8.68643 14.7885C5.60828 13.8098 5.39459 10.9506 5.72487 9.91188C5.84607 9.53068 6.24755 9.29107 6.66687 9.42439L13.4331 11.5758C13.8524 11.7091 14.0418 12.1366 13.9206 12.5178C13.6024 13.5184 11.8027 15.7794 8.68643 14.7885Z"/>`},
+	// boot-shared qS+L GifIcon, inactive: the tile with its corner
+	// folded down, the eyes, the smile and the flap
+	"gif-tab": {"GifIcon", `<path d="M4.5 1.6272H12.4244C13.3242 1.6272 14.1765 2.03108 14.7462 2.72748L17.6125 6.23062C18.051 6.76661 18.2906 7.43781 18.2906 8.13033V15.4178C18.2906 17.0746 16.9474 18.4178 15.2906 18.4178H4.5C2.84315 18.4178 1.5 17.0746 1.5 15.4178V4.6272C1.5 2.97034 2.84315 1.6272 4.5 1.6272Z" stroke="currentColor" stroke-width="1.5"/><path fill="currentColor" d="M5.94449 8.54097 A1.48152 1.48152 0 1 1 8.90753 8.54097 A1.48152 1.48152 0 1 1 5.94449 8.54097Z M10.883 8.54097 A1.48152 1.48152 0 1 1 13.846 8.54097 A1.48152 1.48152 0 1 1 10.883 8.54097Z"/><path d="M6.83563 12.4917C7.32298 13.9732 8.62256 14.714 9.92214 14.714C11.2217 14.714 12.5213 13.9732 13.0086 12.4917" stroke="currentColor" stroke-width="1.5"/><path fill="currentColor" fill-rule="evenodd" d="M14.0106 8.91138C12.8969 8.91138 11.9941 8.00855 11.9941 6.89486L11.9941 3.60259C11.9941 1.6647 14.4611 0.842363 15.6238 2.39268L18.093 5.68495C19.0901 7.01431 18.1415 8.91138 16.4798 8.91138L14.0106 8.91138ZM13.7226 6.89486C13.7226 7.05396 13.8515 7.18293 14.0106 7.18293L16.4798 7.18293C16.7172 7.18293 16.8527 6.91192 16.7103 6.72202L14.2411 3.42975C14.075 3.20827 13.7226 3.32575 13.7226 3.60259L13.7226 6.89486Z"/>`},
+	// GifIcon, active: the ink over the #9ed6fa tile (the tile's stroke,
+	// the eye, the smile and the 1-wide wink)
+	"gif-tab-active": {"GifIcon", `<path d="M4.5 1.5H15.5C17.1569 1.5 18.5 2.84315 18.5 4.5V7V15.5C18.5 17.1569 17.1569 18.5 15.5 18.5H4.5C2.84315 18.5 1.5 17.1569 1.5 15.5V4.5C1.5 2.84315 2.84315 1.5 4.5 1.5Z" stroke="currentColor" stroke-width="1.5"/><path fill="currentColor" d="M11 8.5 A1.5 1.5 0 1 1 14 8.5 A1.5 1.5 0 1 1 11 8.5Z"/><path d="M6.90216 12.5C7.39558 14 8.71137 14.75 10.0272 14.75C11.3429 14.75 12.6587 14 13.1522 12.5" stroke="currentColor" stroke-width="1.5"/><path d="M7.03613 7.53516L9.03613 8.67801L7.03613 9.53516" stroke="currentColor" stroke-width="1"/>`},
 }
 
 // clackOwn are the icons Clack draws that Slack's set has no glyph for,
-// and why.
+// and why (re-checked against the 727 glyphs of build 2c0d02ca130f's
+// icons.json on 2026-11-14: none has one).
 var clackOwn = map[string]string{
-	"times-circle-medium":  "Slack's icon-font glyph U+E229 (c-icon--times-circle-medium, iconfont.go), not an SvgIcon",
-	"disable-font":         "Slack's icon-font glyph U+E149 (c-icon--disable, iconfont.go; IgnoreForkedModalButton's y8g2 icon), not the SvgIcon",
-	"chevron-medium-right": "Slack's icon-font glyph U+E254 (c-icon--chevron-medium-right, iconfont.go), not an SvgIcon",
-	"chevron-medium-down":  "Slack's icon-font glyph U+E256 (c-icon--chevron-medium-down, iconfont.go; the join banner's section chevron), not an SvgIcon",
-	"bullet-list":          "Slack's icon-font glyph U+E157 (c-icon--bullet-list, iconfont.go; a list's sidebar row, UGOO), not an SvgIcon",
-	"star-font":            "Slack's icon-font glyph U+E500 (c-icon--star, iconfont.go; the join banner's Starred section), not the SvgIcon",
-	"bookmark-add":         "a bookmark with a plus (save for later); Slack's set has none",
-	"close-small":          "a smaller close for 16px chips",
-	"dot":                  "SlackFallback, drawn for Slack names the set lacks",
-	"eye-off":              "an eye with a slash; Slack's hidden is eye-closed",
-	"find":                 "the sidebar's find-in-sidebar button; Slack's set has no lines-and-magnifier glyph",
-	"hackclub":             "the Hack Club plugin category's mark",
-	"hand":                 "a raised hand (huddles); Slack's set has none",
-	"hash-small":           "Slack's icon-font glyph U+E125 (c-icon--hash-small, iconfont.go), not an SvgIcon",
-	"pencil-glyph":         "Slack's icon-font glyph U+E024 (c-icon--pencil, directory.go; the sidebar draft mark), not an SvgIcon",
-	"headphones-off":       "Slack's headphones with a slash (huddle deafen); Slack's set has no headphones-off",
-	"history-back":         "a counter-clockwise clock; Slack's history is drawn as history",
-	"missing":              "the crossed box drawn for unknown names",
-	"needs-attention":      "a ring with an exclamation mark (code channels' suspended / PR blocked status); Slack's set has none",
-	"notes":                "huddle notes; Slack's set has none",
-	"plus-circle":          "a circled plus; Slack's set has none",
-	"plus-small":           "a smaller plus for the sidebar's 20px Add rows",
-	"reply":                "a reply arrow; Slack's set has no reply glyph",
-	"slick-mark":           "Slick's mark (a plugin system's, not Slack's)",
-	"sticker":              "a peeling sticker (huddle reactions); Slack's set has none",
-	"times-small":          "Slack's icon-font glyph U+E294 (c-icon--times-small, iconfont.go), not an SvgIcon",
-	"stop-screen-sharing":  "Slack's icon-font glyph U+E096 (c-icon--stop-screen-sharing, iconfont.go; the mini panel's Stop Sharing), not an SvgIcon",
-	"unpin":                "Slack's pin with a slash; Slack's set has no unpin",
-	"unreads":              "Slack's set has no unreads glyph",
+	"bookmark-add":    "a bookmark with a plus (save for later); Slack's set has bookmark but no bookmark-add",
+	"close-small":     "a smaller close for 16px chips; Slack's set has close, close-circle and close-filled, none small",
+	"dot":             "SlackFallback, drawn for Slack names the set lacks",
+	"hackclub":        "the Hack Club plugin category's mark",
+	"hand":            "a raised hand (huddles); Slack's set has none (call-handset is a phone)",
+	"headphones-off":  "Slack's headphones with a slash (huddle deafen); Slack's set has headphones and headphones-filled only",
+	"missing":         "the crossed box drawn for unknown names",
+	"needs-attention": "a ring with an exclamation mark (code channels' suspended / PR blocked status); Slack's set has none",
+	"notes":           "huddle notes; Slack's set has none",
+	"plus-circle":     "a circled plus (plugins' add-circle, plus-circle-filled); Slack's set has plus and plus-filled only",
+	"reply":           "a reply arrow (plugins' arrow-reply); Slack's set has email-reply only",
+	"slick-mark":      "Slick's mark (a plugin system's, not Slack's)",
+	"sticker":         "a peeling sticker (huddle reactions); Slack's set has none",
+	"unreads":         "Slack's set has mark-as-unread, no unreads glyph",
 }

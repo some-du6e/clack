@@ -55,17 +55,12 @@ package ui
 import (
 	"context"
 	"image"
-	"image/color"
-	"math"
 	"sort"
 	"strconv"
 	"time"
 
-	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/ui/icons"
@@ -420,8 +415,7 @@ func (a *App) focusCard(gtx layout.Context) layout.Dimensions {
 	// statusBanner: padding 12 16, gap 12, the 64px telescope and the text
 	by := y + gtx.Dp(12)
 	at(gtx, image.Pt(gtx.Dp(16), by), image.Pt(gtx.Dp(64), gtx.Dp(64)), func(gtx layout.Context) layout.Dimensions {
-		focusTelescope(gtx, gtx.Dp(64))
-		return layout.Dimensions{Size: image.Pt(gtx.Dp(64), gtx.Dp(64))}
+		return icons.Art(gtx, "focus-telescope", gtx.Dp(64)) // focus-d8ca34d.svg
 	})
 	tx := gtx.Dp(16 + 64 + 12)
 	tw := w - tx - gtx.Dp(16)
@@ -686,43 +680,4 @@ func (a *App) openFocusTimes() {
 			a.setFocusCustomTime(opts[i].value, time.Now())
 		}
 	}))
-}
-
-// focusTelescope draws Slack's focus illustration (focus-d8ca34d.svg, a
-// 1000×1000 telescope) s px square at the origin.
-func focusTelescope(gtx layout.Context, s int) {
-	k := float32(s) / 1000
-	light, dark := color.NRGBA{0xab, 0xb7, 0xbf, 0xff}, color.NRGBA{0x29, 0x2f, 0x33, 0xff}
-	rect := func(x, y, w, h, rx, rot, cx, cy float32, col color.NRGBA) {
-		st := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(k, k)).Mul(f32.Affine2D{}.Rotate(f32.Pt(cx, cy), rot*math.Pi/180))).Push(gtx.Ops)
-		r := clip.RRect{Rect: image.Rect(int(x), int(y), int(x+w), int(y+h)), NE: int(rx), NW: int(rx), SE: int(rx), SW: int(rx)}
-		paint.FillShape(gtx.Ops, col, r.Op(gtx.Ops))
-		st.Pop()
-	}
-	rect(606.22, 338.431, 315.738, 132.942, 19.1356, 30.0533, 606.22, 338.431, light)
-	rect(271.32, 97.6533, 509.007, 214.319, 19.1356, 30.0533, 271.32, 97.6533, light)
-	{
-		st := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(k, k))).Push(gtx.Ops)
-		var p clip.Path
-		p.Begin(gtx.Ops)
-		p.MoveTo(f32.Pt(261.737, 114.216))
-		p.CubeTo(f32.Pt(267.03, 105.069), f32.Pt(278.736, 101.944), f32.Pt(287.883, 107.237))
-		p.LineTo(f32.Pt(412.106, 179.111))
-		p.LineTo(f32.Pt(304.774, 364.616))
-		p.LineTo(f32.Pt(180.551, 292.742))
-		p.CubeTo(f32.Pt(171.404, 287.45), f32.Pt(168.279, 275.744), f32.Pt(173.572, 266.596))
-		p.Close()
-		paint.FillShape(gtx.Ops, dark, clip.Outline{Path: p.End()}.Op())
-		st.Pop()
-	}
-	rect(691.52, 387.785, 59.3204, 132.942, 0, 30.0533, 691.52, 387.785, dark)
-	{
-		st := op.Affine(f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(k, k))).Push(gtx.Ops)
-		paint.FillShape(gtx.Ops, light, clip.Ellipse{Min: image.Pt(491-56, 538-56), Max: image.Pt(491+56, 538+56)}.Op(gtx.Ops))
-		st.Pop()
-	}
-	rect(525.326, 608.576, 277.486, 67.9314, 33.9657, 90, 525.326, 608.576, light)
-	rect(474.799, 633.569, 304.155, 67.9314, 33.9657, 120, 474.799, 633.569, light)
-	rect(564.873, 596.348, 307.914, 67.9314, 33.9657, 60, 564.873, 596.348, light)
-	rect(366.501, 594.244, 249.72, 67.9314, 33.9657, 0, 366.501, 594.244, dark)
 }

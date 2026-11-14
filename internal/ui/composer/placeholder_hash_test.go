@@ -71,7 +71,7 @@ func TestPlaceholderHashMatchesText(t *testing.T) {
 		// the stroked hash alpha.24 drew, for scale
 		old := draw(func(gtx layout.Context) {
 			defer op.Offset(image.Pt(2, 3)).Push(gtx.Ops).Pop()
-			drawHashIcon(gtx, 16, p.ph)
+			strokedHash(gtx, 16, p.ph)
 		})
 		_, oldInk := inkBox(old, image.Rect(0, 0, w, h), p.ph, p.bg)
 		if hashInk > oldInk*4/5 {
