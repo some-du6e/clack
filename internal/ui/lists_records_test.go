@@ -22,6 +22,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/listview"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
@@ -87,27 +88,39 @@ func TestListRecordMenusShots(t *testing.T) {
 		return v != nil && v.Doc() != nil
 	})
 	e.move(f32.Pt(float32(e.size.X/2), float32(e.size.Y/2)))
-	var p image.Point
-	e.until("the row", 10*time.Second, func() bool {
-		var ok bool
-		p, ok = v.RowPoint(fakeslack.SavedRecordSaved)
-		return ok
-	})
-	e.move(f32.Pt(float32(p.X), float32(p.Y)))
-	e.rightClickAt(p, time.Duration(time.Now().UnixNano()))
-	e.until("the record menu", 5*time.Second, func() bool {
-		m := e.topMenu()
-		return m != nil && slices.Contains(m.Labels(), "Open item")
-	})
-	m := e.topMenu()
-	want := []string{"Open item", "Add comment", "Copy link to item", "Duplicate item", "Remind me about this", "Archive item", "Delete item"}
-	got := []string{}
-	for _, l := range m.Labels() {
-		if l != "---" {
-			got = append(got, l)
-		}
+	menuFor := func(rec string) *popups.Menu {
+		var p image.Point
+		e.until("the row", 10*time.Second, func() bool {
+			var ok bool
+			p, ok = v.RowPoint(rec)
+			return ok
+		})
+		e.move(f32.Pt(float32(p.X), float32(p.Y)))
+		e.rightClickAt(p, time.Duration(time.Now().UnixNano()))
+		e.until("the record menu", 5*time.Second, func() bool {
+			m := e.topMenu()
+			return m != nil && slices.Contains(m.Labels(), "Open item")
+		})
+		return e.topMenu()
 	}
-	if !slices.Equal(got, want) {
+	rows := func(m *popups.Menu) []string {
+		got := []string{}
+		for _, l := range m.Labels() {
+			if l != "---" {
+				got = append(got, l)
+			}
+		}
+		return got
+	}
+	// a record in Later (the fixture's saved one): Edit reminder
+	if got := rows(menuFor(fakeslack.SavedRecordSaved)); !slices.Contains(got, "Edit reminder") || slices.Contains(got, "Remind me about this") {
+		t.Errorf("a saved record's menu %q", got)
+	}
+	e.key(key.NameEscape, 0)
+	e.settle(200 * time.Millisecond)
+	m := menuFor("Rec0ITEM004") // Ship the beta: not in Later
+	want := []string{"Open item", "Add comment", "Copy link to item", "Duplicate item", "Remind me about this", "Archive item", "Delete item"}
+	if got := rows(m); !slices.Equal(got, want) {
 		t.Errorf("record menu %q, want %q", got, want)
 	}
 	lrShot(e, "list-record-menu")
