@@ -225,7 +225,20 @@ func (v *View) drawCopyButtons(gtx layout.Context, st *Style) {
 // copyTip is the button's tooltip, centred above it after the pointer
 // rests EmojiTipDelay (deferred, above everything).
 func (v *View) copyTip(gtx layout.Context, st *Style, br image.Rectangle, tip string) {
-	if wait := v.copyTipAt.Add(EmojiTipDelay); !gtx.Now.IsZero() && gtx.Now.Before(wait) {
+	v.btnTip(gtx, st, br, tip, false, EmojiTipDelay)
+}
+
+// msgActionTipDelay is MessageActionButton's Tooltip delay (1MqE).
+const msgActionTipDelay = 60 * time.Millisecond
+
+// btnTip is a button's tooltip over br after delay, at top or (right)
+// top-right (BaseTooltip's position: the arrow arrowOffset from the box's
+// right).
+func (v *View) btnTip(gtx layout.Context, st *Style, br image.Rectangle, tip string, right bool, delay time.Duration) {
+	if tip == "" {
+		return
+	}
+	if wait := v.copyTipAt.Add(delay); !gtx.Now.IsZero() && gtx.Now.Before(wait) {
 		gtx.Execute(op.InvalidateCmd{At: wait})
 		return
 	}
@@ -240,7 +253,11 @@ func (v *View) copyTip(gtx layout.Context, st *Style, br image.Rectangle, tip st
 	// the shared tooltip placement and shape (theme/tooltip_place.go,
 	// theme/tooltip.go): 8px over the button, kept inside the window, the
 	// arrow on the button, outlined in dark mode
-	pl := placeTip(gtx, &l, br, image.Pt(bw, bh), v.tipOrg.Bounds())
+	pos := theme.TipTop
+	if right {
+		pos = theme.TipTopRight
+	}
+	pl := placeTipAt(gtx, &l, br, image.Pt(bw, bh), v.tipOrg.Bounds(), pos)
 	r := pl.Box
 	bg, fg, o := tooltipStyle(&st.Palette)
 	m := op.Record(gtx.Ops)

@@ -64,7 +64,7 @@ func (l *lay) canvasFile(f *richtext.File, x, y, w int) int {
 	if tg >= 0 {
 		l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+cw, y+h), t: tg})
 	}
-	l.addFileSec(f, image.Rect(x, y, x+cw, y+h), 12, 28) // FileActions' renderFavoriteCanvas (filesection.go)
+	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
 	return h
 }
 

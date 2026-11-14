@@ -81,7 +81,7 @@ func (v *View) HitAt(p f32.Point) Hit {
 		if tg.inCard {
 			h.Kind = HitCard
 		}
-	case tFile:
+	case tFile, tSnippet: // a snippet's pill and collapsed body are its file's too
 		h.Kind, h.File = HitFile, tg.file
 	case tButton:
 		h.Kind = HitButton

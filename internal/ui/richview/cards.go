@@ -629,8 +629,8 @@ func (l *lay) file(f *richtext.File, x, y, w int) int {
 		return l.mediaGallery([]*richtext.File{f}, x, y, w)
 	case f.IsAudio:
 		return l.audio(f, x, y, w)
-	case f.IsSnippet || f.Preview != "":
-		return l.snippet(f, x, y, w)
+	case f.IsSnippet:
+		return l.snippet(f, x, y, w) // snippet.go
 	case richtext.IsCanvasFile(f):
 		return l.canvasFile(f, x, y, w) // canvasfile.go
 	}
@@ -949,6 +949,9 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 	if f.IsVideo && !overflow {
 		l.videoPill(f, r)
 	}
+	if !overflow { // FileGallery: the overflow tile's showActions is off
+		l.galleryBar(f, r) // FileActions (file_actions.go)
+	}
 	if overflow {
 		l.galleryOverflow(r, count)
 	}
@@ -1080,6 +1083,9 @@ func (l *lay) audio(f *richtext.File, x, y, w int) int {
 	bs := l.dp(36)
 	h := pad + bs + pad + l.dp(18) + pad + l.dp(2)
 	l.cardFrame(x, y, cw, h, tg)
+	// FileActions (file_actions.go); a voice clip has none (MessageFile's
+	// showActions is off for an audio message)
+	l.pillowBar(f, image.Rect(x, y, x+cw, y+h))
 	bx, by := x+l.dp(1)+pad, y+l.dp(1)+pad
 	l.d.boxes = append(l.d.boxes, box{kind: bCircle, r: image.Rect(bx, by, bx+bs, by+bs), fill: rgb(0xe6, 0xef, 0xf6), target: -1})
 	l.playGlyph(image.Pt(bx+bs/2, by+bs/2), rgb(18, 100, 163))
@@ -1264,111 +1270,6 @@ func (l *lay) genericFile(f *richtext.File, x, y, w int) int {
 	meta := pillowMeta(f)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
 	l.plainFlow(meta, tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
-	return h
-}
-
-// snippet is Slack's snippet message file: the file pillow's header (the
-// 36px type tile, the name in 16px Bold, the pretty_type under it) and,
-// edge to edge under it, FileSnippet's CodeMirror lines: 13px monospace at
-// 1.5, a 32px line-number gutter (sk_foreground_min .04, a 1px .13 rule,
-// numbers right-aligned 4px in at .5), the code 8px after it; 4px above
-// the first line and below the last (8px for two lines, 18px for one).
-// Collapsed at 200px (c-pillow_file__snippet--collapsed) with the 40px
-// fade to the pane. Slack's snippet message file has no max width.
-func (l *lay) snippet(f *richtext.File, x, y, w int) int {
-	p := &l.st.Palette
-	cw := min(w, l.dp(1000))
-	pad := l.dp(12)
-	ic := l.dp(36)
-	tg := l.d.addTarget(target{kind: tFile, file: f})
-	bi := l.cardFrame(x, y, cw, 0, tg)
-	l.fileIcon(f, x+pad, y+pad, ic)
-	tx := x + pad + ic + pad
-	fs := l.bodyStyle()
-	fs.face.Weight = font.Bold
-	fs.size, fs.lineH = l.sp(16), l.dp(20)
-	fs.maxLines, fs.ellipsis = 1, true
-	l.plainFlow(fileName(f), tx, y+pad-l.dp(1), x+cw-tx-pad, &fs, tg)
-	ms := l.small(p.Text2)
-	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
-	l.plainFlow(pillowMeta(f), tx, y+pad+l.dp(20), x+cw-tx-pad, &ms, -1)
-	cy := y + pad + ic + pad
-	code := strings.TrimRight(f.Preview, "\n")
-	if code == "" {
-		h := cy - y + l.dp(1)
-		l.d.boxes[bi].r = image.Rect(x, y, x+cw, y+h)
-		return h
-	}
-	lines := strings.Split(code, "\n")
-	top, bot := l.dp(4), l.dp(4)
-	switch len(lines) {
-	case 1:
-		top, bot = l.dp(18), l.dp(18)
-	case 2:
-		top, bot = l.dp(8), l.dp(8)
-	}
-	lh := l.dp(19.5)
-	gw := l.dp(32)
-	inner := image.Rect(x+l.dp(1), cy, x+cw-l.dp(1), cy)
-	codeX := inner.Min.X + gw + l.dp(8)
-	codeW := max(inner.Max.X-l.dp(8)-codeX, 1)
-	cs := flowStyle{face: font.Font{Typeface: l.st.Mono}, size: l.sp(13), lineH: lh, col: p.Text, emoji: l.dp(13), pre: true}
-	ck := l.faceFor(cs.face, cs.size, 0)
-	rows := make([]int, len(lines)) // pre-wrap: visual rows per line
-	total := 0
-	for i, ln := range lines {
-		rows[i] = max(1, int(math.Ceil(float64(l.measure(ln, ck))/float64(codeW))))
-		total += rows[i]
-	}
-	full := top + total*lh + bot
-	ch := min(full, l.dp(200))
-	inner.Max.Y = cy + ch
-	gut := rgba(29, 28, 29, 0.04)
-	rule := rgba(29, 28, 29, 0.13)
-	num := rgba(29, 28, 29, 0.5)
-	if lum(p.Panel) < 0.5 {
-		gut, rule, num = rgba(232, 232, 232, 0.04), rgba(232, 232, 232, 0.13), rgba(209, 210, 211, 0.5)
-	}
-	rr := l.dp(12) - l.dp(1)
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(inner.Min.X, cy, inner.Min.X+gw, cy+ch), fill: Over(gut, p.Panel),
-		target: -1, perCorner: true, corners: [4]int{0, 0, 0, rr}})
-	l.d.boxes = append(l.d.boxes, box{kind: bFill, r: image.Rect(inner.Min.X+gw-l.dp(1), cy, inner.Min.X+gw, cy+ch), fill: Over(rule, p.Panel), target: -1})
-	ns := flowStyle{face: font.Font{Typeface: l.st.Mono}, size: l.sp(13), lineH: lh, col: Over(num, p.Panel), emoji: l.dp(13), maxLines: 1, noSelect: true}
-	l.plainAdd("\n")
-	ly := cy + top
-	for i, ln := range lines {
-		if ly+lh > cy+ch {
-			break
-		}
-		n := strconv.Itoa(i + 1)
-		nw := int(l.measure(n, l.faceFor(ns.face, ns.size, 0)) + 0.999)
-		l.plainFlow(n, inner.Min.X+gw-l.dp(4)-nw-l.dp(1), ly, nw+l.dp(2), &ns, -1)
-		if ln != "" {
-			cs.maxLines = 0
-			if ly+rows[i]*lh > cy+ch {
-				cs.maxLines = max(1, (cy+ch-ly)/lh)
-			}
-			l.plainFlow(ln, codeX, ly, codeW, &cs, -1)
-		}
-		if i < len(lines)-1 {
-			l.plainAdd("\n")
-		}
-		ly += rows[i] * lh
-	}
-	if full > ch { // collapsed: the 40px fade to the pane
-		fh := l.dp(40)
-		for k := 0; k < 8; k++ {
-			a := float32(k+1) / 8
-			c := p.Panel
-			c.A = uint8(a * 255)
-			r := image.Rect(inner.Min.X, cy+ch-fh+k*fh/8, inner.Max.X, cy+ch-fh+(k+1)*fh/8)
-			l.d.boxes = append(l.d.boxes, box{kind: bFill, r: r, fill: c, target: -1, layer: 1})
-		}
-	}
-	h := cy + ch + l.dp(1) - y
-	l.d.boxes[bi].r = image.Rect(x, y, x+cw, y+h)
-	if tg >= 0 {
-		l.d.hits = append(l.d.hits, hit{r: image.Rect(x, y, x+cw, y+h), t: tg})
-	}
+	l.pillowBar(f, image.Rect(x, y, x+cw, y+h)) // FileActions (file_actions.go)
 	return h
 }

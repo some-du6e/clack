@@ -219,9 +219,14 @@ func (v *View) emojiTip(gtx layout.Context, st *Style) {
 // layout scale (8px over the trigger, kept 3px inside the window bounds,
 // under it when there's no room above, the arrow on its centre).
 func placeTip(gtx layout.Context, l *lay, target image.Rectangle, box image.Point, bounds image.Rectangle) theme.TipPlace {
+	return placeTipAt(gtx, l, target, box, bounds, theme.TipTop)
+}
+
+// placeTipAt is placeTip at a BaseTooltip position (theme.Tip*).
+func placeTipAt(gtx layout.Context, l *lay, target image.Rectangle, box image.Point, bounds image.Rectangle, pos string) theme.TipPlace {
 	g := gtx
 	g.Metric = unit.Metric{PxPerDp: l.scale, PxPerSp: l.spx}
-	return theme.PlaceTooltip(g, target, box, bounds, theme.BaseTooltip(g, theme.TipTop))
+	return theme.PlaceTooltip(g, target, box, bounds, theme.BaseTooltip(g, pos))
 }
 
 // tooltipStyle is the emoji tooltip's colors and opacity: Slack's, or a

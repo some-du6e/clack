@@ -31,7 +31,7 @@ func FromMessageIn(r Resolver, m *slack.Message, ch string) Doc {
 	if m.Subtype == "message_deleted" || m.Subtype == "tombstone" {
 		return Doc{Blocks: []Block{tombstone("This message was deleted.")}}
 	}
-	c := &builder{r: r, sender: m.User, chID: ch}
+	c := &builder{r: r, sender: m.User, chID: ch, msgCh: firstNonEmpty(ch, m.Channel), msgTS: m.TS}
 	c.hintsFrom(m)
 	if len(m.Files) > 0 {
 		c.files = make(map[string]*slack.File, len(m.Files))
@@ -136,6 +136,7 @@ func (c *builder) fileBlock(f *slack.File) Block {
 	}
 	out := convertFile(f)
 	c.canvasFile(f, out) // canvasfile.go
+	c.expandable(out)
 	if f.User != "" && c.sender != "" && f.User != c.sender {
 		out.UploaderID = f.User
 		if mn, ok := c.r.(MemberNamer); ok {
@@ -195,12 +196,38 @@ func convertFile(f *slack.File) *File {
 	default:
 		out.Thumb = largestThumb(f)
 	}
-	if !out.IsImage && !out.IsVideo && !out.IsAudio && f.Preview != "" &&
-		(f.Mode == "snippet" || f.Mode == "post" || f.Filetype == "text" || f.Lines > 0 || strings.HasPrefix(mime, "text/")) {
+	// FileSnippet draws a file whose mode is "snippet" (getFileType, e4n/:
+	// images, audio, video, posts, lists and canvases come first); an
+	// uploaded text or code file (mode "hosted") is a file pillow
+	if f.Mode == "snippet" && !out.IsImage && !out.IsVideo && !out.IsAudio && f.Filetype != "quip" && f.Filetype != "list" {
 		out.IsSnippet = true
 		out.Preview = f.Preview
+		out.Highlight = ParseCodeMirror(f.PreviewHighlight)
+		out.LinesMore, out.PreviewTruncated = f.LinesMore, f.PreviewIsTruncated
 	}
+	out.EditLink, out.ExternalType = SafeURL(f.EditLink), f.ExternalType
 	return out
+}
+
+// FileExpander is an optional Resolver extension (store.Store): a message
+// file's expandable (Slack's expandedFiles, by file, channel and
+// message: fetchAndExpand going, or done) and a snippet's highlighted
+// content once files.info brought it (cut for display: truncated).
+type FileExpander interface {
+	FileExpansion(ch, ts, fileID string) (expanded, expanding bool)
+	SnippetContent(fileID string) (code *CodeMirror, truncated, ok bool)
+}
+
+// expandable fills a snippet's expandable state and fetched content.
+func (c *builder) expandable(out *File) {
+	fe, ok := c.r.(FileExpander)
+	if !ok || !out.IsSnippet || out.ID == "" {
+		return
+	}
+	out.Expanded, out.Expanding = fe.FileExpansion(c.msgCh, c.msgTS, out.ID)
+	if code, cut, ok := fe.SnippetContent(out.ID); ok {
+		out.Content, out.ContentTruncated = code, cut
+	}
 }
 
 // imageThumb picks the thumbnail Slack shows inline (thumb_1024 first, then

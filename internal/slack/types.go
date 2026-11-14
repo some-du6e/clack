@@ -249,6 +249,9 @@ type File struct {
 	Preview            string          `json:"preview"`
 	PreviewHighlight   string          `json:"preview_highlight"`
 	Lines              int             `json:"lines"`
+	LinesMore          int             `json:"lines_more,omitempty"`           // snippets: lines past the preview
+	PreviewIsTruncated bool            `json:"preview_is_truncated,omitempty"` // snippets: the preview is cut
+	EditLink           string          `json:"edit_link,omitempty"`            // snippets and posts: the web editor
 	DurationMS         int             `json:"duration_ms"`
 	Transcription      json.RawMessage `json:"transcription,omitempty"`
 	MP4                string          `json:"mp4"`

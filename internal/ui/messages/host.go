@@ -5,6 +5,7 @@
 package messages
 
 import (
+	"context"
 	"image"
 	"os"
 	"strconv"
@@ -303,6 +304,97 @@ func (r *richHandler) OpenFileSection(f *richtext.File, btn image.Rectangle) {
 		title = f.Name
 	}
 	o.OpenFileSectionMenu(f.ID, core.IsListFile(f.Type, "", f.PrettyType), title, image.Rectangle{Min: min, Max: min.Add(btn.Size())}, "file_pillow")
+}
+
+// FileAction is richview's FileActionHandler: a message file's
+// FileActions button, or a snippet's pill (btn: window coordinates).
+//
+//   - Download: the lightbox's download (popups.DownloadFile).
+//   - Share: the file menu's Share file… (the message's share modal).
+//   - Open in new window / Open file on …: renderExternal's href, the
+//     permalink (an external file: url_private), in the browser.
+//   - Edit: Slack opens EditSnippetDialog, or for a file that may be cut
+//     (isFileMaybeTruncated) links its edit_link; Clack has no snippet
+//     editor for an existing file, so it opens edit_link in the browser.
+//     A post's Edit in new window opens its permalink.
+//   - View file details: Clack has no file details view; the file's page
+//     in the browser.
+//   - Add to starred / Unstar canvas: addCanvasToFavorites /
+//     removeCanvasAsCollection (core.StarFile); outside the Files tab the
+//     add toasts "Added {canvas} to Starred." (its View link isn't drawn).
+//   - More actions: FileActions' menu (popups.NewFileActionsMenu).
+//   - Show more / Show less / Collapse: fetchAndExpand, collapseFile
+//     (core.ExpandFile, CollapseFile).
+func (r *richHandler) FileAction(a richview.FileAction, f *richtext.File, btn image.Rectangle) {
+	m := r.m
+	if m == nil || f == nil {
+		return
+	}
+	if r.anchor != nil {
+		min := r.anchor(btn.Min)
+		btn = image.Rectangle{Min: min, Max: min.Add(btn.Size())}
+	}
+	ph, _ := r.h.(popups.Host)
+	app := r.h.Core()
+	switch a {
+	case richview.FileDownload:
+		if ph != nil {
+			popups.DownloadFile(ph, f)
+		}
+	case richview.FileShare:
+		if ph != nil {
+			ph.ShowOverlay(popups.NewForwardModal(ph, *m))
+		}
+	case richview.FileExternal:
+		u := f.Permalink
+		if f.IsExternal && f.URL != "" {
+			u = f.URL
+		}
+		if u != "" {
+			openURL(u)
+		}
+	case richview.FileEdit:
+		if u := f.EditLink; u != "" || f.Permalink != "" {
+			if u == "" {
+				u = f.Permalink
+			}
+			openURL(u)
+		}
+	case richview.FileEditWindow, richview.FileDetails:
+		if f.Permalink != "" {
+			openURL(f.Permalink)
+		}
+	case richview.FileStar:
+		if app == nil || f.ID == "" {
+			return
+		}
+		on := !app.FileStarred(f.ID)
+		title := f.Title
+		if title == "" {
+			title = f.Name
+		}
+		go func() {
+			if err := app.StarFile(context.Background(), f.ID, on); err == nil && on {
+				r.h.Toast("Added " + title + " to Starred.")
+			}
+			r.h.Invalidate()
+		}()
+	case richview.FileMore:
+		if ph != nil {
+			gallery := f.IsImage && f.Thumb != nil
+			if mn := popups.NewFileActionsMenu(ph, btn, *m, f, gallery); mn != nil {
+				ph.ShowOverlay(mn)
+			}
+		}
+	case richview.FileShowMore:
+		if app != nil {
+			app.ExpandFile(m.Channel, m.TS, f.ID)
+		}
+	case richview.FileShowLess, richview.FileCollapse:
+		if app != nil {
+			app.CollapseFile(m.Channel, m.TS, f.ID)
+		}
+	}
 }
 
 // JoinHuddle is a huddle message's Join Huddle (richview.HuddleJoiner):

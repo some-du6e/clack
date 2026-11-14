@@ -107,6 +107,9 @@ type View struct {
 	// the file cards' section buttons (filesection.go): card index+1
 	// under the press, and under the pointer
 	secPress, secHot int
+	// the files' FileActions (file_actions.go): the button under the
+	// press (barKey; -1 the group between its buttons) and the pointer
+	barPress, barHot int
 
 	// Origin, if set by the owner, is added to click anchors so they are in
 	// window coordinates.
@@ -411,6 +414,8 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.drawCopyButtons(gtx, st)
 	v.drawFileSecs(gtx, st)
 	v.drawExpands(gtx, st)
+	v.drawPills(gtx, st)    // snippet.go
+	v.drawFileBars(gtx, st) // file_actions.go
 	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
 	if v.opts.Dim {
@@ -427,9 +432,23 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		if hr.r.Empty() {
 			continue
 		}
+		if hr.t >= 0 && int(hr.t) < len(v.d.targets) && v.d.targets[hr.t].menuOnly {
+			continue // no click: the text cursor stays
+		}
 		s := clip.Rect(hr.r).Push(gtx.Ops)
 		pointer.CursorPointer.Add(gtx.Ops)
 		s.Pop()
+	}
+	for i := range v.d.bars { // the shown FileActions' buttons
+		if !v.barShown(i) {
+			continue
+		}
+		_, rs := v.barRects(i)
+		for _, r := range rs {
+			s := clip.Rect(r).Push(gtx.Ops)
+			pointer.CursorPointer.Add(gtx.Ops)
+			s.Pop()
+		}
 	}
 	for i := range v.d.codes {
 		if c := &v.d.codes[i]; c.block {
@@ -1051,6 +1070,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if b := v.expandAt(st, e.Position) + 1; b != v.expHot {
 					v.expHot, v.copyTipAt = b, gtx.Now
 				}
+				if bar, btn, _ := v.barAt(e.Position); barKey(bar, btn) != v.barHot {
+					v.barHot, v.copyTipAt = barKey(bar, btn), gtx.Now
+				}
 				if f := v.emojiAt(e.Position); f != v.tipFrag {
 					v.tipFrag, v.tipAt = f, gtx.Now
 				}
@@ -1065,6 +1087,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.press = -1
 				v.copyPress = 0
 				v.expPress = 0
+				v.barPress = 0
 			case pointer.Press:
 				if autoscrollPress(e) {
 					// Chromium starts no middle-click autoscroll on a link
@@ -1084,6 +1107,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				}
 				if b := v.fileSecAt(e.Position); b >= 0 && v.hovering { // a file card's section button
 					v.secPress = b + 1
+					continue
+				}
+				if bar, btn, ok := v.barAt(e.Position); ok { // a file's FileActions (its onClick stops the click)
+					v.barPress = -1
+					if btn >= 0 {
+						v.barPress = barKey(bar, btn)
+					}
 					continue
 				}
 				if b := v.expandAt(st, e.Position); b >= 0 { // an image's Expand (animated.go)
@@ -1136,6 +1166,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					v.selB = v.offsetAt(e.Position)
 				}
 			case pointer.Release:
+				if b := v.barPress; b != 0 {
+					v.barPress = 0
+					if bar, btn, ok := v.barAt(e.Position); ok && b > 0 && barKey(bar, btn) == b {
+						v.barAction(bar, btn, h)
+					}
+					continue
+				}
 				if b := v.expPress; b != 0 {
 					v.expPress = 0
 					if v.expandAt(st, e.Position)+1 == b {
@@ -1408,8 +1445,8 @@ func (v *View) activate(t int16, anchor image.Point, h Handler) {
 
 // activateTarget is a click on tg (text: what it draws).
 func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Handler) {
-	if tg.cardOnly {
-		return // not a link
+	if tg.cardOnly || tg.menuOnly {
+		return // not a link; a file card with no click
 	}
 	switch tg.kind {
 	case tLink, tCard:
@@ -1454,6 +1491,10 @@ func (v *View) activateTarget(tg *target, text string, anchor image.Point, h Han
 	case tWorkObject:
 		if wh, ok := h.(WorkObjectHandler); ok && tg.att != nil {
 			wh.WorkObject(v.woEvent(tg, anchor))
+		}
+	case tSnippet: // a snippet's Show more / Show less (snippet.go)
+		if fh, ok := h.(FileActionHandler); ok && tg.file != nil {
+			fh.FileAction(tg.act, tg.file, image.Rectangle{Min: anchor, Max: anchor})
 		}
 	case tCollapse:
 		if tg.img != nil && v.collapsed != nil {
