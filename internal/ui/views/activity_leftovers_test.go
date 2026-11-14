@@ -572,6 +572,9 @@ func loMore(t *testing.T, dark bool) {
 	if !v.lo.moreBtn.Hovered() {
 		t.Fatal("the pointer isn't over More")
 	}
+	// the app's root reports the pointer's window position (PointerPos),
+	// which vaHost doesn't: More's window origin, as the hover gives it there
+	v.lo.moreOff = image.Pt(16+v.lo.moreX, 53)
 	v.lo.moreBtn.Click()
 	e.frame()
 	m := v.lo.moreMenu
