@@ -311,6 +311,14 @@ type File struct {
 	User                                    string // uploader
 	Created                                 int64  // unix seconds
 	IsExternal                              bool
+	// Still is what Slack draws in Thumb's place with Accessibility >
+	// "Allow animations" off (getThumbSrcForFile with suppressAnimations:
+	// deanimate, deanimate_gif, then a static thumb), nil when that's
+	// Thumb itself. Deanimate: the file has Slack's deanimated copy
+	// (file.deanimate), which its PlayPauseAnimations button and
+	// FileActions' Expand need.
+	Still     *Image
+	Deanimate bool
 	// Pending: the viewer's own upload, not finished yet (drawn at .5
 	// with a spinner, c-pending_files__thumbnail--pending); Percent is its
 	// percentComplete.

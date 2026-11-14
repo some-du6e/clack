@@ -43,10 +43,19 @@ type View struct {
 	dirty   bool
 
 	ops      op.Ops
-	call     op.CallOp
+	call     op.CallOp // the recording under the images it doesn't hold (liveImgs)
+	callTop  op.CallOp // … and over them
 	recorded bool
 	pending  []int32 // imgs (>=0) or ^frag index of images not yet decoded
 	live     []int32 // frags of animated emoji: drawn every frame, not recorded
+	liveImgs []int32 // imgs of animated GIFs (animated.go): drawn every frame, not recorded
+	// playing: the stills the viewer played (PlayPauseAnimations with
+	// animations off; animated.go), by the animated source's URL
+	playing map[string]bool
+	// the Expand buttons (animated.go): index+1 under the press and the
+	// pointer, and when the pointer reached one (its tooltip's delay)
+	expPress, expHot int
+	expTipAt         time.Time
 
 	// Slack components (comps.go): the mode the layout was made in, each
 	// component's state and its props/natives receiver.
@@ -217,9 +226,9 @@ func (v *View) Release() {
 	}
 	v.d = display{}
 	v.ops = op.Ops{}
-	v.call = op.CallOp{}
+	v.call, v.callTop = op.CallOp{}, op.CallOp{}
 	v.recorded = false
-	v.pending = nil
+	v.pending, v.liveImgs = nil, nil
 	v.dirty = true
 }
 
@@ -338,6 +347,11 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 		}
 	}
 	v.call.Add(gtx.Ops)
+	for _, i := range v.liveImgs { // animated GIFs: their frame now, over what's under them
+		v.drawImg(gtx.Ops, st, int(i), false)
+	}
+	v.callTop.Add(gtx.Ops)
+	v.drawPlays(gtx, st)
 	for _, i := range v.live {
 		if f := &v.d.frags[i]; st.Images != nil {
 			if img, ok := st.Images.Get(f.url, f.size); ok {
@@ -396,6 +410,7 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	}
 	v.drawCopyButtons(gtx, st)
 	v.drawFileSecs(gtx, st)
+	v.drawExpands(gtx, st)
 	v.drawHoverLayers(gtx, st)
 	v.drawRemoves(gtx, st)
 	if v.opts.Dim {
@@ -501,11 +516,14 @@ func (v *View) relayout(st *Style, w int, pxdp, pxsp float32) {
 	if v.collapsed == nil {
 		v.collapsed = map[*richtext.Image]bool{}
 	}
+	if v.playing == nil {
+		v.playing = map[string]bool{}
+	}
 	// JUMBOMOJI is off under Compact (client-boot Y9zX: jumbomoji &&
 	// messages_theme != "dense")
 	pf := uipref.Get()
 	l := lay{st: st, d: &v.d, scale: pxdp, spx: pxsp, jumbo: v.doc.Jumbo && pf.Jumbomoji && !pf.Dense, lead: float32(v.lead), opts: v.opts, mode: mode, cs: &v.cs,
-		expanded: v.expanded, collapsed: v.collapsed}
+		expanded: v.expanded, collapsed: v.collapsed, playing: v.playing, noAnim: uipref.Get().NoAnimations}
 	v.css.parts = v.css.parts[:0]
 	if v.css.scope.Active() {
 		l.css = &v.css
@@ -586,15 +604,23 @@ func (v *View) anyReady(st *Style) bool {
 	return false
 }
 
-// record paints the static content into v.ops.
+// record paints the static content into v.ops: what's under the images
+// (and the images that don't animate) into call, what's over them into
+// callTop, so an animated image drawn between them each frame keeps its
+// place in the stack (a gallery tile's outline, video pill and overflow
+// scrim over it).
 func (v *View) record(st *Style) {
 	v.ops.Reset()
 	v.pending = v.pending[:0]
 	v.live = v.live[:0]
+	v.liveImgs = v.liveImgs[:0]
 	ops := &v.ops
 	m := op.Record(ops)
-	v.paint(ops, st, 0, nil)
+	v.paintBelow(ops, st, 0)
 	v.call = m.Stop()
+	m = op.Record(ops)
+	v.paintAbove(ops, st, 0, nil)
+	v.callTop = m.Stop()
 	v.recorded = true
 }
 
@@ -603,6 +629,12 @@ func (v *View) record(st *Style) {
 // the primitives of hover layer v.hovPaint draw (0: none of a layer's;
 // drawHoverLayers paints each layer over the recording).
 func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
+	v.paintBelow(ops, st, comp)
+	v.paintAbove(ops, st, comp, fg)
+}
+
+// paintBelow is paint up to and including the images.
+func (v *View) paintBelow(ops *op.Ops, st *Style, comp int16) {
 	css := len(v.css.parts) > 0
 	hp := v.hovPaint
 	static := comp == 0 && hp == 0 // the recording: it tracks pending and animated images
@@ -622,53 +654,19 @@ func (v *View) paint(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
 		if im.comp != comp || im.hov != hp {
 			continue
 		}
-		if im.url == "" {
-			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
+		if static && v.liveImg(st, im) { // a recording would freeze it
+			v.liveImgs = append(v.liveImgs, int32(i))
 			continue
 		}
-		if name, ok := strings.CutPrefix(im.url, iconURL); ok { // a vector icon (unfurl footers, placeholders)
-			paintIconAt(ops, name, im.r, im.tint)
-			continue
-		}
-		var img paint.ImageOp
-		ok := false
-		if st.Images != nil {
-			img, ok = st.Images.Get(im.url, im.px)
-		}
-		if ok && !im.fit {
-			if px := coverPx(img.Size(), im.r.Size(), im.px); px > im.px {
-				// cover: the copy scaled to px by its larger side is
-				// short of the box on its smaller side and would be
-				// stretched (a 1200x630 og:image in a 105x104 card thumb
-				// drawn twice too tall). The copy that covers the box's
-				// device pixels: scaled down only, drawn 1:1. Until it
-				// decodes, the short one, and the recording waits.
-				if big, bok := st.Images.Get(im.url, px); bok {
-					img = big
-				} else if static {
-					v.pending = append(v.pending, int32(i))
-				}
-				im.px = px
-			}
-		}
-		if !ok {
-			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
-			if static {
-				v.pending = append(v.pending, int32(i))
-			}
-			continue
-		}
-		if im.fit {
-			fillRadii(ops, im.r, im.radii, st.Palette.Placeholder)
-		}
-		if im.alpha > 0 && im.alpha < 1 {
-			o := paint.PushOpacity(ops, im.alpha)
-			drawImage(ops, img, im.r, im.radii, !im.fit)
-			o.Pop()
-			continue
-		}
-		drawImage(ops, img, im.r, im.radii, !im.fit)
+		v.drawImg(ops, st, i, static)
 	}
+}
+
+// paintAbove is paint over the images.
+func (v *View) paintAbove(ops *op.Ops, st *Style, comp int16, fg *color.NRGBA) {
+	css := len(v.css.parts) > 0
+	hp := v.hovPaint
+	static := comp == 0 && hp == 0
 	for i := range v.d.boxes { // over images, under text (gallery scrims, video pills)
 		if b := &v.d.boxes[i]; b.layer == 2 && b.comp == comp && b.hov == hp {
 			v.drawBox(ops, b, css)
@@ -1050,6 +1048,9 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				if b := v.fileSecAt(e.Position) + 1; b != v.secHot {
 					v.secHot, v.copyTipAt = b, gtx.Now
 				}
+				if b := v.expandAt(st, e.Position) + 1; b != v.expHot {
+					v.expHot, v.copyTipAt = b, gtx.Now
+				}
 				if f := v.emojiAt(e.Position); f != v.tipFrag {
 					v.tipFrag, v.tipAt = f, gtx.Now
 				}
@@ -1063,6 +1064,7 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				v.dragging = false
 				v.press = -1
 				v.copyPress = 0
+				v.expPress = 0
 			case pointer.Press:
 				if autoscrollPress(e) {
 					// Chromium starts no middle-click autoscroll on a link
@@ -1082,6 +1084,14 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 				}
 				if b := v.fileSecAt(e.Position); b >= 0 && v.hovering { // a file card's section button
 					v.secPress = b + 1
+					continue
+				}
+				if b := v.expandAt(st, e.Position); b >= 0 { // an image's Expand (animated.go)
+					v.expPress = b + 1
+					continue
+				}
+				if b := v.playAt(st, e.Position); b >= 0 { // PlayPauseAnimations: its mousedown plays or stops it
+					v.togglePlay(b)
 					continue
 				}
 				v.press = v.targetAt(e.Position)
@@ -1126,6 +1136,13 @@ func (v *View) events(gtx layout.Context, st *Style, h Handler) {
 					v.selB = v.offsetAt(e.Position)
 				}
 			case pointer.Release:
+				if b := v.expPress; b != 0 {
+					v.expPress = 0
+					if v.expandAt(st, e.Position)+1 == b {
+						v.expand(b-1, h)
+					}
+					continue
+				}
 				if b := v.secPress; b != 0 {
 					v.secPress = 0
 					if v.fileSecAt(e.Position)+1 == b && h != nil {

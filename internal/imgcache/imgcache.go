@@ -79,6 +79,15 @@ type Cache struct {
 
 	wakeAt time.Time // the next repaint: an animation frame (anim.go) or a retry
 	wakeT  *time.Timer
+
+	// animations (anim.go): whether Get plays them (SetAnimate), the
+	// entries with a player playing, and the sweep that stops them once
+	// nothing draws them
+	animate  bool
+	playing  map[*entry]struct{}
+	animT    *time.Timer
+	advances uint64 // frames the players moved on (Stats)
+	gifBytes int    // the entries' encoded GIF bytes (e.gif): at most gifShare of the budget
 }
 
 // failure is a key's failed load: how many in a row, and when Get may try
@@ -130,18 +139,28 @@ type key struct {
 
 type entry struct {
 	k    key
-	op   paint.ImageOp
+	op   paint.ImageOp // the image; an animated GIF's first frame (its still)
 	size image.Point
-	n    int   // decoded bytes
-	used int64 // unix seconds of the last Get (idle eviction)
-	anim *anim // frames of an animated GIF (anim.go), else nil
-	// px are the decoded pixels (the frames of an animation), the same
-	// memory the ImageOps upload from: another size of the URL is scaled
-	// from them at once (derive)
+	n    int   // bytes held: the pixels, and an animation's (anim.go)
+	used int64 // unix milliseconds of the last Get (idle eviction, on screen)
+	// px are the decoded pixels, the same memory the ImageOp uploads
+	// from: another size of the URL is scaled from them at once (derive)
 	px []*image.RGBA
 	// interim: scaled from another size of the URL; the exact decode is
 	// loading and replaces it
 	interim bool
+
+	// an animated GIF (anim.go): its frame count (0 or 1: a still image),
+	// its encoded bytes for playing it again (nil once let go), the
+	// player while it plays, and whether one is starting or when it may
+	frames   int
+	gif      *gifSource
+	play     *player
+	starting bool
+	retry    time.Time
+	// seenFrom..seenAt: the stretch Get has drawn it without a gap of
+	// animGrace (a player starts once it's animSettle long)
+	seenFrom, seenAt time.Time
 }
 
 // IdleAfter: images not asked for in this long are dropped by a sweep every
@@ -181,6 +200,7 @@ func New(fetch Fetcher, diskDir string, invalidate func()) *Cache {
 		failed:     map[key]failure{},
 		ctx:        context.Background(),
 		diskLimit:  DiskLimit,
+		animate:    true,
 	}
 	go c.sweepLoop()
 	return c
@@ -197,6 +217,10 @@ func (c *Cache) SetDir(dir string) {
 		return
 	}
 	c.dir = dir
+	for el := c.lru.Front(); el != nil; el = el.Next() {
+		c.releaseLocked(el.Value.(*entry))
+	}
+	c.gifBytes = 0
 	c.entries = map[key]*list.Element{}
 	c.byURL = map[string]map[int]*list.Element{}
 	c.lru.Init()
@@ -290,11 +314,11 @@ func (c *Cache) sweepLoop() {
 	t := time.NewTicker(IdleAfter / 2)
 	defer t.Stop()
 	for range t.C {
-		c.sweep(time.Now().Add(-IdleAfter).Unix())
+		c.sweep(time.Now().Add(-IdleAfter).UnixMilli())
 	}
 }
 
-// sweep drops entries last used before cutoff (unix seconds).
+// sweep drops entries last used before cutoff (unix milliseconds).
 func (c *Cache) sweep(cutoff int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -308,7 +332,7 @@ func (c *Cache) sweep(cutoff int64) {
 	for k, f := range c.failed {
 		// a failure nobody asked about since (its retry is long due) goes;
 		// one still backing off stays, or the backoff would start over
-		if f.retry.Unix() < cutoff {
+		if f.retry.UnixMilli() < cutoff {
 			delete(c.failed, k)
 		}
 	}
@@ -339,28 +363,30 @@ func (c *Cache) SetLimit(n int) {
 }
 
 // Get returns the image at url scaled so its larger side is at most sizePx
-// (0 = original size, capped at 2048). Non-blocking.
+// (0 = original size, capped at 2048). Non-blocking. An animated GIF
+// returns the frame due now and repaints the window for the next one, as
+// long as something keeps drawing it (anim.go).
 func (c *Cache) Get(url string, sizePx int) (paint.ImageOp, bool) {
+	return c.get(url, sizePx, false)
+}
+
+func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	if c == nil || url == "" {
 		return paint.ImageOp{}, false
 	}
 	k := key{url, sizePx}
+	now := time.Now()
 	c.mu.Lock()
-	if el, ok := c.entries[k]; ok {
+	defer c.mu.Unlock()
+	el, ok := c.entries[k]
+	if ok {
 		c.lru.MoveToFront(el)
-		e := el.Value.(*entry)
-		now := time.Now()
-		e.used = now.Unix()
-		op := e.op
-		if a := e.anim; a != nil {
-			i, next := a.frameAt(now)
-			op = a.frames[i]
-			c.wakeLocked(next)
+	} else {
+		e := c.deriveLocked(k)
+		if e == nil {
+			c.startLocked(k)
+			return paint.ImageOp{}, false
 		}
-		c.mu.Unlock()
-		return op, true
-	}
-	if e := c.deriveLocked(k); e != nil {
 		// the exact decode replaces it: always for a standard emoji's own
 		// CDN size, else when the disk tier has the bytes (a read, no
 		// network); otherwise the scaled copy stays
@@ -370,18 +396,70 @@ func (c *Cache) Get(url string, sizePx int) (paint.ImageOp, bool) {
 		if e.interim {
 			c.startLocked(k)
 		}
-		op := e.op
-		if a := e.anim; a != nil {
-			i, next := a.frameAt(time.Now())
-			op = a.frames[i]
-			c.wakeLocked(next)
+		if el, ok = c.entries[k]; !ok {
+			return e.op, true
 		}
-		c.mu.Unlock()
-		return op, true
 	}
-	c.startLocked(k)
-	c.mu.Unlock()
-	return paint.ImageOp{}, false
+	e := el.Value.(*entry)
+	e.used = now.UnixMilli()
+	return c.frameLocked(e, now, forced), true
+}
+
+// Loaded reports whether some size of url is decoded.
+func (c *Cache) Loaded(url string) bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.byURL[url]) > 0
+}
+
+// entryLocked is k's entry, or nil.
+func (c *Cache) entryLocked(k key) *entry {
+	if el, ok := c.entries[k]; ok {
+		return el.Value.(*entry)
+	}
+	return nil
+}
+
+// Stats is the memory tier as it is: decoded entries, their bytes (an
+// animation's included), the budget, and the animations playing and what
+// they hold.
+type Stats struct {
+	Entries, Bytes, Limit int
+	Players, PlayerBytes  int
+	Animated              int         // entries of animated GIFs, playing or not
+	EncodedBytes          int         // animated GIFs' encoded bytes kept for playing again
+	Advances              uint64      // frames the players have moved on, ever
+	LargestFrame          image.Point // the largest frame a player plays now
+}
+
+// Stats reports the memory tier.
+func (c *Cache) Stats() Stats {
+	if c == nil {
+		return Stats{}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := Stats{Entries: len(c.entries), Bytes: c.bytes, Limit: c.maxBytes, Advances: c.advances}
+	for el := c.lru.Front(); el != nil; el = el.Next() {
+		e := el.Value.(*entry)
+		if e.frames > 1 {
+			s.Animated++
+		}
+		if e.gif != nil {
+			s.EncodedBytes += len(e.gif.data)
+		}
+		if p := e.play; p != nil {
+			s.Players++
+			s.PlayerBytes += p.n
+			if p.size.X*p.size.Y > s.LargestFrame.X*s.LargestFrame.Y {
+				s.LargestFrame = p.size
+			}
+		}
+	}
+	return s
 }
 
 // Size returns the decoded size of a ready image.
@@ -478,8 +556,18 @@ func (c *Cache) load(k key) {
 		c.wakeLocked(f.retry) // the surface asks again when the retry is due
 	} else {
 		delete(c.failed, k)
-		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().Unix(), anim: an, px: px}
+		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().UnixMilli(), px: px}
+		if an != nil {
+			e.frames = len(an.ix.frames)
+			if len(an.data) <= c.maxBytes/(2*gifShare) { // the bytes for playing it (anim.go)
+				e.gif = an
+				e.n += len(an.data)
+			}
+		}
 		c.putLocked(e) // over an interim one (derive)
+		if e.gif != nil {
+			c.keptGIFLocked(e)
+		}
 		c.evict()
 	}
 	inv := c.invalidate
@@ -487,10 +575,51 @@ func (c *Cache) load(k key) {
 	inv()
 }
 
+// evict brings the decoded bytes back under the budget: first what
+// nobody drew in the last animGrace (an animated GIF's encoded bytes
+// before its still, least recently used first), then the animations
+// playing on screen (the largest first; each draws its still until
+// animRetry has passed), and only then, as before, images on screen.
 func (c *Cache) evict() {
+	now := time.Now()
+	if c.shedLocked(c.maxBytes, now) {
+		return
+	}
+	for c.bytes > c.maxBytes && len(c.playing) > 0 {
+		var big *entry
+		for e := range c.playing {
+			if big == nil || e.play.n > big.play.n {
+				big = e
+			}
+		}
+		c.releaseLocked(big)
+		big.retry = now.Add(animRetry)
+		c.wakeLocked(big.retry)
+	}
 	for c.bytes > c.maxBytes && c.lru.Len() > 1 {
 		c.dropLocked(c.lru.Back())
 	}
+}
+
+// shedLocked brings the decoded bytes down to target by letting go of
+// what nobody drew in the last animGrace, least recently used first:
+// animated GIFs' encoded bytes before stills. It reports whether they got
+// there.
+func (c *Cache) shedLocked(target int, now time.Time) bool {
+	if c.bytes <= target {
+		return true
+	}
+	ms := now.UnixMilli()
+	cold := func(e *entry) bool { return ms-e.used >= animGrace.Milliseconds() }
+	for el := c.lru.Back(); el != nil && c.bytes > target && c.gifBytes > 0; el = el.Prev() {
+		if e := el.Value.(*entry); cold(e) && e.play == nil {
+			c.dropGIFLocked(e)
+		}
+	}
+	for c.bytes > target && c.lru.Len() > 1 && cold(c.lru.Back().Value.(*entry)) {
+		c.dropLocked(c.lru.Back())
+	}
+	return c.bytes <= target
 }
 
 // putLocked adds e as the most recent entry, replacing one at its key.
@@ -512,9 +641,42 @@ func (c *Cache) putLocked(e *entry) {
 	c.bytes += e.n
 }
 
+// gifShare is the most of the budget animated GIFs' encoded bytes (kept
+// for playing them again) take; past it the least recently used go
+// first, the ones playing last. The rest of the budget is pixels.
+const gifShare = 4 // a quarter
+
+// keptGIFLocked counts e's encoded bytes (just kept) and lets go of older
+// ones past the budget's gifShare.
+func (c *Cache) keptGIFLocked(e *entry) {
+	c.gifBytes += len(e.gif.data)
+	for el := c.lru.Back(); el != nil && c.gifBytes > c.maxBytes/gifShare; el = el.Prev() {
+		if o := el.Value.(*entry); o != e && o.play == nil {
+			c.dropGIFLocked(o)
+		}
+	}
+}
+
+// dropGIFLocked lets go of e's encoded bytes (a player draws its still
+// again after fetching them anew).
+func (c *Cache) dropGIFLocked(e *entry) {
+	if e.gif == nil {
+		return
+	}
+	n := len(e.gif.data)
+	e.n -= n
+	c.bytes -= n
+	c.gifBytes -= n
+	e.gif = nil
+}
+
 // dropLocked removes entry el.
 func (c *Cache) dropLocked(el *list.Element) {
 	e := el.Value.(*entry)
+	c.releaseLocked(e)
+	if e.gif != nil {
+		c.gifBytes -= len(e.gif.data)
+	}
 	c.lru.Remove(el)
 	if c.entries[e.k] == el {
 		delete(c.entries, e.k)
@@ -548,33 +710,24 @@ func (c *Cache) deriveLocked(k key) *entry {
 			src = e
 		}
 	}
-	if src == nil || src.size.X*src.size.Y*len(src.px) > deriveMaxPx {
+	if src == nil || src.size.X*src.size.Y > deriveMaxPx {
 		return nil
 	}
 	// a standard emoji whose two sizes are different CDN assets (emoji-
 	// sharp's ForPixels): the scaled copy only shows until k's own asset
-	// arrives
-	e := &entry{k: k, used: time.Now().Unix(), interim: emoji.ForPixels(k.url, k.size) != emoji.ForPixels(k.url, src.k.size)}
-	for _, f := range src.px {
-		e.px = append(e.px, Scale(f, k.size))
-	}
+	// arrives. An animated GIF's copy is its still; its player decodes
+	// the frames at k's size (anim.go).
+	e := &entry{k: k, used: time.Now().UnixMilli(), frames: src.frames,
+		interim: emoji.ForPixels(k.url, k.size) != emoji.ForPixels(k.url, src.k.size)}
+	e.px = []*image.RGBA{Scale(src.px[0], k.size)}
 	e.size = e.px[0].Bounds().Size()
-	for _, f := range e.px {
-		e.n += len(f.Pix)
-	}
+	e.n = len(e.px[0].Pix)
 	e.op = paint.NewImageOp(e.px[0])
-	if a := src.anim; a != nil && len(e.px) == len(a.frames) {
-		na := &anim{start: a.start, ends: a.ends, total: a.total}
-		for _, f := range e.px {
-			na.frames = append(na.frames, paint.NewImageOp(f))
-		}
-		e.anim = na
-	}
 	return e
 }
 
-// deriveMaxPx bounds the source pixels derive scales on the UI goroutine
-// (all frames): emoji and avatars, not photos.
+// deriveMaxPx bounds the source pixels derive scales on the UI goroutine:
+// emoji and avatars, not photos.
 const deriveMaxPx = 512 * 512
 
 // sizeBetter reports whether a decode at size a is a better source than
@@ -590,15 +743,22 @@ func sizeBetter(a, b int) bool {
 	return a < b
 }
 
-func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, []*image.RGBA, error) {
-	// A standard emoji loads the CDN size that covers k.size device pixels
-	// (Slack's @2x choice; emoji.ForPixels), so it is only ever scaled
-	// down. The URL as given is the fallback.
+// rawFor is k's encoded bytes. A standard emoji loads the CDN size that
+// covers k.size device pixels (Slack's @2x choice; emoji.ForPixels), so
+// it is only ever scaled down. The URL as given is the fallback.
+func (c *Cache) rawFor(k key) ([]byte, func(), error) {
 	src := emoji.ForPixels(k.url, k.size)
 	data, save, err := c.raw(src)
 	if err != nil && src != k.url {
 		data, save, err = c.raw(k.url)
 	}
+	return data, save, err
+}
+
+// loadImage decodes k. A GIF decodes its first frame only (gifstream.go);
+// an animated one also returns its bytes and their index (anim.go).
+func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
+	data, save, err := c.rawFor(k)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 	}
@@ -606,24 +766,25 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *anim, []*ima
 		if err := checkSize(data); err != nil {
 			return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 		}
-		frames, delays, err := decodeGIF(data, k.size, k.size <= 0 || k.size > MaxAnimPx)
+		ix, err := indexGIF(data)
 		if err != nil {
 			return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 		}
+		if ix.w*ix.h > bigPixels { // its canvas, as a big image's decode
+			bigSem <- struct{}{}
+			defer func() { <-bigSem }()
+		}
+		d := newGIFDecoder(ix, data)
+		d.compose()
+		still := image.NewRGBA(image.Rectangle{Max: scaledSize(ix.w, ix.h, k.size)})
+		var sc frameScaler
+		sc.scale(still, d.canvas)
 		save()
-		first := paint.NewImageOp(frames[0])
-		if len(frames) == 1 {
-			return first, frames[0].Bounds().Size(), len(frames[0].Pix), nil, frames[:1], nil
+		var an *gifSource
+		if len(ix.frames) > 1 {
+			an = &gifSource{data: data, ix: ix}
 		}
-		a := &anim{start: time.Now()}
-		n := 0
-		for i, f := range frames {
-			a.frames = append(a.frames, paint.NewImageOp(f))
-			a.total += delays[i]
-			a.ends = append(a.ends, a.total)
-			n += len(f.Pix)
-		}
-		return first, frames[0].Bounds().Size(), n, a, frames, nil
+		return paint.NewImageOp(still), still.Rect.Size(), len(still.Pix), an, []*image.RGBA{still}, nil
 	}
 	// A big image decodes to its full size and scales through a temporary
 	// buffer as big again (x/image/draw's kernel scaler: 32 bytes per

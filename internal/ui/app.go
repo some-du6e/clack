@@ -154,7 +154,8 @@ type App struct {
 	images *imgcache.Cache
 	data   *backend // nil until signed in
 
-	caption captionState // Windows: the native caption's colours (caption_windows.go)
+	caption captionState // Windows: the window's HWND and DWM attributes (caption_windows.go)
+	wco     wcoBar       // Windows: the caption buttons over the top nav (titlebar.go)
 
 	router          router
 	clicks          clickables
@@ -414,16 +415,23 @@ func (a *App) invalidator() {
 	}
 }
 
+// mainWindowOptions is the main window's: its size, Slack's minimum for
+// the platform, and on Windows no OS title bar (titlebar.go).
+func mainWindowOptions() []app.Option {
+	return append([]app.Option{
+		app.Title(AppName),
+		app.Size(1440, 900),
+		app.MinSize(mainMinW, mainMinH),
+	}, mainWindowChrome()...)
+}
+
 // Run opens the window and blocks until it closes.
 func (a *App) Run() error {
 	a.timing("run", a.opts.Started)
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
-	a.win.Option(
-		app.Title(AppName),
-		app.Size(1440, 900),
-		app.MinSize(800, 500),
-	)
+	a.win.Option(mainWindowOptions()...)
+	a.wcoEnable() // Windows: the top nav draws the caption buttons
 	a.winLive.Store(a.win)
 	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
 	applog.Mark("window", "")
@@ -517,12 +525,15 @@ func (a *App) Run() error {
 				switch {
 				case a.data != nil && a.login == nil && !a.rv.done:
 					a.drawBootPlaceholder(gtx) // Slack's, from the first frame (reveal.go)
+					a.layoutWCO(a.wcoContext(gtx), a.wcoPlaceholderLook())
 				case a.login != nil:
 					// the welcome backdrop's ink: the introduction and the
 					// sign-in card start from it (intro.go)
 					theme.Fill(gtx, image.Rectangle{Max: gtx.Constraints.Max}, introBase)
+					a.layoutWCO(a.wcoContext(gtx), wcoBootLook(introBase))
 				default:
 					a.grad.layout(gtx, a.th.C.ChromeA, a.th.C.ChromeB)
+					a.layoutWCO(a.wcoContext(gtx), wcoBootLook(color.NRGBA{}))
 				}
 				e.Frame(gtx.Ops)
 				applog.Mark("first-frame", "background, fonts loading")
@@ -647,7 +658,9 @@ func (a *App) frame(gtx layout.Context) {
 	a.dropZonesReset() // the panes that take OS file drops register as they lay out
 
 	if a.login != nil {
-		a.layoutWelcome(gtx) // the introduction, then the sign-in card (intro.go)
+		a.wcoWelcomeDrag(gtx) // Windows: the caption, under the screen's widgets
+		a.layoutWelcome(gtx)  // the introduction, then the sign-in card (intro.go)
+		a.layoutWCO(gtx, wcoBootLook(introBase))
 		return
 	}
 	defer a.startupFrame()
@@ -711,7 +724,11 @@ func (a *App) frame(gtx layout.Context) {
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
 	a.clickMods = 0           // splitClick: only this frame's click
-	a.inspectEnd(winGtx)      // over everything, deferred ops included
+	// Windows' caption buttons, over the page as Electron's are (titlebar.go)
+	if a.wcoOn() {
+		a.layoutWCO(gtx, a.wcoClientLook())
+	}
+	a.inspectEnd(winGtx) // over everything, deferred ops included
 }
 
 // layoutShell draws the normal window: top nav, rail, banners, the

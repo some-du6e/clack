@@ -16,7 +16,10 @@ on:
       - "internal/fakeslack/drafts.go"
       - "internal/fakeslack/faults.go"
       - "internal/localimg/**"
-      - "internal/imgcache/imgcache.go"
+      - "internal/imgcache/**"
+      - "internal/fakeslack/gifs.go"
+      - "internal/ui/richview/animated.go"
+      - "internal/ui/gif_shots_test.go"
       - "internal/richtext/message.go"
       - "internal/ui/richview/filemeta.go"
       - "internal/ui/richview/pending.go"
@@ -52,17 +55,19 @@ jobs:
       - name: core, fakeslack, richview, composer
         run: |
           go test -count=1 -v -run 'TestImageOnlySendPlaceholder|TestImageSendAllUploaded|TestFileSendFailureRemovesPlaceholder|TestPrepareUploadPollsOffline|TestPlaceholderStatus|TestImageSendFaults|TestUploadProgressAndPrepared|TestUploadForInput|TestDraftFiles' ./internal/core/
-          go test -count=1 -v -run 'TestFileMetaLine|TestFileImage|TestMediaGallery|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippetCard|TestPillowGrid' ./internal/ui/richview/
+          go test -count=1 -v -run 'TestFileMetaLine|TestFileImage|TestMediaGallery|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippetCard|TestPillowGrid|TestAnimatedImageDrawnEveryFrame|TestStillPlayButtonAndExpand|TestAttachmentStillPlays' ./internal/ui/richview/
+          go test -count=1 -v ./internal/imgcache/
+          go test -count=1 -v -run 'TestFiles|TestAnimatedGIFFile' ./internal/richtext/
           xvfb-run -a go test -count=1 -v -run 'TestImageOnlySendFlow|TestImageSendFailurePutsFilesBack|TestDraftKeepsAttachedFiles|TestAttConcurrentAddFilesClear|TestSendOnModEnter' ./internal/ui/composer/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestImageSendShots$|TestFilesChannel$' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -v -timeout 10m -run 'TestImageSendShots$|TestFilesChannel$|TestGIFShots$' ./internal/ui/
       - name: screenshots
         env:
           IMAGE_SEND_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$IMAGE_SEND_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestImageSendShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestImageSendShots$|TestGIFShots$' ./internal/ui/
           ls -la "$IMAGE_SEND_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

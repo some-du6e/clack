@@ -100,6 +100,7 @@ type imgPrim struct {
 	hov    int16       // hover layer (index+1 into display.hovers), 0 = none
 	tint   color.NRGBA // an iconURL image: the icon's color
 	alpha  float32     // < 1: drawn at this opacity (a pending upload, .5)
+	play   bool        // a still the viewer played: drawn playing (animated.go)
 }
 
 // removeBtn is an unfurl's remove ("x") button (unfurl.go): drawn while
@@ -237,6 +238,10 @@ type display struct {
 	// work object card's hovered subtitle, actions bar and Refresh):
 	// those with hov == index+1
 	hovers []hoverLayer
+	// with animations off (animated.go): the stills that play when
+	// clicked (PlayPauseAnimations) and their Expand buttons
+	plays   []playCtl
+	expands []expandBtn
 }
 
 // hoverLayer is drawn while the View's hovered target is in card..cardTo
@@ -284,6 +289,8 @@ func (d *display) reset() {
 	d.spinners = d.spinners[:0]
 	d.names = d.names[:0]
 	d.hovers = d.hovers[:0]
+	d.plays = d.plays[:0]
+	d.expands = d.expands[:0]
 }
 
 func (d *display) addTarget(t target) int16 {
@@ -386,6 +393,10 @@ type lay struct {
 	expandKey string
 	// collapsed holds the image blocks hidden with their toggle (View state).
 	collapsed map[*richtext.Image]bool
+	// playing holds the stills the viewer played (View state, animated.go);
+	// noAnim: Accessibility > "Allow animations" is off
+	playing map[string]bool
+	noAnim  bool
 	// titleFrags is a YouTube card's title frags [from, to) (compBlock).
 	titleFrags [2]int
 	// media is the card's AttachmentMedia part (fixedMedia), for

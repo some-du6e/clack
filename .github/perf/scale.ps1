@@ -20,7 +20,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 Get-CimInstance Win32_VideoController | Format-List Name, AdapterCompatibility, DriverVersion, AdapterRAM, VideoModeDescription | Out-File (Join-Path $Out 'adapter.txt')
 Get-Content (Join-Path $Out 'adapter.txt')
 
-$fakeArgs = @('-scale', '-addr', '127.0.0.1:8931', '-creds', "$work\creds.json", '-userids', "$work\users.txt")
+$fakeArgs = @('-scale', '-gifs', '300', '-addr', '127.0.0.1:8931', '-creds', "$work\creds.json", '-userids', "$work\users.txt")
 $fp = Start-Process -PassThru -WindowStyle Hidden -FilePath $Fake -ArgumentList $fakeArgs -RedirectStandardError (Join-Path $Out 'fakeslackd-scale.log')
 for ($i = 0; $i -lt 600 -and -not (Test-Path "$work\creds.json"); $i++) { Start-Sleep -Milliseconds 200 }
 if (-not (Test-Path "$work\creds.json")) { throw 'fakeslackd -scale wrote no credentials' }
@@ -116,7 +116,7 @@ try {
     Copy-Item "$work\creds.json" (Join-Path $h 'creds.json')
     Seed-Home $h
     Run-Clack $s $h 'prime' 'users,exit' 900
-    $warm = if ($env:CLACK_PERF_WARM_SCRIPT) { $env:CLACK_PERF_WARM_SCRIPT } else { 'startup,picker,picker-all,scroll,channels,idle' }
+    $warm = if ($env:CLACK_PERF_WARM_SCRIPT) { $env:CLACK_PERF_WARM_SCRIPT } else { 'startup,picker,picker-all,scroll,channels,idle,gifs,gifs-left' }
     Run-Clack $s $h 'warm' $warm (3600 + (Idle-Seconds $env:CLACK_PERF_IDLE))
   }
 } finally {

@@ -18,6 +18,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
 `app/clack_drop*.go`, `app/clack_hide*.go`, `app/clack_pancursor_windows*.go`,
+`app/clack_titlebar*.go`, `app/internal/windows/clack_titlebar.go`,
 `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
 `internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`,
@@ -806,3 +807,122 @@ and Move, no Press or Release, nothing left for a later reader;
 `TestHoverOnlyScrolls`; `TestHoverOnlyKeepsFocusDropsKeys`: still
 focused, the typed key and text dropped, where a plain Source gets both),
 on ci's linux-gio job. Not in `UPSTREAM.patch`.
+
+## 22. app: HiddenTitleBar, a window without its title bar that keeps the frame (Windows)
+
+`app/clack_titlebar.go` (new: `HiddenTitleBar`, `captionHit`),
+`app/clack_titlebar_windows.go` (new), `app/internal/windows/clack_titlebar.go`
+(new: the HT codes, `WM_NCPOINTER*`, `WM_POINTERLEAVE`, `WM_NCMOUSELEAVE`,
+`SM_CXPADDEDBORDER`, `GetSystemMetricsForDpi`, `GetCursorPos`,
+`WindowFromPoint`, `GetCapture`, `MonitorFromWindow`, `SHAppBarMessage`),
+`app/os.go` (`Config.hiddenTitleBar`) and `app/os_windows.go` (`windowProc`'s
+`WM_NCHITTEST`, `WM_NCCALCSIZE`, `WM_GETMINMAXINFO`, the non-client pointer
+messages; `Configure`'s window size; `pointerUpdate` notes the mouse's
+pointer ID). An addition: a window without the option behaves as before.
+
+Slack's main window on Windows is frameless (win32 `main.bundle.cjs`
+4.53.276 @1144516: `frame: false`, `titleBarStyle: "hidden"`,
+`titleBarOverlay: {color: "#00000000", symbolColor: "#FFFFFF", height: 33}`).
+Electron 45 (Slack's) keeps the standard window styles for an opaque
+frameless window (its `fix_remove_caption-removing_style_call.patch` to
+Chromium), takes the caption into the client area with `WM_NCCALCSIZE`
+(`ElectronDesktopWindowTreeHostWin::GetClientAreaInsets`: restored, the
+frame thickness on the left, right and bottom and nothing at the top;
+maximized, the frame thickness all round, which is the work area) and draws
+Windows' caption buttons over the page (`WinCaptionButtonContainer`). Gio's
+`Decorated(false)` on Windows instead makes the whole window client area and
+draws the resize borders inside it. A decorated Gio window keeps its OS
+title bar, which Clack's top nav then sat under (a doubled title bar, gap
+2).
+
+`HiddenTitleBar(true)` on a decorated window:
+
+- `WM_NCCALCSIZE`: restored, the client rectangle is the window's inset by
+  the frame thickness (`SM_CXSIZEFRAME` + `SM_CXPADDEDBORDER` at the window's
+  DPI, Chromium's `GetResizableFrameThicknessFromMonitorInPixels` with
+  `WS_CAPTION`) on the left, right and bottom; maximized, the monitor's work
+  area, 2 px off an edge with an auto-hide taskbar (Chromium's
+  `kAutoHideTaskbarThicknessPx`; a top one moves the bottom up a pixel, as
+  `OnNCCalcSize` does for a system-drawn frame), so Windows doesn't take the
+  window for a full-screen one and keep the taskbar hidden.
+  `SHAppBarMessage(ABM_GETAUTOHIDEBAREX)` calls into the shell, so it runs
+  on a goroutine, cached per monitor and refreshed after a second, as
+  Chromium's `GetAppbarAutohideEdges` does; a change posts the window a
+  message that recomputes its frame. The window keeps `WS_OVERLAPPEDWINDOW`
+  and the DWM frame isn't extended, so DWM keeps the shadow and the
+  rounded corners, Snap works, and the system menu, Alt+Space and the
+  minimize/maximize animations are Windows' own.
+- `WM_NCHITTEST`, in `WinFrameView::NonClientHitTest`'s order: points
+  outside the client area (the borders) are `DefWindowProc`'s; a full-screen
+  window is all `HTCLIENT`; then the topmost `system.ActionInputOp` area:
+  `ActionMinimize` is `HTMINBUTTON`, `ActionMaximize` or `ActionUnmaximize`
+  `HTMAXBUTTON` (Windows 11 opens its Snap Layouts flyout over it),
+  `ActionClose` `HTCLOSE`; then, restored and resizable, the top
+  frame-thickness band is `HTTOP`, with `HTTOPLEFT`/`HTTOPRIGHT` within 16
+  DIPs less the side border of the corners (`kResizeCornerWidth`); then
+  `ActionMove` areas are `HTCAPTION`; the rest `HTCLIENT`.
+  (`captionHit` is the platform-free part.)
+- Pointer input over the caption buttons is non-client input
+  (`WM_NCPOINTERUPDATE/DOWN/UP`, Gio has mouse-in-pointer on). The program's
+  widgets get it as client pointer events, as Chromium routes the
+  non-client mouse messages to its caption button views: a press over a
+  button isn't passed to `DefWindowProc`, which would turn it into a
+  `WM_NCLBUTTONDOWN` and run its classic caption-button loop (painting,
+  capture, the button's own `WM_SYSCOMMAND`); the program performs the
+  action (Clack posts `WM_SYSCOMMAND`). A release ends a press a button
+  took wherever it lands. These messages don't carry the hit-test code
+  their documentation promises: the high word of `wParam` is the
+  pointer's flags, as in the client messages (`0x2016` for a primary
+  button down, seen on the CI runner), so the patch hit-tests the
+  position itself. The legacy `WM_NCLBUTTONDOWN`, `WM_NCLBUTTONDBLCLK` and
+  `WM_NCLBUTTONUP` for a button are the program's as well: touch comes that
+  way (`DefWindowProc` turns it into mouse input), and so does a click while
+  Windows 11's Snap Layouts flyout is open. Given one, `DefWindowProc`'s
+  caption-button loop waits for a `WM_LBUTTONUP` that never comes with
+  mouse-in-pointer on (the release is a pointer message): Clack's window
+  hung in it on the CI runner (ci 43578875698) after a click on maximize
+  with the flyout up. Moves over the caption and
+  the borders reach the program too, so hover ends there, and still go to
+  `DefWindowProc`, as do presses on the caption and the borders (move,
+  resize, double-click to maximize, the right-click system menu). Touch and
+  pen go to `DefWindowProc`.
+- `WM_POINTERLEAVE` and `WM_NCMOUSELEAVE` are a `pointer.Leave` once the
+  cursor is off the window (`WindowFromPoint`, as Chromium's
+  `HandleMouseEventInternal` checks): they also come as it crosses between
+  the caption and the client area. Gio delivered no Leave on Windows
+  before; a window without the option still doesn't.
+- `WM_GETMINMAXINFO` adds the restored frame (twice the thickness wide,
+  once tall) to `MinSize` and `MaxSize`, and `Configure` sizes a `Windowed`
+  window the same way, instead of `AdjustWindowRectEx`'s caption.
+
+Clack's main window uses it on Windows (`internal/ui/titlebar.go`, W34):
+the top nav lays out `ActionMove` under its widgets and Electron's caption
+buttons as `ActionMinimize`/`ActionMaximize`/`ActionClose` areas. Read in
+Electron 45-x-y 6bfc23bf (`shell/browser/ui/views/win_frame_view.cc`,
+`win_caption_button_container.cc`, `frameless_view.cc`,
+`shell/browser/ui/win/electron_desktop_window_tree_host_win.cc`, its
+`patches/chromium`) and Chromium 156.0.8078.100
+(`ui/views/win/hwnd_message_handler.cc`, `ui/base/win/hwnd_metrics.cc`,
+`ui/views/window/frame_view.cc`).
+
+Tests: `app/clack_titlebar_test.go` (`TestCaptionHit`, the order of the
+parts; `TestHiddenTitleBarOption`) on ci's linux-gio job, and on its
+windows-applog job (`CLACK_WINDOWS_TITLEBAR_TESTS`)
+`app/clack_titlebar_windows_test.go`: `TestHiddenTitleBarFrame` (the client
+area starts at the window's top, the frame thickness on the other sides,
+the client size asked for; a window without the option keeps its caption),
+`TestHiddenTitleBarHitTest` (`WM_NCHITTEST` sent as Windows sends it over
+the buttons, the caption, the top band and corner, the client and the
+borders; maximized, no band and the restore button, the client area the
+work area; a window without the option answers `HTCAPTION` for its own
+caption and `HTCLIENT` over the action areas) and
+`TestHiddenTitleBarButtonsInput` (`SendInput`: a hover of a button is its
+widget's, the cursor leaving the window over the top ends it, a click is the
+widget's click and Windows doesn't maximize, minimize or close the window
+itself, a press dragged off a button clicks nothing, a button inside the
+caption is the program's, a click on maximize with the Snap Layouts flyout
+open is the widget's and leaves the window running, a double-click on the
+caption maximizes; a failure prints the window messages and Gio events
+around it, from `clackMsgTrace`, a hook only the tests set).
+`internal/ui` `TestTitleBarWindow` is Clack's window on the same job. Not
+in `UPSTREAM.patch`.

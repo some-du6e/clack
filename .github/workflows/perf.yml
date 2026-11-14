@@ -137,6 +137,25 @@ jobs:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: xvfb-run -a -s "-screen 0 1440x900x24" .github/perf/bench.sh perf-out/fakeslackd perf-out base head
+      # The GIF memory regression test (internal/ui/perf_gif_test.go):
+      # #gif-wall's 300 large animated GIFs at Hack Club scale, paged back
+      # and scrolled through. Fails the job when the image cache's decoded
+      # bytes pass its budget, when GIFs off screen keep playing, or when
+      # the ones on screen don't play at their drawn size. HEAD only.
+      - name: GIF memory (#gif-wall at Hack Club scale)
+        run: |
+          perf-out/fakeslackd -gifs 300 -addr 127.0.0.1:8932 > perf-out/fakeslackd-gifs.log 2>&1 &
+          fp=$!
+          for i in $(seq 1 100); do curl -s -o /dev/null http://127.0.0.1:8932/img/1x1/x.png && break; sleep 0.1; done
+          set +e
+          CLACK_FAKESLACK_URL=http://127.0.0.1:8932/ CLACK_PERF_GIF=300 CLACK_PERF_GIF_REPORT="$PWD/perf-out/head/gif-memory.md" \
+            xvfb-run -a perf-out/head/ui.test -test.run '^TestPerfGIFMemory$' -test.v -test.count 1 -test.timeout 20m > perf-out/head/gif-memory.txt 2>&1
+          rc=$?
+          set -e
+          kill $fp 2>/dev/null || true
+          tail -40 perf-out/head/gif-memory.txt
+          if [ -f perf-out/head/gif-memory.md ]; then cat perf-out/head/gif-memory.md >> "$GITHUB_STEP_SUMMARY"; fi
+          exit $rc
       - name: startup CPU profiles (top)
         run: |
           for s in base head; do

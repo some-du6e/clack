@@ -248,6 +248,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 		cy += l.dp(6)
 		tg := l.d.addTarget(target{kind: tImage, img: a.Image})
 		row(l.image(a.Image, cx, cy, min(cw, l.dp(360)), l.dp(360), l.dp(8), tg))
+		l.imageControls(a.Image, len(l.d.imgs)-1, l.d.imgs[len(l.d.imgs)-1].r) // AttachmentImage (animated.go)
 	} else if a.Image != nil && mediaExpanded() {
 		// AttachmentMedia (BAnD): getAdjustedImageDimensions at max
 		// 360x360, floored; 5px over the image container
@@ -262,6 +263,7 @@ func (l *lay) attachment(b *richtext.Block, x, y, w int) int {
 				r.Max.Y = cy + r.Dx()*ih/max(iw, 1)
 			}
 			l.d.imgs = append(l.d.imgs, imgPrim{r: r, url: a.Image.URL, radii: [4]int{l.dp(8), l.dp(8), l.dp(8), l.dp(8)}, target: tg, px: max(r.Dx(), r.Dy())})
+			l.imageControls(a.Image, len(l.d.imgs)-1, r)
 			l.d.hits = append(l.d.hits, hit{r: r, t: tg})
 			row(r.Dy())
 		}
@@ -934,7 +936,9 @@ func (l *lay) galleryTile(f *richtext.File, r image.Rectangle, dim [2]float64, n
 		if ir.Empty() {
 			ir = r
 		}
-		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: f.Thumb.URL, radii: radii, target: tg, px: max(ir.Dx(), ir.Dy())})
+		src := l.fileStill(f) // animations off: the deanimated still (animated.go)
+		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: src.URL, radii: radii, target: tg, px: max(ir.Dx(), ir.Dy())})
+		l.fileControls(f, len(l.d.imgs)-1, r)
 		l.pendingTile(f, r, len(l.d.imgs)-1)
 	} else {
 		l.pendingTile(f, r, -1)

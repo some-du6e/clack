@@ -28,7 +28,7 @@ fake=$1 out=$2; shift 2
 sides=("$@")
 export GALLIUM_DRIVER=llvmpipe LIBGL_ALWAYS_SOFTWARE=1 CLACK_TIMING=1
 work=$(mktemp -d)
-"$fake" -scale -addr 127.0.0.1:8931 -creds "$work/creds.json" -userids "$work/users.txt" > "$out/fakeslackd-scale.log" 2>&1 &
+"$fake" -scale -gifs 300 -addr 127.0.0.1:8931 -creds "$work/creds.json" -userids "$work/users.txt" > "$out/fakeslackd-scale.log" 2>&1 &
 fpid=$!
 Xvfb :98 -screen 0 1440x900x24 > /dev/null 2>&1 &
 xpid=$!
@@ -108,6 +108,6 @@ for s in "${sides[@]}"; do
   cp "$work/creds.json" "$home/creds.json"
   seed "$home"
   run "$s" "$home" prime "users,exit" 900
-  run "$s" "$home" warm "${CLACK_PERF_WARM_SCRIPT:-startup,picker,picker-all,scroll,channels,idle}" $((6000 + $(idle_seconds "${CLACK_PERF_IDLE:-10m}")))
+  run "$s" "$home" warm "${CLACK_PERF_WARM_SCRIPT:-startup,picker,picker-all,scroll,channels,idle,gifs,gifs-left}" $((6600 + $(idle_seconds "${CLACK_PERF_IDLE:-10m}")))
 done
 exit 0

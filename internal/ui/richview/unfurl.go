@@ -827,6 +827,9 @@ func (l *lay) imageCard(a *richtext.Attachment, x, y, w int) int {
 			tg = l.attImage(img, ir) // the image opens in the viewer, not the link
 		}
 		l.d.imgs = append(l.d.imgs, imgPrim{r: ir, url: img.URL, radii: [4]int{rr, rr, rr, rr}, target: tg, px: max(iw, ih), fit: true})
+		if img == a.Image {
+			l.imageControls(img, len(l.d.imgs)-1, ir) // AttachmentImage (animated.go)
+		}
 	}
 	l.v3Close(a, bi, hi, cardT, r)
 	return r.Dy()
