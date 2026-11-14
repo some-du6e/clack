@@ -298,6 +298,7 @@ Grid signs a session out everywhere when it sees the session's credentials on Go
 | `internal/ui/popups` | ui-popups | overlay system (menu, popover, modal, tooltip, toast), emoji picker (virtualized 65k custom), quick switcher (Ctrl+K), search (dropdown + results view), profile card + full profile, lightbox, message/channel/user/team menus with actions |
 | `internal/ui/views` | ui-views | Activity, DMs, Later/Saved, Files, Threads, Huddles, Drafts & sent, Directories, channel details |
 | `internal/ui/blockkit` (+ `internal/core/interactive*.go`) | blockkit | interactive apps: Block Kit elements in messages, legacy attachment actions, modals (view stack), App Home tabs, app shortcuts, workflow links, ephemeral messages |
+| `internal/ui/inspect` (+ `internal/ui/inspect_wire.go`, `slackc/inspect.go`) | ui-shell | the inspect tool, a gated developer shortcut for bug reports (not a Slack feature): outline the component under the pointer, a click copies the screenshot with a redacted report ([INSPECT.md](INSPECT.md)) |
 
 ### Cross-package interface: `Host`
 To avoid import cycles, every feature package defines the small interface it needs **in its own package** (e.g. `messages.Host`). The `internal/ui` root implements all of them on one `*ui.App`. Shared things every Host offers (use these exact names so one implementation satisfies all):

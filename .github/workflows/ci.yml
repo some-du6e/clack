@@ -116,6 +116,11 @@ jobs:
       - name: Gio lets go of what earlier frames held (vendored gioui.org/io/input, gpu, text)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'ReleasesTagsOfEarlierFrames|ReleaseImagesOfEarlierFrames|ShaperReleasesSource' gioui.org/io/input gioui.org/gpu gioui.org/text
+      # Gio patch 21: a hover-only Source (the inspect tool lays the window
+      # out with one): hover, scroll and focus stay, clicks and keys don't
+      - name: Gio hover-only input (vendored gioui.org/io/input)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'HoverOnly' gioui.org/io/input
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave)
       - name: XDND file drops on Xvfb (Gio patch 11)

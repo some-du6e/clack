@@ -3,7 +3,8 @@ name: feel-shots
 # composer, unfocused and focused, light and dark, at Slack's 1440x900
 # with a 328px sidebar, rendered headlessly over an offline core
 # (TestFeelShots), plus palette.json with the colours they were drawn
-# with. Synthetic only: nothing here talks to Slack.
+# with; and the inspect tool's outline and report image (TestInspectShots,
+# over internal/fakeslack). Synthetic only: nothing here talks to Slack.
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run feel-shots.yml --ref <branch>)
@@ -13,6 +14,9 @@ on:
       - "internal/ui/icons/**"
       - "internal/ui/theme/**"
       - "internal/ui/composer/chrome*.go"
+      - "internal/ui/inspect/**"
+      - "internal/ui/inspect_wire.go"
+      - "internal/ui/inspect_test.go"
       - ".github/workflows/feel-shots.yml"
   workflow_dispatch:
 
@@ -47,3 +51,20 @@ jobs:
         with:
           name: feel-shots
           path: dist/shots
+      # The inspect tool (internal/ui/inspect, a Clack developer shortcut):
+      # its outline and label over a reaction pill and the image a pick
+      # copies (the window with the pill outlined over the redacted
+      # report), light and dark, through the real headless capture.
+      - name: inspect tool shots
+        if: ${{ !cancelled() }}
+        env:
+          INSPECT_SHOTS_DIR: ${{ github.workspace }}/dist/inspect-shots
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$INSPECT_SHOTS_DIR"
+          xvfb-run -a go test -count=1 -v -run 'TestInspectShots$|TestComposeOutlineAndPanel$' ./internal/ui/ ./internal/ui/inspect/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: inspect-shots
+          path: dist/inspect-shots

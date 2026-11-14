@@ -161,6 +161,9 @@ type prefs struct {
 	// filesOpenInSessionStore in local storage (file ids only;
 	// files_open.go).
 	OpenFiles map[string]openFilesPrefs `json:"open_files,omitempty"`
+	// InspectTool turns on the inspect tool's shortcut (inspect_wire.go),
+	// like CLACK_INSPECT=1: a developer setting with no UI, set by hand.
+	InspectTool bool `json:"inspect_tool,omitempty"`
 }
 
 func (a *App) prefsPath() string {

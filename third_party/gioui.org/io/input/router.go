@@ -67,6 +67,9 @@ type Router struct {
 type Source struct {
 	r        *Router
 	disabled bool
+	// hoverOnly (Clack patch 21, Source.HoverOnly): Event drops what
+	// would make a widget act.
+	hoverOnly bool
 }
 
 // Command represents a request such as moving the focus, or initiating a clipboard read.
@@ -223,7 +226,12 @@ func (s Source) Event(filters ...event.Filter) (event.Event, bool) {
 	if !s.Enabled() {
 		return nil, false
 	}
-	return s.r.Event(filters...)
+	for {
+		e, ok := s.r.Event(filters...)
+		if !ok || !s.hoverOnly || hoverEvent(e) {
+			return e, ok
+		}
+	}
 }
 
 func (q *Router) Event(filters ...event.Filter) (event.Event, bool) {

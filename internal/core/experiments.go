@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"sort"
+	"sync/atomic"
 
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -128,10 +129,31 @@ func (a *App) experiment(name string) string {
 	a.mu.Lock()
 	g := a.expGroups
 	a.mu.Unlock()
+	var v string
 	if g == nil {
-		return defaultExperimentGroups[name]
+		v = defaultExperimentGroups[name]
+	} else {
+		v = g[name]
 	}
-	return g[name]
+	if f := experimentObserver.Load(); f != nil {
+		(*f)(name, v)
+	}
+	return v
+}
+
+// experimentObserver sees every experiment read (ObserveExperiments).
+var experimentObserver atomic.Pointer[func(name, group string)]
+
+// ObserveExperiments makes f see every experiment check from now on, with
+// the group it answered, on the checking goroutine; nil stops it. Clack's
+// inspect tool (internal/ui/inspect) uses it to say which experiments a
+// widget read while it drew.
+func ObserveExperiments(f func(name, group string)) {
+	if f == nil {
+		experimentObserver.Store(nil)
+		return
+	}
+	experimentObserver.Store(&f)
 }
 
 // Experiment returns the viewer's group for a Slack experiment

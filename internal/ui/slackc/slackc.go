@@ -190,13 +190,23 @@ func Patched(name string) bool {
 // value passed here is heap-allocated on every call. Hot widgets use
 // Component, which is allocation-free when unpatched.
 func Render(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
-	if patched.Load() == nil { // inlined: one atomic load
+	if patched.Load() == nil && !inspecting.Load() { // inlined: two atomic loads
 		return native(gtx, props)
 	}
 	return renderSlow(gtx, name, props, native)
 }
 
 func renderSlow(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
+	if f := CurrentInspectFrame(); f != nil { // the inspect tool (inspect.go)
+		i := f.beginComponent(name, func() Props { return props })
+		d := renderSlow0(gtx, name, props, native)
+		f.endComponent(gtx, i, d)
+		return d
+	}
+	return renderSlow0(gtx, name, props, native)
+}
+
+func renderSlow0(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] {
 		return native(gtx, props)
 	}
@@ -205,13 +215,23 @@ func renderSlow(gtx layout.Context, name string, props Props, native Native) lay
 
 // RenderLazy is Render with props built only when name is patched.
 func RenderLazy(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
-	if patched.Load() == nil {
+	if patched.Load() == nil && !inspecting.Load() {
 		return native(gtx, nil)
 	}
 	return renderLazySlow(gtx, name, props, native)
 }
 
 func renderLazySlow(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
+	if f := CurrentInspectFrame(); f != nil { // the inspect tool (inspect.go)
+		i := f.beginComponent(name, props)
+		d := renderLazySlow0(gtx, name, props, native)
+		f.endComponent(gtx, i, d)
+		return d
+	}
+	return renderLazySlow0(gtx, name, props, native)
+}
+
+func renderLazySlow0(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] {
 		return native(gtx, nil)
 	}
@@ -227,13 +247,27 @@ func renderLazySlow(gtx layout.Context, name string, props func() Props, native 
 // props may be nil (no props). native's Props argument is nil when
 // unpatched.
 func Component[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
-	if patched.Load() == nil && reserved.Load() == nil { // inlined: the native becomes a direct call
+	if patched.Load() == nil && reserved.Load() == nil && !inspecting.Load() { // inlined: the native becomes a direct call
 		return native(recv, gtx, nil)
 	}
 	return componentSlow(gtx, name, recv, props, native)
 }
 
 func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+	if f := CurrentInspectFrame(); f != nil { // the inspect tool (inspect.go)
+		var pf func() Props
+		if props != nil {
+			pf = func() Props { return props(recv) }
+		}
+		i := f.beginComponent(name, pf)
+		d := componentSlow0(gtx, name, recv, props, native)
+		f.endComponent(gtx, i, d)
+		return d
+	}
+	return componentSlow0(gtx, name, recv, props, native)
+}
+
+func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
 	if m := patched.Load(); m == nil || !(*m)[name] {
 		if ins, ok := reservedFor(name); ok { // a plugin's slot kept free until it renders (reserve.go)
 			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions { return native(recv, g, nil) })

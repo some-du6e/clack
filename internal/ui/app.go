@@ -35,6 +35,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
+	"github.com/some-du6e/clack/internal/ui/inspect"
 	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/nativemenu"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -293,6 +294,9 @@ type App struct {
 	navSrc      navSource     // the main window's container being laid out (secondary.go)
 	overlayPane []string      // the container each overlay was opened from (ShowOverlay)
 	clickMods   key.Modifiers // the modifiers of this frame's click (splitClick)
+
+	insp    *inspect.Tool // the inspect tool, nil unless gated on (inspect_wire.go)
+	inspKey key.Filter    // its shortcut
 }
 
 // New creates the app. Call Run on the UI goroutine (main).
@@ -316,6 +320,7 @@ func New(opts Options, images *imgcache.Cache) *App {
 	a.secondary.width = 0 // auto: Slack's default secondary width (secondaryWidth)
 	a.keys = a.defaultShortcuts()
 	a.loadPrefs()
+	a.initInspect()    // gated: CLACK_INSPECT=1 or ui.json's inspect_tool (inspect_wire.go)
 	a.startDownloads() // downloads.go
 	a.loadSplitWidth()
 	composer.UpArrowShortcut = func() int { return a.prefs.ComposerUpArrow }
@@ -555,6 +560,7 @@ func (a *App) Run() error {
 				e.Frame(cg.Ops)
 			} else {
 				e.Frame(gtx.Ops)
+				a.inspectAfterFrame(gtx.Ops, e.Size) // a pick's screenshot (inspect_wire.go)
 			}
 			if !a.firstPaint {
 				a.timing("first layout", t0)
@@ -645,6 +651,11 @@ func (a *App) frame(gtx layout.Context) {
 		return
 	}
 	defer a.startupFrame()
+	// the inspect tool, before anything reads input: while a session runs
+	// the window lays out hover-only and the tool reads the clicks and
+	// keys (inspect_wire.go)
+	winGtx := gtx
+	gtx = a.inspectBegin(gtx)
 
 	// first: an ancestor of every other input area (popped at the end)
 	navArea := a.navGestures(gtx)
@@ -700,6 +711,7 @@ func (a *App) frame(gtx layout.Context) {
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
 	a.clickMods = 0           // splitClick: only this frame's click
+	a.inspectEnd(winGtx)      // over everything, deferred ops included
 }
 
 // layoutShell draws the normal window: top nav, rail, banners, the
