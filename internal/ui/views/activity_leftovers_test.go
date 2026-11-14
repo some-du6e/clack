@@ -567,6 +567,11 @@ func loMore(t *testing.T, dark bool) {
 		t.Errorf("More at %d (%d wide), the + at %d", v.lo.moreX, v.lo.moreW, v.plusX)
 	}
 	vaShot(t, e, "activity-tabs-more", dark)
+	// over More (the strip is 16px in, the tabs row under the 53px title)
+	loHover(e, image.Pt(16+v.lo.moreX+v.lo.moreW/2, 53+16))
+	if !v.lo.moreBtn.Hovered() {
+		t.Fatal("the pointer isn't over More")
+	}
 	v.lo.moreBtn.Click()
 	e.frame()
 	m := v.lo.moreMenu
@@ -579,6 +584,10 @@ func loMore(t *testing.T, dark bool) {
 	}
 	if got := m.Labels(); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("menu %v, want %v", got, want)
+	}
+	// bottom-left of More: its left edge, under it
+	if r := m.Rect(); r.Min.X > 16+v.lo.moreX+2 || r.Min.Y < 53 {
+		t.Errorf("menu at %v, More at x %d", r, 16+v.lo.moreX)
 	}
 	for _, it := range v.moreItems(v.lo.last, v.tabs.Sel) {
 		if !it.Radio || it.Checked {

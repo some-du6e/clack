@@ -300,7 +300,8 @@ func (v *Activity) moreTab(gtx C, x, h, last, cur int) int {
 	lo.moreX, lo.moreW = x, w
 	sel := cur > last // ex: the tab shown is in the menu
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &lo.moreTag, Kinds: pointer.Press})
+		// the pointer over it (a hover comes before a click): its window origin
+		ev, ok := gtx.Event(pointer.Filter{Target: &lo.moreTag, Kinds: pointer.Press | pointer.Enter | pointer.Move})
 		if !ok {
 			break
 		}
