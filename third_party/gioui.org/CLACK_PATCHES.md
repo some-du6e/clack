@@ -743,3 +743,33 @@ the Shaper's own.
 
 Test: `text` `TestShaperReleasesSource`, on ci's linux job. Not in
 `UPSTREAM.patch`.
+
+## 20. app: options keep a hidden or minimized window as it is (Windows)
+
+`app/os_windows.go` (`window.Configure`, `window.configured`).
+
+`Configure` ended every `Window.Option` with `ShowWindow` for the mode it
+computed, and Gio reads a minimized window's mode as `Windowed`, so any
+option showed a window hidden with `Window.Hide` (§13) and restored a
+minimized one with `SW_SHOWNORMAL`. Clack's window title carries the unread
+count ("… - 3 new items", Slack's DocumentTitle), so each new count brought
+a window closed to the tray back on screen, or restored one the user had
+minimized. Electron's `setTitle` is Chromium's `SetWindowText` and nothing
+more; `setMinimumSize` only changes the size limits.
+
+After the first `Configure` (`newWindow`'s, which shows the window), options
+that leave the mode as it was skip the show on a hidden or minimized window:
+the title and style still change, a hidden window still takes its new
+size (`SetWindowPos` with `SWP_NOACTIVATE`, no show flag), and a minimized
+one keeps its place, since `GetWindowRect` then gives the icon's
+rectangle. An option that changes the mode (Maximized, Fullscreen, back
+from Fullscreen) applies as before, showing the window as Electron's
+`maximize()` does.
+
+Found by `internal/ui` `TestTaskbarWindow` (flakes-1114, 2026-11-14): core's
+count replaced the test's just after a close hid or minimized the window, in
+2 of 30 runs. The test now changes the count on purpose after each close and
+revive. Tests: that one, and `app/clack_hide_windows_test.go`
+`TestOptionKeepsHiddenAndMinimized` (a title and a minimum size on a hidden
+and on a minimized window; then a maximize still applies), on ci's
+windows-shell and windows-applog jobs. Not in `UPSTREAM.patch`.

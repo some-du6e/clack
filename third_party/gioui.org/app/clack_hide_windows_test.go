@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 
 	syscall "golang.org/x/sys/windows"
 
@@ -25,7 +26,14 @@ var (
 	testIsZoomed          = testUser32.NewProc("IsZoomed")
 	testIsWindow          = testUser32.NewProc("IsWindow")
 	testSetCaretBlinkTime = testUser32.NewProc("SetCaretBlinkTime")
+	testGetWindowText     = testUser32.NewProc("GetWindowTextW")
 )
+
+func testWindowText(hwnd syscall.Handle) string {
+	buf := make([]uint16, 256)
+	n, _, _ := testGetWindowText.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	return syscall.UTF16ToString(buf[:n])
+}
 
 func windowTestsEnabled() bool { return os.Getenv("CLACK_WINDOWS_TRAY_TESTS") != "" }
 
@@ -167,6 +175,59 @@ func TestHideAndRaise(t *testing.T) {
 				t.Fatal("the window didn't close")
 			}
 		})
+	}
+}
+
+// Options that leave the mode alone (a title, a minimum size) keep a
+// hidden window hidden and a minimized one minimized (Clack patch,
+// CLACK_PATCHES.md §20): Clack's title carries the unread count, and each
+// change used to bring back a window closed to the tray or restore a
+// minimized one. A mode change still applies, and ActionRaise still shows.
+func TestOptionKeepsHiddenAndMinimized(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens windows")
+	}
+	if !windowTestsEnabled() {
+		t.Skip("CLACK_WINDOWS_TRAY_TESTS not set")
+	}
+	var abort atomic.Bool
+	abort.Store(true)
+	h := newHideTestWindow(t, abort.Load)
+	iconic := func() bool { return windows.IsIconic(h.hwnd) }
+
+	h.closeWindow(t)
+	if h.visible() {
+		t.Fatal("still visible after Hide")
+	}
+	h.w.Option(Title("Clack hide test - 3 new items"))
+	h.w.Option(MinSize(400, 300))
+	time.Sleep(300 * time.Millisecond)
+	if h.visible() {
+		t.Fatal("hidden: a title or minimum size showed the window")
+	}
+	if got := testWindowText(h.hwnd); got != "Clack hide test - 3 new items" {
+		t.Errorf("hidden: title %q", got)
+	}
+	h.w.Perform(system.ActionRaise)
+	waitUntil(t, "visible after ActionRaise", h.visible)
+
+	h.w.Option(Minimized.Option())
+	waitUntil(t, "minimized", iconic)
+	h.w.Option(Title("Clack hide test - 4 new items"))
+	h.w.Option(MinSize(420, 300))
+	time.Sleep(300 * time.Millisecond)
+	if !iconic() || !h.visible() {
+		t.Fatalf("minimized: a title or minimum size changed it (iconic %v, visible %v)", iconic(), h.visible())
+	}
+	h.w.Option(Maximized.Option()) // a mode change still applies
+	waitUntil(t, "maximized", func() bool { r, _, _ := testIsZoomed.Call(uintptr(h.hwnd)); return r != 0 && !iconic() })
+
+	abort.Store(false)
+	h.closeWindow(t)
+	select {
+	case <-h.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the window didn't close")
 	}
 }
 

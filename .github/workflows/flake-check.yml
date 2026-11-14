@@ -98,6 +98,16 @@ name: flake-check
 #                                            answered ("header conv <nil>");
 #                                            the header now keeps its copy
 #                                            while it's looked up again
+# and flakes-1114's (50 runs, the race forced every run):
+#   TestTaskbarWindow (ui, windows-shell)    core's count replaced the
+#                                            test's just after a close hid
+#                                            or minimized the window; the
+#                                            new title went through Gio's
+#                                            Configure, whose ShowWindow
+#                                            brought the window back (a
+#                                            real bug: Gio patch 20). The
+#                                            test now changes the count
+#                                            after each close and revive
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -148,6 +158,7 @@ on:
       - "internal/ui/runfromtray_windows_test.go"
       - "internal/ui/runfromtray.go"
       - "internal/ui/runfromtray_test.go"
+      - "internal/ui/taskbar_windows_test.go"
       - "internal/huddle/fake_video.go"
       - "internal/huddle/videosend_test.go"
       - "internal/huddle/share_test.go"
