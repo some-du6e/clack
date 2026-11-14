@@ -109,6 +109,7 @@ type Tool struct {
 	lastDone chan struct{} // the last report's delivery (Wait)
 	lastNow  time.Time     // the frame Begin last read input for
 	endAfter bool          // picked, and the release came with the press
+	upKey    string        // the innermost element t.up counts from (innerKey)
 }
 
 type ptrAt struct {
@@ -402,8 +403,9 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	}
 	if p.tree >= 0 && best < p.tree {
 		// the tree was drawn after the natives inside it: one of them
-		// under the pointer still wins, a native elsewhere doesn't
-		if best < 0 || !descends(f, best, f.Nodes[p.tree].Parent) {
+		// under the pointer still wins; the component the plugin patches
+		// (the tree's parent) and a native elsewhere don't
+		if parent := f.Nodes[p.tree].Parent; best < 0 || best == parent || !descends(f, best, parent) {
 			best = p.tree
 		}
 	}
@@ -421,6 +423,10 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 		return p
 	}
 	p.inner = best
+	// ↑ counts from the innermost element: another one starts over
+	if k := innerKey(f, best, origin[best].Origin); k != t.upKey {
+		t.up, t.upKey = 0, k
+	}
 	// ↑: the enclosing components that were hit too
 	node := best
 	for k := 0; k < t.up; k++ {
@@ -442,6 +448,7 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	p.origin = h.Origin
 	p.rect = image.Rectangle{Min: h.Origin, Max: h.Origin.Add(f.Nodes[node].Size)}
 	if f.Nodes[node].Kind == slackc.InspectTree {
+		p.label = "plugin tree"
 		if bs := f.Boxes(node, p.local); len(bs) > 0 {
 			p.rect = bs[0].Rect.Add(h.Origin)
 			p.label = boxSelector(bs[0])
@@ -451,6 +458,13 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 		p.label = t.labelFor(f, node)
 	}
 	return p
+}
+
+// innerKey names what the pointer is innermost over across frames (node
+// indices aren't stable): its name and where it is.
+func innerKey(f *slackc.InspectFrame, i int, origin image.Point) string {
+	n := &f.Nodes[i]
+	return fmt.Sprintf("%d %s %v %v", n.Kind, n.Name, origin, n.Size)
 }
 
 // descends reports that node i is anc or inside it.

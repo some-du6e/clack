@@ -223,7 +223,9 @@ func RenderLazy(gtx layout.Context, name string, props func() Props, native Nati
 
 func renderLazySlow(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
 	if f := CurrentInspectFrame(); f != nil { // the inspect tool (inspect.go)
-		i := f.beginComponent(name, props)
+		// no props kept: holding the func would make every caller's
+		// closure escape, the fast path included (TestUnpatchedNoAlloc)
+		i := f.beginComponent(name, nil)
 		d := renderLazySlow0(gtx, name, props, native)
 		f.endComponent(gtx, i, d)
 		return d

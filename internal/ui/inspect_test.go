@@ -28,7 +28,6 @@ import (
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/inspect"
 	"github.com/some-du6e/clack/internal/ui/messages"
-	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // inspectEnv is the client on the fake with the tool gated on and a
@@ -42,7 +41,7 @@ type inspectEnv struct {
 	names   []string // the message's sender's names (must never show)
 }
 
-func newInspectEnv(t *testing.T, gpu bool) *inspectEnv {
+func newInspectEnv(t *testing.T) *inspectEnv {
 	t.Helper()
 	t.Setenv("CLACK_INSPECT", "1")
 	fs, err := fakeslack.Start(fakeslack.Small)
@@ -66,13 +65,6 @@ func newInspectEnv(t *testing.T, gpu bool) *inspectEnv {
 	})
 	e := startEnv(t, fs, t.TempDir())
 	ie.perfEnv = e
-	if gpu {
-		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
-		if err != nil {
-			t.Fatalf("headless window: %v", err)
-		}
-		e.gpu = w
-	}
 	if e.a.insp == nil {
 		t.Fatal("CLACK_INSPECT=1 but the window has no inspect tool")
 	}
@@ -131,6 +123,38 @@ func (e *inspectEnv) startSession(t *testing.T) {
 	e.frame()
 }
 
+// reportRows splits a report's text into its rows' values by key.
+func reportRows(txt string) map[string]string {
+	out := map[string]string{}
+	for _, l := range strings.Split(txt, "\n") {
+		k, v, ok := strings.Cut(l, "  ")
+		if ok && k != "" && !strings.Contains(k, " ") {
+			out[k] = strings.TrimLeft(v, " ")
+		}
+	}
+	return out
+}
+
+// globMatch matches s against pattern, where * is any run of characters.
+func globMatch(pattern, s string) bool {
+	parts := strings.Split(pattern, "*")
+	if !strings.HasPrefix(s, parts[0]) {
+		return false
+	}
+	s = s[len(parts[0]):]
+	for i, p := range parts[1:] {
+		if i == len(parts)-2 {
+			return strings.HasSuffix(s, p)
+		}
+		j := strings.Index(s, p)
+		if j < 0 {
+			return false
+		}
+		s = s[j+len(p):]
+	}
+	return s == ""
+}
+
 func nearRect(a, b image.Rectangle, d int) bool {
 	abs := func(v int) int {
 		if v < 0 {
@@ -182,7 +206,7 @@ func (e *inspectEnv) readReport(t *testing.T) (txt string, pngs int) {
 
 func TestInspectReactionPill(t *testing.T) {
 	shots, copied := fakeShots(t)
-	e := newInspectEnv(t, false)
+	e := newInspectEnv(t)
 	if _, _, ok := e.a.insp.Hovered(); ok {
 		t.Fatal("an outline before any session")
 	}
@@ -229,19 +253,23 @@ func TestInspectReactionPill(t *testing.T) {
 	if pngs != 1 {
 		t.Errorf("%d report images saved, want 1", pngs)
 	}
+	rows := reportRows(txt)
 	pr := e.pill.R // dp = px: the test window's scale is 1
-	for _, want := range []string{
-		"component    UnstyledButton\n",
-		"element      button.c-button-unstyled.c-reaction[data-qa=reactji]\n",
-		"within       Reaction < ReactionBar",
-		"rect         x " + itoa(pr.Min.X) + " y " + itoa(pr.Min.Y) + " w " + itoa(pr.Dx()) + " h " + itoa(pr.Dy()) + " dp\n",
-		"page         c/ch:", "(public)",
-		"channelId=ch:",
-		"colors       bg #ffffff",
-		"window       light ·",
+	for _, w := range []struct{ key, want string }{
+		{"component", "UnstyledButton"},
+		{"element", "button.c-button-unstyled.c-reaction[data-qa=reactji]"},
+		{"within", "Reaction < ReactionBar < *Message < *ClientPrimaryView"},
+		{"classes", "div.c-message_kit__reaction_bar.c-reaction_bar[data-qa=reaction_bar] < *div.c-message_kit__background.c-message_kit__message*"},
+		{"rect", "x " + itoa(pr.Min.X) + " y " + itoa(pr.Min.Y) + " w " + itoa(pr.Dx()) + " h " + itoa(pr.Dy()) + " dp"},
+		{"region", "primary"},
+		{"page", "c/ch:* (public)"},
+		{"ids", "*channelId=ch:*msg.ts=ts:*msg.type=message*"},
+		{"kinds", "ch:* public"},
+		{"colors", "bg #ffffff*"},
+		{"window", "light · * · 1440x900 dp at 1x"},
 	} {
-		if !strings.Contains(txt, want) {
-			t.Errorf("the report has no %q:\n%s", want, txt)
+		if got := rows[w.key]; !globMatch(w.want, got) {
+			t.Errorf("report row %s = %q, want %q\n%s", w.key, got, w.want, txt)
 		}
 	}
 	for _, leak := range append([]string{e.ch, e.ts, "launch", "friday", "quiet", "tada"}, e.names...) {
@@ -270,7 +298,7 @@ func TestInspectReactionPill(t *testing.T) {
 // with the gate off there's no tool at all.
 func TestInspectEscAndGate(t *testing.T) {
 	shots, _ := fakeShots(t)
-	e := newInspectEnv(t, false)
+	e := newInspectEnv(t)
 	e.startSession(t)
 	e.key(key.NameEscape, 0)
 	e.frame()
@@ -298,30 +326,52 @@ func TestInspectEscAndGate(t *testing.T) {
 }
 
 // The session's outline and label over the pill, and the image a pick
-// copies, light and dark, rendered with the GPU (INSPECT_SHOTS_DIR: the
-// feel-shots workflow saves them).
+// copies, light and dark, both through the tool's real headless capture
+// (inspect.Shoot: a GPU context made and released per shot, so no other
+// headless window may share its EGL display here). INSPECT_SHOTS_DIR:
+// the feel-shots workflow saves them.
 func TestInspectShots(t *testing.T) {
 	dir := os.Getenv("INSPECT_SHOTS_DIR")
 	if dir == "" {
 		t.Skip("INSPECT_SHOTS_DIR not set: the feel-shots workflow renders these")
 	}
-	e := newInspectEnv(t, true)
+	e := newInspectEnv(t)
 	prevWrite := inspect.WriteImage
 	inspect.WriteImage = func(image.Image) error { return nil }
 	t.Cleanup(func() { inspect.WriteImage = prevWrite })
+	save := func(name string, img image.Image) {
+		f, err := os.Create(filepath.Join(dir, name+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := png.Encode(f, img); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, dark := range []bool{false, true} {
 		mode := map[bool]string{false: "light", true: "dark"}[dark]
 		e.setDark(dark)
 		e.settle(300 * time.Millisecond)
 		e.startSession(t)
 		e.frame()
-		hcShotTo(t, e.perfEnv, dir, "inspect-"+mode+"-hover")
+		if _, _, ok := e.a.insp.Hovered(); !ok {
+			t.Fatalf("%s: nothing outlined over the pill", mode)
+		}
+		hover, err := inspect.Shoot(&e.ops, e.size)
+		if err != nil {
+			t.Fatalf("%s: the headless capture: %v", mode, err)
+		}
+		save("inspect-"+mode+"-hover", hover)
 		p := e.pillCenter()
 		e.click(image.Pt(int(p.X), int(p.Y)))
 		e.frame()
 		e.a.inspectAfterFrame(&e.ops, e.size)
 		e.a.insp.Wait()
 		e.frame()
+		if !strings.Contains(e.a.toast.text, "paste it as an image") {
+			t.Fatalf("%s: toast %q: no image was made", mode, e.a.toast.text)
+		}
 		ents, _ := os.ReadDir(filepath.Join(e.home, "inspect-reports"))
 		var newest string
 		for _, en := range ents {
@@ -340,22 +390,5 @@ func TestInspectShots(t *testing.T) {
 			t.Fatal(err)
 		}
 		time.Sleep(1100 * time.Millisecond) // the next report's file name (seconds) differs
-	}
-}
-
-// hcShotTo saves the GPU's current frame as dir/name.png.
-func hcShotTo(t *testing.T, e *perfEnv, dir, name string) {
-	t.Helper()
-	img := image.NewRGBA(image.Rectangle{Max: e.size})
-	if err := e.gpu.Screenshot(img); err != nil {
-		t.Fatalf("screenshot: %v", err)
-	}
-	f, err := os.Create(filepath.Join(dir, name+".png"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	if err := png.Encode(f, img); err != nil {
-		t.Fatal(err)
 	}
 }

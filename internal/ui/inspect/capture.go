@@ -153,6 +153,9 @@ func (t *Tool) fill(r *Report, red *Redactor, p *pick) {
 // experiments are the experiments read while node and what it contains
 // drew, then those its enclosing components read, at most maxExps.
 func experiments(f *slackc.InspectFrame, node int) []string {
+	if node < 0 || node >= len(f.Nodes) {
+		return nil // a plugin tree at the top: no component drew it
+	}
 	set := map[string]bool{}
 	var own []string
 	add := func(list *[]string, e string) {
