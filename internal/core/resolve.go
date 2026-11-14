@@ -36,7 +36,8 @@ func (a *App) resolveLoop(ctx context.Context) {
 		// users go to the member fetcher (members.go), on Slack's schedule
 		chans, bots := a.S.TakeMissingNames()
 		files, sections, previews := a.S.TakeMissingCanvases()
-		if len(chans)+len(bots)+len(files)+len(sections)+len(previews) == 0 {
+		recs := a.S.TakeMissingListRecords() // lists_records.go
+		if len(chans)+len(bots)+len(files)+len(sections)+len(previews)+len(recs) == 0 {
 			continue
 		}
 		rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -45,6 +46,7 @@ func (a *App) resolveLoop(ctx context.Context) {
 			ids = a.resolve(rctx, chans, nil, bots)
 		}
 		ids = append(ids, a.resolveCanvases(rctx, files, sections, previews)...) // canvas_refs.go
+		ids = append(ids, a.resolveListRecords(rctx, recs)...)                   // lists_records.go
 		cancel()
 		if len(ids) > 0 {
 			a.emit(Event{Type: "names", Users: ids})

@@ -12,6 +12,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -306,6 +307,19 @@ func (v *View) boardEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) 
 		case pointer.Leave:
 			b.hover = image.Pt(-1, -1)
 		case pointer.Press:
+			if ctxclick.Press(pe) { // the card's BaseRecordContextMenu (records.go)
+				b.pressed = false
+				p := image.Pt(int(pe.Position.X), int(pe.Position.Y))
+				for _, h := range b.hits {
+					if p.In(h.r) && !h.add {
+						if rec := d.Record(h.rec); rec != nil {
+							v.openRecordMenu(d, rec)
+						}
+						break
+					}
+				}
+				continue
+			}
 			b.wheel.press(gtx, pe, maxX, maxY)
 			b.press, b.pressed = pe.Position, true
 		case pointer.Release:

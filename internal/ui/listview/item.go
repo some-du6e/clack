@@ -59,6 +59,7 @@ type Item struct {
 	hits      []itemHit
 	composer  widget.Editor
 	sending   bool
+	moreAt    image.Rectangle // the More actions button, in the content (tests)
 
 	live     atomic.Bool
 	lastSeen atomic.Int64
@@ -68,6 +69,7 @@ type itemHit struct {
 	r   image.Rectangle
 	col *lists.Column
 	x0  int
+	act string // "comment" (Add Comment) or "more" (More actions); col is nil
 }
 
 // NewItem returns the pane of item recID in list listID.
@@ -359,6 +361,7 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 		it.hits = append(it.hits, itemHit{r: r, col: p, x0: r.Min.X})
 		y += gtx.Dp(36 + 12)
 	}
+	y = it.layoutActions(gtx, d, rec, comments, cload, y, w)
 	// fields
 	labW := min(gtx.Dp(160), (w-2*pad)/3)
 	rowHt := gtx.Dp(40)
@@ -582,7 +585,14 @@ func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 			}
 			for _, h := range it.hits {
 				if p.In(h.r) {
-					if rec := d.Record(it.rec); rec != nil {
+					rec := d.Record(it.rec)
+					switch {
+					case rec == nil:
+					case h.act == "comment": // BaseListRecordDetailAddCommentButton: the thread's composer
+						gtx.Execute(key.FocusCmd{Tag: &it.composer})
+					case h.act == "more":
+						it.openPaneMenu(d, rec, image.Point{}, false)
+					default:
 						it.cellClick(d, rec, h.col, p.X-h.x0, gtx)
 					}
 					break
@@ -599,4 +609,64 @@ func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 			gtx.Execute(key.FocusCmd{})
 		}
 	}
+}
+
+// layoutActions is ListRecordDetailActions (2kGA, "Item actions"): an
+// outline row, margin 16px above and 24px below, of Add Comment (3fr:
+// the add-comment icon and "Add Comment", or "{n} Comments" once the
+// item has some) and the 34px More actions ⋮ (ellipsis-vertical-filled
+// 20), 8px apart (p-list_record_detail_content__actions__wrapper). It
+// returns the y below it.
+func (it *Item) layoutActions(gtx layout.Context, d *core.ListDoc, rec *lists.Record, comments []core.Message, cload bool, y, w int) int {
+	th := it.h.Theme()
+	c := &th.C
+	pad := gtx.Dp(20)
+	y += gtx.Dp(4) // the title row's 12px and 4px make the toolbar's 16px margin
+	h := gtx.Dp(36)
+	moreW := gtx.Dp(34)
+	cr := image.Rect(pad, y, w-pad-moreW-gtx.Dp(8), y+h)
+	mr := image.Rect(w-pad-moreW, y, w-pad, y+h)
+	n := 0
+	for _, m := range comments {
+		if m.Subtype != "list_record_comment" && !(m.TS == m.ThreadTS && strings.TrimSpace(m.Text) == "") {
+			n++
+		}
+	}
+	label, icon := nsLists.T("Add Comment"), "add-comment"
+	switch {
+	case n >= 999:
+		label, icon = nsLists.T("{replyCount}+ Comments", "replyCount", 999), ""
+	case n > 0:
+		label, icon = nsLists.T("{replyCount, plural, =1 {# Comment} other {# Comments}}", "replyCount", n), ""
+	}
+	_ = cload
+	outline := func(r image.Rectangle) {
+		theme.RRect(gtx, r, gtx.Dp(8), c.Bg)
+		theme.Border(gtx, r, gtx.Dp(8), max(1, gtx.Dp(1)), c.BorderStrong)
+	}
+	outline(cr)
+	lw := th.Measure(gtx, 15, theme.Bold, label)
+	cw := lw
+	if icon != "" {
+		cw += gtx.Dp(20 + 4)
+	}
+	x := cr.Min.X + max(gtx.Dp(12), (cr.Dx()-cw)/2)
+	if icon != "" {
+		at(gtx, image.Pt(x, y+(h-gtx.Dp(20))/2), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
+			return icons.Get(icon)(gtx, 20, c.Fg)
+		})
+		x += gtx.Dp(24)
+	}
+	at(gtx, image.Pt(x, y), image.Pt(max(0, cr.Max.X-gtx.Dp(12)-x), h), func(gtx layout.Context) layout.Dimensions {
+		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Bold), Size: 15, Color: c.Fg, MaxLines: 1}, label)
+		})
+	})
+	outline(mr)
+	at(gtx, image.Pt(mr.Min.X+(moreW-gtx.Dp(20))/2, y+(h-gtx.Dp(20))/2), image.Pt(gtx.Dp(20), gtx.Dp(20)), func(gtx layout.Context) layout.Dimensions {
+		return icons.Get("ellipsis-vertical-filled")(gtx, 20, c.Fg)
+	})
+	it.hits = append(it.hits, itemHit{r: cr, act: "comment"}, itemHit{r: mr, act: "more"})
+	it.moreAt = mr
+	return y + h + gtx.Dp(24)
 }

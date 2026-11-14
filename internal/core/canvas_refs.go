@@ -77,6 +77,9 @@ func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 			Title        string          `json:"title"`
 			TitleBlocks  json.RawMessage `json:"title_blocks"`
 			IsDeleted    bool            `json:"is_deleted"`
+			Filetype     string          `json:"filetype"`
+			Mode         string          `json:"mode"`
+			PrettyType   string          `json:"pretty_type"`
 			ListMetadata struct {
 				Views []struct {
 					ID   string `json:"id"`
@@ -94,6 +97,12 @@ func (a *App) resolveCanvasRef(ctx context.Context, id string) bool {
 			st = "deleted"
 		}
 		ref := richtext.CanvasRef{Title: r.File.Title, TitleBlocks: r.File.TitleBlocks, Status: st}
+		switch f := r.File; {
+		case f.Filetype == "list" || f.Mode == "list":
+			ref.Kind = "list"
+		case IsCanvasFile(f.Filetype, f.Mode, f.PrettyType):
+			ref.Kind = "canvas"
+		}
 		for _, v := range r.File.ListMetadata.Views {
 			if ref.Views == nil {
 				ref.Views = map[string]string{}

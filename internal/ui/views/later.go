@@ -523,6 +523,10 @@ func (s *savedBase) write1(it core.SavedItem, remove bool, okMsg string, f func(
 // open jumps to the saved message: the thread for replies, else the
 // conversation.
 func (s *savedBase) open(it *core.SavedItem) {
+	if it.ItemType == "list_record" {
+		s.openListRecord(it) // later_records.go
+		return
+	}
 	if it.Channel == "" {
 		return
 	}
@@ -630,6 +634,9 @@ func (s *savedBase) remindMenu(gtx C, it *core.SavedItem, r *laterRow) D {
 }
 
 func (s *savedBase) itemBody(gtx C, it *core.SavedItem) D {
+	if it.ItemType == "list_record" {
+		return s.listRecordBody(gtx, it) // later_records.go
+	}
 	m := it.Msg
 	name, av := s.authorOf(m)
 	return row(gtx, layout.Start,

@@ -47,6 +47,7 @@ type listStore struct {
 	next     int
 	cells    []url.Values               // lists.cells.update calls
 	creates  []url.Values               // lists.records.create calls
+	archives []url.Values               // lists.records.archive calls (lists_records.go)
 	lcreates []url.Values               // lists.create calls
 	dls      []string                   // list downloads (files-pri paths and queries)
 	comments map[string][]slack.Message // "<channel>/<thread ts>" -> replies, root first
@@ -518,6 +519,9 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 	if out, handled := s.handleListsAdd(method, f); handled { // lists_add.go
 		return out, true
 	}
+	if out, handled := s.handleListRecords(method, f); handled { // lists_records.go
+		return out, true
+	}
 	ls := s.listStore()
 	switch method {
 	case "files.info":
@@ -681,6 +685,14 @@ func (s *Server) handleLists(method string, f url.Values) (any, bool) {
 		r := lists.Record{ID: fmt.Sprintf("Rec0NEW%04d", ls.next), ListID: l.ID, DateCreated: now, CreatedBy: SelfID,
 			UpdatedBy: SelfID, Position: pos, ParentRecordID: f.Get("parent_record_id"), ViewPositions: map[string]string{},
 			UpdatedTimestamp: fmt.Sprintf("%d.000100", now)}
+		if dup := f.Get("duplicated_record_id"); dup != "" { // Duplicate item: the record's fields
+			for i := range l.Records {
+				if l.Records[i].ID == dup {
+					r.Fields = append([]lists.Field(nil), l.Records[i].Fields...)
+					r.ParentRecordID = l.Records[i].ParentRecordID
+				}
+			}
+		}
 		for _, c := range init {
 			var colID string
 			_ = json.Unmarshal(c["column_id"], &colID)

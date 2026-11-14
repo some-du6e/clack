@@ -2,8 +2,9 @@ name: lists-shots
 # Renders lists from the fake server headlessly (table, board and a
 # filtered view in full view, a channel's list tab, the side panel, an
 # item's pane with comments; light and dark; a live update; an editing
-# round trip; the keyboard's focus ring, selection and edit states) and
-# uploads the screenshots. Synthetic only: nothing here
+# round trip; the keyboard's focus ring, selection and edit states; a
+# record's right-click menu and Remind me submenu, the item pane's
+# actions, Later's list record rows) and uploads the screenshots. Synthetic only: nothing here
 # talks to Slack.
 on:
   push:
@@ -13,6 +14,9 @@ on:
       - "internal/ui/listview/**"
       - "internal/fakeslack/lists*"
       - "internal/core/lists*.go"
+      - "internal/ui/views/later_records.go"
+      - "internal/richtext/listslug*.go"
+      - "internal/ui/lists_records_test.go"
       - "internal/ui/shortcut/**"
       - ".github/workflows/lists-shots.yml"
   workflow_dispatch:
@@ -43,7 +47,11 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$LISTS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys' ./internal/ui/listview/
+          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys|TestRecordContextMenu|TestRecordPaneMenu' ./internal/ui/listview/
+          # list records outside the grid (lists_in_later, search_file_channel_messages): core's saved-api calls, the slugs, the menus and Later's rows
+          go test -count=1 -v -run 'TestListRecord|TestFileChannelFile' ./internal/core
+          go test -count=1 -v -run 'TestListSlug|TestFileChannelSlugs' ./internal/richtext
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestListRecordMenusShots|TestLaterListRecordRows' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

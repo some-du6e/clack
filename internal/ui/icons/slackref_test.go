@@ -94,6 +94,7 @@ var slackRef = map[string]string{
 	"code-block":                  "code-block",
 	"collapse":                    "reduce-diagonal",
 	"comment":                     "comment",
+	"add-comment":                 "add-comment",
 	"comment-filled":              "comment-filled",
 	"comment-lines":               "threads",
 	"compose":                     "compose",

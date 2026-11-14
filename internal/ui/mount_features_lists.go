@@ -118,7 +118,7 @@ func (a *App) listActions() listview.Actions {
 func listMenuItems(items []listview.MenuItem) []MenuItem {
 	var ms []MenuItem
 	for _, it := range items {
-		ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Disabled: it.Disabled, Divider: it.Divider,
+		ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Subtitle: it.Subtitle, Disabled: it.Disabled, Divider: it.Divider,
 			Danger: it.Danger, Sub: listMenuItems(it.Sub), Do: it.Do})
 	}
 	return ms

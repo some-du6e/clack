@@ -2607,6 +2607,17 @@ func srWhereOf(h Host, refs map[string]core.ConvRef, m *core.Message) srWhere {
 		if w.name == "" {
 			w.name = m.Channel
 		}
+		if a := h.Core(); a != nil { // search_file_channel_messages: a file channel reads as its file
+			if kind, id, ok := a.FileChannelFile(m.Channel); ok {
+				if t := a.FileChannelTitle(id); t != "" {
+					w.name = t
+				}
+				w.icon = "canvas-content"
+				if kind == "list" {
+					w.icon = "lists"
+				}
+			}
+		}
 	}
 	if m.ThreadTS != "" && m.ThreadTS != m.TS {
 		w.pre = nsSearch.T("Thread in ")

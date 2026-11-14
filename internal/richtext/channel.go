@@ -43,6 +43,11 @@ func channelSpan(r Resolver, id, label string) Span {
 		acc = a.ChannelAccess(id)
 	}
 	label = strings.TrimPrefix(label, "#")
+	if acc != ChannelHidden {
+		if sp, ok := fileChannelSpan(r, id); ok { // search_file_channel_messages (listslug.go)
+			return sp
+		}
+	}
 	switch acc {
 	case ChannelHidden:
 		if label != "" {

@@ -403,6 +403,9 @@ func (a *App) loadSaved(ctx context.Context) error {
 					meta[savedKey(it.ItemID, it.TS)] = savedMetaOf(&it)
 				case "file":
 					set[savedKey(savedFileKey, it.ItemID)] = true
+				case "list_record": // lists_records.go
+					k := savedKey(listRecordSavedKey(it.ItemID), it.TS)
+					set[k], meta[k] = true, savedMetaOf(&it)
 				}
 			}
 			if r.Meta.NextCursor == "" {
@@ -672,6 +675,13 @@ func (a *App) onSavedEvent(ctx context.Context, typ string, raw json.RawMessage)
 	_ = json.Unmarshal(raw, &e)
 	if e.Saved.ItemType == "file" && e.Saved.ItemID != "" {
 		a.markSaved(savedFileKey, e.Saved.ItemID, typ != "saved_deleted")
+	}
+	if e.Saved.ItemType == "list_record" && e.Saved.ItemID != "" && e.Saved.TS != "" { // lists_records.go
+		if typ != "saved_deleted" {
+			a.setSavedMeta(listRecordSavedKey(e.Saved.ItemID), e.Saved.TS, savedMetaOf(&e.Saved))
+		} else {
+			a.markSaved(listRecordSavedKey(e.Saved.ItemID), e.Saved.TS, false)
+		}
 	}
 	it := savedItemOf(&e.Saved)
 	if it.Channel != "" {

@@ -3,6 +3,7 @@ package popups
 import (
 	"context"
 	"image"
+	"time"
 
 	"gioui.org/layout"
 
@@ -62,4 +63,18 @@ func ActDo(h Host, ok string, f func(ctx context.Context, a *core.App) error) { 
 // "Create a new view" modal, as the section modals anchor theirs).
 func ModalBodyPoint(gtx layout.Context, m *Modal, p image.Point) image.Point {
 	return dtModalOrigin(gtx, m).Add(p)
+}
+
+// ReminderPresets are useReminderTimeOptions' times (ReminderTimeMenu,
+// saved_for_later) before Custom…: "In 30 mins", "In 1 hour", "In 3
+// hours", "Tomorrow at {reminderPref}" and "Monday at {reminderPref}" in
+// the viewer's locale, with each one's due time picked at now. The list
+// record menus' Remind me about this (Jf4A ListRecordRemindMenu) shows
+// them.
+func ReminderPresets(now time.Time) (labels []string, due []time.Time) {
+	for i, it := range actReminderItems(func(int) func() { return nil }, nil) {
+		labels = append(labels, it.Label)
+		due = append(due, actReminderDue(now, i))
+	}
+	return labels[:5], due[:5]
 }
