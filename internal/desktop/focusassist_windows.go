@@ -202,6 +202,11 @@ func focusAssistStatus(appUserModelID string, timeout time.Duration) (mode int, 
 	}
 }
 
+// readFocusAssist is the utility process FocusAssistActive asks (tests
+// swap it: the cache and a9 without changing the runner's Do not
+// disturb).
+var readFocusAssist = focusAssistStatus
+
 // focusAssist is a6's cache: the last answer and when it came.
 var focusAssist struct {
 	sync.Mutex
@@ -221,7 +226,7 @@ func FocusAssistActive() bool {
 	if !fa.at.IsZero() && time.Since(fa.at) < 5*time.Second {
 		return focusAssistOn(fa.mode, fa.priority)
 	}
-	fa.mode, fa.priority = focusAssistStatus(AppUserModelID, 2*time.Second)
+	fa.mode, fa.priority = readFocusAssist(AppUserModelID, 2*time.Second)
 	fa.at = time.Now()
 	if s := fmt.Sprintf("mode=%d, hasPriority=%v", fa.mode, fa.priority); s != fa.logged {
 		fa.logged = s
