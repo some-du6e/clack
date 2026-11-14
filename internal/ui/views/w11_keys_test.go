@@ -295,7 +295,9 @@ func savedKeys(t *testing.T, dark bool) {
 	}
 	vaShot(t, e, "saved-keyboard-focus", dark)
 	kbPress(e, key.NameReturn, 0)
-	if nav, _ := h.last(); nav != "c/"+fakeslack.ViewsChannel {
+	// eT: jumpToSavedMessage, the conversation at the message (jpad R9;
+	// in the primary here: a host without a secondary column)
+	if nav, _ := h.last(); nav != "c/"+fakeslack.ViewsChannel+"/m/"+second[len(fakeslack.ViewsChannel)+1:] {
 		t.Errorf("Enter on a saved message went to %q", nav)
 	}
 	kbPress(e, key.NameEnd, 0)
