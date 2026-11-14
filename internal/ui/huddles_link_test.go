@@ -42,10 +42,18 @@ func TestHuddlesLinkInvites(t *testing.T) {
 	}
 	ch, ch2 := chans[0], chans[1]
 	users := fs.GroupDMUsers()
+	e.until("the realtime socket", 15*time.Second, func() bool { return fs.Sockets() > 0 })
 	now := time.Now().Unix()
 	fs.PushHuddleRoom("sh_room_join", ch, "R0LINK0001", []string{users[0].ID, users[1].ID, users[2].ID, users[3].ID}, now-120, nil)
 	fs.PushHuddleRoom("sh_room_join", ch2, "R0LINK0002", []string{users[4].ID}, now-60, nil)
-	e.until("the live huddles", 10*time.Second, func() bool { return hud.Link().Channel == ch })
+	e.until("the live huddles", 10*time.Second, func() bool {
+		_, on := hud.Live(ch)
+		_, on2 := hud.Live(ch2)
+		return on && on2
+	})
+	if got := hud.Link().Channel; got != ch {
+		t.Fatalf("the link's facepile is %q's, want the earlier huddle's %s (%s started later)", got, ch, ch2)
+	}
 	e.settle(400 * time.Millisecond) // the faces' avatars
 
 	link := e.sbRowPoint(t, "huddles")

@@ -135,7 +135,11 @@ func TestHuddleLinkUnreadInvites(t *testing.T) {
 	if _, ok := c.Incoming(); ok {
 		t.Fatal("starting the huddle left the invite up")
 	}
-	waitFor(t, "the channel huddle", func() bool { s := c.Session(); return s != nil && s.Channel() == hcChannel })
+	// connected before the cleanup's leave (a leave mid-offer fails the fake's negotiation)
+	waitFor(t, "the channel huddle", func() bool {
+		s := c.Session()
+		return s != nil && s.Channel() == hcChannel && s.State().Phase == huddle.Connected
+	})
 }
 
 // getChannelIdForHuddleLinkFacepile without an invite: the huddle with
