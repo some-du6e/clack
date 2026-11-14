@@ -92,6 +92,17 @@ func (e *perfEnv) gifTile(t *testing.T) messages.FileRect {
 	return tile
 }
 
+// framesFor runs frames for d and reports how many ran, and the fewest
+// frame advances that proves GIFs at 40 ms a frame play: a player moves
+// on at most once a drawn frame (llvmpipe draws a frame in ~100 ms).
+func (e *perfEnv) framesFor(d time.Duration) (frames int, want uint64) {
+	for dl := time.Now().Add(d); time.Now().Before(dl); frames++ {
+		e.frame()
+		time.Sleep(2 * time.Millisecond)
+	}
+	return frames, uint64(min(frames, int(d/(40*time.Millisecond))) / 2)
+}
+
 // grab is the window's pixels in r (nil without a GPU).
 func (e *perfEnv) grab(r image.Rectangle) []byte {
 	if e.gpu == nil {
@@ -118,10 +129,10 @@ func TestGIFShots(t *testing.T) {
 			e.until("GIFs playing", 10*time.Second, func() bool { return images.Stats().Players >= 2 })
 			s0 := images.Stats()
 			a := e.grab(tile.R)
-			e.settle(600 * time.Millisecond) // 15 frames at 40 ms
+			n, want := e.framesFor(600 * time.Millisecond) // 15 GIF frames at 40 ms
 			s1 := images.Stats()
-			if d := s1.Advances - s0.Advances; d < 8 {
-				t.Errorf("600 ms on screen: %d frames advanced", d)
+			if d := s1.Advances - s0.Advances; d < want {
+				t.Errorf("600 ms on screen (%d frames drawn): %d GIF frames advanced, want %d or more", n, d, want)
 			}
 			if sz := s1.LargestFrame; max(sz.X, sz.Y) <= 160 {
 				t.Errorf("the largest frame playing is %v: past 160px GIFs should play at their drawn size", sz)
@@ -161,9 +172,9 @@ func TestGIFShots(t *testing.T) {
 			e.clickAt(mid, time.Second)
 			e.until("the still the viewer played", 5*time.Second, func() bool { return images.Stats().Players >= 1 })
 			s0 := images.Stats()
-			e.settle(500 * time.Millisecond)
-			if d := images.Stats().Advances - s0.Advances; d < 6 {
-				t.Errorf("played: %d frames advanced in 500 ms", d)
+			n, want := e.framesFor(500 * time.Millisecond)
+			if d := images.Stats().Advances - s0.Advances; d < want {
+				t.Errorf("played: %d GIF frames advanced in 500 ms (%d frames drawn), want %d or more", d, n, want)
 			}
 			e.sendShot("gif-5-played-" + mode)
 
