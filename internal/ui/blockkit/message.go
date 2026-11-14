@@ -132,7 +132,8 @@ func MessageElements(h Host, m *core.Message) *Message {
 	msgsMu.Lock()
 	defer msgsMu.Unlock()
 	me := msgs[k]
-	if me == nil {
+	switch {
+	case me == nil:
 		me = &Message{h: h}
 		msgs[k] = me
 		order = append(order, k)
@@ -140,6 +141,11 @@ func MessageElements(h Host, m *core.Message) *Message {
 			delete(msgs, order[0])
 			order = order[1:]
 		}
+	case me.h != h:
+		// another host's (tests run one app after another): this host's
+		// actions must go through its own core
+		me = &Message{h: h}
+		msgs[k] = me
 	}
 	me.setMessage(m)
 	return me

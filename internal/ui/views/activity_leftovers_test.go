@@ -423,10 +423,13 @@ func loInSuggest(t *testing.T, dark bool) {
 	if len(in) == 0 {
 		t.Fatal("no in suggestions from the search")
 	}
-	// the store learns the channels (getChannelOrMemberById)
+	// the store learns the channels it didn't know (getChannelOrMemberById)
 	for _, s := range in {
-		if ref, ok := a.r.Convs[s.ID]; ok {
-			app.S.PutConv(slack.Conversation{ID: s.ID, Name: ref.Name, IsChannel: true, IsMember: true})
+		if _, known := app.Conv(s.ID); known {
+			continue
+		}
+		if ref, ok := a.r.Convs[s.ID]; ok && (ref.Kind == "channel" || ref.Kind == "private") {
+			app.S.PutConv(slack.Conversation{ID: s.ID, Name: ref.Name, IsChannel: true, IsPrivate: ref.Kind == "private", IsMember: true})
 		}
 	}
 	e.frame()
@@ -441,8 +444,14 @@ func loInSuggest(t *testing.T, dark bool) {
 			got = append(got, o.value)
 		}
 	}
-	if head < 0 || len(got) == 0 || len(got) > 5 || got[0] != in[0].ID {
-		t.Fatalf("Suggestions %v (heading at %d), want the search's %v", got, head, in)
+	var want []string
+	for _, s := range in {
+		if _, ok := app.Conv(s.ID); ok {
+			want = append(want, s.ID)
+		}
+	}
+	if head < 0 || len(got) == 0 || strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Suggestions %v (heading at %d), want the search's %v", got, head, want)
 	}
 	vaShot(t, e, "activity-in-suggestions", dark)
 	// pick the first: the feed filters by it, and it leaves the suggestions
@@ -535,7 +544,8 @@ func loMore(t *testing.T, dark bool) {
 		"Synthetic hiring loop", "Synthetic weekly notes", "Synthetic budget threads"}
 	for _, n := range names {
 		v.createView(core.ActivityView{Name: n, Sort: "newest", Density: "compact"}, func(string) {})
-		e.until(t, "the view "+n, func() bool { return strings.HasSuffix(actTabsNow(v), ","+n) })
+		// tabs sort by position as strings ("10" before "2")
+		e.until(t, "the view "+n, func() bool { return strings.Contains(","+actTabsNow(v)+",", ","+n+",") })
 	}
 	v.pickTab(0) // back to All
 	e.frame()
