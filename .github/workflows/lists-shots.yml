@@ -5,7 +5,8 @@ name: lists-shots
 # round trip; the keyboard's focus ring, selection and edit states; a
 # record's right-click menu and Remind me submenu, the item pane's
 # actions, Later's list record rows; the header's section button under
-# custom_file_sections) and uploads the screenshots. Synthetic only: nothing here
+# custom_file_sections; lists_sub_tasks' summaries, thread indicator and
+# the pane's Subtasks) and uploads the screenshots. Synthetic only: nothing here
 # talks to Slack.
 on:
   push:
@@ -50,7 +51,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$LISTS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys|TestRecordContextMenu|TestRecordPaneMenu|TestSectionButton|TestMoreActionsMenu' ./internal/ui/listview/
+          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys|TestRecordContextMenu|TestRecordPaneMenu|TestSectionButton|TestMoreActionsMenu|TestSubtasks' ./internal/ui/listview/
           # list records outside the grid (lists_in_later, search_file_channel_messages): core's saved-api calls, the slugs, the menus and Later's rows
           go test -count=1 -v -run 'TestListRecord|TestFileChannelFile' ./internal/core
           go test -count=1 -v -run 'TestListSlug|TestFileChannelSlugs' ./internal/richtext

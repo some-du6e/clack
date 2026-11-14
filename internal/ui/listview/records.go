@@ -4,7 +4,8 @@ package listview
 //
 //   - The grid row's and board card's right-click menu is
 //     BaseRecordContextMenu (boot-shared Yja+, "Item actions"). Its rows,
-//     in order: Open item (Hi0F) · View comment(s) / Add comment (7EO4) ·
+//     in order: Open item (Hi0F) · Open subtasks (when the item has
+//     subtasks; subtask 18) · View comment(s) / Add comment (7EO4) ·
 //     Copy link to item (A3Rr) ─ Duplicate item (rJ) ─ Remind me about
 //     this ▸ (Jf4A, lists_in_later) ─ Archive item (tAP0) · Delete item
 //     (hWxs), the last group only when the list isn't view-only.
@@ -13,7 +14,7 @@ package listview
 //     item ─ Remind me about this ▸ ─ Archive item · Delete item.
 //
 // Rows Slack shows that Clack has no screen or state for are left out:
-// Open subtasks (no subtask pane), Open in new window (one window), Share
+// Open in new window (one window), Share
 // item (no file share dialog), View history, Report to Slack, Get
 // notifications ▸ (record and thread subscriptions aren't loaded), the
 // grid's Copy and Paste ▸, Move item ▸ and Insert item ▸ (no positions
@@ -58,6 +59,9 @@ func (c *ctl) recordMenu(d *core.ListDoc, rec *lists.Record, pane bool) []MenuIt
 	}
 	if !pane {
 		items = append(items, MenuItem{Label: nsLists.T("Open item"), Icon: "sidebar", Do: open})
+		if hasSubtasks(d, recID) { // OpenItemSubtasksMenuItem (Prtm eD; any group)
+			items = append(items, MenuItem{Label: nsLists.T("Open subtasks"), Icon: "subtask", Do: open})
+		}
 		// AddCommentMenuItemBase: none for an archived item without comments
 		if n := c.commentCount(d, rec); !(rec.Archived && n == 0) {
 			label := nsLists.T("Add comment")

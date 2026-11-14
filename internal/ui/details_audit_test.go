@@ -251,3 +251,67 @@ func TestChannelDetailsHideLinkShot(t *testing.T) {
 	}
 	e.setDark(false)
 }
+
+// Settings' managing-this-channel for a public channel whose member may
+// convert, archive and delete it (views/details_managing.go): the rows,
+// then ArchiveChannelModal, DeleteChannelModal with its checkbox ticked
+// and ConvertChannelToPrivateModal; light and dark.
+func TestChannelDetailsManagingShot(t *testing.T) {
+	e, fs := previewEnv(t)
+	ch := ""
+	for _, s := range e.a.model().Sections { // a public channel that isn't #general
+		for _, id := range s.Rows {
+			if c, ok := e.a.Core().Conv(id); ch == "" && ok && c.Kind == "channel" && !c.Preview && !c.IsGeneral {
+				ch = id
+			}
+		}
+	}
+	if ch == "" {
+		t.Skip("the fake workspace has no public channel besides #general")
+	}
+	fs.SetHook(func(method string, form url.Values) (any, bool) {
+		switch method {
+		case "permissions.info":
+			return map[string]any{"ok": true, "allowed": []string{"RENAME_CHANNEL", "ARCHIVE_CHANNEL", "DELETE_CHANNEL", "CONVERT_TO_PRIVATE"}}, true
+		case "conversations.canSetProperties":
+			return json.RawMessage(`{"ok":true,"props":[]}`), true
+		}
+		return nil, false
+	})
+	e.openChannel(ch)
+	e.settle(200 * time.Millisecond)
+	e.a.OpenDetailsTab(ch, "Settings")
+	e.settle(800 * time.Millisecond)
+	d := topDetails(t, e)
+	d.ScrollSettingsTo("managing-this-channel")
+	e.settle(300 * time.Millisecond)
+	both := func(name string) {
+		for _, dark := range []bool{false, true} {
+			e.setDark(dark)
+			e.settle(300 * time.Millisecond)
+			e.shot(name + "-" + map[bool]string{false: "light", true: "dark"}[dark])
+		}
+		e.setDark(false)
+		e.settle(200 * time.Millisecond)
+	}
+	both("ch-details-managing")
+	for _, m := range []struct{ row, dlg, shot string }{
+		{"archive", "archive", "ch-details-archive-modal"},
+		{"delete", "delete", "ch-details-delete-modal"},
+		{"to-private", "to-private", "ch-details-to-private-modal"},
+	} {
+		e.until("the "+m.dlg+" modal", 10*time.Second, func() bool {
+			if d.Dialog() == "" {
+				d.Press(m.row)
+			}
+			return d.Dialog() == m.dlg
+		})
+		if m.dlg == "delete" {
+			d.Press("delete-confirm")
+		}
+		e.settle(200 * time.Millisecond)
+		both(m.shot)
+		d.Press("cancel")
+		e.until("the modal closes", 10*time.Second, func() bool { return d.Dialog() == "" })
+	}
+}

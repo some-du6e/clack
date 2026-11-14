@@ -469,20 +469,23 @@ type Conversation struct {
 	IsFile bool `json:"is_file,omitempty"`
 	// IsOrgMandatory: a channel everyone in the org is in (Slack's gx
 	// is_general || is_org_mandatory: it can't be left).
-	IsOrgMandatory bool            `json:"is_org_mandatory,omitempty"`
-	User           string          `json:"user,omitempty"` // IM partner
-	Created        int64           `json:"created,omitempty"`
-	Creator        string          `json:"creator,omitempty"`
-	NumMembers     int             `json:"num_members,omitempty"`
-	Topic          *Purpose        `json:"topic,omitempty"`
-	Purpose        *Purpose        `json:"purpose,omitempty"`
-	LastRead       string          `json:"last_read,omitempty"`
-	Latest         json.RawMessage `json:"latest,omitempty"`
-	Members        []string        `json:"members,omitempty"`
-	Properties     json.RawMessage `json:"properties,omitempty"`
-	Priority       float64         `json:"priority,omitempty"`
-	IsOpen         bool            `json:"is_open,omitempty"`
-	ContextTeamID  string          `json:"context_team_id,omitempty"`
+	IsOrgMandatory bool `json:"is_org_mandatory,omitempty"`
+	// IsOrgDefault: a channel new org members join (Opi6 isOrgDefaultChannel
+	// with a public, org-shared channel): it can't be deleted or made private.
+	IsOrgDefault  bool            `json:"is_org_default,omitempty"`
+	User          string          `json:"user,omitempty"` // IM partner
+	Created       int64           `json:"created,omitempty"`
+	Creator       string          `json:"creator,omitempty"`
+	NumMembers    int             `json:"num_members,omitempty"`
+	Topic         *Purpose        `json:"topic,omitempty"`
+	Purpose       *Purpose        `json:"purpose,omitempty"`
+	LastRead      string          `json:"last_read,omitempty"`
+	Latest        json.RawMessage `json:"latest,omitempty"`
+	Members       []string        `json:"members,omitempty"`
+	Properties    json.RawMessage `json:"properties,omitempty"`
+	Priority      float64         `json:"priority,omitempty"`
+	IsOpen        bool            `json:"is_open,omitempty"`
+	ContextTeamID string          `json:"context_team_id,omitempty"`
 	// IsFrozen and IsPendingExtShared keep a DM off Slack's DMs tab
 	// (isFrozen, the pending Slack Connect IM check).
 	IsFrozen           bool `json:"is_frozen,omitempty"`

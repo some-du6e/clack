@@ -659,6 +659,10 @@ func (a *App) Command(ctx context.Context, o CommandOpts) (CommandResult, error)
 		return CommandResult{}, a.C.Call(ctx, "chat.meMessage", url.Values{"channel": {o.Channel}, "text": {o.Text}}, nil)
 	case "/topic":
 		return CommandResult{}, a.SetTopic(ctx, o.Channel, o.Text)
+	case "/invite":
+		if a.isLocalInvite(o.Channel) { // Slack's local inviteCommand (invite_command.go)
+			return a.inviteCommand(ctx, o, cmd)
+		}
 	}
 	return a.serverCommand(ctx, cmd, o) // command.go
 }

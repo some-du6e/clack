@@ -22,10 +22,10 @@ package views
 //     convertToPublic); an is_idp_managed failure has its own text, any
 //     other the generic one.
 //
-// The section's other rows (Change to a private channel, Archive channel
-// for everyone, Delete this channel, Unarchive, the group DM and
-// Salesforce conversions) need modals Clack doesn't have; the section
-// shows only when the convert row does. A Slack Connect channel hosted by
+// The section's other rows are details_managing.go's (Change to a
+// private channel, Archive channel for everyone, Unarchive, Delete this
+// channel); the group DM and Salesforce conversions aren't drawn. A
+// Slack Connect channel hosted by
 // another org keeps today's Settings: Clack doesn't load the host's
 // privacy (fedg s3), which picks the row's text there. Slack's thunk then
 // marks the stored channel private (lfpR convertToPrivate, a slip the

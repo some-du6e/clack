@@ -223,6 +223,7 @@ type display struct {
 	slots    []slot    // interactive element runs drawn by Options.Elements
 	tips     []string  // emoji tooltips (":name:"), frag.tip-1
 	codes    []codeRun // inline code runs and code blocks (codecopy.go)
+	fileSecs []fileSec // file cards with a section button (filesection.go)
 	removes  []removeBtn
 	cards    []v3Card // v3 cards: context menu, hover card (unfurl_hover.go)
 	// overlayIcons paint over images (unfurl.go's video buttons)
@@ -276,6 +277,7 @@ func (d *display) reset() {
 	d.slots = d.slots[:0]
 	d.tips = d.tips[:0]
 	d.codes = d.codes[:0]
+	d.fileSecs = d.fileSecs[:0]
 	d.removes = d.removes[:0]
 	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]
