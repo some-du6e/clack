@@ -27,19 +27,14 @@ package popups
 import (
 	"context"
 	"image"
-	"image/color"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/acrank"
@@ -432,82 +427,9 @@ func srTrues(bs ...bool) int {
 
 // ---- the source pill's Slack logo ----
 
-// srSlackMark is the icon name Pill draws as Slack's four-colour logo.
+// srSlackMark is the icon name Pill draws as Slack's four-colour logo
+// (icons' slack-logo-mark art, slack_logo_mark-8890ba0.svg).
 const srSlackMark = "slack-logo-mark"
-
-// srSlackMarkPaths are slack_logo_mark-8890ba0.svg's eight paths (a 256
-// box, absolute M/L/C/Z) and fills.
-var srSlackMarkPaths = [...]struct {
-	d    string
-	fill uint32
-}{
-	{"M53.79 161.37C53.79 176.22 41.75 188.26 26.89 188.26C12.04 188.26 0 176.22 0 161.37C0 146.52 12.04 134.47 26.89 134.47L53.79 134.47L53.79 161.37Z", 0xe3066a},
-	{"M67.24 161.37C67.24 146.52 79.28 134.47 94.13 134.47C108.99 134.47 121.03 146.52 121.03 161.37L121.03 228.61C121.03 243.46 108.99 255.5 94.13 255.5C79.28 255.5 67.24 243.46 67.24 228.61L67.24 161.37Z", 0xe3066a},
-	{"M94.13 53.79C79.28 53.79 67.24 41.75 67.24 26.89C67.24 12.04 79.28 0 94.13 0C108.99 0 121.03 12.04 121.03 26.89L121.03 53.79L94.13 53.79Z", 0x00b3ff},
-	{"M94.13 67.24C108.99 67.24 121.03 79.28 121.03 94.13C121.03 108.99 108.99 121.03 94.13 121.03L26.89 121.03C12.04 121.03 0 108.99 0 94.13C0 79.28 12.04 67.24 26.89 67.24L94.13 67.24Z", 0x00b3ff},
-	{"M201.71 94.13C201.71 79.28 213.75 67.24 228.61 67.24C243.46 67.24 255.5 79.28 255.5 94.13C255.5 108.99 243.46 121.03 228.61 121.03L201.71 121.03L201.71 94.13Z", 0x41b658},
-	{"M188.26 94.13C188.26 108.99 176.22 121.03 161.37 121.03C146.52 121.03 134.47 108.99 134.47 94.13L134.47 26.89C134.47 12.04 146.52 0 161.37 0C176.22 0 188.26 12.04 188.26 26.89L188.26 94.13Z", 0x41b658},
-	{"M161.37 201.71C176.22 201.71 188.26 213.75 188.26 228.61C188.26 243.46 176.22 255.5 161.37 255.5C146.52 255.5 134.47 243.46 134.47 228.61L134.47 201.71L161.37 201.71Z", 0xfcc003},
-	{"M161.37 188.26C146.52 188.26 134.47 176.22 134.47 161.37C134.47 146.52 146.52 134.47 161.37 134.47L228.61 134.47C243.46 134.47 255.5 146.52 255.5 161.37C255.5 176.22 243.46 188.26 228.61 188.26L161.37 188.26Z", 0xfcc003},
-}
-
-// srSlackMarkDraw paints the logo px pixels square at the origin.
-func srSlackMarkDraw(gtx layout.Context, px int) layout.Dimensions {
-	k := float32(px) / 256
-	for _, sp := range srSlackMarkPaths {
-		var p clip.Path
-		p.Begin(gtx.Ops)
-		srSVGPath(&p, sp.d, k)
-		paint.FillShape(gtx.Ops, srRGB(sp.fill), clip.Outline{Path: p.End()}.Op())
-	}
-	return layout.Dimensions{Size: image.Pt(px, px)}
-}
-
-func srRGB(v uint32) color.NRGBA { return rgb(v) }
-
-// srSVGPath feeds absolute M/L/C/Z path data, scaled by k, into p.
-func srSVGPath(p *clip.Path, d string, k float32) {
-	f := strings.FieldsFunc(d, func(r rune) bool { return r == ' ' || r == ',' })
-	var toks []string
-	for _, w := range f { // split "M53.79" and "161.37C53.79" into commands and numbers
-		start := 0
-		for i, r := range w {
-			if strings.ContainsRune("MLCZ", r) {
-				if i > start {
-					toks = append(toks, w[start:i])
-				}
-				toks = append(toks, string(r))
-				start = i + 1
-			}
-		}
-		if start < len(w) {
-			toks = append(toks, w[start:])
-		}
-	}
-	num := func(i int) float32 {
-		x, _ := strconv.ParseFloat(toks[i], 32)
-		return float32(x) * k
-	}
-	pt := func(i int) f32.Point { return f32.Pt(num(i), num(i+1)) }
-	for i := 0; i < len(toks); {
-		switch toks[i] {
-		case "M":
-			p.MoveTo(pt(i + 1))
-			i += 3
-		case "L":
-			p.LineTo(pt(i + 1))
-			i += 3
-		case "C":
-			p.CubeTo(pt(i+1), pt(i+3), pt(i+5))
-			i += 7
-		case "Z":
-			p.Close()
-			i++
-		default:
-			i++
-		}
-	}
-}
 
 // srMergeFacets is upsertFacet (CSKO): the kept facets, then the new
 // ones whose value isn't there yet (lodash uniqBy on value).

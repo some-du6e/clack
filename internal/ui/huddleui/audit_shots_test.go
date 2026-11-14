@@ -76,7 +76,7 @@ func TestHuddleShotsAudit(t *testing.T) {
 	e.c.showBanner("Someone muted you.", "mic-off")
 	render(t, "audit-window-banner", 620, 400, func(gtx C) { e.w.layout(gtx) })
 	e.c.hideSelf.Store(true)
-	e.c.showBannerLink("Self-view is hidden.", "eye-off", "Undo", func() { e.c.hideSelf.Store(false) })
+	e.c.showBannerLink("Self-view is hidden.", "eye-closed", "Undo", func() { e.c.hideSelf.Store(false) })
 	render(t, "audit-window-hide-self", 620, 400, func(gtx C) { e.w.layout(gtx) })
 	e.c.hideSelf.Store(false)
 

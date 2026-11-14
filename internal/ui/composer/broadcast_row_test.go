@@ -83,7 +83,7 @@ func TestBroadcastRowShots(t *testing.T) {
 		}
 		old := draw(func(gtx layout.Context) {
 			defer op.Offset(image.Pt(2, 6)).Push(gtx.Ops).Pop()
-			drawHashIcon(gtx, 12, p.hint)
+			strokedHash(gtx, 12, p.hint)
 		})
 		oldBox, oldInk := inkBox(old, image.Rect(0, 0, w, h), p.hint, p.bg)
 		t.Logf("%s: # ink %d in %v; the stroked hash alpha.59 drew %d in %v", mode, hashInk, hashBox, oldInk, oldBox)

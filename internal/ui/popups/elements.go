@@ -14,6 +14,7 @@ import (
 	"gioui.org/layout"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -194,7 +195,7 @@ func Pill(gtx layout.Context, th *theme.Theme, c *widget.Clickable, iconName, la
 			lx := dp(gtx, 10)
 			if iconName == srSlackMark { // the search source pill's logo image (appIconSmall: 15px)
 				at(gtx, image.Pt(lx, (h-dp(gtx, 15))/2), func(gtx layout.Context) layout.Dimensions {
-					return srSlackMarkDraw(gtx, dp(gtx, 15))
+					return icons.Art(gtx, srSlackMark, dp(gtx, 15))
 				})
 				lx += dp(gtx, 16) + dp(gtx, 6)
 			} else if iconName != "" {
