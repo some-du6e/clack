@@ -642,6 +642,80 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # docs/GAPS-2026-11-14.md gap 1 (W33): can an ad-hoc signed Clack.app
+      # get UNUserNotificationCenter authorization? usernotifyprobe's test
+      # runs from Clack.app bundles built the way release.yml builds one,
+      # each with its own bundle id so each starts undecided, and logs what
+      # the center answers (the PROBE lines). The answers are the result: the
+      # step fails only when the probe doesn't build.
+      - name: notification probe (UNUserNotificationCenter in ad-hoc signed bundles)
+        run: |
+          set -u
+          out=$PWD/build/notify-probe
+          mkdir -p "$out"
+          go test -c -o build/unprobe.test ./internal/desktop/usernotifyprobe || exit 1
+          go test -c -o build/unprobe-rebuilt.test -ldflags "-X github.com/some-du6e/clack/internal/desktop/usernotifyprobe.build=2" ./internal/desktop/usernotifyprobe || exit 1
+          sw_vers
+          echo "user $(id -un) ($(id -u)); console owner $(stat -f %Su /dev/console)"
+          launchctl print gui/$(id -u) 2>&1 | head -3
+          # bundle DIR ID SIGN [BINARY]: a Clack.app as release.yml makes one,
+          # the probe's test binary as its executable. SIGN adhoc is the
+          # release's codesign --sign - over the bundle; linker leaves only the
+          # Go linker's signature on the binary (Info.plist not bound).
+          bundle() {
+            app=build/$1/Clack.app
+            mkdir -p $app/Contents/MacOS $app/Contents/Resources
+            cp ${4:-build/unprobe.test} $app/Contents/MacOS/clack
+            cp assets/icon/clack.icns $app/Contents/Resources/clack.icns
+            sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > $app/Contents/Info.plist
+            /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $2" $app/Contents/Info.plist
+            printf 'APPL????' > $app/Contents/PkgInfo
+            if [ "$3" = adhoc ]; then
+              codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements $app
+            fi
+            codesign -dv --verbose=2 $app 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|CDHash|Signature|TeamIdentifier|Info.plist|Sealed|Runtime)' | sed "s/^/  $1: /"
+          }
+          probe() { # DIR VARIANT STEPS
+            build/$1/Clack.app/Contents/MacOS/clack -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=$2 -probe.steps=$3 -probe.out="$out"
+            echo "  exit $?"
+          }
+          echo "== bare: the test binary outside any bundle"
+          build/unprobe.test -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=bare -probe.steps=provisional -probe.out="$out"
+          echo "== adhoc-prompt: Clack's bundle id, signed as the release is, run from Contents/MacOS"
+          bundle adhoc io.github.some-du6e.clack adhoc
+          probe adhoc adhoc-prompt prompt,post
+          echo "== adhoc-provisional: the same with provisional authorization (no prompt)"
+          bundle prov io.github.some-du6e.clack.probe-provisional adhoc
+          probe prov adhoc-provisional provisional,post
+          echo "== adhoc-update: that bundle with a rebuilt binary in place (a new cdhash, as an update has)"
+          bundle prov io.github.some-du6e.clack.probe-provisional adhoc build/unprobe-rebuilt.test
+          probe prov adhoc-update none
+          echo "== linker-provisional: no bundle signature"
+          bundle linker io.github.some-du6e.clack.probe-linker linker
+          probe linker linker-provisional provisional,post
+          echo "== adhoc-open: launched through LaunchServices (open), as Finder and the Dock launch it"
+          bundle open io.github.some-du6e.clack.probe-open adhoc
+          open -W -n --stdout "$out/open.out" --stderr "$out/open.err" build/open/Clack.app --args -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=adhoc-open -probe.steps=prompt,post -probe.out="$out"
+          echo "  open exit $?"
+          cat "$out/open.out" "$out/open.err"
+          echo "== control: osascript's display notification (Apple-signed)"
+          osascript -e 'display notification "osascript control" with title "Clack probe"'
+          echo "  osascript exit $?"
+          sleep 3
+          screencapture -x "$out/control-osascript.png"
+          echo "  screencapture exit $?"
+          echo "== Notification Center's records of the probe bundles (com.apple.ncprefs)"
+          plutil -p ~/Library/Preferences/com.apple.ncprefs.plist | grep -B3 -A14 'some-du6e' | head -200
+          echo "== usernoted's log"
+          log show --last 10m --style compact --predicate 'process == "usernoted" OR subsystem BEGINSWITH "com.apple.UserNotifications"' | grep -i -E 'some-du6e|clack|unprobe' | tail -200
+          ls -la "$out"
+          exit 0
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: notify-probe
+          path: build/notify-probe
+          if-no-files-found: ignore
       - name: macOS-only tests (system fonts, AppKit glue, the menu bar)
         run: |
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
