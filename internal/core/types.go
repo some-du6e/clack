@@ -357,6 +357,11 @@ type SendOpts struct {
 	// Attachments go out as chat.postMessage attachments (prepareAndSendMessage's
 	// channelSectionBlocks: [{blocks: [channel_section]}]).
 	Attachments json.RawMessage
+	// ClientMsgID is the message's client_msg_id, as sendMessage's
+	// caller may pass one (`client_msg_id || uuid()`); "" makes one. The
+	// composer passes its own so its message list can find the message
+	// it jumps to (messages.ChannelView.JumpToOwnSend).
+	ClientMsgID string
 }
 
 // UploadOpts share one or more files (held in memory, never spooled to disk).

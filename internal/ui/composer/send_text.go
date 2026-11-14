@@ -17,5 +17,7 @@ func SendText(ctx context.Context, a *core.App, ch, threadTS, text string) error
 	if d.Empty() {
 		return nil
 	}
-	return postMessage(ctx, coreAPI{a}, ch, threadTS, d.Mrkdwn(), d.RichTextBlocks(), false)
+	// no view sends it: Slack's jumpToTimestamp falls back to
+	// jumpToTimestampInternal (the active channel), which Clack doesn't port
+	return postMessage(ctx, coreAPI{a}, ch, threadTS, d.Mrkdwn(), d.RichTextBlocks(), false, nil)
 }

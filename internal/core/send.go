@@ -97,7 +97,11 @@ func (a *App) Send(ctx context.Context, o SendOpts) (Message, error) {
 	if o.Channel == "" {
 		return Message{}, errors.New("core: Send needs a channel")
 	}
-	return a.send(ctx, o, clientMsgID())
+	cid := o.ClientMsgID
+	if cid == "" {
+		cid = clientMsgID()
+	}
+	return a.send(ctx, o, cid)
 }
 
 func (a *App) send(ctx context.Context, o SendOpts, cid string) (Message, error) {

@@ -150,6 +150,28 @@ func (v *ThreadView) Typing() string { return typingText(v.s.snap.typing) }
 // ScrollToBottom jumps to the newest reply.
 func (v *ThreadView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
 
+// JumpToOwnSend is the pane's reply box sending the viewer's reply, with
+// or without files (composer.OnSend): the list goes to its end, and its
+// ScrollToEnd keeps the reply in view when it comes in.
+//
+// Slack's reply has a thread_ts, so its sendMessage dispatches no
+// jumpToTimestamp (client-boot n6uE: `E || jumpToTimestamp`). The reply
+// still shows because the reply box is the list's last row
+// (getThreadRowsAndKeys' "input", boot-shared eTbq). The box you type in
+// is on screen only with the list at its end: ThreadsFlexpane's
+// focusInputIfAvailable scrolls to it (focusOnKey("input")), and
+// Chromium scrolls a focused editor into view as you type. AnchorLayout
+// then holds the end while the reply goes in above the box
+// (stickToBottom, 62rv). Clack's box stays under the list wherever the
+// list is, so the send puts the list where Slack's is when you send.
+func (v *ThreadView) JumpToOwnSend(cid string, files bool) {
+	s := v.s
+	s.list.Position = layout.Position{}
+	s.positioned = true
+	s.pendingJump = "" // a JumpTo still waiting for its reply
+	v.h.Invalidate()
+}
+
 // JumpTo is the thread metadata Slack's jumpToThreadReply sets when the
 // pane opens at a message (client-boot 6IaZ over CSo3 GC, from toThread's
 // replyTs and uiState.highlightTs): the list starts at ts (startTs) and,
