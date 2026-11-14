@@ -650,7 +650,7 @@ jobs:
       # step fails only when the probe doesn't build.
       - name: notification probe (UNUserNotificationCenter in ad-hoc signed bundles)
         run: |
-          set -u
+          set -u +e
           out=$PWD/build/notify-probe
           mkdir -p "$out"
           go test -c -o build/unprobe.test ./internal/desktop/usernotifyprobe || exit 1

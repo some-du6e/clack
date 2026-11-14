@@ -4,6 +4,7 @@
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <UserNotifications/UserNotifications.h>
+#import <objc/message.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -53,28 +54,45 @@ static NSString *errText(NSError *e) {
 
 static ClackProbeDelegate *probeDelegate;
 
-// center is currentNotificationCenter, which raises (rather than returning
-// nil) for a process macOS doesn't see as an app bundle.
+// lsProxy says whether LaunchServices has a bundle proxy for this process,
+// the thing currentNotificationCenter needs (it raises
+// "bundleProxyForCurrentProcess is nil" without one): 1 yes, 0 no, -1 when
+// the private API isn't there to ask.
+static int lsProxy(void) {
+	Class c = NSClassFromString(@"LSBundleProxy");
+	SEL s = NSSelectorFromString(@"bundleProxyForCurrentProcess");
+	if (c == nil || ![c respondsToSelector:s]) {
+		return -1;
+	}
+	return ((id (*)(Class, SEL))objc_msgSend)(c, s) != nil;
+}
+
+// center is currentNotificationCenter. Outside an app bundle that raises
+// NSInternalInconsistencyException inside a dispatch_once, which libdispatch
+// turns into an abort that no @catch sees (ci run 43585762971, the bare
+// variant), so it isn't called without a bundle proxy.
 static UNUserNotificationCenter *center(NSString **why) {
-	@try {
-		UNUserNotificationCenter *c = [UNUserNotificationCenter currentNotificationCenter];
-		if (c == nil) {
-			if (why) {
-				*why = @"currentNotificationCenter returned nil";
-			}
-			return nil;
-		}
-		if (probeDelegate == nil) {
-			probeDelegate = [ClackProbeDelegate new];
-			c.delegate = probeDelegate;
-		}
-		return c;
-	} @catch (NSException *e) {
+	int proxy = lsProxy();
+	NSBundle *b = NSBundle.mainBundle;
+	if (proxy == 0 || (proxy < 0 && (b.bundleIdentifier == nil || ![b.bundlePath.pathExtension isEqualToString:@"app"]))) {
 		if (why) {
-			*why = [NSString stringWithFormat:@"currentNotificationCenter raised %@: %@", e.name, e.reason];
+			*why = [NSString stringWithFormat:@"no LaunchServices bundle proxy for this process (main bundle %@, id %@): currentNotificationCenter would abort",
+			                                  b.bundlePath, b.bundleIdentifier ?: @"(none)"];
 		}
 		return nil;
 	}
+	UNUserNotificationCenter *c = [UNUserNotificationCenter currentNotificationCenter];
+	if (c == nil) {
+		if (why) {
+			*why = @"currentNotificationCenter returned nil";
+		}
+		return nil;
+	}
+	if (probeDelegate == nil) {
+		probeDelegate = [ClackProbeDelegate new];
+		c.delegate = probeDelegate;
+	}
+	return c;
 }
 
 static NSString *sessionText(void) {
@@ -130,9 +148,9 @@ char *clack_unprobe_bundle(void) {
 	@autoreleasepool {
 		NSBundle *b = NSBundle.mainBundle;
 		NSOperatingSystemVersion v = NSProcessInfo.processInfo.operatingSystemVersion;
-		return dupstr([NSString stringWithFormat:@"macOS %ld.%ld.%ld; main bundle path=%@ id=%@ executable=%@; %@; %@",
+		return dupstr([NSString stringWithFormat:@"macOS %ld.%ld.%ld; main bundle path=%@ id=%@ executable=%@ launchServicesProxy=%d; %@; %@",
 		                                         (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion,
-		                                         b.bundlePath, b.bundleIdentifier ?: @"(none)", b.executablePath,
+		                                         b.bundlePath, b.bundleIdentifier ?: @"(none)", b.executablePath, lsProxy(),
 		                                         sessionText(), signatureText()]);
 	}
 }
