@@ -234,6 +234,60 @@ func TestAutocompleteSlackCommandsAndEmoji(t *testing.T) {
 	t.Logf(":smi after picks: %v", got)
 }
 
+// ":tu" then Tab (Karim, 2026-11-14) through the composer: Slack's own
+// ranking (a node harness over build efbd526e8fb3, the cases in
+// internal/acrank/emoji_slack_test.go) puts tulip first and root_vegetable
+// second (only its keyword "turnip" matches), and never offers +1 for
+// "tu", however often it's used: a query under 3 letters may skip no
+// letters and none of +1's keywords starts with "tu". ":thu" does reach
+// it ("thumbsup"), first once its uses count; ":like" reaches it by
+// keyword. A pick stored under ":tu" moves an emoji to the top.
+func TestAutocompleteSlackEmojiTu(t *testing.T) {
+	app, _ := acSlackApp(t)
+	noThumbs := func(rows []string) bool { return acIndex(rows, "+1") < 0 && acIndex(rows, "thumbsup") < 0 }
+	// with the remote model in, root_vegetable is second (the fallback
+	// model puts turkey there)
+	got := acSettle(t, newAutocompleteFor(t, app), ":tu", func(n []string) bool { return len(n) > 1 && n[1] == "root_vegetable" })
+	t.Logf(":tu cold: %v", got)
+	if got[0] != "tulip" || !noThumbs(got) {
+		t.Errorf(":tu: Slack's tulip first, no +1: %v", got)
+	}
+	for _, want := range []string{"turkey", "turtle", "flag-tc", "poultry_leg"} {
+		if acIndex(got, want) < 0 {
+			t.Errorf(":tu: %s (keyword or name match) missing: %v", want, got)
+		}
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":like", func(n []string) bool { return len(n) > 1 })
+	if acIndex(got, "+1") < 0 {
+		t.Errorf(":like: +1 by its keyword: %v", got)
+	}
+
+	// +1 used a lot: reactions record its id key only (text ""), picks
+	// under ":thu" the text too
+	for i := 0; i < 20; i++ {
+		app.RecordEmojiFrecency("+1", "")
+	}
+	for i := 0; i < 3; i++ {
+		app.RecordEmojiFrecency("thumbsup", ":thu")
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":tu", func(n []string) bool { return len(n) > 1 })
+	t.Logf(":tu with +1 frecent: %v", got)
+	if got[0] != "tulip" || !noThumbs(got) {
+		t.Errorf(":tu with +1 frecent: still tulip first, no +1: %v", got)
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":thu", func(n []string) bool { return len(n) > 0 && n[0] == "thumbsup" })
+	t.Logf(":thu with +1 frecent: %v", got)
+
+	// picks under ":tu" itself
+	for i := 0; i < 3; i++ {
+		app.RecordEmojiFrecency("turtle", ":tu")
+	}
+	got = acSettle(t, newAutocompleteFor(t, app), ":tu", func(n []string) bool { return len(n) > 0 && n[0] == "turtle" })
+	if got[1] != "tulip" || !noThumbs(got) {
+		t.Errorf(":tu after turtle picks: turtle, then tulip: %v", got)
+	}
+}
+
 func newAutocompleteFor(t *testing.T, app *core.App) *Autocomplete {
 	ac := newAutocomplete(&slickHost{app: app}, tChGen)
 	t.Cleanup(ac.Close)

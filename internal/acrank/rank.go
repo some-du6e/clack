@@ -78,8 +78,11 @@ type Cand struct {
 	// a member's DM) open, unix seconds (0: not in the history).
 	History float64
 
-	// emoji: Names are the canonical name and aliases
+	// emoji: Names are the canonical name and aliases; Keywords are
+	// Slack's English keywords of a standard emoji (emoji.Keywords;
+	// matchKeywords), normalized or not
 	Names    []string
+	Keywords []string
 	EmojiCtr float64 // offline features user_ctr_30dd (0: Slack's default)
 
 	// commands
@@ -209,7 +212,7 @@ func Rank(query string, cands []Cand, o Options) []Result {
 		case Channel:
 			ok = matchChannel(e, q, m, mc, o)
 		case Emoji:
-			ok = matchEmoji(e, q)
+			ok = matchEmoji(e, q, matcher)
 		case Command:
 			ok = matchCommand(e, q, matcher)
 		}
@@ -234,6 +237,13 @@ func Rank(query string, cands []Cand, o Options) []Result {
 			a, b := es[i], es[j]
 			if a.score != b.score {
 				return a.score < b.score
+			}
+			// getSortFuzzyFunction returns a.score − b.score, NaN for two
+			// Inf scores (emoji that only a keyword matched), and sort
+			// reads NaN as a tie: they keep the list's order, no name
+			// tie-break
+			if math.IsInf(a.score, 1) {
+				return false
 			}
 			return collate(a.sortName, b.sortName) < 0
 		})

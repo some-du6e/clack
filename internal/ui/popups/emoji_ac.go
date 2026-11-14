@@ -11,11 +11,13 @@ import (
 // AutocompleteEmoji is the composer's ":" list as Slack builds it
 // (autocompleteEmoji → the Searcher with the emoji entity, docs/
 // AUTOCOMPLETE-RULES.md): every emoji whose names can match (Slack's
-// character-mask prefilter), scored by scoreEmojiNameAgainstQuery,
-// frecency-boosted from the shared "frecency" pref (o.Frecency) and
-// ranked by the autocomplete model. Ids are Slack's emoji frecency ids
-// ("E"+unicode, "E"+custom name). Name is the best matching name, Toned
-// the name to insert at the skin tone in use.
+// character-mask prefilter) or whose keywords can (matchKeywords),
+// scored by scoreEmojiNameAgainstQuery, frecency-boosted from the shared
+// "frecency" pref (o.Frecency) and ranked by the autocomplete model. The
+// standard emoji go in Slack's consolidated order, then the custom ones:
+// keyword-only matches tie and keep it. Ids are Slack's emoji frecency
+// ids ("E"+unicode, "E"+custom name). Name is the best matching name,
+// Toned the name to insert at the skin tone in use.
 func AutocompleteEmoji(h Host, query string, o acrank.Options) []EmojiMatch {
 	x, _ := epIndexFor(h)
 	if x == nil || query == "" {
@@ -25,13 +27,25 @@ func AutocompleteEmoji(h Host, query string, o acrank.Options) []EmojiMatch {
 	q := []rune(acrank.Normalize(query))
 	cands := make([]acrank.Cand, 0, 256)
 	ids := make([]int32, 0, 256)
-	for id := int32(0); id < int32(len(x.names)); id++ {
+	add := func(id int32, kws []string) {
 		names := x.allNames(id)
-		if !epMayMatch(names, q) {
-			continue
+		if !epMayMatch(names, q) && !acrank.KeywordsMayMatch(kws, q) {
+			return
 		}
-		cands = append(cands, acrank.Cand{Kind: acrank.Emoji, ID: core.EmojiFrecencyID(names[0]), Name: names[0], Names: names})
+		cands = append(cands, acrank.Cand{Kind: acrank.Emoji, ID: core.EmojiFrecencyID(names[0]), Name: names[0], Names: names, Keywords: kws})
 		ids = append(ids, id)
+	}
+	if len(x.std.order) == x.nStd {
+		for _, id := range x.std.order {
+			add(id, x.std.keywords[id])
+		}
+	} else {
+		for id := int32(0); id < int32(x.nStd); id++ {
+			add(id, nil)
+		}
+	}
+	for id := int32(x.nStd); id < int32(len(x.names)); id++ {
+		add(id, nil)
 	}
 	rs := acrank.Rank(query, cands, o)
 	out := make([]EmojiMatch, 0, len(rs))
