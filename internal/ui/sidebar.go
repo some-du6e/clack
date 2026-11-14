@@ -195,6 +195,10 @@ func sectionIcon(typ string) string {
 		return "code"
 	case "priority": // VIP unreads: getIconPrefix's vip glyph
 		return "vip"
+	case "slack_connect": // External connections (iNkd getSectionIconName)
+		return "buildings"
+	case "temporary_channels":
+		return "hourglass"
 	}
 	return "list-view"
 }
