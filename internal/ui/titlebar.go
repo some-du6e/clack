@@ -248,6 +248,15 @@ type wcoLook struct {
 // except in full screen (TitlebarHeight 0, wcoVisible false).
 func (a *App) wcoOn() bool { return a.wco.on && a.winMode != app.Fullscreen }
 
+// macTitlebarOn: the platform hides the main window's title bar and keeps
+// its buttons (macOS, titlebar_darwin.go); Run sets App.macNav from it.
+var macTitlebarOn bool
+
+// navCaption reports whether the top nav is the window's caption, its
+// empty space the drag area: Windows' caption buttons show, or macOS's
+// title bar is hidden (a.macNav), and not in full screen.
+func (a *App) navCaption() bool { return (a.wco.on || a.macNav) && a.winMode != app.Fullscreen }
+
 // wcoScale is px per window DIP: the overlay doesn't zoom with View >
 // Zoom (138px / var(--zoom-factor) in Slack's CSS). gtx is zoomed, as
 // newContext makes it.
@@ -320,10 +329,13 @@ func (a *App) wcoNavReserve(gtx layout.Context) int {
 // Windows .p-ia4_top_nav__native_ui_spacer (2 × 12px + 52px / zoom, the
 // app menu's) is no-drag (unless spacer is false: BBM hides it), and so is
 // .p-ia4_top_nav__windows_controls (reserve px wide, 32px tall, at the end
-// of the right container, 8px from the edge). Gio's ActionAt passes over
-// areas without an action, so the no-drag ones carry an input handler.
+// of the right container, 8px from the edge). On macOS the spacer stays
+// drag (only .p-ia4_top_nav--windows makes it no-drag): the traffic
+// lights over it are AppKit's buttons, above the page. Gio's ActionAt
+// passes over areas without an action, so the no-drag ones carry an input
+// handler.
 func (a *App) wcoNavAreas(gtx layout.Context, width, h, reserve int, spacer bool) {
-	if !a.wcoOn() {
+	if !a.navCaption() {
 		return
 	}
 	for {
@@ -341,7 +353,7 @@ func (a *App) wcoNavAreas(gtx layout.Context, width, h, reserve int, spacer bool
 		defer clip.Rect(r).Push(gtx.Ops).Pop()
 		event.Op(gtx.Ops, &a.wco.noDrg)
 	}
-	if spacer {
+	if spacer && a.wcoOn() {
 		s := a.wcoScale(gtx)
 		noDrag(image.Rect(0, 0, gtx.Dp(wcoNativeUIPad)+int(math.Round(float64(wcoNativeUIW*s))), h))
 	}
@@ -356,14 +368,20 @@ func (a *App) wcoNavAreas(gtx layout.Context, width, h, reserve int, spacer bool
 // Slack page draws them, so Clack makes the overlay's title bar area
 // (navigator.windowControlsOverlay's titlebar rect: the overlay's height,
 // left of the buttons) the drag area, as an Electron page with a
-// titleBarOverlay marks it.
+// titleBarOverlay marks it. macOS has no overlay: the band the top nav
+// would be (40 window points, under the traffic lights) is the drag
+// area there.
 func (a *App) wcoWelcomeDrag(gtx layout.Context) {
-	if !a.wcoOn() {
+	if !a.navCaption() {
 		return
 	}
 	s := a.wcoScale(gtx)
-	w := gtx.Constraints.Max.X - int(math.Round(float64(wcoWidth*s)))
-	h := int(math.Round(float64(wcoBootHeight * s)))
+	w := gtx.Constraints.Max.X
+	h := int(math.Round(float64(float32(theme.TopNavH) * s)))
+	if a.wcoOn() {
+		w -= int(math.Round(float64(wcoWidth * s)))
+		h = int(math.Round(float64(wcoBootHeight * s)))
+	}
 	defer clip.Rect{Max: image.Pt(max(w, 0), h)}.Push(gtx.Ops).Pop()
 	system.ActionInputOp(system.ActionMove).Add(gtx.Ops)
 }

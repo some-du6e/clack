@@ -156,6 +156,7 @@ type App struct {
 
 	caption captionState // Windows: the window's HWND and DWM attributes (caption_windows.go)
 	wco     wcoBar       // Windows: the caption buttons over the top nav (titlebar.go)
+	macNav  bool         // macOS: no title bar, the top nav is the drag area (titlebar_darwin.go; tests)
 
 	router          router
 	clicks          clickables
@@ -431,8 +432,12 @@ func (a *App) Run() error {
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)
-	a.wcoEnable() // Windows: the top nav draws the caption buttons
+	a.wcoEnable()            // Windows: the top nav draws the caption buttons
+	a.macNav = macTitlebarOn // macOS: the top nav is the drag area under the traffic lights
 	a.winLive.Store(a.win)
+	if startMacWindow != nil {
+		startMacWindow(a) // macOS: the Dock icon and the app's activation show a hidden window (window_darwin.go)
+	}
 	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
 	applog.Mark("window", "")
 	go a.updateLoop(a.updateSchedule(), realUpdateClock())
@@ -472,8 +477,8 @@ func (a *App) Run() error {
 		if onEvent != nil {
 			onEvent(ev)
 		}
-		if menuViewEvent != nil {
-			menuViewEvent(ev)
+		if macViewEvent != nil {
+			macViewEvent(ev) // macOS: which NSView is the main window's (window_darwin.go)
 		}
 		a.syncCaption(ev)        // Windows: the native caption follows the window (caption_windows.go)
 		a.syncTaskbar()          // Windows: the taskbar overlay on a new window (dock.go)

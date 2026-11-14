@@ -8,17 +8,31 @@ import (
 	"strings"
 	"testing"
 
+	"gioui.org/app"
+	"gioui.org/app/cocoatest"
+
 	"github.com/some-du6e/clack/internal/ui/menubar"
 )
 
 // AppKit's menus belong to the main thread: TestMain keeps the main
 // goroutine on it and runs onMain's functions there while the tests run.
+// With CLACK_MACOS_WINDOW_TESTS (ci's macos job, window_darwin_test.go) it
+// runs AppKit's own loop there instead, app.Main as cmd/clack's app.Events
+// does, so real windows open; onMain then goes through the main queue.
 
 func init() { runtime.LockOSThread() }
 
 var mainQueue = make(chan func())
 
+// macWindowTests: TestMain runs app.Main (CLACK_MACOS_WINDOW_TESTS).
+var macWindowTests = os.Getenv("CLACK_MACOS_WINDOW_TESTS") != ""
+
 func TestMain(m *testing.M) {
+	if macWindowTests {
+		go func() { os.Exit(m.Run()) }()
+		app.Main()
+		return
+	}
 	done := make(chan int)
 	go func() { done <- m.Run() }()
 	for {
@@ -32,6 +46,10 @@ func TestMain(m *testing.M) {
 }
 
 func onMain(f func()) {
+	if macWindowTests {
+		cocoatest.OnMain(f)
+		return
+	}
 	ran := make(chan struct{})
 	mainQueue <- func() { f(); close(ran) }
 	<-ran

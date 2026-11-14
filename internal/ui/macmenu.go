@@ -266,9 +266,15 @@ func (a *App) menuState(k menuKey) *menubar.State {
 	return s
 }
 
-// menuViewEvent tells the menus which view is the main window (macOS:
-// menubar_view_darwin.go).
-var menuViewEvent func(event.Event)
+// macViewEvent sees every main window event, for the view Gio's
+// AppKitViewEvent names: the main window's, which a close hides and the
+// Dock icon brings back (macOS: window_darwin.go).
+var macViewEvent func(event.Event)
+
+// startMacWindow installs the main window's AppKit glue: the Dock icon's
+// reopen and the app's activation show it after a close hid it (macOS:
+// window_darwin.go).
+var startMacWindow func(a *App)
 
 // Slack's People & User Groups (⇧⌘E) and Channel Browser (⇧⌘L).
 const (

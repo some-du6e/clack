@@ -32,6 +32,7 @@ import (
 #cgo LDFLAGS: -framework AppKit -framework QuartzCore
 
 #include <AppKit/AppKit.h>
+#include <objc/message.h>
 
 #define MOUSE_MOVE 1
 #define MOUSE_UP 2
@@ -41,8 +42,12 @@ import (
 __attribute__ ((visibility ("hidden"))) void gio_main(void);
 __attribute__ ((visibility ("hidden"))) void gio_init(void);
 __attribute__ ((visibility ("hidden"))) CFTypeRef gio_createView(int presentWithTrans);
-__attribute__ ((visibility ("hidden"))) CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int panel);
+__attribute__ ((visibility ("hidden"))) CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int panel, int hiddenTitlebar);
 __attribute__ ((visibility ("hidden"))) void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle);
+// Clack patch (CLACK_PATCHES.md §23)
+__attribute__ ((visibility ("hidden"))) void gio_redrawTrafficLights(CFTypeRef windowRef);
+__attribute__ ((visibility ("hidden"))) void gio_setTitlebar(CFTypeRef viewRef, int hidden, int lightSet, CGFloat x, CGFloat y);
+__attribute__ ((visibility ("hidden"))) void gio_setOrderedOut(CFTypeRef viewRef, int out);
 
 static void writeClipboard(CFTypeRef str) {
 	@autoreleasepool {
@@ -344,6 +349,64 @@ static int isMiniaturized(CFTypeRef windowRef) {
 		return window.miniaturized ? 1 : 0;
 	}
 }
+
+// Clack patch (CLACK_PATCHES.md §23): Window.Hide, and a double-click on
+// a drag area.
+
+static void orderOut(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		[window orderOut:nil];
+	}
+}
+
+static int isWindowVisible(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		return window.visible ? 1 : 0;
+	}
+}
+
+// doubleClickAction is System Settings' "Double-click a window's title
+// bar to": the AppleActionOnDoubleClick user default (retained), or NULL.
+static CFTypeRef doubleClickAction(void) {
+	@autoreleasepool {
+		NSString *s = [[NSUserDefaults standardUserDefaults] stringForKey:@"AppleActionOnDoubleClick"];
+		return s != nil ? CFBridgingRetain(s) : NULL;
+	}
+}
+
+// canZoomFill: the window has macOS 15's Fill (_zoomFill:).
+static int canZoomFill(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		return [window respondsToSelector:NSSelectorFromString(@"_zoomFill:")] ? 1 : 0;
+	}
+}
+
+static void zoomFill(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		SEL sel = NSSelectorFromString(@"_zoomFill:");
+		if ([window respondsToSelector:sel]) {
+			((void (*)(id, SEL, id))objc_msgSend)(window, sel, nil);
+		}
+	}
+}
+
+static void performZoom(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		[window performZoom:nil];
+	}
+}
+
+static void performMiniaturize(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		[window performMiniaturize:nil];
+	}
+}
 */
 import "C"
 
@@ -383,6 +446,14 @@ type window struct {
 	// cmdKeys is for storing the current key event while
 	// waiting for a doCommandBySelector.
 	cmdKeys cmdKeys
+
+	// Clack patch (CLACK_PATCHES.md §23): titlebarHidden is a decorated
+	// window with HiddenTitleBar applied; hidden is a window Hide ordered
+	// out, which draws nothing until it is back on screen; hideAfterFullscreen
+	// is a Hide waiting for the window to leave full screen.
+	titlebarHidden      bool
+	hidden              bool
+	hideAfterFullscreen bool
 }
 
 type cmdKeys struct {
@@ -444,7 +515,10 @@ func (w *window) updateWindowMode() {
 	case C.isWindowZoomed(window) != 0:
 		w.config.Mode = Maximized
 	}
-	w.config.Decorated = style&C.NSWindowStyleMaskFullSizeContentView == 0
+	// Clack patch (CLACK_PATCHES.md §23): a hidden title bar's content
+	// covers the title bar too, and the window is still decorated (else
+	// Gio would draw its own decorations in it).
+	w.config.Decorated = style&C.NSWindowStyleMaskFullSizeContentView == 0 || w.titlebarHidden
 }
 
 func (w *window) Configure(options []Option) {
@@ -453,6 +527,11 @@ func (w *window) Configure(options []Option) {
 	cnf := w.config
 	cnf.apply(cfg, options)
 	window := C.windowForView(w.view)
+	// Clack patch (CLACK_PATCHES.md §23): HiddenTitleBar on a decorated
+	// window keeps the buttons, TrafficLightPosition moves them.
+	w.config.hiddenTitleBar = cnf.hiddenTitleBar
+	w.config.trafficLight = cnf.trafficLight
+	w.titlebarHidden = cnf.Decorated && cnf.hiddenTitleBar
 
 	mask := C.getWindowStyleMask(window)
 	fullscreen := mask&C.NSWindowStyleMaskFullScreen != 0
@@ -505,10 +584,21 @@ func (w *window) Configure(options []Option) {
 	mask &^= style
 	barTrans := C.int(C.NO)
 	titleVis := C.NSWindowTitleVisibility(C.NSWindowTitleVisible)
+	buttonsHidden := C.int(C.NO)
 	if !cnf.Decorated {
 		mask |= style
 		barTrans = C.YES
 		titleVis = C.NSWindowTitleHidden
+		buttonsHidden = C.YES
+	} else if w.titlebarHidden {
+		// Clack patch (CLACK_PATCHES.md §23): Electron's titleBarStyle
+		// "hidden". In full screen the title bar AppKit reveals is an
+		// ordinary one (NotifyWindowEnterFullScreen).
+		mask |= style
+		if !fullscreen {
+			barTrans = C.YES
+			titleVis = C.NSWindowTitleHidden
+		}
 	}
 	if cnf.TopMost {
 		C.setWindowLevel(window, C.NSFloatingWindowLevel)
@@ -516,12 +606,27 @@ func (w *window) Configure(options []Option) {
 	C.setWindowTitlebarAppearsTransparent(window, barTrans)
 	C.setWindowTitleVisibility(window, titleVis)
 	C.setWindowStyleMask(window, mask)
-	C.setWindowStandardButtonHidden(window, C.NSWindowCloseButton, barTrans)
-	C.setWindowStandardButtonHidden(window, C.NSWindowMiniaturizeButton, barTrans)
-	C.setWindowStandardButtonHidden(window, C.NSWindowZoomButton, barTrans)
+	C.setWindowStandardButtonHidden(window, C.NSWindowCloseButton, buttonsHidden)
+	C.setWindowStandardButtonHidden(window, C.NSWindowMiniaturizeButton, buttonsHidden)
+	C.setWindowStandardButtonHidden(window, C.NSWindowZoomButton, buttonsHidden)
+	// Clack patch (CLACK_PATCHES.md §23): AppKit lays the title bar out
+	// again after the title, the style and the buttons' visibility
+	// change (Electron redraws after OnTitleChanged, and after visibility
+	// changes on macOS 26), so the buttons go back where they belong.
+	tl := cnf.trafficLight
+	C.gio_setTitlebar(w.view, boolInt(w.titlebarHidden), boolInt(tl.set), C.CGFloat(tl.x), C.CGFloat(tl.y))
+	C.gio_redrawTrafficLights(window)
 	// When toggling the titlebar, the layer doesn't update its frame
 	// until the next resize. Force it.
 	C.resetLayerFrame(w.view)
+}
+
+// boolInt is b as a C int (Clack patch, CLACK_PATCHES.md §23).
+func boolInt(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func (w *window) setTitle(title string) {
@@ -544,10 +649,104 @@ func (w *window) Perform(acts system.Action) {
 			C.setScreenFrame(window, C.CGFloat(x), C.CGFloat(y), C.CGFloat(sz.X), C.CGFloat(sz.Y))
 		case system.ActionRaise:
 			C.raiseWindow(window)
+			w.shown() // Clack patch (CLACK_PATCHES.md §23)
 		}
 	})
 	if acts&system.ActionClose != 0 {
 		C.closeWindow(window)
+	}
+}
+
+// hide is a Clack patch (CLACK_PATCHES.md §23): Window.Hide on macOS,
+// Electron's NativeWindowMac::Hide ([window orderOut:]). A full-screen
+// window leaves full screen first and goes once it has (windowDidExitFullScreen:),
+// as Slack's close handler awaits leave-full-screen before it hides; the
+// mode is Windowed from now on, so an option given meanwhile doesn't put
+// it back in full screen. Until it is on screen again (ActionRaise, or
+// any other order-front) the window draws no frames: Gio's Metal layer
+// waits for drawables without a timeout.
+func (w *window) hide() bool {
+	window := C.windowForView(w.view)
+	if window == 0 {
+		return false
+	}
+	if C.getWindowStyleMask(window)&C.NSWindowStyleMaskFullScreen != 0 {
+		w.hideAfterFullscreen = true
+		w.config.Mode = Windowed
+		C.toggleFullScreen(window)
+		return true
+	}
+	w.orderOut(window)
+	return true
+}
+
+func (w *window) orderOut(window C.CFTypeRef) {
+	w.setHidden(true)
+	w.displayLink.Stop()
+	C.orderOut(window)
+}
+
+func (w *window) setHidden(hidden bool) {
+	w.hidden = hidden
+	C.gio_setOrderedOut(w.view, boolInt(hidden))
+}
+
+// shown is a Clack patch (CLACK_PATCHES.md §23): a window Hide ordered out
+// that is on screen again draws again.
+func (w *window) shown() {
+	if !w.hidden {
+		return
+	}
+	window := C.windowForView(w.view)
+	if window == 0 || C.isWindowVisible(window) == 0 {
+		return
+	}
+	w.setHidden(false)
+	C.setNeedsDisplay(w.view)
+	w.SetAnimating(w.anim)
+}
+
+// gio_onExitedFullScreen: the window left full screen (exited), or failed
+// to, which ends a Hide's wait (the window stays).
+//
+//export gio_onExitedFullScreen
+func gio_onExitedFullScreen(h C.uintptr_t, exited C.int) {
+	w := windowFor(h)
+	if !w.hideAfterFullscreen {
+		return
+	}
+	w.hideAfterFullscreen = false
+	if window := C.windowForView(w.view); window != 0 && exited != 0 {
+		w.orderOut(window)
+	}
+}
+
+//export gio_onOcclusionChanged
+func gio_onOcclusionChanged(h C.uintptr_t) {
+	windowFor(h).shown()
+}
+
+// titlebarDoubleClick is a Clack patch (CLACK_PATCHES.md §23): what a
+// double-click on a drag area does (titlebarDoubleClickAction).
+func (w *window) titlebarDoubleClick() {
+	window := C.windowForView(w.view)
+	if window == 0 {
+		return
+	}
+	pref := C.doubleClickAction()
+	set := pref != 0
+	var s string
+	if set {
+		s = nsstringToString(pref)
+		C.CFRelease(pref)
+	}
+	switch titlebarDoubleClickAction(s, set, C.canZoomFill(window) != 0) {
+	case titlebarDoubleClickFill:
+		C.zoomFill(window)
+	case titlebarDoubleClickZoom:
+		C.performZoom(window)
+	case titlebarDoubleClickMinimize:
+		C.performMiniaturize(window)
 	}
 }
 
@@ -572,7 +771,8 @@ func (w *window) SetInputHint(_ key.InputHint) {}
 func (w *window) SetAnimating(anim bool) {
 	w.anim = anim
 	window := C.windowForView(w.view)
-	if w.anim && window != 0 && C.isMiniaturized(window) == 0 {
+	// Clack patch (CLACK_PATCHES.md §23): not while Hide has it off screen.
+	if w.anim && window != 0 && C.isMiniaturized(window) == 0 && (!w.hidden || C.isWindowVisible(window) != 0) {
 		w.displayLink.Start()
 	} else {
 		w.displayLink.Stop()
@@ -703,7 +903,7 @@ func gio_onFileDrop(h C.uintptr_t, kind C.int, x, y C.CGFloat, paths C.CFTypeRef
 }
 
 //export gio_onMouse
-func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, dy C.CGFloat, ti C.double, mods C.NSUInteger) {
+func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, dy C.CGFloat, ti C.double, mods C.NSUInteger, clicks C.NSInteger) {
 	w := windowFor(h)
 	t := time.Duration(float64(ti)*float64(time.Second) + .5)
 	xf, yf := float32(x)*w.scale, float32(y)*w.scale
@@ -725,6 +925,17 @@ func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x
 	case C.MOUSE_UP:
 		typ = pointer.Release
 		w.pointerBtns &^= btn
+		// Clack patch (CLACK_PATCHES.md §23): the release of a
+		// double-click on a drag area of a window with a hidden title bar
+		// does what the title bar's would, as Chromium's
+		// NativeWidgetMacNSWindow sendEvent: does for custom draggable areas
+		// (no native title bar gets the clicks: the view takes them all).
+		if clicks == 2 && btn == pointer.ButtonPrimary && w.titlebarHidden && w.config.Mode != Fullscreen {
+			if act, ok := w.w.ActionAt(pos); ok && act == system.ActionMove {
+				w.titlebarDoubleClick()
+				return
+			}
+		}
 	case C.MOUSE_DOWN:
 		typ = pointer.Press
 		w.pointerBtns |= btn
@@ -945,6 +1156,14 @@ func gio_firstRectForCharacterRange(h C.uintptr_t, crng C.NSRange, actual C.NSRa
 }
 
 func (w *window) draw() {
+	// Clack patch (CLACK_PATCHES.md §23): nothing while Hide has the
+	// window off screen.
+	if w.hidden {
+		if window := C.windowForView(w.view); window != 0 && C.isWindowVisible(window) == 0 {
+			return
+		}
+		w.setHidden(false)
+	}
 	cnf := w.config
 	w.updateWindowMode()
 	if w.config != cnf {
@@ -1074,7 +1293,10 @@ func newWindow(win *callbacks, options []Option) {
 		if cnf.panel {
 			panel = 1
 		}
-		window := C.gio_createWindow(w.view, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y), panel)
+		// Clack patch (CLACK_PATCHES.md §23): a hidden title bar from the
+		// start, so the content is the size asked for.
+		hiddenTitlebar := boolInt(cnf.Decorated && cnf.hiddenTitleBar)
+		window := C.gio_createWindow(w.view, C.CGFloat(cnf.Size.X), C.CGFloat(cnf.Size.Y), panel, hiddenTitlebar)
 		// Release our reference now that the NSWindow has it.
 		C.CFRelease(w.view)
 		w.Configure(options)

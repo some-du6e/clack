@@ -855,8 +855,9 @@ func (p *prefsModal) huddleMotionRow(f *prefsForm) {
 // runFromTrayRow is DesktopPref's last row, the desktop setting
 // runFromTray (default on): closing the window leaves Clack running in
 // the notification area (runfromtray.go). It needs the tray icon, which
-// only Windows has, so elsewhere it stays greyed and unticked: a close
-// quits there.
+// only Windows has, so on Linux it stays greyed and unticked: a close
+// quits there. macOS has no DesktopPref; a close hides the window there
+// (the Dock icon brings it back).
 func (p *prefsModal) runFromTrayRow(f *prefsForm) {
 	const label = "Leave app running in notification area when the window is closed"
 	a := p.a

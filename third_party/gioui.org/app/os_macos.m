@@ -3,6 +3,8 @@
 //go:build darwin && !ios
 
 #import <AppKit/AppKit.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 
 #include "_cgo_export.h"
 
@@ -22,12 +24,163 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 // dragFiles is a Clack patch (CLACK_PATCHES.md §11): the drag over the
 // view carries file URLs.
 @property BOOL dragFiles;
+// titlebarHidden is a Clack patch (CLACK_PATCHES.md §23): the window's
+// title bar is hidden (HiddenTitleBar) and the view runs under it.
+@property BOOL titlebarHidden;
+// trafficLight* are a Clack patch (CLACK_PATCHES.md §23): where the
+// window's buttons go (TrafficLightPosition), in points.
+@property BOOL trafficLightSet;
+@property CGFloat trafficLightX;
+@property CGFloat trafficLightY;
+// orderedOut is a Clack patch (CLACK_PATCHES.md §23): Window.Hide ordered
+// the window out and it hasn't drawn since.
+@property BOOL orderedOut;
 @end
+
+// AppKit's undocumented hook for the parts of a view under a transparent
+// title bar (Clack patch, CLACK_PATCHES.md §23; see GioView's override).
+@interface NSView (GioTitlebar)
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar;
+@end
+
+// redrawTrafficLights is a Clack patch (CLACK_PATCHES.md §23): Electron's
+// WindowButtonsProxy redraw (shell/browser/ui/cocoa/window_buttons_proxy.mm)
+// for TrafficLightPosition. The buttons' title bar container becomes the
+// buttons' height plus 2y tall at the window's top, and the buttons sit
+// x from the left (the right in a right-to-left title bar), centred in it:
+// their tops y from the window's top. Not in full screen, whose title bar
+// is AppKit's own (RedrawTrafficLights).
+static void redrawTrafficLights(NSWindow *window) {
+	if (window == nil || ![window.contentView isKindOfClass:[GioView class]]) {
+		return;
+	}
+	GioView *view = (GioView *)window.contentView;
+	if (!view.titlebarHidden || !view.trafficLightSet || (window.styleMask & NSWindowStyleMaskFullScreen) != 0) {
+		return;
+	}
+	BOOL rtl = window.windowTitlebarLayoutDirection == NSUserInterfaceLayoutDirectionRightToLeft;
+	NSButton *left = [window standardWindowButton:rtl ? NSWindowZoomButton : NSWindowCloseButton];
+	NSButton *middle = [window standardWindowButton:NSWindowMiniaturizeButton];
+	NSButton *right = [window standardWindowButton:rtl ? NSWindowCloseButton : NSWindowZoomButton];
+	NSView *container = left.superview.superview;
+	if (container == nil || middle == nil || right == nil) {
+		return;
+	}
+	CGFloat bw = NSWidth(left.frame), bh = NSHeight(left.frame);
+	CGFloat pad = NSMinX(middle.frame) - NSMaxX(left.frame);
+	CGFloat x = view.trafficLightX, y = view.trafficLightY;
+	CGFloat start = rtl ? NSWidth(window.frame) - 3 * bw - 2 * pad - x : x;
+	NSRect cb = container.frame;
+	cb.size.height = bh + 2 * y;
+	cb.origin.y = NSHeight(window.frame) - NSHeight(cb);
+	[container setFrame:cb];
+	CGFloat by = (NSHeight(container.frame) - bh) / 2;
+	[left setFrameOrigin:NSMakePoint(start, by)];
+	start += bw + pad;
+	[middle setFrameOrigin:NSMakePoint(start, by)];
+	start += bw + pad;
+	[right setFrameOrigin:NSMakePoint(start, by)];
+}
+
+// setTrafficLightsVisible shows or hides the buttons' title bar container
+// (WindowButtonsProxy setVisible:).
+static void setTrafficLightsVisible(NSWindow *window, BOOL visible) {
+	NSView *container = [window standardWindowButton:NSWindowCloseButton].superview.superview;
+	[container setHidden:!visible];
+}
+
+static BOOL hasHiddenTitlebar(NSWindow *window) {
+	return [window.contentView isKindOfClass:[GioView class]] && ((GioView *)window.contentView).titlebarHidden;
+}
+
+void gio_redrawTrafficLights(CFTypeRef windowRef) {
+	@autoreleasepool {
+		redrawTrafficLights((__bridge NSWindow *)windowRef);
+	}
+}
+
+void gio_setTitlebar(CFTypeRef viewRef, int hidden, int lightSet, CGFloat x, CGFloat y) {
+	@autoreleasepool {
+		GioView *view = (__bridge GioView *)viewRef;
+		view.titlebarHidden = hidden != 0;
+		view.trafficLightSet = lightSet != 0;
+		view.trafficLightX = x;
+		view.trafficLightY = y;
+	}
+}
+
+void gio_setOrderedOut(CFTypeRef viewRef, int out) {
+	@autoreleasepool {
+		GioView *view = (__bridge GioView *)viewRef;
+		view.orderedOut = out != 0;
+	}
+}
 
 @implementation GioWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow *)window {
 	GioView *view = (GioView *)window.contentView;
 	return gio_onCloseRequest(view.handle) != 0;
+}
+// Clack patch (CLACK_PATCHES.md §23): AppKit lays the title bar out again
+// after these and moves the buttons back (Electron's
+// ElectronNSWindowDelegate redraws them after each).
+- (void)windowDidResize:(NSNotification *)notification {
+	redrawTrafficLights((NSWindow *)[notification object]);
+}
+- (void)windowDidBecomeMain:(NSNotification *)notification {
+	redrawTrafficLights((NSWindow *)[notification object]);
+}
+- (void)windowDidResignMain:(NSNotification *)notification {
+	redrawTrafficLights((NSWindow *)[notification object]);
+}
+// Clack patch (CLACK_PATCHES.md §23): full screen reveals AppKit's own
+// title bar, with the title (Electron's NotifyWindowEnterFullScreen); the
+// buttons' container hides while the window leaves it, so they don't jump
+// (NotifyWindowWillLeaveFullScreen), and comes back moved once it has.
+- (void)windowDidEnterFullScreen:(NSNotification *)notification {
+	NSWindow *window = (NSWindow *)[notification object];
+	if (hasHiddenTitlebar(window)) {
+		window.titleVisibility = NSWindowTitleVisible;
+		window.titlebarAppearsTransparent = NO;
+	}
+}
+- (void)windowDidFailToEnterFullScreen:(NSWindow *)window {
+	redrawTrafficLights(window);
+}
+- (void)windowDidExitFullScreen:(NSNotification *)notification {
+	NSWindow *window = (NSWindow *)[notification object];
+	GioView *view = (GioView *)window.contentView;
+	if (hasHiddenTitlebar(window)) {
+		// the title again too: an option while the window left full screen
+		// showed it (Configure: still full screen then)
+		window.titleVisibility = NSWindowTitleHidden;
+		window.titlebarAppearsTransparent = YES;
+		redrawTrafficLights(window);
+		setTrafficLightsVisible(window, YES);
+	}
+	gio_onExitedFullScreen(view.handle, 1);
+}
+- (void)windowDidFailToExitFullScreen:(NSWindow *)window {
+	if (hasHiddenTitlebar(window)) { // still full screen: AppKit's title bar
+		window.titleVisibility = NSWindowTitleVisible;
+		setTrafficLightsVisible(window, YES);
+	}
+	if ([window.contentView isKindOfClass:[GioView class]]) {
+		gio_onExitedFullScreen(((GioView *)window.contentView).handle, 0);
+	}
+}
+// Clack patch (CLACK_PATCHES.md §23): a window back on screen after
+// Window.Hide draws again, however it came back (an order-front that
+// didn't go through Gio: the Dock icon's reopen).
+- (void)windowDidChangeOcclusionState:(NSNotification *)notification {
+	NSWindow *window = (NSWindow *)[notification object];
+	if (![window.contentView isKindOfClass:[GioView class]]) {
+		return;
+	}
+	GioView *view = (GioView *)window.contentView;
+	if (view.orderedOut && window.visible) {
+		gio_onOcclusionChanged(view.handle);
+	}
 }
 - (void)windowWillMiniaturize:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
@@ -47,6 +200,12 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 - (void)windowWillExitFullScreen:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
   GioView *view = (GioView *)window.contentView;
+	if (hasHiddenTitlebar(window)) { // Clack patch (CLACK_PATCHES.md §23)
+		window.titleVisibility = NSWindowTitleHidden;
+		if (view.trafficLightSet) {
+			setTrafficLightsVisible(window, NO);
+		}
+	}
 	gio_onDraw(view.handle);
 }
 - (void)windowDidChangeScreen:(NSNotification *)notification {
@@ -61,6 +220,7 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 	if ([window firstResponder] == view) {
 		gio_onFocus(view.handle, 1);
 	}
+	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §23)
 }
 - (void)windowDidResignKey:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
@@ -68,6 +228,7 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 	if ([window firstResponder] == view) {
 		gio_onFocus(view.handle, 0);
 	}
+	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §23)
 }
 @end
 
@@ -80,7 +241,10 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 	}
 	// Origin is in the lower left corner. Convert to upper left.
 	CGFloat height = view.bounds.size.height;
-	gio_onMouse(view.handle, (__bridge CFTypeRef)event, typ, event.buttonNumber, p.x, height - p.y, dx, dy, [event timestamp], [event modifierFlags]);
+	// Clack patch (CLACK_PATCHES.md §23): the click count of a press or
+	// release (NSEvent raises for any other kind).
+	NSInteger clicks = (typ == MOUSE_DOWN || typ == MOUSE_UP) ? event.clickCount : 0;
+	gio_onMouse(view.handle, (__bridge CFTypeRef)event, typ, event.buttonNumber, p.x, height - p.y, dx, dy, [event timestamp], [event modifierFlags], clicks);
 }
 
 @implementation GioView
@@ -233,6 +397,32 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 // makes its window key, as Electron's acceptFirstMouse does.
 - (BOOL)acceptsFirstMouse:(NSEvent *)event {
 	return self.firstMouse;
+}
+// Clack patch (CLACK_PATCHES.md §23): under a transparent title bar the
+// window server drags the window from the parts of the content this
+// reports as not opaque, without asking the app. Chromium's
+// BridgedContentView reports its whole bounds, so every click reaches the
+// view and the program decides: an ActionMove area drags (mouseDown:).
+- (NSRect)_opaqueRectForWindowMoveWhenInTitlebar {
+	if (self.titlebarHidden) {
+		return self.bounds;
+	}
+	if (class_getInstanceMethod([NSView class], _cmd) == NULL) {
+		return NSZeroRect;
+	}
+	return [super _opaqueRectForWindowMoveWhenInTitlebar];
+}
+// Clack patch (CLACK_PATCHES.md §23): a theme change lays the title bar
+// out again (Electron's OnNativeThemeUpdated posts a redraw).
+- (void)viewDidChangeEffectiveAppearance {
+	[super viewDidChangeEffectiveAppearance];
+	if (!self.titlebarHidden) {
+		return;
+	}
+	__weak GioView *weak = self;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		redrawTrafficLights(weak.window);
+	});
 }
 - (BOOL) resignFirstResponder {
 	gio_onFocus(self.handle, 0);
@@ -466,13 +656,19 @@ void gio_setCursor(NSUInteger curID) {
 }
 @end
 
-CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int panel) {
+CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int panel, int hiddenTitlebar) {
 	@autoreleasepool {
 		NSRect rect = NSMakeRect(0, 0, width, height);
 		NSUInteger styleMask = NSTitledWindowMask |
 			NSResizableWindowMask |
 			NSMiniaturizableWindowMask |
 			NSClosableWindowMask;
+		if (hiddenTitlebar) {
+			// Clack patch (CLACK_PATCHES.md §23): the content view covers the
+			// title bar from the start, so the window is the size asked for
+			// (Electron's frameless content bounds are the window's).
+			styleMask |= NSWindowStyleMaskFullSizeContentView;
+		}
 
 		Class cls = panel ? [GioPanelWindow class] : [NSWindow class];
 		NSWindow* window = [[cls alloc] initWithContentRect:rect
@@ -483,6 +679,14 @@ CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int
 		NSView *view = (__bridge NSView *)viewRef;
 		[window setContentView:view];
 		window.delegate = globalWindowDel;
+		if (hiddenTitlebar) {
+			// Electron's frameless window: no title, a transparent title bar,
+			// and no window tabs (a tab bar has no title bar to go under).
+			window.titlebarAppearsTransparent = YES;
+			window.titleVisibility = NSWindowTitleHidden;
+			window.tabbingMode = NSWindowTabbingModeDisallowed;
+			((GioView *)view).titlebarHidden = YES;
+		}
 		if (panel) {
 			// What Electron's NativeWindowMac does for type "panel" when it
 			// creates one: the floating level, and the panel's collection

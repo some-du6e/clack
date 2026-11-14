@@ -15,11 +15,14 @@ type hider interface {
 }
 
 // Hide hides the window without destroying it, on the window's thread,
-// and reports whether it did: Windows only for now (Chromium's
-// HWNDMessageHandler::Hide); elsewhere it does nothing and returns false.
-// The window keeps delivering events but draws no frames while hidden;
-// Perform(system.ActionRaise) shows it again. It may be called while
-// handling a ClosingEvent, before calling Abort or after.
+// and reports whether it did: Windows (Chromium's
+// HWNDMessageHandler::Hide) and macOS (Electron's NativeWindowMac::Hide,
+// orderOut:; a full-screen window leaves full screen first, CLACK_PATCHES.md
+// §23); elsewhere it does nothing and returns false. The window keeps
+// delivering events but draws no frames while hidden;
+// Perform(system.ActionRaise) shows it again (on macOS so does any other
+// order-front). It may be called while handling a ClosingEvent, before
+// calling Abort or after.
 func (w *Window) Hide() bool {
 	if w.driver == nil {
 		return false

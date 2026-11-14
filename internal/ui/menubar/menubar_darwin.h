@@ -21,7 +21,6 @@ enum {
 void clack_menubar_edit_role(const char *sel, const char *key, int mods);
 CFTypeRef clack_menubar_spec(const clack_mi *items, int n);
 void clack_menubar_install(CFTypeRef spec);
-void clack_menubar_set_main_view(uintptr_t view);
 
 // main thread only (tests)
 CFTypeRef clack_menubar_build(CFTypeRef spec);

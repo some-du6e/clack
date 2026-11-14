@@ -76,4 +76,38 @@ func TestHiddenTitleBarOption(t *testing.T) {
 	if cnf.hiddenTitleBar {
 		t.Fatal("HiddenTitleBar(false) left it on")
 	}
+	// Clack patch (CLACK_PATCHES.md §23): the buttons' place, unset until
+	// asked for, in DIPs whatever the metric
+	if cnf.trafficLight.set {
+		t.Fatal("TrafficLightPosition set by default")
+	}
+	cnf.apply(unit.Metric{PxPerDp: 2}, []Option{TrafficLightPosition(12, 12)})
+	if want := (trafficLight{set: true, x: 12, y: 12}); cnf.trafficLight != want {
+		t.Fatalf("TrafficLightPosition(12, 12): %+v, want %+v", cnf.trafficLight, want)
+	}
+}
+
+// Clack patch (CLACK_PATCHES.md §23): a double-click on a drag area does
+// what Chromium's NativeWidgetMacNSWindow does for its custom draggable
+// areas with each AppleActionOnDoubleClick.
+func TestTitlebarDoubleClickAction(t *testing.T) {
+	for _, c := range []struct {
+		pref         string
+		set, canFill bool
+		want         titlebarDoubleClick
+	}{
+		{"", false, false, titlebarDoubleClickZoom}, // unset: the default, Zoom
+		{"", false, true, titlebarDoubleClickZoom},
+		{"Maximize", true, false, titlebarDoubleClickZoom},
+		{"Minimize", true, false, titlebarDoubleClickMinimize},
+		{"Fill", true, true, titlebarDoubleClickFill},
+		{"Fill", true, false, titlebarDoubleClickNone}, // before macOS 15: nothing, as in Chromium
+		{"None", true, true, titlebarDoubleClickNone},
+		{"", true, false, titlebarDoubleClickNone},
+		{"maximize", true, false, titlebarDoubleClickNone}, // the values are case-sensitive
+	} {
+		if got := titlebarDoubleClickAction(c.pref, c.set, c.canFill); got != c.want {
+			t.Errorf("AppleActionOnDoubleClick %q (set %v, Fill %v): %d, want %d", c.pref, c.set, c.canFill, got, c.want)
+		}
+	}
 }

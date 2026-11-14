@@ -40,12 +40,14 @@ func (f *fakeTray) got() [][2]string {
 // quitting, and the first such hide ever shows the RunFromTray balloon;
 // anything else is a quit.
 func TestCloseToTray(t *testing.T) {
+	defer func(v bool) { closeHidesWithoutTray = v }(closeHidesWithoutTray)
+	closeHidesWithoutTray = false // Windows' and Linux's (macOS: TestCloseHidesWithoutTray)
 	a, _, _ := fakePrefsApp(t)
 	hides := 0
 	hidden := true // what Window.Hide reports
 	a.hideHook = func() bool { hides++; return hidden }
 
-	// no tray icon (macOS, Linux, or StartTray failed): the close quits
+	// no tray icon (Linux, or StartTray failed): the close quits
 	if a.closeToTray() || hides != 0 {
 		t.Fatalf("no tray: closeToTray hid the window (%d hides)", hides)
 	}
@@ -133,6 +135,60 @@ func TestCloseToTray(t *testing.T) {
 	tray.err = errors.New("Shell_NotifyIcon")
 	if !a.closeToTray() {
 		t.Error("a failing balloon stopped the hide")
+	}
+}
+
+// macOS (W35): MAIN_WINDOW_CLOSE (mac main.bundle.cjs @1148845) hides the
+// window with no tray icon at all, the Dock icon bringing it back: a
+// close hides while runFromTray is on and a workspace is signed in, and
+// the first sets hasRunFromTray though no balloon can show (the mac
+// TrayHandler has no icon); in full screen Window.Hide leaves full screen
+// itself (hideLeavesFullscreen); quitting, signed out or with runFromTray
+// off the close still quits.
+func TestCloseHidesWithoutTray(t *testing.T) {
+	defer func(c, f bool) { closeHidesWithoutTray, hideLeavesFullscreen = c, f }(closeHidesWithoutTray, hideLeavesFullscreen)
+	closeHidesWithoutTray, hideLeavesFullscreen = true, true
+	a, _, _ := fakePrefsApp(t)
+	hides := 0
+	a.hideHook = func() bool { hides++; return true }
+	a.focused = true
+	if !a.closeToTray() || hides != 1 {
+		t.Fatalf("no tray, signed in: the close wasn't a hide (%d hides)", hides)
+	}
+	if a.focused {
+		t.Error("a hidden window still counts as focused")
+	}
+	if !a.prefs.HasRunFromTray {
+		t.Error("hasRunFromTray not set by the first hide")
+	}
+	if !a.closeToTray() || hides != 2 {
+		t.Fatalf("second close: no hide (%d hides)", hides)
+	}
+
+	a.winMode = app.Fullscreen
+	if !a.closeToTray() || hides != 3 {
+		t.Errorf("full screen: no hide (%d hides)", hides)
+	}
+	a.winMode = app.Windowed
+
+	a.quitting.Store(true)
+	if a.closeToTray() {
+		t.Error("quitting (⌘Q): the close hid the window")
+	}
+	a.quitting.Store(false)
+	login := a.login
+	a.login = &loginScreen{}
+	if a.closeToTray() {
+		t.Error("signed out: the close hid the window")
+	}
+	a.login = login
+	a.setRunFromTray(false)
+	if a.closeToTray() {
+		t.Error("runFromTray off: the close hid the window")
+	}
+	a.setRunFromTray(true)
+	if hides != 3 {
+		t.Errorf("%d hides, want 3", hides)
 	}
 }
 

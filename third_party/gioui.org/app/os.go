@@ -57,6 +57,9 @@ type Config struct {
 	// hiddenTitleBar is a Clack patch (CLACK_PATCHES.md §22): see
 	// HiddenTitleBar.
 	hiddenTitleBar bool
+	// trafficLight is a Clack patch (CLACK_PATCHES.md §23): see
+	// TrafficLightPosition.
+	trafficLight trafficLight
 }
 
 // ConfigEvent is sent whenever the configuration of a Window changes.

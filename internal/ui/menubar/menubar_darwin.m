@@ -15,7 +15,6 @@ static const NSInteger kRecentTag = 1 << 20;              // tag of its first en
 static void dump(NSMutableString *out, NSMenu *m, int depth);
 static NSString *const kClackItem = @"clack"; // identifier of the items Clack made (AppKit adds its own)
 static NSMutableDictionary<NSString *, NSArray *> *editRoles; // selector -> @[key, mods]
-static __weak NSView *mainView;
 
 static NSEventModifierFlags maskOf(int mods) {
 	NSEventModifierFlags m = 0;
@@ -73,16 +72,13 @@ static ClackMenuTarget *clackTarget;
 - (void)clackRecent:(NSMenuItem *)sender {
 	clackMenuRecentChoose((int)(sender.tag - kRecentTag));
 }
-// File > Close: Slack hides its main window (the Dock icon brings it back)
-// and closes any other.
+// File > Close: Electron's close role closes the focused window, as its
+// red button does. The main window's close is MAIN_WINDOW_CLOSE, which
+// hides it (Clack's runfromtray.go: the Dock icon brings it back), leaving
+// full screen first, or quits when no workspace is signed in.
 - (void)clackClose:(id)sender {
 	NSWindow *w = [NSApp keyWindow];
 	if (w == nil) {
-		return;
-	}
-	NSView *v = mainView;
-	if (v != nil && v.window == w) {
-		[w orderOut:sender];
 		return;
 	}
 	[w performClose:sender];
@@ -180,16 +176,6 @@ void clack_menubar_add_edit_roles(void) {
 	for (NSString *s in editRoles) {
 		class_addMethod(g, NSSelectorFromString(s), (IMP)gioEdit, "v@:@"); // no-op if Gio has one
 	}
-}
-
-// reopen is the app delegate's applicationShouldHandleReopen: the Dock icon
-// shows the main window again after File > Close.
-static BOOL reopen(id self, SEL cmd, NSApplication *app, BOOL visible) {
-	NSView *v = mainView;
-	if (!visible && v.window != nil) {
-		[v.window makeKeyAndOrderFront:nil];
-	}
-	return YES;
 }
 
 void clack_menubar_edit_role(const char *sel, const char *key, int mods) {
@@ -306,14 +292,6 @@ static void installNow(NSArray *spec) {
 	if (builtHelp != nil) {
 		[NSApp setHelpMenu:builtHelp];
 	}
-	id del = [NSApp delegate];
-	SEL r = @selector(applicationShouldHandleReopen:hasVisibleWindows:);
-	if (del != nil && ![del respondsToSelector:r]) {
-		struct objc_method_description md = protocol_getMethodDescription(@protocol(NSApplicationDelegate), r, NO, YES);
-		if (md.types != NULL) {
-			class_addMethod([del class], r, (IMP)reopen, md.types);
-		}
-	}
 }
 
 void clack_menubar_install(CFTypeRef specRef) {
@@ -338,12 +316,6 @@ char *clack_menubar_install_now(CFTypeRef specRef) {
 	[out appendFormat:@"windowsMenu=%@ helpMenu=%@ servicesMenu=%@\n", [NSApp windowsMenu].title, [NSApp helpMenu].title,
 		[NSApp servicesMenu].title];
 	return strdup(out.UTF8String);
-}
-
-void clack_menubar_set_main_view(uintptr_t view) {
-	dispatch_async(dispatch_get_main_queue(), ^{
-		mainView = (__bridge NSView *)(void *)view;
-	});
 }
 
 static void dump(NSMutableString *out, NSMenu *m, int depth) {

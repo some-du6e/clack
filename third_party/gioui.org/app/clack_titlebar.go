@@ -35,12 +35,75 @@ import (
 // screen resizes it, as the top of a standard frame does, except over the
 // caption buttons.
 //
-// Only Windows implements it; elsewhere the window keeps its title bar.
-// It has no effect on an undecorated window (Decorated(false)).
+// macOS (Clack patch, CLACK_PATCHES.md §23): Electron's titleBarStyle
+// "hidden". The content view runs under the title bar
+// (NSWindowStyleMaskFullSizeContentView), the title bar is transparent
+// and its title hidden, and the close, minimize and zoom buttons stay
+// where AppKit puts them or where TrafficLightPosition says. Every click
+// outside those buttons reaches the program: an ActionMove area drags the
+// window, and a double-click on one does what System Settings' "Double-click
+// a window's title bar to" says. In full screen the title bar AppKit
+// reveals at the top of the screen is an ordinary one again.
+//
+// Windows and macOS implement it; elsewhere the window keeps its title
+// bar. It has no effect on an undecorated window (Decorated(false)).
 func HiddenTitleBar(hidden bool) Option {
 	return func(_ unit.Metric, cnf *Config) {
 		cnf.hiddenTitleBar = hidden
 	}
+}
+
+// trafficLight is TrafficLightPosition's value: Electron's
+// std::optional<gfx::Point> trafficLightPosition, in DIPs.
+type trafficLight struct {
+	set  bool
+	x, y unit.Dp
+}
+
+// TrafficLightPosition moves the close, minimize and zoom buttons of a
+// macOS window with a hidden title bar (Clack patch, CLACK_PATCHES.md
+// §23): Electron's trafficLightPosition and setWindowButtonPosition
+// (WindowButtonsProxy). x is the distance from the window's left edge to
+// the first button, y the distance from the window's top to the buttons'
+// tops; the title bar area AppKit keeps for them is then the buttons'
+// height plus 2y tall. AppKit's own layout moves them back after a
+// resize, a title change, a key or main window change, a theme change and
+// full screen; the window puts them back each time, as Electron does.
+//
+// Only macOS implements it, and only with HiddenTitleBar(true).
+func TrafficLightPosition(x, y unit.Dp) Option {
+	return func(_ unit.Metric, cnf *Config) {
+		cnf.trafficLight = trafficLight{set: true, x: x, y: y}
+	}
+}
+
+// titlebarDoubleClick is what a double-click on a drag area does on macOS
+// (Clack patch, CLACK_PATCHES.md §23).
+type titlebarDoubleClick uint8
+
+const (
+	titlebarDoubleClickNone titlebarDoubleClick = iota
+	titlebarDoubleClickZoom
+	titlebarDoubleClickMinimize
+	titlebarDoubleClickFill
+)
+
+// titlebarDoubleClickAction is Chromium's NativeWidgetMacNSWindow
+// sendEvent: for a double-click on a custom draggable area, from the
+// AppleActionOnDoubleClick user default (System Settings > Desktop & Dock
+// > "Double-click a window's title bar to"): "Fill" fills the screen
+// where AppKit can (_zoomFill:, macOS 15), unset or "Maximize" zooms,
+// "Minimize" minimizes, "None" or anything else does nothing.
+func titlebarDoubleClickAction(pref string, set, canFill bool) titlebarDoubleClick {
+	switch {
+	case set && pref == "Fill" && canFill:
+		return titlebarDoubleClickFill
+	case !set || pref == "Maximize":
+		return titlebarDoubleClickZoom
+	case pref == "Minimize":
+		return titlebarDoubleClickMinimize
+	}
+	return titlebarDoubleClickNone
 }
 
 // captionPart is what a point in the client area of a window with a hidden

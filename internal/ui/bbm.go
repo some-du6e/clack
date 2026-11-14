@@ -370,6 +370,12 @@ func (a *App) layoutBBMTopNav(gtx layout.Context, width int) {
 	if width < gtx.Dp(1208) {
 		x0, x1 = gtx.Dp(8), width-gtx.Dp(8)
 	}
+	if a.macNav {
+		// macOS: leftContainerMargin is s(64/zoom + 12) in a desktop app
+		// (26v2's l), so the history buttons start clear of the traffic
+		// lights: at least that far from the window's left edge
+		x0 = max(x0, gtx.Dp(unit.Dp(math.Round(float64(64/a.zoomFactor()+12)))))
+	}
 	if a.wcoOn() {
 		// rightContainerMargin is s(138/zoom) with the caption buttons:
 		// at least 8 below 1208px, less what the centring gives above

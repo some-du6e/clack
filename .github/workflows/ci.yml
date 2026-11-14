@@ -123,10 +123,12 @@ jobs:
         run: go test -count=1 -v -run 'HoverOnly' gioui.org/io/input
       # Gio patch 22: what each point of a window with a hidden title bar
       # is (the caption buttons, the top band, the caption, the client);
-      # the Windows codes on real windows are windows-applog's
+      # the Windows codes on real windows are windows-applog's. Patch 23:
+      # what a double-click on a macOS drag area does for each "Double-click
+      # a window's title bar to" setting; the real windows are macos's
       - name: Gio hidden title bar hit test (vendored gioui.org/app)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption' gioui.org/app
+        run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption|TestTitlebarDoubleClickAction' gioui.org/app
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave)
       - name: XDND file drops on Xvfb (Gio patch 11)
@@ -647,7 +649,7 @@ jobs:
           go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
           go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
           go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
-          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine|TestTitleDockTaskbarAgreeLikeSlack|TestMacOptions|TestMacActivation|TestMacNotifier' ./internal/ui
+          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine|TestTitleDockTaskbarAgreeLikeSlack|TestMacOptions|TestMacActivation|TestMacNotifier|TestMainWindowOptions|TestCloseHidesWithoutTray|TestMacNavCaption' ./internal/ui
           go test -count=1 -v -run 'TestUserNotification' ./internal/desktop
           go test -count=1 -v ./internal/applog
           go test -count=1 -v ./internal/ui/menubar
@@ -655,6 +657,27 @@ jobs:
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
+      # docs/GAPS-2026-11-14.md gaps 3 and 4 (W35). Gio patch 23 on real
+      # NSWindows: the hidden title bar (content under it, the traffic
+      # lights at {12, 12} through a title change, a resize and a key
+      # change), where AppKit sends a click in the title bar band, a
+      # double-click on a drag area per AppleActionOnDoubleClick, Hide and
+      # the shows after it, Hide in full screen. Then Clack's own window:
+      # the red button and ⌘W hide it, the Dock's reopen and the app's
+      # activation show it, ⌘Q quits it while hidden. TestMain runs app.Main
+      # on the main goroutine for these (CLACK_MACOS_WINDOW_TESTS).
+      - name: macOS window (Gio patch 23, W35)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: |
+          set +e
+          sw_vers
+          go test -count=1 -v -timeout 10m -run 'TestHiddenTitleBarMac|TestTitlebarDoubleClickMac|TestHideMac|TestHideLeavesFullscreenMac' gioui.org/app
+          gio=$?
+          go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
+          ui=$?
+          exit $((gio | ui))
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"

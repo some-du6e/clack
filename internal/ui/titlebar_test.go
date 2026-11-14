@@ -11,6 +11,7 @@ import (
 	"gioui.org/app"
 	"gioui.org/f32"
 	"gioui.org/io/system"
+	"gioui.org/op"
 	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -161,23 +162,88 @@ func TestWcoThemeText(t *testing.T) {
 	}
 }
 
-// Slack's window minimum: 668×400 on Windows (the top nav is the caption
-// there); Clack's 800×500 elsewhere, which keeps its title bar.
+// Slack's window minimum: 668×400 on Windows and macOS (the top nav is the
+// caption there); Clack's 800×500 elsewhere, which keeps its title bar.
+// The frame options: HiddenTitleBar on Windows; on macOS HiddenTitleBar
+// and the traffic lights at Slack's {12, 12} (titlebar_darwin.go).
 func TestMainWindowOptions(t *testing.T) {
 	var cnf app.Config
 	for _, o := range mainWindowOptions() {
 		o(unit.Metric{PxPerDp: 1, PxPerSp: 1}, &cnf)
 	}
 	wantMin, chrome := image.Pt(800, 500), 0
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		wantMin, chrome = image.Pt(668, 400), 1
+	case "darwin":
+		wantMin, chrome = image.Pt(668, 400), 2
 	}
 	if cnf.MinSize != wantMin || cnf.Size != image.Pt(1440, 900) || cnf.Title != AppName {
 		t.Errorf("main window: min %v size %v title %q; want min %v, 1440x900, %q", cnf.MinSize, cnf.Size, cnf.Title, wantMin, AppName)
 	}
 	if n := len(mainWindowChrome()); n != chrome {
-		t.Errorf("%d frame options on %s, want %d (HiddenTitleBar on Windows only)", n, runtime.GOOS, chrome)
+		t.Errorf("%d frame options on %s, want %d (HiddenTitleBar on Windows; and TrafficLightPosition on macOS)", n, runtime.GOOS, chrome)
 	}
+	if runtime.GOOS == "darwin" && (!macTitlebarOn || !closeHidesWithoutTray || !hideLeavesFullscreen) {
+		t.Errorf("macOS: nav caption %v, close hides without a tray %v, Hide leaves full screen %v; want all", macTitlebarOn, closeHidesWithoutTray, hideLeavesFullscreen)
+	}
+}
+
+// macOS (W35): with the title bar hidden (a.macNav) and no caption
+// buttons, the top nav is the drag area under its widgets, the app menu's
+// spacer included (on macOS the traffic lights over it are AppKit's
+// buttons, and only .p-ia4_top_nav--windows makes it no-drag), with no
+// space kept for windows controls; the search, history and help buttons
+// are no-drag; full screen ends it.
+func TestMacNavCaption(t *testing.T) {
+	e := newPerfEnv(t, false)
+	e.waitReady()
+	e.settle(200 * time.Millisecond)
+	if p := e.searchPillLeftOf(); e.actionOK(p) {
+		t.Fatalf("the nav has a system action at %v with a title bar", p)
+	}
+	e.a.macNav = true
+	t.Cleanup(func() { e.a.macNav = false })
+	e.settle(200 * time.Millisecond)
+	if e.a.wcoOn() || e.a.wcoNavReserve(ttContext(new(op.Ops), e.size)) != 0 {
+		t.Fatal("caption buttons with the macOS title bar")
+	}
+	pill := e.a.searchPill
+	hist := pill.Min.X - 9 - 3*26 - 2*6
+	helpR := e.size.X - 8 // the right container's end: no windows controls
+	checks := []struct {
+		what string
+		p    image.Point
+		move bool
+	}{
+		{"the spacer, past the app menu button (Linux's)", image.Pt(50, 20), true},
+		{"the spacer's right end", image.Pt(70, 30), true},
+		{"the nav between the spacer and history", image.Pt((76+hist)/2, 20), true},
+		{"the nav right of the search", image.Pt((pill.Max.X+helpR-26)/2, 20), true},
+		{"the nav's top row", image.Pt((76+hist)/2, 0), true},
+		{"the search box", wcoCentre(pill), false},
+		{"the history buttons", image.Pt(pill.Min.X-9-13, 20), false},
+		{"the help button", image.Pt(helpR-13, 20), false},
+		{"under the nav", image.Pt(600, 300), false},
+	}
+	for _, c := range checks {
+		got, ok := e.actionAt(c.p)
+		if move := ok && got == system.ActionMove; move != c.move {
+			t.Errorf("%s at %v: action %v (%v), want drag %v", c.what, c.p, got, ok, c.move)
+		}
+	}
+	e.movePtr(image.Pt(helpR-13, 20))
+	if !e.a.clicks.get("nav.help").Hovered() {
+		t.Error("the help button isn't at the right container's end")
+	}
+
+	// full screen: no drag area
+	e.a.winMode = app.Fullscreen
+	e.settle(100 * time.Millisecond)
+	if _, ok := e.actionAt(image.Pt((76+hist)/2, 20)); ok {
+		t.Error("full screen: the nav is still a caption")
+	}
+	e.a.winMode = app.Windowed
 }
 
 func wcoCentre(r image.Rectangle) image.Point { return r.Min.Add(r.Max).Div(2) }

@@ -19,13 +19,6 @@ func install(menus []Menu) {
 	C.clack_menubar_install(spec)
 }
 
-// SetMainView tells the menus which view is Clack's main window (Gio's
-// app.AppKitViewEvent.View): File > Close hides that window, as Slack's
-// does, instead of closing it. Safe from any goroutine.
-func SetMainView(view uintptr) {
-	C.clack_menubar_set_main_view(C.uintptr_t(view))
-}
-
 // InstallNow is Install done synchronously, returning a description of
 // NSApp's menu bar as AppKit has it (menubar_darwin.m's dump: title|key
 // equivalent|action|target, "ok"/"MISSING" for whether the action is
