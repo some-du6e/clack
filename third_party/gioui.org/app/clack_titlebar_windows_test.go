@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -34,7 +35,10 @@ import (
 // reaching the program's widgets through Windows' own input path
 // (SendInput, which moves the runner's real cursor).
 
-var testSendMessage = testUser32.NewProc("SendMessageW")
+var (
+	testSendMessage        = testUser32.NewProc("SendMessageW")
+	testSendMessageTimeout = testUser32.NewProc("SendMessageTimeoutW")
+)
 
 // captionTrace records the window messages and the Gio pointer events
 // around the caption, for a failure's message.
@@ -54,12 +58,17 @@ var captionTraceNames = map[uint32]string{
 	0x0247: "WM_POINTERUP", 0x0249: "WM_POINTERENTER", 0x024A: "WM_POINTERLEAVE",
 	0x024B: "WM_POINTERACTIVATE", 0x024C: "WM_POINTERCAPTURECHANGED", 0x02A2: "WM_NCMOUSELEAVE",
 	0x02A3: "WM_MOUSELEAVE", 0x0008: "WM_KILLFOCUS", 0x0007: "WM_SETFOCUS", 0x001F: "WM_CANCELMODE",
+	// the window loop's own and what can hold it (a stall's trace)
+	0x0400: "_WM_WAKEUP", 0x0460: "_WM_CLACK_FRAME", 0x000F: "WM_PAINT", 0x0113: "WM_TIMER",
+	0x0006: "WM_ACTIVATE", 0x0086: "WM_NCACTIVATE", 0x02A0: "WM_NCMOUSEHOVER", 0x02A1: "WM_MOUSEHOVER",
+	0x0231: "WM_ENTERSIZEMOVE", 0x0232: "WM_EXITSIZEMOVE", 0x0211: "WM_ENTERMENULOOP", 0x0212: "WM_EXITMENULOOP",
+	0x0047: "WM_WINDOWPOSCHANGED", 0x0005: "WM_SIZE",
 }
 
 func captionTraceAdd(format string, args ...any) {
 	captionTrace.mu.Lock()
 	defer captionTrace.mu.Unlock()
-	if len(captionTrace.lines) < 4000 {
+	if len(captionTrace.lines) < 20000 {
 		captionTrace.lines = append(captionTrace.lines, fmt.Sprintf("%6dms ", time.Since(captionTrace.t0).Milliseconds())+fmt.Sprintf(format, args...))
 	}
 }
@@ -132,6 +141,11 @@ type captionTestWindow struct {
 	r      [4]image.Rectangle // their bounds, client px
 	size   image.Point
 	done   chan struct{}
+	stage  atomic.Value // the event goroutine's step (a stall's message)
+	// pointer: where Gio last saw the pointer (client px), seen: since
+	// when (any pointer event, the logger's)
+	pointer atomic.Value
+	seen    atomic.Int64
 }
 
 var captionTestNames = [4]string{"client", "minimize", "maximize", "close"}
@@ -146,8 +160,12 @@ func newCaptionTestWindow(t *testing.T, opts ...Option) *captionTestWindow {
 		var ops op.Ops
 		var btns [4]widget.Clickable
 		logTag := new(int)
+		var lastFrame time.Time
 		for {
-			switch e := c.w.Event().(type) {
+			c.stage.Store("Event")
+			ev := c.w.Event()
+			c.stage.Store(fmt.Sprintf("handling %T", ev))
+			switch e := ev.(type) {
 			case Win32ViewEvent:
 				if e.HWND != 0 {
 					captionTrace.mu.Lock()
@@ -163,15 +181,22 @@ func newCaptionTestWindow(t *testing.T, opts ...Option) *captionTestWindow {
 				}
 			case ConfigEvent:
 				c.mode.Store(int32(e.Config.Mode))
+				captionTraceAdd("gio config mode %v focused %v", e.Config.Mode, e.Config.Focused)
 			case FrameEvent:
+				if n := c.frames.Load(); !lastFrame.IsZero() && (e.Now.Sub(lastFrame) > 100*time.Millisecond || n%50 == 0) {
+					captionTraceAdd("gio frame %d, %dms after the last", n, e.Now.Sub(lastFrame).Milliseconds())
+				}
+				lastFrame = e.Now
 				gtx := NewContext(&ops, e)
 				for {
-					ev, ok := gtx.Event(pointer.Filter{Target: logTag, Kinds: pointer.Press | pointer.Release | pointer.Cancel | pointer.Leave | pointer.Enter})
+					ev, ok := gtx.Event(pointer.Filter{Target: logTag, Kinds: pointer.Press | pointer.Release | pointer.Cancel | pointer.Leave | pointer.Enter | pointer.Move})
 					if !ok {
 						break
 					}
 					if pe, ok := ev.(pointer.Event); ok {
 						captionTraceAdd("gio %v at %v buttons %v id %d", pe.Kind, pe.Position, pe.Buttons, pe.PointerID)
+						c.pointer.Store(pe.Position.Round())
+						c.seen.Add(1)
 					}
 				}
 				for i := range btns {
@@ -219,10 +244,13 @@ func newCaptionTestWindow(t *testing.T, opts ...Option) *captionTestWindow {
 				c.mu.Unlock()
 				// keep drawing: hover changes show up in the next frame
 				gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(30 * time.Millisecond)})
+				c.stage.Store("FrameEvent.Frame")
 				e.Frame(gtx.Ops)
 				c.frames.Add(1)
 			case DestroyEvent:
 				return
+			default:
+				captionTraceAdd("gio %T", e)
 			}
 		}
 	}()
@@ -237,6 +265,51 @@ func newCaptionTestWindow(t *testing.T, opts ...Option) *captionTestWindow {
 	f := c.frames.Load()
 	waitUntil(t, "a frame after the move", func() bool { return c.frames.Load() > f+2 })
 	return c
+}
+
+// diag is the window's state for a stall's message: Gio's invalidate gate
+// and animation, the driver's (read without its thread's locks: only for
+// the message), whether the window thread answers a message, the event
+// goroutine's step, the cursor and the window under it, and every
+// goroutine's stack.
+func (c *captionTestWindow) diag() string {
+	var b strings.Builder
+	w := c.w
+	w.invMu.Lock()
+	may, missed := w.mayInvalidate, w.invalidateMissed
+	w.invMu.Unlock()
+	fmt.Fprintf(&b, "frames %d, the event goroutine at %v; mayInvalidate %v, invalidateMissed %v; Window animating %v, hasNextFrame %v (next in %v)",
+		c.frames.Load(), c.stage.Load(), may, missed, w.animating, w.hasNextFrame, time.Until(w.nextFrame).Round(time.Millisecond))
+	if d, ok := w.driver.(*window); ok {
+		fmt.Fprintf(&b, "; driver animating %v, size %v, mode %v, focused %v, ncPressed %v; loop: %d invalidates, %d driver funcs waiting",
+			d.animating, d.config.Size, d.config.Mode, d.config.Focused, d.ncPressed, len(d.loop.invalidates), len(d.loop.driverFuncs))
+	}
+	var res uintptr
+	start := time.Now()
+	r, _, _ := testSendMessageTimeout.Call(uintptr(c.hwnd), 0 /* WM_NULL */, 0, 0, 0x2 /* SMTO_ABORTIFHUNG */, 2000, uintptr(unsafe.Pointer(&res)))
+	fmt.Fprintf(&b, "; WM_NULL answered %v in %v", r != 0, time.Since(start).Round(time.Millisecond))
+	if p, ok := windows.GetCursorPos(); ok {
+		fmt.Fprintf(&b, "; the cursor at %v, over %#x (the window %#x, capture %#x)", p, windows.WindowFromPoint(p), c.hwnd, windows.GetCapture())
+	}
+	fg, _, _ := testGetForeground.Call()
+	fmt.Fprintf(&b, "; foreground %#x", fg)
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	fmt.Fprintf(&b, "\n%s", buf)
+	return b.String()
+}
+
+// waitFor is waitUntil that, on a timeout, says what the window and its
+// messages were doing since mark.
+func (c *captionTestWindow) waitFor(t *testing.T, what string, mark int, ok func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for !ok() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s; messages and Gio events since:\n%s\n%s", what, captionTraceSince(mark), c.diag())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func (c *captionTestWindow) rects() ([4]image.Rectangle, image.Point) {
@@ -436,7 +509,7 @@ func (c *captionTestWindow) expectClick(t *testing.T, want string, mark int) {
 			t.Errorf("clicked %s, want %s", got, want)
 		}
 	case <-time.After(5 * time.Second):
-		t.Errorf("no click on %s; messages and Gio events since the press:\n%s", want, captionTraceSince(mark))
+		t.Errorf("no click on %s; messages and Gio events since the press:\n%s\n%s", want, captionTraceSince(mark), c.diag())
 	}
 }
 
@@ -460,16 +533,32 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 	c := newCaptionTestWindow(t, HiddenTitleBar(true))
 	defer c.close(t)
 	testSetForegroundWindow.Call(uintptr(c.hwnd))
-	r, _ := c.rects()
+	r, size := c.rects()
 	wr := windows.GetWindowRect(c.hwnd)
 
+	// first the middle of the window, away from the caption: the cursor
+	// may already rest on a button's centre from an earlier step (a move
+	// to where it is moves nothing), and Gio has seen the pointer over
+	// the window before the buttons are hovered
+	mid := image.Pt(size.X/2, size.Y/2)
+	mark := captionTraceMark("move to the window's middle")
+	n := c.seen.Load()
+	sendInput(t, []testInput{mouseInput(c.screen(mid), mouseMove)})
+	c.waitFor(t, "the pointer over the window's middle", mark, func() bool {
+		p, _ := c.pointer.Load().(image.Point)
+		d := p.Sub(mid) // SendInput's 0-65535 coordinates round
+		return c.seen.Load() > n && d.X >= -2 && d.X <= 2 && d.Y >= -2 && d.Y <= 2
+	})
+	mark = captionTraceMark("hover close")
 	sendInput(t, []testInput{mouseInput(c.screen(centre(r[3])), mouseMove)})
-	waitUntil(t, "close hovered", c.hover[3].Load)
+	c.waitFor(t, "close hovered", mark, c.hover[3].Load)
+	mark = captionTraceMark("hover maximize")
 	sendInput(t, []testInput{mouseInput(c.screen(centre(r[2])), mouseMove)})
-	waitUntil(t, "maximize hovered, close not", func() bool { return c.hover[2].Load() && !c.hover[3].Load() })
+	c.waitFor(t, "maximize hovered, close not", mark, func() bool { return c.hover[2].Load() && !c.hover[3].Load() })
 	// out of the window over its top edge: the hover ends
+	mark = captionTraceMark("leave over the top edge")
 	sendInput(t, []testInput{mouseInput(windows.Point{X: wr.Right - 70, Y: wr.Top - 30}, mouseMove)})
-	waitUntil(t, "no button hovered once the cursor left", func() bool {
+	c.waitFor(t, "no button hovered once the cursor left", mark, func() bool {
 		return !c.hover[1].Load() && !c.hover[2].Load() && !c.hover[3].Load()
 	})
 
@@ -477,18 +566,19 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 	// clicked: the click came as WM_NCLBUTTONDOWN, and DefWindowProc's
 	// caption-button loop hung the window waiting for a release
 	pm := c.screen(centre(r[2]))
+	mark = captionTraceMark("hover maximize for the Snap Layouts flyout")
 	sendInput(t, []testInput{mouseInput(pm, mouseMove)})
 	time.Sleep(1500 * time.Millisecond)
-	mark := captionTraceMark("click maximize with the Snap Layouts flyout open")
+	captionTraceMark("click maximize with the Snap Layouts flyout open")
 	sendInput(t, []testInput{mouseInput(pm, mouseMove), mouseInput(pm, mouseDown), mouseInput(pm, mouseUp)})
 	c.expectClick(t, "maximize", mark)
 	time.Sleep(600 * time.Millisecond)
 	f := c.frames.Load()
-	waitUntil(t, "frames after the flyout's click (the window isn't stuck)", func() bool { return c.frames.Load() > f+2 })
+	c.waitFor(t, "frames after the flyout's click (the window isn't stuck)", mark, func() bool { return c.frames.Load() > f+2 })
 
 	for _, i := range []int{2, 3, 1, 0} {
 		p := c.screen(centre(r[i]))
-		mark := captionTraceMark("click " + captionTestNames[i])
+		mark = captionTraceMark("click " + captionTestNames[i])
 		sendInput(t, []testInput{mouseInput(p, mouseMove), mouseInput(p, mouseDown), mouseInput(p, mouseUp)})
 		c.expectClick(t, captionTestNames[i], mark)
 		time.Sleep(600 * time.Millisecond) // past the double-click time between buttons
@@ -504,6 +594,7 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 	}
 
 	// pressed on maximize, released under the caption: no click
+	mark = captionTraceMark("press maximize, release under the caption")
 	from, to := c.screen(centre(r[2])), c.screen(image.Pt(centre(r[2]).X, r[2].Max.Y+80))
 	sendInput(t, []testInput{mouseInput(from, mouseMove), mouseInput(from, mouseDown)})
 	time.Sleep(100 * time.Millisecond)
@@ -514,9 +605,10 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 	time.Sleep(600 * time.Millisecond)
 
 	// a double-click on the caption: Windows maximizes the window
-	_, size := c.rects()
+	mark = captionTraceMark("double-click the caption")
+	_, size = c.rects()
 	p := c.screen(image.Pt(size.X/2, r[1].Dy()/2))
 	sendInput(t, []testInput{mouseInput(p, mouseMove), mouseInput(p, mouseDown), mouseInput(p, mouseUp), mouseInput(p, mouseDown), mouseInput(p, mouseUp)})
-	waitUntil(t, "maximized by a double-click on the caption", c.zoomed)
+	c.waitFor(t, "maximized by a double-click on the caption", mark, c.zoomed)
 	c.expectNoClick(t, "the double-click on the caption")
 }
