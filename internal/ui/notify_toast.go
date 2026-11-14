@@ -37,22 +37,32 @@ type desktopNote struct {
 	ID          string // the toast's Tag (Electron Notification id)
 	GroupID     string // its Group (Notification Center's grouping; not drawn)
 	Title, Body string
-	Team        string // teamId
-	Workspace   string // the team's name: the attribution line
-	Channel     string
-	Msg         string // msg: the message's ts, or a huddle notification's tag
-	ThreadTS    string
-	TraceID     string
-	When        time.Time    // the Notification's timestamp (displayTimestamp; zero: none)
-	Buttons     []noteButton // actionButtons
+	// Subtitle is sharedNotificationOptions' (a message's: only with more
+	// than one signed-in account, so never in Clack) or
+	// sharedHuddleNotificationOptions' (the invite's conversation). macOS
+	// shows it; Chrome's toast has no line for it.
+	Subtitle string
+	// HasReply is the payload's hasReply (a message's !messageSendFailed);
+	// Silent its silent (a message's and a huddle invite's: the webapp
+	// plays their sounds). The macOS notification reads them.
+	HasReply, Silent bool
+	Team             string // teamId
+	Workspace        string // the team's name: the attribution line
+	Channel          string
+	Msg              string // msg: the message's ts, or a huddle notification's tag
+	ThreadTS         string
+	TraceID          string
+	When             time.Time    // the Notification's timestamp (displayTimestamp; zero: none)
+	Buttons          []noteButton // actionButtons
 	// Activated runs when the toast or one of its buttons is clicked (any
 	// goroutine; nil: nothing happens).
 	Activated func(toastActivation)
 }
 
 // noteButton is one of actionButtons: buildNotificationActionButtons'
-// {content, launchUri}. One without a launch URI is inert: Windows'
-// own dismiss.
+// {content, launchUri}. One without a launch URI is Windows' own dismiss;
+// on macOS its press goes to the webapp's handleNotificationAction, which
+// declines an invite on Decline and does nothing for the rest (Do).
 type noteButton struct {
 	Content   string
 	LaunchURI string
@@ -60,11 +70,13 @@ type noteButton struct {
 }
 
 // toastActivation is a click on a toast, read from its arguments by
-// handleToastActivation (the payload schemas EV and Ez).
+// handleToastActivation (the payload schemas EV and Ez), or what the user
+// did with a macOS notification (notify_mac.go).
 type toastActivation struct {
-	Type string // notification (the toast), action (a button)
-	// notification
+	Type string // notification (the toast), reply (macOS: its reply box), action (a button)
+	// notification and reply
 	Team, Channel, MessageID, NotificationID, TraceID, ThreadTS string
+	Reply                                                       string // reply: the text
 	// action
 	LaunchURI, ID string
 	Index         int // the button's index, -1 when absent

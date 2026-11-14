@@ -2,17 +2,19 @@ package ui
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
 // notifier posts desktop notifications (D-Bus on Linux, WinRT toasts on
-// Windows, no-op elsewhere).
+// Windows, Notification Center on macOS, no-op elsewhere).
 type notifier interface {
 	Notify(title, body string) error
 	// NotifyActions is Notify with buttons: actions is key/label pairs;
@@ -109,6 +111,7 @@ func (a *App) notifyActions(n huddleui.Notification) {
 	if !a.notifyOn() {
 		return
 	}
+	a.bounceDock() // showHuddleNotification and showHuddleMissedNotification: maybeBounceDockIcon
 	body := n.Body
 	if uipref.Get().NoTextInNotifications && n.PlainBody != "" {
 		body = n.PlainBody
@@ -174,7 +177,9 @@ func (a *App) plainNote() *desktopNote {
 // the thread at thread when it's a reply).
 func (a *App) messageNote(ch, ts, thread string) *desktopNote {
 	team, ws := a.noteTeam()
-	n := &desktopNote{Team: team, Workspace: ws, Channel: ch, Msg: ts, ThreadTS: thread}
+	// silent: the webapp plays the sound (notifyMessage); hasReply: the
+	// message wasn't one of yours that failed to send
+	n := &desktopNote{Team: team, Workspace: ws, Channel: ch, Msg: ts, ThreadTS: thread, HasReply: true, Silent: true}
 	if a.noteActionsOn() {
 		n.ID = buildNotificationID(team, noteTypeMessage, messageNotificationPayload(ch, ts, thread)...)
 		n.GroupID = buildNotificationID(team, noteTypeMessage, ch)
@@ -191,7 +196,9 @@ func (a *App) messageNote(ch, ts, thread string) *desktopNote {
 func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 	team, ws := a.noteTeam()
 	now := time.Now()
-	n := &desktopNote{Team: team, Workspace: ws, Channel: h.Channel, Msg: huddleNotificationTag(h.Channel, now)}
+	// no reply box; silent: both come from an invite (notifIsFromInvite),
+	// which rings in its own window
+	n := &desktopNote{Team: team, Workspace: ws, Channel: h.Channel, Subtitle: h.Subtitle, Msg: huddleNotificationTag(h.Channel, now), Silent: true}
 	typ := noteTypeHuddle
 	if h.Missed {
 		// showHuddleMissedNotification's title; an invite has none
@@ -216,11 +223,14 @@ func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 
 // ---- clicks (UI goroutine) ----
 
-// toastActivated is handleToastActivation for one of Clack's toasts:
-// the toast itself (notificationClicked), a button (its launch URI as a
-// deep link; Clack runs the button's own action). Each brings the window
-// to the front, as notifyBrowser's onclick (window.focus) and the shell's
-// deep-link handler do.
+// toastActivated is handleToastActivation for one of Clack's toasts, and
+// the macOS shell's routing of a notification's events (notify_mac.go):
+// the notification itself (notificationClicked), its reply box
+// (replyToNotification), a button (its launch URI as a deep link, else the
+// webapp's handleNotificationAction; Clack runs the button's own action).
+// A click and a link bring the window to the front, as notifyBrowser's
+// onclick (window.focus) and the shell's deep-link handler do; a reply and
+// a button without a link leave it where it is.
 func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 	raise := func() {
 		if a.winLive.Load() != nil { // a click only comes while the window is up
@@ -231,8 +241,12 @@ func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 	case "notification":
 		raise()
 		a.notificationClicked(act.Channel, act.MessageID, act.ThreadTS, act.NotificationID)
+	case "reply":
+		a.replyFromNotification(act)
 	case "action":
-		raise()
+		if isSlackURI(act.LaunchURI) { // every Windows button that activates Clack has one
+			raise()
+		}
 		if act.Index >= 0 && act.Index < len(n.Buttons) && n.Buttons[act.Index].Do != nil {
 			n.Buttons[act.Index].Do()
 			return
@@ -267,4 +281,33 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 		route += "/t/" + thread
 	}
 	a.Navigate(route)
+}
+
+// replyFromNotification is delegate_replyToNotification (boot-render): the
+// text typed into a notification's reply box goes to its conversation (the
+// one its id names when the payload doesn't), in the thread when the
+// notification was for a reply, through the composer's send. The window
+// stays where it is.
+func (a *App) replyFromNotification(act toastActivation) {
+	ch, thread := act.Channel, act.ThreadTS
+	if ch == "" && act.NotificationID != "" {
+		if _, typ, payload, truncated := parseNotificationID(act.NotificationID); !truncated && typ == noteTypeMessage && len(payload) > 0 {
+			ch = payload[0]
+			if thread == "" && len(payload) > 2 {
+				thread = payload[2]
+			}
+		}
+	}
+	c := a.Core()
+	if c == nil || ch == "" {
+		return
+	}
+	text := act.Reply
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := composer.SendText(ctx, c, ch, thread, text); err != nil {
+			log.Printf("notify: the reply typed into a notification wasn't sent: %v", err)
+		}
+	}()
 }

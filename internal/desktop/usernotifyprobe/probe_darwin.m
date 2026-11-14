@@ -88,7 +88,7 @@ static UNUserNotificationCenter *center(NSString **why) {
 		}
 		return nil;
 	}
-	if (probeDelegate == nil) {
+	if (probeDelegate == nil && c.delegate == nil) { // never over desktop's (TestShowUserNotificationInBundle)
 		probeDelegate = [ClackProbeDelegate new];
 		c.delegate = probeDelegate;
 	}
@@ -328,5 +328,191 @@ char *clack_unprobe_delivered(int secs) {
 		@synchronized(box) {
 			return dupstr([NSString stringWithFormat:@"%@; delegate: %@", box.firstObject, probeDelegate.log ?: @"(nothing)"]);
 		}
+	}
+}
+
+// ---- read-backs for TestShowUserNotificationInBundle ----
+
+static char *jsonOut(id obj) {
+	NSData *d = [NSJSONSerialization dataWithJSONObject:obj options:NSJSONWritingSortedKeys error:nil];
+	return d ? strndup(d.bytes, d.length) : strdup("null");
+}
+
+// deliveredList is getDeliveredNotifications' list, or nil after secs.
+static NSArray<UNNotification *> *deliveredList(UNUserNotificationCenter *c, int secs) {
+	dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+	NSMutableArray *box = [NSMutableArray array];
+	[c getDeliveredNotificationsWithCompletionHandler:^(NSArray<UNNotification *> *ns) {
+		@synchronized(box) {
+			[box addObjectsFromArray:ns];
+		}
+		dispatch_semaphore_signal(sem);
+	}];
+	if (!waitFor(sem, secs)) {
+		return nil;
+	}
+	@synchronized(box) {
+		return [box copy];
+	}
+}
+
+// clack_unprobe_delivered_json: the delivered notifications' requests as
+// JSON objects {id, title, subtitle, body, thread, category, sound}.
+char *clack_unprobe_delivered_json(int secs) {
+	@autoreleasepool {
+		UNUserNotificationCenter *c = center(nil);
+		NSArray<UNNotification *> *ns = c ? deliveredList(c, secs) : nil;
+		if (ns == nil) {
+			return strdup("null");
+		}
+		NSMutableArray *out = [NSMutableArray array];
+		for (UNNotification *n in ns) {
+			UNNotificationContent *k = n.request.content;
+			[out addObject:@{
+				@"id" : n.request.identifier ?: @"",
+				@"title" : k.title ?: @"",
+				@"subtitle" : k.subtitle ?: @"",
+				@"body" : k.body ?: @"",
+				@"thread" : k.threadIdentifier ?: @"",
+				@"category" : k.categoryIdentifier ?: @"",
+				@"sound" : @(k.sound != nil),
+			}];
+		}
+		return jsonOut(out);
+	}
+}
+
+// clack_unprobe_categories: getNotificationCategories as JSON objects {id,
+// customDismiss, actions: [{id, title, foreground, textInput, buttonTitle,
+// placeholder}]}.
+char *clack_unprobe_categories(int secs) {
+	@autoreleasepool {
+		UNUserNotificationCenter *c = center(nil);
+		if (c == nil) {
+			return strdup("null");
+		}
+		dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+		NSMutableArray *box = [NSMutableArray array];
+		[c getNotificationCategoriesWithCompletionHandler:^(NSSet<UNNotificationCategory *> *cats) {
+			NSMutableArray *out = [NSMutableArray array];
+			for (UNNotificationCategory *cat in cats) {
+				NSMutableArray *acts = [NSMutableArray array];
+				for (UNNotificationAction *a in cat.actions) {
+					NSMutableDictionary *o = [@{
+						@"id" : a.identifier ?: @"",
+						@"title" : a.title ?: @"",
+						@"foreground" : @((a.options & UNNotificationActionOptionForeground) != 0),
+						@"textInput" : @([a isKindOfClass:[UNTextInputNotificationAction class]]),
+					} mutableCopy];
+					if ([a isKindOfClass:[UNTextInputNotificationAction class]]) {
+						o[@"buttonTitle"] = ((UNTextInputNotificationAction *)a).textInputButtonTitle ?: @"";
+						o[@"placeholder"] = ((UNTextInputNotificationAction *)a).textInputPlaceholder ?: @"";
+					}
+					[acts addObject:o];
+				}
+				[out addObject:@{
+					@"id" : cat.identifier ?: @"",
+					@"customDismiss" : @((cat.options & UNNotificationCategoryOptionCustomDismissAction) != 0),
+					@"actions" : acts,
+				}];
+			}
+			@synchronized(box) {
+				[box addObject:out];
+			}
+			dispatch_semaphore_signal(sem);
+		}];
+		if (!waitFor(sem, secs)) {
+			return strdup("null");
+		}
+		@synchronized(box) {
+			return jsonOut(box.firstObject);
+		}
+	}
+}
+
+// clack_unprobe_constants: the default and dismiss action identifiers.
+char *clack_unprobe_constants(void) {
+	return dupstr([NSString stringWithFormat:@"%@|%@", UNNotificationDefaultActionIdentifier, UNNotificationDismissActionIdentifier]);
+}
+
+// clack_unprobe_delegate_class: the center's delegate's class.
+char *clack_unprobe_delegate_class(void) {
+	@autoreleasepool {
+		UNUserNotificationCenter *c = center(nil);
+		return dupstr(c && c.delegate ? NSStringFromClass([(NSObject *)c.delegate class]) : @"(none)");
+	}
+}
+
+// clack_unprobe_respond hands the center's delegate a response to the
+// delivered notification ident, as a click on it would: action (a text
+// input's with text). macOS makes responses only for a real click, so this
+// one is decoded from an archive with UNNotificationResponse's keys. It
+// returns "" once the delegate took it, else what went wrong.
+char *clack_unprobe_respond(const char *ident, const char *action, const char *text, int textInput, int secs) {
+	@autoreleasepool {
+		UNUserNotificationCenter *c = center(nil);
+		if (c == nil || c.delegate == nil) {
+			return strdup("no center or no delegate");
+		}
+		UNNotification *note = nil;
+		for (UNNotification *n in deliveredList(c, secs)) {
+			if ([n.request.identifier isEqualToString:@(ident)]) {
+				note = n;
+			}
+		}
+		if (note == nil) {
+			return strdup("not delivered");
+		}
+		NSKeyedArchiver *ar = [[NSKeyedArchiver alloc] initRequiringSecureCoding:NO];
+		[ar encodeObject:note forKey:@"notification"];
+		[ar encodeObject:@(action) forKey:@"actionIdentifier"];
+		if (textInput) {
+			[ar encodeObject:@(text) forKey:@"userText"];
+		}
+		[ar finishEncoding];
+		NSError *err = nil;
+		NSKeyedUnarchiver *un = [[NSKeyedUnarchiver alloc] initForReadingFromData:ar.encodedData error:&err];
+		if (un == nil) {
+			return dupstr([NSString stringWithFormat:@"unarchiver: %@", err]);
+		}
+		un.requiresSecureCoding = NO;
+		Class cls = textInput ? [UNTextInputNotificationResponse class] : [UNNotificationResponse class];
+		UNNotificationResponse *resp = nil;
+		@try {
+			resp = [[cls alloc] initWithCoder:un];
+		} @catch (NSException *e) {
+			return dupstr([NSString stringWithFormat:@"initWithCoder raised %@", e.reason]);
+		}
+		[un finishDecoding];
+		if (resp == nil || ![resp.actionIdentifier isEqualToString:@(action)] || ![resp.notification.request.identifier isEqualToString:@(ident)] ||
+		    (textInput && ![((UNTextInputNotificationResponse *)resp).userText isEqualToString:@(text)])) {
+			return dupstr([NSString stringWithFormat:@"no response from the archive (%@ %@)", resp.actionIdentifier, resp.notification.request.identifier]);
+		}
+		dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+		[c.delegate userNotificationCenter:c didReceiveNotificationResponse:resp withCompletionHandler:^{
+			dispatch_semaphore_signal(sem);
+		}];
+		return strdup(waitFor(sem, secs) ? "" : "the delegate never called its completion handler");
+	}
+}
+
+// clack_unprobe_will_present: what the delegate answers for the delivered
+// notification ident while the app is frontmost (-1: no answer).
+long clack_unprobe_will_present(const char *ident, int secs) {
+	@autoreleasepool {
+		UNUserNotificationCenter *c = center(nil);
+		if (c == nil || ![c.delegate respondsToSelector:@selector(userNotificationCenter:willPresentNotification:withCompletionHandler:)]) {
+			return -1;
+		}
+		for (UNNotification *n in deliveredList(c, secs)) {
+			if ([n.request.identifier isEqualToString:@(ident)]) {
+				__block long got = -1;
+				[c.delegate userNotificationCenter:c willPresentNotification:n withCompletionHandler:^(UNNotificationPresentationOptions o) {
+					got = (long)o;
+				}];
+				return got;
+			}
+		}
+		return -1;
 	}
 }

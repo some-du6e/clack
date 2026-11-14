@@ -642,22 +642,45 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      # docs/GAPS-2026-11-14.md gap 1 (W33): can an ad-hoc signed Clack.app
-      # get UNUserNotificationCenter authorization? usernotifyprobe's test
-      # runs from Clack.app bundles built the way release.yml builds one,
-      # each with its own bundle id so each starts undecided, and logs what
-      # the center answers (the PROBE lines). The answers are the result: the
-      # step fails only when the probe doesn't build.
-      - name: notification probe (UNUserNotificationCenter in ad-hoc signed bundles)
+      - name: macOS-only tests (system fonts, AppKit glue, the menu bar)
+        run: |
+          go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
+          go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
+          go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
+          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine|TestTitleDockTaskbarAgreeLikeSlack|TestMacOptions|TestMacActivation|TestMacNotifier' ./internal/ui
+          go test -count=1 -v -run 'TestUserNotification' ./internal/desktop
+          go test -count=1 -v ./internal/applog
+          go test -count=1 -v ./internal/ui/menubar
+          go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
+          # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
+          go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
+          go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
+      - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
+        env:
+          CLACK_PIXEL_TESTS: "1"
+        run: .github/scripts/gio-layer-fix.sh
+      - name: macOS freeze guards (no blocking work on the AppKit main thread)
+        run: |
+          go test -count=1 -v ./internal/ui/uiguard
+          go test -count=1 -v -run 'TestThemeMapping|TestHCTSolveBounded|TestParseIAThemeJunk|FuzzIATheme' ./internal/ui/theme
+          go test -count=1 -v -run 'TestNoExecOnUIPaths|TestOSPrefersDarkOffUI|TestOSSchemeFollow|TestWatchdogReport|TestTakeShaperDoesNotWait|TestAccountTheme|TestAppearancePageDraws|TestFormatWithMarkupPref' ./internal/ui
+          go test -count=1 -timeout 20m -v -run 'TestStartupStatesNeverBlock|TestStartupWithHangingTools|TestEveryExecSetsWaitDelay' ./internal/ui
+          go test -count=1 -v -run 'Paste|TestAttRunHangingChild' ./internal/ui/composer
+      # docs/GAPS-2026-11-14.md gap 1 (W33). usernotifyprobe's tests run
+      # from Clack.app bundles built the way release.yml builds one, each with
+      # its own bundle id so each starts undecided. TestUserNotifyProbe logs
+      # what UNUserNotificationCenter answers each kind of bundle (the PROBE
+      # lines, and usernoted's log after them): reports, not checks.
+      # TestShowUserNotificationInBundle checks internal/desktop's notifier
+      # from the release's ad-hoc signed bundle and must pass.
+      - name: notifications from ad-hoc signed bundles (UNUserNotificationCenter)
+        if: ${{ !cancelled() }}
         run: |
           set -u +e
-          out=$PWD/build/notify-probe
-          mkdir -p "$out"
           go test -c -o build/unprobe.test ./internal/desktop/usernotifyprobe || exit 1
           go test -c -o build/unprobe-rebuilt.test -ldflags "-X github.com/some-du6e/clack/internal/desktop/usernotifyprobe.build=2" ./internal/desktop/usernotifyprobe || exit 1
           sw_vers
           echo "user $(id -un) ($(id -u)); console owner $(stat -f %Su /dev/console)"
-          launchctl print gui/$(id -u) 2>&1 | head -3
           # bundle DIR ID SIGN [BINARY]: a Clack.app as release.yml makes one,
           # the probe's test binary as its executable. SIGN adhoc is the
           # release's codesign --sign - over the bundle; linker leaves only the
@@ -676,11 +699,15 @@ jobs:
             codesign -dv --verbose=2 $app 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|CDHash|Signature|TeamIdentifier|Info.plist|Sealed|Runtime)' | sed "s/^/  $1: /"
           }
           probe() { # DIR VARIANT STEPS
-            build/$1/Clack.app/Contents/MacOS/clack -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=$2 -probe.steps=$3 -probe.out="$out"
+            build/$1/Clack.app/Contents/MacOS/clack -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=$2 -probe.steps=$3 -probe.wait=10s
             echo "  exit $?"
           }
+          echo "== show: internal/desktop's notifier from the release's bundle"
+          bundle show io.github.some-du6e.clack.probe-show adhoc
+          build/show/Clack.app/Contents/MacOS/clack -test.v -test.timeout 4m -test.run '^TestShowUserNotificationInBundle$' -probe.show
+          shown=$?
           echo "== bare: the test binary outside any bundle"
-          build/unprobe.test -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=bare -probe.steps=provisional -probe.out="$out"
+          build/unprobe.test -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=bare -probe.steps=provisional
           echo "== adhoc-prompt: Clack's bundle id, signed as the release is, run from Contents/MacOS"
           bundle adhoc io.github.some-du6e.clack adhoc
           probe adhoc adhoc-prompt prompt,post
@@ -695,50 +722,13 @@ jobs:
           probe linker linker-provisional provisional,post
           echo "== adhoc-open: launched through LaunchServices (open), as Finder and the Dock launch it"
           bundle open io.github.some-du6e.clack.probe-open adhoc
-          open -W -n --stdout "$out/open.out" --stderr "$out/open.err" build/open/Clack.app --args -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=adhoc-open -probe.steps=prompt,post -probe.out="$out"
+          out=$(mktemp -d)
+          open -W -n --stdout "$out/open.out" --stderr "$out/open.err" build/open/Clack.app --args -test.v -test.timeout 4m -test.run '^TestUserNotifyProbe$' -probe=adhoc-open -probe.steps=prompt,post -probe.wait=10s
           echo "  open exit $?"
           cat "$out/open.out" "$out/open.err"
-          echo "== control: osascript's display notification (Apple-signed)"
-          osascript -e 'display notification "osascript control" with title "Clack probe"'
-          echo "  osascript exit $?"
-          sleep 3
-          screencapture -x "$out/control-osascript.png"
-          echo "  screencapture exit $?"
-          echo "== Notification Center's records of the probe bundles (com.apple.ncprefs)"
-          plutil -p ~/Library/Preferences/com.apple.ncprefs.plist | grep -B3 -A14 'some-du6e' | head -200
           echo "== usernoted's log"
           log show --last 10m --style compact --predicate 'process == "usernoted" OR subsystem BEGINSWITH "com.apple.UserNotifications"' | grep -i -E 'some-du6e|clack|unprobe' | tail -200
-          ls -la "$out"
-          exit 0
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: ${{ !cancelled() }}
-        with:
-          name: notify-probe
-          path: build/notify-probe
-          if-no-files-found: ignore
-      - name: macOS-only tests (system fonts, AppKit glue, the menu bar)
-        run: |
-          go test -count=1 -v -run 'TestCodeRunsHaveOutlines|TestCodeSpanAfterEmoji|TestInlineCodeDraws' ./internal/ui/theme ./internal/ui/richview ./internal/ui/composer
-          go test -count=1 -v -run 'TestEmoji' ./internal/ui/theme
-          go test -count=1 -v -run 'TestOwnProfilePane|TestOtherProfilePane' ./internal/ui/popups
-          go test -count=1 -v -run 'TestSwipe|TestNav|TestNativeMenuBar|TestMacMenu|TestMenuState|TestZoom|TestDiagnosticsText|TestMissedFrameLogLine|TestTitleDockTaskbarAgreeLikeSlack' ./internal/ui
-          go test -count=1 -v ./internal/applog
-          go test -count=1 -v ./internal/ui/menubar
-          go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
-          # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
-          go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
-          go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
-      - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
-        env:
-          CLACK_PIXEL_TESTS: "1"
-        run: .github/scripts/gio-layer-fix.sh
-      - name: macOS freeze guards (no blocking work on the AppKit main thread)
-        run: |
-          go test -count=1 -v ./internal/ui/uiguard
-          go test -count=1 -v -run 'TestThemeMapping|TestHCTSolveBounded|TestParseIAThemeJunk|FuzzIATheme' ./internal/ui/theme
-          go test -count=1 -v -run 'TestNoExecOnUIPaths|TestOSPrefersDarkOffUI|TestOSSchemeFollow|TestWatchdogReport|TestTakeShaperDoesNotWait|TestAccountTheme|TestAppearancePageDraws|TestFormatWithMarkupPref' ./internal/ui
-          go test -count=1 -timeout 20m -v -run 'TestStartupStatesNeverBlock|TestStartupWithHangingTools|TestEveryExecSetsWaitDelay' ./internal/ui
-          go test -count=1 -v -run 'Paste|TestAttRunHangingChild' ./internal/ui/composer
+          exit $shown
       - name: build
         if: ${{ !cancelled() }}
         run: |

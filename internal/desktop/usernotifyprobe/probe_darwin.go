@@ -12,6 +12,12 @@ char *clack_unprobe_settings(int secs);
 char *clack_unprobe_request(long opts, int secs);
 char *clack_unprobe_post(const char *ident, const char *title, const char *subtitle, const char *body, const char *thread, int category, int secs);
 char *clack_unprobe_delivered(int secs);
+char *clack_unprobe_delivered_json(int secs);
+char *clack_unprobe_categories(int secs);
+char *clack_unprobe_constants(void);
+char *clack_unprobe_delegate_class(void);
+char *clack_unprobe_respond(const char *ident, const char *action, const char *text, int textInput, int secs);
+long clack_unprobe_will_present(const char *ident, int secs);
 */
 import "C"
 
@@ -58,3 +64,38 @@ func post(ident, title, subtitle, body, thread string, category bool, secs int) 
 // delivered lists the notifications Notification Center holds for the
 // process, and what the center's delegate was told.
 func delivered(secs int) string { return goStr(C.clack_unprobe_delivered(C.int(secs))) }
+
+// deliveredJSON is the delivered notifications as JSON ("null": no answer).
+func deliveredJSON(secs int) string { return goStr(C.clack_unprobe_delivered_json(C.int(secs))) }
+
+// categoriesJSON is the registered categories as JSON ("null": no answer).
+func categoriesJSON(secs int) string { return goStr(C.clack_unprobe_categories(C.int(secs))) }
+
+// actionConstants is UNNotificationDefaultActionIdentifier and
+// UNNotificationDismissActionIdentifier, joined by "|".
+func actionConstants() string { return goStr(C.clack_unprobe_constants()) }
+
+// delegateClass is the center's delegate's class name.
+func delegateClass() string { return goStr(C.clack_unprobe_delegate_class()) }
+
+// respond hands the delegate a response to the delivered notification id
+// ("" done, else why not).
+func respond(id, action, text string, textInput bool, secs int) string {
+	ci, ca, ct := C.CString(id), C.CString(action), C.CString(text)
+	defer C.free(unsafe.Pointer(ci))
+	defer C.free(unsafe.Pointer(ca))
+	defer C.free(unsafe.Pointer(ct))
+	in := C.int(0)
+	if textInput {
+		in = 1
+	}
+	return goStr(C.clack_unprobe_respond(ci, ca, ct, in, C.int(secs)))
+}
+
+// willPresent is the delegate's presentation options for the delivered
+// notification id (-1: none).
+func willPresent(id string, secs int) int {
+	ci := C.CString(id)
+	defer C.free(unsafe.Pointer(ci))
+	return int(C.clack_unprobe_will_present(ci, C.int(secs)))
+}
