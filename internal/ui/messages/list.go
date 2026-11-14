@@ -153,7 +153,12 @@ type listState struct {
 	sel               selection
 	sb                scrollbar
 	pendingJump       string
-	evictSeen         uint64 // the model's evictGen this list released its rows for (releaseEvicted)
+	// sendCID is the client_msg_id of the viewer's message from the
+	// composer beside the list, which the list jumps to once it's in
+	// (ChannelView.JumpToOwnSend); sendAt is when it went out.
+	sendCID   string
+	sendAt    time.Time
+	evictSeen uint64 // the model's evictGen this list released its rows for (releaseEvicted)
 
 	// the list as the last frame left it (anchoring in layoutList)
 	laidOut   bool
@@ -661,6 +666,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	lastHost = h
 	s.hb.ensureLoaded(s.m)
 	s.sync(h, now)
+	s.placeSendJump(gtx, now)
 	sweepRows(now)
 	size := gtx.Constraints.Max
 	fill(gtx.Ops, image.Rectangle{Max: size}, c.Bg)
@@ -1973,6 +1979,60 @@ func (s *listState) placeJump(now time.Time) {
 			s.positioned = true
 			s.pendingJump = ""
 			s.highlightAt = now
+			return
+		}
+	}
+}
+
+// Sending from the composer under a channel (Slack's sendMessage thunk,
+// client-boot n6uE, build 2c0d02ca130f): after addMsgToEnd puts the
+// pending copy at the end of the history, a top-level message (no
+// thread_ts) dispatches jumpToTimestamp({ts: J.ts || null}) with the
+// copy's temp ts, wherever the pane was. In the main window that
+// navigates the sending view to startTs = ts with scrollmark null and
+// highlightTs = uniqueId() (5Q/C), so nothing flashes and the saved
+// place is gone. BaseMessageList anchors the timestamp closest to startTs
+// (getListProps' anchor) ANCHOR_OFFSET under the list's top
+// (getMessageListLayout, IY25: 64, 120 for the degraded list), and
+// AnchorLayout's bracketScrollTop (62rv) holds the scroll within the
+// content, so a message that fits sits at the bottom of the list over its
+// bottom spacer, and a taller one shows its top 64px down. The scroll
+// event that follows drops the anchor (onScroll), so the list then sticks
+// to the bottom as before (stickToBottom).
+//
+// No other message moves the list: someone else's message while you read
+// history keeps your place (AnchorLayout keeps the first visible row)
+// and ArchivesBanner's "Latest messages" only shows while the history
+// stops short of the newest (reachedEnd false). A message with files goes
+// through sendDraftFiles, whose appendPlaceholderMessage has no
+// jumpToTimestamp, and a thread reply (thread_ts) skips it.
+const (
+	sendJumpOffset = 64               // ANCHOR_OFFSET, dp
+	sendJumpWait   = 10 * time.Second // the copy is in at once; this only drops a send that never reached core
+)
+
+// placeSendJump places the list at the viewer's message sent from the
+// composer beside it (JumpToOwnSend) once the message, pending or
+// already confirmed, is in the list.
+func (s *listState) placeSendJump(gtx layout.Context, now time.Time) {
+	if s.sendCID == "" {
+		return
+	}
+	if now.Sub(s.sendAt) > sendJumpWait {
+		s.sendCID = ""
+		return
+	}
+	for i := len(s.items) - 1; i >= 0; i-- {
+		it := s.items[i]
+		if it.kind != itMsg || len(it.group) > 0 || it.idx >= len(s.snap.msgs) {
+			continue
+		}
+		if s.snap.msgs[it.idx].m.ClientMsgID == s.sendCID {
+			// Gio's List clamps an offset past the end the way
+			// bracketScrollTop does: the end then sits at the bottom
+			s.list.Position = layout.Position{BeforeEnd: true, First: i, Offset: -gtx.Dp(sendJumpOffset)}
+			s.positioned = true
+			s.sendCID = ""
 			return
 		}
 	}

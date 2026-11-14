@@ -114,8 +114,27 @@ func (v *ChannelView) Edit(ts string) { v.s.startEdit(v.h, ts) }
 // Typing returns the "X is typing" text for this channel ("" if nobody).
 func (v *ChannelView) Typing() string { return typingText(v.s.snap.typing) }
 
-// ScrollToBottom jumps to the newest message (e.g. after sending).
+// ScrollToBottom jumps to the newest message.
 func (v *ChannelView) ScrollToBottom() { v.s.list.Position = layout.Position{} }
+
+// JumpToOwnSend is the composer under the channel sending the viewer's
+// message (composer.OnSend), cid its client_msg_id: the sendMessage
+// thunk's jumpToTimestamp to it, which placeSendJump makes once the
+// message is in the list, from wherever the list was (the unread line,
+// history read back). A message with files (sendDraftFiles) leaves the
+// list where it is.
+func (v *ChannelView) JumpToOwnSend(cid string, files bool) {
+	if files || cid == "" {
+		return
+	}
+	s := v.s
+	s.sendCID, s.sendAt = cid, time.Now()
+	// the navigation replaces the view's startTs and highlightTs: a jump
+	// still paging back is dropped and a flashing message stops
+	s.pendingJump, s.pendingDate = "", time.Time{}
+	s.highlight = ""
+	v.h.Invalidate()
+}
 
 // AtBottom reports whether the newest message is visible.
 func (v *ChannelView) AtBottom() bool { return !v.s.list.Position.BeforeEnd }

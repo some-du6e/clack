@@ -230,22 +230,36 @@ func transformBlocks(ctx context.Context, text string, blocks json.RawMessage) (
 
 // postMessage is the send itself (Slack's sendMessage thunk, inside
 // prepareAndSendMessage). It applies the send transforms first.
-func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks json.RawMessage, broadcast bool, attachments ...json.RawMessage) error {
+//
+// sent (nil for none) is the thunk's jumpToTimestamp: sendMessage (n6uE,
+// build 2c0d02ca130f) makes the message's client_msg_id
+// (`client_msg_id || uuid()`), puts the pending copy at the end of the
+// history (addMsgToEnd) and, for a top-level message (no thread_ts),
+// dispatches jumpToTimestamp({ts}) to it in the sending view. The native
+// calls sent with that client_msg_id before core.Send puts the pending
+// copy in, so the list finds the message whichever arrives first.
+func postMessage(ctx context.Context, api coreAPI, ch, ts, text string, blocks json.RawMessage, broadcast bool, sent func(cid string, files bool), attachments ...json.RawMessage) error {
 	text, blocks = transformBlocks(ctx, text, blocks)
 	var atts json.RawMessage
 	if len(attachments) > 0 {
 		atts = attachments[0]
 	}
+	send := func(ctx context.Context, ch, ts, text string, blocks json.RawMessage, broadcast bool, atts json.RawMessage) error {
+		cid := uuidv4() // c5Jz, as sendMessage's own
+		if sent != nil {
+			sent(cid, false)
+		}
+		_, err := api.send(ctx, ch, ts, text, blocks, broadcast, cid, atts)
+		return err
+	}
 	if t := currentTaut(); t.ThunkPatched(thSendMessage) {
 		_, err := taut.Dispatch(ctx, t, thSendMessage, sendMessageArgs{Channel: ch, Blocks: blocks, Text: text, ThreadTs: ts, ReplyBroadcast: broadcast, Attachments: atts},
 			func(ctx context.Context, a sendMessageArgs) (any, error) {
-				_, err := api.send(ctx, a.Channel, a.ThreadTs, a.Text, a.Blocks, a.ReplyBroadcast, a.Attachments)
-				return nil, err
+				return nil, send(ctx, a.Channel, a.ThreadTs, a.Text, a.Blocks, a.ReplyBroadcast, a.Attachments)
 			})
 		return err
 	}
-	_, err := api.send(ctx, ch, ts, text, blocks, broadcast, atts)
-	return err
+	return send(ctx, ch, ts, text, blocks, broadcast, atts)
 }
 
 // sendFiles shares files with the message the way Slack's composer does

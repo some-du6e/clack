@@ -151,6 +151,9 @@ func (a *App) convoFor(ch, ts string) *convo {
 		if fl, ok := c.comp.(interface{ SetOnFocusList(func()) }); ok {
 			fl.SetOnFocusList(func() { a.focusList(c) })
 		}
+		if sn, ok := c.comp.(interface{ SetOnSend(func(string, bool)) }); ok {
+			sn.SetOnSend(func(cid string, files bool) { jumpToOwnSend(c, cid, files) })
+		}
 	}
 	a.convos[k] = c
 	a.convoOrder = append(a.convoOrder, k)
@@ -344,6 +347,17 @@ func (a *App) focusList(c *convo) {
 				c.comp.Focus()
 			}
 		})
+	}
+}
+
+// jumpToOwnSend is the conversation's composer sending a message (its
+// OnSend): the list beside it, in the same view container, moves to it
+// the way Slack's does (messages.ChannelView.JumpToOwnSend for the
+// sendMessage thunk's jumpToTimestamp, ThreadView.JumpToOwnSend for the
+// thread pane, whose reply box is its list's last row).
+func jumpToOwnSend(c *convo, cid string, files bool) {
+	if l, ok := c.list.(interface{ JumpToOwnSend(string, bool) }); ok {
+		l.JumpToOwnSend(cid, files)
 	}
 }
 

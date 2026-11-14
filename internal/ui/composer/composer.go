@@ -77,6 +77,15 @@ type Composer struct {
 	// (client-threads-view onDownArrowInEmptyInput, focusItemBelowInput);
 	// ThreadFooter's default and the channel's do nothing.
 	OnDownWhenEmpty func()
+	// OnSend is called on the UI goroutine when a message from this
+	// composer goes out: the sendMessage thunk's native with the
+	// client_msg_id it posts under (files false), or sendDraftFiles for
+	// a message with files (cid "", files true). It runs once the send
+	// checks and warnings have passed, at the point where Slack's
+	// sendMessage dispatches jumpToTimestamp({ts}) to a top-level message. The
+	// ui root wires it to the message list beside the composer
+	// (messages.ChannelView.JumpToOwnSend, ThreadView.JumpToOwnSend).
+	OnSend func(cid string, files bool)
 
 	// InThreadsView marks the Threads view's inline reply composer:
 	// .p-threads_view .p-threads_footer__input_container has margin 0 20px,
@@ -1307,6 +1316,13 @@ func (c *Composer) send(o *outgoing) {
 	hasFiles := !batch.empty()
 	job := &sendJob{api: c.api, ch: c.ch, ts: c.ts, o: o, prepared: batch.prepared, pending: batch.pending, raw: batch.raw,
 		files: hasFiles, draftID: c.draftID(), view: c.viewContext(), warn: c.ts == "", confirm: c.confirmBroadcast}
+	job.sent = func(cid string, files bool) {
+		c.later(func() {
+			if c.OnSend != nil {
+				c.OnSend(cid, files)
+			}
+		})
+	}
 	go func() {
 		err := job.run(context.Background())
 		if hasFiles && err != nil {
@@ -1429,6 +1445,9 @@ type sendJob struct {
 	// waits (nil: no dialog, so a due warning stops the send).
 	warn    bool
 	confirm func(ctx context.Context, ask broadcastAsk) bool
+	// sent is called as the message goes out (Composer.OnSend), off the
+	// UI goroutine; nil for none.
+	sent func(cid string, files bool)
 }
 
 func (j *sendJob) run(ctx context.Context) error {
@@ -1459,9 +1478,14 @@ func (j *sendJob) deliver(ctx context.Context, ch, ts, text string, blocks json.
 		if j.o.doc.Empty() {
 			comment = ""
 		}
+		if j.sent != nil {
+			// sendDraftFiles: appendPlaceholderMessage puts the message in
+			// (no jumpToTimestamp there), then the uploads and files.share
+			j.sent("", true)
+		}
 		return sendFiles(ctx, j.api, ch, ts, comment, blocks, broadcast, j.prepared, j.pending, j.raw)
 	}
-	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast, j.o.attachments)
+	return postMessage(ctx, j.api, ch, ts, text, blocks, broadcast, j.sent, j.o.attachments)
 }
 
 // checkThenSend runs the SendChecks hook (composer.addSendCheck) and

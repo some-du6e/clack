@@ -57,8 +57,9 @@ func (c coreAPI) smartSymbols() bool {
 // resolver names users, channels and emoji for the mrkdwn parser.
 func (c coreAPI) resolver() richtext.Resolver { return c.a.S }
 
-func (c coreAPI) send(ctx context.Context, ch, threadTS, text string, blocks json.RawMessage, broadcast bool, attachments ...json.RawMessage) (core.Message, error) {
-	o := core.SendOpts{Channel: ch, ThreadTS: threadTS, Text: text, Blocks: blocks, Broadcast: broadcast}
+// send is core.Send; cid is the client_msg_id ("" lets core make one).
+func (c coreAPI) send(ctx context.Context, ch, threadTS, text string, blocks json.RawMessage, broadcast bool, cid string, attachments ...json.RawMessage) (core.Message, error) {
+	o := core.SendOpts{Channel: ch, ThreadTS: threadTS, Text: text, Blocks: blocks, Broadcast: broadcast, ClientMsgID: cid}
 	if len(attachments) > 0 {
 		o.Attachments = attachments[0]
 	}
