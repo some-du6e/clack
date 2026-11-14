@@ -179,6 +179,9 @@ func (a *App) drawCover(gtx layout.Context) {
 			break
 		}
 	}
+	// Windows' caption buttons are the window's, not the page's: they
+	// show over the placeholder (page.html has no drag region)
+	a.layoutWCO(gtx, a.wcoPlaceholderLook())
 }
 
 // drawBootPlaceholder is renderBootPlaceholder over page.html's

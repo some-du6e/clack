@@ -10,11 +10,14 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// The native Windows caption follows what the window shows: while the
-// introduction or the sign-in card is up it is the flat backdrop's colour
-// (introBase) with light text; signed in it follows the app theme (dark:
-// Windows' dark caption; light: the default). Without this the caption is
-// the user's accent colour, a bright bar over the dark window.
+// The window's DWM attributes follow what it shows: while the introduction
+// or the sign-in card is up, the flat backdrop's colour (introBase) with
+// light text; signed in, the app theme (dark: Windows' dark mode; light:
+// the default). The main window has no OS caption since Gio patch 22
+// (titlebar.go), but dark mode still themes its border and its system
+// menu (Alt+Space, a right-click on the top nav), as Electron's
+// SetDarkModeForWindow does, and the caption colours apply to any window
+// that keeps its caption.
 //
 // DWMWA_USE_IMMERSIVE_DARK_MODE (20) is Windows 10 20H1 and later;
 // DWMWA_CAPTION_COLOR (35) and DWMWA_TEXT_COLOR (36) are Windows 11. An

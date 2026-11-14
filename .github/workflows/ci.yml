@@ -121,6 +121,12 @@ jobs:
       - name: Gio hover-only input (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'HoverOnly' gioui.org/io/input
+      # Gio patch 22: what each point of a window with a hidden title bar
+      # is (the caption buttons, the top band, the caption, the client);
+      # the Windows codes on real windows are windows-applog's
+      - name: Gio hidden title bar hit test (vendored gioui.org/app)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'TestCaptionHit|TestHiddenTitleBarOption' gioui.org/app
       # the X11 path on a real X server: python-xlib plays a file manager's
       # XDND source against a Gio window (enter, positions, drop, leave)
       - name: XDND file drops on Xvfb (Gio patch 11)
@@ -231,7 +237,8 @@ jobs:
 
 
   # the log file on Windows: %LOCALAPPDATA% paths, renames while rotating;
-  # the OS hooks, the clipboard, OS file drops, typed text, the reply box gap.
+  # the OS hooks, the clipboard, OS file drops, typed text, the reply box gap,
+  # the frameless window's title bar.
   # The windows-applog steps run in four windows-* jobs, each on its own
   # runner and desktop session; the steps that change the runner's
   # registry, shell and Notification Center state (windows-shell) keep
@@ -296,6 +303,31 @@ jobs:
         run: |
           go test -count=1 -v -run '^TestThreadComposerTopMargin$' ./internal/ui/composer
           go test -count=1 -v -timeout 10m -run '^TestThreadsAuditReplyGap$' ./internal/ui
+      # Slack's frameless window (gap 2, W34). Gio patch 22's HiddenTitleBar
+      # on real windows: no caption over the client area, WM_NCHITTEST for
+      # the caption buttons (HTMAXBUTTON: Snap Layouts), the caption and the
+      # top edge, the buttons' input reaching Gio's widgets through
+      # SendInput and not run by Windows. Then App.Run's own window signed
+      # in to internal/fakeslack: Electron's caption buttons over the top
+      # nav (light and dark, hovered), maximize and restore, a double-click
+      # on the nav, close to the tray, Slack's 668x400 minimum.
+      # Screenshots of the window's top go in titlebar-shots.
+      - name: the title bar (HiddenTitleBar, Clack's caption buttons over the top nav)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TITLEBAR_TESTS: "1"
+          CLACK_TITLEBAR_SHOTS: ${{ runner.temp }}\titlebar-shots
+        run: |
+          go test -count=1 -v -timeout 10m -run 'TestCaptionHit|TestHiddenTitleBar' gioui.org/app
+          go test -count=1 -v -timeout 15m -run '^(TestTitleBarWindow|TestMainWindowOptions|TestWcoGeometry|TestWcoThemeText)$' ./internal/ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: titlebar-shots
+          path: ${{ runner.temp }}/titlebar-shots
+          if-no-files-found: ignore
 
   # Clack's slack:// registration and the single-instance hand-off, close to
   # the tray, toasts, the taskbar
