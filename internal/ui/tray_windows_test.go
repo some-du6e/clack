@@ -111,19 +111,21 @@ func TestTrayWindow(t *testing.T) {
 	hwnds := make(chan uintptr, 1)
 	var frames atomic.Int64
 	images := imgcache.New(fs.Fetch, "", nil)
-	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), InvokedOnStartup: true, OnWindowEvent: func(e event.Event) {
-		switch e := e.(type) {
-		case app.Win32ViewEvent:
-			if e.HWND != 0 {
-				select {
-				case hwnds <- e.HWND:
-				default:
+	launch := false // Launch Control's checkbox, without the runner's Run key
+	a := New(Options{ConfigDir: home, NoRealtime: true, Started: time.Now(), InvokedOnStartup: true,
+		LaunchOnLogin: func() bool { return launch }, SetLaunchOnLogin: func(on bool) error { launch = on; return nil }, OnWindowEvent: func(e event.Event) {
+			switch e := e.(type) {
+			case app.Win32ViewEvent:
+				if e.HWND != 0 {
+					select {
+					case hwnds <- e.HWND:
+					default:
+					}
 				}
+			case app.FrameEvent:
+				frames.Add(1)
 			}
-		case app.FrameEvent:
-			frames.Add(1)
-		}
-	}}, images)
+		}}, images)
 	a.Attach(core.New(slack.New(fs.Creds()), store.New(cache)), cache)
 	a.SetTray(tray)
 	done := make(chan error, 1)

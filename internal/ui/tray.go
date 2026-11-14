@@ -357,14 +357,15 @@ func (a *App) syncJumpList() {
 		log.Printf("ui: jump list: %v", err)
 		return
 	}
+	set, removedOf := setJumpList, jumpListRemoved // as they are now (tests swap them)
 	go func() {
 		jumpMu.Lock()
 		defer jumpMu.Unlock()
-		removed, err := jumpListRemoved("") // getJumpListSettings
+		removed, err := removedOf("") // getJumpListSettings
 		if err != nil {
 			log.Printf("ui: jump list: removed items: %v", err)
 		}
-		if err := setJumpList("", jumpListCategories(k, exe, removed)); err != nil {
+		if err := set("", jumpListCategories(k, exe, removed)); err != nil {
 			log.Printf("ui: Tried to create the jump list, but failed: %v", err)
 		}
 	}()

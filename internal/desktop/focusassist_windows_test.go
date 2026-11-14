@@ -13,8 +13,12 @@ import (
 )
 
 // Focus Assist on the runner (CLACK_WINDOWS_TRAY_TESTS, ci's
-// windows-shell job): the WNF state and the COM settings agree, and the
-// whole check answers well inside Slack's 2 s. With
+// windows-shell job): the WNF state reads, and the whole check answers
+// well inside Slack's 2 s. The WNF state and IQuietHoursSettings needn't
+// agree: Windows 11's Do not disturb (on by default on the runner) sets
+// the state to priority only while the settings' profile stays
+// Unrestricted, and the state is what Windows applies (and Slack reads
+// first). With
 // CLACK_WINDOWS_FOCUS_ASSIST_TESTS (it changes the runner user's Do not
 // disturb) each profile set through IQuietHoursSettings shows in the WNF
 // state, FocusAssist and FocusAssistActive (a9), and Clack among the
@@ -51,8 +55,8 @@ func TestFocusAssistRead(t *testing.T) {
 	if mode < FocusAssistNotSupported || mode > FocusAssistAlarmsOnly {
 		t.Errorf("FocusAssist %d is no mode", mode)
 	}
-	if wnf >= 0 && com >= 0 && wnf != com {
-		t.Errorf("the WNF state (%d) and IQuietHoursSettings (%d) disagree", wnf, com)
+	if mode != wnf && wnf != FocusAssistFailed {
+		t.Errorf("FocusAssist %d, the WNF state %d: the state comes first", mode, wnf)
 	}
 	if wnf == FocusAssistFailed {
 		t.Errorf("NtQueryWnfStateData(WNF_SHEL_QUIETHOURS_ACTIVE_PROFILE_CHANGED) failed")

@@ -59,11 +59,15 @@ func (s *shellTray) items() []desktop.TrayMenuItem {
 // the update item).
 func noUpdateCheck(context.Context) (UpdateInfo, bool, error) { return UpdateInfo{}, false, nil }
 
-// trayOn runs the tray logic on this OS, with a shellTray attached.
+// trayOn runs the tray logic on this OS, with a shellTray attached and
+// the jump list's shell calls stubbed out.
 func trayOn(t *testing.T, a *App) *shellTray {
 	t.Helper()
 	trayAnyOS = true
-	t.Cleanup(func() { trayAnyOS = false })
+	set, removed := setJumpList, jumpListRemoved
+	setJumpList = func(string, []desktop.JumpListCategory) error { return nil }
+	jumpListRemoved = func(string) ([]desktop.JumpListTask, error) { return nil, nil }
+	t.Cleanup(func() { trayAnyOS, setJumpList, jumpListRemoved = false, set, removed })
 	tr := &shellTray{}
 	a.SetTray(tr)
 	a.drain()
@@ -375,6 +379,10 @@ func TestResetWindow(t *testing.T) {
 	t.Cleanup(func() { trayAnyOS, taskbarHWNDHook, moveToCurrentDisplay = false, nil, old })
 	a.win = new(app.Window) // no driver: Option is recorded
 	t.Cleanup(func() { a.win = nil })
+	set, removed := setJumpList, jumpListRemoved
+	setJumpList = func(string, []desktop.JumpListCategory) error { return nil }
+	jumpListRemoved = func(string) ([]desktop.JumpListTask, error) { return nil, nil }
+	t.Cleanup(func() { setJumpList, jumpListRemoved = set, removed })
 	if !a.openDeepLink(resetWindowLink) {
 		t.Fatal("reset-window wasn't handled")
 	}
