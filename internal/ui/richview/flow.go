@@ -67,6 +67,7 @@ const (
 	bChevron
 	bCaret      // small filled down-pointing triangle
 	bCaretRight // small filled right-pointing triangle
+	bFade       // a vertical gradient: transparent at the top, fill at the bottom (corners)
 )
 
 type box struct {
@@ -140,6 +141,7 @@ const (
 	tBot        // "Added by <app>" under Block Kit blocks (id: the bot id): its profile card
 	tHuddleJoin // a huddle message's Join Huddle (id: the channel; huddle.go)
 	tWorkObject // a work object card or one of its buttons (id: the action; workobject.go)
+	tSnippet    // a snippet's Show more / Show less (file, act; snippet.go)
 )
 
 // cardOnly reports whether target t is a hover card trigger only (no
@@ -194,6 +196,12 @@ type target struct {
 	inCard bool
 	// wob is a tWorkObject footer button's primary action.
 	wob *workobject.Button
+	// menuOnly: a file card that only has the file's context menu (a
+	// snippet's pillow: PillowFile with no onClick for an expandable
+	// file): a click does nothing and the pointer is no hand.
+	menuOnly bool
+	// act is a tSnippet's action: FileShowMore or FileShowLess.
+	act FileAction
 }
 
 type hit struct {
@@ -239,9 +247,13 @@ type display struct {
 	// those with hov == index+1
 	hovers []hoverLayer
 	// with animations off (animated.go): the stills that play when
-	// clicked (PlayPauseAnimations) and their Expand buttons
+	// clicked (PlayPauseAnimations) and attachments' Expand buttons
 	plays   []playCtl
 	expands []expandBtn
+	// bars are the files' FileActions (file_actions.go), pills the
+	// snippets' Show more / Show less (snippet.go)
+	bars  []fileBar
+	pills []snipPill
 }
 
 // hoverLayer is drawn while the View's hovered target is in card..cardTo
@@ -291,6 +303,8 @@ func (d *display) reset() {
 	d.hovers = d.hovers[:0]
 	d.plays = d.plays[:0]
 	d.expands = d.expands[:0]
+	d.bars = d.bars[:0]
+	d.pills = d.pills[:0]
 }
 
 func (d *display) addTarget(t target) int16 {

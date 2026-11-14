@@ -328,6 +328,18 @@ func (a *App) installAppCardHooks() {
 		return c != nil && c.URLHoverCardExperiment() && urlHoverCardLink(u)
 	}
 	richview.FileSectionFace = a.fileSectionFace // custom_file_sections on message file cards
+	// FileActions on message files: the viewer's own snippets (Edit) and
+	// starred canvases
+	richview.SelfID = func() string {
+		if c := a.Core(); c != nil {
+			return c.Self().ID
+		}
+		return ""
+	}
+	richview.FileStarred = func(id string) bool {
+		c := a.Core()
+		return c != nil && c.FileStarred(id)
+	}
 	richview.TabSlugCard = func(ch, tab string) bool {
 		c := a.Core()
 		return c != nil && c.ChannelTabSlugCard(ch, tab)

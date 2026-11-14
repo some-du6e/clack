@@ -93,6 +93,7 @@ var slackRef = map[string]string{
 	"code":                        "code",
 	"code-block":                  "code-block",
 	"collapse":                    "reduce-diagonal",
+	"arrow-collapse":              "arrow-collapse", // FileActions' Collapse (richview/file_actions.go)
 	"comment":                     "comment",
 	"add-comment":                 "add-comment",
 	"comment-filled":              "comment-filled",

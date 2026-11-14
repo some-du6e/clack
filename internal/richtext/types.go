@@ -335,6 +335,26 @@ type File struct {
 	// message's sender owns it (FilesMetaTextWrapper's renderUploader),
 	// UploaderID their id.
 	Uploader, UploaderID string
+
+	// Snippets (Slack's FileSnippet; richview snippet.go). Highlight is
+	// the server's CodeMirror HTML of the first lines (preview_highlight)
+	// as read by ParseCodeMirror; LinesMore and PreviewTruncated say
+	// there's more of it (lines_more, preview_is_truncated: Slack's
+	// isExpandableSnippet). EditLink is the file's edit_link.
+	Highlight        *CodeMirror
+	LinesMore        int
+	PreviewTruncated bool
+	EditLink         string
+	ExternalType     string // external_type: gdrive, dropbox, box, onedrive, app…
+	// Expanded and Expanding are the file's expandable in this message
+	// (Slack's expandedFiles: fetchAndExpand going, done). Content is the
+	// whole highlighted content once files.info brought it
+	// (content_highlight_html as computePreviewsForSnippet keeps it), and
+	// ContentTruncated says it was cut for display (is_truncated ||
+	// content_highlight_html_truncated).
+	Expanded, Expanding bool
+	Content             *CodeMirror
+	ContentTruncated    bool
 }
 
 // Doc is a whole message body.

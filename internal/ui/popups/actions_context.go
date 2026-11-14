@@ -317,6 +317,108 @@ func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(at), Width: 240})
 }
 
+// NewFileActionsMenu is FileActions' More actions (gaA3 renderMenu:
+// getFileActionsMenuItems, hYuM, 220 wide, 256 for an email) for f in m,
+// opened as its Popover at "right-bottom", offsetX 4, tryOppositePosition
+// against btn. As a message's FileActions builds it, the root Download and
+// Share stay in the bar (includeDownload and includeShare off), and View
+// file details is the bar's for a pillow; gallery marks a gallery image
+// (shouldUseMediaGallery with an image: Copy image, Open in ▸, View file
+// details). The items Clack can do, in Slack's order:
+//
+//	Save for later / Remove from Later (bookmark) · Open ▸ (Open in
+//	browser, Open in new window; a snippet's View raw) · Copy link to
+//	file (a gallery image: Copy link) · Copy image | Open in ▸ |
+//	Delete file (your own)
+//
+// Left out, for want of their screens: Ask Slackbot, Add to-do, Edit file
+// details / Edit image details (EditFileDialog lives in the Files view),
+// View file details, Print…, Add as tab, Add to folder, Add to section,
+// Create external link…, Refresh file…, Open in split view, Remove
+// Preview and Report to Slack.
+func NewFileActionsMenu(h Host, btn image.Rectangle, m core.Message, f *richtext.File, gallery bool) *Menu {
+	var items []MenuItem
+	group := func(g ...MenuItem) {
+		var keep []MenuItem
+		for _, it := range g {
+			if it.Label != "" {
+				keep = append(keep, it)
+			}
+		}
+		if len(keep) == 0 {
+			return
+		}
+		if len(items) > 0 {
+			items = append(items, Sep())
+		}
+		items = append(items, keep...)
+	}
+	later := fileLaterItem(h, f)
+	if later.Label != "" { // the bookmark glyph (bookmark-filled once saved)
+		later.Icon = "bookmark"
+		if a := h.Core(); a != nil && a.FileSaved(f.ID) {
+			later.Icon = "bookmark-filled"
+		}
+	}
+	// open_original (KfB/): an image, PDF or video that isn't external, a
+	// snippet (not CSV) or an email; Clack, as the desktop app, has
+	// openFileInBrowser too: the Open submenu, a snippet's View raw
+	t := strings.ToLower(f.Type)
+	viewable := f.IsImage || f.IsVideo || t == "pdf"
+	openOrig := viewable && f.Mode != "external" || f.IsSnippet && t != "csv" || f.Mode == "email"
+	var open MenuItem
+	browser := MenuItem{Label: "Open in browser", Do: func() { lbOpen(h, f.Permalink) }}.In(nsFile)
+	window := MenuItem{Label: "Open in new window", Do: func() { lbOpen(h, f.URL) }}.In(nsFile)
+	if openOrig && !gallery && f.URL != "" {
+		switch {
+		case f.IsSnippet || f.Mode == "email":
+			open = MenuItem{Label: "View raw", Do: func() { lbOpen(h, f.URL) }}.In(nsFile)
+		case f.Permalink != "":
+			open = MenuItem{Label: "Open", Sub: []MenuItem{browser, window}}.In(nsFile)
+		}
+	}
+	var copyLink, copyImg MenuItem
+	if link := f.Permalink; link != "" {
+		label := "Copy link to file"
+		switch {
+		case gallery:
+			label = "Copy link"
+		case richtext.IsCanvasFile(f):
+			label = "Copy link to canvas"
+		}
+		copyLink = MenuItem{Label: label, DoCtx: func(gtx layout.Context) {
+			copyText(gtx, link)
+			h.Toast(nsFile.T("Link copied to clipboard")) // enqueueCopyLinkSuccessToast (Bwpd)
+		}}.In(nsFile)
+	}
+	if gallery && f.IsImage {
+		src := f.URL
+		if src == "" && f.Thumb != nil {
+			src = f.Thumb.URL
+		}
+		if src != "" {
+			copyImg = MenuItem{Label: "Copy image", Do: func() { CopyImage(h, src, true, nsFile.T("Image copied to clipboard")) }}.In(nsFile)
+		}
+	}
+	group(later, open, copyLink, copyImg)
+	if gallery && f.URL != "" && f.Permalink != "" && openOrig {
+		group(MenuItem{Label: "Open in", Sub: []MenuItem{browser, window}}.In(nsFile))
+	}
+	del := fileDeleteItem(h, m, f)
+	if del.Label != "" && richtext.IsCanvasFile(f) {
+		del.Label = nsFile.T("Delete canvas")
+	}
+	group(del)
+	if len(items) == 0 {
+		return nil
+	}
+	width := float32(220)
+	if f.Mode == "email" {
+		width = 256
+	}
+	return NewMenuOpts(h, items, MenuOpts{Anchor: btn, Width: width, Popover: "right-bottom", OffsetX: 4, TryOpposite: true})
+}
+
 // fileLaterItem is save_for_later: "Save for later", or "Remove from
 // Later" for a saved file (saveFile / removeFile).
 func fileLaterItem(h Host, f *richtext.File) MenuItem {

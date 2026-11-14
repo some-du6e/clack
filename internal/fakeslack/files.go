@@ -12,7 +12,8 @@ import (
 // File fixtures: Size.Files adds #files-gallery, one message per way
 // Slack draws a shared file (FileGallery in channels: gallery v3 for one
 // to six images, a portrait, a video, an image with a video; the audio
-// player and a voice clip; a PDF, a snippet, a zip; two documents in the
+// player and a voice clip; a PDF, a snippet and the viewer's own long one
+// (snippets.go), a zip; two documents in the
 // mixed grid) plus an image the viewer uploaded (its file menu has Delete
 // file), a wide short screenshot and a small one (thumbs only up to
 // thumb_360, like a pasted 1022x125 composer or a 223px crop), and a thread
@@ -122,8 +123,9 @@ func (s *Server) filesFixtures() []filesFixture {
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESPDF01/q3-report.pdf", Permalink: s.URL + "files/F0FILESPDF01/q3-report.pdf"}
 	snippet := slack.File{ID: "F0FILESSNP01", Name: "fib.py", Title: "fib.py", Mimetype: "text/plain", Filetype: "python",
 		PrettyType: "Python", Size: 160, Mode: "snippet", Lines: 7,
-		Preview:    "def fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n\nprint(fib(10))",
-		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESSNP01/fib.py", Permalink: s.URL + "files/F0FILESSNP01/fib.py"}
+		Preview: cmPlain(fibLines()), PreviewHighlight: cmServer(fibLines()), // snippets.go
+		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESSNP01/fib.py", Permalink: s.URL + "files/F0FILESSNP01/fib.py",
+		EditLink: s.URL + "files/F0FILESSNP01/fib.py/edit"}
 	zip := slack.File{ID: "F0FILESZIP01", Name: "assets.zip", Title: "assets.zip", Mimetype: "application/zip", Filetype: "zip",
 		PrettyType: "Zip", Size: 7 << 20, Mode: "hosted",
 		URLPrivate: s.URL + "files-pri/" + TeamID + "-F0FILESZIP01/assets.zip", Permalink: s.URL + "files/F0FILESZIP01/assets.zip"}
@@ -155,6 +157,7 @@ func (s *Server) filesFixtures() []filesFixture {
 		{"voice clip", "", 1, []slack.File{clip}, nil},
 		{"pdf", "The PDF", 2, []slack.File{pdf}, nil},
 		{"snippet", "A snippet", 3, []slack.File{snippet}, nil},
+		{"long snippet", "My long snippet", -1, []slack.File{s.longSnippet()}, nil},
 		{"zip", "A zip", 1, []slack.File{zip}, nil},
 		{"two documents", "Two documents", 2, []slack.File{pdf, doc}, nil},
 		{"own image", "My own upload", -1, []slack.File{own}, nil},
@@ -261,6 +264,10 @@ func (s *Server) handleFiles(method string, f url.Values) (any, bool) {
 			return slack.File{}, false
 		}
 		if file, found := walk(s.filesFixtures()); found {
+			if c, has := snippetContents()[id]; has { // a snippet's content, at the top level
+				return ok("file", file, "comments", []any{}, "content", c.content, "content_highlight_html", c.html,
+					"content_highlight_html_truncated", c.truncated), true
+			}
 			return ok("file", file, "comments", []any{}), true
 		}
 	case "conversations.replies":

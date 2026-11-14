@@ -9,8 +9,8 @@ package ui
 //     pixels change between two frames).
 //   - Accessibility > "Allow animations" off (a11y_animations false):
 //     nothing plays; the file draws its deanimate still with Slack's Play
-//     button; hovering shows FileActions' Expand; a click on the still
-//     plays it; Expand opens the viewer.
+//     button; hovering shows its FileActions (Download, Expand, More
+//     actions); a click on the still plays it; Expand opens the viewer.
 //
 // IMAGE_SEND_SHOTS_DIR (image-send.yml) saves each stage: gif-*.png.
 
@@ -26,6 +26,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/messages"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -90,6 +91,16 @@ func (e *perfEnv) gifTile(t *testing.T) messages.FileRect {
 	}
 	t.Fatalf("the GIF file's tile stays at %v", tile.R)
 	return tile
+}
+
+// channelFileActions are the FileActions buttons shown in channel ch.
+func (e *perfEnv) channelFileActions(ch string) []messages.FileActionRect {
+	if c := e.a.convos[ch+"/"]; c != nil {
+		if l, ok := c.list.(channelList); ok {
+			return l.FileActionRects()
+		}
+	}
+	return nil
 }
 
 // framesFor runs frames for d and reports how many ran, and the fewest
@@ -178,9 +189,18 @@ func TestGIFShots(t *testing.T) {
 			}
 			e.sendShot("gif-5-played-" + mode)
 
-			// Expand (top 8, right 8, 32px) opens the viewer
+			// Expand (32px, in the tile's FileActions at top 8, right 8,
+			// between Download and More actions) opens the viewer
 			opened := recordLightbox(t)
-			btn := image.Pt(tile.R.Max.X-8-16, tile.R.Min.Y+8+16)
+			var btn image.Point
+			for _, r := range e.channelFileActions(fakeslack.GIFWallID) {
+				if r.Action == richview.FileExpand && r.TS == tile.TS {
+					btn = r.R.Min.Add(r.R.Max).Div(2)
+				}
+			}
+			if btn == (image.Point{}) {
+				t.Fatal("no Expand in the hovered tile's FileActions")
+			}
 			e.move(f32.Pt(float32(btn.X), float32(btn.Y)))
 			e.settle(800 * time.Millisecond) // the tooltip
 			e.sendShot("gif-6-expand-tooltip-" + mode)

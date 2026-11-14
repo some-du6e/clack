@@ -1,7 +1,9 @@
 name: files-shots
 # Files in messages, the file menu and uploads, audited against Slack's
 # web client (docs/FILES-AUDIT.md): gallery v3 geometry and the file
-# cards (internal/ui/richview), the upload sequence (files.getUploadURL,
+# cards (internal/ui/richview), their FileActions on hover and the
+# snippets' highlighting and Show more (files.info's content), the upload
+# sequence (files.getUploadURL,
 # the POST, files.completeUpload, files.share) and the file menu's
 # writes, the #files-gallery render test, and screenshots of the whole
 # channel, the file menu, the delete dialog and the viewer, light and
@@ -13,6 +15,12 @@ on:
     paths:
       - "internal/richtext/message.go"
       - "internal/richtext/types.go"
+      - "internal/richtext/codemirror.go"
+      - "internal/store/snippets.go"
+      - "internal/core/snippets.go"
+      - "internal/fakeslack/snippets.go"
+      - "internal/ui/richview/file_actions.go"
+      - "internal/ui/richview/snippet.go"
       - "internal/slack/more.go"
       - "internal/slack/client.go"
       - "internal/core/writes.go"
@@ -52,18 +60,19 @@ jobs:
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: geometry, uploads and the file menu
         run: |
-          go test -count=1 -v -run 'TestFileImage|TestMediaGallery|TestGalleryPair|TestGalleryBox|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippetCard|TestPillowGrid' ./internal/ui/richview/
-          go test -count=1 -v -run 'TestUploadProgressAndPrepared|TestUploadForInput|TestDraftFiles' ./internal/core/
+          go test -count=1 -v -run 'TestFileImage|TestMediaGallery|TestGalleryPair|TestGalleryBox|TestVideoCard|TestAudioCard|TestGenericFileCard|TestSnippet|TestPillowGrid|TestFileActions|TestGalleryExpandStillOpens|TestStillPlayButtonAndExpand|TestFileCardSectionButton' ./internal/ui/richview/
+          go test -count=1 -v -run 'TestTruncateHTML|TestParseCodeMirror|TestSnippetFields|TestFiles$' ./internal/richtext/
+          go test -count=1 -v -run 'TestUploadProgressAndPrepared|TestUploadForInput|TestDraftFiles|TestExpandSnippet|TestSnippetDisplayCut' ./internal/core/
           go test -count=1 -v -run 'TestFileMenuLaterAndDelete|TestContextMenuShapes' ./internal/ui/popups/
       - name: render
-        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$|TestFileDrop|TestDropSubtitle|TestDropTiming' ./internal/ui/
+        run: xvfb-run -a go test -count=1 -v -run 'TestFilesChannel$|TestFileSnippetExpand$|TestFileDrop|TestDropSubtitle|TestDropTiming' ./internal/ui/
       - name: screenshots
         env:
           FILES_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$FILES_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestFilesShots$|TestDropOverlayShots$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestFilesShots$|TestFileActionsShots$|TestDropOverlayShots$' ./internal/ui/
           ls -la "$FILES_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

@@ -144,6 +144,14 @@ func drawBox(ops *op.Ops, b *box) {
 		p.LineTo(f32.Pt(r.x1, (r.y0+r.y1)/2))
 		p.LineTo(f32.Pt(r.x0, r.y1))
 		paint.FillShape(ops, b.fill, clip.Stroke{Path: p.End(), Width: float32(max(1, b.bw))}.Op())
+	case bFade:
+		// linear-gradient(to top, fill, transparent): fill at the bottom
+		clear := b.fill
+		clear.A = 0
+		cs := clip.RRect{Rect: b.r, NW: b.corners[0], NE: b.corners[1], SE: b.corners[2], SW: b.corners[3]}.Push(ops)
+		paint.LinearGradientOp{Stop1: f32.Pt(0, float32(b.r.Min.Y)), Color1: clear, Stop2: f32.Pt(0, float32(b.r.Max.Y)), Color2: b.fill}.Add(ops)
+		paint.PaintOp{}.Add(ops)
+		cs.Pop()
 	}
 }
 

@@ -1294,36 +1294,52 @@ func TestSnippetCard(t *testing.T) {
 	if card == nil {
 		t.Fatalf("no card")
 	}
-	// p-message_file--snippet has no max width; the header is the pillow's
-	// (60 tall), then 3 lines of 19.5 with 4px above and below
-	if card.r.Min != (image.Point{}) || card.r.Dx() != 600 || card.r.Max.Y != d.size.Y || card.r.Dy() != 60+4+3*20+4+1 {
+	// p-message_file--snippet has no max width and no header (the title
+	// is the meta line's): 3 lines of 19.5 with 4px above and below,
+	// inside the 1px border
+	if card.r.Min != (image.Point{}) || card.r.Dx() != 600 || card.r.Max.Y != d.size.Y || card.r.Dy() != 1+4+3*20+4+1 {
 		t.Errorf("snippet card %v, size %v", card.r, d.size)
 	}
 	pk, fn := findFrag(t, d, "package"), findFrag(t, d, "func")
-	if pk.size != 13 || fn.top <= pk.top {
-		t.Errorf("code size %d, lines %d/%d", pk.size, pk.top, fn.top)
+	if pk.size != 13 || fn.top <= pk.top || pk.top != 1+4 {
+		t.Errorf("code size %d, lines at %d/%d", pk.size, pk.top, fn.top)
 	}
 	if fn.top-pk.top != 2*20 {
 		t.Errorf("blank line not kept: %d", fn.top-pk.top)
 	}
-	if pk.x != 1+32+8 {
-		t.Errorf("code at x %v, want after the 32px gutter and 8px padding", pk.x)
+	if pk.x != 1+32+8+4 {
+		t.Errorf("code at x %v, want after the 32px gutter, the line's 8px padding and the pre's 4px", pk.x)
 	}
 	one := findFrag(t, d, "1")
 	if one.x >= 33 || one.col == st.Palette.Text {
 		t.Errorf("line number %+v, want in the gutter, dimmed", one)
 	}
 	findFrag(t, d, "3")
-	findFrag(t, d, "Go")
-	if hdr := findFrag(t, d, "main.go"); hdr.target != card.target || hdr.top >= pk.top {
-		t.Errorf("header frag target %d top %d", hdr.target, hdr.top)
+	for i := range d.frags {
+		if f := &d.frags[i]; f.sh != nil && (strings.Contains(string(d.plain[f.p0:f.p1]), "main.go") || f.target == card.target) {
+			t.Errorf("a header frag %q in the snippet", d.plain[f.p0:f.p1])
+		}
+	}
+	// a click on it does nothing (PillowFile has no onClick for a snippet);
+	// its right-click is the file's
+	if tg := &d.targets[card.target]; tg.kind != tFile || !tg.menuOnly {
+		t.Errorf("the pillow's target %+v, want a menu-only file", tg)
 	}
 
-	// a long snippet collapses at 200px under the fade
+	// a long preview with nothing more stays whole; with lines_more it is
+	// collapsed at 200px under the fade
 	long := &rt.File{Name: "big.txt", IsSnippet: true, Preview: strings.Repeat("line\n", 30)}
 	v = layoutAt(st, doc(fileBlock(long)), Options{CompactFiles: true}, 600)
-	if h := v.d.size.Y; h != 60+200+1 {
-		t.Errorf("collapsed snippet height %d, want 261", h)
+	if h := v.d.size.Y; h != 1+4+30*20+4+1 {
+		t.Errorf("whole snippet height %d, want 610", h)
+	}
+	long.LinesMore = 12
+	v = layoutAt(st, doc(fileBlock(long)), Options{CompactFiles: true}, 600)
+	if h := v.d.size.Y; h != 1+200+1 {
+		t.Errorf("collapsed snippet height %d, want 202", h)
+	}
+	if fades := boxesOf(&v.d, bFade); len(fades) != 1 || fades[0].r.Dy() != 40 || fades[0].r.Max.Y != 201 {
+		t.Errorf("fade %+v", fades)
 	}
 }
 
