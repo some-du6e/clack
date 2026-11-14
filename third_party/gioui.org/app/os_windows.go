@@ -913,6 +913,11 @@ func (w *window) processDataEvent(content string) {
 }
 
 func (w *window) Configure(options []Option) {
+	if !windows.IsWindowVisible(w.hwnd) || windows.IsIconic(w.hwnd) { // DIAG flakes-1114
+		var c Config
+		c.apply(configForDPI(96), options)
+		fmt.Fprintf(os.Stderr, "DIAG %s gio: Configure on a window visible=%v iconic=%v (mode %v, title %q)\n", time.Now().Format("15:04:05.000"), windows.IsWindowVisible(w.hwnd), windows.IsIconic(w.hwnd), w.config.Mode, c.Title)
+	}
 	dpi := windows.GetWindowDPI(w.hwnd)
 	metric := configForDPI(dpi)
 	cnf := w.config
@@ -1140,6 +1145,7 @@ func (w *window) Perform(acts system.Action) {
 			y := (area.Bottom + area.Top - dy) / 2
 			windows.SetWindowPos(w.hwnd, 0, x, y, dx, dy, windows.SWP_NOZORDER|windows.SWP_FRAMECHANGED)
 		case system.ActionRaise:
+			fmt.Fprintf(os.Stderr, "DIAG %s gio: ActionRaise visible=%v iconic=%v\n", time.Now().Format("15:04:05.000"), windows.IsWindowVisible(w.hwnd), windows.IsIconic(w.hwnd)) // DIAG flakes-1114
 			// Clack patch (CLACK_PATCHES.md §13): a window hidden with
 			// Window.Hide comes back the way Electron's BrowserWindow.show
 			// shows it (Chromium's HWNDMessageHandler::Show for

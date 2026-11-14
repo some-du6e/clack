@@ -485,6 +485,28 @@ jobs:
           FLAKE_TAIL: "300"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
 
+  flakes-1114-taskbar:
+    if: ${{ !inputs.only || startsWith('flakes-1114-taskbar', inputs.only) }}
+    name: "flakes-1114 TestTaskbarWindow (windows-shell)"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "TestTaskbarWindow, every run counted"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-shell
+          CLACK_WINDOWS_TASKBAR_TESTS: "1"
+          TEST: TestTaskbarWindow
+          PKG: ./internal/ui
+          FLAKE_TAIL: "300"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
   flakes-1112b-share:
     if: ${{ !inputs.only || startsWith('flakes-1112b-share', inputs.only) }}
     name: "flakes-1112b ${{ matrix.test }}"

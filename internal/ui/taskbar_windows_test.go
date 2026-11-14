@@ -130,6 +130,28 @@ func TestTaskbarWindow(t *testing.T) {
 	}
 	visible := func() bool { r, _, _ := trayTestIsVisible.Call(hwnd); return r != 0 }
 	iconic := func() bool { r, _, _ := trayTestIsIconic.Call(hwnd); return r != 0 }
+	stopDiag := make(chan struct{})
+	var diagWG sync.WaitGroup
+	diagWG.Add(1)
+	defer func() { close(stopDiag); diagWG.Wait() }()
+	go func() { // DIAG flakes-1114: every visible/iconic change
+		defer diagWG.Done()
+		var lv, li bool
+		first := true
+		for {
+			select {
+			case <-stopDiag:
+				return
+			default:
+			}
+			v, i := visible(), iconic()
+			if first || v != lv || i != li {
+				t.Logf("DIAG %s window visible=%v iconic=%v", time.Now().Format("15:04:05.000"), v, i)
+				lv, li, first = v, i, false
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
 	until("the first frames", func() bool { return frames.Load() > 2 })
 	time.Sleep(2 * time.Second)
 

@@ -946,6 +946,7 @@ func (a *App) setDark(dark bool) {
 func (a *App) updateTitle() {
 	t := a.windowTitle()
 	if t != a.title {
+		log.Printf("DIAG ui: title %q -> %q", a.title, t) // DIAG flakes-1114
 		a.title = t
 		if a.win != nil { // nil in headless benchmarks
 			a.win.Option(app.Title(t))
