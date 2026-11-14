@@ -669,9 +669,15 @@ func (b *backend) handle(a *App, ev core.Event) {
 // stream's update): ephemerals (Slackbot's "you can't @channel here")
 // never notify, and under defer_notification_3p_streaming neither does a
 // message still streaming ("Skip notification for in-progress streaming
-// message"); the rest follow the viewer's notification prefs.
-func (b *backend) maybeNotify(a *App, ev core.Event) {
-	m := &b.m
+// message"); the rest follow the viewer's notification prefs. The
+// conversation comes from core, not the sidebar's rows, and what the
+// notification names is looked up first when the store can't name it
+// yet (notify_conv.go).
+func (b *backend) maybeNotify(a *App, ev core.Event) { b.maybeNotifyAfter(a, ev, false) }
+
+// maybeNotifyAfter is maybeNotify; resolved: the lookups it needed ran
+// (noteResolve), so it shows what it has.
+func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 	if ev.Msg == nil || ev.Msg.User == b.selfID || ev.Msg.System || b.core.Interactive().Ephemeral(ev.Channel, ev.TS) {
 		return
 	}
@@ -679,23 +685,42 @@ func (b *backend) maybeNotify(a *App, ev core.Event) {
 		return
 	}
 	cur := a.router.Current().Channel()
-	c := m.conv(ev.Channel)
-	direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
-	if b.wantsNotify(ev.Channel, ev.Mention || direct) && (c == nil || !c.Muted) && (cur != ev.Channel || !a.focused) &&
-		replyNotifies(b.core, ev) { // a reply only when it mentions the viewer (notify_threads.go)
-		// through Taut's showNotification thunk: plugins may change or
-		// drop it (native: the desktop notification)
-		title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
-		msg := notificationMessage(a.Taut(), ev)
-		note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS) // the toast's payload (notify.go)
-		a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
-			func(ctx context.Context, args map[string]any) (any, error) {
-				if t, b, ok := notificationText(args, msg, body); ok {
-					a.notifyMessage(t, b, note)
-				}
-				return nil, nil
-			})
+	c, named := b.noteConv(ev.Channel)
+	if c != nil && c.Preview {
+		return // a channel the viewer isn't in (isMemberOfChannel: reason 2)
 	}
+	direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
+	if !b.wantsNotify(ev.Channel, ev.Mention || direct) || (c != nil && c.Muted) || (cur == ev.Channel && a.focused) ||
+		!replyNotifies(b.core, ev) { // a reply only when it mentions the viewer (notify_threads.go)
+		return
+	}
+	if !resolved {
+		// a conversation core doesn't know was looked up for this very
+		// message (core onMessage's refreshConv); one it knows without a
+		// name, and the channels the text mentions that nobody named
+		// yet, are looked up now
+		var ids []string
+		if c != nil && !named && c.Kind != "im" && c.Kind != "app" {
+			ids = append(ids, ev.Channel)
+		}
+		ids = append(ids, b.noteMentions(ev.Msg.Doc)...)
+		if len(ids) > 0 {
+			b.noteResolve(a, ids, func() { b.maybeNotifyAfter(a, ev, true) })
+			return
+		}
+	}
+	// through Taut's showNotification thunk: plugins may change or
+	// drop it (native: the desktop notification)
+	title, body := b.notifyTitle(ev, c), b.notifyBody(ev, c)
+	msg := notificationMessage(a.Taut(), ev)
+	note := a.messageNote(ev.Channel, ev.TS, ev.Msg.ThreadTS) // the toast's payload (notify.go)
+	a.dispatch("showNotification", map[string]any{"title": title, "message": msg, "body": body, "channelId": ev.Channel, "ts": ev.TS},
+		func(ctx context.Context, args map[string]any) (any, error) {
+			if t, b, ok := notificationText(args, msg, body); ok {
+				a.notifyMessage(t, b, note)
+			}
+			return nil, nil
+		})
 }
 
 func (b *backend) setCount(id string, cnt core.Count) bool {
@@ -712,18 +737,20 @@ func (b *backend) setCount(id string, cnt core.Count) bool {
 
 // notifyTitle is Slack's getNotificationTitle (gaJC) for one signed-in
 // account: "New message from {name}" in a DM, else "New message in
-// {channel}" (notify_threads.go).
+// {channel}" (growl; notify_threads.go). A conversation core doesn't
+// know keeps the sender's form: its name isn't there to show.
 func (b *backend) notifyTitle(ev core.Event, c *convInfo) string {
 	if c == nil || c.Kind == "im" || c.Kind == "app" {
-		return "New message from " + b.notifySender(ev)
+		return nsGrowl.T("New message from {name}", "name", b.notifySender(ev))
 	}
-	return "New message in " + notifyChannelName(c)
+	return nsGrowl.T("New message in {channel}", "channel", notifyChannelName(c))
 }
 
 // notifyBody is getContentForNotification: the text, after "{sender}: "
-// outside DMs.
+// outside DMs, its channel mentions as Slack's channelToText writes them
+// (notify_conv.go: never the raw id).
 func (b *backend) notifyBody(ev core.Event, c *convInfo) string {
-	text := richtext.PlainText(ev.Msg.Doc)
+	text := richtext.PlainTextWith(ev.Msg.Doc, b.noteSpanText)
 	if c == nil || c.Kind == "im" || c.Kind == "app" {
 		return text
 	}

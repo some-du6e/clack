@@ -42,20 +42,36 @@ func replyNotifies(app *core.App, ev core.Event) bool {
 	return app != nil && app.MentionsViewerInReply(ev.Msg)
 }
 
-// notifyChannelName is getDisplayNameForChannel for the title.
+// notifyChannelName is getDisplayNameForChannel for the title
+// (imIncludeAtSign off): "#name" for a public channel, a private
+// channel's bare name, a group DM's members; formatChannelName's
+// "unknown-channel" for one whose name isn't known, never the raw id
+// (notify_conv.go).
 func notifyChannelName(c *convInfo) string {
 	if c == nil {
 		return ""
 	}
-	if c.Kind == "channel" {
-		return "#" + c.Name
+	name := c.Name
+	if !noteNamed(c) {
+		name = noteUnknownChannel()
 	}
-	return c.Name
+	if c.Kind == "channel" {
+		return "#" + name
+	}
+	return name
 }
 
 // desktopNotification shows the server's desktop_notification for a
-// followed thread's reply, after Slack's checks.
+// followed thread's reply, after Slack's checks. Its conversation comes
+// from core (a followed thread's channel may be one the sidebar doesn't
+// list), looked up first when the store can't name it (notify_conv.go).
 func (b *backend) desktopNotification(a *App, ev core.Event) {
+	b.desktopNotificationAfter(a, ev, false)
+}
+
+// desktopNotificationAfter is desktopNotification; resolved: the
+// conversation was looked up already.
+func (b *backend) desktopNotificationAfter(a *App, ev core.Event, resolved bool) {
 	var e struct {
 		Channel         string `json:"channel"`
 		TS              string `json:"ts"`
@@ -66,10 +82,6 @@ func (b *backend) desktopNotification(a *App, ev core.Event) {
 	}
 	if json.Unmarshal(ev.Raw, &e) != nil || e.Channel == "" {
 		return
-	}
-	c := b.m.conv(e.Channel)
-	if c == nil {
-		return // an unknown conversation (3)
 	}
 	if !e.IsChannelInvite {
 		ts := e.TS
@@ -87,9 +99,20 @@ func (b *backend) desktopNotification(a *App, ev core.Event) {
 			return // read already (20)
 		}
 	}
-	title := "New message in " + notifyChannelName(c)
+	c, named := b.noteConv(e.Channel)
+	if !named && !resolved && b.core != nil {
+		b.noteResolve(a, []string{e.Channel}, func() { b.desktopNotificationAfter(a, ev, true) })
+		return
+	}
+	if c == nil {
+		return // an unknown conversation (3)
+	}
+	if c.Preview {
+		return // a channel the viewer isn't in (isMemberOfChannel: 2)
+	}
+	title := nsGrowl.T("New message in {channel}", "channel", notifyChannelName(c))
 	if c.Kind == "im" || c.Kind == "app" { // isIm (an app's DM too)
-		title = "New message from " + c.Name
+		title = nsGrowl.T("New message from {name}", "name", c.Name)
 	}
 	body := e.Content
 	note := a.messageNote(e.Channel, e.TS, e.ThreadTS) // the toast's payload (notify.go)
