@@ -86,6 +86,12 @@ type Size struct {
 	// ThreadHeader adds one thread in a conversation of each kind the
 	// thread pane's header names differently (threadheader.go).
 	ThreadHeader bool
+	// ThreadAgentTitles (with ThreadHeader) makes two fixtures agent
+	// threads: the public channel's root carries an agent_session titled
+	// ThreadAgentTitle, the app DM's root an assistant_app_thread titled
+	// ThreadAssistantTitle, and the app DM's bot an agent app
+	// (apps.profile.get is_agent_app, is_shown_as_agent left out).
+	ThreadAgentTitles bool
 	// SlackConnectDM (with ThreadHeader) adds an open DM with ExternalID,
 	// Partner Co's member: the sidebar's external DM row
 	// (SlackConnectDMID).
@@ -285,6 +291,11 @@ func (s *Server) appProfile(bot, app string) (map[string]any, bool) {
 	}
 	if p, ok := s.identityAppProfile(bot, app); ok && s.Size.Identity {
 		return p, true
+	}
+	if s.Size.ThreadAgentTitles && (bot == threadAppBotID || app == threadAppAppID) {
+		return map[string]any{"id": threadAppAppID, "name": "Launch Bot", "desc": "Answers launch questions", "app_user_id": ThreadAppUserID,
+			"team_id": TeamID, "is_installed": true, "is_agent_app": true, "icons": icons("app"),
+			"bot_user": map[string]any{"id": ThreadAppUserID, "username": "launchbot"}}, true
 	}
 	switch {
 	case bot == AppBotID || app == AppAppID:

@@ -51,6 +51,7 @@ type ThreadView struct {
 	backBtn                   widget.Clickable // FlexpaneBackButton (PaneBack)
 	bellTip, moreTip, nameTip popups.TipState
 	closeTip                  popups.TipState
+	tt                        threadTitleUI          // the header's title row (thread_title.go)
 	banner                    threadBanner           // jump to unread (thread_banner.go)
 	nameRect                  image.Rectangle        // the subtitle, view coordinates (last frame)
 	nameSub                   HeaderSubtitle         // what it showed
@@ -279,6 +280,9 @@ func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
 	if app == nil {
 		return HeaderSubtitle{}, false
 	}
+	if app.AgentAppChannel(v.ch) { // renderThreadSubtitle: none for an agent app's DM
+		return HeaderSubtitle{}, false
+	}
 	cv, ok := app.Conv(v.ch)
 	if !ok || (cv.Kind == "im" && cv.User == "") || (cv.Kind != "im" && cv.Name == "") {
 		v.resolve(app)
@@ -324,6 +328,21 @@ func (v *ThreadView) subtitle() (HeaderSubtitle, bool) {
 		sub.Icon = "lock-filled"
 	}
 	return sub, true
+}
+
+// subtitleWidth is the subtitle's natural width (its icon and name), 0
+// when there is none.
+func (v *ThreadView) subtitleWidth(gtx layout.Context, th *theme.Theme) int {
+	sub, ok := v.subtitle()
+	if !ok {
+		return 0
+	}
+	ns := textStyle{size: 13, lineH: 18}
+	w := measure(gtx, th, ns, sub.Text).X
+	if sub.Icon != "" {
+		w += gtx.Sp(unit.Sp(ns.size)) + dp(gtx, 2)
+	}
+	return w
 }
 
 // resolve looks the thread's conversation up once (off the UI goroutine).
@@ -470,9 +489,6 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		}
 	}
 	ty := (hh - gtx.Sp(unit.Sp(tsT.lineH))) / 2
-	d := at(gtx, px, ty, func(gtx layout.Context) layout.Dimensions {
-		return lineBox(gtx, tsT, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, tsT, "Thread") })
-	})
 	// header controls, right to left gap apart: close, ⋮
 	// (SecondaryHeaderMore), the bell (thread-mute-button), then plugin
 	// content in ThreadSearchButton. Slack's viewHeaderActionButton is
@@ -491,7 +507,12 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	// header row's height, in what the title leaves them (Slack's title
 	// column shrinks first)
 	bgtx := gtx
-	bgtx.Constraints = layout.Constraints{Max: image.Pt(max(left-gap-px-d.Size.X, 0), hh)}
+	// (an agent session's long title shrinks before it: the space kept
+	// for the title is at most "Thread"'s)
+	title := v.headerTitle(root, rootOK)
+	tw := v.titleWidth(gtx, th, tsT, title)
+	keep := min(tw, measure(gtx, th, tsT, threadsNS.T("Thread")).X)
+	bgtx.Constraints = layout.Constraints{Max: image.Pt(max(left-gap-px-keep, 0), hh)}
 	rec := op.Record(gtx.Ops)
 	hs := flexPrimaryClass.Enter(bgtx, 0, 0)
 	sd := slackc.Component(bgtx, "ThreadSearchButton", v, (*ThreadView).searchButtonProps, (*ThreadView).layoutSearchButton)
@@ -508,6 +529,15 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		call.Add(gtx.Ops)
 		t.Pop()
 	}
+	// the title (renderThreadTitle) and the subtitle share the row
+	// between px and end, shrinking in proportion when both don't fit
+	titleMax := max(0, end-px)
+	if sw := v.subtitleWidth(gtx, th); sw > 0 {
+		if over := tw + dp(gtx, 16) + sw - (end - px); over > 0 {
+			titleMax = max(0, tw-over*tw/(tw+sw))
+		}
+	}
+	d := v.layoutTitle(gtx, th, c, px, ty, min(tw, titleMax), tsT, title)
 	v.layoutSubtitle(gtx, th, c, px+d.Size.X+dp(gtx, 8), ty+(d.Size.Y-d.Baseline), end-dp(gtx, 8), rootOK)
 	if v.s.closeBtn.Clicked(gtx) {
 		v.h.CloseSecondary()

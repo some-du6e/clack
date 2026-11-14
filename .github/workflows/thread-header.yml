@@ -5,7 +5,8 @@ name: thread-header
 # header fixtures; find in thread (find_in_thread: the header's Search in
 # thread, the bar, search.inline, the marks); then window and pane
 # screenshots per kind, light and dark, rendered headlessly; an agent
-# app's answer edited live in the open pane (fakeslack's AgentThread).
+# app's answer edited live in the open pane (fakeslack's AgentThread);
+# agent threads' titles (agent_channel_thread_naming, agent_dm_thread_naming).
 # Synthetic only: nothing here talks to Slack.
 on:
   push:
@@ -13,6 +14,8 @@ on:
     paths:
       - "internal/ui/messages/thread*.go"
       - "internal/ui/thread_header_test.go"
+      - "internal/ui/exp_wave4_test.go"
+      - "internal/core/exp_wave4.go"
       - "internal/ui/route*.go"
       - "internal/ui/host.go"
       - "internal/core/resolve.go"
@@ -57,6 +60,8 @@ jobs:
         run: |
           mkdir -p "$THREAD_HEADER_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestThreadHeaderFromActivity|TestThreadHeaderJumpsToRoot' ./internal/ui/
+          # agent threads' titles (exp-wave-4: thread-agent-title-*.png, thread-agent-dm-title-*.png)
+          xvfb-run -a go test -count=1 -v -run 'TestThreadAgentTitle' ./internal/ui/
           # Slack Connect in the sidebar on the same fixture (slack-connect-sidebar-*.png)
           xvfb-run -a go test -count=1 -v -run 'TestSidebarSlackConnectMarkers' ./internal/ui/
           # find in thread's bar and marks (thread-find-*.png)

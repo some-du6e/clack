@@ -54,6 +54,10 @@ type Message struct {
 	// AgentSession is a thread session's state on its root message
 	// (Slack's iR00 getMessageByTimestamp(…)?.agent_session).
 	AgentSession *MessageAgentSession `json:"agent_session,omitempty"`
+	// AssistantAppThread marks an AI app's assistant thread root
+	// (assistant_app_thread: {title, …}); the thread pane's header reads
+	// its title (srGL renderThreadTitle, Aa1F AssistantThreadTitleLabel).
+	AssistantAppThread *MessageAssistantThread `json:"assistant_app_thread,omitempty"`
 	// FunctionExecutionID marks a workflow step's message: its block
 	// actions carry it (Slack's blocks.actions function_execution_id).
 	FunctionExecutionID string `json:"function_execution_id,omitempty"`
@@ -67,6 +71,21 @@ type Message struct {
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
 	UploadStatus string `json:"-"`
+}
+
+// MessageAssistantThread is a message's assistant_app_thread.
+type MessageAssistantThread struct {
+	Title string `json:"title,omitempty"`
+}
+
+// TitleSet is agent_session.title when it is a string: Slack's
+// `agent_session?.title ?? …` falls through only when it's missing.
+func (s *MessageAgentSession) TitleSet() (string, bool) {
+	var t string
+	if s == nil || json.Unmarshal(s.RawTitle, &t) != nil {
+		return "", false
+	}
+	return t, true
 }
 
 // MessageAgentSession is a message's agent_session: the status (active,

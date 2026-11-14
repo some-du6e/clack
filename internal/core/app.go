@@ -1250,7 +1250,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	v.Blocks, v.Attachments, v.Metadata = m.Blocks, m.RawAttachments, m.Metadata
 	v.StreamingState = m.StreamingState
 	v.WorkflowID, v.TriggerID = m.WorkflowID, m.TriggerID
-	v.AgentSession = m.AgentSession
+	v.AgentSession, v.AssistantThread = m.AgentSession, m.AssistantAppThread
 	v.FunctionExecutionID = m.FunctionExecutionID
 	v.Locked, v.LockedByTeam = m.IsLocked, m.LockedByTeamID
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)

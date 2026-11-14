@@ -35,6 +35,14 @@ const (
 	// ThreadRootTS roots each fixture's thread; ThreadReplyTS(i) are its
 	// replies.
 	ThreadRootTS = "1762516000.000100"
+
+	// ThreadAgentTitle and ThreadAssistantTitle are the agent threads'
+	// titles (Size.ThreadAgentTitles).
+	ThreadAgentTitle     = "Plan the launch checklist"
+	ThreadAssistantTitle = "Launch questions"
+
+	threadAppBotID = "B0THAPPBOT1"
+	threadAppAppID = "A0THAPPBOT1"
 )
 
 // ThreadReplyTS is the i-th reply (0, 1) of a thread fixture.
@@ -72,8 +80,8 @@ func (s *Server) ThreadHeaderCases() []ThreadHeaderCase {
 // threadHeaderApp is the app DM's bot user (users.info only): real_name
 // set, display_name empty, its handle the app's lowercase name.
 func (s *Server) threadHeaderApp() slack.User {
-	p := slack.Profile{RealName: "Launch Bot", Team: TeamID, Fields: json.RawMessage(`{}`), BotID: "B0THAPPBOT1",
-		APIAppID: "A0THAPPBOT1"}
+	p := slack.Profile{RealName: "Launch Bot", Team: TeamID, Fields: json.RawMessage(`{}`), BotID: threadAppBotID,
+		APIAppID: threadAppAppID}
 	return slack.User{ID: ThreadAppUserID, TeamID: TeamID, Name: "launchbot", RealName: "Launch Bot", IsBot: true, Profile: p}
 }
 
@@ -135,6 +143,15 @@ func (s *Server) threadHeaderMsg(ch, ts string) slack.Message {
 	if ts == ThreadRootTS {
 		m.Text = "Launch checklist for Friday"
 		m.ReplyCount, m.LatestReply, m.ReplyUsers = 2, ThreadReplyTS(1), []string{u[1].ID}
+		if s.Size.ThreadAgentTitles {
+			switch ch {
+			case ThreadPublicID:
+				m.AgentSession = &slack.MessageAgentSession{Status: "active", RawTitle: rawJSON(ThreadAgentTitle),
+					RawAgentBotUsers: rawJSON([]string{ThreadAppUserID})}
+			case ThreadAppDMID:
+				m.AssistantAppThread = &slack.MessageAssistantThread{Title: ThreadAssistantTitle}
+			}
+		}
 	} else {
 		m.User = u[1].ID
 		m.Text = map[string]string{ThreadReplyTS(0): "Docs are ready", ThreadReplyTS(1): "Ship it"}[ts]

@@ -63,6 +63,9 @@ type Message struct {
 	// AgentSession is the message's agent_session: a thread session's
 	// state on its root message (nil for other messages).
 	AgentSession *slack.MessageAgentSession
+	// AssistantThread is an assistant thread root's assistant_app_thread
+	// (nil for other messages).
+	AssistantThread *slack.MessageAssistantThread
 	// ThreadLastRead is a followed thread's last read reply (root
 	// messages; the subscription's last_read from conversations.replies,
 	// thread_marked and subscriptions.thread.mark): Slack's
