@@ -182,6 +182,9 @@ func TestManageTabsRenameDeleteLikeSlack(t *testing.T) {
 		e.click(p)
 		e.until(t, "Rename tab", func() bool {
 			ov := h.open()
+			if len(ov) == 0 {
+				return false
+			}
 			r, ok := ov[len(ov)-1].(*popups.RenameTabModal)
 			return ok && r.Title() == "Rename tab"
 		})
@@ -209,6 +212,9 @@ func TestManageTabsRenameDeleteLikeSlack(t *testing.T) {
 		e.click(p)
 		e.until(t, "the remove-access question", func() bool {
 			ov := h.open()
+			if len(ov) == 0 {
+				return false
+			}
 			mm, ok := ov[len(ov)-1].(*popups.Modal)
 			return ok && mm.Title() == "Also remove access to this list?"
 		})

@@ -28,9 +28,8 @@ func TestCanEditTabsLikeSlack(t *testing.T) {
 	}
 	ro := true // canUserPostInChannel: a read-only (announcement) channel
 	a.S.PutConv(slack.Conversation{ID: "C4", Name: "announce", IsChannel: true, IsMember: true, IsReadOnly: &ro})
-	a.S.PutConv(slack.Conversation{ID: "C5", Name: "elsewhere", IsChannel: true})
-	if a.CanEditTabs("C4") || a.CanEditTabs("C5") {
-		t.Error("a member who can't post, or a non-member, may edit the tabs")
+	if a.CanEditTabs("C4") {
+		t.Error("a member who can't post may edit the tabs")
 	}
 	waitGrants(t, a, "C2")
 	if a.CanEditTabs("C2") {

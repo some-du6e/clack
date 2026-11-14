@@ -155,6 +155,11 @@ func RemoveTab(h Host, ch string, t EditTab) {
 			})
 		}()
 	default:
+		// useRemoveTab g: Messages first when it is the open tab, then
+		// removeTab
+		if fh, ok := h.(FolderHost); ok {
+			fh.TabRemoved(ch, t.ID)
+		}
 		remove(false)
 	}
 }

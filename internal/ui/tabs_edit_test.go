@@ -126,7 +126,7 @@ func tbDrag(e *perfEnv, from, to image.Point, mid func()) {
 	const n = 12
 	for i := 1; i <= n; i++ {
 		p := from.Add(to.Sub(from).Mul(i).Div(n))
-		e.r.Queue(pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt(p)})
+		e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: pt(p)}) // the router makes it a Drag
 		e.frame()
 	}
 	if mid != nil {
@@ -238,11 +238,12 @@ func TestTabBarMenuLikeSlack(t *testing.T) {
 	r.SetLabel("Roadmap")
 	pfShot(e, "tabs3-rename")
 	r.Save()
-	e.frame()
-	if got := tbTab(t, e, ch, tbCanvasTab).label; got != "Roadmap" {
-		t.Errorf("the bar says %q right after Save", got)
-	}
+	e.until("the bar's new label", 2*time.Second, func() bool { return tbTab(t, e, ch, tbCanvasTab).label == "Roadmap" })
 	e.until("conversations.updateTab", 10*time.Second, func() bool { return fs.GalleryTabLabels()[tbCanvasTab] == "Roadmap" })
+	e.settle(500 * time.Millisecond) // the re-read keeps the tab's own label
+	if got := tbTab(t, e, ch, tbCanvasTab).label; got != "Roadmap" {
+		t.Errorf("after the re-read the bar says %q", got)
+	}
 	if w, _ := e.lastWrite(fs, "conversations.updateTab", tbCanvasTab); w["label"] != "Roadmap" || w["channel_id"] != ch {
 		t.Errorf("updateTab %v", w)
 	}
