@@ -172,6 +172,15 @@ func (s *Server) ViewCanvasAsOther(id, user string, open bool) {
 		"event_ts": fmt.Sprintf("%d.000200", time.Now().Unix())})
 }
 
+// Sockets is how many realtime sockets are connected: Push reaches only
+// those, so a test pushing right after boot waits for one.
+func (s *Server) Sockets() int {
+	cs := s.canvasStore()
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	return len(cs.sockets)
+}
+
 // Push sends a realtime event to every connected socket.
 func (s *Server) Push(ev any) {
 	b, _ := json.Marshal(ev)

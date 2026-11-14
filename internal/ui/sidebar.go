@@ -568,6 +568,12 @@ func (a *App) layoutSidebarRow(gtx layout.Context, r *sbRow) layout.Dimensions {
 			weight = theme.Black
 			col = c.SidebarTextUnread
 		}
+		// the Huddles page's hasUnreads (getActiveInviteForCurrentTeam):
+		// --unread, except under focus mode (isSilentSidebarActive)
+		if r.key == "huddles" && a.huddles().Link().Unread && !a.focusQuiet() {
+			weight = theme.Black
+			col = c.SidebarTextUnread
+		}
 	case sbHeading:
 		clickPrefix = "sbh."
 		if a.sbCollapsed(r) {
@@ -951,6 +957,9 @@ func (a *App) sidebarRowBody(gtx layout.Context, r *sbRow, btn *widget.Clickable
 				a.sidebar.draftFg, a.sidebar.draftMenu = pc, menu
 				right -= gtx.Dp(6)
 			}
+		}
+		if r.kind == sbLink && r.key == "huddles" {
+			right = a.layoutHuddlesLinkFacepile(gtx, rw, rowH, right)
 		}
 		if conv != nil {
 			// a huddle is on here: Slack's BaseChannelSuffixHuddleIcon

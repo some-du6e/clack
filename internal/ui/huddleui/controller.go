@@ -106,6 +106,12 @@ type Controller struct {
 	hdr     map[string]*headerState
 	last    time.Time
 
+	// unread is clientHuddles.unreadInvites and pageSeen the Huddles
+	// page's useMarkHuddlesNotifications calls, nil while it isn't up
+	// (huddles_link.go)
+	unread   []unreadInvite
+	pageSeen map[string]bool
+
 	dockOrigin image.Point // the dock's window position (menus anchor to it)
 	hideSelf   atomic.Bool // the ⋯ menu's "Hide self-view" (isHidingSelf)
 
@@ -248,6 +254,7 @@ func (c *Controller) toastFor(text, icon string, ms int) {
 // Start starts or joins the huddle in channel (a channel or DM id). If
 // you're in another huddle you leave it first, like Slack.
 func (c *Controller) Start(channel string) {
+	c.clearInvite(channel) // the orchestrator's start: clearInviteForChannelId first
 	c.mu.Lock()
 	if c.joining != "" || (c.s != nil && c.s.Channel() == channel) {
 		c.mu.Unlock()
@@ -630,6 +637,7 @@ func (c *Controller) ended(err error) {
 	if s == nil {
 		return
 	}
+	c.clearInvite(s.Channel()) // the leave's cleanup: clearInviteForChannelId
 	c.sessionEnded()
 	c.stopAloneTimer()
 	c.stopMicChecks()

@@ -207,7 +207,7 @@ func (c *Controller) Badge(gtx C, th *theme.Theme, ch string, right, rowH int, l
 		*t = sbTip{}
 		t = nil
 	}
-	return c.sbStack(gtx, th, t, ch, people, right, rowH, false) - gtx.Dp(8) // margin-left 8px
+	return c.sbStack(gtx, th, t, ch, people, sbMaxFaces, right, rowH, false) - gtx.Dp(8) // margin-left 8px
 }
 
 // CardBadge is ChannelHoverCardHuddleBadge (boot-shared 7+JF) ending at
@@ -220,12 +220,13 @@ func (c *Controller) CardBadge(gtx C, th *theme.Theme, ch string, right, rowH in
 }
 
 // sbStack draws HuddleAvatarStackContent (excludeIcon,
-// excludeMemberOverflowCount, x_small faces) for ch ending at right with
-// its tooltip (withTooltip, nil t: none; includeChannelNameInTooltip is
-// withChannel), and returns its left edge.
-func (c *Controller) sbStack(gtx C, th *theme.Theme, t *sbTip, ch string, people []string, right, rowH int, withChannel bool) int {
+// excludeMemberOverflowCount, x_small faces, at most maxFaces of them:
+// its maxMembers) for ch ending at right with its tooltip (withTooltip,
+// nil t: none; includeChannelNameInTooltip is withChannel), and returns
+// its left edge.
+func (c *Controller) sbStack(gtx C, th *theme.Theme, t *sbTip, ch string, people []string, maxFaces, right, rowH int, withChannel bool) int {
 	fs := gtx.Dp(hdrFace)
-	n := min(len(people), sbMaxFaces)
+	n := min(len(people), maxFaces)
 	steps := sbFaceSteps(n, fs)
 	fw := steps[n-1] + fs
 	fx := right - fw
@@ -536,6 +537,15 @@ func (c *Controller) SectionHuddle(ids []string) string {
 			have = append(have, ch)
 		}
 	}
+	return c.withActiveHuddle(have)
+}
+
+// withActiveHuddle is getChannelIdWithActiveHuddle (b0mi nf) over have,
+// the channels with an active huddle that has people in it (in the order
+// a tie on date_start keeps): the inviting huddle's channel if it's
+// there, else the eligible one with your huddle, else the eligible one
+// that started first. "" for none.
+func (c *Controller) withActiveHuddle(have []string) string {
 	if len(have) == 0 {
 		return ""
 	}
@@ -626,7 +636,7 @@ func (c *Controller) SectionIndicator(gtx C, th *theme.Theme, key, ch string, ri
 		*t = sbTip{}
 		return right
 	}
-	return c.sbStack(gtx, th, t, ch, c.activeMembers(ch), right, rowH, true)
+	return c.sbStack(gtx, th, t, ch, c.activeMembers(ch), sbMaxFaces, right, rowH, true)
 }
 
 // SectionIndicatorHovered reports whether the pointer is over section

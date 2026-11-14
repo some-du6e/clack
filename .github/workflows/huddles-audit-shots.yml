@@ -4,8 +4,8 @@ name: huddles-audit-shots
 # title, toolbar, closed captions, ⋯ menu, banners and hidden self-view;
 # the compact window at 2 and 4 people with a theme, light and dark;
 # the docked bar with the window closed and open; the sidebar row's
-# huddle badge; the header button, its menu and the invite window and
-# card; sharing your screen (the picker, the presenter's mini panel, the
+# huddle badge; the sidebar Huddles link's faces and invite badge; the
+# header button, its menu and the invite window and card; sharing your screen (the picker, the presenter's mini panel, the
 # alerts) with the synthetic test screen; the Huddles page (views:
 # huddles-page-*) with its rows, filters, live and suggested cards and
 # hero against fakeslack's synthetic history. Synthetic only: nothing here
@@ -16,6 +16,9 @@ on:
     paths:
       - "internal/ui/huddleui/**"
       - "internal/ui/huddle_wire.go"
+      - "internal/ui/sidebar_huddles_link.go"
+      - "internal/ui/huddles_link_test.go"
+      - "internal/fakeslack/huddles.go"
       - "internal/ui/views/huddles*.go"
       - "internal/core/huddles_page.go"
       - "internal/fakeslack/huddles_page.go"
@@ -69,6 +72,18 @@ jobs:
           go test -count=1 -v -run 'TestHuddleHistoryParamsLikeSlack|TestParseHuddlePageFields' ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestHuddlesPage|TestSuggestedHuddlesLikeSlack|TestSlickViewBetterHuddles|TestRoomFromEvent' ./internal/ui/views
           ls -la "$HUDDLES_PAGE_SHOTS"
+      - name: the sidebar's Huddles link (the whole client over fakeslack; Mesa llvmpipe)
+        if: ${{ !cancelled() }}
+        env:
+          PREVIEW_SHOTS_DIR: ${{ github.workspace }}/dist/shots
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p "$PREVIEW_SHOTS_DIR"
+          # huddles-link-{faces-tip,invite-off,badge,badge-2,seen}-{light,dark}: the link's facepile, an invite with
+          # huddles_link_v2 unassigned and on, and the Huddles page marking the invites seen
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestHuddlesLinkInvites$' ./internal/ui/
+          ls -la "$PREVIEW_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
