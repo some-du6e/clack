@@ -167,7 +167,13 @@ func (w *window) hiddenTitlePointer(msg uint32, wParam, lParam uintptr) bool {
 		// mouse input, which runs the caption buttons)
 		return false
 	}
-	hit := (wParam >> 16) & 0xffff
+	// The message doesn't carry the hit-test code: its wParam's high word
+	// is the pointer's flags (POINTER_MESSAGE_FLAG_*), as for the client
+	// messages. Hit-test the position instead.
+	x, y := coordsFromlParam(lParam)
+	np := windows.Point{X: int32(x), Y: int32(y)}
+	windows.ScreenToClient(w.hwnd, &np)
+	hit := w.hiddenTitleHitTest(int(np.X), int(np.Y), lParam)
 	button := hit == windows.HTMINBUTTON || hit == windows.HTMAXBUTTON || hit == windows.HTCLOSE
 	switch msg {
 	case windows.WM_NCPOINTERUPDATE:

@@ -866,11 +866,15 @@ title bar, which Clack's top nav then sat under (a doubled title bar, gap
   (`WM_NCPOINTERUPDATE/DOWN/UP`, Gio has mouse-in-pointer on). The program's
   widgets get it as client pointer events, as Chromium routes the
   non-client mouse messages to its caption button views: a press over a
-  button takes the capture (the rest of the click comes as client
-  messages, as for a client press) and isn't passed to `DefWindowProc`,
-  which would paint classic caption buttons and run the button itself; the
-  program performs the action (Clack posts `WM_SYSCOMMAND`). A release
-  ends a press a button took wherever it lands. Moves over the caption and
+  button isn't passed to `DefWindowProc`, which would turn it into a
+  `WM_NCLBUTTONDOWN` and run its classic caption-button loop (painting,
+  capture, the button's own `WM_SYSCOMMAND`); the program performs the
+  action (Clack posts `WM_SYSCOMMAND`). A release ends a press a button
+  took wherever it lands. These messages don't carry the hit-test code
+  their documentation promises: the high word of `wParam` is the
+  pointer's flags, as in the client messages (`0x2016` for a primary
+  button down, seen on the CI runner), so the patch hit-tests the
+  position itself. Moves over the caption and
   the borders reach the program too, so hover ends there, and still go to
   `DefWindowProc`, as do presses on the caption and the borders (move,
   resize, double-click to maximize, the right-click system menu). Touch and
