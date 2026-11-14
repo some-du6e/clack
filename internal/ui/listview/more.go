@@ -4,7 +4,8 @@ package listview
 // MoreActionsMenu (client-boot-shared 57SI), with the items Clack can
 // carry out, in Slack's order and under Slack's labels:
 //
-//	Add to starred / Remove from starred ─
+//	Add to starred / Remove from starred (custom_file_sections: none, the
+//	header's section button instead; in a channel tab Move to section ▸) ─
 //	Save for later / Remove from Later (Add to saved / Remove from Saved
 //	under later_todos) ─
 //	Copy link to list · Make a copy · Download (lists_export_enrichment:
@@ -58,15 +59,24 @@ func (v *View) moreItems() []MenuItem {
 		return items
 	}
 	id := v.id
-	// star_list
-	starred := a.FileStarred(id)
-	star := nsLists.T("Add to starred")
-	if starred {
-		star = nsLists.T("Remove from starred")
+	switch {
+	case a.FileSectionsOn():
+		// custom_file_sections: the header has the section button; a
+		// channel tab's menu has "Move to section" ▸ (FileSectionMoveToMenu)
+		if v.mode == Tab && v.act.SectionItems != nil {
+			items = append(items, MenuItem{Label: nsLists.T("Move to section"), Icon: "folder", Ext: v.act.SectionItems()})
+		}
+	default:
+		// star_list
+		starred := a.FileStarred(id)
+		star := nsLists.T("Add to starred")
+		if starred {
+			star = nsLists.T("Remove from starred")
+		}
+		items = append(items, MenuItem{Label: star, Do: func() {
+			v.write(func(ctx context.Context, a *core.App) error { return a.StarFile(ctx, id, !starred) })
+		}})
 	}
-	items = append(items, MenuItem{Label: star, Do: func() {
-		v.write(func(ctx context.Context, a *core.App) error { return a.StarFile(ctx, id, !starred) })
-	}})
 	sep()
 	// save_for_later: addCanvasToSaved / removeFromSaved
 	saved := a.FileSaved(id)

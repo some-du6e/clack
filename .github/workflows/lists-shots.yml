@@ -4,7 +4,8 @@ name: lists-shots
 # item's pane with comments; light and dark; a live update; an editing
 # round trip; the keyboard's focus ring, selection and edit states; a
 # record's right-click menu and Remind me submenu, the item pane's
-# actions, Later's list record rows) and uploads the screenshots. Synthetic only: nothing here
+# actions, Later's list record rows; the header's section button under
+# custom_file_sections) and uploads the screenshots. Synthetic only: nothing here
 # talks to Slack.
 on:
   push:
@@ -18,6 +19,8 @@ on:
       - "internal/richtext/listslug*.go"
       - "internal/ui/lists_records_test.go"
       - "internal/ui/shortcut/**"
+      - "internal/ui/file_section_button.go"
+      - "internal/ui/views/files_section_button.go"
       - ".github/workflows/lists-shots.yml"
   workflow_dispatch:
 
@@ -47,7 +50,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "$LISTS_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys|TestRecordContextMenu|TestRecordPaneMenu' ./internal/ui/listview/
+          xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestListKeys|TestRecordContextMenu|TestRecordPaneMenu|TestSectionButton|TestMoreActionsMenu' ./internal/ui/listview/
           # list records outside the grid (lists_in_later, search_file_channel_messages): core's saved-api calls, the slugs, the menus and Later's rows
           go test -count=1 -v -run 'TestListRecord|TestFileChannelFile' ./internal/core
           go test -count=1 -v -run 'TestListSlug|TestFileChannelSlugs' ./internal/richtext

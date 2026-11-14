@@ -91,7 +91,22 @@ func (a *App) newListView(id string, mode listview.Mode) *listview.View {
 	case listview.Tab:
 		act.FullView = func() { a.OpenListFull(id) }
 	}
-	return listview.New(a, id, mode, act)
+	// FileSectionDropdownButton (file_section_button.go); source as
+	// Slack's: the header's "list_header", the tab menu's
+	// "canvas_overflow_menu"
+	var lv *listview.View
+	file := func() core.File {
+		f := core.File{ID: id, IsList: true, Mode: "list"}
+		if lv != nil {
+			f.Title = lv.Title()
+		}
+		return f
+	}
+	act.SectionButton = func() (int, string, bool) { return a.fileSectionButton(id) }
+	act.SectionMenu = func(btn image.Rectangle) { a.openFileSection(file(), btn, "list_header") }
+	act.SectionItems = func() any { return a.fileSectionItems(file(), "canvas_overflow_menu") }
+	lv = listview.New(a, id, mode, act)
+	return lv
 }
 
 func (a *App) listActions() listview.Actions {
@@ -118,8 +133,12 @@ func (a *App) listActions() listview.Actions {
 func listMenuItems(items []listview.MenuItem) []MenuItem {
 	var ms []MenuItem
 	for _, it := range items {
+		sub := listMenuItems(it.Sub)
+		if ext, ok := it.Ext.([]MenuItem); ok { // a submenu the shell built (SectionItems)
+			sub = ext
+		}
 		ms = append(ms, MenuItem{Label: it.Label, Icon: it.Icon, Subtitle: it.Subtitle, Disabled: it.Disabled, Divider: it.Divider,
-			Danger: it.Danger, Sub: listMenuItems(it.Sub), Do: it.Do})
+			Danger: it.Danger, Sub: sub, Do: it.Do})
 	}
 	return ms
 }

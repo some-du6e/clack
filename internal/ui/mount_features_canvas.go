@@ -6,10 +6,12 @@ package ui
 
 import (
 	"context"
+	"image"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/canvasview"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -86,7 +88,21 @@ func (a *App) newCanvasView(id string, mode canvasview.Mode) *canvasview.View {
 	if canvasShare != nil {
 		act.Share = func(id string) { canvasShare(a, id) }
 	}
-	return canvasview.New(a, id, mode, act)
+	// FileSectionDropdownButton (file_section_button.go), source
+	// "canvas_header"
+	var cv *canvasview.View
+	act.SectionButton = func() (int, string, bool) { return a.fileSectionButton(id) }
+	act.SectionMenu = func(btn image.Rectangle) {
+		f := core.File{ID: id, IsCanvas: true, Mode: "quip"}
+		if cv != nil {
+			if d := cv.Doc(); d != nil {
+				f.Title = d.Info.Title
+			}
+		}
+		a.openFileSection(f, btn, "canvas_header")
+	}
+	cv = canvasview.New(a, id, mode, act)
+	return cv
 }
 
 // canvasShare opens the share dialog (canvas_share.go); nil hides Share.

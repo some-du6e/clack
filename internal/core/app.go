@@ -660,6 +660,10 @@ func (a *App) Boot(ctx context.Context) error {
 	a.emit(Event{Type: "booted"})
 	// recent searches and places (maybeLoadRecentsPrefs, search_recents.go)
 	go a.MaybeLoadRecents(a.bg)
+	// fetchedDeferredMessagingClientData's maybeFetchCollections (boot-
+	// render): the file collections, under custom_file_sections, so the
+	// canvas and list headers' section buttons know them
+	go func() { _ = a.FetchFileCollections(a.bg) }()
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()

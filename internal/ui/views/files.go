@@ -139,6 +139,9 @@ type Files struct {
 	// run on the UI goroutine by update
 	doneMu sync.Mutex
 	done   []func()
+	// detached: a helper outside the Files page (SectionMenuItems):
+	// nothing drains done, so post goes through the host's Post
+	detached bool
 
 	editName widget.Editor // Edit file details' File name
 
@@ -1513,6 +1516,10 @@ func (f *Files) sidebarText() color.NRGBA {
 
 // post queues fn for the UI goroutine (drainDone) and wakes the window.
 func (f *Files) post(fn func()) {
+	if p, ok := f.h.(interface{ Post(func()) }); ok && f.detached {
+		p.Post(fn)
+		return
+	}
 	f.doneMu.Lock()
 	f.done = append(f.done, fn)
 	f.doneMu.Unlock()
