@@ -20,10 +20,16 @@ import (
 // Toned the name to insert at the skin tone in use.
 func AutocompleteEmoji(h Host, query string, o acrank.Options) []EmojiMatch {
 	x, _ := epIndexFor(h)
+	return epAutocomplete(x, epTone(h), query, o)
+}
+
+// epAutocomplete is AutocompleteEmoji over index x at skin tone tone.
+// A custom alias is one of its target's names (epBuild), so its exact
+// name is an exact match there.
+func epAutocomplete(x *emojiIndex, tone int, query string, o acrank.Options) []EmojiMatch {
 	if x == nil || query == "" {
 		return nil
 	}
-	tone := epTone(h)
 	q := []rune(acrank.Normalize(query))
 	cands := make([]acrank.Cand, 0, 256)
 	ids := make([]int32, 0, 256)
