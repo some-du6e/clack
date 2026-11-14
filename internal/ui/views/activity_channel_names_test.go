@@ -13,8 +13,11 @@ package views
 import (
 	"encoding/json"
 	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +30,7 @@ import (
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/theme"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 const (
@@ -246,5 +250,78 @@ func TestConvTitleNeverID(t *testing.T) {
 	}
 	if got := b.convTitle("D1", nil); got != "Alice Example" && got != "alice" {
 		t.Errorf("DM: %q", got)
+	}
+}
+
+// TestActivityChannelNamesShots (ACTIVITY_SHOTS_DIR, the activity-shots
+// workflow) saves the feed's rows while a channel loads and once every
+// channel is in, Detailed and Dense, light and dark:
+// activity-names-{loading,named}-{detailed,dense}-{light,dark}.png.
+func TestActivityChannelNamesShots(t *testing.T) {
+	dir := os.Getenv("ACTIVITY_SHOTS_DIR")
+	if dir == "" {
+		t.Skip("ACTIVITY_SHOTS_DIR not set")
+	}
+	for _, dark := range []bool{false, true} {
+		mode := map[bool]string{false: "light", true: "dark"}[dark]
+		app, _, release := actNamesApp(t)
+		v := NewActivity(&slickHost{app: app, th: theme.New(dark)})
+		e := &vaEnv{size: image.Pt(1200, 900)}
+		e.draw = func(gtx layout.Context) { v.Layout(gtx) }
+		e.until(t, "the feed", func() bool { return len(actPage(v).Items) == 7 })
+		e.frame()
+		shoot := func(state string) {
+			for _, dense := range []bool{false, true} {
+				v.dense, v.dirty = dense, true
+				e.frame()
+				name := "activity-names-" + state + "-" + map[bool]string{false: "detailed", true: "dense"}[dense] + "-" + mode + ".png"
+				saveActRows(t, v, filepath.Join(dir, name))
+			}
+		}
+		shoot("loading")
+		release()
+		e.until(t, "every channel", func() bool {
+			return v.rowFor("k-priv-later").d.title == "later-plans" && v.rowFor("k-stub").d.title == "stub-plans" && v.rowFor("k-gone").d.ent.Chip
+		})
+		shoot("named")
+	}
+}
+
+// saveActRows draws the page's rows one under another, 1100px wide, into
+// a PNG at path.
+func saveActRows(t *testing.T, v *Activity, path string) {
+	t.Helper()
+	const w = 1100
+	var ops op.Ops
+	gtx := actFrame(&ops, image.Pt(w, 4000))
+	page := actPage(v)
+	y := 0
+	for i := range page.Items {
+		func() {
+			defer op.Offset(image.Pt(0, y)).Push(gtx.Ops).Pop()
+			g := gtx
+			g.Constraints = layout.Constraints{Min: image.Pt(w, 0), Max: image.Pt(w, 400)}
+			y += v.row(g, &page.Items[i], i).Size.Y
+		}()
+	}
+	win, err := pixeltest.NewWindow(w, y)
+	if err != nil {
+		t.Fatalf("headless window: %v", err)
+	}
+	defer win.Release()
+	if err := win.Frame(&ops); err != nil {
+		t.Fatalf("frame: %v", err)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, y))
+	if err := win.Screenshot(img); err != nil {
+		t.Fatalf("screenshot: %v", err)
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
 	}
 }
