@@ -527,7 +527,10 @@ func (c *captionTestWindow) expectNoClick(t *testing.T, what string) {
 // widget's click (and Windows doesn't run the button: the window doesn't
 // maximize or close), a press dragged off a button clicks nothing, a
 // button in the caption is the program's, and a double-click on the
-// caption maximizes the window (Windows').
+// caption maximizes the window (Windows'). Each step's frames come after
+// the input: a pointer up on a button left the window loop waiting in
+// GetMessage with a frame due (CLACK_PATCHES.md §27), and a wait that
+// times out prints what the window and its thread were doing.
 func TestHiddenTitleBarButtonsInput(t *testing.T) {
 	titleBarTests(t)
 	c := newCaptionTestWindow(t, HiddenTitleBar(true))

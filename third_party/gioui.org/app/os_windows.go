@@ -858,16 +858,27 @@ loop:
 		p := windows.GetWindowPlacement(w.hwnd)
 		// Clack patch (CLACK_PATCHES.md §13): a hidden window draws
 		// nothing either, like a minimized one; showing it paints it.
-		if anim && !p.IsMinimized() && windows.IsWindowVisible(w.hwnd) && !windows.PeekMessage(msg, 0, 0, 0, windows.PM_NOREMOVE) {
-			w.draw(false)
-			continue
-		}
-		switch ret := windows.GetMessage(msg, 0, 0, 0); ret {
-		case -1:
-			panic(errors.New("GetMessage failed"))
-		case 0:
-			// WM_QUIT received.
-			break loop
+		if anim && !p.IsMinimized() && windows.IsWindowVisible(w.hwnd) {
+			// Clack patch (CLACK_PATCHES.md §27): take the message, or
+			// draw. A PeekMessage(PM_NOREMOVE) that saw one followed by
+			// GetMessage could block: after a caption button's pointer up
+			// the peek reported a message GetMessage never returned, and
+			// the window drew nothing until the next unrelated input.
+			if !windows.PeekMessage(msg, 0, 0, 0, windows.PM_REMOVE) {
+				w.draw(false)
+				continue
+			}
+			if msg.Message == windows.WM_QUIT {
+				break loop
+			}
+		} else {
+			switch ret := windows.GetMessage(msg, 0, 0, 0); ret {
+			case -1:
+				panic(errors.New("GetMessage failed"))
+			case 0:
+				// WM_QUIT received.
+				break loop
+			}
 		}
 		windows.TranslateMessage(msg)
 		windows.DispatchMessage(msg)

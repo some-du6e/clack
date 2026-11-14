@@ -128,8 +128,15 @@ name: flake-check
 #   TestTitleBarWindow (ui, windows-applog)  close's hover red sampled at a
 #                                            fixed 500 ms, mid-fade
 #   TestHiddenTitleBarButtonsInput (gio)     frames stopped after a caption
-#                                            button's input (diagnosed by
-#                                            the stall dump this job prints)
+#                                            button's pointer up: runLoop's
+#                                            PeekMessage(PM_NOREMOVE) saw a
+#                                            message GetMessage never gave,
+#                                            and the thread waited there with
+#                                            a frame due (Gio patch 27; the
+#                                            sequence job's stall dump, 3 in
+#                                            60 rounds); and the first hover
+#                                            went to where the cursor was
+#   TestTitleBarWindow (ui, the same step)   the same first hover, in a loop
 #   TestQueuedLoadsDontParkGoroutines        the start order of 2000 loads
 #     (imgcache)                             released at once is the
 #                                            scheduler's; released one at a

@@ -1261,3 +1261,31 @@ window) and `app/clack_hide_windows_test.go`
 minimized window, an `Invalidate` from another goroutine while the app
 handles a wake-up, which waits for it, then another wake-up). Not in
 `UPSTREAM.patch`.
+
+## 27. app: the Windows loop never waits while a frame is due
+
+`app/os_windows.go` (`window.runLoop`). A fix.
+
+While animating, the loop drew when `PeekMessage(PM_NOREMOVE)` found the
+queue empty and otherwise called `GetMessage`, expecting it to return the
+message the peek had seen. Right after a pointer up on a caption button
+that §22 handles itself (the press and release never reach
+`DefWindowProc`), the peek reported a message `GetMessage` never
+returned: the window thread waited in `GetMessage` with a frame due
+(`animating` set, the next frame now) and drew nothing until the next
+unrelated input. In Clack that froze the window after a click on its
+caption buttons until the pointer moved again. While animating the loop
+now takes the message with `PeekMessage(PM_REMOVE)` (dispatching it, or
+ending at `WM_QUIT`) and draws when there is none; it calls `GetMessage`
+only when no frame is due.
+
+Found by `app/clack_titlebar_windows_test.go`
+`TestHiddenTitleBarButtonsInput` on ci's windows-applog job (2026-11-14,
+first attempts: close never hovered, maximize's click with the Snap
+Layouts flyout open never arriving and no frames after it, a minimize
+click seconds late), reproduced 3 times in 60 rounds by flake-check's
+`flake-fix-gio-sequence` (the OS file drops, typed text and title bar
+steps in ci's order) with the test's stall dump: the window thread in
+`runLoop`'s `GetMessage`, `animating` true, the next frame due, `WM_NULL`
+answered at once, after the trace's `WM_NCPOINTERDOWN`/`WM_NCPOINTERUP`.
+Not in `UPSTREAM.patch`.
