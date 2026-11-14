@@ -56,6 +56,9 @@ type window struct {
 	frameDims image.Point
 	loop      *eventLoop
 	drop      *dropTarget // Clack patch (CLACK_PATCHES.md §11)
+	// configured: the first Configure (newWindow's, which shows the
+	// window) ran. Clack patch (CLACK_PATCHES.md §20).
+	configured bool
 }
 
 const _WM_WAKEUP = windows.WM_USER + iota
@@ -993,6 +996,26 @@ func (w *window) Configure(options []Option) {
 			style &^= windows.WS_THICKFRAME
 		}
 	}
+
+	// Clack patch (CLACK_PATCHES.md §20): options that leave the mode
+	// alone (a title, a minimum size) don't show a hidden window or
+	// restore a minimized one, as Electron's setTitle and
+	// setMinimumSize don't (SetWindowText, the size limits). Without
+	// this, ShowWindow(SW_SHOWNORMAL) below brought a window hidden to
+	// the tray back each time its title changed ("N new items"), and
+	// restored a minimized one. A hidden window still takes its new size;
+	// a minimized one keeps its iconic place (GetWindowRect is the icon's).
+	if w.configured && cnf.Mode == w.config.Mode {
+		hidden, iconic := !windows.IsWindowVisible(w.hwnd), windows.IsIconic(w.hwnd)
+		if hidden || iconic {
+			if hidden && !iconic {
+				windows.SetWindowPos(w.hwnd, hwndAfter, x, y, width, height, swpStyle|windows.SWP_NOACTIVATE)
+			}
+			windows.SetWindowLong(w.hwnd, windows.GWL_STYLE, style)
+			return
+		}
+	}
+	w.configured = true
 
 	// Note: these invocation all trigger the windows callback method which may process a pending system.ActionCenter
 	// action, so SetWindowPos should come first so as to not "overwrite" system.ActionCenter.

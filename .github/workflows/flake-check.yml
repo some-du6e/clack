@@ -98,6 +98,16 @@ name: flake-check
 #                                            answered ("header conv <nil>");
 #                                            the header now keeps its copy
 #                                            while it's looked up again
+# and flakes-1114's (50 runs, the race forced every run):
+#   TestTaskbarWindow (ui, windows-shell)    core's count replaced the
+#                                            test's just after a close hid
+#                                            or minimized the window; the
+#                                            new title went through Gio's
+#                                            Configure, whose ShowWindow
+#                                            brought the window back (a
+#                                            real bug: Gio patch 20). The
+#                                            test now changes the count
+#                                            after each close and revive
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -148,6 +158,7 @@ on:
       - "internal/ui/runfromtray_windows_test.go"
       - "internal/ui/runfromtray.go"
       - "internal/ui/runfromtray_test.go"
+      - "internal/ui/taskbar_windows_test.go"
       - "internal/huddle/fake_video.go"
       - "internal/huddle/videosend_test.go"
       - "internal/huddle/share_test.go"
@@ -481,6 +492,28 @@ jobs:
           CGO_ENABLED: "0" # as in ci's windows-applog (no -race without cgo)
           CLACK_WINDOWS_TRAY_TESTS: "1"
           TEST: TestCloseToTrayWindow
+          PKG: ./internal/ui
+          FLAKE_TAIL: "300"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
+  flakes-1114-taskbar:
+    if: ${{ !inputs.only || startsWith('flakes-1114-taskbar', inputs.only) }}
+    name: "flakes-1114 TestTaskbarWindow (windows-shell)"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "TestTaskbarWindow, every run counted"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-shell
+          CLACK_WINDOWS_TASKBAR_TESTS: "1"
+          TEST: TestTaskbarWindow
           PKG: ./internal/ui
           FLAKE_TAIL: "300"
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"

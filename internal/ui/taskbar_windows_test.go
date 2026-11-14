@@ -130,6 +130,24 @@ func TestTaskbarWindow(t *testing.T) {
 	}
 	visible := func() bool { r, _, _ := trayTestIsVisible.Call(hwnd); return r != 0 }
 	iconic := func() bool { r, _, _ := trayTestIsIconic.Call(hwnd); return r != 0 }
+	// retitle changes the title's count while the window is minimized or
+	// hidden, as core's next count does: the test's own HomeCount is
+	// replaced by the fake's on the next model (flakes-1114: "4 new
+	// items" became "3 new items" just after a hide or a revive in 2 of
+	// 30 runs). Window.Option(Title) used to end in Gio's
+	// ShowWindow(SW_SHOWNORMAL), bringing the window back; Gio patch 20
+	// leaves it as it was.
+	retitle := func(what string, n int, want func() bool) {
+		t.Helper()
+		onUI(func() {
+			a.model().HomeCount = n
+			a.updateTitle()
+		})
+		time.Sleep(300 * time.Millisecond)
+		if !want() {
+			t.Fatalf("%s: the title's count (%d) changed the window: visible %v, iconic %v", what, n, visible(), iconic())
+		}
+	}
 	until("the first frames", func() bool { return frames.Load() > 2 })
 	time.Sleep(2 * time.Second)
 
@@ -162,6 +180,7 @@ func TestTaskbarWindow(t *testing.T) {
 	})
 	trayTestPostMessage.Call(hwnd, trayTestWMClose, 0, 0)
 	until("the window minimized by the close", func() bool { return visible() && iconic() })
+	retitle("minimized by the close", 5, func() bool { return visible() && iconic() })
 	until("the WindowFlash balloon", func() bool { return len(tray.got()) == 1 })
 	if b := tray.got()[0]; b[1] != "Clack’s set to always flash when you get notifications. To change this, visit Preferences > Notifications." {
 		t.Errorf("balloon %q", b)
@@ -180,9 +199,11 @@ func TestTaskbarWindow(t *testing.T) {
 	onUI(func() { a.prefs.WindowFlashBehavior = flashIdle })
 	trayTestPostMessage.Call(hwnd, trayTestWMClose, 0, 0)
 	until("the window hidden by the close", func() bool { return !visible() })
+	retitle("hidden by the close", 6, func() bool { return !visible() })
 	hook.Drain()
 	a.Post(func() { a.Notify("fakeslack", "another message") })
 	until("the hidden window shown minimized", func() bool { return visible() && iconic() })
+	retitle("shown minimized", 7, func() bool { return visible() && iconic() })
 	if !hook.WaitFlash(hwnd, 10*time.Second) {
 		t.Fatalf("idle: no HSHELL_FLASH for the revived window; the shell hook heard %v", hook.Seen())
 	}
