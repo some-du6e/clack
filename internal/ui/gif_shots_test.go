@@ -66,18 +66,29 @@ func gifEnv(t *testing.T, dark, anim bool) *perfEnv {
 	return e
 }
 
-// gifTile is the newest GIF file's tile on screen.
+// gifTile is the newest GIF file's tile, scrolled whole into view: under
+// the channel header, over the composer (FileRects lists the rows' boxes
+// as laid out, not as clipped by the list).
 func (e *perfEnv) gifTile(t *testing.T) messages.FileRect {
 	t.Helper()
 	var tile messages.FileRect
-	e.until("a GIF file's tile", 10*time.Second, func() bool {
-		for _, r := range e.channelFiles(fakeslack.GIFWallID) {
-			if r.File.Type == "gif" && r.R.Max.Y <= e.size.Y {
-				tile = r
+	for i := 0; i < 10; i++ {
+		tile = messages.FileRect{}
+		e.until("a GIF file's tile", 10*time.Second, func() bool {
+			for _, r := range e.channelFiles(fakeslack.GIFWallID) {
+				if r.File.Type == "gif" && r.R.Max.Y <= e.size.Y {
+					tile = r
+				}
 			}
+			return tile.File != nil
+		})
+		if tile.R.Min.Y >= 150 && tile.R.Max.Y <= e.size.Y-180 {
+			return tile
 		}
-		return tile.File != nil
-	})
+		e.scroll(e.listPoint(), float32(tile.R.Min.Y-200)) // its top to y=200
+		e.settle(250 * time.Millisecond)
+	}
+	t.Fatalf("the GIF file's tile stays at %v", tile.R)
 	return tile
 }
 
