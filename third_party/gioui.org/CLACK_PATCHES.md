@@ -17,7 +17,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/os_macos.m`, `app/os_windows.go`, `app/internal/windows/windows.go`,
 `app/os_wayland.go`, `io/pointer/pointer.go`, `gesture/gesture.go`,
 `gesture/clack_wheel.go`, `io/input/router.go`, `app/window.go`,
-`app/clack_drop*.go`, `app/clack_hide*.go`, `app/clack_pancursor_windows*.go`,
+`app/clack_drop*.go`, `app/clack_hide*.go`, `app/clack_wakeup_test.go`, `app/clack_pancursor_windows*.go`,
 `app/clack_titlebar*.go`, `app/internal/windows/clack_titlebar.go`,
 `app/clack_bounds*.go`, `app/internal/windows/clack_bounds.go`,
 `app/cocoatest/`, `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
@@ -1221,3 +1221,43 @@ bounds; opened full screen, last, since the runner never leaves it).
 and `TestWindowBoundsFullScreenWindow` (Windows) and `TestMacWindowBounds`,
 `TestMacWindowBoundsOffScreen` and `TestMacWindowBoundsFullScreen` (macOS)
 are Clack's window on the same jobs. Not in `UPSTREAM.patch`.
+
+## 26. app: an Invalidate always reaches the client
+
+`app/window.go` (`Window.Invalidate`, `Window.nextEvent`,
+`Window.handOutWakeup`, the `invalidateMissed` field). A fix: the client
+gets an event after every `Invalidate`, as `Window.Event`'s documentation
+says.
+
+`Invalidate` asks the driver only while `mayInvalidate` is set, and
+`nextEvent` sets it again once the client has had every event. An
+`Invalidate` in between (the driver still delivering the wake-up an
+earlier one asked for) did nothing: on a window that draws, the frame the
+first one scheduled covers it; a hidden (§13) or minimized window draws
+none, and when the client had already done its work for that wake-up the
+second `Invalidate` was lost until the next event of any kind. Clack runs
+its posted work on those wake-ups (`internal/ui` `drainIdle`), and a
+notification's taskbar flash, posted from `notificationShown`'s goroutine
+while the notification's own wake-up was still being handled, waited
+there: windowFlashBehavior "always" minimizes on close, and the flash
+came at the next unrelated event, or never.
+
+Now an `Invalidate` that finds `mayInvalidate` unset sets
+`invalidateMissed`; handing the client a `FrameEvent` or a wake-up clears
+it (that event covers every `Invalidate` before it), and `nextEvent`,
+where it would have set `mayInvalidate`, gives a wake-up instead while it
+is set. No frame is scheduled for it: a window that draws already has the
+first one's. A destroyed window (no driver) takes none.
+
+Found by `internal/ui` `TestTaskbarWindow` on ci's windows-shell job
+(2026-11-14: the first attempt of four runs failed "always: no
+HSHELL_FLASH … after a notification", and the log has no
+`flashMainWindowFrame` line). Tests: `app/clack_wakeup_test.go`
+`TestInvalidateWhileHandlingAWakeup` (every platform, on ci's linux-gio
+job: the second `Invalidate` while the first wake-up is out gets its own,
+one made before the wake-up went out doesn't, nor does a destroyed
+window) and `app/clack_hide_windows_test.go`
+`TestInvalidateWhileHandlingWakesHidden` (windows-shell: a hidden and a
+minimized window, an `Invalidate` from another goroutine while the app
+handles a wake-up, which waits for it, then another wake-up). Not in
+`UPSTREAM.patch`.

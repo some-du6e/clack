@@ -136,16 +136,23 @@ func TestTaskbarWindow(t *testing.T) {
 	// items" became "3 new items" just after a hide or a revive in 2 of
 	// 30 runs). Window.Option(Title) used to end in Gio's
 	// ShowWindow(SW_SHOWNORMAL), bringing the window back; Gio patch 20
-	// leaves it as it was.
+	// leaves it as it was. Option runs Configure on the window's thread
+	// before it returns, so the change is in when onUI is; the window
+	// is then watched for 300 ms, every 20 ms, for a show that comes
+	// later (a posted message's).
 	retitle := func(what string, n int, want func() bool) {
 		t.Helper()
 		onUI(func() {
 			a.model().HomeCount = n
 			a.updateTitle()
 		})
-		time.Sleep(300 * time.Millisecond)
-		if !want() {
-			t.Fatalf("%s: the title's count (%d) changed the window: visible %v, iconic %v", what, n, visible(), iconic())
+		for dl := time.Now().Add(300 * time.Millisecond); ; time.Sleep(20 * time.Millisecond) {
+			if !want() {
+				t.Fatalf("%s: the title's count (%d) changed the window: visible %v, iconic %v", what, n, visible(), iconic())
+			}
+			if time.Now().After(dl) {
+				break
+			}
 		}
 	}
 	until("the first frames", func() bool { return frames.Load() > 2 })
@@ -186,6 +193,11 @@ func TestTaskbarWindow(t *testing.T) {
 		t.Errorf("balloon %q", b)
 	}
 	hook.Drain()
+	// The flash is posted from notificationShown's goroutine, often while
+	// this wake-up is still being handled: on the minimized window (no
+	// frames) its wake-up used to be lost, and the flash waited for the
+	// next event of any kind (Gio patch 26; first attempts of ci's
+	// windows-shell on 2026-11-14 failed here).
 	a.Post(func() { a.Notify("fakeslack", "a message") })
 	if !hook.WaitFlash(hwnd, 10*time.Second) {
 		t.Fatalf("always: no HSHELL_FLASH for Clack's window %#x after a notification; the shell hook heard %v", hwnd, hook.Seen())

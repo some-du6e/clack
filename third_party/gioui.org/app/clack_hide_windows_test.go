@@ -43,8 +43,11 @@ type hideTestWindow struct {
 	hwnd    syscall.Handle
 	frames  atomic.Int64
 	wakeups atomic.Int64 // events that are neither frames nor config
-	closing chan *ClosingEvent
-	done    chan struct{}
+	// onWakeup, when set, runs on the event goroutine for each of them,
+	// before the next Event call
+	onWakeup atomic.Pointer[func()]
+	closing  chan *ClosingEvent
+	done     chan struct{}
 }
 
 // hideTestWindow opens a Gio window whose ClosingEvents go to the test.
@@ -90,6 +93,9 @@ func openHideTestWindow(t *testing.T, abort func() bool, opts ...Option) *hideTe
 				return
 			default:
 				h.wakeups.Add(1)
+				if f := h.onWakeup.Load(); f != nil {
+					(*f)()
+				}
 			}
 		}
 	}()
@@ -236,6 +242,87 @@ func TestOptionKeepsHiddenAndMinimized(t *testing.T) {
 	case <-h.done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the window didn't close")
+	}
+}
+
+// An Invalidate made while the app handles a wake-up of a window that
+// draws no frames (hidden, minimized) gets a wake-up of its own (Clack
+// patch, CLACK_PATCHES.md §26). Clack runs posted work on those
+// wake-ups; a notification's taskbar flash, posted from a goroutine
+// while the notification's own wake-up was still being handled, waited
+// for the next event of any kind (internal/ui TestTaskbarWindow). The
+// Invalidate here comes from another goroutine, as Clack's invalidator's
+// does, and the wake-up waits for it, so it always lands while the
+// driver is still delivering the first.
+func TestInvalidateWhileHandlingWakesHidden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens windows")
+	}
+	if !windowTestsEnabled() {
+		t.Skip("CLACK_WINDOWS_TRAY_TESTS not set")
+	}
+	for _, mode := range []string{"hidden", "minimized"} {
+		t.Run(mode, func(t *testing.T) {
+			var abort atomic.Bool
+			abort.Store(true)
+			h := newHideTestWindow(t, abort.Load)
+			if mode == "hidden" {
+				h.closeWindow(t) // aborted: Window.Hide
+				if h.visible() {
+					t.Fatal("still visible after Hide")
+				}
+			} else {
+				h.w.Option(Minimized.Option())
+				waitUntil(t, "minimized", func() bool { return windows.IsIconic(h.hwnd) })
+			}
+			time.Sleep(500 * time.Millisecond) // the hide's or minimize's own events
+
+			// armed: the next wake-up invalidates from another goroutine
+			// while the driver still delivers it (mayInvalidate false; a
+			// stray wake-up from an Invalidate that skipped the gate
+			// re-arms)
+			var armed, inner atomic.Bool
+			hook := func() {
+				if !armed.CompareAndSwap(true, false) {
+					return
+				}
+				h.w.invMu.Lock()
+				gated := !h.w.mayInvalidate
+				h.w.invMu.Unlock()
+				if !gated {
+					armed.Store(true)
+					return
+				}
+				done := make(chan struct{})
+				go func() { h.w.Invalidate(); close(done) }()
+				<-done
+				inner.Store(true)
+			}
+			h.onWakeup.Store(&hook)
+			defer h.onWakeup.Store(nil)
+			armed.Store(true)
+			var w1 int64
+			deadline := time.Now().Add(10 * time.Second)
+			for !inner.Load() {
+				if time.Now().After(deadline) {
+					t.Fatal("no wake-up while the driver was still delivering one")
+				}
+				w1 = h.wakeups.Load()
+				h.w.Invalidate()
+				time.Sleep(100 * time.Millisecond)
+			}
+			waitUntil(t, "a wake-up for the Invalidate made while the app handled one", func() bool { return h.wakeups.Load() > w1+1 })
+
+			h.w.Perform(system.ActionRaise)
+			waitUntil(t, "shown again", func() bool { return h.visible() && !windows.IsIconic(h.hwnd) })
+			abort.Store(false)
+			h.closeWindow(t)
+			select {
+			case <-h.done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the window didn't close")
+			}
+		})
 	}
 }
 

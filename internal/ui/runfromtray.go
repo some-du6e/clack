@@ -200,9 +200,10 @@ func (a *App) hideWindow() bool {
 }
 
 // drainIdle runs what was posted on a window event that isn't a frame:
-// Gio's wake-up after an Invalidate. A hidden or minimized window draws
-// no frames, and posted work (the backend's events, notifications) would
-// otherwise wait for the window to come back. UI goroutine.
+// Gio's wake-up after an Invalidate, which is whichever event comes next
+// (a ConfigEvent too). A hidden or minimized window draws no frames, and
+// posted work (the backend's events, notifications) would otherwise wait
+// for the window to come back. UI goroutine.
 func (a *App) drainIdle() {
 	// Fonts still loading: the first frames drain. The loader's
 	// Invalidate brings a wake-up when they're ready, and a window

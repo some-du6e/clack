@@ -93,9 +93,13 @@ type Window struct {
 	// the window is closed.
 	gpuErr error
 
-	// invMu protects mayInvalidate.
+	// invMu protects mayInvalidate and invalidateMissed.
 	invMu         sync.Mutex
 	mayInvalidate bool
+	// invalidateMissed: an Invalidate came while mayInvalidate was false,
+	// after the client was handed its last frame or wake-up (Clack patch,
+	// CLACK_PATCHES.md §26).
+	invalidateMissed bool
 
 	// coalesced tracks the most recent events waiting to be delivered
 	// to the client.
@@ -288,6 +292,15 @@ func (w *Window) Invalidate() {
 	if w.mayInvalidate {
 		w.mayInvalidate = false
 		w.driver.Invalidate()
+		return
+	}
+	// Clack patch (CLACK_PATCHES.md §26): the driver has an Invalidate it
+	// hasn't finished delivering. On a window that draws, the frame that
+	// one asked for covers this one; a hidden or minimized window draws
+	// none, and a client already past that wake-up would never hear of
+	// this Invalidate. nextEvent gives it a wake-up of its own.
+	if w.driver != nil {
+		w.invalidateMissed = true
 	}
 }
 
@@ -602,14 +615,33 @@ func (w *Window) nextEvent() (event.Event, bool) {
 		e := *s.frame
 		s.frame = nil
 		s.framePending = true
+		w.handOutWakeup()
 		return e.FrameEvent, true
 	case s.wakeup:
+		w.handOutWakeup()
 		return wakeupEvent{}, true
 	}
 	w.invMu.Lock()
 	defer w.invMu.Unlock()
+	if w.invalidateMissed && w.driver != nil {
+		// Clack patch (CLACK_PATCHES.md §26): an Invalidate came after
+		// the client was handed its last frame or wake-up, while the
+		// one before it was still being delivered: it gets a wake-up of
+		// its own instead of waiting for the next event of any kind.
+		w.invalidateMissed = false
+		return wakeupEvent{}, true
+	}
 	w.mayInvalidate = w.driver != nil
 	return nil, false
+}
+
+// handOutWakeup notes a FrameEvent or wake-up going to the client: it
+// covers every Invalidate made before it (Clack patch, CLACK_PATCHES.md
+// §26).
+func (w *Window) handOutWakeup() {
+	w.invMu.Lock()
+	w.invalidateMissed = false
+	w.invMu.Unlock()
 }
 
 func (w *Window) processEvent(e event.Event) bool {
