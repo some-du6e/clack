@@ -920,6 +920,9 @@ caption and `HTCLIENT` over the action areas) and
 widget's, the cursor leaving the window over the top ends it, a click is the
 widget's click and Windows doesn't maximize, minimize or close the window
 itself, a press dragged off a button clicks nothing, a button inside the
-caption is the program's, a double-click on the caption maximizes).
+caption is the program's, a click on maximize with the Snap Layouts flyout
+open is the widget's and leaves the window running, a double-click on the
+caption maximizes; a failure prints the window messages and Gio events
+around it, from `clackMsgTrace`, a hook only the tests set).
 `internal/ui` `TestTitleBarWindow` is Clack's window on the same job. Not
 in `UPSTREAM.patch`.

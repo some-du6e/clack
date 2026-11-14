@@ -225,8 +225,10 @@ func TestTitleBarWindow(t *testing.T) {
 		}
 	}
 	settle := func() {
+		time.Sleep(300 * time.Millisecond)
 		f := frames.Load()
-		until("frames", func() bool { return frames.Load() > f+3 })
+		a.Invalidate()
+		until("a frame", func() bool { return frames.Load() > f })
 		time.Sleep(400 * time.Millisecond)
 	}
 	until("the first frames", func() bool { return frames.Load() > 2 })
