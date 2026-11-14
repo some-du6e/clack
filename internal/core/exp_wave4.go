@@ -144,8 +144,10 @@ var wave4Reads = map[string][]string{
 	"agent_dm_thread_naming": on,
 }
 
+// (agent_channel_thread_naming's read and default were already in
+// experiments.go and sidebar_rules.go, for the rail peek's Rename session.)
 var wave4Defaults = map[string]string{
-	"agent_channel_thread_naming": "on", "agent_dm_thread_naming": "on",
+	"agent_dm_thread_naming": "on",
 }
 
 func init() {
