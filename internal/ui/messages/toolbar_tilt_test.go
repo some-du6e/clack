@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -23,8 +24,8 @@ import (
 // Add reaction…'s scale(1.2) rotate(4deg), the others' scale(1.2), 80 ms
 // on cubic-bezier(.36,.19,.29,1) both ways, nothing under a11y_animations
 // off; the background and icon colour fading over the same 80 ms; the
-// tooltip 60 ms late and fading in over c-popover-fade's second. Every
-// frame they need comes from a deadline, never from Invalidate.
+// tooltip 60 ms late and fading in over the Popover's 80 ms. Every frame
+// they need comes from a deadline, never from Invalidate.
 
 func tiltNear(a, b float64) bool { return math.Abs(a-b) < 1e-6 }
 
@@ -72,6 +73,58 @@ func TestCSSTransitionLikeSlack(t *testing.T) {
 	tr.target(t0.Add(2*time.Second), 1, 0)
 	if tr.running(t0.Add(2*time.Second)) || tr.at(t0.Add(2*time.Second)) != 1 {
 		t.Errorf("no duration: %+v", tr)
+	}
+}
+
+// The tooltip's timing, Slack's: MessageActionButton's Tooltip (delay: 60)
+// shows 60 ms after the pointer comes, and its Popover fades in over
+// 80 ms (getStyle's inline animationDuration "80ms" over .c-popover--fade's
+// 1s, on the rule's "ease"), so it is all there at 140 ms (Karim: "the
+// tool tip takes so long to show up").
+func TestToolbarTipTimingLikeSlack(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	var tt toolbarTilt
+	alpha := func(key string, ms int) float32 {
+		return tt.tipAlpha(layout.Context{Now: t0.Add(time.Duration(ms) * time.Millisecond)}, key)
+	}
+	ease := func(x float64) float32 { return float32(cubicBez(.25, .1, .25, 1, x)) }
+	for _, c := range []struct {
+		ms   int
+		want float32
+	}{{0, 0}, {30, 0}, {59, 0}, {60, 0}, {80, ease(.25)}, {100, ease(.5)}, {120, ease(.75)}, {139, ease(79. / 80)}, {140, 1}, {1000, 1}} {
+		if a := alpha("b1", c.ms); !tiltNear(float64(a), float64(c.want)) {
+			t.Errorf("%d ms after the pointer came: opacity %v, want %v", c.ms, a, c.want)
+		}
+	}
+	// its frames come from deadlines: the delay's end, the fade's frames up
+	// to its end at 140 ms, then none
+	wake := func(ms int) (time.Time, bool) {
+		var r input.Router
+		tt.tipAlpha(layout.Context{Now: t0.Add(time.Duration(ms) * time.Millisecond), Source: r.Source()}, "b1")
+		return r.WakeupTime()
+	}
+	for _, c := range []struct{ ms, at int }{{10, 60}, {100, -1}, {130, 140}} {
+		at, ok := wake(c.ms)
+		want := t0.Add(time.Duration(c.at) * time.Millisecond)
+		if c.at < 0 {
+			want = t0.Add(100*time.Millisecond + tiltFrame)
+		}
+		if !ok || !at.Equal(want) {
+			t.Errorf("at %d ms the tooltip asks for a frame at %v %v, want %v", c.ms, at.Sub(t0), ok, want.Sub(t0))
+		}
+	}
+	if at, ok := wake(140); ok {
+		t.Errorf("the shown tooltip asks for a frame at %v", at.Sub(t0))
+	}
+	// the next button's tooltip waits its own 60 ms, then fades in 80
+	if a := alpha("b2", 1100); a != 0 {
+		t.Errorf("the next button's tooltip at once: %v", a)
+	}
+	if a := alpha("b2", 1200); !tiltNear(float64(a), float64(ease(.5))) {
+		t.Errorf("the next button's tooltip 100 ms in: %v, want %v", a, ease(.5))
+	}
+	if a := alpha("b2", 1240); a != 1 {
+		t.Errorf("the next button's tooltip 140 ms in: %v, want 1", a)
 	}
 }
 
@@ -238,13 +291,19 @@ func TestToolbarHoverLikeSlack(t *testing.T) {
 	if add.move.at(e.now) != 1 || add.paint.at(e.now) != 1 || add.move.running(e.now) || !s.tilt.next.IsZero() {
 		t.Errorf("at 80 ms: move %v paint %v next %v", add.move.at(e.now), add.paint.at(e.now), s.tilt.next)
 	}
-	// the tooltip: 60 ms late, then a second's ease-in
-	if a := s.tilt.tipAlpha(layout.Context{Now: st.Add(tipDelay + tipFade/2)}, "b0"); !tiltNear(float64(a), float64(float32(cubicBez(.25, .1, .25, 1, .5)))) {
-		t.Errorf("tooltip half-way: %v", a)
+	// the tooltip: 60 ms late, then the Popover's 80 ms ease-in, all there
+	// 140 ms after the pointer came
+	if a := s.tilt.tipAlpha(layout.Context{Now: st.Add(100 * time.Millisecond)}, "b0"); !tiltNear(float64(a), float64(float32(cubicBez(.25, .1, .25, 1, .5)))) {
+		t.Errorf("tooltip 100 ms in (half its fade): %v", a)
 	}
-	e.frameAt(st.Add(tipDelay + tipFade + time.Millisecond))
+	e.r.WakeupTime() // only this frame's deadlines below
+	e.frameAt(st.Add(120 * time.Millisecond))
+	if at, ok := e.r.WakeupTime(); !ok || at.After(st.Add(140*time.Millisecond)) {
+		t.Errorf("mid-fade the router wakes at %v %v, want by %v", at, ok, st.Add(140*time.Millisecond))
+	}
+	e.frameAt(st.Add(140 * time.Millisecond))
 	if a := s.tilt.tipAlpha(layout.Context{Now: e.now}, "b0"); a != 1 {
-		t.Errorf("tooltip after its fade: %v", a)
+		t.Errorf("tooltip 140 ms in: %v, want 1 (Slack's 60 ms delay and 80 ms fade)", a)
 	}
 
 	// Reply in thread: Add reaction… goes back over the whole 80 ms (its

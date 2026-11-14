@@ -67,6 +67,7 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 		}
 		rr := image.Rect(x, y, x+bs, y+bs)
 		shadowCard(gtx.Ops, rr, dp(gtx, 8), dp(gtx, 1), c.Bg, c.PillBorder, c.Shadow)
+		area := s.actionsScrollArea(gtx, rr) // the list's scroll under the button (toolbar_scroll.go)
 		at(gtx, x, y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(image.Pt(bs, bs))
 			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -82,6 +83,7 @@ func (s *listState) persistentActions(gtx layout.Context, h Host, rc *rowCtx, si
 				return layout.Dimensions{Size: image.Pt(bs, bs)}
 			})
 		})
+		area.Pop()
 		if btn.Hovered() {
 			tooltip(gtx, th, c, "Message actions", rr, theme.WindowBounds(s.origin), 1)
 		}

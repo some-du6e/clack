@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gioui.org/f32"
+	"gioui.org/gesture"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -171,6 +172,10 @@ type listState struct {
 	quick   quickBar        // one-click reactions before the buttons (quickreact.go)
 	tilt    toolbarTilt     // the buttons' hover transitions (toolbar_tilt.go)
 	tbCard  color.NRGBA     // the toolbar card's background, under the buttons' hover fade
+
+	// actScroll is the list's scroll under the hover toolbar's and the
+	// persistent menu's buttons (toolbar_scroll.go).
+	actScroll gesture.Scroll
 
 	kb kbNav // keyboard focus and the selected message (kbnav.go)
 
@@ -742,6 +747,9 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 		s.hoverIdx = k // the keyboard-selected message draws as hovered
 	}
 
+	// the wheel over the message actions (toolbar_scroll.go)
+	actD := s.actionsScroll(gtx)
+
 	// The anchor: the first message wholly on screen last frame, while
 	// nothing has moved the list since (no rebuild, no jump).
 	akey, ay := "", 0
@@ -801,6 +809,7 @@ func (s *listState) layoutList(gtx layout.Context, h Host, origin image.Point) l
 	}
 	call.Add(gtx.Ops)
 	s.laidOut, s.laidPos, s.laidBuilt = true, s.list.Position, s.built
+	s.actionsScrollEnd(actD)
 
 	// positions of visible items
 	p := s.list.Position
@@ -1556,6 +1565,9 @@ func (s *listState) actionsCard(gtx layout.Context, st slackc.Styled) layout.Dim
 	size := image.Pt(pad*2+(nq+len(s.tbBtns))*bs, bs+2*pad)
 	s.tbCard = st.Background(c.Bg)
 	shadowCard(gtx.Ops, image.Rectangle{Max: size}, dp(gtx, 12), dp(gtx, 1), s.tbCard, c.PillBorder, c.Shadow)
+	// the list's scroll under the buttons (toolbar_scroll.go), after the
+	// shadow, which the area would clip
+	defer s.actionsScrollArea(gtx, image.Rectangle{Max: size}).Pop()
 	s.quick.hov = -1
 	for i := 0; i < nq; i++ {
 		at(gtx, pad+i*bs, pad, func(gtx layout.Context) layout.Dimensions {

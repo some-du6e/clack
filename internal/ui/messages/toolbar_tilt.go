@@ -37,10 +37,13 @@ import (
 //
 // Each button's tooltip (MessageActionButton's Tooltip: position "top",
 // delay 60) shows 60 ms after the pointer comes (BaseTooltip defers it
-// unless the keyboard is in use), in a popover with shouldFade:
-// .c-popover--fade {animation: 1s forwards c-popover-fade} (opacity 0 to 1,
-// the default "ease"). It goes at once: the fading popover's
-// --before-close opacity 0 has no transition.
+// unless the keyboard is in use), in a popover with shouldFade (BaseTooltip's
+// default): .c-popover--fade {animation: 1s forwards c-popover-fade}
+// (opacity 0 to 1, the default "ease"), but the Popover's inline style sets
+// animationDuration "80ms" when it fades (getStyle, client-boot L1PI), so
+// the fade takes 80 ms and the tip is all there 140 ms after the pointer
+// came. It goes at once: BaseTooltip unmounts the Popover, so react-modal's
+// 80 ms closeTimeoutMS and --before-close fade never run.
 
 const (
 	tiltDur   = 80 * time.Millisecond
@@ -50,7 +53,7 @@ const (
 	tiltFrame = time.Second / 60
 
 	tipDelay = 60 * time.Millisecond // MessageActionButton's Tooltip delay
-	tipFade  = time.Second           // c-popover-fade
+	tipFade  = 80 * time.Millisecond // c-popover-fade at the Popover's inline 80ms
 )
 
 // tiltEase is cubic-bezier(.36,.19,.29,1).
@@ -182,8 +185,8 @@ func (tt *toolbarTilt) ask(gtx layout.Context) {
 }
 
 // tipAlpha is the tooltip's opacity for the button key ("" none) at
-// gtx.Now: 0 for the first 60 ms, then c-popover-fade over a second. It
-// asks for the frames it needs with deadlines.
+// gtx.Now: 0 for the first 60 ms, then c-popover-fade over 80 ms. It asks
+// for the frames it needs with deadlines.
 func (tt *toolbarTilt) tipAlpha(gtx layout.Context, key string) float32 {
 	if key != tt.tipKey {
 		tt.tipKey, tt.tipSince = key, gtx.Now
