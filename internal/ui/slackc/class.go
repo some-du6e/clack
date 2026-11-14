@@ -366,6 +366,9 @@ func (d *ClassDef) Enter(gtx layout.Context, st css.State, mods uint64) Styled {
 	if probe.active {
 		probeDisplay(uaDisplay(d.tag, rNone))
 	}
+	if inspecting.Load() {
+		inspectEnter(d, mods, "", "", "") // the inspect tool (inspect.go)
+	}
 	if Styles.Empty() {
 		return Styled{}
 	}
@@ -379,6 +382,9 @@ func (d *ClassDef) EnterClass(gtx layout.Context, st css.State, mods uint64, ext
 	if probe.active {
 		probeDisplay(uaDisplay(d.tag, rNone))
 	}
+	if inspecting.Load() {
+		inspectEnter(d, mods, "", "", extra) // the inspect tool (inspect.go)
+	}
 	if Styles.Empty() {
 		return Styled{}
 	}
@@ -390,6 +396,9 @@ func (d *ClassDef) EnterClass(gtx layout.Context, st css.State, mods uint64, ext
 func (d *ClassDef) EnterAttr(gtx layout.Context, st css.State, mods uint64, name, value string) Styled {
 	if probe.active {
 		probeDisplay(uaDisplay(d.tag, rNone))
+	}
+	if inspecting.Load() {
+		inspectEnter(d, mods, name, value, "") // the inspect tool (inspect.go)
 	}
 	if Styles.Empty() {
 		return Styled{}
@@ -575,6 +584,9 @@ func lookupNative(k nsKey, parent *stackEntry) *nativeStyle {
 
 // Leave pops the widget pushed by Enter.
 func (s Styled) Leave() {
+	if inspecting.Load() {
+		inspectLeave()
+	}
 	if s.s == nil {
 		return
 	}

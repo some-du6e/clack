@@ -10,7 +10,6 @@ import (
 	"image/color"
 	"strconv"
 
-	"gioui.org/f32"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
@@ -18,10 +17,10 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -444,17 +443,6 @@ func tagComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 
 // ---- Checkbox ----
 
-// ctlCheckMark strokes a check in an s×s box.
-func ctlCheckMark(gtx layout.Context, s int, c color.NRGBA) {
-	f := float32(s) / 16
-	var path clip.Path
-	path.Begin(gtx.Ops)
-	path.MoveTo(f32.Pt(3.8*f, 8.3*f))
-	path.LineTo(f32.Pt(6.7*f, 11.1*f))
-	path.LineTo(f32.Pt(12.2*f, 5*f))
-	paint.FillShape(gtx.Ops, c, clip.Stroke{Path: path.End(), Width: 2 * f}.Op())
-}
-
 // toggleEvent is the change event a click on a checkbox produces.
 func toggleEvent(p slackc.Props) slackc.Props {
 	return changeEvent(p.StrOr("value", "on"), !p.Bool("checked"), p.StrOr("id", ""))
@@ -503,7 +491,10 @@ func checkboxComp(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			bar := image.Rect(dp(gtx, 4), s/2-dp(gtx, 1), s-dp(gtx, 4), s/2+dp(gtx, 1))
 			theme.RRect(gtx, bar, dp(gtx, 1), cl.CheckText)
 		case checked:
-			ctlCheckMark(gtx, s, cl.CheckText)
+			// Slack's Checkbox (client-boot QG0J) is a native
+			// c-input_checkbox: Chrome's tick (NativeThemeBase::
+			// PaintCheckbox, icons' chrome-check) on the box
+			icons.Get("chrome-check")(gtx, 16, cl.CheckText)
 		}
 		if !disabled {
 			cursor(gtx, size, pointer.CursorPointer)

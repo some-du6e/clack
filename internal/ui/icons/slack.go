@@ -79,7 +79,7 @@ var slackIconNames = map[string]string{
 	"redo":                       "forward",
 	"drag-handle":                "reorder",
 	"grabber":                    "reorder",
-	"eye-slash":                  "eye-off",
+	"eye-slash":                  "eye-closed",
 	"visible":                    "eye",
 	"hidden":                     "eye-closed",
 	"file-download":              "download",
@@ -254,5 +254,4 @@ func init() {
 	// thread (ArchiveCommentButton): the 1.5-unit ring's centreline, open
 	// at the right, and the arrow at its top end.
 	reg("rotate", s("M16.37 5.59 A7.75 7.75 0 1 0 17.02 13.28"), s("M17.75 2.25 V6.75 H13.25"))
-	reg("eye-off", s("M2.5 10 C4.4 6.4 7 4.75 10 4.75 C13 4.75 15.6 6.4 17.5 10 C15.6 13.6 13 15.25 10 15.25 C7 15.25 4.4 13.6 2.5 10 Z"), s(circle(10, 10, 2.5)), s("M3.5 3.5 L16.5 16.5"))
 }

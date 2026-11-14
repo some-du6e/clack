@@ -1,55 +1,82 @@
 package icons
 
-// Glyphs of Slack's icon font ("Slack v2", slack-icons-v2-*.woff2 on the
-// CDN, the c-icon--* classes), which a few places draw instead of an
-// SvgIcon. Each is the glyph's outline as a fill, in the set's 20-unit
-// view: the font's 2000-unit em at the 20px c-icon:before font size, the
-// baseline at its 1700 ascent (x/100, (1700-y)/100). Slack's fonts are not
-// in the repo.
+// Glyphs of Slack's icon font ("Slack v2", slack-icons-v2-05e8fec.woff2
+// on the CDN, the c-icon--* classes), which a few places draw instead of
+// an SvgIcon, in the set's 20-unit view: the font's 2000-unit em at the
+// 20px c-icon:before font size, the baseline at its 1700 ascent (x/100,
+// (1700-y)/100). Line glyphs are drawn on the centrelines of their
+// outlines like redrawn.go's (a glyph's outline filled reads 20-28% heavy
+// in dark mode), solid ones as fl parts. Slack's fonts are not in the repo:
+// the icon-shots workflow dumps the font's glyphs and TestIconsMatchSlack
+// holds each glyph here to its codepoint's (fontRef).
 func init() {
 	// U+E096 icon_stop_screen_sharing (c-icon--stop-screen-sharing): the
 	// presenter's mini panel's Stop Sharing button (HuddleMiniPanel, a y8g2
 	// font icon)
-	reg("stop-screen-sharing", f("M14.26 18C14.7 18 15.02 17.68 15.02 17.25C15.02 16.82 14.69 16.5 14.25 16.5H11V14H17.25C18.22 14 19 13.22 19 12.25V3.75C19 2.78 18.22 2 17.24 2H2.76C1.78 2 1 2.78 1 3.75V12.25C1 13.21 1.79 14 2.75 14H9L9.01 16.5H5.78C5.34 16.5 5.02 16.82 5.02 17.25C5.02 17.68 5.34 18 5.78 18ZM2.75 12.5C2.62 12.5 2.5 12.38 2.5 12.25V3.75C2.5 3.61 2.61 3.5 2.76 3.5H17.24C17.39 3.5 17.5 3.61 17.5 3.75V12.25C17.5 12.39 17.39 12.5 17.25 12.5ZM8 10.02C8 10.51 8.44 10.78 8.88 10.56L12.81 8.59C13.34 8.32 13.34 7.68 12.81 7.41L8.88 5.44C8.44 5.22 8 5.49 8 5.98Z"))
+	reg("stop-screen-sharing", s(rrect(1.75, 2.75, 16.5, 10.5, 1)), sw(2, "M10 13.5 V17"), s("M5.77 17.25 H14.27"), fl("M8.72 6.17 L8.72 9.83 L12.38 8 Z"))
 	// U+E125 icon_hash_small (c-icon--hash-small): the # before the channel
 	// name in the composer's placeholder (MessagePaneInputPlaceholder). Its
 	// strokes are one unit wide, the weight of Lato's own at 15px.
-	reg("hash-small", f("M12.75 8 13.23 5.59C13.24 5.55 13.24 5.52 13.24 5.48C13.24 5.21 13.03 5 12.72 5C12.48 5 12.3 5.17 12.25 5.43L11.73 8H9.26L9.74 5.59C9.75 5.55 9.75 5.52 9.75 5.48C9.75 5.21 9.54 5 9.23 5C8.99 5 8.81 5.17 8.76 5.43L8.24 8H6.51C6.21 8 6 8.21 6 8.5C6 8.79 6.21 9 6.51 9H8.04L7.44 12H5.71C5.41 12 5.2 12.21 5.2 12.5C5.2 12.79 5.41 13 5.71 13H7.24L6.76 15.41C6.75 15.45 6.75 15.48 6.75 15.52C6.75 15.79 6.96 16 7.27 16C7.51 16 7.69 15.83 7.74 15.57L8.26 13H10.73L10.25 15.41C10.24 15.45 10.24 15.48 10.24 15.52C10.24 15.79 10.45 16 10.76 16C11 16 11.18 15.83 11.23 15.57L11.75 13H13.48C13.78 13 13.99 12.79 13.99 12.5C13.99 12.21 13.78 12 13.48 12H11.95L12.55 9H14.29C14.59 9 14.8 8.79 14.8 8.5C14.8 8.21 14.59 8 14.29 8ZM8.46 12 9.06 9H11.53L10.93 12Z"))
+	reg("hash-small", sw(1, "M9.25 5.5 L7.25 15.5 M12.74 5.5 L10.74 15.5 M6.5 8.5 H14.3 M5.7 12.5 H13.49"))
 	// U+E157 icon_bullet_list (c-icon--bullet-list): a list's sidebar row
 	// without programmable_sidebar (boot-render UGOO
 	// getIconTypeForChannelPrefix, core/sidebar_docs.go); font
 	// slack-icons-v2-05e8fec
-	reg("bullet-list", f("M3.25 4C2.57 4 2 4.57 2 5.25C2 5.93 2.57 6.5 3.25 6.5C3.93 6.5 4.5 5.93 4.5 5.25C4.5 4.57 3.93 4 3.25 4ZM18.75 6C19.16 6 19.5 5.66 19.5 5.25C19.5 4.84 19.16 4.5 18.75 4.5H9.25C8.84 4.5 8.5 4.84 8.5 5.25C8.5 5.66 8.84 6 9.25 6ZM3.25 9C2.57 9 2 9.57 2 10.25C2 10.93 2.57 11.5 3.25 11.5C3.93 11.5 4.5 10.93 4.5 10.25C4.5 9.57 3.93 9 3.25 9ZM9.25 9.5C8.84 9.5 8.5 9.84 8.5 10.25C8.5 10.66 8.84 11 9.25 11H18.75C19.16 11 19.5 10.66 19.5 10.25C19.5 9.84 19.16 9.5 18.75 9.5ZM3.25 14C2.57 14 2 14.57 2 15.25C2 15.93 2.57 16.5 3.25 16.5C3.93 16.5 4.5 15.93 4.5 15.25C4.5 14.57 3.93 14 3.25 14ZM9.25 14.5C8.84 14.5 8.5 14.84 8.5 15.25C8.5 15.66 8.84 16 9.25 16H18.75C19.16 16 19.5 15.66 19.5 15.25C19.5 14.84 19.16 14.5 18.75 14.5Z"))
+	reg("bullet-list", disc(3.25, 5.25, 1.25), disc(3.25, 10.25, 1.25), disc(3.25, 15.25, 1.25), s("M9.25 5.25 H18.75 M9.25 10.25 H18.75 M9.25 15.25 H18.75"))
+	// U+E281 icon_plus_small (c-icon--plus-small): the Apps section's Add
+	// apps row (boot-render FmLP's add-more-items row; its
+	// BaseChannelPrefixIcon, akoD, draws an iconType that isn't one of its
+	// SvgIcons as the inline y8g2 font icon, size inherit)
+	reg("plus-small", s("M10 6.5 V13.5 M6.5 10 H13.5"))
 	// U+E294 icon_times_small (c-icon--times-small): AttachmentDeleteButton's
 	// rail-style remove button left of classic and Block Kit unfurls.
-	reg("times-small", f("M7.25 13.5C7.44 13.5 7.64 13.42 7.78 13.28L10 11.06L12.22 13.28C12.37 13.43 12.56 13.5 12.75 13.5C13.13 13.5 13.5 13.19 13.5 12.75C13.5 12.56 13.43 12.37 13.28 12.22L11.06 10L13.28 7.78C13.43 7.63 13.5 7.44 13.5 7.25C13.5 6.83 13.17 6.5 12.75 6.5C12.56 6.5 12.37 6.57 12.22 6.72L10 8.94L7.78 6.72C7.63 6.57 7.44 6.5 7.25 6.5C6.83 6.5 6.5 6.84 6.5 7.25C6.5 7.44 6.57 7.63 6.72 7.78L8.94 10L6.72 12.22C6.58 12.36 6.5 12.56 6.5 12.75C6.5 13.16 6.84 13.5 7.25 13.5Z"))
+	reg("times-small", s("M7.25 7.25 L12.75 12.75 M12.75 7.25 L7.25 12.75"))
 
 	// The Activity rows' Slack Connect Ignore flow (rPCk IgnoreForkedModal,
 	// IgnoreForkedModalButton: the y8g2 font icons times-circle-medium,
 	// disable and chevron-medium-right).
 	// U+E229 icon_times_circle_medium
-	reg("times-circle-medium", f("M10 18C14.42 18 18 14.42 18 10C18 5.58 14.42 2 10 2C5.58 2 2 5.58 2 10C2 14.42 5.58 18 10 18ZM10 3.5C13.59 3.5 16.5 6.41 16.5 10C16.5 13.59 13.59 16.5 10 16.5C6.41 16.5 3.5 13.59 3.5 10C3.5 6.41 6.41 3.5 10 3.5ZM13.01 7C12.72 6.71 12.24 6.71 11.95 7L10 8.94L8.06 7C7.77 6.71 7.29 6.71 7 7C6.71 7.29 6.71 7.77 7 8.06L8.94 10L7 11.95C6.71 12.24 6.71 12.72 7 13.01C7.29 13.3 7.77 13.3 8.06 13.01L10 11.06L11.95 13.01C12.24 13.3 12.72 13.3 13.01 13.01C13.3 12.72 13.3 12.24 13.01 11.95L11.06 10L13.01 8.06C13.3 7.77 13.3 7.29 13.01 7Z"))
+	reg("times-circle-medium", s(circle(10, 10, 7.25)), s("M7.53 7.53 L12.47 12.47 M12.47 7.53 L7.53 12.47"))
 	// U+E149 icon_disable
-	reg("disable-font", f("M10 2C5.58 2 2 5.58 2 10C2 14.42 5.58 18 10 18C14.42 18 18 14.42 18 10C18 5.58 14.42 2 10 2ZM5.96 4.9C7.07 4.03 8.48 3.5 10 3.5C13.59 3.5 16.5 6.41 16.5 10C16.5 11.52 15.97 12.93 15.1 14.04ZM3.5 10C3.5 8.48 4.03 7.07 4.9 5.96L14.04 15.1C12.93 15.97 11.52 16.5 10 16.5C6.41 16.5 3.5 13.59 3.5 10Z"))
+	reg("disable-font", s(circle(10, 10, 7.25)), s("M4.87 4.87 L15.13 15.13"))
 	// U+E256 icon_chevron_medium_down: the chevron after the channel join
 	// banner's section name (ChannelJoinBannerActionButtons'
 	// p-about_modal__action_icon_suffix, a y8g2 font icon)
-	reg("chevron-medium-down", f("M15.28 7.47C15.14 7.33 14.94 7.25 14.75 7.25C14.56 7.25 14.37 7.32 14.22 7.47L10 11.69L5.78 7.47C5.64 7.33 5.44 7.25 5.25 7.25C5.06 7.25 4.86 7.32 4.72 7.47C4.58 7.62 4.5 7.81 4.5 8C4.5 8.19 4.58 8.39 4.72 8.53L9.47 13.28C9.62 13.43 9.81 13.5 10 13.5C10.19 13.5 10.38 13.42 10.53 13.28L10.56 13.25L15.28 8.53C15.43 8.39 15.5 8.19 15.5 8C15.5 7.81 15.43 7.62 15.28 7.47Z"))
+	reg("chevron-medium-down", s("M5.25 8 L10 12.75 L14.75 8"))
 	// U+E500 icon_star (c-icon--star): the channel join banner's Starred
 	// section, an inline y8g2 icon
-	reg("star-font", f("M19.14 8.05C19.14 6.89 17.91 6.31 15.11 6.31C14.47 6.31 13.78 6.34 13.05 6.38C12.51 3.68 11.3 1 10 1C8.7 1 7.49 3.68 6.95 6.38C6.22 6.34 5.53 6.31 4.89 6.31C2.03 6.31 0.86 6.92 0.86 8.05C0.86 9.27 2.59 10.8 5.08 12.31C4.28 14.03 3.74 15.89 3.74 17.22C3.74 18.4 4.14 19 4.98 19C6.26 19 8.38 17.65 10 16.03C11.62 17.65 13.74 19 15.02 19C15.88 19 16.26 18.36 16.26 17.22C16.26 15.89 15.72 14.03 14.92 12.31C17.41 10.8 19.14 9.27 19.14 8.05Z"))
+	reg("star-font", fl("M18.42 8.05 L18.39 7.85 L18.32 7.71 L18.17 7.57 L18 7.46 L17.43 7.25 L16.82 7.13 L16.04 7.06 L15.11 7.03 L12.47 7.13 L12.03 5.24 L11.74 4.33 L11.41 3.5 L11.05 2.79 L10.68 2.24 L10.34 1.89 L10.16 1.77 L10 1.72 L9.84 1.77 L9.66 1.89 L9.32 2.24 L8.95 2.79 L8.59 3.5 L8.26 4.33 L7.97 5.24 L7.53 7.13 L5.2 7.03 L3.66 7.08 L3.16 7.14 L2.54 7.26 L2.1 7.41 L1.82 7.57 L1.67 7.72 L1.61 7.86 L1.58 8.05 L1.63 8.3 L1.87 8.79 L2.38 9.39 L2.91 9.89 L3.8 10.6 L4.86 11.33 L6 12.03 L5.55 13.03 L5.21 13.87 L4.86 14.9 L4.66 15.69 L4.52 16.43 L4.46 17.22 L4.5 17.75 L4.56 17.97 L4.64 18.14 L4.72 18.23 L4.87 18.27 L5.34 18.23 L6 18.02 L6.78 17.63 L7.62 17.09 L8.48 16.44 L9.1 15.9 L10 15.02 L10.9 15.9 L11.52 16.44 L12.38 17.09 L13.01 17.51 L13.62 17.84 L14.35 18.15 L14.91 18.27 L15.13 18.27 L15.29 18.21 L15.38 18.1 L15.47 17.89 L15.54 17.34 L15.5 16.6 L15.38 15.88 L15.2 15.1 L14.87 14.08 L14.54 13.24 L14 12.03 L15.14 11.33 L15.95 10.78 L16.67 10.24 L17.28 9.72 L17.77 9.23 L18.13 8.79 L18.34 8.41 Z"))
 	// U+E254 icon_chevron_medium_right
-	reg("chevron-medium-right", f("M8.53 4.72C8.39 4.58 8.19 4.5 8 4.5C7.81 4.5 7.62 4.58 7.47 4.72C7.32 4.86 7.25 5.06 7.25 5.25C7.25 5.44 7.33 5.64 7.47 5.78L11.69 10L7.47 14.22C7.32 14.37 7.25 14.56 7.25 14.75C7.25 14.94 7.33 15.14 7.47 15.28C7.62 15.43 7.81 15.5 8 15.5C8.19 15.5 8.39 15.43 8.53 15.28L13.25 10.56L13.28 10.53C13.42 10.38 13.5 10.19 13.5 10C13.5 9.81 13.43 9.62 13.28 9.47Z"))
+	reg("chevron-medium-right", s("M8 5.25 L12.75 10 L8 14.75"))
 	// The sidebar's organize mode checkbox (boot-render PZNh Channel's
 	// renderEditModeCheckbox, an inline c-icon at the row's font size):
 	// U+E322 icon_real_checkbox_empty and U+E323 icon_real_checkbox_checked
 	// (its check a hole).
-	reg("real-checkbox-empty", f("M6.1 1C3.14 1 1 3.14 1 6.1V13.9C1 16.86 3.14 19 6.1 19H13.9C16.86 19 19 16.86 19 13.9V6.1C19 3.14 16.86 1 13.9 1ZM13.9 2.5C16.03 2.5 17.5 3.97 17.5 6.1V13.9C17.5 16.03 16.03 17.5 13.9 17.5H6.1C3.97 17.5 2.5 16.03 2.5 13.9V6.1C2.5 3.97 3.97 2.5 6.1 2.5Z"))
+	reg("real-checkbox-empty", s("M6.1 1.75 H13.9 C16.45 1.75 18.25 3.56 18.25 6.1 V13.9 C18.25 16.45 16.45 18.25 13.9 18.25 H6.1 C3.56 18.25 1.75 16.45 1.75 13.9 V6.1 C1.75 3.56 3.56 1.75 6.1 1.75 Z"))
 	reg("real-checkbox-checked", f("M6.1 1C3.14 1 1 3.14 1 6.1V13.9C1 16.86 3.14 19 6.1 19H13.9C16.86 19 19 16.86 19 13.9V6.1C19 3.14 16.86 1 13.9 1ZM13.99 7.4C13.99 7.63 13.92 7.85 13.76 8.03L9.17 13.46C8.97 13.7 8.7 13.82 8.41 13.82C8.07 13.82 7.78 13.66 7.58 13.38L6.03 11.17C5.91 10.99 5.85 10.79 5.85 10.58C5.85 10.23 6 9.95 6.28 9.77C6.45 9.66 6.64 9.6 6.85 9.6C7.18 9.6 7.47 9.76 7.66 10.02L8.49 11.19L12.23 6.75C12.43 6.52 12.69 6.4 12.98 6.4C13.23 6.4 13.44 6.47 13.63 6.62C13.87 6.81 13.99 7.1 13.99 7.4Z"))
 	// U+E706 icon_form_checkbox_dash (c-menu_item__checkbox_dash): an
 	// indeterminate menu row's mark (the Move to… menu over several
 	// conversations).
-	reg("form-checkbox-dash", f("M6 10C6 9.42 6.43 9 7.02 9H12.98C13.57 9 14 9.42 14 10C14 10.58 13.57 11 12.98 11H7.02C6.43 11 6 10.58 6 10Z"))
+	reg("form-checkbox-dash", sw(2, "M7 10 H13"))
+
+	// TextyAutocompleteMenu's keyboard help (boot-shared WOwF):
+	// "{arrowUp} {arrowDown} to navigate" draws the inline y8g2 icons
+	// arrow-up-medium (U+E292) and arrow-down-medium (U+E293) at the
+	// c-icon:before 20px, "{symbol} to select" enter (U+E302) at the help
+	// row's 12px (size inherit). enter-font is the font's enter, not the
+	// SvgIcon enter.
+	reg("arrow-up-medium", s("M6.75 9 L10 5.75 L13.25 9 M10 5.75 V14.25"))
+	reg("arrow-down-medium", s("M6.75 11 L10 14.25 L13.25 11 M10 14.25 V5.75"))
+	reg("enter-font", s("M16.25 4.25 V11.25 H3.75 M7 8 L3.75 11.25 L7 14.5"))
+	// U+E106 icon_broadcast (c-icon--broadcast): the @here / @channel /
+	// @everyone rows' icon (SmallBroadcastEntity's y8g2 Icon type
+	// "broadcast", size inherit): the megaphone's outline and its two
+	// inner walls.
+	reg("broadcast", s("M16.54 1.53 L16.15 1.58 L15.66 1.79 L15.22 2.07 L14.01 2.93 L13.13 3.44 L12.25 3.82 L11.47 4.06 L10.81 4.19 L10.15 4.25 L3.55 4.26 L3.26 4.33 L2.91 4.51 L2.62 4.76 L2.41 5.08 L2.28 5.45 L2.25 5.76 L2.25 9.24 L2.28 9.55 L2.37 9.83 L2.51 10.09 L2.69 10.31 L2.91 10.49 L3.17 10.63 L3.65 10.75 L4.77 10.76 L5 10.86 L5.22 11.05 L5.32 11.24 L7.37 16.86 L7.47 17.04 L7.65 17.28 L8.05 17.58 L8.42 17.71 L8.72 17.75 L9.1 17.71 L9.39 17.61 L9.64 17.46 L9.91 17.2 L10.11 16.88 L10.22 16.52 L10.24 16.14 L10.19 15.84 L8.68 11.65 L8.66 11.43 L8.73 11.18 L8.88 10.97 L9.09 10.82 L9.41 10.75 L10.18 10.75 L10.65 10.79 L11.45 10.93 L12.24 11.17 L12.85 11.43 L13.57 11.8 L14.18 12.18 L15.44 13.08 L15.86 13.31 L16.15 13.42 L16.54 13.47 L17 13.4 L17.31 13.22 L17.54 12.91 L17.7 12.4 L17.75 11.84 L17.74 2.86 L17.62 2.27 L17.5 2.02 L17.36 1.83 L17.2 1.7 L17 1.6 Z"), s("M8.75 4.25 V10.75"), s("M4.9 10.75 H9.75"))
+	// U+E029 icon_lock_o (c-icon--lock-o): the composer placeholder's
+	// private-channel icon (txEg getPlaceholderText, size inherit under
+	// c-texty_input__placeholder_icon--private's 14px)
+	reg("lock-o", s("M6.75 9.25 V7.05 C6.75 5.12 8.08 3.75 10 3.75 C11.94 3.75 13.25 5.12 13.25 7.05 V9.25"), s(rrect(4.75, 9.25, 10.5, 7, 1.09)))
 	// Slack's cloud-offline SvgIcon (InlineOfflineIndicator: Activity's
 	// "No connection. Go online to load more activity."), on the
 	// centrelines of its outlines: the left lobe (r 3 about 4.75,13.75),

@@ -38,15 +38,19 @@ import (
 // whatever its shape; shape is the L1 distance between the two normalized
 // ink maps.
 //
-// Every icon in slackRef is held to its Slack glyph: ink within inkTol (6%
-// at 2x, 10% at 1x) and shape within shapeTol in both inks at both scales. Every icon name the
-// code uses (TestIconRefsExist's scan, the -filled variants the rail and
-// tabs draw when selected, Block Kit's icon_button names) must be in
-// slackRef or clackOwn.
+// Every icon in slackRef is held to its Slack glyph, every icon in fontRef
+// to its glyph of Slack's icon font and every icon in inlineRef to the
+// shapes it names: ink within inkTol (6% at 2x, 10% at 1x) and shape
+// within shapeTol in both inks at both scales. Every icon name the code
+// uses (TestIconRefsExist's scan, the -filled variants the rail and tabs
+// draw when selected, Block Kit's icon_button names) must be in one of
+// those or in clackOwn.
 //
 // Slack's glyphs aren't in the repo: CI downloads the icon set the public
 // web client ships (the Iconify JSON slack-datamine-plus extracts, see the
-// icon-shots workflow) and points CLACK_SLACK_ICONS at it. ICON_SHOTS_DIR
+// icon-shots workflow) and points CLACK_SLACK_ICONS at it, and dumps the
+// glyphs of the CDN's icon font the same way (CLACK_SLACK_ICON_FONT,
+// keyed by hex codepoint; .github/scripts/slack_icon_font.py). ICON_SHOTS_DIR
 // gets a contact sheet per ink and scale (each cell: Slack left, Clack
 // right, the name and Clack's ink ratio below, red when out of tolerance)
 // and icons-vs-slack.tsv with every measurement.
@@ -55,21 +59,33 @@ func TestIconsMatchSlack(t *testing.T) {
 	if path == "" {
 		t.Skip("CLACK_SLACK_ICONS (Slack's icons.json) not set; the icon-shots workflow sets it")
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	set := readIconSet(t, path)
+	fontPath := os.Getenv("CLACK_SLACK_ICON_FONT")
+	if fontPath == "" {
+		t.Fatal("CLACK_SLACK_ICON_FONT (Slack's icon font glyphs, slack_icon_font.py's JSON) not set; the icon-shots workflow sets it")
 	}
-	var set struct {
-		Icons map[string]struct{ Body string } `json:"icons"`
+	font := readIconSet(t, fontPath)
+	var cases []iconCase
+	for n, sn := range slackRef {
+		body, ok := set[sn]
+		if !ok {
+			t.Errorf("%s: Slack's set has no %q", n, sn)
+			continue
+		}
+		cases = append(cases, iconCase{n, sn, body})
 	}
-	if err := json.Unmarshal(raw, &set); err != nil {
-		t.Fatal(err)
+	for n, cp := range fontRef {
+		body, ok := font[fmt.Sprintf("%04x", cp)]
+		if !ok {
+			t.Errorf("%s: Slack's icon font has no U+%04X", n, cp)
+			continue
+		}
+		cases = append(cases, iconCase{n, fmt.Sprintf("U+%04X", cp), body})
 	}
-	names := make([]string, 0, len(slackRef))
-	for n := range slackRef {
-		names = append(names, n)
+	for n, r := range inlineRef {
+		cases = append(cases, iconCase{n, r.src, r.body})
 	}
-	sort.Strings(names)
+	sort.Slice(cases, func(i, j int) bool { return cases[i].name < cases[j].name })
 	inks := []struct {
 		name   string
 		fg, bg color.NRGBA
@@ -86,22 +102,20 @@ func TestIconsMatchSlack(t *testing.T) {
 			px := size * scale
 			var cells []sheetCell
 			var lines []string
-			for _, n := range names {
-				sn := slackRef[n]
-				body, ok := set.Icons[sn]
-				if !ok {
-					t.Errorf("%s: Slack's set has no %q", n, sn)
-					continue
-				}
+			for _, c := range cases {
+				n, sn := c.name, c.ref
 				if !Has(n) {
-					t.Errorf("slackRef lists %q, which isn't registered", n)
+					t.Errorf("%q is held to %s but isn't registered", n, sn)
 					continue
 				}
-				ref := slackRaster(t, body.Body, px, ink.fg, ink.bg)
+				ref := slackRaster(t, c.body, px, ink.fg, ink.bg)
 				got := clackRaster(t, n, px, scale, ink.fg, ink.bg)
 				ratio := inkOf(got, ink.fg, ink.bg) / inkOf(ref, ink.fg, ink.bg)
 				shape := shapeDiff(ref, got, ink.fg, ink.bg)
 				tol := inkTol[scale-1]
+				if scale == 1 && phase1x[n] > tol {
+					tol = phase1x[n]
+				}
 				bad := math.Abs(ratio-1) > tol || shape > shapeTol
 				if bad {
 					t.Errorf("%s %dx %s: ink %.3f of Slack's %s, shape %.2f (want ink within %.0f%%, shape ≤ %.2f)", ink.name, scale, n, ratio, sn, shape, tol*100, shapeTol)
@@ -123,12 +137,37 @@ func TestIconsMatchSlack(t *testing.T) {
 		}
 	}
 	var far []string
-	for _, n := range names {
-		if worst[n] > 0.05 {
-			far = append(far, fmt.Sprintf("%s %.1f%%", n, worst[n]*100))
+	for _, c := range cases {
+		if worst[c.name] > 0.05 {
+			far = append(far, fmt.Sprintf("%s %.1f%%", c.name, worst[c.name]*100))
 		}
 	}
-	t.Logf("%d icons against Slack's; ink off by more than 5%% anywhere: %s", len(names), strings.Join(far, ", "))
+	t.Logf("%d icons against Slack's; ink off by more than 5%% anywhere: %s", len(cases), strings.Join(far, ", "))
+}
+
+// iconCase is one icon TestIconsMatchSlack holds: its Clack name, what it
+// is held to (a Slack icon name, a codepoint, a source) and that
+// reference's Iconify body.
+type iconCase struct{ name, ref, body string }
+
+// readIconSet reads an Iconify JSON's bodies by name.
+func readIconSet(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var set struct {
+		Icons map[string]struct{ Body string } `json:"icons"`
+	}
+	if err := json.Unmarshal(raw, &set); err != nil {
+		t.Fatal(err)
+	}
+	out := make(map[string]string, len(set.Icons))
+	for n, b := range set.Icons {
+		out[n] = b.Body
+	}
+	return out
 }
 
 // The tolerances TestIconsMatchSlack holds every slackRef icon to. Ink
@@ -141,30 +180,61 @@ func TestIconsMatchSlack(t *testing.T) {
 // are rasterized Chrome's way. So 1x gets 10%.
 var inkTol = [2]float64{0.10, 0.06} // 1x, 2x
 
+// phase1x widens the 1x ink tolerance for an icon whose edges sit almost
+// on the 18px pixel grid, where Gio's StrokeGamma (the +0.23 px a light
+// stroke is widened by, averaged over edge positions) lands whole in the
+// next row: form-checkbox-dash's 2-unit bar has its edges 0.1 px off the
+// grid and reads 1.095 in light at 1x (icon-shots run 43570785892), at the
+// edge of the 10%, while 2x is within 1% and its geometry is the font's to
+// 0.998 IoU.
+var phase1x = map[string]float64{"form-checkbox-dash": 0.12}
+
 const shapeTol = 0.35
 
 // TestIconCoverage checks that every icon the code draws is held to a
 // Slack glyph (slackRef) or is one of Clack's own (clackOwn), and that the
 // two tables name registered icons. It needs no GPU or download.
 func TestIconCoverage(t *testing.T) {
-	for n, sn := range slackRef {
-		if !Has(n) {
-			t.Errorf("slackRef[%q] (Slack's %q): not registered", n, sn)
+	tables := map[string]func(string) bool{
+		"slackRef":  func(n string) bool { _, ok := slackRef[n]; return ok },
+		"fontRef":   func(n string) bool { _, ok := fontRef[n]; return ok },
+		"inlineRef": func(n string) bool { _, ok := inlineRef[n]; return ok },
+		"clackOwn":  func(n string) bool { _, ok := clackOwn[n]; return ok },
+	}
+	listed := func(n string) []string {
+		var in []string
+		for tn, has := range tables {
+			if has(n) {
+				in = append(in, tn)
+			}
 		}
-		if _, ok := clackOwn[n]; ok {
-			t.Errorf("%q is in both slackRef and clackOwn", n)
-		}
+		sort.Strings(in)
+		return in
+	}
+	var all []string
+	for n := range slackRef {
+		all = append(all, n)
+	}
+	for n := range fontRef {
+		all = append(all, n)
+	}
+	for n := range inlineRef {
+		all = append(all, n)
 	}
 	for n := range clackOwn {
+		all = append(all, n)
+	}
+	for _, n := range all {
 		if !Has(n) {
-			t.Errorf("clackOwn[%q]: not registered", n)
+			t.Errorf("%q (in %v): not registered", n, listed(n))
+		}
+		if in := listed(n); len(in) > 1 {
+			t.Errorf("%q is in %v", n, in)
 		}
 	}
 	for _, n := range drawnIcons(t) {
-		_, ok := slackRef[n]
-		_, own := clackOwn[n]
-		if !ok && !own {
-			t.Errorf("icon %q is drawn but has no Slack glyph in slackRef (or a reason in clackOwn)", n)
+		if len(listed(n)) == 0 {
+			t.Errorf("icon %q is drawn but is held to nothing (slackRef, fontRef, inlineRef) and has no reason in clackOwn", n)
 		}
 	}
 }

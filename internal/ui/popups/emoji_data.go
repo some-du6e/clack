@@ -65,6 +65,14 @@ var epTabNames = [epNumGroups]string{
 	"Activities", "Objects", "Symbols", "Flags", "Custom",
 }
 
+// epTabIcons are the category tabs' SvgIcons, drawn at 20 (Zu56's group
+// tabs: client-boot VEl9's tS by group name; Frequently Used's tab draws
+// Search's, a group without an entry Custom's slack-logo).
+var epTabIcons = [epNumGroups]string{
+	"search", "emoji-filled", "emoji-nature", "emoji-food", "emoji-travel",
+	"emoji-activities", "emoji-objects", "emoji-symbols", "emoji-flag", "slack-logo",
+}
+
 // skin tone modifier code points for tones 2..6.
 var epSkinCodes = [5]string{"1F3FB", "1F3FC", "1F3FD", "1F3FE", "1F3FF"}
 

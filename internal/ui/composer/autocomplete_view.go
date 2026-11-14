@@ -434,8 +434,9 @@ func (rc *acRowCtx) member(it acItem) {
 
 func (rc *acRowCtx) group(it acItem, team string) {
 	gtx := rc.gtx
+	// SmallUserGroupEntity (boot-shared 93cB): the SvgIcon user-groups at 18
 	ic := rc.square(acIcon, 8)
-	drawAt(gtx, ic, func(gtx layout.Context, s int) { drawPeopleIcon(gtx, s, rc.color(acText)) })
+	drawIcon(gtx, ic, icons.Get("user-groups"), rc.color(acText))
 	rc.line(acTextSize, font.Bold, acText, it.Name)
 	rc.gap(8)
 	members := "members"
@@ -453,8 +454,10 @@ func (rc *acRowCtx) group(it acItem, team string) {
 
 func (rc *acRowCtx) broadcast(it acItem) {
 	gtx := rc.gtx
-	ic := rc.square(acIcon, 8)
-	drawAt(gtx, ic, func(gtx layout.Context, s int) { drawPeopleIcon(gtx, s, rc.color(acText)) })
+	// SmallBroadcastEntity (boot-shared qmtA): the y8g2 font icon
+	// "broadcast" at size inherit, a 1em box at the row's 15px
+	ic := rc.square(unit.Dp(float32(acTextSize)), 8)
+	drawIcon(gtx, ic, icons.Get("broadcast"), rc.color(acText))
 	rc.line(acTextSize, font.Bold, acText, "@"+it.Name)
 	if it.Secondary != "" && rc.x+gtx.Dp(8) < rc.right {
 		rc.gap(8)
@@ -469,18 +472,18 @@ func (rc *acRowCtx) channel(it acItem) {
 	if it.Archived {
 		col, name = acContext, name+" (archived)"
 	}
+	// SmallChannelEntity's ChannelIcon (client-boot 0FpA, /HhV
+	// getChannelIconType unfilled): the SvgIcon archive, lock or channel
+	// at x_small's 18
 	ic := rc.square(acIcon, 8)
-	c := rc.color(col)
-	drawAt(gtx, ic, func(gtx layout.Context, s int) {
-		switch {
-		case it.Archived:
-			drawArchiveIcon(gtx, s, c)
-		case it.Private:
-			drawLockIcon(gtx, s, c)
-		default:
-			drawHashIcon(gtx, s, c)
-		}
-	})
+	icon := "channel"
+	switch {
+	case it.Archived:
+		icon = "archive"
+	case it.Private:
+		icon = "lock"
+	}
+	drawIcon(gtx, ic, icons.Get(icon), rc.color(col))
 	rc.line(acTextSize, font.Bold, col, name)
 }
 
@@ -524,14 +527,20 @@ func (rc *acRowCtx) command(it acItem) {
 	top := gtx.Dp(10)
 	ic := gtx.Dp(acAvatar)
 	icon := image.Rect(rc.x, top+gtx.Dp(4), rc.x+ic, top+gtx.Dp(4)+ic)
-	if it.Command != nil && it.Command.IconURL != "" {
+	switch {
+	case it.Command != nil && it.Command.IconURL != "":
 		// App command: the app's icon (placeholder gray while it loads).
 		fillRRect(gtx, icon, gtx.Dp(acAvatarR), acPlaceBg)
 		rc.ac.drawImage(gtx, it.Command.IconURL, icon, gtx.Dp(acAvatarR), acPlaceBg)
-	} else {
-		// Built-in (core) command: the slash glyph.
+	case cmdSource(it.Command) == "Slack":
+		// a core or client command (omi8 gives it appName "Slack"):
+		// SlashCommandsAutocompleteMenuEntityIcon (boot-shared olrj)
+		// shows /img/slack_logo_mark.svg at 20px, on the row's own
+		// background (.p-slash_commands_autocomplete_menu_entity__icon
+		// .c-base_icon: background-color inherit)
+		drawAt(gtx, icon, func(gtx layout.Context, s int) { icons.Art(gtx, "slack-logo-mark", s) })
+	default:
 		fillRRect(gtx, icon, gtx.Dp(acAvatarR), acPlaceBg)
-		drawAt(gtx, icon, func(gtx layout.Context, s int) { drawSlashGlyph(gtx, s, acHelpText) })
 	}
 	x0 := rc.x + ic + gtx.Dp(8)
 
@@ -607,13 +616,20 @@ func (ac *Autocomplete) layoutFooter(gtx layout.Context, r image.Rectangle) {
 	x := r.Min.X + gtx.Dp(acFooterPadX)
 	right := r.Max.X - gtx.Dp(acFooterPadX)
 	y, h := r.Min.Y, r.Dy()
-	icon := func(wdp unit.Dp, draw func(gtx layout.Context, w, h int)) {
-		iw, ih := gtx.Dp(wdp), gtx.Dp(12)
+	// TextyAutocompleteMenu's keyboard help (boot-shared WOwF) draws inline
+	// y8g2 font icons, each glyph's em box centred on its c-icon box:
+	// arrow-up-medium and arrow-down-medium at the c-icon:before 20px in
+	// 10px boxes (c-texty_autocomplete__help_item--narrow), enter at the
+	// row's 12px in a 1em box (size inherit)
+	glyph := func(ic icons.Icon, box, em unit.Dp) {
+		bw, g := gtx.Dp(box), gtx.Dp(em)
 		func() {
-			defer op.Offset(image.Pt(x, y+(h-ih)/2)).Push(gtx.Ops).Pop()
-			draw(gtx, iw, ih)
+			defer op.Offset(image.Pt(x+(bw-g)/2, y+(h-g)/2)).Push(gtx.Ops).Pop()
+			gg := gtx
+			gg.Constraints = layout.Exact(image.Pt(g, g))
+			ic(gg, em, acHelpText)
 		}()
-		x += iw
+		x += bw
 	}
 	txt := func(st textStyle, t string) {
 		if x < right {
@@ -621,13 +637,13 @@ func (ac *Autocomplete) layoutFooter(gtx layout.Context, r image.Rectangle) {
 		}
 	}
 	space := gtx.Dp(3)
-	icon(10, func(gtx layout.Context, w, h int) { drawArrowGlyph(gtx, w, h, true, acHelpText) })
+	glyph(icons.Get("arrow-up-medium"), 10, 20)
 	x += space
-	icon(10, func(gtx layout.Context, w, h int) { drawArrowGlyph(gtx, w, h, false, acHelpText) })
+	glyph(icons.Get("arrow-down-medium"), 10, 20)
 	x += space
 	txt(s, "to navigate")
 	x += gtx.Dp(16)
-	icon(12, func(gtx layout.Context, w, h int) { drawReturnGlyph(gtx, w, h, acHelpText) })
+	glyph(icons.Get("enter-font"), 12, 12)
 	x += space
 	txt(s, "to select")
 	x += gtx.Dp(16)
@@ -812,130 +828,12 @@ func drawAt(gtx layout.Context, r image.Rectangle, f func(gtx layout.Context, s 
 	f(gtx, r.Dx())
 }
 
-func strokePath(gtx layout.Context, build func(p *clip.Path), width float32, col color.NRGBA) {
-	var p clip.Path
-	p.Begin(gtx.Ops)
-	build(&p)
-	defer clip.Stroke{Path: p.End(), Width: width}.Op().Push(gtx.Ops).Pop()
-	paint.ColorOp{Color: col}.Add(gtx.Ops)
-	paint.PaintOp{}.Add(gtx.Ops)
-}
-
-// drawHashIcon draws the channel '#' in an s×s box.
-func drawHashIcon(gtx layout.Context, s int, col color.NRGBA) {
-	f := float32(s)
-	strokePath(gtx, func(p *clip.Path) {
-		p.MoveTo(f32.Pt(f*0.43, f*0.17))
-		p.LineTo(f32.Pt(f*0.34, f*0.83))
-		p.MoveTo(f32.Pt(f*0.68, f*0.17))
-		p.LineTo(f32.Pt(f*0.59, f*0.83))
-		p.MoveTo(f32.Pt(f*0.2, f*0.38))
-		p.LineTo(f32.Pt(f*0.84, f*0.38))
-		p.MoveTo(f32.Pt(f*0.16, f*0.62))
-		p.LineTo(f32.Pt(f*0.8, f*0.62))
-	}, f*0.09, col)
-}
-
-// drawLockIcon draws a padlock in an s×s box.
-func drawLockIcon(gtx layout.Context, s int, col color.NRGBA) {
-	f := float32(s)
-	body := image.Rect(int(f*0.22), int(f*0.45), int(f*0.78), int(f*0.86))
-	fillRRect(gtx, body, max(int(f*0.08), 1), col)
-	strokePath(gtx, func(p *clip.Path) {
-		p.MoveTo(f32.Pt(f*0.33, f*0.47))
-		p.LineTo(f32.Pt(f*0.33, f*0.33))
-		p.CubeTo(f32.Pt(f*0.33, f*0.12), f32.Pt(f*0.67, f*0.12), f32.Pt(f*0.67, f*0.33))
-		p.LineTo(f32.Pt(f*0.67, f*0.47))
-	}, f*0.09, col)
-}
-
-// drawArchiveIcon draws an archive box (lid plus body) in an s×s box.
-func drawArchiveIcon(gtx layout.Context, s int, col color.NRGBA) {
-	f := float32(s)
-	w := f * 0.08
-	strokePath(gtx, func(p *clip.Path) {
-		// lid
-		p.MoveTo(f32.Pt(f*0.14, f*0.2))
-		p.LineTo(f32.Pt(f*0.86, f*0.2))
-		p.LineTo(f32.Pt(f*0.86, f*0.36))
-		p.LineTo(f32.Pt(f*0.14, f*0.36))
-		p.Close()
-		// body
-		p.MoveTo(f32.Pt(f*0.2, f*0.36))
-		p.LineTo(f32.Pt(f*0.2, f*0.82))
-		p.LineTo(f32.Pt(f*0.8, f*0.82))
-		p.LineTo(f32.Pt(f*0.8, f*0.36))
-		// handle
-		p.MoveTo(f32.Pt(f*0.4, f*0.5))
-		p.LineTo(f32.Pt(f*0.6, f*0.5))
-	}, w, col)
-}
-
-// drawPeopleIcon draws the two-heads usergroup outline in an s×s box.
-func drawPeopleIcon(gtx layout.Context, s int, col color.NRGBA) {
-	f := float32(s)
-	w := f * 0.08
-	circle := func(p *clip.Path, cx, cy, r float32) {
-		const k = 0.5523
-		p.MoveTo(f32.Pt(cx+r, cy))
-		p.CubeTo(f32.Pt(cx+r, cy+r*k), f32.Pt(cx+r*k, cy+r), f32.Pt(cx, cy+r))
-		p.CubeTo(f32.Pt(cx-r*k, cy+r), f32.Pt(cx-r, cy+r*k), f32.Pt(cx-r, cy))
-		p.CubeTo(f32.Pt(cx-r, cy-r*k), f32.Pt(cx-r*k, cy-r), f32.Pt(cx, cy-r))
-		p.CubeTo(f32.Pt(cx+r*k, cy-r), f32.Pt(cx+r, cy-r*k), f32.Pt(cx+r, cy))
-		p.Close()
-	}
-	strokePath(gtx, func(p *clip.Path) {
-		circle(p, f*0.38, f*0.32, f*0.15)
-		p.MoveTo(f32.Pt(f*0.1, f*0.86))
-		p.CubeTo(f32.Pt(f*0.12, f*0.58), f32.Pt(f*0.64, f*0.58), f32.Pt(f*0.66, f*0.86))
-		circle(p, f*0.7, f*0.36, f*0.11)
-		p.MoveTo(f32.Pt(f*0.7, f*0.6))
-		p.CubeTo(f32.Pt(f*0.84, f*0.6), f32.Pt(f*0.92, f*0.7), f32.Pt(f*0.92, f*0.86))
-	}, w, col)
-}
-
-// drawSlashGlyph draws a '/' in an s×s box (placeholder app icon).
-func drawSlashGlyph(gtx layout.Context, s int, col color.NRGBA) {
-	f := float32(s)
-	strokePath(gtx, func(p *clip.Path) {
-		p.MoveTo(f32.Pt(f*0.62, f*0.25))
-		p.LineTo(f32.Pt(f*0.38, f*0.75))
-	}, f*0.1, col)
-}
-
-// drawArrowGlyph draws an up or down arrow in a w×h box.
-func drawArrowGlyph(gtx layout.Context, w, h int, up bool, col color.NRGBA) {
-	fw, fh := float32(w), float32(h)
-	sw := float32(gtx.Dp(1.25))
-	strokePath(gtx, func(p *clip.Path) {
-		cx := fw / 2
-		t, b := fh*0.12, fh*0.88
-		p.MoveTo(f32.Pt(cx, t))
-		p.LineTo(f32.Pt(cx, b))
-		if up {
-			p.MoveTo(f32.Pt(fw*0.15, fh*0.42))
-			p.LineTo(f32.Pt(cx, t))
-			p.LineTo(f32.Pt(fw*0.85, fh*0.42))
-		} else {
-			p.MoveTo(f32.Pt(fw*0.15, fh*0.58))
-			p.LineTo(f32.Pt(cx, b))
-			p.LineTo(f32.Pt(fw*0.85, fh*0.58))
-		}
-	}, sw, col)
-}
-
-// drawReturnGlyph draws the ↵ return arrow in a w×h box.
-func drawReturnGlyph(gtx layout.Context, w, h int, col color.NRGBA) {
-	fw, fh := float32(w), float32(h)
-	sw := float32(gtx.Dp(1.25))
-	strokePath(gtx, func(p *clip.Path) {
-		p.MoveTo(f32.Pt(fw*0.88, fh*0.15))
-		p.LineTo(f32.Pt(fw*0.88, fh*0.62))
-		p.LineTo(f32.Pt(fw*0.12, fh*0.62))
-		p.MoveTo(f32.Pt(fw*0.38, fh*0.36))
-		p.LineTo(f32.Pt(fw*0.12, fh*0.62))
-		p.LineTo(f32.Pt(fw*0.38, fh*0.88))
-	}, sw, col)
+// drawIcon draws ic filling the square r.
+func drawIcon(gtx layout.Context, r image.Rectangle, ic icons.Icon, col color.NRGBA) {
+	defer op.Offset(r.Min).Push(gtx.Ops).Pop()
+	g := gtx
+	g.Constraints = layout.Exact(r.Size())
+	ic(g, unit.Dp(float32(r.Dx())/gtx.Metric.PxPerDp), col)
 }
 
 // acLight is the measured light palette; acApplyTheme swaps the package

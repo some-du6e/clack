@@ -8,16 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"gioui.org/f32"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
-	"gioui.org/op/clip"
-	"gioui.org/op/paint"
+	"gioui.org/unit"
 	"gioui.org/widget"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/hovercard"
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -818,9 +817,7 @@ func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bo
 	}
 	switch {
 	case pfIsSlackbot(u):
-		px := dp(gtx, dot*10/9) // the glyph is 10 wide where the circle is 9
-		pfHeart(gtx, px, col)
-		return layout.Dimensions{Size: image.Pt(px, px)}
+		return pfSlackbotHeart(gtx, dot, col)
 	case u.External || u.Guest:
 		px := dp(gtx, dot*8/9) // an 8-unit square where the circle is 9
 		off := (dp(gtx, dot) - px) / 2
@@ -836,22 +833,19 @@ func pfPresenceGlyph(gtx layout.Context, th *theme.Theme, u core.User, active bo
 	return presenceDot(gtx, th, active, dot)
 }
 
-// pfHeart fills a heart in a px square (redrawn after Slack's
-// status-slackbot-filled: two round lobes meeting at a point).
-func pfHeart(gtx layout.Context, px int, col color.NRGBA) {
-	s := float32(px)
-	pt := func(x, y float32) f32.Point { return f32.Pt(x*s, y*s) }
-	var pa clip.Path
-	pa.Begin(gtx.Ops)
-	pa.MoveTo(pt(0.5, 0.92))
-	pa.CubeTo(pt(0.2, 0.72), pt(0.0, 0.52), pt(0.0, 0.32))
-	pa.CubeTo(pt(0.0, 0.14), pt(0.12, 0.04), pt(0.27, 0.04))
-	pa.CubeTo(pt(0.38, 0.04), pt(0.46, 0.1), pt(0.5, 0.2))
-	pa.CubeTo(pt(0.54, 0.1), pt(0.62, 0.04), pt(0.73, 0.04))
-	pa.CubeTo(pt(0.88, 0.04), pt(1.0, 0.14), pt(1.0, 0.32))
-	pa.CubeTo(pt(1.0, 0.52), pt(0.8, 0.72), pt(0.5, 0.92))
-	pa.Close()
-	paint.FillShape(gtx.Ops, col, clip.Outline{Path: pa.End()}.Op())
+// pfSlackbotHeart draws Slackbot's presence, the SvgIcon
+// status-slackbot-filled, in the dot×dot box the member circle fills:
+// BasePresence draws every presence glyph in the same 20-unit box, and
+// the circle (status-member-filled) is 9 units across, so the icon is
+// dot·20/9 with its centre on the box's.
+func pfSlackbotHeart(gtx layout.Context, dot float32, col color.NRGBA) layout.Dimensions {
+	s := dot * 20 / 9
+	d := dp(gtx, dot)
+	off := (dp(gtx, s) - d) / 2
+	t := op.Offset(image.Pt(-off, -off)).Push(gtx.Ops)
+	icons.Get("status-slackbot-filled")(gtx, unit.Dp(s), col)
+	t.Pop()
+	return layout.Dimensions{Size: image.Pt(d, d)}
 }
 
 // ---- shared profile helpers (card + full profile) ----

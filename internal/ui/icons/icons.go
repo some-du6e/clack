@@ -272,10 +272,7 @@ func init() {
 	// placeholder for unknown names
 	reg("missing", s(rrect(3, 3, 14, 14, 2)), s("M3 3 L17 17 M17 3 L3 17"))
 
-	reg("history-back", s("M3.6 11 A6.5 6.5 0 1 0 5.2 5.6"), s("M2.8 3.6 L4.7 6.3 L7.6 5.2"), s("M10 6.5 V10 L12.5 12"))
-	reg("find", s("M2.5 5.5 H9 M2.5 9.5 H6.5 M2.5 13.5 H7"), s(circle(12.75, 11.25, 3.5)), s("M15.3 13.8 L17.5 16"))
 	reg("close-small", s("M6.5 6.5 L13.5 13.5 M13.5 6.5 L6.5 13.5"))
-	reg("plus-small", s("M10 5.5 V14.5 M5.5 10 H14.5"))
 	reg("plus-circle", s(circle(10, 10, 6.75)), s("M10 6.75 V13.25 M6.75 10 H13.25"))
 
 	reg("unreads", s("M4 5.5 H11 M4 10 H16 M4 14.5 H16"), f(circle(15, 5.5, 2)))

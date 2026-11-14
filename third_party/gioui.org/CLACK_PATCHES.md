@@ -21,6 +21,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `app/clack_cursors/`, `app/os_unix.go`, `app/os_darwin.go`, `app/os_android.go`,
 `app/os_js.go`, `gesture/clack_autoscroll.go`, `io/input/clack_values.go`,
 `internal/ops/clack_size.go`, `op/clack_size.go`, `op/clip/clack_size.go`,
+`io/input/clack_hover.go`, `io/input/clack_hover_test.go`,
 `font/opentype/opentype.go`, `io/input/pointer.go`, `io/input/key.go`,
 `io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
 `text/clack_release_test.go` and these two files (`CLACK_PATCHES.md`,
@@ -773,3 +774,35 @@ revive. Tests: that one, and `app/clack_hide_windows_test.go`
 `TestOptionKeepsHiddenAndMinimized` (a title and a minimum size on a hidden
 and on a minimized window; then a maximize still applies), on ci's
 windows-shell and windows-applog jobs. Not in `UPSTREAM.patch`.
+
+## 21. io/input: a Source that only hovers
+
+`io/input/router.go` (the `Source.hoverOnly` field, `Source.Event`) and
+`io/input/clack_hover.go` (`Source.HoverOnly`). An addition: a Source
+nobody asks for one behaves as before.
+
+Clack's inspect tool (internal/ui/inspect, a developer shortcut for bug
+reports) points at widgets the way a browser's inspect-element mode does:
+the widget under the pointer gets an outline, and a click picks it
+instead of pressing it. While it runs, the window must look exactly as it
+did (the hover states that show a message's toolbar or a tooltip, the
+caret, the focus rings, animations) and keep scrolling, but no button,
+editor or shortcut may react. `Source.Disabled()` can't do that: with it
+`Focused` is always false (every caret and focus ring disappears, and
+code that polls focus sees a blur), commands are dropped (lost focus
+requests and invalidations), and the widgets declare no filters, so the
+router's idea of what is hovered drifts from theirs and hover states
+stick after the tool ends.
+
+`HoverOnly` returns a Source whose `Event` hands out pointer Enter,
+Leave, Move, Scroll and Cancel events and focus changes, and takes every
+other event that matches (Press, Release, Drag, key and text input,
+transfers) from the queue and drops it. Filters still reach the router,
+`Execute` still runs commands and `Focused` still answers, so hover and
+focus stay as the widgets believe them to be, before, during and after.
+
+Tests: `io/input/clack_hover_test.go` (`TestHoverOnlyDropsClicks`: Enter
+and Move, no Press or Release, nothing left for a later reader;
+`TestHoverOnlyScrolls`; `TestHoverOnlyKeepsFocusDropsKeys`: still
+focused, the typed key and text dropped, where a plain Source gets both),
+on ci's linux-gio job. Not in `UPSTREAM.patch`.

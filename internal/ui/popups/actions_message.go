@@ -178,7 +178,7 @@ func actMessageItems(h Host, m core.Message, o MessageMenuOpts) []MenuItem {
 		actDo(h, "Message pinned", func(ctx context.Context, a *core.App) error { return a.Pin(ctx, ch, ts) })
 	}}.In(nsMessage)
 	if m.Pinned {
-		pin = MenuItem{Label: unpinLabel, Icon: "unpin", Hint: nsMessage.T("P"), Keys: KeyPin, Do: func() {
+		pin = MenuItem{Label: unpinLabel, Icon: "pin", Hint: nsMessage.T("P"), Keys: KeyPin, Do: func() {
 			actDo(h, "Message unpinned", func(ctx context.Context, a *core.App) error { return a.Unpin(ctx, ch, ts) })
 		}}.In(nsMessage)
 	}

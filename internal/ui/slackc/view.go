@@ -741,6 +741,9 @@ func (s *scope) paint() {
 		event.Op(gtx.Ops, &s.ptag)
 		pp.Pop()
 		ar.Pop()
+		if f := CurrentInspectFrame(); f != nil {
+			f.tree(gtx, s, r) // the inspect tool (inspect.go)
+		}
 	}
 }
 
