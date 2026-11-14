@@ -67,10 +67,29 @@ type Message struct {
 	// root (core/thread_lock.go).
 	IsLocked       bool   `json:"is_locked,omitempty"`
 	LockedByTeamID string `json:"locked_by_team_id,omitempty"`
+	// DocumentComment is a canvas comment thread's root (subtype
+	// document_comment_root, in the canvas's file channel): Slack's
+	// msg.document_comment (j6Z8 S: thread_id; REqS isArchivedDocumentComment,
+	// getCanvasRootLastSeen, isDocumentCommentVisible; thrK most_recent_editor;
+	// v+tj authors).
+	DocumentComment *MessageDocumentComment `json:"document_comment,omitempty"`
 	// UploadStatus is a placeholder's PendingFilesMetaTextWrapper text
 	// ("Waiting to upload…", "Uploading…", "Sending…") while the viewer's
 	// own files upload: Clack only, never on the wire.
 	UploadStatus string `json:"-"`
+}
+
+// MessageDocumentComment is a canvas comment root's document_comment.
+// ThreadID is the Quip comment thread (a "temp:C:…"-style id; Slack's
+// thread ts for it is "Qpc:" + the id with "temp:" shortened to "t:").
+// LastSeen is the viewer's last seen reply in microseconds.
+type MessageDocumentComment struct {
+	ThreadID         string      `json:"thread_id,omitempty"`
+	Authors          []string    `json:"authors,omitempty"`
+	IsArchived       bool        `json:"is_archived,omitempty"`
+	IsVisible        bool        `json:"is_visible,omitempty"`
+	LastSeen         json.Number `json:"last_seen,omitempty"`
+	MostRecentEditor string      `json:"most_recent_editor,omitempty"`
 }
 
 // MessageAssistantThread is a message's assistant_app_thread.

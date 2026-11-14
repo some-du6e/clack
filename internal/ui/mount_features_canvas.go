@@ -86,6 +86,8 @@ func (a *App) newCanvasView(id string, mode canvasview.Mode) *canvasview.View {
 	if canvasShare != nil {
 		act.Share = func(id string) { canvasShare(a, id) }
 	}
+	act.Comments = func() { a.ToggleCanvasComments(id) } // canvas_comments.go
+	act.CommentsOpen = func() bool { return a.CanvasCommentsOpen(id) }
 	return canvasview.New(a, id, mode, act)
 }
 

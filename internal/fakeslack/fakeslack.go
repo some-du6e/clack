@@ -1310,6 +1310,9 @@ func ok(kv ...any) map[string]any {
 }
 
 func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMessage) any {
+	if out, handled := s.handleComments(method, f); handled { // canvas_comments.go
+		return out
+	}
 	if out, handled := s.handleAgentSessions(method, f); handled { // agent_sessions.go
 		return out
 	}

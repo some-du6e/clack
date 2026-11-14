@@ -54,6 +54,11 @@ type Actions struct {
 	Canvas   func(id string)    // a link to another canvas
 	Share    func(id string)    // "Share": the ui root's conversation picker
 	Menu     func(m []MenuItem) // "More actions": the shell's menu at the pointer
+	// Comments is More actions' "Show all threads" / "Hide all threads"
+	// (toQuipCommentStream in the secondary pane, or closing it);
+	// CommentsOpen reports whether the pane shows this canvas's stream.
+	Comments     func()
+	CommentsOpen func() bool
 }
 
 // MenuItem is one row of a canvas menu (More options, the bottom

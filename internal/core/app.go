@@ -1253,6 +1253,11 @@ func (a *App) message(ch string, m *slack.Message) Message {
 	v.AgentSession, v.AssistantThread = m.AgentSession, m.AssistantAppThread
 	v.FunctionExecutionID = m.FunctionExecutionID
 	v.Locked, v.LockedByTeam = m.IsLocked, m.LockedByTeamID
+	if dc := m.DocumentComment; dc != nil {
+		c := *dc
+		c.Authors = append([]string(nil), dc.Authors...)
+		v.DocumentComment = &c
+	}
 	if v.Attachments == nil && len(m.Attachments) > 0 { // built in memory (not decoded from Slack)
 		v.Attachments, _ = json.Marshal(m.Attachments)
 	}

@@ -250,5 +250,9 @@ func init() {
 	reg("caret-right-filled", fl("M8.25 6.25 L12.74 10 L8.25 13.75 Z"))
 	reg("add-channel-canvas", s("M8.25 2.25 H14.75 A3 3 0 0 1 17.75 5.25 V11.5 L11.5 17.75 H5.25 A3 3 0 0 1 2.25 14.75 V9.25 M11.5 17.75 V12.25 A.75 .75 0 0 1 12.25 11.5 H17.75 M4 1.75 V6.25 M1.75 4 H6.25"))
 
+	// Slack's rotate (icons.json), the comment thread header's Re-open
+	// thread (ArchiveCommentButton): the 1.5-unit ring's centreline, open
+	// at the right, and the arrow at its top end.
+	reg("rotate", s("M16.37 5.59 A7.75 7.75 0 1 0 17.02 13.28"), s("M17.75 2.25 V6.75 H13.25"))
 	reg("eye-off", s("M2.5 10 C4.4 6.4 7 4.75 10 4.75 C13 4.75 15.6 6.4 17.5 10 C15.6 13.6 13 15.25 10 15.25 C7 15.25 4.4 13.6 2.5 10 Z"), s(circle(10, 10, 2.5)), s("M3.5 3.5 L16.5 16.5"))
 }

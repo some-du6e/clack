@@ -64,6 +64,9 @@ type ThreadView struct {
 	// region; Clack has no screen-reader bridge yet): tests read it.
 	announced   []string
 	offlineSaid bool // LargeOfflineIndicator was up last frame (announced as it showed)
+	// cmt is a canvas comment thread's state (thread_comment.go): the
+	// canvas's files.info and the header's Resolve / Re-open button.
+	cmt commentThread
 }
 
 // ContentHeight is the height the pane needs to show the whole thread (header,
@@ -500,8 +503,16 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	bell := v.bellShown(root, rootOK)
 	mx := cx - gap - bs
 	left := mx
+	// ArchiveCommentButton (a canvas comment thread) sits before the ⋮,
+	// the bell before it
+	arch := v.archiveShown(root, rootOK)
+	ax := mx
+	if arch {
+		ax = mx - gap - bs
+		left = ax
+	}
 	if bell {
-		left = mx - gap - bs
+		left = ax - gap - bs
 	}
 	// a ThreadSearchButton patch's items are as wide as they are, in the
 	// header row's height, in what the title leaves them (Slack's title
@@ -551,6 +562,9 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 		v.toggleFollow(root)
 		sub = !sub
 	}
+	if v.cmt.btn.Clicked(gtx) && arch {
+		v.toggleResolved(root)
+	}
 	st := flexControlClass.Enter(gtx, btnState(gtx, &v.s.closeBtn), 0)
 	defer st.Leave()
 	if st.Hidden() {
@@ -580,6 +594,9 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 			icon = "notifications"
 		}
 		v.headerButton(gtx, th, c, st, &v.bellBtn, &v.bellTip, image.Pt(left, (hh-bs)/2), bs, icon, popups.ThreadFollowLabel(sub))
+	}
+	if arch {
+		v.archiveButton(gtx, th, c, st, image.Pt(ax, (hh-bs)/2), bs, root)
 	}
 	v.headerButton(gtx, th, c, st, &v.moreBtn, &v.moreTip, image.Pt(mx, (hh-bs)/2), bs, "ellipsis-vertical-filled", "More actions")
 	at(gtx, cx, (hh-bs)/2, func(gtx layout.Context) layout.Dimensions {
