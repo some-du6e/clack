@@ -260,6 +260,24 @@ func (a *App) MegaphoneNewBadge(badge string) bool {
 	return false
 }
 
+// NotificationNewBadgeGeneric is hro4 ze.NEW_BADGE_GENERIC (gantry-v2
+// vendors a4xD g, builds fa938a086569 and 2c0d02ca130f): the
+// generic_new_badge space's notification.
+const NotificationNewBadgeGeneric = "new_badge_generic"
+
+// DismissNewBadge is recordAndClearNewBadge (lXJx J): badge leaves the
+// list here (clearNewBadge) and the dismissal is recorded with
+// recordNotificationEvent (NznF): megaphone.setNotificationAsSeen
+// {notification new_badge_generic, action dismiss, step badge, reason
+// record-notification-event}. Activity's sort button calls it when its
+// menu closes (KJvs useActivitySortNewBadge).
+func (a *App) DismissNewBadge(ctx context.Context, badge string) error {
+	a.ClearNewBadge(badge)
+	p := url.Values{"notification": {NotificationNewBadgeGeneric}, "action": {MegaphoneDismiss}, "step": {badge},
+		"reason": {megaphoneReasonRecordNotifyEvent}}
+	return a.C.Call(ctx, "megaphone.setNotificationAsSeen", p, nil)
+}
+
 // ClearNewBadge is clearNewBadge (ZNtt h1): badge leaves the list here
 // only (Slack sends nothing; the server stops answering it once the
 // notification's impressions are in).

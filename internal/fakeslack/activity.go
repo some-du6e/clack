@@ -86,6 +86,44 @@ const (
 func init() {
 	activityMsgs[4].Reactions = []slack.Reaction{{Name: "tada", Count: 2, Users: []string{"U0FAKE00001", "U0FAKE00002"}}}
 	activityMsgs[7].Reactions = []slack.Reaction{{Name: "eyes", Count: 1, Users: []string{SelfID}}}
+	activityMsgs = append(activityMsgs, activityAgentMsg())
+}
+
+// The agent entry SetActivityAgentActions adds: an agent's DM whose
+// latest message asks for a decision with one actions block of two
+// buttons (docs/ACTIVITY.md "Leftovers 2": Slack's rZx3 Rq shows such a
+// block under the row with agent_command_center).
+const (
+	ActivityAgentDM      = "D0FAKEAGNT1"
+	ActivityAgentUser    = "U0FAKEAGENT"
+	ActivityAgentTS      = "1762702050.000100"
+	ActivityAgentBlockID = "agent-decision"
+)
+
+func activityAgentMsg() slack.Message {
+	m := viewsMsg(ActivityAgentDM, ActivityAgentTS, "", ActivityAgentUser, "A synthetic agent needs a decision.")
+	m.BotID = "B0FAKEAGENT"
+	m.Blocks = json.RawMessage(`[{"type":"section","block_id":"agent-question","text":{"type":"mrkdwn","text":"A synthetic agent needs a decision."}},` +
+		`{"type":"actions","block_id":"` + ActivityAgentBlockID + `","elements":[` +
+		`{"type":"button","action_id":"agent-approve","style":"primary","value":"approve","text":{"type":"plain_text","text":"Approve"}},` +
+		`{"type":"button","action_id":"agent-decline","value":"decline","text":{"type":"plain_text","text":"Decline"}}]}]`)
+	return m
+}
+
+// activityAgentEntry is the agent DM's feed entry (newest in the feed).
+func activityAgentEntry() map[string]any {
+	return map[string]any{"key": "fa-agent", "feed_ts": ActivityAgentTS, "is_unread": true, "is_bot": true,
+		"item": map[string]any{"type": "dm", "bundle_info": map[string]any{"unread_count": 1,
+			"payload": map[string]any{"dm_entry": map[string]any{"latest_message": map[string]any{"ts": ActivityAgentTS, "channel": ActivityAgentDM}}}}}}
+}
+
+// SetActivityAgentActions puts the agent entry (fa-agent) at the top of
+// the feed.
+func (s *Server) SetActivityAgentActions(on bool) {
+	v := s.views()
+	v.mu.Lock()
+	v.act().agent = on
+	v.mu.Unlock()
 }
 
 // activityEntries is the feed, newest first; base is the server's URL
@@ -179,6 +217,7 @@ type activityState struct {
 	ignored   map[string]bool // invites ignored or accepted
 	inviteIDs bool            // external invites' item.invite is the id string (SetActivityInviteIDs)
 	bulk      int             // extra unread mentions, and a paged feed (SetActivityBulk)
+	agent     bool            // the agent entry first (SetActivityAgentActions)
 
 	// the channel invite's accept: the eligibility answer a test set (nil:
 	// eligible), the name and privacy it was accepted with, and whether
@@ -310,6 +349,9 @@ func (s *Server) handleActivity(method string, f url.Values) (any, bool) {
 		st := v.act()
 		var items []map[string]any
 		entries := activityEntries(s.URL)
+		if st.agent {
+			entries = append([]map[string]any{activityAgentEntry()}, entries...)
+		}
 		bulk := st.bulk
 		if bulk > 0 {
 			entries = append(entries, activityBulk(bulk)...)

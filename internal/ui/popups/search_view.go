@@ -516,7 +516,10 @@ func (v *SearchView) search(page int) {
 		}
 		o := core.SearchOpts{Query: q, Page: page, Sort: v.sortBy, ExactOnly: v.exact, ExcludeArchived: v.exclArch,
 			Session: sess, RecentChannels: srRecentChannels(), Module: srTabModules[v.tab],
-			DisableSortOverride: v.tab == srTabMessages && v.sortState.noOverride}
+			DisableSortOverride: v.tab == srTabMessages && v.sortState.noOverride,
+			// a fresh search: its suggestions are the window's (A+yj's
+			// fetchSuggestions; Activity's In picker lists them)
+			FetchSuggestions: page <= 1 && v.tab == srTabMessages}
 		v.loading = true
 		run(v.h, func(ctx context.Context) (core.SearchResult, error) { return c.SearchMessages(ctx, o) },
 			func(res core.SearchResult, err error) {

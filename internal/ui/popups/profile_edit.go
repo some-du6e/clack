@@ -988,66 +988,17 @@ func (f *epForm) over(gtx layout.Context) {
 // SpeedBump reports the discard speed bump is up.
 func (f *epForm) SpeedBump() bool { return f.bump }
 
-// epSpeedBump is ModalSpeedBump in the footer: the card veiled, the
-// c-modal_speed_bump_content sheet at the bottom (base-pry, a 1px otl-ter
-// line, padding 20 24) with "**Discard changes?** Closing this window
-// will cancel any unsaved changes." 24px over Keep Editing (focused) and
-// Close & Discard (danger), 12px apart at the right.
+// epSpeedBump is ModalSpeedBump in the footer (speed_bump.go): the card
+// veiled, the c-modal_speed_bump_content sheet at the bottom (base-pry, a
+// 1px otl-ter line, padding 20 24) with "**Discard changes?** Closing
+// this window will cancel any unsaved changes." 24px over Keep Editing
+// (focused) and Close & Discard (danger), 12px apart at the right.
 func epSpeedBump(gtx layout.Context, h Host, m *Modal, veil *int, keep, discard *ModalButton, onKeep, onDiscard func()) {
-	th := h.Theme()
-	cl := colorsOf(th)
-	if keep.click.Clicked(gtx) {
-		onKeep()
-		return
-	}
-	if discard.click.Clicked(gtx) {
-		onDiscard()
-		return
-	}
-	sz := gtx.Constraints.Max
-	func() {
-		rad := dp(gtx, 8)
-		defer clip.RRect{Rect: image.Rectangle{Max: sz}, NE: rad, NW: rad, SE: rad, SW: rad}.Push(gtx.Ops).Pop()
-		event.Op(gtx.Ops, veil)
-		for {
-			if _, ok := gtx.Event(pointer.Filter{Target: veil, Kinds: pointer.Press | pointer.Release | pointer.Scroll,
-				ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}}); !ok {
-				break
-			}
-		}
-		fill(gtx, image.Rectangle{Max: sz}, theme.WithAlpha(cl.ModalBg, 179))
-	}()
 	var runs []cnRun
 	for _, p := range nsSpeedBump.RT("<r1>Discard changes?</r1> Closing this window will cancel any unsaved changes.") {
 		runs = append(runs, cnRun{s: p.Text, bold: p.Tag != ""})
 	}
-	px, py := dp(gtx, 24), dp(gtx, 20)
-	iw := sz.X - 2*px
-	call, td := record(loose(gtx, image.Pt(iw, 1<<20)), func(gtx layout.Context) layout.Dimensions {
-		return cnRuns(gtx, th, cl, runs, 15, 22, cl.Fg, iw)
-	})
-	bh := dp(gtx, 36)
-	sheetH := py + td.Size.Y + dp(gtx, 24) + bh + py
-	top := sz.Y - sheetH
-	sheet := image.Rect(0, top, sz.X, sz.Y)
-	rad := dp(gtx, 8)
-	func() {
-		defer clip.RRect{Rect: sheet, SE: rad, SW: rad}.Push(gtx.Ops).Pop()
-		fill(gtx, sheet, BasePryOf(th))
-	}()
-	fill(gtx, image.Rect(0, top, sz.X, top+border1(gtx)), theme.OtlTer(th))
-	macroAt(gtx, call, image.Pt(px, top+py))
-	by := top + py + td.Size.Y + dp(gtx, 24)
-	x := sz.X - px
-	for _, b := range []*ModalButton{discard, keep} {
-		ring := m.ringOn(gtx, &b.click)
-		c, d := record(loose(gtx, image.Pt(sz.X, bh)), func(gtx layout.Context) layout.Dimensions {
-			return b.draw(gtx, th, b.Kind, ring, grpNone)
-		})
-		x -= d.Size.X
-		macroAt(gtx, c, image.Pt(x, by))
-		x -= dp(gtx, 12)
-	}
+	speedBumpSheet(gtx, h, m, veil, keep, discard, onKeep, onDiscard, "", runs)
 }
 
 // epSpinner is Slack's loading ring (a 3/4 arc turning once a second) in a

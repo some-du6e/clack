@@ -173,7 +173,12 @@ func actPlural(n int, one, many string) string {
 
 // viewTabs is the strip: 13px bold labels, 9px 8px padding, the 2px
 // underline under the shown one; a custom tab leads with its emoji or
-// icon (16px, 4px gap), the default ones with theirs.
+// icon (16px, 4px gap), the default ones with theirs. Each tab is its own
+// flex item (draggable_tab: flex 0 0 fit-content) whose button keeps
+// margin-right 4px (margin 0 4px, :first-child 0) but All's, whose
+// wrapper also holds the children div. The tabs that don't fit go into
+// the More tab after the last one shown (activity_leftovers.go), then
+// the "+".
 func (v *Activity) viewTabs(gtx C) D {
 	t := v.tabs
 	st := &v.strip
@@ -192,8 +197,15 @@ func (v *Activity) viewTabs(gtx C) D {
 	counts := v.tabCounts()
 	icons := v.stripIconOnly(gtx.Constraints.Max.X, gtx)
 	target, side := v.dropTarget()
-	x := 0
-	h := 0
+	type tabRec struct {
+		call     op.CallOp
+		d        D
+		slot     int
+		count    int
+		iconOnly bool
+	}
+	recs := make([]tabRec, n)
+	bw, mr := make([]int, n), make([]int, n) // each button, its margin-right
 	for i := range t.Labels {
 		slot := i
 		if i < len(v.slots) {
@@ -208,24 +220,55 @@ func (v *Activity) viewTabs(gtx C) D {
 		g := gtx
 		g.Constraints.Min = image.Point{}
 		d := v.viewTab(g, i, slot, count, xi, iconOnly)
-		call := m.Stop()
-		st.xs[i], st.ws[i] = x, d.Size.X
-		h = max(h, d.Size.Y)
+		recs[i] = tabRec{call: m.Stop(), d: d, slot: slot, count: count, iconOnly: iconOnly}
+		bw[i], mr[i] = d.Size.X, actTabMargin(gtx, slot)
+	}
+	// measureVisibleTabs (useTabsResizeObserver): all of them, or those
+	// 80px clear of the strip's right edge, the More tab after the last
+	lo := &v.lo
+	last := n - 1
+	if n > 0 && gtx.Constraints.Max.X > 0 {
+		prev := lo.last
+		if !lo.measured {
+			prev = n - 1 // eo starts at J.length - 1
+		}
+		extra := v.moreTabWidth(gtx) + plusTabWidth(gtx)
+		last = actStripLast(bw, mr, prev, extra, gtx.Constraints.Max.X, gtx.Dp(actMoreReserve))
+		lo.last, lo.measured = last, true
+	}
+	x := 0
+	h := 0
+	for _, r := range recs {
+		h = max(h, r.d.Size.Y)
+	}
+	lo.hidden = lo.hidden[:0]
+	for i := range t.Labels {
+		r := recs[i]
+		if i > last {
+			// isHidden: visibility hidden, pointer-events none
+			st.xs[i], st.ws[i] = x, 0
+			lo.hidden = append(lo.hidden, i)
+			continue
+		}
+		st.xs[i], st.ws[i] = x, r.d.Size.X
 		func() {
 			defer op.Offset(image.Pt(x, 0)).Push(gtx.Ops).Pop()
 			if st.dragging && i == st.from {
 				// channel_tab_is_dragging: opacity .5
 				defer paint.PushOpacity(gtx.Ops, .5).Pop()
 			}
-			call.Add(gtx.Ops)
-			if iconOnly {
-				popups.Tooltip(gtx, v.th, &st.tips[i], t.clicks[i].Hovered() && !st.dragging, d.Size, popups.Below, actTabTip(slot, count), "")
+			r.call.Add(gtx.Ops)
+			if r.iconOnly {
+				popups.Tooltip(gtx, v.th, &st.tips[i], t.clicks[i].Hovered() && !st.dragging, r.d.Size, popups.Below, actTabTip(r.slot, r.count), "")
 			}
 		}()
-		x += d.Size.X
+		x += bw[i] + mr[i]
+	}
+	if last < n-1 {
+		x += v.moreTab(gtx, x, h, last, t.Sel)
 	}
 	st.h = h
-	if st.dragging && target >= 0 {
+	if st.dragging && target >= 0 && st.ws[target] > 0 {
 		// channel_tab_hovered: a 2px base-inv-hgl-1 bar (margin -2px)
 		bar := gtx.Dp(2)
 		bx := st.xs[target] - bar
@@ -238,6 +281,15 @@ func (v *Activity) viewTabs(gtx C) D {
 		v.dragPreview(gtx, st.from)
 	}
 	return D{Size: image.Pt(x, h)}
+}
+
+// actTabMargin is a tab button's margin-right: 4px, none for All (the
+// button isn't its wrapper's last child there).
+func actTabMargin(gtx C, slot int) int {
+	if slot == 0 {
+		return 0
+	}
+	return gtx.Dp(4)
 }
 
 // dropBarColor is base-inv-hgl-1.

@@ -60,6 +60,17 @@ func (a *App) ActivityExcludeAutomationsFilter() bool {
 // behind activity_inbox.
 func (a *App) AgentStatusInActivity() bool { return a.experiment("agent_status_in_activity") == "on" }
 
+// AgentCommandCenter is HLQ9 Lq (agent_command_center): an Activity
+// row whose message carries one actions block of buttons shows it
+// (rZx3 Rq, boot-shared mMdU's activity_actions). It isn't behind
+// activity_inbox.
+func (a *App) AgentCommandCenter() bool { return a.experiment("agent_command_center") == "on" }
+
+// UnifiedGlobalTriage is 6rqO j (unified_global_triage): Activity's list
+// takes p-activity_ia4_list--unified_global_triage (outside the peek),
+// whose --activity-first-item-lead-in is 0.
+func (a *App) UnifiedGlobalTriage() bool { return a.experiment("unified_global_triage") == "on" }
+
 // ActivityAgentStatus is useAgentActivityStatus (aEhj Ol) for a row: the
 // session's status when it is Processing ("Working": the streaming
 // spinner) or Suspended ("Needs attention"), else "". It is only asked

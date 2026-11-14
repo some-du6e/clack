@@ -258,27 +258,34 @@ func (v *Activity) pickedItems() ([]core.ActivityItem, []string) {
 // selected as read, Clear selected (Clear everything under server-side
 // select-all; none in Cleared items), Mark selected as unread (the
 // experiment); icon-only under 415px (isSmallWidth), each 8px after the
-// last; disabled with nothing picked.
+// last; disabled with nothing picked. Each has its tooltip above it
+// (m+ho, position "top"): with the activity inbox the read and clear
+// buttons show their keys ("Alt+U", "Alt+C"; Option on a Mac) unless
+// they're icons alone, which show their labels; Clear everything and
+// Mark selected as unread always show their labels.
 func (v *Activity) bulkRows(gtx C, x int) int {
 	on := len(v.picked) > 0
 	small := gtx.Constraints.Max.X < gtx.Dp(415)
+	tips := v.bulkTips(small)
 	type b struct {
 		c           *widget.Clickable
 		icon, label string
+		tip         string
+		st          *popups.TipState
 	}
 	var bs []b
 	if !v.serverAll {
-		bs = append(bs, b{&v.bulkRead, "mark-as-read", nsActivity.T("Mark selected as read")})
+		bs = append(bs, b{&v.bulkRead, "mark-as-read", nsActivity.T("Mark selected as read"), tips[0], &v.lo.bulkTips[0]})
 	}
 	if !v.showCleared {
 		label := nsActivity.T("Clear selected")
 		if v.serverAll {
 			label = nsActivity.T("Clear everything")
 		}
-		bs = append(bs, b{&v.bulkClear, "eraser", label})
+		bs = append(bs, b{&v.bulkClear, "eraser", label, tips[1], &v.lo.bulkTips[1]})
 	}
 	if !v.serverAll && v.bulkUnreadTool() {
-		bs = append(bs, b{&v.bulkUnread, "mark-as-unread", nsActivity.T("Mark selected as unread")})
+		bs = append(bs, b{&v.bulkUnread, "mark-as-unread", nsActivity.T("Mark selected as unread"), tips[2], &v.lo.bulkTips[2]})
 	}
 	for _, bt := range bs {
 		label := bt.label
@@ -286,9 +293,33 @@ func (v *Activity) bulkRows(gtx C, x int) int {
 			label = ""
 		}
 		x += gtx.Dp(8)
-		x += actAt(gtx, x, func(gtx C) D { return v.bulkButton(gtx, bt.c, bt.icon, label, on) }).Size.X
+		x += actAt(gtx, x, func(gtx C) D {
+			d := v.bulkButton(gtx, bt.c, bt.icon, label, on)
+			popups.Tooltip(gtx, v.th, bt.st, bt.c.Hovered(), d.Size, popups.Above, bt.tip, "")
+			return d
+		}).Size.X
 	}
 	return x
+}
+
+// bulkTips are the bulk buttons' tooltips (m+ho ee, ea, J): Mark
+// selected as read's, Clear's, Mark selected as unread's.
+func (v *Activity) bulkTips(small bool) [3]string {
+	inbox := v.h.Core().ActivityInbox()
+	alt := actAltKey()
+	read := nsActivity.T("Mark selected as read")
+	clr := nsActivity.T("Clear selected")
+	if v.serverAll {
+		clr = nsActivity.T("Clear everything")
+	}
+	tips := [3]string{read, clr, nsActivity.T("Mark selected as unread")}
+	if !small && inbox {
+		tips[0] = alt + "+U"
+		if !v.serverAll {
+			tips[1] = alt + "+C"
+		}
+	}
+	return tips
 }
 
 // bulkClicks runs the bulk buttons and the select menu.

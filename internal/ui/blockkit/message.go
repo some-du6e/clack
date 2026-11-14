@@ -94,8 +94,10 @@ type Message struct {
 	busy   map[string]int    // block id (or "att:N") → actions in flight
 	errTap map[string]*tap   // the warning icon (hover shows the message)
 	tips   map[string]*popups.TipState
-	// statusAt is where block bid's status icons were drawn in its slot.
+	// statusAt is where block bid's status icons were drawn in its slot;
+	// runAt where its elements were (RunRects).
 	statusAt map[string]image.Point
+	runAt    map[string][]image.Rectangle
 	ver      atomic.Uint32
 	gtx      layout.Context
 	ops      op.Ops
@@ -130,7 +132,8 @@ func MessageElements(h Host, m *core.Message) *Message {
 	msgsMu.Lock()
 	defer msgsMu.Unlock()
 	me := msgs[k]
-	if me == nil {
+	switch {
+	case me == nil:
 		me = &Message{h: h}
 		msgs[k] = me
 		order = append(order, k)
@@ -138,6 +141,11 @@ func MessageElements(h Host, m *core.Message) *Message {
 			delete(msgs, order[0])
 			order = order[1:]
 		}
+	case me.h != h:
+		// another host's (tests run one app after another): this host's
+		// actions must go through its own core
+		me = &Message{h: h}
+		msgs[k] = me
 	}
 	me.setMessage(m)
 	return me
@@ -167,7 +175,15 @@ func (me *Message) setMessage(m *core.Message) {
 	me.errTap = map[string]*tap{}
 	me.tips = map[string]*popups.TipState{}
 	me.statusAt = map[string]image.Point{}
+	me.runAt = map[string][]image.Rectangle{}
 	me.ver.Add(1)
+}
+
+// RunRects are where block bid's elements (its buttons, "+ N more") were
+// last drawn, in their run's slot: an Activity row's own click skips the
+// clicks they take (ControlledClick ignores a BUTTON target).
+func (me *Message) RunRects(bid string) []image.Rectangle {
+	return append([]image.Rectangle(nil), me.runAt[bid]...)
 }
 
 func parseAttachments(raw json.RawMessage) []attachment {
@@ -576,6 +592,9 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 	}
 	gap := dp(gtx, 8)
 	x, y, rowH, wMax := 0, 0, 0, 0
+	if draw {
+		me.runAt[bid] = me.runAt[bid][:0]
+	}
 	place := func(sz image.Point, f func(gtx C)) {
 		if x > 0 && x+sz.X > maxW {
 			x = 0
@@ -589,13 +608,18 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 		wMax = max(wMax, x-gap)
 		rowH = max(rowH, sz.Y)
 	}
+	button := func(sz image.Point) {
+		if draw {
+			me.runAt[bid] = append(me.runAt[bid], image.Rectangle{Min: image.Pt(x, y), Max: image.Pt(x+sz.X, y+sz.Y)})
+		}
+	}
 	for _, w := range ws[:n] {
 		w := w
 		sz := w.size(gtx, maxW, false)
 		if sz.X == 0 {
 			continue
 		}
-		place(sz, func(gtx C) { w.slot = image.Pt(x, y); w.layout(gtx, sz) })
+		place(sz, func(gtx C) { w.slot = image.Pt(x, y); button(sz); w.layout(gtx, sz) })
 	}
 	if hidden > 0 {
 		txt := "+ " + itoa(hidden) + " more"
@@ -603,6 +627,7 @@ func (me *Message) run(gtx C, bs []richtext.Button, maxW int, draw bool) image.P
 		mw := ws[0]
 		place(sz, func(gtx C) {
 			mw.moreAt = image.Pt(x, y)
+			button(sz)
 			if mw.more.clicked(gtx, me.h) {
 				me.more[bid] = true
 				me.changed()

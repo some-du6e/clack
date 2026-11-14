@@ -25,14 +25,21 @@ package views
 //     feed loads again; "Clear all" drops them all
 //     (clearChannelsAndSections); closing it with nothing picked turns the
 //     picker off again.
-//   - Slack's "Suggestions" without a query are the last search's "in"
-//     suggestions (yLIV Gb, main window); Clack's search keeps those per
-//     search view, so the group is left out.
+//   - With no query, after "Recent", "Suggestions": the window's last
+//     searches' "in" suggestions (yLIV Gb: searchResults[window]
+//     .suggestions.in, core.SearchSuggestions), those the store knows (a
+//     conversation, or a person: getChannelOrMemberById) and not picked,
+//     each labelled as its entity; three loading rows (BaseMissingChannel)
+//     while a messages search runs with none yet (6/pc mL). A person
+//     picked filters by their DM (WJ+z addFilterChannelId:
+//     getDmIdByUserId, else the person's id). The new view's "In" lists
+//     the same (fNIs: the same ActivityFilterBySpecific).
 
 import (
 	"image"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gioui.org/layout"
@@ -116,10 +123,29 @@ func (v *Activity) inToggle(o dirPickOpt) bool {
 		v.sections = actToggleID(v.sections, id)
 		return true
 	case o.value != "":
-		v.channels = actToggleID(v.channels, o.value)
+		v.channels = actToggleID(v.channels, v.inFilterID(o.value))
 		return true
 	}
 	return false
+}
+
+// inFilterID is addFilterChannelId (WJ+z): a person's id becomes their
+// DM's (getDmIdByUserId), or stays when there's none.
+func (v *Activity) inFilterID(id string) string {
+	if !actLooksLikeUser(id) {
+		return id
+	}
+	for _, cv := range v.h.Core().Snapshot().Convs {
+		if cv.Kind == "im" && cv.User == id {
+			return cv.ID
+		}
+	}
+	return id
+}
+
+// actLooksLikeUser is 5oKS's user id test (U… or W…).
+func actLooksLikeUser(id string) bool {
+	return len(id) > 1 && (id[0] == 'U' || id[0] == 'W')
 }
 
 func actToggleID(list []string, id string) []string {
@@ -131,15 +157,21 @@ func actToggleID(list []string, id string) []string {
 
 // inOptions is the popover's list (IKpm ew, or the query's results).
 func (v *Activity) inOptions() []dirPickOpt {
-	c := v.h.Core()
-	snap := c.Snapshot()
+	snap := v.h.Core().Snapshot()
 	sel := v.inSelected()
+	if q := v.in.pick.query(); q != "" {
+		return v.inSearch(snap, q)
+	}
+	return v.inBlank(snap, sel)
+}
+
+// inBlank is the popover's list with no query (IKpm ex): what's picked,
+// "Clear all" past one, "Recent", then "Suggestions".
+func (v *Activity) inBlank(snap core.Snapshot, sel []string) []dirPickOpt {
+	c := v.h.Core()
 	picked := map[string]bool{}
 	for _, s := range sel {
 		picked[s] = true
-	}
-	if q := v.in.pick.query(); q != "" {
-		return v.inSearch(snap, q)
 	}
 	var out []dirPickOpt
 	for _, s := range sel {
@@ -164,6 +196,34 @@ func (v *Activity) inOptions() []dirPickOpt {
 	if len(recent) > 0 {
 		out = append(out, dirPickOpt{value: "recent", label: nsActivity.T("Recent"), header: true})
 		out = append(out, recent...)
+	}
+	// Suggestions (ek): the window's in suggestions the store knows, not
+	// picked; the loading rows (J) while a messages search runs without any
+	var sugg []dirPickOpt
+	in, _ := c.SearchSuggestions()
+	for _, s := range in {
+		if picked[s.ID] {
+			continue
+		}
+		switch {
+		case core.LooksLikeChannelID(s.ID):
+			if _, ok := c.Conv(s.ID); ok {
+				sugg = append(sugg, dirPickOpt{value: s.ID, label: v.inLabel(snap, s.ID), group: true})
+			}
+		case actLooksLikeUser(s.ID):
+			if _, ok := c.S.User(s.ID); ok {
+				sugg = append(sugg, dirPickOpt{value: s.ID, label: v.userName(s.ID), group: true})
+			}
+		}
+	}
+	if len(sugg) == 0 && c.SearchMessagesLoading() {
+		for i := 1; i <= 3; i++ {
+			sugg = append(sugg, dirPickOpt{value: "dummy-loader" + strconv.Itoa(i), loading: true, group: true})
+		}
+	}
+	if len(sugg) > 0 {
+		out = append(out, dirPickOpt{value: "Suggestions", label: nsActivity.T("Suggestions"), header: true})
+		out = append(out, sugg...)
 	}
 	return out
 }
@@ -352,6 +412,7 @@ func (v *Activity) inPill(gtx C) D {
 type actInField struct {
 	pick   dirPick
 	inited bool
+	opts   []dirPickOpt // the rows the popover lists (tests)
 }
 
 func (f *actInField) init() {
@@ -374,7 +435,7 @@ func (m *actViewModal) addTabIn(gtx C) D {
 		case strings.HasPrefix(o.value, actInSectionPrefix):
 			st.sections = actToggleID(st.sections, strings.TrimPrefix(o.value, actInSectionPrefix))
 		case o.value != "":
-			st.channels = actToggleID(st.channels, o.value)
+			st.channels = actToggleID(st.channels, v.inFilterID(o.value))
 		}
 		st.showIn = len(st.channels) > 0 || len(st.sections) > 0
 	}
@@ -424,13 +485,9 @@ func (m *actViewModal) addTabIn(gtx C) D {
 				if q := f.pick.query(); q != "" {
 					opts = v.inSearch(snap, q)
 				} else {
-					for _, s := range sel {
-						opts = append(opts, dirPickOpt{value: s, label: v.inLabel(snap, s)})
-					}
-					if len(sel) > 1 {
-						opts = append(opts, dirPickOpt{value: "clear", label: nsActivity.T("Clear all"), clear: true})
-					}
+					opts = v.inBlank(snap, sel)
 				}
+				f.opts = opts
 				f.pick.popover(&v.base, gtx, d.Size, opts, func(val string) bool { return picked[val] }, nsActivity.T("Nothing found"))
 			}
 			return d

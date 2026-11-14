@@ -9,6 +9,11 @@ name: activity-shots
 # side-by-sides put Clack's Dense and Detailed rows next to the same rows
 # in Slack's markup under Slack's shipping CSS (client-boot-styles, the
 # public CDN file) and design tokens (.github/scripts/activity_ref.py).
+# activity_leftovers_test.go adds the list's lead-in and the VIP header's
+# stuck mark, the importance icon's header, an agent row's Block Kit
+# actions, the In picker's blank-query suggestions, the tab strip's More,
+# the "Discard changes?" speed bump, the sort button's "new" badge and the
+# tooltips, light and dark.
 # Nothing here talks to Slack's API or opens the Slack client.
 on:
   push:
@@ -28,6 +33,12 @@ on:
       - "internal/ui/popups/sc_accept.go"
       - "internal/ui/views/reactions_slack.go"
       - "internal/ui/popups/activity_exports.go"
+      - "internal/ui/popups/speed_bump.go"
+      - "internal/ui/popups/menu_badge.go"
+      - "internal/ui/views/dir_filters.go"
+      - "internal/ui/blockkit/message.go"
+      - "internal/core/search_suggest.go"
+      - "internal/fakeslack/unreads.go"
       - "internal/ui/views/kit.go"
       - "internal/ui/theme/account.go"
       - ".github/scripts/activity_ref.py"
