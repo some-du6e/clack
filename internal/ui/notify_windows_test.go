@@ -13,6 +13,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/desktop"
 	"github.com/some-du6e/clack/internal/desktop/uiatest"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/huddleui"
 )
 
@@ -137,6 +138,69 @@ func TestWindowsToastOpensConversation(t *testing.T) {
 	}
 	uiNotificationCenter(t, false)
 	open = false
+}
+
+// TestWindowsToastPrivateChannel: a private channel's message, through
+// maybeNotify, reaches Notification Center titled with the channel's
+// bare name (getDisplayNameForChannel), and the channel's id shows
+// nowhere in it. The channel is core's and not in the sidebar's rows yet,
+// where Clack's title used to be the sender's ("New message from Ada").
+func TestWindowsToastPrivateChannel(t *testing.T) {
+	if os.Getenv("CLACK_WINDOWS_TOAST_TESTS") == "" {
+		t.Skip("set CLACK_WINDOWS_TOAST_TESTS=1 to show real toasts (the windows-applog job)")
+	}
+	a, ca, _, _ := noteApp(t)
+	id := fmt.Sprintf("%s.priv%d", desktop.AppUserModelID, time.Now().UnixNano()%1e9)
+	if _, err := desktop.RegisterAppUserModelID(id, "Clack", filepath.Join(t.TempDir(), "clack.png"), icon.PNG128); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = desktop.RemoveToasts(id, "", "")
+		_ = desktop.UnregisterAppUserModelID(id)
+	})
+	a.notify = &toastNotifier{aumid: id, cache: t.TempDir()}
+	team := storeTeam(ca)
+	nonce := fmt.Sprint(time.Now().UnixNano() % 1e6)
+	const ch = "C0NOTEPRIV1"
+	name := "secret-plans-" + nonce
+	ca.S.PutConv(slack.Conversation{ID: ch, Name: name, IsGroup: true, IsPrivate: true, IsMember: true})
+	msg := noteMsg("1762520199.000100", "", "private "+nonce)
+	a.data.handle(a, core.Event{Type: "message", Channel: ch, TS: msg.TS, ConvKind: "private", Msg: msg, Mention: true})
+	tag := team + "_" + msg.TS
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		a.drain()
+		h, _ := desktop.ToastHistory(id)
+		found := false
+		for _, r := range h {
+			found = found || r.Tag == tag
+		}
+		if found {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the private channel's toast (tag %s) isn't in Notification Center: %v", tag, h)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	time.Sleep(800 * time.Millisecond)
+	uiNotificationCenter(t, true)
+	t.Cleanup(func() { uiNotificationCenter(t, false) })
+	uiScreenshot(t, "clack-private-notification-center")
+	has := func(text string) func(uiatest.Element) bool {
+		return func(e uiatest.Element) bool { return strings.Contains(e.Name, text) || strings.Contains(e.Help, text) }
+	}
+	if _, err := uiatest.Find(has("private "+nonce), 10*time.Second); err != nil {
+		t.Fatalf("the private channel's toast isn't in Notification Center: %v\n%s", err, uiatest.Dump(60))
+	}
+	if e, err := uiatest.Find(has("New message in "+name), 5*time.Second); err != nil {
+		t.Errorf("no toast titled %q in Notification Center: %v\n%s", "New message in "+name, err, uiatest.Dump(60))
+	} else {
+		t.Logf("titled: %s", e)
+	}
+	if e, err := uiatest.Find(has(ch), 2*time.Second); err == nil {
+		t.Errorf("Notification Center shows the channel id: %s", e)
+	}
 }
 
 // firstLines is the first n lines of s.
