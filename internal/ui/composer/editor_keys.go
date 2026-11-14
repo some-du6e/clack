@@ -288,7 +288,7 @@ func (e *Editor) copySel(gtx layout.Context) bool {
 		return false
 	}
 	sl := e.doc.Slice(lo, hi)
-	txt := sl.Text()
+	txt := sl.copyText()
 	e.clipText, e.clipDoc = txt, sl
 	gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(txt))})
 	return true

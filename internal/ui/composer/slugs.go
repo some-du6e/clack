@@ -1,23 +1,30 @@
 package composer
 
 // Link slugs, 1:1 with Slack's composer (gantry-v2 2026-11, TextySlugs;
-// core/slugs.go has the protocol): pasting a Slack link whose text is
-// the URL asks chat.slugifyUrl what it is, without blocking the editor.
+// core/slugs.go has the protocol): pasting a link whose text is the URL
+// asks chat.slugifyUrl what it is, without blocking the editor (eFqW
+// convertLinksToUnprocessedSlugs takes every such link, Slack's or not).
 // A message link becomes Slack's message slug (the "💬 karim in #clack"
 // pill, sent as a message_mention element), a channel link a #channel
-// mention, a profile link an @user mention; anything else stays a link.
-// Typed links only autolink, as in Slack. A message link still waiting
-// for its answer at send time is resolved from the message cache.
+// mention, a profile link an @user mention, and any link answered as a
+// link a link slug: the "link" icon and the server's short form of the
+// URL ("example.com/docs/…/guide…"), sent as the link with that text and
+// truncated: true. Links with no answer stay links. Typed links only
+// autolink, as in Slack. A message link still waiting for its answer at
+// send time is resolved from the message cache.
 
 import (
 	"context"
 	"image"
 	"image/color"
+	"strings"
 	"time"
 
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/richtext"
@@ -43,11 +50,28 @@ func messageAtom(r AtomResolver, s core.Slug, url string) *Atom {
 		Text: messageAtomLabel(r, s.ChannelID, s.AuthorID, url)}
 }
 
+// linkAtom is a link slug (processSlugs' "link": formatLinkSlugAttributesForDelta
+// over hydrateLinkSlugData), labelled with the answer's display_url, or
+// the URL when that is blank (isUsableSlugLabel), in NFC like every
+// resolved slug's label (5Qpp canonicalizeUnicode).
+func linkAtom(url, display string) *Atom {
+	label := display
+	if strings.TrimSpace(label) == "" {
+		label = url
+	}
+	return &Atom{Kind: AtomLink, ID: url, URL: url, Text: norm.NFC.String(label)}
+}
+
 // slugAtom converts any resolved slug (nil: it stays a link).
 func slugAtom(r AtomResolver, s core.Slug, url string) *Atom {
 	switch s.Type {
 	case "message":
 		return messageAtom(r, s, url)
+	case "link":
+		if url == "" {
+			return nil
+		}
+		return linkAtom(url, s.DisplayURL)
 	case "channel":
 		name := s.Name
 		if r != nil {
@@ -77,6 +101,12 @@ func slugAtom(r AtomResolver, s core.Slug, url string) *Atom {
 	return nil
 }
 
+// linkSlugDelta is the slackslug attribute of a link slug op
+// (formatLinkSlugAttributesForDelta).
+func linkSlugDelta(a *Atom) map[string]any {
+	return map[string]any{"id": a.ID, "url": a.URL, "label": a.Text, "type": "link"}
+}
+
 // messageSlugDelta is the slackslug attribute of a message slug op.
 func messageSlugDelta(a *Atom) map[string]any {
 	m := map[string]any{"id": a.ID, "label": a.Text, "type": "message", "secondaryObjectId": a.Channel}
@@ -92,7 +122,8 @@ func messageSlugDelta(a *Atom) map[string]any {
 	return m
 }
 
-// paintSlugIcon draws a message slug's "message" icon before its label.
+// paintSlugIcon draws a slug's icon before its label: "message" for a
+// message slug, "link" for a link slug (getSlugIconName's map, KT9Q).
 func (l *tlLayout) paintSlugIcon(gtx layout.Context, li int, it *tlItem, col color.NRGBA) {
 	m := &l.m
 	px := m.ppem.Round()
@@ -102,7 +133,11 @@ func (l *tlLayout) paintSlugIcon(gtx layout.Context, li int, it *tlItem, col col
 	g := gtx
 	g.Metric = unit.Metric{PxPerDp: 1, PxPerSp: 1}
 	g.Constraints = layout.Exact(image.Pt(px, px))
-	icons.GetSlack("message")(g, unit.Dp(px), col)
+	name := "message"
+	if a := it.attr.Atom; a != nil && a.Kind == AtomLink {
+		name = "link"
+	}
+	icons.GetSlack(name)(g, unit.Dp(px), col)
 }
 
 // ---- paste ----
@@ -115,8 +150,9 @@ type edSlugs struct {
 	onPaste func(urls []string)
 }
 
-// slugCandidates lists the Slack links in [lo, hi) whose text is the URL:
-// bare URLs and links labelled with their own URL, outside code.
+// slugCandidates lists the links in [lo, hi) whose text is the URL: bare
+// URLs and links labelled with their own URL, outside code
+// (convertLinksToUnprocessedSlugs: any link op whose link is its insert).
 func (e *Editor) slugCandidates(lo, hi int) []rtURLMatch {
 	d := e.doc
 	if hi <= lo {
@@ -133,7 +169,7 @@ func (e *Editor) slugCandidates(lo, hi int) []rtURLMatch {
 	var out []rtURLMatch
 	for _, m := range rtFindURLs(rs) {
 		a, b := lo+m.start, lo+m.end
-		if !core.IsSlackURL(m.url) || string(d.Runes[a:b]) != m.url {
+		if string(d.Runes[a:b]) != m.url {
 			continue
 		}
 		if l := d.LineOf(a); l < len(d.Lines) && d.Lines[l].Kind == CodeBlock {
@@ -245,15 +281,24 @@ func (c *Composer) bindSlugs() {
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
-			res, err := app.SlugifyURLs(ctx, urls, ch)
+			// afterTextChangeQueue: the pending links in chunks of ten,
+			// one processSlugs (chat.slugifyUrl) each
+			res := map[string]core.Slug{}
+			for i := 0; i < len(urls); i += 10 {
+				part, err := app.SlugifyURLs(ctx, urls[i:min(i+10, len(urls))], ch)
+				if err != nil {
+					continue
+				}
+				for u, s := range part {
+					res[u] = s
+				}
+			}
 			c.later(func() {
 				r := c.api.resolver()
 				atoms := map[string]*Atom{}
-				if err == nil {
-					for u, s := range res {
-						if at := slugAtom(r, s, u); at != nil {
-							atoms[u] = at
-						}
+				for u, s := range res {
+					if at := slugAtom(r, s, u); at != nil {
+						atoms[u] = at
 					}
 				}
 				c.ed.applySlugs(atoms, urls)

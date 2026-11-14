@@ -233,10 +233,12 @@ func (a *App) ResolveConv(ctx context.Context, id string) (Conv, bool) {
 }
 
 // named reports whether a conversation has what its name is drawn from:
-// an IM its partner, anything else a name.
+// an IM its partner, anything else a name that isn't its own id (what a
+// stub carries when the payload had no name, and what the store's
+// ChannelName falls back to).
 func named(c Conv) bool {
 	if c.Kind == "im" {
 		return c.User != ""
 	}
-	return c.Name != ""
+	return c.Name != "" && c.Name != c.ID
 }

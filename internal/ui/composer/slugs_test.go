@@ -70,8 +70,9 @@ func TestPastedSlackLinksBecomeSlugs(t *testing.T) {
 	var asked [][]string
 	e.slugs.onPaste = func(urls []string) { asked = append(asked, urls) }
 	e.paste("look " + slugURL + " and https://example.com/x " + slugURL)
-	if len(asked) != 1 || len(asked[0]) != 1 || asked[0][0] != slugURL {
-		t.Fatalf("asked %v (only Slack links, once each)", asked)
+	// every pasted link, Slack's or not, once each (convertLinksToUnprocessedSlugs)
+	if len(asked) != 1 || len(asked[0]) != 2 || asked[0][0] != slugURL || asked[0][1] != "https://example.com/x" {
+		t.Fatalf("asked %v (each pasted link once)", asked)
 	}
 	// typing a link doesn't ask
 	edType(e, " https://ws.slack.com/archives/C1")
@@ -94,7 +95,7 @@ func TestPastedSlackLinksBecomeSlugs(t *testing.T) {
 		t.Errorf("caret %d, want %d", e.caret, want)
 	}
 	if !strings.Contains(d.Text(), "https://example.com/x") {
-		t.Errorf("other links stay: %q", d.Text())
+		t.Errorf("a link without an answer stays: %q", d.Text())
 	}
 	e.Undo()
 	if strings.Count(e.Doc().Text(), slugURL) != 2 {
@@ -109,8 +110,18 @@ func TestSlugAtomKinds(t *testing.T) {
 	if a := slugAtom(btResolver{}, core.Slug{Type: "user", ID: "U1", Name: "alice"}, ""); a == nil || a.Kind != AtomUser || a.Text != "@alice" {
 		t.Errorf("user: %+v", a)
 	}
-	if a := slugAtom(btResolver{}, core.Slug{Type: "link"}, ""); a != nil {
+	// a link answer is a link slug, labelled with display_url or the URL
+	if a := slugAtom(btResolver{}, core.Slug{Type: "link", DisplayURL: "example.com/x"}, "https://example.com/x"); a == nil || a.Kind != AtomLink || a.Text != "example.com/x" {
 		t.Errorf("link: %+v", a)
+	}
+	if a := slugAtom(btResolver{}, core.Slug{Type: "link"}, "https://example.com/x"); a == nil || a.Kind != AtomLink || a.Text != "https://example.com/x" {
+		t.Errorf("link without display_url: %+v", a)
+	}
+	if a := slugAtom(btResolver{}, core.Slug{Type: "link"}, ""); a != nil {
+		t.Errorf("link without a URL: %+v", a)
+	}
+	if a := slugAtom(btResolver{}, core.Slug{Type: "attachment"}, "https://example.com/x"); a != nil {
+		t.Errorf("attachment (not ported): %+v", a)
 	}
 }
 

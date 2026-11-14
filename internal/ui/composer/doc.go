@@ -61,6 +61,12 @@ const (
 	// ("karim in #clack"), URL the permalink, Channel/Author/Thread where
 	// the message is and who wrote it.
 	AtomMessage
+	// AtomLink is any other pasted link that chat.slugifyUrl answered as a
+	// link: Slack's link slug (formatLinkSlugAttributesForDelta), the
+	// "link" icon before Text, the answer's display_url ("example.com/
+	// docs/…/guide…"); ID and URL are the link. It goes out as a link
+	// with that text and truncated: true (createSlugChunkFromOp).
+	AtomLink
 )
 
 // ObjRune stands in for an atom in Doc.Runes.
@@ -458,6 +464,29 @@ func (d *Doc) Text() string {
 			if a.Kind == AtomEmoji && a.Uni != "" {
 				b.WriteString(a.Uni)
 			} else {
+				b.WriteString(a.Text)
+			}
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// copyText is the text/plain Slack's composer copies
+// (convertContentsToStringForDisplay with treatSlugsAsUrls, KT9Q's copy
+// handler): a slug with a URL (a message or link slug) is that URL, other
+// atoms their display text.
+func (d *Doc) copyText() string {
+	var b strings.Builder
+	for i, r := range d.Runes {
+		if a := d.Attrs[i].Atom; a != nil {
+			switch {
+			case (a.Kind == AtomMessage || a.Kind == AtomLink) && a.URL != "":
+				b.WriteString(a.URL)
+			case a.Kind == AtomEmoji && a.Uni != "":
+				b.WriteString(a.Uni)
+			default:
 				b.WriteString(a.Text)
 			}
 			continue

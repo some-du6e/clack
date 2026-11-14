@@ -233,10 +233,11 @@ type rtOutText struct {
 }
 
 type rtOutLink struct {
-	Type  string      `json:"type"`
-	URL   string      `json:"url"`
-	Text  string      `json:"text,omitempty"`
-	Style *rtOutStyle `json:"style,omitempty"`
+	Type      string      `json:"type"`
+	URL       string      `json:"url"`
+	Text      string      `json:"text,omitempty"`
+	Truncated bool        `json:"truncated,omitempty"` // a link slug: Text is its label, not the URL
+	Style     *rtOutStyle `json:"style,omitempty"`
 }
 
 type rtOutUser struct {
@@ -498,6 +499,15 @@ func rtAtomOut(a *Atom) any {
 	case AtomMessage:
 		return rtOutMessageMention{Type: "message_mention", MessageTS: a.ID, ChannelID: a.Channel,
 			Text: firstNonEmpty(a.URL, a.Channel), URL: a.URL, AuthorID: a.Author, ThreadTS: a.Thread}
+	case AtomLink:
+		// createSlugChunkFromOp's "link": url is the slug's id; the
+		// insert, when it isn't the URL, is the text, and a label that
+		// isn't the URL marks it truncated
+		l := rtOutLink{Type: "link", URL: a.ID}
+		if a.Text != a.ID {
+			l.Text, l.Truncated = a.Text, true
+		}
+		return l
 	}
 	return rtOutText{Type: "text", Text: rtAtomText(a)}
 }
@@ -862,6 +872,12 @@ func rtAtomMrkdwn(a *Atom) string {
 		if a.URL != "" {
 			return "<" + rtEscape(a.URL) + ">"
 		}
+	case AtomLink:
+		// the link with its label, as a labelled link writes
+		if a.Text == "" || a.Text == a.ID {
+			return "<" + rtEscape(a.ID) + ">"
+		}
+		return "<" + rtEscape(a.ID) + "|" + rtEscape(a.Text) + ">"
 	}
 	return rtEscape(rtAtomText(a))
 }
@@ -1062,6 +1078,11 @@ func (b *rtBuilder) rtSpans(l Line, spans []richtext.Span, plain bool) {
 			if txt == "" {
 				txt = s.URL
 			}
+			if s.Truncated && s.URL != "" {
+				// a truncated link edits as its link slug (rtTruncatedLink)
+				b.rtTruncatedLink(s.URL, txt, st, plain)
+				continue
+			}
 			a := Attr{Style: st}
 			if !plain && !(st&Code == 0 && rtIsAutoLink(txt, s.URL)) {
 				a.Link = s.URL
@@ -1170,6 +1191,21 @@ type rtIn struct {
 	Timestamp   json.RawMessage `json:"timestamp"`
 	Fallback    string          `json:"fallback"`
 	Value       string          `json:"value"`
+	Truncated   bool            `json:"truncated"` // link: text is a link slug's label
+}
+
+// rtTruncatedLink writes a link element with truncated: true and a text
+// (convertBlocksToDelta, V/2c): it comes back as a link slug labelled
+// with that text (formatLinkSlugAttributesForDelta({url, display_url:
+// text})), so an edit shows the slug, not the URL. Where atoms can't go
+// (plain: a code block) the URL stands in for it, as
+// expandTruncatedLinks writes it.
+func (b *rtBuilder) rtTruncatedLink(url, text string, st Style, plain bool) {
+	if plain {
+		b.text(url, Attr{Style: st})
+		return
+	}
+	b.atom(&Atom{Kind: AtomLink, ID: url, URL: url, Text: text})
 }
 
 func (e *rtIn) text() string {
@@ -1319,6 +1355,10 @@ func (b *rtBuilder) rtJSONInline(l Line, els []rtIn, r AtomResolver, plain bool)
 			b.text(e.text(), Attr{Style: st})
 		case "link":
 			txt := e.text()
+			if e.Truncated && txt != "" && e.URL != "" {
+				b.rtTruncatedLink(e.URL, txt, st, plain)
+				continue
+			}
 			if txt == "" {
 				txt = e.URL
 			}

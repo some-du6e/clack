@@ -1,19 +1,26 @@
 package core
 
-// Link slugs: Slack's composer turns pasted Slack links into objects
-// (gantry-v2 2026-11, TextySlugs.processSlugs): links whose text is the
-// URL become unprocessed slugs, chat.slugifyUrl {urls (≤10), channel,
-// reason: "link-paste-slugify"} resolves them, and the answer by
-// slug_type becomes a message slug (sent as message_mention), a
-// #channel or an @user mention. Anything else stays a link. A message
-// slug still unresolved at send time is resolved from the message cache
+// Link slugs: Slack's composer turns pasted links into objects
+// (gantry-v2 2026-11, TextySlugs.processSlugs): every pasted link whose
+// text is the URL becomes an unprocessed slug (eFqW
+// convertLinksToUnprocessedSlugs, run by rBgP prepareDeltaForPaste),
+// chat.slugifyUrl {urls (≤10), channel, reason: "link-paste-slugify"}
+// resolves them, and the answer by slug_type becomes a message slug (sent
+// as message_mention), a #channel or an @user mention, or a link slug
+// labelled with the answer's display_url (sent as a link with text and
+// truncated: true). Anything else stays a link. A message slug still
+// unresolved at send time is resolved from the message cache
 // (withUnprocessedMessageSlugsResolved).
 //
-// chat.slugifyUrl answers (live shapes 2026-11-08, keys only):
+// chat.slugifyUrl answers (live shapes, keys only; link 2026-11-14):
 //
 //	message: {slug_type, author_id, channel_id, ts, message{…}}
 //	channel: {slug_type, id, name, channel{…}}
 //	user:    {slug_type, id, name, user{…}}
+//	link:    {slug_type, display_url}
+//
+// The team host answers team_is_restricted on Hack Club's grid; the
+// client retries on the enterprise host (slack.Client).
 
 import (
 	"context"
@@ -27,7 +34,7 @@ import (
 
 // Slug is one resolved link.
 type Slug struct {
-	Type      string // message | channel | user
+	Type      string // message | channel | user | link
 	ID        string // message ts, channel id or user id
 	Name      string // channel / user name (channel, user)
 	ChannelID string // message
@@ -35,6 +42,12 @@ type Slug struct {
 	ThreadTS  string // message: the thread it is in, if a reply
 	IsIM      bool   // channel: a DM or group DM (Slack drops the "#")
 	IsMPIM    bool
+
+	// DisplayURL is a link slug's label: the server's short form of the
+	// URL ("example.com/docs/…/guide…": no scheme or www., at most a few
+	// path segments, "…" for the rest). Slack's hydrateLinkSlugData (YccF
+	// Q) keeps only this field.
+	DisplayURL string
 }
 
 // Permalink is a parsed Slack link.
@@ -53,7 +66,7 @@ var (
 )
 
 // IsSlackURL reports whether u is on a Slack host (*.slack.com), the
-// links the composer offers chat.slugifyUrl.
+// links that can be Slack permalinks.
 func IsSlackURL(u string) bool {
 	p, err := url.Parse(u)
 	if err != nil || (p.Scheme != "https" && p.Scheme != "http") {
@@ -117,15 +130,16 @@ func (a *App) SlugifyURLs(ctx context.Context, urls []string, channel string) (m
 	}
 	var res struct {
 		Slugs map[string]struct {
-			Type      string              `json:"slug_type"`
-			ID        string              `json:"id"`
-			Name      string              `json:"name"`
-			AuthorID  string              `json:"author_id"`
-			ChannelID string              `json:"channel_id"`
-			TS        string              `json:"ts"`
-			Message   *slack.Message      `json:"message"`
-			Channel   *slack.Conversation `json:"channel"`
-			User      *slack.User         `json:"user"`
+			Type       string              `json:"slug_type"`
+			ID         string              `json:"id"`
+			Name       string              `json:"name"`
+			AuthorID   string              `json:"author_id"`
+			ChannelID  string              `json:"channel_id"`
+			TS         string              `json:"ts"`
+			Message    *slack.Message      `json:"message"`
+			Channel    *slack.Conversation `json:"channel"`
+			User       *slack.User         `json:"user"`
+			DisplayURL string              `json:"display_url"`
 		} `json:"slugs"`
 	}
 	if err := a.C.Call(ctx, "chat.slugifyUrl", p, &res); err != nil {
@@ -179,6 +193,12 @@ func (a *App) SlugifyURLs(ctx context.Context, urls []string, channel string) (m
 				continue
 			}
 			out[u] = Slug{Type: "user", ID: id, Name: s.Name}
+		case "link":
+			// isSlugObjectSupported: the composer's slugs have
+			// isAttachmentSlugFromUnfurlEnabled on (TextyInput passes
+			// !disableSlugging), so every link answer is a slug, labelled
+			// with display_url (or the URL when that is missing)
+			out[u] = Slug{Type: "link", DisplayURL: s.DisplayURL}
 		}
 	}
 	return out, nil

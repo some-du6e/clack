@@ -37,8 +37,8 @@ const (
 // JavaScript string units (UTF-16): text counts as typed, a link whose
 // text isn't its URL counts both, an emoji its ":name:" text, a user,
 // channel or user group mention its id, a broadcast its label
-// ("@here"), a message slug its label; the delta's final newline
-// doesn't count. Divider embeds count nothing.
+// ("@here"), a message or link slug its label; the delta's final
+// newline doesn't count. Divider embeds count nothing.
 func slackLength(d *Doc) int {
 	n, line := 0, 0
 	for i := 0; i < len(d.Runes); {
@@ -49,7 +49,7 @@ func slackLength(d *Doc) int {
 				n += jsLen(":" + at.ID + ":")
 			case AtomBroadcast:
 				n += jsLen("@" + at.ID)
-			case AtomMessage:
+			case AtomMessage, AtomLink:
 				n += jsLen(at.Text)
 			default:
 				if at.ID != "" {

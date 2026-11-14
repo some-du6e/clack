@@ -547,7 +547,7 @@ func qFromDoc(d *Doc) (qDelta, []int) {
 				label = []rune{'!'}
 			}
 			key := "slackmention"
-			if a.Atom.Kind == AtomMessage {
+			if a.Atom.Kind == AtomMessage || a.Atom.Kind == AtomLink {
 				key = "slackslug"
 			}
 			seq++

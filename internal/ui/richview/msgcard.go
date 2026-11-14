@@ -79,6 +79,28 @@ func (l *lay) messageMention(sp *richtext.Span, fs *flowStyle, k faceKey, pt uin
 	l.addPad(pad, dc, k)
 }
 
+// truncatedLink lays out a link with truncated: true, as Slack's Link
+// (+W5o) draws it: RichTextSlug (Pc7Q) with the "link" icon, not a link
+// itself (noLinking), around the link, BaseMrkdwnLink with the text as
+// it is (getLinkContents). The chip is the message slug's
+// .p-rich_text_slug (content-hgl-1 on surf-hgl-1, 3px radius, 1px 2px
+// padding, the icon's margin-right 4); the label is a .c-link in the
+// link colour, never underlined (.p-rich_text_slug .c-link), whose hover
+// is the link's (its URL card under truncated_url_hover_card) and whose
+// click opens the URL.
+func (l *lay) truncatedLink(sp *richtext.Span, fs *flowStyle, k faceKey, pt uint8) {
+	p := &l.st.Palette
+	tg := l.d.addTarget(target{kind: tLink, url: sp.URL, slug: true, urlCard: true})
+	pad, padV := l.dpf(2), l.dpf(1)
+	l.decos = append(l.decos, deco{kind: 1, bg: p.MentionBg, padL: pad, padR: pad, padT: padV, padB: padV, radius: l.dp(3), target: tg, face: k, part: pt})
+	dc := int16(len(l.decos) - 1)
+	l.addPad(pad, dc, k)
+	l.addIcon("link", fs.size, k, p.MentionText, dc, tg)
+	l.addPad(l.dpf(3), dc, k) // icon margin-right 4 (the icon item ends with 1px)
+	l.addText(sp.Text, fs, k, p.Link, sp.Style, dc, tg)
+	l.addPad(pad, dc, k)
+}
+
 // privateChannel is BaseMissingChannel's Nonexistent chip, a channel the
 // viewer can't see (not a link): span.c-missing_channel--private,
 // rgba(foreground_low, .13) behind rgba(foreground_max, .7) text, radius
