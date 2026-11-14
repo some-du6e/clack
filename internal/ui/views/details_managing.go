@@ -271,7 +271,7 @@ func (d *ChannelDetails) deleteFooter() []W {
 	dl := &d.x.dlg
 	return []W{func(gtx C) D {
 		return row(gtx, layout.Middle,
-			layout.Flexed(1, d.cdCheckRow(&dl.confirmAll, dl.confirmed, false, nsChannelDetails.T("Yes, permanently delete the channel"), nil)),
+			layout.Flexed(1, d.cdCheckRow(&dl.confirmAll, dl.confirmed, false, nsChannelDetails.T("Yes, permanently delete the channel"), func(gtx C) D { return D{} })),
 			layout.Rigid(d.cdDlgButton(&dl.cancel, btnOutline, "Cancel", false)),
 			hgap(12),
 			layout.Rigid(d.cdDlgButton(&dl.ok, btnDanger, nsChannelDetails.T("Delete Channel"), !dl.confirmed || dl.pending)),
