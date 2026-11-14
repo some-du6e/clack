@@ -1101,8 +1101,8 @@ create the window at the bounds; `update` reports them; `Configure`'s
 `app/os_macos.go` (`updateWindowMode` reports them; `Configure` places the
 window before the mode, its size limits in every mode, a first full
 screen once the window is on the screen; `newWindow` doesn't cascade a
-placed window; `gio_onWindowMove`), `app/os_macos.m` (`windowDidMove:`)
-and `app/cocoatest/` (`Window.ScreenFrame`, `Screens`, `SetTopLeft`,
+placed window; `gio_onWindowMove`), `app/os_macos.m` (`windowDidMove:`;
+`gioViewOf` in the delegate's other methods) and `app/cocoatest/` (`Window.ScreenFrame`, `Screens`, `SetTopLeft`,
 `ZoomWindow`). Additions, but for the macOS size limits (below).
 
 Slack reopens its main window where it was (gap 9). Its settings keep
@@ -1182,6 +1182,14 @@ where it is, or to list the displays: every Clack launch opened at
   option; they apply in every mode. A first `Fullscreen` option runs
   before `newWindow` orders the window front, and goes full screen once it
   is on the screen (`toggleFullScreen:` on the next turn of the run loop).
+- macOS, a closed full-screen window: §24's `windowWillClose:` lets go of
+  the content view, and AppKit then takes the closing window out of full
+  screen; `windowWillExitFullScreen:` read the handle of the view that was
+  gone (0) and Gio panicked ("runtime/cgo: misuse of an invalid Handle"),
+  so Quit from full screen crashed Clack. The delegate's methods that call
+  into Go now go through `gioViewOf`, which is nil once the view is gone,
+  and do nothing then. Found by `TestBoundsMac` and
+  `TestMacWindowBoundsFullScreen`, which close full-screen windows.
 
 Clack's main window uses all of it (`internal/ui/winbounds.go`, W40):
 Slack's default bounds (`rV`), `validateBoundsForDisplay`, the minimum

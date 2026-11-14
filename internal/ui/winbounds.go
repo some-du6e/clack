@@ -283,6 +283,7 @@ func (a *App) mainWindowPlace() []app.Option {
 		return nil
 	}
 	b := openWindowBounds(s, ds, mainMinW, mainMinH)
+	a.winOpened = b
 	opts := []app.Option{app.Bounds(b)}
 	mode := "windowed"
 	switch {

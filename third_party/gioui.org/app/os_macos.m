@@ -89,6 +89,16 @@ static void setTrafficLightsVisible(NSWindow *window, BOOL visible) {
 	[container setHidden:!visible];
 }
 
+// gioViewOf is the window's Gio view, or nil once windowWillClose: has
+// let go of it (Clack patch, CLACK_PATCHES.md §25): AppKit still sends a
+// closing full-screen window windowWillExitFullScreen: after that, and a
+// zero handle there panicked (cgo: misuse of an invalid Handle) when a
+// full-screen window was closed or Clack quit from full screen.
+static GioView *gioViewOf(NSWindow *window) {
+	NSView *v = window.contentView;
+	return [v isKindOfClass:[GioView class]] ? (GioView *)v : nil;
+}
+
 static BOOL hasHiddenTitlebar(NSWindow *window) {
 	return [window.contentView isKindOfClass:[GioView class]] && ((GioView *)window.contentView).titlebarHidden;
 }
@@ -207,22 +217,31 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 }
 - (void)windowWillMiniaturize:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
-  GioView *view = (GioView *)window.contentView;
-	gio_onDraw(view.handle);
+	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
+	if (view != nil) {
+		gio_onDraw(view.handle);
+	}
 }
 - (void)windowDidDeminiaturize:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
-  GioView *view = (GioView *)window.contentView;
-	gio_onDraw(view.handle);
+	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
+	if (view != nil) {
+		gio_onDraw(view.handle);
+	}
 }
 - (void)windowWillEnterFullScreen:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
-  GioView *view = (GioView *)window.contentView;
-	gio_onDraw(view.handle);
+	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
+	if (view != nil) {
+		gio_onDraw(view.handle);
+	}
 }
 - (void)windowWillExitFullScreen:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
-  GioView *view = (GioView *)window.contentView;
+	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
+	if (view == nil) {
+		return; // closed (windowWillClose:), leaving full screen as it goes
+	}
 	if (hasHiddenTitlebar(window)) { // Clack patch (CLACK_PATCHES.md §24)
 		window.titleVisibility = NSWindowTitleHidden;
 		if (view.trafficLightSet) {
@@ -234,29 +253,31 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 // Clack patch (CLACK_PATCHES.md §25): a move changes the window's
 // Config.Bounds.
 - (void)windowDidMove:(NSNotification *)notification {
-	NSWindow *window = (NSWindow *)[notification object];
-	if ([window.contentView isKindOfClass:[GioView class]]) {
-		gio_onWindowMove(((GioView *)window.contentView).handle);
+	GioView *view = gioViewOf((NSWindow *)[notification object]);
+	if (view != nil) {
+		gio_onWindowMove(view.handle);
 	}
 }
 - (void)windowDidChangeScreen:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
 	CGDirectDisplayID dispID = [[[window screen] deviceDescription][@"NSScreenNumber"] unsignedIntValue];
-  GioView *view = (GioView *)window.contentView;
-	gio_onChangeScreen(view.handle, dispID);
+	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
+	if (view != nil) {
+		gio_onChangeScreen(view.handle, dispID);
+	}
 }
 - (void)windowDidBecomeKey:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
-	GioView *view = (GioView *)window.contentView;
-	if ([window firstResponder] == view) {
+	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
+	if (view != nil && [window firstResponder] == view) {
 		gio_onFocus(view.handle, 1);
 	}
 	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §24)
 }
 - (void)windowDidResignKey:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
-	GioView *view = (GioView *)window.contentView;
-	if ([window firstResponder] == view) {
+	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
+	if (view != nil && [window firstResponder] == view) {
 		gio_onFocus(view.handle, 0);
 	}
 	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §24)

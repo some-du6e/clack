@@ -95,6 +95,20 @@ func (ma *macBoundsApp) until(t *testing.T, what string, ok func() bool) {
 	}
 }
 
+// onUI runs f on the UI goroutine and waits.
+func (ma *macBoundsApp) onUI(t *testing.T, f func()) {
+	t.Helper()
+	ran := make(chan struct{})
+	ma.a.Post(func() { f(); close(ran) })
+	select {
+	case <-ran:
+	case <-ma.done:
+		t.Fatalf("Run returned (%v)", ma.err)
+	case <-time.After(20 * time.Second):
+		t.Fatal("posted work didn't run")
+	}
+}
+
 func (ma *macBoundsApp) state() cocoatest.Window {
 	var s cocoatest.Window
 	onMain(func() { s = cocoatest.State(ma.view) })
@@ -177,10 +191,12 @@ func TestMacWindowBounds(t *testing.T) {
 		return s != nil && s.Bounds != nil && s.Bounds.rect() == moved && !s.Maximized && !s.FullScreen
 	})
 
-	// 3.
+	// 3. (the zoomed frame is AppKit's standard frame, the screen's
+	// visible frame: the work area as the save read it; the runner's Dock
+	// comes and goes)
 	onMain(func() { cocoatest.ZoomWindow(ma.view) })
 	ma.until(t, "zoomed", func() bool { return ma.state().Zoomed })
-	want := defaultWindowBounds(prim)
+	want := defaultWindowBounds(app.Display{Bounds: prim.Bounds, WorkArea: ma.frame(), Scale: 1, Primary: true})
 	ma.until(t, "ui.json maximized", func() bool {
 		s := ma.saved()
 		return s != nil && s.Maximized && s.Bounds != nil && s.Bounds.rect() == want
@@ -195,19 +211,21 @@ func TestMacWindowBounds(t *testing.T) {
 
 // TestMacWindowBoundsOffScreen: saved maximized off every screen, the
 // window opens zoomed on the runner's screen, and Window > Zoom takes it
-// to Slack's validateBoundsForDisplay fallback there, which ui.json then
-// keeps.
+// to Slack's validateBoundsForDisplay fallback there (900x600, its right
+// edge on the screen's: x 124 on the 1024-point screen; its y follows the
+// Dock, which comes and goes on the runner), which ui.json then keeps.
 func TestMacWindowBoundsOffScreen(t *testing.T) {
 	if !macWindowTests {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
 	}
 	prim := macBoundsPrimary(t)
 	seed := &mainWindowSettings{Bounds: &winRect{X: 5000, Y: 5000, Width: 900, Height: 600}, Maximized: true}
-	want := openWindowBounds(seed, app.Displays(), mainMinW, mainMinH)
-	if !want.In(prim.WorkArea) {
-		t.Fatalf("Slack's fallback %v isn't in the work area %v", want, prim.WorkArea)
-	}
 	ma := runMacBoundsApp(t, seed)
+	var want image.Rectangle
+	ma.onUI(t, func() { want = ma.a.winOpened })
+	if !want.In(prim.Bounds) || want.Dx() != 900 || want.Dy() != 600 || want.Max.X != prim.WorkArea.Max.X {
+		t.Fatalf("opened at %v: not Slack's fallback on the screen %+v", want, prim)
+	}
 	ma.until(t, "zoomed", func() bool { return ma.state().Zoomed })
 	onMain(func() { cocoatest.ZoomWindow(ma.view) })
 	ma.until(t, "unzoomed onto the screen", func() bool { return !ma.state().Zoomed && ma.frame() == want })

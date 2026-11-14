@@ -270,6 +270,7 @@ type App struct {
 	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
 	winPlace         bool                       // Gio places the window here (Windows, macOS): mainWindowSettings keeps its bounds (winbounds.go)
 	winSaveDue       bool                       // mainWindowSettings changed since ui.json was last written
+	winOpened        image.Rectangle            // where mainWindowPlace opened the window (logs, tests)
 	hideHook         func() bool                // tests: replaces Window.Hide (runfromtray.go)
 	inval            chan struct{}              // redraw requests for invalidator (cap 1: they coalesce)
 	update           updateState                // "Update available" banner

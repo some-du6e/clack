@@ -22,6 +22,13 @@ func macRect(r cocoatest.Rect) image.Rectangle {
 	return image.Rect(x, y, x+int(r.W+.5), y+int(r.H+.5))
 }
 
+// sameScreen: d is the screen p is. Not the whole Display: the runner's
+// Dock comes and goes, and the visible frame (the work area) with it
+// (705, then 708 points down, between two reads a second apart).
+func sameScreen(d, p Display) bool {
+	return d.Bounds == p.Bounds && d.Primary == p.Primary && d.Scale == p.Scale && d.WorkArea.In(d.Bounds)
+}
+
 func (h *macTestWindow) config() Config {
 	if c := h.cfg.Load(); c != nil {
 		return *c
@@ -79,7 +86,7 @@ func TestBoundsMac(t *testing.T) {
 		t.Errorf("opened at %v (%+v), want %v", macRect(s.ScreenFrame), s.ScreenFrame, r)
 	}
 	macWaitUntil(t, "the ConfigEvent's bounds", func() bool { return h.config().Bounds() == r })
-	if d := h.config().Display(); d != prim {
+	if d := h.config().Display(); !sameScreen(d, prim) {
 		t.Errorf("the window's display %+v, want the primary %+v", d, prim)
 	}
 
@@ -104,7 +111,7 @@ func TestBoundsMac(t *testing.T) {
 	// Window > Zoom takes it back to r
 	h = newMacTestWindowWith(t, never, HiddenTitleBar(true), MinSize(400, 300), Bounds(r), Maximized.Option())
 	macWaitUntil(t, "zoomed", func() bool { return h.state().Zoomed && h.config().Mode == Maximized })
-	if b := h.config().Bounds(); !b.In(prim.Bounds) || b.Dx() < r.Dx() || h.config().Display() != prim {
+	if b := h.config().Bounds(); !b.In(prim.Bounds) || b.Dx() < r.Dx() || !sameScreen(h.config().Display(), prim) {
 		t.Errorf("maximized: bounds %v on %+v, want a frame bigger than %v on the primary", b, h.config().Display(), r)
 	}
 	cocoatest.OnMain(func() { cocoatest.ZoomWindow(h.view) })
@@ -121,7 +128,7 @@ func TestBoundsMac(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Logf("full screen: bounds %v, display %+v", h.config().Bounds(), h.config().Display())
-	if b := h.config().Bounds(); !b.In(prim.Bounds) || h.config().Display() != prim {
+	if b := h.config().Bounds(); !b.In(prim.Bounds) || !sameScreen(h.config().Display(), prim) {
 		t.Errorf("full screen: bounds %v on %+v, want on the primary %+v", b, h.config().Display(), prim)
 	}
 	// the runner may never take the window out of its full-screen Space:
