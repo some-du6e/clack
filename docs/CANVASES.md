@@ -141,6 +141,7 @@ Sources: Slack's web client on the public CDN, read without a cookie: the `appli
 - **Root:** ThreadRootCanvas. There is no avatar gutter; QuipCommentRoot shows, in a thread, a heading with the most recent editor's 16px avatar and name, then the highlighted text. When Quip no longer shows the highlight it says "This content was deleted.".
 - **Header:** ArchiveCommentButton sits before the ⋮, shown when canArchiveComment (the canvas writeable and not locked, a Quip thread id, at least one reply). It is check "Resolve thread", or rotate "Re-open thread" on a resolved thread, with its tooltip bottom-right after 300ms.
 - **The root's own reactions:** the root takes no add-reaction button or quick reactions there (showAddReactionButton and showQuickReactions off).
+- **Comment wording:** a message in a canvas's file channel is a canvas comment (isCanvasComment, `C3jk`/`z1wc`). Its share action says "Share comment…" ("Forward comment…" under private_message_forwarding; `5t6x`), and deleting it asks "Delete comment" / "Are you sure you want to delete this comment? This cannot be undone." (`6Qou`).
 
 **Reactions on comments** (canAddReaction, `vtEK`). In a canvas's file channel, a viewer who can't edit the canvas may react only when it is commentable (access comment, write or owner) and `canvas_comment_only_mode` is on. Clack applies this to the toolbar's add-reaction button and quick reactions and to the context menu's "Add reaction…" once the canvas's files.info is known (`core.CanAddReaction`).
 
