@@ -80,8 +80,8 @@ func (a *App) ThreadHeaderTitle(ch, ts string, root *Message) ThreadTitle {
 	if ch == "" || ts == "" {
 		return ThreadTitle{}
 	}
-	c, _ := a.S.Conv(ch)
-	isDM := c.IsIM
+	c, ok := a.S.Conv(ch)
+	isDM := ok && c.IsIM
 	agentApp := a.AgentAppChannel(ch)
 	switch {
 	case a.AgentChannelThreadNaming() && !agentApp && !isDM && root != nil && root.AgentSession != nil:
