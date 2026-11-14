@@ -2,7 +2,7 @@
 
 //go:build darwin && !ios
 
-// Clack patch (CLACK_PATCHES.md §23): AppKit helpers for the macOS window
+// Clack patch (CLACK_PATCHES.md §24): AppKit helpers for the macOS window
 // tests (cocoatest_darwin.go). ARC.
 
 #import <AppKit/AppKit.h>

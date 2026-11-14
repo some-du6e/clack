@@ -57,7 +57,7 @@ type Config struct {
 	// hiddenTitleBar is a Clack patch (CLACK_PATCHES.md §22): see
 	// HiddenTitleBar.
 	hiddenTitleBar bool
-	// trafficLight is a Clack patch (CLACK_PATCHES.md §23): see
+	// trafficLight is a Clack patch (CLACK_PATCHES.md §24): see
 	// TrafficLightPosition.
 	trafficLight trafficLight
 }

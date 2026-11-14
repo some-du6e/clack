@@ -30,7 +30,7 @@ import (
 // shows the window again (window_darwin.m). The RunFromTray balloon needs
 // the menu bar icon, which the mac TrayHandler makes only for Slackbot
 // Mini, so there the shell logs that the tray icon doesn't exist and shows
-// nothing; hasRunFromTray is set all the same. Gio patch 23 hides the
+// nothing; hasRunFromTray is set all the same. Gio patch 24 hides the
 // window (orderOut:).
 
 // closeHidesWithoutTray: a close hides the window even with no tray icon
@@ -38,7 +38,7 @@ import (
 var closeHidesWithoutTray bool
 
 // hideLeavesFullscreen: the platform's Window.Hide leaves full screen
-// before it hides, once the window has left it (macOS: Gio patch 23, as
+// before it hides, once the window has left it (macOS: Gio patch 24, as
 // Slack's hx awaits leave-full-screen), so closeToTray doesn't ask for it.
 var hideLeavesFullscreen bool
 

@@ -76,7 +76,7 @@ func TestHiddenTitleBarOption(t *testing.T) {
 	if cnf.hiddenTitleBar {
 		t.Fatal("HiddenTitleBar(false) left it on")
 	}
-	// Clack patch (CLACK_PATCHES.md §23): the buttons' place, unset until
+	// Clack patch (CLACK_PATCHES.md §24): the buttons' place, unset until
 	// asked for, in DIPs whatever the metric
 	if cnf.trafficLight.set {
 		t.Fatal("TrafficLightPosition set by default")
@@ -87,7 +87,7 @@ func TestHiddenTitleBarOption(t *testing.T) {
 	}
 }
 
-// Clack patch (CLACK_PATCHES.md §23): a double-click on a drag area does
+// Clack patch (CLACK_PATCHES.md §24): a double-click on a drag area does
 // what Chromium's NativeWidgetMacNSWindow does for its custom draggable
 // areas with each AppleActionOnDoubleClick.
 func TestTitlebarDoubleClickAction(t *testing.T) {

@@ -511,7 +511,7 @@ not hide a window.
   (Electron's `hide()`), `SetWindowPos` with `SWP_HIDEWINDOW |
   SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOREPOSITION | SWP_NOSIZE |
   SWP_NOZORDER`, not `ShowWindow(SW_HIDE)`, which activates another window
-  itself. macOS hides since §23 (`orderOut:`). Other platforms return false
+  itself. macOS hides since §24 (`orderOut:`). Other platforms return false
   and do nothing (Clack then lets the close go on). It may be called while
   handling a `ClosingEvent`: the
   window thread runs `Window.Run` functions while it waits for the app to
@@ -928,7 +928,7 @@ around it, from `clackMsgTrace`, a hook only the tests set).
 `internal/ui` `TestTitleBarWindow` is Clack's window on the same job. Not
 in `UPSTREAM.patch`.
 
-## 23. app: HiddenTitleBar and TrafficLightPosition on macOS, and Window.Hide there
+## 24. app: HiddenTitleBar and TrafficLightPosition on macOS, and Window.Hide there
 
 `app/clack_titlebar.go` (`HiddenTitleBar`'s macOS part, new
 `TrafficLightPosition`, `titlebarDoubleClickAction`), `app/os.go`

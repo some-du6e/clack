@@ -20,7 +20,7 @@ import (
 	"gioui.org/op/clip"
 )
 
-// Clack patch (CLACK_PATCHES.md §23) on a real macOS desktop
+// Clack patch (CLACK_PATCHES.md §24) on a real macOS desktop
 // (CLACK_MACOS_WINDOW_TESTS, ci's macos job). AppKit's windows need
 // app.Main on the main goroutine, so TestMain runs it there and the tests
 // on another; cocoatest does what the tests need on AppKit's main thread.

@@ -24,26 +24,26 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 // dragFiles is a Clack patch (CLACK_PATCHES.md §11): the drag over the
 // view carries file URLs.
 @property BOOL dragFiles;
-// titlebarHidden is a Clack patch (CLACK_PATCHES.md §23): the window's
+// titlebarHidden is a Clack patch (CLACK_PATCHES.md §24): the window's
 // title bar is hidden (HiddenTitleBar) and the view runs under it.
 @property BOOL titlebarHidden;
-// trafficLight* are a Clack patch (CLACK_PATCHES.md §23): where the
+// trafficLight* are a Clack patch (CLACK_PATCHES.md §24): where the
 // window's buttons go (TrafficLightPosition), in points.
 @property BOOL trafficLightSet;
 @property CGFloat trafficLightX;
 @property CGFloat trafficLightY;
-// orderedOut is a Clack patch (CLACK_PATCHES.md §23): Window.Hide ordered
+// orderedOut is a Clack patch (CLACK_PATCHES.md §24): Window.Hide ordered
 // the window out and it hasn't drawn since.
 @property BOOL orderedOut;
 @end
 
 // AppKit's undocumented hook for the parts of a view under a transparent
-// title bar (Clack patch, CLACK_PATCHES.md §23; see GioView's override).
+// title bar (Clack patch, CLACK_PATCHES.md §24; see GioView's override).
 @interface NSView (GioTitlebar)
 - (NSRect)_opaqueRectForWindowMoveWhenInTitlebar;
 @end
 
-// redrawTrafficLights is a Clack patch (CLACK_PATCHES.md §23): Electron's
+// redrawTrafficLights is a Clack patch (CLACK_PATCHES.md §24): Electron's
 // WindowButtonsProxy redraw (shell/browser/ui/cocoa/window_buttons_proxy.mm)
 // for TrafficLightPosition. The buttons' title bar container becomes the
 // buttons' height plus 2y tall at the window's top, and the buttons sit
@@ -116,7 +116,7 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 	}
 }
 
-// gio_closeWindow is ActionClose. Clack patch (CLACK_PATCHES.md §23):
+// gio_closeWindow is ActionClose. Clack patch (CLACK_PATCHES.md §24):
 // performClose: never asks windowShouldClose: of a window with a hidden
 // title bar, visible or not (the macOS 26 runner), so such a window does
 // what performClose: does itself, as Electron's ElectronNSWindow does for a
@@ -142,7 +142,7 @@ void gio_closeWindow(CFTypeRef windowRef) {
 	GioView *view = (GioView *)window.contentView;
 	return gio_onCloseRequest(view.handle) != 0;
 }
-// Clack patch (CLACK_PATCHES.md §23): Gio's DestroyEvent comes from the
+// Clack patch (CLACK_PATCHES.md §24): Gio's DestroyEvent comes from the
 // view's dealloc, which waited for the window's: on the macOS 26 runner a
 // closed window outlived its close (an aborted close before, or not, a
 // hidden title bar or not), so the view never went and the program never
@@ -155,7 +155,7 @@ void gio_closeWindow(CFTypeRef windowRef) {
 		[window setContentView:nil];
 	}
 }
-// Clack patch (CLACK_PATCHES.md §23): AppKit lays the title bar out again
+// Clack patch (CLACK_PATCHES.md §24): AppKit lays the title bar out again
 // after these and moves the buttons back (Electron's
 // ElectronNSWindowDelegate redraws them after each).
 - (void)windowDidResize:(NSNotification *)notification {
@@ -167,7 +167,7 @@ void gio_closeWindow(CFTypeRef windowRef) {
 - (void)windowDidResignMain:(NSNotification *)notification {
 	redrawTrafficLights((NSWindow *)[notification object]);
 }
-// Clack patch (CLACK_PATCHES.md §23): full screen reveals AppKit's own
+// Clack patch (CLACK_PATCHES.md §24): full screen reveals AppKit's own
 // title bar, with the title (Electron's NotifyWindowEnterFullScreen); the
 // buttons' container hides while the window leaves it, so they don't jump
 // (NotifyWindowWillLeaveFullScreen), and comes back moved once it has.
@@ -212,7 +212,7 @@ void gio_closeWindow(CFTypeRef windowRef) {
 		gio_onExitedFullScreen(((GioView *)window.contentView).handle, 0);
 	}
 }
-// Clack patch (CLACK_PATCHES.md §23): a window back on screen after
+// Clack patch (CLACK_PATCHES.md §24): a window back on screen after
 // Window.Hide draws again, however it came back (an order-front that
 // didn't go through Gio: the Dock icon's reopen).
 - (void)windowDidChangeOcclusionState:(NSNotification *)notification {
@@ -243,7 +243,7 @@ void gio_closeWindow(CFTypeRef windowRef) {
 - (void)windowWillExitFullScreen:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
   GioView *view = (GioView *)window.contentView;
-	if (hasHiddenTitlebar(window)) { // Clack patch (CLACK_PATCHES.md §23)
+	if (hasHiddenTitlebar(window)) { // Clack patch (CLACK_PATCHES.md §24)
 		window.titleVisibility = NSWindowTitleHidden;
 		if (view.trafficLightSet) {
 			setTrafficLightsVisible(window, NO);
@@ -263,7 +263,7 @@ void gio_closeWindow(CFTypeRef windowRef) {
 	if ([window firstResponder] == view) {
 		gio_onFocus(view.handle, 1);
 	}
-	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §23)
+	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §24)
 }
 - (void)windowDidResignKey:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
@@ -271,7 +271,7 @@ void gio_closeWindow(CFTypeRef windowRef) {
 	if ([window firstResponder] == view) {
 		gio_onFocus(view.handle, 0);
 	}
-	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §23)
+	redrawTrafficLights(window); // Clack patch (CLACK_PATCHES.md §24)
 }
 @end
 
@@ -284,7 +284,7 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 	}
 	// Origin is in the lower left corner. Convert to upper left.
 	CGFloat height = view.bounds.size.height;
-	// Clack patch (CLACK_PATCHES.md §23): the click count of a press or
+	// Clack patch (CLACK_PATCHES.md §24): the click count of a press or
 	// release (NSEvent raises for any other kind).
 	NSInteger clicks = (typ == MOUSE_DOWN || typ == MOUSE_UP) ? event.clickCount : 0;
 	gio_onMouse(view.handle, (__bridge CFTypeRef)event, typ, event.buttonNumber, p.x, height - p.y, dx, dy, [event timestamp], [event modifierFlags], clicks);
@@ -441,7 +441,7 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 - (BOOL)acceptsFirstMouse:(NSEvent *)event {
 	return self.firstMouse;
 }
-// Clack patch (CLACK_PATCHES.md §23): under a transparent title bar the
+// Clack patch (CLACK_PATCHES.md §24): under a transparent title bar the
 // window server drags the window from the parts of the content this
 // reports as not opaque, without asking the app. Chromium's
 // BridgedContentView reports its whole bounds, so every click reaches the
@@ -455,7 +455,7 @@ static void handleMouse(GioView *view, NSEvent *event, int typ, CGFloat dx, CGFl
 	}
 	return [super _opaqueRectForWindowMoveWhenInTitlebar];
 }
-// Clack patch (CLACK_PATCHES.md §23): a theme change lays the title bar
+// Clack patch (CLACK_PATCHES.md §24): a theme change lays the title bar
 // out again (Electron's OnNativeThemeUpdated posts a redraw).
 - (void)viewDidChangeEffectiveAppearance {
 	[super viewDidChangeEffectiveAppearance];
@@ -707,7 +707,7 @@ CFTypeRef gio_createWindow(CFTypeRef viewRef, CGFloat width, CGFloat height, int
 			NSMiniaturizableWindowMask |
 			NSClosableWindowMask;
 		if (hiddenTitlebar) {
-			// Clack patch (CLACK_PATCHES.md §23): the content view covers the
+			// Clack patch (CLACK_PATCHES.md §24): the content view covers the
 			// title bar from the start, so the window is the size asked for
 			// (Electron's frameless content bounds are the window's).
 			styleMask |= NSWindowStyleMaskFullSizeContentView;

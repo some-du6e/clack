@@ -35,7 +35,7 @@ import (
 // screen resizes it, as the top of a standard frame does, except over the
 // caption buttons.
 //
-// macOS (Clack patch, CLACK_PATCHES.md §23): Electron's titleBarStyle
+// macOS (Clack patch, CLACK_PATCHES.md §24): Electron's titleBarStyle
 // "hidden". The content view runs under the title bar
 // (NSWindowStyleMaskFullSizeContentView), the title bar is transparent
 // and its title hidden, and the close, minimize and zoom buttons stay
@@ -62,7 +62,7 @@ type trafficLight struct {
 
 // TrafficLightPosition moves the close, minimize and zoom buttons of a
 // macOS window with a hidden title bar (Clack patch, CLACK_PATCHES.md
-// §23): Electron's trafficLightPosition and setWindowButtonPosition
+// §24): Electron's trafficLightPosition and setWindowButtonPosition
 // (WindowButtonsProxy). x is the distance from the window's left edge to
 // the first button, y the distance from the window's top to the buttons'
 // tops; the title bar area AppKit keeps for them is then the buttons'
@@ -78,7 +78,7 @@ func TrafficLightPosition(x, y unit.Dp) Option {
 }
 
 // titlebarDoubleClick is what a double-click on a drag area does on macOS
-// (Clack patch, CLACK_PATCHES.md §23).
+// (Clack patch, CLACK_PATCHES.md §24).
 type titlebarDoubleClick uint8
 
 const (

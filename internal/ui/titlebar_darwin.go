@@ -43,7 +43,7 @@ func mainWindowChrome() []app.Option {
 func init() {
 	// MAIN_WINDOW_CLOSE hides the window with no tray icon: the Dock's
 	// icon brings it back. hx (@1150977) leaves full screen before it
-	// hides; Gio patch 23's Hide does that itself.
+	// hides; Gio patch 24's Hide does that itself.
 	closeHidesWithoutTray = true
 	hideLeavesFullscreen = true
 	macTitlebarOn = true

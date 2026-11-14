@@ -4,7 +4,7 @@
 #import <objc/runtime.h>
 #include "_cgo_export.h"
 
-// The main window after a close hid it (W35; runfromtray.go, Gio patch 23).
+// The main window after a close hid it (W35; runfromtray.go, Gio patch 24).
 // Slack's MAIN_WINDOW_ACTIONS epic (mac main.bundle.cjs 4.53.276 @1148718)
 // listens to Electron's app "activate", which is the app delegate's
 // applicationShouldHandleReopen:hasVisibleWindows: (a click on the Dock

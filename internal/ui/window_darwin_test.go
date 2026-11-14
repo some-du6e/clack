@@ -31,7 +31,7 @@ import (
 // app's activation with no window focused (⌘Tab) shows it; ⌘Q while it is
 // hidden quits: Run returns.
 //
-// What it proves: Gio patch 23's hidden title bar and hide on a real
+// What it proves: Gio patch 24's hidden title bar and hide on a real
 // NSWindow, runFromTray's macOS path, window_darwin.m's reopen and
 // activation handlers, the menu bar's Close and Quit. What it doesn't:
 // the Dock itself (the test calls the app delegate's reopen as the Dock's
