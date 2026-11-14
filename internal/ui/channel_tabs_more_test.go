@@ -54,7 +54,7 @@ func TestChannelTabsMoreMenu(t *testing.T) {
 	t.Cleanup(func() { fs.Close() })
 	fs.Permissions = map[string][]string{fakeslack.PinsChannelID: {core.PermManageChannelTabs}} // useCanEditTabs: Edit tabs, Hide tab
 	e := startEnv(t, fs, t.TempDir())
-	e.size = image.Pt(560, 760) // only Messages fits: Pins goes into More
+	e.size = image.Pt(520, 760) // only Messages stays: Pins goes into More
 	if os.Getenv("PREVIEW_SHOTS_DIR") != "" {
 		w, err := pixeltest.NewWindow(e.size.X, e.size.Y)
 		if err != nil {
