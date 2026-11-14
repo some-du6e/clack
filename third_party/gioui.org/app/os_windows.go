@@ -473,6 +473,12 @@ func windowProc(hwnd syscall.Handle, msg uint32, wParam, lParam uintptr) uintptr
 		if w.hiddenTitle() && w.hiddenTitlePointer(msg, wParam, lParam) {
 			return 0
 		}
+	case windows.WM_NCLBUTTONDOWN, windows.WM_NCLBUTTONDBLCLK, windows.WM_NCLBUTTONUP:
+		// Clack patch (CLACK_PATCHES.md §22): never DefWindowProc's
+		// caption-button loop for the program's buttons.
+		if w.hiddenTitle() && w.hiddenTitleMouse(msg, wParam, lParam) {
+			return 0
+		}
 	case windows.WM_POINTERLEAVE:
 		if w.hiddenTitle() { // Clack patch (CLACK_PATCHES.md §22)
 			pid := getPointerIDwParam(wParam)

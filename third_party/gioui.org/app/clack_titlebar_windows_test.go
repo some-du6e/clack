@@ -473,6 +473,19 @@ func TestHiddenTitleBarButtonsInput(t *testing.T) {
 		return !c.hover[1].Load() && !c.hover[2].Load() && !c.hover[3].Load()
 	})
 
+	// maximize hovered until Windows 11 opens its Snap Layouts flyout, then
+	// clicked: the click came as WM_NCLBUTTONDOWN, and DefWindowProc's
+	// caption-button loop hung the window waiting for a release
+	pm := c.screen(centre(r[2]))
+	sendInput(t, []testInput{mouseInput(pm, mouseMove)})
+	time.Sleep(1500 * time.Millisecond)
+	mark := captionTraceMark("click maximize with the Snap Layouts flyout open")
+	sendInput(t, []testInput{mouseInput(pm, mouseMove), mouseInput(pm, mouseDown), mouseInput(pm, mouseUp)})
+	c.expectClick(t, "maximize", mark)
+	time.Sleep(600 * time.Millisecond)
+	f := c.frames.Load()
+	waitUntil(t, "frames after the flyout's click (the window isn't stuck)", func() bool { return c.frames.Load() > f+2 })
+
 	for _, i := range []int{2, 3, 1, 0} {
 		p := c.screen(centre(r[i]))
 		mark := captionTraceMark("click " + captionTestNames[i])

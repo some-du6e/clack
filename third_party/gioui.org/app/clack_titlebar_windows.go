@@ -203,6 +203,55 @@ func (w *window) hiddenTitlePointer(msg uint32, wParam, lParam uintptr) bool {
 	return false
 }
 
+// hiddenTitleMouse handles a legacy non-client left-button message (it
+// reports whether the message is done with). They come for the caption
+// buttons too: from touch, which DefWindowProc turns into mouse input, and
+// for a click while Windows 11's Snap Layouts flyout is open, which
+// reaches the window as WM_NCLBUTTONDOWN rather than WM_NCPOINTERDOWN.
+// DefWindowProc must not have one for a button: its caption-button loop
+// waits for a WM_LBUTTONUP, which never comes with mouse-in-pointer on
+// (the release is a pointer message), and the window hangs in it.
+func (w *window) hiddenTitleMouse(msg uint32, wParam, lParam uintptr) bool {
+	button := wParam == windows.HTMINBUTTON || wParam == windows.HTMAXBUTTON || wParam == windows.HTCLOSE
+	switch msg {
+	case windows.WM_NCLBUTTONDOWN, windows.WM_NCLBUTTONDBLCLK:
+		if !button {
+			return false
+		}
+		w.ncPressed = true
+		w.ncMouseEvent(pointer.Press, pointer.ButtonPrimary, lParam)
+		return true
+	case windows.WM_NCLBUTTONUP:
+		if !button && !w.ncPressed {
+			return false
+		}
+		w.ncPressed = false
+		w.ncMouseEvent(pointer.Release, 0, lParam)
+		return true
+	}
+	return false
+}
+
+// ncMouseEvent is a pointer event for a legacy non-client message: the
+// mouse's pointer ID, lParam's screen position.
+func (w *window) ncMouseEvent(kind pointer.Kind, buttons pointer.Buttons, lParam uintptr) {
+	if kind == pointer.Press && !w.config.Focused {
+		windows.SetFocus(w.hwnd)
+	}
+	x, y := coordsFromlParam(lParam)
+	np := windows.Point{X: int32(x), Y: int32(y)}
+	windows.ScreenToClient(w.hwnd, &np)
+	w.ProcessEvent(pointer.Event{
+		Kind:      kind,
+		Source:    pointer.Mouse,
+		Position:  f32.Point{X: float32(np.X), Y: float32(np.Y)},
+		PointerID: w.mousePID,
+		Buttons:   buttons,
+		Time:      windows.GetMessageTime(),
+		Modifiers: getModifiers(),
+	})
+}
+
 // ncPointerEvent is pointerUpdate for a non-client message, without taking
 // the focus on a move.
 func (w *window) ncPointerEvent(pi windows.PointerInfo, pid pointer.ID, kind pointer.Kind, lParam uintptr) {

@@ -874,7 +874,14 @@ title bar, which Clack's top nav then sat under (a doubled title bar, gap
   their documentation promises: the high word of `wParam` is the
   pointer's flags, as in the client messages (`0x2016` for a primary
   button down, seen on the CI runner), so the patch hit-tests the
-  position itself. Moves over the caption and
+  position itself. The legacy `WM_NCLBUTTONDOWN`, `WM_NCLBUTTONDBLCLK` and
+  `WM_NCLBUTTONUP` for a button are the program's as well: touch comes that
+  way (`DefWindowProc` turns it into mouse input), and so does a click while
+  Windows 11's Snap Layouts flyout is open. Given one, `DefWindowProc`'s
+  caption-button loop waits for a `WM_LBUTTONUP` that never comes with
+  mouse-in-pointer on (the release is a pointer message): Clack's window
+  hung in it on the CI runner (ci 43578875698) after a click on maximize
+  with the flyout up. Moves over the caption and
   the borders reach the program too, so hover ends there, and still go to
   `DefWindowProc`, as do presses on the caption and the borders (move,
   resize, double-click to maximize, the right-click system menu). Touch and
