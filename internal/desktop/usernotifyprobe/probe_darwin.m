@@ -333,6 +333,8 @@ char *clack_unprobe_delivered(int secs) {
 
 // ---- read-backs for TestShowUserNotificationInBundle ----
 
+// jsonOut writes obj as JSON (booleans must be boxed BOOLs: a boxed C
+// comparison is an int and comes out as 1).
 static char *jsonOut(id obj) {
 	NSData *d = [NSJSONSerialization dataWithJSONObject:obj options:NSJSONWritingSortedKeys error:nil];
 	return d ? strndup(d.bytes, d.length) : strdup("null");
@@ -375,7 +377,7 @@ char *clack_unprobe_delivered_json(int secs) {
 				@"body" : k.body ?: @"",
 				@"thread" : k.threadIdentifier ?: @"",
 				@"category" : k.categoryIdentifier ?: @"",
-				@"sound" : @(k.sound != nil),
+				@"sound" : @((BOOL)(k.sound != nil)),
 			}];
 		}
 		return jsonOut(out);
@@ -401,8 +403,8 @@ char *clack_unprobe_categories(int secs) {
 					NSMutableDictionary *o = [@{
 						@"id" : a.identifier ?: @"",
 						@"title" : a.title ?: @"",
-						@"foreground" : @((a.options & UNNotificationActionOptionForeground) != 0),
-						@"textInput" : @([a isKindOfClass:[UNTextInputNotificationAction class]]),
+						@"foreground" : @((BOOL)((a.options & UNNotificationActionOptionForeground) != 0)),
+						@"textInput" : @((BOOL)[a isKindOfClass:[UNTextInputNotificationAction class]]),
 					} mutableCopy];
 					if ([a isKindOfClass:[UNTextInputNotificationAction class]]) {
 						o[@"buttonTitle"] = ((UNTextInputNotificationAction *)a).textInputButtonTitle ?: @"";
@@ -412,7 +414,7 @@ char *clack_unprobe_categories(int secs) {
 				}
 				[out addObject:@{
 					@"id" : cat.identifier ?: @"",
-					@"customDismiss" : @((cat.options & UNNotificationCategoryOptionCustomDismissAction) != 0),
+					@"customDismiss" : @((BOOL)((cat.options & UNNotificationCategoryOptionCustomDismissAction) != 0)),
 					@"actions" : acts,
 				}];
 			}
