@@ -116,39 +116,19 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 	}
 }
 
-// gio_closeWindow is ActionClose. Clack patch (CLACK_PATCHES.md §24):
-// performClose: never asks windowShouldClose: of a window with a hidden
-// title bar, visible or not (the macOS 26 runner), so such a window does
-// what performClose: does itself, as Electron's ElectronNSWindow does for a
-// window without a title bar and Chromium does for every programmatic
-// close: ask the delegate, then close.
-void gio_closeWindow(CFTypeRef windowRef) {
-	@autoreleasepool {
-		NSWindow *window = (__bridge NSWindow *)windowRef;
-		if (!hasHiddenTitlebar(window)) {
-			[window performClose:nil];
-			return;
-		}
-		id<NSWindowDelegate> del = window.delegate;
-		if ([del respondsToSelector:@selector(windowShouldClose:)] && ![del windowShouldClose:window]) {
-			return;
-		}
-		[window close];
-	}
-}
-
 @implementation GioWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow *)window {
 	GioView *view = (GioView *)window.contentView;
 	return gio_onCloseRequest(view.handle) != 0;
 }
 // Clack patch (CLACK_PATCHES.md §24): Gio's DestroyEvent comes from the
-// view's dealloc, which waited for the window's: on the macOS 26 runner a
-// closed window outlived its close (an aborted close before, or not, a
-// hidden title bar or not), so the view never went and the program never
-// heard. The closing window lets go of its view now; once nothing else
-// holds it, it deallocs and Gio sends DestroyEvent, as Chromium's
-// windowWillClose: tears its widget down without waiting for AppKit.
+// view's dealloc, and the view went with its window. On the macOS 26
+// runner every closed window, plain or with a hidden title bar, was still
+// alive after its close (TestMacCloseDestroys), so no DestroyEvent came
+// and a quit never ended. The closing window lets go of its view now;
+// once nothing else holds it, it deallocs and Gio sends DestroyEvent, as
+// Chromium's windowWillClose: tears its widget down without waiting for
+// AppKit to free the window.
 - (void)windowWillClose:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
 	if ([window.contentView isKindOfClass:[GioView class]]) {

@@ -48,7 +48,6 @@ __attribute__ ((visibility ("hidden"))) void gio_viewSetHandle(CFTypeRef viewRef
 __attribute__ ((visibility ("hidden"))) void gio_redrawTrafficLights(CFTypeRef windowRef);
 __attribute__ ((visibility ("hidden"))) void gio_setTitlebar(CFTypeRef viewRef, int hidden, int lightSet, CGFloat x, CGFloat y);
 __attribute__ ((visibility ("hidden"))) void gio_setOrderedOut(CFTypeRef viewRef, int out);
-__attribute__ ((visibility ("hidden"))) void gio_closeWindow(CFTypeRef windowRef);
 
 static void writeClipboard(CFTypeRef str) {
 	@autoreleasepool {
@@ -664,7 +663,7 @@ func (w *window) Perform(acts system.Action) {
 		}
 	})
 	if acts&system.ActionClose != 0 {
-		C.gio_closeWindow(window) // Clack patch (CLACK_PATCHES.md §24)
+		C.closeWindow(window)
 	}
 }
 

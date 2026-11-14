@@ -972,14 +972,16 @@ on ci's windows-shell job (`CLACK_WINDOWS_TRAY_TESTS`). Not in
 `TrafficLightPosition`, `titlebarDoubleClickAction`), `app/os.go`
 (`Config.trafficLight`), `app/os_macos.go` (`Configure`, `updateWindowMode`,
 `gio_onMouse`'s click count and double-click, `hide`, `shown`, `draw`,
-`SetAnimating`, `Perform`'s `ActionRaise`, `newWindow`), `app/os_macos.m`
-(`GioView`'s `titlebarHidden`, traffic-light and `orderedOut` properties,
+`SetAnimating`, `Perform`'s `ActionRaise`, `newWindow`,
+`toggleFullScreenLater`), `app/os_macos.m` (`GioView`'s `titlebarHidden`,
+traffic-light and `orderedOut` properties,
 `_opaqueRectForWindowMoveWhenInTitlebar`, `viewDidChangeEffectiveAppearance`;
-`GioWindowDelegate`'s resize, key, main, full-screen and occlusion methods;
-`gio_createWindow`'s `hiddenTitlebar`; `redrawTrafficLights`),
-`app/clack_hide.go` (the doc) and `app/cocoatest/` (new: the tests' AppKit
-helpers). An addition: a window without the options behaves as before,
-and `Window.Hide` hides on macOS where it returned false.
+`GioWindowDelegate`'s `windowWillClose:` and its resize, key, main,
+full-screen and occlusion methods; `gio_createWindow`'s `hiddenTitlebar`;
+`redrawTrafficLights`), `app/clack_hide.go` (the doc) and `app/cocoatest/`
+(new: the tests' AppKit helpers). Additions, but for two changes:
+`Window.Hide` hides on macOS where it returned false, and every macOS
+window now gets its `DestroyEvent` when it closes (below).
 
 Slack's main window on macOS is frameless (mac `main.bundle.cjs` 4.53.276
 @1145075: `frame: false`, `titleBarStyle: "hidden"`): the page runs under
@@ -1033,14 +1035,27 @@ each, as Electron does; the container hides while the window leaves full
 screen and comes back moved.
 
 `Window.Hide` is `NativeWindowMac::Hide` (`orderOut:`). A full-screen
-window first leaves full screen and is ordered out at
-`windowDidExitFullScreen:`, as Slack's `hx` awaits `leave-full-screen`
-before it hides (the mode is `Windowed` from then on, so an option given
-meanwhile doesn't send it back). A hidden window draws no frames (Gio's
+window first leaves full screen and is ordered out once
+`windowDidExitFullScreen:` has returned, as Slack's `hx` awaits
+`leave-full-screen` before it hides (the mode is `Windowed` from then on,
+so an option given meanwhile doesn't send it back). The toggle waits for
+the run loop's default mode, outside the close button's click and
+`windowShouldClose:`, as Slack's handler leaves full screen after the close
+event returned. A hidden window draws no frames (Gio's
 Metal layer waits for a drawable without a timeout) and keeps its display
 link stopped; the app still gets its wake-ups. `ActionRaise` shows it, and
 so does any other order-front (the occlusion change that follows): it
 draws again.
+
+A closing window lets go of its content view (`windowWillClose:`), for
+every window. Gio's `DestroyEvent` comes from `GioView`'s `dealloc`, and the
+view only went with its window: on the macOS 26 runner every closed window,
+plain or with a hidden title bar, was still alive after its close
+(`TestMacCloseDestroys` holds weak references), so no `DestroyEvent` came
+within 10 s and Clack's Quit never ended `Run`. With the view let go, it
+deallocs at once and Gio sends `DestroyEvent`, as Chromium's
+`windowWillClose:` tears its widget down without waiting for AppKit to
+free the window.
 
 Clack's main window uses all three on macOS (`internal/ui/titlebar_darwin.go`,
 W35). Read in Electron 45-x-y (`shell/browser/native_window_mac.mm`,
@@ -1062,6 +1077,11 @@ on a widget in the band the widget's), `TestTitlebarDoubleClickMac`
 (synthesized double-clicks with each `AppleActionOnDoubleClick`),
 `TestHideMac` (the red button's aborted close hides, no frames but
 wake-ups, `ActionRaise` and an order-front outside Gio show it, a close
-destroys a hidden window) and `TestHideLeavesFullscreenMac`. `internal/ui`
+destroys a hidden window), `TestMacCloseDestroys` (a close of a plain
+window and of hidden-title-bar ones brings `DestroyEvent`, and logs whether
+the view and the window are still alive) and `TestHideLeavesFullscreenMac`
+(skipped on the runner: it enters full screen, but no `toggleFullScreen:`,
+AppKit's own from the main queue included, ever takes the window out
+again, so the full-screen hide is untested there). `internal/ui`
 `TestMacWindowCloseHides` is Clack's window on the same job. Not in
 `UPSTREAM.patch`.
