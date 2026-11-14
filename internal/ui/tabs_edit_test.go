@@ -373,10 +373,15 @@ func TestTabBarMoreDragLikeSlack(t *testing.T) {
 	}
 	src := visible[0]
 	sp, _, _ := tbSpan(t, e, ch, src.key)
-	pm, ok := e.scanHover(e.a.clicks.get("tab."+ch+".more"), image.Pt(e.a.primaryOrigin.X+20, sp.Y), image.Pt(e.size.X-10, sp.Y))
-	if !ok {
-		t.Fatal("no More tab")
+	morePt := func() image.Point {
+		t.Helper()
+		pm, ok := e.scanHover(e.a.clicks.get("tab."+ch+".more"), image.Pt(e.a.primaryOrigin.X+20, sp.Y), image.Pt(e.size.X-10, sp.Y))
+		if !ok {
+			t.Fatal("no More tab")
+		}
+		return pm
 	}
+	pm := morePt()
 	all := tbKeys(e, ch)
 	lastID := all[len(all)-1]
 	tbDrag(e, sp, pm, func() {
@@ -404,6 +409,7 @@ func TestTabBarMoreDragLikeSlack(t *testing.T) {
 		}
 	}
 	tp, tx0, _ := tbSpan(t, e, ch, tgt.key)
+	pm = morePt() // the bar changed: More may have moved
 	e.click(pm)
 	e.until("the More menu", 5*time.Second, func() bool { return e.topMenu() != nil })
 	e.settle(100 * time.Millisecond)
@@ -429,6 +435,7 @@ func TestTabBarMoreDragLikeSlack(t *testing.T) {
 
 	// a More row's right-click: the tab's own menu with Rename / Remove
 	e.settle(200 * time.Millisecond)
+	pm = morePt()
 	e.click(pm)
 	e.until("the More menu", 5*time.Second, func() bool { return e.topMenu() != nil })
 	e.settle(100 * time.Millisecond)
