@@ -5,8 +5,9 @@ package messages
 // (MESSAGES_AUDIT_SHOTS_DIR, the messages-audit-shots workflow), on
 // context_test.go's synthetic channel. Frames are taken at fixed times
 // after the pointer arrives: at rest, 0, 20, 40 and 80 ms (the tilt's 80 ms
-// transition), at 560 and 1100 ms (the tooltip's 60 ms delay and its
-// second-long fade), and Reply in thread at 80 ms.
+// transition), at 100 and 140 ms (the tooltip half-way through and at the
+// end of its 80 ms fade, after the 60 ms delay) and 560 ms, and Reply in
+// thread at 80 ms.
 //
 // This file uses only what the ui branch already had, so the workflow also
 // runs it on a checkout of ui with TOOLBAR_SHOTS_TAG=before: the
@@ -105,9 +106,9 @@ func TestToolbarHoverShots(t *testing.T) {
 		t0 := e.now.Add(time.Second)
 		move(button(tbAddReact), t0)
 		shoot("0ms")
-		for _, ms := range []int{20, 40, 80, 560, 1100} {
+		for _, ms := range []int{20, 40, 80, 100, 140, 560} {
 			frame(t0.Add(time.Duration(ms) * time.Millisecond))
-			shoot(map[int]string{20: "20ms", 40: "40ms", 80: "80ms", 560: "tip-560ms", 1100: "tip-1100ms"}[ms])
+			shoot(map[int]string{20: "20ms", 40: "40ms", 80: "80ms", 100: "tip-100ms", 140: "tip-140ms", 560: "tip-560ms"}[ms])
 		}
 		t1 := e.now.Add(time.Second)
 		move(button(tbReply), t1)
