@@ -790,3 +790,53 @@ jobs:
           TEST: ${{ matrix.test }}
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" ${{ matrix.flags }}
+
+  # flake-fix: the title bar tests after the gioui.org/app steps ci's
+  # windows-applog runs before them (the OLE drops move the cursor and run
+  # PowerShell's drag source, typed text clicks its window), COUNT rounds
+  # on three fresh runners. A failed title bar run prints its log (the
+  # stall dump: trace, window state, goroutines) and fails the job; the
+  # other steps' failures are only counted.
+  flake-fix-gio-sequence:
+    if: ${{ !inputs.only || startsWith('flake-fix-gio-sequence', inputs.only) }}
+    name: "flake-fix windows-applog's gioui.org/app steps in a row (runner ${{ matrix.runner }})"
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: "OS file drops, typed text, the title bar: COUNT rounds"
+        shell: bash
+        env:
+          CGO_ENABLED: "0" # as in ci's windows-applog
+          CLACK_WINDOWS_DROP_TESTS: "1"
+          CLACK_WINDOWS_KEY_TESTS: "1"
+          CLACK_WINDOWS_TITLEBAR_TESTS: "1"
+        run: |
+          go test -c -o "$RUNNER_TEMP/gioapp.test.exe" gioui.org/app
+          cd third_party/gioui.org/app # where go test runs it
+          titlebar=0
+          other=0
+          for i in $(seq "$COUNT"); do
+            for run in 'TestOLEFileDrop|TestWMDropFiles|FileDrop|URIList' 'TestWinKeyText' 'TestCaptionHit|TestHiddenTitleBar'; do
+              if ! "$RUNNER_TEMP/gioapp.test.exe" -test.v -test.count=1 -test.timeout 10m -test.run "$run" > "$RUNNER_TEMP/round.log" 2>&1; then
+                case "$run" in
+                  TestCaptionHit*) titlebar=$((titlebar + 1)) ;;
+                  *) other=$((other + 1)) ;;
+                esac
+                echo "::group::round $i: $run failed"
+                head -4000 "$RUNNER_TEMP/round.log"
+                echo "::endgroup::"
+              fi
+            done
+          done
+          echo "::notice title=windows-applog's gioui.org/app steps::the title bar failed $titlebar of $COUNT rounds; the drops and typed text $other times"
+          exit $(( titlebar > 0 ))
