@@ -81,7 +81,7 @@ func sbPropRows(rows []sbRow) []any {
 		case sbDivider:
 			typ, id = "divider", ""
 		case sbNote:
-			typ, id = "empty_section_note", ""
+			typ, id = "emptyStarredSectionBanner", sbStarredBannerKey // EmptyStarredSectionRow's type and id
 		case sbNoResults:
 			typ, id = "textFilterNoResults", "" // TextFilterNoResultsRow's type (id null)
 		}

@@ -133,6 +133,15 @@ type Size struct {
 	// users.conversations, two of them in the Projects section
 	// (file_channels.go).
 	FileChannels bool
+	// FewSections leaves Starred listing nothing and two custom sections
+	// (Hack Club, Projects; sections.go), the account Slack shows the
+	// Starred section's empty states for (core sidebar_rules.go
+	// emptyStarredShown, starredBanner).
+	FewSections bool
+	// ConnectSection adds a slack_connect section after Channels (Slack's
+	// External connections; should_show_connect_section is on), where
+	// externally shared conversations outside a custom section go.
+	ConnectSection bool
 	// AgentSessions fills ai.alpha.agents.sessions.list (the rail's
 	// Agents & tools peek, agent_sessions.go) and adds its agent.
 	AgentSessions bool

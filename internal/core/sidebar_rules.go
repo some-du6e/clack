@@ -20,8 +20,10 @@ import (
 //
 //   - candidates (boot-render lJBI / application XkwK): member, unarchived
 //     channels; DMs and group DMs only when open (is_open), unread, with a
-//     draft or a huddle; never DMs with deleted users or the USEARCH /
-//     UCHANNELEXPERT system users.
+//     draft (hasDraftByChannelId: drafts.go sidebarDrafts) or a huddle
+//     on (huddleChannelIds: the huddle UI's, SetHuddleChannels); never
+//     DMs with deleted users, the USEARCH / UCHANNELEXPERT system users,
+//     or Slackbot's while its tab or link shows (slackbotDMHidden).
 //   - each section's filter (boot-render 0Eub + boot-shared aQqV, ij26):
 //     the channel_sections pref's "sidebar" value when the global
 //     sidebar_behavior is "hide_read_channels_unless_starred" (Custom by
@@ -30,7 +32,8 @@ import (
 //     server marked dormant (properties.is_dormant, modern.vendor QzJY)
 //     when the filter_dormant_channels experiment is on; "hid" hides read
 //     rows; "mentions" keeps only rows with a badge; muted rows leave the
-//     sidebar unless show_muted_items_outside_sidebar_menus.
+//     sidebar unless show_muted_items_outside_sidebar_menus; a draft or a
+//     huddle keeps a row of an expanded section.
 //   - sort (boot-shared O/sM, s0VO; boot-render lJBI): per-section "sort"
 //     pref or the global channel_sort; DM sections default to recent
 //     activity under the dm_recency_sort_rollout experiment. Rows go in
@@ -257,13 +260,18 @@ func sectionFilter(typ, id string, p store.Prefs, e sidebarExp) string {
 // rowState is what the row filter and the sort need about a conversation.
 type rowState struct {
 	unread, badge, muted, dormant bool
-	latest                        string
+	// draft and huddle are lJBI's hasDraftByChannelId and huddleChannelIds
+	// for the row (sidebarKeep)
+	draft, huddle bool
+	latest        string
 }
 
 // keepRow is lJBI's per-row filter for a row in a section with filter f
-// (not in edit mode; Clack has no drafts or huddle state in core).
-// collapsed is the section's state R: a collapsed section keeps its unread
-// rows only, muted ones included.
+// (not in edit mode). collapsed is the section's state R: a collapsed
+// section keeps its unread rows only, muted ones included. In an expanded
+// one a draft keeps the row whatever the filter (a dormant one too), and
+// a huddle keeps it unless it's dormant under "active" or muted and
+// hidden as such.
 func keepRow(r rowState, f string, windowHidden, collapsed bool, p store.Prefs, e sidebarExp) bool {
 	hideDormant := f == filterActive
 	showRead := f == filterAll
@@ -273,16 +281,16 @@ func keepRow(r rowState, f string, windowHidden, collapsed bool, p store.Prefs, 
 	if e.improveMute {
 		hideMuted = !p.ShowMutedOutside
 	}
-	if e.improveMute && r.badge && !collapsed {
+	if e.improveMute && (r.draft || r.badge) && !collapsed {
 		return true
 	}
-	if e.filterDormant && hideDormant && r.dormant {
+	if e.filterDormant && hideDormant && !r.draft && r.dormant {
 		return false
 	}
 	if e.improveMute && hideMuted && r.muted && !collapsed {
 		return false
 	}
-	if showRead && !collapsed {
+	if (showRead || r.huddle || r.draft) && !collapsed {
 		return true
 	}
 	if !e.improveMute && r.badge {
@@ -475,8 +483,66 @@ func tsFloat(ts string) float64 {
 // systemDMUsers are users whose DMs never show in the sidebar.
 var systemDMUsers = map[string]bool{"USEARCH": true, "UCHANNELEXPERT": true}
 
-// dmCandidate reports whether a DM or group DM is a sidebar candidate.
-func (a *App) dmCandidate(id string) bool {
+// slackbotID is Slackbot's user (s8g3 Q$; s0AY isChannelSlackbotIm).
+const slackbotID = "USLACKBOT"
+
+// sidebarKeep is what keeps a conversation lJBI would otherwise drop:
+// hasDraftByChannelId (drafts.go sidebarDrafts) and huddleChannelIds (the
+// huddle UI's, SetHuddleChannels). A closed DM or group DM with either is
+// still a candidate, and either keeps a row an expanded section's filter
+// would hide (keepRow).
+type sidebarKeep struct {
+	draft, huddle map[string]bool
+}
+
+// sidebarKeeps reads both sets once, for one build of the sections.
+func (a *App) sidebarKeeps() sidebarKeep {
+	return sidebarKeep{draft: a.sidebarDrafts(), huddle: a.huddleChannels()}
+}
+
+// SetHuddleChannels hands the sidebar rules Slack's huddleChannelIds
+// (client-boot b0mi jg, through YovN): the conversations whose huddle has
+// someone in it, yours included. The huddle UI keeps that state (the rooms
+// sh_room_* and edge huddles/list fill, which the rows' huddle suffix
+// draws), so core asks f each time it builds the sections, from any
+// goroutine, and the UI asks for new sections when the set changes.
+func (a *App) SetHuddleChannels(f func() map[string]bool) {
+	a.mu.Lock()
+	a.huddleChans = f
+	a.mu.Unlock()
+}
+
+func (a *App) huddleChannels() map[string]bool {
+	a.mu.Lock()
+	f := a.huddleChans
+	a.mu.Unlock()
+	if f == nil {
+		return nil
+	}
+	return f()
+}
+
+// slackbotDMHidden is OpEF AZ (shouldHideSlackbotDmFromSidebar). While
+// Slackbot big mode is on (w7YO Yc, the rail's Slackbot tab) or the
+// sidebar shows the Slackbot link (OpEF gW shouldShowSlackbotLink:
+// slackbot_ia_prototype, Slack AI's Slackbot with its sidebar education,
+// onboarding, sampling, joiner onboarding), Slackbot's own DM leaves the
+// sidebar. lJBI drops it from the candidates and from every default
+// section, so there is one way to Slackbot, not two. The tab and the link
+// both open Slack AI's Slackbot view, which Clack doesn't have (rail.go
+// keeps the Slackbot tab off for the same reason), so slackbotView is
+// false and the DM stays in Apps.
+func (a *App) slackbotDMHidden() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.slackbotView
+}
+
+// dmCandidate reports whether a DM or group DM is a sidebar candidate
+// (lJBI): never an archived one, one with a deleted member or a system
+// user, or Slackbot's while its tab or link shows; then an open one, or a
+// closed one that is unread, has a draft or has a huddle on.
+func (a *App) dmCandidate(id string, keep sidebarKeep) bool {
 	c, ok := a.S.Conv(id)
 	if !ok {
 		return false
@@ -485,14 +551,14 @@ func (a *App) dmCandidate(id string) bool {
 		return false
 	}
 	if c.IsIM {
-		if systemDMUsers[c.User] {
+		if systemDMUsers[c.User] || c.User == slackbotID && a.slackbotDMHidden() {
 			return false
 		}
 		if u, ok := a.S.User(c.User); ok && u.Deleted {
 			return false
 		}
 	}
-	if a.dmOpen(id) {
+	if a.dmOpen(id) || keep.draft[id] || keep.huddle[id] {
 		return true
 	}
 	e, _ := a.S.Count(id)
@@ -500,7 +566,7 @@ func (a *App) dmCandidate(id string) bool {
 }
 
 // applySectionRules filters and sorts every section in place.
-func (a *App) applySectionRules(out []Section, names map[string]string, now time.Time) {
+func (a *App) applySectionRules(out []Section, names map[string]string, keep sidebarKeep, now time.Time) {
 	a.S.RLock()
 	p := a.S.Prefs
 	muted := a.S.Muted
@@ -533,6 +599,7 @@ func (a *App) applySectionRules(out []Section, names map[string]string, now time
 			r := sortRow{id: id, name: names[id], user: c.User, priority: c.Priority, rowState: rowState{
 				unread: cnt.HasUnreads || cnt.MentionCount > 0, badge: cnt.MentionCount > 0,
 				muted: muted[id], dormant: c.Dormant(), latest: cnt.Latest,
+				draft: keep.draft[id], huddle: keep.huddle[id],
 			}}
 			switch {
 			case c.IsIM:
@@ -601,10 +668,7 @@ var sectionRank = map[string]int{"stars": 3, "standard": 2, "user_group": 1}
 func assignSections(ordered []slack.Section, starred []string, temp map[string]bool) map[string]string {
 	starsID, tempID := "", ""
 	in := map[string][]slack.Section{}
-	isStar := map[string]bool{}
-	for _, id := range starred {
-		isStar[id] = true
-	}
+	isStar := starredSet(ordered, starred)
 	for _, s := range ordered {
 		if s.Type == "temporary_channels" && tempID == "" {
 			tempID = s.ID
@@ -612,9 +676,6 @@ func assignSections(ordered []slack.Section, starred []string, temp map[string]b
 		if s.Type == "stars" {
 			if starsID == "" {
 				starsID = s.ID
-			}
-			for _, id := range s.ChannelIDsPage.ChannelIDs {
-				isStar[id] = true
 			}
 			continue
 		}
@@ -657,6 +718,119 @@ func assignSections(ordered []slack.Section, starred []string, temp map[string]b
 		}
 	}
 	return out
+}
+
+// starredSet is every starred conversation (lJBI's starredChannels, vTeF
+// Sd): stars.list's, and those a Starred section lists.
+func starredSet(ordered []slack.Section, starred []string) map[string]bool {
+	out := map[string]bool{}
+	for _, id := range starred {
+		out[id] = true
+	}
+	for _, s := range ordered {
+		if s.Type == "stars" {
+			for _, id := range s.ChannelIDsPage.ChannelIDs {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
+// anySectionConv reports whether a section holds a conversation f accepts:
+// lJBI's hasSharedChannels and userHasStarredChannel, which look at every
+// candidate before the row filter (every candidate has a section).
+func anySectionConv(out []Section, f func(id string) bool) bool {
+	for _, s := range out {
+		for _, id := range s.Channels {
+			if f(id) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// standardSections counts the custom sections (lJBI's
+// standardChannelSectionsCount, m1KW's filter on the ordered list).
+func standardSections(ordered []slack.Section) int {
+	n := 0
+	for _, s := range ordered {
+		if s.Type == "standard" {
+			n++
+		}
+	}
+	return n
+}
+
+// clientLocalSection is oT95 lJ isChannelSectionClientLocal for the
+// sections Clack makes itself: Code channels when the account has none
+// and VIP unreads.
+func clientLocalSection(id string) bool {
+	return id == LocalCodingChannelsID || id == PrioritySectionID
+}
+
+// emptyStarredShown is lJBI's visibleChannelSections test for Starred
+// while no candidate is starred (userHasStarredChannel false; Clack's
+// Starred section has no sidebar entities): hidden in simplified
+// onboarding (m01E l: Clack never is, rail.go) and for frontline members
+// (u+N9 W), else shown, empty, unless the section is client-made (Clack
+// makes none: Starred comes from users.channelSections.list), the viewer
+// has VIPs (U8c3 MY) or there are three custom sections or more.
+func (a *App) emptyStarredShown(ordered []slack.Section) bool {
+	if a.viewerFrontline() {
+		return false
+	}
+	return len(a.VIPs()) == 0 && standardSections(ordered) < 3
+}
+
+// starredBanner is showEmptyStarredSectionBanner (boot-shared m1KW l):
+// Starred's "Drag and drop important stuff here" row (the UI draws it
+// under an open, empty Starred heading outside organize mode and the text
+// filter, as use_home_channel_sidebar_visible_rows does) and the
+// condition for its "New" badge (MGQu). It needs no VIPs (f/hH Gn &&
+// U8c3 RZ), fewer than three custom sections, Starred as the first
+// section Slack's server sent, and no starred conversation that would
+// show: an unarchived one the viewer is in, open if it is a DM or group
+// DM, whose DM member isn't deleted. Slack's other two inputs are always
+// false here: the Activity's own star (vTeF wN, STARRED_ACTIVITY_KEY;
+// Clack's stars are conversations) and the Starred section's sidebar
+// entities (TuXh Tv).
+func (a *App) starredBanner(ordered []slack.Section, isStar map[string]bool) bool {
+	if paidTeam && len(a.VIPs()) > 0 {
+		return false
+	}
+	if standardSections(ordered) >= 3 {
+		return false
+	}
+	first := ""
+	for _, s := range ordered {
+		if !clientLocalSection(s.ID) {
+			first = s.Type
+			break
+		}
+	}
+	if first != "stars" {
+		return false
+	}
+	for id := range isStar {
+		// 6Z4k LO + aK5v jq: only conversations Slack holds; the store's
+		// are the viewer's (JUrK bl), DMs and group DMs included
+		c, ok := a.S.Conv(id)
+		if !ok || c.IsArchived {
+			continue
+		}
+		if (c.IsIM || c.IsMPIM) && !a.dmOpen(id) { // Opi6 nT: a closed one doesn't count
+			continue
+		}
+		if c.IsIM {
+			if u, ok := a.S.User(c.User); ok && u.Deleted { // R+RT o
+				continue
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // sortName is the name Slack sorts a row by (lJBI channelNamesMap): the

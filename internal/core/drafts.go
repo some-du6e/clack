@@ -80,10 +80,66 @@ func (a *App) draftOf(d *draftRaw) Draft {
 
 // draftCache mirrors the server drafts: filled by Drafts (drafts.list),
 // kept current by SaveDraft/DeleteDraft and the draft_* realtime events
-// (other devices). Composers restore from it (DraftFor).
+// (other devices). Composers restore from it (DraftFor), and the sidebar
+// keeps the conversations with one (sidebarDrafts).
 type draftCache struct {
 	byID map[string]Draft
 	gen  uint64
+	// sidebar is sidebarDrafts' conversations when they last changed,
+	// sorted and joined: the sections are rebuilt when they move
+	sidebar string
+}
+
+// sidebarDrafts is Slack's drafts.channelIds (client-boot YFjR), which
+// lJBI reads as hasDraftByChannelId, from the drafts DraftFor reads.
+// Slack keys an attached draft (is_from_composer false) by its first
+// destination (HOmS getDraftClientIdFromServerDraft: "channel" or
+// "channel-thread_ts") and lists the channel for one that isn't a reply;
+// a composer draft is keyed by its client_msg_id and one addressed to
+// user ids alone has no key, so neither counts. A scheduled draft isn't
+// skipped as DraftFor skips it: only a scheduled reply turns into a
+// composer draft there (the scheduled messages Clack and Slack make are
+// composer drafts anyway).
+func (a *App) sidebarDrafts() map[string]bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.sidebarDraftsLocked()
+}
+
+func (a *App) sidebarDraftsLocked() map[string]bool {
+	out := map[string]bool{}
+	for _, d := range a.drafts.byID {
+		if d.FromComposer || d.Channel == "" || d.ThreadTS != "" {
+			continue
+		}
+		out[d.Channel] = true
+	}
+	return out
+}
+
+// sidebarDraftsMovedLocked records sidebarDrafts after a change to the
+// cache (a.mu held) and reports whether the set changed: the caller emits
+// "sidebar_changed" once it has let go of a.mu.
+func (a *App) sidebarDraftsMovedLocked() bool {
+	ids := make([]string, 0, len(a.drafts.byID))
+	for id := range a.sidebarDraftsLocked() {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	k := strings.Join(ids, ",")
+	if k == a.drafts.sidebar {
+		return false
+	}
+	a.drafts.sidebar = k
+	return true
+}
+
+// sidebarDraftsMoved emits "sidebar_changed" when moved: a closed DM with
+// a draft is a candidate, and a draft keeps a row the filter would hide.
+func (a *App) sidebarDraftsMoved(moved bool) {
+	if moved {
+		a.emit(Event{Type: "sidebar_changed"})
+	}
 }
 
 func (a *App) putDraft(d Draft) {
@@ -99,7 +155,9 @@ func (a *App) putDraft(d Draft) {
 	}
 	a.drafts.byID[d.ID] = d
 	a.drafts.gen++
+	moved := a.sidebarDraftsMovedLocked()
 	a.mu.Unlock()
+	a.sidebarDraftsMoved(moved)
 }
 
 // mergeFileInfo fills files known only by id from what was seen before.
@@ -120,11 +178,14 @@ func mergeFileInfo(cur, old []DraftFile) []DraftFile {
 
 func (a *App) dropDraft(id string) {
 	a.mu.Lock()
+	moved := false
 	if _, ok := a.drafts.byID[id]; ok {
 		delete(a.drafts.byID, id)
 		a.drafts.gen++
+		moved = a.sidebarDraftsMovedLocked()
 	}
 	a.mu.Unlock()
+	a.sidebarDraftsMoved(moved)
 }
 
 // DraftsGen changes whenever the known drafts do (cheap; for the UI to
@@ -193,7 +254,9 @@ func (a *App) Drafts(ctx context.Context) ([]Draft, error) {
 	a.mu.Lock()
 	a.drafts.byID = byID
 	a.drafts.gen++
+	moved := a.sidebarDraftsMovedLocked()
 	a.mu.Unlock()
+	a.sidebarDraftsMoved(moved)
 	a.EnsureUsers(ctx, ids)
 	return out, nil
 }

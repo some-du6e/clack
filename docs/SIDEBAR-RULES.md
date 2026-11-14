@@ -15,8 +15,10 @@ Clack ports these rules from Slack's own web client, not from guesses. The imple
 
 - **Candidates** (`gantry-v2-async-client-boot-render` lJBI = `application` XkwK)
   - Channels must be ones the user is a member of, and not archived.
-  - DMs and group DMs must be open (`is_open`, QzJY.isOpen) or unread (s2nj → 0jMB.OM unread count). Slack also keeps them for a draft or a huddle.
-  - Never shown: archived DMs, DMs with deleted users, DMs with `USEARCH`/`UCHANNELEXPERT`.
+  - DMs and group DMs must be open (`is_open`, QzJY.isOpen), unread (s2nj → 0jMB.OM unread count), have a draft (`hasDraftByChannelId`) or have a huddle on (`huddleChannelIds`). Build 2c0d02ca130f, `core.dmCandidate`:
+    - The draft set is Slack's `drafts.channelIds` (client-boot `YFjR`), read from the draft cache that `DraftFor` uses (`drafts.go` `sidebarDrafts`). Slack keys an attached draft (`is_from_composer` false) by its first destination (`HOmS` getDraftClientIdFromServerDraft: `channel` or `channel-thread_ts`) and lists the channel only for a draft that isn't a reply. A composer draft is keyed by its `client_msg_id`, and a draft addressed to user ids alone has no key, so neither keeps a DM. A change to the set emits `sidebar_changed`.
+    - The huddle set is `b0mi` jg (through `YovN`): every active channel whose call has someone in it, yours included. The huddle UI keeps those rooms (`sh_room_*`, edge `huddles/list`). Core reads `huddleui.HuddleChannels` through `SetHuddleChannels` each time it builds the sections, and the sidebar asks for new sections when the set changes (`huddle_wire.go` `sbHuddleSync`). Slack also gates the set on `allow_huddles` (`zq6z` pt); Clack's huddle UI has no such gate, so the rule reads what the rows' huddle suffix draws.
+  - Never shown: archived DMs, DMs with deleted users, DMs with `USEARCH`/`UCHANNELEXPERT`, and Slackbot's DM while Slackbot's tab or sidebar link shows (below).
   - Closed DMs drop out of every section, custom ones included.
 - **Section of a row** (lJBI)
   - Starred conversations always go to Starred.
@@ -35,6 +37,7 @@ Clack ports these rules from Slack's own web client, not from guesses. The imple
   - `active` hides rows whose `properties.is_dormant` is set (QzJY.isDormant; Slack's server sets the flag) when `filter_dormant_channels` is on.
   - `hid` hides read rows. `mentions` keeps only rows with a badge.
   - Under `improve_mute_pref`, muted rows go unless `show_muted_items_outside_sidebar_menus` is on, and a badge always keeps a row.
+  - In an expanded section, a draft keeps any row, a dormant one under `active` or a muted one included. A huddle keeps a read row, but not a dormant one under `active` or a muted one that is hidden.
   - A collapsed section keeps its unread rows, muted ones included.
 - **Sort** (boot-shared O/sM + s0VO, lJBI)
   - The per-section `"sort"` pref wins, else `channel_sort` (`default` = alphabetical with `Intl.Collator("en-US",{numeric:true})`, `recent`, `priority`, `recent_dms`).
@@ -61,7 +64,11 @@ Clack ports these rules from Slack's own web client, not from guesses. The imple
   - An IM goes when its member is deleted, when it is frozen or a pending Slack Connect IM, when the member is `USLACKSECURITY`, `USEARCH` or `UCHANNELEXPERT`, and when it is a bot DM: Slackbot's IM, `USLACK`, or a member with `is_bot` / `is_slackbot` (`is_app_user` alone isn't a bot there), unless the bot is an agent shown with the DMs (`uXg5` isAgentInDmSidebar, by member).
   - A DM without a latest message goes, except the self-DM and while onboarding isn't complete (shouldShowAllDms).
   - Newest first.
-- The sidebar's Direct messages already sends app DMs to Apps (`uSoP` getDefaultSectionType with `qSRE` isAppOrBot). Slack also drops the Slackbot DM from the sidebar while its Slackbot link shows (`OpEF` shouldHideSlackbotDmFromSidebar); Clack has no Slackbot link, so it stays.
+- The sidebar's Direct messages already sends app DMs to Apps (`uSoP` getDefaultSectionType with `qSRE` isAppOrBot).
+- **Slackbot's DM** (`OpEF` AZ shouldHideSlackbotDmFromSidebar, `core.slackbotDMHidden`):
+  - Slack drops the DM while Slackbot big mode is on (`w7YO` Yc, the rail's Slackbot tab) or the sidebar shows the Slackbot link (`OpEF` gW shouldShowSlackbotLink: `slackbot_ia_prototype`, Slack AI's Slackbot with its sidebar education, onboarding, sampling or joiner onboarding, unless `enable_slackbot_view` is false).
+  - lJBI then leaves it out of the candidates, and out of every default section even while it's the open conversation.
+  - The tab and the link both open Slack AI's Slackbot view, which Clack doesn't have (the rail's Slackbot tab is off for the same reason). Clack shows neither, so the DM stays in Apps. Hiding it would leave no way to reach Slackbot. The gate is wired, and tests turn it on. Once Clack has the view, big mode would follow the account's `slackbot_big_mode_ga` (treatment) and its Slack AI Slackbot permission (`ACCESS_SLACK_AI_SLACKBOT`).
 
 ## Canvases and lists (file channels)
 
@@ -72,13 +79,40 @@ Implementation: `internal/core/sidebar_docs.go`, `internal/ui/sidebar_docs.go`. 
 - **Row** (`PZNh`, `m7We` getSidebarDocumentType): a list is a document row; a canvas is one only with `programmable_sidebar`. Other file channels draw as private channels. Icons (`UGOO`): canvas `canvas`; list `lists` with `programmable_sidebar`, else the font's `bullet-list`. A document row's name goes through FormatTextWithEmoji (`Un00`, `G6jU`), so `:shortcodes:` draw as emoji. The name (`W+Ke`) is the canvas's title (a channel canvas: "#channel canvas" / "Canvas for DM with …"); a list's is the channel name.
 - **Click** (`r5i1` openFileChannelFromSidebar, GH on): a list opens the list view; a canvas opens the canvas view with `programmable_sidebar` or `sidebar_ia6`; anything else opens the conversation. The row is selected while its document is the main view (`x6Wj`).
 
+## The Starred section when nothing is starred
+
+Implementation: `core` `emptyStarredShown` and `starredBanner` (`sidebar_rules.go`), `internal/ui/sidebar_starred.go`. Tests: `internal/core/sidebar_keep_test.go`, `internal/ui/sidebar_starred_test.go` over fakeslack `Size.FewSections`, with screenshots from the `sidebar-experiments` workflow. Build 2c0d02ca130f.
+
+- **Shown or not** (lJBI visibleChannelSections, while no candidate is starred and the section has no sidebar entities):
+  - Hidden in simplified onboarding (`m01E` l; Clack never is) and for frontline members (`u+N9` W).
+  - Otherwise shown, empty, unless it is client-made (Clack makes none), the viewer has VIPs (`U8c3` MY), or there are three custom sections or more.
+- **The banner** (boot-shared `m1KW` l showEmptyStarredSectionBanner, `Section.StarredBanner`):
+  - It needs no VIPs, fewer than three custom sections, and Starred as the first section the server sent (Code channels and VIP unreads, made on the client, are skipped).
+  - No starred conversation may be one that would show: unarchived, the viewer in it, open if it's a DM or group DM, its DM member not deleted.
+  - Slack's other inputs are always off here: the Activity's own star (`STARRED_ACTIVITY_KEY`) and Starred's sidebar entities.
+- **The row** (boot-render `FmLP` EmptyStarredSectionRow, type and id `emptyStarredSectionBanner`):
+  - It shows under an open Starred heading with no rows, outside organize mode and the text filter. It is 44px: a 4px spacer, then the 40px banner.
+  - "Drag and drop important stuff here" is 13px regular in the sidebar's colour, 24px from the list's inset with 12px on the right. It wraps at most two lines of 13px × 1.46668 from the top, and the second line ellipsizes.
+- **The "New" badge** (boot-render `MGQu`, `iNkd` SectionMenuNewInternal):
+  - It needs the banner's condition and the megaphone's `generic_new_badge` listing `starred_section_new_badge`.
+  - The Starred heading then carries EducationTag's micro "New" (`7ux/`, style education): 8px after the label, 1px lower, at most 70px. It is hidden when the sidebar is under 220px.
+  - `0Eub` reads the section as collapsed. Clicking the heading toggles it open and ends the hold at once. 500ms later `recordAndClearNewBadge` sends `megaphone.setNotificationAsSeen` dismiss with the badge as its step.
+
+## External connections
+
+Implementation: `core` `sections` (app.go). Tests: `TestConnectSectionPref`, `TestConnectSectionShowsForAnyShared`, and `internal/ui` `TestSidebarConnectPlacement` over fakeslack `Size.ConnectSection`.
+
+- **Where it is.** It is the user's `slack_connect` section from `users.channelSections.list`, wherever the linked list puts it. Slack makes no client-side one.
+- **What goes there** (`uSoP`). With `should_show_connect_section` on, an externally shared conversation (`is_ext_shared`) that no section lists goes to External connections, unless it is starred, temporary, an agent's channel (Code channels) or a Salesforce record's. That check comes before agents, apps, Direct messages and Channels.
+- **Shown or not** (lJBI showConnectSection && hasSharedChannels). It shows while any candidate is externally shared, even when custom sections or Starred hold all of them and it has no rows.
+- **Name** (`p4Ef` getChannelSectionNameIfStatic). It is always "External connections", whatever the server calls it.
+
 ## Not ported
 
-- Drafts and huddles keeping a row visible (core has no such state).
-- Slack Connect section placement.
-- Hiding the Slackbot DM when the Slackbot link shows.
-- Starred section empty states.
 - Programmable-sidebar experiments (`programmable_sidebar*`), which are off for the test account.
+- Starred's banner as a drop target, with its drag looks. Clack's sidebar has no drag and drop.
+- The banner's tooltip, which shows only on a cut label; the label fits two lines at every sidebar width.
+- The hidden-row lists for the heading menus are worked out after the filter. Slack fills them inside it, so a row that is both muted and dormant goes only to Inactive channels there, and a muted row hidden for being read also goes to Muted conversations.
 
 ## Rail (the left tab column)
 

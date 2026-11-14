@@ -116,6 +116,9 @@ func (b *backend) start(a *App) {
 	b.app = a
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	installMemberRead(b.core) // mentions ask for their members as they draw (lazy_users.go)
+	// the sidebar rules keep a closed DM with a huddle on: they read the
+	// huddle UI's rooms (huddle_wire.go sbHuddleSync rebuilds on a change)
+	b.core.SetHuddleChannels(a.huddles().HuddleChannels)
 	ch, unsub := b.core.Subscribe()
 	b.unsub = unsub
 	go func() {
@@ -388,7 +391,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	m.Sections = m.Sections[:0]
 	for _, sec := range s.Sections {
 		ss := sbSection{ID: sec.ID, Name: sec.Name, Type: sec.Type, Emoji: sec.Emoji, EmojiURL: sec.EmojiURL, Collapsed: sec.Collapsed,
-			Filter: sec.Filter, Sort: sec.Sort}
+			Filter: sec.Filter, Sort: sec.Sort, StarredBanner: sec.StarredBanner}
 		known := func(ids []string) []string {
 			var out []string
 			for _, id := range ids {
@@ -446,6 +449,8 @@ func defaultSectionName(t string) string {
 		return "Direct messages"
 	case "apps", "recent_apps":
 		return "Apps"
+	case "slack_connect":
+		return "External connections" // p4Ef's static name
 	}
 	return "Section"
 }

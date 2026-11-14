@@ -256,6 +256,11 @@ type Section struct {
 	// values (all | active | hid | mentions | today | d7 | d30; default |
 	// recent | priority).
 	Filter, Sort string
+	// StarredBanner (Starred only) is showEmptyStarredSectionBanner (m1KW
+	// l, sidebar_rules.go starredBanner): the open section shows "Drag and
+	// drop important stuff here" while it has no rows, and its heading may
+	// carry the "New" badge (starred_section_new_badge).
+	StarredBanner bool
 }
 
 // Count is a conversation's unread state. DMs count every unread message

@@ -60,6 +60,9 @@ func (s *Server) sectionsLocked() []*fakeSection {
 	ids := s.ChannelIDs()
 	per := max(1, len(ids)/6)
 	names := []string{"Starred", "Hack Club", "Projects", "Events", "Random stuff", "Bots"}
+	if s.Size.FewSections {
+		names = names[:3]
+	}
 	for i, n := range names {
 		lo, hi := i*per, min(len(ids), (i+1)*per)
 		if i == len(names)-1 {
@@ -70,16 +73,25 @@ func (s *Server) sectionsLocked() []*fakeSection {
 			typ = "stars"
 		}
 		base := ids[lo:hi:hi]
+		if i == 0 && s.Size.FewSections { // nothing starred: its channels go to Channels
+			base = nil
+		}
 		if i == 2 && s.Size.FileChannels { // a pinned canvas and list (file_channels.go)
 			base = append(append([]string(nil), base...), fileChannelSectionIDs()...)
 		}
 		st.list = append(st.list, &fakeSection{ID: fmt.Sprintf("L0FAKE%02d", i), Name: n, Type: typ, base: base})
 	}
-	st.list = append(st.list, &fakeSection{ID: "L0FAKECH", Type: "channels"},
-		&fakeSection{ID: "L0FAKEDM", Type: "direct_messages"}, &fakeSection{ID: "L0FAKETMP", Type: "temporary_channels"})
+	st.list = append(st.list, &fakeSection{ID: "L0FAKECH", Type: "channels"})
+	if s.Size.ConnectSection {
+		st.list = append(st.list, &fakeSection{ID: ConnectSectionID, Name: "Slack Connect", Type: "slack_connect"})
+	}
+	st.list = append(st.list, &fakeSection{ID: "L0FAKEDM", Type: "direct_messages"}, &fakeSection{ID: "L0FAKETMP", Type: "temporary_channels"})
 	relink(st.list)
 	return st.list
 }
+
+// ConnectSectionID is Size.ConnectSection's slack_connect section.
+const ConnectSectionID = "L0FAKESC"
 
 func relink(l []*fakeSection) {
 	for i, x := range l {

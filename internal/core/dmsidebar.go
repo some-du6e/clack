@@ -10,8 +10,11 @@ import (
 )
 
 // Which DMs and group DMs are sidebar candidates (Slack's rule, see
-// sidebar_rules.go): open ones (is_open), plus closed ones with unread
-// messages. users.conversations lists closed DMs too and carries no is_open;
+// sidebar_rules.go dmCandidate): open ones (is_open), plus closed ones with
+// unread messages, a draft (drafts.go sidebarDrafts) or a huddle on (the
+// huddle UI's rooms, SetHuddleChannels); a draft or a huddle doesn't reopen
+// one, it keeps the row only while it lasts. users.conversations lists
+// closed DMs too and carries no is_open;
 // sidebar.dms does (it agrees with client.userBoot's is_open list). A closed
 // DM also reopens on a new message, im_open / mpim_open, or Clack opening it.
 // Until sidebar.dms answers every DM counts as open (Clack's old behaviour).
