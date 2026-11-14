@@ -11,8 +11,10 @@ import (
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
@@ -56,6 +58,7 @@ type gifPanel struct {
 	list  layout.List
 	rowFn layout.ListElement
 	viewH int
+	clear widget.Clickable // the no-results' Clear Search
 }
 
 type gifResult struct {
@@ -432,121 +435,58 @@ func (p *EmojiPicker) gifSkeleton(gtx layout.Context, th *theme.Theme, vh int) {
 	}
 }
 
-// gifEmpty is the no-results / error state.
+// gifEmpty is the no-results / error state: the GIF picker's no-results
+// (boot-shared xVsA, searched or not), whose Clear Search (the picker's
+// clearSearchResults: the results and the query cleared, the input
+// focused) loads the trending GIFs again.
 func (p *EmojiPicker) gifEmpty(gtx layout.Context, th *theme.Theme, cl *Colors, w, h int) {
 	g := &p.gif
-	msg := nsGifPicker.T("No GIFs to show") // the GIF picker's empty state (DMNm), searched or not
-	if g.err != "" {
-		msg = "Couldn't load GIFs: " + g.err
+	if g.clear.Clicked(gtx) {
+		g.ed.SetText("")
+		g.typed, g.due = "", gtx.Now
+		gtx.Execute(key.FocusCmd{Tag: &g.ed})
+		gtx.Execute(op.InvalidateCmd{})
 	}
-	ig := dp(gtx, 32)
-	maxW := w - 2*dp(gtx, 16)
-	tw := minInt(textW(gtx, th, 15, theme.Regular, msg), maxW)
-	y := h/2 - dp(gtx, 36)
-	at(gtx, image.Pt((w-ig)/2, y), func(gtx layout.Context) layout.Dimensions {
-		return emojiGlyph(gtx, epGlyphSearch, 32, cl.Subtle)
-	})
-	at(gtx, image.Pt((w-tw)/2, y+ig+dp(gtx, 12)), func(gtx layout.Context) layout.Dimensions {
-		return text(loose(gtx, image.Pt(tw+1, dp(gtx, 24))), th, 15, theme.Regular, cl.Fg2, msg)
-	})
+	header, sub := nsGifPicker.T("No GIFs to show"), nsGifPicker.T("You\u2019ve stumped the GIF search. Impressive.")
+	if g.err != "" {
+		header, sub = "Couldn't load GIFs: "+g.err, ""
+	}
+	p.noResults(gtx, th, cl, w, h, header, sub, &g.clear, nsGifPicker.T("Clear Search"))
 }
 
-// epTabIcon draws the "Emoji | GIFs" tab icons (tab 0 Emoji, 1 GIFs) the
-// way Slack's EmojiIcon and GifIcon do (p-emoji_and_gif_picker_custom_icons,
-// client-boot-shared, 2026-11): the active tab, and an inactive one while
-// hovered, shows the coloured icon, a skin-tone disc (#f2c744 by default)
-// with a turned grin or a #9ed6fa tile with a wink, inked in ink (#1d1c1d;
-// the page background for a hovered inactive tab in dark mode). Other
-// inactive tabs show the line icon (a smile, a tile with a folded corner)
-// in ink (--sk_foreground_max_solid).
+// epTabIcon draws the "Emoji | GIFs" tab icons (tab 0 Emoji, 1 GIFs):
+// Slack's EmojiIcon and GifIcon (boot-shared Y5Hl, qS+L;
+// p-emoji_and_gif_picker_custom_icons). The active tab, and an inactive
+// one while hovered, shows the coloured icon: the skin-tone disc (#f2c744
+// by default, EmojiIcon's r 9 circle) under emoji-tab-active, or the
+// #9ed6fa tile (GifIcon's r 3 square) under gif-tab-active, inked in ink
+// (#1d1c1d; the page background for a hovered inactive tab in dark mode).
+// Other inactive tabs show the line icon (emoji's, or gif-tab's tile
+// with a folded corner) in ink (--sk_foreground_max_solid).
 func epTabIcon(gtx layout.Context, tab int, coloured bool, ink color.NRGBA, tone int) layout.Dimensions {
 	px := dp(gtx, 20)
-	e := &epPen{gtx: gtx, s: float32(px) / 20, col: ink}
+	k := float32(px) / 20
 	switch {
 	case tab == 0 && coloured:
-		e.begin()
-		e.circle(10, 10, 9)
-		e.fillC(epToneDisc(tone))
-		e.begin()
-		e.circle(10, 10, 8.25)
-		e.stroke()
-		// the face turned ~18° clockwise: eyes and an open grin
-		e.dot(8.58, 6.88, 1.5)
-		e.dot(13.34, 8.4, 1.5)
-		e.begin()
-		e.move(5.9, 9.75)
-		e.cube(6.05, 9.48, 6.36, 9.33, 6.67, 9.42)
-		e.line(13.43, 11.58)
-		e.cube(13.85, 11.71, 14.04, 12.14, 13.92, 12.52)
-		e.cube(13.6, 13.52, 11.8, 15.78, 8.69, 14.79)
-		e.cube(5.61, 13.81, 5.39, 10.95, 5.72, 9.91)
-		e.close()
-		e.fill()
+		paint.FillShape(gtx.Ops, epToneDisc(tone), clip.Outline{Path: icons.ClipPath(gtx, epEmojiDisc, k)}.Op())
+		icons.Get("emoji-tab-active")(gtx, 20, ink)
 	case tab == 0:
-		e.begin()
-		e.circle(10, 10, 8.25)
-		e.stroke()
-		e.dot(7.5, 8, 1.5)
-		e.dot(12.5, 8, 1.5)
-		e.begin()
-		e.move(6.9, 12)
-		e.cube(7.4, 13.5, 8.71, 14.25, 10.03, 14.25)
-		e.cube(11.34, 14.25, 12.66, 13.5, 13.15, 12)
-		e.stroke()
+		icons.Get("emoji")(gtx, 20, ink)
 	case coloured:
-		e.begin()
-		e.rrect(1.5, 1.5, 18.5, 18.5, 3)
-		e.fillC(rgb(0x9ed6fa))
-		e.begin()
-		e.rrect(1.5, 1.5, 18.5, 18.5, 3)
-		e.stroke()
-		e.dot(12.5, 8.5, 1.5)
-		e.begin()
-		e.move(6.9, 12.5)
-		e.cube(7.4, 14, 8.71, 14.75, 10.03, 14.75)
-		e.cube(11.34, 14.75, 12.66, 14, 13.15, 12.5)
-		e.stroke()
-		e.begin() // winking eye
-		e.move(7.04, 7.54)
-		e.line(9.04, 8.68)
-		e.line(7.04, 9.54)
-		e.strokeW(1)
+		paint.FillShape(gtx.Ops, rgb(0x9ed6fa), clip.Outline{Path: icons.ClipPath(gtx, epGifTile, k)}.Op())
+		icons.Get("gif-tab-active")(gtx, 20, ink)
 	default:
-		// a tile with its top-right corner folded down
-		e.begin()
-		e.move(4.5, 1.63)
-		e.line(12.42, 1.63)
-		e.cube(13.32, 1.63, 14.18, 2.03, 14.75, 2.73)
-		e.line(17.61, 6.23)
-		e.cube(18.05, 6.77, 18.29, 7.44, 18.29, 8.13)
-		e.line(18.29, 15.42)
-		e.cube(18.29, 17.07, 16.95, 18.42, 15.29, 18.42)
-		e.line(4.5, 18.42)
-		e.cube(2.84, 18.42, 1.5, 17.07, 1.5, 15.42)
-		e.line(1.5, 4.63)
-		e.cube(1.5, 2.97, 2.84, 1.63, 4.5, 1.63)
-		e.close()
-		e.stroke()
-		e.begin() // the flap
-		e.move(12.86, 3.6)
-		e.line(12.86, 6.9)
-		e.cube(12.86, 7.53, 13.37, 8.05, 14, 8.05)
-		e.line(16.48, 8.05)
-		e.cube(17.4, 8.05, 17.95, 6.95, 17.4, 6.2)
-		e.line(14.93, 2.91)
-		e.cube(14.25, 2, 12.86, 2.5, 12.86, 3.6)
-		e.close()
-		e.strokeW(1.7)
-		e.dot(7.43, 8.54, 1.48)
-		e.dot(12.36, 8.54, 1.48)
-		e.begin()
-		e.move(6.84, 12.49)
-		e.cube(7.32, 13.97, 8.62, 14.71, 9.92, 14.71)
-		e.cube(11.22, 14.71, 12.52, 13.97, 13.01, 12.49)
-		e.stroke()
+		icons.Get("gif-tab")(gtx, 20, ink)
 	}
 	return layout.Dimensions{Size: image.Pt(px, px)}
 }
+
+// epEmojiDisc and epGifTile are EmojiIcon's skin-tone disc and GifIcon's
+// tile (their 20-unit paths).
+const (
+	epEmojiDisc = "M19 10C19 5.03 14.97 1 10 1C5.03 1 1 5.03 1 10C1 14.97 5.03 19 10 19C14.97 19 19 14.97 19 10Z"
+	epGifTile   = "M4.5 1.5H15.5C17.1569 1.5 18.5 2.84315 18.5 4.5V15.5C18.5 17.1569 17.1569 18.5 15.5 18.5H4.5C2.84315 18.5 1.5 17.1569 1.5 15.5V4.5C1.5 2.84315 2.84315 1.5 4.5 1.5Z"
+)
 
 // epToneDisc is the Emoji tab's disc for the preferred skin tone
 // (p-emoji_and_gif_picker_custom_icons--skin_tone_N; 0 and 1 are yellow).

@@ -110,8 +110,10 @@ func (c *Controller) moreMenu(s *huddle.Session, st huddle.State, w *window) []p
 		items = append(items, popups.MenuItem{Key: "hidingSelf", Label: nsHuddles.T("Hide self-view"), Checked: hide, Do: func() {
 			c.hideSelf.Store(!hide)
 			if !hide { // "user_self_view_is_hidden": Self-view is hidden. Undo
-				text, undo, _ := linkParts("<strong>Self-view is hidden.</strong> <a>Undo</a>") // HuddlesInformationalBanner
-				c.showBannerLink(text, "eye-off", undo, func() { c.hideSelf.Store(false) })
+				// HuddlesInformationalBanner (boot-shared): this banner's
+				// icon is the SvgIcon eye-closed
+				text, undo, _ := linkParts("<strong>Self-view is hidden.</strong> <a>Undo</a>")
+				c.showBannerLink(text, "eye-closed", undo, func() { c.hideSelf.Store(false) })
 			} else {
 				c.showBanner("", "")
 			}

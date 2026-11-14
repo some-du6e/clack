@@ -62,7 +62,6 @@ var slackIcons = map[string]string{
 	"link-external":              "external",
 	"open-in-new":                "external",
 	"open-in-window":             "external",
-	"undo":                       "history-back",
 	"redo":                       "forward",
 	"arrow-left":                 "back",
 	"arrow-right":                "forward",

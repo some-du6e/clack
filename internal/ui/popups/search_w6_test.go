@@ -18,6 +18,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/ui/icons"
 )
 
 func srTestGtx() layout.Context {
@@ -150,19 +151,13 @@ func TestSearchSourcePillLogo(t *testing.T) {
 			t.Errorf("tab %d source pill %+v", tab, s)
 		}
 	}
-	// the logo's eight paths, in its four colours
-	cols := map[uint32]int{}
-	for _, p := range srSlackMarkPaths {
-		cols[p.fill]++
-		if !strings.HasPrefix(p.d, "M") || !strings.HasSuffix(p.d, "Z") {
-			t.Errorf("path %q", p.d)
-		}
-	}
-	if len(cols) != 4 || cols[0xe3066a] != 2 || cols[0x00b3ff] != 2 || cols[0x41b658] != 2 || cols[0xfcc003] != 2 {
-		t.Errorf("logo colours %v", cols)
+	// the logo is the icons package's slack-logo-mark art (its eight
+	// paths and four colours are held to Slack's file there)
+	if !icons.HasArt(srSlackMark) {
+		t.Fatalf("no %q art", srSlackMark)
 	}
 	gtx := srTestGtx()
-	if d := srSlackMarkDraw(gtx, 15); d.Size != image.Pt(15, 15) {
+	if d := icons.Art(gtx, srSlackMark, 15); d.Size != image.Pt(15, 15) {
 		t.Errorf("logo size %v", d.Size)
 	}
 }

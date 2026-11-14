@@ -196,8 +196,10 @@ func (a *App) layoutSidebarFilter(gtx layout.Context, sz image.Point) layout.Dim
 	}
 	pad := max(1, gtx.Dp(1)) + gtx.Dp(4)
 	is := gtx.Dp(16)
+	// SidebarTextFilterInput passes FilterInput svgIcon "quick-switch" at
+	// size small (FilterInputBase draws SvgIcon name at 16)
 	at(gtx, image.Pt(pad, (sz.Y-is)/2), image.Pt(is, is), func(gtx layout.Context) layout.Dimensions {
-		return icons.Get("find")(gtx, 16, c.SidebarTextUnread)
+		return icons.Get("quick-switch")(gtx, 16, c.SidebarTextUnread)
 	})
 	tx := pad + is + gtx.Dp(4)
 	slot := gtx.Dp(20)

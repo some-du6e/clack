@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"gioui.org/app"
-	"gioui.org/f32"
 	"gioui.org/font"
 	"gioui.org/io/system"
 	"gioui.org/op"
@@ -379,10 +378,9 @@ func layoutInviteWindow(gtx C, th *theme.Theme, c *Controller, v inviteView, dec
 					col.A /= 2
 				}
 				s := gtx.Dp(20)
+				// HuddleInviteWindowWithPreviewContent (boot-shared KgK6):
+				// the SvgIcons close, hourglass and headphones at 20
 				at(gtx, image.Pt((bd-s)/2, (bd-s)/2), image.Pt(s, s), func(gtx C) D {
-					if b.icon == "hourglass" {
-						return hourglass(gtx, 20, col)
-					}
 					return icons.Get(b.icon)(gtx, 20, col)
 				})
 				return D{Size: image.Pt(bd, bd)}
@@ -498,38 +496,4 @@ func ellipsize(gtx C, th *theme.Theme, size unit.Sp, wt font.Weight, txt string,
 		}
 	}
 	return "…"
-}
-
-// hourglass is Slack's hourglass glyph (the Be there soon button), drawn
-// here on the icon set's 20×20 grid and 1.5px stroke.
-func hourglass(gtx C, size unit.Dp, col color.NRGBA) D {
-	px := float32(gtx.Dp(size))
-	u := px / 20
-	pt := func(x, y float32) f32.Point { return f32.Pt(x*u, y*u) }
-	var p clip.Path
-	p.Begin(gtx.Ops)
-	p.MoveTo(pt(4.75, 2.75))
-	p.LineTo(pt(15.25, 2.75))
-	p.MoveTo(pt(4.75, 17.25))
-	p.LineTo(pt(15.25, 17.25))
-	p.MoveTo(pt(6.25, 2.75))
-	p.LineTo(pt(6.25, 5.5))
-	p.CubeTo(pt(6.25, 7.6), pt(9.25, 8.9), pt(9.25, 10))
-	p.CubeTo(pt(9.25, 11.1), pt(6.25, 12.4), pt(6.25, 14.5))
-	p.LineTo(pt(6.25, 17.25))
-	p.MoveTo(pt(13.75, 2.75))
-	p.LineTo(pt(13.75, 5.5))
-	p.CubeTo(pt(13.75, 7.6), pt(10.75, 8.9), pt(10.75, 10))
-	p.CubeTo(pt(10.75, 11.1), pt(13.75, 12.4), pt(13.75, 14.5))
-	p.LineTo(pt(13.75, 17.25))
-	paint.FillShape(gtx.Ops, col, clip.Stroke{Path: p.End(), Width: 1.5 * u}.Op())
-	// the sand
-	var q clip.Path
-	q.Begin(gtx.Ops)
-	q.MoveTo(pt(8, 15.75))
-	q.LineTo(pt(12, 15.75))
-	q.LineTo(pt(10, 13.5))
-	q.Close()
-	paint.FillShape(gtx.Ops, col, clip.Outline{Path: q.End()}.Op())
-	return D{Size: image.Pt(int(px), int(px))}
 }
