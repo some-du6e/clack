@@ -361,6 +361,19 @@ static void orderOut(CFTypeRef windowRef) {
 	}
 }
 
+// toggleFullScreenLater leaves (or enters) full screen on the next turn of
+// the run loop: AppKit ignores a toggleFullScreen: from inside a close
+// button's windowShouldClose: (Slack's close handler leaves full screen
+// after it returned).
+static void toggleFullScreenLater(CFTypeRef windowRef) {
+	@autoreleasepool {
+		__weak NSWindow *window = (__bridge NSWindow *)windowRef;
+		dispatch_async(dispatch_get_main_queue(), ^{
+			[window toggleFullScreen:nil];
+		});
+	}
+}
+
 static int isWindowVisible(CFTypeRef windowRef) {
 	@autoreleasepool {
 		NSWindow *window = (__bridge NSWindow *)windowRef;
@@ -674,7 +687,7 @@ func (w *window) hide() bool {
 	if C.getWindowStyleMask(window)&C.NSWindowStyleMaskFullScreen != 0 {
 		w.hideAfterFullscreen = true
 		w.config.Mode = Windowed
-		C.toggleFullScreen(window)
+		C.toggleFullScreenLater(window)
 		return true
 	}
 	w.orderOut(window)

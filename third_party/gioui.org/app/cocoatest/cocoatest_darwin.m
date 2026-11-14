@@ -193,6 +193,24 @@ int cocoatest_key_equivalent(const char *key, int mods) {
 	}
 }
 
+static __weak NSView *trackedView;
+static __weak NSWindow *trackedWindow;
+
+void cocoatest_track(uintptr_t viewRef) {
+	@autoreleasepool {
+		NSView *view = (__bridge NSView *)(void *)viewRef;
+		trackedView = view;
+		trackedWindow = view.window;
+	}
+}
+
+void cocoatest_alive(int *view, int *window) {
+	@autoreleasepool {
+		*view = trackedView != nil;
+		*window = trackedWindow != nil;
+	}
+}
+
 static void runMain(void *h) {
 	cocoatestRun((uintptr_t)h);
 }

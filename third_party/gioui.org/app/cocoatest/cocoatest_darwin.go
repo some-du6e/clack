@@ -39,6 +39,8 @@ int cocoatest_reopen(int visible, int *handled);
 void cocoatest_post_did_become_active(void);
 int cocoatest_key_equivalent(const char *key, int mods);
 void cocoatest_on_main(uintptr_t h);
+void cocoatest_track(uintptr_t view);
+void cocoatest_alive(int *view, int *window);
 */
 import "C"
 
@@ -197,6 +199,18 @@ func KeyEquivalent(key string, mods int) bool {
 	cs := C.CString(key)
 	defer C.free(unsafe.Pointer(cs))
 	return C.cocoatest_key_equivalent(cs, C.int(mods)) != 0
+}
+
+// Track keeps weak references to view and its window, for Alive. Main
+// thread.
+func Track(view uintptr) { C.cocoatest_track(C.uintptr_t(view)) }
+
+// Alive reports whether the view and the window Track last saw still
+// exist (their weak references aren't nil). Main thread.
+func Alive() (view, window bool) {
+	var v, w C.int
+	C.cocoatest_alive(&v, &w)
+	return v != 0, w != 0
 }
 
 // OnMain runs f on the main thread from the main dispatch queue (the run

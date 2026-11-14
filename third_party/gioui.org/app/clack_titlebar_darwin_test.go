@@ -62,8 +62,15 @@ type macTestWindow struct {
 // window from inside the event, as Clack's runFromTray does.
 func newMacTestWindow(t *testing.T, abort func() bool, opts ...Option) *macTestWindow {
 	t.Helper()
+	return newMacTestWindowWith(t, abort, append([]Option{HiddenTitleBar(true), TrafficLightPosition(macTrafficX, macTrY)}, opts...)...)
+}
+
+// newMacTestWindowWith opens the test window with just opts (a title bar
+// unless they hide it).
+func newMacTestWindowWith(t *testing.T, abort func() bool, opts ...Option) *macTestWindow {
+	t.Helper()
 	h := &macTestWindow{w: new(Window), closing: make(chan *ClosingEvent, 4), done: make(chan struct{})}
-	h.w.Option(append([]Option{Title("Clack title bar test"), Size(macTestW, macTestH), HiddenTitleBar(true), TrafficLightPosition(macTrafficX, macTrY)}, opts...)...)
+	h.w.Option(append([]Option{Title("Clack title bar test"), Size(macTestW, macTestH)}, opts...)...)
 	views := make(chan uintptr, 1)
 	widget := new(int)
 	go func() {
@@ -426,6 +433,54 @@ func TestHideMac(t *testing.T) {
 	hidden()
 	abort.Store(false)
 	h.destroy(t) // Quit while hidden: performClose: on an ordered-out window
+}
+
+// A close that isn't aborted ends the window with a DestroyEvent, with a
+// title bar or without, whether or not the test read the window first;
+// the log says whether the view and the NSWindow are gone a moment later
+// (Gio's DestroyEvent comes from the view's dealloc, and the runner kept
+// closed windows: windowWillClose: lets the view go).
+func TestMacCloseDestroys(t *testing.T) {
+	if !macWindowTestsEnabled() {
+		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
+	}
+	for _, c := range []struct {
+		name string
+		read bool
+		opts []Option
+	}{
+		{"plain", false, nil},
+		{"plain, read first", true, nil},
+		{"hidden title bar", true, []Option{HiddenTitleBar(true)}},
+		{"hidden title bar and traffic lights", true, []Option{HiddenTitleBar(true), TrafficLightPosition(macTrafficX, macTrY)}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newMacTestWindowWith(t, func() bool { return false }, c.opts...)
+			cocoatest.OnMain(func() { cocoatest.Track(h.view) })
+			if c.read {
+				h.state()
+			}
+			cocoatest.OnMain(func() { cocoatest.Press(h.view, cocoatest.Close) })
+			select {
+			case <-h.closing:
+			case <-time.After(10 * time.Second):
+				t.Fatal("no ClosingEvent from the close button")
+			}
+			destroyed := false
+			select {
+			case <-h.done:
+				destroyed = true
+			case <-time.After(5 * time.Second):
+			}
+			time.Sleep(500 * time.Millisecond)
+			var view, window bool
+			cocoatest.OnMain(func() { view, window = cocoatest.Alive() })
+			t.Logf("DestroyEvent %v; then the view alive %v, the NSWindow alive %v", destroyed, view, window)
+			if !destroyed {
+				t.Error("a close that wasn't aborted brought no DestroyEvent")
+			}
+		})
+	}
 }
 
 // A Hide in full screen leaves full screen and orders the window out once

@@ -142,6 +142,19 @@ void gio_closeWindow(CFTypeRef windowRef) {
 	GioView *view = (GioView *)window.contentView;
 	return gio_onCloseRequest(view.handle) != 0;
 }
+// Clack patch (CLACK_PATCHES.md §23): Gio's DestroyEvent comes from the
+// view's dealloc, which waited for the window's: on the macOS 26 runner a
+// closed window outlived its close (an aborted close before, or not, a
+// hidden title bar or not), so the view never went and the program never
+// heard. The closing window lets go of its view now; once nothing else
+// holds it, it deallocs and Gio sends DestroyEvent, as Chromium's
+// windowWillClose: tears its widget down without waiting for AppKit.
+- (void)windowWillClose:(NSNotification *)notification {
+	NSWindow *window = (NSWindow *)[notification object];
+	if ([window.contentView isKindOfClass:[GioView class]]) {
+		[window setContentView:nil];
+	}
+}
 // Clack patch (CLACK_PATCHES.md §23): AppKit lays the title bar out again
 // after these and moves the buttons back (Electron's
 // ElectronNSWindowDelegate redraws them after each).
