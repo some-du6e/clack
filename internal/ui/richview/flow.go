@@ -179,6 +179,10 @@ type target struct {
 	// cardless: a channel target that opens no hover card (a work
 	// object's channel field)
 	cardless bool
+	// urlCard: a link in message text (rich text's Link, mrkdwn's
+	// renderLink), BaseMrkdwnLink's renderDefaultLink: its hover is
+	// UrlHoverCard under truncated_url_hover_card (View.isURLCard)
+	urlCard bool
 	// tab: a channel-tab slug's tab id (a tLink whose id is the channel):
 	// the slug opens the channel hover card when TabSlugCard says Slack's
 	// would
@@ -593,7 +597,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, att: l.expandAt, underline: true})
 			} else {
-				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true})
+				tg = l.d.addTarget(target{kind: tLink, url: sp.URL, underline: true, website: true, urlCard: true})
 			}
 			if st&richtext.Code == 0 {
 				col = p.Link

@@ -777,21 +777,29 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	a.tabDragEvents(gtx, ch, canEdit) // tab_drag.go: last frame's tab rects
 	drag := a.tabDrag()
 	rects := make([]tabRect, 0, len(all))
-	drawn := map[string]func(gtx layout.Context){} // each tab's content, for the drag preview
-	for i, t := range all {
-		i, t := i, t
+	ws := make([]int, len(all))
+	lws := make([]int, len(all))
+	for i := range all {
+		t := &all[i]
 		t.label = i18n.T("tabbed-channel", t.label) // the standard tabs are Slack's; a bookmark's own name misses and stays
 		if viewNames {
-			t = withListViewName(t)
+			*t = withListViewName(*t)
 		}
-		lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
+		lws[i] = a.th.Measure(gtx, 13, theme.Bold, t.label)
 		if t.spans != nil {
-			lw = a.spansWidth(gtx, t.spans, 13)
+			lws[i] = a.spansWidth(gtx, t.spans, 13)
 		}
-		w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lw + gtx.Dp(8)
-		if x+w > sz.X-gtx.Dp(48) {
+		ws[i] = gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lws[i] + gtx.Dp(8)
+	}
+	// measureVisibleTabs: all of them, or those 80px clear of the bar's
+	// end, then the More tab (channel_tabs_more.go)
+	last := tabsLastVisible(ws, x, gtx.Dp(4), sz.X-gtx.Dp(48), gtx.Dp(tabsOverflowReserve))
+	for i, t := range all {
+		i, t := i, t
+		if i > last {
 			break
 		}
+		lw, w := lws[i], ws[i]
 		btn := a.clicks.get("tab." + ch + "." + t.key)
 		id := strings.TrimPrefix(t.key, "tab:")
 		if t.key == "messages" {
@@ -799,7 +807,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		}
 		rects = append(rects, tabRect{key: t.key, id: id, typ: t.typ, label: t.label, fileID: t.fileID, folder: t.folder, idx: i,
 			r: image.Rect(x, 0, x+w, sz.Y), drag: canEdit && t.key != "messages" && core.DraggableTab(id, t.typ)})
-		source := drag.dragging && drag.press >= 0 && drag.press < len(drag.rects) && drag.rects[drag.press].key == t.key
+		source := drag.dragging && drag.src.key == t.key
 		var fade paint.OpacityStack
 		if source {
 			fade = paint.PushOpacity(gtx.Ops, .5) // channel_tab_is_dragging
@@ -820,7 +828,6 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		if source {
 			fade.Pop()
 		}
-		drawn[t.key] = func(gtx layout.Context) { a.tabContent(gtx, t, lw, sz.Y, false) }
 		if clicked(btn) && !drag.swallow { // a drop isn't a click
 			a.selectChannelTab(ch, i, t)
 		}
@@ -830,12 +837,19 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 	if n := len(rects); n > 0 {
 		rects[n-1].last = true
 	}
-	drag.rects = rects
-	a.tabDragOverlay(gtx, sz, func(gtx layout.Context, t tabRect) {
-		if f := drawn[t.key]; f != nil {
-			f(gtx)
+	drag.rects, drag.all, drag.last, drag.cur = rects, all, last, cur
+	drag.more = image.Rectangle{}
+	if last < len(all)-1 {
+		mr := image.Rect(x, 0, x+a.tabsMoreWidth(gtx), sz.Y)
+		drag.more = mr
+		if drag.overMore() { // draggable_overflow_menu_hovered: base-ter, radius 4 4 1 1
+			a.fillDropTarget(gtx, mr, 0xff)
 		}
-	})
+		x += a.layoutTabsMore(gtx, ch, all, last, cur, x, sz) + gtx.Dp(4)
+	} else {
+		a.tabsMoreFor(ch).hidden = nil
+	}
+	a.tabDragOverlay(gtx, sz)
 	if ci := a.model().conv(ch); ci != nil && ci.Preview {
 		return layout.Dimensions{Size: sz} // Slack: no "+" (add a tab) for a channel you aren't in
 	}

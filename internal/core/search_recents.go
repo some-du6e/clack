@@ -146,7 +146,8 @@ type recentsState struct {
 	visits         []RecentNavigation
 	visitsLoaded   bool
 	visitsChecksum string
-	loadTried      bool // a load was claimed with recents read on (claimRecentsLoad)
+	visitsAt       time.Time // the last visits.list answer (RefreshHistoryVisits)
+	loadTried      bool      // a load was claimed with recents read on (claimRecentsLoad)
 
 	// search.autocomplete's QueryHistoryCache (CZjT)
 	hist   []QueryHistoryItem
@@ -486,6 +487,7 @@ func (a *App) LoadVisits(ctx context.Context) error {
 	}
 	a.rec.mu.Lock()
 	defer a.rec.mu.Unlock()
+	a.rec.visitsAt = a.rec.clock()
 	if sum != "" && r.Checksum == sum {
 		return nil
 	}
