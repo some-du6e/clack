@@ -592,6 +592,10 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 				l.addPad(l.dpf(4), -1, k)
 			}
 		case richtext.Link:
+			if sp.Truncated && sp.URL != expandURL {
+				l.truncatedLink(sp, fs, k, pt) // msgcard.go
+				continue
+			}
 			if sp.URL == expandURL && l.expandKey != "" { // section Show more / Show less (truncate.go)
 				tg = l.d.addTarget(target{kind: tExpand, id: l.expandKey, underline: true})
 			} else if sp.URL == expandURL { // attachment Show more / Show less (truncate.go)

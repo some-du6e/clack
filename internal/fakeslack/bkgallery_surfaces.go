@@ -406,6 +406,9 @@ func surfAPI(s *Server, method string, f url.Values) (any, bool) {
 		for _, u := range urls {
 			m := surfPermaRe.FindStringSubmatch(u)
 			if m == nil {
+				// any other link: a link slug, labelled with the server's
+				// short form of the URL (slug_display.go)
+				slugs[u] = map[string]any{"slug_type": "link", "display_url": slugDisplayURL(u)}
 				continue
 			}
 			if m[2] == "" {

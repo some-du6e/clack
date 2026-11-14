@@ -102,6 +102,8 @@ func TestEditRoundTripEveryElement(t *testing.T) {
 			`{"type":"text","text":"quoted "},` + erSlugEl + `]}]}]`},
 		{"code block", `[{"type":"rich_text","elements":[{"type":"rich_text_preformatted","elements":[` +
 			`{"type":"text","text":"go vet ./...\nok"}],"border":0}]}]`},
+		{"truncated link", `[{"type":"rich_text","elements":[{"type":"rich_text_section","elements":[` +
+			`{"type":"text","text":"the guide "},` + lsTruncatedEl() + `,{"type":"text","text":" (pasted)"}]}]}]`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := erMessage(tc.blocks)

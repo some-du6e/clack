@@ -88,6 +88,13 @@ type Span struct {
 	// and the view draws HiddenUserIconAndName (q9bm), the user-hide icon
 	// before it on a chip.
 	Hidden bool
+
+	// Truncated (Link): a rich_text link with truncated: true, a link
+	// slug's label (Slack's composer sends a pasted link that way, its
+	// text the server's short form of the URL). Slack's Link (+W5o) draws
+	// it as a RichTextSlug (Pc7Q) chip with the "link" icon around the
+	// link, data-qa rich_text_truncated_link_element.
+	Truncated bool
 }
 
 // BlockKind says what a block is.

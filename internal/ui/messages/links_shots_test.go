@@ -10,7 +10,11 @@ package messages
 // shows the member's display name and picture (MemberLink,
 // ConnectedBaseAvatar), not author_name / author_icon, and nothing in it
 // is underlined, also with Accessibility > "Underline links to
-// websites", which underlines the message's link only. With
+// websites", which underlines the message's link only; then a pasted
+// link as Slack's composer sends it (a link slug: the link with the
+// server's short form of the URL as its text and truncated: true), which
+// Slack's Link (+W5o) draws as a RichTextSlug chip with the "link" icon
+// (Karim, 2026-11-13: "like the message pill thingy"). With
 // MESSAGES_AUDIT_SHOTS_DIR set (the messages-audit-shots workflow) each
 // state is saved, light and dark.
 
@@ -40,9 +44,22 @@ func linksPermalink(ts string) string {
 	return "https://fakeclub.slack.com/archives/" + tShots + "/p" + strings.ReplaceAll(ts, ".", "")
 }
 
-// linksMessages adds dee and three messages after the fixture's: dee's
-// note (lk1), ana's two slugs (lk2: lk1 and the thread root) and ben's
-// link with the unfurl of lk1 (lk3). It returns their ts.
+// linksTruncatedURL is a 300-character pasted link and linksTruncatedText
+// chat.slugifyUrl's display_url for it (a live answer, 2026-11-14).
+var linksTruncatedURL = func() string {
+	b := []byte("https://example.com/docs/guides/")
+	for i := 0; len(b) < 300; i++ {
+		b = append(b, "abcdefghij"[i%10])
+	}
+	return string(b)
+}()
+
+const linksTruncatedText = "example.com/docs/…/abcdefghijab…"
+
+// linksMessages adds dee and four messages after the fixture's: dee's
+// note (lk1), ana's two slugs (lk2: lk1 and the thread root), ben's link
+// with the unfurl of lk1 (lk3) and ana's pasted link, a truncated link
+// (lk4). It returns their ts.
 func linksMessages(t *testing.T, s *store.Store, root string) map[string]string {
 	t.Helper()
 	s.PutUsers([]slack.User{{ID: linksDee, Name: "dee", RealName: "​",
@@ -51,7 +68,7 @@ func linksMessages(t *testing.T, s *store.Store, root string) map[string]string 
 	at := func(h, m int) string {
 		return fmt.Sprintf("%d.000100", time.Date(day.Year(), day.Month(), day.Day(), h, m, 0, 0, time.Local).Unix())
 	}
-	ts := map[string]string{"lk1": at(9, 54), "lk2": at(9, 55), "lk3": at(9, 56)}
+	ts := map[string]string{"lk1": at(9, 54), "lk2": at(9, 55), "lk3": at(9, 56), "lk4": at(9, 57)}
 	u1, u2 := linksPermalink(ts["lk1"]), linksPermalink(root)
 	raw := []string{
 		`{"type":"message","ts":"` + ts["lk1"] + `","user":"` + linksDee + `","text":"Shipping notes are up for 4.2",
@@ -70,6 +87,11 @@ func linksMessages(t *testing.T, s *store.Store, root string) map[string]string 
 			"channel_id":"` + tShots + `","from_url":"` + u1 + `","original_url":"` + u1 + `","ts":"` + ts["lk1"] + `",
 			"fallback":"[9:54 AM] : Shipping notes are up for 4.2","footer":"Slack Conversation","mrkdwn_in":["text"],"text":"Shipping notes are up for 4.2",
 			"blocks":[{"type":"rich_text","block_id":"b","elements":[{"type":"rich_text_section","elements":[{"type":"text","text":"Shipping notes are up for 4.2"}]}]}]}]}`,
+		`{"type":"message","ts":"` + ts["lk4"] + `","user":"UANA00001","text":"The checklist: <` + linksTruncatedURL + `|` + linksTruncatedText + `> before the train",
+			"blocks":[{"type":"rich_text","block_id":"r","elements":[{"type":"rich_text_section","elements":[
+			{"type":"text","text":"The checklist: "},
+			{"type":"link","url":"` + linksTruncatedURL + `","text":"` + linksTruncatedText + `","truncated":true},
+			{"type":"text","text":" before the train"}]}]}]}`,
 	}
 	var msgs []slack.Message
 	if tl := s.Timeline(tShots); tl != nil {
@@ -111,7 +133,7 @@ func TestLinksShots(t *testing.T) {
 			f := func() { shotFrame(v, th, w, h, ops) }
 			loadList(v, f)
 			until(t, 5*time.Second, "the link messages", f, func() bool {
-				return v.s.rows[ts["lk3"]] != nil && itemHeight(v.s, ts["lk3"]) > 0 && v.s.rows[ts["lk1"]] != nil
+				return v.s.rows[ts["lk4"]] != nil && itemHeight(v.s, ts["lk4"]) > 0 && v.s.rows[ts["lk3"]] != nil && v.s.rows[ts["lk1"]] != nil
 			})
 			for i := 0; i < 60; i++ { // pictures
 				f()
@@ -139,6 +161,18 @@ func TestLinksShots(t *testing.T) {
 			if strings.Join(labels, "|") != "dee in #release|ana in #release" {
 				t.Errorf("%s: slugs %q", name, labels)
 			}
+			// the pasted link: a truncated Link span, its text as sent
+			var chip *richtext.Span
+			for _, b := range v.s.rows[ts["lk4"]].m.Doc.Blocks {
+				for i := range b.Spans {
+					if b.Spans[i].Kind == richtext.Link && b.Spans[i].Truncated {
+						chip = &b.Spans[i]
+					}
+				}
+			}
+			if chip == nil || chip.Text != linksTruncatedText || chip.URL != linksTruncatedURL {
+				t.Errorf("%s: the truncated link %+v", name, chip)
+			}
 			img := pixeltest.Render(t, w, h, ops)
 			y0, y1 := -1, 0
 			for i, it := range v.s.items {
@@ -148,7 +182,7 @@ func TestLinksShots(t *testing.T) {
 				switch it.key {
 				case ts["lk1"]:
 					y0 = v.s.pos[i]
-				case ts["lk3"]:
+				case ts["lk4"]:
 					y1 = v.s.pos[i] + v.s.heights[i]
 				}
 			}

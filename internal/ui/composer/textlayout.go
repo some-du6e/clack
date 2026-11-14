@@ -664,7 +664,7 @@ func (l *tlLayout) atomItem(a Attr, q int, k tlKey) tlItem {
 	it.shape = l.cache.get(l.sh, tlShapeKey{s: label, font: lato, ppem: m.ppem, loc: k.loc})
 	it.padL = fixed.I(m.pillPadX)
 	it.w = it.shape.width + 2*it.padL
-	if at.Kind == AtomMessage { // the slug's "message" icon, 4px before the label
+	if at.Kind == AtomMessage || at.Kind == AtomLink { // the slug's icon ("message", "link"), 4px before the label
 		it.icon = m.ppem + fixed.I(max(1, m.pillPadX*2))
 		it.w += it.icon
 	}

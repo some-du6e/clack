@@ -77,6 +77,12 @@ func (d *Doc) Delta() map[string]any {
 			i++
 			continue
 		}
+		if a.Atom != nil && a.Atom.Kind == AtomLink {
+			// a link slug op: the label, slackslug the link
+			ops = append(ops, map[string]any{"insert": a.Atom.Text, "attributes": map[string]any{"slackslug": linkSlugDelta(a.Atom)}})
+			i++
+			continue
+		}
 		if a.Atom != nil {
 			ops = append(ops, map[string]any{"insert": deltaEmbed(a.Atom)})
 			i++

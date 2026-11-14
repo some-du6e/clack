@@ -24,6 +24,7 @@ type bk struct {
 	Text        json.RawMessage `json:"text"` // string (rich_text) or text object
 	Style       json.RawMessage `json:"style"`
 	URL         string          `json:"url"`
+	Truncated   bool            `json:"truncated"` // link: a link slug's label (Slack draws a chip)
 	UserID      string          `json:"user_id"`
 	ChannelID   string          `json:"channel_id"`
 	TabID       string          `json:"tab_id"`     // channel: a channel-tab slug
@@ -765,7 +766,11 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 			if unlink {
 				out = append(out, Span{Kind: Text, Text: label})
 			} else {
-				out = append(out, linkSpan(e.URL, label))
+				sp := linkSpan(e.URL, label)
+				// +W5o Link: a truncated link's text is drawn as it is
+				// (getLinkContents), inside RichTextSlug's chip
+				sp.Truncated = e.Truncated && sp.Kind == Link
+				out = append(out, sp)
 			}
 		case "user":
 			out = append(out, userSpan(c.r, e.UserID, ""))
