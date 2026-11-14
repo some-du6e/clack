@@ -277,7 +277,15 @@ func TestDetailsSettingsSections(t *testing.T) {
 	if st, ok := e.d.guestAccessState(); !ok || st.CanSet || st.Reason != "scg_present" {
 		t.Errorf("guest access state %+v %v, want read-only (scg_present)", st, ok)
 	}
-	if c := srv.seen("permissions.info"); len(c) == 0 || c[0].form.Get("channel_id") != "C1" || !strings.Contains(c[0].form.Get("permissions"), "EDIT_CHANNEL_AI_EXCLUSIONS") {
+	// the channel's permissions.info (the team's CREATE_PRIVATE_CHANNEL,
+	// details_managing.go, is its own call)
+	var chPerms []cdTestCall
+	for _, c := range srv.seen("permissions.info") {
+		if c.form.Has("channel_id") {
+			chPerms = append(chPerms, c)
+		}
+	}
+	if c := chPerms; len(c) == 0 || c[0].form.Get("channel_id") != "C1" || !strings.Contains(c[0].form.Get("permissions"), "EDIT_CHANNEL_AI_EXCLUSIONS") {
 		t.Errorf("permissions.info form %v", c)
 	}
 

@@ -17,12 +17,17 @@ const ExpListsSubTasks = "lists_sub_tasks"
 // wave6Reads join experimentReads (TestExperimentReadsListed); their
 // defaults are the account's groups (TestDefaultExperimentsMatchAccount).
 var wave6Reads = map[string][]string{
-	ExpListsSubTasks: on,
+	ExpListsSubTasks: on, ExpInviteMulti: on,
 }
 
 var wave6Defaults = map[string]string{
-	ExpListsSubTasks: "on",
+	ExpListsSubTasks: "on", ExpInviteMulti: "on",
 }
+
+// ExpInviteMulti is invite_slash_command_multi: 7R+y w (with
+// invite_slash_command_in_threads), read by the local /invite
+// (invite_command.go).
+const ExpInviteMulti = "invite_slash_command_multi"
 
 func init() {
 	for name, groups := range wave6Reads {

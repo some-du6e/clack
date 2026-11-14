@@ -113,7 +113,7 @@ func (a *App) inviteCommand(ctx context.Context, o CommandOpts, cmd string) (Com
 		}
 	}
 	inThreads := a.experiment("invite_slash_command_in_threads") == "on"
-	multi := len(ids) > 1 && inThreads && a.experiment("invite_slash_command_multi") == "on"
+	multi := len(ids) > 1 && inThreads && a.experiment(ExpInviteMulti) == "on"
 	el := ids
 	if inThreads && !multi && len(el) > 1 {
 		el = el[:1]
