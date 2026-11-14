@@ -41,6 +41,7 @@ int cocoatest_key_equivalent(const char *key, int mods);
 void cocoatest_on_main(uintptr_t h);
 void cocoatest_track(uintptr_t view);
 void cocoatest_alive(int *view, int *window);
+void cocoatest_toggle_full_screen(uintptr_t view);
 */
 import "C"
 
@@ -200,6 +201,10 @@ func KeyEquivalent(key string, mods int) bool {
 	defer C.free(unsafe.Pointer(cs))
 	return C.cocoatest_key_equivalent(cs, C.int(mods)) != 0
 }
+
+// ToggleFullScreen sends the window toggleFullScreen:, as the green
+// button and View > Toggle Full Screen do. Main thread.
+func ToggleFullScreen(view uintptr) { C.cocoatest_toggle_full_screen(C.uintptr_t(view)) }
 
 // Track keeps weak references to view and its window, for Alive. Main
 // thread.

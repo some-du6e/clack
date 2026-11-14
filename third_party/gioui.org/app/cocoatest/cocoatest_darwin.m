@@ -193,6 +193,12 @@ int cocoatest_key_equivalent(const char *key, int mods) {
 	}
 }
 
+void cocoatest_toggle_full_screen(uintptr_t view) {
+	@autoreleasepool {
+		[windowOf(view) toggleFullScreen:nil];
+	}
+}
+
 static __weak NSView *trackedView;
 static __weak NSWindow *trackedWindow;
 

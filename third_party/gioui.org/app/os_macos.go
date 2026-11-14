@@ -361,16 +361,13 @@ static void orderOut(CFTypeRef windowRef) {
 	}
 }
 
-// toggleFullScreenLater leaves (or enters) full screen on the next turn of
-// the run loop: AppKit ignores a toggleFullScreen: from inside a close
-// button's windowShouldClose: (Slack's close handler leaves full screen
-// after it returned).
+// toggleFullScreenLater leaves (or enters) full screen once the run loop
+// is back in its default mode: AppKit ignores a toggleFullScreen: from
+// inside a close button's windowShouldClose: (and its click's tracking).
 static void toggleFullScreenLater(CFTypeRef windowRef) {
 	@autoreleasepool {
-		__weak NSWindow *window = (__bridge NSWindow *)windowRef;
-		dispatch_async(dispatch_get_main_queue(), ^{
-			[window toggleFullScreen:nil];
-		});
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		[window performSelector:@selector(toggleFullScreen:) withObject:nil afterDelay:0];
 	}
 }
 

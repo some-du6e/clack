@@ -486,8 +486,10 @@ func TestMacCloseDestroys(t *testing.T) {
 // A Hide in full screen leaves full screen and orders the window out once
 // it has (Slack awaits leave-full-screen); full screen shows AppKit's own
 // title bar with the title, and the hidden title bar and the buttons'
-// place come back after it. Skipped when the runner can't enter full
-// screen.
+// place come back after it. In stages, each logged: AppKit's own
+// toggleFullScreen: from the main queue (the control: skipped when the
+// runner can't enter or leave full screen), Hide outside a close, then
+// the close button's Hide (the case that counts).
 func TestHideLeavesFullscreenMac(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
@@ -499,29 +501,79 @@ func TestHideLeavesFullscreenMac(t *testing.T) {
 		abort.Store(false)
 		h.destroy(t)
 	}()
-	h.makeKey(t)
-	h.w.Option(Fullscreen.Option())
-	deadline := time.Now().Add(20 * time.Second)
-	for !h.state().FullScreen {
-		if time.Now().After(deadline) {
-			t.Skip("the runner didn't enter full screen in 20 s")
+	// enter puts the window in full screen and waits for AppKit to finish
+	// (windowDidEnterFullScreen: shows the title)
+	enter := func(stage string) bool {
+		t.Helper()
+		h.makeKey(t)
+		h.w.Option(Fullscreen.Option())
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			if s := h.state(); s.FullScreen && !s.TitleHidden {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Logf("%s: not in full screen after 20 s (%+v)", stage, h.state())
+				return false
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(time.Second) // the animation's end
+		return true
 	}
-	time.Sleep(2 * time.Second) // the animation
+	// left waits up to 15 s for the window out of full screen, ordered out
+	// when hidden is set, and logs how it went
+	left := func(stage string, hidden bool) bool {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Second)
+		last := time.Now()
+		for {
+			s := h.state()
+			if !s.FullScreen && s.Visible != hidden {
+				t.Logf("%s: out of full screen (visible %v)", stage, s.Visible)
+				return true
+			}
+			if time.Now().After(deadline) {
+				t.Logf("%s: still full screen %v, visible %v after 15 s", stage, s.FullScreen, s.Visible)
+				return false
+			}
+			if time.Since(last) > 3*time.Second {
+				last = time.Now()
+				t.Logf("%s: full screen %v visible %v title hidden %v", stage, s.FullScreen, s.Visible, s.TitleHidden)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	if !enter("control") {
+		t.Skip("the runner didn't enter full screen")
+	}
 	if s := h.state(); s.TitleHidden || s.TitlebarTransparent {
 		t.Errorf("full screen: title hidden %v, transparent title bar %v; want AppKit's own title bar", s.TitleHidden, s.TitlebarTransparent)
 	}
-	h.closeWindow(t)
-	last := time.Now()
-	macWaitUntil(t, "out of full screen and ordered out", func() bool {
-		s := h.state()
-		if time.Since(last) > time.Second {
-			last = time.Now()
-			t.Logf("leaving: full screen %v visible %v title hidden %v", s.FullScreen, s.Visible, s.TitleHidden)
+	cocoatest.OnMain(func() { cocoatest.ToggleFullScreen(h.view) })
+	if !left("control, toggleFullScreen: from the main queue", false) {
+		t.Skip("the runner doesn't leave full screen for toggleFullScreen: either")
+	}
+	time.Sleep(time.Second)
+
+	if enter("Hide outside a close") {
+		h.w.Hide()
+		if !left("Hide outside a close", true) {
+			t.Error("Hide in full screen (outside a close) didn't leave full screen and hide")
 		}
-		return !s.FullScreen && !s.Visible
-	})
+		h.w.Perform(system.ActionRaise)
+		macWaitUntil(t, "visible after ActionRaise", func() bool { return h.state().Visible })
+		time.Sleep(time.Second)
+	}
+
+	if !enter("the close button") {
+		t.Fatal("not in full screen again")
+	}
+	h.closeWindow(t)
+	if !left("the close button's Hide", true) {
+		t.Fatal("the close button's Hide in full screen didn't leave full screen and hide")
+	}
 	f0 := h.frames.Load()
 	h.w.Perform(system.ActionRaise)
 	macWaitUntil(t, "visible after ActionRaise", func() bool { return h.state().Visible })
