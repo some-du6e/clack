@@ -516,6 +516,9 @@ type ChannelDetails struct {
 	PurposeSetAt int64
 	Props        ChannelProps // properties the Settings tab reads (chdetails.go)
 	HostID       string       // conversation_host_id
+	// OrgMandatory and OrgDefault are is_org_mandatory and is_org_default
+	// (Settings' managing-this-channel rows; views/details_managing.go).
+	OrgMandatory, OrgDefault bool
 }
 
 type ActivityOpts struct {

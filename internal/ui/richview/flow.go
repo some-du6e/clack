@@ -277,6 +277,7 @@ func (d *display) reset() {
 	d.slots = d.slots[:0]
 	d.tips = d.tips[:0]
 	d.codes = d.codes[:0]
+	d.fileSecs = d.fileSecs[:0]
 	d.removes = d.removes[:0]
 	d.cards = d.cards[:0]
 	d.overlayIcons = d.overlayIcons[:0]

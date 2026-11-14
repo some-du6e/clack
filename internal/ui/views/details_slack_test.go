@@ -98,6 +98,10 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 			write(`{"ok":true,"channel":{"id":"C1","name":"general-ish","is_channel":true,"is_member":true,"num_members":3,"properties":` + props + `}}`)
 		case "C9":
 			write(`{"ok":true,"channel":{"id":"C9","name":"secret","is_channel":true,"is_private":true,"is_member":true,"num_members":1}}`)
+		case "C8": // archived (details_managing_test.go)
+			write(`{"ok":true,"channel":{"id":"C8","name":"old-project","is_channel":true,"is_member":true,"is_archived":true,"num_members":2}}`)
+		case "C7": // shared with another org, hosted here (details_managing_test.go)
+			write(`{"ok":true,"channel":{"id":"C7","name":"partners","is_channel":true,"is_member":true,"is_ext_shared":true,"num_members":2}}`)
 		case "D1":
 			write(`{"ok":true,"channel":{"id":"D1","is_im":true,"user":"U1"}}`)
 		case "G9":

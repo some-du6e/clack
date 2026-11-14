@@ -58,7 +58,8 @@ const (
 // cdSettingsPerms are the permissions.info checks the Settings tab needs.
 var cdSettingsPerms = []string{core.PermRenameChannel, core.PermManageChannelPermission,
 	core.PermEditChannelAIExclusions, core.PermManageChannelTabs, core.PermManageChannelPosting,
-	core.PermConvertPrivateToPublic}
+	core.PermConvertPrivateToPublic, core.PermArchiveChannel, core.PermDeleteChannel,
+	core.PermConvertToPrivate, core.PermConvertToPrivateUnderPrefs, core.PermUnarchiveChannel}
 
 // Stacked dialog kinds.
 const (
@@ -73,6 +74,10 @@ const (
 	cdDlgSharing
 	cdDlgPosting  // PostingPermissionsModal (details_posting.go)
 	cdDlgToPublic // ConvertChannelToPublicModal (details_convert_public.go)
+	// managing-this-channel's modals (details_managing.go)
+	cdDlgToPrivate // ConvertChannelToPrivateModal
+	cdDlgArchive   // ArchiveChannelModal
+	cdDlgDelete    // DeleteChannelModal
 )
 
 // cdExtra is the dialog state behind the Slack parts above.
@@ -88,11 +93,17 @@ type cdExtra struct {
 	suggest, huddleLearn, aiLearn widget.Clickable
 	copyNames, copyEmails         widget.Clickable
 	toPublicRow                   widget.Clickable // Change to a public channel (details_convert_public.go)
-	hidePrefs                     widget.Clickable // HideUserConfirmationModal's "preferences"
-	mpdmName                      widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
-	postRow, postLearn            widget.Clickable // Posting permissions (details_posting.go)
-	postSub                       async[core.PostingPrefs]
-	helpTips                      map[string]*cdTip
+	// managing-this-channel's other rows (details_managing.go)
+	toPrivateRow, archiveRow widget.Clickable
+	unarchiveRow, deleteRow  widget.Clickable
+	teamPerms                async[map[string]bool] // the team's CREATE_PRIVATE_CHANNEL
+	unarch                   async[bool]            // submitUnarchive
+	unarchiving              bool
+	hidePrefs                widget.Clickable // HideUserConfirmationModal's "preferences"
+	mpdmName                 widget.Clickable // About's "Conversation name" Edit (details_mpdm.go)
+	postRow, postLearn       widget.Clickable // Posting permissions (details_posting.go)
+	postSub                  async[core.PostingPrefs]
+	helpTips                 map[string]*cdTip
 
 	suggestOp      async[bool]
 	suggestPending bool
@@ -156,6 +167,7 @@ type cdDialog struct {
 	resultsW                int
 	resultsShow             bool
 	confirmAll, confirmBack widget.Clickable
+	confirmed               bool   // cdDlgDelete: "Yes, permanently delete the channel"
 	subtitle                string // the title bar's subtitle (c-sk-modal_title_bar__subtitle)
 	titleH                  int    // the title bar's height this frame (px)
 }
@@ -195,8 +207,11 @@ func (d *ChannelDetails) settingsSections(inf core.ChannelDetails) []string {
 		return nil
 	}
 	cv := d.conv(inf, true)
-	if cv.IsArchived {
-		return nil // only "managing-this-channel" (unarchive) is left; Clack has no unarchive
+	if cv.IsArchived { // jf5b: managing-this-channel alone (details_managing.go)
+		if d.manageOpts(inf).any() {
+			return []string{cdSecManaging}
+		}
+		return nil
 	}
 	e := d.cdConvType()
 	var out []string
@@ -219,8 +234,8 @@ func (d *ChannelDetails) settingsSections(inf core.ChannelDetails) []string {
 	if (e == "channel" || e == "mpdm") && c.C != nil && c.C.Creds.EnterpriseID != "" {
 		out = append(out, cdSecCopyMembers)
 	}
-	// managing-this-channel: the rows Clack has (details_convert_public.go)
-	if d.toPublicOpt(inf).show {
+	// managing-this-channel (details_managing.go, details_convert_public.go)
+	if o := d.manageOpts(inf); o.archive || o.del || o.toPrivate || d.toPublicOpt(inf).show {
 		out = append(out, cdSecManaging)
 	}
 	return out
@@ -238,6 +253,11 @@ func (d *ChannelDetails) loadSettings(inf core.ChannelDetails) {
 		if !d.x.perms.started() {
 			d.x.perms.load(d.h, false, func(ctx context.Context) (map[string]bool, error) {
 				return c.ChannelPermissions(ctx, id, cdSettingsPerms...)
+			})
+		}
+		if !d.x.teamPerms.started() { // 2v1U Rt: the team's CREATE_PRIVATE_CHANNEL
+			d.x.teamPerms.load(d.h, false, func(ctx context.Context) (map[string]bool, error) {
+				return c.ChannelPermissions(ctx, "", core.PermCreatePrivateChannel)
 			})
 		}
 		if !d.x.canProps.started() && c.Experiment("enable_new_channel_settings") == "on" {
@@ -338,7 +358,7 @@ func (d *ChannelDetails) slackSettingsItems(inf core.ChannelDetails, name W) []W
 		case cdSecCopyMembers:
 			card(d.copyMembersRows()...)
 		case cdSecManaging:
-			card(d.toPublicRow(inf))
+			card(d.managingRows(inf)...)
 		}
 	}
 	if len(items) == 0 {
@@ -1249,6 +1269,14 @@ func (d *ChannelDetails) layoutDialog(gtx C, full image.Point, inf core.ChannelD
 	case cdDlgToPublic:
 		d.skModal(gtx, full, "Change to a public channel?", true, d.toPublicBody(inf, name),
 			[]W{cancel, d.cdDlgButton(&dl.ok, btnPrimary, "Change to Public", dl.pending)})
+	case cdDlgToPrivate:
+		d.skModal(gtx, full, nsChannelDetails.T("Change to a private channel?"), true, d.toPrivateBody(name),
+			[]W{cancel, d.cdDlgButton(&dl.ok, btnDanger, nsChannelDetails.T("Change to Private"), dl.pending)})
+	case cdDlgArchive:
+		d.skModal(gtx, full, nsChannelDetails.T("Archive this channel?"), true, d.archiveBody(),
+			[]W{cancel, d.cdDlgButton(&dl.ok, btnDanger, nsChannelDetails.T("Archive Channel"), dl.pending)})
+	case cdDlgDelete:
+		d.skModal(gtx, full, nsChannelDetails.T("Delete this channel?"), true, d.deleteBody(inf), d.deleteFooter())
 	}
 }
 
@@ -1399,7 +1427,16 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 		d.updatePosting(gtx, inf)
 		return
 	}
-	if dl.ok.Clicked(gtx) && !dl.pending {
+	if dl.kind == cdDlgDelete {
+		if dl.confirmAll.Clicked(gtx) {
+			dl.confirmed = !dl.confirmed
+		}
+		if dl.back.Clicked(gtx) { // "archive a channel instead": this modal closes, the archive one opens
+			d.openDialog(cdDlgArchive)
+			return
+		}
+	}
+	if dl.ok.Clicked(gtx) && !dl.pending && (dl.kind != cdDlgDelete || dl.confirmed) {
 		switch dl.kind {
 		case cdDlgLeave:
 			start(func(ctx context.Context) error { return c.Leave(ctx, id) })
@@ -1443,6 +1480,12 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 			start(func(ctx context.Context) error { return c.HideUser(ctx, uid, dm) })
 		case cdDlgToPublic:
 			start(func(ctx context.Context) error { return c.ConvertToPublic(ctx, id) })
+		case cdDlgToPrivate:
+			start(func(ctx context.Context) error { return c.ConvertToPrivate(ctx, id) })
+		case cdDlgArchive:
+			start(func(ctx context.Context) error { return c.Archive(ctx, id) })
+		case cdDlgDelete:
+			start(func(ctx context.Context) error { return c.DeleteChannel(ctx, id) })
 		}
 	}
 	if !dl.pending {
@@ -1528,6 +1571,29 @@ func (d *ChannelDetails) updateDialog(gtx C, inf core.ChannelDetails) {
 		}
 		d.closeDialog()
 		d.refreshInfo()
+	case cdDlgToPrivate:
+		if err != nil {
+			dl.err = cdErrCode(err)
+			return
+		}
+		d.closeDialog()
+		d.refreshInfo()
+	case cdDlgArchive:
+		if err != nil {
+			_, admin, _ := d.selfRoles()
+			dl.err = archiveModalError(err, admin, isPrivateConv(d.conv(inf, true)))
+			return
+		}
+		d.closeDialog() // onSubmit's closeAll: the details close
+		d.closed = true
+	case cdDlgDelete:
+		if err != nil {
+			dl.err = cdErrCode(err)
+			return
+		}
+		d.closeDialog()
+		d.closed = true
+		d.h.Navigate("activity")
 	}
 }
 
@@ -2241,7 +2307,9 @@ func (d *ChannelDetails) updateSlackParts(gtx C, inf core.ChannelDetails, loaded
 // suggest, new-tab, ok, cancel, back, conversation-name (a group DM's
 // "Conversation name" Edit), posting (Settings › Posting permissions),
 // save, add-app ("Add an App" / "Add agents and apps"), to-public
-// (Settings › Change to a public channel).
+// (Settings › Change to a public channel), to-private, archive,
+// unarchive, delete, delete-confirm, archive-instead (managing-this-channel's
+// other rows and the delete modal).
 func (d *ChannelDetails) Press(name string) {
 	cs := map[string]*widget.Clickable{
 		"leave": &d.leaveRow, "vip": &d.vip, "hide": &d.hide, "ai-use": &d.x.aiRow, "guests": &d.x.guestRow,
@@ -2250,6 +2318,10 @@ func (d *ChannelDetails) Press(name string) {
 		"conversation-name": &d.x.mpdmName, "sharing": &d.x.sharingRow,
 		"posting": &d.x.postRow, "save": &d.x.dlg.ok, "add-app": &d.addApp,
 		"to-public": &d.x.toPublicRow,
+		// managing-this-channel's other rows (details_managing.go) and the
+		// delete modal's checkbox and "archive a channel instead"
+		"to-private": &d.x.toPrivateRow, "archive": &d.x.archiveRow, "unarchive": &d.x.unarchiveRow,
+		"delete": &d.x.deleteRow, "delete-confirm": &d.x.dlg.confirmAll, "archive-instead": &d.x.dlg.back,
 	}
 	if name == "add-people" {
 		if cdGroup(d.kind) == "im" {
@@ -2296,6 +2368,12 @@ func (d *ChannelDetails) Dialog() string {
 		return "hide"
 	case cdDlgToPublic:
 		return "to-public"
+	case cdDlgToPrivate:
+		return "to-private"
+	case cdDlgArchive:
+		return "archive"
+	case cdDlgDelete:
+		return "delete"
 	case cdDlgAddPeople:
 		if d.x.dlg.add != nil && d.x.dlg.add.step == 1 {
 			return "add-people-history"
