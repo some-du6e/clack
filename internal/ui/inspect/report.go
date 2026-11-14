@@ -79,7 +79,7 @@ func (r *Report) Lines() []Line {
 	if v == "" {
 		v = "dev"
 	}
-	add("clack", fmt.Sprintf("%s · %s · %s", v, r.OS, r.When.Format("2006-01-02 15:04:05 MST")))
+	add("clack", fmt.Sprintf("%s · %s · %s", v, r.OS, r.When.UTC().Format("2006-01-02 15:04:05 MST")))
 	comp := r.Component
 	if comp == "" {
 		comp = "(no Slack component here)"

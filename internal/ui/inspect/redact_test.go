@@ -62,7 +62,8 @@ func TestRouteRedacted(t *testing.T) {
 	for _, c := range []struct{ in, prefix string }{
 		{"c/C0B4DEFKFCJ", "c/ch:"},
 		{"c/C0B4DEFKFCJ/1794632524.647929", "c/ch:"},
-		{"search/karim's secret plans", "search/id:"},
+		{"search/karim's secret plans", "search/q:"},
+		{"search?q=secret", "search?q:"},
 		{"dms", "dms"},
 		{"bbm/U082DRXPMF1", "bbm/user:"},
 	} {
@@ -75,6 +76,21 @@ func TestRouteRedacted(t *testing.T) {
 				t.Errorf("Route(%q) = %q keeps %q", c.in, got, leak)
 			}
 		}
+	}
+}
+
+// Clack's route words stay where they are, between the tags.
+func TestRouteKeepsWords(t *testing.T) {
+	r := NewRedactor()
+	got := r.Route("c/C0B4DEFKFCJ/t/1794632524.647929")
+	if want := "c/" + r.ID("C0B4DEFKFCJ") + "/t/" + r.ID("1794632524.647929"); got != want {
+		t.Errorf("thread route: %q, want %q", got, want)
+	}
+	if got := r.Route("directories/people"); got != "directories/people" {
+		t.Errorf("directories tab: %q", got)
+	}
+	if got := r.Route("Karim's page"); strings.Contains(got, "Karim") {
+		t.Errorf("an unknown page kept: %q", got)
 	}
 }
 

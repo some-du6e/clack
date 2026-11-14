@@ -566,7 +566,7 @@ func (t *Tool) drawHover(gtx layout.Context) {
 		h := gtx.Dp(28)
 		r := image.Rect((sz.X-tw)/2-gtx.Dp(14), gtx.Dp(8), (sz.X+tw)/2+gtx.Dp(14), gtx.Dp(8)+h)
 		theme.RRect(gtx, r, h/2, color.NRGBA{R: 0x16, G: 0x17, B: 0x1a, A: 0xf0})
-		frame(gtx, r, 1, outlineCol)
+		theme.Border(gtx, r, h/2, max(gtx.Dp(1), 1), outlineCol)
 		t.text(gtx, th, msg, image.Pt(r.Min.X+gtx.Dp(14), r.Min.Y), h, tw)
 	}
 }

@@ -211,31 +211,38 @@ func safeValue(s string) bool {
 	return true
 }
 
-// pages are the first route segments Clack has (route.go): kept, as they
-// say which page, not whose.
-var pages = map[string]bool{
-	"c": true, "dms": true, "activity": true, "later": true, "threads": true, "unreads": true,
-	"files": true, "search": true, "people": true, "channels": true, "huddles": true, "bbm": true,
-	"home": true, "drafts": true, "canvases": true, "lists": true, "agents": true, "tools": true,
-	"apps": true, "workflows": true, "directories": true, "saved": true, "mentions": true,
-}
+// routeWord is one of Clack's own route words: a page ("c", "dms",
+// "directories") or a part of one ("t" in c/<id>/t/<ts>). Ids are
+// uppercase, timestamps digits, and user text only ever comes after "?"
+// or in a search route.
+var routeWord = regexp.MustCompile(`^[a-z][a-z_-]{0,19}$`)
 
-// Route redacts a Clack route ("c/C123/1700000000.000100"): the page
-// stays, every other segment becomes a tag (search queries included).
+// Route redacts a Clack route: its words stay, every id and timestamp
+// becomes a tag, and a search or a query is one tag ("search/q:…").
 func (r *Redactor) Route(route string) string {
 	if route == "" {
 		return ""
 	}
-	segs := strings.Split(route, "/")
-	for i, s := range segs {
-		switch {
-		case i == 0 && pages[s]:
-		case s == "":
-		default:
-			segs[i] = r.ID(s)
+	page, rest := route, ""
+	if i := strings.IndexAny(route, "/?"); i >= 0 {
+		page, rest = route[:i], route[i:]
+	}
+	if !routeWord.MatchString(page) {
+		page = r.ID(page)
+	}
+	if rest == "" {
+		return page
+	}
+	if rest[0] == '?' || page == "search" {
+		return page + rest[:1] + r.Tag("q", rest[1:])
+	}
+	segs := strings.Split(rest[1:], "/")
+	for i, seg := range segs {
+		if seg != "" && !(routeWord.MatchString(seg) && len(seg) <= 12) {
+			segs[i] = r.ID(seg)
 		}
 	}
-	return strings.Join(segs, "/")
+	return page + "/" + strings.Join(segs, "/")
 }
 
 // enumAttrs are attributes whose values Slack's DOM uses as enumerations

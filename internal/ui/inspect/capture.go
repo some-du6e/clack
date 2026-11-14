@@ -84,7 +84,7 @@ func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
 // Limits on the chains a report lists.
 const (
 	maxWithin  = 14
-	maxClasses = 10
+	maxClasses = 6 // the nearest elements: "within" names where it is
 	maxPropsOf = 8 // components whose props are read for ids, innermost first
 	maxExps    = 30
 )
