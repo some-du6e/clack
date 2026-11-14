@@ -1,7 +1,8 @@
 name: canvas-shots
 # Renders canvases from the fake server headlessly (full view, side panel,
 # channel tab; light and dark; the whole kitchen-sink document; a live
-# update) and uploads the screenshots. Synthetic only: nothing here talks
+# update; the comment stream and a comment thread) and uploads the
+# screenshots. Synthetic only: nothing here talks
 # to Slack.
 on:
   push:
@@ -13,6 +14,9 @@ on:
       - "internal/fakeslack/canvases/**"
       - "internal/core/canvas*.go"
       - "internal/ui/icons/canvas*.go"
+      - "internal/ui/canvas_comments*.go"
+      - "internal/ui/views/canvas_comments*.go"
+      - "internal/ui/messages/thread_comment*.go"
       - ".github/workflows/canvas-shots.yml"
   workflow_dispatch:
 
@@ -43,7 +47,7 @@ jobs:
         run: |
           mkdir -p "$CANVAS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -run 'TestRender|TestLiveUpdate|TestEdit|TestDefaultLine|TestAddCover|TestFocusSection|TestTitleEmoji|TestEmojiTrigger' ./internal/ui/canvasview/
-          go test -count=1 -v -run 'TestCanvasEmojiSource' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -run 'TestCanvasEmojiSource|TestCanvasComments' ./internal/ui/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

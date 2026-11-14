@@ -17,6 +17,8 @@ package ui
 //     (FlexpaneBackButton).
 
 import (
+	"image"
+
 	"github.com/some-du6e/clack/internal/ui/canvasview"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
@@ -83,3 +85,6 @@ func (a *App) OpenCommentThread(file, ch, ts string) {
 	a.secondary.view = a.mountThread(ch, ts)
 	a.Invalidate()
 }
+
+// SecondaryOrigin is views.SecondaryOriginer: the pane's window origin.
+func (a *App) SecondaryOrigin() image.Point { return a.secondaryOrigin }

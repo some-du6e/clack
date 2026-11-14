@@ -132,6 +132,16 @@ type CanvasComments struct {
 	filterR                   image.Rectangle // the Filter button, window coordinates
 	origin                    image.Point     // the view's window origin (last frame)
 	notes                     actNotes
+	// sizes are this frame's list element heights; rects the rows' window
+	// boxes by key (tests: a row is clicked where it is drawn)
+	sizes map[int]int
+	rects map[string]image.Rectangle
+}
+
+// SecondaryOriginer is optionally implemented by the Host: the secondary
+// pane's window origin, where the stream is drawn (menus anchor to it).
+type SecondaryOriginer interface {
+	SecondaryOrigin() image.Point
 }
 
 // NewCanvasComments is the comment stream of canvas file, on filter
@@ -141,7 +151,8 @@ func NewCanvasComments(h Host, file, filter string) *CanvasComments {
 	if filter == "" {
 		filter = core.CommentsLatest
 	}
-	v := &CanvasComments{base: newBase(h), file: file, filter: filter, clicks: map[string]*widget.Clickable{}}
+	v := &CanvasComments{base: newBase(h), file: file, filter: filter, clicks: map[string]*widget.Clickable{},
+		sizes: map[int]int{}, rects: map[string]image.Rectangle{}}
 	v.list.Axis = layout.Vertical
 	v.filterTip.Delay, v.closeTip.Delay = 150*time.Millisecond, 150*time.Millisecond
 	return v
@@ -189,6 +200,10 @@ func (v *CanvasComments) Loaded() bool {
 
 // FilterRect is the Filter button (window coordinates; tests).
 func (v *CanvasComments) FilterRect() image.Rectangle { return v.filterR }
+
+// RowRect is the row with key (a root's or reply's ts, "load-more-<root
+// ts>") as last drawn, window coordinates; empty when it isn't in view.
+func (v *CanvasComments) RowRect(key string) image.Rectangle { return v.rects[key] }
 
 // match: a reply or an edit in this canvas's file channel, or a root
 // changing (resolve, reactions), reloads the stream (Slack's
@@ -293,8 +308,8 @@ func (v *CanvasComments) Layout(gtx C) D {
 	if v.w.due(gtx, 500*time.Millisecond) && !v.data.busy() {
 		v.load(false)
 	}
-	if t, ok := v.h.(interface{ WindowOrigin(any) image.Point }); ok {
-		v.origin = t.WindowOrigin(v)
+	if t, ok := v.h.(SecondaryOriginer); ok {
+		v.origin = t.SecondaryOrigin()
 	}
 	size := gtx.Constraints.Max
 	fill(gtx, image.Rectangle{Max: size}, v.p.Bg)
@@ -419,18 +434,40 @@ func (v *CanvasComments) body(gtx C) D {
 	if d.hasMore && !v.data.busy() && v.list.Position.First+v.list.Position.Count >= len(rows)-2 {
 		v.load(true) // loadPost
 	}
-	return layout.Inset{Left: unit.Dp(16), Right: unit.Dp(16)}.Layout(gtx, func(gtx C) D {
+	clear(v.sizes)
+	clear(v.rects)
+	side := gtx.Dp(16)
+	ld := layout.Inset{Left: unit.Dp(16), Right: unit.Dp(16)}.Layout(gtx, func(gtx C) D {
 		gtx.Constraints.Min.X = gtx.Constraints.Max.X
 		return v.list.Layout(gtx, len(rows), func(gtx C, i int) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			r := rows[i]
 			d := v.row(gtx, r)
+			v.sizes[i] = d.Size.Y
+			if r.last {
+				v.sizes[i] -= gtx.Dp(16) // the card's margin isn't the row's
+			}
 			if i == len(rows)-1 { // lastRow__cNSsg
 				d.Size.Y += gtx.Dp(12)
 			}
 			return d
 		})
 	})
+	// the rows' window boxes, from the list's final position
+	y := -v.list.Position.Offset
+	top := v.origin.Add(image.Pt(side, gtx.Dp(50)))
+	for i := v.list.Position.First; i < len(rows); i++ {
+		h, ok := v.sizes[i]
+		if !ok {
+			break
+		}
+		v.rects[rows[i].key] = image.Rect(0, y, size.X-2*side, y+h).Add(top)
+		y += h
+		if rows[i].last {
+			y += gtx.Dp(16)
+		}
+	}
+	return ld
 }
 
 func (v *CanvasComments) click(key string) *widget.Clickable {

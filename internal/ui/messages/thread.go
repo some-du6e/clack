@@ -506,6 +506,7 @@ func (v *ThreadView) header(gtx layout.Context, th *theme.Theme, c *colors, w, h
 	// ArchiveCommentButton (a canvas comment thread) sits before the ⋮,
 	// the bell before it
 	arch := v.archiveShown(root, rootOK)
+	v.cmt.rect = image.Rectangle{}
 	ax := mx
 	if arch {
 		ax = mx - gap - bs

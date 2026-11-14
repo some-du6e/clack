@@ -60,6 +60,7 @@ type commentThread struct {
 	busy      bool
 	resolving *bool // the state clicked, until the root has it
 	at        time.Time
+	rect      image.Rectangle // the button, window coordinates (last frame)
 }
 
 // canvasInfo is the thread's canvas, fetched on first use.
@@ -144,6 +145,7 @@ func (v *ThreadView) archiveButton(gtx layout.Context, th *theme.Theme, c *color
 		icon, label = "rotate", nsDocs.T("Re-open thread")
 	}
 	v.cmt.tip.Delay = 300 * time.Millisecond
+	v.cmt.rect = image.Rect(pos.X, pos.Y, pos.X+bs, pos.Y+bs).Add(v.Origin)
 	at(gtx, pos.X, pos.Y, func(gtx layout.Context) layout.Dimensions {
 		gtx.Constraints = layout.Exact(image.Pt(bs, bs))
 		d := v.cmt.btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -166,6 +168,13 @@ func (v *ThreadView) archiveButton(gtx layout.Context, th *theme.Theme, c *color
 func (v *ThreadView) ResolveShown() bool {
 	root, ok := v.root()
 	return v.archiveShown(root, ok)
+}
+
+// ResolveRect is that button as last drawn (window coordinates), and
+// whether it says Re-open thread.
+func (v *ThreadView) ResolveRect() (image.Rectangle, bool) {
+	root, _ := v.root()
+	return v.cmt.rect, v.resolved(root)
 }
 
 // commentRootLayout is ThreadRootCanvas: QuipCommentRoot in the thread.
