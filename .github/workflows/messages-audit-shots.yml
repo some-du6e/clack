@@ -50,6 +50,9 @@ on:
       - "internal/ui/messages/toolbar_tilt.go"
       - "internal/ui/messages/toolbar_tilt_test.go"
       - "internal/ui/messages/toolbar_hover_shots_test.go"
+      - "internal/ui/messages/toolbar_scroll.go"
+      - "internal/ui/messages/toolbar_scroll_test.go"
+      - "internal/ui/messages/persist.go"
       - "internal/ui/messages/quickreact.go"
       - "internal/ui/popups/actions_todo.go"
       - "internal/ui/popups/actions_todo_test.go"
@@ -106,7 +109,7 @@ jobs:
           go test -count=1 -v -run 'TestMessageMentionLabel|TestMessageUnfurlCard|TestCanvasSlug|TestListSlug|TestFileChannelSlugs' ./internal/richtext
           go test -count=1 -v -run 'TestMemberName' ./internal/store
           go test -count=1 -v -run 'TestMessageKeepsEditor|TestSavedMeta|TestToggleTodoLikeSlack|TestUserHiddenLikeSlack|TestMentionsViewerDirectly|TestMentionsViewerInReply' ./internal/core
-          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined|TestCanvasSlugClick|TestCanvasAnchorCard|TestCanvasFileCard' ./internal/ui/richview
+          xvfb-run -a go test -count=1 -v -run 'TestEditedTipLikeSlack|TestEditedLabel|TestEditedByTip|TestFullTimestamp|TestLinkUnderlineSpansSpaces|TestStyleDecorationSpansSpaces|TestMsgCardLinks|TestDecorationShots|TestSlugPillNotUnderlined|TestCanvasSlugClick|TestCanvasAnchorCard|TestCanvasFileCard|TestFileCardSection' ./internal/ui/richview
           xvfb-run -a go test -count=1 -v -run 'TestToolbarThreadAndShareLikeSlack|TestContextMenuOnMessageBody|TestReactionTipText|TestReactionTooltipDraws|TestCSSReactionTooltip|TestReactionBarCollapseLikeSlack|TestRowHeightsMatchSlack|TestMessagesAuditShots|TestHuddleMessageRowLikeSlack|TestHuddleMessageShots|TestLinksShots|TestReactionGroup|TestEditedByLikeSlack|TestPinnedByMemberLink|TestMessagesAuditGapShots|TestLaterLabelLikeSlack|TestLaterLabelDraws|TestLaterLabelShots|TestHiddenSender|TestHiddenMessageMentionContents|TestHiddenSystem|TestHiddenJoinsSummaryLikeSlack|TestTombstoneColumnLikeSlack|TestCanvasLinkShots|TestCanvasFileShots|TestListSlugShots' ./internal/ui/messages
           # the to-do and reminder rows (gap-w7)
           xvfb-run -a go test -count=1 -v -run 'TestTodoAndReminderLabelsLikeSlack|TestTodoActionClickToasts|TestTodoToastText|TestSaveRowLikeSlack|TestMessageContextMenuThreadAction' ./internal/ui/popups
@@ -115,9 +118,10 @@ jobs:
           go test -count=1 -v -run 'TestWorkObject' ./internal/richtext ./internal/core
           xvfb-run -a go test -count=1 -v -run 'TestWorkObject' ./internal/ui/richview
           xvfb-run -a go test -count=1 -timeout 20m -v -run 'TestWorkObjectFlexpane' ./internal/ui
-          # the hover toolbar (toolbar_tilt.go): the tests, then the shots
-          # here and on ui (the shots test uses only what ui has)
-          xvfb-run -a go test -count=1 -v -run 'TestCSSTransitionLikeSlack|TestTiltAffine|TestToolbarButtonColorsLikeSlack|TestToolbarHoverLikeSlack|TestToolbarHoverShots' ./internal/ui/messages
+          # the hover toolbar (toolbar_tilt.go, toolbar_scroll.go): the
+          # tests, then the shots here and on ui (the shots test uses only
+          # what ui has)
+          xvfb-run -a go test -count=1 -v -run 'TestCSSTransitionLikeSlack|TestTiltAffine|TestToolbarButtonColorsLikeSlack|TestToolbarHoverLikeSlack|TestToolbarTipTimingLikeSlack|TestToolbarWheelScrollsList|TestToolbarWheelNotchLikeRow|TestPersistActionsWheelScrollsList|TestToolbarHoverShots' ./internal/ui/messages
           cp internal/ui/messages/toolbar_hover_shots_test.go before-ui/internal/ui/messages/
           (cd before-ui && git log -1 --format='before = ui at %H' && TOOLBAR_SHOTS_TAG=before xvfb-run -a go test -count=1 -v -run 'TestToolbarHoverShots' ./internal/ui/messages)
           ls -la "$MESSAGES_AUDIT_SHOTS_DIR"

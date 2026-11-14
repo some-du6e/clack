@@ -65,5 +65,6 @@ func (l *lay) listFile(f *richtext.File, x, y, w int, gallery bool) int {
 	ms := l.small(p.Text2)
 	ms.maxLines, ms.ellipsis, ms.noSelect = 1, true, true
 	l.plainFlow("List", tx, y+in+l.dp(22)+l.dp(4), tw, &ms, -1)
+	l.addFileSec(f, image.Rect(x, y, x+cw, y+h), 8, 32) // ListEntityActionsBar's star (filesection.go)
 	return h
 }

@@ -519,6 +519,9 @@ type ChannelDetails struct {
 	PurposeSetAt int64
 	Props        ChannelProps // properties the Settings tab reads (chdetails.go)
 	HostID       string       // conversation_host_id
+	// OrgMandatory and OrgDefault are is_org_mandatory and is_org_default
+	// (Settings' managing-this-channel rows; views/details_managing.go).
+	OrgMandatory, OrgDefault bool
 }
 
 type ActivityOpts struct {
@@ -761,4 +764,7 @@ type CommandResult struct {
 	// KeepInput is chat.command's keep_input: the composer gets the
 	// command back.
 	KeepInput bool
+	// Invite is the local /invite's request for the channel's invite
+	// modal (invite_command.go).
+	Invite *InviteModalRequest
 }

@@ -98,6 +98,10 @@ func (s *cdTestServer) handler(w http.ResponseWriter, r *http.Request) {
 			write(`{"ok":true,"channel":{"id":"C1","name":"general-ish","is_channel":true,"is_member":true,"num_members":3,"properties":` + props + `}}`)
 		case "C9":
 			write(`{"ok":true,"channel":{"id":"C9","name":"secret","is_channel":true,"is_private":true,"is_member":true,"num_members":1}}`)
+		case "C8": // archived (details_managing_test.go)
+			write(`{"ok":true,"channel":{"id":"C8","name":"old-project","is_channel":true,"is_member":true,"is_archived":true,"num_members":2}}`)
+		case "C7": // shared with another org, hosted here (details_managing_test.go)
+			write(`{"ok":true,"channel":{"id":"C7","name":"partners","is_channel":true,"is_member":true,"is_ext_shared":true,"num_members":2}}`)
 		case "D1":
 			write(`{"ok":true,"channel":{"id":"D1","is_im":true,"user":"U1"}}`)
 		case "G9":
@@ -273,7 +277,15 @@ func TestDetailsSettingsSections(t *testing.T) {
 	if st, ok := e.d.guestAccessState(); !ok || st.CanSet || st.Reason != "scg_present" {
 		t.Errorf("guest access state %+v %v, want read-only (scg_present)", st, ok)
 	}
-	if c := srv.seen("permissions.info"); len(c) == 0 || c[0].form.Get("channel_id") != "C1" || !strings.Contains(c[0].form.Get("permissions"), "EDIT_CHANNEL_AI_EXCLUSIONS") {
+	// the channel's permissions.info (the team's CREATE_PRIVATE_CHANNEL,
+	// details_managing.go, is its own call)
+	var chPerms []cdTestCall
+	for _, c := range srv.seen("permissions.info") {
+		if c.form.Has("channel_id") {
+			chPerms = append(chPerms, c)
+		}
+	}
+	if c := chPerms; len(c) == 0 || c[0].form.Get("channel_id") != "C1" || !strings.Contains(c[0].form.Get("permissions"), "EDIT_CHANNEL_AI_EXCLUSIONS") {
 		t.Errorf("permissions.info form %v", c)
 	}
 

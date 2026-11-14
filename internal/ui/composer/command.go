@@ -39,3 +39,10 @@ func isCommandFailed(err error) bool {
 	var cf *commandFailed
 	return errors.As(err, &cf)
 }
+
+// inviteOpener is optional on the Host: the local /invite's invite modal
+// for a channel (core.InviteModalRequest), with users picked. Called off the
+// UI goroutine; the host posts it.
+type inviteOpener interface {
+	OpenInviteToChannel(ch string, users []string)
+}

@@ -210,6 +210,17 @@ func init() {
 
 // detailsOverlay shows views.ChannelDetails (a centered modal dialog, as
 // in Slack 2026) on the overlay stack.
+// OpenInviteToChannel is the local /invite's invite modal (composer's
+// inviteOpener; core/invite_command.go): the channel's details with Add
+// people open and users picked.
+func (a *App) OpenInviteToChannel(ch string, users []string) {
+	a.Post(func() {
+		d := views.NewChannelDetails(a, ch)
+		d.InviteOnOpen(users)
+		a.ShowOverlay(detailsOverlay{d: d, a: a})
+	})
+}
+
 type detailsOverlay struct {
 	d *views.ChannelDetails
 	a *App

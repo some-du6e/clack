@@ -9,6 +9,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
 
@@ -26,6 +27,34 @@ func (a *App) fileSectionButton(fileID string) (look int, emoji string, ok bool)
 // openFileSection opens the button's menu under btn.
 func (a *App) openFileSection(f core.File, btn image.Rectangle, source string) {
 	views.OpenSectionMenu(a, f, btn, source)
+}
+
+// OpenFileSectionMenu is a message file card's button (messages'
+// FileSectionMenuOpener; richview filesection.go).
+func (a *App) OpenFileSectionMenu(id string, list bool, title string, btn image.Rectangle, source string) {
+	f := core.File{ID: id, Title: title, IsCanvas: !list, Mode: "quip"}
+	if list {
+		f.IsList, f.Mode = true, "list"
+	}
+	a.openFileSection(f, btn, source)
+}
+
+// fileSectionFace is richview.FileSectionFace: the face the headers'
+// button has.
+func (a *App) fileSectionFace(id string) (richview.SectionLook, string, bool) {
+	look, emoji, ok := a.fileSectionButton(id)
+	if !ok {
+		return 0, "", false
+	}
+	switch views.SectionButtonLook(look) {
+	case views.SectionStarred:
+		return richview.SectionLookStarred, "", true
+	case views.SectionEmoji:
+		return richview.SectionLookEmoji, emoji, true
+	case views.SectionIcon:
+		return richview.SectionLookIcon, "", true
+	}
+	return richview.SectionLookStar, "", true
 }
 
 // fileSectionItems is the same menu as shell rows (a submenu's).

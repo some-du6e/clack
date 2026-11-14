@@ -682,7 +682,8 @@ func (a *App) ChannelInfo(ctx context.Context, ch string) (ChannelDetails, error
 	if ms, err := a.Managers(ctx, ch); err == nil {
 		mgrs = ms
 	}
-	d := ChannelDetails{Conv: a.conv(c), Managers: mgrs, IsMember: c.IsMember || c.IsIM, IsOrgShared: c.IsOrgShared, IsExtShared: c.IsExtShared, LastRead: c.LastRead}
+	d := ChannelDetails{Conv: a.conv(c), Managers: mgrs, IsMember: c.IsMember || c.IsIM, IsOrgShared: c.IsOrgShared, IsExtShared: c.IsExtShared, LastRead: c.LastRead,
+		OrgMandatory: c.IsOrgMandatory, OrgDefault: c.IsOrgDefault}
 	d.Teams = c.InternalTeamIDs
 	if len(d.Teams) == 0 && c.ContextTeamID != "" {
 		d.Teams = []string{c.ContextTeamID}

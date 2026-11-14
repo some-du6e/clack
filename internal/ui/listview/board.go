@@ -101,7 +101,11 @@ func (v *View) layoutBoard(gtx layout.Context, d *core.ListDoc, lv *lists.View, 
 				n++
 			}
 		}
-		return gtx.Dp(12+22+16) + n*gtx.Dp(28)
+		h := gtx.Dp(12+22+16) + n*gtx.Dp(28)
+		if v.cardSummary(d, r.Rec) {
+			h += gtx.Dp(22)
+		}
+		return h
 	}
 	tallest := 0
 	for _, g := range groups {
@@ -268,7 +272,16 @@ func (v *View) drawCard(gtx layout.Context, d *core.ListDoc, cols []*lists.Colum
 			return th.Text(gtx, theme.LabelOpts{Font: theme.Font(theme.Bold), Size: 15, Color: c.Fg, MaxLines: 1}, name)
 		})
 	}
-	y += gtx.Dp(22 + 6)
+	y += gtx.Dp(22)
+	if v.cardSummary(d, r.Rec) { // p-board-card__subtasks (subtasks.go)
+		done, total := subtaskProgress(d, r.Rec.ID)
+		sz := summarySize(gtx, th, done, total, true, true)
+		at(gtx, image.Pt(x+gtx.Dp(22), y), sz, func(gtx layout.Context) layout.Dimensions {
+			return drawSummary(gtx, th, done, total, true, true, false)
+		})
+		y += sz.Y
+	}
+	y += gtx.Dp(6)
 	for _, col := range cols {
 		if col.IsPrimary || (gc != nil && col.Key == gc.Key) || col.Type == lists.TodoCompleted {
 			continue
@@ -283,6 +296,13 @@ func (v *View) drawCard(gtx layout.Context, d *core.ListDoc, cols []*lists.Colum
 		})
 		y += gtx.Dp(28)
 	}
+}
+
+// cardSummary: the card shows SubtasksProgressSummary under its name
+// (Yja+'s board renderBoardField: lists_sub_tasks, a to-do list with
+// grid to-dos, the record has subtasks).
+func (v *View) cardSummary(d *core.ListDoc, rec *lists.Record) bool {
+	return v.gridTodos(d) && v.subTasksOn() && hasSubtasks(d, rec.ID)
 }
 
 func (v *View) boardEvents(gtx layout.Context, d *core.ListDoc, maxX, maxY int) {

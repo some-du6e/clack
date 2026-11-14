@@ -20,7 +20,9 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/lists"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/icons"
+	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -60,6 +62,10 @@ type Item struct {
 	composer  widget.Editor
 	sending   bool
 	moreAt    image.Rectangle // the More actions button, in the content (tests)
+	hover     image.Point     // the pointer in the body (not scrolled; far away when it left)
+	tip       popups.TipState // the subtasks section's one tooltip (subtasks.go)
+	tipHit    bool
+	editNext  string // a new subtask whose name editor opens once it is drawn
 
 	live     atomic.Bool
 	lastSeen atomic.Int64
@@ -69,13 +75,14 @@ type itemHit struct {
 	r   image.Rectangle
 	col *lists.Column
 	x0  int
-	act string // "comment" (Add Comment) or "more" (More actions); col is nil
+	act string // "comment" (Add Comment), "more" (More actions) or a subtask part (subtasks.go); col is nil
+	rec string // a subtask's cell or part ("" the item's own)
 }
 
 // NewItem returns the pane of item recID in list listID.
 func NewItem(h Host, listID, recID string, act Actions) *Item {
 	it := &Item{ctl: ctl{h: h, id: listID, act: act}, rec: recID, btns: map[string]*widget.Clickable{},
-		rvs: map[string]*richview.View{}, rvDoc: map[string]*core.Message{}}
+		rvs: map[string]*richview.View{}, rvDoc: map[string]*core.Message{}, hover: image.Pt(-1<<20, -1<<20)}
 	it.handler = &handler{h: h, act: &it.act}
 	it.composer.Submit = true
 	return it
@@ -251,7 +258,11 @@ func (it *Item) Layout(gtx layout.Context) layout.Dimensions {
 	it.events(gtx, d)
 	// content, scrolled
 	m := op.Record(gtx.Ops)
+	it.tipHit = false
 	h := it.layoutContent(gtx, d, rec, comments, cload, body.X)
+	if !it.tipHit {
+		popups.Tooltip(gtx, th, &it.tip, false, image.Point{}, popups.Above, "", "")
+	}
 	call := m.Stop()
 	maxS := max(0, h-body.Y+gtx.Dp(80))
 	_, dy := it.wheel.tick(gtx, 0, it.scroll, 0, maxS)
@@ -361,6 +372,11 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 		it.hits = append(it.hits, itemHit{r: r, col: p, x0: r.Min.X})
 		y += gtx.Dp(36 + 12)
 	}
+	if rec.ParentRecordID != "" { // SubtaskSubtitle (subtasks.go)
+		if parent := d.Record(rec.ParentRecordID); parent != nil {
+			y = it.subtaskSubtitle(gtx, d, parent, y-gtx.Dp(12), w) + gtx.Dp(8)
+		}
+	}
 	y = it.layoutActions(gtx, d, rec, comments, cload, y, w)
 	// fields
 	labW := min(gtx.Dp(160), (w-2*pad)/3)
@@ -398,6 +414,17 @@ func (it *Item) layoutContent(gtx layout.Context, d *core.ListDoc, rec *lists.Re
 		}
 		it.hits = append(it.hits, itemHit{r: r, col: col, x0: vx})
 		y += rowHt
+	}
+	// ListRecordSubtasks (lists_sub_tasks, not on a subtask; subtasks.go)
+	if it.subTasksOn() && rec.ParentRecordID == "" {
+		if it.editNext != "" {
+			if s := d.Record(it.editNext); s != nil {
+				it.editNext = ""
+				it.editSubtaskName(d, s, gtx)
+			}
+		}
+		y += gtx.Dp(16)
+		y = it.subtaskSection(gtx, d, rec, y, w, self)
 	}
 	// comments
 	y += gtx.Dp(16)
@@ -556,7 +583,7 @@ func (it *Item) send() {
 // events: scrolling and clicks on fields.
 func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 	for {
-		ev, ok := gtx.Event(pointer.Filter{Target: &it.tag, Kinds: pointer.Press | pointer.Release | pointer.Scroll,
+		ev, ok := gtx.Event(pointer.Filter{Target: &it.tag, Kinds: pointer.Press | pointer.Release | pointer.Scroll | pointer.Move | pointer.Leave,
 			ScrollY: pointer.ScrollRange{Min: -1 << 20, Max: 1 << 20}})
 		if !ok {
 			break
@@ -569,7 +596,24 @@ func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 		case pointer.Scroll:
 			_, dy := it.wheel.event(gtx, pe, 0, it.scroll, 0, it.maxScroll, false)
 			it.scroll += dy
+		case pointer.Move:
+			it.hover = image.Pt(int(pe.Position.X), int(pe.Position.Y))
+		case pointer.Leave:
+			it.hover = image.Pt(-1<<20, -1<<20)
 		case pointer.Press:
+			if ctxclick.Press(pe) { // a subtask row's BaseSubtaskContextMenu
+				it.pressed = false
+				p := image.Pt(int(pe.Position.X), int(pe.Position.Y)+it.scroll)
+				for _, h := range it.hits {
+					if h.rec != "" && p.In(h.r) {
+						if s := d.Record(h.rec); s != nil && s.ParentRecordID == it.rec && it.act.Menu != nil {
+							it.act.Menu(it.subtaskMenu(d, s))
+						}
+						break
+					}
+				}
+				continue
+			}
 			it.wheel.press(gtx, pe, 0, it.maxScroll)
 			it.press, it.pressed = pe.Position, true
 		case pointer.Release:
@@ -586,12 +630,32 @@ func (it *Item) events(gtx layout.Context, d *core.ListDoc) {
 			for _, h := range it.hits {
 				if p.In(h.r) {
 					rec := d.Record(it.rec)
+					if h.rec != "" && h.act == "" { // a subtask's cell
+						rec = d.Record(h.rec)
+					}
 					switch {
 					case rec == nil:
 					case h.act == "comment": // BaseListRecordDetailAddCommentButton: the thread's composer
 						gtx.Execute(key.FocusCmd{Tag: &it.composer})
 					case h.act == "more":
 						it.openPaneMenu(d, rec, image.Point{}, false)
+					case h.act == "subtask-row":
+					case h.act == "subtask-menu": // the row's handle opens its menu
+						if s := d.Record(h.rec); s != nil && it.act.Menu != nil {
+							it.act.Menu(it.subtaskMenu(d, s))
+						}
+					case h.act == "subtask-open", h.act == "subtask-parent": // OpenSubtaskBtn; SubtaskSubtitle's parent link
+						if it.act.OpenItem != nil {
+							it.act.OpenItem(it.id, h.rec)
+						}
+					case h.act == "subtask-list": // SubtaskSubtitle's list link
+						if it.act.OpenList != nil {
+							it.act.OpenList(it.id)
+						}
+					case h.act == "subtask-add":
+						it.addSubtask(it.id, it.rec)
+					case h.rec != "" && h.col != nil && h.col.IsPrimary:
+						it.editSubtaskName(d, rec, gtx)
 					default:
 						it.cellClick(d, rec, h.col, p.X-h.x0, gtx)
 					}

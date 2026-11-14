@@ -1240,6 +1240,11 @@ func (c *Composer) submit() {
 				if err == nil && res.KeepInput {
 					c.restore(doc)
 				}
+				if inv := res.Invite; inv != nil && inv.AddPeople != "" { // the local /invite's invite modal
+					if o, ok := c.h.(inviteOpener); ok {
+						o.OpenInviteToChannel(inv.AddPeople, inv.AddUsers)
+					}
+				}
 			}()
 			return
 		}

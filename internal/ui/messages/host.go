@@ -280,6 +280,31 @@ func (r *richHandler) OpenFile(f *richtext.File) {
 	}
 }
 
+// FileSectionMenuOpener is optional on the Host: a message file card's
+// FileSectionDropdownButton (custom_file_sections, source "file_pillow")
+// opens FileSectionMoveToMenu under btn (window coordinates).
+type FileSectionMenuOpener interface {
+	OpenFileSectionMenu(id string, list bool, title string, btn image.Rectangle, source string)
+}
+
+// OpenFileSection is richview's FileSectionOpener: the canvas pillow's
+// or the list entity's section button.
+func (r *richHandler) OpenFileSection(f *richtext.File, btn image.Rectangle) {
+	o, ok := r.h.(FileSectionMenuOpener)
+	if !ok || f == nil {
+		return
+	}
+	min := btn.Min
+	if r.anchor != nil {
+		min = r.anchor(min)
+	}
+	title := f.Title
+	if title == "" {
+		title = f.Name
+	}
+	o.OpenFileSectionMenu(f.ID, core.IsListFile(f.Type, "", f.PrettyType), title, image.Rectangle{Min: min, Max: min.Add(btn.Size())}, "file_pillow")
+}
+
 // JoinHuddle is a huddle message's Join Huddle (richview.HuddleJoiner):
 // Slack's HuddleMsgJoinButton runs startHuddle with entryPoint
 // huddle_message_button, which the ui root's huddle controller does.
