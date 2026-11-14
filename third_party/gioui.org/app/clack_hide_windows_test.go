@@ -27,6 +27,7 @@ var (
 	testIsWindow          = testUser32.NewProc("IsWindow")
 	testSetCaretBlinkTime = testUser32.NewProc("SetCaretBlinkTime")
 	testGetWindowText     = testUser32.NewProc("GetWindowTextW")
+	testGetForeground     = testUser32.NewProc("GetForegroundWindow")
 )
 
 func testWindowText(hwnd syscall.Handle) string {
@@ -49,6 +50,15 @@ type hideTestWindow struct {
 // hideTestWindow opens a Gio window whose ClosingEvents go to the test.
 // abort decides each close (the test's App: runFromTray).
 func newHideTestWindow(t *testing.T, abort func() bool, opts ...Option) *hideTestWindow {
+	t.Helper()
+	h := openHideTestWindow(t, abort, opts...)
+	waitUntil(t, "the first frame", func() bool { return h.frames.Load() > 0 })
+	time.Sleep(300 * time.Millisecond)
+	return h
+}
+
+// openHideTestWindow is newHideTestWindow without waiting for a frame.
+func openHideTestWindow(t *testing.T, abort func() bool, opts ...Option) *hideTestWindow {
 	t.Helper()
 	h := &hideTestWindow{w: new(Window), closing: make(chan *ClosingEvent, 4), done: make(chan struct{})}
 	h.w.Option(append([]Option{Title("Clack hide test"), Size(480, 360)}, opts...)...)
@@ -88,8 +98,6 @@ func newHideTestWindow(t *testing.T, abort func() bool, opts ...Option) *hideTes
 	case <-time.After(30 * time.Second):
 		t.Fatal("no Win32ViewEvent")
 	}
-	waitUntil(t, "the first frame", func() bool { return h.frames.Load() > 0 })
-	time.Sleep(300 * time.Millisecond)
 	return h
 }
 
@@ -276,5 +284,60 @@ func TestCaretBlinkFromOS(t *testing.T) {
 		}
 		h.closeWindow(t)
 		<-h.done
+	}
+}
+
+// A window made with StartHidden (Clack patch, CLACK_PATCHES.md §23) is
+// never shown by its creation: not visible, not the foreground window;
+// past the frames its creation's configure draws (Gio's update on
+// WM_WINDOWPOSCHANGED and WM_STYLECHANGED), Invalidate draws nothing but
+// still wakes the app; a title change keeps it hidden (§20); ActionRaise
+// shows it and it draws; it closes as usual.
+func TestStartHidden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens windows")
+	}
+	if !windowTestsEnabled() {
+		t.Skip("CLACK_WINDOWS_TRAY_TESTS not set")
+	}
+	var abort atomic.Bool
+	h := openHideTestWindow(t, abort.Load, StartHidden(true))
+	time.Sleep(time.Second)
+	if h.visible() {
+		t.Fatal("a StartHidden window is visible after its creation")
+	}
+	if fg, _, _ := testGetForeground.Call(); syscall.Handle(fg) == h.hwnd {
+		t.Error("a StartHidden window took the foreground")
+	}
+	f0, w0 := h.frames.Load(), h.wakeups.Load()
+	t.Logf("the creation drew %d frames", f0)
+	for range 5 {
+		h.w.Invalidate()
+		time.Sleep(100 * time.Millisecond)
+	}
+	if n := h.frames.Load() - f0; n != 0 {
+		t.Errorf("hidden from the start: %d frames after Invalidate, want none", n)
+	}
+	if h.wakeups.Load() == w0 {
+		t.Error("hidden from the start: Invalidate delivered no event to the app")
+	}
+	h.w.Option(Title("Clack hide test - 3 new items"))
+	time.Sleep(300 * time.Millisecond)
+	if h.visible() {
+		t.Fatal("a title change showed the window started hidden")
+	}
+
+	f1 := h.frames.Load()
+	h.w.Perform(system.ActionRaise)
+	waitUntil(t, "visible after ActionRaise", h.visible)
+	waitUntil(t, "a frame after ActionRaise", func() bool { return h.frames.Load() > f1 })
+	if got := testWindowText(h.hwnd); got != "Clack hide test - 3 new items" {
+		t.Errorf("title %q after the show", got)
+	}
+	h.closeWindow(t)
+	select {
+	case <-h.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the window didn't close")
 	}
 }

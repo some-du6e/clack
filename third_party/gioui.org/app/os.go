@@ -57,6 +57,9 @@ type Config struct {
 	// hiddenTitleBar is a Clack patch (CLACK_PATCHES.md §22): see
 	// HiddenTitleBar.
 	hiddenTitleBar bool
+	// startHidden is a Clack patch (CLACK_PATCHES.md §23): see
+	// StartHidden.
+	startHidden bool
 }
 
 // ConfigEvent is sent whenever the configuration of a Window changes.

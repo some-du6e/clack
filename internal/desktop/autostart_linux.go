@@ -47,3 +47,10 @@ func SetLaunchOnLogin(on bool) error {
 	}
 	return os.Rename(tmp, p)
 }
+
+// StartupFlag is Windows' launch-on-login switch (autostart_windows.go);
+// this OS's autostart entry doesn't pass it.
+const StartupFlag = "--startup"
+
+// RefreshLaunchOnLogin is Windows' Run value upgrade: nothing to do here.
+func RefreshLaunchOnLogin() error { return nil }

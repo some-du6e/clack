@@ -1,5 +1,6 @@
 // Package icon embeds Clack's app icon (see clack.svg; the PNG, .ico and
-// .icns files next to it are rendered from it) for window and Dock icons.
+// .icns files next to it are rendered from it) for window and Dock icons,
+// and the Windows notification-area icon's states (build.py draws them).
 package icon
 
 import _ "embed"
@@ -14,4 +15,16 @@ var (
 	PNG128 []byte
 	//go:embed clack-512.png
 	PNG512 []byte
+)
+
+// The notification-area icon's .ico files, one per state of Slack's tray
+// (slack-taskbar-rest, -unread and -highlight.ico): no unreads, unread
+// messages, mentions.
+var (
+	//go:embed clack-tray-rest.ico
+	TrayRest []byte
+	//go:embed clack-tray-unread.ico
+	TrayUnread []byte
+	//go:embed clack-tray-highlight.ico
+	TrayHighlight []byte
 )

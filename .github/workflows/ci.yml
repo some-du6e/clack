@@ -330,7 +330,8 @@ jobs:
           if-no-files-found: ignore
 
   # Clack's slack:// registration and the single-instance hand-off, close to
-  # the tray, toasts, the taskbar
+  # the tray, the tray's states and menu, the jump list, Focus Assist,
+  # toasts, the taskbar
   windows-shell:
     runs-on: windows-latest
     steps:
@@ -480,6 +481,123 @@ jobs:
           go test -count=1 -v -run 'TestNotifyIconDataSize|TestTrayBalloon|TestPutUTF16' ./internal/desktop
           go test -count=1 -v -timeout 15m -run '^(TestCloseToTrayWindow|TestCloseToTray|TestRunFromTrayRow|TestDrainIdleRunsPosted)$' ./internal/ui
 
+      # Slack's notification-area icon, its menu and the taskbar's jump
+      # list (gap 8, W39: internal/desktop tray_windows.go,
+      # jumplist_windows.go, focusassist_windows.go; internal/ui tray.go):
+      # the tray's rest, unread and highlight .ico frames as HICONs
+      # (LoadImage's pick per SM_CXSMICON), its native menu read back, the
+      # icon on the runner's taskbar found by its tooltip through UI
+      # Automation, a click, the menu opened by its right button and an
+      # item invoked; the jump list Windows saves for a scratch app id;
+      # the Focus Assist read (WNF and IQuietHoursSettings); the Run
+      # value's --startup; Gio patch 23's StartHidden; App.Run's own window
+      # launched on login with Keep in Background, then its tray state,
+      # menu, reset-window and jump list. bash: every go test counts.
+      # Screenshots in toast-shots.
+      - name: the tray's states and menu, the jump list, Focus Assist, Keep in Background
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TRAY_TESTS: "1"
+          CLACK_TOAST_SHOTS: ${{ runner.temp }}\toast-shots
+        run: |
+          rc=0
+          go test -count=1 -v -timeout 10m -run '^TestStartHidden$' gioui.org/app || rc=1
+          go test -count=1 -v -timeout 10m -run '^(TestTrayIconFromICO|TestTrayMenuItems|TestTrayShell|TestJumpList|TestFocusAssistRead|TestLaunchOnLoginRunValue|TestFitCenteredLikeSlack|TestFocusAssistOnLikeSlack)$' ./internal/desktop || rc=1
+          go test -count=1 -v -timeout 15m -run '^(TestTrayWindow|TestTrayStateLikeSlack|TestTrayIconFollowsUnreads|TestTrayMenuLikeSlack|TestLaunchOnLoginTrayAndPrefs|TestJumpListLikeSlack|TestAppActions|TestResetWindow|TestStartHiddenLikeSlack|TestSoundPlaybackHoldsTheSound)$' ./internal/ui || rc=1
+          exit $rc
+      # The real exe: Clack.exe --startup (the Run value) with Keep in
+      # Background, the default, keeps its window hidden; the jump list's
+      # Move Clack to Current Display (a second launch with
+      # slack://app/?action=reset-window) hands over and the window comes
+      # out maximized; the jump list Windows saved for Clack.exe has the
+      # task; the exe carries the task's icon (icon group #2).
+      - name: Clack.exe --startup (Keep in Background) and the jump list's Move Clack to Current Display
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path build\Clack.exe)) {
+            go install github.com/tc-hib/go-winres@v0.3.3
+            & (Join-Path (go env GOPATH) 'bin\go-winres.exe') make --in packaging/windows/winres.json --out cmd/clack/rsrc --arch amd64 --file-version 0.0.0.0 --product-version 0.0.0-ci
+            $env:CGO_ENABLED = '0'
+            go build -trimpath -ldflags="-s -w -H windowsgui" -o build\Clack.exe .\cmd\clack
+            if ($LASTEXITCODE -ne 0) { throw 'go build' }
+          }
+          $exe = (Resolve-Path build\Clack.exe).Path
+          $res = Join-Path $env:RUNNER_TEMP 'clack-res'
+          & (Join-Path (go env GOPATH) 'bin\go-winres.exe') extract --dir $res $exe
+          if ($LASTEXITCODE -ne 0) { throw 'go-winres extract' }
+          $groups = (Get-Content (Join-Path $res 'winres.json') -Raw | ConvertFrom-Json).RT_GROUP_ICON
+          if (-not $groups.'#2') { throw "Clack.exe has no icon group #2 (the jump list task's screen.ico): $($groups | ConvertTo-Json -Compress)" }
+          Add-Type @'
+          using System; using System.Text; using System.Runtime.InteropServices;
+          public static class ClackWin {
+            public delegate bool EnumProc(IntPtr h, IntPtr l);
+            [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f, IntPtr l);
+            [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+            [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+            [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+            [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+            public static IntPtr Find(uint want) {
+              IntPtr found = IntPtr.Zero;
+              EnumWindows((h, l) => { uint pid; GetWindowThreadProcessId(h, out pid); var c = new StringBuilder(64); GetClassName(h, c, 64);
+                if (pid == want && c.ToString() == "clack") { found = h; return false; } return true; }, IntPtr.Zero);
+              return found;
+            }
+          }
+          '@
+          $log = Join-Path $env:LOCALAPPDATA 'Clack\logs\clack.log'
+          $script:mark = if (Test-Path $log) { @(Get-Content $log).Count } else { 0 }
+          function Wait-Log([string]$text, [string]$what, [int]$secs = 90) {
+            for ($i = 0; $i -lt $secs * 4; $i++) {
+              if ((Test-Path $log) -and (@(Get-Content $log | Select-Object -Skip $script:mark) | Where-Object { $_.Contains($text) })) { return }
+              Start-Sleep -Milliseconds 250
+            }
+            if (Test-Path $log) { Get-Content $log | Select-Object -Skip $script:mark | Select-Object -Last 80 }
+            throw "no '$text' in the log after ${secs}s: $what"
+          }
+          $since = (Get-Date).AddSeconds(-2)
+          $p = Start-Process -PassThru -FilePath $exe -ArgumentList '--startup'
+          try {
+            Wait-Log 'ui: launched on login: the window stays in the notification area (Keep in Background)' 'the login launch'
+            $h = [IntPtr]::Zero
+            for ($i = 0; $i -lt 120 -and $h -eq [IntPtr]::Zero; $i++) { $h = [ClackWin]::Find([uint32]$p.Id); Start-Sleep -Milliseconds 250 }
+            if ($h -eq [IntPtr]::Zero) { throw 'no Clack window' }
+            Start-Sleep -Seconds 3
+            if ([ClackWin]::IsWindowVisible($h)) { throw 'Keep in Background: the window is visible' }
+            Write-Host 'the login launch kept its window hidden'
+            Start-Process -Wait -FilePath $exe -ArgumentList 'slack://app/?action=reset-window'
+            Wait-Log 'desktop: another launch handed over a slack:// link' 'the jump list task reaching the running Clack'
+            for ($i = 0; $i -lt 80 -and -not ([ClackWin]::IsWindowVisible($h) -and [ClackWin]::IsZoomed($h)); $i++) { Start-Sleep -Milliseconds 250 }
+            if (-not [ClackWin]::IsWindowVisible($h)) { throw 'reset-window: the window stayed hidden' }
+            if (-not [ClackWin]::IsZoomed($h)) { throw 'reset-window: the window is not maximized' }
+            Write-Host 'Move Clack to Current Display: shown and maximized'
+            $dir = Join-Path $env:APPDATA 'Microsoft\Windows\Recent\CustomDestinations'
+            $want = @('Move Clack to Current Display', 'slack://app/?action=reset-window', 'Tasks', $exe)
+            $ok = $false
+            for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+              foreach ($f in Get-ChildItem $dir -Filter '*.customDestinations-ms' -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $since }) {
+                $b = [System.IO.File]::ReadAllBytes($f.FullName)
+                # UTF-16 strings sit at even or odd offsets: read it both ways
+                $texts = @([System.Text.Encoding]::Unicode.GetString($b), [System.Text.Encoding]::Unicode.GetString($b, 1, $b.Length - 1))
+                if (@($want | Where-Object { $w = $_; -not @($texts | Where-Object { $_.Contains($w) }) }).Count -eq 0) { $ok = $true; Write-Host "the jump list: $($f.Name)" }
+              }
+              if (-not $ok) { Start-Sleep -Milliseconds 500 }
+            }
+            if (-not $ok) {
+              $adv = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -ErrorAction SilentlyContinue
+              Write-Host "Start_TrackDocs: $($adv.Start_TrackDocs)"
+              Get-ChildItem $dir -ErrorAction SilentlyContinue | Format-Table Name, Length, LastWriteTime | Out-String | Write-Host
+              Get-Content $log | Select-String -SimpleMatch 'jump list', 'desktop:', 'ui: ' | Select-Object -Last 40 | ForEach-Object { $_.Line }
+              throw "no saved jump list with $($want -join ', ')"
+            }
+          } finally {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            $p.WaitForExit(15000) | Out-Null
+          }
+
       # Toasts (WinRT, internal/desktop/toast_windows.go). Windows drops a
       # toast from an app id it doesn't know without an error, so a scratch
       # id shows one without and one with the registration Clack writes
@@ -568,6 +686,19 @@ jobs:
         run: |
           go test -count=1 -v -timeout 10m -run 'TestTaskbar|TestSystemIdleTime|TestBadge|TestLanczos' ./internal/desktop
           go test -count=1 -v -timeout 15m -run '^(TestTaskbarWindow|TestTaskbarOverlayFollowsCount|TestFlashOnNotification|TestCloseKeepsAppInTaskbar|TestWindowsAppearancePref|TestCloseToTray|TestTitleDockTaskbarAgreeLikeSlack)$' ./internal/ui
+      # Focus Assist's modes set through IQuietHoursSettings, each read back
+      # through the WNF state as Slack's windows-focus-assist reads it, and
+      # Clack as a priority app. It switches the runner's Do not disturb,
+      # which restarts the notification service on Server 2025, so it runs
+      # after every toast and taskbar step; it puts the profile back.
+      - name: Focus Assist's modes (Do not disturb switched through IQuietHoursSettings, then put back)
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          CLACK_WINDOWS_TRAY_TESTS: "1"
+          CLACK_WINDOWS_FOCUS_ASSIST_TESTS: "1"
+        run: go test -count=1 -v -timeout 5m -run '^TestFocusAssistModes$' ./internal/desktop
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

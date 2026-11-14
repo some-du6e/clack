@@ -128,6 +128,11 @@ type Options struct {
 	// checker, or Hunspell dictionaries from Slack's dictionary CDN.
 	// Off in tests and the demo, which never fetch anything.
 	Spellcheck bool
+	// InvokedOnStartup: Launch on Login started Clack (cmd/clack
+	// --startup, Slack's environment.invokedOnStartup). With Launch
+	// Control's Keep in Background the window starts hidden in the
+	// notification area (tray.go).
+	InvokedOnStartup bool
 }
 
 // SetLogin shows the sign-in screen, calling login on submit. On the
@@ -255,6 +260,11 @@ type App struct {
 	switchTo         Route
 	winLive          atomic.Pointer[app.Window] // a.win once Run made it, for other goroutines
 	tray             atomic.Pointer[trayRef]    // the notification-area icon (SetTray, runfromtray.go)
+	trayLast         trayIconState              // the tray icon's state and tooltip as last set (tray.go)
+	trayMenuLast     trayMenuKey                // what the tray menu was last made from
+	launch           launchCache                // Launch app on login as last read or set
+	jump             jumpKey                    // what the jump list was last made from
+	resetPending     bool                       // a reset-window waits for the window
 	quitting         atomic.Bool                // Quit: the next close isn't runFromTray's (Slack's app.isQuitting)
 	winMode          app.WindowMode             // the last ConfigEvent's (runFromTray leaves full screen first)
 	hideHook         func() bool                // tests: replaces Window.Hide (runfromtray.go)
@@ -431,6 +441,10 @@ func (a *App) Run() error {
 	a.win = new(app.Window)
 	nativemenu.SetRunner(a.win.Run) // TrackPopupMenuEx runs on the window's thread
 	a.win.Option(mainWindowOptions()...)
+	if a.startHidden() { // Keep in Background after a login launch (tray.go)
+		log.Print("ui: launched on login: the window stays in the notification area (Keep in Background)")
+		a.win.Option(app.StartHidden(true))
+	}
 	a.wcoEnable() // Windows: the top nav draws the caption buttons
 	a.winLive.Store(a.win)
 	a.rv.inRun = true // the real window: covered until revealed (reveal.go)
@@ -477,6 +491,7 @@ func (a *App) Run() error {
 		}
 		a.syncCaption(ev)        // Windows: the native caption follows the window (caption_windows.go)
 		a.syncTaskbar()          // Windows: the taskbar overlay on a new window (dock.go)
+		a.syncTray()             // Windows: the tray menu, the jump list (tray.go)
 		nativemenu.NoteEvent(ev) // the window's HWND / NSView for native context menus
 		switch e := ev.(type) {
 		case app.DestroyEvent:

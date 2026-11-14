@@ -145,6 +145,11 @@ type prefs struct {
 	// (runfromtray.go).
 	NoRunFromTray  bool `json:"no_run_from_tray,omitempty"`
 	HasRunFromTray bool `json:"has_run_from_tray,omitempty"`
+	// ShowOnStartup is the tray's Launch Control > Show Clack
+	// Immediately: Slack's desktop setting hideOnStartup false (its
+	// default is true, Keep in Background: a launch on login leaves the
+	// window in the notification area; tray.go).
+	ShowOnStartup bool `json:"show_on_startup,omitempty"`
 	// Windows' Notifications block (prefs_win_appearance.go), Slack's
 	// desktop settings: WindowFlashBehavior is win32.windowFlashBehavior
 	// ("never", "idle", "always"; "" the default, idle) and

@@ -59,6 +59,9 @@ type window struct {
 	// configured: the first Configure (newWindow's, which shows the
 	// window) ran. Clack patch (CLACK_PATCHES.md §20).
 	configured bool
+	// startedHidden: that Configure left the window hidden (StartHidden).
+	// Clack patch (CLACK_PATCHES.md §23).
+	startedHidden bool
 	// mousePID is the mouse's pointer ID, for a pointer.Leave from a
 	// message that has none; ncPressed: a press on a caption button went
 	// to the program. Clack patch (CLACK_PATCHES.md §22).
@@ -129,7 +132,9 @@ func newWindow(win *callbacks, options []Option) {
 		defer winMap.Delete(w.hwnd)
 		w.Configure(options)
 		w.ProcessEvent(Win32ViewEvent{HWND: uintptr(w.hwnd)})
-		if !w.config.panel { // Clack patch (CLACK_PATCHES.md §8)
+		// Clack patches (CLACK_PATCHES.md §8, §23): a panel or a window
+		// started hidden doesn't take the focus.
+		if !w.config.panel && !w.startedHidden {
 			windows.SetForegroundWindow(w.hwnd)
 			windows.SetFocus(w.hwnd)
 		}
@@ -1077,12 +1082,22 @@ func (w *window) Configure(options []Option) {
 			return
 		}
 	}
+	// Clack patch (CLACK_PATCHES.md §23): the first Configure of a window
+	// made with StartHidden places and styles it but doesn't show it.
+	hide := !w.configured && cnf.startHidden
 	w.configured = true
+	if hide {
+		swpStyle |= windows.SWP_NOACTIVATE
+	}
 
 	// Note: these invocation all trigger the windows callback method which may process a pending system.ActionCenter
 	// action, so SetWindowPos should come first so as to not "overwrite" system.ActionCenter.
 	windows.SetWindowPos(w.hwnd, hwndAfter, x, y, width, height, swpStyle)
 	windows.SetWindowLong(w.hwnd, windows.GWL_STYLE, style)
+	if hide {
+		w.startedHidden = true
+		return
+	}
 	if cnf.panel && showMode == windows.SW_SHOWNORMAL {
 		showMode = windows.SW_SHOWNOACTIVATE // Clack patch (CLACK_PATCHES.md §8)
 	}
