@@ -409,6 +409,21 @@ func reportMessage(h Host, link string) {
 	}
 }
 
+// reportSection is getReportSectionMenuTemplate's click: the team's
+// /help/requests/report-content?u=<the section's anchor link>&type=canvas_section.
+func reportSection(h Host, link string) {
+	base := "https://" + teamDomain(h) + ".slack.com/"
+	if a := h.Core(); a != nil && a.TeamURL() != "" {
+		base = a.TeamURL()
+	}
+	if !strings.HasSuffix(base, "/") {
+		base += "/"
+	}
+	if err := openReport(base + "help/requests/report-content?u=" + link + "&type=canvas_section"); err != nil {
+		h.Toast("Couldn't open the link: " + errText(err))
+	}
+}
+
 // jsEncodeURI is JavaScript's encodeURI: everything but the URI's
 // reserved and unreserved characters is percent-encoded (so a
 // permalink's ?thread_ts=…&cid=… stays as it is, as in Slack).
@@ -449,7 +464,12 @@ func confirmRemoveBroadcast(h Host, m core.Message, channel bool) {
 func ConfirmDelete(h Host, m core.Message) { confirmDelete(h, m, nil) }
 
 func confirmDelete(h Host, m core.Message, del func(ctx context.Context, ch, ts string) error) {
-	Confirm(h, nsMsgEdit.T("Delete message"), nsMsgEdit.T("Are you sure you want to delete this message? This cannot be undone."), nsMsgEdit.T("Delete"), true,
+	// 6Qou getTitleText / getPrimaryBodyText: a canvas comment says so
+	title, body := "Delete message", "Are you sure you want to delete this message? This cannot be undone."
+	if a := h.Core(); a != nil && a.IsCanvasComment(&m) {
+		title, body = "Delete comment", "Are you sure you want to delete this comment? This cannot be undone."
+	}
+	Confirm(h, nsMsgEdit.T(title), nsMsgEdit.T(body), nsMsgEdit.T("Delete"), true,
 		func(gtx layout.Context) layout.Dimensions { return actMsgPreview(gtx, h, m, true) },
 		func() {
 			ch, ts := m.Channel, m.TS

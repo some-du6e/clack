@@ -228,6 +228,7 @@ var slackRef = map[string]string{
 	"pr-open":                     "pr-open",
 	"quote":                       "quote",
 	"refine":                      "refine",
+	"rotate":                      "rotate", // the comment thread's Re-open thread (ArchiveCommentButton)
 	"refresh":                     "refresh",
 	"remind":                      "remind",
 	"reorder":                     "reorder",

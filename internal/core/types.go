@@ -83,6 +83,9 @@ type Message struct {
 	// (ThreadLocked, thread_lock.go). LockedByTeam is locked_by_team_id.
 	Locked       bool
 	LockedByTeam string
+	// DocumentComment is a canvas comment root's document_comment (nil
+	// for other messages; canvas_comments.go).
+	DocumentComment *slack.MessageDocumentComment
 }
 
 // SubtypeSlackbotResponse is the subtype of Slackbot's answers to the

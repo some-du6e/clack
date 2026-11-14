@@ -850,6 +850,9 @@ func (r *row) layoutMessage(gtx layout.Context, p slackc.Props) layout.Dimension
 	if r.m.Tombstone {
 		return r.tombstoneLayout(gtx, rc)
 	}
+	if rc.parent && rc.thread && r.m.IsCommentRoot() { // ThreadRootCanvas (thread_comment.go)
+		return r.commentRootLayout(gtx, rc)
+	}
 	if r.m.System && (!rc.parent || huddleSubtype(r.m.Subtype)) && !r.hiddenSystem(rc) {
 		// ThreadRootGeneric draws a huddle root as a redesigned system
 		// message too (huddle_msg.go)

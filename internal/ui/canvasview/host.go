@@ -61,6 +61,11 @@ type Actions struct {
 	// SectionMenu opens its FileSectionMoveToMenu under btn (window
 	// coordinates).
 	SectionMenu func(btn image.Rectangle)
+	// Comments is More actions' "Show all threads" / "Hide all threads"
+	// (toQuipCommentStream in the secondary pane, or closing it);
+	// CommentsOpen reports whether the pane shows this canvas's stream.
+	Comments     func()
+	CommentsOpen func() bool
 }
 
 // MenuItem is one row of a canvas menu (More options, the bottom

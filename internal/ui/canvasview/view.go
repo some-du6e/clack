@@ -570,8 +570,9 @@ func (v *View) barAction(key string) {
 }
 
 // openMore is the canvas's More options menu, Slack's items Clack can
-// carry out, under Slack's labels: Copy link, Share this canvas, and the
-// split view / full view switch ("Open in split view" in a channel tab).
+// carry out, under Slack's labels: Copy link, Share this canvas, Show all
+// threads, and the split view / full view switch ("Open in split view"
+// in a channel tab).
 func (v *View) openMore() {
 	if v.act.Menu == nil {
 		return
@@ -584,6 +585,20 @@ func (v *View) openMore() {
 	}
 	if v.act.Share != nil {
 		items = append(items, MenuItem{Label: nsCanvas.T("Share this canvas"), Icon: "share-message", Do: func() { v.act.Share(v.id) }})
+	}
+	// "Show all threads" / "Hide all threads" (key comments, after the
+	// canvas customization separator): shown unless the canvas is a
+	// template the viewer can't write (show: !isFileCanvasTemplate ||
+	// isWriteable)
+	if v.act.Comments != nil && (d == nil || !d.Info.TemplateMod || d.Info.Editable) {
+		label := nsCanvas.T("Show all threads")
+		if v.act.CommentsOpen != nil && v.act.CommentsOpen() {
+			label = nsCanvas.T("Hide all threads")
+		}
+		if len(items) > 0 {
+			items = append(items, MenuItem{Divider: true})
+		}
+		items = append(items, MenuItem{Label: label, Do: v.act.Comments})
 	}
 	var view []MenuItem
 	switch {

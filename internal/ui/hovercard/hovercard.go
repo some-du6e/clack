@@ -126,6 +126,9 @@ type Request struct {
 	// ChannelHovercard (boot-shared UyZX) after HovercardImpl's 250ms
 	// anchorMouseEnter delay (Delay), not ChannelHoverCard.
 	Canvas bool
+	// CanvasFile and CanvasSection are the canvas and the section holding
+	// that mention (the embedded menu's section rows).
+	CanvasFile, CanvasSection string
 	// URL is a link's UrlHoverCard (boot-shared cXYm): with
 	// truncated_url_hover_card on, BaseMrkdwnLink's renderDefaultLink
 	// wraps an external link that shows a tooltip in UrlHoverCardTrigger
@@ -251,9 +254,16 @@ const CanvasShowDelay = 250 * time.Millisecond
 // ReportCanvasChannel says the pointer is on a canvas's channel mention
 // (Request.Canvas).
 func (c *Controller) ReportCanvasChannel(key any, channelID string, local image.Rectangle, ptr f32.Point) {
+	c.ReportCanvasMention(key, channelID, "", "", local, ptr)
+}
+
+// ReportCanvasMention is ReportCanvasChannel for a mention in canvas
+// file's section.
+func (c *Controller) ReportCanvasMention(key any, channelID, file, section string, local image.Rectangle, ptr f32.Point) {
 	c.ReportChannel(key, channelID, local, ptr)
 	if c.hasRep && c.rep.Key == key {
 		c.rep.Canvas, c.rep.Buttons, c.rep.Delay = true, false, CanvasShowDelay
+		c.rep.CanvasFile, c.rep.CanvasSection = file, section
 	}
 }
 

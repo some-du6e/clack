@@ -83,7 +83,10 @@ func ctxContainer(where MessageContext) string {
 func ctxHoverItems(h Host, at image.Point, m core.Message, where MessageContext, o MessageMenuOpts) []MenuItem {
 	var items []MenuItem
 	ch, ts := m.Channel, m.TS
-	if !m.System {
+	// canAddReaction (vtEK): a canvas comment follows the canvas's access;
+	// a comment thread's root takes none in its thread (ThreadRootCanvas)
+	react := !m.System && (h.Core() == nil || h.Core().CanAddReaction(&m)) && !(where == InThread && m.IsCommentRoot())
+	if react {
 		items = append(items, MenuItem{Label: "Add reaction…", Icon: "add-reaction", Hint: nsMessage.T("R"), Keys: KeyReact, Do: func() {
 			h.ShowOverlay(NewReactionPicker(h, at, ch, ts, m.ThreadTS, nil))
 		}}.In(nsMessage))

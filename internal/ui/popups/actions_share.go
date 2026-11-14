@@ -119,6 +119,12 @@ func ShareAction(app *core.App, m *core.Message, thread bool) (ShareActionInfo, 
 	info := func(label, qa string) (ShareActionInfo, bool) {
 		return ShareActionInfo{Label: label, QA: qa, Hint: hint}, true
 	}
+	if app != nil && app.IsCanvasComment(m) { // 5t6x: a canvas comment first
+		if forwarding {
+			return info("Forward comment…", "share_message")
+		}
+		return info("Share comment…", "share_message")
+	}
 	if f := singleFile(m, thread); f != nil {
 		switch {
 		case fileIsCanvas(f) && forwarding:

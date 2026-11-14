@@ -263,11 +263,26 @@ func (a *App) dropSplitPane() {
 	p.convos, p.convoOrder, p.joinBannerCh = nil, nil, ""
 }
 
-// PaneBack is messages.PaneBack: the split view has a back stack.
-func (a *App) PaneBack() bool { return a.pane == paneSplit && len(a.split.stack) > 1 }
+// PaneBack is messages.PaneBack: the split view has a back stack, or the
+// secondary pane's thread does (a canvas comment thread opened from the
+// comment stream, canvas_comments.go).
+func (a *App) PaneBack() bool {
+	if a.pane == paneSplit {
+		return len(a.split.stack) > 1
+	}
+	return a.navSrc == srcSecondary && a.secondary.kind == secThread && a.secondary.prev != nil
+}
 
-// GoPaneBack goes back in the split view (FlexpaneBackButton).
+// GoPaneBack goes back in the split view or the secondary pane
+// (FlexpaneBackButton).
 func (a *App) GoPaneBack() {
+	if a.pane != paneSplit {
+		if a.secondary.kind == secThread && a.secondary.prev != nil {
+			a.leaveThreadRoute(a.secondary.channel, a.secondary.ts)
+			a.GoSecondaryBack()
+		}
+		return
+	}
 	if s := &a.split; len(s.stack) > 1 {
 		s.stack = s.stack[:len(s.stack)-1]
 		s.focus = true

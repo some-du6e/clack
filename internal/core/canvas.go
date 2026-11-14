@@ -57,6 +57,9 @@ type CanvasInfo struct {
 	// AccessRequested: the viewer already asked for more access
 	// (most_recent_access_request_ts; QuipAccessIndicator's "already asked")
 	AccessRequested bool
+	// Locked is files.info is_locked: Lock edits (x1Bi isLocked), which
+	// also stops resolving comment threads (canArchiveComment).
+	Locked bool
 }
 
 // CanvasFile is an embedded Slack file's display data (images, file cards).
@@ -99,6 +102,8 @@ type canvasFileJSON struct {
 	IMs             []string        `json:"ims"`
 	IsPublic        bool            `json:"is_public"`
 	CommentsCount   int             `json:"comments_count"`
+	IsLocked        bool            `json:"is_locked"`
+	TemplateMode    json.RawMessage `json:"canvas_template_mode"` // x1Bi isFileCanvasTemplate: !!canvas_template_mode
 	ShowBadge       bool            `json:"show_badge"`
 	TitleBlocks     json.RawMessage `json:"title_blocks"`
 	Thumb360        string          `json:"thumb_360"`
@@ -129,6 +134,7 @@ type canvasState struct {
 	pending  map[string]bool            // a refetch is scheduled
 	viewers  map[string]map[string]bool // file id -> users viewing it (files.open, file_opened/closed)
 	watching bool
+	infos    map[string]CanvasInfo // the last files.info of each canvas read (KnownCanvasInfo)
 }
 
 var canvasStates sync.Map // *App -> *canvasState
@@ -137,7 +143,8 @@ func (a *App) canvases() *canvasState {
 	if v, ok := canvasStates.Load(a); ok {
 		return v.(*canvasState)
 	}
-	v, _ := canvasStates.LoadOrStore(a, &canvasState{open: map[string]int{}, pending: map[string]bool{}, viewers: map[string]map[string]bool{}})
+	v, _ := canvasStates.LoadOrStore(a, &canvasState{open: map[string]int{}, pending: map[string]bool{}, viewers: map[string]map[string]bool{},
+		infos: map[string]CanvasInfo{}})
 	return v.(*canvasState)
 }
 
@@ -158,7 +165,12 @@ func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 	ci := CanvasInfo{ID: f.ID, Title: f.Title, Creator: firstNonEmpty(f.CanvasCreatorID, f.User), Created: f.Created,
 		Updated: f.EditTimestamp, Editable: f.Editable, Access: f.Access, Editors: f.Editors, Permalink: f.Permalink,
 		URL: f.URLPrivate, IsPublic: f.IsPublic, CommentsN: f.CommentsCount, ShowBadge: f.ShowBadge,
-		QuipThreadID: f.QuipThreadID}
+		QuipThreadID: f.QuipThreadID, Locked: f.IsLocked}
+	switch strings.Trim(string(f.TemplateMode), `"`) {
+	case "", "null", "0", "false":
+	default:
+		ci.TemplateMod = true
+	}
 	if ci.Updated == 0 {
 		ci.Updated = f.Updated
 	}
@@ -182,6 +194,7 @@ func (a *App) canvasInfo(f *canvasFileJSON) CanvasInfo {
 	if len(ci.TitleSpans) == 0 { // QuipTitleParsedId's string path: FormatTextWithEmoji
 		ci.TitleSpans, ci.TitleFromText = richtext.EmojiText(a.S, ci.Title), true
 	}
+	a.rememberCanvasInfo(ci)
 	return ci
 }
 

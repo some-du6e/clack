@@ -1443,6 +1443,9 @@ func (s *listState) toolbar(gtx layout.Context, h Host, rc *rowCtx, r *row, idx 
 	s.tilt.mount(r)
 	s.quick.prepare(h, s.ch, r)
 	s.prepareButtons(h.Core(), r)
+	if !reactable(h.Core(), r, s.thread) { // canAddReaction; ThreadRootCanvas: no quick reactions
+		s.quick.names = s.quick.names[:0]
+	}
 	// message_actions_truncate (L2dv calculateResponsiveActions): the
 	// quick reactions go when the toolbar with them is wider than the
 	// message from its left edge to the toolbar's right edge
@@ -1510,6 +1513,10 @@ func (s *listState) prepareButtons(app *core.App, r *row) {
 			s.tbLabel[i], s.tbQAs[i] = l, qa
 		case tbTodo:
 			s.tbLabel[i] = todoAction(app, &r.src).Label // Yoyn: "Complete to-do" on a to-do
+		case tbAddReact:
+			if !reactable(app, r, s.thread) {
+				continue
+			}
 		}
 		s.tbLabel[i] = tbTip(i, s.tbLabel[i])
 		s.tbBtns = append(s.tbBtns, i)

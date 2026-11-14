@@ -101,6 +101,8 @@ func (a *App) newCanvasView(id string, mode canvasview.Mode) *canvasview.View {
 		}
 		a.openFileSection(f, btn, "canvas_header")
 	}
+	act.Comments = func() { a.ToggleCanvasComments(id) } // canvas_comments.go
+	act.CommentsOpen = func() bool { return a.CanvasCommentsOpen(id) }
 	cv = canvasview.New(a, id, mode, act)
 	return cv
 }

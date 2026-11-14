@@ -106,7 +106,55 @@ Canvas markdown (`internal/canvas/markdown.go`): `#`/`##`/`###`, `- `, `1. `, `-
 
 The editor draws its text with richview's 0.45px embolden (`composer.EditorStyle.Embolden`), so a block doesn't look lighter while it's being edited.
 
-**Not supported yet:** editing tables, images, columns and embeds (they render, but don't open in the editor), a drag selection across blocks, Insert > Date / Callout / Canvas, layouts, comments, version history, templates, deleting a canvas, Lists, and sending cursors (`document_change`). The link button only links selected text that is itself an address (there's no link dialog yet).
+**Not supported yet:** editing tables, images, columns and embeds (they render, but don't open in the editor), a drag selection across blocks, Insert > Date / Callout / Canvas, layouts, starting comment threads and section reactions (see "Comments"), version history, templates, deleting a canvas, Lists, and sending cursors (`document_change`). The link button only links selected text that is itself an address (there's no link dialog yet).
+
+## Comments
+
+Sources: Slack's web client on the public CDN, read without a cookie: the `application.js` + `modern.vendor` build 93ac48dd3c752f09 (requestQuipComments `xiJX`, updateArchiveState `XuFq`, QuipCommentsDataProvider `YPJx`, the id codecs `neAw`, ArchiveCommentButton in the flexpane header `WanD`, QuipCommentRoot `thrK`, canAddReaction `vtEK`, canArchiveComment `+IQ1+`, the embedded menu `Kda0`), the comment stream's lazy chunk `quip-popout_quip-comment-stream-view` 0893e737, boot-shared f9df0f12 (ThreadRoot `3ZeZ`, the stream reducer `pkMj`), `quip-collab-webapp`/`-editor` b10cb414/54e67774, and client-boot-styles cf726c4f.
+
+**What a comment is.** A canvas's comments live in its file channel, the file id with F → C (`7/Dp`). A comment thread is a thread there. Its root has subtype `document_comment_root` and `document_comment {thread_id, authors, is_archived, is_visible, last_seen (µs), most_recent_editor}`; its text is the highlighted part of the canvas. The comments are the root's replies. Slack's thread key for a comment thread before it knows the root is `<channel>-Qpc:<thread id with "temp:" shortened to "t:">`, and `conversations.replies` takes that `Qpc:` form as `ts`.
+
+**Where the anchor lives.** Quip makes the thread. Highlighting text and choosing Comment creates a `CONTROL_HIGHLIGHT_TYPE` control in the section (`highlightRange`/`highlightSection`, `quip-collab-webapp`), saved through Quip's binary `/canvas/-/edit-document`. `didCreateAnnotation` then calls `startCommentsThread`, and Quip's server writes the root message. A section reaction is the same kind of annotation, with the emoji on the root (`openReaction`, ReactionsEmojiPicker). The highlight's position, the annotation gutter and its message and reaction counts (`getAnnotationMessageCount`, `getAnnotationReactionCount`) exist only in Quip's document model. The HTML export Clack reads has no trace of them. canvases.edit has no form for a highlight, and Clack doesn't write Quip's protobuf (see "What Clack does"). So Clack can't start a thread or react to a section, and it can't draw the margin indicators. It reads, answers, resolves and reacts to the threads that exist.
+
+**API** (all Web API, form-encoded):
+
+| what | call |
+|---|---|
+| the comment stream (documentHistoryFetcher) | `conversations.history {channel: <file channel>, limit: 20, include_pin_count, inclusive, no_user_profile, include_free_team_extra_messages, include_date_joined: false, document_stream: latest_reply \| unread \| archived, cursor}`. The roots are the `document_comment_root` messages and the other messages are their latest replies. `channel_not_found` means no threads |
+| a thread (requestQuipComments → fetchReplies) | `conversations.replies {channel, ts, inclusive, limit}` |
+| reply, edit, delete, react | `chat.postMessage` (thread_ts = the root), `chat.update`, `chat.delete`, `reactions.add/remove`, as in any thread |
+| Resolve thread / Re-open thread (updateArchiveState) | `quip.thread.archive` / `quip.thread.unarchive {channel_id, thread_ts}`. createApiMethodFetcher snake-cases its camelCase input. The answer's `message` replaces the root |
+| Resolve all threads (archiveAllThreads) | `quip.thread.archiveAll {channel_id}` |
+
+**The stream** (`internal/ui/views/canvas_comments.go`, QuipCommentStreamView). The canvas's More actions has "Show all threads", or "Hide all threads" while the stream shows (key `comments`). It is hidden only on a template the viewer can't write. The item opens `toQuipCommentStream` in the secondary pane. With the canvas itself in the side panel, the stream takes the pane and the canvas becomes its back stack (the header's Back).
+- **Header:** `.p-quip_popout__flexpane_header`, 50px with padding 4px 12px, 18px Lato Black, and a 1px line under it. The title is "All threads", "Unread comments" or "Resolved threads". On the right are the Filter button (refine, "Filter" tooltip) and Close.
+- **Filter menu:** "Filter by", the radios Most recent / Unread / Resolved, then Resolve all threads when the canvas is writeable and not locked. That item asks first (QuipArchiveAllModal: "Resolve all threads and reactions?", danger).
+- **Rows** (getRows): a date row per day of the latest reply (13px bold, padding 12px 16px, `{day_divider_pretty}`). Each thread is a card (base-pry, 1px otl-ter, radius 12, 16px under it) holding:
+  - the root, drawn as ThreadRootCanvas → QuipCommentRoot: padding 12px 20px 8px 12px, the 4px base-ter attachment bar, the highlighted text;
+  - "Show N more replies" (32px) when the thread has more than one reply;
+  - the "New" line when `last_seen` isn't the latest reply;
+  - the latest reply.
+- **Clicks:** every row opens the thread (showQuipCommentThread) with the stream as its back stack.
+- **Empty states:** "Nobody's added any comments" / "There aren't any resolved threads" / "No unread comments", each with Slack's description.
+
+**The thread** (`internal/ui/messages/thread_comment.go`). It is the ordinary thread pane on the file channel.
+- **Root:** ThreadRootCanvas. There is no avatar gutter; QuipCommentRoot shows, in a thread, a heading with the most recent editor's 16px avatar and name, then the highlighted text. When Quip no longer shows the highlight it says "This content was deleted.".
+- **Header:** ArchiveCommentButton sits before the ⋮, shown when canArchiveComment (the canvas writeable and not locked, a Quip thread id, at least one reply). It is check "Resolve thread", or rotate "Re-open thread" on a resolved thread, with its tooltip bottom-right after 300ms.
+- **The root's own reactions:** the root takes no add-reaction button or quick reactions there (showAddReactionButton and showQuickReactions off).
+- **Comment wording:** a message in a canvas's file channel is a canvas comment (isCanvasComment, `C3jk`/`z1wc`). Its share action says "Share comment…" ("Forward comment…" under private_message_forwarding; `5t6x`), and deleting it asks "Delete comment" / "Are you sure you want to delete this comment? This cannot be undone." (`6Qou`).
+
+**Reactions on comments** (canAddReaction, `vtEK`). In a canvas's file channel, a viewer who can't edit the canvas may react only when it is commentable (access comment, write or owner) and `canvas_comment_only_mode` is on. Clack applies this to the toolbar's add-reaction button and quick reactions and to the context menu's "Add reaction…" once the canvas's files.info is known (`core.CanAddReaction`).
+
+**canvas_comment_only_mode** (on for the account) changes four things in Slack:
+- the access indicator's "Comment only" and Request Comment Access (`access.go`, ported);
+- reactions on comments with comment access (above, ported);
+- the embedded menus' comment rows for commentable viewers (`fileIsCommentable` in Kda0, which needs annotations);
+- the share dialog's Can comment level (useGetAccessOptions). That one can't be ported: canvases.access.set takes read, write and owner only.
+
+**The channel card's rows** (`popups/canvas_channel_card.go`; Kda0 EmbeddedMenu in the HOVERCARD context). After View channel details and Copy name:
+- **Report to Slack** (getReportSectionMenuTemplate): shown with `is_content_reporting_enabled`. It opens the team's `/help/requests/report-content?u=<the section's anchor link>&type=canvas_section`. The anchor link is the canvas permalink with `focus_section_id` appended (Quip's getUrl uses `URL.searchParams.append`).
+- **Remove mention** (getRemoveSectionMenuTemplate). Slack deletes the control (performAction 1). Clack saves the section without the mention (canvases.edit replace), so the row is offered only on a top-level section that passes the fidelity check with and without it (`canvasview/mention.go`).
+- **Not offered:** Add a comment / View comments, Add a reaction / View reactions and Display as (Mention / URL / Card). Each writes the control or an annotation through edit-document.
 
 ## How it looks
 
@@ -170,7 +218,7 @@ Slack's evidence: the Quip editor's stylesheet `canvas-controller-d97a8e501e2ab7
 **Floating formatting bar** (`QuipFloatingFormattingBar`).
 - **When:** only while a non-empty range is selected.
 - **Shape:** #1a1d21 in both themes, radius 8, padding 2, a `#e8e8e840` ring. Buttons are 28px with radius 4 and white icons, hover `#ffffff13`, pressed `#e8e8e821`. Separators are 1px `#ffffff40` lines, 20px tall.
-- **Buttons, from `zk`:** the block-style menu (the current format's icon and a caret: Paragraph, Big/Medium/Small heading, ─, Check list, Ordered list, Bulleted list, ─, Code block, Blockquote) | bold, italic, underline, strike | code | link, callout. Under `canvas_blockquote_layout` the blockquote leaves the menu for a button of its own after strike (`[blockquote-layout]`, the quote icon, pressed in a quote): `performBlockquoteConversion` quotes the block or takes it out of the quote. The comment button is left out because Clack has no comments, which is Slack's own `quipThreadButtonType: "NONE"`.
+- **Buttons, from `zk`:** the block-style menu (the current format's icon and a caret: Paragraph, Big/Medium/Small heading, ─, Check list, Ordered list, Bulleted list, ─, Code block, Blockquote) | bold, italic, underline, strike | code | link, callout. Under `canvas_blockquote_layout` the blockquote leaves the menu for a button of its own after strike (`[blockquote-layout]`, the quote icon, pressed in a quote): `performBlockquoteConversion` quotes the block or takes it out of the quote. The comment button is left out because Clack can't start a comment thread (a highlight control, see "Comments"), which is Slack's own `quipThreadButtonType: "NONE"`.
 - **Disabled:** underline (canvas markdown has none) and callout (no canvas markdown either), in the floating bar's disabled colour (`#ffffff4d`).
 
 ## Plugins
@@ -184,4 +232,5 @@ In the library, only Slick's NoUpsell touches canvas UI: it hides `CanvasAskSlac
 - `internal/core/canvas.go`: `Canvas`, `CanvasInfo`, `OpenCanvas`/`CloseCanvas`, the event watcher, `EditCanvas`, `RenameCanvas`, `CreateCanvas`, `ShareCanvas`.
 - `internal/ui/canvasview`: the view (header, blocks, the three modes, live updates, editing); `toc.go` the table of contents, `access.go` the access indicator, `experiments.go` the canvas experiments it follows.
 - `internal/ui/mount_features_canvas.go`: the `docs/<F…>` route, the side panel, the channel tab body. Hooks elsewhere: the channel tab click and body (`channel.go`), `messages.CanvasOpener` (canvas files and canvas links in messages), Files → Canvases (`views/files.go`), and the canvas tile in file cards (`richview/cards.go`).
-- `internal/fakeslack/canvas.go`: fixture canvases (`canvases/kitchen.html` covers every block type) and the endpoints above, with `document_update` pushed over the fake socket.
+- `internal/core/canvas_comments.go`: the comment stream, Resolve / Re-open / Resolve all, canArchiveComment, canAddReaction's file channel rule. `internal/ui/views/canvas_comments.go` the stream, `internal/ui/messages/thread_comment.go` the thread's root and header button, `internal/ui/canvas_comments.go` the pane wiring, `internal/ui/canvasview/mention.go` Remove mention.
+- `internal/fakeslack/canvas.go`: fixture canvases (`canvases/kitchen.html` covers every block type) and the endpoints above, with `document_update` pushed over the fake socket. `canvas_comments.go`: the Launch plan canvas's comment threads (open, unread, resolved, one with a reaction) on its file channel, with the stream's filters and the `quip.thread.*` methods.
