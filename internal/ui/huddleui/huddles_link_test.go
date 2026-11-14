@@ -15,8 +15,8 @@ import (
 // real session on the fake Chime) when someone rings you in #huddle-test.
 // The link names the inviting channel and, under huddles_link_v2, counts
 // the invite; the Huddles page marks what it sees 600 ms on, once per
-// call while it stays up; Decline, huddle_invite_cancel and starting the
-// huddle drop the channel's invites.
+// call while it stays up; starting the huddle, Decline and
+// huddle_invite_cancel drop the channel's invites.
 func TestHuddleLinkUnreadInvites(t *testing.T) {
 	e := newInviteEnv(t, nil)
 	c := e.c
@@ -37,12 +37,27 @@ func TestHuddleLinkUnreadInvites(t *testing.T) {
 	}
 	link(HuddleLink{}, "no huddle, no invite")
 
-	// your huddle in the DM: the link's facepile is yours (eS has it, and
-	// getChannelIdWithActiveHuddle picks your own)
+	// rung in the DM and starting that huddle (the orchestrator's start)
+	// clears its invite; the session (the fake Chime's) is the test's only
+	// join: you're in the DM huddle from here on, and the link's facepile
+	// is yours (eS has it, and getChannelIdWithActiveHuddle picks your own)
+	invite(dmChannel, "R0INVITE00")
+	e.shown("the DM invite")
+	if n := c.UnreadInvites(); n != 1 {
+		t.Fatalf("%d unread invites after the DM's huddle_invite", n)
+	}
+	link(HuddleLink{Unread: true, Channel: dmChannel, Badge: 1}, "rung in the DM")
 	c.Start(dmChannel)
+	if n := c.UnreadInvites(); n != 0 {
+		t.Fatalf("starting the huddle left %d unread invites", n)
+	}
+	if _, ok := c.Incoming(); ok {
+		t.Fatal("starting the huddle left the invite up")
+	}
 	waitFor(t, "the DM huddle", func() bool { s := c.Session(); return s != nil && s.State().Phase == huddle.Connected })
 	t.Cleanup(c.Leave)
 	link(HuddleLink{Channel: dmChannel}, "in the DM huddle")
+	rings := len(e.h.ringed())
 
 	// rung in #huddle-test while in it: no sound (you're in a huddle), one
 	// unread invite, the link bold with the inviting channel and the badge
@@ -51,7 +66,7 @@ func TestHuddleLinkUnreadInvites(t *testing.T) {
 	if n := c.UnreadInvites(); n != 1 {
 		t.Fatalf("%d unread invites after one huddle_invite", n)
 	}
-	if len(e.h.ringed()) != 0 {
+	if len(e.h.ringed()) != rings {
 		t.Fatalf("an invite rang while you're in a huddle: %q", e.h.ringed())
 	}
 	link(HuddleLink{Unread: true, Channel: hcChannel, Badge: 1}, "invited, huddles_link_v2 on")
@@ -121,25 +136,6 @@ func TestHuddleLinkUnreadInvites(t *testing.T) {
 	c.DeclineInvite()
 	waitFor(t, "declined", func() bool { _, ok := c.Incoming(); return !ok && c.UnreadInvites() == 0 })
 	link(HuddleLink{Channel: dmChannel}, "declined")
-
-	// starting the huddle you're rung for clears it (the orchestrator's
-	// start): leave the DM first, so the invite doesn't drop on the leave
-	c.Leave()
-	waitFor(t, "left", func() bool { return c.Session() == nil })
-	invite(hcChannel, "R0INVITE04")
-	waitFor(t, "a fourth invite", func() bool { return c.UnreadInvites() == 1 })
-	c.Start(hcChannel)
-	if n := c.UnreadInvites(); n != 0 {
-		t.Fatalf("starting the huddle left %d unread invites", n)
-	}
-	if _, ok := c.Incoming(); ok {
-		t.Fatal("starting the huddle left the invite up")
-	}
-	// connected before the cleanup's leave (a leave mid-offer fails the fake's negotiation)
-	waitFor(t, "the channel huddle", func() bool {
-		s := c.Session()
-		return s != nil && s.Channel() == hcChannel && s.State().Phase == huddle.Connected
-	})
 }
 
 // getChannelIdForHuddleLinkFacepile without an invite: the huddle with

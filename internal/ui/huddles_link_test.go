@@ -42,7 +42,9 @@ func TestHuddlesLinkInvites(t *testing.T) {
 	}
 	ch, ch2 := chans[0], chans[1]
 	users := fs.GroupDMUsers()
-	e.until("the realtime socket", 15*time.Second, func() bool { return fs.Sockets() > 0 })
+	// the huddle events come over the socket
+	go a.Core().SetRealtime(true)
+	e.until("the realtime socket", 15*time.Second, func() bool { return a.data.m.Connected && fs.Sockets() > 0 })
 	now := time.Now().Unix()
 	fs.PushHuddleRoom("sh_room_join", ch, "R0LINK0001", []string{users[0].ID, users[1].ID, users[2].ID, users[3].ID}, now-120, nil)
 	fs.PushHuddleRoom("sh_room_join", ch2, "R0LINK0002", []string{users[4].ID}, now-60, nil)
