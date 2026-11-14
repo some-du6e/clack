@@ -14,9 +14,11 @@ package fakeslack
 //     for every link of ChannelLinks, and one more channel for the first
 //     (LinkSharedTwice).
 //   - #files-gallery's tab bar is stateful: conversations.removeTab hides
-//     a built-in tab (is_disabled), conversations.addTab {type} shows it
-//     again (or adds a built-in one), conversations.moveTab {id, after}
-//     reorders and answers tabz. TabWrites records them.
+//     a built-in tab (is_disabled) and drops a canvas, list or folder tab,
+//     conversations.addTab {type} shows it again (or adds a built-in one),
+//     conversations.moveTab {id, after} reorders and answers tabz,
+//     conversations.updateTab sets a label; files.hasShares answers
+//     SetGalleryHasShares. TabWrites records them.
 //
 // Synthetic names and URLs only.
 
@@ -45,8 +47,11 @@ type cfMore struct {
 	folders []map[string]any // #files-gallery's bookmarks (nil: GalleryFolder)
 	adds    []url.Values     // its bookmarks.add calls
 	tabs    []map[string]any // #files-gallery's properties.tabs (nil: the default)
-	writes  []url.Values     // conversations.removeTab / addTab / moveTab, with "method"
+	writes  []url.Values     // conversations.removeTab / addTab / moveTab / updateTab, files.hasShares, with "method"
 	shares  []TabShare
+	// hasShares is files.hasShares' answer (false: a file shared only
+	// here, so removing its tab asks about access)
+	hasShares bool
 }
 
 var cfMores sync.Map // *Server -> *cfMore
@@ -74,6 +79,52 @@ func (s *Server) SetGalleryTabs(types ...string) {
 	for _, t := range types {
 		m.tabs = append(m.tabs, map[string]any{"id": t, "type": t, "label": ""})
 	}
+}
+
+// GalleryTab is one of #files-gallery's tabs for SetGalleryTabList: a
+// canvas or list tab carries its file, a folder tab its folder.
+func GalleryTab(id, typ, label, fileID, folderID string) map[string]any {
+	t := map[string]any{"id": id, "type": typ, "label": label}
+	data := map[string]any{}
+	if fileID != "" {
+		data["file_id"] = fileID
+	}
+	if folderID != "" {
+		data["folder_bookmark_id"] = folderID
+	}
+	if len(data) > 0 {
+		t["data"] = data
+	}
+	return t
+}
+
+// SetGalleryTabList replaces #files-gallery's tab bar with tabs, in order.
+func (s *Server) SetGalleryTabList(tabs ...map[string]any) {
+	m := s.cfmore()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.tabs = tabs
+}
+
+// SetGalleryHasShares is files.hasShares' answer for the tab's files.
+func (s *Server) SetGalleryHasShares(on bool) {
+	m := s.cfmore()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.hasShares = on
+}
+
+// GalleryTabLabels are #files-gallery's tabs' labels by id.
+func (s *Server) GalleryTabLabels() map[string]string {
+	m := s.cfmore()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]string{}
+	for _, t := range m.galleryTabs() {
+		id, _ := t["id"].(string)
+		out[id], _ = t["label"].(string)
+	}
+	return out
 }
 
 // GalleryTabs is #files-gallery's tab bar now: each tab's id, with a
@@ -146,7 +197,7 @@ func (s *Server) GalleryBookmarkAdds() []url.Values {
 func (m *cfMore) galleryBookmarks() []map[string]any {
 	if m.folders == nil {
 		m.folders = []map[string]any{{"id": GalleryFolder, "channel_id": FilesChannelID, "title": "Launch docs", "link": "",
-			"type": "folder", "parent_id": "", "rank": "a", "date_created": filesBaseTS, "emoji": "", "icon_url": "", "entity_id": ""}}
+			"type": "local_folder", "parent_id": "", "rank": "a", "date_created": filesBaseTS, "emoji": "", "icon_url": "", "entity_id": ""}}
 	}
 	return m.folders
 }
@@ -169,9 +220,13 @@ func (s *Server) handleChannelFilesMore(method string, f url.Values) (any, bool)
 			return ok("bookmarks", out), true
 		}
 		m.adds = append(m.adds, withoutToken(f))
+		typ := f.Get("type")
+		if typ == "folder" {
+			typ = "local_folder" // the server stores a new folder as local_folder
+		}
 		b := map[string]any{"id": "Bk0FILESNEW" + strconv.Itoa(len(m.adds)), "channel_id": FilesChannelID, "title": f.Get("title"),
-			"link": f.Get("link"), "type": f.Get("type"), "parent_id": f.Get("parent_id"), "rank": "z" + strconv.Itoa(len(m.adds)),
-			"date_created": filesBaseTS + 100, "emoji": "", "icon_url": "", "entity_id": ""}
+			"link": f.Get("link"), "type": typ, "entity_id": f.Get("entity_id"), "parent_id": f.Get("parent_id"), "rank": "z" + strconv.Itoa(len(m.adds)),
+			"date_created": filesBaseTS + 100, "emoji": "", "icon_url": ""}
 		m.folders = append(bms, b)
 		return ok("bookmark", b), true
 	case "search.autocomplete.files":
@@ -252,7 +307,18 @@ func (s *Server) handleChannelFilesMore(method string, f url.Values) (any, bool)
 		}
 		return ok("module", "messages", "items", append([]any{}, items...), "pagination",
 			map[string]any{"total_count": len(items), "page": 1, "page_count": 1}), true
-	case "conversations.removeTab", "conversations.addTab", "conversations.moveTab":
+	case "files.hasShares":
+		if f.Get("channel_id") != FilesChannelID {
+			return nil, false
+		}
+		m := s.cfmore()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		w := withoutToken(f)
+		w.Set("method", method)
+		m.writes = append(m.writes, w)
+		return ok("has_shares", m.hasShares), true
+	case "conversations.removeTab", "conversations.addTab", "conversations.moveTab", "conversations.updateTab":
 		if f.Get("channel_id") != FilesChannelID || method == "conversations.addTab" && f.Get("data") != "" {
 			return nil, false // a canvas or list tab goes to lists_add.go
 		}
@@ -277,7 +343,18 @@ func (s *Server) handleChannelFilesMore(method string, f url.Values) (any, bool)
 			if i < 0 {
 				return fail("tab_not_found"), true
 			}
-			tabs[i]["is_disabled"] = true
+			switch tabs[i]["type"] {
+			case "canvas", "list", "folder": // gone; a built-in one is only hidden
+				m.tabs = append(append([]map[string]any{}, tabs[:i]...), tabs[i+1:]...)
+			default:
+				tabs[i]["is_disabled"] = true
+			}
+		case "conversations.updateTab":
+			i := find(f.Get("id"))
+			if i < 0 {
+				return fail("tab_not_found"), true
+			}
+			tabs[i]["label"] = f.Get("label")
 		case "conversations.addTab":
 			typ := f.Get("type")
 			if i := find(typ); i >= 0 {

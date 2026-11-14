@@ -9,13 +9,13 @@ import (
 	"image"
 	"strings"
 	"sync"
-	"time"
 
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -55,10 +55,6 @@ func (a *App) LinkDetailsShown() string {
 	return ""
 }
 
-// builtinTabIDs are isKnownChannelTabId's ids among the tabs Clack draws:
-// their context menu hides them ("Hide tab") instead of removing them.
-var builtinTabIDs = map[string]bool{"files": true, "workflows": true, "pins": true, "bookmarks": true}
-
 // tabCtx registers the right-click (or macOS Ctrl+click) on a tab of the
 // bar at r: the tab's context menu (useTabSchemaToTabItems'
 // getTabContextMenu).
@@ -89,44 +85,111 @@ func (a *App) tabCtx(gtx layout.Context, ch string, t chTab, r image.Rectangle) 
 	event.Op(gtx.Ops, tag)
 }
 
-// openTabMenu is getTabContextMenu for a built-in tab: with tab editing
-// (useCanEditTabs) the "remove" group's "Hide tab" (danger; removeTab:
-// conversations.removeTab, then Messages if it was the open tab). Slack
-// shows no menu when the template is empty.
+// openTabMenu is the tab's context menu at the pointer (Slack shows none
+// when the template is empty).
 func (a *App) openTabMenu(ch string, t chTab, at image.Point) {
-	id := strings.TrimPrefix(t.key, "tab:")
-	c := a.Core()
-	if c == nil || !builtinTabIDs[id] {
+	items := a.tabMenuItems(ch, t)
+	if len(items) == 0 {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if !c.CanEditTabsChecked(ctx, ch) {
-			return
-		}
-		a.Post(func() {
-			items := []popups.MenuItem{{Label: i18n.T("tabbed-channel", "Hide tab"), Danger: true, Do: func() { a.hideTab(ch, id) }}}
-			a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at.Add(image.Pt(1, 1))},
-				Width: 240}))
-		})
-	}()
+	a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Anchor: image.Rectangle{Min: at, Max: at.Add(image.Pt(1, 1))},
+		Width: 240}))
 }
 
-// hideTab is removeTab: the open tab goes back to Messages first
-// (navigateToTab Channel), then conversations.removeTab; the "tabs" event
-// re-reads the bar.
-func (a *App) hideTab(ch, id string) {
-	tabs := a.channelTabs(ch)
-	if i := a.chTab[ch]; i > 0 && i < len(tabs) && tabs[i].key == "tab:"+id {
-		a.chTab[ch] = 0
+// editTabOf is the bar's tab as views' rename and remove flows take it.
+func editTabOf(t chTab) views.EditTab {
+	e := views.EditTab{ID: strings.TrimPrefix(t.key, "tab:"), Type: t.typ, Label: t.rawLabel, FileID: t.fileID, FolderID: t.folder}
+	if t.fileID != "" {
+		e.FileTitle = t.label
 	}
+	return e
+}
+
+// tabMenuItems is getTabContextMenu (useTabSchemaToTabItems, H9Rh) for
+// the tabs Clack draws, t its useCanEditTabs:
+//
+//   - a folder: Add link (with canUserPostInChannel and membership: the
+//     Add link modal into the folder);
+//   - the "administrative-options" group: Rename tab, or Rename folder,
+//     with t for the types the rename table (cO) has;
+//   - the "remove" group with t for a tab that isn't static: Hide tab for
+//     a built-in one (isKnownChannelTab), Delete folder for a folder, else
+//     Remove tab, all danger (useRemoveTab).
+//
+// Separators open each group; Slack Kit drops a leading one. Add file
+// (AddFileModal), Copy link to canvas / list, Add or Move to folder, Canvas
+// options, the folder's post updates toggle, Change default list view
+// and the split / secondary view and new window items aren't ported.
+func (a *App) tabMenuItems(ch string, t chTab) []popups.MenuItem {
 	c := a.Core()
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if err := c.HideTab(ctx, ch, id); err != nil {
-			a.Post(func() { a.Toast("Couldn't do that: " + err.Error()) })
+	if c == nil || t.key == "messages" {
+		return nil
+	}
+	nsT := i18n.NS("channel_tabs")
+	et := editTabOf(t)
+	can := c.CanEditTabs(ch)
+	folder := t.typ == "folder"
+	var items []popups.MenuItem
+	if folder && c.CanEditBookmarks(ch) {
+		items = append(items, popups.MenuItem{Key: "add_link", Label: nsT.T("Add link"), Do: func() { a.addLinkToFolderTab(ch, et) }})
+	}
+	if can && core.RenameableTab(t.typ) {
+		label := nsT.T("Rename tab")
+		if folder {
+			label = nsT.T("Rename folder")
 		}
-	}()
+		items = append(items, popups.Sep(), popups.MenuItem{Key: "rename", Label: label, Do: func() { views.OpenRenameTab(a, ch, et, folder) }})
+	}
+	if can && !core.StaticTabType(t.typ) {
+		label := nsT.T("Remove tab")
+		switch {
+		case core.KnownTabID(et.ID):
+			label = nsT.T("Hide tab")
+		case folder:
+			label = nsT.T("Delete folder")
+		}
+		items = append(items, popups.Sep(), popups.MenuItem{Key: "remove", Label: label, Danger: true, Do: func() { views.RemoveTab(a, ch, et) }})
+	}
+	for len(items) > 0 && items[0].Separator {
+		items = items[1:]
+	}
+	return items
+}
+
+// addLinkToFolderTab is the folder menu's Add link: the Add link modal
+// (modalHeaderTitle "Add link", fromChannelFolder) with the folder as
+// parent; a save opens the folder (onBookmarkAdded).
+func (a *App) addLinkToFolderTab(ch string, t views.EditTab) {
+	c := a.Core()
+	m := popups.NewBookmarkLinkModal(a, popups.BookmarkLinkOpts{Title: i18n.NS("channel_tabs").T("Add link"),
+		Save: func(ctx context.Context, link, name string) error {
+			_, err := c.AddFolderLink(ctx, ch, t.FolderID, link, name)
+			return err
+		}})
+	m.OnSaved = func() { a.openChannelTab(ch, t.ID) }
+	a.ShowOverlay(m)
+}
+
+// SetTabLabel is views.TabLabelHost: updateTabLabel's label at once in
+// the bar (a canvas without one shows its file's title again).
+func (a *App) SetTabLabel(ch, id string, label string) {
+	if a.data == nil {
+		return
+	}
+	tabs := a.data.tabCache[ch]
+	for i := range tabs {
+		if tabs[i].key != "tab:"+id {
+			continue
+		}
+		title := label
+		if title == "" && tabs[i].fileID != "" && tabs[i].rawLabel == "" {
+			title = tabs[i].label // the file's title already
+		}
+		tabs[i].rawLabel, tabs[i].labeled = label, label != ""
+		if title != "" {
+			tabs[i].label = title
+			tabs[i].spans = tabLabelSpans(title, a.Core().Emoji)
+		}
+	}
+	a.Invalidate()
 }

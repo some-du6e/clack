@@ -24,8 +24,10 @@ import (
 // TabState is one of a channel's tabs as properties.tabs has it, hidden
 // built-ins included (Tabs leaves those out).
 type TabState struct {
-	ID, Type, Label string
-	Disabled        bool // is_disabled: a built-in tab that is hidden
+	ID, Type, Label  string
+	Disabled         bool   // is_disabled: a built-in tab that is hidden
+	FileID, FolderID string // data.file_id, data.folder_bookmark_id
+	AppID            string // data.app_id
 }
 
 // TabOrder reads the channel's tabs in order, hidden ones too
@@ -56,7 +58,8 @@ func tabStates(raw []tabRaw) []TabState {
 		if id == "" {
 			id = r.Type // formatDynamicTab: id ?? type
 		}
-		out = append(out, TabState{ID: id, Type: r.Type, Label: r.Label, Disabled: r.IsDisabled})
+		out = append(out, TabState{ID: id, Type: r.Type, Label: r.Label, Disabled: r.IsDisabled, FileID: r.Data.FileID,
+			FolderID: r.Data.FolderBookmarkID, AppID: r.Data.AppID})
 	}
 	return out
 }

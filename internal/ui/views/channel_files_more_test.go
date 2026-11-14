@@ -426,8 +426,11 @@ func TestChannelFilesManageTabs(t *testing.T) {
 		m := d.manageTabs()
 		e.until(t, "the tab order", func() bool {
 			_, ok, _ := m.order.get()
-			can, cok, _ := m.can.get()
-			return ok && cok && can
+			return ok && h.Core().CanEditTabs(fakeslack.FilesChannelID) // the grant answers on its own
+		})
+		e.until(t, "the tab grant", func() bool {
+			e.frame()
+			return h.Core().CanEditTabs(fakeslack.FilesChannelID)
 		})
 		order := m.manageOrder()
 		if len(order) != 2 || order[0].ID != "channel" || order[1].ID != "files" {

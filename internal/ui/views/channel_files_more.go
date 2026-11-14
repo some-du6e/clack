@@ -632,9 +632,11 @@ func (v *ChannelFiles) starTip(it *fileItem) string {
 
 // addLinkToFolder is LinkEntity's "Add to folder" click: AddBookmarkModal
 // with modalHeaderTitle "Add link to folder", the link (initialLink) and
-// its title (initialPreview), showSetFolder over the channel's folders.
-// With none it says the link goes to a Bookmarks folder and makes it
-// first (addBookmarkFolderForChannel: bookmarks.add type folder); then
+// its title (initialPreview), showSetFolder over the channel's folders
+// (useFoldersForChannel), its default folder tab (SwCK) and, with
+// useCanEditTabs, New folder. A new folder (or, with none, the Bookmarks
+// folder the banner names) is made first (addBookmarkFolderForChannel:
+// bookmarks.add type folder); then
 // bookmarks.add {channel, link, title, type: link, parent_id}
 // (core.AddFolderLink), and "Added {fileName} to folder {folderName}"
 // for 5 s. Slack's row is a submenu (AddOrMoveToFolderMenuItems), but for
@@ -647,24 +649,34 @@ func (v *ChannelFiles) addLinkToFolder(l core.ChannelLink) {
 		return
 	}
 	ch := v.ch
+	var tabs []FolderTabInfo
+	if fh, ok := v.h.(FolderTabsHost); ok {
+		tabs = fh.FolderTabs(ch)
+	}
+	all, _ := a.ChannelBookmarks(ch)
 	var opts []popups.FolderOption
 	titles := map[string]string{}
-	for _, f := range a.ChannelFolders(ch) {
-		opts = append(opts, popups.FolderOption{ID: f.ID, Title: f.Title})
-		titles[f.ID] = f.Title
+	for _, f := range foldersForChannel(all, tabs) {
+		title := firstNonEmpty(f.Title, f.Link)
+		opts = append(opts, popups.FolderOption{ID: f.ID, Title: title})
+		titles[f.ID] = title
 	}
+	defLabel, defAt, _ := defaultFolderTab(tabs)
 	h := v.h
 	toast := ""
 	m := popups.NewBookmarkLinkModal(ph, popups.BookmarkLinkOpts{Title: nsExplorerLnk.T("Add link to folder"), Link: l.URL,
-		Name: l.Title, ShowFolder: true, Folders: opts,
-		SaveIn: func(ctx context.Context, link, name, folder string) error {
-			fname := titles[folder]
-			if folder == "" {
-				f, err := a.AddBookmarkFolder(ctx, ch, nsTabbed.T("Bookmarks"))
+		Name: l.Title, ShowFolder: true, Folders: opts, DefaultFolder: defLabel, DefaultAt: defAt, NewFolder: a.CanEditTabs(ch),
+		SaveIn: func(ctx context.Context, link, name string, pick popups.FolderPick) error {
+			folder, fname := pick.ID, titles[pick.ID]
+			switch {
+			case pick.New != "":
+				f, err := a.AddBookmarkFolder(ctx, ch, pick.New)
 				if err != nil {
 					return err
 				}
 				folder, fname = f.ID, f.Title
+			case pick.Default:
+				folder, fname = "", defLabel
 			}
 			b, err := a.AddFolderLink(ctx, ch, folder, link, name)
 			if err != nil {
