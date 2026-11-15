@@ -325,8 +325,13 @@ func TestWorkflowsTabRowActionsShot(t *testing.T) {
 	ui := st.rowUIFor(key)
 	ui.menuOpen = true // the row shows its actions (isFocused)
 	e.settle(300 * time.Millisecond)
-	if ui.moreRect.Empty() {
-		t.Fatal("the row drew no ⋮")
+	// the pointer over the row: its origin tracker learns where the ⋮ is
+	// (the bookmarked row sits at y≈458 in the 1440x900 window)
+	r0 := ui.moreRect
+	e.movePtr(image.Pt(900, 458))
+	e.settle(200 * time.Millisecond)
+	if r := ui.moreRect; r.Empty() || r == r0 || r.Min.Y < 380 || r.Max.Y > 540 || r.Min.X < 1200 {
+		t.Fatalf("the ⋮ at %v (before the pointer came: %v)", r, r0)
 	}
 	e.wfShot("workflows-tab-row-actions-light")
 	e.a.openWorkflowRowMenu(ch, st, key, it, false, ui.moreRect)
