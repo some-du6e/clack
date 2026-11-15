@@ -51,7 +51,7 @@ func TestSearchRowsMetrics(t *testing.T) {
 	if h, last := srChanRowH(gtx, 0, 3), srChanRowH(gtx, 2, 3); h != 75 || last != 76 {
 		t.Errorf("channel rows %d / last %d, want 1 + 74.25 and its bottom border", h, last)
 	}
-	for _, c := range []struct{ w, cols, cell int }{{1152, 4, 273}, {1079, 3, 346}, {520, 1, 520}, {540, 2, 260}, {200, 1, 200}} {
+	for _, c := range []struct{ w, cols, cell int }{{1152, 4, 273}, {1079, 4, 254}, {1059, 3, 339}, {520, 2, 250}, {519, 1, 519}, {200, 1, 200}} {
 		if cols, cell := srPeopleGrid(gtx, c.w); cols != c.cols || cell != c.cell {
 			t.Errorf("grid %d: %d × %d, want %d × %d (auto-fill minmax(250px, 1fr), gap 20)", c.w, cols, cell, c.cols, c.cell)
 		}
@@ -232,10 +232,16 @@ func TestSearchRowsChannelRequired(t *testing.T) {
 	}
 	gtx := srTestGtx()
 	px := v.padX(gtx, d.size.X)
+	cw := d.size.X - 2*px
+	d.scan()
 	y0, _ := v.srChanRowY(gtx, 0)
-	srMoveTo(d, px+300, y0+40)
-	x := srJoined(d.scan())
-	if !strings.Contains(x, "Required ") || strings.Contains(x, "Open in Home") {
+	srMoveTo(d, px+cw/2, y0+50)
+	var x string
+	d.until(t, "Required under the pointer", func() bool {
+		x = srJoined(d.scan())
+		return strings.Contains(x, "Required ")
+	})
+	if strings.Contains(x, "Open in Home") || !strings.Contains(x, "View channel") {
 		t.Errorf("hover over #general: %q", x)
 	}
 }

@@ -974,16 +974,25 @@ func srBannerLabel(u core.User) string {
 }
 
 // srPeopleRowH is grid row j's height: its tallest card, and the 20px gap
-// under every row but the last.
+// under every row but the last. The first row starts its ring's width
+// down (the ring is a box-shadow outside the card, which the list would
+// clip).
 func (v *SearchView) srPeopleRowH(gtx layout.Context, j, cols int) int {
-	h := 0
+	h := srPeopleRowTop(gtx, j)
 	for i := j * cols; i < min(len(v.people), (j+1)*cols); i++ {
-		h = max(h, srPersonCardH(gtx, v.people[i]))
+		h = max(h, srPeopleRowTop(gtx, j)+srPersonCardH(gtx, v.people[i]))
 	}
 	if (j+1)*cols < len(v.people) {
 		h += dp(gtx, 20)
 	}
 	return h
+}
+
+func srPeopleRowTop(gtx layout.Context, j int) int {
+	if j == 0 {
+		return border1(gtx)
+	}
+	return 0
 }
 
 // peopleRow draws grid row j.
@@ -997,7 +1006,7 @@ func (v *SearchView) peopleRow(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			break
 		}
 		x := px + k*(cell+gap)
-		at(gtx, image.Pt(x, 0), func(gtx layout.Context) layout.Dimensions {
+		at(gtx, image.Pt(x, srPeopleRowTop(gtx, j)), func(gtx layout.Context) layout.Dimensions {
 			return v.personCard(gtx, th, cl, i, cell)
 		})
 	}
