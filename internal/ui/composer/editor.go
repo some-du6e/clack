@@ -175,7 +175,8 @@ type Editor struct {
 	slugs      edSlugs // pasted Slack links being resolved (slugs.go)
 	plainPaste bool
 	richRead   *clipRead     // HTML read started by Ctrl/Cmd+V
-	pendPaste  *pendingPaste // plain text waiting for richRead
+	pendPaste  *pendingPaste // plain text waiting for richRead and filesRead
+	filesRead  *filePaste    // the composer's file probe for that paste
 
 	events  []EditorEvent
 	filters []event.Filter

@@ -1002,20 +1002,25 @@ var (
 // PasteClipboardImage probes the system clipboard for an image (async) and
 // attaches it as "image.png", like Slack. Called on every Ctrl+V; it skips
 // office-app copies (rich text plus a rendered picture of it). Files copied
-// in Explorer (Windows) attach as those files.
-func (a *attachments) PasteClipboardImage() { a.pasteImage(false) }
+// in Explorer (Windows) and Finder (macOS) attach as those files. The
+// result says whether they did (nil when a paste's probe is still
+// running): then the paste inserts no text (filePaste).
+func (a *attachments) PasteClipboardImage() *filePaste { return a.pasteImage(false) }
 
-func (a *attachments) pasteImage(explicit bool) {
+func (a *attachments) pasteImage(explicit bool) *filePaste {
 	if !a.pasting.CompareAndSwap(false, true) {
-		return
+		return nil
 	}
+	fp := newFilePaste()
 	go func() {
 		defer a.pasting.Store(false)
+		defer fp.decide(false)
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		// Files copied in a file manager attach as themselves (Chromium
 		// hands them to the page as the paste's files).
 		if paths, err := attClipboardFiles(ctx); err == nil && len(paths) > 0 {
+			fp.decide(true)
 			a.addPaths(paths)
 			return
 		}
@@ -1023,6 +1028,9 @@ func (a *attachments) pasteImage(explicit bool) {
 		if err == nil && !strings.HasPrefix(http.DetectContentType(data), "image/") {
 			err = errAttNoClipImage
 		}
+		// a file too big to upload is still the paste's file (Slack
+		// rejects it after preventDefault)
+		fp.decide(err == nil || errors.Is(err, errAttTooBig))
 		if err != nil {
 			switch {
 			case errors.Is(err, errAttTooBig):
@@ -1034,6 +1042,7 @@ func (a *attachments) pasteImage(explicit bool) {
 		}
 		a.add(attPastedName(mime), data)
 	}()
+	return fp
 }
 
 // attClipImageTypes are the image targets we fetch, best first.

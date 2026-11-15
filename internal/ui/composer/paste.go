@@ -69,24 +69,66 @@ func (r *clipRead) result() (string, bool) {
 	}
 }
 
-// pendingPaste is clipboard text waiting for the HTML read.
+// filePaste is a paste's probe for files (attachments.pasteImage): whether
+// the clipboard's files, or its image, go to the composer. Then the
+// paste's text isn't inserted, as in Slack, whose useUploadPastedFiles
+// takes getPastedFiles(clipboardData) (the files, minus an office copy's
+// rendered picture) to the draft and preventDefaults the paste, and
+// Texty's shouldSkipOnPaste skips a prevented paste. Finder's ⌘C puts the
+// files' names on the pasteboard as text next to their URLs.
+type filePaste struct {
+	done chan struct{}
+	took bool
+}
+
+func newFilePaste() *filePaste { return &filePaste{done: make(chan struct{})} }
+
+// decide records the probe's answer; the first call wins.
+func (f *filePaste) decide(took bool) {
+	select {
+	case <-f.done:
+	default:
+		f.took = took
+		close(f.done)
+	}
+}
+
+// result returns whether the paste took files, once the probe knows.
+func (f *filePaste) result() (took, done bool) {
+	select {
+	case <-f.done:
+		return f.took, true
+	default:
+		return false, false
+	}
+}
+
+// clipFilesWait is how long a paste's text waits for the file probe
+// (which reads the clipboard's file list, then its image) after the text
+// arrived; then the text goes in.
+const clipFilesWait = time.Second
+
+// pendingPaste is clipboard text waiting for the HTML read and the file
+// probe.
 type pendingPaste struct {
-	text  string
-	until time.Time
+	text       string
+	until      time.Time // for the HTML
+	filesUntil time.Time // for the file probe
 }
 
 // receivePaste handles the plain text of a paste.
 func (e *Editor) receivePaste(gtx layout.Context, s string) {
-	if e.richRead == nil {
+	if e.richRead == nil && e.filesRead == nil {
 		e.paste(s)
 		return
 	}
-	e.pendPaste = &pendingPaste{text: s, until: gtx.Now.Add(clipHTMLWait)}
+	e.pendPaste = &pendingPaste{text: s, until: gtx.Now.Add(clipHTMLWait), filesUntil: gtx.Now.Add(clipFilesWait)}
 	e.flushPaste(gtx)
 }
 
-// flushPaste pastes the pending text once the HTML read is done (or took
-// too long), and otherwise asks for another frame.
+// flushPaste pastes the pending text once the HTML read and the file
+// probe are done (or took too long), and otherwise asks for another
+// frame. A paste whose files went to the composer inserts no text.
 func (e *Editor) flushPaste(gtx layout.Context) {
 	p := e.pendPaste
 	if p == nil {
@@ -96,11 +138,19 @@ func (e *Editor) flushPaste(gtx layout.Context) {
 	if e.richRead != nil {
 		html, done = e.richRead.result()
 	}
-	if !done && gtx.Now.Before(p.until) {
+	took, fdone := false, true
+	if e.filesRead != nil {
+		took, fdone = e.filesRead.result()
+	}
+	if !done && gtx.Now.Before(p.until) || !fdone && gtx.Now.Before(p.filesUntil) {
 		gtx.Execute(op.InvalidateCmd{At: gtx.Now.Add(8 * time.Millisecond)})
 		return
 	}
-	e.pendPaste, e.richRead = nil, nil
+	e.pendPaste, e.richRead, e.filesRead = nil, nil, nil
+	if took {
+		e.plainPaste = false
+		return
+	}
 	e.scrollCaret = true
 	e.pasteHTML(p.text, html)
 }

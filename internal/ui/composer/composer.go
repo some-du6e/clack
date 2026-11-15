@@ -782,7 +782,8 @@ func (c *Composer) handleEditor(gtx layout.Context) {
 			c.openLink()
 		case EvPasted:
 			if c.field == nil { // Texty there has no onFilesSelected
-				c.att.PasteClipboardImage()
+				// a paste whose files attach inserts no text (filePaste)
+				c.ed.filesRead = c.att.PasteClipboardImage()
 			}
 		case EvPasteLimit:
 			c.pasteLimitDialog(c.ed.RefusedPaste())
