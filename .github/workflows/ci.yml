@@ -1029,6 +1029,16 @@ jobs:
         env:
           CLACK_MACOS_PASTEBOARD_TESTS: "1"
         run: go test -count=1 -v -timeout 10m -run '^TestMacPaste' ./internal/ui/composer
+      # P6b: ⌘V in App.Run's own composer, through the Edit menu's paste:
+      # and Gio's pasteboard string. A Finder copy attaches its files and
+      # leaves out their names (Finder's plain text), as Slack's
+      # useUploadPastedFiles preventDefaults the paste; plain text, an
+      # image and TextEdit's rich text with a picture are as before.
+      - name: macOS ⌘V into the composer (P6b)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run '^TestMacComposerPaste$' ./internal/ui
       # docs/GAPS-2026-11-14.md gap 9 (W40). Gio patch 25 on real NSWindows:
       # Displays against NSScreen, a window opened at Bounds (points from
       # the primary screen's top left), its ConfigEvents' bounds through a
