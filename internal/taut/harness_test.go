@@ -173,6 +173,16 @@ type harness struct {
 	fetchMu sync.Mutex
 	fetches map[string]string
 	nativeT []string // native thunk calls the test recorded
+	// jsErrors are the runtime's error and warning lines ("level: msg")
+	logMu    sync.Mutex
+	jsErrors []string
+}
+
+// jsLogged returns the runtime's error and warning lines so far.
+func (h *harness) jsLogged() []string {
+	h.logMu.Lock()
+	defer h.logMu.Unlock()
+	return append([]string(nil), h.jsErrors...)
 }
 
 func newHarness(t *testing.T) *harness {
@@ -192,6 +202,9 @@ func newHarness(t *testing.T) *harness {
 		CacheDir: t.TempDir(), Fetch: h.fetch, Log: func(level, msg string) {
 			if level == "error" || level == "warn" {
 				t.Logf("js %s: %s", level, msg)
+				h.logMu.Lock()
+				h.jsErrors = append(h.jsErrors, level+": "+msg)
+				h.logMu.Unlock()
 			}
 		},
 	})

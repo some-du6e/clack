@@ -338,6 +338,69 @@ function compose(name) {
   return reps.reduce((cur, r) => applyReplacer(r, cur), original)
 }
 
+// ---- a patch that throws draws the original ----
+
+/**
+ * Every patched component Go draws is a React root of its own, and React
+ * unmounts a whole root on an error nothing catches: one throw anywhere in
+ * a patched subtree, while rendering or in an effect, emptied the root's
+ * host tree and Go drew nothing for the component. A composer that Better
+ * Typing Indicator patches (it wraps MessagePaneInput, and its TypingNames
+ * renders again whenever someone types) vanished that way and stayed gone
+ * until a restart. So each patched render runs under a PatchGuard: what a
+ * patch throws is logged and the component draws as though no plugin
+ * patched it (its Original; the patched parts inside keep their own
+ * guards). New props try the patches again.
+ */
+let PatchGuard
+function patchGuard() {
+  if (PatchGuard) return PatchGuard
+  const React = G.React
+  PatchGuard = class PatchGuard extends React.Component {
+    constructor(props) {
+      super(props)
+      this.state = { failed: false }
+    }
+    static getDerivedStateFromError() {
+      return { failed: true }
+    }
+    componentDidCatch(err, info) {
+      notePatchError(this.props.name, err, info)
+    }
+    componentDidUpdate(prev) {
+      // after the commit, not in getDerivedStateFromProps: a reset there
+      // would also run in the render that shows the fallback, render the
+      // throwing patch again, and send the error on up to the root
+      if (this.state.failed && prev.props !== this.props.props) this.setState({ failed: false })
+    }
+    render() {
+      return this.state.failed ? React.createElement(originalObject(this.props.name), this.props.props) : this.props.children
+    }
+  }
+  return PatchGuard
+}
+
+/** component name → {at, n}: the last line about its patches throwing, and the throws since */
+const patchErrors = new Map()
+const PATCH_ERROR_EVERY = 60e3
+/** logs a patch's error: the first at once, then a line a minute per component with the count */
+function notePatchError(name, err, info) {
+  const now = Date.now()
+  let s = patchErrors.get(name)
+  if (!s) patchErrors.set(name, (s = { at: -Infinity, n: 0 }))
+  s.n++
+  if (now - s.at < PATCH_ERROR_EVERY) return
+  const stack = String(info?.componentStack ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(' < ')
+  error(`a plugin's patch of ${name} threw${s.n > 1 ? ` (${s.n} times)` : ''}; drawing ${name} without it:`, err, stack ? `[${stack}]` : '')
+  s.at = now
+  s.n = 0
+}
+
 /** the component a plugin gets for Slack's `name`: it follows patches as they come and go */
 function slackComponent(name) {
   let w = wrappers.get(name)
@@ -352,6 +415,8 @@ function slackComponent(name) {
     if (props && props.__original) {
       const { __original, ...rest } = props
       el = React.createElement(nativeFor(name), rest)
+    } else if (C !== originalObject(name)) {
+      el = React.createElement(patchGuard(), { name, props }, React.createElement(C, props))
     } else {
       el = React.createElement(C, props)
     }

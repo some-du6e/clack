@@ -207,7 +207,7 @@ func renderSlow(gtx layout.Context, name string, props Props, native Native) lay
 }
 
 func renderSlow0(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
-	if m := patched.Load(); m == nil || !(*m)[name] {
+	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
 		return native(gtx, props)
 	}
 	return renderPatched(gtx, name, props, native)
@@ -234,7 +234,7 @@ func renderLazySlow(gtx layout.Context, name string, props func() Props, native 
 }
 
 func renderLazySlow0(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
-	if m := patched.Load(); m == nil || !(*m)[name] {
+	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
 		return native(gtx, nil)
 	}
 	return renderPatched(gtx, name, props(), native)
@@ -270,6 +270,9 @@ func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T)
 }
 
 func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
+	if unpatched > 0 { // drawn without plugins (guard.go)
+		return native(recv, gtx, nil)
+	}
 	if m := patched.Load(); m == nil || !(*m)[name] {
 		if ins, ok := reservedFor(name); ok { // a plugin's slot kept free until it renders (reserve.go)
 			return drawReserved(gtx, ins, func(g layout.Context) layout.Dimensions { return native(recv, g, nil) })

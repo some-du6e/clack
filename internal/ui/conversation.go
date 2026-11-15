@@ -129,6 +129,10 @@ type convo struct {
 	bannerH  int             // its height last frame
 	post     core.Posting    // posting restrictions, cached at postAt
 	postAt   time.Time
+	// zeroSince is when the composer started laying out to no height (zero:
+	// it has its height); rebuiltAt when it was last replaced for that
+	// (composer_guard.go).
+	zeroSince, rebuiltAt time.Time
 }
 
 func (a *App) convoFor(ch, ts string) *convo {
@@ -145,16 +149,7 @@ func (a *App) convoFor(ch, ts string) *convo {
 	} else {
 		c.list = a.mountThreadList(ch, ts)
 	}
-	if cv, ok := a.mountComposer(ch, ts).(composerView); ok {
-		c.comp = cv
-		c.comp.SetOnEditLast(func() { a.editLast(c) })
-		if fl, ok := c.comp.(interface{ SetOnFocusList(func()) }); ok {
-			fl.SetOnFocusList(func() { a.focusList(c) })
-		}
-		if sn, ok := c.comp.(interface{ SetOnSend(func(string, bool)) }); ok {
-			sn.SetOnSend(func(cid string, files bool) { jumpToOwnSend(c, cid, files) })
-		}
-	}
+	a.attachComposer(c)
 	a.convos[k] = c
 	a.convoOrder = append(a.convoOrder, k)
 	if len(a.convoOrder) > 32 {
@@ -166,6 +161,22 @@ func (a *App) convoFor(ch, ts string) *convo {
 		delete(a.convos, old)
 	}
 	return c
+}
+
+// attachComposer mounts c's composer and wires it to c's list.
+func (a *App) attachComposer(c *convo) {
+	cv, ok := a.mountComposer(c.ch, c.ts).(composerView)
+	if !ok {
+		return
+	}
+	c.comp = cv
+	c.comp.SetOnEditLast(func() { a.editLast(c) })
+	if fl, ok := c.comp.(interface{ SetOnFocusList(func()) }); ok {
+		fl.SetOnFocusList(func() { a.focusList(c) })
+	}
+	if sn, ok := c.comp.(interface{ SetOnSend(func(string, bool)) }); ok {
+		sn.SetOnSend(func(cid string, files bool) { jumpToOwnSend(c, cid, files) })
+	}
 }
 
 // layoutConvo draws the list with the composer under it. fallback is the
@@ -240,6 +251,12 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		g.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*mx, 0), Max: image.Pt(sz.X-2*mx, sz.Y*6/10)}
 		st := op.Offset(image.Pt(mx, 0)).Push(gtx.Ops)
 		d := comp.Layout(g)
+		if a.composerHeight(gtx, g, c, comp, d.Size.Y) { // no height: a new composer (composer_guard.go)
+			comp = c.comp
+			comp.SetOrigin(origin.Add(image.Pt(mx, compY)))
+			a.composerRoadblock(c, comp)
+			d = comp.Layout(g)
+		}
 		st.Pop()
 		call = m.Stop()
 		compH = d.Size.Y + mb

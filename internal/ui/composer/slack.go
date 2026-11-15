@@ -408,6 +408,7 @@ func (c *Composer) layoutPane(gtx layout.Context, p slackc.Props) layout.Dimensi
 	s := def.Enter(gtx, 0, 0)
 	defer s.Leave()
 	if s.Hidden() {
+		c.cssHidden = true
 		return layout.Dimensions{}
 	}
 	c.paneP = p
@@ -577,6 +578,7 @@ func (c *Composer) layoutRoadblock(gtx layout.Context, p slackc.Props) layout.Di
 // drawRoadblock draws Slack's roadblock: the message centred in a
 // bordered box where the composer would be, then the hint bar's space.
 func (c *Composer) drawRoadblock(gtx layout.Context, p slackc.Props) layout.Dimensions {
+	c.drewRoadblock = true
 	th := c.h.Theme()
 	W := gtx.Constraints.Max.X
 	m := gtx.Dp(20)
@@ -686,6 +688,7 @@ func (c *Composer) layoutInput(gtx layout.Context, p slackc.Props) layout.Dimens
 	s := crInputClass[c.cs.Mode].Enter(gtx, 0, 0)
 	defer s.Leave()
 	if s.Hidden() {
+		c.cssHidden = true
 		return layout.Dimensions{}
 	}
 	c.inputP = p

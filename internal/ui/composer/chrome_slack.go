@@ -31,6 +31,7 @@ type crFrame struct {
 	W, maxY, margin, hintH int
 	box                    image.Rectangle // composer-local, set by layoutBox
 	boxOK                  bool
+	boxHidden              bool // CSS hid the box (.c-wysiwyg_container display: none / visibility: hidden)
 	x0, x1                 int
 	barBg                  color.NRGBA // formatting bar background (CSS)
 	hide                   uint32      // buttons turned off (crBtn bits)
@@ -160,6 +161,7 @@ func (c *chrome) layoutWysiwyg(gtx layout.Context, p slackc.Props) layout.Dimens
 	s := def.Enter(gtx, cs, mods)
 	defer s.Leave()
 	if s.Hidden() {
+		c.f.boxHidden = true
 		return layout.Dimensions{}
 	}
 	c.f.wysP = p

@@ -147,6 +147,9 @@ type Composer struct {
 	cmdPick       core.Command  // the command last picked from the / list
 	fbar          floatBar      // the floating formatting bar (floatbar.go)
 	drewInput     bool          // the editor was laid out (no roadblock)
+	drewRoadblock bool          // a roadblock notice was drawn in its place
+	cssHidden     bool          // CSS hid the pane or the input (display: none, visibility: hidden)
+	vanish        vanishGuard   // frames the boundary drew no box (vanish.go)
 	roadblock     string        // SetRoadblock: Slack's notice instead of the editor
 	rbLink, rbURL string        // SetRoadblockLink: a link after it ("Learn more")
 	rbClick       widget.Clickable
@@ -499,17 +502,9 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	// an edit. Unpatched each is a direct call.
 	c.cs = c.chromeState(gtx)
 	c.ui.prime(&c.cs)
-	c.top, c.drewInput = 0, false
-	c.paneP, c.inputP = nil, nil
-	var dims layout.Dimensions
-	switch {
-	case c.edit != nil || c.field != nil:
-		dims = slackc.Component(gtx, "MessageInput", c, (*Composer).inputProps, (*Composer).layoutInput)
-	case c.ts != "":
-		dims = slackc.Component(gtx, "InputContainer", c, (*Composer).paneProps, (*Composer).layoutPane)
-	default:
-		dims = slackc.Component(gtx, "MessagePaneInput", c, (*Composer).paneProps, (*Composer).layoutPane)
-	}
+	// The box is always there: a boundary that drew none (a plugin's tree
+	// left it out) is drawn again without plugins (vanish.go).
+	dims := c.layoutBoundary(gtx)
 
 	// Autocomplete after the editor laid out, anchored at the trigger,
 	// with what plugins changed on TextyAutocomplete.
