@@ -109,6 +109,15 @@ func lightTextColor(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) 
 	return c
 }
 
+// LabelInk is the colour labels (Text, DrawText) ink c in: the
+// light-text fade above at pxPerDp for weight w, on the aubergine chrome
+// when chrome is set. Painters that shape their own text (slackc's host
+// trees) call it so a plugin's 12px #ababad reads like the timestamp
+// next to it.
+func LabelInk(c color.NRGBA, pxPerDp float32, w font.Weight, chrome bool) color.NRGBA {
+	return lightTextColor(c, pxPerDp, w, chrome)
+}
+
 // lightBlackEmbolden (px) gives light Black text (the sidebar team name)
 // the ink it lacks next to Chrome: 8% at 1x unfaded.
 const lightBlackEmbolden = 0.12

@@ -152,7 +152,7 @@ func displayName(d css.Display) string {
 }
 
 // ClassStyle is what the cascade gave a laid-out box with some class: its
-// own colour, background and text-decoration, the decorations its inline
+// own colour, background, text-decoration and font, the decorations its inline
 // ancestors propagate to its text, and the opacity its ancestors and it
 // multiply to. Like LayoutShape it carries no text. A debugging aid for
 // tests that check a plugin's CSS against Chromium (UI goroutine).
@@ -164,6 +164,8 @@ type ClassStyle struct {
 	Propagated css.TextDecoration // its own and its ancestors'
 	Opacity    float32            // the effective (group) opacity
 	W, H       float32
+	FontSize   float32 // CSS px
+	FontWeight int     // 100..900
 }
 
 // ClassStyles lists every laid-out box of any patched component whose
@@ -178,7 +180,8 @@ func ClassStyles(class string) []ClassStyle {
 			}
 			if k.n != nil && slices.Contains(k.n.Class, class) {
 				cs := ClassStyle{Component: name, Color: k.st.Color, Background: k.st.Background.Color,
-					Decoration: k.st.TextDecoration, Opacity: 1, W: k.w, H: k.h}
+					Decoration: k.st.TextDecoration, Opacity: 1, W: k.w, H: k.h,
+					FontSize: k.st.FontSize, FontWeight: k.st.FontWeight}
 				for p := k; p != nil; p = p.parent {
 					cs.Propagated |= p.st.TextDecoration
 					cs.Opacity *= p.st.Opacity

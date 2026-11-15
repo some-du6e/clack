@@ -489,6 +489,20 @@ func TestPluginUserPronouns(t *testing.T) {
 	if p := r.threadSenderProps(); p["$pane"] == nil {
 		t.Errorf("thread component props lack $pane: %v", p)
 	}
+	// .taut-pronouns: the timestamp's text (12px, 400,
+	// sk_foreground_max_solid), in the channel row and the thread header
+	seen := map[string]bool{}
+	until(t, 5*time.Second, "the pronouns laid out in both headers", func() { frameFn(v)(); ft() }, func() bool {
+		for _, cs := range slackc.ClassStyles("taut-pronouns") {
+			seen[cs.Component] = true
+		}
+		return seen["BaseBroadcastPreamble"] && seen["ThreadSenderAndTimestampGeneric"]
+	})
+	for _, cs := range slackc.ClassStyles("taut-pronouns") {
+		if cs.Color != lightColors.Text2 || cs.FontSize != 12 || cs.FontWeight != 400 {
+			t.Errorf("%s: pronouns %v %vpx weight %d, want the timestamp's %v 12px 400", cs.Component, cs.Color, cs.FontSize, cs.FontWeight, lightColors.Text2)
+		}
+	}
 }
 
 func TestPluginWhoReacted(t *testing.T) {

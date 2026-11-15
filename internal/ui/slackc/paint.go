@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"gioui.org/f32"
+	"gioui.org/font"
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
@@ -1215,6 +1216,11 @@ func (p *painter) drawWord(sh *shaped, x, y float32, col color.NRGBA, st *css.St
 	if sh == nil || len(sh.glyphs) == 0 || col.A == 0 {
 		return
 	}
+	// the labels' ink (theme.Text): light-on-dark glyphs faded for Gio's
+	// linear-light coverage, so a plugin's text (UserPronouns' 12px
+	// sk_foreground_max_solid) is no heavier than the native timestamp
+	// beside it
+	col = TextInk(col, st.FontWeight, p.v.dp, chromeText())
 	shp := shaper()
 	path, bm := sh.pathOf(shp)
 	t := op.Affine(f32.AffineId().Offset(f32.Pt(x, float32(math.Round(float64(y)))))).Push(p.ops)
@@ -1235,6 +1241,19 @@ func (p *painter) drawWord(sh *shaped, x, y float32, col color.NRGBA, st *css.St
 		bm.Add(p.ops)
 	}
 	t.Pop()
+}
+
+// TextInk is the colour a word in col at CSS weight (100..900) is inked
+// in at dp px per dp: the labels' (theme.LabelInk).
+func TextInk(col color.NRGBA, weight int, dp float32, chrome bool) color.NRGBA {
+	return theme.LabelInk(col, dp, font.Weight(weight-400), chrome)
+}
+
+// chromeText reports whether the theme is drawing the aubergine chrome
+// (top nav, rail, sidebar), whose light text fades less (theme.LabelInk).
+func chromeText() bool {
+	th := env().Theme
+	return th != nil && th.Chrome
 }
 
 // run paints an inline formatting context; (x, y) is the container's
