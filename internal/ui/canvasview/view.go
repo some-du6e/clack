@@ -966,7 +966,7 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, t
 			defer op.Offset(image.Pt(x0, y)).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, gtx.Constraints.Max.Y)}
-			y += v.layoutTitleBlock(g, tb)
+			y += inspectTitle(gtx, cw, func() int { return v.layoutTitleBlock(g, tb) })
 		}()
 	} else {
 		if v.title == nil {
@@ -981,12 +981,14 @@ func (v *View) layoutHeader(gtx layout.Context, d *core.CanvasDoc, x0, cw int, t
 			defer op.Offset(image.Pt(x0, y)).Push(gtx.Ops).Pop()
 			g := gtx
 			g.Constraints = layout.Constraints{Max: image.Pt(cw, gtx.Constraints.Max.Y)}
-			dim := v.title.Layout(g, v.styles.title, v.handler)
-			y += dim.Size.Y
-			if d.Info.Editable && v.edit.canEdit(v) {
-				r := image.Rect(0, 0, cw, dim.Size.Y)
-				v.edit.titleArea(gtx, v, r)
-			}
+			y += inspectTitle(gtx, cw, func() int {
+				dim := v.title.Layout(g, v.styles.title, v.handler)
+				if d.Info.Editable && v.edit.canEdit(v) {
+					r := image.Rect(0, 0, cw, dim.Size.Y)
+					v.edit.titleArea(gtx, v, r)
+				}
+				return dim.Size.Y
+			})
 		}()
 	}
 	v.layoutCover(gtx, gtx.Constraints.Min.X, x0, gtx.Dp(docTop), y) // over the title: its hover area passes presses on
