@@ -100,6 +100,10 @@ func TestMacCommandKeys(t *testing.T) {
 	}{
 		{"⌘B", cocoatest.KeyB, cmd, key.Event{Name: "B", Modifiers: key.ModCommand}},
 		{"⇧⌘D", cocoatest.KeyD, cmd | shift, key.Event{Name: "D", Modifiers: key.ModCommand | key.ModShift}},
+		// the composer's inline code and strike (⌘C and ⌘X are the Edit
+		// menu's Copy and Cut key equivalents; shifted, they're not)
+		{"⇧⌘C", cocoatest.KeyC, cmd | shift, key.Event{Name: "C", Modifiers: key.ModCommand | key.ModShift}},
+		{"⇧⌘X", cocoatest.KeyX, cmd | shift, key.Event{Name: "X", Modifiers: key.ModCommand | key.ModShift}},
 		{"⌥⇧⌘D", cocoatest.KeyD, cmd | opt | shift, key.Event{Name: "D", Modifiers: key.ModCommand | key.ModAlt | key.ModShift}},
 		{"⌃⌥⇧⌘D (Hyper+D)", cocoatest.KeyD, cmd | opt | shift | ctrl, key.Event{Name: "D", Modifiers: key.ModCommand | key.ModAlt | key.ModShift | key.ModCtrl}},
 		{"⌥⌘B", cocoatest.KeyB, cmd | opt, key.Event{Name: "B", Modifiers: key.ModCommand | key.ModAlt}},

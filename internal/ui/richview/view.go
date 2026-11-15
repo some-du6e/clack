@@ -328,9 +328,6 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	if v.opts.Dim {
 		opac = paint.PushOpacity(gtx.Ops, 0.5)
 	}
-	if v.selA != v.selB {
-		v.paintSelection(gtx, st)
-	}
 	// Hover backgrounds for pills, buttons and cards draw under the content.
 	if v.hover >= 0 {
 		for i := range v.d.boxes {
@@ -352,6 +349,14 @@ func (v *View) draw(gtx layout.Context, st *Style) layout.Dimensions {
 	v.call.Add(gtx.Ops)
 	for _, i := range v.liveImgs { // animated GIFs: their frame now, over what's under them
 		v.drawImg(gtx.Ops, st, int(i), false)
+	}
+	// The selection over the backgrounds, under the text: Chromium paints
+	// ::selection with the text (the text fragment's selection rect, then
+	// its glyphs), after every background below it, so it shows over a
+	// code block, a code chip and a mention pill (their fills are opaque
+	// here: Palette.flat). Drawn under v.call, those boxes hid it.
+	if v.selA != v.selB {
+		v.paintSelection(gtx, st)
 	}
 	v.callTop.Add(gtx.Ops)
 	v.drawPlays(gtx, st)

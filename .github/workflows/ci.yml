@@ -222,7 +222,7 @@ jobs:
           # -p 1: test binaries bringing up Mesa's EGL at once is what made
           # eglInitialize fail (0x3001); pixeltest.NewWindow also retries.
           # TestTextMatchesChrome: text against Chrome 156's (theme/testdata/text-render; font-shots' text-render jobs re-measure it)
-          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots|TestTextMatchesChrome' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/theme
+          xvfb-run -a go test -p 1 -count=1 -run 'TestCodeSpanAfterEmoji|TestInlineCodeDraws|TestSelectionOverCode|TestComposerSelectionOverCode|TestEmojiTooltip|TestReactionTooltipDraws|TestPlaceholderHashMatchesText|TestSlugPillNotUnderlined|TestDecorationShots|TestTextMatchesChrome' ./internal/ui/richview ./internal/ui/composer ./internal/ui/messages ./internal/ui/theme
       - name: Gio drawLayers fix (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"
@@ -1014,7 +1014,7 @@ jobs:
           set +e
           go test -count=1 -v -timeout 10m -run '^TestMacCommandKeys$' gioui.org/app
           gio=$?
-          go test -count=1 -v -timeout 10m -run '^TestMacInspectKeys$' ./internal/ui
+          go test -count=1 -v -timeout 10m -run '^(TestMacInspectKeys|TestMacComposerFormatKeys)$' ./internal/ui
           ui=$?
           exit $((gio | ui))
       # docs/GAPS-2026-11-14.md gap 9 (W40). Gio patch 25 on real NSWindows:
