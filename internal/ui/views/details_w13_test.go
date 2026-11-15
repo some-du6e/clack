@@ -277,6 +277,10 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 	w := newW13Env(t, fakeslack.ViewsChannel, func(fs *fakeslack.Server) {
 		fs.Permissions = map[string][]string{fakeslack.ViewsChannel: {"CAN_AT_CHANNEL", core.PermCreateChannelEmailAddresses}}
 		fs.SetEnterpriseOrgPrefs(map[string]any{"channel_email_addresses_enabled": true})
+		// the details' conversations.info (which stores fakeslack's channel
+		// name over the test's) slow, as under the release's load: every
+		// name the test reads must come after it
+		fs.SetFault("conversations.info", fakeslack.Fault{Delay: time.Second})
 	})
 	w.e.until(t, "the emails field", func() bool {
 		_ = w.app.ChannelGrant(fakeslack.ViewsChannel, core.PermCreateChannelEmailAddresses)

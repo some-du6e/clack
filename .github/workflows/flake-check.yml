@@ -145,6 +145,18 @@ name: flake-check
 #                                            lines on Windows' disk (94 were
 #                                            in), and the Fatal skipped Close:
 #                                            TempDir couldn't remove the file
+# and flake-fix-2's (2026-11-15: α.85's release; the race forced every run):
+#   TestDetailsSendEmailsLikeSlack           the details' conversations.info
+#     (ui/views)                             stored fakeslack's channel name
+#                                            over the test's after the email
+#                                            modal had kept the old one, so
+#                                            the copied address and Slackbot's
+#                                            prompt named another channel
+#                                            than w.name(); newW13Env now
+#                                            waits for that read, and the
+#                                            test holds it back 1 s
+#   TestDetailsCallButtonLikeSlack,          the same read against the call
+#   TestDetailsCallMenuStartsCall (ui/views) tooltip's name
 # Synthetic data only (internal/fakeslack, the fake Chime).
 on:
   workflow_dispatch:
@@ -200,6 +212,7 @@ on:
       - "internal/huddle/videosend_test.go"
       - "internal/huddle/share_test.go"
       - "internal/ui/views/details_w14_test.go"
+      - "internal/ui/views/details_w13_test.go"
       - "internal/ui/views/views_keys_test.go"
       - "internal/ui/channel_preview_test.go"
       - "internal/ui/backend.go"
@@ -782,6 +795,34 @@ jobs:
           - { test: TestQueuedLoadsDontParkGoroutines, pkg: ./internal/imgcache, flags: "-cpu=1,2,4,8" }
           - { test: TestTailWaitsForQueuedLines, pkg: ./internal/applog, flags: "-race" }
           - { test: TestInvalidateWhileHandlingAWakeup, pkg: gioui.org/app, flags: "-race" }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "${{ matrix.test }} ${{ matrix.flags }}, every run counted"
+        env:
+          TEST: ${{ matrix.test }}
+          PKG: ${{ matrix.pkg }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" ${{ matrix.flags }}
+
+  flake-fix-2-views:
+    if: ${{ !inputs.only || startsWith('flake-fix-2-views', inputs.only) }}
+    name: "flake-fix-2 ${{ matrix.test }} (${{ matrix.flags }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { test: TestDetailsSendEmailsLikeSlack, pkg: ./internal/ui/views, flags: "-race" }
+          - { test: TestDetailsSendEmailsLikeSlack, pkg: ./internal/ui/views, flags: "-cpu=1" }
+          - { test: TestDetailsCallButtonLikeSlack, pkg: ./internal/ui/views, flags: "-race" }
+          - { test: TestDetailsCallMenuStartsCall, pkg: ./internal/ui/views, flags: "-race" }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
