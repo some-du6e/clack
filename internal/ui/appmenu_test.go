@@ -2,8 +2,11 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
 func renderAppMenu(items []MenuItem, depth int, b *strings.Builder) {
@@ -57,5 +60,40 @@ func TestAppMenuWinLinux(t *testing.T) {
 	// signed out: the web client's items are greyed
 	if !strings.Contains(got, "New Message (off)") {
 		t.Errorf("signed out, New Message isn't greyed:\n%s", got)
+	}
+}
+
+// File on Linux and Windows: getFileMenuItems' New Message, New Channel,
+// New Canvas (Ctrl+Shift+N) and Invite People (order 11, after the
+// Workspace submenu's separator), then the app menu's Preferences; with
+// Invite People left out its separator goes too.
+func TestAppMenuFileItems(t *testing.T) {
+	a, ca, _ := fakeApp(t, nil)
+	file := func() ([]MenuItem, string) {
+		for _, m := range a.appMenuItems() {
+			if m.Label == "File" {
+				var b strings.Builder
+				renderAppMenu(m.Sub, 0, &b)
+				return m.Sub, b.String()
+			}
+		}
+		t.Fatal("no File menu")
+		return nil, ""
+	}
+	items, got := file()
+	if want := "New Message\nNew Channel\nNew Canvas\n---\nInvite People\n---\nPreferences…\n"; !strings.HasPrefix(got, want) {
+		t.Errorf("File:\n%s\nwant it to start:\n%s", got, want)
+	}
+	for _, it := range items {
+		if it.Key == menuNewCanvas && it.Hint != shortcut.Format("Mod+Shift+N") {
+			t.Errorf("New Canvas hint %q", it.Hint)
+		}
+		if (it.Key == menuNewChannel || it.Key == menuInvitePeople) && it.Hint != "" {
+			t.Errorf("%s hint %q: Slack gives it no accelerator", it.Label, it.Hint)
+		}
+	}
+	ca.SetTeamPrefs(map[string]json.RawMessage{"invites_only_admins": json.RawMessage("true")})
+	if _, got := file(); !strings.HasPrefix(got, "New Message\nNew Channel\nNew Canvas\n---\nPreferences…\n") {
+		t.Errorf("without Invite People:\n%s", got)
 	}
 }

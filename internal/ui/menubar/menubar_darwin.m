@@ -97,8 +97,15 @@ static ClackMenuTarget *clackTarget;
 	}
 	return clackMenuEnabled((int)it.tag) != 0;
 }
-// History's recent views, after its placeholder separator.
+// The menu's items that State.Hidden hides (Show full history, File's
+// New Canvas and Invite People), then History's recent views, after its
+// placeholder separator.
 - (void)menuNeedsUpdate:(NSMenu *)menu {
+	for (NSMenuItem *it in menu.itemArray) {
+		if (it.tag < kRecentPlaceholder && [it.identifier isEqualToString:kClackItem]) {
+			it.hidden = clackMenuHidden((int)it.tag) != 0;
+		}
+	}
 	for (NSInteger i = menu.numberOfItems - 1; i >= 0; i--) {
 		if ([menu itemAtIndex:i].tag >= kRecentTag) {
 			[menu removeItemAtIndex:i];
@@ -118,12 +125,6 @@ static ClackMenuTarget *clackTarget;
 		it.target = self;
 		it.tag = kRecentTag + i;
 		[menu insertItem:it atIndex:at + 1 + i];
-	}
-	// the menu's own items that State.Hidden hides (Show full history)
-	for (NSMenuItem *it in menu.itemArray) {
-		if (it.tag < kRecentPlaceholder && [it.identifier isEqualToString:kClackItem]) {
-			it.hidden = clackMenuHidden((int)it.tag) != 0;
-		}
 	}
 }
 @end
@@ -245,6 +246,8 @@ CFTypeRef clack_menubar_build(CFTypeRef specRef) {
 				builtWindows = m;
 			} else if ([role isEqualToString:@"help"]) {
 				builtHelp = m;
+			} else if (role.length == 0) {
+				m.delegate = clackTarget; // State.Hidden (menuNeedsUpdate:)
 			}
 			[bar addItem:it];
 			[made addObject:it];

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -9,9 +10,11 @@ import (
 	"gioui.org/io/key"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/menubar"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 func testMenus() []menubar.Menu {
@@ -77,6 +80,10 @@ const wantMenus = `Clack [app]
   Quit Clack|⌘Q|→
 File
   New Message|⌘N|→ fwd
+  New Channel||→
+  New Canvas|⇧⌘N|→ fwd
+  ---
+  Invite People||→
   ---
   Close|⌘W|clackClose:
 Edit
@@ -306,5 +313,105 @@ func TestZoomLevels(t *testing.T) {
 	a.zoom(0)
 	if a.prefs.Zoom != 0 {
 		t.Errorf("reset %d", a.prefs.Zoom)
+	}
+}
+
+// File's web-client items are getFileMenuItems' (boot-render, build
+// 2c0d02ca130f): New Message ⌘N, New Channel, New Canvas ⇧⌘N, then Invite
+// People after the Workspace submenu's separator. Choosing each runs the
+// real action on a fake Slack: the create-channel modal, a new canvas
+// opened in full view, the invite modal with the click handler's source.
+// Slack leaves New Canvas out for frontline members and free teams, and
+// Invite People out when canUserSeeInviteModal says no.
+func TestMacMenuFileItems(t *testing.T) {
+	a, ca, _ := fakeApp(t, nil)
+	file := map[string]menubar.Item{}
+	var order []string
+	for _, m := range menubar.Clean(a.macMenus()) {
+		if m.Title != "File" {
+			continue
+		}
+		for _, it := range m.Items {
+			if it.Sep {
+				order = append(order, "---")
+				continue
+			}
+			order = append(order, it.Title)
+			file[it.ID] = it
+		}
+	}
+	if got, want := strings.Join(order, " | "), "New Message | New Channel | New Canvas | --- | Invite People | --- | Close"; got != want {
+		t.Errorf("File = %q, want %q", got, want)
+	}
+	for _, w := range []struct{ id, title, accel string }{
+		{menuNewChannel, "New Channel", ""},
+		{menuNewCanvas, "New Canvas", "⇧⌘N"},
+		{menuInvitePeople, "Invite People", ""},
+	} {
+		it, ok := file[w.id]
+		if !ok {
+			t.Fatalf("no %s in File", w.id)
+		}
+		if it.Title != w.title || it.Accel() != w.accel || it.Do == nil || it.Role != "" {
+			t.Errorf("%s: %q %q do=%v role=%q, want %q %q", w.id, it.Title, it.Accel(), it.Do != nil, it.Role, w.title, w.accel)
+		}
+		if !menuWorkspaceOnly[w.id] {
+			t.Errorf("%s isn't greyed on the sign-in screen", w.id)
+		}
+	}
+
+	k := a.menuKeyNow()
+	if !k.signedIn {
+		t.Fatal("the fake app isn't signed in")
+	}
+	st := a.menuState(k)
+	for _, id := range []string{menuNewChannel, menuNewCanvas, menuInvitePeople, menuInviteSep} {
+		if st.Hidden[id] || st.Disabled[id] {
+			t.Errorf("a member of the fake team: %s hidden %v, disabled %v", id, st.Hidden[id], st.Disabled[id])
+		}
+	}
+
+	// New Channel: the create-channel modal (createChannel, app_menu)
+	file[menuNewChannel].Do()
+	waitTheme(t, a, "the create-channel modal", func() bool {
+		_, ok := topOverlay[*popups.CreateChannelModal](a)
+		return ok
+	})
+	// Invite People: the invite modal, source universal_click_handler
+	file[menuInvitePeople].Do()
+	waitTheme(t, a, "the invite modal", func() bool { return lastInviteModal(a) != nil })
+	if src := lastInviteModal(a).Source(); src != "universal_click_handler" {
+		t.Errorf("invite source %q, want universal_click_handler", src)
+	}
+	// New Canvas: canvases.create, then the canvas in full view
+	file[menuNewCanvas].Do()
+	waitTheme(t, a, "the new canvas", func() bool { return strings.HasPrefix(string(a.router.Current()), "docs/") })
+
+	// the gates: a frontline member gets neither (KBR4 q; c1OI Lz)
+	self := slack.User{ID: fakeslack.SelfID, Name: "self", RestrictedUserType: "frontline_worker"}
+	ca.S.Lock()
+	ca.S.Self = self
+	ca.S.Unlock()
+	ca.S.PutUsers([]slack.User{self})
+	st = a.menuState(a.menuKeyNow())
+	for _, id := range []string{menuNewCanvas, menuInvitePeople, menuInviteSep} {
+		if !st.Hidden[id] {
+			t.Errorf("frontline: %s shown", id)
+		}
+	}
+	if st.Hidden[menuNewChannel] {
+		t.Error("frontline: New Channel hidden")
+	}
+	// a full member on a team where only admins invite and nobody may
+	// request invites: New Canvas, no Invite People
+	self.RestrictedUserType = ""
+	ca.S.Lock()
+	ca.S.Self = self
+	ca.S.Unlock()
+	ca.S.PutUsers([]slack.User{self})
+	ca.SetTeamPrefs(map[string]json.RawMessage{"invites_only_admins": json.RawMessage("true")})
+	st = a.menuState(a.menuKeyNow())
+	if st.Hidden[menuNewCanvas] || !st.Hidden[menuInvitePeople] || !st.Hidden[menuInviteSep] {
+		t.Errorf("invites_only_admins: hidden %v", st.Hidden)
 	}
 }

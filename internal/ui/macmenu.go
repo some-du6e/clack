@@ -8,6 +8,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/ui/menubar"
+	"github.com/some-du6e/clack/internal/ui/popups"
 )
 
 // The macOS menu bar: Slack desktop's (4.53.276), whose menus come from two
@@ -21,10 +22,19 @@ import (
 // the separators below are those. The update item takes Slack's titles
 // for each update state (update_ui.go). Items Clack has no feature for are
 // left out: Settings & Administration,
-// Workspace, Reload, Force Reload, Toggle Privacy Mode, New Channel, New
-// Canvas, Invite People, Workflow Builder, Downloads, Keyboard Navigation,
-// What's New, Contact Us, Give Feedback, Developer, and Troubleshooting's
-// items other than the logs (appmenu.go).
+// Workspace, Reload, Force Reload, Toggle Privacy Mode, Workflow Builder,
+// Downloads, Keyboard Navigation, What's New, Contact Us, Give Feedback,
+// Developer, and Troubleshooting's items other than the logs (appmenu.go).
+//
+// File's web-client items are getFileMenuItems' (boot-render, build
+// 2c0d02ca130f): New Message ⌘N (order 0), New Channel (1, no shortcut),
+// New Canvas ⇧⌘N (2) and Invite People (21 on macOS, 11 elsewhere: after
+// the Workspace submenu Clack leaves out, so after a separator). Its click
+// handler (the same chunk's switch over the ids) runs createChannel with
+// entryPoint app_menu, createAndOpenDoc (source FILE_MENU; a ⇧⌘N press
+// goes to the keyboard handler instead, as Forward does here) and
+// openInviteModal with source universal_click_handler. Slack leaves out
+// the items the account can't use; menuState hides them (fileMenuGates).
 //
 // Shortcuts Clack's window already binds (keys.go) are Forward: a key
 // press goes to Gio as before, so modals and focused widgets still decide;
@@ -73,6 +83,10 @@ func (a *App) macMenus() []menubar.Menu {
 		{Title: AppName, Kind: "app", Items: app},
 		{Title: "File", Items: []menubar.Item{
 			{ID: "menuitem-new-message", Title: "New Message", Key: "n", Mods: C, Forward: true, Do: on(a.compose)},
+			{ID: menuNewChannel, Title: "New Channel", Do: on(a.OpenCreateChannel)},
+			{ID: menuNewCanvas, Title: "New Canvas", Key: "n", Mods: S | C, Forward: true, Do: on(a.CreateCanvas)},
+			{ID: menuInviteSep, Sep: true},
+			{ID: menuInvitePeople, Title: "Invite People", Do: on(a.openInviteFromMenu)},
 			sep,
 			{ID: "menuitem-file-close", Title: "Close", Key: "w", Mods: C, Role: "clackClose:"},
 		}},
@@ -150,7 +164,37 @@ const (
 	// gJ's ids: Px "menuitem-top-level-history" + Q/rf SHOW_ALL_RECENTS
 	menuHistoryMoreSep = "menuitem-top-level-history-view-more-separator"
 	menuHistoryShowAll = "menuitem-top-level-history-showAllRecents"
+	// File's web-client items (getFileMenuItems)
+	menuNewChannel   = "menuitem-new-channel"
+	menuNewCanvas    = "menuitem-new-canvas"
+	menuInvitePeople = "menuitem-invite-people"
+	menuInviteSep    = "menuitem-invite-people-separator" // Clack's: hidden with Invite People
 )
+
+// openInviteFromMenu is File > Invite People: the invite modal, with the
+// source Slack's click handler passes.
+func (a *App) openInviteFromMenu() { popups.OpenInviteModal(a, popups.InviteFromAppMenu) }
+
+// fileMenuGates are getFileMenuItems' conditions, as far as Clack can
+// read them:
+//
+//   - New Canvas: !(KBR4 q) — not a frontline member (u+N9 W) — and not
+//     a free team (mAu1 tc isOnFreePlan). Slack also asks u+51 F (canvases
+//     on: the govslack switches and allow_spaceship), which no other Clack
+//     canvas entry point reads; Clack shows the item then.
+//   - Invite People: c1OI Lz canUserSeeInviteModal (popups.CanInvite).
+//
+// New Channel's Dmhc MM (the CREATE_PUBLIC_CHANNEL or
+// CREATE_PRIVATE_CHANNEL grant from permissions/info) isn't read: Clack's
+// other create-channel entry points don't fetch the grants either, and
+// the modal shows the API's error.
+func (a *App) fileMenuGates() (canvas, invite bool) {
+	c := a.Core()
+	if c == nil {
+		return false, false
+	}
+	return !c.Self().Frontline && !c.OnFreePlan(), popups.CanInvite(a)
+}
 
 // menuWorkspaceOnly are the web client's items: Slack shows them only with
 // a workspace open, Clack greys them out on the sign-in screen.
@@ -162,6 +206,7 @@ var menuWorkspaceOnly = map[string]bool{
 	"menuitem-later": true, "menuitems-channel-browser": true, "menuitem-file-browser": true,
 	"menuitem-people-user-groups": true, "menuitem-apps": true, "menuitem-profile": true,
 	"menuitem-navigate-back": true, "menuitem-navigate-forward": true, menuHistoryShowAll: true,
+	menuNewChannel: true, menuNewCanvas: true, menuInvitePeople: true,
 }
 
 // menuKey is what menuState shows; the state is rebuilt when it changes.
@@ -175,6 +220,7 @@ type menuKey struct {
 	tick                         int64 // conversation names load later: refresh every 2 s
 	update                       string
 	updateOff                    bool // the update item is greyed out
+	noCanvas, noInvite           bool // File's New Canvas and Invite People are left out (fileMenuGates)
 }
 
 // menuBar is the installed menu bar's state (macOS only).
@@ -221,6 +267,10 @@ func (a *App) menuKeyNow() menuKey {
 	if c := a.Core(); c != nil {
 		k.historyMenu = c.HistoryMenuExperiment()
 	}
+	if k.signedIn {
+		canvas, invite := a.fileMenuGates()
+		k.noCanvas, k.noInvite = !canvas, !invite
+	}
 	if a.opts.CheckUpdate != nil {
 		t, ok := a.updateMenuItem()
 		k.update, k.updateOff = t, !ok
@@ -260,8 +310,15 @@ func (a *App) menuState(k menuKey) *menubar.State {
 			s.Recent = append(s.Recent, menubar.Recent{Title: labels[i], Route: string(v.Route)})
 		}
 	}
+	s.Hidden = map[string]bool{}
 	if !more {
-		s.Hidden = map[string]bool{menuHistoryMoreSep: true, menuHistoryShowAll: true}
+		s.Hidden[menuHistoryMoreSep], s.Hidden[menuHistoryShowAll] = true, true
+	}
+	if k.noCanvas {
+		s.Hidden[menuNewCanvas] = true
+	}
+	if k.noInvite {
+		s.Hidden[menuInvitePeople], s.Hidden[menuInviteSep] = true, true
 	}
 	return s
 }

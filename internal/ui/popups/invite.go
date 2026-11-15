@@ -90,6 +90,9 @@ const (
 	InviteFromTeamMenu   = "team_menu"
 	InviteFromCreateMenu = "sidebar_create_new_invite_people"
 	InviteFromHuddles    = "huddles_page"
+	// File > Invite People (the desktop menu's click handler, boot-render
+	// build 2c0d02ca130f)
+	InviteFromAppMenu = "universal_click_handler"
 	// Directories > People: InvitePeopleButton and the education banner's
 	// "Invite people" (client-browse-people-view, build fa938a086569)
 	InviteFromPeopleBrowser     = "people_browser"

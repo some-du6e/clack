@@ -114,9 +114,10 @@ type State struct {
 	Disabled map[string]bool   // by Item.ID
 	Titles   map[string]string // overrides Item.Title, by Item.ID
 	Recent   []Recent          // History's recent views, most recent first
-	// Hidden are the items (separators too, by Item.ID) of the menu that
-	// holds the recent views which don't show right now: History's "Show
-	// full history" and its separator.
+	// Hidden are the items (separators too, by Item.ID) of the top-level
+	// menus without a Kind that don't show right now: History's "Show full
+	// history" and its separator, File's items the account can't use.
+	// AppKit applies it when the menu opens.
 	Hidden map[string]bool
 }
 
