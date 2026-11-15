@@ -335,13 +335,11 @@ type Activity struct {
 	rows     map[string]*actRow
 	override map[string]bool // local read state: true = read, false = unread
 	cleared  map[string]bool
-	// hideRead holds the items already read when an Unreads load started:
-	// Slack's Unreads filter keeps items you read while it's on (until the
-	// filters change or the feed reloads) but doesn't bring back ones read
-	// before.
-	hideRead map[string]bool
-	notes    actNotes
-	patchOn  bool
+	// visSel is the opened row the latest rebuild kept under Unreads
+	// (actUnreadsHides): a new selection or none rebuilds the list.
+	visSel  string
+	notes   actNotes
+	patchOn bool
 	// shown: whether the page or its peek drew in the latest frame; its
 	// realtime watcher redraws only then (watchItems)
 	shown    shownTracker
@@ -914,17 +912,14 @@ func (v *Activity) load(mode actLoad) {
 		v.failedCursor = ""
 		v.vis = v.vis[:0]
 		v.dirty = true
-		v.hideRead = nil
-		if opts.Unread {
-			v.hideRead = map[string]bool{}
-			for k, read := range v.override {
-				if read {
-					v.hideRead[k] = true
-				}
-			}
-		}
 	}
 	sticky := opts.Unread
+	unreadMarks := map[string]bool{} // pendingUnreadMarkKeys: rows you marked unread here
+	for k, read := range v.override {
+		if !read {
+			unreadMarks[k] = true
+		}
+	}
 	v.mode, v.paging, v.wasBusy = mode, mode == actMore, true
 	v.data.load(v.h, mode != actFresh, func(ctx context.Context) (core.ActivityPage, error) {
 		if none {
@@ -939,8 +934,9 @@ func (v *Activity) load(mode actLoad) {
 			return actAppend(old, p), nil
 		case actRefresh:
 			if sticky {
-				// Unreads: rows already shown stay until the filters change.
-				return actSticky(p, old), nil
+				// Unreads: the fresh unread page, plus the rows Slack keeps
+				// on a refresh (getItemsRetainedOnRefresh)
+				return actRetained(p, old, unreadMarks), nil
 			}
 			return actMerge(p, old), nil
 		}
@@ -986,26 +982,39 @@ func actMerge(fresh, old core.ActivityPage) core.ActivityPage {
 	return core.ActivityPage{Items: items, Next: old.Next, Convs: actRefs(old.Convs, fresh.Convs)}
 }
 
-// actSticky is the Unreads refresh: the fresh unread page plus every row
-// already loaded (now read or not), newest first.
-func actSticky(fresh, old core.ActivityPage) core.ActivityPage {
+// actRetained is the Unreads refresh, P0K2's refreshItems upsert
+// (build c07ab895506f): the fresh unread page, then the rows loaded
+// before that getItemsRetainedOnRefresh keeps: newer than the page's
+// newest row, or marked unread here (pendingUnreadMarkKeys) and still
+// unread. The rest, read rows included, goes with the old list; its
+// cursor is the fresh page's.
+func actRetained(fresh, old core.ActivityPage, unreadMarks map[string]bool) core.ActivityPage {
+	newest := ""
+	for i := range fresh.Items {
+		if ts := fresh.Items[i].FeedTS; newest == "" || actTSLess(newest, ts) {
+			newest = ts
+		}
+	}
 	seen := make(map[string]bool, len(fresh.Items))
-	items := make([]core.ActivityItem, 0, len(old.Items)+len(fresh.Items))
+	items := make([]core.ActivityItem, 0, len(fresh.Items))
 	for i := range fresh.Items {
 		seen[actKey(&fresh.Items[i])] = true
 		items = append(items, fresh.Items[i])
 	}
 	for i := range old.Items {
-		if !seen[actKey(&old.Items[i])] {
-			items = append(items, old.Items[i])
+		it := &old.Items[i]
+		k := actKey(it)
+		if seen[k] {
+			continue
+		}
+		// unreadMarks holds the rows whose local state is unread (the
+		// store's isUnread after the optimistic mark)
+		if unreadMarks[k] || newest != "" && actTSLess(newest, it.FeedTS) {
+			items = append(items, *it)
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool { return actTSLess(items[j].FeedTS, items[i].FeedTS) })
-	next := fresh.Next
-	if len(old.Items) > len(fresh.Items) {
-		next = old.Next
-	}
-	return core.ActivityPage{Items: items, Next: next, Convs: actRefs(old.Convs, fresh.Convs)}
+	return core.ActivityPage{Items: items, Next: fresh.Next, Convs: actRefs(old.Convs, fresh.Convs)}
 }
 
 // actTSLess compares Slack timestamps ("1730000000.123456") numerically.
@@ -1379,14 +1388,26 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		order, split = v.actVIPOrder(page)
 	}
 	shown := 0
+	// Unreads (ActivityList selector Q): only the unread rows and the
+	// opened one; "Everything else" heads the first of its rows shown
+	v.visSel = v.unreadsSel()
+	elseAt := split
 	for n := range page.Items {
 		i := n
 		if order != nil {
 			i = order[n]
+		}
+		if v.actUnreadsHides(&page.Items[i]) {
+			if n == elseAt {
+				elseAt++
+			}
+			continue
+		}
+		if order != nil {
 			switch {
 			case split > 0 && n == 0:
 				v.vis = append(v.vis, actVisVIP)
-			case split > 0 && n == split:
+			case split > 0 && n == elseAt:
 				if xi {
 					// e0: a section_spacer before every header but the
 					// first (16px in the bordered-separators list)
@@ -1414,9 +1435,6 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		if c, ok := v.cleared[key]; ok && c != v.showCleared {
 			continue
 		}
-		if v.unread.Value && v.hideRead[key] {
-			continue
-		}
 		if dm && !r.d.dm {
 			continue
 		}
@@ -1431,7 +1449,7 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		// the first row at all (v).
 		if t := tsTime(it.FeedTS); !t.IsZero() && (lastDay.IsZero() || !sameDay(t, lastDay)) {
 			today, first := sameDay(t, now), shown == 0
-			boundary := split > 0 && n == split
+			boundary := split > 0 && n == elseAt
 			f := inbox && first && today
 			g := inVIP || boundary && (today || xi)
 			vv := xi && first && len(v.vis) == 0 && !today
@@ -1447,6 +1465,28 @@ func (v *Activity) rebuild(page *core.ActivityPage) {
 		v.vis = v.vis[:0]
 	}
 	v.visN, v.dirty = len(page.Items), false
+}
+
+// unreadsSel is the opened row's key while Unreads is on ("" otherwise),
+// the one read row its list keeps.
+func (v *Activity) unreadsSel() string {
+	if v.unread.Value && v.selOK {
+		return v.selKey
+	}
+	return ""
+}
+
+// actUnreadsHides reports whether the Unreads filter leaves it out: the
+// ActivityList selector Q (3x6A, build c07ab895506f) keeps, with
+// filterUnreadsSelected, only `selected?.key === e.key || e.isUnread`.
+// A row read here or elsewhere leaves Unreads at once unless it's the
+// one opened; the All list keeps every row.
+func (v *Activity) actUnreadsHides(it *core.ActivityItem) bool {
+	if !v.unread.Value {
+		return false
+	}
+	key := actKey(it)
+	return key != v.visSel && !v.isUnread(it, key)
 }
 
 // actVisVIP and actVisElse mark ActivitySectionHeader's "VIP unreads" and
@@ -1846,6 +1886,9 @@ func (v *Activity) items(gtx C) D {
 	page, loaded, err := v.data.get()
 	if g := i18n.Gen(); g != v.locGen {
 		v.locGen, v.dirty = g, true // row text in the new locale
+	}
+	if v.unreadsSel() != v.visSel {
+		v.dirty = true // Unreads keeps the opened row only while it's open
 	}
 	if v.dirty || v.visN != len(page.Items) {
 		v.rebuild(&page)
