@@ -1017,6 +1017,18 @@ jobs:
           go test -count=1 -v -timeout 10m -run '^(TestMacInspectKeys|TestMacComposerFormatKeys)$' ./internal/ui
           ui=$?
           exit $((gio | ui))
+      # P6 (gap audit 2026-11-15): ⌘V reads the general pasteboard natively
+      # (internal/desktop/pasteboard_darwin.m), as Chromium's ClipboardMac:
+      # Finder's copied files attach as those files, an image comes as
+      # public.png's bytes or NSImage's as a PNG, rich text with a picture
+      # stays text, a busy main thread never holds the read. JXA puts the
+      # data on the real pasteboard; TestMain runs app.Main for the reads'
+      # main-thread hops (CLACK_MACOS_PASTEBOARD_TESTS).
+      - name: macOS paste from the pasteboard (P6)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_PASTEBOARD_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run '^TestMacPaste' ./internal/ui/composer
       # docs/GAPS-2026-11-14.md gap 9 (W40). Gio patch 25 on real NSWindows:
       # Displays against NSScreen, a window opened at Bounds (points from
       # the primary screen's top left), its ConfigEvents' bounds through a

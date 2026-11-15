@@ -1,68 +1,22 @@
-//go:build (!linux && !windows) || android
+//go:build (!linux && !windows && !darwin) || android || ios
 
 package composer
 
-import (
-	"context"
-	"os/exec"
-	"runtime"
+import "context"
 
-	"github.com/some-du6e/clack/internal/ui/uiguard"
-)
-
-// macOS: clipboard images via pngpaste (if installed) or osascript, and an
-// osascript "choose file" picker when the ui root set no explorer.
-// The rest: no clipboard images; the picker is the explorer or the in-app
-// modal. Windows is attach_windows.go.
+// No clipboard images or copied files; the picker is the explorer or the
+// in-app modal. Windows is attach_windows.go, macOS attach_darwin.go.
 
 // attExplorerUsable reports whether the Gio explorer's chooser is safe to
-// call. macOS uses native panels that return promptly, so the
-// explorer is always usable there (the portal-hang problem is Linux only).
+// call; the portal-hang problem is Linux only.
 func attExplorerUsable() bool { return true }
 
-func attClipboardSupported() bool { return runtime.GOOS == "darwin" }
+func attClipboardSupported() bool { return false }
 
-// attClipboardFiles: copied files aren't read from the macOS clipboard.
 func attClipboardFiles(context.Context) ([]string, error) { return nil, nil }
 
-func attClipboardImage(ctx context.Context, explicit bool) ([]byte, string, error) {
-	if runtime.GOOS != "darwin" {
-		return nil, "", errAttClipNone
-	}
-	info, err := attRun(ctx, 1<<20, "osascript", "-e", "clipboard info")
-	if err != nil || !attMacClipHasImage(string(info), explicit) {
-		return nil, "", errAttNoClipImage
-	}
-	if attHave("pngpaste") {
-		if data, err := attRun(ctx, attMaxFileSize, "pngpaste", "-"); err == nil && len(data) > 0 {
-			return data, "image/png", nil
-		}
-	}
-	out, err := attRun(ctx, 2*attMaxFileSize+64, "osascript", "-e", "the clipboard as «class PNGf»")
-	if err != nil {
-		return nil, "", errAttNoClipImage
-	}
-	data, err := attParseAppleData(string(out))
-	if err != nil {
-		return nil, "", err
-	}
-	return data, "image/png", nil
+func attClipboardImage(context.Context, bool) ([]byte, string, error) {
+	return nil, "", errAttClipNone
 }
 
-const attMacChooseScript = `set fs to choose file with prompt "Upload files" with multiple selections allowed
-set out to ""
-repeat with f in fs
-set out to out & POSIX path of f & linefeed
-end repeat
-return out`
-
-func attNativePick(ctx context.Context) (paths []string, ok bool, err error) {
-	uiguard.OffUI("exec osascript")
-	if runtime.GOOS != "darwin" || !attHave("osascript") {
-		return nil, false, nil
-	}
-	c := exec.CommandContext(ctx, "osascript", "-e", attMacChooseScript)
-	c.WaitDelay = attWaitDelay
-	out, err := c.Output()
-	return attPickResult(out, err)
-}
+func attNativePick(context.Context) ([]string, bool, error) { return nil, false, nil }

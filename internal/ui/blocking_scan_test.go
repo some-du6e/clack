@@ -22,7 +22,6 @@ var execAllowed = map[string]string{
 	"openurl/openurl.go":       "Open starts the browser on its own goroutine",
 	"composer/attach.go":       "attRun/attHave run on the picker and clipboard-image goroutines",
 	"composer/attach_linux.go": "attNativePick runs on Pick's goroutine",
-	"composer/attach_other.go": "attNativePick runs on Pick's goroutine",
 	"popups/emoji_add.go":      "the chooser lookup and dialog run in background goroutines",
 	"clipimg/clipimg_linux.go": "clipimg.Write runs on popups' run goroutine (Copy image)",
 }
