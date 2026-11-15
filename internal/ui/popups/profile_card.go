@@ -25,8 +25,10 @@ import (
 // Measured from app.slack.com (2026-11, profile hover card): 340 wide,
 // radius 8, popover shadow (ring 1px rgba(29,28,29,.13) + 0 4px 12px
 // rgba(0,0,0,.12)). Primary block padding 16: avatar 72 (radius 12), 12px
-// gap, name 15/900 followed by the presence indicator, pronouns and title
-// 15px #454447 (title wraps), status emoji + text. Secondary block: border
+// gap, then the text column (centred beside the avatar): name 15/900
+// followed by the presence indicator, the title 15px content-sec
+// (wraps), the pronouns 13px rgba(foreground_max,.7) on their own line
+// below it (column order and styles: pfColumn's comment). Secondary block: border
 // top 1px rgba(29,28,29,.13), padding 0 16 16; clock icon 20 + "12:39 PM
 // local time" 15px (margin-top 16); buttons row (margin-top 12): [Message]
 // [Huddle ▾] [VIP] ⋮, outline, 28 tall, radius 4, 13/700, 16px icons.
@@ -430,7 +432,7 @@ func (p *ProfileCard) content(gtx layout.Context, th *theme.Theme, cl *Colors, u
 // header is MemberProfileBaseEntity's primary block: Slack's
 // MemberProfileHoverBanner (Workspace Owner / Workspace Admin /
 // Deactivated account) across the top, then avatar, name, presence,
-// pronouns and title, full card width, paddings included.
+// title and pronouns, full card width, paddings included.
 func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, ok bool, w int) layout.Dimensions {
 	bh := 0
 	if ok {
@@ -462,21 +464,59 @@ func (p *ProfileCard) header(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 	} else {
 		rrect(gtx, image.Rect(pad, pad, pad+av, pad+av), dp(gtx, 12), cl.Selected)
 	}
-	// Slack's text column has margin: -4px 0 (it starts 4px above the
-	// avatar and may hang 4px below it).
+	// Slack's text column (.c-base_entity__text-contents) has margin:
+	// -4px 0 and sits in .c-base_entity--has-avatar's flex row
+	// (align-items: center; the avatar is align-self: flex-start): a
+	// column shorter than the avatar is centred beside it, a taller one
+	// starts 4px above the avatar and may hang 4px below it.
 	m4 := dp(gtx, 4)
-	cd := at(gtx, image.Pt(colX, pad-m4), func(gtx layout.Context) layout.Dimensions {
+	m := op.Record(gtx.Ops)
+	cd := func() layout.Dimensions {
+		gtx := gtx
 		gtx.Constraints = layout.Constraints{Max: image.Pt(colW, 1<<20)}
 		if !ok {
 			return pfSkeleton(gtx, th, cl, p.missing, p.id, colW)
 		}
 		return p.column(gtx, th, cl, u, colW)
-	})
-	y := bh + pad + maxInt(av, cd.Size.Y-2*m4) + pad
+	}()
+	colCall := m.Stop()
+	inner := cd.Size.Y - 2*m4 // the column's margin box
+	top := pad - m4
+	if ok && inner < av {
+		top += (av - inner) / 2
+	}
+	func() {
+		defer op.Offset(image.Pt(colX, top)).Push(gtx.Ops).Pop()
+		colCall.Add(gtx.Ops)
+	}()
+	y := bh + pad + maxInt(av, inner) + pad
 	return layout.Dimensions{Size: image.Pt(w, y)}
 }
 
-// column is the text column beside the avatar.
+// column is the text column beside the avatar, Slack's
+// MemberProfileBaseEntity → BaseEntity (client-boot-shared Se3V and
+// 0gdK, build 2c0d02ca130f): .c-base_entity__text-contents (flex
+// column) holds text, subtext, metadata in that order:
+//
+//   - text: the name (.p-member_profile_base_entity__name strong 15px,
+//     weight 900, 22px line) and the presence indicator after it;
+//   - subtext: the title, a BaseEntitySubtext span. Its className is
+//     clsx({baseEntitySubtextStyle: …__title | …__title_deleted}), which
+//     only adds the literal class "baseEntitySubtextStyle", so neither
+//     title rule applies: it is .c-base_entity__subtext (display:block,
+//     color var(--dt_color-content-sec), the card's 15px/22px) with
+//     .p-member_profile_base_entity__title--full (white-space: initial:
+//     it wraps), in a deactivated member's card too;
+//   - metadata: the pronouns, a BaseEntitySubtext span with
+//     .p-member_profile_base_entity__pronouns, which comes after
+//     .c-base_entity__subtext in client-boot-styles and wins: block,
+//     nowrap + ellipsis, font-size 13px, line-height 1.46668 (19.07px),
+//     font-weight initial, color rgba(var(--sk_foreground_max), .7). No
+//     margin: the metadata is a fragment, not a .c-base_entity__metadata,
+//     so `__subtext ~ __metadata {margin-top: 4px}` doesn't match.
+//
+// BaseEntitySubtext renders nothing for an empty string; any other text
+// is a block line (one of only spaces collapses to no height).
 func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u core.User, colW int) layout.Dimensions {
 	lineH := dp(gtx, 22)
 	y := 0
@@ -485,25 +525,50 @@ func (p *ProfileCard) column(gtx layout.Context, th *theme.Theme, cl *Colors, u 
 		return pfNameLine(gtx, p.h, th, &p.nameBtn, u, 15, 22, 10, colW)
 	})
 	y += lineH
-	if !pfBlank(u.Pronouns) {
-		at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(colW, lineH)}
-			return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, u.Pronouns, 1)
-		})
-		y += lineH
-	}
-	if !pfBlank(u.Title) {
-		col := cl.Fg2
-		if u.Deleted { // .p-member_profile_base_entity__title_deleted: color inherit
-			col = cl.Fg
-		}
+	if pfSubtextShown(u.Title) {
 		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Constraints{Max: image.Pt(colW, 1<<20)}
-			return para(gtx, th, 15, 22, theme.Regular, col, u.Title, 0)
+			return para(gtx, th, 15, 22, theme.Regular, cl.Fg2, u.Title, 0)
 		})
 		y += maxInt(d.Size.Y, lineH)
 	}
+	if pfSubtextShown(u.Pronouns) {
+		pronH := dp(gtx, pfPronounsLH)
+		d := at(gtx, image.Pt(0, y), func(gtx layout.Context) layout.Dimensions {
+			gtx.Constraints = layout.Constraints{Max: image.Pt(colW, 1<<20)}
+			return para(gtx, th, pfPronounsSize, pfPronounsLH, theme.Regular, pfPronounsColor(th, cl), u.Pronouns, 1)
+		})
+		y += maxInt(d.Size.Y, pronH)
+	}
 	return layout.Dimensions{Size: image.Pt(colW, maxInt(y, lineH))}
+}
+
+// .p-member_profile_base_entity__pronouns: 13px, line-height 1.46668.
+const (
+	pfPronounsSize = 13
+	pfPronounsLH   = 13 * 1.46668
+)
+
+// pfPronounsColor is the pronouns' rgba(var(--sk_foreground_max), .7)
+// (sk_foreground_max 29,28,29 light, 232,232,232 dark, or a theme's),
+// flattened over the card the way Chrome blends.
+func pfPronounsColor(th *theme.Theme, cl *Colors) color.NRGBA {
+	c := color.NRGBA{R: 0x1d, G: 0x1c, B: 0x1d, A: 0xb3}
+	if th != nil && th.Dark {
+		c = color.NRGBA{R: 0xe8, G: 0xe8, B: 0xe8, A: 0xb3}
+	}
+	if th != nil {
+		theme.SetColor(th.Tokens, &c, "rgba(var(--sk_foreground_max),0.7)")
+	}
+	return theme.Over(c, cl.Bg)
+}
+
+// pfSubtextShown reports whether a BaseEntitySubtext line draws: it
+// renders for any non-empty string, and a block of only collapsible
+// white space has no line box. A lone zero-width space is text, so it
+// keeps its (blank) line, as in Slack.
+func pfSubtextShown(s string) bool {
+	return strings.Trim(s, " \t\n\r\f") != ""
 }
 
 func (p *ProfileCard) buttons(gtx layout.Context, th *theme.Theme, u core.User, w int) layout.Dimensions {
