@@ -763,6 +763,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.layoutHoverCardOver(gtx) // over a dialog whose own list has triggers
 	a.slackcOverlays(gtx)
 	a.layoutToast(gtx)
+	a.layoutWorkflowRunToast(gtx)
 	a.layoutIntroOverlay(gtx) // Replay introduction, over everything
 	// middle-click autoscroll's window-wide area: over everything but the
 	// tracker

@@ -96,6 +96,8 @@ type bk struct {
 			} `json:"app_icon_urls"`
 		} `json:"v1"`
 	} `json:"call"`
+
+	bkWorkflow // workflow_mention (workflow_mention.go)
 }
 
 type textObj struct {
@@ -797,6 +799,10 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 			out = append(out, messageMentionSpan(c.r, e))
 		case "canvas":
 			out = append(out, c.canvasSpan(e))
+		case "workflow_mention": // workflow_mention.go
+			if sp, ok := c.workflowMentionSpan(e); ok {
+				out = append(out, sp)
+			}
 		case "list_record": // listslug.go
 			if sp, ok := c.listRecordSpan(e); ok {
 				out = append(out, sp)

@@ -163,9 +163,13 @@ func (a *App) wrapToastParts(gtx layout.Context, parts []i18n.Part, maxW int) ([
 		case p.Tag == "link" && a.toast.linkHref != "":
 			href = a.toast.linkHref
 		}
-		for i, f := range strings.Split(p.Text, " ") {
+		for i, f := range strings.Split(strings.ReplaceAll(p.Text, "\n", " \n "), " ") {
 			if i > 0 {
 				pendingSpace = true
+			}
+			if f == "\n" { // a <div> or <br> line break (the workflow toasts, Izws)
+				line, x, pendingSpace = line+1, 0, false
+				continue
 			}
 			if f == "" {
 				continue

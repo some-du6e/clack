@@ -2,10 +2,17 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"image"
+	"log"
+	"net/url"
+	"regexp"
+	"slices"
 	"sync"
 	"time"
 
+	"gioui.org/io/event"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
@@ -14,6 +21,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
+	"github.com/some-du6e/clack/internal/ui/ctxclick"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -47,6 +55,7 @@ type wfTabState struct {
 	buildScratch, moreInfo widget.Clickable
 	starts, rows           map[string]*widget.Clickable
 	tipStart               map[string]*popups.TipState
+	rowUI                  map[string]*wfRowUI // a row's ⋮ and context menu (wfRowUI)
 	featureTip             popups.TipState
 	lastW                  int
 	// peek: the state is the channel-tab slug's WorkflowsPeek
@@ -335,11 +344,20 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 		tip = new(popups.TipState)
 		st.tipStart[key] = tip
 	}
+	ui := st.rowUIFor(key)
 	runnable := !it.Denied && it.Trigger.IsShortcut() && it.Trigger.ShortcutURL != "" && it.Trigger.Published
-	if start.Clicked(gtx) && runnable {
+	// the buttons' clicks first: the row under them mustn't take them too
+	startHit, moreHit := start.Clicked(gtx), ui.more.Clicked(gtx)
+	if startHit && runnable {
 		// onExecute with the explorer's context: location bookmark, the
 		// trigger as bookmark_id (useChannelWorkflowsExplorer's M)
 		blockkit.TripWorkflow(a, it.Trigger.ShortcutURL, core.BookmarkTripContext(ch, it.Trigger.ID), "channel_workflows")
+	}
+	if moreHit && !st.peek && !it.Denied {
+		a.openWorkflowRowMenu(ch, st, key, it, featured, ui.moreRect)
+	}
+	if row.Clicked(gtx) && !startHit && !moreHit && !it.Denied {
+		a.workflowItemClick(ch, it) // onListItemSelect: handleWorkflowItemClick (d1EE)
 	}
 	pad, is := gtx.Dp(16), gtx.Dp(36)
 	nameH, descH := gtx.Dp(22), gtx.Dp(18)
@@ -349,7 +367,8 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 	}
 	r := image.Rect(0, 0, w, h)
 	rad := gtx.Dp(12)
-	hover := row.Hovered() || start.Hovered()
+	// :hover and --focused (the ⋮'s menu open: ActionsMenu isFocused)
+	hover := row.Hovered() || start.Hovered() || ui.more.Hovered() || ui.menuOpen
 	// the card: rows share their borders; the first and last round off
 	border := cl.Ring
 	if hover && !it.Denied {
@@ -419,12 +438,10 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 		}
 		desc = "Only certain people can use this workflow"
 	}
+	// the actions sit over the text (.c-actions_menu__actions is
+	// absolute), so the text keeps its width on hover
 	tx := pad + is + gtx.Dp(12)
-	bw := 0
-	if runnable && hover {
-		bw = gtx.Dp(28) + gtx.Dp(8)
-	}
-	tw := w - tx - pad - bw
+	tw := w - tx - pad
 	ty := (h - nameH - descH) / 2
 	at(gtx, image.Pt(tx, ty), image.Pt(tw, nameH), func(gtx layout.Context) layout.Dimensions {
 		return th.Layout(gtx, theme.TextStyle{Size: 15, LineHeight: 22, Weight: theme.Bold, Color: cl.Fg, MaxLines: 1}, name)
@@ -432,18 +449,17 @@ func (a *App) wfRow(gtx layout.Context, ch string, st *wfTabState, it core.TabWo
 	at(gtx, image.Pt(tx, ty+nameH), image.Pt(tw, descH), func(gtx layout.Context) layout.Dimensions {
 		return th.Layout(gtx, theme.TextStyle{Size: 13, LineHeight: 18, Weight: theme.Regular, Color: cl.Muted, MaxLines: 1}, desc)
 	})
-	// the hover area under the actions
+	// the hover area under the actions; the managers' context menu
+	// (WorkflowContextMenu) on a right-click
 	atExact(gtx, image.Point{}, image.Pt(w, h), func(gtx layout.Context) layout.Dimensions {
-		return row.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(w, h)} })
+		d := row.Layout(gtx, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(w, h)} })
+		if !it.Denied {
+			a.workflowRowContext(gtx, ch, st, key, it, featured, ui, image.Pt(w, h))
+		}
+		return d
 	})
-	if runnable && hover {
-		bs := gtx.Dp(28)
-		p := image.Pt(w-pad-bs, (h-bs)/2)
-		at(gtx, p, image.Pt(bs, bs), func(gtx layout.Context) layout.Dimensions {
-			d := iconButton(gtx, start, "play", 28, 16, cl.Fg2, cl.BgHover, 6)
-			popups.Tooltip(gtx, th, tip, start.Hovered(), d.Size, popups.Above, "Start workflow", "")
-			return d
-		})
+	if hover && !it.Denied {
+		a.workflowRowActions(gtx, ch, st, it, ui, start, tip, runnable, w, h, pad)
 	}
 	if last || st.peek {
 		return layout.Dimensions{Size: image.Pt(w, h)}
@@ -578,3 +594,342 @@ func buttonWidth(gtx layout.Context, th *theme.Theme, kind popups.BtnKind, size 
 	_ = m.Stop()
 	return d.Size.X
 }
+
+// ---- a row's actions and menus ----
+//
+// WorkflowItem's actions (31Gm): on hover (and while its menu is open) an
+// ActionsMenu (e7SQ, .c-actions_menu__actions: the primary background,
+// a 1px fg-low ring and a 0 1px 3px shadow, radius 12, padding 4, at the
+// row's right, centred) of smedium icon buttons (32px, 18px glyphs,
+// content-sec, content-pry on base-sec when hovered): ▶ "Start workflow"
+// for a link trigger, then "More actions" (ellipsis-vertical-filled), the
+// MoreActionsMenu (KIj/) for uiPage channel_workflows; not in the peek
+// (isPreview). For people who may manage the channel's workflows a
+// right-click opens the same menu (WorkflowContextMenu, Jf9W er). A click
+// on the row is handleWorkflowItemClick (d1EE).
+
+// wfRowUI is a row's widget state.
+type wfRowUI struct {
+	more     widget.Clickable
+	moreTip  popups.TipState
+	org      originTracker   // the row's window origin, for the ⋮'s rect
+	moreRect image.Rectangle // the ⋮ in window coordinates
+	ctxTag   int
+	menuOpen bool
+}
+
+func (st *wfTabState) rowUIFor(key string) *wfRowUI {
+	if st.rowUI == nil {
+		st.rowUI = map[string]*wfRowUI{}
+	}
+	u := st.rowUI[key]
+	if u == nil {
+		u = new(wfRowUI)
+		st.rowUI[key] = u
+	}
+	return u
+}
+
+// workflowRowActions draws the hover ActionsMenu at the row's right.
+func (a *App) workflowRowActions(gtx layout.Context, ch string, st *wfTabState, it core.TabWorkflow, ui *wfRowUI, start *widget.Clickable, tip *popups.TipState, runnable bool, w, h, pad int) {
+	th := a.th
+	c := &th.C
+	cl := popups.ColorsOf(th)
+	type btn struct {
+		c    *widget.Clickable
+		tip  *popups.TipState
+		icon string
+		text string
+	}
+	var bs []btn
+	if runnable {
+		bs = append(bs, btn{start, tip, "play", "Start workflow"})
+	}
+	if !st.peek {
+		bs = append(bs, btn{&ui.more, &ui.moreTip, "ellipsis-vertical-filled", "More actions"})
+	}
+	if len(bs) == 0 {
+		return
+	}
+	bsz, inset := gtx.Dp(32), gtx.Dp(4)
+	card := image.Rect(0, 0, 2*inset+len(bs)*bsz, 2*inset+bsz)
+	card = card.Add(image.Pt(w-pad-card.Dx(), (h-card.Dy())/2))
+	ui.org.track(gtx, a)
+	theme.Shadow(gtx, card.Add(image.Pt(0, gtx.Dp(1))), gtx.Dp(12), gtx.Dp(3), theme.WithAlpha(c.PanelShadow, 0x14))
+	theme.RRect(gtx, card.Inset(-max(1, gtx.Dp(1))), gtx.Dp(12)+1, cl.Ring)
+	theme.RRect(gtx, card, gtx.Dp(12), cl.Bg)
+	for i, b := range bs {
+		p := image.Pt(card.Min.X+inset+i*bsz, card.Min.Y+inset)
+		b := b
+		at(gtx, p, image.Pt(bsz, bsz), func(gtx layout.Context) layout.Dimensions {
+			d := clickArea(gtx, b.c, func(gtx layout.Context, sz image.Point, hovered bool) {
+				if hovered {
+					theme.RRect(gtx, image.Rectangle{Max: sz}, gtx.Dp(8), cl.BgAlt) // --action_button:hover base-sec
+				}
+			}, func(gtx layout.Context) layout.Dimensions {
+				col := c.FgMuted
+				if b.c.Hovered() {
+					col = c.Fg
+				}
+				off := (bsz - gtx.Dp(18)) / 2
+				at(gtx, image.Pt(off, off), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+					return icons.Get(b.icon)(gtx, 18, col)
+				})
+				return layout.Dimensions{Size: image.Pt(bsz, bsz)}
+			})
+			popups.Tooltip(gtx, th, b.tip, b.c.Hovered(), d.Size, popups.Above, b.text, "")
+			return d
+		})
+		if b.c == &ui.more {
+			ui.moreRect = image.Rectangle{Min: p, Max: p.Add(image.Pt(bsz, bsz))}.Add(ui.org.get(a.ptrWin.Sub(p)))
+		}
+	}
+}
+
+// workflowRowContext opens the row's menu at the pointer on a context
+// click, for those who may manage the channel's workflows.
+func (a *App) workflowRowContext(gtx layout.Context, ch string, st *wfTabState, key string, it core.TabWorkflow, featured bool, ui *wfRowUI, sz image.Point) {
+	for {
+		ev, ok := gtx.Event(pointer.Filter{Target: &ui.ctxTag, Kinds: pointer.Press})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
+			st.mu.Lock()
+			manage := st.tab.CanManage
+			st.mu.Unlock()
+			if manage {
+				p := a.ptrWin
+				a.openWorkflowRowMenu(ch, st, key, it, featured, image.Rectangle{Min: p, Max: p.Add(image.Pt(1, 1))})
+			}
+		}
+	}
+	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
+	defer pointer.PassOp{}.Push(gtx.Ops).Pop()
+	event.Op(gtx.Ops, &ui.ctxTag)
+}
+
+// openWorkflowRowMenu opens MoreActionsMenu for the row at anchor; the
+// row keeps its actions while it is open (isFocused).
+func (a *App) openWorkflowRowMenu(ch string, st *wfTabState, key string, it core.TabWorkflow, featured bool, anchor image.Rectangle) {
+	items := a.workflowRowMenu(ch, st, it, featured)
+	if len(items) == 0 {
+		return
+	}
+	ui := st.rowUIFor(key)
+	ui.menuOpen = true
+	a.ShowOverlay(popups.NewMenuOpts(a, items, popups.MenuOpts{Anchor: anchor, AlignRight: true,
+		OnClose: func() { ui.menuOpen = false; a.Invalidate() }}))
+}
+
+// workflowRowMenu is MoreActionsMenu's template for a Workflows tab row
+// (not isDetailsView; showUnpublished off; the explorer's context
+// {location: bookmark, channelId}; collectionType workflow-channel for a
+// featured row, bookmark otherwise), the rows Clack can run:
+//
+//	Start workflow (LiIV: a link trigger) · Feature workflow (a
+//	bookmarked, not featured link trigger, for managers, under 15
+//	featured)
+//	— Copy workflow link (its share_url; "Workflow link copied") · View
+//	details (Yh1Y: the workflow details view)
+//	— Add to VIP / Remove from VIP (the workflow's bot user)
+//	— Copy workflow ID
+//	— Remove from featured / Remove from bookmarks (danger; managers, or
+//	a bookmark the viewer may edit)
+//
+// Left out: View activity log, Edit workflow, Unpublish and Create a copy
+// (Workflow Builder's: its collaborators), Forward workflow (Slack's
+// share dialog for a workflow, not in the cached chunks), the Salesforce
+// notification rows, and the unpublish flow Slack runs instead of
+// removing a non-link trigger's bookmark for its editors.
+func (a *App) workflowRowMenu(ch string, st *wfTabState, it core.TabWorkflow, featured bool) []popups.MenuItem {
+	c := a.Core()
+	if c == nil {
+		return nil
+	}
+	st.mu.Lock()
+	tab := st.tab
+	st.mu.Unlock()
+	t := it.Trigger
+	link := t.IsShortcut() && t.ShortcutURL != ""
+	var bm *core.TabWorkflow // the trigger's bookmark here (JU, the bookmarks store)
+	for i := range tab.Bookmarked {
+		if tab.Bookmarked[i].Trigger.ID == t.ID && tab.Bookmarked[i].BookmarkID != "" {
+			bm = &tab.Bookmarked[i]
+			break
+		}
+	}
+	var groups [][]popups.MenuItem
+	var g []popups.MenuItem
+	if link {
+		u := t.ShortcutURL
+		g = append(g, popups.MenuItem{Key: "start_workflow", Label: wfShortNS.T("Start workflow"), Do: func() {
+			blockkit.TripWorkflow(a, u, core.BookmarkTripContext(ch, t.ID), "")
+		}})
+	}
+	if bm != nil && tab.CanManage && !featured && !tab.FeaturedFull && link {
+		g = append(g, popups.MenuItem{Key: "add_channel_workflow", Label: wfShortNS.T("Feature workflow"), Do: func() { a.featureWorkflow(ch, t) }})
+	}
+	groups = append(groups, g)
+	g = nil
+	if t.ShareURL != "" {
+		u := t.ShareURL
+		g = append(g, popups.MenuItem{Key: "copy_workflow", Label: wfShortNS.T("Copy workflow link"), DoCtx: func(gtx layout.Context) {
+			wfCopy(gtx, u)
+			a.wfToast(wfShortNS.T("Workflow link copied"))
+		}})
+	}
+	g = append(g, popups.MenuItem{Key: "view_details", Label: wfShortNS.T("View details"), Do: func() { a.OpenWorkflowDetails(t.ID, ch) }})
+	groups = append(groups, g)
+	if bot := t.BotUserID; bot != "" {
+		key, label := "workflow_menu_item_add_to_vip", wfShortNS.T("Add to VIP")
+		if a.wfIsVIP(bot) {
+			key, label = "workflow_menu_item_remove_from_vip", wfShortNS.T("Remove from VIP")
+		}
+		groups = append(groups, []popups.MenuItem{{Key: key, Label: label, Do: func() { a.wfToggleVIP(bot) }}})
+	}
+	if t.WorkflowID != "" {
+		id := t.WorkflowID
+		groups = append(groups, []popups.MenuItem{{Key: "copy_workflow_id", Label: wfShortNS.T("Copy workflow ID"), DoCtx: func(gtx layout.Context) { wfCopy(gtx, id) }}})
+	}
+	// useRemoveWorkflowFromChannelTab: k (featured ones or this bookmark),
+	// the channel, and the permission (or a bookmark the viewer may edit)
+	if (len(tab.Featured) > 0 || bm != nil) && (tab.CanManage || bm != nil && !featured && c.CanEditBookmarks(ch)) {
+		label := wfShortNS.T("Remove from bookmarks")
+		if featured {
+			label = wfShortNS.T("Remove from featured")
+		}
+		groups = append(groups, []popups.MenuItem{{Key: "delete_workflow", Label: label, Danger: true, Do: func() {
+			if featured {
+				a.confirmUnfeatureWorkflow(ch, t, bm != nil)
+			} else if bm != nil {
+				a.confirmRemoveWorkflowBookmark(ch, *bm)
+			}
+		}}})
+	}
+	var items []popups.MenuItem
+	for _, g := range groups {
+		if len(g) == 0 {
+			continue
+		}
+		if len(items) > 0 {
+			items = append(items, popups.Sep())
+		}
+		items = append(items, g...)
+	}
+	return items
+}
+
+// confirmUnfeatureWorkflow is RemoveWorkflowFromChannelModal for a
+// featured row: "Remove workflow from featured?", with "Bookmark this
+// workflow instead" unless it is bookmarked already; Remove from Featured
+// is workflows.featured.remove (removeWorkflowFromChannelWorkflowsActions),
+// then, when ticked, the bookmark (addWorkflowBookmarkForChannel with the
+// workflow's link).
+func (a *App) confirmUnfeatureWorkflow(ch string, t core.WorkflowTrigger, bookmarked bool) {
+	th := a.th
+	var box widget.Clickable
+	addBookmark := false
+	var body layout.Widget
+	if !bookmarked {
+		body = func(gtx layout.Context) layout.Dimensions {
+			if box.Clicked(gtx) {
+				addBookmark = !addBookmark
+			}
+			cl := popups.ColorsOf(th)
+			return clickArea(gtx, &box, nil, func(gtx layout.Context) layout.Dimensions {
+				d := popups.Checkbox(gtx, th, addBookmark, false, false)
+				lw := th.Measure(gtx, 15, theme.Regular, wfShortNS.T("Bookmark this workflow instead"))
+				h := max(d.Size.Y, gtx.Dp(22))
+				at(gtx, image.Pt(d.Size.X+gtx.Dp(8), 0), image.Pt(lw, h), func(gtx layout.Context) layout.Dimensions {
+					return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
+						return th.Label(gtx, 15, theme.Regular, cl.Fg, wfShortNS.T("Bookmark this workflow instead"))
+					})
+				})
+				return layout.Dimensions{Size: image.Pt(d.Size.X+gtx.Dp(8)+lw, h)}
+			})
+		}
+	}
+	popups.Confirm(a, wfShortNS.T("Remove workflow from featured?"),
+		wfShortNS.T("Are you sure you want to stop featuring this workflow? It will no longer show up in this channel’s messages."),
+		wfShortNS.T("Remove from Featured"), true, body, func() {
+			c := a.Core()
+			if c == nil || c.C == nil {
+				return
+			}
+			add := addBookmark
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				ids, _ := json.Marshal([]string{t.ID})
+				if err := c.C.Call(ctx, "workflows.featured.remove", url.Values{"trigger_ids": {string(ids)}, "channel_id": {ch}}, nil); err != nil {
+					log.Printf("workflows: unfeature %s in %s: %v", t.ID, ch, err)
+					return
+				}
+				a.Post(func() {
+					if add {
+						a.addWorkflowBookmark(ch, t, t.ShortcutURL)
+						return
+					}
+					a.reloadWorkflowsTab(ch)
+				})
+			}()
+		})
+}
+
+// confirmRemoveWorkflowBookmark is the modal's bookmark case: "Remove
+// workflow from bookmarks?"; Remove is deleteBookmarkForChannel
+// (bookmarks.remove).
+func (a *App) confirmRemoveWorkflowBookmark(ch string, bm core.TabWorkflow) {
+	popups.Confirm(a, wfShortNS.T("Remove workflow from bookmarks?"),
+		wfShortNS.T("Are you sure you want to remove this workflow from the channel’s bookmarks? People can still find it in Automations."),
+		wfShortNS.T("Remove"), true, nil, func() {
+			c := a.Core()
+			if c == nil {
+				return
+			}
+			b := core.Bookmark{ID: bm.BookmarkID, Type: "shortcut", ShortcutID: bm.Trigger.ID}
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				if err := c.RemoveFolderBookmark(ctx, ch, b); err != nil {
+					log.Printf("workflows: remove bookmark %s in %s: %v", b.ID, ch, err)
+					return
+				}
+				a.Post(func() {
+					if a.data != nil {
+						delete(a.data.fetched, ch) // the tab bar's bookmarks
+					}
+					a.reloadWorkflowsTab(ch)
+				})
+			}()
+		})
+}
+
+// workflowItemClick is handleWorkflowItemClick (d1EE): a workflow the
+// viewer collaborates on (the triggers store's trigger: its workflow
+// details' collaborators) opens in Workflow Builder at edit_workflow, as
+// Clack opens Builder pages, in the browser (getPathForWorkflowBuilderRoute,
+// CrVT: /workflow-builder/{team}/workflow/{id}); every other one opens the
+// workflow details view (toWorkflowDetails, no channel).
+func (a *App) workflowItemClick(ch string, it core.TabWorkflow) {
+	c := a.Core()
+	if c == nil {
+		return
+	}
+	t := it.Trigger
+	if known, ok := c.Interactive().Trigger(t.ID); ok {
+		t = known
+	}
+	if self := c.S.SelfID(); wfTriggerIDRe.MatchString(t.ID) && t.WorkflowID != "" && self != "" && slices.Contains(t.Collaborators, self) {
+		if team := c.Interactive().TeamID(); team != "" {
+			u := "https://app.slack.com/workflow-builder/" + team + "/workflow/" + t.WorkflowID
+			go func() { _ = openurl.Open(u) }()
+			return
+		}
+	}
+	a.OpenWorkflowDetails(t.ID, "")
+}
+
+// wfTriggerIDRe is looksLikeTriggerId (DRuY).
+var wfTriggerIDRe = regexp.MustCompile(`^Ft[A-Z0-9]{7,}$`)

@@ -37,6 +37,14 @@ type CanvasOpener interface {
 	OpenCanvasLink(url string) bool
 }
 
+// WorkflowMentionOpener is optional: OpenWorkflowMention handles a click
+// on a workflow mention in m (rich text workflow_mention, linking to url):
+// Slack's WorkflowMention opens the workflow details view
+// (workflows_wire.go). It reports whether url was one.
+type WorkflowMentionOpener interface {
+	OpenWorkflowMention(m *core.Message, url string) bool
+}
+
 // ChannelTabOpener is optional: OpenChannelTabLink handles a channel-tab
 // link (/archives/<C>/tabs/<id>), opening a code channel's view in its
 // details pane (navigateToChannelTabSlug), and reports whether url was one.
@@ -187,6 +195,9 @@ type richHandler struct {
 }
 
 func (r *richHandler) OpenURL(url string) {
+	if wo, ok := r.h.(WorkflowMentionOpener); ok && wo.OpenWorkflowMention(r.m, url) {
+		return
+	}
 	if blockkit.OpenWorkflowLink(r.h, url, r.m.Channel, r.m.TS) {
 		return
 	}

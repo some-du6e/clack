@@ -117,6 +117,7 @@ func (p *wfDetailsPane) load() {
 		if err == nil && t.WorkflowID != "" {
 			if w, err := ix.Workflow(ctx, t.WorkflowID); err == nil {
 				wf = &w
+				wfWorkflows.Store(t.WorkflowID, w)
 			}
 		}
 		// the managers and the bot user as members (LinkifyMembers and the
@@ -263,9 +264,12 @@ func (p *wfDetailsPane) clicks(gtx layout.Context, s wfShortcut) {
 	}
 }
 
-// isVIP is U8c3 mF: the bot user is one of the viewer's VIPs.
-func (p *wfDetailsPane) isVIP(id string) bool {
-	c := p.a.Core()
+func (p *wfDetailsPane) isVIP(id string) bool { return p.a.wfIsVIP(id) }
+func (p *wfDetailsPane) toggleVIP(id string)  { p.a.wfToggleVIP(id) }
+
+// wfIsVIP is U8c3 mF: the bot user is one of the viewer's VIPs.
+func (a *App) wfIsVIP(id string) bool {
+	c := a.Core()
 	if c == nil {
 		return false
 	}
@@ -277,13 +281,14 @@ func (p *wfDetailsPane) isVIP(id string) bool {
 	return false
 }
 
-// toggleVIP is 77my: add or remove the workflow's bot user as a VIP.
-func (p *wfDetailsPane) toggleVIP(id string) {
-	c := p.a.Core()
+// wfToggleVIP is 77my: add or remove a workflow's bot user as a VIP (the
+// details view's VIP button, the Workflows tab's ⋮).
+func (a *App) wfToggleVIP(id string) {
+	c := a.Core()
 	if c == nil {
 		return
 	}
-	add := !p.isVIP(id)
+	add := !a.wfIsVIP(id)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -292,9 +297,21 @@ func (p *wfDetailsPane) toggleVIP(id string) {
 		} else {
 			_ = c.RemoveVIP(ctx, id)
 		}
-		p.a.Invalidate()
+		a.Invalidate()
 	}()
 }
+
+// wfToast is Slack's plain Toast (4HH1: bottom right, 6 s) with text, as
+// the workflow menus' "Workflow link copied" (copyWorkflowUrl, Zvd/).
+func (a *App) wfToast(text string) {
+	a.ToastParts([]i18n.Part{{Text: text}}, "", color.NRGBA{}, 6*time.Second)
+}
+
+// wfWorkflows is what Clack keeps of Slack's workflows store: the
+// workflows the details view fetched (functions.workflows.get upserts
+// them there), read by the run status toasts for the workflow's icon and
+// title (workflows_wire.go).
+var wfWorkflows sync.Map // workflow id -> core.WorkflowInfo
 
 // openMore is MoreActionsMenu isDetailsView for a viewer who can't edit
 // the workflow: Copy workflow link (a link trigger's share_url; copied
@@ -306,7 +323,7 @@ func (p *wfDetailsPane) openMore(s wfShortcut) {
 		u := s.shareURL
 		items = append(items, popups.MenuItem{Key: "copy_workflow", Label: wfShortNS.T("Copy workflow link"), DoCtx: func(gtx layout.Context) {
 			wfCopy(gtx, u)
-			p.a.Toast(wfShortNS.T("Workflow link copied"))
+			p.a.wfToast(wfShortNS.T("Workflow link copied"))
 		}})
 	}
 	if s.workflowID != "" {

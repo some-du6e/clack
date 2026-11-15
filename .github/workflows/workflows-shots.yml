@@ -2,8 +2,10 @@ name: workflows-shots
 # Workflows (docs/WORKFLOWS.md) against internal/fakeslack's
 # #workflows-gallery: tripping link triggers, workflow buttons and
 # bookmarks with Slack's contexts, the speedbump, the workflow picker,
-# channel details' Automations tab; then the speedbump, the picker and the
-# Automations tab rendered light and dark (llvmpipe under xvfb), uploaded
+# channel details' Automations tab, the Workflows tab's row menus, workflow
+# mentions, the trip toasts and the execution window's run toasts; then the
+# speedbump, the picker, the Automations tab, the Workflows tab's row
+# actions and menu and the toasts rendered (llvmpipe under xvfb), uploaded
 # as the workflows-shots artifact. Synthetic only: nothing here talks to
 # Slack.
 on:
@@ -16,6 +18,8 @@ on:
       - "internal/ui/views/details_automations*.go"
       - "internal/ui/workflows_wire*.go"
       - "internal/ui/workflows_tab*.go"
+      - "internal/ui/workflow_details*.go"
+      - "internal/richtext/workflow_mention*.go"
       - "internal/ui/popups/workflows.go"
       - ".github/workflows/workflows-shots.yml"
   workflow_dispatch:
@@ -44,7 +48,8 @@ jobs:
           go test -count=1 -v -run 'TestWorkflow|TestTrip|TestTrigger|TestNeedsSpeedbump|TestChannelWorkflows|TestAddWorkflowBookmark' ./internal/core
           go test -count=1 -v -run 'TestTripWorkflow|TestWorkflowSpeedbump|TestWorkflowPicker' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestAutomations' ./internal/ui/views
-          xvfb-run -a go test -count=1 -v -run 'TestAddWorkflowChannelMenu$|TestWorkflowBookmarkTrips$' ./internal/ui/
+          go test -count=1 -v -run 'TestWorkflowMention|TestSanitizeSlugText' ./internal/richtext
+          xvfb-run -a go test -count=1 -v -run 'TestAddWorkflowChannelMenu$|TestWorkflowBookmarkTrips$|TestWorkflowsTabRowMenu$|TestWorkflowMentions$|TestWorkflowTripToasts$|TestWorkflowRunToasts$|TestWorkflowDetailsPaneLikeSlack$' ./internal/ui/
       - name: screenshots
         env:
           WORKFLOWS_SHOTS_DIR: ${{ github.workspace }}/dist/shots
@@ -54,7 +59,7 @@ jobs:
           mkdir -p "$WORKFLOWS_SHOTS_DIR"
           xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestWorkflowShots' ./internal/ui/blockkit
           xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestAutomations' ./internal/ui/views
-          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestWorkflowsTab$' ./internal/ui/
+          xvfb-run -a go test -count=1 -v -timeout 20m -run 'TestWorkflowsTab$|TestWorkflowsTabRowActionsShot$|TestWorkflowTripToasts$|TestWorkflowRunToasts$' ./internal/ui/
           ls -l "$WORKFLOWS_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}

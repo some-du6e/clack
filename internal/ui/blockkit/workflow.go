@@ -158,11 +158,18 @@ func tripAgain(h Host, link string, tc core.TripContext) {
 	}, func(res core.TripResult, err error) { tripDone(h, id, res, err) })
 }
 
+// TripToasts, set by the ui root, shows the toasts below in Slack's toast
+// styles (workflows_wire.go); false leaves them to tripDone.
+var TripToasts func(h Host, id string, res core.TripResult, err error) bool
+
 // tripDone shows Slack's toast for a trip's answer (Izws): the error
 // toast's text, else, unless Slack's workflow execution window shows the
 // run instead (workflow_execution_window), "You successfully started a
 // workflow" or, for a slow workflow, the longer-to-run toast.
 func tripDone(h Host, id string, res core.TripResult, err error) {
+	if TripToasts != nil && TripToasts(h, id, res, err) {
+		return
+	}
 	if err != nil {
 		code, sub := "", ""
 		var te *core.TripError

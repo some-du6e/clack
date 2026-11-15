@@ -137,9 +137,57 @@ secondary kind `secWorkflow`):
   Builder), the ⋮ menu's builder rows (edit, unpublish, copy, export, add
   to channel), Connections (third-party steps' accounts), the VIP badge
   after the title, the "and N others" managers dialog, and an event
-  trigger's type line (Clack keeps no event type). The other ways in
-  (the Workflows tab's rows and ⋮ View details, Automations' non-link
-  triggers and ⋮, workflow mentions) still don't open it.
+  trigger's type line (Clack keeps no event type). Automations' non-link
+  triggers and ⋮ still don't open it; the Workflows tab's rows and ⋮
+  View details, workflow mentions and the run status toast's
+  caret-up-down button do (below).
+
+## The Workflows tab's row actions
+
+Checked against build c07ab895506f (2026-11-15, the exp-wave-9 cache of the public CDN: boot-shared `31Gm`, `Jf9W`, `d1EE`, `KIj/`, `e7SQ`; CSS from client-boot-styles cf726c4f2eaecc74). In `ui/workflows_tab.go`.
+
+- **Row click** (`onListItemSelect` → `handleWorkflowItemClick`, `d1EE`): a workflow the viewer collaborates on (the triggers store's trigger, its `workflow_details.collaborators` or the workflow's), when the id looks like a trigger (`DRuY`), goes to Workflow Builder at `edit_workflow`. Clack opens that page (`/workflow-builder/{team}/workflow/{id}`, `CrVT`) in the browser, as it does Build from scratch. Every other row opens the workflow details view (`toWorkflowDetails`, no channel). `AccessDeniedWorkflowItem` rows have no handler.
+- **Hover actions** (`WorkflowItem`'s `ActionsMenu`, `e7SQ`): `.c-actions_menu__actions` is absolute at the row's right, centred, over the text (the text keeps its width): the primary background, a 1px fg-low (.13) ring and `0 1px 3px #00000014`, radius 12, padding 4. Its buttons are smedium icon buttons (32px, 18px glyphs, content-sec; content-pry on base-sec when hovered): ▶ "Start workflow" for a link trigger, then "More actions" (`ellipsis-vertical-filled`; not in the peek, `isPreview`). The row keeps them while its menu is open (`--focused`).
+- **More actions** is `MoreActionsMenu` (`KIj/`) for uiPage `channel_workflows`, context `{location: bookmark, channelId}`, collection `workflow-channel` (featured) or `bookmark`. In Slack's order, with its separators:
+  - Start workflow (`LiIV`, a link trigger; onExecute without a uiPage) · Feature workflow (a bookmarked link trigger that isn't the featured row, for managers, under 15 featured: `workflows.featured.add`)
+  - Copy workflow link (the `share_url`, toast "Workflow link copied") · View details (`Yh1Y`, the details view)
+  - Add to VIP / Remove from VIP (the workflow's bot user, `77my`)
+  - Copy workflow ID
+  - Remove from featured / Remove from bookmarks (danger; managers, or a bookmark the viewer may edit). Both open `RemoveWorkflowFromChannelModal`. Featured: "Remove workflow from featured?" / "Are you sure you want to stop featuring this workflow? It will no longer show up in this channel’s messages.", "Bookmark this workflow instead" when it isn't bookmarked, and Remove from Featured, which calls `workflows.featured.remove {trigger_ids, channel_id}` (`3CoY`) and then bookmarks it if ticked. Bookmark: "Remove workflow from bookmarks?" / "…People can still find it in Automations.", Remove, `bookmarks.remove`.
+- **Right-click** (`WorkflowContextMenu`, `Jf9W` er): the same menu at the pointer, for people who may manage the channel's workflows.
+- Left out: View activity log, Edit workflow, Unpublish and Create a copy (Workflow Builder's rows for collaborators), Forward workflow (`openShareDialogCircular` for a workflow; the share dialog's workflow mode isn't in the cached chunks), the Salesforce notification rows, the unpublish flow Slack runs instead of removing a non-link trigger's bookmark for its editors, and "Open workflow in new window" (desktop, for editors).
+
+## Workflow mentions
+
+A rich text `workflow_mention` element (`function_trigger_id`, `workflow_id`, `text`, `url`, `style`) is Slack's `WorkflowMention` (`jp/6`). It is the `RichTextSlug` (`Pc7Q`) the canvas and list mentions draw, labelled by `getWorkflowSlugAttributes` (`Po6V`). The trigger comes from the triggers store (`SzL7` bn with fetch: `workflows.triggers.info {trigger_id, include_workflow_details}`; a failed lookup is kept as `{id, error}`). The variants (`y1oE`):
+
+| variant | when | label | icon | click |
+|---|---|---|---|---|
+| not_loaded | the trigger hasn't come | nothing drawn | | |
+| normal | no error | the workflow's title (`trigger.workflow.title`, else the element's text, through `sanitizeOpInsertString`) | play | the workflow details view (`openWorkflowDetailsModalCircular`) |
+| hidden | `access_denied` | the same title | lock | none |
+| deleted | any other error | "Deleted workflow" | trash | none |
+
+Clack: `richtext/workflow_mention.go` (a Canvas-kind span, so richview draws it as the other slugs), the resolver and the click in `ui/workflows_wire.go` (a trigger already looked up, else one `workflows.triggers.info`; the visible messages are rebuilt when it lands), routed by `messages.WorkflowMentionOpener` before workflow links trip. Left out: the task variant (a Slackbot task workflow: `ai-workflow`, "Deleted task", the task route) and the hover card (`WorkflowHoverCardTrigger`, `WorkflowHoverCard`).
+
+## Toasts
+
+Slack's `Toast` (`c5oy` over `4HH1`, `.c-toast`): bottom right, 20px in, base-inv-pry, radius 8, padding 12 16, 15px on 1.5 lines, at most 350 wide, an optional 20px icon 8px before the text, 6 s unless it says. Clack draws the workflow toasts with it (`App.ToastParts`), not its old bold centred toast:
+
+- "You successfully started a workflow" (`SlackFunctionFormModalConfirmToast`, `slack_functions`): 2 s.
+- `SlowWorkflowStartedToast`: the rocket and "**You started {workflowTitle}.** This workflow might take a little longer to run." (`rt`). Without a known trigger Slack calls `t()`, not `rt()`, on the same string, so the tags show as typed, and Clack draws them the same way.
+- `AiStepWorkflowStartedToast`: bolt, "You started a workflow." in bold over "This workflow has an AI step and may take longer to run." (two `div`s; the rich toast now breaks lines on `\n`).
+- `SlackFunctionTriggerErrorToast` (6 s): `core.TripErrorText`'s text. Two cases are rich: "Learn more about workflow restrictions" links help article 14844871922195 (`articleId 0xd8057515213`), and the plan errors show "**Workflow currently unavailable.**" over "Contact a workspace owner for help." (`<br>`).
+- "Workflow link copied" (`copyWorkflowUrl`, `Zvd/`): the plain toast, from the details view and the tab's ⋮.
+
+### The workflow execution window
+
+With `workflow_execution_window` on (it is for the account: exp-wave-9's assignments, 2026-11-15), a trip shows no start toast. The realtime handlers (boot-render) follow the run instead, and Clack listens to the same events (`core.SubscribeRaw`):
+
+- `workflow_execution_step_started`, unless the run's toast was dismissed: `WorkflowStatusToast` replaces the last one. It shows the workflow's icon (24px; a `#0000004d` scrim and a small white spinner) when the workflows store has the workflow, else a large (24px) blue spinner. Then "{n}/{total}" (content-inv-sec) unless the workflow branches, the step's display title (`getWorkflowStepDisplayTitle`: a builtin step's sentence from Slack's table, else "In progress: {stepTitle}"), the caret-up-down button (the details view) and the close button ("Dismiss and continue running workflow", which keeps that run quiet). The toast is padded 16px top and bottom; its row has 8px gaps, is at most 300 wide and uses 24px lines; it sits 60px up (`offsetY 60`). It fades after 6 s, but not for an AI answer or a channel summary step.
+- `workflow_execution_outcome_changed`, for a run whose step came and that wasn't dismissed, with a final status (SUCCESS, ERROR, EXPIRED, CANCELED, ABANDONED): `WorkflowOutcomeToast`, the workflow's icon or check-circle / warning, then "Workflow complete", "Workflow failed" or "Workflow canceled", with the close button ("Dismiss notification").
+
+Clack's workflows store is what the details view fetched (`functions.workflows.get`), so a run's toast shows the workflow's icon only after its details were opened. Left out: the step titles' two experiment variants ("Summarizing channels" under `wfb_back_to_basics_jalapeno_release`, "Sending summary to channel" under `slackforce_scheduled_summary_to_channel`; both on for the account, but core doesn't read them yet) and the screen reader's announcement. The spinner is `InfiniteSpinner` at its default 1.2 s.
 
 ## What Clack does
 
@@ -157,17 +205,22 @@ secondary kind `secWorkflow`):
 | the channel's Workflows tab | featured and bookmarked workflows, cards, footer, ▶ Start (`Jf9W`, `31Gm`, `MUnG`, `HR6W`, `EXgk`, `HRod`, `uJYJ`) | the tab bar toasted "This tab opens in Slack" | the tab opens in the channel's body with Slack's sections, rows, placeholder, cards and footer; ▶ trips with the explorer's context; Feature workflow / Add workflow run Slack's calls (`ui/workflows_tab.go`, `core.ChannelWorkflowsTab`, `core.FeatureWorkflow`) |
 | channel details > Automations | WorkflowsSettings: workflow apps and channel actions as above (`2MVc`, `2Lul`, `ARyf`, `A3kQ`, `s4p6`) | an invented "Workflows / Automate routine tasks… / Add a Workflow" card whose button toasted "Not supported yet" | the same calls and merge, "Published Automations" rows (icon, title, description, WORKFLOW badge, ▶ on hover), a click trips (`channel_details`) or runs the legacy workflow with Slack's toasts, Learn More, Slack's empty state copy (`core.ChannelWorkflowApps`, `core.ChannelActions`, `views/details_automations.go`) |
 
+| Workflows tab rows | row click → details (or Builder for collaborators); hover `ActionsMenu`; ⋮ and right-click `MoreActionsMenu` (`31Gm`, `d1EE`, `KIj/`, `e7SQ`) | no ⋮, no row click, a bare 28px ▶ that squeezed the text on hover | Slack's card of actions, the menu's rows Clack can run, the remove confirms (`ui/workflows_tab.go`) |
+| workflow mentions | `WorkflowMention` slug, details on click (`jp/6`, `Po6V`) | the element's text | the slug's variants and the click (`richtext/workflow_mention.go`, `ui/workflows_wire.go`) |
+| toasts | `Toast` styles, 2 s success, rocket / bolt (`Izws`, `c5oy`) | one bold centred line, 3.5 s | Slack's toasts (`ui.tripToast`, `blockkit.TripToasts`) |
+| execution window | `WorkflowStatusToast` / `WorkflowOutcomeToast` from RTM (`Izws`) | nothing shown with the window on | both toasts (`ui.workflowRunEvent`, `layoutWorkflowRunToast`) |
+
+Tests: `TestWorkflowsTabRowMenu`, `TestWorkflowsTabRowActionsShot`, `TestWorkflowMentions`, `TestWorkflowTripToasts`, `TestWorkflowRunToasts` (internal/ui); `TestWorkflowMentionVariants`, `TestWorkflowMentionTrigger`, `TestSanitizeSlugText` (internal/richtext). The shots add `workflows-tab-row-actions-light.png`, `workflows-tab-row-menu-light.png`, `workflow-toast-ai-step-light.png`, `workflow-run-status-light.png` and `workflow-run-outcome-light.png`.
+
 Tests: `TestTripContexts`, `TestTripTrigger`, `TestTripErrorText`, `TestNeedsSpeedbump`, `TestTriggerInfoAndSearch`, `TestWorkflowStepActions`, `TestChannelWorkflows` (internal/core); `TestTripWorkflow`, `TestWorkflowSpeedbump`, `TestWorkflowPicker`, `TestWorkflowShots` (internal/ui/blockkit); `TestAutomationsTab`, `TestAutomationsEmpty` (internal/ui/views); `TestAddWorkflowChannelMenu`, `TestWorkflowBookmarkTrips`, `TestWorkflowsTab` (internal/ui); `TestAddWorkflowBookmark`, `TestChannelWorkflowsTab` (internal/core). The `workflows-shots` workflow uploads `workflow-speedbump-scopes-{light,dark}.png`, `workflow-picker-attach-{light,dark}.png`, `automations-tab-{light,dark}.png`, `automations-empty-{light,dark}.png` and `workflows-tab-light.png`.
 
 ## Not done
 
 - **Workflow Builder.** "Create a Workflow" opens Slack's Builder page in the browser, the page Slack's own window loads. The Builder's editor (chunk `client-workflow-editor-view`, 13,000 lines beautified) and template gallery (`client-workflow-templates-view`, `workflows.templates.*`) aren't ported: "Add a workflow" doesn't lead to them.
-- **The Workflows tab's education banner** (megaphone notifications), **its rows' ⋮ menu** (View details, Copy workflow link, Forward, Remove…) and **row clicks** (Slack opens the workflow details view, which Clack now has from the message menu but doesn't open from here), **"Browse templates"** (Slack's template gallery), and **trigger summaries** in a row's description (a scheduled or event trigger's "Runs every Monday…", `iN.WL`).
+- **The Workflows tab's education banner** (megaphone notifications), the ⋮ rows listed as left out above, **"Browse templates"** (Slack's template gallery), and **trigger summaries** in a row's description (a scheduled or event trigger's "Runs every Monday…", `iN.WL`).
 - **Picker details.** Frecency sorting (Slack's searcher ranks by local frecency; Clack keeps the server's order); the empty state's illustration (an SVG, which Clack can't draw: its space stays empty) and templates list; the "Add automation as member" mode.
 - **Third-party auth, missing inputs, AI access and multi-step speedbumps.** These need Slack's OAuth window and its conversation, canvas and user pickers. When Slack would show one, Clack opens the workflow link in the browser, where Slack's web client trips it and shows the speedbump.
-- **Toast styling.** Clack's toast is one bold line with no icon, shown for 3.5 s. Slack's success toast lasts 2 s, and the slow-workflow toast has a rocket icon and a bold first sentence.
 - **The `hermes__read` gate on the + menu row.** Slack reads it from its `featureAccess` store (`X+JB.G2`, filled by `updateFeatureAccessStore`, `HhLp`), which Clack doesn't load. Clack always shows the row.
-- **The `/` menu's workflow triggers** (`autocompleteCommands` in `26v2` searches `workflowTriggers` and trips with `location: slash_command`) belong to the composer's autocomplete, which doesn't list them yet (docs/AUTOCOMPLETE-RULES.md).
-- **The workflow execution window and status toasts** ("Running workflow step 1 of 3: …", `WorkflowStatusToast` / `WorkflowOutcomeToast` in `Izws`), which follow a run's progress when `workflow_execution_window` is on.
+- **The `/` menu's workflow triggers**, split out of W57. What Slack does (boot-render `VxbD`, build c07ab895506f): `autocompleteCommands` (`Fy`) searches with `entities.workflowTriggers {runaway: true}` beside the slash commands, global, channel and call actions, sorted `{frecency, source: slash-command-menu, preferChannelWorkflows}`, tiered, limit 25. The local set is every published trigger in the store with type `shortcut` (`QcwJ`, `ew.NJ` filtered); the remote part is `search.autocomplete.triggers` (`fetchAndUpsertTriggersWithQuery`). A picked `shortcut`/`workflow` row runs `workflowsTriggersTrip {linkTriggerUrl: shortcut_url, context {location: slash_command, channelId}, reason: trip-trigger-from-slash-command}` (`OF`) instead of inserting text. Its row is `SlashCommandsAutocompleteMenuEntity` (`olrj`): the workflow's `icons.image_96` at 20px (else the default app icon), the name, then "Workflow" (`eKm9`; "App" when the row has an app id) and " · {desc}". Porting it touches the composer's rows, ranking and pick (`autocomplete_view.go`, `autocomplete_rank.go`, `composer.go`), outside this package's files.
 - **Automations: the buttons and menus that lead to views Clack lacks.** These are "Go to Your Workflows" / "Add Automation" / "Manage" (Slack's Workflows › Managed by you view), the ⋮ menu's View details / Forward workflow / Edit workflow, a non-link trigger's click (the workflow details modal), "Add Automation as Member" (a second picker mode, `searchWorkflowsToAddAsChannelMember` / `addWorkflowAsChannelMember`, behind `wfb_add_workflow_to_channel_via_channel_details_modal`), and the empty state's illustration (served from app.slack.com only, which Clack doesn't fetch with the session). The free-plan upsell isn't drawn either: Clack doesn't know the team's plan.
-- **Workflow mentions** (rich text `workflow_mention`, `jp/6`: clicking one opens the workflow details view, which Clack has but doesn't open from a mention yet) and **workflow unfurl cards** (`NLQV` WorkflowEntity).
+- **Workflow mentions' task variant and hover card** (above) and **workflow unfurl cards** (`NLQV` WorkflowEntity).

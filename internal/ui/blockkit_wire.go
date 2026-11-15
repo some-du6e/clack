@@ -33,7 +33,9 @@ func (b *backend) startBlockkit(a *App) {
 	if b.core == nil {
 		return
 	}
-	stop := blockkit.Start(a)
+	stopBK := blockkit.Start(a)
+	stopWF := a.startWorkflowWatch(b.core) // workflows_wire.go: mentions' triggers, the run toasts
+	stop := func() { stopBK(); stopWF() }
 	blockkit.PickFiles = func(accept string, multiple bool) ([]core.UploadFile, error) {
 		fs, err := a.pickFiles(accept, multiple)
 		out := make([]core.UploadFile, 0, len(fs))
