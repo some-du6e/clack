@@ -327,3 +327,68 @@ func absDiff(a, b uint8) int {
 	}
 	return int(b - a)
 }
+
+// Code on a selection with an emoji and a truncated link
+// (maybeAdaptDeltaForCode): the emoji becomes its :name: text and the
+// link's "[…]" text its URL, unformatted and then code like the rest; the
+// selection covers the new text. Taking code off leaves the text.
+func TestCodeOnSelectionWithEmojiAndLink(t *testing.T) {
+	const url = "https://example.com/a/long/path/z"
+	e := NewEditor()
+	d := NewDoc()
+	pos := d.Insert(0, "see ", Attr{})
+	pos = d.InsertAtom(pos, &Atom{Kind: AtomEmoji, ID: "smile", Text: ":smile:", Uni: "\U0001F604"})
+	pos = d.Insert(pos, " at ", Attr{})
+	pos = d.Insert(pos, "https://example.com/a[…]/z", Attr{Link: url, Style: Bold})
+	d.Insert(pos, " ok", Attr{})
+	e.SetDoc(d)
+	e.SetSelection(0, e.Doc().Len()-3) // up to before " ok"
+	e.ToggleStyle(Code)
+	want := "see :smile: at " + url
+	if got := e.Doc().String(0, e.Doc().Len()); got != want+" ok" {
+		t.Fatalf("text %q, want %q", got, want+" ok")
+	}
+	n := len([]rune(want))
+	if a, b := e.Selection(); a != 0 || b != n {
+		t.Errorf("selection [%d,%d), want [0,%d) over the new text", a, b, n)
+	}
+	dd := e.Doc()
+	for i := 0; i < n; i++ {
+		if dd.Attrs[i].Atom != nil || dd.Attrs[i].Style&Code == 0 {
+			t.Errorf("rune %d (%q) not code text: %+v", i, dd.Runes[i], dd.Attrs[i])
+		}
+		if i >= len([]rune("see :smile: at ")) && (dd.Attrs[i].Link != "" || dd.Attrs[i].Style&Bold != 0) {
+			t.Errorf("rune %d of the URL keeps the link's formats: %+v", i, dd.Attrs[i])
+		}
+	}
+	for i := n; i < dd.Len(); i++ {
+		if dd.Attrs[i].Style&Code != 0 {
+			t.Errorf("rune %d after the selection is code", i)
+		}
+	}
+	e.ToggleStyle(Code)
+	if got := e.Doc().String(0, e.Doc().Len()); got != want+" ok" || e.Doc().HasStyle(0, n, Code) {
+		t.Errorf("toggle off: %q code %v", got, e.Doc().HasStyle(0, n, Code))
+	}
+}
+
+func TestTruncatedLinkText(t *testing.T) {
+	const url = "https://example.com/a/long/path/z"
+	for _, c := range []struct {
+		text string
+		want bool
+	}{
+		{"https://example.com/a[…]/z", true},
+		{"https://example.com/a[…]path/z", true},
+		{"https://example.com/a[…]", false}, // at the end
+		{"[…]/z", false},                    // at the start
+		{"https://other.com/[…]/z", false},
+		{"https://example.com/a[…]/q", false},
+		{"https://example.com/a/long/path/z", false},
+		{"a[…]b[…]z", false},
+	} {
+		if got := truncatedLinkText(c.text, url); got != c.want {
+			t.Errorf("%q: %v, want %v", c.text, got, c.want)
+		}
+	}
+}

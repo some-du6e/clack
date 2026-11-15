@@ -30,12 +30,12 @@ func TestSelectionOverCode(t *testing.T) {
 			p := &st.Palette
 			d := doc(
 				para(txt("before the code")),
-				rt.Block{Kind: rt.Preformatted, Spans: []rt.Span{txt("selected code line")}},
+				rt.Block{Kind: rt.Preformatted, Spans: []rt.Span{txt("selectedcodeline")}},
 				para(txt("a "), rt.Span{Kind: rt.Text, Text: "chipword", Style: rt.Code}, txt(" b")),
 			)
 			const w = 420
 			v := layoutAt(st, d, Options{}, w)
-			pre := findFrag(t, &v.d, "selected code line")
+			pre := findFrag(t, &v.d, "selectedcodeline")
 			chip := findFrag(t, &v.d, "chipword")
 			h := v.d.size.Y + 4
 

@@ -336,6 +336,62 @@ func (d *Doc) SetStyle(start, end int, s Style, on bool) {
 	}
 }
 
+// codeText is maybeAdaptDeltaForCode (boot-shared OtZP), which
+// applyFormattingToSelection runs before it adds inline code to a
+// selection: in [lo, hi) an emoji becomes its text (slackemoji.text,
+// ":name:", or nothing when it has none) and a truncated link's text
+// ("https://exa[…]/page", isOpTruncatedLink) becomes its URL, both
+// unformatted, so the code takes them as text. It returns the new end.
+func (d *Doc) codeText(lo, hi int) int {
+	lo, hi = d.clamp(lo), d.clamp(hi)
+	type repl struct {
+		a, b int
+		text string
+	}
+	var rs []repl
+	for i := lo; i < hi; {
+		a := d.Attrs[i]
+		if at := a.Atom; at != nil {
+			if at.Kind == AtomEmoji {
+				rs = append(rs, repl{i, i + 1, at.Text})
+			}
+			i++
+			continue
+		}
+		// a Quill op: the run of the same formats (sliced to the range,
+		// as getContents(index, length) slices it)
+		j := i + 1
+		for j < hi && d.Attrs[j].Atom == nil && d.Attrs[j].Style == a.Style && d.Attrs[j].Link == a.Link {
+			j++
+		}
+		if a.Link != "" && truncatedLinkText(string(d.Runes[i:j]), a.Link) {
+			rs = append(rs, repl{i, j, a.Link})
+		}
+		i = j
+	}
+	for k := len(rs) - 1; k >= 0; k-- {
+		r := rs[k]
+		d.Delete(r.a, r.b)
+		hi += d.Insert(r.a, r.text, Attr{}) - r.a - (r.b - r.a)
+	}
+	return hi
+}
+
+// truncatedLinkText is isOpTruncatedLink (Jk4U uK): text is url cut with
+// one "[…]" in its middle, the part before it the URL's start and the
+// part after it (if any) in the rest of the URL.
+func truncatedLinkText(text, url string) bool {
+	const ell = "[\u2026]"
+	parts := strings.Split(text, ell)
+	if len(parts) != 2 {
+		return false
+	}
+	if n := strings.Index(text, ell); n == 0 || n == len(text)-len(ell) {
+		return false // at the start or the end
+	}
+	return strings.HasPrefix(url, parts[0]) && (parts[1] == "" || strings.Contains(url[len(parts[0]):], parts[1]))
+}
+
 // ToggleStyle sets s on [start, end) unless all of it already has s.
 func (d *Doc) ToggleStyle(start, end int, s Style) {
 	d.SetStyle(start, end, s, !d.HasStyle(start, end, s))
