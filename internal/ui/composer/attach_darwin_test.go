@@ -51,8 +51,8 @@ func macPBEnabled(t *testing.T) {
 }
 
 // macPBSet runs a JXA script with pb (the cleared general pasteboard) and
-// args (its arguments) in scope.
-func macPBSet(t *testing.T, script string, args ...string) {
+// args (its arguments) in scope, and returns what it printed.
+func macPBSet(t *testing.T, script string, args ...string) string {
 	t.Helper()
 	full := "ObjC.import('AppKit');\n" +
 		"function run(args) {\n" +
@@ -60,9 +60,11 @@ func macPBSet(t *testing.T, script string, args ...string) {
 		"pb.clearContents;\n" +
 		script + "\n}\n"
 	cmd := exec.Command("osascript", append([]string{"-l", "JavaScript", "-e", full}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("osascript: %v\n%s", err, out)
 	}
+	return string(out)
 }
 
 func macPBCtx(t *testing.T) context.Context {
@@ -226,21 +228,30 @@ func TestMacPasteboardRichText(t *testing.T) {
 
 // macPBFinderCopy puts paths on the pasteboard the way Finder's ⌘C does:
 // one item per file with its public.file-url, the names as text and the
-// first file's icon as a TIFF.
+// first file's icon as a TIFF. The paths go to JXA in a UTF-8 file
+// (osascript's argv mangles emoji) and it prints the URLs it wrote.
 func macPBFinderCopy(t *testing.T, paths ...string) {
 	t.Helper()
-	macPBSet(t, "var items = $.NSMutableArray.array;\n"+
+	list := filepath.Join(t.TempDir(), "paths.txt")
+	if err := os.WriteFile(list, []byte(strings.Join(paths, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := macPBSet(t, "var ps = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(args[0], $.NSUTF8StringEncoding, null)).split('\\n');\n"+
+		"var items = $.NSMutableArray.array;\n"+
 		"var names = [];\n"+
-		"for (var i = 0; i < args.length; i++) {\n"+
+		"for (var i = 0; i < ps.length; i++) {\n"+
 		"  var it = $.NSPasteboardItem.alloc.init;\n"+
-		"  it.setStringForType($.NSURL.fileURLWithPath(args[i]).absoluteString, 'public.file-url');\n"+
-		"  names.push(ObjC.unwrap($(args[i]).lastPathComponent));\n"+
+		"  var u = $.NSURL.fileURLWithPath($(ps[i])).absoluteString;\n"+
+		"  console.log(ObjC.unwrap(u));\n"+
+		"  it.setStringForType(u, 'public.file-url');\n"+
+		"  names.push(ObjC.unwrap($(ps[i]).lastPathComponent));\n"+
 		"  items.addObject(it);\n"+
 		"}\n"+
 		"var first = items.objectAtIndex(0);\n"+
 		"first.setStringForType($(names.join('\\r')), 'public.utf8-plain-text');\n"+
-		"first.setDataForType($.NSWorkspace.sharedWorkspace.iconForFile(args[0]).TIFFRepresentation, 'public.tiff');\n"+
-		"pb.writeObjects(items);", paths...)
+		"first.setDataForType($.NSWorkspace.sharedWorkspace.iconForFile($(ps[0])).TIFFRepresentation, 'public.tiff');\n"+
+		"pb.writeObjects(items);", list)
+	t.Logf("file URLs written:\n%s", out)
 }
 
 // Files copied in Finder come back as their paths (spaces, accents and
