@@ -117,6 +117,12 @@ func newW13Env(t *testing.T, ch string, pre func(fs *fakeslack.Server)) *w13Env 
 			o.Layout(gtx)
 		}
 	}
+	// The details' conversations.info stores fakeslack's channel (its own
+	// name) over the PutConv above. Settle it before the test reads any
+	// name: a modal that opened before it landed kept the old name while
+	// w.name() read the new one (α.85's TestDetailsSendEmailsLikeSlack
+	// under the release's load).
+	env.e.until(t, "the details' conversations.info", func() bool { _, ok, _ := env.d.info.get(); return ok })
 	return env
 }
 
@@ -287,7 +293,12 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 		return w.d.EmailsMode() == "button"
 	})
 	no := newW13Env(t, fakeslack.ViewsChannel, nil) // no grant: nothing
-	time.Sleep(200 * time.Millisecond)
+	// permissions/info has answered (fakeslack grants a channel's
+	// MANAGE_CHANNEL_TABS in the same fetch), so "" means no grant, not
+	// not-loaded-yet
+	no.e.until(t, "the no-grant channel's permissions", func() bool {
+		return no.app.ChannelGrant(fakeslack.ViewsChannel, core.PermManageChannelTabs)
+	})
 	no.e.frame()
 	if m := no.d.EmailsMode(); m != "" {
 		t.Errorf("without CREATE_CHANNEL_EMAIL_ADDRESSES: %q", m)
@@ -305,17 +316,6 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 	}
 	evs, stop := w.app.Subscribe()
 	defer stop()
-	var mu sync.Mutex
-	prompt := ""
-	go func() {
-		for ev := range evs {
-			if ev.Type == "message" && ev.Channel == fakeslack.ViewsChannel && ev.Msg != nil && ev.UserID == "USLACKBOT" {
-				mu.Lock()
-				prompt = ev.Msg.Text
-				mu.Unlock()
-			}
-		}
-	}()
 	em.GetAddress()
 	w.e.until(t, "the new address", func() bool { return em.Email().Address != "" })
 	addr := em.Email().Address
@@ -328,12 +328,28 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 	if !slices.Contains(w.h.toasts(), "Email address copied to clipboard.") {
 		t.Errorf("toasts %q", w.h.toasts())
 	}
-	// Slackbot's share prompt in the channel for a new address
-	w.e.until(t, "the share prompt", func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return strings.HasPrefix(prompt, "Now that you have set an email address for "+w.name())
-	})
+	// Slackbot's share prompt in the channel for a new address. GetAddress
+	// posts it (LocalEphemeral, whose message event emit queues on evs)
+	// before GetChannelEmail's answer reaches the modal, so it is already
+	// queued once the address shows: drain what's there, no waiting.
+	prompt := ""
+	for drained := false; !drained; {
+		select {
+		case ev := <-evs:
+			if ev.Type == "resync" {
+				t.Fatal("the event subscription lagged and dropped events")
+			}
+			if ev.Type == "message" && ev.Channel == fakeslack.ViewsChannel && ev.Msg != nil && ev.UserID == "USLACKBOT" {
+				prompt = ev.Msg.Text
+			}
+		default:
+			drained = true
+		}
+	}
+	stop()
+	if want := "Now that you have set an email address for " + w.name(); !strings.HasPrefix(prompt, want) {
+		t.Errorf("the share prompt %q, want it to start %q", prompt, want)
+	}
 
 	em.SwitchPane(popups.CEHelp)
 	w.e.frame()
