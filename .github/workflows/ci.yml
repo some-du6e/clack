@@ -98,9 +98,10 @@ jobs:
   # timing races that only show under it (TestInspectKonami in α.82,
   # TestFilesViewSectionsSidebar in α.83) passed ci and failed the
   # tagged release. This fails the ui/main push instead. ui and main
-  # only (~18 min); a newer push to the same ref cancels the older run.
+  # only (~18 min), or any branch by hand (gh workflow run ci.yml --ref
+  # <branch>); a newer push to the same ref cancels the older run.
   full-test:
-    if: github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/ui' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     concurrency:
       group: ci-full-test-${{ github.ref }}

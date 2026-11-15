@@ -842,6 +842,31 @@ jobs:
           PKG: ${{ matrix.pkg }}
         run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh" ${{ matrix.flags }}
 
+  # the release's test job (release.yml) as it is: the whole suite in one
+  # job on a clean cache, on three fresh runners at once. Timing races
+  # that only show under the whole suite's load failed α.82, α.83 and α.85
+  # there and nowhere else.
+  release-suite:
+    if: ${{ !inputs.only || startsWith('release-suite', inputs.only) }}
+    name: "release-suite (runner ${{ matrix.runner }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false # as release.yml: a clean module/build cache
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: go test ./...
+        run: go test -timeout 30m ./...
+
   # flake-fix: the title bar tests after the gioui.org/app steps ci's
   # windows-applog runs before them (the OLE drops move the cursor and run
   # PowerShell's drag source, typed text clicks its window), COUNT rounds
