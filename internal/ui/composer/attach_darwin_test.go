@@ -3,12 +3,14 @@
 package composer
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,29 +231,69 @@ func TestMacPasteboardRichText(t *testing.T) {
 // macPBFinderCopy puts paths on the pasteboard the way Finder's ⌘C does:
 // one item per file with its public.file-url, the names as text and the
 // first file's icon as a TIFF. The paths go to JXA in a UTF-8 file
-// (osascript's argv mangles emoji) and it prints the URLs it wrote.
+// (osascript's argv mangles emoji). Like Finder, the writer stays running
+// (until the test ends, serving its run loop): the pasteboard server may
+// ask the owner for later items' data, and an exited osascript dropped
+// them at random.
 func macPBFinderCopy(t *testing.T, paths ...string) {
 	t.Helper()
 	list := filepath.Join(t.TempDir(), "paths.txt")
 	if err := os.WriteFile(list, []byte(strings.Join(paths, "\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := macPBSet(t, "var ps = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(args[0], $.NSUTF8StringEncoding, null)).split('\\n');\n"+
-		"var items = $.NSMutableArray.array;\n"+
-		"var names = [];\n"+
-		"for (var i = 0; i < ps.length; i++) {\n"+
-		"  var it = $.NSPasteboardItem.alloc.init;\n"+
-		"  var u = $.NSURL.fileURLWithPath($(ps[i])).absoluteString;\n"+
-		"  console.log(ObjC.unwrap(u));\n"+
-		"  it.setStringForType(u, 'public.file-url');\n"+
-		"  names.push(ObjC.unwrap($(ps[i]).lastPathComponent));\n"+
-		"  items.addObject(it);\n"+
-		"}\n"+
-		"var first = items.objectAtIndex(0);\n"+
-		"first.setStringForType($(names.join('\\r')), 'public.utf8-plain-text');\n"+
-		"first.setDataForType($.NSWorkspace.sharedWorkspace.iconForFile($(ps[0])).TIFFRepresentation, 'public.tiff');\n"+
-		"pb.writeObjects(items);", list)
-	t.Logf("file URLs written:\n%s", out)
+	script := "ObjC.import('AppKit');\n" +
+		"function run(args) {\n" +
+		"var pb = $.NSPasteboard.generalPasteboard;\n" +
+		"pb.clearContents;\n" +
+		"var ps = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(args[0], $.NSUTF8StringEncoding, null)).split('\\n');\n" +
+		"var items = $.NSMutableArray.array;\n" +
+		"var names = [];\n" +
+		"for (var i = 0; i < ps.length; i++) {\n" +
+		"  var it = $.NSPasteboardItem.alloc.init;\n" +
+		"  var u = $.NSURL.fileURLWithPath($(ps[i])).absoluteString;\n" +
+		"  console.log(ObjC.unwrap(u));\n" +
+		"  it.setStringForType(u, 'public.file-url');\n" +
+		"  names.push(ObjC.unwrap($(ps[i]).lastPathComponent));\n" +
+		"  items.addObject(it);\n" +
+		"}\n" +
+		"var first = items.objectAtIndex(0);\n" +
+		"first.setStringForType($(names.join('\\r')), 'public.utf8-plain-text');\n" +
+		"first.setDataForType($.NSWorkspace.sharedWorkspace.iconForFile($(ps[0])).TIFFRepresentation, 'public.tiff');\n" +
+		"pb.writeObjects(items);\n" +
+		"console.log('ready');\n" +
+		// serve the pasteboard (a run loop) until the stop file appears
+		"var end = $.NSDate.dateWithTimeIntervalSinceNow(120);\n" +
+		"while (!$.NSFileManager.defaultManager.fileExistsAtPath(args[1]) && end.timeIntervalSinceNow > 0) {\n" +
+		"  $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));\n" +
+		"}\n" +
+		"}\n"
+	stop := filepath.Join(filepath.Dir(list), "stop")
+	cmd := exec.Command("osascript", "-l", "JavaScript", "-e", script, list, stop)
+	stderr, err := cmd.StderrPipe() // console.log
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	drained := make(chan struct{})
+	t.Cleanup(func() {
+		os.WriteFile(stop, nil, 0o644)
+		<-drained
+		cmd.Wait()
+	})
+	var log strings.Builder
+	sc := bufio.NewScanner(stderr)
+	for sc.Scan() {
+		if sc.Text() == "ready" {
+			t.Logf("file URLs written:\n%s", log.String())
+			go func() { io.Copy(io.Discard, stderr); close(drained) }()
+			return
+		}
+		log.WriteString(sc.Text() + "\n")
+	}
+	close(drained)
+	t.Fatalf("osascript ended before writing the pasteboard:\n%s", log.String())
 }
 
 // Files copied in Finder come back as their paths (spaces, accents and
