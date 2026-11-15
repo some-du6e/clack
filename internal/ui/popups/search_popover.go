@@ -139,6 +139,7 @@ type SearchPopover struct {
 	rect    image.Rectangle
 
 	clear, filter, history, feedback widget.Clickable
+	learnMore                        widget.Clickable // "Results feel off? Learn more" (search_rows.go)
 	historyRect                      image.Rectangle
 
 	rows    []srRow
@@ -1942,7 +1943,7 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		}
 		group(nsPrefs.T("Enter"), nsSearch.T("Open"))
 		group("Tab", nsSearch.T("Actions"))
-		p.feedbackLink(gtx, th, cl, sz)
+		p.footerLinks(gtx, th, cl, sz) // search_rows.go
 		return layout.Dimensions{Size: sz}
 	}
 	for _, name := range [...]string{"caret-up", "caret-down"} {
@@ -1959,7 +1960,7 @@ func (p *SearchPopover) footer(gtx layout.Context, th *theme.Theme, cl *Colors, 
 			return text(gtx, th, 13, theme.Regular, cl.Fg2, nsSearch.T("Select"))
 		})
 	})
-	p.feedbackLink(gtx, th, cl, sz)
+	p.footerLinks(gtx, th, cl, sz) // search_rows.go
 	return layout.Dimensions{Size: sz}
 }
 

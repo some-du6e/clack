@@ -4,8 +4,10 @@ name: search
 # params Slack's web client sends, the modifier parser, the popover (blank
 # slate, Recent places, history mode, keys, Enter), the results page
 # (sources and counts, More menu, pagination, Nothing turned up, Files),
-# search in channel, and light/dark screenshots (GPU, synthetic data
-# only: nothing here talks to Slack).
+# the Files / Channels / People results and "Results feel off? Learn
+# more" (search_rows.go: TestSearchRows*, TestSearchResultsFeelOff, the
+# rows-* shots), search in channel, and light/dark screenshots (GPU,
+# synthetic data only: nothing here talks to Slack).
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run search.yml --ref <branch>)
@@ -19,6 +21,8 @@ on:
       - "internal/ui/richview/workobject*.go"
       - "internal/ui/popups/search*.go"
       - "internal/ui/popups/menu.go"
+      - "internal/ui/popups/profile_card.go" # the people cards' name, avatar and local time
+      - "internal/ui/popups/canvas_channel_card.go" # the channel rows' icon and purpose line
       - "internal/ui/secondary.go"
       - "internal/ui/macmenu.go"
       - ".github/workflows/search.yml"

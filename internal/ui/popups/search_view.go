@@ -363,10 +363,10 @@ type SearchView struct {
 	chans  []core.ChannelHit
 	people []core.User
 	files  []core.File
-	rows   []widget.Clickable
-	btns   []widget.Clickable
+	rows   []widget.Clickable // a result's body (file, channel, person)
+	btns   []widget.Clickable // a channel's Join / Joined / Leave
+	chanUI []srChanUI         // a channel's other controls (search_rows.go)
 	listY  int
-	rowH   int
 
 	// numbered pagination (Slack's c-pagination)
 	prevBtn, nextBtn widget.Clickable
@@ -625,6 +625,12 @@ func (v *SearchView) growRows(n int) {
 	}
 	for len(v.btns) < n {
 		v.btns = append(v.btns, widget.Clickable{})
+	}
+	for len(v.chanUI) < n {
+		v.chanUI = append(v.chanUI, srChanUI{})
+	}
+	for i := range v.chanUI {
+		v.chanUI[i].busy = false // a new page: no join or leave in flight
 	}
 }
 
@@ -1054,22 +1060,9 @@ func (v *SearchView) handle(gtx layout.Context) {
 			}
 		}
 	case srTabChannels:
-		for i := range v.chans {
-			if v.rows[i].Clicked(gtx) || v.btns[i].Clicked(gtx) {
-				RecordRecentConversation(v.chans[i].ID)
-				v.h.Navigate("c/" + v.chans[i].ID)
-			}
-		}
+		v.handleChannels(gtx)
 	case srTabPeople:
-		for i := range v.people {
-			if v.rows[i].Clicked(gtx) {
-				y := v.listY + (i-v.list.Position.First)*v.rowH - v.list.Position.Offset
-				pad := v.padX(gtx, gtx.Constraints.Max.X)
-				r := image.Rect(pad, y, pad+dp(gtx, 52), y+v.rowH)
-				w := v.win(gtx, r)
-				v.h.OpenProfile(image.Pt(w.Max.X, w.Min.Y), v.people[i].ID)
-			}
-		}
+		v.handlePeople(gtx)
 	}
 }
 
@@ -1428,27 +1421,24 @@ func (v *SearchView) results(gtx layout.Context, th *theme.Theme, cl *Colors, px
 		return layout.Dimensions{Size: sz}
 	}
 	pager := v.pages > 1
-	items := n
+	rows := n
+	if v.tab == srTabPeople { // PeopleGrid: one list row per grid row
+		cols, _ := srPeopleGrid(gtx, cw)
+		rows = (n + cols - 1) / cols
+	}
+	items := rows
 	if pager {
 		items++
 	}
-	switch v.tab {
-	case srTabChannels:
-		v.rowH = dp(gtx, 64)
-	case srTabPeople:
-		v.rowH = dp(gtx, 60)
-	case srTabFiles, srTabCanvases:
-		v.rowH = dp(gtx, 64)
-	}
 	return v.list.Layout(gtx, items, func(gtx layout.Context, i int) layout.Dimensions {
-		if i == n {
+		if i == rows {
 			return v.pagination(gtx, th, cl, sz.X)
 		}
 		switch v.tab {
 		case srTabChannels:
 			return v.chanRow(gtx, th, cl, i, px, cw)
 		case srTabPeople:
-			return v.personRow(gtx, th, cl, i, px, cw)
+			return v.peopleRow(gtx, th, cl, i, px, cw)
 		case srTabFiles, srTabCanvases:
 			return v.fileRow(gtx, th, cl, i, px, cw)
 		}
@@ -1585,66 +1575,6 @@ func (v *SearchView) pagination(gtx layout.Context, th *theme.Theme, cl *Colors,
 	x += dp(gtx, 8) - gap
 	caret(&v.nextBtn, "caret-right", v.page >= v.pages)
 	return layout.Dimensions{Size: image.Pt(w, h)}
-}
-
-// fileRow is a Files / Canvases result: the type tile, the title, and
-// "Name · date" under it.
-func (v *SearchView) fileRow(gtx layout.Context, th *theme.Theme, cl *Colors, i, px, cw int) layout.Dimensions {
-	f := v.files[i]
-	h := v.rowH
-	return at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
-		return clickBox(gtx, &v.rows[i], nil, func(gtx layout.Context) layout.Dimensions {
-			r := image.Rect(0, 0, cw, h-dp(gtx, 8))
-			bg := cl.Bg
-			if v.rows[i].Hovered() {
-				bg = cl.BgHover
-			}
-			rrect(gtx, r, dp(gtx, 12), bg)
-			stroke(gtx, r, dp(gtx, 12), border1(gtx), cl.Divider)
-			tile := dp(gtx, 36)
-			ty := (r.Dy() - tile) / 2
-			ic := "files"
-			switch {
-			case f.IsCanvas:
-				ic = "canvas"
-			case f.IsList:
-				ic = "list-tab"
-			case f.IsImage:
-				ic = "image"
-			}
-			rrect(gtx, image.Rect(dp(gtx, 12), ty, dp(gtx, 12)+tile, ty+tile), dp(gtx, 8), cl.BgHover)
-			at(gtx, image.Pt(dp(gtx, 12)+(tile-dp(gtx, 20))/2, ty+(tile-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-				return icon(gtx, ic, 20, cl.Fg2)
-			})
-			tx := dp(gtx, 12) + tile + dp(gtx, 12)
-			tw := maxInt(1, cw-tx-dp(gtx, 12))
-			title := f.Title
-			if title == "" {
-				title = f.Name
-			}
-			at(gtx, image.Pt(tx, ty-dp(gtx, 1)), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 22))}
-				return text(gtx, th, 15, theme.Black, cl.Fg, title)
-			})
-			sub := ""
-			if u, ok := lookupUser(v.h, f.User); ok {
-				sub = userName(u)
-			}
-			if f.Created > 0 {
-				when := srShortDay(time.Unix(f.Created, 0), time.Now())
-				if sub != "" {
-					sub += " · " + when
-				} else {
-					sub = when
-				}
-			}
-			at(gtx, image.Pt(tx, ty+dp(gtx, 20)), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(tw, dp(gtx, 18))}
-				return text(gtx, th, 13, theme.Regular, cl.Fg2, sub)
-			})
-			return layout.Dimensions{Size: image.Pt(cw, h)}
-		})
-	})
 }
 
 // openFile opens a file result like the Files browser does.
@@ -2295,122 +2225,6 @@ func (v *SearchView) replyChip(gtx layout.Context, th *theme.Theme, cl *Colors, 
 		})
 		return layout.Dimensions{Size: image.Pt(w, h)}
 	})
-}
-
-func (v *SearchView) chanRow(gtx layout.Context, th *theme.Theme, cl *Colors, i, px, cw int) layout.Dimensions {
-	gtx.Constraints.Min = image.Point{}
-	ch := &v.chans[i]
-	h := v.rowH
-	sz := image.Pt(cw, h)
-	at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
-		if v.rows[i].Hovered() || v.btns[i].Hovered() {
-			rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 8), cl.BgHover)
-		}
-		g := gtx
-		g.Constraints = layout.Exact(sz)
-		v.rows[i].Layout(g, func(gtx layout.Context) layout.Dimensions {
-			pointerCursor(gtx, sz)
-			return layout.Dimensions{Size: sz}
-		})
-		box := dp(gtx, 36)
-		x := dp(gtx, 12)
-		rrect(gtx, image.Rect(x, (h-box)/2, x+box, (h+box)/2), dp(gtx, 8), cl.Disabled)
-		at(gtx, image.Pt(x+(box-dp(gtx, 20))/2, (h-dp(gtx, 20))/2), func(gtx layout.Context) layout.Dimensions {
-			return icon(gtx, convIcon(ch.Kind), 20, cl.Fg2)
-		})
-		tx := x + box + dp(gtx, 12)
-		label := nsSearch.T("View")
-		if !ch.IsMember {
-			label = nsSearch.T("Join")
-		}
-		bw := textW(gtx, th, 13, theme.Bold, label) + dp(gtx, 24)
-		bx := cw - dp(gtx, 12) - bw
-		at(gtx, image.Pt(bx, (h-dp(gtx, 28))/2), func(gtx layout.Context) layout.Dimensions {
-			return Button(gtx, th, &v.btns[i], BtnOutline, BtnSmall, label, "", 0)
-		})
-		maxW := maxInt(1, bx-dp(gtx, 12)-tx)
-		at(gtx, image.Pt(tx, dp(gtx, 11)), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 22))}
-			return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
-				name := ch.Name
-				if ch.IsArchived {
-					name += " " + nsSearch.T("(archived)") // ChannelName's
-				}
-				return text(gtx, th, 15, theme.Bold, cl.Fg, name)
-			})
-		})
-		sub := plural(ch.NumMembers, "member")
-		if i18n.Locale() != i18n.EnUS {
-			sub = nsSearch.T("{count, plural, =1 {# member} other {# members}}", "count", ch.NumMembers) // BrowsePageChannelSubtext
-		}
-		if ch.IsMember {
-			sub = nsSearch.T("Joined") + " · " + sub
-		}
-		if p := strings.TrimSpace(ch.Purpose); p != "" {
-			sub += " · " + strings.Join(strings.Fields(p), " ")
-		}
-		at(gtx, image.Pt(tx, dp(gtx, 33)), func(gtx layout.Context) layout.Dimensions {
-			gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 20))}
-			return vcenter(gtx, dp(gtx, 20), func(gtx layout.Context) layout.Dimensions {
-				return text(gtx, th, 13, theme.Regular, cl.Fg3, sub)
-			})
-		})
-		return layout.Dimensions{Size: sz}
-	})
-	return layout.Dimensions{Size: image.Pt(px+cw, h)}
-}
-
-func (v *SearchView) personRow(gtx layout.Context, th *theme.Theme, cl *Colors, i, px, cw int) layout.Dimensions {
-	gtx.Constraints.Min = image.Point{}
-	u := &v.people[i]
-	h := v.rowH
-	sz := image.Pt(cw, h)
-	at(gtx, image.Pt(px, 0), func(gtx layout.Context) layout.Dimensions {
-		g := gtx
-		g.Constraints = layout.Exact(sz)
-		return clickBox(g, &v.rows[i], func(gtx layout.Context, sz image.Point, hovered bool) {
-			if hovered {
-				rrect(gtx, image.Rectangle{Max: sz}, dp(gtx, 8), cl.BgHover)
-			}
-		}, func(gtx layout.Context) layout.Dimensions {
-			x := dp(gtx, 12)
-			av := dp(gtx, 36)
-			at(gtx, image.Pt(x, (h-av)/2), func(gtx layout.Context) layout.Dimensions {
-				return avatar(gtx, v.h, u.Avatar, 36)
-			})
-			tx := x + av + dp(gtx, 12)
-			maxW := maxInt(1, cw-tx-dp(gtx, 12))
-			d := at(gtx, image.Pt(tx, dp(gtx, 9)), func(gtx layout.Context) layout.Dimensions {
-				gtx.Constraints = layout.Constraints{Max: image.Pt(maxW-dp(gtx, 16), dp(gtx, 22))}
-				return vcenter(gtx, dp(gtx, 22), func(gtx layout.Context) layout.Dimensions {
-					return text(gtx, th, 15, theme.Bold, cl.Fg, userName(*u))
-				})
-			})
-			if u.Presence != "" {
-				at(gtx, image.Pt(tx+d.Size.X+dp(gtx, 6), dp(gtx, 9)+(dp(gtx, 22)-dp(gtx, 9))/2), func(gtx layout.Context) layout.Dimensions {
-					return presenceDot(gtx, th, u.Presence == "active", 9)
-				})
-			}
-			sub := u.Title
-			if u.RealName != "" && u.RealName != userName(*u) {
-				if sub != "" {
-					sub = u.RealName + " · " + sub
-				} else {
-					sub = u.RealName
-				}
-			}
-			if sub != "" {
-				at(gtx, image.Pt(tx, dp(gtx, 31)), func(gtx layout.Context) layout.Dimensions {
-					gtx.Constraints = layout.Constraints{Max: image.Pt(maxW, dp(gtx, 20))}
-					return vcenter(gtx, dp(gtx, 20), func(gtx layout.Context) layout.Dimensions {
-						return text(gtx, th, 13, theme.Regular, cl.Fg3, sub)
-					})
-				})
-			}
-			return layout.Dimensions{Size: sz}
-		})
-	})
-	return layout.Dimensions{Size: image.Pt(px+cw, h)}
 }
 
 // srHoverBot is the bot a result's sender opens AppHoverCard for when the
