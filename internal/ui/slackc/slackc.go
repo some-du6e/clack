@@ -210,7 +210,7 @@ func renderSlow0(gtx layout.Context, name string, props Props, native Native) la
 	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
 		return native(gtx, props)
 	}
-	return renderPatched(gtx, name, props, native)
+	return renderPatched(gtx, name, props, props, native)
 }
 
 // RenderLazy is Render with props built only when name is patched.
@@ -237,7 +237,7 @@ func renderLazySlow0(gtx layout.Context, name string, props func() Props, native
 	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
 		return native(gtx, nil)
 	}
-	return renderPatched(gtx, name, props(), native)
+	return renderPatched(gtx, name, props(), nil, native)
 }
 
 // Component is the allocation-free form of Render for hot widgets: with
@@ -287,7 +287,7 @@ func componentPatched[T any](gtx layout.Context, name string, recv T, props func
 	if props != nil {
 		p = props(recv)
 	}
-	return renderPatched(gtx, name, p, func(gtx layout.Context, p Props) layout.Dimensions {
+	return renderPatched(gtx, name, p, nil, func(gtx layout.Context, p Props) layout.Dimensions {
 		return native(recv, gtx, p)
 	})
 }
@@ -346,10 +346,20 @@ func now(gtx layout.Context) time.Time {
 	return time.Now()
 }
 
-func renderPatched(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
+// renderPatched draws component name through its plugin's host tree. Until
+// the first tree arrives, and with no bridge, native draws as it would
+// unpatched: with pre, which is props for Render and nil for Component and
+// RenderLazy, whose natives take non-nil props for <Original>'s. Handed
+// the props built for JS there, the composer's natives looked in them for
+// the host nodes of their parts, found Go's slots and drew nothing: the
+// message box was gone until JS answered, and for good when it didn't.
+// In a reserved slot (reserve.go) the native still gets props: drawn
+// inside the insets, ClientPrimaryView learns its origin from the pointer
+// as under a patch.
+func renderPatched(gtx layout.Context, name string, props, pre Props, native Native) layout.Dimensions {
 	b := bridge()
 	if b == nil {
-		return native(gtx, props)
+		return native(gtx, pre)
 	}
 	pump()
 	t := now(gtx)
@@ -396,7 +406,7 @@ func renderPatched(gtx layout.Context, name string, props Props, native Native) 
 				return probeNative(name, func() layout.Dimensions { return native(g, props) })
 			})
 		}
-		return probeNative(name, func() layout.Dimensions { return native(gtx, props) })
+		return probeNative(name, func() layout.Dimensions { return native(gtx, pre) })
 	}
 	unreserve(name)
 	learn := in.view.learnPending

@@ -202,7 +202,8 @@ func crWysiwygFor(className string) *slackc.ClassDef {
 
 // kid returns the host nodes standing for the nested boundary name in a
 // patched native's children. patched is false when p is nil (the parent
-// was not patched: render the boundary yourself). Under a patch the
+// was not patched: render the boundary yourself), or holds the props Go
+// built rather than a plugin's. Under a patch the
 // nested part is the top-level node that is (or wraps, like
 // BetterTypingIndicator's span around TypingNames) the slot named name,
 // plus the plugin nodes after it (and before it, when nothing before
@@ -214,6 +215,13 @@ func kid(p slackc.Props, name string) (e slackc.Element, patched bool) {
 	}
 	ch, ok := slackc.PropChildren(p)
 	if !ok {
+		// Props Go built (a native drawn in a reserved slot before the
+		// plugin's first tree, slackc.renderPatched) hold the parts as
+		// slots, not host nodes: draw them as unpatched. A plugin's
+		// <Original> never passes children as anything but an Element.
+		if _, own := p["children"].([]any); own {
+			return slackc.Element{}, false
+		}
 		return slackc.Element{}, true
 	}
 	ns := ch.Nodes
