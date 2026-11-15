@@ -36,6 +36,13 @@ func startTautUI(t *testing.T, name string, opts map[string]any) *slickEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return startTautCode(t, code, opts, nil)
+}
+
+// startTautCode is startTautUI for a plugin's code itself; jsLog, when
+// set, also gets the runtime's error and warning lines.
+func startTautCode(t *testing.T, code []byte, opts map[string]any, jsLog func(level, msg string)) *slickEnv {
+	t.Helper()
 	app, fs := syntheticApp(t)
 	e := &slickEnv{t: t, app: app, slack: fs, trees: map[uint64][]byte{}, h: &slickHost{app: app, th: theme.New(false)}}
 	tdir := t.TempDir()
@@ -63,6 +70,9 @@ func startTautUI(t *testing.T, name string, opts map[string]any) *slickEnv {
 		Log: func(level, msg string) {
 			if level == "error" || level == "warn" {
 				t.Logf("js %s: %s", level, msg)
+				if jsLog != nil {
+					jsLog(level, msg)
+				}
 			}
 		},
 	})
@@ -85,7 +95,7 @@ func startTautUI(t *testing.T, name string, opts map[string]any) *slickEnv {
 	ctx := e.ctx()
 	id, err := tt.Import(ctx, code, "")
 	if err != nil {
-		t.Fatalf("import %s: %v", name, err)
+		t.Fatalf("import: %v", err)
 	}
 	for k, v := range opts {
 		if err := tt.SetOption(ctx, id, k, v); err != nil {

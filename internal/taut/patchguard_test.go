@@ -2,8 +2,11 @@ package taut
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/jsrt"
 )
 
 // A plugin's patch that throws must not empty its component's root. Every
@@ -163,7 +166,53 @@ func TestPatchGuardInvisible(t *testing.T) {
 	if len(nodes) != 1 || !hasClass(nodes, "patched") || findNative(nodes, "MessagePaneInput") == nil {
 		t.Fatalf("patched: want div.patched around the native, got %v", nodes)
 	}
-	if l := h.jsLogged(); len(l) > 0 {
-		t.Errorf("a patch that renders fine logged %v", l)
+	if h.loggedPatchError("MessagePaneInput") {
+		t.Errorf("a patch that renders fine was logged as throwing: %q", h.jsLogged())
 	}
+}
+
+// The mechanism PatchGuard is for, in Clack's runtime: an error no
+// boundary catches unmounts the React root, and the root commits an empty
+// host tree. That was the composer's tree when a plugin inside it threw.
+func TestUncaughtRenderErrorEmptiesRoot(t *testing.T) {
+	h := newHarness(t)
+	r := h.rt()
+	h.js(`
+		const R = globalThis.React
+		globalThis.__boomEl = (fail) => R.createElement(function Boom() {
+			if (fail) throw new Error('synthetic uncaught render error')
+			return R.createElement('div', { className: 'boom-ok' })
+		})
+		return 1`)
+	var mu sync.Mutex
+	var last string
+	root := r.rt.NewRoot(func(tree []byte) {
+		mu.Lock()
+		last = string(tree)
+		mu.Unlock()
+	})
+	render := func(fail bool) error {
+		done := make(chan error, 1)
+		r.rt.Post(func(js *jsrt.Ctx) {
+			el, err := js.Global().Get("__boomEl").Call(fail)
+			if err == nil {
+				err = root.Render(js, el)
+			}
+			done <- err
+		})
+		return <-done
+	}
+	tree := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return last
+	}
+	if err := render(false); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, renderWait(), "the first tree", func() bool { return strings.Contains(tree(), "boom-ok") })
+	if err := render(true); err != nil {
+		t.Logf("the throwing render returned %v", err) // React reports it as uncaught instead
+	}
+	eventually(t, renderWait(), "the root's tree emptied", func() bool { return tree() == "[]" })
 }
