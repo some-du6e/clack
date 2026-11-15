@@ -153,8 +153,11 @@ name: flake-check
 #                                            the copied address and Slackbot's
 #                                            prompt named another channel
 #                                            than w.name(); newW13Env now
-#                                            waits for that read, and the
-#                                            test holds it back 1 s
+#                                            waits for that read. The test
+#                                            holds it back 1 s and the
+#                                            address's create until the
+#                                            client stored it (the old order
+#                                            fails every run)
 #   TestDetailsCallButtonLikeSlack,          the same read against the call
 #   TestDetailsCallMenuStartsCall (ui/views) tooltip's name
 # Synthetic data only (internal/fakeslack, the fake Chime).

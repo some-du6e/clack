@@ -283,10 +283,24 @@ func TestDetailsSendEmailsLikeSlack(t *testing.T) {
 	w := newW13Env(t, fakeslack.ViewsChannel, func(fs *fakeslack.Server) {
 		fs.Permissions = map[string][]string{fakeslack.ViewsChannel: {"CAN_AT_CHANNEL", core.PermCreateChannelEmailAddresses}}
 		fs.SetEnterpriseOrgPrefs(map[string]any{"channel_email_addresses_enabled": true})
-		// the details' conversations.info (which stores fakeslack's channel
-		// name over the test's) slow, as under the release's load: every
-		// name the test reads must come after it
+		// α.85's race, every run: the details' conversations.info (which
+		// stores fakeslack's channel name, "announcements", over the env's
+		// "views-fixtures") is slow, as under the release's load...
 		fs.SetFault("conversations.info", fakeslack.Fault{Delay: time.Second})
+	})
+	// ...and Get Email Address's create answers only once the client has
+	// stored it, so a modal that opened before that read (keeping the old
+	// name) always meets the new name in w.name(). newW13Env waits for the
+	// read, so here the client already has it.
+	w.fs.SetHook(func(method string, _ url.Values) (any, bool) {
+		if method == "conversations.emailaddresses.create" {
+			for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); time.Sleep(5 * time.Millisecond) {
+				if cv, _ := w.app.Conv(fakeslack.ViewsChannel); cv.Name != "views-fixtures" {
+					break
+				}
+			}
+		}
+		return nil, false
 	})
 	w.e.until(t, "the emails field", func() bool {
 		_ = w.app.ChannelGrant(fakeslack.ViewsChannel, core.PermCreateChannelEmailAddresses)
