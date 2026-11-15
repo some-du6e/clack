@@ -102,6 +102,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	sz := gtx.Constraints.Max
 	vh := clsViewHeader.Enter(gtx, 0, 0)
 	defer vh.Leave()
+	defer slackc.InspectArea(gtx, image.Rectangle{Max: sz}) // over what it draws (the inspect tool)
 	if vh.Hidden() {
 		return layout.Dimensions{Size: sz}
 	}
@@ -141,6 +142,8 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	btn := gtx.Dp(28)
 	y := (h - btn) / 2
 	kebabX := 0
+	actEnd := right
+	acts := insHdrActions.Inspect(0) // the inspect tool's .p-view_header__actions
 	// Slack's app DMs keep only the bell and the kebab: no search, Huddle
 	// or member count.
 	appDM := conv != nil && conv.Kind == "app"
@@ -307,6 +310,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			right -= gtx.Dp(6)
 		}
 	}
+	acts.EndAt(gtx, image.Rect(min(right+gtx.Dp(6), actEnd), 0, actEnd, h))
 
 	// a group DM's title is MPDMTitle (channel_mpdm.go)
 	if conv != nil && conv.Kind == "mpim" {
@@ -363,6 +367,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 	actL := right + gtx.Dp(6) // the actions' left edge: the title shows up to it
 	tcl := clip.Rect{Max: image.Pt(actL, h)}.Push(gtx.Ops)
 	at(gtx, image.Pt(x, (h-gtx.Dp(32))/2), image.Pt(titleW, gtx.Dp(32)), func(gtx layout.Context) layout.Dimensions {
+		defer insHdrTitle.Inspect(0).End(gtx, image.Pt(titleW, gtx.Dp(32)))
 		return clickArea(gtx, a.clicks.get("hdr.title"), func(gtx layout.Context, s image.Point, hov bool) {
 			if hov {
 				theme.RRect(gtx, image.Rectangle{Max: s}, gtx.Dp(6), c.BgHover)
@@ -372,6 +377,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 			ix := gtx.Dp(4)
 			if icon != "" {
 				at(gtx, image.Pt(ix, (th-gtx.Dp(18))/2), image.Pt(gtx.Dp(18), gtx.Dp(18)), func(gtx layout.Context) layout.Dimensions {
+					defer insHdrIcon.Inspect(0).End(gtx, image.Pt(gtx.Dp(18), gtx.Dp(18)))
 					return icons.Get(icon)(gtx, 18, c.Fg)
 				})
 			} else if conv != nil {
@@ -380,6 +386,7 @@ func (a *App) layoutChannelHeader(gtx layout.Context, ch string, conv *convInfo)
 				})
 			}
 			at(gtx, image.Pt(ix+iconW, 0), image.Pt(nw, th), func(gtx layout.Context) layout.Dimensions {
+				defer insHdrName.Inspect(0).End(gtx, image.Pt(nw, th))
 				return vcenter(gtx, th, func(gtx layout.Context) layout.Dimensions {
 					return a.th.Label(gtx, 18, theme.Black, c.Fg, name)
 				})
@@ -479,6 +486,7 @@ func (a *App) layoutHeaderTopic(gtx layout.Context, ch string, conv *convInfo, r
 	card := a.clicks.get("hdr.topiccard")
 	showCard := truncated && (btn.Hovered() || card.Hovered())
 	at(gtx, r.Min, r.Size(), func(gtx layout.Context) layout.Dimensions {
+		defer insHdrTopic.Inspect(0).End(gtx, r.Size())
 		return hov.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			at(gtx, image.Point{}, image.Pt(tw, h), func(gtx layout.Context) layout.Dimensions {
 				draw := func(gtx layout.Context) layout.Dimensions {
@@ -762,6 +770,7 @@ func (a *App) channelTabs(ch string) []chTab {
 
 func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions {
 	sz := gtx.Constraints.Max
+	defer insTabMenu.Inspect(0).End(gtx, sz) // the inspect tool's tab bar
 	c := &a.th.C
 	x := gtx.Dp(16)
 	viewNames := a.Core() != nil && a.Core().Experiment("list_channel_tab_show_view_name_fe") == "on"
@@ -817,6 +826,7 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 			fade = paint.PushOpacity(gtx.Ops, .5) // channel_tab_is_dragging
 		}
 		at(gtx, image.Pt(x, 0), image.Pt(w, sz.Y), func(gtx layout.Context) layout.Dimensions {
+			defer insTab.Inspect(insMod(i == cur)).End(gtx, image.Pt(w, sz.Y))
 			return clickArea(gtx, btn, func(gtx layout.Context, s image.Point, hov bool) {
 				if hov && i != cur {
 					theme.RRect(gtx, image.Rect(0, gtx.Dp(5), s.X, s.Y-gtx.Dp(5)), gtx.Dp(6), c.BgHover)
@@ -884,6 +894,7 @@ func (a *App) tabContent(gtx layout.Context, t chTab, lw, h int, active bool) {
 		icon += "-filled" // and the active Home (app DMs) etc.
 	}
 	at(gtx, image.Pt(gtx.Dp(8), (h-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
+		defer insTabIcon.Inspect(0).End(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)))
 		return icons.Get(icon)(gtx, 16, col)
 	})
 	if t.unread {
@@ -894,6 +905,7 @@ func (a *App) tabContent(gtx layout.Context, t chTab, lw, h int, active bool) {
 		theme.Circle(gtx, ctr, gtx.Dp(8), c.Link)
 	}
 	at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, h), func(gtx layout.Context) layout.Dimensions {
+		defer insTabLabel.Inspect(0).End(gtx, image.Pt(lw+2, h)) // the tab's title, for the inspect tool
 		if t.spans != nil {
 			return a.inlineSpans(gtx, t.spans, 13, col, h)
 		}

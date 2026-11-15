@@ -31,8 +31,9 @@ type Report struct {
 
 	// Component is the innermost Slack component under the pointer;
 	// Within, the components around it, innermost first. Element is its
-	// root element as a selector, Classes the elements around the
-	// component, innermost first.
+	// root element as a selector, or the element picked when it was one
+	// (the chrome's elements have their own outline), Classes the
+	// elements around it, innermost first.
 	Component string
 	Patched   bool
 	Within    []string

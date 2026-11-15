@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -251,5 +252,133 @@ func TestInspectTreeBoxes(t *testing.T) {
 	}
 	if tree0 < 0 {
 		t.Fatalf("no tree node under the chip: hits %+v", hits)
+	}
+}
+
+var (
+	inspBarClass  = Class("p-view_header")
+	inspTabClass  = Class("c-tabs__tab", "role", "tab").Tag("button").Mods("c-tabs__tab--active")
+	inspNameClass = Class("c-tabs__tab_content").Tag("span")
+	inspRailClass = Class("p-tab_rail")
+)
+
+// The chrome's elements marked for the tool alone (ClassDef.Inspect)
+// get areas the picker hits, nest as they were drawn (a component's
+// render inside them is inside them), and touch nothing styles see: no
+// element goes on the element stack. An entered element given a box
+// (InspectArea) is hit too. Outside a session nothing is recorded.
+func TestInspectMarks(t *testing.T) {
+	var r input.Router
+	var f InspectFrame
+	ptr := f32.Point{}
+	winAt := func(time.Duration) (f32.Point, bool) { return ptr, true }
+	depth := -1
+	scene := func(gtx layout.Context) {
+		// a rail at 0,0 70×300: marked, closed at its rect
+		rail := inspRailClass.Inspect(0)
+		rail.EndAt(gtx, image.Rect(0, 0, 70, 300))
+		// a header at 100,0 400×50, entered and given its box at the end;
+		// a tab inside it at 120,10 80×30 (active) with its title at
+		// +30,5 40×20, then a component beside it
+		defer op.Offset(image.Pt(100, 0)).Push(gtx.Ops).Pop()
+		bar := inspBarClass.Enter(gtx, 0, 0)
+		func() {
+			defer op.Offset(image.Pt(20, 10)).Push(gtx.Ops).Pop()
+			defer inspTabClass.Inspect(1).End(gtx, image.Pt(80, 30))
+			func() {
+				defer op.Offset(image.Pt(30, 5)).Push(gtx.Ops).Pop()
+				mk := inspNameClass.Inspect(0)
+				depth = len(stack)
+				mk.End(gtx, image.Pt(40, 20))
+			}()
+		}()
+		func() {
+			defer op.Offset(image.Pt(200, 10)).Push(gtx.Ops).Pop()
+			Render(gtx, "AvatarStack", nil, func(gtx layout.Context, _ Props) layout.Dimensions {
+				return layout.Dimensions{Size: image.Pt(60, 30)}
+			})
+		}()
+		InspectArea(gtx, image.Rectangle{Max: image.Pt(400, 50)})
+		bar.Leave()
+	}
+	frame := func() {
+		gtx := testGtx(600, 400)
+		gtx.Source = r.Source()
+		InspectBegin(&f, r.Source())
+		before := len(stack)
+		scene(gtx)
+		if depth != before {
+			t.Errorf("Inspect changed the element stack: %d entries inside, %d before", depth, before)
+		}
+		InspectEnd()
+		r.Frame(gtx.Ops)
+	}
+	label := func(i int) string {
+		n := &f.Nodes[i]
+		if n.Kind == InspectComponent {
+			return n.Name
+		}
+		return strings.Join(n.Classes(), ".")
+	}
+	move := func(x, y float32) (out []string, hits []InspectHit) {
+		ptr = f32.Pt(x, y)
+		r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: ptr})
+		hits = f.ReadHits(r.Source(), winAt)
+		for _, h := range hits {
+			out = append(out, label(h.Node))
+		}
+		return out, hits
+	}
+	frame()
+
+	got, hits := move(160, 25) // the tab's title
+	if want := []string{"p-view_header", "c-tabs__tab.c-tabs__tab--active", "c-tabs__tab_content"}; !slices.Equal(got, want) {
+		t.Fatalf("on the tab's title: hits %v, want %v", got, want)
+	}
+	for _, h := range hits {
+		n := &f.Nodes[h.Node]
+		want := map[string]image.Rectangle{
+			"p-view_header":                   image.Rect(100, 0, 500, 50),
+			"c-tabs__tab.c-tabs__tab--active": image.Rect(120, 10, 200, 40),
+			"c-tabs__tab_content":             image.Rect(150, 15, 190, 35),
+		}[label(h.Node)]
+		if got := (image.Rectangle{Min: h.Origin, Max: h.Origin.Add(n.Size)}); got != want || !n.Sized() {
+			t.Errorf("%s: at %v (sized %v), want %v", label(h.Node), got, n.Sized(), want)
+		}
+	}
+	title := hits[2].Node
+	var chain []string
+	for _, i := range f.Chain(title) {
+		chain = append(chain, label(i))
+	}
+	if want := []string{"c-tabs__tab_content", "c-tabs__tab.c-tabs__tab--active", "p-view_header"}; !slices.Equal(chain, want) {
+		t.Errorf("the title's chain %v, want %v", chain, want)
+	}
+	if n := &f.Nodes[title]; n.Tag() != "span" || n.Kind != InspectElement {
+		t.Errorf("the title: %v %q", n.Kind, n.Tag())
+	}
+	if got, _ := move(320, 20); !slices.Equal(got, []string{"p-view_header", "AvatarStack"}) {
+		t.Errorf("on the component beside the tab: hits %v", got)
+	}
+	if p := f.Nodes[f.Chain(hits[0].Node)[0]].Parent; p != -1 {
+		t.Errorf("the header's parent %d, want none", p)
+	}
+	if got, _ := move(30, 200); !slices.Equal(got, []string{"p-tab_rail"}) {
+		t.Errorf("on the rail: hits %v", got)
+	}
+	if got, _ := move(550, 200); len(got) != 0 {
+		t.Errorf("outside everything: hits %v", got)
+	}
+
+	// no session: no record, nothing on the stack, no op
+	if m := inspTabClass.Inspect(0); m != (InspectMark{}) {
+		t.Errorf("a mark outside a session: %+v", m)
+	}
+	nodes := len(f.Nodes)
+	gtx := testGtx(100, 100)
+	inspTabClass.Inspect(0).End(gtx, image.Pt(10, 10))
+	InspectArea(gtx, image.Rect(0, 0, 10, 10))
+	if len(f.Nodes) != nodes || Inspecting() {
+		t.Error("marks outside a session recorded something")
 	}
 }

@@ -182,6 +182,7 @@ func actPlural(n int, one, many string) string {
 func (v *Activity) viewTabs(gtx C) D {
 	t := v.tabs
 	st := &v.strip
+	strip := insTabMenu.Inspect(0) // the inspect tool's tablist
 	n := len(t.Labels)
 	if len(st.tags) != n {
 		st.tags = make([]actTabCtx, n)
@@ -280,6 +281,7 @@ func (v *Activity) viewTabs(gtx C) D {
 	if st.dragging && st.from >= 0 && st.from < n {
 		v.dragPreview(gtx, st.from)
 	}
+	strip.End(gtx, image.Pt(x, h))
 	return D{Size: image.Pt(x, h)}
 }
 
@@ -315,6 +317,7 @@ func (v *Activity) viewTab(gtx C, i, slot, count int, xi, iconOnly bool) D {
 		if sel {
 			fg = v.p.Text
 		}
+		mk := insTab.Inspect(insMod(sel)) // the inspect tool's tab
 		m := op.Record(gtx.Ops)
 		d := v.tabBody(gtx, slot, t.label(i), fg, count, xi, iconOnly)
 		call := m.Stop()
@@ -342,6 +345,7 @@ func (v *Activity) viewTab(gtx C, i, slot, count int, xi, iconOnly bool) D {
 			pass.Pop()
 		}
 		cl.Pop()
+		mk.End(gtx, d.Size)
 		return d
 	})
 }
@@ -360,7 +364,7 @@ func (v *Activity) tabBody(gtx C, slot int, label string, fg color.NRGBA, count 
 				if iconOnly {
 					return D{}
 				}
-				return v.label(gtx, 13, wBold, fg, label)
+				return insLabel(gtx, func(gtx C) D { return v.label(gtx, 13, wBold, fg, label) })
 			}),
 			layout.Rigid(func(gtx C) D { return v.tabBadge(gtx, slot, count, xi, iconOnly) }),
 		)

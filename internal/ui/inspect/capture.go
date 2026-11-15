@@ -173,7 +173,7 @@ func (t *Tool) fill(r *Report, red *Redactor, p *pick) {
 		case slackc.InspectComponent:
 			if r.Component == "" {
 				r.Component, r.Patched = n.Name, n.Patched
-				if el := rootElement(f, i); el >= 0 {
+				if el := rootElement(f, i); el >= 0 && r.Element == "" {
 					r.Element = selector(&f.Nodes[el], red, 0)
 				}
 			} else if len(r.Within) < maxWithin {
@@ -195,7 +195,12 @@ func (t *Tool) fill(r *Report, red *Redactor, p *pick) {
 				}
 			}
 		case slackc.InspectElement:
-			if r.Component != "" && len(r.Classes) < maxClasses {
+			switch {
+			case i == node:
+				// a sized element picked itself (the chrome's: the header's
+				// title, a tab): the component is the one around it
+				r.Element = selector(n, red, 0)
+			case (r.Component != "" || r.Element != "") && len(r.Classes) < maxClasses:
 				r.Classes = append(r.Classes, selector(n, red, 0))
 			}
 		}

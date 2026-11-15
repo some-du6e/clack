@@ -27,6 +27,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/taut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
@@ -559,6 +560,32 @@ func trIn(ns i18n.NS) func(int, string) string {
 	return func(_ int, s string) string { return ns.T(s) }
 }
 
+// A tab strip's elements as the inspect tool sees them (slackc
+// ClassDef.Inspect: recorded for the picker alone, nothing draws
+// differently): Slack Kit's Tabs, a tablist of c-tabs__tab buttons
+// (--active for the selected one) with their titles.
+var (
+	insTabMenu  = slackc.Class("c-tabs__tab_menu", "role", "tablist")
+	insTab      = slackc.Class("c-button-unstyled c-tabs__tab", "role", "tab").Tag("button").Mods("c-tabs__tab--active")
+	insTabLabel = slackc.Class("c-tabs__tab_content").Tag("span")
+)
+
+// insMod is mods bit 0 when on.
+func insMod(on bool) uint64 {
+	if on {
+		return 1
+	}
+	return 0
+}
+
+// insLabel is l, the title of a tab, marked for the inspect tool.
+func insLabel(gtx C, l layout.Widget) D {
+	mk := insTabLabel.Inspect(0)
+	d := l(gtx)
+	mk.End(gtx, d.Size)
+	return d
+}
+
 func newTabs(labels ...string) *tabs {
 	return &tabs{Labels: labels, clicks: make([]widget.Clickable, len(labels))}
 }
@@ -584,6 +611,7 @@ func (b *base) tabStrip(gtx C, t *tabs, badges []int) D {
 }
 
 func (b *base) tabStripIcons(gtx C, t *tabs, icons []string, badges []int) D {
+	strip := insTabMenu.Inspect(0)
 	ch := make([]layout.FlexChild, 0, len(t.Labels))
 	for i := range t.Labels {
 		i := i
@@ -591,6 +619,7 @@ func (b *base) tabStripIcons(gtx C, t *tabs, icons []string, badges []int) D {
 			return t.clicks[i].Layout(gtx, func(gtx C) D {
 				pointerCursor(gtx)
 				sel := i == t.Sel
+				mk := insTab.Inspect(insMod(sel))
 				fg := b.p.Sec
 				if sel {
 					fg = b.p.Text
@@ -604,7 +633,9 @@ func (b *base) tabStripIcons(gtx C, t *tabs, icons []string, badges []int) D {
 							}
 							return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return b.icon(gtx, icons[i], 16, fg) })
 						}),
-						layout.Rigid(func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.label(i)) }),
+						layout.Rigid(func(gtx C) D {
+							return insLabel(gtx, func(gtx C) D { return b.label(gtx, 13, wBold, fg, t.label(i)) })
+						}),
 						layout.Rigid(func(gtx C) D {
 							if i >= len(badges) || badges[i] <= 0 {
 								return D{}
@@ -624,11 +655,14 @@ func (b *base) tabStripIcons(gtx C, t *tabs, icons []string, badges []int) D {
 					h := gtx.Dp(2)
 					fill(gtx, image.Rect(0, d.Size.Y-h, d.Size.X, d.Size.Y), b.p.TabLine)
 				}
+				mk.End(gtx, d.Size)
 				return d
 			})
 		}))
 	}
-	return row(gtx, layout.End, ch...)
+	d := row(gtx, layout.End, ch...)
+	strip.End(gtx, d.Size)
+	return d
 }
 
 // pills is a row of filter chips (Files type filters, Directories filters).

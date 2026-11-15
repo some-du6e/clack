@@ -18,8 +18,11 @@
 // the clicks and keys. Where things are comes from slackc's inspect
 // records (slackc/inspect.go): each component boundary gets a
 // pass-through pointer area, and Gio's own hit test says which are under
-// the pointer. Plugins' host trees go down to their boxes. Outside
-// components (plain Gio widgets) the report falls back to the shell area.
+// the pointer. Plugins' host trees go down to their boxes, and the
+// chrome's elements (the channel header's title and topic, the tab bar's
+// tabs, the tab rail's buttons; slackc ClassDef.Inspect) have areas of
+// their own, as a browser's inspector reaches any element. Elsewhere
+// (plain Gio widgets) the report falls back to the shell area.
 package inspect
 
 import (
@@ -406,16 +409,17 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	}
 	origin := map[int]slackc.InspectHit{}
 	best := -1
+	var tb treeBox
 	for _, h := range hits {
 		origin[h.Node] = h
 		n := &f.Nodes[h.Node]
 		if n.Kind == slackc.InspectTree {
-			if p.tree < 0 || h.Node > p.tree {
-				p.tree, p.local = h.Node, h.Local
+			if b := innermostBox(f, h); p.tree < 0 || b.over(tb) {
+				p.tree, p.local, tb = h.Node, h.Local, b
 			}
 			continue
 		}
-		best = max(best, h.Node)
+		best = max(best, h.Node) // a component, or an element with a size
 	}
 	if p.tree >= 0 && best < p.tree {
 		// the tree was drawn after the natives inside it: one of them
@@ -448,7 +452,7 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	for k := 0; k < t.up; k++ {
 		next := -1
 		for i := f.Nodes[node].Parent; i >= 0; i = f.Nodes[i].Parent {
-			if _, ok := origin[i]; ok && f.Nodes[i].Kind != slackc.InspectElement {
+			if _, ok := origin[i]; ok { // hit: it has an area (a component, a sized element)
 				next = i
 				break
 			}
@@ -476,11 +480,48 @@ func (t *Tool) pickFrom(f *slackc.InspectFrame, hits []slackc.InspectHit) *pick 
 	return p
 }
 
+// treeBox is the innermost box of a plugin tree under the pointer, to
+// choose between trees that are both hit.
+type treeBox struct {
+	node   int
+	native bool // a "@" box (a native the tree draws), or no box at all
+	area   int
+}
+
+func innermostBox(f *slackc.InspectFrame, h slackc.InspectHit) treeBox {
+	bs := f.Boxes(h.Node, h.Local)
+	if len(bs) == 0 {
+		return treeBox{node: h.Node, native: true, area: 1 << 62}
+	}
+	r := bs[0].Rect
+	return treeBox{node: h.Node, native: bs[0].Component != "", area: r.Dx() * r.Dy()}
+}
+
+// over reports that b is more specific than o: a tree's own element over
+// a native's box, then the smaller box, then the tree drawn later. A
+// native's children are a tree of their own (LayoutElement: the
+// UserPronouns span among BaseBroadcastPreamble's children), painted
+// before the tree around the native, whose innermost box there is only
+// the native's "@" box.
+func (b treeBox) over(o treeBox) bool {
+	if b.native != o.native {
+		return !b.native
+	}
+	if b.area != o.area {
+		return b.area < o.area
+	}
+	return b.node > o.node
+}
+
 // innerKey names what the pointer is innermost over across frames (node
-// indices aren't stable): its name and where it is.
+// indices aren't stable): its name or selector and where it is.
 func innerKey(f *slackc.InspectFrame, i int, origin image.Point) string {
 	n := &f.Nodes[i]
-	return fmt.Sprintf("%d %s %v %v", n.Kind, n.Name, origin, n.Size)
+	name := n.Name
+	if n.Kind == slackc.InspectElement {
+		name = selector(n, nil, 0)
+	}
+	return fmt.Sprintf("%d %s %v %v", n.Kind, name, origin, n.Size)
 }
 
 // descends reports that node i is anc or inside it.
@@ -493,9 +534,13 @@ func descends(f *slackc.InspectFrame, i, anc int) bool {
 	return false
 }
 
-// labelFor is the hover label: the component and its root element.
+// labelFor is the hover label: the component and its root element, or
+// the element.
 func (t *Tool) labelFor(f *slackc.InspectFrame, i int) string {
 	n := &f.Nodes[i]
+	if n.Kind == slackc.InspectElement {
+		return selector(n, nil, 3)
+	}
 	s := n.Name
 	if el := rootElement(f, i); el >= 0 {
 		s += " · " + selector(&f.Nodes[el], nil, 3)

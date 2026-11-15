@@ -19,7 +19,7 @@ Until Gio patch 29 the shortcut, then ⌥⇧⌘D, did nothing on macOS. AppKit s
 
 ## A session
 
-A banner at the top says the session is on. The Slack component under the pointer gets a pink outline and a label with its name, root element and size. ↑ widens the outline to the enclosing component and ↓ comes back. Esc or Hyper+D again ends the session.
+A banner at the top says the session is on. The Slack component under the pointer gets a pink outline and a label with its name, root element and size; one of the chrome's elements (below) gets one with its selector. ↑ widens the outline to the enclosing element or component and ↓ comes back. Esc or Hyper+D again ends the session.
 
 The window keeps working while the session runs, minus clicks and keys. Hover states still show (a message's toolbar, tooltips), lists scroll, and carets, focus rings and animations stay as they are. No button, editor or shortcut reacts. The tool alone reads the clicks and keys. Gio patch 21 (`Source.HoverOnly`, `third_party/gioui.org/CLACK_PATCHES.md`) makes that possible.
 
@@ -37,7 +37,7 @@ Where the system can't copy images (Linux without wl-copy or xclip) the report's
 | row | what |
 |---|---|
 | component | the innermost Slack component boundary under the pointer (`slackc.Render`/`Component`), and whether a plugin patches it |
-| element | its root element as a selector, Slack's classes and `data-qa` included |
+| element | its root element as a selector, Slack's classes and `data-qa` included; for a chrome element picked itself, that element |
 | within | the enclosing components, innermost first |
 | classes | the elements around it (`div.c-message_kit__message < …`) |
 | tree, style | inside a plugin's host tree: the boxes under the pointer and the innermost one's computed colours and font |
@@ -59,9 +59,9 @@ The image shows the picked element as the user saw it, and of the rest of the wi
 
 ## Coverage
 
-Coverage is best inside Slack component boundaries: messages and their parts (sender, avatar, text, reactions, the reply bar, attachments), the sidebar's items, the composer, search, activity rows, menus and more, about 90 names in all. Plain Gio widgets outside them (the message list itself, the toolbar's buttons) are reported as their enclosing component, or as the shell column (sidebar, primary, secondary, top nav, tab rail) when no component encloses them. Plugin host trees go down to their boxes, through slackc's own hit test.
+Coverage is best inside Slack component boundaries: messages and their parts (sender, avatar, text, reactions, the reply bar, attachments), the sidebar's items, the composer, search, activity rows, menus and more, about 90 names in all. The chrome Clack draws without a component around it is marked for the tool alone with Slack's classes and `data-qa` (`slackc` `ClassDef.Inspect` and `InspectArea`: recorded for the picker, never on the element stack, so no selector matches them and nothing draws differently), as a browser's inspector reaches any element: the channel header (`.p-view_header`, its title button, the channel's name `span.p-view_header__channel_title`, the icon, the topic container, the actions), the tab bar (`c-tabs__tab_menu`, each `c-tabs__tab` and its title `c-tabs__tab_content`), the top nav (its containers, the history buttons, the search box and its text), the tab rail (`.p-tab_rail`, each `p-tab_rail__button` with Slack's `data-qa`, `tab_rail_activity_button`, its icon and label, the user button), and the Activity view's saved-view tabs and their titles. Other plain Gio widgets (the message list itself, the toolbar's buttons) are reported as their enclosing component, or as the shell column (sidebar, primary, secondary, top nav, tab rail) when nothing encloses them. Plugin host trees go down to their boxes, through slackc's own hit test; of two trees under the pointer the one with its own element there wins, so an element a plugin puts among a native's children (UserPronouns' span in BaseBroadcastPreamble) is picked, not the native's box in the tree around it.
 
-How it finds what is under the pointer: while a session records a frame, slackc puts a pass-through pointer area over every component it draws, with a new tag each frame. Gio sends an Enter to each new area under the pointer, so Gio's own hit test (clips, and whatever is drawn over them) decides what counts. `internal/ui/slackc/inspect.go` has the details.
+How it finds what is under the pointer: while a session records a frame, slackc puts a pass-through pointer area over every component it draws and every chrome element marked with a size, with a new tag each frame. Gio sends an Enter to each new area under the pointer, so Gio's own hit test (clips, and whatever is drawn over them) decides what counts. `internal/ui/slackc/inspect.go` has the details.
 
 ## Later
 

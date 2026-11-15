@@ -53,6 +53,63 @@ var (
 			Mods("c-presence--active", "c-presence--away")
 )
 
+// The chrome's elements as the inspect tool sees them (slackc
+// ClassDef.Inspect: recorded for the picker alone, so no selector matches
+// them and nothing draws differently): Slack's classes and data-qa for
+// what Clack draws without a component around it, so the picker reaches
+// the header's title, a tab's title or the Activity button the way a
+// browser's inspector reaches any element (gantry boot-shared and
+// boot-render, build 7879320ed1f9; the header's actions and topic
+// container from the live DOM).
+var (
+	insHdrTitle   = slackc.Class("c-button-unstyled p-view_header__big_button p-view_header__big_button--channel").Tag("button")
+	insHdrName    = slackc.Class("p-view_header__channel_title").Tag("span")
+	insHdrIcon    = slackc.Class("p-view_header__channel_title_icon").Tag("span")
+	insHdrTopic   = slackc.Class("p-view_header__topic_container")
+	insHdrActions = slackc.Class("p-view_header__actions")
+	insTabMenu    = slackc.Class("c-tabs__tab_menu", "role", "tablist")
+	insTab        = slackc.Class("c-button-unstyled c-tabs__tab", "role", "tab").Tag("button").Mods("c-tabs__tab--active")
+	insTabIcon    = slackc.Class("c-tabs__tab_icon--left").Tag("span")
+	insTabLabel   = slackc.Class("c-tabs__tab_content").Tag("span")
+	insRail       = slackc.Class("p-tab_rail", "role", "tablist")
+	insRailIcon   = slackc.Class("p-tab_rail__button__icon")
+	insRailLabel  = slackc.Class("p-tab_rail__button__label")
+	insRailMe     = slackc.Class("p-ia__nav__user__button", "data-qa", "user-button").Tag("button")
+	insSearch     = slackc.Class("c-button-unstyled p-top_nav__search", "data-qa", "top_nav_search").Tag("button")
+	insSearchText = slackc.Class("p-top_nav__search__text").Tag("span")
+	insNavButton  = slackc.Class("c-button-unstyled p-ia4_history_buttons__button").Tag("button").
+			Mods("p-ia4_history_buttons__button-back", "p-ia4_history_buttons__button-forward")
+	insNavHistory = slackc.Class("c-button-unstyled p-ia4_history_menu_button").Tag("button")
+)
+
+// insRailButton is a tab rail button (TabRail's tabs: c-tabs__tab with
+// p-tab_rail__button, --active while its view shows), with the data-qa
+// Slack gives the tabs it names (ed.sp.TAB_RAIL_*_BUTTON).
+var insRailButton = func() map[string]*slackc.ClassDef {
+	m := map[string]*slackc.ClassDef{}
+	for _, k := range []string{"home", "dms", "activity", "later", "files", "browse"} {
+		m[k] = slackc.Class("c-button-unstyled c-tabs__tab p-tab_rail__button", "role", "tab", "data-qa", "tab_rail_"+k+"_button").
+			Tag("button").Mods("p-tab_rail__button--active")
+	}
+	m[""] = slackc.Class("c-button-unstyled c-tabs__tab p-tab_rail__button", "role", "tab").Tag("button").Mods("p-tab_rail__button--active")
+	return m
+}()
+
+func insRailButtonFor(key string) *slackc.ClassDef {
+	if d := insRailButton[key]; d != nil {
+		return d
+	}
+	return insRailButton[""]
+}
+
+// insMod is mods bit 0 when on.
+func insMod(on bool) uint64 {
+	if on {
+		return 1
+	}
+	return 0
+}
+
 // clsSbChannel is .p-channel_sidebar__channel per channel type and
 // selection (static attributes); the channel id is EnterAttr's.
 var clsSbChannel = func() (t [5][2]*slackc.ClassDef) {

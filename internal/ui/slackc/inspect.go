@@ -13,6 +13,7 @@ import (
 	"gioui.org/io/input"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
 	"gioui.org/op/clip"
 )
 
@@ -20,8 +21,9 @@ import (
 // shortcut for bug reports; nothing Slack has). While a frame runs between
 // InspectBegin and InspectEnd, slackc records the Slack components natives
 // draw (Render, RenderLazy, Component), the elements natives enter
-// (ClassDef.Enter, so their Slack classes) and the scopes of plugins' host
-// trees, nested as they were drawn. Each record with a size gets a
+// (ClassDef.Enter, so their Slack classes), the chrome's elements marked
+// for the tool alone (ClassDef.Inspect: the header, tabs, rail) and the
+// scopes of plugins' host trees, nested as they were drawn. Each record with a size gets a
 // pass-through pointer area over it with a new tag, so Gio's router says
 // which of them are under the pointer through its own hit test (clips, and
 // whatever is drawn over them, count as for any widget): it sends a new
@@ -47,8 +49,10 @@ type InspectKind uint8
 const (
 	// InspectComponent is a Slack component boundary (Render, Component).
 	InspectComponent InspectKind = iota + 1
-	// InspectElement is an element a native entered (ClassDef.Enter): its
-	// tag, classes and attributes; natives don't say how big it is.
+	// InspectElement is an element a native entered (ClassDef.Enter) or
+	// chrome marked for the tool (ClassDef.Inspect): its tag, classes and
+	// attributes. Its size is known only where Inspect or InspectArea
+	// gave it one.
 	InspectElement
 	// InspectTree is the scope of a plugin's host tree: InspectFrame.Boxes
 	// finds its boxes under a point.
@@ -214,6 +218,92 @@ func inspectLeave() {
 		f.stack = f.stack[:n-1]
 	}
 }
+
+// InspectMark is an element Inspect recorded; the zero mark, none.
+type InspectMark struct{ i int } // the node's index + 1
+
+// Inspect records element d for the inspect tool alone, so the picker
+// reaches what Clack draws without a Slack component around it (the
+// channel header's title and topic, the tab bar's tabs, the tab rail's
+// buttons), the way a browser's inspector reaches any element. Unlike
+// Enter it touches nothing styles see: no element goes on the element
+// stack, so no selector matches it and nothing is drawn differently.
+// Outside inspect mode it is one atomic load. Pair it with End, at the
+// op origin the element is drawn at:
+//
+//	defer clsTab.Inspect(mods).End(gtx, sz)
+func (d *ClassDef) Inspect(mods uint64) InspectMark {
+	if !inspecting.Load() {
+		return InspectMark{}
+	}
+	f := inspectF
+	if f == nil {
+		return InspectMark{}
+	}
+	return InspectMark{f.push(InspectNode{Kind: InspectElement, def: d, mods: mods}) + 1}
+}
+
+// End gives the element Inspect recorded its size, sz px at the current
+// op origin, and a pass-through pointer area there (as a component's),
+// and closes it: what was recorded after it until now is inside it.
+// Call it after what the element draws, so the area is over it.
+func (m InspectMark) End(gtx layout.Context, sz image.Point) {
+	m.EndAt(gtx, image.Rectangle{Max: sz})
+}
+
+// EndAt is End for an element at r, in the current op coordinates.
+func (m InspectMark) EndAt(gtx layout.Context, r image.Rectangle) {
+	f := inspectF
+	if m.i == 0 || f == nil {
+		return
+	}
+	i := m.i - 1
+	if i >= len(f.Nodes) {
+		return // the frame was recorded afresh since
+	}
+	for n := len(f.stack); n > 0; n-- {
+		if f.stack[n-1] == i {
+			f.stack = f.stack[:n-1]
+			break
+		}
+	}
+	f.areaAt(gtx, i, r)
+}
+
+// InspectArea gives the innermost element entered (ClassDef.Enter, not
+// left yet) a box for the inspect tool: r, in the current op coordinates,
+// with a pass-through pointer area, so the picker reaches it. Call it
+// before the element's Leave, after what it draws (the area goes over
+// that). An element already given one isn't touched, nor is a component.
+// Outside inspect mode it is one atomic load.
+func InspectArea(gtx layout.Context, r image.Rectangle) {
+	if !inspecting.Load() {
+		return
+	}
+	f := inspectF
+	if f == nil {
+		return
+	}
+	i := f.top()
+	if i < 0 || f.Nodes[i].Kind != InspectElement || f.Nodes[i].tag != nil {
+		return
+	}
+	f.areaAt(gtx, i, r)
+}
+
+// areaAt sizes node i as r and puts its area there (op coordinates): the
+// area's origin is r's corner, as the node's InspectHit reports it.
+func (f *InspectFrame) areaAt(gtx layout.Context, i int, r image.Rectangle) {
+	f.Nodes[i].Size = r.Size()
+	off := op.Offset(r.Min).Push(gtx.Ops)
+	f.area(gtx, i, r.Size())
+	off.Pop()
+}
+
+// Sized reports that the node has a pointer area this frame: the picker
+// can land on it (components and trees with a size, and the elements
+// Inspect and InspectArea gave one).
+func (n *InspectNode) Sized() bool { return n.tag != nil }
 
 // tree records a host tree's scope s, painted at the current op origin
 // over r (scope coordinates).
