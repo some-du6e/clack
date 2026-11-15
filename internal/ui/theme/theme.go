@@ -32,8 +32,9 @@ import (
 // system-installed Lato (Ubuntu's fonts-lato, a different build) can never
 // win the family match: Gio's font map lists system fonts before the
 // embedded collection, so with the plain name every label rendered with
-// the system files (and parsed them into the heap).
-const Typeface font.Typeface = Family + ", " + ExtFamily + ", " + ExtFamily + "2"
+// the system files (and parsed them into the heap). KeysFamily, last,
+// draws the Mac key symbols (⌃⌥⇧⌘) the UI font lacks (keysface.go).
+const Typeface font.Typeface = Family + ", " + ExtFamily + ", " + ExtFamily + "2, " + KeysFamily
 
 // Font weights in Gio units (CSS weight minus 400).
 const (
@@ -110,7 +111,7 @@ func parseFace(b []byte) font.Face {
 // FacesFor returns the Lato collection (the same for both modes; text
 // weight is matched to Chrome with the Embolden stroke instead).
 func FacesFor(dark bool) []font.FontFace {
-	out := latoFaces()
+	out := append(latoFaces(), keysFaces()...)
 	// after Lato: the first face is the shaper's default. The emoji slot
 	// face goes last (slotIndex reads its index from the collection).
 	out = append(out, MonoFaces()...)

@@ -136,6 +136,7 @@ func facesWith(u *UIFont, extra []FaceSlot) ([]font.FontFace, error) {
 		}
 		out = ff
 	}
+	out = append(out, keysFaces()...)
 	ex, err := parseAll(extra)
 	if err != nil {
 		return nil, err
