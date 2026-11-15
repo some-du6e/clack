@@ -52,6 +52,27 @@ func emojiSlotHas(t *testing.T, r rune) bool {
 	return err == nil && gi != 0
 }
 
+// keysHas reports whether the Clack Keys face (theme/keysface.go), which
+// every UI typeface lists after Lato, maps r in both its faces.
+func keysHas(t *testing.T, r rune) bool {
+	t.Helper()
+	for _, name := range []string{"keysface-regular.ttf", "keysface-bold.ttf"} {
+		b, err := os.ReadFile(filepath.Join("theme", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := sfnt.Parse(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf sfnt.Buffer
+		if gi, err := f.GlyphIndex(&buf, r); err != nil || gi == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // symbolsOutsideLato are the symbol runes (U+2000–U+2FFF) that appear in
 // internal/ui's string literals although Lato has no glyph for them, and
 // why each is fine. Anything drawn from Lato with no glyph falls back to
@@ -59,19 +80,15 @@ func emojiSlotHas(t *testing.T, r rune) bool {
 // intro's Sign in keycap, α.36).
 var symbolsOutsideLato = map[rune]string{
 	'↵': "icon", // keycapIcons draws it as the enter icon
-	'⌘': "macOS only: shortcut.FormatFor/ChipsFor/ClickHintFor's darwin branches, and parse aliases",
-	'⌃': "macOS only: shortcut's darwin branches, and parse aliases",
-	'⌥': "macOS only: shortcut's darwin branches, and parse aliases",
-	'⇧': "macOS only: shortcut's darwin branches, and parse aliases",
-	'⌦': "macOS only: menubar's NSMenu key equivalents",
 	'‣': "input only: composer's pasted-list bullets, never drawn",
 	'⁃': "input only: composer's pasted-list bullets, never drawn",
 	'■': "input only: composer's pasted-list bullets, never drawn",
 	'⧸': "input only: link_warning normalises it to /",
 }
 
-// Every visible symbol in internal/ui's strings is in Lato or drawn as an
-// emoji image, or listed above with a reason; ↵ in particular is drawn as
+// Every visible symbol in internal/ui's strings is in Lato or the Clack
+// Keys face (the Mac key symbols: ⌘⌥⇧⌃ and friends), or drawn as an emoji
+// image, or listed above with a reason; ↵ in particular is drawn as
 // an icon by every keycap. Characters that draw nothing (bidi controls,
 // the word joiner, spaces, line and paragraph separators) and regular
 // expressions (link_warning's look-alike set,
@@ -132,7 +149,7 @@ func TestUISymbolsHaveGlyphs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for r, at := range seen {
-		if latoHas(t, r) || emojiSlotHas(t, r) {
+		if latoHas(t, r) || keysHas(t, r) || emojiSlotHas(t, r) {
 			continue
 		}
 		why, ok := symbolsOutsideLato[r]
@@ -149,7 +166,7 @@ func TestUISymbolsHaveGlyphs(t *testing.T) {
 }
 
 // Windows' and Linux's shortcut labels and tooltip chips use only glyphs
-// Lato has (the macOS ones use the system's ⌘⌥⇧⌃).
+// Lato has (the macOS ones draw ⌘⌥⇧⌃ from the Clack Keys face).
 func TestShortcutChipsHaveGlyphs(t *testing.T) {
 	combos := []string{"Mod+K", "Mod+Shift+K", "Ctrl+Alt+Shift+Up", "Alt+Down", "Alt+Left", "Alt+Right",
 		"Mod+Enter", "Shift+Enter", "Esc", "Mod+[", "Mod+]", "Mod+,", "Mod+.", "Mod+/", "Shift+Space", "Tab", "Mod+Backspace"}

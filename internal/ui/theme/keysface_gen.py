@@ -1,7 +1,7 @@
 """Builds keysface-regular.ttf and keysface-bold.ttf: the Mac key symbols.
 
 Lato has none of the glyphs macOS writes shortcuts with (⌃ ⌥ ⇧ ⌘, ⎋ ⌫ ⌦
-⏎ ↩ ⇥ ⇤ ⇪ ⌅ ⇞ ⇟ ↖ ↘), and Gio's system-font fallback found only some of
+⏎ ↩ ⇥ ⇤ ⇪ ⌅ ⇞ ⇟), and Gio's system-font fallback found only some of
 them on macOS: "⌃⌥⇧⌘D" drew as "□□⇧⌘D" (α.85). theme.Typeface lists
 KeysFamily after the UI font's families, so these code points always
 resolve to this face when the UI font lacks them, on every platform, before
@@ -29,8 +29,8 @@ from fontTools.pens.cu2quPen import Cu2QuPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont, newTable
 
-# Keep in sync with keysRunes in keysface.go.
-KEYS = "⌃⌥⇧⌘⎋⌫⌦⏎↩⇥⇤⇪⌅⇞⇟↖↘"
+# Keep in sync with keysRunes in keysface_test.go.
+KEYS = "⌃⌥⇧⌘⎋⌫⌦⏎↩⇥⇤⇪⌅⇞⇟"
 
 FAMILY = "Clack Keys"
 

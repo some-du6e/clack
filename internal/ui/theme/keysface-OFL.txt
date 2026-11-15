@@ -1,6 +1,6 @@
 keysface-regular.ttf and keysface-bold.ttf ("Clack Keys") are a subset of
 Inter 4.0 Regular and Bold (https://github.com/rsms/inter), built by
-keysface_gen.py: 17 key symbols, outlines converted to TrueType, vertical
+keysface_gen.py: 15 key symbols, outlines converted to TrueType, vertical
 metrics changed, renamed. Inter has no Reserved Font Name.
 
 Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)

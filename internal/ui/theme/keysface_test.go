@@ -13,6 +13,10 @@ import (
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
 
+// keysRunes are the code points the face maps (keysface_gen.py's KEYS):
+// the Mac key symbols Lato lacks.
+const keysRunes = "⌃⌥⇧⌘⎋⌫⌦⏎↩⇥⇤⇪⌅⇞⇟"
+
 // keysGlyph is one shaped glyph: its face in the collection and its gid.
 type keysGlyph struct {
 	r    rune

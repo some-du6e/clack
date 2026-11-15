@@ -22,9 +22,6 @@ import (
 // KeysFamily is the key-symbol face's family (last in Typeface).
 const KeysFamily = "Clack Keys"
 
-// keysRunes are the code points the face maps (keysface_gen.py's KEYS).
-const keysRunes = "⌃⌥⇧⌘⎋⌫⌦⏎↩⇥⇤⇪⌅⇞⇟↖↘"
-
 var (
 	//go:embed keysface-regular.ttf
 	keysRegularTTF []byte

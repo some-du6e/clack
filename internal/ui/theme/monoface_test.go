@@ -120,11 +120,13 @@ func TestCodeRunsHaveOutlines(t *testing.T) {
 	if len(MonoFaces()) == 0 {
 		t.Fatal("no Monaco found for MonoTypeface on macOS")
 	}
-	// the code run uses the stripped Monaco (collection face 8, after Lato)
+	// the code run uses the stripped Monaco (the collection face after
+	// Lato's eight and the key symbols)
+	mono := 8 + len(keysFaces())
 	gs := shapeRun(sh, MonoTypeface+", Monaco, monospace", "@Abcd")
 	for _, g := range gs {
-		if _, fi, _ := splitGlyphID(g.ID); fi != 8 {
-			t.Errorf("glyph from face %d, want MonoTypeface (8)", fi)
+		if _, fi, _ := splitGlyphID(g.ID); fi != mono {
+			t.Errorf("glyph from face %d, want MonoTypeface (%d)", fi, mono)
 		}
 	}
 	// what it replaces, for the log
