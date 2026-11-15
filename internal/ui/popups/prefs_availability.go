@@ -250,12 +250,12 @@ func (p *avPrefs) events(gtx layout.Context, org image.Point, cx int) {
 		if !p.nav[i].Clicked(gtx) || i == 0 {
 			continue
 		}
-		if OpenPreferences != nil {
-			p.modal.Dismiss()
-			OpenPreferences()
-			return
+		if OpenPreferences == nil {
+			continue // a host without the ui root's hooks: no preferences to open
 		}
-		h.Toast(avNav[i].label + " preferences aren't available in " + appName + " yet")
+		p.modal.Dismiss()
+		OpenPreferences()
+		return
 	}
 	if !p.loaded {
 		return

@@ -517,8 +517,15 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 		return layout.Dimensions{Size: sz}
 	}
 	// the workspace menu's strings (makeMenuItemIcon, useSwitchWorkspaceMenu)
+	//
+	// The team blurb: Slack's HomeHeaderMenu (q56z, build 1359418bd580)
+	// clicks it only on a non-Grid team for an admin ("Edit workspace
+	// details"). On Grid under workspace_switcher_improvements (on for the
+	// account) it is the workspace-switcher submenu, the org's workspaces
+	// as sidebar filters, which needs the org's workspace list; Clack
+	// doesn't load it, so the row does nothing.
 	items := []MenuItem{
-		{Widget: header, Do: actToast(h, team.Name+" is the only workspace you're signed in to")},
+		{Key: "team-blurb-menu-item", Widget: header},
 		Sep(),
 	}
 	// "Invite people to …" (key invite-people, show: canUserSeeInviteModal)
@@ -537,18 +544,82 @@ func NewTeamMenu(h Host, anchor image.Point) *Menu {
 		}
 		items = append(items, MenuItem{Key: "check-for-updates", Label: label, Disabled: !ok, Do: f})
 	}
-	items = append(items, []MenuItem{
-		MenuItem{Label: "Tools", Sub: []MenuItem{
-			{Key: LabelKey("Workflows"), Label: nsTeamMenu.T("Workflows"), Do: actToast(h, "Workflows aren't supported in "+appName)},
-			MenuItem{Label: "Analytics", Do: actToast(h, "Analytics aren't supported in "+appName)}.In(nsIa4),
-		}}.In(nsIa4),
-		Sep(),
-		MenuItem{Label: "Sign in on mobile", Do: actToast(h, "Use the Slack mobile app to sign in on your phone")}.In(nsClassicNav),
-		MenuItem{Label: "Join or leave workspaces", External: true, Do: actToast(h, "Manage workspaces at app.slack.com")}.In(nsIa4),
-		MenuItem{Label: "Sign out", Do: actSignOut(h)}.In(nsIa4),
-		MenuItem{Label: "Open the Slack App", Do: actToast(h, "You're already in a Slack app")}.In(nsNativeApps),
-	}...)
+	if tools := teamMenuTools(h); len(tools) > 0 {
+		// "tools-and-settings-submenu": titled "Tools" when it holds only
+		// tools (Clack draws none of the admin settings rows)
+		items = append(items, MenuItem{Key: "tools-and-settings-submenu", Label: nsIa4.T("Tools"), Sub: tools})
+	}
+	items = append(items, Sep())
+	// qr-code-signin-mobile ("Sign in on mobile") opens Slack's QR code
+	// modal (auth.magicLogins.create drawn as a QR code), which Clack
+	// doesn't have, so the row is left out. Join or leave workspaces is a
+	// link to the team's site, on Grid for anyone but frontline members.
+	// open-desktop-app ("Open the Slack App") is web-only (!isDesktop).
+	if snap.EnterpriseID != "" && !actSelf(h).Frontline {
+		items = append(items, MenuItem{Key: "join-leave-workspaces", Label: nsIa4.T("Join or leave workspaces"), External: true,
+			Do: func() { menuOpenTeamPage(h, "") }})
+	}
+	items = append(items, MenuItem{Key: "sign-out", Label: nsIa4.T("Sign out"), Do: actSignOut(h)})
 	return NewMenuOpts(h, items, MenuOpts{Anchor: pointRect(anchor), Width: 320})
+}
+
+// teamMenuTools is HomeHeaderMenu's tools list (a2) as far as Clack draws
+// it. Left out: "Customize workspace" (its gate is the team's custom
+// prefs Clack doesn't read), "Organization analytics" (org admins), and
+// "Workflow Builder" (key launch-workflow-builder, for non-guests), which
+// opens Slack's in-client Workflows › Managed by you view
+// (toWorkflowsTabbedView), a view Clack doesn't have.
+//
+// "Workspace analytics" (key workspace-analytics) shows when the viewer
+// may see the workspace's analytics (A8Mg P: not a guest; an admin, or
+// anyone while the stats_only_admins team pref is off; Clack can't read
+// VIEW_OVERVIEW_ANALYTICS grants). On a workspace (a T… team, all Clack
+// signs in to) it is a link to the gantry page /manage/{team}/analytics
+// on app.slack.com (buildGantryUrl); only an org-level client opens the
+// workspace picker instead.
+func teamMenuTools(h Host) []MenuItem {
+	a := h.Core()
+	if a == nil {
+		return nil
+	}
+	self := actSelf(h)
+	if self.Guest {
+		return nil
+	}
+	team := a.Interactive().TeamID()
+	if team == "" {
+		return nil
+	}
+	if v, ok := a.TeamPref("stats_only_admins"); ok && !self.IsAdmin && !self.IsOwner {
+		switch strings.TrimSpace(string(v)) {
+		case "false", "0", `""`: // !!getTeamPref is false
+		default:
+			return nil
+		}
+	}
+	return []MenuItem{{Key: "workspace-analytics", Label: nsIa4.T("Workspace analytics"), External: true,
+		Do: func() { menuOpenURL(h, "https://app.slack.com/manage/"+team+"/analytics") }}}
+}
+
+// actSelf is the viewer (zero before boot).
+func actSelf(h Host) core.User {
+	if a := h.Core(); a != nil {
+		return a.Self()
+	}
+	return core.User{}
+}
+
+// menuOpenURL opens a menu row's link in the browser (tests swap it).
+var menuOpenURL = srOpenLink
+
+// menuOpenTeamPage is openAuthenticatedUrlInBrowser / an href to the
+// team's site: the workspace's web address plus path.
+func menuOpenTeamPage(h Host, path string) {
+	a := h.Core()
+	if a == nil || a.TeamURL() == "" {
+		return
+	}
+	menuOpenURL(h, a.TeamURL()+strings.TrimPrefix(path, "/"))
 }
 
 // ---- user menu (avatar, bottom-left; opens upward) ----
@@ -744,7 +815,8 @@ func NewUserMenu(h Host, anchor image.Point) *Menu {
 			pfOpenFull(h, actSelfID(h))
 		}}.In(nsClassicNav),
 		MenuItem{Label: "Preferences", Do: actPreferences(h)}.In(nsClassicNav),
-		MenuItem{Label: "Account settings", External: true, Do: actToast(h, "Account settings live at app.slack.com")}.In(nsClassicNav),
+		// account-settings: openAuthenticatedUrlInBrowser(team, "/account/settings")
+		{Key: "account-settings", Label: nsClassicNav.T("Account settings"), External: true, Do: func() { menuOpenTeamPage(h, "account/settings") }},
 		Sep(),
 		{Key: "sign-out", Label: nsClassicNav.T("Sign out of {teamDisplayName}", "teamDisplayName", teamName), Do: actSignOut(h)},
 	}

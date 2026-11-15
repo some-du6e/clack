@@ -132,7 +132,7 @@ type ChannelDetails struct {
 	leaveNo, joinRow, emails        widget.Clickable
 	addPeople, addPeopleRow         widget.Clickable
 	viewProfile, moreMembers        widget.Clickable
-	addApp, addWorkflow             widget.Clickable
+	addApp                          widget.Clickable
 	huddleStart, huddleLink         widget.Clickable
 	newTab                          widget.Clickable // Tabs: "New Tab"
 	orgLearn                        widget.Clickable // "Workspaces with access": Learn more
@@ -729,11 +729,6 @@ func (d *ChannelDetails) update(gtx C) {
 	}
 
 	d.updateAddApps(gtx) // "Add an App" / "Add agents and apps": the apps browser (details_more.go)
-	for _, c := range []*widget.Clickable{&d.addWorkflow} {
-		if c.Clicked(gtx) {
-			d.h.Toast(cdUnsupported)
-		}
-	}
 	if d.call.Clicked(gtx) {
 		d.callClicked() // details_call.go
 	}
