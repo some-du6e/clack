@@ -708,7 +708,8 @@ func (v *SearchView) chanEntity(gtx layout.Context, th *theme.Theme, cl *Colors,
 		})
 		if suffix { // the name's :hover underline rides with the row's
 			uy := lineH - dp(gtx, 5)
-			fill(gtx, image.Rect(ix, uy, ix+nd.Size.X, uy+max(1, dp(gtx, 1))), nameCol)
+			one := max(1, dp(gtx, 1)) // the underline's thickness, not a border
+			fill(gtx, image.Rect(ix, uy, ix+nd.Size.X, uy+one), nameCol)
 		}
 		return layout.Dimensions{}
 	})
