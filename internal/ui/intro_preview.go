@@ -240,22 +240,29 @@ func (p *introPreview) close() {
 	}()
 }
 
-// update runs the preview's posted work and, until the beat shows it,
-// lays it out unseen a few times so its history, thread and avatars are
-// in by then. Every window frame while the introduction is up.
-func (p *introPreview) update(f *introFrame, showing bool) {
+// pump runs the preview's posted work (its boot, the header's reads):
+// every window frame while the introduction is up, drawn or not.
+func (p *introPreview) pump(now time.Time) {
 	if p == nil || p.app == nil || p.closed {
 		return
 	}
-	a := p.app
-	a.drain()
+	p.app.drain()
+	if p.ready() {
+		if p.readyAt.IsZero() {
+			p.readyAt = now
+		}
+		p.openThread()
+	}
+}
+
+// update, until the beat shows the preview, lays it out unseen a few
+// times so its history, thread and avatars are in by then. Every frame
+// that draws the beats.
+func (p *introPreview) update(f *introFrame, showing bool) {
 	if !p.ready() {
 		return
 	}
-	if p.readyAt.IsZero() {
-		p.readyAt = f.now
-	}
-	p.openThread()
+	a := p.app
 	if showing {
 		p.warmDone = true // from here on it is laid out only on screen
 	}

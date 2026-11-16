@@ -208,6 +208,7 @@ func (in *intro) update(gtx layout.Context, a *App) {
 		now = time.Now()
 	}
 	in.mc = motionClock{now: now}
+	in.preview.pump(now)
 	if in.made.IsZero() {
 		in.made = now
 		in.prefetch(gtx, a)
