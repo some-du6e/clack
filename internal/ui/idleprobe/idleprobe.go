@@ -126,10 +126,12 @@ func skipFrame(fn string) bool {
 		}
 	}
 	// the tests' per-window filters (TestIdleFrames.func1,
-	// TestHuddleWindowIdleFrames.func1, TestMacIdleCPU's) and the perf
-	// driver's (perfInvalidateHook)
+	// TestHuddleWindowIdleFrames.func1, TestMacIdleCPU's,
+	// TestIdleTrafficFrames' and the plugin perf's idle passes:
+	// idleTrafficHook) and the perf driver's (perfInvalidateHook)
 	return strings.Contains(fn, "IdleFrames.func1") || strings.Contains(fn, "IdleCPU.func") ||
-		strings.HasSuffix(fn, ".perfInvalidateHook")
+		strings.HasSuffix(fn, ".perfInvalidateHook") || strings.HasSuffix(fn, ".idleTrafficHook") ||
+		strings.Contains(fn, "IdleTrafficFrames.func") || strings.Contains(fn, ".perfIdle.func")
 }
 
 // Caller names the code that asked for a frame: the first two frames
