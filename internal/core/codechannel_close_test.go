@@ -317,3 +317,214 @@ func TestClosedCodeChannelsSurviveRestart(t *testing.T) {
 		t.Error("control: without code_channel_closed.json the closed code channel stayed out of the sidebar; the test no longer reproduces the bug")
 	}
 }
+
+// Sign-out deletes the saved closed set with the rest of the account's
+// cache (store.DropDisk's cacheFiles), so signing back in to the same
+// account doesn't hide a code channel that may have been reopened
+// meanwhile.
+func TestSignOutForgetsClosedCodeChannels(t *testing.T) {
+	sz := fakeslack.Small
+	sz.CodeChannels = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	dir := t.TempDir()
+	ctx := context.Background()
+	a := New(slack.New(fs.Creds()), store.New(dir))
+	t.Cleanup(a.Shutdown)
+	if err := a.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	a.closeStaleCodeChannels(ctx, codeCloseFirstMax)
+	closed := filepath.Join(dir, codeClosedFile)
+	if _, err := os.Stat(closed); err != nil || inSidebar(a, fakeslack.CodeQuietID) {
+		t.Fatalf("closing it: saved %v, in the sidebar %v", err, inSidebar(a, fakeslack.CodeQuietID))
+	}
+	a.Shutdown()
+	<-a.DropCache() // sign-out
+	for _, n := range []string{codeClosedFile, codeClosedFile + ".tmp", codeReopenFile, codeReopenFile + ".tmp"} {
+		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("sign-out left %s (%v)", n, err)
+		}
+	}
+	if es, err := os.ReadDir(dir); err == nil {
+		var left []string
+		for _, e := range es {
+			left = append(left, e.Name())
+		}
+		t.Logf("the account directory after sign-out: %v", left)
+	}
+
+	b := New(slack.New(fs.Creds()), store.New(dir)) // signed in again
+	t.Cleanup(b.Shutdown)
+	if err := b.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !inSidebar(b, fakeslack.CodeQuietID) || b.codeChannelClosed(fakeslack.CodeQuietID) {
+		t.Error("after signing out and in again the code channel closed before is still hidden")
+	}
+}
+
+// The closer's close is saved only once conversations.close answered ok:
+// quitting while it runs (the call never sent) leaves nothing on disk, so
+// the next launch doesn't hide a channel the server still has open.
+func TestCodeChannelCloseSavedOnlyOnceConfirmed(t *testing.T) {
+	sz := fakeslack.Small
+	sz.CodeChannels = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	dir := t.TempDir()
+	a := New(slack.New(fs.Creds()), store.New(dir))
+	t.Cleanup(a.Shutdown)
+	if err := a.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	quit, cancel := context.WithCancel(context.Background())
+	cancel() // the app is quitting: core's background context is done
+	if err := a.CloseCodeChannel(quit, fakeslack.CodeQuietID); err == nil {
+		t.Fatal("conversations.close went out on a cancelled context")
+	}
+	for _, c := range fs.CodeCalls() {
+		if c.Method == "conversations.close" {
+			t.Fatalf("the fake got conversations.close %v", c.Args)
+		}
+	}
+	if !a.codeChannelClosed(fakeslack.CodeQuietID) {
+		t.Error("the optimistic close isn't in memory")
+	}
+	if m := a.readCodeState(codeClosedFile); len(m) != 0 {
+		t.Errorf("a close the server never got was saved: %v", m)
+	}
+	a.Shutdown()
+
+	b := New(slack.New(fs.Creds()), store.New(dir))
+	t.Cleanup(b.Shutdown)
+	if err := b.Boot(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !inSidebar(b, fakeslack.CodeQuietID) || len(b.staleCodeChannels(10, time.Now())) == 0 {
+		t.Error("after quitting mid-close the next launch hides the channel (or won't close it)")
+	}
+	// confirmed this time: saved
+	if err := b.CloseCodeChannel(context.Background(), fakeslack.CodeQuietID); err != nil {
+		t.Fatal(err)
+	}
+	if m := b.readCodeState(codeClosedFile); m[fakeslack.CodeQuietID] == 0 {
+		t.Errorf("a close conversations.close answered isn't saved: %v", m)
+	}
+}
+
+// codeClosedApp is a core over the fake API with a cache directory, the
+// viewer's code channels ids (latest message quiet ago) and plain channel
+// plain.
+func codeClosedApp(t *testing.T, dir string, ids []string, plain string, latest map[string]time.Time) *App {
+	t.Helper()
+	f := newFake(t)
+	c := slack.New(slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: f.srv.URL + "/"})
+	c.EdgeURL = f.srv.URL + "/edge/"
+	s := store.New(dir)
+	s.PutUsers([]slack.User{{ID: "USELF", Name: "me"}})
+	a := New(c, s)
+	t.Cleanup(a.Shutdown)
+	a.S.Self = *mustUser(s, "USELF")
+	created := time.Now().Add(-60 * 24 * time.Hour).Unix()
+	var counts []slack.CountEntry
+	for _, id := range ids {
+		a.S.PutConv(slack.Conversation{ID: id, Name: strings.ToLower(id), IsChannel: true, IsMember: true, Created: created,
+			Properties: json.RawMessage(liveTestProps)})
+	}
+	a.S.PutConv(slack.Conversation{ID: plain, Name: strings.ToLower(plain), IsChannel: true, IsMember: true, Created: created})
+	for id, at := range latest {
+		ts := strconv.FormatInt(at.Unix(), 10) + ".000100"
+		counts = append(counts, slack.CountEntry{ID: id, Latest: ts, LastRead: ts})
+	}
+	a.S.SetCounts(&slack.Counts{Channels: counts})
+	return a
+}
+
+// A saved close doesn't last for good. A join is a new membership, and
+// leaving drops the entry. Boot drops entries for channels that aren't the
+// viewer's code channels any more, and those with a message newer than the
+// newest Clack saw while it ran (the record_channel_open it may have
+// missed). A message Clack saw while running, with no reopen, keeps the
+// channel closed, as Slack's client does: quitting saves it as the entry's
+// watermark.
+func TestClosedCodeChannelEntriesExpire(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	day := 24 * time.Hour
+	quiet, recent := now.Add(-10*day), now.Add(-day)
+	w := now.Add(-5 * day).Unix() // when they were closed
+	saved := map[string]int64{"CJOIN": w, "CLEFT": w, "CSEEN": w, "CMISSED": w, "CGONE": w, "CPLAIN": w, "CQUIET": w}
+	b, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, codeClosedFile), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codes := []string{"CJOIN", "CLEFT", "CSEEN", "CMISSED", "CGONE", "CQUIET"}
+	all := func(at map[string]time.Time) map[string]time.Time {
+		out := map[string]time.Time{}
+		for _, id := range append(codes, "CPLAIN") {
+			out[id] = quiet
+		}
+		for id, t := range at {
+			out[id] = t
+		}
+		return out
+	}
+
+	// the first launch: boot's check drops the plain channel's entry only
+	a := codeClosedApp(t, dir, codes, "CPLAIN", all(nil))
+	a.loadCodeChannelState()
+	a.reconcileClosedCodeChannels()
+	for _, id := range codes {
+		if !a.codeChannelClosed(id) {
+			t.Errorf("first launch: %s isn't closed", id)
+		}
+	}
+	if a.codeChannelClosed("CPLAIN") {
+		t.Error("first launch: an entry for a channel that isn't a code channel stayed")
+	}
+	// while it runs: rejoined, left, and a message in CSEEN with no reopen
+	a.handle(rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "CJOIN", "name": "cjoin"}}))
+	a.handle(rtm("channel_left", map[string]any{"channel": "CLEFT"}))
+	ts := strconv.FormatInt(recent.Unix(), 10) + ".000100"
+	var counts []slack.CountEntry
+	for id, at := range all(map[string]time.Time{"CSEEN": recent}) {
+		l := strconv.FormatInt(at.Unix(), 10) + ".000100"
+		counts = append(counts, slack.CountEntry{ID: id, Latest: l, LastRead: l})
+	}
+	a.S.SetCounts(&slack.Counts{Channels: counts})
+	if a.codeChannelClosed("CJOIN") || a.codeChannelClosed("CLEFT") {
+		t.Errorf("joined %v, left %v: still closed", a.codeChannelClosed("CJOIN"), a.codeChannelClosed("CLEFT"))
+	}
+	if !a.codeChannelClosed("CSEEN") {
+		t.Error("a message with no record_channel_open reopened CSEEN")
+	}
+	_ = a.Close() // quit: the watermarks
+	a.Shutdown()
+
+	// the next launch: CMISSED had a message while Clack wasn't running,
+	// CGONE isn't the viewer's any more
+	next := all(map[string]time.Time{"CSEEN": recent, "CMISSED": recent})
+	delete(next, "CGONE")
+	b2 := codeClosedApp(t, dir, []string{"CJOIN", "CLEFT", "CSEEN", "CMISSED", "CQUIET"}, "CPLAIN", next)
+	b2.loadCodeChannelState()
+	b2.reconcileClosedCodeChannels()
+	want := map[string]bool{"CJOIN": false, "CLEFT": false, "CSEEN": true, "CMISSED": false, "CGONE": false, "CPLAIN": false, "CQUIET": true}
+	for id, closed := range want {
+		if got := b2.codeChannelClosed(id); got != closed {
+			t.Errorf("next launch: %s closed %v, want %v", id, got, closed)
+		}
+	}
+	if m := b2.readCodeState(codeClosedFile); m["CSEEN"] != recent.Unix() {
+		t.Errorf("CSEEN's watermark %d, want the message it saw (%d); ts %s", m["CSEEN"], recent.Unix(), ts)
+	}
+}

@@ -538,21 +538,33 @@ func (a *App) Boot(ctx context.Context) error {
 		}()
 	}
 	var tDMUsers time.Duration
-	dmsDone := make(chan struct{}) // sidebar.dms answered (or failed)
+	dmsDone := make(chan struct{})    // sidebar.dms answered (or failed)
+	countsDone := make(chan struct{}) // client.counts answered (or failed)
 	step("conversations", func() error {
 		convs, errConvs = a.C.Conversations(ctx)
 		if errConvs != nil {
 			return errConvs
 		}
 		// the DM rows' people, straight away (not after every other
-		// step): the open DMs' (sidebar.dms), not every DM
-		// users.conversations lists. Closed ones aren't rows; their
-		// partners are read when something draws them (members.go).
+		// step): the sidebar's DMs, open ones (sidebar.dms) and closed
+		// ones with unreads (client.counts), not every DM
+		// users.conversations lists. Other closed ones aren't rows; their
+		// partners are read when something draws them (members.go). A
+		// closed DM a draft or a huddle keeps in the sidebar is named one
+		// users/info later, by the first snapshot's lookup.
 		<-dmsDone
+		<-countsDone
 		open := map[string]bool{}
 		for _, d := range dms {
 			if d.IsOpen {
 				open[d.ID] = true
+			}
+		}
+		if counts != nil {
+			for _, e := range counts.IMs {
+				if e.HasUnreads || e.MentionCount > 0 {
+					open[e.ID] = true
+				}
 			}
 		}
 		ids := []string{a.C.Creds.UserID}
@@ -568,6 +580,7 @@ func (a *App) Boot(ctx context.Context) error {
 		return nil
 	})
 	step("counts", func() (err error) {
+		defer close(countsDone)
 		counts, err = a.C.Counts(ctx)
 		return err
 	})
@@ -674,6 +687,7 @@ func (a *App) Boot(ctx context.Context) error {
 	if errDMs == nil {
 		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
 	}
+	a.reconcileClosedCodeChannels() // the saved closed code channels against what boot fetched (codechannel_close.go)
 	a.S.Lock()
 	a.S.Sections = sections
 	a.S.Unlock()
@@ -728,6 +742,7 @@ func (a *App) Boot(ctx context.Context) error {
 // Close saves the metadata cache (after any save still writing).
 func (a *App) Close() error {
 	a.saves.Wait()
+	a.checkpointClosedCodeChannels() // the closed code channels' watermarks (codechannel_close.go)
 	return a.S.SaveCache()
 }
 

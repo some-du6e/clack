@@ -204,6 +204,10 @@ func (a *App) handle(ev slack.Event) {
 			if e.TempExp != nil {
 				a.setTemp(id, *e.TempExp)
 			}
+			// a new membership: Slack upserts the event's channel, is_open
+			// with it; Clack keeps no is_open from it, so an old close of
+			// a code channel no longer counts (codechannel_close.go)
+			a.forgetCodeChannelClosed(id)
 		}
 		a.refreshConv(ctx, id)
 	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
@@ -229,6 +233,7 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: "sidebar_changed"})
 	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted":
 		a.dropMembership(ch, ev.Type == "channel_archive" || ev.Type == "group_archive")
+		a.forgetCodeChannelClosed(ch) // no membership, no is_open to keep (codechannel_close.go)
 		a.emit(Event{Type: "conv_removed", Channel: ch})
 	case "pin_added", "pin_removed":
 		var e struct {

@@ -36,15 +36,31 @@ package core
 // (client-boot dRMY dispatchChannelsDataInner, build 2c0d02ca130f: the
 // channel objects' is_open, and under version_all_channels a closable
 // channel the answer leaves out counts as closed), which Clack doesn't
-// call. So Clack keeps the code channels it saw closed on disk
+// call. So Clack keeps the code channels it knows are closed on disk
 // (code_channel_closed.json, next to the reopen times) and reads them
 // before the first sidebar: before, every launch listed the closed ones
-// again and the closer closed the same channels two minutes later. A
-// reopen made elsewhere while Clack wasn't running shows once
-// record_channel_open comes or the channel is viewed. Slack sets "opened
-// this session" only from im_open / mpim_open and for IMs it created
-// (setConversationOpen, channelCreated), never for a code channel, so that
-// rule never holds one back here either.
+// again and the closer closed the same channels two minutes later.
+//
+//   - Only a close the server confirmed is saved: record_channel_close,
+//     or conversations.close answering ok. The closer's optimistic close
+//     lives in memory until then, so quitting mid-close keeps nothing.
+//   - Each entry is a watermark: when Clack last knew the channel closed
+//     (the close, then the newest message it saw while running, saved on
+//     quit). A message newer than that at the next boot is activity Clack
+//     wasn't running for, where it may have missed the record_channel_open
+//     that reopened it, so the entry goes: at worst the channel shows
+//     until it is stale again and the closer closes it.
+//   - A join is a new membership (Slack's channelJoined upserts the
+//     event's channel, is_open with it); leaving, archiving or deleting
+//     the channel drops its entry, and so does boot for a channel that
+//     isn't the viewer's code channel any more. Sign-out deletes the file
+//     (store.DropDisk).
+//
+// A reopen made elsewhere while Clack wasn't running and without later
+// activity shows once record_channel_open comes or the channel is viewed.
+// Slack sets "opened this session" only from im_open / mpim_open and for
+// IMs it created (setConversationOpen, channelCreated), never for a code
+// channel, so that rule never holds one back here either.
 
 import (
 	"context"
@@ -80,7 +96,8 @@ const (
 // codeChannelReopen store.
 type codeOpenState struct {
 	mu           sync.Mutex
-	closed       map[string]int64 // code channel → when Clack saw it closed (unix s): is_open false
+	closed       map[string]int64 // code channel → is_open false since (the watermark, unix s)
+	pending      map[string]bool  // closed here, the server's answer not in yet: not saved
 	closedLoaded bool             // closed read from disk
 	reopen       map[string]int64 // codeChannelReopen: code channel → reopenedAt (unix s)
 	loaded       bool             // reopen read from disk
@@ -93,7 +110,8 @@ func (a *App) codeOpen() *codeOpenState {
 	if v, ok := codeOpenStates.Load(a); ok {
 		return v.(*codeOpenState)
 	}
-	v, _ := codeOpenStates.LoadOrStore(a, &codeOpenState{closed: map[string]int64{}, reopen: map[string]int64{}, conn: make(chan bool, 4)})
+	v, _ := codeOpenStates.LoadOrStore(a, &codeOpenState{closed: map[string]int64{}, pending: map[string]bool{}, reopen: map[string]int64{},
+		conn: make(chan bool, 4)})
 	return v.(*codeOpenState)
 }
 
@@ -112,23 +130,145 @@ func (a *App) codeChannelClosed(ch string) bool {
 }
 
 // setCodeChannelOpen records ch's is_open and reports whether it changed.
-// The closed set is saved at once (off the UI goroutine: closing and
-// reopening run on core's).
-func (a *App) setCodeChannelOpen(ch string, open bool) bool {
+// confirmed is the server's word (an event, or a call that answered ok):
+// only that is saved, at once (off the UI goroutine: closing and reopening
+// run on core's); an optimistic change stays in memory until confirmed.
+func (a *App) setCodeChannelOpen(ch string, open, confirmed bool) bool {
 	st := a.codeOpen()
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	a.loadCodeClosedLocked(st)
-	if _, closed := st.closed[ch]; closed == !open {
-		return false
-	}
-	if open {
+	_, closed := st.closed[ch]
+	changed := closed == open
+	switch {
+	case open:
 		delete(st.closed, ch)
-	} else {
+		delete(st.pending, ch)
+	case !closed:
 		st.closed[ch] = time.Now().Unix()
 	}
-	a.saveCodeStateLocked(codeClosedFile, st.closed)
+	if !open {
+		if confirmed {
+			delete(st.pending, ch)
+		} else if changed {
+			st.pending[ch] = true
+		}
+	}
+	if confirmed {
+		a.saveCodeClosedLocked(st)
+	}
+	return changed
+}
+
+// saveCodeClosedLocked writes the confirmed closed set. st.mu is held.
+func (a *App) saveCodeClosedLocked(st *codeOpenState) {
+	m := make(map[string]int64, len(st.closed))
+	for id, at := range st.closed {
+		if !st.pending[id] {
+			m[id] = at
+		}
+	}
+	a.saveCodeStateLocked(codeClosedFile, m)
+}
+
+// codeChannelSavedClosed reports whether ch's close is the server's word
+// (saved), not one still waiting for its answer.
+func (a *App) codeChannelSavedClosed(ch string) bool {
+	st := a.codeOpen()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	a.loadCodeClosedLocked(st)
+	_, closed := st.closed[ch]
+	return closed && !st.pending[ch]
+}
+
+// forgetCodeChannelClosed drops what Clack knows of ch's is_open (a new
+// membership, or none: joined, left, archived, deleted) and reports
+// whether it was closed.
+func (a *App) forgetCodeChannelClosed(ch string) bool {
+	st := a.codeOpen()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	a.loadCodeClosedLocked(st)
+	if _, ok := st.closed[ch]; !ok {
+		return false
+	}
+	delete(st.closed, ch)
+	delete(st.pending, ch)
+	a.saveCodeClosedLocked(st)
 	return true
+}
+
+// latestSecs is ch's newest message (channelLatestSecs over the counts).
+func (a *App) latestSecs(ch string) int64 {
+	e, _ := a.S.Count(ch)
+	c, _ := a.S.Conv(ch)
+	return channelLatestSecs(e.Latest, c)
+}
+
+// checkpointClosedCodeChannels moves each closed code channel's watermark
+// up to the newest message Clack has seen in it (quit: Close), so the
+// next boot tells activity it saw from activity it missed.
+func (a *App) checkpointClosedCodeChannels() {
+	st := a.codeOpen()
+	st.mu.Lock()
+	ids := make([]string, 0, len(st.closed))
+	for id := range st.closed {
+		ids = append(ids, id)
+	}
+	st.mu.Unlock()
+	latest := make(map[string]int64, len(ids))
+	for _, id := range ids {
+		latest[id] = a.latestSecs(id)
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	changed := false
+	for id, l := range latest {
+		if at, ok := st.closed[id]; ok && l > at {
+			st.closed[id] = l
+			changed = true
+		}
+	}
+	if changed {
+		a.saveCodeClosedLocked(st)
+	}
+}
+
+// reconcileClosedCodeChannels is Boot's check of the saved closed set
+// against the conversations and counts it fetched: entries for channels
+// that aren't the viewer's unarchived code channels go, and so do those
+// with a message newer than their watermark (see the top of this file).
+func (a *App) reconcileClosedCodeChannels() {
+	st := a.codeOpen()
+	st.mu.Lock()
+	a.loadCodeClosedLocked(st)
+	saved := make(map[string]int64, len(st.closed))
+	for id, at := range st.closed {
+		if !st.pending[id] {
+			saved[id] = at
+		}
+	}
+	st.mu.Unlock()
+	var gone []string
+	for id, at := range saved {
+		c, ok := a.S.Conv(id)
+		if !ok || c.IsArchived || codeChannelOf(c) == nil || a.latestSecs(id) > at {
+			gone = append(gone, id)
+		}
+	}
+	if len(gone) == 0 {
+		return
+	}
+	st.mu.Lock()
+	for _, id := range gone {
+		delete(st.closed, id)
+		delete(st.pending, id)
+	}
+	a.saveCodeClosedLocked(st)
+	st.mu.Unlock()
+	sort.Strings(gone)
+	log.Printf("code channels: %d saved as closed reopened or gone since (%v)", len(gone), gone)
 }
 
 // loadCodeChannelState reads the closed code channels and their reopen
@@ -149,7 +289,7 @@ func (a *App) loadCodeClosedLocked(st *codeOpenState) {
 	st.closedLoaded = true
 	for k, v := range a.readCodeState(codeClosedFile) {
 		if _, ok := st.closed[k]; !ok { // what this session saw already wins
-			st.closed[k] = v
+			st.closed[k] = v // saved: the server's word
 		}
 	}
 }
@@ -425,14 +565,18 @@ func (a *App) closeStaleCodeChannels(ctx context.Context, limit int) {
 
 // CloseCodeChannel is closeChannelApi for a code channel: closed in the
 // sidebar at once, then conversations.close {channel}; open again when the
-// call fails.
+// call fails. The close is saved only once the server answered ok: a quit
+// while it is in flight (the call never sent) leaves nothing on disk.
 func (a *App) CloseCodeChannel(ctx context.Context, ch string) error {
-	if a.setCodeChannelOpen(ch, false) {
+	if a.setCodeChannelOpen(ch, false, false) {
 		a.emit(Event{Type: "sidebar_changed"})
 	}
 	err := a.C.Call(ctx, "conversations.close", url.Values{"channel": {ch}}, nil)
-	if err != nil && ctx.Err() == nil {
-		if a.setCodeChannelOpen(ch, true) {
+	switch {
+	case err == nil:
+		a.setCodeChannelOpen(ch, false, true)
+	case ctx.Err() == nil:
+		if a.setCodeChannelOpen(ch, true, false) {
 			a.emit(Event{Type: "sidebar_changed"})
 		}
 	}
@@ -447,7 +591,7 @@ func (a *App) onRecordChannelClose(ch string) {
 	if !ok {
 		return // "Unknown channel"
 	}
-	changed := a.setCodeChannelOpen(ch, false)
+	changed := a.setCodeChannelOpen(ch, false, true)
 	if codeChannelOf(c) != nil && a.codeChannelsAutoCloseOn() {
 		a.clearCodeChannelReopenedAt(ch)
 	}
@@ -487,18 +631,20 @@ func (a *App) OpenRecordChannel(ctx context.Context, ch, reason string) error {
 	if ok && codeChannelOf(c) != nil && a.codeChannelsAutoCloseOn() {
 		a.setCodeChannelReopenedAt(ch, time.Now().Unix())
 	}
-	if a.setCodeChannelOpen(ch, true) {
+	saved := a.codeChannelSavedClosed(ch)
+	if a.setCodeChannelOpen(ch, true, false) {
 		a.emit(Event{Type: "sidebar_changed"})
 	}
 	var res struct {
 		Channel json.RawMessage `json:"channel"`
 	}
 	if err := a.C.Call(ctx, "recordChannels.open", url.Values{"channel": {ch}, "reason": {reason}}, &res); err != nil {
-		if a.setCodeChannelOpen(ch, false) {
+		if a.setCodeChannelOpen(ch, false, saved) { // as it was
 			a.emit(Event{Type: "sidebar_changed"})
 		}
 		return err
 	}
+	a.setCodeChannelOpen(ch, true, true)
 	if len(res.Channel) > 0 && string(res.Channel) != "null" {
 		if a.mergeChannel(ch, res.Channel) {
 			if v, ok := a.Conv(ch); ok {

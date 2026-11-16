@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -155,12 +156,13 @@ func TestMembersPassKeepsSidebarPastTarget(t *testing.T) {
 	}
 }
 
-// Boot asks users/info for the open DMs' partners only (sidebar.dms), and
-// neither the snapshot nor the members fetcher asks for a closed DM's
-// partner or a closed group DM's members afterwards. Before, boot asked
-// for every DM's partner (users.conversations lists the closed ones too),
-// so with the closed ones dropped by the hourly pass every launch fetched
-// them again.
+// Boot asks users/info for the sidebar's DM partners only: the open DMs'
+// (sidebar.dms) and closed ones with unreads (client.counts), which are
+// sidebar rows too. Neither the snapshot nor the members fetcher asks for
+// another closed DM's partner or a closed group DM's members afterwards.
+// Before, boot asked for every DM's partner (users.conversations lists
+// the closed ones too), so with the closed ones dropped by the hourly pass
+// every launch fetched them again.
 func TestBootAsksOpenDMPartnersOnly(t *testing.T) {
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
@@ -168,8 +170,15 @@ func TestBootAsksOpenDMPartnersOnly(t *testing.T) {
 	}
 	t.Cleanup(func() { fs.Close() })
 	const closed, mpA, mpB = "U0CLOSEDDM1", "U0CLOSEDMP1", "U0CLOSEDMP2" // not in the fake's directory
+	const unread = "U0CLOSEDUN1"                                         // a closed DM with unreads: a sidebar row
 	fs.AddClosedDM("D0CLOSEDDM1", closed)
 	fs.AddClosedMPDM("G0CLOSEDMP1", "mpdm-closed-1", []string{fakeslack.SelfID, mpA, mpB})
+	fs.AddClosedDM("D0CLOSEDUN1", unread)
+	// read up to an old message: client.counts has it unread
+	if err := slack.New(fs.Creds()).Call(context.Background(), "conversations.mark",
+		url.Values{"channel": {"D0CLOSEDUN1"}, "ts": {"1700000000.000000"}}, nil); err != nil {
+		t.Fatal(err)
+	}
 	var mu sync.Mutex
 	asked := map[string]bool{}
 	fs.SetEdgeHook(func(method string, body map[string]json.RawMessage) (any, bool) {
@@ -192,11 +201,17 @@ func TestBootAsksOpenDMPartnersOnly(t *testing.T) {
 	if !a.SidebarDMsKnown() {
 		t.Fatal("sidebar.dms didn't answer")
 	}
+	mu.Lock()
+	unreadAsked := asked[unread]
+	mu.Unlock()
+	if !unreadAsked {
+		t.Error("boot didn't ask users/info for the partner of a closed DM with unreads (a sidebar row)")
+	}
 	openPartner := ""
 	var ims [][2]string // id, partner (dmOpen takes a.mu: not under the store's lock)
 	a.S.RLock()
 	for _, c := range a.S.Convs {
-		if c.IsIM && c.User != fakeslack.SelfID && c.ID != "D0CLOSEDDM1" {
+		if c.IsIM && c.User != fakeslack.SelfID && c.ID != "D0CLOSEDDM1" && c.ID != "D0CLOSEDUN1" {
 			ims = append(ims, [2]string{c.ID, c.User})
 		}
 	}
