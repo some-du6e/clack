@@ -54,6 +54,7 @@ func WriteCharged(ctx context.Context, img image.Image, charge func(int64) error
 // encoding reaches it, half as big again as the encoding so far, between
 // minChunk and maxChunk.
 type pngData struct {
+	ctx    context.Context // the copy's: the encode stops once it's done
 	chunks [][]byte
 	n      int
 	charge func(int64) error
@@ -65,6 +66,9 @@ const (
 )
 
 func (d *pngData) Write(p []byte) (int, error) {
+	if err := d.ctx.Err(); err != nil {
+		return 0, err
+	}
 	n := len(p)
 	for len(p) > 0 {
 		if k := len(d.chunks); k == 0 || len(d.chunks[k-1]) == cap(d.chunks[k-1]) {
@@ -104,13 +108,14 @@ func (d *pngData) copyTo(dst []byte) {
 }
 
 // encodePNG is img as a PNG, in chunks, charged first: the encoder's own
-// buffers (pngEncoderBytes), then each chunk as it's made.
-func encodePNG(img image.Image, charge func(int64) error) (*pngData, error) {
+// buffers (pngEncoderBytes), then each chunk as it's made. It stops, with
+// ctx's error, once ctx is done.
+func encodePNG(ctx context.Context, img image.Image, charge func(int64) error) (*pngData, error) {
 	w := img.Bounds().Dx()
 	if err := charge(pngEncoderBytes(w)); err != nil {
 		return nil, err
 	}
-	d := &pngData{charge: charge}
+	d := &pngData{ctx: ctx, charge: charge}
 	if err := png.Encode(d, pngSource(img)); err != nil {
 		return nil, err
 	}

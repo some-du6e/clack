@@ -99,8 +99,8 @@ type Cache struct {
 	maxBytes int
 	inflight map[key]bool
 	failed   map[key]failure
-	// held: busy loads' bytes for their next try (holdLocked), at most
-	// heldMax of them (heldBytes)
+	// held: busy loads' bytes for their next try (holdLocked), heldBytes of
+	// them, counted in bytes and at most 1/heldShare of the budget
 	held      map[key]held
 	heldBytes int
 
@@ -186,9 +186,11 @@ type held struct {
 	at   time.Time
 }
 
-// heldMax bounds the bytes kept for busy loads' next tries, in all; past
-// it the oldest go (their next try downloads them again).
-const heldMax = 64 << 20
+// heldShare: busy loads' kept bytes are counted in the cache's byte budget
+// (c.bytes, as its images are) and take at most 1/heldShare of it; past
+// that the oldest go, and a file bigger than that isn't kept (its next try
+// downloads it again).
+const heldShare = 4
 
 // ErrUndecodable marks bytes in an image format this package reads
 // (PNG, JPEG, GIF, WebP) that don't decode: a final failure, never
@@ -842,14 +844,16 @@ func (c *Cache) load(k key) {
 	inv()
 }
 
-// holdLocked keeps h for k's next try, letting the oldest held go first
-// past heldMax (bytes over heldMax on their own aren't kept).
+// holdLocked keeps h for k's next try, in the cache's byte budget: the
+// oldest held go first past the budget's 1/heldShare, and what nobody drew
+// lately makes room (shedLocked); bytes that don't fit then aren't kept.
 func (c *Cache) holdLocked(k key, h held) {
-	if len(h.data) > heldMax {
+	c.unholdLocked(k)
+	limit := c.maxBytes / heldShare
+	if len(h.data) > limit {
 		return
 	}
-	c.unholdLocked(k)
-	for c.heldBytes+len(h.data) > heldMax {
+	for c.heldBytes+len(h.data) > limit {
 		var old key
 		var at time.Time
 		first := true
@@ -860,31 +864,49 @@ func (c *Cache) holdLocked(k key, h held) {
 		}
 		c.unholdLocked(old)
 	}
+	if !c.shedLocked(c.maxBytes-len(h.data), time.Now()) {
+		return // what's drawn now has the budget
+	}
 	if c.held == nil {
 		c.held = map[key]held{}
 	}
 	h.at = time.Now()
 	c.held[k] = h
 	c.heldBytes += len(h.data)
+	c.bytes += len(h.data)
 }
 
 // unholdLocked lets k's held bytes go.
 func (c *Cache) unholdLocked(k key) {
 	if h, ok := c.held[k]; ok {
 		c.heldBytes -= len(h.data)
+		c.bytes -= len(h.data)
 		delete(c.held, k)
 	}
 }
 
 // evict brings the decoded bytes back under the budget: first what
 // nobody drew in the last animGrace (an animated GIF's encoded bytes
-// before its still, least recently used first), then the animations
-// playing on screen (the largest first; each draws its still until
-// animRetry has passed), and only then, as before, images on screen.
+// before its still, least recently used first), then busy loads' kept
+// bytes (oldest first: their next try downloads them again), then the
+// animations playing on screen (the largest first; each draws its still
+// until animRetry has passed), and only then, as before, images on
+// screen.
 func (c *Cache) evict() {
 	now := time.Now()
 	if c.shedLocked(c.maxBytes, now) {
 		return
+	}
+	for c.bytes > c.maxBytes && len(c.held) > 0 { // busy loads' bytes: downloaded again if need be
+		var old key
+		var at time.Time
+		first := true
+		for hk, hv := range c.held {
+			if first || hv.at.Before(at) {
+				old, at, first = hk, hv.at, false
+			}
+		}
+		c.unholdLocked(old)
 	}
 	for c.bytes > c.maxBytes && len(c.playing) > 0 {
 		var big *entry

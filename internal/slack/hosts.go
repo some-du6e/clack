@@ -201,10 +201,14 @@ func GetNoCreds(ctx context.Context, raw string, max int64) ([]byte, string, err
 		return nil, "", err
 	}
 	if int64(len(b)) > max {
-		return nil, "", errors.New("slack: response too large")
+		return nil, "", ErrTooLarge
 	}
 	return b, resp.Header.Get("Content-Type"), nil
 }
+
+// ErrTooLarge is a download past the size its caller allows (GetNoCreds'
+// max, core.Fetch's MaxFetch): the body was cut off there and dropped.
+var ErrTooLarge = errors.New("slack: response too large")
 
 // FetchPublic loads an image without credentials: directly from Slack's
 // hosts (and Gravatar), through Slack's image proxy from anywhere else.

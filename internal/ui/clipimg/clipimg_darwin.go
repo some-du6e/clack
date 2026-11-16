@@ -46,8 +46,8 @@ import (
 	"unsafe"
 )
 
-func write(_ context.Context, img image.Image, charge func(int64) error) error {
-	data, err := encodePNG(img, charge)
+func write(ctx context.Context, img image.Image, charge func(int64) error) error {
+	data, err := encodePNG(ctx, img, charge)
 	if err != nil {
 		return err
 	}

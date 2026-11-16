@@ -23,7 +23,7 @@ func write(ctx context.Context, img image.Image, charge func(int64) error) error
 	default:
 		return ErrUnsupported
 	}
-	data, err := encodePNG(img, charge)
+	data, err := encodePNG(ctx, img, charge)
 	if err != nil {
 		return err
 	}

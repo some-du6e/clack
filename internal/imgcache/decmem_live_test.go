@@ -190,3 +190,38 @@ func TestOverCapIsFailedNotBusy(t *testing.T) {
 		t.Errorf("an over-cap original is tried again in %v; the same bytes need the same memory", d)
 	}
 }
+
+// TestHeldBytesInCacheBudget: a busy load's kept bytes count in the cache's
+// byte budget (as its images do), at most 1/heldShare of it, and go when
+// the image loads; a file bigger than that share isn't kept (its next try
+// downloads it again). So kept bytes can't stack on a full decode pool
+// beyond what the cache may hold anyway.
+func TestHeldBytesInCacheBudget(t *testing.T) {
+	data := pngSolid(512, 512, pngRGBA8, false, nil)
+	withTestPool(8<<20, func() {
+		c, _ := countingCache(data)
+		k := key{url: "https://files.slack.com/files-pri/T1-F6/a.png", size: 0}
+		hold := fill(t, decodePool.Limit())
+		c.load(k)
+		if c.heldBytes != len(data) || c.bytes != len(data) {
+			t.Errorf("a busy load's %d kept bytes: held %d, cache bytes %d, want both %d", len(data), c.heldBytes, c.bytes, len(data))
+		}
+		hold.Release()
+		c.load(k)
+		e := c.entryLocked(k)
+		if e == nil {
+			t.Fatalf("the retry didn't load: %+v", c.failed[k])
+		}
+		if c.heldBytes != 0 || c.bytes != e.n {
+			t.Errorf("once loaded: held %d, cache bytes %d, want 0 and the image's %d", c.heldBytes, c.bytes, e.n)
+		}
+		c.SetLimit(heldShare*len(data) - 1) // its share is now under the file
+		hold = fill(t, decodePool.Limit())
+		k2 := key{url: "https://files.slack.com/files-pri/T1-F7/b.png", size: 0}
+		c.load(k2)
+		if _, ok := c.held[k2]; ok || c.heldBytes != 0 {
+			t.Errorf("a file past the held share was kept (%d bytes held)", c.heldBytes)
+		}
+		hold.Release()
+	})
+}

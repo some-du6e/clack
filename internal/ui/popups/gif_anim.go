@@ -9,7 +9,11 @@ package popups
 // vendored image/gif, every allocation charged to the decode memory, no
 // frame past them read) and composed (honouring disposal), cover-cropped to
 // a square and scaled to the tile size on a worker goroutine, the
-// composition charged to the same budget. Tiles pick the frame
+// composition charged to the same budget: one in the small lane
+// (imgcache.WithSmallBudget), so previews never queue for the big-decode
+// slot. The composed frames an animation keeps are charged to the decode
+// memory for as long as they're kept (imgcache.NewKeepBudget), at most
+// gifAnimKeepBytes of them in all past what's on screen. Tiles pick the frame
 // from the clock and schedule the next redraw only while they are laid out,
 // so nothing animates (or costs anything) once the tile scrolls away or the
 // picker closes. Media is Giphy's public CDN; nothing is written to disk.
@@ -39,11 +43,18 @@ const (
 	gifAnimMaxFrames = 120      // frames kept per animation
 	gifAnimMaxBytes  = 12 << 20 // largest .gif fetched
 	gifAnimWorkers   = 4        // concurrent fetch+decode jobs
+	// gifAnimKeepBytes: the composed frames kept, in all, past those of
+	// animations drawn in the last gifAnimOnScreen (which stay: evicting
+	// a tile on screen would decode it again at once)
+	gifAnimKeepBytes = 64 << 20
+	gifAnimOnScreen  = time.Second
 )
 
 type gifAnim struct {
 	frames  []paint.ImageOp
-	ends    []time.Duration // cumulative end time of each frame
+	bytes   int              // what frames hold
+	keep    *imgcache.Budget // frames' memory, charged while they're kept
+	ends    []time.Duration  // cumulative end time of each frame
 	total   time.Duration
 	start   time.Time // first shown
 	used    time.Time
@@ -60,6 +71,7 @@ type gifAnimKey struct {
 var gifAnims = struct {
 	mu    sync.Mutex
 	m     map[gifAnimKey]*gifAnim
+	kept  int // the animations' frame bytes
 	sem   chan struct{}
 	fetch func(ctx context.Context, raw string) ([]byte, error) // tests swap it (no network)
 }{
@@ -115,7 +127,7 @@ func gifAnimGet(h Host, url string, px int, now time.Time) (*gifAnim, bool) {
 	if a == nil {
 		a = &gifAnim{loading: true}
 		gifAnims.m[k] = a
-		gifAnimEvictLocked()
+		gifAnimEvictLocked(now)
 		go gifAnimLoad(h, k, a)
 	}
 	a.used = now
@@ -130,13 +142,20 @@ func gifAnimGet(h Host, url string, px int, now time.Time) (*gifAnim, bool) {
 	return a, true
 }
 
-func gifAnimEvictLocked() {
-	for len(gifAnims.m) > gifAnimMax {
+// gifAnimEvictLocked lets the least recently drawn animations go while
+// there are more than gifAnimMax, or their frames hold more than
+// gifAnimKeepBytes (then only ones off screen), giving back their memory.
+func gifAnimEvictLocked(now time.Time) {
+	for {
+		over := len(gifAnims.m) > gifAnimMax
+		if !over && gifAnims.kept <= gifAnimKeepBytes {
+			return
+		}
 		var oldK gifAnimKey
 		var oldT time.Time
 		first := true
 		for k, a := range gifAnims.m {
-			if a.loading {
+			if a.loading || !over && now.Sub(a.used) < gifAnimOnScreen {
 				continue
 			}
 			if first || a.used.Before(oldT) {
@@ -146,21 +165,30 @@ func gifAnimEvictLocked() {
 		if first {
 			return
 		}
+		a := gifAnims.m[oldK]
 		delete(gifAnims.m, oldK)
+		gifAnims.kept -= a.bytes
+		a.keep.Release()
 	}
 }
 
 func gifAnimLoad(h Host, k gifAnimKey, a *gifAnim) {
 	gifAnims.sem <- struct{}{}
-	frames, ends, err := gifAnimDecode(k.url, k.px)
+	g, err := gifAnimDecode(k.url, k.px)
 	<-gifAnims.sem
 	gifAnims.mu.Lock()
 	a.loading = false
-	if err != nil || len(frames) == 0 {
+	switch {
+	case err != nil || len(g.frames) == 0:
 		a.failed = true
-	} else {
-		a.frames, a.ends, a.total = frames, ends, ends[len(ends)-1]
+	case gifAnims.m[k] != a: // let go meanwhile
+		g.keep.Release()
+	default:
+		a.frames, a.ends, a.total = g.frames, g.ends, g.ends[len(g.ends)-1]
+		a.bytes, a.keep = g.bytes, g.keep
 		a.ready = true
+		gifAnims.kept += a.bytes
+		gifAnimEvictLocked(time.Now())
 	}
 	gifAnims.mu.Unlock()
 	if a.ready && h != nil {
@@ -173,8 +201,19 @@ func gifAnimLoad(h Host, k gifAnimKey, a *gifAnim) {
 // can't allocate gigabytes per frame.
 const gifAnimMaxSide = 1024
 
-// gifAnimDecode fetches and decodes url into px×px cover-cropped frames.
-func gifAnimDecode(raw string, px int) ([]paint.ImageOp, []time.Duration, error) {
+// gifDecoded is a decoded animation: its frames, their end times, what
+// they hold and the budget that holds it (the caller's to Release when it
+// lets them go).
+type gifDecoded struct {
+	frames []paint.ImageOp
+	ends   []time.Duration
+	bytes  int
+	keep   *imgcache.Budget
+}
+
+// gifAnimDecode fetches and decodes url into px×px cover-cropped frames,
+// charged, as kept, to the returned budget.
+func gifAnimDecode(raw string, px int) (gifDecoded, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	gifAnims.mu.Lock()
@@ -182,19 +221,33 @@ func gifAnimDecode(raw string, px int) ([]paint.ImageOp, []time.Duration, error)
 	gifAnims.mu.Unlock()
 	b, err := fetch(ctx, raw) // no credentials; Giphy direct, anything else via Slack's image proxy
 	if err != nil {
-		return nil, nil, err
+		return gifDecoded{}, err
 	}
-	var frames []paint.ImageOp
-	var ends []time.Duration
-	err = imgcache.WithBudget(ctx, func(bg *imgcache.Budget) error {
+	var d gifDecoded
+	err = imgcache.WithSmallBudget(ctx, func(bg *imgcache.Budget) error {
 		g, err := imgcache.DecodeGIF(b, gifAnimMaxFrames, gifAnimMaxSide, bg)
 		if err != nil {
 			return err
 		}
-		frames, ends, err = gifAnimFrames(g, px, imgcache.ChargeFunc(bg))
-		return err
+		frames, ends, err := gifAnimFrames(g, px, imgcache.ChargeFunc(bg))
+		if err != nil {
+			return err
+		}
+		// the frames outlive the decode: charged again, as kept, before
+		// its budget gives them back
+		n := 4 * px * px * len(frames)
+		keep := imgcache.NewKeepBudget()
+		if err := imgcache.ChargeFunc(keep)(int64(n)); err != nil {
+			keep.Release()
+			return err
+		}
+		d = gifDecoded{frames: frames, ends: ends, bytes: n, keep: keep}
+		return nil
 	})
-	return frames, ends, err
+	if err != nil {
+		return gifDecoded{}, err
+	}
+	return d, nil
 }
 
 // gifAnimFrames composes g's frames (disposal aware) and scales each to a

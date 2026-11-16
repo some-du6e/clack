@@ -40,7 +40,7 @@ func write(ctx context.Context, img image.Image, charge func(int64) error) error
 	if ciUser32.Load() != nil || ciKernel32.Load() != nil {
 		return ErrUnsupported
 	}
-	pngData, err := encodePNG(img, charge)
+	pngData, err := encodePNG(ctx, img, charge)
 	if err != nil {
 		return err
 	}

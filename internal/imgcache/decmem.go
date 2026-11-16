@@ -106,6 +106,13 @@ func NewBudget() *Budget { return budget.New(decodePool, MaxDecode) }
 // memory for as long as it plays.
 func newPlayerBudget() *Budget { return budget.NewPlayer(decodePool, MaxDecode) }
 
+// NewKeepBudget is a Budget for decoded images a caller keeps (the GIF
+// picker's composed frames): charge them to it for as long as they're
+// kept, and Release it when they go. It never takes the big slot or waits
+// (its memory isn't given back on demand), and a big decode waiting for
+// memory doesn't wait for it.
+func NewKeepBudget() *Budget { return budget.NewPlayer(decodePool, MaxDecode) }
+
 // WithBudget runs f with a new Budget, released when f returns. f failing
 // with ErrBusy runs again, with a new Budget, after a wait that starts at
 // busyStep and doubles to busyStepMax, until ctx is done (or for busyWait,
@@ -115,6 +122,18 @@ func newPlayerBudget() *Budget { return budget.NewPlayer(decodePool, MaxDecode) 
 // another Budget of its own (a second big decode would wait for the slot
 // its first holds).
 func WithBudget(ctx context.Context, f func(*Budget) error) error {
+	return withBudget(ctx, f, func(ctx context.Context) *Budget { return budget.NewContext(ctx, decodePool, MaxDecode) })
+}
+
+// WithSmallBudget is WithBudget for a decode that keeps to the small lane:
+// its budget never takes the big slot, so it never waits behind (or holds
+// up) the big decodes, and fails busy at once when the pool can't cover a
+// charge. For many small decodes at once (the GIF picker's previews).
+func WithSmallBudget(ctx context.Context, f func(*Budget) error) error {
+	return withBudget(ctx, f, func(ctx context.Context) *Budget { return budget.NewPlayerContext(ctx, decodePool, MaxDecode) })
+}
+
+func withBudget(ctx context.Context, f func(*Budget) error, mk func(context.Context) *Budget) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -124,7 +143,7 @@ func WithBudget(ctx context.Context, f func(*Budget) error) error {
 	}
 	step := busyStep
 	for {
-		b := NewBudget()
+		b := mk(ctx)
 		err := f(b)
 		b.Release()
 		if !errors.Is(err, ErrBusy) || time.Now().Add(step).After(deadline) {

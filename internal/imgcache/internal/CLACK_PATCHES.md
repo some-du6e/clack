@@ -132,6 +132,30 @@ x/image's over a range of sizes, source types and sub-rectangles.
   pass a budget, so `imgcache` registers the format itself with a budgeted
   decode (`imgcache.go`).
 
+## Known limits
+
+One decode holds at most `MaxDecode` (224 MiB, `../decmem.go`) at its
+peak. What a pixel costs at that peak: a baseline JPEG 1.5 bytes (4:2:0)
+to 3 (4:4:4); a progressive one 4.5 (4:2:0), 6 (4:2:2) or 9 (4:4:4), its
+int16 coefficients given back once the image is built; a progressive
+CMYK (Adobe) JPEG 12; an 8-bit PNG 1 to 4, a 16-bit one 8, an interlaced
+one half as much again for its largest pass; a GIF's canvas 4, 8 when it
+disposes to previous. So these normal-looking images, which decoded (with
+no memory bound) under `imgcache`'s old 40 MP gate, are past it:
+
+- a progressive 4:4:4 JPEG above about 26 MP;
+- a progressive CMYK JPEG above about 19 MP;
+- a 16-bit PNG above about 27 MP (less interlaced).
+
+A Slack file's largest thumbnail stands in for such an original: the
+lightbox shows it (`lbShown`), Copy image copies it and says so
+("Copied a smaller version of the image"). An image with no Slack
+thumbnail (an unfurl's or attachment's image, an image block) fails as
+`ErrOverCap`, and its placeholder shows. Decoding those at a reduced
+resolution (a JPEG's DCT scaling, as libjpeg's `scale_denom`; PNG rows
+reduced as they're read) would lift the limit for the lightbox, but needs
+new decode paths in the vendored readers, not a change to their charges.
+
 ## Updating
 
 Re-copy the upstream files for the new version (Go's `image/jpeg`,

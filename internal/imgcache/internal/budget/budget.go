@@ -23,11 +23,17 @@
 // it): so at most one big decode competes for the pool at a time, beside
 // small decodes and animation players. Holding the slot, a charge the pool
 // can't cover now waits for memory to be given back, up to the pool's
-// BigWait, before it fails with ErrBusy. Players (NewPlayer) hold their
-// memory for as long as they play, and never take the slot or wait.
+// BigWait, before it fails with ErrBusy — but only when what the other
+// decodes hold could cover it: memory players hold (NewPlayer: animation
+// players, the GIF picker's kept frames) isn't given back while they
+// play, so a shortfall only they could cover fails at once. Players never
+// take the slot or wait. A budget made with NewContext stops waiting (for
+// the slot or for memory), and charges nothing more, once its context is
+// done.
 package budget
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -57,6 +63,9 @@ const DefaultBigWait = 2 * time.Second
 type Pool struct {
 	limit, reserve, small int64
 	used, peak            atomic.Int64
+	// players is what player budgets hold of used: memory that isn't
+	// given back while they play
+	players atomic.Int64
 
 	// big is the big slot: a decode budget holding more than small has it
 	// (one at a time; the next waits on the send, in order).
@@ -91,6 +100,9 @@ func (p *Pool) Small() int64 { return p.small }
 
 // Used is what the pool's budgets hold now.
 func (p *Pool) Used() int64 { return p.used.Load() }
+
+// Players is what player budgets hold of it.
+func (p *Pool) Players() int64 { return p.players.Load() }
 
 // Peak is the most they held at once since ResetPeak.
 func (p *Pool) Peak() int64 { return p.peak.Load() }
@@ -159,6 +171,8 @@ type Budget struct {
 	closed bool
 	player bool // never takes the big slot or waits (holds memory while it plays)
 	slot   bool // holds the pool's big slot
+	// ctx (NewContext) ends its waits and its charges once done
+	ctx context.Context
 }
 
 // New returns a decode's root budget of at most limit bytes drawing from p
@@ -167,11 +181,45 @@ func New(p *Pool, limit int64) *Budget {
 	return &Budget{pool: p, limit: min(limit, p.MaxBudget())}
 }
 
+// NewContext is New for a decode ctx may cancel: once ctx is done, a wait
+// for the big slot or for memory ends, and every charge fails, with ctx's
+// error (so a cancelled decode doesn't decode on).
+func NewContext(ctx context.Context, p *Pool, limit int64) *Budget {
+	b := New(p, limit)
+	b.ctx = ctx
+	return b
+}
+
 // NewPlayer returns an animation player's root budget: as New, but it
 // never takes the big slot nor waits for memory (it holds what it has for
-// as long as it plays, so it mustn't hold up the big decodes).
+// as long as it plays, so it mustn't hold up the big decodes). What it
+// holds counts as the pool's Players.
 func NewPlayer(p *Pool, limit int64) *Budget {
 	return &Budget{pool: p, limit: min(limit, p.MaxBudget()), player: true}
+}
+
+// NewPlayerContext is NewPlayer whose charges fail once ctx is done.
+func NewPlayerContext(ctx context.Context, p *Pool, limit int64) *Budget {
+	b := NewPlayer(p, limit)
+	b.ctx = ctx
+	return b
+}
+
+// done is b's context's Done channel (nil, never closed, without one).
+func (b *Budget) done() <-chan struct{} {
+	if b.ctx == nil {
+		return nil
+	}
+	return b.ctx.Done()
+}
+
+// ctxErr is b's context's error as a charge returns it, nil while it isn't
+// done (or b has none).
+func (b *Budget) ctxErr() error {
+	if b.ctx == nil || b.ctx.Err() == nil {
+		return nil
+	}
+	return fmt.Errorf("budget: %w", context.Cause(b.ctx))
 }
 
 // NewLocal returns a budget of limit bytes that draws from no pool: a
@@ -221,14 +269,19 @@ func (b *Budget) Charge(n int64) error {
 		return nil
 	}
 	if !b.player && !b.slot && b.used+n > p.small {
-		// a big decode now: after the big decodes before it
+		// a big decode now: after the big decodes before it, unless its
+		// context ends first
 		b.mu.Unlock()
-		p.big <- struct{}{}
+		select {
+		case p.big <- struct{}{}:
+		case <-b.done():
+			return b.ctxErr()
+		}
 		b.mu.Lock()
-		if b.closed { // released meanwhile
+		if err := b.checkLocked(n); err != nil { // released, or cancelled, meanwhile
 			<-p.big
 			b.mu.Unlock()
-			return fmt.Errorf("%w: released", ErrBudget)
+			return err
 		}
 		b.slot = true
 	}
@@ -243,12 +296,24 @@ func (b *Budget) Charge(n int64) error {
 				p.doneWaiting()
 			}
 			b.used += n
+			if b.player {
+				p.players.Add(n)
+			}
 			b.mu.Unlock()
 			return nil
 		}
 		if freed == nil { // small, or a player: never waits
 			b.mu.Unlock()
 			return fmt.Errorf("%w: %d bytes more, %d of %d held", ErrBusy, n, p.Used(), p.limit)
+		}
+		// Wait only for memory that can come back: what the other decodes
+		// hold (they give it back when they're done), not players' (held
+		// for as long as they play) nor this decode's own.
+		short := n - (p.limit - p.reserve - p.Used())
+		if back := p.Used() - p.Players() - b.used; back < short {
+			p.doneWaiting()
+			b.mu.Unlock()
+			return fmt.Errorf("%w: %d bytes more, %d of %d held, %d of it by players", ErrBusy, n, p.Used(), p.limit, p.Players())
 		}
 		if deadline.IsZero() {
 			deadline = time.Now().Add(p.bigWait)
@@ -264,6 +329,7 @@ func (b *Budget) Charge(n int64) error {
 		select {
 		case <-freed:
 		case <-t.C:
+		case <-b.done():
 		}
 		t.Stop()
 		p.doneWaiting()
@@ -275,10 +341,14 @@ func (b *Budget) Charge(n int64) error {
 	}
 }
 
-// checkLocked is the budget's own limit check for a charge of n.
+// checkLocked is the budget's own limit check for a charge of n, and its
+// context's.
 func (b *Budget) checkLocked(n int64) error {
 	if b.closed {
 		return fmt.Errorf("%w: released", ErrBudget)
+	}
+	if err := b.ctxErr(); err != nil {
+		return err
 	}
 	if n < 0 || n > b.limit-b.used {
 		return fmt.Errorf("%w: %d bytes more, %d of %d used", ErrBudget, n, b.used, b.limit)
@@ -345,8 +415,16 @@ func (b *Budget) Free(n int64) {
 	case b.parent != nil:
 		b.parent.uncharge(n)
 	case b.pool != nil:
-		b.pool.give(n)
+		b.giveLocked(n)
 	}
+}
+
+// giveLocked returns n bytes of a root budget's to its pool.
+func (b *Budget) giveLocked(n int64) {
+	if b.player {
+		b.pool.players.Add(-n)
+	}
+	b.pool.give(n)
 }
 
 // Release gives back everything b holds (to its parent, or its pool) and
@@ -369,7 +447,7 @@ func (b *Budget) Release() {
 	case b.parent != nil:
 		b.parent.uncharge(n)
 	case b.pool != nil:
-		b.pool.give(n)
+		b.giveLocked(n)
 	}
 	if b.slot {
 		b.slot = false
@@ -389,7 +467,7 @@ func (b *Budget) uncharge(n int64) {
 	case b.parent != nil:
 		b.parent.uncharge(n)
 	case b.pool != nil:
-		b.pool.give(n)
+		b.giveLocked(n)
 	}
 }
 

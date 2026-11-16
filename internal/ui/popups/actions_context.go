@@ -14,6 +14,7 @@ import (
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/clipimg"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -199,11 +200,13 @@ func ctxImageItems(h Host, src string, proxy bool) []MenuItem {
 // or the failure.
 func CopyImage(h Host, src string, proxy bool, ok string) { copyImage(h, src, "", proxy, ok) }
 
-// copyFileImage is a file menu's Copy image: the original, or (when the
-// original can't be copied: it needs more decode memory than an image may
-// have, its format isn't one Clack decodes, it's past the download limit)
-// the file's largest Slack thumbnail in its place, as Slack's own
-// thumbnails stand in for it everywhere else.
+// copyFileImage is a file menu's Copy image: the original (Slack's
+// getSrcForFullSizeImage: url_private), or, when Clack can't copy the
+// original at all (standIn: it needs more decode memory than an image may
+// have, its format isn't one Clack decodes, it's past the download limit),
+// the file's largest Slack thumbnail in its place, toasted as such
+// (copiedSmaller). A slow download, decode, encode or clipboard helper is
+// the original's own failure, never a reason for the thumbnail.
 func copyFileImage(h Host, f *richtext.File, ok string) {
 	src, alt := f.URL, ""
 	if f.Thumb != nil {
@@ -215,42 +218,58 @@ func copyFileImage(h Host, f *richtext.File, ok string) {
 	copyImage(h, src, alt, true, ok)
 }
 
-// copyOriginalWait is how long a copy with a stand-in gives the original
-// (its download, and its decode while the decode memory is busy) before
-// it copies the stand-in instead.
-const copyOriginalWait = 8 * time.Second
+// copiedSmaller is the toast for a copy of the file's thumbnail in its
+// original's place. Clack's: Slack copies only the original
+// (getSrcForFullSizeImage) and toasts "Image copied to clipboard" or
+// "Failed to copy image", nothing in between.
+const copiedSmaller = "Copied a smaller version of the image"
 
-// copyImage is CopyImage with a stand-in: alt ("" for none) is copied, as
-// if it were src, when src can't be.
+// copyImage is CopyImage with a stand-in: alt ("" for none) is copied in
+// src's place when src can't be copied for a reason a smaller copy gets
+// around (standIn), and toasted as copiedSmaller.
 func copyImage(h Host, src, alt string, proxy bool, ok string) {
-	run(h, func(ctx context.Context) (struct{}, error) {
-		return struct{}{}, copyImageWork(ctx, h, src, alt, proxy)
-	}, func(_ struct{}, err error) {
+	run(h, func(ctx context.Context) (bool, error) {
+		return copyImageWork(ctx, h, src, alt, proxy)
+	}, func(smaller bool, err error) {
 		switch {
 		case err != nil:
 			h.Toast("Failed to copy image: " + errText(err))
+		case smaller:
+			h.Toast(copiedSmaller)
 		case ok != "":
 			h.Toast(ok)
 		}
 	})
 }
 
-// copyImageWork copies src, or alt ("" for none) in its place when src
-// can't be copied (src's own error when neither can).
-func copyImageWork(ctx context.Context, h Host, src, alt string, proxy bool) error {
-	if alt == "" || alt == src {
-		return copyFrom(ctx, h, src, proxy)
+// copyImageWork copies src with the whole of ctx, or alt ("" for none) in
+// its place when src's failure is one a smaller copy gets around
+// (standIn); smaller says alt was copied. Any other failure of src (a
+// timeout, a cancelled copy, a failed download, the clipboard helper) is
+// returned as it is.
+func copyImageWork(ctx context.Context, h Host, src, alt string, proxy bool) (smaller bool, err error) {
+	err = copyFrom(ctx, h, src, proxy)
+	if err == nil || alt == "" || alt == src || !standIn(err) || ctx.Err() != nil {
+		return false, err
 	}
-	octx, cancel := context.WithTimeout(ctx, copyOriginalWait)
-	err := copyFrom(octx, h, src, proxy)
-	cancel()
-	if err == nil || ctx.Err() != nil {
-		return err
+	if aerr := copyFrom(ctx, h, alt, proxy); aerr != nil {
+		return false, err // the original's reason is the one to report
 	}
-	if aerr := copyFrom(ctx, h, alt, proxy); aerr == nil {
-		return nil
+	return true, nil
+}
+
+// standIn reports whether a file's thumbnail may stand in for an original
+// that failed with err: the original needs more decode memory than an
+// image may have, or is past MaxPixels or MaxSide (imgcache.ErrTooBig), or
+// is in a format Clack doesn't decode (image.ErrFormat), or is past the
+// download limit (slack.ErrTooLarge). Those are the original itself; a
+// timeout, a busy decode memory or a failed download are not, and copy
+// nothing in its place.
+func standIn(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
 	}
-	return err
+	return errors.Is(err, imgcache.ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, slack.ErrTooLarge)
 }
 
 // copyFetch and copyWrite are copyFrom's download and clipboard write

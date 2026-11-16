@@ -53,7 +53,7 @@ func (a *App) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) 
 				return err
 			}
 			if len(b) > MaxFetch {
-				return errors.New("core: Fetch: file too large")
+				return fmt.Errorf("core: Fetch: file over %d MB: %w", MaxFetch>>20, slack.ErrTooLarge)
 			}
 			mime = resp.Header.Get("Content-Type")
 		} else {

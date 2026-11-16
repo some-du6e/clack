@@ -334,6 +334,31 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -cpu 1 -count=$COUNT -run 'TestSearchRecentsReadGroups$|TestRecentsLoadOnce$' ./internal/core
 
+  # imgcache's decode memory (emoji-load-6): Copy image copies the
+  # original however long it takes and its thumbnail only when the original
+  # can't be decoded at all, the viewer shows the thumbnail for an original
+  # past the decode memory, the GIF picker keeps to the small lane, and the
+  # budget's waits (big slot, memory, contexts). Dispatch with
+  # only=decode-memory; count=1 is enough (the slow-original test waits 9 s).
+  decode-memory:
+    if: ${{ !inputs.only || startsWith('decode-memory', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: popups (Copy image, the viewer, the GIF picker)
+        run: go test -count=$COUNT -v -run '^(TestCopyImage|TestStandInReasons|TestLightboxShowsThumbnailForOverCapOriginal|TestGIFPicker)' ./internal/ui/popups
+      - name: imgcache and its budget
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^(TestBig|TestContextEndsWaits|TestFreeGivesBack|TestHeldBytesInCacheBudget|TestBusyRetryDoesntRefetch|TestPressureEndsInALoad|TestSustainedPressureNoEndlessSpinner)' ./internal/imgcache ./internal/imgcache/internal/budget
+
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
     runs-on: ubuntu-latest
