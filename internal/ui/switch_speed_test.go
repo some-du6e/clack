@@ -28,12 +28,22 @@ import (
 // read (backend.opened's ChannelInfo) can't be what brings it.
 func TestHeaderCountLandsAfterPage(t *testing.T) {
 	e, fs := organizeEnv(t, nil)
-	ch := fakeslackMemberChannel(e)
-	if ch == "" {
-		t.Fatal("no member channel in the sidebar")
+	// a member channel nothing opened yet (boot opens one; its header read
+	// its count)
+	ch := ""
+	for _, s := range e.a.model().Sections {
+		for _, id := range s.Rows {
+			c := e.a.model().conv(id)
+			if c == nil || c.Kind != "channel" || c.Preview || c.Archived || c.File || id == e.a.router.Current().Channel() {
+				continue
+			}
+			if _, ok := e.a.data.core.MemberCountCached(id); !ok && ch == "" {
+				ch = id
+			}
+		}
 	}
-	if _, ok := e.a.data.core.MemberCountCached(ch); ok {
-		t.Fatalf("%s has a member count before it was opened", ch)
+	if ch == "" {
+		t.Fatal("no member channel without a member count in the sidebar")
 	}
 	const people = 4321
 	hold := make(chan struct{})
