@@ -113,6 +113,7 @@ func RunIntroPreview(args []string, stdout, stderr io.Writer) int {
 	home := filepath.Join(*dir, "home")
 	os.Setenv("CLACK_HOME", home)
 	os.Setenv("YOLOSLACK_HOME", home)
+	handleChildSignals(*dir)     // the window gone: EPIPE, not SIGPIPE; SIGTERM cleans up
 	defer removePreviewDir(*dir) // after the teardown: the window may be gone
 	t0 := time.Now()
 	emit := func(rep *introPreviewReport, img *image.RGBA) error {

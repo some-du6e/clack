@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -240,6 +241,11 @@ func (p *introPreview) run(cfg []byte, size image.Point, scale, spdp float32, de
 	if p.isClosed() {
 		return errors.New("closed")
 	}
+	// Linux's parent-death signal follows the thread that forks: keep this
+	// one from Start to Wait, so no other goroutine's thread exiting (a
+	// locked one ending) kills the renderer mid-render
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	// Start outside the lock: close (UI goroutine) never waits on a fork
 	if err := cmd.Start(); err != nil {
 		return err

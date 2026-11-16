@@ -588,7 +588,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/intro-shots"
           CLACK_INTRO_PREVIEW_BIN="$GITHUB_WORKSPACE/build/Clack.exe" LOGIN_SHOTS_DIR="$RUNNER_TEMP/intro-shots" \
-            go test -count=1 -v -timeout 15m -run '^(TestIntroSlackPreview|TestIntroPreviewPluginHome|TestIntroPreviewQuit)$' ./internal/ui
+            go test -count=1 -v -timeout 15m -run '^(TestIntroSlackPreview|TestIntroPreviewPluginHome|TestIntroPreviewQuit|TestIntroPreviewWindowGone)$' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:
@@ -934,19 +934,31 @@ jobs:
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
-      # The introduction's preview renderer as a release runs it: a built
-      # clack started as `intro-preview` by TestIntroSlackPreview's window,
-      # a Metal headless frame, the renderer's report (real components,
-      # reads only, no plugin, the user's folder untouched) and its AppKit
-      # standing: never a regular app (no Dock icon), never active. The
-      # beat's shots are the intro-preview-macos artifact.
-      - name: the introduction's preview renderer (clack intro-preview, Metal, never an app)
+      # The introduction's preview renderer as a release runs it: clack
+      # in a Clack.app made and ad-hoc signed as release.yml makes it,
+      # started as `intro-preview` from Contents/MacOS by
+      # TestIntroSlackPreview's window: a Metal headless frame, the
+      # renderer's report (real components, reads only, no plugin, the
+      # user's folder untouched) and its AppKit standing (no
+      # NSApplication, never a regular app with a Dock icon, never active);
+      # a renderer whose window went cleans up. The beat's shots are the
+      # intro-preview-macos artifact.
+      - name: the introduction's preview renderer (Clack.app's clack intro-preview, Metal, never an app)
         if: ${{ !cancelled() }}
         run: |
+          set -eu
           mkdir -p "$RUNNER_TEMP/intro-shots"
-          go build -o "$RUNNER_TEMP/clack" ./cmd/clack
-          CLACK_INTRO_PREVIEW_BIN="$RUNNER_TEMP/clack" LOGIN_SHOTS_DIR="$RUNNER_TEMP/intro-shots" \
-            go test -count=1 -v -timeout 15m -run '^(TestIntroSlackPreview|TestIntroPreviewPluginHome|TestIntroPreviewQuit)$' ./internal/ui
+          app="$RUNNER_TEMP/intro/Clack.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          go build -o "$app/Contents/MacOS/clack" ./cmd/clack
+          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
+          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
+          codesign --verify --deep --strict "$app"
+          CLACK_INTRO_PREVIEW_BIN="$app/Contents/MacOS/clack" LOGIN_SHOTS_DIR="$RUNNER_TEMP/intro-shots" \
+            go test -count=1 -v -timeout 15m -run '^(TestIntroSlackPreview|TestIntroPreviewPluginHome|TestIntroPreviewQuit|TestIntroPreviewWindowGone)$' ./internal/ui
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: ${{ !cancelled() }}
         with:

@@ -261,7 +261,7 @@ func TestIntroSlackPreview(t *testing.T) {
 				t.Errorf("the renderer started a plugin system (taut %v, slick %v)", rep.Taut, rep.Slick)
 			}
 			if runtime.GOOS == "darwin" {
-				if k := rep.AppKit; k == nil || k.Policy == 0 || k.Active {
+				if k := rep.AppKit; k == nil || k.NSApp || k.Policy == 0 || k.Active {
 					t.Errorf("the renderer is an app to AppKit (Dock icon, activation): %+v", k)
 				}
 			}
@@ -496,5 +496,61 @@ func TestIntroPreviewQuit(t *testing.T) {
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Errorf("closed first %v: the renderer's folder %s is still there (%v)", closedFirst, dir, err)
 		}
+	}
+}
+
+// A renderer whose window has gone (its stdout's reader closed before the
+// frame) isn't killed by SIGPIPE: the write fails, it tears down, removes
+// its own folder and exits by itself.
+func TestIntroPreviewWindowGone(t *testing.T) {
+	dir, err := os.MkdirTemp("", previewDirPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { removePreviewDir(dir) })
+	if err := os.WriteFile(filepath.Join(dir, "ui.json"), []byte(`{"last_channel":"`+demo.GeneralID+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	logf, err := os.CreateTemp(t.TempDir(), "renderer-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logf.Close()
+	cmd, _ := introPreviewTestCommand("-dir", dir, "-w", "330", "-h", "165", "-scale", "0.275")
+	base := cmd.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	cmd.Env = rendererEnv(base, filepath.Join(dir, "home"))
+	cmd.Stderr = logf
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Close() // the window is gone before the frame
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(90 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("the renderer didn't exit after its window went")
+	}
+	log, _ := os.ReadFile(logf.Name())
+	t.Logf("renderer log:\n%s", log)
+	if bytes.Contains(log, []byte("headless window")) {
+		t.Skip("no GPU for the renderer")
+	}
+	if !bytes.Contains(log, []byte("intro-preview:")) {
+		t.Errorf("the renderer didn't report its failed write")
+	}
+	if st, ok := cmd.ProcessState.Sys().(interface{ Signaled() bool }); ok && st.Signaled() {
+		t.Errorf("the renderer was killed by a signal (%v), so its cleanup never ran", cmd.ProcessState)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("the renderer's folder %s is still there (%v)", dir, err)
 	}
 }
