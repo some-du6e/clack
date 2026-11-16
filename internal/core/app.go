@@ -30,7 +30,8 @@ type App struct {
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
 	acs       acState    // the composer autocomplete's frecency, model and history (autocomplete.go)
 	ready     chan struct{}
-	recent    recentSnap // RecentSnapshot's (snapshot_recent.go)
+	recent    recentSnap    // RecentSnapshot's (snapshot_recent.go)
+	sbPeople  sidebarPeople // the sidebar's DM people at the last snapshot (members.go)
 	bootErr   error
 	mu        sync.Mutex
 	connected bool
@@ -536,15 +537,26 @@ func (a *App) Boot(ctx context.Context) error {
 		}()
 	}
 	var tDMUsers time.Duration
+	dmsDone := make(chan struct{}) // sidebar.dms answered (or failed)
 	step("conversations", func() error {
 		convs, errConvs = a.C.Conversations(ctx)
 		if errConvs != nil {
 			return errConvs
 		}
-		// the DM rows' people, straight away (not after every other step)
+		// the DM rows' people, straight away (not after every other
+		// step): the open DMs' (sidebar.dms), not every DM
+		// users.conversations lists. Closed ones aren't rows; their
+		// partners are read when something draws them (members.go).
+		<-dmsDone
+		open := map[string]bool{}
+		for _, d := range dms {
+			if d.IsOpen {
+				open[d.ID] = true
+			}
+		}
 		ids := []string{a.C.Creds.UserID}
 		for _, c := range convs {
-			if c.IsIM {
+			if c.IsIM && (errDMs != nil || open[c.ID]) {
 				ids = append(ids, c.User)
 			}
 		}
@@ -570,6 +582,7 @@ func (a *App) Boot(ctx context.Context) error {
 		return err
 	})
 	step("sidebar.dms", func() error { // which DMs are open (users.conversations has no is_open)
+		defer close(dmsDone)
 		dms, errDMs = a.C.SidebarDMs(ctx)
 		return errDMs
 	})
@@ -979,14 +992,12 @@ func (a *App) snapshotNow() Snapshot {
 	if c, ok := a.selectedExt(); ok { // a previewed channel's row (preview.go)
 		cs = append(cs, c)
 	}
+	// every DM's partner as the store holds it (getRawMemberById): no hit,
+	// nothing asked for. Only the DMs the sections list read theirs
+	// through getMemberById, below.
 	convs := make([]Conv, 0, len(cs))
-	ids := []string{selfID}
 	for _, c := range cs {
-		v := a.conv(c)
-		convs = append(convs, v)
-		if v.User != "" {
-			ids = append(ids, v.User)
-		}
+		convs = append(convs, a.convOf(c, false))
 	}
 	sort.Slice(convs, func(i, j int) bool { return convs[i].Name < convs[j].Name })
 	a.mu.Lock()
@@ -995,9 +1006,10 @@ func (a *App) snapshotNow() Snapshot {
 	self, _ := a.User(selfID)
 	secs, counts := a.sections(convs), a.Counts()
 	convs = sidebarFileConvs(convs, secs)
+	users := a.sidebarUsers(convs, secs, selfID)
 	return Snapshot{
 		Self: self, Team: team, Convs: convs, Sections: secs, Counts: counts,
-		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
+		Threads: a.ThreadsState(), Users: users, Connected: connected, Prefs: prefs,
 		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID, Rail: a.Rail(),
 		FilterNames: a.filterNames(convs, secs, counts),
 	}
@@ -1135,6 +1147,17 @@ func (a *App) User(id string) (User, bool) {
 	return a.userOf(u), true
 }
 
+// RawUser is User as getRawMemberById reads it: the member if the store
+// holds it, with no hit recorded and nothing asked for. For logic over
+// people nothing draws (a closed DM's partner in a list of every DM).
+func (a *App) RawUser(id string) (User, bool) {
+	u, ok := a.S.RawUser(id)
+	if !ok {
+		return User{}, false
+	}
+	return a.userOf(u), true
+}
+
 // MemberAvatar is getProfileImageForMember: member id's picture for a
 // size px slot ("" while the member isn't known: the lookup asks for it,
 // and "names" follows).
@@ -1174,13 +1197,22 @@ func (a *App) users(ids []string) map[string]User {
 // Users returns the known users among ids.
 func (a *App) Users(ids []string) map[string]User { return a.users(ids) }
 
-func (a *App) conv(c *slack.Conversation) Conv {
+func (a *App) conv(c *slack.Conversation) Conv { return a.convOf(c, true) }
+
+// convOf is conv. With lookup false an IM's partner is read as the store
+// holds it (getRawMemberById: no hit, a miss asks for nothing), as the
+// sidebar's snapshot reads the DMs it doesn't list.
+func (a *App) convOf(c *slack.Conversation, lookup bool) Conv {
 	v := Conv{ID: c.ID, Name: c.Name, User: c.User, NumMembers: c.NumMembers, IsArchived: c.IsArchived,
 		IsGeneral: c.IsGeneral, IsShared: c.IsExtShared, Created: c.Created, Creator: c.Creator, Priority: c.Priority}
 	switch {
 	case c.IsIM:
 		v.Kind = "im"
-		v.Name = a.S.UserName(c.User)
+		if lookup {
+			v.Name = a.S.UserName(c.User)
+		} else {
+			v.Name = a.rawUserName(c.User)
+		}
 	case c.IsMPIM:
 		v.Kind = "mpim"
 		v.Members = c.Members
@@ -1763,7 +1795,9 @@ func (a *App) isAppDM(ch string) bool {
 	case "USLACKBOT", "USLACK":
 		return true
 	}
-	u, ok := a.S.User(c.User)
+	// raw: lJBI decides from imAndMpimMembers, which the snapshot reads
+	// through getMemberById for the DMs it lists (sidebarUsers)
+	u, ok := a.S.RawUser(c.User)
 	return ok && (u.IsBot || u.IsAppUser || u.Profile.BotID != "" || u.Profile.APIAppID != "")
 }
 

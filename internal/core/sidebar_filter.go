@@ -333,8 +333,12 @@ func (a *App) filterNames(convs []Conv, secs []Section, counts map[string]Count)
 	realNames := a.S.Prefs.DisplayRealNames
 	self := a.S.Self.ID
 	a.S.RUnlock()
-	member := func(id string) string { // resolveMemberName: nothing when unknown
-		u, ok := a.S.User(id)
+	// resolveMemberName: nothing when unknown. Raw: the listed DMs' people
+	// are read through getMemberById by the snapshot (sidebarUsers), and
+	// /HdK reads closed DMs' with fetchIfMissing false, only while the
+	// filter has text; a raw read neither records a hit nor asks
+	member := func(id string) string {
+		u, ok := a.S.RawUser(id)
 		if !ok {
 			return ""
 		}
@@ -426,7 +430,7 @@ func (a *App) closedDM(id string) bool {
 		if systemDMUsers[c.User] {
 			return false
 		}
-		if u, ok := a.S.User(c.User); ok && u.Deleted {
+		if u, ok := a.S.RawUser(c.User); ok && u.Deleted { // deletedMembers: no hit
 			return false
 		}
 	}
