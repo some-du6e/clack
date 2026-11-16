@@ -983,8 +983,7 @@ func (a *App) dmsTabShows(c *slack.Conversation, latest string) bool {
 		if known && u.Deleted {
 			return false
 		}
-		bot := c.User == "USLACKBOT" || c.User == "USLACK" || known && (u.IsBot || u.IsSlackbot)
-		if bot && !a.agentInDMSidebarUser(c.User) {
+		if isBotDM(c.User, u) && !a.agentInDMSidebarUser(c.User) { // rail.go
 			return false
 		}
 	}

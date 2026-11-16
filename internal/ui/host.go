@@ -350,9 +350,9 @@ func (a *App) railBadge(key string) (int, bool) {
 		if uipref.Get().NoHomeDot { // home_unread_dot off: +oIJ hides Home's dot and badge
 			return 0, false
 		}
-		return m.Rail.HomeBadge(m.HomeUnread, m.DMCount)
-	case "dms":
-		return m.DMCount, m.DMUnread
+		return m.Rail.HomeBadge(m.HomeUnread, m.DMHighlights)
+	case "dms": // InjD: a count while rHEx dmsBadgeCount is above 0, never a dot
+		return m.Rail.DMsBadge(m.DMHighlights, m.DMUnreadConvs), false
 	case "activity":
 		return m.ActivityCount, false
 	case "browse": // yEMG: badges of what is under More
@@ -361,7 +361,7 @@ func (a *App) railBadge(key string) (int, bool) {
 			switch railKey(id) {
 			case "dms":
 				if !(m.Rail.ActivityInbox && !m.Rail.DMsOptOut) && m.Rail.DMsInRail {
-					n += m.DMCount
+					n += m.DMHighlights // yEMG adds dmsBadgeCount
 				}
 			case "activity":
 				n += m.ActivityCount

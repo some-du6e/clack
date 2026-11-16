@@ -25,8 +25,12 @@ type model struct {
 	FilterNames core.FilterNames
 
 	ActivityCount int  // unread mentions/reactions for the Activity tab
-	DMUnread      bool // dot on the DMs tab
-	DMCount       int
+	DMUnread      bool // a DM or group DM is unread (the desktop badge's "anything unread")
+	// The DMs tab's badge inputs (core RailState.DMsBadge): DMHighlights is
+	// rHEx dmsBadgeCount, which Home and More count too; DMUnreadConvs is
+	// 6Z4k Sm getTotalUnreadDmsMpims.
+	DMHighlights  int
+	DMUnreadConvs int
 	HomeUnread    bool
 	HomeCount     int // mention total shown on Home when not on Home
 
@@ -92,6 +96,9 @@ type convInfo struct {
 	Shared   bool
 	Teams    []string
 	PeerTeam string
+	// NoDMsBadge, NoDMsCount: core.Conv's (an IM the DM badges leave out;
+	// recount)
+	NoDMsBadge, NoDMsCount bool
 }
 
 // mentionTotal is the workspace's mention count (unmuted conversations'

@@ -427,6 +427,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 			continue
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic,
+			NoDMsBadge: c.NoDMsBadge, NoDMsCount: c.NoDMsCount,
 			NumMembers: c.NumMembers, Members: c.Members, Muted: c.Muted, TopicSpans: firstSpans(c.TopicDoc),
 			Archived: c.IsArchived, Preview: c.Preview, Purpose: c.Purpose,
 			Code: c.Code, CodeStatus: c.CodeStatus, AgentName: c.AgentName,
@@ -575,9 +576,19 @@ func (b *backend) activityBadgeMoved() bool {
 }
 
 // recount derives the rail badges from conv counts.
+//
+// The DMs tab's are Slack's (core rail.go DMsBadge): muted conversations
+// count nowhere (siMV), an unread DM is its mention count or 1 (ZdmU), and
+// the IMs the DMs page leaves out stay out of the tab's highlights (rHEx
+// dmsBadgeCount) and, a bot's, out of its unread conversations (6Z4k Sm).
+// Clack summed every unread DM into the tab, so the Slack system user's
+// DM (USLACK, "Slack") and Slackbot's drew a count the DMs page had no
+// row for (Karim, 2026-11-16). They still make something unread
+// (DMUnread) and stay in the app badge's highlights (HomeCount).
 func (b *backend) recount() {
 	m := &b.m
-	m.DMCount, m.DMUnread, m.HomeCount, m.HomeUnread, m.ActivityCount = 0, false, 0, false, 0
+	m.DMUnread, m.DMHighlights, m.DMUnreadConvs, m.HomeCount, m.HomeUnread, m.ActivityCount = false, 0, 0, 0, false, 0
+	dms := 0
 	for _, c := range m.Convs {
 		if c.Muted {
 			continue
@@ -585,8 +596,15 @@ func (b *backend) recount() {
 		switch c.Kind {
 		case "im", "mpim", "app":
 			if c.Unread || c.Mentions > 0 {
+				n := max(c.Mentions, 1)
 				m.DMUnread = true
-				m.DMCount += max(c.Mentions, 1)
+				dms += n
+				if !c.NoDMsBadge {
+					m.DMHighlights += n
+				}
+				if !c.NoDMsCount {
+					m.DMUnreadConvs++
+				}
 			}
 		default:
 			m.HomeCount += c.Mentions
@@ -596,7 +614,7 @@ func (b *backend) recount() {
 			}
 		}
 	}
-	m.HomeCount += m.DMCount
+	m.HomeCount += dms
 	if m.Rail.ActivityInbox && b.core != nil {
 		// Slack's rail reads activity_v2 under activity_inbox, not the
 		// channels' mentions: thread replies and @channel count there too

@@ -1322,6 +1322,8 @@ func (a *App) convOf(c *slack.Conversation, lookup bool) Conv {
 		} else {
 			v.Name = a.rawUserName(c.User)
 		}
+		u, _ := a.S.RawUser(c.User)
+		v.NoDMsBadge, v.NoDMsCount = dmBadgeSkips(c.User, u) // rail.go
 	case c.IsMPIM:
 		v.Kind = "mpim"
 		v.Members = c.Members

@@ -238,6 +238,12 @@ type Conv struct {
 	FileID    string
 	Doc       string
 	NameSpans []richtext.Span
+	// NoDMsBadge and NoDMsCount (IMs): the DM badges leave the IM out of
+	// the DMs tab's highlights (rHEx dmsBadgeCount: Slackbot's, the Slack
+	// system user's, a bot's, USEARCH's, the security bot's) or out of its
+	// unread conversations (6Z4k Sm: a bot member's). rail.go
+	// dmBadgeSkips, over the member the store holds (never fetched).
+	NoDMsBadge, NoDMsCount bool
 }
 
 // ConvRef describes a conversation that may not be in the sidebar
