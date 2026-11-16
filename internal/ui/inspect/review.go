@@ -15,8 +15,8 @@ import (
 	"gioui.org/op/paint"
 )
 
-// The review. A capture (an element's pick or a dragged region) doesn't
-// go to the clipboard at once: its shot is shown frozen over the dimmed
+// The review. A Shift+click's pick or a dragged region doesn't go to
+// the clipboard at once (a plain click's does): its shot is shown frozen over the dimmed
 // window as the copy will show it (an element's margin blurred, the
 // element sharp and outlined; a region as it was), and the user drags
 // rects over anything in it (a name, an avatar, someone else's message)
