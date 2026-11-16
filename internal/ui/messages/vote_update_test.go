@@ -163,7 +163,11 @@ func (p *votePane) buttons(ts string, bids ...string) (map[string]image.Rectangl
 	return nil, nil, false
 }
 
+// click clicks at's centre, a second and more after the pane's last
+// frame: a button stays disabled for one after each click (ButtonElement's
+// isProcessingClick).
 func (p *votePane) click(at image.Rectangle) {
+	p.now = p.now.Add(1100 * time.Millisecond)
 	p.clock += 600 * time.Millisecond
 	c := at.Min.Add(at.Max).Div(2)
 	pt := f32.Pt(float32(c.X), float32(c.Y))
