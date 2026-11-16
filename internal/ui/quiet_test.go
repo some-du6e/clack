@@ -59,12 +59,20 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	e.openChannel(ch)
 	e.settle(500 * time.Millisecond)
 	self := e.a.Core().Self().ID
+	// a message in the fake's history (a history fetch keeps it), and to
+	// the client as the socket would bring it
 	post := func(text string) string {
-		ts := liveTS()
-		b, _ := json.Marshal(map[string]any{"type": "message", "channel": ch, "user": self, "text": text, "ts": ts, "event_ts": ts})
+		ts, ev := fs.PostQuiet(ch, self, text)
+		b, _ := json.Marshal(ev)
 		chJSON, _ := json.Marshal(ch)
 		e.a.data.core.Inject(slack.Event{Type: "message", Channel: chJSON, Raw: b})
 		return ts
+	}
+	toBottom := func() {
+		for i := 0; i < 40; i++ {
+			e.scroll(e.listPoint(), 4000)
+			e.frame()
+		}
 	}
 	inTimeline := func(ts string) bool {
 		if tl := e.a.data.core.S.Timeline(ch); tl != nil {
@@ -76,7 +84,9 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 		}
 		return false
 	}
-	post("boom :" + name + ": boom")
+	first := post("boom :" + name + ": boom")
+	e.until("the message", 10*time.Second, func() bool { return inTimeline(first) })
+	toBottom()
 	e.until("the emoji playing", 20*time.Second, func() bool { return e.a.images.Stats().Players > 0 })
 	t.Logf("the emoji's bytes asked for %d times; %+v", asks.Load(), e.a.images.Stats())
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)}) // off the window

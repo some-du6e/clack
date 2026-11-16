@@ -841,17 +841,21 @@ func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
 	tr := &perfTraffic{e: e}
 	ch := fakeslack.BenchChannelID
 	var posted []string
+	// in the fake's history (a history fetch keeps them) and to the client
+	// as the socket would bring them
 	for i := 0; i < 6; i++ {
 		text := fmt.Sprintf("kaboom :%s: number %d, and again :%s:", name, i, name)
 		if i >= 4 {
 			text = ":" + name + ":"
 		}
-		ts := liveTS()
-		tr.inject(ch, "message", "", map[string]any{"user": e.c.Authors[i%len(e.c.Authors)], "text": text, "ts": ts, "event_ts": ts, "client_msg_id": "emoji-" + ts})
+		ts, ev := e.fs.PostQuiet(ch, e.c.Authors[i%len(e.c.Authors)], text)
+		delete(ev, "type")
+		delete(ev, "channel")
+		tr.inject(ch, "message", "", ev)
 		posted = append(posted, ts)
-		time.Sleep(2 * time.Millisecond) // distinct timestamps
 	}
 	for _, ts := range posted[2:4] {
+		e.fs.ReactQuiet(ch, ts, name, e.c.Authors[0])
 		tr.inject(ch, "reaction_added", "", map[string]any{"user": e.c.Authors[0], "reaction": name, "item": map[string]any{"type": "message", "channel": ch, "ts": ts}})
 	}
 	e.toBottom()

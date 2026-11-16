@@ -772,7 +772,7 @@ func (c *Cache) liveOpLocked(e *entry, forced bool, op paint.ImageOp) paint.Imag
 	}
 	if e.live[i].Size() == (image.Point{}) {
 		l := &live{c: c, k: e.k, forced: forced, making: true, last: op}
-		e.live[i] = paint.NewLiveImageOp(l)
+		e.live[i] = newLiveImageOp(l) // gio_patch35.go
 		l.making = false
 	}
 	return e.live[i]
