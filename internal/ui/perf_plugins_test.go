@@ -925,6 +925,16 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 		}
 	}
 	defer func() { invalidateHook = prevHook }()
+	// the pass's Go→JS renders by component, and for a root rendered again
+	// what in its props changed (top-level keys, msg's one level down)
+	rl := &perfRenderLog{last: map[uint64]map[string]json.RawMessage{}, names: map[string]int{}, keys: map[string]int{}}
+	slackc.SetBridge(perfRenderBridge{countingBridge{e.tt.Bridge(), &e.calls}, rl})
+	defer slackc.SetBridge(countingBridge{e.tt.Bridge(), &e.calls})
+	defer func() {
+		if top := rl.top(); top != "" {
+			e.t.Logf("pass %s: renders %s", name, top)
+		}
+	}()
 	if perfQuietStart != nil && !every {
 		defer perfQuietStart(e, func() {
 			select {
@@ -1041,4 +1051,92 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 		p.MedianMS, p.P95MS, p.P99MS, p.MaxMS = ds[len(ds)/2], ds[len(ds)*95/100], ds[len(ds)*99/100], ds[len(ds)-1]
 	}
 	return p
+}
+
+// perfRenderLog is a pass's renders (perfRenderBridge): how many per
+// component, and the props that changed when a root was rendered again.
+type perfRenderLog struct {
+	mu    sync.Mutex
+	last  map[uint64]map[string]json.RawMessage
+	names map[string]int
+	keys  map[string]int
+}
+
+func (l *perfRenderLog) note(root uint64, name string, props []byte) {
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(props, &m)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.names[name]++
+	if old, ok := l.last[root]; ok {
+		for k, v := range m {
+			if string(old[k]) == string(v) {
+				continue
+			}
+			if k == "msg" { // which of the message's fields
+				var a, b map[string]json.RawMessage
+				_ = json.Unmarshal(old[k], &a)
+				_ = json.Unmarshal(v, &b)
+				for mk, mv := range b {
+					if string(a[mk]) != string(mv) {
+						l.keys[name+".msg."+mk]++
+					}
+				}
+				continue
+			}
+			l.keys[name+"."+k]++
+		}
+		for k := range old {
+			if _, ok := m[k]; !ok {
+				l.keys[name+"."+k+" (gone)"]++
+			}
+		}
+	}
+	l.last[root] = m
+}
+
+// top lists the components rendered most and the props that changed most.
+func (l *perfRenderLog) top() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.names) == 0 {
+		return ""
+	}
+	list := func(m map[string]int) string {
+		type kv struct {
+			k string
+			n int
+		}
+		var s []kv
+		for k, n := range m {
+			s = append(s, kv{k, n})
+		}
+		sort.Slice(s, func(i, j int) bool { return s[i].n > s[j].n || s[i].n == s[j].n && s[i].k < s[j].k })
+		var b strings.Builder
+		for i, x := range s {
+			if i == 8 {
+				break
+			}
+			fmt.Fprintf(&b, " %s×%d", x.k, x.n)
+		}
+		return b.String()
+	}
+	return "by component:" + list(l.names) + "; changed props:" + list(l.keys)
+}
+
+// perfRenderBridge counts renders as countingBridge does and logs them in
+// a perfRenderLog.
+type perfRenderBridge struct {
+	countingBridge
+	log *perfRenderLog
+}
+
+func (b perfRenderBridge) Render(root uint64, name string, props []byte) {
+	b.log.note(root, name, props)
+	b.countingBridge.Render(root, name, props)
+}
+
+func (b perfRenderBridge) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	b.log.note(root, name, props)
+	b.countingBridge.RenderIn(root, parent, parentK, name, props)
 }

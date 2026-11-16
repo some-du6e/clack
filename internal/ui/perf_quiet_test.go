@@ -7,7 +7,9 @@ import "time"
 // these stay nil and every frame is laid out.
 func init() {
 	perfQuietStart = func(e *benchEnv, wake func()) func() {
-		onAnimRepaint(e.perfEnv, wake)
+		// perfIdle's invalidateHook wakes it for both (Invalidate and
+		// animReady call it): a second wake drew a frame nothing asked for
+		onAnimRepaint(e.perfEnv, func() {})
 		return func() {
 			e.a.images.SetAnimInvalidate(nil)
 			e.a.images.SetLiveOps(false)
