@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -437,14 +439,16 @@ func TestViewCacheMemory(t *testing.T) {
 	})
 }
 
-// Profile changes for members no frame drew, and count or badge events,
-// cost nothing: no conversion generation moves, nothing converts again,
-// nothing redraws (a busy workspace sends user_change many times a
+// Profile changes for members no conversion read, and count or badge
+// events, cost nothing: no conversion generation moves, nothing converts
+// again, nothing redraws (a busy workspace sends user_change many times a
 // second; review of 2026-11-16). So do a channel's details and its member
 // count (core's member_count, once per channel on its first open when
-// users/counts lands): they carry a channel but no message, which
-// noteConv would otherwise take as a change to every message. A member
-// the latest frame drew still does.
+// users/counts lands) and tabs of a channel no conversion read: they carry
+// a channel but no message, which noteConv would otherwise take as a
+// change to every message. A member a conversion read (a mention, a
+// file's owner) converts that message again, and only that one, whether a
+// frame drew them or not (core.Message.Refs).
 func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
 	h := newHarness(t)
 	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
@@ -479,14 +483,27 @@ func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
 		t.Error("the view was converted again")
 	}
 
-	// a member the latest frame drew (the MessageView above read the views)
+	// a member a conversion read, drawn a minute ago: that conversion is
+	// made again, the others stay
+	var slot atomic.Pointer[viewConv]
+	sm := slack.Message{Type: "message", TS: "1700000005.000500", User: "UALICE", Text: "ask <@UBOB> about it"}
+	first := v.conv(&slot, chGen, &sm, false)
+	if !slices.Contains(first.msg.Refs.Members, "UBOB") {
+		t.Fatalf("the conversion of a mention read %+v; want UBOB", first.msg.Refs)
+	}
 	n1 := h.ui.invalidations.Load()
-	h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UBOB", Seen: time.Now()})
-	if v.convGen(chGen, ts) == g0 {
-		t.Error("a drawn member's change left the conversions as they were")
+	h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UBOB", Seen: long})
+	if v.convGen(chGen, sm.TS) == first.gen {
+		t.Error("the change of a member a conversion named left it as it was")
+	}
+	if g := v.convGen(chGen, ts); g != g0 {
+		t.Errorf("a conversion that named nobody changed moved (%d → %d)", g0, g)
 	}
 	if h.ui.invalidations.Load() == n1 {
-		t.Error("no redraw for a drawn member's change")
+		t.Error("no redraw for the change of a member a conversion named")
+	}
+	if again := v.conv(&slot, chGen, &sm, false); again.id == first.id {
+		t.Error("the conversion that named the member wasn't made again")
 	}
 }
 

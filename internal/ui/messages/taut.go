@@ -268,7 +268,9 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// or channel). Only then are the Docs compared.
 	again := r.viewConv != 0 && conv != r.viewConv
 	r.viewConv = conv
-	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text && (!again || reflect.DeepEqual(r.m.Doc, mv.Doc)) {
+	// (a row drawing the view compares them on a new revision too: the
+	// fresh view may differ only in a name the source's revision had new)
+	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text && (!again && !changed || reflect.DeepEqual(r.m.Doc, mv.Doc)) {
 		return
 	}
 	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text && (!again || reflect.DeepEqual(r.src.Doc, mv.Doc)) {
@@ -297,6 +299,16 @@ type injState struct {
 	at   time.Time
 	keys string
 	msgs []core.Message
+	revs map[string]uint32 // each message's rev (refreshInjected)
+	n    uint32
+}
+
+// rev is injected message ts's rev.
+func (in *injState) rev(ts string) uint32 {
+	if r, ok := in.revs[ts]; ok {
+		return r
+	}
+	return injRevBase
 }
 
 func (s *listState) refreshInjected(t *taut.Taut, now time.Time) (changed bool) {
@@ -315,11 +327,57 @@ func (s *listState) refreshInjected(t *taut.Taut, now time.Time) (changed bool) 
 	for i := range msgs {
 		keys += msgs[i].TS + ","
 	}
-	if keys == s.inj.keys {
+	if keys == s.inj.keys && sameInjected(s.inj.msgs, msgs) {
 		return false
 	}
-	s.inj.keys, s.inj.msgs = keys, msgs
+	// each message's rev: a new one for a message that changed (converted
+	// again for a name in it, edited by the plugin), so its row draws it
+	old := make(map[string]int, len(s.inj.msgs))
+	for i := range s.inj.msgs {
+		old[s.inj.msgs[i].TS] = i
+	}
+	revs := make(map[string]uint32, len(msgs))
+	for i := range msgs {
+		if j, ok := old[msgs[i].TS]; ok && sameInjectedMsg(&s.inj.msgs[j], &msgs[i]) {
+			revs[msgs[i].TS] = s.inj.revs[msgs[i].TS]
+			continue
+		}
+		s.inj.n++
+		revs[msgs[i].TS] = injRevBase + s.inj.n
+	}
+	s.inj.keys, s.inj.msgs, s.inj.revs = keys, msgs, revs
 	return true
+}
+
+// injRevBase starts the injected messages' revs, far from the models'
+// (which count from 1): a message core gets later is another revision.
+const injRevBase = 1 << 31
+
+// sameInjected reports whether the lists hold the same messages as they
+// were converted (same ts, in order).
+func sameInjected(a, b []core.Message) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !sameInjectedMsg(&a[i], &b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameInjectedMsg reports whether b is a's message unchanged: the same
+// conversion (taut hands back the cached one: same Doc), or one equal to
+// it. InjectedMessages converts again when what the message read changed.
+func sameInjectedMsg(a, b *core.Message) bool {
+	if a.TS != b.TS {
+		return false
+	}
+	if len(a.Doc.Blocks) > 0 && len(b.Doc.Blocks) > 0 && &a.Doc.Blocks[0] == &b.Doc.Blocks[0] && a.Text == b.Text {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
 }
 
 // injVisible reports whether an injected message belongs in this list, by
@@ -361,13 +419,13 @@ func (s *listState) mergeInjected() {
 	j := 0
 	for i := range s.snap.msgs {
 		for j < len(inj) && tsLess(inj[j].TS, s.snap.msgs[i].m.TS) {
-			out = append(out, entry{m: inj[j], rev: 1})
+			out = append(out, entry{m: inj[j], rev: s.inj.rev(inj[j].TS)})
 			j++
 		}
 		out = append(out, s.snap.msgs[i])
 	}
 	for ; j < len(inj); j++ {
-		out = append(out, entry{m: inj[j], rev: 1})
+		out = append(out, entry{m: inj[j], rev: s.inj.rev(inj[j].TS)})
 	}
 	s.snap.msgs = out
 }
