@@ -958,3 +958,31 @@ jobs:
           go test -count=1 -v -run '^TestChannelFilesSuggestionsSurviveMeasurePass$' ./internal/ui/views || rc=1
           go test -count=1 -v -timeout 15m -run '^TestSidebarTextFilterMeasurePassKeepsFocus$' ./internal/ui || rc=1
           exit $rc
+
+  # slackc-sweep: a window's patched roots age by its own frames (one idle
+  # 5 s came back to every root unmounted and mounted again; the huddle
+  # window's frames swept the still main window's; a root two windows draw
+  # outlives one closing; a closed window's own roots go at once), and
+  # Message gets MessageWrapper's very msg. `only=patched-clicks` runs
+  # this job with the one above.
+  patched-clicks-roots:
+    if: ${{ !inputs.only || startsWith('patched-clicks-roots', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "slackc: patched roots age by their own window's frames, COUNT runs"
+        run: go test -count=$COUNT -run '^(TestIdleWindowKeepsPatchedRoots|TestUndrawnPatchedRootsUnmount|TestOtherWindowsFramesKeepPatchedRoots|TestClosedSubWindowRootsUnmount|TestRootSharedByTwoWindowsOutlivesOneClosing)$' ./internal/ui/slackc
+      - name: "slackc: the same under the race detector, 3 runs (a closing window's sweep runs on a goroutine of its own)"
+        if: ${{ !cancelled() }}
+        run: go test -race -count=3 -run '^(TestClosedSubWindowRootsUnmount|TestRootSharedByTwoWindowsOutlivesOneClosing)$' ./internal/ui/slackc
+      - name: "messages: Message gets MessageWrapper's very msg, 3 runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=3 -v -run '^TestMessagePatchGetsWrappersExactMsg$' ./internal/ui/messages
