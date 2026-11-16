@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/some-du6e/clack/internal/awake"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/openurl"
@@ -43,7 +44,7 @@ const freezeAfter = 2 * time.Second
 const freezeSecond = 5 * time.Second
 
 // Reports are kept for freezeKeepAge, and only the newest that fit in
-// freezeKeepBytes (the newest one always stays).
+// freezeKeepBytes (the one just written always stays).
 const (
 	freezeKeepAge   = 7 * 24 * time.Hour
 	freezeKeepBytes = 20 << 20
@@ -53,16 +54,15 @@ type watchdog struct {
 	dir     string // freeze-reports directory ("" = off)
 	ui      string // ui.json, copied into the report
 	started time.Time
-	base    time.Time     // zero of busy's clock (monotonic)
 	after   time.Duration // freezeAfter (shorter in tests)
 	second  time.Duration // freezeSecond
 	keepAge time.Duration // freezeKeepAge
 	keepMax int64         // freezeKeepBytes
 
-	// busy is when the current task began, in ns since base on the
-	// monotonic clock (+1); 0 = idle. The monotonic clock stands still
-	// while the computer sleeps, so a frame that straddles a lid-close
-	// isn't a minutes-long freeze.
+	// busy is when the current task began on the awake clock
+	// (internal/awake: ns, never 0); 0 = idle. It stands still while the
+	// computer sleeps, on Linux, macOS and Windows, so a frame that
+	// straddles a lid-close isn't a minutes-long freeze.
 	busy  atomic.Int64
 	epoch atomic.Uint64
 	stage atomic.Pointer[string]
@@ -74,7 +74,7 @@ type watchdog struct {
 }
 
 func newWatchdog(configDir string, started time.Time) *watchdog {
-	w := &watchdog{started: started, base: time.Now(), after: freezeAfter, second: freezeSecond,
+	w := &watchdog{started: started, after: freezeAfter, second: freezeSecond,
 		keepAge: freezeKeepAge, keepMax: freezeKeepBytes, quit: make(chan struct{})}
 	if configDir != "" {
 		w.dir = filepath.Join(configDir, "freeze-reports")
@@ -91,8 +91,8 @@ var (
 	stageShaper = "first frame"
 )
 
-// now is busy's clock: ns since base, never 0.
-func (w *watchdog) now() int64 { return int64(time.Since(w.base)) + 1 }
+// now is busy's clock: awake time in ns, never 0.
+func (w *watchdog) now() int64 { return awake.Now() }
 
 // begin starts timing a task on the UI goroutine. Cheap: atomics only.
 func (w *watchdog) begin(stage *string) {
@@ -232,7 +232,7 @@ func (w *watchdog) report(since int64) (string, error) {
 	if err := os.WriteFile(path, []byte(slack.Redact(b.String())), 0o600); err != nil {
 		return "", err
 	}
-	w.prune()
+	w.prune(path)
 	return path, nil
 }
 
@@ -352,8 +352,11 @@ func allStacks() []byte {
 }
 
 // prune deletes reports older than keepAge, then the oldest until the rest
-// fit in keepMax bytes. The newest report always stays.
-func (w *watchdog) prune() {
+// fit in keepMax bytes; keep (the report just written) always stays.
+// Reports rank by modification time, not by name: a name is local wall
+// time, which a DST fall-back or a westward zone change turns back, so the
+// newest report could sort below older ones and go first.
+func (w *watchdog) prune(keep string) {
 	ents, err := os.ReadDir(w.dir)
 	if err != nil {
 		return
@@ -375,11 +378,19 @@ func (w *watchdog) prune() {
 		}
 		reps = append(reps, rep{n, fi.Size(), fi.ModTime()})
 	}
-	sort.Slice(reps, func(i, j int) bool { return reps[i].name > reps[j].name }) // timestamps sort by time: newest first
+	// newest first; a clock set back can still date keep before older
+	// reports, which is why keep is exempt rather than first
+	sort.Slice(reps, func(i, j int) bool {
+		if !reps[i].mod.Equal(reps[j].mod) {
+			return reps[i].mod.After(reps[j].mod)
+		}
+		return reps[i].name > reps[j].name
+	})
+	keep = filepath.Base(keep)
 	var total int64
-	for i, r := range reps {
+	for _, r := range reps {
 		total += r.size
-		if i > 0 && (time.Since(r.mod) > w.keepAge || total > w.keepMax) {
+		if r.name != keep && (time.Since(r.mod) > w.keepAge || total > w.keepMax) {
 			_ = os.Remove(filepath.Join(w.dir, r.name))
 		}
 	}

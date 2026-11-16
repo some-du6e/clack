@@ -150,6 +150,12 @@ func (tt *toolbarTilt) mount(r *row) {
 // frame with a deadline.
 func (tt *toolbarTilt) step(gtx layout.Context, a *iconAnim, active, hover bool, paintDur time.Duration) (move, paint float64) {
 	now := gtx.Now
+	if !gtx.Source.Enabled() {
+		// a measure pass (a plugin patching MessageActions, OwlMode's)
+		// sees no key focus: retargeting there restarted a focused
+		// button's transition twice a frame, so it reads the values only
+		return a.move.at(now), a.paint.at(now)
+	}
 	mv, dur := 0.0, tiltDur
 	if uipref.Get().NoAnimations { // c-message-actions--a11y-reduce-animations
 		dur = 0
