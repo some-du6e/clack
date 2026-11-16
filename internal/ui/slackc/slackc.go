@@ -467,31 +467,31 @@ func (in *inst) refreshSlots(p Props) {
 // ones encodeProps gave the slots: ".key", ".index", ".p" for a Slot's
 // props.
 func (in *inst) refresh(v any, path []byte) {
-	switch v := v.(type) {
+	switch x := v.(type) {
 	case Props:
-		for k, x := range v {
+		for k, c := range x {
 			if q := append(append(path, '.'), k...); in.prefixes[string(q)] {
-				in.refresh(x, q)
+				in.refresh(c, q)
 			}
 		}
 	case map[string]any:
-		for k, x := range v {
+		for k, c := range x {
 			if q := append(append(path, '.'), k...); in.prefixes[string(q)] {
-				in.refresh(x, q)
+				in.refresh(c, q)
 			}
 		}
 	case []any:
-		for i, x := range v {
+		for i, c := range x {
 			if q := strconv.AppendInt(append(path, '.'), int64(i), 10); in.prefixes[string(q)] {
-				in.refresh(x, q)
+				in.refresh(c, q)
 			}
 		}
 	case Slot:
 		if id, ok := in.slots[string(path)]; ok {
-			gofns.m[id] = v
+			gofns.m[id] = v // the interface it came in (x would be boxed again)
 		}
 		if q := append(path, ".p"...); in.prefixes[string(q)] {
-			in.refresh(v.Props, q)
+			in.refresh(x.Props, q)
 		}
 	case nil, string, bool, float64, int, int64, JSFunc, Element:
 	default:
