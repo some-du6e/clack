@@ -62,21 +62,25 @@ func (w *SubWindow) FrameBg(gtx layout.Context, classes string, fg, bg color.NRG
 	return func() { stack, windowSize, subFrame, subBg, curClock = saved, savedSize, false, savedBg, savedClock }
 }
 
-// Close says the window is gone: the next sweep (any window's frame)
-// unmounts the roots it drew last. Any goroutine, no frame lock: a
-// window's DestroyEvent must not wait for another window's frame.
+// Close says the window is gone: its draws keep no root from then on (the
+// next sweep, any window's, unmounts those no other window draws). Any
+// goroutine, no frame lock: a window's DestroyEvent must not wait for
+// another window's frame.
 func (w *SubWindow) Close() { w.c.closed.Store(true) }
 
-// A patched root goes (its View closed, its JS root unmounted) once the
-// window that drew it last has drawn staleFrames frames without it and
-// staleAfter has passed since that draw. Counting the window's own frames
-// is what keeps a root that's still on screen: a window that sat without
-// a frame (unfocused, so no caret blinking) came back to every root
-// unmounted and mounted again (plugin state lost, the native drawn until
-// JS answered: Show Real User's names flashed back to the relay bot), and
-// the huddle window's frames swept the still main window's roots, while
-// slackc compared every root's last draw with whichever frame ran. The
-// time keeps a row scrolled away and back within seconds as it was.
+// A patched root goes (its View closed, its JS root unmounted) once no
+// window draws it: every window that drew it has drawn staleFrames frames
+// without it, staleAfter after that draw, or has closed. Counting each
+// window's own frames is what keeps a root that's still on screen: a
+// window that sat without a frame (unfocused, so no caret blinking) came
+// back to every root unmounted and mounted again (plugin state lost, the
+// native drawn until JS answered: Show Real User's names flashed back to
+// the relay bot), and the huddle window's frames swept the still main
+// window's roots, while slackc compared every root's last draw with
+// whichever frame ran. Two windows can draw one root (HuddleMiniPanel is
+// the main window's dock's and the presenter panel's): the panel closing
+// leaves it the dock's. The time keeps a row scrolled away and back within
+// seconds as it was.
 const (
 	staleFrames = 3
 	staleAfter  = 5 * time.Second
@@ -90,6 +94,7 @@ type frameClock struct {
 	now    time.Time // the time of the frame in progress, and of the last one between frames
 	swept  time.Time // its last sweep (now then)
 	closed atomic.Bool
+	layers layerList // the plugin layers open in its frames (layers.go)
 }
 
 var (
@@ -102,15 +107,55 @@ var (
 // begin starts the clock's next frame, at t. First its roots that the
 // frames so far left undrawn unmount: the sweep runs after the last
 // frame's draws and before this one's, so a root that frame drew isn't
-// stale however long the window then went without one.
+// stale however long the window then went without one. Then the plugin
+// layers that frame left out close.
 func (c *frameClock) begin(t time.Time) {
 	c.sweep()
+	c.layers.frame()
 	c.frame++
 	c.now = t
 }
 
-// sweep unmounts the roots c's window stopped drawing (scrolled away,
-// closed) and those of windows that closed.
+// drawRec is one window's latest draw of a root.
+type drawRec struct {
+	clock *frameClock
+	frame uint64    // the clock's frame then
+	at    time.Time // and its time
+}
+
+// stale reports whether the draw keeps its root no more: its window
+// closed, or has drawn staleFrames frames without it, staleAfter after it.
+func (d *drawRec) stale() bool {
+	c := d.clock
+	return c.closed.Load() || c.frame-d.frame >= staleFrames && c.now.Sub(d.at) > staleAfter
+}
+
+// drawn records that the window whose frame runs drew in, at t.
+func (in *inst) drawn(t time.Time) {
+	c := curClock
+	for i := range in.draws {
+		if d := &in.draws[i]; d.clock == c {
+			d.frame, d.at = c.frame, t
+			return
+		}
+	}
+	in.draws = append(in.draws, drawRec{clock: c, frame: c.frame, at: t})
+}
+
+// unused reports whether no window's draw keeps in.
+func (in *inst) unused() bool {
+	for i := range in.draws {
+		if !in.draws[i].stale() {
+			return false
+		}
+	}
+	return true
+}
+
+// sweep unmounts the roots no window draws anymore: scrolled away, closed,
+// or drawn only in windows that closed. Each draw ages by the frames of
+// the window that made it (drawRec.stale), so any window's sweep can find
+// a root none keeps, and none drops another window's.
 func (c *frameClock) sweep() {
 	if c.now.Sub(c.swept) < sweepEvery {
 		return
@@ -118,8 +163,7 @@ func (c *frameClock) sweep() {
 	c.swept = c.now
 	b := bridge()
 	for k, in := range insts {
-		gone := in.clock != nil && in.clock.closed.Load()
-		if gone || in.clock == c && c.frame-in.frame >= staleFrames && c.now.Sub(in.used) > staleAfter {
+		if in.unused() {
 			delete(insts, k)
 			dropRoot(in, b)
 		}

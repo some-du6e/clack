@@ -229,3 +229,46 @@ func TestClosedSubWindowRootsUnmount(t *testing.T) {
 		t.Errorf("the open (still) presenter panel's root was unmounted (%v)", b.unmounted)
 	}
 }
+
+// HuddleMiniPanel is one root that two windows draw: the main window's
+// dock and the presenter panel (same key). While the main window draws
+// rarely (unfocused) the panel draws it every 500 ms, then closes (Stop
+// sharing). The main window's next frame sweeps first, and the root is
+// still the dock's: it isn't unmounted and mounted again. Once neither
+// window draws it, it goes.
+func TestRootSharedByTwoWindowsOutlivesOneClosing(t *testing.T) {
+	b, at := sweepEnv(t)
+	var panel SubWindow
+	for i := 0; i < 2; i++ {
+		mainFrame(at, "mini")
+		subWinFrame(&panel, at, "mini")
+		at = at.Add(20 * time.Millisecond)
+	}
+	mini := b.root["mini"]
+	if mini == 0 {
+		t.Fatalf("no render reached the bridge: %v", b.root)
+	}
+	for i := 0; i < 20; i++ {
+		if i == 5 {
+			mainFrame(at, "mini") // the main window's one frame meanwhile
+		}
+		subWinFrame(&panel, at, "mini")
+		at = at.Add(500 * time.Millisecond)
+	}
+	panel.Close()
+	renders := len(b.renders)
+	for i := 0; i < 3; i++ {
+		mainFrame(at, "mini")
+		at = at.Add(20 * time.Millisecond)
+	}
+	if b.gone(mini) || b.root["mini"] != mini || len(b.renders) != renders {
+		t.Errorf("the presenter panel closed and the main window's dock root was unmounted and mounted again (unmounted %v, root %d, was %d)", b.unmounted, b.root["mini"], mini)
+	}
+	for i := 0; i < 80; i++ {
+		mainFrame(at)
+		at = at.Add(100 * time.Millisecond)
+	}
+	if !b.gone(mini) {
+		t.Errorf("neither window draws the root and it's still mounted (unmounted %v, want %d)", b.unmounted, mini)
+	}
+}

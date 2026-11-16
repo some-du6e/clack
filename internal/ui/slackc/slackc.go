@@ -315,10 +315,8 @@ type inst struct {
 	root  uint64
 	name  string
 	key   instKey
-	sent  uint64      // hash of the props last sent to JS
-	clock *frameClock // the window that drew it last
-	frame uint64      // that window's frame then (frameClock.frame)
-	used  time.Time   // and its time
+	sent  uint64    // hash of the props last sent to JS
+	draws []drawRec // each window's latest draw (frame.go)
 	slots map[string]int64
 	view  *View
 	tree  atomic.Pointer[[]*Node]
@@ -388,7 +386,7 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 		roots[in.root] = in
 		rootsMu.Unlock()
 	}
-	in.clock, in.frame, in.used = curClock, curClock.frame, t
+	in.drawn(t)
 	if h != in.sent {
 		in.sent = h
 		if nb, ok := b.(NestedBridge); ok && k.parent != 0 {
