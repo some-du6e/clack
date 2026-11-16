@@ -212,6 +212,13 @@ func (a *App) focusAfterNavigate(prev, r Route) {
 	if ch == "" || prev == r || r.Thread() != "" || r.Message() != "" {
 		return
 	}
+	a.focusChannelComposer(ch)
+}
+
+// focusChannelComposer is the channel view's onFocusTransition: its
+// message input takes the focus, unless an overlay is open or the channel
+// has a footer in its place (a preview, an archived channel).
+func (a *App) focusChannelComposer(ch string) {
 	if a.data == nil || a.data.core == nil {
 		return // no workspace (a shell under test): nothing to mount
 	}

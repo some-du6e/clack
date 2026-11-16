@@ -233,18 +233,27 @@ func (a *App) searchInChannel(ch string) {
 // CloseSecondary closes the secondary pane. In the split view it is the
 // thread header's close, which closes the split view (Slack's
 // FlexpaneHeader in the Split container).
+//
+// Like Slack's onViewClosed (TRANSITION_FOCUS_NAVIGATE_LISTENER, client-boot
+// 1zp8: the closed Secondary hands the focus to Primary) the channel's
+// message input takes the focus; the pane's composer lets go of it at the
+// end of the frame (composer_release.go).
 func (a *App) CloseSecondary() {
 	if a.pane == paneSplit {
 		a.CloseSplit()
 		return
 	}
-	if a.secondary.kind == secThread {
+	was := a.secondary.kind
+	if was == secThread {
 		if ch := a.router.Current().Channel(); ch != "" {
 			a.router.Replace(Route("c/" + ch))
 		}
 	}
 	w := a.secondary.width
 	a.secondary = secondaryState{width: w}
+	if ch := a.router.Current().Channel(); ch != "" && was != secNone {
+		a.focusChannelComposer(ch)
+	}
 	a.Invalidate()
 }
 
@@ -289,6 +298,11 @@ func (a *App) threadPaneFocused(gtx layout.Context) bool {
 	return !ok || !p.PopupOpen()
 }
 
+// toggleSecondary is Mod+. (Toggle the right pane): details for the
+// channel while nothing is open, else the pane hides or shows again. A
+// hidden pane is a closed view for the focus, as in CloseSecondary
+// (Slack's onViewClosed): the channel's message input takes it, so what is
+// typed next goes there, not nowhere (its composer lets go of it).
 func (a *App) toggleSecondary() {
 	if a.secondary.kind == secNone {
 		if ch := a.router.Current().Channel(); ch != "" {
@@ -297,6 +311,11 @@ func (a *App) toggleSecondary() {
 		return
 	}
 	a.secondary.hidden = !a.secondary.hidden
+	if a.secondary.hidden {
+		if ch := a.router.Current().Channel(); ch != "" {
+			a.focusChannelComposer(ch)
+		}
+	}
 }
 
 func (a *App) layoutSecondary(gtx layout.Context) layout.Dimensions {

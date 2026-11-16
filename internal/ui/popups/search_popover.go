@@ -153,13 +153,15 @@ type SearchPopover struct {
 	listHov gesture.Hover // the list (onMouseLeave resets the selection)
 	inList  bool
 
-	// local data (snapshot taken once when core is ready)
+	// local data (snapshot taken once when core is ready, again when a
+	// member it couldn't name is in: unnamed)
 	snapOK  bool
 	cands   []srCand
 	byConv  map[string]int // conv id -> cands index
 	dmOf    map[string]string
 	unreads []string // conv ids, mentions first
 	counts  map[string]core.Count
+	unnamed []string // members the snapshot's lookups missed (asked for)
 
 	// async (stale results are dropped by sequence number)
 	seq                int
@@ -247,6 +249,41 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 	if p.snapOK {
 		return
 	}
+	p.loadSnapNow(now, true)
+}
+
+// reloadNamed loads the candidates again once a member loadSnap couldn't
+// name is in: the snapshot names a closed DM only while the members cache
+// holds its partner, and the lookup that missed asked users/info ("names"
+// redraws the window). Slack's switcher re-renders on that upsert; here a
+// closed DM whose partner was let go joins the list while it stays open.
+func (p *SearchPopover) reloadNamed(now time.Time) {
+	if !p.snapOK || len(p.unnamed) == 0 {
+		return
+	}
+	c := p.h.Core()
+	if c == nil {
+		return
+	}
+	wait := p.unnamed[:0]
+	in := false
+	for _, id := range p.unnamed {
+		if _, ok := c.RawUser(id); ok {
+			in = true
+			continue
+		}
+		if !c.S.Nonexistent(id) { // users/info said there's none: never named
+			wait = append(wait, id)
+		}
+	}
+	p.unnamed = wait
+	if in {
+		p.loadSnapNow(now, false)
+	}
+}
+
+// loadSnapNow takes the snapshot's candidates; resetSel as rebuild's.
+func (p *SearchPopover) loadSnapNow(now time.Time, resetSel bool) {
 	c := p.h.Core()
 	if c == nil {
 		return
@@ -257,6 +294,7 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 		return
 	}
 	p.snapOK = true
+	p.unnamed = p.unnamed[:0]
 	snap := c.SnapshotNow()
 	recents, _ := srRecents()
 	rec := make(map[string]bool, len(recents))
@@ -272,7 +310,11 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 		if u, ok := snap.Users[id]; ok {
 			return u, true
 		}
-		return lookupUser(p.h, id)
+		u, ok := lookupUser(p.h, id) // getMemberById: a miss asks users/info
+		if !ok {
+			p.unnamed = append(p.unnamed, id)
+		}
+		return u, ok
 	}
 	for _, cv := range snap.Convs {
 		if cv.IsArchived || cv.File { // a canvas's or list's conversation isn't a channel to switch to (I3y6 isValidViewableChannel)
@@ -369,7 +411,7 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 		}
 		return p.unreads[i] < p.unreads[j]
 	})
-	p.rebuild(now, true)
+	p.rebuild(now, resetSel)
 }
 
 // candRow turns a candidate into a list row.
@@ -1411,6 +1453,7 @@ func (p *SearchPopover) Layout(gtx layout.Context) layout.Dimensions {
 	win := gtx.Constraints.Max
 	gtx.Constraints.Min = image.Point{}
 	p.loadSnap(gtx.Now)
+	p.reloadNamed(gtx.Now)
 	if c := p.h.Core(); c != nil && strings.TrimSpace(p.userQuery()) == "" {
 		// the history and Recent places follow the recents' arrival and
 		// the read experiment's group (an Experiments plugin flips it live)

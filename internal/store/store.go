@@ -141,6 +141,9 @@ type Store struct {
 	// schedule
 	missUsers  []string
 	userNotify chan struct{}
+	// missBotApps are app ids the lookups that missed a bot knew (a
+	// message's app_id: getBotById's app_id param), for bots.info's app_ids
+	missBotApps map[string]string
 }
 
 // PutName remembers the name of a conversation outside the sidebar.
@@ -988,10 +991,32 @@ func (s *Store) missInitLocked() {
 }
 
 // NoteMissingBot records a bot id whose name/icon is unknown.
-func (s *Store) NoteMissingBot(id string) {
-	if strings.HasPrefix(id, "B") {
-		s.noteMissing('b', id)
+func (s *Store) NoteMissingBot(id string) { s.NoteMissingBotApp(id, "") }
+
+// NoteMissingBotApp is NoteMissingBot with the app the bot belongs to,
+// when the message that drew it says (getBotByMsg passes its app_id):
+// bots.info gets it as app_ids.
+func (s *Store) NoteMissingBotApp(id, appID string) {
+	if !strings.HasPrefix(id, "B") {
+		return
 	}
+	if appID != "" {
+		s.missMu.Lock()
+		if s.missBotApps == nil {
+			s.missBotApps = map[string]string{}
+		}
+		s.missBotApps[id] = appID
+		s.missMu.Unlock()
+	}
+	s.noteMissing('b', id)
+}
+
+// MissingBotApp is the app id a lookup that missed bot id knew ("" when
+// none did).
+func (s *Store) MissingBotApp(id string) string {
+	s.missMu.Lock()
+	defer s.missMu.Unlock()
+	return s.missBotApps[id]
 }
 
 // MissingNotify fires (coalesced) when new unresolved channel, bot or

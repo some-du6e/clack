@@ -30,8 +30,9 @@ type App struct {
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
 	acs       acState    // the composer autocomplete's frecency, model and history (autocomplete.go)
 	ready     chan struct{}
-	warm      warmState  // the warm boot: boot data, DataReady, the header cache (warmboot.go)
-	recent    recentSnap // RecentSnapshot's (snapshot_recent.go)
+	warm      warmState     // the warm boot: boot data, DataReady, the header cache (warmboot.go)
+	recent    recentSnap    // RecentSnapshot's (snapshot_recent.go)
+	sbPeople  sidebarPeople // the sidebar's DM people at the last snapshot (members.go)
 	bootErr   error
 	mu        sync.Mutex
 	connected bool
@@ -165,7 +166,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
 			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
-			go a.refreshCounts(a.bg)
+			go a.refreshCountsAfterGap(a.bg)           // what the socket missed (codechannel_close.go)
 		}
 	}
 	a.RTM.OnHello = a.onHello
@@ -299,7 +300,7 @@ const maxPollFetches = 6
 // conversation and of cached ones whose counts changed, and the threads
 // opened in the last 15 minutes; then tells the UI ("poll").
 func (a *App) pollOnce(ctx context.Context) {
-	a.refreshCounts(ctx)
+	a.refreshCountsAfterGap(ctx) // no socket: nothing was heard (codechannel_close.go)
 	if ctx.Err() != nil || a.C.SignedOut() {
 		return
 	}
@@ -513,6 +514,7 @@ func (a *App) Boot(ctx context.Context) error {
 		s := time.Now()
 		a.S.LoadCache()
 		a.installCachedExperiments() // Slack's persisted experiments store (experiments.go)
+		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
 		close(cacheDone)
 	}()
@@ -565,6 +567,8 @@ func (a *App) Boot(ctx context.Context) error {
 		}()
 	}
 	var tDMUsers time.Duration
+	dmsAnswered := make(chan struct{}) // sidebar.dms answered (or failed), before its install waits for the counts
+	var dmsOpen map[string]bool        // its open flags (nil: it failed)
 	step("conversations", func() error {
 		convs, errConvs = a.C.Conversations(ctx)
 		if errConvs != nil {
@@ -573,13 +577,18 @@ func (a *App) Boot(ctx context.Context) error {
 		<-a.warm.done
 		a.installConvs(convs, since)
 		installed("sidebar_changed")
-		// the DM rows' people, straight away (not after every other step)
-		ids := []string{a.C.Creds.UserID}
-		for _, c := range convs {
-			if c.IsIM {
-				ids = append(ids, c.User)
-			}
+		// the DM rows' people, straight away (not after every other step):
+		// the sidebar's DMs, not every DM users.conversations lists (closed
+		// ones aren't rows; their partners are read when something draws
+		// them: members.go). A warm start knows which are open from the
+		// boot data at once; a cold start waits for sidebar.dms' answer,
+		// not for client.counts its install waits on (bootDMPeople).
+		open := map[string]bool(nil) // core's own (dmOpen)
+		if !a.SidebarDMsKnown() {
+			<-dmsAnswered
+			open = dmsOpen // nil when it failed: every DM is a row then
 		}
+		ids := a.bootDMPeople(convs, open)
 		<-cacheDone
 		tu := time.Now()
 		a.EnsureUsers(ctx, ids)
@@ -626,7 +635,16 @@ func (a *App) Boot(ctx context.Context) error {
 	})
 	step("sidebar.dms", func() error { // which DMs are open (users.conversations has no is_open)
 		dms, err := a.C.SidebarDMs(ctx)
-		<-countsIn // closed DMs reopen on messages newer than now (reopenMark reads the counts)
+		if err == nil {
+			dmsOpen = make(map[string]bool, len(dms))
+			for _, d := range dms {
+				if d.IsOpen {
+					dmsOpen[d.ID] = true
+				}
+			}
+		}
+		close(dmsAnswered) // the DM rows' people don't wait for the counts below
+		<-countsIn         // closed DMs reopen on messages newer than now (reopenMark reads the counts)
 		if err != nil {
 			return err // a failed call keeps the boot data's
 		}
@@ -714,6 +732,7 @@ func (a *App) Boot(ctx context.Context) error {
 		a.bootErr = errConvs
 		return errConvs
 	}
+	a.reconcileClosedCodeChannels(since) // the saved closed code channels against what boot fetched (codechannel_close.go)
 	if u, ok := a.S.User(a.C.Creds.UserID); ok {
 		a.S.Lock()
 		a.S.Self = *u
@@ -793,6 +812,7 @@ func (a *App) Boot(ctx context.Context) error {
 // save still writing).
 func (a *App) Close() error {
 	a.saves.Wait()
+	a.checkpointClosedCodeChannels() // the closed code channels' watermarks (codechannel_close.go)
 	a.SaveWarm()
 	return a.S.SaveCache()
 }
@@ -1075,14 +1095,12 @@ func (a *App) snapshotNow() Snapshot {
 	if c, ok := a.selectedExt(); ok { // a previewed channel's row (preview.go)
 		cs = append(cs, c)
 	}
+	// every DM's partner as the store holds it (getRawMemberById): no hit,
+	// nothing asked for. Only the DMs the sections list read theirs
+	// through getMemberById, below.
 	convs := make([]Conv, 0, len(cs))
-	ids := []string{selfID}
 	for _, c := range cs {
-		v := a.conv(c)
-		convs = append(convs, v)
-		if v.User != "" {
-			ids = append(ids, v.User)
-		}
+		convs = append(convs, a.convOf(c, false))
 	}
 	sort.Slice(convs, func(i, j int) bool { return convs[i].Name < convs[j].Name })
 	a.mu.Lock()
@@ -1091,9 +1109,10 @@ func (a *App) snapshotNow() Snapshot {
 	self, _ := a.User(selfID)
 	secs, counts := a.sections(convs), a.Counts()
 	convs = sidebarFileConvs(convs, secs)
+	users := a.sidebarUsers(convs, secs, selfID)
 	return Snapshot{
 		Self: self, Team: team, Convs: convs, Sections: secs, Counts: counts,
-		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
+		Threads: a.ThreadsState(), Users: users, Connected: connected, Prefs: prefs,
 		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID, Rail: a.Rail(),
 		FilterNames: a.filterNames(convs, secs, counts), Seq: seq,
 	}
@@ -1232,6 +1251,17 @@ func (a *App) User(id string) (User, bool) {
 	return a.userOf(u), true
 }
 
+// RawUser is User as getRawMemberById reads it: the member if the store
+// holds it, with no hit recorded and nothing asked for. For logic over
+// people nothing draws (a closed DM's partner in a list of every DM).
+func (a *App) RawUser(id string) (User, bool) {
+	u, ok := a.S.RawUser(id)
+	if !ok {
+		return User{}, false
+	}
+	return a.userOf(u), true
+}
+
 // MemberAvatar is getProfileImageForMember: member id's picture for a
 // size px slot ("" while the member isn't known: the lookup asks for it,
 // and "names" follows).
@@ -1271,13 +1301,22 @@ func (a *App) users(ids []string) map[string]User {
 // Users returns the known users among ids.
 func (a *App) Users(ids []string) map[string]User { return a.users(ids) }
 
-func (a *App) conv(c *slack.Conversation) Conv {
+func (a *App) conv(c *slack.Conversation) Conv { return a.convOf(c, true) }
+
+// convOf is conv. With lookup false an IM's partner is read as the store
+// holds it (getRawMemberById: no hit, a miss asks for nothing), as the
+// sidebar's snapshot reads the DMs it doesn't list.
+func (a *App) convOf(c *slack.Conversation, lookup bool) Conv {
 	v := Conv{ID: c.ID, Name: c.Name, User: c.User, NumMembers: c.NumMembers, IsArchived: c.IsArchived,
 		IsGeneral: c.IsGeneral, IsShared: c.IsExtShared, Created: c.Created, Creator: c.Creator, Priority: c.Priority}
 	switch {
 	case c.IsIM:
 		v.Kind = "im"
-		v.Name = a.S.UserName(c.User)
+		if lookup {
+			v.Name = a.S.UserName(c.User)
+		} else {
+			v.Name = a.rawUserName(c.User)
+		}
 	case c.IsMPIM:
 		v.Kind = "mpim"
 		v.Members = c.Members
@@ -1860,7 +1899,9 @@ func (a *App) isAppDM(ch string) bool {
 	case "USLACKBOT", "USLACK":
 		return true
 	}
-	u, ok := a.S.User(c.User)
+	// raw: lJBI decides from imAndMpimMembers, which the snapshot reads
+	// through getMemberById for the DMs it lists (sidebarUsers)
+	u, ok := a.S.RawUser(c.User)
 	return ok && (u.IsBot || u.IsAppUser || u.Profile.BotID != "" || u.Profile.APIAppID != "")
 }
 

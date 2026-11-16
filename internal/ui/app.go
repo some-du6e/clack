@@ -302,6 +302,7 @@ type App struct {
 	standIn          bool                       // keepBody's draw is running
 	standIns         int                        // keepBody draws so far
 	missedFrameLog   focusLog                   // the missed-frame log line (focus_log.go)
+	shownConvos      shownConvos                // the conversations the last frame showed (composer_release.go)
 	sw               startupWatch               // the startup timeline (startup.go)
 	rv               revealState                // the cover until the window is ready (reveal.go)
 	panelOrigin      image.Point                // the primary panel's window origin this frame
@@ -785,6 +786,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	slackc.RouteEscape(gtx)   // an Escape no widget took goes to the overlay layers (slackc layers.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
+	a.releaseHidden(gtx)      // composers taken off the screen let go of the focus (composer_release.go)
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
 	a.clickMods = 0           // splitClick: only this frame's click
