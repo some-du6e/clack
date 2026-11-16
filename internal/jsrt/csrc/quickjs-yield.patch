@@ -175,7 +175,15 @@
      old_size = js_arena_usable_size(rt, ptr);
      s = &rt->malloc_state;
      /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
-@@ -4696,6 +4836,7 @@
+@@ -4642,6 +4782,7 @@
+     if (tag == JS_TAG_STRING_ROPE) {
+         /* recursively concatenate rope children */
+         JSStringRope *r = JS_VALUE_GET_STRING_ROPE(v);
++        js_yield_tick(); /* clack: see clack_yield */
+         if (string_buffer_concat_value(s, r->left))
+             return -1;
+         return string_buffer_concat_value(s, r->right);
+@@ -4696,6 +4837,7 @@
              return -1;
      }
      while (count-- > 0) {
@@ -183,7 +191,7 @@
          if (string_buffer_putc16(s, c))
              return -1;
      }
-@@ -4889,8 +5030,12 @@
+@@ -4889,8 +5031,12 @@
             strings, which is the most common case.
           */
          count = 0;
@@ -198,7 +206,7 @@
          }
          if (count == 0 && str->kind == JS_STRING_KIND_NORMAL) {
              if (plen)
-@@ -4902,6 +5047,7 @@
+@@ -4902,6 +5048,7 @@
              goto fail;
          q = str8(str_new);
          for (pos = 0; pos < len; pos++) {
@@ -206,7 +214,7 @@
              c = src[pos];
              if (c < 0x80) {
                  *q++ = c;
-@@ -4912,6 +5058,7 @@
+@@ -4912,6 +5059,7 @@
          }
      } else {
          const uint16_t *src = str16(str);
@@ -214,7 +222,7 @@
          /* Allocate 3 bytes per 16 bit code point. Surrogate pairs may
             produce 4 bytes but use 2 code points.
           */
-@@ -4921,6 +5068,7 @@
+@@ -4921,6 +5069,7 @@
          q = str8(str_new);
          pos = 0;
          while (pos < len) {
@@ -222,7 +230,15 @@
              c = src[pos++];
              if (c < 0x80) {
                  *q++ = c;
-@@ -5823,6 +5971,7 @@
+@@ -5137,6 +5286,7 @@
+         return NULL;
+     val = s->stack[--s->stack_len];
+     for(;;) {
++        js_yield_tick(); /* clack: see clack_yield */
+         if (JS_VALUE_GET_TAG(val) == JS_TAG_STRING)
+             return JS_VALUE_GET_STRING(val);
+         r = JS_VALUE_GET_STRING_ROPE(val);
+@@ -5823,6 +5973,7 @@
      }
      pr = get_shape_prop(sh);
      for(i = 0; i < sh->prop_count; i++) {
@@ -230,7 +246,7 @@
          JS_FreeAtomRT(rt, pr->atom);
          pr++;
      }
-@@ -5892,6 +6041,7 @@
+@@ -5892,6 +6043,7 @@
          memset(prop_hash_end(sh) - new_hash_size, 0,
                 sizeof(prop_hash_end(sh)[0]) * new_hash_size);
          for(i = 0, pr = get_shape_prop(sh); i < sh->prop_count; i++, pr++) {
@@ -238,7 +254,7 @@
              if (pr->atom != JS_ATOM_NULL) {
                  h = hash_atom(pr->atom, new_hash_mask);
                  pr->hash_next = prop_hash_end(sh)[-h - 1];
-@@ -5965,6 +6115,7 @@
+@@ -5965,6 +6117,7 @@
      pr = get_shape_prop(sh);
      prop = p->prop;
      for(i = 0; i < sh->prop_count; i++) {
@@ -246,7 +262,7 @@
          if (old_pr->atom != JS_ATOM_NULL) {
              pr->atom = old_pr->atom;
              pr->flags = old_pr->flags;
-@@ -6906,6 +7057,7 @@
+@@ -6906,6 +7059,7 @@
      uint32_t i;
  
      for(i = 0; i < p->u.array.count; i++) {
@@ -254,7 +270,7 @@
          JS_FreeValueRT(rt, p->u.array.u.values[i]);
      }
      js_free_rt(rt, p->u.array.u.values);
-@@ -6918,6 +7070,7 @@
+@@ -6918,6 +7072,7 @@
      uint32_t i;
  
      for(i = 0; i < p->u.array.count; i++) {
@@ -262,7 +278,7 @@
          JS_MarkValue(rt, p->u.array.u.values[i], mark_func);
      }
  }
-@@ -7062,6 +7215,7 @@
+@@ -7062,6 +7217,7 @@
      sh = p->shape;
      pr = get_shape_prop(sh);
      for(i = 0; i < sh->prop_count; i++) {
@@ -270,7 +286,7 @@
          free_property(rt, &p->prop[i], pr->flags);
          pr++;
      }
-@@ -7123,6 +7277,7 @@
+@@ -7123,6 +7279,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          assert(JS_REF_COUNT(p) == 0);
          free_gc_object(rt, p);
@@ -278,7 +294,7 @@
      }
      rt->gc_phase = JS_GC_PHASE_NONE;
  }
-@@ -7270,6 +7425,7 @@
+@@ -7270,6 +7427,7 @@
              prs = get_shape_prop(sh);
              for(i = 0; i < sh->prop_count; i++) {
                  JSProperty *pr = &p->prop[i];
@@ -286,7 +302,7 @@
                  if (prs->atom != JS_ATOM_NULL) {
                      if (prs->flags & JS_PROP_TMASK) {
                          if ((prs->flags & JS_PROP_TMASK) == JS_PROP_GETSET) {
-@@ -7383,6 +7539,8 @@
+@@ -7383,6 +7541,8 @@
         objects and move the GC objects with zero refcount to
         tmp_obj_list */
      list_for_each_safe(el, el1, &rt->gc_obj_list) {
@@ -295,7 +311,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          assert(JS_GC_MARK(p) == 0);
          mark_children(rt, p, gc_decref_child);
-@@ -7418,6 +7576,7 @@
+@@ -7418,6 +7578,7 @@
  
      /* keep the objects with a refcount > 0 and their children. */
      list_for_each(el, &rt->gc_obj_list) {
@@ -303,7 +319,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          assert(JS_REF_COUNT(p) > 0);
          JS_GC_MARK(p) = 0; /* reset the mark for the next GC call */
-@@ -7426,6 +7585,7 @@
+@@ -7426,6 +7587,7 @@
  
      /* restore the refcount of the objects to be deleted. */
      list_for_each(el, &rt->tmp_obj_list) {
@@ -311,7 +327,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          mark_children(rt, p, gc_scan_incref_child2);
      }
-@@ -7445,6 +7605,7 @@
+@@ -7445,6 +7607,7 @@
          el = rt->tmp_obj_list.next;
          if (el == &rt->tmp_obj_list)
              break;
@@ -319,7 +335,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          /* Only need to free the GC object associated with JS
             values. The rest will be automatically removed because they
-@@ -7484,6 +7645,10 @@
+@@ -7484,6 +7647,10 @@
  
  void JS_RunGC(JSRuntime *rt)
  {
@@ -330,7 +346,7 @@
      /* decrement the reference of the children of each object. mark =
         1 after this pass. */
      gc_decref(rt);
-@@ -7493,6 +7658,8 @@
+@@ -7493,6 +7660,8 @@
  
      /* free the GC objects in a cycle */
      gc_free_cycles(rt);
@@ -339,7 +355,7 @@
  }
  
  /* Return false if not an object or if the object has already been
-@@ -9492,6 +9659,8 @@
+@@ -9492,6 +9661,8 @@
      uint32_t v1, v2;
      bool atom1_is_integer, atom2_is_integer;
  
@@ -348,7 +364,7 @@
      atom1_is_integer = JS_AtomIsArrayIndex(ctx, &v1, atom1);
      atom2_is_integer = JS_AtomIsArrayIndex(ctx, &v2, atom2);
      assert(atom1_is_integer && atom2_is_integer);
-@@ -9507,8 +9676,10 @@
+@@ -9507,8 +9678,10 @@
  {
      uint32_t i;
      if (tab) {
@@ -360,7 +376,7 @@
          js_free(ctx, tab);
      }
  }
-@@ -9544,6 +9715,7 @@
+@@ -9544,6 +9717,7 @@
      tab_exotic = NULL;
      sh = p->shape;
      for(i = 0, prs = get_shape_prop(sh); i < sh->prop_count; i++, prs++) {
@@ -368,7 +384,7 @@
          atom = prs->atom;
          if (atom != JS_ATOM_NULL) {
              is_enumerable = ((prs->flags & JS_PROP_ENUMERABLE) != 0);
-@@ -9631,6 +9803,7 @@
+@@ -9631,6 +9805,7 @@
      num_sorted = true;
      sh = p->shape;
      for(i = 0, prs = get_shape_prop(sh); i < sh->prop_count; i++, prs++) {
@@ -376,7 +392,7 @@
          atom = prs->atom;
          if (atom != JS_ATOM_NULL) {
              is_enumerable = ((prs->flags & JS_PROP_ENUMERABLE) != 0);
-@@ -9663,6 +9836,7 @@
+@@ -9663,6 +9838,7 @@
                  len = js_string_obj_get_length(ctx, JS_MKPTR(JS_TAG_OBJECT, p));
              add_array_keys:
                  for(i = 0; i < len; i++) {
@@ -384,7 +400,7 @@
                      tab_atom[num_index].atom = __JS_AtomFromUInt32(i);
                      if (tab_atom[num_index].atom == JS_ATOM_NULL) {
                          js_free_prop_enum(ctx, tab_atom, num_index);
-@@ -10091,6 +10265,10 @@
+@@ -10091,6 +10267,10 @@
      JSAtom prop;
      int present;
  
@@ -395,7 +411,7 @@
      if (likely(JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT &&
                 (uint64_t)idx <= INT32_MAX)) {
          /* fast path for array and typed array access */
-@@ -10127,6 +10305,7 @@
+@@ -10127,6 +10307,7 @@
      JSAtom prop;
      JSValue val;
  
@@ -403,7 +419,7 @@
      if (likely(JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT &&
                 (uint64_t)idx <= INT32_MAX)) {
          /* fast path for array and typed array access */
-@@ -10242,6 +10421,7 @@
+@@ -10242,6 +10423,7 @@
          for(i = 0; i < len; i++) {
              /* add_property cannot fail here but
                 __JS_AtomFromUInt32(i) fails for i > INT32_MAX */
@@ -411,7 +427,7 @@
              pr = add_property(ctx, p, __JS_AtomFromUInt32(i), JS_PROP_C_W_E | JS_PROP_VARREF);
              pr->u.var_ref = *tab++;
          }
-@@ -10250,6 +10430,7 @@
+@@ -10250,6 +10432,7 @@
          for(i = 0; i < len; i++) {
              /* add_property cannot fail here but
                 __JS_AtomFromUInt32(i) fails for i > INT32_MAX */
@@ -419,7 +435,7 @@
              pr = add_property(ctx, p, __JS_AtomFromUInt32(i), JS_PROP_C_W_E);
              pr->u.value = *tab++;
          }
-@@ -10387,6 +10568,7 @@
+@@ -10387,6 +10570,7 @@
          uint32_t old_len = p->u.array.count;
          if (len < old_len) {
              for(i = len; i < old_len; i++) {
@@ -427,7 +443,7 @@
                  JS_FreeValue(ctx, p->u.array.u.values[i]);
                  p->u.array.u.values[i] = JS_UNDEFINED;
              }
-@@ -10492,6 +10674,8 @@
+@@ -10492,6 +10676,8 @@
                                    JSValue val, int flags)
  {
      uint32_t new_len, array_len;
@@ -436,7 +452,7 @@
      /* extend the array by one */
      /* XXX: convert to slow array if new_len > 2^31-1 elements */
      new_len = p->u.array.count + 1;
-@@ -10539,8 +10723,10 @@
+@@ -10539,8 +10725,10 @@
              return JS_EXCEPTION;
          }
          p->u.array.count = len;
@@ -448,7 +464,7 @@
          /* update the 'length' field */
          set_value(ctx, &p->prop[0].u.value, js_int32(len));
      }
-@@ -10996,6 +11182,7 @@
+@@ -10996,6 +11184,7 @@
  int JS_SetPropertyUint32(JSContext *ctx, JSValueConst this_obj,
                           uint32_t idx, JSValue val)
  {
@@ -456,7 +472,7 @@
      return JS_SetPropertyValue(ctx, this_obj, js_uint32(idx), val,
                                 JS_PROP_THROW);
  }
-@@ -11006,6 +11193,7 @@
+@@ -11006,6 +11195,7 @@
      JSAtom prop;
      int res;
  
@@ -464,7 +480,7 @@
      if ((uint64_t)idx <= INT32_MAX) {
          /* fast path for fast arrays */
          return JS_SetPropertyValue(ctx, this_obj, js_int32(idx), val,
-@@ -11969,6 +12157,7 @@
+@@ -11969,6 +12159,7 @@
      JSAtom prop;
      int res;
  
@@ -472,7 +488,7 @@
      if ((uint64_t)idx <= JS_ATOM_MAX_INT) {
          /* fast path for fast arrays */
          return JS_DeleteProperty(ctx, obj, __JS_AtomFromUInt32(idx), flags);
-@@ -14717,7 +14906,7 @@
+@@ -14717,7 +14908,7 @@
      JSValue val;
      JSString *p;
      int i;
@@ -481,7 +497,7 @@
      StringBuffer b_s, *b = &b_s;
      char buf[16];
  
-@@ -14732,6 +14921,9 @@
+@@ -14732,6 +14923,9 @@
      if (string_buffer_putc8(b, '\"'))
          goto fail;
      for(i = 0; i < p->len; ) {
@@ -491,7 +507,23 @@
          c = string_getc(p, &i);
          switch(c) {
          case '\t':
-@@ -17386,6 +17578,7 @@
+@@ -16849,6 +17043,7 @@
+                                    JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY))
+             goto fail;
+         for(i = 0; i < tab_atom_count; i++) {
++            js_yield_tick(); /* clack: see clack_yield */
+             JS_SetPropertyInternal(ctx, enum_obj, tab_atom[i].atom, JS_NULL, 0);
+         }
+         js_free_prop_enum(ctx, tab_atom, tab_atom_count);
+@@ -16867,6 +17062,7 @@
+             goto fail;
+         }
+         for(i = 0; i < tab_atom_count; i++) {
++            js_yield_tick(); /* clack: see clack_yield */
+             JS_DefinePropertyValue(ctx, enum_obj, tab_atom[i].atom, JS_NULL,
+                                    (tab_atom[i].is_enumerable ?
+                                     JS_PROP_ENUMERABLE : 0));
+@@ -17386,6 +17582,7 @@
              goto general_case;
          /* Handle fast arrays explicitly */
          for (i = 0; i < count32; i++) {
@@ -499,7 +531,15 @@
              if (JS_DefinePropertyValueUint32(ctx, sp[-3], pos++,
                                               js_dup(arrp[i]), JS_PROP_C_W_E) < 0)
                  goto exception;
-@@ -23613,9 +23806,13 @@
+@@ -17455,6 +17652,7 @@
+         return -1;
+ 
+     for (i = 0; i < tab_atom_count; i++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         if (pexcl) {
+             ret = JS_GetOwnPropertyInternal(ctx, NULL, pexcl, tab_atom[i].atom);
+             if (ret) {
+@@ -23613,9 +23811,13 @@
  
          // Fast path: batch consecutive ASCII characters
          const uint8_t *p_start = p;
@@ -514,7 +554,15 @@
  
          // Write batched ASCII in one call
          if (p > p_start) {
-@@ -43111,6 +43308,7 @@
+@@ -41650,6 +41852,7 @@
+         goto exception;
+     for(j = i = 0; i < len; i++) {
+         JSAtom atom = atoms[i].atom;
++        js_yield_tick(); /* clack: see clack_yield */
+         if (flags & JS_GPN_ENUM_ONLY) {
+             int desc_flags, res;
+ 
+@@ -43111,6 +43314,7 @@
                  l = min_int64(l, from + 1);
                  l = min_int64(l, to + 1);
                  for(j = 0; j < l; j++) {
@@ -522,7 +570,7 @@
                      set_value(ctx, &p->u.array.u.values[to - j],
                                js_dup(p->u.array.u.values[from - j]));
                  }
-@@ -43118,6 +43316,7 @@
+@@ -43118,6 +43322,7 @@
                  l = min_int64(l, len - from);
                  l = min_int64(l, len - to);
                  for(j = 0; j < l; j++) {
@@ -530,7 +578,7 @@
                      set_value(ctx, &p->u.array.u.values[to + j],
                                js_dup(p->u.array.u.values[from + j]));
                  }
-@@ -43456,11 +43655,15 @@
+@@ -43456,11 +43661,15 @@
      i = 0;
      pval = p->u.array.u.values;
      if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
@@ -548,7 +596,7 @@
      } else {
          for (; i < idx; i++, pval++)
              if (-1 == JS_TryGetPropertyInt64(ctx, obj, i, pval))
-@@ -43901,6 +44104,7 @@
+@@ -43901,6 +44110,7 @@
          }
          if (js_get_fast_array(ctx, obj, &arrp, &count)) {
              for (; n < count; n++) {
@@ -556,7 +604,7 @@
                  if (js_strict_eq2(ctx, argv[0], arrp[n],
                                    JS_EQ_SAME_VALUE_ZERO)) {
                      goto done;
-@@ -43950,6 +44154,7 @@
+@@ -43950,6 +44160,7 @@
          }
          if (js_get_fast_array(ctx, obj, &arrp, &count)) {
              for (; n < count; n++) {
@@ -564,7 +612,7 @@
                  if (js_strict_eq2(ctx, argv[0], arrp[n], JS_EQ_STRICT)) {
                      goto done;
                  }
-@@ -44001,6 +44206,7 @@
+@@ -44001,6 +44212,7 @@
          }
          if (js_get_fast_array(ctx, obj, &arrp, &count) && count == len) {
              for (; n >= 0; n--) {
@@ -572,7 +620,7 @@
                  if (js_strict_eq2(ctx, argv[0], arrp[n],
                                    JS_EQ_STRICT)) {
                      goto done;
-@@ -44162,6 +44368,7 @@
+@@ -44162,6 +44374,7 @@
      string_buffer_init(ctx, b, 0);
  
      for(i = 0; i < n; i++) {
@@ -580,7 +628,7 @@
          if (i > 0) {
              if (c >= 0) {
                  string_buffer_putc8(b, c);
-@@ -44211,7 +44418,7 @@
+@@ -44211,7 +44424,7 @@
              JSObject *p = JS_VALUE_GET_OBJ(obj);
              if (shift) {
                  res = arrp[0];
@@ -589,7 +637,7 @@
                  p->u.array.count--;
              } else {
                  res = arrp[count32 - 1];
-@@ -44331,6 +44538,7 @@
+@@ -44331,6 +44544,7 @@
  
          if (count32 > 1) {
              for (ll = 0, hh = count32 - 1; ll < hh; ll++, hh--) {
@@ -597,7 +645,7 @@
                  lval = arrp[ll];
                  arrp[ll] = arrp[hh];
                  arrp[hh] = lval;
-@@ -44408,8 +44616,10 @@
+@@ -44408,8 +44622,10 @@
          i = len - 1;
          pval = p->u.array.u.values;
          if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
@@ -609,7 +657,7 @@
          } else {
              // Query order is observable; test262 expects descending order.
              for (; i >= 0; i--, pval++) {
-@@ -44488,6 +44698,7 @@
+@@ -44488,6 +44704,7 @@
          js_is_fast_array(ctx, arr)) {
          /* XXX: should share code with fast array constructor */
          for (; k < final && k < count32; k++, n++) {
@@ -617,7 +665,7 @@
              if (JS_CreateDataPropertyUint32Const(ctx, arr, n, arrp[k], JS_PROP_THROW) < 0)
                  goto exception;
          }
-@@ -44583,12 +44794,16 @@
+@@ -44583,12 +44800,16 @@
      last = &p->u.array.u.values[newlen];
  
      if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
@@ -636,7 +684,7 @@
      } else {
          for (i = 0; i < start; i++, pval++)
              if (-1 == JS_TryGetPropertyInt64(ctx, obj, i, pval))
-@@ -44782,6 +44997,7 @@
+@@ -44782,6 +45003,7 @@
      if (psc->exception)
          return 0;
  
@@ -644,7 +692,7 @@
      if (psc->has_method) {
          argv[0] = ap->val;
          argv[1] = bp->val;
-@@ -44846,6 +45062,7 @@
+@@ -44846,6 +45068,7 @@
  
      /* XXX: should special case fast arrays */
      for (i = 0; i < len; i++) {
@@ -652,7 +700,7 @@
          if (pos >= array_size) {
              size_t new_size;
              ValueSlot *new_array;
-@@ -44875,6 +45092,7 @@
+@@ -44875,6 +45098,7 @@
  
      /* XXX: should special case fast arrays */
      while (n < pos) {
@@ -660,7 +708,7 @@
          if (array[n].str)
              JS_FreeValue(ctx, JS_MKPTR(JS_TAG_STRING, array[n].str));
          if (array[n].pos == n) {
-@@ -44941,8 +45159,10 @@
+@@ -44941,8 +45165,10 @@
          i = 0;
          pval = p->u.array.u.values;
          if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
@@ -672,7 +720,7 @@
          } else {
              for (; i < len; i++, pval++) {
                  if (-1 == JS_TryGetPropertyInt64(ctx, obj, i, pval))
-@@ -47343,12 +47563,14 @@
+@@ -47343,12 +47569,14 @@
      int i, len = p->len;
      if (p->is_wide_char) {
          for (i = from; i < len; i++) {
@@ -687,7 +735,7 @@
                  if (str8(p)[i] == (uint8_t)c)
                      return i;
              }
-@@ -47367,6 +47589,7 @@
+@@ -47367,6 +47595,7 @@
          j = string_indexof_char(p1, c, i);
          if (j < 0 || j + len2 > len1)
              break;
@@ -695,7 +743,7 @@
          if (!string_cmp(p1, p2, j + 1, 1, len2 - 1))
              return j;
      }
-@@ -47507,6 +47730,7 @@
+@@ -47507,6 +47736,7 @@
      ret = -1;
      if (len >= v_len && inc * (stop - start) >= 0) {
          for (i = start;; i += inc) {
@@ -703,7 +751,7 @@
              if (!string_cmp(p, p1, i, 0, v_len)) {
                  ret = i;
                  break;
-@@ -47573,6 +47797,7 @@
+@@ -47573,6 +47803,7 @@
      }
      if (start >= 0 && start <= stop) {
          for (i = start;; i++) {
@@ -711,7 +759,7 @@
              if (!string_cmp(p, p1, i, 0, v_len)) {
                  ret = 1;
                  break;
-@@ -48117,6 +48342,7 @@
+@@ -48117,6 +48348,7 @@
      if (p1) {
          while (n > 0) {
              int chunk = min_int(n, p1->len);
@@ -719,7 +767,7 @@
              if (string_buffer_concat(b, p1, 0, chunk))
                  goto fail;
              n -= chunk;
-@@ -48184,6 +48410,7 @@
+@@ -48184,6 +48416,7 @@
          string_buffer_fill(b, string_get(p, 0), n);
      } else {
          while (n-- > 0) {
@@ -727,7 +775,7 @@
              string_buffer_concat(b, p, 0, len);
          }
      }
-@@ -48368,6 +48595,7 @@
+@@ -48368,6 +48601,7 @@
      if (string_buffer_init(ctx, b, p->len))
          goto fail;
      for(i = 0; i < p->len;) {
@@ -735,7 +783,7 @@
          c = string_getc(p, &i);
          if (c == 0x3a3 && to_lower && test_final_sigma(p, i - 1)) {
              res[0] = 0x3c2; /* final sigma */
-@@ -51111,6 +51339,8 @@
+@@ -51111,6 +51345,8 @@
      JSValue val = JS_NULL;
      int ret;
  
@@ -744,7 +792,7 @@
      if (js_check_stack_overflow(ctx->rt, 0)) {
          return JS_ThrowStackOverflow(ctx);
      }
-@@ -51626,6 +51856,7 @@
+@@ -51626,6 +51862,7 @@
      tab = JS_UNDEFINED;
      prop = JS_UNDEFINED;
  
@@ -752,7 +800,7 @@
      if (js_check_stack_overflow(ctx->rt, 0)) {
          JS_ThrowStackOverflow(ctx);
          goto exception;
-@@ -53979,6 +54210,7 @@
+@@ -53979,6 +54216,7 @@
      if (s) {
          assert(!s->is_weak);
          list_for_each(el, &s->records) {
@@ -760,7 +808,20 @@
              mr = list_entry(el, JSMapRecord, link);
              JS_MarkValue(rt, mr->key, mark_func);
              JS_MarkValue(rt, mr->value, mark_func);
-@@ -59705,7 +59937,7 @@
+@@ -59249,9 +59487,11 @@
+             memset(abuf->data, 0, sab_alloc_len);
+         } else {
+             /* the allocation must be done after the object creation */
+-            abuf->data = js_mallocz(ctx, max_int(len, 1));
++            /* clack: zeroed in pieces (see js_yield_memset), not by calloc */
++            abuf->data = js_malloc(ctx, max_int(len, 1));
+             if (!abuf->data)
+                 goto fail;
++            js_yield_memset(abuf->data, 0, max_int(len, 1));
+         }
+     } else {
+         if (class_id == JS_CLASS_SHARED_ARRAY_BUFFER &&
+@@ -59705,7 +59945,7 @@
              return JS_ThrowOutOfMemory(ctx);
          bs = new_bs;
          if (new_len > old_len)
@@ -769,7 +830,7 @@
      }
      /* neuter the source */
      abuf->data = NULL;
-@@ -59775,7 +60007,7 @@
+@@ -59775,7 +60015,7 @@
          if (!data)
              return JS_ThrowOutOfMemory(ctx);
          if (len > abuf->byte_length)
@@ -778,7 +839,7 @@
          abuf->byte_length = len;
          abuf->data = data;
      }
-@@ -59865,7 +60097,7 @@
+@@ -59865,7 +60105,7 @@
              JS_ThrowTypeErrorDetachedArrayBuffer(ctx);
          goto fail;
      }
@@ -787,7 +848,7 @@
      new_abuf->immutable = immutable;
      return new_obj;
   fail:
-@@ -60157,8 +60389,8 @@
+@@ -60157,8 +60397,8 @@
          /* copying between typed objects */
          if (src_p->class_id == p->class_id) {
              /* same type, use memmove */
@@ -798,7 +859,7 @@
              goto done;
          }
          if (dest_abuf->data == src_abuf->data) {
-@@ -60325,8 +60557,8 @@
+@@ -60325,8 +60565,8 @@
      if (copy_len > 0) {
          ta = p->u.typed_array;
          src_abuf = ta->buffer->u.array_buffer;
@@ -809,7 +870,7 @@
      }
  
      if (JS_SetPropertyInt64(ctx, arr, idx, val) < 0) {
-@@ -60576,9 +60808,9 @@
+@@ -60576,9 +60816,9 @@
      count = min_int(count, space);
      if (count > 0) {
          shift = typed_array_size_log2(p->class_id);
@@ -822,7 +883,7 @@
      }
      return js_dup(this_val);
  }
-@@ -60654,21 +60886,24 @@
+@@ -60654,21 +60894,24 @@
      switch(shift) {
      case 0:
          if (k < final) {
@@ -848,7 +909,7 @@
              p->u.array.u.uint64_ptr[k] = v64;
          }
          break;
-@@ -60883,11 +61118,12 @@
+@@ -60883,11 +61126,12 @@
              if (inc > 0) {
                  pp = NULL;
                  if (pv)
@@ -862,7 +923,7 @@
                      if (pv[k] == v) {
                          res = k;
                          break;
-@@ -60908,6 +61144,7 @@
+@@ -60908,6 +61152,7 @@
              pv = p->u.array.u.uint16_ptr;
              v = v64;
              for (; k != stop; k += inc) {
@@ -870,7 +931,7 @@
                  if (pv[k] == v) {
                      res = k;
                      break;
-@@ -60927,6 +61164,7 @@
+@@ -60927,6 +61172,7 @@
              pv = p->u.array.u.uint32_ptr;
              v = v64;
              for (; k != stop; k += inc) {
@@ -878,7 +939,7 @@
                  if (pv[k] == v) {
                      res = k;
                      break;
-@@ -60943,6 +61181,7 @@
+@@ -60943,6 +61189,7 @@
              if (special != special_includes)
                  goto done;
              for (; k != stop; k += inc) {
@@ -886,7 +947,7 @@
                  if (isfp16nan(pv[k])) {
                      res = k;
                      break;
-@@ -60952,6 +61191,7 @@
+@@ -60952,6 +61199,7 @@
              // special case: includes also finds negative zero
              const uint16_t *pv = p->u.array.u.fp16_ptr;
              for (; k != stop; k += inc) {
@@ -894,7 +955,7 @@
                  if (isfp16zero(pv[k])) {
                      res = k;
                      break;
-@@ -60960,6 +61200,7 @@
+@@ -60960,6 +61208,7 @@
          } else if (hf = tofp16(d), d == fromfp16(hf)) {
              const uint16_t *pv = p->u.array.u.fp16_ptr;
              for (; k != stop; k += inc) {
@@ -902,7 +963,7 @@
                  if (pv[k] == hf) {
                      res = k;
                      break;
-@@ -60976,6 +61217,7 @@
+@@ -60976,6 +61225,7 @@
              if (special != special_includes)
                  goto done;
              for (; k != stop; k += inc) {
@@ -910,7 +971,7 @@
                  if (isnan(pv[k])) {
                      res = k;
                      break;
-@@ -60984,6 +61226,7 @@
+@@ -60984,6 +61234,7 @@
          } else if ((f = (float)d) == d) {
              const float *pv = p->u.array.u.float_ptr;
              for (; k != stop; k += inc) {
@@ -918,7 +979,7 @@
                  if (pv[k] == f) {
                      res = k;
                      break;
-@@ -61000,6 +61243,7 @@
+@@ -61000,6 +61251,7 @@
              if (special != special_includes)
                  goto done;
              for (; k != stop; k += inc) {
@@ -926,7 +987,7 @@
                  if (isnan(pv[k])) {
                      res = k;
                      break;
-@@ -61008,6 +61252,7 @@
+@@ -61008,6 +61260,7 @@
          } else {
              const double *pv = p->u.array.u.double_ptr;
              for (; k != stop; k += inc) {
@@ -934,7 +995,7 @@
                  if (pv[k] == d) {
                      res = k;
                      break;
-@@ -61028,6 +61273,7 @@
+@@ -61028,6 +61281,7 @@
              pv = p->u.array.u.uint64_ptr;
              v = v64;
              for (; k != stop; k += inc) {
@@ -942,7 +1003,7 @@
                  if (pv[k] == v) {
                      res = k;
                      break;
-@@ -61131,6 +61377,7 @@
+@@ -61131,6 +61385,7 @@
  {
      JSObject *p;
      int len;
@@ -950,7 +1011,7 @@
  
      len = js_typed_array_get_length_unsafe(ctx, this_val);
      if (len < 0)
-@@ -61145,6 +61392,7 @@
+@@ -61145,6 +61400,7 @@
                  uint8_t *p1 = p->u.array.u.uint8_ptr;
                  uint8_t *p2 = p1 + len - 1;
                  while (p1 < p2) {
@@ -958,7 +1019,7 @@
                      uint8_t v = *p1;
                      *p1++ = *p2;
                      *p2-- = v;
-@@ -61156,6 +61404,7 @@
+@@ -61156,6 +61412,7 @@
                  uint16_t *p1 = p->u.array.u.uint16_ptr;
                  uint16_t *p2 = p1 + len - 1;
                  while (p1 < p2) {
@@ -966,7 +1027,7 @@
                      uint16_t v = *p1;
                      *p1++ = *p2;
                      *p2-- = v;
-@@ -61167,6 +61416,7 @@
+@@ -61167,6 +61424,7 @@
                  uint32_t *p1 = p->u.array.u.uint32_ptr;
                  uint32_t *p2 = p1 + len - 1;
                  while (p1 < p2) {
@@ -974,7 +1035,7 @@
                      uint32_t v = *p1;
                      *p1++ = *p2;
                      *p2-- = v;
-@@ -61178,6 +61428,7 @@
+@@ -61178,6 +61436,7 @@
                  uint64_t *p1 = p->u.array.u.uint64_ptr;
                  uint64_t *p2 = p1 + len - 1;
                  while (p1 < p2) {
@@ -982,7 +1043,7 @@
                      uint64_t v = *p1;
                      *p1++ = *p2;
                      *p2-- = v;
-@@ -61263,16 +61514,19 @@
+@@ -61263,16 +61522,19 @@
                     in increasing order, observable when the species
                     constructor returns a view over the same buffer that
                     overlaps the source ahead of it */
@@ -1004,7 +1065,7 @@
                  val = JS_GetPropertyValue(ctx, this_val, js_int32(start + n));
                  if (JS_IsException(val))
                      goto exception;
-@@ -61351,55 +61605,66 @@
+@@ -61351,55 +61613,66 @@
  }
  
  static int js_TA_cmp_int8(const void *a, const void *b, void *opaque) {
@@ -1071,7 +1132,7 @@
      return js_cmp_doubles(*(const double *)a, *(const double *)b);
  }
  
-@@ -61593,8 +61858,10 @@
+@@ -61593,8 +61866,10 @@
              array_idx = js_calloc(ctx, len, sizeof(array_idx[0]));
              if (!array_idx)
                  return JS_EXCEPTION;
@@ -1083,7 +1144,7 @@
              tsc.elt_size = elt_size;
              rqsort(array_idx, len, sizeof(array_idx[0]),
                     js_TA_cmp_generic, &tsc);
-@@ -61612,10 +61879,11 @@
+@@ -61612,10 +61887,11 @@
                  js_free(ctx, array_idx);
                  return JS_EXCEPTION;
              }
@@ -1096,7 +1157,7 @@
                      j = array_idx[i];
                      if (j < len)
                          p->u.array.u.uint8_ptr[i] = ((uint8_t *)array_tmp)[j];
-@@ -61623,6 +61891,7 @@
+@@ -61623,6 +61899,7 @@
                  break;
              case 2:
                  for(i = 0; i < len; i++) {
@@ -1104,7 +1165,7 @@
                      j = array_idx[i];
                      if (j < len)
                          p->u.array.u.uint16_ptr[i] = ((uint16_t *)array_tmp)[j];
-@@ -61630,6 +61899,7 @@
+@@ -61630,6 +61907,7 @@
                  break;
              case 4:
                  for(i = 0; i < len; i++) {
@@ -1112,7 +1173,7 @@
                      j = array_idx[i];
                      if (j < len)
                          p->u.array.u.uint32_ptr[i] = ((uint32_t *)array_tmp)[j];
-@@ -61637,6 +61907,7 @@
+@@ -61637,6 +61915,7 @@
                  break;
              case 8:
                  for(i = 0; i < len; i++) {
@@ -1120,7 +1181,7 @@
                      j = array_idx[i];
                      if (j < len)
                          p->u.array.u.uint64_ptr[i] = ((uint64_t *)array_tmp)[j];
-@@ -61911,7 +62182,7 @@
+@@ -61911,7 +62190,7 @@
          goto fail;
      if (p->class_id == classid) {
          /* same type: copy the content */
