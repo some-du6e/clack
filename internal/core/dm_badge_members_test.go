@@ -80,8 +80,8 @@ func TestCountsAnswerAsksForUnreadIMMember(t *testing.T) {
 
 // The badges' people stay through the members pass, as the sidebar's do:
 // Slack's lookups keep them among the members found last. Here the store
-// holds more than 700 members, the unread system-user IM's member the
-// first of them, and a snapshot reads it before the pass.
+// holds more than 700 members, the unread system-user IM's member the one
+// found longest ago, and a snapshot reads it before the pass.
 func TestMembersPassKeepsBadgePeople(t *testing.T) {
 	a, _ := testApp(t)
 	a.S.PutUsers([]slack.User{{ID: "UCHANNELEXPERT", Name: "channel_agent", Profile: slack.Profile{DisplayName: "Channel Agent"}}})
@@ -91,6 +91,9 @@ func TestMembersPassKeepsBadgePeople(t *testing.T) {
 		us = append(us, slack.User{ID: uid, Name: strings.ToLower(uid)})
 	}
 	a.S.PutUsers(us)
+	for _, u := range us { // found since: UCHANNELEXPERT is the one found longest ago
+		a.S.TouchMember(u.ID)
+	}
 	a.S.PutConv(slack.Conversation{ID: "DEXPERT", IsIM: true, User: "UCHANNELEXPERT"})
 	a.S.SetCounts(&slack.Counts{IMs: []slack.CountEntry{
 		{ID: "DEXPERT", HasUnreads: true, MentionCount: 2, LastRead: "1700000000.000100", Latest: "1700000001.000100"},
@@ -108,5 +111,26 @@ func TestMembersPassKeepsBadgePeople(t *testing.T) {
 	}
 	if _, ok := a.S.RawUser("UCHANNELEXPERT"); !ok {
 		t.Error("UCHANNELEXPERT left the store")
+	}
+}
+
+// A mark from another client can leave a DM unread (im_marked with an
+// unread count) with no message and no new snapshot: the badges read its
+// member then too.
+func TestMarkedUnreadAsksForIMMember(t *testing.T) {
+	a, _ := testApp(t)
+	a.S.PutConv(slack.Conversation{ID: "DMARK", IsIM: true, User: "U0MARKBOT01"})
+	a.S.SetCounts(&slack.Counts{IMs: []slack.CountEntry{{ID: "DMARK", LastRead: "1700000002.000100", Latest: "1700000002.000100"}}})
+	a.setSidebarDMs([]slack.SidebarDM{{ID: "D1", IsIM: true, User: "U1", IsOpen: true}, {ID: "DMARK", IsIM: true, User: "U0MARKBOT01"}})
+	close(a.ready)
+	a.Snapshot()
+	a.S.TakeMissingUsers()
+	a.handle(rtm("im_marked", map[string]any{"channel": "DMARK", "ts": "1700000001.000100",
+		"unread_count_display": 1, "mention_count_display": 1}))
+	if e, _ := a.S.Count("DMARK"); !e.HasUnreads {
+		t.Fatal("im_marked didn't leave DMARK unread")
+	}
+	if missing := a.S.TakeMissingUsers(); !slices.Contains(missing, "U0MARKBOT01") {
+		t.Errorf("after im_marked: asked for %v, not the unread IM's member U0MARKBOT01", missing)
 	}
 }

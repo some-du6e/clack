@@ -215,7 +215,7 @@ func (a *App) setSidebarPeople(ids []string) {
 // next snapshot) kept the badge skips of a person while its member was
 // unknown: an app's DM badged the DMs tab. Clack reads them when it builds
 // a snapshot and when client.counts answers (readBadgePerson for a
-// message), so "names" follows a fetch and the next snapshot has the right
+// message or a mark), so "names" follows a fetch and the next snapshot has the right
 // skips; a miss is asked once (store noteMissing), and nothing here runs
 // per frame. The ids stay through the members pass with the sidebar's
 // people (EvictMembers), as Slack's lookups keep them among the members
@@ -242,11 +242,12 @@ func (a *App) readBadgePeople() {
 	a.bdPeople.mu.Unlock()
 }
 
-// readBadgePerson is readBadgePeople's lookup for the IM a message is
-// about to make unread. It runs before the message's own EnsureUsers,
-// whose users/info answer would leave the member known with no "names":
-// recorded first, the miss's fetch emits "names" either way (members.go
-// fetchUnknownMembers names what the store holds by then).
+// readBadgePerson is readBadgePeople's lookup for one IM: the one a
+// message is about to make unread, or one a mark from another client left
+// unread (im_marked). For a message it runs before the message's own
+// EnsureUsers, whose users/info answer would leave the member known with
+// no "names": recorded first, the miss's fetch emits "names" either way
+// (fetchUnknownMembers names what the store holds by then).
 func (a *App) readBadgePerson(ch string) {
 	a.S.RLock()
 	c, ok := a.S.Convs[ch]

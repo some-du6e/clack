@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -229,9 +231,8 @@ func TestDMBadgesClassicLikeSlack(t *testing.T) {
 		fs.SetChannelBadges(badges)
 		fs.SetAlerts(map[string]int{"external_channel_invite": 1, "quietly_added_to_channel": 1})
 	})
-	if e.a.model().Rail.ActivityInbox {
-		t.Fatal("the fake assigned activity_inbox: the test wants Slack's classic Activity")
-	}
+	e.a.Core().SetExperimentGroup("activity_inbox", "off") // Slack's classic Activity
+	e.until("the classic rail", 5*time.Second, func() bool { return !e.a.model().Rail.ActivityInbox })
 	waitDMBadgeFixtures(t, e)
 	postRobinAndGroup(e)
 
@@ -286,11 +287,13 @@ func TestDMBadgesClassicLikeSlack(t *testing.T) {
 	e.until("the app badge without channel_badges", 10*time.Second, func() bool { return e.a.desktopUnreads().Count == 3+1 })
 }
 
-// An app's DM nothing lists (closed, and read until a client.counts answer
-// says otherwise) gets its member asked for once it's unread, the way
-// Slack's badge selectors fetch it (DUy0 G, 6Z4k Sm getMemberById). While
-// users/info is out the badges count it as a person's DM, as Slack's do
-// with the unknown member's stub; once it loads, it badges nothing.
+// An app's DM nothing lists (closed and read) gets its member asked for
+// once it's unread, the way Slack's badge selectors fetch it (DUy0 G, 6Z4k
+// Sm getMemberById). Here another client marks it unread: no new message,
+// so it doesn't reopen and the sidebar builds nothing, and only a
+// client.counts answer tells of it. While users/info is out the badges
+// count it as a person's DM, as Slack's do with the unknown member's stub;
+// once it loads, it badges nothing.
 func TestDMBadgeMemberLoadsLate(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
@@ -317,8 +320,13 @@ func TestDMBadgeMemberLoadsLate(t *testing.T) {
 		t.Fatal("users/info was asked for the closed, read DM's member: the test wants nothing to have")
 	}
 
-	// a message there that only a client.counts answer tells of
-	fs.PostQuiet(late, fakeslack.DMBadgeLateBotID, "another synthetic weekly digest")
+	// "Mark unread" on another client, which only a client.counts answer
+	// tells of here
+	e.settle(time.Second) // boot's own lookups and snapshots are done
+	if err := slack.New(fs.Creds()).Call(context.Background(), "conversations.mark",
+		url.Values{"channel": {late}, "ts": {"1700000000.000000"}}, nil); err != nil {
+		t.Fatal(err)
+	}
 	raw, _ := json.Marshal(map[string]any{"type": "thread_marked"})
 	e.a.Core().Inject(slack.Event{Type: "thread_marked", Raw: raw}) // client.counts again (refreshCountsSoon)
 	e.until("the late app's DM unread", 10*time.Second, func() bool {

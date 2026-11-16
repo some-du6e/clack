@@ -11,11 +11,20 @@ import (
 // Slack's 3x6A getActivityBadgeCount, getAppBadgeCount and ZVw+
 // getTotalUnreadHighlights. Synthetic counts only.
 
-func TestClassicActivityBadgeLikeSlack(t *testing.T) {
+// classicApp is testApp without the activity inbox (core's default
+// groups, defaultExperimentGroups, have it on, as the account does).
+func classicApp(t *testing.T) *App {
+	t.Helper()
 	a, _ := testApp(t)
+	a.SetExperimentGroup("activity_inbox", "off")
 	if a.ActivityInbox() {
-		t.Fatal("testApp has the activity inbox on: the test wants Slack's classic Activity")
+		t.Fatal("the activity inbox is still on")
 	}
+	return a
+}
+
+func TestClassicActivityBadgeLikeSlack(t *testing.T) {
+	a := classicApp(t)
 	a.mergeChannelBadges(map[string]int{"channels": 5, "thread_mentions": 1, "app_dms": 2, "thread_unreads": 4, "dms": 9})
 	a.resetAlerts(map[string]int{"external_channel_invite": 1, "quietly_added_to_channel": 3, "lists_todo_notification": 2,
 		"lists_approval_request": 1, "prejoin_dm_welcome_party_alert": 1, "not_an_alert_type": 7})
@@ -64,7 +73,7 @@ func TestClassicActivityBadgeLikeSlack(t *testing.T) {
 }
 
 func TestClassicAppBadgeLikeSlack(t *testing.T) {
-	a, _ := testApp(t)
+	a := classicApp(t)
 	// before client.counts: the DMs' own highlights only
 	if n := a.AppBadgeCount(3); n != 3 {
 		t.Errorf("no channel_badges yet: app badge %d, want the DMs' 3", n)
@@ -99,7 +108,7 @@ func TestClassicAppBadgeLikeSlack(t *testing.T) {
 // both, the way handleBadgeCountsUpdatedRTMEvent applies them, and not
 // its activity_v2; under the inbox only its activity_v2.
 func TestClassicBadgesUpdatesLikeSlack(t *testing.T) {
-	a, _ := testApp(t)
+	a := classicApp(t)
 	a.installCounts(&slack.Counts{ChannelBadges: map[string]int{"channels": 2, "app_dms": 1},
 		Alerts: map[string]int{"external_dm_invite": 1, "not_an_alert_type": 4}}, 0)
 	if n := a.ActivityBadgeCount(); n != 2+1+1 {

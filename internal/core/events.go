@@ -105,6 +105,9 @@ func (a *App) handle(ev slack.Event) {
 		}
 		a.S.Unlock()
 		cv := a.Count(ch)
+		if cv.Unread || cv.Mentions > 0 { // marked unread elsewhere: the DM badges read its member (members.go)
+			a.readBadgePerson(ch)
+		}
 		a.emit(Event{Type: "marked", Channel: ch, TS: e.TS, Count: &cv})
 	case "presence_change":
 		var e struct {
