@@ -16,8 +16,9 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The beats' illustrations. "Your Slack, 1:1" is the app itself, live over
-// the demo workspace (intro_preview.go); the others are drawn from
+// The beats' illustrations. "Your Slack, 1:1" is the app itself over the
+// demo workspace, one frame rendered by it in its own process
+// (intro_preview.go); the others are drawn from
 // Clack's own pieces at a smaller scale: the aubergine window with its
 // rail, sidebar and message pane, Preferences' plugin rows and their
 // switches, a workspace tile and channel names. Every piece comes in on
@@ -365,7 +366,7 @@ func drawPointer(f *introFrame, p f32.Point, h, a float32) {
 	paint.FillShape(f.gtx.Ops, alphaMul(miniFg, a), clip.Stroke{Path: shape(), Width: h * 0.06}.Op())
 }
 
-// ---- your Slack 1:1: Clack itself, live, over the demo workspace ----
+// ---- your Slack 1:1: Clack itself, rendered over the demo workspace ----
 
 // drawSlackStage is the card rising in as before, and in it the real app
 // (intro_preview.go): the rail, top bar and sidebar sections, #general's

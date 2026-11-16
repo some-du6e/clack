@@ -152,9 +152,17 @@ func (b *backend) start(a *App) {
 	// "booted"), Block Kit, the restored channel's header (tabs, bookmarks,
 	// member count and facepile) and the drafts' sidebar markers. The
 	// window stays covered until they're in (reveal.go).
-	b.startTautAsync(a)
+	if a.inert {
+		// the introduction's preview renderer: no plugin system at all (no
+		// Taut or Slick runtime, plugin config, storage or slots)
+		b.pluginsOnce.Do(func() { close(b.pluginsReady) })
+	} else {
+		b.startTautAsync(a)
+	}
 	b.startBlockkit(a)
-	go a.settlePluginSlots(b) // release reserved plugin slots, save the learned ones
+	if !a.inert {
+		go a.settlePluginSlots(b) // release reserved plugin slots, save the learned ones
+	}
 	if ch := a.router.Current().Channel(); ch != "" {
 		b.opened(ch)
 	}

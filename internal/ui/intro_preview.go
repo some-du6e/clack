@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,8 +68,26 @@ var introPreviewCommand = func(args ...string) (*exec.Cmd, error) {
 	}
 	cmd := exec.Command(exe, append([]string{"intro-preview"}, args...)...)
 	cmd.WaitDelay = 2 * time.Second // a killed renderer's pipes never hold Wait
-	hideChildWindow(cmd)            // Windows: no console flashes up
+	configureChild(cmd)             // Windows: no console; Linux: dies with the window
 	return cmd, nil
+}
+
+// rendererEnv is the renderer's environment: the window's (base), with
+// CLACK_HOME and YOLOSLACK_HOME pointing into the renderer's own folder so
+// nothing that defaults to the user's config folder (Taut's and Slick's
+// plugins, their storage and secrets, creds.json) can find it, and none
+// of the window's test switches.
+func rendererEnv(base []string, home string) []string {
+	out := make([]string, 0, len(base)+2)
+	for _, kv := range base {
+		k, _, _ := strings.Cut(kv, "=")
+		switch strings.ToUpper(k) {
+		case "CLACK_HOME", "YOLOSLACK_HOME", "CLACK_MACOS_WINDOW_TESTS":
+			continue
+		}
+		out = append(out, kv)
+	}
+	return append(out, "CLACK_HOME="+home, "YOLOSLACK_HOME="+home)
 }
 
 // introPreviewReportHook, when set (tests), asks the renderer for its
@@ -93,7 +112,6 @@ type introPreview struct {
 	closed bool
 	proc   *os.Process
 	dir    string
-	wg     sync.WaitGroup // the renderer's goroutine
 }
 
 func startIntroPreview(host *App) *introPreview { return &introPreview{host: host} }
@@ -106,7 +124,7 @@ func (p *introPreview) failed() bool { return p == nil || p.fail }
 
 // update starts the renderer at the first frame that draws the beats (the
 // card's size in px is known then) and notes when an image came in.
-func (p *introPreview) update(f *introFrame, _ bool) {
+func (p *introPreview) update(f *introFrame) {
 	if p == nil {
 		return
 	}
@@ -136,22 +154,29 @@ func (p *introPreview) update(f *introFrame, _ bool) {
 		p.fail = true
 		return
 	}
-	p.wg.Add(1)
+	h := p.host
+	h.previews.Add(1) // quit waits for every renderer (shutdownIntro)
 	go func() {
-		defer p.wg.Done()
-		img, err := p.run(cfg, size, float32(size.X)/previewW, spdp)
-		p.host.Post(func() {
-			switch {
-			case err != nil:
+		defer h.previews.Done()
+		// the frame is shown as soon as it is read; the renderer's exit and
+		// the folder's removal come after
+		deliver := func(img *image.RGBA) {
+			h.Post(func() {
+				if !p.isClosed() {
+					p.img, p.op, p.fresh = img, paint.NewImageOp(img), true
+				}
+			})
+		}
+		if err := p.run(cfg, size, float32(size.X)/previewW, spdp, deliver); err != nil {
+			h.Post(func() {
 				if !p.isClosed() {
 					log.Printf("ui: intro preview: %v", err)
 				}
-				p.fail = true
-			case p.isClosed():
-			default:
-				p.img, p.op, p.fresh = img, paint.NewImageOp(img), true
-			}
-		})
+				if p.img == nil {
+					p.fail = true
+				}
+			})
+		}
 	}()
 }
 
@@ -175,17 +200,18 @@ func (p *introPreview) config() ([]byte, error) {
 	})
 }
 
-// run starts the renderer in a new folder, reads its frame and waits for
-// it to exit, then removes the folder. Off the UI goroutine.
-func (p *introPreview) run(cfg []byte, size image.Point, scale, spdp float32) (*image.RGBA, error) {
+// run starts the renderer in a new folder, hands its frame to deliver as
+// soon as it is read, waits for it to exit and removes the folder (the
+// renderer removes it too). Off the UI goroutine.
+func (p *introPreview) run(cfg []byte, size image.Point, scale, spdp float32, deliver func(*image.RGBA)) error {
 	sweepPreviewDirs()
 	dir, err := os.MkdirTemp("", previewDirPrefix)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer removePreviewDir(dir)
 	if err := os.WriteFile(filepath.Join(dir, "ui.json"), cfg, 0o600); err != nil {
-		return nil, err
+		return err
 	}
 	args := []string{"-dir", dir, "-w", fmt.Sprint(size.X), "-h", fmt.Sprint(size.Y),
 		"-scale", fmt.Sprint(scale), "-spdp", fmt.Sprint(spdp)}
@@ -195,39 +221,44 @@ func (p *introPreview) run(cfg []byte, size image.Point, scale, spdp float32) (*
 	}
 	cmd, err := introPreviewCommand(args...)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	base := cmd.Env
+	if base == nil {
+		base = os.Environ()
+	}
+	cmd.Env = rendererEnv(base, filepath.Join(dir, "home"))
 	cmd.Stdin = nil
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return nil, err
+		return err
+	}
+	if p.isClosed() {
+		return errors.New("closed")
+	}
+	// Start outside the lock: close (UI goroutine) never waits on a fork
+	if err := cmd.Start(); err != nil {
+		return err
 	}
 	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return nil, errors.New("closed")
-	}
-	if err := cmd.Start(); err != nil {
-		p.mu.Unlock()
-		return nil, err
-	}
 	p.proc, p.dir = cmd.Process, dir
+	if p.closed { // closed while it started
+		_ = cmd.Process.Kill()
+	}
 	p.mu.Unlock()
 	logged := make(chan struct{})
 	go func() { // its log, marked as the preview's, in the window's
 		defer close(logged)
-		sc := bufio.NewScanner(stderr)
-		for sc.Scan() {
-			// the renderer's own log lines: the demo workspace's, no account
-			// or message of the window's is in that process
-			log.Printf("ui: intro preview: %s", sc.Bytes())
-		}
+		relayPreviewLog(stderr)
 	}()
 	img, rep, rerr := readPreviewFrame(bufio.NewReaderSize(stdout, 1<<16), size, hook != nil)
+	if rerr == nil {
+		deliver(img)
+	}
 	_, _ = io.Copy(io.Discard, stdout) // whatever is left, so Wait never blocks on the pipe
 	<-logged
 	werr := cmd.Wait()
@@ -239,11 +270,33 @@ func (p *introPreview) run(cfg []byte, size image.Point, scale, spdp float32) (*
 	}
 	if rerr != nil {
 		if werr != nil {
-			return nil, fmt.Errorf("renderer: %v (%v)", werr, rerr)
+			return fmt.Errorf("renderer: %v (%v)", werr, rerr)
 		}
-		return nil, rerr
+		return rerr
 	}
-	return img, nil
+	return nil
+}
+
+// relayPreviewLog copies the renderer's log lines into the window's,
+// marked as the preview's, until it closes: always drained (a line past
+// 4 KB is cut and the rest discarded), so the renderer never blocks on a
+// full pipe. Its lines are the demo workspace's: no account or message of
+// the window's is in that process.
+func relayPreviewLog(r io.Reader) {
+	br := bufio.NewReaderSize(r, 4096)
+	for {
+		line, err := br.ReadSlice('\n')
+		if len(line) > 0 {
+			log.Printf("ui: intro preview: %s", bytes.TrimRight(line, "\r\n"))
+		}
+		for err == bufio.ErrBufferFull { // the rest of a long line
+			_, err = br.ReadSlice('\n')
+		}
+		if err != nil {
+			_, _ = io.Copy(io.Discard, br)
+			return
+		}
+	}
 }
 
 // readPreviewFrame reads the renderer's "CLACKPV1 w h" line, its pixels
@@ -318,18 +371,19 @@ func (p *introPreview) close() {
 	p.img, p.op = nil, paint.ImageOp{}
 }
 
-// shutdown is close, waiting (up to d) for the renderer to exit and its
-// folder to go: the window is closing.
-func (p *introPreview) shutdown(d time.Duration) {
-	if p == nil {
-		return
+// shutdownIntro is the window closing: the introduction's renderer is
+// stopped, and quit waits (up to 3 s) for every renderer started so far,
+// this introduction's and any an earlier one closed, to exit and its
+// folder to go.
+func (a *App) shutdownIntro() {
+	if in := a.intro; in != nil {
+		in.preview.close()
 	}
-	p.close()
 	done := make(chan struct{})
-	go func() { p.wg.Wait(); close(done) }()
+	go func() { a.previews.Wait(); close(done) }()
 	select {
 	case <-done:
-	case <-time.After(d):
+	case <-time.After(3 * time.Second):
 	}
 }
 

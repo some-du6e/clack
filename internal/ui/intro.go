@@ -32,7 +32,7 @@ import (
 // card (first launch) or "You're all set" (replay). Each beat comes in
 // on springs with its pieces staggered, and its illustration is drawn
 // from Clack's own UI (intro_beats.go); "your Slack, 1:1" shows the real
-// app, live over the demo workspace (intro_preview.go). Beats move on by themselves; Enter,
+// app over the demo workspace, rendered in its own process (intro_preview.go). Beats move on by themselves; Enter,
 // Space or → moves on now, ← goes back, Esc skips to the end. With
 // reduced motion (osmotion.go) everything only fades.
 //
@@ -165,14 +165,6 @@ func (a *App) replayIntro() {
 func (in *intro) close() {
 	if in != nil {
 		in.preview.close()
-	}
-}
-
-// shutdownIntro is the window closing: the preview's renderer stopped and
-// its folder removed before the process goes.
-func (a *App) shutdownIntro() {
-	if in := a.intro; in != nil {
-		in.preview.shutdown(3 * time.Second)
 	}
 }
 
@@ -664,7 +656,7 @@ func (a *App) layoutIntroOverlay(gtx layout.Context) {
 		in.mc.schedule(gtx)
 		return
 	}
-	in.preview.update(f, in.cur == beatSlack || in.prev == beatSlack) // even while the overlay is still clear
+	in.preview.update(f) // even while the overlay is still clear
 	o := fx{a: float32(clamp01(f.mc.spring(springSmooth, in.t0))), s: 1}
 	if in.closing {
 		c := f.mc.spring(springSmooth, in.closeAt)
@@ -705,7 +697,7 @@ func (in *intro) drawBackdrop(f *introFrame) {
 // drawBeats draws the beat leaving and the beat coming in, then the
 // bottom bar.
 func (in *intro) drawBeats(f *introFrame) {
-	in.preview.update(f, in.cur == beatSlack || in.prev == beatSlack)
+	in.preview.update(f)
 	if in.prev >= 0 && in.prev != beatFinal {
 		in.drawBeat(f, in.prev, in.leave(f))
 	}

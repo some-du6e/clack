@@ -26,7 +26,8 @@ var execAllowed = map[string]string{
 	"clipimg/clipimg_linux.go": "clipimg.Write runs on popups' run goroutine (Copy image)",
 	"intro_preview.go":         "the preview renderer starts and is waited for on its own goroutine",
 	"intro_preview_windows.go": "only sets the renderer's SysProcAttr",
-	"intro_preview_other.go":   "only the no-op hideChildWindow",
+	"intro_preview_linux.go":   "only sets the renderer's SysProcAttr",
+	"intro_preview_unix.go":    "only the no-op configureChild",
 }
 
 type uiFile struct {

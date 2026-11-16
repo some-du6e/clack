@@ -8,6 +8,7 @@ import (
 	"image"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -66,12 +67,28 @@ type introPreviewReport struct {
 	Elapsed  float64          `json:"elapsed"`  // seconds to the frame
 	Timeout  bool             `json:"timeout"`  // the frame came at the deadline
 	Unread   bool             `json:"unread"`   // #general starts unread (its pill)
+	Chrome   [3]uint8         `json:"chrome"`   // the account theme's chrome colour
+	Font     string           `json:"font"`     // the ui.json font option's value
+	Locale   string           `json:"locale"`   // the ui.json locale
+	Home     string           `json:"home"`     // CLACK_HOME as the renderer has it
+	Taut     bool             `json:"taut"`     // a Taut runtime was built or started (must not be)
+	Slick    bool             `json:"slick"`    // a Slick runtime was built (must not be)
+	AppKit   *appKitState     `json:"appkit"`   // macOS: whether it became an app
+}
+
+// appKitState is the renderer's standing with AppKit (macOS; nil
+// elsewhere): it must never be a regular, Dock-registered app.
+type appKitState struct {
+	NSApp  bool `json:"nsapp"`  // NSApplication was created
+	Policy int  `json:"policy"` // NSRunningApplication activationPolicy (0 regular, 1 accessory, 2 prohibited)
+	Active bool `json:"active"`
 }
 
 // RunIntroPreview is `clack intro-preview` (cmd/clack). It returns the
 // process's exit code.
 func RunIntroPreview(args []string, stdout, stderr io.Writer) int {
-	demo.LockNetwork() // first: from here on, loopback only
+	demo.LockNetwork()   // first: from here on, loopback only
+	endStartupFeedback() // Windows: the launch's busy cursor ends now
 	log.SetOutput(stderr)
 	log.SetFlags(0)
 	fs := flag.NewFlagSet("clack intro-preview", flag.ContinueOnError)
@@ -90,40 +107,50 @@ func RunIntroPreview(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "intro-preview: -dir and a size up to 4096 px are needed")
 		return 2
 	}
+	// the folder is the renderer's: its own CLACK_HOME too (the window sets
+	// it already), so no package that defaults to the user's config folder
+	// (Taut's and Slick's plugins, creds) can reach it from here
+	home := filepath.Join(*dir, "home")
+	os.Setenv("CLACK_HOME", home)
+	os.Setenv("YOLOSLACK_HOME", home)
+	defer removePreviewDir(*dir) // after the teardown: the window may be gone
 	t0 := time.Now()
-	rep, img, err := renderIntroPreview(*dir, image.Pt(*w, *h), float32(*scale), float32(*spdp), *limit, *report)
-	if err != nil {
+	emit := func(rep *introPreviewReport, img *image.RGBA) error {
+		out := bufio.NewWriterSize(stdout, 1<<16)
+		fmt.Fprintf(out, "%s %d %d\n", introPreviewMagic, img.Bounds().Dx(), img.Bounds().Dy())
+		out.Write(img.Pix)
+		if *report {
+			rep.Elapsed = time.Since(t0).Seconds()
+			b, _ := json.Marshal(rep)
+			fmt.Fprintf(out, "report %s\n", b)
+		}
+		return out.Flush()
+	}
+	if err := renderIntroPreview(*dir, image.Pt(*w, *h), float32(*scale), float32(*spdp), *limit, *report, emit); err != nil {
 		fmt.Fprintln(stderr, "intro-preview:", err)
-		return 1
-	}
-	out := bufio.NewWriterSize(stdout, 1<<16)
-	fmt.Fprintf(out, "%s %d %d\n", introPreviewMagic, img.Bounds().Dx(), img.Bounds().Dy())
-	out.Write(img.Pix)
-	if *report {
-		rep.Elapsed = time.Since(t0).Seconds()
-		b, _ := json.Marshal(rep)
-		fmt.Fprintf(out, "report %s\n", b)
-	}
-	if err := out.Flush(); err != nil {
 		return 1
 	}
 	return 0
 }
 
-// renderIntroPreview boots the demo workspace in an inert App and renders
-// its settled shell at size px.
-func renderIntroPreview(dir string, size image.Point, scale, spdp float32, limit time.Duration, report bool) (*introPreviewReport, *image.RGBA, error) {
+// renderIntroPreview boots the demo workspace in an inert App, renders its
+// settled shell at size px and hands the frame to emit before it tears
+// the App down (the window shows it without waiting for that).
+func renderIntroPreview(dir string, size image.Point, scale, spdp float32, limit time.Duration, report bool, emit func(*introPreviewReport, *image.RGBA) error) error {
 	rep := &introPreviewReport{}
 	var dockMu sync.Mutex
 	dockBadge = func(l string) { dockMu.Lock(); rep.Dock = append(rep.Dock, l); dockMu.Unlock() } // never the OS's
+	if report {
+		dockAnyOS = true // tests: the badge path runs on every OS, so only inert keeps it quiet
+	}
 	s, err := demo.Start(demo.Options{Quiet: true, Seed: 1, Read: []string{demo.GeneralID}, Logf: func(string, ...any) {}})
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	defer s.Close()
 	c, err := s.NewClient()
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	images := imgcache.New(s.Fetch, "", nil)
 	a := New(Options{ConfigDir: dir, NoRealtime: true}, images)
@@ -144,7 +171,7 @@ func renderIntroPreview(dir string, size image.Point, scale, spdp float32, limit
 	}()
 	win, err := headless.NewWindow(size.X, size.Y)
 	if err != nil {
-		return nil, nil, fmt.Errorf("headless window: %w", err)
+		return fmt.Errorf("headless window: %w", err)
 	}
 	defer win.Release()
 
@@ -203,11 +230,11 @@ func renderIntroPreview(dir string, size image.Point, scale, spdp float32, limit
 	}
 	layoutOnce()
 	if err := win.Frame(&ops); err != nil {
-		return nil, nil, fmt.Errorf("frame: %w", err)
+		return fmt.Errorf("frame: %w", err)
 	}
 	img := image.NewRGBA(image.Rectangle{Max: size})
 	if err := win.Screenshot(img); err != nil {
-		return nil, nil, fmt.Errorf("screenshot: %w", err)
+		return fmt.Errorf("screenshot: %w", err)
 	}
 	if report {
 		m := a.model()
@@ -228,10 +255,16 @@ func renderIntroPreview(dir string, size image.Point, scale, spdp float32, limit
 			rep.Unread = ci.Unread
 		}
 		rep.Dark = a.th.Dark
-		bg := a.th.C.Bg
-		rep.Bg = [3]uint8{bg.R, bg.G, bg.B}
+		bg, ch := a.th.C.Bg, a.th.C.ChromeA
+		rep.Bg, rep.Chrome = [3]uint8{bg.R, bg.G, bg.B}, [3]uint8{ch.R, ch.G, ch.B}
+		if o := a.prefs.ClientTypeface; o != nil {
+			rep.Font = o.Value
+		}
+		rep.Locale, rep.Home = a.prefs.Locale, os.Getenv("CLACK_HOME")
+		rep.Taut, rep.Slick = a.data.taut != nil || a.data.tautStarting, a.data.slick != nil
+		rep.AppKit = appKitReport()
 	}
-	return rep, img, nil
+	return emit(rep, img)
 }
 
 // newestThread is the newest thread root in ch's loaded history ("" none).

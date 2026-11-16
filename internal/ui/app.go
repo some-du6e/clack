@@ -211,6 +211,8 @@ type App struct {
 	// inert: the introduction's preview renderer (intro_preview_child.go):
 	// no Dock, taskbar or tray badge, no notification, sound or bounce
 	inert bool
+	// previews are the introduction's renderers still running (intro_preview.go): quit waits for them
+	previews sync.WaitGroup
 	// pinAcct keeps the account theme ui.json gave: the account's prefs
 	// don't replace it (the preview renderer draws the window's theme over
 	// the demo workspace's prefs)

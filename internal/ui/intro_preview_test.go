@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"bytes"
 	"image"
 	"image/png"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,8 +12,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 	"weak"
@@ -21,16 +21,22 @@ import (
 	"gioui.org/io/pointer"
 
 	"github.com/some-du6e/clack/internal/demo"
-	"github.com/some-du6e/clack/internal/emoji"
-	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
+	"github.com/some-du6e/clack/internal/ui/uifont"
 )
 
-// introPreviewTestCommand runs the preview renderer as this test binary
-// (TestIntroPreviewChild), the way the app runs `clack intro-preview`.
+// The renderer in tests: this test binary as TestIntroPreviewChild, or,
+// with CLACK_INTRO_PREVIEW_BIN set (the macos and windows-shell jobs), a
+// built Clack's own `intro-preview`, the way a release runs it.
 func introPreviewTestCommand(args ...string) (*exec.Cmd, error) {
-	cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestIntroPreviewChild$", "-test.count=1", "--"}, args...)...)
-	cmd.Env = append(os.Environ(), "CLACK_INTRO_PREVIEW_CHILD=1")
+	var cmd *exec.Cmd
+	if bin := os.Getenv("CLACK_INTRO_PREVIEW_BIN"); bin != "" {
+		cmd = exec.Command(bin, append([]string{"intro-preview"}, args...)...)
+		configureChild(cmd)
+	} else {
+		cmd = exec.Command(os.Args[0], append([]string{"-test.run=^TestIntroPreviewChild$", "-test.count=1", "--"}, args...)...)
+		cmd.Env = append(os.Environ(), "CLACK_INTRO_PREVIEW_CHILD=1")
+	}
 	cmd.WaitDelay = 2 * time.Second
 	return cmd, nil
 }
@@ -112,20 +118,82 @@ var previewReads = []string{
 	"users.profile.get", "workflows.featured.list",
 }
 
-// "It's your Slack, 1:1." shows the real app: the preview renderer, its
-// own process, boots the demo workspace and draws the shell with the
-// sidebar's sections, #general's header, messages and composer and a
-// thread, in the window's theme, and the card draws its frame. The window
-// gives nothing of itself: its emoji set, plugin patches and Dock badge
-// are untouched while the renderer works and the card shows, clicks and
-// keys on the card do nothing, the renderer calls only reads, and after
-// the introduction the preview is gone: unreachable, its goroutines ended,
-// its folder removed (and on quit mid-renderer too). With LOGIN_SHOTS_DIR
-// set (the login-shots workflow) the beat is saved, light and dark:
+// ochin is Slack's Ochin theme as ia_theme stores it (theme/account_test.go).
+const ochin = `{"primary":{"palette":"ocean"},"highlight1":{"palette":"ocean"},"highlight2":{"palette":"cilantro"},"important":{"palette":"mojito"},"brightness":5,"sidebarInverted":false,"useCustomHex":false}`
+
+// startPreviewBeat replays the introduction over a fresh window (its
+// account theme Ochin, Arial, fr-FR), goes to "your Slack, 1:1" and waits
+// for the renderer's frame and (reports) its report. base is the
+// goroutine count before the introduction.
+func startPreviewBeat(t *testing.T, dark bool, reports chan *introPreviewReport) (*App, *introEnv, *introPreviewReport, int) {
+	t.Helper()
+	a, _, _ := fakePrefsApp(t)
+	a.motionOverride = -1
+	if dark {
+		a.th.SetDark(true)
+	}
+	// the window's account theme, font and locale, none of them defaults
+	a.prefs.AcctTheme = ochin
+	a.setAcct(acctFromPrefs(ochin, false))
+	a.prefs.ClientTypeface = &uifont.Option{Label: "Arial", Value: uifont.Arial, FontFamily: "Arial"}
+	a.prefs.Locale = "fr-FR"
+	e := newIntroEnv(t, a, image.Pt(1440, 900))
+	e.run(300 * time.Millisecond)
+	runtime.GC()
+	base := runtime.NumGoroutine() // before the introduction (and its renderer)
+	a.replayIntro()
+	e.frame(time.Second / 60)
+	e.started()
+	in := a.intro
+	e.key(key.NameRightArrow)
+	e.key(key.NameRightArrow)
+	if in.cur != beatSlack {
+		t.Fatalf("beat %d, want your Slack (%d)", in.cur, beatSlack)
+	}
+	waitReal(t, e, "the preview's frame", 90*time.Second, func() bool { return in.preview.ready() || in.preview.failed() })
+	if in.preview.failed() {
+		if w, err := pixeltest.NewWindow(64, 64); err != nil {
+			t.Skipf("no GPU for the renderer: %v", err)
+		} else {
+			w.Release()
+		}
+		t.Fatal("the preview renderer failed (its log is above)")
+	}
+	var rep *introPreviewReport
+	if reports != nil {
+		select {
+		case rep = <-reports:
+		case <-time.After(15 * time.Second):
+			t.Fatal("no report from the renderer")
+		}
+	}
+	return a, e, rep, base
+}
+
+// endIntro closes the introduction (Esc, then Enter on You're all set).
+func endIntro(t *testing.T, a *App, e *introEnv) {
+	t.Helper()
+	e.key(key.NameEscape)
+	e.run(1500 * time.Millisecond)
+	e.key(key.NameReturn)
+	e.run(time.Second)
+	if a.intro != nil {
+		t.Fatal("the introduction is still up")
+	}
+}
+
+// "It's your Slack, 1:1." shows the real app: the renderer, its own
+// process, boots the demo workspace and draws the shell (sidebar sections,
+// #general's header, messages and composer, a thread) in the window's
+// account theme, font and locale, and the card draws its frame. The
+// renderer calls only reads, never badges the Dock, never runs a plugin
+// and (macOS) never becomes an app; clicks and keys on the card do nothing;
+// after the introduction the preview is gone: unreachable, its goroutines
+// ended, no folder left. With LOGIN_SHOTS_DIR set (login-shots, and the
+// macos and windows-shell jobs) the beat is saved, light and dark:
 // intro-slack-<mode>.png and its card, -card.png.
 func TestIntroSlackPreview(t *testing.T) {
 	dir := os.Getenv("LOGIN_SHOTS_DIR")
-	sz := image.Pt(1440, 900)
 	for _, dark := range []bool{false, true} {
 		mode := "light"
 		if dark {
@@ -133,71 +201,8 @@ func TestIntroSlackPreview(t *testing.T) {
 		}
 		t.Run(mode, func(t *testing.T) {
 			reports := usePreviewRenderer(t, true)
-			a, _, _ := fakePrefsApp(t) // the window (its own core sets the emoji set: before the sentinel)
-			a.motionOverride = -1
-			if dark {
-				a.th.SetDark(true)
-			}
-			// the window's process-wide state, set to what the renderer would
-			// change if it reached it
-			v17 := !emoji.V17()
-			emoji.SetV17(v17)
-			t.Cleanup(func() { emoji.SetV17(!v17) })
-			slackc.SetPatched([]string{"IntroSentinel"})
-			t.Cleanup(func() { slackc.SetPatched(nil) })
-			var badges atomic.Int32
-			oldAny, oldBadge := dockAnyOS, dockBadge
-			dockAnyOS, dockBadge = true, func(string) { badges.Add(1) }
-			t.Cleanup(func() { dockAnyOS, dockBadge = oldAny, oldBadge })
-			// a background goroutine, as a plugin dispatch would, sees the
-			// window's patches the whole time
-			var unpatched atomic.Int32
-			stop := make(chan struct{})
-			var bg sync.WaitGroup
-			bg.Add(1)
-			go func() {
-				defer bg.Done()
-				for {
-					select {
-					case <-stop:
-						return
-					default:
-					}
-					if !slackc.Patched("IntroSentinel") {
-						unpatched.Add(1)
-					}
-					time.Sleep(time.Millisecond)
-				}
-			}()
-
-			e := newIntroEnv(t, a, sz)
-			e.run(300 * time.Millisecond)
-			runtime.GC()
-			base := runtime.NumGoroutine()
-			a.replayIntro()
-			e.frame(time.Second / 60)
-			e.started()
+			a, e, rep, base := startPreviewBeat(t, dark, reports)
 			in := a.intro
-			e.key(key.NameRightArrow)
-			e.key(key.NameRightArrow)
-			if in.cur != beatSlack {
-				t.Fatalf("beat %d, want your Slack (%d)", in.cur, beatSlack)
-			}
-			waitReal(t, e, "the preview's frame", 90*time.Second, func() bool { return in.preview.ready() || in.preview.failed() })
-			if in.preview.failed() {
-				if w, err := pixeltest.NewWindow(64, 64); err != nil {
-					t.Skipf("no GPU for the renderer: %v", err)
-				} else {
-					w.Release()
-				}
-				t.Fatal("the preview renderer failed (its log is above)")
-			}
-			var rep *introPreviewReport
-			select {
-			case rep = <-reports:
-			case <-time.After(10 * time.Second):
-				t.Fatal("no report from the renderer")
-			}
 			e.run(1200 * time.Millisecond) // the card has risen, the image faded in
 
 			var rec []introDrawn
@@ -215,8 +220,8 @@ func TestIntroSlackPreview(t *testing.T) {
 			}
 
 			// what the renderer drew: the app's own components
-			t.Logf("renderer: %.1fs, timeout %v, route %q, sections %q, %d rows, thread %v, list %s, composer %s, unread %v",
-				rep.Elapsed, rep.Timeout, rep.Route, rep.Sections, rep.Rows, rep.Thread, rep.List, rep.Composer, rep.Unread)
+			t.Logf("renderer: %.1fs, timeout %v, route %q, sections %q, %d rows, thread %v, list %s, composer %s, unread %v, font %q, locale %q, home %q, appkit %+v",
+				rep.Elapsed, rep.Timeout, rep.Route, rep.Sections, rep.Rows, rep.Thread, rep.List, rep.Composer, rep.Unread, rep.Font, rep.Locale, rep.Home, rep.AppKit)
 			t.Logf("drawn: %q", rep.Drawn)
 			if rep.Timeout {
 				t.Error("the renderer never settled")
@@ -227,7 +232,7 @@ func TestIntroSlackPreview(t *testing.T) {
 			if !rep.Thread || rep.List != "ui.channelList" || rep.Composer != "ui.composerBox" {
 				t.Errorf("#general: thread %v, list %s, composer %s (want the real list, composer and a thread)", rep.Thread, rep.List, rep.Composer)
 			}
-			for _, want := range []string{demo.TeamName, "general", "Sales floor", "Thread", "Reply to thread…"} {
+			for _, want := range []string{demo.TeamName, "general"} {
 				if !slices.Contains(rep.Drawn, want) {
 					t.Errorf("%q isn't drawn", want)
 				}
@@ -240,11 +245,25 @@ func TestIntroSlackPreview(t *testing.T) {
 			if rep.Unread {
 				t.Error("#general starts unread")
 			}
-			if bg := a.th.C.Bg; rep.Dark != dark || rep.Bg != [3]uint8{bg.R, bg.G, bg.B} {
-				t.Errorf("the renderer's theme: dark %v, panel %v; the window's: dark %v, panel %v", rep.Dark, rep.Bg, dark, bg)
+			// the window's theme: its mode, its account theme's chrome (the
+			// demo account's own is the default aubergine), its font and locale
+			bg, ch := a.th.C.Bg, a.th.C.ChromeA
+			if rep.Dark != dark || rep.Bg != [3]uint8{bg.R, bg.G, bg.B} || rep.Chrome != [3]uint8{ch.R, ch.G, ch.B} {
+				t.Errorf("the renderer's theme: dark %v, panel %v, chrome %v; the window's: dark %v, panel %v, chrome %v", rep.Dark, rep.Bg, rep.Chrome, dark, bg, ch)
+			}
+			if rep.Font != uifont.Arial || rep.Locale != "fr-FR" {
+				t.Errorf("the renderer's font %q and locale %q, want the window's (arial, fr-FR)", rep.Font, rep.Locale)
 			}
 			if len(rep.Dock) != 0 {
 				t.Errorf("the renderer asked for Dock badges %q", rep.Dock)
+			}
+			if rep.Taut || rep.Slick {
+				t.Errorf("the renderer started a plugin system (taut %v, slick %v)", rep.Taut, rep.Slick)
+			}
+			if runtime.GOOS == "darwin" {
+				if k := rep.AppKit; k == nil || k.Policy == 0 || k.Active {
+					t.Errorf("the renderer is an app to AppKit (Dock icon, activation): %+v", k)
+				}
 			}
 			var calls []string
 			for m, n := range rep.Calls {
@@ -257,7 +276,7 @@ func TestIntroSlackPreview(t *testing.T) {
 			t.Logf("calls: %q", calls)
 
 			if dir != "" {
-				win, err := pixeltest.NewWindow(sz.X, sz.Y)
+				win, err := pixeltest.NewWindow(e.sz.X, e.sz.Y)
 				if err != nil {
 					t.Fatalf("headless window: %v", err)
 				}
@@ -292,27 +311,10 @@ func TestIntroSlackPreview(t *testing.T) {
 				t.Errorf("input on the card: %d overlays, beat %d", len(a.overlays), in.cur)
 			}
 
-			// the window's own state, untouched
-			if emoji.V17() != v17 {
-				t.Error("the window's emoji set changed")
-			}
-			if n := badges.Load(); n != 0 {
-				t.Errorf("the Dock badge was set %d times", n)
-			}
-			if n := unpatched.Load(); n != 0 {
-				t.Errorf("a background reader saw the window's plugin patches gone %d times", n)
-			}
-
 			// gone with the introduction
 			wp := weak.Make(in.preview)
-			e.key(key.NameEscape)
-			e.run(1500 * time.Millisecond)
-			e.key(key.NameReturn)
-			e.run(time.Second)
-			if a.intro != nil {
-				t.Fatal("the introduction is still up")
-			}
 			in = nil
+			endIntro(t, a, e)
 			dl := time.Now().Add(15 * time.Second)
 			for {
 				runtime.GC()
@@ -328,8 +330,6 @@ func TestIntroSlackPreview(t *testing.T) {
 				e.frame(0)
 				time.Sleep(20 * time.Millisecond)
 			}
-			close(stop)
-			bg.Wait()
 			if ms, _ := filepath.Glob(filepath.Join(os.TempDir(), previewDirPrefix+"*")); len(ms) != 0 {
 				t.Errorf("renderer folders left: %q", ms)
 			}
@@ -337,36 +337,164 @@ func TestIntroSlackPreview(t *testing.T) {
 	}
 }
 
-// Quitting while the renderer still works stops it and removes its
-// folder before the window goes (DestroyEvent's shutdownIntro).
-func TestIntroPreviewQuit(t *testing.T) {
-	usePreviewRenderer(t, false)
-	a, _, _ := fakePrefsApp(t)
-	a.motionOverride = -1
-	e := newIntroEnv(t, a, image.Pt(1280, 800))
-	e.run(200 * time.Millisecond)
-	a.replayIntro()
-	e.frame(time.Second / 60)
-	e.started()
-	p := a.intro.preview
-	var dir string
-	waitReal(t, e, "the renderer running", 60*time.Second, func() bool {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		dir = p.dir
-		return p.proc != nil || p.fail
+// treeState is every file under dir: its bytes and modification time.
+func treeState(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := d.Info()
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		v := fi.ModTime().UTC().Format(time.RFC3339Nano)
+		if !d.IsDir() {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			v += " " + string(b)
+		}
+		out[rel] = v
+		return nil
 	})
-	if p.fail {
-		t.Skip("the renderer didn't start")
+	if err != nil {
+		t.Fatal(err)
 	}
-	a.shutdownIntro()
-	p.mu.Lock()
-	proc := p.proc
-	p.mu.Unlock()
-	if proc != nil {
-		t.Error("the renderer is still running after shutdown")
+	return out
+}
+
+// The renderer never touches the user's config folder: with CLACK_HOME
+// holding an enabled Taut plugin that writes its storage on start, its
+// config, user CSS, stored data and secrets, creds.json and Slick's
+// switches, nothing in it changes (bytes, mtimes, no new file), the
+// renderer's CLACK_HOME is its own, and no plugin system ran.
+func TestIntroPreviewPluginHome(t *testing.T) {
+	home := t.TempDir()
+	plugin := `(() => {
+const TautPlugin = globalThis.TautPlugin, opt = globalThis.TautOpt;
+class Marker extends TautPlugin {
+	static id = 'Marker'; static pluginName = 'Marker'; static description = ''; static authors = []
+	static defaultConfig = { enabled: true }
+	async start() {
+		this.s = this.api.storage.store('k', {n: 0})
+		await this.s.ready
+		await this.s.update((v) => ({n: v.n + 1}))
+		await this.api.secrets.store('key', '').set('from the renderer')
 	}
-	if _, err := os.Stat(dir); !os.IsNotExist(err) {
-		t.Errorf("the renderer's folder %s is still there (%v)", dir, err)
+}
+return Marker
+})()`
+	files := map[string]string{
+		"taut/plugins/Marker.js":        plugin,
+		"taut/config.json":              `{"plugins":{"Marker":{"enabled":true}}}`,
+		"taut/user.css":                 `.p-ia4_client { outline: 1px solid red }`,
+		"taut/storage/plugin~Old~store": `{"a":"b"}`,
+		"taut/secrets/plugin~Old~sec":   `{"token":"xoxc-user"}`,
+		"creds.json":                    `{"token":"xoxc-user","cookie":"xoxd-user"}`,
+		"slick/switches.json":           `{"enabled":["SomeTheme"]}`,
+		"slick/settings.json":           `{}`,
+	}
+	for name, body := range files {
+		p := filepath.Join(home, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-time.Hour) // mtimes a write would move
+	_ = filepath.WalkDir(home, func(p string, d fs.DirEntry, err error) error { return os.Chtimes(p, old, old) })
+	before := treeState(t, home)
+	t.Setenv("CLACK_HOME", home)
+	t.Setenv("YOLOSLACK_HOME", home)
+
+	reports := usePreviewRenderer(t, true)
+	a, e, rep, _ := startPreviewBeat(t, false, reports)
+	if rep.Taut || rep.Slick {
+		t.Errorf("the renderer started a plugin system (taut %v, slick %v)", rep.Taut, rep.Slick)
+	}
+	if rep.Home == "" || rep.Home == home || !strings.HasPrefix(filepath.Base(filepath.Dir(rep.Home)), previewDirPrefix) {
+		t.Errorf("the renderer's CLACK_HOME is %q, not its own folder", rep.Home)
+	}
+	endIntro(t, a, e)
+	dl := time.Now().Add(15 * time.Second)
+	for {
+		ms, _ := filepath.Glob(filepath.Join(os.TempDir(), previewDirPrefix+"*"))
+		if len(ms) == 0 {
+			break
+		}
+		if time.Now().After(dl) {
+			t.Fatalf("renderer folders left: %q", ms)
+		}
+		e.frame(0)
+		time.Sleep(20 * time.Millisecond)
+	}
+	after := treeState(t, home)
+	for k, v := range after {
+		if b, ok := before[k]; !ok {
+			t.Errorf("the renderer made %s in the user's folder", k)
+		} else if b != v {
+			t.Errorf("the renderer changed %s in the user's folder", k)
+		}
+	}
+	for k := range before {
+		if _, ok := after[k]; !ok {
+			t.Errorf("the renderer removed %s from the user's folder", k)
+		}
+	}
+}
+
+// Quitting while a renderer still works stops it and removes its folder
+// before the window goes: the open introduction's, and one an
+// introduction just closed (Esc) left exiting. Run's DestroyEvent is what
+// calls shutdownIntro.
+func TestIntroPreviewQuit(t *testing.T) {
+	src, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := bytes.Index(src, []byte("case app.DestroyEvent:"))
+	if i < 0 || !bytes.Contains(src[i:min(len(src), i+400)], []byte("a.shutdownIntro()")) {
+		t.Error("Run's DestroyEvent doesn't call a.shutdownIntro()")
+	}
+	usePreviewRenderer(t, false)
+	for _, closedFirst := range []bool{false, true} {
+		a, _, _ := fakePrefsApp(t)
+		a.motionOverride = -1
+		e := newIntroEnv(t, a, image.Pt(1280, 800))
+		e.run(200 * time.Millisecond)
+		a.replayIntro()
+		e.frame(time.Second / 60)
+		e.started()
+		p := a.intro.preview
+		var dir string
+		waitReal(t, e, "the renderer running", 60*time.Second, func() bool {
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			dir = p.dir
+			return p.proc != nil || p.fail
+		})
+		if p.fail {
+			t.Skip("the renderer didn't start")
+		}
+		if closedFirst { // the introduction is gone; its renderer is still exiting
+			a.intro.close()
+			a.intro = nil
+		}
+		a.shutdownIntro()
+		p.mu.Lock()
+		proc := p.proc
+		p.mu.Unlock()
+		if proc != nil {
+			t.Errorf("closed first %v: the renderer is still running after shutdown", closedFirst)
+		}
+		if _, err := os.Stat(dir); !os.IsNotExist(err) {
+			t.Errorf("closed first %v: the renderer's folder %s is still there (%v)", closedFirst, dir, err)
+		}
 	}
 }
