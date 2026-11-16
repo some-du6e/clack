@@ -13,6 +13,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/some-du6e/clack/internal/awake"
 )
 
 // Runtime is one JS engine instance with its own JS thread (a goroutine).
@@ -212,7 +214,16 @@ func (r *Runtime) loop() {
 	defer r.markDone()
 	defer live.Delete(r) // before Done fires; an abandoned runtime stays listed while it still runs
 	r.js = &Ctx{r: r}
+	// boot runs outside runTask but holds the JS thread in wasm (the
+	// environment and React's bundles) like a task, so Snapshots (freeze
+	// reports) and runningLabel name it instead of calling the runtime
+	// idle. It has no deadline: nothing interrupts it but Close.
+	bootTask := task{kind: "boot", start: time.Now(), mono: monoNow()}
+	r.running.Store(&bootTask)
+	r.taskStart.Store(bootTask.mono)
 	r.initErr = r.boot()
+	r.taskStart.Store(0)
+	r.running.Store(nil)
 	close(r.ready)
 	if r.initErr != nil {
 		if r.eng != nil {
@@ -280,7 +291,7 @@ func (r *Runtime) runTask(t task) {
 		r.logSlowGC()
 	}()
 	start := monoNow()
-	t.start = time.Now()
+	t.start, t.mono = time.Now(), start
 	r.running.Store(&t)
 	r.taskStart.Store(start)
 	r.deadline.Store(start + int64(r.opts.Timeout))
@@ -293,10 +304,11 @@ func (r *Runtime) runTask(t task) {
 // queued a Post or Do), never arguments.
 type task struct {
 	f     func()
-	kind  string  // "Call", "Do", "Post", "timer", "setImmediate", "release"
+	kind  string  // "Call", "Do", "Post", "timer", "setImmediate", "release", "boot"
 	what  string  // the Call's path, the timer's id
 	pc    uintptr // who queued it (Post, Do): a return address, 0 = none
 	start time.Time
+	mono  int64 // monoNow at start
 }
 
 // callerPC is the return address into the caller of the function calling
@@ -309,10 +321,9 @@ func callerPC(skip int) uintptr {
 	return pc[0]
 }
 
-// label names t for a log line: "Call taut.rtmEvent",
-// "Post from taut.(*Host).render.func1", "timer 12", with how long it has
-// run so far.
-func (t *task) label() string {
+// name names t: "Call taut.rtmEvent", "Post from
+// taut.(*Host).render.func1", "timer 12", "boot".
+func (t *task) name() string {
 	s := t.kind
 	if t.what != "" {
 		s += " " + t.what
@@ -326,12 +337,18 @@ func (t *task) label() string {
 			s += " from " + fn
 		}
 	}
+	return s
+}
+
+// label is name() for a log line, with how long t has run so far.
+func (t *task) label() string {
+	s := t.name()
 	if !t.start.IsZero() {
-		ran := time.Since(t.start) // monotonic
+		ran := time.Duration(monoNow() - t.mono)
 		s += fmt.Sprintf(", running %v", ran.Round(time.Millisecond))
-		// The wall clock goes on while a Mac sleeps and the monotonic one
-		// (ran, and the deadline: monoNow) doesn't: a wide gap means the
-		// system slept during the task.
+		// The wall clock goes on while the computer sleeps and the awake
+		// one (ran, and the deadline: monoNow) doesn't: a wide gap means
+		// the system slept during the task.
 		if wall := time.Now().Round(0).Sub(t.start.Round(0)); wall-ran > 2*time.Second {
 			s += fmt.Sprintf(", %v on the wall clock (the system slept?)", wall.Round(time.Second))
 		}
@@ -418,15 +435,14 @@ func (r *Runtime) markDone() { r.doneOnce.Do(func() { close(r.done) }) }
 // callers waiting on a promise can use this to stop. Any goroutine.
 func (r *Runtime) Interrupts() uint64 { return r.interrupts.Load() }
 
-// monoBase anchors the clock of every jsrt deadline. time.Since reads the
-// monotonic clock, which (unlike UnixNano's wall clock) stands still while
-// the computer sleeps: a task that was running when the lid closed isn't
-// past its deadline on wake, so the watchdog doesn't abandon the runtime
-// (and restart every plugin) over a sleep.
-var monoBase = time.Now()
-
-// monoNow is the time since monoBase in ns on the monotonic clock; never 0.
-func monoNow() int64 { return int64(time.Since(monoBase)) + 1 }
+// monoNow is the clock of every jsrt deadline and diagnostic: ns of awake
+// time (internal/awake), never 0. Unlike the wall clock it stands still
+// while the computer sleeps, on Linux, macOS and Windows (where Go's own
+// monotonic clock counts sleep and awake subtracts it), so a task that was
+// running when the lid closed isn't past its deadline on wake and the
+// watchdog doesn't abandon the runtime (and restart every plugin) over a
+// sleep.
+func monoNow() int64 { return awake.Now() }
 
 // ---- timers (setTimeout & co. are JS wrappers around these) ----
 

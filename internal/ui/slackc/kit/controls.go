@@ -55,7 +55,7 @@ type ctlPress struct {
 // around it while it has keyboard focus. onFocus/onBlur fire on changes.
 func (s *ctlPress) layout(gtx layout.Context, h *slackc.Host, radius int, w layout.Widget) layout.Dimensions {
 	d := s.click.Layout(gtx, w)
-	f := gtx.Focused(&s.click)
+	f := liveFocus(gtx, &s.click, s.focused)
 	if f != s.focused {
 		s.focused = f
 		if f {
@@ -743,7 +743,7 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			ed.SetText(value)
 		}
 	}
-	if p.Bool("autoFocus") && !st.autoDone && !disabled {
+	if p.Bool("autoFocus") && !st.autoDone && !disabled && gtx.Source.Enabled() {
 		gtx.Execute(key.FocusCmd{Tag: ed})
 		st.autoDone = true
 	}
@@ -800,7 +800,7 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			h.Call("onChange", ed.Text())
 		}
 	}
-	if f := gtx.Focused(ed); f != st.focused {
+	if f := liveFocus(gtx, ed, st.focused); f != st.focused {
 		st.focused = f
 		if f {
 			h.Call("onFocus", focusEvent("focus", ed.Text()))
@@ -825,7 +825,7 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	H := dp(gtx, hh)
 	r := image.Rect(0, 0, w, H)
 	rad := dp(gtx, 8)
-	focused := gtx.Focused(ed)
+	focused := liveFocus(gtx, ed, st.focused)
 	bg := cl.Bg
 	if disabled {
 		bg = cl.BgAlt

@@ -621,7 +621,7 @@ func timePicker(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 			gtx.Execute(key.FocusCmd{})
 		}
 	}
-	focused := gtx.Focused(&st.ed)
+	focused := liveFocus(gtx, &st.ed, st.focused)
 	if st.focused && !focused {
 		st.commitTyped()
 	}
