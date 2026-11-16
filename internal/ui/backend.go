@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +19,7 @@ import (
 	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 	"github.com/some-du6e/clack/internal/ui/uipref"
 )
 
@@ -82,9 +85,24 @@ type backend struct {
 	snapMu      sync.Mutex
 	snapPending bool
 
-	booted    time.Time
+	booted time.Time // Boot's answers are applied
+	// warmAt is when the boot data's sidebar was applied (a warm start:
+	// core.WarmSnapshot), before Boot answered; the boot placeholder lifts
+	// on it as on booted (reveal.go)
+	warmAt    time.Time
 	onSignOut func()
 	app       *App
+}
+
+// A core call that waits for Boot on the UI goroutine freezes the window
+// until Slack answers (a launch restored to Activity painted nothing for
+// 2.3 s, 2026-11-15): uiguard logs it and records it for the tests
+// (TestStartupStatesNeverBlock, TestUINeverWaitsForBoot). Core logs every
+// wait over 50 ms with its caller too (warmboot.go).
+func init() {
+	core.SetBootWaitHook(func(method, caller string) {
+		uiguard.OffUI("core." + method + " waiting for boot (" + caller + ")")
+	})
 }
 
 // NewBackend wraps a core service. cacheDir is unused: the account's cache
@@ -155,6 +173,29 @@ func (b *backend) start(a *App) {
 		b.opened(ch)
 	}
 	b.loadDrafts(a)
+	// A warm start renders from the boot data, as Slack renders from its
+	// persisted store, while Boot's calls are still out (core
+	// warmboot.go): the sidebar, and the restored channel's header from
+	// the header cache. Boot's answers replace them below.
+	go func() {
+		snap, warm := b.core.WarmSnapshot() // the disk reads only
+		a.Post(func() {
+			if a.data != b || b.ctx.Err() != nil {
+				return // signed out or switched meanwhile
+			}
+			if warm && b.booted.IsZero() {
+				b.apply(a, snap)
+				b.warmAt = time.Now()
+				applog.Mark("sidebar-cached", fmt.Sprintf("%d convs", len(snap.Convs)))
+				if a.router.Current() == "" {
+					a.openDefault()
+				}
+			}
+			if ch := a.router.Current().Channel(); ch != "" {
+				b.headerFromCache(ch)
+			}
+		})
+	}()
 	go func() {
 		t0 := time.Now()
 		if err := b.core.Boot(b.ctx); err != nil {
@@ -297,6 +338,9 @@ func (b *backend) stop() <-chan struct{} {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// the next warm start's sidebar and headers first: the window's
+		// close waits only so long, and plugins' stop hooks can be slow
+		b.core.SaveWarm()
 		// a section collapse still in its 3 s debounce goes out now
 		// (flushPendingChannelSectionCollapsedSync on teardown)
 		b.core.FlushSectionCollapsed()
@@ -322,6 +366,9 @@ func (b *backend) resnapshot(a *App) {
 		b.snapMu.Lock()
 		b.snapPending = false
 		b.snapMu.Unlock()
+		// during boot (cached prefs and experiments emit before the calls
+		// answer) the live snapshot backend.start applies comes first
+		<-b.core.Ready()
 		snap := b.core.Snapshot()
 		a.Post(func() { b.apply(a, snap) })
 	}()
@@ -697,7 +744,7 @@ func (b *backend) wants(ev core.Event) bool {
 		return os.Getenv("CLACK_TYPINGLOG") != ""
 	case "update":
 		return ev.StreamDone
-	case "emoji_changed":
+	case "emoji_changed", "hydrated": // hydrated: start's WarmSnapshot goroutine applies the boot data
 		return false
 	case "presence":
 		return b.shows(ev.UserID) || b.shows(ev.Users...)
@@ -864,20 +911,22 @@ func contains(s []string, v string) bool {
 
 // ---- per-channel side data (tabs, facepile) ----
 
-// opened is called when a conversation becomes current: fetch its
-// bookmarks/pins (tabs) and member facepile in the background.
+// opened is called when a conversation becomes current: its header's
+// reads (the tab bar with the folder tabs' bookmarks, the member facepile
+// and count) go out in the background. A header this session hasn't read
+// shows the header cache's copy at once (core header_cache.go, kept on
+// disk across starts) while the reads revalidate it, and reads that bring
+// the same header change nothing on screen.
 func (b *backend) opened(ch string) {
 	if t, ok := b.fetched[ch]; ok && time.Since(t) < 2*time.Minute {
 		return
 	}
 	b.fetched[ch] = time.Now()
+	b.headerFromCache(ch)
 	a := b.app
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, 20*time.Second)
 		defer cancel()
-		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…).
-		var tabs []chTab
-		var bms []core.Bookmark
 		// The header's three reads at once (they used to go one after
 		// another: three round trips before the header was complete).
 		// Members needs the kind: the sidebar's, else the id's.
@@ -911,28 +960,9 @@ func (b *backend) opened(ch string) {
 		if err != nil {
 			log.Printf("ui: tabs %s: %v", ch, err)
 		}
-		viewNames := b.core.Experiment("list_channel_tab_show_view_name_fe") == "on"
-		for _, t := range ts {
-			if t.Type == "messages" {
-				continue
-			}
-			label := t.Title
-			if label == "" {
-				label = t.Label
-			}
-			icon := tabIcon(t.Type)
-			if t.Deleted {
-				icon = "trash"
-			}
-			if label == "" {
-				continue
-			}
-			doc, emo, label, spans := docTab(t, label, tabSpans(t, label, b.core.Emoji), viewNames, b.core.Emoji) // tab_emoji_icon.go
-			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread,
-				folder: t.FolderBookmarkID, appID: t.AppID, doc: doc, emojiIcon: emo,
-				spans: spans, defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != "", rawLabel: t.Label})
-			bms = append(bms, t.Bookmarks...)
-		}
+		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…)
+		notMember := ierr == nil && !info.IsMember
+		tabs, bms := b.tabsOf(ts, notMember)
 		var members []string
 		if tried {
 			log.Printf("ui: members %s: %d err=%v", ch, len(us), merr)
@@ -951,29 +981,33 @@ func (b *backend) opened(ch string) {
 		if a == nil {
 			return
 		}
-		if ierr == nil && !info.IsMember {
-			// Slack's tab bar marks no canvas unread in a channel you
-			// aren't in (C08E083LZ9A's "Untitled", 2026-11-08).
-			for i := range tabs {
-				tabs[i].unread = false
-			}
-		}
 		a.Post(func() {
-			a.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
-			b.bookmarks[ch] = bms
 			if b.tabsDone == nil {
 				b.tabsDone = map[string]bool{}
 			}
+			// a failed tab read keeps the bar shown (this session's or the
+			// cache's); one that brings the same bar changes nothing
+			changed := !b.tabsDone[ch]
+			if err == nil || !b.tabsDone[ch] {
+				if !reflect.DeepEqual(b.tabCache[ch], tabs) {
+					a.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
+					changed = true
+				}
+				if !reflect.DeepEqual(b.bookmarks[ch], bms) {
+					b.bookmarks[ch] = bms
+					changed = true
+				}
+			}
 			b.tabsDone[ch] = true
 			sd := b.sideOf(ch)
-			if ierr == nil && info.Conv.NumMembers > 0 {
-				sd.num = info.Conv.NumMembers
+			if ierr == nil && info.Conv.NumMembers > 0 && sd.num != info.Conv.NumMembers {
+				sd.num, changed = info.Conv.NumMembers, true
 			}
-			if ierr == nil && info.Conv.Topic != "" {
-				sd.topic, sd.spans = info.Conv.Topic, firstSpans(info.Conv.TopicDoc)
+			if ierr == nil && info.Conv.Topic != "" && sd.topic != info.Conv.Topic {
+				sd.topic, sd.spans, changed = info.Conv.Topic, firstSpans(info.Conv.TopicDoc), true
 			}
-			if len(members) > 0 {
-				sd.members = members
+			if len(members) > 0 && !slices.Equal(sd.members, members) {
+				sd.members, changed = members, true
 			}
 			if tried && merr != nil {
 				// the facepile stays the loading tiles until a read works:
@@ -984,11 +1018,98 @@ func (b *backend) opened(ch string) {
 			} else {
 				sd.fails = 0
 			}
-			b.applySide(b.m.conv(ch), false)
-			b.applySide(b.ext[ch], false)
-			a.Invalidate()
+			if err == nil && ierr == nil { // the next start's header (and this session's next open)
+				b.core.SetCachedHeader(ch, core.ChannelHeader{Tabs: ts, NotMember: notMember, Members: sd.members, Num: sd.num})
+			}
+			// the read wins over a snapshot's count and topic (applySide),
+			// as before; only a change draws
+			for _, c := range []*convInfo{b.m.conv(ch), b.ext[ch]} {
+				if c == nil {
+					continue
+				}
+				n, ms, tp := c.NumMembers, c.Members, c.Topic
+				b.applySide(c, false)
+				if c.NumMembers != n || !slices.Equal(c.Members, ms) || c.Topic != tp {
+					changed = true
+				}
+			}
+			if changed {
+				a.Invalidate()
+			}
 		})
 	}()
+}
+
+// tabsOf is the tab bar a channel's core.Tabs read makes, and the folder
+// tabs' bookmarks. notMember: Slack's tab bar marks no canvas unread in a
+// channel you aren't in (C08E083LZ9A's "Untitled", 2026-11-08). Any
+// goroutine.
+func (b *backend) tabsOf(ts []core.Tab, notMember bool) ([]chTab, []core.Bookmark) {
+	var tabs []chTab
+	var bms []core.Bookmark
+	viewNames := b.core.Experiment("list_channel_tab_show_view_name_fe") == "on"
+	for _, t := range ts {
+		if t.Type == "messages" {
+			continue
+		}
+		label := t.Title
+		if label == "" {
+			label = t.Label
+		}
+		icon := tabIcon(t.Type)
+		if t.Deleted {
+			icon = "trash"
+		}
+		if label == "" {
+			continue
+		}
+		doc, emo, label, spans := docTab(t, label, tabSpans(t, label, b.core.Emoji), viewNames, b.core.Emoji) // tab_emoji_icon.go
+		tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread && !notMember,
+			folder: t.FolderBookmarkID, appID: t.AppID, doc: doc, emojiIcon: emo,
+			spans: spans, defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != "", rawLabel: t.Label})
+		bms = append(bms, t.Bookmarks...)
+	}
+	return tabs, bms
+}
+
+// headerFromCache shows ch's header as its last read left it (the header
+// cache: an earlier session's read on a warm start, or this session's)
+// until opened's reads revalidate it: the tab bar, the folder tabs'
+// bookmarks, the facepile and the member count. Only for a header this
+// session's reads haven't filled yet (tabsDone); it reports whether it
+// filled one. UI goroutine.
+func (b *backend) headerFromCache(ch string) bool {
+	if b.tabsDone[ch] || b.core == nil {
+		return false
+	}
+	h, ok := b.core.CachedHeader(ch)
+	if !ok {
+		return false
+	}
+	tabs, bms := b.tabsOf(h.Tabs, h.NotMember)
+	if b.app != nil {
+		b.app.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
+	} else {
+		b.tabCache[ch] = tabs
+	}
+	b.bookmarks[ch] = bms
+	if b.tabsDone == nil {
+		b.tabsDone = map[string]bool{}
+	}
+	b.tabsDone[ch] = true
+	sd := b.sideOf(ch)
+	if sd.num == 0 {
+		sd.num = h.Num
+	}
+	if len(sd.members) == 0 {
+		sd.members = h.Members
+	}
+	b.applySide(b.m.conv(ch), false)
+	b.applySide(b.ext[ch], false)
+	if b.app != nil {
+		b.app.Invalidate()
+	}
+	return true
 }
 
 // chSide is what opened() read for a conversation's header.

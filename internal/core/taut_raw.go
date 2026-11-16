@@ -134,11 +134,14 @@ func (a *App) SavedState(ch, ts string) bool {
 	return a.saved[ch+"/"+ts]
 }
 
-// ServeOffline marks the app ready without Boot: Ready, Snapshot and the
-// rest answer from what the store already holds. For packages built on
-// core that run without a network (internal/taut's plugin tests, demos).
-// Call it at most once, instead of Boot.
-func (a *App) ServeOffline() { close(a.ready) }
+// ServeOffline marks the app ready without Boot: Ready, DataReady,
+// Snapshot and the rest answer from what the store already holds. For
+// packages built on core that run without a network (internal/taut's
+// plugin tests, demos). Call it at most once, instead of Boot.
+func (a *App) ServeOffline() {
+	a.markDataReady()
+	close(a.ready)
+}
 
 // Inject applies one realtime event as if the gateway had sent it (raw
 // subscribers first, then core's own handling and its typed events). For

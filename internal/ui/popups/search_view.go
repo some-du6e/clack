@@ -674,8 +674,8 @@ func (v *SearchView) snapshot() (core.Snapshot, bool) {
 		return core.Snapshot{}, false
 	}
 	select {
-	case <-c.Ready():
-		return c.Snapshot(), true
+	case <-c.DataReady():
+		return c.SnapshotNow(), true
 	default:
 		return core.Snapshot{}, false
 	}

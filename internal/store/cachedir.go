@@ -11,16 +11,18 @@ import (
 // under the OS's user cache folder (cmd/clack's cacheRoot):
 //
 //	<cache root>/v1/<team>-<user>/
-//	  meta.json     the user directory, custom emoji, usergroups, prefs (SaveCache)
-//	  img/          avatars and emoji (imgcache)
+//	  meta.json       the user directory, custom emoji, usergroups, prefs (SaveCache)
+//	  boot_data.json  the sidebar a warm boot renders first (bootdata.go)
+//	  headers.json    recently opened channels' tab bars and facepiles (bootdata.go)
+//	  img/            avatars and emoji (imgcache)
 //
 // Every file is 0600 and every directory 0700; nothing in it is message
 // content. The whole directory goes on sign-out (DropDisk). Older vN
 // directories are purged (PurgeOldVersions), as Slack drops a store older
 // than its minimum data version (isStoreOutOfDate, "store_out_of_date").
 // alpha.28 also kept a boot snapshot here (boot.json, and the last
-// conversation's messages in history.json); the fast cold start replaced
-// it (docs/STARTUP.md) and RemoveBootFiles deletes what it left.
+// conversation's messages in history.json); RemoveBootFiles deletes what
+// it left. boot_data.json is its sidebar half without any message.
 
 // CacheVersion is the disk layout version: the vN directory and every
 // file's "v". Bump it when a change makes old snapshots wrong.
@@ -111,6 +113,7 @@ func (s *Store) CacheDir() string { return s.cacheDir }
 
 // cacheFiles are the files DropDisk removes from the account directory.
 var cacheFiles = []string{"meta.json", "meta.json.tmp", "sidebar.json", "boot.json", "history.json",
+	BootDataFile, HeadersFile, // the warm boot's (bootdata.go)
 	"code_channel_reopen.json", "code_channel_reopen.json.tmp", // core's codeChannelReopen (codechannel_close.go)
 	"channel_managers.json"} // core's channel managers store (channel_managers.go)
 

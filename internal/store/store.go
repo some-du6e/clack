@@ -1912,17 +1912,33 @@ func (s *Store) SaveCache() error {
 		d.Experiments = s.experiments // replaced whole, never changed in place
 	}
 	// the stored users are never changed in place (PutUsers replaces
-	// them), so they're written after the lock is let go: the viewer and
-	// the MaxSavedUsers most recently fetched
+	// them), so they're written after the lock is let go: the viewer, the
+	// people the sidebar names (DM partners, group DM members: a warm
+	// boot's rows are labelled from these, bootdata.go) and the
+	// MaxSavedUsers most recently fetched
 	users := make([]*slack.User, 0, len(s.Users))
 	for _, u := range s.Users {
 		users = append(users, u)
 	}
 	if len(users) > MaxSavedUsers {
 		self := s.Self.ID
+		side := map[string]bool{}
+		for _, c := range s.Convs {
+			if c.IsIM && c.User != "" {
+				side[c.User] = true
+			}
+			if c.IsMPIM {
+				for _, m := range c.Members {
+					side[m] = true
+				}
+			}
+		}
 		sort.Slice(users, func(i, j int) bool {
 			if (users[i].ID == self) != (users[j].ID == self) {
 				return users[i].ID == self
+			}
+			if a, b := side[users[i].ID], side[users[j].ID]; a != b {
+				return a
 			}
 			if a, b := s.userSeen[users[i].ID], s.userSeen[users[j].ID]; a != b {
 				return a > b

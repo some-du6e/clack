@@ -33,9 +33,10 @@ const recentSnapTTL = time.Second
 // redo per frame on a large workspace. Its Counts can lag a second
 // behind (messages and marks don't drop it): read Counts or Count for
 // live unread state. The result is shared: callers must not modify it.
-// Like Snapshot it blocks until Boot finished.
+// Unlike Snapshot it never waits for Boot: before Boot finished it is what
+// core holds (a warm start's boot data, or nothing yet on a cold start),
+// and Boot's "booted" event drops it.
 func (a *App) RecentSnapshot() Snapshot {
-	<-a.ready
 	r := &a.recent
 	r.mu.Lock()
 	if r.ok && r.built == r.gen && time.Since(r.at) < recentSnapTTL {

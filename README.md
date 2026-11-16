@@ -286,7 +286,7 @@ Measured on the Hack Club Slack:
 Clack follows the [Hack Club scraping policy](https://news.hackclub.com/news/scraping-use-policy/):
 
 - **Message contents are never written to disk.** Messages, threads, drafts, files and rendered documents live only in memory for the lifetime of the process, as in any Slack client. Logs carry method names, ids, counts and timings only.
-- Only metadata is cached on disk, in one directory per workspace and user under the OS's cache folder (`~/Library/Caches/Clack`, `~/.cache/clack`, `%LocalAppData%\Clack`; `v1/<team>-<user>/`): the user directory, the custom emoji map, usergroups and your prefs (`meta.json`), plus avatar and emoji images (at most 384 MB). Every file is readable by you only (0600). **Signing out deletes the directory.**
+- Only metadata is cached on disk, in one directory per workspace and user under the OS's cache folder (`~/Library/Caches/Clack`, `~/.cache/clack`, `%LocalAppData%\Clack`; `v1/<team>-<user>/`): the user directory, the custom emoji map, usergroups and your prefs (`meta.json`), the sidebar and recently opened channels' tab bars that a start shows before Slack answers (`boot_data.json`, `headers.json`; no messages), plus avatar and emoji images (at most 384 MB). Every file is readable by you only (0600). **Signing out deletes the directory.**
 - Files and thumbnails from `files.slack.com` are fetched into a memory-only cache and never saved.
 - Clack makes the same kind of requests the official client makes: on demand, rate-limited, no crawling.
 

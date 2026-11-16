@@ -418,3 +418,81 @@ func setsWaitDelay(fn ast.Node) bool {
 	})
 	return found
 }
+
+// bootWaitAllowed are the internal/ui functions that may call core's
+// Snapshot or BootErr, which wait for Boot (Slack's answers, seconds on
+// a slow network), outside a go statement: each runs on a goroutine its
+// caller starts. Everything else reads the backend's model,
+// RecentSnapshot or SnapshotNow, which never wait: a launch restored to
+// Activity painted nothing until Boot finished (2026-11-15), and with the
+// warm boot the window shows before Boot finishes.
+var bootWaitAllowed = map[string]string{
+	"blockkit/menus.go refresh":           "a conversations_select's items, in run's goroutine",
+	"blockkit/menus.go directoryUsers":    "users_select's empty query, in run's goroutine",
+	"views/directories.go dirKnownPeople": "the people directory's fallback, in its load's goroutine",
+}
+
+// TestNoBootWaitOnUIPaths: no function under internal/ui calls Snapshot or
+// BootErr (core's Boot waits) except from a go statement's function literal
+// or a bootWaitAllowed function. The runtime half is core's boot-wait hook
+// (backend.go's init: uiguard records a wait on the UI goroutine).
+func TestNoBootWaitOnUIPaths(t *testing.T) {
+	seen := map[string]bool{}
+	for _, uf := range parseUI(t) {
+		for _, d := range uf.f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
+			}
+			key := uf.rel + " " + fd.Name.Name
+			goLits := map[*ast.FuncLit]bool{}
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				if n == nil {
+					return true
+				}
+				if g, ok := n.(*ast.GoStmt); ok {
+					if fl, ok := g.Call.Fun.(*ast.FuncLit); ok {
+						goLits[fl] = true
+					}
+				}
+				return true
+			})
+			var walk func(n ast.Node, inGo bool)
+			walk = func(n ast.Node, inGo bool) {
+				ast.Inspect(n, func(x ast.Node) bool {
+					if x == nil || x == n {
+						return true
+					}
+					if fl, ok := x.(*ast.FuncLit); ok { // its own walk: a go statement's runs off the UI goroutine
+						walk(fl.Body, inGo || goLits[fl])
+						return false
+					}
+					c, ok := x.(*ast.CallExpr)
+					if !ok || len(c.Args) != 0 {
+						return true
+					}
+					sel, ok := c.Fun.(*ast.SelectorExpr)
+					if !ok || (sel.Sel.Name != "Snapshot" && sel.Sel.Name != "BootErr") {
+						return true
+					}
+					if inGo {
+						return true
+					}
+					if _, ok := bootWaitAllowed[key]; ok {
+						seen[key] = true
+						return true
+					}
+					t.Errorf("%s: %s calls %s, which waits for core's Boot: on the UI goroutine read the backend's model, RecentSnapshot or SnapshotNow; if this runs on a goroutine, add %q to bootWaitAllowed with why",
+						uf.fset.Position(sel.Pos()), fd.Name.Name, sel.Sel.Name, key)
+					return true
+				})
+			}
+			walk(fd.Body, false)
+		}
+	}
+	for k := range bootWaitAllowed {
+		if !seen[k] {
+			t.Errorf("bootWaitAllowed lists %q, which no longer calls Snapshot or BootErr: drop it", k)
+		}
+	}
+}

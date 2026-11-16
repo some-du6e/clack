@@ -30,6 +30,7 @@ type App struct {
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
 	acs       acState    // the composer autocomplete's frecency, model and history (autocomplete.go)
 	ready     chan struct{}
+	warm      warmState  // the warm boot: boot data, DataReady, the header cache (warmboot.go)
 	recent    recentSnap // RecentSnapshot's (snapshot_recent.go)
 	bootErr   error
 	mu        sync.Mutex
@@ -150,6 +151,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		s.Self.ID = c.Creds.UserID
 		s.Unlock()
 	}
+	a.warm.dataReady, a.warm.done = make(chan struct{}), make(chan struct{})
 	a.bg, a.stopBG = context.WithCancel(context.Background())
 	c.OnAuthFailed(a.onAuthFailed)
 	a.RTM = c.NewRTM()
@@ -394,7 +396,8 @@ func (a *App) onAuthFailed(code string) {
 // that start many sessions in one process; the UI simply exits.
 func (a *App) Shutdown() {
 	a.StopTraffic()
-	a.saves.Wait() // a metadata save still writing (loadEmoji)
+	a.saves.Wait()   // a metadata save still writing (loadEmoji)
+	a.warm.wg.Wait() // the warm boot's files, if they were writing
 }
 
 // StopTraffic is Shutdown without waiting for background disk saves (the
@@ -494,6 +497,7 @@ func (a *App) once(key string, f func() error) error {
 // realtime connection and background prefetch. It logs timings only.
 func (a *App) Boot(ctx context.Context) error {
 	defer close(a.ready)
+	defer a.markDataReady() // a cold start's data is in (or Boot failed: what core holds is all there is)
 	t0 := time.Now()
 	// meta.json (the user directory, 65k emoji, usergroups) decodes
 	// alongside the calls instead of before them; the steps that depend
@@ -507,6 +511,10 @@ func (a *App) Boot(ctx context.Context) error {
 		tCache = time.Since(s)
 		close(cacheDone)
 	}()
+	// The warm boot: boot_data.json and headers.json load alongside, and
+	// once meta.json is in too the cached sidebar is installed and
+	// DataReady closes, long before the calls below answer (warmboot.go).
+	go a.loadWarm(cacheDone)
 	var (
 		wg       sync.WaitGroup
 		tmu      sync.Mutex
@@ -646,12 +654,20 @@ func (a *App) Boot(ctx context.Context) error {
 	// client.extras: the message menu's Report to Slack (message_menu.go)
 	a.later(5*time.Second, func() { _ = a.LoadClientExtras(a.bg) })
 	wg.Wait()
+	// a warm start's cached sidebar is in the store before the live
+	// answers replace it (the disk reads are far quicker than the calls)
+	<-a.warm.done
+	added := a.warmAdded()
 	if errConvs != nil {
 		a.bootErr = errConvs
 		return errConvs
 	}
 	for _, c := range convs {
 		a.S.PutConv(c)
+	}
+	// cached conversations Slack no longer lists (left, archived elsewhere) go
+	if n := a.S.DropBootConvs(added, convs); n > 0 {
+		log.Printf("boot: %d cached conversations no longer listed", n)
 	}
 	if counts != nil {
 		a.S.SetCounts(counts)
@@ -660,9 +676,11 @@ func (a *App) Boot(ctx context.Context) error {
 	if errDMs == nil {
 		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
 	}
-	a.S.Lock()
-	a.S.Sections = sections
-	a.S.Unlock()
+	if errSecs == nil || added == nil { // a failed call keeps the cached sections
+		a.S.Lock()
+		a.S.Sections = sections
+		a.S.Unlock()
+	}
 	if u, ok := a.S.User(a.C.Creds.UserID); ok {
 		a.S.Lock()
 		a.S.Self = *u
@@ -673,6 +691,7 @@ func (a *App) Boot(ctx context.Context) error {
 		time.Since(t0).Round(time.Millisecond), tCache.Round(time.Millisecond), strings.Join(timings, " "),
 		tDMUsers.Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
 	applog.Mark("core-ready", fmt.Sprintf("%d convs, %d sections", len(convs), len(sections)))
+	a.setBootOK() // what core holds is worth keeping for the next warm boot
 	a.rtMu.Lock()
 	a.rtBooted = true
 	a.rtMu.Unlock()
@@ -696,6 +715,21 @@ func (a *App) Boot(ctx context.Context) error {
 	// render): the file collections, under custom_file_sections, so the
 	// canvas and list headers' section buttons know them
 	go func() { _ = a.FetchFileCollections(a.bg) }()
+	// The warm boot's files from this session's fresh state, once
+	// startup's work is done, then with the metadata cache every 5
+	// minutes, and at Close.
+	a.warm.wg.Add(1) // Shutdown waits for it; Close doesn't (it saves itself)
+	go func() {
+		defer a.warm.wg.Done()
+		t := time.NewTimer(20 * time.Second)
+		defer t.Stop()
+		select {
+		case <-a.bg.Done():
+			return
+		case <-t.C:
+		}
+		a.SaveWarm()
+	}()
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -705,15 +739,18 @@ func (a *App) Boot(ctx context.Context) error {
 				return
 			case <-t.C:
 			}
+			a.SaveWarm()
 			_ = a.S.SaveCache()
 		}
 	}()
 	return nil
 }
 
-// Close saves the metadata cache (after any save still writing).
+// Close saves the warm boot's files and the metadata cache (after any
+// save still writing).
 func (a *App) Close() error {
 	a.saves.Wait()
+	a.SaveWarm()
 	return a.S.SaveCache()
 }
 
@@ -952,9 +989,13 @@ func (a *App) ThreadsState() ThreadsState {
 
 // ---- snapshot ----
 
-// Snapshot returns the sidebar state. It blocks until Boot finished.
+// Snapshot returns the sidebar state. It blocks until Boot finished, so
+// it is for goroutines: the UI goroutine reads the model its backend
+// applied, RecentSnapshot or SnapshotNow, which never wait. A wait longer
+// than bootWaitLog is logged with its caller (warmboot.go), so a path that
+// still waits on the UI goroutine names itself.
 func (a *App) Snapshot() Snapshot {
-	<-a.ready
+	a.waitBoot("Snapshot")
 	return a.snapshotNow()
 }
 
@@ -1039,9 +1080,10 @@ func sidebarFileConvs(convs []Conv, secs []Section) []Conv {
 	return out
 }
 
-// BootErr is the error Boot returned, if any.
+// BootErr is the error Boot returned, if any. It waits for Boot, like
+// Snapshot.
 func (a *App) BootErr() error {
-	<-a.ready
+	a.waitBoot("BootErr")
 	return a.bootErr
 }
 

@@ -125,8 +125,8 @@ func NewAddEmojiModal(h Host) *Modal {
 	team, bold := "this", false
 	if a := h.Core(); a != nil {
 		select {
-		case <-a.Ready():
-			if n := strings.TrimSpace(a.Snapshot().Team.Name); n != "" {
+		case <-a.DataReady():
+			if n := strings.TrimSpace(a.RecentSnapshot().Team.Name); n != "" {
 				team, bold = n, true
 			}
 		default:

@@ -544,15 +544,16 @@ func actSelfID(h Host) string {
 	return ""
 }
 
-// actSnapshot returns the core snapshot without blocking on boot.
+// actSnapshot returns the core snapshot without blocking on boot: false
+// until the sidebar's data is in (a warm start's boot data, or Boot).
 func actSnapshot(h Host) (core.Snapshot, bool) {
 	a := h.Core()
 	if a == nil {
 		return core.Snapshot{}, false
 	}
 	select {
-	case <-a.Ready():
-		return a.Snapshot(), true
+	case <-a.DataReady():
+		return a.SnapshotNow(), true
 	default:
 		return core.Snapshot{}, false
 	}

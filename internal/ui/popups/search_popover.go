@@ -252,12 +252,12 @@ func (p *SearchPopover) loadSnap(now time.Time) {
 		return
 	}
 	select {
-	case <-c.Ready():
+	case <-c.DataReady():
 	default:
 		return
 	}
 	p.snapOK = true
-	snap := c.Snapshot()
+	snap := c.SnapshotNow()
 	recents, _ := srRecents()
 	rec := make(map[string]bool, len(recents))
 	for _, id := range recents {
