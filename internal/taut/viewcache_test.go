@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/slack"
 )
@@ -249,4 +250,188 @@ func TestViewCacheStaleWhileInFlight(t *testing.T) {
 	if !s1 || !s2 {
 		t.Fatalf("slice-wide %v, staleAll %v", s1, s2)
 	}
+}
+
+// cached is the entry under messages/ch/ts and whether it's fresh, read
+// without asking for it (entry() would ask again, which an idle window
+// never does).
+func cached(v *viewCache, ch, ts string) (*viewEntry, bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	g := v.groups[viewSK{"messages", ch}]
+	if g == nil {
+		return nil, false
+	}
+	e := g.subs[ts]
+	return e, e != nil && !v.staleLocked(e, g, "messages")
+}
+
+// The review's interleaving (perf-plugin-ui-thread, 2026-11-16): an edit
+// is invalidated while JS is busy; the fetch it starts is queued ahead of
+// the mirror's "invalidate" post, so JS answers with the old bytes after
+// the mirror marked the view stale again, and the frame that mark asked
+// for was turned away because the key was in flight. The worker must ask
+// again by itself, and redraw once the new value is in: an idle window
+// gets no other frame.
+func TestViewCacheAsksAgainWhenInvalidatedInFlight(t *testing.T) {
+	h := newHarness(t)
+	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	const ts = "1700000001.000100"
+	eventually(t, 3*time.Second, "the view", func() bool { _, ok := h.tt.MessageView(chGen, ts); return ok })
+	v := &h.tt.ui.views
+
+	// the JS thread busy until released
+	block := make(chan struct{})
+	h.rt().rt.Post(func(*jsrt.Ctx) { <-block })
+	// the edit lands in core, with nothing told yet
+	h.app.S.Mutate(chGen, ts, func(m *slack.Message) { m.Text = "the job fair moved to friday" })
+	v.stale("messages", chGen)  // the mirror's first mark
+	h.tt.MessageView(chGen, ts) // the frame for core's event: asked, queued behind the busy task
+	eventually(t, 2*time.Second, "the key in flight", func() bool {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return v.flying[viewKey{"messages", chGen, ts}]
+	})
+	time.Sleep(30 * time.Millisecond) // its views call is on the JS queue
+	// the mirror: stale, then post "invalidate" to JS (behind the views
+	// call), mark it stale again and redraw
+	h.tt.mirror.invalidate("messages", chGen)
+	time.Sleep(50 * time.Millisecond)
+	h.tt.MessageView(chGen, ts) // the redraw it asked for: the key is in flight
+	n0 := h.ui.invalidations.Load()
+	close(block) // JS: the views call (old value), then the invalidate
+
+	// no more frames: the cache must get the edit by itself
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		e, fresh := cached(v, chGen, ts)
+		if e != nil && e.sm != nil && e.sm.Text == "the *** fair moved to friday" && fresh {
+			break
+		}
+		if time.Now().After(deadline) {
+			text := "(none)"
+			if e != nil && e.sm != nil {
+				text = e.sm.Text
+			}
+			t.Fatalf("after the in-flight answer the view is %q (fresh %v): it was never asked for again", text, fresh)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	eventually(t, 2*time.Second, "a redraw for the new value", func() bool { return h.ui.invalidations.Load() > n0 })
+}
+
+// A batch JS didn't answer in time is asked again a moment later, without
+// waiting for a frame (an idle window might never draw one).
+func TestViewCacheRetriesWhatJSDidntAnswer(t *testing.T) {
+	if raceOn {
+		t.Skip("bounds wall-clock time around a 3 s timeout")
+	}
+	h := newHarness(t)
+	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	const ts = "1700000001.000100"
+	v := &h.tt.ui.views
+	block := make(chan struct{})
+	h.rt().rt.Post(func(*jsrt.Ctx) { <-block }) // past the views call's 3 s timeout
+	h.tt.MessageView(chGen, ts)                 // asked once: the call times out
+	time.Sleep(3500 * time.Millisecond)
+	close(block)
+	eventually(t, 5*time.Second, "the view after JS came back", func() bool {
+		e, fresh := cached(v, chGen, ts)
+		return e != nil && e.sm != nil && fresh
+	})
+}
+
+// Conversion generations: a bump redraws when a conversion it outdates is
+// cached (the UI may have converted with the old generation first), and
+// "experiments" bumps every message (a huddle message's sentence and the
+// emoji set follow experiment groups).
+func TestConvBumpRedraws(t *testing.T) {
+	h := newHarness(t)
+	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	const ts = "1700000001.000100"
+	eventually(t, 3*time.Second, "the view", func() bool { _, ok := h.tt.MessageView(chGen, ts); return ok })
+	v := &h.tt.ui.views
+
+	n0 := h.ui.invalidations.Load()
+	v.bumpConv(chGen, ts) // its message changed in core
+	if h.ui.invalidations.Load() == n0 {
+		t.Error("no redraw after the cached conversion's message changed")
+	}
+	n1 := h.ui.invalidations.Load()
+	h.tt.mirror.onEvent(core.Event{Type: "names", Users: []string{"B0BOT"}}) // a bot's name arrived
+	if h.ui.invalidations.Load() == n1 {
+		t.Error("no redraw after names arrived")
+	}
+	g0 := v.convGen(chGen, ts)
+	h.tt.mirror.onEvent(core.Event{Type: "experiments"})
+	if v.convGen(chGen, ts) == g0 {
+		t.Error("an experiments event left the conversions as they were")
+	}
+	g1 := v.convGen(chGen, ts)
+	h.tt.mirror.onEvent(core.Event{Type: "typing", Channel: chGen, UserID: "UBOB"})
+	if v.convGen(chGen, ts) != g1 {
+		t.Error("a typing event outdated the conversions")
+	}
+}
+
+// What a message view holds: the decoded message and its conversion, not
+// the JSON as well; what core's cache pass lets go goes from here too; and
+// the cache is bounded by bytes, not only by entries.
+func TestViewCacheMemory(t *testing.T) {
+	h := newHarness(t)
+	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	tss := []string{"1700000001.000100", "1700000002.000200", "1700000003.000300"}
+	eventually(t, 3*time.Second, "the views", func() bool {
+		for _, ts := range tss {
+			if _, ok := h.tt.MessageView(chGen, ts); !ok {
+				return false
+			}
+		}
+		return true
+	})
+	v := &h.tt.ui.views
+	for _, ts := range tss {
+		e, _ := cached(v, chGen, ts)
+		if e == nil || e.raw != nil || e.sum == 0 || e.rawLen == 0 || e.sm == nil {
+			t.Fatalf("%s: raw kept %v, sum %x, %d bytes, decoded %v", ts, e != nil && e.raw != nil, e.sum, e.rawLen, e != nil && e.sm != nil)
+		}
+	}
+	// a refetch with the same bytes keeps the conversion
+	before, _ := h.tt.MessageView(chGen, tss[0])
+	v.stale("messages", chGen)
+	h.tt.MessageView(chGen, tss[0])
+	eventually(t, 3*time.Second, "the refetch", func() bool { _, fresh := cached(v, chGen, tss[0]); return fresh })
+	if after, _ := h.tt.MessageView(chGen, tss[0]); docID(after) != docID(before) {
+		t.Error("a refetch of the same value converted it again")
+	}
+
+	// core's cache pass kept chGen from its second message on
+	h.tt.mirror.onEvent(core.Event{Type: "evicted", Channel: chGen, TS: tss[1]})
+	if e, _ := cached(v, chGen, tss[0]); e != nil {
+		t.Error("the evicted message's view stayed")
+	}
+	if e, _ := cached(v, chGen, tss[1]); e == nil {
+		t.Error("a message the pass kept lost its view")
+	}
+	v.mu.Lock()
+	n, b := v.n, v.bytes
+	v.mu.Unlock()
+	if n < 2 || b <= 0 {
+		t.Errorf("entries %d, bytes %d after the eviction", n, b)
+	}
+
+	// past the byte budget, everything goes when the next answer lands
+	v.mu.Lock()
+	v.maxBytes = 1
+	v.mu.Unlock()
+	v.stale("messages", chGen)
+	h.tt.MessageView(chGen, tss[2])
+	eventually(t, 3*time.Second, "the cache dropped", func() bool {
+		e, _ := cached(v, chGen, tss[1])
+		return e == nil
+	})
 }

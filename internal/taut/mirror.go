@@ -304,13 +304,19 @@ func (m *mirror) onEvent(ev core.Event) {
 	case "evicted":
 		// core trimmed the conversation to Slack's message cache budget
 		// (core/evict.go): the JS side drops what it cached of it, as
-		// Slack's store drops the evicted messages
+		// Slack's store drops the evicted messages, and so do the UI's
+		// patched views of them (the pass never trims what's on screen)
+		m.t.ui.views.dropEvicted(ev.Channel, ev.ThreadTS, ev.TS)
 		m.invalidate("messages", ev.Channel)
 		m.invalidate("channelHistory")
 		m.invalidate("reactions")
 	case "members_evicted":
 		// core trimmed the members cache (store/members.go): the JS side
-		// drops them, as Slack's store does (bulkRemoveMembersById)
+		// drops them, as Slack's store does (bulkRemoveMembersById), and
+		// so do the UI's patched views of them
+		if len(ev.Users) > 0 {
+			m.t.ui.views.drop("members", ev.Users...)
+		}
 		m.invalidate("members", ev.Users...)
 		m.invalidate("presence", ev.Users...)
 	case "names":
@@ -393,12 +399,13 @@ func (m *mirror) onEvent(ev core.Event) {
 // changed: the message it names (core announces every change to a message
 // that way, a thread's broadcasts included), or for anything else that
 // core.App.message reads (people, names, prefs and highlight words,
-// emoji, channels, a resync) every message. Events that change no
-// message's conversion are skipped.
+// emoji, channels, experiment groups, a resync) every message. Events
+// that change no message's conversion are skipped. ("experiments" counts:
+// a huddle message's sentence and the emoji set follow experiment groups.)
 func (m *mirror) noteConv(ev core.Event) {
 	switch ev.Type {
 	case "typing", "presence", "marked", "counts", "huddle", "draft", "dnd_updated", "dnd_updated_user",
-		"experiments", "connection", "sidebar_changed", "channel_sections_upserted",
+		"connection", "sidebar_changed", "channel_sections_upserted",
 		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
 		return
 	}

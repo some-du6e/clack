@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -967,8 +968,14 @@ type viewKey struct{ slice, key, sub string }
 type viewSK struct{ slice, key string }
 
 type viewEntry struct {
-	raw json.RawMessage
-	ver uint64 // seq when the worker asked JS for it (mu)
+	// raw is the value as JS sent it, except for a message of a bucket
+	// (slice messages, sub ts): there it's decoded into sm and let go,
+	// and sum and rawLen tell a refetch of the same bytes
+	raw    json.RawMessage
+	sum    uint64
+	rawLen int
+	size   int    // bytes it holds, about (the cache's budget)
+	ver    uint64 // seq when the worker asked JS for it (mu)
 
 	// decoded by the worker, read-only once installed
 	sm    *slack.Message // a message (slice messages, sub ts)
@@ -1015,6 +1022,9 @@ type viewCache struct {
 	busy     bool             // the worker runs or is about to
 	fetches  atomic.Int64     // worker batches (tests)
 	maxSubs  int              // entries before everything is dropped (20000)
+	bytes    int              // what the entries hold, about
+	maxBytes int              // bytes before everything is dropped (64 MiB)
+	failN    int              // fetches that failed in a row (retry backoff)
 
 	// conversion generations (MessageView): the mirror bumps a message's
 	// on core's events about it, and the global one on events about
@@ -1034,6 +1044,22 @@ func (v *viewCache) init(t *Taut) {
 	v.flying = map[viewKey]bool{}
 	v.msgGen = map[viewSK]uint64{}
 	v.maxSubs = 20000
+	v.maxBytes = 64 << 20
+}
+
+// viewRetry is how soon a batch JS didn't answer is asked again (doubling
+// with each failure in a row, up to viewRetryMax).
+const (
+	viewRetry    = 250 * time.Millisecond
+	viewRetryMax = 5 * time.Second
+)
+
+// kickLocked starts the worker if it isn't running (mu held).
+func (v *viewCache) kickLocked() {
+	if !v.busy {
+		v.busy = true
+		time.AfterFunc(2*time.Millisecond, v.work) // a frame's misses in one batch
+	}
 }
 
 // groupLocked returns (creating) the group of (slice, key). Groups exist
@@ -1060,12 +1086,11 @@ func (v *viewCache) entry(slice, key, sub string) *viewEntry {
 	v.mu.Lock()
 	g := v.groupLocked(viewSK{slice, key})
 	e := g.subs[sub]
+	// a key in flight isn't asked twice: if it was invalidated meanwhile,
+	// the worker asks again when it lands (work)
 	if (e == nil || v.staleLocked(e, g, slice)) && !v.want[k] && !v.flying[k] {
 		v.want[k] = true
-		if !v.busy {
-			v.busy = true
-			time.AfterFunc(2*time.Millisecond, v.work) // a frame's misses in one batch
-		}
+		v.kickLocked()
 	}
 	v.mu.Unlock()
 	return e
@@ -1126,61 +1151,159 @@ func (v *viewCache) work() {
 		ver := v.seq
 		v.mu.Unlock()
 
-		got := v.fetch(keys) // JS and decoding, mu released
+		got, failed := v.fetch(keys) // JS and decoding, mu released
 		v.fetches.Add(1)
 
 		v.mu.Lock()
-		if v.n > v.maxSubs || len(v.groups) > v.maxSubs {
+		if v.n > v.maxSubs || len(v.groups) > v.maxSubs || v.bytes > v.maxBytes {
 			// bounded: drop everything (what's on screen comes back), and
 			// count what's in flight as stale
 			clear(v.groups)
 			clear(v.sliceN)
-			v.n = 0
+			v.n, v.bytes = 0, 0
 			v.seq++
 			v.allVer = v.seq
 		}
 		changed := false
+		var retry []viewKey
 		for _, k := range keys {
 			delete(v.flying, k)
 			e := got[k]
 			if e == nil {
+				if failed {
+					retry = append(retry, k)
+				}
 				continue
 			}
 			g := v.groupLocked(viewSK{k.slice, k.key})
-			old := g.subs[k.sub]
-			if old != nil && old.inj == nil && e.inj == nil && bytes.Equal(old.raw, e.raw) {
+			cur := g.subs[k.sub]
+			if cur != nil && cur.inj == nil && e.inj == nil && cur.sameValue(e) {
 				// the same value: keep what was decoded and converted (not
 				// a bucket's injected list, which also depends on what core
 				// had when it came: a message core deleted since that a
 				// logger keeps is injected now)
-				old.ver = ver
-				continue
+				cur.ver = ver
+			} else {
+				if cur == nil {
+					v.n++
+				} else {
+					v.bytes -= cur.size
+				}
+				v.bytes += e.size
+				e.ver = ver
+				g.subs[k.sub] = e
+				cur = e
+				changed = true
 			}
-			if old == nil {
-				v.n++
+			// Invalidated while JS answered (the mirror marks a change again
+			// once it has posted it to JS, behind this call): the value may
+			// be from before the change, and a frame that asked meanwhile
+			// was turned away (flying). Ask again: that call comes after
+			// the change. Without it an idle window kept the plugins'
+			// pre-edit value for good.
+			if v.staleLocked(cur, g, k.slice) {
+				v.want[k] = true
 			}
-			e.ver = ver
-			g.subs[k.sub] = e
-			changed = true
+		}
+		delay := time.Duration(0)
+		if len(retry) > 0 {
+			delay = min(viewRetry<<min(v.failN, 5), viewRetryMax)
+			v.failN++
+		} else if !failed {
+			v.failN = 0
 		}
 		v.mu.Unlock()
+		if len(retry) > 0 {
+			// JS didn't answer (busy past the timeout, or the call failed):
+			// ask again in a moment, not on the next frame, which may never
+			// come to an idle window
+			time.AfterFunc(delay, func() {
+				v.mu.Lock()
+				for _, k := range retry {
+					if !v.flying[k] {
+						v.want[k] = true
+					}
+				}
+				v.kickLocked()
+				v.mu.Unlock()
+			})
+		}
 		if f := v.t.opts.UI.Invalidate; changed && f != nil {
 			f()
 		}
 	}
 }
 
+// sameValue reports whether e holds the bytes x does.
+func (x *viewEntry) sameValue(e *viewEntry) bool {
+	if x.raw != nil || e.raw != nil {
+		return bytes.Equal(x.raw, e.raw) && x.rawLen == e.rawLen
+	}
+	return x.sum == e.sum && x.rawLen == e.rawLen
+}
+
+// drop forgets slice's cached values under keys (all of slice with none).
+func (v *viewCache) drop(slice string, keys ...string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for sk, g := range v.groups {
+		if sk.slice != slice || len(keys) > 0 && !slices.Contains(keys, sk.key) {
+			continue
+		}
+		v.dropGroupLocked(sk, g)
+	}
+}
+
+func (v *viewCache) dropGroupLocked(sk viewSK, g *viewGroup) {
+	for _, e := range g.subs {
+		v.n--
+		v.bytes -= e.size
+	}
+	delete(v.groups, sk)
+	v.sliceN[sk.slice]--
+}
+
+// dropEvicted forgets the message views core's cache pass let go (its
+// "evicted" event: ch, or the thread under root, kept from oldest on,
+// all of it when oldest is ""). The pass leaves what's on screen alone,
+// and so does this.
+func (v *viewCache) dropEvicted(ch, root, oldest string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	sk := viewSK{"messages", ch}
+	g := v.groups[sk]
+	if g == nil {
+		return
+	}
+	if root == "" && oldest == "" {
+		v.dropGroupLocked(sk, g)
+		return
+	}
+	for ts, e := range g.subs {
+		if ts == "" || oldest != "" && ts >= oldest {
+			continue
+		}
+		if root != "" && (e.sm == nil || e.sm.ThreadTS != root || ts == root) {
+			continue // the thread's replies only
+		}
+		delete(g.subs, ts)
+		v.n--
+		v.bytes -= e.size
+	}
+}
+
 // fetch asks JS for keys and decodes what comes back: one JS read per
 // (slice, key), each message bucket decoded once for all of its messages
-// asked for.
-func (v *viewCache) fetch(keys []viewKey) map[viewKey]*viewEntry {
+// asked for. failed: a call to JS failed (the keys it didn't answer are
+// worth asking again); with no runtime nothing is asked or failed.
+func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bool) {
 	v.t.mu.Lock()
 	rt := v.t.rt
 	v.t.mu.Unlock()
 	if rt == nil {
-		return nil
+		return nil, false
 	}
-	out := make(map[viewKey]*viewEntry, len(keys))
+	out = make(map[viewKey]*viewEntry, len(keys))
 	// StateView reads go one by one through __taut.viewIn
 	var plain []viewKey
 	for _, k := range keys {
@@ -1194,7 +1317,9 @@ func (v *viewCache) fetch(keys []viewKey) map[viewKey]*viewEntry {
 			key = nil
 		}
 		if raw, err := rt.rt.Call(context.Background(), "__taut.viewIn", float64(id), k.slice, key); err == nil {
-			out[k] = &viewEntry{raw: raw}
+			out[k] = &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
+		} else {
+			failed = true
 		}
 	}
 	index := map[viewSK]int{}
@@ -1212,13 +1337,13 @@ func (v *viewCache) fetch(keys []viewKey) map[viewKey]*viewEntry {
 		pairs = append(pairs, [2]any{k.slice, key})
 	}
 	if len(pairs) == 0 {
-		return out
+		return out, failed
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var vals []json.RawMessage
 	if err := rt.call(ctx, "views", &vals, pairs); err != nil || len(vals) != len(pairs) {
-		return out
+		return out, true
 	}
 	buckets := make(map[int]map[string]json.RawMessage)
 	bucket := func(i int) map[string]json.RawMessage {
@@ -1235,18 +1360,25 @@ func (v *viewCache) fetch(keys []viewKey) map[viewKey]*viewEntry {
 		if k.sub != "" {
 			raw = bucket(i)[k.sub] // one message of a bucket
 		}
-		e := &viewEntry{raw: raw}
+		e := &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
 		switch k.slice {
 		case "messages":
 			if k.sub != "" {
+				// decoded and converted, the bytes aren't needed again:
+				// a hash tells a refetch of the same value
 				e.sm = decodeMessage(raw)
+				e.raw, e.sum = nil, viewSum(raw)
+				e.size = 3*len(raw) + 256 // the decoded message and its conversion
 			} else if k.key != "" {
 				e.inj = v.injected(k.key, bucket(i))
+				e.size += 3 * 1024 * len(e.inj)
 			}
 		case "members":
 			e.mem = decodeMember(raw)
+			e.size += 256
 		case "channels":
 			e.ch = decodeChannel(raw)
+			e.size += 128
 		case "readOnlyChannels", "threadOnlyChannels":
 			var r restrFields
 			if json.Unmarshal(raw, &r) == nil {
@@ -1255,7 +1387,17 @@ func (v *viewCache) fetch(keys []viewKey) map[viewKey]*viewEntry {
 		}
 		out[k] = e
 	}
-	return out
+	return out, failed
+}
+
+// viewSum is FNV-1a of b.
+func viewSum(b []byte) uint64 {
+	h := uint64(14695981039346656037)
+	for _, c := range b {
+		h ^= uint64(c)
+		h *= 1099511628211
+	}
+	return h
 }
 
 func decodeMessage(raw json.RawMessage) *slack.Message {
@@ -1316,17 +1458,52 @@ func (v *viewCache) convGen(ch, ts string) uint64 {
 }
 
 // bumpConv makes conversions of ch/ts (with ts "", of every message) be
-// made again.
+// made again, and redraws when one of them is cached: the UI hears core's
+// event on its own and may have drawn, converting with the old
+// generation, before the mirror got here (a mention resolved by "names",
+// new highlight words), and nothing else would redraw for it.
 func (v *viewCache) bumpConv(ch, ts string) {
 	v.gmu.Lock()
-	defer v.gmu.Unlock()
 	v.gseq++
-	if ch == "" || ts == "" || len(v.msgGen) >= 50000 {
+	global := ch == "" || ts == "" || len(v.msgGen) >= 50000
+	if global {
 		clear(v.msgGen)
 		v.global = v.gseq
-		return
+	} else {
+		v.msgGen[viewSK{ch, ts}] = v.gseq
 	}
-	v.msgGen[viewSK{ch, ts}] = v.gseq
+	v.gmu.Unlock()
+	if global {
+		ch, ts = "", ""
+	}
+	if f := v.t.opts.UI.Invalidate; f != nil && v.convCached(ch, ts) {
+		f()
+	}
+}
+
+// convCached reports whether a conversion of ch/ts is cached (with ch "",
+// of any message).
+func (v *viewCache) convCached(ch, ts string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if ch == "" {
+		return v.sliceN["messages"] > 0
+	}
+	g := v.groups[viewSK{"messages", ch}]
+	if g == nil {
+		return false
+	}
+	if e := g.subs[ts]; e != nil && e.conv.Load() != nil {
+		return true
+	}
+	if b := g.subs[""]; b != nil {
+		for i := range b.inj {
+			if b.inj[i].ts == ts {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // File is a file crossing to JS as a real File (thunk args like
