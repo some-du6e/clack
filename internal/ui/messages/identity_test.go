@@ -170,7 +170,12 @@ func TestSenderIdentityRender(t *testing.T) {
 
 // identityShot saves the pane as IDENTITY_SHOTS_DIR/<name>.png (CI).
 func identityShot(t *testing.T, frame func(), ops *op.Ops, size image.Point, name string) {
-	dir := os.Getenv("IDENTITY_SHOTS_DIR")
+	identityShotIn(t, "IDENTITY_SHOTS_DIR", frame, ops, size, name)
+}
+
+// identityShotIn is identityShot into the directory env names.
+func identityShotIn(t *testing.T, env string, frame func(), ops *op.Ops, size image.Point, name string) {
+	dir := os.Getenv(env)
 	if dir == "" {
 		return
 	}

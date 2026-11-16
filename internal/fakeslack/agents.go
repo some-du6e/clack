@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 const (
@@ -212,4 +214,75 @@ func (s *Server) handleAgents(method string, f url.Values) (any, bool) {
 		return ok("messages", json.RawMessage(b), "has_more", false), true
 	}
 	return nil, false
+}
+
+// ---- a custom app's plan post (synthetic) ----
+
+// AppPlanChannelID is the channel AppPlanMessages post in.
+const (
+	AppPlanChannelID = "C0FAKEPLAN01"
+	AppPlanBotID     = "B0FAKEPLAN01"
+	AppPlanAppID     = "A0FAKEPLAN01"
+	AppPlanUserID    = "U0FAKEPLAN01"
+	// AppPlanBotName is the app's name: one U+202E (RIGHT-TO-LEFT
+	// OVERRIDE), as a real custom app had it.
+	AppPlanBotName = "‮"
+)
+
+// AppPlanPlan is a plan block of every task status, each task's details
+// rich text (bold, code, a link).
+func AppPlanPlan() map[string]any {
+	link := map[string]any{"type": "link", "url": "https://example.com/build/42", "text": "build 42"}
+	code := map[string]any{"type": "text", "text": "go vet", "style": map[string]bool{"code": true}}
+	return map[string]any{"type": "plan", "block_id": "plan_mixed_01", "title": "Checking the release", "tasks": []any{
+		agentTask("1", "Read the changelog", "complete", map[string]any{"details": agentRich("Three fixes, ", bold("one"), " breaking change.")}),
+		agentTask("2", "Run the checks", "error", map[string]any{"details": agentRich(code, " failed in ", link, ".")}),
+		agentTask("3", "Compare with the last release", "in_progress", map[string]any{"details": agentRich("Reading the diff.")}),
+		agentTask("4", "Write the notes", "pending", nil),
+	}}
+}
+
+// AppPlanMessages are a custom app's top-level posts, newest first, in
+// the shape such an app sends them (chat.postMessage, then
+// chat.update): user, bot_id, app_id, bot_profile, edited, a short
+// fallback text, and blocks:
+//
+//   - "plan": one plan block, two complete tasks with rich_text details
+//     whose rich_text carries its own block_id (the shape of the post
+//     Clack drew blank, 2026-11-15)
+//   - "mixed": AppPlanPlan
+//   - "unknown": a block type no Slack client knows, then rich text
+//   - "unknown-only": only the unknown block
+func AppPlanMessages() (msgs []slack.Message, names []string) {
+	details := func(s string) map[string]any {
+		d := agentRich(s)
+		d["block_id"] = "dt" + s[:2]
+		return d
+	}
+	posts := []struct {
+		name, text string
+		blocks     []any
+	}{
+		{"plan", "Looked over the open issues", []any{map[string]any{"type": "plan", "block_id": "plan_k8f3m2q9x1z7w4b6v0",
+			"title": "Looked over the open issues", "tasks": []any{
+				agentTask("t01", "Listed the issues opened this week", "complete", map[string]any{"details": details("Nine new issues, four of them about the composer losing focus after a paste.")}),
+				agentTask("t02", "Grouped them by the part of the app they touch", "complete", map[string]any{"details": details("Composer: four. Sidebar: three. Search: two. None needs a release on its own.")}),
+			}}}},
+		{"mixed", "Checking the release", []any{AppPlanPlan()}},
+		{"unknown", "A block from the future", []any{map[string]any{"type": "hologram", "block_id": "h1", "beams": 3},
+			map[string]any{"type": "rich_text", "block_id": "r1", "elements": []any{map[string]any{"type": "rich_text_section",
+				"elements": []any{map[string]any{"type": "text", "text": "Text after the hologram."}}}}}}},
+		{"unknown-only", "Only the fallback text", []any{map[string]any{"type": "hologram", "block_id": "h2"}}},
+	}
+	base := 1794761000
+	for i, p := range posts {
+		raw, _ := json.Marshal(p.blocks)
+		ts := fmt.Sprintf("%d.%06d", base+i*60, 100)
+		m := slack.Message{Type: "message", TS: ts, User: AppPlanUserID, BotID: AppPlanBotID, Text: p.text, Blocks: raw,
+			Edited:     &slack.Edited{User: AppPlanUserID, TS: fmt.Sprintf("%d.000000", base+i*60+5)},
+			BotProfile: &slack.BotProfile{ID: AppPlanBotID, Name: AppPlanBotName, AppID: AppPlanAppID, UserID: AppPlanUserID, TeamID: TeamID}}
+		msgs = append([]slack.Message{m}, msgs...)
+		names = append([]string{p.name}, names...)
+	}
+	return msgs, names
 }
