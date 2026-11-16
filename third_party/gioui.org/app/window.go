@@ -663,6 +663,14 @@ func (w *Window) processEvent(e event.Event) bool {
 			panic(errors.New("internal error: zero-sized Draw"))
 		}
 		w.metric = e2.Metric
+		// Clack patch 35: what the window's own frames asked for, and
+		// what a frame the client hasn't been handed yet was asked for
+		if w.hasNextFrame {
+			e2.Asked, e2.AskedAt = true, w.nextFrame
+		}
+		if p := w.coalesced.frame; p != nil && p.Asked && (!e2.Asked || p.AskedAt.Before(e2.AskedAt)) {
+			e2.Asked, e2.AskedAt = true, p.AskedAt
+		}
 		w.hasNextFrame = false
 		e2.Frame = w.driver.Frame
 		e2.Source = w.queue.Source()

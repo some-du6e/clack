@@ -28,7 +28,10 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
 `text/clack_release_test.go`, `io/input/clack_keylog.go`,
 `io/input/clack_keylog_test.go`, `app/clack_keys_darwin_test.go`,
-`app/metal_darwin.go`, `app/clack_wake_darwin_test.go` and
+`app/metal_darwin.go`, `app/clack_wake_darwin_test.go`,
+`app/app.go`, `app/clack_asked_test.go`, `op/paint/clack_live.go`,
+`op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
+`gpu/headless/clack_live_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -1634,3 +1637,55 @@ ci's linux-gio job. Stock Gio builds of `internal/ui/slackc` (the
 gio-layer-fix job's richview) use `gio_patch34_stock.go`. With no
 answers there, a layer neither records an opener nor sees the focus
 inside it. Not in `UPSTREAM.patch`.
+
+## 35. op/paint, gpu, app: live images, and what a frame was asked for
+
+`op/paint/clack_live.go` (new: `LiveImage`, `NewLiveImageOp`),
+`gpu/gpu.go` (`resolveLive`, called by `texHandle`), `app/app.go`
+(`FrameEvent.Asked`, `FrameEvent.AskedAt`) and `app/window.go`
+(`processEvent`'s `frameEvent`). Additions: nothing upstream behaves
+differently.
+
+Gio draws the whole window every frame, and Clack's layout of it takes
+17–23 ms on Karim's Mac with his plugins (2026-11-16). An animated custom
+emoji (`:explodes:`, 13 frames of 30–70 ms) asked for a frame every
+frame of its own, so every one of them cost the whole layout: the
+animation played slowly and the window lagged while it was on screen.
+Chromium repaints only the image's layer. Clack now shows the last frame's
+ops again when an animation is all that asked for the frame
+(`internal/ui` quiet.go), which needs two things from Gio:
+
+- A live image: `NewLiveImageOp(l)` is an `ImageOp` whose pixels are
+  `l.Image()` as it is when the GPU draws the frame, not when the ops
+  were written. Its handle is a `liveHandle`; `texHandle` asks it for the
+  image to draw (`resolveLive`) and keys the texture by that image's own
+  handle, so each of an animation's frames is its own texture, uploaded
+  when shown. The ask happens in `uploadImages`, after `collect` dropped
+  the paints outside the viewport and their clips: only the paints a frame
+  shows ask, once each. The image's size must stay the size the live op
+  was made with (the paint's bounds and texture coordinates come from it).
+  `internal/imgcache` (`SetLiveOps`) hands out its playing animations this
+  way: its `LiveImage` is the frame due at the GPU's ask, which also
+  counts as a draw for the player (it stays on screen, its next frame is
+  asked for).
+- What a frame was asked for: `FrameEvent.Asked` reports whether the
+  window's own frames asked for this one or a later one, and
+  `FrameEvent.AskedAt` when (the zero time: at once). That's the window's
+  `nextFrame` when the frame began: input a handler took, an
+  `op.InvalidateCmd` (from `WakeupTime` after the last frame), a change of
+  options. An `Invalidate` alone sets nothing, so a frame only an
+  Invalidate brought has `Asked` false, and a client that knows why it
+  invalidated can show its last frame's ops again. Such a frame takes
+  the window's `nextFrame` like any other, so the client executes
+  `op.InvalidateCmd{At: AskedAt}` to keep a wake-up that isn't due yet.
+  A frame that replaces one the client wasn't handed yet (coalesced)
+  keeps what that one was asked for.
+
+Tests: `op/paint/clack_live_test.go` (`TestLiveImageOp`),
+`gpu/clack_live_test.go` (`TestDrawOpsLiveImage`: the same ops collected
+twice draw the live image's image at each, and a paint outside the
+viewport never asks) and `app/clack_asked_test.go` (`TestFrameEventAsked`)
+on ci's linux-gio job; `gpu/headless/clack_live_test.go`
+(`TestLiveImageFrames`: a real GPU context draws the same ops twice and
+shows each image) on flake-check's emoji-anim job, under Xvfb. Not in
+`UPSTREAM.patch`.

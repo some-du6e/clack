@@ -131,8 +131,15 @@ type Cache struct {
 	// on screen still.
 	drawnAt int64
 
-	wakeAt time.Time // the next repaint: an animation frame (anim.go) or a retry
-	wakeT  *time.Timer
+	// the next repaints (anim.go wakeLocked): wake for a load's retry, a
+	// layout's worth (invalidate); animWake for an animation's next frame
+	// or a player's start (animInvalidate, which a window may answer by
+	// showing its last frame again with its animated images moved on)
+	wake, animWake waker
+	animInvalidate func() // nil: invalidate
+	// liveOps: Get hands out an animated image as a live ImageOp (anim.go
+	// SetLiveOps)
+	liveOps bool
 
 	// animations (anim.go): whether Get plays them (SetAnimate), the
 	// entries with a player playing, and the sweep that stops them once
@@ -141,6 +148,7 @@ type Cache struct {
 	playing  map[*entry]struct{}
 	animT    *time.Timer
 	advances uint64 // frames the players moved on (Stats)
+	skipped  uint64 // frames their timelines passed over, late (Stats)
 	gifBytes int    // the entries' encoded GIF bytes (e.gif): at most gifShare of the budget
 }
 
@@ -288,6 +296,8 @@ type entry struct {
 	// seenFrom..seenAt: the stretch Get has drawn it without a gap of
 	// animGrace (a player starts once it's animSettle long)
 	seenFrom, seenAt time.Time
+	// live: its live ImageOps (SetLiveOps), for Get and GetPlaying
+	live [2]paint.ImageOp
 }
 
 // IdleAfter: images not asked for in this long are dropped by a sweep every
@@ -506,6 +516,18 @@ func (c *Cache) SetInvalidate(f func()) {
 	c.mu.Unlock()
 }
 
+// SetAnimInvalidate sets the callback for repaints only animations need
+// (any goroutine): an animated image's next frame is due, a player started
+// or decoded its next frame. Nothing about the layout changed: with live
+// ImageOps (SetLiveOps) a window may show its last frame's ops again, and
+// the GPU draws each animation's frame due then. nil: those go to the
+// SetInvalidate callback.
+func (c *Cache) SetAnimInvalidate(f func()) {
+	c.mu.Lock()
+	c.animInvalidate = f
+	c.mu.Unlock()
+}
+
 // SetFetcher replaces the downloader (e.g. once an authenticated session
 // exists for files.slack.com).
 func (c *Cache) SetFetcher(f Fetcher) {
@@ -563,7 +585,11 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	}
 	e := el.Value.(*entry)
 	e.used = now.UnixMilli()
-	return c.frameLocked(e, now, forced), true
+	op := c.frameLocked(e, now, forced)
+	if c.liveOps && e.frames > 1 && (c.animate || forced) {
+		return c.liveOpLocked(e, forced, op), true
+	}
+	return op, true
 }
 
 // Loaded reports whether some size of url is decoded.
@@ -593,6 +619,7 @@ type Stats struct {
 	Animated              int         // entries of animated GIFs, playing or not
 	EncodedBytes          int         // animated GIFs' encoded bytes kept for playing again
 	Advances              uint64      // frames the players have moved on, ever
+	Skipped               uint64      // frames their timelines passed over to catch up, ever
 	LargestFrame          image.Point // the largest frame a player plays now
 }
 
@@ -603,7 +630,7 @@ func (c *Cache) Stats() Stats {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	s := Stats{Entries: len(c.entries), Bytes: c.bytes, Limit: c.maxBytes, Advances: c.advances}
+	s := Stats{Entries: len(c.entries), Bytes: c.bytes, Limit: c.maxBytes, Advances: c.advances, Skipped: c.skipped}
 	for el := c.lru.Front(); el != nil; el = el.Next() {
 		e := el.Value.(*entry)
 		if e.frames > 1 {
@@ -908,16 +935,35 @@ func (c *Cache) evict() {
 		}
 		c.unholdLocked(old)
 	}
+	// players stop, largest first: the streaming ones (each holds a canvas
+	// and three frames of a large animation), then keeping ones past
+	// their share of the budget. A keeping player is its image's frames,
+	// decoded once (an emoji's 13 frames are 53 KB), and plays on while
+	// stills fill the budget, as Chromium's animations do; a burst of
+	// them (the picker's animated emoji) still can't take the budget.
 	for c.bytes > c.maxBytes && len(c.playing) > 0 {
 		var big *entry
+		kept := 0
 		for e := range c.playing {
-			if big == nil || e.play.n > big.play.n {
+			if p := e.play; p.keep {
+				kept += p.n
+			} else if big == nil || p.n > big.play.n {
 				big = e
 			}
 		}
+		if big == nil && kept > c.maxBytes/keepShare {
+			for e := range c.playing {
+				if big == nil || e.play.n > big.play.n {
+					big = e
+				}
+			}
+		}
+		if big == nil {
+			break
+		}
 		c.releaseLocked(big)
 		big.retry = now.Add(animRetry)
-		c.wakeLocked(big.retry)
+		c.wakeAnimLocked(big.retry)
 	}
 	for c.bytes > c.maxBytes && c.lru.Len() > 1 {
 		c.dropLocked(c.lru.Back())
@@ -963,6 +1009,10 @@ func (c *Cache) putLocked(e *entry) {
 	m[e.k.size] = el
 	c.bytes += e.n
 }
+
+// keepShare: keeping players' frames (anim.go) stop for room only past
+// this share of the budget (a quarter).
+const keepShare = 4
 
 // gifShare is the most of the budget animated GIFs' encoded bytes (kept
 // for playing them again) take; past it the least recently used go

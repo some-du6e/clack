@@ -392,11 +392,15 @@ func TestLargeGIFAnimatesAtDrawnSize(t *testing.T) {
 	}
 }
 
-// TestOffscreenGIFReleased: once nothing draws a GIF its player goes
-// (its frames, canvas and buffers), and its still stays like any image's.
+// TestOffscreenGIFReleased: once nothing draws a GIF while the window
+// draws other things (it scrolled away) its player goes (its frames,
+// canvas and buffers), and its still stays like any image's. A window that
+// draws nothing at all (stalled on a long frame) lets a streaming player
+// go but keeps a keeping one, which goes on from where its timeline is.
 func TestOffscreenGIFReleased(t *testing.T) {
-	const big, small = "https://example.com/big.gif", "https://emoji.slack-edge.com/T1/s/x.gif"
-	c, _ := gifCache(t, map[string][]byte{big: bigGIF(t, 400, 300, 10, 5, 0), small: synthGIF(t)})
+	const big, small, other = "https://example.com/big.gif", "https://emoji.slack-edge.com/T1/s/x.gif", "https://example.com/other.png"
+	c, _ := gifCache(t, map[string][]byte{big: bigGIF(t, 400, 300, 10, 5, 0), small: synthGIF(t), other: pngBytes(16, 16)})
+	readyEntry(t, c, other, 16)
 	readyEntry(t, c, big, 300)
 	readyEntry(t, c, small, 32)
 	drawFor(c, big, 300, 300*time.Millisecond)
@@ -404,15 +408,23 @@ func TestOffscreenGIFReleased(t *testing.T) {
 	if s := c.Stats(); s.Players != 2 {
 		t.Fatalf("%d players while drawn", s.Players)
 	}
+	time.Sleep(2500 * time.Millisecond) // a frame that took 2.5 s: nothing drawn at all
+	if p := playerOf(c, small, 32); p == nil || !p.keep {
+		t.Errorf("the keeping player went during a stall: %+v", p)
+	}
+	if p := playerOf(c, big, 300); p != nil {
+		t.Errorf("the streaming player stayed through a 2.5 s stall: %+v", p)
+	}
 	dl := time.Now().Add(4 * time.Second)
 	for c.Stats().Players > 0 && time.Now().Before(dl) {
-		time.Sleep(50 * time.Millisecond)
+		c.Get(other, 16) // the window draws, but not the GIFs: they scrolled away
+		time.Sleep(20 * time.Millisecond)
 	}
 	s := c.Stats()
 	if s.Players != 0 || s.PlayerBytes != 0 {
 		t.Fatalf("off screen 4 s: %d players holding %d bytes", s.Players, s.PlayerBytes)
 	}
-	if s.Entries != 2 || s.Bytes != 300*225*4+32*32*4+s.EncodedBytes {
+	if s.Entries != 3 || s.Bytes != 300*225*4+32*32*4+16*16*4+s.EncodedBytes {
 		t.Errorf("stills: %+v", s)
 	}
 	// back on screen: it plays again (from the bytes it kept)
@@ -500,7 +512,7 @@ func TestGIFLoopCount(t *testing.T) {
 		if len(seen) != 4*passes {
 			t.Errorf("%s: %d frames shown, want %d", u, len(seen), 4*passes)
 		}
-		if p := playerOf(c, u, 40); p == nil || !p.ended || p.cur != 3 {
+		if p := playerOf(c, u, 40); p == nil || !p.s.ended || p.s.cur != 3 {
 			t.Errorf("%s: player %+v, want ended on the last frame", u, p)
 		}
 	}
