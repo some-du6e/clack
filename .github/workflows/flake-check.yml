@@ -947,3 +947,14 @@ jobs:
       - name: "messages: every vote variant and the patched Message's props, 3 runs"
         if: ${{ !cancelled() }}
         run: go test -count=3 -timeout 30m -run 'TestVoteButtonsSurviveUpdates$|TestMessagePatchGetsWrappersMsg$' ./internal/ui/messages
+      - name: "the measure-pass audit: a test per family (slackc, kit, composer, messages, views, ui)"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -count=1 -v -run '^TestMeasurePassLeavesFocusAlone$' ./internal/ui/slackc || rc=1
+          go test -count=1 -v -run '^TestFormTextInputFocusThroughMeasurePasses$' ./internal/ui/slackc/kit || rc=1
+          go test -count=1 -v -run '^TestLinkDialogFocusAfterMeasurePass$' ./internal/ui/composer || rc=1
+          go test -count=1 -v -run '^TestToolbarTiltIgnoresMeasurePass$' ./internal/ui/messages || rc=1
+          go test -count=1 -v -run '^TestChannelFilesSuggestionsSurviveMeasurePass$' ./internal/ui/views || rc=1
+          go test -count=1 -v -timeout 15m -run '^TestSidebarTextFilterMeasurePassKeepsFocus$' ./internal/ui || rc=1
+          exit $rc
