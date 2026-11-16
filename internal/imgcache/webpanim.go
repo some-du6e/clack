@@ -35,17 +35,19 @@ package imgcache
 // groups its meta image names, how big each code's alphabet is), which the
 // header doesn't constrain. So every picture decodes through the vendored
 // x/image decoders in internal/webp and internal/vp8l, which charge each
-// allocation to a byte budget before making it: webpBudget, scaled to the
-// picture's size with a hard ceiling. A file whose decode would need more
-// fails with ErrTooBig before the allocation that doesn't fit. Stills,
-// animation frames and ALPH alpha planes (compression 1 is a VP8L stream)
-// all go through it.
+// allocation to a byte budget before making it: a child of the decode's
+// Budget (decmem.go), limited to webpBudget, scaled to the picture's size,
+// that draws from the process-wide decode pool like every other charge. A
+// file whose decode would need more fails with ErrTooBig before the
+// allocation that doesn't fit; one the pool can't cover now, with ErrBusy.
+// Stills, animation frames and ALPH alpha planes (compression 1 is a VP8L
+// stream) all go through it. An animation frame's picture is given back
+// once it's drawn on the canvas.
 
 import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"image"
 	"image/draw"
 	"image/gif"
@@ -53,7 +55,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/some-du6e/clack/internal/imgcache/internal/vp8l"
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 	"github.com/some-du6e/clack/internal/imgcache/internal/webp"
 )
 
@@ -74,12 +76,13 @@ func isAnimWebP(b []byte) bool {
 // animated WebP): it decodes through the frame index.
 func isAnim(data []byte) bool { return isGIF(data) || isAnimWebP(data) }
 
-// indexAnim is indexGIF or indexWebP, by data's signature.
-func indexAnim(data []byte) (*gifIndex, error) {
+// indexAnim is indexGIF or indexWebP, by data's signature, the index
+// charged to bg.
+func indexAnim(data []byte, bg *budget.Budget) (*gifIndex, error) {
 	if isAnimWebP(data) {
-		return indexWebP(data)
+		return indexWebP(data, bg)
 	}
-	return indexGIF(data)
+	return indexGIF(data, bg)
 }
 
 func le24(b []byte) int { return int(b[0]) | int(b[1])<<8 | int(b[2])<<16 }
@@ -94,9 +97,10 @@ func riffEnd(b []byte) int {
 	return end
 }
 
-// indexWebP reads an animated WebP's canvas, loop count and frames. A
-// file that breaks off after its first frame is the frames it has.
-func indexWebP(b []byte) (*gifIndex, error) {
+// indexWebP reads an animated WebP's canvas, loop count and frames, its
+// frames array charged to bg as it grows. A file that breaks off after its
+// first frame is the frames it has.
+func indexWebP(b []byte, bg *budget.Budget) (*gifIndex, error) {
 	if !isAnimWebP(b) {
 		return nil, errBadWebP
 	}
@@ -167,6 +171,9 @@ func indexWebP(b []byte) (*gifIndex, error) {
 				delay: animDelay(time.Duration(le24(c[12:])) * time.Millisecond), blend: fl&0x02 == 0}
 			if fl&0x01 != 0 {
 				f.disp = gif.DisposalBackground
+			}
+			if err := ix.grow(bg); err != nil {
+				return nil, err
 			}
 			ix.frames = append(ix.frames, f)
 		}
@@ -239,6 +246,15 @@ func webpSize(pic []byte, lossless bool) (w, h int, ok bool) {
 	}
 	w, h = int(b[6])|int(b[7]&0x3f)<<8, int(b[8])|int(b[9]&0x3f)<<8
 	return w, h, w > 0 && h > 0
+}
+
+// webpStillLen is how long webpStill's file of alph and pic is.
+func webpStillLen(alph, pic []byte, lossless bool) int {
+	n := 12 + len(pic) + len(pic)&1
+	if alph != nil && !lossless {
+		n += 18 + len(alph) + len(alph)&1
+	}
+	return n
 }
 
 // webpStill writes into buf (reused) a still WebP of a picture chunk of
@@ -349,24 +365,26 @@ func webpStillReader(alph, pic []byte, lossless bool, w, h int) io.Reader {
 // decodePicture within the picture's budget. maxPixels/maxSide are the
 // caller's decoded-size limit (Decode passes MaxPixels/MaxSide;
 // DecodeWithin a larger one), which bounds the picture and so its budget.
-func decodeWebP(data []byte, maxPixels, maxSide int) (image.Image, error) {
+func decodeWebP(data []byte, maxPixels, maxSide int, b *budget.Budget) (image.Image, error) {
 	alph, pic, lossless, w, h, err := stillWebP(data, maxPixels, maxSide)
 	if err != nil {
 		return nil, err
 	}
-	return decodePicture(webpStillReader(alph, pic, lossless, w, h), w, h)
+	return decodePicture(webpStillReader(alph, pic, lossless, w, h), w, h, b.Sub(webpBudget(w, h)))
 }
 
 // decodePicture decodes a still WebP r of a w×h picture, every allocation
-// charged first to webpBudget(w, h) (internal/webp, internal/vp8l). One
-// that would go past it fails the decode, before it's made, with an error
-// that is ErrTooBig: the same bytes always need the same memory.
-func decodePicture(r io.Reader, w, h int) (image.Image, error) {
-	m, err := webp.Decode(r, vp8l.NewBudget(webpBudget(w, h)))
-	if errors.Is(err, vp8l.ErrBudget) {
-		return nil, fmt.Errorf("%w: %w", ErrTooBig, err)
+// charged first to pb (internal/webp, internal/vp8l): a child of the
+// decode's budget limited to webpBudget(w, h), drawing from the decode
+// pool. One past its limit fails the decode, before it's made, with an
+// error that is ErrTooBig (the same bytes always need the same memory);
+// one the pool can't cover now, with ErrBusy.
+func decodePicture(r io.Reader, w, h int, pb *budget.Budget) (image.Image, error) {
+	m, err := webp.Decode(r, pb)
+	if err != nil {
+		return nil, budgetErr(err)
 	}
-	return m, err
+	return m, nil
 }
 
 // webpBudget is the most decoding a w×h WebP picture may allocate in all:
@@ -425,15 +443,13 @@ func webpFrameBytes(ix *gifIndex) int {
 // aren't reserved for the player's life.
 func webpDecodeBytes(w, h int) int { return int(webpPixelBytes(w, h)) }
 
-// drawWebP decodes WebP frame f and composes it on the canvas: blended
-// over what's there, or replacing its rectangle. A frame that doesn't
-// decode leaves the canvas as it is (d.werr says why).
-func (d *gifDecoder) drawWebP(f *gifFrame) {
-	d.werr = nil
+// decodeWebPFrame decodes WebP frame f's picture, charged to a child of
+// d.b that the caller releases once the picture is drawn. A frame that
+// doesn't decode is the error (ErrBusy: one the pool can't cover now).
+func (d *gifDecoder) decodeWebPFrame(f *gifFrame) (image.Image, *budget.Budget, error) {
 	end := min(f.data+f.n, len(d.data))
 	if f.data >= end {
-		d.werr = errBadWebP
-		return
+		return nil, nil, errBadWebP
 	}
 	alph, pic, lossless := webpPicture(d.data[f.data:end])
 	// the decoder allocates by the picture's header: only one of the
@@ -442,13 +458,31 @@ func (d *gifDecoder) drawWebP(f *gifFrame) {
 	// animation can't allocate out of proportion to its canvas per frame
 	w, h, ok := webpSize(pic, lossless)
 	if !ok || w != f.r.Dx() || h != f.r.Dy() {
-		d.werr = errBadWebP
-		return
+		return nil, nil, errBadWebP
+	}
+	if n := webpStillLen(alph, pic, lossless); cap(d.wfile) < n {
+		// the file grows with the largest frame so far, only, so what it
+		// charges over the decoder's life is under the encoded bytes
+		if err := d.b.Charge(int64(n)); err != nil {
+			return nil, nil, budgetErr(err)
+		}
+		d.wfile = make([]byte, 0, n)
 	}
 	d.wfile = webpStill(d.wfile, alph, pic, lossless, w, h)
-	m, err := decodePicture(bytes.NewReader(d.wfile), w, h)
+	pb := d.b.Sub(webpBudget(w, h))
+	m, err := decodePicture(bytes.NewReader(d.wfile), w, h, pb)
 	if err != nil {
-		d.werr = err
+		pb.Release()
+		return nil, nil, err
+	}
+	return m, pb, nil
+}
+
+// drawWebP composes WebP frame f's picture m on the canvas: blended over
+// what's there, or replacing its rectangle. A frame that didn't decode (m
+// nil) leaves the canvas as it is (d.werr says why).
+func (d *gifDecoder) drawWebP(f *gifFrame, m image.Image) {
+	if m == nil {
 		return
 	}
 	mb := m.Bounds()

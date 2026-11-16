@@ -5,6 +5,16 @@
 // Package gif implements a GIF image decoder and encoder.
 //
 // The GIF specification is at https://www.w3.org/Graphics/GIF/spec-gif89a.txt.
+//
+// Clack: this is Go 1.24.9's image/gif decoder (reader.go; not the
+// encoder) with every allocation whose size the file decides charged first
+// to the budget.Budget the caller passes: the decoder and its reader, each
+// colour table (and a frame's copy of the global one), each frame's pixels,
+// its LZW reader and its de-interlaced copy, and what DecodeAll keeps per
+// frame. A file whose decode would need more than its budget fails, before
+// the allocation that doesn't fit, with an error wrapping budget.ErrBudget
+// (or budget.ErrBusy when the process-wide pool is full). Every changed line
+// is marked Clack: (see ../CLACK_PATCHES.md).
 package gif
 
 import (
@@ -15,6 +25,8 @@ import (
 	"image"
 	"image/color"
 	"io"
+
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
 
 var (
@@ -81,7 +93,8 @@ func readByte(r io.ByteReader) (byte, error) {
 
 // decoder is the type used to decode a GIF file.
 type decoder struct {
-	r reader
+	r      reader
+	budget *budget.Budget // Clack: what every allocation charges first
 
 	// From header.
 	vers            string
@@ -221,6 +234,9 @@ func (d *decoder) decode(r io.Reader, configOnly, keepAllFrames bool) error {
 	if rr, ok := r.(reader); ok {
 		d.r = rr
 	} else {
+		if err := d.budget.Charge(bufioBytes); err != nil { // Clack
+			return err
+		}
 		d.r = bufio.NewReader(r)
 	}
 
@@ -293,6 +309,9 @@ func (d *decoder) readColorTable(fields byte) (color.Palette, error) {
 	err := readFull(d.r, d.tmp[:3*n])
 	if err != nil {
 		return nil, fmt.Errorf("gif: reading color table: %s", err)
+	}
+	if err := d.budget.Charge(int64(n) * colorBytes); err != nil { // Clack: the table and its boxed colours
+		return nil, err
 	}
 	j, p := 0, make(color.Palette, n)
 	for i := range p {
@@ -396,6 +415,9 @@ func (d *decoder) readImageDescriptor(keepAllFrames bool) error {
 	if d.hasTransparentIndex {
 		if !useLocalColorTable {
 			// Clone the global color table.
+			if err := d.budget.Charge(int64(len(d.globalColorTable)) * colorBytes); err != nil { // Clack
+				return err
+			}
 			m.Palette = append(color.Palette(nil), d.globalColorTable...)
 		}
 		if ti := int(d.transparentIndex); ti < len(m.Palette) {
@@ -405,6 +427,9 @@ func (d *decoder) readImageDescriptor(keepAllFrames bool) error {
 			// according to the spec, but Firefox and Google Chrome
 			// seem OK with this, so we enlarge the palette with
 			// transparent colors. See golang.org/issue/15059.
+			if err := d.budget.Charge(int64(ti+1) * colorBytes); err != nil { // Clack
+				return err
+			}
 			p := make(color.Palette, ti+1)
 			copy(p, m.Palette)
 			for i := len(m.Palette); i < len(p); i++ {
@@ -421,6 +446,9 @@ func (d *decoder) readImageDescriptor(keepAllFrames bool) error {
 		return fmt.Errorf("gif: pixel size in decode out of range: %d", litWidth)
 	}
 	// A wonderfully Go-like piece of magic.
+	if err := d.budget.Charge(lzwBytes); err != nil { // Clack: the block and LZW readers
+		return err
+	}
 	br := &blockReader{d: d}
 	lzwr := lzw.NewReader(br, lzw.LSB, int(litWidth))
 	defer lzwr.Close()
@@ -467,10 +495,16 @@ func (d *decoder) readImageDescriptor(keepAllFrames bool) error {
 
 	// Undo the interlacing if necessary.
 	if d.imageFields&fInterlace != 0 {
+		if err := d.budget.Charge(int64(m.Rect.Dx()) * int64(m.Rect.Dy())); err != nil { // Clack: the copy
+			return err
+		}
 		uninterlace(m)
 	}
 
 	if keepAllFrames || len(d.image) == 0 {
+		if err := d.budget.Charge(keptBytes); err != nil { // Clack
+			return err
+		}
 		d.image = append(d.image, m)
 		d.delay = append(d.delay, d.delayTime)
 		d.disposal = append(d.disposal, d.disposalMethod)
@@ -511,6 +545,10 @@ func (d *decoder) newImageFromDescriptor() (*image.Paletted, error) {
 	// against imageBounds.Min (0, 0).
 	if left+width > d.width || top+height > d.height {
 		return nil, errors.New("gif: frame bounds larger than image bounds")
+	}
+	// Clack: the frame's pixels and the image
+	if err := d.budget.Charge(int64(width)*int64(height) + imageBytes); err != nil {
+		return nil, err
 	}
 	return image.NewPaletted(image.Rectangle{
 		Min: image.Point{left, top},
@@ -562,8 +600,13 @@ func uninterlace(m *image.Paletted) {
 
 // Decode reads a GIF image from r and returns the first embedded
 // image as an [image.Image].
-func Decode(r io.Reader) (image.Image, error) {
-	var d decoder
+//
+// Clack: every allocation is charged to b first (see the package doc).
+func Decode(r io.Reader, b *budget.Budget) (image.Image, error) {
+	if err := b.Charge(decoderBytes); err != nil { // Clack: the decoder itself
+		return nil, err
+	}
+	d := &decoder{budget: b}
 	if err := d.decode(r, false, false); err != nil {
 		return nil, err
 	}
@@ -602,8 +645,13 @@ type GIF struct {
 
 // DecodeAll reads a GIF image from r and returns the sequential frames
 // and timing information.
-func DecodeAll(r io.Reader) (*GIF, error) {
-	var d decoder
+//
+// Clack: every allocation is charged to b first (see the package doc).
+func DecodeAll(r io.Reader, b *budget.Budget) (*GIF, error) {
+	if err := b.Charge(decoderBytes); err != nil { // Clack: the decoder and the GIF
+		return nil, err
+	}
+	d := &decoder{budget: b}
 	if err := d.decode(r, false, true); err != nil {
 		return nil, err
 	}
@@ -625,7 +673,7 @@ func DecodeAll(r io.Reader) (*GIF, error) {
 // DecodeConfig returns the global color model and dimensions of a GIF image
 // without decoding the entire image.
 func DecodeConfig(r io.Reader) (image.Config, error) {
-	var d decoder
+	d := decoder{budget: budget.NewLocal(configBytes)} // Clack: the global colour table, at most
 	if err := d.decode(r, true, false); err != nil {
 		return image.Config{}, err
 	}
@@ -636,6 +684,5 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 	}, nil
 }
 
-func init() {
-	image.RegisterFormat("gif", "GIF8?a", Decode, DecodeConfig)
-}
+// Clack: no init registering the format with package image: its registry
+// can't pass a decode its budget. imgcache calls Decode itself.

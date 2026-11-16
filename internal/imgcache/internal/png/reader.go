@@ -5,6 +5,16 @@
 // Package png implements a PNG image decoder and encoder.
 //
 // The PNG specification is at https://www.w3.org/TR/PNG/.
+//
+// Clack: this is Go 1.24.9's image/png decoder (reader.go, paeth.go; not
+// the encoder) with every allocation whose size the file decides charged
+// first to the budget.Budget the caller passes: the decoder and its
+// inflater, the palette, each pass's image (the full image and every Adam7
+// pass, grayscale and truecolor with tRNS as the NRGBA/NRGBA64 they decode
+// to) and its row buffers. A file whose decode would need more than its
+// budget fails, before the allocation that doesn't fit, with an error
+// wrapping budget.ErrBudget (or budget.ErrBusy when the process-wide pool is
+// full). Every changed line is marked Clack: (see ../CLACK_PATCHES.md).
 package png
 
 import (
@@ -16,6 +26,8 @@ import (
 	"image"
 	"image/color"
 	"io"
+
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
 
 // Color type, as per the PNG spec.
@@ -107,6 +119,7 @@ const pngHeader = "\x89PNG\r\n\x1a\n"
 
 type decoder struct {
 	r             io.Reader
+	budget        *budget.Budget // Clack: what every allocation charges first
 	img           image.Image
 	crc           hash.Hash32
 	width, height int
@@ -116,6 +129,7 @@ type decoder struct {
 	stage         int
 	idatLength    uint32
 	tmp           [3 * 256]byte
+	ignored       [4096]byte // Clack: parseChunk's, once a decode (it escaped, per chunk)
 	interlace     int
 
 	// useTransparent and transparent are used for grayscale and truecolor
@@ -238,6 +252,9 @@ func (d *decoder) parsePLTE(length uint32) error {
 	d.crc.Write(d.tmp[:n])
 	switch d.cb {
 	case cbP1, cbP2, cbP4, cbP8:
+		if err := d.budget.Charge(paletteBytes); err != nil { // Clack
+			return err
+		}
 		d.palette = make(color.Palette, 256)
 		for i := 0; i < np; i++ {
 			d.palette[i] = color.RGBA{d.tmp[3*i+0], d.tmp[3*i+1], d.tmp[3*i+2], 0xff}
@@ -306,6 +323,9 @@ func (d *decoder) parsetRNS(length uint32) error {
 		}
 		d.crc.Write(d.tmp[:n])
 
+		if err := d.budget.Charge(paletteBytes); err != nil { // Clack: the colours, boxed again
+			return err
+		}
 		if len(d.palette) < n {
 			d.palette = d.palette[:n]
 		}
@@ -361,6 +381,9 @@ func (d *decoder) Read(p []byte) (int, error) {
 
 // decode decodes the IDAT data into an image.
 func (d *decoder) decode() (image.Image, error) {
+	if err := d.budget.Charge(inflaterBytes); err != nil { // Clack
+		return nil, err
+	}
 	r, err := zlib.NewReader(d)
 	if err != nil {
 		return nil, err
@@ -434,6 +457,10 @@ func (d *decoder) readImagePass(r io.Reader, pass int, allocateOnly bool) (image
 			return nil, nil
 		}
 	}
+	// Clack: the image the switch below makes, before it's made
+	if err := d.budget.Charge(d.pixelBytes() * int64(width) * int64(height)); err != nil {
+		return nil, err
+	}
 	switch d.cb {
 	case cbG1, cbG2, cbG4, cbG8:
 		bitsPerPixel = d.depth
@@ -503,6 +530,9 @@ func (d *decoder) readImagePass(r io.Reader, pass int, allocateOnly bool) (image
 		return nil, UnsupportedError("dimension overflow")
 	}
 	// cr and pr are the bytes for the current and previous row.
+	if err := d.budget.Charge(2 * rowSize); err != nil { // Clack
+		return nil, err
+	}
 	cr := make([]uint8, rowSize)
 	pr := make([]uint8, rowSize)
 
@@ -931,7 +961,7 @@ func (d *decoder) parseChunk(configOnly bool) error {
 		return FormatError(fmt.Sprintf("Bad chunk length: %d", length))
 	}
 	// Ignore this chunk (of a known length).
-	var ignored [4096]byte
+	ignored := d.ignored[:] // Clack: the decoder's, not 4 KB a chunk
 	for length > 0 {
 		n, err := io.ReadFull(d.r, ignored[:min(len(ignored), int(length))])
 		if err != nil {
@@ -966,10 +996,16 @@ func (d *decoder) checkHeader() error {
 
 // Decode reads a PNG image from r and returns it as an [image.Image].
 // The type of Image returned depends on the PNG contents.
-func Decode(r io.Reader) (image.Image, error) {
+//
+// Clack: every allocation is charged to b first (see the package doc).
+func Decode(r io.Reader, b *budget.Budget) (image.Image, error) {
+	if err := b.Charge(decoderBytes); err != nil { // Clack: the decoder itself
+		return nil, err
+	}
 	d := &decoder{
-		r:   r,
-		crc: crc32.NewIEEE(),
+		r:      r,
+		budget: b,
+		crc:    crc32.NewIEEE(),
 	}
 	if err := d.checkHeader(); err != nil {
 		if err == io.EOF {
@@ -992,8 +1028,9 @@ func Decode(r io.Reader) (image.Image, error) {
 // decoding the entire image.
 func DecodeConfig(r io.Reader) (image.Config, error) {
 	d := &decoder{
-		r:   r,
-		crc: crc32.NewIEEE(),
+		r:      r,
+		budget: budget.NewLocal(configBytes), // Clack: the palette, at most
+		crc:    crc32.NewIEEE(),
 	}
 	if err := d.checkHeader(); err != nil {
 		if err == io.EOF {
@@ -1049,6 +1086,5 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 	}, nil
 }
 
-func init() {
-	image.RegisterFormat("png", pngHeader, Decode, DecodeConfig)
-}
+// Clack: no init registering the format with package image: its registry
+// can't pass a decode its budget. imgcache calls Decode itself.

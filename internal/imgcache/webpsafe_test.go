@@ -109,12 +109,12 @@ func TestWebPFrameBoundsChecked(t *testing.T) {
 		webptest.Solid(0, 0, 4, 4, 50, color.NRGBA{255, 0, 0, 255}), // 4×4 past a 2×2 canvas
 		webptest.Solid(2, 0, 2, 2, 50, color.NRGBA{255, 0, 0, 255}), // offset past the right edge
 	} {
-		if _, err := indexWebP(webptest.Anim(2, 2, 0, f)); err == nil {
+		if _, err := testIndexWebP(webptest.Anim(2, 2, 0, f)); err == nil {
 			t.Errorf("a frame at %v past the 2×2 canvas was indexed", image.Rect(f.X, f.Y, f.X+f.W, f.Y+f.H))
 		}
 	}
 	// a frame flush with the canvas is in bounds
-	if _, err := indexWebP(webptest.Anim(4, 4, 0, webptest.Solid(0, 0, 4, 4, 50, color.NRGBA{0, 255, 0, 255}))); err != nil {
+	if _, err := testIndexWebP(webptest.Anim(4, 4, 0, webptest.Solid(0, 0, 4, 4, 50, color.NRGBA{0, 255, 0, 255}))); err != nil {
 		t.Errorf("a frame filling the canvas: %v", err)
 	}
 }

@@ -15,6 +15,14 @@ package imgcache
 // at 100 ms. A frame reaching past the logical screen is clipped to it, a
 // colour index past the colour table is transparent, and a frame whose
 // data ends early keeps what decoded.
+//
+// What an index and a decoder allocate is charged to a Budget first
+// (decmem.go): the index's frames and colour tables as it grows, the
+// decoder's canvas, the copy under a DisposalPrevious frame, its row and
+// LZW tables, an animated WebP frame's picture (released once it's drawn),
+// and the frame scaler's halved canvases. A charge the decode pool can't
+// cover now (ErrBusy) fails before anything changes, so the same call can
+// be made again later.
 
 import (
 	"compress/lzw"
@@ -24,8 +32,11 @@ import (
 	"io"
 	"log"
 	"time"
+	"unsafe"
 
 	xdraw "golang.org/x/image/draw"
+
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
 
 var errBadGIF = errors.New("imgcache: bad GIF")
@@ -48,7 +59,34 @@ type gifIndex struct {
 	prev bool
 	// webp: an animated WebP's frames (webpanim.go), not a GIF's
 	webp bool
+	// bytes is what the index holds: its frames array and colour tables
+	// (counted with the encoded bytes it indexes: gifSource.size)
+	bytes int
 }
+
+// grow makes room in ix.frames for one more frame, charging bg for a new
+// array when it's full (doubling, as append would, up to maxFrames).
+func (ix *gifIndex) grow(bg *budget.Budget) error {
+	if len(ix.frames) < cap(ix.frames) {
+		return nil
+	}
+	n := min(max(8, 2*cap(ix.frames)), maxFrames)
+	if err := bg.Charge(int64(n) * int64(gifFrameBytes)); err != nil {
+		return err
+	}
+	f := make([]gifFrame, len(ix.frames), n)
+	copy(f, ix.frames)
+	ix.bytes += (n - cap(ix.frames)) * gifFrameBytes
+	ix.frames = f
+	return nil
+}
+
+// gifFrameBytes is a gifFrame, paletteBytes a gifPalette as allocated
+// (1,032 bytes in Go's 1,152-byte size class).
+const (
+	gifFrameBytes = int(unsafe.Sizeof(gifFrame{}))
+	paletteBytes  = 1152
+)
 
 // gifFrame is one image of a GIF: where it goes, how it's composed and
 // where its LZW data starts.
@@ -75,12 +113,17 @@ type gifPalette struct {
 	c [256][4]byte
 }
 
-func readPalette(b []byte, n int) *gifPalette {
+// readPalette reads a colour table of n colours, charging bg for it.
+func (ix *gifIndex) readPalette(b []byte, n int, bg *budget.Budget) (*gifPalette, error) {
+	if err := bg.Charge(paletteBytes); err != nil {
+		return nil, err
+	}
+	ix.bytes += paletteBytes
 	p := &gifPalette{n: n}
 	for i := 0; i < n; i++ {
 		p.c[i] = [4]byte{b[3*i], b[3*i+1], b[3*i+2], 0xff}
 	}
-	return p
+	return p, nil
 }
 
 // frameDelay is a frame's display time from its delay in centiseconds:
@@ -110,9 +153,11 @@ func skipBlocks(b []byte, p int) int {
 	return -1
 }
 
-// indexGIF reads b's logical screen, loop count and frames. A file that
-// breaks off after its first frame is the frames it has.
-func indexGIF(b []byte) (*gifIndex, error) {
+// indexGIF reads b's logical screen, loop count and frames, charging bg
+// for what the index holds as it grows (its frames and colour tables; a
+// frame's own table only once the frame is kept). A file that breaks off
+// after its first frame is the frames it has.
+func indexGIF(b []byte, bg *budget.Budget) (*gifIndex, error) {
 	if len(b) < 13 || string(b[:3]) != "GIF" {
 		return nil, errBadGIF
 	}
@@ -124,7 +169,10 @@ func indexGIF(b []byte) (*gifIndex, error) {
 		if p+3*n > len(b) {
 			return nil, errBadGIF
 		}
-		global = readPalette(b[p:], n)
+		var err error
+		if global, err = ix.readPalette(b[p:], n, bg); err != nil {
+			return nil, err
+		}
 		p += 3 * n
 	}
 	// the graphic control block in force for the next image
@@ -164,14 +212,14 @@ blocks:
 			fw, fh := int(b[p+5])|int(b[p+6])<<8, int(b[p+7])|int(b[p+8])<<8
 			pk := b[p+9]
 			p += 10
-			pal := global
+			pal, local, nLocal := global, -1, 0
 			if pk&0x80 != 0 {
-				n := 1 << (pk&7 + 1)
-				if p+3*n > len(b) {
+				nLocal = 1 << (pk&7 + 1)
+				if p+3*nLocal > len(b) {
 					break blocks
 				}
-				pal = readPalette(b[p:], n)
-				p += 3 * n
+				local = p // read once the frame is kept
+				p += 3 * nLocal
 			}
 			if p >= len(b) {
 				break blocks
@@ -182,13 +230,22 @@ blocks:
 			if p = skipBlocks(b, p); p < 0 {
 				p = len(b) // the last frame's data runs off the end: what's there decodes
 			}
-			if pal == nil || lit < 2 || lit > 8 || fw > MaxSide || fh > MaxSide || fw*fh > MaxPixels {
+			if pal == nil && local < 0 || lit < 2 || lit > 8 || fw > MaxSide || fh > MaxSide || fw*fh > MaxPixels {
 				break blocks // image/gif refuses these too
 			}
 			if fw > 0 && fh > 0 {
 				if len(ix.frames) == maxFrames {
 					truncated = true
 					break blocks
+				}
+				if err := ix.grow(bg); err != nil {
+					return nil, err
+				}
+				if local >= 0 {
+					var err error
+					if pal, err = ix.readPalette(b[local:], nLocal, bg); err != nil {
+						return nil, err
+					}
 				}
 				ix.frames = append(ix.frames, gifFrame{r: image.Rect(x, y, x+fw, y+fh), pal: pal, trans: trans,
 					disp: disp, inter: pk&0x40 != 0, lit: lit, data: data, delay: frameDelay(cs)})
@@ -260,6 +317,7 @@ func (r *blockReader) Read(p []byte) (int, error) {
 type gifDecoder struct {
 	ix     *gifIndex
 	data   []byte
+	b      *budget.Budget // what its buffers charge (the owner's: a load, a player)
 	canvas *image.RGBA
 	save   []byte // under a DisposalPrevious frame, before it was drawn
 	row    []byte
@@ -273,9 +331,22 @@ type gifDecoder struct {
 	werr  error
 }
 
-func newGIFDecoder(ix *gifIndex, data []byte) *gifDecoder {
-	return &gifDecoder{ix: ix, data: data, canvas: image.NewRGBA(image.Rect(0, 0, ix.w, ix.h)), last: -1}
+// newGIFDecoder makes a decoder of ix's frames, its canvas and later
+// buffers charged to b.
+func newGIFDecoder(ix *gifIndex, data []byte, b *budget.Budget) (*gifDecoder, error) {
+	if err := b.Charge(rgbaBytes(image.Pt(ix.w, ix.h)) + decoderFixed); err != nil {
+		return nil, err
+	}
+	return &gifDecoder{ix: ix, data: data, b: b, canvas: image.NewRGBA(image.Rect(0, 0, ix.w, ix.h)), last: -1}, nil
 }
+
+// decoderFixed is what a decoder allocates besides its buffers: itself and
+// its canvas's header.
+const decoderFixed = 1 << 10
+
+// lzwBytes is an lzw.Reader (its 4K suffix, 8K prefix and 8K output
+// tables).
+const lzwBytes = 24 << 10
 
 // decoderBytes is what a decoder of ix holds besides the encoded data:
 // the canvas and the LZW tables, the rectangle under a DisposalPrevious
@@ -295,9 +366,33 @@ func decoderBytes(ix *gifIndex) int {
 // compose draws the next frame on the canvas, after the previous frame's
 // disposal, and returns its index. After the last frame comes the first,
 // on an empty canvas. A frame whose data is cut short keeps what decoded.
-func (d *gifDecoder) compose() int {
+//
+// What the frame needs is charged to d.b first: a buffer that doesn't fit
+// fails compose before the canvas changes, the same frame still next.
+func (d *gifDecoder) compose() (int, error) {
 	i := d.next
 	cr := d.canvas.Rect
+	f := &d.ix.frames[i]
+	if f.disp == gif.DisposalPrevious && d.save == nil {
+		// the whole canvas's, once: every frame's rectangle fits in it
+		n := 4 * cr.Dx() * cr.Dy()
+		if err := d.b.Charge(int64(n)); err != nil {
+			return i, err
+		}
+		d.save = make([]byte, n)
+	}
+	var wm image.Image // an animated WebP frame's picture, decoded first
+	var wb *budget.Budget
+	if d.ix.webp {
+		var err error
+		if wm, wb, err = d.decodeWebPFrame(f); budget.IsBusy(err) {
+			return i, err
+		}
+		defer wb.Release() // the picture, once it's drawn
+		d.werr = err
+	} else if err := d.gifBuffers(f); err != nil {
+		return i, err
+	}
 	if i == 0 {
 		clear(d.canvas.Pix)
 	} else if d.last >= 0 {
@@ -312,24 +407,36 @@ func (d *gifDecoder) compose() int {
 			copyRect(d.canvas, r, d.save, false)
 		}
 	}
-	f := &d.ix.frames[i]
 	if f.disp == gif.DisposalPrevious {
 		r := f.r.Intersect(cr)
-		if n := 4 * r.Dx() * r.Dy(); cap(d.save) < n {
-			d.save = make([]byte, n)
-		} else {
-			d.save = d.save[:n]
-		}
-		copyRect(d.canvas, r, d.save, true)
+		copyRect(d.canvas, r, d.save[:4*r.Dx()*r.Dy()], true)
 	}
 	if d.ix.webp {
-		d.drawWebP(f)
+		d.drawWebP(f, wm)
 	} else {
 		d.draw(f)
 	}
 	d.last = i
 	d.next = (i + 1) % len(d.ix.frames)
-	return i
+	return i, nil
+}
+
+// gifBuffers makes what draw reads a GIF frame with, charged to d.b once:
+// the LZW tables and a row as wide as the widest frame.
+func (d *gifDecoder) gifBuffers(f *gifFrame) error {
+	if d.lz == nil {
+		w := 0
+		for i := range d.ix.frames {
+			w = max(w, d.ix.frames[i].r.Dx())
+		}
+		if err := d.b.Charge(lzwBytes + int64(w)); err != nil {
+			return err
+		}
+		d.br = blockReader{b: d.data, off: f.data}
+		d.lz = lzw.NewReader(&d.br, lzw.LSB, f.lit).(*lzw.Reader)
+		d.row = make([]byte, w)
+	}
+	return nil
 }
 
 // copyRect copies the canvas pixels under r into buf (out) or back.
@@ -345,18 +452,12 @@ func copyRect(m *image.RGBA, r image.Rectangle, buf []byte, out bool) {
 	}
 }
 
-// draw decodes frame f's indices a row at a time onto the canvas.
+// draw decodes frame f's indices a row at a time onto the canvas (its
+// LZW reader and row made already: gifBuffers).
 func (d *gifDecoder) draw(f *gifFrame) {
 	d.br = blockReader{b: d.data, off: f.data}
-	if d.lz == nil {
-		d.lz = lzw.NewReader(&d.br, lzw.LSB, f.lit).(*lzw.Reader)
-	} else {
-		d.lz.Reset(&d.br, lzw.LSB, f.lit)
-	}
+	d.lz.Reset(&d.br, lzw.LSB, f.lit)
 	fw, fh := f.r.Dx(), f.r.Dy()
-	if cap(d.row) < fw {
-		d.row = make([]byte, fw)
-	}
 	row := d.row[:fw]
 	cr := d.canvas.Rect
 	x0, x1 := max(f.r.Min.X, cr.Min.X), min(f.r.Max.X, cr.Max.X)
@@ -428,26 +529,54 @@ func maxInt(a, b int) int {
 // animation is the still exactly.
 type frameScaler struct{ tmp [2]*image.RGBA }
 
-// scale draws src (the whole of it) into dst (the whole of it).
-func (s *frameScaler) scale(dst, src *image.RGBA) {
+// scale draws src (the whole of it) into dst (the whole of it), the
+// halved canvases it makes charged to b first (it draws nothing when one
+// doesn't fit).
+func (s *frameScaler) scale(dst, src *image.RGBA, b *budget.Budget) error {
 	cur := src
 	for i := 0; cur.Rect.Dx() >= 2*dst.Rect.Dx() && cur.Rect.Dy() >= 2*dst.Rect.Dy(); i++ {
-		w, h := cur.Rect.Dx()/2, cur.Rect.Dy()/2
-		t := s.tmp[i%2]
-		if t == nil || cap(t.Pix) < 4*w*h {
-			t = image.NewRGBA(image.Rect(0, 0, w, h))
-			s.tmp[i%2] = t
-		} else {
-			t.Pix, t.Stride, t.Rect = t.Pix[:4*w*h], 4*w, image.Rect(0, 0, w, h)
+		t, err := s.buf(i, cur.Rect.Dx()/2, cur.Rect.Dy()/2, b)
+		if err != nil {
+			return err
 		}
 		halve(t, cur)
 		cur = t
 	}
 	if cur.Rect.Size() == dst.Rect.Size() && cur.Stride == dst.Stride && cur.Rect.Min == (image.Point{}) && dst.Rect.Min == (image.Point{}) {
 		copy(dst.Pix, cur.Pix)
-		return
+		return nil
 	}
 	xdraw.ApproxBiLinear.Scale(dst, dst.Rect, cur, cur.Rect, xdraw.Src, nil)
+	return nil
+}
+
+// prepare makes the halved canvases scale needs to draw a canvas of size
+// src into a frame of size dst, charged to b, so that scale makes none.
+func (s *frameScaler) prepare(src, dst image.Point, b *budget.Budget) error {
+	w, h := src.X, src.Y
+	for i := 0; w >= 2*dst.X && h >= 2*dst.Y; i++ {
+		w, h = w/2, h/2
+		if _, err := s.buf(i, w, h, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// buf is the scaler's i-th halved canvas, w×h: one it has, or a new one
+// charged to b when it has none that big.
+func (s *frameScaler) buf(i, w, h int, b *budget.Budget) (*image.RGBA, error) {
+	t := s.tmp[i%2]
+	if t == nil || cap(t.Pix) < 4*w*h {
+		if err := b.Charge(rgbaBytes(image.Pt(w, h))); err != nil {
+			return nil, err
+		}
+		t = image.NewRGBA(image.Rect(0, 0, w, h))
+		s.tmp[i%2] = t
+	} else {
+		t.Pix, t.Stride, t.Rect = t.Pix[:4*w*h], 4*w, image.Rect(0, 0, w, h)
+	}
+	return t, nil
 }
 
 // bytes is what the scaler's buffers hold for a w×h canvas (at most a

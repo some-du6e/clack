@@ -56,7 +56,7 @@ func TestAnimWebPIndex(t *testing.T) {
 	if _, err := Decode(data); err == nil {
 		t.Log("x/image/webp decodes animated WebP now: webpanim.go may be simpler")
 	}
-	ix, err := indexAnim(data)
+	ix, err := testIndexAnim(data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,17 +83,17 @@ func TestAnimWebPIndex(t *testing.T) {
 	}
 	// WebP counts passes; gifIndex's loop is GIF's repetitions
 	for passes, want := range map[int]int{0: 0, 1: -1, 2: 1, 5: 4} {
-		if ix, err := indexWebP(synthWebP(passes)); err != nil || ix.loop != want {
+		if ix, err := testIndexWebP(synthWebP(passes)); err != nil || ix.loop != want {
 			t.Errorf("loop count %d: indexed %v (%v), want %d", passes, ix, err, want)
 		}
 	}
-	if ix, err := indexWebP(data[:len(data)-5]); err != nil || len(ix.frames) != 3 { // the last frame cut short
+	if ix, err := testIndexWebP(data[:len(data)-5]); err != nil || len(ix.frames) != 3 { // the last frame cut short
 		t.Errorf("cut short: %v", err)
 	}
-	if _, err := indexWebP(webptest.Anim(8, 8, 0)); err == nil {
+	if _, err := testIndexWebP(webptest.Anim(8, 8, 0)); err == nil {
 		t.Error("an animation of no frames indexed")
 	}
-	if _, err := indexWebP(webptest.Anim(20000, 8, 0, webptest.Solid(0, 0, 8, 8, 50, wRed))); !errors.Is(err, ErrTooBig) {
+	if _, err := testIndexWebP(webptest.Anim(20000, 8, 0, webptest.Solid(0, 0, 8, 8, 50, wRed))); !errors.Is(err, ErrTooBig) {
 		t.Errorf("a 20000px canvas: %v, want ErrTooBig", err)
 	}
 }
@@ -103,7 +103,7 @@ func TestAnimWebPIndex(t *testing.T) {
 // from an empty canvas.
 func TestAnimWebPCompose(t *testing.T) {
 	data := synthWebP(0)
-	ix, err := indexWebP(data)
+	ix, err := testIndexWebP(data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,10 +116,10 @@ func TestAnimWebPCompose(t *testing.T) {
 		{{0, 0}: red, {1, 1}: red, {3, 3}: mix, {5, 5}: mix, {2, 5}: mix, {6, 6}: none, {7, 3}: red, {1, 5}: red},
 		{{0, 0}: red, {3, 3}: none, {5, 5}: none, {5, 3}: none, {2, 5}: green, {1, 7}: green, {3, 7}: green, {2, 4}: green, {7, 3}: red, {6, 7}: none},
 	}
-	d := newGIFDecoder(ix, data)
+	d := testDecoder(t, ix, data)
 	for pass := 0; pass < 2; pass++ {
 		for i, px := range want {
-			if got := d.compose(); got != i || d.werr != nil {
+			if got := d.next1(); got != i || d.werr != nil {
 				t.Fatalf("pass %d: composed frame %d (%v), want %d", pass, got, d.werr, i)
 			}
 			for p, w := range px {
@@ -161,7 +161,7 @@ func TestAnimWebPLossyAlpha(t *testing.T) {
 		webptest.Frame{X: 10, Y: 4, W: w, H: h, DurMS: 70, Chunks: [][]byte{alph, vp8}},
 		webptest.Frame{X: 0, Y: 0, W: w, H: h, DurMS: 30, NoBlend: true, Chunks: [][]byte{vp8}},
 	)
-	ix, err := indexWebP(data)
+	ix, err := testIndexWebP(data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,8 +170,8 @@ func TestAnimWebPLossyAlpha(t *testing.T) {
 	opaque := image.NewRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(opaque, opaque.Rect, ycc, image.Point{}, draw.Src)
 
-	d := newGIFDecoder(ix, data)
-	d.compose()
+	d := testDecoder(t, ix, data)
+	d.next1()
 	if d.werr != nil {
 		t.Fatal(d.werr)
 	}
@@ -186,7 +186,7 @@ func TestAnimWebPLossyAlpha(t *testing.T) {
 	if g := d.canvas.RGBAAt(10+75, 4+50); g.A == 0 || g.A == 255 {
 		t.Errorf("frame 0's middle has alpha %d, want the plane's ~128", g.A)
 	}
-	d.compose()
+	d.next1()
 	if d.werr != nil {
 		t.Fatal(d.werr)
 	}

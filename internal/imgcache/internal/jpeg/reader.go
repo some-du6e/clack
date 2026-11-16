@@ -5,13 +5,25 @@
 // Package jpeg implements a JPEG image decoder and encoder.
 //
 // JPEG is defined in ITU-T T.81: https://www.w3.org/Graphics/JPEG/itu-t81.pdf.
+//
+// Clack: this is Go 1.24.9's image/jpeg decoder (reader.go, scan.go,
+// huffman.go, idct.go; not the encoder) with every allocation whose size the
+// file decides charged first to the budget.Budget the caller passes:
+// the decoder, the destination image, the 4th component's plane, the
+// progressive coefficients and the CMYK/RGB conversions. A file whose decode
+// would need more than its budget fails, before the allocation that doesn't
+// fit, with an error wrapping budget.ErrBudget (or budget.ErrBusy when the
+// process-wide pool is full). Every changed line is marked Clack: (see
+// ../CLACK_PATCHES.md).
 package jpeg
 
 import (
 	"image"
 	"image/color"
-	"image/internal/imageutil"
+	"image/draw" // Clack: for image/internal/imageutil, which std alone may import
 	"io"
+
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
 
 // A FormatError reports that the input is not a valid JPEG.
@@ -103,8 +115,9 @@ type bits struct {
 }
 
 type decoder struct {
-	r    io.Reader
-	bits bits
+	r      io.Reader
+	budget *budget.Budget // Clack: what every allocation charges first
+	bits   bits
 	// bytes is a byte buffer, similar to a bufio.Reader, except that it
 	// has to be able to unread more than 1 byte, due to byte stuffing.
 	// Byte stuffing is specified in section F.1.2.3.
@@ -687,8 +700,13 @@ func (d *decoder) applyBlack() (image.Image, error) {
 		// out the 'Adobe inversion' described in the applyBlack doc comment
 		// above, so in practice, only the fourth channel (black) is inverted.
 		bounds := d.img3.Bounds()
+		if err := d.charge(rgbaBytes(bounds)); err != nil { // Clack
+			return nil, err
+		}
 		img := image.NewRGBA(bounds)
-		imageutil.DrawYCbCr(img, bounds, d.img3, bounds.Min)
+		// Clack: draw.Draw of a YCbCr onto an RGBA is imageutil.DrawYCbCr
+		// (for the 4:4:4 and 4:2:0 this decoder makes for 4 components)
+		draw.Draw(img, bounds, d.img3, bounds.Min, draw.Src)
 		for iBase, y := 0, bounds.Min.Y; y < bounds.Max.Y; iBase, y = iBase+img.Stride, y+1 {
 			for i, x := iBase+3, bounds.Min.X; x < bounds.Max.X; i, x = i+4, x+1 {
 				img.Pix[i] = 255 - d.blackPix[(y-bounds.Min.Y)*d.blackStride+(x-bounds.Min.X)]
@@ -707,6 +725,9 @@ func (d *decoder) applyBlack() (image.Image, error) {
 	// separate channels into an image.CMYK's single []byte slice containing 4
 	// contiguous bytes per pixel.
 	bounds := d.img3.Bounds()
+	if err := d.charge(rgbaBytes(bounds)); err != nil { // Clack
+		return nil, err
+	}
 	img := image.NewCMYK(bounds)
 
 	translations := [4]struct {
@@ -752,6 +773,9 @@ func (d *decoder) isRGB() bool {
 func (d *decoder) convertToRGB() (image.Image, error) {
 	cScale := d.comp[0].h / d.comp[1].h
 	bounds := d.img3.Bounds()
+	if err := d.charge(rgbaBytes(bounds)); err != nil { // Clack
+		return nil, err
+	}
 	img := image.NewRGBA(bounds)
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		po := img.PixOffset(bounds.Min.X, y)
@@ -768,8 +792,13 @@ func (d *decoder) convertToRGB() (image.Image, error) {
 }
 
 // Decode reads a JPEG image from r and returns it as an [image.Image].
-func Decode(r io.Reader) (image.Image, error) {
-	var d decoder
+//
+// Clack: every allocation is charged to b first (see the package doc).
+func Decode(r io.Reader, b *budget.Budget) (image.Image, error) {
+	if err := b.Charge(decoderBytes); err != nil { // Clack: the decoder itself
+		return nil, err
+	}
+	d := &decoder{budget: b}
 	return d.decode(r, false)
 }
 
@@ -807,6 +836,5 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 	return image.Config{}, FormatError("missing SOF marker")
 }
 
-func init() {
-	image.RegisterFormat("jpeg", "\xff\xd8", Decode, DecodeConfig)
-}
+// Clack: no init registering the format with package image: its registry
+// can't pass a decode its budget. imgcache calls Decode itself.

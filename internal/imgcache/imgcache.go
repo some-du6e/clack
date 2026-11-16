@@ -13,10 +13,14 @@
 // backoff (retryAfter), and the window repaints when the retry is due, so
 // a visible avatar that hit a timeout or a dropped connection loads by
 // itself.
+//
+// Every decode, and the scale after it, charges what it allocates to the
+// process-wide decode memory (decmem.go): decoding never takes more than
+// DecodeMemory in all, and one that can't have its memory now tries again
+// shortly.
 package imgcache
 
 import (
-	"bytes"
 	"container/list"
 	"context"
 	"crypto/sha256"
@@ -24,7 +28,10 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/draw"
+	// The standard decoders stay registered with package image for its
+	// DecodeConfig (core's photo checks, the composer's and the emoji
+	// dialog's size checks read headers through it); imgcache itself
+	// decodes only through the budgeted copies in internal (decmem.go).
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
@@ -38,10 +45,10 @@ import (
 	"time"
 
 	"gioui.org/op/paint"
-	_ "golang.org/x/image/bmp" // decoder for the shared safe Decode (composer attachments)
-	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/bmp" // registered for DecodeConfig too (composer attachments)
 
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 	"github.com/some-du6e/clack/internal/imgcache/internal/webp"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
@@ -142,12 +149,15 @@ type Cache struct {
 // A final failure (bytes that arrived whole and don't decode:
 // ErrUndecodable) isn't tried again for finalFailureTTL while the account
 // is signed in: the same bytes would fail the same way. Slack's <img>
-// doesn't retry an onError either.
+// doesn't retry an onError either. A busy one (ErrBusy: other decodes held
+// the decode memory) is tried again within RetryBusyMax, and isn't a
+// failure to the surfaces asking (Failed): the image is still loading.
 type failure struct {
 	at    time.Time
 	n     int
 	retry time.Time
 	final bool
+	busy  bool
 }
 
 // ErrUndecodable marks bytes in an image format this package reads
@@ -158,11 +168,11 @@ type failure struct {
 // stayed a blank tile.
 var ErrUndecodable = errors.New("imgcache: undecodable image")
 
-// undecodable wraps a format decoder's error as ErrUndecodable; ErrTooBig
-// and image.ErrFormat (not an image at all, e.g. an error page) stay as
-// they are.
+// undecodable wraps a format decoder's error as ErrUndecodable; ErrTooBig,
+// image.ErrFormat (not an image at all, e.g. an error page) and ErrBusy
+// (the decode memory was taken: nothing about the bytes) stay as they are.
 func undecodable(err error) error {
-	if err == nil || errors.Is(err, ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, ErrUndecodable) {
+	if err == nil || errors.Is(err, ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, ErrUndecodable) || errors.Is(err, ErrBusy) {
 		return err
 	}
 	return fmt.Errorf("%w: %w", ErrUndecodable, err)
@@ -170,15 +180,27 @@ func undecodable(err error) error {
 
 // Retry backoff: RetryMin doubling up to RetryMax for errors that may pass
 // (network, timeouts, HTTP 429 and 5xx); RetryPermanent for bytes that
-// aren't an image or are too big, and URLs that are refused outright.
+// aren't an image or are too big, and URLs that are refused outright;
+// RetryBusy doubling up to RetryBusyMax for a decode the decode memory was
+// too full for (ErrBusy), which loads as soon as the decodes holding it
+// are done.
 const (
 	RetryMin       = time.Second
 	RetryMax       = time.Minute
 	RetryPermanent = 10 * time.Minute
+	RetryBusy      = 250 * time.Millisecond
+	RetryBusyMax   = 4 * time.Second
 )
 
 // retryAfter is the wait before the n-th retry (n ≥ 1) after err.
 func retryAfter(n int, err error) time.Duration {
+	if errors.Is(err, ErrBusy) {
+		d := RetryBusy
+		for i := 1; i < n && d < RetryBusyMax; i++ {
+			d *= 2
+		}
+		return min(d, RetryBusyMax)
+	}
 	if permanent(err) {
 		return RetryPermanent
 	}
@@ -190,8 +212,11 @@ func retryAfter(n int, err error) time.Duration {
 }
 
 // permanent reports errors a retry can't fix: undecodable or oversized
-// bytes and URLs the fetchers refuse.
+// bytes and URLs the fetchers refuse. ErrBusy never is.
 func permanent(err error) bool {
+	if errors.Is(err, ErrBusy) {
+		return false
+	}
 	if errors.Is(err, ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, ErrBlockedAddr) || errors.Is(err, ErrUndecodable) {
 		return true
 	}
@@ -543,7 +568,7 @@ func (c *Cache) Stats() Stats {
 			s.Animated++
 		}
 		if e.gif != nil {
-			s.EncodedBytes += len(e.gif.data)
+			s.EncodedBytes += e.gif.size()
 		}
 		if p := e.play; p != nil {
 			s.Players++
@@ -580,15 +605,16 @@ func (c *Cache) Prefetch(url string, sizePx int) {
 }
 
 // Failed reports whether the last fetch of url failed (so callers can show a
-// broken-image state instead of a spinner).
+// broken-image state instead of a spinner). One the decode memory was too
+// full for (ErrBusy) hasn't: it's still loading, and tries again shortly.
 func (c *Cache) Failed(url string, sizePx int) bool {
 	if c == nil {
 		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, ok := c.failed[key{url, sizePx}]
-	return ok
+	f, ok := c.failed[key{url, sizePx}]
+	return ok && !f.busy
 }
 
 // startLocked queues k's load. drawn: Get asked (it's on screen), not
@@ -730,6 +756,7 @@ func (c *Cache) load(k key) {
 		f.at = now
 		f.retry = now.Add(retryAfter(f.n, err))
 		f.final = errors.Is(err, ErrUndecodable)
+		f.busy = errors.Is(err, ErrBusy)
 		c.failed[k] = f
 		if !f.final {
 			c.wakeLocked(f.retry) // the surface asks again when the retry is due
@@ -739,9 +766,9 @@ func (c *Cache) load(k key) {
 		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().UnixMilli(), px: px}
 		if an != nil {
 			e.frames = len(an.ix.frames)
-			if len(an.data) <= c.maxBytes/(2*gifShare) { // the bytes for playing it (anim.go)
+			if an.size() <= c.maxBytes/(2*gifShare) { // the bytes for playing it (anim.go)
 				e.gif = an
-				e.n += len(an.data)
+				e.n += an.size()
 			}
 		}
 		c.putLocked(e) // over an interim one (derive)
@@ -829,7 +856,7 @@ const gifShare = 4 // a quarter
 // keptGIFLocked counts e's encoded bytes (just kept) and lets go of older
 // ones past the budget's gifShare.
 func (c *Cache) keptGIFLocked(e *entry) {
-	c.gifBytes += len(e.gif.data)
+	c.gifBytes += e.gif.size()
 	for el := c.lru.Back(); el != nil && c.gifBytes > c.maxBytes/gifShare; el = el.Prev() {
 		if o := el.Value.(*entry); o != e && o.play == nil {
 			c.dropGIFLocked(o)
@@ -843,7 +870,7 @@ func (c *Cache) dropGIFLocked(e *entry) {
 	if e.gif == nil {
 		return
 	}
-	n := len(e.gif.data)
+	n := e.gif.size()
 	e.n -= n
 	c.bytes -= n
 	c.gifBytes -= n
@@ -855,7 +882,7 @@ func (c *Cache) dropLocked(el *list.Element) {
 	e := el.Value.(*entry)
 	c.releaseLocked(e)
 	if e.gif != nil {
-		c.gifBytes -= len(e.gif.data)
+		c.gifBytes -= e.gif.size()
 	}
 	c.lru.Remove(el)
 	if c.entries[e.k] == el {
@@ -938,32 +965,53 @@ func (c *Cache) rawFor(k key) ([]byte, func(), error) {
 // loadImage decodes k. A GIF or an animated WebP decodes its first frame
 // only (gifstream.go, webpanim.go); an animated one also returns its
 // bytes and their index (anim.go). Bytes that don't decode are
-// ErrUndecodable.
+// ErrUndecodable; a decode the decode memory is too full for now is
+// ErrBusy (decmem.go).
+//
+// Everything the decode and its scale allocate is charged to one Budget,
+// given back once the display-size copy (the cache's now) is all that's
+// kept.
 func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
 	data, save, err := c.rawFor(k)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 	}
+	b := NewBudget()
+	defer b.Release()
 	if isAnim(data) {
-		if err := checkSize(data); err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+		fail := func(err error) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(budgetErr(err))
 		}
-		ix, err := indexAnim(data)
+		if err := checkSize(data); err != nil {
+			return fail(err)
+		}
+		ix, err := indexAnim(data, b)
 		if err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+			return fail(err)
 		}
 		if ix.w*ix.h > bigPixels { // its canvas, as a big image's decode
 			bigSem <- struct{}{}
 			defer func() { <-bigSem }()
 		}
-		d := newGIFDecoder(ix, data)
-		d.compose()
-		if d.werr != nil { // an animated WebP whose first frame doesn't decode
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(d.werr)
+		d, err := newGIFDecoder(ix, data, b)
+		if err != nil {
+			return fail(err)
 		}
-		still := image.NewRGBA(image.Rectangle{Max: scaledSize(ix.w, ix.h, k.size)})
+		if _, err := d.compose(); err != nil {
+			return fail(err)
+		}
+		if d.werr != nil { // an animated WebP whose first frame doesn't decode
+			return fail(d.werr)
+		}
+		sz := scaledSize(ix.w, ix.h, k.size)
+		if err := b.Charge(rgbaBytes(sz)); err != nil {
+			return fail(err)
+		}
+		still := image.NewRGBA(image.Rectangle{Max: sz})
 		var sc frameScaler
-		sc.scale(still, d.canvas)
+		if err := sc.scale(still, d.canvas, b); err != nil {
+			return fail(err)
+		}
 		save()
 		var an *gifSource
 		if len(ix.frames) > 1 {
@@ -971,21 +1019,23 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, [
 		}
 		return paint.NewImageOp(still), still.Rect.Size(), len(still.Pix), an, []*image.RGBA{still}, nil
 	}
-	// A big image decodes to its full size and scales through a temporary
-	// buffer as big again (x/image/draw's kernel scaler: 32 bytes per
-	// destination column per source row) before the display-size copy is
-	// all that's kept. Eight of them at once while a channel of screenshots
-	// scrolled by held 150 MB for a moment: at most bigDecodes at a time.
+	// A big image decodes to its full size and scales (a band at a time:
+	// internal/catmullrom) before the display-size copy is all that's kept.
+	// The decode memory bounds what they hold together; at most bigDecodes
+	// at a time bounds the CPU they take.
 	if big := isBig(data); big {
 		bigSem <- struct{}{}
 		defer func() { <-bigSem }()
 	}
-	img, err := Decode(data)
+	img, err := decodeImage(data, MaxPixels, MaxSide, b)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
 	}
 	save() // only bytes that decoded as an image reach the disk tier
-	rgba := Scale(img, k.size)
+	rgba, err := ScaleBudget(img, k.size, b)
+	if err != nil {
+		return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+	}
 	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, []*image.RGBA{rgba}, nil
 }
 
@@ -1000,58 +1050,67 @@ var bigSem = make(chan struct{}, bigDecodes)
 
 // isBig reports whether data's header says it has more than bigPixels.
 func isBig(data []byte) bool {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, _, err := decodeConfig(data)
 	return err == nil && cfg.Width*cfg.Height > bigPixels
 }
 
-// MaxPixels bounds the decoded size of one image (width × height), so a
-// tiny file that claims to be 60000×60000 (a decompression bomb) can't
-// allocate gigabytes. MaxSide bounds either dimension.
+// MaxPixels bounds the decoded size of one image (width × height), and
+// MaxSide either dimension: an image past them isn't decoded at all. What
+// a decode may allocate is bounded by its budget (MaxDecode), which a
+// photo of 64 MP may or may not fit in by its format (a 48 MP phone photo,
+// 8064×6048, does), so this bounds the work: a tiny file claiming to be
+// 60000×60000 is refused by its header before anything decodes.
 const (
-	MaxPixels = 40 << 20
+	MaxPixels = 64 << 20
 	MaxSide   = 16384
 )
 
-// ErrTooBig is returned for images over MaxPixels or MaxSide.
+// ErrTooBig is returned for images over MaxPixels or MaxSide, and for one
+// whose decode would need more than MaxDecode (or a WebP picture's budget).
 var ErrTooBig = errors.New("imgcache: image dimensions too large")
 
 // Decode is the one safe entry point for decoding untrusted image bytes:
 // the cache's own loads, and every UI path that decodes bytes some
 // workspace member or a picked file could control (Copy Image, custom
-// emoji, profile photos, email icons). It rejects a header claiming more
-// than MaxPixels or MaxSide before decoding, and for WebP routes through
-// decodeWebP, which additionally checks a still's picture against its
-// header size and charges every allocation of the decode to a byte budget
-// tied to the picture's size (webpanim.go), returning an error before any
-// that would exceed it. A bomb comes back as an error, so a caller on an
-// overlay or popup with no recover shows a failure instead of crashing the
-// app.
+// emoji, profile photos, email icons). It decodes PNG, JPEG, GIF (its
+// first frame), WebP and BMP only, each through a vendored decoder that
+// charges every allocation to a Budget from the decode memory before
+// making it (decmem.go): it rejects a header claiming more than MaxPixels
+// or MaxSide before decoding, a decode that would need more than MaxDecode
+// fails with ErrTooBig before the allocation that doesn't fit, and one the
+// decode memory is too full for now is tried again for a while
+// (WithBudget) before failing with ErrBusy. A bomb comes back as an error,
+// so a caller on an overlay or popup with no recover shows a failure
+// instead of crashing the app. The image is the caller's once it returns
+// (no longer charged); one that works with it after (scales, converts)
+// uses DecodeBudget under its own WithBudget instead.
 func Decode(data []byte) (image.Image, error) {
 	return DecodeWithin(data, MaxPixels, MaxSide)
 }
 
-// DecodeWithin is Decode with the caller's own decoded-size budget, for a
+// DecodeWithin is Decode with the caller's own decoded-size limits, for a
 // surface that legitimately decodes larger images than the cache's
 // MaxPixels (the composer's attachment thumbnails, at attMaxPixels). The
-// WebP memory budget is scaled to the picture, so maxPixels is the ceiling
-// for a lossless or alpha WebP too, the same as for PNG, JPEG and lossy
-// WebP.
+// decode is still bounded by MaxDecode, and a WebP's by its picture's
+// budget too.
 func DecodeWithin(data []byte, maxPixels, maxSide int) (image.Image, error) {
-	if err := checkSizeWithin(data, maxPixels, maxSide); err != nil {
+	var img image.Image
+	err := WithBudget(context.Background(), func(b *Budget) error {
+		var err error
+		img, err = decodeImage(data, maxPixels, maxSide, b)
+		return err
+	})
+	if err != nil {
 		return nil, err
 	}
-	if isWebP(data) {
-		return decodeWebP(data, maxPixels, maxSide)
-	}
-	img, _, err := image.Decode(bytes.NewReader(data))
-	return img, err
+	return img, nil
 }
 
 // checkSize reads the header's dimensions only, against the cache budget.
 func checkSize(data []byte) error { return checkSizeWithin(data, MaxPixels, MaxSide) }
 
 func checkSizeWithin(data []byte, maxPixels, maxSide int) error {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	cfg, _, err := decodeConfig(data)
 	if err != nil {
 		return err
 	}
@@ -1140,37 +1199,12 @@ func (c *Cache) raw(u string) ([]byte, func(), error) {
 }
 
 // Scale converts img to *image.RGBA (premultiplied, what Gio uploads
-// fastest) with its larger side at most max px (0 = 2048 cap).
+// fastest) with its larger side at most max px (0 = 2048 cap): the pixels
+// x/image/draw's CatmullRom.Scale draws, a band at a time (ScaleBudget,
+// uncharged: for images already decoded and small, as derive's).
 func Scale(img image.Image, max int) *image.RGBA {
-	if max <= 0 {
-		max = 2048
-	}
-	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
-	if w > max || h > max {
-		if w >= h {
-			h = max * h / w
-			w = max
-		} else {
-			w = max * w / h
-			h = max
-		}
-		if w < 1 {
-			w = 1
-		}
-		if h < 1 {
-			h = 1
-		}
-		dst := image.NewRGBA(image.Rect(0, 0, w, h))
-		xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Src, nil)
-		return dst
-	}
-	if r, ok := img.(*image.RGBA); ok && b.Min == (image.Point{}) {
-		return r
-	}
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.Draw(dst, dst.Bounds(), img, b.Min, draw.Src)
-	return dst
+	r, _ := ScaleBudget(img, max, budget.Unlimited()) // an unlimited budget refuses nothing
+	return r
 }
 
 // DiskOK reports whether an image URL may be persisted: avatars and emoji

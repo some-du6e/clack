@@ -5,13 +5,23 @@
 // Package bmp implements a BMP image decoder and encoder.
 //
 // The BMP specification is at http://www.digicamsoft.com/bmp/bmp.html.
-package bmp // import "golang.org/x/image/bmp"
+//
+// Clack: this is golang.org/x/image/bmp v0.33.0's decoder (reader.go; not
+// the encoder) with its header, palette, image and row buffer charged
+// first to the budget.Budget the caller passes. A file whose decode would
+// need more than its budget fails, before the allocation that doesn't fit,
+// with an error wrapping budget.ErrBudget (or budget.ErrBusy when the
+// process-wide pool is full). Every changed line is marked Clack: (see
+// ../CLACK_PATCHES.md).
+package bmp
 
 import (
 	"errors"
 	"image"
 	"image/color"
 	"io"
+
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
 
 // ErrUnsupported means that the input BMP image uses a valid but unsupported
@@ -28,7 +38,14 @@ func readUint32(b []byte) uint32 {
 
 // decodePaletted reads a 1, 2, 4 or 8 bit-per-pixel BMP image from r.
 // If topDown is false, the image rows will be read bottom-up.
-func decodePaletted(r io.Reader, c image.Config, topDown bool, bpp int) (image.Image, error) {
+func decodePaletted(r io.Reader, c image.Config, topDown bool, bpp int, bg *budget.Budget) (image.Image, error) {
+	pixelsPerByte := 8 / bpp
+	// Pad up to ensure each row is 4-bytes aligned.
+	bytesPerRow := ((c.Width+pixelsPerByte-1)/pixelsPerByte + 3) &^ 3
+	// Clack: the pixels and the row, before either is made
+	if err := bg.Charge(int64(c.Width)*int64(c.Height) + int64(bytesPerRow)); err != nil {
+		return nil, err
+	}
 	paletted := image.NewPaletted(image.Rect(0, 0, c.Width, c.Height), c.ColorModel.(color.Palette))
 	if c.Width == 0 || c.Height == 0 {
 		return paletted, nil
@@ -38,9 +55,6 @@ func decodePaletted(r io.Reader, c image.Config, topDown bool, bpp int) (image.I
 		y0, y1, yDelta = 0, c.Height, +1
 	}
 
-	pixelsPerByte := 8 / bpp
-	// Pad up to ensure each row is 4-bytes aligned.
-	bytesPerRow := ((c.Width+pixelsPerByte-1)/pixelsPerByte + 3) &^ 3
 	b := make([]byte, bytesPerRow)
 
 	for y := y0; y != y1; y += yDelta {
@@ -63,7 +77,11 @@ func decodePaletted(r io.Reader, c image.Config, topDown bool, bpp int) (image.I
 
 // decodeRGB reads a 24 bit-per-pixel BMP image from r.
 // If topDown is false, the image rows will be read bottom-up.
-func decodeRGB(r io.Reader, c image.Config, topDown bool) (image.Image, error) {
+func decodeRGB(r io.Reader, c image.Config, topDown bool, bg *budget.Budget) (image.Image, error) {
+	// Clack: the pixels and the row, before either is made
+	if err := bg.Charge(4*int64(c.Width)*int64(c.Height) + int64((3*c.Width+3)&^3)); err != nil {
+		return nil, err
+	}
 	rgba := image.NewRGBA(image.Rect(0, 0, c.Width, c.Height))
 	if c.Width == 0 || c.Height == 0 {
 		return rgba, nil
@@ -92,7 +110,10 @@ func decodeRGB(r io.Reader, c image.Config, topDown bool) (image.Image, error) {
 
 // decodeNRGBA reads a 32 bit-per-pixel BMP image from r.
 // If topDown is false, the image rows will be read bottom-up.
-func decodeNRGBA(r io.Reader, c image.Config, topDown, allowAlpha bool) (image.Image, error) {
+func decodeNRGBA(r io.Reader, c image.Config, topDown, allowAlpha bool, bg *budget.Budget) (image.Image, error) {
+	if err := bg.Charge(4 * int64(c.Width) * int64(c.Height)); err != nil { // Clack
+		return nil, err
+	}
 	rgba := image.NewNRGBA(image.Rect(0, 0, c.Width, c.Height))
 	if c.Width == 0 || c.Height == 0 {
 		return rgba, nil
@@ -119,18 +140,23 @@ func decodeNRGBA(r io.Reader, c image.Config, topDown, allowAlpha bool) (image.I
 
 // Decode reads a BMP image from r and returns it as an image.Image.
 // Limitation: The file must be 8, 24 or 32 bits per pixel.
-func Decode(r io.Reader) (image.Image, error) {
+//
+// Clack: every allocation is charged to b first (see the package doc).
+func Decode(r io.Reader, b *budget.Budget) (image.Image, error) {
+	if err := b.Charge(headerBytes); err != nil { // Clack: the header and palette
+		return nil, err
+	}
 	c, bpp, topDown, allowAlpha, err := decodeConfig(r)
 	if err != nil {
 		return nil, err
 	}
 	switch bpp {
 	case 1, 2, 4, 8:
-		return decodePaletted(r, c, topDown, bpp)
+		return decodePaletted(r, c, topDown, bpp, b)
 	case 24:
-		return decodeRGB(r, c, topDown)
+		return decodeRGB(r, c, topDown, b)
 	case 32:
-		return decodeNRGBA(r, c, topDown, allowAlpha)
+		return decodeNRGBA(r, c, topDown, allowAlpha, b)
 	}
 	panic("unreachable")
 }
@@ -255,6 +281,9 @@ func decodeConfig(r io.Reader) (config image.Config, bitsPerPixel int, topDown b
 	return image.Config{}, 0, false, false, ErrUnsupported
 }
 
-func init() {
-	image.RegisterFormat("bmp", "BM????\x00\x00\x00\x00", Decode, DecodeConfig)
-}
+// Clack: no init registering the format with package image: its registry
+// can't pass a decode its budget. imgcache calls Decode itself.
+
+// headerBytes: what decodeConfig allocates, at most: its 1 KB header buffer
+// and a 256-entry palette with its boxed colours.
+const headerBytes = 1024 + 256*(16+8) + 512 // Clack

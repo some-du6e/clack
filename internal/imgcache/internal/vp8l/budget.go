@@ -4,55 +4,27 @@ package vp8l
 // is Clack's, not upstream's.
 
 import (
-	"errors"
-	"fmt"
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
 
 // ErrBudget is a decode that would allocate more than its Budget allows.
 // The decoder returns it before making the allocation that doesn't fit.
-var ErrBudget = errors.New("vp8l: decode needs more memory than its budget")
+// (A budget drawing from the process-wide pool fails with budget.ErrBusy
+// instead when the pool can't cover the charge right now.)
+var ErrBudget = budget.ErrBudget
 
-// Budget is how many bytes one decode may allocate in all. Every
-// allocation the decoder makes (the Huffman groups and their trees, code
-// lengths, the colour caches, transform data, pixel buffers, its reader)
-// charges it first. Nothing is given back when memory is freed, so what a
-// decode allocates over its whole life, not just at its peak, stays within
-// the budget. A nil *Budget allows nothing.
-type Budget struct {
-	limit, used int64
-}
+// Budget is how many bytes one decode may allocate in all: the shared
+// budget.Budget every vendored decoder charges. Every allocation the
+// decoder makes (the Huffman groups and their trees, code lengths, the
+// colour caches, transform data, pixel buffers, its reader) charges it
+// first. Nothing is given back when memory is freed, so what a decode
+// allocates over its whole life, not just at its peak, stays within the
+// budget. A nil *Budget allows nothing.
+type Budget = budget.Budget
 
-// NewBudget returns a budget of n bytes.
-func NewBudget(n int64) *Budget { return &Budget{limit: n} }
-
-// Charge takes n bytes from b, or returns an error wrapping ErrBudget and
-// takes nothing when fewer than n are left.
-func (b *Budget) Charge(n int64) error {
-	if b == nil {
-		return fmt.Errorf("%w: no budget", ErrBudget)
-	}
-	if n < 0 || n > b.limit-b.used {
-		return fmt.Errorf("%w: %d bytes more, %d of %d used", ErrBudget, n, b.used, b.limit)
-	}
-	b.used += n
-	return nil
-}
-
-// Used is how many bytes have been charged.
-func (b *Budget) Used() int64 {
-	if b == nil {
-		return 0
-	}
-	return b.used
-}
-
-// Limit is the budget's size.
-func (b *Budget) Limit() int64 {
-	if b == nil {
-		return 0
-	}
-	return b.limit
-}
+// NewBudget returns a budget of n bytes that draws from no pool (the
+// header reads; imgcache passes pooled budgets of its own).
+func NewBudget(n int64) *Budget { return budget.NewLocal(n) }
 
 // newNodes gives h a zeroed node array for a tree of nSymbols symbols:
 // len 1 and cap 2·nSymbols−1, what upstream made and insert fills up to.

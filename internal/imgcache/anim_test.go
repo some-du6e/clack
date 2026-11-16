@@ -213,17 +213,17 @@ func TestGIFDecodeMatchesImageGIF(t *testing.T) {
 	for name, data := range map[string][]byte{"disposals": disposals, "interlaced": interlacedGIF(t), "synth": synthGIF(t)} {
 		t.Run(name, func(t *testing.T) {
 			want := refFrames(t, data)
-			ix, err := indexGIF(data)
+			ix, err := testIndexGIF(data)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(ix.frames) != len(want) {
 				t.Fatalf("%d frames indexed, image/gif has %d", len(ix.frames), len(want))
 			}
-			d := newGIFDecoder(ix, data)
+			d := testDecoder(t, ix, data)
 			for pass := 0; pass < 2; pass++ {
 				for i := range want {
-					if got := d.compose(); got != i {
+					if got := d.next1(); got != i {
 						t.Fatalf("pass %d: composed frame %d, want %d", pass, got, i)
 					}
 					if !bytes.Equal(d.canvas.Pix, want[i].Pix) {
@@ -242,7 +242,7 @@ func TestGIFDecodeMatchesImageGIF(t *testing.T) {
 }
 
 func TestGIFIndex(t *testing.T) {
-	ix, err := indexGIF(synthGIF(t))
+	ix, err := testIndexGIF(synthGIF(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestGIFIndex(t *testing.T) {
 		t.Errorf("frame 1 at %v", r)
 	}
 	for _, loop := range []int{-1, 0, 2} {
-		ix, err := indexGIF(bigGIF(t, 8, 8, 3, 5, loop))
+		ix, err := testIndexGIF(bigGIF(t, 8, 8, 3, 5, loop))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -268,11 +268,11 @@ func TestGIFIndex(t *testing.T) {
 	}
 	data := synthGIF(t)
 	for _, cut := range []int{len(data) - 1, len(data) - 30} { // cut off: what's there
-		if ix, err := indexGIF(data[:cut]); err != nil || len(ix.frames) == 0 {
+		if ix, err := testIndexGIF(data[:cut]); err != nil || len(ix.frames) == 0 {
 			t.Errorf("cut at %d: %v", cut, err)
 		}
 	}
-	if _, err := indexGIF([]byte("GIF89a")); err == nil {
+	if _, err := testIndexGIF([]byte("GIF89a")); err == nil {
 		t.Error("a 6-byte GIF indexed")
 	}
 }
@@ -543,14 +543,14 @@ func TestAnimationsOff(t *testing.T) {
 // to draw one).
 func TestStillDecodesFirstFrameOnly(t *testing.T) {
 	data := bigGIF(t, 400, 300, 60, 3, 0)
-	ix, err := indexGIF(data)
+	ix, err := testIndexGIF(data)
 	if err != nil || len(ix.frames) != 60 {
 		t.Fatalf("index: %v", err)
 	}
 	var a, b runtime.MemStats
 	runtime.ReadMemStats(&a)
-	d := newGIFDecoder(ix, data)
-	d.compose()
+	d := testDecoder(t, ix, data)
+	d.next1()
 	runtime.ReadMemStats(&b)
 	if got := b.TotalAlloc - a.TotalAlloc; got > 3*400*300*4 {
 		t.Errorf("the first frame allocated %d bytes; its canvas is %d", got, 400*300*4)

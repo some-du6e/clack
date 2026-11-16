@@ -9,11 +9,18 @@ import (
 )
 
 // makeImg allocates and initializes the destination image.
-func (d *decoder) makeImg(mxx, myy int) {
+//
+// Clack: it charges the decode's budget for each buffer first, and fails
+// with the budget's error, allocating nothing more, when one doesn't fit.
+func (d *decoder) makeImg(mxx, myy int) error {
 	if d.nComp == 1 {
-		m := image.NewGray(image.Rect(0, 0, 8*mxx, 8*myy))
+		r := image.Rect(0, 0, 8*mxx, 8*myy)
+		if err := d.charge(int64(r.Dx()) * int64(r.Dy())); err != nil { // Clack
+			return err
+		}
+		m := image.NewGray(r)
 		d.img1 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.Gray)
-		return
+		return nil
 	}
 
 	h0 := d.comp[0].h
@@ -37,14 +44,22 @@ func (d *decoder) makeImg(mxx, myy int) {
 	default:
 		panic("unreachable")
 	}
-	m := image.NewYCbCr(image.Rect(0, 0, 8*h0*mxx, 8*v0*myy), subsampleRatio)
+	r := image.Rect(0, 0, 8*h0*mxx, 8*v0*myy)
+	if err := d.charge(ycbcrBytes(r, subsampleRatio)); err != nil { // Clack
+		return err
+	}
+	m := image.NewYCbCr(r, subsampleRatio)
 	d.img3 = m.SubImage(image.Rect(0, 0, d.width, d.height)).(*image.YCbCr)
 
 	if d.nComp == 4 {
 		h3, v3 := d.comp[3].h, d.comp[3].v
+		if err := d.charge(int64(8*h3*mxx) * int64(8*v3*myy)); err != nil { // Clack
+			return err
+		}
 		d.blackPix = make([]byte, 8*h3*mxx*8*v3*myy)
 		d.blackStride = 8 * h3 * mxx
 	}
+	return nil
 }
 
 // Specified in section B.2.3.
@@ -147,13 +162,19 @@ func (d *decoder) processSOS(n int) error {
 	mxx := (d.width + 8*h0 - 1) / (8 * h0)
 	myy := (d.height + 8*v0 - 1) / (8 * v0)
 	if d.img1 == nil && d.img3 == nil {
-		d.makeImg(mxx, myy)
+		if err := d.makeImg(mxx, myy); err != nil { // Clack
+			return err
+		}
 	}
 	if d.progressive {
 		for i := 0; i < nComp; i++ {
 			compIndex := scan[i].compIndex
 			if d.progCoeffs[compIndex] == nil {
-				d.progCoeffs[compIndex] = make([]block, mxx*myy*d.comp[compIndex].h*d.comp[compIndex].v)
+				n := mxx * myy * d.comp[compIndex].h * d.comp[compIndex].v
+				if err := d.charge(int64(n) * blockBytes); err != nil { // Clack
+					return err
+				}
+				d.progCoeffs[compIndex] = make([]block, n)
 			}
 		}
 	}

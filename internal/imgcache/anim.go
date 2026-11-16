@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"gioui.org/op/paint"
+
+	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
 
 // Animated GIFs play at the size they're drawn, as they do in Slack (a
@@ -38,6 +40,13 @@ import (
 //
 // An animated WebP (webpanim.go) plays the same way, through the same
 // index, decoder and players.
+//
+// What a player decodes with is charged to a Budget from the decode pool
+// (decmem.go): a keeping one's decoder, scaler and frames while it decodes
+// them (the frames are then the cache's, in its byte budget); a streaming
+// one's decoder, scaler and three frames for as long as it plays, given
+// back when it stops. One the pool can't cover now shows its still, or
+// stays on its frame, and tries again shortly.
 //
 // Frames play for their GIF delays (10 ms or less as 100 ms), the loop
 // count is honoured (no NETSCAPE2.0 block: once; the last frame then
@@ -74,6 +83,10 @@ type gifSource struct {
 	ix   *gifIndex
 }
 
+// size is what s holds: the encoded bytes and their index (its frames and
+// colour tables), as the cache counts it.
+func (s *gifSource) size() int { return len(s.data) + s.ix.bytes }
+
 // player is an animated GIF playing at one size.
 type player struct {
 	ix      *gifIndex
@@ -98,6 +111,13 @@ type player struct {
 	next   int // the frame in nextOp, -1 none
 	nextOp paint.ImageOp
 	nextB  int
+	// budget holds a streaming player's decoder, scaler and frames from the
+	// decode pool while it plays: released when it stops (by whoever is
+	// last: releaseLocked, or the worker busy then). A frame that couldn't
+	// decode (ErrBusy: the pool is full) is tried again from retryAt.
+	budget  *budget.Budget
+	fails   int
+	retryAt time.Time
 
 	cur      int
 	curOp    paint.ImageOp
@@ -227,12 +247,15 @@ func (c *Cache) startPlay(k key, forced bool) {
 	}
 	src := e.gif
 	c.mu.Unlock()
+	// what the player decodes with: a streaming one keeps it while it
+	// plays, a keeping one gives it back once its frames are decoded
+	b := NewBudget()
 	var err error
 	if src == nil { // let go for room, or a derived size: the bytes again (disk tier, core's cache or the network)
 		var data []byte
 		if data, _, err = c.rawFor(k); err == nil {
 			var ix *gifIndex
-			if ix, err = indexAnim(data); err == nil {
+			if ix, err = indexAnim(data, b); err == nil {
 				src = &gifSource{data: data, ix: ix}
 			}
 		}
@@ -242,21 +265,26 @@ func (c *Cache) startPlay(k key, forced bool) {
 	e = c.entryLocked(k)
 	if e == nil {
 		c.mu.Unlock()
+		b.Release()
 		return
 	}
 	e.starting = false
 	if err != nil {
-		e.retry = now.Add(retryAfter(1, err))
+		e.retry = now.Add(retryAfter(1, budgetErr(err)))
+		c.wakeLocked(e.retry)
 		c.mu.Unlock()
+		b.Release()
 		return
 	}
 	if len(src.ix.frames) < 2 || src.ix.w*src.ix.h > animMaxPixels {
 		e.retry = now.Add(RetryPermanent) // it stays a still
 		c.mu.Unlock()
+		b.Release()
 		return
 	}
 	if now.UnixMilli()-e.used > animGrace.Milliseconds() { // nobody drew it since it was asked for
 		c.mu.Unlock()
+		b.Release()
 		return
 	}
 	ix := src.ix
@@ -273,12 +301,13 @@ func (c *Cache) startPlay(k key, forced bool) {
 	}
 	held := 0 // the encoded bytes, when the entry doesn't hold them already
 	if e.gif == nil {
-		held = len(src.data)
+		held = src.size()
 	}
 	if !c.fitLocked(p.n+held, now) {
 		e.retry = now.Add(animRetry)
 		c.wakeLocked(e.retry)
 		c.mu.Unlock()
+		b.Release()
 		return
 	}
 	switch {
@@ -292,15 +321,27 @@ func (c *Cache) startPlay(k key, forced bool) {
 		work += held
 	}
 	p.deadline = now.Add(ix.frames[0].delay + animGrace)
+	if !p.keep {
+		// the budget is the player's, and only startPlay touches it until
+		// the decoder is ready (busy: a release meanwhile leaves it here)
+		p.budget, p.busy = b, true
+	}
 	c.installLocked(e, p)
 	c.mu.Unlock()
 
 	animSem <- struct{}{}
 	defer func() { <-animSem }()
 	if p.keep {
-		frames := decodeFrames(src, sz)
+		frames, err := decodeFrames(src, sz, b)
+		b.Release() // the frames are the cache's now (p.n), the rest garbage
 		c.mu.Lock()
-		if !p.dropped { // its frames are all it holds now
+		switch {
+		case p.dropped:
+		case err != nil: // the still again, and another try later
+			c.releaseLocked(e)
+			e.retry = time.Now().Add(retryAfter(1, budgetErr(err)))
+			c.wakeLocked(e.retry)
+		default: // its frames are all it holds now
 			p.frames = frames
 			p.deadline = time.Now().Add(animGrace)
 			p.n -= work
@@ -312,10 +353,23 @@ func (c *Cache) startPlay(k key, forced bool) {
 		inv()
 		return
 	}
-	d := newGIFDecoder(ix, src.data)
-	d.compose() // frame 0: the still's canvas
+	d, err := newGIFDecoder(ix, src.data, b)
+	if err == nil {
+		_, err = d.compose() // frame 0: the still's canvas
+	}
+	if err == nil {
+		err = p.prepare(ix, b)
+	}
 	c.mu.Lock()
-	if !p.dropped {
+	p.busy = false
+	switch {
+	case p.dropped:
+		b.Release()
+	case err != nil:
+		c.releaseLocked(e)
+		e.retry = time.Now().Add(retryAfter(1, budgetErr(err)))
+		c.wakeLocked(e.retry)
+	default:
 		p.src, p.dec = src, d
 		p.deadline = time.Now().Add(ix.frames[0].delay + animGrace)
 		c.decodeLocked(p)
@@ -323,19 +377,49 @@ func (c *Cache) startPlay(k key, forced bool) {
 	c.mu.Unlock()
 }
 
-// decodeFrames composes every frame of src at size sz.
-func decodeFrames(src *gifSource, sz image.Point) []paint.ImageOp {
-	d := newGIFDecoder(src.ix, src.data)
+// prepare makes a streaming player's three frames and its scaler's halved
+// canvases, charged to b, so that decoding a frame (decodeFrame) allocates
+// nothing more but a WebP frame's picture.
+func (p *player) prepare(ix *gifIndex, b *budget.Budget) error {
+	for i := range p.bufs {
+		if err := b.Charge(rgbaBytes(p.size)); err != nil {
+			return err
+		}
+		p.bufs[i] = image.NewRGBA(image.Rectangle{Max: p.size})
+	}
+	return p.sc.prepare(image.Pt(ix.w, ix.h), p.size, b)
+}
+
+// decodeFrames composes every frame of src at size sz, the decoder, the
+// scaler and the frames charged to b.
+func decodeFrames(src *gifSource, sz image.Point, b *budget.Budget) ([]paint.ImageOp, error) {
+	d, err := newGIFDecoder(src.ix, src.data, b)
+	if err != nil {
+		return nil, err
+	}
 	var sc frameScaler
+	if err := b.Charge(int64(len(src.ix.frames)) * opBytes); err != nil {
+		return nil, err
+	}
 	out := make([]paint.ImageOp, len(src.ix.frames))
 	for i := range out {
-		d.compose()
+		if _, err := d.compose(); err != nil {
+			return nil, err
+		}
+		if err := b.Charge(rgbaBytes(sz) + opBytes); err != nil {
+			return nil, err
+		}
 		m := image.NewRGBA(image.Rectangle{Max: sz})
-		sc.scale(m, d.canvas)
+		if err := sc.scale(m, d.canvas, b); err != nil {
+			return nil, err
+		}
 		out[i] = paint.NewImageOp(m)
 	}
-	return out
+	return out, nil
 }
+
+// opBytes is a paint.ImageOp, and what NewImageOp allocates for one.
+const opBytes = 64
 
 // installLocked makes p e's player, its bytes counted.
 func (c *Cache) installLocked(e *entry, p *player) {
@@ -353,7 +437,7 @@ func (c *Cache) installLocked(e *entry, p *player) {
 
 // decodeLocked composes p's next frame on a worker.
 func (c *Cache) decodeLocked(p *player) {
-	if p.dec == nil || p.busy || p.ended || p.dropped {
+	if p.dec == nil || p.busy || p.ended || p.dropped || time.Now().Before(p.retryAt) {
 		return
 	}
 	p.busy = true
@@ -363,21 +447,28 @@ func (c *Cache) decodeLocked(p *player) {
 
 func (c *Cache) decodeFrame(p *player, t int) {
 	animSem <- struct{}{}
-	i := p.dec.compose()
+	i, err := p.dec.compose() // a charge that fails changes nothing: the same frame next time
 	m := p.bufs[t]
-	if m == nil {
-		m = image.NewRGBA(image.Rectangle{Max: p.size})
-		p.bufs[t] = m
+	if err == nil {
+		err = p.sc.scale(m, p.dec.canvas, p.budget)
 	}
-	p.sc.scale(m, p.dec.canvas)
 	<-animSem
 	op := paint.NewImageOp(m)
 	c.mu.Lock()
 	p.busy = false
 	if p.dropped {
+		p.budget.Release()
 		c.mu.Unlock()
 		return
 	}
+	if err != nil { // the frame it shows stays; this one again shortly
+		p.fails++
+		p.retryAt = time.Now().Add(retryAfter(p.fails, budgetErr(err)))
+		c.wakeLocked(p.retryAt)
+		c.mu.Unlock()
+		return
+	}
+	p.fails = 0
 	p.next, p.nextOp, p.nextB = i, op, t
 	now := time.Now()
 	late := !now.Before(p.shown.Add(p.ix.frames[p.cur].delay))
@@ -398,6 +489,7 @@ func (c *Cache) endLocked(e *entry, p *player) {
 	if p.busy {
 		return
 	}
+	p.budget.Release() // the frame it stays on is the cache's (keep)
 	keep := 4 * p.size.X * p.size.Y
 	if p.n > keep {
 		e.n -= p.n - keep
@@ -419,6 +511,9 @@ func (c *Cache) releaseLocked(e *entry) {
 		return
 	}
 	p.dropped = true
+	if !p.busy { // else the worker gives it back once it's done
+		p.budget.Release()
+	}
 	e.play = nil
 	e.n -= p.n
 	c.bytes -= p.n
