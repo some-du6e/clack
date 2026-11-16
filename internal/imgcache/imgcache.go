@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"gioui.org/op/paint"
+	_ "golang.org/x/image/bmp" // decoder for the shared safe Decode (composer attachments)
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
@@ -989,26 +990,45 @@ const (
 // ErrTooBig is returned for images over MaxPixels or MaxSide.
 var ErrTooBig = errors.New("imgcache: image dimensions too large")
 
-// Decode decodes data after checking its header's dimensions. A still
-// WebP's picture must also be the size its header gives (decodeWebP).
+// Decode is the one safe entry point for decoding untrusted image bytes:
+// the cache's own loads, and every UI path that decodes bytes some
+// workspace member or a picked file could control (Copy Image, custom
+// emoji, profile photos, email icons). It rejects a header claiming more
+// than MaxPixels or MaxSide before decoding, and for WebP routes through
+// decodeWebP, which additionally checks a still's picture against its
+// header size and bounds a lossless picture's (or ALPH plane's)
+// Huffman-group allocation by the canvas (webpvp8l.go). A bomb comes back
+// as an error, so a caller on an overlay or popup with no recover shows a
+// failure instead of crashing the app.
 func Decode(data []byte) (image.Image, error) {
-	if err := checkSize(data); err != nil {
+	return DecodeWithin(data, MaxPixels, MaxSide)
+}
+
+// DecodeWithin is Decode with the caller's own decoded-size budget, for a
+// surface that legitimately decodes larger images than the cache's
+// MaxPixels (the composer's attachment thumbnails, at attMaxPixels). The
+// lossless Huffman-group bound is tied to the canvas and holds whatever
+// the budget.
+func DecodeWithin(data []byte, maxPixels, maxSide int) (image.Image, error) {
+	if err := checkSizeWithin(data, maxPixels, maxSide); err != nil {
 		return nil, err
 	}
 	if isWebP(data) {
-		return decodeWebP(data)
+		return decodeWebP(data, maxPixels, maxSide)
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
 }
 
-// checkSize reads the header's dimensions only.
-func checkSize(data []byte) error {
+// checkSize reads the header's dimensions only, against the cache budget.
+func checkSize(data []byte) error { return checkSizeWithin(data, MaxPixels, MaxSide) }
+
+func checkSizeWithin(data []byte, maxPixels, maxSide int) error {
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > MaxSide || cfg.Height > MaxSide || cfg.Width*cfg.Height > MaxPixels {
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxSide || cfg.Height > maxSide || cfg.Width*cfg.Height > maxPixels {
 		return ErrTooBig
 	}
 	return nil

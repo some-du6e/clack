@@ -23,13 +23,20 @@ package imgcache
 // are anyone's (a custom emoji): a picture's size is its own bitstream
 // header's (VP8's key frame header, VP8L's), which must be its ANMF
 // rectangle's, and every rectangle must lie in the canvas (libwebp's
-// demux: CheckFrameBounds), so the canvas, which the decode is budgeted
-// by, bounds every frame's decode. A file breaking either rule is
-// undecodable. A still WebP's picture must be its VP8X canvas's size
-// (libwebp's ParseHeadersInternal), and decodes rewrapped on its own as
-// a frame does (decodeWebP): x/image refuses a VP8X still that has an
-// alpha flag but no ALPH chunk, as every lossless one with alpha and
-// metadata has, and Chromium shows those.
+// demux: CheckFrameBounds), so the canvas bounds every frame's decode. A
+// file breaking either rule is undecodable. A still WebP's picture must be
+// its VP8X canvas's size (libwebp's ParseHeadersInternal), and decodes
+// rewrapped on its own as a frame does (decodeWebP): x/image refuses a
+// VP8X still that has an alpha flag but no ALPH chunk, as every lossless
+// one with alpha and metadata has, and Chromium shows those.
+//
+// The header size is necessary but not sufficient: x/image's lossless
+// (VP8L) decoder also sizes its Huffman-group array by an index the
+// picture's meta prefix-code image names, which the header size doesn't
+// constrain, so a 1×1 picture (still, frame, or compression-1 ALPH plane)
+// could make it allocate ~175 MB. checkWebPLossless (webpvp8l.go) bounds
+// that index by the canvas before every lossless decode here, so the
+// canvas really does bound the whole decode.
 
 import (
 	"bytes"
@@ -259,7 +266,7 @@ func webpStill(buf, alph, pic []byte, lossless bool, w, h int) []byte {
 // ParseHeadersInternal requires (x/image checks the canvas, then
 // allocates by the header). ALPH counts only under VP8X's alpha flag, as
 // libwebp's demux (Chromium's) has it.
-func stillWebP(b []byte) (alph, pic []byte, lossless bool, w, h int, err error) {
+func stillWebP(b []byte, maxPixels, maxSide int) (alph, pic []byte, lossless bool, w, h int, err error) {
 	if !isWebP(b) {
 		return nil, nil, false, 0, 0, errBadWebP
 	}
@@ -292,7 +299,7 @@ func stillWebP(b []byte) (alph, pic []byte, lossless bool, w, h int, err error) 
 	if !ok || cw != 0 && (w != cw || h != ch) {
 		return nil, nil, false, 0, 0, errBadWebP
 	}
-	if w > MaxSide || h > MaxSide || w*h > MaxPixels {
+	if w > maxSide || h > maxSide || w*h > maxPixels {
 		return nil, nil, false, 0, 0, ErrTooBig
 	}
 	return alph, pic, lossless, w, h, nil
@@ -334,10 +341,16 @@ func webpStillReader(alph, pic []byte, lossless bool, w, h int) io.Reader {
 
 // decodeWebP decodes a still WebP: its picture's chunks alone (stillWebP,
 // webpStillReader), with the size checks the bitstream header needs
-// before x/image allocates by it.
-func decodeWebP(data []byte) (image.Image, error) {
-	alph, pic, lossless, w, h, err := stillWebP(data)
+// before x/image allocates by it, and checkWebPLossless to bound a
+// lossless picture's (or ALPH plane's) Huffman-group allocation by the
+// canvas (webpvp8l.go). maxPixels/maxSide are the caller's decoded-size
+// budget (Decode passes MaxPixels/MaxSide; DecodeWithin a larger one).
+func decodeWebP(data []byte, maxPixels, maxSide int) (image.Image, error) {
+	alph, pic, lossless, w, h, err := stillWebP(data, maxPixels, maxSide)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkWebPLossless(alph, pic, lossless, w, h); err != nil {
 		return nil, err
 	}
 	return webp.Decode(webpStillReader(alph, pic, lossless, w, h))
@@ -362,10 +375,14 @@ func webpFrameBytes(ix *gifIndex) int {
 // more) and its transforms' tile images (under 1); a lossy one's alpha
 // plane, decoded as a lossless picture is and then kept (1 more), and its
 // YCbCr in whole macroblocks (1.5, each side rounded up to 16); and at
-// most 256 KB of decoders, buffers and prefix-code tables besides. Not
-// counted: a lossless picture's meta prefix codes, which x/image
-// allocates by the largest group index the picture names (libwebp: by
-// the groups it uses).
+// most 256 KB of decoders, buffers and prefix-code tables besides. A
+// lossless picture's meta prefix-code groups are a transient x/image
+// frees once the frame is decoded, and no longer a fixed 175 MB:
+// checkWebPLossless (webpvp8l.go) caps them at the picture's tile count,
+// nTiles(w,hBits)·nTiles(h,hBits) ≤ ⌈w/4⌉·⌈h/4⌉ groups of ~2.7 KB, so
+// O(w·h) and tied to the canvas. Being a short-lived transient (and tiny
+// for the small pictures that use meta codes), it is not reserved in this
+// retained-and-working-set budget.
 func webpDecodeBytes(w, h int) int { return 9*w*h + 32*(w+h) + 256<<10 }
 
 // drawWebP decodes WebP frame f and composes it on the canvas: blended
@@ -384,6 +401,14 @@ func (d *gifDecoder) drawWebP(f *gifFrame) {
 	w, h, ok := webpSize(pic, lossless)
 	if !ok || w != f.r.Dx() || h != f.r.Dy() {
 		d.werr = errBadWebP
+		return
+	}
+	// Bound a lossless frame's (or its ALPH plane's) Huffman-group
+	// allocation by the frame's size before x/image decodes it
+	// (webpvp8l.go): the picture is no bigger than the canvas (indexWebP),
+	// so a playing animation can't allocate out of proportion per frame.
+	if err := checkWebPLossless(alph, pic, lossless, w, h); err != nil {
+		d.werr = err
 		return
 	}
 	d.wfile = webpStill(d.wfile, alph, pic, lossless, w, h)

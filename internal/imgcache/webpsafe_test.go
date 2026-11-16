@@ -11,6 +11,7 @@ package imgcache
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"os"
@@ -33,6 +34,22 @@ func allocBytes(f func()) uint64 {
 	runtime.GC()
 	runtime.ReadMemStats(&b)
 	return b.TotalAlloc - a.TotalAlloc
+}
+
+// loadBytesAlloc runs the cache's real decode entry (loadImage, which
+// drives Decode for stills and the frame compose for animations) on data,
+// and reports how many bytes it allocated and the error. A size or
+// structure bomb must be rejected cheaply; a decode of the claimed size
+// would allocate hundreds of MB.
+func loadBytesAlloc(data []byte) (uint64, error) {
+	c := &Cache{
+		fetch: func(context.Context, string) ([]byte, error) { return data, nil },
+		ctx:   context.Background(),
+	}
+	k := key{url: "https://files.slack.com/x.webp", size: 16} // not DiskOK: memory only
+	var err error
+	n := allocBytes(func() { _, _, _, _, _, err = c.loadImage(k) })
+	return n, err
 }
 
 func vp8lChunk(w, h int) []byte {
@@ -63,8 +80,10 @@ func TestWebPSizeReadsHeaderOnly(t *testing.T) {
 }
 
 // A frame whose picture header claims a larger size than its ANMF
-// rectangle is rejected while indexing, before any decode, so x/image
-// never allocates the claimed size.
+// rectangle is rejected before x/image allocates the claimed size.
+// Measured across the real decode entry (loadImage): the frame-size guard
+// lives in both indexWebP and drawWebP, so the allocation stays small even
+// though the pictures claim 16384².
 func TestWebPFrameSizeMustMatchRect(t *testing.T) {
 	bombs := map[string][]byte{
 		"VP8L 16384² in a 1×1 frame": webptest.Anim(1, 1, 0,
@@ -72,21 +91,13 @@ func TestWebPFrameSizeMustMatchRect(t *testing.T) {
 		"VP8 16383² in a 1×1 frame": webptest.Anim(1, 1, 0,
 			webptest.Frame{X: 0, Y: 0, W: 1, H: 1, DurMS: 50, Chunks: [][]byte{webptest.Chunk("VP8 ", webptest.VP8Header(16383, 16383, 16))}}),
 	}
-	// a 1×1 canvas, thousands of frames, each claiming 16384² (keep mode:
-	// decodeFrames would otherwise run them all): still just a header each
-	var many []webptest.Frame
-	for i := 0; i < 5000; i++ {
-		many = append(many, webptest.Frame{X: 0, Y: 0, W: 1, H: 1, DurMS: 50, Chunks: [][]byte{vp8lChunk(16384, 16384)}})
-	}
-	bombs["5000 frames each claiming 16384²"] = webptest.Anim(1, 1, 0, many...)
-
 	for name, data := range bombs {
-		var err error
-		if n := allocBytes(func() { _, err = indexWebP(data) }); n > 16<<20 {
-			t.Errorf("%s: indexing allocated %d bytes (a decode of the claimed size)", name, n)
+		n, err := loadBytesAlloc(data)
+		if n > 16<<20 {
+			t.Errorf("%s: decoding allocated %d bytes (a decode of the claimed size, not the 1×1 frame)", name, n)
 		}
 		if err == nil {
-			t.Errorf("%s: indexed instead of being rejected", name)
+			t.Errorf("%s: decoded instead of being rejected", name)
 		}
 	}
 }
@@ -122,7 +133,12 @@ func TestWebPStillInnerSizeChecked(t *testing.T) {
 		t.Error("a VP8X still with an oversized inner picture decoded")
 	}
 	lossy := webptest.Still(2, 2, 0, webptest.Chunk("VP8 ", webptest.VP8Header(16383, 16383, 16)))
-	if _, err := Decode(lossy); err == nil {
+	if n := allocBytes(func() { _, err = Decode(lossy) }); n > 16<<20 {
+		// without the canvas check, x/image's VP8 DecodeFrame calls ensureImg
+		// (~400 MB for 16383²) before it fails parsing the garbage body
+		t.Errorf("decoding allocated %d bytes for a 2×2 canvas with a 16383² inner lossy picture", n)
+	}
+	if err == nil {
 		t.Error("a VP8X still with an oversized inner lossy picture decoded")
 	}
 }

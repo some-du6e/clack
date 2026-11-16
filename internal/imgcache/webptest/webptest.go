@@ -60,6 +60,74 @@ func VP8LSolid(w, h int, c color.NRGBA) []byte {
 	return b.bytes()
 }
 
+// vp8lSimpleTree writes a one-symbol VP8L prefix code (simple, 8-bit
+// symbol): the symbol then decodes with zero bits, as VP8LSolid relies on.
+func (w *bits) vp8lSimpleTree(symbol uint8) {
+	w.put(1, 1) // simple code
+	w.put(0, 1) // one symbol
+	w.put(1, 1) // of 8 bits
+	w.put(uint32(symbol), 8)
+}
+
+// VP8LMeta is a 1×1 VP8L bitstream (no chunk header) that uses meta prefix
+// codes: one tile (hBits 2) whose single meta pixel names Huffman group
+// `group`. x/image sizes its group array make([]hGroup, group+1) by that
+// index, so a group beyond the one tile (anything ≥ 1 here) is the
+// decompression bomb the size gate can't see. When complete is true it
+// also writes group 0's codes and the one pixel, so a valid picture
+// (group 0) decodes to the colour c; otherwise the stream ends right after
+// the meta image — enough for the validator, and for x/image to allocate
+// the oversized group array before it fails on the missing codes.
+func VP8LMeta(group int, c color.NRGBA, complete bool) []byte {
+	var b bits
+	// header: magic, width−1=0, height−1=0 (1×1), alpha hint, version
+	b.put(0x2f, 8)
+	b.put(0, 14)
+	b.put(0, 14)
+	b.put(0, 1)
+	b.put(0, 3)
+	b.vp8lMetaBody(group, c, complete)
+	return b.bytes()
+}
+
+// VP8LMetaBody is VP8LMeta without the 5-byte header, for a compression-1
+// ALPH alpha plane: x/image decodes that with a header it synthesizes from
+// the picture's size (readAlpha), so the stored bytes start at the body.
+// The plane is 1×1 (one tile), and group is the index its meta pixel names.
+func VP8LMetaBody(group int) []byte {
+	var b bits
+	b.vp8lMetaBody(group, color.NRGBA{}, false)
+	return b.bytes()
+}
+
+// vp8lMetaBody writes everything after the VP8L header for a 1×1 picture
+// that uses meta prefix codes naming Huffman group `group`.
+func (b *bits) vp8lMetaBody(group int, c color.NRGBA, complete bool) {
+	b.put(0, 1) // no transform
+	// top-level decodePix: no colour cache, then the Huffman groups
+	b.put(0, 1) // no colour cache
+	b.put(1, 1) // use meta prefix codes
+	b.put(0, 3) // hBits raw 0 → tile size 1<<2 (nTiles(1,2)=1 tile)
+	// the meta image (a 1×1 sub-image): no colour cache, then five simple
+	// codes whose green/red give the named group index (red<<8|green)
+	b.put(0, 1)
+	b.vp8lSimpleTree(uint8(group))      // green = group low byte
+	b.vp8lSimpleTree(uint8(group >> 8)) // red = group high byte
+	b.vp8lSimpleTree(0)                 // blue
+	b.vp8lSimpleTree(0)                 // alpha
+	b.vp8lSimpleTree(0)                 // distance
+	// the single meta pixel decodes with zero bits (one-symbol codes)
+	if complete {
+		// group 0's codes and the one top-level pixel, so x/image decodes a
+		// 1×1 image of colour c (meaningful only when group == 0)
+		b.vp8lSimpleTree(c.G)
+		b.vp8lSimpleTree(c.R)
+		b.vp8lSimpleTree(c.B)
+		b.vp8lSimpleTree(c.A)
+		b.vp8lSimpleTree(0)
+	}
+}
+
 // VP8Header is a lossy VP8 key-frame bitstream header (no chunk header)
 // claiming a w×h picture, padded to at least padTo bytes. The body isn't
 // a real frame: it's for the size checks, where a picture whose header

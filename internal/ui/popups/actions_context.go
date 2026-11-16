@@ -1,7 +1,6 @@
 package popups
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"image"
@@ -13,6 +12,7 @@ import (
 	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/clipimg"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
@@ -203,7 +203,12 @@ func CopyImage(h Host, src string, proxy bool, ok string) {
 		if err != nil {
 			return struct{}{}, err
 		}
-		img, _, err := image.Decode(bytes.NewReader(data))
+		// imgcache.Decode is the shared safe decoder: it size-gates the
+		// header and bounds a lossless WebP's Huffman-group allocation by the
+		// canvas, so an untrusted emoji or image returns an error here (run's
+		// callback toasts it) instead of OOM-crashing — this overlay has no
+		// recover.
+		img, err := imgcache.Decode(data)
 		if err != nil {
 			return struct{}{}, err
 		}

@@ -48,7 +48,6 @@ package popups
 // Email Address buttons (Clack's local Slackbot messages are text).
 
 import (
-	"bytes"
 	"context"
 	"image"
 	"image/color"
@@ -63,6 +62,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -992,7 +992,7 @@ func (c *ceCrop) start() {
 		if err != nil {
 			return res{}, err
 		}
-		img, _, err := image.Decode(bytes.NewReader(f.Data))
+		img, err := imgcache.Decode(f.Data) // size- and lossless-gated
 		if err != nil {
 			return res{}, err
 		}
