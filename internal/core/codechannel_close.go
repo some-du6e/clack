@@ -45,11 +45,14 @@ package core
 //     or conversations.close answering ok. The closer's optimistic close
 //     lives in memory until then, so quitting mid-close keeps nothing.
 //   - Each entry is a watermark: when Clack last knew the channel closed
-//     (the close, then the newest message it saw while running, saved on
-//     quit). A message newer than that at the next boot is activity Clack
-//     wasn't running for, where it may have missed the record_channel_open
-//     that reopened it, so the entry goes: at worst the channel shows
-//     until it is stale again and the closer closes it.
+//     (the close, then the newest message it heard on the socket, saved
+//     on quit). With the socket up, a reopen would have come with that
+//     message (record_channel_open). A newer message seen any other way,
+//     at boot or in the counts after a socket gap or a poll, is activity
+//     Clack wasn't hearing, where it may have missed the reopen, so the
+//     entry goes: at worst the channel shows until it is stale again and
+//     the closer closes it. Boot checks first; quitting saves the
+//     watermarks only after that check ran.
 //   - A join is a new membership (Slack's channelJoined upserts the
 //     event's channel, is_open with it); leaving, archiving or deleting
 //     the channel drops its entry, and so does boot for a channel that
@@ -102,6 +105,8 @@ type codeOpenState struct {
 	// at the store journal's position (store/journal.go): Boot's check of
 	// the saved set against its answers keeps it (reconcile)
 	wrote        map[string]uint64
+	moved        bool             // a watermark moved since the last save (noteCodeChannelMessage)
+	checked      bool             // Boot's check of the saved set ran (reconcile): quitting may save the watermarks
 	closedLoaded bool             // closed read from disk
 	reopen       map[string]int64 // codeChannelReopen: code channel → reopenedAt (unix s)
 	loaded       bool             // reopen read from disk
@@ -214,46 +219,76 @@ func (a *App) latestSecs(ch string) int64 {
 	return channelLatestSecs(e.Latest, c)
 }
 
-// checkpointClosedCodeChannels moves each closed code channel's watermark
-// up to the newest message Clack has seen in it (quit: Close), so the
-// next boot tells activity it saw from activity it missed.
+// noteCodeChannelMessage moves a closed code channel's watermark up to a
+// new message (onMessage) when it was heard on the socket (live): a reopen
+// would have come over the same socket. Activity Clack learns of any other
+// way doesn't move it (see the top of this file).
+func (a *App) noteCodeChannelMessage(ch, ts string, live bool) {
+	if !live {
+		return
+	}
+	secs := channelLatestSecs(ts, nil)
+	if secs <= 0 {
+		return
+	}
+	st := a.codeOpen()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	a.loadCodeClosedLocked(st)
+	if at, ok := st.closed[ch]; ok && secs > at {
+		st.closed[ch] = secs
+		st.moved = true
+	}
+}
+
+// checkpointClosedCodeChannels saves the closed set's watermarks (quit:
+// Close), once Boot's check of the saved set ran this session: before
+// it, nothing this session saw may stand for what the check reads.
 func (a *App) checkpointClosedCodeChannels() {
 	st := a.codeOpen()
 	st.mu.Lock()
-	ids := make([]string, 0, len(st.closed))
-	for id := range st.closed {
-		ids = append(ids, id)
+	defer st.mu.Unlock()
+	if !st.checked || !st.moved {
+		return
 	}
-	st.mu.Unlock()
-	latest := make(map[string]int64, len(ids))
-	for _, id := range ids {
-		latest[id] = a.latestSecs(id)
-	}
+	st.moved = false
+	a.saveCodeClosedLocked(st)
+}
+
+// codeChannelsChecked reports whether Boot's check of the saved closed set
+// ran (reconcileClosedCodeChannels).
+func (a *App) codeChannelsChecked() bool {
+	st := a.codeOpen()
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	changed := false
-	for id, l := range latest {
-		if at, ok := st.closed[id]; ok && l > at {
-			st.closed[id] = l
-			changed = true
-		}
-	}
-	if changed {
-		a.saveCodeClosedLocked(st)
+	return st.checked
+}
+
+// refreshCountsAfterGap is refreshCounts after a stretch Clack wasn't
+// hearing the socket (a reconnect, a poll with realtime off): the saved
+// closed code channels are checked against the fresh counts again, as at
+// boot, since a reopen made meanwhile (record_channel_open) went unheard.
+func (a *App) refreshCountsAfterGap(ctx context.Context) {
+	since := a.S.Seq()
+	a.refreshCounts(ctx)
+	if ctx.Err() == nil && a.codeChannelsChecked() && a.reconcileClosedCodeChannels(since) {
+		a.emit(Event{Type: "sidebar_changed"})
 	}
 }
 
 // reconcileClosedCodeChannels is Boot's check of the saved closed set
 // against the conversations and counts it fetched (at the store journal's
-// position since): entries for channels that aren't the viewer's
-// unarchived code channels go, and so do those with a message newer than
-// their watermark (see the top of this file). A channel closed or
-// reopened here while Boot's calls were out (a warm start's window is
-// usable meanwhile) keeps that: it is newer than what Boot fetched.
-func (a *App) reconcileClosedCodeChannels(since uint64) {
+// position since), run again after a socket gap (refreshCountsAfterGap):
+// entries for channels that aren't the viewer's unarchived code channels
+// go, and so do those with a message newer than their watermark (see the
+// top of this file). A channel closed or reopened here while the calls
+// were out (a warm start's window is usable meanwhile) keeps that: it is
+// newer than what they fetched. It reports whether an entry went.
+func (a *App) reconcileClosedCodeChannels(since uint64) bool {
 	st := a.codeOpen()
 	st.mu.Lock()
 	a.loadCodeClosedLocked(st)
+	st.checked = true
 	saved := make(map[string]int64, len(st.closed))
 	for id, at := range st.closed {
 		if !st.pending[id] && st.wrote[id] <= since {
@@ -269,7 +304,7 @@ func (a *App) reconcileClosedCodeChannels(since uint64) {
 		}
 	}
 	if len(gone) == 0 {
-		return
+		return false
 	}
 	st.mu.Lock()
 	for _, id := range gone {
@@ -283,6 +318,7 @@ func (a *App) reconcileClosedCodeChannels(since uint64) {
 	st.mu.Unlock()
 	sort.Strings(gone)
 	log.Printf("code channels: %d saved as closed reopened or gone since (%v)", len(gone), gone)
+	return true
 }
 
 // loadCodeChannelState reads the closed code channels and their reopen

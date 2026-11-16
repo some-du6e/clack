@@ -166,7 +166,7 @@ func New(c *slack.Client, s *store.Store) *App {
 		a.codeChannelsConnection(up) // the stale code channel closer's timers (codechannel_close.go)
 		if up {
 			a.socketConnected(a.RTM.LastConnectFast()) // the refetchers' slow reconnects (channel_pins.go)
-			go a.refreshCounts(a.bg)
+			go a.refreshCountsAfterGap(a.bg)           // what the socket missed (codechannel_close.go)
 		}
 	}
 	a.RTM.OnHello = a.onHello
@@ -300,7 +300,7 @@ const maxPollFetches = 6
 // conversation and of cached ones whose counts changed, and the threads
 // opened in the last 15 minutes; then tells the UI ("poll").
 func (a *App) pollOnce(ctx context.Context) {
-	a.refreshCounts(ctx)
+	a.refreshCountsAfterGap(ctx) // no socket: nothing was heard (codechannel_close.go)
 	if ctx.Err() != nil || a.C.SignedOut() {
 		return
 	}

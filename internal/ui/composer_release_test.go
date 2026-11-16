@@ -158,6 +158,30 @@ func TestLeftComposerLetsGoOfFocus(t *testing.T) {
 	if focused(ch, "") {
 		t.Error("a permalink into the channel focused its composer: CloseSecondary's request outlived the navigation")
 	}
+
+	// Mod+. hides the thread pane while typing in it: the channel's
+	// composer takes the focus, as on a close (Slack's onViewClosed), so
+	// the next keys land there, not nowhere
+	e.openChannel(ch)
+	e.a.OpenThread(ch, root)
+	e.frame()
+	e.focusComposer(ch, root)
+	if !focused(ch, root) {
+		t.Fatal("the thread's composer didn't take the focus before Mod+.")
+	}
+	e.key(".", key.ModShortcut)
+	e.frame()
+	e.frame()
+	if !e.a.secondary.hidden {
+		t.Fatal("Mod+. didn't hide the thread pane")
+	}
+	typed("typed-after-hiding")
+	if got := box(ch, "").DocText(); !strings.Contains(got, "typed-after-hiding") {
+		t.Errorf("after Mod+. hid the thread pane, typing didn't reach the channel's composer (%q)", got)
+	}
+	if got := box(ch, root).DocText(); strings.Contains(got, "typed-after-hiding") {
+		t.Errorf("text typed after the pane hid landed in its composer: %q", got)
+	}
 }
 
 // fakeComposer is a composerView whose focus tag, live draw and Release

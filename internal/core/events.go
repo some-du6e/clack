@@ -613,6 +613,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if a.confirmPending(ch, &m) {
 		if isTopLevel(&m) {
 			a.S.NoteMessage(ch, &m, false)
+			a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
 		}
 		return
 	}
@@ -632,6 +633,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.NoteMessage(ch, &m, mention)
+		a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
 	}

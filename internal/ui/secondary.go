@@ -298,6 +298,11 @@ func (a *App) threadPaneFocused(gtx layout.Context) bool {
 	return !ok || !p.PopupOpen()
 }
 
+// toggleSecondary is Mod+. (Toggle the right pane): details for the
+// channel while nothing is open, else the pane hides or shows again. A
+// hidden pane is a closed view for the focus, as in CloseSecondary
+// (Slack's onViewClosed): the channel's message input takes it, so what is
+// typed next goes there, not nowhere (its composer lets go of it).
 func (a *App) toggleSecondary() {
 	if a.secondary.kind == secNone {
 		if ch := a.router.Current().Channel(); ch != "" {
@@ -306,6 +311,11 @@ func (a *App) toggleSecondary() {
 		return
 	}
 	a.secondary.hidden = !a.secondary.hidden
+	if a.secondary.hidden {
+		if ch := a.router.Current().Channel(); ch != "" {
+			a.focusChannelComposer(ch)
+		}
+	}
 }
 
 func (a *App) layoutSecondary(gtx layout.Context) layout.Dimensions {

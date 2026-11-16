@@ -420,9 +420,9 @@ func TestCodeChannelCloseSavedOnlyOnceConfirmed(t *testing.T) {
 }
 
 // codeClosedApp is a core over the fake API with a cache directory, the
-// viewer's code channels ids (latest message quiet ago) and plain channel
-// plain.
-func codeClosedApp(t *testing.T, dir string, ids []string, plain string, latest map[string]time.Time) *App {
+// viewer's code channels ids and plain channel plain, each channel's
+// latest message at latest's time.
+func codeClosedApp(t *testing.T, dir string, ids []string, plain string, latest map[string]time.Time) (*App, *fakeSlack) {
 	t.Helper()
 	f := newFake(t)
 	c := slack.New(slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: f.srv.URL + "/"})
@@ -444,16 +444,27 @@ func codeClosedApp(t *testing.T, dir string, ids []string, plain string, latest 
 		counts = append(counts, slack.CountEntry{ID: id, Latest: ts, LastRead: ts})
 	}
 	a.S.SetCounts(&slack.Counts{Channels: counts})
-	return a
+	return a, f
+}
+
+// countsReply is client.counts answering every channel's latest message
+// at latest's time, read.
+func countsReply(latest map[string]time.Time) string {
+	var chans []map[string]any
+	for id, at := range latest {
+		ts := strconv.FormatInt(at.Unix(), 10) + ".000100"
+		chans = append(chans, map[string]any{"id": id, "latest": ts, "last_read": ts})
+	}
+	b, _ := json.Marshal(map[string]any{"ok": true, "channels": chans, "ims": []any{}, "mpims": []any{}})
+	return string(b)
 }
 
 // A saved close doesn't last for good. A join is a new membership, and
 // leaving drops the entry. Boot drops entries for channels that aren't the
 // viewer's code channels any more, and those with a message newer than the
-// newest Clack saw while it ran (the record_channel_open it may have
-// missed). A message Clack saw while running, with no reopen, keeps the
-// channel closed, as Slack's client does: quitting saves it as the entry's
-// watermark.
+// newest Clack heard on the socket (the record_channel_open it may have
+// missed). A message heard live, with no reopen, keeps the channel closed,
+// as Slack's client does: quitting saves it as the entry's watermark.
 func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
@@ -481,7 +492,7 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	}
 
 	// the first launch: boot's check drops the plain channel's entry only
-	a := codeClosedApp(t, dir, codes, "CPLAIN", all(nil))
+	a, _ := codeClosedApp(t, dir, codes, "CPLAIN", all(nil))
 	a.loadCodeChannelState()
 	a.reconcileClosedCodeChannels(a.S.Seq())
 	for _, id := range codes {
@@ -492,7 +503,8 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	if a.codeChannelClosed("CPLAIN") {
 		t.Error("first launch: an entry for a channel that isn't a code channel stayed")
 	}
-	// while it runs: rejoined, left, and a message in CSEEN with no reopen
+	// while it runs: rejoined, left, and a message in CSEEN heard on the
+	// socket with no reopen
 	a.handle(rtm("channel_joined", map[string]any{"channel": map[string]any{"id": "CJOIN", "name": "cjoin"}}))
 	a.handle(rtm("channel_left", map[string]any{"channel": "CLEFT"}))
 	ts := strconv.FormatInt(recent.Unix(), 10) + ".000100"
@@ -502,6 +514,7 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 		counts = append(counts, slack.CountEntry{ID: id, Latest: l, LastRead: l})
 	}
 	a.S.SetCounts(&slack.Counts{Channels: counts})
+	a.noteCodeChannelMessage("CSEEN", ts, true)
 	if a.codeChannelClosed("CJOIN") || a.codeChannelClosed("CLEFT") {
 		t.Errorf("joined %v, left %v: still closed", a.codeChannelClosed("CJOIN"), a.codeChannelClosed("CLEFT"))
 	}
@@ -515,7 +528,7 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	// CGONE isn't the viewer's any more
 	next := all(map[string]time.Time{"CSEEN": recent, "CMISSED": recent})
 	delete(next, "CGONE")
-	b2 := codeClosedApp(t, dir, []string{"CJOIN", "CLEFT", "CSEEN", "CMISSED", "CQUIET"}, "CPLAIN", next)
+	b2, _ := codeClosedApp(t, dir, []string{"CJOIN", "CLEFT", "CSEEN", "CMISSED", "CQUIET"}, "CPLAIN", next)
 	b2.loadCodeChannelState()
 	// Boot's calls go out (since); CQUIET is closed again here meanwhile
 	// (journaled), so Boot's view of it, older, doesn't touch it even where
@@ -539,5 +552,77 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	}
 	if m := b2.readCodeState(codeClosedFile); m["CSEEN"] != recent.Unix() {
 		t.Errorf("CSEEN's watermark %d, want the message it saw (%d); ts %s", m["CSEEN"], recent.Unix(), ts)
+	}
+}
+
+// A closed code channel's watermark moves only with messages heard on the
+// socket. Activity seen in the counts after a socket gap (a reconnect after
+// sleep) or a poll (realtime off) is activity Clack wasn't hearing, where
+// a record_channel_open may have gone by: the gap's counts refresh checks
+// the closed set again and shows the channel, and quitting never saves that
+// activity as seen. Quitting saves nothing before Boot's check ran (a boot
+// that failed, a quit mid-boot).
+func TestClosedCodeChannelWatermarkHeardLive(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	day := 24 * time.Hour
+	quiet, recent := now.Add(-10*day), now.Add(-day)
+	w := now.Add(-5 * day).Unix()
+	b, err := json.Marshal(map[string]int64{"CHEARD": w, "CGAP": w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, codeClosedFile), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	codes := []string{"CHEARD", "CGAP"}
+	at := func(m map[string]time.Time) map[string]time.Time {
+		out := map[string]time.Time{"CHEARD": quiet, "CGAP": quiet, "CPLAIN": quiet}
+		for id, t := range m {
+			out[id] = t
+		}
+		return out
+	}
+
+	// a boot that never got to its check (users.conversations failed):
+	// its counts already show CGAP's message, and quitting saves nothing
+	early, _ := codeClosedApp(t, dir, codes, "CPLAIN", at(map[string]time.Time{"CGAP": recent}))
+	early.loadCodeChannelState()
+	early.noteCodeChannelMessage("CHEARD", strconv.FormatInt(recent.Unix(), 10)+".000100", true)
+	_ = early.Close()
+	early.Shutdown()
+	if m := early.readCodeState(codeClosedFile); m["CHEARD"] != w || m["CGAP"] != w {
+		t.Fatalf("a quit before Boot's check saved watermarks: %v", m)
+	}
+
+	a, f := codeClosedApp(t, dir, codes, "CPLAIN", at(nil))
+	a.loadCodeChannelState()
+	a.reconcileClosedCodeChannels(a.S.Seq()) // Boot's check
+	evs, stop := a.Subscribe()
+	defer stop()
+	// CHEARD's message comes over the socket; CGAP's while the socket was
+	// down (the laptop asleep): only the counts after the reconnect show it
+	a.noteCodeChannelMessage("CHEARD", strconv.FormatInt(recent.Unix(), 10)+".000100", true)
+	a.noteCodeChannelMessage("CGAP", strconv.FormatInt(recent.Unix(), 10)+".000100", false) // not heard: no watermark
+	f.reply["client.counts"] = countsReply(at(map[string]time.Time{"CHEARD": recent, "CGAP": recent}))
+	a.refreshCountsAfterGap(context.Background())
+	if !a.codeChannelClosed("CHEARD") {
+		t.Error("a message heard on the socket, with no reopen, reopened CHEARD")
+	}
+	if a.codeChannelClosed("CGAP") {
+		t.Error("activity the socket missed (a reopen may have gone by) left CGAP hidden")
+	}
+	next(t, evs, "sidebar_changed")
+	_ = a.Close() // quit: CHEARD's watermark is what it heard
+	a.Shutdown()
+
+	b2, _ := codeClosedApp(t, dir, codes, "CPLAIN", at(map[string]time.Time{"CHEARD": recent, "CGAP": recent}))
+	b2.loadCodeChannelState()
+	b2.reconcileClosedCodeChannels(b2.S.Seq())
+	if !b2.codeChannelClosed("CHEARD") || b2.codeChannelClosed("CGAP") {
+		t.Errorf("next launch: CHEARD closed %v (want true), CGAP closed %v (want false)", b2.codeChannelClosed("CHEARD"), b2.codeChannelClosed("CGAP"))
+	}
+	if m := b2.readCodeState(codeClosedFile); m["CHEARD"] != recent.Unix() {
+		t.Errorf("CHEARD's watermark %d, want the message heard (%d)", m["CHEARD"], recent.Unix())
 	}
 }
