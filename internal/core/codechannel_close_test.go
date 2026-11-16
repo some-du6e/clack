@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -296,5 +298,22 @@ func TestClosedCodeChannelsSurviveRestart(t *testing.T) {
 	c := launch()
 	if !inSidebar(c, fakeslack.CodeQuietID) {
 		t.Error("a reopened code channel is closed again after a restart")
+	}
+	// closed again as the closer closes one (its reopen time dropped first)
+	c.clearCodeChannelReopenedAt(fakeslack.CodeQuietID)
+	if err := c.CloseCodeChannel(ctx, fakeslack.CodeQuietID); err != nil || closes() != 2 || inSidebar(c, fakeslack.CodeQuietID) {
+		t.Fatalf("closing it on the third launch: %v, %d conversations.close, in the sidebar %v", err, closes(), inSidebar(c, fakeslack.CodeQuietID))
+	}
+	c.Shutdown()
+
+	// control: without the saved set (Clack before: only memory) the next
+	// launch lists it again and its closer would close it again, so this
+	// test reproduces the bug
+	if err := os.Remove(filepath.Join(dir, codeClosedFile)); err != nil {
+		t.Fatal(err)
+	}
+	d := launch()
+	if !inSidebar(d, fakeslack.CodeQuietID) || len(d.staleCodeChannels(10, time.Now())) == 0 {
+		t.Error("control: without code_channel_closed.json the closed code channel stayed out of the sidebar; the test no longer reproduces the bug")
 	}
 }

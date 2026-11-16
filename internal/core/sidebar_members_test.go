@@ -100,6 +100,27 @@ func TestMembersPassThenSnapshotAsksNoClosedDMs(t *testing.T) {
 	if a.S.MemberAccessed("U0DMP000000").IsZero() || !a.S.MemberAccessed("U0DMP000500").IsZero() {
 		t.Error("the snapshot recorded hits on the wrong members")
 	}
+	// control: reading every DM's partner through getMemberById, as the
+	// snapshot did (conv and Users for each DM), asks for the closed DMs'
+	// partners the pass let go, so this test reproduces the bug
+	var ims []string
+	a.S.RLock()
+	for _, c := range a.S.Convs {
+		if c.IsIM {
+			ims = append(ims, c.ID)
+		}
+	}
+	a.S.RUnlock()
+	for _, id := range ims {
+		if c, ok := a.S.Conv(id); ok {
+			a.users([]string{a.conv(c).User})
+		}
+	}
+	if n := len(a.S.TakeMissingUsers()); n == 0 {
+		t.Error("control: reading every DM's partner asked for nobody; the test no longer reproduces the bug")
+	} else {
+		t.Logf("control: the old snapshot's reads would have asked users/info for %d members", n)
+	}
 }
 
 // When the sidebar lists more people than the cache's target (600 open
