@@ -58,6 +58,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
@@ -71,6 +72,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -144,6 +146,22 @@ func perfGCs() uint64 {
 	return s[0].Value.Uint64()
 }
 
+// perfOffHeapWasmMB is the plugin engines' wasm memory that lives outside
+// the Go heap (jsrt.Snapshot's WasmMemory where WasmReserved is set). The
+// base tree runs this file too, and its Snapshot may have neither field:
+// then it's 0 (the memory is a Go slice, in the live heap).
+func perfOffHeapWasmMB() float64 {
+	var n uint64
+	for _, s := range jsrt.Snapshots() {
+		v := reflect.ValueOf(s)
+		mem, res := v.FieldByName("WasmMemory"), v.FieldByName("WasmReserved")
+		if mem.IsValid() && res.IsValid() && res.Uint() > 0 {
+			n += mem.Uint()
+		}
+	}
+	return float64(n) / (1 << 20)
+}
+
 // perfGoID is the calling goroutine's id ("goroutine 7 [running]:").
 func perfGoID() string {
 	buf := make([]byte, 64)
@@ -187,14 +205,17 @@ func perfStack(id string) []string {
 }
 
 type perfPluginResult struct {
-	Plugins  []string   `json:"plugins"`
-	Failed   []string   `json:"failed,omitempty"`
-	Patched  []string   `json:"patched"`
-	Messages int        `json:"messages"`
-	Replies  int        `json:"replies"`
-	Visited  int        `json:"visited"`
-	HeapMB   float64    `json:"heap_mb"` // live heap after setup
-	Passes   []perfPass `json:"passes"`
+	Plugins  []string `json:"plugins"`
+	Failed   []string `json:"failed,omitempty"`
+	Patched  []string `json:"patched"`
+	Messages int      `json:"messages"`
+	Replies  int      `json:"replies"`
+	Visited  int      `json:"visited"`
+	HeapMB   float64  `json:"heap_mb"` // live heap after setup
+	// WasmMB is the plugin engines' wasm memory outside the Go heap (jsrt's
+	// reservation; 0 where it is a Go slice, inside HeapMB)
+	WasmMB float64    `json:"wasm_mb,omitempty"`
+	Passes []perfPass `json:"passes"`
 }
 
 func TestPerfPluginScroll(t *testing.T) {
@@ -314,8 +335,8 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.loadAll()
 	res.Messages = e.loadedMessages(fakeslack.BenchChannelID)
 	runtime.GC()
-	res.HeapMB = liveHeapMB()
-	t.Logf("%d messages loaded, %d channels visited, live heap %.0f MB", res.Messages, res.Visited, res.HeapMB)
+	res.HeapMB, res.WasmMB = liveHeapMB(), perfOffHeapWasmMB()
+	t.Logf("%d messages loaded, %d channels visited, live heap %.0f MB, wasm memory outside it %.0f MB", res.Messages, res.Visited, res.HeapMB, res.WasmMB)
 
 	prof := os.Getenv("PERF_PLUGIN_PROF")
 	if prof != "" {
@@ -337,9 +358,13 @@ func TestPerfPluginScroll(t *testing.T) {
 	res.Passes = append(res.Passes, e.perfScroll("channel-live", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
 	func() {
 		// the heap a quarter above what's live: the collector runs all the
-		// time, as near cmd/clack's limit
+		// time, as near cmd/clack's limit. What's live includes the plugin
+		// engine's wasm memory wherever it is: in the Go heap (a Go
+		// slice) the quarter above counted it, so where it lives outside
+		// (jsrt's reservation) the limit keeps that headroom
 		runtime.GC()
-		lim := int64(liveHeapMB()*1.25*(1<<20)) + 32<<20
+		wasm := perfOffHeapWasmMB()
+		lim := int64(((liveHeapMB()+wasm)*1.25-wasm)*(1<<20)) + 32<<20
 		old := debug.SetMemoryLimit(lim)
 		defer debug.SetMemoryLimit(old)
 		res.Passes = append(res.Passes, e.perfScroll("channel-gc", e.listPoint, traffic(fakeslack.BenchChannelID, "")))

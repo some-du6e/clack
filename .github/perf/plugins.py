@@ -96,7 +96,10 @@ def main():
         print(f"Plugins running: {', '.join(ref.get('plugins') or []) or 'none'}" +
               (f"; failed to start: {', '.join(ref['failed'])}" if ref.get("failed") else ""))
         print(f"\nPatched components: {', '.join(ref.get('patched') or [])}\n")
-        print(f"{ref.get('messages', 0)} messages in the channel, {ref.get('replies', 0)} replies in the thread, {ref.get('visited', 0)} other channels opened first; live heap {ref.get('heap_mb', 0):.0f} MB.\n")
+        heaps = "; ".join(
+            f"{side}: live heap {runs[0].get('heap_mb', 0):.0f} MB" + (f" + {runs[0]['wasm_mb']:.0f} MB of wasm memory outside it" if runs[0].get("wasm_mb") else "")
+            for side, runs in sides.items() if runs)
+        print(f"{ref.get('messages', 0)} messages in the channel, {ref.get('replies', 0)} replies in the thread, {ref.get('visited', 0)} other channels opened first; {heaps}.\n")
     names = []
     for runs in sides.values():
         for r in runs:

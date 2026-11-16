@@ -22,6 +22,9 @@ func init() { startTrim = trimMemory }
 // loaded at once: about 500 MB live), so it never makes the collector run
 // nonstop while scrolling; if what's live ever exceeds it, the runtime's
 // GC CPU limit (half the CPU) lets the heap grow rather than thrash.
+// The plugin engine's wasm memory isn't in it: it lives outside the Go
+// heap, under its own cap (internal/jsrt/wasmmem.go; it used to be a Go
+// slice, and a few hundred MB of it brought a long session to this limit).
 // GOMEMLIMIT, when set, wins.
 const memoryLimit = 768 << 20
 
