@@ -178,7 +178,7 @@ func TestSlickViewAppPlanEveryPlugin(t *testing.T) {
 	var ids []string
 	for _, e := range ents {
 		n := e.Name()
-		if strings.HasSuffix(n, ".js") && !strings.HasSuffix(n, ".main.js") {
+		if strings.HasSuffix(n, ".js") && !strings.HasSuffix(n, ".main.js") && !strings.HasSuffix(n, ".user.js") {
 			ids = append(ids, strings.TrimSuffix(n, ".js"))
 		}
 	}

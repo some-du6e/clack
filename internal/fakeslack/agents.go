@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -189,6 +190,11 @@ func (s *Server) BlockActions() []url.Values {
 // history and replies (the fixtures, oldest first in replies).
 func (s *Server) handleAgents(method string, f url.Values) (any, bool) {
 	switch method {
+	case "bots.info":
+		if s.Size.AppPlans && (f.Get("bot") == AppPlanBotID || strings.Contains(f.Get("bots"), AppPlanBotID)) {
+			return map[string]any{"ok": true, "bot": appPlanBot(), "bots": []slack.BotProfile{appPlanBot()}}, true
+		}
+		return nil, false
 	case "blocks.actions":
 		r := s.agentRec()
 		r.mu.Lock()
@@ -285,4 +291,59 @@ func AppPlanMessages() (msgs []slack.Message, names []string) {
 		names = append([]string{p.name}, names...)
 	}
 	return msgs, names
+}
+
+// addAppPlans adds #plans, the app's bot user and AppPlanMessages
+// (Size.AppPlans).
+func (s *Server) addAppPlans() {
+	s.convs = append(s.convs, slack.Conversation{ID: AppPlanChannelID, Name: "plans", IsChannel: true, IsMember: true,
+		Created: 1700000000, Creator: SelfID, NumMembers: 2, ContextTeamID: TeamID})
+	s.users = append(s.users, slack.User{ID: AppPlanUserID, TeamID: TeamID, Name: "eth", IsBot: true,
+		Profile: slack.Profile{DisplayName: "eth", RealName: "eth", Team: TeamID}})
+	msgs, _ := AppPlanMessages()
+	s.hist[AppPlanChannelID] = msgs
+}
+
+// appPlanBot is bots.info's answer for the app.
+func appPlanBot() slack.BotProfile {
+	return slack.BotProfile{ID: AppPlanBotID, Name: AppPlanBotName, AppID: AppPlanAppID, UserID: AppPlanUserID, TeamID: TeamID}
+}
+
+// PushAppPlanLive posts a plan as the app does live: the message (its
+// tasks in progress), then chat.update's message_changed (all complete,
+// edited). It returns the message's ts.
+func (s *Server) PushAppPlanLive() string {
+	plan := func(st1, st2 string) []any {
+		return []any{map[string]any{"type": "plan", "block_id": "plan_live_00000000001", "title": "Read the new issues", "tasks": []any{
+			agentTask("t01", "Listed the issues", st1, map[string]any{"details": agentRich("Two new issues.")}),
+			agentTask("t02", "Labelled them", st2, map[string]any{"details": agentRich("Both are composer bugs.")}),
+		}}}
+	}
+	ts, _ := s.PostQuiet(AppPlanChannelID, AppPlanUserID, "Read the new issues")
+	msg := func(blocks []any, edited bool) map[string]any {
+		m := map[string]any{"type": "message", "ts": ts, "user": AppPlanUserID, "bot_id": AppPlanBotID, "app_id": AppPlanAppID,
+			"team": TeamID, "text": "Read the new issues", "blocks": blocks, "channel": AppPlanChannelID,
+			"bot_profile": map[string]any{"id": AppPlanBotID, "app_id": AppPlanAppID, "user_id": AppPlanUserID, "name": AppPlanBotName,
+				"team_id": TeamID, "deleted": false, "updated": 1794000000, "icons": map[string]any{}}}
+		if edited {
+			m["edited"] = map[string]any{"user": AppPlanUserID, "ts": ts}
+		}
+		return m
+	}
+	first, done := plan("in_progress", "pending"), plan("complete", "complete")
+	s.histMu.Lock()
+	if h := s.hist[AppPlanChannelID]; len(h) > 0 && h[0].TS == ts {
+		raw, _ := json.Marshal(done)
+		h[0].BotID, h[0].Blocks = AppPlanBotID, raw
+		h[0].Edited = &slack.Edited{User: AppPlanUserID, TS: ts}
+		h[0].BotProfile = &slack.BotProfile{ID: AppPlanBotID, Name: AppPlanBotName, AppID: AppPlanAppID, UserID: AppPlanUserID, TeamID: TeamID}
+	}
+	s.histMu.Unlock()
+	ev := msg(first, false)
+	ev["event_ts"] = ts
+	s.Push(ev)
+	time.Sleep(300 * time.Millisecond)
+	s.Push(map[string]any{"type": "message", "subtype": "message_changed", "channel": AppPlanChannelID, "hidden": true,
+		"ts": ts, "event_ts": ts, "message": msg(done, true), "previous_message": msg(first, false)})
+	return ts
 }

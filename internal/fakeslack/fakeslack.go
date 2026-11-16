@@ -148,6 +148,9 @@ type Size struct {
 	// AgentThread adds a DM with an agent app and a thread in it, the
 	// agent's answer edited live (agent_thread.go).
 	AgentThread bool
+	// AppPlans adds #plans (AppPlanChannelID): a custom app's plan posts
+	// and posts with an unknown block type (agents.go AppPlanMessages).
+	AppPlans bool
 	// PinsFolders adds #pins-gallery: the Pins tab's pinned messages and
 	// file, and bookmark folders with their methods (pins_folders.go).
 	PinsFolders bool
@@ -733,6 +736,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.GIFs > 0 {
 		s.addGIFWall() // gifs.go
+	}
+	if sz.AppPlans {
+		s.addAppPlans() // agents.go
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
