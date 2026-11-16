@@ -313,6 +313,9 @@ type App struct {
 	layoutDue, animDue atomic.Bool
 	quiet              quietState
 	quietFrames        uint64
+	animHeld           atomic.Bool  // an animation repaint waits out a slow frame (animHold)
+	lastLayout         atomic.Int64 // the last frame's layout (ns; 0 for a quiet one)
+	lastFrameEnd       atomic.Int64 // when it was submitted (unix ns)
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow
@@ -622,6 +625,7 @@ func (a *App) Run() error {
 				wd.next(&stageSubmit)
 				e.Frame(&ops)
 				a.frameStats.addQuiet(time.Since(t0))
+				a.noteFrameCost(0)
 				break
 			}
 			wd.next(&stagePosted)
@@ -662,6 +666,7 @@ func (a *App) Run() error {
 				a.timing("first GPU submit", tl)
 			}
 			a.frameStats.add(time.Since(t0), tl.Sub(t0))
+			a.noteFrameCost(tl.Sub(t0))
 			if frameLog {
 				log.Printf("frame: layout %.2fms total %.1fms", float64(tl.Sub(t0).Microseconds())/1000, float64(time.Since(t0).Microseconds())/1000)
 			}

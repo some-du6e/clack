@@ -242,6 +242,7 @@ func (b *backend) start(a *App) {
 				a.slickRoute(a.router.Current())
 			}
 			b.maybePresencePrompt(a)
+			b.a11yNewUserDefaults(a) // a11y_defaults.go
 		})
 	}()
 }

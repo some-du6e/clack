@@ -384,7 +384,7 @@ jobs:
         run: go test -count=$COUNT -v -run '^(TestExplodesPlaysOnTimeUnderLoad|TestAnimSizesShareTimeline|TestAnimCatchesUp|TestKeepingPlayerSurvivesStall|TestOffscreenGIFReleased|TestGIFLoopCount|TestAnimatedGIF|TestAnimWebPEmojiPlays|TestGIFBurstStaysInBudget|TestAnimationsOff|TestLargeGIFAnimatesAtDrawnSize)$' ./internal/imgcache
       - name: ui (an animation tick is a quiet frame)
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -timeout 20m -run '^TestAnimationTickIsQuiet$' ./internal/ui
+        run: go test -count=$COUNT -v -timeout 20m -run '^(TestAnimationTickIsQuiet|TestA11yNewUserDefaultsLikeSlack)$' ./internal/ui
       - name: Gio patch 35 (live images, what a frame was asked for; a real GPU context)
         if: ${{ !cancelled() }}
         env:

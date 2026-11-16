@@ -60,9 +60,19 @@ func (a *App) wireQuietFrames() {
 }
 
 // animReady is the image cache's repaint for animations alone (any
-// goroutine): a frame only it asks for may be a quiet one.
+// goroutine): a frame only it asks for may be a quiet one. After a slow
+// frame it waits (animHold).
 func (a *App) animReady() {
 	a.animDue.Store(true)
+	if d := a.animHold(time.Now()); d > 0 {
+		if a.animHeld.CompareAndSwap(false, true) {
+			time.AfterFunc(d, func() {
+				a.animHeld.Store(false)
+				a.animReady()
+			})
+		}
+		return
+	}
 	if h := invalidateHook; h != nil {
 		h(a)
 	}
@@ -113,4 +123,25 @@ func (a *App) replayFrame(src input.Source, asked bool, askedAt, now time.Time) 
 func (a *App) noteFullFrame(size image.Point, m unit.Metric, insets app.Insets, covered bool) {
 	a.quiet = quietState{ok: !covered && a.login == nil && a.insp == nil, size: size, metric: m, insets: insets,
 		zoom: a.zoomFactor(), subs: slackc.SubFrames()}
+}
+
+// animHold is how long an animation's repaint waits after a slow frame. A
+// frame whose layout took over a display frame (16 ms: a scroll, a
+// plugin's render) is followed by as long again without a frame for
+// animations alone, so they take at most half of the UI goroutine and input
+// keeps its turn; the animations keep to their timelines meanwhile (a frame
+// drawn late skips to the one due). A quiet frame lays nothing out, so
+// after one nothing waits.
+func (a *App) animHold(now time.Time) time.Duration {
+	cost := time.Duration(a.lastLayout.Load())
+	if cost < 16*time.Millisecond {
+		return 0
+	}
+	return max(time.Unix(0, a.lastFrameEnd.Load()).Add(cost).Sub(now), 0)
+}
+
+// noteFrameCost records a submitted frame's layout time (0: quiet).
+func (a *App) noteFrameCost(layout time.Duration) {
+	a.lastLayout.Store(int64(layout))
+	a.lastFrameEnd.Store(time.Now().UnixNano())
 }
