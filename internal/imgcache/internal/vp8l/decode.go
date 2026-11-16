@@ -6,7 +6,11 @@
 //
 // The VP8L specification is at:
 // https://developers.google.com/speed/webp/docs/riff_container
-package vp8l // import "golang.org/x/image/vp8l"
+//
+// Clack: this is golang.org/x/image/vp8l v0.33.0 with every allocation
+// charged to a Budget the caller passes, and only the Huffman groups the
+// meta prefix-code image uses built (CLACK_PATCHES.md).
+package vp8l
 
 import (
 	"bufio"
@@ -61,7 +65,21 @@ type decoder struct {
 	r     io.ByteReader
 	bits  uint32
 	nBits uint32
+
+	// Clack: what every allocation charges first (budget.go), and scratch
+	// space the prefix codes are read with, reused so that reading one
+	// allocates nothing beyond the tree a group keeps.
+	budget      *Budget
+	codeLengths []uint32 // a code's lengths (decodeHuffmanTree)
+	codes       []uint32 // their canonical codes (codeLengthsToCodes)
+	lenTree     hTree    // the code-length code (decodeCodeLengths)
+	lenNodes    []hNode  // lenTree's node array
+	dropTree    hTree    // a code of a group no tile uses: read, checked, dropped
+	dropNodes   []hNode  // dropTree's node array
 }
+
+// charge takes n bytes from the decode's budget, before they're allocated.
+func (d *decoder) charge(n int64) error { return d.budget.Charge(n) }
 
 // read reads the next n bits from the decoder's bit-stream.
 func (d *decoder) read(n uint32) (uint32, error) {
@@ -154,8 +172,8 @@ var (
 // decodeCodeLengths decodes a Huffman tree's code lengths which are themselves
 // encoded via a Huffman tree, specified in section 5.2.2.
 func (d *decoder) decodeCodeLengths(dst []uint32, codeLengthCodeLengths []uint32) error {
-	h := hTree{}
-	if err := h.build(codeLengthCodeLengths); err != nil {
+	h := &d.lenTree // Clack: reused, not a new tree per code
+	if err := d.build(h, codeLengthCodeLengths); err != nil {
 		return err
 	}
 
@@ -252,7 +270,7 @@ func (d *decoder) decodeHuffmanTree(h *hTree, alphabetSize uint32) error {
 				return err
 			}
 		}
-		return h.buildSimple(nSymbols, symbols, alphabetSize)
+		return d.buildSimple(h, nSymbols, symbols, alphabetSize)
 	}
 
 	nCodes, err := d.read(4)
@@ -270,11 +288,15 @@ func (d *decoder) decodeHuffmanTree(h *hTree, alphabetSize uint32) error {
 			return err
 		}
 	}
-	codeLengths := make([]uint32, alphabetSize)
+	// Clack: the lengths are read into reused scratch, not a new slice
+	codeLengths, err := d.scratch(&d.codeLengths, alphabetSize)
+	if err != nil {
+		return err
+	}
 	if err = d.decodeCodeLengths(codeLengths, codeLengthCodeLengths[:]); err != nil {
 		return err
 	}
-	return h.build(codeLengths)
+	return d.build(h, codeLengths)
 }
 
 const (
@@ -293,10 +315,19 @@ type hGroup [nHuff]hTree
 // data. If one hGroup is used for the entire image, then hPix and hBits will
 // be zero. If more than one hGroup is used, then hPix contains the meta-image
 // that maps tiles to hGroup index, and hBits contains the log-2 tile size.
+//
+// Clack: only the groups a tile uses are kept, numbered in the order the
+// tiles first use them, and hPix is rewritten to name those numbers
+// (libwebp's ReadHuffmanCodes does the same). Every group's codes are
+// still read and checked in order, so the same streams decode or fail as
+// upstream, but a group no tile uses is read into a scratch tree and
+// dropped. Upstream allocated every index up to the largest the meta image
+// names, so one tile naming group 65535 made it build 65536 groups.
 func (d *decoder) decodeHuffmanGroups(w int32, h int32, topLevel bool, ccBits uint32) (
 	hGroups []hGroup, hPix []byte, hBits uint32, err error) {
 
 	maxHGroupIndex := 0
+	nGroups, used := 1, []int32(nil) // Clack: the groups kept; used maps an index to one, or -1
 	if topLevel {
 		useMeta, err := d.read(1)
 		if err != nil {
@@ -318,20 +349,61 @@ func (d *decoder) decodeHuffmanGroups(w int32, h int32, topLevel bool, ccBits ui
 					maxHGroupIndex = i
 				}
 			}
+			if used, nGroups, err = d.usedGroups(hPix, maxHGroupIndex); err != nil {
+				return nil, nil, 0, err
+			}
 		}
 	}
-	hGroups = make([]hGroup, maxHGroupIndex+1)
-	for i := range hGroups {
+	if err := d.charge(int64(nGroups) * hGroupBytes); err != nil {
+		return nil, nil, 0, err
+	}
+	hGroups = make([]hGroup, nGroups)
+	for i := 0; i <= maxHGroupIndex; i++ {
+		var g *hGroup // nil: no tile uses group i
+		switch {
+		case used == nil:
+			g = &hGroups[i]
+		case used[i] >= 0:
+			g = &hGroups[used[i]]
+		}
 		for j, alphabetSize := range alphabetSizes {
 			if j == 0 && ccBits > 0 {
 				alphabetSize += 1 << ccBits
 			}
-			if err := d.decodeHuffmanTree(&hGroups[i][j], alphabetSize); err != nil {
+			t := &d.dropTree
+			if g != nil {
+				t = &g[j]
+			}
+			if err := d.decodeHuffmanTree(t, alphabetSize); err != nil {
 				return nil, nil, 0, err
 			}
 		}
 	}
 	return hGroups, hPix, hBits, nil
+}
+
+// usedGroups numbers the groups the meta image hPix names, in the order its
+// tiles first name them, and rewrites hPix to name those numbers. It
+// returns, for every index up to maxIndex, its number or -1 when no tile
+// names it, and how many are named.
+func (d *decoder) usedGroups(hPix []byte, maxIndex int) ([]int32, int, error) {
+	if err := d.charge(4 * int64(maxIndex+1)); err != nil {
+		return nil, 0, err
+	}
+	used := make([]int32, maxIndex+1)
+	for i := range used {
+		used[i] = -1
+	}
+	n := int32(0)
+	for p := 0; p < len(hPix); p += 4 {
+		g := &used[int(hPix[p])<<8|int(hPix[p+1])]
+		if *g < 0 {
+			*g = n
+			n++
+		}
+		hPix[p], hPix[p+1] = uint8(*g>>8), uint8(*g)
+	}
+	return used, int(n), nil
 }
 
 const (
@@ -365,6 +437,9 @@ func (d *decoder) decodePix(w int32, h int32, minCap int32, topLevel bool) ([]by
 			return nil, errors.New("vp8l: invalid color cache parameters")
 		}
 		ccShift = 32 - ccBits
+		if err := d.charge(4 << ccBits); err != nil { // Clack
+			return nil, err
+		}
 		ccEntries = make([]uint32, 1<<ccBits)
 	}
 
@@ -381,6 +456,9 @@ func (d *decoder) decodePix(w int32, h int32, minCap int32, topLevel bool) ([]by
 	// Decode the pixels.
 	if minCap < 4*w*h {
 		minCap = 4 * w * h
+	}
+	if err := d.charge(int64(minCap)); err != nil { // Clack
+		return nil, err
 	}
 	pix := make([]byte, 4*w*h, minCap)
 	p, cachedP := 0, 0
@@ -502,12 +580,19 @@ func (d *decoder) lz77Param(symbol uint32) (uint32, error) {
 }
 
 // decodeHeader decodes the VP8L header from r.
-func decodeHeader(r io.Reader) (d *decoder, w int32, h int32, err error) {
+func decodeHeader(r io.Reader, b *Budget) (d *decoder, w int32, h int32, err error) {
+	// Clack: the decoder and its reader charge the budget too
+	if err := b.Charge(fixedBytes); err != nil {
+		return nil, 0, 0, err
+	}
 	rr, ok := r.(io.ByteReader)
 	if !ok {
+		if err := b.Charge(readerBytes); err != nil {
+			return nil, 0, 0, err
+		}
 		rr = bufio.NewReader(r)
 	}
-	d = &decoder{r: rr}
+	d = &decoder{r: rr, budget: b}
 	magic, err := d.read(8)
 	if err != nil {
 		return nil, 0, 0, err
@@ -541,7 +626,7 @@ func decodeHeader(r io.Reader) (d *decoder, w int32, h int32, err error) {
 
 // DecodeConfig decodes the color model and dimensions of a VP8L image from r.
 func DecodeConfig(r io.Reader) (image.Config, error) {
-	_, w, h, err := decodeHeader(r)
+	_, w, h, err := decodeHeader(r, NewBudget(fixedBytes+readerBytes)) // Clack: the header only
 	if err != nil {
 		return image.Config{}, err
 	}
@@ -553,8 +638,12 @@ func DecodeConfig(r io.Reader) (image.Config, error) {
 }
 
 // Decode decodes a VP8L image from r.
-func Decode(r io.Reader) (image.Image, error) {
-	d, w, h, err := decodeHeader(r)
+//
+// Clack: everything the decode allocates is charged to b first; a stream
+// whose decode would need more than b allows fails with an error wrapping
+// ErrBudget, before the allocation that doesn't fit.
+func Decode(r io.Reader, b *Budget) (image.Image, error) {
+	d, w, h, err := decodeHeader(r, b)
 	if err != nil {
 		return nil, err
 	}
@@ -593,6 +682,13 @@ func Decode(r io.Reader) (image.Image, error) {
 	// Apply the inverse transformations.
 	for i := nTransforms - 1; i >= 0; i-- {
 		t := &transforms[i]
+		// Clack: inverseColorIndexing unpacks pixels packed several to a
+		// byte into a new buffer of the width before the transform
+		if t.transformType == transformTypeColorIndexing && t.bits != 0 {
+			if err := d.charge(4 * int64(t.oldWidth) * int64(h)); err != nil {
+				return nil, err
+			}
+		}
 		pix = inverseTransforms[t.transformType](t, pix, h)
 	}
 	return &image.NRGBA{

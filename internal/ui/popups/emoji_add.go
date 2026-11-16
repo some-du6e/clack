@@ -28,10 +28,9 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 
 	"github.com/some-du6e/clack/internal/i18n"
-	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/imgcache" // registers WebP for image.DecodeConfig
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )

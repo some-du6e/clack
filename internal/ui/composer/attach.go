@@ -38,11 +38,10 @@ import (
 	"gioui.org/x/explorer"
 	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
-	"github.com/some-du6e/clack/internal/imgcache"
+	"github.com/some-du6e/clack/internal/imgcache" // registers WebP for image.DecodeConfig
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
@@ -621,9 +620,9 @@ func attThumbnail(data []byte, px int) (*image.RGBA, error) {
 	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > attMaxPixels {
 		return nil, fmt.Errorf("image is %dx%d", cfg.Width, cfg.Height)
 	}
-	// imgcache.DecodeWithin bounds a lossless WebP's Huffman-group
-	// allocation by the canvas (a 1×1 meta bomb passes the pixel check
-	// above), keeping attMaxPixels as this surface's own thumbnail budget.
+	// imgcache.DecodeWithin charges a lossless WebP's decode to a memory
+	// budget (a 1×1 meta bomb passes the pixel check above), with
+	// attMaxPixels as this surface's own thumbnail ceiling.
 	img, err := imgcache.DecodeWithin(data, attMaxPixels, attMaxPixels)
 	if err != nil {
 		return nil, err

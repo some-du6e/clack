@@ -60,6 +60,241 @@ func VP8LSolid(w, h int, c color.NRGBA) []byte {
 	return b.bytes()
 }
 
+// putMSB writes n's low bits most-significant first, the order a VP8L
+// decoder reads a canonical prefix code (the first bit read is the code's
+// high bit). put is least-significant first, so a canonical code can't go
+// out whole.
+func (w *bits) putMSB(v uint32, n uint) {
+	for i := int(n) - 1; i >= 0; i-- {
+		w.put((v>>uint(i))&1, 1)
+	}
+}
+
+// vp8lFlatByteCode writes a VP8L prefix code over an alphabet of
+// alphabetSize symbols in which every symbol 0–255 has length 8 (a flat
+// byte code, Kraft sum 256·2⁻⁸ = 1) and any symbol ≥256 length 0. Its
+// canonical code for byte v is v itself, so a literal pixel channel of
+// value v is emitted with putMSB(v, 8). It lets a test write arbitrary
+// literal pixels, which one-symbol codes (vp8lSimpleTree) cannot.
+func (w *bits) vp8lFlatByteCode(alphabetSize int) {
+	w.put(0, 1) // not a simple code
+	// The code-length code: 12 lengths in codeLengthCodeOrder
+	// (17,18,0,1,2,3,4,5,16,6,7,8), giving symbols 0 and 8 length 1 and the
+	// rest 0 — a two-symbol code where length-8 is "8" and length-0 is "0".
+	w.put(12-4, 4)
+	for _, l := range []uint32{0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1} {
+		w.put(l, 3)
+	}
+	w.put(0, 1) // no max-symbol limit: read a length for every symbol
+	// symbol 8 (code-length 8) has canonical code 1, symbol 0 (length 0) code 0
+	for i := 0; i < alphabetSize; i++ {
+		if i < 256 {
+			w.put(1, 1) // length 8
+		} else {
+			w.put(0, 1) // length 0: unused
+		}
+	}
+}
+
+// vp8lLiteralGroup writes the five prefix codes of a Huffman group whose
+// green/red/blue/alpha are flat byte codes (so any RGBA pixel is a literal)
+// and whose distance code is a one-symbol placeholder (no LZ77 is emitted).
+// ccBits > 0 widens green's alphabet by the colour cache, as the format
+// requires, though these pixels never use the cache.
+func (w *bits) vp8lLiteralGroup(ccBits int) {
+	green := 280
+	if ccBits > 0 { // the cache widens green's alphabet, as x/image's does
+		green += 1 << ccBits
+	}
+	w.vp8lFlatByteCode(green) // green: literals, length codes, cache
+	w.vp8lFlatByteCode(256)   // red
+	w.vp8lFlatByteCode(256)   // blue
+	w.vp8lFlatByteCode(256)   // alpha
+	w.vp8lSimpleTree(0)       // distance (unused)
+}
+
+// vp8lLiteralPixels emits len(pix)/4 literal RGBA pixels (red, green, blue,
+// alpha bytes) through a group vp8lLiteralGroup wrote.
+func (w *bits) vp8lLiteralPixels(pix []byte) {
+	for p := 0; p+3 < len(pix); p += 4 {
+		w.putMSB(uint32(pix[p+1]), 8) // green first (decodePix reads it first)
+		w.putMSB(uint32(pix[p+0]), 8) // red
+		w.putMSB(uint32(pix[p+2]), 8) // blue
+		w.putMSB(uint32(pix[p+3]), 8) // alpha
+	}
+}
+
+// VP8LLiteral is a w×h VP8L bitstream (no chunk header) of literal RGBA
+// pixels (4 bytes each, red-green-blue-alpha): no transforms, no colour
+// cache, no meta prefix codes, one group of flat byte codes. Unlike
+// VP8LSolid it carries a different colour per pixel, so a test can build a
+// picture whose decode fills a known-size pixel buffer.
+func VP8LLiteral(w, h int, pix []byte) []byte {
+	var b bits
+	b.put(0x2f, 8)
+	b.put(uint32(w-1), 14)
+	b.put(uint32(h-1), 14)
+	b.put(0, 1) // alpha hint
+	b.put(0, 3) // version
+	b.put(0, 1) // no transform
+	b.put(0, 1) // no colour cache
+	b.put(0, 1) // no meta prefix codes
+	b.vp8lLiteralGroup(0)
+	b.vp8lLiteralPixels(pix)
+	return b.bytes()
+}
+
+// VP8LLiteralCC is VP8LLiteral with the top-level colour cache declared at
+// ccBits (1–11). The pixels are still literals (they never look the cache
+// up), but the decoder allocates the 4·2^ccBits-entry cache and widens
+// green's alphabet, so a test can measure the colour-cache allocation.
+func VP8LLiteralCC(w, h, ccBits int, pix []byte) []byte {
+	var b bits
+	b.put(0x2f, 8)
+	b.put(uint32(w-1), 14)
+	b.put(uint32(h-1), 14)
+	b.put(0, 1) // alpha hint
+	b.put(0, 3) // version
+	b.put(0, 1) // no transform
+	b.put(1, 1) // use a colour cache
+	b.put(uint32(ccBits), 4)
+	b.put(0, 1) // no meta prefix codes
+	b.vp8lLiteralGroup(ccBits)
+	b.vp8lLiteralPixels(pix)
+	return b.bytes()
+}
+
+// VP8LManyGroups is a w×h VP8L bitstream (no chunk header) whose meta
+// prefix-code image names nGroups distinct Huffman groups: with tiles of
+// 1<<hBits pixels, tile i (row-major) names group i (capped at nGroups−1),
+// so a decoder that builds a group per named index allocates nGroups of
+// them. The stream ends right after the meta image, before any group's
+// codes: enough for the decoder to size and allocate the group array (the
+// bomb this exercises) and then fail reading the first group. w×h must
+// give at least nGroups tiles.
+func VP8LManyGroups(w, h, hBits, nGroups int) []byte {
+	var b bits
+	b.put(0x2f, 8)
+	b.put(uint32(w-1), 14)
+	b.put(uint32(h-1), 14)
+	b.put(0, 1) // alpha hint
+	b.put(0, 3) // version
+	b.put(0, 1) // no transform
+	b.put(0, 1) // no colour cache
+	b.put(1, 1) // use meta prefix codes
+	b.put(uint32(hBits-2), 3)
+	mw, mh := (w+(1<<hBits)-1)>>hBits, (h+(1<<hBits)-1)>>hBits
+	pix := make([]byte, 4*mw*mh)
+	for i := 0; i < mw*mh; i++ {
+		g := i
+		if g > nGroups-1 {
+			g = nGroups - 1
+		}
+		pix[4*i+0] = byte(g >> 8) // red: group index high byte
+		pix[4*i+1] = byte(g)      // green: group index low byte
+	}
+	// the meta image is itself a VP8L sub-image: one group, literal pixels
+	b.put(0, 1) // the meta image uses no colour cache
+	b.vp8lLiteralGroup(0)
+	b.vp8lLiteralPixels(pix)
+	return b.bytes()
+}
+
+// VP8LMetaSolids is a complete w×h VP8L bitstream (no chunk header) using
+// meta prefix codes: tile i (row-major, tiles of 1<<hBits pixels) names
+// Huffman group tileGroup[i], and group g is a solid colour[g] (one-symbol
+// codes, so every pixel of a tile takes zero bits). It writes a group body
+// for every index 0..max(tileGroup) in index order, as a real stream does.
+// A decoder that keeps only the groups tiles name, renumbering them, must
+// still paint each tile its own group's colour — including when tileGroup
+// names them out of the order their bodies appear, which this can express
+// and libwebp's dense in-order numbering cannot.
+func VP8LMetaSolids(w, h, hBits int, tileGroup []int, colour []color.NRGBA) []byte {
+	var b bits
+	b.put(0x2f, 8)
+	b.put(uint32(w-1), 14)
+	b.put(uint32(h-1), 14)
+	b.put(0, 1) // alpha hint
+	b.put(0, 3) // version
+	b.put(0, 1) // no transform
+	b.put(0, 1) // no colour cache (top level)
+	b.put(1, 1) // use meta prefix codes
+	b.put(uint32(hBits-2), 3)
+	mw, mh := (w+(1<<hBits)-1)>>hBits, (h+(1<<hBits)-1)>>hBits
+	pix := make([]byte, 4*mw*mh)
+	maxIdx := 0
+	for i := 0; i < mw*mh; i++ {
+		g := tileGroup[i]
+		if g > maxIdx {
+			maxIdx = g
+		}
+		pix[4*i+0] = byte(g >> 8) // red: index high byte
+		pix[4*i+1] = byte(g)      // green: index low byte
+	}
+	b.put(0, 1) // the meta image uses no colour cache
+	b.vp8lLiteralGroup(0)
+	b.vp8lLiteralPixels(pix)
+	// a group body for every index 0..maxIdx, in index order
+	for g := 0; g <= maxIdx; g++ {
+		c := color.NRGBA{}
+		if g < len(colour) {
+			c = colour[g]
+		}
+		for _, sym := range []uint8{c.G, c.R, c.B, c.A, 0} {
+			b.vp8lSimpleTree(sym)
+		}
+	}
+	// the top-level pixels take zero bits (every group's codes are one-symbol)
+	return b.bytes()
+}
+
+// VP8LManyGroupsFull is a complete w×h VP8L bitstream (no chunk header)
+// whose meta image names nGroups distinct Huffman groups, every group a
+// full flat byte code (green, red, blue and alpha each a 256-symbol code,
+// so each group's trees allocate the most a byte-literal code can). Unlike
+// VP8LManyGroups it includes every group's body and the top-level pixels
+// (all transparent black), so it decodes and the decoder reads and
+// allocates each group's trees. It lets a test vary nGroups to measure the
+// per-group tree-node allocation exactly. w×h must give at least nGroups
+// tiles.
+func VP8LManyGroupsFull(w, h, hBits, nGroups int) []byte {
+	var b bits
+	b.put(0x2f, 8)
+	b.put(uint32(w-1), 14)
+	b.put(uint32(h-1), 14)
+	b.put(0, 1) // alpha hint
+	b.put(0, 3) // version
+	b.put(0, 1) // no transform
+	b.put(0, 1) // no colour cache (top level)
+	b.put(1, 1) // use meta prefix codes
+	b.put(uint32(hBits-2), 3)
+	mw, mh := (w+(1<<hBits)-1)>>hBits, (h+(1<<hBits)-1)>>hBits
+	meta := make([]byte, 4*mw*mh)
+	for i := 0; i < mw*mh; i++ {
+		g := i
+		if g > nGroups-1 {
+			g = nGroups - 1
+		}
+		meta[4*i+0] = byte(g >> 8)
+		meta[4*i+1] = byte(g)
+	}
+	b.put(0, 1) // the meta image uses no colour cache
+	b.vp8lLiteralGroup(0)
+	b.vp8lLiteralPixels(meta)
+	// every group's body: a full flat byte code (no colour cache)
+	for g := 0; g < nGroups; g++ {
+		b.vp8lLiteralGroup(0)
+	}
+	// top-level pixels: transparent black literals (every group decodes them)
+	for i := 0; i < w*h; i++ {
+		b.putMSB(0, 8) // green
+		b.putMSB(0, 8) // red
+		b.putMSB(0, 8) // blue
+		b.putMSB(0, 8) // alpha
+	}
+	return b.bytes()
+}
+
 // vp8lSimpleTree writes a one-symbol VP8L prefix code (simple, 8-bit
 // symbol): the symbol then decodes with zero bits, as VP8LSolid relies on.
 func (w *bits) vp8lSimpleTree(symbol uint8) {

@@ -28,6 +28,7 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -39,12 +40,36 @@ import (
 	"gioui.org/op/paint"
 	_ "golang.org/x/image/bmp" // decoder for the shared safe Decode (composer attachments)
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 
 	"github.com/some-du6e/clack/internal/emoji"
+	"github.com/some-du6e/clack/internal/imgcache/internal/webp"
 	"github.com/some-du6e/clack/internal/localimg"
 	"github.com/some-du6e/clack/internal/slack"
 )
+
+// WebP is decoded by the vendored, budget-charging decoder in
+// internal/webp and internal/vp8l (webpanim.go), never x/image/webp's,
+// whose vp8l allocates its Huffman groups before reading them. x/image's
+// webp is not imported for its init, which would register that unbounded
+// decoder with package image, so image.Decode would run it. Instead the
+// format is registered here with the vendored decoder's header reader —
+// what image.DecodeConfig needs to size-gate a WebP everywhere — and a
+// full decode that routes through the budgeted Decode, so even a direct
+// image.Decode of a WebP can't allocate out of proportion.
+func init() {
+	image.RegisterFormat("webp", "RIFF????WEBPVP8", decodeWebPRegistered, webp.DecodeConfig)
+}
+
+// decodeWebPRegistered is the package image decoder for WebP: it buffers
+// the reader (capped, as the bytes are untrusted) and hands them to
+// Decode, so a registry decode is gated and budgeted like every other.
+func decodeWebPRegistered(r io.Reader) (image.Image, error) {
+	data, err := io.ReadAll(io.LimitReader(r, MaxFetchBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	return Decode(data)
+}
 
 // Fetcher downloads url. For files.slack.com it must authenticate (core.Fetch).
 type Fetcher func(ctx context.Context, url string) ([]byte, error)
@@ -996,10 +1021,11 @@ var ErrTooBig = errors.New("imgcache: image dimensions too large")
 // emoji, profile photos, email icons). It rejects a header claiming more
 // than MaxPixels or MaxSide before decoding, and for WebP routes through
 // decodeWebP, which additionally checks a still's picture against its
-// header size and bounds a lossless picture's (or ALPH plane's)
-// Huffman-group allocation by the canvas (webpvp8l.go). A bomb comes back
-// as an error, so a caller on an overlay or popup with no recover shows a
-// failure instead of crashing the app.
+// header size and charges every allocation of the decode to a byte budget
+// tied to the picture's size (webpanim.go), returning an error before any
+// that would exceed it. A bomb comes back as an error, so a caller on an
+// overlay or popup with no recover shows a failure instead of crashing the
+// app.
 func Decode(data []byte) (image.Image, error) {
 	return DecodeWithin(data, MaxPixels, MaxSide)
 }
@@ -1007,8 +1033,9 @@ func Decode(data []byte) (image.Image, error) {
 // DecodeWithin is Decode with the caller's own decoded-size budget, for a
 // surface that legitimately decodes larger images than the cache's
 // MaxPixels (the composer's attachment thumbnails, at attMaxPixels). The
-// lossless Huffman-group bound is tied to the canvas and holds whatever
-// the budget.
+// WebP memory budget is scaled to the picture, so maxPixels is the ceiling
+// for a lossless or alpha WebP too, the same as for PNG, JPEG and lossy
+// WebP.
 func DecodeWithin(data []byte, maxPixels, maxSide int) (image.Image, error) {
 	if err := checkSizeWithin(data, maxPixels, maxSide); err != nil {
 		return nil, err

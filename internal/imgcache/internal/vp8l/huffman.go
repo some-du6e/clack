@@ -115,7 +115,9 @@ func (h *hTree) insert(symbol uint32, code uint32, codeLength uint32) error {
 
 // codeLengthsToCodes returns the canonical Huffman codes implied by the
 // sequence of code lengths.
-func codeLengthsToCodes(codeLengths []uint32) ([]uint32, error) {
+//
+// Clack: a decoder method, writing the codes to its reused scratch.
+func (d *decoder) codeLengthsToCodes(codeLengths []uint32) ([]uint32, error) {
 	maxCodeLength := uint32(0)
 	for _, cl := range codeLengths {
 		if maxCodeLength < cl {
@@ -135,7 +137,10 @@ func codeLengthsToCodes(codeLengths []uint32) ([]uint32, error) {
 		currCode = (currCode + histogram[cl-1]) << 1
 		nextCodes[cl] = currCode
 	}
-	codes := make([]uint32, len(codeLengths))
+	codes, err := d.scratch(&d.codes, uint32(len(codeLengths)))
+	if err != nil {
+		return nil, err
+	}
 	for symbol, cl := range codeLengths {
 		if cl > 0 {
 			codes[symbol] = nextCodes[cl]
@@ -146,7 +151,10 @@ func codeLengthsToCodes(codeLengths []uint32) ([]uint32, error) {
 }
 
 // build builds a canonical Huffman tree from the given code lengths.
-func (h *hTree) build(codeLengths []uint32) error {
+//
+// Clack: a decoder method, so that h's node array charges the budget
+// (newNodes, budget.go).
+func (d *decoder) build(h *hTree, codeLengths []uint32) error {
 	// Calculate the number of symbols.
 	var nSymbols, lastSymbol uint32
 	for symbol, cl := range codeLengths {
@@ -158,7 +166,9 @@ func (h *hTree) build(codeLengths []uint32) error {
 	if nSymbols == 0 {
 		return errInvalidHuffmanTree
 	}
-	h.nodes = make([]hNode, 1, 2*nSymbols-1)
+	if err := d.newNodes(h, nSymbols); err != nil {
+		return err
+	}
 	// Handle the trivial case.
 	if nSymbols == 1 {
 		if len(codeLengths) <= int(lastSymbol) {
@@ -167,7 +177,7 @@ func (h *hTree) build(codeLengths []uint32) error {
 		return h.insert(lastSymbol, 0, 0)
 	}
 	// Handle the non-trivial case.
-	codes, err := codeLengthsToCodes(codeLengths)
+	codes, err := d.codeLengthsToCodes(codeLengths)
 	if err != nil {
 		return err
 	}
@@ -182,8 +192,12 @@ func (h *hTree) build(codeLengths []uint32) error {
 }
 
 // buildSimple builds a Huffman tree with 1 or 2 symbols.
-func (h *hTree) buildSimple(nSymbols uint32, symbols [2]uint32, alphabetSize uint32) error {
-	h.nodes = make([]hNode, 1, 2*nSymbols-1)
+//
+// Clack: a decoder method, as build is.
+func (d *decoder) buildSimple(h *hTree, nSymbols uint32, symbols [2]uint32, alphabetSize uint32) error {
+	if err := d.newNodes(h, nSymbols); err != nil {
+		return err
+	}
 	for i := uint32(0); i < nSymbols; i++ {
 		if symbols[i] >= alphabetSize {
 			return errInvalidHuffmanTree
