@@ -10,16 +10,23 @@ package popups
 // frame past them read) and composed (honouring disposal), cover-cropped to
 // a square and scaled to the tile size on a worker goroutine, the
 // composition charged to the same budget: one in the small lane
-// (imgcache.WithSmallBudget), so previews never queue for the big-decode
+// (imgcache.TrySmallBudget), so previews never queue for the big-decode
 // slot. The composed frames an animation keeps are charged to the decode
 // memory for as long as they're kept (imgcache.NewKeepBudget), at most
-// gifAnimKeepBytes of them in all past what's on screen. Tiles pick the frame
-// from the clock and schedule the next redraw only while they are laid out,
-// so nothing animates (or costs anything) once the tile scrolls away or the
-// picker closes. Media is Giphy's public CDN; nothing is written to disk.
+// gifAnimKeepBytes of them in all past what's on screen, and no longer than
+// they're drawn: an animation no tile has drawn for gifAnimIdle is let go
+// by a sweep, and every one is when the picker closes or its GIF tab hides
+// (gifAnimReleaseAll), so a picker that's gone holds no decode memory. A
+// preview the decode memory was too busy for (imgcache.ErrBusy) is loaded
+// again on a draw after a backoff (gifAnimRetry doubling), never failed for
+// good. Tiles pick the frame from the clock and schedule the next redraw
+// only while they are laid out, so nothing animates (or costs anything)
+// once the tile scrolls away or the picker closes. Media is Giphy's public
+// CDN; nothing is written to disk.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -48,6 +55,13 @@ const (
 	// a tile on screen would decode it again at once)
 	gifAnimKeepBytes = 64 << 20
 	gifAnimOnScreen  = time.Second
+	// gifAnimIdle: an animation no tile has drawn for this long is let go
+	// (the sweep runs every gifAnimIdle/2 while any is kept)
+	gifAnimIdle = 3 * time.Second
+	// gifAnimRetry, doubling to gifAnimRetryMax: how long a preview the
+	// decode memory was too busy for waits before a draw loads it again
+	gifAnimRetry    = time.Second
+	gifAnimRetryMax = 16 * time.Second
 )
 
 type gifAnim struct {
@@ -61,6 +75,11 @@ type gifAnim struct {
 	ready   bool
 	failed  bool
 	loading bool
+	// busy: the last load found the decode memory full; retry is when a
+	// draw may load it again, busyN how many loads in a row were busy
+	busy  bool
+	retry time.Time
+	busyN int
 }
 
 type gifAnimKey struct {
@@ -71,7 +90,8 @@ type gifAnimKey struct {
 var gifAnims = struct {
 	mu    sync.Mutex
 	m     map[gifAnimKey]*gifAnim
-	kept  int // the animations' frame bytes
+	kept  int         // the animations' frame bytes
+	sweep *time.Timer // gifAnimSweep, while any is kept
 	sem   chan struct{}
 	fetch func(ctx context.Context, raw string) ([]byte, error) // tests swap it (no network)
 }{
@@ -124,10 +144,15 @@ func gifAnimGet(h Host, url string, px int, now time.Time) (*gifAnim, bool) {
 	k := gifAnimKey{url, px}
 	gifAnims.mu.Lock()
 	a := gifAnims.m[k]
-	if a == nil {
+	switch {
+	case a == nil:
 		a = &gifAnim{loading: true}
 		gifAnims.m[k] = a
 		gifAnimEvictLocked(now)
+		gifAnimSweepLocked()
+		go gifAnimLoad(h, k, a)
+	case a.busy && !a.loading && !now.Before(a.retry): // memory may have freed
+		a.loading = true
 		go gifAnimLoad(h, k, a)
 	}
 	a.used = now
@@ -165,10 +190,52 @@ func gifAnimEvictLocked(now time.Time) {
 		if first {
 			return
 		}
-		a := gifAnims.m[oldK]
-		delete(gifAnims.m, oldK)
-		gifAnims.kept -= a.bytes
-		a.keep.Release()
+		gifAnimDropLocked(oldK, gifAnims.m[oldK])
+	}
+}
+
+// gifAnimDropLocked lets k's animation go, giving back its frames' memory
+// (a load in flight drops what it decodes: gifAnimLoad).
+func gifAnimDropLocked(k gifAnimKey, a *gifAnim) {
+	delete(gifAnims.m, k)
+	gifAnims.kept -= a.bytes
+	a.bytes = 0
+	a.keep.Release()
+}
+
+// gifAnimReleaseAll lets every animation go, loading ones too: the picker
+// closed, or its GIF tab hid. Tiles drawn again load theirs anew.
+func gifAnimReleaseAll() {
+	gifAnims.mu.Lock()
+	defer gifAnims.mu.Unlock()
+	for k, a := range gifAnims.m {
+		gifAnimDropLocked(k, a)
+	}
+}
+
+// gifAnimSweepLocked starts the sweep, unless it's running.
+func gifAnimSweepLocked() {
+	if gifAnims.sweep == nil {
+		gifAnims.sweep = time.AfterFunc(gifAnimIdle/2, gifAnimSweep)
+	}
+}
+
+// gifAnimSweep lets go of the animations no tile has drawn for gifAnimIdle
+// (the picker scrolled them away, or stopped being drawn without closing),
+// and runs again while any is left.
+func gifAnimSweep() {
+	gifAnims.mu.Lock()
+	defer gifAnims.mu.Unlock()
+	now := time.Now()
+	for k, a := range gifAnims.m {
+		if !a.loading && now.Sub(a.used) >= gifAnimIdle {
+			gifAnimDropLocked(k, a)
+		}
+	}
+	if len(gifAnims.m) > 0 {
+		gifAnims.sweep.Reset(gifAnimIdle / 2)
+	} else {
+		gifAnims.sweep = nil
 	}
 }
 
@@ -178,21 +245,30 @@ func gifAnimLoad(h Host, k gifAnimKey, a *gifAnim) {
 	<-gifAnims.sem
 	gifAnims.mu.Lock()
 	a.loading = false
+	var wake time.Duration
 	switch {
-	case err != nil || len(g.frames) == 0:
-		a.failed = true
 	case gifAnims.m[k] != a: // let go meanwhile
 		g.keep.Release()
+	case errors.Is(err, imgcache.ErrBusy): // not the GIF's fault: again later
+		a.busy, a.busyN = true, a.busyN+1
+		wake = min(gifAnimRetry<<(a.busyN-1), gifAnimRetryMax)
+		a.retry = time.Now().Add(wake)
+	case err != nil || len(g.frames) == 0:
+		a.failed, a.busy = true, false
 	default:
 		a.frames, a.ends, a.total = g.frames, g.ends, g.ends[len(g.ends)-1]
 		a.bytes, a.keep = g.bytes, g.keep
-		a.ready = true
+		a.ready, a.busy = true, false
 		gifAnims.kept += a.bytes
 		gifAnimEvictLocked(time.Now())
 	}
+	ready := a.ready
 	gifAnims.mu.Unlock()
-	if a.ready && h != nil {
+	switch {
+	case ready && h != nil:
 		h.Invalidate()
+	case wake > 0 && h != nil: // a draw then loads it again
+		time.AfterFunc(wake, h.Invalidate)
 	}
 }
 
@@ -223,8 +299,10 @@ func gifAnimDecode(raw string, px int) (gifDecoded, error) {
 	if err != nil {
 		return gifDecoded{}, err
 	}
+	// one try: a busy decode memory makes the preview wait for a later draw
+	// (gifAnimLoad), not hold a worker meanwhile
 	var d gifDecoded
-	err = imgcache.WithSmallBudget(ctx, func(bg *imgcache.Budget) error {
+	err = imgcache.TrySmallBudget(ctx, func(bg *imgcache.Budget) error {
 		g, err := imgcache.DecodeGIF(b, gifAnimMaxFrames, gifAnimMaxSide, bg)
 		if err != nil {
 			return err

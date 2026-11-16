@@ -125,12 +125,20 @@ func WithBudget(ctx context.Context, f func(*Budget) error) error {
 	return withBudget(ctx, f, func(ctx context.Context) *Budget { return budget.NewContext(ctx, decodePool, MaxDecode) })
 }
 
-// WithSmallBudget is WithBudget for a decode that keeps to the small lane:
-// its budget never takes the big slot, so it never waits behind (or holds
-// up) the big decodes, and fails busy at once when the pool can't cover a
-// charge. For many small decodes at once (the GIF picker's previews).
-func WithSmallBudget(ctx context.Context, f func(*Budget) error) error {
-	return withBudget(ctx, f, func(ctx context.Context) *Budget { return budget.NewPlayerContext(ctx, decodePool, MaxDecode) })
+// TrySmallBudget runs f once with a small-lane Budget
+// (budget.NewSmallContext), released when f returns: it never takes the
+// big slot, so it never waits behind (or holds up) the big decodes, and a
+// pool that can't cover a charge is f's ErrBusy at once, for the caller to
+// try again later (the GIF picker's previews do, on a later draw); its
+// memory still counts as a decode's, given back when it's done, so a big
+// decode can wait for it. For many small decodes at once.
+func TrySmallBudget(ctx context.Context, f func(*Budget) error) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b := budget.NewSmallContext(ctx, decodePool, MaxDecode)
+	defer b.Release()
+	return f(b)
 }
 
 func withBudget(ctx context.Context, f func(*Budget) error, mk func(context.Context) *Budget) error {

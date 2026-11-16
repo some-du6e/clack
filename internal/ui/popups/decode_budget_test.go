@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/jpeg"
 	"image/png"
 	"runtime"
 	"sync"
@@ -356,5 +357,149 @@ func TestGIFPickerSmallLane(t *testing.T) {
 		}
 	case <-time.After(20 * time.Second):
 		t.Fatal("the GIF picker's preview waited for the big-decode slot")
+	}
+}
+
+// gifKeys draws every key of keys (gifAnimGet, as the GIF tab's tiles do)
+// every 20 ms until all are ready or d passes, and reports whether they
+// were.
+func gifKeys(urls []string, px int, d time.Duration) bool {
+	for end := time.Now().Add(d); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		ready := 0
+		for _, u := range urls {
+			if _, ok := gifAnimGet(nil, u, px, time.Now()); ok {
+				ready++
+			}
+		}
+		if ready == len(urls) {
+			return true
+		}
+	}
+	return false
+}
+
+func gifKept() (n, kept int) {
+	gifAnims.mu.Lock()
+	defer gifAnims.mu.Unlock()
+	return len(gifAnims.m), gifAnims.kept
+}
+
+// photo48MP is a valid 48 MP (8064×6048) baseline 4:2:0 JPEG: a phone
+// photo, 73 MB to decode.
+func photo48MP(t *testing.T) []byte {
+	t.Helper()
+	m := image.NewYCbCr(image.Rect(0, 0, 8064, 6048), image.YCbCrSubsampleRatio420)
+	for i := range m.Y {
+		m.Y[i] = byte(i)
+	}
+	var b bytes.Buffer
+	if err := jpeg.Encode(&b, m, &jpeg.Options{Quality: 75}); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
+}
+
+// TestGIFPickerCloseReleasesFrames: the GIF tab's kept frames (charged to
+// the decode memory as kept, never given back on demand) are let go when
+// the picker closes, so a 48 MP photo decodes after it, as on ui. Nine
+// 120-frame previews at 2x keep 169 MB: with them still charged, the
+// photo's 73 MB doesn't fit what's left of the 224 MiB a decode may hold,
+// and it fails busy.
+func TestGIFPickerCloseReleasesFrames(t *testing.T) {
+	t.Cleanup(gifAnimReleaseAll)
+	photo := photo48MP(t)
+	serveGIF(t, manyFrameGIF(200, 200, 120))
+	var urls []string
+	for i := 0; i < 9; i++ {
+		urls = append(urls, fmt.Sprintf("https://media.giphy.com/media/close%d/200w.gif", i))
+		if !gifKeys(urls, 198, 60*time.Second) { // the tiles on screen, as one more loads
+			t.Fatalf("the picker's %d previews didn't all load", len(urls))
+		}
+	}
+	if _, kept := gifKept(); kept < 160<<20 {
+		t.Fatalf("the open picker keeps %d bytes of frames, want the nine previews' ~169 MB", kept)
+	}
+	p := &EmojiPicker{}
+	p.setGifMode(true) // the GIF tab was shown
+	p.gifMode = true
+	p.Dismiss()
+	if n, kept := gifKept(); n != 0 || kept != 0 {
+		t.Fatalf("after the picker closed: %d animations keep %d bytes, want none", n, kept)
+	}
+	img, err := imgcache.Decode(photo)
+	if err != nil {
+		t.Fatalf("a 48 MP photo after the GIF picker closed: %v", err)
+	}
+	if img.Bounds().Dx() != 8064 {
+		t.Errorf("decoded %v, want 8064 wide", img.Bounds())
+	}
+}
+
+// TestGIFPickerTabHideReleases: switching the picker from its GIF tab back
+// to emoji lets the animations go too.
+func TestGIFPickerTabHideReleases(t *testing.T) {
+	t.Cleanup(gifAnimReleaseAll)
+	serveGIF(t, manyFrameGIF(100, 100, 10))
+	if !gifKeys([]string{"https://media.giphy.com/media/tab/200w.gif"}, 64, 30*time.Second) {
+		t.Fatal("the preview didn't load")
+	}
+	p := &EmojiPicker{}
+	p.setGifMode(true)
+	p.setGifMode(false)
+	if n, kept := gifKept(); n != 0 || kept != 0 {
+		t.Errorf("after the GIF tab hid: %d animations keep %d bytes, want none", n, kept)
+	}
+}
+
+// TestGIFPickerIdleSweep: an animation no tile has drawn for gifAnimIdle is
+// let go by the sweep, without the picker closing (an owner that just
+// stops drawing it).
+func TestGIFPickerIdleSweep(t *testing.T) {
+	t.Cleanup(gifAnimReleaseAll)
+	serveGIF(t, manyFrameGIF(100, 100, 10))
+	if !gifKeys([]string{"https://media.giphy.com/media/idle/200w.gif"}, 64, 30*time.Second) {
+		t.Fatal("the preview didn't load")
+	}
+	for end := time.Now().Add(gifAnimIdle * 4); time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
+		if n, kept := gifKept(); n == 0 && kept == 0 {
+			return
+		}
+	}
+	n, kept := gifKept()
+	t.Errorf("%v after it was last drawn, %d animations still keep %d bytes", gifAnimIdle*4, n, kept)
+}
+
+// TestGIFPickerBusyRetries: a preview the decode memory is too full for
+// isn't failed for good: once the memory frees, a later draw loads it and
+// it animates. Mark busy previews failed and it never does.
+func TestGIFPickerBusyRetries(t *testing.T) {
+	t.Cleanup(gifAnimReleaseAll)
+	serveGIF(t, manyFrameGIF(200, 200, 120)) // 18.8 MB of frames at 198 px: past the reserve
+	hold := imgcache.NewKeepBudget()
+	if err := hold.Charge(imgcache.MaxDecode); err != nil {
+		t.Fatalf("filling the decode memory: %v", err)
+	}
+	u := "https://media.giphy.com/media/busy/200w.gif"
+	k := gifAnimKey{u, 198}
+	gifAnimGet(nil, u, 198, time.Now())
+	busy := false
+	for end := time.Now().Add(30 * time.Second); !busy && time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		gifAnimGet(nil, u, 198, time.Now())
+		gifAnims.mu.Lock()
+		a := gifAnims.m[k]
+		busy = a != nil && a.busy && !a.loading
+		failed := a != nil && a.failed
+		gifAnims.mu.Unlock()
+		if failed {
+			hold.Release()
+			t.Fatal("a preview the decode memory was too full for was failed for good")
+		}
+	}
+	hold.Release()
+	if !busy {
+		t.Fatal("the preview never found the decode memory busy")
+	}
+	if !gifKeys([]string{u}, 198, 30*time.Second) {
+		t.Fatal("the preview didn't animate once the decode memory freed")
 	}
 }

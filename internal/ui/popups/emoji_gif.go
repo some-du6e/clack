@@ -86,6 +86,9 @@ func (p *EmojiPicker) setGifMode(on bool) {
 		return
 	}
 	p.gifMode = on
+	if !on { // the GIF tab hid: its animations' memory comes back
+		gifAnimReleaseAll()
+	}
 	p.hover, p.press, p.pressed, p.ptrIn = epNoCell, epNoCell, false, false
 	p.toneUI.open = false
 	p.prevID = -1
@@ -98,6 +101,17 @@ func (p *EmojiPicker) setGifMode(on bool) {
 			g.rowFn = p.gifRow
 		}
 	}
+}
+
+// Dismiss closes the picker (base.Dismiss), letting its GIF tab's
+// animations go once it has shown them: their frames' decode memory comes
+// back at once. (A picker its owner stops drawing without closing it has
+// them let go by gifAnimSweep.)
+func (p *EmojiPicker) Dismiss() {
+	if p.gif.rowFn != nil { // its GIF tab was opened
+		gifAnimReleaseAll()
+	}
+	p.base.Dismiss()
 }
 
 // gifFetch loads the first page for q, or (more) the next page of the

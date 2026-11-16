@@ -420,3 +420,50 @@ func TestFreeGivesBack(t *testing.T) {
 	}
 	b.Release()
 }
+
+// TestSmallLaneComesBack: a small-lane decode (NewSmallContext: the GIF
+// picker's previews) never takes the big slot or waits, but its memory is
+// a decode's, given back when it's done: a big decode waits for it, where
+// it fails at once on players'. Count the small lane as players and the
+// big charge fails at once.
+func TestSmallLaneComesBack(t *testing.T) {
+	p := NewPool(1000, 0, 100)
+	p.SetBigWait(5 * time.Second)
+	first := New(p, 1000)
+	if err := first.Charge(200); err != nil { // holds the big slot
+		t.Fatal(err)
+	}
+	lane := NewSmallContext(context.Background(), p, 1000)
+	done := make(chan error, 1)
+	go func() { done <- lane.Charge(700) }() // past Small: doesn't wait for the slot
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a small-lane charge past Small with the slot held: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a small-lane decode waited for the big slot")
+	}
+	if lane.Big() || p.Players() != 0 {
+		t.Errorf("the small-lane budget took the slot (%v) or counts as players (%d)", lane.Big(), p.Players())
+	}
+	first.Release()
+	big := New(p, 1000)
+	got := make(chan error, 1)
+	go func() { got <- big.Charge(500) }() // 700 + 500 > 1000: waits for the lane's
+	select {
+	case err := <-got:
+		t.Fatalf("the big charge returned (%v) instead of waiting for the small-lane decode", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	lane.Release()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Errorf("the big charge once the small-lane decode finished: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the big charge didn't wake when the small-lane decode gave its memory back")
+	}
+	big.Release()
+}

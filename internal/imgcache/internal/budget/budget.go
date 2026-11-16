@@ -27,7 +27,9 @@
 // decodes hold could cover it: memory players hold (NewPlayer: animation
 // players, the GIF picker's kept frames) isn't given back while they
 // play, so a shortfall only they could cover fails at once. Players never
-// take the slot or wait. A budget made with NewContext stops waiting (for
+// take the slot or wait, and nor do small-lane decodes (NewSmallContext:
+// many at once, the GIF picker's previews), whose memory, unlike players',
+// counts as coming back. A budget made with NewContext stops waiting (for
 // the slot or for memory), and charges nothing more, once its context is
 // done.
 package budget
@@ -169,7 +171,8 @@ type Budget struct {
 	limit  int64
 	used   int64
 	closed bool
-	player bool // never takes the big slot or waits (holds memory while it plays)
+	player bool // never takes the big slot or waits; holds memory while it plays (Players)
+	lane   bool // small lane: never takes the big slot or waits; gives its memory back
 	slot   bool // holds the pool's big slot
 	// ctx (NewContext) ends its waits and its charges once done
 	ctx context.Context
@@ -198,10 +201,14 @@ func NewPlayer(p *Pool, limit int64) *Budget {
 	return &Budget{pool: p, limit: min(limit, p.MaxBudget()), player: true}
 }
 
-// NewPlayerContext is NewPlayer whose charges fail once ctx is done.
-func NewPlayerContext(ctx context.Context, p *Pool, limit int64) *Budget {
-	b := NewPlayer(p, limit)
-	b.ctx = ctx
+// NewSmallContext is a small-lane decode's budget: as NewContext, but it
+// never takes the big slot nor waits for memory (it fails busy at once),
+// so many of them at once (the GIF picker's previews) never queue behind,
+// or hold up, the big decodes. Its memory is a decode's, given back when
+// it's done: a waiting big decode waits for it (not Players).
+func NewSmallContext(ctx context.Context, p *Pool, limit int64) *Budget {
+	b := NewContext(ctx, p, limit)
+	b.lane = true
 	return b
 }
 
@@ -268,7 +275,7 @@ func (b *Budget) Charge(n int64) error {
 		b.mu.Unlock()
 		return nil
 	}
-	if !b.player && !b.slot && b.used+n > p.small {
+	if !b.player && !b.lane && !b.slot && b.used+n > p.small {
 		// a big decode now: after the big decodes before it, unless its
 		// context ends first
 		b.mu.Unlock()
@@ -302,7 +309,7 @@ func (b *Budget) Charge(n int64) error {
 			b.mu.Unlock()
 			return nil
 		}
-		if freed == nil { // small, or a player: never waits
+		if freed == nil { // small, the small lane, or a player: never waits
 			b.mu.Unlock()
 			return fmt.Errorf("%w: %d bytes more, %d of %d held", ErrBusy, n, p.Used(), p.limit)
 		}

@@ -357,7 +357,7 @@ jobs:
         run: go test -count=$COUNT -v -run '^(TestCopyImage|TestStandInReasons|TestLightboxShowsThumbnailForOverCapOriginal|TestGIFPicker)' ./internal/ui/popups
       - name: imgcache and its budget
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -v -run '^(TestBig|TestContextEndsWaits|TestFreeGivesBack|TestHeldBytesInCacheBudget|TestBusyRetryDoesntRefetch|TestPressureEndsInALoad|TestSustainedPressureNoEndlessSpinner)' ./internal/imgcache ./internal/imgcache/internal/budget
+        run: go test -count=$COUNT -v -run '^(TestBig|TestSmallLane|TestContextEndsWaits|TestFreeGivesBack|TestHeldBytesInCacheBudget|TestBusyRetryDoesntRefetch|TestPressureEndsInALoad|TestSustainedPressureNoEndlessSpinner)' ./internal/imgcache ./internal/imgcache/internal/budget
 
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
