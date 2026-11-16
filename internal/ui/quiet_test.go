@@ -2,7 +2,9 @@ package ui
 
 import (
 	"encoding/json"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,6 +46,30 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 		}
 		return nil, "", false
 	})
+	// who asks for frames while the ticks run (Invalidate's callers, the
+	// animation repaints included), for the log
+	var record atomic.Bool
+	var srcMu sync.Mutex
+	sources := map[string]int{}
+	invalidateHook = func(*App) {
+		if !record.Load() {
+			return
+		}
+		pcs := make([]uintptr, 16)
+		fr := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)]) // past Invalidate or animReady
+		var names []string
+		for len(names) < 4 {
+			f, more := fr.Next()
+			names = append(names, strings.TrimPrefix(f.Function, "github.com/some-du6e/clack/internal/"))
+			if !more {
+				break
+			}
+		}
+		srcMu.Lock()
+		sources[strings.Join(names, " < ")]++
+		srcMu.Unlock()
+	}
+	t.Cleanup(func() { invalidateHook = nil })
 	home := t.TempDir()
 	t.Setenv("CLACK_HOME", home)
 	e := startEnv(t, fs, home)
@@ -98,6 +124,7 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	// the ticks: a frame each time the image cache's animation repaint
 	// fires (as the window's loop draws one), for 1.5 s
 	laid0, adv0 := e.a.FrameSeq(), e.a.images.Stats().Advances
+	record.Store(true)
 	quiet, full := 0, 0
 	why := map[string]int{} // the laid-out frames, by what else asked for them
 	for dl := time.Now().Add(1500 * time.Millisecond); time.Now().Before(dl); {
@@ -113,8 +140,14 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 		}
 		askedAt, asked = e.r.WakeupTime()
 	}
+	record.Store(false)
 	laid, adv := e.a.FrameSeq()-laid0, e.a.images.Stats().Advances-adv0
 	t.Logf("1.5 s of ticks: %d quiet, %d laid out (%d layouts; why: %v), %d animation frames shown", quiet, full, laid, why, adv)
+	srcMu.Lock()
+	for src, n := range sources {
+		t.Logf("  %3d× %s", n, src)
+	}
+	srcMu.Unlock()
 	if quiet < 15 {
 		t.Errorf("%d ticks were quiet and %d laid the window out (%d layouts): an animation tick should lay nothing out", quiet, full, laid)
 	}
