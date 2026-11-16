@@ -924,9 +924,11 @@ jobs:
           echo "::notice title=windows-applog's window steps::the title bar tests failed $titlebar times in $COUNT rounds; the drops and typed text $other times"
           exit $(( titlebar > 0 ))
 
-  # patched-tree-clicks: Block Kit clicks on a channel row under a plugin
-  # patching Message (TestVoteButtonsSurviveUpdates' ThreadReplyGeneric+
-  # Message variant), the diagnostic logging every frame of each click.
+  # patched-tree-clicks: Block Kit clicks and redraws on rows under a
+  # plugin patching Message / ThreadReplyGeneric, whose own msg override
+  # went back to JS as their props (row.wrapped) and kept an updated row
+  # bouncing between two revisions (lost clicks, α.92's redraw timeouts);
+  # the lockstep variants make that timing happen every run
   patched-clicks:
     if: ${{ !inputs.only || startsWith('patched-clicks', inputs.only) }}
     runs-on: ubuntu-latest
@@ -940,7 +942,5 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: messages (the vote row's clicks, frame by frame)
-        env:
-          CLACK_VOTE_DIAG: "1"
-        run: go test -count=1 -v -timeout 20m -run 'TestVoteClickDiag$' ./internal/ui/messages
+      - name: messages (vote buttons through message updates, patched Message props)
+        run: go test -count=$COUNT -timeout 60m -run 'TestVoteButtonsSurviveUpdates$|TestMessagePatchGetsWrappersMsg$' ./internal/ui/messages
