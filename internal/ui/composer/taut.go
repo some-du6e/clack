@@ -56,6 +56,12 @@ func SetTaut(t *taut.Taut) {
 	tautRef.Store(t)
 }
 
+// SwapTaut puts t in the plugin system's place and returns the one that
+// was there, without extending or detaching either (the introduction's
+// preview lays a second App's composer out with none: intro_preview.go).
+// UI goroutine.
+func SwapTaut(t *taut.Taut) *taut.Taut { return tautRef.Swap(t) }
+
 // currentTaut is the plugin system, or nil. Every *taut.Taut method the
 // composer uses on the hot path is nil-safe or guarded here.
 func currentTaut() *taut.Taut { return tautRef.Load() }

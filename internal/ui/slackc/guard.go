@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"gioui.org/layout"
 )
@@ -19,15 +20,19 @@ import (
 // changed (internal/taut's PatchGuard now catches them), and Go drew
 // nothing for the component.
 
-// unpatched counts the Unpatched calls in progress (UI goroutine).
-var unpatched int
+// unpatchedN counts the Unpatched calls in progress (UI goroutine; atomic
+// because Patched reads it and may be asked from any goroutine).
+var unpatchedN atomic.Int32
+
+func unpatched() bool { return unpatchedN.Load() > 0 }
 
 // Unpatched runs draw with every Slack component boundary drawn by its
 // native, as though no plugin patched anything (no plugin trees, no
-// reserved slots), and returns what draw returned. UI goroutine.
+// reserved slots), and returns what draw returned; Patched says false
+// meanwhile. UI goroutine.
 func Unpatched(draw func() layout.Dimensions) layout.Dimensions {
-	unpatched++
-	defer func() { unpatched-- }()
+	unpatchedN.Add(1)
+	defer unpatchedN.Add(-1)
 	return draw()
 }
 

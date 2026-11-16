@@ -136,8 +136,8 @@ func TestUnpatchedRemountKeyed(t *testing.T) {
 	if d := Unpatched(draw); d.Size.Y != 40 || n.calls != 1 || n.props[0] != nil {
 		t.Errorf("Unpatched: drew %v, native called %d times with %v", d.Size, n.calls, n.props)
 	}
-	if unpatched != 0 {
-		t.Errorf("unpatched left at %d", unpatched)
+	if n := unpatchedN.Load(); n != 0 {
+		t.Errorf("unpatched left at %d", n)
 	}
 	// an empty tree
 	if err := Deliver(root, []byte(`[]`)); err != nil {

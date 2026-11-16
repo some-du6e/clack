@@ -440,6 +440,8 @@ func TestIntroVideo(t *testing.T) {
 	e := newIntroEnv(t, a, sz)
 	record("intro", 60, e, func(step func(time.Duration), kf func(string)) {
 		step(400 * time.Millisecond)
+		// the "your Slack" beat's live app: up before the clock runs on
+		waitReal(t, e, "the introduction's preview", 60*time.Second, a.intro.preview.ready)
 		marks := []struct {
 			at    time.Duration
 			label string
@@ -488,6 +490,7 @@ func TestIntroVideo(t *testing.T) {
 		b.replayIntro()
 		step(300 * time.Millisecond)
 		kf("fading-in")
+		waitReal(t, e, "the replay's preview", 60*time.Second, b.intro.preview.ready)
 		for b.intro != nil && b.intro.cur != beatFinal {
 			step(time.Second / 60)
 		}

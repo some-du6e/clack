@@ -121,6 +121,7 @@ type hub struct {
 	// frame is the latest frame a list drew at (markDrawn): the models
 	// drawn then are the ones on screen
 	frame time.Time
+	unsub func() // ends the event subscription (Release)
 }
 
 // markDrawn notes that a list drew m in the frame at (gtx.Now).
@@ -194,10 +195,39 @@ func hubFor(h Host) *hub {
 	hb := &hub{h: h, app: app, chans: map[string]*model{}, thread: map[string]*model{}}
 	hubs[app] = hb
 	if app != nil {
-		evs, _ := app.Subscribe()
+		evs, unsub := app.Subscribe()
+		hb.unsub = unsub
 		go hb.run(evs)
 	}
 	return hb
+}
+
+// Release forgets app's lists (their models, its event subscription and
+// any Isolate) when app goes for good: the introduction's preview core,
+// torn down with the introduction. UI goroutine.
+func Release(app *core.App) {
+	isolated.Delete(app)
+	hubsMu.Lock()
+	hb := hubs[app]
+	delete(hubs, app)
+	hubsMu.Unlock()
+	if hb != nil && hb.unsub != nil {
+		hb.unsub()
+	}
+	for k, s := range listCache {
+		if s.hb == hb {
+			delete(listCache, k)
+		}
+	}
+}
+
+// SwapLastHost puts h in the place of the last list's Host and returns
+// the one that was there (intro_preview.go: the window's lists stay the
+// last host the plugins' host components reach). UI goroutine.
+func SwapLastHost(h Host) Host {
+	old := lastHost
+	lastHost = h
+	return old
 }
 
 // invalidate asks the current host for a frame. hubFor swaps hb.h under

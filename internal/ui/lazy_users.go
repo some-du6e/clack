@@ -28,7 +28,12 @@ func installMemberRead(c *core.App) {
 	memberReadOwner.mu.Lock()
 	defer memberReadOwner.mu.Unlock()
 	memberReadOwner.c = c
-	richview.SetMemberRead(func(id string) (string, richview.MemberMiss) {
+	richview.SetMemberRead(memberReadFor(c))
+}
+
+// memberReadFor is richview's member read over c's store.
+func memberReadFor(c *core.App) richview.MemberRead {
+	return func(id string) (string, richview.MemberMiss) {
 		u, ok := c.S.User(id) // getMemberById: a miss is asked for, a hit is an access
 		switch {
 		case ok:
@@ -41,7 +46,7 @@ func installMemberRead(c *core.App) {
 			return "", richview.MemberGone // BaseMissingMember "non-existent"
 		}
 		return "", richview.MemberLoading // the unknown stub until "names"
-	})
+	}
 }
 
 // uninstallMemberRead removes the hook if c's backend installed it last.
