@@ -22,6 +22,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"image"
 	"image/draw"
 	_ "image/gif"
@@ -73,7 +74,16 @@ type Cache struct {
 	// asked for (under mu). A goroutine per request waiting its turn cost
 	// 8 KB of stack each: scrolling the emoji picker through Hack Club's
 	// 65,000 emoji parked 30,000 of them, 250 MB.
+	//
+	// An image asked for again while it waits (Get draws it every frame:
+	// it's on screen) also goes in its lane's hot queue, which the workers
+	// take first: the emoji of the message list don't wait behind the
+	// thousands a picker scroll or the last channel left queued. A hot one
+	// nobody drew in the last animGrace by the time its turn comes goes
+	// back to its place in the queue. Every queued image still loads.
 	queue   [2][]key
+	hot     [2][]key
+	waiting map[key]queued // queued, not started yet
 	workers [2]int
 	ctx     context.Context
 
@@ -95,10 +105,34 @@ type Cache struct {
 // image on screen comes back on its own after a dropped connection, a
 // timeout or a 5xx, instead of staying a placeholder until something else
 // redraws the window.
+//
+// A final failure (bytes that arrived whole and don't decode:
+// ErrUndecodable) is never tried again while the account is signed in:
+// the same bytes would fail the same way. Slack's <img> doesn't retry an
+// onError either.
 type failure struct {
 	at    time.Time
 	n     int
 	retry time.Time
+	final bool
+}
+
+// ErrUndecodable marks bytes in an image format this package reads
+// (PNG, JPEG, GIF, WebP) that don't decode: a final failure, never
+// retried. Before it, an animated WebP behind a .png URL (x/image/webp
+// reads only stills) failed with "webp: invalid format", which wasn't
+// permanent, so the emoji was fetched again every minute for good and
+// stayed a blank tile.
+var ErrUndecodable = errors.New("imgcache: undecodable image")
+
+// undecodable wraps a format decoder's error as ErrUndecodable; ErrTooBig
+// and image.ErrFormat (not an image at all, e.g. an error page) stay as
+// they are.
+func undecodable(err error) error {
+	if err == nil || errors.Is(err, ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, ErrUndecodable) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrUndecodable, err)
 }
 
 // Retry backoff: RetryMin doubling up to RetryMax for errors that may pass
@@ -125,7 +159,7 @@ func retryAfter(n int, err error) time.Duration {
 // permanent reports errors a retry can't fix: undecodable or oversized
 // bytes and URLs the fetchers refuse.
 func permanent(err error) bool {
-	if errors.Is(err, ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, ErrBlockedAddr) {
+	if errors.Is(err, ErrTooBig) || errors.Is(err, image.ErrFormat) || errors.Is(err, ErrBlockedAddr) || errors.Is(err, ErrUndecodable) {
 		return true
 	}
 	s := err.Error()
@@ -332,7 +366,7 @@ func (c *Cache) sweep(cutoff int64) {
 	for k, f := range c.failed {
 		// a failure nobody asked about since (its retry is long due) goes;
 		// one still backing off stays, or the backoff would start over
-		if f.retry.UnixMilli() < cutoff {
+		if !f.final && f.retry.UnixMilli() < cutoff {
 			delete(c.failed, k)
 		}
 	}
@@ -384,7 +418,7 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	} else {
 		e := c.deriveLocked(k)
 		if e == nil {
-			c.startLocked(k)
+			c.startLocked(k, true)
 			return paint.ImageOp{}, false
 		}
 		// the exact decode replaces it: always for a standard emoji's own
@@ -394,7 +428,7 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 		c.putLocked(e)
 		c.evict()
 		if e.interim {
-			c.startLocked(k)
+			c.startLocked(k, true)
 		}
 		if el, ok = c.entries[k]; !ok {
 			return e.op, true
@@ -480,7 +514,7 @@ func (c *Cache) Prefetch(url string, sizePx int) {
 	c.mu.Lock()
 	k := key{url, sizePx}
 	if _, ok := c.entries[k]; !ok {
-		c.startLocked(k)
+		c.startLocked(k, false)
 	}
 	c.mu.Unlock()
 }
@@ -497,23 +531,42 @@ func (c *Cache) Failed(url string, sizePx int) bool {
 	return ok
 }
 
-func (c *Cache) startLocked(k key) {
+// startLocked queues k's load. drawn: Get asked (it's on screen), not
+// Prefetch; asked again while it waits, it moves to the hot queue.
+func (c *Cache) startLocked(k key, drawn bool) {
 	if c.inflight[k] {
+		if w, ok := c.waiting[k]; ok && drawn {
+			w.asked = time.Now().UnixMilli()
+			if !w.hot {
+				w.hot = true
+				lane := laneOf(k)
+				c.hot[lane] = append(c.hot[lane], k)
+			}
+			c.waiting[k] = w
+		}
 		return
 	}
-	if f, ok := c.failed[k]; ok && time.Now().Before(f.retry) {
+	if f, ok := c.failed[k]; ok && (f.final || time.Now().Before(f.retry)) {
 		return
 	}
 	c.inflight[k] = true
-	lane := laneOther
-	if DiskOK(k.url) {
-		lane = laneSmall
+	lane := laneOf(k)
+	if c.waiting == nil {
+		c.waiting = map[key]queued{}
 	}
+	c.waiting[k] = queued{asked: time.Now().UnixMilli()}
 	c.queue[lane] = append(c.queue[lane], k)
 	if c.workers[lane] < laneWorkers {
 		c.workers[lane]++
 		go c.work(lane)
 	}
+}
+
+// queued is a waiting load: when Get last asked for it and whether it's
+// in the hot queue.
+type queued struct {
+	asked int64 // unix milliseconds
+	hot   bool
 }
 
 // The fetch lanes (Cache.queue) and how many loads each runs at once.
@@ -523,23 +576,60 @@ const (
 	laneWorkers = 8
 )
 
-// work loads the lane's queued images in order until it is empty.
+func laneOf(k key) int {
+	if DiskOK(k.url) {
+		return laneSmall
+	}
+	return laneOther
+}
+
+// work loads the lane's queued images until it is empty: the hot queue's
+// first, then the rest in the order they were asked for.
 func (c *Cache) work(lane int) {
 	for {
 		c.mu.Lock()
-		q := c.queue[lane]
-		if len(q) == 0 {
-			c.queue[lane] = nil // a drained burst's array goes too
+		k, ok := c.nextLocked(lane)
+		if !ok {
+			c.queue[lane], c.hot[lane] = nil, nil // a drained burst's arrays go too
 			c.workers[lane]--
 			c.mu.Unlock()
 			return
 		}
-		k := q[0]
-		q[0] = key{}
-		c.queue[lane] = q[1:]
+		delete(c.waiting, k)
 		c.mu.Unlock()
 		c.load(k)
 	}
+}
+
+// nextLocked takes the lane's next load: the first hot one still drawn,
+// else the queue's first not started yet (a hot one started already is
+// still in the queue too, and skipped there).
+func (c *Cache) nextLocked(lane int) (key, bool) {
+	ms := time.Now().UnixMilli()
+	for h := c.hot[lane]; len(h) > 0; h = c.hot[lane] {
+		k := h[0]
+		h[0] = key{}
+		c.hot[lane] = h[1:]
+		w, ok := c.waiting[k]
+		if !ok || !w.hot {
+			continue
+		}
+		if ms-w.asked > animGrace.Milliseconds() { // off screen now: back to its turn
+			w.hot = false
+			c.waiting[k] = w
+			continue
+		}
+		return k, true
+	}
+	for q := c.queue[lane]; len(q) > 0; q = c.queue[lane] {
+		k := q[0]
+		q[0] = key{}
+		c.queue[lane] = q[1:]
+		if _, ok := c.waiting[k]; ok {
+			return k, true
+		}
+	}
+	return key{}, false
 }
 
 func (c *Cache) load(k key) {
@@ -552,8 +642,11 @@ func (c *Cache) load(k key) {
 		f.n++
 		f.at = now
 		f.retry = now.Add(retryAfter(f.n, err))
+		f.final = errors.Is(err, ErrUndecodable)
 		c.failed[k] = f
-		c.wakeLocked(f.retry) // the surface asks again when the retry is due
+		if !f.final {
+			c.wakeLocked(f.retry) // the surface asks again when the retry is due
+		}
 	} else {
 		delete(c.failed, k)
 		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().UnixMilli(), px: px}
@@ -755,20 +848,22 @@ func (c *Cache) rawFor(k key) ([]byte, func(), error) {
 	return data, save, err
 }
 
-// loadImage decodes k. A GIF decodes its first frame only (gifstream.go);
-// an animated one also returns its bytes and their index (anim.go).
+// loadImage decodes k. A GIF or an animated WebP decodes its first frame
+// only (gifstream.go, webpanim.go); an animated one also returns its
+// bytes and their index (anim.go). Bytes that don't decode are
+// ErrUndecodable.
 func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
 	data, save, err := c.rawFor(k)
 	if err != nil {
 		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
 	}
-	if isGIF(data) {
+	if isAnim(data) {
 		if err := checkSize(data); err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
 		}
-		ix, err := indexGIF(data)
+		ix, err := indexAnim(data)
 		if err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
 		}
 		if ix.w*ix.h > bigPixels { // its canvas, as a big image's decode
 			bigSem <- struct{}{}
@@ -776,6 +871,9 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, [
 		}
 		d := newGIFDecoder(ix, data)
 		d.compose()
+		if d.werr != nil { // an animated WebP whose first frame doesn't decode
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(d.werr)
+		}
 		still := image.NewRGBA(image.Rectangle{Max: scaledSize(ix.w, ix.h, k.size)})
 		var sc frameScaler
 		sc.scale(still, d.canvas)
@@ -797,7 +895,7 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, [
 	}
 	img, err := Decode(data)
 	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
+		return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
 	}
 	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)

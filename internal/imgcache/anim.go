@@ -36,6 +36,9 @@ import (
 //     draws stills only. GetPlaying plays a GIF anyway: Slack's
 //     PlayPauseAnimations, the still's play button.
 //
+// An animated WebP (webpanim.go) plays the same way, through the same
+// index, decoder and players.
+//
 // Frames play for their GIF delays (10 ms or less as 100 ms), the loop
 // count is honoured (no NETSCAPE2.0 block: once; the last frame then
 // stays), and a frame that's late shows when its decode is ready: a slow
@@ -65,7 +68,7 @@ var animSem = make(chan struct{}, max(2, min(4, runtime.GOMAXPROCS(0))))
 
 func isGIF(data []byte) bool { return bytes.HasPrefix(data, []byte("GIF8")) }
 
-// gifSource is an animated GIF's encoded bytes and their index.
+// gifSource is an animated GIF's (or WebP's) encoded bytes and their index.
 type gifSource struct {
 	data []byte
 	ix   *gifIndex
@@ -229,7 +232,7 @@ func (c *Cache) startPlay(k key, forced bool) {
 		var data []byte
 		if data, _, err = c.rawFor(k); err == nil {
 			var ix *gifIndex
-			if ix, err = indexGIF(data); err == nil {
+			if ix, err = indexAnim(data); err == nil {
 				src = &gifSource{data: data, ix: ix}
 			}
 		}
