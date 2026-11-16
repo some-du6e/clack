@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -362,6 +363,9 @@ globalThis.__runTests = async () => {
 // uses (Slick's OfficeHours builds its windows with getHours/setHours). It
 // runs itself again with TZ pinned to a zone that isn't UTC.
 func TestLocalTimeZone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Go reads the local zone from the registry on Windows: TZ doesn't set time.Local")
+	}
 	if os.Getenv("JSRT_TZ_CHILD") == "" {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestLocalTimeZone$", "-test.count=1", "-test.v")
 		cmd.Env = append(os.Environ(), "JSRT_TZ_CHILD=1", "TZ=America/New_York")

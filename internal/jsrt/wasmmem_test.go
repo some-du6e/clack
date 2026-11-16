@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"runtime/metrics"
 	"strings"
 	"testing"
@@ -66,6 +67,7 @@ func growJS(t *testing.T, heap bool, bufs int) growth {
 	g.reservedOK = g.snap.WasmReserved >= g.snap.WasmMemory && g.snap.WasmMemory == uint64(g.memAfter)
 	r.Close() // the next run measures without this one's memory
 	<-r.Done()
+	debug.FreeOSMemory() // nor the Go heap it left behind (macOS pages slowly under pressure)
 	return g
 }
 
