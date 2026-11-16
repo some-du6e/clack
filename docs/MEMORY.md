@@ -31,6 +31,7 @@ Slack's web client bounds its own caches with a CacheManager (client-boot `WcSL`
 | emoji picker index | dropped 5 minutes after the last use | Clack |
 | font glyphs | parsed as they're used; in-memory fonts' tables read in place | go-text patches (`third_party/typesetting`) |
 | Go heap | soft limit 768 MiB (`GOMEMLIMIT` wins); a backstop, not a budget | Go runtime |
+| plugin JS engine (wasm memory) | QuickJS's heap limit 512 MiB, the wasm memory capped at 1 GiB; outside the Go heap since 2026-11-16 (below) | jsrt (`Options.MemoryLimit`) |
 | users saved in `meta.json` | the viewer and the 1,000 fetched most recently (`store.MaxSavedUsers`); anyone else is fetched when a message, mention or profile needs them | Slack persists its members store (`ukWt` persistenceEnabled), which its members cache bounds |
 
 Slack's other managers: `channels` 200 → 100, `files` 250 → 200.
@@ -163,6 +164,10 @@ perf.yml run 43448329808 (`jobs: scale`, `scale_base: 3bb45cbd`, idle 10 minutes
 | Windows: live Go heap, before → after | 84 → 86 MB | 542 → 481 MB | 489 → 458 MB | 293 → 278 MB |
 
 At startup the session now fetches 76 people instead of about 5,800: the people the first screen draws, not those of the 24 prefetched channels. After the long channels it fetches half as many (the senders, mentions and reply users of the 6,000 messages it scrolled past, no reactors). The users' own heap halves. The rest of the live heap moves from run to run as the earlier sections describe (messages, the plugin engine); the startup heap is the same within noise. Linux scrolls twice as far a frame (`CLACK_PERF_SCROLL_STEP`), so it draws fewer of the rows and fetches fewer people than Windows.
+
+## The plugin engine's memory leaves the Go heap (2026-11-16)
+
+The engine's wasm memory used to be a Go `[]byte` that wazero grew by `append`: it counted in the live Go heap, in heap profiles (the "plugin JS engine (wasm heap)" rows here) and toward the 768 MiB soft limit, and each growth past its capacity copied all of it and left the old slice for the collector (333–520 MB per perf.yml plugins pass, 50–70% of what the process allocated). Since jsrt-mem it lives in address space reserved outside the Go heap and grows in place (`internal/jsrt/wasmmem.go`). So in measurements from then on the live Go heap is smaller by the engine's memory (about 110 MB in perf.yml's plugins session: 330 → 215 MB), heap profiles no longer show it, and it appears with the process's private memory outside the Go heap (Linux smaps' anonymous mappings, Windows' private working set and commit) instead; freeze reports print it on each JS runtime's line, and `jsrt.Snapshots` has it (`WasmMemory`, `WasmReserved`). The engine still never gives memory back while it runs: what it held at its busiest stays (below).
 
 ## The plugin engine's high-water mark (2026-11-13)
 
