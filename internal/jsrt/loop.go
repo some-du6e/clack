@@ -23,7 +23,7 @@ type Runtime struct {
 	cancel context.CancelFunc
 
 	mu       sync.Mutex
-	queue    []func()
+	queue    []task
 	modules  map[string]string
 	wake     chan struct{}
 	done     chan struct{} // closed when the loop exits (or the watchdog gives up on it)
@@ -33,8 +33,9 @@ type Runtime struct {
 	globalMu sync.RWMutex
 	global   map[string]int // window/document listener counts by event type
 
-	goid     atomic.Int64 // JS thread goroutine id
-	deadline atomic.Int64 // unix nanos; the running task is interrupted after it (0 = none)
+	goid     atomic.Int64         // JS thread goroutine id
+	deadline atomic.Int64         // unix nanos; the running task is interrupted after it (0 = none)
+	running  atomic.Pointer[task] // the macrotask on the JS thread, for timeout lines (nil = none)
 
 	interrupts atomic.Uint64 // watchdog interrupts (Interrupts)
 
@@ -117,13 +118,18 @@ func (r *Runtime) Done() <-chan struct{} { return r.done }
 // Post queues f to run on the JS thread. Any goroutine; never blocks. After
 // f returns, pending Promise jobs run and dirty React roots are flushed.
 func (r *Runtime) Post(f func(js *Ctx)) {
-	r.enqueue(func() { f(r.js) })
+	r.enqueue(task{kind: "Post", pc: callerPC(1), f: func() { f(r.js) }})
 }
 
 // Do runs f on the JS thread and waits for it (bounded by Options.Timeout).
 // Called from the JS thread itself (inside a HostFunc, Post or another Do),
 // it runs f inline.
 func (r *Runtime) Do(f func(js *Ctx) error) error {
+	return r.do(task{kind: "Do", pc: callerPC(1)}, f)
+}
+
+// do is Do with t naming the task (t.f is set here).
+func (r *Runtime) do(t task, f func(js *Ctx) error) error {
 	if r.closed.Load() {
 		return ErrClosed
 	}
@@ -131,7 +137,7 @@ func (r *Runtime) Do(f func(js *Ctx) error) error {
 		return f(r.js)
 	}
 	ch := make(chan error, 1)
-	r.enqueue(func() {
+	t.f = func() {
 		defer func() {
 			if p := recover(); p != nil {
 				ch <- fmt.Errorf("jsrt: panic in Do: %v", p)
@@ -139,7 +145,8 @@ func (r *Runtime) Do(f func(js *Ctx) error) error {
 			}
 		}()
 		ch <- f(r.js)
-	})
+	}
+	r.enqueue(t)
 	select {
 	case err := <-ch:
 		return err
@@ -153,9 +160,9 @@ func (r *Runtime) Do(f func(js *Ctx) error) error {
 	}
 }
 
-func (r *Runtime) enqueue(f func()) {
+func (r *Runtime) enqueue(t task) {
 	r.mu.Lock()
-	r.queue = append(r.queue, f)
+	r.queue = append(r.queue, t)
 	r.mu.Unlock()
 	r.signal()
 }
@@ -206,11 +213,11 @@ func (r *Runtime) loop() {
 		q := r.queue
 		r.queue = nil
 		r.mu.Unlock()
-		for _, f := range q {
+		for _, t := range q {
 			if r.closed.Load() {
 				return
 			}
-			r.runTask(f)
+			r.runTask(t)
 		}
 		r.fireTimers()
 		if r.closed.Load() {
@@ -245,16 +252,79 @@ func (r *Runtime) loop() {
 
 // runTask runs one macrotask with a deadline, then the microtask checkpoint
 // and the render flush.
-func (r *Runtime) runTask(f func()) {
+func (r *Runtime) runTask(t task) {
 	defer func() {
 		r.deadline.Store(0)
+		r.running.Store(nil)
 		if p := recover(); p != nil {
 			r.afterPanic(p)
 		}
 	}()
-	r.deadline.Store(time.Now().Add(r.opts.Timeout).UnixNano())
-	f()
+	t.start = time.Now()
+	r.running.Store(&t)
+	r.deadline.Store(t.start.Add(r.opts.Timeout).UnixNano())
+	t.f()
 	r.checkpoint()
+}
+
+// task is one macrotask on the JS thread, and what the timeout lines say
+// about it: ids only (a Call path, a timer id, the Go function that
+// queued a Post or Do), never arguments.
+type task struct {
+	f     func()
+	kind  string  // "Call", "Do", "Post", "timer", "setImmediate", "release"
+	what  string  // the Call's path, the timer's id
+	pc    uintptr // who queued it (Post, Do): a return address, 0 = none
+	start time.Time
+}
+
+// callerPC is the return address into the caller of the function calling
+// callerPC, skip frames further up (callerPC(1) in Post: Post's caller).
+func callerPC(skip int) uintptr {
+	var pc [1]uintptr
+	if runtime.Callers(skip+2, pc[:]) == 0 {
+		return 0
+	}
+	return pc[0]
+}
+
+// label names t for a log line: "Call taut.rtmEvent",
+// "Post from taut.(*Host).render.func1", "timer 12", with how long it has
+// run so far.
+func (t *task) label() string {
+	s := t.kind
+	if t.what != "" {
+		s += " " + t.what
+	}
+	if t.pc != 0 {
+		fr, _ := runtime.CallersFrames([]uintptr{t.pc}).Next()
+		if fn := fr.Function; fn != "" {
+			if i := strings.LastIndexByte(fn, '/'); i >= 0 {
+				fn = fn[i+1:]
+			}
+			s += " from " + fn
+		}
+	}
+	if !t.start.IsZero() {
+		ran := time.Since(t.start) // monotonic
+		s += fmt.Sprintf(", running %v", ran.Round(time.Millisecond))
+		// The deadline is on the wall clock, which goes on while a Mac
+		// sleeps and the monotonic one doesn't: a wide gap is a sleep, not
+		// a slow task.
+		if wall := time.Now().Round(0).Sub(t.start.Round(0)); wall-ran > 2*time.Second {
+			s += fmt.Sprintf(", %v on the wall clock (the system slept?)", wall.Round(time.Second))
+		}
+	}
+	return s
+}
+
+// runningLabel is label() of the task on the JS thread ("" between tasks).
+// Any goroutine.
+func (r *Runtime) runningLabel() string {
+	if t := r.running.Load(); t != nil {
+		return t.label()
+	}
+	return ""
 }
 
 // afterPanic handles a panic on the JS thread: a Go panic in a task is
@@ -303,7 +373,11 @@ func (r *Runtime) watchdog() {
 		case <-tick.C:
 		}
 		if d := r.deadline.Load(); d != 0 && time.Now().UnixNano() > d+int64(grace) {
-			r.opts.Log("error", fmt.Sprintf("jsrt: a task ignored its interrupt for %v past its deadline; abandoning the JS runtime", grace))
+			what := ""
+			if l := r.runningLabel(); l != "" {
+				what = " (" + l + ")"
+			}
+			r.opts.Log("error", fmt.Sprintf("jsrt: a task%s ignored its interrupt for %v past its deadline; abandoning the JS runtime", what, grace))
 			r.Close()
 			r.markDone()
 			return
@@ -372,7 +446,8 @@ func (r *Runtime) fireTimers() {
 	now := time.Now()
 	for len(r.timers) > 0 && !r.timers[0].at.After(now) && !r.closed.Load() {
 		t := heap.Pop(&r.timers).(*timer)
-		r.runTask(func() { r.eng.fireTimer(r.js, t.id) })
+		id := t.id
+		r.runTask(task{kind: "timer", what: strconv.Itoa(id), f: func() { r.eng.fireTimer(r.js, id) }})
 	}
 }
 
