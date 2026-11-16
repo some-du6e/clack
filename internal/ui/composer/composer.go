@@ -459,6 +459,19 @@ func (c *Composer) prepareSend(d *Doc) *Doc {
 
 // ---- layout ----
 
+// LayoutIn is Layout with the composer's plugin components drawn in
+// slackc pane pane (its conversation list's): each place that draws a
+// composer for a conversation has plugin roots of its own, as Slack's
+// ThreadsFlexpane and Threads view each render their own InputContainer.
+// A thread's reply box in the Threads view and the same thread in the
+// pane (a channel in the main and the split view too) shared one root,
+// and the prepareAndSendMessage a plugin wraps called back the composer
+// drawn last: a reply sent from the other was lost.
+func (c *Composer) LayoutIn(gtx layout.Context, pane string) layout.Dimensions {
+	defer slackc.EndPane(slackc.Pane(pane))
+	return c.Layout(gtx)
+}
+
 // Layout draws the composer. Channel/thread composers take the full width
 // they're given (margins included) and size their height to the content;
 // edit composers draw just the box.

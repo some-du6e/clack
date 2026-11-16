@@ -220,8 +220,10 @@ func (s *Store) HuddleTextOpts(channel string) richtext.HuddleTextOpts {
 
 // UserAvatar is richtext.AvatarResolver: a user's 48px picture ("" when
 // unknown, which asks for the member).
-func (s *Store) UserAvatar(id string) string {
-	if u, ok := s.User(id); ok && u != nil {
+func (s *Store) UserAvatar(id string) string { return userAvatar(s.User, id) }
+
+func userAvatar(look userLookup, id string) string {
+	if u, ok := look(id); ok && u != nil {
 		return u.Profile.Image48
 	}
 	return ""
@@ -828,8 +830,14 @@ func avatarTeam(u *slack.User, viewerTeam string) string {
 
 // ---- richtext.Resolver ----
 
-func (s *Store) UserName(id string) string {
-	u, _ := s.User(id) // a miss is asked for
+// userLookup is how a resolver method reads a member: Store.User (a
+// view's read: the hit counts) or peekUser (Peek's: it doesn't).
+type userLookup func(id string) (*slack.User, bool)
+
+func (s *Store) UserName(id string) string { return userName(s.User, id) }
+
+func userName(look userLookup, id string) string {
+	u, _ := look(id) // a miss is asked for
 	return DisplayName(u)
 }
 
@@ -838,8 +846,10 @@ func (s *Store) UserName(id string) string {
 // pref, "Name hidden" for someone in their hidden_users (0OuZ
 // isUserHidden). ok is false for a member not loaded yet, which is noted
 // to be fetched.
-func (s *Store) MemberName(id string) (string, bool) {
-	u, ok := s.User(id) // a miss is asked for
+func (s *Store) MemberName(id string) (string, bool) { return s.memberName(s.User, id) }
+
+func (s *Store) memberName(look userLookup, id string) (string, bool) {
+	u, ok := look(id) // a miss is asked for
 	if !ok || u == nil {
 		return "", false
 	}
@@ -856,8 +866,10 @@ func (s *Store) MemberName(id string) (string, bool) {
 // MemberRealName is richtext.RealNamer: the member's real name, as the
 // member tokens Slack draws with forceRealName print it (a work object's
 // user fields), else their display name; "" for a member not loaded yet.
-func (s *Store) MemberRealName(id string) string {
-	u, ok := s.User(id) // a miss is asked for
+func (s *Store) MemberRealName(id string) string { return memberRealName(s.User, id) }
+
+func memberRealName(look userLookup, id string) string {
+	u, ok := look(id) // a miss is asked for
 	if !ok || u == nil {
 		return ""
 	}
@@ -879,8 +891,10 @@ func firstNonEmptyName(v ...string) string {
 // MemberAvatar is richtext.MemberNamer: the member's own picture for a
 // 36px avatar (ConnectedBaseAvatar asks for twice that), the image
 // message rows draw; "" for a member not loaded yet.
-func (s *Store) MemberAvatar(id string) string {
-	u, ok := s.User(id)
+func (s *Store) MemberAvatar(id string) string { return s.memberAvatar(s.User, id) }
+
+func (s *Store) memberAvatar(look userLookup, id string) string {
+	u, ok := look(id)
 	if !ok || u == nil {
 		return ""
 	}
@@ -908,7 +922,11 @@ func hiddenUser(raw json.RawMessage, id string) bool {
 	return false
 }
 
-func (s *Store) ChannelName(id string) string {
+func (s *Store) ChannelName(id string) string { return s.channelName(id, true) }
+
+// channelName is ChannelName; a DM's name is its partner's, read as a hit
+// when touch (a view's read) and not otherwise (Peek).
+func (s *Store) channelName(id string, touch bool) string {
 	s.mu.RLock()
 	c, ok := s.Convs[id]
 	if !ok {
@@ -917,7 +935,13 @@ func (s *Store) ChannelName(id string) string {
 	if ok {
 		if c.IsIM {
 			partner, name := c.User, c.Name
-			u, known := s.lookupLocked(partner, time.Now().UnixMilli())
+			var u *slack.User
+			var known bool
+			if touch {
+				u, known = s.lookupLocked(partner, time.Now().UnixMilli())
+			} else {
+				u, known = s.peekLocked(partner)
+			}
 			s.mu.RUnlock()
 			s.afterLookup(partner, known)
 			if u != nil {

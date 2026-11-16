@@ -303,7 +303,7 @@
       const entry = { cb, capture, once: !!o.once, passive: !!o.passive, removed: false };
       l.push(entry);
       if (o.signal) o.signal.addEventListener('abort', () => this.removeEventListener(type, cb, { capture }), { once: true });
-      jr.onListen && jr.onListen(this, type, true);
+      jr.onListen && jr.onListen(this, type, true, l.length === 1);
     }
     removeEventListener(type, cb, opts) {
       const m = this[kListeners];
@@ -316,7 +316,7 @@
         l[i].removed = true;
         l.splice(i, 1);
         if (!l.length) m.delete(String(type));
-        jr.onListen && jr.onListen(this, String(type), false);
+        jr.onListen && jr.onListen(this, String(type), false, !l.length);
       }
     }
     dispatchEvent(ev) {

@@ -862,25 +862,35 @@ func (t *Taut) SlicePatched(slice string) bool {
 // conversion reads (names, prefs, emoji) changes: it used to be decoded
 // and converted (highlighting and all) on every call, every frame on the
 // Activity page.
-func (t *Taut) MessageView(ch, ts string) (core.Message, bool) { return t.messageView(ch, ts, false) }
+func (t *Taut) MessageView(ch, ts string) (core.Message, bool) {
+	m, _, ok := t.MessageViewConv(ch, ts, false)
+	return m, ok
+}
 
 // MessageViewChanged is MessageView for a caller whose own copy of the
 // message just changed (a new revision from core's events): the view is
 // converted again now, so it never shows the message's previous state
 // while the mirror is still on the event that changed it.
 func (t *Taut) MessageViewChanged(ch, ts string) (core.Message, bool) {
-	return t.messageView(ch, ts, true)
+	m, _, ok := t.MessageViewConv(ch, ts, true)
+	return m, ok
 }
 
-func (t *Taut) messageView(ch, ts string, fresh bool) (core.Message, bool) {
+// MessageViewConv is MessageView (fresh: MessageViewChanged) with the
+// serial of the conversion it returns, which changes whenever the view is
+// converted again: when its value changed, or what the conversion read (a
+// member's name, a channel's tabs: bumpChange) did, though nothing else a
+// caller compares may have.
+func (t *Taut) MessageViewConv(ch, ts string, fresh bool) (core.Message, uint64, bool) {
 	if !t.SlicePatched("messages") {
-		return core.Message{}, false
+		return core.Message{}, 0, false
 	}
 	e := t.ui.views.entry("messages", ch, ts)
 	if e == nil || e.sm == nil {
-		return core.Message{}, false
+		return core.Message{}, 0, false
 	}
-	return t.ui.views.convert(&e.conv, ch, e.sm, fresh), true
+	c := t.ui.views.conv(&e.conv, ch, e.sm, fresh)
+	return c.msg, c.id, true
 }
 
 // InjectedMessages lists messages plugins added to ch (injectMessages)
@@ -1083,11 +1093,14 @@ type viewInj struct {
 	conv    atomic.Pointer[viewConv]
 }
 
-// viewConv is a message converted for the UI, at conversion generation gen.
+// viewConv is a message converted for the UI, at conversion generation
+// gen; id is the conversion's serial (convSerial).
 type viewConv struct {
-	gen uint64
-	msg core.Message
+	gen, id uint64
+	msg     core.Message
 }
+
+var convSerial atomic.Uint64
 
 // viewGroup is the cached values under one (slice, key): a message bucket's
 // messages share theirs.
@@ -1110,20 +1123,32 @@ type viewCache struct {
 	flying   map[viewKey]bool // asked of JS, not back yet
 	busy     bool             // the worker runs or is about to
 	fetches  atomic.Int64     // worker batches (tests)
-	lastRead atomic.Int64     // UnixMilli of the UI's latest read (entry): its latest frame
 	maxSubs  int              // entries before everything is dropped (20000)
 	bytes    int              // what the entries hold, about
 	maxBytes int              // bytes before everything is dropped (64 MiB)
 	failN    int              // fetches that failed in a row (retry backoff)
 
 	// conversion generations (MessageView): the mirror bumps a message's
-	// on core's events about it, and the global one on events about
-	// people, names, prefs, emoji and the rest core.App.message reads
+	// on core's events about it or about a member or conversation its
+	// conversion read (refBy), and the global one on events about prefs,
+	// emoji and the rest core.App.message reads
 	gmu    sync.Mutex
 	gseq   uint64
 	global uint64
 	msgGen map[viewSK]uint64 // channel, ts → gseq
+	// what each conversion read (core.Message.Refs): member,
+	// conversation or file id → the messages whose conversion read it,
+	// and back (gmu), so a change to one converts just those again
+	// (bumpChange). refSeq is each id's last change (gseq): a conversion
+	// that was under way as it changed converts again (indexRefs).
+	refBy  map[string]map[viewSK]struct{}
+	refOf  map[viewSK]core.MsgRefs
+	refSeq map[string]uint64
 }
+
+// maxConvKeys bounds the per-message generations and the conversions'
+// index: past it they start over with a global bump.
+const maxConvKeys = 50000
 
 func (v *viewCache) init(t *Taut) {
 	v.t = t
@@ -1133,6 +1158,9 @@ func (v *viewCache) init(t *Taut) {
 	v.want = map[viewKey]bool{}
 	v.flying = map[viewKey]bool{}
 	v.msgGen = map[viewSK]uint64{}
+	v.refBy = map[string]map[viewSK]struct{}{}
+	v.refOf = map[viewSK]core.MsgRefs{}
+	v.refSeq = map[string]uint64{}
 	v.maxSubs = 20000
 	v.maxBytes = 64 << 20
 }
@@ -1172,7 +1200,6 @@ func (v *viewCache) staleLocked(e *viewEntry, g *viewGroup, slice string) bool {
 // entry returns slice[key][sub]'s cached value (nil until the first one
 // arrives), queueing a fetch when it's missing or stale. Never waits on JS.
 func (v *viewCache) entry(slice, key, sub string) *viewEntry {
-	v.lastRead.Store(time.Now().UnixMilli())
 	k := viewKey{slice, key, sub}
 	v.mu.Lock()
 	g := v.groupLocked(viewSK{slice, key})
@@ -1254,6 +1281,10 @@ func (v *viewCache) work() {
 			v.n, v.bytes = 0, 0
 			v.seq++
 			v.allVer = v.seq
+			v.gmu.Lock() // no conversion is left: nothing they read is anyone's
+			clear(v.refOf)
+			clear(v.refBy)
+			v.gmu.Unlock()
 		}
 		changed := false
 		var retry []viewKey
@@ -1362,6 +1393,18 @@ func (v *viewCache) dropGroupLocked(sk viewSK, g *viewGroup) {
 	}
 	delete(v.groups, sk)
 	v.sliceN[sk.slice]--
+	if sk.slice == "messages" { // its conversions went: what they read is no one's
+		var keys []viewSK
+		for ts, e := range g.subs {
+			if ts != "" {
+				keys = append(keys, viewSK{sk.key, ts})
+			}
+			for i := range e.inj {
+				keys = append(keys, viewSK{sk.key, e.inj[i].ts})
+			}
+		}
+		v.unindex(keys) // gmu inside mu, as everywhere
+	}
 }
 
 // dropEvicted forgets the views of ch's messages core's cache pass let go
@@ -1397,13 +1440,24 @@ func (v *viewCache) dropEvicted(ch string) {
 	if g == nil {
 		return
 	}
+	injected := map[string]bool{} // what the bucket's injected list still converts
+	if b := g.subs[""]; b != nil {
+		for i := range b.inj {
+			injected[b.inj[i].ts] = true
+		}
+	}
+	var keys []viewSK
 	for _, ts := range gone {
 		if e := g.subs[ts]; e != nil {
 			delete(g.subs, ts)
 			v.n--
 			v.bytes -= e.size
+			if !injected[ts] {
+				keys = append(keys, viewSK{ch, ts})
+			}
 		}
 	}
+	v.unindex(keys)
 }
 
 // fetch asks JS for keys and decodes what comes back: one JS read per
@@ -1554,14 +1608,189 @@ func (v *viewCache) injected(ch string, bucket map[string]json.RawMessage) []vie
 // again only when the conversion generation of ch/sm.TS moved since, or
 // when fresh.
 func (v *viewCache) convert(slot *atomic.Pointer[viewConv], ch string, sm *slack.Message, fresh bool) core.Message {
-	gen := v.convGen(ch, sm.TS)
+	return v.conv(slot, ch, sm, fresh).msg
+}
+
+// conv is convert's conversion itself.
+func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Message, fresh bool) *viewConv {
+	gen, at := v.convGenAt(ch, sm.TS)
 	if c := slot.Load(); c != nil && !fresh && c.gen == gen {
-		return c.msg
+		return c
 	}
 	m := *sm
-	c := &viewConv{gen: gen, msg: v.t.app.MessageFromSlack(ch, &m)}
+	c := &viewConv{gen: gen, id: convSerial.Add(1), msg: v.t.app.MessageFromSlack(ch, &m)}
 	slot.Store(c)
-	return c.msg
+	if v.indexRefs(viewSK{ch, sm.TS}, c.msg.Refs, at) {
+		// something it read changed while it was being made (bumpChange
+		// came before it was indexed): the next read makes it again
+		if f := v.t.opts.UI.Invalidate; f != nil {
+			f()
+		}
+	}
+	return c
+}
+
+// convGenAt is convGen, and the sequence then (indexRefs' at).
+func (v *viewCache) convGenAt(ch, ts string) (gen, at uint64) {
+	v.gmu.Lock()
+	defer v.gmu.Unlock()
+	return max(v.global, v.msgGen[viewSK{ch, ts}]), v.gseq
+}
+
+// indexRefs records what the conversion of k read, in place of what its
+// last conversion read. A conversion begun at sequence at that read
+// something bumpChange changed since is stale at once: it reports true
+// with k's generation moved on.
+func (v *viewCache) indexRefs(k viewSK, r core.MsgRefs, at uint64) (stale bool) {
+	v.gmu.Lock()
+	defer v.gmu.Unlock()
+	for _, l := range [][]string{r.Members, r.Channels, r.Files} {
+		for _, id := range l {
+			if v.refSeq[id] > at {
+				stale = true
+			}
+		}
+	}
+	if len(r.Members) > 0 && v.refSeq[anyMember] > at {
+		stale = true
+	}
+	if stale {
+		v.gseq++
+		v.msgGen[k] = v.gseq
+	}
+	old, had := v.refOf[k]
+	n := len(r.Members) + len(r.Channels) + len(r.Files)
+	if n == 0 && !had {
+		return stale
+	}
+	v.unindexLocked(k, old)
+	if n == 0 {
+		return stale
+	}
+	if !had && len(v.refOf) >= maxConvKeys {
+		// start over: every conversion is made (and indexed) again
+		clear(v.refOf)
+		clear(v.refBy)
+		clear(v.refSeq)
+		clear(v.msgGen)
+		v.gseq++
+		v.global = v.gseq
+	}
+	v.refOf[k] = r
+	for _, l := range [][]string{r.Members, r.Channels, r.Files} {
+		for _, id := range l {
+			set := v.refBy[id]
+			if set == nil {
+				set = map[viewSK]struct{}{}
+				v.refBy[id] = set
+			}
+			set[k] = struct{}{}
+		}
+	}
+	return stale
+}
+
+// unindexLocked forgets that k's conversion read refs (gmu held).
+func (v *viewCache) unindexLocked(k viewSK, refs core.MsgRefs) {
+	for _, l := range [][]string{refs.Members, refs.Channels, refs.Files} {
+		for _, id := range l {
+			if set := v.refBy[id]; set != nil {
+				delete(set, k)
+				if len(set) == 0 {
+					delete(v.refBy, id)
+				}
+			}
+		}
+	}
+	delete(v.refOf, k)
+}
+
+// unindex forgets the conversions of keys (their views went).
+func (v *viewCache) unindex(keys []viewSK) {
+	if len(keys) == 0 {
+		return
+	}
+	v.gmu.Lock()
+	for _, k := range keys {
+		if refs, ok := v.refOf[k]; ok {
+			v.unindexLocked(k, refs)
+		}
+	}
+	v.gmu.Unlock()
+}
+
+// anyMember is refSeq's key for a change to every member's names
+// (RefChange.AnyMember): a conversion that read a member while it came is
+// stale (indexRefs).
+const anyMember = "*"
+
+// bumpChange makes the conversions that read what c changed be made
+// again, and only those: a profile change converted every message again,
+// or none. It redraws only when one of them is still cached (a view's
+// conversion that went keeps nothing on screen), and forgets the others.
+func (v *viewCache) bumpChange(c core.RefChange) {
+	if c.Empty() {
+		return
+	}
+	ids := c.IDs()
+	if c.AnyMember {
+		ids = append(ids, anyMember)
+	}
+	v.gmu.Lock()
+	v.gseq++
+	seq := v.gseq
+	if len(v.refSeq)+len(ids) > maxConvKeys {
+		clear(v.refSeq)
+	}
+	for _, id := range ids {
+		v.refSeq[id] = seq
+	}
+	var keys []viewSK
+	for _, id := range ids {
+		for k := range v.refBy[id] {
+			keys = append(keys, k)
+		}
+	}
+	if c.AnyMember {
+		for k, refs := range v.refOf {
+			if len(refs.Members) > 0 {
+				keys = append(keys, k)
+			}
+		}
+	}
+	if len(keys) == 0 {
+		v.gmu.Unlock()
+		return
+	}
+	if len(v.msgGen)+len(keys) >= maxConvKeys {
+		clear(v.msgGen)
+		v.global = seq
+	} else {
+		for _, k := range keys {
+			v.msgGen[k] = seq
+		}
+	}
+	v.gmu.Unlock()
+	cached, gone := v.cachedKeys(keys)
+	v.unindex(gone)
+	if f := v.t.opts.UI.Invalidate; cached && f != nil {
+		f()
+	}
+}
+
+// cachedKeys reports whether any of keys has a conversion cached, and
+// lists those that have none.
+func (v *viewCache) cachedKeys(keys []viewSK) (cached bool, gone []viewSK) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, k := range keys {
+		if v.convCachedLocked(k.slice, k.key) {
+			cached = true
+		} else {
+			gone = append(gone, k)
+		}
+	}
+	return cached, gone
 }
 
 // convGen is the generation of what converting ch/ts reads.
@@ -1579,7 +1808,7 @@ func (v *viewCache) convGen(ch, ts string) uint64 {
 func (v *viewCache) bumpConv(ch, ts string) {
 	v.gmu.Lock()
 	v.gseq++
-	global := ch == "" || ts == "" || len(v.msgGen) >= 50000
+	global := ch == "" || ts == "" || len(v.msgGen) >= maxConvKeys
 	if global {
 		clear(v.msgGen)
 		v.global = v.gseq
@@ -1595,19 +1824,15 @@ func (v *viewCache) bumpConv(ch, ts string) {
 	}
 }
 
-// drewMember reports whether a member last drawn at seen (core.Event.Seen)
-// was drawn in the UI's latest frame, the one that read the views last:
-// rows touch their members as they read their views. A second of slack
-// covers a long frame.
-func (v *viewCache) drewMember(seen time.Time) bool {
-	return !seen.IsZero() && seen.UnixMilli() >= v.lastRead.Load()-1000
-}
-
 // convCached reports whether a conversion of ch/ts is cached (with ch "",
 // of any message).
 func (v *viewCache) convCached(ch, ts string) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	return v.convCachedLocked(ch, ts)
+}
+
+func (v *viewCache) convCachedLocked(ch, ts string) bool {
 	if ch == "" {
 		return v.sliceN["messages"] > 0
 	}

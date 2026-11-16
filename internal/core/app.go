@@ -43,6 +43,8 @@ type App struct {
 	subMu sync.Mutex
 	subs  map[*sub]struct{}
 
+	docs docState // what message Docs read, as the last events left it (msg_refs.go)
+
 	// prefsMu orders every change to the raw prefs: a change copies them,
 	// sets its keys and installs the copy, and two at once lost one of
 	// them (mergePrefs, installPrefs).
@@ -175,6 +177,9 @@ func New(c *slack.Client, s *store.Store) *App {
 	appsByStore.Store(s, a)
 	store.ExperimentGroup = experimentForStore
 	a.followEmojiSet() // the defaults' set until the account's groups are in
+	// what of the prefs conversions read as they start (a prefs event
+	// that changes it converts again what reads it: msg_refs.go)
+	a.docs.prefs, a.docs.docPrefs, a.docs.prefsInit = a.namePrefsKey(), a.docPrefsKey(), true
 	return a
 }
 
@@ -457,6 +462,7 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 }
 
 func (a *App) emit(ev Event) {
+	a.noteDocChange(&ev) // what ev changed of what message Docs read (msg_refs.go)
 	if !snapshotQuietEvents[ev.Type] {
 		a.InvalidateSnapshot() // snapshot_recent.go
 	}
@@ -1414,7 +1420,12 @@ var systemSubtypes = map[string]bool{
 }
 
 // message converts a Slack message for the UI.
-func (a *App) message(ch string, m *slack.Message) Message {
+func (a *App) message(ch string, m *slack.Message) Message { return a.messageWith(ch, m, false) }
+
+// messageWith is message; with peek its member reads don't count as a
+// view's (StoredMessage: a message converted again because a name in it
+// changed, not because anything draws it).
+func (a *App) messageWith(ch string, m *slack.Message, peek bool) Message {
 	v := Message{
 		TS: m.TS, Channel: firstNonEmpty(ch, m.Channel), User: m.User, BotID: m.BotID, Subtype: m.Subtype, Text: m.Text,
 		Edited: m.Edited != nil, ThreadTS: m.ThreadTS, ReplyCount: m.ReplyCount, ReplyUsers: m.ReplyUsers,
@@ -1476,7 +1487,11 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		v.Reactions = append(v.Reactions, rv)
 	}
 	v.Reactions = a.overlayReactions(ch, m.TS, v.Reactions)
-	v.Doc = richtext.FromMessageIn(msgNames{a.S}, m, ch) // mentions ask as they draw (lazy_users.go); in ch, a slug to one of ch's tabs is the tab alone
+	// mentions ask as they draw (lazy_users.go); in ch, a slug to one of
+	// ch's tabs is the tab alone; Refs: what it read (msg_refs.go)
+	rn := refNames{msgNames: msgNames{a.S}, app: a, peek: peek}
+	v.Doc = richtext.FromMessageIn(&rn, m, ch)
+	v.Refs = rn.refs
 	return v
 }
 

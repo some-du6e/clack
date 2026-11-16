@@ -95,6 +95,9 @@ type thrCard struct {
 
 	comp  *composer.Composer // the real reply composer, made on first click
 	compY int                // composer top within the list element (px)
+	// pane is the composer's slackc pane ("threads:" + the thread's key):
+	// its plugin roots are its own, not the thread pane's composer's
+	pane string
 
 	// "Show N more replies" (threads_older.go): the older replies loaded
 	// into the card, oldest first; a fetch running; the thread's start
@@ -996,6 +999,7 @@ func (v *Threads) openReply(t *thrItem, c *thrCard) {
 	}
 	if c.comp == nil {
 		c.comp = composer.New(ch, t.Channel, t.Root.TS)
+		c.pane = "threads:" + t.key
 		c.comp.InThreadsView = true // .p-threads_view: no 12px over the box
 		key := t.key
 		// onUpArrowInEmptyInput: focusItemAboveInput
@@ -1051,7 +1055,7 @@ func (v *Threads) card(gtx C, c *thrCard, t *thrItem, row func(key string, y, h 
 				d := layout.Inset{Top: 8, Left: 4, Right: 4}.Layout(gtx, func(gtx C) D {
 					gtx.Constraints.Min = image.Point{}
 					gtx.Constraints.Max.Y = gtx.Dp(thrCompMax)
-					return c.comp.Layout(gtx)
+					return c.comp.LayoutIn(gtx, c.pane)
 				})
 				compH = d.Size.Y - gtx.Dp(8)
 				return rec("footer-"+t.key, d)

@@ -1265,10 +1265,21 @@
     if (!target) return { defaultPrevented: false, propagationStopped: false };
     if (e.rects) for (const key in e.rects) { const n = byK(+key); if (n) n._r = e.rects[key]; }
     const type = e.type;
+    // the target's form state as Go has it: a change to it is the root's
+    // (every pointer event over a plugin's node marked it, and its root
+    // sent the same tree again as rows scrolled under the pointer)
     if (e.target && target.nodeType === ELEMENT_NODE) {
-      if ('value' in e.target && e.target.value != null) { target._val = String(e.target.value); if (e.target.selectionStart != null) { target._selStart = e.target.selectionStart; target._selEnd = e.target.selectionEnd ?? e.target.selectionStart; } }
-      if ('checked' in e.target && e.target.checked != null) target._chk = !!e.target.checked;
-      markDirty(target);
+      let changed = false;
+      if ('value' in e.target && e.target.value != null) {
+        const v = String(e.target.value);
+        if (target._val !== v) { target._val = v; changed = true; }
+        if (e.target.selectionStart != null) {
+          const a = e.target.selectionStart, b = e.target.selectionEnd ?? e.target.selectionStart;
+          if (target._selStart !== a || target._selEnd !== b) { target._selStart = a; target._selEnd = b; changed = true; }
+        }
+      }
+      if ('checked' in e.target && e.target.checked != null && target._chk !== !!e.target.checked) { target._chk = !!e.target.checked; changed = true; }
+      if (changed) markDirty(target);
     }
     if (type === 'focus') { focusElement(target === document ? null : target); return { defaultPrevented: false, propagationStopped: false }; }
     if (type === 'blur') { if (activeEl === target || target === document) focusElement(null); return { defaultPrevented: false, propagationStopped: false }; }
@@ -2379,7 +2390,8 @@
     Object.defineProperty(Node.prototype, name, {
       configurable: true, enumerable: false,
       get() { return (this._onp && this._onp[type]) || null; },
-      set(fn) { const m = this._onp || (this._onp = Object.create(null)); if (typeof fn === 'function') m[type] = fn; else delete m[type]; markDirty(this); },
+      // the "on" set changes when a type gets or loses its handler, not when one replaces another
+      set(fn) { const m = this._onp || (this._onp = Object.create(null)); const had = typeof m[type] === 'function'; if (typeof fn === 'function') m[type] = fn; else delete m[type]; if (had !== (typeof fn === 'function')) markDirty(this); },
     });
   }
   for (const [name, field] of [['scrollTop', '_sT'], ['scrollLeft', '_sL']]) {
@@ -2392,9 +2404,11 @@
   // DOM listeners change a node's "on" set
   // window/document listeners are reported to Go (Runtime.WantsEvent), so
   // the UI only forwards global input (mousemove, keydown…) when JS listens
-  jr.onListen = (target, type, added) => {
+  // (first: the type's first listener came, or its last went; a listener
+  // swapped for another, an effect's cleanup and setup, changes nothing)
+  jr.onListen = (target, type, added, first) => {
     if (target === G || target === document) H.listen(type, added ? 1 : -1);
-    else if (target instanceof Node) markDirty(target);
+    else if (target instanceof Node && first !== false) markDirty(target);
   };
   jr.serializeNode = serializeNode;
 

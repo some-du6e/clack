@@ -141,10 +141,17 @@ func (a *App) handle(ev slack.Event) {
 			// most of a large workspace's profile changes are. The event is
 			// read without a lookup, which would count as a view's.
 			seen := a.S.MemberAccessed(e.User.ID)
+			// what message Docs read of the member, before and after
+			// (a status or huddle change converts no message again)
+			var before slack.User
+			old, had := a.S.RawUser(e.User.ID)
+			if had && old != nil {
+				before = *old
+			}
 			a.S.PutUsers([]slack.User{e.User})
 			if su, ok := a.S.RawUser(e.User.ID); ok {
 				u := a.userOf(su)
-				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen})
+				a.emit(Event{Type: "user", UserID: u.ID, User: &u, Seen: seen, SameNames: had && old != nil && sameUserNames(&before, su)})
 			}
 		}
 	case "team_icon_change":
