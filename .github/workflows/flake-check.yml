@@ -391,7 +391,7 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
-        run: xvfb-run -a go test -count=$COUNT -v -run '^(TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked|TestLiveImageFrames)$' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/gpu/headless
+        run: xvfb-run -a go test -count=$COUNT -v -run '^(TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked|TestReplayKeepsFilters|TestLiveImageFrames)$' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input gioui.org/gpu/headless
       - name: richview (the custom emoji draws live)
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^TestCustomEmojiAnimatedWebPDraws$' ./internal/ui/richview

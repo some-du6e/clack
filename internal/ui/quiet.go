@@ -35,9 +35,11 @@ import (
 // Gio patch 35), the same size, scale, insets and zoom as the last frame,
 // which was the main window's own full frame (not under the boot cover or
 // the inspect tool, and no other window drew patch points since: slackc
-// Views can be shared). A quiet frame submits that frame's ops again and
-// asks for any later wake-up the last full frame asked for, which a frame
-// takes from the window. Everything else is laid out as before.
+// Views can be shared). A quiet frame submits that frame's ops again, the
+// router keeping the event filters its widgets asked for (Source.Replay:
+// the focus stays where it is), and asks for any later wake-up the last
+// full frame asked for, which a frame takes from the window. Everything
+// else is laid out as before.
 
 // quietState is what the last full frame was drawn for.
 type quietState struct {
@@ -120,9 +122,14 @@ func (a *App) quietFrame(now time.Time, size image.Point, m unit.Metric, insets 
 }
 
 // replayFrame is a quiet frame's work before its ops go out again: the
-// wake-up the last full frame asked for, which isn't due yet, asked for
+// router keeps the event filters the last full frame's widgets asked for
+// (Source.Replay, Gio patch 35: none ask in this one, and without it the
+// focused composer lost the focus at every quiet frame and got it back at
+// the next full one, a blur and a focus for plugins each time), and the
+// wake-up the last full frame asked for, which isn't due yet, is asked for
 // again (the window takes it with every frame).
 func (a *App) replayFrame(src input.Source, asked bool, askedAt, now time.Time) {
+	src.Replay()
 	if asked && askedAt.After(now) {
 		src.Execute(op.InvalidateCmd{At: askedAt})
 	}

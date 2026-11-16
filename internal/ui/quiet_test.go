@@ -117,6 +117,11 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	t.Logf("the emoji's bytes asked for %d times; %+v", asks.Load(), e.a.images.Stats())
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)}) // off the window
 	e.until("the images loaded", 10*time.Second, func() bool { return e.a.images.Pending() == 0 })
+	e.focusComposer(ch, "") // the caret in the composer, as when the channel opens
+	focus := e.r.Source().FocusTag()
+	if focus == nil {
+		t.Fatal("nothing focused after focusing the composer")
+	}
 	e.settle(800 * time.Millisecond)
 	e.frame()
 	askedAt, asked := e.r.WakeupTime()
@@ -125,7 +130,7 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	// fires (as the window's loop draws one), for 1.5 s
 	laid0, adv0 := e.a.FrameSeq(), e.a.images.Stats().Advances
 	record.Store(true)
-	quiet, full := 0, 0
+	quiet, full, lost := 0, 0, 0
 	why := map[string]int{} // the laid-out frames, by what else asked for them
 	for dl := time.Now().Add(1500 * time.Millisecond); time.Now().Before(dl); {
 		select {
@@ -137,6 +142,9 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 		} else {
 			full++
 			why[frameWhy(e)]++
+		}
+		if e.r.Source().FocusTag() != focus {
+			lost++
 		}
 		askedAt, asked = e.r.WakeupTime()
 	}
@@ -153,6 +161,9 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	}
 	if n := why[""]; n > 0 {
 		t.Errorf("%d frames were laid out with nothing but an animation asking", n)
+	}
+	if lost > 0 {
+		t.Errorf("the composer wasn't focused after %d of %d frames: a frame drawn again dropped the focus", lost, quiet+full)
 	}
 	if int(laid) > 2*full {
 		t.Errorf("%d layouts in %d full frames: a quiet one laid out", laid, full)

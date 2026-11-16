@@ -30,6 +30,7 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_keylog_test.go`, `app/clack_keys_darwin_test.go`,
 `app/metal_darwin.go`, `app/clack_wake_darwin_test.go`,
 `app/app.go`, `app/clack_asked_test.go`, `op/paint/clack_live.go`,
+`io/input/clack_replay.go`, `io/input/clack_replay_test.go`,
 `op/paint/clack_live_test.go`, `gpu/clack_live_test.go`,
 `gpu/headless/clack_live_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
@@ -1638,13 +1639,14 @@ gio-layer-fix job's richview) use `gio_patch34_stock.go`. With no
 answers there, a layer neither records an opener nor sees the focus
 inside it. Not in `UPSTREAM.patch`.
 
-## 35. op/paint, gpu, app: live images, and what a frame was asked for
+## 35. op/paint, gpu, app, io/input: live images, what a frame was asked for, and frames drawn again
 
 `op/paint/clack_live.go` (new: `LiveImage`, `NewLiveImageOp`),
 `gpu/gpu.go` (`resolveLive`, called by `texHandle`), `app/app.go`
-(`FrameEvent.Asked`, `FrameEvent.AskedAt`) and `app/window.go`
-(`processEvent`'s `frameEvent`). Additions: nothing upstream behaves
-differently.
+(`FrameEvent.Asked`, `FrameEvent.AskedAt`), `app/window.go`
+(`processEvent`'s `frameEvent`), `io/input/clack_replay.go` (new:
+`Source.Replay`) and `io/input/router.go` (`Frame`). Additions: nothing
+upstream behaves differently unless asked.
 
 Gio draws the whole window every frame, and Clack's layout of it takes
 17–23 ms on Karim's Mac with his plugins (2026-11-16). An animated custom
@@ -1680,12 +1682,26 @@ ops again when an animation is all that asked for the frame
   `op.InvalidateCmd{At: AskedAt}` to keep a wake-up that isn't due yet.
   A frame that replaces one the client wasn't handed yet (coalesced)
   keeps what that one was asked for.
+- Frames drawn again: the router builds each handler's event filters
+  from the `Event` calls of the frame's layout, and a frame that shows
+  the last frame's ops again makes none, so its `Frame` swapped in empty
+  filters. The focused editor then lost the focus (`keyQueue.Frame`
+  drops a focus whose tag asked for no focus events) and got it back from
+  Clack's KeepFocus at the next laid-out frame, a blur and a focus for the
+  plugins each time (Taut's patched MessagePaneInput rendered again on
+  every one: textyHasFocus false, true), and an event right after one had
+  no filter to be routed by. `Source.Replay()` says the frame in progress
+  is the last one's ops again: its `Frame` keeps every handler's filters
+  and the key filter as the last frame left them.
 
 Tests: `op/paint/clack_live_test.go` (`TestLiveImageOp`),
 `gpu/clack_live_test.go` (`TestDrawOpsLiveImage`: the same ops collected
 twice draw the live image's image at each, and a paint outside the
 viewport never asks) and `app/clack_asked_test.go` (`TestFrameEventAsked`)
-on ci's linux-gio job; `gpu/headless/clack_live_test.go`
+and `io/input/clack_replay_test.go` (`TestReplayKeepsFilters`: a
+replayed frame keeps the focus and the next press reaches its handler;
+the same frame without Replay loses the focus) on ci's linux-gio job;
+`gpu/headless/clack_live_test.go`
 (`TestLiveImageFrames`: a real GPU context draws the same ops twice and
 shows each image) on flake-check's emoji-anim job, under Xvfb. Not in
 `UPSTREAM.patch`.

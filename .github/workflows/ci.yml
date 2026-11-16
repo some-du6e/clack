@@ -212,12 +212,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'TestInvalidateWhileHandlingAWakeup' gioui.org/app
       # Gio patch 35: a live image draws its image as it is when the frame
-      # is drawn (only the paints a frame shows ask), and a FrameEvent says
-      # whether the window's own frames asked for it (ui's quiet frames);
-      # the real GPU's is flake-check's emoji-anim job
+      # is drawn (only the paints a frame shows ask), a FrameEvent says
+      # whether the window's own frames asked for it, and a frame drawn
+      # again keeps the handlers' filters (ui's quiet frames); the real
+      # GPU's is flake-check's emoji-anim job
       - name: Gio live images and what a frame was asked for (vendored gioui.org/op/paint, gpu, app)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked' gioui.org/op/paint gioui.org/gpu gioui.org/app
+        run: go test -count=1 -v -run 'TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked|TestReplayKeepsFilters' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/io/input
       # Gio patch 22: what each point of a window with a hidden title bar
       # is (the caption buttons, the top band, the caption, the client);
       # the Windows codes on real windows are windows-applog's. Patch 24:
