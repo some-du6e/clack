@@ -95,6 +95,9 @@ func (r *Runtime) releaseBatch(b *relBatch) {
 		r.eng.release(h)
 	}
 	r.released.Add(uint64(len(hs)))
+	if f := r.relSeen.Load(); f != nil {
+		(*f)(hs)
+	}
 }
 
 // asRemote marks v, on the JS thread and about to be handed to another

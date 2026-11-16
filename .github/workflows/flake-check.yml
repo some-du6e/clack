@@ -230,6 +230,8 @@ on:
       - "third_party/gioui.org/app/window.go"
       - "third_party/gioui.org/app/clack_hide_windows_test.go"
       - "third_party/gioui.org/app/clack_titlebar_windows_test.go"
+      - "internal/jsrt/release_batch_test.go"
+      - "internal/ui/huddles_link_test.go"
 
 permissions:
   contents: read
@@ -1121,3 +1123,56 @@ jobs:
       - name: "ui: Escape and the focus in each stacking in the main window, 3 runs"
         if: ${{ !cancelled() }}
         run: go test -count=3 -v -timeout 30m -run '^(TestEscapeClosesPluginPopoverFirst|TestEscapeWithThePumpUp|TestPopoverInsideEditProfile|TestPopoverInViewsModal|TestDialogOverPopover|TestEscapeOwners|TestEscapeClosesWhatChannelDetailsOpenedFirst|TestEscapeClosesPreferencesColourPopoverFirst|TestEscapeClosesMenuOverEditProfileFirst|TestEscapeKeepsGuardedModal|TestHoverPeekGivesNoFocus|TestModalFromMenuGivesFocusBackToThreadComposer|TestReplayIntroClosesGuardedModal|TestEscapeKeepsDirtyEditProfile|TestW28NavigateFocusesComposer)$' ./internal/ui
+
+  # 2026-11-16: the jsrt release-burst tests counted the runtime's own
+  # garbage's frees too (20018 of 20000 once), and TestHuddlesLinkInvites
+  # timed the Huddles page's 600 ms from up to a frame after it started
+  # (526 ms once); both now count only what they test
+  flakes-1116:
+    if: ${{ !inputs.only || startsWith('flakes-1116', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: "jsrt: release bursts count their own handles, COUNT runs"
+        run: go test -count=$COUNT -run '^(TestReleaseBurstIsOneTask|TestPostDuringReleaseBurst)$' ./internal/jsrt
+      - name: "jsrt: the same under the race detector, 5 runs"
+        if: ${{ !cancelled() }}
+        run: go test -race -count=5 -run '^(TestReleaseBurstIsOneTask|TestPostDuringReleaseBurst)$' ./internal/jsrt
+      - name: "ui: the Huddles link's invites (llvmpipe, as huddles-audit-shots), 5 runs"
+        if: ${{ !cancelled() }}
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=5 -v -timeout 40m -run '^TestHuddlesLinkInvites$' ./internal/ui/
+
+  # The DM badges (core rail.go DMsBadge; Karim's 2026-11-16 "ghost
+  # pings"): Slack's rHEx dmsBadgeCount leaves out the bot DMs the DMs page
+  # doesn't list (Slackbot's, the Slack system user's, an app's), and under
+  # the activity inbox the tab counts unread conversations (6Z4k Sm).
+  # Dispatch with only=dm-badges.
+  dm-badges:
+    if: ${{ !inputs.only || startsWith('dm-badges', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "core: the DM badges' rules, the DMs tab's rows, COUNT runs"
+        run: go test -count=$COUNT -v -run '^(TestDMBadgeSkips|TestDMsBadgeRule|TestSnapshotDMBadgeSkips|TestDMsTabFilters|TestHomeBadgeRule)$' ./internal/core
+      - name: "ui: the DMs tab's badge and the DMs page over fakeslack's bot DMs, COUNT runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -timeout 30m -run '^TestDMsBadgeLikeSlack$' ./internal/ui

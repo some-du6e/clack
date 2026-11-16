@@ -1,6 +1,7 @@
 package jsrt
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -39,10 +40,57 @@ func blockJS(t *testing.T, r *Runtime) func() {
 	return func() { close(release) }
 }
 
-func queued(r *Runtime) int {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return len(r.queue)
+// freedWatch counts, from when it's made, how many of a test's handles the
+// runtime frees, how many of those more than once, and how many batches
+// freed any of them. r.released can't say: the runtime's own garbage
+// (Values its start-up wrapped, collected whenever a cycle runs) frees
+// other handles meanwhile, and joins the same batches (20018 of 20000
+// once on CI).
+type freedWatch struct {
+	mu      sync.Mutex
+	times   map[uint32]int
+	freed   int
+	twice   int
+	batches int
+}
+
+func watchFreed(r *Runtime, hs []uint32) *freedWatch {
+	w := &freedWatch{times: make(map[uint32]int, len(hs))}
+	for _, h := range hs {
+		w.times[h] = 0
+	}
+	f := func(b []uint32) {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		mine := false
+		for _, h := range b {
+			n, ok := w.times[h]
+			if !ok {
+				continue
+			}
+			mine = true
+			w.times[h] = n + 1
+			switch n {
+			case 0:
+				w.freed++
+			case 1:
+				w.twice++
+			}
+		}
+		if mine {
+			w.batches++
+		}
+	}
+	r.relSeen.Store(&f)
+	return w
+}
+
+// counts is the test's handles freed so far, those freed more than once,
+// and the batches that freed any of them.
+func (w *freedWatch) counts() (freed, twice, batches int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.freed, w.twice, w.batches
 }
 
 // A collection's burst of Value cleanups is one task, not one per handle
@@ -53,20 +101,24 @@ func TestReleaseBurstIsOneTask(t *testing.T) {
 	r := newTest(t)
 	const n = 20000
 	hs := leaked(t, r, n)
+	w := watchFreed(r, hs)
 	unblock := blockJS(t, r)
-	before, freed := queued(r), r.released.Load()
 	for _, h := range hs {
 		r.releaseLater(h)
-	}
-	if got := queued(r) - before; got != 1 {
-		t.Errorf("%d cleanups queued %d tasks, want 1", n, got)
 	}
 	unblock()
 	if err := r.Do(func(*Ctx) error { return nil }); err != nil { // after everything queued
 		t.Fatal(err)
 	}
-	if got := r.released.Load() - freed; got != n {
-		t.Errorf("%d of %d handles freed", got, n)
+	freed, twice, batches := w.counts()
+	if freed != n || twice != 0 {
+		t.Errorf("%d of %d handles freed (%d of them twice)", freed, n, twice)
+	}
+	// one task; two when a cleanup of the runtime's own garbage started a
+	// batch while the burst's first was being queued (a batch takes
+	// handles only once its task is queued last: releaseLater)
+	if batches < 1 || batches > 2 {
+		t.Errorf("%d cleanups were freed by %d tasks, want 1", n, batches)
 	}
 }
 
@@ -77,14 +129,13 @@ func TestReleaseBurstIsOneTask(t *testing.T) {
 func TestPostDuringReleaseBurst(t *testing.T) {
 	r := newTest(t)
 	hs := leaked(t, r, 20002)
+	w := watchFreed(r, hs)
 	unblock := blockJS(t, r)
-	before := queued(r)
 
 	// order: the first handle's batch, then a task, then the second handle
 	r.releaseLater(hs[0])
 	var atTask atomic.Int64
-	base := r.released.Load()
-	r.Post(func(*Ctx) { atTask.Store(int64(r.released.Load() - base)) })
+	r.Post(func(*Ctx) { freed, _, _ := w.counts(); atTask.Store(int64(freed)) })
 	r.releaseLater(hs[1])
 
 	// the rest while another goroutine (the UI, say) keeps posting
@@ -114,10 +165,6 @@ func TestPostDuringReleaseBurst(t *testing.T) {
 	}
 	close(stop)
 	posts := <-done
-	tasks := queued(r) - before - 1 - posts // the task posted above, and the posts
-	if tasks > posts+2 {
-		t.Errorf("%d cleanups made %d release tasks beside %d posts: at most one more than the posts that split them", len(hs), tasks, posts)
-	}
 	if d := time.Duration(worst.Load()); d > 50*time.Millisecond {
 		t.Errorf("a Post waited %v during the burst", d)
 	}
@@ -128,8 +175,15 @@ func TestPostDuringReleaseBurst(t *testing.T) {
 	if got := atTask.Load(); got != 1 {
 		t.Errorf("when the task posted between them ran, %d handles were freed, want 1 (the second joined a batch queued before the task)", got)
 	}
-	if got := r.released.Load() - base; got != uint64(len(hs)) {
-		t.Errorf("%d of %d handles freed", got, len(hs))
+	freed, twice, batches := w.counts()
+	if freed != len(hs) || twice != 0 {
+		t.Errorf("%d of %d handles freed (%d of them twice)", freed, len(hs), twice)
+	}
+	// a batch per split: at most one more than the tasks posted during the
+	// burst (the one between the first two handles too), plus one for a
+	// garbage cleanup racing a batch being queued (TestReleaseBurstIsOneTask)
+	if batches > posts+3 {
+		t.Errorf("%d cleanups were freed by %d tasks beside %d posts: at most one more than the posts that split them", len(hs), batches, posts)
 	}
 }
 

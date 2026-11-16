@@ -81,6 +81,10 @@ type Size struct {
 	// DMsTab answers client.dms (the DMs tab and its peek) with the open
 	// generated DMs and their latest messages, newest first.
 	DMsTab bool
+	// DMBadges adds unread DMs with Slackbot, the Slack system user
+	// (SlackUserID) and an app, and a read one with a person, and answers
+	// every other DM read (dm_badges.go): the DMs the DM badges leave out.
+	DMBadges bool
 	// Embeds adds #embeds-gallery: one message per way Slack draws a
 	// link preview (embeds.go).
 	Embeds bool
@@ -342,6 +346,10 @@ type Server struct {
 
 	actBadgeMu sync.Mutex
 	actBadges  map[string]int // client.counts activity_v2 (activity_badges.go)
+
+	// dmBadgeRead: Size.DMBadges' DMs and their read cursors, set before
+	// serving (dm_badges.go)
+	dmBadgeRead map[string]string
 
 	// OnPost, when set, runs inside chat.postMessage before it answers,
 	// with the posted form and the new message (tests push the realtime
@@ -721,6 +729,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	}
 	if sz.GroupDMs {
 		s.addGroupDMs() // groupdms.go
+	}
+	if sz.DMBadges {
+		s.addDMBadges() // dm_badges.go
 	}
 	if sz.Workflows {
 		s.addWorkflowsChannel() // workflows.go
@@ -1488,6 +1499,7 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 			if closedDM(c) { // closed_dms.go: read
 				e.HasUnreads, e.MentionCount, e.LastRead = false, 0, e.Latest
 			}
+			e = s.dmBadgeCount(c, e) // dm_badges.go
 			e.LastRead, e.HasUnreads, e.MentionCount = s.applyMark(c.ID, e.LastRead, e.Latest, e.HasUnreads, e.MentionCount)
 			if c.IsIM {
 				ims = append(ims, e)
@@ -1537,8 +1549,8 @@ func (s *Server) handle(method string, f url.Values, edge map[string]json.RawMes
 		for _, r := range rows {
 			item := map[string]any{"id": r.id, "channel": r.conv}
 			ts := "0000000000.000000"
-			if h := s.history(r.id); len(h) > 0 { // newest first
-				item["message"], ts = h[0], h[0].TS
+			if m, ok := s.dmsLatest(r.id); ok { // dm_badges.go
+				item["message"], ts = m, m.TS
 			}
 			outs = append(outs, dmOut{ts, item, r.conv.IsIM})
 		}
@@ -1911,6 +1923,9 @@ func (s *Server) userByID(id string) (slack.User, bool) {
 	}
 	if s.Size.ThreadHeader && id == ThreadAppUserID { // threadheader.go
 		return s.threadHeaderApp(), true
+	}
+	if s.Size.DMBadges && id == SlackUserID { // dm_badges.go
+		return s.slackSystemUser(), true
 	}
 	if strings.HasPrefix(id, "U0FAKE") {
 		if n, err := strconv.Atoi(id[6:]); err == nil && n < len(s.users) {

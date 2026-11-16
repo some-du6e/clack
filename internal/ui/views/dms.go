@@ -269,6 +269,26 @@ func NewDMs(h Host) *DMs {
 // Selected returns the selected conversation id ("" when none).
 func (d *DMs) Selected() string { return d.sel }
 
+// Listed is the list as the last frame drew it: the DMs it lists, newest
+// first, and the ones among them drawn unread (dmRow: dmsUnread, the
+// selected row read). ok is false before the first client.dms answer.
+func (d *DMs) Listed() (ids, unread []string, ok bool) {
+	if _, done, _ := d.first.get(); !done && len(d.items) == 0 {
+		return nil, nil, false
+	}
+	for _, e := range d.view {
+		if e.dm < 0 {
+			continue
+		}
+		dm := &d.items[e.dm]
+		ids = append(ids, dm.Channel)
+		if dmsUnread(dm) && (dm.Channel != d.sel || d.peeking) {
+			unread = append(unread, dm.Channel)
+		}
+	}
+	return ids, unread, true
+}
+
 // Layout draws the list pane in the themed column and the selected
 // conversation in the white pane beside it.
 func (d *DMs) Layout(gtx C) D {

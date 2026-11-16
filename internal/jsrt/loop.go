@@ -60,6 +60,9 @@ type Runtime struct {
 	relOpen  *relBatch     // the batch still taking handles (relMu)
 	relSeq   uint64        // enqN when relOpen's task was queued; 0 = not yet (relMu)
 	released atomic.Uint64 // handles releaseLater's batches freed
+	// relSeen, tests only: called on the JS thread with each batch's
+	// handles once they're freed (release_batch_test.go's freedWatch).
+	relSeen atomic.Pointer[func([]uint32)]
 
 	// JS-thread-only state below.
 	eng        *engine

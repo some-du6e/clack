@@ -118,13 +118,16 @@ func TestHuddlesLinkInvites(t *testing.T) {
 	}
 	e.shotBoth("huddles-link-badge-2")
 
-	// the Huddles page: seen 600 ms after it notices them
+	// the Huddles page: seen 600 ms after it notices them. Timed from
+	// before the click, the page's 600 ms can't start before the clock does:
+	// timed from when e.until saw the page (up to a frame after it noticed
+	// the invites, ~100 ms on llvmpipe), it measured 526 ms once on CI.
+	opened := time.Now()
 	e.click(link)
 	e.until("the Huddles page", 5*time.Second, func() bool { return a.router.Current() == "huddles" })
-	opened := time.Now()
 	e.until("the invites marked seen", 10*time.Second, func() bool { return hud.UnreadInvites() == 0 })
-	if d := time.Since(opened); d < 550*time.Millisecond {
-		t.Fatalf("marked %v after the page opened, before Slack's 600 ms", d)
+	if d := time.Since(opened); d < 600*time.Millisecond {
+		t.Fatalf("marked %v after the click on the link, before Slack's 600 ms", d)
 	}
 	if l := hud.Link(); l != (huddleui.HuddleLink{Unread: true, Channel: ch}) {
 		t.Fatalf("seen: %+v", l)

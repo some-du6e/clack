@@ -3,6 +3,7 @@ package core
 import (
 	"slices"
 
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 )
 
@@ -264,9 +265,12 @@ func OrganizeRail(r RailState, avail int, height func(tab string) int) (show, ov
 }
 
 // HomeBadge is the Home tab's badge (InjD useGetMentions). Home counts DM
-// mentions only when the DMs tab is not in the rail (and, with the activity
-// inbox, only when DMs are opted out of it); otherwise it shows a dot when
-// channels (not DMs) have unread messages (rHEx homeBadgeCount).
+// mentions (dmCount: rHEx dmsBadgeCount, the DMs tab's highlights) only
+// when the DMs tab is not in the rail (and, with the activity inbox, only
+// when DMs are opted out of it); otherwise it shows a dot when channels
+// (not DMs) have unread messages (rHEx homeBadgeCount). Not ported: with
+// the inbox Slack's number is then activity_v2's dm count (3x6A wf), not
+// dmCount.
 func (r RailState) HomeBadge(channelsUnread bool, dmCount int) (count int, dot bool) {
 	badge := !r.DMsInRail && dmCount > 0
 	if r.ActivityInbox {
@@ -279,6 +283,74 @@ func (r RailState) HomeBadge(channelsUnread bool, dmCount int) (count int, dot b
 		return 0, (!r.DMsOptOut || r.DMsInRail || dmCount == 0) && channelsUnread
 	}
 	return 0, channelsUnread
+}
+
+// The DM badges: the DMs tab's, Home's DM count and More's (web client
+// bundles cached 2026-11-15: client-boot.bbd3a8c1f7bb6f10, boot-render
+// ffcc7d4c4df423eb, boot-shared 54b29d3cf4bf04bc; docs/SIDEBAR-RULES.md
+// "Rail"):
+//
+//   - client-boot ZdmU applyCountsToChannels: an IM's or group DM's unread
+//     count is client.counts' mention_count, else 1 for has_unreads. siMV
+//     refreshFilteredUnreadChannelCounts drops muted conversations (6eOG
+//     shouldCountUnreadsInModel) and makes all of an IM's or unmuted group
+//     DM's unreads highlights (shouldUseUnreadCountAsMentionCount).
+//   - boot-shared rHEx dmsBadgeCount sums those highlights over the IMs
+//     and group DMs, except the search user's IM (Opi6 df, USEARCH), the
+//     security bot's (Opi6 Cx, USLACKSECURITY) and bot DMs (DUy0 G
+//     isBotDm; JMmn R is false). yEMG hands the sum to the rail as the
+//     DMs tab's count, More's and Home's (InjD useGetMentions).
+//   - client-boot 6Z4k Sm getTotalUnreadDmsMpims counts the same
+//     conversations instead of their messages. It leaves out the IMs whose
+//     member is a bot or the security bot, but not Slackbot's own IM.
+
+// isBotDM is DUy0 isBotDm (G, and s for the DMs tab's rows) for the IM
+// with user, its member u as the store holds it (nil: unknown): Slackbot's
+// IM (s0AY D), the Slack system user's ("USLACK", served is_bot false, so
+// a member check misses it) or a member nMbN po isBotUser calls a bot.
+func isBotDM(user string, u *slack.User) bool {
+	return user == SlackbotUserID || user == "USLACK" || botMember(u)
+}
+
+// botMember is nMbN po isBotUser: is_bot, Slackbot (gmjA U: is_slackbot or
+// its id) or the Slack system user (o6sH _).
+func botMember(u *slack.User) bool {
+	return u != nil && (u.IsBot || u.IsSlackbot || u.ID == SlackbotUserID || u.ID == "USLACK")
+}
+
+// dmBadgeSkips reads the IM with user (member u, nil when the store holds
+// none) the way the DM badges do: noBadge leaves it out of rHEx
+// dmsBadgeCount, noCount out of 6Z4k Sm getTotalUnreadDmsMpims (w7aZ C:
+// is_slacksecuritybot or USLACKSECURITY is the security bot). Group DMs
+// count in both. Sm's id checks hold before the member loads: Slack's
+// lookup (gIKW getMemberById) hands back Gx04 UnknownFetchManager's stub,
+// which carries the id, so o6sH's "USLACK" and w7aZ C's USLACKSECURITY
+// match it; an unknown app's bot user still counts until it loads (the
+// stub has no is_bot), as here.
+func dmBadgeSkips(user string, u *slack.User) (noBadge, noCount bool) {
+	noBadge = user == "USEARCH" || user == "USLACKSECURITY" || isBotDM(user, u)
+	noCount = user != SlackbotUserID && (user == "USLACK" || user == "USLACKSECURITY" || botMember(u))
+	return noBadge, noCount
+}
+
+// DMsBadge is the DMs tab's count (InjD useGetMentions; 0 draws nothing):
+// highlights is rHEx dmsBadgeCount, unreadDMs 6Z4k Sm
+// getTotalUnreadDmsMpims (Conv.NoDMsBadge and NoDMsCount pick what each
+// sums). The tab badges only while highlights is above 0, so the DMs it
+// leaves out (Slackbot's, the Slack system user's, an app's) never badge
+// it on their own. Under the activity inbox, with the DMs tab in the rail,
+// the number is unreadDMs: the unread conversations, Slackbot's included.
+// Otherwise it is highlights. Slack's dot instead of a count (the compact
+// rail and narrow windows: useMaybeQuietModeBadging) isn't ported, as on
+// the other tabs.
+func (r RailState) DMsBadge(highlights, unreadDMs int) int {
+	if highlights <= 0 {
+		return 0
+	}
+	if r.ActivityInbox && r.DMsInRail {
+		return unreadDMs
+	}
+	return highlights
 }
 
 // RailCustomization is 5ydT.b: tab_rail_customization merged over each
