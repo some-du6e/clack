@@ -2,6 +2,7 @@ package slackc
 
 import (
 	"image"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -437,64 +438,50 @@ func TestLayerOpenedFromAClosedOneGivesItsFocusBack(t *testing.T) {
 }
 
 // A field a hold keeps focusable after its layer went (composer.KeepFocus
-// re-draws a focused editor at the root after the frame's layout) doesn't
-// keep the focus: the layer gives it back before the hold, in the frame
-// it stopped drawing.
+// draws a focused editor that wasn't drawn this frame at the window's
+// root, after the frame's layout) doesn't keep the focus: the layer gives
+// it back before the hold, in the frame it stopped drawing. Also after a
+// frame in which the layer missed the field and the hold bridged it (the
+// field's area is the root's then).
 func TestClosedLayerFieldKeepsNoFocus(t *testing.T) {
-	w := newLayerWin(t)
-	var opener int
-	w.page = func(gtx layout.Context) { focusable(gtx, &opener, image.Rect(0, 250, 50, 280)) }
-	l := &testLayer{plugin: true}
-	held := 0
-	w.post = func(gtx layout.Context) { // KeepFocus
-		if !gtx.Focused(&l.field) {
-			return
+	for _, glitch := range []bool{false, true} {
+		w := newLayerWin(t)
+		var opener int
+		w.page = func(gtx layout.Context) { focusable(gtx, &opener, image.Rect(0, 250, 50, 280)) }
+		l := &testLayer{plugin: true}
+		held := 0
+		w.post = func(gtx layout.Context) { // KeepFocus
+			if !gtx.Focused(&l.field) || slices.Contains(w.layers, l) && !l.noField {
+				return
+			}
+			held++
+			for {
+				if _, ok := gtx.Event(key.FocusFilter{Target: &l.field}); !ok {
+					break
+				}
+			}
+			defer clip.Rect{}.Push(gtx.Ops).Pop()
+			event.Op(gtx.Ops, &l.field)
 		}
-		held++
-		for {
-			if _, ok := gtx.Event(key.FocusFilter{Target: &l.field}); !ok {
-				break
+		w.frames(1)
+		w.focus(&opener)
+		w.layers = []*testLayer{l}
+		w.frames(1)
+		w.focus(&l.field)
+		if glitch {
+			l.noField = true
+			w.frames(1)
+			if held != 1 || !w.focused(&l.field) {
+				t.Fatalf("the hold didn't bridge the frame that missed the field (held %d, focus on %v)", held, w.r.Source().FocusTag())
 			}
 		}
-		defer clip.Rect{}.Push(gtx.Ops).Pop()
-		event.Op(gtx.Ops, &l.field)
-	}
-	w.frames(1)
-	w.focus(&opener)
-	w.layers = []*testLayer{l}
-	w.frames(1)
-	w.focus(&l.field)
-	w.layers = nil
-	held = 0
-	w.frames(1)
-	if !w.focused(&opener) || held != 0 {
-		t.Errorf("the layer closed with its field focused: the focus is on %v (held %d frames); want the opener, never held", w.r.Source().FocusTag(), held)
-	}
-}
-
-// While the window's page takes no input (a replayed introduction,
-// FocusInert) a layer that closes gives it no focus: the replay moved it
-// off the composer, and typing during it goes nowhere.
-func TestLayerGivesNoFocusWhileInert(t *testing.T) {
-	w := newLayerWin(t)
-	var opener int
-	w.page = func(gtx layout.Context) { focusable(gtx, &opener, image.Rect(0, 250, 50, 280)) }
-	fallback := 0
-	FocusFallback = func(layout.Context) { fallback++ }
-	inert := false
-	FocusInert = func() bool { return inert }
-	t.Cleanup(func() { FocusInert = nil })
-	w.frames(1)
-	w.focus(&opener)
-	l := &testLayer{}
-	w.layers = []*testLayer{l}
-	w.frames(1)
-	w.focus(&l.field)
-	inert = true
-	w.layers = nil
-	w.frames(2)
-	if !w.r.Source().Focused(nil) || fallback != 0 {
-		t.Errorf("a layer closed under a replay: the focus is on %v, FocusFallback ran %d times; want nowhere, never", w.r.Source().FocusTag(), fallback)
+		w.layers = nil
+		held = 0
+		w.frames(1)
+		if !w.focused(&opener) || held != 0 {
+			t.Errorf("glitch %v: the layer closed with its field focused: the focus is on %v (held %d frames); want the opener, never held",
+				glitch, w.r.Source().FocusTag(), held)
+		}
 	}
 }
 

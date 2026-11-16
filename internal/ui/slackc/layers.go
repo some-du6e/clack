@@ -168,6 +168,7 @@ type layerStack struct {
 	// layer, which gets this frame's Escape first (EscapeToFocus)
 	pluginFocus bool
 	focusIn     *layerEntry // the innermost layer holding the focus at the last frame's end
+	lastFocus   event.Tag   // the focus then
 
 	mu     sync.Mutex
 	passed []*EscapePress // Escapes passed on since the last RouteEscape (any goroutine)
@@ -221,6 +222,20 @@ func (ls *layerStack) holder(s input.Source, f event.Tag, not *layerEntry) *laye
 	return nil
 }
 
+// holding is the innermost layer holding focused tag f: drawn inside it in
+// the last frame or, for the tag that had the focus at the last frame's
+// end, the layer that held it then (a hold, composer.KeepFocus, draws an
+// editor that missed a frame at the window's root).
+func (ls *layerStack) holding(s input.Source, f event.Tag, not *layerEntry) *layerEntry {
+	if h := ls.holder(s, f, not); h != nil {
+		return h
+	}
+	if in := ls.focusIn; f != nil && f == ls.lastFocus && in != nil && in != not && !in.gone {
+		return in
+	}
+	return nil
+}
+
 // target is where an Escape with the focus on f goes on to: the innermost
 // layer holding f, or the topmost layer opened from inside it (or from
 // those), else the topmost layer. Layers an Escape is closing are passed
@@ -228,7 +243,7 @@ func (ls *layerStack) holder(s input.Source, f event.Tag, not *layerEntry) *laye
 // of those, to none (what had the focus before them, outside every
 // layer, gets it: the shell's).
 func (ls *layerStack) target(s input.Source, f event.Tag, now time.Time) (to *layerEntry, past bool) {
-	if h := ls.holder(s, f, nil); h != nil {
+	if h := ls.holding(s, f, nil); h != nil {
 		for h != nil && (h.gone || h.escaped(now)) {
 			h, past = h.parent, true
 		}
@@ -265,7 +280,7 @@ func (ls *layerStack) involved(s input.Source, f event.Tag, to *layerEntry) bool
 	if to != nil && to.plugin() {
 		return true
 	}
-	h := ls.holder(s, f, nil)
+	h := ls.holding(s, f, nil)
 	return h != nil && h.plugin()
 }
 
@@ -293,7 +308,7 @@ func OpenLayer(gtx layout.Context, l Layer, spec LayerSpec) {
 	if !e.live && gtx.Source.Enabled() {
 		e.live = true
 		e.opener = focusTag(gtx.Source)
-		e.parent = ls.holder(gtx.Source, e.opener, e)
+		e.parent = ls.holding(gtx.Source, e.opener, e)
 	}
 }
 
@@ -504,7 +519,13 @@ func RouteEscape(gtx layout.Context) {
 		ls.goOn(gtx, p)
 	}
 	ls.unclaimed(gtx)
-	ls.focusIn = ls.holder(s, focusTag(s), nil)
+	// where the focus is as the frame ends; a tag still focused that a
+	// hold drew outside its layer is still that layer's
+	f := focusTag(s)
+	if h := ls.holder(s, f, nil); h != nil || f != ls.lastFocus {
+		ls.focusIn = h
+	}
+	ls.lastFocus = f
 }
 
 // goOn gives a passed Escape to the layer it was aimed at, if that is
@@ -610,12 +631,12 @@ func (ls *layerStack) begin(gtx layout.Context) {
 		}
 		return
 	}
+	h := ls.holding(s, f, nil)
 	for _, e := range ls.entries {
-		if !e.held && e.holds(s, f) {
+		if !e.held && (e == h || e.holds(s, f)) {
 			e.held = true
 		}
 	}
-	h := ls.holder(s, f, nil)
 	ls.pluginFocus = h != nil && h.plugin()
 }
 
@@ -656,7 +677,8 @@ func (ls *layerStack) closeUnseen(gtx layout.Context, atEnd bool) {
 	for _, x := range closed {
 		// the focus left on one of its tags that went with it (a tag that
 		// is still drawn is somewhere else now), or gone
-		if f != nil && x.holds(s, f) && !(atEnd && askedFocus(s, f)) || f == nil && x.held {
+		in := x.holds(s, f) || f != nil && x == ls.focusIn && f == ls.lastFocus
+		if f != nil && in && !(atEnd && askedFocus(s, f)) || f == nil && x.held {
 			from = x
 			break
 		}
