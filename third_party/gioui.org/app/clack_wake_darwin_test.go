@@ -172,12 +172,15 @@ func pingMain(limit time.Duration) (time.Duration, bool) {
 	}
 }
 
-// With every drawable of the window's CAMetalLayer taken (what a sleeping
-// or waking display does: it keeps them), the frame waits at most the
-// layer's second for one, is skipped and tried again, the main thread
-// free in between; the window isn't destroyed; it presents again once
-// drawables come back. Each run of skipped frames gets a line in the log,
-// and so does its end.
+// With the compositor keeping every drawable of the window's CAMetalLayer
+// (what a sleeping display does; a waking one hands them back late), a
+// frame waits at most the layer's second for one, is skipped and tried
+// again, the main thread free in between; the window isn't destroyed; it
+// presents again once drawables come back. Each run of skipped frames gets
+// a line in the log, and so does its end. cocoatest.HoldDrawables has
+// nextDrawable answer as CAMetalLayer documents for a pool with none free
+// (a test can't make the compositor keep them on a desktop that shows
+// them); the layer's timeout setting is the real one.
 func TestNoDrawableSkipsFrameMac(t *testing.T) {
 	if !macWindowTestsEnabled() {
 		t.Skip("CLACK_MACOS_WINDOW_TESTS not set")
@@ -185,27 +188,26 @@ func TestNoDrawableSkipsFrameMac(t *testing.T) {
 	logs := captureLog(t)
 	h := newMacTestWindowWith(t, func() bool { return false })
 	defer h.destroy(t)
-	var (
-		held     cocoatest.Drawables
-		released bool
-	)
-	cocoatest.OnMain(func() { held = cocoatest.HoldDrawables(h.view) })
+	var timeout, metal bool
+	cocoatest.OnMain(func() { timeout, metal = cocoatest.DrawableTimeout(h.view) })
+	t.Logf("the layer's allowsNextDrawableTimeout %v", timeout)
+	if !metal {
+		t.Fatal("the window's layer isn't a CAMetalLayer")
+	}
+	if !timeout {
+		t.Error("allowsNextDrawableTimeout is NO: nextDrawable waits on the main thread for as long as the compositor keeps the drawables")
+	}
+	cocoatest.OnMain(cocoatest.HoldDrawables)
 	// from this goroutine: without the timeout the main thread waits in
 	// nextDrawable until the drawables come back
+	released := false
 	release := func() {
 		if !released {
 			released = true
-			cocoatest.Release(held.Held)
+			cocoatest.ReleaseDrawables()
 		}
 	}
 	defer release()
-	t.Logf("holding %d drawables (ended: %s, the last call %v); the layer's allowsNextDrawableTimeout %v", held.N, held.End, held.LastWait.Round(time.Millisecond), held.Timeout)
-	if held.N <= 0 || held.End != "nil" {
-		t.Fatalf("HoldDrawables left the layer drawables to give: %+v", held)
-	}
-	if !held.Timeout {
-		t.Error("allowsNextDrawableTimeout is NO: nextDrawable waits on the main thread for as long as the compositor keeps the drawables")
-	}
 
 	s0, p0, f0 := metalSkipped.Load(), metalPresented.Load(), h.frames.Load()
 	h.w.Invalidate()
@@ -220,7 +222,7 @@ func TestNoDrawableSkipsFrameMac(t *testing.T) {
 	}
 	t.Logf("the main thread's longest wait for a block: %v", worst.Round(time.Millisecond))
 	skipped, frames, presented := metalSkipped.Load()-s0, h.frames.Load()-f0, metalPresented.Load()-p0
-	t.Logf("in 4 s with no drawables: %d frames, %d skipped, %d presented", frames, skipped, presented)
+	t.Logf("in 4 s with no drawables: %d frames, %d skipped, %d presented; nextDrawable called %d times", frames, skipped, presented, cocoatest.HeldCalls())
 	if skipped < 2 {
 		t.Errorf("%d frames skipped for want of a drawable in 4 s, want at least 2 (one try a second)", skipped)
 	}

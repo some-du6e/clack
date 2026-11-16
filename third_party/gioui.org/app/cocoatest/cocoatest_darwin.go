@@ -54,14 +54,15 @@ void cocoatest_keyboard_layout(char *out, int n);
 void cocoatest_cover(void);
 void cocoatest_uncover(void);
 void cocoatest_post_workspace(int note);
-uintptr_t cocoatest_hold_drawables(uintptr_t view, int *n, int *timeout, int *end, double *lastMs);
-void cocoatest_release(uintptr_t ref);
+int cocoatest_drawable_timeout(uintptr_t view);
+void cocoatest_hold_drawables(void);
+void cocoatest_release_drawables(void);
+int cocoatest_held_calls(void);
 */
 import "C"
 
 import (
 	"runtime/cgo"
-	"time"
 	"unsafe"
 )
 
@@ -348,38 +349,29 @@ const (
 // does when the computer or its screens sleep and wake. Main thread.
 func PostWorkspace(n WorkspaceNote) { C.cocoatest_post_workspace(C.int(n)) }
 
-// Drawables is what HoldDrawables took.
-type Drawables struct {
-	Held uintptr // for Release
-	N    int     // drawables held; -1: the view's layer isn't a CAMetalLayer
-	// Timeout is the layer's allowsNextDrawableTimeout as the app left it.
-	Timeout bool
-	// End is how the taking ended: "nil" (none left: the call waited
-	// LastWait and gave nil), "same" (the layer gave a drawable it had
-	// given already), "no texture" or "limit" (8 taken).
-	End      string
-	LastWait time.Duration
+// DrawableTimeout is the view's CAMetalLayer's allowsNextDrawableTimeout
+// (metal false: the layer isn't a CAMetalLayer). Main thread.
+func DrawableTimeout(view uintptr) (timeout, metal bool) {
+	r := C.cocoatest_drawable_timeout(C.uintptr_t(view))
+	return r == 1, r >= 0
 }
 
-// HoldDrawables takes every drawable the view's CAMetalLayer can give
-// (nextDrawable until it gives nil, with the layer's one-second timeout on
-// for the calls), each with its texture, and keeps them, so the layer has
-// none left until Release: what a sleeping or waking display does to it,
-// which keeps its drawables. Main thread (Release from any).
-func HoldDrawables(view uintptr) Drawables {
-	var cn, ct, ce C.int
-	var ms C.double
-	h := C.cocoatest_hold_drawables(C.uintptr_t(view), &cn, &ct, &ce, &ms)
-	ends := [...]string{"nil", "same", "no texture", "limit"}
-	end := "?"
-	if int(ce) < len(ends) {
-		end = ends[ce]
-	}
-	return Drawables{Held: uintptr(h), N: int(cn), Timeout: ct != 0, End: end, LastWait: time.Duration(float64(ms) * float64(time.Millisecond))}
-}
+// HoldDrawables makes every CAMetalLayer answer nextDrawable as it does
+// when the compositor keeps all its drawables (a sleeping display keeps
+// them; a waking one hands them back late): with allowsNextDrawableTimeout
+// the call waits a second and gives nil, without it the call waits until
+// ReleaseDrawables, and then gets a drawable. A layer's own drawables don't
+// run out on a desktop that shows them: on the macOS 26 runner one gave 8
+// unpresented drawables, their textures taken, without waiting. Main
+// thread.
+func HoldDrawables() { C.cocoatest_hold_drawables() }
 
-// Release lets go of what HoldDrawables held. Any thread.
-func Release(held uintptr) { C.cocoatest_release(C.uintptr_t(held)) }
+// ReleaseDrawables ends HoldDrawables, waiting calls included. Any thread.
+func ReleaseDrawables() { C.cocoatest_release_drawables() }
+
+// HeldCalls is how many nextDrawable calls HoldDrawables has answered
+// since it began. Any thread.
+func HeldCalls() int { return int(C.cocoatest_held_calls()) }
 
 // Track keeps weak references to view and its window, for Alive. Main
 // thread.

@@ -569,57 +569,85 @@ void cocoatest_post_workspace(int note) {
 	}
 }
 
-uintptr_t cocoatest_hold_drawables(uintptr_t viewRef, int *n, int *timeout, int *end, double *lastMs) {
+int cocoatest_drawable_timeout(uintptr_t viewRef) {
 	@autoreleasepool {
-		*n = -1;
-		*timeout = 0;
-		*end = 0;
-		*lastMs = 0;
 		NSView *view = (__bridge NSView *)(void *)viewRef;
 		if (![view.layer isKindOfClass:[CAMetalLayer class]]) {
-			return 0;
+			return -1;
 		}
-		CAMetalLayer *layer = (CAMetalLayer *)view.layer;
 		if (@available(macOS 10.13, *)) {
-			BOOL was = layer.allowsNextDrawableTimeout;
-			*timeout = was ? 1 : 0;
-			// with the timeout on, the call after the last free drawable
-			// gives nil a second later instead of waiting for one
-			layer.allowsNextDrawableTimeout = YES;
-			NSMutableArray *held = [NSMutableArray array];
-			*end = 3; // as many as the loop takes
-			for (int i = 0; i < 8; i++) {
-				NSTimeInterval t0 = [NSProcessInfo processInfo].systemUptime;
-				id<CAMetalDrawable> d = [layer nextDrawable];
-				*lastMs = ([NSProcessInfo processInfo].systemUptime - t0) * 1000;
-				if (d == nil) {
-					*end = 0; // nil: none left
-					break;
-				}
-				if ([held indexOfObjectIdenticalTo:d] != NSNotFound) {
-					*end = 1; // the same drawable again
-					break;
-				}
-				// a drawable is in use once its texture is (as Gio's
-				// RenderTarget takes it at once)
-				if (d.texture == nil) {
-					*end = 2;
-					break;
-				}
-				[held addObject:d];
-			}
-			layer.allowsNextDrawableTimeout = was;
-			*n = (int)held.count;
-			return (uintptr_t)CFBridgingRetain(held);
+			return ((CAMetalLayer *)view.layer).allowsNextDrawableTimeout ? 1 : 0;
 		}
 		return 0;
 	}
 }
 
-void cocoatest_release(uintptr_t ref) {
-	if (ref != 0) {
-		CFRelease((CFTypeRef)ref);
+// A layer whose drawables the compositor keeps: while held, every
+// CAMetalLayer's nextDrawable answers as CAMetalLayer documents for a pool
+// with none free, waiting a second and giving nil with
+// allowsNextDrawableTimeout, waiting until the release without it.
+// (Holding drawables doesn't do it: on the macOS 26 runner a layer gave 8
+// unpresented ones, textures taken, without waiting.)
+static IMP origNextDrawable;
+static NSCondition *drawableCond;
+static BOOL drawablesHeld;
+static int heldCalls;
+
+static id heldNextDrawable(id self, SEL cmd) {
+	NSCondition *c = drawableCond;
+	[c lock];
+	if (drawablesHeld) {
+		heldCalls++;
+		BOOL timeout = YES;
+		if (@available(macOS 10.13, *)) {
+			timeout = ((CAMetalLayer *)self).allowsNextDrawableTimeout;
+		}
+		NSDate *limit = timeout ? [NSDate dateWithTimeIntervalSinceNow:1.0] : [NSDate distantFuture];
+		while (drawablesHeld && [c waitUntilDate:limit]) {
+		}
+		if (drawablesHeld) {
+			[c unlock];
+			return nil;
+		}
 	}
+	[c unlock];
+	return ((id (*)(id, SEL))origNextDrawable)(self, cmd);
+}
+
+void cocoatest_hold_drawables(void) {
+	@autoreleasepool {
+		if (drawableCond == nil) {
+			drawableCond = [[NSCondition alloc] init];
+			Method m = class_getInstanceMethod([CAMetalLayer class], @selector(nextDrawable));
+			origNextDrawable = method_setImplementation(m, (IMP)heldNextDrawable);
+		}
+		[drawableCond lock];
+		drawablesHeld = YES;
+		heldCalls = 0;
+		[drawableCond unlock];
+	}
+}
+
+void cocoatest_release_drawables(void) {
+	NSCondition *c = drawableCond;
+	if (c == nil) {
+		return;
+	}
+	[c lock];
+	drawablesHeld = NO;
+	[c broadcast];
+	[c unlock];
+}
+
+int cocoatest_held_calls(void) {
+	NSCondition *c = drawableCond;
+	if (c == nil) {
+		return 0;
+	}
+	[c lock];
+	int n = heldCalls;
+	[c unlock];
+	return n;
 }
 
 static void runMain(void *h) {
