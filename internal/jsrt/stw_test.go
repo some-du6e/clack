@@ -117,6 +117,24 @@ func TestStopTheWorldBounded(t *testing.T) {
 		{"Object.keys and for-in over an object with 2M keys",
 			`globalThis.text = null; if (!globalThis.dict) { globalThis.dict = {}; for (let i = 0; i < 2000000; i++) dict['k' + i] = i; }`,
 			evalOp(`(() => { let n = Object.keys(dict).length + Object.keys(dict).length; for (const k in dict) n++; return n })()`)},
+		// JSON.parse's string loop: escapes and non-ASCII characters take its
+		// slow path one at a time (utf8_decode, string_buffer_putc), which
+		// never ticked; only the ASCII batches between them did
+		{"JSON.parse of a 30M-character string of é",
+			`globalThis.dict = null; if (!globalThis.ejson) globalThis.ejson = JSON.stringify('é'.repeat(30000000));`,
+			evalOp(`JSON.parse(ejson).length`)},
+		{"JSON.parse of a string of 50M \\n escapes",
+			`globalThis.ejson = null; if (!globalThis.njson) globalThis.njson = JSON.stringify('\n'.repeat(50000000));`,
+			evalOp(`JSON.parse(njson).length`)},
+		// one character past U+00FF widens the string's 8-bit buffer to 16
+		// bits: a loop over everything before it
+		{"JSON.parse of a 30M-character ASCII string ending in an emoji",
+			`globalThis.njson = null; if (!globalThis.wjson) globalThis.wjson = JSON.stringify('a'.repeat(30000000) + '\u{1F600}');`,
+			evalOp(`JSON.parse(wjson).length`)},
+		// whitespace between tokens is skipped a character at a time
+		{"JSON.parse of 50M spaces between two tokens",
+			`globalThis.wjson = null; if (!globalThis.sjson) globalThis.sjson = '[' + ' '.repeat(50000000) + '1]';`,
+			evalOp(`JSON.parse(sjson).length`)},
 	}
 	for _, c := range cases {
 		var res [2]stwResult
@@ -147,8 +165,9 @@ func TestStopTheWorldBounded(t *testing.T) {
 			}
 		}
 		off, on := res[0], res[1]
-		// growing the wasm memory past its capacity copies all of it in Go (wazero's
-		// append): one memmove that no stop-the-world can interrupt either
+		// the wasm memory grows in place (wasmmem.go; with
+		// CLACK_JSRT_HEAP_MEMORY, a Go slice grown past its capacity is
+		// copied in one memmove no stop-the-world can interrupt either)
 		grew := ""
 		if on.grew {
 			grew = fmt.Sprintf("; the wasm memory grew, to %d MiB", on.mem>>20)
