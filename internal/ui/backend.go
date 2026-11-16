@@ -68,7 +68,14 @@ type backend struct {
 	chanDrafts map[string][]core.Draft
 
 	tabCache map[string][]chTab
-	tabsDone map[string]bool // opened() finished for the channel (the header is complete; reveal.go)
+	tabsDone map[string]bool // the header shows what there is: opened() finished, or the header cache filled it (reveal.go)
+	// headerReads is what this session's header reads of each
+	// conversation brought (opened): whether one answered every part (the
+	// header cache can't be newer then), the last tabs read and the
+	// membership it saw. A read that failed or came back partial before
+	// the header cache loaded leaves the cache to fill the gaps when it
+	// does (headerFromCache). UI goroutine only.
+	headerReads map[string]headerRead
 	// pluginsReady closes when the plugins enabled at start have started
 	// (any goroutine may wait on it)
 	pluginsReady chan struct{}
@@ -1008,10 +1015,24 @@ func (b *backend) opened(ch string) {
 			if b.tabsDone == nil {
 				b.tabsDone = map[string]bool{}
 			}
+			if b.headerReads == nil {
+				b.headerReads = map[string]headerRead{}
+			}
+			hr := b.headerReads[ch]
+			if err == nil {
+				hr.tabs = ts
+			}
+			if ierr == nil {
+				hr.notMember, hr.memberKnown = notMember, true
+			}
+			hr.complete = hr.complete || complete && ierr == nil
+			b.headerReads[ch] = hr
 			// a failed tab read keeps the bar shown (this session's or the
-			// cache's); one that brings the same bar changes nothing
+			// cache's, the cache's also when it loads later); one that
+			// brings the same bar changes nothing
 			changed := !b.tabsDone[ch]
-			if err == nil || !b.tabsDone[ch] {
+			switch {
+			case err == nil:
 				if !reflect.DeepEqual(b.tabCache[ch], tabs) {
 					a.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
 					changed = true
@@ -1020,6 +1041,9 @@ func (b *backend) opened(ch string) {
 					b.bookmarks[ch] = bms
 					changed = true
 				}
+			case !b.tabsDone[ch] && !b.headerFromCache(ch):
+				a.keepTabSelection(ch, func() { b.tabCache[ch] = nil })
+				b.bookmarks[ch] = nil
 			}
 			b.tabsDone[ch] = true
 			// the facepile, count and topic reach the screen through the
@@ -1145,22 +1169,34 @@ func tabsComplete(ts []core.Tab) bool {
 // headerFromCache shows ch's header as its last read left it (the header
 // cache: an earlier session's read on a warm start, or this session's)
 // until opened's reads revalidate it: the tab bar, the folder tabs'
-// bookmarks, the facepile and the member count. Only for a header this
-// session's reads haven't filled yet (tabsDone); it reports whether it
-// filled one. UI goroutine.
+// bookmarks, the facepile and the member count. Not over a read of this
+// session that answered every part; over one that failed, or filling the
+// parts a partial one couldn't read (a read that ran before the header
+// cache loaded: an offline warm start). It reports whether it filled the
+// header. UI goroutine.
 func (b *backend) headerFromCache(ch string) bool {
-	if b.tabsDone[ch] || b.core == nil {
+	hr := b.headerReads[ch]
+	if hr.complete || b.core == nil {
 		return false
 	}
 	h, ok := b.core.CachedHeader(ch)
 	if !ok {
 		return false
 	}
-	tabs, bms := b.tabsOf(h.Tabs, h.NotMember)
-	if b.app != nil {
-		b.app.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
-	} else {
-		b.tabCache[ch] = tabs
+	ts, notMember := h.Tabs, h.NotMember
+	if hr.tabs != nil { // this session's partial read: its known parts are newer
+		ts = mergeTabReads(hr.tabs, h.Tabs)
+	}
+	if hr.memberKnown {
+		notMember = hr.notMember
+	}
+	tabs, bms := b.tabsOf(ts, notMember)
+	if !reflect.DeepEqual(b.tabCache[ch], tabs) {
+		if b.app != nil {
+			b.app.keepTabSelection(ch, func() { b.tabCache[ch] = tabs })
+		} else {
+			b.tabCache[ch] = tabs
+		}
 	}
 	b.bookmarks[ch] = bms
 	if b.tabsDone == nil {
@@ -1180,6 +1216,15 @@ func (b *backend) headerFromCache(ch string) bool {
 		b.app.Invalidate()
 	}
 	return true
+}
+
+// headerRead is what this session's header reads of a conversation
+// brought (backend.headerReads).
+type headerRead struct {
+	complete    bool       // a read answered every part
+	tabs        []core.Tab // the last tabs read that answered (nil: none did)
+	notMember   bool       // conversations.info: the viewer isn't in it (memberKnown)
+	memberKnown bool
 }
 
 // chSide is what opened() read for a conversation's header.

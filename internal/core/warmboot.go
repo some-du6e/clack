@@ -216,13 +216,14 @@ func (a *App) installConvs(convs []slack.Conversation, since uint64) {
 
 // installCounts installs a client.counts answer fetched at the store
 // journal's position since (Boot, refreshCounts): the unread state and
-// the Activity badges, except what changed after since (a mark, a new
-// message, items marked read), which is newer and stays. It reports
-// whether it kept any such change.
+// the Activity badges, merged with what changed after since (a mark, a
+// new message, items marked read: store.SetCountsSince). It reports
+// whether it merged anything: the result is then partly older than
+// Slack's state, worth reading once more.
 func (a *App) installCounts(c *slack.Counts, since uint64) bool {
-	kept := a.S.SetCountsSince(c, since)
+	merged := a.S.SetCountsSince(c, since)
 	badges := c.ActivityV2 == nil || a.setActivityBadgesSince(c.ActivityV2, since)
-	return kept > 0 || !badges
+	return merged > 0 || !badges
 }
 
 // warmAdded is the conversations the boot data installed (nil on a cold

@@ -142,6 +142,15 @@ func (s *Store) DropDisk() {
 // interrupted sign-out finishes it: SweepAccounts), then the directory
 // itself when that left it empty.
 func dropAccountDir(dir string) {
+	removeAccountFiles(dir)
+	_ = os.RemoveAll(filepath.Join(dir, "img"))
+	_ = os.Remove(filepath.Join(dir, SignedOutMark))
+	_ = os.Remove(dir) // only when empty
+}
+
+// removeAccountFiles deletes Clack's own files in an account directory
+// (cacheFiles and their temp files), not the images or the mark.
+func removeAccountFiles(dir string) {
 	for _, n := range cacheFiles {
 		_ = os.Remove(filepath.Join(dir, n))
 	}
@@ -152,9 +161,6 @@ func dropAccountDir(dir string) {
 			}
 		}
 	}
-	_ = os.RemoveAll(filepath.Join(dir, "img"))
-	_ = os.Remove(filepath.Join(dir, SignedOutMark))
-	_ = os.Remove(dir) // only when empty
 }
 
 // SignedOutMark is the empty file sign-out leaves in the account
@@ -178,27 +184,43 @@ func (s *Store) SignOutNow() {
 }
 
 // RemoveWarmFiles deletes the warm boot's files (boot_data.json,
-// headers.json), after any write of them still going. A session that
-// ended (auth_failed) drops them too: they only serve a warm start of
-// this account's session.
+// headers.json), after any write of them still going, and no write of
+// them follows (a save already past its own checks included). A session
+// that ended (auth_failed) drops them: they only serve this session's
+// next warm start.
 func (s *Store) RemoveWarmFiles() {
 	if s.cacheDir == "" {
 		return
 	}
 	s.fileMu.Lock()
 	defer s.fileMu.Unlock()
+	s.warmGone = true
 	for _, n := range []string{BootDataFile, HeadersFile} {
 		_ = os.Remove(filepath.Join(s.cacheDir, n))
 	}
 }
 
-// SweepAccounts runs at start, before any account's store opens: an
-// account directory with the signed-out mark is deleted (a sign-out the
-// process didn't live to finish), and every account directory but keep's
-// (the signed-in account's, "" when none is) loses its warm boot files:
-// they only serve that account's next warm start, and it isn't signed in.
-// Its other files stay, as before (meta.json, images). A few stats and
-// removes: call it before the window opens, off the UI goroutine.
+// ClearSignedOut takes the signed-out mark off the directory: a signed-in
+// session opened it again (the same account signed back in), so it is
+// that session's now, whatever an earlier sign-out left unfinished.
+// cmd/clack calls it as the session's store opens.
+func (s *Store) ClearSignedOut() {
+	if s.cacheDir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(s.cacheDir, SignedOutMark))
+}
+
+// SweepAccounts runs at start, before any account's store opens. An
+// account directory with the signed-out mark is deleted: a sign-out the
+// process didn't live to finish. keep (the signed-in account's directory,
+// "" when none is) is never deleted: its mark only means a sign-out was
+// followed by a sign-in to the same account, so the mark goes instead.
+// Every other directory stays whole, warm boot files included, as Slack
+// keeps a persisted store per signed-in team (the account switcher's
+// saved accounts sign in again warm). The images of a deleted directory
+// are removed in the background. A few stats and removes: call it before
+// the window opens, off the UI goroutine.
 func SweepAccounts(root, keep string) {
 	if root == "" {
 		return
@@ -213,27 +235,37 @@ func SweepAccounts(root, keep string) {
 			continue
 		}
 		dir := filepath.Join(base, e.Name())
-		if _, err := os.Stat(filepath.Join(dir, SignedOutMark)); err == nil {
-			// the images can be hundreds of MB: out of the way at once,
-			// deleted in the background
-			img := filepath.Join(dir, "img")
-			trash := filepath.Join(base, "."+e.Name()+"-img-"+strconv.FormatInt(time.Now().UnixNano(), 36)+".trash")
-			if os.Rename(img, trash) == nil {
+		if strings.HasSuffix(e.Name(), ".trash") { // an earlier sweep's images, cut short
+			go func(p string) { _ = os.RemoveAll(p) }(dir)
+			continue
+		}
+		mark := filepath.Join(dir, SignedOutMark)
+		if _, err := os.Stat(mark); err != nil {
+			continue
+		}
+		if dir == keep {
+			_ = os.Remove(mark)
+			continue
+		}
+		// the images can be hundreds of MB: out of the way at once and
+		// deleted in the background; when the rename fails (a file in
+		// them held open), deleted in the background where they are,
+		// the mark and the directory after them
+		img := filepath.Join(dir, "img")
+		trash := filepath.Join(base, "."+e.Name()+"-img-"+strconv.FormatInt(time.Now().UnixNano(), 36)+".trash")
+		if err := os.Rename(img, trash); err == nil || os.IsNotExist(err) {
+			if err == nil {
 				go func() { _ = os.RemoveAll(trash) }()
 			}
 			dropAccountDir(dir)
 			continue
 		}
-		if strings.HasSuffix(e.Name(), ".trash") { // an earlier sweep's, cut short
-			go func(p string) { _ = os.RemoveAll(p) }(dir)
-			continue
-		}
-		if dir == keep {
-			continue
-		}
-		for _, n := range []string{BootDataFile, HeadersFile} {
-			_ = os.Remove(filepath.Join(dir, n))
-		}
+		removeAccountFiles(dir)
+		go func() {
+			_ = os.RemoveAll(img)
+			_ = os.Remove(mark)
+			_ = os.Remove(dir) // only when empty
+		}()
 	}
 }
 

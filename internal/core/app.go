@@ -50,6 +50,7 @@ type App struct {
 	presSeen     map[string]time.Time
 	presWaiters  []chan struct{}
 	countsTimer  *time.Timer
+	countsReread bool           // refreshCounts' next read is the one after a merged answer (it doesn't ask again)
 	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
 	actBadgesAt  uint64         // the store journal's position at their last change (setActivityBadgesSince)
 	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
@@ -973,7 +974,18 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 func (a *App) refreshCounts(ctx context.Context) {
 	since := a.S.Seq()
 	if c, err := a.C.Counts(ctx); err == nil {
-		a.installCounts(c, since) // a mark or message while it was out stays (store/journal.go)
+		// a mark or message while it was out stays (store/journal.go); an
+		// answer merged with one is partly older than Slack is now, so the
+		// counts are read once more (not again after that read: a busy
+		// channel doesn't keep it asking)
+		merged := a.installCounts(c, since)
+		a.mu.Lock()
+		reread := merged && !a.countsReread
+		a.countsReread = reread
+		a.mu.Unlock()
+		if reread {
+			a.refreshCountsSoon()
+		}
 		a.emit(Event{Type: "counts"})
 		if a.reopenActive() { // a closed DM got a new message
 			a.emit(Event{Type: "sidebar_changed"})

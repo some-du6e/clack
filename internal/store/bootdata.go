@@ -25,8 +25,10 @@ import (
 //
 // Neither holds message content. Both name the account they belong to and
 // are read only for it. Sign-out deletes them first (SignOutNow), a session
-// that ended deletes them (RemoveWarmFiles), and a start deletes every
-// other account's (SweepAccounts).
+// that ended deletes them (RemoveWarmFiles), and a start finishes a
+// sign-out its process didn't live through (SweepAccounts). Another
+// signed-in account's stay, as Slack keeps a persisted store per team
+// (the account switcher's saved accounts).
 
 // BootDataFile and HeadersFile are the warm boot's files in the account
 // directory.
@@ -81,8 +83,8 @@ func (s *Store) WriteFile(name string, b []byte) error {
 	}
 	s.fileMu.Lock()
 	defer s.fileMu.Unlock()
-	if s.dropped.Load() {
-		return errDropped
+	if s.dropped.Load() || s.warmGone && (name == BootDataFile || name == HeadersFile) {
+		return errDropped // signed out, or the session ended (RemoveWarmFiles): a save already past its own checks
 	}
 	return writeAtomic(s.cacheDir, name, b)
 }

@@ -17,6 +17,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -407,5 +408,42 @@ func TestMergeTabReads(t *testing.T) {
 	}
 	if tabsComplete(got) || !tabsComplete(got[:2]) {
 		t.Error("tabsComplete")
+	}
+}
+
+// A header read that failed or came back partial before the header cache
+// loaded (an offline warm start reads at once, the cache waits for
+// meta.json) doesn't keep the cache out: when it loads, the cached tab bar
+// fills the failed read and the gaps of the partial one (whose known parts
+// win); a read that answered every part keeps the cache out.
+func TestHeaderCacheFillsAnEarlyFailedRead(t *testing.T) {
+	c := core.New(slack.New(slack.Creds{Token: "xoxc-test", UserID: "USELF", Team: "T1", TeamURL: "http://127.0.0.1:1/"}), store.New(""))
+	b := newBackend(c, "")
+	const ch = "C1"
+	labels := func() []string {
+		var out []string
+		for _, t := range b.tabCache[ch] {
+			out = append(out, t.label)
+		}
+		return out
+	}
+	// the read failed first: an empty bar, done
+	b.tabsDone = map[string]bool{ch: true}
+	b.headerReads = map[string]headerRead{ch: {}}
+	c.SetCachedHeader(ch, core.ChannelHeader{Tabs: []core.Tab{{ID: "t1", Type: "canvas", FileID: "F1", Title: "Plan"}}, Num: 5, Members: []string{"U1"}})
+	if !b.headerFromCache(ch) || !slices.Equal(labels(), []string{"Plan"}) || b.side[ch].num != 5 {
+		t.Fatalf("after a failed read: tabs %v, side %+v", labels(), b.side[ch])
+	}
+	// a partial read: t1's title unknown (the cache's fills it), t2 new
+	b.headerReads[ch] = headerRead{tabs: []core.Tab{
+		{ID: "t1", Type: "canvas", FileID: "F1", Title: "Untitled", TitleUnknown: true},
+		{ID: "t2", Type: "canvas", FileID: "F2", Title: "Fresh"}}}
+	if !b.headerFromCache(ch) || !slices.Equal(labels(), []string{"Plan", "Fresh"}) {
+		t.Errorf("after a partial read: %v", labels())
+	}
+	// a complete read: the cache doesn't override it
+	b.headerReads[ch] = headerRead{complete: true, tabs: []core.Tab{{ID: "t2", Type: "canvas", FileID: "F2", Title: "Fresh"}}}
+	if b.headerFromCache(ch) {
+		t.Error("the cache filled over a complete read")
 	}
 }

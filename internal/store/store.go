@@ -119,9 +119,12 @@ type Store struct {
 	// gen counts changes to what the disk cache holds; SaveCache writes
 	// only when it (or the emoji map's version) moved since the last load
 	// or save.
-	gen       atomic.Uint64
-	saveMu    sync.Mutex
-	fileMu    sync.Mutex  // WriteFile's (the warm boot's small files), apart from meta.json's long saves
+	gen    atomic.Uint64
+	saveMu sync.Mutex
+	fileMu sync.Mutex // WriteFile's (the warm boot's small files), apart from meta.json's long saves
+	// warmGone: the warm boot's files were deleted for good (a session
+	// that ended, sign-out): WriteFile writes neither again (fileMu)
+	warmGone  bool
 	dropped   atomic.Bool // DropDisk ran (signed out): never write again
 	saved     bool
 	savedGen  uint64
@@ -1144,6 +1147,12 @@ func (s *Store) SelfID() string {
 
 func (s *Store) PutConv(c slack.Conversation) {
 	s.mu.Lock()
+	s.putConvLocked(c)
+	s.mu.Unlock()
+}
+
+// putConvLocked is PutConv's body (s.mu held).
+func (s *Store) putConvLocked(c slack.Conversation) {
 	if old, ok := s.Convs[c.ID]; ok {
 		if c.NumMembers == 0 {
 			c.NumMembers = old.NumMembers
@@ -1159,7 +1168,6 @@ func (s *Store) PutConv(c slack.Conversation) {
 		}
 	}
 	s.Convs[c.ID] = &c
-	s.mu.Unlock()
 }
 
 func (s *Store) Conv(id string) (*slack.Conversation, bool) {
@@ -1449,7 +1457,7 @@ func (s *Store) MarkRead(ch, ts string) slack.CountEntry {
 		e = &slack.CountEntry{ID: ch}
 		s.Counts[ch] = e
 	}
-	s.noteCountLocked(ch) // a counts answer fetched before keeps this (journal.go)
+	s.noteMarkLocked(ch) // a counts answer fetched before keeps this cursor (journal.go)
 	e.LastRead = ts
 	if e.Latest == "" || !TSLess(ts, e.Latest) {
 		e.HasUnreads = false
@@ -1471,7 +1479,7 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 		e = &slack.CountEntry{ID: ch}
 		s.Counts[ch] = e
 	}
-	s.noteCountLocked(ch) // newer than a counts answer still out (journal.go)
+	s.noteMessageLocked(ch) // newer than a counts answer still out (journal.go)
 	if e.Latest == "" || TSLess(e.Latest, m.TS) {
 		e.Latest = m.TS
 	}

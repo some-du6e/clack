@@ -31,8 +31,28 @@ func TestJournalKeepsNewerChanges(t *testing.T) {
 	if e, _ := s.Count("C2"); e.HasUnreads {
 		t.Errorf("C2 should take the answer: %+v", e)
 	}
-	if !s.CountsChangedSince(since) || s.CountsChangedSince(s.Seq()) {
-		t.Error("CountsChangedSince")
+	if !s.CountChangedSince("C1", since) || s.CountChangedSince("C1", s.Seq()) || s.CountChangedSince("C2", since) {
+		t.Error("CountChangedSince")
+	}
+
+	// Only a new message while the answer was out: Slack's cursor and
+	// mention count win (it counts mentions below a partial mark the
+	// client can't), and the newer message stays unread.
+	s.SetCounts(&slack.Counts{Channels: []slack.CountEntry{{ID: "C7", LastRead: "3.0", Latest: "5.0", HasUnreads: true}}})
+	since = s.Seq()
+	s.NoteMessage("C7", &slack.Message{TS: "6.0", User: "U2"}, false)
+	if n := s.SetCountsSince(&slack.Counts{Channels: []slack.CountEntry{{ID: "C7", LastRead: "3.0", Latest: "5.0", HasUnreads: true, MentionCount: 2}}}, since); n != 1 {
+		t.Errorf("merged %d, want 1", n)
+	}
+	if e, _ := s.Count("C7"); e.MentionCount != 2 || !e.HasUnreads || e.Latest != "6.0" || e.LastRead != "3.0" {
+		t.Errorf("a message during the call: %+v, want Slack's 2 mentions, the newer latest, unread", e)
+	}
+	// a message the answer already counted: the answer whole
+	since = s.Seq()
+	s.NoteMessage("C7", &slack.Message{TS: "7.0", User: "U2"}, false)
+	s.SetCountsSince(&slack.Counts{Channels: []slack.CountEntry{{ID: "C7", LastRead: "7.0", Latest: "7.0"}}}, since)
+	if e, _ := s.Count("C7"); e.HasUnreads || e.MentionCount != 0 {
+		t.Errorf("an answer that saw the message: %+v", e)
 	}
 
 	s.PutConv(slack.Conversation{ID: "C3", Name: "three", IsChannel: true})
@@ -139,15 +159,18 @@ func TestSignOutAndSweep(t *testing.T) {
 	}
 
 	keep, other, quit := acct("TK"), acct("TO"), acct("TQ")
-	write(keep, "meta.json", BootDataFile, HeadersFile)
-	write(other, "meta.json", BootDataFile, HeadersFile)
-	write(quit, "meta.json", BootDataFile, SignedOutMark) // signed out, then the process ended
+	write(keep, "meta.json", BootDataFile, HeadersFile, SignedOutMark) // signed out, then the same account signed in again
+	write(other, "meta.json", BootDataFile, HeadersFile)               // the account switcher's saved account
+	write(quit, "meta.json", BootDataFile, SignedOutMark)              // signed out, then the process ended
 	SweepAccounts(root, keep)
-	if !exists(filepath.Join(keep, BootDataFile)) || !exists(filepath.Join(keep, HeadersFile)) {
-		t.Error("the signed-in account lost its warm boot files")
+	if !exists(filepath.Join(keep, BootDataFile)) || !exists(filepath.Join(keep, HeadersFile)) || !exists(filepath.Join(keep, "meta.json")) {
+		t.Error("the signed-in account's directory lost files")
 	}
-	if exists(filepath.Join(other, BootDataFile)) || exists(filepath.Join(other, HeadersFile)) || !exists(filepath.Join(other, "meta.json")) {
-		t.Error("another account: the warm boot files should go, meta.json stay")
+	if exists(filepath.Join(keep, SignedOutMark)) {
+		t.Error("the signed-in account's stale mark stayed")
+	}
+	if !exists(filepath.Join(other, BootDataFile)) || !exists(filepath.Join(other, HeadersFile)) || !exists(filepath.Join(other, "meta.json")) {
+		t.Error("another signed-in account lost its warm boot files")
 	}
 	if exists(filepath.Join(quit, "meta.json")) || exists(filepath.Join(quit, SignedOutMark)) {
 		t.Error("an interrupted sign-out wasn't finished")
@@ -159,5 +182,38 @@ func TestSignOutAndSweep(t *testing.T) {
 	}
 	if !slices.Contains(names, filepath.Base(keep)) || slices.Contains(names, filepath.Base(quit)) {
 		t.Errorf("v1 after the sweep: %v", names)
+	}
+}
+
+// A session that ended deletes the warm boot's files, and a save already
+// past its own checks doesn't write them again (the flag WriteFile reads
+// under its lock); other cache files still save. ClearSignedOut takes a
+// stale mark away.
+func TestWarmFilesGoneForGood(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir)
+	for _, n := range []string{BootDataFile, HeadersFile} {
+		if err := s.WriteFile(n, []byte("{}")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.RemoveWarmFiles()
+	for _, n := range []string{BootDataFile, HeadersFile} {
+		if _, err := os.Stat(filepath.Join(dir, n)); !os.IsNotExist(err) {
+			t.Errorf("%s still there", n)
+		}
+		if err := s.WriteFile(n, []byte("{}")); err == nil {
+			t.Errorf("%s written after RemoveWarmFiles", n)
+		}
+	}
+	if err := s.WriteFile("channel_managers.json", []byte("{}")); err != nil {
+		t.Errorf("another file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, SignedOutMark), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.ClearSignedOut()
+	if _, err := os.Stat(filepath.Join(dir, SignedOutMark)); !os.IsNotExist(err) {
+		t.Error("ClearSignedOut left the mark")
 	}
 }

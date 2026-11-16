@@ -523,11 +523,15 @@ func scanBootWaits(uf uiFile, seenHelper map[string]bool, report func(n ast.Node
 				case *ast.GoStmt:
 					if fl, ok := v.Call.Fun.(*ast.FuncLit); ok {
 						walk(fl.Body, true, where)
-						for _, a := range v.Call.Args { // evaluated here
+					} else if sel, ok := v.Call.Fun.(*ast.SelectorExpr); ok { // go x.f(): f runs off the UI goroutine, x is evaluated here
+						ast.Inspect(sel.X, visit)
+					}
+					for _, a := range v.Call.Args { // evaluated here; a method value handed over runs there
+						if !bootWaitValue(a) {
 							ast.Inspect(a, visit)
 						}
-						return false
 					}
+					return false
 				case *ast.CallExpr:
 					name := calleeName(v.Fun)
 					for _, a := range v.Args {
@@ -545,10 +549,8 @@ func scanBootWaits(uf uiFile, seenHelper map[string]bool, report func(n ast.Node
 						}
 					}
 					if !async && len(v.Args) == 0 {
-						if sel, ok := v.Fun.(*ast.SelectorExpr); ok && bootWaits[sel.Sel.Name] {
-							if id, ok := sel.X.(*ast.Ident); !ok || !pkgs[id.Name] {
-								report(v, where, "calls "+sel.Sel.Name)
-							}
+						if sel, ok := v.Fun.(*ast.SelectorExpr); ok && bootWaits[sel.Sel.Name] && coreReceiver(sel.X, pkgs) {
+							report(v, where, "calls "+sel.Sel.Name)
 						}
 					}
 					if !async {
@@ -561,20 +563,20 @@ func scanBootWaits(uf uiFile, seenHelper map[string]bool, report func(n ast.Node
 					} else {
 						ast.Inspect(v.Fun, visit)
 					}
+					handsOff := name == "AfterFunc" || asyncRunners[name] // a method value it runs off the UI goroutine
 					for _, a := range v.Args {
-						if _, ok := a.(*ast.FuncLit); !ok {
-							ast.Inspect(a, visit)
+						if _, ok := a.(*ast.FuncLit); ok || handsOff && bootWaitValue(a) {
+							continue
 						}
+						ast.Inspect(a, visit)
 					}
 					return false
 				case *ast.FuncLit:
 					walk(v.Body, async, where)
 					return false
 				case *ast.SelectorExpr: // a method value (f := c.Snapshot)
-					if !async && bootWaits[v.Sel.Name] {
-						if id, ok := v.X.(*ast.Ident); !ok || !pkgs[id.Name] {
-							report(v, where, "takes "+v.Sel.Name)
-						}
+					if !async && bootWaits[v.Sel.Name] && coreReceiver(v.X, pkgs) {
+						report(v, where, "takes "+v.Sel.Name)
 					}
 				case *ast.UnaryExpr:
 					if v.Op == token.ARROW && !async {
@@ -682,6 +684,15 @@ func selects(c *core.App) {
 }
 
 func typesOnly(s core.Snapshot) core.Snapshot { return core.Snapshot{} } // fine: types
+
+func goNamed(v *View, c *core.App) {
+	go dirKnownPeople(c)                          // fine: a helper started as a goroutine
+	go v.load(c.Snapshot)                         // fine: the method value runs there
+	time.AfterFunc(time.Second, v.refreshPeople)  // fine
+	go v.show(c.Snapshot())                       // bad: the argument is evaluated here
+}
+
+func otherSnapshots(x *store.Store) { _ = x.CustomEmoji.Snapshot() } // fine: not core's
 `
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "x.go", src, parser.SkipObjectResolution)
@@ -709,12 +720,35 @@ func typesOnly(s core.Snapshot) core.Snapshot { return core.Snapshot{} } // fine
 		fmt.Sprintf("%d a package-level func calls BootErr", line("var pkgLevel")),
 		fmt.Sprintf("%d receive receives from Ready", line("func receive")),
 		fmt.Sprintf("%d selects receives from Ready", line("bad: no default")),
+		fmt.Sprintf("%d goNamed calls Snapshot", line("bad: the argument")),
 	}
 	sort.Strings(got)
 	sort.Strings(want)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the scan reported\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+}
+
+// bootWaitValue reports whether x is a method value of a boot wait
+// (c.Snapshot): taken, not called.
+func bootWaitValue(x ast.Expr) bool {
+	sel, ok := x.(*ast.SelectorExpr)
+	return ok && bootWaits[sel.Sel.Name]
+}
+
+// coreReceiver reports whether x can be the *core.App a Snapshot or
+// BootErr is called on: not a package (core.Snapshot is the type), and
+// not an exported field of something else (c.S.CustomEmoji.Snapshot() is
+// the emoji map's copy). A variable, an unexported field (b.core) and a
+// call (h.Core()) can.
+func coreReceiver(x ast.Expr, pkgs map[string]bool) bool {
+	switch v := x.(type) {
+	case *ast.Ident:
+		return !pkgs[v.Name]
+	case *ast.SelectorExpr:
+		return !ast.IsExported(v.Sel.Name)
+	}
+	return true
 }
 
 // inFree reports whether the receive u is one of a non-blocking select's

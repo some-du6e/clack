@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -525,5 +526,39 @@ func TestWarmWindowWritesSurviveBoot(t *testing.T) {
 	}
 	if d.DMsOpen[openDM] || !d.DMsOpen[closed] {
 		t.Errorf("boot data's DMs: %s open %v, %s open %v", openDM, d.DMsOpen[openDM], closed, d.DMsOpen[closed])
+	}
+}
+
+// refreshCounts while a message lands in a channel that was marked
+// partway: Slack's mention count below the cursor (only Slack knows it) is
+// taken, not dropped with the whole entry; the newer message stays unread;
+// and the counts are read once more (the answer was partly older than
+// Slack), not again after that.
+func TestRefreshCountsMergesAMessageAndRereadsOnce(t *testing.T) {
+	a, f := testApp(t)
+	f.reply["client.counts"] = `{"ok":true,"channels":[{"id":"C1","last_read":"1700000001.000000","latest":"1700000005.000000","has_unreads":true,"mention_count":2}],"ims":[],"mpims":[]}`
+	var calls atomic.Int32
+	f.hooks["client.counts"] = func(url.Values) {
+		if calls.Add(1) == 1 { // while the first call is out
+			a.S.NoteMessage("C1", &slack.Message{TS: "1700000006.000000", User: "U1"}, false)
+		}
+	}
+	a.refreshCounts(context.Background())
+	if c := a.Count("C1"); c.Mentions != 2 || !c.Unread || c.Latest != "1700000006.000000" {
+		t.Errorf("after a message during the call: %+v, want Slack's 2 mentions, unread, the newer latest", c)
+	}
+	deadline := time.Now().Add(6 * time.Second)
+	for calls.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if calls.Load() < 2 {
+		t.Fatal("no second client.counts after a merged answer")
+	}
+	time.Sleep(2500 * time.Millisecond) // refreshCountsSoon's delay, and some
+	if n := calls.Load(); n != 2 {
+		t.Errorf("%d client.counts calls, want 2 (one re-read)", n)
+	}
+	if c := a.Count("C1"); c.Mentions != 2 {
+		t.Errorf("after the re-read: %+v", c)
 	}
 }
