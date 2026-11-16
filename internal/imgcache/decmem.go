@@ -78,17 +78,20 @@ func NewBudget() *Budget { return budget.New(decodePool, MaxDecode) }
 
 // WithBudget runs f with a new Budget, released when f returns. f failing
 // with ErrBusy runs again, with a new Budget, after a wait that starts at
-// busyStep and doubles to busyStepMax, for at most busyWait or until ctx
-// is done; then the ErrBusy is returned. For one-shot callers (Copy Image,
-// the composer's and the emoji dialog's thumbnails, a picked profile
-// photo) that have no retry of their own. Nothing waits on the pool
-// itself: a decode that can't have its memory fails at once, and runs
-// again from the start.
+// busyStep and doubles to busyStepMax, until ctx is done (or for busyWait,
+// when ctx has no deadline); then the ErrBusy is returned. For one-shot
+// callers (Copy Image, the composer's and the emoji dialog's thumbnails, a
+// picked profile photo) that have no retry of their own. Nothing waits on
+// the pool itself: a decode that can't have its memory fails at once, and
+// runs again from the start.
 func WithBudget(ctx context.Context, f func(*Budget) error) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	deadline := time.Now().Add(busyWait)
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(busyWait)
+	}
 	step := busyStep
 	for {
 		b := NewBudget()
@@ -114,6 +117,13 @@ const (
 	busyStep    = 50 * time.Millisecond
 	busyStepMax = time.Second
 )
+
+// ChargeFunc is b.Charge with its errors as imgcache reports them
+// (budgetErr): for the copies a caller makes of a decoded image (Copy
+// Image's clipboard conversion) under the decode's budget.
+func ChargeFunc(b *Budget) func(int64) error {
+	return func(n int64) error { return budgetErr(b.Charge(n)) }
+}
 
 // budgetErr is err as imgcache reports it: a decode past its budget is
 // ErrTooBig (permanent: the same bytes need the same memory), a busy pool

@@ -43,16 +43,22 @@ import (
 	"context"
 	"errors"
 	"image"
+	"unsafe"
 )
 
-func write(_ context.Context, img image.Image) error {
-	data, err := encodePNG(img)
+func write(_ context.Context, img image.Image, charge func(int64) error) error {
+	data, err := encodePNG(img, charge)
 	if err != nil {
 		return err
 	}
-	p := C.CBytes(data)
+	// one copy, in C's heap, for AppKit (which copies it into its NSData)
+	p := C.malloc(C.size_t(data.Len()))
+	if p == nil {
+		return errors.New("out of memory")
+	}
 	defer C.free(p)
-	if C.clack_put_image(p, C.long(len(data))) == 0 {
+	data.copyTo(unsafe.Slice((*byte)(p), data.Len()))
+	if C.clack_put_image(p, C.long(data.Len())) == 0 {
 		return errors.New("the pasteboard refused the image")
 	}
 	return nil

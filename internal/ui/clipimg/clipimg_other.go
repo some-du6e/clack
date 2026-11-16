@@ -7,4 +7,4 @@ import (
 	"image"
 )
 
-func write(context.Context, image.Image) error { return ErrUnsupported }
+func write(context.Context, image.Image, func(int64) error) error { return ErrUnsupported }

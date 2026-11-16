@@ -27,7 +27,6 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/unit"
 	"gioui.org/widget"
-	xdraw "golang.org/x/image/draw"
 
 	"github.com/some-du6e/clack/internal/i18n"
 	"github.com/some-du6e/clack/internal/imgcache" // registers WebP for image.DecodeConfig
@@ -397,22 +396,31 @@ func emojiAddLoad(path string) (emojiAddFile, error) {
 	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > emojiAddMaxPixels {
 		return emojiAddFile{}, errors.New("That image is too big to use as an emoji.")
 	}
-	// imgcache.Decode gates the header size and bounds a lossless WebP's
-	// Huffman-group allocation by the canvas (a 1×1 meta bomb bypasses the
-	// pixel check above).
-	img, err := imgcache.Decode(data)
+	// The decode and the thumbnail's scale charge what they allocate to a
+	// budget from imgcache's process-wide decode memory (a 1×1 WebP meta
+	// bomb bypasses the pixel check above).
+	var thumb image.Image
+	err = imgcache.WithBudget(context.Background(), func(b *imgcache.Budget) error {
+		img, err := imgcache.DecodeBudget(data, imgcache.MaxPixels, imgcache.MaxSide, b)
+		if err != nil {
+			return err
+		}
+		thumb, err = emojiAddThumb(img, emojiAddThumbPx, b)
+		return err
+	})
 	if err != nil {
 		return emojiAddFile{}, errors.New("That file isn’t a PNG, GIF, JPEG or WebP image.")
 	}
-	return emojiAddFile{name: filepath.Base(path), data: data, op: paint.NewImageOp(emojiAddThumb(img, emojiAddThumbPx))}, nil
+	return emojiAddFile{name: filepath.Base(path), data: data, op: paint.NewImageOp(thumb)}, nil
 }
 
-// emojiAddThumb downscales img so its longer side is at most limit px.
-func emojiAddThumb(img image.Image, limit int) image.Image {
-	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
+// emojiAddThumb downscales img so its longer side is at most limit px, the
+// scale charged to b.
+func emojiAddThumb(img image.Image, limit int, b *imgcache.Budget) (image.Image, error) {
+	bd := img.Bounds()
+	w, h := bd.Dx(), bd.Dy()
 	if w <= limit && h <= limit {
-		return img
+		return img, nil
 	}
 	nw, nh := limit, limit
 	if w > h {
@@ -420,9 +428,15 @@ func emojiAddThumb(img image.Image, limit int) image.Image {
 	} else {
 		nw = maxInt(1, w*limit/h)
 	}
+	if err := imgcache.ChargeFunc(b)(4 * int64(nw) * int64(nh)); err != nil {
+		return nil, err
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Src, nil)
-	return dst
+	// x/image/draw's CatmullRom.Scale's pixels, a band at a time
+	if err := imgcache.ScaleInto(dst, img, bd, b); err != nil {
+		return nil, err
+	}
+	return dst, nil
 }
 
 func (s *emojiAddModal) applyFile(f emojiAddFile, err error) {

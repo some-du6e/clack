@@ -3,7 +3,6 @@
 package clipimg
 
 import (
-	"bytes"
 	"context"
 	"image"
 	"os"
@@ -13,7 +12,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
-func write(ctx context.Context, img image.Image) error {
+func write(ctx context.Context, img image.Image, charge func(int64) error) error {
 	uiguard.OffUI("exec wl-copy/xclip (copy image)")
 	var args []string
 	switch {
@@ -24,14 +23,14 @@ func write(ctx context.Context, img image.Image) error {
 	default:
 		return ErrUnsupported
 	}
-	data, err := encodePNG(img)
+	data, err := encodePNG(img, charge)
 	if err != nil {
 		return err
 	}
 	// Both tools fork to serve the clipboard and the parent exits; no
 	// stdout pipe is attached, so Run doesn't wait for the child.
 	c := exec.CommandContext(ctx, args[0], args[1:]...)
-	c.Stdin = bytes.NewReader(data)
+	c.Stdin = data.reader()
 	// The forked server child may keep our stdin pipe open: without
 	// WaitDelay, Run could wait on it forever (TestEveryExecSetsWaitDelay).
 	c.WaitDelay = 2 * time.Second

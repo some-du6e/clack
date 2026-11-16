@@ -37,7 +37,6 @@ import (
 	"gioui.org/widget"
 	"gioui.org/x/explorer"
 	_ "golang.org/x/image/bmp"
-	xdraw "golang.org/x/image/draw"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
@@ -620,21 +619,40 @@ func attThumbnail(data []byte, px int) (*image.RGBA, error) {
 	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > attMaxPixels {
 		return nil, fmt.Errorf("image is %dx%d", cfg.Width, cfg.Height)
 	}
-	// imgcache.DecodeWithin charges a lossless WebP's decode to a memory
-	// budget (a 1×1 meta bomb passes the pixel check above), with
-	// attMaxPixels as this surface's own thumbnail ceiling.
-	img, err := imgcache.DecodeWithin(data, attMaxPixels, attMaxPixels)
+	// The decode and the crop's scale charge what they allocate to a
+	// budget from imgcache's process-wide decode memory (a 1×1 WebP meta
+	// bomb passes the pixel check above; a progressive JPEG's coefficients
+	// don't show in it), with attMaxPixels as this surface's own thumbnail
+	// ceiling; one the decode memory is too busy for now is tried again
+	// until ctx is done.
+	ctx, cancel := context.WithTimeout(context.Background(), attThumbWait)
+	defer cancel()
+	var dst *image.RGBA
+	err = imgcache.WithBudget(ctx, func(bg *imgcache.Budget) error {
+		img, err := imgcache.DecodeBudget(data, attMaxPixels, attMaxPixels, bg)
+		if err != nil {
+			return err
+		}
+		b := img.Bounds()
+		s := min(b.Dx(), b.Dy())
+		sr := image.Rect(b.Min.X+(b.Dx()-s)/2, b.Min.Y+(b.Dy()-s)/2, 0, 0)
+		sr.Max = sr.Min.Add(image.Pt(s, s))
+		if err := imgcache.ChargeFunc(bg)(4 * int64(px) * int64(px)); err != nil {
+			return err
+		}
+		dst = image.NewRGBA(image.Rect(0, 0, px, px))
+		// x/image/draw's CatmullRom.Scale's pixels, a band at a time
+		return imgcache.ScaleInto(dst, img, sr, bg)
+	})
 	if err != nil {
 		return nil, err
 	}
-	b := img.Bounds()
-	s := min(b.Dx(), b.Dy())
-	sr := image.Rect(b.Min.X+(b.Dx()-s)/2, b.Min.Y+(b.Dy()-s)/2, 0, 0)
-	sr.Max = sr.Min.Add(image.Pt(s, s))
-	dst := image.NewRGBA(image.Rect(0, 0, px, px))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, sr, xdraw.Src, nil)
 	return dst, nil
 }
+
+// attThumbWait is how long a thumbnail tries again while the decode memory
+// is busy (imgcache.ErrBusy) before the chip shows as a file card.
+const attThumbWait = time.Minute
 
 func (a *attachments) makeThumb(c *attChip, px int) {
 	img, err := attThumbnail(a.thumbBytes(c), px)
