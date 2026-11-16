@@ -35,9 +35,10 @@ import (
 //     the text acts on mouse-down (jumpOrMark): with the line in view it
 //     marks the channel read, else it jumps to the line. Its tooltip is
 //     "Jump" with ⌘J (the desktop app), the ✕'s "Mark as read" with Esc,
-//     both below after 300 ms. When the unreads go the buttons fade out
-//     in 80 ms (easeInQuad), after 1 s while the last read is a ghost;
-//     marking read hides it at once. The unread_threads_in_channel_nav
+//     both below after 300 ms. When the unreads go the text button
+//     fades out (its style opacity; the pill and the ✕ stay) in 80 ms
+//     (easeInQuad), after 1 s while the last read is a ghost, and then
+//     the banner goes; marking read hides it at once. The unread_threads_in_channel_nav
 //     variant (a dot and a caret menu of unread stops) isn't drawn: the
 //     account isn't in it and Clack has no unread stops.
 //   - ArchivesBanner's LatestMessagesJumpBanner (no AI summaries here):
@@ -213,26 +214,40 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 		act(true)
 	}
 
+	// IA4 (client-boot-styles): .p-message_pane__unread_banner is 28px,
+	// radius 14, #1264a3 with box-shadow 0 4px 12px #00000014, 13px
+	// (.p-message_pane__banner) bold white text. __msg is a 28px button
+	// (line-height 28, padding 0 12) holding span.margin_right_25 (4px)
+	// round the arrow's SvgIcon, then the text; __close_icon is a 28px
+	// button (padding 0 8 0 4) round the close SvgIcon. Each svg.is-inline
+	// is 1em (13px) square on the text's line, its bottom .125em under
+	// the baseline. Both hover #0b4c8c; the light and dark themes have no
+	// rule of their own.
 	th := h.Theme()
-	ts := textStyle{size: 10 * 4 / 3.0, weight: theme.Bold, col: rgb(0xffffff), lineH: 28} // 10pt
+	const fs = 13
+	ts := textStyle{size: fs, weight: theme.Bold, col: rgb(0xffffff), lineH: 28}
 	tw := measure(gtx, th, ts, text).X
 	bh := dp(gtx, 28)
-	iconBox := dp(gtx, 20) // .c-icon--inline
-	msgW := dp(gtx, 12) + iconBox + dp(gtx, 4) + tw + dp(gtx, 12)
-	closeW := dp(gtx, 4) + iconBox + dp(gtx, 8)
+	gs := dp(gtx, fs) // the svg: 1em
+	msgW := dp(gtx, 12) + gs + dp(gtx, 4) + tw + dp(gtx, 12)
+	closeW := dp(gtx, 4) + gs + dp(gtx, 8)
 	bw := msgW + closeW
 	inner := size.X - 2*dp(gtx, 16)
 	x := dp(gtx, 16) + (inner-bw)/2
 	y := dp(gtx, 14)
 	r := image.Rect(x, y, x+bw, y+bh)
-	// box-shadow: 0 4px 12px #00000014
 	softShadow(gtx.Ops, r.Add(image.Pt(0, dp(gtx, 4))), bh/2, dp(gtx, 12), color.NRGBA{A: 0x14})
 	rrect(gtx.Ops, r, bh/2, bannerBlue)
 
-	half := func(btn *widget.Clickable, br image.Rectangle, left bool, draw func(gtx layout.Context)) {
+	// half draws one button: its hover fill and its content. fade is
+	// __msg's style opacity (the ✕ has none).
+	half := func(btn *widget.Clickable, br image.Rectangle, left, fade bool, draw func(gtx layout.Context)) {
 		at(gtx, br.Min.X, br.Min.Y, func(gtx layout.Context) layout.Dimensions {
 			gtx.Constraints = layout.Exact(br.Size())
 			return btn.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+				if fade && opacity < 1 {
+					defer paint.PushOpacity(gtx.Ops, opacity).Pop()
+				}
 				if btn.Hovered() {
 					rad := bh / 2
 					rr := clip.RRect{Rect: image.Rectangle{Max: br.Size()}}
@@ -243,9 +258,6 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 					}
 					paint.FillShape(gtx.Ops, bannerBlueHover, rr.Op(gtx.Ops))
 				}
-				if opacity < 1 {
-					defer paint.PushOpacity(gtx.Ops, opacity).Pop()
-				}
 				draw(gtx)
 				return layout.Dimensions{Size: br.Size()}
 			})
@@ -255,17 +267,20 @@ func (s *listState) paneUnreadBanner(gtx layout.Context, h Host, rc *rowCtx, siz
 	msgR := image.Rect(r.Min.X, r.Min.Y, r.Min.X+msgW, r.Max.Y)
 	closeR := image.Rect(msgR.Max.X, r.Min.Y, r.Max.X, r.Max.Y)
 	ub.text, ub.icon, ub.msgR, ub.closeR = text, icon, msgR, closeR
-	gs := dp(gtx, 13.333) // the glyph is 1em
-	half(&ub.msg, msgR, true, func(gtx layout.Context) {
-		at(gtx, dp(gtx, 12)+(iconBox-gs)/2, (bh-gs)/2, func(gtx layout.Context) layout.Dimensions {
-			return icons.Get(icon)(gtx, unit.Dp(13.333), white)
+	// both buttons are 28px with the line centred in them, so the text's
+	// baseline (and the svgs on it) sit at the same height in each
+	gy := inlineSvgTop(gtx, fs, 28)
+	half(&ub.msg, msgR, true, true, func(gtx layout.Context) {
+		at(gtx, dp(gtx, 12), gy, func(gtx layout.Context) layout.Dimensions {
+			return icons.GetSlack(icon)(gtx, unit.Dp(fs), white)
 		})
-		at(gtx, dp(gtx, 12)+iconBox+dp(gtx, 4), 0, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, text) })
+		at(gtx, dp(gtx, 12)+gs+dp(gtx, 4), 0, func(gtx layout.Context) layout.Dimensions {
+			return lineBox(gtx, ts, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, text) })
+		})
 	})
-	cg := dp(gtx, 13) // .p-message_pane__unread_banner__close_icon{font-size:13px}
-	half(&ub.close, closeR, false, func(gtx layout.Context) {
-		at(gtx, dp(gtx, 4)+(iconBox-cg)/2, (bh-cg)/2, func(gtx layout.Context) layout.Dimensions {
-			return icons.Get("close")(gtx, unit.Dp(13), white)
+	half(&ub.close, closeR, false, false, func(gtx layout.Context) {
+		at(gtx, dp(gtx, 4), gy, func(gtx layout.Context) layout.Dimensions {
+			return icons.GetSlack("close")(gtx, unit.Dp(fs), white)
 		})
 	})
 	ub.msgTip.Delay, ub.closeTip.Delay = 300*time.Millisecond, 300*time.Millisecond
@@ -308,7 +323,8 @@ func softShadow(ops *op.Ops, r image.Rectangle, radius, blur int, col color.NRGB
 
 // archivesBanner is LatestMessagesJumpBanner (.p-archives_banner under
 // IA4): a #1264a3 pill, 28px, radius 14, padding 8 left and 16 right,
-// 13px bold white, arrow-down (margin_right_25) and "Latest messages",
+// 13px bold white on a 28px line, arrow-down (a 13px svg.is-inline in
+// margin_right_25) and "Latest messages",
 // centred 16px over the bottom, the same blue under the pointer and in
 // dark mode (no theme rule overrides it).
 func (s *listState) archivesBanner(gtx layout.Context, h Host, size image.Point) {
@@ -322,8 +338,8 @@ func (s *listState) archivesBanner(gtx layout.Context, h Host, size image.Point)
 	txt := "Latest messages"
 	sz := measure(gtx, th, ts, txt)
 	bh := dp(gtx, 28)
-	iconBox := dp(gtx, 20)
-	bw := dp(gtx, 8) + iconBox + dp(gtx, 4) + sz.X + dp(gtx, 16)
+	gs := dp(gtx, 13) // svg.is-inline: 1em
+	bw := dp(gtx, 8) + gs + dp(gtx, 4) + sz.X + dp(gtx, 16)
 	r := image.Rect((size.X-bw)/2, size.Y-bh-dp(gtx, 16), (size.X-bw)/2+bw, size.Y-dp(gtx, 16))
 	s.latestR = r
 	if s.jump.Clicked(gtx) { // jumpToMostRecent
@@ -334,14 +350,26 @@ func (s *listState) archivesBanner(gtx layout.Context, h Host, size image.Point)
 		gtx.Constraints = layout.Exact(r.Size())
 		return s.jump.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			rrect(gtx.Ops, image.Rectangle{Max: r.Size()}, bh/2, bannerBlue)
-			gs := dp(gtx, 13)
-			at(gtx, dp(gtx, 8)+(iconBox-gs)/2, (bh-gs)/2, func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("arrow-down")(gtx, unit.Dp(13), white)
+			at(gtx, dp(gtx, 8), inlineSvgTop(gtx, 13, 28), func(gtx layout.Context) layout.Dimensions {
+				return icons.GetSlack("arrow-down")(gtx, unit.Dp(13), white)
 			})
-			at(gtx, dp(gtx, 8)+iconBox+dp(gtx, 4), 0, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, txt) })
+			at(gtx, dp(gtx, 8)+gs+dp(gtx, 4), 0, func(gtx layout.Context) layout.Dimensions {
+				return lineBox(gtx, ts, func(gtx layout.Context) layout.Dimensions { return label(gtx, th, ts, txt) })
+			})
 			return layout.Dimensions{Size: r.Size()}
 		})
 	})
+}
+
+// inlineSvgTop is where an inline SvgIcon (svg.is-inline: 1em square,
+// display inline-block, vertical-align -.125em) on a size/lineH line
+// starts from the line box's top: its bottom .125em under the baseline
+// cssBaseline puts there.
+func inlineSvgTop(gtx layout.Context, size, lineH float32) int {
+	sp := gtx.Metric.PxPerSp
+	asc, desc := uiExt.Ascent, uiExt.Descent
+	bl := (lineH*sp-(asc+desc)*size*sp)/2 + asc*size*sp
+	return int(bl + 0.125*size*sp - size*sp + 0.5)
 }
 
 // dayJumpOption is one of dayDividerJumperMenuOptions' rows: when is the

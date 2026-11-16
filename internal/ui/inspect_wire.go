@@ -23,9 +23,10 @@ import (
 // ui.json ("inspect_tool": true); the code again turns it off.
 // CLACK_INSPECT=1 turns it on too, read at launch like ui.json. Then
 // Hyper+D (⌃⌥⇧⌘D; Ctrl+Alt+Shift+D on Linux and Windows) starts a
-// session, Esc or Hyper+D again ends it, and a click captures the element
-// under the pointer (a drag, the region dragged out) for a review where
-// rects can be blurred out before Enter copies the report.
+// session, Esc or Hyper+D again ends it, and a click copies a report of
+// the element under the pointer. A Shift+click (or a drag, for the region
+// dragged out) captures it for a review where rects can be blurred out
+// before Enter copies the report.
 
 // inspectFilter is the tool's shortcut, Hyper+D: all four modifiers (off
 // macOS Mod is Ctrl, so three). Super may be held as well: a Linux Hyper

@@ -43,9 +43,11 @@ jobs:
         env:
           PREFS_AUDIT_SHOTS_DIR: ${{ github.workspace }}/dist/shots
           LIBGL_ALWAYS_SOFTWARE: "1"
+          CLACK_PIXEL_TESTS: "1" # TestPrefsClackNavIcon fails (not skips) without a GPU here
         run: |
           mkdir -p "$PREFS_AUDIT_SHOTS_DIR"
-          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestPrefsAuditShots$' ./internal/ui/
+          # TestPrefsClackNavIcon: the Clack tab's logo glyph against its neighbours' (prefs-clack-nav-*.png)
+          xvfb-run -a go test -count=1 -v -timeout 15m -run 'TestPrefsAuditShots$|TestPrefsClackNavIcon$' ./internal/ui/
           BADGE_SHOTS_DIR="$PREFS_AUDIT_SHOTS_DIR" go test -count=1 -v -run 'TestBadgeOverlay$' ./internal/desktop
           ls "$PREFS_AUDIT_SHOTS_DIR"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

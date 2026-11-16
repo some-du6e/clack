@@ -165,6 +165,7 @@ type App struct {
 
 	router          router
 	clicks          clickables
+	wd              *watchdog    // the frame watchdog (Run; nil in tests)
 	hdrx            *headerExtra // the channel header's topic card and edit-name tooltip (channel_mpdm.go)
 	joinBannerCh    string       // the channel whose join banner was last laid out (joinbanner.go)
 	megaBooted      bool         // the megaphone boot load went out (joinbanner.go)
@@ -491,6 +492,7 @@ func (a *App) Run() error {
 	var ops, coverOps op.Ops
 	uiguard.MarkUI() // this goroutine handles every window event (uiguard)
 	wd := newWatchdog(a.opts.ConfigDir, a.opts.Started)
+	a.wd = wd // drainIdle's stage
 	go wd.run()
 	for {
 		ev := a.win.Event()

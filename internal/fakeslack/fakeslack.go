@@ -148,6 +148,9 @@ type Size struct {
 	// AgentThread adds a DM with an agent app and a thread in it, the
 	// agent's answer edited live (agent_thread.go).
 	AgentThread bool
+	// AppPlans adds #plans (AppPlanChannelID): a custom app's plan posts
+	// and posts with an unknown block type (agents.go AppPlanMessages).
+	AppPlans bool
 	// PinsFolders adds #pins-gallery: the Pins tab's pinned messages and
 	// file, and bookmark folders with their methods (pins_folders.go).
 	PinsFolders bool
@@ -734,6 +737,9 @@ func Serve(ln net.Listener, sz Size) *Server {
 	if sz.GIFs > 0 {
 		s.addGIFWall() // gifs.go
 	}
+	if sz.AppPlans {
+		s.addAppPlans() // agents.go
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", s.api)
 	mux.HandleFunc("/img/", s.img)
@@ -903,6 +909,19 @@ func (s *Server) generate() {
 		{ID: ArchivedChannelID, Name: "old-hackathon", IsChannel: true, IsArchived: true, Created: now - 2e8,
 			Creator: s.users[2].ID, NumMembers: 37, ContextTeamID: TeamID, Purpose: &slack.Purpose{Value: "Archived."}},
 	}
+}
+
+// AddOtherChannel adds a public channel the viewer isn't in (someone
+// else made it): conversations.info answers it with is_member false and
+// conversations.join moves it to the viewer's.
+func (s *Server) AddOtherChannel(c slack.Conversation) {
+	c.IsChannel, c.IsMember = true, false
+	if c.ContextTeamID == "" {
+		c.ContextTeamID = TeamID
+	}
+	s.convMu.Lock()
+	s.others = append(s.others, c)
+	s.convMu.Unlock()
 }
 
 // conv finds a conversation by id: the viewer's, then the others.

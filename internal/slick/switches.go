@@ -15,9 +15,9 @@ import (
 // Chromium switches from main halves (MainCtx.switches.append, boot only).
 // Slick appends them to Electron's command line at process start, from the
 // settings stored then (src/desktop/pluginHost.ts). Clack has no Chromium:
-// the switches with a Clack counterpart (Switch*) work Clack's own
-// process-wide knobs at the next start (cmd/clack reads StartupSwitches),
-// the rest are kept and change nothing.
+// the switches with a Clack counterpart (SwitchIgnoreGPUBlocklist) work
+// Clack's own process-wide knobs at the next start (cmd/clack reads
+// StartupSwitches), the rest are kept and change nothing.
 //
 // The next start gets what each enabled main half's boot appends with the
 // settings it has then, as in Slick. Clack's main halves boot once per JS
@@ -27,11 +27,14 @@ import (
 // switches do anything (S.previewSwitches) and keeps the result in
 // <Dir>/switches.json. Turning the plugin or Slick off clears its entry.
 
-// The Chromium switches Clack has a counterpart for.
+// The Chromium switches cmd/clack looks at.
 const (
 	// SwitchDisableCrashpad and SwitchDisableCrashReporter (Snappy's
-	// "Disable crash reporter"): no crash capture (applog.CaptureCrashes:
-	// crash.log, copied into clack.log at the next start).
+	// "Disable crash reporter", default on) stop Chromium's crashpad
+	// handler and its upload to Slack. Clack uploads nothing, so they have
+	// no counterpart: crash capture (applog.CaptureCrashes: crash.log,
+	// copied into clack.log at the next start) stays on, and cmd/clack
+	// logs one line saying so.
 	SwitchDisableCrashpad      = "disable-crashpad"
 	SwitchDisableCrashReporter = "disable-crash-reporter"
 	// SwitchIgnoreGPUBlocklist (Snappy's "Ignore GPU blocklist"): Gio's

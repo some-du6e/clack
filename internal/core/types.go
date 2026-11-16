@@ -618,6 +618,10 @@ type ActivityItem struct {
 	// LatestTS is a bundle's latest message (thread_entry.latest_ts, a DM's
 	// or channel's latest_message.ts): Slack's latestTs.
 	LatestTS string
+	// MinUnreadTS is a thread bundle's first unread reply
+	// (thread_entry.min_unread_ts): Slack's minUnreadTs, where an unread
+	// thread_v2 item opens its thread.
+	MinUnreadTS string
 
 	// Invite is a Slack Connect invitation's connect invite (nil for
 	// anything else, or a feed entry without one).

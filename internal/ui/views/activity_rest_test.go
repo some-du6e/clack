@@ -162,6 +162,7 @@ func TestActivityCustomViewsLikeSlack(t *testing.T) {
 	st.Lock()
 	st.Sections = []slack.Section{{ID: "L0FAKE00", Name: "Starred", Type: "stars"}, {ID: "L0FAKE01", Name: "Synthetic projects", Type: "standard"}}
 	st.Unlock()
+	v.h.Core().InvalidateSnapshot() // as the sidebar_changed event a real change brings
 	acts, secs := v.suggestions()
 	var names []string
 	for _, g := range acts {
@@ -517,10 +518,10 @@ func TestActivityLiveUpdatesLikeSlack(t *testing.T) {
 	e.until(t, "the view from elsewhere", func() bool { return strings.HasSuffix(actTabsNow(v), ",Synthetic elsewhere") })
 }
 
-// Activity frames with the "+" menu closed don't build its rows, which
-// read a whole core Snapshot (Karim's 4.4 s freeze on the Activity page,
-// 2026-11-15, was inside one): only an open menu, and the frame after it
-// closed, do.
+// Activity frames with the "+" menu closed build nothing for it: its rows
+// read the sidebar's sections from a core snapshot (Karim's 4.4 s freeze
+// on the Activity page, 2026-11-15, was inside one), and exist only once
+// the menu is drawn open.
 func TestActivityPlusRowsOnlyWhileOpen(t *testing.T) {
 	v, _, e, _ := vaFakeActivity(t, false)
 	e.until(t, "the saved views", func() bool { return v.viewsLoaded })

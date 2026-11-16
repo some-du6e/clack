@@ -168,10 +168,10 @@ func (m *macNotifier) start() {
 		m.sys.SetHandler(m.respond)
 		m.sys.Request(func(granted bool, err error) {
 			if err != nil {
-				log.Printf("notify: macOS notification authorization: %v", err)
+				log.Printf("notify: macOS notification permission error: %v", err)
 				return
 			}
-			log.Printf("notify: macOS notification authorization: granted %t", granted)
+			log.Printf("notify: macOS notification permission: granted=%t", granted)
 		})
 	})
 }

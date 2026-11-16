@@ -182,6 +182,10 @@ type SenderView struct {
 	Missing  core.MemberState // the bar drawn in the sender's place (MemberKnown: none)
 	Mentions []string         // user mentions drawn as BaseMissingMember's bar
 	Text     string           // the body's text as laid out (a bar adds none)
+	// Body is the body's row-local rect, Slots its Block Kit element
+	// slots (an agent block's is its whole block), as laid out.
+	Body  image.Rectangle
+	Slots []image.Rectangle
 }
 
 // Senders lists the senders of the visible messages as of the last frame.
@@ -207,7 +211,9 @@ func (s *listState) senders() []SenderView {
 		if r.rv != nil {
 			sv.Mentions = r.rv.MissingMembers()
 			sv.Text = r.rv.TextRange(0, r.rv.PlainLen())
+			sv.Slots = r.rv.ElementSlots()
 		}
+		sv.Body = r.bodyRect
 		out = append(out, sv)
 	}
 	return out

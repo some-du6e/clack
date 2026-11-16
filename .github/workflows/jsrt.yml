@@ -21,6 +21,8 @@ env:
   QJS_COMMIT: d7215b0ad3fc2c562e8317fd9bca058fd4863804 # quickjs-ng tag v0.18.0
   WASI_SDK_VERSION: "27"
   WASI_SDK_SHA256: b7d4d944c88503e4f21d84af07ac293e3440b1b6210bfd7fe78e0afd92c23bc2 # wasi-sdk-27.0-x86_64-linux.tar.gz
+  # the engine before csrc/quickjs-yield.patch, which the bench job measures against
+  JSRT_BASE_COMMIT: a54d14a8173bdd1e75dfe7205012c4a4de330364
 permissions:
   contents: read
 
@@ -68,10 +70,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: test
+        env:
+          JSRT_STW_STRICT: "1" # this package alone on the runner: the absolute stop-the-world bound holds (stw_test.go)
         run: go test -count=1 ./internal/jsrt/...
       - name: timings
         if: ${{ !cancelled() }}
         run: go test -count=1 -run 'TestStartupTiming' -v ./internal/jsrt/ | grep -v '^=== RUN' || true
+      - name: stop-the-world waits on the JS thread (native loops with the yields off, then on)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -run 'TestStopTheWorldBounded' -v ./internal/jsrt/ | grep -E 'stw:|garbage collector|^(--- |ok|FAIL|PASS)' || true
   taut-plugins:
     # every plugin in taut's plugins/, built with taut's own build:user-plugin, must load
     runs-on: ubuntu-latest
@@ -117,6 +124,19 @@ jobs:
           cache: true
       - name: bench
         run: go test -run '^$' -bench . -benchmem -benchtime 2s ./internal/jsrt/ | tee bench.txt
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.JSRT_BASE_COMMIT }}
+          path: base
+          sparse-checkout: internal/jsrt/jsrt.wasm
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: the previous engine (JSRT_BASE_COMMIT) on the same benchmarks and stop-the-world test
+        env:
+          CLACK_JSRT_WASM: ${{ github.workspace }}/base/internal/jsrt/jsrt.wasm
+        run: |
+          go test -run '^$' -bench . -benchmem -benchtime 2s ./internal/jsrt/ | tee bench-base.txt
+          go test -count=1 -run 'TestStopTheWorldBounded' -v ./internal/jsrt/ | grep -E 'stw:|^(--- |ok|FAIL|PASS)' | tee stw-base.txt || true
       - name: startup and render profile
         run: go test -count=1 -run 'TestStartupTiming|TestRenderProfile' -v ./internal/jsrt/
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -131,4 +151,6 @@ jobs:
           name: jsrt-bench
           path: |
             bench.txt
+            bench-base.txt
+            stw-base.txt
             enginecmp.txt

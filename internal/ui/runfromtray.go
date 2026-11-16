@@ -220,6 +220,7 @@ func (a *App) drainIdle() {
 		return
 	}
 	slackc.LockFrame()
+	a.wd.next(&stagePosted) // the freeze report's stage: posted work, not the event
 	a.drain()
 	slackc.UnlockFrame()
 }

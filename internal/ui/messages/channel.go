@@ -165,6 +165,18 @@ func (v *ChannelView) Highlight(ts string) {
 	}
 }
 
+// Highlighted is the message the list highlights now (Highlight's flash,
+// 4 s from when the jump was placed), "" for none.
+func (v *ChannelView) Highlighted() string {
+	if s := v.s; s.highlight != "" && time.Since(s.highlightAt) < 4*time.Second {
+		return s.highlight
+	}
+	return ""
+}
+
+// JumpPending is the message a Highlight waits to place ("" for none).
+func (v *ChannelView) JumpPending() string { return v.s.pendingJump }
+
 // Refresh refetches the newest messages in the background.
 func (v *ChannelView) Refresh() {
 	v.s.m.mu.Lock()

@@ -244,11 +244,13 @@ func (a *App) huddleNote(h huddleui.Notification) *desktopNote {
 // (replyToNotification), a button (its launch URI as a deep link, else the
 // webapp's handleNotificationAction; Clack runs the button's own action).
 // A click and a link bring the window to the front, as notifyBrowser's
-// onclick (window.focus) and the shell's deep-link handler do; a reply and
-// a button without a link leave it where it is.
+// onclick (window.focus) and the shell's deep-link handler do (the mac
+// shell's CLICK_NOTIFICATION is FOCUS_MAIN_WINDOW's: show, restore if
+// minimized, focus; a window a close hid comes back too, Raise's
+// ActionRaise); a reply and a button without a link leave it where it is.
 func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 	raise := func() {
-		if a.winLive.Load() != nil { // a click only comes while the window is up
+		if a.winLive.Load() != nil { // Run made the window (shown or hidden)
 			a.Raise()
 		}
 	}
@@ -273,13 +275,20 @@ func (a *App) toastActivated(n *desktopNote, act toastActivation) {
 }
 
 // notificationClicked is the webapp's notificationClicked (boot-shared
-// rFJr) for what Clack notifies about: a huddle's notification opens its
-// conversation (the msg starts "huddle", or the id says so); a message's
-// opens its conversation, in the thread for a reply.
+// rFJr, notificationClickedInVisitOrigin) for what Clack notifies about: a
+// huddle's notification opens its conversation (the msg starts "huddle",
+// or the id says so); a message's is jumpToMessage({channelId, ts: the
+// msg when it is a timestamp, threadTs}): its conversation at the message,
+// highlighted, or for a reply its thread at the reply (jump.go). Without a
+// channel the id's route (parseMessageNotificationRoute) gives the
+// channel, the message and the thread.
 func (a *App) notificationClicked(ch, msg, thread, id string) {
 	if _, typ, payload, truncated := parseNotificationID(id); ch == "" && !truncated && typ == noteTypeMessage && len(payload) > 0 {
 		// parseMessageNotificationRoute: the id names the conversation
 		ch = payload[0]
+		if len(payload) > 1 && msg == "" {
+			msg = payload[1]
+		}
 		if len(payload) > 2 && thread == "" {
 			thread = payload[2]
 		}
@@ -291,11 +300,14 @@ func (a *App) notificationClicked(ch, msg, thread, id string) {
 		a.Navigate("c/" + ch)
 		return
 	}
-	route := "c/" + ch
-	if thread != "" && slackTSRE.MatchString(thread) {
-		route += "/t/" + thread
+	ts := ""
+	if slackTSRE.MatchString(msg) { // (0,M.A)(V) ? V : void 0
+		ts = msg
 	}
-	a.Navigate(route)
+	if !slackTSRE.MatchString(thread) {
+		thread = ""
+	}
+	a.jumpToMessage(ch, ts, thread)
 }
 
 // replyFromNotification is delegate_replyToNotification (boot-render): the

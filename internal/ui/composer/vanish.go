@@ -117,6 +117,7 @@ func (c *Composer) layoutBoundary(gtx layout.Context) layout.Dimensions {
 	// drawn below would sit on top of it.
 	if live {
 		c.vanished(gtx.Now)
+		c.ui.liveShown = 0 // its buttons were dropped with it
 	}
 	c.resetDraw()
 	return slackc.Unpatched(func() layout.Dimensions { return c.drawBoundary(gtx) })

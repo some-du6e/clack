@@ -49,6 +49,10 @@ type backend struct {
 	// extStale marks ext entries refreshExt wants looked up again (their
 	// copy shows meanwhile).
 	extStale map[string]bool
+	// extFailed marks conversations ResolveConv couldn't look up (offline,
+	// channel_not_found): their membership stays unknown, and footerFor
+	// stops holding the composer back for them.
+	extFailed map[string]bool
 
 	// unsent drafts (drafts.list, refreshed on "draft" events), UI goroutine
 	// only: Slack's "✎ N" on Drafts & sent and the pencil on channel rows.
@@ -309,6 +313,7 @@ func (b *backend) stop() <-chan struct{} {
 // resnapshot rebuilds the model off the UI goroutine (sidebar_changed,
 // resync), coalescing bursts.
 func (b *backend) resnapshot(a *App) {
+	b.core.InvalidateSnapshot() // RecentSnapshot's readers (the huddle channels, a draft) see it too
 	b.snapMu.Lock()
 	if b.snapPending {
 		b.snapMu.Unlock()
@@ -631,6 +636,9 @@ func (b *backend) handle(a *App, ev core.Event) {
 	case "conv", "conv_removed", "sidebar_changed", "resync", "team": // "prefs" is handled above (it resnapshots too)
 		if ev.Type == "conv_removed" && ev.Channel != "" {
 			b.forgetExt(ev.Channel) // left: a preview again, not the member it resolved as
+		}
+		if ev.Type == "conv" && ev.Channel != "" {
+			b.refreshExt(ev.Channel) // a non-member channel looked up again (renamed, unarchived): its header and footer
 		}
 		b.resnapshot(a)
 	case "auth_failed":
@@ -1116,7 +1124,20 @@ func (b *backend) resolved(ch string) *convInfo {
 		ctx, cancel := context.WithTimeout(b.ctx, 15*time.Second)
 		defer cancel()
 		c, ok := b.core.ResolveConv(ctx, ch)
-		if !ok || a == nil {
+		if a == nil {
+			return
+		}
+		if !ok {
+			a.Post(func() {
+				if b.extGen[ch] != gen {
+					return
+				}
+				if b.extFailed == nil {
+					b.extFailed = map[string]bool{}
+				}
+				b.extFailed[ch] = true // footerFor stops waiting on it (joinpane.go)
+				a.Invalidate()
+			})
 			return
 		}
 		ci := &convInfo{ID: c.ID, Name: c.Name, Kind: c.Kind, User: c.User, Topic: c.Topic, NumMembers: c.NumMembers,
@@ -1136,6 +1157,7 @@ func (b *backend) resolved(ch string) *convInfo {
 			}
 			b.applySide(ci, true) // opened()'s facepile, if it came first
 			b.ext[ch] = ci
+			delete(b.extFailed, ch)
 			a.Invalidate()
 		})
 	}()
@@ -1168,6 +1190,7 @@ func (b *backend) refreshExt(ch string) {
 func (b *backend) forgetExt(ch string) {
 	delete(b.ext, ch)
 	delete(b.extStale, ch)
+	delete(b.extFailed, ch)
 	if b.extGen == nil {
 		b.extGen = map[string]int{}
 	}

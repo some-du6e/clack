@@ -24,7 +24,15 @@ type bkState struct {
 }
 
 // elements is the row's element host (nil: nothing interactive), looked
-// up once per message revision.
+// up again whenever the message the row draws changes: a new revision,
+// and every setDoc, since a plugin's props (MessageWrapper's or
+// ThreadReplyGeneric's msg, a patched messages view) swap r.m without
+// one. The host is shared by channel/ts and keyed by block_id, so it must
+// hold the blocks of the doc being drawn: after the vote app's
+// chat.update (new block_ids), the first frames still drew the JS tree's
+// previous msg, the host was made from those old blocks, and when the
+// new msg came no button of the new doc found its element (nothing
+// drawn; Karim's 11-15 "upvote and downvote went byebye").
 func (r *row) elements(h Host) *blockkit.Message {
 	if !r.bk.done || r.bk.rev != r.rev || r.bk.ts != r.m.TS {
 		r.bk = bkState{rev: r.rev, ts: r.m.TS, done: true, el: blockkit.MessageElements(h, &r.m)}

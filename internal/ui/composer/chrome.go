@@ -357,8 +357,11 @@ type chrome struct {
 	btn   [crNumBtn]widget.Clickable
 	tip   [crNumBtn]popups.TipState
 	rect  [crNumBtn]image.Rectangle // last frame, composer-local
-	shown uint32                    // buttons laid out this frame
-	bg    gesture.Click
+	shown uint32                    // buttons the last Layout laid out
+	// liveShown: the buttons this frame's live Layouts laid out
+	// (Composer.Layout zeroes it; endFrame resets the others)
+	liveShown uint32
+	bg        gesture.Click
 
 	acts, spare []chromeAction
 	inputOff    image.Point
@@ -615,17 +618,34 @@ func (c *chrome) Layout(gtx layout.Context, h Host, st chromeState, input, attac
 		c.layoutHint(gtx, th, &c.fpal, &c.cur, box)
 	}
 
-	// Buttons that weren't drawn can't receive the Leave that ends their
-	// hover; reset them so a tooltip doesn't pop when they come back.
+	// What this call laid out counts for the frame's reset (endFrame)
+	// only when it delivers input: a measure pass (gtx.Disabled()) may
+	// reuse the box's draw and lay out none of its buttons.
+	if gtx.Source.Enabled() {
+		c.liveShown |= c.shown
+	}
+	return layout.Dimensions{Size: image.Pt(W, boxH+hintH)}
+}
+
+// endFrame resets the buttons no live draw laid out this frame: they
+// can't receive the Leave that ends their hover, so a tooltip would pop
+// when they come back. Composer.Layout calls it once the boundary is
+// drawn, not each Layout: under a plugin that draws the composer from its
+// tree (Better Typing Indicator's MessagePaneInput patch), a hover or a
+// press makes slackc lay the tree out again, measuring the chrome
+// (gtx.Disabled()) with the box's draw reused, so that call laid out no
+// formatting button; resetting there dropped the press between it and
+// the release, and no click came (Karim, α.89: "I can't click the
+// strikethrough button while selecting").
+func (c *chrome) endFrame() {
 	for id := crBtn(0); id < crNumBtn; id++ {
-		if c.shown&(1<<id) == 0 {
+		if c.liveShown&(1<<id) == 0 {
 			c.rect[id] = image.Rectangle{}
 			if c.btn[id].Hovered() || c.btn[id].Pressed() {
 				c.btn[id] = widget.Clickable{}
 			}
 		}
 	}
-	return layout.Dimensions{Size: image.Pt(W, boxH+hintH)}
 }
 
 // layoutBox draws the bordered box (WysiwygContainer's native) in

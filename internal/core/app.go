@@ -30,6 +30,7 @@ type App struct {
 	topMem    topMembers // the channels' first members (membershipOrdered, code_card.go)
 	acs       acState    // the composer autocomplete's frecency, model and history (autocomplete.go)
 	ready     chan struct{}
+	recent    recentSnap // RecentSnapshot's (snapshot_recent.go)
 	bootErr   error
 	mu        sync.Mutex
 	connected bool
@@ -214,6 +215,7 @@ func (a *App) Realtime() bool {
 }
 
 func (a *App) startRealtime() {
+	a.ClientOnline() // starts the watcher that reconnects on wake and network changes (online.go)
 	a.rtMu.Lock()
 	defer a.rtMu.Unlock()
 	if !a.rtWant || !a.rtBooted || a.rtStop != nil || a.bg.Err() != nil {
@@ -234,7 +236,7 @@ func (a *App) startRealtime() {
 			a.emit(Event{Type: "connection", Connected: false})
 		}
 		a.rtMu.Lock()
-		if a.rtDone == done { // gave up or the session ended: allow a restart
+		if a.rtDone == done { // the session ended: allow a restart
 			a.rtStop, a.rtDone = nil, nil
 		}
 		a.rtMu.Unlock()
@@ -444,6 +446,9 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 }
 
 func (a *App) emit(ev Event) {
+	if !snapshotQuietEvents[ev.Type] {
+		a.InvalidateSnapshot() // snapshot_recent.go
+	}
 	a.pinsTabSee(ev) // the Pins tab's message copies (channel_pins.go)
 	a.subMu.Lock()
 	defer a.subMu.Unlock()
@@ -961,6 +966,7 @@ func (a *App) SnapshotNow() Snapshot { return a.snapshotNow() }
 
 // snapshotNow is Snapshot from what the store holds now.
 func (a *App) snapshotNow() Snapshot {
+	a.recent.builds.Add(1)
 	a.S.RLock()
 	cs := make([]*slack.Conversation, 0, len(a.S.Convs))
 	for _, c := range a.S.Convs {

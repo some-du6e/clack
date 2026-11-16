@@ -1000,6 +1000,36 @@ jobs:
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?
           exit $((gio | ui))
+      # A notification's click (Karim, α.89: "the thing to hop to the
+      # desired message when clicking a notif doesn't work"): App.Run's
+      # window comes forward (shown after a close hid it, restored from the
+      # Dock after a minimize, key, the app active) and opens the message,
+      # highlighted, or a reply's thread at the reply, from another
+      # conversation. First with notify_mac_test.go's fake center, then from
+      # a test Clack.app through the real UNUserNotificationCenter, the
+      # click being the response macOS hands the center's delegate
+      # (usernotifyprobe.Click).
+      - name: macOS notification click jumps to the message
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: |
+          set +e
+          rc=0
+          go test -count=1 -v -timeout 10m -run '^TestMacNotificationClickJumps$' ./internal/ui || rc=1
+          mkdir -p build && go test -c -o build/ui-click.test ./internal/ui || exit 1
+          app="$GITHUB_WORKSPACE/build/click/Clack.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp build/ui-click.test "$app/Contents/MacOS/clack"
+          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
+          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier io.github.some-du6e.clack.probe-click" "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
+          cd internal/ui
+          CLACK_MACOS_NOTIFY_BUNDLE=1 "$app/Contents/MacOS/clack" -test.v -test.count=1 -test.timeout 10m -test.run '^TestMacNotificationClickJumps$' || rc=1
+          log show --last 10m --style compact --predicate 'process == "usernoted"' | grep -i 'probe-click' | tail -60
+          exit $rc
       # Keys posted as a keyboard makes them (cocoatest.PostKey: the
       # layout's characters) and delivered by AppKit: NSApp sendEvent:, the
       # menu bar's key equivalents, Gio's view and its interpretKeyEvents:.

@@ -10,8 +10,9 @@ package ui
 const clackTabID = "clack"
 
 // clackNav is the Clack tab's nav entry (extraNav puts it first, under
-// the divider).
-var clackNav = navExtra{id: clackTabID, label: AppName, icon: "info"}
+// the divider), drawn with Clack's own mark in the nav's icon colour
+// (icons/clack.go's clack-logo, Karim 2026-11-15), not Slack's info.
+var clackNav = navExtra{id: clackTabID, label: AppName, icon: "clack-logo"}
 
 // clackIntroRow is the tab's second row, Replay introduction: branch
 // intro-motion's self-contained prefsReplayIntroRow, hooked in from that

@@ -211,7 +211,7 @@ func (r *Runtime) Call(ctx context.Context, path string, args ...any) (json.RawM
 	}
 	ch := make(chan res, 1)
 	onJS := r.onJSThread()
-	err := r.Do(func(js *Ctx) error {
+	err := r.do(task{kind: "Call", what: path}, func(js *Ctx) error {
 		fn, this, err := js.resolvePath(path)
 		if err != nil {
 			return err

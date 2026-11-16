@@ -236,6 +236,21 @@ type actRow struct {
 	actTag  struct{}
 	// where the hover bar went last (its top on the row, its right inset)
 	barY, barRight int
+	// The super narrow Dense row's borders this frame (the container's
+	// border-top unless --follows-divider; border-bottom unless --selected
+	// or --precedes-header), the Dense content box's middle (the hover
+	// bar's top 50%) and the parts' last layout.
+	snTop, snBottom bool
+	denseMid        int
+	dn              actDenseBox
+}
+
+// actDenseBox is a Dense row's last layout in px: the leading block's
+// width, the sender's room, the status and type icon, the message, the
+// location and the time (the "·" included on the super narrow second
+// line), the lines and the row's height.
+type actDenseBox struct {
+	lead, name, status, typeIcon, msg, loc, time, lines, h int
 }
 
 // Activity is the Activity view.
@@ -249,7 +264,13 @@ type Activity struct {
 	plusX int
 	seg   [2]widget.Clickable
 	dense bool
-	kebab widget.Clickable
+	// superNarrow is ActivityList's isSuperNarrowDense this frame (eH: the
+	// list's width under 625px; never in the peek, which has no column
+	// width): the list's --super_narrow_dense, the Dense row on two lines.
+	// denseLoc is --activity_single_line_location_width (actDenseLoc).
+	superNarrow bool
+	denseLoc    int
+	kebab       widget.Clickable
 
 	// Bulk selection (ActivityFilterBulkAction, activity_bulk.go): picked
 	// holds the selected item keys (P0K2 bulkItems), bulkMode is Custom
@@ -328,7 +349,6 @@ type Activity struct {
 	extraC      [len(actExtras)]widget.Clickable
 	showCleared bool
 	plusC       []widget.Clickable // the "+" menu's rows (plusItems)
-	plusWasOpen bool               // the "+" menu was open last frame (plusClicks)
 
 	data     async[core.ActivityPage]
 	list     widget.List
@@ -1933,6 +1953,10 @@ func (v *Activity) items(gtx C) D {
 		return v.actEmpty(gtx)
 	}
 	gtx.Constraints.Min.X = gtx.Constraints.Max.X
+	// ActivityList's eH (isSuperNarrowDense): the column's width under
+	// 625px; the peek has no column layout, so never there
+	v.superNarrow = v.dense && !v.pk.peeking && gtx.Constraints.Max.X < gtx.Dp(625)
+	v.denseLoc = v.actDenseLoc(gtx)
 	// the list is the keyboard's focus target (activity_keys.go), the rows
 	// inside its area
 	v.listFocusEvents(gtx)
@@ -2204,6 +2228,21 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 	sel := v.selOK && v.selKey == key
 	focused := v.kbFocused && v.focusKey == key
 	r.v, r.it, r.key, r.unread = v, it, key, unread
+	if v.superNarrow {
+		// ActivityRowContentSingleLine's --follows-divider (the item
+		// before is a date divider or a section header) and
+		// --precedes-header (the next, past a spacer, is a header)
+		prev, next := -1, i+1
+		if i > 0 {
+			prev = v.vis[i-1]
+		}
+		if next < len(v.vis) && v.vis[next] == actVisSpacer {
+			next++
+		}
+		r.snTop = !(i > 0 && prev < 0 && prev != actVisSpacer)
+		r.snBottom = !sel && !v.isHeader(next)
+	}
+	r.denseMid = -1 // denseContent's, unless a plugin drew the row
 	var d D
 	if v.triage() {
 		// activity_multi_line_row_triage_container: 22px, the 16px
@@ -2247,8 +2286,14 @@ func (v *Activity) row(gtx C, it *core.ActivityItem, i int) D {
 		switch {
 		case v.dense:
 			// activity_single_line_row_content__actions_toggle: centred on
-			// the row (top 50%, translateY(-50%)), right -4px
-			y = (d.Size.Y - gtx.Dp(40)) / 2
+			// the content box (top 50%, translateY(-50%)), right -4px,
+			// over the text (no space kept for it but the wide row's
+			// location padding)
+			mid := r.denseMid
+			if mid < 0 {
+				mid = d.Size.Y / 2
+			}
+			y = mid - gtx.Dp(40)/2
 		case v.pk.peeking:
 			y, right = gtx.Dp(12-4), gtx.Dp(20)
 		case i == 0:
@@ -2380,6 +2425,18 @@ func (r *actRow) itemBody(gtx C, st slackc.Styled, sel bool) D {
 		pass.Pop()
 		cl.Pop()
 		h := max(1, gtx.Dp(1))
+		if v.dense && v.superNarrow {
+			// --super_narrow_dense: border-top 1px otl-ter, border-bottom
+			// none, which the later bordered separators' rule puts back on
+			// rows neither selected nor before a header
+			if r.snTop {
+				fill(gtx, image.Rect(0, 0, dims.Size.X, h), v.p.Border)
+			}
+			if r.snBottom {
+				fill(gtx, image.Rect(0, dims.Size.Y-h, dims.Size.X, dims.Size.Y), v.p.Border)
+			}
+			return dims
+		}
 		fill(gtx, image.Rect(0, dims.Size.Y-h, dims.Size.X, dims.Size.Y), v.p.Border)
 		return dims
 	})
@@ -2534,6 +2591,7 @@ func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
 		}
 	}
 	v.openSecondary() // activity_panel.go: beside the inbox, in the app's column
+	v.jumpPane()      // or in the view's own pane, at the message
 	v.prevList.Position = layout.Position{}
 	v.dirty = true
 }
@@ -2894,85 +2952,62 @@ func (v *Activity) detailedContent(gtx C, r *actRow) D {
 
 // actDenseH is the Dense row's height: activity_row_content_container
 // --dense --design-v3, 50px (padding 10px 12px; the grouped container's
-// sides 20px), its bottom border included.
+// sides 20px), its bottom border included. --super_narrow_dense makes it
+// height auto with a min-height of 50px (denseNarrow).
 const actDenseH unit.Dp = 50
+
+// actDenseLoc is --activity_single_line_location_width: clamp(100px,
+// --activity_single_line_dm_location_width, 150px), the DM width being
+// what ActivitySingleLineLocationSizer measures, ActivityDirectMessageLabel
+// in bold 13px rounded up (ActivityList puts it on the list's style).
+func (v *Activity) actDenseLoc(gtx C) int {
+	return min(max(v.th.Measure(gtx, 13, wBold, nsActivity.T("Direct message")), gtx.Dp(100)), gtx.Dp(150))
+}
 
 // denseContent is ActivityRowContentSingleLine (gantry boot-render U5s4,
 // CSS activity_single_line_row_content*), one line, 8px gaps: the leading
-// block (200px; 100px in a container 300px or narrower) with the 20px
-// avatar, the sender (15px, flexible, ellipsis) and the status (the unread
-// badge, then the 20px type icon); then the centre (gaps 16px, 4px at
-// 625px or narrower): the message (15px, one line), the location (13px,
-// 100px wide, 224px from 800px) and the time (13px, 54px, right-aligned,
-// hidden while the row is hovered).
+// block (flex-shrink 0, calc(200px - the location width + 100px): 200px
+// unless the DM label is wider than 100px; 100px in a container 300px or
+// narrower, 200px from 800px) with the 20px avatar, the sender (15px,
+// flex 1, min-width 0: what gives way, with an ellipsis) and the status
+// (flex-shrink 0: the unread badge or mark, then the 20px type icon); then
+// the centre (flex 1, min-width 0; gaps 16px, 4px at 625px or narrower):
+// the message (15px, one line, flex 1: what gives way there), the
+// location (13px, flex-shrink 0, the location width, 224px from 800px)
+// and the time (13px, 54px, flex-shrink 0, right-aligned, hidden while
+// the row is hovered). In a list under 625px it's denseNarrow.
 func (v *Activity) denseContent(gtx C, r *actRow) D {
+	if v.superNarrow {
+		return v.denseNarrow(gtx, r)
+	}
 	d, unread := r.cur, r.unread
 	// the 54px timestamp is its own container: the narrow variant
 	bodyCol, when := r.bodyCol, v.rowWhen(gtx, d, true)
 	hov := r.click.Hovered() || r.bar.Hovered()
 	g := gtx
 	g.Constraints = layout.Exact(image.Pt(gtx.Constraints.Max.X, gtx.Dp(actDenseH))) // the bottom border is drawn inside
+	r.dn = actDenseBox{lines: 1, h: g.Constraints.Max.Y}
+	r.denseMid = g.Constraints.Max.Y / 2
 	return layout.Inset{Left: 20, Right: 20}.Layout(g, func(gtx C) D {
 		cw := gtx.Constraints.Max.X
-		lead, locW, centreGap := gtx.Dp(200), gtx.Dp(100), unit.Dp(16)
+		locW := v.denseLoc
+		lead, centreGap := gtx.Dp(200)-locW+gtx.Dp(100), unit.Dp(16)
 		switch {
 		case cw <= gtx.Dp(300):
 			lead = gtx.Dp(100)
 		case cw >= gtx.Dp(800):
-			locW = gtx.Dp(224)
+			lead, locW = gtx.Dp(200), gtx.Dp(224)
 		}
 		if cw <= gtx.Dp(625) {
 			centreGap = 4
 		}
+		r.dn.lead = lead
 		return layout.W.Layout(gtx, func(gtx C) D {
 			gtx.Constraints.Min.X = gtx.Constraints.Max.X
 			return row(gtx, layout.Middle,
 				layout.Rigid(func(gtx C) D {
 					gtx.Constraints = layout.Exact(image.Pt(lead, gtx.Dp(30)))
-					return row(gtx, layout.Middle,
-						layout.Flexed(1, func(gtx C) D {
-							// __user: flex 1, so the status sits at the leading block's end
-							gtx.Constraints.Min.X = gtx.Constraints.Max.X
-							return row(gtx, layout.Middle,
-								layout.Rigid(func(gtx C) D {
-									return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
-								}),
-								hgap(8),
-								layout.Flexed(1, func(gtx C) D {
-									gtx.Constraints.Min.X = 0
-									r.nameMax = gtx.Constraints.Max.X
-									if d.teamIcon != "" {
-										r.nameMax = max(0, r.nameMax-gtx.Dp(20))
-									}
-									return row(gtx, layout.Middle,
-										layout.Rigid(func(gtx C) D {
-											return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
-										}),
-										layout.Rigid(func(gtx C) D { return v.teamIcon(gtx, d) }),
-									)
-								}),
-							)
-						}),
-						layout.Rigid(func(gtx C) D {
-							switch {
-							case r.agentOn(gtx):
-								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.agentStatus(gtx, r) })
-							case v.typingOn(gtx, r.it):
-								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.typingStatus(gtx, r) })
-							case unread:
-								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
-							case r.markOK:
-								return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.markIcon(gtx, r) })
-							}
-							return D{}
-						}),
-						layout.Rigid(func(gtx C) D {
-							if d.typeIcon == "" {
-								return D{}
-							}
-							return layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actTypeIcon(gtx, d) })
-						}),
-					)
+					return v.denseLeading(gtx, r)
 				}),
 				hgap(8),
 				layout.Flexed(1, func(gtx C) D {
@@ -2980,49 +3015,31 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 					return row(gtx, layout.Middle,
 						layout.Flexed(1, func(gtx C) D {
 							gtx.Constraints.Min.X = gtx.Constraints.Max.X
-							if m := r.msg(); m != nil && !d.invite && len(m.Doc.Blocks) > 0 {
-								// __message: one 15px/22px line
-								gtx.Constraints.Min.Y, gtx.Constraints.Max.Y = gtx.Dp(22), gtx.Dp(22)
-								defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
-								return v.actBody(gtx, r, 1, bodyCol)
-							}
-							return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
+							r.dn.msg = gtx.Constraints.Max.X
+							return v.denseMessage(gtx, r, bodyCol)
 						}),
 						layout.Rigid(func(gtx C) D {
 							if !d.locOn {
 								return D{}
 							}
 							return layout.Inset{Left: centreGap}.Layout(gtx, func(gtx C) D {
-								gtx.Constraints = layout.Exact(image.Pt(locW, gtx.Dp(18)))
+								box := image.Pt(locW, gtx.Dp(18))
+								gtx.Constraints = layout.Exact(box)
 								if hov || r.key == v.focusKey && v.kbFocused {
 									// __locationReserved (hovered or focused):
-									// padding-inline-end 32px under the actions
+									// border-box, padding-inline-end 32px under
+									// the actions; the box keeps its width
 									gtx.Constraints.Max.X = max(0, locW-gtx.Dp(32))
-									gtx.Constraints.Min.X = gtx.Constraints.Max.X
 								}
-								w := wReg
-								if unread {
-									w = wBold
-								}
-								if d.locEnt { // the channel's InlineChannelEntity
-									return layout.W.Layout(gtx, func(gtx C) D { return v.chanEntity(gtx, d.ent, 13, w, v.p.Muted) })
-								}
-								return row(gtx, layout.Middle,
-									layout.Rigid(func(gtx C) D {
-										if d.locIcon == "" {
-											return D{}
-										}
-										return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.locIcon), 13, v.p.Muted) })
-									}),
-									layout.Flexed(1, func(gtx C) D {
-										gtx.Constraints.Min.X = 0
-										return v.para(gtx, 13, 18, w, v.p.Muted, 1, d.loc)
-									}),
-								)
+								gtx.Constraints.Min.X = 0
+								layout.W.Layout(gtx, func(gtx C) D { return v.denseLocation(gtx, d, unread) })
+								r.dn.loc = box.X
+								return D{Size: box}
 							})
 						}),
 						layout.Rigid(func(gtx C) D {
 							return layout.Inset{Left: centreGap}.Layout(gtx, func(gtx C) D {
+								r.dn.time = gtx.Dp(54)
 								if hov {
 									return D{Size: image.Pt(gtx.Dp(54), gtx.Dp(18))}
 								}
@@ -3034,6 +3051,202 @@ func (v *Activity) denseContent(gtx C, r *actRow) D {
 			)
 		})
 	})
+}
+
+// denseNarrow is ActivityRowContentSingleLine in a list under 625px
+// (--super_narrow_dense): the container is height auto, min-height 50px,
+// with border-top 1px (itemBody draws the borders); the row aligns its
+// parts to the top; the leading block is 152px (__leadingSuperNarrow, but
+// 100px in a container 300px or narrower: that container query comes
+// later in the sheet and wins); the centre wraps (padding-top 1px, row-gap
+// 2px): the message across the first line (flex-basis 100%), then __meta
+// (flex, baseline): the location (width auto, min-width 0, at most 175px,
+// flex-shrink 1: what gives way, with an ellipsis) and the timestamp
+// (flex-shrink 0, width auto, start-aligned, no container of its own)
+// after a "·" with 4px either side. The timestamp stays while the row is
+// hovered and the location keeps no room for the actions, which sit over
+// the text.
+func (v *Activity) denseNarrow(gtx C, r *actRow) D {
+	d, unread := r.cur, r.unread
+	px := max(1, gtx.Dp(1))
+	top, bottom := 0, 0
+	if r.snTop {
+		top = px
+	}
+	if r.snBottom {
+		bottom = px
+	}
+	w := gtx.Constraints.Max.X
+	cw := max(0, w-gtx.Dp(40))
+	lead := gtx.Dp(152)
+	if cw <= gtx.Dp(300) {
+		lead = gtx.Dp(100)
+	}
+	// the timestamp's variant follows the row's container
+	// (timestamp_variant_narrow at 285px or narrower)
+	when := v.rowWhen(gtx, d, cw <= gtx.Dp(285))
+	r.dn = actDenseBox{lead: lead, lines: 2}
+	pad := gtx.Dp(10)
+	var ch int
+	func() {
+		defer op.Offset(image.Pt(gtx.Dp(20), top+pad)).Push(gtx.Ops).Pop()
+		g := gtx
+		g.Constraints = layout.Constraints{Min: image.Pt(cw, 0), Max: image.Pt(cw, max(gtx.Constraints.Max.Y, gtx.Dp(200)))}
+		ch = row(g, layout.Start,
+			layout.Rigid(func(gtx C) D {
+				// __leading: the 22px line of the sender, its parts centred
+				gtx.Constraints = layout.Constraints{Min: image.Pt(lead, gtx.Dp(22)), Max: image.Pt(lead, gtx.Constraints.Max.Y)}
+				return v.denseLeading(gtx, r)
+			}),
+			hgap(8),
+			layout.Flexed(1, func(gtx C) D {
+				gtx.Constraints.Min.X = 0
+				r.dn.msg = gtx.Constraints.Max.X
+				return layout.Inset{Top: 1}.Layout(gtx, func(gtx C) D {
+					return col(gtx,
+						layout.Rigid(func(gtx C) D {
+							gtx.Constraints.Min.X = gtx.Constraints.Max.X
+							gtx.Constraints.Min.Y = gtx.Dp(22)
+							return v.denseMessage(gtx, r, r.bodyCol)
+						}),
+						vgap(2),
+						layout.Rigid(func(gtx C) D { return v.denseMeta(gtx, r, when, unread) }),
+					)
+				})
+			}),
+		).Size.Y
+	}()
+	h := max(gtx.Dp(actDenseH), top+pad+ch+pad+bottom)
+	// the content box (height 100%) and its middle, the actions' top 50%
+	r.denseMid = top + pad + (h-top-bottom-2*pad)/2
+	r.dn.h = h
+	return D{Size: image.Pt(w, h)}
+}
+
+// denseMeta is the super narrow row's second line, __meta: the location
+// (at most 175px, giving way to the timestamp) and the timestamp with its
+// "·" (:before, margin 0 4px), 13px content-ter.
+func (v *Activity) denseMeta(gtx C, r *actRow, when string, unread bool) D {
+	d := r.cur
+	avail, h := gtx.Constraints.Max.X, gtx.Dp(18)
+	tm := op.Record(gtx.Ops)
+	lg := gtx
+	lg.Constraints = layout.Constraints{Max: image.Pt(1<<20, h)}
+	td := row(lg, layout.Middle,
+		layout.Rigid(func(gtx C) D {
+			return layout.Inset{Left: 4, Right: 4}.Layout(gtx, func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, "·") })
+		}),
+		layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, v.p.Muted, when) }),
+	)
+	tcall := tm.Stop()
+	x := 0
+	if d.locOn {
+		g := gtx
+		g.Constraints = layout.Constraints{Min: image.Pt(0, h), Max: image.Pt(max(0, min(gtx.Dp(175), avail-td.Size.X)), h)}
+		x = layout.W.Layout(g, func(gtx C) D { return v.denseLocation(gtx, d, unread) }).Size.X
+	}
+	func() {
+		defer op.Offset(image.Pt(x, max(0, h-td.Size.Y)/2)).Push(gtx.Ops).Pop()
+		tcall.Add(gtx.Ops)
+	}()
+	r.dn.loc, r.dn.time = x, td.Size.X
+	return D{Size: image.Pt(min(avail, x+td.Size.X), h)}
+}
+
+// denseLeading is __leading's inside, in gtx's box: __user (flex 1,
+// min-width 0: the 20px avatar, 8px, the sender, which gives way with an
+// ellipsis) and __status (flex-shrink 0, 8px after it: the status
+// indicator, then the 20px type icon, 8px apart).
+func (v *Activity) denseLeading(gtx C, r *actRow) D {
+	d, unread := r.cur, r.unread
+	r.dn.status, r.dn.typeIcon = 0, 0
+	return row(gtx, layout.Middle,
+		layout.Flexed(1, func(gtx C) D {
+			// __user: flex 1, so the status sits at the leading block's end
+			gtx.Constraints.Min.X = gtx.Constraints.Max.X
+			return row(gtx, layout.Middle,
+				layout.Rigid(func(gtx C) D {
+					return slackc.Component(gtx, "ActivityRowContentSenderAvatarLayout", r, (*actRow).avatarProps, (*actRow).layoutAvatar)
+				}),
+				hgap(8),
+				layout.Flexed(1, func(gtx C) D {
+					gtx.Constraints.Min.X = 0
+					r.nameMax = gtx.Constraints.Max.X
+					if d.teamIcon != "" {
+						r.nameMax = max(0, r.nameMax-gtx.Dp(20))
+					}
+					r.dn.name = r.nameMax
+					return row(gtx, layout.Middle,
+						layout.Rigid(func(gtx C) D {
+							return slackc.Component(gtx, "ActivityPrivacyBlurredName", r, (*actRow).nameProps, (*actRow).layoutName)
+						}),
+						layout.Rigid(func(gtx C) D { return v.teamIcon(gtx, d) }),
+					)
+				}),
+			)
+		}),
+		layout.Rigid(func(gtx C) D {
+			var s D
+			switch {
+			case r.agentOn(gtx):
+				s = layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.agentStatus(gtx, r) })
+			case v.typingOn(gtx, r.it):
+				s = layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.typingStatus(gtx, r) })
+			case unread:
+				s = layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actStatus(gtx, r.count, unread) })
+			case r.markOK:
+				s = layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.markIcon(gtx, r) })
+			}
+			r.dn.status = s.Size.X
+			return s
+		}),
+		layout.Rigid(func(gtx C) D {
+			if d.typeIcon == "" {
+				return D{}
+			}
+			s := layout.Inset{Left: 8}.Layout(gtx, func(gtx C) D { return v.actTypeIcon(gtx, d) })
+			r.dn.typeIcon = s.Size.X
+			return s
+		}),
+	)
+}
+
+// denseMessage is __message: the body on one 15px/22px line (clamped to
+// it) or the row's preview text.
+func (v *Activity) denseMessage(gtx C, r *actRow, bodyCol color.NRGBA) D {
+	d := r.cur
+	if m := r.msg(); m != nil && !d.invite && len(m.Doc.Blocks) > 0 {
+		gtx.Constraints.Min.Y, gtx.Constraints.Max.Y = gtx.Dp(22), gtx.Dp(22)
+		defer clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops).Pop()
+		return v.actBody(gtx, r, 1, bodyCol)
+	}
+	return layout.W.Layout(gtx, func(gtx C) D { return v.label(gtx, 15, wReg, bodyCol, d.prev) })
+}
+
+// denseLocation is __location's content at its own width within gtx's
+// (white-space nowrap, an ellipsis): the channel's InlineChannelEntity, or
+// the location's icon and text; bold on unread rows.
+func (v *Activity) denseLocation(gtx C, d *actDesc, unread bool) D {
+	w := wReg
+	if unread {
+		w = wBold
+	}
+	gtx.Constraints.Min.X = 0
+	if d.locEnt {
+		return v.chanEntity(gtx, d.ent, 13, w, v.p.Muted)
+	}
+	return row(gtx, layout.Middle,
+		layout.Rigid(func(gtx C) D {
+			if d.locIcon == "" {
+				return D{}
+			}
+			return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.icon(gtx, icons.Slack(d.locIcon), 13, v.p.Muted) })
+		}),
+		layout.Rigid(func(gtx C) D {
+			gtx.Constraints.Min.X = 0
+			return v.para(gtx, 13, 18, w, v.p.Muted, 1, d.loc)
+		}),
+	)
 }
 
 // actTypeIcon is the Dense row's ActivityDecoupledTypeIcon: a 20px box,

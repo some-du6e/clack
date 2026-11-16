@@ -127,9 +127,9 @@ func (a *App) OpenThreadAt(ch, thread, ts string) {
 //     && prev primary id !== the thread's channel`.
 //   - highlightRoot, for a thread in the Secondary, moves the primary
 //     conversation to the root (startTs) and highlights it there (lazily),
-//     then is cleared. Its callers here have the To-dos list or the Saved
-//     page in the primary, never a conversation, so it has nothing to
-//     move.
+//     then is cleared. The To-dos list and the Saved page have no
+//     conversation in the primary for it to move; jumpToMessage (jump.go),
+//     which puts the thread's conversation there, moves it itself.
 func (a *App) openThreadAt(ch, thread, ts string, prev Route) {
 	if ch == "" || thread == "" {
 		return

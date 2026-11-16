@@ -52,6 +52,11 @@ func (r *Runtime) logError(prefix string, err error) {
 		return // Close interrupted whatever ran: expected, not the script's fault
 	}
 	msg := err.Error()
+	if errors.Is(err, ErrTimeout) {
+		if l := r.runningLabel(); l != "" {
+			prefix += " in " + l
+		}
+	}
 	var je *JSError
 	if errors.As(err, &je) && je.Stack != "" {
 		msg += "\n" + je.Stack
@@ -200,14 +205,14 @@ func (r *Runtime) installHost() {
 	})
 	def("wake", func(js *Ctx, _ Value, a []Value) (any, error) {
 		// a macrotask for setImmediate / MessageChannel / scheduler
-		r.enqueue(func() {
+		r.enqueue(task{kind: "setImmediate", f: func() {
 			fn := r.js.Global().Get("__jr").Get("runImmediates")
 			if fn.IsFunction() {
 				if _, err := fn.Call(); err != nil {
 					r.logError("uncaught", err)
 				}
 			}
-		})
+		}})
 		return nil, nil
 	})
 	def("now", func(js *Ctx, _ Value, a []Value) (any, error) {

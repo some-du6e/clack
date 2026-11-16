@@ -232,17 +232,22 @@ func fakeShots(t *testing.T) (shots *int, copied *image.Image) {
 	return shots, copied
 }
 
-// pickAndCopy clicks p: the click's frame is shot, the review opens
-// over it, and Enter copies the report.
+// pickAndCopy clicks p: the click's frame is shot and the report copied
+// at once, with no review.
 func (e *inspectEnv) pickAndCopy(t *testing.T, p image.Point) {
 	t.Helper()
 	e.click(p)
 	e.frame()
 	e.a.inspectAfterFrame(&e.ops, e.size)
-	e.reviewAndCopy(t)
+	if e.a.insp.Reviewing() {
+		t.Fatal("a plain click opened the review")
+	}
+	e.a.insp.Wait()
+	e.frame()
 }
 
-// reviewAndCopy finishes the review the last frame's shot started.
+// reviewAndCopy finishes the review the last frame's shot started (a
+// drag's, a Shift+click's).
 func (e *inspectEnv) reviewAndCopy(t *testing.T) {
 	t.Helper()
 	if !e.a.insp.Reviewing() {
@@ -304,8 +309,8 @@ func TestInspectReactionPill(t *testing.T) {
 		t.Errorf("↓: outline %q, want the pill's UnstyledButton again", label)
 	}
 
-	// the click picks: one shot, reviewed, then on Enter one image on the
-	// clipboard and the session over
+	// the click picks: one shot, one image on the clipboard at once, the
+	// session over
 	p := e.pillCenter()
 	e.pickAndCopy(t, image.Pt(int(p.X), int(p.Y)))
 	if e.a.insp.Active() {
