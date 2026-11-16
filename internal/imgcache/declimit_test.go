@@ -186,11 +186,12 @@ func TestDecPoolsIndependent(t *testing.T) {
 // small pool full a small PNG's decode waits, and fails to reserve under a
 // cancelled context.
 func TestDecodePNGReserves(t *testing.T) {
-	rel, err := decReserve(context.Background(), decSmallCap) // fill the small pool
-	if err != nil {
+	// fill the small pool directly (decReserve routes decSmallCap, which is
+	// larger than decSmallMax, to the big pool)
+	if err := decSmall.acquire(context.Background(), decSmallCap); err != nil {
 		t.Fatalf("fill the small pool: %v", err)
 	}
-	defer rel()
+	defer decSmall.release(decSmallCap)
 	ctx, cancel := context.WithCancel(context.Background())
 	data := pngBytes(8, 8) // tiny → small pool, blocks while it's full
 	done, blocked := blocks(150*time.Millisecond, func() error {
