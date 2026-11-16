@@ -18,16 +18,16 @@ import (
 // the interfaces, an offline reading counts only once it lasts the
 // offline event's throttle, and each change is one "client_online" event.
 func TestClientOnline(t *testing.T) {
-	if !probeInterfaces() {
-		t.Error("probeInterfaces: offline on a runner with a network")
+	if on, fp := scanInterfaces(); !on || fp == "" {
+		t.Errorf("scanInterfaces: online %v, addresses %q on a runner with a network", on, fp)
 	}
 	var up atomic.Bool
 	up.Store(true)
 	var probes atomic.Int32
-	oldProbe, oldPoll, oldThrottle := clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle
-	clientOnlineProbe = func() bool { probes.Add(1); return up.Load() }
+	oldScan, oldPoll, oldThrottle := netScan, clientOnlinePoll, clientOfflineThrottle
+	netScan = func() (bool, string) { probes.Add(1); return up.Load(), "" }
 	clientOnlinePoll, clientOfflineThrottle = 20*time.Millisecond, 60*time.Millisecond
-	t.Cleanup(func() { clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle = oldProbe, oldPoll, oldThrottle })
+	t.Cleanup(func() { netScan, clientOnlinePoll, clientOfflineThrottle = oldScan, oldPoll, oldThrottle })
 
 	a := New(slack.New(slack.Creds{}), store.New(""))
 	t.Cleanup(a.Shutdown)
@@ -138,11 +138,10 @@ func TestNetworkChangeReconnects(t *testing.T) {
 	addrs.Store("en0=192.168.100.166")
 	clk := &clock2{wall: time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)}
 	t.Cleanup(slack.SetClock(clk.read))
-	oldProbe, oldPoll, oldFP := clientOnlineProbe, clientOnlinePoll, networkFingerprint
-	clientOnlineProbe = func() bool { return true }
+	oldScan, oldPoll := netScan, clientOnlinePoll
 	clientOnlinePoll = 20 * time.Millisecond
-	networkFingerprint = func() string { clk.tick(20 * time.Millisecond); return addrs.Load().(string) }
-	t.Cleanup(func() { clientOnlineProbe, clientOnlinePoll, networkFingerprint = oldProbe, oldPoll, oldFP })
+	netScan = func() (bool, string) { clk.tick(20 * time.Millisecond); return true, addrs.Load().(string) }
+	t.Cleanup(func() { netScan, clientOnlinePoll = oldScan, oldPoll })
 
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
@@ -213,5 +212,33 @@ func TestNetworkChangeReconnects(t *testing.T) {
 	}
 	if a.RTM.LastConnectFast() {
 		t.Error("reconnected on a reconnect_url after waking")
+	}
+}
+
+// The watcher walks the interfaces once a poll: whether the machine is
+// online and its addresses come from the same walk (it walked them twice
+// every 2 s, and on Windows each walk was a GetAdaptersAddresses of
+// every adapter per interface).
+func TestOnlineWatcherWalksOncePerPoll(t *testing.T) {
+	var n atomic.Int64
+	oldScan, oldPoll := netScan, clientOnlinePoll
+	netScan = func() (bool, string) { n.Add(1); return scanInterfaces() }
+	clientOnlinePoll = 25 * time.Millisecond
+	t.Cleanup(func() { netScan, clientOnlinePoll = oldScan, oldPoll })
+	a := New(slack.New(slack.Creds{}), store.New(""))
+	t.Cleanup(a.Shutdown)
+	a.ClientOnline() // the first read walks, and starts the watcher
+	time.Sleep(20 * clientOnlinePoll)
+	a.Shutdown()
+	time.Sleep(2 * clientOnlinePoll)
+	walks := n.Load()
+	polls := int64(20)
+	// the first read, the watcher's first look, then one a tick (a
+	// loaded runner may skip a tick or two)
+	if walks > polls+2 {
+		t.Errorf("%d interface walks in %d polls, want one a poll", walks, polls)
+	}
+	if walks < polls/3 {
+		t.Errorf("%d interface walks in %d polls: the watcher isn't polling", walks, polls)
 	}
 }

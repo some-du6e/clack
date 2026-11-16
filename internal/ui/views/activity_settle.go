@@ -47,9 +47,11 @@ func (v *Activity) unbuildChanged(old, page core.ActivityPage) {
 //
 //   - "user" (user_change, user_profile_changed): the rows that looked the
 //     member up (actDesc.reads: the sender's name and picture, a DM's
-//     title, the names its preview mentions). A member no view has read
-//     since it was stored (ev.Seen zero) draws on no row, as most of a
-//     large workspace's profile changes don't.
+//     title, the names its preview mentions). A member no built row read
+//     (notes.readers) draws on no row, as most of a large workspace's
+//     profile changes don't: one that other views read (ev.Seen) no more
+//     wakes the page than a stranger. While rows are being described any
+//     member might be one (describing).
 //   - "conv": the rows about that conversation (its name, topic, a group
 //     DM's custom name).
 //   - "team" (the team's or a user group's name, which previews mention):
@@ -65,7 +67,7 @@ func (v *Activity) noteStale(ev core.Event) bool {
 		if user = ev.UserID; user == "" && ev.User != nil {
 			user = ev.User.ID
 		}
-		if user == "" || ev.Seen.IsZero() {
+		if user == "" || ev.Seen.IsZero() || core.CardOnly(ev.Prev, ev.User) { // a row draws a name and a picture
 			return false
 		}
 	case "conv", "team":
@@ -75,6 +77,9 @@ func (v *Activity) noteStale(ev core.Event) bool {
 	n := &v.notes
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if !n.describing && (user != "" && !n.readers[user] || ev.Type == "conv" && ev.Channel != "" && !n.chans[ev.Channel]) {
+		return false
+	}
 	switch {
 	case user != "":
 		if n.staleUsers == nil {
@@ -104,17 +109,18 @@ func (v *Activity) unbuildStale() {
 	users, convs, all := n.staleUsers, n.staleConvs, n.staleAll
 	n.staleUsers, n.staleConvs, n.staleAll, n.staleQueued = nil, nil, false, false
 	n.mu.Unlock()
+	unbuilt := false
 	for _, r := range v.rows {
 		if !r.built {
 			continue
 		}
 		if all {
-			r.built = false
+			r.built, unbuilt = false, true
 			continue
 		}
 		for _, id := range r.d.reads {
 			if users[id] {
-				r.built = false
+				r.built, unbuilt = false, true
 				break
 			}
 		}
@@ -123,11 +129,54 @@ func (v *Activity) unbuildStale() {
 		page, _, _ := v.data.get()
 		for i := range page.Items {
 			if it := &page.Items[i]; convs[it.Channel] {
-				if r := v.rows[actKey(it)]; r != nil {
-					r.built = false
+				if r := v.rows[actKey(it)]; r != nil && r.built {
+					r.built, unbuilt = false, true
 				}
 			}
 		}
 	}
-	v.dirty = true
+	if unbuilt { // the list builds again only for a row that changed
+		v.dirty = true
+	}
+}
+
+// describingRows brackets rebuild's descriptions (UI goroutine): while
+// on, every profile or conversation change may be one a row is reading;
+// when it ends, readers is what the built rows read and chans the
+// conversations the loaded rows are about.
+func (v *Activity) describingRows(on bool) {
+	var readers, chans map[string]bool
+	if !on {
+		readers, chans = map[string]bool{}, map[string]bool{}
+		for _, r := range v.rows {
+			if r.built {
+				for _, id := range r.d.reads {
+					readers[id] = true
+				}
+			}
+		}
+		page, _, _ := v.data.get()
+		for i := range page.Items {
+			if ch := page.Items[i].Channel; ch != "" {
+				chans[ch] = true
+			}
+		}
+	}
+	n := &v.notes
+	n.mu.Lock()
+	n.describing = on
+	if !on {
+		n.readers, n.chans = readers, chans
+	}
+	n.mu.Unlock()
+}
+
+// rowsAbout reports whether a loaded row is about conversation ch (any
+// goroutine): ch "" is about everything, and while rows are being
+// described any may be.
+func (v *Activity) rowsAbout(ch string) bool {
+	n := &v.notes
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return ch == "" || n.describing || n.chans[ch]
 }

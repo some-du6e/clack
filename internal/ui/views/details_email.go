@@ -113,7 +113,7 @@ func (d *ChannelDetails) plansURL() string {
 	if a := d.h.Core(); a != nil {
 		select {
 		case <-a.DataReady():
-			if dom := a.RecentSnapshot().Team.Domain; dom != "" {
+			if dom := a.OwnTeam().Domain; dom != "" {
 				host = dom + ".slack.com"
 			}
 		default:

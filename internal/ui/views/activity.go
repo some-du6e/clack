@@ -494,7 +494,12 @@ func (v *Activity) watchItems() {
 			}
 			if ev.Type == "conv" {
 				// channel_updated: an agent session's status (the rows'
-				// agent status) may have changed
+				// agent status) may have changed; a conversation no row
+				// is about (a lookup of a channel the viewer isn't in)
+				// changes none
+				if !v.rowsAbout(ev.Channel) {
+					continue
+				}
 				v.notes.mu.Lock()
 				if !v.notes.dirtyQueued {
 					v.notes.dirtyQueued = true
@@ -1435,6 +1440,8 @@ func (v *Activity) describeItem(it *core.ActivityItem, refs map[string]core.Conv
 
 // rebuild recomputes row text and the client-side filtered index list.
 func (v *Activity) rebuild(page *core.ActivityPage) {
+	v.describingRows(true) // a profile change meanwhile wakes the page (noteStale)
+	defer v.describingRows(false)
 	v.vis = v.vis[:0]
 	q := strings.ToLower(v.query.text())
 	if !v.searchOn {
@@ -2857,6 +2864,12 @@ type actNotes struct {
 	// (Activity.noteStale): members, conversations, or everything
 	staleQueued, staleAll  bool
 	staleUsers, staleConvs map[string]bool
+	// readers are the members the built rows' descriptions read
+	// (actDesc.reads) and chans the conversations the rows are about
+	// (describingRows); describing is set while rebuild describes rows:
+	// a "user" or "conv" event about anything else draws on no row
+	readers, chans map[string]bool
+	describing     bool
 }
 
 func (n *actNotes) add(h Host, s string) {

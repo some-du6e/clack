@@ -203,3 +203,69 @@ func TestActivityMergeKeepsLaterPagesOutOfTimeOrder(t *testing.T) {
 		}
 	}
 }
+
+// A profile change of a member no Activity row reads draws nothing there:
+// it neither wakes the page nor builds its list again, though another
+// view read the member (ev.Seen: the sidebar reads its DM people every
+// frame). On Hack Club's socket that was a frame and the whole list
+// rebuilt for each such user_change while Activity was open (α.100).
+func TestActivityIgnoresProfilesNoRowReads(t *testing.T) {
+	v, _, e, _ := vaFakeActivity(t, false)
+	e.frame()
+	const id = "U0FAKE00077"
+	for k, r := range v.rows {
+		for _, x := range r.d.reads {
+			if x == id {
+				t.Fatalf("row %s reads %s", k, id)
+			}
+		}
+	}
+	ev := core.Event{Type: "user", UserID: id, User: &core.User{ID: id, Name: "someone else"}, Seen: time.Now()}
+	if v.noteStale(ev) {
+		t.Error("a profile change of a member no row reads woke Activity")
+	}
+	// a pass that unbuilds no row leaves the list as it is
+	v.notes.mu.Lock()
+	v.notes.staleUsers = map[string]bool{id: true}
+	v.notes.mu.Unlock()
+	v.dirty = false
+	v.unbuildStale()
+	if v.dirty {
+		t.Error("a pass that changed no row's text built the whole list again")
+	}
+	// one a row reads still does
+	ada := core.Event{Type: "user", UserID: "U0FAKE00001", User: &core.User{ID: "U0FAKE00001", Name: "Ada Renamed"}, Seen: time.Now()}
+	if !v.noteStale(ada) {
+		t.Error("a profile change of a member the rows read didn't reach them")
+	}
+	// and a conversation no row is about (a channel the viewer isn't in,
+	// looked up) is nothing to the page either
+	if v.noteStale(core.Event{Type: "conv", Channel: "C0NOWHERE01"}) {
+		t.Error("a conversation no row is about woke Activity")
+	}
+}
+
+// A change only a profile card shows (core.CardOnly: the status text, a
+// title) reaches no row, even for a member the rows read.
+func TestActivityIgnoresCardOnlyProfileChanges(t *testing.T) {
+	v, _, e, _ := vaFakeActivity(t, false)
+	e.frame()
+	const id = "U0FAKE00001"
+	u, ok := v.h.Core().User(id)
+	if !ok {
+		t.Fatal("no Ada")
+	}
+	prev := u
+	u.StatusText, u.Title = "on a train", "Synthetic engineer"
+	if !core.CardOnly(&prev, &u) {
+		t.Fatal("CardOnly: a status text and a title aren't card-only")
+	}
+	if v.noteStale(core.Event{Type: "user", UserID: id, User: &u, Prev: &prev, Seen: time.Now()}) {
+		t.Error("a status text change woke Activity")
+	}
+	u2 := prev
+	u2.Name = "Ada Renamed"
+	if core.CardOnly(&prev, &u2) || !v.noteStale(core.Event{Type: "user", UserID: id, User: &u2, Prev: &prev, Seen: time.Now()}) {
+		t.Error("a rename didn't reach the rows that read the member")
+	}
+}

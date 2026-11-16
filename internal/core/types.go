@@ -368,7 +368,11 @@ type Event struct {
 	Connected  bool // connection: socket up; realtime: live updates on
 	// Seen (user): when a view last read the member before this change
 	// (store.MemberAccessed); zero: none did, or the store didn't hold them
-	Seen     time.Time
+	Seen time.Time
+	// Prev (user): the member as the store held them before this change;
+	// nil when it didn't (CardOnly tells a change only a profile card
+	// shows)
+	Prev     *User
 	Presence string // presence: active | away
 	Users    []string
 	Prefs    *Prefs

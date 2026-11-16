@@ -732,8 +732,7 @@ func (v *Unreads) filterLabel() string {
 // allLabel: "All of {org}" on an Enterprise org (isEnterprise), else
 // "All of {workspace}" / "All conversations".
 func (v *Unreads) allLabel() string {
-	snap := v.h.Core().RecentSnapshot()
-	if n := snap.Team.Name; n != "" {
+	if n := v.h.Core().OwnTeam().Name; n != "" { // read every frame: no snapshot
 		return nsUnreads.T("All of {workspace}", "workspace", n)
 	}
 	return nsUnreads.T("All conversations")
@@ -750,7 +749,7 @@ func (v *Unreads) control(gtx C, c *widget.Clickable, label string, team bool) D
 				if !team || v.sectionFilter() != "" {
 					return D{}
 				}
-				icon := v.h.Core().RecentSnapshot().Team.Icon
+				icon := v.h.Core().OwnTeam().Icon
 				return layout.Inset{Right: 4}.Layout(gtx, func(gtx C) D { return v.avatar(gtx, icon, 16) })
 			}),
 			layout.Rigid(func(gtx C) D { return v.label(gtx, 13, wReg, col, label) }),

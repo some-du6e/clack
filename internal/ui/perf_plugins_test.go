@@ -71,11 +71,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/ui/idleprobe"
 	"github.com/some-du6e/clack/internal/ui/slackc"
+	"github.com/some-du6e/clack/internal/ui/theme/pixeltest"
 )
 
 // perfProfPrefix is PERF_PLUGIN_PROF while the passes run.
@@ -216,6 +219,9 @@ type perfPluginResult struct {
 	// reservation; 0 where it is a Go slice, inside HeapMB)
 	WasmMB float64    `json:"wasm_mb,omitempty"`
 	Passes []perfPass `json:"passes"`
+	// Idle are the window left alone in the bench channel with the
+	// composer focused, quiet and under idleTraffic (perfIdle)
+	Idle []perfIdlePass `json:"idle,omitempty"`
 }
 
 func TestPerfPluginScroll(t *testing.T) {
@@ -388,6 +394,11 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.a.Navigate("activity")
 	e.settle(2 * time.Second)
 	res.Passes = append(res.Passes, e.perfScroll("activity", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
+
+	// the window left alone: what a caret blink costs (layout, and the
+	// GPU frame in llvmpipe), then a busy workspace's socket about
+	// nothing on screen; frames a second, before and after
+	res.Idle = e.perfIdlePasses(t)
 
 	// what the flight recorder costs: PERF_PLUGIN_RECORDER pairs of the
 	// channel-live pass with it off and on, in turns (off-on, on-off, …),
@@ -741,5 +752,373 @@ func (p *perfTraffic) run() {
 			ts := pick(2)
 			p.inject(p.ch, "message", "message_deleted", map[string]any{"deleted_ts": ts, "ts": liveTS(), "event_ts": liveTS(), "hidden": true})
 		}
+	}
+}
+
+// perfIdlePass is the window left alone (perfIdle): the frames it drew
+// and what asked for them, what each cost on the UI goroutine (drain,
+// layout and the router: a caret blink redraws all of it) and in the GPU
+// renderer (llvmpipe here: the CPU's share of a real GPU's frame, an
+// upper bound), the snapshots core built and the events it took.
+type perfIdlePass struct {
+	Name        string   `json:"name"`
+	Seconds     float64  `json:"seconds"`
+	Frames      int      `json:"frames"`
+	FPS         float64  `json:"fps"`
+	CaretFrames int      `json:"caret_frames"` // every cause the caret's blink
+	EventFrames int      `json:"event_frames"` // asked for by an Invalidate (an event, a load)
+	OtherFPS    float64  `json:"other_fps"`    // frames a second besides the caret's
+	LayoutMS    float64  `json:"layout_ms"`    // per frame, mean
+	LayoutMax   float64  `json:"layout_max_ms"`
+	GPUMS       float64  `json:"gpu_ms,omitempty"` // per frame, mean (0: no GPU renderer)
+	CPUMS       float64  `json:"cpu_ms"`           // process CPU over the pass
+	Builds      int64    `json:"snapshot_builds"`  // full sidebar snapshots, any goroutine
+	Events      int      `json:"events"`
+	Causes      []string `json:"causes,omitempty"` // the most frequent, with counts
+}
+
+// perfIdlePasses opens the bench channel with its composer focused and
+// lets it sit: quiet, with the caret still (no blink), and under
+// idleTraffic.
+func (e *benchEnv) perfIdlePasses(t *testing.T) []perfIdlePass {
+	e.openBench()
+	focus := func() {
+		e.frame()
+		if c := e.a.convoFor(fakeslack.BenchChannelID, ""); c != nil && c.comp != nil {
+			c.comp.Focus()
+		}
+		e.frame()
+		e.frame()
+	}
+	focus()
+	e.settle(2 * time.Second)
+	if w, err := pixeltest.NewWindow(e.size.X, e.size.Y); err == nil {
+		e.gpu = w
+		defer func() { w.Release(); e.gpu = nil }()
+	} else {
+		t.Logf("no GPU renderer for the idle passes (%v): layout only", err)
+	}
+	var out []perfIdlePass
+	out = append(out, e.perfIdle(t, "idle", 10*time.Second, nil))
+	tr := newIdleTraffic(e.perfEnv, func(raw map[string]any) { injectRaw(e.a.data.core, raw) })
+	tr.prepare()
+	focus()
+	e.settle(3 * time.Second)
+	out = append(out, e.perfIdle(t, "idle-traffic", 10*time.Second, tr))
+	return out
+}
+
+// perfIdle is one idle pass of d: idleprobe's window loop over the real
+// router, each frame timed.
+func (e *benchEnv) perfIdle(t *testing.T, name string, d time.Duration, tr *idleTraffic) perfIdlePass {
+	p := idleprobe.New()
+	defer p.Close()
+	idleTrafficApp.Store(e.a)
+	invalidateHook = func(a *App) { idleTrafficHook(a, p) }
+	defer func() { invalidateHook = nil }()
+	var layout, gpu []float64
+	frame := func(now time.Time) {
+		t0 := time.Now()
+		a := e.a
+		a.drain()
+		e.now = now
+		gtx := e.context()
+		before := a.router.Current()
+		a.frame(gtx)
+		if a.router.Current() != before {
+			gtx = e.context()
+			a.frame(gtx)
+		}
+		a.revealFrame()
+		e.r.Frame(&e.ops)
+		layout = append(layout, float64(time.Since(t0).Microseconds())/1000)
+		if e.gpu != nil {
+			t1 := time.Now()
+			if err := e.gpu.Frame(&e.ops); err == nil {
+				gpu = append(gpu, float64(time.Since(t1).Microseconds())/1000)
+			}
+		}
+	}
+	b0 := e.a.data.core.SnapshotBuilds()
+	c0 := procCPU()
+	if tr != nil {
+		tr.start()
+	}
+	res := p.Run(name, d, &e.r, frame)
+	events := 0
+	if tr != nil {
+		events = tr.stop()
+	}
+	cpu := procCPU() - c0
+	res.Log(t)
+	pass := perfIdlePass{Name: name, Seconds: d.Seconds(), Frames: res.Count(), CaretFrames: res.CountMatching("Editor).Layout"),
+		CPUMS: float64(cpu.Microseconds()) / 1000, Builds: e.a.data.core.SnapshotBuilds() - b0, Events: events}
+	pass.FPS = float64(pass.Frames) / d.Seconds()
+	pass.OtherFPS = float64(pass.Frames-pass.CaretFrames) / d.Seconds()
+	by := map[string]int{}
+	for _, f := range res.Frames {
+		inv := false
+		for _, c := range f.Causes {
+			by[c]++
+			inv = inv || strings.HasPrefix(c, "Invalidate ")
+		}
+		if inv {
+			pass.EventFrames++
+		}
+	}
+	// the first layout is the probe's settled one, not a frame drawn
+	if len(layout) > 1 {
+		layout = layout[1:]
+	}
+	if len(gpu) > 1 {
+		gpu = gpu[1:]
+	}
+	if len(layout) > 0 && len(res.Frames) > 0 {
+		for _, l := range layout {
+			pass.LayoutMS += l
+			pass.LayoutMax = math.Max(pass.LayoutMax, l)
+		}
+		pass.LayoutMS = math.Round(pass.LayoutMS/float64(len(layout))*100) / 100
+	}
+	if len(gpu) > 0 && len(res.Frames) > 0 {
+		for _, g := range gpu {
+			pass.GPUMS += g
+		}
+		pass.GPUMS = math.Round(pass.GPUMS/float64(len(gpu))*100) / 100
+	}
+	keys := make([]string, 0, len(by))
+	for k := range by {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return by[keys[i]] > by[keys[j]] || by[keys[i]] == by[keys[j]] && keys[i] < keys[j]
+	})
+	for i, k := range keys {
+		if i == 8 {
+			break
+		}
+		pass.Causes = append(pass.Causes, fmt.Sprintf("%d× %s", by[k], k))
+	}
+	t.Logf("idle pass %-12s %d frames in %v (%.1f/s, %.1f/s besides the caret's %d, %d from Invalidates), layout %.2f ms a frame (max %.1f), GPU %.2f ms a frame, CPU %.0f ms, %d snapshot builds, %d events",
+		name, pass.Frames, d, pass.FPS, pass.OtherFPS, pass.CaretFrames, pass.EventFrames, pass.LayoutMS, pass.LayoutMax, pass.GPUMS, pass.CPUMS, pass.Builds, events)
+	return pass
+}
+
+// idleTrafficApp is the App whose Invalidates the idle probe counts (an
+// earlier one's goroutines may still finish work after its shutdown).
+var idleTrafficApp atomic.Pointer[App]
+
+// idleTrafficHook is invalidateHook for the idle passes and
+// TestIdleTrafficFrames: the measured App's Invalidates go to the probe.
+func idleTrafficHook(a *App, p *idleprobe.Probe) {
+	if a == idleTrafficApp.Load() {
+		p.Invalidated()
+	}
+}
+
+// injectRaw hands one realtime event to core's handler, as the socket
+// does (core.Inject).
+func injectRaw(c *core.App, raw map[string]any) {
+	typ, _ := raw["type"].(string)
+	sub, _ := raw["subtype"].(string)
+	b, _ := json.Marshal(raw)
+	ev := slack.Event{Type: typ, Subtype: sub, Raw: b}
+	if ch, ok := raw["channel"].(string); ok {
+		ev.Channel, _ = json.Marshal(ch)
+	}
+	c.Inject(ev)
+}
+
+// idleTraffic is a busy workspace's socket about nothing on screen, what
+// Karim's Clack sat idle under at 10% GPU on Hack Club's Enterprise Grid
+// (2026-11-16). Every 50 ms someone's status changes: a stranger's, or
+// only the text of a DM partner's or a group DM member's (their rows draw
+// their name, picture and emoji, not the text). In turns people are
+// renamed, presence comes and goes (strangers', a DM partner's that stays
+// active), messages land in a channel that is already unread and not
+// open, the Activity badges are recounted unchanged, a channel the viewer
+// isn't in is renamed, messages there are deleted and reacted to,
+// threads' read states and other people's do-not-disturb move, custom
+// emoji are added and someone types elsewhere. emit hands each event to
+// core (the fake's socket, or core.Inject), from the traffic's goroutine.
+type idleTraffic struct {
+	e    *perfEnv
+	emit func(map[string]any)
+	ch   string // unread, not open: its messages draw nothing new
+	// other is a channel the viewer isn't in (fakeslack's others)
+	other  string
+	sender string     // a member the store holds who posts in ch
+	dm     slack.User // a DM partner as the store holds them
+	mpim   slack.User // a group DM member who isn't a DM partner (none: ID "")
+	last   string     // ch's newest message
+	seq    int
+
+	quit chan struct{}
+	done sync.WaitGroup
+	n    atomic.Int64
+}
+
+func newIdleTraffic(e *perfEnv, emit func(map[string]any)) *idleTraffic {
+	return &idleTraffic{e: e, emit: emit}
+}
+
+// prepare picks the traffic's channels and people, makes ch unread and
+// sends each kind of event once, so the window has taken what it changes
+// before the measuring starts (UI goroutine: it reads the model).
+func (tr *idleTraffic) prepare() {
+	e := tr.e
+	m := e.a.model()
+	open := e.a.router.Current().Channel()
+	for _, id := range e.fs.ChannelIDs() {
+		if c := m.conv(id); c != nil && id != open && !c.Muted && c.Kind == "channel" {
+			tr.ch = id
+			break
+		}
+	}
+	tr.other = "C0IDLEOTHR1"
+	e.fs.AddOtherChannel(slack.Conversation{ID: tr.other, Name: "idle-traffic-elsewhere", NumMembers: 900})
+	st := e.a.data.core.S
+	dms := map[string]bool{}
+	for _, c := range m.Convs {
+		if c.Kind == "im" && c.User != "" && c.User != m.SelfID {
+			dms[c.User] = true
+			if tr.dm.ID == "" || c.User < tr.dm.ID {
+				if u, ok := st.RawUser(c.User); ok {
+					tr.dm = *u
+				}
+			}
+		}
+	}
+	for _, c := range m.Convs {
+		if c.Kind != "mpim" || tr.mpim.ID != "" {
+			continue
+		}
+		for _, id := range c.Members {
+			if id != m.SelfID && !dms[id] {
+				if u, ok := st.RawUser(id); ok {
+					tr.mpim = *u
+					break
+				}
+			}
+		}
+	}
+	if tr.dm.ID != "" {
+		tr.sender = tr.dm.ID
+	}
+	tr.round(true)
+}
+
+func (tr *idleTraffic) start() {
+	tr.quit = make(chan struct{})
+	tr.done.Add(1)
+	go func() {
+		defer tr.done.Done()
+		tick := time.NewTicker(50 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tr.quit:
+				return
+			case <-tick.C:
+			}
+			tr.round(false)
+		}
+	}()
+}
+
+func (tr *idleTraffic) stop() int {
+	close(tr.quit)
+	tr.done.Wait()
+	return int(tr.n.Load())
+}
+
+func (tr *idleTraffic) send(raw map[string]any) {
+	tr.emit(raw)
+	tr.n.Add(1)
+}
+
+// round is one 50 ms tick's events; all sends every kind once.
+func (tr *idleTraffic) round(all bool) {
+	i := tr.seq
+	tr.seq++
+	ts := liveTS()
+	stranger := fmt.Sprintf("U0IDLETR%03d", i%40)
+	status := func(u slack.User) {
+		u.Profile.StatusText = fmt.Sprintf("away for a bit (%d)", i)
+		tr.send(map[string]any{"type": "user_change", "user": u, "event_ts": ts})
+	}
+	strangerUser := func(name string) slack.User {
+		return slack.User{ID: stranger, Name: name, Profile: slack.Profile{DisplayName: name, RealName: "Idle " + name,
+			StatusEmoji: ":wave:", StatusText: fmt.Sprintf("status %d", i)}}
+	}
+	// every tick a status change (all: one of each, the DM partner's and
+	// the group DM member's first copies in)
+	for k := 0; k < 4; k++ {
+		if !all && k != i%4 {
+			continue
+		}
+		switch k {
+		case 0:
+			status(strangerUser("idle" + stranger))
+		case 1:
+			if tr.dm.ID != "" {
+				status(tr.dm)
+			}
+		case 2:
+			if tr.mpim.ID != "" {
+				status(tr.mpim)
+			}
+		case 3: // a rename
+			status(strangerUser(fmt.Sprintf("renamed%d", i)))
+		}
+	}
+	if all || i%2 == 0 {
+		pr := "active"
+		if i%4 == 2 {
+			pr = "away"
+		}
+		tr.send(map[string]any{"type": "presence_change", "user": stranger, "presence": pr})
+		if tr.dm.ID != "" {
+			tr.send(map[string]any{"type": "presence_change", "user": tr.dm.ID, "presence": "active"})
+		}
+	}
+	if tr.ch != "" && tr.sender != "" && (all || i%4 == 1) {
+		mts, ev := tr.e.fs.PostQuiet(tr.ch, tr.sender, fmt.Sprintf("a message nobody is looking at (%d)", i))
+		tr.last = mts
+		tr.send(ev)
+	}
+	if all || i%8 == 3 {
+		av := tr.e.fs.ActivityBadges() // client.counts' own: the badge stays
+		if av == nil {
+			av = map[string]int{}
+		}
+		tr.send(map[string]any{"type": "badge_counts_updated", "activity_v2": av, "event_ts": ts})
+	}
+	if all || i%8 == 5 {
+		tr.send(map[string]any{"type": "channel_rename", "channel": map[string]any{"id": tr.other, "name": fmt.Sprintf("idle-traffic-elsewhere-%d", i), "created": 1700000000}, "event_ts": ts})
+	}
+	if tr.ch != "" && (all || i%8 == 7) {
+		tr.send(map[string]any{"type": "message", "subtype": "message_deleted", "channel": tr.ch, "deleted_ts": "1700000000.000100", "ts": ts, "event_ts": ts, "hidden": true})
+	}
+	if tr.ch != "" && tr.last != "" && tr.sender != "" && (all || i%4 == 2) {
+		tr.send(map[string]any{"type": "reaction_added", "user": tr.sender, "reaction": "eyes", "item": map[string]any{"type": "message", "channel": tr.ch, "ts": tr.last}, "event_ts": ts})
+	}
+	if all || i%16 == 9 {
+		tr.send(map[string]any{"type": "update_thread_state", "has_unreads": false, "mention_count": 0, "timestamp": ts, "event_ts": ts})
+	}
+	if tr.ch != "" && (all || i%16 == 13) {
+		tr.send(map[string]any{"type": "thread_marked", "subscription": map[string]any{"type": "thread", "channel": tr.ch, "thread_ts": "1700000000.000200",
+			"last_read": ts, "active": true}, "event_ts": ts})
+	}
+	if all || i%8 == 1 {
+		tr.send(map[string]any{"type": "dnd_updated_user", "user": stranger, "dnd_status": map[string]any{"dnd_enabled": true,
+			"next_dnd_start_ts": time.Now().Unix() - 60, "next_dnd_end_ts": time.Now().Unix() + 3600}, "event_ts": ts})
+	}
+	if all || i%8 == 6 {
+		tr.send(map[string]any{"type": "emoji_changed", "subtype": "add", "name": fmt.Sprintf("idle-emoji-%d", i),
+			"value": "https://emoji.slack-edge.com/T0/idle/1.png", "event_ts": ts})
+	}
+	if tr.ch != "" && tr.sender != "" && (all || i%4 == 3) {
+		tr.send(map[string]any{"type": "user_typing", "channel": tr.ch, "user": tr.sender})
 	}
 }

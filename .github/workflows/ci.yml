@@ -323,12 +323,14 @@ jobs:
       # Idle: the client left alone for 10 s per surface (channel, thread,
       # Activity, Preferences, the sidebar with unreads, the huddle window),
       # with and without reduced motion; fails past a caret's blinks plus
-      # a clock tick, and logs who asked for every frame.
-      - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
+      # a clock tick, and logs who asked for every frame. Then under a busy
+      # workspace's socket about nothing on screen (TestIdleTrafficFrames):
+      # no frame an Invalidate asked for, no sidebar snapshot built.
+      - name: idle frames (TestIdleFrames, TestIdleTrafficFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}
         env:
           CLACK_IDLE_FRAMES: "1"
-        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
+        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestIdleTrafficFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
 
   windows:
     runs-on: ubuntu-latest
@@ -954,12 +956,12 @@ jobs:
           go-version-file: go.mod
           cache: true
       # The idle-frame budget on Windows (see linux-idle).
-      - name: idle frames (TestIdleFrames, TestHuddleWindowIdleFrames)
+      - name: idle frames (TestIdleFrames, TestIdleTrafficFrames, TestHuddleWindowIdleFrames)
         if: ${{ !cancelled() }}
         env:
           CGO_ENABLED: "0"
           CLACK_IDLE_FRAMES: "1"
-        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
+        run: go test -count=1 -v -timeout 20m -run '^(TestIdleFrames|TestIdleTrafficFrames|TestHuddleWindowIdleFrames)$' ./internal/ui ./internal/ui/huddleui
 
 
   macos:
@@ -1246,7 +1248,7 @@ jobs:
             echo "== $(basename "$f")"
             go tool pprof -top -nodecount=30 "$RUNNER_TEMP/ui-idle.test" "$f" 2>&1 | head -42
           done
-          CLACK_IDLE_FRAMES=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 25m -test.run '^TestIdleFrames$' || rc=1
+          CLACK_IDLE_FRAMES=1 "$RUNNER_TEMP/ui-idle.test" -test.v -test.count=1 -test.timeout 25m -test.run '^(TestIdleFrames|TestIdleTrafficFrames)$' || rc=1
           exit $rc
       - name: build
         if: ${{ !cancelled() }}

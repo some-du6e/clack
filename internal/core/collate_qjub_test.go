@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,26 +23,21 @@ import (
 var qjubNames = []string{"a10", "a2", "A2", "a1", "b", "B", "é", "e", "E", "Zed", "zed", "_x", "123", "12", "#x", "-dash",
 	"ẞ", "ss", "émile", "emile", "", "Ω", "alpha-9", "alpha-10", "Ünïcode", "unicode", "x y", "x-y", "a2"}
 
-func qjubBuilt() (n int) {
-	withQjub(func(*collate.Collator) { n = qjub.built })
-	return n
-}
-
 // A snapshot of 1700 conversations (300 group DMs, every sort and filter
-// path) builds QJub's collator once, ever: collate.New per group DM was
-// α.89's 2 s freeze.
+// path) reuses QJub's collators: collate.New per group DM was α.89's 2 s
+// freeze. The pool makes one per goroutine using one at a time, and again
+// only when a goroutine moved to another processor or a collection
+// emptied it, so a handful at most.
 func TestQjubCollatorBuiltOnce(t *testing.T) {
-	if qjubBuilt() != 1 {
-		t.Fatalf("%d collators before the snapshot", qjubBuilt())
-	}
 	a := bigApp(t)
+	n0 := qjubMade.Load()
 	s := a.snapshotNow()
 	for _, c := range s.Convs {
 		a.sortName(c)
 	}
 	qjubSortStrings(slices.Clone(qjubNames))
-	if n := qjubBuilt(); n != 1 {
-		t.Errorf("%d collators built, want 1", n)
+	if n := qjubMade.Load() - n0; n > 8 {
+		t.Errorf("%d collators built for one snapshot and %d group DM names, want a handful", n, len(s.Convs))
 	}
 }
 
@@ -127,55 +123,100 @@ func TestQjubConcurrent(t *testing.T) {
 	wg.Wait()
 }
 
-// RecentSnapshot builds once and hands the same one out until an event
-// that can change the sidebar, InvalidateSnapshot or a second's age.
+// RecentSnapshot builds the first one on its caller, then hands the
+// newest one out: an event that can change it, or InvalidateSnapshot,
+// starts one build in the background, which wakes the window when it
+// lands; until then the reader keeps the one it had. Events about what it
+// doesn't hold keep it, and it never expires with time.
 func TestRecentSnapshotReused(t *testing.T) {
 	a, _ := testApp(t)
 	close(a.ready)
+	old := recentRebuildGap
+	recentRebuildGap = 0
+	t.Cleanup(func() { recentRebuildGap = old })
+	var wakes atomic.Int32
+	a.SetSnapshotWake(func() { wakes.Add(1) })
 	b0 := a.SnapshotBuilds()
+	builds := func() int64 { return a.SnapshotBuilds() - b0 }
 	s := a.RecentSnapshot()
 	for i := 0; i < 10; i++ {
 		a.RecentSnapshot()
 	}
-	if n := a.SnapshotBuilds() - b0; n != 1 {
+	if n := builds(); n != 1 {
 		t.Fatalf("%d builds for 11 reads, want 1", n)
 	}
 	if len(s.Convs) != 2 {
 		t.Fatalf("%d convs", len(s.Convs))
 	}
-	builds := func() int64 { return a.SnapshotBuilds() - b0 }
-
-	a.emit(Event{Type: "typing", Channel: "C1"}) // quiet: keeps it
-	a.emit(Event{Type: "message", Channel: "C1"})
-	a.RecentSnapshot()
-	if n := builds(); n != 1 {
-		t.Errorf("typing/message rebuilt it: %d builds", n)
+	settled := func(what string, want int64) {
+		t.Helper()
+		for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(time.Millisecond) {
+			a.RecentSnapshot()
+			a.recent.mu.Lock()
+			fresh, running := a.recent.ok && a.recent.built == a.recent.gen, a.recent.running
+			a.recent.mu.Unlock()
+			if fresh && !running {
+				break
+			}
+		}
+		if n := builds(); n != want {
+			t.Errorf("%s: %d builds, want %d", what, n, want)
+		}
 	}
 
+	// quiet: typing, a message, a profile change, a lookup and a new
+	// emoji about nothing it holds, a channel the viewer isn't in
+	a.emit(Event{Type: "typing", Channel: "C1"})
+	a.emit(Event{Type: "message", Channel: "C1"})
+	a.emit(Event{Type: "user", UserID: "U9STRANGER"})
+	a.emit(Event{Type: "names", Users: []string{"U9STRANGER", "C9ELSEWHERE"}})
+	a.emit(Event{Type: "emoji_changed", Name: "partyparrot"})
+	a.emit(Event{Type: "conv", Channel: "C9ELSEWHERE", Conv: &Conv{ID: "C9ELSEWHERE", Preview: true}})
+	a.emit(Event{Type: "badge_counts_updated"})
+	a.RecentSnapshot()
+	if n := builds(); n != 1 {
+		t.Errorf("quiet events rebuilt it: %d builds", n)
+	}
+	// a DM partner's profile isn't quiet
+	a.emit(Event{Type: "user", UserID: "U1"})
+	settled("after the DM partner's profile changed", 2)
+
 	a.S.PutConv(slack.Conversation{ID: "C2", Name: "random", IsChannel: true})
+	w := wakes.Load()
 	a.emit(Event{Type: "conv", Channel: "C2"})
-	if got := a.RecentSnapshot(); builds() != 2 || len(got.Convs) != 3 {
-		t.Errorf("after a conv event: %d builds, %d convs", builds(), len(got.Convs))
+	if got := a.RecentSnapshot(); len(got.Convs) != 2 {
+		t.Errorf("the read after a conv event got %d convs: built on the caller, want the old one", len(got.Convs))
+	}
+	settled("after a conv event", 3)
+	if got := a.RecentSnapshot(); len(got.Convs) != 3 {
+		t.Errorf("after the rebuild: %d convs, want 3", len(got.Convs))
+	}
+	if wakes.Load() == w {
+		t.Error("the rebuild didn't wake the window")
 	}
 
 	a.InvalidateSnapshot()
-	a.RecentSnapshot()
-	if n := builds(); n != 3 {
-		t.Errorf("after InvalidateSnapshot: %d builds", n)
-	}
+	settled("after InvalidateSnapshot", 4)
 
-	a.recent.mu.Lock()
-	a.recent.at = a.recent.at.Add(-2 * time.Second)
-	a.recent.mu.Unlock()
+	time.Sleep(1200 * time.Millisecond) // older than the old 1 s expiry
 	a.RecentSnapshot()
+	time.Sleep(50 * time.Millisecond)
 	if n := builds(); n != 4 {
-		t.Errorf("past its second: %d builds", n)
+		t.Errorf("rebuilt with nothing changed after 1.2 s: %d builds", n)
 	}
 
-	// Snapshot always builds a fresh one, as before
+	// Snapshot always builds a fresh one, and its build is the readers'
+	a.S.PutConv(slack.Conversation{ID: "C3", Name: "third", IsChannel: true})
+	a.emit(Event{Type: "conv", Channel: "C3"})
 	a.Snapshot()
-	a.Snapshot()
-	if n := builds(); n != 6 {
-		t.Errorf("Snapshot: %d builds, want 6", n)
+	if n := builds(); n != 5 {
+		t.Errorf("Snapshot: %d builds, want 5", n)
+	}
+	if got := a.RecentSnapshot(); len(got.Convs) != 4 {
+		t.Errorf("after Snapshot built one: RecentSnapshot has %d convs, want 4", len(got.Convs))
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := builds(); n != 5 {
+		t.Errorf("RecentSnapshot rebuilt what Snapshot had just built: %d builds", n)
 	}
 }

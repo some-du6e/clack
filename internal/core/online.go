@@ -46,13 +46,14 @@ var (
 	clientOfflineThrottle = 500 * time.Millisecond
 )
 
-// clientOnlineProbe reports whether the machine has a network connection
-// (tests replace it).
-var clientOnlineProbe = probeInterfaces
-
-// networkFingerprint names the machine's network addresses; a change
-// means the network path changed (tests replace it).
-var networkFingerprint = interfaceFingerprint
+// netScan reads the machine's network in one walk of its interfaces:
+// whether it has a connection (online) and a name for its addresses
+// (fingerprint), whose change means the network path changed (tests
+// replace it). The watcher reads both every clientOnlinePoll, so one walk
+// serves both: on Windows each interface's addresses cost another
+// GetAdaptersAddresses of every adapter (Go's net), where scanInterfaces
+// makes one call.
+var netScan = scanInterfaces
 
 type onlineState struct {
 	once sync.Once
@@ -65,7 +66,7 @@ type onlineState struct {
 func (a *App) ClientOnline() bool {
 	o := &a.online
 	o.once.Do(func() {
-		o.on = clientOnlineProbe()
+		o.on, _ = netScan()
 		go a.watchOnline()
 	})
 	o.mu.Lock()
@@ -74,10 +75,11 @@ func (a *App) ClientOnline() bool {
 }
 
 func (a *App) watchOnline() {
-	probe, poll, throttle, fingerprint := clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle, networkFingerprint
+	scan, poll, throttle := netScan, clientOnlinePoll, clientOfflineThrottle
 	t := time.NewTicker(poll)
 	defer t.Stop()
-	last, addrs := slack.ReadClock(), fingerprint()
+	_, addrs := scan()
+	last := slack.ReadClock()
 	for {
 		select {
 		case <-a.bg.Done():
@@ -91,7 +93,8 @@ func (a *App) watchOnline() {
 			why = append(why, "woke from sleep")
 		}
 		last = now
-		if f := fingerprint(); f != addrs {
+		on, f := scan()
+		if f != addrs {
 			log.Printf("core: network addresses changed (%d → %d)", countAddrs(addrs), countAddrs(f))
 			addrs = f
 			why = append(why, "network changed")
@@ -99,7 +102,6 @@ func (a *App) watchOnline() {
 		if len(why) > 0 {
 			a.networkChanged(strings.Join(why, ", "))
 		}
-		on := probe()
 		if !on && a.ClientOnline() {
 			// the offline event's throttle: a blip doesn't count
 			select {
@@ -107,7 +109,7 @@ func (a *App) watchOnline() {
 				return
 			case <-time.After(throttle):
 			}
-			on = probe()
+			on, _ = scan()
 		}
 		a.setClientOnline(on)
 	}
@@ -126,37 +128,6 @@ func (a *App) setClientOnline(on bool) {
 	}
 }
 
-// probeInterfaces reports an interface that is up and running, not
-// loopback, with an address that isn't link-local.
-func probeInterfaces() bool {
-	ifs, err := net.Interfaces()
-	if err != nil {
-		return true // nothing to go on: don't claim offline
-	}
-	for _, ifc := range ifs {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagRunning == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := ifc.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, ad := range addrs {
-			var ip net.IP
-			switch v := ad.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified() {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // networkChanged drops everything that rode the old network path: the
 // idle API connections and the realtime socket, which reconnects at once
 // with a fresh gateway URL.
@@ -167,39 +138,20 @@ func (a *App) networkChanged(why string) {
 	}
 }
 
-// interfaceFingerprint lists the addresses probeInterfaces counts (up,
-// running, not loopback, not link-local), sorted. Link-local addresses
-// are left out: macOS's AWDL interfaces come and go with nothing but
-// those, and no Slack connection uses them.
-func interfaceFingerprint() string {
-	ifs, err := net.Interfaces()
-	if err != nil {
-		return ""
-	}
-	var out []string
-	for _, ifc := range ifs {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagRunning == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := ifc.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, ad := range addrs {
-			var ip net.IP
-			switch v := ad.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified() {
-				out = append(out, ifc.Name+"="+ip.String())
-			}
-		}
-	}
-	sort.Strings(out)
-	return strings.Join(out, " ")
+func countAddrs(fp string) int { return len(strings.Fields(fp)) }
+
+// countsOnline reports an address scanInterfaces counts, on an interface
+// that is up, running and not loopback: not loopback, link-local or
+// unspecified. Link-local addresses are left out of the fingerprint too:
+// macOS's AWDL interfaces come and go with nothing but those, and no
+// Slack connection uses them.
+func countsOnline(ip net.IP) bool {
+	return ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified()
 }
 
-func countAddrs(fp string) int { return len(strings.Fields(fp)) }
+// fingerprintOf is the fingerprint of an interface walk's addresses
+// ("<interface>=<ip>"): sorted, space-separated.
+func fingerprintOf(addrs []string) string {
+	sort.Strings(addrs)
+	return strings.Join(addrs, " ")
+}

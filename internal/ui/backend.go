@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/some-du6e/clack/internal/applog"
@@ -37,10 +36,10 @@ type backend struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	unsub   func()
-	// people: the viewer and the partners and members of the model's
-	// DMs, app DMs and group DMs (apply), the people handle's presence
-	// and profile changes can show; the event goroutine reads it (wants)
-	people atomic.Pointer[map[string]bool]
+	// view is what the event goroutine compares events with (wants,
+	// pump_view.go): the model's drawn fields, which the UI goroutine
+	// copies there as it changes them
+	view pumpView
 
 	selfID string
 	domain string
@@ -151,6 +150,9 @@ func (b *backend) start(a *App) {
 	b.app = a
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	installMemberRead(b.core) // mentions ask for their members as they draw (lazy_users.go)
+	// RecentSnapshot's background builds draw their readers' next frame
+	// (Unreads' and Activity's filters, menus)
+	b.core.SetSnapshotWake(a.Invalidate)
 	// the sidebar rules keep a closed DM with a huddle on: they read the
 	// huddle UI's rooms (huddle_wire.go sbHuddleSync rebuilds on a change)
 	b.core.SetHuddleChannels(a.huddles().HuddleChannels)
@@ -345,6 +347,7 @@ func (b *backend) stop() <-chan struct{} {
 	b.detachTaut()
 	b.stopBlockkit()
 	uninstallMemberRead(b.core)
+	b.core.SetSnapshotWake(nil)
 	if b.cancel != nil {
 		b.cancel()
 	}
@@ -476,7 +479,6 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 		convs[c.ID] = ci
 	}
 	m.Convs = convs
-	b.notePeople()
 	m.FilterNames = s.FilterNames
 	m.Sections = m.Sections[:0]
 	for _, sec := range s.Sections {
@@ -515,6 +517,7 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 	}
 	m.threadsUnread = s.Threads.Unread
 	b.recount()
+	b.syncView() // what the event goroutine compares events with (pump_view.go)
 	m.version++
 	a.Invalidate()
 }
@@ -621,6 +624,7 @@ func (b *backend) recount() {
 		// (core ActivityBadgeCount)
 		m.ActivityCount = b.core.ActivityBadgeCount()
 	}
+	b.viewBadge()
 	if b.app != nil {
 		b.app.updateDock()
 	}
@@ -705,31 +709,48 @@ func (b *backend) handle(a *App, ev core.Event) {
 	case "activity_badges": // badge_counts_updated or a mark read (core activity_badges.go)
 		changed = b.activityBadgeMoved()
 	case "presence":
+		active := ev.Presence == "active"
 		for _, c := range m.Convs {
-			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) {
-				c.Active = ev.Presence == "active"
+			if c.Kind == "im" && (c.User == ev.UserID || contains(ev.Users, c.User)) && c.Active != active {
+				c.Active = active
 				changed = true
 			}
 		}
-		if ev.UserID == b.selfID || contains(ev.Users, b.selfID) {
-			m.SelfActive = ev.Presence == "active"
+		if (ev.UserID == b.selfID || contains(ev.Users, b.selfID)) && m.SelfActive != active {
+			m.SelfActive = active
 			changed = true
 		}
+		if changed {
+			for _, id := range append([]string{ev.UserID}, ev.Users...) {
+				b.viewPerson(id, nil)
+			}
+		}
 	case "user":
-		if ev.User != nil {
-			if ev.User.ID == b.selfID {
-				m.SelfName, m.SelfAvatar = ev.User.Name, ev.User.Avatar
-				changed = true
+		if u := ev.User; u != nil {
+			if u.ID == b.selfID {
+				m.SelfName, m.SelfAvatar = u.Name, u.Avatar
+				changed = true // the rail's status and picture read core too
 			}
 			for _, c := range m.Convs {
 				switch {
-				case (c.Kind == "im" || c.Kind == "app") && c.User == ev.User.ID:
-					c.Avatar, c.Name, c.StatusEmoji = ev.User.Avatar, ev.User.Name, ev.User.StatusEmojiURL
-					changed = true
-				case c.Kind == "mpim" && contains(c.Members, ev.User.ID):
-					changed = true // its name lists its members
+				case (c.Kind == "im" || c.Kind == "app") && c.User == u.ID:
+					name := c.Name
+					if u.Name != "" { // apply's rule: a nameless copy keeps the row's
+						name = u.Name
+					}
+					if c.Avatar != u.Avatar || c.Name != name || c.StatusEmoji != u.StatusEmojiURL {
+						c.Avatar, c.Name, c.StatusEmoji = u.Avatar, name, u.StatusEmojiURL
+						changed = true
+					}
+				case c.Kind == "mpim" && contains(c.Members, u.ID):
+					// its name lists its members' (apply's mpimNameBy)
+					if n := b.mpimNameBy(&core.Conv{ID: c.ID, Name: c.Name, Members: c.Members}, b.selfID, b.core.RawUser); n != c.Name {
+						c.Name = n
+						changed = true
+					}
 				}
 			}
+			b.viewPerson(u.ID, u)
 		}
 	case "conv", "conv_removed", "sidebar_changed", "resync", "team": // "prefs" is handled above (it resnapshots too)
 		if ev.Type == "conv_removed" && ev.Channel != "" {
@@ -799,16 +820,21 @@ func (b *backend) handle(a *App, ev core.Event) {
 	}
 }
 
-// wants reports whether handle does anything with ev (the event
-// goroutine). Each Post draws a frame, and a busy workspace's socket
+// wants reports whether handle does anything with ev that the window
+// shows, or acts on it (notifies, resnapshots): the event goroutine posts
+// only those, and each post draws a frame. A busy workspace's socket
 // brings typing, reactions, new emoji, presence and profile changes about
-// conversations and people the window doesn't show, many a second (Karim
-// 2026-11-14: Hack Club's, while Clack sat idle): handle only logs typing,
-// leaves updates other than a settled stream to the message lists, never
-// reads new emoji, and changes the model for presence and profiles of the
-// viewer and DM people only. The lists' hub, the composer and the views
-// follow the events they draw on their own.
+// conversations and people the window doesn't show, and messages in
+// channels that are already unread, many a second (Karim 2026-11-14 and
+// 11-16: Hack Club's, while Clack sat idle, at 10% GPU): handle only logs
+// typing, leaves updates other than a settled stream to the message
+// lists, never reads new emoji, and changes the model only where it draws
+// differently (pumpView: a row's unread state, a DM row's name, picture,
+// status emoji and presence, a group DM's name, the viewer's own, the
+// rail's Activity badge). The lists' hub, the composer and the views
+// follow the events they draw on their own (pumpIgnores).
 func (b *backend) wants(ev core.Event) bool {
+	v := &b.view
 	switch ev.Type {
 	case "typing":
 		return os.Getenv("CLACK_TYPINGLOG") != ""
@@ -817,51 +843,36 @@ func (b *backend) wants(ev core.Event) bool {
 	case "emoji_changed", "hydrated": // hydrated: start's WarmSnapshot goroutine applies the boot data
 		return false
 	case "presence":
-		return b.shows(ev.UserID) || b.shows(ev.Users...)
+		return v.presenceMoves(ev)
 	case "user":
-		id := ev.UserID
-		if ev.User != nil {
-			id = ev.User.ID
+		return v.userMoves(ev)
+	case "message":
+		return ev.Count == nil || v.countMoves(ev.Channel, *ev.Count) || b.mayNotify(ev)
+	case "marked", "counts":
+		if ev.Count != nil && ev.Channel != "" {
+			return v.countMoves(ev.Channel, *ev.Count) || v.badgeMoves(b.core)
 		}
-		return b.shows(id)
+		return v.countsMove(b.core.Counts()) || v.badgeMoves(b.core)
+	case "activity_badges":
+		return v.badgeMoves(b.core)
+	case "conv":
+		// a channel the viewer isn't in, looked up (channel_rename and
+		// channel_created come to every member of the team): no row, no
+		// header, nothing resnapshot would change
+		return !(ev.Conv != nil && ev.Conv.Preview && !v.holdsConv(ev.Channel))
 	}
-	return true
+	return !pumpIgnores[ev.Type]
 }
 
-// shows reports whether any of ids is in people (any goroutine); before
-// the first model, everyone is.
-func (b *backend) shows(ids ...string) bool {
-	p := b.people.Load()
-	if p == nil {
-		return true
+// mayNotify reports whether maybeNotify could show a notification for a
+// message (the event goroutine): its checks that read nothing the UI
+// goroutine owns. The rest it makes itself.
+func (b *backend) mayNotify(ev core.Event) bool {
+	if ev.Msg == nil || ev.Msg.System || ev.Msg.User == b.core.S.SelfID() {
+		return false
 	}
-	for _, id := range ids {
-		if id != "" && (*p)[id] {
-			return true
-		}
-	}
-	return false
-}
-
-// notePeople rebuilds people from the model (UI goroutine).
-func (b *backend) notePeople() {
-	p := map[string]bool{}
-	if b.selfID != "" {
-		p[b.selfID] = true
-	}
-	for _, c := range b.m.Convs {
-		switch c.Kind {
-		case "im", "app":
-			if c.User != "" {
-				p[c.User] = true
-			}
-		case "mpim":
-			for _, u := range c.Members {
-				p[u] = true
-			}
-		}
-	}
-	b.people.Store(&p)
+	direct := ev.ConvKind == "im" || ev.ConvKind == "mpim"
+	return b.wantsNotify(ev.Channel, ev.Mention || direct) && replyNotifies(b.core, ev)
 }
 
 // maybeNotify is maybeShowNotification for a message (or a settled
@@ -922,15 +933,20 @@ func (b *backend) maybeNotifyAfter(a *App, ev core.Event, resolved bool) {
 		})
 }
 
+// setCount takes a conversation's unread state into the model and reports
+// whether what the window draws of it changed. Latest, which every new
+// message moves, is kept but draws nothing (markRead reads core's).
 func (b *backend) setCount(id string, cnt core.Count) bool {
 	c := b.m.conv(id)
 	if c == nil {
 		return false
 	}
-	if c.Unread == cnt.Unread && c.Mentions == cnt.Mentions && c.LastRead == cnt.LastRead && c.Latest == cnt.Latest {
+	c.Latest = cnt.Latest
+	if c.Unread == cnt.Unread && c.Mentions == cnt.Mentions && c.LastRead == cnt.LastRead {
 		return false
 	}
-	c.Unread, c.Mentions, c.LastRead, c.Latest = cnt.Unread, cnt.Mentions, cnt.LastRead, cnt.Latest
+	c.Unread, c.Mentions, c.LastRead = cnt.Unread, cnt.Mentions, cnt.LastRead
+	b.viewCount(c)
 	return true
 }
 
@@ -1393,6 +1409,7 @@ func (b *backend) resolved(ch string) *convInfo {
 		b.ext = map[string]*convInfo{}
 	}
 	b.ext[ch] = ci // in flight (nil), or the stale copy until the answer
+	b.viewExt(ch, true)
 	gen := b.extGen[ch]
 	a := b.app
 	go func() {
@@ -1464,6 +1481,7 @@ func (b *backend) refreshExt(ch string) {
 // UI goroutine only.
 func (b *backend) forgetExt(ch string) {
 	delete(b.ext, ch)
+	b.viewExt(ch, false)
 	delete(b.extStale, ch)
 	delete(b.extFailed, ch)
 	if b.extGen == nil {
@@ -1526,6 +1544,7 @@ func (b *backend) togglePresence() {
 		p = "auto"
 	}
 	b.m.SelfActive = !b.m.SelfActive
+	b.viewPerson(b.selfID, nil)
 	b.m.version++
 	go func() { _ = b.core.SetPresence(b.ctx, p) }()
 }
@@ -1580,11 +1599,20 @@ func (b *backend) openBookmark(ch, id string) {
 
 func (b *backend) markRead(ch string) {
 	c := b.m.conv(ch)
-	if c == nil || (!c.Unread && c.Mentions == 0) || c.Latest == "" {
+	if c == nil || (!c.Unread && c.Mentions == 0) {
 		return
 	}
+	// the newest message: the pump leaves messages that draw nothing new
+	// out of the model, so core's count can be ahead of the row's
 	ts := c.Latest
-	c.Unread, c.Mentions, c.LastRead = false, 0, ts
+	if l := b.core.Count(ch).Latest; tsAfter(l, ts) {
+		ts = l
+	}
+	if ts == "" {
+		return
+	}
+	c.Unread, c.Mentions, c.LastRead, c.Latest = false, 0, ts, ts
+	b.viewCount(c)
 	b.recount()
 	b.m.version++
 	go func() { _, _ = b.core.Mark(b.ctx, ch, ts) }()

@@ -34,6 +34,73 @@ METRICS = [
 ]
 
 
+IDLE_METRICS = [
+    ("fps", "frames a second", "/s"),
+    ("other_fps", "frames a second besides the caret's", "/s"),
+    ("event_frames", "frames an Invalidate asked for", ""),
+    ("caret_frames", "caret blinks drawn", ""),
+    ("layout_ms", "layout per frame (UI goroutine)", "ms"),
+    ("layout_max_ms", "longest layout", "ms"),
+    ("gpu_ms", "GPU frame (llvmpipe)", "ms"),
+    ("cpu_ms", "process CPU over the pass", "ms"),
+    ("snapshot_builds", "sidebar snapshots built", ""),
+    ("events", "realtime events", ""),
+]
+
+
+def idle(sides):
+    """The window left alone in the bench channel, composer focused:
+    quiet, then under a busy workspace's socket about nothing on screen
+    (perf_plugins_test.go perfIdlePasses)."""
+    names = []
+    for runs in sides.values():
+        for r in runs:
+            for p in r.get("idle") or []:
+                if p["name"] not in names:
+                    names.append(p["name"])
+    if not names:
+        return
+    print("### Idle frames\n")
+    print("The bench channel left alone with its composer focused for 10 s: quiet (`idle`: only the caret's blinks should draw), then under a busy workspace's socket about nothing on screen (`idle-traffic`: status changes every 50 ms, renames, presence, messages in a channel that is already unread, badge counts, a channel the viewer isn't in renamed, deletes, reactions, threads' read states, other people's DND, new emoji, typing elsewhere). Frames come from idleprobe's window loop over the real router; each is the UI goroutine's drain + layout, then the GPU renderer's frame in llvmpipe (the CPU's share of a real GPU's frame). Medians over the rounds, the rounds in brackets.\n")
+    for name in names:
+        print(f"#### {name}\n")
+        print("| | before | after | change |")
+        print("|---|---|---|---|")
+        for key, label, unit in IDLE_METRICS:
+            cols, meds = [], []
+            for side in ("base", "head"):
+                vals = [p.get(key) for r in sides[side] for p in (r.get("idle") or []) if p["name"] == name]
+                vals = [v for v in vals if v is not None]
+                if not vals:
+                    cols.append("—")
+                    meds.append(None)
+                    continue
+                m = statistics.median(vals)
+                meds.append(m)
+                cols.append(f"{fmt(m, unit)} [{' / '.join(fmt(v, unit) for v in vals)}]")
+            change = "—"
+            if meds[0] is not None and meds[1] is not None:
+                if meds[0] > 0:
+                    change = f"{(meds[1] - meds[0]) / meds[0] * 100:+.0f}%"
+                elif meds[1] == 0:
+                    change = "0"
+            print(f"| {label} | {cols[0]} | {cols[1]} | {change} |")
+        print()
+        for side in ("base", "head"):
+            for r in sides[side][:1]:
+                for p in r.get("idle") or []:
+                    if p["name"] == name and p.get("causes"):
+                        print(f"{side} round 1, what asked for the frames: " + "; ".join(f"`{c}`" for c in p["causes"][:6]) + "\n")
+    # a caret blink's cost: the quiet pass's frames are the caret's
+    for side in ("base", "head"):
+        for r in sides[side][:1]:
+            for p in r.get("idle") or []:
+                if p["name"] == "idle" and p.get("caret_frames"):
+                    per = (p.get("layout_ms") or 0) + (p.get("gpu_ms") or 0)
+                    rate = p["caret_frames"] / (p.get("seconds") or 10)
+                    print(f"{side}: a caret blink costs {p.get('layout_ms', 0):.2f} ms of layout + {p.get('gpu_ms', 0):.2f} ms of GPU frame (llvmpipe) = {per:.2f} ms, {rate:.1f} a second: {per * rate:.1f} ms of CPU a second while the composer is focused.\n")
+
+
 def load(d, side):
     out = []
     for p in sorted(glob.glob(os.path.join(d, f"{side}-*.json"))):
@@ -48,6 +115,8 @@ def load(d, side):
 def fmt(v, unit):
     if v is None:
         return "—"
+    if unit == "/s":
+        return f"{v:.1f}/s"
     if unit == "ms":
         return f"{v:.1f} ms" if v < 100 else f"{v:.0f} ms"
     return f"{v:.0f}"
@@ -107,6 +176,7 @@ def main():
                 if p["name"] not in names:
                     names.append(p["name"])
     recorder(sides["head"])
+    idle(sides)
     for name in names:
         if ", recorder o" in name:
             continue  # in the recorder's table above

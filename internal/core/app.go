@@ -457,7 +457,7 @@ func (a *App) Subscribe() (<-chan Event, func()) {
 }
 
 func (a *App) emit(ev Event) {
-	if !snapshotQuietEvents[ev.Type] {
+	if !a.snapshotQuiet(ev) {
 		a.InvalidateSnapshot() // snapshot_recent.go
 	}
 	a.pinsTabSee(ev) // the Pins tab's message copies (channel_pins.go)
@@ -1084,8 +1084,17 @@ func (a *App) Snapshot() Snapshot {
 // core emits "booted" when Boot's data is in.
 func (a *App) SnapshotNow() Snapshot { return a.snapshotNow() }
 
-// snapshotNow is Snapshot from what the store holds now.
+// snapshotNow is Snapshot from what the store holds now. Every build is
+// offered to RecentSnapshot's cache.
 func (a *App) snapshotNow() Snapshot {
+	gen := a.beginBuild()
+	s := a.buildSnapshot()
+	a.endBuild(s, gen)
+	return s
+}
+
+// buildSnapshot builds a full snapshot (snapshotNow).
+func (a *App) buildSnapshot() Snapshot {
 	a.recent.builds.Add(1)
 	seq := a.recent.seq.Add(1)
 	a.S.RLock()

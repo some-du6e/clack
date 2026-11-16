@@ -110,9 +110,8 @@ func NewSCAcceptModal(h Host, o SCAcceptOpts) *SCAcceptModal {
 	if a := h.Core(); a != nil {
 		select {
 		case <-a.DataReady():
-			snap := a.RecentSnapshot()
-			c.workspace = strings.TrimSpace(snap.Team.Name)
-			c.enterprise = snap.Self.EnterpriseID != ""
+			c.workspace = strings.TrimSpace(a.OwnTeam().Name)
+			c.enterprise = a.Self().EnterpriseID != ""
 		default:
 		}
 	}
@@ -722,7 +721,7 @@ func scPlansURL(h Host, inviteID string) string {
 	if a := h.Core(); a != nil {
 		select {
 		case <-a.DataReady():
-			if d := a.RecentSnapshot().Team.Domain; d != "" {
+			if d := a.OwnTeam().Domain; d != "" {
 				host = d + ".slack.com"
 			}
 		default:

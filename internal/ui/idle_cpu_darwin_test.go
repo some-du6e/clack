@@ -210,6 +210,19 @@ func TestMacIdleCPU(t *testing.T) {
 
 	var reps []idleprobe.Report
 	reps = append(reps, measure("channel", true))
+	// what one caret blink costs on the real window (a full layout and a
+	// full Metal frame, twice a second): the same channel with the caret
+	// drawn but still (Gio patch 13's zero interval asks for no frames)
+	widget.SetCaretBlinkInterval(0)
+	still := measure("channel, caret not blinking", true)
+	widget.SetCaretBlinkInterval(-1)
+	reps = append(reps, still)
+	if b := reps[0].CountMatching("Editor).Layout"); b > 0 {
+		d := reps[0].CPU - still.CPU
+		per := d / time.Duration(b)
+		t.Logf("caret blink: %d blinks in %v took %v more CPU than the still caret: %v a blink, %.2f%% of a core at two a second",
+			b, idleFor, d.Round(time.Millisecond), per.Round(10*time.Microsecond), 100*2*per.Seconds())
+	}
 	// a frame slower than a vsync: the display link's tick during it
 	// asked AppKit for one more frame after it, nobody's (Gio patch 28)
 	slow.Store(true)

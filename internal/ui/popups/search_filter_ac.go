@@ -525,8 +525,9 @@ func newSRACRanker(h Host) *srACRanker {
 	if c == nil {
 		return nil
 	}
-	s := c.RecentSnapshot() // the UI goroutine: never waits for boot
-	r := &srACRanker{h: h, c: c, self: s.Self.ID, team: s.Self.TeamID, ims: map[string]core.Conv{}, cnt: s.Counts,
+	s := c.RecentSnapshot() // the UI goroutine: never waits for boot, nor builds
+	// the counts live: the snapshot's can lag
+	r := &srACRanker{h: h, c: c, self: s.Self.ID, team: s.Self.TeamID, ims: map[string]core.Conv{}, cnt: c.Counts(),
 		hist: c.ViewHistory()}
 	for _, cv := range s.Convs {
 		if cv.Kind == "im" && cv.User != "" {
@@ -806,12 +807,12 @@ func (r *srACRanker) user(id string) (core.User, bool) {
 func (r *srACRanker) teams(q string) []srACItem {
 	qq := strings.TrimSpace(acrank.SearcherQuery(q))
 	m := acrank.NewMatcher(qq, acrank.MatcherOpts{FuzzyLimit: 3, FuzzyJumpLimit: 20, FuzzyCJK: true})
-	snap := r.c.RecentSnapshot() // per keystroke
+	own := r.c.OwnTeam() // per keystroke
 	var out []srACItem
 	for _, id := range r.c.EnterpriseTeams() {
 		name, ic := "", ""
-		if id == snap.Team.ID {
-			name, ic = snap.Team.Name, snap.Team.Icon
+		if id == own.ID {
+			name, ic = own.Name, own.Icon
 		}
 		if name == "" {
 			name, ic, _ = r.c.Team(id, 40)
@@ -985,8 +986,8 @@ func srTeamName(h Host, id string) string {
 	if c == nil {
 		return ""
 	}
-	if snap := c.RecentSnapshot(); snap.Team.ID == id && snap.Team.Name != "" {
-		return snap.Team.Name
+	if t := c.OwnTeam(); t.ID == id && t.Name != "" {
+		return t.Name
 	}
 	n, _, _ := c.Team(id, 20)
 	return n

@@ -726,14 +726,17 @@ func (hb *hub) apply(ev core.Event) bool {
 		// user: a profile change, for a member a list drew in its latest
 		// frame (drawsMember); another draws nowhere now, and a row that
 		// wants one it doesn't hold draws the unknown stub until its
-		// fetch's "names" redraws it. names: core
+		// fetch's "names" redraws it. A change only a profile card shows
+		// (core.CardOnly: a status text, a title) redraws no row: the
+		// sidebar reads its DM people every frame, so they all count as
+		// drawn, and their status changes redrew every list. names: core
 		// fetched members (and names) a lookup missed, an evicted
 		// member's among them (store/members.go): the rows that drew them
 		// unknown resolve again. members_evicted: the members cache let
 		// some go, and the rows read their members again, as Slack's
 		// re-render on bulkRemoveMembersById (one that still draws an
 		// evicted member asks for it)
-		if ev.Type == "user" && !hb.drawsMember(ev) {
+		if ev.Type == "user" && (!hb.drawsMember(ev) || core.CardOnly(ev.Prev, ev.User)) {
 			return false
 		}
 		hb.mu.Lock()
