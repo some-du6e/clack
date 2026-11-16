@@ -24,6 +24,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"gioui.org/layout"
 
@@ -323,6 +324,15 @@ type inst struct {
 	raw   []byte // the last tree delivered, as JS sent it (rootsMu)
 	fn    bool   // a RenderFn root
 	sub   *Sub
+
+	// what an unchanged frame skips (UI goroutine): every path leading to
+	// a Go func slot (refreshSlots), and the hash of the props' "msg" term
+	// while it's the same map (propsHash)
+	prefixes map[string]bool
+	prefN    int
+	pbuf     []byte // refreshSlots' path buffer
+	hmsg     Props
+	hmsgH    uint64
 }
 
 var (
@@ -365,7 +375,6 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	t := now(gtx)
 	sweep(t)
 
-	h := hashProps(props)
 	k := instKey{name: name}
 	// Drawn by a native inside another patched component's tree (a row's
 	// <Original> calling MessageText): the child root belongs under that
@@ -374,19 +383,29 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	if c := curRender; c != nil && c.view != nil && c.n != nil {
 		k.parent, k.parentK = c.view.root, c.n.K
 	}
-	if id, ok := props["$key"]; ok {
+	var h uint64
+	id, keyed := props["$key"]
+	if keyed {
 		k.key = keyString(id)
 	} else {
+		h = hashProps(props)
 		k.hash = h
 	}
 	in := insts[k]
-	if in == nil {
-		in = &inst{root: newRoot(), name: name, key: k, sent: h ^ 1, slots: map[string]int64{}}
+	created := in == nil
+	if created {
+		in = &inst{root: newRoot(), name: name, key: k, slots: map[string]int64{}}
 		in.view = NewView(in.root)
 		insts[k] = in
 		rootsMu.Lock()
 		roots[in.root] = in
 		rootsMu.Unlock()
+	}
+	if keyed {
+		h = in.propsHash(props)
+	}
+	if created {
+		in.sent = h ^ 1 // the first frame always renders
 	}
 	in.used = t
 	if h != in.sent {
@@ -397,7 +416,7 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 			b.Render(in.root, name, encodeProps(props, in.slots))
 		}
 	} else if len(in.slots) > 0 {
-		refreshFns(props, in.slots, "")
+		in.refreshSlots(props)
 	}
 	nodes := in.tree.Load()
 	if nodes == nil {
@@ -418,36 +437,96 @@ func renderPatched(gtx layout.Context, name string, props, pre Props, native Nat
 	return d
 }
 
-// refreshFns points each Go-func slot at this frame's closure.
-func refreshFns(v any, slots map[string]int64, path string) {
+// refreshSlots points each Go-func slot at this frame's closure (the
+// props are rebuilt every frame, the ids stay). It walks only the paths
+// that lead to a slot, building them in a buffer: walking all the props,
+// a message's blocks and reactions included, with a new string per key,
+// cost a patched row more than hashing them did.
+func (in *inst) refreshSlots(p Props) {
+	if in.prefN != len(in.slots) { // slots only grow (encodeProps)
+		in.prefixes = make(map[string]bool, 2*len(in.slots))
+		for path := range in.slots {
+			for i := 1; i < len(path); i++ {
+				if path[i] == '.' {
+					in.prefixes[path[:i]] = true
+				}
+			}
+			in.prefixes[path] = true
+		}
+		in.prefN = len(in.slots)
+	}
+	if in.pbuf == nil {
+		in.pbuf = make([]byte, 0, 96)
+	}
+	gofns.Lock()
+	in.refresh(p, in.pbuf[:0])
+	gofns.Unlock()
+}
+
+// refresh is refreshSlots under v at path (gofns held). The paths are the
+// ones encodeProps gave the slots: ".key", ".index", ".p" for a Slot's
+// props.
+func (in *inst) refresh(v any, path []byte) {
 	switch v := v.(type) {
 	case Props:
 		for k, x := range v {
-			refreshFns(x, slots, path+"."+k)
+			if q := append(append(path, '.'), k...); in.prefixes[string(q)] {
+				in.refresh(x, q)
+			}
 		}
 	case map[string]any:
 		for k, x := range v {
-			refreshFns(x, slots, path+"."+k)
+			if q := append(append(path, '.'), k...); in.prefixes[string(q)] {
+				in.refresh(x, q)
+			}
 		}
 	case []any:
 		for i, x := range v {
-			refreshFns(x, slots, path+"."+strconv.Itoa(i))
+			if q := strconv.AppendInt(append(path, '.'), int64(i), 10); in.prefixes[string(q)] {
+				in.refresh(x, q)
+			}
 		}
 	case Slot:
-		if id, ok := slots[path]; ok {
-			gofns.Lock()
+		if id, ok := in.slots[string(path)]; ok {
 			gofns.m[id] = v
-			gofns.Unlock()
 		}
-		refreshFns(v.Props, slots, path+".p")
+		if q := append(path, ".p"...); in.prefixes[string(q)] {
+			in.refresh(v.Props, q)
+		}
 	case nil, string, bool, float64, int, int64, JSFunc, Element:
 	default:
-		if id, ok := slots[path]; ok && isFunc(v) {
-			gofns.Lock()
+		if id, ok := in.slots[string(path)]; ok && isFunc(v) {
 			gofns.m[id] = v
-			gofns.Unlock()
 		}
 	}
+}
+
+// propsHash is hashProps(p), keeping the "msg" term while it's the same
+// map: rows build their message props once per revision of the message,
+// and hashing its blocks, files and reactions again for each of a row's
+// patched components every frame was most of their hashing. The memo
+// holds the map, so its address can't come back as another message.
+func (in *inst) propsHash(p Props) uint64 {
+	var h uint64
+	for k, v := range p {
+		if k == "$key" {
+			continue
+		}
+		if m, ok := v.(Props); ok && k == "msg" && m != nil {
+			if in.hmsg == nil || !sameMap(in.hmsg, m) {
+				in.hmsg, in.hmsgH = m, mix(hashValue(hstr(fnvOff, k), v))
+			}
+			h += in.hmsgH
+			continue
+		}
+		h += mix(hashValue(hstr(fnvOff, k), v))
+	}
+	return mix(h ^ uint64(len(p)))
+}
+
+// sameMap reports whether a and b are the same map (not equal contents).
+func sameMap(a, b Props) bool {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&a)) == *(*unsafe.Pointer)(unsafe.Pointer(&b))
 }
 
 func keyString(v any) string {
