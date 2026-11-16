@@ -961,9 +961,12 @@ jobs:
 
   # patched-tree-2: a window's patched roots age by its own frames (one
   # idle 5 s came back to every root unmounted and mounted again; the
-  # huddle window's frames swept the still main window's), a Popover's
-  # autoFocus field keeps the caret, and Message gets MessageWrapper's
-  # very msg. `only=patched-clicks` runs this job with the one above.
+  # huddle window's frames swept the still main window's; a root two
+  # windows draw outlives one closing), a Popover's autoFocus field keeps
+  # the caret, Escape is an open Popover's (top first, before the shell's
+  # "Close / mark as read") and the focus comes back when it closes, and
+  # Message gets MessageWrapper's very msg. `only=patched-clicks` runs this
+  # job with the one above.
   patched-clicks-roots:
     if: ${{ !inputs.only || startsWith('patched-clicks-roots', inputs.only) }}
     runs-on: ubuntu-latest
@@ -978,10 +981,13 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "slackc: patched roots age by their own window's frames, COUNT runs"
-        run: go test -count=$COUNT -run '^(TestIdleWindowKeepsPatchedRoots|TestUndrawnPatchedRootsUnmount|TestOtherWindowsFramesKeepPatchedRoots|TestClosedSubWindowRootsUnmount)$' ./internal/ui/slackc
-      - name: "kit: a Popover's autoFocus field keeps the caret, COUNT runs"
+        run: go test -count=$COUNT -run '^(TestIdleWindowKeepsPatchedRoots|TestUndrawnPatchedRootsUnmount|TestOtherWindowsFramesKeepPatchedRoots|TestClosedSubWindowRootsUnmount|TestRootSharedByTwoWindowsOutlivesOneClosing|TestLayersTopmostAndClosed)$' ./internal/ui/slackc
+      - name: "kit: a Popover's autoFocus field keeps the caret, Escape closes it (top first) and the focus comes back, COUNT runs"
         if: ${{ !cancelled() }}
-        run: go test -count=$COUNT -run '^(TestPopoverAutoFocusFieldKeepsCaret|TestFormTextInputFocusThroughMeasurePasses)$' ./internal/ui/slackc/kit
+        run: go test -count=$COUNT -run '^(TestPopoverAutoFocusFieldKeepsCaret|TestFormTextInputFocusThroughMeasurePasses|TestPopoverEscapeCloses|TestNestedPopoversCloseTopFirst|TestPopoverGivesFocusBack|TestPopoverTakesFocusBackFromRemovedField)$' ./internal/ui/slackc/kit
+      - name: "ui: in the main window Escape closes a plugin Popover, not the channel's unreads, 3 runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=3 -v -timeout 15m -run '^TestEscapeClosesPluginPopoverFirst$' ./internal/ui
       - name: "messages: Message gets MessageWrapper's very msg, 3 runs"
         if: ${{ !cancelled() }}
         run: go test -count=3 -v -run '^TestMessagePatchGetsWrappersExactMsg$' ./internal/ui/messages
