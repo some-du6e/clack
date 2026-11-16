@@ -113,26 +113,27 @@ func TestFreeOSLimiterSkipsWithoutQuiet(t *testing.T) {
 // quietFor, and at quietMax gives up (false) while input continues.
 func TestWaitQuietOnInput(t *testing.T) {
 	defer func(f, m, b time.Duration) { quietFor, quietMax, quietBusy = f, m, b }(quietFor, quietMax, quietBusy)
-	quietFor, quietMax, quietBusy = 80*time.Millisecond, 400*time.Millisecond, 40*time.Millisecond
+	quietFor, quietMax, quietBusy = 300*time.Millisecond, 900*time.Millisecond, 150*time.Millisecond
 
 	inputidle.Note()
 	t0 := time.Now()
 	if !waitQuiet() {
 		t.Fatal("no pause found after one input")
 	}
-	if d := time.Since(t0); d < 60*time.Millisecond {
+	if d := time.Since(t0); d < 250*time.Millisecond {
 		t.Fatalf("collected %v after input, before the pause (%v)", d, quietFor)
 	}
 
 	stop := make(chan struct{})
-	go func() { // someone scrolling the whole time
+	inputidle.Note() // the scrolling has begun before the request comes
+	go func() {      // and goes on the whole time
 		for {
 			select {
 			case <-stop:
 				return
 			default:
 				inputidle.Note()
-				time.Sleep(5 * time.Millisecond)
+				time.Sleep(2 * time.Millisecond)
 			}
 		}
 	}()
@@ -142,7 +143,7 @@ func TestWaitQuietOnInput(t *testing.T) {
 	if ok {
 		t.Fatal("collected during continuous input")
 	}
-	if d := time.Since(t0); d < 350*time.Millisecond || d > 2*time.Second {
+	if d := time.Since(t0); d < 850*time.Millisecond || d > 4*time.Second {
 		t.Fatalf("gave up after %v, want about %v", d, quietMax)
 	}
 }
