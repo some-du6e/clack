@@ -1031,10 +1031,11 @@ func (a *App) DND(ctx context.Context) (json.RawMessage, error) {
 
 // loadMemberCount caches the people count of ch (edge users/counts). One
 // read per channel at a time: History's side read and the header's
-// ChannelInfo, both on a first open, share it. A count that arrived or
-// changed is announced ("member_count"): the header repaints.
+// ChannelInfo, both on a first open, share it, each waiting only as long
+// as its own ctx allows (sharedRead). A count that arrived or changed is
+// announced ("member_count"): the header repaints.
 func (a *App) loadMemberCount(ctx context.Context, ch string) {
-	_ = a.once("mc:"+ch, func() error {
+	a.sharedRead(ctx, "mc:"+ch, func() error {
 		mc, err := a.MemberCounts(ctx, ch)
 		if err != nil {
 			return err

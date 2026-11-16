@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"log"
 	"sync"
 	"time"
@@ -100,6 +101,64 @@ func waitSide(chs ...<-chan struct{}) {
 			<-c
 		}
 	}
+}
+
+// PrefetchHistory starts reading ch's newest page before its view opens:
+// the press on its sidebar row (ui sidebar_prefetch.go, Slack's
+// prefetchPointerdownHistory). It only fills the store: the view's own
+// History on the click returns the cached page, or joins this read while
+// it's out (loadLatestIfMissing's once). Unlike History it leaves the
+// conversation on screen alone (watch: the poll's refetch, typing's
+// lookups) and doesn't mark the conversation opened (noteAccess), since a
+// press may never become a click; the page it loads counts for the cache
+// budget like any prefetch's (fetchLatest). It reports whether a read
+// started: none for a conversation core holds already, or once the
+// session is over.
+func (a *App) PrefetchHistory(ch string) bool {
+	if ch == "" || a.bg.Err() != nil || a.S.Timeline(ch) != nil {
+		return false
+	}
+	return a.sideRead(ch, "prefetch", func(ctx context.Context) { _ = a.loadLatestIfMissing(ctx, ch) }) != nil
+}
+
+// sharedRead runs read once for key at a time, like once, for callers
+// that each stop waiting when their own ctx ends: one that finds a read
+// in flight (another caller's, under that caller's ctx) waits only as
+// long as ctx allows, so a send's 10 s @channel check doesn't take on a
+// side read's 20 s, and Close's wait for the side reads doesn't hang on a
+// popup's read. A read that ended because its own caller's ctx did is
+// read again under ctx. read must use its caller's ctx.
+func (a *App) sharedRead(ctx context.Context, key string, read func() error) {
+	for try := 0; try < 2; try++ {
+		err := a.onceWait(ctx, key, read)
+		if err == nil || ctx.Err() != nil || !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return
+		}
+	}
+}
+
+// onceWait is once whose waiters return when ctx ends (ctx.Err()); the
+// caller that starts the call runs f, under its own ctx.
+func (a *App) onceWait(ctx context.Context, key string, f func() error) error {
+	a.mu.Lock()
+	if c, ok := a.inflight[key]; ok {
+		a.mu.Unlock()
+		select {
+		case <-c.done:
+			return c.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	c := &call{done: make(chan struct{})}
+	a.inflight[key] = c
+	a.mu.Unlock()
+	c.err = f()
+	a.mu.Lock()
+	delete(a.inflight, key)
+	a.mu.Unlock()
+	close(c.done)
+	return c.err
 }
 
 // memberCountChanged is loadMemberCount's "member_count" event: the

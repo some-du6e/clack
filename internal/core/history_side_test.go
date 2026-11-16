@@ -145,3 +145,126 @@ func TestHistorySideReadsEndWithTheSession(t *testing.T) {
 		t.Error("a side read started after Shutdown")
 	}
 }
+
+// A caller that joins a member-count read in flight waits only as long as
+// its own ctx allows (a send's @channel check has 10 s), and the side
+// reads Close waits for end when the session's context does, whoever owns
+// the read they joined.
+func TestMemberCountWaitersKeepTheirContext(t *testing.T) {
+	a, f := testApp(t)
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	f.mu.Lock()
+	f.reply["counts"] = `{"ok":true,"counts":{"people":7,"members":7}}`
+	f.hooks["counts"] = func(url.Values) { <-hold }
+	f.mu.Unlock()
+	owner := make(chan struct{})
+	go func() { // a caller without a deadline owns the read (a popup's)
+		defer close(owner)
+		a.loadMemberCount(context.Background(), "C1")
+	}()
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		a.mu.Lock()
+		_, out := a.inflight["mc:C1"]
+		a.mu.Unlock()
+		if out {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the owner's users/counts read never started")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	joined := make(chan struct{})
+	go func() {
+		defer close(joined)
+		a.loadMemberCount(ctx, "C1")
+	}()
+	select {
+	case <-joined:
+	case <-time.After(3 * time.Second):
+		release()
+		<-joined
+		<-owner
+		t.Fatal("a joining caller with a 150 ms context waited for another caller's read")
+	}
+	if _, ok := a.MemberCountCached("C1"); ok {
+		t.Error("the count is known before users/counts answered")
+	}
+
+	// History's side read joins the same read; sign-out cancels the
+	// session's context and Close returns without the owner's answer
+	a.S.SetLatest("C1", []slack.Message{{TS: "1.000001", User: "U1", Text: "a"}}, false)
+	if _, err := a.History(context.Background(), "C1", ""); err != nil {
+		t.Fatal(err)
+	}
+	a.StopTraffic()
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_ = a.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		release()
+		<-closed
+		t.Fatal("Close waited for another caller's users/counts read")
+	}
+	release()
+	<-owner
+}
+
+// The sidebar's press prefetch only fills the store: the conversation on
+// screen (watch, what the poll refetches and typing's lookups read) stays
+// the open one, and the open's History then reads the page from memory.
+func TestPrefetchHistoryLeavesTheOpenConversation(t *testing.T) {
+	a, f := testApp(t)
+	a.S.PutConv(slack.Conversation{ID: "C2", Name: "random", IsChannel: true, IsMember: true})
+	f.mu.Lock()
+	f.reply["conversations.history"] = `{"ok":true,"messages":[{"ts":"7.000001","user":"U2","text":"hi"}],"has_more":false}`
+	f.mu.Unlock()
+	a.S.SetLatest("C1", []slack.Message{{TS: "1.000001", User: "U1", Text: "a"}}, false)
+	if _, err := a.History(context.Background(), "C1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !a.PrefetchHistory("C2") {
+		t.Fatal("no prefetch for a conversation without a page")
+	}
+	for deadline := time.Now().Add(3 * time.Second); a.S.Timeline("C2") == nil; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the prefetch never filled C2's page")
+		}
+	}
+	if !a.watching("C1", "") || a.watching("C2", "") {
+		a.mu.Lock()
+		w := a.watchCh
+		a.mu.Unlock()
+		t.Errorf("the prefetch moved the conversation on screen to %q", w)
+	}
+	if a.PrefetchHistory("C2") {
+		t.Error("a second prefetch for a page core holds")
+	}
+	reads := func() int {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		n := 0
+		for _, m := range f.calls {
+			if m == "conversations.history" {
+				n++
+			}
+		}
+		return n
+	}
+	before := reads()
+	if p, err := a.History(context.Background(), "C2", ""); err != nil || len(p.Messages) != 1 {
+		t.Fatalf("history after the prefetch: %+v %v", p, err)
+	}
+	if n := reads(); n != before {
+		t.Errorf("History read C2 again after the prefetch (%d → %d)", before, n)
+	}
+	a.Shutdown()
+}

@@ -211,6 +211,35 @@ func TestSidebarPressPrefetchesHistory(t *testing.T) {
 	press(pt, 0)
 	noRead(off, "control group")
 	release(pt, 0)
+
+	// d7's app_dm: a DM only with a person the member store holds
+	person := ""
+	for _, cv := range e.a.model().Convs {
+		if cv.Kind == "im" && cv.User != "" && cv.User != "USLACKBOT" {
+			if u, ok := c.User(cv.User); ok && !u.IsBot {
+				person = cv.User
+				break
+			}
+		}
+	}
+	if person == "" {
+		t.Fatal("no DM with a person in the sidebar")
+	}
+	for _, x := range []struct {
+		cv   convInfo
+		want bool
+	}{
+		{convInfo{Kind: "channel"}, true},
+		{convInfo{Kind: "im", User: person}, true},
+		{convInfo{Kind: "im", User: "U0NOTLOADED1"}, false}, // a partner not loaded yet
+		{convInfo{Kind: "im", User: "USLACKBOT"}, false},
+		{convInfo{Kind: "im", User: "USLACK"}, false},
+		{convInfo{Kind: "app", User: person}, false},
+	} {
+		if got := e.a.sbPrefetchDM(&x.cv); got != x.want {
+			t.Errorf("sbPrefetchDM(%s %s) = %v, want %v", x.cv.Kind, x.cv.User, got, x.want)
+		}
+	}
 }
 
 // The conversation views kept are the ones used most recently: a channel

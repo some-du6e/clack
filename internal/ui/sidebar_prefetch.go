@@ -3,8 +3,6 @@ package ui
 import (
 	"gioui.org/io/pointer"
 	"gioui.org/widget"
-
-	"github.com/some-du6e/clack/internal/ui/messages"
 )
 
 // The sidebar row's press prefetch, as Slack's web client has it (build
@@ -22,10 +20,16 @@ import (
 //   - under pointerdown_history_prefetch "treatment";
 //   - for a conversation the prefetch can open (TWX9 d7's skips): not
 //     archived, a member's (not_member), not a canvas's or list's
-//     (file_channel), not a DM with Slackbot, USLACK or an app (app_dm),
-//     its history not loaded yet (has_history) or loading. d7's scrollmark
-//     (a channel the pane reopens at a saved scroll position) isn't
-//     skipped here.
+//     (file_channel); a DM only with a person the member store holds
+//     (app_dm: Slackbot's and USLACK's DMs, and any whose partner isn't
+//     an existent member that isn't a bot, vrX/ isExistentMember and nMbN
+//     isBotUser, a partner not loaded yet included); its history not
+//     loaded yet (has_history) or loading. d7's scrollmark (a channel the
+//     pane reopens at a saved scroll position) isn't skipped here.
+//
+// The read only fills core's store (core.App.PrefetchHistory): the view
+// that mounts on the click finds the page there, or joins the read while
+// it's out, and the conversation on screen stays the open one until then.
 //
 // Slack doesn't prefetch on hover: a row's onPointerEnter only begins a
 // sampled "channel_history_intent" study (client-boot 8BF7, one session in
@@ -52,8 +56,27 @@ func (a *App) sbPressPrefetch(id string, e pointer.Event, btn *widget.Clickable)
 		return
 	}
 	c := a.model().conv(id)
-	if c == nil || c.Archived || c.Preview || c.File || c.Kind == "app" || c.User == "USLACKBOT" || c.User == "USLACK" {
+	if c == nil || c.Archived || c.Preview || c.File || !a.sbPrefetchDM(c) {
 		return
 	}
-	messages.PrefetchHistory(a, id)
+	if svc := a.Core(); svc != nil {
+		svc.PrefetchHistory(id)
+	}
+}
+
+// sbPrefetchDM is d7's app_dm test: false for a DM whose partner isn't a
+// person the member store holds (true for anything that isn't a DM).
+func (a *App) sbPrefetchDM(c *convInfo) bool {
+	if c.Kind != "im" && c.Kind != "app" {
+		return true
+	}
+	if c.Kind == "app" || c.User == "" || c.User == "USLACKBOT" || c.User == "USLACK" {
+		return false
+	}
+	svc := a.Core()
+	if svc == nil {
+		return false
+	}
+	u, ok := svc.User(c.User)
+	return ok && !u.IsBot
 }

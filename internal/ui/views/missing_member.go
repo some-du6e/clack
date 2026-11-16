@@ -167,6 +167,27 @@ func (b *base) recording(describe func()) []string {
 	return waits
 }
 
+// noteRead records id among the members the description being built
+// looked up (recordingReads), if one is.
+func (b *base) noteRead(id string) {
+	if b.reads != nil && id != "" && !slices.Contains(*b.reads, id) {
+		*b.reads = append(*b.reads, id)
+	}
+}
+
+// recordingReads is recording that also returns every member the
+// description looked up, named or not: its sender, a DM's partner, the
+// people its preview mentions. A profile change to one of them (a "user"
+// event) leaves what was described from them out of date, as Slack's
+// rows render again when the member store changes.
+func (b *base) recordingReads(describe func()) (waits, reads []string) {
+	prev := b.reads
+	b.reads = &reads
+	waits = b.recording(describe)
+	b.reads = prev
+	return waits, reads
+}
+
 // waitOver looks the members and bots in waits up again, as every render
 // of Slack's components calls getMemberById (a miss is asked for, so a
 // fetch that failed is asked again), and reports whether one of them can
