@@ -336,3 +336,4 @@ One row per push (perf workflow, GitHub runner, llvmpipe). Paint and RSS are the
 | 2026-11-16 | `450f7b7` | ui | 259 ms | 282 ms | 337 MB | 109 MB | 178.47 ms | 92.60 ms | 98.54 ms / 1,930 | 229.54 ms | 74.7 |
 | 2026-11-16 | `6a11970` | ui | 321 ms | 335 ms | 346 MB | 109 MB | 251.61 ms | 123.32 ms | 131.62 ms / 1,972 | 310.60 ms | 74.8 |
 | 2026-11-16 | `faaed45` | ui | 397 ms | 412 ms | 348 MB | 109 MB | 314.46 ms | 156.22 ms | 166.25 ms / 1,975 | 386.96 ms | 75.0 |
+| 2026-11-16 | `15f9f88` | ui | 275 ms | 300 ms | 329 MB | 110 MB | 215.25 ms | 107.10 ms | 114.24 ms / 1,928 | 262.05 ms | 75.0 |
