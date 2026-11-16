@@ -381,6 +381,7 @@ var inlineRef = map[string]struct{ src, body string }{
 // icons.json on 2026-11-14: none has one).
 var clackOwn = map[string]string{
 	"bookmark-add":    "a bookmark with a plus (save for later); Slack's set has bookmark but no bookmark-add",
+	"clack-logo":      "Clack's own brand mark, monochrome (Preferences > Clack's tab); not a Slack glyph",
 	"close-small":     "a smaller close for 16px chips; Slack's set has close, close-circle and close-filled, none small",
 	"dot":             "SlackFallback, drawn for Slack names the set lacks",
 	"hackclub":        "the Hack Club plugin category's mark",

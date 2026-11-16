@@ -98,9 +98,13 @@ type Message struct {
 	// runAt where its elements were (RunRects).
 	statusAt map[string]image.Point
 	runAt    map[string][]image.Rectangle
-	ver      atomic.Uint32
-	gtx      layout.Context
-	ops      op.Ops
+	// gen counts the message's block revisions: an action sent before the
+	// blocks changed settles into nothing (useBlockKitInteractiveState's
+	// resetKey generation).
+	gen uint32
+	ver atomic.Uint32
+	gtx layout.Context
+	ops op.Ops
 }
 
 type legacyRef struct {
@@ -158,8 +162,11 @@ func (me *Message) setMessage(m *core.Message) {
 		return
 	}
 	// Slack resets an element's state when the message's blocks change
-	// (the app replaced the message).
+	// (the app replaced the message): useBlockKitInteractiveState's
+	// resetKey is msg.blocks, and its effect clears the loading and error
+	// sets and bumps the generation an answer must match.
 	me.sig = sig
+	me.gen++
 	me.blocks = ParseBlocks(m.Blocks)
 	me.atts = parseAttachments(m.Attachments)
 	me.vals = Values{}
@@ -231,13 +238,27 @@ func (me *Message) loading(bid string) bool {
 	return false
 }
 
+// Status reports block bid's action state: in flight (the spinner, its
+// elements disabled) and failed (the warning icon).
+func (me *Message) Status(bid string) (loading, failed bool) {
+	_, failed = me.errs[bid]
+	return me.loading(bid), failed
+}
+
 // begin marks block key loading and clears its error; the returned func
-// settles it (Slack's useBlockKitInteractiveState).
+// settles it (Slack's useBlockKitInteractiveState). An answer that comes
+// after the message's blocks changed (the app's chat.update reached the
+// client first, as message_changed) changes nothing: the new blocks start
+// idle, as Slack's handlers drop a result whose generation is past.
 func (me *Message) begin(key string) func(err error) {
 	delete(me.errs, key)
 	me.busy[key]++
 	me.changed()
+	gen := me.gen
 	return func(err error) {
+		if me.gen != gen {
+			return
+		}
 		if me.busy[key]--; me.busy[key] <= 0 {
 			delete(me.busy, key)
 		}

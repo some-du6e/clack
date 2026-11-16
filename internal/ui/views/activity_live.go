@@ -66,7 +66,7 @@ func (v *Activity) liveAccepts(it *core.ActivityItem) bool {
 		for _, ch := range v.channels {
 			in[ch] = true
 		}
-		for _, s := range c.Snapshot().Sections {
+		for _, s := range c.RecentSnapshot().Sections {
 			if slices.Contains(v.sections, s.ID) {
 				for _, ch := range s.All {
 					in[ch] = true

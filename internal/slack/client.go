@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
@@ -512,7 +513,7 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		req.Header.Set("Content-Type", ctype)
 		req.Header.Set("Cookie", c.cookieHeader())
 		HonestHeaders(req.Header) // no Origin, no client hints (ua.go)
-		resp, err := c.HTTP.Do(req)
+		resp, err := c.do(req, method, body)
 		if err != nil {
 			return scrubErr(err)
 		}
@@ -564,6 +565,29 @@ func (c *Client) doPost(ctx context.Context, method, u, ctype string, body []byt
 		}
 		return json.Unmarshal(data, out)
 	}
+}
+
+// do sends req, and sends a read once more on a fresh connection when the
+// pooled connection it went out on turned out to be dead: the request
+// failed before any response with a reset, a closed connection or a lost
+// local address (connretry.go). httptrace only observes the connection;
+// the request leaves exactly as before, headers and all. The retry is
+// built from body like the first attempt (desktop sessions sign a fresh
+// DPoP proof for it in their transport).
+func (c *Client) do(req *http.Request, method string, body []byte) (*http.Response, error) {
+	var reused bool
+	trace := &httptrace.ClientTrace{GotConn: func(i httptrace.GotConnInfo) { reused = i.Reused }}
+	ctx := req.Context()
+	resp, err := c.HTTP.Do(req.WithContext(httptrace.WithClientTrace(ctx, trace)))
+	if err == nil || !reused || !connReset(err) || !readOnlyMethod(method) || ctx.Err() != nil || c.SignedOut() {
+		return resp, err
+	}
+	log.Printf("slack: %s: pooled connection was dead (%v), retrying on a new one", method, scrubErr(err))
+	retry := req.Clone(ctx)
+	retry.Body = io.NopCloser(bytes.NewReader(body))
+	retry.ContentLength = int64(len(body))
+	retry.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	return c.HTTP.Do(retry)
 }
 
 // Download fetches an authenticated URL (files.slack.com etc) with the session

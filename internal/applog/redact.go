@@ -14,7 +14,12 @@ import (
 // stderr does:
 //
 //   - URL-encoded tokens: xoxc%2D…
-//   - Cookie:, Set-Cookie: and Authorization: values (to the end of the line)
+//   - Cookie:, Set-Cookie: and Authorization: values (to the end of the
+//     line), where the name is a header: at the start of a line, or after
+//     punctuation (as in a Go http.Header "map[Authorization:[…] Cookie:[…]]"
+//     or "dial: Cookie: …"), or written the way a header is after a space
+//     ("sent Authorization: …"); a lowercase name after a word is prose
+//     ("notification authorization: granted") and stays
 //   - Bearer <credential>
 //   - JSON "token", "cookie", "d", "password", "secret", "access_token"
 //     and "refresh_token" string values
@@ -23,7 +28,7 @@ import (
 func Redact(s string) string {
 	s = slack.Redact(s)
 	s = encodedTokenRE.ReplaceAllStringFunc(s, func(m string) string { return m[:4] + "-REDACTED" })
-	s = headerRE.ReplaceAllString(s, "${1}${2}REDACTED")
+	s = headerRE.ReplaceAllString(s, "${1}REDACTED")
 	s = bearerRE.ReplaceAllString(s, "${1}REDACTED")
 	s = jsonSecretRE.ReplaceAllString(s, `${1}"REDACTED"`)
 	s = deepLinkQueryRE.ReplaceAllString(s, "${1}?…")
@@ -32,7 +37,7 @@ func Redact(s string) string {
 
 var (
 	encodedTokenRE  = regexp.MustCompile(`(?i)xox[a-z]%2d[^\s"'&;,)<>\]]+`)
-	headerRE        = regexp.MustCompile(`(?i)\b(cookie|set-cookie|authorization)(\s*:\s*)[^\n]+`)
+	headerRE        = regexp.MustCompile(`(?im)((?:(?:^|[\[\](){}<>"'\x60,;:=|])[ \t]*(?:cookie|set-cookie|authorization)|\s(?-i:Cookie|Set-Cookie|Authorization|COOKIE|SET-COOKIE|AUTHORIZATION))[ \t]*:[ \t]*)[^\n]+`)
 	bearerRE        = regexp.MustCompile(`(?i)\b(bearer\s+)[^\s"',;]+`)
 	jsonSecretRE    = regexp.MustCompile(`(?i)("(?:token|cookie|d|password|secret|access_token|refresh_token)"\s*:\s*)"[^"]*"`)
 	deepLinkQueryRE = regexp.MustCompile(`(?i)(slack://[^\s?"'<>]*)\?[^\s"'<>]*`)

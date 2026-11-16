@@ -502,9 +502,18 @@ func (c *Composer) Layout(gtx layout.Context) layout.Dimensions {
 	// an edit. Unpatched each is a direct call.
 	c.cs = c.chromeState(gtx)
 	c.ui.prime(&c.cs)
+	// The chrome's buttons no live draw laid out are reset once per frame,
+	// after the boundary (chrome.endFrame); a measure pass doesn't count.
+	live := gtx.Source.Enabled()
+	if live {
+		c.ui.liveShown = 0
+	}
 	// The box is always there: a boundary that drew none (a plugin's tree
 	// left it out) is drawn again without plugins (vanish.go).
 	dims := c.layoutBoundary(gtx)
+	if live {
+		c.ui.endFrame()
+	}
 
 	// Autocomplete after the editor laid out, anchored at the trigger,
 	// with what plugins changed on TextyAutocomplete.
@@ -1865,7 +1874,7 @@ func (c *Composer) BoxRect() image.Rectangle {
 }
 
 func (c *Composer) winRect(id crBtn) image.Rectangle {
-	if c.ui.shown&(1<<id) == 0 {
+	if (c.ui.shown|c.ui.liveShown)&(1<<id) == 0 {
 		return image.Rectangle{}
 	}
 	return c.ui.rect[id].Add(c.Origin).Add(image.Pt(0, c.top))

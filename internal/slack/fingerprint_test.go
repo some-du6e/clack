@@ -151,7 +151,7 @@ func TestEveryTransportSendsTheRecordedHello(t *testing.T) {
 		}},
 		{"realtime websocket", func() error {
 			r := client(false).NewRTM()
-			r.reconnectURL = "wss://" + fpHost + "/ws"
+			r.reconnectURL, r.reconnectAt = "wss://"+fpHost+"/ws", ReadClock()
 			err := r.once(ctx)
 			var ce websocket.CloseError
 			if errors.As(err, &ce) && ce.Code == websocket.StatusNormalClosure {

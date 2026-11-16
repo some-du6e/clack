@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"golang.org/x/text/collate"
-	"golang.org/x/text/language"
 
 	"github.com/some-du6e/clack/internal/acrank"
 	"github.com/some-du6e/clack/internal/slack"
@@ -237,19 +236,20 @@ func FilterSidebar(secs []FilterSection, query string, m2, m3 bool, n FilterName
 			add(id)
 		}
 	}
-	col := collate.New(language.AmericanEnglish, collate.Numeric)
-	sort.SliceStable(ids, func(i, j int) bool {
-		ri, rj := n.LastRead[ids[i]], n.LastRead[ids[j]]
-		if ri == "" {
-			ri = "0"
-		}
-		if rj == "" {
-			rj = "0"
-		}
-		if ri != rj {
-			return ri > rj // string order, as Slack compares the cursors
-		}
-		return qjubLess(col, names[ids[i]], names[ids[j]])
+	withQjub(func(col *collate.Collator) {
+		sort.SliceStable(ids, func(i, j int) bool {
+			ri, rj := n.LastRead[ids[i]], n.LastRead[ids[j]]
+			if ri == "" {
+				ri = "0"
+			}
+			if rj == "" {
+				rj = "0"
+			}
+			if ri != rj {
+				return ri > rj // string order, as Slack compares the cursors
+			}
+			return qjubLess(col, names[ids[i]], names[ids[j]])
+		})
 	})
 	if dmAt >= 0 {
 		out[dmAt].Rows = ids
@@ -333,7 +333,6 @@ func (a *App) filterNames(convs []Conv, secs []Section, counts map[string]Count)
 	realNames := a.S.Prefs.DisplayRealNames
 	self := a.S.Self.ID
 	a.S.RUnlock()
-	col := collate.New(language.AmericanEnglish, collate.Numeric)
 	member := func(id string) string { // resolveMemberName: nothing when unknown
 		u, ok := a.S.User(id)
 		if !ok {
@@ -354,7 +353,7 @@ func (a *App) filterNames(convs []Conv, secs []Section, counts map[string]Count)
 				out = append(out, name)
 			}
 		}
-		col.SortStrings(out)
+		qjubSortStrings(out)
 		return out
 	}
 	byID := make(map[string]Conv, len(convs))

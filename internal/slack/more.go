@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/url"
 	"runtime"
 	"sort"
@@ -209,9 +210,29 @@ func uniq(ids []string) []string {
 	return out
 }
 
-// MessagesList fetches specific messages in one round trip:
-// want maps channel -> timestamps. Returns channel -> messages.
-func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (map[string][]Message, error) {
+// MessagesListGroup and MessagesListConcurrency are Slack's split of a
+// messages.list query (client-boot ptFS innerFetchMessagesByIds):
+// pMap((0,a.A)(query, 10), …, {concurrency: 2}), 10 channels a call and
+// at most 2 calls out at once. One call for a whole page's channels can
+// come back too_many_channels.
+const (
+	MessagesListGroup       = 10
+	MessagesListConcurrency = 2
+)
+
+// MessagesList fetches specific messages: want maps channel ->
+// timestamps. The channels go out sorted, MessagesListGroup to a call,
+// MessagesListConcurrency calls at a time, and the answers are merged
+// into channel -> messages. answered has every channel whose call
+// succeeded: a timestamp missing from such a channel's messages is
+// gone, while a channel whose call failed says nothing about its
+// messages. err joins the failed calls' errors (nil when all answered),
+// and each failure is logged with its channel count and ids.
+//
+// Slack's pMap stops starting groups after the first failure and
+// rejects the whole fetch; here every group is asked, so one failed
+// group costs only its own channels.
+func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (msgs map[string][]Message, answered map[string]bool, err error) {
 	type q struct {
 		Channel    string   `json:"channel"`
 		Timestamps []string `json:"timestamps"`
@@ -222,19 +243,65 @@ func (c *Client) MessagesList(ctx context.Context, want map[string][]string) (ma
 			ids = append(ids, q{ch, uniq(append([]string(nil), ts...))})
 		}
 	}
+	msgs, answered = map[string][]Message{}, map[string]bool{}
 	if len(ids) == 0 {
-		return map[string][]Message{}, nil
+		return msgs, answered, nil
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i].Channel < ids[j].Channel })
-	b, _ := json.Marshal(ids)
-	var r struct {
-		Messages map[string][]Message `json:"messages"`
+	var groups [][]q
+	for len(ids) > 0 {
+		n := min(MessagesListGroup, len(ids))
+		groups = append(groups, ids[:n:n])
+		ids = ids[n:]
 	}
-	err := c.Call(ctx, "messages.list", url.Values{"message_ids": {string(b)}, "org_wide_aware": {"true"}}, &r)
-	if r.Messages == nil {
-		r.Messages = map[string][]Message{}
+	var (
+		mu   sync.Mutex
+		errs []error
+		next int
+		wg   sync.WaitGroup
+	)
+	ask := func(g []q) {
+		b, _ := json.Marshal(g)
+		var r struct {
+			Messages map[string][]Message `json:"messages"`
+		}
+		err := c.Call(ctx, "messages.list", url.Values{"message_ids": {string(b)}, "org_wide_aware": {"true"}}, &r)
+		chans := make([]string, len(g))
+		for i := range g {
+			chans[i] = g[i].Channel
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			log.Printf("messages.list: %d channels: %v (%s)", len(g), err, strings.Join(chans, " "))
+			errs = append(errs, err)
+			return
+		}
+		for _, ch := range chans {
+			answered[ch] = true
+		}
+		for ch, ms := range r.Messages {
+			msgs[ch] = append(msgs[ch], ms...)
+		}
 	}
-	return r.Messages, err
+	for range min(MessagesListConcurrency, len(groups)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				mu.Lock()
+				i := next
+				next++
+				mu.Unlock()
+				if i >= len(groups) {
+					return
+				}
+				ask(groups[i])
+			}
+		}()
+	}
+	wg.Wait()
+	return msgs, answered, errors.Join(errs...)
 }
 
 // SearchMessages runs search.messages.

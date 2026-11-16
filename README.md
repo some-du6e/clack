@@ -217,7 +217,7 @@ If the window stops responding for more than 2 seconds (a beachball on macOS), C
 - Linux: `~/.config/clack/freeze-reports/`
 - Windows: `%AppData%\clack\freeze-reports\`
 
-Each `freeze-<date>-<time>.txt` holds the Clack version, what the window was doing (layout, posted work or the GPU submit), your `ui.json` settings, and the stack of every goroutine, plus how long the freeze lasted once it ended. It has no message text, and tokens and cookies are redacted. **Help → Troubleshooting → Show Freeze Reports** opens the folder (Copy Diagnostics names it and the newest report). To report a freeze, attach the newest file to a GitHub issue. The log also prints the report's path. Clack keeps the 10 most recent reports.
+Each `freeze-<date>-<time>.txt` holds the Clack version, what the window was doing (layout, posted work or the GPU submit), your `ui.json` settings, the Go runtime's heap and stop-the-world figures, what each plugin JS runtime was doing (a running task, its garbage collector, its heap size), and the stack of every goroutine with the times they were asked for and got. A freeze still going at 5 seconds gets a second snapshot, and the report ends with how long the freeze lasted. Time the computer spends asleep doesn't count. It has no message text, and tokens and cookies are redacted. **Help → Troubleshooting → Show Freeze Reports** opens the folder (Copy Diagnostics names it and the newest report). To report a freeze, attach the newest file to a GitHub issue. The log also prints the report's path. Clack keeps a week of reports, up to 20 MB (the newest always stays).
 
 ### Logs
 

@@ -250,7 +250,7 @@ func TestRTMRefusesForeignSocket(t *testing.T) {
 	c := New(Creds{Token: "xoxc-1", Cookie: "xoxd-secret"})
 	r := &RTM{c: c, Events: make(chan Event, 1)}
 	for _, u := range []string{"wss://evil.example/?token=x", "ws://wss-primary.slack.com/", "wss://wss-primary.slack.com.evil.io/"} {
-		r.reconnectURL = u
+		r.reconnectURL, r.reconnectAt = u, ReadClock()
 		if err := r.once(context.Background()); !errors.Is(err, ErrUntrustedHost) {
 			t.Errorf("once(%q) = %v, want ErrUntrustedHost", u, err)
 		}

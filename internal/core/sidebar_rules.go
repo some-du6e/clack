@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"golang.org/x/text/collate"
-	"golang.org/x/text/language"
 
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
@@ -420,7 +419,7 @@ func sortSectionRows(rows []sortRow, inDMSection bool, sortOrder, self string, p
 	for _, r := range rows {
 		keys[r.id] = key{r.muted, sortGroup(r, inDMSection, sortOrder, self, p)}
 	}
-	col := collate.New(language.AmericanEnglish, collate.Numeric) // QJub: Intl.Collator("en-US",{numeric:true})
+	var col *collate.Collator // QJub's (collate_qjub.go): set while the sort below runs
 	alpha := func(a, b sortRow) int {
 		if a.name == b.name {
 			return 0
@@ -458,15 +457,18 @@ func sortSectionRows(rows []sortRow, inDMSection bool, sortOrder, self string, p
 			return alpha(a, b)
 		}
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		ki, kj := keys[rows[i].id], keys[rows[j].id]
-		if ki.muted != kj.muted {
-			return !ki.muted
-		}
-		if ki.group != kj.group {
-			return ki.group < kj.group
-		}
-		return cmp(rows[i], rows[j]) < 0
+	withQjub(func(c *collate.Collator) {
+		col = c
+		sort.SliceStable(rows, func(i, j int) bool {
+			ki, kj := keys[rows[i].id], keys[rows[j].id]
+			if ki.muted != kj.muted {
+				return !ki.muted
+			}
+			if ki.group != kj.group {
+				return ki.group < kj.group
+			}
+			return cmp(rows[i], rows[j]) < 0
+		})
 	})
 	out := make([]string, len(rows))
 	for i, r := range rows {
@@ -863,6 +865,6 @@ func (a *App) sortName(c Conv) string {
 			}
 		}
 	}
-	collate.New(language.AmericanEnglish, collate.Numeric).SortStrings(names)
+	qjubSortStrings(names)
 	return strings.Join(names, ",")
 }

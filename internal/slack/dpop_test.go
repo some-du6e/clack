@@ -245,7 +245,7 @@ func TestBoundClientProofs(t *testing.T) {
 	checkProof(t, s.lastProof(), "POST", s.srv.URL+"/api/plain.method")
 	// The websocket handshake carries one, named by its ws:// URL.
 	r := c.NewRTM()
-	r.reconnectURL = "ws" + strings.TrimPrefix(s.srv.URL, "http") + "/websocket?token=x"
+	r.reconnectURL, r.reconnectAt = "ws"+strings.TrimPrefix(s.srv.URL, "http")+"/websocket?token=x", ReadClock()
 	_ = r.once(ctx)
 	checkProof(t, s.lastProof(), "GET", "ws"+strings.TrimPrefix(s.srv.URL, "http")+"/websocket")
 	// File downloads don't (not in the evidence).
@@ -331,7 +331,7 @@ func TestDPoPRejectionStopsTraffic(t *testing.T) {
 				c.Call(NoBackoff(ctx), "other.method", nil, nil)
 			}
 			r := c.NewRTM()
-			r.reconnectURL = "ws" + strings.TrimPrefix(s.srv.URL, "http") + "/websocket"
+			r.reconnectURL, r.reconnectAt = "ws"+strings.TrimPrefix(s.srv.URL, "http")+"/websocket", ReadClock()
 			r.once(ctx)
 			if n := s.hits.Load(); n != 1 {
 				t.Errorf("%d requests reached Slack, want 1", n)

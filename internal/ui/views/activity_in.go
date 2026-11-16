@@ -135,7 +135,7 @@ func (v *Activity) inFilterID(id string) string {
 	if !actLooksLikeUser(id) {
 		return id
 	}
-	for _, cv := range v.h.Core().Snapshot().Convs {
+	for _, cv := range v.h.Core().RecentSnapshot().Convs {
 		if cv.Kind == "im" && cv.User == id {
 			return cv.ID
 		}
@@ -157,7 +157,7 @@ func actToggleID(list []string, id string) []string {
 
 // inOptions is the popover's list (IKpm ew, or the query's results).
 func (v *Activity) inOptions() []dirPickOpt {
-	snap := v.h.Core().Snapshot()
+	snap := v.h.Core().RecentSnapshot() // per frame while the popover is open
 	sel := v.inSelected()
 	if q := v.in.pick.query(); q != "" {
 		return v.inSearch(snap, q)
@@ -317,7 +317,7 @@ func (v *Activity) inPillText() (text, icon, emoji string) {
 	case 0:
 		return nsActivity.T("In"), "", ""
 	case 1:
-		snap := v.h.Core().Snapshot()
+		snap := v.h.Core().RecentSnapshot() // per frame: the In pill
 		if id, ok := strings.CutPrefix(sel[0], actInSectionPrefix); ok {
 			for _, s := range snap.Sections {
 				if s.ID == id {
@@ -446,7 +446,7 @@ func (m *actViewModal) addTabIn(gtx C) D {
 		layout.Rigid(func(gtx C) D {
 			sel := append(append([]string(nil), m.st.channels...), prefixAll(m.st.sections)...)
 			text := nsActivity.T("Channel or section…")
-			snap := v.h.Core().Snapshot()
+			snap := v.h.Core().RecentSnapshot() // per frame: the modal's In field
 			switch len(sel) {
 			case 0:
 			case 1:

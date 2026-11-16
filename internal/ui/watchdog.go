@@ -3,14 +3,17 @@ package ui
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/metrics"
 	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/openurl"
 )
@@ -21,26 +24,46 @@ import (
 // work drained before it, the GPU submit) and when it's done. If one of
 // those takes longer than freezeAfter, a goroutine writes every
 // goroutine's stack to <config dir>/freeze-reports/freeze-<time>.txt and
-// the app keeps running; when the stuck work finishes, the report gets
-// how long it took. The stacks hold function names, file lines and
-// argument words only (no strings, so no message text); the whole report
-// goes through slack.Redact anyway, so no token or cookie is written.
-// README "Freezes" says where to find the file.
+// the app keeps running; at freezeSecond it adds a second snapshot, and
+// when the stuck work finishes, the report gets how long it took. Each
+// snapshot has the Go runtime's stop-the-world figures and what every
+// plugin JS runtime is doing: Go can't stop a goroutine inside wasm code,
+// so a stop-the-world (each GC cycle, runtime.Stack) waits for the JS
+// thread (internal/jsrt/diag.go). The stacks hold function names, file
+// lines and argument words only (no strings, so no message text); the
+// whole report goes through slack.Redact anyway, so no token or cookie is
+// written. README "If Clack freezes" says where to find the file.
 
 // freezeAfter is how long one frame or UI-goroutine task may run before a
 // report is written.
 const freezeAfter = 2 * time.Second
 
-// freezeKeep is how many reports stay on disk (oldest removed first).
-const freezeKeep = 10
+// freezeSecond: a task still stuck this long after it began gets a second
+// snapshot in its report.
+const freezeSecond = 5 * time.Second
+
+// Reports are kept for freezeKeepAge, and only the newest that fit in
+// freezeKeepBytes (the newest one always stays).
+const (
+	freezeKeepAge   = 7 * 24 * time.Hour
+	freezeKeepBytes = 20 << 20
+)
 
 type watchdog struct {
 	dir     string // freeze-reports directory ("" = off)
 	ui      string // ui.json, copied into the report
 	started time.Time
+	base    time.Time     // zero of busy's clock (monotonic)
 	after   time.Duration // freezeAfter (shorter in tests)
+	second  time.Duration // freezeSecond
+	keepAge time.Duration // freezeKeepAge
+	keepMax int64         // freezeKeepBytes
 
-	busy  atomic.Int64 // unix ns the current task began; 0 = idle
+	// busy is when the current task began, in ns since base on the
+	// monotonic clock (+1); 0 = idle. The monotonic clock stands still
+	// while the computer sleeps, so a frame that straddles a lid-close
+	// isn't a minutes-long freeze.
+	busy  atomic.Int64
 	epoch atomic.Uint64
 	stage atomic.Pointer[string]
 	page  atomic.Pointer[string] // the route's page at the last frame
@@ -51,7 +74,8 @@ type watchdog struct {
 }
 
 func newWatchdog(configDir string, started time.Time) *watchdog {
-	w := &watchdog{started: started, after: freezeAfter, quit: make(chan struct{})}
+	w := &watchdog{started: started, base: time.Now(), after: freezeAfter, second: freezeSecond,
+		keepAge: freezeKeepAge, keepMax: freezeKeepBytes, quit: make(chan struct{})}
 	if configDir != "" {
 		w.dir = filepath.Join(configDir, "freeze-reports")
 		w.ui = filepath.Join(configDir, "ui.json")
@@ -67,6 +91,9 @@ var (
 	stageShaper = "first frame"
 )
 
+// now is busy's clock: ns since base, never 0.
+func (w *watchdog) now() int64 { return int64(time.Since(w.base)) + 1 }
+
 // begin starts timing a task on the UI goroutine. Cheap: atomics only.
 func (w *watchdog) begin(stage *string) {
 	if w == nil {
@@ -74,7 +101,7 @@ func (w *watchdog) begin(stage *string) {
 	}
 	w.stage.Store(stage)
 	w.epoch.Add(1)
-	w.busy.Store(time.Now().UnixNano())
+	w.busy.Store(w.now())
 }
 
 // next moves the running task to another stage (same task, same clock).
@@ -124,7 +151,8 @@ func (w *watchdog) run() {
 	var (
 		open      string // report of the task still running
 		openEpoch uint64
-		openSince time.Time
+		openSince int64 // its busy value
+		seconded  bool  // it has its second snapshot
 	)
 	for {
 		select {
@@ -135,26 +163,32 @@ func (w *watchdog) run() {
 		since := w.busy.Load()
 		ep := w.epoch.Load()
 		if open != "" && (since == 0 || ep != openEpoch) {
-			d := time.Since(openSince).Round(100 * time.Millisecond)
+			d := time.Duration(w.now() - openSince).Round(100 * time.Millisecond)
 			appendFile(open, fmt.Sprintf("\nThe window was responsive again after about %v.\n", d))
 			log.Printf("ui: the stuck UI work finished after about %v", d)
 			open = ""
 		}
+		if open != "" && !seconded && time.Duration(w.now()-openSince) >= w.second {
+			seconded = true
+			title := fmt.Sprintf("Still blocked after %v, in %s: a second snapshot", time.Duration(w.now()-openSince).Round(100*time.Millisecond), w.stageName())
+			appendFile(open, slack.Redact(w.snapshot(title)))
+			log.Printf("ui: the window is still blocked (%s); a second snapshot went into %s", w.stageName(), open)
+			continue
+		}
 		if since == 0 || open != "" || ep == openEpoch {
 			continue
 		}
-		start := time.Unix(0, since)
-		if time.Since(start) < w.after {
+		if time.Duration(w.now()-since) < w.after {
 			continue
 		}
-		path, err := w.report(start)
+		path, err := w.report(since)
 		openEpoch = ep // one report per stuck task
 		if err != nil {
 			log.Printf("ui: the window is blocked (%s) but the freeze report couldn't be written: %v", w.stageName(), err)
 			continue
 		}
-		open, openSince = path, start
-		log.Printf("ui: the window has been blocked for %v (%s); freeze report: %s", time.Since(start).Round(100*time.Millisecond), w.stageName(), path)
+		open, openSince, seconded = path, since, false
+		log.Printf("ui: the window has been blocked for %v (%s); freeze report: %s", time.Duration(w.now()-since).Round(100*time.Millisecond), w.stageName(), path)
 		if w.written != nil {
 			w.written(path)
 		}
@@ -175,22 +209,22 @@ func (w *watchdog) stageName() string {
 	return "?"
 }
 
-// report writes one freeze report and returns its path.
-func (w *watchdog) report(start time.Time) (string, error) {
+// report writes one freeze report for the task that began at since (busy's
+// clock) and returns its path.
+func (w *watchdog) report(since int64) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Clack freeze report\n\n")
 	fmt.Fprintf(&b, "version: %s\n", buildVersion)
 	fmt.Fprintf(&b, "os: %s/%s, %s, %d CPUs\n", runtime.GOOS, runtime.GOARCH, runtime.Version(), runtime.NumCPU())
 	fmt.Fprintf(&b, "written: %s (%v after start)\n", time.Now().Format(time.RFC3339), time.Since(w.started).Round(time.Second))
-	fmt.Fprintf(&b, "blocked: %v so far, in %s\n", time.Since(start).Round(10*time.Millisecond), w.stageName())
+	fmt.Fprintf(&b, "blocked: %v so far, in %s\n", time.Duration(w.now()-since).Round(10*time.Millisecond), w.stageName())
 	if p := w.page.Load(); p != nil {
 		fmt.Fprintf(&b, "page: %s\n", *p)
 	}
 	if ui, err := os.ReadFile(w.ui); err == nil && len(ui) < 64<<10 {
 		fmt.Fprintf(&b, "\nui.json:\n%s\n", strings.TrimSpace(string(ui)))
 	}
-	stacks := allStacks()
-	fmt.Fprintf(&b, "\ngoroutines (%d):\n\n%s\n", runtime.NumGoroutine(), stacks)
+	b.WriteString(w.snapshot(""))
 	if err := os.MkdirAll(w.dir, 0o700); err != nil {
 		return "", err
 	}
@@ -200,6 +234,108 @@ func (w *watchdog) report(start time.Time) (string, error) {
 	}
 	w.prune()
 	return path, nil
+}
+
+// snapshot is the runtime figures, the JS runtimes and every goroutine's
+// stack, as of now, under an optional title.
+func (w *watchdog) snapshot(title string) string {
+	var b strings.Builder
+	if title != "" {
+		fmt.Fprintf(&b, "\n%s\n", title)
+	}
+	b.WriteString(runtimeFigures())
+	b.WriteString(jsFigures())
+	asked := time.Now()
+	stacks := allStacks()
+	got := time.Now()
+	// runtime.Stack stops the world first: a long wait here is something
+	// that wouldn't stop (a JS thread in a native loop, say)
+	fmt.Fprintf(&b, "\nstacks: asked for at %s, got at %s (%v)\n", asked.Format("15:04:05.000"), got.Format("15:04:05.000"), got.Sub(asked).Round(time.Millisecond))
+	fmt.Fprintf(&b, "\ngoroutines (%d):\n\n%s\n", runtime.NumGoroutine(), stacks)
+	return b.String()
+}
+
+// freezeMetrics are the runtime/metrics a snapshot prints (reading them
+// doesn't stop the world, unlike runtime.ReadMemStats).
+var freezeMetrics = []string{
+	"/sched/pauses/stopping/gc:seconds",
+	"/sched/pauses/stopping/other:seconds",
+	"/sched/pauses/total/gc:seconds",
+	"/sched/pauses/total/other:seconds",
+	"/gc/heap/live:bytes",
+	"/gc/heap/goal:bytes",
+	"/memory/classes/total:bytes",
+	"/gc/cycles/total:gc-cycles",
+}
+
+// runtimeFigures is the Go heap and the stop-the-world histograms' worst
+// cases since start. A stop-the-world first waits for every goroutine to
+// stop ("stopping"); one that can't be stopped holds the rest paused.
+func runtimeFigures() string {
+	s := make([]metrics.Sample, len(freezeMetrics))
+	for i, n := range freezeMetrics {
+		s[i].Name = n
+	}
+	metrics.Read(s)
+	u := func(i int) uint64 {
+		if s[i].Value.Kind() != metrics.KindUint64 {
+			return 0
+		}
+		return s[i].Value.Uint64()
+	}
+	mib := func(v uint64) string { return fmt.Sprintf("%.1f MiB", float64(v)/(1<<20)) }
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nGo runtime: heap %s live (goal %s), %s mapped in all; %d collections\n", mib(u(4)), mib(u(5)), mib(u(6)), u(7))
+	fmt.Fprintf(&b, "stop-the-world since start (longest; how many took 100ms or more):\n")
+	for i, what := range []string{"waiting for every goroutine to stop, for a GC", "waiting for every goroutine to stop, for anything else (runtime.Stack, ReadMemStats)", "paused in all, for a GC", "paused in all, for anything else"} {
+		fmt.Fprintf(&b, "  %s: %s\n", what, histWorst(s[i].Value))
+	}
+	return b.String()
+}
+
+// histWorst describes a time histogram's highest non-empty bucket and how
+// many samples were 100ms or more.
+func histWorst(v metrics.Value) string {
+	if v.Kind() != metrics.KindFloat64Histogram {
+		return "not measured"
+	}
+	h := v.Float64Histogram()
+	var slow uint64
+	worst := -1
+	for i, c := range h.Counts {
+		if c == 0 {
+			continue
+		}
+		worst = i
+		if h.Buckets[i] >= 0.1 {
+			slow += c
+		}
+	}
+	if worst < 0 {
+		return "none"
+	}
+	lo, hi := math.Max(h.Buckets[worst], 0), h.Buckets[worst+1]
+	sec := func(f float64) string {
+		return time.Duration(f * float64(time.Second)).Round(time.Microsecond).String()
+	}
+	if math.IsInf(hi, 1) {
+		return fmt.Sprintf("over %s; %d", sec(lo), slow)
+	}
+	return fmt.Sprintf("%s–%s; %d", sec(lo), sec(hi), slow)
+}
+
+// jsFigures is what each plugin JS runtime is doing.
+func jsFigures() string {
+	ss := jsrt.Snapshots()
+	if len(ss) == 0 {
+		return "\nJS runtimes: none\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nJS runtimes (QuickJS on wazero; a stop-the-world waits for a JS thread to leave wasm code):\n")
+	for i, s := range ss {
+		fmt.Fprintf(&b, "  %d: %s\n", i+1, s)
+	}
+	return b.String()
 }
 
 // allStacks is runtime.Stack for every goroutine (grows the buffer up to
@@ -215,22 +351,37 @@ func allStacks() []byte {
 	}
 }
 
-// prune keeps the newest freezeKeep reports.
+// prune deletes reports older than keepAge, then the oldest until the rest
+// fit in keepMax bytes. The newest report always stays.
 func (w *watchdog) prune() {
 	ents, err := os.ReadDir(w.dir)
 	if err != nil {
 		return
 	}
-	var names []string
-	for _, e := range ents {
-		if n := e.Name(); !e.IsDir() && strings.HasPrefix(n, "freeze-") && strings.HasSuffix(n, ".txt") {
-			names = append(names, n)
-		}
+	type rep struct {
+		name string
+		size int64
+		mod  time.Time
 	}
-	sort.Strings(names) // timestamps sort by time
-	for len(names) > freezeKeep {
-		_ = os.Remove(filepath.Join(w.dir, names[0]))
-		names = names[1:]
+	var reps []rep
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || !strings.HasPrefix(n, "freeze-") || !strings.HasSuffix(n, ".txt") {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		reps = append(reps, rep{n, fi.Size(), fi.ModTime()})
+	}
+	sort.Slice(reps, func(i, j int) bool { return reps[i].name > reps[j].name }) // timestamps sort by time: newest first
+	var total int64
+	for i, r := range reps {
+		total += r.size
+		if i > 0 && (time.Since(r.mod) > w.keepAge || total > w.keepMax) {
+			_ = os.Remove(filepath.Join(w.dir, r.name))
+		}
 	}
 }
 

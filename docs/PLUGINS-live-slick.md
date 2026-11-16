@@ -91,7 +91,7 @@ Snappy (src/plugins/Snappy) makes Slack feel faster by collapsing CSS transition
 | `optimizeResize`: holds Slack's `resize` listeners and ResizeObservers while a window edge is dragged, then replays once. | Slick's `deferResizeWork` now holds ResizeObservers too, not only `resize` events. Clack's own layout is native and follows the window every frame. |
 | `optimizeStateTracking`: opts Slack's Redux code into two fast paths at boot. | Nothing to do: Clack's views never run Slack's Redux code. Said in Preferences. |
 | `disableSpellcheck` (main half): `session.setSpellCheckerEnabled(false)`, live. | The composer stops spellchecking (Electron's session spellchecker is Clack's), and checks again when it's off or Snappy stops. |
-| `disableCrashReporter` (default on, main half): Chromium's `disable-crashpad` and `disable-crash-reporter` at boot. | Clack's main halves' switches are kept for the next start (`slick/switches.json`); with these, Clack doesn't capture crashes into crash.log. |
+| `disableCrashReporter` (default on, main half): Chromium's `disable-crashpad` and `disable-crash-reporter` at boot. | Clack's main halves' switches are kept for the next start (`slick/switches.json`). These two do nothing in Clack: they stop Chromium's crashpad upload, and Clack uploads no crash reports. crash.log stays on, and the start logs one line saying the switches were kept. (Until 11-15 they turned crash.log off.) |
 | `ignoreGpuBlocklist` (main half): Chromium's `ignore-gpu-blocklist`. | Gio's one GPU blocklist is X11's Vulkan (NVIDIA drivers): at the next start an X11 window tries Vulkan first (`app.IgnoreGPUBlocklist`, CLACK_PATCHES §4). |
 
 

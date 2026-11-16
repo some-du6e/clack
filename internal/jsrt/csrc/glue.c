@@ -1,5 +1,6 @@
 // glue.c: the ABI between Go (internal/jsrt/engine.go) and QuickJS-NG,
-// compiled to wasm32-wasip1 (reactor) by .github/workflows/jsrt-wasm.yml.
+// compiled to wasm32-wasip1 (reactor) by csrc/build.sh in the jsrt
+// workflow (.github/workflows/jsrt.yml).
 //
 // JS values cross the boundary as u32 handles into a table. Handle 0 is
 // undefined and is never stored. A returned handle with bit 31 set is an
@@ -20,6 +21,18 @@ IMPORT(host_module) uint64_t host_module(const char *name, uint32_t len);
 IMPORT(host_rejection) void host_rejection(uint32_t promise, uint32_t reason, int32_t handled);
 IMPORT(host_free) void host_free(uint32_t id);
 IMPORT(host_tz_offset) int32_t host_tz_offset(int64_t secs);
+IMPORT(host_yield) void host_yield(void);
+IMPORT(host_gc) void host_gc(int32_t phase, uint32_t objects, uint32_t heap);
+
+// quickjs-yield.patch: QuickJS's own C loops call clack_yield every ~10k
+// steps. The host call does nothing; it is a point where Go can stop this
+// thread, which it can't inside wasm code. clack_gc brackets each run of
+// the cycle collector (phase 0 starts, 1 ends) so the host can time it.
+void clack_yield(void) { host_yield(); }
+void clack_gc(int phase, uint32_t objects, size_t heap) { host_gc(phase, objects, (uint32_t)heap); }
+void JS_ClackSetYield(int n);
+size_t JS_ClackMallocSize(JSRuntime *rt);
+size_t JS_ClackMallocCount(JSRuntime *rt);
 
 // localtime_r is where QuickJS's Date gets the local zone (getTimezoneOffset,
 // every local getter and setter, toString). wasi-libc has no time zones, so
@@ -190,6 +203,16 @@ EXPORT(jr_memory) uint64_t jr_memory(void) {
 	JS_ComputeMemoryUsage(rt, &u);
 	return (uint64_t)u.memory_used_size;
 }
+
+// jr_heap is the JS heap's malloc'd bytes << 32 | its live allocations, in
+// O(1) (jr_memory walks the whole heap).
+EXPORT(jr_heap) uint64_t jr_heap(void) {
+	return (uint64_t)JS_ClackMallocSize(rt) << 32 | (uint32_t)JS_ClackMallocCount(rt);
+}
+
+// jr_set_yield sets how many steps QuickJS's C loops take between yields
+// (quickjs-yield.patch); n <= 0 turns them off. For measuring them.
+EXPORT(jr_set_yield) void jr_set_yield(int32_t n) { JS_ClackSetYield(n); }
 
 // ---- eval & modules ----
 // flags: 0 script (sloppy), 1 module (returns the module's evaluation promise)

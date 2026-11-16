@@ -46,11 +46,11 @@ func (r *Runtime) releaseLater(h uint32) {
 	if r.closed.Load() {
 		return
 	}
-	r.enqueue(func() {
+	r.enqueue(task{kind: "release", f: func() {
 		if r.eng != nil {
 			r.eng.release(h)
 		}
-	})
+	}})
 }
 
 // asRemote marks v, on the JS thread and about to be handed to another

@@ -32,11 +32,19 @@ type fmtRig struct {
 	ops op.Ops
 	now time.Time
 	w   int
+
+	ptrT time.Duration // the last mouse event's time (strike_plugin_test.go)
 }
 
 func newFmtRig(t *testing.T, w int, toolbar bool) *fmtRig {
 	t.Helper()
 	app, _ := syntheticApp(t, func(*store.Store) {})
+	return newFmtRigOn(t, w, toolbar, &ovHost{slickHost: &slickHost{app: app, th: theme.New(false)}})
+}
+
+// newFmtRigOn is newFmtRig over host h (a plugin env's: strike_plugin_test.go).
+func newFmtRigOn(t *testing.T, w int, toolbar bool, h *ovHost) *fmtRig {
+	t.Helper()
 	stubTyping(t)
 	old := showFormatting
 	t.Cleanup(func() { showFormatting = old })
@@ -45,7 +53,7 @@ func newFmtRig(t *testing.T, w int, toolbar bool) *fmtRig {
 	formattingWrite.Unlock()
 	t.Cleanup(func() { formattingWrite.Lock(); formattingWrite.pending = 0; formattingWrite.Unlock() })
 	showFormatting = toolbar
-	g := &fmtRig{t: t, h: &ovHost{slickHost: &slickHost{app: app, th: theme.New(false)}}, now: time.Now(), w: w}
+	g := &fmtRig{t: t, h: h, now: time.Now(), w: w}
 	g.c = freshComposer(t, g.h)
 	g.c.Focus()
 	g.settle()

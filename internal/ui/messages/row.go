@@ -330,6 +330,7 @@ func (r *row) setDoc() {
 	r.uRev = 0
 	r.blocksOv, r.tailOv = 0, [2]uintptr{}
 	r.needChan = blocksNeedChan(r.m.Doc.Blocks)
+	r.bk.done = false // the element host follows the blocks drawn (blockkit.go)
 	r.hasFiles, r.hasAtts = docTail(r.m.Doc.Blocks)
 	r.chansDoc = false
 }

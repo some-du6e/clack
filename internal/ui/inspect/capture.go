@@ -28,13 +28,15 @@ import (
 // capture is a pick or a dragged region on its way to the clipboard:
 // the report, built when the press was read (from the frame the pointer
 // was over) or, for a region, at the release, waiting for the release's
-// frame to be shot and the review (review.go) to finish.
+// frame to be shot and, for a Shift+click or a region, the review
+// (review.go) to finish.
 type capture struct {
 	rep    *Report
 	rect   image.Rectangle // px, window
 	ptr    image.Point     // px
 	scale  float32
 	region bool              // a dragged region: shot as it is, no margin, no outline
+	review bool              // a Shift+click: reviewed before it's copied (a region always is)
 	redact []image.Rectangle // the review's rects, px in the shot
 
 	// once shot: the element and the pointer in the shot (px), and the
@@ -324,8 +326,10 @@ func dpRect(r image.Rectangle, scale float32) image.Rectangle {
 }
 
 // AfterFrame shoots the frame just finished when a pick or a dragged
-// region asked for it and shows the shot for review (review.go); with no
-// shot the report goes on its way as text at once. Call it on the UI
+// region asked for it. A plain click's report goes on its way with the
+// shot at once, the session over; a Shift+click's or a region's shot is
+// shown for review (review.go) first. With no shot the report goes on
+// its way as text at once. Call it on the UI
 // goroutine once the frame's ops are complete (after the window's frame
 // was submitted, before the ops are reset); size is the frame's size in
 // px.
@@ -357,6 +361,11 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	// the middle of the pointer's px
 	c.ptrShot = image.Pt(int((float32(c.ptr.X-crop.Min.X)+.5)*k), int((float32(c.ptr.Y-crop.Min.Y)+.5)*k))
 	c.k = k
+	if !c.region && !c.review {
+		t.stop()
+		t.deliver(c, img, nil)
+		return
+	}
 	t.startReview(c, img)
 }
 

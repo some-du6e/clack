@@ -129,7 +129,7 @@ func TestNoBrowserDisguise(t *testing.T) {
 			t.Fatal(err)
 		}
 		r := c.NewRTM()
-		r.reconnectURL = "ws" + strings.TrimPrefix(base, "http") + "/websocket"
+		r.reconnectURL, r.reconnectAt = "ws"+strings.TrimPrefix(base, "http")+"/websocket", ReadClock()
 		if err := r.once(ctx); err == nil {
 			t.Fatal("handshake should fail against the fake")
 		}
