@@ -59,8 +59,9 @@ type warmState struct {
 	done chan struct{}
 
 	mu    sync.Mutex
-	snap  *Snapshot                      // the sidebar from the boot data (nil: a cold start)
-	added map[string]*slack.Conversation // the conversations it installed (store.DropBootConvs)
+	warm  bool                           // this session started from boot data
+	snap  *Snapshot                      // the sidebar from the boot data, until Boot's answers are in (nil: a cold start)
+	added map[string]*slack.Conversation // the conversations it installed (store.DropBootConvs), until then too
 	// bootOK: Boot answered with the conversation list in this session,
 	// so what core holds is worth keeping (a failed start never replaces
 	// good boot data)
@@ -104,7 +105,7 @@ func (a *App) WarmSnapshot() (Snapshot, bool) {
 func (a *App) Warm() bool {
 	a.warm.mu.Lock()
 	defer a.warm.mu.Unlock()
-	return a.warm.snap != nil
+	return a.warm.warm
 }
 
 // bootAccount is the account the boot data belongs to: the session's
@@ -142,7 +143,7 @@ func (a *App) loadWarm(cacheDone <-chan struct{}) {
 	a.InvalidateSnapshot()
 	snap := a.snapshotNow() // here, off the UI goroutine
 	a.warm.mu.Lock()
-	a.warm.snap, a.warm.added = &snap, added
+	a.warm.snap, a.warm.added, a.warm.warm = &snap, added, true
 	a.warm.mu.Unlock()
 	a.markDataReady()
 	// the boot data is in: plugins' state mirror re-reads it, as at
@@ -199,6 +200,15 @@ func (a *App) warmAdded() map[string]*slack.Conversation {
 	a.warm.mu.Lock()
 	defer a.warm.mu.Unlock()
 	return a.warm.added
+}
+
+// warmDone lets go of the warm boot's snapshot and cached conversations
+// once Boot's answers replaced them (the UI applied the snapshot long
+// before: it read it as soon as the disk reads were in).
+func (a *App) warmDone() {
+	a.warm.mu.Lock()
+	a.warm.snap, a.warm.added = nil, nil
+	a.warm.mu.Unlock()
 }
 
 // SaveWarm writes the warm boot's files when they changed: the boot data

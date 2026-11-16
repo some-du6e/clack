@@ -189,9 +189,10 @@ func (s *Store) InstallBootData(d *BootData) map[string]*slack.Conversation {
 }
 
 // DropBootConvs removes the conversations boot data added that the live
-// list (users.conversations) no longer has, a channel left or archived
-// elsewhere, unless something replaced them since (a fresher read of the
-// same conversation stays).
+// list (users.conversations) no longer has: a channel left or archived
+// elsewhere since the boot data was written. The live list is what the
+// viewer is in, so this holds even when a read refreshed the cached copy
+// meanwhile (the restored channel's conversations.info at start).
 func (s *Store) DropBootConvs(added map[string]*slack.Conversation, live []slack.Conversation) int {
 	if len(added) == 0 {
 		return 0
@@ -203,11 +204,11 @@ func (s *Store) DropBootConvs(added map[string]*slack.Conversation, live []slack
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
-	for id, c := range added {
+	for id := range added {
 		if in[id] {
 			continue
 		}
-		if cur, ok := s.Convs[id]; ok && cur == c {
+		if _, ok := s.Convs[id]; ok {
 			delete(s.Convs, id)
 			n++
 		}

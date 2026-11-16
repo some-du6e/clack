@@ -658,6 +658,7 @@ func (a *App) Boot(ctx context.Context) error {
 	// answers replace it (the disk reads are far quicker than the calls)
 	<-a.warm.done
 	added := a.warmAdded()
+	defer a.warmDone() // Boot's answers (or a failed Boot's store) replace the boot data's sidebar
 	if errConvs != nil {
 		a.bootErr = errConvs
 		return errConvs

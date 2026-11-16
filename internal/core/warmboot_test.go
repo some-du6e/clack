@@ -124,6 +124,9 @@ func TestWarmBootFromBootData(t *testing.T) {
 	if !ok || !a.Warm() {
 		t.Fatal("no warm snapshot from the boot data")
 	}
+	if !slices.Contains(convIDs(ws), gone) {
+		t.Fatalf("the boot data lacks %s, which session 1 had", gone)
+	}
 	if got, want := convIDs(ws), convIDs(first); !slices.Equal(got, want) {
 		t.Errorf("warm conversations differ from session 1's:\n got %v\nwant %v", got, want)
 	}
@@ -139,6 +142,11 @@ func TestWarmBootFromBootData(t *testing.T) {
 	if n := len(a.RecentSnapshot().Convs); n != len(ws.Convs) {
 		t.Errorf("RecentSnapshot has %d convs before Boot, want the boot data's %d", n, len(ws.Convs))
 	}
+	// the restored channel's header read (the UI's opened) refreshes the
+	// cached copy of the channel left elsewhere before Boot answers
+	if _, err := a.ChannelInfo(context.Background(), gone); err != nil {
+		t.Logf("conversations.info %s: %v", gone, err)
+	}
 	release()
 	if err := <-booted; err != nil {
 		t.Fatal(err)
@@ -150,6 +158,9 @@ func TestWarmBootFromBootData(t *testing.T) {
 	want := slices.DeleteFunc(convIDs(first), func(id string) bool { return id == gone })
 	if got := convIDs(live); !slices.Equal(got, want) {
 		t.Errorf("after Boot: conversations\n got %v\nwant %v", got, want)
+	}
+	if _, ok := a.WarmSnapshot(); ok || !a.Warm() {
+		t.Error("after Boot the warm snapshot should be let go, and Warm still true")
 	}
 }
 
