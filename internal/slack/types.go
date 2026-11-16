@@ -10,6 +10,7 @@ type Message struct {
 	TS             string          `json:"ts"`
 	User           string          `json:"user,omitempty"`
 	BotID          string          `json:"bot_id,omitempty"`
+	AppID          string          `json:"app_id,omitempty"` // the app a bot message came from (getBotByMsg passes it to bots.info)
 	Username       string          `json:"username,omitempty"`
 	Text           string          `json:"text"`
 	ThreadTS       string          `json:"thread_ts,omitempty"`
