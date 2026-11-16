@@ -3,6 +3,9 @@ package jsrt
 import (
 	"fmt"
 	"math"
+	"os"
+	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/tetratelabs/wazero/experimental"
@@ -32,6 +35,21 @@ import (
 // space; TestReservationReleased checks that the OS gets it back.
 // Where address space can't be reserved (a 32-bit build, an address-space
 // rlimit) the memory falls back to a Go slice, as before.
+
+// heapMemoryWanted reports whether CLACK_JSRT_HEAP_MEMORY asks for the
+// wasm memory in a Go slice, as before this file (for comparing): any
+// value but 0, off, false and no.
+func heapMemoryWanted() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("CLACK_JSRT_HEAP_MEMORY"))) {
+	case "", "0", "off", "false", "no":
+		return false
+	}
+	return true
+}
+
+// heapMemoryLogged: the first engine made in a Go slice for
+// CLACK_JSRT_HEAP_MEMORY logs it.
+var heapMemoryLogged sync.Once
 
 // commitStep is how much more of a reservation is committed at a time (at
 // least what the memory grows by): dlmalloc grows the wasm memory a few

@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"runtime/metrics"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -90,7 +91,7 @@ func TestWasmMemoryGrowsInPlace(t *testing.T) {
 	if res.memAfter < res.memBefore+bufs*(4<<20) {
 		t.Fatalf("the wasm memory grew %d → %d bytes for %d MiB of ArrayBuffers", res.memBefore, res.memAfter, bufs*4)
 	}
-	if os.Getenv("CLACK_JSRT_HEAP_MEMORY") != "" {
+	if heapMemoryWanted() {
 		t.Log("wasmmem: CLACK_JSRT_HEAP_MEMORY is set: both sides are Go slices, so the checks below fail")
 	}
 	if res.moved {
@@ -262,6 +263,46 @@ func TestWasmReservationFailedInstantiate(t *testing.T) {
 	t.Logf("wasmmem: the failed instantiation: %v", err)
 	if n := r.wasmMem.reserved.Load(); n != 0 {
 		t.Fatalf("the failed instantiation left %d bytes reserved", n)
+	}
+}
+
+// CLACK_JSRT_HEAP_MEMORY takes 0, off, false and no as off and anything
+// else as on, like CLACK_FLIGHT_RECORDER; the first engine it puts in a Go
+// slice logs it, later ones don't, and =0 leaves the reservation on.
+func TestHeapMemoryEnv(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "0": false, "off": false, "False": false, " no ": false, "1": true, "yes": true, "on": true} {
+		t.Setenv("CLACK_JSRT_HEAP_MEMORY", v)
+		if got := heapMemoryWanted(); got != want {
+			t.Errorf("CLACK_JSRT_HEAP_MEMORY=%q: %v, want %v", v, got, want)
+		}
+	}
+	t.Setenv("CLACK_JSRT_HEAP_MEMORY", "1")
+	heapMemoryLogged = sync.Once{}
+	var mu sync.Mutex
+	lines := 0
+	logf := func(level, msg string) {
+		if strings.Contains(msg, "CLACK_JSRT_HEAP_MEMORY") {
+			mu.Lock()
+			lines++
+			mu.Unlock()
+		}
+	}
+	for i := 0; i < 2; i++ {
+		r := newTest(t, func(o *Options) { o.Log = logf })
+		if res, size := r.wasmMem.reserved.Load(), r.wasmMem.size.Load(); res != 0 || size == 0 {
+			t.Fatalf("engine %d with CLACK_JSRT_HEAP_MEMORY=1: %d bytes reserved, a %d-byte memory", i, res, size)
+		}
+		r.Close()
+		<-r.Done()
+	}
+	mu.Lock()
+	if lines != 1 {
+		t.Errorf("%d log lines for two engines in Go slices, want 1", lines)
+	}
+	mu.Unlock()
+	t.Setenv("CLACK_JSRT_HEAP_MEMORY", "0")
+	if r := newTest(t); r.wasmMem.reserved.Load() == 0 {
+		t.Error("CLACK_JSRT_HEAP_MEMORY=0 put the wasm memory in a Go slice")
 	}
 }
 

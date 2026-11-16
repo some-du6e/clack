@@ -160,8 +160,15 @@ func newEngine(r *Runtime) (*engine, error) {
 	// the linear memory in address space reserved outside the Go heap,
 	// grown in place (wasmmem.go); wazero reads the allocator from the
 	// instantiation's context only. CLACK_JSRT_HEAP_MEMORY=1 puts it back
-	// in a Go slice (for comparing).
-	alloc := &wasmAllocator{stats: &r.wasmMem, heap: r.opts.heapWasmMemory || os.Getenv("CLACK_JSRT_HEAP_MEMORY") != ""}
+	// in a Go slice (for comparing; logged once).
+	heap := r.opts.heapWasmMemory
+	if heapMemoryWanted() {
+		heap = true
+		heapMemoryLogged.Do(func() {
+			r.opts.Log("warn", "jsrt: CLACK_JSRT_HEAP_MEMORY is set: the engines' wasm memory is a Go slice, and growing it copies all of it (as before wasmmem.go)")
+		})
+	}
+	alloc := &wasmAllocator{stats: &r.wasmMem, heap: heap}
 	mod, err := wrt.InstantiateModule(experimental.WithMemoryAllocator(ctx, alloc), cm, mc)
 	if err != nil {
 		alloc.free() // a failed instantiation leaves wazero nothing to free it with
