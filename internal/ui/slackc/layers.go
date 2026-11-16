@@ -351,6 +351,11 @@ func EscapeToFocus(gtx layout.Context) bool {
 // modal that opens then leaves giving it back to the stack.
 func FocusInPluginLayer(gtx layout.Context) bool { return EscapeToFocus(gtx) }
 
+// TakesFocus reports whether tag, drawn in the frame in progress, asked
+// for its focus events (would keep a key.FocusCmd past the frame): at the
+// end of a frame, a widget on screen now.
+func TakesFocus(gtx layout.Context, tag event.Tag) bool { return askedFocus(gtx.Source, tag) }
+
 // EscapeToLayer takes an Escape press the shell's binding read where a
 // plugin's layer is involved: the layer it goes on to (target) is a
 // plugin's. It reports whether it took it; when it didn't, the binding

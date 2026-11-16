@@ -94,11 +94,13 @@ func (a *App) dismissOverlay(o Overlay) {
 
 // focusFallback is the main window's focus of last resort when the last
 // of its overlay layers that held the focus closes and what had it can't
-// take it back (slackc.FocusFallback): the composer that had it last, if
-// it's still drawn (refocus, as a modal gives it back), else the current
-// conversation's.
+// take it back (slackc.FocusFallback): the composer that had it last if
+// it's on screen now (refocus, as a modal gives it back: a thread's,
+// Activity's), else the current conversation's. One that went off the
+// screen isn't asked: the request would wait for it, and take the focus
+// when it came back (a permalink to its channel).
 func (a *App) focusFallback(gtx layout.Context) {
-	if t := refocus.Last(gtx.Now); t != nil {
+	if t := refocus.Last(gtx.Now); t != nil && slackc.TakesFocus(gtx, t) {
 		refocus.Restore(t)
 		a.Invalidate()
 		return
