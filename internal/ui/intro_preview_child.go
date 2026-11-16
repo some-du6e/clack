@@ -10,7 +10,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,6 +64,7 @@ type introPreviewReport struct {
 	List     string           `json:"list"`     // #general's list's type
 	Composer string           `json:"composer"` // #general's composer's type
 	Dock     []string         `json:"dock"`     // Dock badges asked for (must be none)
+	Refused  []string         `json:"refused"`  // methods the client refused (never sent)
 	Dark     bool             `json:"dark"`     // the theme's mode
 	Bg       [3]uint8         `json:"bg"`       // the primary panel's colour
 	Elapsed  float64          `json:"elapsed"`  // seconds to the frame
@@ -82,6 +85,33 @@ type appKitState struct {
 	NSApp  bool `json:"nsapp"`  // NSApplication was created
 	Policy int  `json:"policy"` // NSRunningApplication activationPolicy (0 regular, 1 accessory, 2 prohibited)
 	Active bool `json:"active"`
+}
+
+// previewReads are the only Slack methods the renderer's client sends
+// (fakeslack's names; edge calls as edge/<path>): the reads boot, the
+// sidebar, #general and its thread need. Anything else, a mark, a draft, a
+// pref write (core's automatic time zone), a post, is refused before it
+// leaves (slack.Client.Allow) and listed in the report.
+var previewReads = []string{
+	"admin.roles.entity.listAssignments", "api.features", "apps.profile.get", "auth.test", "bookmarks.list", "bots.info",
+	"canvases.sections.lookup", "channels.prefs.get", "chat.getPermalink", "client.boot", "client.counts", "client.userBoot",
+	"conversations.history", "conversations.info", "conversations.list", "conversations.members", "conversations.replies",
+	"conversations.view", "dnd.info", "dnd.teamInfo", "drafts.list", "edge/huddles/list", "edge/permissions/info",
+	"edge/users/counts", "edge/users/info", "edge/users/list", "emoji.adminList", "emoji.list", "enterprise.prefs.get",
+	"experiments.getByUser", "files.info", "files.list", "lists.items.list", "megaphone.notifications.list", "pins.list",
+	"reminders.list", "saved.list", "search.modules", "sidebar.dms", "stars.list", "subscriptions.thread.get",
+	"subscriptions.thread.getView", "team.info", "team.prefs.get", "users.channelSections.list", "users.conversations",
+	"users.counts", "users.getPresence", "users.info", "users.list", "users.prefs.get", "users.profile.get",
+	"workflows.featured.list",
+}
+
+// previewRead reports whether the renderer may send method (a
+// slack.Client method name: edge calls are "edge:<path>").
+func previewRead(method string) bool {
+	if p, ok := strings.CutPrefix(method, "edge:"); ok {
+		method = "edge/" + p
+	}
+	return slices.Contains(previewReads, method)
 }
 
 // RunIntroPreview is `clack intro-preview` (cmd/clack). It returns the
@@ -152,6 +182,18 @@ func renderIntroPreview(dir string, size image.Point, scale, spdp float32, limit
 	c, err := s.NewClient()
 	if err != nil {
 		return err
+	}
+	var refusedMu sync.Mutex
+	c.Allow = func(method string) bool { // reads only: nothing is ever written, not even to the demo
+		if previewRead(method) {
+			return true
+		}
+		refusedMu.Lock()
+		if !slices.Contains(rep.Refused, method) {
+			rep.Refused = append(rep.Refused, method)
+		}
+		refusedMu.Unlock()
+		return false
 	}
 	images := imgcache.New(s.Fetch, "", nil)
 	a := New(Options{ConfigDir: dir, NoRealtime: true}, images)
@@ -240,6 +282,9 @@ func renderIntroPreview(dir string, size image.Point, scale, spdp float32, limit
 	if report {
 		m := a.model()
 		rep.Calls = s.FS.CallCounts()
+		refusedMu.Lock()
+		sort.Strings(rep.Refused)
+		refusedMu.Unlock()
 		for k := range drawn {
 			rep.Drawn = append(rep.Drawn, k)
 		}

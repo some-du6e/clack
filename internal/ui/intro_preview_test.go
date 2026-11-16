@@ -103,21 +103,6 @@ func writeShot(t *testing.T, dir, name string, img *image.RGBA, r image.Rectangl
 	}
 }
 
-// previewReads are the fakeslack methods the renderer may call: reads,
-// and the client's own session bookkeeping. Anything else (a mark, a
-// draft, a post, a pref write) fails the test.
-var previewReads = []string{
-	"admin.roles.entity.listAssignments", "api.features", "apps.profile.get", "auth.test", "bookmarks.list", "bots.info", "canvases.sections.lookup",
-	"channels.prefs.get", "chat.getPermalink", "client.boot", "client.counts", "client.userBoot", "conversations.history",
-	"conversations.info", "conversations.list", "conversations.members", "conversations.replies", "conversations.view",
-	"dnd.info", "dnd.teamInfo", "drafts.list", "edge/huddles/list", "edge/permissions/info", "edge/users/counts",
-	"edge/users/info", "edge/users/list", "enterprise.prefs.get", "megaphone.notifications.list", "sidebar.dms", "emoji.adminList", "emoji.list", "experiments.getByUser", "files.info",
-	"files.list", "lists.items.list", "pins.list", "reminders.list", "saved.list", "search.modules", "stars.list",
-	"subscriptions.thread.get", "subscriptions.thread.getView", "team.info", "team.prefs.get", "users.channelSections.list",
-	"users.conversations", "users.counts", "users.getPresence", "users.info", "users.list", "users.prefs.get",
-	"users.profile.get", "workflows.featured.list",
-}
-
 // ochin is Slack's Ochin theme as ia_theme stores it (theme/account_test.go).
 const ochin = `{"primary":{"palette":"ocean"},"highlight1":{"palette":"ocean"},"highlight2":{"palette":"cilantro"},"important":{"palette":"mojito"},"brightness":5,"sidebarInverted":false,"useCustomHex":false}`
 
@@ -273,7 +258,7 @@ func TestIntroSlackPreview(t *testing.T) {
 				}
 			}
 			sort.Strings(calls)
-			t.Logf("calls: %q", calls)
+			t.Logf("calls: %q; refused (never sent): %q", calls, rep.Refused)
 
 			if dir != "" {
 				win, err := pixeltest.NewWindow(e.sz.X, e.sz.Y)
