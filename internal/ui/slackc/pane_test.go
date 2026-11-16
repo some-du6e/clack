@@ -87,11 +87,14 @@ func TestPanesHaveRootsOfTheirOwn(t *testing.T) {
 	}
 	w.Close()
 	closing.Wait()
+	for r := range fresh {
+		if !b.gone(r) {
+			t.Errorf("the second window closed and its root %d is still mounted (unmounted %v)", r, b.unmounted)
+		}
+	}
 	for r := range roots {
-		for _, u := range b.unmounted {
-			if u == r {
-				t.Errorf("the second window closing unmounted the main window's root %d", r)
-			}
+		if b.gone(r) {
+			t.Errorf("the second window closing unmounted the main window's root %d", r)
 		}
 	}
 

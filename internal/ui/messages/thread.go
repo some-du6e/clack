@@ -128,6 +128,10 @@ func (v *ThreadView) Esc() bool {
 	return true
 }
 
+// PaneID is the list's slackc pane: the thread's composer draws its
+// plugin components in it too (composer.LayoutIn).
+func (v *ThreadView) PaneID() string { return v.s.paneID }
+
 // Channel and TS identify the thread.
 func (v *ThreadView) Channel() string { return v.ch }
 func (v *ThreadView) TS() string      { return v.ts }

@@ -68,6 +68,19 @@ func KeyedTrees(key string) string {
 	return strings.Join(out, "; ")
 }
 
+// KeyedPanes are the panes (Pane) of component name's instances keyed
+// key, sorted: one per list that draws the row, for tests. UI goroutine.
+func KeyedPanes(name, key string) []string {
+	var out []string
+	for k := range insts {
+		if k.name == name && k.key == key {
+			out = append(out, k.pane)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // treeState is what an instance draws from: no tree yet (its native draws),
 // an empty tree (nothing draws), or n nodes with or without the "@" node
 // for its own native (<Original>).

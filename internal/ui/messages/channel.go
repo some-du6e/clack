@@ -52,6 +52,10 @@ func NewChannelViewIn(h Host, channelID, pane string) *ChannelView {
 // Channel returns the conversation id.
 func (v *ChannelView) Channel() string { return v.ch }
 
+// PaneID is the list's slackc pane: the conversation's composer draws its
+// plugin components in it too (composer.LayoutIn).
+func (v *ChannelView) PaneID() string { return v.s.paneID }
+
 // Layout draws the list filling the constraints.
 func (v *ChannelView) Layout(gtx layout.Context) layout.Dimensions {
 	defer slackc.EndPane(slackc.Pane(v.s.paneID))
