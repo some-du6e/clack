@@ -29,6 +29,19 @@ jobs:
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - name: vet
         run: go vet ./...
+      # The app must not link golang.org/x/image/webp: its init would
+      # register an unbudgeted WebP decoder with package image, which
+      # image.Decode could then reach, bypassing imgcache's per-decode
+      # memory budget. imgcache vendors internal/imgcache/internal/webp and
+      # registers that instead (internal/imgcache/webpreg checks the
+      # registration holds in a build that doesn't link x/image/webp).
+      - name: the binary does not link x/image/webp
+        if: ${{ !cancelled() }}
+        run: |
+          if go list -deps ./cmd/clack | grep -qx golang.org/x/image/webp; then
+            echo "::error::cmd/clack links golang.org/x/image/webp; its unbudgeted decoder would be reachable through image.Decode. Use internal/imgcache/internal/webp."
+            exit 1
+          fi
       - name: build
         if: ${{ !cancelled() }}
         run: |

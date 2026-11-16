@@ -1,0 +1,149 @@
+package imgcache
+
+// Synthetic image bytes crafted so a decode's dangerous allocation is the
+// dominant one: a grayscale PNG with tRNS (decodes to NRGBA, 4× the Gray),
+// a 16-bit interlaced PNG (8 B/px plus an image per Adam7 pass), a
+// progressive JPEG (per-component coefficient blocks) and a 4-component
+// one (the black plane), and a GIF with a big canvas or many local palettes.
+//
+// The JPEG builders write a valid header up to and including the SOS
+// marker, with no entropy-coded data: image/jpeg allocates the image, the
+// 4th-component plane and the progressive coefficients as soon as it parses
+// the SOS header, before reading a single scan byte, so a header alone
+// drives exactly the allocations under test. Nothing here comes from Slack.
+
+import (
+	"bytes"
+	"compress/zlib"
+	"encoding/binary"
+	"hash/crc32"
+)
+
+// ---- PNG ----
+
+// pngColor is a PNG colour type + bit depth.
+type pngColor struct {
+	colorType byte
+	depth     byte
+	channels  int
+}
+
+var (
+	pngGray8  = pngColor{0, 8, 1}
+	pngGray16 = pngColor{0, 16, 1}
+	pngRGB16  = pngColor{2, 16, 3}
+	pngRGBA8  = pngColor{6, 8, 4}
+)
+
+// pngChunk appends a PNG chunk (length, type, data, CRC) to b.
+func pngChunk(b []byte, typ string, data []byte) []byte {
+	var hdr [8]byte
+	binary.BigEndian.PutUint32(hdr[:4], uint32(len(data)))
+	copy(hdr[4:], typ)
+	b = append(b, hdr[:]...)
+	b = append(b, data...)
+	crc := crc32.NewIEEE()
+	crc.Write(hdr[4:8])
+	crc.Write(data)
+	return binary.BigEndian.AppendUint32(b, crc.Sum32())
+}
+
+// adam7Passes is each Adam7 pass's width and height for a w×h image.
+var adam7 = [7][4]int{{8, 8, 0, 0}, {8, 8, 4, 0}, {4, 8, 0, 4}, {4, 4, 2, 0}, {2, 4, 0, 2}, {2, 2, 1, 0}, {1, 2, 0, 1}}
+
+// pngSolid builds a valid single-colour PNG of w×h: colour type and depth
+// c, interlaced (Adam7) or not, with an optional tRNS chunk. The pixels are
+// all zero, so every scanline filters to zero bytes and the IDAT is tiny —
+// but the decode allocates the full image (and, interlaced, an image per
+// pass) by the IHDR, which is the point.
+func pngSolid(w, h int, c pngColor, interlace bool, trns []byte) []byte {
+	out := append([]byte(nil), "\x89PNG\r\n\x1a\n"...)
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:], uint32(w))
+	binary.BigEndian.PutUint32(ihdr[4:], uint32(h))
+	ihdr[8] = c.depth
+	ihdr[9] = c.colorType
+	if interlace {
+		ihdr[12] = 1
+	}
+	out = pngChunk(out, "IHDR", ihdr)
+	if trns != nil {
+		out = pngChunk(out, "tRNS", trns)
+	}
+	bpp := int(c.depth) * c.channels
+	rowBytes := func(pw int) int { return 1 + (bpp*pw+7)/8 }
+	var raw []byte
+	emit := func(pw, ph int) {
+		if pw <= 0 || ph <= 0 {
+			return
+		}
+		row := make([]byte, rowBytes(pw)) // filter 0 + zero samples
+		for y := 0; y < ph; y++ {
+			raw = append(raw, row...)
+		}
+	}
+	if interlace {
+		for _, p := range adam7 {
+			pw := (w - p[2] + p[0] - 1) / p[0]
+			ph := (h - p[3] + p[1] - 1) / p[1]
+			emit(pw, ph)
+		}
+	} else {
+		emit(w, h)
+	}
+	var zb bytes.Buffer
+	zw := zlib.NewWriter(&zb)
+	zw.Write(raw)
+	zw.Close()
+	out = pngChunk(out, "IDAT", zb.Bytes())
+	return pngChunk(out, "IEND", nil)
+}
+
+// ---- JPEG ----
+
+// jpegHeader builds a JPEG that ends at the SOS header (no scan data):
+// SOI, an Adobe APP14 (for a 4-component image's colour model), SOF (sof2
+// progressive or sof0 baseline), and an interleaved SOS naming every
+// component. image/jpeg makes the image, the 4th-component plane and (for
+// progressive) the coefficient blocks when it parses the SOS, then fails
+// reading the absent scan data — so the header alone drives those
+// allocations.
+func jpegHeader(w, h, nComp int, progressive bool) []byte {
+	seg := func(marker byte, payload []byte) []byte {
+		n := len(payload) + 2
+		return append([]byte{0xff, marker, byte(n >> 8), byte(n)}, payload...)
+	}
+	out := []byte{0xff, 0xd8} // SOI
+	if nComp == 4 {
+		// Adobe APP14: "Adobe", version, flags0, flags1, transform (2 = YCCK)
+		out = append(out, seg(0xee, []byte{'A', 'd', 'o', 'b', 'e', 0, 100, 0, 0, 0, 0, 2})...)
+	}
+	sof := []byte{8, byte(h >> 8), byte(h), byte(w >> 8), byte(w), byte(nComp)}
+	for i := 0; i < nComp; i++ {
+		sof = append(sof, byte(i+1), 0x11, 0) // id, hv=1×1, quant table 0
+	}
+	marker := byte(0xc0) // SOF0 baseline
+	if progressive {
+		marker = 0xc2 // SOF2 progressive
+	}
+	out = append(out, seg(marker, sof)...)
+	sos := []byte{byte(nComp)}
+	for i := 0; i < nComp; i++ {
+		sos = append(sos, byte(i+1), 0) // component, DC/AC table 0
+	}
+	sos = append(sos, 0, 0, 0) // Ss, Se, Ah/Al: a DC scan (zigStart 0)
+	out = append(out, seg(0xda, sos)...)
+	return out
+}
+
+// jpegDecoyHeader is jpegHeader with a COMment segment, before the real
+// SOF, that contains a decoy 1×1 SOF0: image/jpeg skips the whole comment,
+// so it parses the real SOF and allocates by it. A decoder that pre-parsed
+// the header could be fooled into reading the decoy's tiny size.
+func jpegDecoyHeader(w, h int) []byte {
+	decoy := []byte{0xff, 0xc0, 0, 11, 8, 0, 1, 0, 1, 1, 0x11, 0} // 1×1 grayscale SOF0
+	out := []byte{0xff, 0xd8}
+	com := append([]byte{0xff, 0xfe, byte((len(decoy) + 2) >> 8), byte(len(decoy) + 2)}, decoy...)
+	out = append(out, com...)
+	return append(out, jpegHeader(w, h, 3, false)[2:]...) // the rest, past its own SOI
+}

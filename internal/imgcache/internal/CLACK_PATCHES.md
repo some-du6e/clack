@@ -1,13 +1,25 @@
-# Vendored WebP/VP8L decoders
+# Vendored image decoders and scaler
 
-`webp/` and `vp8l/` are `golang.org/x/image`'s `webp` and `vp8l` packages at
-**v0.33.0** (the version in the repo's `go.mod`), copied here so every
-allocation a decode makes charges a byte budget the caller passes, and the
-decoder fails before any allocation that would exceed it. BSD-3-Clause; each
-directory keeps upstream's `LICENSE`. The `vp8` and `riff` packages they
-depend on are used unchanged from the module.
+Every image decoder `imgcache` runs is vendored here so each charges the
+memory it allocates to a `budget.Budget` the caller passes, before it
+allocates, and fails before any allocation that would exceed it:
 
-The first commit of these files is upstream verbatim, so the budget changes
+- `jpeg/`, `png/`, `gif/` are Go **1.24.9**'s `image/jpeg`, `image/png` and
+  `image/gif` decoders (the readers, not the encoders);
+- `bmp/` is `golang.org/x/image/bmp` at **v0.33.0** (the version in the
+  repo's `go.mod`);
+- `webp/` and `vp8l/` are `golang.org/x/image`'s `webp` and `vp8l` at
+  **v0.33.0**; the `vp8` and `riff` packages they depend on are used
+  unchanged from the module;
+- `catmullrom/` is the kernel scaler of `golang.org/x/image/draw` at
+  **v0.33.0** (`scale.go` and the `impl.go` paths `CatmullRom.Scale` runs
+  for the source types imgcache decodes into an `*image.RGBA`).
+
+`budget/` is Clack's own (not vendored): the `Budget` and the process-wide
+`Pool` every decode's budget draws from (see `../decmem.go`).
+
+All BSD-3-Clause; each directory keeps upstream's `LICENSE`. The first
+commit of each vendored file is upstream verbatim, so the Clack changes
 read as a diff against it. Every changed line is marked `Clack:`.
 
 ## Why
@@ -34,12 +46,63 @@ enforces the bound where the memory is allocated.
 
 ## Changes
 
+### `budget` (Clack's own package)
+
+- `Budget.Charge(n)` takes `n` bytes before they're allocated, or fails,
+  taking nothing, with `ErrBudget` (past the budget's own limit: the same
+  bytes always need the same memory) or `ErrBusy` (the process-wide pool
+  can't cover it now: other decodes hold the memory — try again shortly).
+- A root `Budget` draws from a `Pool` with a non-blocking try-acquire, so
+  nothing ever waits for memory: no queue, no head-of-line blocking, no
+  deadlock. A `Pool`'s last reserve is kept for small budgets (emoji,
+  avatars), so big decodes can't make every small one fail. `Sub` makes a
+  child with a tighter limit of its own (a WebP picture's) that still draws
+  from the pool.
+- Nothing is returned when a decoder frees memory mid-decode, so what a
+  decode charges is at least everything it allocates over its life, not
+  just its peak: a pool's limit bounds what all the decodes in flight hold.
+
+### `jpeg`, `png`, `gif`, `bmp` (`budget.go` is new in each; the readers patched)
+
+Each reader takes a `*budget.Budget` and charges, before allocating, every
+buffer the file sizes:
+
+- **jpeg** — the image (`image.NewGray`/`NewYCbCr`), the 4th component's
+  plane (`blackPix`), the progressive coefficients (`progCoeffs`), and the
+  `convertToRGB`/`applyBlack` output. `DecodeConfig` is the same parser, so
+  a decoy marker can't make the charge disagree with what the decode
+  allocates. (`image/internal/imageutil` is std-internal, so the YCbCr→RGBA
+  draw goes through `image/draw`.)
+- **png** — the decoder, the zlib inflater, the palette, and each pass
+  image (grayscale and truecolor with `tRNS` as the `NRGBA`/`NRGBA64` they
+  decode to, every Adam7 pass, the row buffers).
+- **gif** — the decoder and its reader, each colour table (and a frame's
+  copy of the global one), each frame's pixels, its LZW reader, its
+  de-interlace copy, and what `DecodeAll` keeps per frame.
+- **bmp** — the header/palette, the image, and the row buffer.
+
+No `init` registers these with package `image` (the registry can't pass a
+budget); `imgcache` dispatches to them itself by signature (`decmem.go`),
+and decodes only PNG, JPEG, GIF, WebP and BMP — TIFF and other registered
+formats are refused as `image.ErrFormat`.
+
+### `catmullrom` (`scale.go`, one `Scale` entry Clack's)
+
+`Scale` draws exactly what `CatmullRom.Scale(dst, dst.Bounds(), src, sr,
+draw.Src, nil)` draws, every pixel bit for bit, but a band of destination
+rows at a time: the temporary buffer holds only the source rows a band
+reads (a few MB) instead of `dw×sh` entries of 32 bytes for the whole image
+(a 24 MP photo to 2048 px: 262 MB), and the buffer and the kernel weights
+charge the caller's budget. `scale_test.go` checks the output equals
+x/image's over a range of sizes, source types and sub-rectangles.
+
 ### `vp8l` (`budget.go` is new; `decode.go`, `huffman.go` patched)
 
-- `Budget` (budget.go): a byte allowance; `Charge(n)` fails with `ErrBudget`
-  when fewer than `n` bytes are left and takes nothing. Because nothing is
-  ever returned, a decode's whole lifetime, not just its peak, stays within
-  the budget.
+- `Budget` (budget.go) is now an alias of `budget.Budget`, so a WebP
+  picture's budget draws from the same process-wide pool as every other
+  decode. `Charge(n)` fails with `ErrBudget` when fewer than `n` bytes are
+  left and takes nothing. Because nothing is ever returned, a decode's whole
+  lifetime, not just its peak, stays within the budget.
 - `Decode`/`decodeHeader` take a `*Budget`; `DecodeConfig` reads the header
   under a tiny internal one.
 - Every allocation charges first, before it's made: the decoder and its
@@ -71,8 +134,11 @@ enforces the bound where the memory is allocated.
 
 ## Updating
 
-Re-copy the four upstream files for the new version, commit them verbatim,
-then re-apply the `Clack:`-marked hunks. `vp8l/budget_test.go` cross-checks
-the charged node/tree/group sizes against `unsafe.Sizeof`, and `imgcache`'s
-`webpbudget_test.go` measures `TotalAlloc` across the real decode entries
-and proves the vendored decode still matches x/image's pixel for pixel.
+Re-copy the upstream files for the new version (Go's `image/jpeg`,
+`image/png`, `image/gif`; x/image's `bmp`, `webp`, `vp8l`, and `draw`'s
+scaler paths), commit them verbatim, then re-apply the `Clack:`-marked
+hunks. `vp8l/budget_test.go` cross-checks the charged node/tree/group sizes
+against `unsafe.Sizeof`; `catmullrom/scale_test.go` proves the banded scale
+still matches x/image pixel for pixel; and `imgcache`'s `decmem_test.go`
+and `webpbudget_test.go` measure `TotalAlloc` across the real decode
+entries and prove the vendored decodes still match x/image's output.
