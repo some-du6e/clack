@@ -307,6 +307,13 @@ type App struct {
 	rv               revealState                // the cover until the window is ready (reveal.go)
 	panelOrigin      image.Point                // the primary panel's window origin this frame
 
+	// quiet frames (quiet.go): an Invalidate since the last frame (layout
+	// to do), an animation repaint since then, what the last full frame
+	// was drawn for, and how many frames were quiet
+	layoutDue, animDue atomic.Bool
+	quiet              quietState
+	quietFrames        uint64
+
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow
 	navTag        int             // the window-wide scroll handler (navGestures)
@@ -424,6 +431,7 @@ func (a *App) FrameSeq() uint64 { return a.frameSeq.Load() }
 // before the freeze watchdog can report it. That was the macOS launch
 // beachball. Only invalidator, on its own goroutine, may call it.
 func (a *App) Invalidate() {
+	a.layoutDue.Store(true) // not a quiet frame (quiet.go)
 	if h := invalidateHook; h != nil {
 		h(a)
 	}
@@ -485,6 +493,7 @@ func (a *App) Run() error {
 	}
 	if a.images != nil {
 		a.images.SetInvalidate(a.imagesReady) // huddle_wire.go
+		a.wireQuietFrames()                   // animations repaint as quiet frames (quiet.go)
 		a.th.Images = a.images
 	}
 	if installHooks != nil {
@@ -604,6 +613,17 @@ func (a *App) Run() error {
 			}
 			// patch points (slackc) are shared with the huddle call window
 			slackc.LockFrame()
+			if a.quietFrame(e.Now, e.Size, e.Metric, e.Insets, e.Asked, e.AskedAt) {
+				// only an animation asked for this frame: the last one's
+				// ops again, the GPU drawing each animation's frame now
+				// (quiet.go)
+				a.replayFrame(e.Source, e.Asked, e.AskedAt, e.Now)
+				slackc.UnlockFrame()
+				wd.next(&stageSubmit)
+				e.Frame(&ops)
+				a.frameStats.addQuiet(time.Since(t0))
+				break
+			}
 			wd.next(&stagePosted)
 			a.drain()
 			wd.next(&stageLayout)
@@ -620,6 +640,7 @@ func (a *App) Run() error {
 				a.frame(gtx)
 			}
 			covered := a.revealFrame()
+			a.noteFullFrame(e.Size, e.Metric, e.Insets, covered)
 			slackc.UnlockFrame()
 			tl := time.Now()
 			wd.next(&stageSubmit)
@@ -1199,6 +1220,15 @@ type frameStats struct {
 	layout time.Duration
 	max    time.Duration
 	last   time.Time
+	quiet  int           // of n: quiet frames (quiet.go)
+	qtotal time.Duration // their time
+}
+
+// addQuiet counts a quiet frame (no layout) of d.
+func (s *frameStats) addQuiet(d time.Duration) {
+	s.quiet++
+	s.qtotal += d
+	s.add(d, 0)
 }
 
 func (s *frameStats) add(d, layout time.Duration) {
@@ -1210,7 +1240,8 @@ func (s *frameStats) add(d, layout time.Duration) {
 	}
 	if envFlag("FRAMESTATS") && time.Since(s.last) > 5*time.Second && s.n > 0 {
 		n := time.Duration(s.n)
-		log.Printf("ui: %d frames, avg %v (layout %v), max %v", s.n, (s.total / n).Round(10*time.Microsecond), (s.layout / n).Round(10*time.Microsecond), s.max.Round(10*time.Microsecond))
+		log.Printf("ui: %d frames, avg %v (layout %v), max %v; %d quiet (no layout, avg %v)", s.n, (s.total / n).Round(10*time.Microsecond), (s.layout / n).Round(10*time.Microsecond), s.max.Round(10*time.Microsecond),
+			s.quiet, (s.qtotal / time.Duration(max(s.quiet, 1))).Round(10*time.Microsecond))
 		s.last = time.Now()
 		*s = frameStats{last: s.last}
 	}

@@ -278,3 +278,39 @@ func TestAnimCatchesUp(t *testing.T) {
 		t.Errorf("%d different frames in %d draws 150 ms apart, of a 620 ms loop of 13", len(distinct), draws)
 	}
 }
+
+// TestKeepingPlayerSurvivesStall: a window that draws nothing at all for
+// 2.5 s (a frame stuck in a plugin or a long collection) hasn't scrolled
+// the emoji away: its player stays, and once frames come again it shows
+// the frame its timeline is at, with no still and no start over. Players
+// used to go once nothing drew them for animGrace, whatever else drew, so
+// after every long frame the emoji showed its still, settled, decoded its
+// frames again and played from the first. A streaming player (a large GIF)
+// still goes: it holds a canvas and three frames.
+func TestKeepingPlayerSurvivesStall(t *testing.T) {
+	const big = "https://example.com/big.gif"
+	c, _ := gifCache(t, map[string][]byte{explodesURL: webptest.Explodes(), big: bigGIF(t, 400, 300, 10, 5, 0)})
+	readyEntry(t, c, big, 300)
+	readyEntry(t, c, explodesURL, 22)
+	idx := playing(t, c, explodesURL, 22)
+	drawFor(c, big, 300, 300*time.Millisecond)
+	before := playerOf(c, explodesURL, 22)
+	time.Sleep(2500 * time.Millisecond) // nothing drawn at all
+	if p := playerOf(c, explodesURL, 22); p == nil || p != before {
+		t.Fatalf("the emoji's player went during the stall (now %p, was %p)", p, before)
+	}
+	if p := playerOf(c, big, 300); p != nil {
+		t.Errorf("the streaming player stayed through the stall")
+	}
+	c.mu.Lock()
+	still := c.entries[key{explodesURL, 22}].Value.(*entry).op
+	c.mu.Unlock()
+	if op, _ := c.Get(explodesURL, 22); op == still {
+		t.Error("after the stall the emoji drew its still")
+	} else if _, ok := idx[op]; !ok {
+		t.Error("after the stall the emoji drew a frame its player never decoded")
+	}
+	if p := playerOf(c, explodesURL, 22); p == nil || p != before {
+		t.Error("the emoji's player started over after the stall")
+	}
+}

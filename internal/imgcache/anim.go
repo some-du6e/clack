@@ -778,6 +778,29 @@ func (c *Cache) liveOpLocked(e *entry, forced bool, op paint.ImageOp) paint.Imag
 	return e.live[i]
 }
 
+// ReplayLive does for the live images (SetLiveOps) what a GPU drawing a
+// frame again from its ops does: each one drawn in the last animGrace is
+// asked for its frame now. For windows drawn without a GPU (headless tests
+// and benchmarks), whose quiet frames nothing draws.
+func (c *Cache) ReplayLive() {
+	if c == nil {
+		return
+	}
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for el := c.lru.Front(); el != nil; el = el.Next() {
+		e := el.Value.(*entry)
+		for i := range e.live {
+			if e.live[i].Size() != (image.Point{}) && now.Sub(e.seenAt) <= animGrace {
+				e.used = now.UnixMilli()
+				c.drawnAt = e.used
+				c.frameLocked(e, now, i == 1)
+			}
+		}
+	}
+}
+
 // GetPlaying is Get for a GIF the viewer chose to play (Slack's
 // PlayPauseAnimations with animations off): it plays whether or not
 // SetAnimate is on. Other images are as Get returns them.

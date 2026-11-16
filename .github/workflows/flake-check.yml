@@ -359,6 +359,41 @@ jobs:
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -run '^(TestBig|TestSmallLane|TestContextEndsWaits|TestFreeGivesBack|TestHeldBytesInCacheBudget|TestBusyRetryDoesntRefetch|TestPressureEndsInALoad|TestSustainedPressureNoEndlessSpinner)' ./internal/imgcache ./internal/imgcache/internal/budget
 
+  # The animated custom emoji (:explodes:, Karim's "so choppy and laggy"
+  # on α.98; branch emoji-anim-smooth): webptest.Explodes' frames on time
+  # under load (photos past the cache's budget), every size of one image on
+  # one timeline, a slow window catching up to the timeline, a player that
+  # outlives a stalled frame, an animation tick drawn as a quiet frame (the
+  # last frame's ops again, no layout), and Gio patch 35's live images on a
+  # real GPU context (llvmpipe). Dispatch with only=emoji-anim; count=1 is
+  # enough, and 20 runs the timing ones under the runner's noise.
+  emoji-anim:
+    if: ${{ !inputs.only || startsWith('emoji-anim', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps, Xvfb, Mesa llvmpipe
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: imgcache (timeline, budget, stalls)
+        run: go test -count=$COUNT -v -run '^(TestExplodesPlaysOnTimeUnderLoad|TestAnimSizesShareTimeline|TestAnimCatchesUp|TestKeepingPlayerSurvivesStall|TestOffscreenGIFReleased|TestGIFLoopCount|TestAnimatedGIF|TestAnimWebPEmojiPlays|TestGIFBurstStaysInBudget|TestAnimationsOff|TestLargeGIFAnimatesAtDrawnSize)$' ./internal/imgcache
+      - name: ui (an animation tick is a quiet frame)
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -timeout 20m -run '^TestAnimationTickIsQuiet$' ./internal/ui
+      - name: Gio patch 35 (live images, what a frame was asked for; a real GPU context)
+        if: ${{ !cancelled() }}
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: xvfb-run -a go test -count=$COUNT -v -run '^(TestLiveImageOp|TestDrawOpsLiveImage|TestFrameEventAsked|TestLiveImageFrames)$' gioui.org/op/paint gioui.org/gpu gioui.org/app gioui.org/gpu/headless
+      - name: richview (the custom emoji draws live)
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -v -run '^TestCustomEmojiAnimatedWebPDraws$' ./internal/ui/richview
+
   huddle:
     if: ${{ !inputs.only || startsWith('huddle', inputs.only) }}
     runs-on: ubuntu-latest

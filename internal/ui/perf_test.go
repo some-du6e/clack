@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"gioui.org/app"
 	"gioui.org/f32"
 	"gioui.org/gpu/headless"
 	"gioui.org/io/input"
@@ -253,6 +254,7 @@ func (e *perfEnv) frame() {
 		gtx = e.context()
 		a.frame(gtx)
 	}
+	a.noteFullFrame(e.size, gtx.Metric, app.Insets{}, false) // what quietFrame shows again (quiet.go)
 	e.r.Frame(&e.ops)
 	if e.gpu != nil {
 		if err := e.gpu.Frame(&e.ops); err != nil {

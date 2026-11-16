@@ -124,6 +124,7 @@ type perfPass struct {
 	Seconds    float64 `json:"seconds,omitempty"`
 	AnimFrames int     `json:"anim_frames,omitempty"`
 	Players    int     `json:"players,omitempty"`
+	Quiet      int     `json:"quiet_frames,omitempty"` // of Frames: the last frame's ops again, no layout (quiet.go)
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
 	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
@@ -470,7 +471,7 @@ func TestPerfPluginScroll(t *testing.T) {
 	}
 	for _, p := range res.Passes {
 		if p.Seconds > 0 {
-			t.Logf("idle pass %-10s %d frames in %.1f s (%.1f ms of frames a second), %d animation frames shown, %d players at the end", p.Name, p.Frames, p.Seconds, p.TotalMS/p.Seconds, p.AnimFrames, p.Players)
+			t.Logf("idle pass %-10s %d frames in %.1f s (%.1f ms of frames a second, %d quiet), %d animation frames shown, %d players at the end", p.Name, p.Frames, p.Seconds, p.TotalMS/p.Seconds, p.Quiet, p.AnimFrames, p.Players)
 		}
 	}
 	if out := os.Getenv("PERF_PLUGIN_OUT"); out != "" {
@@ -819,8 +820,20 @@ func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
 	name := names[len(names)-1]
 	path := strings.TrimPrefix(all[name], e.fs.URL+"img/")
 	data := perfExplodes()
+	var served, asked atomic.Int32
+	var seenMu sync.Mutex
+	var seen []string // what was asked for under the emoji's name (diagnostics)
 	e.fs.SetImages(func(p string) ([]byte, string, bool) {
+		if strings.Contains(p, "/"+name+"/") {
+			asked.Add(1)
+			seenMu.Lock()
+			if len(seen) < 4 {
+				seen = append(seen, p)
+			}
+			seenMu.Unlock()
+		}
 		if p == path {
+			served.Add(1)
 			return data, "image/png", true // a WebP behind a .png URL, as Slack serves it
 		}
 		return nil, "", false
@@ -846,9 +859,34 @@ func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
 	ok := e.wait(15*time.Second, func() bool { return e.a.images.Stats().Players > 0 })
 	e.settle(1500 * time.Millisecond) // every size's player, the rows' plugin renders
 	s := e.a.images.Stats()
-	t.Logf("emoji :%s: (an animated WebP behind a .png URL): %d players, %d animated images, playing %v", name, s.Players, s.Animated, ok)
+	inTL := 0
+	if tl := e.a.data.core.S.Timeline(ch); tl != nil {
+		for _, m := range tl.Msgs {
+			for _, ts := range posted {
+				if m.TS == ts {
+					inTL++
+				}
+			}
+		}
+	}
+	seenMu.Lock()
+	t.Logf("emoji :%s: (an animated WebP behind a .png URL): %d players, %d animated images, playing %v; %d of %d messages in the timeline; its image asked for %d times (%d served: %q, want %q); loaded %v, animation at 22/32/44 px %v/%v/%v",
+		name, s.Players, s.Animated, ok, inTL, len(posted), asked.Load(), served.Load(), seen, path, e.a.images.Loaded(all[name]),
+		e.a.images.IsAnimation(all[name], 22), e.a.images.IsAnimation(all[name], 32), e.a.images.IsAnimation(all[name], 44))
+	seenMu.Unlock()
 	return ok
 }
+
+// perfQuietStart and perfQuietFrame, set by perf_quiet_test.go (trees with
+// quiet frames, quiet.go), wire an idle pass's image cache as the window
+// does (wake at its animation repaints too) and draw a frame as the
+// window's loop does (the last frame's ops again when only an animation
+// asked for it; asked, askedAt: what the last frame asked for). nil (the
+// base tree): every frame is laid out.
+var (
+	perfQuietStart func(e *benchEnv, wake func()) (stop func())
+	perfQuietFrame func(e *benchEnv, asked bool, askedAt time.Time) (quiet bool)
+)
 
 // perfIdle leaves the client alone for d, the pointer off the window, and
 // draws a frame only when something asks for one, as the window does: the
@@ -865,6 +903,14 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 		}
 	})
 	defer e.a.images.SetInvalidate(func() {})
+	if perfQuietStart != nil && !every {
+		defer perfQuietStart(e, func() {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		})()
+	}
 	runtime.GC()
 	treeCounts := func() (all, same int) {
 		e.mu.Lock()
@@ -902,14 +948,17 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 	start := time.Now()
 	end := start.Add(d)
 	var last time.Time
+	var asked bool // what the last frame asked for (the window's FrameEvent.Asked)
+	var askedAt time.Time
+	quiet := 0
 	for {
 		if !last.IsZero() {
 			if every {
 				time.Sleep(time.Until(last.Add(16 * time.Millisecond)))
 			} else {
 				var timer <-chan time.Time
-				if wt, ok := e.r.WakeupTime(); ok {
-					timer = time.After(max(time.Until(wt), 0))
+				if asked {
+					timer = time.After(max(time.Until(askedAt), 0))
 				}
 				select {
 				case <-wake:
@@ -925,8 +974,15 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 			break
 		}
 		last = time.Now()
-		e.frame()
+		if perfQuietFrame != nil && !every {
+			if perfQuietFrame(e, asked, askedAt) {
+				quiet++
+			}
+		} else {
+			e.frame()
+		}
 		ds = append(ds, float64(time.Since(last).Microseconds())/1000)
+		askedAt, asked = e.r.WakeupTime()
 	}
 	cpu := procCPU() - c0
 	runtime.ReadMemStats(&ms1)
@@ -938,7 +994,7 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 		Trees: trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
 		Allocs: math.Round(float64(ms1.Mallocs-ms0.Mallocs) / n), AllocKB: math.Round(float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n),
 		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6,
-		Seconds: time.Since(start).Seconds(), AnimFrames: int(st1.Advances - st0.Advances), Players: st1.Players}
+		Seconds: time.Since(start).Seconds(), AnimFrames: int(st1.Advances - st0.Advances), Players: st1.Players, Quiet: quiet}
 	for _, d := range ds {
 		p.TotalMS += d
 		switch {
