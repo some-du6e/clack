@@ -38,10 +38,14 @@ import (
 // from Clack's data. Read one with `go tool trace <file>` (Go 1.24 or
 // newer; README "If Clack freezes").
 //
-// CLACK_FLIGHT_RECORDER=1 or ui.json's "flight_recorder": true turns it
-// on, CLACK_FLIGHT_RECORDER=0 off (flightRecorderWanted); unset, it
-// follows flightRecorderDefault. perf.yml's plugins job measures what it
-// costs (PERF_PLUGIN_RECORDER: channel-live passes with it off and on).
+// It is on: perf.yml's plugins job measures what it costs
+// (PERF_PLUGIN_RECORDER: channel-live passes with it off and on, in turns,
+// on one runner), and in run 43866883085 that was nothing the passes could
+// tell from noise: 9 passes each way, process CPU -0.1% and the sum of
+// the frames -0.6% (one pass to the next varies by ±2.5%), the longest
+// frame and p99 no higher, allocations -0.9%; its 5 s window was 0.7 MB,
+// written in 7 ms. CLACK_FLIGHT_RECORDER=0 or ui.json's
+// "flight_recorder": false turns it off (flightRecorderWanted).
 
 const (
 	slowTrace      = 100 * time.Millisecond // a task this long writes a trace
@@ -53,15 +57,18 @@ const (
 )
 
 // flightRecorderDefault is whether the recorder runs without being asked.
-const flightRecorderDefault = false
+const flightRecorderDefault = true
 
-// flightRecorderWanted: CLACK_FLIGHT_RECORDER=1 (or any value but 0, off,
-// false) turns the recorder on, =0 off; unset, ui.json's
+// flightRecorderWanted: CLACK_FLIGHT_RECORDER=0 (or off, false, no) turns
+// the recorder off and any other value on; unset, ui.json's
 // "flight_recorder" decides, then flightRecorderDefault.
-func flightRecorderWanted(pref bool) bool {
+func flightRecorderWanted(pref *bool) bool {
 	switch v := strings.ToLower(strings.TrimSpace(os.Getenv("CLACK_FLIGHT_RECORDER"))); v {
 	case "":
-		return pref || flightRecorderDefault
+		if pref != nil {
+			return *pref
+		}
+		return flightRecorderDefault
 	case "0", "off", "false", "no":
 		return false
 	default:
@@ -180,7 +187,7 @@ func (r *flightRecorder) run() {
 		}
 		took := time.Since(t0).Round(time.Millisecond)
 		if q.report != "" {
-			appendFile(q.report, fmt.Sprintf("\nExecution trace of the %v before this report (and its first seconds): %s (%.1f MB; go tool trace %s)\n", tracePeriod, name, float64(n)/1e6, name))
+			appendFile(q.report, fmt.Sprintf("\nExecution trace of the %v up to this report (the freeze's start included): %s (%.1f MB; go tool trace %s)\n", tracePeriod, name, float64(n)/1e6, name))
 			log.Printf("ui: the freeze report's execution trace: %s (%.1f MB, written in %v)", path, float64(n)/1e6, took)
 		} else {
 			log.Printf("ui: a %v task (%s); execution trace of the %v before its end: %s (%.1f MB, written in %v)", q.slow.Round(time.Millisecond), q.stage, tracePeriod, path, float64(n)/1e6, took)

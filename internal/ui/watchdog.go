@@ -10,6 +10,7 @@ import (
 	"runtime/metrics"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -69,14 +70,19 @@ type watchdog struct {
 	page  atomic.Pointer[string] // the route's page at the last frame
 
 	// rec is the execution-trace flight recorder (flightrec.go; nil =
-	// off). With it on, begin, next and end also time each stage (UI
-	// goroutine only, so no atomics), and a task of slowTrace or more asks
-	// it for a trace naming the stage that took longest.
-	rec       *flightRecorder
-	traceGap  time.Duration // between two slow-task traces (traceGap; shorter in tests)
-	stageAt   int64         // when the current stage began (now's clock)
-	longest   time.Duration
-	longStage *string
+	// off, or not started yet). With it on, begin, next and end also time
+	// each stage (UI goroutine only, so no atomics), and a task of
+	// slowTrace or more asks it for a trace naming the stage that took
+	// longest. recMu orders its start (on a goroutine of its own) against
+	// stop.
+	rec        atomic.Pointer[flightRecorder]
+	recMu      sync.Mutex
+	recStopped bool          // stop ran (recMu)
+	traceGap   time.Duration // between two slow-task traces (traceGap; shorter in tests)
+	timing     bool          // this task's stages are timed (the recorder was on at begin)
+	stageAt    int64         // when the current stage began (now's clock)
+	longest    time.Duration
+	longStage  *string
 
 	// written is called with each report's path (tests).
 	written func(path string)
@@ -106,18 +112,34 @@ func (w *watchdog) now() int64 { return awake.Now() }
 
 // startRecorder starts the flight recorder when it's wanted
 // (CLACK_FLIGHT_RECORDER, ui.json's flight_recorder; flightrec.go) and
-// reports are on. Before run.
-func (w *watchdog) startRecorder(pref bool) {
+// reports are on, on a goroutine of its own: starting the tracer stops the
+// world, which waits for every goroutine (a JS thread in wasm included),
+// and the UI goroutine never waits. The channel closes once it's on (or
+// didn't start).
+func (w *watchdog) startRecorder(pref *bool) <-chan struct{} {
+	done := make(chan struct{})
 	if w == nil || w.dir == "" || !flightRecorderWanted(pref) {
-		return
+		close(done)
+		return done
 	}
-	rec, err := startFlightRecorder(w.dir, w.traceGap)
-	if err != nil {
-		log.Printf("ui: the execution trace flight recorder didn't start: %v", err)
-		return
-	}
-	w.rec = rec
-	log.Printf("ui: the execution trace flight recorder is on: a task of %v or more writes the last %v to %s", slowTrace, tracePeriod, w.dir)
+	go func() {
+		defer close(done)
+		rec, err := startFlightRecorder(w.dir, w.traceGap)
+		if err != nil {
+			log.Printf("ui: the execution trace flight recorder didn't start: %v", err)
+			return
+		}
+		w.recMu.Lock()
+		if w.recStopped {
+			w.recMu.Unlock()
+			rec.stop()
+			return
+		}
+		w.rec.Store(rec)
+		w.recMu.Unlock()
+		log.Printf("ui: the execution trace flight recorder is on: a task of %v or more writes the last %v to %s", slowTrace, tracePeriod, w.dir)
+	}()
+	return done
 }
 
 // begin starts timing a task on the UI goroutine. Cheap: atomics only.
@@ -129,7 +151,7 @@ func (w *watchdog) begin(stage *string) {
 	w.epoch.Add(1)
 	now := w.now()
 	w.busy.Store(now)
-	if w.rec != nil {
+	if w.timing = w.rec.Load() != nil; w.timing {
 		w.stageAt, w.longest, w.longStage = now, 0, stage
 	}
 }
@@ -139,14 +161,14 @@ func (w *watchdog) next(stage *string) {
 	if w == nil {
 		return
 	}
-	if w.rec != nil {
+	if w.timing {
 		w.endStage(w.now())
 	}
 	w.stage.Store(stage)
 }
 
 // endStage counts the stage ending at now toward the task's longest (UI
-// goroutine, recorder on).
+// goroutine, w.timing).
 func (w *watchdog) endStage(now int64) {
 	if d := time.Duration(now - w.stageAt); d > w.longest {
 		w.longest, w.longStage = d, w.stage.Load()
@@ -158,19 +180,24 @@ func (w *watchdog) end() {
 	if w == nil {
 		return
 	}
-	if w.rec != nil {
+	if rec := w.rec.Load(); rec != nil {
 		if since := w.busy.Load(); since != 0 {
 			now := w.now()
-			w.endStage(now)
+			stage := w.stage.Load() // the recorder came on during the task: its last stage
+			if w.timing {
+				w.endStage(now)
+				stage = w.longStage
+			}
 			if d := time.Duration(now - since); d >= slowTrace {
-				stage := "?"
-				if w.longStage != nil {
-					stage = *w.longStage
+				name := "?"
+				if stage != nil {
+					name = *stage
 				}
-				w.rec.slowTask(d, stage)
+				rec.slowTask(d, name)
 			}
 		}
 	}
+	w.timing = false
 	w.busy.Store(0)
 }
 
@@ -252,12 +279,18 @@ func (w *watchdog) run() {
 	}
 }
 
-// stop ends run, and the flight recorder.
+// stop ends run, and the flight recorder (once a trace being written is
+// done).
 func (w *watchdog) stop() {
-	if w != nil {
-		close(w.quit)
-		w.rec.stop()
+	if w == nil {
+		return
 	}
+	close(w.quit)
+	w.recMu.Lock()
+	w.recStopped = true
+	rec := w.rec.Swap(nil)
+	w.recMu.Unlock()
+	rec.stop()
 }
 
 func (w *watchdog) stageName() string {
@@ -291,7 +324,7 @@ func (w *watchdog) report(since int64) (string, error) {
 		return "", err
 	}
 	w.prune(path)
-	w.rec.freeze(path) // the trace of the seconds before, beside it (flightrec.go)
+	w.rec.Load().freeze(path) // the trace of the seconds before, beside it (flightrec.go)
 	return path, nil
 }
 

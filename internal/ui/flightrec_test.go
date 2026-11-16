@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -63,12 +64,14 @@ func recWatchdog(t *testing.T, gap time.Duration) (wd *watchdog, traces chan str
 	t.Helper()
 	wd = newWatchdog(t.TempDir(), time.Now())
 	wd.traceGap = gap
-	wd.startRecorder(true)
-	if wd.rec == nil {
+	on := true
+	<-wd.startRecorder(&on)
+	rec := wd.rec.Load()
+	if rec == nil {
 		t.Fatal("the flight recorder didn't start")
 	}
 	traces = make(chan string, 8)
-	wd.rec.written = func(p string) { traces <- p }
+	rec.written = func(p string) { traces <- p }
 	t.Cleanup(wd.stop)
 	return wd, traces
 }
@@ -159,7 +162,7 @@ func TestFlightRecorderFreezeReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name := filepath.Base(p); !strings.Contains(string(b), "Execution trace of the 5s before this report") || !strings.Contains(string(b), "go tool trace "+name) {
+	if name := filepath.Base(p); !strings.Contains(string(b), "Execution trace of the 5s up to this report") || !strings.Contains(string(b), "go tool trace "+name) {
 		t.Errorf("the report doesn't name its trace %s:\n%.2000s", name, b)
 	}
 	wd.end()
@@ -202,31 +205,38 @@ func TestFlightRecorderPrune(t *testing.T) {
 	}
 }
 
-// The recorder is off unless asked for (flightRecorderDefault, measured);
-// CLACK_FLIGHT_RECORDER=1 turns it on and =0 off, over ui.json's pref.
+// The recorder is on unless turned off (flightRecorderDefault, measured):
+// CLACK_FLIGHT_RECORDER=0 turns it off and =1 on, over ui.json's
+// "flight_recorder", which counts only when set.
 func TestFlightRecorderWanted(t *testing.T) {
+	on, off := true, false
 	for _, c := range []struct {
 		env  string
-		pref bool
+		pref *bool
 		want bool
 	}{
-		{"", false, flightRecorderDefault},
-		{"", true, true},
-		{"1", false, true},
-		{"yes", false, true},
-		{"0", true, false},
-		{"off", true, false},
+		{"", nil, true},
+		{"", &off, false},
+		{"", &on, true},
+		{"1", &off, true},
+		{"yes", nil, true},
+		{"0", &on, false},
+		{"off", nil, false},
 	} {
 		t.Setenv("CLACK_FLIGHT_RECORDER", c.env)
 		if got := flightRecorderWanted(c.pref); got != c.want {
-			t.Errorf("CLACK_FLIGHT_RECORDER=%q, pref %v: %v, want %v", c.env, c.pref, got, c.want)
+			pref := "unset"
+			if c.pref != nil {
+				pref = fmt.Sprint(*c.pref)
+			}
+			t.Errorf("CLACK_FLIGHT_RECORDER=%q, ui.json %s: %v, want %v", c.env, pref, got, c.want)
 		}
 	}
 	// a watchdog without reports (no config directory) never starts one
 	wd := newWatchdog("", time.Now())
 	t.Setenv("CLACK_FLIGHT_RECORDER", "1")
-	wd.startRecorder(true)
-	if wd.rec != nil {
+	<-wd.startRecorder(&on)
+	if wd.rec.Load() != nil {
 		wd.stop()
 		t.Error("a recorder started with nowhere to write")
 	}
