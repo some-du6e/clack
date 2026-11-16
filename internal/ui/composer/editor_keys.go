@@ -110,10 +110,10 @@ func (e *Editor) command(gtx layout.Context, k key.Event) {
 			return
 		}
 		e.emit(EvCancel)
-		// with an overlay layer open (with none the shell's Escape came
-		// first) the Escape goes on to the layers, as a DOM keydown bubbles
-		// on: a Popover's RichTextInput or a modal's field closes its layer
-		slackc.PassEscape()
+		// in a plugin's layer the Escape goes on to it, as a DOM keydown
+		// bubbles on: a Popover's RichTextInput closes the Popover (the
+		// editor's Escape stays its own anywhere else)
+		slackc.PassEscape(gtx)
 	case key.NameTab:
 		e.tab(shift)
 	case key.NameDeleteBackward:

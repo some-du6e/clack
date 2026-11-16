@@ -312,7 +312,7 @@ func confirmationModal(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		return layout.Dimensions{}
 	}
 	var d layout.Dimensions
-	slackc.DrawLayer(gtx, st, slackc.LayerSpec{Area: &st.area, Home: st.m.FocusHome()}, func(gtx layout.Context) { d = st.m.Layout(gtx) })
+	slackc.DrawLayer(gtx, st, slackc.LayerSpec{Area: &st.area, Home: st.m.FocusHome(), Plugin: true}, func(gtx layout.Context) { d = st.m.Layout(gtx) })
 	return d
 }
 

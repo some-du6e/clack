@@ -89,20 +89,17 @@ func (m *Modal) stops() []event.Tag {
 // keys runs the modal's focus and keys for this frame; true when it closed.
 func (m *Modal) keys(gtx layout.Context) bool {
 	m.frames++
-	// In a window whose overlay layers route Escape and the focus
-	// (slackc layers.go: the main window, the huddle window) the stack gives
-	// the focus back when the modal closes, to what had it when it opened
-	// (not refocus's last composer), and an Escape from anywhere in the
-	// modal reaches it as the innermost layer holding the focus, after a
-	// Popover in its body: the modal reads it only on its own tags.
-	routed := slackc.EscapeRouted(gtx)
 	// the first focus waits for a live pass: laid out inside a plugin's
 	// tree (kit's ConfirmationModal) the modal is measured first with
 	// input off, where a FocusCmd goes nowhere and its autoFocus button
 	// never got the focus
 	if !m.focus && gtx.Source.Enabled() {
 		m.focus = true
-		if !m.overModal() && !routed {
+		// opened with the focus in a plugin's layer (kit's ConfirmationModal
+		// in a Popover, a modal a plugin's button opened), the window's
+		// overlay stack gives it back there (slackc layers.go), not
+		// refocus to the last composer
+		if !m.overModal() && !slackc.FocusInPluginLayer(gtx) {
 			m.prev = refocus.Last(gtx.Now)
 		}
 		if b := m.autoFocus(); b != nil {
@@ -126,12 +123,10 @@ func (m *Modal) keys(gtx layout.Context) bool {
 		return false
 	}
 	filters := []event.Filter{key.Filter{Name: key.NameTab, Optional: key.ModShift}}
-	if routed {
-		filters = append(filters, key.Filter{Focus: m, Name: key.NameEscape})
-		for _, t := range m.stops() {
-			filters = append(filters, key.Filter{Focus: t, Name: key.NameEscape})
-		}
-	} else {
+	if !slackc.EscapeToFocus(gtx) {
+		// with the focus in a plugin's layer (a Popover in its body, the
+		// modal itself inside a plugin's tree) the focused element there has
+		// Escape first, and its layer after it (slackc layers.go)
 		filters = append(filters, key.Filter{Name: key.NameEscape})
 	}
 	if m.o.OnCmdEnter != nil {

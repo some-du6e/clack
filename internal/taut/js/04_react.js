@@ -500,7 +500,11 @@ T.fnElement = (fnId, args) => {
 T.callHostFn = (id, args) => {
   const fn = typeof host.fnById === 'function' ? host.fnById(id) : null
   if (typeof fn !== 'function') throw new Error(`[Taut] function ${id} is gone`)
-  return Promise.resolve(fn(...decode(args || []))).then(encode)
+  const [a, events] = T.decodeArgs(args)
+  const r = fn(...a)
+  // a synthetic event's handler: what it did with it, at once (00_core.js)
+  if (events) return T.eventAnswer(events)
+  return Promise.resolve(r).then(encode)
 }
 T.patchedComponents = () => [...patchedNames]
 

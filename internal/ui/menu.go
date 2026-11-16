@@ -50,10 +50,18 @@ func (a *App) dismissTop() bool {
 }
 
 // dismissAt closes the overlay at i and drops it from the stack (one that
-// stays, like a Block Kit view backing out, shows itself again).
+// stays, like a Block Kit view backing out, shows itself again), unless
+// its CloseGuard kept it open: it stays where it is, under the speed
+// bump it put up (dropped, the dialog went behind its own "discard?"
+// confirm and cancelling that left no dialog).
 func (a *App) dismissAt(i int) {
-	if d, ok := a.overlays[i].(dismisser); ok {
+	o := a.overlays[i]
+	if d, ok := o.(dismisser); ok {
 		d.Dismiss()
+	}
+	if k, ok := o.(interface{ KeptOpen() bool }); ok && k.KeptOpen() {
+		a.Invalidate()
+		return
 	}
 	// the slot past the end goes too, as layoutOverlays clears it: an
 	// overlay left there stays reachable (a closed emoji picker held its

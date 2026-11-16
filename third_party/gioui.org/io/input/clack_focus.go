@@ -32,6 +32,19 @@ func (s Source) CanFocus(tag event.Tag) bool {
 	return ok && h.filter.focusable && h.key.visible
 }
 
+// AskedFocus reports whether tag asked for focus events (a key.FocusFilter
+// read) in the frame in progress, since the last Frame: at the end of a
+// frame's layout, whether a key.FocusCmd for it would keep the focus past
+// that frame (drawn widgets ask as they lay out). CanFocus answers for the
+// last frame, which a tag that went in this one still passes.
+func (s Source) AskedFocus(tag event.Tag) bool {
+	if !s.Enabled() || tag == nil {
+		return false
+	}
+	h, ok := s.r.handlers[tag]
+	return ok && h.nextFilter.focusable
+}
+
 // Within reports whether tag was drawn inside container in the last frame:
 // tag's event.Op is in container's clip area or in one nested in it. An op
 // outside every clip area is inside nothing. Deferred ops (op.Defer) run

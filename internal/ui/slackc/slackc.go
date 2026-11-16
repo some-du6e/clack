@@ -313,6 +313,15 @@ type ResultBridge interface {
 	DispatchResult(target int64, event []byte, done func(propagationStopped bool))
 }
 
+// EventBridge is implemented by bridges that call a JS function prop with
+// a DOM event JS makes React's synthetic one (args carry {"$event":
+// fields}: the handler can call stopPropagation and preventDefault) and
+// tell done, on any goroutine, whether the handler stopped it
+// (JSFunc.CallEvent). In order with Dispatch's events.
+type EventBridge interface {
+	CallEvent(fn int64, args []byte, done func(stopped bool))
+}
+
 // NestedBridge is implemented by bridges that can mount a root inside
 // another root's React tree (a portal under the host node parentK of
 // root parent), so React context flows from a parent patch into the
@@ -679,7 +688,7 @@ var lastViewport struct {
 func Frame(gtx layout.Context) {
 	curClock = &mainClock
 	mainClock.begin(now(gtx))
-	mainClock.layers.begin(gtx, true)
+	mainClock.layers.begin(gtx)
 	windowSize = gtx.Constraints.Max
 	pushDocument()
 	b := bridge()

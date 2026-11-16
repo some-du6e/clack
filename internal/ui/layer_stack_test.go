@@ -11,6 +11,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"image"
 	"slices"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"gioui.org/io/key"
+	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -94,6 +96,18 @@ type layerEnv struct {
 
 func newLayerEnv(t *testing.T, names ...string) *layerEnv {
 	t.Helper()
+	e := newNativeEnv(t)
+	fb := &escBridge{renders: map[string]uint64{}}
+	slackc.SetBridge(fb)
+	slackc.SetPatched(names)
+	t.Cleanup(func() { slackc.Reset(); slackc.SetBridge(nil); slackc.SetPatched(nil) })
+	e.fb = fb
+	return e
+}
+
+// newNativeEnv is the main window on a channel with no plugins at all.
+func newNativeEnv(t *testing.T) *layerEnv {
+	t.Helper()
 	fs, err := fakeslack.Start(fakeslack.Small)
 	if err != nil {
 		t.Fatal(err)
@@ -108,11 +122,7 @@ func newLayerEnv(t *testing.T, names ...string) *layerEnv {
 	if pe.a.overlayOpen() {
 		t.Fatal("an overlay is open after boot")
 	}
-	fb := &escBridge{renders: map[string]uint64{}}
-	slackc.SetBridge(fb)
-	slackc.SetPatched(names)
-	t.Cleanup(func() { slackc.Reset(); slackc.SetBridge(nil); slackc.SetPatched(nil) })
-	return &layerEnv{pe, fb, ch}
+	return &layerEnv{pe, nil, ch}
 }
 
 // rootOf waits for the plugin root of component name.
@@ -341,5 +351,214 @@ func TestDialogOverPopover(t *testing.T) {
 	}
 	if k := e.fb.escKeydowns(); !slices.Contains(k, "12") {
 		t.Errorf("Escape keydowns dispatched at %v; want one at the dialog's focused input (12)", k)
+	}
+}
+
+// Without plugins Escape is as it always was: the shell's binding, read
+// first in the frame, closes the topmost overlay (dismissTop). A menu or
+// a dialog opened from inside Channel details is its own overlay on top,
+// and Escape closes it, not the details dialog under it (whose own
+// Escape reader, given the key, closed itself and left the menu floating
+// over the page); the next Escape closes Channel details.
+func TestEscapeClosesWhatChannelDetailsOpenedFirst(t *testing.T) {
+	e := newNativeEnv(t)
+	var prefs map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(`{"allow_calls":true,"calls_apps":{"video":[{"id":"A5GE9BMQC","name":"Zoom"},{"id":"AMEET0001","name":"Google Meet"}]}}`), &prefs)
+	e.a.Core().SetTeamPrefs(prefs)
+	e.a.OpenDetails(e.ch)
+	e.settle(500 * time.Millisecond)
+	d := topDetails(t, e.perfEnv)
+	e.until("the call button's menu", 10*time.Second, func() bool { vis, _, caret, _ := d.CallButton(); return vis && caret })
+	d.PressCall()
+	e.until("the call menu", 5*time.Second, func() bool { return d.CallMenu() != nil })
+	m := d.CallMenu()
+	e.settle(300 * time.Millisecond)
+	e.escape()
+	if d.Closed() {
+		t.Fatal("Escape over the call menu closed Channel details under it")
+	}
+	if !m.Dismissed() {
+		t.Error("Escape didn't close the call menu over Channel details")
+	}
+
+	// the "Start a call?" confirm it opens
+	d.PressCall()
+	e.until("the call menu again", 5*time.Second, func() bool { return d.CallMenu() != nil })
+	var meet func()
+	for _, it := range d.CallMenu().Items() {
+		if it.Label == "Google Meet" {
+			meet = it.Do
+		}
+	}
+	if meet == nil {
+		t.Fatal("no Google Meet row in the call menu")
+	}
+	d.CallMenu().Dismiss()
+	e.settle(100 * time.Millisecond)
+	meet()
+	e.until("Start a call?", 5*time.Second, func() bool { return d.CallConfirm() != nil })
+	e.settle(300 * time.Millisecond)
+	e.escape()
+	if d.Closed() {
+		t.Fatal("Escape over \"Start a call?\" closed Channel details under it")
+	}
+	if d.CallConfirm() != nil {
+		t.Error("Escape didn't close \"Start a call?\" over Channel details")
+	}
+	if len(d.CallsOpened()) != 0 {
+		t.Fatalf("a call was opened: %v", d.CallsOpened())
+	}
+	e.escape()
+	if !d.Closed() {
+		t.Error("Escape with nothing over Channel details didn't close it")
+	}
+}
+
+// The colour popover Preferences' Appearance opens (a custom theme
+// colour's edit button) takes no focus; the focus stays on the dialog.
+// Escape closes the popover, not Preferences (its own reader, Focus-bound
+// on the dialog, read it first and left the popover over the page,
+// still applying colours); the next Escape closes Preferences.
+func TestEscapeClosesPreferencesColourPopoverFirst(t *testing.T) {
+	e := newNativeEnv(t)
+	e.a.showPrefs("appearance")
+	e.settle(500 * time.Millisecond)
+	prefs, ok := topOverlay[*popups.Modal](e.a)
+	if !ok || prefs.Title() != "Preferences" {
+		t.Fatal("Preferences didn't open")
+	}
+	p := newColorPopover(e.a, image.Pt(400, 300), "#611F69", func(string) {}) // as "Edit … color" does
+	e.a.ShowOverlay(p)
+	e.settle(300 * time.Millisecond)
+	e.escape()
+	if prefs.Dismissed() {
+		t.Fatal("Escape on the colour popover closed Preferences under it")
+	}
+	if slices.Contains(e.a.overlays, Overlay(p)) && !p.Dismissed() {
+		t.Error("Escape didn't close the colour popover over Preferences")
+	}
+	e.escape()
+	if !prefs.Dismissed() {
+		t.Error("Escape with the popover gone didn't close Preferences")
+	}
+}
+
+// A menu opened over a modal (Edit profile's) closes on Escape first; the
+// modal stays for the next one.
+func TestEscapeClosesMenuOverEditProfileFirst(t *testing.T) {
+	e := newNativeEnv(t)
+	ep := popups.OpenEditProfile(e.a, popups.EditProfileOpts{})
+	e.settle(400 * time.Millisecond)
+	m := popups.NewMenu(e.a, image.Pt(500, 300), []popups.MenuItem{{Label: "One"}, {Label: "Two"}})
+	e.a.ShowOverlay(m)
+	e.settle(300 * time.Millisecond)
+	e.escape()
+	if ep.Dismissed() {
+		t.Fatal("Escape over a menu closed the Edit profile modal under it")
+	}
+	if !m.Dismissed() {
+		t.Error("Escape didn't close the menu over Edit profile")
+	}
+	e.escape()
+	if !ep.Dismissed() {
+		t.Error("Escape with the menu gone didn't close Edit profile")
+	}
+}
+
+// A modal whose CloseGuard keeps it open (unsaved edits: its speed bump
+// goes up over it) stays in the shell's stack on Escape: dropped, it
+// went behind its own "discard?" confirm, and cancelling that left no
+// dialog.
+func TestEscapeKeepsGuardedModal(t *testing.T) {
+	e := newNativeEnv(t)
+	asked := 0
+	m := popups.NewModal(e.a, popups.ModalOpts{Title: "Guarded", Width: 400,
+		Body:       func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(300, 80)} },
+		CloseGuard: func() bool { asked++; return false }})
+	e.a.ShowOverlay(m)
+	e.settle(300 * time.Millisecond)
+	e.escape()
+	if asked != 1 {
+		t.Fatalf("Escape asked the guard %d times; want once", asked)
+	}
+	if m.Dismissed() || !slices.Contains(e.a.overlays, Overlay(m)) {
+		t.Error("the guard kept the modal open and Escape dropped it from the window's overlays anyway")
+	}
+	m.Close()
+	e.settle(200 * time.Millisecond)
+}
+
+// A hover peek never takes the focus, so it has none to give back: one
+// that opens and closes with the focus nowhere leaves it nowhere (it was
+// an overlay layer, and its close focused the channel's composer).
+func TestHoverPeekGivesNoFocus(t *testing.T) {
+	e := newNativeEnv(t)
+	e.r.Source().Execute(key.FocusCmd{})
+	e.settle(200 * time.Millisecond)
+	if !e.r.Source().Focused(nil) {
+		t.Fatal("something took the focus back")
+	}
+	pop := popups.NewPopover(e.a, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(200, 100)} },
+		popups.PopoverOpts{Anchor: image.Rect(100, 100, 130, 130), Peek: true})
+	e.a.ShowOverlay(pop)
+	e.settle(300 * time.Millisecond)
+	pop.Dismiss()
+	e.settle(300 * time.Millisecond)
+	if e.composerFocused() || !e.r.Source().Focused(nil) {
+		t.Errorf("a hover peek came and went: the focus is on %v (composer %v); want nowhere", e.r.Source().FocusTag(), e.composerFocused())
+	}
+}
+
+// A modal opened from a menu item gives the focus back, when it closes,
+// to what had it before the menu opened: the thread pane's reply
+// composer here, not the channel's (the menu, which had the focus when
+// the modal opened, was gone).
+func TestModalFromMenuGivesFocusBackToThreadComposer(t *testing.T) {
+	e := threadsAuditEnv(t, false)
+	ch, root := fakeslack.ThreadsAuditChannel, fakeslack.ThreadsAuditLong
+	e.openChannel(ch)
+	e.a.OpenThread(ch, root)
+	e.until("the thread", 15*time.Second, func() bool {
+		tv := e.threadView(ch, root)
+		return tv != nil && tv.ContentHeight() >= 0 && len(tv.Channel()) > 0
+	})
+	focused := func(k string) bool {
+		c := e.a.convos[k]
+		if c == nil {
+			return false
+		}
+		f, ok := c.comp.(interface{ Focused() bool })
+		return ok && f.Focused()
+	}
+	e.a.FocusThreadComposer(ch, root)
+	e.settle(300 * time.Millisecond)
+	if !focused(ch + "/" + root) {
+		t.Fatal("the thread composer didn't take the focus")
+	}
+	var modal *popups.Modal
+	m := popups.NewMenu(e.a, image.Pt(600, 400), []popups.MenuItem{{Label: "Custom time", Do: func() {
+		modal = popups.NewModal(e.a, popups.ModalOpts{Title: "Custom time", Width: 400,
+			Body:    func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(300, 80)} },
+			Buttons: []*popups.ModalButton{{Label: "Cancel", Do: func() bool { return true }}}})
+		e.a.ShowOverlay(modal)
+	}}})
+	e.a.ShowOverlay(m)
+	e.settle(300 * time.Millisecond)
+	e.key(key.NameDownArrow, 0)
+	e.settle(100 * time.Millisecond)
+	e.key(key.NameReturn, 0)
+	e.until("the modal the menu item opened", 5*time.Second, func() bool { return modal != nil })
+	e.settle(300 * time.Millisecond)
+	if focused(ch + "/" + root) {
+		t.Fatal("the modal didn't take the focus from the thread composer")
+	}
+	e.key(key.NameEscape, 0)
+	e.settle(400 * time.Millisecond)
+	if !modal.Dismissed() {
+		t.Fatal("Escape didn't close the modal")
+	}
+	if !focused(ch + "/" + root) {
+		t.Errorf("the modal opened from the menu closed: the focus went to %v (channel composer %v); want the thread composer",
+			e.r.Source().FocusTag(), focused(ch+"/"))
 	}
 }

@@ -6,15 +6,16 @@ import (
 	"gioui.org/io/event"
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/ui/refocus"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // The shell's overlays (menus, pickers, Slack's modals, the profile, Block
 // Kit views) are layers in the main window's overlay stack (slackc
-// layers.go), with the plugins' Popovers, dialogs and overlay roots. An
-// Escape no widget took goes to the innermost layer holding the focus,
-// else the topmost, and to the shell's "Close / mark as read" only with
-// none open; a layer that closes gives the focus back to what had it.
+// layers.go), with the plugins' Popovers, dialogs and overlay roots. Their
+// Escape stays the shell's (its binding closes the topmost, dismissTop);
+// a plugin's layer opened over them, or from inside one, gets it first.
+// A layer that closes gives the focus back to what had it when it opened.
 
 // shellLayer is one shell overlay as a layer.
 type shellLayer struct {
@@ -23,9 +24,9 @@ type shellLayer struct {
 	area int
 }
 
-// LayerEscape (slackc.Layer) is an Escape that reached the overlay: it
-// closes it as the shell's Escape binding closed the topmost one
-// (dismissTop).
+// LayerEscape (slackc.Layer) is an Escape that reached the overlay (one
+// a plugin's layer it opened passed on): it closes it as the shell's
+// Escape binding closes the topmost (dismissTop).
 func (l *shellLayer) LayerEscape() { l.a.dismissOverlay(l.o) }
 
 // invisible reports an overlay that draws nothing (the popups pump): no
@@ -35,10 +36,18 @@ func invisible(o Overlay) bool {
 	return ok && inv.Invisible()
 }
 
+// peeking reports a hover peek (a rail tab's, the Focus button's, a peek
+// menu until it's pinned): no layer, as it never takes the focus and has
+// none to give back.
+func peeking(o Overlay) bool {
+	p, ok := o.(interface{ Peeking() bool })
+	return ok && p.Peeking()
+}
+
 // drawOverlay lays out overlay o as a layer: inside its area, so a focus
 // in it is in the layer, with its focus home when it has one.
 func (a *App) drawOverlay(gtx layout.Context, o Overlay) {
-	if invisible(o) || !reflect.TypeOf(o).Comparable() {
+	if invisible(o) || peeking(o) || !reflect.TypeOf(o).Comparable() {
 		o.Layout(gtx)
 		return
 	}
@@ -83,10 +92,22 @@ func (a *App) dismissOverlay(o Overlay) {
 	}
 }
 
+// focusFallback is the main window's focus of last resort when the last
+// of its overlay layers that held the focus closes and what had it can't
+// take it back (slackc.FocusFallback): the composer that had it last, if
+// it's still drawn (refocus, as a modal gives it back), else the current
+// conversation's.
+func (a *App) focusFallback(gtx layout.Context) {
+	if t := refocus.Last(gtx.Now); t != nil {
+		refocus.Restore(t)
+		a.Invalidate()
+		return
+	}
+	a.focusComposer()
+}
+
 // focusComposer focuses the current conversation's composer (the edit in
-// progress first), as a navigation does: the main window's focus of last
-// resort when its overlay layers close and what had the focus can't take
-// it back (slackc.FocusFallback).
+// progress first), as a navigation does.
 func (a *App) focusComposer() {
 	ch := a.router.Current().Channel()
 	if ch == "" || a.data == nil || a.data.core == nil {

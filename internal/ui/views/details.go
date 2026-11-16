@@ -33,6 +33,7 @@ import (
 	"github.com/some-du6e/clack/internal/ui/hovercard"
 	"github.com/some-du6e/clack/internal/ui/popups"
 	"github.com/some-du6e/clack/internal/ui/richview"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -682,7 +683,10 @@ func (d *ChannelDetails) writing() bool {
 // update handles keys, clicks and finished writes before drawing.
 func (d *ChannelDetails) update(gtx C) {
 	d.inviteOnOpen()
-	for {
+	// with the focus in a plugin's layer over the dialog, its focused
+	// element has Escape first (slackc layers.go): read here, whatever has
+	// the focus, it closed the dialog under the layer
+	for !slackc.EscapeToFocus(gtx) {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
 		if !ok {
 			break

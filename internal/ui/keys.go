@@ -173,12 +173,12 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 			escOwned = true
 		}
 	}
-	// with an overlay layer open (a menu, a modal, a plugin's Popover or
-	// dialog) Escape is the layers', as the DOM bubbles a keydown up to the
-	// modal holding the focus: none of the Escape bindings take it
-	// (slackc.RouteEscape gives it to the innermost layer holding the
-	// focus, else the topmost)
-	layerEsc := slackc.LayerOpen(gtx)
+	// with the focus in a plugin's layer (a kit Popover, a plugin's
+	// dialog) its focused element gets Escape first, as in the DOM (a
+	// plugin's input sends it to JS, whose listeners can stop it): none of
+	// the Escape bindings take it, and what nothing stopped goes on to the
+	// layer at the end of the frame (slackc layers.go)
+	pluginEsc := slackc.EscapeToFocus(gtx)
 	// a modal dialog makes the page inert (its keys go to it), and so does
 	// a replayed introduction (intro.go)
 	if !slackc.ModalOpen() && a.intro == nil {
@@ -188,7 +188,7 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 			compEd = a.secComposerEd(gtx)
 		}
 		for _, sc := range s.list {
-			if sc.name == key.NameEscape && (layerEsc || escOwned && sc.mods == 0) {
+			if sc.name == key.NameEscape && (pluginEsc || escOwned && sc.mods == 0) {
 				continue
 			}
 			if activity && sc.mods&key.ModAlt != 0 && (sc.name == key.NameUpArrow || sc.name == key.NameDownArrow) &&
@@ -218,6 +218,12 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 		if ke.State != key.Press {
 			continue
 		}
+		// a plugin's layer it goes on to (one opened over the shell's, or
+		// from inside one) closes first; else the binding, as always
+		if slackc.EscapeToLayer(gtx, ke, globalKeys) {
+			a.Invalidate()
+			continue
+		}
 		for _, sc := range s.list {
 			if sc.name == ke.Name && sc.mods == ke.Modifiers {
 				sc.do(a)
@@ -229,6 +235,23 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 	if a.clipboard != "" {
 		gtx.Execute(clipboard.WriteCmd{Type: "application/text", Data: io.NopCloser(strings.NewReader(a.clipboard))})
 		a.clipboard = ""
+	}
+}
+
+// escape runs the Escape binding for ke (Close / mark as read, Shift+Esc)
+// as process does: slackc's ShellEscape, for an Escape the shell left to
+// a plugin's layer that had closed by the end of the frame, or one that
+// went past the layers it was aimed at (an earlier Escape closed them).
+func (s *shortcuts) escape(a *App, ke key.Event) {
+	if slackc.ModalOpen() || a.intro != nil {
+		return
+	}
+	for _, sc := range s.list {
+		if sc.name == ke.Name && sc.mods == ke.Modifiers {
+			sc.do(a)
+			a.Invalidate()
+			return
+		}
 	}
 }
 

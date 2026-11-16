@@ -51,6 +51,25 @@ func (f JSFunc) CallResult(done func(result any, err error), args ...any) {
 	})
 }
 
+// CallEvent calls the JS function (an onKeyDown prop) with a DOM event
+// it gets as React's synthetic one, whose stopPropagation and
+// preventDefault it can call, and tells done (any goroutine) whether it
+// stopped it. A bridge that can't tell (EventBridge) gets the bare event,
+// and done hears false.
+func (f JSFunc) CallEvent(ev Props, done func(stopped bool)) {
+	b := bridge()
+	eb, ok := b.(EventBridge)
+	switch {
+	case f.ID == 0 || b == nil:
+		done(false)
+	case ok:
+		eb.CallEvent(f.ID, encodeArgs([]any{Props{"$event": ev}}), done)
+	default:
+		b.Call(f.ID, encodeArgs([]any{ev}), nil)
+		done(false)
+	}
+}
+
 var errNoBridge = errors.New("slackc: no plugin runtime")
 
 // Element is a React element passed as a prop ({"$el":[…]}), e.g. a

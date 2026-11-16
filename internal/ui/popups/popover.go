@@ -75,6 +75,11 @@ func NewPopover(h Host, content layout.Widget, o PopoverOpts) *Popover {
 // Rect is the card's last laid-out rectangle (window coords).
 func (p *Popover) Rect() image.Rectangle { return p.rect }
 
+// Peeking reports a hover peek (PopoverOpts.Peek): it never takes the
+// focus, so it has none to give back, and isn't one of the window's
+// overlay layers (the shell's dismissTop closes it on Escape).
+func (p *Popover) Peeking() bool { return p.o.Peek }
+
 // Layout draws the popover.
 func (p *Popover) Layout(gtx layout.Context) layout.Dimensions {
 	drain()

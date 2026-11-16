@@ -760,12 +760,14 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	}
 
 	// Enter, the arrows and Escape reach the plugin before the editor, as
-	// in a browser input: the onKeyDown prop, then a DOM keydown/keyup at
+	// in a browser input: the onKeyDown prop (React's synthetic event: it
+	// can stopPropagation and preventDefault), then a DOM keydown/keyup at
 	// the component's node that bubbles through the plugin's elements
 	// around it (api.modal's wrapper, a form's onKeyDown). Enter without an
 	// onKeyDown of its own also submits an enclosing <form> (implicit
-	// submission). An Escape no listener stopped goes on to the layer the
-	// field is in (a Popover closes: slackc layers.go).
+	// submission). An Escape neither stopped goes on to the layer the
+	// field is in (a Popover closes: slackc layers.go); one the prop
+	// stopped (a search field clearing its query) leaves it open.
 	if gtx.Focused(ed) {
 		mods := key.ModShift | key.ModCtrl | key.ModAlt | key.ModSuper
 		own := hasFunc(p, "onKeyDown")
@@ -785,9 +787,19 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 				continue
 			}
 			if ke.State == key.Press && own {
-				h.Call("onKeyDown", keyEvent("keydown", string(ke.Name), ke.Modifiers, ed.Text()))
+				var esc *slackc.EscapePress // its two answers: the prop's, the node's
+				if ke.Name == key.NameEscape {
+					esc = slackc.PressEscape(gtx, ke, 2)
+				}
+				h.CallEvent("onKeyDown", keyEvent("keydown", string(ke.Name), ke.Modifiers, ed.Text()), esc.Answer)
+				if esc != nil {
+					h.DispatchKeyAs(ke, esc)
+				} else {
+					h.DispatchKey(ke)
+				}
+			} else {
+				h.DispatchKey(ke)
 			}
-			h.DispatchKey(ke)
 			if ke.State == key.Press && !own && (ke.Name == key.NameReturn || ke.Name == key.NameEnter) && ke.Modifiers == 0 {
 				h.SubmitForm()
 			}

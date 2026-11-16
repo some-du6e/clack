@@ -16,6 +16,7 @@ import (
 	"gioui.org/op/paint"
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -69,8 +70,12 @@ func (p *colorPopover) Layout(gtx layout.Context) layout.Dimensions {
 	// outside the card: close (applying a typed hex, like onBlur)
 	defer clip.Rect{Max: win}.Push(gtx.Ops).Pop()
 	event.Op(gtx.Ops, p)
+	filters := []event.Filter{pointer.Filter{Target: p, Kinds: pointer.Press}}
+	if !slackc.EscapeToFocus(gtx) { // else a plugin's layer has the focus, and Escape first (slackc layers.go)
+		filters = append(filters, key.Filter{Name: key.NameEscape})
+	}
 	for {
-		e, ok := gtx.Event(pointer.Filter{Target: p, Kinds: pointer.Press}, key.Filter{Name: key.NameEscape})
+		e, ok := gtx.Event(filters...)
 		if !ok {
 			break
 		}

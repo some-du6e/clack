@@ -1007,16 +1007,23 @@ func domKey(n key.Name, m key.Modifiers) (string, string) {
 
 func (v *View) dispatchKey(t *box, typ string, ke key.Event) {
 	// A focused plugin element's Escape keydown, once JS has it, goes on
-	// to the window's overlay layers unless a listener stopped it, as the
-	// DOM's bubbles up to react-modal's content (layers.go).
-	var done func(stopped bool)
+	// to the layer it was aimed at as it was pressed unless a listener
+	// stopped it, as the DOM's bubbles up to react-modal's content
+	// (layers.go); with no answer in time, as unstopped.
+	var p *EscapePress
 	if typ == "keydown" && ke.Name == key.NameEscape {
-		c := curClock
-		done = func(stopped bool) {
-			if !stopped {
-				c.bubble(true)
-			}
-		}
+		p = pressEscape(ke, focusTag(curClock.layers.src), true)
+		p.wait()
+	}
+	v.dispatchKeyAs(t, typ, ke, p)
+}
+
+// dispatchKeyAs dispatches a keydown/keyup, telling p (an Escape keydown's
+// press; nil: none) whether a listener stopped it.
+func (v *View) dispatchKeyAs(t *box, typ string, ke key.Event, p *EscapePress) {
+	var done func(stopped bool)
+	if p != nil {
+		done = p.Answer
 	}
 	if !dispatching() {
 		if done != nil {

@@ -220,6 +220,7 @@ type Modal struct {
 	// keyboard focus (focus.go)
 	ring   bool      // the focused button shows Slack's focus ring
 	prev   event.Tag // focused before the modal opened (refocus)
+	kept   bool      // CloseGuard kept it open at the last Dismiss
 	last   event.Tag // the stop that had the focus last
 	wasTop bool
 	ptr    int // pointer tag: a press anywhere hides the ring
@@ -274,11 +275,18 @@ func (m *Modal) Press(label string) bool {
 
 // Dismiss closes the modal, unless CloseGuard keeps it open.
 func (m *Modal) Dismiss() {
+	m.kept = false
 	if m.o.CloseGuard != nil && !m.done && !m.o.CloseGuard() {
+		m.kept = true
 		return
 	}
 	m.base.Dismiss()
 }
+
+// KeptOpen reports whether CloseGuard kept the modal open at the last
+// Dismiss (its speed bump is up over it): the window keeps it in its
+// stack, where an Escape that reached it leaves it.
+func (m *Modal) KeptOpen() bool { return m.kept && !m.Dismissed() }
 
 // Close closes the modal without asking CloseGuard (the owner's own
 // close: the speed bump's discard).

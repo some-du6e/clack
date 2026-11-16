@@ -13,7 +13,8 @@ import (
 )
 
 // Clack patch 34: FocusTag is the focused tag; CanFocus says whether a
-// tag drawn with a focus filter last frame would keep the focus; Within
+// tag drawn with a focus filter last frame would keep the focus, and
+// AskedFocus whether one asked in the frame in progress; Within
 // follows the clip areas: a field drawn inside a layer's area is within
 // the layer, one beside it isn't, and one drawn from a deferred macro is
 // within only what that macro draws around it.
@@ -73,6 +74,15 @@ func TestFocusTagCanFocusWithin(t *testing.T) {
 		t.Errorf("CanFocus: field %v, layer %v, an unknown tag %v, nil %v; want true, true, false, false",
 			s.CanFocus(field), s.CanFocus(layer), s.CanFocus(new(int)), s.CanFocus(nil))
 	}
+	// AskedFocus: this frame's asks, not the last frame's
+	if s.AskedFocus(field) {
+		t.Error("AskedFocus(field) before anything asked in this frame")
+	}
+	events(&r, -1, key.FocusFilter{Target: field})
+	if !s.AskedFocus(field) || s.AskedFocus(beside) || s.AskedFocus(nil) {
+		t.Errorf("AskedFocus: field %v (asked), beside %v (not yet), nil %v; want true, false, false",
+			s.AskedFocus(field), s.AskedFocus(beside), s.AskedFocus(nil))
+	}
 	frame(false) // the field isn't drawn: Gio drops its focus, and it can't take it back
 	if s.CanFocus(field) {
 		t.Error("CanFocus(field) after a frame that didn't draw it")
@@ -80,7 +90,7 @@ func TestFocusTagCanFocusWithin(t *testing.T) {
 	if s.FocusTag() != nil {
 		t.Errorf("FocusTag after the focused field went = %v, want nil", s.FocusTag())
 	}
-	if s.Disabled().FocusTag() != nil || s.Disabled().CanFocus(layer) || s.Disabled().Within(layer, layer) {
+	if s.Disabled().FocusTag() != nil || s.Disabled().CanFocus(layer) || s.Disabled().AskedFocus(layer) || s.Disabled().Within(layer, layer) {
 		t.Error("a disabled Source answers")
 	}
 }

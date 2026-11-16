@@ -13,4 +13,5 @@ import (
 
 func focusTag(input.Source) event.Tag                { return nil }
 func canFocus(input.Source, event.Tag) bool          { return false }
+func askedFocus(input.Source, event.Tag) bool        { return false }
 func within(input.Source, event.Tag, event.Tag) bool { return false }

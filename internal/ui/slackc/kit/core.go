@@ -586,8 +586,15 @@ func (l *layer) float(gtx layout.Context, org *origin, win image.Point, call op.
 				org.learn(pe.Position.X+float32(off.X), pe.Position.Y+float32(off.Y))
 			}
 		}
+		// its Escape: the window's overlay stack's where it routes them
+		// (slackc layers.go: once, and the focused element's listeners
+		// first), else its own
+		filters := []event.Filter{key.FocusFilter{Target: &l.focus}}
+		if !slackc.EscapeRouted(gtx) {
+			filters = append(filters, key.Filter{Focus: &l.focus, Name: key.NameEscape})
+		}
 		for {
-			e, ok := gtx.Event(key.FocusFilter{Target: &l.focus}, key.Filter{Focus: &l.focus, Name: key.NameEscape})
+			e, ok := gtx.Event(filters...)
 			if !ok {
 				break
 			}
@@ -636,7 +643,8 @@ func (l *layer) float(gtx layout.Context, org *origin, win image.Point, call op.
 // popover does. Gio's last FocusCmd wins: the layer's, run after the
 // content, took the caret from the field (no caret, typing went nowhere).
 func (l *layer) open(gtx layout.Context, lay slackc.Layer) {
-	slackc.OpenLayer(gtx, lay, slackc.LayerSpec{Area: &l.focus, Home: &l.focus})
+	// a plugin's layer; its Escape asks JS to close it (onClose)
+	slackc.OpenLayer(gtx, lay, slackc.LayerSpec{Area: &l.focus, Home: &l.focus, Plugin: true, Async: true})
 	if !l.opened && gtx.Source.Enabled() { // a measure pass's FocusCmd goes nowhere
 		gtx.Execute(key.FocusCmd{Tag: &l.focus})
 		l.opened = true

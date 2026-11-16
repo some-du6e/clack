@@ -55,7 +55,7 @@ func (w *SubWindow) FrameBg(gtx layout.Context, classes string, fg, bg color.NRG
 	saved, savedSize, savedBg, savedClock := stack, windowSize, subBg, curClock
 	w.c.begin(now(gtx))
 	curClock = &w.c
-	w.c.layers.begin(gtx, false)
+	w.c.layers.begin(gtx)
 	subBg = bg
 	st := css.Initial(fg)
 	root := &docEl{tag: "div", class: strings.Fields(classes)}

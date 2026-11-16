@@ -264,9 +264,9 @@ func (s *Stack) keys(gtx C) {
 	}
 	if !s.focused {
 		s.focused = true
-		if !slackc.EscapeRouted(gtx) {
-			// where the window's overlay layers run (slackc layers.go) they
-			// give the focus back, to what had it when the stack opened
+		if !slackc.FocusInPluginLayer(gtx) {
+			// opened from a plugin's layer, the window's overlay stack gives
+			// the focus back there (slackc layers.go)
 			s.prev = refocus.Last(gtx.Now)
 		}
 		st := s.stops()

@@ -25,12 +25,13 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/unit"
 
+	"github.com/some-du6e/clack/internal/ui/composer"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // popEnv lays out a plugin tree as a window's frame does (the frame lock,
-// slackc.Frame, the page, slackc.RouteEscape last), beside a focusable
-// stand-in for the composer.
+// slackc.Frame, the page, slackc.RouteEscape, then composer.KeepFocus),
+// beside a focusable stand-in for the composer.
 type popEnv struct {
 	t     *testing.T
 	log   *callLog
@@ -82,6 +83,7 @@ func (e *popEnv) frame() {
 		e.v.Layout(gtx, e.nodes, "PluginPanel", nil, nil)
 	}
 	slackc.RouteEscape(gtx)
+	composer.KeepFocus(gtx)
 	e.r.Frame(&e.ops)
 }
 
@@ -133,6 +135,9 @@ func TestPopoverEscapeCloses(t *testing.T) {
 	if !e.called(onClose) {
 		t.Error("Escape with the popover focused didn't close it (no onClose)")
 	}
+	// the plugin kept it open: past the time JS has to close it, the next
+	// Escape is its own again
+	e.now = e.now.Add(time.Second)
 	e.key(key.NameEscape, key.ModShift)
 	if !e.called(onClose) {
 		t.Error("Shift+Escape didn't close the popover (no onClose)")
@@ -303,5 +308,104 @@ func TestPopoverInputCanStopEscape(t *testing.T) {
 	e.key(key.NameEscape, 0)
 	if !e.called(onClose) {
 		t.Error("no listener stopped the input's Escape and the popover didn't close")
+	}
+}
+
+// eventLog is a bridge whose function calls with a DOM event answer
+// stop (slackc.EventBridge) and record what the event was.
+type eventLog struct {
+	callLog
+	mu     sync.Mutex
+	stop   bool
+	events []string // "<fn>:<args>"
+}
+
+func (b *eventLog) CallEvent(fn int64, args []byte, done func(bool)) {
+	b.add(fn)
+	b.mu.Lock()
+	b.events = append(b.events, strconv.FormatInt(fn, 10)+":"+string(args))
+	stop := b.stop
+	b.mu.Unlock()
+	done(stop)
+}
+
+// A FormTextInput's onKeyDown gets React's synthetic event (it can call
+// stopPropagation and preventDefault): one that stops an Escape (a search
+// field clearing its query) keeps the Popover around it open; one that
+// doesn't, and no DOM listener stopping it either, closes it.
+func TestFormTextInputOnKeyDownCanStopEscape(t *testing.T) {
+	const onClose, onKeyDown = 31, 71
+	e := newPopEnv(t)
+	el := &eventLog{stop: true}
+	slackc.SetBridge(el)
+	e.log = &el.callLog
+	field := `{"t":"@","n":"FormTextInput","k":3,"p":{"autoFocus":true,"value":"","onKeyDown":{"$fn":71}}}`
+	e.tree(popoverJS(1, true, onClose, `{"t":"div","k":2,"c":[`+field+`]}`))
+	e.frames(4)
+	e.key(key.NameEscape, 0)
+	got := e.log.take()
+	if !slices.Contains(got, onKeyDown) {
+		t.Fatalf("Escape in the field called %v; want its onKeyDown (%d)", got, onKeyDown)
+	}
+	if slices.Contains(got, onClose) {
+		t.Error("onKeyDown stopped the Escape and the popover closed anyway")
+	}
+	el.mu.Lock()
+	ev := el.events[len(el.events)-1]
+	el.mu.Unlock()
+	if !strings.Contains(ev, `"$event"`) || !strings.Contains(ev, `"key":"Escape"`) {
+		t.Errorf("onKeyDown's argument %s; want an Escape keydown marked as a DOM event ($event)", ev)
+	}
+	el.mu.Lock()
+	el.stop = false
+	el.mu.Unlock()
+	e.key(key.NameEscape, 0)
+	if got := e.log.take(); !slices.Contains(got, onClose) {
+		t.Errorf("onKeyDown let the Escape go: calls %v; want the popover's onClose (%d)", got, onClose)
+	}
+}
+
+// focusedRich is a RichTextInput whose editor takes the focus as it
+// mounts (as a click into it does): a composer.Editor, which
+// composer.KeepFocus holds when it misses a frame.
+func init() {
+	slackc.RegisterHost(func(gtx layout.Context, h *slackc.Host) layout.Dimensions {
+		d := richTextInput(gtx, h)
+		if st := stateOf[richInputState](h); st.ed != nil && !st.focused && gtx.Source.Enabled() && !gtx.Focused(st.ed) {
+			gtx.Execute(key.FocusCmd{Tag: st.ed})
+		}
+		return d
+	}, "TestFocusedRichTextInput")
+}
+
+// Escape in a Popover's RichTextInput with nothing to cancel closes the
+// Popover (the editor passes it on), and when the plugin closes it the
+// focus goes back to the composer, which had it when the popover opened:
+// the hidden editor doesn't keep it (KeepFocus held it, typing went into
+// the hidden box, then the focus went nowhere for good).
+func TestRichTextInputPopoverGivesFocusBack(t *testing.T) {
+	const onClose = 31
+	e := newPopEnv(t)
+	e.frames(1)
+	e.r.Source().Execute(key.FocusCmd{Tag: &e.comp})
+	e.frames(2)
+	rich := `{"t":"@","n":"TestFocusedRichTextInput","k":3,"p":{"value":null}}`
+	e.tree(popoverJS(1, true, onClose, `{"t":"div","k":2,"c":[`+rich+`]}`))
+	e.frames(4)
+	if e.r.Source().Focused(&e.comp) || e.r.Source().Focused(nil) {
+		t.Fatalf("the popover's editor didn't take the focus (on %v)", e.r.Source().FocusTag())
+	}
+	e.key(key.NameEscape, 0)
+	if !e.called(onClose) {
+		t.Fatal("Escape in the popover's RichTextInput didn't close the popover (no onClose)")
+	}
+	e.tree(popoverJS(1, false, onClose, `{"t":"div","k":2,"c":[`+rich+`]}`))
+	e.frames(1)
+	if !e.r.Source().Focused(&e.comp) {
+		t.Errorf("the popover closed: the focus is on %v; want the composer back, in that frame", e.r.Source().FocusTag())
+	}
+	e.frames(8)
+	if !e.r.Source().Focused(&e.comp) {
+		t.Errorf("frames after the popover closed the focus is on %v; want the composer", e.r.Source().FocusTag())
 	}
 }

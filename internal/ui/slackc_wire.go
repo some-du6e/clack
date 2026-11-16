@@ -3,6 +3,7 @@ package ui
 import (
 	"image"
 
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 
@@ -30,7 +31,11 @@ func (a *App) slackcFrame(gtx layout.Context) {
 			messages.RegisterSlackHosts()
 		}
 		a.slackc.inited, a.slackc.core = true, c
-		slackc.FocusFallback = a.focusComposer // the overlay layers' focus of last resort
+		// the overlay layers' focus of last resort, the replay that takes
+		// none, and the shell's Escape for one a plugin's layer left
+		slackc.FocusFallback = a.focusFallback
+		slackc.FocusInert = func() bool { return a.intro != nil }
+		slackc.ShellEscape = func(gtx layout.Context, ke key.Event) { a.keys.escape(a, ke) }
 		slackc.Init(slackc.Env{
 			Theme:      a.th,
 			Images:     a.images,

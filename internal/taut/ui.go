@@ -405,15 +405,80 @@ func (b *Bridge) Dispatch(target int64, event []byte) {
 // listener stopped the event's propagation (slackc.ResultBridge: a focused
 // plugin element's Escape keydown goes on to Clack's overlay layers unless
 // one did, as a DOM keydown bubbles up to react-modal). With no runtime to
-// dispatch to, done hears false.
+// dispatch to, or one that shuts down first (its queued tasks never run),
+// done hears false.
 func (b *Bridge) DispatchResult(target int64, event []byte, done func(propagationStopped bool)) {
-	dispatch := func(r *runtime) {
+	b.withAnswer(done, func(r *runtime, answer func(bool)) {
 		r.rt.DispatchEventThen(int(target), event, func(res jsrt.EventResult, err error) {
-			done(err == nil && res.PropagationStopped)
+			answer(err == nil && res.PropagationStopped)
 		})
+	})
+}
+
+// CallEvent calls JS function prop fn with args that carry a DOM event
+// ({"$event": fields}, which the TautAPI makes React's synthetic event:
+// the handler can call stopPropagation and preventDefault) and tells done
+// (any goroutine) whether it stopped the event (slackc.EventBridge: kit's
+// FormTextInput onKeyDown). One JS task, queued in order with Dispatch's
+// (the same field's DOM keydown comes after it). done hears false with no
+// runtime, one that shuts down first, or a call that fails.
+func (b *Bridge) CallEvent(fn int64, args []byte, done func(stopped bool)) {
+	path := "callHostFn"
+	if IsTautFn(fn) {
+		path = "callFn"
+	}
+	b.withAnswer(done, func(r *runtime, answer func(bool)) {
+		r.rt.Post(func(js *jsrt.Ctx) {
+			stopped := false
+			defer func() { answer(stopped) }()
+			a, err := js.ParseJSON(args)
+			if err != nil {
+				return
+			}
+			v, err := js.Global().Get("__taut").Get(path).Call(float64(fn), a)
+			if err != nil {
+				return
+			}
+			res, err := v.JSON()
+			if err != nil {
+				return
+			}
+			var out struct {
+				Event struct {
+					Stopped bool `json:"stopped"`
+				} `json:"$event"`
+			}
+			if json.Unmarshal(res, &out) == nil {
+				stopped = out.Event.Stopped
+			}
+		})
+	})
+}
+
+// withAnswer runs f on the live runtime (starting one if need be) with an
+// answer that reaches done once: f's, or false if the runtime shuts down
+// before f answers (its queued tasks never run) or can't start.
+func (b *Bridge) withAnswer(done func(bool), f func(r *runtime, answer func(bool))) {
+	run := func(r *runtime) {
+		var once sync.Once
+		answered := make(chan struct{})
+		answer := func(v bool) {
+			once.Do(func() {
+				close(answered)
+				done(v)
+			})
+		}
+		go func() {
+			select {
+			case <-r.rt.Done():
+				answer(false)
+			case <-answered:
+			}
+		}()
+		f(r, answer)
 	}
 	if r := b.t.liveRuntime(); r != nil {
-		dispatch(r)
+		run(r)
 		return
 	}
 	go func() {
@@ -422,7 +487,7 @@ func (b *Bridge) DispatchResult(target int64, event []byte, done func(propagatio
 			done(false)
 			return
 		}
-		dispatch(r)
+		run(r)
 	}()
 }
 
