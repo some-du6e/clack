@@ -243,23 +243,26 @@ type renderCount struct {
 }
 
 type sentRender struct {
+	root           uint64
 	name, ts, text string
+	view           string // the props' viewContext
 	blocks         []string
 }
 
 func (b *renderCount) Render(root uint64, name string, props []byte) {
-	b.add(name, props)
+	b.add(root, name, props)
 	b.Bridge.Render(root, name, props)
 }
 
 func (b *renderCount) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
-	b.add(name, props)
+	b.add(root, name, props)
 	b.Bridge.RenderIn(root, parent, parentK, name, props)
 }
 
-func (b *renderCount) add(name string, props []byte) {
+func (b *renderCount) add(root uint64, name string, props []byte) {
 	var p struct {
-		Msg struct {
+		View string `json:"viewContext"`
+		Msg  struct {
 			TS     string `json:"ts"`
 			Text   string `json:"text"`
 			Blocks []struct {
@@ -268,7 +271,7 @@ func (b *renderCount) add(name string, props []byte) {
 		} `json:"msg"`
 	}
 	_ = json.Unmarshal(props, &p)
-	r := sentRender{name: name, ts: p.Msg.TS, text: p.Msg.Text}
+	r := sentRender{root: root, name: name, ts: p.Msg.TS, text: p.Msg.Text, view: p.View}
 	for _, bl := range p.Msg.Blocks {
 		r.blocks = append(r.blocks, bl.ID)
 	}

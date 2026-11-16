@@ -103,6 +103,17 @@ type typer interface{ Typing() string }
 // (set through a small adapter in mount_features.go).
 type originSetter interface{ SetOrigin(image.Point) }
 
+// layoutComposerIn lays comp out with its plugin components in slackc
+// pane pane (composer.LayoutIn); a composer without one lays out as it is.
+func layoutComposerIn(comp composerView, gtx layout.Context, pane string) layout.Dimensions {
+	if p, ok := comp.(interface {
+		LayoutIn(layout.Context, string) layout.Dimensions
+	}); ok {
+		return p.LayoutIn(gtx, pane)
+	}
+	return comp.Layout(gtx)
+}
+
 // composerView is what the shell needs from composer.Composer.
 type composerView interface {
 	View
@@ -269,12 +280,18 @@ func (a *App) layoutConvo(gtx layout.Context, c *convo, fallback image.Point) la
 		g := gtx
 		g.Constraints = layout.Constraints{Min: image.Pt(sz.X-2*mx, 0), Max: image.Pt(sz.X-2*mx, sz.Y*6/10)}
 		st := op.Offset(image.Pt(mx, 0)).Push(gtx.Ops)
-		d := comp.Layout(g)
+		// in its list's slackc pane: the plugin roots are this
+		// conversation's, never another place's composer for it
+		pane := ""
+		if p, ok := c.list.(interface{ PaneID() string }); ok {
+			pane = p.PaneID()
+		}
+		d := layoutComposerIn(comp, g, pane)
 		if a.composerHeight(gtx, g, c, comp, d.Size.Y) { // no height: a new composer (composer_guard.go)
 			comp = c.comp
 			comp.SetOrigin(origin.Add(image.Pt(mx, compY)))
 			a.composerRoadblock(c, comp)
-			d = comp.Layout(g)
+			d = layoutComposerIn(comp, g, pane)
 		}
 		st.Pop()
 		call = m.Stop()

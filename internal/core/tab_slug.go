@@ -71,6 +71,12 @@ func findSlugTab(props json.RawMessage, id string) (slugTab, bool) {
 // channel, a private channel the viewer isn't in (unless it is a record
 // channel) or a tab that doesn't resolve.
 func (a *App) ChannelTabSlug(ch, tab string) (richtext.TabSlug, bool) {
+	return a.channelTabSlug(ch, tab, a.S.ChannelName)
+}
+
+// channelTabSlug is ChannelTabSlug with the channel's name read by
+// channelName (a re-conversion's doesn't count as a view's read).
+func (a *App) channelTabSlug(ch, tab string, channelName func(string) string) (richtext.TabSlug, bool) {
 	c, ok := a.S.Conv(ch)
 	if !ok {
 		if c, ok = a.S.ExtConv(ch); !ok {
@@ -88,7 +94,7 @@ func (a *App) ChannelTabSlug(ch, tab string) (richtext.TabSlug, bool) {
 	return richtext.TabSlug{
 		Label:  a.tabSlugLabel(t),
 		Icon:   tabSlugIcon(t.Type, a.experiment("resources_channel_tab") == "on"),
-		Name:   strings.TrimPrefix(a.S.ChannelName(c.ID), "#"),
+		Name:   strings.TrimPrefix(channelName(c.ID), "#"),
 		ChIcon: a.slugChannelIcon(c),
 	}, true
 }

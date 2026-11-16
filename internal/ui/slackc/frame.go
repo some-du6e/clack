@@ -52,9 +52,9 @@ func (w *SubWindow) Frame(gtx layout.Context, classes string, fg color.NRGBA) (r
 // huddle window's dark frame): translucent plugin colors composite over
 // bg (srgb.go).
 func (w *SubWindow) FrameBg(gtx layout.Context, classes string, fg, bg color.NRGBA) (restore func()) {
-	saved, savedSize, savedBg, savedClock := stack, windowSize, subBg, curClock
+	saved, savedSize, savedBg, savedClock, savedPane := stack, windowSize, subBg, curClock, curPane
 	w.c.begin(now(gtx))
-	curClock = &w.c
+	curClock, curPane = &w.c, ""
 	w.c.layers.begin(gtx)
 	subBg = bg
 	st := css.Initial(fg)
@@ -63,7 +63,7 @@ func (w *SubWindow) FrameBg(gtx layout.Context, classes string, fg, bg color.NRG
 	windowSize, subFrame = gtx.Constraints.Max, true
 	return func() {
 		RouteEscape(gtx) // the window's Escape its layers get (layers.go)
-		stack, windowSize, subFrame, subBg, curClock = saved, savedSize, false, savedBg, savedClock
+		stack, windowSize, subFrame, subBg, curClock, curPane = saved, savedSize, false, savedBg, savedClock, savedPane
 	}
 }
 

@@ -401,31 +401,43 @@ func (m *mirror) onEvent(ev core.Event) {
 
 // noteConv tells MessageView's cached conversions what ev may have
 // changed: the message it names (core announces every change to a message
-// that way, a thread's broadcasts included), or for anything else that
-// core.App.message reads (names, prefs and highlight words, emoji,
-// experiment groups, a resync) every message. Events that change no
-// message's conversion are skipped: read states, counts and badges, a
-// channel's own details (rows resolve channel names as they draw) and its
-// member count (users/counts on a first open), tabs, bookmarks, presence,
-// typing. ("experiments" counts: a huddle message's sentence and the
-// emoji set follow experiment groups.)
+// that way, a thread's broadcasts included); for a member or a channel
+// (a profile change, a channel's name, icon, membership or tabs) the
+// messages whose conversion read it (core.RefsChanged,
+// viewCache.bumpChange: a file's uploader, a huddle's sentence, a message
+// slug, a work object, a channel mention, a tab slug); for anything else
+// that core.App.message reads (names lookups resolved, prefs and
+// highlight words, emoji, experiment groups, a resync) every message.
+// Events that change no message's conversion are skipped: read states,
+// counts and badges, a channel's member count (users/counts on a first
+// open), bookmarks, presence, typing. ("experiments" counts: a huddle
+// message's sentence and the emoji set follow experiment groups.)
 func (m *mirror) noteConv(ev core.Event) {
 	switch ev.Type {
 	case "typing", "presence", "marked", "counts", "huddle", "draft", "dnd_updated", "dnd_updated_user",
 		"connection", "realtime", "client_online", "sidebar_changed", "channel_sections_upserted",
 		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted",
-		"activity", "activity_badges", "poll", "tabs", "bookmarks", "pins_tab", "channel_email", "permissions",
-		"conv", "conv_removed", "member_count", "canvas_viewers", "megaphone", "suggested_prompts",
+		"activity", "activity_badges", "poll", "bookmarks", "pins_tab", "channel_email", "permissions",
+		"member_count", "canvas_viewers", "megaphone", "suggested_prompts",
 		"assistant_status", "auth_failed":
 		return
-	case "user":
-		// a profile change, many a second on a busy workspace's socket:
-		// only a member the UI drew in its latest frame can show in a
-		// conversion it uses (as the UI's own filter, hub.drawsMember);
-		// the event's Seen is when the member was last drawn, from before
-		// the change
-		if m.t.ui.views.drewMember(ev.Seen) {
+	case "user", "conv", "conv_removed", "tabs":
+		// a profile change comes many a second on a busy workspace's
+		// socket: it converts again only the messages that named the
+		// member, drawn or not (a file's uploader isn't the row's
+		// sender, so the frame that drew the row never read them).
+		// ("names" stays every message's: its ids are bots', canvases'
+		// and list records' too, which conversions don't record.)
+		m.t.ui.views.bumpChange(core.RefsChanged(ev))
+		return
+	case "prefs":
+		// the highlight words or emoji_mode: every conversion read them;
+		// display_real_names, hidden_users: those that named a member;
+		// any other pref: none
+		if ev.DocPrefs {
 			m.t.ui.views.bumpConv("", "")
+		} else {
+			m.t.ui.views.bumpChange(core.RefsChanged(ev))
 		}
 		return
 	}
