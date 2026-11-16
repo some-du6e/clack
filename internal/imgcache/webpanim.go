@@ -350,7 +350,7 @@ func webpStillReader(alph, pic []byte, lossless bool, w, h int) io.Reader {
 // decodePicture within the picture's budget. maxPixels/maxSide are the
 // caller's decoded-size limit (Decode passes MaxPixels/MaxSide;
 // DecodeWithin a larger one), which bounds the picture and so its budget.
-// ctx cancels the wait for a share of the process decode cap (decMem).
+// ctx, when it carries a deadline or cancel, stops the decode early.
 func decodeWebP(ctx context.Context, data []byte, maxPixels, maxSide int) (image.Image, error) {
 	alph, pic, lossless, w, h, err := stillWebP(data, maxPixels, maxSide)
 	if err != nil {
@@ -359,37 +359,32 @@ func decodeWebP(ctx context.Context, data []byte, maxPixels, maxSide int) (image
 	return decodePicture(ctx, webpStillReader(alph, pic, lossless, w, h), w, h)
 }
 
-// decodePicture decodes a still WebP r of a w×h picture. It first reserves
-// decodeBudget(w, h) of the process-wide decode cap (decMem), waiting its
-// turn so concurrent decodes together stay under the cap, and charges
-// every allocation to a vp8l.Budget of that same size: one that would go
-// past it fails the decode, before it's made, with an error that is
-// ErrTooBig (the same bytes always need the same memory). The budget is
-// clamped to the cap, so a picture whose uncapped budget would exceed the
-// whole process cap fails within it instead of allocating out of bounds.
+// decodePicture decodes a still WebP r of a w×h picture, charging every
+// allocation to a vp8l.Budget of decodeBudget(w, h): one that would go past
+// it fails the decode, before it's made, with an error that is ErrTooBig
+// (the same bytes always need the same memory). The process-wide memory
+// reservation is the caller's (DecodeWithinCtx, loadImage, a player): this
+// is only the per-decode bomb budget. ctx, when it carries a deadline or
+// cancel, stops the decode between scanlines (vp8l checks it).
 func decodePicture(ctx context.Context, r io.Reader, w, h int) (image.Image, error) {
-	if ctx == nil {
-		ctx = context.Background()
+	b := vp8l.NewBudget(decodeBudget(w, h))
+	if ctx != nil && ctx.Done() != nil {
+		b.Cancel = func() bool { return ctx.Err() != nil }
 	}
-	budget := decodeBudget(w, h)
-	if err := decMem.acquire(ctx, budget); err != nil {
-		return nil, decAcquireErr(err)
-	}
-	defer decMem.release(budget)
-	m, err := webp.Decode(r, vp8l.NewBudget(budget))
+	m, err := webp.Decode(r, b)
 	if errors.Is(err, vp8l.ErrBudget) {
 		return nil, fmt.Errorf("%w: %w", ErrTooBig, err)
 	}
 	return m, err
 }
 
-// decodeBudget is the memory a w×h WebP picture's decode may reserve and
-// allocate: webpBudget, clamped to the process decode cap (decCap). A
-// picture whose uncapped budget is larger (DecodeWithin at a large
-// maxPixels, e.g. the composer's 80 MP) is decoded within the cap and
-// fails with ErrTooBig if it genuinely needs more, rather than being given
-// a budget bigger than the whole process may hold.
-func decodeBudget(w, h int) int64 { return min(webpBudget(w, h), decCap) }
+// decodeBudget is the memory a w×h WebP picture's decode may allocate:
+// webpBudget, clamped to the largest a single decode may reserve
+// (decMaxDecode). A picture whose uncapped budget is larger (DecodeWithin
+// at a large maxPixels, e.g. the composer's 80 MP) is decoded within the
+// cap and fails with ErrTooBig if it genuinely needs more, rather than
+// being given a budget bigger than the process may hold.
+func decodeBudget(w, h int) int64 { return min(webpBudget(w, h), decMaxDecode) }
 
 // webpBudget is the most decoding a w×h WebP picture may allocate in all:
 // webpPixelBytes for what's proportional to its pixels, and webpCodeBytes

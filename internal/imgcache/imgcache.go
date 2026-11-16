@@ -940,26 +940,35 @@ func (c *Cache) rawFor(k key) ([]byte, func(), error) {
 // bytes and their index (anim.go). Bytes that don't decode are
 // ErrUndecodable.
 func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
+	fail := func(err error) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
+		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
+	}
 	data, save, err := c.rawFor(k)
 	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
+		return fail(err)
 	}
 	if isAnim(data) {
 		if err := checkSize(data); err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+			return fail(undecodable(err))
 		}
 		ix, err := indexAnim(data)
 		if err != nil {
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+			return fail(undecodable(err))
 		}
-		if ix.w*ix.h > bigPixels { // its canvas, as a big image's decode
-			bigSem <- struct{}{}
-			defer func() { <-bigSem }()
+		// Reserve the canvas, the DisposalPrevious save buffer, the frame
+		// scaler and the still, held across the compose and scale, so a big
+		// animated canvas can't allocate outside the limit (the players
+		// decode later within the cache's own byte budget).
+		weight := animLoadWeight(ix, k.size)
+		release, err := decReserve(c.ctx, weight)
+		if err != nil {
+			return fail(undecodable(decAcquireErr(err)))
 		}
+		defer release()
 		d := newGIFDecoder(ix, data)
 		d.compose()
 		if d.werr != nil { // an animated WebP whose first frame doesn't decode
-			return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(d.werr)
+			return fail(undecodable(d.werr))
 		}
 		still := image.NewRGBA(image.Rectangle{Max: scaledSize(ix.w, ix.h, k.size)})
 		var sc frameScaler
@@ -971,37 +980,27 @@ func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, [
 		}
 		return paint.NewImageOp(still), still.Rect.Size(), len(still.Pix), an, []*image.RGBA{still}, nil
 	}
-	// A big image decodes to its full size and scales through a temporary
-	// buffer as big again (x/image/draw's kernel scaler: 32 bytes per
-	// destination column per source row) before the display-size copy is
-	// all that's kept. Eight of them at once while a channel of screenshots
-	// scrolled by held 150 MB for a moment: at most bigDecodes at a time.
-	if big := isBig(data); big {
-		bigSem <- struct{}{}
-		defer func() { <-bigSem }()
-	}
-	img, err := Decode(data)
+	// A still image: reserve the peak of the decode and the scale (the
+	// decoded image stays live while x/image/draw's kernel scaler allocates
+	// a temp of 32 bytes per destination column per source row), held across
+	// both, so neither runs outside the limit.
+	cfg, format, weight, err := weighDecode(data, MaxPixels, MaxSide)
 	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, nil, nil, undecodable(err)
+		return fail(undecodable(err))
+	}
+	weight = max(weight, scalePeak(cfg, format, data, k.size))
+	release, err := decReserve(c.ctx, weight)
+	if err != nil {
+		return fail(undecodable(decAcquireErr(err)))
+	}
+	defer release()
+	img, err := decodeNoReserve(c.ctx, data, MaxPixels, MaxSide)
+	if err != nil {
+		return fail(undecodable(err))
 	}
 	save() // only bytes that decoded as an image reach the disk tier
 	rgba := Scale(img, k.size)
 	return paint.NewImageOp(rgba), rgba.Bounds().Size(), len(rgba.Pix), nil, []*image.RGBA{rgba}, nil
-}
-
-// bigDecodes is how many images of more than bigPixels decode at once
-// (every Cache together: they share the memory).
-const (
-	bigDecodes = 2
-	bigPixels  = 1 << 20
-)
-
-var bigSem = make(chan struct{}, bigDecodes)
-
-// isBig reports whether data's header says it has more than bigPixels.
-func isBig(data []byte) bool {
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
-	return err == nil && cfg.Width*cfg.Height > bigPixels
 }
 
 // MaxPixels bounds the decoded size of one image (width × height), so a
@@ -1030,80 +1029,163 @@ func Decode(data []byte) (image.Image, error) {
 	return DecodeCtx(context.Background(), data)
 }
 
-// DecodeCtx is Decode with a context that cancels the decode's wait for a
-// share of the process decode cap (decMem), so a surface that no longer
-// needs the image (an overlay closed, the request cancelled) stops waiting.
+// DecodeCtx is Decode with a context that stops the decode (and its wait
+// for a memory reservation) when a surface no longer needs the image (an
+// overlay closed, the request cancelled).
 func DecodeCtx(ctx context.Context, data []byte) (image.Image, error) {
 	return DecodeWithinCtx(ctx, data, MaxPixels, MaxSide)
 }
 
 // DecodeWithin is Decode with the caller's own decoded-size budget, for a
 // surface that legitimately decodes larger images than the cache's
-// MaxPixels (the composer's attachment thumbnails, at attMaxPixels). The
-// WebP memory budget is scaled to the picture, so maxPixels is the ceiling
-// for a lossless or alpha WebP too, the same as for PNG, JPEG and lossy
-// WebP.
+// MaxPixels (the composer's attachment thumbnails, at attMaxPixels).
 func DecodeWithin(data []byte, maxPixels, maxSide int) (image.Image, error) {
 	return DecodeWithinCtx(context.Background(), data, maxPixels, maxSide)
 }
 
 // DecodeWithinCtx is DecodeWithin with a cancellable context (DecodeCtx).
-// Every decode reserves its memory from the process-wide cap (decMem)
-// before it allocates: a WebP its clamped webpBudget (decodePicture), a
-// PNG/JPEG/GIF its natural decoded size (image.Decode allocates the whole
-// image by the header before reading the pixels), so however many decodes
-// run at once their reservations stay under the cap, and one too big for
-// the cap fails with ErrTooBig rather than an out-of-memory.
+// It reserves, from the header, the memory the decode will really allocate
+// (decweight.go) before it allocates, held across the decode, so concurrent
+// decodes together stay under the process limit; a format imgcache doesn't
+// decode (TIFF and the like) or one too big for the cap comes back as
+// ErrTooBig rather than an unbounded allocation.
 func DecodeWithinCtx(ctx context.Context, data []byte, maxPixels, maxSide int) (image.Image, error) {
-	cfg, err := decodeConfigWithin(data, maxPixels, maxSide)
-	if err != nil {
-		return nil, err
-	}
-	if isWebP(data) {
-		return decodeWebP(ctx, data, maxPixels, maxSide)
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	weight := stdDecodeBytes(cfg)
-	if err := decMem.acquire(ctx, weight); err != nil {
+	_, _, weight, err := weighDecode(data, maxPixels, maxSide)
+	if err != nil {
+		return nil, err
+	}
+	release, err := decReserve(ctx, weight)
+	if err != nil {
 		return nil, decAcquireErr(err)
 	}
-	defer decMem.release(weight)
+	defer release()
+	return decodeNoReserve(ctx, data, maxPixels, maxSide)
+}
+
+// weighDecode reads data's header, rejects (ErrTooBig) a format imgcache
+// won't decode or one past the size limits, and returns the config, the
+// format name and the memory the decode peaks at.
+func weighDecode(data []byte, maxPixels, maxSide int) (cfg image.Config, format string, weight int64, err error) {
+	cfg, format, err = image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return image.Config{}, "", 0, err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > maxSide || cfg.Height > maxSide || cfg.Width*cfg.Height > maxPixels {
+		return image.Config{}, "", 0, ErrTooBig
+	}
+	if isWebP(data) || format == "webp" {
+		return cfg, "webp", decodeBudget(cfg.Width, cfg.Height), nil
+	}
+	w, ok := decodeWeight(data, cfg, format)
+	if !ok { // a format imgcache doesn't decode (TIFF, …): reject
+		return image.Config{}, "", 0, ErrTooBig
+	}
+	return cfg, format, w, nil
+}
+
+// decodeNoReserve decodes data within the size limits without reserving any
+// process memory — the caller already holds the reservation (so it can span
+// the decode and the scale or clipboard copies). WebP routes through the
+// budgeted vendored decoder; everything else through the registered
+// decoders, already gated by weighDecode's header check.
+func decodeNoReserve(ctx context.Context, data []byte, maxPixels, maxSide int) (image.Image, error) {
+	if isWebP(data) {
+		return decodeWebP(ctx, data, maxPixels, maxSide)
+	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
 }
 
-// stdDecodeBytes is the memory a PNG, JPEG, GIF or BMP decode reserves
-// from the process cap: four bytes a pixel, the premultiplied-RGBA/NRGBA
-// worst case for the 8-bit images the UI actually copies and thumbnails
-// (YCbCr, grey and paletted decodes allocate less; a rare 16-bit PNG would
-// use twice this, which the soft memoryLimit absorbs). cfg is already
-// bounded by decodeConfigWithin, so this can't overflow.
-func stdDecodeBytes(cfg image.Config) int64 { return 4 * int64(cfg.Width) * int64(cfg.Height) }
-
-// DecodeClipboard decodes data for Copy Image (actions_context.go). A PNG,
-// JPEG or GIF may be as large as the process decode cap allows (about
-// 64 MP at four bytes a pixel) — a real 48 MP phone photo or a wide
-// panorama copies, where the cache's 40 MP / 16384 px ceiling would refuse
-// it — charged to the cap like any decode, so a bomb too big for the cap
-// still fails (within the cap, never an OOM). WebP keeps the cache's
-// tighter ceiling and its Huffman budget: a crafted WebP is the memory
-// risk, a photo isn't.
-func DecodeClipboard(ctx context.Context, data []byte) (image.Image, error) {
-	if isWebP(data) {
-		return DecodeWithinCtx(ctx, data, MaxPixels, MaxSide)
+// DecodeClipboard decodes data for Copy Image (actions_context.go). A
+// PNG/JPEG/GIF photo may be larger than the cache's 40 MP / 16384 px
+// ceiling — a real 48 MP phone photo, a wide panorama — up to what the
+// decode and the clipboard conversion together fit in the cap; WebP keeps
+// the tighter ceiling and its Huffman budget. The reservation is held
+// across the clipboard conversion by the caller (it passes the decoded
+// image to clipimg, which builds copies several times its size), so a
+// photo too big for the cap fails gracefully instead of an OOM.
+func DecodeClipboard(ctx context.Context, data []byte) (img image.Image, release func(), err error) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return DecodeWithinCtx(ctx, data, photoMaxPixels, photoMaxSide)
+	maxPixels, maxSide := MaxPixels, MaxSide
+	if !isWebP(data) {
+		maxPixels, maxSide = photoMaxPixels, photoMaxSide
+	}
+	cfg, _, weight, err := weighDecode(data, maxPixels, maxSide)
+	if err != nil {
+		return nil, nil, err
+	}
+	// hold the decode's peak and the clipboard copies, whichever is larger
+	weight = max(weight, clipboardPeak(cfg))
+	release, err = decReserve(ctx, weight)
+	if err != nil {
+		return nil, nil, decAcquireErr(err)
+	}
+	img, err = decodeNoReserve(ctx, data, maxPixels, maxSide)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return img, release, nil
+}
+
+// clipboardPeak is the memory clipimg.Write holds beyond the decoded image:
+// a PNG encode buffer and, on Windows, a DIB, each about four bytes a
+// pixel, live alongside the image.
+func clipboardPeak(cfg image.Config) int64 {
+	n := int64(cfg.Width) * int64(cfg.Height)
+	return 4*n /*the decoded image*/ + 4*n /*PNG encode buffer*/ + 4*n /*DIB*/ + smallConst
 }
 
 // photoMaxPixels and photoMaxSide bound a PNG/JPEG/GIF Copy Image decode
-// (DecodeClipboard): four bytes a pixel fills the whole decode cap at
-// photoMaxPixels, and photoMaxSide still admits a wide panorama.
+// (DecodeClipboard). photoMaxSide admits a wide panorama; the decode-plus-
+// clipboard reservation, not this, is the real limit (a photo near
+// photoMaxPixels is refused for the conversion memory, degrading to a
+// failed-copy toast, never an OOM).
 const (
-	photoMaxPixels = decCap / 4
+	photoMaxPixels = 64 << 20
 	photoMaxSide   = 1 << 15
 )
+
+// scalePeak is the memory loadImage holds while Scale runs: the decoded
+// image (resultBytes, still live) plus x/image/draw's kernel-scaler temp
+// (32 bytes per destination column per source row) and the scaled result.
+func scalePeak(cfg image.Config, format string, data []byte, max int) int64 {
+	dw, dh, down := scaledDims(cfg.Width, cfg.Height, max)
+	extra := 4 * int64(dw) * int64(dh) // the scaled RGBA
+	if down {
+		extra += int64(dw) * int64(cfg.Height) * 32 // makeTmpBuf: dw*srcH entries of [4]float64
+	}
+	return resultBytes(data, cfg, format) + extra + smallConst
+}
+
+// scaledDims is the size Scale downscales a w×h image to for a max larger
+// side (0 → 2048), and whether it downscales (Scale leaves smaller images
+// alone, bar a format copy).
+func scaledDims(w, h, max int) (dw, dh int, down bool) {
+	if max <= 0 {
+		max = 2048
+	}
+	if w <= max && h <= max {
+		return w, h, false
+	}
+	if w >= h {
+		return max, maxInt(1, max*h/w), true
+	}
+	return maxInt(1, max*w/h), max, true
+}
+
+// animLoadWeight is the memory loadImage holds while it composes and scales
+// an animation's first frame: the decoder's canvas, DisposalPrevious save
+// buffer and (for WebP) a frame's picture, the frame scaler, and the still.
+func animLoadWeight(ix *gifIndex, size int) int64 {
+	still := scaledSize(ix.w, ix.h, size)
+	return int64(decoderBytes(ix)) + int64(scalerBytes(ix.w, ix.h)) + 4*int64(still.X)*int64(still.Y) + smallConst
+}
 
 // checkSize reads the header's dimensions only, against the cache budget.
 func checkSize(data []byte) error { return checkSizeWithin(data, MaxPixels, MaxSide) }

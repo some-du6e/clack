@@ -12,6 +12,11 @@ import (
 // The decoder returns it before making the allocation that doesn't fit.
 var ErrBudget = errors.New("vp8l: decode needs more memory than its budget")
 
+// ErrCanceled is returned when a decode's Budget.Cancel reports the
+// caller's context is done, so a cancelled decode (an overlay closed mid
+// Copy Image) stops between scanlines instead of running to the end.
+var ErrCanceled = errors.New("vp8l: decode canceled")
+
 // Budget is how many bytes one decode may allocate in all. Every
 // allocation the decoder makes (the Huffman groups and their trees, code
 // lengths, the colour caches, transform data, pixel buffers, its reader)
@@ -20,6 +25,10 @@ var ErrBudget = errors.New("vp8l: decode needs more memory than its budget")
 // the budget. A nil *Budget allows nothing.
 type Budget struct {
 	limit, used int64
+	// Cancel, when set, is checked by the pixel loop every few thousand
+	// pixels; a true result stops the decode with ErrCanceled. It lets a
+	// caller's context cancel a long decode (Clack).
+	Cancel func() bool
 }
 
 // NewBudget returns a budget of n bytes.

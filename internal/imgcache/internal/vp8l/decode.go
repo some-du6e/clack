@@ -465,6 +465,10 @@ func (d *decoder) decodePix(w int32, h int32, minCap int32, topLevel bool) ([]by
 	x, y := int32(0), int32(0)
 	hg, lookupHG := &hGroups[0], hMask != 0
 	for p < len(pix) {
+		// Clack: stop a cancelled decode between scanlines (every 4096 px).
+		if d.budget.Cancel != nil && p&(4096*4-1) == 0 && d.budget.Cancel() {
+			return nil, ErrCanceled
+		}
 		if lookupHG {
 			i := 4 * (tilesPerRow*(y>>hBits) + (x >> hBits))
 			hg = &hGroups[uint32(hPix[i])<<8|uint32(hPix[i+1])]

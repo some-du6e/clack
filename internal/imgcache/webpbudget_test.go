@@ -263,12 +263,13 @@ func TestWebPBudgetCeilings(t *testing.T) {
 	if got := webpCodeBytes(4096, 4096); got != 96<<20 {
 		t.Errorf("webpCodeBytes(4096,4096) = %d, want the 96 MiB ceiling %d", got, 96<<20)
 	}
-	// decodeBudget clamps webpBudget to the process cap, so at MaxSide² (and
-	// hence at any size the gates admit) it is exactly the cap, never more.
-	if got := decodeBudget(MaxSide, MaxSide); got != decCap {
-		t.Errorf("decodeBudget(%d,%d) = %d, want it clamped to the cap %d", MaxSide, MaxSide, got, decCap)
+	// decodeBudget clamps webpBudget to the largest a single decode may
+	// reserve, so at MaxSide² (and hence at any size the gates admit) it is
+	// exactly that cap, never more.
+	if got := decodeBudget(MaxSide, MaxSide); got != decMaxDecode {
+		t.Errorf("decodeBudget(%d,%d) = %d, want it clamped to the cap %d", MaxSide, MaxSide, got, decMaxDecode)
 	}
-	if got := decodeBudget(MaxSide, MaxSide); got > decCap {
-		t.Errorf("decodeBudget over the cap: %d > %d", got, decCap)
+	if got := decodeBudget(MaxSide, MaxSide); got > decMaxDecode {
+		t.Errorf("decodeBudget over the cap: %d > %d", got, decMaxDecode)
 	}
 }

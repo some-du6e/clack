@@ -177,10 +177,12 @@ func TestColorCacheCharge(t *testing.T) {
 // pins the tight budget: one byte under what a decode charges is refused.
 func TestFixtureChargesCoverAllocation(t *testing.T) {
 	// allocRoundingSlack is the most TotalAlloc may exceed the charge from
-	// size-class rounding alone — above the ~9 KB seen, below the smallest
-	// dropped charge this guards (a group's ~16 KB of trees, the cc green
-	// tree's tens of KB), so rounding passes and a missing charge fails.
-	const allocRoundingSlack = 16 << 10
+	// size-class rounding alone. It sits between the largest normal gap
+	// measured on these fixtures (lossless-multigroup, +8916 B on the
+	// amd64 CI runners) and the smallest dropped charge this guards — a full
+	// group's trees (flatGroupNodes = 16360 B) and lossless-cc's 1261-symbol
+	// green tree (≈20 KB) — so rounding passes and a missing charge fails.
+	const allocRoundingSlack = 12 << 10
 	// Lossless (VP8L) fixtures only: a lossy VP8 decode also copies the
 	// frame's partitions out of the chunk, which the budget deliberately
 	// doesn't charge (bounded by the input, not amplified), so its charge is

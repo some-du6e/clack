@@ -35,22 +35,25 @@ func TestWebPConfigRegistered(t *testing.T) {
 }
 
 // TestWebPDecodeRegisteredIsBudgeted: the full decoder registered for
-// image.Decode is imgcache's budgeted one, not an unbudgeted decoder. A
-// 1×1 VP8L whose one meta tile names Huffman group 65535 would make
-// x/image's decoder allocate make([]hGroup, 65536) ≈ 168 MB before reading
-// a tree; the vendored decoder builds only the group the tile uses and
-// fails cheaply. Decoding the bomb through image.Decode (the registry)
-// must therefore both error and allocate little — if x/image/webp were
-// linked and registered first, this would allocate ~168 MB.
+// image.Decode is imgcache's size-gated, budgeted one, not an ungated
+// decode. The bomb is a VP8L whose header claims 16384×16384 (268 M px,
+// over imgcache's 40 MP MaxPixels) but whose body is a few bytes of
+// zero-bit codes. The registered decoder refuses it on the header, cheaply;
+// an ungated vendored decode would allocate its 1 GiB pixel buffer
+// (4·16384·16384) before reading the body. So decoding the bomb through
+// image.Decode must both error and allocate little — this fails if
+// decodeWebPRegistered is changed to skip the size gate / budget (e.g. call
+// webp.Decode directly), which a meta-group bomb could not catch (the
+// vendored decoder drops unused groups cheaply whatever the budget).
 func TestWebPDecodeRegisteredIsBudgeted(t *testing.T) {
-	bomb := webptest.Simple(webptest.Chunk("VP8L", webptest.VP8LMeta(65535, color.NRGBA{}, false)))
+	bomb := webptest.Simple(webptest.Chunk("VP8L", webptest.VP8LSolid(16384, 16384, color.NRGBA{1, 2, 3, 255})))
 	var derr error
 	n := allocBytes(func() { _, _, derr = image.Decode(bytes.NewReader(bomb)) })
 	if derr == nil {
-		t.Error("a 1×1 VP8L meta bomb decoded through image.Decode instead of being rejected")
+		t.Error("a 16384² VP8L bomb decoded through image.Decode instead of being rejected on its header")
 	}
 	if n > 16<<20 {
-		t.Errorf("image.Decode allocated %d bytes for a 1×1 VP8L meta bomb (x/image's decoder would allocate ~168 MB)", n)
+		t.Errorf("image.Decode allocated %d bytes for a 16384² VP8L bomb (an ungated decode allocates ~1 GiB)", n)
 	}
 }
 
