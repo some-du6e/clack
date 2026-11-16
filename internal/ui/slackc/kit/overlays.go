@@ -188,8 +188,7 @@ func popover(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	st := stateOf[popoverState](h)
 	st.org.track(gtx, image.Rectangle{Max: gtx.Constraints.Min})
 	if !h.Props.Bool("isOpen") {
-		st.layer.reset()
-		return layout.Dimensions{}
+		return layout.Dimensions{} // as the next frame begins the layer closes (LayerClosed)
 	}
 	anchor, ok := domRect(gtx, h.Props.Map("targetBounds"))
 	if !ok {
@@ -212,11 +211,11 @@ func popover(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		}
 	}
 	maxSz := image.Pt(dp(gtx, 1600), dp(gtx, 1200))
-	st.layer.open(gtx) // before the children: an autoFocus field among them takes the focus from it
+	esc := st.layer.open(gtx) // before the children (see open)
 	call, d := record(loose(gtx, maxSz), h.Children)
 	p := place(anchor, d.Size, image.Point{}, dp(gtx, 8), side, align)
-	outside, esc := st.layer.float(gtx, &st.org, p, call, d.Size, true)
-	if outside || esc {
+	outside, focusedEsc := st.layer.float(gtx, &st.org, p, call, d.Size, true)
+	if outside || esc || focusedEsc {
 		h.Call("onClose")
 	}
 	return layout.Dimensions{}

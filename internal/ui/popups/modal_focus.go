@@ -233,6 +233,20 @@ func (m *Modal) overModal() bool {
 	return false
 }
 
+// ModalUp reports whether a modal was on screen last frame. A plugin layer
+// that opens over one (kit's Popover in the modal's content) gives no
+// widget under the modal the focus when it closes, as a modal over a
+// modal doesn't (overModal): the composer under it would take the focus
+// from the modal.
+func ModalUp() bool {
+	for _, o := range stackPrev {
+		if m, ok := o.(*Modal); ok && !m.done {
+			return true
+		}
+	}
+	return false
+}
+
 // giveBackFocus asks the widget focused before the modal opened to take
 // the focus back (Dismiss).
 func (m *Modal) giveBackFocus() {

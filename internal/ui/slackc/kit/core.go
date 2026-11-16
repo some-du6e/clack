@@ -31,6 +31,7 @@ import (
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/icons"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/refocus"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/slackc/css"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -543,19 +544,22 @@ func (o *origin) toWin(p image.Point) image.Point { return p.Add(o.pt) }
 
 // layer draws content above everything (op.Defer) at a window position,
 // for Popover, Tooltip-like and menu content that stays part of the host
-// tree. With modal it catches presses outside the content and Escape, and
-// learns the host's window origin from pointer moves anywhere in the
-// window (the host may never be hovered).
+// tree. With modal it catches presses outside the content and Escape
+// (open), and learns the host's window origin from pointer moves anywhere
+// in the window (the host may never be hovered).
 type layer struct {
 	scrim, block, focus int
-	focused             bool
+	opened              bool      // open, the focus taken (open); LayerClosed forgets it
+	prev                event.Tag // what had the focus when it opened (refocus.Last), which gets it back
 }
 
 const far = 1 << 16
 
 // float draws call (laid out at the origin, size sz) with its top-left at
 // window position win. It reports a press outside the content and an
-// Escape press since the last frame (modal only).
+// Escape press with the layer focused since the last frame (modal only:
+// before it was a window's topmost layer, as it opens; open reads the
+// topmost layer's).
 func (l *layer) float(gtx layout.Context, org *origin, win image.Point, call op.CallOp, sz image.Point, modal bool) (outside, esc bool) {
 	if modal {
 		for {
@@ -613,27 +617,66 @@ func (l *layer) float(gtx layout.Context, org *origin, win image.Point, call op.
 	call.Add(gtx.Ops)
 	off.Pop()
 	op.Defer(gtx.Ops, m.Stop())
-	if !modal {
-		l.focused = false
-	}
 	return outside, esc
 }
 
-// open gives a modal layer the keyboard focus (its Escape) as it opens.
-// Call it before laying out the content: a field in it that takes the
-// focus as it lays out (FormTextInput's or an <input>'s autoFocus) then
-// keeps it, as a browser's autofocus inside a popover does. Gio's last
-// FocusCmd wins: the layer's, run after the content, took the caret from
-// the field (no caret, and typing went nowhere).
-func (l *layer) open(gtx layout.Context) {
-	if !l.focused && gtx.Source.Enabled() { // a measure pass's FocusCmd goes nowhere
-		gtx.Execute(key.FocusCmd{Tag: &l.focus})
-		l.focused = true
+// escAny is Escape with any modifiers: react-modal's handleKeyDown closes
+// on keyCode 27 whatever else is held.
+var escAny = key.Filter{Name: key.NameEscape, Optional: key.ModShift | key.ModCtrl | key.ModAlt | key.ModSuper | key.ModCommand}
+
+// open says a modal layer is open this frame (slackc.OpenLayer; call it on
+// every pass, before laying out the content) and runs its keyboard as
+// Slack's react-modal does:
+//   - it takes the focus as it opens, before the content lays out: a field
+//     in it that takes the focus as it lays out (FormTextInput's or an
+//     <input>'s autoFocus) then keeps it, as a browser's autofocus inside
+//     a popover does. Gio's last FocusCmd wins: the layer's, run after the
+//     content, took the caret from the field.
+//   - while it's the window's topmost layer and the focus went nowhere (the
+//     field that had it went), it takes it back (onFocusedElementRemoved).
+//   - as the topmost layer it reads Escape first, whatever has the focus:
+//     an Escape from the content bubbles up to it and stops there, so the
+//     content's own readers, a layer under it and the shell's Escape
+//     bindings (which wait while a layer is open) never see it. esc
+//     reports one.
+func (l *layer) open(gtx layout.Context) (esc bool) {
+	top, others := slackc.OpenLayer(l)
+	if !gtx.Source.Enabled() { // a measure pass: its FocusCmd goes nowhere and it gets no keys
+		return false
 	}
+	switch {
+	case !l.opened:
+		l.opened = true
+		if !others && !popups.ModalUp() { // over another layer or a modal, that one keeps the focus
+			l.prev = refocus.Last(gtx.Now)
+		}
+		gtx.Execute(key.FocusCmd{Tag: &l.focus})
+	case top && gtx.Focused(nil):
+		gtx.Execute(key.FocusCmd{Tag: &l.focus})
+	}
+	if top {
+		for {
+			e, ok := gtx.Event(escAny)
+			if !ok {
+				break
+			}
+			if ke, ok := e.(key.Event); ok && ke.State == key.Press {
+				esc = true
+			}
+		}
+	}
+	return esc
 }
 
-// reset forgets focus so the next open grabs it again.
-func (l *layer) reset() { l.focused = false }
+// LayerClosed (slackc.Layer) gives the focus back to what had it when the
+// layer opened, if it's then nowhere or still on the layer (react-modal's
+// shouldReturnFocusAfterClose), and forgets that it was open.
+func (l *layer) LayerClosed() {
+	if l.prev != nil {
+		refocus.Restore(l.prev, &l.focus)
+	}
+	l.opened, l.prev = false, nil
+}
 
 // place positions a box of size sz next to anchor in a window of size win
 // (margin m), preferring side and flipping when there is no room.

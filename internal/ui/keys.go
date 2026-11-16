@@ -173,6 +173,12 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 			escOwned = true
 		}
 	}
+	// a plugin's open layer (kit's Popover: react-modal, whose content's
+	// onKeyDown closes it on any Escape from inside and stops it there)
+	// takes Escape and Shift+Escape, whatever has the focus, unless one of
+	// the shell's overlays is up: opened over it (from it), it closes first
+	// (dismissTop)
+	layerEsc := slackc.LayerOpen() && !a.overlayOpen()
 	// a modal dialog makes the page inert (its keys go to it), and so does
 	// a replayed introduction (intro.go)
 	if !slackc.ModalOpen() && a.intro == nil {
@@ -182,7 +188,7 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 			compEd = a.secComposerEd(gtx)
 		}
 		for _, sc := range s.list {
-			if escOwned && sc.name == key.NameEscape && sc.mods == 0 {
+			if sc.name == key.NameEscape && (layerEsc || escOwned && sc.mods == 0) {
 				continue
 			}
 			if activity && sc.mods&key.ModAlt != 0 && (sc.name == key.NameUpArrow || sc.name == key.NameDownArrow) &&
