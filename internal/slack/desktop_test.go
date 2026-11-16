@@ -98,7 +98,7 @@ func exerciseClient(t *testing.T, c *Client, s *sessionServer) (cookies, uas, hi
 	}
 	add()
 	r := c.NewRTM()
-	r.reconnectURL = "ws" + strings.TrimPrefix(s.srv.URL, "http") + "/websocket"
+	r.reconnectURL, r.reconnectAt = "ws"+strings.TrimPrefix(s.srv.URL, "http")+"/websocket", ReadClock()
 	if err := r.once(ctx); err == nil {
 		t.Fatal("handshake should fail against the fake")
 	}
