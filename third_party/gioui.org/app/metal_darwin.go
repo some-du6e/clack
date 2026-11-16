@@ -6,6 +6,9 @@ package app
 
 import (
 	"errors"
+	"log"
+	"sync/atomic"
+	"time"
 
 	"gioui.org/gpu"
 )
@@ -34,8 +37,13 @@ static void setupLayer(CFTypeRef layerRef, CFTypeRef devRef) {
 		// Package gpu assumes an sRGB-encoded framebuffer.
 		layer.pixelFormat = MTLPixelFormatBGRA8Unorm_sRGB;
 		if (@available(iOS 11.0, *)) {
-			// Never let nextDrawable time out and return nil.
-			layer.allowsNextDrawableTimeout = NO;
+			// Clack patch (CLACK_PATCHES.md §32): nextDrawable waits a second
+			// at most (CAMetalLayer's default) and gives nil when no drawable
+			// came back in time; RenderTarget skips that frame and the window
+			// tries again. Upstream turned the timeout off, and the call held
+			// the main thread for as long as the compositor kept the
+			// drawables: seconds as a display woke, minutes while it slept.
+			layer.allowsNextDrawableTimeout = YES;
 		}
 	}
 }
@@ -74,6 +82,11 @@ static CFTypeRef newCommandQueue(CFTypeRef devRef) {
 */
 import "C"
 
+// metalPresented and metalSkipped count the frames every Metal context
+// presented, and skipped for want of a drawable (Clack patch,
+// CLACK_PATCHES.md §32; the macOS window tests read them).
+var metalPresented, metalSkipped atomic.Int64
+
 type mtlContext struct {
 	dev      C.CFTypeRef
 	view     C.CFTypeRef
@@ -81,6 +94,36 @@ type mtlContext struct {
 	queue    C.CFTypeRef
 	drawable C.CFTypeRef
 	texture  C.CFTypeRef
+
+	// Clack patch (CLACK_PATCHES.md §32): skipped frames in a row for
+	// want of a drawable, since skipSince; the slow waits on the layer.
+	skipped                   int
+	skipSince                 time.Time
+	slowDrawable, slowPresent slowWaits
+}
+
+// slowMetalWait is a wait on the Metal layer long enough to log (Clack
+// patch, CLACK_PATCHES.md §32): the main thread does nothing else.
+const slowMetalWait = 250 * time.Millisecond
+
+// slowWaits logs waits of slowMetalWait or more: the first at once, then
+// at most a line a minute with how many came and the longest.
+type slowWaits struct {
+	last  time.Time
+	n     int
+	worst time.Duration
+}
+
+func (s *slowWaits) note(what string, d time.Duration) {
+	if d < slowMetalWait {
+		return
+	}
+	s.n++
+	s.worst = max(s.worst, d)
+	if now := time.Now(); s.last.IsZero() || now.Sub(s.last) >= time.Minute {
+		log.Printf("gio: %s held the main thread %v (%d such waits since the last line, the longest %v)", what, d.Round(time.Millisecond), s.n, s.worst.Round(time.Millisecond))
+		s.last, s.n, s.worst = now, 0, 0
+	}
 }
 
 func newMtlContext(w *window) (*mtlContext, error) {
@@ -114,10 +157,26 @@ func (c *mtlContext) RenderTarget() (gpu.RenderTarget, error) {
 	if c.drawable != 0 || c.texture != 0 {
 		return nil, errors.New("metal:a previous RenderTarget wasn't Presented")
 	}
+	start := time.Now()
 	c.drawable = C.nextDrawable(c.layer)
+	waited := time.Since(start)
 	if c.drawable == 0 {
-		return nil, errors.New("metal: [CAMetalLayer nextDrawable] failed")
+		// Clack patch (CLACK_PATCHES.md §32): none within the layer's
+		// second. The frame is skipped (validateAndProcess), not an error
+		// that ends the window, and the window tries again.
+		metalSkipped.Add(1)
+		if c.skipped == 0 {
+			c.skipSince = start
+			log.Printf("gio: no Metal drawable within %v ([CAMetalLayer nextDrawable] gave nil): frame skipped, the window tries again", waited.Round(time.Millisecond))
+		}
+		c.skipped++
+		return nil, errNoRenderTarget
 	}
+	if c.skipped > 0 {
+		log.Printf("gio: Metal drawables again after %d frames skipped in %v", c.skipped, time.Since(c.skipSince).Round(time.Millisecond))
+		c.skipped = 0
+	}
+	c.slowDrawable.note("[CAMetalLayer nextDrawable]", waited)
 	c.texture = C.drawableTexture(c.drawable)
 	if c.texture == 0 {
 		return nil, errors.New("metal: CADrawable.texture is nil")
@@ -151,9 +210,15 @@ func (c *mtlContext) Release() {
 func (c *mtlContext) Present() error {
 	C.CFRelease(c.texture)
 	c.texture = 0
+	start := time.Now()
 	C.presentDrawable(c.queue, c.drawable)
+	// Clack patch (CLACK_PATCHES.md §32): waitUntilScheduled, which a
+	// layer that presents with its transaction needs (Chromium's
+	// HDRCopierLayer does the same), holds the main thread too.
+	c.slowPresent.note("presenting a frame (waitUntilScheduled)", time.Since(start))
 	C.CFRelease(c.drawable)
 	c.drawable = 0
+	metalPresented.Add(1)
 	return nil
 }
 

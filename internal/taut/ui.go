@@ -1,6 +1,7 @@
 package taut
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -765,34 +766,46 @@ func (t *Taut) SlicePatched(slice string) bool {
 // MessageView is message ch/ts as plugins present it (patchMessageText,
 // patchSlice('messages'), injectMessages). Never blocks: until the patched
 // value has been computed (a moment, then the UI is invalidated) it
-// returns ok=false and the UI draws m as is.
-func (t *Taut) MessageView(ch, ts string) (core.Message, bool) {
+// returns ok=false and the UI draws m as is. The fetch worker decodes the
+// value off the UI goroutine, and its conversion to a core.Message is
+// made once and kept until the value, the message in core, or what the
+// conversion reads (names, prefs, emoji) changes: it used to be decoded
+// and converted (highlighting and all) on every call, every frame on the
+// Activity page.
+func (t *Taut) MessageView(ch, ts string) (core.Message, bool) { return t.messageView(ch, ts, false) }
+
+// MessageViewChanged is MessageView for a caller whose own copy of the
+// message just changed (a new revision from core's events): the view is
+// converted again now, so it never shows the message's previous state
+// while the mirror is still on the event that changed it.
+func (t *Taut) MessageViewChanged(ch, ts string) (core.Message, bool) {
+	return t.messageView(ch, ts, true)
+}
+
+func (t *Taut) messageView(ch, ts string, fresh bool) (core.Message, bool) {
 	if !t.SlicePatched("messages") {
 		return core.Message{}, false
 	}
-	raw, ok := t.ui.views.get("messages", ch, ts)
-	if !ok || len(raw) == 0 || string(raw) == "null" {
+	e := t.ui.views.entry("messages", ch, ts)
+	if e == nil || e.sm == nil {
 		return core.Message{}, false
 	}
-	var sm slack.Message
-	if json.Unmarshal(raw, &sm) != nil {
-		return core.Message{}, false
-	}
-	return t.app.MessageFromSlack(ch, &sm), true
+	return t.ui.views.convert(&e.conv, ch, e.sm, fresh), true
 }
 
 // InjectedMessages lists messages plugins added to ch (injectMessages)
-// that core doesn't have, as UI messages. Non-blocking like MessageView.
+// that core doesn't have, as UI messages. Non-blocking like MessageView,
+// and cheap: the fetch worker decodes the channel's bucket once per value
+// and keeps (converted) only the messages core didn't have when it came;
+// here they're checked against core again. (Every call used to decode
+// the whole bucket, 124 KB in a long channel, and look up each of its
+// messages in core, copying the timeline once per message.)
 func (t *Taut) InjectedMessages(ch string) []core.Message {
 	if !t.SlicePatched("messages") {
 		return nil
 	}
-	raw, ok := t.ui.views.get("messages", ch, "")
-	if !ok {
-		return nil
-	}
-	var bucket map[string]slack.Message
-	if json.Unmarshal(raw, &bucket) != nil {
+	e := t.ui.views.entry("messages", ch, "")
+	if e == nil || len(e.inj) == 0 {
 		return nil
 	}
 	// The bucket is the mirror of core's messages as plugins left them,
@@ -800,47 +813,45 @@ func (t *Taut) InjectedMessages(ch string) []core.Message {
 	// (swapped for the confirmed message since) or a message core already
 	// has under another ts must not come back as "injected" (the message
 	// showed twice after every send with Message Logger on).
-	var cids map[string]bool
 	var out []core.Message
-	for ts, sm := range bucket {
-		if _, have := t.app.S.Find(ch, ts); have {
+	for i := range e.inj {
+		in := &e.inj[i]
+		if t.app.S.Holds(ch, in.ts, in.cid) {
 			continue
 		}
-		if _, local := t.app.LocalTS(ts); local {
+		if _, local := t.app.LocalTS(in.ts); local {
 			continue
 		}
-		if sm.ClientMsgID != "" {
-			if cids == nil {
-				cids = t.app.ClientMsgIDs(ch)
-			}
-			if cids[sm.ClientMsgID] {
-				continue
-			}
-		}
-		m := sm
-		out = append(out, t.app.MessageFromSlack(ch, &m))
+		out = append(out, t.ui.views.convert(&in.conv, ch, in.sm, false))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].TS < out[j].TS })
-	return out
+	return out // the worker sorted them by ts
 }
 
 // MemberView is member id as plugins present it (Nicknames,
-// StreamerMode…): the Slack-shaped member JSON. Non-blocking.
+// StreamerMode…): the Slack-shaped member JSON. Non-blocking; decoded
+// once per value by the fetch worker.
 func (t *Taut) MemberView(id string) (MemberFields, bool) {
 	if !t.SlicePatched("members") {
 		return MemberFields{}, false
 	}
-	raw, ok := t.ui.views.get("members", id, "")
-	if !ok || len(raw) == 0 || string(raw) == "null" {
+	e := t.ui.views.entry("members", id, "")
+	if e == nil || e.mem == nil {
 		return MemberFields{}, false
+	}
+	return *e.mem, true
+}
+
+func decodeMember(raw json.RawMessage) *MemberFields {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
 	}
 	var u slack.User
 	if json.Unmarshal(raw, &u) != nil {
-		return MemberFields{}, false
+		return nil
 	}
-	return MemberFields{Name: firstNonEmpty(u.Profile.DisplayName, u.RealName, u.Name), RealName: firstNonEmpty(u.RealName, u.Profile.RealName),
+	return &MemberFields{Name: firstNonEmpty(u.Profile.DisplayName, u.RealName, u.Name), RealName: firstNonEmpty(u.RealName, u.Profile.RealName),
 		DisplayName: u.Profile.DisplayName, Avatar: firstNonEmpty(u.Profile.Image72, u.Profile.Image48), StatusText: u.Profile.StatusText,
-		StatusEmoji: u.Profile.StatusEmoji, Raw: raw}, true
+		StatusEmoji: u.Profile.StatusEmoji, Raw: raw}
 }
 
 // MemberFields are the parts of a patched member the UI draws.
@@ -850,13 +861,21 @@ type MemberFields struct {
 }
 
 // ChannelView is channel id as plugins present it (PrivateChannel…).
+// Non-blocking; decoded once per value by the fetch worker.
 func (t *Taut) ChannelView(id string) (ChannelFields, bool) {
 	if !t.SlicePatched("channels") {
 		return ChannelFields{}, false
 	}
-	raw, ok := t.ui.views.get("channels", id, "")
-	if !ok || len(raw) == 0 || string(raw) == "null" {
+	e := t.ui.views.entry("channels", id, "")
+	if e == nil || e.ch == nil {
 		return ChannelFields{}, false
+	}
+	return *e.ch, true
+}
+
+func decodeChannel(raw json.RawMessage) *ChannelFields {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
 	}
 	var c struct {
 		Name       string `json:"name"`
@@ -865,9 +884,9 @@ func (t *Taut) ChannelView(id string) (ChannelFields, bool) {
 		IsMember   bool   `json:"is_member"`
 	}
 	if json.Unmarshal(raw, &c) != nil {
-		return ChannelFields{}, false
+		return nil
 	}
-	return ChannelFields{Name: c.Name, IsPrivate: c.IsPrivate, IsArchived: c.IsArchived, IsMember: c.IsMember, Raw: raw}, true
+	return &ChannelFields{Name: c.Name, IsPrivate: c.IsPrivate, IsArchived: c.IsArchived, IsMember: c.IsMember, Raw: raw}
 }
 
 // ChannelFields are the parts of a patched channel the UI draws.
@@ -890,15 +909,24 @@ func (t *Taut) ChannelRestriction(ch string) (readOnly, threadOnly bool) {
 		post, thread := t.mirror.restrictions(c)
 		return post && thread, post && !thread
 	}
-	ro, _ := t.ui.views.get("readOnlyChannels", ch, "")
-	to, _ := t.ui.views.get("threadOnlyChannels", ch, "")
-	var r struct {
-		IsReadOnly   bool `json:"isReadOnly"`
-		IsThreadOnly bool `json:"isThreadOnly"`
+	// both values decoded in turn into one struct, the second's fields
+	// winning where it has them
+	for _, s := range []string{"readOnlyChannels", "threadOnlyChannels"} {
+		if e := t.ui.views.entry(s, ch, ""); e != nil && e.restr != nil {
+			if e.restr.IsReadOnly != nil {
+				readOnly = *e.restr.IsReadOnly
+			}
+			if e.restr.IsThreadOnly != nil {
+				threadOnly = *e.restr.IsThreadOnly
+			}
+		}
 	}
-	_ = json.Unmarshal(ro, &r)
-	_ = json.Unmarshal(to, &r)
-	return r.IsReadOnly, r.IsThreadOnly
+	return readOnly, threadOnly
+}
+
+type restrFields struct {
+	IsReadOnly   *bool `json:"isReadOnly"`
+	IsThreadOnly *bool `json:"isThreadOnly"`
 }
 
 // ViewIn reads slice[key] the way a plugin's redux.StateView presents it
@@ -920,41 +948,157 @@ func (t *Taut) View(slice, key string) (json.RawMessage, bool) {
 	return t.ui.views.get(slice, key, "")
 }
 
-// viewCache keeps patched values for the UI. A miss (or a stale entry)
-// schedules one batched JS call; the UI gets the old value (or none) now
-// and an Invalidate when the new one lands.
+// viewCache keeps patched values for the UI (MessageView, View…). A miss
+// or a stale entry queues its key for the one fetch worker; the UI gets
+// the last value (or none) now and an Invalidate when the new one lands.
+//
+// The UI goroutine holds mu for map lookups only. The worker calls JS and
+// decodes with mu released, and takes it again just to swap results in.
+// It used to decode a channel's whole bucket under mu once for every
+// message asked of it, while each frame's lookups waited on mu, and each
+// frame that missed while JS was busy started another fetch of the same
+// keys (Karim's 2.5 s freezes on the Activity page, 2026-11-15).
+//
+// Staleness is by sequence number: marking a slice or key stale is O(1)
+// (it walked every entry, twice per typing event), and a value asked of JS
+// before an invalidation that lands after it stays stale.
 type viewKey struct{ slice, key, sub string }
 
+type viewSK struct{ slice, key string }
+
 type viewEntry struct {
-	raw   json.RawMessage
-	stale bool
+	// raw is the value as JS sent it, except for a message of a bucket
+	// (slice messages, sub ts): there it's decoded into sm and let go,
+	// and sum and rawLen tell a refetch of the same bytes
+	raw    json.RawMessage
+	sum    uint64
+	rawLen int
+	size   int    // bytes it holds, about (the cache's budget)
+	ver    uint64 // seq when the worker asked JS for it (mu)
+
+	// decoded by the worker, read-only once installed
+	sm    *slack.Message // a message (slice messages, sub ts)
+	inj   []viewInj      // a channel's bucket (messages, key ch, sub ""): what core didn't have
+	mem   *MemberFields  // a member (members)
+	ch    *ChannelFields // a channel (channels)
+	restr *restrFields   // readOnlyChannels / threadOnlyChannels
+
+	conv atomic.Pointer[viewConv] // sm converted (MessageView)
+}
+
+// viewInj is a message of a bucket that core didn't have.
+type viewInj struct {
+	ts, cid string
+	sm      *slack.Message
+	conv    atomic.Pointer[viewConv]
+}
+
+// viewConv is a message converted for the UI, at conversion generation gen.
+type viewConv struct {
+	gen uint64
+	msg core.Message
+}
+
+// viewGroup is the cached values under one (slice, key): a message bucket's
+// messages share theirs.
+type viewGroup struct {
+	ver  uint64 // seq of its last invalidation
+	subs map[string]*viewEntry
 }
 
 type viewCache struct {
-	t       *Taut
-	mu      sync.Mutex
-	entries map[viewKey]*viewEntry
-	want    map[viewKey]bool
-	timer   *time.Timer
+	t *Taut
+
+	mu       sync.Mutex
+	groups   map[viewSK]*viewGroup
+	sliceVer map[string]uint64 // seq of each slice's last whole invalidation
+	sliceN   map[string]int    // groups per slice
+	allVer   uint64            // seq of the last staleAll
+	seq      uint64
+	n        int // entries
+	want     map[viewKey]bool
+	flying   map[viewKey]bool // asked of JS, not back yet
+	busy     bool             // the worker runs or is about to
+	fetches  atomic.Int64     // worker batches (tests)
+	lastRead atomic.Int64     // UnixMilli of the UI's latest read (entry): its latest frame
+	maxSubs  int              // entries before everything is dropped (20000)
+	bytes    int              // what the entries hold, about
+	maxBytes int              // bytes before everything is dropped (64 MiB)
+	failN    int              // fetches that failed in a row (retry backoff)
+
+	// conversion generations (MessageView): the mirror bumps a message's
+	// on core's events about it, and the global one on events about
+	// people, names, prefs, emoji and the rest core.App.message reads
+	gmu    sync.Mutex
+	gseq   uint64
+	global uint64
+	msgGen map[viewSK]uint64 // channel, ts → gseq
 }
 
 func (v *viewCache) init(t *Taut) {
 	v.t = t
-	v.entries = map[viewKey]*viewEntry{}
+	v.groups = map[viewSK]*viewGroup{}
+	v.sliceVer = map[string]uint64{}
+	v.sliceN = map[string]int{}
 	v.want = map[viewKey]bool{}
+	v.flying = map[viewKey]bool{}
+	v.msgGen = map[viewSK]uint64{}
+	v.maxSubs = 20000
+	v.maxBytes = 64 << 20
+}
+
+// viewRetry is how soon a batch JS didn't answer is asked again (doubling
+// with each failure in a row, up to viewRetryMax).
+const (
+	viewRetry    = 250 * time.Millisecond
+	viewRetryMax = 5 * time.Second
+)
+
+// kickLocked starts the worker if it isn't running (mu held).
+func (v *viewCache) kickLocked() {
+	if !v.busy {
+		v.busy = true
+		time.AfterFunc(2*time.Millisecond, v.work) // a frame's misses in one batch
+	}
+}
+
+// groupLocked returns (creating) the group of (slice, key). Groups exist
+// from the first request on, so an invalidation while it's in flight
+// marks what comes back stale.
+func (v *viewCache) groupLocked(sk viewSK) *viewGroup {
+	g := v.groups[sk]
+	if g == nil {
+		g = &viewGroup{subs: map[string]*viewEntry{}}
+		v.groups[sk] = g
+		v.sliceN[sk.slice]++
+	}
+	return g
+}
+
+func (v *viewCache) staleLocked(e *viewEntry, g *viewGroup, slice string) bool {
+	return e.ver < g.ver || e.ver < v.sliceVer[slice] || e.ver < v.allVer
+}
+
+// entry returns slice[key][sub]'s cached value (nil until the first one
+// arrives), queueing a fetch when it's missing or stale. Never waits on JS.
+func (v *viewCache) entry(slice, key, sub string) *viewEntry {
+	v.lastRead.Store(time.Now().UnixMilli())
+	k := viewKey{slice, key, sub}
+	v.mu.Lock()
+	g := v.groupLocked(viewSK{slice, key})
+	e := g.subs[sub]
+	// a key in flight isn't asked twice: if it was invalidated meanwhile,
+	// the worker asks again when it lands (work)
+	if (e == nil || v.staleLocked(e, g, slice)) && !v.want[k] && !v.flying[k] {
+		v.want[k] = true
+		v.kickLocked()
+	}
+	v.mu.Unlock()
+	return e
 }
 
 func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {
-	k := viewKey{slice, key, sub}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	e := v.entries[k]
-	if e == nil || e.stale {
-		v.want[k] = true
-		if v.timer == nil {
-			v.timer = time.AfterFunc(2*time.Millisecond, v.fetch)
-		}
-	}
+	e := v.entry(slice, key, sub)
 	if e == nil {
 		return nil, false
 	}
@@ -963,9 +1107,8 @@ func (v *viewCache) get(slice, key, sub string) (json.RawMessage, bool) {
 
 func (v *viewCache) staleAll() {
 	v.mu.Lock()
-	for _, e := range v.entries {
-		e.stale = true
-	}
+	v.seq++
+	v.allVer = v.seq
 	v.mu.Unlock()
 	if f := v.t.opts.UI.Invalidate; f != nil {
 		f()
@@ -975,69 +1118,238 @@ func (v *viewCache) staleAll() {
 // stale marks the cached views of slice (key "" = all) stale, reporting
 // whether it held any.
 func (v *viewCache) stale(slice, key string) bool {
-	hit := false
 	v.mu.Lock()
-	for k, e := range v.entries {
-		if k.slice == slice && (key == "" || k.key == key) {
-			e.stale = true
-			hit = true
+	defer v.mu.Unlock()
+	v.seq++
+	if key == "" {
+		v.sliceVer[slice] = v.seq
+		return v.sliceN[slice] > 0
+	}
+	g := v.groups[viewSK{slice, key}]
+	if g == nil {
+		return false
+	}
+	g.ver = v.seq
+	return len(g.subs) > 0
+}
+
+// work is the fetch worker: one batch at a time until nothing is wanted,
+// so a busy runtime gets each key asked once, not once per frame.
+func (v *viewCache) work() {
+	for {
+		v.mu.Lock()
+		if len(v.want) == 0 {
+			v.busy = false
+			v.mu.Unlock()
+			return
+		}
+		keys := make([]viewKey, 0, len(v.want))
+		for k := range v.want {
+			keys = append(keys, k)
+			v.flying[k] = true
+		}
+		clear(v.want)
+		ver := v.seq
+		v.mu.Unlock()
+
+		got, failed := v.fetch(keys) // JS and decoding, mu released
+		v.fetches.Add(1)
+
+		v.mu.Lock()
+		if v.n > v.maxSubs || len(v.groups) > v.maxSubs || v.bytes > v.maxBytes {
+			// bounded: drop everything (what's on screen comes back), and
+			// count what's in flight as stale
+			clear(v.groups)
+			clear(v.sliceN)
+			v.n, v.bytes = 0, 0
+			v.seq++
+			v.allVer = v.seq
+		}
+		changed := false
+		var retry []viewKey
+		for _, k := range keys {
+			delete(v.flying, k)
+			e := got[k]
+			if e == nil {
+				if failed {
+					retry = append(retry, k)
+				}
+				continue
+			}
+			g := v.groupLocked(viewSK{k.slice, k.key})
+			cur := g.subs[k.sub]
+			if cur != nil && cur.inj == nil && e.inj == nil && cur.sameValue(e) {
+				// the same value: keep what was decoded and converted (not
+				// a bucket's injected list, which also depends on what core
+				// had when it came: a message core deleted since that a
+				// logger keeps is injected now)
+				cur.ver = ver
+			} else {
+				if cur == nil {
+					v.n++
+				} else {
+					v.bytes -= cur.size
+				}
+				v.bytes += e.size
+				e.ver = ver
+				g.subs[k.sub] = e
+				cur = e
+				changed = true
+			}
+			// Invalidated while JS answered (the mirror marks a change again
+			// once it has posted it to JS, behind this call): the value may
+			// be from before the change, and a frame that asked meanwhile
+			// was turned away (flying). Ask again: that call comes after
+			// the change. Without it an idle window kept the plugins'
+			// pre-edit value for good.
+			if v.staleLocked(cur, g, k.slice) {
+				v.want[k] = true
+			}
+		}
+		delay := time.Duration(0)
+		if len(retry) > 0 {
+			delay = min(viewRetry<<min(v.failN, 5), viewRetryMax)
+			v.failN++
+		} else if !failed {
+			v.failN = 0
+		}
+		v.mu.Unlock()
+		if len(retry) > 0 {
+			// JS didn't answer (busy past the timeout, or the call failed):
+			// ask again in a moment, not on the next frame, which may never
+			// come to an idle window
+			time.AfterFunc(delay, func() {
+				v.mu.Lock()
+				for _, k := range retry {
+					if !v.flying[k] {
+						v.want[k] = true
+					}
+				}
+				v.kickLocked()
+				v.mu.Unlock()
+			})
+		}
+		if f := v.t.opts.UI.Invalidate; changed && f != nil {
+			f()
+		}
+	}
+}
+
+// sameValue reports whether e holds the bytes x does.
+func (x *viewEntry) sameValue(e *viewEntry) bool {
+	if x.raw != nil || e.raw != nil {
+		return bytes.Equal(x.raw, e.raw) && x.rawLen == e.rawLen
+	}
+	return x.sum == e.sum && x.rawLen == e.rawLen
+}
+
+// drop forgets slice's cached values under keys (all of slice with none).
+func (v *viewCache) drop(slice string, keys ...string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(keys) == 0 {
+		for sk, g := range v.groups {
+			if sk.slice == slice {
+				v.dropGroupLocked(sk, g)
+			}
+		}
+		return
+	}
+	// a lookup per key: the members pass lets thousands go at once, and
+	// scanning every group for each of them held mu for tens of ms
+	for _, k := range keys {
+		sk := viewSK{slice, k}
+		if g := v.groups[sk]; g != nil {
+			v.dropGroupLocked(sk, g)
+		}
+	}
+}
+
+func (v *viewCache) dropGroupLocked(sk viewSK, g *viewGroup) {
+	for _, e := range g.subs {
+		v.n--
+		v.bytes -= e.size
+	}
+	delete(v.groups, sk)
+	v.sliceN[sk.slice]--
+}
+
+// dropEvicted forgets the views of ch's messages core's cache pass let go
+// (its "evicted" event): those core no longer holds. Not those older than
+// the event's oldest kept: the pass keeps a thread on screen whole while
+// it trims its channel, and dropping that thread's root and replies made
+// them flash back to their unpatched text until JS answered again.
+func (v *viewCache) dropEvicted(ch string) {
+	sk := viewSK{"messages", ch}
+	v.mu.Lock()
+	var subs []string
+	if g := v.groups[sk]; g != nil {
+		for ts := range g.subs {
+			if ts != "" {
+				subs = append(subs, ts)
+			}
 		}
 	}
 	v.mu.Unlock()
-	return hit
-}
-
-func (v *viewCache) fetch() {
-	v.mu.Lock()
-	v.timer = nil
-	keys := make([]viewKey, 0, len(v.want))
-	for k := range v.want {
-		keys = append(keys, k)
+	// asked of core with mu released: the UI goroutine's lookups wait on it
+	var gone []string
+	for _, ts := range subs {
+		if !v.t.app.S.Holds(ch, ts, "") {
+			gone = append(gone, ts)
+		}
 	}
-	v.want = map[viewKey]bool{}
-	if len(v.entries) > 20000 {
-		v.entries = map[viewKey]*viewEntry{}
-	}
-	v.mu.Unlock()
-	if len(keys) == 0 {
+	if len(gone) == 0 {
 		return
 	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	g := v.groups[sk]
+	if g == nil {
+		return
+	}
+	for _, ts := range gone {
+		if e := g.subs[ts]; e != nil {
+			delete(g.subs, ts)
+			v.n--
+			v.bytes -= e.size
+		}
+	}
+}
+
+// fetch asks JS for keys and decodes what comes back: one JS read per
+// (slice, key), each message bucket decoded once for all of its messages
+// asked for. failed: a call to JS failed (the keys it didn't answer are
+// worth asking again); with no runtime nothing is asked or failed.
+func (v *viewCache) fetch(keys []viewKey) (out map[viewKey]*viewEntry, failed bool) {
 	v.t.mu.Lock()
 	rt := v.t.rt
 	v.t.mu.Unlock()
 	if rt == nil {
-		return
+		return nil, false
 	}
+	out = make(map[viewKey]*viewEntry, len(keys))
 	// StateView reads go one by one through __taut.viewIn
 	var plain []viewKey
-	var viewed []viewKey
 	for _, k := range keys {
-		if strings.HasPrefix(k.sub, "view:") {
-			viewed = append(viewed, k)
-		} else {
+		if !strings.HasPrefix(k.sub, "view:") {
 			plain = append(plain, k)
+			continue
 		}
-	}
-	keys = plain
-	for _, k := range viewed {
 		id, _ := strconv.ParseInt(strings.TrimPrefix(k.sub, "view:"), 10, 64)
 		var key any = k.key
 		if k.key == "" {
 			key = nil
 		}
-		raw, err := rt.rt.Call(context.Background(), "__taut.viewIn", float64(id), k.slice, key)
-		if err == nil {
-			v.mu.Lock()
-			v.entries[k] = &viewEntry{raw: raw}
-			v.mu.Unlock()
+		if raw, err := rt.rt.Call(context.Background(), "__taut.viewIn", float64(id), k.slice, key); err == nil {
+			out[k] = &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
+		} else {
+			failed = true
 		}
 	}
-	// one JS read per (slice, key); message subs share their bucket
-	type sk struct{ slice, key string }
-	index := map[sk]int{}
+	index := map[viewSK]int{}
 	var pairs [][2]any
-	for _, k := range keys {
-		p := sk{k.slice, k.key}
+	for _, k := range plain {
+		p := viewSK{k.slice, k.key}
 		if _, ok := index[p]; ok {
 			continue
 		}
@@ -1048,27 +1360,182 @@ func (v *viewCache) fetch() {
 		}
 		pairs = append(pairs, [2]any{k.slice, key})
 	}
+	if len(pairs) == 0 {
+		return out, failed
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	var vals []json.RawMessage
 	if err := rt.call(ctx, "views", &vals, pairs); err != nil || len(vals) != len(pairs) {
-		return
+		return out, true
 	}
-	v.mu.Lock()
-	for _, k := range keys {
-		raw := vals[index[sk{k.slice, k.key}]]
-		if k.sub != "" {
-			// one message of a bucket
-			var bucket map[string]json.RawMessage
-			_ = json.Unmarshal(raw, &bucket)
-			raw = bucket[k.sub]
+	buckets := make(map[int]map[string]json.RawMessage)
+	bucket := func(i int) map[string]json.RawMessage {
+		b, ok := buckets[i]
+		if !ok {
+			_ = json.Unmarshal(vals[i], &b)
+			buckets[i] = b
 		}
-		v.entries[k] = &viewEntry{raw: raw}
+		return b
 	}
-	v.mu.Unlock()
-	if f := v.t.opts.UI.Invalidate; f != nil {
+	for _, k := range plain {
+		i := index[viewSK{k.slice, k.key}]
+		raw := vals[i]
+		if k.sub != "" {
+			raw = bucket(i)[k.sub] // one message of a bucket
+		}
+		e := &viewEntry{raw: raw, rawLen: len(raw), size: len(raw) + 64}
+		switch k.slice {
+		case "messages":
+			if k.sub != "" {
+				// decoded and converted, the bytes aren't needed again:
+				// a hash tells a refetch of the same value
+				e.sm = decodeMessage(raw)
+				e.raw, e.sum = nil, viewSum(raw)
+				e.size = 3*len(raw) + 256 // the decoded message and its conversion
+			} else if k.key != "" {
+				e.inj = v.injected(k.key, bucket(i))
+				e.size += 3 * 1024 * len(e.inj)
+			}
+		case "members":
+			e.mem = decodeMember(raw)
+			e.size += 256
+		case "channels":
+			e.ch = decodeChannel(raw)
+			e.size += 128
+		case "readOnlyChannels", "threadOnlyChannels":
+			var r restrFields
+			if json.Unmarshal(raw, &r) == nil {
+				e.restr = &r
+			}
+		}
+		out[k] = e
+	}
+	return out, failed
+}
+
+// viewSum is FNV-1a of b.
+func viewSum(b []byte) uint64 {
+	h := uint64(14695981039346656037)
+	for _, c := range b {
+		h ^= uint64(c)
+		h *= 1099511628211
+	}
+	return h
+}
+
+func decodeMessage(raw json.RawMessage) *slack.Message {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var sm slack.Message
+	if json.Unmarshal(raw, &sm) != nil {
+		return nil
+	}
+	return &sm
+}
+
+// injected is the messages of ch's bucket that core doesn't have, by ts,
+// converted (worker goroutine).
+func (v *viewCache) injected(ch string, bucket map[string]json.RawMessage) []viewInj {
+	if len(bucket) == 0 {
+		return nil
+	}
+	have, cids := v.t.app.S.MessageKeys(ch)
+	var out []viewInj
+	for ts, raw := range bucket {
+		if have[ts] {
+			continue
+		}
+		sm := decodeMessage(raw)
+		if sm == nil || sm.ClientMsgID != "" && cids[sm.ClientMsgID] {
+			continue
+		}
+		out = append(out, viewInj{ts: ts, cid: sm.ClientMsgID, sm: sm})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ts < out[j].ts })
+	for i := range out {
+		v.convert(&out[i].conv, ch, out[i].sm, false)
+	}
+	return out
+}
+
+// convert is sm (a decoded view, never written) as a UI message: made
+// again only when the conversion generation of ch/sm.TS moved since, or
+// when fresh.
+func (v *viewCache) convert(slot *atomic.Pointer[viewConv], ch string, sm *slack.Message, fresh bool) core.Message {
+	gen := v.convGen(ch, sm.TS)
+	if c := slot.Load(); c != nil && !fresh && c.gen == gen {
+		return c.msg
+	}
+	m := *sm
+	c := &viewConv{gen: gen, msg: v.t.app.MessageFromSlack(ch, &m)}
+	slot.Store(c)
+	return c.msg
+}
+
+// convGen is the generation of what converting ch/ts reads.
+func (v *viewCache) convGen(ch, ts string) uint64 {
+	v.gmu.Lock()
+	defer v.gmu.Unlock()
+	return max(v.global, v.msgGen[viewSK{ch, ts}])
+}
+
+// bumpConv makes conversions of ch/ts (with ts "", of every message) be
+// made again, and redraws when one of them is cached: the UI hears core's
+// event on its own and may have drawn, converting with the old
+// generation, before the mirror got here (a mention resolved by "names",
+// new highlight words), and nothing else would redraw for it.
+func (v *viewCache) bumpConv(ch, ts string) {
+	v.gmu.Lock()
+	v.gseq++
+	global := ch == "" || ts == "" || len(v.msgGen) >= 50000
+	if global {
+		clear(v.msgGen)
+		v.global = v.gseq
+	} else {
+		v.msgGen[viewSK{ch, ts}] = v.gseq
+	}
+	v.gmu.Unlock()
+	if global {
+		ch, ts = "", ""
+	}
+	if f := v.t.opts.UI.Invalidate; f != nil && v.convCached(ch, ts) {
 		f()
 	}
+}
+
+// drewMember reports whether a member last drawn at seen (core.Event.Seen)
+// was drawn in the UI's latest frame, the one that read the views last:
+// rows touch their members as they read their views. A second of slack
+// covers a long frame.
+func (v *viewCache) drewMember(seen time.Time) bool {
+	return !seen.IsZero() && seen.UnixMilli() >= v.lastRead.Load()-1000
+}
+
+// convCached reports whether a conversion of ch/ts is cached (with ch "",
+// of any message).
+func (v *viewCache) convCached(ch, ts string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if ch == "" {
+		return v.sliceN["messages"] > 0
+	}
+	g := v.groups[viewSK{"messages", ch}]
+	if g == nil {
+		return false
+	}
+	if e := g.subs[ts]; e != nil && e.conv.Load() != nil {
+		return true
+	}
+	if b := g.subs[""]; b != nil {
+		for i := range b.inj {
+			if b.inj[i].ts == ts {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // File is a file crossing to JS as a real File (thunk args like

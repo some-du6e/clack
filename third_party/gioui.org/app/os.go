@@ -21,6 +21,12 @@ import (
 // longer match the window.
 var errOutOfDate = errors.New("app: GPU surface out of date")
 
+// errNoRenderTarget is a context's RenderTarget that had nothing to draw
+// into this time (Clack patch, CLACK_PATCHES.md §32: macOS's Metal layer
+// gave no drawable within its second). The window skips the frame and
+// asks for another.
+var errNoRenderTarget = errors.New("app: no render target for this frame")
+
 // Config describes a Window configuration.
 type Config struct {
 	// Size is the window dimensions (Width, Height).

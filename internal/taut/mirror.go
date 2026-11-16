@@ -288,6 +288,7 @@ func (m *mirror) sweep() {
 // ---- events ----
 
 func (m *mirror) onEvent(ev core.Event) {
+	m.noteConv(ev)
 	switch ev.Type {
 	case "message", "update", "delete", "sent":
 		m.invalidate("messages", ev.Channel)
@@ -303,13 +304,19 @@ func (m *mirror) onEvent(ev core.Event) {
 	case "evicted":
 		// core trimmed the conversation to Slack's message cache budget
 		// (core/evict.go): the JS side drops what it cached of it, as
-		// Slack's store drops the evicted messages
+		// Slack's store drops the evicted messages, and so do the UI's
+		// patched views of them (the pass never trims what's on screen)
+		m.t.ui.views.dropEvicted(ev.Channel)
 		m.invalidate("messages", ev.Channel)
 		m.invalidate("channelHistory")
 		m.invalidate("reactions")
 	case "members_evicted":
 		// core trimmed the members cache (store/members.go): the JS side
-		// drops them, as Slack's store does (bulkRemoveMembersById)
+		// drops them, as Slack's store does (bulkRemoveMembersById), and
+		// so do the UI's patched views of them
+		if len(ev.Users) > 0 {
+			m.t.ui.views.drop("members", ev.Users...)
+		}
 		m.invalidate("members", ev.Users...)
 		m.invalidate("presence", ev.Users...)
 	case "names":
@@ -386,6 +393,47 @@ func (m *mirror) onEvent(ev core.Event) {
 			}
 		}
 	}
+}
+
+// noteConv tells MessageView's cached conversions what ev may have
+// changed: the message it names (core announces every change to a message
+// that way, a thread's broadcasts included), or for anything else that
+// core.App.message reads (names, prefs and highlight words, emoji,
+// experiment groups, a resync) every message. Events that change no
+// message's conversion are skipped: read states, counts and badges, a
+// channel's own details (rows resolve channel names as they draw) and its
+// member count (users/counts on a first open), tabs, bookmarks, presence,
+// typing. ("experiments" counts: a huddle message's sentence and the
+// emoji set follow experiment groups.)
+func (m *mirror) noteConv(ev core.Event) {
+	switch ev.Type {
+	case "typing", "presence", "marked", "counts", "huddle", "draft", "dnd_updated", "dnd_updated_user",
+		"connection", "realtime", "client_online", "sidebar_changed", "channel_sections_upserted",
+		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted",
+		"activity", "activity_badges", "poll", "tabs", "bookmarks", "pins_tab", "channel_email", "permissions",
+		"conv", "conv_removed", "member_count", "canvas_viewers", "megaphone", "suggested_prompts",
+		"assistant_status", "auth_failed":
+		return
+	case "user":
+		// a profile change, many a second on a busy workspace's socket:
+		// only a member the UI drew in its latest frame can show in a
+		// conversion it uses (as the UI's own filter, hub.drawsMember);
+		// the event's Seen is when the member was last drawn, from before
+		// the change
+		if m.t.ui.views.drewMember(ev.Seen) {
+			m.t.ui.views.bumpConv("", "")
+		}
+		return
+	}
+	ts := ev.TS
+	if ts == "" && ev.Msg != nil {
+		ts = ev.Msg.TS
+	}
+	if ev.Channel != "" && ts != "" {
+		m.t.ui.views.bumpConv(ev.Channel, ts)
+		return
+	}
+	m.t.ui.views.bumpConv("", "")
 }
 
 func typingKey(ch, thread, user string) string { return ch + "|" + thread + "|" + user }
@@ -1205,49 +1253,57 @@ func (m *mirror) slashCommands() any {
 // ---- fingerprints (cheap change detection for watched entries) ----
 
 func (m *mirror) messagesFP(ch string) uint64 {
-	h := fnv.New64a()
-	tl := m.t.app.S.Timeline(ch)
-	if tl != nil {
-		for i := range tl.Msgs {
-			fpMsg(h, &tl.Msgs[i])
-		}
-	}
-	// threads in ts order: a map's order changes from one range to the
+	// in place and without allocating (fnv64a below is FNV-1a over the
+	// same bytes the hash/fnv writes produced): the sweep fingerprints
+	// every watched channel every 750 ms, and copying each timeline and
+	// its threads out made megabytes of garbage a sweep in a long session.
+	// Threads go in ts order: a map's order changes from one range to the
 	// next, and an unsorted walk gave a channel with two cached threads a
 	// new fingerprint every sweep, so the mirror re-sent its messages to
 	// JS every 750 ms and every row a messages-reading plugin patched
 	// (ShowRealUser, ShowSendingBot, Slick's Censorship) re-rendered forever
-	threads := m.t.app.S.ThreadsIn(ch)
-	roots := make([]string, 0, len(threads))
-	for root := range threads {
-		roots = append(roots, root)
-	}
-	sort.Strings(roots)
-	for _, root := range roots {
-		h.Write([]byte(root))
-		msgs := threads[root]
-		for i := range msgs {
-			fpMsg(h, &msgs[i])
-		}
-	}
-	return h.Sum64()
+	h := fnv64a(fnvOffset64)
+	m.t.app.S.VisitMessages(ch, h.str, func(sm *slack.Message) { fpMsg(&h, sm) })
+	return uint64(h)
 }
 
-type hashWriter interface{ Write([]byte) (int, error) }
+// fnv64a is an FNV-1a hash that takes strings and ints without allocating.
+type fnv64a uint64
 
-func fpMsg(h hashWriter, sm *slack.Message) {
-	h.Write([]byte(sm.TS))
+const (
+	fnvOffset64 fnv64a = 14695981039346656037
+	fnvPrime64  fnv64a = 1099511628211
+)
+
+func (h *fnv64a) str(s string) {
+	for i := 0; i < len(s); i++ {
+		*h ^= fnv64a(s[i])
+		*h *= fnvPrime64
+	}
+}
+
+// int hashes n's decimal digits (strconv.Itoa's bytes).
+func (h *fnv64a) int(n int) {
+	var b [20]byte
+	for _, c := range strconv.AppendInt(b[:0], int64(n), 10) {
+		*h ^= fnv64a(c)
+		*h *= fnvPrime64
+	}
+}
+
+func fpMsg(h *fnv64a, sm *slack.Message) {
+	h.str(sm.TS)
 	if sm.Edited != nil {
-		h.Write([]byte(sm.Edited.TS))
+		h.str(sm.Edited.TS)
 	}
-	h.Write([]byte(strconv.Itoa(sm.ReplyCount)))
-	h.Write([]byte(strconv.Itoa(len(sm.Text))))
+	h.int(sm.ReplyCount)
+	h.int(len(sm.Text))
 	for _, r := range sm.Reactions {
-		h.Write([]byte(r.Name))
-		h.Write([]byte(strconv.Itoa(r.Count)))
+		h.str(r.Name)
+		h.int(r.Count)
 	}
-	h.Write([]byte(strconv.Itoa(len(sm.Files))))
-	h.Write([]byte(sm.Subtype))
+	h.int(len(sm.Files))
+	h.str(sm.Subtype)
 }
 
 func (m *mirror) memberFP(id string) uint64 {
@@ -1255,10 +1311,17 @@ func (m *mirror) memberFP(id string) uint64 {
 	if !ok {
 		return 0
 	}
-	h := fnv.New64a()
-	h.Write([]byte(strconv.FormatInt(u.Updated, 10)))
-	h.Write([]byte(u.Name + "\x00" + u.RealName + "\x00" + u.Profile.DisplayName + "\x00" + u.Profile.StatusText + "\x00" + u.Profile.StatusTextCanonical + "\x00" + u.Profile.StatusEmoji + "\x00" + u.Profile.Image72))
-	return h.Sum64()
+	// the same bytes as before (Updated's digits, then the fields joined by
+	// NULs), hashed without building them: up to 4096 members a sweep
+	h := fnvOffset64
+	h.int(int(u.Updated))
+	for i, f := range [...]string{u.Name, u.RealName, u.Profile.DisplayName, u.Profile.StatusText, u.Profile.StatusTextCanonical, u.Profile.StatusEmoji, u.Profile.Image72} {
+		if i > 0 {
+			h.str("\x00")
+		}
+		h.str(f)
+	}
+	return uint64(h)
 }
 
 func (m *mirror) channelFP(id string) uint64 {

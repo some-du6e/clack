@@ -182,9 +182,11 @@ func (p *miniPanel) run() {
 	go func() { screen <- screenOf(p.src) }()
 	var bounds image.Rectangle
 	var ops op.Ops
+	var patch slackc.SubWindow // its plugin patch points' roots (slackc)
 	for {
 		switch e := ww.Event().(type) {
 		case app.DestroyEvent:
+			patch.Close()
 			p.mu.Lock()
 			p.closed = true
 			p.mu.Unlock()
@@ -204,7 +206,7 @@ func (p *miniPanel) run() {
 			}
 			gtx.Execute(op.InvalidateCmd{At: e.Now.Add(next)})
 			slackc.LockFrame()
-			restore := slackc.SubFrame(gtx, "sk-client-theme--dark", panelInk)
+			restore := patch.Frame(gtx, "sk-client-theme--dark", panelInk)
 			p.layout(gtx, th)
 			restore()
 			slackc.UnlockFrame()

@@ -51,7 +51,7 @@ on:
         required: false
         default: ""
       jobs:
-        description: "all, or scale (only the Hack Club-scale memory jobs)"
+        description: "all, scale (only the Hack Club-scale memory jobs) or plugins (only scroll frames under a plugin set like Karim's, base vs head)"
         required: false
         default: "all"
       scale_base:
@@ -86,7 +86,7 @@ concurrency:
 
 jobs:
   perf:
-    if: ${{ inputs.jobs != 'scale' }}
+    if: ${{ inputs.jobs != 'scale' && inputs.jobs != 'plugins' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
@@ -234,7 +234,7 @@ jobs:
   # and a heap profile (inuse_space and alloc_space). Design notes:
   # .github/perf/README.md.
   scale-linux:
-    if: ${{ inputs.scale_platforms != 'windows' }}
+    if: ${{ inputs.jobs != 'plugins' && inputs.scale_platforms != 'windows' }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     strategy:
@@ -316,7 +316,7 @@ jobs:
             !scale-out/library
 
   scale-windows:
-    if: ${{ inputs.scale_platforms != 'linux' }}
+    if: ${{ inputs.jobs != 'plugins' && inputs.scale_platforms != 'linux' }}
     runs-on: windows-latest
     timeout-minutes: 150
     strategy:
@@ -416,7 +416,7 @@ jobs:
   # on the perf-history branch (pushes, and dispatches of the scale jobs).
   scale-report:
     needs: [scale-linux, scale-windows]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && inputs.jobs != 'plugins' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -454,3 +454,108 @@ jobs:
           cd ../hist && git add docs/perf-scale-history.md && git commit -qm "perf scale: ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}" || exit 0
           for i in 1 2 3; do git push -q origin perf-history && exit 0; git pull -q --rebase origin perf-history; done
 
+
+  # Scroll frames under a plugin set like Karim's (his 2026-11-15 freeze
+  # reports: the UI goroutine 2-10 s inside plugin-patched rows, patched
+  # message views and injected messages). internal/ui/perf_plugins_test.go
+  # installs the Library's default Taut plugins and Slick's Message Logger
+  # from the published `plugins` release, then scrolls the plugin bench's
+  # 500-message channel (quiet, then with people typing, posting, reacting,
+  # editing and deleting) and a 300-reply thread. HEAD's test file runs on
+  # the base tree too, so both columns are the same passes; the sides run
+  # interleaved on one runner. Dispatch only (jobs: plugins; base: the
+  # commit to compare against, default the merge base with ui).
+  # Third-party plugin code runs here: read-only token, no shared Go cache.
+  plugins:
+    if: ${{ inputs.jobs == 'plugins' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: base tree
+        id: base
+        env:
+          BASE: ${{ inputs.base }}
+        run: |
+          if [ -z "$BASE" ]; then
+            BASE=$(git merge-base HEAD origin/ui)
+          fi
+          sha=$(git rev-parse -q --verify "$BASE^{commit}" || git rev-parse -q --verify "origin/$BASE^{commit}") || { echo "::error::base $BASE not found"; exit 1; }
+          git worktree add -q --detach "$RUNNER_TEMP/base-tree" "$sha"
+          cp internal/ui/perf_plugins_test.go "$RUNNER_TEMP/base-tree/internal/ui/"
+          echo "label=$(git rev-parse --short "$sha")" >> "$GITHUB_OUTPUT"
+          echo "base: $(git log --oneline -1 "$sha")"
+          echo "head: $(git log --oneline -1 HEAD)"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: deps (Gio, Xvfb)
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS xvfb libgl1-mesa-dri libegl-mesa0
+      - name: the published Library (index.json + bundles)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist/library
+          .github/scripts/fetch_library.sh dist/library
+          test -s dist/library/index.json
+      - name: build both sides' ui tests
+        run: |
+          mkdir -p perf-out
+          go test -c -o perf-out/head.test ./internal/ui
+          (cd "$RUNNER_TEMP/base-tree" && go test -c -o "$GITHUB_WORKSPACE/perf-out/base.test" ./internal/ui) || echo "::warning::the base tree's ui tests didn't build; head numbers only"
+      - name: scroll passes (base and head interleaved, 3 rounds)
+        env:
+          PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          for r in 1 2 3; do
+            for s in base head; do
+              [ -x perf-out/$s.test ] || continue
+              echo "::group::$s round $r"
+              PERF_PLUGIN_OUT="$PWD/perf-out/$s-$r.json" PERF_PLUGIN_PROF="$PWD/perf-out/$s-$r" xvfb-run -a perf-out/$s.test -test.run '^TestPerfPluginScroll$' -test.v -test.count 1 -test.timeout 25m > perf-out/$s-$r.log 2>&1 || echo "::warning::$s round $r failed"
+              grep -E 'pass |running [0-9]+ plugins|messages loaded|--- |panic|FAIL' perf-out/$s-$r.log || true
+              echo "::endgroup::"
+            done
+          done
+      - name: profiles (round 1; CPU per pass, then mutex and block waits)
+        if: ${{ !cancelled() }}
+        run: |
+          for s in base head; do
+            [ -x perf-out/$s.test ] || continue
+            for f in perf-out/$s-1-*.cpu.pprof; do
+              [ -f "$f" ] || continue
+              echo "::group::$f flat"; go tool pprof -top -nodecount 45 perf-out/$s.test "$f" 2>&1 | head -60; echo "::endgroup::"
+              echo "::group::$f cumulative"; go tool pprof -top -cum -nodecount 70 perf-out/$s.test "$f" 2>&1 | head -85; echo "::endgroup::"
+              a="${f%.cpu.pprof}"
+              if [ -f "$a.allocs0.pprof" ] && [ -f "$a.allocs1.pprof" ]; then
+                echo "::group::$a allocated during the pass"; go tool pprof -sample_index=alloc_space -top -nodecount 40 -base "$a.allocs0.pprof" perf-out/$s.test "$a.allocs1.pprof" 2>&1 | head -55; echo "::endgroup::"
+              fi
+            done
+            for k in mutex block; do
+              f=perf-out/$s-1.$k.pprof
+              [ -f "$f" ] || continue
+              echo "::group::$f"; go tool pprof -top -nodecount 30 perf-out/$s.test "$f" 2>&1 | head -45; echo "::endgroup::"
+              echo "::group::$f cumulative"; go tool pprof -top -cum -nodecount 40 perf-out/$s.test "$f" 2>&1 | head -55; echo "::endgroup::"
+            done
+          done
+      - name: report
+        if: ${{ !cancelled() }}
+        env:
+          BASE_LABEL: ${{ steps.base.outputs.label }}
+        run: |
+          python3 .github/perf/plugins.py perf-out "$BASE_LABEL" "$GITHUB_REF_NAME (${GITHUB_SHA::7})" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: perf-plugins
+          path: |
+            perf-out/*.json
+            perf-out/*.log
+            perf-out/*.pprof

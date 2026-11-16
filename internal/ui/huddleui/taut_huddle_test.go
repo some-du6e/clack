@@ -344,7 +344,7 @@ func renderHuddleWindow(t *testing.T, e *hcEnv, w, h int) *image.RGBA {
 		ops.Reset()
 		gtx := shotCtx(&ops, w, h)
 		slackc.LockFrame()
-		restore := slackc.SubFrame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
+		restore := e.patch.Frame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
 		e.w.layout(gtx)
 		restore()
 		slackc.Frame(gtx)

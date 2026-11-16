@@ -8,6 +8,7 @@ import (
 	"errors"
 	"image"
 	"io"
+	"log"
 	"runtime"
 	"runtime/cgo"
 	"strings"
@@ -48,6 +49,22 @@ __attribute__ ((visibility ("hidden"))) void gio_viewSetHandle(CFTypeRef viewRef
 __attribute__ ((visibility ("hidden"))) void gio_redrawTrafficLights(CFTypeRef windowRef);
 __attribute__ ((visibility ("hidden"))) void gio_setTitlebar(CFTypeRef viewRef, int hidden, int lightSet, CGFloat x, CGFloat y);
 __attribute__ ((visibility ("hidden"))) void gio_setOrderedOut(CFTypeRef viewRef, int out);
+// Clack patch (CLACK_PATCHES.md §32)
+__attribute__ ((visibility ("hidden"))) void gio_eachView(void);
+
+// NSWorkspace's sleep and wake (gio_onPowerEvent; Clack patch,
+// CLACK_PATCHES.md §32).
+#define GIO_WILL_SLEEP 0
+#define GIO_DID_WAKE 1
+#define GIO_SCREENS_SLEEP 2
+#define GIO_SCREENS_WAKE 3
+
+static int isOcclusionVisible(CFTypeRef windowRef) {
+	@autoreleasepool {
+		NSWindow *window = (__bridge NSWindow *)windowRef;
+		return (window.occlusionState & NSWindowOcclusionStateVisible) != 0 ? 1 : 0;
+	}
+}
 
 static void writeClipboard(CFTypeRef str) {
 	@autoreleasepool {
@@ -464,7 +481,23 @@ type window struct {
 	titlebarHidden      bool
 	hidden              bool
 	hideAfterFullscreen bool
+
+	// occluded is a Clack patch (CLACK_PATCHES.md §32): AppKit's last
+	// occlusion change left the window without NSWindowOcclusionStateVisible
+	// (covered, on another Space, minimized, ordered out). It draws nothing
+	// until AppKit says it's visible.
+	occluded bool
 }
+
+// Clack patch (CLACK_PATCHES.md §32): screensAsleep is
+// NSWorkspaceScreensDidSleepNotification with neither ScreensDidWake nor
+// input since: no window draws. The times are wall clock (the monotonic one
+// stands still while the computer sleeps). Main thread.
+var (
+	screensAsleep  bool
+	screensSleptAt time.Time
+	systemSleptAt  time.Time
+)
 
 type cmdKeys struct {
 	eventStr  string
@@ -701,8 +734,8 @@ func (w *window) Perform(acts system.Action) {
 // as Slack's close handler awaits leave-full-screen before it hides; the
 // mode is Windowed from now on, so an option given meanwhile doesn't put
 // it back in full screen. Until it is on screen again (ActionRaise, or
-// any other order-front) the window draws no frames: Gio's Metal layer
-// waits for drawables without a timeout.
+// any other order-front) the window draws no frames: a frame would wait
+// for a drawable nothing shows (§32).
 func (w *window) hide() bool {
 	window := C.windowForView(w.view)
 	if window == 0 {
@@ -759,9 +792,125 @@ func gio_onExitedFullScreen(h C.uintptr_t, exited C.int) {
 	}
 }
 
+// gio_onOcclusionChanged: AppKit changed the window's occlusionState
+// (visible: NSWindowOcclusionStateVisible, or a full-screen transition,
+// which counts as visible).
+//
 //export gio_onOcclusionChanged
-func gio_onOcclusionChanged(h C.uintptr_t) {
-	windowFor(h).shown()
+func gio_onOcclusionChanged(h C.uintptr_t, visible C.int) {
+	w := windowFor(h)
+	w.shown() // Clack patch (CLACK_PATCHES.md §24): back on screen after Hide
+	// Clack patch (CLACK_PATCHES.md §32): an occluded window draws nothing;
+	// it draws again the moment AppKit says it's visible, as Chromium shows
+	// an occluded WebContents again at once (WebContentsViewCocoa).
+	occluded := visible == 0
+	if occluded == w.occluded {
+		return
+	}
+	w.occluded = occluded
+	if occluded {
+		w.displayLink.Stop()
+		return
+	}
+	w.resume()
+}
+
+// drawPaused is a Clack patch (CLACK_PATCHES.md §32): the window draws
+// nothing for now. The screens are asleep, or AppKit's last occlusion
+// change said it's occluded and its occlusionState still does (so a
+// visible window never waits on a notification). A frame would wait up to
+// a second for a drawable nothing shows; Chromium counts these windows
+// occluded too (WindowOcclusionCheckerMac). Main thread.
+func (w *window) drawPaused() bool {
+	if screensAsleep {
+		return true
+	}
+	if !w.occluded {
+		return false
+	}
+	window := C.windowForView(w.view)
+	return window != 0 && C.isOcclusionVisible(window) == 0
+}
+
+// resume is a Clack patch (CLACK_PATCHES.md §32): a window that can draw
+// again draws a frame, and its animation goes on. Main thread.
+func (w *window) resume() {
+	if w.view == 0 || w.drawPaused() {
+		return
+	}
+	C.setNeedsDisplay(w.view)
+	w.SetAnimating(w.anim)
+}
+
+// gio_onPowerEvent is a Clack patch (CLACK_PATCHES.md §32): NSWorkspace's
+// sleep and wake notifications, each a line in the log. The screens'
+// sleep stops every window's frames until their wake: the computer's own
+// wake doesn't end it, its screens may still be off (Chromium's
+// WindowOcclusionCheckerMac keeps its displays-asleep state until
+// ScreensDidWake too).
+//
+//export gio_onPowerEvent
+func gio_onPowerEvent(kind C.int) {
+	now := time.Now().Round(0)
+	switch kind {
+	case C.GIO_WILL_SLEEP:
+		systemSleptAt = now
+		log.Print("gio: macOS is going to sleep (NSWorkspaceWillSleepNotification)")
+	case C.GIO_DID_WAKE:
+		log.Printf("gio: macOS woke from sleep%s (NSWorkspaceDidWakeNotification)", sinceWall(systemSleptAt, now))
+		systemSleptAt = time.Time{}
+	case C.GIO_SCREENS_SLEEP:
+		setScreensAsleep(true, now, "")
+	case C.GIO_SCREENS_WAKE:
+		setScreensAsleep(false, now, "")
+	}
+}
+
+// setScreensAsleep records the screens' sleep or wake (input: what showed
+// they're on when no ScreensDidWake came) and pauses or resumes every
+// window. Main thread.
+func setScreensAsleep(asleep bool, now time.Time, input string) {
+	if asleep == screensAsleep {
+		return
+	}
+	screensAsleep = asleep
+	switch {
+	case asleep:
+		screensSleptAt = now
+		log.Print("gio: the screens went to sleep: windows draw no frames until they wake (NSWorkspaceScreensDidSleepNotification)")
+	case input != "":
+		log.Printf("gio: input while the screens were asleep (%s%s, no NSWorkspaceScreensDidWakeNotification): windows draw again", input, sinceWall(screensSleptAt, now))
+	default:
+		log.Printf("gio: the screens woke up%s: windows draw again (NSWorkspaceScreensDidWakeNotification)", sinceWall(screensSleptAt, now))
+	}
+	C.gio_eachView() // gio_onScreensChanged for each window
+}
+
+// screensOn: input reached a window while the screens were asleep, so
+// they're on (Clack patch, CLACK_PATCHES.md §32): a ScreensDidWake that
+// never came doesn't keep a window the user is using from drawing.
+func screensOn(input string) {
+	if screensAsleep {
+		setScreensAsleep(false, time.Now().Round(0), input)
+	}
+}
+
+//export gio_onScreensChanged
+func gio_onScreensChanged(h C.uintptr_t) {
+	w := windowFor(h)
+	if screensAsleep {
+		w.displayLink.Stop()
+		return
+	}
+	w.resume()
+}
+
+// sinceWall is " after <now-t>", or "" without t.
+func sinceWall(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return " after " + now.Sub(t).Round(time.Second).String()
 }
 
 // titlebarDoubleClick is a Clack patch (CLACK_PATCHES.md §24): what a
@@ -809,8 +958,9 @@ func (w *window) SetInputHint(_ key.InputHint) {}
 func (w *window) SetAnimating(anim bool) {
 	w.anim = anim
 	window := C.windowForView(w.view)
-	// Clack patch (CLACK_PATCHES.md §24): not while Hide has it off screen.
-	if w.anim && window != 0 && C.isMiniaturized(window) == 0 && (!w.hidden || C.isWindowVisible(window) != 0) {
+	// Clack patch (CLACK_PATCHES.md §24): not while Hide has it off screen;
+	// §32: nor while it's occluded or the screens are asleep.
+	if w.anim && window != 0 && C.isMiniaturized(window) == 0 && (!w.hidden || C.isWindowVisible(window) != 0) && !w.drawPaused() {
 		w.displayLink.Start()
 	} else {
 		w.displayLink.Stop()
@@ -839,6 +989,7 @@ func gio_onKeys(h C.uintptr_t, event C.CFTypeRef, cstr C.CFTypeRef, ti C.double,
 	ks := key.Release
 	commanded := false
 	if keyDown {
+		screensOn("a key press") // Clack patch (CLACK_PATCHES.md §32)
 		ks = key.Press
 		w.cmdKeys.eventStr = str
 		w.cmdKeys.eventMods = kmods
@@ -955,6 +1106,12 @@ func gio_onFileDrop(h C.uintptr_t, kind C.int, x, y C.CGFloat, paths C.CFTypeRef
 //export gio_onMouse
 func gio_onMouse(h C.uintptr_t, evt C.CFTypeRef, cdir C.int, cbtn C.NSInteger, x, y, dx, dy C.CGFloat, ti C.double, mods C.NSUInteger, clicks C.NSInteger) {
 	w := windowFor(h)
+	switch cdir {
+	case C.MOUSE_DOWN:
+		screensOn("a click") // Clack patch (CLACK_PATCHES.md §32)
+	case C.MOUSE_SCROLL:
+		screensOn("a scroll")
+	}
 	t := time.Duration(float64(ti)*float64(time.Second) + .5)
 	xf, yf := float32(x)*w.scale, float32(y)*w.scale
 	dxf, dyf := float32(dx)*w.scale, float32(dy)*w.scale
@@ -1236,6 +1393,12 @@ func (w *window) draw() {
 	select {
 	case <-w.redraw:
 	default:
+	}
+	// Clack patch (CLACK_PATCHES.md §32): no frame while the window is
+	// occluded or the screens are asleep; resume draws one once it can.
+	if w.drawPaused() {
+		w.displayLink.Stop()
+		return
 	}
 	if w.anim {
 		w.SetAnimating(w.anim)

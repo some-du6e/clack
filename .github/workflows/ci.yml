@@ -181,7 +181,7 @@ jobs:
       # a press no filter matches gets a frame and stays unhandled
       - name: Gio key presses whoever takes them (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'KeyPresses' gioui.org/io/input
+        run: go test -count=1 -v -run 'KeyPresses|SinceInput' gioui.org/io/input
       # Gio patch 21: a hover-only Source (the inspect tool lays the window
       # out with one): hover, scroll and focus stay, clicks and keys don't
       - name: Gio hover-only input (vendored gioui.org/io/input)
@@ -1059,6 +1059,18 @@ jobs:
           go test -count=1 -v -timeout 10m -run '^TestMacWindowCloseHides$' ./internal/ui
           ui=$?
           exit $((gio | ui))
+      # Gio patch 32 (Karim's freezes after his Mac woke, 2026-11-16: the
+      # main thread in -[CAMetalLayer nextDrawable] for seconds, minutes
+      # while the screens slept). An occluded window (an opaque window over
+      # every screen) draws nothing and comes back once it's visible; with
+      # every drawable taken a frame waits a second at most, is skipped and
+      # tried again, the window alive; the screens' sleep stops frames
+      # until their wake or a click; each wake and sleep is in the log.
+      - name: macOS wake, sleep and occlusion (Gio patch 32)
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+        run: go test -count=1 -v -timeout 10m -run '^(TestOccludedWindowPausesMac|TestNoDrawableSkipsFrameMac|TestScreensSleepWakeMac)$' gioui.org/app
       # A notification's click (Karim, α.89: "the thing to hop to the
       # desired message when clicking a notif doesn't work"): App.Run's
       # window comes forward (shown after a close hid it, restored from the

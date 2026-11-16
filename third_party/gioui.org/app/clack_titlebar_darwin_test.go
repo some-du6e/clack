@@ -55,6 +55,10 @@ type macTestWindow struct {
 	cfg      atomic.Pointer[Config]
 	closing  chan *ClosingEvent
 	done     chan struct{}
+	// animate: each frame asks for the next (op.InvalidateCmd), as a
+	// caret's blink or an animation does (Clack patch, CLACK_PATCHES.md
+	// §32).
+	animate atomic.Bool
 }
 
 // newMacTestWindow opens a Gio window with a hidden title bar and the
@@ -109,6 +113,9 @@ func newMacTestWindowWith(t *testing.T, abort func() bool, opts ...Option) *macT
 				wa := clip.Rect{Min: image.Pt(gtx.Dp(macWidgetX0), 0), Max: image.Pt(gtx.Dp(macWidgetX1), band)}.Push(gtx.Ops)
 				event.Op(gtx.Ops, widget)
 				wa.Pop()
+				if h.animate.Load() {
+					gtx.Execute(op.InvalidateCmd{})
+				}
 				e.Frame(gtx.Ops)
 				h.frames.Add(1)
 			case *ClosingEvent:

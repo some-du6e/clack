@@ -1335,23 +1335,73 @@ func (s *Store) Remove(ch, ts string) {
 func (s *Store) Find(ch, ts string) (slack.Message, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	if m := s.findRefLocked(ch, ts, ""); m != nil {
+		return *m, true
+	}
+	return slack.Message{}, false
+}
+
+// Holds reports whether ch's cached messages (timeline and threads) have
+// ts, or with cid != "" a message with that client_msg_id: Find without
+// copying the message out.
+func (s *Store) Holds(ch, ts, cid string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.findRefLocked(ch, ts, cid) != nil
+}
+
+// findRefLocked is the cached message of ch with ts (or client_msg_id cid),
+// indexed in place: ranging by value copied every message it passed
+// (slack.Message is large), and InjectedMessages asked once per message of
+// a channel.
+func (s *Store) findRefLocked(ch, ts, cid string) *slack.Message {
+	match := func(m *slack.Message) bool { return m.TS == ts || cid != "" && m.ClientMsgID == cid }
 	if t := s.timelines[ch]; t != nil {
-		for _, m := range t.Msgs {
-			if m.TS == ts {
-				return m, true
+		for i := range t.Msgs {
+			if match(&t.Msgs[i]) {
+				return &t.Msgs[i]
 			}
 		}
 	}
+	pre := ch + "/"
 	for k, th := range s.threads {
-		if strings.HasPrefix(k, ch+"/") {
-			for _, m := range th {
-				if m.TS == ts {
-					return m, true
+		if strings.HasPrefix(k, pre) {
+			for i := range th {
+				if match(&th[i]) {
+					return &th[i]
 				}
 			}
 		}
 	}
-	return slack.Message{}, false
+	return nil
+}
+
+// MessageKeys is every ts and client_msg_id among ch's cached messages
+// (timeline and threads), in one pass.
+func (s *Store) MessageKeys(ch string) (ts, cids map[string]bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ts, cids = map[string]bool{}, map[string]bool{}
+	add := func(m *slack.Message) {
+		ts[m.TS] = true
+		if m.ClientMsgID != "" {
+			cids[m.ClientMsgID] = true
+		}
+	}
+	if t := s.timelines[ch]; t != nil {
+		for i := range t.Msgs {
+			add(&t.Msgs[i])
+		}
+	}
+	pre := ch + "/"
+	for k, th := range s.threads {
+		if strings.HasPrefix(k, pre) {
+			for i := range th {
+				add(&th[i])
+			}
+		}
+	}
+	return ts, cids
 }
 
 // MsgRef names a cached message.

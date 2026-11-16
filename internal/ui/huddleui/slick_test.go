@@ -59,6 +59,7 @@ type hcEnv struct {
 	mu    sync.Mutex
 	trees map[uint64][]byte
 	ops   op.Ops
+	patch slackc.SubWindow // the huddle window's patch points (its run's)
 
 	tmu    sync.Mutex
 	toasts []string // enqueueHuddleToast's texts
@@ -208,7 +209,7 @@ func (e *hcEnv) frame() {
 	e.ops.Reset()
 	gtx := layout.Context{Ops: &e.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(960, 640)), Now: time.Now()}
 	slackc.LockFrame()
-	restore := slackc.SubFrame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
+	restore := e.patch.Frame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
 	e.w.layout(gtx)
 	restore()
 	slackc.Frame(gtx)

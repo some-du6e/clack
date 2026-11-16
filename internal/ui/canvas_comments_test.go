@@ -160,6 +160,9 @@ func TestCanvasComments(t *testing.T) {
 				t.Fatalf("resolve sent %v", c)
 			}
 			e.until("Re-open thread", 10*time.Second, func() bool { _, ro := tv.ResolveRect(); return ro })
+			// the button says Re-open at once but takes no click until the
+			// archive call has answered (fakeslack records the call first)
+			e.until("the resolve call's answer", 10*time.Second, func() bool { return !tv.ResolveBusy() })
 			e.commentShot(t, "canvas-comments-resolved-"+mode)
 			r, _ = tv.ResolveRect()
 			e.click(rectMid(r))
