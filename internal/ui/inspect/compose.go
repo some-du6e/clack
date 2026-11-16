@@ -170,99 +170,110 @@ func Redacted(shot *image.RGBA, redact []image.Rectangle, scale float32) *image.
 	return img
 }
 
-// Redact paints each rect in marks (px in img, oldest first) over so
-// that it keeps nothing of what was drawn there: it is filled from the
-// pixels just outside it (each side's row or column, the nearer side
-// weighing more, the sides past bounds left out), a smooth patch that
-// runs into what's around it, then smoothed RedactBlur dp (scale px per
-// dp) inside itself. Unlike a blur of the rect's own pixels nothing
-// inside it comes through, so no text or face can be read back out of
-// it, however it is sharpened. A rect marked over an earlier one is
-// filled from what the earlier one left.
+// Redact paints the rects in marks (px in img) over so that they keep
+// nothing of what was drawn there: each is filled from the nearest
+// pixels outside every rect (on each side, the row or column level with
+// the pixel, the nearer side weighing more, sides past bounds left out),
+// a smooth patch that runs into what's around it, then smoothed
+// RedactBlur dp (scale px per dp) inside itself. Unlike a blur of the
+// rects' own pixels nothing under any of them comes through, so no text
+// or face can be read back out, however the image is sharpened, and
+// overlapping rects leak nothing into each other.
 func Redact(img *image.RGBA, bounds image.Rectangle, marks []image.Rectangle, scale float32) {
 	bounds = bounds.Intersect(img.Bounds())
 	if scale <= 0 {
 		scale = 1
 	}
-	rad := max(int(math.Round(float64(RedactBlur*scale))), 1)
+	var ms []image.Rectangle
 	for _, m := range marks {
-		m = m.Canon().Intersect(bounds)
-		if m.Empty() {
-			continue
+		if m = m.Canon().Intersect(bounds); !m.Empty() {
+			ms = append(ms, m)
 		}
-		fillFromEdges(img, bounds, m)
+	}
+	if len(ms) == 0 {
+		return
+	}
+	// every fill from the image as it was, so the order doesn't matter
+	src := image.NewRGBA(img.Bounds())
+	copy(src.Pix, img.Pix)
+	for _, m := range ms {
+		fillFromEdges(img, src, bounds, m, ms)
+	}
+	rad := max(int(math.Round(float64(RedactBlur*scale))), 1)
+	for _, m := range ms {
 		blur(img, m, rad)
 	}
 }
 
-// fillFromEdges fills m from the rows and columns of img just outside
-// it (inside b): each pixel the sides' samples level with it, weighted
-// by 1 over the distance to each side. A rect that covers all of b has
-// no sides: it's filled grey.
-func fillFromEdges(img *image.RGBA, b, m image.Rectangle) {
-	top, bot := m.Min.Y > b.Min.Y, m.Max.Y < b.Max.Y
-	left, right := m.Min.X > b.Min.X, m.Max.X < b.Max.X
-	if !top && !bot && !left && !right {
-		draw.Draw(img, m, image.NewUniform(color.RGBA{R: 0x80, G: 0x80, B: 0x80, A: 0xff}), image.Point{}, draw.Src)
-		return
-	}
-	px := func(x, y int) [4]float32 {
-		o := img.PixOffset(x, y)
-		p := img.Pix[o : o+4 : o+4]
-		return [4]float32{float32(p[0]), float32(p[1]), float32(p[2]), float32(p[3])}
-	}
-	// the samples, read before any pixel of m is written
-	row := func(y int) [][4]float32 {
-		out := make([][4]float32, m.Dx())
-		for x := range out {
-			out[x] = px(m.Min.X+x, y)
+// fillFromEdges fills m in img from src: each pixel the nearest pixels
+// level with it outside every rect in all (inside b) up, down, left and
+// right, weighted by 1 over their distance. A pixel with none (the rects
+// cover all of b around it) is grey.
+func fillFromEdges(img, src *image.RGBA, b, m image.Rectangle, all []image.Rectangle) {
+	covered := func(x, y int) bool {
+		p := image.Pt(x, y)
+		for _, r := range all {
+			if p.In(r) {
+				return true
+			}
 		}
-		return out
+		return false
 	}
-	col := func(x int) [][4]float32 {
-		out := make([][4]float32, m.Dy())
-		for y := range out {
-			out[y] = px(x, m.Min.Y+y)
+	type sample struct {
+		c  [4]float32
+		d  int // past the rect's edge
+		ok bool
+	}
+	at := func(x, y, d int) sample {
+		o := src.PixOffset(x, y)
+		p := src.Pix[o : o+4 : o+4]
+		return sample{[4]float32{float32(p[0]), float32(p[1]), float32(p[2]), float32(p[3])}, d, true}
+	}
+	// the nearest uncovered pixel from (x, y) stepping (dx, dy)
+	walk := func(x, y, dx, dy int) sample {
+		for d := 0; ; d++ {
+			if !image.Pt(x, y).In(b) {
+				return sample{}
+			}
+			if !covered(x, y) {
+				return at(x, y, d)
+			}
+			x, y = x+dx, y+dy
 		}
-		return out
 	}
-	var T, B, L, R [][4]float32
-	if top {
-		T = row(m.Min.Y - 1)
+	T, B := make([]sample, m.Dx()), make([]sample, m.Dx())
+	for x := range T {
+		T[x] = walk(m.Min.X+x, m.Min.Y-1, 0, -1)
+		B[x] = walk(m.Min.X+x, m.Max.Y, 0, 1)
 	}
-	if bot {
-		B = row(m.Max.Y)
-	}
-	if left {
-		L = col(m.Min.X - 1)
-	}
-	if right {
-		R = col(m.Max.X)
+	L, R := make([]sample, m.Dy()), make([]sample, m.Dy())
+	for y := range L {
+		L[y] = walk(m.Min.X-1, m.Min.Y+y, -1, 0)
+		R[y] = walk(m.Max.X, m.Min.Y+y, 1, 0)
 	}
 	for y := 0; y < m.Dy(); y++ {
 		for x := 0; x < m.Dx(); x++ {
 			var acc [4]float32
 			var w float32
-			add := func(s [4]float32, d int) {
-				k := 1 / float32(d)
+			add := func(s sample, d int) {
+				if !s.ok {
+					return
+				}
+				k := 1 / float32(d+s.d)
 				for c := range acc {
-					acc[c] += s[c] * k
+					acc[c] += s.c[c] * k
 				}
 				w += k
 			}
-			if top {
-				add(T[x], y+1)
-			}
-			if bot {
-				add(B[x], m.Dy()-y)
-			}
-			if left {
-				add(L[y], x+1)
-			}
-			if right {
-				add(R[y], m.Dx()-x)
-			}
+			add(T[x], y+1)
+			add(B[x], m.Dy()-y)
+			add(L[y], x+1)
+			add(R[y], m.Dx()-x)
 			o := img.PixOffset(m.Min.X+x, m.Min.Y+y)
+			if w == 0 {
+				copy(img.Pix[o:o+4], []uint8{0x80, 0x80, 0x80, 0xff})
+				continue
+			}
 			for c := range acc {
 				img.Pix[o+c] = uint8(min(acc[c]/w+.5, 255))
 			}

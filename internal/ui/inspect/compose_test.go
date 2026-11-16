@@ -265,9 +265,9 @@ func TestComposeRedactKeepsNothingInside(t *testing.T) {
 	}
 }
 
-// Rects over rects: a later one is filled from what the earlier one
-// left, so the overlap holds nothing either; rects past the shot are
-// clipped; a rect over all of it is one flat colour.
+// Rects over rects: each is filled from what's outside all of them, so
+// nothing under one leaks into another; rects past the shot are clipped;
+// a rect over all of it is one flat colour.
 func TestRedactOverlapAndEdges(t *testing.T) {
 	a := noiseShot(image.Pt(200, 120), 2)
 	b := noiseShot(image.Pt(200, 120), 3)

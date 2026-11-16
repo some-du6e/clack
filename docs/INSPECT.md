@@ -39,7 +39,7 @@ Nothing is copied yet. The shot is shown frozen over the dimmed window, exactly 
 - Enter (or Mod+C) copies and saves the report with the rectangles baked into the image.
 - Esc or Hyper+D drops the report: nothing is copied or saved.
 
-A blurred rectangle holds nothing of what was under it. It is filled from the pixels just outside it (each side's row or column, the nearer side weighing more), then smoothed 6 dp. It is not a blur of its own pixels, so no deblurring or sharpening can bring a name or a face back. The rectangles are painted over the shot before the margin is blurred, so the margin's smear carries nothing of them either. `TestComposeRedactKeepsNothingInside` composes two shots that differ only under a rectangle and requires the two images to be identical. The report's text says how many rectangles the reporter blurred.
+A blurred rectangle holds nothing of what was under it. It is filled from the nearest pixels outside every rectangle (on each side, level with the pixel, the nearer side weighing more), then smoothed 6 dp. It is not a blur of its own pixels, so no deblurring or sharpening can bring a name or a face back. The rectangles are painted over the shot before the margin is blurred, so the margin's smear carries nothing of them either. `TestComposeRedactKeepsNothingInside` composes two shots that differ only under a rectangle and requires the two images to be identical. The report's text says how many rectangles the reporter blurred.
 
 Then Clack:
 
