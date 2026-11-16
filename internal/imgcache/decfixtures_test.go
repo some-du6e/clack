@@ -14,6 +14,7 @@ package imgcache
 
 import (
 	"bytes"
+	"compress/lzw"
 	"compress/zlib"
 	"encoding/binary"
 	"hash/crc32"
@@ -146,4 +147,71 @@ func jpegDecoyHeader(w, h int) []byte {
 	com := append([]byte{0xff, 0xfe, byte((len(decoy) + 2) >> 8), byte(len(decoy) + 2)}, decoy...)
 	out = append(out, com...)
 	return append(out, jpegHeader(w, h, 3, false)[2:]...) // the rest, past its own SOI
+}
+
+// progressiveJPEG is a complete, valid progressive JPEG of w×h with nComp
+// components at 1×1 sampling (4:4:4): a quantization table, a DC Huffman
+// table of one 1-bit code (difference category 0), one interleaved DC
+// scan with every block's DC difference 0 (one 0 bit each), and EOI. It
+// decodes, through image/jpeg's progressive path (every component's
+// coefficient blocks, then the image rebuilt from them), to a flat grey
+// image: the real allocations of a progressive photo of that size, from
+// a file of about w·h·nComp/512 bytes.
+func progressiveJPEG(w, h, nComp int) []byte {
+	seg := func(marker byte, payload []byte) []byte {
+		n := len(payload) + 2
+		return append([]byte{0xff, marker, byte(n >> 8), byte(n)}, payload...)
+	}
+	out := []byte{0xff, 0xd8} // SOI
+	dqt := make([]byte, 65)   // Pq/Tq 0, then 64 entries
+	for i := 1; i < 65; i++ {
+		dqt[i] = 1
+	}
+	out = append(out, seg(0xdb, dqt)...)
+	sof := []byte{8, byte(h >> 8), byte(h), byte(w >> 8), byte(w), byte(nComp)}
+	for i := 0; i < nComp; i++ {
+		sof = append(sof, byte(i+1), 0x11, 0)
+	}
+	out = append(out, seg(0xc2, sof)...) // SOF2: progressive
+	dht := make([]byte, 1+16+1)          // Tc/Th 0 (DC table 0), counts, values
+	dht[1] = 1                           // one code of length 1
+	dht[17] = 0                          // for category 0
+	out = append(out, seg(0xc4, dht)...)
+	sos := []byte{byte(nComp)}
+	for i := 0; i < nComp; i++ {
+		sos = append(sos, byte(i+1), 0)
+	}
+	sos = append(sos, 0, 0, 0) // Ss 0, Se 0, Ah/Al 0: the first DC scan
+	out = append(out, seg(0xda, sos)...)
+	blocks := ((w + 7) / 8) * ((h + 7) / 8) * nComp
+	out = append(out, make([]byte, (blocks+7)/8)...) // one 0 bit a block
+	return append(out, 0xff, 0xd9)                   // EOI
+}
+
+// manyFrameGIF is a GIF of frames frames, each the whole w×h screen of
+// colour 0, its LZW data a few KB a frame: what a GIF of thousands of big
+// frames is made of.
+func manyFrameGIF(w, h, frames int) []byte {
+	var lz bytes.Buffer
+	lw := lzw.NewWriter(&lz, lzw.LSB, 2)
+	lw.Write(make([]byte, w*h))
+	lw.Close()
+	var sub []byte
+	for p := lz.Bytes(); len(p) > 0; {
+		n := min(255, len(p))
+		sub = append(sub, byte(n))
+		sub = append(sub, p[:n]...)
+		p = p[n:]
+	}
+	sub = append(sub, 0)
+	out := []byte("GIF89a")
+	out = append(out, byte(w), byte(w>>8), byte(h), byte(h>>8), 0x80, 0, 0) // a 2-colour global table
+	out = append(out, 0, 0, 0, 255, 255, 255)
+	for i := 0; i < frames; i++ {
+		out = append(out, 0x21, 0xf9, 4, 0, 5, 0, 0, 0) // 50 ms
+		out = append(out, 0x2c, 0, 0, 0, 0, byte(w), byte(w>>8), byte(h), byte(h>>8), 0)
+		out = append(out, 2)
+		out = append(out, sub...)
+	}
+	return append(out, 0x3b)
 }

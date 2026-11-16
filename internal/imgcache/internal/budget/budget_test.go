@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestChargeLimit: a budget takes exactly what fits, an over-charge takes
@@ -40,7 +41,7 @@ func TestChargeLimit(t *testing.T) {
 // pool holds. Make take always succeed and the first check fails; make it
 // report over-limit and the second does.
 func TestBusyIsNotOver(t *testing.T) {
-	p := NewPool(100, 0, 0)
+	p := NewPool(100, 0, 1000) // every budget here is small: none takes the big slot
 	a := New(p, 100)
 	if err := a.Charge(80); err != nil {
 		t.Fatal(err)
@@ -85,7 +86,8 @@ func TestPoolNeverPassesLimit(t *testing.T) {
 			defer wg.Done()
 			r := rand.New(rand.NewPCG(seed, 1))
 			for round := 0; round < 300; round++ {
-				b := New(p, limit)
+				b := NewPlayer(p, limit) // never takes the big slot: they all contend
+
 				if err := b.Charge(int64(1 + r.IntN(limit/4))); errors.Is(err, ErrBusy) {
 					busy.Add(1)
 				} else if err != nil {
@@ -121,10 +123,10 @@ func TestReserveForSmall(t *testing.T) {
 	if err := big.Charge(80); err != nil {
 		t.Fatal(err)
 	}
-	if err := New(p, 100).Charge(11); !errors.Is(err, ErrBusy) {
+	if err := NewPlayer(p, 100).Charge(11); !errors.Is(err, ErrBusy) {
 		t.Errorf("an 11-byte charge with only the reserve left: %v, want ErrBusy", err)
 	}
-	small := New(p, 100)
+	small := NewPlayer(p, 100)
 	if err := small.Charge(10); err != nil {
 		t.Errorf("a small budget's 10 bytes from the reserve: %v", err)
 	}
@@ -189,4 +191,130 @@ func TestLocalDrawsNothing(t *testing.T) {
 	if err := Unlimited().Charge(1 << 40); err != nil {
 		t.Errorf("an unlimited budget refused a charge: %v", err)
 	}
+}
+
+// TestBigSlotOneAtATime: a decode budget growing past Small takes the
+// pool's one big slot, so a second big decode waits for the first to be
+// released, while a small decode's charges never wait for it. Make the
+// slot not exclusive and the second big charge succeeds at once.
+func TestBigSlotOneAtATime(t *testing.T) {
+	p := NewPool(1<<20, 0, 100)
+	first := New(p, 1<<20)
+	if err := first.Charge(200); err != nil { // past Small: the slot
+		t.Fatal(err)
+	}
+	if !first.Big() {
+		t.Fatal("a budget past Small doesn't hold the big slot")
+	}
+	small := New(p, 1<<20)
+	done := make(chan error, 1)
+	go func() { done <- small.Charge(50) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("a small charge while the slot is held: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a small decode waited for the big slot")
+	}
+	second := New(p, 1<<20)
+	got := make(chan error, 1)
+	go func() { got <- second.Charge(300) }()
+	select {
+	case err := <-got:
+		t.Fatalf("a second big decode charged (%v) while the first held the slot", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	first.Release()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Errorf("the second big decode once the first let go: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second big decode didn't get the slot once the first was released")
+	}
+	second.Release()
+	small.Release()
+	if p.Used() != 0 {
+		t.Errorf("the pool holds %d", p.Used())
+	}
+}
+
+// TestBigWaitsForRoom: the big decode's charge the pool can't cover waits
+// for memory to be given back instead of failing at once, and fails with
+// ErrBusy only once it has waited BigWait. A player's (or a small
+// decode's) never waits. Make the slot holder not wait and the first
+// check fails.
+func TestBigWaitsForRoom(t *testing.T) {
+	p := NewPool(1000, 0, 100)
+	p.SetBigWait(5 * time.Second)
+	hold := NewPlayer(p, 1000)
+	if err := hold.Charge(900); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewPlayer(p, 1000).Charge(200); !errors.Is(err, ErrBusy) {
+		t.Errorf("a player's charge with no room: %v, want ErrBusy at once", err)
+	}
+	big := New(p, 1000)
+	got := make(chan error, 1)
+	go func() { got <- big.Charge(500) }() // past Small: the slot, then a wait
+	select {
+	case err := <-got:
+		t.Fatalf("the big charge returned (%v) before any memory was given back", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	hold.Free(600) // a decoder letting a buffer go
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Errorf("the big charge once room was given back: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the big charge didn't wake when room was given back")
+	}
+	big.Release()
+	hold.Release()
+
+	p.SetBigWait(50 * time.Millisecond)
+	hold = NewPlayer(p, 1000)
+	_ = hold.Charge(900)
+	start := time.Now()
+	if err := New(p, 1000).Charge(500); !errors.Is(err, ErrBusy) {
+		t.Errorf("a big charge with no room for good: %v, want ErrBusy", err)
+	}
+	if d := time.Since(start); d < 40*time.Millisecond {
+		t.Errorf("the big charge failed after %v, before its BigWait", d)
+	}
+	hold.Release()
+}
+
+// TestFreeGivesBack: Free returns bytes to the pool (a child's through its
+// parent) and keeps the budget usable.
+func TestFreeGivesBack(t *testing.T) {
+	p := NewPool(1000, 0, 2000)
+	b := New(p, 1000)
+	if err := b.Charge(600); err != nil {
+		t.Fatal(err)
+	}
+	b.Free(400)
+	if b.Used() != 200 || p.Used() != 200 {
+		t.Errorf("after Free(400): budget %d, pool %d, want 200 each", b.Used(), p.Used())
+	}
+	c := b.Sub(500)
+	if err := c.Charge(300); err != nil {
+		t.Fatal(err)
+	}
+	c.Free(300)
+	if c.Used() != 0 || b.Used() != 200 || p.Used() != 200 {
+		t.Errorf("after the child's Free: child %d, parent %d, pool %d", c.Used(), b.Used(), p.Used())
+	}
+	b.Free(1 << 20) // at most what it holds
+	if b.Used() != 0 || p.Used() != 0 {
+		t.Errorf("Free past what's held: budget %d, pool %d", b.Used(), p.Used())
+	}
+	if err := b.Charge(10); err != nil {
+		t.Errorf("a charge after Free: %v", err)
+	}
+	b.Release()
 }

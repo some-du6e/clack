@@ -26,6 +26,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/some-du6e/clack/internal/imgcache/internal/budget"
 )
@@ -47,14 +48,27 @@ func decodeAt(data []byte, limit int64, maxPixels, maxSide int) (image.Image, ui
 func refused(err error) bool { return errors.Is(err, ErrTooBig) }
 
 // withTestPool runs f with the package decode pool replaced by one of
-// limit bytes (and no reserve), so a test can drive the real loadImage and
-// Decode under a tight cap. Tests in a package run one at a time, so the
-// swap is safe.
+// limit bytes (no reserve; every decode past 0 bytes is big, so it takes
+// the slot and waits 100 ms for room), so a test can drive the real
+// loadImage and Decode under a tight cap. Tests in a package run one at a
+// time, so the swap is safe.
 func withTestPool(limit int64, f func()) {
 	old := decodePool
 	decodePool = budget.NewPool(limit, 0, 0)
+	decodePool.SetBigWait(100 * time.Millisecond)
 	defer func() { decodePool = old }()
 	f()
+}
+
+// fill holds n bytes of the decode pool as an animation player does (it
+// never takes the big slot), until released: memory pressure.
+func fill(t testing.TB, n int64) *Budget {
+	t.Helper()
+	b := budget.NewPlayer(decodePool, n)
+	if err := b.Charge(n); err != nil {
+		t.Fatalf("filling the decode pool with %d bytes: %v", n, err)
+	}
+	return b
 }
 
 // TestGrayTRNSChargedAsNRGBA: a grayscale PNG with a tRNS chunk decodes to
@@ -81,12 +95,14 @@ func TestGrayTRNSChargedAsNRGBA(t *testing.T) {
 
 // TestInterlaced16BitChargesEveryPass: a 16-bit truecolor PNG decodes to
 // RGBA64 (8 bytes a pixel), and interlaced (Adam7) allocates an image per
-// pass on top of the full one. A budget that fits the non-interlaced image
-// refuses the interlaced one. Remove the per-pass charge and the interlaced
-// image is charged for the full image only, fits, and allocates every pass.
+// pass on top of the full one (each given back once merged, so the peak is
+// the full image and its largest pass, half of it). A budget that fits the
+// non-interlaced image refuses the interlaced one. Remove the per-pass
+// charge and the interlaced image is charged for the full image only,
+// fits, and allocates every pass.
 func TestInterlaced16BitChargesEveryPass(t *testing.T) {
-	const w, h = 1024, 1024 // RGBA64: full 8 MB, +passes ≈ 16 MB
-	budgetBytes := int64(12 << 20)
+	const w, h = 1024, 1024 // RGBA64: full 8 MB, its last pass 4 MB more
+	budgetBytes := int64(10 << 20)
 	plain := pngSolid(w, h, pngRGB16, false, nil)
 	if _, _, err := decodeAt(plain, budgetBytes, MaxPixels, MaxSide); err != nil {
 		t.Fatalf("a non-interlaced 16-bit PNG under a %d-byte budget: %v, want it to decode", budgetBytes, err)
@@ -109,7 +125,7 @@ func TestInterlaced16BitChargesEveryPass(t *testing.T) {
 // allocates the coefficients. (A baseline header of the same size, which
 // makes no coefficients, is the control: it gets past the allocation.)
 func TestProgressiveJPEGChargesCoefficients(t *testing.T) {
-	const w, h = 2048, 2048 // YCbCr 4:4:4 image 12.6 MB; DC-scan coeffs ≈ 50 MB
+	const w, h = 2048, 2048 // YCbCr 4:4:4 image 12.6 MB; DC-scan coeffs (int16) 25 MB
 	budgetBytes := int64(24 << 20)
 	baseline := jpegHeader(w, h, 3, false)
 	if _, _, err := decodeAt(baseline, budgetBytes, MaxPixels, MaxSide); refused(err) {
@@ -120,8 +136,8 @@ func TestProgressiveJPEGChargesCoefficients(t *testing.T) {
 	if !refused(err) {
 		t.Errorf("a progressive JPEG (per-component coefficient blocks): %v, want ErrTooBig", err)
 	}
-	if n > 20<<20 {
-		t.Errorf("the refused progressive decode allocated %d bytes (the 50 MB of coefficients must not be made)", n)
+	if n > 24<<20 {
+		t.Errorf("the refused progressive decode allocated %d bytes (all 25 MB of coefficients must not be made)", n)
 	}
 }
 
@@ -246,10 +262,7 @@ func TestBusyDecodeRetryableAndLoadsWhenFreed(t *testing.T) {
 
 	data := pngSolid(1024, 1024, pngRGBA8, false, nil) // NRGBA 4 MB
 	withTestPool(16<<20, func() {
-		hold := NewBudget()
-		if err := hold.Charge(hold.Limit()); err != nil {
-			t.Fatalf("filling the test pool: %v", err)
-		}
+		hold := fill(t, decodePool.Limit())
 		// decode directly: the pool is full, so it can't get its memory
 		b := NewBudget()
 		_, err := decodeImage(data, MaxPixels, MaxSide, b)
@@ -277,8 +290,7 @@ func TestBusyLoadNotFailed(t *testing.T) {
 	withTestPool(16<<20, func() {
 		c := New(func(_ context.Context, _ string) ([]byte, error) { return data, nil }, "", nil)
 		k := key{url: "https://files.slack.com/x.png", size: 0} // not DiskOK: memory only
-		hold := NewBudget()
-		_ = hold.Charge(hold.Limit())
+		hold := fill(t, decodePool.Limit())
 		c.load(k)
 		if f, ok := c.failed[k]; !ok || !f.busy || f.final {
 			t.Errorf("a busy load recorded %+v, want busy and not final", c.failed[k])
@@ -376,4 +388,36 @@ func bigAnimGIF(t testing.TB, w, h, frames int) []byte {
 		t.Fatalf("encoding a %d×%d GIF: %v", w, h, err)
 	}
 	return b.Bytes()
+}
+
+// TestDecodeGIFBudgetedAndCapped: DecodeGIF (the GIF picker's decode)
+// keeps a GIF's first maxFrames frames, reading no further, each charged:
+// under a budget too small for 120 of a GIF's 1024×1024 frames it's refused
+// having allocated about the budget, and 30 of them decode. A screen past
+// maxSide is refused by its header.
+func TestDecodeGIFBudgetedAndCapped(t *testing.T) {
+	data := manyFrameGIF(1024, 1024, 400)
+	p := budget.NewPool(64<<20, 0, 0)
+	b := budget.New(p, 64<<20)
+	var err error
+	n := allocBytes(func() { _, err = DecodeGIF(data, 120, 1024, b) })
+	b.Release()
+	if !errors.Is(err, ErrTooBig) {
+		t.Errorf("120 frames of 1 MB under a 64 MB budget: %v, want ErrTooBig", err)
+	}
+	if n > 80<<20 {
+		t.Errorf("the refused GIF decode allocated %d bytes, want about its 64 MB budget", n)
+	}
+	b = budget.New(p, 64<<20)
+	g, err := DecodeGIF(data, 30, 1024, b)
+	b.Release()
+	if err != nil {
+		t.Fatalf("the first 30 frames: %v", err)
+	}
+	if len(g.Image) != 30 {
+		t.Errorf("%d frames, want 30", len(g.Image))
+	}
+	if _, err := DecodeGIF(manyFrameGIF(2048, 16, 1), 1, 1024, budget.Unlimited()); !errors.Is(err, ErrTooBig) {
+		t.Errorf("a 2048-wide GIF with a 1024 limit: %v, want ErrTooBig", err)
+	}
 }
