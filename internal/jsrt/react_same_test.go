@@ -123,3 +123,60 @@ React.createElement(Same)`)
 	renderJS(t, r, root, `React.createElement(Same)`)
 	rec.waitFor(t, "Go's render answered", func(ns []node) bool { return find(ns, func(n node) bool { return n.T == "@" }) != nil })
 }
+
+// A portal Go renders under a native that isn't drawing (hidden under a
+// Suspense boundary that suspended again, which runs its layout effects'
+// cleanups) waits for it, and answers once the native shows again, an
+// empty portal too: a portal's tree went only when React changed a host
+// node in it, so an empty one never answered and Go drew its native for
+// good ("no tree yet").
+func TestPortalUnderHiddenNativeAnswers(t *testing.T) {
+	r := newTest(t)
+	rec := newRecv()
+	root := r.NewRoot(rec.cb(t))
+	renderJS(t, r, root, `
+globalThis.Row = __clack.native('MessageWrapper');
+let pending = null;
+function Gate() {
+  if (pending) throw pending;
+  return null;
+}
+globalThis.Hide = function Hide() {
+  const [g, setG] = React.useState(0);
+  globalThis.suspend = () => {
+    pending = new Promise((res) => { globalThis.resume = () => { pending = null; res(); }; });
+    setG((x) => x + 1);
+  };
+  return React.createElement(React.Suspense, { fallback: React.createElement('i', null, 'loading') },
+    React.createElement(Row, { ts: '1.1' }), React.createElement(Gate, { g }));
+};
+React.createElement(Hide)`)
+	ns := rec.next(t)
+	row := find(ns, func(n node) bool { return n.T == "@" && n.N == "MessageWrapper" })
+	if row == nil || row.K == 0 {
+		t.Fatalf("no native row: %+v", ns)
+	}
+	r.Post(func(js *Ctx) { _, _ = js.Global().Get("suspend").Call() })
+	rec.waitFor(t, "the fallback over the hidden row", func(ns []node) bool {
+		return find(ns, func(n node) bool { return n.T == "i" && n.text() == "loading" }) != nil
+	})
+
+	// Go renders an empty portal under the hidden row
+	childRec := newRecv()
+	child := r.NewRoot(childRec.cb(t))
+	err := r.Do(func(js *Ctx) error {
+		el, err := js.Eval("child.js", `React.createElement(function Empty() { return null; })`)
+		if err != nil {
+			return err
+		}
+		return child.RenderPortal(js, int64(row.K), el)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Post(func(js *Ctx) { _, _ = js.Global().Get("resume").Call() })
+	rec.waitFor(t, "the row shown again", func(ns []node) bool {
+		return find(ns, func(n node) bool { return n.T == "i" }) == nil && find(ns, func(n node) bool { return n.T == "@" }) != nil
+	})
+	childRec.waitFor(t, "the empty portal's answer", func(ns []node) bool { return len(ns) == 0 })
+}

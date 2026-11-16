@@ -78,7 +78,12 @@
     }
   };
   const rootHost = { svg: HTML };
-  // same keys, same values: a native's props that serialize the same
+  // same keys, same values (Object.is): a native's props that serialize
+  // the same, as long as nothing in them was mutated in place (a plugin
+  // passes new props to change them, as React wants; a mutated object
+  // under the same reference shows on the next real change). A new object
+  // equal to the old one is a change here: it serializes again, and its
+  // root sends a tree that is the same (Go drops it)
   const sameProps = (a, b) => {
     if (a === b) return true;
     if (!a || !b) return false;
@@ -151,9 +156,9 @@
     commitUpdate(el, type, prev, next, fiber) {
       el.__reactProps$clack = next;
       el.__reactFiber$clack = fiber;
-      // a native or a slot rendered again with what it had is no change:
-      // its root delivers nothing new (a parent that rendered again for
-      // nothing, a portal mounted under it)
+      // a native or a slot rendered again with the very values it had is
+      // no change: its root delivers nothing (a parent that rendered again
+      // for nothing, a portal mounted under it)
       if (type[0] === '@') { const np = next.__np || null; if (!sameProps(el._np, np)) jr.markDirty(el); el._np = np; return; }
       if (type === '#slot') { const name = String(next.name); if (el._slot !== name) { el._slot = name; jr.markDirty(el); } return; }
       applyProps(el, prev, next, el._svg, false);
@@ -327,8 +332,8 @@
     portalRootK.set(id, k);
     notifyPortal(k);
     R.flushSyncWork();
-    // it answers with the portal's tree, an empty one too, once the native
-    // it goes into has drawn it (a native not mounted yet portals it later)
+    // it answers with the portal's tree, an empty one too: now if the
+    // native it goes into is mounted, else once it mounts (its layout effect)
     if (portalSubs.has(k)) jr.markDirty(portalBoxes.get(id));
   };
   __clack.portalCount = () => portalRootK.size;
@@ -358,7 +363,13 @@
         let subs = portalSubs.get(hk);
         if (!subs) portalSubs.set(hk, (subs = new Set()));
         subs.add(rerender);
-        if (portalsByK.has(hk)) rerender();
+        const pm = portalsByK.get(hk);
+        if (pm) {
+          // portals Go rendered before this native drew (or while it was
+          // hidden) answer now, an empty one too (__clack.portalInto)
+          rerender();
+          for (const id of pm.keys()) { const box = portalBoxes.get(id); if (box) jr.markDirty(box); }
+        }
         return () => { subs.delete(rerender); if (!subs.size) portalSubs.delete(hk); };
       }, []);
       const hk = ref.current && ref.current._k;
