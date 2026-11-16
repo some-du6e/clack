@@ -597,6 +597,11 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	a.S.KeepPin(ch, &m)
 	a.S.SlurpSub(ch, &m)
 	a.streams.seen(ch, m.TS, m.StreamingState == "in_progress")
+	// the DM badges read the member of the IM this makes unread (members.go
+	// readBadgePerson), before EnsureUsers below can load it unannounced
+	if m.ThreadTS == "" || m.ThreadTS == m.TS || m.Subtype == "thread_broadcast" {
+		a.readBadgePerson(ch)
+	}
 	// the "message" event names its sender for the notification (and the
 	// mentions in its text), so the people are fetched before it goes out;
 	// not its reactions' (a new message has none) (lazy_users.go)

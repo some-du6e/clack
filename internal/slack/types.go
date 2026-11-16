@@ -604,6 +604,9 @@ type Counts struct {
 	// ActivityV2 is the Activity inbox's unread badge count by entry type
 	// (Slack's transformClientCountsOutput activityV2).
 	ActivityV2 map[string]int `json:"activity_v2"`
+	// Alerts is the unread count by user alert type (Slack's userAlerts;
+	// the classic Activity badge sums some: core classic_badges.go).
+	Alerts map[string]int `json:"alerts"`
 }
 
 // UnmarshalJSON decodes a message and keeps the raw attachments JSON (for

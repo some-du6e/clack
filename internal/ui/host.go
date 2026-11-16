@@ -350,11 +350,11 @@ func (a *App) railBadge(key string) (int, bool) {
 		if uipref.Get().NoHomeDot { // home_unread_dot off: +oIJ hides Home's dot and badge
 			return 0, false
 		}
-		return m.Rail.HomeBadge(m.HomeUnread, m.DMHighlights)
+		return m.Rail.HomeBadge(m.HomeUnread, m.DMHighlights, m.ActivityDMs)
 	case "dms": // InjD: a count while rHEx dmsBadgeCount is above 0, never a dot
 		return m.Rail.DMsBadge(m.DMHighlights, m.DMUnreadConvs), false
-	case "activity":
-		return m.ActivityCount, false
+	case "activity": // InjD: without the inbox a dot while only threads it doesn't count are unread
+		return m.ActivityCount, m.ActivityDot
 	case "browse": // yEMG: badges of what is under More
 		n := 0
 		for _, id := range a.railOverflow {

@@ -45,7 +45,7 @@ const (
 	JoinBannerOldID = "C0JOIN00002"
 )
 
-// unreadsBase is the fixtures' clock: 2026-11-06 09:00 UTC.
+// unreadsBase is the fixtures' clock: 2026-11-07 09:00 UTC.
 const unreadsBase = 1794042000
 
 // UnreadsCall is one recorded unread.* or megaphone.* call.
