@@ -24,13 +24,14 @@ func TestDMBadgeSkips(t *testing.T) {
 		{"Slackbot's IM (s0AY D), which 6Z4k Sm still counts", "USLACKBOT", &slack.User{ID: "USLACKBOT"}, true, false},
 		{"Slackbot's IM, member unknown", "USLACKBOT", nil, true, false},
 		{"the Slack system user (DUy0 G's USLACK; o6sH _ for Sm)", "USLACK", &slack.User{ID: "USLACK", RealName: "Slack"}, true, true},
-		{"the Slack system user, member unknown: Sm can't tell", "USLACK", nil, true, false},
+		{"the Slack system user, member unknown (Gx04's stub carries the id, o6sH _)", "USLACK", nil, true, true},
 		{"an app's bot user (is_bot)", "UB", &slack.User{ID: "UB", IsBot: true}, true, true},
 		{"an app's bot user the store doesn't hold yet", "UB", nil, false, false},
 		{"is_slackbot (gmjA U)", "UX", &slack.User{ID: "UX", IsSlackbot: true}, true, true},
 		{"is_app_user alone isn't a bot (nMbN po)", "UA", &slack.User{ID: "UA", IsAppUser: true}, false, false},
 		{"the search user (Opi6 df)", "USEARCH", &slack.User{ID: "USEARCH"}, true, false},
 		{"the security bot (Opi6 Cx; w7aZ C)", "USLACKSECURITY", &slack.User{ID: "USLACKSECURITY"}, true, true},
+		{"the security bot, member unknown (w7aZ C on the stub's id)", "USLACKSECURITY", nil, true, true},
 	} {
 		noBadge, noCount := dmBadgeSkips(c.user, c.member)
 		if noBadge != c.noBadge || noCount != c.noCount {

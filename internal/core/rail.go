@@ -286,7 +286,9 @@ func (r RailState) HomeBadge(channelsUnread bool, dmCount int) (count int, dot b
 }
 
 // The DM badges: the DMs tab's, Home's DM count and More's (web client
-// build 18d49a0da6f7, 2026-11-16; docs/SIDEBAR-RULES.md "Rail"):
+// bundles cached 2026-11-15: client-boot.bbd3a8c1f7bb6f10, boot-render
+// ffcc7d4c4df423eb, boot-shared 54b29d3cf4bf04bc; docs/SIDEBAR-RULES.md
+// "Rail"):
 //
 //   - client-boot ZdmU applyCountsToChannels: an IM's or group DM's unread
 //     count is client.counts' mention_count, else 1 for has_unreads. siMV
@@ -320,10 +322,14 @@ func botMember(u *slack.User) bool {
 // none) the way the DM badges do: noBadge leaves it out of rHEx
 // dmsBadgeCount, noCount out of 6Z4k Sm getTotalUnreadDmsMpims (w7aZ C:
 // is_slacksecuritybot or USLACKSECURITY is the security bot). Group DMs
-// count in both.
+// count in both. Sm's id checks hold before the member loads: Slack's
+// lookup (gIKW getMemberById) hands back Gx04 UnknownFetchManager's stub,
+// which carries the id, so o6sH's "USLACK" and w7aZ C's USLACKSECURITY
+// match it; an unknown app's bot user still counts until it loads (the
+// stub has no is_bot), as here.
 func dmBadgeSkips(user string, u *slack.User) (noBadge, noCount bool) {
 	noBadge = user == "USEARCH" || user == "USLACKSECURITY" || isBotDM(user, u)
-	noCount = user != SlackbotUserID && (botMember(u) || u != nil && u.ID == "USLACKSECURITY")
+	noCount = user != SlackbotUserID && (user == "USLACK" || user == "USLACKSECURITY" || botMember(u))
 	return noBadge, noCount
 }
 
