@@ -172,8 +172,9 @@ type prefs struct {
 	// writes ui.json from what it read at launch.
 	InspectTool bool `json:"inspect_tool,omitempty"`
 	// FlightRecorder is the execution trace flight recorder (flightrec.go):
-	// on unless false, as CLACK_FLIGHT_RECORDER=0 turns it off. A
-	// diagnostic with no UI, set by hand with Clack quit (as InspectTool).
+	// off unless true, as CLACK_FLIGHT_RECORDER=1 turns it on (it slows
+	// every frame). A diagnostic with no UI, set by hand with Clack quit
+	// (as InspectTool).
 	FlightRecorder *bool `json:"flight_recorder,omitempty"`
 	// MainWindow is Slack's mainWindowSettings: where the main window was
 	// (its frame in Gio patch 25's screen coordinates: physical pixels on
