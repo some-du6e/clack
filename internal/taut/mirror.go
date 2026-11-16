@@ -288,6 +288,7 @@ func (m *mirror) sweep() {
 // ---- events ----
 
 func (m *mirror) onEvent(ev core.Event) {
+	m.noteConv(ev)
 	switch ev.Type {
 	case "message", "update", "delete", "sent":
 		m.invalidate("messages", ev.Channel)
@@ -386,6 +387,30 @@ func (m *mirror) onEvent(ev core.Event) {
 			}
 		}
 	}
+}
+
+// noteConv tells MessageView's cached conversions what ev may have
+// changed: the message it names (core announces every change to a message
+// that way, a thread's broadcasts included), or for anything else that
+// core.App.message reads (people, names, prefs and highlight words,
+// emoji, channels, a resync) every message. Events that change no
+// message's conversion are skipped.
+func (m *mirror) noteConv(ev core.Event) {
+	switch ev.Type {
+	case "typing", "presence", "marked", "counts", "huddle", "draft", "dnd_updated", "dnd_updated_user",
+		"experiments", "connection", "sidebar_changed", "channel_sections_upserted",
+		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
+		return
+	}
+	ts := ev.TS
+	if ts == "" && ev.Msg != nil {
+		ts = ev.Msg.TS
+	}
+	if ev.Channel != "" && ts != "" {
+		m.t.ui.views.bumpConv(ev.Channel, ts)
+		return
+	}
+	m.t.ui.views.bumpConv("", "")
 }
 
 func typingKey(ch, thread, user string) string { return ch + "|" + thread + "|" + user }

@@ -241,8 +241,15 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	if now.Sub(r.viewAt) < viewRefresh && r.viewRev == r.rev {
 		return
 	}
+	// taut keeps each view converted until something it reads changes;
+	// when core just changed the row's message, convert it again now
+	// rather than show the old state until the mirror sees the event
+	view := t.MessageView
+	if r.viewRev != 0 && r.viewRev != r.rev {
+		view = t.MessageViewChanged
+	}
 	r.viewAt, r.viewRev = now, r.rev
-	mv, ok := t.MessageView(r.src.Channel, r.src.TS)
+	mv, ok := view(r.src.Channel, r.src.TS)
 	if !ok {
 		if r.viewed {
 			r.viewed = false
