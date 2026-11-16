@@ -10,9 +10,11 @@ package messages
 // plugins' patched views (taut's conversions) alike, until the next
 // history load. Each conversion now records the members and channels it
 // read (core.Message.Refs), and a change to one converts again just the
-// messages that read it. Synthetic data on internal/fakeslack.
+// messages that read it; a names pref (display_real_names) those that
+// read any member. Synthetic data on internal/fakeslack.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -51,11 +53,16 @@ func refsTabRename(app *core.App, label string) {
 	app.Inject(slack.Event{Type: "channel_updated", Channel: json.RawMessage(`"` + refsOps + `"`), Raw: raw})
 }
 
+// refsFile is a PDF Cara owns.
+func refsFile(id, title string) map[string]any {
+	return map[string]any{"id": id, "name": strings.ToLower(title) + ".pdf", "title": title, "mimetype": "application/pdf",
+		"filetype": "pdf", "pretty_type": "PDF", "mode": "hosted", "user": "UCARA0001", "size": 2048}
+}
+
 // refsMessages are Ana's message sharing a file Cara owns and Ben's
 // message with a slug to #ops' tab, at the ts of i and i+1.
 func refsMessages(ts func(int) string, i int, ch string) []map[string]any {
-	file := map[string]any{"id": fmt.Sprintf("F0REFS%04d", i), "name": "plan.pdf", "title": "Launch plan", "mimetype": "application/pdf",
-		"filetype": "pdf", "pretty_type": "PDF", "mode": "hosted", "user": "UCARA0001", "size": 2048}
+	file := refsFile(fmt.Sprintf("F0REFS%04d", i), "Launch plan")
 	slug := []any{map[string]any{"type": "rich_text", "block_id": "r", "elements": []any{map[string]any{"type": "rich_text_section", "elements": []any{
 		map[string]any{"type": "text", "text": "Steps are in "},
 		map[string]any{"type": "channel", "channel_id": refsOps, "tab_id": refsTab}}}}}}
@@ -78,9 +85,12 @@ func refsOwners(m *core.Message) []string {
 
 func TestRenamesRedrawRows(t *testing.T) {
 	t.Run("unpatched", func(t *testing.T) { checkRenames(t, false) })
-	// a plugin patching the messages slice: the rows draw its views, which
-	// taut converts; and two messages only the plugin has
-	// (injectMessages), which only taut converts
+	// a plugin patching the messages slice: its text patch changes every
+	// message, so each row draws the plugin's view, which taut converts;
+	// its copy of Ben's notes shares a file Cara owns, which the list's
+	// own copy doesn't (only taut's conversion names her, so only its
+	// re-conversion can update the row); and two messages only the
+	// plugin has (injectMessages), which only taut converts
 	t.Run("patched", func(t *testing.T) { checkRenames(t, true) })
 }
 
@@ -91,8 +101,10 @@ func checkRenames(t *testing.T, patched bool) {
 	app.S.PutConv(slack.Conversation{ID: refsOps, Name: "ops", IsChannel: true, IsMember: true, NumMembers: 8, Properties: props})
 	base := time.Now().Add(-time.Hour).Unix()
 	ts := func(i int) string { return fmt.Sprintf("%d.%06d", base+int64(i)*60, 100+i) }
+	// Ben's notes: a file in them only in the plugin's copy
+	notesMsg := map[string]any{"type": "message", "channel": refsChan, "ts": ts(4), "user": "UBEN00001", "text": "Notes from the sync"}
 	var msgs []slack.Message
-	for _, m := range refsMessages(ts, 0, refsChan) {
+	for _, m := range append(refsMessages(ts, 0, refsChan), notesMsg) {
 		b, _ := json.Marshal(m)
 		var sm slack.Message
 		if err := json.Unmarshal(b, &sm); err != nil {
@@ -101,25 +113,31 @@ func checkRenames(t *testing.T, patched bool) {
 		msgs = append(msgs, sm)
 	}
 	app.S.SetLatest(refsChan, msgs, false)
-	files, slugs := []string{ts(0)}, []string{ts(1)}
+	files, slugs, stored := []string{ts(0)}, []string{ts(1)}, []string{ts(0), ts(1)}
 	if patched {
 		inj, _ := json.Marshal(refsMessages(ts, 2, refsChan))
+		notes, _ := json.Marshal(refsFile("F0REFSNOTE", "Sync notes"))
 		patchedEnv(t, app, pluginJS(`
 class InjectRefs extends TautPlugin {
   static id = 'InjectRefs'
   static pluginName = 'Inject refs (test)'
-  static description = 'test: messages only the plugin has, naming a file owner and a channel tab'
+  static description = 'test: a text patch, a file only its copy of a message has, messages only it has'
   static authors = ['clack']
   static category = 'messages'
   static defaultConfig = { enabled: true }
   start() {
     const msgs = `+string(inj)+`
     this.api.messages.injectMessages(() => msgs)
+    this.api.messages.patchMessageText((t) => t.replace(/plan/g, 'PLAN').replace(/Steps/g, 'STEPS').replace(/sync/g, 'SYNC'))
+    const notes = `+string(notes)+`
+    const share = (ts, m) => (ts === '`+ts(4)+`' && m ? { ...m, files: [notes] } : m)
+    const { patchSlice, mapEntries } = this.api.redux
+    patchSlice('messages', (ch, bucket) => (ch === '`+refsChan+`' && bucket && typeof bucket === 'object' ? mapEntries(bucket, share) : bucket))
   }
 }
 return InjectRefs`))
 		until(t, 5*time.Second, "the messages slice patched", func() {}, func() bool { return tautOf().SlicePatched("messages") })
-		files, slugs = append(files, ts(2)), append(slugs, ts(3))
+		files, slugs, stored = append(files, ts(2), ts(4)), append(slugs, ts(3)), append(stored, ts(4))
 	}
 	h := coreHost{app: app, th: theme.New(false)}
 	v := NewChannelView(h, refsChan)
@@ -171,6 +189,15 @@ return InjectRefs`))
 	}
 	wait("the file owner's name", rows(files, "cara | ", ""))
 	wait("the tab slug", rows(slugs, "Runbook in #ops", ""))
+	if patched {
+		// the rows of the messages core has draw the plugin's views
+		wait("the plugin's text", rows([]string{ts(0)}, "PLAN", ""))
+		for _, k := range stored {
+			if r := v.s.rows[k]; r == nil || !r.viewed {
+				t.Errorf("the row of %s doesn't draw the plugin's view: %s", k, texts())
+			}
+		}
+	}
 
 	// Cara renames herself: the rows of her file say so (she sent none of
 	// them, so no row drew her)
@@ -180,4 +207,65 @@ return InjectRefs`))
 	// #ops' tab renamed: the slugs to it follow
 	refsTabRename(app, "Playbook")
 	wait("the renamed tab in its slugs", rows(slugs, "Playbook in #ops", "Runbook"))
+
+	// display_real_names: the files name their owner by her full name
+	if err := app.SetMultiplePrefs(context.Background(), map[string]any{"display_real_names": true}); err != nil {
+		t.Fatal(err)
+	}
+	wait("the owner's full name under display_real_names", rows(files, "Cara Lindqvist | ", "kit.l | "))
+}
+
+// A rename that comes while a model's load is out finds none of the
+// load's messages to convert again, and the load's answer, converted
+// before the rename, lands with the old name: the model converts again
+// what the rename changed once the load is in (afterLoad).
+func TestRenameDuringLoad(t *testing.T) {
+	app, _, _ := shotsApp(t)
+	app.S.PutConv(slack.Conversation{ID: refsChan, Name: "launch", IsChannel: true, IsMember: true, NumMembers: 12})
+	base := time.Now().Add(-time.Hour).Unix()
+	ts := func(i int) string { return fmt.Sprintf("%d.%06d", base+int64(i)*60, 100+i) }
+	b, _ := json.Marshal(refsMessages(ts, 0, refsChan)[0])
+	var sm slack.Message
+	if err := json.Unmarshal(b, &sm); err != nil {
+		t.Fatal(err)
+	}
+	app.S.SetLatest(refsChan, []slack.Message{sm}, false)
+	hb := hubFor(coreHost{app: app, th: theme.New(false)})
+	m := hb.channel(refsChan)
+	m.mu.Lock()
+	m.loading = true // a load is out
+	m.mu.Unlock()
+	answer := app.MessageFromSlack(refsChan, &sm) // converted as it came, before the rename
+	if got := refsOwners(&answer); len(got) != 1 || got[0] != "cara" {
+		t.Fatalf("the file's owner before the rename: %v", got)
+	}
+
+	refsUserChange(app, "kit.l")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		m.mu.Lock()
+		seen := !m.reconv.Empty()
+		m.mu.Unlock()
+		if seen {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the rename never reached the loading model")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// the load lands as ensureLoaded lands it
+	m.mu.Lock()
+	m.msgs = []entry{{m: answer, rev: m.bump()}}
+	m.loading = false
+	m.rev++
+	m.mu.Unlock()
+	hb.afterLoad(m)
+	m.mu.Lock()
+	got := refsOwners(&m.msgs[0].m)
+	m.mu.Unlock()
+	if len(got) != 1 || got[0] != "kit.l" {
+		t.Errorf("the load's copy, converted before the rename, names %v; want [kit.l]", got)
+	}
 }

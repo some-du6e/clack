@@ -262,18 +262,21 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	}
 	// keep what only the native knows (pending state, resolved author)
 	mv.Pending, mv.Failed, mv.ClientMsgID = r.src.Pending, r.src.Failed, r.src.ClientMsgID
-	// A view converted again can differ only in its Doc, past what
-	// sameView compares: a name in it (a file's uploader, a tab slug;
-	// taut converts again just the messages that named a changed member
-	// or channel). Only then are the Docs compared.
+	// A row drawing the view takes one converted again (or the fresh one
+	// of a new revision) that differs only in its Doc, past what sameView
+	// compares: a name in it (a file's uploader, a tab slug), which taut
+	// converts again for just the messages that read a changed member or
+	// channel. A row drawing its source doesn't: the lists convert their
+	// own copies again for the same changes (hub.reconvert), and taut's
+	// conversion, from the plugins' JSON, can differ from the source's in
+	// ways that show nothing (every row switching to it redrew it, and
+	// sent its components new props, after each "names").
 	again := r.viewConv != 0 && conv != r.viewConv
 	r.viewConv = conv
-	// (a row drawing the view compares them on a new revision too: the
-	// fresh view may differ only in a name the source's revision had new)
 	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text && (!again && !changed || reflect.DeepEqual(r.m.Doc, mv.Doc)) {
 		return
 	}
-	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text && (!again || reflect.DeepEqual(r.src.Doc, mv.Doc)) {
+	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text {
 		return
 	}
 	r.viewed = true
@@ -323,29 +326,39 @@ func (s *listState) refreshInjected(t *taut.Taut, now time.Time) (changed bool) 
 			msgs = append(msgs, all[i])
 		}
 	}
+	return s.inj.take(msgs)
+}
+
+// take makes msgs the injected messages, and reports whether any of them
+// changed (one came, went, or was converted again with something new).
+func (in *injState) take(msgs []core.Message) (changed bool) {
 	keys := ""
 	for i := range msgs {
 		keys += msgs[i].TS + ","
 	}
-	if keys == s.inj.keys && sameInjected(s.inj.msgs, msgs) {
+	if keys == in.keys && sameInjected(in.msgs, msgs) {
+		// the same messages; keep the conversions taut hands back now
+		// (and every rev), so the next check is by identity again and not
+		// a deep compare
+		in.msgs = msgs
 		return false
 	}
 	// each message's rev: a new one for a message that changed (converted
 	// again for a name in it, edited by the plugin), so its row draws it
-	old := make(map[string]int, len(s.inj.msgs))
-	for i := range s.inj.msgs {
-		old[s.inj.msgs[i].TS] = i
+	old := make(map[string]int, len(in.msgs))
+	for i := range in.msgs {
+		old[in.msgs[i].TS] = i
 	}
 	revs := make(map[string]uint32, len(msgs))
 	for i := range msgs {
-		if j, ok := old[msgs[i].TS]; ok && sameInjectedMsg(&s.inj.msgs[j], &msgs[i]) {
-			revs[msgs[i].TS] = s.inj.revs[msgs[i].TS]
+		if j, ok := old[msgs[i].TS]; ok && sameInjectedMsg(&in.msgs[j], &msgs[i]) {
+			revs[msgs[i].TS] = in.revs[msgs[i].TS]
 			continue
 		}
-		s.inj.n++
-		revs[msgs[i].TS] = injRevBase + s.inj.n
+		in.n++
+		revs[msgs[i].TS] = injRevBase + in.n
 	}
-	s.inj.keys, s.inj.msgs, s.inj.revs = keys, msgs, revs
+	in.keys, in.msgs, in.revs = keys, msgs, revs
 	return true
 }
 
