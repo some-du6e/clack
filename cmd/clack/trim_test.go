@@ -5,6 +5,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/some-du6e/clack/internal/ui/inputidle"
 )
 
 // Forced collections are at least the gap apart: requests inside it
@@ -60,10 +62,11 @@ func TestFreeOSLimiterWaitsForQuiet(t *testing.T) {
 	release := make(chan struct{})
 	var waits atomic.Int32
 	l := &freeOSLimiter{gap: 200 * time.Millisecond, run: func() { runs.Add(1) },
-		quiet: func() {
+		quiet: func() bool {
 			if waits.Add(1) == 1 {
 				<-release // the first collection waits for a quiet window
 			}
+			return true
 		}}
 	go l.request()
 	deadline := time.Now().Add(5 * time.Second)
@@ -86,5 +89,60 @@ func TestFreeOSLimiterWaitsForQuiet(t *testing.T) {
 	time.Sleep(400 * time.Millisecond)
 	if n := runs.Load(); n != 2 {
 		t.Fatalf("the requests made while it waited ran %d times, want once", n-1)
+	}
+}
+
+// A collection that never found a pause is skipped, not forced at the
+// deadline; the next request tries again.
+func TestFreeOSLimiterSkipsWithoutQuiet(t *testing.T) {
+	var runs atomic.Int32
+	quiet := atomic.Bool{}
+	l := &freeOSLimiter{gap: time.Hour, run: func() { runs.Add(1) }, quiet: func() bool { return quiet.Load() }}
+	l.request()
+	if n := runs.Load(); n != 0 {
+		t.Fatalf("%d collections without a pause", n)
+	}
+	quiet.Store(true)
+	l.request() // the skipped one used no gap
+	if n := runs.Load(); n != 1 {
+		t.Fatalf("%d collections once quiet, want 1", n)
+	}
+}
+
+// waitQuiet keys on input, not frames: it returns once input stops for
+// quietFor, and at quietMax gives up (false) while input continues.
+func TestWaitQuietOnInput(t *testing.T) {
+	defer func(f, m, b time.Duration) { quietFor, quietMax, quietBusy = f, m, b }(quietFor, quietMax, quietBusy)
+	quietFor, quietMax, quietBusy = 80*time.Millisecond, 400*time.Millisecond, 40*time.Millisecond
+
+	inputidle.Note()
+	t0 := time.Now()
+	if !waitQuiet() {
+		t.Fatal("no pause found after one input")
+	}
+	if d := time.Since(t0); d < 60*time.Millisecond {
+		t.Fatalf("collected %v after input, before the pause (%v)", d, quietFor)
+	}
+
+	stop := make(chan struct{})
+	go func() { // someone scrolling the whole time
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				inputidle.Note()
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}()
+	t0 = time.Now()
+	ok := waitQuiet()
+	close(stop)
+	if ok {
+		t.Fatal("collected during continuous input")
+	}
+	if d := time.Since(t0); d < 350*time.Millisecond || d > 2*time.Second {
+		t.Fatalf("gave up after %v, want about %v", d, quietMax)
 	}
 }

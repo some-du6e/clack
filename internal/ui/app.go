@@ -565,7 +565,6 @@ func (a *App) Run() error {
 			a.drainIdle()
 		case app.FrameEvent:
 			t0 := time.Now()
-			lastFrameAt.Store(t0.UnixNano())
 			if a.th.Shaper == nil && !a.takeShaper() {
 				// The shaper (fonts) is still loading: paint the window's
 				// background and come back when it's ready, instead of

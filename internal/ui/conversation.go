@@ -14,6 +14,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/inputidle"
 )
 
 // originTracker learns a widget's window position from pointer events:
@@ -55,11 +56,18 @@ func (t *originTracker) get(fallback image.Point) image.Point {
 // event with the same event's window position.
 func (a *App) readRootPointer(gtx layout.Context) {
 	for {
-		e, ok := gtx.Event(pointer.Filter{Target: &a.ptrTag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag | pointer.Release})
+		// Scroll with no range: the root sees each wheel or trackpad
+		// scroll (input, for inputidle) and takes none of it from what's
+		// under it (Gio's clampScroll hands all of it on)
+		e, ok := gtx.Event(pointer.Filter{Target: &a.ptrTag, Kinds: pointer.Move | pointer.Enter | pointer.Press | pointer.Drag | pointer.Release | pointer.Scroll})
 		if !ok {
 			break
 		}
 		if pe, ok := e.(pointer.Event); ok {
+			inputidle.Note() // someone's at the window (cmd/clack's trim waits for a pause)
+			if pe.Kind == pointer.Scroll {
+				continue // the handlers below never saw scrolls
+			}
 			a.ptrWin = image.Pt(int(pe.Position.X+.5), int(pe.Position.Y+.5))
 			a.ptrOK = true
 			composer.NotePointer(a.ptrWin) // the editors' context menus open here
