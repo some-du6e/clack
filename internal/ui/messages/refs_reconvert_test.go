@@ -65,6 +65,17 @@ func refsMessages(ts func(int) string, i int, ch string) []map[string]any {
 	}
 }
 
+// refsOwners are the file owners m's Doc names (failure messages).
+func refsOwners(m *core.Message) []string {
+	var out []string
+	for _, b := range m.Doc.Blocks {
+		if b.File != nil {
+			out = append(out, b.File.Uploader)
+		}
+	}
+	return out
+}
+
 func TestRenamesRedrawRows(t *testing.T) {
 	t.Run("unpatched", func(t *testing.T) { checkRenames(t, false) })
 	// a plugin patching the messages slice: the rows draw its views, which
@@ -130,7 +141,20 @@ return InjectRefs`))
 	texts := func() string {
 		var out []string
 		for _, k := range append(append([]string(nil), files...), slugs...) {
-			out = append(out, fmt.Sprintf("%s: %q", k, rowText(v.s.rows[k])))
+			s := fmt.Sprintf("%s: %q", k, rowText(v.s.rows[k]))
+			if r := v.s.rows[k]; r != nil {
+				s += fmt.Sprintf(" (viewed %v, conversion %d, rev %d, src owners %v)", r.viewed, r.viewConv, r.rev, refsOwners(&r.src))
+			}
+			if t := tautOf(); t != nil {
+				mv, conv, ok := t.MessageViewConv(refsChan, k, false)
+				s += fmt.Sprintf(" view ok %v conversion %d owners %v", ok, conv, refsOwners(&mv))
+			}
+			out = append(out, s)
+		}
+		if t := tautOf(); t != nil {
+			for _, m := range t.InjectedMessages(refsChan) {
+				out = append(out, fmt.Sprintf("injected %s owners %v", m.TS, refsOwners(&m)))
+			}
 		}
 		return strings.Join(out, "; ")
 	}
