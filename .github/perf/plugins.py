@@ -22,7 +22,8 @@ METRICS = [
     ("p99_ms", "p99 frame", "ms"),
     ("p95_ms", "p95 frame", "ms"),
     ("median_ms", "median frame", "ms"),
-    ("total_ms", "sum of 300 frames", "ms"),
+    ("frames", "frames drawn", ""),
+    ("total_ms", "sum of the frames", "ms"),
     ("cpu_ms", "process CPU", "ms"),
     ("allocs", "allocations / frame", ""),
     ("alloc_kb", "KB allocated / frame", ""),
@@ -31,6 +32,8 @@ METRICS = [
     ("trees", "plugin trees that changed (during the frames)", ""),
     ("trees_same", "plugin trees re-delivered unchanged", ""),
     ("renders", "Go→JS renders", ""),
+    ("anim_frames", "animation frames shown (every player's)", ""),
+    ("players", "animations playing at the end", ""),
 ]
 
 
@@ -89,7 +92,7 @@ def main():
     sides = {"base": load(d, "base"), "head": load(d, "head")}
     print(f"## Scroll frames under a plugin set like Karim's\n")
     print(f"Before: `{base_label}` ({len(sides['base'])} rounds). After: `{head_label}` ({len(sides['head'])} rounds).")
-    print("Each pass is 300 frames at 60 a second, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU. Allocations and collections are the whole process's.")
+    print("Each scroll pass is 300 frames at 60 a second, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU. The idle passes (idle, emoji) leave the channel alone for 5 s and draw a frame only when something asks for one, as the window does (emoji: an animated custom emoji on screen); emoji-60hz draws one every 16 ms. Allocations and collections are the whole process's, per frame.")
     print("Values are the median over the rounds, the rounds in brackets.\n")
     ref = (sides["head"] or sides["base"] or [{}])[0]
     if ref:
