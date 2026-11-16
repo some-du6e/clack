@@ -39,10 +39,14 @@ import (
 // meta.json decodes and, once all three are in, installs the boot data
 // (only what Boot hasn't answered yet), builds a snapshot from it and
 // closes DataReady. The UI renders that snapshot (WarmSnapshot) and lifts
-// the boot placeholder. Boot's calls then replace each part as on a cold
-// start: the conversations (cached ones Slack no longer lists leave),
-// counts, sections, sidebar.dms and stars. A call that fails keeps the
-// cached part, as a failed refresh keeps Slack's.
+// the boot placeholder. Each of Boot's sidebar answers then replaces its
+// part when it arrives, as Slack dispatches each one: the conversations
+// (cached ones Slack no longer lists leave), counts, sections,
+// sidebar.dms and stars. A call that fails keeps the cached part, as a
+// failed refresh keeps Slack's. The window is usable meanwhile, so each
+// answer is merged with what this session changed after its call went out
+// (store/journal.go): a mark, a leave, a DM opened or closed, a section
+// move made then stays.
 //
 // Not copied: Slack boots cold again once its last cold boot is a week
 // old (hasBeenTooLongSinceLastColdBoot, cold_boot_interval_elapsed),
@@ -124,8 +128,10 @@ func (a *App) loadWarm(cacheDone <-chan struct{}) {
 	var d *store.BootData
 	if !noWarmBoot {
 		d = a.S.ReadBootData(team, user)
+		a.loadHeaders(team, user)
+	} else {
+		a.loadHeaders("", "") // none: headers come from their reads, as before the warm boot
 	}
-	a.loadHeaders(team, user)
 	<-cacheDone // the users, emoji, prefs and experiments the snapshot reads
 	switch {
 	case noWarmBoot:
@@ -192,6 +198,31 @@ func (a *App) installWarmCore(d *store.BootData) {
 		}
 		a.mu.Unlock()
 	}
+}
+
+// installConvs installs a users.conversations answer fetched at the store
+// journal's position since (Boot): every conversation, except the ones
+// this session changed after since (store.PutConvsSince), then the boot
+// data's conversations the answer no longer lists leave.
+func (a *App) installConvs(convs []slack.Conversation, since uint64) {
+	if n := a.S.PutConvsSince(convs, since); n > 0 {
+		log.Printf("boot: %d conversations changed here while users.conversations was out keep that", n)
+	}
+	// cached conversations Slack no longer lists (left, archived elsewhere) go
+	if n := a.S.DropBootConvs(a.warmAdded(), convs, since); n > 0 {
+		log.Printf("boot: %d cached conversations no longer listed", n)
+	}
+}
+
+// installCounts installs a client.counts answer fetched at the store
+// journal's position since (Boot, refreshCounts): the unread state and
+// the Activity badges, except what changed after since (a mark, a new
+// message, items marked read), which is newer and stays. It reports
+// whether it kept any such change.
+func (a *App) installCounts(c *slack.Counts, since uint64) bool {
+	kept := a.S.SetCountsSince(c, since)
+	badges := c.ActivityV2 == nil || a.setActivityBadgesSince(c.ActivityV2, since)
+	return kept > 0 || !badges
 }
 
 // warmAdded is the conversations the boot data installed (nil on a cold

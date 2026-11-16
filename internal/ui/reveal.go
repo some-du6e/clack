@@ -46,8 +46,10 @@ import (
 //     (users.conversations, counts, sections, prefs, stars…: Slack's boot
 //     data);
 //   - the restored channel's header (tabs, bookmarks, member count), which
-//     Slack's boot data carries in the channel object: from the header
-//     cache on a warm start (core header_cache.go), else its reads;
+//     Slack's boot data carries in the channel object: on a warm start the
+//     header cache's (core header_cache.go), or none if it hasn't the
+//     channel (Slack renders whatever its persisted store has), else its
+//     reads;
 //   - the plugins enabled at start registered and their first renders
 //     delivered: Taut patches Slack's components before its first render,
 //     and those patches render synchronously with Slack's React; Clack's
@@ -94,7 +96,11 @@ func (a *App) revealBlocker(now time.Time) string {
 	if b.booted.IsZero() && b.warmAt.IsZero() {
 		return "boot data"
 	}
-	if ch := a.router.Current().Channel(); ch != "" && !b.tabsDone[ch] {
+	// On a warm start the header is the header cache's when it has the
+	// channel (headerFromCache fills it with the boot data); when it
+	// doesn't, the client renders without waiting for the reads, as
+	// Slack's does with every boot API nonblocking.
+	if ch := a.router.Current().Channel(); ch != "" && !b.tabsDone[ch] && b.warmAt.IsZero() {
 		return "channel header"
 	}
 	if a.rv.dataAt.IsZero() {

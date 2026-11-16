@@ -333,6 +333,14 @@ func main() {
 	}
 
 	creds, err := slack.ReadCreds(*credsPath)
+	// before any account's store opens: finish a sign-out this process's
+	// predecessor didn't live through, and drop the warm boot's files of
+	// every account that isn't the one signed in (store.SweepAccounts)
+	keep := ""
+	if err == nil {
+		keep = store.AccountDir(croot, firstNonEmpty(creds.Team, creds.EnterpriseID), creds.UserID)
+	}
+	store.SweepAccounts(croot, keep)
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	// A slack:// link is a navigation, except a magic-login link, which

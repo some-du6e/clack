@@ -24,7 +24,9 @@ import (
 //	                channels opened most recently (core's header cache)
 //
 // Neither holds message content. Both name the account they belong to and
-// are read only for it; DropDisk deletes them with the rest at sign-out.
+// are read only for it. Sign-out deletes them first (SignOutNow), a session
+// that ended deletes them (RemoveWarmFiles), and a start deletes every
+// other account's (SweepAccounts).
 
 // BootDataFile and HeadersFile are the warm boot's files in the account
 // directory.
@@ -77,8 +79,8 @@ func (s *Store) WriteFile(name string, b []byte) error {
 	if s.cacheDir == "" {
 		return nil
 	}
-	s.saveMu.Lock()
-	defer s.saveMu.Unlock()
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
 	if s.dropped.Load() {
 		return errDropped
 	}
@@ -152,10 +154,11 @@ func (s *Store) BootSidebar(d *BootData) {
 }
 
 // InstallBootData fills the store from boot data (a warm boot), keeping
-// whatever the live boot already put there: the team (until team.info),
-// the conversations, sections (until users.channelSections.list) and
-// unread counts (until client.counts). It returns the conversations it
-// added, for DropBootConvs.
+// whatever is already there: the team (team.info answered), each
+// conversation and each conversation's unread state (a mark made before
+// the disk read finished keeps its own, every other cached count still
+// installs), the sections, and the threads' state (client.counts
+// answered). It returns the conversations it added, for DropBootConvs.
 func (s *Store) InstallBootData(d *BootData) map[string]*slack.Conversation {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,11 +177,13 @@ func (s *Store) InstallBootData(d *BootData) map[string]*slack.Conversation {
 	if s.Sections == nil {
 		s.Sections = append([]slack.Section(nil), d.Sections...)
 	}
-	if len(s.Counts) == 0 {
-		for i := range d.Counts {
-			e := d.Counts[i]
+	for i := range d.Counts {
+		e := d.Counts[i]
+		if _, ok := s.Counts[e.ID]; !ok {
 			s.Counts[e.ID] = &e
 		}
+	}
+	if !s.countsLive {
 		s.ThreadsUnread, s.ThreadMentions = d.ThreadsUnread, d.ThreadMentions
 		s.ThreadsUnreadByChannel = d.ThreadsByChan
 	}
@@ -189,11 +194,13 @@ func (s *Store) InstallBootData(d *BootData) map[string]*slack.Conversation {
 }
 
 // DropBootConvs removes the conversations boot data added that the live
-// list (users.conversations) no longer has: a channel left or archived
-// elsewhere since the boot data was written. The live list is what the
-// viewer is in, so this holds even when a read refreshed the cached copy
-// meanwhile (the restored channel's conversations.info at start).
-func (s *Store) DropBootConvs(added map[string]*slack.Conversation, live []slack.Conversation) int {
+// list (users.conversations, fetched at journal position since) no longer
+// has: a channel left or archived elsewhere since the boot data was
+// written. The live list is what the viewer is in, so this holds even
+// when a read refreshed the cached copy meanwhile (the restored channel's
+// conversations.info at start); only a change this session made after
+// since (a channel joined again) keeps one.
+func (s *Store) DropBootConvs(added map[string]*slack.Conversation, live []slack.Conversation, since uint64) int {
 	if len(added) == 0 {
 		return 0
 	}
@@ -205,7 +212,7 @@ func (s *Store) DropBootConvs(added map[string]*slack.Conversation, live []slack
 	defer s.mu.Unlock()
 	n := 0
 	for id := range added {
-		if in[id] {
+		if in[id] || s.jr.convs[id] > since {
 			continue
 		}
 		if _, ok := s.Convs[id]; ok {

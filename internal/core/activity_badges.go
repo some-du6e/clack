@@ -19,7 +19,37 @@ func (a *App) setActivityBadges(m map[string]int) {
 	}
 	a.mu.Lock()
 	a.actBadges = cp
+	a.actBadgesAt = a.S.NextSeq()
 	a.mu.Unlock()
+}
+
+// setActivityBadgesSince installs a client.counts answer's activity_v2
+// fetched at the store journal's position since, unless the badges
+// changed after since (items marked read meanwhile, a
+// badge_counts_updated): those are newer, so they stay. It reports
+// whether it installed them.
+func (a *App) setActivityBadgesSince(m map[string]int, since uint64) bool {
+	if m == nil {
+		return false
+	}
+	a.mu.Lock()
+	newer := a.actBadgesAt > since
+	a.mu.Unlock()
+	if newer {
+		return false
+	}
+	cp := make(map[string]int, len(m))
+	for k, v := range m {
+		cp[k] = v
+	}
+	a.mu.Lock()
+	if a.actBadgesAt > since { // changed while this copied
+		a.mu.Unlock()
+		return false
+	}
+	a.actBadges = cp
+	a.mu.Unlock()
+	return true
 }
 
 // onActivityBadges takes badge_counts_updated's activity_v2. Under
@@ -60,6 +90,7 @@ func (a *App) decActivityBadges(items []ActivityItem) {
 		}
 		if changed {
 			a.actBadges = cp
+			a.actBadgesAt = a.S.NextSeq() // newer than a counts answer still out
 		}
 	}
 	a.mu.Unlock()

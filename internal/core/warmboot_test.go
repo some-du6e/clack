@@ -355,3 +355,175 @@ func TestHeaderCacheKeepsRecent(t *testing.T) {
 		t.Error("the oldest header outlived the keep limit")
 	}
 }
+
+// holdStale makes fs answer the first call of each method with what it
+// would have answered when that call arrived (fakeslack Answer), sent only
+// once release runs: Slack's answer computed before the client's writes
+// that follow, still on its way. Later calls answer as usual.
+func holdStale(t *testing.T, fs *fakeslack.Server, methods ...string) (release func()) {
+	t.Helper()
+	ch := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(ch) }) }
+	var mu sync.Mutex
+	held := map[string]bool{}
+	fs.SetHook(func(m string, f url.Values) (any, bool) {
+		if !slices.Contains(methods, m) {
+			return nil, false
+		}
+		mu.Lock()
+		first := !held[m]
+		held[m] = true
+		mu.Unlock()
+		if !first {
+			return nil, false
+		}
+		out := fs.Answer(m, f)
+		<-ch
+		return out, out != nil
+	})
+	t.Cleanup(func() { release(); fs.SetHook(nil) })
+	return release
+}
+
+// The window is usable from the boot data while Boot's calls are out
+// (the warm reveal), so the user can mark a channel read, leave a
+// channel, close a DM, open a closed one and move a channel into a
+// section before the sidebar's answers land. Those answers were computed
+// before the writes reached Slack; installed as they are they undid every
+// one of them for the session (and the next boot data). Boot merges them
+// with the writes (store/journal.go): each write stays.
+func TestWarmWindowWritesSurviveBoot(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fs.Close() })
+	const closed, closedUser = "D0CLOSED0001", "U0FAKE00050"
+	fs.AddClosedDM(closed, closedUser)
+	dir := t.TempDir()
+	first := warmSession(t, fs, dir, fs.Creds(), nil)
+	// the target: the first standard section; what moves into it: a read
+	// channel from another standard one (not Starred: moving there stars)
+	secType := map[string]string{} // conversation -> the type of the section it's in
+	var section string
+	for _, s := range first.Sections {
+		if s.Type == "standard" && section == "" {
+			section = s.ID
+		}
+		for _, id := range s.Channels {
+			secType[id] = s.Type
+			if s.ID == section {
+				secType[id] = "target"
+			}
+		}
+	}
+	var unread, left, moved, openDM string
+	for _, c := range first.Convs {
+		read := !first.Counts[c.ID].Unread
+		switch {
+		case c.Kind == "im" && c.ID != closed && openDM == "":
+			openDM = c.ID
+		case c.Kind != "channel" || c.IsGeneral || secType[c.ID] == "target":
+		case unread == "" && !read:
+			unread = c.ID
+		case left == "" && read && secType[c.ID] != "stars":
+			left = c.ID
+		case moved == "" && read && secType[c.ID] == "standard":
+			moved = c.ID
+		}
+	}
+	if section == "" || unread == "" || left == "" || moved == "" || openDM == "" {
+		t.Fatalf("the fixture lacks a case: section %q unread %q left %q moved %q dm %q", section, unread, left, moved, openDM)
+	}
+
+	release := holdStale(t, fs, "users.conversations", "client.counts", "sidebar.dms", "users.channelSections.list")
+	a := New(slack.New(fs.Creds()), store.New(dir))
+	t.Cleanup(a.Shutdown)
+	ctx := context.Background()
+	booted := make(chan error, 1)
+	go func() { booted <- a.Boot(ctx) }()
+	select {
+	case <-a.DataReady():
+	case <-time.After(15 * time.Second):
+		t.Fatal("no boot data")
+	}
+	if !a.Warm() || !a.dmOpen(openDM) || a.dmOpen(closed) {
+		t.Fatalf("the warm start's state: warm %v, %s open %v, %s open %v", a.Warm(), openDM, a.dmOpen(openDM), closed, a.dmOpen(closed))
+	}
+	// the writes, every sidebar answer still out
+	if _, err := a.Mark(ctx, unread, a.Count(unread).Latest); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Leave(ctx, left); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Leave(ctx, openDM); err != nil { // conversations.close
+		t.Fatal(err)
+	}
+	if _, err := a.OpenDM(ctx, closedUser); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.MoveToSection(ctx, section, []string{moved}, nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-a.Ready():
+		t.Fatal("Boot finished with its answers held")
+	default:
+	}
+	release()
+	if err := <-booted; err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string) {
+		t.Helper()
+		if a.Count(unread).Unread {
+			t.Errorf("%s: %s marked read is unread again", when, unread)
+		}
+		if _, ok := a.S.Conv(left); ok {
+			t.Errorf("%s: %s left is back in the sidebar", when, left)
+		}
+		if a.dmOpen(openDM) {
+			t.Errorf("%s: %s closed is open again", when, openDM)
+		}
+		if !a.dmOpen(closed) {
+			t.Errorf("%s: %s opened is closed again", when, closed)
+		}
+		in := false
+		a.S.RLock()
+		for _, s := range a.S.Sections {
+			if s.ID == section {
+				in = slices.Contains(s.ChannelIDsPage.ChannelIDs, moved)
+			}
+		}
+		a.S.RUnlock()
+		if !in {
+			t.Errorf("%s: %s moved into %s is out of it again", when, moved, section)
+		}
+	}
+	check("after Boot")
+	// the post-Boot rereads (counts, sections) agree, and so does the
+	// boot data written from them
+	time.Sleep(1500 * time.Millisecond)
+	check("after the rereads")
+	a.SaveWarm()
+	team, user := a.bootAccount()
+	d := a.S.ReadBootData(team, user)
+	if d == nil {
+		t.Fatal("no boot data written")
+	}
+	for _, e := range d.Counts {
+		if e.ID == unread && e.HasUnreads {
+			t.Errorf("boot data: %s unread", unread)
+		}
+	}
+	for _, c := range d.Convs {
+		if c.ID == left {
+			t.Errorf("boot data lists %s, left", left)
+		}
+	}
+	if d.DMsOpen[openDM] || !d.DMsOpen[closed] {
+		t.Errorf("boot data's DMs: %s open %v, %s open %v", openDM, d.DMsOpen[openDM], closed, d.DMsOpen[closed])
+	}
+}

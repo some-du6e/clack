@@ -3,6 +3,7 @@ package fakeslack
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -82,4 +83,19 @@ func (s *Server) applyFault(w http.ResponseWriter, f Fault) bool {
 		return true
 	}
 	return false
+}
+
+// Answer is what the fake answers method with right now (tests): a hook
+// that holds a call can take its answer when the request arrives, the
+// server's state then, and send it later (SetHook's out), so a change the
+// client makes meanwhile isn't in it, as with a real reply on its way.
+func (s *Server) Answer(method string, form url.Values) any {
+	out := s.handle(method, form, nil)
+	if _, none := out.(unanswered); none {
+		return nil
+	}
+	if method == "experiments.getByUser" {
+		out = withAccountExperiments(out)
+	}
+	return out
 }

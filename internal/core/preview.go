@@ -217,10 +217,7 @@ func joinParams(ch string, exp int64) url.Values {
 // but keeps it known as a non-member, so the conversation still open
 // turns into a preview (or the archived bar) instead of losing its header.
 func (a *App) dropMembership(ch string, archived bool) {
-	a.S.Lock()
-	c, ok := a.S.Convs[ch]
-	delete(a.S.Convs, ch)
-	a.S.Unlock()
+	c, ok := a.S.DropConv(ch) // a list fetched before this doesn't bring it back (store/journal.go)
 	a.setTemp(ch, 0)
 	if !ok || c.IsIM || c.IsMPIM {
 		return

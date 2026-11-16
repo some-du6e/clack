@@ -149,7 +149,7 @@ func (a *App) bulkUpdateSections(ctx context.Context, ins, rem []SectionItems) e
 	if err := a.C.Call(ctx, "users.channelSections.channels.bulkUpdate", url.Values{"insert": {string(bi)}, "remove": {string(br)}}, nil); err != nil {
 		return err
 	}
-	a.refreshSections(ctx)
+	a.refreshSections(ctx) // Slack has the move: a list fetched before it doesn't undo it
 	return nil
 }
 

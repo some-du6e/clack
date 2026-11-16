@@ -481,6 +481,6 @@ func (a *App) mergeChannel(ch string, raw json.RawMessage) bool {
 		return false
 	}
 	next.ID = ch
-	a.S.PutConv(next)
+	a.S.PutConvLocal(next)
 	return true
 }

@@ -314,6 +314,11 @@ type Snapshot struct {
 	EmojiCount   int
 	EnterpriseID string
 	Rail         RailState // the left rail from Navigation prefs and experiments (rail.go)
+	// Seq orders snapshots by when their build started (1, 2, …): one
+	// started later holds at least what an earlier one does, so a UI that
+	// applies them from several goroutines skips one older than what it
+	// shows. 0 for a snapshot core didn't build.
+	Seq uint64
 	// FilterNames is what the sidebar text filter matches (sidebar_filter.go).
 	FilterNames FilterNames
 }

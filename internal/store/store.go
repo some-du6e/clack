@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -93,6 +94,11 @@ type Store struct {
 	ThreadsUnread          bool
 	ThreadMentions         int
 	ThreadsUnreadByChannel map[string]int
+	// countsLive: a client.counts answer was installed (SetCounts*), so the
+	// boot data's thread state no longer applies (bootdata.go)
+	countsLive bool
+	// jr is the write journal (journal.go)
+	jr journal
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
@@ -115,6 +121,7 @@ type Store struct {
 	// or save.
 	gen       atomic.Uint64
 	saveMu    sync.Mutex
+	fileMu    sync.Mutex  // WriteFile's (the warm boot's small files), apart from meta.json's long saves
 	dropped   atomic.Bool // DropDisk ran (signed out): never write again
 	saved     bool
 	savedGen  uint64
@@ -1416,20 +1423,9 @@ func (s *Store) AddReply(ch string, m slack.Message) {
 
 // ---- counts ----
 
-func (s *Store) SetCounts(c *slack.Counts) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Counts = map[string]*slack.CountEntry{}
-	for _, l := range [][]slack.CountEntry{c.Channels, c.IMs, c.MPIMs} {
-		for i := range l {
-			e := l[i]
-			s.Counts[e.ID] = &e
-		}
-	}
-	s.ThreadsUnread = c.Threads.HasUnreads
-	s.ThreadMentions = c.Threads.MentionCount
-	s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
-}
+// SetCounts installs a client.counts answer whole (SetCountsSince keeps
+// what changed while the call was out).
+func (s *Store) SetCounts(c *slack.Counts) { s.SetCountsSince(c, math.MaxUint64) }
 
 // Count returns a copy of a conversation's unread state.
 func (s *Store) Count(ch string) (slack.CountEntry, bool) {
@@ -1453,6 +1449,7 @@ func (s *Store) MarkRead(ch, ts string) slack.CountEntry {
 		e = &slack.CountEntry{ID: ch}
 		s.Counts[ch] = e
 	}
+	s.noteCountLocked(ch) // a counts answer fetched before keeps this (journal.go)
 	e.LastRead = ts
 	if e.Latest == "" || !TSLess(ts, e.Latest) {
 		e.HasUnreads = false
@@ -1474,6 +1471,7 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 		e = &slack.CountEntry{ID: ch}
 		s.Counts[ch] = e
 	}
+	s.noteCountLocked(ch) // newer than a counts answer still out (journal.go)
 	if e.Latest == "" || TSLess(e.Latest, m.TS) {
 		e.Latest = m.TS
 	}

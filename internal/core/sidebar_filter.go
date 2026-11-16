@@ -451,11 +451,12 @@ func (a *App) SidebarDMsKnown() bool {
 // filter while sidebar.dms hasn't answered (Slack: "will retry" on the next
 // focus), so it is a user's retry and skips the failure backoff.
 func (a *App) FetchSidebarDMs(ctx context.Context) error {
+	since := a.S.Seq()
 	dms, err := a.C.SidebarDMs(slack.NoBackoff(ctx))
 	if err != nil {
 		return err
 	}
-	a.setSidebarDMs(dms)
+	a.setSidebarDMsSince(dms, since) // a DM opened or closed while it was out stays
 	a.emit(Event{Type: "sidebar_changed"})
 	return nil
 }

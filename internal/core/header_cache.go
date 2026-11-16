@@ -49,12 +49,17 @@ type headersDisk struct {
 	Channels map[string]ChannelHeader `json:"channels"`
 }
 
-// loadHeaders reads headers.json for the account, once (Boot's warm load).
+// loadHeaders reads headers.json for the account, once (Boot's warm
+// load); with no account ("", "": CLACK_NO_WARM_BOOT) it reads nothing,
+// and the cache holds only this session's reads.
 func (a *App) loadHeaders(team, user string) {
 	h := &a.warm.headers
 	var d headersDisk
-	b, err := a.S.ReadFile(store.HeadersFile)
-	ok := err == nil && json.Unmarshal(b, &d) == nil && d.V == store.CacheVersion && d.Team == team && d.User == user
+	var ok bool
+	if team != "" || user != "" {
+		b, err := a.S.ReadFile(store.HeadersFile)
+		ok = err == nil && json.Unmarshal(b, &d) == nil && d.V == store.CacheVersion && d.Team == team && d.User == user
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.loaded {

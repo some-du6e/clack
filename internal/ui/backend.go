@@ -88,6 +88,7 @@ type backend struct {
 
 	snapMu      sync.Mutex
 	snapPending bool
+	snapSeq     uint64 // the core.Snapshot.Seq applied last (apply skips older)
 
 	booted time.Time // Boot's answers are applied
 	// warmAt is when the boot data's sidebar was applied (a warm start:
@@ -370,16 +371,25 @@ func (b *backend) resnapshot(a *App) {
 		b.snapMu.Lock()
 		b.snapPending = false
 		b.snapMu.Unlock()
-		// during boot (cached prefs and experiments emit before the calls
-		// answer) the live snapshot backend.start applies comes first
-		<-b.core.Ready()
-		snap := b.core.Snapshot()
+		// before the sidebar's data is in there is nothing to show (a cold
+		// start's Boot applies its own snapshot when it ends); from then on
+		// (a warm start's boot data) what the store holds now, so a change
+		// made before Boot finished shows at once
+		<-b.core.DataReady()
+		snap := b.core.SnapshotNow()
 		a.Post(func() { b.apply(a, snap) })
 	}()
 }
 
-// apply replaces the model from a snapshot.
+// apply replaces the model from a snapshot, unless it is older than the
+// one applied last (core.Snapshot.Seq: snapshots built on several
+// goroutines, the boot's, a resnapshot's, a warm start's, can land out of
+// order).
 func (b *backend) apply(a *App, s core.Snapshot) {
+	if s.Seq != 0 && s.Seq < b.snapSeq {
+		return
+	}
+	b.snapSeq = max(b.snapSeq, s.Seq)
 	m := &b.m
 	a.applyAccountPrefs(s.Prefs)
 	uipref.Set(b.core.Prefs())
@@ -967,7 +977,13 @@ func (b *backend) opened(ch string) {
 		if err != nil {
 			log.Printf("ui: tabs %s: %v", ch, err)
 		}
-		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…)
+		// Slack's tab bar (core.Tabs: canvases, lists, bookmarks, files…).
+		// A tab whose file or bookmarks read failed keeps what the last
+		// good read had (the header cache: this session's or the disk's).
+		if prev, ok := b.core.CachedHeader(ch); ok && err == nil {
+			ts = mergeTabReads(ts, prev.Tabs)
+		}
+		complete := err == nil && tabsComplete(ts)
 		notMember := ierr == nil && !info.IsMember
 		tabs, bms := b.tabsOf(ts, notMember)
 		var members []string
@@ -1006,15 +1022,18 @@ func (b *backend) opened(ch string) {
 				}
 			}
 			b.tabsDone[ch] = true
+			// the facepile, count and topic reach the screen through the
+			// conversation's row (applySide, below): a change there is
+			// what redraws
 			sd := b.sideOf(ch)
-			if ierr == nil && info.Conv.NumMembers > 0 && sd.num != info.Conv.NumMembers {
-				sd.num, changed = info.Conv.NumMembers, true
+			if ierr == nil && info.Conv.NumMembers > 0 {
+				sd.num = info.Conv.NumMembers
 			}
 			if ierr == nil && info.Conv.Topic != "" && sd.topic != info.Conv.Topic {
-				sd.topic, sd.spans, changed = info.Conv.Topic, firstSpans(info.Conv.TopicDoc), true
+				sd.topic, sd.spans = info.Conv.Topic, firstSpans(info.Conv.TopicDoc)
 			}
-			if len(members) > 0 && !slices.Equal(sd.members, members) {
-				sd.members, changed = members, true
+			if len(members) > 0 {
+				sd.members = members
 			}
 			if tried && merr != nil {
 				// the facepile stays the loading tiles until a read works:
@@ -1025,7 +1044,7 @@ func (b *backend) opened(ch string) {
 			} else {
 				sd.fails = 0
 			}
-			if err == nil && ierr == nil { // the next start's header (and this session's next open)
+			if complete && ierr == nil { // the next start's header (and this session's next open); never a partial read
 				b.core.SetCachedHeader(ch, core.ChannelHeader{Tabs: ts, NotMember: notMember, Members: sd.members, Num: sd.num})
 			}
 			// the read wins over a snapshot's count and topic (applySide),
@@ -1077,6 +1096,50 @@ func (b *backend) tabsOf(ts []core.Tab, notMember bool) ([]chTab, []core.Bookmar
 		bms = append(bms, t.Bookmarks...)
 	}
 	return tabs, bms
+}
+
+// mergeTabReads fills the parts of a tab read that failed (a file's title
+// and state, a folder's bookmarks: core.Tab's TitleUnknown and
+// BookmarksUnknown) from an earlier read of the same tab, where that read
+// had them.
+func mergeTabReads(ts, prev []core.Tab) []core.Tab {
+	var out []core.Tab
+	for i, t := range ts {
+		if !t.TitleUnknown && !t.BookmarksUnknown {
+			continue
+		}
+		for _, p := range prev {
+			if p.ID != t.ID {
+				continue
+			}
+			if out == nil {
+				out = append([]core.Tab(nil), ts...)
+			}
+			m := &out[i]
+			if t.TitleUnknown && !p.TitleUnknown && p.FileID == t.FileID {
+				m.Title, m.TitleSpans, m.FileTitle, m.Deleted, m.Unread, m.ViewName = p.Title, p.TitleSpans, p.FileTitle, p.Deleted, p.Unread, p.ViewName
+				m.TitleUnknown = false
+			}
+			if t.BookmarksUnknown && !p.BookmarksUnknown {
+				m.Bookmarks, m.BookmarksUnknown = p.Bookmarks, false
+			}
+			break
+		}
+	}
+	if out == nil {
+		return ts
+	}
+	return out
+}
+
+// tabsComplete reports whether every part of a tab read answered.
+func tabsComplete(ts []core.Tab) bool {
+	for _, t := range ts {
+		if t.TitleUnknown || t.BookmarksUnknown {
+			return false
+		}
+	}
+	return true
 }
 
 // headerFromCache shows ch's header as its last read left it (the header

@@ -63,9 +63,7 @@ func (a *App) DeleteChannel(ctx context.Context, ch string) error {
 	if err := a.C.Call(ctx, "conversations.delete", url.Values{"channel": {ch}}, nil); err != nil {
 		return err
 	}
-	a.S.Lock()
-	delete(a.S.Convs, ch)
-	a.S.Unlock()
+	a.S.DropConv(ch)
 	a.emit(Event{Type: "conv_removed", Channel: ch})
 	return nil
 }

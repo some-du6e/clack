@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The account's cache directory: per workspace and per user, versioned,
@@ -129,10 +130,18 @@ func (s *Store) DropDisk() {
 	s.dropped.Store(true)
 	s.saveMu.Lock() // waits out a save already writing
 	defer s.saveMu.Unlock()
-	dir := s.cacheDir
-	if dir == "" {
-		return
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+	if s.cacheDir != "" {
+		dropAccountDir(s.cacheDir)
 	}
+}
+
+// dropAccountDir deletes Clack's files in an account directory, the img
+// directory, and last the signed-out mark (so a start after an
+// interrupted sign-out finishes it: SweepAccounts), then the directory
+// itself when that left it empty.
+func dropAccountDir(dir string) {
 	for _, n := range cacheFiles {
 		_ = os.Remove(filepath.Join(dir, n))
 	}
@@ -144,7 +153,88 @@ func (s *Store) DropDisk() {
 		}
 	}
 	_ = os.RemoveAll(filepath.Join(dir, "img"))
+	_ = os.Remove(filepath.Join(dir, SignedOutMark))
 	_ = os.Remove(dir) // only when empty
+}
+
+// SignedOutMark is the empty file sign-out leaves in the account
+// directory before it deletes anything else, removed last (dropAccountDir):
+// a start that finds it finishes the sign-out (SweepAccounts).
+const SignedOutMark = ".signed-out"
+
+// SignOutNow is what a sign-out does to the disk before anything else, at
+// once: no save writes again (StopSaving), the warm boot's files go (they
+// are small; meta.json and the images follow in DropDisk, which waits for
+// a save still writing), and the signed-out mark is left so the next
+// start finishes the job if this process ends first. Disk I/O, but only a
+// few small files: the UI calls it as it signs out.
+func (s *Store) SignOutNow() {
+	s.dropped.Store(true)
+	if s.cacheDir == "" {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(s.cacheDir, SignedOutMark), nil, 0o600)
+	s.RemoveWarmFiles()
+}
+
+// RemoveWarmFiles deletes the warm boot's files (boot_data.json,
+// headers.json), after any write of them still going. A session that
+// ended (auth_failed) drops them too: they only serve a warm start of
+// this account's session.
+func (s *Store) RemoveWarmFiles() {
+	if s.cacheDir == "" {
+		return
+	}
+	s.fileMu.Lock()
+	defer s.fileMu.Unlock()
+	for _, n := range []string{BootDataFile, HeadersFile} {
+		_ = os.Remove(filepath.Join(s.cacheDir, n))
+	}
+}
+
+// SweepAccounts runs at start, before any account's store opens: an
+// account directory with the signed-out mark is deleted (a sign-out the
+// process didn't live to finish), and every account directory but keep's
+// (the signed-in account's, "" when none is) loses its warm boot files:
+// they only serve that account's next warm start, and it isn't signed in.
+// Its other files stay, as before (meta.json, images). A few stats and
+// removes: call it before the window opens, off the UI goroutine.
+func SweepAccounts(root, keep string) {
+	if root == "" {
+		return
+	}
+	base := filepath.Join(root, "v"+strconv.Itoa(CacheVersion))
+	es, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	for _, e := range es {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(base, e.Name())
+		if _, err := os.Stat(filepath.Join(dir, SignedOutMark)); err == nil {
+			// the images can be hundreds of MB: out of the way at once,
+			// deleted in the background
+			img := filepath.Join(dir, "img")
+			trash := filepath.Join(base, "."+e.Name()+"-img-"+strconv.FormatInt(time.Now().UnixNano(), 36)+".trash")
+			if os.Rename(img, trash) == nil {
+				go func() { _ = os.RemoveAll(trash) }()
+			}
+			dropAccountDir(dir)
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".trash") { // an earlier sweep's, cut short
+			go func(p string) { _ = os.RemoveAll(p) }(dir)
+			continue
+		}
+		if dir == keep {
+			continue
+		}
+		for _, n := range []string{BootDataFile, HeadersFile} {
+			_ = os.Remove(filepath.Join(dir, n))
+		}
+	}
 }
 
 // Dropped reports whether DropDisk ran.

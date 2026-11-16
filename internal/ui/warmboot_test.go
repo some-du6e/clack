@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/store"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
@@ -307,4 +309,103 @@ func TestUINeverWaitsForBoot(t *testing.T) {
 // window, right of the sidebar).
 func composerPoint(e *perfEnv) image.Point {
 	return image.Pt(int(float32(e.size.X)*0.6), e.size.Y-60)
+}
+
+// A warm start whose restored channel's header isn't in the header cache
+// (opened after the last save, or its last read failed) still reveals from
+// the boot data: Slack's warm boot renders whatever its persisted store
+// has, with every boot API nonblocking. The tabs come with their read.
+// And a change made before Boot finished (a star) shows at once: the
+// sidebar reads the store from DataReady on, not after Boot.
+func TestWarmBootWithoutCachedHeader(t *testing.T) {
+	fs, err := fakeslack.Start(fakeslack.Small)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { fs.Close() })
+	home := freezeHome(t)
+	cached, uncached := fs.ChannelIDs()[0], fs.ChannelIDs()[2]
+	e := startEnv(t, fs, home)
+	e.waitReady()
+	e.openChannel(cached)
+	e.until("the header", 10*time.Second, func() bool { return e.a.data.tabsDone[cached] })
+	e.settle(200 * time.Millisecond)
+	<-e.a.data.stop()
+	e.shutdown()
+	setUIRoute(t, home, "c/"+uncached)
+
+	release, _ := holdCalls(t, fs, "users.conversations", "conversations.info")
+	e2 := startEnv(t, fs, home)
+	a := e2.a
+	if _, ok := a.data.core.CachedHeader(uncached); ok {
+		t.Fatalf("%s has a cached header: pick another", uncached)
+	}
+	e2.until("the boot placeholder's data gates", 10*time.Second, func() bool {
+		b := a.revealBlocker(time.Now())
+		return b != "boot data" && b != "channel header" && b != "fonts"
+	})
+	if !a.data.booted.IsZero() || a.data.tabsDone[uncached] {
+		t.Fatalf("revealed on the network's answers (booted %v, header read %v), not the boot data", !a.data.booted.IsZero(), a.data.tabsDone[uncached])
+	}
+
+	// a star before Boot finished shows in the sidebar before Boot does
+	star := ""
+	for _, id := range fs.ChannelIDs()[3:] {
+		if c := a.model().Convs[id]; c != nil && !c.Starred && c.Kind == "channel" {
+			star = id
+			break
+		}
+	}
+	if star == "" {
+		t.Fatal("no unstarred channel in the warm sidebar")
+	}
+	if err := a.data.core.Star(context.Background(), star, true); err != nil {
+		t.Fatal(err)
+	}
+	e2.until("the star in the sidebar", 5*time.Second, func() bool {
+		c := a.model().Convs[star]
+		return c != nil && c.Starred
+	})
+	if !a.data.booted.IsZero() {
+		t.Fatal("Boot finished with users.conversations held")
+	}
+	release()
+	e2.waitReady()
+	e2.settle(300 * time.Millisecond)
+	if c := a.model().Convs[star]; c == nil || !c.Starred {
+		t.Error("the star was undone when Boot answered")
+	}
+}
+
+// A tab read whose file or bookmarks read failed keeps those parts from
+// the last good read (the header cache), and isn't complete (never
+// cached) while a part is still unknown.
+func TestMergeTabReads(t *testing.T) {
+	prev := []core.Tab{
+		{ID: "t1", Type: "canvas", FileID: "F1", Title: "Project plan", FileTitle: "Project plan"},
+		{ID: "t2", Type: "folder", Title: "Bookmarks", Bookmarks: []core.Bookmark{{ID: "b1", Title: "Docs"}}},
+		{ID: "t4", Type: "canvas", FileID: "F4", Title: "Old file"},
+	}
+	ts := []core.Tab{
+		{ID: "t1", Type: "canvas", FileID: "F1", Title: "Untitled", TitleUnknown: true},
+		{ID: "t2", Type: "folder", Title: "Bookmarks", BookmarksUnknown: true},
+		{ID: "t3", Type: "canvas", FileID: "F3", Title: "Untitled", TitleUnknown: true}, // new: nothing to keep
+		{ID: "t4", Type: "canvas", FileID: "F5", Title: "Untitled", TitleUnknown: true}, // points at another file now
+	}
+	got := mergeTabReads(ts, prev)
+	if got[0].Title != "Project plan" || got[0].TitleUnknown {
+		t.Errorf("t1: %+v", got[0])
+	}
+	if len(got[1].Bookmarks) != 1 || got[1].BookmarksUnknown {
+		t.Errorf("t2: %+v", got[1])
+	}
+	if !got[2].TitleUnknown || !got[3].TitleUnknown || got[3].Title != "Untitled" {
+		t.Errorf("t3/t4 were filled: %+v %+v", got[2], got[3])
+	}
+	if ts[0].Title != "Untitled" {
+		t.Error("mergeTabReads changed its input")
+	}
+	if tabsComplete(got) || !tabsComplete(got[:2]) {
+		t.Error("tabsComplete")
+	}
 }

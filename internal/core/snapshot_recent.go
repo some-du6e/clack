@@ -16,7 +16,8 @@ type recentSnap struct {
 	at    time.Time // when its build started
 	snap  Snapshot
 
-	builds atomic.Int64 // snapshotNow runs, for the tests and freeze reports
+	builds atomic.Int64  // snapshotNow runs, for the tests and freeze reports
+	seq    atomic.Uint64 // Snapshot.Seq's source
 }
 
 // recentSnapTTL bounds how stale RecentSnapshot gets on a change no event

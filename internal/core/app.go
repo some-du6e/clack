@@ -51,6 +51,7 @@ type App struct {
 	presWaiters  []chan struct{}
 	countsTimer  *time.Timer
 	actBadges    map[string]int // client.counts activity_v2 (activity_badges.go)
+	actBadgesAt  uint64         // the store journal's position at their last change (setActivityBadgesSince)
 	savedOverdue int            // saved.list counts.uncompleted_overdue_count (app_badge.go)
 	cmdCache     []slack.Command
 	cmdAt        time.Time
@@ -382,6 +383,9 @@ func (a *App) watch(ch, threadTS string) {
 func (a *App) onAuthFailed(code string) {
 	log.Printf("core: session ended (%s); stopping all Slack traffic", code)
 	a.stopBG()
+	// the warm boot's files only serve this session's next start (and
+	// SaveWarm writes nothing once the session ended)
+	a.S.RemoveWarmFiles()
 	a.mu.Lock()
 	if a.countsTimer != nil {
 		a.countsTimer.Stop()
@@ -520,13 +524,29 @@ func (a *App) Boot(ctx context.Context) error {
 		tmu      sync.Mutex
 		timings  []string
 		convs    []slack.Conversation
-		counts   *slack.Counts
 		sections []slack.Section
-		dms      []slack.SidebarDM
-		errDMs   error
 		errConvs error
-		errSecs  error
+		raced    struct {
+			sync.Mutex
+			counts, sections bool
+		}
 	)
+	// Each sidebar answer is installed when it comes, as Slack dispatches
+	// every boot API's answer into its store on arrival, after the boot
+	// data (a warm start's disk reads are far quicker than the calls), and
+	// merged with what this session changed after the calls went out. The
+	// window is usable from the boot data meanwhile, so a mark, a leave, a
+	// DM opened or closed or a section move made then is newer than the
+	// answer that lands after it, and it stays (store/journal.go). On a
+	// warm start each install is announced, so the UI follows it the way
+	// Slack's components re-render on each dispatch.
+	since := a.S.Seq()
+	installed := func(ev string) {
+		if a.Warm() {
+			a.emit(Event{Type: ev})
+		}
+	}
+	countsIn := make(chan struct{}) // client.counts installed (or failed): sidebar.dms' reopen marks read it
 	step := func(name string, f func() error) {
 		wg.Add(1)
 		go func() {
@@ -549,6 +569,9 @@ func (a *App) Boot(ctx context.Context) error {
 		if errConvs != nil {
 			return errConvs
 		}
+		<-a.warm.done
+		a.installConvs(convs, since)
+		installed("sidebar_changed")
 		// the DM rows' people, straight away (not after every other step)
 		ids := []string{a.C.Creds.UserID}
 		for _, c := range convs {
@@ -562,13 +585,36 @@ func (a *App) Boot(ctx context.Context) error {
 		tDMUsers = time.Since(tu)
 		return nil
 	})
-	step("counts", func() (err error) {
-		counts, err = a.C.Counts(ctx)
-		return err
+	step("counts", func() error {
+		defer close(countsIn)
+		c, err := a.C.Counts(ctx)
+		if err != nil {
+			return err
+		}
+		<-a.warm.done
+		if a.installCounts(c, since) {
+			raced.Lock()
+			raced.counts = true
+			raced.Unlock()
+		}
+		installed("counts")
+		return nil
 	})
-	step("sections", func() (err error) {
-		sections, errSecs = a.C.SectionsAll(ctx)
-		return errSecs
+	step("sections", func() error {
+		secs, err := a.C.SectionsAll(ctx)
+		if err != nil {
+			return err // a failed call keeps the boot data's sections
+		}
+		sections = secs
+		<-a.warm.done
+		if a.S.SetSectionsSince(secs, since) {
+			installed("sidebar_changed")
+		} else { // a section write since is newer
+			raced.Lock()
+			raced.sections = true
+			raced.Unlock()
+		}
+		return nil
 	})
 	step("experiments", func() error { // every experiment check (experiments.go)
 		g, err := a.C.ExperimentAssignments(ctx)
@@ -578,8 +624,15 @@ func (a *App) Boot(ctx context.Context) error {
 		return err
 	})
 	step("sidebar.dms", func() error { // which DMs are open (users.conversations has no is_open)
-		dms, errDMs = a.C.SidebarDMs(ctx)
-		return errDMs
+		dms, err := a.C.SidebarDMs(ctx)
+		<-countsIn // closed DMs reopen on messages newer than now (reopenMark reads the counts)
+		if err != nil {
+			return err // a failed call keeps the boot data's
+		}
+		<-a.warm.done
+		a.setSidebarDMsSince(dms, since)
+		installed("sidebar_changed")
+		return nil
 	})
 	loadPrefs := func() error {
 		raw, err := a.C.Prefs(ctx)
@@ -654,33 +707,11 @@ func (a *App) Boot(ctx context.Context) error {
 	// client.extras: the message menu's Report to Slack (message_menu.go)
 	a.later(5*time.Second, func() { _ = a.LoadClientExtras(a.bg) })
 	wg.Wait()
-	// a warm start's cached sidebar is in the store before the live
-	// answers replace it (the disk reads are far quicker than the calls)
 	<-a.warm.done
-	added := a.warmAdded()
-	defer a.warmDone() // Boot's answers (or a failed Boot's store) replace the boot data's sidebar
+	defer a.warmDone() // Boot's answers (or a failed Boot's store) replaced the boot data's sidebar
 	if errConvs != nil {
 		a.bootErr = errConvs
 		return errConvs
-	}
-	for _, c := range convs {
-		a.S.PutConv(c)
-	}
-	// cached conversations Slack no longer lists (left, archived elsewhere) go
-	if n := a.S.DropBootConvs(added, convs); n > 0 {
-		log.Printf("boot: %d cached conversations no longer listed", n)
-	}
-	if counts != nil {
-		a.S.SetCounts(counts)
-		a.setActivityBadges(counts.ActivityV2)
-	}
-	if errDMs == nil {
-		a.setSidebarDMs(dms) // after counts: closed DMs reopen on messages newer than now
-	}
-	if errSecs == nil || added == nil { // a failed call keeps the cached sections
-		a.S.Lock()
-		a.S.Sections = sections
-		a.S.Unlock()
 	}
 	if u, ok := a.S.User(a.C.Creds.UserID); ok {
 		a.S.Lock()
@@ -693,6 +724,16 @@ func (a *App) Boot(ctx context.Context) error {
 		tDMUsers.Round(time.Millisecond), len(convs), len(sections), a.S.CustomEmoji.Len())
 	applog.Mark("core-ready", fmt.Sprintf("%d convs, %d sections", len(convs), len(sections)))
 	a.setBootOK() // what core holds is worth keeping for the next warm boot
+	// An answer that kept a change made here while it was out is older
+	// than Slack's state now: read that list once more, merged the same way.
+	raced.Lock()
+	if raced.counts {
+		a.refreshCountsSoon()
+	}
+	if raced.sections {
+		go a.refreshSections(a.bg)
+	}
+	raced.Unlock()
 	a.rtMu.Lock()
 	a.rtBooted = true
 	a.rtMu.Unlock()
@@ -930,9 +971,9 @@ func (a *App) fetchLatest(ctx context.Context, ch string) error {
 // ---- counts ----
 
 func (a *App) refreshCounts(ctx context.Context) {
+	since := a.S.Seq()
 	if c, err := a.C.Counts(ctx); err == nil {
-		a.S.SetCounts(c)
-		a.setActivityBadges(c.ActivityV2)
+		a.installCounts(c, since) // a mark or message while it was out stays (store/journal.go)
 		a.emit(Event{Type: "counts"})
 		if a.reopenActive() { // a closed DM got a new message
 			a.emit(Event{Type: "sidebar_changed"})
@@ -1009,6 +1050,7 @@ func (a *App) SnapshotNow() Snapshot { return a.snapshotNow() }
 // snapshotNow is Snapshot from what the store holds now.
 func (a *App) snapshotNow() Snapshot {
 	a.recent.builds.Add(1)
+	seq := a.recent.seq.Add(1)
 	a.S.RLock()
 	cs := make([]*slack.Conversation, 0, len(a.S.Convs))
 	for _, c := range a.S.Convs {
@@ -1041,7 +1083,7 @@ func (a *App) snapshotNow() Snapshot {
 		Self: self, Team: team, Convs: convs, Sections: secs, Counts: counts,
 		Threads: a.ThreadsState(), Users: a.users(ids), Connected: connected, Prefs: prefs,
 		EmojiCount: a.S.CustomEmoji.Len(), EnterpriseID: a.C.Creds.EnterpriseID, Rail: a.Rail(),
-		FilterNames: a.filterNames(convs, secs, counts),
+		FilterNames: a.filterNames(convs, secs, counts), Seq: seq,
 	}
 }
 
