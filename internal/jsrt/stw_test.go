@@ -89,15 +89,31 @@ func TestStopTheWorldBounded(t *testing.T) {
 				t.Fatal(err)
 			}
 			y0 := r.yields.Load()
-			res[i] = measureSTW(func() error { return r.Do(c.op) })
+			var mem0, mem1 uint32
+			res[i] = measureSTW(func() error {
+				return r.Do(func(js *Ctx) error {
+					mem0 = r.eng.mem.Size()
+					err := c.op(js)
+					mem1 = r.eng.mem.Size()
+					return err
+				})
+			})
 			res[i].yields = r.yields.Load() - y0
+			res[i].grew = mem1 > mem0
+			res[i].mem = mem1
 			if res[i].err != nil {
 				t.Fatalf("%s: %v", c.name, res[i].err)
 			}
 		}
 		off, on := res[0], res[1]
-		t.Logf("stw: %s: took %v; longest stop-the-world %v with the yields off, %v on (%d yields); longest heartbeat gap %v off, %v on",
-			c.name, on.op.Round(time.Millisecond), off.stw.Round(10*time.Microsecond), on.stw.Round(10*time.Microsecond), on.yields,
+		// growing the wasm memory past its capacity copies all of it in Go (wazero's
+		// append): one memmove that no stop-the-world can interrupt either
+		grew := ""
+		if on.grew {
+			grew = fmt.Sprintf("; the wasm memory grew, to %d MiB", on.mem>>20)
+		}
+		t.Logf("stw: %s: took %v; longest stop-the-world %v with the yields off, %v on (%d yields%s); longest heartbeat gap %v off, %v on",
+			c.name, on.op.Round(time.Millisecond), off.stw.Round(10*time.Microsecond), on.stw.Round(10*time.Microsecond), on.yields, grew,
 			off.gap.Round(10*time.Microsecond), on.gap.Round(10*time.Microsecond))
 		if !patched {
 			continue
@@ -128,6 +144,8 @@ type stwResult struct {
 	stw    time.Duration // the longest runtime.ReadMemStats (a stop-the-world)
 	gap    time.Duration // the longest gap in a 1 ms heartbeat
 	yields uint64
+	grew   bool   // the wasm memory grew during op
+	mem    uint32 // its size after
 	err    error
 }
 

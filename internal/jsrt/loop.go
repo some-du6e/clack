@@ -344,12 +344,6 @@ func (r *Runtime) markDone() { r.doneOnce.Do(func() { close(r.done) }) }
 // callers waiting on a promise can use this to stop. Any goroutine.
 func (r *Runtime) Interrupts() uint64 { return r.interrupts.Load() }
 
-// interrupted reports whether the running task is past its deadline.
-func (r *Runtime) interrupted() bool {
-	d := r.deadline.Load()
-	return d != 0 && monoNow() > d
-}
-
 // monoBase anchors the clock of every jsrt deadline. time.Since reads the
 // monotonic clock, which (unlike UnixNano's wall clock) stands still while
 // the computer sleeps: a task that was running when the lid closed isn't

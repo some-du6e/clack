@@ -172,6 +172,7 @@ func (w *watchdog) run() {
 			seconded = true
 			title := fmt.Sprintf("Still blocked after %v, in %s: a second snapshot", time.Duration(w.now()-openSince).Round(100*time.Millisecond), w.stageName())
 			appendFile(open, slack.Redact(w.snapshot(title)))
+			log.Printf("ui: the window is still blocked (%s); a second snapshot went into %s", w.stageName(), open)
 			continue
 		}
 		if since == 0 || open != "" || ep == openEpoch {
