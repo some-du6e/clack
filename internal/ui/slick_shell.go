@@ -298,6 +298,7 @@ func sbRowNested() bool {
 // while the body is nested in a plugin tree.
 func (a *App) sbRowInput(gtx layout.Context, id string, btn *widget.Clickable, sz image.Point) {
 	tag := a.sbMenu.tag(id)
+	var press *pointer.Event
 	for {
 		ev, ok := gtx.Event(pointer.Filter{Target: tag, Kinds: pointer.Press})
 		if !ok {
@@ -305,6 +306,8 @@ func (a *App) sbRowInput(gtx layout.Context, id string, btn *widget.Clickable, s
 		}
 		if e, ok := ev.(pointer.Event); ok && ctxclick.Press(e) {
 			a.openSidebarMenu(id, a.ptrWin, a.sbMenu.gts[id])
+		} else if ok {
+			press = &e
 		}
 	}
 	if sbRowNested() {
@@ -319,6 +322,9 @@ func (a *App) sbRowInput(gtx layout.Context, id string, btn *widget.Clickable, s
 			pointer.CursorPointer.Add(gtx.Ops)
 			return layout.Dimensions{Size: sz}
 		})
+	}
+	if press != nil { // after the button took the press (or didn't: one of the row's controls did)
+		a.sbPressPrefetch(id, *press, btn) // sidebar_prefetch.go
 	}
 	defer clip.Rect{Max: sz}.Push(gtx.Ops).Pop()
 	defer pointer.PassOp{}.Push(gtx.Ops).Pop()

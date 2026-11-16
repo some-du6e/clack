@@ -327,8 +327,10 @@ type base struct {
 	// pv caches Activity's preview documents (activity_rows.go)
 	pv map[string]pvEntry
 	// rec, while a row is described (recording), notes the members it
-	// drew without a name (missing_member.go)
-	rec *[]string
+	// drew without a name (missing_member.go); reads (recordingReads)
+	// every member it looked up
+	rec   *[]string
+	reads *[]string
 }
 
 func newBase(h Host) base { return base{h: h, rich: richCache{}} }

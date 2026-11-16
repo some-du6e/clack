@@ -165,6 +165,9 @@ type actDesc struct {
 	// DM's member left out of its title. "names" listing one describes
 	// the row again (membersIn).
 	waits []string
+	// reads are all the members the description looked up: a "user"
+	// event for one describes the row again (activity_settle.go)
+	reads []string
 }
 
 type actRow struct {
@@ -405,6 +408,7 @@ type Activity struct {
 
 	mode         actLoad
 	wasBusy      bool
+	loadedFrom   core.ActivityPage // the page the last load started from (settle)
 	paging       bool
 	pageCursor   string
 	failedCursor string
@@ -482,6 +486,12 @@ func (v *Activity) watchItems() {
 			// draw without drawing now, one pending pass of each kind
 			// however many come (a busy workspace's socket)
 			shown := v.shown.shown(v.h)
+			if v.noteStale(ev) && shown { // a profile, conversation or team change (activity_settle.go)
+				v.h.Invalidate()
+			}
+			if ev.Type == "user" || ev.Type == "team" {
+				continue
+			}
 			if ev.Type == "conv" {
 				// channel_updated: an agent session's status (the rows'
 				// agent status) may have changed
@@ -895,18 +905,18 @@ func actIntersect(a, b string) string {
 	return strings.Join(out, ",")
 }
 
-// settle runs once after each load finishes: rebuilds cached row text
-// and records a failed pagination cursor so it is not retried in a loop.
+// settle runs once after each load finishes: rebuilds the cached text of
+// the rows the answer changed (activity_settle.go) and records a failed
+// pagination cursor so it is not retried in a loop.
 func (v *Activity) settle() {
 	if !v.wasBusy || v.data.busy() {
 		return
 	}
 	v.wasBusy = false
-	for _, r := range v.rows {
-		r.built = false
-	}
+	page, _, err := v.data.get()
+	v.unbuildChanged(v.loadedFrom, page)
+	v.loadedFrom = core.ActivityPage{}
 	v.dirty = true
-	_, _, err := v.data.get()
 	v.offline = err != nil && actOffline(err)
 	if v.paging {
 		v.paging = false
@@ -922,7 +932,16 @@ func (v *Activity) load(mode actLoad) {
 	opts := core.ActivityOpts{View: "all", Types: types, Unread: v.unread.Value, Archived: v.showCleared, Limit: actLimit,
 		Priority: v.vip, SectionIDs: v.sections, ChannelIDs: v.channels, Mode: v.feedMode(),
 		ExcludeAutomations: v.exclAuto, AutomationsOnly: v.autoOnly}
+	// An earlier load whose answer landed but no frame has settled (the
+	// peek opened again off screen, an activity_invalidated reload that
+	// notes.drain runs before settle) is settled first, so the rows built
+	// before it see what it changed; one still out (this load cancels it)
+	// leaves loadedFrom as it was, the page the rows were built from.
+	v.settle()
 	old, _, _ := v.data.get()
+	if !v.wasBusy {
+		v.loadedFrom = old // settle compares the answer with it
+	}
 	if mode == actMore {
 		opts.Cursor = old.Next
 		v.pageCursor = old.Next
@@ -959,7 +978,7 @@ func (v *Activity) load(mode actLoad) {
 				// on a refresh (getItemsRetainedOnRefresh)
 				return actRetained(p, old, unreadMarks), nil
 			}
-			return actMerge(p, old), nil
+			return actMerge(p, old, opts.Mode == ""), nil // "": chrono_v1, newest first; the VIP sort isn't in time order
 		}
 		return p, nil
 	})
@@ -982,9 +1001,35 @@ func actAppend(old, p core.ActivityPage) core.ActivityPage {
 }
 
 // actMerge replaces the first page with fresh and keeps the older pages
-// already loaded, so a realtime refresh doesn't lose the scroll position.
-func actMerge(fresh, old core.ActivityPage) core.ActivityPage {
+// already loaded, so a refresh (realtime, the peek's) doesn't lose the
+// scroll position: the old rows after the one fresh ends with, in the old
+// list's order, and the old cursor. Where fresh ends is found by key, not
+// by time: the feed isn't always in time order (the VIP sort lists VIP
+// unreads first, then the rest by time), and a time cutoff dropped later
+// pages' rows while keeping the cursor past them. When the old list
+// doesn't hold fresh's last row (more new rows than a page), the later
+// pages go and the cursor is fresh's, so the next page continues right
+// after fresh with nothing skipped.
+//
+// In time order a row of the old first page that fresh doesn't hold is
+// gone (deleted, cleared): a row only moves up, with newer activity. Out
+// of it (timeOrder false: the VIP sort) a row can move down too: one the
+// viewer just read leaves the VIP unreads for the rest, a page further on,
+// possibly past the cursor. Then the later pages go and the cursor is
+// fresh's, so paging brings it back where it now belongs.
+func actMerge(fresh, old core.ActivityPage, timeOrder bool) core.ActivityPage {
 	if len(fresh.Items) == 0 || len(old.Items) <= len(fresh.Items) {
+		return fresh
+	}
+	lastKey := actKey(&fresh.Items[len(fresh.Items)-1])
+	end := -1
+	for i := range old.Items {
+		if actKey(&old.Items[i]) == lastKey {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
 		return fresh
 	}
 	seen := make(map[string]bool, len(fresh.Items))
@@ -993,10 +1038,15 @@ func actMerge(fresh, old core.ActivityPage) core.ActivityPage {
 		seen[actKey(&fresh.Items[i])] = true
 		items = append(items, fresh.Items[i])
 	}
-	last := tsTime(fresh.Items[len(fresh.Items)-1].FeedTS)
-	for i := range old.Items {
-		it := &old.Items[i]
-		if !seen[actKey(it)] && tsTime(it.FeedTS).Before(last) {
+	if !timeOrder {
+		for i := 0; i < end; i++ {
+			if !seen[actKey(&old.Items[i])] { // moved down (or gone): page again from fresh
+				return fresh
+			}
+		}
+	}
+	for i := end + 1; i < len(old.Items); i++ {
+		if it := &old.Items[i]; !seen[actKey(it)] {
 			items = append(items, *it)
 		}
 	}
@@ -1162,8 +1212,8 @@ func (v *Activity) isUnread(it *core.ActivityItem, key string) bool {
 // yet (waits): the row is described again when "names" lists one.
 func (v *Activity) describe(it *core.ActivityItem, refs map[string]core.ConvRef) actDesc {
 	var d actDesc
-	waits := v.recording(func() { d = v.describeItem(it, refs) })
-	d.waits = waits
+	waits, reads := v.recordingReads(func() { d = v.describeItem(it, refs) })
+	d.waits, d.reads = waits, reads
 	return d
 }
 
@@ -2803,6 +2853,10 @@ type actNotes struct {
 	// however many events come before a draw
 	dirtyQueued, namesQueued bool
 	members                  map[string]bool // the people "names" named since the last draw
+	// what changed under the rows' descriptions since the last draw
+	// (Activity.noteStale): members, conversations, or everything
+	staleQueued, staleAll  bool
+	staleUsers, staleConvs map[string]bool
 }
 
 func (n *actNotes) add(h Host, s string) {

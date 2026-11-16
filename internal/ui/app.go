@@ -992,16 +992,20 @@ func pageOwnsWorkspace(r Route) bool {
 // view returns the cached view for route r, creating it with mk.
 func (a *App) view(r Route, mk func() View) View {
 	if v, ok := a.views[r]; ok {
+		a.viewOrder = lruTouch(a.viewOrder, r) // view_lru.go
 		return v
 	}
 	v := mk()
 	a.views[r] = v
 	a.viewOrder = append(a.viewOrder, r)
-	if len(a.viewOrder) > 24 { // keep the 24 most recent views warm
+	if len(a.viewOrder) > maxViews { // keep the 24 most recently used views warm
 		old := a.viewOrder[0]
 		a.viewOrder = a.viewOrder[1:]
 		if old != a.router.Current() {
 			delete(a.views, old)
+			noteEvicted("view", string(old))
+		} else {
+			a.viewOrder = append(a.viewOrder, old) // the page on screen stays (and stays in the order)
 		}
 	}
 	return v

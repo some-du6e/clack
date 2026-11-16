@@ -88,6 +88,7 @@ func (b *base) user(id string) (core.User, bool) {
 	} else if b.rec != nil && core.LooksLikeMemberID(id) && c.MissingMember(id) == core.MemberUnknown {
 		b.noteWait(id)
 	}
+	b.noteRead(id) // missing_member.go
 	return u, ok
 }
 

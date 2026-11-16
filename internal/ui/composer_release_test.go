@@ -77,6 +77,17 @@ func TestLeftComposerLetsGoOfFocus(t *testing.T) {
 	// the thread pane closes: the channel's composer takes the focus
 	e.a.OpenThread(ch, root)
 	e.frame()
+	// the pane draws its reply box once the thread has loaded
+	// (ThreadView.HidesComposer); a load the frames above didn't cover (the
+	// boot channel's older page read meanwhile) left nothing to focus
+	e.until("the thread's reply box", 10*time.Second, func() bool {
+		c := e.a.convos[ch+"/"+root]
+		if c == nil {
+			return false
+		}
+		hc, ok := c.list.(interface{ HidesComposer() bool })
+		return !ok || !hc.HidesComposer()
+	})
 	e.focusComposer(ch, root)
 	if !focused(ch, root) {
 		t.Fatal("the thread's composer didn't take the focus")
