@@ -96,7 +96,11 @@ func (m *Modal) keys(gtx layout.Context) bool {
 	// modal reaches it as the innermost layer holding the focus, after a
 	// Popover in its body: the modal reads it only on its own tags.
 	routed := slackc.EscapeRouted(gtx)
-	if !m.focus {
+	// the first focus waits for a live pass: laid out inside a plugin's
+	// tree (kit's ConfirmationModal) the modal is measured first with
+	// input off, where a FocusCmd goes nowhere and its autoFocus button
+	// never got the focus
+	if !m.focus && gtx.Source.Enabled() {
 		m.focus = true
 		if !m.overModal() && !routed {
 			m.prev = refocus.Last(gtx.Now)
