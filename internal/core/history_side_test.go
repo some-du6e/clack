@@ -268,3 +268,67 @@ func TestPrefetchHistoryLeavesTheOpenConversation(t *testing.T) {
 	}
 	a.Shutdown()
 }
+
+// Close returns promptly while a view's History is slow: the press
+// prefetch skips a conversation whose history is loading (d7's loading)
+// instead of joining the view's read, and History's side read that joined
+// a lookup another caller owns (a popup's, with no deadline) stops waiting
+// when sign-out cancels core's background context.
+func TestCloseDoesNotWaitOnSlowReads(t *testing.T) {
+	a, f := testApp(t)
+	hold := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	f.mu.Lock()
+	f.reply["conversations.history"] = `{"ok":true,"messages":[{"ts":"7.000001","user":"U2","text":"hi"}],"has_more":false}`
+	f.reply["conversations.info"] = `{"ok":true,"channel":{"id":"D9","is_im":true,"user":"U2"}}`
+	f.hooks["conversations.history"] = func(url.Values) { <-hold }
+	f.hooks["conversations.info"] = func(url.Values) { <-hold }
+	f.mu.Unlock()
+	a.S.PutConv(slack.Conversation{ID: "C2", Name: "random", IsChannel: true, IsMember: true})
+	inflight := func(key string) {
+		t.Helper()
+		for deadline := time.Now().Add(3 * time.Second); !a.inFlight(key); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s never went out", key)
+			}
+		}
+	}
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer release()
+	wg.Add(2)
+	go func() { // a view's History, under the view's own 45 s context
+		defer wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		_, _ = a.History(ctx, "C2", "")
+	}()
+	inflight("h:C2")
+	if a.PrefetchHistory("C2") {
+		t.Error("a press prefetched a conversation whose history is loading")
+	}
+	go func() { // a popup's lookup with no deadline
+		defer wg.Done()
+		a.ResolveConv(context.Background(), "D9")
+	}()
+	inflight("ci:D9")
+	a.S.SetLatest("D9", []slack.Message{{TS: "1.000001", User: "U2", Text: "a"}}, false)
+	if _, err := a.History(context.Background(), "D9", ""); err != nil { // cached: its side read joins the lookup
+		t.Fatal(err)
+	}
+	a.StopTraffic()
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_ = a.Close()
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		release()
+		<-closed
+		t.Fatal("Close waited for reads another caller owns")
+	}
+}

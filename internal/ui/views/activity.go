@@ -978,7 +978,7 @@ func (v *Activity) load(mode actLoad) {
 				// on a refresh (getItemsRetainedOnRefresh)
 				return actRetained(p, old, unreadMarks), nil
 			}
-			return actMerge(p, old), nil
+			return actMerge(p, old, opts.Mode == ""), nil // "": chrono_v1, newest first; the VIP sort isn't in time order
 		}
 		return p, nil
 	})
@@ -1010,7 +1010,14 @@ func actAppend(old, p core.ActivityPage) core.ActivityPage {
 // doesn't hold fresh's last row (more new rows than a page), the later
 // pages go and the cursor is fresh's, so the next page continues right
 // after fresh with nothing skipped.
-func actMerge(fresh, old core.ActivityPage) core.ActivityPage {
+//
+// In time order a row of the old first page that fresh doesn't hold is
+// gone (deleted, cleared): a row only moves up, with newer activity. Out
+// of it (timeOrder false: the VIP sort) a row can move down too: one the
+// viewer just read leaves the VIP unreads for the rest, a page further on,
+// possibly past the cursor. Then the later pages go and the cursor is
+// fresh's, so paging brings it back where it now belongs.
+func actMerge(fresh, old core.ActivityPage, timeOrder bool) core.ActivityPage {
 	if len(fresh.Items) == 0 || len(old.Items) <= len(fresh.Items) {
 		return fresh
 	}
@@ -1030,6 +1037,13 @@ func actMerge(fresh, old core.ActivityPage) core.ActivityPage {
 	for i := range fresh.Items {
 		seen[actKey(&fresh.Items[i])] = true
 		items = append(items, fresh.Items[i])
+	}
+	if !timeOrder {
+		for i := 0; i < end; i++ {
+			if !seen[actKey(&old.Items[i])] { // moved down (or gone): page again from fresh
+				return fresh
+			}
+		}
 	}
 	for i := end + 1; i < len(old.Items); i++ {
 		if it := &old.Items[i]; !seen[actKey(it)] {

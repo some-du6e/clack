@@ -162,7 +162,7 @@ func TestActivityMergeKeepsLaterPagesOutOfTimeOrder(t *testing.T) {
 	for i := 0; i < 19; i++ {
 		old = append(old, item("rest-"+string(rune('a'+i)), actTSN(99-i)))
 	}
-	got := actMerge(core.ActivityPage{Items: page1, Next: "c2"}, core.ActivityPage{Items: old, Next: "c3"})
+	got := actMerge(core.ActivityPage{Items: page1, Next: "c2"}, core.ActivityPage{Items: old, Next: "c3"}, false)
 	if len(got.Items) != len(old) || got.Next != "c3" {
 		t.Fatalf("merged %d rows (next %q), want the %d loaded with next c3", len(got.Items), got.Next, len(old))
 	}
@@ -174,8 +174,32 @@ func TestActivityMergeKeepsLaterPagesOutOfTimeOrder(t *testing.T) {
 	// a fresh page that ends on a row the old list doesn't hold
 	fresh := append([]core.ActivityItem{item("new", actTSN(101))}, page1[:19]...)
 	fresh[len(fresh)-1] = item("unseen", actTSN(82))
-	got = actMerge(core.ActivityPage{Items: fresh, Next: "c2"}, core.ActivityPage{Items: old, Next: "c3"})
+	got = actMerge(core.ActivityPage{Items: fresh, Next: "c2"}, core.ActivityPage{Items: old, Next: "c3"}, false)
 	if len(got.Items) != len(fresh) || got.Next != "c2" {
 		t.Errorf("merged %d rows (next %q), want fresh's %d with its cursor c2", len(got.Items), got.Next, len(fresh))
+	}
+	// the viewer read vip-b: it left the VIP unreads for the rest, a page
+	// further on, so the refresh pages again from fresh instead of keeping
+	// the old cursor past where vip-b now sits
+	read := append(append([]core.ActivityItem{page1[0]}, page1[2:]...), old[20]) // vip-a, vip-c … vip-t, vip-last
+	got = actMerge(core.ActivityPage{Items: read, Next: "c2"}, core.ActivityPage{Items: old, Next: "c3"}, false)
+	if len(got.Items) != len(read) || got.Next != "c2" {
+		t.Errorf("after reading vip-b: merged %d rows (next %q), want fresh's %d with its cursor c2", len(got.Items), got.Next, len(read))
+	}
+	// in time order a first-page row fresh doesn't hold is gone (deleted,
+	// cleared): it stays out and the later pages stay
+	var chrono []core.ActivityItem
+	for i := 0; i < 40; i++ {
+		chrono = append(chrono, item("t-"+strconv.Itoa(i), actTSN(200-i)))
+	}
+	gone := append(append([]core.ActivityItem{}, chrono[:3]...), chrono[4:21]...) // t-3 deleted: t-20 joins page 1
+	got = actMerge(core.ActivityPage{Items: gone, Next: "c2"}, core.ActivityPage{Items: chrono, Next: "c3"}, true)
+	if len(got.Items) != len(chrono)-1 || got.Next != "c3" {
+		t.Fatalf("time order: merged %d rows (next %q), want %d with next c3", len(got.Items), got.Next, len(chrono)-1)
+	}
+	for _, it := range got.Items {
+		if it.Key == "t-3" {
+			t.Error("time order: the deleted row came back")
+		}
 	}
 }

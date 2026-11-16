@@ -962,7 +962,9 @@ func (a *App) loadLatest(ctx context.Context, ch string) error {
 // refetch a channel History loaded meanwhile, since its page (read from
 // Slack before a send's echo, say) would replace the newer cached one.
 func (a *App) loadLatestIfMissing(ctx context.Context, ch string) error {
-	return a.once("h:"+ch, func() error {
+	// onceCtx: a caller joining another's read waits only while its own
+	// ctx lasts (core's background readers end with the session)
+	return a.onceCtx(ctx, "h:"+ch, func() error {
 		if a.S.Timeline(ch) != nil {
 			return nil
 		}

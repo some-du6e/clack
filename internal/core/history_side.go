@@ -107,34 +107,47 @@ func waitSide(chs ...<-chan struct{}) {
 // the press on its sidebar row (ui sidebar_prefetch.go, Slack's
 // prefetchPointerdownHistory). It only fills the store: the view's own
 // History on the click returns the cached page, or joins this read while
-// it's out (loadLatestIfMissing's once). Unlike History it leaves the
+// it's out (loadLatestIfMissing's onceCtx). Unlike History it leaves the
 // conversation on screen alone (watch: the poll's refetch, typing's
 // lookups) and doesn't mark the conversation opened (noteAccess), since a
 // press may never become a click; the page it loads counts for the cache
 // budget like any prefetch's (fetchLatest). It reports whether a read
-// started: none for a conversation core holds already, or once the
-// session is over.
+// started: none for a conversation core holds already or is reading
+// (d7's has_history and loading), or once the session is over. Skipping
+// a read in flight also keeps the tracked side reads off a view's own
+// History, which runs under the view's context, not core's.
 func (a *App) PrefetchHistory(ch string) bool {
-	if ch == "" || a.bg.Err() != nil || a.S.Timeline(ch) != nil {
+	if ch == "" || a.bg.Err() != nil || a.S.Timeline(ch) != nil || a.inFlight("h:"+ch) {
 		return false
 	}
 	return a.sideRead(ch, "prefetch", func(ctx context.Context) { _ = a.loadLatestIfMissing(ctx, ch) }) != nil
 }
 
-// sharedRead runs read once for key at a time, like once, for callers
-// that each stop waiting when their own ctx ends: one that finds a read
-// in flight (another caller's, under that caller's ctx) waits only as
-// long as ctx allows, so a send's 10 s @channel check doesn't take on a
-// side read's 20 s, and Close's wait for the side reads doesn't hang on a
-// popup's read. A read that ended because its own caller's ctx did is
-// read again under ctx. read must use its caller's ctx.
-func (a *App) sharedRead(ctx context.Context, key string, read func() error) {
+// inFlight reports whether a once-style call for key is running.
+func (a *App) inFlight(key string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	_, ok := a.inflight[key]
+	return ok
+}
+
+// onceCtx runs f once for key at a time, like once, for callers that
+// each stop waiting when their own ctx ends: one that finds a call in
+// flight (another caller's, under that caller's ctx) waits only as long
+// as ctx allows. A send's 10 s @channel check doesn't take on a side
+// read's 20 s, and the side reads Close waits for, cancelled with core's
+// background context, never hang on a view's History or a popup's
+// lookup. A call that ended because its own caller's ctx did runs again
+// under ctx. f must use its caller's ctx.
+func (a *App) onceCtx(ctx context.Context, key string, f func() error) error {
+	var err error
 	for try := 0; try < 2; try++ {
-		err := a.onceWait(ctx, key, read)
+		err = a.onceWait(ctx, key, f)
 		if err == nil || ctx.Err() != nil || !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-			return
+			return err
 		}
 	}
+	return err
 }
 
 // onceWait is once whose waiters return when ctx ends (ctx.Err()); the
