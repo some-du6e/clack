@@ -1846,6 +1846,14 @@ func (c *Composer) restoreDroppedFocus(gtx layout.Context) {
 // that nothing takes focus from it).
 func (c *Composer) FocusTag() any { return c.ed }
 
+// Release lets go of the composer's focus for good (composer.Release):
+// its conversation left the screen. It stops counting itself focused, so
+// restoreDroppedFocus doesn't take the focus back when it's drawn again.
+func (c *Composer) Release() {
+	c.focused = false
+	Release(c.ed)
+}
+
 // PopupOpen reports whether the composer's own popup (autocomplete) is
 // up: Escape is the popup's then, not the thread pane's.
 func (c *Composer) PopupOpen() bool { return c.ac != nil && c.ac.Open() }

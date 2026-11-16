@@ -233,18 +233,27 @@ func (a *App) searchInChannel(ch string) {
 // CloseSecondary closes the secondary pane. In the split view it is the
 // thread header's close, which closes the split view (Slack's
 // FlexpaneHeader in the Split container).
+//
+// Like Slack's onViewClosed (TRANSITION_FOCUS_NAVIGATE_LISTENER, client-boot
+// 1zp8: the closed Secondary hands the focus to Primary) the channel's
+// message input takes the focus; the pane's composer lets go of it at the
+// end of the frame (composer_release.go).
 func (a *App) CloseSecondary() {
 	if a.pane == paneSplit {
 		a.CloseSplit()
 		return
 	}
-	if a.secondary.kind == secThread {
+	was := a.secondary.kind
+	if was == secThread {
 		if ch := a.router.Current().Channel(); ch != "" {
 			a.router.Replace(Route("c/" + ch))
 		}
 	}
 	w := a.secondary.width
 	a.secondary = secondaryState{width: w}
+	if ch := a.router.Current().Channel(); ch != "" && was != secNone {
+		a.focusChannelComposer(ch)
+	}
 	a.Invalidate()
 }
 
