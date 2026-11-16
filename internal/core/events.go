@@ -517,6 +517,13 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 		if _, found := a.S.Mutate(ch, m.TS, func(x *slack.Message) { *x = m }); !found {
 			a.putLocal(ch, m) // a reply goes to its (cached) thread, never the channel
 		}
+		if m.ThreadTS == "" || m.ThreadTS == m.TS {
+			// a root's copy replaces the stored root: its broadcasts'
+			// root copies take its reply metadata (broadcast_footer.go)
+			a.syncBroadcastRoots(ch, m.TS, func(x *slack.Message) {
+				x.ThreadTS, x.ReplyCount, x.ReplyUsers, x.ReplyUsersN, x.LatestReply = m.ThreadTS, m.ReplyCount, m.ReplyUsers, m.ReplyUsersN, m.LatestReply
+			})
+		}
 		if needsFileInfo(&m) {
 			go a.fillFiles(ch, m.TS)
 		}

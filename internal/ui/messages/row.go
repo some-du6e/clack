@@ -109,6 +109,8 @@ type row struct {
 	nameCtx, avatarCtx ctxTag            // right-click → the member context menu
 	threadBtn          widget.Clickable
 	broadcastBtn       widget.Clickable
+	newerBtn           widget.Clickable // ThreadBroadcastFooter's "View newer replies" (broadcast_footer.go)
+	newerRect          image.Rectangle  // its box (row-local), empty when not drawn
 	labelLink          widget.Clickable // the label's link (broadcastLabel)
 	laterLink          widget.Clickable // LaterLabel's "View Saved" / "View to-dos" (laterLabelLine)
 	pinnedLink         widget.Clickable // "Pinned by {member}"'s MemberLink (pinnedRuns)
@@ -1383,6 +1385,10 @@ func (r *row) layoutColumn(gtx layout.Context) layout.Dimensions {
 			return slackc.Component(gtx, "ThreadReplies", r, (*row).repliesProps, (*row).layoutThreadReplies)
 		})
 		y += d.Size.Y
+	}
+	r.newerRect = image.Rectangle{}
+	if broadcast && m.NewerReplies && !rc.hiddenUser && r.edit == nil {
+		y += r.broadcastFooter(gtx, y, cw)
 	}
 	if slackc.Patched("CodeChannelEntityCard") {
 		y += r.channelCards(gtx, y, cw)

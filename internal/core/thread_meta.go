@@ -85,8 +85,7 @@ func (a *App) onMessageReplied(ctx context.Context, ch string, raw json.RawMessa
 	if latest == "" {
 		latest = r.latest()
 	}
-	// the reply bar asks for its avatars' people as it draws (lazy_users.go)
-	if upd, ok := a.S.Mutate(ch, m.TS, func(x *slack.Message) {
+	apply := func(x *slack.Message) {
 		// makeThreadObject: reply_count parseInt(...) || 0; the rest as sent
 		x.ReplyCount, x.ReplyUsers, x.LatestReply = m.ReplyCount, m.ReplyUsers, latest
 		if m.ReplyUsersN > 0 {
@@ -95,9 +94,18 @@ func (a *App) onMessageReplied(ctx context.Context, ch string, raw json.RawMessa
 		if m.ThreadTS != "" {
 			x.ThreadTS = m.ThreadTS
 		}
-	}); ok {
+	}
+	// the reply bar asks for its avatars' people as it draws (lazy_users.go)
+	if upd, ok := a.S.Mutate(ch, m.TS, apply); ok {
 		a.emitUpdate(ch, &upd)
 	}
+	// the broadcasts' root copies are Slack's stored root when the parent
+	// isn't cached, the same guard included (broadcast_footer.go)
+	a.syncBroadcastRoots(ch, m.TS, func(x *slack.Message) {
+		if !staleReplied(r.latest(), x) {
+			apply(x)
+		}
+	})
 }
 
 // mergeBroadcastRoot applies a thread_broadcast's root to its cached
@@ -132,7 +140,7 @@ func (a *App) mergeBroadcastRoot(ch string, m *slack.Message, raw json.RawMessag
 	if pts == "" {
 		pts = m.ThreadTS
 	}
-	if upd, ok := a.S.Mutate(ch, pts, func(x *slack.Message) {
+	merge := func(x *slack.Message) {
 		if has("thread_ts") {
 			x.ThreadTS = root.ThreadTS
 		}
@@ -148,7 +156,10 @@ func (a *App) mergeBroadcastRoot(ch string, m *slack.Message, raw json.RawMessag
 		if has("latest_reply") || has("replies") {
 			x.LatestReply = r.latest()
 		}
-	}); ok {
+	}
+	if upd, ok := a.S.Mutate(ch, pts, merge); ok {
 		a.emitUpdate(ch, &upd)
 	}
+	// the thread's other broadcasts read the same root (broadcast_footer.go)
+	a.syncBroadcastRoots(ch, pts, merge)
 }

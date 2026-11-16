@@ -59,6 +59,9 @@ var (
 	// "replied to a thread" under a broadcast reply's name
 	preambleClass     = slackc.Class("c-message__broadcast_preamble").Tag("span")
 	preambleLinkClass = slackc.Class("c-link c-message__broadcast_preamble_link").Tag("a")
+	// ThreadBroadcastFooter's "View newer replies" (a ButtonLink)
+	broadcastFooterClass = slackc.Class("c-link--button c-message__broadcast_footer c-message_kit__broadcast_footer",
+		"data-stringify-ignore", "true").Tag("button")
 
 	mrkdwnClass        = slackc.Class("p-mrkdwn_element")
 	memberLinkClass    = slackc.Class("c-link c-member_slug c-member_slug--link").Tag("button")

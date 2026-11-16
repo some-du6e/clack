@@ -38,6 +38,10 @@ type Message struct {
 	PinnedBy              string // who pinned it (when Pinned)
 	IsBot, Edited, Pinned bool
 	Broadcast, System     bool // System: join/leave/topic… drawn compactly
+	// NewerReplies: a thread broadcast whose thread has a reply newer than
+	// it, so Slack's ThreadBroadcastFooter draws "View newer replies"
+	// under it (broadcast_footer.go).
+	NewerReplies bool
 	// A system message's own fields: who added the joiner (inviter), the
 	// topic or purpose it set, a rename's old and new names.
 	Inviter, Topic, Purpose, OldName, NewName string

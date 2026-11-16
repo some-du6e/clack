@@ -27,6 +27,7 @@ package ui
 import (
 	"gioui.org/layout"
 
+	"github.com/some-du6e/clack/internal/ui/messages"
 	"github.com/some-du6e/clack/internal/ui/views"
 )
 
@@ -161,3 +162,28 @@ func (a *App) SecondaryAt() (ch, ts string) {
 }
 
 var _ views.SavedSecondary = (*App)(nil)
+
+// OpenThreadReply opens thread (its root's ts) at reply ts: Slack's
+// ThreadBroadcastFooter (boot-shared NnKv) navigates to toThread({
+// channelId, threadTs, replyTs }) with no uiState, so jumpToThreadReply
+// has no highlightTs to apply. The pane starts at replyTs (its start ts
+// is the stored one, else replyTs) and highlights it only in a child
+// window, which Clack doesn't have.
+func (a *App) OpenThreadReply(ch, thread, ts string) {
+	if ch == "" || thread == "" {
+		return
+	}
+	split := a.pane == paneSplit || a.splitClick()
+	a.OpenThread(ch, thread)
+	s := &a.secondary
+	if split || ts == "" || s.kind != secThread || s.channel != ch || s.ts != thread {
+		return
+	}
+	s.at = ts
+	if j, ok := a.convoFor(ch, thread).list.(interface{ JumpTo(ts string, flash bool) }); ok {
+		j.JumpTo(ts, false)
+	}
+	a.Invalidate()
+}
+
+var _ messages.ThreadReplyOpener = (*App)(nil)

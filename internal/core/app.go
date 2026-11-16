@@ -1273,6 +1273,7 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		Broadcast: m.Subtype == "thread_broadcast" || m.ReplyBroadcast, System: systemSubtypes[m.Subtype],
 		Tombstone: m.Subtype == "tombstone",
 	}
+	v.NewerReplies = a.newerReplies(ch, m) // broadcast_footer.go
 	if m.Edited != nil {
 		v.EditedTS, v.EditedBy = m.Edited.TS, m.Edited.User
 	}
