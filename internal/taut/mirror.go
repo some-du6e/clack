@@ -306,7 +306,7 @@ func (m *mirror) onEvent(ev core.Event) {
 		// (core/evict.go): the JS side drops what it cached of it, as
 		// Slack's store drops the evicted messages, and so do the UI's
 		// patched views of them (the pass never trims what's on screen)
-		m.t.ui.views.dropEvicted(ev.Channel, ev.ThreadTS, ev.TS)
+		m.t.ui.views.dropEvicted(ev.Channel)
 		m.invalidate("messages", ev.Channel)
 		m.invalidate("channelHistory")
 		m.invalidate("reactions")
@@ -398,15 +398,29 @@ func (m *mirror) onEvent(ev core.Event) {
 // noteConv tells MessageView's cached conversions what ev may have
 // changed: the message it names (core announces every change to a message
 // that way, a thread's broadcasts included), or for anything else that
-// core.App.message reads (people, names, prefs and highlight words,
-// emoji, channels, experiment groups, a resync) every message. Events
-// that change no message's conversion are skipped. ("experiments" counts:
-// a huddle message's sentence and the emoji set follow experiment groups.)
+// core.App.message reads (names, prefs and highlight words, emoji,
+// experiment groups, a resync) every message. Events that change no
+// message's conversion are skipped: read states, counts and badges, a
+// channel's own details (rows resolve channel names as they draw), tabs,
+// bookmarks, presence, typing. ("experiments" counts: a huddle message's
+// sentence and the emoji set follow experiment groups.)
 func (m *mirror) noteConv(ev core.Event) {
 	switch ev.Type {
 	case "typing", "presence", "marked", "counts", "huddle", "draft", "dnd_updated", "dnd_updated_user",
-		"connection", "sidebar_changed", "channel_sections_upserted",
-		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
+		"connection", "realtime", "client_online", "sidebar_changed", "channel_sections_upserted",
+		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted",
+		"activity", "activity_badges", "poll", "tabs", "bookmarks", "pins_tab", "channel_email", "permissions",
+		"conv", "conv_removed", "canvas_viewers", "megaphone", "suggested_prompts", "assistant_status", "auth_failed":
+		return
+	case "user":
+		// a profile change, many a second on a busy workspace's socket:
+		// only a member the UI drew in its latest frame can show in a
+		// conversion it uses (as the UI's own filter, hub.drawsMember);
+		// the event's Seen is when the member was last drawn, from before
+		// the change
+		if m.t.ui.views.drewMember(ev.Seen) {
+			m.t.ui.views.bumpConv("", "")
+		}
 		return
 	}
 	ts := ev.TS

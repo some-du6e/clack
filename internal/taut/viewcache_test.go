@@ -410,6 +410,7 @@ func TestViewCacheMemory(t *testing.T) {
 	}
 
 	// core's cache pass kept chGen from its second message on
+	h.app.S.Remove(chGen, tss[0])
 	h.tt.mirror.onEvent(core.Event{Type: "evicted", Channel: chGen, TS: tss[1]})
 	if e, _ := cached(v, chGen, tss[0]); e != nil {
 		t.Error("the evicted message's view stayed")
@@ -434,4 +435,115 @@ func TestViewCacheMemory(t *testing.T) {
 		e, _ := cached(v, chGen, tss[1])
 		return e == nil
 	})
+}
+
+// Profile changes for members no frame drew, and count or badge events,
+// cost nothing: no conversion generation moves, nothing converts again,
+// nothing redraws (a busy workspace sends user_change many times a
+// second; review of 2026-11-16). A member the latest frame drew still
+// does.
+func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
+	h := newHarness(t)
+	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	const ts = "1700000001.000100"
+	var m core.Message
+	eventually(t, 3*time.Second, "the view", func() bool {
+		var ok bool
+		m, ok = h.tt.MessageView(chGen, ts)
+		return ok
+	})
+	v := &h.tt.ui.views
+	time.Sleep(100 * time.Millisecond) // the view's fetch settled
+	g0, n0 := v.convGen(chGen, ts), h.ui.invalidations.Load()
+	long := time.Now().Add(-time.Minute)
+	for i := 0; i < 200; i++ {
+		h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UBOB", Seen: long}) // drawn a minute ago
+		h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UALICE"})           // never drawn
+		for _, typ := range []string{"activity_badges", "counts", "poll", "client_online", "realtime", "tabs", "bookmarks"} {
+			h.tt.mirror.noteConv(core.Event{Type: typ})
+		}
+		h.tt.mirror.noteConv(core.Event{Type: "conv", Channel: chGen})
+	}
+	if g := v.convGen(chGen, ts); g != g0 {
+		t.Errorf("the conversion generation moved (%d → %d)", g0, g)
+	}
+	if n := h.ui.invalidations.Load(); n != n0 {
+		t.Errorf("%d redraws for members nobody drew and badge events", n-n0)
+	}
+	if again, _ := h.tt.MessageView(chGen, ts); docID(again) != docID(m) {
+		t.Error("the view was converted again")
+	}
+
+	// a member the latest frame drew (the MessageView above read the views)
+	n1 := h.ui.invalidations.Load()
+	h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UBOB", Seen: time.Now()})
+	if v.convGen(chGen, ts) == g0 {
+		t.Error("a drawn member's change left the conversions as they were")
+	}
+	if h.ui.invalidations.Load() == n1 {
+		t.Error("no redraw for a drawn member's change")
+	}
+}
+
+// Core's cache pass trims a channel but keeps a thread on screen whole:
+// the thread's views stay (they flashed to unpatched text until JS
+// answered again), and only messages core let go lose theirs.
+func TestEvictionKeepsWhatCoreKept(t *testing.T) {
+	h := newHarness(t)
+	const root, r1, r2 = "1700000001.000100", "1700000001.500000", "1700000001.600000"
+	const gone = "1700000002.000200"
+	h.app.S.SetThread(chGen, root, []slack.Message{
+		{Type: "message", TS: root, User: "UALICE", Text: "the job fair is today", ThreadTS: root, ReplyCount: 2},
+		{Type: "message", TS: r1, User: "UBOB", Text: "a job reply", ThreadTS: root},
+		{Type: "message", TS: r2, User: "UALICE", Text: "another job reply", ThreadTS: root},
+	})
+	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
+	eventually(t, 2*time.Second, "messages patched", func() bool { return h.tt.SlicePatched("messages") })
+	all := []string{root, r1, r2, gone}
+	eventually(t, 3*time.Second, "the views", func() bool {
+		for _, ts := range all {
+			if _, ok := h.tt.MessageView(chGen, ts); !ok {
+				return false
+			}
+		}
+		return true
+	})
+	v := &h.tt.ui.views
+	h.app.S.Remove(chGen, gone) // what the pass let go
+	// kept from the channel's newest message on: older than the thread
+	h.tt.mirror.onEvent(core.Event{Type: "evicted", Channel: chGen, TS: "1700000003.000300"})
+	for _, ts := range []string{root, r1, r2} {
+		if e, _ := cached(v, chGen, ts); e == nil {
+			t.Errorf("%s: the kept thread's view was dropped", ts)
+		}
+	}
+	if e, _ := cached(v, chGen, gone); e != nil {
+		t.Error("the view of a message core let go stayed")
+	}
+}
+
+// drop takes the members it names and leaves the rest.
+func TestViewCacheDropMembers(t *testing.T) {
+	h := newHarness(t)
+	v := &h.tt.ui.views
+	v.mu.Lock()
+	for i := 0; i < 50; i++ {
+		g := v.groupLocked(viewSK{"members", fmt.Sprintf("U%03d", i)})
+		g.subs[""] = &viewEntry{raw: json.RawMessage(`{}`), size: 10}
+		v.n++
+		v.bytes += 10
+	}
+	v.mu.Unlock()
+	v.drop("members", "U001", "U002", "U049", "UNOPE")
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, id := range []string{"U001", "U002", "U049"} {
+		if v.groups[viewSK{"members", id}] != nil {
+			t.Errorf("%s stayed", id)
+		}
+	}
+	if v.groups[viewSK{"members", "U000"}] == nil || v.n != 47 || v.bytes != 470 {
+		t.Errorf("the rest: U000 kept %v, %d entries, %d bytes", v.groups[viewSK{"members", "U000"}] != nil, v.n, v.bytes)
+	}
 }

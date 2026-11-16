@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1021,6 +1020,7 @@ type viewCache struct {
 	flying   map[viewKey]bool // asked of JS, not back yet
 	busy     bool             // the worker runs or is about to
 	fetches  atomic.Int64     // worker batches (tests)
+	lastRead atomic.Int64     // UnixMilli of the UI's latest read (entry): its latest frame
 	maxSubs  int              // entries before everything is dropped (20000)
 	bytes    int              // what the entries hold, about
 	maxBytes int              // bytes before everything is dropped (64 MiB)
@@ -1082,6 +1082,7 @@ func (v *viewCache) staleLocked(e *viewEntry, g *viewGroup, slice string) bool {
 // entry returns slice[key][sub]'s cached value (nil until the first one
 // arrives), queueing a fetch when it's missing or stale. Never waits on JS.
 func (v *viewCache) entry(slice, key, sub string) *viewEntry {
+	v.lastRead.Store(time.Now().UnixMilli())
 	k := viewKey{slice, key, sub}
 	v.mu.Lock()
 	g := v.groupLocked(viewSK{slice, key})
@@ -1246,11 +1247,21 @@ func (x *viewEntry) sameValue(e *viewEntry) bool {
 func (v *viewCache) drop(slice string, keys ...string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	for sk, g := range v.groups {
-		if sk.slice != slice || len(keys) > 0 && !slices.Contains(keys, sk.key) {
-			continue
+	if len(keys) == 0 {
+		for sk, g := range v.groups {
+			if sk.slice == slice {
+				v.dropGroupLocked(sk, g)
+			}
 		}
-		v.dropGroupLocked(sk, g)
+		return
+	}
+	// a lookup per key: the members pass lets thousands go at once, and
+	// scanning every group for each of them held mu for tens of ms
+	for _, k := range keys {
+		sk := viewSK{slice, k}
+		if g := v.groups[sk]; g != nil {
+			v.dropGroupLocked(sk, g)
+		}
 	}
 }
 
@@ -1263,32 +1274,45 @@ func (v *viewCache) dropGroupLocked(sk viewSK, g *viewGroup) {
 	v.sliceN[sk.slice]--
 }
 
-// dropEvicted forgets the message views core's cache pass let go (its
-// "evicted" event: ch, or the thread under root, kept from oldest on,
-// all of it when oldest is ""). The pass leaves what's on screen alone,
-// and so does this.
-func (v *viewCache) dropEvicted(ch, root, oldest string) {
+// dropEvicted forgets the views of ch's messages core's cache pass let go
+// (its "evicted" event): those core no longer holds. Not those older than
+// the event's oldest kept: the pass keeps a thread on screen whole while
+// it trims its channel, and dropping that thread's root and replies made
+// them flash back to their unpatched text until JS answered again.
+func (v *viewCache) dropEvicted(ch string) {
+	sk := viewSK{"messages", ch}
+	v.mu.Lock()
+	var subs []string
+	if g := v.groups[sk]; g != nil {
+		for ts := range g.subs {
+			if ts != "" {
+				subs = append(subs, ts)
+			}
+		}
+	}
+	v.mu.Unlock()
+	// asked of core with mu released: the UI goroutine's lookups wait on it
+	var gone []string
+	for _, ts := range subs {
+		if !v.t.app.S.Holds(ch, ts, "") {
+			gone = append(gone, ts)
+		}
+	}
+	if len(gone) == 0 {
+		return
+	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	sk := viewSK{"messages", ch}
 	g := v.groups[sk]
 	if g == nil {
 		return
 	}
-	if root == "" && oldest == "" {
-		v.dropGroupLocked(sk, g)
-		return
-	}
-	for ts, e := range g.subs {
-		if ts == "" || oldest != "" && ts >= oldest {
-			continue
+	for _, ts := range gone {
+		if e := g.subs[ts]; e != nil {
+			delete(g.subs, ts)
+			v.n--
+			v.bytes -= e.size
 		}
-		if root != "" && (e.sm == nil || e.sm.ThreadTS != root || ts == root) {
-			continue // the thread's replies only
-		}
-		delete(g.subs, ts)
-		v.n--
-		v.bytes -= e.size
 	}
 }
 
@@ -1479,6 +1503,14 @@ func (v *viewCache) bumpConv(ch, ts string) {
 	if f := v.t.opts.UI.Invalidate; f != nil && v.convCached(ch, ts) {
 		f()
 	}
+}
+
+// drewMember reports whether a member last drawn at seen (core.Event.Seen)
+// was drawn in the UI's latest frame, the one that read the views last:
+// rows touch their members as they read their views. A second of slack
+// covers a long frame.
+func (v *viewCache) drewMember(seen time.Time) bool {
+	return !seen.IsZero() && seen.UnixMilli() >= v.lastRead.Load()-1000
 }
 
 // convCached reports whether a conversion of ch/ts is cached (with ch "",
