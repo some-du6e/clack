@@ -14,6 +14,11 @@ import (
 // steps, a millisecond or so; the rest is CI noise.
 const stwBound = 50 * time.Millisecond
 
+// stwMeasurable: a case whose longest stop-the-world with the yields off
+// is shorter than this is too small to compare (on the runners these cases
+// take 50-900 ms).
+const stwMeasurable = 20 * time.Millisecond
+
 // TestStopTheWorldBounded: Go can't stop a goroutine inside wasm code, so
 // a stop-the-world (each GC cycle, runtime.ReadMemStats, runtime.Stack)
 // waits until the JS thread next calls the host, and every goroutine,
@@ -103,8 +108,11 @@ func TestStopTheWorldBounded(t *testing.T) {
 		if on.stw > stwBound {
 			t.Errorf("%s: a stop-the-world waited %v on the JS thread (bound %v; %v with the yields off)", c.name, on.stw, stwBound, off.stw)
 		}
-		if off.op < 4*stwBound {
-			t.Logf("stw: %s ran only %v: too quick here to show what the yields change", c.name, off.op)
+		switch {
+		case off.stw < stwMeasurable:
+			t.Logf("stw: %s: only %v with the yields off: too small here to show what they change", c.name, off.stw)
+		case on.stw > off.stw/4:
+			t.Errorf("%s: the yields cut the longest stop-the-world only from %v to %v", c.name, off.stw, on.stw)
 		}
 	}
 	_ = r.Do(func(js *Ctx) error { r.eng.setYield(10000); return nil })
