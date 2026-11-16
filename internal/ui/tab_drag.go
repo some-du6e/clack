@@ -279,6 +279,7 @@ func (a *App) tabDragEvent(gtx layout.Context, d *tabDragState, e pointer.Event,
 		}
 		a.Invalidate()
 	case pointer.Release:
+		was := d.pressed || d.dragging
 		if d.dragging {
 			d.swallow = true
 			if tgt, ok := a.dragTarget(d); ok {
@@ -289,10 +290,15 @@ func (a *App) tabDragEvent(gtx layout.Context, d *tabDragState, e pointer.Event,
 			}
 		}
 		d.pressed, d.dragging = false, false
-		a.Invalidate()
+		if was { // nothing to redraw for a release or cancel no press began here
+			a.Invalidate()
+		}
 	case pointer.Cancel:
+		was := d.pressed || d.dragging
 		d.pressed, d.dragging = false, false
-		a.Invalidate()
+		if was { // a scroll's grab or the window's focus going cancels every handler
+			a.Invalidate()
+		}
 	}
 }
 

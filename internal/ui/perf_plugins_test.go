@@ -896,8 +896,9 @@ var (
 
 // perfIdle leaves the client alone for d, the pointer off the window, and
 // draws a frame only when something asks for one, as the window does: the
-// image cache's repaint (an animation's next frame) or a widget's wake-up
-// (op.InvalidateCmd), at most one per 16 ms (the display's). every draws
+// image cache's repaint (an animation's next frame), any other Invalidate
+// (data, a plugin's tree) or a widget's wake-up (op.InvalidateCmd), at
+// most one per 16 ms (the display's). every draws
 // one every 16 ms instead, as when something else keeps the window drawing.
 // Each frame is timed like perfScroll's.
 func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
@@ -909,6 +910,21 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 		}
 	})
 	defer e.a.images.SetInvalidate(func() {})
+	// and at the window's other repaints (App.Invalidate: data, a plugin's
+	// tree, posted work), as the window draws one for each
+	prevHook := invalidateHook
+	invalidateHook = func(a *App) {
+		if prevHook != nil {
+			prevHook(a)
+		}
+		if a == e.a {
+			select {
+			case wake <- struct{}{}:
+			default:
+			}
+		}
+	}
+	defer func() { invalidateHook = prevHook }()
 	if perfQuietStart != nil && !every {
 		defer perfQuietStart(e, func() {
 			select {
