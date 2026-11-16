@@ -89,13 +89,23 @@ func checkUnreadBannerPixels(t *testing.T, tag string, img *image.RGBA, pill, ms
 			t.Errorf("%s: pill row %d at x %d is %v, want #1264a3 (clipped or covered)", tag, y, cx, img.RGBAAt(cx, y))
 		}
 	}
+	// inside: the pixel lies 1px or more inside the pill's 14px-radius
+	// shape (past its round ends a light page shows through)
+	rad := float64(pill.Dy()) / 2
+	inside := func(x, y int) bool {
+		px, py := float64(x)+0.5, float64(y)+0.5
+		cy := float64(pill.Min.Y) + rad
+		ccx := min(max(px, float64(pill.Min.X)+rad), float64(pill.Max.X)-rad)
+		dx, dy := px-ccx, py-cy
+		return dx*dx+dy*dy <= (rad-1)*(rad-1)
+	}
 	// ink: the white text and glyphs over the blue (green well above
 	// #1264a3's 0x64)
 	ink := func(x0, x1 int) (top, bot int) {
 		top, bot = -1, -1
 		for y := pill.Min.Y; y < pill.Max.Y; y++ {
 			for x := x0; x < x1; x++ {
-				if img.RGBAAt(x, y).G >= 0xb4 {
+				if inside(x, y) && img.RGBAAt(x, y).G >= 0xb4 {
 					if top < 0 {
 						top = y
 					}
