@@ -28,7 +28,7 @@ func init() {
 			if err != nil {
 				return 0, 0
 			}
-			return n, time.Since(t0)
+			return int(n), time.Since(t0)
 		}
 		stop := func() {
 			rec.stop()

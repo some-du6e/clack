@@ -464,9 +464,11 @@ func allStacks() []byte {
 }
 
 // prune deletes reports older than keepAge, then the oldest until the rest
-// fit in keepMax bytes; keep (the report just written) always stays.
+// fit in keepMax bytes, and the execution traces of the reports it
+// deleted (flightrec.go); keep (the report just written) always stays.
 func (w *watchdog) prune(keep string) {
 	pruneFiles(w.dir, keep, func(n string) bool { return strings.HasPrefix(n, "freeze-") && strings.HasSuffix(n, ".txt") }, w.keepAge, w.keepMax)
+	pruneOrphanTraces(w.dir, keep)
 }
 
 // pruneFiles deletes the files in dir that match and are older than
