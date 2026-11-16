@@ -1,5 +1,7 @@
 package ui
 
+import "gioui.org/layout"
+
 // Composers taken off the screen let go of the focus.
 //
 // composer.KeepFocus holds a focused editor that missed a frame (a
@@ -17,37 +19,109 @@ package ui
 // container's view closed (onViewClosed) to the first of Secondary,
 // Primary, Sidebar that still has a view, so closing the thread pane
 // focuses the channel's message input (CloseSecondary here); a primary
-// view that changed takes it itself (focusAfterNavigate). Here the
-// composers of a conversation the screen stopped showing since the last
-// frame are released (composer.Release) at the end of the frame: the
-// primary view's channel when the route left it, the pane's thread when
-// the pane closed or shows something else. The check reads the state, not
-// what was drawn, so a glitch frame doesn't trip it, and Release keeps the
-// focus of an editor that was drawn that frame anyway (the same
-// conversation in another pane).
+// view that changed takes it itself (focusAfterNavigate).
+//
+// Here, at the end of every frame (releaseHidden):
+//
+//   - the composers of a conversation the state stopped showing since the
+//     last frame are released (composer.Release): the primary view's
+//     channel when the route left it; the secondary column's thread or
+//     conversation when it closed, hid or shows something else; the split
+//     view's when it moved on or closed. That also drops a focus request
+//     made just before (CloseSecondary, then a navigation away).
+//   - a focused composer this frame didn't draw is released too, wherever
+//     it lives (the DMs tab's or Activity's conversation, any pane), unless
+//     the state still shows its conversation: only there is a missing
+//     draw a glitch frame, for KeepFocus to bridge.
+//
+// The state, not what was drawn, decides what a glitch is, so a frame a
+// plugin's tree skipped doesn't release anything it still shows, and
+// Release keeps the focus of an editor drawn that frame anyway. Editors
+// outside a conversation (an inline message edit, Block Kit inputs) are
+// KeepFocus's alone: a hold that ends without them drops what was typed
+// meanwhile.
 
-// shownConvos are the convos (a.convos keys) the last frame's state
-// showed: the primary view's channel and the thread pane's thread.
+// shownConvos are the conversations the state shows, this frame's and the
+// last one's: keys of a.convos (main) and of the split view's (split).
+// The two frames' maps take turns (no new maps per frame).
 type shownConvos struct {
-	channel, thread string
+	main, split         map[string]bool
+	prevMain, prevSplit map[string]bool
 }
 
-// releaseLeftComposers runs once per frame, before composer.KeepFocus.
-func (a *App) releaseLeftComposers() {
-	now := shownConvos{}
+// next makes this frame's sets the last frame's and empties the other
+// pair for this frame.
+func (s *shownConvos) next() {
+	s.main, s.prevMain = s.prevMain, s.main
+	s.split, s.prevSplit = s.prevSplit, s.split
+	if s.main == nil {
+		s.main, s.split = map[string]bool{}, map[string]bool{}
+	}
+	clear(s.main)
+	clear(s.split)
+}
+
+// fillShown reads them from the route, the secondary column and the split
+// view.
+func (a *App) fillShown(s *shownConvos) {
 	if ch := a.router.Current().Channel(); ch != "" {
-		now.channel = ch + "/"
+		s.main[ch+"/"] = true
 	}
-	if s := &a.secondary; s.kind == secThread && s.open() {
-		now.thread = s.channel + "/" + s.ts
+	if sec := &a.secondary; sec.open() {
+		switch sec.kind {
+		case secThread:
+			s.main[sec.channel+"/"+sec.ts] = true
+		case secChannel:
+			s.main[sec.channel+"/"] = true
+		}
 	}
-	prev := a.shownConvos
-	a.shownConvos = now
-	if prev.channel != "" && prev.channel != now.channel {
-		a.releaseConvo(a.convos[prev.channel])
+	if a.splitOpen() {
+		if r := a.splitTop(); r.Channel() != "" {
+			s.split[r.Channel()+"/"+r.Thread()] = true
+		}
 	}
-	if prev.thread != "" && prev.thread != now.thread {
-		a.releaseConvo(a.convos[prev.thread])
+}
+
+// releaseHidden runs once per frame, after the layout and before
+// composer.KeepFocus.
+func (a *App) releaseHidden(gtx layout.Context) {
+	s := &a.shownConvos
+	s.next()
+	a.fillShown(s)
+	for k := range s.prevMain {
+		if !s.main[k] {
+			a.releaseConvo(a.convos[k])
+		}
+	}
+	for k := range s.prevSplit {
+		if !s.split[k] {
+			a.releaseConvo(a.split.pane.convos[k])
+		}
+	}
+	a.releaseUndrawn(gtx, a.convos, s.main)
+	a.releaseUndrawn(gtx, a.split.pane.convos, s.split)
+}
+
+// focusReleaser is what releaseHidden needs of a composer
+// (composer.Composer, through composerBox).
+type focusReleaser interface {
+	FocusTag() any
+	Release()
+	DrawnLive(gtx layout.Context) bool
+}
+
+// releaseUndrawn releases a focused composer this frame didn't draw in a
+// conversation the state doesn't show.
+func (a *App) releaseUndrawn(gtx layout.Context, convos map[string]*convo, shown map[string]bool) {
+	for k, c := range convos {
+		if shown[k] {
+			continue
+		}
+		for _, cv := range []composerView{c.comp, c.edit} {
+			if r, ok := cv.(focusReleaser); ok && gtx.Focused(r.FocusTag()) && !r.DrawnLive(gtx) {
+				r.Release()
+			}
+		}
 	}
 }
 

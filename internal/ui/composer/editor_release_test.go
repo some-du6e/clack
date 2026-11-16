@@ -93,4 +93,40 @@ func TestKeepFocusLetsGoOfUndrawnEditors(t *testing.T) {
 	if !r.Source().Focused(ed) {
 		t.Fatal("a released editor drawn in that frame lost the focus")
 	}
+
+	// slow frames: 4 missed frames 100 ms apart are past keepFor, but the
+	// hold lasts keepFrames frames whatever the clock says
+	frame(true, 16*time.Millisecond)
+	for range keepFrames {
+		frame(false, 100*time.Millisecond)
+	}
+	if !r.Source().Focused(ed) {
+		t.Fatal("the focus went over 4 slow missed frames (keepFrames)")
+	}
+	frame(true, 16*time.Millisecond)
+
+	// a glitch: what was typed while the editor missed a frame lands in it
+	// when it's back
+	r.Queue(key.EditEvent{Text: "glitch-typing"})
+	frame(false, 16*time.Millisecond)
+	frame(true, 16*time.Millisecond)
+	frame(true, 16*time.Millisecond)
+	if !strings.Contains(text(), "glitch-typing") {
+		t.Errorf("text typed over a glitch frame didn't reach the editor: %q", text())
+	}
+
+	// a hold that ends without the editor back drops what it read: drawn
+	// again later, it doesn't replay text typed while nobody saw it
+	r.Queue(key.EditEvent{Text: "hidden-typing"})
+	for range keepFrames + 2 {
+		frame(false, 100*time.Millisecond)
+	}
+	if r.Source().Focused(ed) {
+		t.Fatal("the hold didn't end")
+	}
+	frame(true, 16*time.Millisecond)
+	frame(true, 16*time.Millisecond)
+	if strings.Contains(text(), "hidden-typing") {
+		t.Errorf("text typed during a hold that ended came back in the editor: %q", text())
+	}
 }

@@ -73,6 +73,15 @@ func Release(ed *Editor) {
 	kept.Unlock()
 }
 
+// DrawnLive reports whether ed was drawn in this frame's live layout (a
+// measure pass doesn't count). Call it after the frame's layout.
+func DrawnLive(gtx layout.Context, ed *Editor) bool {
+	kept.Lock()
+	defer kept.Unlock()
+	at, ok := kept.at[ed]
+	return ok && at.Equal(gtx.Now)
+}
+
 // noteLive records a draw that delivers input (not a measure pass).
 func (e *Editor) noteLive(gtx layout.Context) {
 	if !gtx.Source.Enabled() {
@@ -112,6 +121,10 @@ func KeepFocus(gtx layout.Context) {
 		if rel[e] || gtx.Now.Sub(at) > keepFor && kept.missed[e] > keepFrames || gtx.Now.Before(at) {
 			delete(kept.at, e)
 			delete(kept.missed, e)
+			// the hold ended without the editor back: what it read
+			// meanwhile was typed into a box nobody saw, and goes with it
+			// (replayed, it came out wherever that editor was drawn next)
+			e.missed = nil
 			continue
 		}
 		keep = append(keep, e)

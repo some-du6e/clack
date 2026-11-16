@@ -1848,11 +1848,19 @@ func (c *Composer) FocusTag() any { return c.ed }
 
 // Release lets go of the composer's focus for good (composer.Release):
 // its conversation left the screen. It stops counting itself focused, so
-// restoreDroppedFocus doesn't take the focus back when it's drawn again.
+// restoreDroppedFocus doesn't take the focus back when it's drawn again,
+// and a Focus asked for before it went is dropped: drawn again later (a
+// permalink, a thread route, where nothing focuses the input) it must not
+// take the focus on its own.
 func (c *Composer) Release() {
+	c.focusReq = false
 	c.focused = false
 	Release(c.ed)
 }
+
+// DrawnLive reports whether the composer's editor was drawn in this
+// frame's live layout (composer.DrawnLive).
+func (c *Composer) DrawnLive(gtx layout.Context) bool { return DrawnLive(gtx, c.ed) }
 
 // PopupOpen reports whether the composer's own popup (autocomplete) is
 // up: Escape is the popup's then, not the thread pane's.

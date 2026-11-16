@@ -774,7 +774,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.rootPointer(gtx)
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
-	a.releaseLeftComposers()  // a composer taken off the screen lets go of the focus (composer_release.go)
+	a.releaseHidden(gtx)      // composers taken off the screen let go of the focus (composer_release.go)
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
 	a.clickMods = 0           // splitClick: only this frame's click
