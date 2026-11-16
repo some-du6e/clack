@@ -214,9 +214,10 @@ func (r *Runtime) loop() {
 	defer r.markDone()
 	defer live.Delete(r) // before Done fires; an abandoned runtime stays listed while it still runs
 	r.js = &Ctx{r: r}
-	// boot runs outside runTask but holds the JS thread in wasm (React's
-	// bundles) like a task: freeze reports and the timeout lines name it
-	// (it has no deadline)
+	// boot runs outside runTask but holds the JS thread in wasm (the
+	// environment and React's bundles) like a task, so Snapshots (freeze
+	// reports) and runningLabel name it instead of calling the runtime
+	// idle. It has no deadline: nothing interrupts it but Close.
 	bootTask := task{kind: "boot", start: time.Now(), mono: monoNow()}
 	r.running.Store(&bootTask)
 	r.taskStart.Store(bootTask.mono)

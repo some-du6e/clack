@@ -846,6 +846,43 @@ jobs:
   # job on a clean cache, on three fresh runners at once. Timing races
   # that only show under the whole suite's load failed α.82, α.83 and α.85
   # there and nowhere else.
+  # freeze-stw-2: TestVoteButtonsSurviveUpdates (Block Kit buttons under a
+  # message-patching plugin, so through jsrt) failed once on the branch
+  # with csrc/quickjs-yield.patch's added ticks; COUNT runs on the committed
+  # engine and on freeze-stw's (1ace8550, before those ticks) side by side
+  freeze-stw-2-vote:
+    if: ${{ !inputs.only || startsWith('freeze-stw-2-vote', inputs.only) }}
+    name: "freeze-stw-2-vote (${{ matrix.engine }} engine)"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [committed, freeze-stw]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        if: ${{ matrix.engine == 'freeze-stw' }}
+        with:
+          ref: 1ace85509e7f4f0a88bde6523c72e3816d219c82
+          path: base
+          sparse-checkout: internal/jsrt/jsrt.wasm
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: TestVoteButtonsSurviveUpdates, every run counted
+        env:
+          TEST: TestVoteButtonsSurviveUpdates
+          PKG: ./internal/ui/messages
+          CLACK_JSRT_WASM: ${{ matrix.engine == 'freeze-stw' && format('{0}/base/internal/jsrt/jsrt.wasm', github.workspace) || '' }}
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
   release-suite:
     if: ${{ !inputs.only || startsWith('release-suite', inputs.only) }}
     name: "release-suite (runner ${{ matrix.runner }})"
