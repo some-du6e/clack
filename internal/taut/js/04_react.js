@@ -234,8 +234,15 @@ const slotContext = () => (slotCtx ??= G.React.createContext(null))
 function nativeFor(name) {
   let c = rawNatives.get(name)
   if (c) return c
-  const native = typeof host.native === 'function' ? host.native(name) : null
   const React = G.React
+  // The host native, memoized: a patch that renders again with what it
+  // passed before stops here, so the native's host node, and the root
+  // drawing it, don't change. Every patch calling usePatchVersion renders
+  // again on each api.redux.refresh (Message Logger's, on every edit and
+  // delete it logs): about 1,000 of them in a long channel, each
+  // re-rendering its native, which re-serialized its props (a message's
+  // blocks and all) and sent its root's same tree to Go again.
+  const native = typeof host.native === 'function' ? React.memo(host.native(name)) : null
   const render = function SlackNative(props) {
     const view = React.useContext(stateViewContext())
     const el = native ? React.createElement(native, view ? { ...props, $view: view.id } : props) : React.createElement('clack-native', { name, props })
