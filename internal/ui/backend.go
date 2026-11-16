@@ -721,6 +721,18 @@ func (b *backend) handle(a *App, ev core.Event) {
 			b.refreshExt(ev.Channel) // a non-member channel looked up again (renamed, unarchived): its header and footer
 		}
 		b.resnapshot(a)
+	case "member_count":
+		// users/counts answered after the page showed (core History's side
+		// read): the header draws the count from the row, so set it there
+		// (no snapshot, and no sidebar rebuild, for one number)
+		if ev.Conv != nil && ev.Conv.NumMembers > 0 {
+			for _, c := range []*convInfo{m.Convs[ev.Channel], b.ext[ev.Channel]} {
+				if c != nil && c.NumMembers != ev.Conv.NumMembers {
+					c.NumMembers = ev.Conv.NumMembers
+					a.Invalidate()
+				}
+			}
+		}
 	case "auth_failed":
 		// core stopped all traffic on a dead session: back to sign-in
 		a.sessionEnded()

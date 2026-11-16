@@ -81,15 +81,24 @@ var actPeekBadgeKinds = [3]struct {
 // PeekTitle is the card's header.
 func (v *Activity) PeekTitle() string { return nsIA4.T("Activity") }
 
-// PeekOpened is the view's mount (es: fetchActivity's refresh, rsjQ a):
-// the list starts at the top; route is the tab the rows open in.
+// PeekOpened is the view's mount: the card's list starts at the top, and
+// the feed's first page is fetched again while the rows already loaded
+// stay (route is the tab the rows open in). Slack's peek mounts the
+// Activity page in peek mode (boot-shared gOQ8 es, build 2c0d02ca130f),
+// whose ActivityPage (mMdU) refetches on every mount (under the activity
+// inbox fetchActivitiesForPeekView, /wt5, into the peek's own list, which
+// starts from the page's items; without it fetchActivities with
+// fetchNew): nothing is cleared before the answer, and the page's list
+// and its scroll position are left as they were. A peek that cleared them
+// left the page empty until the fetch answered when it was clicked
+// through, and every row was described again in one frame.
 func (v *Activity) PeekOpened(closePeek func(), route string) {
 	v.pk.close, v.pk.route = closePeek, route
 	v.pk.list.Position = layout.Position{}
 	v.pk.list.Axis = layout.Vertical
 	v.pk.lastUnr = v.unread.Value
 	if v.data.started() && !v.data.busy() {
-		v.load(actFresh)
+		v.load(actRefresh)
 	}
 }
 

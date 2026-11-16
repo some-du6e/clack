@@ -355,6 +355,10 @@ func (m *mirror) onEvent(ev core.Event) {
 		if id == m.t.app.S.SelfID() {
 			m.invalidate("dndV2")
 		}
+	case "member_count": // users/counts answered (core loadMemberCount): Slack's membershipCounts entry
+		if ev.Channel != "" {
+			m.invalidate("membershipCounts", ev.Channel)
+		}
 	case "conv", "conv_removed":
 		id := ev.Channel
 		if id == "" && ev.Conv != nil {
