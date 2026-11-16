@@ -50,3 +50,6 @@ func (e *perfEnv) quietFrame(asked bool, askedAt time.Time) bool {
 	e.frame()
 	return false
 }
+
+// frameWhy is why e's last frame wasn't quiet (quiet.go's quietWhy).
+func frameWhy(e *perfEnv) string { return e.a.quietWhy }

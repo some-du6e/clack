@@ -90,6 +90,7 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	e.until("the emoji playing", 20*time.Second, func() bool { return e.a.images.Stats().Players > 0 })
 	t.Logf("the emoji's bytes asked for %d times; %+v", asks.Load(), e.a.images.Stats())
 	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(-100, -100)}) // off the window
+	e.until("the images loaded", 10*time.Second, func() bool { return e.a.images.Pending() == 0 })
 	e.settle(800 * time.Millisecond)
 	e.frame()
 	askedAt, asked := e.r.WakeupTime()
@@ -98,6 +99,7 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 	// fires (as the window's loop draws one), for 1.5 s
 	laid0, adv0 := e.a.FrameSeq(), e.a.images.Stats().Advances
 	quiet, full := 0, 0
+	why := map[string]int{} // the laid-out frames, by what else asked for them
 	for dl := time.Now().Add(1500 * time.Millisecond); time.Now().Before(dl); {
 		select {
 		case <-wake:
@@ -107,13 +109,17 @@ func TestAnimationTickIsQuiet(t *testing.T) {
 			quiet++
 		} else {
 			full++
+			why[frameWhy(e)]++
 		}
 		askedAt, asked = e.r.WakeupTime()
 	}
 	laid, adv := e.a.FrameSeq()-laid0, e.a.images.Stats().Advances-adv0
-	t.Logf("1.5 s of ticks: %d quiet, %d laid out (%d layouts), %d animation frames shown", quiet, full, laid, adv)
-	if quiet < 15 || full > quiet/4 {
+	t.Logf("1.5 s of ticks: %d quiet, %d laid out (%d layouts; why: %v), %d animation frames shown", quiet, full, laid, why, adv)
+	if quiet < 15 {
 		t.Errorf("%d ticks were quiet and %d laid the window out (%d layouts): an animation tick should lay nothing out", quiet, full, laid)
+	}
+	if n := why[""]; n > 0 {
+		t.Errorf("%d frames were laid out with nothing but an animation asking", n)
 	}
 	if int(laid) > 2*full {
 		t.Errorf("%d layouts in %d full frames: a quiet one laid out", laid, full)

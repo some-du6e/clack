@@ -93,19 +93,30 @@ func (a *App) quietFrame(now time.Time, size image.Point, m unit.Metric, insets 
 	layout := a.layoutDue.Swap(false)
 	anim := a.animDue.Swap(false)
 	q := &a.quiet
-	if layout || !anim || !q.ok || asked && !askedAt.After(now) {
-		return false
+	a.quietWhy = ""
+	switch {
+	case layout:
+		a.quietWhy = "an Invalidate"
+	case !anim:
+		a.quietWhy = "no animation asked"
+	case !q.ok:
+		a.quietWhy = "the last frame can't be shown again"
+	case asked && !askedAt.After(now):
+		a.quietWhy = "the window's frames asked" // input, an op.InvalidateCmd
+	case size != q.size || m != q.metric || insets != q.insets || a.zoomFactor() != q.zoom:
+		a.quietWhy = "another size or scale"
+	case slackc.SubFrames() != q.subs:
+		a.quietWhy = "another window drew"
+	case a.login != nil || a.insp != nil:
+		a.quietWhy = "sign-in or the inspect tool"
+	default:
+		a.mu.Lock()
+		if len(a.pending) > 0 { // postLazy's work waits for a frame
+			a.quietWhy = "posted work"
+		}
+		a.mu.Unlock()
 	}
-	if size != q.size || m != q.metric || insets != q.insets || a.zoomFactor() != q.zoom || slackc.SubFrames() != q.subs {
-		return false
-	}
-	if a.login != nil || a.insp != nil {
-		return false
-	}
-	a.mu.Lock()
-	posted := len(a.pending) > 0 // postLazy's work waits for a frame
-	a.mu.Unlock()
-	return !posted
+	return a.quietWhy == ""
 }
 
 // replayFrame is a quiet frame's work before its ops go out again: the

@@ -34,6 +34,7 @@ METRICS = [
     ("renders", "Go→JS renders", ""),
     ("anim_frames", "animation frames shown (every player's)", ""),
     ("players", "animations playing at the end", ""),
+    ("quiet_frames", "quiet frames (no layout)", ""),
 ]
 
 

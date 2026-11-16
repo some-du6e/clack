@@ -121,10 +121,11 @@ type perfPass struct {
 	// the idle passes (perfIdle): how long they ran, the animation frames
 	// the image cache's players moved on to meanwhile (every size of every
 	// animated image counts), and the players playing at the end
-	Seconds    float64 `json:"seconds,omitempty"`
-	AnimFrames int     `json:"anim_frames,omitempty"`
-	Players    int     `json:"players,omitempty"`
-	Quiet      int     `json:"quiet_frames,omitempty"` // of Frames: the last frame's ops again, no layout (quiet.go)
+	Seconds    float64        `json:"seconds,omitempty"`
+	AnimFrames int            `json:"anim_frames,omitempty"`
+	Players    int            `json:"players,omitempty"`
+	Quiet      int            `json:"quiet_frames,omitempty"` // of Frames: the last frame's ops again, no layout (quiet.go)
+	Why        map[string]int `json:"not_quiet,omitempty"`    // the frames laid out, by why they weren't quiet
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
 	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
@@ -471,7 +472,7 @@ func TestPerfPluginScroll(t *testing.T) {
 	}
 	for _, p := range res.Passes {
 		if p.Seconds > 0 {
-			t.Logf("idle pass %-10s %d frames in %.1f s (%.1f ms of frames a second, %d quiet), %d animation frames shown, %d players at the end", p.Name, p.Frames, p.Seconds, p.TotalMS/p.Seconds, p.Quiet, p.AnimFrames, p.Players)
+			t.Logf("idle pass %-10s %d frames in %.1f s (%.1f ms of frames a second, %d quiet; laid out: %v), %d animation frames shown, %d players at the end", p.Name, p.Frames, p.Seconds, p.TotalMS/p.Seconds, p.Quiet, p.Why, p.AnimFrames, p.Players)
 		}
 	}
 	if out := os.Getenv("PERF_PLUGIN_OUT"); out != "" {
@@ -890,6 +891,7 @@ func (e *benchEnv) perfAnimEmoji(t *testing.T) bool {
 var (
 	perfQuietStart func(e *benchEnv, wake func()) (stop func())
 	perfQuietFrame func(e *benchEnv, asked bool, askedAt time.Time) (quiet bool)
+	perfQuietWhy   func(e *benchEnv) string // why the last frame wasn't quiet
 )
 
 // perfIdle leaves the client alone for d, the pointer off the window, and
@@ -955,6 +957,7 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 	var asked bool // what the last frame asked for (the window's FrameEvent.Asked)
 	var askedAt time.Time
 	quiet := 0
+	var why map[string]int // the frames laid out, by why they weren't quiet
 	for {
 		if !last.IsZero() {
 			if every {
@@ -981,6 +984,11 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 		if perfQuietFrame != nil && !every {
 			if perfQuietFrame(e, asked, askedAt) {
 				quiet++
+			} else if perfQuietWhy != nil {
+				if why == nil {
+					why = map[string]int{}
+				}
+				why[perfQuietWhy(e)]++
 			}
 		} else {
 			e.frame()
@@ -998,7 +1006,7 @@ func (e *benchEnv) perfIdle(name string, d time.Duration, every bool) perfPass {
 		Trees: trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
 		Allocs: math.Round(float64(ms1.Mallocs-ms0.Mallocs) / n), AllocKB: math.Round(float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n),
 		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6,
-		Seconds: time.Since(start).Seconds(), AnimFrames: int(st1.Advances - st0.Advances), Players: st1.Players, Quiet: quiet}
+		Seconds: time.Since(start).Seconds(), AnimFrames: int(st1.Advances - st0.Advances), Players: st1.Players, Quiet: quiet, Why: why}
 	for _, d := range ds {
 		p.TotalMS += d
 		switch {

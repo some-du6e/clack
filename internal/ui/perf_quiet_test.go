@@ -16,4 +16,5 @@ func init() {
 	perfQuietFrame = func(e *benchEnv, asked bool, askedAt time.Time) bool {
 		return e.perfEnv.quietFrame(asked, askedAt)
 	}
+	perfQuietWhy = func(e *benchEnv) string { return e.a.quietWhy }
 }

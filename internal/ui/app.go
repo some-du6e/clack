@@ -316,6 +316,7 @@ type App struct {
 	animHeld           atomic.Bool  // an animation repaint waits out a slow frame (animHold)
 	lastLayout         atomic.Int64 // the last frame's layout (ns; 0 for a quiet one)
 	lastFrameEnd       atomic.Int64 // when it was submitted (unix ns)
+	quietWhy           string       // why the last frame wasn't quiet ("" when it was; tests, the perf job)
 
 	swipe         swiper          // trackpad history swipes (swipe.go, nav.go)
 	swipeNow      swipeState      // this frame's swipe progress, for the arrow
