@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,11 +100,14 @@ type testUI struct {
 	panes     []string
 	attached  *Bridge
 	prefsOpen []string
+	// invalidations counts UIHooks.Invalidate calls (a redraw asked for)
+	invalidations atomic.Int64
 }
 
 func (u *testUI) hooks() UIHooks {
 	return UIHooks{
-		Attached: func(b *Bridge) { u.mu.Lock(); u.attached = b; u.mu.Unlock() },
+		Attached:   func(b *Bridge) { u.mu.Lock(); u.attached = b; u.mu.Unlock() },
+		Invalidate: func() { u.invalidations.Add(1) },
 		Deliver: func(root uint64, tree []byte) {
 			u.mu.Lock()
 			u.trees[root] = append([]byte(nil), tree...)

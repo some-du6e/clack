@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/core"
+	"github.com/some-du6e/clack/internal/ui/inputidle"
 )
 
 func init() { startTrim = trimMemory }
@@ -44,7 +45,8 @@ const freeOSGap = 10 * time.Second
 // idle. Every 5 s for the first minute, then every 30 s, when more than 16
 // MB is free but unreturned, or the heap holds much more than the last
 // collection left live and none ran for a minute, run one FreeOSMemory (a
-// GC plus scavenge, ~10-30 ms of background CPU).
+// GC plus scavenge, ~10-30 ms of background CPU), at most once per
+// freeOSGap and only in a pause in the person's input (waitQuiet).
 //
 // The figures come from runtime/metrics, not runtime.ReadMemStats:
 // ReadMemStats stops the world, and a stop-the-world waits for every
@@ -127,22 +129,33 @@ func allUint64(s []metrics.Sample) bool {
 	return true
 }
 
-// freeOS runs debug.FreeOSMemory at most once per freeOSGap.
-var freeOS = &freeOSLimiter{gap: freeOSGap, run: debug.FreeOSMemory}
+// freeOS runs debug.FreeOSMemory at most once per freeOSGap, each time
+// in a pause in the person's input (waitQuiet).
+var freeOS = &freeOSLimiter{gap: freeOSGap, run: debug.FreeOSMemory, quiet: waitQuiet}
 
 type freeOSLimiter struct {
-	gap time.Duration
-	run func()
+	gap   time.Duration
+	run   func()
+	quiet func() bool // waits for a good moment; false: none came, skip (nil: now)
 
 	mu      sync.Mutex
 	last    time.Time // when the last collection started
 	pending bool      // one is scheduled for the end of the gap
+	running bool      // one is waiting for quiet or collecting
+	again   bool      // a request came while one was running
 }
 
 // request collects now, or once at the end of the gap since the last one.
-// Any goroutine; the collection runs on the caller's goroutine or a timer's.
+// A request while a collection waits for quiet or runs is one more after
+// it, at the gap's end: none is dropped, none runs alongside another. Any
+// goroutine; the collection runs on the caller's goroutine or a timer's.
 func (l *freeOSLimiter) request() {
 	l.mu.Lock()
+	if l.running {
+		l.again = true
+		l.mu.Unlock()
+		return
+	}
 	if l.pending {
 		l.mu.Unlock()
 		return
@@ -153,13 +166,69 @@ func (l *freeOSLimiter) request() {
 		time.AfterFunc(wait, func() {
 			l.mu.Lock()
 			l.pending = false
-			l.last = time.Now()
+			if l.running {
+				l.again = true
+				l.mu.Unlock()
+				return
+			}
+			l.running = true
 			l.mu.Unlock()
-			l.run()
+			l.collect()
 		})
 		return
 	}
-	l.last = time.Now()
+	l.running = true
 	l.mu.Unlock()
-	l.run()
+	l.collect()
+}
+
+// collect waits for quiet, then runs one collection, or none when no
+// quiet came: the next request tries again (running is set).
+func (l *freeOSLimiter) collect() {
+	if l.quiet == nil || l.quiet() {
+		l.mu.Lock()
+		l.last = time.Now()
+		l.mu.Unlock()
+		l.run()
+	}
+	l.mu.Lock()
+	l.running = false
+	again := l.again
+	l.again = false
+	l.mu.Unlock()
+	if again {
+		l.request() // the gap from this one applies
+	}
+}
+
+// The trim's patience with someone at work: a collection waits until
+// there has been no input for quietFor, quietMax at most, and is skipped
+// then if input came within quietBusy (someone is scrolling: the next
+// request tries again).
+var (
+	quietFor  = 2 * time.Second
+	quietMax  = time.Minute
+	quietBusy = 500 * time.Millisecond
+)
+
+// waitQuiet reports whether to collect now, once there has been no input
+// for quietFor: no pointer, scroll, key or text event queued to any
+// window's Gio router, whichever widget took it (inputidle; Gio patch 33). A forced collection
+// while someone scrolls or types stops the UI goroutine with every other
+// one for its stop-the-world phases and then scavenges all free memory
+// under the heap lock new allocations need; two of Karim's freeze reports
+// of 2026-11-15 (4.2 s and 10.1 s) caught one in progress. Frames don't
+// count as activity: a focused composer's caret redraws the window twice
+// a second, so a gate on frames never saw quiet and always ran out its
+// minute, collecting whatever the person was doing then.
+func waitQuiet() bool {
+	dl := time.Now().Add(quietMax)
+	step := max(quietFor/8, time.Millisecond)
+	for inputidle.Since() < quietFor {
+		if time.Now().After(dl) {
+			return inputidle.Since() >= quietBusy
+		}
+		time.Sleep(step)
+	}
+	return true
 }

@@ -743,6 +743,46 @@ jobs:
   # flake-fix (2026-11-14): each test that failed a first ci attempt, on two
   # fresh runners (a first attempt's state: the cursor where ci's earlier
   # steps left it, a notification service never crashed), COUNT runs each
+  # Gio patch 32 (mac-wake, 2026-11-16): ci's macOS wake, sleep and
+  # occlusion tests, each $COUNT times in one process (TestMain runs
+  # app.Main): AppKit's occlusion reports, the layer's one-second drawable
+  # timeout and the display link's restarts all have timing in them.
+  mac-wake:
+    if: ${{ !inputs.only || startsWith('mac-wake', inputs.only) }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: TestOccludedWindowPausesMac, every run counted
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+          TEST: TestOccludedWindowPausesMac
+          PKG: gioui.org/app
+          FLAKE_TAIL: "200"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: TestNoDrawableSkipsFrameMac, every run counted
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+          TEST: TestNoDrawableSkipsFrameMac
+          PKG: gioui.org/app
+          FLAKE_TAIL: "200"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+      - name: TestScreensSleepWakeMac, every run counted
+        if: ${{ !cancelled() }}
+        env:
+          CLACK_MACOS_WINDOW_TESTS: "1"
+          TEST: TestScreensSleepWakeMac
+          PKG: gioui.org/app
+          FLAKE_TAIL: "200"
+        run: sh "$GITHUB_WORKSPACE/.github/flake-count.sh"
+
   flake-fix-windows:
     if: ${{ !inputs.only || startsWith('flake-fix-windows', inputs.only) }}
     name: "flake-fix ${{ matrix.test }} (runner ${{ matrix.runner }})"

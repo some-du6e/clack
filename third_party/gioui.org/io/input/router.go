@@ -432,6 +432,7 @@ func (q *Router) Queue(events ...event.Event) {
 			e = se.Event
 		}
 		q.noteKey(e) // Clack patch 28
+		noteInput(e) // Clack patch 33
 		q.processEvent(e, system)
 	}
 }

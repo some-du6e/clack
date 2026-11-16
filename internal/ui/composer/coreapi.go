@@ -31,7 +31,10 @@ func (c coreAPI) conv(id string) (core.Conv, bool) {
 	}
 	return core.Conv{ID: r.ID, Name: r.Name, Kind: r.Kind, User: r.User}, true
 }
-func (c coreAPI) snapshot() core.Snapshot        { return c.a.Snapshot() }
+
+// snapshot is the sidebar state without waiting for boot (the composer
+// runs on the UI goroutine). Shared: read it, never change it.
+func (c coreAPI) snapshot() core.Snapshot        { return c.a.RecentSnapshot() }
 func (c coreAPI) customEmoji() map[string]string { return c.a.CustomEmoji() }
 func (c coreAPI) emoji(name string) (url, text string, ok bool) {
 	return c.a.Emoji(name)

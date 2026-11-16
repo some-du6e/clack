@@ -172,7 +172,7 @@ func (a *App) CreateChannel(ctx context.Context, o CreateChannelOpts) (Conv, err
 		return Conv{}, errors.New("core: conversations.create answered no channel")
 	}
 	c.IsMember = true
-	a.S.PutConv(c)
+	a.S.PutConvLocal(c)
 	if o.Section != "" {
 		a.fileNewChannel(ctx, c.ID, o.Section)
 	}
@@ -211,5 +211,6 @@ func (a *App) fileNewChannel(ctx context.Context, ch, section string) {
 			}
 		}
 		a.S.Unlock()
+		a.S.NoteSectionsChanged() // an older section list doesn't undo it
 	}
 }

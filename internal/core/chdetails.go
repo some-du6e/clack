@@ -225,7 +225,7 @@ func (a *App) AddToConversation(ctx context.Context, ch string, users []string, 
 		c = *full
 	}
 	a.EnsureUsers(ctx, append(append([]string(nil), users...), c.Members...))
-	a.S.PutConv(c)
+	a.S.PutConvLocal(c)
 	a.openDM(c.ID)
 	v := a.conv(&c)
 	a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})

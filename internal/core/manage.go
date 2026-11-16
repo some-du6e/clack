@@ -249,7 +249,7 @@ func (a *App) convChanged(ctx context.Context, ch string, res *struct {
 		if old, ok := a.S.Conv(ch); ok {
 			res.Channel.LastRead = old.LastRead
 		}
-		a.S.PutConv(res.Channel)
+		a.S.PutConvLocal(res.Channel) // a rename, a topic: an older list doesn't undo it
 		if c, ok := a.Conv(ch); ok {
 			a.emit(Event{Type: "conv", Channel: ch, Conv: &c})
 		}
@@ -315,9 +315,7 @@ func (a *App) Archive(ctx context.Context, ch string) error {
 	if err := a.C.Call(ctx, "conversations.archive", url.Values{"channel": {ch}}, nil); err != nil {
 		return err
 	}
-	a.S.Lock()
-	delete(a.S.Convs, ch)
-	a.S.Unlock()
+	a.S.DropConv(ch)
 	a.emit(Event{Type: "conv_removed", Channel: ch})
 	return nil
 }

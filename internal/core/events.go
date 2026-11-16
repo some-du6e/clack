@@ -219,9 +219,7 @@ func (a *App) handle(ev slack.Event) {
 		_ = json.Unmarshal(ev.Raw, &e)
 		a.markDMClosed(ch)
 		if e.ConvertedTo != "" { // group DM turned into a private channel
-			a.S.Lock()
-			delete(a.S.Convs, ch)
-			a.S.Unlock()
+			a.S.DropConv(ch)
 			a.emit(Event{Type: "conv_removed", Channel: ch})
 			a.refreshConv(ctx, e.ConvertedTo)
 			return
@@ -283,10 +281,8 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: ev.Type, Raw: ev.Raw})
 		switch ev.Type {
 		case "channel_sections_upserted", "channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted":
-			if secs, err := a.C.SectionsAll(ctx); err == nil {
-				a.S.Lock()
-				a.S.Sections = secs
-				a.S.Unlock()
+			since := a.S.Seq()
+			if secs, err := a.C.SectionsAll(ctx); err == nil && a.S.SetSectionsSince(secs, since) {
 				a.emit(Event{Type: "sidebar_changed"})
 			}
 		case "thread_marked", "update_thread_state", "badge_counts_updated":

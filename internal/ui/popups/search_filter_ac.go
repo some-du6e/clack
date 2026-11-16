@@ -525,7 +525,7 @@ func newSRACRanker(h Host) *srACRanker {
 	if c == nil {
 		return nil
 	}
-	s := c.Snapshot()
+	s := c.RecentSnapshot() // the UI goroutine: never waits for boot
 	r := &srACRanker{h: h, c: c, self: s.Self.ID, team: s.Self.TeamID, ims: map[string]core.Conv{}, cnt: s.Counts,
 		hist: c.ViewHistory()}
 	for _, cv := range s.Convs {
@@ -985,7 +985,7 @@ func srTeamName(h Host, id string) string {
 	if c == nil {
 		return ""
 	}
-	if snap := c.Snapshot(); snap.Team.ID == id && snap.Team.Name != "" {
+	if snap := c.RecentSnapshot(); snap.Team.ID == id && snap.Team.Name != "" {
 		return snap.Team.Name
 	}
 	n, _, _ := c.Team(id, 20)

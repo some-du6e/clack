@@ -392,7 +392,7 @@ func TestWatchdogReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	for _, want := range []string{"Clack freeze report", "frame layout", "page: c", "goroutine ", "TestWatchdogReport", "responsive again"} {
+	for _, want := range []string{"Clack freeze report", "frame layout", "page: c", "Go runtime: heap ", "% of CPU in GC since start", "goroutine ", "TestWatchdogReport", "responsive again"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("report lacks %q:\n%.2000s", want, s)
 		}

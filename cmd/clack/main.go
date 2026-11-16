@@ -340,6 +340,14 @@ func main() {
 	}
 
 	creds, err := slack.ReadCreds(*credsPath)
+	// before any account's store opens: finish a sign-out this process's
+	// predecessor didn't live through (never the signed-in account's
+	// directory: store.SweepAccounts)
+	keep := ""
+	if err == nil {
+		keep = store.AccountDir(croot, firstNonEmpty(creds.Team, creds.EnterpriseID), creds.UserID)
+	}
+	store.SweepAccounts(croot, keep)
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	// A slack:// link is a navigation, except a magic-login link, which
@@ -386,6 +394,7 @@ func main() {
 		migrateLegacyCache(cfg, acct, creds.UserID)
 		go store.RemoveBootFiles(acct) // alpha.28's boot snapshot (it held message text)
 		st := store.New(acct)
+		st.ClearSignedOut() // signed in again: an earlier sign-out's unfinished mark isn't this session's
 		svc := core.New(c, st)
 		images.SetDir(filepath.Join(acct, "img"))
 		// After core.New (which listens for the session ending): a bound

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -24,21 +25,32 @@ type dmState struct {
 	open     map[string]bool      // DM -> is_open (missing: closed when known)
 	closedAt map[string]string    // closed DM -> newest ts that does not reopen it
 	openedAt map[string]time.Time // opened during this session
+	// wrote is each DM's last open or close in this session, at the store
+	// journal's position (store/journal.go): a sidebar.dms answer fetched
+	// before it keeps it (setSidebarDMsSince)
+	wrote map[string]uint64
 }
 
 // nowTS is the current time as a Slack ts, for reopen watermarks.
 var nowTS = func() string { return strconv.FormatInt(time.Now().Unix(), 10) + ".000000" }
 
 // setSidebarDMs records sidebar.dms' open flags.
-func (a *App) setSidebarDMs(list []slack.SidebarDM) {
+func (a *App) setSidebarDMs(list []slack.SidebarDM) { a.setSidebarDMsSince(list, math.MaxUint64) }
+
+// setSidebarDMsSince records a sidebar.dms answer fetched at the store
+// journal's position since: every DM's open flag is replaced, except the
+// ones this session opened or closed after since, which keep theirs (a DM
+// closed while Boot's call was out stays closed).
+func (a *App) setSidebarDMsSince(list []slack.SidebarDM, since uint64) {
 	now := nowTS()
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	oldOpen, oldClosed := a.dms.open, a.dms.closedAt
 	a.dms.known = true
 	a.dms.open = make(map[string]bool, len(list))
 	a.dms.closedAt = map[string]string{}
 	for _, d := range list {
-		if d.ID == "" {
+		if d.ID == "" || a.dms.wrote[d.ID] > since {
 			continue
 		}
 		a.dms.open[d.ID] = d.IsOpen
@@ -46,6 +58,25 @@ func (a *App) setSidebarDMs(list []slack.SidebarDM) {
 			a.dms.closedAt[d.ID] = a.reopenMark(d.ID, now)
 		}
 	}
+	for id, at := range a.dms.wrote { // the local ones, answered or not
+		if at <= since {
+			continue
+		}
+		if v, ok := oldOpen[id]; ok {
+			a.dms.open[id] = v
+		}
+		if m, ok := oldClosed[id]; ok {
+			a.dms.closedAt[id] = m
+		}
+	}
+}
+
+// noteDMWriteLocked records a local open or close of ch (a.mu held).
+func (a *App) noteDMWriteLocked(ch string) {
+	if a.dms.wrote == nil {
+		a.dms.wrote = map[string]uint64{}
+	}
+	a.dms.wrote[ch] = a.S.NextSeq()
 }
 
 // reopenMark is the ts a closed DM's latest message must pass to reopen it:
@@ -91,6 +122,7 @@ func (a *App) openDM(ch string) bool {
 	a.dms.open[ch] = true
 	a.dms.openedAt[ch] = time.Now()
 	delete(a.dms.closedAt, ch)
+	a.noteDMWriteLocked(ch)
 	prev := !a.dms.known
 	if ok {
 		prev = was
@@ -112,6 +144,7 @@ func (a *App) markDMClosed(ch string) {
 	a.dms.open[ch] = false
 	a.dms.closedAt[ch] = mark
 	delete(a.dms.openedAt, ch)
+	a.noteDMWriteLocked(ch)
 }
 
 // reopenActive reopens closed DMs whose latest message is newer than when
