@@ -364,7 +364,18 @@ type Event struct {
 	Connected  bool // connection: socket up; realtime: live updates on
 	// Seen (user): when a view last read the member before this change
 	// (store.MemberAccessed); zero: none did, or the store didn't hold them
-	Seen     time.Time
+	Seen time.Time
+	// SameNames (user, conv, conv_removed, tabs): the change left alone
+	// what message Docs read of the member or conversation (its names
+	// and picture; a channel's name, kind, membership and tabs): a
+	// status, a huddle, a topic, a bookmark (msg_refs.go)
+	SameNames bool
+	// NamePrefs (prefs): how messages name people changed
+	// (display_real_names, hidden_users)
+	NamePrefs bool
+	// DocPrefs (prefs): a pref every message's Doc reads changed (the
+	// highlight words, emoji_mode)
+	DocPrefs bool
 	Presence string // presence: active | away
 	Users    []string
 	Prefs    *Prefs

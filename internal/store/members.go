@@ -132,6 +132,14 @@ func (s *Store) lookupLocked(id string, now int64) (u *slack.User, known bool) {
 	return nil, false
 }
 
+// peekLocked is lookupLocked without recording the hit (s.mu held).
+func (s *Store) peekLocked(id string) (u *slack.User, known bool) {
+	if v, ok := s.Users[id]; ok {
+		return v, true
+	}
+	return nil, s.members.nonexistent[id]
+}
+
 // afterLookup is the rest of getMemberById once the lock is let go: a
 // miss (an id the store doesn't know at all) asks for the member
 // (noteMissing: core fetches it and emits "names"), and either way the
