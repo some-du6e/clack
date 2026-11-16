@@ -31,6 +31,7 @@ import (
 func introPreviewTestCommand(args ...string) (*exec.Cmd, error) {
 	cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestIntroPreviewChild$", "-test.count=1", "--"}, args...)...)
 	cmd.Env = append(os.Environ(), "CLACK_INTRO_PREVIEW_CHILD=1")
+	cmd.WaitDelay = 2 * time.Second
 	return cmd, nil
 }
 

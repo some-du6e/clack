@@ -23,6 +23,7 @@ import (
 	"gioui.org/op/paint"
 
 	"github.com/some-du6e/clack/internal/demo"
+	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
 
 // The "your Slack, 1:1" beat shows Clack itself, not a drawing of it: the
@@ -56,6 +57,7 @@ const (
 // the running executable's `intro-preview`. Test binaries have none
 // (introPreviewTestCommand stands in where a test wants one).
 var introPreviewCommand = func(args ...string) (*exec.Cmd, error) {
+	uiguard.OffUI("intro preview: exec") // run calls it on its goroutine
 	if testing.Testing() {
 		return nil, errors.New("no renderer in tests")
 	}
@@ -64,7 +66,8 @@ var introPreviewCommand = func(args ...string) (*exec.Cmd, error) {
 		return nil, err
 	}
 	cmd := exec.Command(exe, append([]string{"intro-preview"}, args...)...)
-	hideChildWindow(cmd) // Windows: no console flashes up
+	cmd.WaitDelay = 2 * time.Second // a killed renderer's pipes never hold Wait
+	hideChildWindow(cmd)            // Windows: no console flashes up
 	return cmd, nil
 }
 
@@ -219,7 +222,9 @@ func (p *introPreview) run(cfg []byte, size image.Point, scale, spdp float32) (*
 		defer close(logged)
 		sc := bufio.NewScanner(stderr)
 		for sc.Scan() {
-			log.Printf("ui: intro preview: %s", sc.Text())
+			// the renderer's own log lines: the demo workspace's, no account
+			// or message of the window's is in that process
+			log.Printf("ui: intro preview: %s", sc.Bytes())
 		}
 	}()
 	img, rep, rerr := readPreviewFrame(bufio.NewReaderSize(stdout, 1<<16), size, hook != nil)
