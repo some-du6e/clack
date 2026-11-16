@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/text/collate"
@@ -863,6 +864,14 @@ func (a *App) sortName(c Conv) string {
 			}
 		}
 	}
-	collate.New(language.AmericanEnglish, collate.Numeric).SortStrings(names)
+	col := nameCollators.Get().(*collate.Collator)
+	col.SortStrings(names)
+	nameCollators.Put(col)
 	return strings.Join(names, ",")
 }
+
+// nameCollators are sortName's collators (QJub's Intl.Collator("en-US",
+// {numeric: true})): one built per group DM, every snapshot, was most of
+// what the sidebar's sections cost. A Collator isn't safe for concurrent
+// use, so each caller takes its own.
+var nameCollators = sync.Pool{New: func() any { return collate.New(language.AmericanEnglish, collate.Numeric) }}

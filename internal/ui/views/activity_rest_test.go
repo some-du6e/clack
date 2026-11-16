@@ -516,3 +516,23 @@ func TestActivityLiveUpdatesLikeSlack(t *testing.T) {
 	app.Inject(slack.Event{Type: "activity_views_updated", Raw: raw})
 	e.until(t, "the view from elsewhere", func() bool { return strings.HasSuffix(actTabsNow(v), ",Synthetic elsewhere") })
 }
+
+// Activity frames with the "+" menu closed don't build its rows, which
+// read a whole core Snapshot (Karim's 4.4 s freeze on the Activity page,
+// 2026-11-15, was inside one): only an open menu, and the frame after it
+// closed, do.
+func TestActivityPlusRowsOnlyWhileOpen(t *testing.T) {
+	v, _, e, _ := vaFakeActivity(t, false)
+	e.until(t, "the saved views", func() bool { return v.viewsLoaded })
+	for i := 0; i < 5; i++ {
+		e.frame()
+	}
+	if len(v.plusC) != 0 {
+		t.Fatalf("%d \"+\" rows built with the menu closed", len(v.plusC))
+	}
+	v.plus.Click()
+	e.frame()
+	if v.menu != actMenuPlus || len(v.plusC) == 0 {
+		t.Fatalf("the open menu: menu %d, %d rows", v.menu, len(v.plusC))
+	}
+}

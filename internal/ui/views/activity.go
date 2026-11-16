@@ -328,6 +328,7 @@ type Activity struct {
 	extraC      [len(actExtras)]widget.Clickable
 	showCleared bool
 	plusC       []widget.Clickable // the "+" menu's rows (plusItems)
+	plusWasOpen bool               // the "+" menu was open last frame (plusClicks)
 
 	data     async[core.ActivityPage]
 	list     widget.List

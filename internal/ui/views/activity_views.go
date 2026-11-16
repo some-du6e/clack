@@ -822,6 +822,16 @@ func (v *Activity) plusClick() {
 
 // plusClicks runs the "+" menu's clicked row.
 func (v *Activity) plusClicks(gtx C) {
+	// The rows take clicks only while the menu is open, and the frame
+	// after it closed: building them reads a core Snapshot (every
+	// conversation, the sidebar's sections, a collator per group DM),
+	// which every Activity frame paid for (Karim's 4.4 s freeze on the
+	// Activity page, 2026-11-15, was inside it).
+	open, was := v.menu == actMenuPlus, v.plusWasOpen
+	v.plusWasOpen = open
+	if !open && !was {
+		return
+	}
 	items := v.plusItems()
 	if len(v.plusC) < len(items) {
 		v.plusC = append(v.plusC, make([]widget.Clickable, len(items)-len(v.plusC))...)
