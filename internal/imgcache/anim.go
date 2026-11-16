@@ -244,8 +244,10 @@ func (c *Cache) startPlay(k key, forced bool) {
 	src := e.gif
 	c.mu.Unlock()
 	// what the player decodes with: a streaming one keeps it while it
-	// plays, a keeping one gives it back once its frames are decoded
-	b := NewBudget()
+	// plays, a keeping one gives it back once its frames are decoded. A
+	// player's never takes the big slot, nor waits (it may hold its memory
+	// for as long as it plays: newPlayerBudget)
+	b := newPlayerBudget()
 	var err error
 	if src == nil { // let go for room, or a derived size: the bytes again (disk tier, core's cache or the network)
 		var data []byte
@@ -266,7 +268,8 @@ func (c *Cache) startPlay(k key, forced bool) {
 	}
 	e.starting = false
 	if err != nil {
-		e.retry = now.Add(retryAfter(1, budgetErr(err)))
+		e.playFails++
+		e.retry = now.Add(retryAfter(e.playFails, budgetErr(err)))
 		c.wakeLocked(e.retry)
 		c.mu.Unlock()
 		b.Release()
@@ -335,10 +338,12 @@ func (c *Cache) startPlay(k key, forced bool) {
 		case p.dropped:
 		case err != nil: // the still again, and another try later
 			c.releaseLocked(e)
-			e.retry = time.Now().Add(retryAfter(1, budgetErr(err)))
+			e.playFails++
+			e.retry = time.Now().Add(retryAfter(e.playFails, budgetErr(err)))
 			c.wakeLocked(e.retry)
 		default: // its frames are all it holds now
 			p.frames = frames
+			e.playFails = 0
 			p.deadline = time.Now().Add(animGrace)
 			p.n -= work
 			e.n -= work
@@ -363,10 +368,12 @@ func (c *Cache) startPlay(k key, forced bool) {
 		b.Release()
 	case err != nil:
 		c.releaseLocked(e)
-		e.retry = time.Now().Add(retryAfter(1, budgetErr(err)))
+		e.playFails++
+		e.retry = time.Now().Add(retryAfter(e.playFails, budgetErr(err)))
 		c.wakeLocked(e.retry)
 	default:
 		p.src, p.dec = src, d
+		e.playFails = 0
 		p.deadline = time.Now().Add(ix.frames[0].delay + animGrace)
 		c.decodeLocked(p)
 	}

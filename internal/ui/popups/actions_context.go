@@ -197,27 +197,34 @@ func ctxImageItems(h Host, src string, proxy bool) []MenuItem {
 // CopyImage puts the image at src on the clipboard (Slack-hosted images
 // come through core.Fetch; proxy forces that). It toasts ok ("" for none)
 // or the failure.
-func CopyImage(h Host, src string, proxy bool, ok string) {
+func CopyImage(h Host, src string, proxy bool, ok string) { copyImage(h, src, "", proxy, ok) }
+
+// copyFileImage is a file menu's Copy image: the original, or (when the
+// original can't be copied: it needs more decode memory than an image may
+// have, its format isn't one Clack decodes, it's past the download limit)
+// the file's largest Slack thumbnail in its place, as Slack's own
+// thumbnails stand in for it everywhere else.
+func copyFileImage(h Host, f *richtext.File, ok string) {
+	src, alt := f.URL, ""
+	if f.Thumb != nil {
+		alt = f.Thumb.URL
+	}
+	if src == "" {
+		src, alt = alt, ""
+	}
+	copyImage(h, src, alt, true, ok)
+}
+
+// copyOriginalWait is how long a copy with a stand-in gives the original
+// (its download, and its decode while the decode memory is busy) before
+// it copies the stand-in instead.
+const copyOriginalWait = 8 * time.Second
+
+// copyImage is CopyImage with a stand-in: alt ("" for none) is copied, as
+// if it were src, when src can't be.
+func copyImage(h Host, src, alt string, proxy bool, ok string) {
 	run(h, func(ctx context.Context) (struct{}, error) {
-		data, err := fetchBytes(ctx, h, src, proxy)
-		if err != nil {
-			return struct{}{}, err
-		}
-		// The decode charges everything it allocates to a budget from
-		// imgcache's process-wide decode memory, and the clipboard
-		// conversion charges its copies (the PNG) to the same budget, held
-		// until the image is on the clipboard: an untrusted emoji or image
-		// too big for it returns an error here (run's callback toasts it)
-		// instead of OOM-crashing (this overlay has no recover). One the
-		// decode memory is too busy for right now is tried again until ctx
-		// runs out (WithBudget).
-		return struct{}{}, imgcache.WithBudget(ctx, func(b *imgcache.Budget) error {
-			img, err := imgcache.DecodeBudget(data, imgcache.MaxPixels, imgcache.MaxSide, b)
-			if err != nil {
-				return err
-			}
-			return clipimg.WriteCharged(ctx, img, imgcache.ChargeFunc(b))
-		})
+		return struct{}{}, copyImageWork(ctx, h, src, alt, proxy)
 	}, func(_ struct{}, err error) {
 		switch {
 		case err != nil:
@@ -225,6 +232,53 @@ func CopyImage(h Host, src string, proxy bool, ok string) {
 		case ok != "":
 			h.Toast(ok)
 		}
+	})
+}
+
+// copyImageWork copies src, or alt ("" for none) in its place when src
+// can't be copied (src's own error when neither can).
+func copyImageWork(ctx context.Context, h Host, src, alt string, proxy bool) error {
+	if alt == "" || alt == src {
+		return copyFrom(ctx, h, src, proxy)
+	}
+	octx, cancel := context.WithTimeout(ctx, copyOriginalWait)
+	err := copyFrom(octx, h, src, proxy)
+	cancel()
+	if err == nil || ctx.Err() != nil {
+		return err
+	}
+	if aerr := copyFrom(ctx, h, alt, proxy); aerr == nil {
+		return nil
+	}
+	return err
+}
+
+// copyFetch and copyWrite are copyFrom's download and clipboard write
+// (tests swap them: no network, no clipboard).
+var (
+	copyFetch = fetchBytes
+	copyWrite = clipimg.WriteCharged
+)
+
+// copyFrom puts the image at src on the clipboard. The decode charges
+// everything it allocates to a budget from imgcache's process-wide decode
+// memory (its dead buffers given back as it goes), and the clipboard
+// conversion charges its copies (the PNG) to the same budget, held until
+// the image is on the clipboard: an untrusted emoji or image too big for it
+// returns an error here (run's callback toasts it) instead of OOM-crashing
+// (this overlay has no recover). One the decode memory is too busy for
+// right now is tried again until ctx runs out (WithBudget).
+func copyFrom(ctx context.Context, h Host, src string, proxy bool) error {
+	data, err := copyFetch(ctx, h, src, proxy)
+	if err != nil {
+		return err
+	}
+	return imgcache.WithBudget(ctx, func(b *imgcache.Budget) error {
+		img, err := imgcache.DecodeBudget(data, imgcache.MaxPixels, imgcache.MaxSide, b)
+		if err != nil {
+			return err
+		}
+		return copyWrite(ctx, img, imgcache.ChargeFunc(b))
 	})
 }
 
@@ -308,7 +362,7 @@ func NewFileMenu(h Host, at image.Point, m core.Message, f *richtext.File) *Menu
 		if src == "" && f.Thumb != nil {
 			src = f.Thumb.URL
 		}
-		cp := MenuItem{Label: "Copy image", Do: func() { CopyImage(h, src, true, nsFile.T("Image copied to clipboard")) }}.In(nsFile)
+		cp := MenuItem{Label: "Copy image", Do: func() { copyFileImage(h, f, nsFile.T("Image copied to clipboard")) }}.In(nsFile)
 		group(download)
 		if src != "" {
 			group(share, copyLink, cp, later)
@@ -407,7 +461,7 @@ func NewFileActionsMenu(h Host, btn image.Rectangle, m core.Message, f *richtext
 			src = f.Thumb.URL
 		}
 		if src != "" {
-			copyImg = MenuItem{Label: "Copy image", Do: func() { CopyImage(h, src, true, nsFile.T("Image copied to clipboard")) }}.In(nsFile)
+			copyImg = MenuItem{Label: "Copy image", Do: func() { copyFileImage(h, f, nsFile.T("Image copied to clipboard")) }}.In(nsFile)
 		}
 	}
 	group(later, open, copyLink, copyImg)

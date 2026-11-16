@@ -14,7 +14,10 @@
 // to) and its row buffers. A file whose decode would need more than its
 // budget fails, before the allocation that doesn't fit, with an error
 // wrapping budget.ErrBudget (or budget.ErrBusy when the process-wide pool is
-// full). Every changed line is marked Clack: (see ../CLACK_PATCHES.md).
+// full). A buffer the decode is done with (an Adam7 pass once merged, a
+// pass's rows, the inflater) is given back to the budget (Free) as soon as
+// nothing references it. Every changed line is marked Clack: (see
+// ../CLACK_PATCHES.md).
 package png
 
 import (
@@ -130,6 +133,7 @@ type decoder struct {
 	idatLength    uint32
 	tmp           [3 * 256]byte
 	ignored       [4096]byte // Clack: parseChunk's, once a decode (it escaped, per chunk)
+	passBytes     int64      // Clack: what the last pass's image charged
 	interlace     int
 
 	// useTransparent and transparent are used for grayscale and truecolor
@@ -389,6 +393,7 @@ func (d *decoder) decode() (image.Image, error) {
 		return nil, err
 	}
 	defer r.Close()
+	defer d.budget.Free(inflaterBytes) // Clack: garbage once the stream is read
 	var img image.Image
 	if d.interlace == itNone {
 		img, err = d.readImagePass(r, 0, false)
@@ -408,6 +413,7 @@ func (d *decoder) decode() (image.Image, error) {
 			}
 			if imagePass != nil {
 				d.mergePassInto(img, imagePass, pass)
+				d.budget.Free(d.passBytes) // Clack: merged into img, garbage now
 			}
 		}
 	}
@@ -458,7 +464,8 @@ func (d *decoder) readImagePass(r io.Reader, pass int, allocateOnly bool) (image
 		}
 	}
 	// Clack: the image the switch below makes, before it's made
-	if err := d.budget.Charge(d.pixelBytes() * int64(width) * int64(height)); err != nil {
+	d.passBytes = d.pixelBytes() * int64(width) * int64(height)
+	if err := d.budget.Charge(d.passBytes); err != nil {
 		return nil, err
 	}
 	switch d.cb {
@@ -533,6 +540,7 @@ func (d *decoder) readImagePass(r io.Reader, pass int, allocateOnly bool) (image
 	if err := d.budget.Charge(2 * rowSize); err != nil { // Clack
 		return nil, err
 	}
+	defer d.budget.Free(2 * rowSize) // Clack: garbage once the pass is read
 	cr := make([]uint8, rowSize)
 	pr := make([]uint8, rowSize)
 

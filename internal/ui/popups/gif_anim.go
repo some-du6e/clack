@@ -4,15 +4,17 @@ package popups
 //
 // imgcache decodes only the first frame, so the GIF tab keeps its own small
 // cache of animations: Giphy's 200w rendition is fetched as .gif (Go's webp
-// decoder can't do animated webp; Giphy serves the same path as .gif),
-// every frame is composed (honouring disposal), cover-cropped to a square
-// and scaled to the tile size on a worker goroutine. Tiles pick the frame
+// decoder can't do animated webp; Giphy serves the same path as .gif), its
+// first gifAnimMaxFrames frames are decoded (imgcache.DecodeGIF: the
+// vendored image/gif, every allocation charged to the decode memory, no
+// frame past them read) and composed (honouring disposal), cover-cropped to
+// a square and scaled to the tile size on a worker goroutine, the
+// composition charged to the same budget. Tiles pick the frame
 // from the clock and schedule the next redraw only while they are laid out,
 // so nothing animates (or costs anything) once the tile scrolls away or the
 // picker closes. Media is Giphy's public CDN; nothing is written to disk.
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"image"
@@ -28,6 +30,7 @@ import (
 	"gioui.org/op/paint"
 	xdraw "golang.org/x/image/draw"
 
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/slack"
 )
 
@@ -181,21 +184,22 @@ func gifAnimDecode(raw string, px int) ([]paint.ImageOp, []time.Duration, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	if cfg, err := gif.DecodeConfig(bytes.NewReader(b)); err != nil {
-		return nil, nil, err
-	} else if cfg.Width > gifAnimMaxSide || cfg.Height > gifAnimMaxSide {
-		return nil, nil, fmt.Errorf("gif: %dx%d is too large", cfg.Width, cfg.Height)
-	}
-	g, err := gif.DecodeAll(bytes.NewReader(b))
-	if err != nil {
-		return nil, nil, err
-	}
-	return gifAnimFrames(g, px)
+	var frames []paint.ImageOp
+	var ends []time.Duration
+	err = imgcache.WithBudget(ctx, func(bg *imgcache.Budget) error {
+		g, err := imgcache.DecodeGIF(b, gifAnimMaxFrames, gifAnimMaxSide, bg)
+		if err != nil {
+			return err
+		}
+		frames, ends, err = gifAnimFrames(g, px, imgcache.ChargeFunc(bg))
+		return err
+	})
+	return frames, ends, err
 }
 
 // gifAnimFrames composes g's frames (disposal aware) and scales each to a
-// px×px center crop.
-func gifAnimFrames(g *gif.GIF, px int) ([]paint.ImageOp, []time.Duration, error) {
+// px×px center crop, its canvases and frames charged to charge first.
+func gifAnimFrames(g *imgcache.GIF, px int, charge func(int64) error) ([]paint.ImageOp, []time.Duration, error) {
 	if len(g.Image) == 0 {
 		return nil, nil, fmt.Errorf("gif: no frames")
 	}
@@ -203,6 +207,9 @@ func gifAnimFrames(g *gif.GIF, px int) ([]paint.ImageOp, []time.Duration, error)
 	if w <= 0 || hgt <= 0 {
 		b := g.Image[0].Bounds()
 		w, hgt = b.Max.X, b.Max.Y
+	}
+	if err := charge(4 * int64(w) * int64(hgt)); err != nil {
+		return nil, nil, err
 	}
 	canvas := image.NewRGBA(image.Rect(0, 0, w, hgt))
 	var prev *image.RGBA
@@ -225,10 +232,18 @@ func gifAnimFrames(g *gif.GIF, px int) ([]paint.ImageOp, []time.Duration, error)
 			disp = g.Disposal[i]
 		}
 		if disp == gif.DisposalPrevious {
-			prev = image.NewRGBA(canvas.Rect)
+			if prev == nil { // one copy of the canvas, made once
+				if err := charge(int64(len(canvas.Pix))); err != nil {
+					return nil, nil, err
+				}
+				prev = image.NewRGBA(canvas.Rect)
+			}
 			copy(prev.Pix, canvas.Pix)
 		}
 		draw.Draw(canvas, fr.Bounds(), fr, fr.Bounds().Min, draw.Over)
+		if err := charge(4 * int64(px) * int64(px)); err != nil {
+			return nil, nil, err
+		}
 		out := image.NewRGBA(image.Rect(0, 0, px, px))
 		xdraw.ApproxBiLinear.Scale(out, out.Rect, canvas, crop, xdraw.Src, nil)
 		frames = append(frames, paint.NewImageOp(out))

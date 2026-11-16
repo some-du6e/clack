@@ -11,15 +11,26 @@ package imgcache
 // before its clipboard copies. Nothing reads a header first to guess.
 //
 // Every Budget draws from one process-wide pool, DecodeMemory, charge by
-// charge, with a try-acquire that never waits: what all the decodes,
-// scales, players and copies in flight hold together never passes it. A
-// charge the pool can't cover now fails the decode with ErrBusy, which
-// the cache treats as "try again shortly" (retryAfter), never as
-// undecodable; one past the decode's own limit (MaxDecode) fails with
-// ErrTooBig: the same bytes always need the same memory. A decode gives
-// back everything it charged when it, and the scale or conversion after
-// it, is done. There's no queue: no head-of-line blocking, no fairness to
-// manage, no deadlock.
+// charge: what all the decodes, scales, players and copies in flight hold
+// together never passes it. A decoder gives a buffer's charge back (Free)
+// as soon as it no longer references it (progressive coefficients once the
+// image is built, an Adam7 pass once merged, the scaler's band), and a
+// decode gives back the rest when it, and the scale or conversion after
+// it, is done: so a decode holds what's live.
+//
+// Small decodes (under smallDecode: emoji, avatars, message thumbnails)
+// never wait: a charge fits now or fails with ErrBusy, and the pool's last
+// decodeReserve bytes are theirs. A decode growing past smallDecode takes
+// the pool's one big slot first, behind the big decodes before it (a queue
+// of big decodes only), so one big decode at a time competes for the pool;
+// holding it, a charge the pool can't cover waits for memory to be given
+// back (budget.DefaultBigWait) before it fails with ErrBusy. The cache
+// tries a busy load again shortly with the bytes it fetched (busyTries
+// times; then the image has failed, the lightbox shows the file's largest
+// thumbnail, and it's tried again later), never as undecodable. A decode
+// past its own limit (MaxDecode) fails with ErrOverCap, an ErrTooBig: the
+// same bytes always need the same memory, and a file's thumbnail stands in
+// for it (the lightbox, Copy Image).
 
 import (
 	"bytes"
@@ -52,11 +63,23 @@ const (
 	smallDecode   = 8 << 20
 )
 
-// MaxDecode is the most one decode may hold: a decode needing more is
-// ErrTooBig. A 48 MP phone photo (8064×6048, baseline 4:2:0) decodes to
-// 73 MB and scales to 2048 px in about 18 MB more; Copy Image's PNG of it
-// takes about 100 MB more again.
+// MaxDecode is the most one decode may hold at once: a decode needing more
+// is ErrOverCap. What a decode holds at its peak, a pixel: a baseline JPEG
+// 1.5 bytes (4:2:0) to 3 (4:4:4); a progressive one 4.5 (4:2:0), 6 (4:2:2)
+// or 9 (4:4:4), its int16 coefficients given back once the image is built;
+// a CMYK or RGB JPEG 7 to 12; an 8-bit PNG 1 to 4 and a 16-bit one 8
+// (interlaced, half as much again for its largest pass); a GIF's canvas 4,
+// and 8 when it disposes to previous. So a 48 MP phone photo (8064×6048,
+// baseline 4:2:0) takes 73 MB and its 2048 px scale about 18 MB more, a
+// 40 MP progressive 4:2:0 JPEG 180 MB, a 26 MP progressive 4:4:4 one
+// 235 MB; Copy Image's PNG of a photo takes about 2 bytes a pixel more.
 const MaxDecode = DecodeMemory - decodeReserve
+
+// ErrOverCap is a decode that needs more memory than one decode may hold
+// (MaxDecode): an ErrTooBig, as the same bytes always need the same
+// memory. A Slack file's largest thumbnail stands in for it: the lightbox
+// shows it, Copy Image copies it.
+var ErrOverCap = fmt.Errorf("%w: it needs more decode memory than an image may have", ErrTooBig)
 
 // decodePool is the memory every Budget draws from.
 var decodePool = budget.NewPool(DecodeMemory, decodeReserve, smallDecode)
@@ -73,17 +96,24 @@ type Budget = budget.Budget
 
 // NewBudget returns a Budget of at most MaxDecode drawing from the decode
 // pool. Release it once the decode and everything done with its image is
-// over.
+// over. Past smallDecode it takes the pool's one big slot (after the big
+// decodes before it: small decodes never wait), and then waits for room
+// (budget.DefaultBigWait) when the pool can't cover a charge.
 func NewBudget() *Budget { return budget.New(decodePool, MaxDecode) }
+
+// newPlayerBudget is an animation player's Budget (anim.go): as NewBudget,
+// but it never takes the big slot or waits, as a streaming player holds its
+// memory for as long as it plays.
+func newPlayerBudget() *Budget { return budget.NewPlayer(decodePool, MaxDecode) }
 
 // WithBudget runs f with a new Budget, released when f returns. f failing
 // with ErrBusy runs again, with a new Budget, after a wait that starts at
 // busyStep and doubles to busyStepMax, until ctx is done (or for busyWait,
 // when ctx has no deadline); then the ErrBusy is returned. For one-shot
 // callers (Copy Image, the composer's and the emoji dialog's thumbnails, a
-// picked profile photo) that have no retry of their own. Nothing waits on
-// the pool itself: a decode that can't have its memory fails at once, and
-// runs again from the start.
+// picked profile photo) that have no retry of their own. f must not start
+// another Budget of its own (a second big decode would wait for the slot
+// its first holds).
 func WithBudget(ctx context.Context, f func(*Budget) error) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -126,13 +156,14 @@ func ChargeFunc(b *Budget) func(int64) error {
 }
 
 // budgetErr is err as imgcache reports it: a decode past its budget is
-// ErrTooBig (permanent: the same bytes need the same memory), a busy pool
-// stays ErrBusy (retryable), anything else is as it is.
+// ErrOverCap, an ErrTooBig (permanent: the same bytes need the same
+// memory), a busy pool stays ErrBusy (retryable), anything else is as it
+// is.
 func budgetErr(err error) error {
 	if err == nil || errors.Is(err, ErrBusy) || errors.Is(err, ErrTooBig) || !errors.Is(err, budget.ErrBudget) {
 		return err
 	}
-	return fmt.Errorf("%w: %w", ErrTooBig, err)
+	return fmt.Errorf("%w: %w", ErrOverCap, err)
 }
 
 // errUnsupported is image bytes in a format imgcache doesn't decode: not
@@ -267,4 +298,30 @@ func ScaleBudget(img image.Image, max int, b *Budget) (*image.RGBA, error) {
 // (dst is the caller's, charged by it).
 func ScaleInto(dst *image.RGBA, src image.Image, sr image.Rectangle, b *Budget) error {
 	return budgetErr(catmullrom.Scale(dst, src, sr, b))
+}
+
+// GIF is a decoded GIF's frames and timing (the vendored image/gif's).
+type GIF = gif.GIF
+
+// DecodeGIF decodes data's first maxFrames frames (every one, when it has
+// fewer) and their timing, refusing a logical screen wider or taller than
+// maxSide (ErrTooBig) before decoding, every allocation charged to b: the
+// GIF picker's animations. A GIF of more frames than that stops being read
+// past them.
+func DecodeGIF(data []byte, maxFrames, maxSide int, b *Budget) (*GIF, error) {
+	if formatOf(data) != "gif" {
+		return nil, errUnsupported
+	}
+	cfg, err := gif.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Width > maxSide || cfg.Height > maxSide {
+		return nil, fmt.Errorf("%w: a %dx%d GIF", ErrTooBig, cfg.Width, cfg.Height)
+	}
+	g, err := gif.DecodeAllN(bytes.NewReader(data), b, maxFrames)
+	if err != nil {
+		return nil, budgetErr(err)
+	}
+	return g, nil
 }

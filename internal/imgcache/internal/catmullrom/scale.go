@@ -17,7 +17,8 @@
 // (a few MB), and the buffer and the kernel's weights are charged to the
 // caller's budget.Budget before they're made. Every destination pixel is
 // still the same sum, in the same order, of the same terms. Every changed
-// line is marked Clack: (see ../CLACK_PATCHES.md).
+// line is marked Clack: (see ../CLACK_PATCHES.md). The weights and the band
+// are given back to the budget (Free) when Scale returns.
 package catmullrom
 
 import (
@@ -208,6 +209,9 @@ func Scale(dst *image.RGBA, src image.Image, sr image.Rectangle, b *budget.Budge
 		sw:     int32(sr.Dx()),
 		sh:     int32(sr.Dy()),
 	}
+	// Clack: what Scale charges is garbage once it returns: given back then
+	used := b.Used()
+	defer func() { b.Free(b.Used() - used) }()
 	var err error
 	if z.horizontal, err = newDistrib(q, z.dw, z.sw, b); err != nil {
 		return err

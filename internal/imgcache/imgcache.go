@@ -99,6 +99,10 @@ type Cache struct {
 	maxBytes int
 	inflight map[key]bool
 	failed   map[key]failure
+	// held: busy loads' bytes for their next try (holdLocked), at most
+	// heldMax of them (heldBytes)
+	held      map[key]held
+	heldBytes int
 
 	// Two fetch lanes: avatars and emoji (DiskOK URLs, a few KB each) never
 	// wait behind message images, files and unfurls, which can take the
@@ -150,15 +154,41 @@ type Cache struct {
 // ErrUndecodable) isn't tried again for finalFailureTTL while the account
 // is signed in: the same bytes would fail the same way. Slack's <img>
 // doesn't retry an onError either. A busy one (ErrBusy: other decodes held
-// the decode memory) is tried again within RetryBusyMax, and isn't a
-// failure to the surfaces asking (Failed): the image is still loading.
+// the decode memory) is tried again within RetryBusyMax, with the bytes it
+// already fetched (held), and for busyTries tries isn't a failure to the
+// surfaces asking (Failed): the image is still loading. Past them it has
+// failed (the lightbox shows the file's largest thumbnail instead) and is
+// tried again as a failure that may pass, RetryMin doubling to RetryMax,
+// still with its bytes: so under memory pressure that doesn't end, nothing
+// spins for good, and the image loads once the pressure is over.
 type failure struct {
 	at    time.Time
 	n     int
 	retry time.Time
 	final bool
-	busy  bool
+	busy  bool // busy and still loading (Failed is false)
+	busyN int  // busy failures in a row
 }
+
+// busyTries is how many busy failures in a row an image is still loading
+// for; after them it has failed (and is tried again later).
+const busyTries = 3
+
+// errBusyLong is a load busy past busyTries: tried again as an error that
+// may pass (RetryMin doubling to RetryMax), not every RetryBusyMax.
+var errBusyLong = errors.New("imgcache: decode memory busy for a while")
+
+// held is a busy load's bytes (and its disk-tier save), kept for its next
+// try so it isn't downloaded again.
+type held struct {
+	data []byte
+	save func()
+	at   time.Time
+}
+
+// heldMax bounds the bytes kept for busy loads' next tries, in all; past
+// it the oldest go (their next try downloads them again).
+const heldMax = 64 << 20
 
 // ErrUndecodable marks bytes in an image format this package reads
 // (PNG, JPEG, GIF, WebP) that don't decode: a final failure, never
@@ -250,6 +280,9 @@ type entry struct {
 	play     *player
 	starting bool
 	retry    time.Time
+	// playFails: player starts in a row that failed (a busy decode
+	// memory, a fetch): each waits longer (retryAfter)
+	playFails int
 	// seenFrom..seenAt: the stretch Get has drawn it without a gap of
 	// animGrace (a player starts once it's animSettle long)
 	seenFrom, seenAt time.Time
@@ -318,6 +351,7 @@ func (c *Cache) SetDir(dir string) {
 	c.lru.Init()
 	c.bytes = 0
 	c.failed = map[key]failure{}
+	c.held, c.heldBytes = nil, 0 // the last account's
 	c.written = 0
 	c.mu.Unlock()
 	if dir != "" {
@@ -431,6 +465,12 @@ func (c *Cache) sweep(cutoff int64) {
 			// asked about since its retry was due; one still backing off
 			// stays, or the backoff would start over
 			delete(c.failed, k)
+			c.unholdLocked(k)
+		}
+	}
+	for k := range c.held { // held for a failure that went
+		if _, ok := c.failed[k]; !ok {
+			c.unholdLocked(k)
 		}
 	}
 	if finals > maxFinalFailures { // the oldest go
@@ -746,7 +786,11 @@ func (c *Cache) nextHotLocked(lane int) (key, bool) {
 }
 
 func (c *Cache) load(k key) {
-	op, sz, n, an, px, err := c.loadImage(k)
+	c.mu.Lock()
+	h := c.held[k] // the bytes a busy try kept
+	c.unholdLocked(k)
+	c.mu.Unlock()
+	op, sz, n, an, px, h, err := c.loadFrom(k, h)
 	c.mu.Lock()
 	delete(c.inflight, k)
 	if err != nil {
@@ -754,9 +798,25 @@ func (c *Cache) load(k key) {
 		f := c.failed[k]
 		f.n++
 		f.at = now
-		f.retry = now.Add(retryAfter(f.n, err))
+		busy := errors.Is(err, ErrBusy)
+		if busy {
+			f.busyN++
+		} else {
+			f.busyN = 0
+		}
 		f.final = errors.Is(err, ErrUndecodable)
-		f.busy = errors.Is(err, ErrBusy)
+		f.busy = busy && f.busyN <= busyTries
+		switch {
+		case f.busy: // still loading: again shortly
+			f.retry = now.Add(retryAfter(f.busyN, err))
+		case busy: // busy for a while: failed, and again later
+			f.retry = now.Add(retryAfter(f.busyN-busyTries, errBusyLong))
+		default:
+			f.retry = now.Add(retryAfter(f.n, err))
+		}
+		if busy && h.data != nil {
+			c.holdLocked(k, h)
+		}
 		c.failed[k] = f
 		if !f.final {
 			c.wakeLocked(f.retry) // the surface asks again when the retry is due
@@ -780,6 +840,40 @@ func (c *Cache) load(k key) {
 	inv := c.invalidate
 	c.mu.Unlock()
 	inv()
+}
+
+// holdLocked keeps h for k's next try, letting the oldest held go first
+// past heldMax (bytes over heldMax on their own aren't kept).
+func (c *Cache) holdLocked(k key, h held) {
+	if len(h.data) > heldMax {
+		return
+	}
+	c.unholdLocked(k)
+	for c.heldBytes+len(h.data) > heldMax {
+		var old key
+		var at time.Time
+		first := true
+		for hk, hv := range c.held {
+			if first || hv.at.Before(at) {
+				old, at, first = hk, hv.at, false
+			}
+		}
+		c.unholdLocked(old)
+	}
+	if c.held == nil {
+		c.held = map[key]held{}
+	}
+	h.at = time.Now()
+	c.held[k] = h
+	c.heldBytes += len(h.data)
+}
+
+// unholdLocked lets k's held bytes go.
+func (c *Cache) unholdLocked(k key) {
+	if h, ok := c.held[k]; ok {
+		c.heldBytes -= len(h.data)
+		delete(c.held, k)
+	}
 }
 
 // evict brings the decoded bytes back under the budget: first what
@@ -972,10 +1066,29 @@ func (c *Cache) rawFor(k key) ([]byte, func(), error) {
 // given back once the display-size copy (the cache's now) is all that's
 // kept.
 func (c *Cache) loadImage(k key) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
-	data, save, err := c.rawFor(k)
-	if err != nil {
-		return paint.ImageOp{}, image.Point{}, 0, nil, nil, err
+	op, sz, n, an, px, _, err := c.loadFrom(k, held{})
+	return op, sz, n, an, px, err
+}
+
+// loadFrom is loadImage from h's bytes when a busy try kept them (else
+// fetched as loadImage fetches them), and returns the bytes it decoded
+// for a busy failure to keep.
+func (c *Cache) loadFrom(k key, h held) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, held, error) {
+	data, save := h.data, h.save
+	if data == nil {
+		var err error
+		if data, save, err = c.rawFor(k); err != nil {
+			return paint.ImageOp{}, image.Point{}, 0, nil, nil, held{}, err
+		}
 	}
+	h = held{data: data, save: save}
+	op, sz, n, an, px, err := c.decodeLoad(k, data, save)
+	return op, sz, n, an, px, h, err
+}
+
+// decodeLoad decodes data for k (loadImage), save writing it to the disk
+// tier once it has decoded.
+func (c *Cache) decodeLoad(k key, data []byte, save func()) (paint.ImageOp, image.Point, int, *gifSource, []*image.RGBA, error) {
 	b := NewBudget()
 	defer b.Release()
 	if isAnim(data) {

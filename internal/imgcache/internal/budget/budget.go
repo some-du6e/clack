@@ -5,19 +5,26 @@
 // image/gif, x/image bmp, webp and vp8l in this directory), the scaler
 // (catmullrom), the animation canvases and Copy Image's clipboard copies
 // charge a Budget before each allocation whose size the bytes decide. A
-// root Budget draws every charge from a process-wide Pool at once, with a
-// non-blocking try-acquire: nothing ever waits for memory, so there is no
-// queue, no head-of-line blocking and no deadlock. A charge the Pool can't
-// cover right now fails with ErrBusy (other decodes hold the memory: try
-// again shortly); one past the Budget's own limit fails with ErrBudget
-// (the same bytes always need the same memory: final). Release gives
+// root Budget draws every charge from a process-wide Pool at once: what
+// all the budgets hold together never passes the pool's limit. A charge
+// past the Budget's own limit fails with ErrBudget (the same bytes always
+// need the same memory); one the pool can't cover fails with ErrBusy
+// (other decodes hold the memory: try again shortly). Release gives
 // everything back once the decode, and the scale or conversion that
-// follows it, is done.
+// follows it, is done; Free gives back a buffer the decoder no longer
+// references (the garbage collector reclaims it), so a decode holds what's
+// live, not everything it ever allocated.
 //
-// Nothing is returned when a decoder frees memory mid-decode, so what a
-// decode charges is at least everything it allocates over its life, not
-// just its peak: a Pool's limit bounds what all the decodes in flight
-// allocate together.
+// Small decodes (a budget holding at most the pool's Small bytes: emoji,
+// avatars, thumbnails) never wait: a charge either fits now or fails with
+// ErrBusy, and the pool's last Reserve bytes are kept for them. A decode
+// that grows past Small takes the pool's one big slot first, waiting for
+// the big decodes before it, in order (no small decode ever waits for
+// it): so at most one big decode competes for the pool at a time, beside
+// small decodes and animation players. Holding the slot, a charge the pool
+// can't cover now waits for memory to be given back, up to the pool's
+// BigWait, before it fails with ErrBusy. Players (NewPlayer) hold their
+// memory for as long as they play, and never take the slot or wait.
 package budget
 
 import (
@@ -26,6 +33,7 @@ import (
 	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ErrBudget is a decode that needs more than its Budget's limit. The
@@ -38,27 +46,48 @@ var ErrBudget = errors.New("decode needs more memory than its budget")
 // they're done.
 var ErrBusy = errors.New("decode memory is in use by other decodes")
 
+// DefaultBigWait is how long a big decode's charge waits for memory to be
+// given back before it fails with ErrBusy.
+const DefaultBigWait = 2 * time.Second
+
 // Pool is the memory every root Budget drawing from it holds together, at
 // most Limit bytes. Its last Reserve bytes are kept for small budgets (those
-// holding at most Small bytes, emoji and avatars), so a few big decodes in
-// flight can't make every small one fail.
+// holding at most Small bytes), so the big decode in flight can't make the
+// small ones fail; a budget past Small takes the pool's big slot first.
 type Pool struct {
 	limit, reserve, small int64
 	used, peak            atomic.Int64
+
+	// big is the big slot: a decode budget holding more than small has it
+	// (one at a time; the next waits on the send, in order).
+	big     chan struct{}
+	bigWait time.Duration
+
+	// waiters for memory to be given back (the slot holder's charges):
+	// freed is closed, and replaced, when some is
+	nwait atomic.Int32
+	mu    sync.Mutex
+	freed chan struct{}
 }
 
 // NewPool returns a pool of limit bytes whose last reserve bytes only
 // budgets holding at most small bytes may take.
 func NewPool(limit, reserve, small int64) *Pool {
 	reserve = min(max(reserve, 0), limit)
-	return &Pool{limit: limit, reserve: reserve, small: small}
+	return &Pool{limit: limit, reserve: reserve, small: small, big: make(chan struct{}, 1), bigWait: DefaultBigWait}
 }
+
+// SetBigWait sets how long the big decode's charges wait for memory (tests).
+func (p *Pool) SetBigWait(d time.Duration) { p.bigWait = d }
 
 // Limit is the most the pool's budgets hold together.
 func (p *Pool) Limit() int64 { return p.limit }
 
 // MaxBudget is the most one budget can draw: the limit less the reserve.
 func (p *Pool) MaxBudget() int64 { return p.limit - p.reserve }
+
+// Small is how much a small budget holds at most.
+func (p *Pool) Small() int64 { return p.small }
 
 // Used is what the pool's budgets hold now.
 func (p *Pool) Used() int64 { return p.used.Load() }
@@ -89,7 +118,32 @@ func (p *Pool) take(n, total int64) bool {
 	}
 }
 
-func (p *Pool) give(n int64) { p.used.Add(-n) }
+// give returns n bytes, waking a charge waiting for memory.
+func (p *Pool) give(n int64) {
+	p.used.Add(-n)
+	if p.nwait.Load() > 0 {
+		p.mu.Lock()
+		if p.freed != nil {
+			close(p.freed)
+			p.freed = nil
+		}
+		p.mu.Unlock()
+	}
+}
+
+// waitFreed is a channel closed the next time memory is given back; the
+// caller calls doneWaiting after.
+func (p *Pool) waitFreed() <-chan struct{} {
+	p.nwait.Add(1)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.freed == nil {
+		p.freed = make(chan struct{})
+	}
+	return p.freed
+}
+
+func (p *Pool) doneWaiting() { p.nwait.Add(-1) }
 
 // Budget is what one decode (and the scale or conversion after it) may
 // allocate. A root budget draws from a Pool; a child (Sub) charges its
@@ -103,12 +157,21 @@ type Budget struct {
 	limit  int64
 	used   int64
 	closed bool
+	player bool // never takes the big slot or waits (holds memory while it plays)
+	slot   bool // holds the pool's big slot
 }
 
-// New returns a root budget of at most limit bytes drawing from p (and no
-// more than p.MaxBudget()).
+// New returns a decode's root budget of at most limit bytes drawing from p
+// (and no more than p.MaxBudget()). Past p.Small() it takes p's big slot.
 func New(p *Pool, limit int64) *Budget {
 	return &Budget{pool: p, limit: min(limit, p.MaxBudget())}
+}
+
+// NewPlayer returns an animation player's root budget: as New, but it
+// never takes the big slot nor waits for memory (it holds what it has for
+// as long as it plays, so it mustn't hold up the big decodes).
+func NewPlayer(p *Pool, limit int64) *Budget {
+	return &Budget{pool: p, limit: min(limit, p.MaxBudget()), player: true}
 }
 
 // NewLocal returns a budget of limit bytes that draws from no pool: a
@@ -129,34 +192,101 @@ func (b *Budget) Sub(limit int64) *Budget {
 // Charge takes n bytes, before they're allocated. It fails, taking
 // nothing, with an error wrapping ErrBudget when b (or a parent) has fewer
 // than n left of its limit, or wrapping ErrBusy when its pool can't cover
-// them now.
+// them (for the big decode: once it has waited BigWait for memory).
 func (b *Budget) Charge(n int64) error {
 	if b == nil {
 		return fmt.Errorf("%w: no budget", ErrBudget)
 	}
+	if b.parent != nil {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if err := b.checkLocked(n); err != nil {
+			return err
+		}
+		if err := b.parent.Charge(n); err != nil {
+			return err
+		}
+		b.used += n
+		return nil
+	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	if err := b.checkLocked(n); err != nil {
+		b.mu.Unlock()
+		return err
+	}
+	p := b.pool
+	if p == nil {
+		b.used += n
+		b.mu.Unlock()
+		return nil
+	}
+	if !b.player && !b.slot && b.used+n > p.small {
+		// a big decode now: after the big decodes before it
+		b.mu.Unlock()
+		p.big <- struct{}{}
+		b.mu.Lock()
+		if b.closed { // released meanwhile
+			<-p.big
+			b.mu.Unlock()
+			return fmt.Errorf("%w: released", ErrBudget)
+		}
+		b.slot = true
+	}
+	var deadline time.Time
+	for {
+		var freed <-chan struct{}
+		if b.slot {
+			freed = p.waitFreed() // before the take, so a give between them wakes it
+		}
+		if p.take(n, b.used+n) {
+			if freed != nil {
+				p.doneWaiting()
+			}
+			b.used += n
+			b.mu.Unlock()
+			return nil
+		}
+		if freed == nil { // small, or a player: never waits
+			b.mu.Unlock()
+			return fmt.Errorf("%w: %d bytes more, %d of %d held", ErrBusy, n, p.Used(), p.limit)
+		}
+		if deadline.IsZero() {
+			deadline = time.Now().Add(p.bigWait)
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			p.doneWaiting()
+			b.mu.Unlock()
+			return fmt.Errorf("%w: %d bytes more after %v, %d of %d held", ErrBusy, n, p.bigWait, p.Used(), p.limit)
+		}
+		b.mu.Unlock()
+		t := time.NewTimer(left)
+		select {
+		case <-freed:
+		case <-t.C:
+		}
+		t.Stop()
+		p.doneWaiting()
+		b.mu.Lock()
+		if err := b.checkLocked(n); err != nil {
+			b.mu.Unlock()
+			return err
+		}
+	}
+}
+
+// checkLocked is the budget's own limit check for a charge of n.
+func (b *Budget) checkLocked(n int64) error {
 	if b.closed {
 		return fmt.Errorf("%w: released", ErrBudget)
 	}
 	if n < 0 || n > b.limit-b.used {
 		return fmt.Errorf("%w: %d bytes more, %d of %d used", ErrBudget, n, b.used, b.limit)
 	}
-	switch {
-	case b.parent != nil:
-		if err := b.parent.Charge(n); err != nil {
-			return err
-		}
-	case b.pool != nil:
-		if !b.pool.take(n, b.used+n) {
-			return fmt.Errorf("%w: %d bytes more, %d of %d held", ErrBusy, n, b.pool.Used(), b.pool.limit)
-		}
-	}
-	b.used += n
 	return nil
 }
 
-// Used is how many bytes b holds: everything charged since it was made.
+// Used is how many bytes b holds.
 func (b *Budget) Used() int64 {
 	if b == nil {
 		return 0
@@ -186,9 +316,42 @@ func (b *Budget) Left() int64 {
 	return b.limit - b.used
 }
 
+// Big reports whether b holds its pool's big slot.
+func (b *Budget) Big() bool {
+	if b == nil {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.slot
+}
+
+// Free gives back n of the bytes b holds (at most what it holds): a buffer
+// the decoder made and no longer references, which the garbage collector
+// reclaims, so the next charges (b's own, or another decode's) can have
+// them. It keeps the big slot: the decode is still big.
+func (b *Budget) Free(n int64) {
+	if b == nil || n <= 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closed {
+		return
+	}
+	n = min(n, b.used)
+	b.used -= n
+	switch {
+	case b.parent != nil:
+		b.parent.uncharge(n)
+	case b.pool != nil:
+		b.pool.give(n)
+	}
+}
+
 // Release gives back everything b holds (to its parent, or its pool) and
-// closes it: a charge after it fails. Releasing twice, or a child after its
-// parent, does nothing more.
+// the big slot, and closes it: a charge after it fails. Releasing twice, or
+// a child after its parent, does nothing more.
 func (b *Budget) Release() {
 	if b == nil {
 		return
@@ -207,6 +370,10 @@ func (b *Budget) Release() {
 		b.parent.uncharge(n)
 	case b.pool != nil:
 		b.pool.give(n)
+	}
+	if b.slot {
+		b.slot = false
+		<-b.pool.big
 	}
 }
 

@@ -13,8 +13,17 @@
 // progressive coefficients and the CMYK/RGB conversions. A file whose decode
 // would need more than its budget fails, before the allocation that doesn't
 // fit, with an error wrapping budget.ErrBudget (or budget.ErrBusy when the
-// process-wide pool is full). Every changed line is marked Clack: (see
-// ../CLACK_PATCHES.md).
+// process-wide pool is full). A buffer the decode is done with (the
+// coefficients once reconstructed, the YCbCr and black planes once
+// converted, the decoder) is given back to the budget (Free) as soon as
+// nothing references it.
+//
+// Clack: the progressive coefficients are kept as int16 (block16), as
+// libjpeg keeps them (JCOEF), half of int32's memory: every valid 8-bit
+// JPEG's quantized coefficients fit (11 bits and a sign), so such a file
+// decodes exactly as with int32; only a corrupt stream's out-of-range
+// values are truncated where stdlib's wrap. Every changed line is marked
+// Clack: (see ../CLACK_PATCHES.md).
 package jpeg
 
 import (
@@ -154,10 +163,13 @@ type decoder struct {
 	eobRun              uint16 // End-of-Band run, specified in section G.1.2.2.
 
 	comp       [maxComponents]component
-	progCoeffs [maxComponents][]block // Saved state between progressive-mode scans.
-	huff       [maxTc + 1][maxTh + 1]huffman
-	quant      [maxTq + 1]block // Quantization tables, in zig-zag order.
-	tmp        [2 * blockSize]byte
+	progCoeffs [maxComponents][]block16 // Saved state between progressive-mode scans. Clack: int16
+	// Clack: what the image, black plane and coefficients charged, for
+	// giving them back once the decode is done with them
+	imgBytes, blackBytes, coeffBytes int64
+	huff                             [maxTc + 1][maxTh + 1]huffman
+	quant                            [maxTq + 1]block // Quantization tables, in zig-zag order.
+	tmp                              [2 * blockSize]byte
 }
 
 // fill fills up the d.bytes.buf buffer from the underlying io.Reader. It
@@ -663,15 +675,24 @@ func (d *decoder) decode(r io.Reader, configOnly bool) (image.Image, error) {
 		if err := d.reconstructProgressiveImage(); err != nil {
 			return nil, err
 		}
+		d.freeCoeffs() // Clack: the image holds it all now
 	}
 	if d.img1 != nil {
 		return d.img1, nil
 	}
 	if d.img3 != nil {
 		if d.blackPix != nil {
-			return d.applyBlack()
+			m, err := d.applyBlack()
+			if err == nil {
+				d.freePlanes() // Clack: converted
+			}
+			return m, err
 		} else if d.isRGB() {
-			return d.convertToRGB()
+			m, err := d.convertToRGB()
+			if err == nil {
+				d.freePlanes() // Clack: converted
+			}
+			return m, err
 		}
 		return d.img3, nil
 	}
@@ -799,7 +820,12 @@ func Decode(r io.Reader, b *budget.Budget) (image.Image, error) {
 		return nil, err
 	}
 	d := &decoder{budget: b}
-	return d.decode(r, false)
+	m, err := d.decode(r, false)
+	if err == nil {
+		d.freeCoeffs()       // Clack: dead past the decode (a baseline file has none)
+		b.Free(decoderBytes) // Clack: the decoder is garbage once this returns
+	}
+	return m, err
 }
 
 // DecodeConfig returns the color model and dimensions of a JPEG image without

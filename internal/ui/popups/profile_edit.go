@@ -82,7 +82,6 @@ import (
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/widget"
-	xdraw "golang.org/x/image/draw"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
@@ -1087,19 +1086,20 @@ func (u *epUpload) start() {
 	}
 	f := u.file
 	type res struct {
-		up  core.PhotoUpload
-		img image.Image
+		up   core.PhotoUpload
+		disp *image.RGBA
+		size image.Point
 	}
 	run(u.e.h, func(ctx context.Context) (res, error) {
 		up, err := a.PreparePhoto(ctx, f.Name, f.Data)
 		if err != nil {
 			return res{}, err
 		}
-		img, err := imgcache.Decode(f.Data) // size- and lossless-gated
+		disp, size, err := cropImage(ctx, f.Data)
 		if err != nil {
 			return res{}, core.ErrPhotoAPI
 		}
-		return res{up, img}, nil
+		return res{up, disp, size}, nil
 	}, func(r res, err error) {
 		if u.e.upl != u {
 			return // a different image was picked since
@@ -1110,7 +1110,7 @@ func (u *epUpload) start() {
 			return
 		}
 		u.status = "success"
-		u.e.crop = newEPCrop(u.e, r.up, r.img)
+		u.e.crop = newEPCrop(u.e, r.up, r.disp, r.size)
 		u.e.switchPane("cropPane")
 	})
 }
@@ -1300,23 +1300,55 @@ type cropBox struct {
 	fs      float64
 }
 
-// newCropBox fits img into 460px with BaseImageCrop's first square
+// cropDisplay is the size an image of size fits at in the crop pane
+// (BaseImageCrop's fit into 460 px), in display px and in whole pixels.
+func cropDisplay(size image.Point) (dw, dh float64, px image.Point) {
+	dw, dh = core.PhotoDisplaySize(float64(size.X), float64(size.Y), core.PhotoCropMaxSize)
+	return dw, dh, image.Pt(max(1, int(math.Round(dw))), max(1, int(math.Round(dh))))
+}
+
+// cropImage decodes a picked image and scales it to the crop pane's
+// display size, both under one budget from imgcache's decode memory (the
+// pixels x/image's CatmullRom.Scale draws, a band at a time): the scaled
+// copy the pane shows and the image's size. The full-size image isn't kept.
+func cropImage(ctx context.Context, data []byte) (*image.RGBA, image.Point, error) {
+	var disp *image.RGBA
+	var size image.Point
+	err := imgcache.WithBudget(ctx, func(b *imgcache.Budget) error {
+		img, err := imgcache.DecodeBudget(data, imgcache.MaxPixels, imgcache.MaxSide, b)
+		if err != nil {
+			return err
+		}
+		bd := img.Bounds()
+		size = bd.Size()
+		_, _, px := cropDisplay(size)
+		if err := imgcache.ChargeFunc(b)(4 * int64(px.X) * int64(px.Y)); err != nil {
+			return err
+		}
+		disp = image.NewRGBA(image.Rectangle{Max: px})
+		return imgcache.ScaleInto(disp, img, bd, b)
+	})
+	if err != nil {
+		return nil, image.Point{}, err
+	}
+	return disp, size, nil
+}
+
+// newCropBox is the crop pane for an image of size, shown as disp (fitted
+// into 460px: cropImage), with BaseImageCrop's first square
 // (defaultCropScale 1, at least minSize, centred).
-func newCropBox(h Host, img image.Image, minSize float64) cropBox {
+func newCropBox(h Host, disp *image.RGBA, size image.Point, minSize float64) cropBox {
 	c := cropBox{h: h, min: minSize}
-	b := img.Bounds()
-	c.dw, c.dh = core.PhotoDisplaySize(float64(b.Dx()), float64(b.Dy()), core.PhotoCropMaxSize)
-	dst := image.NewRGBA(image.Rect(0, 0, max(1, int(math.Round(c.dw))), max(1, int(math.Round(c.dh)))))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Src, nil)
-	c.img = paint.NewImageOp(dst)
+	c.dw, c.dh, _ = cropDisplay(size)
+	c.img = paint.NewImageOp(disp)
 	e, t := math.Min(c.dh, core.PhotoCropMaxSize), math.Min(c.dw, core.PhotoCropMaxSize)
 	c.s = math.Max(minSize, math.Min(e, t))
 	c.x, c.y = math.Max(0, (t-c.s)/2), math.Max(0, (e-c.s)/2)
 	return c
 }
 
-func newEPCrop(e *EditProfileModal, up core.PhotoUpload, img image.Image) *epCrop {
-	c := &epCrop{e: e, up: up, cropBox: newCropBox(e.h, img, core.PhotoCropMinSize)}
+func newEPCrop(e *EditProfileModal, up core.PhotoUpload, disp *image.RGBA, size image.Point) *epCrop {
+	c := &epCrop{e: e, up: up, cropBox: newCropBox(e.h, disp, size, core.PhotoCropMinSize)}
 	cancel := &ModalButton{Label: nsEditProfile.T("Cancel"), Kind: BtnOutline, Do: func() bool { e.switchPane("formPane"); return false }}
 	save := &ModalButton{Label: nsEditProfile.T("Save"), Kind: BtnPrimary, Enabled: func() bool { return !c.saving }, Do: func() bool { c.Save(); return false }}
 	c.m = NewModal(e.h, ModalOpts{TitleFunc: func() string { return cropTitle(e.h) }, HeadH: 65, Body: c.layout,

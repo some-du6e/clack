@@ -13,8 +13,11 @@
 // its LZW reader and its de-interlaced copy, and what DecodeAll keeps per
 // frame. A file whose decode would need more than its budget fails, before
 // the allocation that doesn't fit, with an error wrapping budget.ErrBudget
-// (or budget.ErrBusy when the process-wide pool is full). Every changed line
-// is marked Clack: (see ../CLACK_PATCHES.md).
+// (or budget.ErrBusy when the process-wide pool is full). A buffer the
+// decode is done with (a frame's LZW reader, its pixels before
+// de-interlacing) is given back to the budget (Free). DecodeAllN keeps at
+// most n frames, reading no further. Every changed line is marked Clack:
+// (see ../CLACK_PATCHES.md).
 package gif
 
 import (
@@ -93,8 +96,9 @@ func readByte(r io.ByteReader) (byte, error) {
 
 // decoder is the type used to decode a GIF file.
 type decoder struct {
-	r      reader
-	budget *budget.Budget // Clack: what every allocation charges first
+	r         reader
+	budget    *budget.Budget // Clack: what every allocation charges first
+	maxFrames int            // Clack: DecodeAllN's n (0: every frame)
 
 	// From header.
 	vers            string
@@ -268,6 +272,9 @@ func (d *decoder) decode(r io.Reader, configOnly, keepAllFrames bool) error {
 
 			if !keepAllFrames && len(d.image) == 1 {
 				return nil
+			}
+			if keepAllFrames && d.maxFrames > 0 && len(d.image) == d.maxFrames {
+				return nil // Clack: DecodeAllN has its frames
 			}
 
 		case sTrailer:
@@ -452,6 +459,7 @@ func (d *decoder) readImageDescriptor(keepAllFrames bool) error {
 	br := &blockReader{d: d}
 	lzwr := lzw.NewReader(br, lzw.LSB, int(litWidth))
 	defer lzwr.Close()
+	defer d.budget.Free(lzwBytes) // Clack: garbage once the frame is read
 	if err = readFull(lzwr, m.Pix); err != nil {
 		if err != io.ErrUnexpectedEOF {
 			return fmt.Errorf("gif: reading image data: %v", err)
@@ -495,10 +503,12 @@ func (d *decoder) readImageDescriptor(keepAllFrames bool) error {
 
 	// Undo the interlacing if necessary.
 	if d.imageFields&fInterlace != 0 {
-		if err := d.budget.Charge(int64(m.Rect.Dx()) * int64(m.Rect.Dy())); err != nil { // Clack: the copy
+		n := int64(m.Rect.Dx()) * int64(m.Rect.Dy())
+		if err := d.budget.Charge(n); err != nil { // Clack: the copy
 			return err
 		}
 		uninterlace(m)
+		d.budget.Free(n) // Clack: the pixels it replaced are garbage
 	}
 
 	if keepAllFrames || len(d.image) == 0 {
@@ -647,11 +657,18 @@ type GIF struct {
 // and timing information.
 //
 // Clack: every allocation is charged to b first (see the package doc).
-func DecodeAll(r io.Reader, b *budget.Budget) (*GIF, error) {
+func DecodeAll(r io.Reader, b *budget.Budget) (*GIF, error) { return DecodeAllN(r, b, 0) }
+
+// DecodeAllN is DecodeAll keeping at most n frames (n ≤ 0: all of them): it
+// stops reading after the n-th, so a GIF of many more frames than a caller
+// shows decodes, and charges, only those it shows.
+//
+// Clack: new.
+func DecodeAllN(r io.Reader, b *budget.Budget, n int) (*GIF, error) {
 	if err := b.Charge(decoderBytes); err != nil { // Clack: the decoder and the GIF
 		return nil, err
 	}
-	d := &decoder{budget: b}
+	d := &decoder{budget: b, maxFrames: max(n, 0)}
 	if err := d.decode(r, false, true); err != nil {
 		return nil, err
 	}

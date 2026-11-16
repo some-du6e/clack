@@ -61,13 +61,18 @@ import (
 // file from a file manager onto the window can't be supported yet.
 
 const (
-	attMaxFileSize  = 1 << 30  // Slack's per-file upload limit (1 GB)
-	attMaxTotalSize = 1 << 30  // what one message may hold in memory
-	attMaxFiles     = 10       // Slack attaches at most 10 files to a message
-	attMaxPixels    = 80 << 20 // don't decode thumbnails of images above 80 MP
-	attChipH        = 62       // dp, chip height (and image thumbnail side)
-	attCardW        = 240      // dp, file card width
-	attRadius       = 12       // dp, chip corner radius
+	attMaxFileSize  = 1 << 30 // Slack's per-file upload limit (1 GB)
+	attMaxTotalSize = 1 << 30 // what one message may hold in memory
+	attMaxFiles     = 10      // Slack attaches at most 10 files to a message
+	// attMaxPixels: a thumbnail isn't decoded for an image claiming more
+	// than 80 MP. Under it the decode is still bounded by imgcache's
+	// decode memory (MaxDecode): a thumbnail that doesn't fit (an RGBA PNG
+	// past ~58 MP, a big progressive JPEG) degrades to the file chip, as an
+	// undecodable one does (makeThumb); the upload itself is unchanged.
+	attMaxPixels = 80 << 20
+	attChipH     = 62  // dp, chip height (and image thumbnail side)
+	attCardW     = 240 // dp, file card width
+	attRadius    = 12  // dp, chip corner radius
 )
 
 var (

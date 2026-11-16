@@ -15,7 +15,8 @@ import (
 func (d *decoder) makeImg(mxx, myy int) error {
 	if d.nComp == 1 {
 		r := image.Rect(0, 0, 8*mxx, 8*myy)
-		if err := d.charge(int64(r.Dx()) * int64(r.Dy())); err != nil { // Clack
+		d.imgBytes = int64(r.Dx()) * int64(r.Dy())
+		if err := d.charge(d.imgBytes); err != nil { // Clack
 			return err
 		}
 		m := image.NewGray(r)
@@ -45,7 +46,8 @@ func (d *decoder) makeImg(mxx, myy int) error {
 		panic("unreachable")
 	}
 	r := image.Rect(0, 0, 8*h0*mxx, 8*v0*myy)
-	if err := d.charge(ycbcrBytes(r, subsampleRatio)); err != nil { // Clack
+	d.imgBytes = ycbcrBytes(r, subsampleRatio)
+	if err := d.charge(d.imgBytes); err != nil { // Clack
 		return err
 	}
 	m := image.NewYCbCr(r, subsampleRatio)
@@ -53,7 +55,8 @@ func (d *decoder) makeImg(mxx, myy int) error {
 
 	if d.nComp == 4 {
 		h3, v3 := d.comp[3].h, d.comp[3].v
-		if err := d.charge(int64(8*h3*mxx) * int64(8*v3*myy)); err != nil { // Clack
+		d.blackBytes = int64(8*h3*mxx) * int64(8*v3*myy)
+		if err := d.charge(d.blackBytes); err != nil { // Clack
 			return err
 		}
 		d.blackPix = make([]byte, 8*h3*mxx*8*v3*myy)
@@ -171,10 +174,11 @@ func (d *decoder) processSOS(n int) error {
 			compIndex := scan[i].compIndex
 			if d.progCoeffs[compIndex] == nil {
 				n := mxx * myy * d.comp[compIndex].h * d.comp[compIndex].v
-				if err := d.charge(int64(n) * blockBytes); err != nil { // Clack
+				if err := d.charge(int64(n) * block16Bytes); err != nil { // Clack
 					return err
 				}
-				d.progCoeffs[compIndex] = make([]block, n)
+				d.coeffBytes += int64(n) * block16Bytes
+				d.progCoeffs[compIndex] = make([]block16, n) // Clack: int16
 			}
 		}
 	}
@@ -237,7 +241,7 @@ func (d *decoder) processSOS(n int) error {
 
 					// Load the previous partially decoded coefficients, if applicable.
 					if d.progressive {
-						b = d.progCoeffs[compIndex][by*mxx*hi+bx]
+						b = d.progCoeffs[compIndex][by*mxx*hi+bx].widen() // Clack: int16
 					} else {
 						b = block{}
 					}
@@ -309,7 +313,7 @@ func (d *decoder) processSOS(n int) error {
 
 					if d.progressive {
 						// Save the coefficients.
-						d.progCoeffs[compIndex][by*mxx*hi+bx] = b
+						d.progCoeffs[compIndex][by*mxx*hi+bx] = b.narrow() // Clack: int16
 						// At this point, we could call reconstructBlock to dequantize and perform the
 						// inverse DCT, to save early stages of a progressive image to the *image.YCbCr
 						// buffers (the whole point of progressive encoding), but in Go, the jpeg.Decode
@@ -473,7 +477,8 @@ func (d *decoder) reconstructProgressiveImage() error {
 		stride := mxx * d.comp[i].h
 		for by := 0; by*v < d.height; by++ {
 			for bx := 0; bx*h < d.width; bx++ {
-				if err := d.reconstructBlock(&d.progCoeffs[i][by*stride+bx], bx, by, i); err != nil {
+				b := d.progCoeffs[i][by*stride+bx].widen() // Clack: int16
+				if err := d.reconstructBlock(&b, bx, by, i); err != nil {
 					return err
 				}
 			}

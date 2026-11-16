@@ -580,21 +580,34 @@ func lbGradient(gtx layout.Context, r image.Rectangle, top bool) {
 	paint.PaintOp{}.Add(gtx.Ops)
 }
 
+// lbShown is what the viewer shows for it: the original (displayURL) once
+// it's decoded, and the file's largest Slack thumbnail (it.img) while it
+// loads — or in its place for good, when the original can't be shown (it
+// needs more decode memory than an image may have, or doesn't decode): so
+// that's no error. ok is false while neither is ready, msg then the
+// placeholder's text ("This image couldn't be loaded" only once neither
+// can be).
+func lbShown(imgs *imgcache.Cache, it lbItem) (paint.ImageOp, bool, string) {
+	u := it.displayURL()
+	img, ok := imgs.Get(u, 0)
+	if !ok && u != it.img.URL {
+		img, ok = imgs.Get(it.img.URL, 0) // the thumb while the original loads, or in its place
+	}
+	if ok {
+		return img, true, ""
+	}
+	if imgs.Failed(u, 0) && (u == it.img.URL || imgs.Failed(it.img.URL, 0)) {
+		return paint.ImageOp{}, false, "This image couldn't be loaded"
+	}
+	return paint.ImageOp{}, false, "Loading…"
+}
+
 // drawImage fits the current image into area (contain, at most natural
 // size at zoom 1), applies zoom/rotation/pan and registers the drag area.
 func (lb *Lightbox) drawImage(gtx layout.Context, th *theme.Theme, panel, area image.Rectangle) {
 	it := lb.cur()
-	imgs := lb.h.Images()
-	u := it.displayURL()
-	img, ok := imgs.Get(u, 0)
-	if !ok && u != it.img.URL {
-		img, ok = imgs.Get(it.img.URL, 0) // the thumb while the original loads
-	}
+	img, ok, msg := lbShown(lb.h.Images(), it)
 	if !ok {
-		msg := "Loading…"
-		if imgs.Failed(u, 0) && (u == it.img.URL || imgs.Failed(it.img.URL, 0)) {
-			msg = "This image couldn't be loaded"
-		}
 		tw := textW(gtx, th, 15, theme.Regular, msg)
 		at(gtx, image.Pt(area.Min.X+(area.Dx()-tw)/2, area.Min.Y+area.Dy()/2-dp(gtx, 11)), func(gtx layout.Context) layout.Dimensions {
 			return text(gtx, th, 15, theme.Regular, rgba(0xffffff, .8), msg)
