@@ -1555,4 +1555,9 @@ wake an animating window draws nothing, the computer's wake included, and
 its frames come back with the wake; a click while the screens are asleep
 brings them back too, and a late ScreensDidWake logs nothing more). Before
 the fix the occlusion test drew 90 frames while covered and the sleep test
-found no log line (flake-check run 43821390827). Not in `UPSTREAM.patch`.
+found no log line (flake-check run 43821390827), and the no-drawable test
+found the main thread running nothing for over 2.5 s, no frame skipped or
+tried again (run 43823092739). With it each passed 3 runs of 3 (run
+43823305380): the main thread's longest wait 0.9 s, 4 frames skipped in
+4 s, frames back about 75 ms after the window was visible or the screens
+woke. Not in `UPSTREAM.patch`.
