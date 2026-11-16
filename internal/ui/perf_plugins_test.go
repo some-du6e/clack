@@ -361,6 +361,7 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	trees0, calls0 := e.delivered(), e.calls.snapshot()
 	if perfProfPrefix != "" {
 		writeProf := func(suffix string) {
+			runtime.GC() // the allocs profile is as of the last collection
 			if f, err := os.Create(perfProfPrefix + "-" + name + suffix); err == nil {
 				_ = pprof.Lookup("allocs").WriteTo(f, 0)
 				f.Close()
