@@ -1140,7 +1140,7 @@ jobs:
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
       - name: "core: the DM badges' rules, the DMs tab's rows, COUNT runs"
-        run: go test -count=$COUNT -v -run '^(TestDMBadgeSkips|TestDMsBadgeRule|TestSnapshotDMBadgeSkips|TestDMsTabFilters|TestHomeBadgeRule|TestBadgeReadersAskForUnreadIMMembers|TestCountsAnswerAsksForUnreadIMMember|TestMembersPassKeepsBadgePeople|TestClassicActivityBadgeLikeSlack|TestClassicAppBadgeLikeSlack|TestClassicBadgesUpdatesLikeSlack|TestBotDMIsDUy0G|TestMembersPassThenSnapshotAsksNoClosedDMs|TestBootAsksOpenDMPartnersOnly|TestExperimentReadsListed)$' ./internal/core
+        run: go test -count=$COUNT -v -run '^(TestDMBadgeSkips|TestDMsBadgeRule|TestSnapshotDMBadgeSkips|TestDMsTabFilters|TestHomeBadgeRule|TestBadgeReadersAskForUnreadIMMembers|TestCountsAnswerAsksForUnreadIMMember|TestMarkedUnreadAsksForIMMember|TestMembersPassKeepsBadgePeople|TestClassicActivityBadgeLikeSlack|TestClassicAppBadgeLikeSlack|TestClassicBadgesUpdatesLikeSlack|TestBotDMIsDUy0G|TestMembersPassThenSnapshotAsksNoClosedDMs|TestBootAsksOpenDMPartnersOnly|TestExperimentReadsListed)$' ./internal/core
       - name: "ui: the DM badges, the DMs page, the classic Activity and app badges over fakeslack's DMs, COUNT runs"
         if: ${{ !cancelled() }}
         run: go test -count=$COUNT -v -timeout 30m -run '^(TestDMsBadgeLikeSlack|TestDMBadgesClassicLikeSlack|TestDMBadgeMemberLoadsLate|TestTitleDockTaskbarAgreeLikeSlack|TestActivityRailBadgeLikeSlack)$' ./internal/ui

@@ -290,10 +290,12 @@ func TestDMBadgesClassicLikeSlack(t *testing.T) {
 // An app's DM nothing lists (closed and read) gets its member asked for
 // once it's unread, the way Slack's badge selectors fetch it (DUy0 G, 6Z4k
 // Sm getMemberById). Here another client marks it unread: no new message,
-// so it doesn't reopen and the sidebar builds nothing, and only a
-// client.counts answer tells of it. While users/info is out the badges
-// count it as a person's DM, as Slack's do with the unknown member's stub;
-// once it loads, it badges nothing.
+// so it doesn't reopen, and only a client.counts answer tells of it. While
+// users/info is out the badges count it as a person's DM, as Slack's do
+// with the unknown member's stub; once it loads, it badges nothing. (The
+// sidebar's next build lists a closed DM with unreads and asks for its
+// member as well, so this passes without the badges' own lookups too: the
+// core tests in dm_badge_members_test.go are the ones that need them.)
 func TestDMBadgeMemberLoadsLate(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
