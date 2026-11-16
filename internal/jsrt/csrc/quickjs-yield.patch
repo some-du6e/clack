@@ -1,0 +1,214 @@
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -1678,6 +1678,52 @@
+     return js_dup(v);
+ }
+ 
++/* clack: Go can't preempt wasm code (wazero's compiled code has no safe
++   points), so a Go stop-the-world (each Go GC cycle, ReadMemStats,
++   runtime.Stack) waits until this thread next calls the host, with every
++   goroutine paused, the UI's too. Bytecode calls the interrupt handler
++   every JS_INTERRUPT_COUNTER_INIT steps, but QuickJS's own C loops (the
++   cycle collector, JSON, allocation-heavy builtins, joins, sorts) call
++   nothing. They call js_yield_tick, and every clack_yield_every ticks
++   clack_yield (glue.c) makes a host call that does nothing but give Go
++   its chance. A tick is about one object visited or one allocation (well
++   under a microsecond), so 10000 ticks is a millisecond or so. */
++void clack_yield(void);
++void clack_gc(int phase, uint32_t objects, size_t heap);
++static int clack_yield_every = 10000;
++static int clack_yield_left = 10000;
++static uint32_t clack_gc_objects;
++
++static no_inline void js_yield_slow(void)
++{
++    clack_yield_left = clack_yield_every;
++    clack_yield();
++}
++
++static inline void js_yield_tick(void)
++{
++    if (unlikely(--clack_yield_left <= 0))
++        js_yield_slow();
++}
++
++/* clack: ticks between yields; n <= 0 turns them off (to measure them) */
++void JS_ClackSetYield(int n)
++{
++    clack_yield_every = n > 0 ? n : INT32_MAX;
++    clack_yield_left = clack_yield_every;
++}
++
++/* clack: O(1) heap figures (JS_ComputeMemoryUsage walks the whole heap) */
++size_t JS_ClackMallocSize(JSRuntime *rt)
++{
++    return rt->malloc_state.malloc_size;
++}
++
++size_t JS_ClackMallocCount(JSRuntime *rt)
++{
++    return rt->malloc_state.malloc_count;
++}
++
+ static void js_trigger_gc(JSRuntime *rt, size_t size)
+ {
+     bool force_gc;
+@@ -1989,6 +2035,7 @@
+         if (unlikely(count != (count * size) / size))
+             return NULL;
+ 
++    js_yield_tick(); /* clack: see clack_yield */
+     s = &rt->malloc_state;
+     /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
+     if (unlikely(s->malloc_size + (count * size) > s->malloc_limit - 1))
+@@ -2012,6 +2059,7 @@
+     if (unlikely(size == 0))
+         return NULL;
+ 
++    js_yield_tick(); /* clack: see clack_yield */
+     s = &rt->malloc_state;
+     /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
+     if (unlikely(s->malloc_size + size > s->malloc_limit - 1))
+@@ -2033,6 +2081,7 @@
+     if (!ptr)
+         return;
+ 
++    js_yield_tick(); /* clack: see clack_yield */
+     s = &rt->malloc_state;
+     size_t free_size = js_arena_usable_size(rt, ptr) + MALLOC_OVERHEAD;
+     if (unlikely(free_size > s->malloc_size)) {
+@@ -2058,6 +2107,7 @@
+         js_free_rt(rt, ptr);
+         return NULL;
+     }
++    js_yield_tick(); /* clack: see clack_yield */
+     old_size = js_arena_usable_size(rt, ptr);
+     s = &rt->malloc_state;
+     /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
+@@ -6918,6 +6968,7 @@
+     uint32_t i;
+ 
+     for(i = 0; i < p->u.array.count; i++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         JS_MarkValue(rt, p->u.array.u.values[i], mark_func);
+     }
+ }
+@@ -7123,6 +7174,7 @@
+         p = list_entry(el, JSGCObjectHeader, link);
+         assert(JS_REF_COUNT(p) == 0);
+         free_gc_object(rt, p);
++        js_yield_tick(); /* clack: see clack_yield */
+     }
+     rt->gc_phase = JS_GC_PHASE_NONE;
+ }
+@@ -7270,6 +7322,7 @@
+             prs = get_shape_prop(sh);
+             for(i = 0; i < sh->prop_count; i++) {
+                 JSProperty *pr = &p->prop[i];
++                js_yield_tick(); /* clack: see clack_yield */
+                 if (prs->atom != JS_ATOM_NULL) {
+                     if (prs->flags & JS_PROP_TMASK) {
+                         if ((prs->flags & JS_PROP_TMASK) == JS_PROP_GETSET) {
+@@ -7383,6 +7436,8 @@
+        objects and move the GC objects with zero refcount to
+        tmp_obj_list */
+     list_for_each_safe(el, el1, &rt->gc_obj_list) {
++        js_yield_tick(); /* clack: see clack_yield */
++        clack_gc_objects++;
+         p = list_entry(el, JSGCObjectHeader, link);
+         assert(JS_GC_MARK(p) == 0);
+         mark_children(rt, p, gc_decref_child);
+@@ -7418,6 +7473,7 @@
+ 
+     /* keep the objects with a refcount > 0 and their children. */
+     list_for_each(el, &rt->gc_obj_list) {
++        js_yield_tick(); /* clack: see clack_yield */
+         p = list_entry(el, JSGCObjectHeader, link);
+         assert(JS_REF_COUNT(p) > 0);
+         JS_GC_MARK(p) = 0; /* reset the mark for the next GC call */
+@@ -7426,6 +7482,7 @@
+ 
+     /* restore the refcount of the objects to be deleted. */
+     list_for_each(el, &rt->tmp_obj_list) {
++        js_yield_tick(); /* clack: see clack_yield */
+         p = list_entry(el, JSGCObjectHeader, link);
+         mark_children(rt, p, gc_scan_incref_child2);
+     }
+@@ -7445,6 +7502,7 @@
+         el = rt->tmp_obj_list.next;
+         if (el == &rt->tmp_obj_list)
+             break;
++        js_yield_tick(); /* clack: see clack_yield */
+         p = list_entry(el, JSGCObjectHeader, link);
+         /* Only need to free the GC object associated with JS
+            values. The rest will be automatically removed because they
+@@ -7484,6 +7542,10 @@
+ 
+ void JS_RunGC(JSRuntime *rt)
+ {
++    /* clack: the host times each collection (a slow one is logged) */
++    clack_gc_objects = 0;
++    clack_gc(0, 0, rt->malloc_state.malloc_size);
++
+     /* decrement the reference of the children of each object. mark =
+        1 after this pass. */
+     gc_decref(rt);
+@@ -7493,6 +7555,8 @@
+ 
+     /* free the GC objects in a cycle */
+     gc_free_cycles(rt);
++
++    clack_gc(1, clack_gc_objects, rt->malloc_state.malloc_size);
+ }
+ 
+ /* Return false if not an object or if the object has already been
+@@ -14732,6 +14796,8 @@
+     if (string_buffer_putc8(b, '\"'))
+         goto fail;
+     for(i = 0; i < p->len; ) {
++        if ((i & 63) == 0)
++            js_yield_tick(); /* clack: see clack_yield */
+         c = string_getc(p, &i);
+         switch(c) {
+         case '\t':
+@@ -44162,6 +44228,7 @@
+     string_buffer_init(ctx, b, 0);
+ 
+     for(i = 0; i < n; i++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         if (i > 0) {
+             if (c >= 0) {
+                 string_buffer_putc8(b, c);
+@@ -44782,6 +44849,7 @@
+     if (psc->exception)
+         return 0;
+ 
++    js_yield_tick(); /* clack: see clack_yield */
+     if (psc->has_method) {
+         argv[0] = ap->val;
+         argv[1] = bp->val;
+@@ -51111,6 +51179,8 @@
+     JSValue val = JS_NULL;
+     int ret;
+ 
++    js_yield_tick(); /* clack: see clack_yield */
++
+     if (js_check_stack_overflow(ctx->rt, 0)) {
+         return JS_ThrowStackOverflow(ctx);
+     }
+@@ -51626,6 +51696,7 @@
+     tab = JS_UNDEFINED;
+     prop = JS_UNDEFINED;
+ 
++    js_yield_tick(); /* clack: see clack_yield */
+     if (js_check_stack_overflow(ctx->rt, 0)) {
+         JS_ThrowStackOverflow(ctx);
+         goto exception;
+@@ -53979,6 +54050,7 @@
+     if (s) {
+         assert(!s->is_weak);
+         list_for_each(el, &s->records) {
++            js_yield_tick(); /* clack: see clack_yield */
+             mr = list_entry(el, JSMapRecord, link);
+             JS_MarkValue(rt, mr->key, mark_func);
+             JS_MarkValue(rt, mr->value, mark_func);

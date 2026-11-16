@@ -33,10 +33,20 @@ type Runtime struct {
 	globalMu sync.RWMutex
 	global   map[string]int // window/document listener counts by event type
 
-	goid     atomic.Int64 // JS thread goroutine id
-	deadline atomic.Int64 // unix nanos; the running task is interrupted after it (0 = none)
+	goid      atomic.Int64 // JS thread goroutine id
+	deadline  atomic.Int64 // monoNow; the running task is interrupted after it (0 = none)
+	taskStart atomic.Int64 // monoNow the running task began (0 = idle)
 
 	interrupts atomic.Uint64 // watchdog interrupts (Interrupts)
+
+	// For freeze reports (Snapshots), written on the JS thread.
+	lastExit  atomic.Int64  // monoNow the JS thread last polled its interrupt or yielded
+	yields    atomic.Uint64 // host_yield calls (csrc/quickjs-yield.patch)
+	gcStart   atomic.Int64  // monoNow QuickJS's running collection began (0 = none)
+	gcLast    atomic.Int64  // the last collection's length (ns)
+	gcObjects atomic.Uint32 // objects the last collection scanned
+	gcs       atomic.Uint64 // collections so far
+	heap      atomic.Uint64 // JS heap bytes << 32 | live allocations (jr_heap)
 
 	// JS-thread-only state below.
 	eng        *engine
@@ -58,6 +68,11 @@ type Runtime struct {
 	builtins map[string]string
 	bootTime time.Duration
 	phases   []Phase
+
+	gcDepth   int    // nesting of QuickJS collections (gcEvent)
+	slowGCs   int    // slow collections not logged yet
+	slowGCMsg string // the latest one, logged after the task
+	slowGCLog int64  // monoNow of the last slow-collection line
 
 	initErr error
 	ready   chan struct{}
@@ -90,6 +105,7 @@ func New(opts Options) (*Runtime, error) {
 		start:   time.Now(),
 		ready:   make(chan struct{}),
 	}
+	live.Store(r, struct{}{})
 	go r.loop()
 	<-r.ready
 	if r.initErr != nil {
@@ -107,7 +123,7 @@ func (r *Runtime) Close() {
 		return
 	}
 	r.cancel()
-	r.deadline.Store(time.Now().UnixNano()) // interrupt whatever runs now
+	r.deadline.Store(monoNow()) // interrupt whatever runs now
 	r.signal()
 }
 
@@ -248,11 +264,15 @@ func (r *Runtime) loop() {
 func (r *Runtime) runTask(f func()) {
 	defer func() {
 		r.deadline.Store(0)
+		r.taskStart.Store(0)
 		if p := recover(); p != nil {
 			r.afterPanic(p)
 		}
+		r.logSlowGC()
 	}()
-	r.deadline.Store(time.Now().Add(r.opts.Timeout).UnixNano())
+	start := monoNow()
+	r.taskStart.Store(start)
+	r.deadline.Store(start + int64(r.opts.Timeout))
 	f()
 	r.checkpoint()
 }
@@ -279,6 +299,9 @@ func (r *Runtime) checkpoint() {
 	r.eng.runJobs(r.js)
 	r.flushRender()
 	r.eng.gcFloor()
+	if r.eng != nil && r.eng.fns["jr_heap"] != nil && r.eng.mod != nil {
+		r.heap.Store(r.eng.call("jr_heap"))
+	}
 }
 
 // watchdog backs up the interrupt handler. QuickJS polls it in JS code,
@@ -302,7 +325,7 @@ func (r *Runtime) watchdog() {
 			return
 		case <-tick.C:
 		}
-		if d := r.deadline.Load(); d != 0 && time.Now().UnixNano() > d+int64(grace) {
+		if d := r.deadline.Load(); d != 0 && monoNow() > d+int64(grace) {
 			r.opts.Log("error", fmt.Sprintf("jsrt: a task ignored its interrupt for %v past its deadline; abandoning the JS runtime", grace))
 			r.Close()
 			r.markDone()
@@ -312,7 +335,12 @@ func (r *Runtime) watchdog() {
 }
 
 // markDone closes done once (the loop exiting, or the watchdog giving up).
-func (r *Runtime) markDone() { r.doneOnce.Do(func() { close(r.done) }) }
+func (r *Runtime) markDone() {
+	r.doneOnce.Do(func() {
+		live.Delete(r)
+		close(r.done)
+	})
+}
 
 // Interrupts counts the times the watchdog interrupted JS (a task over
 // Options.Timeout, or Close). QuickJS settles nothing an interrupted
@@ -320,11 +348,21 @@ func (r *Runtime) markDone() { r.doneOnce.Do(func() { close(r.done) }) }
 // callers waiting on a promise can use this to stop. Any goroutine.
 func (r *Runtime) Interrupts() uint64 { return r.interrupts.Load() }
 
-// interrupted is polled by the engine's interrupt handler.
+// interrupted reports whether the running task is past its deadline.
 func (r *Runtime) interrupted() bool {
 	d := r.deadline.Load()
-	return d != 0 && time.Now().UnixNano() > d
+	return d != 0 && monoNow() > d
 }
+
+// monoBase anchors the clock of every jsrt deadline. time.Since reads the
+// monotonic clock, which (unlike UnixNano's wall clock) stands still while
+// the computer sleeps: a task that was running when the lid closed isn't
+// past its deadline on wake, so the watchdog doesn't abandon the runtime
+// (and restart every plugin) over a sleep.
+var monoBase = time.Now()
+
+// monoNow is the time since monoBase in ns on the monotonic clock; never 0.
+func monoNow() int64 { return int64(time.Since(monoBase)) + 1 }
 
 // ---- timers (setTimeout & co. are JS wrappers around these) ----
 
