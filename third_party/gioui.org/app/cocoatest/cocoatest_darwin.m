@@ -7,6 +7,7 @@
 
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
+#import <QuartzCore/CAMetalLayer.h>
 #import <objc/runtime.h>
 
 #include "_cgo_export.h"
@@ -89,6 +90,7 @@ void cocoatest_state(uintptr_t viewRef, cocoatest_window *s) {
 			strlcpy(s->title, t, sizeof(s->title));
 		}
 		s->screenFrame = flipped(w.frame);
+		s->occlusionVisible = (w.occlusionState & NSWindowOcclusionStateVisible) != 0;
 	}
 }
 
@@ -513,6 +515,94 @@ void cocoatest_alive(int *view, int *window) {
 	@autoreleasepool {
 		*view = trackedView != nil;
 		*window = trackedWindow != nil;
+	}
+}
+
+// ---- Clack patch (CLACK_PATCHES.md §32): occlusion, sleep and drawables ----
+
+static NSWindow *coverWindow;
+
+void cocoatest_cover(void) {
+	@autoreleasepool {
+		NSRect all = NSZeroRect;
+		for (NSScreen *s in [NSScreen screens]) {
+			all = NSUnionRect(all, s.frame);
+		}
+		// larger than any window under it: macOS may not count a window of
+		// the same size as covering (Chromium's WindowOcclusionCheckerMac)
+		all = NSInsetRect(all, -40, -40);
+		if (coverWindow == nil) {
+			coverWindow = [[NSWindow alloc] initWithContentRect:all
+													  styleMask:NSWindowStyleMaskBorderless
+														backing:NSBackingStoreBuffered
+														  defer:NO];
+			coverWindow.releasedWhenClosed = NO;
+			coverWindow.opaque = YES;
+			coverWindow.backgroundColor = NSColor.blackColor;
+			coverWindow.hasShadow = NO;
+			coverWindow.level = NSFloatingWindowLevel;
+		}
+		[coverWindow setFrame:all display:YES];
+		[coverWindow orderFrontRegardless];
+	}
+}
+
+void cocoatest_uncover(void) {
+	@autoreleasepool {
+		[coverWindow orderOut:nil];
+	}
+}
+
+void cocoatest_post_workspace(int note) {
+	@autoreleasepool {
+		NSString *names[4] = {
+			NSWorkspaceWillSleepNotification,
+			NSWorkspaceDidWakeNotification,
+			NSWorkspaceScreensDidSleepNotification,
+			NSWorkspaceScreensDidWakeNotification,
+		};
+		if (note < 0 || note > 3) {
+			return;
+		}
+		NSWorkspace *ws = [NSWorkspace sharedWorkspace];
+		[ws.notificationCenter postNotificationName:names[note] object:ws];
+	}
+}
+
+uintptr_t cocoatest_hold_drawables(uintptr_t viewRef, int *n, int *timeout) {
+	@autoreleasepool {
+		*n = -1;
+		*timeout = 0;
+		NSView *view = (__bridge NSView *)(void *)viewRef;
+		if (![view.layer isKindOfClass:[CAMetalLayer class]]) {
+			return 0;
+		}
+		CAMetalLayer *layer = (CAMetalLayer *)view.layer;
+		if (@available(macOS 10.13, *)) {
+			BOOL was = layer.allowsNextDrawableTimeout;
+			*timeout = was ? 1 : 0;
+			// with the timeout on, the call after the last free drawable
+			// gives nil a second later instead of waiting for one
+			layer.allowsNextDrawableTimeout = YES;
+			NSMutableArray *held = [NSMutableArray array];
+			for (int i = 0; i < 8; i++) {
+				id<CAMetalDrawable> d = [layer nextDrawable];
+				if (d == nil) {
+					break;
+				}
+				[held addObject:d];
+			}
+			layer.allowsNextDrawableTimeout = was;
+			*n = (int)held.count;
+			return (uintptr_t)CFBridgingRetain(held);
+		}
+		return 0;
+	}
+}
+
+void cocoatest_release(uintptr_t ref) {
+	if (ref != 0) {
+		CFRelease((CFTypeRef)ref);
 	}
 }
 

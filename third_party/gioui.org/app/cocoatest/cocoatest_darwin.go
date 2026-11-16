@@ -6,7 +6,7 @@ package cocoatest
 
 /*
 #cgo CFLAGS: -Werror -Wno-deprecated-declarations -fobjc-arc -x objective-c
-#cgo LDFLAGS: -framework AppKit -framework Carbon
+#cgo LDFLAGS: -framework AppKit -framework Carbon -framework QuartzCore -framework Metal
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -28,6 +28,7 @@ typedef struct {
 	int visible, zoomed, miniaturized, fullScreen, key, appActive;
 	char title[256];
 	cocoatest_rect screenFrame;
+	int occlusionVisible;
 } cocoatest_window;
 
 void cocoatest_state(uintptr_t view, cocoatest_window *s);
@@ -50,6 +51,11 @@ void cocoatest_post_key(uintptr_t view, int code, int mods, int direct, char *ch
 void cocoatest_trace_keys(uintptr_t view);
 char *cocoatest_key_trace(void);
 void cocoatest_keyboard_layout(char *out, int n);
+void cocoatest_cover(void);
+void cocoatest_uncover(void);
+void cocoatest_post_workspace(int note);
+uintptr_t cocoatest_hold_drawables(uintptr_t view, int *n, int *timeout);
+void cocoatest_release(uintptr_t ref);
 */
 import "C"
 
@@ -98,6 +104,10 @@ type Window struct {
 	// coordinates: points from the primary screen's top left, y down
 	// (Clack patch, CLACK_PATCHES.md §25).
 	ScreenFrame Rect
+	// OcclusionVisible: the window's occlusionState has
+	// NSWindowOcclusionStateVisible, some of it on a screen (Clack patch,
+	// CLACK_PATCHES.md §32).
+	OcclusionVisible bool
 }
 
 func rect(r C.cocoatest_rect) Rect {
@@ -127,6 +137,7 @@ func State(view uintptr) Window {
 		AppActive:           s.appActive != 0,
 		Title:               C.GoString(&s.title[0]),
 		ScreenFrame:         rect(s.screenFrame),
+		OcclusionVisible:    s.occlusionVisible != 0,
 	}
 	for i := range w.Buttons {
 		w.ButtonsHidden[i] = s.buttonsHidden[i] != 0
@@ -315,6 +326,42 @@ func ZoomWindow(view uintptr) { C.cocoatest_zoom(C.uintptr_t(view)) }
 // ToggleFullScreen sends the window toggleFullScreen:, as the green
 // button and View > Toggle Full Screen do. Main thread.
 func ToggleFullScreen(view uintptr) { C.cocoatest_toggle_full_screen(C.uintptr_t(view)) }
+
+// Cover puts an opaque window over every screen, above normal windows,
+// so AppKit reports the windows under it occluded (Clack patch,
+// CLACK_PATCHES.md §32). Uncover takes it away. Main thread.
+func Cover()   { C.cocoatest_cover() }
+func Uncover() { C.cocoatest_uncover() }
+
+// WorkspaceNote is one of NSWorkspace's sleep and wake notifications.
+type WorkspaceNote int
+
+const (
+	WillSleep       WorkspaceNote = iota // NSWorkspaceWillSleepNotification
+	DidWake                              // NSWorkspaceDidWakeNotification
+	ScreensDidSleep                      // NSWorkspaceScreensDidSleepNotification
+	ScreensDidWake                       // NSWorkspaceScreensDidWakeNotification
+)
+
+// PostWorkspace posts n on NSWorkspace's notification center, as macOS
+// does when the computer or its screens sleep and wake. Main thread.
+func PostWorkspace(n WorkspaceNote) { C.cocoatest_post_workspace(C.int(n)) }
+
+// HoldDrawables takes every drawable the view's CAMetalLayer can give
+// (nextDrawable until it gives nil, with the layer's one-second timeout on
+// for the calls) and keeps them, so the layer has none left until
+// Release(held): what a sleeping or waking display does to it, which
+// keeps its drawables. timeout is the layer's allowsNextDrawableTimeout as
+// the app left it; n is -1 when the view's layer isn't a CAMetalLayer.
+// Main thread (Release from any).
+func HoldDrawables(view uintptr) (held uintptr, n int, timeout bool) {
+	var cn, ct C.int
+	h := C.cocoatest_hold_drawables(C.uintptr_t(view), &cn, &ct)
+	return uintptr(h), int(cn), ct != 0
+}
+
+// Release lets go of what HoldDrawables held. Any thread.
+func Release(held uintptr) { C.cocoatest_release(C.uintptr_t(held)) }
 
 // Track keeps weak references to view and its window, for Alive. Main
 // thread.

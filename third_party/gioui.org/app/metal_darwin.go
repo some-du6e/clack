@@ -6,6 +6,7 @@ package app
 
 import (
 	"errors"
+	"sync/atomic"
 
 	"gioui.org/gpu"
 )
@@ -73,6 +74,11 @@ static CFTypeRef newCommandQueue(CFTypeRef devRef) {
 }
 */
 import "C"
+
+// metalPresented and metalSkipped count the frames every Metal context
+// presented, and skipped for want of a drawable (Clack patch,
+// CLACK_PATCHES.md §32; the macOS window tests read them).
+var metalPresented, metalSkipped atomic.Int64
 
 type mtlContext struct {
 	dev      C.CFTypeRef
@@ -154,6 +160,7 @@ func (c *mtlContext) Present() error {
 	C.presentDrawable(c.queue, c.drawable)
 	C.CFRelease(c.drawable)
 	c.drawable = 0
+	metalPresented.Add(1)
 	return nil
 }
 
