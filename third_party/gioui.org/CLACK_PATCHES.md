@@ -28,7 +28,14 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
 `text/clack_release_test.go`, `io/input/clack_keylog.go`,
 `io/input/clack_keylog_test.go`, `app/clack_keys_darwin_test.go`,
-`app/metal_darwin.go`, `app/clack_wake_darwin_test.go` and
+`app/metal_darwin.go`, `app/clack_wake_darwin_test.go`,
+`gpu/clack_stats.go`, `gpu/caches.go`, `gpu/path.go`,
+`gpu/headless/clack_stats.go`, `gpu/headless/clack_cost_test.go`,
+`gpu/internal/driver/clack_calls.go`, `gpu/internal/metal/metal_darwin.go`,
+`gpu/internal/d3d11/d3d11_windows.go`, `gpu/internal/opengl/opengl.go`,
+`internal/gl/gl_unix.go`, `internal/gl/gl_windows.go`,
+`internal/gl/gl_js.go`, `op/clip/clip.go`, `op/clip/shapes.go`,
+`app/metal_macos.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -1634,3 +1641,175 @@ ci's linux-gio job. Stock Gio builds of `internal/ui/slackc` (the
 gio-layer-fix job's richview) use `gio_patch34_stock.go`. With no
 answers there, a layer neither records an opener nor sees the focus
 inside it. Not in `UPSTREAM.patch`.
+
+## 36. gpu: what a frame costs (frame stats)
+
+`gpu/clack_stats.go` (new: `FrameStats`, the `ClackStats` interface),
+`gpu/gpu.go` (counts in `frame`, `stencilClips`, `intersect`,
+`drawLayers`, `drawOps`; `buildPaths` keeps quad bounds when asked),
+`gpu/caches.go` (`opCacheValue.quads`),
+`gpu/internal/driver/clack_calls.go` (new: `CallCounter`, `Calls`), the
+Metal, Direct3D 11 and OpenGL backends (`ClackCalls`), `internal/gl`
+(`Functions.Calls`, counted in every `gl_unix.go` call) and
+`gpu/headless/clack_stats.go` (new: `Window.ClackFrameStats`,
+`ClackStatsDetail`, `ClackSync`). Additions only.
+
+Karim saw Clack at 10% GPU in Windows Task Manager with nothing moving
+(2026-11-16), and his Mac's traces had ~11,400 Metal calls a frame.
+`FrameStats` says what the renderer did for the last frame: the ops by
+kind (blits, covers, intersections), the paths stenciled, draw calls,
+render passes, the calls into the graphics API and the ones the backend's
+state cache left out (patch 37), and the pixels: stencil fragments (from
+each path's quads in its stencil region; `ClackStatsDetail` keeps the
+quads' bounds on the CPU for it), covered, blitted, intersected, cleared
+and the atlases' size. `ClackSync` reads one pixel back, so a timed frame
+includes its rasterization.
+
+Used by `gpu/headless/clack_cost_test.go` (`TestClackPlacementNoise`, a
+probe that logs, never fails), `internal/ui/theme/framecost_test.go`
+(`TestFrameCostPixels`), `internal/ui/framecost_test.go`
+(`TestFrameCostWindow`), all on flake-check's gpu-cost job (Linux
+llvmpipe, Windows WARP, macOS Metal), and the perf workflow's plugins job
+(`perf_gpustats_test.go`: the gpu passes' draw and API calls). Not in
+`UPSTREAM.patch`.
+
+## 37. gpu/internal: Metal, Direct3D 11 and OpenGL leave out state the API already has
+
+`gpu/internal/metal/metal_darwin.go`, `gpu/internal/d3d11/d3d11_windows.go`,
+`gpu/internal/opengl/opengl.go`. No change to what's drawn.
+
+Gio's renderer binds the pipeline, the quad's vertices, the textures, the
+uniforms and the viewport again for every op. OpenGL's backend had a
+state cache for most of it; Metal's and Direct3D's had none:
+
+- Metal: one cgo call per command, each under its own autorelease pool.
+  The backend now keeps the open render encoder's state (`encState`):
+  the pipeline, the attribute buffer (a Metal buffer at an offset, or a
+  Go buffer's bytes as of its upload, `Buffer.gen`), the bytes each
+  stage was last sent at index 0, the fragment textures and samplers per
+  unit and the viewport, and leaves out a bind of what the encoder has. A
+  new encoder starts with nothing. `BindUniforms` sends a stage only the
+  uniforms it reads: shaders reading none (the stencil and intersection
+  fragment shaders, the texture materials') get no `setFragmentBytes`,
+  and a stage whose bytes in its range (`Shader.uniformRange`, from the
+  shader's reflection) are the ones it was last sent isn't sent them
+  again (text runs of one colour in a row). Sampler states are one per
+  filter for all textures (`Backend.sampler`), so switching textures
+  keeps the sampler bound; `Texture.Release` leaves it to the backend.
+  A buffer bound again at another offset only gets
+  `setVertexBufferOffset`.
+- Direct3D 11: `prepareDraw` set the vertex and pixel shaders, input
+  layout, blend state, vertex buffer and topology for every draw, and
+  `BindUniforms`, `BindTexture` and `BindIndexBuffer` set theirs every
+  time, each a COM call through syscall. `ctxState` keeps what the
+  context was last set to; a set of the same is left out. The pixel
+  shader's constant buffer is bound only for shaders that read it, and a
+  constant buffer uploaded the bytes it has (`Buffer.last`) isn't
+  updated. `BeginFrame` forgets everything (the swap chain code sets
+  state too); `BeginRenderPass`, `BindImageTexture` and
+  `BindStorageBuffer` forget the bound shader resources (Direct3D unbinds
+  a resource from them when it's bound for output).
+- OpenGL: `vertexAttribPointer` was called for every attribute of every
+  draw, and every uniform was set before every draw. An attribute
+  already pointing at the same buffer, offset and format is left alone
+  (`glState.deleteBuffer` forgets attributes into a deleted buffer, whose
+  name can come back), and a program's uniform set to the bits it has
+  (`uniformLocation.last`) isn't set again.
+
+Measured on flake-check's gpu-cost job with Clack's whole window
+(`TestFrameCostWindow`) and the scenes of `TestFrameCostPixels`, the
+calls these leave out are `FrameStats.Skipped`: on a light window at 1x,
+Metal 10,506 calls before, 6,056 after this patch alone; Direct3D 11
+(WARP) 22,929 and 5,559; OpenGL (llvmpipe) 15,157 and 10,154. Not in
+`UPSTREAM.patch` yet (a candidate).
+
+## 38. op/clip, gpu: a rounded clip is left off what's drawn inside its interior
+
+`op/clip/shapes.go` (`RRect.Interior`, set on the `PathSpec`),
+`op/clip/clip.go` (`PathSpec.interior`; `Op.add` writes it),
+`internal/ops/ops.go` (new op `TypeClipInterior`, `DecodeClipInterior`)
+and `gpu/gpu.go` (`pathOp.interior`, `pathOp.covers`, used by
+`expandPathOp`, `packIntersections` and `intersectPath`;
+`ClackLegacyClips`).
+
+Clack's primary panel is a `clip.RRect` around everything in it, so every
+text run, rounded image and icon inside was clipped by two paths: an
+intersection, with its own pass over both paths' coverage into another
+atlas (about 11 more GPU calls an op on Metal) and the panel's path
+stenciled over the whole panel every frame. Gio's coverage is exactly 1
+where a rectangle's straight edges are at least a pixel away: the
+`TypeClipInterior` op before an outline's `TypeClip` gives that
+rectangle (`RRect.Interior`: the columns between the corners' arcs, a
+pixel in from each edge; under an arc the coverage is a sum of slivers
+rounded to half floats). The renderer drops such a clip from the clip
+stack of every op whose bounds lie in its interior, under an integer
+offset only: the op is drawn as if the clip weren't there (same pixels:
+the coverage it multiplied by is 1.0), and the clip isn't stenciled for
+it. Strokes get no interior. The router ignores the new op.
+
+`ClackLegacyClips(true)` turns this and patch 39 off, for tests that
+compare the two ways. The same probe on all three backends: the panel's
+content clipped through the RRect or with the clip dropped where it
+covers is the same picture (`TestClackPlacementNoise`'s "split fill only"
+line is identical; the differences in its "dropped inside" line are the
+glyphs' own coverage moving with their atlas placement, the same as one
+more path drawn first moves them). Not in `UPSTREAM.patch`.
+
+## 39. gpu: a clip path is stenciled in regions near the ops it clips
+
+`gpu/gpu.go` (`pathOp.more`, `pathRegion`, `addRegion`, `region`;
+`expandPathOp`, `packStencils`, `stencilClips`, `packIntersections`,
+`intersectPath`, `prepareIntersections`).
+
+Gio stenciled a path once over the box around all the ops it clips. A
+pixel's coverage only adds up the curves above it, so the same path can
+as well be stenciled in several regions: a panel clipping a hovered row,
+a divider, a scroll bar along its right edge and its corners isn't
+stenciled over the whole panel. `addRegion` puts an op's rectangle in the
+region it grows the least, unless that adds more than `regionSlack`
+(32K) pixels no op needs; then it gets a region of its own, up to
+`maxPathRegions` (8). Each region is packed and stenciled on its own,
+from the same vertices; an op reads the coverage from a region holding
+it. A path with one op, or ops close together, has one region as before.
+Rect clips have none (they never had a use for theirs).
+
+What can change: a path's coverage depends by a rounding on where its
+stencil lands in the atlas (the GPU interpolates from the atlas origin),
+so pixels on a region's edges can come out a level or two apart, as any
+change earlier in a frame already does. `TestFrameCostPixels` measures
+that floor in each scene and holds the new way to it. Not in
+`UPSTREAM.patch`.
+
+## 40. gpu: atlas pages shrink, idle ones go after a while, and layers of a depth share a page
+
+`gpu/path.go` (`FBO.idle`, `fboSet.resize`) and `gpu/gpu.go`
+(`packLayers`).
+
+`fboSet.resize` meant to make a page's texture again when it wasted too
+much, but its test (needed over current size) is at most 1 whenever the
+page fits, so a coverage page kept its biggest size for good, and every
+frame cleared and stored all of it (on llvmpipe a memset of the whole R16
+texture; on Apple GPUs a store of every tile). A texture more than twice
+the size its page needs for `fboIdleFrames` (60) frames in a row is made
+again to size, and one the frame doesn't need at all goes after as many
+frames instead of at once (a page count going down and up, as an opacity
+layer fades in, made and released textures each time). `packLayers`
+meant layers of one depth to share a page but never updated its depth,
+so every nested opacity layer got a page, an FBO and a render pass of
+its own. Not in `UPSTREAM.patch` yet (candidates).
+
+## 41. app: the macOS display link and layer aren't set again for nothing
+
+`app/os_darwin.go` (`displayLink.Start`), `app/metal_macos.go`
+(`resizeDrawable`) and `app/os_macos.m` (`displayLayer:`).
+
+A drawing window restarts its animation every frame (`draw` calls
+`SetAnimating`), and `displayLink.Start` sent on an unbuffered channel to
+the link's goroutine each time, which had to be scheduled to take it.
+Start now returns at once while the link runs with no stop pending
+(`running` is 1; only a Stop sends 0, and both come from the main
+thread). `resizeDrawable` set the layer's `drawableSize` every frame and
+`displayLayer:` its `contentsScale`; each is set only when it changes.
+The window's geometry is still read every frame (`updateWindowMode`):
+caching it would have to catch every resize, move, screen and scale
+change. Not in `UPSTREAM.patch`.
