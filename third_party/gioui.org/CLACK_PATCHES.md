@@ -1421,3 +1421,36 @@ transform applies to them too.
 
 Test: `internal/ui` `TestInspectShots` (feel-shots, llvmpipe) renders the
 pick through it. Not in `UPSTREAM.patch`.
+
+## 34. io/input: where the key focus is
+
+`io/input/clack_focus.go` (new: `Source.FocusTag`, `Source.CanFocus`,
+`Source.Within`). An addition: nothing upstream behaves differently.
+
+A Source answers only "is this tag focused?". Clack's overlay layers
+(`internal/ui/slackc` layers.go: kit's Popover, Slack's modals, plugin
+dialogs, the shell's menus) work the way the DOM does a modal. Escape
+goes first to the focused element, then to the innermost layer whose
+content holds the focus, then to the topmost one. A layer records the
+element that had the focus when it opened (document.activeElement), and
+gives it back when it closes if that element is still there and
+focusable. That needs three answers about the last frame:
+
+- `FocusTag`: the focused tag, or nil.
+- `CanFocus(tag)`: whether a `key.FocusCmd` for tag would keep the
+  focus past the frame. In the last frame the tag was drawn (an
+  `event.Op`) and asked for focus events (`key.FocusFilter`), which is
+  what `keyQueue.Frame` keeps the focus on.
+- `Within(tag, container)`: whether tag's `event.Op` was in container's
+  clip area or one nested in it (the pointer queue's area tree). Deferred
+  macros run from the root area, so a container whose content is
+  deferred draws its own op inside the macro.
+
+All three read the router's state and nothing else. A disabled Source
+answers nil and false.
+
+Test: `io/input/clack_focus_test.go` (`TestFocusTagCanFocusWithin`) on
+ci's linux-gio job. Stock Gio builds of `internal/ui/slackc` (the
+gio-layer-fix job's richview) use `gio_patch34_stock.go`. With no
+answers there, a layer neither records an opener nor sees the focus
+inside it. Not in `UPSTREAM.patch`.

@@ -187,6 +187,11 @@ jobs:
       - name: Gio hover-only input (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v -run 'HoverOnly' gioui.org/io/input
+      # Gio patch 34: the focused tag, whether a tag can keep the focus, and
+      # whether one was drawn inside another (slackc's overlay layers)
+      - name: Gio focus answers (vendored gioui.org/io/input)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v -run 'FocusTagCanFocusWithin' gioui.org/io/input
       # Gio patch 26: an Invalidate made while the client handles a wake-up
       # gets a wake-up of its own (hidden and minimized windows draw no
       # frame to cover it); the real windows are windows-shell's
