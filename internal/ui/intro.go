@@ -664,6 +664,7 @@ func (a *App) layoutIntroOverlay(gtx layout.Context) {
 		in.mc.schedule(gtx)
 		return
 	}
+	in.preview.update(f, in.cur == beatSlack || in.prev == beatSlack) // even while the overlay is still clear
 	o := fx{a: float32(clamp01(f.mc.spring(springSmooth, in.t0))), s: 1}
 	if in.closing {
 		c := f.mc.spring(springSmooth, in.closeAt)

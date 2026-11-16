@@ -100,10 +100,11 @@ func writeShot(t *testing.T, dir, name string, img *image.RGBA, r image.Rectangl
 // and the client's own session bookkeeping. Anything else (a mark, a
 // draft, a post, a pref write) fails the test.
 var previewReads = []string{
-	"api.features", "apps.profile.get", "auth.test", "bookmarks.list", "bots.info", "canvases.sections.lookup",
+	"admin.roles.entity.listAssignments", "api.features", "apps.profile.get", "auth.test", "bookmarks.list", "bots.info", "canvases.sections.lookup",
 	"channels.prefs.get", "chat.getPermalink", "client.boot", "client.counts", "client.userBoot", "conversations.history",
 	"conversations.info", "conversations.list", "conversations.members", "conversations.replies", "conversations.view",
-	"dnd.info", "dnd.teamInfo", "drafts.list", "emoji.adminList", "emoji.list", "experiments.getByUser", "files.info",
+	"dnd.info", "dnd.teamInfo", "drafts.list", "edge/huddles/list", "edge/permissions/info", "edge/users/counts",
+	"edge/users/info", "edge/users/list", "enterprise.prefs.get", "megaphone.notifications.list", "sidebar.dms", "emoji.adminList", "emoji.list", "experiments.getByUser", "files.info",
 	"files.list", "lists.items.list", "pins.list", "reminders.list", "saved.list", "search.modules", "stars.list",
 	"subscriptions.thread.get", "subscriptions.thread.getView", "team.info", "team.prefs.get", "users.channelSections.list",
 	"users.conversations", "users.counts", "users.getPresence", "users.info", "users.list", "users.prefs.get",
@@ -131,6 +132,11 @@ func TestIntroSlackPreview(t *testing.T) {
 		}
 		t.Run(mode, func(t *testing.T) {
 			reports := usePreviewRenderer(t, true)
+			a, _, _ := fakePrefsApp(t) // the window (its own core sets the emoji set: before the sentinel)
+			a.motionOverride = -1
+			if dark {
+				a.th.SetDark(true)
+			}
 			// the window's process-wide state, set to what the renderer would
 			// change if it reached it
 			v17 := !emoji.V17()
@@ -163,11 +169,6 @@ func TestIntroSlackPreview(t *testing.T) {
 				}
 			}()
 
-			a, _, _ := fakePrefsApp(t)
-			a.motionOverride = -1
-			if dark {
-				a.th.SetDark(true)
-			}
 			e := newIntroEnv(t, a, sz)
 			e.run(300 * time.Millisecond)
 			runtime.GC()
