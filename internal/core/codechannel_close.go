@@ -95,9 +95,13 @@ const (
 // codeOpenState is what core knows of code channels' is_open, plus Slack's
 // codeChannelReopen store.
 type codeOpenState struct {
-	mu           sync.Mutex
-	closed       map[string]int64 // code channel → is_open false since (the watermark, unix s)
-	pending      map[string]bool  // closed here, the server's answer not in yet: not saved
+	mu      sync.Mutex
+	closed  map[string]int64 // code channel → is_open false since (the watermark, unix s)
+	pending map[string]bool  // closed here, the server's answer not in yet: not saved
+	// wrote is each code channel's last close or reopen in this session,
+	// at the store journal's position (store/journal.go): Boot's check of
+	// the saved set against its answers keeps it (reconcile)
+	wrote        map[string]uint64
 	closedLoaded bool             // closed read from disk
 	reopen       map[string]int64 // codeChannelReopen: code channel → reopenedAt (unix s)
 	loaded       bool             // reopen read from disk
@@ -110,8 +114,8 @@ func (a *App) codeOpen() *codeOpenState {
 	if v, ok := codeOpenStates.Load(a); ok {
 		return v.(*codeOpenState)
 	}
-	v, _ := codeOpenStates.LoadOrStore(a, &codeOpenState{closed: map[string]int64{}, pending: map[string]bool{}, reopen: map[string]int64{},
-		conn: make(chan bool, 4)})
+	v, _ := codeOpenStates.LoadOrStore(a, &codeOpenState{closed: map[string]int64{}, pending: map[string]bool{}, wrote: map[string]uint64{},
+		reopen: map[string]int64{}, conn: make(chan bool, 4)})
 	return v.(*codeOpenState)
 }
 
@@ -154,6 +158,9 @@ func (a *App) setCodeChannelOpen(ch string, open, confirmed bool) bool {
 			st.pending[ch] = true
 		}
 	}
+	if changed { // the sidebar lists it, or doesn't: newer than an answer fetched before
+		st.wrote[ch] = a.S.NextSeq()
+	}
 	if confirmed {
 		a.saveCodeClosedLocked(st)
 	}
@@ -195,6 +202,7 @@ func (a *App) forgetCodeChannelClosed(ch string) bool {
 	}
 	delete(st.closed, ch)
 	delete(st.pending, ch)
+	st.wrote[ch] = a.S.NextSeq()
 	a.saveCodeClosedLocked(st)
 	return true
 }
@@ -236,16 +244,19 @@ func (a *App) checkpointClosedCodeChannels() {
 }
 
 // reconcileClosedCodeChannels is Boot's check of the saved closed set
-// against the conversations and counts it fetched: entries for channels
-// that aren't the viewer's unarchived code channels go, and so do those
-// with a message newer than their watermark (see the top of this file).
-func (a *App) reconcileClosedCodeChannels() {
+// against the conversations and counts it fetched (at the store journal's
+// position since): entries for channels that aren't the viewer's
+// unarchived code channels go, and so do those with a message newer than
+// their watermark (see the top of this file). A channel closed or
+// reopened here while Boot's calls were out (a warm start's window is
+// usable meanwhile) keeps that: it is newer than what Boot fetched.
+func (a *App) reconcileClosedCodeChannels(since uint64) {
 	st := a.codeOpen()
 	st.mu.Lock()
 	a.loadCodeClosedLocked(st)
 	saved := make(map[string]int64, len(st.closed))
 	for id, at := range st.closed {
-		if !st.pending[id] {
+		if !st.pending[id] && st.wrote[id] <= since {
 			saved[id] = at
 		}
 	}
@@ -262,6 +273,9 @@ func (a *App) reconcileClosedCodeChannels() {
 	}
 	st.mu.Lock()
 	for _, id := range gone {
+		if st.wrote[id] > since { // closed or reopened here since the check read it
+			continue
+		}
 		delete(st.closed, id)
 		delete(st.pending, id)
 	}
@@ -685,6 +699,6 @@ func (a *App) mergeChannel(ch string, raw json.RawMessage) bool {
 		return false
 	}
 	next.ID = ch
-	a.S.PutConv(next)
+	a.S.PutConvLocal(next)
 	return true
 }

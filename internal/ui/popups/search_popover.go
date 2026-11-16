@@ -289,13 +289,13 @@ func (p *SearchPopover) loadSnapNow(now time.Time, resetSel bool) {
 		return
 	}
 	select {
-	case <-c.Ready():
+	case <-c.DataReady():
 	default:
 		return
 	}
 	p.snapOK = true
 	p.unnamed = p.unnamed[:0]
-	snap := c.Snapshot()
+	snap := c.SnapshotNow()
 	recents, _ := srRecents()
 	rec := make(map[string]bool, len(recents))
 	for _, id := range recents {

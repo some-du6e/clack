@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -93,6 +94,11 @@ type Store struct {
 	ThreadsUnread          bool
 	ThreadMentions         int
 	ThreadsUnreadByChannel map[string]int
+	// countsLive: a client.counts answer was installed (SetCounts*), so the
+	// boot data's thread state no longer applies (bootdata.go)
+	countsLive bool
+	// jr is the write journal (journal.go)
+	jr journal
 	// names of conversations we are not a member of (from search/browse)
 	names       map[string]string
 	prefsCached bool
@@ -113,8 +119,12 @@ type Store struct {
 	// gen counts changes to what the disk cache holds; SaveCache writes
 	// only when it (or the emoji map's version) moved since the last load
 	// or save.
-	gen       atomic.Uint64
-	saveMu    sync.Mutex
+	gen    atomic.Uint64
+	saveMu sync.Mutex
+	fileMu sync.Mutex // WriteFile's (the warm boot's small files), apart from meta.json's long saves
+	// warmGone: the warm boot's files were deleted for good (a session
+	// that ended, sign-out): WriteFile writes neither again (fileMu)
+	warmGone  bool
 	dropped   atomic.Bool // DropDisk ran (signed out): never write again
 	saved     bool
 	savedGen  uint64
@@ -1162,6 +1172,12 @@ func (s *Store) SelfID() string {
 
 func (s *Store) PutConv(c slack.Conversation) {
 	s.mu.Lock()
+	s.putConvLocked(c)
+	s.mu.Unlock()
+}
+
+// putConvLocked is PutConv's body (s.mu held).
+func (s *Store) putConvLocked(c slack.Conversation) {
 	if old, ok := s.Convs[c.ID]; ok {
 		if c.NumMembers == 0 {
 			c.NumMembers = old.NumMembers
@@ -1177,7 +1193,6 @@ func (s *Store) PutConv(c slack.Conversation) {
 		}
 	}
 	s.Convs[c.ID] = &c
-	s.mu.Unlock()
 }
 
 func (s *Store) Conv(id string) (*slack.Conversation, bool) {
@@ -1441,20 +1456,9 @@ func (s *Store) AddReply(ch string, m slack.Message) {
 
 // ---- counts ----
 
-func (s *Store) SetCounts(c *slack.Counts) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.Counts = map[string]*slack.CountEntry{}
-	for _, l := range [][]slack.CountEntry{c.Channels, c.IMs, c.MPIMs} {
-		for i := range l {
-			e := l[i]
-			s.Counts[e.ID] = &e
-		}
-	}
-	s.ThreadsUnread = c.Threads.HasUnreads
-	s.ThreadMentions = c.Threads.MentionCount
-	s.ThreadsUnreadByChannel = c.Threads.UnreadCountByChannel
-}
+// SetCounts installs a client.counts answer whole (SetCountsSince keeps
+// what changed while the call was out).
+func (s *Store) SetCounts(c *slack.Counts) { s.SetCountsSince(c, math.MaxUint64) }
 
 // Count returns a copy of a conversation's unread state.
 func (s *Store) Count(ch string) (slack.CountEntry, bool) {
@@ -1478,6 +1482,7 @@ func (s *Store) MarkRead(ch, ts string) slack.CountEntry {
 		e = &slack.CountEntry{ID: ch}
 		s.Counts[ch] = e
 	}
+	s.noteMarkLocked(ch) // a counts answer fetched before keeps this cursor (journal.go)
 	e.LastRead = ts
 	if e.Latest == "" || !TSLess(ts, e.Latest) {
 		e.HasUnreads = false
@@ -1499,6 +1504,7 @@ func (s *Store) NoteMessage(ch string, m *slack.Message, mentionsSelf bool) slac
 		e = &slack.CountEntry{ID: ch}
 		s.Counts[ch] = e
 	}
+	s.noteMessageLocked(ch) // newer than a counts answer still out (journal.go)
 	if e.Latest == "" || TSLess(e.Latest, m.TS) {
 		e.Latest = m.TS
 	}
@@ -1937,17 +1943,33 @@ func (s *Store) SaveCache() error {
 		d.Experiments = s.experiments // replaced whole, never changed in place
 	}
 	// the stored users are never changed in place (PutUsers replaces
-	// them), so they're written after the lock is let go: the viewer and
-	// the MaxSavedUsers most recently fetched
+	// them), so they're written after the lock is let go: the viewer, the
+	// people the sidebar names (DM partners, group DM members: a warm
+	// boot's rows are labelled from these, bootdata.go) and the
+	// MaxSavedUsers most recently fetched
 	users := make([]*slack.User, 0, len(s.Users))
 	for _, u := range s.Users {
 		users = append(users, u)
 	}
 	if len(users) > MaxSavedUsers {
 		self := s.Self.ID
+		side := map[string]bool{}
+		for _, c := range s.Convs {
+			if c.IsIM && c.User != "" {
+				side[c.User] = true
+			}
+			if c.IsMPIM {
+				for _, m := range c.Members {
+					side[m] = true
+				}
+			}
+		}
 		sort.Slice(users, func(i, j int) bool {
 			if (users[i].ID == self) != (users[j].ID == self) {
 				return users[i].ID == self
+			}
+			if a, b := side[users[i].ID], side[users[j].ID]; a != b {
+				return a
 			}
 			if a, b := s.userSeen[users[i].ID], s.userSeen[users[j].ID]; a != b {
 				return a > b

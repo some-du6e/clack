@@ -376,8 +376,8 @@ func (m *mirror) onEvent(ev core.Event) {
 	case "dnd_updated", "dnd_updated_user":
 		m.invalidate("dndV2")
 	case "emoji_changed":
-	case "resync", "connection", "booted":
-		if ev.Type != "connection" { // booted: everything boot fetched is in
+	case "resync", "connection", "booted", "hydrated":
+		if ev.Type != "connection" { // booted: everything boot fetched is in; hydrated: a warm start's boot data (core warmboot.go)
 			for _, s := range mapSlices {
 				m.invalidate(s)
 			}

@@ -326,7 +326,11 @@ func teamDomain(h Host) string {
 		s := c.S.TeamDomain
 		c.S.RUnlock()
 		if s == "" {
-			if _, booted := actSnapshot(h); !booted {
+			// the fallback stays only once Boot finished (team.info had its
+			// say): a warm start's boot data can lack the domain
+			select {
+			case <-c.Ready():
+			default:
 				return d // not known yet: ask again later
 			}
 		} else {

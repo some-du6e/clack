@@ -269,6 +269,38 @@ func (a *App) sidebarUsers(convs []Conv, secs []Section, self string) map[string
 	return out
 }
 
+// bootDMPeople is Boot's list of the DM rows' people for users/info: the
+// viewer and the partners of the DMs the sidebar lists. Those are the
+// open ones (open: sidebar.dms' flags; nil reads core's own, the boot
+// data's on a warm start, or every DM while nothing is known, when the
+// sidebar lists them all) and closed ones with unreads in the counts the
+// store holds by then (a warm start's, or client.counts' if it answered
+// first). A closed DM a draft or a huddle keeps, or one with unreads a
+// cold start learns of later, is named one users/info later, by the
+// first snapshot's lookup (sidebarUsers).
+func (a *App) bootDMPeople(convs []slack.Conversation, open map[string]bool) []string {
+	ids := []string{a.C.Creds.UserID}
+	for _, c := range convs {
+		if !c.IsIM || c.User == "" {
+			continue
+		}
+		var row bool
+		if open != nil {
+			row = open[c.ID]
+		} else {
+			row = a.dmOpen(c.ID)
+		}
+		if !row {
+			e, ok := a.S.Count(c.ID)
+			row = ok && (e.HasUnreads || e.MentionCount > 0)
+		}
+		if row {
+			ids = append(ids, c.User)
+		}
+	}
+	return ids
+}
+
 // rawUserName is Store.UserName without the lookup's bookkeeping.
 func (a *App) rawUserName(id string) string {
 	u, _ := a.S.RawUser(id)

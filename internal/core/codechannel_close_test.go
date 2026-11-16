@@ -483,7 +483,7 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	// the first launch: boot's check drops the plain channel's entry only
 	a := codeClosedApp(t, dir, codes, "CPLAIN", all(nil))
 	a.loadCodeChannelState()
-	a.reconcileClosedCodeChannels()
+	a.reconcileClosedCodeChannels(a.S.Seq())
 	for _, id := range codes {
 		if !a.codeChannelClosed(id) {
 			t.Errorf("first launch: %s isn't closed", id)
@@ -517,8 +517,21 @@ func TestClosedCodeChannelEntriesExpire(t *testing.T) {
 	delete(next, "CGONE")
 	b2 := codeClosedApp(t, dir, []string{"CJOIN", "CLEFT", "CSEEN", "CMISSED", "CQUIET"}, "CPLAIN", next)
 	b2.loadCodeChannelState()
-	b2.reconcileClosedCodeChannels()
-	want := map[string]bool{"CJOIN": false, "CLEFT": false, "CSEEN": true, "CMISSED": false, "CGONE": false, "CPLAIN": false, "CQUIET": true}
+	// Boot's calls go out (since); CQUIET is closed again here meanwhile
+	// (journaled), so Boot's view of it, older, doesn't touch it even where
+	// it would drop it (a message newer than its watermark)
+	since := b2.S.Seq()
+	st := b2.codeOpen()
+	st.mu.Lock()
+	st.wrote["CQUIET"] = b2.S.NextSeq()
+	st.closed["CQUIET"] = quiet.Unix() - 1
+	st.mu.Unlock()
+	b2.reconcileClosedCodeChannels(since)
+	if !b2.codeChannelClosed("CQUIET") {
+		t.Error("a close journaled after Boot's calls went out was undone by Boot's check")
+	}
+	b2.reconcileClosedCodeChannels(b2.S.Seq()) // a later boot: its own view counts
+	want := map[string]bool{"CJOIN": false, "CLEFT": false, "CSEEN": true, "CMISSED": false, "CGONE": false, "CPLAIN": false, "CQUIET": false}
 	for id, closed := range want {
 		if got := b2.codeChannelClosed(id); got != closed {
 			t.Errorf("next launch: %s closed %v, want %v", id, got, closed)

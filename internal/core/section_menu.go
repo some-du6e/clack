@@ -135,16 +135,19 @@ func (a *App) rawSection(id string) (slack.Section, bool) {
 }
 
 // refreshSections re-reads users.channelSections.list and redraws the
-// sidebar.
+// sidebar, after a section write Slack accepted: the write itself moves
+// the journal first, so a list fetched before it (Boot's) can't undo it
+// while this read is out (store/journal.go).
 func (a *App) refreshSections(ctx context.Context) {
+	a.S.NoteSectionsChanged()
+	since := a.S.Seq()
 	secs, err := a.C.SectionsAll(ctx)
 	if err != nil {
 		return
 	}
-	a.S.Lock()
-	a.S.Sections = secs
-	a.S.Unlock()
-	a.emit(Event{Type: "sidebar_changed"})
+	if a.S.SetSectionsSince(secs, since) { // a newer list (another move's refresh) stays
+		a.emit(Event{Type: "sidebar_changed"})
+	}
 }
 
 // SetSectionPref is setChannelSectionPrefByApi: pref is "sidebar" (the

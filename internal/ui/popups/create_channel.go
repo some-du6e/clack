@@ -118,8 +118,8 @@ func NewCreateChannelModal(h Host, o CreateChannelOpts) *CreateChannelModal {
 	c.workspace = "this workspace"
 	if a := h.Core(); a != nil {
 		select {
-		case <-a.Ready():
-			if n := strings.TrimSpace(a.Snapshot().Team.Name); n != "" {
+		case <-a.DataReady():
+			if n := strings.TrimSpace(a.RecentSnapshot().Team.Name); n != "" {
 				c.workspace = n
 			}
 		default:

@@ -201,12 +201,6 @@ func TestBootAsksOpenDMPartnersOnly(t *testing.T) {
 	if !a.SidebarDMsKnown() {
 		t.Fatal("sidebar.dms didn't answer")
 	}
-	mu.Lock()
-	unreadAsked := asked[unread]
-	mu.Unlock()
-	if !unreadAsked {
-		t.Error("boot didn't ask users/info for the partner of a closed DM with unreads (a sidebar row)")
-	}
 	openPartner := ""
 	var ims [][2]string // id, partner (dmOpen takes a.mu: not under the store's lock)
 	a.S.RLock()
@@ -242,5 +236,43 @@ func TestBootAsksOpenDMPartnersOnly(t *testing.T) {
 	}
 	if len(asked) == 0 {
 		t.Error("the edge hook saw no users/info at all")
+	}
+	if !asked[unread] {
+		t.Error("users/info wasn't asked for the partner of a closed DM with unreads (a sidebar row)")
+	}
+}
+
+// bootDMPeople: the open DMs' partners and closed ones with unreads, by
+// sidebar.dms' flags when given, else by core's own (a warm start's boot
+// data: no call waits, and a failed sidebar.dms asks for no closed DM's
+// partner); every DM's while nothing knows which are open (the sidebar
+// lists them all then).
+func TestBootDMPeople(t *testing.T) {
+	a, _ := testApp(t)
+	var convs []slack.Conversation
+	for _, id := range []string{"OPEN", "CLOSED", "UNREAD"} {
+		convs = append(convs, slack.Conversation{ID: "D" + id, IsIM: true, User: "U0" + id + "0000"})
+	}
+	convs = append(convs, slack.Conversation{ID: "C1", Name: "general", IsChannel: true})
+	ts := "1762516800.000000"
+	a.S.SetCounts(&slack.Counts{IMs: []slack.CountEntry{{ID: "DUNREAD", Latest: ts, LastRead: "1762500000.000000", HasUnreads: true},
+		{ID: "DCLOSED", Latest: ts, LastRead: ts}, {ID: "DOPEN", Latest: ts, LastRead: ts}}})
+	got := func(open map[string]bool) string {
+		ids := a.bootDMPeople(convs, open)
+		slices.Sort(ids)
+		return strings.Join(ids, ",")
+	}
+	// nothing known yet (a cold start whose sidebar.dms failed): every DM
+	if g := got(nil); g != "U0CLOSED0000,U0OPEN0000,U0UNREAD0000,USELF" {
+		t.Errorf("nothing known: %s", g)
+	}
+	// sidebar.dms' flags (a cold start): the open one and the unread one
+	if g := got(map[string]bool{"DOPEN": true}); g != "U0OPEN0000,U0UNREAD0000,USELF" {
+		t.Errorf("sidebar.dms' flags: %s", g)
+	}
+	// core's own (a warm start's boot data), with no answer to wait for
+	a.setSidebarDMs([]slack.SidebarDM{{ID: "DOPEN", IsOpen: true}, {ID: "DCLOSED"}, {ID: "DUNREAD"}})
+	if g := got(nil); g != "U0OPEN0000,U0UNREAD0000,USELF" {
+		t.Errorf("core's own flags: %s", g)
 	}
 }
