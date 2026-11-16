@@ -25,8 +25,11 @@
     if (name.length > 2 && name[0] === 'o' && name[1] === 'n' && name[2] >= 'A' && name[2] <= 'Z') {
       const h = el._h || (el._h = Object.create(null));
       const k = eventKey(name);
+      const had = typeof h[k] === 'function';
       if (typeof v === 'function') h[k] = v; else delete h[k];
-      jr.markDirty(el);
+      // a new closure for the same handler (most renders make one) is no
+      // change: the tree lists handled types, and events call h[k] as it is
+      if (had !== (typeof v === 'function')) jr.markDirty(el);
       return;
     }
     switch (name) {

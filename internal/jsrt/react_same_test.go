@@ -9,9 +9,11 @@ import (
 // changed nothing on screen (a plugin's usePatchVersion after
 // api.redux.refresh, a store subscription whose value didn't change, a
 // portal mounted under one of its natives). Each such commit used to send
-// the root's same tree to Go again: 650 to 4,000 in a perf pass. A commit
-// of JS's own updates now sends one only when a host node changed; what Go
-// renders always answers.
+// the root's same tree to Go again: 650 to 4,000 in a perf pass. So did an
+// event Go dispatched to a node (every pointer event over a plugin's node
+// as rows scroll under the pointer), a handler replaced by a new closure
+// and a listener added again. A commit of JS's own updates now sends one
+// only when what the tree holds changed; what Go renders always answers.
 
 // quiet fails if rec gets a commit within d.
 func quiet(t *testing.T, rec *treeRecv, d time.Duration, what string) {
@@ -29,26 +31,52 @@ func TestSameOutputSendsNoTree(t *testing.T) {
 	root := r.NewRoot(rec.cb(t))
 	renderJS(t, r, root, `
 globalThis.Row = __clack.native('MessageWrapper');
+globalThis.keep = () => {};
 globalThis.Same = function Same() {
   const [n, setN] = React.useState(0);
   const [, poke] = React.useReducer((x) => x + 1, 0);
+  const ref = React.useRef(null);
   globalThis.poke = poke;
   globalThis.setLabel = setN;
-  // the native gets the same props on every render but a label change
-  return React.createElement('div', { className: 'row' }, React.createElement(Row, { ts: '1.1', label: 'n' + n }));
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    el.addEventListener('mouseover', keep);
+    return () => el.removeEventListener('mouseover', keep);
+  }, []);
+  // an effect that listens afresh after every render (its type stays handled)
+  React.useLayoutEffect(() => {
+    const el = ref.current, f = () => {};
+    el.addEventListener('mouseover', f);
+    return () => el.removeEventListener('mouseover', f);
+  });
+  // new handler closures every render; the native gets the same props but for a label change
+  return React.createElement('div', { className: 'row', ref, onClick: () => {}, onMouseEnter: () => {} },
+    React.createElement(Row, { ts: '1.1', label: 'n' + n }));
 };
 React.createElement(Same)`)
 	ns := rec.next(t)
 	row := find(ns, func(n node) bool { return n.T == "@" && n.N == "MessageWrapper" })
-	if row == nil || row.K == 0 {
+	div := find(ns, func(n node) bool { return n.T == "div" && n.P["className"] == "row" })
+	if row == nil || row.K == 0 || div == nil {
 		t.Fatalf("no native row: %+v", ns)
 	}
+	if div.On["click"] == 0 || div.On["mouseenter"] == 0 || div.On["mouseover"] == 0 {
+		t.Fatalf("the row's handled events: %v", div.On)
+	}
 
-	// a state update that renders the same: nothing goes to Go
+	// a state update that renders the same (new closures, listeners
+	// swapped): nothing goes to Go
 	for i := 0; i < 3; i++ {
 		r.Post(func(js *Ctx) { _, _ = js.Global().Get("poke").Call() })
 	}
 	quiet(t, rec, 300*time.Millisecond, "re-rendered with the same output")
+
+	// pointer events that change nothing on their target (rows passing
+	// under a still pointer as a list scrolls)
+	for _, typ := range []string{"mouseenter", "mouseover", "mouseleave"} {
+		r.DispatchEvent(div.K, []byte(`{"type":"`+typ+`","clientX":4,"clientY":4,"buttons":0}`))
+	}
+	quiet(t, rec, 300*time.Millisecond, "pointer events over the row")
 
 	// one that changes the native's props: its tree goes
 	r.Post(func(js *Ctx) { _, _ = js.Global().Get("setLabel").Call(1) })
