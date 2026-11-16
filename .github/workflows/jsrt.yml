@@ -7,7 +7,7 @@ name: jsrt
 on:
   push:
     branches: [ui, main] # agent branches run only ci + supply-chain on push; dispatch this one by hand (gh workflow run jsrt.yml --ref <branch>)
-    paths: ['internal/jsrt/**', '.github/workflows/jsrt.yml']
+    paths: ['internal/jsrt/**', 'internal/awake/**', '.github/workflows/jsrt.yml']
   workflow_dispatch:
     inputs:
       bench:

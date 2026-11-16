@@ -13,12 +13,24 @@ package messages
 //
 // Slack (useBlockKitInteractiveState, resetKey msg.blocks): the replaced
 // message's buttons start idle, and an action's answer that comes after
-// the update changes nothing. Synthetic data on internal/fakeslack.
+// the update changes nothing.
+//
+// Under a plugin patching Message (ThreadReplyGeneric in the thread pane)
+// the buttons' clicks were lost now and then, and (α.92) the two panes
+// timed out drawing the new revision. The row sent its own override, the
+// msg the patched tree handed back, to JS as the component's props
+// (row.wrapped): after an update that was the old tree's msg, and while JS
+// answered each render before the next frame the root bounced between the
+// two revisions every frame, rebuilding the Block Kit host (a press went
+// to buttons the release no longer found). The lockstep variants run JS
+// to completion after every frame, the timing that bounced every time.
+// Synthetic data on internal/fakeslack.
 
 import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,8 +43,10 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/store"
+	"github.com/some-du6e/clack/internal/taut"
 	"github.com/some-du6e/clack/internal/ui/blockkit"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
@@ -108,29 +122,36 @@ class PassThrough extends TautPlugin {
 return PassThrough`)
 }
 
-// votePane is one view (channel or thread pane) over a router, drawn at
-// its own clock.
+// votePane is one view (channel or thread pane) over a router. The panes
+// share one clock (now), as the views of one window do: on clocks of
+// their own, the pane that clicked more ran seconds ahead and its frames
+// swept the other pane's patched roots as undrawn (slackc unmounts a root
+// not drawn for 5 s).
 type votePane struct {
 	name string
 	s    *listState
 	v    interface {
 		Layout(gtx layout.Context) layout.Dimensions
 	}
-	size image.Point
-	// noClick: the pane's clicks aren't checked (see checkVoteButtons)
-	noClick bool
-	r       input.Router
-	ops     op.Ops
-	now     time.Time
-	clock   time.Duration
+	size  image.Point
+	r     input.Router
+	ops   op.Ops
+	now   *time.Time
+	clock time.Duration
+	// step, when set, runs after every frame: lockstep's wait for JS to
+	// have answered whatever the frame sent it
+	step func()
 }
 
 func (p *votePane) frame() {
 	p.ops.Reset()
-	p.now = p.now.Add(20 * time.Millisecond)
-	gtx := layout.Context{Ops: &p.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(p.size), Now: p.now, Source: p.r.Source()}
+	*p.now = p.now.Add(20 * time.Millisecond)
+	gtx := layout.Context{Ops: &p.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(p.size), Now: *p.now, Source: p.r.Source()}
 	p.v.Layout(gtx)
 	p.r.Frame(&p.ops)
+	if p.step != nil {
+		p.step()
+	}
 }
 
 // buttons returns where ts's row drew the button of each actions block
@@ -170,7 +191,7 @@ func (p *votePane) buttons(ts string, bids ...string) (map[string]image.Rectangl
 // ButtonElement's isProcessingClick), and lets the hover's frames (and any
 // JS render they cause) settle.
 func (p *votePane) hover(at image.Rectangle) {
-	p.now = p.now.Add(1100 * time.Millisecond)
+	*p.now = p.now.Add(1100 * time.Millisecond)
 	p.clock += 600 * time.Millisecond
 	c := at.Min.Add(at.Max).Div(2)
 	p.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: f32.Pt(float32(c.X), float32(c.Y)), Time: p.clock})
@@ -200,13 +221,135 @@ func (p *votePane) settle(n int) {
 }
 
 func TestVoteButtonsSurviveUpdates(t *testing.T) {
-	t.Run("native", func(t *testing.T) { checkVoteButtons(t, nil) })
+	t.Run("native", func(t *testing.T) { checkVoteButtons(t, nil, false) })
 	for name, comps := range passThroughPlugins {
-		t.Run(name, func(t *testing.T) { checkVoteButtons(t, comps) })
+		t.Run(name, func(t *testing.T) { checkVoteButtons(t, comps, false) })
+		// lockstep: JS answers every render before the next frame, the
+		// timing that kept a patched Message's root bouncing between two
+		// revisions every frame (its own override went back to JS as its
+		// props, row.wrapped); free-running frames met it now and then
+		t.Run(name+" lockstep", func(t *testing.T) { checkVoteButtons(t, comps, true) })
 	}
 }
 
-func checkVoteButtons(t *testing.T, patch []string) {
+// renderCount is the bridge the ui root installs, recording every render
+// Go sends JS: the component, and its msg's ts, text and block_ids (a row
+// that settled sends none; one updated to revision n sends n's blocks).
+type renderCount struct {
+	*taut.Bridge
+	mu sync.Mutex
+	rs []sentRender
+}
+
+type sentRender struct {
+	name, ts, text string
+	blocks         []string
+}
+
+func (b *renderCount) Render(root uint64, name string, props []byte) {
+	b.add(name, props)
+	b.Bridge.Render(root, name, props)
+}
+
+func (b *renderCount) RenderIn(root, parent uint64, parentK int64, name string, props []byte) {
+	b.add(name, props)
+	b.Bridge.RenderIn(root, parent, parentK, name, props)
+}
+
+func (b *renderCount) add(name string, props []byte) {
+	var p struct {
+		Msg struct {
+			TS     string `json:"ts"`
+			Text   string `json:"text"`
+			Blocks []struct {
+				ID string `json:"block_id"`
+			} `json:"blocks"`
+		} `json:"msg"`
+	}
+	_ = json.Unmarshal(props, &p)
+	r := sentRender{name: name, ts: p.Msg.TS, text: p.Msg.Text}
+	for _, bl := range p.Msg.Blocks {
+		r.blocks = append(r.blocks, bl.ID)
+	}
+	b.mu.Lock()
+	b.rs = append(b.rs, r)
+	b.mu.Unlock()
+}
+
+// mark is where the renders sent from now on start (since).
+func (b *renderCount) mark() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.rs)
+}
+
+// since are the renders sent after mark i.
+func (b *renderCount) since(i int) []sentRender {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]sentRender(nil), b.rs[min(i, len(b.rs)):]...)
+}
+
+// of is how many renders of the components names were sent.
+func (b *renderCount) of(names []string) int {
+	k := 0
+	for _, r := range b.since(0) {
+		for _, n := range names {
+			if r.name == n {
+				k++
+			}
+		}
+	}
+	return k
+}
+
+// sentTexts are the msg texts of name's renders, in order.
+func (b *renderCount) sentTexts(name string) []string {
+	var out []string
+	for _, r := range b.since(0) {
+		if r.name == name {
+			out = append(out, r.text)
+		}
+	}
+	return out
+}
+
+// patchedEnv runs plugin js over app as the ui root does, waiting until
+// names are patched. step waits for JS to have answered everything sent
+// to it so far (an empty task on the JS thread: renders, dispatches and
+// the trees they commit run before it), for lockstep frames.
+func patchedEnv(t *testing.T, app *core.App, js []byte, names ...string) (rc *renderCount, step func()) {
+	t.Helper()
+	u := &pluginUI{trees: map[uint64][]byte{}}
+	rc = &renderCount{}
+	hooks := u.hooks()
+	hooks.Attached = func(*taut.Bridge) { slackc.SetBridge(rc) }
+	tt := newTaut(t, app, hooks)
+	rc.Bridge = tt.Bridge()
+	slackc.SetBridge(rc)
+	SetTaut(tt)
+	t.Cleanup(func() { SetTaut(nil); slackc.SetBridge(nil); slackc.Reset(); slackc.SetPatched(nil) })
+	install(t, tt, js)
+	until(t, 5*time.Second, "the components patched", func() {}, func() bool {
+		for _, n := range names {
+			if !slackc.Patched(n) {
+				return false
+			}
+		}
+		return true
+	})
+	rt, err := tt.JS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rc, func() {
+		if err := rt.Do(func(*jsrt.Ctx) error { return nil }); err != nil {
+			t.Errorf("waiting for JS: %v", err)
+		}
+	}
+}
+
+func checkVoteButtons(t *testing.T, patch []string, lockstep bool) {
 	app, fs, _ := shotsApp(t)
 	app.S.PutConv(slack.Conversation{ID: voteChan, Name: "meta", IsChannel: true, IsMember: true, NumMembers: 40})
 	app.S.PutBot(voteBotID, store.BotInfo{Name: "Vote Bot", Icon: shotAvatar(voteBotID)})
@@ -218,45 +361,25 @@ func checkVoteButtons(t *testing.T, patch []string) {
 	app.S.SetLatest(voteChan, []slack.Message{root, voteMsg(chanTS, "", 1, 0, 0)}, false)
 	app.S.SetThread(voteChan, rootTS, []slack.Message{root, voteMsg(replyTS, rootTS, 1, 0, 0)})
 
+	var renders *renderCount
+	var step func()
 	if patch != nil {
-		u := &pluginUI{trees: map[uint64][]byte{}}
-		tt := newTaut(t, app, u.hooks())
-		slackc.SetBridge(tt.Bridge())
-		SetTaut(tt)
-		t.Cleanup(func() { SetTaut(nil); slackc.SetBridge(nil); slackc.Reset(); slackc.SetPatched(nil) })
-		install(t, tt, passThroughJS(patch))
-		until(t, 5*time.Second, "the components patched", func() {}, func() bool {
-			for _, n := range patch {
-				if !slackc.Patched(n) {
-					return false
-				}
-			}
-			return true
-		})
+		renders, step = patchedEnv(t, app, passThroughJS(patch), patch...)
+		if !lockstep {
+			step = nil
+		}
 	}
 	h := coreHost{app: app, th: theme.New(false)}
 	cv := NewChannelView(h, voteChan)
 	cv.Preview = true
 	tv := NewThreadView(h, voteChan, rootTS)
-	start := time.Now()
+	now := time.Now()
 	panes := []struct {
 		p  *votePane
 		ts string
 	}{
-		{&votePane{name: "channel", s: cv.s, v: cv, size: image.Pt(1100, 700), now: start}, chanTS},
-		{&votePane{name: "thread", s: tv.s, v: tv, size: image.Pt(520, 700), now: start}, replyTS},
-	}
-	clicking := len(panes)
-	for _, n := range patch {
-		if n == "Message" {
-			// Open (2026-11-16, not this bug): a channel row under a
-			// patched Message loses some clicks on its Block Kit buttons
-			// (drawn, idle, the press on them sends nothing; the same
-			// clicks work natively, under MessageWrapper and in the
-			// ThreadReplyGeneric thread pane). The redraw checks still run.
-			panes[0].p.noClick = true
-			clicking--
-		}
+		{&votePane{name: "channel", s: cv.s, v: cv, size: image.Pt(1100, 700), now: &now, step: step}, chanTS},
+		{&votePane{name: "thread", s: tv.s, v: tv, size: image.Pt(520, 700), now: &now, step: step}, replyTS},
 	}
 	all := func() {
 		for _, x := range panes {
@@ -269,7 +392,31 @@ func checkVoteButtons(t *testing.T, patch []string) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	// drawn waits for both views to draw revision n's two buttons, idle
+	// marks: where the renders sent since each revision's update start
+	marks := map[int]int{}
+	// stale fails on any render of the vote message sent since revision
+	// n's update that carries another revision's blocks: the row sending
+	// JS the old tree's msg back as its props
+	stale := func(what string, n int) {
+		t.Helper()
+		if renders == nil || n < 2 {
+			return
+		}
+		for _, r := range renders.since(marks[n]) {
+			if r.ts != chanTS && r.ts != replyTS {
+				continue
+			}
+			for _, bid := range r.blocks {
+				if bid[1:] != fmt.Sprint(n) {
+					t.Errorf("%s: Go rendered %s with block %s (msg %q) after the update to revision %d; its msg is the wrapper's, never the old tree's",
+						what, r.name, bid, r.text, n)
+					break
+				}
+			}
+		}
+	}
+	// drawn waits for both views to draw revision n's two buttons, idle,
+	// and for the rows to stay put: no render sent JS while they settle
 	drawn := func(what string, n int) {
 		t.Helper()
 		u, d := fmt.Sprintf("u%d", n), fmt.Sprintf("d%d", n)
@@ -281,7 +428,17 @@ func checkVoteButtons(t *testing.T, patch []string) {
 			}
 			return true
 		})
+		sent := 0
+		if renders != nil {
+			sent = renders.of(patch)
+		}
 		settle()
+		if renders != nil {
+			if k := renders.of(patch) - sent; k > 0 {
+				t.Errorf("%s: %d renders of %v sent while the views settled; settled rows send JS none", what, k, patch)
+			}
+		}
+		stale(what, n)
 		for _, x := range panes {
 			_, el, ok := x.p.buttons(x.ts, u, d)
 			if !ok {
@@ -295,12 +452,10 @@ func checkVoteButtons(t *testing.T, patch []string) {
 		}
 	}
 	// vote clicks the button of revision n's block kind ("u", "d") in
-	// pane x and checks blocks.actions got it
+	// pane x, press and release a frame apart, and checks blocks.actions
+	// got it, from the element host the press found
 	vote := func(what string, x *votePane, ts string, n int, kind string) {
 		t.Helper()
-		if x.noClick {
-			return
-		}
 		bid := fmt.Sprintf("%s%d", kind, n)
 		u, d := fmt.Sprintf("u%d", n), fmt.Sprintf("d%d", n)
 		bs, _, ok := x.buttons(ts, u, d)
@@ -308,11 +463,16 @@ func checkVoteButtons(t *testing.T, patch []string) {
 			t.Fatalf("%s, %s: no %s button to click", what, x.name, bid)
 		}
 		x.hover(bs[bid])
-		if bs, _, ok = x.buttons(ts, u, d); !ok {
+		bs, el, ok := x.buttons(ts, u, d)
+		if !ok {
 			t.Fatalf("%s, %s: the %s button went away under the pointer", what, x.name, bid)
 		}
+		gen, w, _, _ := el.Probe(bid)
 		sent := len(fs.BlockActionCalls())
 		x.click(bs[bid])
+		if g, w2, _, _ := el.Probe(bid); g != gen || w2 != w {
+			t.Errorf("%s, %s: the row rebuilt %s's element host between the press and the release (generation %d → %d)", what, x.name, bid, gen, g)
+		}
 		var c fakeslack.BlockActionCall
 		for dl := time.Now().Add(5 * time.Second); ; {
 			if cs := fs.BlockActionCalls(); len(cs) > sent {
@@ -324,7 +484,8 @@ func checkVoteButtons(t *testing.T, patch []string) {
 				st := ""
 				if el != nil {
 					l, f := el.Status(bid)
-					st = fmt.Sprintf("loading %v failed %v", l, f)
+					g, _, pr, hv := el.Probe(bid)
+					st = fmt.Sprintf("loading %v failed %v, generation %d (was %d), pressed %v hovered %v", l, f, g, gen, pr, hv)
 				}
 				t.Fatalf("%s, %s: clicking %s at %v sent no blocks.actions (buttons now %v, drawn %v, %s)", what, x.name, bid, bs[bid], now, ok, st)
 			}
@@ -336,6 +497,9 @@ func checkVoteButtons(t *testing.T, patch []string) {
 		}
 	}
 	update := func(n, up, down int) {
+		if renders != nil {
+			marks[n] = renders.mark()
+		}
 		voteChanged(app, voteMsg(chanTS, "", n, up, down))
 		voteChanged(app, voteMsg(replyTS, rootTS, n, up, down))
 	}
@@ -357,11 +521,8 @@ func checkVoteButtons(t *testing.T, patch []string) {
 	// (b) a vote, its answer held: the app's chat.update reaches the
 	// client first. The buttons come back idle, and the late answer
 	// leaves them so.
-	fs.SetFault("blocks.actions", fakeslack.Fault{ReplyDelay: 1500 * time.Millisecond, Times: clicking})
+	fs.SetFault("blocks.actions", fakeslack.Fault{ReplyDelay: 1500 * time.Millisecond, Times: len(panes)})
 	for _, x := range panes {
-		if x.p.noClick {
-			continue
-		}
 		vote("held vote", x.p, x.ts, 2, "u")
 		if _, el, _ := x.p.buttons(x.ts, "u2", "d2"); el == nil {
 			t.Fatalf("%s: no element host", x.p.name)

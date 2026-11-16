@@ -359,3 +359,30 @@ func containsInt(xs []int, x int) bool {
 	}
 	return false
 }
+
+// Under a plugin patching MessageActions (OwlMode's) the toolbar is also
+// laid out in slackc's measure passes (gtx.Disabled()), where no button
+// has the key focus: there step reads the transitions without
+// retargeting them, or a keyboard-focused button's tilt would restart
+// twice a frame and never finish.
+func TestToolbarTiltIgnoresMeasurePass(t *testing.T) {
+	var tt toolbarTilt
+	var a iconAnim
+	var r input.Router
+	t0 := time.Unix(1700000000, 0)
+	live := layout.Context{Now: t0, Source: r.Source()}
+	tt.step(live, &a, false, false, tiltDur) // mounted at rest
+	live.Now = t0.Add(10 * time.Millisecond)
+	tt.step(live, &a, true, false, tiltDur) // key focus: tilting
+	want := a
+	m := live
+	m.Now = t0.Add(20 * time.Millisecond)
+	if mv, _ := tt.step(m.Disabled(), &a, false, false, tiltDur); a != want || !tiltNear(mv, want.move.at(m.Now)) {
+		t.Fatalf("a measure pass retargeted the tilt: %+v, want %+v (value %v)", a, want, mv)
+	}
+	live.Now = t0.Add(30 * time.Millisecond)
+	tt.step(live, &a, true, false, tiltDur)
+	if a != want {
+		t.Errorf("the live pass after the measure pass restarted the tilt: %+v, want %+v", a, want)
+	}
+}

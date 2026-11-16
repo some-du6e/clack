@@ -20,6 +20,7 @@ var live sync.Map
 // Snapshot is one Runtime's state.
 type Snapshot struct {
 	Task       time.Duration // how long the running task has run; 0 = idle
+	Running    string        // what it is ("Call taut.rtmEvent", "boot"; "" = unknown)
 	SinceExit  time.Duration // since the JS thread last left the wasm to poll its interrupt or yield (when a task runs)
 	GC         time.Duration // how long QuickJS's running collection has run; 0 = not collecting
 	LastGC     time.Duration // the last collection's length
@@ -57,6 +58,9 @@ func (r *Runtime) snapshot(now int64) Snapshot {
 	since := func(t int64) time.Duration { return time.Duration(max(now-t, 1)) } // t may be a hair after now
 	if t := r.taskStart.Load(); t != 0 {
 		s.Task = since(t)
+		if rt := r.running.Load(); rt != nil {
+			s.Running = rt.name()
+		}
 		if x := r.lastExit.Load(); x > t {
 			s.SinceExit = since(x)
 		} else {
@@ -79,7 +83,11 @@ func (s Snapshot) String() string {
 	mib := func(b uint64) string { return fmt.Sprintf("%.1f MiB", float64(b)/(1<<20)) }
 	out := "idle"
 	if s.Task > 0 {
-		out = fmt.Sprintf("a task running for %v (last interrupt poll or yield %v ago)", s.Task.Round(time.Millisecond), s.SinceExit.Round(time.Millisecond))
+		what := ""
+		if s.Running != "" {
+			what = s.Running + "; "
+		}
+		out = fmt.Sprintf("a task running for %v (%slast interrupt poll or yield %v ago)", s.Task.Round(time.Millisecond), what, s.SinceExit.Round(time.Millisecond))
 	}
 	if s.Abandoned {
 		out = "abandoned by the jsrt watchdog but still running: " + out

@@ -331,6 +331,11 @@ jobs:
           cache: true
       - name: applog tests
         run: go test -count=1 -v ./internal/applog
+      # Go's monotonic clock counts sleep on Windows; awake reads
+      # QueryUnbiasedInterruptTime instead (jsrt deadlines, freeze watchdog)
+      - name: awake clock (QueryUnbiasedInterruptTime)
+        if: ${{ !cancelled() }}
+        run: go test -count=1 -v ./internal/awake
       - name: huddle OS hooks (WTS lock events, RegisterHotKey Ctrl+Shift+Space)
         if: ${{ !cancelled() }}
         run: go test -count=1 -v ./internal/ui/screenlock ./internal/ui/globalkey
