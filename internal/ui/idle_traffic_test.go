@@ -1,13 +1,17 @@
 package ui
 
 import (
+	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"gioui.org/widget"
 
+	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
 	"github.com/some-du6e/clack/internal/ui/idleprobe"
 )
@@ -56,16 +60,87 @@ func TestIdleTrafficFrames(t *testing.T) {
 		t.Fatalf("%s isn't unread after its first message: %+v", tr.ch, c)
 	}
 
+	// what core emitted meanwhile, and who built each snapshot: the
+	// failure names the events behind a frame
+	type coreEv struct {
+		at       time.Duration
+		typ, sub string
+	}
+	var evMu sync.Mutex
+	var evLog []coreEv
+	var buildStacks []string
+	var t0 time.Time
+	core.SetSnapshotBuildHook(func() {
+		pcs := make([]uintptr, 12)
+		n := runtime.Callers(3, pcs)
+		fr := runtime.CallersFrames(pcs[:n])
+		var st []string
+		for {
+			f, more := fr.Next()
+			st = append(st, strings.TrimPrefix(f.Function, "github.com/some-du6e/clack/internal/"))
+			if !more || len(st) == 6 {
+				break
+			}
+		}
+		evMu.Lock()
+		buildStacks = append(buildStacks, strings.Join(st, " < "))
+		evMu.Unlock()
+	})
+	defer core.SetSnapshotBuildHook(nil)
+	evs, unsub := e.a.data.core.Subscribe()
+	defer unsub()
+	go func() {
+		for ev := range evs {
+			evMu.Lock()
+			if !t0.IsZero() {
+				evLog = append(evLog, coreEv{time.Since(t0), ev.Type, ev.Channel + " " + ev.UserID})
+			}
+			evMu.Unlock()
+		}
+	}()
+
 	run := func(name string, caret bool) {
 		t.Helper()
 		e.settle(time.Second)
 		b0 := e.a.data.core.SnapshotBuilds()
+		evMu.Lock()
+		evLog, buildStacks, t0 = nil, nil, time.Now()
+		evMu.Unlock()
 		tr.start()
 		const d = 5 * time.Second
 		res := p.Run(name, d, &e.r, e.idleFrame)
 		events := tr.stop()
 		builds := e.a.data.core.SnapshotBuilds() - b0
+		evMu.Lock()
+		got, stacks := append([]coreEv(nil), evLog...), append([]string(nil), buildStacks...)
+		t0 = time.Time{}
+		evMu.Unlock()
 		res.Log(t)
+		byType := map[string]int{}
+		for _, ev := range got {
+			byType[ev.typ]++
+		}
+		t.Logf("%s: core events %v", name, byType)
+		for _, st := range stacks {
+			t.Logf("%s: a snapshot built by %s", name, st)
+		}
+		// the events in the 60 ms before each frame an Invalidate asked for
+		for _, f := range res.Frames {
+			inv := false
+			for _, c := range f.Causes {
+				inv = inv || strings.HasPrefix(c, "Invalidate ")
+			}
+			if !inv {
+				continue
+			}
+			var before []string
+			for _, ev := range got {
+				if ev.at <= f.At && ev.at > f.At-60*time.Millisecond {
+					before = append(before, fmt.Sprintf("%s(%s)", ev.typ, strings.TrimSpace(ev.sub)))
+				}
+			}
+			t.Logf("%s: frame @%v (%s) after %s", name, f.At.Round(time.Millisecond), strings.Join(f.Causes, " | "), strings.Join(before, ", "))
+		}
 		blinks := res.CountMatching("Editor).Layout")
 		var asked []string
 		frames := 0
