@@ -104,7 +104,7 @@ type perfPass struct {
 	Trees    int     `json:"trees"`    // host trees delivered
 	Renders  int64   `json:"renders"`  // Go→JS Render/RenderIn calls
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
-	// 40 ms in (function names), with what landed meanwhile
+	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
 }
 
@@ -126,18 +126,32 @@ func perfGCs() uint64 {
 	return s[0].Value.Uint64()
 }
 
-// perfStack is the stack of the goroutine running perfScroll, function
-// names only (no arguments, no message text).
-func perfStack() []string {
+// perfGoID is the calling goroutine's id ("goroutine 7 [running]:").
+func perfGoID() string {
+	buf := make([]byte, 64)
+	f := strings.Fields(string(buf[:runtime.Stack(buf, false)]))
+	if len(f) < 2 {
+		return ""
+	}
+	return f[1]
+}
+
+// perfStack is goroutine id's stack, function names only (no arguments,
+// no message text), and the state it's in.
+func perfStack(id string) []string {
 	buf := make([]byte, 4<<20)
 	buf = buf[:runtime.Stack(buf, true)]
 	for _, g := range strings.Split(string(buf), "\n\n") {
-		if !strings.Contains(g, "perfScroll") {
+		if !strings.HasPrefix(g, "goroutine "+id+" [") {
 			continue
 		}
 		var out []string
 		for i, l := range strings.Split(g, "\n") {
-			if i == 0 || strings.HasPrefix(l, "\t") {
+			if i == 0 {
+				out = append(out, l) // its state: running, runnable, a lock…
+				continue
+			}
+			if strings.HasPrefix(l, "\t") {
 				continue
 			}
 			if j := strings.LastIndex(l, "("); j > 0 {
@@ -295,6 +309,9 @@ func TestPerfPluginScroll(t *testing.T) {
 		}()
 	}
 	perfProfPrefix = prof
+	// slow-frame samples show the runtime's frames too (a GC assist, a
+	// stop-the-world wait), not just the Go code that was running
+	debug.SetTraceback("system")
 	traffic := func(ch, thread string) *perfTraffic {
 		return &perfTraffic{e: e, ch: ch, thread: thread, others: others[1:]}
 	}
@@ -339,7 +356,7 @@ func TestPerfPluginScroll(t *testing.T) {
 	}
 	for _, p := range res.Passes {
 		for _, sl := range p.Slow {
-			t.Logf("slow frame in %s: %.1f ms, %d trees delivered meanwhile, %d collections; 40 ms in:\n\t%s", p.Name, sl.MS, sl.Trees, sl.GCs, strings.Join(sl.Stack, "\n\t"))
+			t.Logf("slow frame in %s: %.1f ms, %d trees delivered meanwhile, %d collections; the frame goroutine 40 ms in:\n\t%s", p.Name, sl.MS, sl.Trees, sl.GCs, strings.Join(sl.Stack, "\n\t"))
 		}
 	}
 	for _, p := range res.Passes {
@@ -443,6 +460,7 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	}
 	var ds []float64
 	var slow []perfSlow
+	me := perfGoID()
 	step := func(dy float32) {
 		e.scroll(at(), dy)
 		gc0, tr0 := perfGCs(), e.delivered()
@@ -451,12 +469,19 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 		sampled := make(chan struct{})
 		go func() {
 			defer close(sampled)
-			select {
-			case <-done:
-			case <-time.After(40 * time.Millisecond):
-				if len(slow) < 6 {
-					sample = perfStack()
+			if len(slow) >= 6 {
+				return
+			}
+			for _, at := range []time.Duration{40 * time.Millisecond, 80 * time.Millisecond} {
+				select {
+				case <-done:
+					return
+				case <-time.After(at):
 				}
+				if sample != nil {
+					sample = append(sample, "-- 120 ms in:")
+				}
+				sample = append(sample, perfStack(me)...)
 			}
 		}()
 		t0 := time.Now()
