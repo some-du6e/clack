@@ -139,10 +139,12 @@ type row struct {
 	// more" (richview Options.Truncate)
 	truncate bool
 
-	// plugin view of the message (taut patchMessageText…), see applyView
+	// plugin view of the message (taut patchMessageText…), see applyView;
+	// viewConv: the serial of the view's conversion it last compared
 	viewAt           time.Time
 	viewRev          uint32
 	viewed           bool
+	viewConv         uint64
 	col              image.Point  // body column origin, row-local
 	reactAt          image.Point  // reaction bar origin, row-local
 	wrapOv, blocksOv uintptr      // msg overrides applied (propsID); 0 = none

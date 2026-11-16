@@ -862,25 +862,35 @@ func (t *Taut) SlicePatched(slice string) bool {
 // conversion reads (names, prefs, emoji) changes: it used to be decoded
 // and converted (highlighting and all) on every call, every frame on the
 // Activity page.
-func (t *Taut) MessageView(ch, ts string) (core.Message, bool) { return t.messageView(ch, ts, false) }
+func (t *Taut) MessageView(ch, ts string) (core.Message, bool) {
+	m, _, ok := t.MessageViewConv(ch, ts, false)
+	return m, ok
+}
 
 // MessageViewChanged is MessageView for a caller whose own copy of the
 // message just changed (a new revision from core's events): the view is
 // converted again now, so it never shows the message's previous state
 // while the mirror is still on the event that changed it.
 func (t *Taut) MessageViewChanged(ch, ts string) (core.Message, bool) {
-	return t.messageView(ch, ts, true)
+	m, _, ok := t.MessageViewConv(ch, ts, true)
+	return m, ok
 }
 
-func (t *Taut) messageView(ch, ts string, fresh bool) (core.Message, bool) {
+// MessageViewConv is MessageView (fresh: MessageViewChanged) with the
+// serial of the conversion it returns, which changes whenever the view is
+// converted again: when its value changed, or what the conversion read (a
+// member's name, a channel's tabs: bumpRefs) did, though nothing else a
+// caller compares may have.
+func (t *Taut) MessageViewConv(ch, ts string, fresh bool) (core.Message, uint64, bool) {
 	if !t.SlicePatched("messages") {
-		return core.Message{}, false
+		return core.Message{}, 0, false
 	}
 	e := t.ui.views.entry("messages", ch, ts)
 	if e == nil || e.sm == nil {
-		return core.Message{}, false
+		return core.Message{}, 0, false
 	}
-	return t.ui.views.convert(&e.conv, ch, e.sm, fresh), true
+	c := t.ui.views.conv(&e.conv, ch, e.sm, fresh)
+	return c.msg, c.id, true
 }
 
 // InjectedMessages lists messages plugins added to ch (injectMessages)
@@ -1083,11 +1093,14 @@ type viewInj struct {
 	conv    atomic.Pointer[viewConv]
 }
 
-// viewConv is a message converted for the UI, at conversion generation gen.
+// viewConv is a message converted for the UI, at conversion generation
+// gen; id is the conversion's serial (convSerial).
 type viewConv struct {
-	gen uint64
-	msg core.Message
+	gen, id uint64
+	msg     core.Message
 }
+
+var convSerial atomic.Uint64
 
 // viewGroup is the cached values under one (slice, key): a message bucket's
 // messages share theirs.
@@ -1110,20 +1123,29 @@ type viewCache struct {
 	flying   map[viewKey]bool // asked of JS, not back yet
 	busy     bool             // the worker runs or is about to
 	fetches  atomic.Int64     // worker batches (tests)
-	lastRead atomic.Int64     // UnixMilli of the UI's latest read (entry): its latest frame
 	maxSubs  int              // entries before everything is dropped (20000)
 	bytes    int              // what the entries hold, about
 	maxBytes int              // bytes before everything is dropped (64 MiB)
 	failN    int              // fetches that failed in a row (retry backoff)
 
 	// conversion generations (MessageView): the mirror bumps a message's
-	// on core's events about it, and the global one on events about
-	// people, names, prefs, emoji and the rest core.App.message reads
+	// on core's events about it or about a member or conversation its
+	// conversion read (refBy), and the global one on events about prefs,
+	// emoji and the rest core.App.message reads
 	gmu    sync.Mutex
 	gseq   uint64
 	global uint64
 	msgGen map[viewSK]uint64 // channel, ts → gseq
+	// what each conversion read (core.Message.Refs): member or
+	// conversation id → the messages whose conversion read it, and back
+	// (gmu), so a change to one converts just those again (bumpRefs)
+	refBy map[string]map[viewSK]struct{}
+	refOf map[viewSK][]string
 }
+
+// maxConvKeys bounds the per-message generations and the conversions'
+// index: past it they start over with a global bump.
+const maxConvKeys = 50000
 
 func (v *viewCache) init(t *Taut) {
 	v.t = t
@@ -1133,6 +1155,8 @@ func (v *viewCache) init(t *Taut) {
 	v.want = map[viewKey]bool{}
 	v.flying = map[viewKey]bool{}
 	v.msgGen = map[viewSK]uint64{}
+	v.refBy = map[string]map[viewSK]struct{}{}
+	v.refOf = map[viewSK][]string{}
 	v.maxSubs = 20000
 	v.maxBytes = 64 << 20
 }
@@ -1172,7 +1196,6 @@ func (v *viewCache) staleLocked(e *viewEntry, g *viewGroup, slice string) bool {
 // entry returns slice[key][sub]'s cached value (nil until the first one
 // arrives), queueing a fetch when it's missing or stale. Never waits on JS.
 func (v *viewCache) entry(slice, key, sub string) *viewEntry {
-	v.lastRead.Store(time.Now().UnixMilli())
 	k := viewKey{slice, key, sub}
 	v.mu.Lock()
 	g := v.groupLocked(viewSK{slice, key})
@@ -1554,14 +1577,93 @@ func (v *viewCache) injected(ch string, bucket map[string]json.RawMessage) []vie
 // again only when the conversion generation of ch/sm.TS moved since, or
 // when fresh.
 func (v *viewCache) convert(slot *atomic.Pointer[viewConv], ch string, sm *slack.Message, fresh bool) core.Message {
+	return v.conv(slot, ch, sm, fresh).msg
+}
+
+// conv is convert's conversion itself.
+func (v *viewCache) conv(slot *atomic.Pointer[viewConv], ch string, sm *slack.Message, fresh bool) *viewConv {
 	gen := v.convGen(ch, sm.TS)
 	if c := slot.Load(); c != nil && !fresh && c.gen == gen {
-		return c.msg
+		return c
 	}
 	m := *sm
-	c := &viewConv{gen: gen, msg: v.t.app.MessageFromSlack(ch, &m)}
+	c := &viewConv{gen: gen, id: convSerial.Add(1), msg: v.t.app.MessageFromSlack(ch, &m)}
 	slot.Store(c)
-	return c.msg
+	v.indexRefs(viewSK{ch, sm.TS}, &c.msg.Refs)
+	return c
+}
+
+// indexRefs records the members and conversations the conversion of ch/ts
+// read, in place of what its last conversion read.
+func (v *viewCache) indexRefs(k viewSK, r *core.MsgRefs) {
+	n := len(r.Members) + len(r.Channels)
+	v.gmu.Lock()
+	defer v.gmu.Unlock()
+	old, had := v.refOf[k]
+	if n == 0 && !had {
+		return
+	}
+	for _, id := range old {
+		if set := v.refBy[id]; set != nil {
+			delete(set, k)
+			if len(set) == 0 {
+				delete(v.refBy, id)
+			}
+		}
+	}
+	if n == 0 {
+		delete(v.refOf, k)
+		return
+	}
+	if !had && len(v.refOf) >= maxConvKeys {
+		// start over: every conversion is made (and indexed) again
+		clear(v.refOf)
+		clear(v.refBy)
+		clear(v.msgGen)
+		v.gseq++
+		v.global = v.gseq
+	}
+	ids := make([]string, 0, n)
+	ids = append(append(ids, r.Members...), r.Channels...)
+	v.refOf[k] = ids
+	for _, id := range ids {
+		set := v.refBy[id]
+		if set == nil {
+			set = map[viewSK]struct{}{}
+			v.refBy[id] = set
+		}
+		set[k] = struct{}{}
+	}
+}
+
+// bumpRefs makes the conversions that read any of ids (member and
+// conversation ids) be made again, and only those, and redraws when there
+// were any: a profile change converted every message again, or none.
+func (v *viewCache) bumpRefs(ids []string) {
+	v.gmu.Lock()
+	n := 0
+	for _, id := range ids {
+		n += len(v.refBy[id])
+	}
+	if n == 0 {
+		v.gmu.Unlock()
+		return
+	}
+	v.gseq++
+	if len(v.msgGen)+n >= maxConvKeys {
+		clear(v.msgGen)
+		v.global = v.gseq
+	} else {
+		for _, id := range ids {
+			for k := range v.refBy[id] {
+				v.msgGen[k] = v.gseq
+			}
+		}
+	}
+	v.gmu.Unlock()
+	if f := v.t.opts.UI.Invalidate; f != nil {
+		f()
+	}
 }
 
 // convGen is the generation of what converting ch/ts reads.
@@ -1579,7 +1681,7 @@ func (v *viewCache) convGen(ch, ts string) uint64 {
 func (v *viewCache) bumpConv(ch, ts string) {
 	v.gmu.Lock()
 	v.gseq++
-	global := ch == "" || ts == "" || len(v.msgGen) >= 50000
+	global := ch == "" || ts == "" || len(v.msgGen) >= maxConvKeys
 	if global {
 		clear(v.msgGen)
 		v.global = v.gseq
@@ -1593,14 +1695,6 @@ func (v *viewCache) bumpConv(ch, ts string) {
 	if f := v.t.opts.UI.Invalidate; f != nil && v.convCached(ch, ts) {
 		f()
 	}
-}
-
-// drewMember reports whether a member last drawn at seen (core.Event.Seen)
-// was drawn in the UI's latest frame, the one that read the views last:
-// rows touch their members as they read their views. A second of slack
-// covers a long frame.
-func (v *viewCache) drewMember(seen time.Time) bool {
-	return !seen.IsZero() && seen.UnixMilli() >= v.lastRead.Load()-1000
 }
 
 // convCached reports whether a conversion of ch/ts is cached (with ch "",

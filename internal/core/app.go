@@ -1474,7 +1474,11 @@ func (a *App) message(ch string, m *slack.Message) Message {
 		v.Reactions = append(v.Reactions, rv)
 	}
 	v.Reactions = a.overlayReactions(ch, m.TS, v.Reactions)
-	v.Doc = richtext.FromMessageIn(msgNames{a.S}, m, ch) // mentions ask as they draw (lazy_users.go); in ch, a slug to one of ch's tabs is the tab alone
+	// mentions ask as they draw (lazy_users.go); in ch, a slug to one of
+	// ch's tabs is the tab alone; Refs: what it read (msg_refs.go)
+	rn := refNames{msgNames: msgNames{a.S}}
+	v.Doc = richtext.FromMessageIn(&rn, m, ch)
+	v.Refs = rn.refs
 	return v
 }
 

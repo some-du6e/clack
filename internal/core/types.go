@@ -59,6 +59,8 @@ type Message struct {
 	Reactions       []Reaction
 	Huddle          json.RawMessage
 	Doc             richtext.Doc
+	// Refs are the members and conversations Doc was built from (msg_refs.go)
+	Refs MsgRefs
 	// Raw Slack data for plugins (Taut): memory only, never written to disk.
 	Blocks      json.RawMessage // Block Kit blocks as sent
 	Attachments json.RawMessage // legacy attachments / unfurls as sent

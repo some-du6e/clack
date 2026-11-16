@@ -3,6 +3,7 @@ package messages
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -246,27 +247,31 @@ func (s *listState) applyView(t *taut.Taut, r *row, now time.Time) {
 	// rather than show the old state until the mirror sees the event
 	changed := r.viewRev != 0 && r.viewRev != r.rev
 	r.viewAt, r.viewRev = now, r.rev
-	var mv core.Message
-	var ok bool
 	if changed {
-		mv, ok = t.MessageViewChanged(r.src.Channel, r.src.TS)
-	} else {
-		mv, ok = t.MessageView(r.src.Channel, r.src.TS)
+		r.viewConv = 0 // a new revision: compared afresh
 	}
+	mv, conv, ok := t.MessageViewConv(r.src.Channel, r.src.TS, changed)
 	if !ok {
 		if r.viewed {
 			r.viewed = false
 			r.m = r.src
 			r.setDoc()
 		}
+		r.viewConv = 0
 		return
 	}
 	// keep what only the native knows (pending state, resolved author)
 	mv.Pending, mv.Failed, mv.ClientMsgID = r.src.Pending, r.src.Failed, r.src.ClientMsgID
-	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text {
+	// A view converted again can differ only in its Doc, past what
+	// sameView compares: a name in it (a file's uploader, a tab slug;
+	// taut converts again just the messages that named a changed member
+	// or channel). Only then are the Docs compared.
+	again := r.viewConv != 0 && conv != r.viewConv
+	r.viewConv = conv
+	if r.viewed && sameView(&r.m, &mv) && r.m.Text == mv.Text && (!again || reflect.DeepEqual(r.m.Doc, mv.Doc)) {
 		return
 	}
-	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text {
+	if !r.viewed && sameView(&r.src, &mv) && r.src.Text == mv.Text && (!again || reflect.DeepEqual(r.src.Doc, mv.Doc)) {
 		return
 	}
 	r.viewed = true
