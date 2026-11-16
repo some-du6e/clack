@@ -625,16 +625,44 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 // types every 150 ms, a message (or thread reply) every 700 ms, a
 // reaction every 300 ms, an edit every 1.5 s and a delete every 2.5 s
 // (Message Logger keeps deleted messages: injected ones); in the other
-// channels a message every 250 ms. As realtime events through core's
-// handler, from their own goroutine like the socket's.
+// channels a message every 250 ms. Each live message mentions someone,
+// and every third shares a file someone else owns. A large workspace's
+// profile changes come too: a status (or huddle) change every 50 ms,
+// through the people the messages name, and a display name change every
+// 4 s. As realtime events through core's handler, from their own
+// goroutine like the socket's.
 type perfTraffic struct {
 	e          *benchEnv
 	ch, thread string
 	others     []string
 
-	quit chan struct{}
-	done sync.WaitGroup
-	n    atomic.Int64
+	quit   chan struct{}
+	done   sync.WaitGroup
+	n      atomic.Int64
+	status int
+}
+
+// profile is a user_change for member id as the socket brings it: the
+// stored profile with a new status, and with rename its display name
+// changed too (a suffix added or taken off).
+func (p *perfTraffic) profile(id string, rename bool) {
+	u, ok := p.e.a.data.core.S.RawUser(id)
+	if !ok || u == nil {
+		return
+	}
+	c := *u
+	p.status++
+	c.Profile.StatusText, c.Profile.StatusEmoji = fmt.Sprintf("in a meeting (%d)", p.status), ":spiral_calendar_pad:"
+	if rename {
+		if n, cut := strings.CutSuffix(c.Profile.DisplayName, " (away)"); cut {
+			c.Profile.DisplayName = n
+		} else {
+			c.Profile.DisplayName += " (away)"
+		}
+	}
+	raw, _ := json.Marshal(map[string]any{"type": "user_change", "user": c})
+	p.e.a.data.core.Inject(slack.Event{Type: "user_change", Raw: raw})
+	p.n.Add(1)
 }
 
 func (p *perfTraffic) start() {
@@ -685,8 +713,8 @@ func (p *perfTraffic) run() {
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	start := time.Now()
-	var lastType, lastMsg, lastReact, lastEdit, lastDel, lastOther time.Duration
-	seq := 0
+	var lastType, lastMsg, lastReact, lastEdit, lastDel, lastOther, lastStatus, lastRename time.Duration
+	seq, msgs := 0, 0
 	for {
 		select {
 		case <-p.quit:
@@ -707,12 +735,29 @@ func (p *perfTraffic) run() {
 		if el-lastMsg >= 700*time.Millisecond {
 			lastMsg = el
 			ts := liveTS()
-			ev := map[string]any{"user": u, "text": "live message " + ts, "ts": ts, "event_ts": ts, "client_msg_id": "live-" + ts}
+			msgs++
+			who := authors[(seq*5+1)%len(authors)]
+			text := "live message " + ts + " for "
+			ev := map[string]any{"user": u, "text": text + "<@" + who + ">", "ts": ts, "event_ts": ts, "client_msg_id": "live-" + ts,
+				"blocks": []any{map[string]any{"type": "rich_text", "block_id": "live", "elements": []any{map[string]any{"type": "rich_text_section",
+					"elements": []any{map[string]any{"type": "text", "text": text}, map[string]any{"type": "user", "user_id": who}}}}}}}
+			if msgs%3 == 0 {
+				ev["files"] = []any{map[string]any{"id": fmt.Sprintf("F0LIVE%05d", msgs), "name": "notes.pdf", "title": "Notes", "mimetype": "application/pdf",
+					"filetype": "pdf", "pretty_type": "PDF", "mode": "hosted", "user": authors[(seq*3+2)%len(authors)], "size": 2048}}
+			}
 			if p.thread != "" {
 				ev["thread_ts"] = p.thread
 			}
 			p.inject(p.ch, "message", "", ev)
 			targets = append(targets, ts)
+		}
+		if el-lastStatus >= 50*time.Millisecond {
+			lastStatus = el
+			p.profile(authors[(seq*7)%len(authors)], false)
+		}
+		if el-lastRename >= 4*time.Second {
+			lastRename = el
+			p.profile(authors[(seq*3)%len(authors)], true)
 		}
 		if len(p.others) > 0 && el-lastOther >= 250*time.Millisecond {
 			lastOther = el
