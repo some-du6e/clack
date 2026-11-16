@@ -7,6 +7,7 @@ import (
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/ui/composer"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // ChannelView is a conversation's message list, anchored at the bottom.
@@ -53,6 +54,7 @@ func (v *ChannelView) Channel() string { return v.ch }
 
 // Layout draws the list filling the constraints.
 func (v *ChannelView) Layout(gtx layout.Context) layout.Dimensions {
+	defer slackc.EndPane(slackc.Pane(v.s.paneID))
 	v.s.noMark = v.Preview
 	shown(&lastChannel, v.s)
 	st := paneClass.Enter(gtx, 0, 0)

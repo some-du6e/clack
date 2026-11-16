@@ -210,6 +210,7 @@ func (v *ThreadView) JumpPending() string { return v.s.pendingJump }
 
 // Layout draws the header and the list: Slack's Serialized(ThreadsFlexpane).
 func (v *ThreadView) Layout(gtx layout.Context) layout.Dimensions {
+	defer slackc.EndPane(slackc.Pane(v.s.paneID))
 	return slackc.Component(gtx, "Serialized(ThreadsFlexpane)", v, (*ThreadView).flexpaneProps, (*ThreadView).layoutPane)
 }
 
