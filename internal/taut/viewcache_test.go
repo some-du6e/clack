@@ -440,8 +440,11 @@ func TestViewCacheMemory(t *testing.T) {
 // Profile changes for members no frame drew, and count or badge events,
 // cost nothing: no conversion generation moves, nothing converts again,
 // nothing redraws (a busy workspace sends user_change many times a
-// second; review of 2026-11-16). A member the latest frame drew still
-// does.
+// second; review of 2026-11-16). So do a channel's details and its member
+// count (core's member_count, once per channel on its first open when
+// users/counts lands): they carry a channel but no message, which
+// noteConv would otherwise take as a change to every message. A member
+// the latest frame drew still does.
 func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
 	h := newHarness(t)
 	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
@@ -464,6 +467,7 @@ func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
 			h.tt.mirror.noteConv(core.Event{Type: typ})
 		}
 		h.tt.mirror.noteConv(core.Event{Type: "conv", Channel: chGen})
+		h.tt.mirror.noteConv(core.Event{Type: "member_count", Channel: chGen, Conv: &core.Conv{ID: chGen, NumMembers: 42}})
 	}
 	if g := v.convGen(chGen, ts); g != g0 {
 		t.Errorf("the conversion generation moved (%d → %d)", g0, g)

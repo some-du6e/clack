@@ -401,16 +401,18 @@ func (m *mirror) onEvent(ev core.Event) {
 // core.App.message reads (names, prefs and highlight words, emoji,
 // experiment groups, a resync) every message. Events that change no
 // message's conversion are skipped: read states, counts and badges, a
-// channel's own details (rows resolve channel names as they draw), tabs,
-// bookmarks, presence, typing. ("experiments" counts: a huddle message's
-// sentence and the emoji set follow experiment groups.)
+// channel's own details (rows resolve channel names as they draw) and its
+// member count (users/counts on a first open), tabs, bookmarks, presence,
+// typing. ("experiments" counts: a huddle message's sentence and the
+// emoji set follow experiment groups.)
 func (m *mirror) noteConv(ev core.Event) {
 	switch ev.Type {
 	case "typing", "presence", "marked", "counts", "huddle", "draft", "dnd_updated", "dnd_updated_user",
 		"connection", "realtime", "client_online", "sidebar_changed", "channel_sections_upserted",
 		"channel_sections_channels_upserted", "channel_sections_channels_removed", "channel_sections_deleted",
 		"activity", "activity_badges", "poll", "tabs", "bookmarks", "pins_tab", "channel_email", "permissions",
-		"conv", "conv_removed", "canvas_viewers", "megaphone", "suggested_prompts", "assistant_status", "auth_failed":
+		"conv", "conv_removed", "member_count", "canvas_viewers", "megaphone", "suggested_prompts",
+		"assistant_status", "auth_failed":
 		return
 	case "user":
 		// a profile change, many a second on a busy workspace's socket:
