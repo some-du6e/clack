@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gioui.org/io/input"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -99,5 +100,64 @@ func TestFormTextInputFocusThroughMeasurePasses(t *testing.T) {
 		if c == onFocus || c == onBlur {
 			t.Fatalf("re-renders of a focused field called onFocus/onBlur (fn %d); want neither", c)
 		}
+	}
+}
+
+// A Popover's modal layer takes the focus as it opens (for its Escape),
+// but a field in it with autoFocus (a menu's search) gets the caret, as a
+// browser's autofocus inside a popover does. The layer took the focus
+// after its content had laid out, and Gio's last FocusCmd wins: the field
+// got the focus and lost it in the same frame (onFocus, then onBlur), drew
+// no caret, and typing went nowhere until it was clicked.
+func TestPopoverAutoFocusFieldKeepsCaret(t *testing.T) {
+	Register()
+	const onFocus, onBlur, onChange = 21, 22, 23
+	log := &callLog{}
+	slackc.SetBridge(log)
+	t.Cleanup(func() { slackc.SetBridge(nil) })
+	nodes, err := slackc.ParseTree([]byte(`{"t":"@","n":"Popover","k":1,"p":{"isOpen":true,"targetBounds":{"x":40,"y":40,"width":120,"height":28},` +
+		`"onClose":{"$fn":24}},"c":[{"t":"div","k":2,"c":[{"t":"@","n":"FormTextInput","k":3,"p":{"autoFocus":true,"value":"",` +
+		`"onFocus":{"$fn":21},"onBlur":{"$fn":22},"onChange":{"$fn":23}}}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := slackc.NewView(903)
+	t.Cleanup(v.Close)
+	var r input.Router
+	ops := new(op.Ops)
+	now := time.Unix(1000, 0)
+	frame := func() {
+		ops.Reset()
+		now = now.Add(20 * time.Millisecond)
+		gtx := layout.Context{Ops: ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Constraints{Max: image.Pt(600, 400)},
+			Now: now, Source: r.Source()}
+		v.Layout(gtx, nodes, "PluginPanel", nil, nil)
+		r.Frame(ops)
+	}
+	for i := 0; i < 4; i++ {
+		frame()
+	}
+	got := log.take()
+	focused := false
+	for _, c := range got {
+		focused = focused || c == onFocus
+		if c == onBlur {
+			t.Errorf("the autoFocus field in the Popover was blurred (calls %v): the layer took the focus from it", got)
+		}
+	}
+	if !focused {
+		t.Fatalf("the autoFocus field in the Popover never got the focus: no onFocus (calls %v)", got)
+	}
+	// typing goes into the field
+	r.Queue(key.EditEvent{Text: "x"}, key.SelectionEvent{Start: 1, End: 1})
+	for i := 0; i < 3; i++ {
+		frame()
+	}
+	changed := false
+	for _, c := range log.take() {
+		changed = changed || c == onChange
+	}
+	if !changed {
+		t.Error("typing with the Popover open changed nothing (no onChange): the field doesn't have the caret")
 	}
 }

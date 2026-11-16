@@ -212,6 +212,7 @@ func popover(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		}
 	}
 	maxSz := image.Pt(dp(gtx, 1600), dp(gtx, 1200))
+	st.layer.open(gtx) // before the children: an autoFocus field among them takes the focus from it
 	call, d := record(loose(gtx, maxSz), h.Children)
 	p := place(anchor, d.Size, image.Point{}, dp(gtx, 8), side, align)
 	outside, esc := st.layer.float(gtx, &st.org, p, call, d.Size, true)

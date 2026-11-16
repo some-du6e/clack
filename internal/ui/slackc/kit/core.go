@@ -613,14 +613,23 @@ func (l *layer) float(gtx layout.Context, org *origin, win image.Point, call op.
 	call.Add(gtx.Ops)
 	off.Pop()
 	op.Defer(gtx.Ops, m.Stop())
-	if modal && !l.focused && gtx.Source.Enabled() { // a measure pass's FocusCmd goes nowhere
-		gtx.Execute(key.FocusCmd{Tag: &l.focus})
-		l.focused = true
-	}
 	if !modal {
 		l.focused = false
 	}
 	return outside, esc
+}
+
+// open gives a modal layer the keyboard focus (its Escape) as it opens.
+// Call it before laying out the content: a field in it that takes the
+// focus as it lays out (FormTextInput's or an <input>'s autoFocus) then
+// keeps it, as a browser's autofocus inside a popover does. Gio's last
+// FocusCmd wins: the layer's, run after the content, took the caret from
+// the field (no caret, and typing went nowhere).
+func (l *layer) open(gtx layout.Context) {
+	if !l.focused && gtx.Source.Enabled() { // a measure pass's FocusCmd goes nowhere
+		gtx.Execute(key.FocusCmd{Tag: &l.focus})
+		l.focused = true
+	}
 }
 
 // reset forgets focus so the next open grabs it again.
