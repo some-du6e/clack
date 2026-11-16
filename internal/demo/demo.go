@@ -35,6 +35,10 @@ type Options struct {
 	Seed int64
 	// Logf, when set, gets the bots' log lines.
 	Logf func(format string, args ...any)
+	// Read are conversations that start read: the seed's unread messages
+	// and mentions in them are not (Clack's introduction shows #general
+	// without a "new messages" pill).
+	Read []string
 }
 
 // Session is a running demo: the fake, its workspace and the bots.

@@ -531,8 +531,11 @@ jobs:
             Wait-Log 'sign-in: a sign-in link came from outside Clack; signing in with it' 'the sign-in card taking it'
             Wait-Log "sign-in: couldn't read the team and token from the sign-in link" 'the sign-in attempt (the fake link stops it there)'
             if ($p.HasExited) { throw "the first Clack exited ($($p.ExitCode))" }
-            for ($i = 0; $i -lt 40 -and @(Get-Process -Name Clack -ErrorAction SilentlyContinue).Count -gt 1; $i++) { Start-Sleep -Milliseconds 250 }
-            $n = @(Get-Process -Name Clack -ErrorAction SilentlyContinue).Count
+            # the window's Clack processes: not the introduction's renderer
+            # (Clack.exe intro-preview, which the first run's intro starts)
+            function Count-Clack { @(Get-CimInstance Win32_Process -Filter "Name='Clack.exe'" | Where-Object { $_.CommandLine -notlike '*intro-preview*' }).Count }
+            for ($i = 0; $i -lt 40 -and (Count-Clack) -gt 1; $i++) { Start-Sleep -Milliseconds 250 }
+            $n = Count-Clack
             if ($n -ne 1) { throw "$n Clack processes: the launch Windows started didn't hand over and exit" }
             if (Select-String -Path $log -SimpleMatch -Pattern 'magic-login/xyz' -Quiet) { throw 'the sign-in link is in the log' }
           } finally { Stop-Clack $p }
@@ -570,6 +573,27 @@ jobs:
           Assert-NoReg 'HKCU\Software\Classes\Clack.slack'
           Get-Content $log | Select-String -SimpleMatch 'slack://', 'sign-in:' | ForEach-Object { $_.Line }
           exit 0 # the last reg query's expected exit 1 would otherwise end the step
+
+      # The introduction's preview renderer as a release runs it: the
+      # Clack.exe built above (-H windowsgui) started as `intro-preview`
+      # by TestIntroSlackPreview's window, a D3D11 headless frame, the
+      # renderer's report (real components, reads only, no plugin, the
+      # user's folder untouched), quit mid-render. The beat's shots are the
+      # intro-preview-windows artifact.
+      - name: the introduction's preview renderer (Clack.exe intro-preview)
+        if: ${{ !cancelled() }}
+        shell: bash # every go test counts (pwsh steps fail only on the last command)
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p "$RUNNER_TEMP/intro-shots"
+          CLACK_INTRO_PREVIEW_BIN="$GITHUB_WORKSPACE/build/Clack.exe" LOGIN_SHOTS_DIR="$RUNNER_TEMP/intro-shots" \
+            go test -count=1 -v -timeout 15m -run '^(TestIntroSlackPreview|TestIntroPreviewPluginHome|TestIntroPreviewQuit|TestIntroPreviewWindowGone)$' ./internal/ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: intro-preview-windows
+          path: ${{ runner.temp }}/intro-shots
 
       # Closing the window keeps Clack in the notification area (Slack's
       # runFromTray): Gio patch 13's Window.Hide and the show in
@@ -910,6 +934,36 @@ jobs:
           # Cmd+Backspace / Cmd+Delete / Option+Backspace in Block Kit text inputs (Gio editor patch 4)
           go test -count=1 -v -run 'TestModalTextInputsEdit$' ./internal/ui/blockkit
           go test -count=1 -v -run 'TestBlockKitModalFieldsEdit$' ./internal/ui
+      # The introduction's preview renderer as a release runs it: clack
+      # in a Clack.app made and ad-hoc signed as release.yml makes it,
+      # started as `intro-preview` from Contents/MacOS by
+      # TestIntroSlackPreview's window: a Metal headless frame, the
+      # renderer's report (real components, reads only, no plugin, the
+      # user's folder untouched) and its AppKit standing (no
+      # NSApplication, never a regular app with a Dock icon, never active);
+      # a renderer whose window went cleans up. The beat's shots are the
+      # intro-preview-macos artifact.
+      - name: the introduction's preview renderer (Clack.app's clack intro-preview, Metal, never an app)
+        if: ${{ !cancelled() }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/intro-shots"
+          app="$RUNNER_TEMP/intro/Clack.app"
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          go build -o "$app/Contents/MacOS/clack" ./cmd/clack
+          cp assets/icon/clack.icns "$app/Contents/Resources/clack.icns"
+          sed "s/@VERSION@/0.0.1/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          printf 'APPL????' > "$app/Contents/PkgInfo"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --force --deep --sign - --entitlements packaging/macos/Clack.entitlements "$app"
+          codesign --verify --deep --strict "$app"
+          CLACK_INTRO_PREVIEW_BIN="$app/Contents/MacOS/clack" LOGIN_SHOTS_DIR="$RUNNER_TEMP/intro-shots" \
+            go test -count=1 -v -timeout 15m -run '^(TestIntroSlackPreview|TestIntroPreviewPluginHome|TestIntroPreviewQuit|TestIntroPreviewWindowGone)$' ./internal/ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: intro-preview-macos
+          path: ${{ runner.temp }}/intro-shots
       - name: Gio drawLayers fix on Metal (patched passes, stock v0.10.3 panics)
         env:
           CLACK_PIXEL_TESTS: "1"

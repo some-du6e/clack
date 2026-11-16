@@ -146,6 +146,13 @@ func main() {
 		}
 		return
 	}
+	// `clack intro-preview`: the introduction's renderer, a child of the
+	// window (internal/ui/intro_preview_child.go). Before everything else:
+	// no log file, config, credentials, single-instance check or window;
+	// loopback-only network.
+	if len(os.Args) > 1 && os.Args[1] == "intro-preview" {
+		os.Exit(ui.RunIntroPreview(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	// `clack --update`: download and install the newest release from the
 	// terminal, for a Clack that won't open. Before everything else: no
 	// window, config, credentials or Slack.

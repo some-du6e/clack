@@ -146,6 +146,11 @@ const MaxConcurrent = 16
 type Client struct {
 	HTTP  *http.Client
 	Creds Creds
+	// Allow, when set, is the only methods the client sends (Web API names,
+	// edge calls as "edge:<path>"); anything else fails with ErrNotAllowed
+	// before it leaves, and so do file uploads. Clack's introduction
+	// renderer allows only the reads it needs. Set it before the first call.
+	Allow func(method string) bool
 	base  string // https://<team>.slack.com/api/
 	ent   string // https://<org>.enterprise.slack.com/api/
 	sem   chan struct{}
@@ -340,6 +345,9 @@ var forbiddenMethods = map[string]bool{
 	"auth.signout": true, "auth.revoke": true, "auth.enterprisesignout": true, "enterprisesignout": true,
 }
 
+// ErrNotAllowed is returned for a method Client.Allow doesn't allow.
+var ErrNotAllowed = errors.New("slack: method not allowed on this client")
+
 // ErrForbiddenMethod is returned for methods that would end the session.
 var ErrForbiddenMethod = errors.New("slack: method refused (it would sign you out everywhere)")
 
@@ -457,6 +465,9 @@ var SlowCall = 1500 * time.Millisecond
 // exponentially (BackoffBase … BackoffMax), and a session-ended answer from
 // any call trips SignedOut.
 func (c *Client) post(ctx context.Context, method, u, ctype string, body []byte, out any) error {
+	if c.Allow != nil && !c.Allow(method) {
+		return fmt.Errorf("%w: %s", ErrNotAllowed, method)
+	}
 	if c.SignedOut() {
 		return ErrSignedOut
 	}
@@ -655,6 +666,9 @@ func FileURL(u *url.URL) bool {
 // and once at the end, with the multipart body size as total. It runs on
 // the calling goroutine.
 func (c *Client) UploadBytes(ctx context.Context, uploadURL, filename string, data []byte, progress func(sent, total int64)) error {
+	if c.Allow != nil {
+		return fmt.Errorf("%w: a file upload", ErrNotAllowed)
+	}
 	if c.SignedOut() {
 		return ErrSignedOut
 	}

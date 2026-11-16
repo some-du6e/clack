@@ -801,6 +801,17 @@ func (s *Server) CallCount(method string) int64 {
 	return 0
 }
 
+// CallCounts is how often each method was called, every method so far.
+func (s *Server) CallCounts() map[string]int64 {
+	s.callsMu.Lock()
+	defer s.callsMu.Unlock()
+	out := make(map[string]int64, len(s.Calls))
+	for m, c := range s.Calls {
+		out[m] = c.Load()
+	}
+	return out
+}
+
 func (s *Server) count(method string) {
 	s.callsMu.Lock()
 	c := s.Calls[method]

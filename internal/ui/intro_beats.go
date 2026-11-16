@@ -16,11 +16,14 @@ import (
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The beats' illustrations, drawn from Clack's own pieces at a smaller
-// scale: the aubergine window with its rail, sidebar and message pane,
-// the composer, Preferences' plugin rows and their switches, a workspace
-// tile and channel names. Every piece comes in on its own spring,
-// staggered, and multiplies the stage's look (its slide and fade).
+// The beats' illustrations. "Your Slack, 1:1" is the app itself over the
+// demo workspace, one frame rendered by it in its own process
+// (intro_preview.go); the others are drawn from
+// Clack's own pieces at a smaller scale: the aubergine window with its
+// rail, sidebar and message pane, Preferences' plugin rows and their
+// switches, a workspace tile and channel names. Every piece comes in on
+// its own spring, staggered, and multiplies the stage's look (its slide
+// and fade).
 
 var (
 	introWhite  = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0xff}
@@ -30,7 +33,6 @@ var (
 	miniSubtle  = hexc(0x868686)
 	miniBorder  = hexc(0xe2e1e2)
 	miniLink    = hexc(0x1264a3)
-	miniGreen   = hexc(0x007a5a)
 	miniSwitch  = hexc(0x2bac76)
 	miniChromeA = hexc(0x4a154b)
 	miniChromeB = hexc(0x2c0a2d)
@@ -364,181 +366,43 @@ func drawPointer(f *introFrame, p f32.Point, h, a float32) {
 	paint.FillShape(f.gtx.Ops, alphaMul(miniFg, a), clip.Stroke{Path: shape(), Width: h * 0.06}.Op())
 }
 
-// ---- your Slack 1:1: a message typed, sent and reacted to ----
+// ---- your Slack 1:1: Clack itself, rendered over the demo workspace ----
 
-const slackTyped = "count me in, reviewing it now"
-
-// typedAt is when each character of slackTyped lands after the typing
-// starts: a person's rhythm (quick runs, a beat after the comma).
-func typedAt(i int) time.Duration {
-	d := time.Duration(0)
-	for j := 0; j < i; j++ {
-		h := uint32(j*2654435761) >> 27 // 0..31
-		d += msec(34 + float64(h))
-		if slackTyped[j] == ',' {
-			d += msec(170)
-		}
-		if slackTyped[j] == ' ' {
-			d += msec(16)
-		}
-	}
-	return d
-}
-
+// drawSlackStage is the card rising in as before, and in it the real app
+// (intro_preview.go): the rail, top bar and sidebar sections, #general's
+// header, messages and composer, and a thread in the secondary pane, as
+// the preview renderer drew them, fading in once its frame is here. Until
+// then the card is the app's own boot look: the chrome gradient.
 func (in *intro) drawSlackStage(f *introFrame, g introGeom, start time.Time, stage fx) {
 	k := f.kit(g)
-	cw, ch := float32(600), float32(330)
-	cx := (k.w - cw) / 2
-	card := k.rect(cx, 0, cw, ch)
+	cx := (k.w - cardW) / 2
+	card := k.rect(cx, 0, cardW, cardH)
 	ce := f.rise(start, f.df(26), 0.97).mul(stage)
 	pop := f.transform(fx{dx: ce.dx, dy: ce.dy, s: ce.s}, center(card))
 	defer pop()
 	A := ce.a
+	rad := f.d(12)
+	th := f.a.th
 	f.with("slack-card", fx{a: A, s: 1}, f32.Point{}, func() {
-		f.card(card, f.d(14), introWhite)
-	})
-	he := f.enter(start.Add(msec(70)), f.df(8), springSmooth, false).fade(A)
-	f.with("slack-header", he, f32.Point{}, func() {
-		w := f.label(k.pt(cx+20, 13), 16, theme.Black, miniFg, "# lounge")
-		f.label(image.Pt(k.pt(cx+20, 0).X+w+f.d(12), k.pt(0, 16).Y), 12.5, theme.Regular, miniSubtle, "Ship it, then show it")
-		theme.Fill(f.gtx, k.rect(cx, 44, cw, 0.7), miniBorder)
-	})
-	msgs := [2][3]string{{"Ava", "2:41 PM", "anyone shipping tonight?"}, {"Leo", "2:42 PM", "pushing the arcade build in 10"}}
-	for i, m := range msgs {
-		e := f.enter(start.Add(msec(130+60*float64(i))), f.df(14), springBouncy, false).fade(A)
-		f.with("slack-message", e, f32.Point{}, func() { k.msgRow(cx+20, 60+float32(i)*54, m[0], m[1], m[2], 1) })
-	}
-	// the composer
-	cy := ch - 92
-	box := k.rect(cx+16, cy, cw-32, 70)
-	typeAt := start.Add(msec(750))
-	n := 0
-	for n < len(slackTyped) && !f.now.Before(typeAt.Add(typedAt(n+1))) {
-		n++
-	}
-	sendAt := typeAt.Add(typedAt(len(slackTyped)) + msec(330))
-	if n < len(slackTyped) && !f.now.Before(typeAt) {
-		f.mc.wakeAt(typeAt.Add(typedAt(n + 1)))
-	}
-	if f.reduced {
-		n = 0 // no typing: the message fades in sent
-	}
-	sent := !f.now.Before(sendAt)
-	be := f.enter(start.Add(msec(200)), f.df(12), springSmooth, false).fade(A)
-	f.with("slack-composer", be, f32.Point{}, func() {
-		theme.RRect(f.gtx, box, f.d(9), introWhite)
-		focus := float32(clamp01(f.mc.spring(springSnappy, typeAt.Add(-msec(150)))))
-		theme.Border(f.gtx, box, f.d(9), max(1, f.d(1)), theme.Mix(hexc(0xbcbcbc), hexc(0x868686), focus))
-		// the text, the caret after it
-		txt := slackTyped[:n]
-		ta := float32(1)
-		if sent {
-			ta = float32(1 - clamp01(f.mc.spring(springSnappy, sendAt)*1.6))
-		}
-		tp := k.pt(cx+30, cy+12)
-		if n == 0 || ta < 0.01 {
-			f.label(tp, 13.5, theme.Regular, miniSubtle, "Message #lounge")
-		}
-		tw := 0
-		if n > 0 && ta > 0.004 {
-			tw = f.label(tp, 13.5, theme.Regular, alphaMul(miniFg, ta), txt)
-		}
-		blink := f.now.Sub(typeAt.Add(typedAt(n))).Milliseconds()/530%2 == 0
-		if !f.now.Before(typeAt) && !sent && (n < len(slackTyped) || blink) && !f.reduced {
-			theme.Fill(f.gtx, image.Rect(tp.X+tw+f.d(1), tp.Y+f.d(1), tp.X+tw+f.d(1)+max(1, f.d(1.5)), tp.Y+f.d(17)), miniLink)
-			if n >= len(slackTyped) {
-				f.mc.wakeAt(f.now.Add(msec(530 - float64(f.now.Sub(typeAt.Add(typedAt(n))).Milliseconds()%530))))
-			}
-		}
-		// the toolbar and the send button
-		for i, name := range []string{"bold", "italic", "strike", "link"} {
-			at(f.gtx, k.pt(cx+30+float32(i)*26, cy+44), image.Pt(f.d(16), f.d(16)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get(name)(gtx, f.idp(15), hexc(0xa0a0a0))
-			})
-		}
-		sb := k.rect(cx+cw-16-46, cy+40, 32, 24)
-		armed := float32(0)
-		if n > 0 && !sent {
-			armed = 1
-		}
-		if sent {
-			armed = float32(1 - clamp01(f.mc.spring(springSmooth, sendAt.Add(msec(120)))))
-		}
-		ps := float32(1)
-		if !f.reduced {
-			if d := f.now.Sub(sendAt); d >= -msec(90) && d < 0 {
-				ps = 0.88
-				f.mc.moving = true
-			} else if d >= 0 {
-				ps = 0.88 + 0.12*float32(f.mc.spring(springPop, sendAt))
-			}
-		}
+		f.card(card, rad, th.C.Bg)
 		func() {
-			t := op.Affine(f32.Affine2D{}.Scale(center(sb), f32.Pt(ps, ps))).Push(f.gtx.Ops)
-			defer t.Pop()
-			theme.RRect(f.gtx, sb, f.d(5), theme.Mix(introWhite, miniGreen, armed))
-			ir := image.Rectangle{Min: center(sb).Round().Sub(image.Pt(f.d(7), f.d(7)))}
-			at(f.gtx, ir.Min, image.Pt(f.d(14), f.d(14)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("send")(gtx, f.idp(14), theme.Mix(hexc(0xb0b0b0), introWhite, armed))
-			})
+			defer clip.UniformRRect(card, rad).Push(f.gtx.Ops).Pop()
+			paint.LinearGradientOp{Stop1: layout.FPt(card.Min), Color1: th.C.ChromeA, Stop2: layout.FPt(card.Max), Color2: th.C.ChromeB}.Add(f.gtx.Ops)
+			paint.PaintOp{}.Add(f.gtx.Ops)
 		}()
 	})
-	// the sent message lands in the list
-	slotY := float32(60 + 2*54)
-	landAt := sendAt
-	if f.reduced {
-		landAt = start.Add(msec(1400))
-	}
-	if !f.now.Before(landAt) {
-		e := f.enter(landAt, k.f.df(cy-slotY-4), springBouncy, false).fade(A)
-		f.with("slack-sent", e, f32.Point{}, func() { k.msgRow(cx+20, slotY, "You", "2:42 PM", slackTyped, 1) })
-		// a reaction, then a second person on it
-		ra := landAt.Add(msec(620))
-		re := f.pop(ra, 0.45, springPop).fade(A)
-		pr := k.rect(cx+60, slotY+40, 46, 22)
-		f.with("slack-reaction", re, f32.Pt(float32(pr.Min.X), center(pr).Y), func() {
-			theme.RRect(f.gtx, pr, pr.Dy()/2, hexc(0xe8f5fa))
-			theme.Border(f.gtx, pr, pr.Dy()/2, max(1, f.d(1)), hexc(0x1d9bd1))
-			at(f.gtx, k.pt(cx+68, slotY+43.5), image.Pt(f.d(15), f.d(15)), func(gtx layout.Context) layout.Dimensions {
-				return icons.Get("thumbs-up")(gtx, f.idp(15), miniLink)
-			})
-			// the count rolls from 1 to 2
-			roll := float32(clamp01(f.mc.spring(springBouncy, ra.Add(msec(560)))))
-			if f.reduced {
-				roll = float32(clamp01(f.mc.spring(springSmooth, ra.Add(msec(560)))))
-			}
-			cp := k.pt(cx+88, slotY+44)
-			func() {
-				defer clip.Rect(pr).Push(f.gtx.Ops).Pop()
-				dy := 0
-				if !f.reduced {
-					dy = f.d(12 * roll)
-				}
-				if roll < 0.999 {
-					f.label(image.Pt(cp.X, cp.Y-dy), 12, theme.Black, alphaMul(miniLink, 1-roll), "1")
-				}
-				if roll > 0.001 {
-					f.label(image.Pt(cp.X, cp.Y+f.d(12)-dy), 12, theme.Black, alphaMul(miniLink, roll), "2")
-				}
-			}()
-		})
-	}
-	// someone else is typing
-	tyAt := landAt.Add(msec(1250))
-	te := f.enter(tyAt, f.df(4), springSmooth, false).fade(A)
-	f.with("slack-typing", te, f32.Point{}, func() {
-		p := k.pt(cx+18, ch-17)
-		dots := f.d(20)
-		for i := 0; i < 3; i++ {
-			lift := float32(0)
-			if !f.reduced {
-				ph := f.now.Sub(tyAt).Seconds()*2*math.Pi*1.35 - float64(i)*0.75
-				lift = float32(math.Max(0, math.Sin(ph))) * f.df(2.6)
-				f.mc.moving = true
-			}
-			theme.Circle(f.gtx, image.Pt(p.X+f.d(3)+i*f.d(6), p.Y+f.d(7)-int(lift)), max(2, f.d(4)), miniSubtle)
+	p := in.preview
+	if p.ready() {
+		at := start.Add(msec(70))
+		if p.readyAt.After(at) {
+			at = p.readyAt // came up after the beat: it fades in then
 		}
-		f.label(image.Pt(p.X+dots, p.Y), 11.5, theme.Regular, miniMuted, "Leo is typing")
+		pe := f.enter(at, f.df(8), springSmooth, false).fade(A)
+		f.with("slack-preview", pe, f32.Point{}, func() { p.draw(f, card, rad) })
+	} // until then the card is the boot look; the image's arrival wakes the window (Post)
+	// a hairline of light: the window against the dark backdrop
+	f.with("slack-edge", fx{a: A, s: 1}, f32.Point{}, func() {
+		theme.Border(f.gtx, card, rad, max(1, f.d(1)), alphaMul(introWhite, 0.12))
 	})
 }
 

@@ -436,10 +436,14 @@ func TestIntroVideo(t *testing.T) {
 	}
 
 	// the first launch, left alone, then a wrong link pasted on the card
+	usePreviewRenderer(t, false)
 	a := introApp(t, "", nil)
 	e := newIntroEnv(t, a, sz)
 	record("intro", 60, e, func(step func(time.Duration), kf func(string)) {
 		step(400 * time.Millisecond)
+		// the "your Slack" beat's frame from the renderer: in before the clock runs on
+		e.frame(0) // the beats draw: the renderer starts
+		waitReal(t, e, "the introduction's preview", 90*time.Second, func() bool { return a.intro.preview.ready() || a.intro.preview.failed() })
 		marks := []struct {
 			at    time.Duration
 			label string
@@ -488,6 +492,7 @@ func TestIntroVideo(t *testing.T) {
 		b.replayIntro()
 		step(300 * time.Millisecond)
 		kf("fading-in")
+		waitReal(t, e, "the replay's preview", 90*time.Second, func() bool { return b.intro.preview.ready() || b.intro.preview.failed() })
 		for b.intro != nil && b.intro.cur != beatFinal {
 			step(time.Second / 60)
 		}

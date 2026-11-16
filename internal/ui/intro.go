@@ -31,7 +31,8 @@ import (
 // fast, your Slack 1:1, plugins unmodified, Hack Club, then the sign-in
 // card (first launch) or "You're all set" (replay). Each beat comes in
 // on springs with its pieces staggered, and its illustration is drawn
-// from Clack's own UI (intro_beats.go). Beats move on by themselves; Enter,
+// from Clack's own UI (intro_beats.go); "your Slack, 1:1" shows the real
+// app over the demo workspace, rendered in its own process (intro_preview.go). Beats move on by themselves; Enter,
 // Space or → moves on now, ← goes back, Esc skips to the end. With
 // reduced motion (osmotion.go) everything only fades.
 //
@@ -100,7 +101,8 @@ type intro struct {
 
 	dock    springVal // the mark: 0 the hero in the middle, 1 docked top-left
 	sprites introSprites
-	mc      motionClock // this frame's
+	preview *introPreview // "your Slack, 1:1": the real app over the demo workspace (intro_preview.go)
+	mc      motionClock   // this frame's
 
 	rec *[]introDrawn // tests: every element drawn this frame
 }
@@ -138,6 +140,7 @@ func (a *App) startFirstRunIntro() {
 		watchOSMotion()
 	}
 	a.intro = newIntro(introFirstRun, a)
+	a.intro.preview = startIntroPreview(a)
 }
 
 // replayIntro is Preferences > Clack > Replay introduction: the whole
@@ -152,8 +155,17 @@ func (a *App) replayIntro() {
 	if a.motionOverride == 0 {
 		watchOSMotion()
 	}
+	a.intro.close()
 	a.intro = newIntro(introReplay, a)
+	a.intro.preview = startIntroPreview(a)
 	a.Invalidate()
+}
+
+// close stops the introduction's preview (nil-safe, idempotent).
+func (in *intro) close() {
+	if in != nil {
+		in.preview.close()
+	}
 }
 
 // introSeen records that the introduction ran to the sign-in card (or was
@@ -566,6 +578,7 @@ func (a *App) layoutWelcome(gtx layout.Context) {
 	a.loginClipboard(gtx) // a sign-in link copied in the browser (login.go)
 	in := a.intro
 	if in != nil && in.mode != introFirstRun {
+		in.close()
 		a.intro, in = nil, nil // signed out mid-replay
 	}
 	if in == nil && a.welcome == nil {
@@ -603,6 +616,7 @@ func (a *App) layoutWelcome(gtx layout.Context) {
 		a.layoutLogin(gtx, enter, f)
 	}
 	if in != nil && in.gone {
+		in.close()
 		a.intro = nil
 		a.welcome = nil
 	}
@@ -628,6 +642,7 @@ func (a *App) introInput(gtx layout.Context) {
 func (a *App) layoutIntroOverlay(gtx layout.Context) {
 	in := a.intro
 	if in == nil || in.mode != introReplay {
+		in.close() // signed in from the first launch's: nothing shows it now
 		return
 	}
 	f := in.frame(gtx, a)
@@ -641,6 +656,7 @@ func (a *App) layoutIntroOverlay(gtx layout.Context) {
 		in.mc.schedule(gtx)
 		return
 	}
+	in.preview.update(f) // even while the overlay is still clear
 	o := fx{a: float32(clamp01(f.mc.spring(springSmooth, in.t0))), s: 1}
 	if in.closing {
 		c := f.mc.spring(springSmooth, in.closeAt)
@@ -655,6 +671,7 @@ func (a *App) layoutIntroOverlay(gtx layout.Context) {
 		in.drawDock(f)
 	})
 	if in.gone {
+		in.close()
 		a.intro = nil
 	}
 	in.mc.schedule(gtx)
@@ -680,6 +697,7 @@ func (in *intro) drawBackdrop(f *introFrame) {
 // drawBeats draws the beat leaving and the beat coming in, then the
 // bottom bar.
 func (in *intro) drawBeats(f *introFrame) {
+	in.preview.update(f)
 	if in.prev >= 0 && in.prev != beatFinal {
 		in.drawBeat(f, in.prev, in.leave(f))
 	}

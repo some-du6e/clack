@@ -52,7 +52,7 @@ var (
 // through slackc. taut.New reads the plugin config only; no JS engine
 // starts unless a plugin is enabled.
 func (b *backend) startTaut(a *App) {
-	if b.core == nil || b.taut != nil {
+	if b.core == nil || b.taut != nil || a.inert {
 		return
 	}
 	t, s := b.buildTaut(a, a.th.Dark, b.teamID, a.router.Current().Channel())
@@ -64,8 +64,8 @@ func (b *backend) startTaut(a *App) {
 // convert the Slick theme's CSS, so they run on a goroutine and only the
 // install is posted to the UI goroutine.
 func (b *backend) startTautAsync(a *App) {
-	if b.core == nil || b.taut != nil || b.tautStarting {
-		return
+	if b.core == nil || b.taut != nil || b.tautStarting || a.inert {
+		return // inert: the preview renderer never runs plugins (intro_preview_child.go)
 	}
 	b.tautStarting = true
 	team := b.teamID
@@ -101,6 +101,17 @@ func (b *backend) startTautAsync(a *App) {
 	}()
 }
 
+// inertPluginDir is name inside the preview renderer's own folder ("" for
+// a normal App, whose plugin folders are Taut's and Slick's defaults).
+// The renderer never starts plugins (startTaut); this keeps it off the
+// user's folders even if something did.
+func (a *App) inertPluginDir(name string) string {
+	if !a.inert || a.opts.ConfigDir == "" {
+		return ""
+	}
+	return filepath.Join(a.opts.ConfigDir, name)
+}
+
 // buildTaut makes the plugin runtimes (any goroutine). nil on error.
 func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut, *slick.Slick) {
 	t0 := time.Now()
@@ -110,6 +121,8 @@ func (b *backend) buildTaut(a *App, dark bool, team, channel string) (*taut.Taut
 	var patchMu sync.Mutex
 	var patchedNow []string
 	t, err := taut.New(taut.Options{
+		Dir:            a.inertPluginDir("taut"), // "": Taut's own (clackHome)
+		CredsPath:      a.inertPluginDir("creds.json"),
 		App:            b.core,
 		OpenURL:        openURL,
 		ClipboardWrite: func(s string) error { a.Post(func() { a.copyText(s) }); return nil },
@@ -425,7 +438,7 @@ func argStr(args map[string]any, k string) string {
 // Go).
 func (b *backend) buildSlick(a *App, t *taut.Taut, dark bool, team, channel string) *slick.Slick {
 	t0 := time.Now()
-	s, err := slick.New(slick.Options{Taut: t, OpenURL: openURL, OpenFile: a.openFilePath,
+	s, err := slick.New(slick.Options{Dir: a.inertPluginDir("slick"), Taut: t, OpenURL: openURL, OpenFile: a.openFilePath,
 		SlackCSS: slackc.NativeTransitionsCSS, SlackCSSHref: slackc.SlackCSSHref, SpellChecker: a.setSessionSpellChecker})
 	if err != nil {
 		log.Printf("slick: %v", err)

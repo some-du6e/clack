@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -158,7 +159,7 @@ func (w *World) seed() {
 	for _, c := range w.convs {
 		latest := w.latestLocked(c.ID)
 		lr := latest
-		if u, ok := ws.Unread[c.ID]; ok && u.LastRead != "" {
+		if u, ok := ws.Unread[c.ID]; ok && u.LastRead != "" && !slices.Contains(w.opts.Read, c.ID) {
 			lr = u.LastRead
 			w.seedMent[c.ID] = u.Mentions
 		}

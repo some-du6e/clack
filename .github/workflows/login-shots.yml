@@ -1,7 +1,9 @@
 name: login-shots
 # Renders the sign-in card headlessly in each of its states (default,
 # waiting, signing in, errors, Having trouble?, Advanced) at 1440x900,
-# 1280x720 and the 800x500 minimum, and uploads the screenshots;
+# 1280x720 and the 800x500 minimum, and the introduction's "your Slack,
+# 1:1" beat with the app's own frame over the demo workspace, light and dark
+# (intro-slack-*.png, TestIntroSlackPreview), and uploads the screenshots;
 # intro-video renders the introduction (intro.go) and the sign-in card's
 # states (login_card.go) frame by frame at 60 fps and encodes them with
 # ffmpeg: MP4s, GIFs, key frames and contact sheets. Synthetic only:
@@ -12,6 +14,7 @@ on:
     paths:
       - "internal/ui/login*.go"
       - "internal/ui/intro*.go"
+      - "internal/demo/**"
       - "internal/ui/motion*.go"
       - "internal/ui/osmotion*"
       - "internal/slack/magic*.go"
