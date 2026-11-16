@@ -44,12 +44,14 @@ import (
 //  2. one nothing stopped goes on to the layer it was aimed at as it was
 //     pressed: the innermost layer holding the focus, or the topmost of
 //     the layers opened from inside it, else the topmost layer
-//     (RouteEscape, last in the frame, for the rest). A plugin layer's
-//     Escape is JS's (the keydown's default action cancels the topmost
-//     modal dialog) or its own (a kit Popover's onClose): once, and until
-//     JS has closed it later Escapes go past it, to what it opened from,
-//     as Slack's synchronous keydowns reach what is under a modal they
-//     closed;
+//     (RouteEscape, last in the frame, for the rest); one aimed at a layer
+//     that has closed since goes nowhere. A plugin layer's Escape is JS's
+//     (the keydown's default action cancels the topmost modal dialog) or
+//     its own (a kit Popover's onClose). While it is open it takes every
+//     Escape aimed at it, as react-modal's handleKeyDown stops them all:
+//     onClose once per asyncGrace (a second press before JS closed it
+//     calls nothing), and nothing goes past it to the layers under it or
+//     the shell;
 //  3. one the shell's binding read goes to that layer when it's a
 //     plugin's (EscapeToLayer), else on to the binding: dismissTop closes
 //     the topmost shell overlay, and with none open the shell's Escape
@@ -94,7 +96,7 @@ type LayerSpec struct {
 	Plugin bool
 	// Async marks a layer whose LayerEscape asks JS to close it (a kit
 	// Popover's onClose): until it stops drawing, or asyncGrace passes,
-	// later Escapes go past it.
+	// later Escapes aimed at it are its, and call nothing.
 	Async bool
 }
 
@@ -104,8 +106,8 @@ const (
 	// starting or gone): then it goes on as unstopped.
 	escAnswerWait = 300 * time.Millisecond
 	// asyncGrace is how long an Async layer an Escape reached counts as
-	// closing: an Escape past that is its again (a plugin that kept it
-	// open hears onClose once more).
+	// closing: the Escapes it takes meanwhile call nothing; one after that
+	// calls onClose again (a plugin that kept it open hears it once more).
 	asyncGrace = 500 * time.Millisecond
 )
 
@@ -132,9 +134,10 @@ func (e *layerEntry) holds(s input.Source, f event.Tag) bool {
 }
 
 // escaped reports whether an Escape that reached the layer is still
-// closing it: later ones go past it. A shell overlay that stays after one
-// (a CloseGuard kept it, a Block Kit view backed out) settles once it is
-// drawn after it (begin).
+// closing it. A sync one (closed at once) is passed over by later ones,
+// as it goes; an Async one takes them, and calls nothing. A shell overlay
+// that stays after one (a CloseGuard kept it, a Block Kit view backed
+// out) settles once it is drawn after it (begin).
 func (e *layerEntry) escaped(now time.Time) bool {
 	if e.escAt.IsZero() {
 		return false
@@ -169,6 +172,7 @@ type layerStack struct {
 	pluginFocus bool
 	focusIn     *layerEntry // the innermost layer holding the focus at the last frame's end
 	lastFocus   event.Tag   // the focus then
+	gaveTo      event.Tag   // where a closing layer gave the focus back this frame
 
 	mu     sync.Mutex
 	passed []*EscapePress // Escapes passed on since the last RouteEscape (any goroutine)
@@ -236,15 +240,19 @@ func (ls *layerStack) holding(s input.Source, f event.Tag, not *layerEntry) *lay
 	return nil
 }
 
+// passing reports whether a later Escape goes past the layer: a sync one
+// an Escape closed (it goes this frame). An Async one still open takes it.
+func (e *layerEntry) passing(now time.Time) bool { return !e.spec.Async && e.escaped(now) }
+
 // target is where an Escape with the focus on f goes on to: the innermost
 // layer holding f, or the topmost layer opened from inside it (or from
-// those), else the topmost layer. Layers an Escape is closing are passed
-// over, to what they opened from (past reports one was): past the last
-// of those, to none (what had the focus before them, outside every
-// layer, gets it: the shell's).
+// those), else the topmost layer. Sync layers an Escape closed are passed
+// over, to what they opened from (past reports one was): past the last of
+// those, to none (what had the focus before them, outside every layer,
+// gets it: the shell's).
 func (ls *layerStack) target(s input.Source, f event.Tag, now time.Time) (to *layerEntry, past bool) {
 	if h := ls.holding(s, f, nil); h != nil {
-		for h != nil && (h.gone || h.escaped(now)) {
+		for h != nil && (h.gone || h.passing(now)) {
 			h, past = h.parent, true
 		}
 		if h == nil {
@@ -252,7 +260,7 @@ func (ls *layerStack) target(s input.Source, f event.Tag, now time.Time) (to *la
 		}
 		for i := len(ls.entries) - 1; i >= 0; i-- {
 			e := ls.entries[i]
-			if e.escaped(now) {
+			if e.passing(now) {
 				continue
 			}
 			for a := e; a != nil; a = a.parent {
@@ -266,7 +274,7 @@ func (ls *layerStack) target(s input.Source, f event.Tag, now time.Time) (to *la
 	// the focus in none: the topmost (one closing doesn't make the next
 	// one's Escape a plugin's)
 	for i := len(ls.entries) - 1; i >= 0; i-- {
-		if e := ls.entries[i]; !e.escaped(now) {
+		if e := ls.entries[i]; !e.passing(now) {
 			return e, false
 		}
 	}
@@ -285,8 +293,13 @@ func (ls *layerStack) involved(s input.Source, f event.Tag, to *layerEntry) bool
 }
 
 // escape gives to the Escape: its LayerEscape (a plugin overlay root's is
-// JS's), and it is closing.
+// JS's), and it is closing. An Async layer an earlier Escape is still
+// closing takes this one too, and calls nothing (react-modal stops every
+// Escape; onClose once per round trip).
 func (ls *layerStack) escape(to *layerEntry, now time.Time) {
+	if to.spec.Async && to.escaped(now) {
+		return
+	}
 	to.escAt, to.escF = now, ls.frame
 	if !to.spec.JS {
 		to.l.LayerEscape()
@@ -346,6 +359,19 @@ func EscapeToFocus(gtx layout.Context) bool {
 	return ls.pluginFocus && gtx.Source.Enabled() && gtx.Source == ls.routed
 }
 
+// FocusTarget is the tag the window's focus is on, or goes to as the frame
+// ends: one a closing layer gave it back to this frame (Gio runs that
+// FocusCmd at the frame's end when the tag has read its focus events
+// already). The shell's Escape (ShellEscape) leaves alone an Escape that
+// tag owns.
+func FocusTarget(gtx layout.Context) event.Tag {
+	ls := &curClock.layers
+	if ls.gaveTo != nil && gtx.Source == ls.routed {
+		return ls.gaveTo
+	}
+	return focusTag(gtx.Source)
+}
+
 // FocusInPluginLayer reports whether the focus is in a plugin's layer of
 // the window gtx draws, at the start of this frame (EscapeToFocus): a
 // modal that opens then leaves giving it back to the stack.
@@ -390,9 +416,7 @@ type EscapePress struct {
 	ls    *layerStack
 	c     *frameClock
 	to    *layerEntry
-	past  bool // the layers it was aimed at were closing
 	js    bool // JS had it: a plugin overlay root's own Escape ran there
-	ke    key.Event
 	timer *time.Timer
 
 	mu   sync.Mutex
@@ -409,11 +433,11 @@ func pressEscape(ke key.Event, f event.Tag, js bool) *EscapePress {
 	if !s.Enabled() || s != ls.routed {
 		return nil
 	}
-	to, past := ls.target(s, f, ls.now)
-	if to == nil && !past || !ls.involved(s, f, to) && !past {
+	to, _ := ls.target(s, f, ls.now)
+	if to == nil || !ls.involved(s, f, to) {
 		return nil
 	}
-	return &EscapePress{ls: ls, c: c, to: to, past: past, js: js, ke: ke, need: 1}
+	return &EscapePress{ls: ls, c: c, to: to, js: js, need: 1}
 }
 
 // PassEscape passes on to the window's layers an Escape a focused Clack
@@ -533,29 +557,17 @@ func RouteEscape(gtx layout.Context) {
 	ls.lastFocus = f
 }
 
-// goOn gives a passed Escape to the layer it was aimed at, if that is
-// still open: past one an earlier Escape closed (it is closing, or gone),
-// to what it opened from, and past the last of those to the shell's
-// binding; one closed some other way (a click) takes it with it.
+// goOn gives a passed Escape to the layer it was aimed at as it was
+// pressed. One that closed since (the Escape before it, a click) takes it
+// with it: in Slack the keydown reached it while it was open, and went no
+// further (react-modal stops it). One still open takes it (escape: an
+// Async one closing calls nothing).
 func (ls *layerStack) goOn(gtx layout.Context, p *EscapePress) {
-	to, past := p.to, p.past
-	for to != nil {
-		if to.gone && to.escAt.IsZero() {
-			return
-		}
-		if !to.gone && !to.escaped(gtx.Now) {
-			break
-		}
-		to, past = to.parent, true
-	}
-	switch {
-	case to == nil:
-		if past && ls.main() && ShellEscape != nil {
-			ShellEscape(gtx, p.ke)
-		}
+	switch to := p.to; {
+	case to == nil || to.gone:
 	case to.spec.JS && p.js: // its default action ran in JS
 	case to.spec.JS:
-		GlobalKey("keydown", p.ke) // a Clack widget's: at the document, where the default action cancels the topmost modal dialog
+		GlobalKey("keydown", key.Event{Name: key.NameEscape, State: key.Press}) // a Clack widget's: at the document, where the default action cancels the topmost modal dialog
 		ls.escape(to, gtx.Now)
 	default:
 		ls.escape(to, gtx.Now)
@@ -583,7 +595,7 @@ func (ls *layerStack) unclaimed(gtx layout.Context) {
 		switch {
 		case to == nil:
 			// the shell's binding stood down for a plugin's layer that
-			// closed by now (or an earlier Escape is closing it)
+			// closed by now (or a sync one an earlier Escape closed)
 			if ke.State == key.Press && (ls.pluginFocus || past) && ls.main() && ShellEscape != nil {
 				ShellEscape(gtx, ke)
 			}
@@ -595,7 +607,7 @@ func (ls *layerStack) unclaimed(gtx layout.Context) {
 			GlobalKey(typ, ke) // at the document: the default action cancels the topmost modal dialog
 		case ke.State == key.Press:
 			ls.escape(to, gtx.Now)
-			to, past = ls.target(s, f, gtx.Now) // a second one in the frame goes on past it
+			to, past = ls.target(s, f, gtx.Now) // a second one in the frame: past a sync layer it closed, an Async one's again
 		}
 	}
 }
@@ -604,7 +616,7 @@ func (ls *layerStack) unclaimed(gtx layout.Context) {
 // context, before anything is laid out).
 func (ls *layerStack) begin(gtx layout.Context) {
 	ls.frame++
-	ls.src, ls.now = gtx.Source, gtx.Now
+	ls.src, ls.now, ls.gaveTo = gtx.Source, gtx.Now, nil
 	if !ls.ended {
 		// the last frame ran no RouteEscape: what it didn't lay out
 		// closed then
@@ -701,6 +713,7 @@ func (ls *layerStack) closeUnseen(gtx layout.Context, atEnd bool) {
 	}
 	focus := func(t event.Tag) {
 		gtx.Execute(key.FocusCmd{Tag: t})
+		ls.gaveTo = t
 		curClock.wakeAfter()
 	}
 	o, p := from.giveBack()

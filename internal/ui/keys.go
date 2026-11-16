@@ -240,11 +240,18 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 
 // escape runs the Escape binding for ke (Close / mark as read, Shift+Esc)
 // as process does: slackc's ShellEscape, for an Escape the shell left to
-// a plugin's layer that had closed by the end of the frame, or one that
-// went past the layers it was aimed at (an earlier Escape closed them).
-func (s *shortcuts) escape(a *App, ke key.Event) {
+// a plugin's layer that had closed by the end of the frame. Plain Escape
+// stays the focused widget's if it owns it (a composer on a quote line,
+// a list cell's editor), as in process; that includes the one the closed
+// layer gave the focus back to.
+func (s *shortcuts) escape(gtx layout.Context, a *App, ke key.Event) {
 	if slackc.ModalOpen() || a.intro != nil {
 		return
+	}
+	if ke.Modifiers == 0 {
+		if f := slackc.FocusTarget(gtx); f != nil && shortcut.OwnsEscape(f) {
+			return
+		}
 	}
 	for _, sc := range s.list {
 		if sc.name == ke.Name && sc.mods == ke.Modifiers {

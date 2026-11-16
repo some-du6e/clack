@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"slices"
 
 	"gioui.org/io/event"
 	"gioui.org/io/pointer"
@@ -47,6 +48,42 @@ func (a *App) dismissTop() bool {
 		return true
 	}
 	return false
+}
+
+// closeOverlays closes every overlay over the app at once (Replay
+// introduction): one pass from the top, past any CloseGuard (a modal's
+// Close; one without is dismissed), then they all go, with what that pass
+// put up (a Block Kit view's copy, a speed bump). The popups pump stays:
+// an action is in flight. dismissTop in a loop never ended once a guarded
+// modal stayed: each pass closed the speed bump the last one put up.
+func (a *App) closeOverlays() {
+	ovs := slices.Clone(a.overlays)
+	for i := len(ovs) - 1; i >= 0; i-- {
+		o := ovs[i]
+		if o.Dismissed() || invisible(o) {
+			continue
+		}
+		if c, ok := o.(interface{ Close() }); ok {
+			c.Close()
+		} else if d, ok := o.(dismisser); ok {
+			d.Dismiss()
+		}
+	}
+	n := 0
+	for i, o := range a.overlays {
+		if !invisible(o) || o.Dismissed() {
+			continue
+		}
+		a.overlays[n] = o
+		if i < len(a.overlayPane) && n < len(a.overlayPane) {
+			a.overlayPane[n] = a.overlayPane[i]
+		}
+		n++
+	}
+	clear(a.overlays[n:])
+	a.overlays = a.overlays[:n]
+	a.overlayPane = a.overlayPane[:min(n, len(a.overlayPane))]
+	a.Invalidate()
 }
 
 // dismissAt closes the overlay at i and drops it from the stack (one that

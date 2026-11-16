@@ -145,13 +145,13 @@ func (a *App) startFirstRunIntro() {
 
 // replayIntro is Preferences > Clack > Replay introduction: the whole
 // sequence over the signed-in app, ending on "You're all set". It closes
-// Preferences (and any menu) first.
+// Preferences and whatever else is open first, past any CloseGuard (a
+// dirty dialog's speed bump would only come up over the replay).
 func (a *App) replayIntro() {
 	if a.login != nil {
 		return
 	}
-	for a.dismissTop() {
-	}
+	a.closeOverlays()
 	if a.motionOverride == 0 {
 		watchOSMotion()
 	}

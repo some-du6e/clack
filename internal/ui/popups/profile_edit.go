@@ -164,6 +164,22 @@ func (e *EditProfileModal) Dismiss() {
 	}
 }
 
+// KeptOpen reports that its CloseGuard kept it open at the last Dismiss
+// (the form's speed bump is up): the window keeps it, under the bump.
+func (e *EditProfileModal) KeptOpen() bool { return e.m != nil && e.m.KeptOpen() && !e.Dismissed() }
+
+// FocusHome is its pane's modal's (the window's overlay layers).
+func (e *EditProfileModal) FocusHome() event.Tag {
+	if e.m == nil {
+		return nil
+	}
+	return e.m.FocusHome()
+}
+
+// Close closes it without asking the speed bump (closeModal({force:
+// true}): Replay introduction closing everything).
+func (e *EditProfileModal) Close() { e.close() }
+
 // close is closeModal({force: true}).
 func (e *EditProfileModal) close() {
 	if e.m != nil {
@@ -1745,6 +1761,13 @@ func NewEditSectionModal(h Host, sec core.ProfileSection, focus string, refetch 
 func (s *EditSectionModal) Layout(gtx layout.Context) layout.Dimensions { return s.m.Layout(gtx) }
 func (s *EditSectionModal) Dismissed() bool                             { return s.m.Dismissed() }
 func (s *EditSectionModal) Dismiss()                                    { s.m.Dismiss() }
+
+// KeptOpen, FocusHome and Close are its modal's: the speed bump keeps it
+// open, the window's layers give the focus back into it, a close past
+// the bump (Replay introduction).
+func (s *EditSectionModal) KeptOpen() bool       { return s.m.KeptOpen() }
+func (s *EditSectionModal) FocusHome() event.Tag { return s.m.FocusHome() }
+func (s *EditSectionModal) Close()               { s.m.Close() }
 
 // Title is the modal's title.
 func (s *EditSectionModal) Title() string { return s.m.o.Title }

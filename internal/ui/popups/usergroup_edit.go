@@ -492,6 +492,13 @@ func (e *UserGroupEditModal) Dismissed() bool                             { retu
 // Dismiss closes it the way the close button does (the speed bump).
 func (e *UserGroupEditModal) Dismiss() { e.m.Dismiss() }
 
+// KeptOpen, FocusHome and Close are its modal's: the speed bump (always
+// asked) keeps it open, the window's layers give the focus back into it,
+// a close past the bump (Replay introduction).
+func (e *UserGroupEditModal) KeptOpen() bool       { return e.m.KeptOpen() }
+func (e *UserGroupEditModal) FocusHome() event.Tag { return e.m.FocusHome() }
+func (e *UserGroupEditModal) Close()               { e.m.Close() }
+
 // SpeedBump reports the speed bump is up.
 func (e *UserGroupEditModal) SpeedBump() bool { return e.bump }
 

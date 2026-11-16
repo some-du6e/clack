@@ -35,7 +35,7 @@ func (a *App) slackcFrame(gtx layout.Context) {
 		// none, and the shell's Escape for one a plugin's layer left
 		slackc.FocusFallback = a.focusFallback
 		slackc.FocusInert = func() bool { return a.intro != nil }
-		slackc.ShellEscape = func(gtx layout.Context, ke key.Event) { a.keys.escape(a, ke) }
+		slackc.ShellEscape = func(gtx layout.Context, ke key.Event) { a.keys.escape(gtx, a, ke) }
 		slackc.Init(slackc.Env{
 			Theme:      a.th,
 			Images:     a.images,

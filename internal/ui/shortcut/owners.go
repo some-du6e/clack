@@ -29,3 +29,14 @@ func TakeEscapeOwners() []event.Tag {
 	escOwners = nil
 	return o
 }
+
+// OwnsEscape reports whether tag claimed plain Escape since the last
+// TakeEscapeOwners (in the frame laid out so far), keeping the claims.
+func OwnsEscape(tag event.Tag) bool {
+	for _, t := range escOwners {
+		if t == tag {
+			return true
+		}
+	}
+	return false
+}

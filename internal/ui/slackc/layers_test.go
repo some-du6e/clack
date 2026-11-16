@@ -550,10 +550,10 @@ func pluginInputIn(t *testing.T, w *layerWin, l, under *testLayer) {
 	}
 }
 
-// Each of two Escapes pressed before JS answered goes where the DOM's
-// synchronous keydown would have: the first closes the plugin's layer
-// (once: its onClose isn't called twice), the second, past it as it
-// closes, the layer it was opened from.
+// Two Escapes pressed before JS answered are both the plugin's layer's,
+// as react-modal stops every Escape that reaches it: the first calls its
+// onClose, the second nothing (onClose once per round trip), and neither
+// reaches the layer it was opened from.
 func TestTwoEscapesBeforeJSAnswers(t *testing.T) {
 	w := newLayerWin(t)
 	b := &dispatchRec{hold: true}
@@ -568,9 +568,45 @@ func TestTwoEscapesBeforeJSAnswers(t *testing.T) {
 	}
 	b.answer(false)
 	w.frames(2)
-	if pop.esc != 1 || under.esc != 1 {
-		t.Errorf("two Escapes JS let go: the plugin's layer got %d, the one under it %d; want 1 and 1", pop.esc, under.esc)
+	if pop.esc != 1 || under.esc != 0 {
+		t.Errorf("two Escapes JS let go: the plugin's layer got %d, the one under it %d; want 1 and 0", pop.esc, under.esc)
 	}
+}
+
+// A plugin's Popover that stays open after its onClose (a plugin keeping
+// it, or none to call) takes every Escape aimed at it, with the focus in
+// it or not: nothing goes past it to the shell's binding (a second press
+// marked the channel read, or closed the thread, under the open popover)
+// or to the layer under it. Within the time JS has to close it a second
+// one calls nothing; after it, onClose again.
+func TestStillOpenPopoverTakesEveryEscape(t *testing.T) {
+	w := newLayerWin(t)
+	own, shell := 0, 0
+	w.shellBinding(&own)
+	ShellEscape = func(layout.Context, key.Event) { shell++ }
+	var outside int
+	w.page = func(gtx layout.Context) { focusable(gtx, &outside, image.Rect(300, 250, 350, 280)) }
+	pop := &testLayer{plugin: true, async: true}
+	w.layers = []*testLayer{pop}
+	w.frames(2)
+	got := func(what string, wantPop int) {
+		t.Helper()
+		if pop.esc != wantPop || own != 0 || shell != 0 {
+			t.Errorf("%s: the popover got %d Escapes, the shell's binding %d (ShellEscape %d); want %d, 0, 0", what, pop.esc, own, shell, wantPop)
+		}
+	}
+	w.focus(&pop.field)
+	w.escape(0)
+	got("the first Escape in it", 1)
+	w.escape(0)
+	got("a second one while it's still open", 1)
+	w.focus(&outside)
+	w.escape(0)
+	got("one with the focus outside it", 1)
+	w.now = w.now.Add(time.Second) // past the time JS has to close it
+	w.frames(1)
+	w.escape(0)
+	got("one after JS had the time to close it", 2)
 }
 
 // An answer that comes after the layer it was aimed at closed some other

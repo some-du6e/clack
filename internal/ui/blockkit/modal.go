@@ -142,6 +142,18 @@ func (s *Stack) Dismiss() {
 	s.userBack()
 }
 
+// Close closes the whole stack without the speedbump, telling Slack (the
+// ×'s closeAll): the window closing everything (Replay introduction).
+func (s *Stack) Close() {
+	switch {
+	case s.done:
+	case len(s.views) == 0 && s.dialog == nil:
+		s.close()
+	default:
+		s.closeAll()
+	}
+}
+
 // Slack's speedbump (BlockKitModal getShouldShowSpeedBump): leaving a
 // view that has a submit button and stateful inputs whose values changed
 // asks first. Backing out of a pushed view says "Continue", otherwise

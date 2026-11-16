@@ -562,3 +562,81 @@ func TestModalFromMenuGivesFocusBackToThreadComposer(t *testing.T) {
 			e.r.Source().FocusTag(), focused(ch+"/"))
 	}
 }
+
+// Replay introduction closes everything over the app, past a CloseGuard.
+// With a dirty dialog under Preferences (its guard puts a speed bump up
+// and refuses, every time it's asked) the close loop never ended: each
+// pass closed the speed bump the last one put up, and the UI froze.
+func TestReplayIntroClosesGuardedModal(t *testing.T) {
+	e := newNativeEnv(t)
+	asked := 0
+	m := popups.NewModal(e.a, popups.ModalOpts{Title: "Dirty", Width: 400,
+		Body: func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{Size: image.Pt(300, 80)} },
+		CloseGuard: func() bool { // as the snippet dialog's: a speed bump each time, never yes
+			asked++
+			popups.Confirm(e.a, "Discard it?", "", "Discard", true, nil, func() {})
+			return false
+		}})
+	e.a.ShowOverlay(m)
+	e.settle(200 * time.Millisecond)
+	e.a.showPrefs("notifications")
+	e.settle(300 * time.Millisecond)
+	if _, ok := topOverlay[*popups.Modal](e.a); !ok || len(e.a.overlays) < 2 {
+		t.Fatalf("Preferences didn't open over the dirty dialog (%d overlays)", len(e.a.overlays))
+	}
+	e.a.motionOverride = -1 // no OS motion watcher (as the intro tests)
+	hang := time.AfterFunc(20*time.Second, func() { panic("replayIntro never returned: its close loop spins on the guarded modal") })
+	e.a.replayIntro()
+	hang.Stop()
+	t.Cleanup(func() { e.a.intro.close(); e.a.intro = nil })
+	if !m.Dismissed() {
+		t.Error("Replay introduction left the dirty dialog open")
+	}
+	for _, o := range e.a.overlays {
+		if !o.Dismissed() && !invisible(o) {
+			t.Errorf("Replay introduction left %T open", o)
+		}
+	}
+	if asked != 0 {
+		t.Errorf("the dialog's guard was asked %d times; the replay closes past it", asked)
+	}
+	if e.a.intro == nil {
+		t.Error("the replay didn't start")
+	}
+}
+
+// Escape on Edit profile with unsaved edits puts its speed bump up and
+// keeps the dialog: the shell's stack held the EditProfileModal wrapper,
+// which said nothing of its modal's guard, so Escape dropped the dialog
+// behind its own "Keep Editing / Close & Discard" and the edits went.
+func TestEscapeKeepsDirtyEditProfile(t *testing.T) {
+	e := newNativeEnv(t)
+	ep := popups.OpenEditProfile(e.a, popups.EditProfileOpts{})
+	e.settle(400 * time.Millisecond)
+	f := ep.Form()
+	field := ""
+	for _, n := range f.Fields() {
+		if !f.Locked(n) {
+			field = n
+			break
+		}
+	}
+	if field == "" {
+		t.Fatal("no editable field on Edit profile")
+	}
+	f.SetField(field, "Changed by the test")
+	e.settle(200 * time.Millisecond)
+	e.escape()
+	if ep.Dismissed() || !slices.Contains(e.a.overlays, Overlay(ep)) {
+		t.Fatal("Escape on dirty Edit profile closed it (its speed bump never showed, the edits went)")
+	}
+	if !f.SpeedBump() {
+		t.Error("Escape on dirty Edit profile didn't put its speed bump up")
+	}
+	e.escape() // on the speed bump: it goes, the dialog stays
+	if ep.Dismissed() || f.SpeedBump() {
+		t.Errorf("Escape on the speed bump: dialog closed %v, bump up %v; want the bump gone and the dialog kept", ep.Dismissed(), f.SpeedBump())
+	}
+	ep.Close()
+	e.settle(200 * time.Millisecond)
+}
