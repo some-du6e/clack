@@ -139,6 +139,16 @@ func tipPosition(s string) string {
 type popoverState struct {
 	org   origin
 	layer layer
+	h     *slackc.Host // this frame's (LayerEscape)
+}
+
+// LayerEscape (slackc.Layer) is an Escape that bubbled up from the
+// popover's content, or reached it as the window's topmost layer: Slack's
+// Popover is react-modal with shouldCloseOnEsc.
+func (st *popoverState) LayerEscape() {
+	if st.h != nil {
+		st.h.Call("onClose")
+	}
 }
 
 // domRect reads a DOMRect-like prop ({x,y,width,height,top,left,right,
@@ -188,9 +198,10 @@ func popover(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	st := stateOf[popoverState](h)
 	st.org.track(gtx, image.Rectangle{Max: gtx.Constraints.Min})
 	if !h.Props.Bool("isOpen") {
-		st.layer.reset()
+		st.layer.opened = false // the next open takes the focus again
 		return layout.Dimensions{}
 	}
+	st.h = h
 	anchor, ok := domRect(gtx, h.Props.Map("targetBounds"))
 	if !ok {
 		// no target: open at the popover's own place in the flow.
@@ -212,6 +223,7 @@ func popover(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		}
 	}
 	maxSz := image.Pt(dp(gtx, 1600), dp(gtx, 1200))
+	st.layer.open(gtx, st) // before the children (see open)
 	call, d := record(loose(gtx, maxSz), h.Children)
 	p := place(anchor, d.Size, image.Point{}, dp(gtx, 8), side, align)
 	outside, esc := st.layer.float(gtx, &st.org, p, call, d.Size, true)
@@ -229,7 +241,13 @@ type confirmState struct {
 	h      *slackc.Host
 	cancel *popups.ModalButton
 	submit *popups.ModalButton
+	area   int // its layer's (DrawLayer)
 }
+
+// LayerEscape (slackc.Layer): the dialog's Escape, as its X or backdrop
+// (onClose), even laid out inside a Popover's content: the confirm on top
+// closes first, the Popover under it stays.
+func (st *confirmState) LayerEscape() { st.m.Dismiss() }
 
 // confirmationModal: title, children (body), onSubmit, onCancel, onClose,
 // submitButtonText, cancelButtonText, submitButtonType primary|danger,
@@ -293,7 +311,9 @@ func confirmationModal(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 	if st.m.Dismissed() {
 		return layout.Dimensions{}
 	}
-	return st.m.Layout(gtx)
+	var d layout.Dimensions
+	slackc.DrawLayer(gtx, st, slackc.LayerSpec{Area: &st.area, Home: st.m.FocusHome()}, func(gtx layout.Context) { d = st.m.Layout(gtx) })
+	return d
 }
 
 func init() {

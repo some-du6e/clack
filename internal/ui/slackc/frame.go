@@ -55,13 +55,22 @@ func (w *SubWindow) FrameBg(gtx layout.Context, classes string, fg, bg color.NRG
 	saved, savedSize, savedBg, savedClock := stack, windowSize, subBg, curClock
 	w.c.begin(now(gtx))
 	curClock = &w.c
+	w.c.layers.begin(gtx, false)
 	subBg = bg
 	st := css.Initial(fg)
 	root := &docEl{tag: "div", class: strings.Fields(classes)}
 	stack = append(make([]stackEntry, 0, 8), stackEntry{el: root, style: &st, key: mix(hstr(fnvOff, classes) ^ uint64(fg.R)<<16 ^ uint64(fg.G)<<8 ^ uint64(fg.B))})
 	windowSize, subFrame = gtx.Constraints.Max, true
-	return func() { stack, windowSize, subFrame, subBg, curClock = saved, savedSize, false, savedBg, savedClock }
+	return func() {
+		RouteEscape(gtx) // the window's Escape its layers get (layers.go)
+		stack, windowSize, subFrame, subBg, curClock = saved, savedSize, false, savedBg, savedClock
+	}
 }
+
+// SetWake gives the window's frame a way to be asked for from any
+// goroutine (the huddle window's invalidate): an Escape JS passed on to
+// its layers asks for one.
+func (w *SubWindow) SetWake(f func()) { w.c.wake = f }
 
 // Close says the window is gone: its draws keep no root from then on. At
 // once, not at another window's next sweep (a hidden or minimized main
@@ -112,6 +121,8 @@ type frameClock struct {
 	now    time.Time // the time of the frame in progress, and of the last one between frames
 	swept  time.Time // its last sweep (now then)
 	closed atomic.Bool
+	layers layerStack // its overlay layers (layers.go)
+	wake   func()     // asks for a frame (nil: the main window's invalidate)
 }
 
 var (

@@ -134,6 +134,7 @@ func LayoutOverlays(gtx layout.Context) {
 	type item struct {
 		v     *View
 		nodes []*Node
+		layer bool
 	}
 	items := make([]item, 0, len(ids))
 	for _, id := range ids {
@@ -143,14 +144,21 @@ func LayoutOverlays(gtx layout.Context) {
 			v.overlay = true
 			overlays.views[id] = v
 		}
-		items = append(items, item{v, overlays.m[id]})
+		// a window layer (layers.go): a modal, a menu; the body only while
+		// it holds an open modal dialog (a cat that follows the pointer
+		// isn't a layer, and the shell's Escape stays the shell's)
+		items = append(items, item{v, overlays.m[id], id != OverlayBody || overlays.modal[id]})
 	}
 	overlays.Unlock()
 	for _, it := range items {
 		g := gtx
 		g.Constraints = layout.Exact(gtx.Constraints.Max)
 		g.Constraints.Min = image.Point{}
-		it.v.Layout(g, it.nodes, "", nil, nil)
+		if !it.layer {
+			it.v.Layout(g, it.nodes, "", nil, nil)
+			continue
+		}
+		DrawLayer(g, &it.v.layer, it.v.layer.spec(), func(g layout.Context) { it.v.Layout(g, it.nodes, "", nil, nil) })
 	}
 }
 

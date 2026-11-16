@@ -228,6 +228,17 @@ func (s *Stack) close() {
 	s.h.Invalidate()
 }
 
+// FocusHome is where the focus comes back to in the stack (its overlay
+// layer's home: a Popover in a view closed, or the focus went): its last
+// stop, where it opened with the focus.
+func (s *Stack) FocusHome() event.Tag {
+	if len(s.views) == 0 {
+		return &s.tag
+	}
+	st := s.stops()
+	return st[len(st)-1]
+}
+
 // stops is the tab order: the header (back, close) first, as in Slack's
 // c-dialog, then the footer's Close and Submit. The body's inputs take
 // the focus with the mouse.
@@ -253,7 +264,11 @@ func (s *Stack) keys(gtx C) {
 	}
 	if !s.focused {
 		s.focused = true
-		s.prev = refocus.Last(gtx.Now)
+		if !slackc.EscapeRouted(gtx) {
+			// where the window's overlay layers run (slackc layers.go) they
+			// give the focus back, to what had it when the stack opened
+			s.prev = refocus.Last(gtx.Now)
+		}
 		st := s.stops()
 		gtx.Execute(key.FocusCmd{Tag: st[len(st)-1]})
 	}

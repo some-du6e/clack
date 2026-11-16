@@ -200,6 +200,7 @@ type App struct {
 	ptrOK           bool
 	hover           profileHover // the profile hover card (hover_card.go)
 	overlays        []Overlay
+	overlayLayers   map[Overlay]*shellLayer // the overlays' layers in the window's stack (overlay_layers.go)
 	slackc          slackcState
 	toast           toastState
 	toastClick      gesture.Click // a rich toast's links (toast_slack.go)
@@ -782,6 +783,7 @@ func (a *App) frame(gtx layout.Context) {
 	a.autoscroll.End(gtx.Ops, gtx.Source, sz)
 	a.rootPointer(gtx)
 	a.resizeOverlay(gtx)      // over everything while a column resizer drags (resizer.go)
+	slackc.RouteEscape(gtx)   // an Escape no widget took goes to the overlay layers (slackc layers.go)
 	a.keys.processGlobal(gtx) // last: only the keys no widget took
 	composer.KeepFocus(gtx)   // a focused editor this frame didn't draw stays focused
 	a.logMissedFrames(gtx)    // after KeepFocus: what it held this frame
@@ -1076,8 +1078,9 @@ func (a *App) layoutOverlays(gtx layout.Context) {
 		if i < len(panes) {
 			p = panes[i]
 		}
-		a.inPane(p, func() { o.Layout(g) })
+		a.inPane(p, func() { a.drawOverlay(g, o) })
 	}
+	a.pruneOverlayLayers()
 }
 
 type toastState struct {

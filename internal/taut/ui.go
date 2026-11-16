@@ -400,6 +400,31 @@ func (b *Bridge) Dispatch(target int64, event []byte) {
 	b.with(func(r *runtime) { r.rt.DispatchEvent(int(target), event) })
 }
 
+// DispatchResult is Dispatch telling done (any goroutine) whether a JS
+// listener stopped the event's propagation (slackc.ResultBridge: a focused
+// plugin element's Escape keydown goes on to Clack's overlay layers unless
+// one did, as a DOM keydown bubbles up to react-modal). With no runtime to
+// dispatch to, done hears false.
+func (b *Bridge) DispatchResult(target int64, event []byte, done func(propagationStopped bool)) {
+	dispatch := func(r *runtime) {
+		r.rt.DispatchEventThen(int(target), event, func(res jsrt.EventResult, err error) {
+			done(err == nil && res.PropagationStopped)
+		})
+	}
+	if r := b.t.liveRuntime(); r != nil {
+		dispatch(r)
+		return
+	}
+	go func() {
+		r, err := b.t.ensureRuntime()
+		if err != nil {
+			done(false)
+			return
+		}
+		dispatch(r)
+	}()
+}
+
 // Call calls a JS function prop; done (optional) gets its JSON result.
 func (b *Bridge) Call(fn int64, args []byte, done func(result []byte, err error)) {
 	if done == nil && !IsTautFn(fn) {

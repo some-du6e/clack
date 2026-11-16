@@ -302,6 +302,16 @@ type instKey struct {
 	parentK int64  // the "@" node in it whose native drew this one
 }
 
+// ResultBridge is implemented by bridges that report what JS did with an
+// event: done gets, on any goroutine, whether a listener stopped its
+// propagation. A focused plugin element's Escape keydown goes on to the
+// window's overlay layers only when none did (dispatchKey), as a DOM
+// keydown bubbles up to react-modal's content. Without it the keydown
+// goes on at once.
+type ResultBridge interface {
+	DispatchResult(target int64, event []byte, done func(propagationStopped bool))
+}
+
 // NestedBridge is implemented by bridges that can mount a root inside
 // another root's React tree (a portal under the host node parentK of
 // root parent), so React context flows from a parent patch into the
@@ -590,6 +600,7 @@ var lastViewport struct {
 func Frame(gtx layout.Context) {
 	curClock = &mainClock
 	mainClock.begin(now(gtx))
+	mainClock.layers.begin(gtx, true)
 	windowSize = gtx.Constraints.Max
 	pushDocument()
 	b := bridge()

@@ -759,12 +759,13 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 		}
 	}
 
-	// Enter and the arrows reach the plugin before the editor, as in a
-	// browser input: the onKeyDown prop, then a DOM keydown/keyup at the
-	// component's node that bubbles through the plugin's elements around
-	// it (api.modal's wrapper, a form's onKeyDown). Enter without an
+	// Enter, the arrows and Escape reach the plugin before the editor, as
+	// in a browser input: the onKeyDown prop, then a DOM keydown/keyup at
+	// the component's node that bubbles through the plugin's elements
+	// around it (api.modal's wrapper, a form's onKeyDown). Enter without an
 	// onKeyDown of its own also submits an enclosing <form> (implicit
-	// submission).
+	// submission). An Escape no listener stopped goes on to the layer the
+	// field is in (a Popover closes: slackc layers.go).
 	if gtx.Focused(ed) {
 		mods := key.ModShift | key.ModCtrl | key.ModAlt | key.ModSuper
 		own := hasFunc(p, "onKeyDown")
@@ -774,6 +775,7 @@ func formTextInput(gtx layout.Context, h *slackc.Host) layout.Dimensions {
 				key.Filter{Focus: ed, Name: key.NameEnter, Optional: mods},
 				key.Filter{Focus: ed, Name: key.NameUpArrow, Optional: mods},
 				key.Filter{Focus: ed, Name: key.NameDownArrow, Optional: mods},
+				key.Filter{Focus: ed, Name: key.NameEscape, Optional: mods},
 			)
 			if !ok {
 				break

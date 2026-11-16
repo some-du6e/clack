@@ -30,6 +30,7 @@ func (a *App) slackcFrame(gtx layout.Context) {
 			messages.RegisterSlackHosts()
 		}
 		a.slackc.inited, a.slackc.core = true, c
+		slackc.FocusFallback = a.focusComposer // the overlay layers' focus of last resort
 		slackc.Init(slackc.Env{
 			Theme:      a.th,
 			Images:     a.images,

@@ -108,6 +108,16 @@ func (r *Runtime) DispatchEvent(target int, ev []byte) {
 	r.Post(func(js *Ctx) { _, _ = js.dispatch(target, ev) })
 }
 
+// DispatchEventThen is DispatchEvent telling done, on the JS goroutine,
+// what JS did with the event: whether a listener stopped its propagation
+// or prevented its default. done doesn't run if the runtime closes first.
+func (r *Runtime) DispatchEventThen(target int, ev []byte, done func(EventResult, error)) {
+	r.Post(func(js *Ctx) {
+		v, err := js.dispatch(target, ev)
+		done(v, err)
+	})
+}
+
 // DispatchEventSync is DispatchEvent waiting for the result (e.g. to learn
 // whether a key was preventDefault'ed). Bounded by ctx and Options.Timeout.
 func (r *Runtime) DispatchEventSync(ctx context.Context, target int, ev []byte) (EventResult, error) {

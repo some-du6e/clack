@@ -24,7 +24,8 @@ type View struct {
 	learnPending bool // a new tree: learn its original's insets after the next layout (reserve.go)
 	root         uint64
 	overlay      bool
-	sheet        string // text of the tree's <style> elements, installed as "root:<id>"
+	layer        jsLayer // the overlay root as a window layer (LayoutOverlays)
+	sheet        string  // text of the tree's <style> elements, installed as "root:<id>"
 
 	fr   frame
 	name string
@@ -107,6 +108,7 @@ type frame struct {
 // nodeState is a host node's UI state that survives new trees.
 type nodeState struct {
 	k                int64
+	layer            jsLayer // an in-page modal <dialog> as a window layer (painter.fixed)
 	st               css.State
 	scrollX, scrollY float32
 	hover            bool

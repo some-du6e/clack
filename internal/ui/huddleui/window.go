@@ -61,8 +61,9 @@ type window struct {
 	lounge    loungeUI        // HuddleLoungeMusicBanner (lounge.go)
 	tips      map[string]*popups.TipState
 
-	overlays []popups.Overlay // modals over the window (winHost.ShowOverlay; under mu)
-	posts    []func()         // winHost.post (under mu)
+	overlays []popups.Overlay             // modals over the window (winHost.ShowOverlay; under mu)
+	layers   map[popups.Overlay]*winLayer // the overlays' layers in the window's stack (window_menu.go)
+	posts    []func()                     // winHost.post (under mu)
 
 	shareAlert alertState // the screen share alert's link and close (share.go)
 	panel      panelState // the Captions side panel (captions_panel.go)
@@ -170,8 +171,9 @@ func (w *window) run() {
 	// going, the captions' fade), like Slack's, which draws nothing in a
 	// still call.
 	var ops op.Ops
-	var caption captionState   // Windows: the caption takes the window's colour (caption.go)
-	var patch slackc.SubWindow // its plugin patch points' roots (slackc)
+	var caption captionState    // Windows: the caption takes the window's colour (caption.go)
+	var patch slackc.SubWindow  // its plugin patch points' roots (slackc)
+	patch.SetWake(w.invalidate) // an Escape JS passed on to its overlay layers
 	for {
 		ev := ww.Event()
 		caption.sync(ev, ww, hudCaption)

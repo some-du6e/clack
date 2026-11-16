@@ -2,7 +2,9 @@ package huddleui
 
 import (
 	"image"
+	"reflect"
 
+	"gioui.org/io/event"
 	"gioui.org/layout"
 
 	"github.com/some-du6e/clack/internal/core"
@@ -11,6 +13,7 @@ import (
 	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/richtext"
 	"github.com/some-du6e/clack/internal/ui/popups"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
@@ -288,9 +291,21 @@ func (w *window) layoutOverlays(gtx C) {
 	for _, o := range ovs {
 		g := gtx
 		g.Constraints = layout.Exact(gtx.Constraints.Max)
-		o.Layout(g)
+		w.drawOverlay(g, o)
 		if !o.Dismissed() {
 			keep = append(keep, o)
+		}
+	}
+	for o := range w.layers {
+		shown := false
+		for _, x := range keep {
+			if x == o {
+				shown = true
+				break
+			}
+		}
+		if !shown {
+			delete(w.layers, o)
 		}
 	}
 	w.mu.Lock()
@@ -300,4 +315,40 @@ func (w *window) layoutOverlays(gtx C) {
 	}
 	w.overlays = keep
 	w.mu.Unlock()
+}
+
+// winLayer is one of the huddle window's overlays as a layer in its
+// overlay stack (slackc layers.go): an Escape that reaches it (the
+// innermost layer holding the focus, else the topmost) dismisses it.
+type winLayer struct {
+	o    popups.Overlay
+	area int
+}
+
+func (l *winLayer) LayerEscape() {
+	if d, ok := l.o.(interface{ Dismiss() }); ok {
+		d.Dismiss()
+	}
+}
+
+// drawOverlay lays out overlay o as a layer: inside its area, with its
+// focus home when it has one.
+func (w *window) drawOverlay(gtx C, o popups.Overlay) {
+	if !reflect.TypeOf(o).Comparable() {
+		o.Layout(gtx)
+		return
+	}
+	l := w.layers[o]
+	if l == nil {
+		if w.layers == nil {
+			w.layers = map[popups.Overlay]*winLayer{}
+		}
+		l = &winLayer{o: o}
+		w.layers[o] = l
+	}
+	spec := slackc.LayerSpec{Area: &l.area}
+	if h, ok := o.(interface{ FocusHome() event.Tag }); ok {
+		spec.Home = h.FocusHome()
+	}
+	slackc.DrawLayer(gtx, l, spec, func(gtx C) { o.Layout(gtx) })
 }

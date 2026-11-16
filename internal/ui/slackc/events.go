@@ -792,7 +792,12 @@ func (v *View) beginEvent(typ string) []byte {
 
 // endEvent adds target state and the boxes of the target and its
 // ancestors, then dispatches.
-func (v *View) endEvent(t *box, b []byte) {
+func (v *View) endEvent(t *box, b []byte) { v.endEventThen(t, b, nil) }
+
+// endEventThen is endEvent telling done (when non-nil, on any goroutine)
+// whether a JS listener stopped the event's propagation (ResultBridge;
+// false at once without one).
+func (v *View) endEventThen(t *box, b []byte, done func(stopped bool)) {
 	k := t.k()
 	b = append(b, `,"target":{`...)
 	val, hasVal := v.targetValue(t)
@@ -837,11 +842,21 @@ func (v *View) endEvent(t *box, b []byte) {
 		b = append(b, ']')
 	}
 	b = append(b, '}', '}')
-	if br := bridge(); br != nil {
-		br.Dispatch(k, b)
-	}
 	if testDispatch != nil {
 		testDispatch(k, b)
+	}
+	br := bridge()
+	rb, ok := br.(ResultBridge)
+	switch {
+	case ok && done != nil:
+		rb.DispatchResult(k, b, done)
+	case br != nil:
+		br.Dispatch(k, b)
+		fallthrough
+	default:
+		if done != nil {
+			done(false)
+		}
 	}
 }
 
@@ -909,18 +924,27 @@ func domButtons(b pointer.Buttons) int {
 }
 
 func (v *View) dispatchSimple(t *box, typ string, extra func([]byte) []byte) {
-	if t == nil || !dispatching() {
-		return
+	v.dispatchThen(t, typ, extra, nil)
+}
+
+// dispatchThen is dispatchSimple telling done whether a listener stopped
+// the event (endEventThen); done hears false when there is nothing to
+// dispatch to.
+func (v *View) dispatchThen(t *box, typ string, extra func([]byte) []byte, done func(stopped bool)) {
+	if t != nil {
+		t = t.elem()
 	}
-	t = t.elem()
-	if t == nil || t.k() == 0 {
+	if t == nil || t.k() == 0 || !dispatching() {
+		if done != nil {
+			done(false)
+		}
 		return
 	}
 	b := v.beginEvent(typ)
 	if extra != nil {
 		b = extra(b)
 	}
-	v.endEvent(t, b)
+	v.endEventThen(t, b, done)
 }
 
 func (v *View) dispatchValue(t *box, typ string) { v.dispatchSimple(t, typ, nil) }
@@ -982,11 +1006,26 @@ func domKey(n key.Name, m key.Modifiers) (string, string) {
 }
 
 func (v *View) dispatchKey(t *box, typ string, ke key.Event) {
+	// A focused plugin element's Escape keydown, once JS has it, goes on
+	// to the window's overlay layers unless a listener stopped it, as the
+	// DOM's bubbles up to react-modal's content (layers.go).
+	var done func(stopped bool)
+	if typ == "keydown" && ke.Name == key.NameEscape {
+		c := curClock
+		done = func(stopped bool) {
+			if !stopped {
+				c.bubble(true)
+			}
+		}
+	}
 	if !dispatching() {
+		if done != nil {
+			done(false)
+		}
 		return
 	}
 	k, code := domKey(ke.Name, ke.Modifiers)
-	v.dispatchSimple(t, typ, func(b []byte) []byte {
+	v.dispatchThen(t, typ, func(b []byte) []byte {
 		b = append(b, `,"key":`...)
 		b = appendString(b, k)
 		b = append(b, `,"code":`...)
@@ -994,7 +1033,7 @@ func (v *View) dispatchKey(t *box, typ string, ke key.Event) {
 		b = appendMods(b, ke.Modifiers)
 		b = appendBool(b, "repeat", false)
 		return b
-	})
+	}, done)
 }
 
 // dispatchChar sends keydown/keyup for a typed character (editors only

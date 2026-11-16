@@ -34,29 +34,38 @@ func (a *App) ShowOverlay(o Overlay) {
 type dismisser interface{ Dismiss() }
 
 // dismissTop closes the topmost overlay; reports whether one was closed.
+// Invisible ones (the popups pump) don't count: while an async action was
+// in flight every Escape went to the pump, which passed it on to no popup
+// and the channel never got its "mark as read".
 func (a *App) dismissTop() bool {
 	for i := len(a.overlays) - 1; i >= 0; i-- {
 		o := a.overlays[i]
-		if o.Dismissed() {
+		if o.Dismissed() || invisible(o) {
 			continue
 		}
-		if d, ok := o.(dismisser); ok {
-			d.Dismiss()
-		}
-		// the slot past the end goes too, as layoutOverlays clears it: an
-		// overlay left there stays reachable (a closed emoji picker held
-		// its 10 MB index until another overlay took the slot)
-		n := len(a.overlays)
-		copy(a.overlays[i:], a.overlays[i+1:])
-		a.overlays[n-1] = nil
-		a.overlays = a.overlays[:n-1]
-		if i < len(a.overlayPane) {
-			a.overlayPane = append(a.overlayPane[:i], a.overlayPane[i+1:]...)
-		}
-		a.Invalidate()
+		a.dismissAt(i)
 		return true
 	}
 	return false
+}
+
+// dismissAt closes the overlay at i and drops it from the stack (one that
+// stays, like a Block Kit view backing out, shows itself again).
+func (a *App) dismissAt(i int) {
+	if d, ok := a.overlays[i].(dismisser); ok {
+		d.Dismiss()
+	}
+	// the slot past the end goes too, as layoutOverlays clears it: an
+	// overlay left there stays reachable (a closed emoji picker held its
+	// 10 MB index until another overlay took the slot)
+	n := len(a.overlays)
+	copy(a.overlays[i:], a.overlays[i+1:])
+	a.overlays[n-1] = nil
+	a.overlays = a.overlays[:n-1]
+	if i < len(a.overlayPane) {
+		a.overlayPane = append(a.overlayPane[:i], a.overlayPane[i+1:]...)
+	}
+	a.Invalidate()
 }
 
 // shellMenu is the shell's own Slack-style menu (team menu, channel kebab,

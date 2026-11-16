@@ -173,6 +173,12 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 			escOwned = true
 		}
 	}
+	// with an overlay layer open (a menu, a modal, a plugin's Popover or
+	// dialog) Escape is the layers', as the DOM bubbles a keydown up to the
+	// modal holding the focus: none of the Escape bindings take it
+	// (slackc.RouteEscape gives it to the innermost layer holding the
+	// focus, else the topmost)
+	layerEsc := slackc.LayerOpen(gtx)
 	// a modal dialog makes the page inert (its keys go to it), and so does
 	// a replayed introduction (intro.go)
 	if !slackc.ModalOpen() && a.intro == nil {
@@ -182,7 +188,7 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 			compEd = a.secComposerEd(gtx)
 		}
 		for _, sc := range s.list {
-			if escOwned && sc.name == key.NameEscape && sc.mods == 0 {
+			if sc.name == key.NameEscape && (layerEsc || escOwned && sc.mods == 0) {
 				continue
 			}
 			if activity && sc.mods&key.ModAlt != 0 && (sc.name == key.NameUpArrow || sc.name == key.NameDownArrow) &&

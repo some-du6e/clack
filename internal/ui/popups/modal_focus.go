@@ -11,6 +11,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/ui/refocus"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
+	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
 // Keyboard and focus, as Slack's modals do it (BaseModal/c-sk-modal over
@@ -88,9 +89,16 @@ func (m *Modal) stops() []event.Tag {
 // keys runs the modal's focus and keys for this frame; true when it closed.
 func (m *Modal) keys(gtx layout.Context) bool {
 	m.frames++
+	// In a window whose overlay layers route Escape and the focus
+	// (slackc layers.go: the main window, the huddle window) the stack gives
+	// the focus back when the modal closes, to what had it when it opened
+	// (not refocus's last composer), and an Escape from anywhere in the
+	// modal reaches it as the innermost layer holding the focus, after a
+	// Popover in its body: the modal reads it only on its own tags.
+	routed := slackc.EscapeRouted(gtx)
 	if !m.focus {
 		m.focus = true
-		if !m.overModal() {
+		if !m.overModal() && !routed {
 			m.prev = refocus.Last(gtx.Now)
 		}
 		if b := m.autoFocus(); b != nil {
@@ -113,9 +121,14 @@ func (m *Modal) keys(gtx layout.Context) bool {
 	if !top {
 		return false
 	}
-	filters := []event.Filter{
-		key.Filter{Name: key.NameEscape},
-		key.Filter{Name: key.NameTab, Optional: key.ModShift},
+	filters := []event.Filter{key.Filter{Name: key.NameTab, Optional: key.ModShift}}
+	if routed {
+		filters = append(filters, key.Filter{Focus: m, Name: key.NameEscape})
+		for _, t := range m.stops() {
+			filters = append(filters, key.Filter{Focus: t, Name: key.NameEscape})
+		}
+	} else {
+		filters = append(filters, key.Filter{Name: key.NameEscape})
 	}
 	if m.o.OnCmdEnter != nil {
 		mod := key.ModSuper // Mousetrap's "command" is the meta key
@@ -231,6 +244,16 @@ func (m *Modal) overModal() bool {
 		}
 	}
 	return false
+}
+
+// FocusHome is where the focus comes back to in the modal (its overlay
+// layer's home: a Popover in its body closed, or the focus went): the stop
+// that had it, else the dialog.
+func (m *Modal) FocusHome() event.Tag {
+	if m.last != nil && m.hasStop(m.last) {
+		return m.last
+	}
+	return m
 }
 
 // giveBackFocus asks the widget focused before the modal opened to take

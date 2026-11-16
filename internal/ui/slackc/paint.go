@@ -574,8 +574,23 @@ func (p *painter) fixed(k *box) {
 	saveClip := p.clip
 	p.clip = noClip
 	p.inDefer = true
+	var area clip.Stack
+	modal := k.Modal() && p.s != nil
+	if modal {
+		// an open modal <dialog> in the page's own tree: a window layer
+		// (layers.go), its area inside the deferred ops it's drawn by
+		l := &p.v.state(k).layer
+		OpenLayer(p.s.gtx, l, l.spec())
+		area = clip.Rect(irect(rectF{-ox, -oy, -ox + p.v.vw, -oy + p.v.vh})).Push(p.ops)
+		pass := pointer.PassOp{}.Push(p.ops)
+		event.Op(p.ops, &l.area)
+		pass.Pop()
+	}
 	p.backdrop(k, ox, oy)
 	p.paintBox(k, x, y)
+	if modal {
+		area.Pop()
+	}
 	p.inDefer = false
 	p.clip = saveClip
 	// a pass-through handler inside the deferred ops so events over the
