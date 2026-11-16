@@ -464,7 +464,10 @@ func (b *backend) apply(a *App, s core.Snapshot) {
 			}
 		}
 		if c.Kind == "mpim" {
-			ci.Name = b.mpimName(c, s.Self.ID)
+			// raw (no hit, nothing asked for): every group DM is here,
+			// closed ones too; core's snapshot read the members of those
+			// the sidebar lists through getMemberById (sidebarUsers)
+			ci.Name = b.mpimNameBy(c, s.Self.ID, b.core.RawUser)
 		}
 		if cnt, ok := s.Counts[c.ID]; ok {
 			ci.Unread, ci.Mentions, ci.LastRead, ci.Latest = cnt.Unread, cnt.Mentions, cnt.LastRead, cnt.Latest
@@ -542,6 +545,11 @@ func defaultSectionName(t string) string {
 }
 
 func (b *backend) mpimName(c *core.Conv, self string) string {
+	return b.mpimNameBy(c, self, b.core.User)
+}
+
+// mpimNameBy is mpimName reading the members with user.
+func (b *backend) mpimNameBy(c *core.Conv, self string, user func(string) (core.User, bool)) string {
 	if n, ok := b.core.MpdmCustomName(c.ID); ok { // mpdm_naming (core/mpdm_name.go)
 		return n
 	}
@@ -550,7 +558,7 @@ func (b *backend) mpimName(c *core.Conv, self string) string {
 		if id == self {
 			continue
 		}
-		if u, ok := b.core.User(id); ok && u.Name != "" {
+		if u, ok := user(id); ok && u.Name != "" {
 			names = append(names, u.Name)
 		}
 	}

@@ -204,6 +204,10 @@ func (a *App) handle(ev slack.Event) {
 			if e.TempExp != nil {
 				a.setTemp(id, *e.TempExp)
 			}
+			// a new membership: Slack upserts the event's channel, is_open
+			// with it; Clack keeps no is_open from it, so an old close of
+			// a code channel no longer counts (codechannel_close.go)
+			a.forgetCodeChannelClosed(id)
 		}
 		a.refreshConv(ctx, id)
 	case "record_channel_close": // channelClosed for a record (code) channel (codechannel_close.go)
@@ -227,6 +231,7 @@ func (a *App) handle(ev slack.Event) {
 		a.emit(Event{Type: "sidebar_changed"})
 	case "channel_left", "group_left", "channel_archive", "group_archive", "channel_deleted":
 		a.dropMembership(ch, ev.Type == "channel_archive" || ev.Type == "group_archive")
+		a.forgetCodeChannelClosed(ch) // no membership, no is_open to keep (codechannel_close.go)
 		a.emit(Event{Type: "conv_removed", Channel: ch})
 	case "pin_added", "pin_removed":
 		var e struct {
@@ -608,6 +613,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	if a.confirmPending(ch, &m) {
 		if isTopLevel(&m) {
 			a.S.NoteMessage(ch, &m, false)
+			a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
 		}
 		return
 	}
@@ -627,6 +633,7 @@ func (a *App) onMessage(ctx context.Context, ch string, ev slack.Event) {
 	mention := mentionsSelf(&m, self) || (m.User != self && keywordMention(&m, a.S.HighlightWords()))
 	if !isReply || m.Subtype == "thread_broadcast" {
 		a.S.NoteMessage(ch, &m, mention)
+		a.noteCodeChannelMessage(ch, m.TS, a.RTM.Connected()) // heard live (codechannel_close.go)
 	} else if m.User != self {
 		a.refreshCountsSoon() // thread unread state lives server-side
 	}

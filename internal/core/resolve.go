@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/url"
 	"strings"
@@ -165,32 +166,128 @@ func (a *App) resolveChannels(ctx context.Context, ids []string) []string {
 	return out
 }
 
-// resolveBots caches bot names and icons (bots.info, comma-separated batch).
+// resolveBots is Slack's fetchBotsById (client-boot 0H7E y, build
+// 2c0d02ca130f), the bots UnknownFetchManager's fetch for a client with a
+// socket: the edge cache's users/info (flannel MEMBER_INFO, iFK2
+// fetchBotsById: chunks of 100, every id at 0 in updated_ids) first, then
+// bots.info for the ids it didn't return, with app_ids lined up with them
+// when a message that drew one carried its app (getBotByMsg's app_id).
+// Slack's fallback covers the edge's failed_ids and failed chunks; Clack
+// sends bots.info for any id the edge didn't answer with a bot.
+//
+// bots.info goes to the enterprise host on Grid (the team host answers
+// bots_not_found for org apps); ids it doesn't know (bots_not_found, or
+// left out of a partial answer) are asked once more on the team host,
+// which knows the workspace's own bots. An id neither answers is left
+// unresolved for the session, as Slack's upsertNonExistent leaves it; a
+// request that failed outright (the network, a 5xx, a timeout) forgets
+// its ids so the next draw asks again.
 func (a *App) resolveBots(ctx context.Context, ids []string) []string {
+	got := map[string]bool{}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
 	var out []string
-	for i := 0; i < len(ids); i += 50 {
-		j := min(i+50, len(ids))
-		var r struct {
-			Bots []slack.BotProfile `json:"bots"`
-			Bot  *slack.BotProfile  `json:"bot"`
-		}
-		if err := a.C.Call(ctx, "bots.info", url.Values{"bots": {strings.Join(ids[i:j], ",")}}, &r); err != nil {
-			log.Printf("bots.info: %v", err)
-			continue
-		}
-		if r.Bot != nil {
-			r.Bots = append(r.Bots, *r.Bot)
-		}
-		for _, b := range r.Bots {
-			if b.ID == "" {
+	put := func(bs []slack.BotProfile) {
+		for _, b := range bs {
+			if b.ID == "" || !want[b.ID] || got[b.ID] {
 				continue
 			}
+			got[b.ID] = true
 			a.S.PutBot(b.ID, store.BotInfo{Name: b.Name, Icon: firstNonEmpty(b.Icons.Image72, b.Icons.Image48, b.Icons.Image36),
 				AppID: b.AppID, Workflow: b.IsWorkflowBot})
 			out = append(out, b.ID)
 		}
 	}
+	left := func(part []string) []string {
+		var rest []string
+		for _, id := range part {
+			if !got[id] {
+				rest = append(rest, id)
+			}
+		}
+		return rest
+	}
+	for i := 0; i < len(ids); i += 100 {
+		part := ids[i:min(i+100, len(ids))]
+		bs, err := a.edgeBots(ctx, part)
+		if err != nil {
+			log.Printf("edge users/info %v: %v", part, err)
+		}
+		put(bs)
+	}
+	rest := left(ids)
+	var transient []string
+	for i := 0; i < len(rest); i += 50 {
+		part := rest[i:min(i+50, len(rest))]
+		bs, err := a.botsInfo(ctx, part, a.C.Call)
+		put(bs)
+		if err != nil {
+			log.Printf("bots.info %v: %v", part, err)
+		}
+		missing := left(part)
+		if len(missing) > 0 && a.C.OnEnterprise("bots.info") && (err == nil || isCode(err, "bots_not_found")) {
+			bs, err2 := a.botsInfo(ctx, missing, a.C.CallTeam)
+			put(bs)
+			if err2 != nil {
+				log.Printf("bots.info %v (team host): %v", missing, err2)
+			}
+			err = err2
+			missing = left(missing)
+		}
+		if err != nil && !isAPIError(err) {
+			transient = append(transient, missing...)
+		}
+	}
+	if len(transient) > 0 {
+		a.S.ForgetMissing('b', transient...) // asked again at the next draw
+	}
 	return out
+}
+
+// edgeBots is fetchBotsById's flannel step: the bots users/info returns
+// among ids.
+func (a *App) edgeBots(ctx context.Context, ids []string) ([]slack.BotProfile, error) {
+	up := make(map[string]int, len(ids))
+	for _, id := range ids {
+		up[id] = 0
+	}
+	var r struct {
+		Results []slack.BotProfile `json:"results"`
+	}
+	err := a.C.Edge(ctx, "users/info", map[string]any{"updated_ids": up}, &r)
+	return r.Results, err
+}
+
+// botsInfo is fetchBotsInfo: bots.info {bots, app_ids} through call.
+func (a *App) botsInfo(ctx context.Context, ids []string, call func(context.Context, string, url.Values, any) error) ([]slack.BotProfile, error) {
+	p := url.Values{"bots": {strings.Join(ids, ",")}}
+	apps := make([]string, len(ids))
+	known := false
+	for i, id := range ids {
+		apps[i] = a.S.MissingBotApp(id)
+		known = known || apps[i] != ""
+	}
+	if known {
+		p.Set("app_ids", strings.Join(apps, ","))
+	}
+	var r struct {
+		Bots []slack.BotProfile `json:"bots"`
+		Bot  *slack.BotProfile  `json:"bot"`
+	}
+	err := call(ctx, "bots.info", p, &r)
+	if r.Bot != nil {
+		r.Bots = append(r.Bots, *r.Bot)
+	}
+	return r.Bots, err
+}
+
+// isAPIError reports whether err is an answer from Slack ({"ok":false}),
+// not a request that failed on the way.
+func isAPIError(err error) bool {
+	var se *slack.Error
+	return errors.As(err, &se)
 }
 
 // ResolveConv returns any conversation by id: the sidebar's, or one looked

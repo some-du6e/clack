@@ -176,12 +176,13 @@ func (s *Store) MembersDue() <-chan struct{} {
 
 // RunMembersPass is the scheduled callback: the last check becomes now,
 // evict runs, and the next pass can be scheduled an interval later. It
-// returns the ids it removed.
-func (s *Store) RunMembersPass(now time.Time) []string {
+// returns the ids it removed. keep are members the pass doesn't let go,
+// past MembersTarget if need be (EvictMembersKeeping).
+func (s *Store) RunMembersPass(now time.Time, keep ...string) []string {
 	m := s.membersInit()
 	m.lastCheck.Store(now.UnixMilli())
 	defer m.scheduled.Store(false)
-	return s.EvictMembers()
+	return s.EvictMembersKeeping(keep)
 }
 
 // SetMembersSizeForDebug is the CacheManager's setCacheSizeMaximumForDebug
@@ -229,8 +230,27 @@ func (s *Store) MembersStats() (users, nonexistent int) {
 // MembersTarget the comparator puts last (the viewer, then whoever was
 // found most recently) and removes the rest. It returns the removed ids;
 // a later lookup of one asks users/info again.
-func (s *Store) EvictMembers() []string {
+func (s *Store) EvictMembers() []string { return s.EvictMembersKeeping(nil) }
+
+// EvictMembersKeeping is EvictMembers that never lets keep go: the
+// viewer and keep stay, and the rest of MembersTarget goes to the others
+// found most recently (none when keep alone fills it). Core keeps the
+// sidebar's people this way. Slack's sidebar reads every DM partner it
+// lists through getMemberById on each store change, so they always sort
+// last, unless there are more of them than the target. Then Slack's pass
+// drops some and the sidebar's next read asks users/info for them
+// straight away; Clack keeps them instead. Under the debug sizes
+// (SetMembersSizeForDebug, Slack's cacheEviction hook: tests' evictAll)
+// nothing is kept but what the comparator keeps.
+func (s *Store) EvictMembersKeeping(keep []string) []string {
 	maximum, target := s.members.limits()
+	var pinned map[string]bool
+	if len(keep) > 0 && s.members.maximum.Load() == 0 && s.members.target.Load() == 0 {
+		pinned = make(map[string]bool, len(keep))
+		for _, id := range keep {
+			pinned[id] = true
+		}
+	}
 	s.mu.Lock()
 	n := len(s.Users) + len(s.members.nonexistent)
 	if n < maximum {
@@ -275,8 +295,30 @@ func (s *Store) EvictMembers() []string {
 	})
 	// takeItemsToEvict: keep the last cacheSizeTarget
 	cut := max(len(cs)-target, 0)
+	gone := cs[:cut]
+	if pinned != nil {
+		// the viewer and the pinned stay; the others found last fill
+		// what's left of the target
+		room := target
+		for i := range cs {
+			if cs[i].self || pinned[cs[i].id] {
+				room--
+			}
+		}
+		gone = make([]cand, 0, cut)
+		for i := len(cs) - 1; i >= 0; i-- {
+			switch c := cs[i]; {
+			case c.self || pinned[c.id]:
+			case room > 0:
+				room--
+			default:
+				gone = append(gone, c)
+			}
+		}
+		cut = len(gone)
+	}
 	out := make([]string, 0, cut)
-	for _, c := range cs[:cut] {
+	for _, c := range gone {
 		out = append(out, c.id)
 		delete(s.Users, c.id)
 		delete(s.userSeen, c.id)

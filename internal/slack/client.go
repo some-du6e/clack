@@ -338,6 +338,16 @@ func (c *Client) Call(ctx context.Context, method string, params url.Values, out
 	return err
 }
 
+// OnEnterprise reports whether Call sends method to the enterprise host.
+func (c *Client) OnEnterprise(method string) bool { return c.useEnt(method) }
+
+// CallTeam is Call on the team host and token, whatever the method's
+// route: for an answer the enterprise host can't give (bots.info's
+// bots_not_found for a workspace's own bot).
+func (c *Client) CallTeam(ctx context.Context, method string, params url.Values, out any) error {
+	return c.callOn(ctx, method, false, params, out)
+}
+
 // forbiddenMethods would end the user's Slack session for every client.
 // Clack never calls them; "Sign out" only forgets local credentials.
 // Keys are lower case; refusedMethod compares case-insensitively.

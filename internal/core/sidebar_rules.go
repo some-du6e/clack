@@ -556,7 +556,9 @@ func (a *App) dmCandidate(id string, keep sidebarKeep) bool {
 		if systemDMUsers[c.User] || c.User == slackbotID && a.slackbotDMHidden() {
 			return false
 		}
-		if u, ok := a.S.User(c.User); ok && u.Deleted {
+		// lJBI's deletedMembers (gIKW G): a selector over every member,
+		// which records no hit and asks for nothing
+		if u, ok := a.S.RawUser(c.User); ok && u.Deleted {
 			return false
 		}
 	}
@@ -847,7 +849,9 @@ func (a *App) sortName(c Conv) string {
 	if len(c.Members) > 0 {
 		for _, m := range c.Members {
 			if m != self {
-				names = append(names, a.S.UserName(m))
+				// raw: the snapshot reads the listed group DMs' members
+				// through getMemberById (sidebarUsers), and no others
+				names = append(names, a.rawUserName(m))
 			}
 		}
 	} else { // mpdm-alice--bob--me-1: handles, minus our own

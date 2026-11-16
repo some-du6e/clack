@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/some-du6e/clack/internal/slack"
+	"github.com/some-du6e/clack/internal/store"
 )
 
 // Slack's members cache (store/members.go) and how Slack fetches a member
@@ -147,12 +149,15 @@ var AfterMembersEvict func(members int)
 // EvictMembers runs the members cache's pass now (Slack's evict(): the
 // store keeps the viewer and the 500 members found most recently once it
 // holds 700) and returns the ids it removed. Views drawing one of them
-// look it up again, which asks users/info for it.
+// look it up again, which asks users/info for it. The sidebar's people
+// stay even when there are more than 500 of them
+// (store.EvictMembersKeeping).
 func (a *App) EvictMembers() []string {
 	t0 := time.Now()
 	before, gone := a.S.MembersStats()
-	a.touchSidebarMembers()
-	ids := a.S.RunMembersPass(t0)
+	keep := a.sidebarPeopleNow()
+	a.touchSidebarMembers(keep)
+	ids := a.S.RunMembersPass(t0, keep...)
 	if len(ids) > 0 || before+gone >= 700 {
 		after, gone2 := a.S.MembersStats()
 		log.Printf("core: members cache: %d members and %d not found; %d went, %d and %d left (%s)",
@@ -167,27 +172,139 @@ func (a *App) EvictMembers() []string {
 	return ids
 }
 
-// touchSidebarMembers records a hit on the members the sidebar shows (the
-// viewer, DM partners, group DMs' members): Slack's sidebar sections
-// (useCalculateSidebarSections, which reads each DM's member to hide
-// deactivated people and apps) run on every store change, so its people
-// are always among the last found when a pass sorts them. Clack's sidebar
-// rules read them at each snapshot, which may be long before the pass.
-func (a *App) touchSidebarMembers() {
-	var ids []string
-	a.S.RLock()
-	for _, c := range a.S.Convs {
-		switch {
-		case c.IsIM && c.User != "":
-			ids = append(ids, c.User)
-		case c.IsMPIM:
-			ids = append(ids, c.Members...)
-		}
-	}
-	a.S.RUnlock()
+// touchSidebarMembers records a hit on the sidebar's people (ids, from
+// sidebarPeopleNow). Slack's sidebar sections (useCalculateSidebarSections)
+// read them through getMemberById on every store change, so they are
+// always among the last found when a pass sorts them. Clack reads them at
+// each snapshot, which may be long before the pass.
+func (a *App) touchSidebarMembers(ids []string) {
 	for _, id := range ids {
 		a.S.TouchMember(id)
 	}
+}
+
+// sidebarPeople are lJBI's imAndMpimMembers at the last snapshot: the
+// partner of every DM the sections list and the members of every group
+// DM they list. Slack's useCalculateSidebarSections (boot-shared lJBI,
+// build 2c0d02ca130f) reads them with getMemberById (gIKW nv) on every
+// store change, for its candidates: open DMs and group DMs, and closed
+// ones with unreads, a draft or a huddle, before any section's own
+// filter. Closed DMs aren't candidates and are never read, so their
+// partners aren't kept and aren't asked for. Its deleted-member test
+// (deletedMembers, gIKW G) is a selector over every member, which
+// records nothing.
+type sidebarPeople struct {
+	mu  sync.Mutex
+	ids []string
+}
+
+func (a *App) setSidebarPeople(ids []string) {
+	a.sbPeople.mu.Lock()
+	a.sbPeople.ids = ids
+	a.sbPeople.mu.Unlock()
+}
+
+// sidebarPeopleNow is the last snapshot's sidebarPeople (nil before one).
+func (a *App) sidebarPeopleNow() []string {
+	a.sbPeople.mu.Lock()
+	defer a.sbPeople.mu.Unlock()
+	return a.sbPeople.ids
+}
+
+// sidebarUsers is the snapshot's Users: the viewer and every DM's
+// partner. The people of the DMs and group DMs the sections list are
+// read with getMemberById, which records a hit or asks users/info for a
+// miss ("names" follows), and are remembered as sidebarPeople; any other
+// DM's partner is read as the store holds it (RawUser).
+func (a *App) sidebarUsers(convs []Conv, secs []Section, self string) map[string]User {
+	listed := map[string]bool{}
+	for _, s := range secs {
+		for _, l := range [][]string{s.All, s.Channels} {
+			for _, id := range l {
+				listed[id] = true
+			}
+		}
+	}
+	out := map[string]User{}
+	if u, ok := a.User(self); ok {
+		out[self] = u
+	}
+	var people []string
+	seen := map[string]bool{}
+	for _, c := range convs {
+		if !listed[c.ID] {
+			continue
+		}
+		switch c.Kind {
+		case "im":
+			if c.User != "" && !seen[c.User] {
+				seen[c.User] = true
+				people = append(people, c.User)
+				if u, ok := a.User(c.User); ok {
+					out[c.User] = u
+				}
+			}
+		case "mpim":
+			for _, m := range c.Members {
+				if m != "" && !seen[m] {
+					seen[m] = true
+					people = append(people, m)
+					a.S.User(m)
+				}
+			}
+		}
+	}
+	a.setSidebarPeople(people)
+	for _, c := range convs {
+		if c.Kind != "im" || c.User == "" {
+			continue
+		}
+		if _, ok := out[c.User]; ok {
+			continue
+		}
+		if u, ok := a.RawUser(c.User); ok {
+			out[c.User] = u
+		}
+	}
+	return out
+}
+
+// bootDMPeople is Boot's list of the DM rows' people for users/info: the
+// viewer and the partners of the DMs the sidebar lists. Those are the
+// open ones (open: sidebar.dms' flags; nil reads core's own, the boot
+// data's on a warm start, or every DM while nothing is known, when the
+// sidebar lists them all) and closed ones with unreads in the counts the
+// store holds by then (a warm start's, or client.counts' if it answered
+// first). A closed DM a draft or a huddle keeps, or one with unreads a
+// cold start learns of later, is named one users/info later, by the
+// first snapshot's lookup (sidebarUsers).
+func (a *App) bootDMPeople(convs []slack.Conversation, open map[string]bool) []string {
+	ids := []string{a.C.Creds.UserID}
+	for _, c := range convs {
+		if !c.IsIM || c.User == "" {
+			continue
+		}
+		var row bool
+		if open != nil {
+			row = open[c.ID]
+		} else {
+			row = a.dmOpen(c.ID)
+		}
+		if !row {
+			e, ok := a.S.Count(c.ID)
+			row = ok && (e.HasUnreads || e.MentionCount > 0)
+		}
+		if row {
+			ids = append(ids, c.User)
+		}
+	}
+	return ids
+}
+
+// rawUserName is Store.UserName without the lookup's bookkeeping.
+func (a *App) rawUserName(id string) string {
+	u, _ := a.S.RawUser(id)
+	return store.DisplayName(u)
 }
 
 // membersOnline is mG45 isOnline for the members pass: clientOnline (the

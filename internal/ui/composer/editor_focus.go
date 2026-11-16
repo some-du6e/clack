@@ -28,13 +28,58 @@ import (
 // zero-area input op), so the focus survives. It never asks for focus:
 // any real move (a click on another field, Escape, a FocusCmd) goes
 // through Gio as before, and the editor reads the FocusEvent it gets
-// later. Editors not drawn for keepFor are let go (closed composers).
+// later. Editors not drawn for keepFor and keepFrames frames are let go
+// (closed composers).
+//
+// The hold bridges glitch frames, not navigation: an editor taken off the
+// screen on purpose (another channel or page, a closed or replaced thread
+// pane) is let go at once with Release. Held for 2 s, as before, it took
+// what was typed meanwhile (the focus filter matches EditEvent,
+// SnippetEvent and SelectionEvent), replayed it into whichever box drew
+// that editor next, and then left nothing focused (Karim's log: 3078 held
+// frames, most after a switch to Activity or another thread). keepFrames
+// keeps a glitch of a few slow frames bridged where 250 ms is fewer than
+// that (a plugin's tree on a slow machine, CI's software renderer).
 
-const keepFor = 2 * time.Second
+const (
+	keepFor    = 250 * time.Millisecond
+	keepFrames = 4
+)
 
 var kept struct {
 	sync.Mutex
-	at map[*Editor]time.Time // last live draw (input enabled)
+	at      map[*Editor]time.Time // last live draw (input enabled)
+	missed  map[*Editor]int       // frames since then
+	release map[*Editor]bool      // Release: let go at the end of the frame
+}
+
+// Release lets go of ed's focus for good: its composer left the screen on
+// purpose. What KeepFocus read for ed is dropped, and at the end of the
+// frame (the next one, outside a frame) KeepFocus stops holding it and
+// the focus goes, with nothing focused in its place, if ed still has it
+// and wasn't drawn in that frame after all. Slack moves the focus to the
+// view that took its place; whatever did (focusAfterNavigate,
+// CloseSecondary) asks for it on its own. UI goroutine only.
+func Release(ed *Editor) {
+	if ed == nil {
+		return
+	}
+	ed.missed = nil
+	kept.Lock()
+	if kept.release == nil {
+		kept.release = map[*Editor]bool{}
+	}
+	kept.release[ed] = true
+	kept.Unlock()
+}
+
+// DrawnLive reports whether ed was drawn in this frame's live layout (a
+// measure pass doesn't count). Call it after the frame's layout.
+func DrawnLive(gtx layout.Context, ed *Editor) bool {
+	kept.Lock()
+	defer kept.Unlock()
+	at, ok := kept.at[ed]
+	return ok && at.Equal(gtx.Now)
 }
 
 // noteLive records a draw that delivers input (not a measure pass).
@@ -47,6 +92,7 @@ func (e *Editor) noteLive(gtx layout.Context) {
 		kept.at = map[*Editor]time.Time{}
 	}
 	kept.at[e] = gtx.Now
+	delete(kept.missed, e)
 	kept.Unlock()
 }
 
@@ -58,18 +104,38 @@ func KeepFocus(gtx layout.Context) {
 		return
 	}
 	kept.Lock()
+	rel := kept.release
+	kept.release = nil
 	var keep []*Editor
+	if kept.missed == nil {
+		kept.missed = map[*Editor]int{}
+	}
 	for e, at := range kept.at {
-		switch {
-		case at.Equal(gtx.Now):
-			// drawn this frame
-		case gtx.Now.Sub(at) > keepFor || gtx.Now.Before(at):
-			delete(kept.at, e)
-		default:
-			keep = append(keep, e)
+		if at.Equal(gtx.Now) {
+			// drawn this frame; released, it is on screen after all (the
+			// same conversation in another pane) and keeps the focus
+			delete(rel, e)
+			continue
 		}
+		kept.missed[e]++
+		if rel[e] || gtx.Now.Sub(at) > keepFor && kept.missed[e] > keepFrames || gtx.Now.Before(at) {
+			delete(kept.at, e)
+			delete(kept.missed, e)
+			// the hold ended without the editor back: what it read
+			// meanwhile was typed into a box nobody saw, and goes with it
+			// (replayed, it came out wherever that editor was drawn next)
+			e.missed = nil
+			continue
+		}
+		keep = append(keep, e)
 	}
 	kept.Unlock()
+	for e := range rel {
+		e.missed = nil
+		if gtx.Focused(e) {
+			gtx.Execute(key.FocusCmd{}) // no tag: nothing focused
+		}
+	}
 	for _, e := range keep {
 		if !gtx.Focused(e) {
 			continue

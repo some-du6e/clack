@@ -203,6 +203,17 @@ func (a *App) historyEntryFor(r Route) (historyEntry, bool) {
 			return e, false
 		}
 		e.conv, e.label = c, c.displayName()
+		if e.label == "" && c.User != "" && (c.Kind == "im" || c.Kind == "app") {
+			// the snapshot names a DM only while the members cache holds
+			// its partner; one it let go is looked up as the menu draws it,
+			// as Slack's rows read getMemberById (a miss asks users/info:
+			// named the next time the menu opens)
+			if cc := a.Core(); cc != nil {
+				if u, ok := cc.User(c.User); ok {
+					e.label = u.Name
+				}
+			}
+		}
 		if c.Kind == "channel" || c.Kind == "private" {
 			e.label = "#" + e.label
 		}

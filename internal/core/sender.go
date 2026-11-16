@@ -159,7 +159,7 @@ func (a *App) senderOf(v *Message, m *slack.Message) {
 		if b, ok := a.S.Bot(m.BotID); ok {
 			bot = &botIdentity{name: b.Name, icon: b.Icon, appID: b.AppID}
 		} else if m.BotProfile == nil {
-			a.S.NoteMissingBot(m.BotID) // resolved in the background (names event)
+			a.S.NoteMissingBotApp(m.BotID, m.AppID) // resolved in the background (names event)
 		}
 	}
 	if bot == nil && m.BotProfile != nil {
