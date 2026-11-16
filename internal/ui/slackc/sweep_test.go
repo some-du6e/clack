@@ -20,8 +20,8 @@ import (
 	"gioui.org/op"
 )
 
-// keyBridge records the root each Card key last rendered into, and the
-// roots unmounted.
+// keyBridge records the root each Card (by its card prop: JS never gets
+// "$key") last rendered into, and the roots unmounted.
 type keyBridge struct {
 	recBridge
 	root map[string]uint64
@@ -30,10 +30,10 @@ type keyBridge struct {
 func (b *keyBridge) Render(root uint64, name string, props []byte) {
 	b.recBridge.Render(root, name, props)
 	var p struct {
-		Key string `json:"$key"`
+		Card string `json:"card"`
 	}
 	_ = json.Unmarshal(props, &p)
-	b.root[p.Key] = root
+	b.root[p.Card] = root
 }
 
 func (b *keyBridge) gone(root uint64) bool {
@@ -71,7 +71,7 @@ func cardCtx(at time.Time) layout.Context {
 // cards draws the patched Card of each key, as their owners do every frame.
 func cards(gtx layout.Context, keys []string) {
 	for _, k := range keys {
-		Render(gtx, "Card", Props{"$key": k}, func(gtx layout.Context, p Props) layout.Dimensions {
+		Render(gtx, "Card", Props{"$key": k, "card": k}, func(gtx layout.Context, p Props) layout.Dimensions {
 			return layout.Dimensions{Size: image.Pt(100, 40)}
 		})
 	}
