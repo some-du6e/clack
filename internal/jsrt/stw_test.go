@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -20,7 +21,8 @@ const stwBound = 50 * time.Millisecond
 
 // stwMeasurable: a case whose longest stop-the-world with the yields off
 // is shorter than this is too small to compare (on the runners these cases
-// take 50-900 ms).
+// take 50-1500 ms; each is big enough that a quarter of it is well above
+// what a loaded runner adds).
 const stwMeasurable = 20 * time.Millisecond
 
 // TestStopTheWorldBounded: Go can't stop a goroutine inside wasm code, so
@@ -86,6 +88,35 @@ func TestStopTheWorldBounded(t *testing.T) {
 		{"Array.prototype.sort of 300k strings",
 			`globalThis.back = null; globalThis.flat = null; if (!globalThis.strs) globalThis.strs = Array.from({ length: 300000 }, (_, i) => 'k' + ((i * 7919) % 300000));`,
 			evalOp(`strs.slice().sort().length`)},
+		// i steps by two over each surrogate pair, so a tick on (i & 63) == 0
+		// never came once one ASCII character had made it odd
+		{"JSON.stringify of a 30M-character string of emoji after one ASCII character",
+			`globalThis.strs = null; if (!globalThis.emoji) globalThis.emoji = 'a' + '\u{1F600}'.repeat(15000000);`,
+			evalOp(`JSON.stringify(emoji).length`)},
+		// sort's collect and write-back loops, slice's copy and the copy's
+		// release are O(n) with no accessor that ticked: the wait grew with
+		// the length
+		{"Array.prototype.sort of 3M strings",
+			`globalThis.emoji = null; if (!globalThis.big) globalThis.big = Array.from({ length: 3000000 }, (_, i) => 'k' + ((i * 7919) % 3000000));`,
+			evalOp(`big.slice().sort().length`)},
+		// no comparator: rqsort calls the native js_TA_cmp_* n log n times
+		{"TypedArray.prototype.sort of 2M doubles",
+			`globalThis.big = null; if (!globalThis.ta) globalThis.ta = new Float64Array(2000000); for (let i = 0; i < ta.length; i++) ta[i] = (i * 7919) % 2000000;`,
+			evalOp(`ta.sort().length`)},
+		{"indexOf, lastIndexOf, includes, reverse and with over a 10M-element array",
+			`globalThis.ta = null; if (!globalThis.ints) globalThis.ints = new Array(10000000).fill(0);`,
+			evalOp(`ints.indexOf(1) + ints.lastIndexOf(1) + (ints.includes(1) ? 1 : 0) + ints.reverse().length + ints.with(0, 1).length`)},
+		{"fill, indexOf, lastIndexOf, includes, reverse and slice over a 10M-element Float64Array, 4 times",
+			`globalThis.ints = null; if (!globalThis.f64) globalThis.f64 = new Float64Array(10000000);`,
+			evalOp(`(() => { let n = 0; for (let r = 0; r < 4; r++) { f64.fill(r); n += f64.indexOf(-1) + f64.lastIndexOf(-1) + (f64.includes(-1) ? 1 : 0) + f64.reverse().length + f64.slice().length; } return n })()`)},
+		{"String indexOf, lastIndexOf, includes and repeat over 20M characters",
+			`globalThis.f64 = null; if (!globalThis.text) globalThis.text = 'ab'.repeat(10000000);`,
+			evalOp(`text.indexOf('abc') + text.lastIndexOf('abc') + (text.includes('abc') ? 1 : 0) + 'xy'.repeat(10000000).length + 'z'.repeat(20000000).length`)},
+		// a plugin's cache keyed by message ts: Object.keys and for-in walk
+		// its property table
+		{"Object.keys and for-in over an object with 2M keys",
+			`globalThis.text = null; if (!globalThis.dict) { globalThis.dict = {}; for (let i = 0; i < 2000000; i++) dict['k' + i] = i; }`,
+			evalOp(`(() => { let n = Object.keys(dict).length + Object.keys(dict).length; for (const k in dict) n++; return n })()`)},
 	}
 	for _, c := range cases {
 		var res [2]stwResult
@@ -122,8 +153,8 @@ func TestStopTheWorldBounded(t *testing.T) {
 		if on.grew {
 			grew = fmt.Sprintf("; the wasm memory grew, to %d MiB", on.mem>>20)
 		}
-		t.Logf("stw: %s: took %v; longest stop-the-world %v with the yields off, %v on (%d yields%s); longest heartbeat gap %v off, %v on",
-			c.name, on.op.Round(time.Millisecond), off.stw.Round(10*time.Microsecond), on.stw.Round(10*time.Microsecond), on.yields, grew,
+		t.Logf("stw: %s: took %v with the yields off, %v on; longest stop-the-world %v off, %v on (%d yields%s); longest heartbeat gap %v off, %v on",
+			c.name, off.op.Round(time.Millisecond), on.op.Round(time.Millisecond), off.stw.Round(10*time.Microsecond), on.stw.Round(10*time.Microsecond), on.yields, grew,
 			off.gap.Round(10*time.Microsecond), on.gap.Round(10*time.Microsecond))
 		if !patched {
 			continue
@@ -241,6 +272,9 @@ func TestSnapshotsWhileBusy(t *testing.T) {
 	if mine == nil || mine.Task < 200*time.Millisecond {
 		t.Fatalf("no busy runtime in Snapshots (%+v)", Snapshots())
 	}
+	if !strings.HasPrefix(mine.Running, "Do from jsrt.TestSnapshotsWhileBusy") {
+		t.Errorf("the busy runtime runs %q, want the test's Do", mine.Running)
+	}
 	t.Logf("busy: %s", mine)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -259,5 +293,51 @@ func TestSnapshotsWhileBusy(t *testing.T) {
 	<-r.Done()
 	if _, ok := live.Load(r); ok {
 		t.Error("a closed runtime is still in Snapshots")
+	}
+}
+
+// A runtime boots (the environment and React's bundles, in wasm) outside
+// any task; a freeze report taken meanwhile names the boot instead of
+// calling the runtime idle.
+func TestSnapshotsNameBoot(t *testing.T) {
+	done := make(chan *Runtime, 1)
+	go func() {
+		r, err := New(Options{Log: func(level, msg string) {}, Fetch: fakeFetch})
+		if err != nil {
+			t.Error(err)
+		}
+		done <- r
+	}()
+	var (
+		booting *Snapshot
+		r       *Runtime
+	)
+	for booted := false; !booted; {
+		for _, s := range Snapshots() {
+			if s.Running == "boot" && s.Task > 0 {
+				booting = &s
+			}
+		}
+		select {
+		case r = <-done:
+			booted = true
+		case <-time.After(200 * time.Microsecond):
+		}
+	}
+	if r == nil {
+		t.Fatal("New failed")
+	}
+	defer r.Close()
+	if booting == nil {
+		t.Fatalf("no Snapshot named the boot while it ran (after it: %+v)", Snapshots())
+	}
+	if s := booting.String(); !strings.HasPrefix(s, "a task running for ") || !strings.Contains(s, "(boot; last interrupt poll or yield ") {
+		t.Errorf("a booting runtime reads %q", s)
+	}
+	t.Logf("booting: %s", booting)
+	for _, s := range Snapshots() {
+		if s.Running == "boot" {
+			t.Errorf("a booted runtime still says boot: %s", s)
+		}
 	}
 }

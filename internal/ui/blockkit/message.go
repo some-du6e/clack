@@ -193,6 +193,19 @@ func (me *Message) RunRects(bid string) []image.Rectangle {
 	return append([]image.Rectangle(nil), me.runAt[bid]...)
 }
 
+// Probe is for tests: the host's block generation (it moves whenever
+// setMessage takes other blocks) and block bid's first element widget,
+// whose identity changes when the host rebuilds its widgets, with its
+// click gesture's press and hover state.
+func (me *Message) Probe(bid string) (gen uint32, w any, pressed, hovered bool) {
+	for _, x := range me.ws {
+		if x.bid == bid {
+			return me.gen, x, x.main.g.Pressed(), x.main.g.Hovered()
+		}
+	}
+	return me.gen, nil, false, false
+}
+
 func parseAttachments(raw json.RawMessage) []attachment {
 	if len(raw) == 0 {
 		return nil

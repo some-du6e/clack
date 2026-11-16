@@ -19,6 +19,8 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -532,5 +534,32 @@ func TestChannelFilesAddToFolder(t *testing.T) {
 	adds := fs2.GalleryBookmarkAdds()
 	if adds[0].Get("type") != "folder" || adds[0].Get("title") != "Bookmarks" || adds[1].Get("type") != "link" || adds[1].Get("parent_id") == "" {
 		t.Errorf("adds %v", adds)
+	}
+}
+
+// Under a plugin patching a boundary above the view (ChatTabs'
+// ClientPrimaryView) slackc also lays the Files tab out in measure passes
+// (gtx.Disabled()), where Gio reports nothing focused: the search's
+// onBlur rule closed the open suggestions on every relayout. The blur
+// comes only from a pass that delivers input.
+func TestChannelFilesSuggestionsSurviveMeasurePass(t *testing.T) {
+	v, _, e, _ := cfView(t, false)
+	e.r.Source().Execute(key.FocusCmd{Tag: &v.search.ed})
+	e.frame()
+	cfType(e, v, "report")
+	e.frame()
+	if !v.sug.open || !v.sug.focused {
+		t.Fatalf("list open %v, search focused %v; want both", v.sug.open, v.sug.focused)
+	}
+	for i := 0; i < 3; i++ {
+		// a measure pass: no input source, as slackc's gtx.Disabled()
+		v.Layout(layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(e.size), Now: time.Now()})
+		if !v.sug.open {
+			t.Fatalf("measure pass %d closed the suggestions", i+1)
+		}
+		e.frame()
+	}
+	if !v.sug.open || !v.sug.focused {
+		t.Errorf("after the measure passes: list open %v, search focused %v", v.sug.open, v.sug.focused)
 	}
 }

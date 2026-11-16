@@ -923,3 +923,38 @@ jobs:
           done
           echo "::notice title=windows-applog's window steps::the title bar tests failed $titlebar times in $COUNT rounds; the drops and typed text $other times"
           exit $(( titlebar > 0 ))
+
+  # patched-tree-clicks: Block Kit clicks and redraws on rows under a
+  # plugin patching Message / ThreadReplyGeneric, whose own msg override
+  # went back to JS as their props (row.wrapped) and kept an updated row
+  # bouncing between two revisions (lost clicks, α.92's redraw timeouts);
+  # the lockstep variants make that timing happen every run
+  patched-clicks:
+    if: ${{ !inputs.only || startsWith('patched-clicks', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "messages: the vote buttons under ThreadReplyGeneric+Message (free-running and lockstep), COUNT runs"
+        run: go test -count=$COUNT -timeout 60m -run 'TestVoteButtonsSurviveUpdates/ThreadReplyGeneric' ./internal/ui/messages
+      - name: "messages: every vote variant and the patched Message's props, 3 runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=3 -timeout 30m -run 'TestVoteButtonsSurviveUpdates$|TestMessagePatchGetsWrappersMsg$' ./internal/ui/messages
+      - name: "the measure-pass audit: a test per family (slackc, kit, composer, messages, views, ui)"
+        if: ${{ !cancelled() }}
+        run: |
+          rc=0
+          go test -count=1 -v -run '^TestMeasurePassLeavesFocusAlone$' ./internal/ui/slackc || rc=1
+          go test -count=1 -v -run '^TestFormTextInputFocusThroughMeasurePasses$' ./internal/ui/slackc/kit || rc=1
+          go test -count=1 -v -run '^TestLinkDialogFocusAfterMeasurePass$' ./internal/ui/composer || rc=1
+          go test -count=1 -v -run '^TestToolbarTiltIgnoresMeasurePass$' ./internal/ui/messages || rc=1
+          go test -count=1 -v -run '^TestChannelFilesSuggestionsSurviveMeasurePass$' ./internal/ui/views || rc=1
+          go test -count=1 -v -timeout 15m -run '^TestSidebarTextFilterMeasurePassKeepsFocus$' ./internal/ui || rc=1
+          exit $rc

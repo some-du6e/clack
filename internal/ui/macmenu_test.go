@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -148,8 +149,12 @@ Help [help]
 `
 
 func TestMacMenus(t *testing.T) {
-	if got := renderMenus(testMenus()); got != wantMenus {
-		t.Errorf("menus:\n%s\nwant:\n%s", got, wantMenus)
+	want := wantMenus
+	if runtime.GOOS == "windows" { // the updater workflow runs this on Windows too (troubleshootingMenu)
+		want = strings.Replace(want, "Show Logs in File Manager", "Show Logs in Explorer", 1)
+	}
+	if got := renderMenus(testMenus()); got != want {
+		t.Errorf("menus:\n%s\nwant:\n%s", got, want)
 	}
 }
 

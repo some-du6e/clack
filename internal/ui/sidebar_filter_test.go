@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"gioui.org/io/key"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -350,5 +353,36 @@ func TestSidebarTextFilterFuzzy(t *testing.T) {
 	e.settle(400 * time.Millisecond)
 	if matched() {
 		t.Errorf("without m3, %q still matched %s", q, a.model().conv(id).Name)
+	}
+}
+
+// Under a plugin patching ChannelSidebar slackc also lays the sidebar out
+// in measure passes (gtx.Disabled()), where Gio reports nothing focused.
+// The filter's focus edges come only from passes that deliver input: each
+// measure pass looked like a blur and the next frame like a new focus, so
+// onFocus (the closed DMs' sidebar.dms, tried again while it fails) ran
+// once per relayout.
+func TestSidebarTextFilterMeasurePassKeepsFocus(t *testing.T) {
+	e, fs := filterEnv(t, func(fs *fakeslack.Server) {
+		fs.SetFault("sidebar.dms", fakeslack.Fault{Error: "fatal_error", Times: 1000}) // every try fails
+	})
+	a := e.a
+	e.click(filterPoint())
+	e.until("the filter focused", 5*time.Second, func() bool { return a.sidebar.filter.focused })
+	e.settle(300 * time.Millisecond)
+	n0 := fs.CallCount("sidebar.dms")
+	sz := image.Pt(240, 28)
+	for i := 0; i < 5; i++ {
+		// a measure pass: no input source, as slackc's gtx.Disabled()
+		m := layout.Context{Ops: new(op.Ops), Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(sz), Now: time.Now()}
+		a.layoutSidebarFilter(m, sz)
+		if !a.sidebar.filter.focused {
+			t.Fatalf("measure pass %d: the focused filter looks blurred", i+1)
+		}
+		e.frame()
+	}
+	e.settle(300 * time.Millisecond)
+	if n := fs.CallCount("sidebar.dms") - n0; n != 0 {
+		t.Errorf("%d more sidebar.dms calls after measure passes of the focused filter; want none", n)
 	}
 }

@@ -9,8 +9,9 @@ CC="$WASI_SDK/bin/clang"
 #   quickjs-interrupt.patch  generic array methods poll the interrupt
 #                            handler, so a plugin looping over
 #                            {length: 2**53 - 1} is stopped by the task deadline
-#   quickjs-yield.patch      the cycle collector, the allocator, JSON, joins
-#                            and sorts call the host every ~10k steps, so a Go
+#   quickjs-yield.patch      the cycle collector, the allocator, JSON and the
+#                            array, typed-array, string and property-table
+#                            loops call the host every ~10k steps, so a Go
 #                            stop-the-world never waits long on the JS thread
 patched="$here/.build"
 rm -rf "$patched" && mkdir -p "$patched"
