@@ -90,6 +90,14 @@ func TestIntroSlackPreview(t *testing.T) {
 			mode = "dark"
 		}
 		t.Run(mode, func(t *testing.T) {
+			// the window's hooks before (earlier tests may have left theirs):
+			// a sentinel member read, and whatever plugin system is there
+			origRead := richview.SwapMemberRead(func(string) (string, richview.MemberMiss) {
+				return "sentinel", richview.MemberLoaded
+			})
+			origTaut := messages.SwapTaut(nil)
+			messages.SwapTaut(origTaut)
+			t.Cleanup(func() { richview.SwapMemberRead(origRead) })
 			a, _, hostFS := fakePrefsApp(t)
 			a.motionOverride = -1
 			if dark {
@@ -240,11 +248,13 @@ func TestIntroSlackPreview(t *testing.T) {
 
 			// the window's hooks are its own again, and the preview goes with
 			// the introduction
-			if f := richview.SwapMemberRead(nil); f != nil {
-				t.Error("the preview's member read stayed installed")
+			if f := richview.SwapMemberRead(nil); f == nil {
+				t.Error("the window's member read is gone")
+			} else if name, _ := f("U0DEMOGORD"); name != "sentinel" {
+				t.Errorf("the preview's member read stayed installed (it says %q)", name)
 			}
-			if tt := messages.SwapTaut(nil); tt != nil {
-				t.Error("a plugin system appeared in the message lists")
+			if tt := messages.SwapTaut(origTaut); tt != origTaut {
+				t.Error("the message lists' plugin system changed")
 			}
 			e.key(key.NameEscape)
 			e.run(1500 * time.Millisecond)
