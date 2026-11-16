@@ -57,6 +57,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"runtime/metrics"
 	"runtime/pprof"
 	"sort"
 	"strings"
@@ -102,6 +103,55 @@ type perfPass struct {
 	Events   int     `json:"events"`   // realtime events injected
 	Trees    int     `json:"trees"`    // host trees delivered
 	Renders  int64   `json:"renders"`  // Go→JS Render/RenderIn calls
+	// Slow are the frames over 40 ms: what the frame goroutine was doing
+	// 40 ms in (function names), with what landed meanwhile
+	Slow []perfSlow `json:"slow,omitempty"`
+}
+
+type perfSlow struct {
+	MS    float64  `json:"ms"`
+	Trees int      `json:"trees"` // host trees delivered during the frame
+	GCs   uint32   `json:"gcs"`   // collections that ended during it
+	Stack []string `json:"stack"`
+}
+
+// perfGCs counts finished collections without stopping the world (as
+// ReadMemStats does: an extra stop every frame would be what's measured).
+func perfGCs() uint64 {
+	s := []metrics.Sample{{Name: "/gc/cycles/total:gc-cycles"}}
+	metrics.Read(s)
+	if s[0].Value.Kind() != metrics.KindUint64 {
+		return 0
+	}
+	return s[0].Value.Uint64()
+}
+
+// perfStack is the stack of the goroutine running perfScroll, function
+// names only (no arguments, no message text).
+func perfStack() []string {
+	buf := make([]byte, 4<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if !strings.Contains(g, "perfScroll") {
+			continue
+		}
+		var out []string
+		for i, l := range strings.Split(g, "\n") {
+			if i == 0 || strings.HasPrefix(l, "\t") {
+				continue
+			}
+			if j := strings.LastIndex(l, "("); j > 0 {
+				l = l[:j]
+			}
+			l = strings.TrimPrefix(l, "github.com/some-du6e/clack/internal/")
+			out = append(out, l)
+			if len(out) == 45 {
+				break
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 type perfPluginResult struct {
@@ -288,6 +338,11 @@ func TestPerfPluginScroll(t *testing.T) {
 		}
 	}
 	for _, p := range res.Passes {
+		for _, sl := range p.Slow {
+			t.Logf("slow frame in %s: %.1f ms, %d trees delivered meanwhile, %d collections; 40 ms in:\n\t%s", p.Name, sl.MS, sl.Trees, sl.GCs, strings.Join(sl.Stack, "\n\t"))
+		}
+	}
+	for _, p := range res.Passes {
 		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees %d, renders %d",
 			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.Renders)
 	}
@@ -387,12 +442,32 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 		traffic.start()
 	}
 	var ds []float64
+	var slow []perfSlow
 	step := func(dy float32) {
 		e.scroll(at(), dy)
+		gc0, tr0 := perfGCs(), e.delivered()
+		done := make(chan struct{})
+		var sample []string
+		sampled := make(chan struct{})
+		go func() {
+			defer close(sampled)
+			select {
+			case <-done:
+			case <-time.After(40 * time.Millisecond):
+				if len(slow) < 6 {
+					sample = perfStack()
+				}
+			}
+		}()
 		t0 := time.Now()
 		e.frame()
 		d := time.Since(t0)
+		close(done)
+		<-sampled
 		ds = append(ds, float64(d.Microseconds())/1000)
+		if d > 40*time.Millisecond && len(slow) < 6 {
+			slow = append(slow, perfSlow{MS: float64(d.Microseconds()) / 1000, Trees: e.delivered() - tr0, GCs: uint32(perfGCs() - gc0), Stack: sample})
+		}
 		if d < 16*time.Millisecond {
 			time.Sleep(16*time.Millisecond - d) // the next vsync
 		}
@@ -415,7 +490,7 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000, Events: events,
 		Trees: e.delivered() - trees0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
 		Allocs: float64(ms1.Mallocs-ms0.Mallocs) / n, AllocKB: float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n,
-		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6}
+		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6, Slow: slow}
 	for _, d := range ds {
 		p.TotalMS += d
 		switch {
