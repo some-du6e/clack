@@ -34,16 +34,22 @@ import (
 // content panel #fff (rgb(26,29,33) dark); with nothing stored it stays
 // page.html's #bbbabb / #282828 (dark). React mounts the client over it in
 // renderApp ("Render React"), after bootDataFinished ("Finish waiting for
-// boot data"), or straight from the persisted store on a warm boot; inside
-// the client the channel then shows its own loading state
-// (c-channel_loading_state) until its history arrives.
+// boot data"), or straight from the persisted store on a warm boot (every
+// boot API is "nonblocking" then: core warmboot.go); inside the client the
+// channel then shows its own loading state (c-channel_loading_state) until
+// its history arrives.
 //
 // Clack draws that placeholder until its client would render the same way:
 //
-//   - core booted (users.conversations, counts, sections, prefs, stars…:
-//     Slack's boot data);
+//   - the sidebar's data: the boot data from disk on a warm start (core
+//     WarmSnapshot, Slack's persisted store), else core booted
+//     (users.conversations, counts, sections, prefs, stars…: Slack's boot
+//     data);
 //   - the restored channel's header (tabs, bookmarks, member count), which
-//     Slack's boot data carries in the channel object;
+//     Slack's boot data carries in the channel object: on a warm start the
+//     header cache's (core header_cache.go), or none if it hasn't the
+//     channel (Slack renders whatever its persisted store has), else its
+//     reads;
 //   - the plugins enabled at start registered and their first renders
 //     delivered: Taut patches Slack's components before its first render,
 //     and those patches render synchronously with Slack's React; Clack's
@@ -87,10 +93,14 @@ func (a *App) revealBlocker(now time.Time) string {
 	if b.core.SignedOut() {
 		return ""
 	}
-	if b.booted.IsZero() {
+	if b.booted.IsZero() && b.warmAt.IsZero() {
 		return "boot data"
 	}
-	if ch := a.router.Current().Channel(); ch != "" && !b.tabsDone[ch] {
+	// On a warm start the header is the header cache's when it has the
+	// channel (headerFromCache fills it with the boot data); when it
+	// doesn't, the client renders without waiting for the reads, as
+	// Slack's does with every boot API nonblocking.
+	if ch := a.router.Current().Channel(); ch != "" && !b.tabsDone[ch] && b.warmAt.IsZero() {
 		return "channel header"
 	}
 	if a.rv.dataAt.IsZero() {

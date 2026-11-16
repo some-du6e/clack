@@ -35,6 +35,9 @@ __attribute__ ((visibility ("hidden"))) CALayer *gio_layerFactory(BOOL presentWi
 // orderedOut is a Clack patch (CLACK_PATCHES.md §24): Window.Hide ordered
 // the window out and it hasn't drawn since.
 @property BOOL orderedOut;
+// fullScreenTransition is a Clack patch (CLACK_PATCHES.md §32): the window
+// is entering or leaving full screen, and counts as visible meanwhile.
+@property BOOL fullScreenTransition;
 @end
 
 // AppKit's undocumented hook for the parts of a view under a transparent
@@ -103,6 +106,41 @@ static BOOL hasHiddenTitlebar(NSWindow *window) {
 	return [window.contentView isKindOfClass:[GioView class]] && ((GioView *)window.contentView).titlebarHidden;
 }
 
+// occlusionChanged is a Clack patch (CLACK_PATCHES.md §32): Gio's frames
+// follow the window's occlusionState. While it enters or leaves full screen
+// AppKit reports spurious changes, which Chromium's
+// WindowOcclusionCheckerMac ignores until the transition is over
+// (crbug.com/1081229): the window counts as visible until then.
+static void occlusionChanged(NSWindow *window) {
+	GioView *view = gioViewOf(window);
+	if (view == nil) {
+		return;
+	}
+	BOOL visible = view.fullScreenTransition || (window.occlusionState & NSWindowOcclusionStateVisible) != 0;
+	gio_onOcclusionChanged(view.handle, visible ? 1 : 0);
+}
+
+static void setFullScreenTransition(NSWindow *window, BOOL on) {
+	GioView *view = gioViewOf(window);
+	if (view == nil) {
+		return;
+	}
+	view.fullScreenTransition = on;
+	if (on) {
+		occlusionChanged(window);
+		return;
+	}
+	// the state again once AppKit is done, on the next turn of the run loop
+	// (where the checker schedules its update after a transition)
+	__weak GioView *weak = view;
+	dispatch_async(dispatch_get_main_queue(), ^{
+		GioView *v = weak;
+		if (v != nil && v.window != nil) {
+			occlusionChanged(v.window);
+		}
+	});
+}
+
 void gio_redrawTrafficLights(CFTypeRef windowRef) {
 	@autoreleasepool {
 		redrawTrafficLights((__bridge NSWindow *)windowRef);
@@ -167,12 +205,15 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 		window.titleVisibility = NSWindowTitleVisible;
 		window.titlebarAppearsTransparent = NO;
 	}
+	setFullScreenTransition(window, NO); // Clack patch (CLACK_PATCHES.md §32)
 }
 - (void)windowDidFailToEnterFullScreen:(NSWindow *)window {
 	redrawTrafficLights(window);
+	setFullScreenTransition(window, NO); // Clack patch (CLACK_PATCHES.md §32)
 }
 - (void)windowDidExitFullScreen:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
+	setFullScreenTransition(window, NO); // Clack patch (CLACK_PATCHES.md §32)
 	GioView *view = (GioView *)window.contentView;
 	if (hasHiddenTitlebar(window)) {
 		// the title again too: an option while the window left full screen
@@ -194,6 +235,7 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 	});
 }
 - (void)windowDidFailToExitFullScreen:(NSWindow *)window {
+	setFullScreenTransition(window, NO); // Clack patch (CLACK_PATCHES.md §32)
 	if (hasHiddenTitlebar(window)) { // still full screen: AppKit's title bar
 		window.titleVisibility = NSWindowTitleVisible;
 		setTrafficLightsVisible(window, YES);
@@ -204,16 +246,10 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 }
 // Clack patch (CLACK_PATCHES.md §24): a window back on screen after
 // Window.Hide draws again, however it came back (an order-front that
-// didn't go through Gio: the Dock icon's reopen).
+// didn't go through Gio: the Dock icon's reopen); §32: an occluded window
+// draws nothing until it's visible.
 - (void)windowDidChangeOcclusionState:(NSNotification *)notification {
-	NSWindow *window = (NSWindow *)[notification object];
-	if (![window.contentView isKindOfClass:[GioView class]]) {
-		return;
-	}
-	GioView *view = (GioView *)window.contentView;
-	if (view.orderedOut && window.visible) {
-		gio_onOcclusionChanged(view.handle);
-	}
+	occlusionChanged((NSWindow *)[notification object]);
 }
 - (void)windowWillMiniaturize:(NSNotification *)notification {
 	NSWindow *window = (NSWindow *)[notification object];
@@ -233,6 +269,7 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 	NSWindow *window = (NSWindow *)[notification object];
 	GioView *view = gioViewOf(window); // Clack patch (CLACK_PATCHES.md §25)
 	if (view != nil) {
+		setFullScreenTransition(window, YES); // Clack patch (CLACK_PATCHES.md §32)
 		gio_onDraw(view.handle);
 	}
 }
@@ -242,6 +279,7 @@ void gio_setOrderedOut(CFTypeRef viewRef, int out) {
 	if (view == nil) {
 		return; // closed (windowWillClose:), leaving full screen as it goes
 	}
+	setFullScreenTransition(window, YES); // Clack patch (CLACK_PATCHES.md §32)
 	if (hasHiddenTitlebar(window)) { // Clack patch (CLACK_PATCHES.md §24)
 		window.titleVisibility = NSWindowTitleHidden;
 		if (view.trafficLightSet) {
@@ -791,6 +829,51 @@ void gio_viewSetHandle(CFTypeRef viewRef, uintptr_t handle) {
 }
 @end
 
+// GioWorkspaceObserver is a Clack patch (CLACK_PATCHES.md §32): the
+// computer's and the screens' sleep and wake (gio_onPowerEvent), observed
+// as Chromium's WindowOcclusionCheckerMac observes the screens'.
+@interface GioWorkspaceObserver : NSObject
+@end
+
+@implementation GioWorkspaceObserver
+- (void)willSleep:(NSNotification *)notification {
+	gio_onPowerEvent(GIO_WILL_SLEEP);
+}
+- (void)didWake:(NSNotification *)notification {
+	gio_onPowerEvent(GIO_DID_WAKE);
+}
+- (void)screensDidSleep:(NSNotification *)notification {
+	gio_onPowerEvent(GIO_SCREENS_SLEEP);
+}
+- (void)screensDidWake:(NSNotification *)notification {
+	gio_onPowerEvent(GIO_SCREENS_WAKE);
+}
+@end
+
+static GioWorkspaceObserver *workspaceObserver;
+
+static void observeWorkspace(void) {
+	workspaceObserver = [[GioWorkspaceObserver alloc] init];
+	NSNotificationCenter *c = [[NSWorkspace sharedWorkspace] notificationCenter];
+	[c addObserver:workspaceObserver selector:@selector(willSleep:) name:NSWorkspaceWillSleepNotification object:nil];
+	[c addObserver:workspaceObserver selector:@selector(didWake:) name:NSWorkspaceDidWakeNotification object:nil];
+	[c addObserver:workspaceObserver selector:@selector(screensDidSleep:) name:NSWorkspaceScreensDidSleepNotification object:nil];
+	[c addObserver:workspaceObserver selector:@selector(screensDidWake:) name:NSWorkspaceScreensDidWakeNotification object:nil];
+}
+
+// gio_eachView calls gio_onScreensChanged for every window's Gio view
+// (Clack patch, CLACK_PATCHES.md §32).
+void gio_eachView(void) {
+	@autoreleasepool {
+		for (NSWindow *window in [[NSApp windows] copy]) {
+			GioView *view = gioViewOf(window);
+			if (view != nil) {
+				gio_onScreensChanged(view.handle);
+			}
+		}
+	}
+}
+
 void gio_main() {
 	@autoreleasepool {
 		[NSApplication sharedApplication];
@@ -814,6 +897,7 @@ void gio_main() {
 		[NSApp setMainMenu:menuBar];
 
 		globalWindowDel = [[GioWindowDelegate alloc] init];
+		observeWorkspace(); // Clack patch (CLACK_PATCHES.md §32)
 
 		[NSApp run];
 	}

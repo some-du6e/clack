@@ -542,7 +542,7 @@ func (a *App) join(ctx context.Context, ch string, exp int64) (Conv, error) {
 	if full, err := a.C.ConversationInfo(ctx, ch); err == nil {
 		c = *full
 	}
-	a.S.PutConv(c)
+	a.S.PutConvLocal(c)
 	v := a.conv(&c)
 	a.emit(Event{Type: "conv", Channel: ch, Conv: &v})
 	return v, nil
@@ -588,7 +588,7 @@ func (a *App) OpenDM(ctx context.Context, users ...string) (Conv, error) {
 		c.IsIM, c.User = true, users[0]
 	}
 	a.EnsureUsers(ctx, append(users, c.User))
-	a.S.PutConv(c)
+	a.S.PutConvLocal(c)
 	a.openDM(c.ID)
 	v := a.conv(&c)
 	a.emit(Event{Type: "conv", Channel: c.ID, Conv: &v})

@@ -6,7 +6,7 @@ package cocoatest
 
 /*
 #cgo CFLAGS: -Werror -Wno-deprecated-declarations -fobjc-arc -x objective-c
-#cgo LDFLAGS: -framework AppKit -framework Carbon
+#cgo LDFLAGS: -framework AppKit -framework Carbon -framework QuartzCore -framework Metal
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -28,6 +28,7 @@ typedef struct {
 	int visible, zoomed, miniaturized, fullScreen, key, appActive;
 	char title[256];
 	cocoatest_rect screenFrame;
+	int occlusionVisible;
 } cocoatest_window;
 
 void cocoatest_state(uintptr_t view, cocoatest_window *s);
@@ -50,6 +51,13 @@ void cocoatest_post_key(uintptr_t view, int code, int mods, int direct, char *ch
 void cocoatest_trace_keys(uintptr_t view);
 char *cocoatest_key_trace(void);
 void cocoatest_keyboard_layout(char *out, int n);
+void cocoatest_cover(void);
+void cocoatest_uncover(void);
+void cocoatest_post_workspace(int note);
+int cocoatest_drawable_timeout(uintptr_t view);
+void cocoatest_hold_drawables(void);
+void cocoatest_release_drawables(void);
+int cocoatest_held_calls(void);
 */
 import "C"
 
@@ -98,6 +106,10 @@ type Window struct {
 	// coordinates: points from the primary screen's top left, y down
 	// (Clack patch, CLACK_PATCHES.md §25).
 	ScreenFrame Rect
+	// OcclusionVisible: the window's occlusionState has
+	// NSWindowOcclusionStateVisible, some of it on a screen (Clack patch,
+	// CLACK_PATCHES.md §32).
+	OcclusionVisible bool
 }
 
 func rect(r C.cocoatest_rect) Rect {
@@ -127,6 +139,7 @@ func State(view uintptr) Window {
 		AppActive:           s.appActive != 0,
 		Title:               C.GoString(&s.title[0]),
 		ScreenFrame:         rect(s.screenFrame),
+		OcclusionVisible:    s.occlusionVisible != 0,
 	}
 	for i := range w.Buttons {
 		w.ButtonsHidden[i] = s.buttonsHidden[i] != 0
@@ -315,6 +328,50 @@ func ZoomWindow(view uintptr) { C.cocoatest_zoom(C.uintptr_t(view)) }
 // ToggleFullScreen sends the window toggleFullScreen:, as the green
 // button and View > Toggle Full Screen do. Main thread.
 func ToggleFullScreen(view uintptr) { C.cocoatest_toggle_full_screen(C.uintptr_t(view)) }
+
+// Cover puts an opaque window over every screen, above normal windows,
+// so AppKit reports the windows under it occluded (Clack patch,
+// CLACK_PATCHES.md §32). Uncover takes it away. Main thread.
+func Cover()   { C.cocoatest_cover() }
+func Uncover() { C.cocoatest_uncover() }
+
+// WorkspaceNote is one of NSWorkspace's sleep and wake notifications.
+type WorkspaceNote int
+
+const (
+	WillSleep       WorkspaceNote = iota // NSWorkspaceWillSleepNotification
+	DidWake                              // NSWorkspaceDidWakeNotification
+	ScreensDidSleep                      // NSWorkspaceScreensDidSleepNotification
+	ScreensDidWake                       // NSWorkspaceScreensDidWakeNotification
+)
+
+// PostWorkspace posts n on NSWorkspace's notification center, as macOS
+// does when the computer or its screens sleep and wake. Main thread.
+func PostWorkspace(n WorkspaceNote) { C.cocoatest_post_workspace(C.int(n)) }
+
+// DrawableTimeout is the view's CAMetalLayer's allowsNextDrawableTimeout
+// (metal false: the layer isn't a CAMetalLayer). Main thread.
+func DrawableTimeout(view uintptr) (timeout, metal bool) {
+	r := C.cocoatest_drawable_timeout(C.uintptr_t(view))
+	return r == 1, r >= 0
+}
+
+// HoldDrawables makes every CAMetalLayer answer nextDrawable as it does
+// when the compositor keeps all its drawables (a sleeping display keeps
+// them; a waking one hands them back late): with allowsNextDrawableTimeout
+// the call waits a second and gives nil, without it the call waits until
+// ReleaseDrawables, and then gets a drawable. A layer's own drawables don't
+// run out on a desktop that shows them: on the macOS 26 runner one gave 8
+// unpresented drawables, their textures taken, without waiting. Main
+// thread.
+func HoldDrawables() { C.cocoatest_hold_drawables() }
+
+// ReleaseDrawables ends HoldDrawables, waiting calls included. Any thread.
+func ReleaseDrawables() { C.cocoatest_release_drawables() }
+
+// HeldCalls is how many nextDrawable calls HoldDrawables has answered
+// since it began. Any thread.
+func HeldCalls() int { return int(C.cocoatest_held_calls()) }
 
 // Track keeps weak references to view and its window, for Alive. Main
 // thread.

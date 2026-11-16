@@ -117,11 +117,18 @@ func (v *ThreadView) resolved(root core.Message) bool {
 // toggleResolved is updateArchiveState.
 func (v *ThreadView) toggleResolved(root core.Message) {
 	app := v.h.Core()
-	if app == nil || v.cmt.busy {
+	if app == nil {
+		return
+	}
+	v.cmt.mu.Lock() // busy is cleared on the call's goroutine
+	busy := v.cmt.busy
+	v.cmt.busy = true
+	v.cmt.mu.Unlock()
+	if busy {
 		return
 	}
 	to := !v.resolved(root)
-	v.cmt.resolving, v.cmt.at, v.cmt.busy = &to, time.Now(), true
+	v.cmt.resolving, v.cmt.at = &to, time.Now()
 	ch, ts, h := v.ch, root.TS, v.h
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -168,6 +175,15 @@ func (v *ThreadView) archiveButton(gtx layout.Context, th *theme.Theme, c *color
 func (v *ThreadView) ResolveShown() bool {
 	root, ok := v.root()
 	return v.archiveShown(root, ok)
+}
+
+// ResolveBusy reports whether a Resolve / Re-open click's call is still
+// out: the button relabels at once, but takes no click until it answers
+// (tests).
+func (v *ThreadView) ResolveBusy() bool {
+	v.cmt.mu.Lock()
+	defer v.cmt.mu.Unlock()
+	return v.cmt.busy
 }
 
 // ResolveRect is that button as last drawn (window coordinates), and

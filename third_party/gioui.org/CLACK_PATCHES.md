@@ -27,7 +27,8 @@ It should show only `gpu/gpu.go`, `widget/index.go`, `widget/editor.go`,
 `font/opentype/opentype.go`, `io/input/pointer.go`, `io/input/key.go`,
 `io/input/clack_release_test.go`, `gpu/clack_release_test.go`,
 `text/clack_release_test.go`, `io/input/clack_keylog.go`,
-`io/input/clack_keylog_test.go`, `app/clack_keys_darwin_test.go` and
+`io/input/clack_keylog_test.go`, `app/clack_keys_darwin_test.go`,
+`app/metal_darwin.go`, `app/clack_wake_darwin_test.go` and
 these two files (`CLACK_PATCHES.md`, `UPSTREAM.patch`).
 
 ## 1. gpu: drop opacity layers covered by a full-window opaque paint
@@ -1043,9 +1044,10 @@ window first leaves full screen and is ordered out once
 so an option given meanwhile doesn't send it back). The toggle waits for
 the run loop's default mode, outside the close button's click and
 `windowShouldClose:`, as Slack's handler leaves full screen after the close
-event returned. A hidden window draws no frames (Gio's
-Metal layer waits for a drawable without a timeout) and keeps its display
-link stopped; the app still gets its wake-ups. `ActionRaise` shows it, and
+event returned. A hidden window draws no frames (a frame would wait for a
+drawable nothing shows; until §32 Gio's Metal layer waited without a
+timeout) and keeps its display link stopped; the app still gets its
+wake-ups. `ActionRaise` shows it, and
 so does any other order-front (the occlusion change that follows): it
 draws again.
 
@@ -1421,3 +1423,174 @@ transform applies to them too.
 
 Test: `internal/ui` `TestInspectShots` (feel-shots, llvmpipe) renders the
 pick through it. Not in `UPSTREAM.patch`.
+
+## 32. app: no frames while a window is occluded or the screens sleep, and none waits long for a drawable (macOS)
+
+`app/metal_darwin.go` (`setupLayer`'s `allowsNextDrawableTimeout`,
+`RenderTarget`, `Present`, `slowWaits`), `app/os.go` (`errNoRenderTarget`),
+`app/window.go` (`validateAndProcess`), `app/os_macos.go` (`draw`,
+`SetAnimating`, `gio_onOcclusionChanged`, `drawPaused`, `resume`,
+`gio_onPowerEvent`, `setScreensAsleep`, `screensOn`, `gio_onScreensChanged`,
+`gio_onKeys`, `gio_onMouse`), `app/os_macos.m` (`occlusionChanged`,
+`setFullScreenTransition`, the delegate's occlusion and full-screen
+methods, `GioWorkspaceObserver`, `gio_eachView`, `gio_main`),
+`app/cocoatest/` (`Window.OcclusionVisible`, `Cover`, `PostWorkspace`,
+`DrawableTimeout`, `HoldDrawables`) and `app/clack_wake_darwin_test.go`.
+A fix.
+
+Karim's clack.log (2026-11-16): "frame submit (GPU, main thread)" freezes
+were the first lines after 330 s and 403 s of silence, next to the
+realtime socket's reset ("Socket URL has expired"): his Mac had just woken.
+While the screen slept the same stage reached 40.3 s and 6 min 40.8 s.
+That stage is the UI goroutine in `FrameEvent.Frame`, which on macOS waits
+for the main thread's `validateAndProcess`, and there for `RenderTarget`'s
+`-[CAMetalLayer nextDrawable]`. Gio set `allowsNextDrawableTimeout` to NO,
+so the call waited for as long as the compositor kept the layer's
+drawables: a sleeping display keeps them, a waking one hands them back
+late. And nothing stopped a window from drawing then: the app's
+Invalidates and animations (the caret's blink) drew covered windows and
+windows on sleeping screens, 60 frames a second for an animating one.
+
+What Chromium does (Slack's desktop app is Electron):
+
+- Its browser thread never waits for a drawable. The GPU process draws
+  into IOSurfaces, which the browser sets as CALayer contents; the only
+  `nextDrawable` in chromium/chromium (`components/metal_util/hdr_copier_layer.mm`,
+  HDR content) keeps CAMetalLayer's one-second timeout (no Chromium file
+  sets `allowsNextDrawableTimeout`) and presents as Gio does:
+  `presentsWithTransaction`, `commit`, `waitUntilScheduled`, `present`.
+  Dawn's Metal swap chain (`src/dawn/native/metal/SwapChainMTL.mm`) turns a
+  nil drawable into a `Timeout` status the caller skips; ANGLE's
+  `SurfaceMtl.mm` retries one with the timeout off ("this may wait forever
+  here"), but Chromium on macOS doesn't present through ANGLE window
+  surfaces.
+- `WindowOcclusionCheckerMac`
+  (`components/remote_cocoa/app_shim/window_occlusion_checker_mac.mm`)
+  counts a window occluded while its `occlusionState` lacks
+  `NSWindowOcclusionStateVisible`, and every window occluded between
+  `NSWorkspaceScreensDidSleepNotification` and
+  `NSWorkspaceScreensDidWakeNotification` (`_displaysAreAsleep`, on every
+  macOS but 13.0-13.2). It ignores occlusion changes during a full-screen
+  transition (crbug.com/1081229) and updates once it's over, on the next
+  turn of the run loop. `WebContentsViewCocoa`
+  (`content/app_shim_remote_cocoa/web_contents_view_cocoa.mm`) marks the
+  page occluded a second later and visible at once, and an occluded page's
+  renderer draws nothing. Electron's `windowDidChangeOcclusionState:`
+  (`shell/browser/ui/cocoa/electron_ns_window_delegate.mm`) also calls
+  `WasOccluded` and `WasShown` at once (`electron_api_browser_window.cc`
+  `OnWindowHide`, `OnWindowShow`); Slack's main bundle sets no
+  `backgroundThrottling`, so it applies.
+- The computer's own sleep and wake come from IOKit
+  (`base/power_monitor/power_monitor_device_source_mac.mm`,
+  `IORegisterForSystemPower`), and Slack logs them ("PowerMonitor: System
+  suspending", "System resuming" with the sleep's length).
+
+Now:
+
+- `allowsNextDrawableTimeout` is YES, CAMetalLayer's default: `nextDrawable`
+  waits a second at most. A nil drawable is `errNoRenderTarget`, which
+  `validateAndProcess` doesn't treat as a failure (that destroyed the
+  window): the frame's ops still go to the router (the client laid them
+  out, its handlers take the input), the window asks for the next frame
+  (`setNextFrame` now: the display link's next tick), and the client
+  continues. The first skipped frame of a run logs "gio: no Metal drawable
+  within 1s … frame skipped, the window tries again", the next drawable
+  "gio: Metal drawables again after N frames skipped in …". A
+  `nextDrawable` or a present (its `waitUntilScheduled`) of 250 ms or more
+  logs how long it held the main thread, at most a line a minute for each.
+- A window draws nothing while it's occluded. The delegate reports every
+  occlusion change (`gio_onOcclusionChanged`); a window whose last change
+  lacked `NSWindowOcclusionStateVisible`, and whose `occlusionState` still
+  lacks it, skips `draw` and keeps its display link stopped. Both are
+  needed, so a visible window never waits for a notification, and a new
+  window draws before AppKit has said anything. When AppKit says it's
+  visible it draws a frame and its animation goes on (`resume`), as
+  WebContentsViewCocoa shows a page at once. A full-screen transition
+  counts as visible, and its end reads the state again on the run loop's
+  next turn, as WindowOcclusionCheckerMac does. Unlike Chromium there is
+  no second's delay before a window stops: a paused Gio window throws
+  nothing away, and a frame for a covered window could wait the second.
+- The screens' sleep stops every window's frames until their wake, which
+  draws each window again (`gio_eachView`), as `_displaysAreAsleep` does.
+  The computer's own wake (`NSWorkspaceDidWakeNotification`) doesn't end it:
+  its screens may still be off. Unlike Chromium, a click, a scroll or a key
+  press in a Gio window ends it too (the screens are on), so a
+  ScreensDidWake that never comes can't freeze a window someone is using.
+- Each of `NSWorkspaceWillSleepNotification`, `NSWorkspaceDidWakeNotification`
+  (with the sleep's length), the screens' sleep and their wake (with its
+  length), and input that ended the screens' sleep, logs one line. The
+  lengths are wall clock: the monotonic clock stands still while the Mac
+  sleeps.
+- The app still gets its wake-ups while its windows draw nothing (an
+  Invalidate's, as a hidden window's, §24), so posted work and
+  notifications go on.
+
+Where Clack still differs: Gio draws on the main thread, so a frame that
+finds no drawable (a window AppKit hasn't yet reported occluded, a display
+waking up) holds it for the layer's second, where Chromium's browser thread
+never waits; and Clack doesn't do Chromium's own occlusion check of windows
+of the same size (macOS can miss that one covers another).
+
+Tests, on ci's macos job (`CLACK_MACOS_WINDOW_TESTS`; flake-check's
+`mac-wake` job runs each `$COUNT` times), `app/clack_wake_darwin_test.go`:
+`TestOccludedWindowPausesMac` (an opaque window over every screen,
+`cocoatest.Cover`, makes AppKit report the test window occluded within
+about 30 ms: an animating window draws nothing for 1.5 s of Invalidates
+and still gets its wake-ups, and draws again at once when uncovered; an
+idle one draws nothing for an Invalidate until it's visible, then a frame
+at once), `TestNoDrawableSkipsFrameMac` (the layer's
+`allowsNextDrawableTimeout` is YES; `cocoatest.HoldDrawables` has
+`nextDrawable` answer as CAMetalLayer documents for a pool with none free,
+a second's wait and nil with the timeout, a wait until the release
+without it: frames are skipped and tried again about once a second with
+the main thread running other work in between, none is presented, the
+window isn't destroyed, and once the drawables come back a frame is
+presented, with one log line for the run and one for its end; a test
+can't make the compositor keep drawables on a desktop that shows them,
+and holding them doesn't empty the pool: on the runner a layer gave 8
+unpresented drawables, their textures taken, without waiting, flake-check
+run 43822438092) and `TestScreensSleepWakeMac` (`cocoatest.PostWorkspace`: the
+computer's sleep and wake each log a line; between the screens' sleep and
+wake an animating window draws nothing, the computer's wake included, and
+its frames come back with the wake; a click while the screens are asleep
+brings them back too, and a late ScreensDidWake logs nothing more). Before
+the fix the occlusion test drew 90 frames while covered and the sleep test
+found no log line (flake-check run 43821390827), and the no-drawable test
+found the main thread running nothing for over 2.5 s, no frame skipped or
+tried again (run 43823092739). With it each passed 3 runs of 3 (run
+43823305380): the main thread's longest wait 0.9 s, 4 frames skipped in
+4 s, frames back about 75 ms after the window was visible or the screens
+woke. Not in `UPSTREAM.patch`.
+
+## 33. io/input: when a router was last given input
+
+`io/input/clack_inputidle.go` (new: `SinceInput`) and `io/input/router.go`
+(`Queue` notes each event). An addition: nothing upstream reads the
+clock.
+
+Clack holds work that would stall the window for a pause in the person's
+input: cmd/clack's forced collections (`debug.FreeOSMemory`), whose
+stop-the-world phases and scavenge of all free memory freeze whatever the
+UI goroutine is doing. A pause has to mean no input anywhere, and Clack
+code only ever sees the events its own handlers are routed: a focused
+widget's keys (the message list's arrow navigation, Block Kit's and
+plugins' text fields, list search, the link dialog), a drag another
+widget grabbed (the grab drops every other handler, the root's
+included), a popover drawn with `op.Defer` above the window's root
+handler, and the huddle windows' input never reach a handler at the
+root. Frames are no sign of input either: a focused editor's caret
+redraws the window twice a second for as long as it's focused.
+
+`Queue` notes every pointer event (not the router's or window's own
+`Cancel`), key event and `EditEvent` it's given, before routing, in a
+process-wide clock on the monotonic time (a wall-clock step moves
+nothing). `SinceInput` is how long ago the last one was (how long the
+process has run when there was none). Focus changes, snippets and
+selections aren't input. Clack reads it through `internal/ui/inputidle`,
+whose stockgio build (`.github/scripts/gio-layer-fix.sh`) has no clock.
+
+Tests: `io/input/clack_inputidle_test.go` (`TestSinceInput`: a cancel and
+a focus change don't count; a key, an edit and a scroll do) on ci's
+linux-gio job, `internal/ui` `TestInputIdleSeesFocusedWidgetKeys`,
+`TestInputIdleSeesScroll` and `TestInputIdleSeesGrabbedDrag`, and
+`cmd/clack` `TestWaitQuietOnInput`. Not in `UPSTREAM.patch`.

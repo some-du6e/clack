@@ -91,7 +91,7 @@ func messageSound(v string) string {
 }
 
 func (a *App) notifyShow(title, body string, n *desktopNote) bool {
-	if !a.notifyOn() || uipref.Get().NoDesktopPush { // Notifications > Desktop notifications
+	if a.inert || !a.notifyOn() || uipref.Get().NoDesktopPush { // Notifications > Desktop notifications
 		return false
 	}
 	if uipref.Get().NoTextInNotifications { // Notifications: no message preview

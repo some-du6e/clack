@@ -25,7 +25,9 @@ type Runtime struct {
 	cancel context.CancelFunc
 
 	mu       sync.Mutex
-	queue    []task
+	queue    []task // waiting tasks (mu); enqueue never grows it while holding mu
+	spare    []task // the loop's last drained queue, cleared, for the next swap (mu)
+	enqN     atomic.Uint64
 	modules  map[string]string
 	wake     chan struct{}
 	done     chan struct{} // closed when the loop exits (or the watchdog gives up on it)
@@ -50,6 +52,13 @@ type Runtime struct {
 	gcObjects atomic.Uint32 // objects the last collection scanned
 	gcs       atomic.Uint64 // collections so far
 	heap      atomic.Uint64 // JS heap bytes << 32 | live allocations (jr_heap)
+
+	// Released handles (releaseLater): a GC cycle's cleanups free them by
+	// the thousand, as batches of one task each.
+	relMu    sync.Mutex
+	relOpen  *relBatch     // the batch still taking handles (relMu)
+	relSeq   uint64        // enqN when relOpen's task was queued; 0 = not yet (relMu)
+	released atomic.Uint64 // handles releaseLater's batches freed
 
 	// JS-thread-only state below.
 	eng        *engine
@@ -100,6 +109,8 @@ func New(opts Options) (*Runtime, error) {
 		ctx:     ctx,
 		cancel:  cancel,
 		modules: map[string]string{},
+		queue:   make([]task, 0, 64),
+		spare:   make([]task, 0, 64),
 		wake:    make(chan struct{}, 1),
 		done:    make(chan struct{}),
 		roots:   map[uint64]*Root{},
@@ -178,11 +189,31 @@ func (r *Runtime) do(t task, f func(js *Ctx) error) error {
 	}
 }
 
-func (r *Runtime) enqueue(t task) {
-	r.mu.Lock()
-	r.queue = append(r.queue, t)
-	r.mu.Unlock()
-	r.signal()
+// enqueue adds t to the queue and returns how many tasks were ever
+// queued, t included. It allocates nothing while it holds mu: every
+// goroutine that talks to JS posts here, the UI goroutine among them, and
+// an allocation can make a goroutine help the collector (mark assist) for
+// a long while, with everyone queued behind the lock. A full queue grows
+// outside the lock.
+func (r *Runtime) enqueue(t task) uint64 {
+	for {
+		r.mu.Lock()
+		if len(r.queue) < cap(r.queue) {
+			r.queue = append(r.queue, t) // room: no allocation
+			n := r.enqN.Add(1)
+			r.mu.Unlock()
+			r.signal()
+			return n
+		}
+		c := cap(r.queue)
+		r.mu.Unlock()
+		grown := make([]task, 0, max(2*c, 64))
+		r.mu.Lock()
+		if len(r.queue) == cap(r.queue) && len(r.queue) <= cap(grown) { // still full, and it fits
+			r.queue = append(grown, r.queue...) // a copy within capacity
+		}
+		r.mu.Unlock()
+	}
 }
 
 func (r *Runtime) signal() {
@@ -237,16 +268,23 @@ func (r *Runtime) loop() {
 	idle := time.NewTimer(time.Hour)
 	defer idle.Stop()
 	for !r.closed.Load() {
+		// swap in the spare queue, so enqueue appends into room it has
 		r.mu.Lock()
 		q := r.queue
-		r.queue = nil
+		r.queue, r.spare = r.spare[:0], nil
 		r.mu.Unlock()
-		for _, t := range q {
+		for i := range q {
 			if r.closed.Load() {
 				return
 			}
-			r.runTask(t)
+			r.runTask(q[i])
 		}
+		clear(q) // the tasks' closures and whatever they hold
+		r.mu.Lock()
+		if r.spare == nil {
+			r.spare = q[:0]
+		}
+		r.mu.Unlock()
 		r.fireTimers()
 		if r.closed.Load() {
 			return

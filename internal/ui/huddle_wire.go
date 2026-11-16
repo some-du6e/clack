@@ -113,7 +113,7 @@ func (a *App) OpenHuddleStartWith(entry, channel, member string) {
 	cands := a.sidebarConvs()
 	pick := channel
 	if member != "" {
-		for _, c := range a.Core().Snapshot().Convs {
+		for _, c := range a.Core().RecentSnapshot().Convs { // UI goroutine: never waits for boot
 			if c.Kind == "im" && c.User == member {
 				pick = c.ID
 				break

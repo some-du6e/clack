@@ -192,6 +192,16 @@ func (w *Window) validateAndProcess(size image.Point, sync bool, frame *op.Ops, 
 					sync = true
 					continue
 				}
+				if errors.Is(err, errNoRenderTarget) {
+					// Clack patch (CLACK_PATCHES.md §32): nothing to draw
+					// into this time (macOS: no Metal drawable within a
+					// second). The frame's handlers still take the input,
+					// and the window asks for another frame, which the
+					// driver draws when it can.
+					w.queue.Frame(frame)
+					w.setNextFrame(time.Time{})
+					return nil
+				}
 				w.destroyGPU()
 				if errors.Is(err, gpu.ErrDeviceLost) {
 					continue

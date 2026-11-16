@@ -194,6 +194,13 @@ type Tab struct {
 	// AppID is a tab's data.app_id (an agent's own tab: the Channel
 	// Expert's knowledge folder).
 	AppID string
+	// TitleUnknown: the tab's file read (files.info) failed, so Title,
+	// TitleSpans, FileTitle, Deleted, Unread and ViewName are the
+	// defaults; BookmarksUnknown: a folder tab's bookmarks.list failed, so
+	// Bookmarks is empty. A caller holding an earlier read keeps that part
+	// of it (ui backend.opened).
+	TitleUnknown     bool `json:",omitempty"`
+	BookmarksUnknown bool `json:",omitempty"`
 }
 
 // MemberCounts is edge users/counts. Slack's channel header shows People.
@@ -944,6 +951,9 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			bms, err := a.Bookmarks(ctx, ch)
 			if err != nil {
 				log.Printf("tabs %s: bookmarks.list: %v", ch, err)
+				for _, i := range folderTabs {
+					out[i].BookmarksUnknown = true
+				}
 				return
 			}
 			byParent := map[string][]Bookmark{}
@@ -969,6 +979,7 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			f, err := a.tabFileTitle(ctx, t.FileID)
 			if err != nil {
 				log.Printf("tabs %s: files.info %s: %v", ch, t.FileID, err)
+				t.TitleUnknown = true
 				return
 			}
 			if !f.deleted {

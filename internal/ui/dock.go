@@ -70,6 +70,9 @@ func dockBadgeLabel(count int, unread, bullet bool) string {
 // updateDock sets the badge from the model when it changed: the Dock's
 // on macOS, the taskbar overlay and the tray icon on Windows.
 func (a *App) updateDock() {
+	if a.inert {
+		return
+	}
 	if runtime.GOOS == "windows" || taskbarAnyOS {
 		a.updateTaskbar(false)
 	}
@@ -97,7 +100,7 @@ func (a *App) updateDock() {
 // "informational"), never cancelled: AppKit stops it when Clack comes
 // forward.
 func (a *App) bounceDock() {
-	if runtime.GOOS != "darwin" && !dockAnyOS {
+	if a.inert || runtime.GOOS != "darwin" && !dockAnyOS {
 		return
 	}
 	bounce, critical := dockBounceKind(uipref.Get().MacBounce)

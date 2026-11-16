@@ -146,6 +146,13 @@ func main() {
 		}
 		return
 	}
+	// `clack intro-preview`: the introduction's renderer, a child of the
+	// window (internal/ui/intro_preview_child.go). Before everything else:
+	// no log file, config, credentials, single-instance check or window;
+	// loopback-only network.
+	if len(os.Args) > 1 && os.Args[1] == "intro-preview" {
+		os.Exit(ui.RunIntroPreview(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	// `clack --update`: download and install the newest release from the
 	// terminal, for a Clack that won't open. Before everything else: no
 	// window, config, credentials or Slack.
@@ -333,6 +340,14 @@ func main() {
 	}
 
 	creds, err := slack.ReadCreds(*credsPath)
+	// before any account's store opens: finish a sign-out this process's
+	// predecessor didn't live through (never the signed-in account's
+	// directory: store.SweepAccounts)
+	keep := ""
+	if err == nil {
+		keep = store.AccountDir(croot, firstNonEmpty(creds.Team, creds.EnterpriseID), creds.UserID)
+	}
+	store.SweepAccounts(croot, keep)
 	ui.SetVersion(version)
 	a := ui.New(opts, images)
 	// A slack:// link is a navigation, except a magic-login link, which
@@ -379,6 +394,7 @@ func main() {
 		migrateLegacyCache(cfg, acct, creds.UserID)
 		go store.RemoveBootFiles(acct) // alpha.28's boot snapshot (it held message text)
 		st := store.New(acct)
+		st.ClearSignedOut() // signed in again: an earlier sign-out's unfinished mark isn't this session's
 		svc := core.New(c, st)
 		images.SetDir(filepath.Join(acct, "img"))
 		// After core.New (which listens for the session ending): a bound

@@ -266,6 +266,9 @@ var freezeMetrics = []string{
 	"/gc/heap/goal:bytes",
 	"/memory/classes/total:bytes",
 	"/gc/cycles/total:gc-cycles",
+	"/gc/gomemlimit:bytes",
+	"/cpu/classes/gc/total:cpu-seconds",
+	"/cpu/classes/total:cpu-seconds",
 }
 
 // runtimeFigures is the Go heap and the stop-the-world histograms' worst
@@ -283,9 +286,26 @@ func runtimeFigures() string {
 		}
 		return s[i].Value.Uint64()
 	}
+	f := func(i int) float64 {
+		if s[i].Value.Kind() != metrics.KindFloat64 {
+			return 0
+		}
+		return s[i].Value.Float64()
+	}
 	mib := func(v uint64) string { return fmt.Sprintf("%.1f MiB", float64(v)/(1<<20)) }
+	// the soft limit and the collector's share of the CPU: near the limit
+	// it runs nearly nonstop, and the UI goroutine's allocations pay for
+	// it in assists (every part of a frame slows down at once)
+	limit := "no limit"
+	if l := u(8); l > 0 && l < math.MaxInt64 {
+		limit = "limit " + mib(l)
+	}
+	gcShare := 0.0
+	if all := f(10); all > 0 {
+		gcShare = 100 * f(9) / all
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nGo runtime: heap %s live (goal %s), %s mapped in all; %d collections\n", mib(u(4)), mib(u(5)), mib(u(6)), u(7))
+	fmt.Fprintf(&b, "\nGo runtime: heap %s live (goal %s, %s), %s mapped in all; %d collections, %.1f%% of CPU in GC since start\n", mib(u(4)), mib(u(5)), limit, mib(u(6)), u(7), gcShare)
 	fmt.Fprintf(&b, "stop-the-world since start (longest; how many took 100ms or more):\n")
 	for i, what := range []string{"waiting for every goroutine to stop, for a GC", "waiting for every goroutine to stop, for anything else (runtime.Stack, ReadMemStats)", "paused in all, for a GC", "paused in all, for anything else"} {
 		fmt.Fprintf(&b, "  %s: %s\n", what, histWorst(s[i].Value))

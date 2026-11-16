@@ -7,6 +7,7 @@
 
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
+#import <QuartzCore/CAMetalLayer.h>
 #import <objc/runtime.h>
 
 #include "_cgo_export.h"
@@ -89,6 +90,7 @@ void cocoatest_state(uintptr_t viewRef, cocoatest_window *s) {
 			strlcpy(s->title, t, sizeof(s->title));
 		}
 		s->screenFrame = flipped(w.frame);
+		s->occlusionVisible = (w.occlusionState & NSWindowOcclusionStateVisible) != 0;
 	}
 }
 
@@ -514,6 +516,138 @@ void cocoatest_alive(int *view, int *window) {
 		*view = trackedView != nil;
 		*window = trackedWindow != nil;
 	}
+}
+
+// ---- Clack patch (CLACK_PATCHES.md §32): occlusion, sleep and drawables ----
+
+static NSWindow *coverWindow;
+
+void cocoatest_cover(void) {
+	@autoreleasepool {
+		NSRect all = NSZeroRect;
+		for (NSScreen *s in [NSScreen screens]) {
+			all = NSUnionRect(all, s.frame);
+		}
+		// larger than any window under it: macOS may not count a window of
+		// the same size as covering (Chromium's WindowOcclusionCheckerMac)
+		all = NSInsetRect(all, -40, -40);
+		if (coverWindow == nil) {
+			coverWindow = [[NSWindow alloc] initWithContentRect:all
+													  styleMask:NSWindowStyleMaskBorderless
+														backing:NSBackingStoreBuffered
+														  defer:NO];
+			coverWindow.releasedWhenClosed = NO;
+			coverWindow.opaque = YES;
+			coverWindow.backgroundColor = NSColor.blackColor;
+			coverWindow.hasShadow = NO;
+			coverWindow.level = NSFloatingWindowLevel;
+		}
+		[coverWindow setFrame:all display:YES];
+		[coverWindow orderFrontRegardless];
+	}
+}
+
+void cocoatest_uncover(void) {
+	@autoreleasepool {
+		[coverWindow orderOut:nil];
+	}
+}
+
+void cocoatest_post_workspace(int note) {
+	@autoreleasepool {
+		NSString *names[4] = {
+			NSWorkspaceWillSleepNotification,
+			NSWorkspaceDidWakeNotification,
+			NSWorkspaceScreensDidSleepNotification,
+			NSWorkspaceScreensDidWakeNotification,
+		};
+		if (note < 0 || note > 3) {
+			return;
+		}
+		NSWorkspace *ws = [NSWorkspace sharedWorkspace];
+		[ws.notificationCenter postNotificationName:names[note] object:ws];
+	}
+}
+
+int cocoatest_drawable_timeout(uintptr_t viewRef) {
+	@autoreleasepool {
+		NSView *view = (__bridge NSView *)(void *)viewRef;
+		if (![view.layer isKindOfClass:[CAMetalLayer class]]) {
+			return -1;
+		}
+		if (@available(macOS 10.13, *)) {
+			return ((CAMetalLayer *)view.layer).allowsNextDrawableTimeout ? 1 : 0;
+		}
+		return 0;
+	}
+}
+
+// A layer whose drawables the compositor keeps: while held, every
+// CAMetalLayer's nextDrawable answers as CAMetalLayer documents for a pool
+// with none free, waiting a second and giving nil with
+// allowsNextDrawableTimeout, waiting until the release without it.
+// (Holding drawables doesn't do it: on the macOS 26 runner a layer gave 8
+// unpresented ones, textures taken, without waiting.)
+static IMP origNextDrawable;
+static NSCondition *drawableCond;
+static BOOL drawablesHeld;
+static int heldCalls;
+
+static id heldNextDrawable(id self, SEL cmd) {
+	NSCondition *c = drawableCond;
+	[c lock];
+	if (drawablesHeld) {
+		heldCalls++;
+		BOOL timeout = YES;
+		if (@available(macOS 10.13, *)) {
+			timeout = ((CAMetalLayer *)self).allowsNextDrawableTimeout;
+		}
+		NSDate *limit = timeout ? [NSDate dateWithTimeIntervalSinceNow:1.0] : [NSDate distantFuture];
+		while (drawablesHeld && [c waitUntilDate:limit]) {
+		}
+		if (drawablesHeld) {
+			[c unlock];
+			return nil;
+		}
+	}
+	[c unlock];
+	return ((id (*)(id, SEL))origNextDrawable)(self, cmd);
+}
+
+void cocoatest_hold_drawables(void) {
+	@autoreleasepool {
+		if (drawableCond == nil) {
+			drawableCond = [[NSCondition alloc] init];
+			Method m = class_getInstanceMethod([CAMetalLayer class], @selector(nextDrawable));
+			origNextDrawable = method_setImplementation(m, (IMP)heldNextDrawable);
+		}
+		[drawableCond lock];
+		drawablesHeld = YES;
+		heldCalls = 0;
+		[drawableCond unlock];
+	}
+}
+
+void cocoatest_release_drawables(void) {
+	NSCondition *c = drawableCond;
+	if (c == nil) {
+		return;
+	}
+	[c lock];
+	drawablesHeld = NO;
+	[c broadcast];
+	[c unlock];
+}
+
+int cocoatest_held_calls(void) {
+	NSCondition *c = drawableCond;
+	if (c == nil) {
+		return 0;
+	}
+	[c lock];
+	int n = heldCalls;
+	[c unlock];
+	return n;
 }
 
 static void runMain(void *h) {

@@ -47,9 +47,9 @@ one() { # side run
     curl -s -o "$p/idle.heap.pprof" "127.0.0.1:6061/heap?gc=1"
     awk '/^[0-9a-f]+-[0-9a-f]+ /{n=($6==""?"[anon]":$6)} /^Rss:/{r[n]+=$2} END{for(k in r) if(r[k]>1024) print r[k], k}' /proc/$apid/smaps 2>/dev/null | sort -rn > "$p/idle.smaps.txt"
   fi
-  paint=$(sed -n 's/.*ui: first frame painted \([0-9.]*m\?s\) after start (\([0-9]*\) sidebar rows).*/\1 \2/p' "$p/$run.log" | head -1)
-  ready=$(sed -n 's/.*ui: core ready \([0-9.]*m\?s\) after boot start.*/\1/p' "$p/$run.log" | head -1)
-  boot=$(sed -n 's/.*boot: ready in \([0-9.]*m\?s\) (cache \([0-9.]*[mµ]\?s\).*/\1 \2/p' "$p/$run.log" | head -1)
+  paint=$(sed -n '/ui: intro preview: /d; s/.*ui: first frame painted \([0-9.]*m\?s\) after start (\([0-9]*\) sidebar rows).*/\1 \2/p' "$p/$run.log" | head -1)
+  ready=$(sed -n '/ui: intro preview: /d; s/.*ui: core ready \([0-9.]*m\?s\) after boot start.*/\1/p' "$p/$run.log" | head -1)
+  boot=$(sed -n '/ui: intro preview: /d; s/.*boot: ready in \([0-9.]*m\?s\) (cache \([0-9.]*[mµ]\?s\).*/\1 \2/p' "$p/$run.log" | head -1)
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$run" "${paint:-? ?}" "${ready:-?}" "${boot:-? ?}" "${rss:-0}" "${hwm:-0}" "${anon:-0}" "$heap" | tee -a "$p/process.tsv" | sed "s/^/$s\t/"
   if [ "$run" = warm3 ]; then # long idle: background sweeps (rows 30 s, images 60 s, trim) have run
     sleep 75
