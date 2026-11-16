@@ -172,14 +172,20 @@ func TestBootAsksOpenDMPartnersOnly(t *testing.T) {
 		t.Fatal("sidebar.dms didn't answer")
 	}
 	openPartner := ""
+	var ims [][2]string // id, partner (dmOpen takes a.mu: not under the store's lock)
 	a.S.RLock()
 	for _, c := range a.S.Convs {
-		if c.IsIM && c.User != fakeslack.SelfID && c.ID != "D0CLOSEDDM1" && a.dmOpen(c.ID) {
-			openPartner = c.User
-			break
+		if c.IsIM && c.User != fakeslack.SelfID && c.ID != "D0CLOSEDDM1" {
+			ims = append(ims, [2]string{c.ID, c.User})
 		}
 	}
 	a.S.RUnlock()
+	for _, im := range ims {
+		if a.dmOpen(im[0]) {
+			openPartner = im[1]
+			break
+		}
+	}
 	if openPartner == "" {
 		t.Fatal("no open DM")
 	}
