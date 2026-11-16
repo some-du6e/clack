@@ -28,7 +28,8 @@ type Snapshot struct {
 	Heap       uint64        // JS heap bytes, as of the last task or collection
 	Allocs     uint32        // live JS heap allocations, as of the last task
 	Yields     uint64        // native-loop yields (host_yield)
-	Interrupts uint64        // tasks interrupted for running past their deadline
+	Interrupts uint64        // interrupt polls that stopped a task past its deadline
+	Abandoned  bool          // the watchdog gave up on it, but its JS thread is still running
 }
 
 // Snapshots describes every live Runtime. Any goroutine; atomics only, so
@@ -53,16 +54,22 @@ func (r *Runtime) snapshot(now int64) Snapshot {
 	}
 	h := r.heap.Load()
 	s.Heap, s.Allocs = h>>32, uint32(h)
+	since := func(t int64) time.Duration { return time.Duration(max(now-t, 1)) } // t may be a hair after now
 	if t := r.taskStart.Load(); t != 0 {
-		s.Task = time.Duration(now - t)
+		s.Task = since(t)
 		if x := r.lastExit.Load(); x > t {
-			s.SinceExit = time.Duration(now - x)
+			s.SinceExit = since(x)
 		} else {
 			s.SinceExit = s.Task
 		}
 	}
 	if g := r.gcStart.Load(); g != 0 {
-		s.GC = time.Duration(now - g)
+		s.GC = since(g)
+	}
+	select {
+	case <-r.done:
+		s.Abandoned = true // done fired, yet the loop (which unlists it) hasn't returned
+	default:
 	}
 	return s
 }
@@ -73,6 +80,9 @@ func (s Snapshot) String() string {
 	out := "idle"
 	if s.Task > 0 {
 		out = fmt.Sprintf("a task running for %v (last interrupt poll or yield %v ago)", s.Task.Round(time.Millisecond), s.SinceExit.Round(time.Millisecond))
+	}
+	if s.Abandoned {
+		out = "abandoned by the jsrt watchdog but still running: " + out
 	}
 	if s.GC > 0 {
 		out += fmt.Sprintf("; QuickJS's garbage collector running for %v", s.GC.Round(time.Millisecond))

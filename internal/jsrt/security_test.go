@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -92,6 +93,10 @@ func TestWatchdogGivesUpOnStuckTask(t *testing.T) {
 	case <-r.Done():
 	case <-time.After(time.Second):
 		t.Fatal("Done didn't fire")
+	}
+	// still stuck, it stays in Snapshots (freeze reports), marked abandoned
+	if !slices.ContainsFunc(Snapshots(), func(s Snapshot) bool { return s.Abandoned && s.Task > 0 }) {
+		t.Errorf("the abandoned runtime, still in its task, isn't in Snapshots: %+v", Snapshots())
 	}
 	if err := r.Do(func(js *Ctx) error { return nil }); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Do afterwards: %v", err)

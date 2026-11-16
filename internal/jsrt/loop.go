@@ -203,6 +203,7 @@ func curGoid() int64 {
 func (r *Runtime) loop() {
 	r.goid.Store(curGoid())
 	defer r.markDone()
+	defer live.Delete(r) // before Done fires; an abandoned runtime stays listed while it still runs
 	r.js = &Ctx{r: r}
 	r.initErr = r.boot()
 	close(r.ready)
@@ -335,12 +336,7 @@ func (r *Runtime) watchdog() {
 }
 
 // markDone closes done once (the loop exiting, or the watchdog giving up).
-func (r *Runtime) markDone() {
-	r.doneOnce.Do(func() {
-		live.Delete(r)
-		close(r.done)
-	})
-}
+func (r *Runtime) markDone() { r.doneOnce.Do(func() { close(r.done) }) }
 
 // Interrupts counts the times the watchdog interrupted JS (a task over
 // Options.Timeout, or Close). QuickJS settles nothing an interrupted
