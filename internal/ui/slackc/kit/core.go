@@ -613,7 +613,7 @@ func (l *layer) float(gtx layout.Context, org *origin, win image.Point, call op.
 	call.Add(gtx.Ops)
 	off.Pop()
 	op.Defer(gtx.Ops, m.Stop())
-	if modal && !l.focused {
+	if modal && !l.focused && gtx.Source.Enabled() { // a measure pass's FocusCmd goes nowhere
 		gtx.Execute(key.FocusCmd{Tag: &l.focus})
 		l.focused = true
 	}
@@ -769,6 +769,20 @@ func keyEvent(typ, name string, mods key.Modifiers, value string) slackc.Props {
 		"repeat": false, "isComposing": false, "target": t, "currentTarget": t,
 		"nativeEvent": slackc.Props{"isComposing": false}, "defaultPrevented": false,
 	}
+}
+
+// liveFocus is whether tag has the key focus: Gio's answer in a pass that
+// delivers input, else was (the last live answer). Kit components are
+// natives in plugins' trees, which slackc also lays out in measure passes
+// (gtx.Disabled()) where Gio reports nothing focused: there a focused
+// Button or FormTextInput sent onBlur then onFocus on every relayout, and
+// a TimePicker being typed in committed the half-typed time and replaced
+// the text with it.
+func liveFocus(gtx layout.Context, tag any, was bool) bool {
+	if !gtx.Source.Enabled() {
+		return was
+	}
+	return gtx.Focused(tag)
 }
 
 // focusEvent is a focus/blur event object.

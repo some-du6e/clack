@@ -1846,7 +1846,9 @@ func (d *ChannelDetails) updateAddPeople(gtx C, inf core.ChannelDetails) {
 	}
 	c, id := d.h.Core(), d.id
 	if a.step == 0 {
-		if !a.focused && a.focusTries < 5 { // focusOnMount; the input appears this frame
+		// focusOnMount; the input appears this frame (tries only in a pass
+		// that delivers input: a measure pass's FocusCmd goes nowhere)
+		if !a.focused && a.focusTries < 5 && gtx.Source.Enabled() {
 			a.focusTries++
 			gtx.Execute(key.FocusCmd{Tag: &a.q.ed})
 			a.focused = gtx.Focused(&a.q.ed)

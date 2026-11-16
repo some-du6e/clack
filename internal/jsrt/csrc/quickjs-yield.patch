@@ -1,6 +1,6 @@
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -1678,6 +1678,52 @@
+@@ -1678,6 +1678,142 @@
      return js_dup(v);
  }
  
@@ -9,11 +9,13 @@
 +   runtime.Stack) waits until this thread next calls the host, with every
 +   goroutine paused, the UI's too. Bytecode calls the interrupt handler
 +   every JS_INTERRUPT_COUNTER_INIT steps, but QuickJS's own C loops (the
-+   cycle collector, JSON, allocation-heavy builtins, joins, sorts) call
-+   nothing. They call js_yield_tick, and every clack_yield_every ticks
-+   clack_yield (glue.c) makes a host call that does nothing but give Go
-+   its chance. A tick is about one object visited or one allocation (well
-+   under a microsecond), so 10000 ticks is a millisecond or so. */
++   cycle collector, JSON, allocation-heavy builtins, the array, typed
++   array and string builtins' loops) call nothing. They call
++   js_yield_tick, and every clack_yield_every ticks clack_yield (glue.c)
++   makes a host call that does nothing but give Go its chance. A tick is
++   about one object visited, one allocation or one array element (well
++   under a microsecond); a loop over raw memory ticks once per 16
++   elements or 64 bytes. So 10000 ticks is a millisecond or so. */
 +void clack_yield(void);
 +void clack_gc(int phase, uint32_t objects, size_t heap);
 +static int clack_yield_every = 10000;
@@ -30,6 +32,94 @@
 +{
 +    if (unlikely(--clack_yield_left <= 0))
 +        js_yield_slow();
++}
++
++/* clack: n ticks at once, for a step worth n ordinary ones (a block of
++   memory copied, a string compared at one position) */
++static inline void js_yield_ticks(int n)
++{
++    clack_yield_left -= n;
++    if (unlikely(clack_yield_left <= 0))
++        js_yield_slow();
++}
++
++/* clack: a tight loop over raw elements (a typed array's, a string's
++   characters: a load, a store or a compare each, a nanosecond or so)
++   ticks once per 16 iterations of i, which is evaluated once. i must
++   take every value in turn: an index that skips (string_getc steps two
++   over a surrogate pair) can miss every multiple of 16, so such a loop
++   counts its iterations apart. */
++#define js_yield_tick_every16(i) \
++    do { if (unlikely(((i) & 15) == 0)) js_yield_tick(); } while (0)
++
++/* clack: memmove, memset and memchr in 64 KiB pieces with a tick per 64
++   bytes: over a typed array or ArrayBuffer of hundreds of MB, one call
++   is otherwise a single long stretch without a host call */
++#define CLACK_PIECE ((size_t)64 << 10)
++
++static void js_yield_memmove(void *dst, const void *src, size_t n)
++{
++    uint8_t *d = dst;
++    const uint8_t *s = src;
++    size_t k;
++
++    if (n == 0)
++        return;
++    if ((uintptr_t)d <= (uintptr_t)s) {
++        while (n > 0) {
++            k = n < CLACK_PIECE ? n : CLACK_PIECE;
++            memmove(d, s, k);
++            d += k;
++            s += k;
++            n -= k;
++            js_yield_ticks((int)(k >> 6));
++        }
++    } else {
++        /* back to front: an overlapping move reads each byte before it
++           is overwritten */
++        d += n;
++        s += n;
++        while (n > 0) {
++            k = n < CLACK_PIECE ? n : CLACK_PIECE;
++            d -= k;
++            s -= k;
++            memmove(d, s, k);
++            n -= k;
++            js_yield_ticks((int)(k >> 6));
++        }
++    }
++}
++
++static void js_yield_memset(void *dst, int c, size_t n)
++{
++    uint8_t *d = dst;
++    size_t k;
++
++    while (n > 0) {
++        k = n < CLACK_PIECE ? n : CLACK_PIECE;
++        memset(d, c, k);
++        d += k;
++        n -= k;
++        js_yield_ticks((int)(k >> 6));
++    }
++}
++
++static const void *js_yield_memchr(const void *buf, int c, size_t n)
++{
++    const uint8_t *s = buf;
++    const void *r;
++    size_t k;
++
++    while (n > 0) {
++        k = n < CLACK_PIECE ? n : CLACK_PIECE;
++        r = memchr(s, c, k);
++        if (r)
++            return r;
++        s += k;
++        n -= k;
++        js_yield_ticks((int)(k >> 6));
++    }
++    return NULL;
 +}
 +
 +/* clack: ticks between yields; n <= 0 turns them off (to measure them) */
@@ -53,7 +143,7 @@
  static void js_trigger_gc(JSRuntime *rt, size_t size)
  {
      bool force_gc;
-@@ -1989,6 +2035,7 @@
+@@ -1989,6 +2125,7 @@
          if (unlikely(count != (count * size) / size))
              return NULL;
  
@@ -61,7 +151,7 @@
      s = &rt->malloc_state;
      /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
      if (unlikely(s->malloc_size + (count * size) > s->malloc_limit - 1))
-@@ -2012,6 +2059,7 @@
+@@ -2012,6 +2149,7 @@
      if (unlikely(size == 0))
          return NULL;
  
@@ -69,7 +159,7 @@
      s = &rt->malloc_state;
      /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
      if (unlikely(s->malloc_size + size > s->malloc_limit - 1))
-@@ -2033,6 +2081,7 @@
+@@ -2033,6 +2171,7 @@
      if (!ptr)
          return;
  
@@ -77,7 +167,7 @@
      s = &rt->malloc_state;
      size_t free_size = js_arena_usable_size(rt, ptr) + MALLOC_OVERHEAD;
      if (unlikely(free_size > s->malloc_size)) {
-@@ -2058,6 +2107,7 @@
+@@ -2058,6 +2197,7 @@
          js_free_rt(rt, ptr);
          return NULL;
      }
@@ -85,7 +175,144 @@
      old_size = js_arena_usable_size(rt, ptr);
      s = &rt->malloc_state;
      /* When malloc_limit is 0 (unlimited), malloc_limit - 1 will be SIZE_MAX. */
-@@ -6918,6 +6968,7 @@
+@@ -4574,11 +4714,12 @@
+     }
+     if (s->is_wide_char) {
+         for (i = 0; i < len; i++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             str16(s->str)[s->len + i] = p[i];
+         }
+         s->len += len;
+     } else {
+-        memcpy(&str8(s->str)[s->len], p, len);
++        js_yield_memmove(&str8(s->str)[s->len], p, len); /* clack */
+         s->len += len;
+     }
+     return 0;
+@@ -4588,8 +4729,12 @@
+ {
+     int c = 0, i;
+ 
+-    for (i = 0; i < len; i++) {
+-        c |= p[i];
++    for (i = 0; i < len; ) {
++        /* clack: 4096 characters at a time, a tick per 16 */
++        int end = min_int(len, i + 4096);
++        js_yield_ticks((end - i) >> 4);
++        for (; i < end; i++)
++            c |= p[i];
+     }
+     if (s->len + len > s->size) {
+         if (string_buffer_realloc(s, s->len + len, c))
+@@ -4599,10 +4744,11 @@
+             return -1;
+     }
+     if (s->is_wide_char) {
+-        memcpy(&str16(s->str)[s->len], p, len << 1);
++        js_yield_memmove(&str16(s->str)[s->len], p, len << 1); /* clack */
+         s->len += len;
+     } else {
+         for (i = 0; i < len; i++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             str8(s->str)[s->len + i] = p[i];
+         }
+         s->len += len;
+@@ -4642,6 +4788,7 @@
+     if (tag == JS_TAG_STRING_ROPE) {
+         /* recursively concatenate rope children */
+         JSStringRope *r = JS_VALUE_GET_STRING_ROPE(v);
++        js_yield_tick(); /* clack: see clack_yield */
+         if (string_buffer_concat_value(s, r->left))
+             return -1;
+         return string_buffer_concat_value(s, r->right);
+@@ -4696,6 +4843,7 @@
+             return -1;
+     }
+     while (count-- > 0) {
++        js_yield_tick_every16(count); /* clack: see clack_yield */
+         if (string_buffer_putc16(s, c))
+             return -1;
+     }
+@@ -4889,8 +5037,12 @@
+            strings, which is the most common case.
+          */
+         count = 0;
+-        for (pos = 0; pos < len; pos++) {
+-            count += src[pos] >> 7;
++        for (pos = 0; pos < len; ) {
++            /* clack: 4 KiB at a time, a tick per 16 bytes */
++            int end = min_int(len, pos + 4096);
++            js_yield_ticks((end - pos) >> 4);
++            for (; pos < end; pos++)
++                count += src[pos] >> 7;
+         }
+         if (count == 0 && str->kind == JS_STRING_KIND_NORMAL) {
+             if (plen)
+@@ -4902,6 +5054,7 @@
+             goto fail;
+         q = str8(str_new);
+         for (pos = 0; pos < len; pos++) {
++            js_yield_tick_every16(pos); /* clack: see clack_yield */
+             c = src[pos];
+             if (c < 0x80) {
+                 *q++ = c;
+@@ -4912,6 +5065,7 @@
+         }
+     } else {
+         const uint16_t *src = str16(str);
++        uint32_t steps = 0; /* clack: see clack_yield */
+         /* Allocate 3 bytes per 16 bit code point. Surrogate pairs may
+            produce 4 bytes but use 2 code points.
+          */
+@@ -4921,6 +5075,7 @@
+         q = str8(str_new);
+         pos = 0;
+         while (pos < len) {
++            js_yield_tick_every16(++steps); /* clack: pos steps two over a pair */
+             c = src[pos++];
+             if (c < 0x80) {
+                 *q++ = c;
+@@ -5137,6 +5292,7 @@
+         return NULL;
+     val = s->stack[--s->stack_len];
+     for(;;) {
++        js_yield_tick(); /* clack: see clack_yield */
+         if (JS_VALUE_GET_TAG(val) == JS_TAG_STRING)
+             return JS_VALUE_GET_STRING(val);
+         r = JS_VALUE_GET_STRING_ROPE(val);
+@@ -5823,6 +5979,7 @@
+     }
+     pr = get_shape_prop(sh);
+     for(i = 0; i < sh->prop_count; i++) {
++        js_yield_tick_every16(i); /* clack: see clack_yield */
+         JS_FreeAtomRT(rt, pr->atom);
+         pr++;
+     }
+@@ -5892,6 +6049,7 @@
+         memset(prop_hash_end(sh) - new_hash_size, 0,
+                sizeof(prop_hash_end(sh)[0]) * new_hash_size);
+         for(i = 0, pr = get_shape_prop(sh); i < sh->prop_count; i++, pr++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             if (pr->atom != JS_ATOM_NULL) {
+                 h = hash_atom(pr->atom, new_hash_mask);
+                 pr->hash_next = prop_hash_end(sh)[-h - 1];
+@@ -5965,6 +6123,7 @@
+     pr = get_shape_prop(sh);
+     prop = p->prop;
+     for(i = 0; i < sh->prop_count; i++) {
++        js_yield_tick_every16(i); /* clack: see clack_yield */
+         if (old_pr->atom != JS_ATOM_NULL) {
+             pr->atom = old_pr->atom;
+             pr->flags = old_pr->flags;
+@@ -6906,6 +7065,7 @@
+     uint32_t i;
+ 
+     for(i = 0; i < p->u.array.count; i++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         JS_FreeValueRT(rt, p->u.array.u.values[i]);
+     }
+     js_free_rt(rt, p->u.array.u.values);
+@@ -6918,6 +7078,7 @@
      uint32_t i;
  
      for(i = 0; i < p->u.array.count; i++) {
@@ -93,7 +320,15 @@
          JS_MarkValue(rt, p->u.array.u.values[i], mark_func);
      }
  }
-@@ -7123,6 +7174,7 @@
+@@ -7062,6 +7223,7 @@
+     sh = p->shape;
+     pr = get_shape_prop(sh);
+     for(i = 0; i < sh->prop_count; i++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         free_property(rt, &p->prop[i], pr->flags);
+         pr++;
+     }
+@@ -7123,6 +7285,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          assert(JS_REF_COUNT(p) == 0);
          free_gc_object(rt, p);
@@ -101,7 +336,7 @@
      }
      rt->gc_phase = JS_GC_PHASE_NONE;
  }
-@@ -7270,6 +7322,7 @@
+@@ -7270,6 +7433,7 @@
              prs = get_shape_prop(sh);
              for(i = 0; i < sh->prop_count; i++) {
                  JSProperty *pr = &p->prop[i];
@@ -109,7 +344,7 @@
                  if (prs->atom != JS_ATOM_NULL) {
                      if (prs->flags & JS_PROP_TMASK) {
                          if ((prs->flags & JS_PROP_TMASK) == JS_PROP_GETSET) {
-@@ -7383,6 +7436,8 @@
+@@ -7383,6 +7547,8 @@
         objects and move the GC objects with zero refcount to
         tmp_obj_list */
      list_for_each_safe(el, el1, &rt->gc_obj_list) {
@@ -118,7 +353,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          assert(JS_GC_MARK(p) == 0);
          mark_children(rt, p, gc_decref_child);
-@@ -7418,6 +7473,7 @@
+@@ -7418,6 +7584,7 @@
  
      /* keep the objects with a refcount > 0 and their children. */
      list_for_each(el, &rt->gc_obj_list) {
@@ -126,7 +361,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          assert(JS_REF_COUNT(p) > 0);
          JS_GC_MARK(p) = 0; /* reset the mark for the next GC call */
-@@ -7426,6 +7482,7 @@
+@@ -7426,6 +7593,7 @@
  
      /* restore the refcount of the objects to be deleted. */
      list_for_each(el, &rt->tmp_obj_list) {
@@ -134,7 +369,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          mark_children(rt, p, gc_scan_incref_child2);
      }
-@@ -7445,6 +7502,7 @@
+@@ -7445,6 +7613,7 @@
          el = rt->tmp_obj_list.next;
          if (el == &rt->tmp_obj_list)
              break;
@@ -142,7 +377,7 @@
          p = list_entry(el, JSGCObjectHeader, link);
          /* Only need to free the GC object associated with JS
             values. The rest will be automatically removed because they
-@@ -7484,6 +7542,10 @@
+@@ -7484,6 +7653,10 @@
  
  void JS_RunGC(JSRuntime *rt)
  {
@@ -153,7 +388,7 @@
      /* decrement the reference of the children of each object. mark =
         1 after this pass. */
      gc_decref(rt);
-@@ -7493,6 +7555,8 @@
+@@ -7493,6 +7666,8 @@
  
      /* free the GC objects in a cycle */
      gc_free_cycles(rt);
@@ -162,16 +397,272 @@
  }
  
  /* Return false if not an object or if the object has already been
-@@ -14732,6 +14796,8 @@
+@@ -9492,6 +9667,8 @@
+     uint32_t v1, v2;
+     bool atom1_is_integer, atom2_is_integer;
+ 
++    js_yield_tick(); /* clack: see clack_yield */
++
+     atom1_is_integer = JS_AtomIsArrayIndex(ctx, &v1, atom1);
+     atom2_is_integer = JS_AtomIsArrayIndex(ctx, &v2, atom2);
+     assert(atom1_is_integer && atom2_is_integer);
+@@ -9507,8 +9684,10 @@
+ {
+     uint32_t i;
+     if (tab) {
+-        for(i = 0; i < len; i++)
++        for(i = 0; i < len; i++) {
++            js_yield_tick(); /* clack: see clack_yield */
+             JS_FreeAtom(ctx, tab[i].atom);
++        }
+         js_free(ctx, tab);
+     }
+ }
+@@ -9544,6 +9723,7 @@
+     tab_exotic = NULL;
+     sh = p->shape;
+     for(i = 0, prs = get_shape_prop(sh); i < sh->prop_count; i++, prs++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         atom = prs->atom;
+         if (atom != JS_ATOM_NULL) {
+             is_enumerable = ((prs->flags & JS_PROP_ENUMERABLE) != 0);
+@@ -9631,6 +9811,7 @@
+     num_sorted = true;
+     sh = p->shape;
+     for(i = 0, prs = get_shape_prop(sh); i < sh->prop_count; i++, prs++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         atom = prs->atom;
+         if (atom != JS_ATOM_NULL) {
+             is_enumerable = ((prs->flags & JS_PROP_ENUMERABLE) != 0);
+@@ -9663,6 +9844,7 @@
+                 len = js_string_obj_get_length(ctx, JS_MKPTR(JS_TAG_OBJECT, p));
+             add_array_keys:
+                 for(i = 0; i < len; i++) {
++                    js_yield_tick_every16(i); /* clack: see clack_yield */
+                     tab_atom[num_index].atom = __JS_AtomFromUInt32(i);
+                     if (tab_atom[num_index].atom == JS_ATOM_NULL) {
+                         js_free_prop_enum(ctx, tab_atom, num_index);
+@@ -10091,6 +10273,10 @@
+     JSAtom prop;
+     int present;
+ 
++    /* clack: a builtin's element loop reads through here or
++       JS_GetPropertyInt64; the fast path returns before the interrupt
++       poll below (see clack_yield) */
++    js_yield_tick();
+     if (likely(JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT &&
+                (uint64_t)idx <= INT32_MAX)) {
+         /* fast path for array and typed array access */
+@@ -10127,6 +10313,7 @@
+     JSAtom prop;
+     JSValue val;
+ 
++    js_yield_tick(); /* clack: see JS_TryGetPropertyInt64 */
+     if (likely(JS_VALUE_GET_TAG(obj) == JS_TAG_OBJECT &&
+                (uint64_t)idx <= INT32_MAX)) {
+         /* fast path for array and typed array access */
+@@ -10242,6 +10429,7 @@
+         for(i = 0; i < len; i++) {
+             /* add_property cannot fail here but
+                __JS_AtomFromUInt32(i) fails for i > INT32_MAX */
++            js_yield_tick(); /* clack: see clack_yield */
+             pr = add_property(ctx, p, __JS_AtomFromUInt32(i), JS_PROP_C_W_E | JS_PROP_VARREF);
+             pr->u.var_ref = *tab++;
+         }
+@@ -10250,6 +10438,7 @@
+         for(i = 0; i < len; i++) {
+             /* add_property cannot fail here but
+                __JS_AtomFromUInt32(i) fails for i > INT32_MAX */
++            js_yield_tick(); /* clack: see clack_yield */
+             pr = add_property(ctx, p, __JS_AtomFromUInt32(i), JS_PROP_C_W_E);
+             pr->u.value = *tab++;
+         }
+@@ -10387,6 +10576,7 @@
+         uint32_t old_len = p->u.array.count;
+         if (len < old_len) {
+             for(i = len; i < old_len; i++) {
++                js_yield_tick(); /* clack: see clack_yield */
+                 JS_FreeValue(ctx, p->u.array.u.values[i]);
+                 p->u.array.u.values[i] = JS_UNDEFINED;
+             }
+@@ -10492,6 +10682,8 @@
+                                   JSValue val, int flags)
+ {
+     uint32_t new_len, array_len;
++
++    js_yield_tick(); /* clack: see clack_yield */
+     /* extend the array by one */
+     /* XXX: convert to slow array if new_len > 2^31-1 elements */
+     new_len = p->u.array.count + 1;
+@@ -10539,8 +10731,10 @@
+             return JS_EXCEPTION;
+         }
+         p->u.array.count = len;
+-        for(i = 0; i < len; i++)
++        for(i = 0; i < len; i++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             p->u.array.u.values[i] = JS_UNDEFINED;
++        }
+         /* update the 'length' field */
+         set_value(ctx, &p->prop[0].u.value, js_int32(len));
+     }
+@@ -10996,6 +11190,7 @@
+ int JS_SetPropertyUint32(JSContext *ctx, JSValueConst this_obj,
+                          uint32_t idx, JSValue val)
+ {
++    js_yield_tick(); /* clack: see JS_TryGetPropertyInt64 */
+     return JS_SetPropertyValue(ctx, this_obj, js_uint32(idx), val,
+                                JS_PROP_THROW);
+ }
+@@ -11006,6 +11201,7 @@
+     JSAtom prop;
+     int res;
+ 
++    js_yield_tick(); /* clack: see JS_TryGetPropertyInt64 */
+     if ((uint64_t)idx <= INT32_MAX) {
+         /* fast path for fast arrays */
+         return JS_SetPropertyValue(ctx, this_obj, js_int32(idx), val,
+@@ -11969,6 +12165,7 @@
+     JSAtom prop;
+     int res;
+ 
++    js_yield_tick(); /* clack: see JS_TryGetPropertyInt64 */
+     if ((uint64_t)idx <= JS_ATOM_MAX_INT) {
+         /* fast path for fast arrays */
+         return JS_DeleteProperty(ctx, obj, __JS_AtomFromUInt32(idx), flags);
+@@ -14717,7 +14914,7 @@
+     JSValue val;
+     JSString *p;
+     int i;
+-    uint32_t c;
++    uint32_t c, steps = 0;
+     StringBuffer b_s, *b = &b_s;
+     char buf[16];
+ 
+@@ -14732,6 +14929,9 @@
      if (string_buffer_putc8(b, '\"'))
          goto fail;
      for(i = 0; i < p->len; ) {
-+        if ((i & 63) == 0)
-+            js_yield_tick(); /* clack: see clack_yield */
++        /* clack: counted apart from i, which steps two over a surrogate
++           pair (see js_yield_tick_every16) */
++        js_yield_tick_every16(++steps);
          c = string_getc(p, &i);
          switch(c) {
          case '\t':
-@@ -44162,6 +44228,7 @@
+@@ -16849,6 +17049,7 @@
+                                    JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY))
+             goto fail;
+         for(i = 0; i < tab_atom_count; i++) {
++            js_yield_tick(); /* clack: see clack_yield */
+             JS_SetPropertyInternal(ctx, enum_obj, tab_atom[i].atom, JS_NULL, 0);
+         }
+         js_free_prop_enum(ctx, tab_atom, tab_atom_count);
+@@ -16867,6 +17068,7 @@
+             goto fail;
+         }
+         for(i = 0; i < tab_atom_count; i++) {
++            js_yield_tick(); /* clack: see clack_yield */
+             JS_DefinePropertyValue(ctx, enum_obj, tab_atom[i].atom, JS_NULL,
+                                    (tab_atom[i].is_enumerable ?
+                                     JS_PROP_ENUMERABLE : 0));
+@@ -17386,6 +17588,7 @@
+             goto general_case;
+         /* Handle fast arrays explicitly */
+         for (i = 0; i < count32; i++) {
++            js_yield_tick(); /* clack: see clack_yield */
+             if (JS_DefinePropertyValueUint32(ctx, sp[-3], pos++,
+                                              js_dup(arrp[i]), JS_PROP_C_W_E) < 0)
+                 goto exception;
+@@ -17455,6 +17658,7 @@
+         return -1;
+ 
+     for (i = 0; i < tab_atom_count; i++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         if (pexcl) {
+             ret = JS_GetOwnPropertyInternal(ctx, NULL, pexcl, tab_atom[i].atom);
+             if (ret) {
+@@ -23613,9 +23817,13 @@
+ 
+         // Fast path: batch consecutive ASCII characters
+         const uint8_t *p_start = p;
+-        while (p < s->buf_end && *p != '"' && *p != '\\' && *p >= 0x20 && *p < 0x80) {
++        /* clack: at most 4 KiB a batch, a tick per 16 bytes; the loop
++           below takes whatever character stopped it */
++        const uint8_t *p_stop = s->buf_end - p > 4096 ? p + 4096 : s->buf_end;
++        while (p < p_stop && *p != '"' && *p != '\\' && *p >= 0x20 && *p < 0x80) {
+             p++;
+         }
++        js_yield_ticks((int)((p - p_start) >> 4));
+ 
+         // Write batched ASCII in one call
+         if (p > p_start) {
+@@ -41650,6 +41858,7 @@
+         goto exception;
+     for(j = i = 0; i < len; i++) {
+         JSAtom atom = atoms[i].atom;
++        js_yield_tick(); /* clack: see clack_yield */
+         if (flags & JS_GPN_ENUM_ONLY) {
+             int desc_flags, res;
+ 
+@@ -43111,6 +43320,7 @@
+                 l = min_int64(l, from + 1);
+                 l = min_int64(l, to + 1);
+                 for(j = 0; j < l; j++) {
++                    js_yield_tick(); /* clack: see clack_yield */
+                     set_value(ctx, &p->u.array.u.values[to - j],
+                               js_dup(p->u.array.u.values[from - j]));
+                 }
+@@ -43118,6 +43328,7 @@
+                 l = min_int64(l, len - from);
+                 l = min_int64(l, len - to);
+                 for(j = 0; j < l; j++) {
++                    js_yield_tick(); /* clack: see clack_yield */
+                     set_value(ctx, &p->u.array.u.values[to + j],
+                               js_dup(p->u.array.u.values[from + j]));
+                 }
+@@ -43456,11 +43667,15 @@
+     i = 0;
+     pval = p->u.array.u.values;
+     if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
+-        for (; i < idx; i++, pval++)
++        for (; i < idx; i++, pval++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             *pval = js_dup(arrp[i]);
++        }
+         *pval = js_dup(argv[1]);
+-        for (i++, pval++; i < len; i++, pval++)
++        for (i++, pval++; i < len; i++, pval++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             *pval = js_dup(arrp[i]);
++        }
+     } else {
+         for (; i < idx; i++, pval++)
+             if (-1 == JS_TryGetPropertyInt64(ctx, obj, i, pval))
+@@ -43901,6 +44116,7 @@
+         }
+         if (js_get_fast_array(ctx, obj, &arrp, &count)) {
+             for (; n < count; n++) {
++                js_yield_tick(); /* clack: see clack_yield */
+                 if (js_strict_eq2(ctx, argv[0], arrp[n],
+                                   JS_EQ_SAME_VALUE_ZERO)) {
+                     goto done;
+@@ -43950,6 +44166,7 @@
+         }
+         if (js_get_fast_array(ctx, obj, &arrp, &count)) {
+             for (; n < count; n++) {
++                js_yield_tick(); /* clack: see clack_yield */
+                 if (js_strict_eq2(ctx, argv[0], arrp[n], JS_EQ_STRICT)) {
+                     goto done;
+                 }
+@@ -44001,6 +44218,7 @@
+         }
+         if (js_get_fast_array(ctx, obj, &arrp, &count) && count == len) {
+             for (; n >= 0; n--) {
++                js_yield_tick(); /* clack: see clack_yield */
+                 if (js_strict_eq2(ctx, argv[0], arrp[n],
+                                   JS_EQ_STRICT)) {
+                     goto done;
+@@ -44162,6 +44380,7 @@
      string_buffer_init(ctx, b, 0);
  
      for(i = 0; i < n; i++) {
@@ -179,7 +670,63 @@
          if (i > 0) {
              if (c >= 0) {
                  string_buffer_putc8(b, c);
-@@ -44782,6 +44849,7 @@
+@@ -44211,7 +44430,7 @@
+             JSObject *p = JS_VALUE_GET_OBJ(obj);
+             if (shift) {
+                 res = arrp[0];
+-                memmove(arrp, arrp + 1, (count32 - 1) * sizeof(*arrp));
++                js_yield_memmove(arrp, arrp + 1, (count32 - 1) * sizeof(*arrp)); /* clack */
+                 p->u.array.count--;
+             } else {
+                 res = arrp[count32 - 1];
+@@ -44331,6 +44550,7 @@
+ 
+         if (count32 > 1) {
+             for (ll = 0, hh = count32 - 1; ll < hh; ll++, hh--) {
++                js_yield_tick_every16(ll); /* clack: see clack_yield */
+                 lval = arrp[ll];
+                 arrp[ll] = arrp[hh];
+                 arrp[hh] = lval;
+@@ -44408,8 +44628,10 @@
+         i = len - 1;
+         pval = p->u.array.u.values;
+         if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
+-            for (; i >= 0; i--, pval++)
++            for (; i >= 0; i--, pval++) {
++                js_yield_tick_every16(i); /* clack: see clack_yield */
+                 *pval = js_dup(arrp[i]);
++            }
+         } else {
+             // Query order is observable; test262 expects descending order.
+             for (; i >= 0; i--, pval++) {
+@@ -44488,6 +44710,7 @@
+         js_is_fast_array(ctx, arr)) {
+         /* XXX: should share code with fast array constructor */
+         for (; k < final && k < count32; k++, n++) {
++            js_yield_tick(); /* clack: see clack_yield */
+             if (JS_CreateDataPropertyUint32Const(ctx, arr, n, arrp[k], JS_PROP_THROW) < 0)
+                 goto exception;
+         }
+@@ -44583,12 +44806,16 @@
+     last = &p->u.array.u.values[newlen];
+ 
+     if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
+-        for (i = 0; i < start; i++, pval++)
++        for (i = 0; i < start; i++, pval++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             *pval = js_dup(arrp[i]);
++        }
+         for (j = 0; j < add; j++, pval++)
+             *pval = js_dup(argv[2 + j]);
+-        for (i += del; i < len; i++, pval++)
++        for (i += del; i < len; i++, pval++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             *pval = js_dup(arrp[i]);
++        }
+     } else {
+         for (i = 0; i < start; i++, pval++)
+             if (-1 == JS_TryGetPropertyInt64(ctx, obj, i, pval))
+@@ -44782,6 +45009,7 @@
      if (psc->exception)
          return 0;
  
@@ -187,7 +734,98 @@
      if (psc->has_method) {
          argv[0] = ap->val;
          argv[1] = bp->val;
-@@ -51111,6 +51179,8 @@
+@@ -44846,6 +45074,7 @@
+ 
+     /* XXX: should special case fast arrays */
+     for (i = 0; i < len; i++) {
++        js_yield_tick(); /* clack: see clack_yield */
+         if (pos >= array_size) {
+             size_t new_size;
+             ValueSlot *new_array;
+@@ -44875,6 +45104,7 @@
+ 
+     /* XXX: should special case fast arrays */
+     while (n < pos) {
++        js_yield_tick(); /* clack: see clack_yield */
+         if (array[n].str)
+             JS_FreeValue(ctx, JS_MKPTR(JS_TAG_STRING, array[n].str));
+         if (array[n].pos == n) {
+@@ -44941,8 +45171,10 @@
+         i = 0;
+         pval = p->u.array.u.values;
+         if (js_get_fast_array(ctx, obj, &arrp, &count32) && count32 == len) {
+-            for (; i < len; i++, pval++)
++            for (; i < len; i++, pval++) {
++                js_yield_tick_every16(i); /* clack: see clack_yield */
+                 *pval = js_dup(arrp[i]);
++            }
+         } else {
+             for (; i < len; i++, pval++) {
+                 if (-1 == JS_TryGetPropertyInt64(ctx, obj, i, pval))
+@@ -47343,12 +47575,14 @@
+     int i, len = p->len;
+     if (p->is_wide_char) {
+         for (i = from; i < len; i++) {
++            js_yield_tick_every16(i); /* clack: see clack_yield */
+             if (str16(p)[i] == c)
+                 return i;
+         }
+     } else {
+         if ((c & ~0xff) == 0) {
+             for (i = from; i < len; i++) {
++                js_yield_tick_every16(i); /* clack: see clack_yield */
+                 if (str8(p)[i] == (uint8_t)c)
+                     return i;
+             }
+@@ -47367,6 +47601,7 @@
+         j = string_indexof_char(p1, c, i);
+         if (j < 0 || j + len2 > len1)
+             break;
++        js_yield_ticks(1 + (len2 >> 6)); /* clack: see clack_yield */
+         if (!string_cmp(p1, p2, j + 1, 1, len2 - 1))
+             return j;
+     }
+@@ -47507,6 +47742,7 @@
+     ret = -1;
+     if (len >= v_len && inc * (stop - start) >= 0) {
+         for (i = start;; i += inc) {
++            js_yield_ticks(1 + (v_len >> 6)); /* clack: see clack_yield */
+             if (!string_cmp(p, p1, i, 0, v_len)) {
+                 ret = i;
+                 break;
+@@ -47573,6 +47809,7 @@
+     }
+     if (start >= 0 && start <= stop) {
+         for (i = start;; i++) {
++            js_yield_ticks(1 + (v_len >> 6)); /* clack: see clack_yield */
+             if (!string_cmp(p, p1, i, 0, v_len)) {
+                 ret = 1;
+                 break;
+@@ -48117,6 +48354,7 @@
+     if (p1) {
+         while (n > 0) {
+             int chunk = min_int(n, p1->len);
++            js_yield_ticks(1 + (chunk >> 6)); /* clack: see clack_yield */
+             if (string_buffer_concat(b, p1, 0, chunk))
+                 goto fail;
+             n -= chunk;
+@@ -48184,6 +48422,7 @@
+         string_buffer_fill(b, string_get(p, 0), n);
+     } else {
+         while (n-- > 0) {
++            js_yield_ticks(1 + (len >> 6)); /* clack: see clack_yield */
+             string_buffer_concat(b, p, 0, len);
+         }
+     }
+@@ -48368,6 +48607,7 @@
+     if (string_buffer_init(ctx, b, p->len))
+         goto fail;
+     for(i = 0; i < p->len;) {
++        js_yield_tick(); /* clack: see clack_yield */
+         c = string_getc(p, &i);
+         if (c == 0x3a3 && to_lower && test_final_sigma(p, i - 1)) {
+             res[0] = 0x3c2; /* final sigma */
+@@ -51111,6 +51351,8 @@
      JSValue val = JS_NULL;
      int ret;
  
@@ -196,7 +834,7 @@
      if (js_check_stack_overflow(ctx->rt, 0)) {
          return JS_ThrowStackOverflow(ctx);
      }
-@@ -51626,6 +51696,7 @@
+@@ -51626,6 +51868,7 @@
      tab = JS_UNDEFINED;
      prop = JS_UNDEFINED;
  
@@ -204,7 +842,7 @@
      if (js_check_stack_overflow(ctx->rt, 0)) {
          JS_ThrowStackOverflow(ctx);
          goto exception;
-@@ -53979,6 +54050,7 @@
+@@ -53979,6 +54222,7 @@
      if (s) {
          assert(!s->is_weak);
          list_for_each(el, &s->records) {
@@ -212,3 +850,385 @@
              mr = list_entry(el, JSMapRecord, link);
              JS_MarkValue(rt, mr->key, mark_func);
              JS_MarkValue(rt, mr->value, mark_func);
+@@ -59249,9 +59493,11 @@
+             memset(abuf->data, 0, sab_alloc_len);
+         } else {
+             /* the allocation must be done after the object creation */
+-            abuf->data = js_mallocz(ctx, max_int(len, 1));
++            /* clack: zeroed in pieces (see js_yield_memset), not by calloc */
++            abuf->data = js_malloc(ctx, max_int(len, 1));
+             if (!abuf->data)
+                 goto fail;
++            js_yield_memset(abuf->data, 0, max_int(len, 1));
+         }
+     } else {
+         if (class_id == JS_CLASS_SHARED_ARRAY_BUFFER &&
+@@ -59705,7 +59951,7 @@
+             return JS_ThrowOutOfMemory(ctx);
+         bs = new_bs;
+         if (new_len > old_len)
+-            memset(bs + old_len, 0, new_len - old_len);
++            js_yield_memset(bs + old_len, 0, new_len - old_len); /* clack */
+     }
+     /* neuter the source */
+     abuf->data = NULL;
+@@ -59775,7 +60021,7 @@
+         if (!data)
+             return JS_ThrowOutOfMemory(ctx);
+         if (len > abuf->byte_length)
+-            memset(&data[abuf->byte_length], 0, len - abuf->byte_length);
++            js_yield_memset(&data[abuf->byte_length], 0, len - abuf->byte_length); /* clack */
+         abuf->byte_length = len;
+         abuf->data = data;
+     }
+@@ -59865,7 +60111,7 @@
+             JS_ThrowTypeErrorDetachedArrayBuffer(ctx);
+         goto fail;
+     }
+-    memcpy(new_abuf->data, abuf->data + start, new_len);
++    js_yield_memmove(new_abuf->data, abuf->data + start, new_len); /* clack */
+     new_abuf->immutable = immutable;
+     return new_obj;
+  fail:
+@@ -60157,8 +60403,8 @@
+         /* copying between typed objects */
+         if (src_p->class_id == p->class_id) {
+             /* same type, use memmove */
+-            memmove(dest_abuf->data + dest_ta->offset + (offset << shift),
+-                    src_abuf->data + src_ta->offset, src_len << shift);
++            js_yield_memmove(dest_abuf->data + dest_ta->offset + (offset << shift),
++                             src_abuf->data + src_ta->offset, src_len << shift); /* clack */
+             goto done;
+         }
+         if (dest_abuf->data == src_abuf->data) {
+@@ -60325,8 +60571,8 @@
+     if (copy_len > 0) {
+         ta = p->u.typed_array;
+         src_abuf = ta->buffer->u.array_buffer;
+-        memcpy(abuf->data, src_abuf->data + ta->offset,
+-               (size_t)copy_len << size_log2);
++        js_yield_memmove(abuf->data, src_abuf->data + ta->offset,
++                         (size_t)copy_len << size_log2); /* clack */
+     }
+ 
+     if (JS_SetPropertyInt64(ctx, arr, idx, val) < 0) {
+@@ -60576,9 +60822,9 @@
+     count = min_int(count, space);
+     if (count > 0) {
+         shift = typed_array_size_log2(p->class_id);
+-        memmove(p->u.array.u.uint8_ptr + (to << shift),
+-                p->u.array.u.uint8_ptr + (from << shift),
+-                count << shift);
++        js_yield_memmove(p->u.array.u.uint8_ptr + (to << shift),
++                         p->u.array.u.uint8_ptr + (from << shift),
++                         count << shift); /* clack */
+     }
+     return js_dup(this_val);
+ }
+@@ -60654,21 +60900,24 @@
+     switch(shift) {
+     case 0:
+         if (k < final) {
+-            memset(p->u.array.u.uint8_ptr + k, v64, final - k);
++            js_yield_memset(p->u.array.u.uint8_ptr + k, v64, final - k); /* clack */
+         }
+         break;
+     case 1:
+         for(; k < final; k++) {
++            js_yield_tick_every16(k); /* clack: see clack_yield */
+             p->u.array.u.uint16_ptr[k] = v64;
+         }
+         break;
+     case 2:
+         for(; k < final; k++) {
++            js_yield_tick_every16(k); /* clack: see clack_yield */
+             p->u.array.u.uint32_ptr[k] = v64;
+         }
+         break;
+     case 3:
+         for(; k < final; k++) {
++            js_yield_tick_every16(k); /* clack: see clack_yield */
+             p->u.array.u.uint64_ptr[k] = v64;
+         }
+         break;
+@@ -60883,11 +61132,12 @@
+             if (inc > 0) {
+                 pp = NULL;
+                 if (pv)
+-                    pp = memchr(pv + k, v, len - k);
++                    pp = js_yield_memchr(pv + k, v, len - k); /* clack */
+                 if (pp)
+                     res = pp - pv;
+             } else {
+                 for (; k != stop; k += inc) {
++                    js_yield_tick_every16(k); /* clack: see clack_yield */
+                     if (pv[k] == v) {
+                         res = k;
+                         break;
+@@ -60908,6 +61158,7 @@
+             pv = p->u.array.u.uint16_ptr;
+             v = v64;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (pv[k] == v) {
+                     res = k;
+                     break;
+@@ -60927,6 +61178,7 @@
+             pv = p->u.array.u.uint32_ptr;
+             v = v64;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (pv[k] == v) {
+                     res = k;
+                     break;
+@@ -60943,6 +61195,7 @@
+             if (special != special_includes)
+                 goto done;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (isfp16nan(pv[k])) {
+                     res = k;
+                     break;
+@@ -60952,6 +61205,7 @@
+             // special case: includes also finds negative zero
+             const uint16_t *pv = p->u.array.u.fp16_ptr;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (isfp16zero(pv[k])) {
+                     res = k;
+                     break;
+@@ -60960,6 +61214,7 @@
+         } else if (hf = tofp16(d), d == fromfp16(hf)) {
+             const uint16_t *pv = p->u.array.u.fp16_ptr;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (pv[k] == hf) {
+                     res = k;
+                     break;
+@@ -60976,6 +61231,7 @@
+             if (special != special_includes)
+                 goto done;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (isnan(pv[k])) {
+                     res = k;
+                     break;
+@@ -60984,6 +61240,7 @@
+         } else if ((f = (float)d) == d) {
+             const float *pv = p->u.array.u.float_ptr;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (pv[k] == f) {
+                     res = k;
+                     break;
+@@ -61000,6 +61257,7 @@
+             if (special != special_includes)
+                 goto done;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (isnan(pv[k])) {
+                     res = k;
+                     break;
+@@ -61008,6 +61266,7 @@
+         } else {
+             const double *pv = p->u.array.u.double_ptr;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (pv[k] == d) {
+                     res = k;
+                     break;
+@@ -61028,6 +61287,7 @@
+             pv = p->u.array.u.uint64_ptr;
+             v = v64;
+             for (; k != stop; k += inc) {
++                js_yield_tick_every16(k); /* clack: see clack_yield */
+                 if (pv[k] == v) {
+                     res = k;
+                     break;
+@@ -61131,6 +61391,7 @@
+ {
+     JSObject *p;
+     int len;
++    uint32_t steps = 0; /* clack: see clack_yield */
+ 
+     len = js_typed_array_get_length_unsafe(ctx, this_val);
+     if (len < 0)
+@@ -61145,6 +61406,7 @@
+                 uint8_t *p1 = p->u.array.u.uint8_ptr;
+                 uint8_t *p2 = p1 + len - 1;
+                 while (p1 < p2) {
++                    js_yield_tick_every16(++steps); /* clack */
+                     uint8_t v = *p1;
+                     *p1++ = *p2;
+                     *p2-- = v;
+@@ -61156,6 +61418,7 @@
+                 uint16_t *p1 = p->u.array.u.uint16_ptr;
+                 uint16_t *p2 = p1 + len - 1;
+                 while (p1 < p2) {
++                    js_yield_tick_every16(++steps); /* clack */
+                     uint16_t v = *p1;
+                     *p1++ = *p2;
+                     *p2-- = v;
+@@ -61167,6 +61430,7 @@
+                 uint32_t *p1 = p->u.array.u.uint32_ptr;
+                 uint32_t *p2 = p1 + len - 1;
+                 while (p1 < p2) {
++                    js_yield_tick_every16(++steps); /* clack */
+                     uint32_t v = *p1;
+                     *p1++ = *p2;
+                     *p2-- = v;
+@@ -61178,6 +61442,7 @@
+                 uint64_t *p1 = p->u.array.u.uint64_ptr;
+                 uint64_t *p2 = p1 + len - 1;
+                 while (p1 < p2) {
++                    js_yield_tick_every16(++steps); /* clack */
+                     uint64_t v = *p1;
+                     *p1++ = *p2;
+                     *p2-- = v;
+@@ -61263,16 +61528,19 @@
+                    in increasing order, observable when the species
+                    constructor returns a view over the same buffer that
+                    overlaps the source ahead of it */
+-                for (n = 0; n < nbytes; n++)
++                for (n = 0; n < nbytes; n++) {
++                    js_yield_tick_every16(n); /* clack: see clack_yield */
+                     dst[n] = src[n];
++                }
+             } else {
+-                memmove(dst, src, nbytes);
++                js_yield_memmove(dst, src, nbytes); /* clack */
+             }
+         } else {
+         slow_path:
+             space = max_int(0, p->u.array.count - start);
+             count = min_int(count, space);
+             for (n = 0; n < count; n++) {
++                js_yield_tick(); /* clack: see clack_yield */
+                 val = JS_GetPropertyValue(ctx, this_val, js_int32(start + n));
+                 if (JS_IsException(val))
+                     goto exception;
+@@ -61351,55 +61619,66 @@
+ }
+ 
+ static int js_TA_cmp_int8(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     return *(const int8_t *)a - *(const int8_t *)b;
+ }
+ 
+ static int js_TA_cmp_uint8(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     return *(const uint8_t *)a - *(const uint8_t *)b;
+ }
+ 
+ static int js_TA_cmp_int16(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     return *(const int16_t *)a - *(const int16_t *)b;
+ }
+ 
+ static int js_TA_cmp_uint16(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     return *(const uint16_t *)a - *(const uint16_t *)b;
+ }
+ 
+ static int js_TA_cmp_int32(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     int32_t x = *(const int32_t *)a;
+     int32_t y = *(const int32_t *)b;
+     return (y < x) - (y > x);
+ }
+ 
+ static int js_TA_cmp_uint32(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     uint32_t x = *(const uint32_t *)a;
+     uint32_t y = *(const uint32_t *)b;
+     return (y < x) - (y > x);
+ }
+ 
+ static int js_TA_cmp_int64(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     int64_t x = *(const int64_t *)a;
+     int64_t y = *(const int64_t *)b;
+     return (y < x) - (y > x);
+ }
+ 
+ static int js_TA_cmp_uint64(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     uint64_t x = *(const uint64_t *)a;
+     uint64_t y = *(const uint64_t *)b;
+     return (y < x) - (y > x);
+ }
+ 
+ static int js_TA_cmp_float16(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     return js_cmp_doubles(fromfp16(*(const uint16_t *)a),
+                           fromfp16(*(const uint16_t *)b));
+ }
+ 
+ static int js_TA_cmp_float32(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     return js_cmp_doubles(*(const float *)a, *(const float *)b);
+ }
+ 
+ static int js_TA_cmp_float64(const void *a, const void *b, void *opaque) {
++    js_yield_tick(); /* clack: see clack_yield */
+     return js_cmp_doubles(*(const double *)a, *(const double *)b);
+ }
+ 
+@@ -61593,8 +61872,10 @@
+             array_idx = js_calloc(ctx, len, sizeof(array_idx[0]));
+             if (!array_idx)
+                 return JS_EXCEPTION;
+-            for(i = 0; i < len; i++)
++            for(i = 0; i < len; i++) {
++                js_yield_tick_every16(i); /* clack: see clack_yield */
+                 array_idx[i] = i;
++            }
+             tsc.elt_size = elt_size;
+             rqsort(array_idx, len, sizeof(array_idx[0]),
+                    js_TA_cmp_generic, &tsc);
+@@ -61612,10 +61893,11 @@
+                 js_free(ctx, array_idx);
+                 return JS_EXCEPTION;
+             }
+-            memcpy(array_tmp, p->u.array.u.ptr, len * elt_size);
++            js_yield_memmove(array_tmp, p->u.array.u.ptr, len * elt_size); /* clack */
+             switch(elt_size) {
+             case 1:
+                 for(i = 0; i < len; i++) {
++                    js_yield_tick_every16(i); /* clack: see clack_yield */
+                     j = array_idx[i];
+                     if (j < len)
+                         p->u.array.u.uint8_ptr[i] = ((uint8_t *)array_tmp)[j];
+@@ -61623,6 +61905,7 @@
+                 break;
+             case 2:
+                 for(i = 0; i < len; i++) {
++                    js_yield_tick_every16(i); /* clack: see clack_yield */
+                     j = array_idx[i];
+                     if (j < len)
+                         p->u.array.u.uint16_ptr[i] = ((uint16_t *)array_tmp)[j];
+@@ -61630,6 +61913,7 @@
+                 break;
+             case 4:
+                 for(i = 0; i < len; i++) {
++                    js_yield_tick_every16(i); /* clack: see clack_yield */
+                     j = array_idx[i];
+                     if (j < len)
+                         p->u.array.u.uint32_ptr[i] = ((uint32_t *)array_tmp)[j];
+@@ -61637,6 +61921,7 @@
+                 break;
+             case 8:
+                 for(i = 0; i < len; i++) {
++                    js_yield_tick_every16(i); /* clack: see clack_yield */
+                     j = array_idx[i];
+                     if (j < len)
+                         p->u.array.u.uint64_ptr[i] = ((uint64_t *)array_tmp)[j];
+@@ -61911,7 +62196,7 @@
+         goto fail;
+     if (p->class_id == classid) {
+         /* same type: copy the content */
+-        memcpy(abuf->data, src_abuf->data + ta->offset, abuf->byte_length);
++        js_yield_memmove(abuf->data, src_abuf->data + ta->offset, abuf->byte_length); /* clack */
+     } else {
+         for(i = 0; i < len; i++) {
+             JSValue val;

@@ -184,7 +184,14 @@ func (v *ChannelFiles) buildSuggestions() {
 func (v *ChannelFiles) sugUpdate(gtx C) {
 	s := &v.sug
 	ed := &v.search.ed
-	focused := gtx.Focused(ed)
+	// the onBlur below only from a pass that delivers input: under a
+	// plugin patching a boundary above the view (ChatTabs'
+	// ClientPrimaryView) slackc also measures it with gtx.Disabled(),
+	// where nothing is focused, and every relayout closed the open list
+	focused := s.focused
+	if gtx.Source.Enabled() {
+		focused = gtx.Focused(ed)
+	}
 	if s.open {
 		fs := []event.Filter{
 			key.Filter{Focus: ed, Name: key.NameUpArrow}, key.Filter{Focus: ed, Name: key.NameDownArrow},

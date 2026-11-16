@@ -28,9 +28,9 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	xdraw "golang.org/x/image/draw"
-	_ "golang.org/x/image/webp"
 
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/imgcache" // registers WebP for image.DecodeConfig
 	"github.com/some-du6e/clack/internal/ui/theme"
 	"github.com/some-du6e/clack/internal/ui/uiguard"
 )
@@ -397,7 +397,10 @@ func emojiAddLoad(path string) (emojiAddFile, error) {
 	if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > emojiAddMaxPixels {
 		return emojiAddFile{}, errors.New("That image is too big to use as an emoji.")
 	}
-	img, _, err := image.Decode(bytes.NewReader(data))
+	// imgcache.Decode gates the header size and bounds a lossless WebP's
+	// Huffman-group allocation by the canvas (a 1×1 meta bomb bypasses the
+	// pixel check above).
+	img, err := imgcache.Decode(data)
 	if err != nil {
 		return emojiAddFile{}, errors.New("That file isn’t a PNG, GIF, JPEG or WebP image.")
 	}

@@ -1,10 +1,11 @@
 package imgcache
 
-// A GIF decoded one frame at a time. image/gif's DecodeAll holds every
-// frame's pixels at once (a 480×270 GIF of 100 frames is 13 MB of indices
-// before a single frame is composed), so an animation here keeps its
-// encoded bytes and an index of where each frame's LZW data starts, and
-// composes the next frame on its canvas when it's due, as browsers do.
+// A GIF decoded one frame at a time (an animated WebP too: webpanim.go).
+// image/gif's DecodeAll holds every frame's pixels at once (a 480×270 GIF
+// of 100 frames is 13 MB of indices before a single frame is composed),
+// so an animation here keeps its encoded bytes and an index of where each
+// frame's LZW data starts, and composes the next frame on its canvas when
+// it's due, as browsers do.
 //
 // Composition follows Chromium (and Firefox): a frame's transparent
 // pixels leave the canvas as it is, DisposalBackground clears the frame's
@@ -45,6 +46,8 @@ type gifIndex struct {
 	// prev: some frame disposes to previous (the decoder keeps a copy of
 	// what's under it)
 	prev bool
+	// webp: an animated WebP's frames (webpanim.go), not a GIF's
+	webp bool
 }
 
 // gifFrame is one image of a GIF: where it goes, how it's composed and
@@ -58,6 +61,12 @@ type gifFrame struct {
 	lit   int  // the LZW minimum code size
 	data  int  // offset of the image data's first sub-block
 	delay time.Duration
+	// an animated WebP's frame (webpanim.go): data is where its ALPH and
+	// VP8/VP8L chunks start and n their length; blend draws it over the
+	// canvas (else it replaces its rectangle); disp is
+	// gif.DisposalBackground for its dispose bit
+	n     int
+	blend bool
 }
 
 // gifPalette is a colour table as RGBA (GIF colours are opaque).
@@ -76,8 +85,12 @@ func readPalette(b []byte, n int) *gifPalette {
 
 // frameDelay is a frame's display time from its delay in centiseconds:
 // browsers play 0–10 ms as 100 ms.
-func frameDelay(cs int) time.Duration {
-	if d := time.Duration(cs) * 10 * time.Millisecond; d > 10*time.Millisecond {
+func frameDelay(cs int) time.Duration { return animDelay(time.Duration(cs) * 10 * time.Millisecond) }
+
+// animDelay is a frame's display time for its stated duration (a GIF's
+// or an animated WebP's): Chromium plays 10 ms or less as 100 ms.
+func animDelay(d time.Duration) time.Duration {
+	if d > 10*time.Millisecond {
 		return d
 	}
 	return 100 * time.Millisecond
@@ -254,17 +267,27 @@ type gifDecoder struct {
 	lz     *lzw.Reader
 	next   int // the frame compose draws next
 	last   int // the frame on the canvas, -1 none
+	// an animated WebP's (webpanim.go): the frame's chunks as a still
+	// WebP of their own, and why the last frame drawn didn't decode
+	wfile []byte
+	werr  error
 }
 
 func newGIFDecoder(ix *gifIndex, data []byte) *gifDecoder {
 	return &gifDecoder{ix: ix, data: data, canvas: image.NewRGBA(image.Rect(0, 0, ix.w, ix.h)), last: -1}
 }
 
-// decoderBytes is what a decoder of ix holds besides the encoded data.
+// decoderBytes is what a decoder of ix holds besides the encoded data:
+// the canvas and the LZW tables, the rectangle under a DisposalPrevious
+// frame, and what a WebP frame's decode allocates (webpFrameBytes: its
+// picture is no bigger than the canvas).
 func decoderBytes(ix *gifIndex) int {
-	n := ix.w*ix.h*4 + 16<<10 // the canvas, the LZW tables
+	n := ix.w*ix.h*4 + 16<<10
 	if ix.prev {
 		n += ix.w * ix.h * 4
+	}
+	if ix.webp {
+		n += webpFrameBytes(ix)
 	}
 	return n
 }
@@ -299,7 +322,11 @@ func (d *gifDecoder) compose() int {
 		}
 		copyRect(d.canvas, r, d.save, true)
 	}
-	d.draw(f)
+	if d.ix.webp {
+		d.drawWebP(f)
+	} else {
+		d.draw(f)
+	}
 	d.last = i
 	d.next = (i + 1) % len(d.ix.frames)
 	return i

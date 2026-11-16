@@ -104,8 +104,9 @@ func (s *scope) events() {
 		sx = pointer.ScrollRange{Min: -1e6, Max: 1e6}
 		sy = sx
 	}
-	if s.rehover && s.ptrIn {
-		// content scrolled under a still pointer
+	if s.rehover && s.ptrIn && gtx.Source.Enabled() {
+		// content scrolled under a still pointer (a measure pass leaves it
+		// for the live one: its hover change would ask for no frame)
 		s.rehover = false
 		v.setHover(s.hitTest(s.ptr), s, &pointer.Event{Position: s.ptr})
 	}
@@ -690,8 +691,13 @@ func (v *View) focusBox(s *scope, b *box) {
 }
 
 // focusEvents reports focus transitions of a focusable box (called while
-// painting it, every frame).
+// painting it, every frame). Not in a measure pass (a native measuring the
+// tree it lays out, gtx.Disabled()), where Gio reports nothing focused: a
+// focused input there sent JS blur and focus again on every relayout.
 func (v *View) focusEvents(s *scope, b *box) {
+	if !s.gtx.Source.Enabled() {
+		return
+	}
 	ns := v.state(b)
 	f := s.gtx.Focused(v.focusTag(b))
 	if f == ns.focused {

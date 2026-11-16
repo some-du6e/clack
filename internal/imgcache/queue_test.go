@@ -119,3 +119,97 @@ func TestQueuedLoadsDontParkGoroutines(t *testing.T) {
 		t.Fatalf("%d goroutines left after the queue drained", g)
 	}
 }
+
+// An on-screen image's load jumps the queue only while it's on screen,
+// which is judged by frames drawn, not the clock: on an idle window (a
+// slow link, nothing new to draw) a load completing runs the next load
+// before the window has drawn another frame, so "when was it last drawn"
+// must be the last frame, not now. Here a gap of real time passes with no
+// frame drawn, and the on-screen load still jumps the queue; by the clock
+// it would look long off screen and lose to the backlog.
+func TestHotQueueIdleGapKeepsOnScreen(t *testing.T) {
+	release := make(chan struct{})
+	started := make(chan string, 1000)
+	c := New(func(_ context.Context, u string) ([]byte, error) {
+		started <- u
+		<-release
+		return pngBytes(8, 8), nil
+	}, "", nil)
+	url := func(i int) string {
+		return fmt.Sprintf("https://emoji.slack-edge.com/T1/e%04d/0123456789abcdef.png", i)
+	}
+	next := func(what string) string {
+		t.Helper()
+		select {
+		case u := <-started:
+			return u
+		case <-time.After(30 * time.Second):
+			t.Fatalf("%s: no load started", what)
+			return ""
+		}
+	}
+	const n = 100
+	for i := 0; i < n; i++ { // a backlog, every worker busy
+		c.Get(url(i), 16)
+	}
+	for k := 0; k < laneWorkers; k++ {
+		next("the first loads")
+	}
+	on := url(1000)
+	c.Get(on, 16) // queued behind the backlog...
+	c.Get(on, 16) // ...and drawn again: on screen (hot)
+
+	// an idle gap: wall time passes, but no frame is drawn (no Get), so the
+	// on-screen image is on screen still
+	time.Sleep(animGrace + 300*time.Millisecond)
+
+	release <- struct{}{}
+	if u := next("the freed worker"); u != on {
+		t.Fatalf("after an idle gap the freed worker loaded %s, want the on-screen %s (demotion by frames, not the clock)", u, on)
+	}
+	close(release)
+	for dl := time.Now().Add(5 * time.Second); c.Pending() > 0 && time.Now().Before(dl); time.Sleep(10 * time.Millisecond) {
+	}
+	if c.Pending() != 0 {
+		t.Errorf("%d loads pending after the queue drained", c.Pending())
+	}
+}
+
+// When the images on screen need more decoded bytes than the budget, each
+// load evicts another one still drawn, which the next frame re-queues and
+// promotes to hot. The hot queue mustn't serve those ahead of the cold
+// queue for ever, or an image queued once (scrolled past, not redrawn)
+// never loads. nextLocked takes the cold queue's head after hotRunMax hot
+// loads in a row, so every queued image loads. The scheduler is driven
+// directly here: a fresh on-screen image is re-queued hot every turn
+// (the thrash), while one cold entry waits in the queue.
+func TestHotQueueDoesNotStarveColdQueue(t *testing.T) {
+	c := New(nil, "", nil)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	const lane = laneSmall
+	c.waiting = map[key]queued{}
+	c.drawnAt = time.Now().UnixMilli()
+	cold := key{"https://emoji.slack-edge.com/T1/cold/0123456789abcdef.png", 16}
+	c.waiting[cold] = queued{asked: c.drawnAt}
+	c.queue[lane] = []key{cold}
+	hot := 0
+	for i := 0; i < 10*hotRunMax; i++ {
+		k := key{fmt.Sprintf("https://emoji.slack-edge.com/T1/h%04d/0123456789abcdef.png", i), 16}
+		c.waiting[k] = queued{asked: c.drawnAt, hot: true}
+		c.hot[lane] = append(c.hot[lane], k)
+		got, ok := c.nextLocked(lane)
+		if !ok {
+			t.Fatal("the lane served nothing with work waiting")
+		}
+		if got == cold {
+			if hot > hotRunMax {
+				t.Fatalf("the cold entry waited behind %d hot loads, cap is %d", hot, hotRunMax)
+			}
+			return
+		}
+		hot++
+		delete(c.waiting, got) // the on-screen one loaded
+	}
+	t.Fatalf("the cold entry never loaded behind a stream of hot ones (%d served)", hot)
+}

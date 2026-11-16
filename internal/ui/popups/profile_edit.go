@@ -61,14 +61,13 @@ package popups
 // speed_bump_modal, rimeto_atlas_user and date_picker.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"image"
 	"image/color"
-	_ "image/gif"  // decoding the picked photo
-	_ "image/jpeg" // decoding the picked photo
-	_ "image/png"  // decoding the picked photo
+	_ "image/gif"  // decoders registered for imgcache.Decode
+	_ "image/jpeg" // decoders registered for imgcache.Decode
+	_ "image/png"  // decoders registered for imgcache.Decode
 	"math"
 	"strings"
 	"time"
@@ -87,6 +86,7 @@ import (
 
 	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/i18n"
+	"github.com/some-du6e/clack/internal/imgcache"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 	"github.com/some-du6e/clack/internal/ui/theme"
 )
@@ -1095,7 +1095,7 @@ func (u *epUpload) start() {
 		if err != nil {
 			return res{}, err
 		}
-		img, _, err := image.Decode(bytes.NewReader(f.Data))
+		img, err := imgcache.Decode(f.Data) // size- and lossless-gated
 		if err != nil {
 			return res{}, core.ErrPhotoAPI
 		}

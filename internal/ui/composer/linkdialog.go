@@ -170,9 +170,12 @@ func (d *crLinkDlg) layoutBody(gtx layout.Context, p slackc.Props) layout.Dimens
 }
 
 // body draws the two fields. The modal calls it twice a frame (measure,
-// then draw); events are handled in whichever pass comes first.
+// then draw); events are handled in whichever pass comes first. The first
+// focus waits for a pass that delivers input: under a plugin patching
+// ComposerLinkModal slackc measures this native with gtx.Disabled() first,
+// where the FocusCmd went nowhere and neither field ever got the caret.
 func (d *crLinkDlg) body(gtx layout.Context) layout.Dimensions {
-	if !d.focused {
+	if !d.focused && gtx.Source.Enabled() {
 		d.focused = true
 		tag := &d.text
 		if d.text.Len() > 0 {

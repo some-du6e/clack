@@ -322,11 +322,16 @@ func (p *painter) input(b *box, r rectF, visible bool) {
 	if b.disabled() {
 		gtx = gtx.Disabled()
 	}
-	if truthy(b.n.P["autoFocus"]) && !ns.autoFocused {
-		ns.autoFocused = true
-		gtx.Execute(key.FocusCmd{Tag: ed})
-	} else if modalFocus(b, ns) {
-		gtx.Execute(key.FocusCmd{Tag: ed})
+	// autoFocus and a modal's focus wait for a live pass: in a native's
+	// measure pass (gtx.Disabled()) the FocusCmd went nowhere and the
+	// input never got the focus it was marked as having taken
+	if s.gtx.Source.Enabled() {
+		if truthy(b.n.P["autoFocus"]) && !ns.autoFocused {
+			ns.autoFocused = true
+			gtx.Execute(key.FocusCmd{Tag: ed})
+		} else if modalFocus(b, ns) {
+			gtx.Execute(key.FocusCmd{Tag: ed})
+		}
 	}
 	// keys the editor doesn't report: Escape, and arrows in one-line inputs
 	if ns.filters == nil {
@@ -482,11 +487,13 @@ func (p *painter) focusArea(b *box, r rectF) {
 	event.Op(p.ops, &ns.tag)
 	pp.Pop()
 	ar.Pop()
-	if truthy(b.n.P["autoFocus"]) && !ns.autoFocused {
-		ns.autoFocused = true
-		s.gtx.Execute(key.FocusCmd{Tag: &ns.tag})
-	} else if modalFocus(b, ns) {
-		s.gtx.Execute(key.FocusCmd{Tag: &ns.tag})
+	if s.gtx.Source.Enabled() { // not in a measure pass (see input)
+		if truthy(b.n.P["autoFocus"]) && !ns.autoFocused {
+			ns.autoFocused = true
+			s.gtx.Execute(key.FocusCmd{Tag: &ns.tag})
+		} else if modalFocus(b, ns) {
+			s.gtx.Execute(key.FocusCmd{Tag: &ns.tag})
+		}
 	}
 	v.keyEvents(s, b)
 	v.focusEvents(s, b)
