@@ -101,8 +101,12 @@ type perfPass struct {
 	GCs      int     `json:"gcs"`      // collections during the pass
 	GCPause  float64 `json:"gc_pause"` // ms of stop-the-world pauses
 	Events   int     `json:"events"`   // realtime events injected
-	Trees    int     `json:"trees"`    // host trees delivered
-	Renders  int64   `json:"renders"`  // Go→JS Render/RenderIn calls
+	// Trees are the host trees JS delivered during the 300 frames that
+	// changed their root's tree; TreesSame the ones identical to it (a
+	// React commit with the same output)
+	Trees     int   `json:"trees"`
+	TreesSame int   `json:"trees_same"`
+	Renders   int64 `json:"renders"` // Go→JS Render/RenderIn calls
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
 	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
@@ -360,8 +364,8 @@ func TestPerfPluginScroll(t *testing.T) {
 		}
 	}
 	for _, p := range res.Passes {
-		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees %d, renders %d",
-			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.Renders)
+		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees changed %d (identical %d), renders %d",
+			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.TreesSame, p.Renders)
 	}
 	if out := os.Getenv("PERF_PLUGIN_OUT"); out != "" {
 		b, _ := json.MarshalIndent(res, "", "  ")
@@ -430,7 +434,13 @@ func perfInstall(ctx context.Context, e *benchEnv, page *libraryPage, entry plug
 // realtime events arrive meanwhile.
 func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfTraffic) perfPass {
 	runtime.GC()
-	trees0, calls0 := e.delivered(), e.calls.snapshot()
+	treeCounts := func() (all, same int) {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		return e.deliveries, e.same
+	}
+	trees0, same0 := treeCounts()
+	calls0 := e.calls.snapshot()
 	if perfProfPrefix != "" {
 		writeProf := func(suffix string) {
 			runtime.GC() // the allocs profile is as of the last collection
@@ -507,13 +517,14 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	if traffic != nil {
 		events = traffic.stop()
 	}
+	trees1, same1 := treeCounts()
 	runtime.ReadMemStats(&ms1)
 	e.settle(400 * time.Millisecond) // the JS renders of rows that scrolled in
 	cpu := procCPU() - c0
 	calls := e.calls.snapshot()
 	n := float64(len(ds))
 	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000, Events: events,
-		Trees: e.delivered() - trees0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
+		Trees: trees1 - trees0 - (same1 - same0), TreesSame: same1 - same0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
 		Allocs: float64(ms1.Mallocs-ms0.Mallocs) / n, AllocKB: float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n,
 		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6, Slow: slow}
 	for _, d := range ds {

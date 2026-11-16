@@ -28,7 +28,8 @@ METRICS = [
     ("alloc_kb", "KB allocated / frame", ""),
     ("gcs", "collections", ""),
     ("gc_pause", "GC pauses", "ms"),
-    ("trees", "host trees delivered", ""),
+    ("trees", "plugin trees that changed (during the frames)", ""),
+    ("trees_same", "plugin trees re-delivered unchanged", ""),
     ("renders", "Go→JS renders", ""),
 ]
 
