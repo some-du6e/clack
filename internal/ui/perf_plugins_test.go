@@ -40,6 +40,9 @@ package ui
 //	                      pass (<prefix>-<pass>.cpu.pprof, .allocs0/1.pprof
 //	                      before and after) and the mutex and block
 //	                      profiles over all passes
+//	PERF_PLUGIN_RECORDER  n: then n pairs of channel-live passes with the
+//	                      execution-trace flight recorder off and on
+//	                      (flightrec.go; trees that have it)
 //
 // Synthetic data only; nothing reaches Slack. It uses nothing newer than
 // the plugin bench, so the perf workflow runs this same file on the
@@ -60,6 +63,7 @@ import (
 	"runtime/metrics"
 	"runtime/pprof"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -110,7 +114,17 @@ type perfPass struct {
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
 	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
+	// TraceMB and TraceMS: with the flight recorder on, the trace of its
+	// window written after the pass, as a slow frame writes it
+	TraceMB float64 `json:"trace_mb,omitempty"`
+	TraceMS float64 `json:"trace_ms,omitempty"`
 }
+
+// perfRecorder starts the execution-trace flight recorder (flightrec.go)
+// and returns its stop and a function writing its window (bytes, time).
+// perf_flightrec_test.go sets it; the base tree (which runs this file) has
+// no recorder, so there it stays nil and the recorder passes are skipped.
+var perfRecorder func() (stop func(), dump func() (int, time.Duration), err error)
 
 type perfSlow struct {
 	MS    float64  `json:"ms"`
@@ -349,6 +363,42 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.a.Navigate("activity")
 	e.settle(2 * time.Second)
 	res.Passes = append(res.Passes, e.perfScroll("activity", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
+
+	// what the flight recorder costs: PERF_PLUGIN_RECORDER pairs of the
+	// channel-live pass with it off and on, in turns (off-on, on-off, …),
+	// without the CPU profiler (the tracer records its samples too)
+	if pairs, _ := strconv.Atoi(os.Getenv("PERF_PLUGIN_RECORDER")); pairs > 0 && perfRecorder != nil {
+		e.openBench()
+		profPrefix := perfProfPrefix
+		perfProfPrefix = ""
+		for i := 0; i < pairs; i++ {
+			order := []bool{false, true}
+			if i%2 == 1 {
+				order = []bool{true, false}
+			}
+			for _, on := range order {
+				name := "channel-live, recorder off"
+				var stop func()
+				var dump func() (int, time.Duration)
+				if on {
+					var err error
+					if stop, dump, err = perfRecorder(); err != nil {
+						t.Fatalf("the flight recorder: %v", err)
+					}
+					name = "channel-live, recorder on"
+				}
+				e.settle(2 * time.Second) // the recorder holds a few generations first
+				p := e.perfScroll(name, e.listPoint, traffic(fakeslack.BenchChannelID, ""))
+				if on {
+					n, took := dump()
+					p.TraceMB, p.TraceMS = float64(n)/1e6, float64(took.Microseconds())/1000
+					stop()
+				}
+				res.Passes = append(res.Passes, p)
+			}
+		}
+		perfProfPrefix = profPrefix
+	}
 
 	if prof != "" {
 		for _, k := range []string{"mutex", "block"} {
