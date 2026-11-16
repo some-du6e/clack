@@ -72,9 +72,10 @@ React.createElement(Same)`)
 	quiet(t, rec, 300*time.Millisecond, "re-rendered with the same output")
 
 	// pointer events that change nothing on their target (rows passing
-	// under a still pointer as a list scrolls)
+	// under a still pointer as a list scrolls), with the target state
+	// slackc sends with every event
 	for _, typ := range []string{"mouseenter", "mouseover", "mouseleave"} {
-		r.DispatchEvent(div.K, []byte(`{"type":"`+typ+`","clientX":4,"clientY":4,"buttons":0}`))
+		r.DispatchEvent(div.K, []byte(`{"type":"`+typ+`","clientX":4,"clientY":4,"buttons":0,"target":{},"rects":{}}`))
 	}
 	quiet(t, rec, 300*time.Millisecond, "pointer events over the row")
 
