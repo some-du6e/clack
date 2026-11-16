@@ -405,6 +405,7 @@ type Activity struct {
 
 	mode         actLoad
 	wasBusy      bool
+	loadedFrom   core.ActivityPage // the page the last load started from (settle)
 	paging       bool
 	pageCursor   string
 	failedCursor string
@@ -895,18 +896,18 @@ func actIntersect(a, b string) string {
 	return strings.Join(out, ",")
 }
 
-// settle runs once after each load finishes: rebuilds cached row text
-// and records a failed pagination cursor so it is not retried in a loop.
+// settle runs once after each load finishes: rebuilds the cached text of
+// the rows the answer changed (activity_settle.go) and records a failed
+// pagination cursor so it is not retried in a loop.
 func (v *Activity) settle() {
 	if !v.wasBusy || v.data.busy() {
 		return
 	}
 	v.wasBusy = false
-	for _, r := range v.rows {
-		r.built = false
-	}
+	page, _, err := v.data.get()
+	v.unbuildChanged(v.loadedFrom, page)
+	v.loadedFrom = core.ActivityPage{}
 	v.dirty = true
-	_, _, err := v.data.get()
 	v.offline = err != nil && actOffline(err)
 	if v.paging {
 		v.paging = false
@@ -923,6 +924,7 @@ func (v *Activity) load(mode actLoad) {
 		Priority: v.vip, SectionIDs: v.sections, ChannelIDs: v.channels, Mode: v.feedMode(),
 		ExcludeAutomations: v.exclAuto, AutomationsOnly: v.autoOnly}
 	old, _, _ := v.data.get()
+	v.loadedFrom = old // settle compares the answer with it
 	if mode == actMore {
 		opts.Cursor = old.Next
 		v.pageCursor = old.Next

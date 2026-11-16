@@ -60,6 +60,7 @@ type App struct {
 	streams openStreams // chat streams seen in progress (events.go emitStreamDone)
 
 	saves sync.WaitGroup // background disk saves (loadEmoji's meta.json)
+	side  sideReads      // History's side reads (history_side.go)
 
 	// bg scopes all background work (realtime, prefetch, resolvers); it is
 	// cancelled when the session ends.
@@ -393,6 +394,7 @@ func (a *App) onAuthFailed(code string) {
 // timers). The App must not be used afterwards. For tests and benchmarks
 // that start many sessions in one process; the UI simply exits.
 func (a *App) Shutdown() {
+	defer a.side.wait() // History's side reads, which the stop below cancels
 	a.StopTraffic()
 	a.saves.Wait() // a metadata save still writing (loadEmoji)
 }
@@ -713,6 +715,7 @@ func (a *App) Boot(ctx context.Context) error {
 
 // Close saves the metadata cache (after any save still writing).
 func (a *App) Close() error {
+	a.side.wait() // History's side reads (StopTraffic, before it, cancelled them)
 	a.saves.Wait()
 	return a.S.SaveCache()
 }

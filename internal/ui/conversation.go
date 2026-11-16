@@ -145,6 +145,7 @@ func (a *App) convoFor(ch, ts string) *convo {
 		a.convos = map[string]*convo{}
 	}
 	if c := a.convos[k]; c != nil {
+		a.convoOrder = lruTouch(a.convoOrder, k) // view_lru.go
 		return c
 	}
 	c := &convo{ch: ch, ts: ts}
@@ -156,13 +157,14 @@ func (a *App) convoFor(ch, ts string) *convo {
 	a.attachComposer(c)
 	a.convos[k] = c
 	a.convoOrder = append(a.convoOrder, k)
-	if len(a.convoOrder) > 32 {
-		old := a.convoOrder[0]
+	if len(a.convoOrder) > maxConvos {
+		old := a.convoOrder[0] // the least recently used
 		a.convoOrder = a.convoOrder[1:]
 		if oc := a.convos[old]; oc != nil && oc.comp != nil {
 			oc.comp.Close() // saves the draft
 		}
 		delete(a.convos, old)
+		noteEvicted("convo", old)
 	}
 	return c
 }

@@ -1,0 +1,6 @@
+package core
+
+// The experiment the sidebar's press prefetch reads (TestExperimentReadsListed;
+// ui sidebar_prefetch.go): boot-render PZNh prefetchPointerdownHistory
+// starts a pressed row's history request only for "treatment".
+func init() { experimentReads["pointerdown_history_prefetch"] = []string{"treatment"} }
