@@ -11,6 +11,7 @@ package inspect
 import (
 	"image"
 	"image/color"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -447,7 +448,8 @@ func TestCaptureOpensReview(t *testing.T) {
 
 // A plain click delivers what a Shift+click's review copies when no rect
 // is marked (Mod+C here): the same crop, the same shot in the image, the
-// same report but for its time; no capture or blurred row.
+// same report but for its time and its tags' hashes (salted per
+// report); no capture or blurred row.
 func TestPlainClickSameAsReviewed(t *testing.T) {
 	e := newDragEnv(t)
 	p := f32.Pt(100, 300)
@@ -510,7 +512,7 @@ func TestPlainClickSameAsReviewed(t *testing.T) {
 	rows := func(r *Report) map[string]string {
 		m := map[string]string{}
 		for _, l := range r.Lines() {
-			m[l.Key] = l.Value
+			m[l.Key] = tagHash.ReplaceAllString(l.Value, ":*")
 		}
 		delete(m, "clack") // the time
 		return m
@@ -533,3 +535,6 @@ func TestPlainClickSameAsReviewed(t *testing.T) {
 		t.Errorf("the plain click's report: region %q, colors %q", a["region"], a["colors"])
 	}
 }
+
+// tagHash is a tag's hash (ch:3fa2b1), which a report's salt makes its own.
+var tagHash = regexp.MustCompile(`:[0-9a-f]{6}\b`)
