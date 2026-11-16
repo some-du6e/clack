@@ -986,3 +986,34 @@ jobs:
       - name: "messages: Message gets MessageWrapper's very msg, 3 runs"
         if: ${{ !cancelled() }}
         run: go test -count=3 -v -run '^TestMessagePatchGetsWrappersExactMsg$' ./internal/ui/messages
+
+  # plugin-escape: one overlay stack per window (slackc layers.go), the
+  # way the DOM does a modal. Escape goes to the focused element first (a
+  # plugin input's keydown to JS, which can stop it), then to the innermost
+  # layer holding the focus, else the topmost; the shell's "Close / mark as
+  # read" only with none open. A layer that closes gives the focus back to
+  # what had it (Gio patch 34's focus answers).
+  plugin-escape:
+    if: ${{ !inputs.only || startsWith('plugin-escape', inputs.only) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gio deps
+        run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
+      - name: "Gio patch 34: the focus answers, COUNT runs"
+        run: go test -count=$COUNT -run 'FocusTagCanFocusWithin' gioui.org/io/input
+      - name: "slackc: the overlay stack's Escape and focus, COUNT runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -run '^(TestEscapeGoesToTheLayerHoldingTheFocus|TestLayerGivesFocusBack|TestPluginInputEscapeBubbles|TestLayerOpenOnlyInItsWindow)$' ./internal/ui/slackc
+      - name: "kit: a Popover's Escape (top first, its field's listeners first) and focus, COUNT runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=$COUNT -run '^(TestPopoverAutoFocusFieldKeepsCaret|TestFormTextInputFocusThroughMeasurePasses|TestPopoverEscapeCloses|TestNestedPopoversCloseTopFirst|TestConfirmInsidePopoverClosesFirst|TestPopoverGivesFocusBack|TestPopoverTakesFocusBackFromRemovedField|TestPopoverInputCanStopEscape)$' ./internal/ui/slackc/kit
+      - name: "ui: Escape and the focus in each stacking in the main window, 3 runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=3 -v -timeout 20m -run '^(TestEscapeClosesPluginPopoverFirst|TestEscapeWithThePumpUp|TestPopoverInsideEditProfile|TestPopoverInViewsModal|TestDialogOverPopover|TestEscapeOwners)$' ./internal/ui
