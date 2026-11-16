@@ -24,6 +24,10 @@ METRICS = [
     ("median_ms", "median frame", "ms"),
     ("total_ms", "sum of 300 frames", "ms"),
     ("cpu_ms", "process CPU", "ms"),
+    ("allocs", "allocations / frame", ""),
+    ("alloc_kb", "KB allocated / frame", ""),
+    ("gcs", "collections", ""),
+    ("gc_pause", "GC pauses", "ms"),
     ("trees", "host trees delivered", ""),
     ("renders", "Go→JS renders", ""),
 ]
@@ -53,14 +57,14 @@ def main():
     sides = {"base": load(d, "base"), "head": load(d, "head")}
     print(f"## Scroll frames under a plugin set like Karim's\n")
     print(f"Before: `{base_label}` ({len(sides['base'])} rounds). After: `{head_label}` ({len(sides['head'])} rounds).")
-    print("Each pass is 300 frames, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU.")
+    print("Each pass is 300 frames at 60 a second, a wheel step each (150 up, 150 down); a frame is the UI goroutine's drain + layout, no GPU. Allocations and collections are the whole process's.")
     print("Values are the median over the rounds, the rounds in brackets.\n")
     ref = (sides["head"] or sides["base"] or [{}])[0]
     if ref:
         print(f"Plugins running: {', '.join(ref.get('plugins') or []) or 'none'}" +
               (f"; failed to start: {', '.join(ref['failed'])}" if ref.get("failed") else ""))
         print(f"\nPatched components: {', '.join(ref.get('patched') or [])}\n")
-        print(f"{ref.get('messages', 0)} messages in the channel, {ref.get('replies', 0)} replies in the thread.\n")
+        print(f"{ref.get('messages', 0)} messages in the channel, {ref.get('replies', 0)} replies in the thread, {ref.get('visited', 0)} other channels opened first; live heap {ref.get('heap_mb', 0):.0f} MB.\n")
     names = []
     for runs in sides.values():
         for r in runs:

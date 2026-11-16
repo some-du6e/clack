@@ -3,34 +3,43 @@ package ui
 // Scroll frames under a plugin set like Karim's (perf workflow, jobs:
 // plugins): the Library's Taut plugins that are on by default plus Slick's
 // Message Logger, run unmodified from the published `plugins` release, in
-// the whole client over internal/fakeslack (the plugin bench's
-// workspace). Together they patch what the freeze reports of 2026-11-15
-// showed the UI goroutine stuck in: MessageListItem, MessageWrapper,
-// MessageText, Blocks, the thread pane's rows, the gutter, MessageSender,
-// MessagePaneInput and TypingNames, and the messages slice (patched
-// views and injected messages).
+// the whole client over internal/fakeslack (the plugin bench's workspace
+// with more channels and the Activity inbox). Together they patch what
+// the freeze reports of 2026-11-15 showed the UI goroutine stuck in:
+// MessageListItem, MessageWrapper, MessageText, Blocks, the thread pane's
+// rows, the gutter, MessageSender, MessagePaneInput and TypingNames, and
+// the messages slice (patched views and injected messages).
 //
-// The passes, each a wheel step a frame:
+// Like a long session, it first opens 40 channels (the plugin mirror then
+// watches them all), then measures, a wheel step a frame at 60 frames a
+// second:
 //
 //	channel       the 500-message #plugin-bench, bottom to top and back
-//	channel-live  the same while people type, post, react, edit and
-//	              delete in it (realtime events through core.Inject)
-//	thread-live   a 300-reply thread in the side pane, with replies and
-//	              typing arriving
+//	channel-live  the same while people type, post, react, edit and delete
+//	              in it and post in the other channels (realtime events
+//	              through core.Inject)
+//	channel-gc    channel-live with the heap near its memory limit, so the
+//	              collector runs all the time (cmd/clack's 768 MB limit in
+//	              a long Hack Club session)
+//	thread-live   a 300-reply thread in the side pane, replies and typing
+//	              arriving
+//	activity      the Activity page, scrolled, with the same traffic
 //
 // For each it records every frame's time on the UI goroutine (drain +
-// layout; no GPU) and the process CPU. A freeze is one long frame, so the
-// report leads with the longest frame and the frames over 50, 100 and 250
-// ms, then the median and p95.
+// layout; no GPU, so the sleep to the next frame isn't counted), the
+// process CPU, allocations and collections. A freeze is one long frame, so
+// the report leads with the longest frame and the frames over 50, 100 and
+// 250 ms, then the median and p95.
 //
 //	PLUGIN_BENCH_LIBRARY  the `plugins` release's files (index.json + bundles)
 //	PERF_PLUGINS          system:id list; "taut:@default" is every Taut
 //	                      plugin the Library turns on by default
 //	                      (default "taut:@default,slick:MessageLogger")
 //	PERF_PLUGIN_OUT       where the JSON result goes
-//	PERF_PLUGIN_PROF      a path prefix: a CPU profile per pass
-//	                      (<prefix>-<pass>.cpu.pprof) and the mutex and
-//	                      block profiles over all passes
+//	PERF_PLUGIN_PROF      a path prefix: a CPU and an allocation profile per
+//	                      pass (<prefix>-<pass>.cpu.pprof, .allocs0/1.pprof
+//	                      before and after) and the mutex and block
+//	                      profiles over all passes
 //
 // Synthetic data only; nothing reaches Slack. It uses nothing newer than
 // the plugin bench, so the perf workflow runs this same file on the
@@ -41,11 +50,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"runtime/pprof"
 	"sort"
 	"strings"
@@ -63,6 +74,14 @@ import (
 // perfProfPrefix is PERF_PLUGIN_PROF while the passes run.
 var perfProfPrefix string
 
+// perfPluginSize is the bench's workspace with the channels of a longer
+// session and the Activity inbox.
+var perfPluginSize = func() fakeslack.Size {
+	s := benchSize
+	s.Channels, s.Views = 60, true
+	return s
+}()
+
 // perfPass is one measured pass.
 type perfPass struct {
 	Name     string  `json:"name"`
@@ -76,6 +95,10 @@ type perfPass struct {
 	Over250  int     `json:"over_250ms"`
 	TotalMS  float64 `json:"total_ms"` // sum of the frames
 	CPUMS    float64 `json:"cpu_ms"`   // process CPU over the pass
+	Allocs   float64 `json:"allocs"`   // allocations per frame (whole process)
+	AllocKB  float64 `json:"alloc_kb"` // KB allocated per frame (whole process)
+	GCs      int     `json:"gcs"`      // collections during the pass
+	GCPause  float64 `json:"gc_pause"` // ms of stop-the-world pauses
 	Events   int     `json:"events"`   // realtime events injected
 	Trees    int     `json:"trees"`    // host trees delivered
 	Renders  int64   `json:"renders"`  // Go→JS Render/RenderIn calls
@@ -87,6 +110,8 @@ type perfPluginResult struct {
 	Patched  []string   `json:"patched"`
 	Messages int        `json:"messages"`
 	Replies  int        `json:"replies"`
+	Visited  int        `json:"visited"`
+	HeapMB   float64    `json:"heap_mb"` // live heap after setup
 	Passes   []perfPass `json:"passes"`
 }
 
@@ -123,7 +148,7 @@ func TestPerfPluginScroll(t *testing.T) {
 		t.Fatalf("PERF_PLUGINS %q matches nothing in the Library", want)
 	}
 
-	fs, err := fakeslack.Start(benchSize)
+	fs, err := fakeslack.Start(perfPluginSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,8 +205,21 @@ func TestPerfPluginScroll(t *testing.T) {
 	res.Patched = slackc.PatchedNames()
 	t.Logf("running %d plugins (%s), failed %v; patched: %s", len(res.Plugins), strings.Join(res.Plugins, " "), res.Failed, strings.Join(res.Patched, " "))
 
+	// a long session: many channels opened (the mirror watches each)
+	chans := fs.ChannelIDs()
+	var others []string
+	for _, ch := range chans {
+		if ch == fakeslack.BenchChannelID || len(others) >= 40 {
+			continue
+		}
+		e.openChannel(ch)
+		e.settle(120 * time.Millisecond)
+		others = append(others, ch)
+	}
+	res.Visited = len(others)
+
 	// a long thread in another channel, served by conversations.replies
-	thCh := fs.ChannelIDs()[1]
+	thCh := others[0]
 	thRoot, _ := fs.PostQuiet(thCh, e.c.Authors[0], "the long thread for the scroll pass")
 	const replies = 300
 	for i := 0; i < replies; i++ {
@@ -193,7 +231,9 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.openBench()
 	e.loadAll()
 	res.Messages = e.loadedMessages(fakeslack.BenchChannelID)
-	t.Logf("%d messages loaded", res.Messages)
+	runtime.GC()
+	res.HeapMB = liveHeapMB()
+	t.Logf("%d messages loaded, %d channels visited, live heap %.0f MB", res.Messages, res.Visited, res.HeapMB)
 
 	prof := os.Getenv("PERF_PLUGIN_PROF")
 	if prof != "" {
@@ -205,9 +245,20 @@ func TestPerfPluginScroll(t *testing.T) {
 		}()
 	}
 	perfProfPrefix = prof
+	traffic := func(ch, thread string) *perfTraffic {
+		return &perfTraffic{e: e, ch: ch, thread: thread, others: others[1:]}
+	}
 	res.Passes = append(res.Passes, e.perfScroll("channel", e.listPoint, nil))
-	live := &perfTraffic{e: e, ch: fakeslack.BenchChannelID}
-	res.Passes = append(res.Passes, e.perfScroll("channel-live", e.listPoint, live))
+	res.Passes = append(res.Passes, e.perfScroll("channel-live", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
+	func() {
+		// the heap a quarter above what's live: the collector runs all the
+		// time, as near cmd/clack's limit
+		runtime.GC()
+		lim := int64(liveHeapMB()*1.25*(1<<20)) + 32<<20
+		old := debug.SetMemoryLimit(lim)
+		defer debug.SetMemoryLimit(old)
+		res.Passes = append(res.Passes, e.perfScroll("channel-gc", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
+	}()
 
 	e.a.OpenThread(thCh, thRoot)
 	e.until("the thread pane", 20*time.Second, func() bool { return e.a.secondary.kind == secThread })
@@ -216,14 +267,17 @@ func TestPerfPluginScroll(t *testing.T) {
 		o := e.a.secondaryOrigin
 		return image.Pt(o.X+(e.size.X-o.X)/2, o.Y+(e.size.Y-o.Y)/3)
 	}
-	// to the thread's end first, like toBottom
-	for i := 0; i < 60; i++ {
+	for i := 0; i < 60; i++ { // to the thread's end first, like toBottom
 		e.scroll(thPoint(), 4000)
 		e.frame()
 	}
 	e.settle(300 * time.Millisecond)
-	thLive := &perfTraffic{e: e, ch: thCh, thread: thRoot}
-	res.Passes = append(res.Passes, e.perfScroll("thread-live", thPoint, thLive))
+	res.Passes = append(res.Passes, e.perfScroll("thread-live", thPoint, traffic(thCh, thRoot)))
+	e.a.CloseSecondary()
+
+	e.a.Navigate("activity")
+	e.settle(2 * time.Second)
+	res.Passes = append(res.Passes, e.perfScroll("activity", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
 
 	if prof != "" {
 		for _, k := range []string{"mutex", "block"} {
@@ -234,8 +288,8 @@ func TestPerfPluginScroll(t *testing.T) {
 		}
 	}
 	for _, p := range res.Passes {
-		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, events %d, trees %d, renders %d",
-			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Events, p.Trees, p.Renders)
+		t.Logf("pass %-12s frames %d: max %.1f ms, >50ms %d, >100ms %d, >250ms %d, median %.2f ms, p95 %.2f ms, p99 %.2f ms, total %.0f ms, cpu %.0f ms, %.0f allocs %.0f KB/frame, %d GCs %.1f ms paused, events %d, trees %d, renders %d",
+			p.Name, p.Frames, p.MaxMS, p.Over50, p.Over100, p.Over250, p.MedianMS, p.P95MS, p.P99MS, p.TotalMS, p.CPUMS, p.Allocs, p.AllocKB, p.GCs, p.GCPause, p.Events, p.Trees, p.Renders)
 	}
 	if out := os.Getenv("PERF_PLUGIN_OUT"); out != "" {
 		b, _ := json.MarshalIndent(res, "", "  ")
@@ -300,12 +354,20 @@ func perfInstall(ctx context.Context, e *benchEnv, page *libraryPage, entry plug
 }
 
 // perfScroll scrolls the list under at() up 150 wheel steps and down 150,
-// one a frame, timing each frame; with traffic, realtime events arrive
-// meanwhile.
+// one a frame at 60 frames a second, timing each frame; with traffic,
+// realtime events arrive meanwhile.
 func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfTraffic) perfPass {
 	runtime.GC()
 	trees0, calls0 := e.delivered(), e.calls.snapshot()
 	if perfProfPrefix != "" {
+		writeProf := func(suffix string) {
+			if f, err := os.Create(perfProfPrefix + "-" + name + suffix); err == nil {
+				_ = pprof.Lookup("allocs").WriteTo(f, 0)
+				f.Close()
+			}
+		}
+		writeProf(".allocs0.pprof")
+		defer writeProf(".allocs1.pprof")
 		if f, err := os.Create(perfProfPrefix + "-" + name + ".cpu.pprof"); err == nil {
 			if pprof.StartCPUProfile(f) == nil {
 				defer func() {
@@ -317,6 +379,8 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 			}
 		}
 	}
+	var ms0, ms1 runtime.MemStats
+	runtime.ReadMemStats(&ms0)
 	c0 := procCPU()
 	if traffic != nil {
 		traffic.start()
@@ -326,7 +390,11 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 		e.scroll(at(), dy)
 		t0 := time.Now()
 		e.frame()
-		ds = append(ds, float64(time.Since(t0).Microseconds())/1000)
+		d := time.Since(t0)
+		ds = append(ds, float64(d.Microseconds())/1000)
+		if d < 16*time.Millisecond {
+			time.Sleep(16*time.Millisecond - d) // the next vsync
+		}
 	}
 	for i := 0; i < 150; i++ {
 		step(-260)
@@ -338,11 +406,15 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	if traffic != nil {
 		events = traffic.stop()
 	}
+	runtime.ReadMemStats(&ms1)
 	e.settle(400 * time.Millisecond) // the JS renders of rows that scrolled in
 	cpu := procCPU() - c0
 	calls := e.calls.snapshot()
+	n := float64(len(ds))
 	p := perfPass{Name: name, Frames: len(ds), CPUMS: float64(cpu.Microseconds()) / 1000, Events: events,
-		Trees: e.delivered() - trees0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1]}
+		Trees: e.delivered() - trees0, Renders: calls[0] - calls0[0] + calls[1] - calls0[1],
+		Allocs: float64(ms1.Mallocs-ms0.Mallocs) / n, AllocKB: float64(ms1.TotalAlloc-ms0.TotalAlloc) / 1024 / n,
+		GCs: int(ms1.NumGC - ms0.NumGC), GCPause: float64(ms1.PauseTotalNs-ms0.PauseTotalNs) / 1e6}
 	for _, d := range ds {
 		p.TotalMS += d
 		switch {
@@ -358,16 +430,20 @@ func (e *benchEnv) perfScroll(name string, at func() image.Point, traffic *perfT
 	}
 	sort.Float64s(ds)
 	p.MedianMS, p.P95MS, p.P99MS, p.MaxMS = ds[len(ds)/2], ds[len(ds)*95/100], ds[len(ds)*99/100], ds[len(ds)-1]
+	p.Allocs, p.AllocKB = math.Round(p.Allocs), math.Round(p.AllocKB)
 	return p
 }
 
-// perfTraffic is a busy conversation: people typing every 250 ms, a new
-// message (or thread reply) every 1.5 s, a reaction every 600 ms, an edit
-// every 3 s and a delete every 5 s (Message Logger keeps deleted messages:
-// injected ones), as realtime events through core's handler.
+// perfTraffic is a busy workspace: in the open conversation, someone
+// types every 150 ms, a message (or thread reply) every 700 ms, a
+// reaction every 300 ms, an edit every 1.5 s and a delete every 2.5 s
+// (Message Logger keeps deleted messages: injected ones); in the other
+// channels a message every 250 ms. As realtime events through core's
+// handler, from their own goroutine like the socket's.
 type perfTraffic struct {
 	e          *benchEnv
 	ch, thread string
+	others     []string
 
 	quit chan struct{}
 	done sync.WaitGroup
@@ -386,16 +462,21 @@ func (p *perfTraffic) stop() int {
 	return int(p.n.Load())
 }
 
-func (p *perfTraffic) inject(typ, subtype string, raw map[string]any) {
+func (p *perfTraffic) inject(ch, typ, subtype string, raw map[string]any) {
 	raw["type"] = typ
 	if subtype != "" {
 		raw["subtype"] = subtype
 	}
-	raw["channel"] = p.ch
+	raw["channel"] = ch
 	b, _ := json.Marshal(raw)
-	chJSON, _ := json.Marshal(p.ch)
+	chJSON, _ := json.Marshal(ch)
 	p.e.a.data.core.Inject(slack.Event{Type: typ, Subtype: subtype, Channel: chJSON, Raw: b})
 	p.n.Add(1)
+}
+
+func liveTS() string {
+	now := time.Now()
+	return fmt.Sprintf("%d.%06d", now.Unix(), now.Nanosecond()/1000)
 }
 
 func (p *perfTraffic) run() {
@@ -403,25 +484,21 @@ func (p *perfTraffic) run() {
 	authors := p.e.c.Authors
 	// the messages to react to, edit and delete: what core holds now
 	var targets []string
-	if tl := p.e.a.data.core.S.Timeline(p.ch); tl != nil {
-		for _, m := range tl.Msgs {
-			if p.thread == "" || m.ThreadTS == p.thread {
-				targets = append(targets, m.TS)
-			}
-		}
-	}
 	if p.thread != "" {
 		if msgs, ok := p.e.a.data.core.S.Thread(p.ch, p.thread); ok {
-			targets = targets[:0]
 			for _, m := range msgs {
 				targets = append(targets, m.TS)
 			}
 		}
+	} else if tl := p.e.a.data.core.S.Timeline(p.ch); tl != nil {
+		for _, m := range tl.Msgs {
+			targets = append(targets, m.TS)
+		}
 	}
-	tick := time.NewTicker(50 * time.Millisecond)
+	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	start := time.Now()
-	var lastType, lastMsg, lastReact, lastEdit, lastDel time.Duration
+	var lastType, lastMsg, lastReact, lastEdit, lastDel, lastOther time.Duration
 	seq := 0
 	for {
 		select {
@@ -432,46 +509,50 @@ func (p *perfTraffic) run() {
 		el := time.Since(start)
 		u := authors[seq%len(authors)]
 		seq++
-		if el-lastType >= 250*time.Millisecond {
+		if el-lastType >= 150*time.Millisecond {
 			lastType = el
 			ev := map[string]any{"user": u}
 			if p.thread != "" {
 				ev["thread_ts"] = p.thread
 			}
-			p.inject("user_typing", "", ev)
+			p.inject(p.ch, "user_typing", "", ev)
 		}
-		if el-lastMsg >= 1500*time.Millisecond {
+		if el-lastMsg >= 700*time.Millisecond {
 			lastMsg = el
-			now := time.Now()
-			ts := fmt.Sprintf("%d.%06d", now.Unix(), now.Nanosecond()/1000)
+			ts := liveTS()
 			ev := map[string]any{"user": u, "text": "live message " + ts, "ts": ts, "event_ts": ts, "client_msg_id": "live-" + ts}
 			if p.thread != "" {
 				ev["thread_ts"] = p.thread
 			}
-			p.inject("message", "", ev)
+			p.inject(p.ch, "message", "", ev)
 			targets = append(targets, ts)
+		}
+		if len(p.others) > 0 && el-lastOther >= 250*time.Millisecond {
+			lastOther = el
+			ts := liveTS()
+			p.inject(p.others[seq%len(p.others)], "message", "", map[string]any{"user": u, "text": "elsewhere " + ts, "ts": ts, "event_ts": ts})
 		}
 		if len(targets) == 0 {
 			continue
 		}
 		pick := func(k int) string { return targets[(seq*7+k)%len(targets)] }
-		if el-lastReact >= 600*time.Millisecond {
+		if el-lastReact >= 300*time.Millisecond {
 			lastReact = el
-			p.inject("reaction_added", "", map[string]any{"user": u, "reaction": "eyes", "item": map[string]any{"type": "message", "channel": p.ch, "ts": pick(0)}})
+			p.inject(p.ch, "reaction_added", "", map[string]any{"user": u, "reaction": "eyes", "item": map[string]any{"type": "message", "channel": p.ch, "ts": pick(0)}})
 		}
-		if el-lastEdit >= 3*time.Second {
+		if el-lastEdit >= 1500*time.Millisecond {
 			lastEdit = el
 			ts := pick(1)
-			msg := map[string]any{"type": "message", "user": u, "text": "edited " + ts, "ts": ts, "edited": map[string]any{"user": u, "ts": ts}}
+			msg := map[string]any{"type": "message", "user": u, "text": "edited " + ts, "ts": ts, "edited": map[string]any{"user": u, "ts": liveTS()}}
 			if p.thread != "" {
 				msg["thread_ts"] = p.thread
 			}
-			p.inject("message", "message_changed", map[string]any{"message": msg, "ts": ts, "event_ts": ts, "hidden": true})
+			p.inject(p.ch, "message", "message_changed", map[string]any{"message": msg, "ts": liveTS(), "event_ts": liveTS(), "hidden": true})
 		}
-		if el-lastDel >= 5*time.Second {
+		if el-lastDel >= 2500*time.Millisecond {
 			lastDel = el
 			ts := pick(2)
-			p.inject("message", "message_deleted", map[string]any{"deleted_ts": ts, "ts": ts, "event_ts": ts, "hidden": true})
+			p.inject(p.ch, "message", "message_deleted", map[string]any{"deleted_ts": ts, "ts": liveTS(), "event_ts": liveTS(), "hidden": true})
 		}
 	}
 }

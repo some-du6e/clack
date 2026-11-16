@@ -533,6 +533,10 @@ jobs:
               [ -f "$f" ] || continue
               echo "::group::$f flat"; go tool pprof -top -nodecount 45 perf-out/$s.test "$f" 2>&1 | head -60; echo "::endgroup::"
               echo "::group::$f cumulative"; go tool pprof -top -cum -nodecount 70 perf-out/$s.test "$f" 2>&1 | head -85; echo "::endgroup::"
+              a="${f%.cpu.pprof}"
+              if [ -f "$a.allocs0.pprof" ] && [ -f "$a.allocs1.pprof" ]; then
+                echo "::group::$a allocated during the pass"; go tool pprof -sample_index=alloc_space -top -nodecount 40 -base "$a.allocs0.pprof" perf-out/$s.test "$a.allocs1.pprof" 2>&1 | head -55; echo "::endgroup::"
+              fi
             done
             for k in mutex block; do
               f=perf-out/$s-1.$k.pprof
