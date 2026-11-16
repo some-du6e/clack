@@ -175,11 +175,15 @@ func (a *App) hydrate(ctx context.Context, want map[string][]string) map[string]
 	return out
 }
 
-// hydrateOK is hydrate, also reporting whether every lookup answered (no
-// messages.list error): then a message missing from the result is gone.
-func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[string]slack.Message, bool) {
+// hydrateOK is hydrate, also reporting which channels answered: every
+// channel of want found in memory, plus those whose messages.list group
+// succeeded (slack.MessagesList). A message missing from the result is
+// gone only when its channel answered; a failed group (too_many_channels,
+// a reset connection) leaves its channels' messages unknown.
+func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[string]slack.Message, map[string]bool) {
 	out := map[string]slack.Message{}
 	missing := map[string][]string{}
+	answered := map[string]bool{}
 	for ch, tss := range want {
 		for _, ts := range tss {
 			if m, ok := a.S.Find(ch, ts); ok {
@@ -188,23 +192,25 @@ func (a *App) hydrateOK(ctx context.Context, want map[string][]string) (map[stri
 				missing[ch] = append(missing[ch], ts)
 			}
 		}
+		if len(missing[ch]) == 0 {
+			answered[ch] = true
+		}
 	}
 	if len(missing) == 0 {
-		return out, true
+		return out, answered
 	}
-	got, err := a.C.MessagesList(ctx, missing)
-	if err != nil {
-		log.Printf("messages.list: %v", err)
+	// a failed group is logged with its channels in MessagesList
+	got, asked, _ := a.C.MessagesList(ctx, missing)
+	for ch := range asked {
+		answered[ch] = true
 	}
-	var all []slack.Message
 	for ch, ms := range got {
 		for _, m := range ms {
 			out[ch+"/"+m.TS] = m
-			all = append(all, m)
 		}
 	}
 	// the messages' people are asked for as rows draw them (lazy_users.go)
-	return out, err == nil
+	return out, answered
 }
 
 // SlackbotCustomResponseInThread reports whether user (Slackbot) answered
@@ -883,7 +889,7 @@ func (a *App) Saved(ctx context.Context, filter, cursor string) (SavedPage, erro
 			chans[v.Channel] = true
 			if m, ok := got[savedKey(v.Channel, v.TS)]; ok {
 				v.Msg = a.messagePtr(v.Channel, &m)
-			} else if answered && v.ItemType == "message" && v.TS != "" {
+			} else if answered[v.Channel] && v.ItemType == "message" && v.TS != "" {
 				v.Gone = true
 			}
 		}

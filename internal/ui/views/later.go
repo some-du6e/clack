@@ -970,9 +970,12 @@ func (l *Later) cleanUp(i int) {
 	case 2: // Clear to-dos: remove every to-do (asks first)
 		l.confirmClear()
 	case 3: // Remove deleted messages: unsave the tombstones
+		// only a tombstone or a message messages.list answered without
+		// (laterTombstoned): a message that failed to load has no Msg
+		// either, and unsaving it would lose the item
 		var gone []core.SavedItem
 		for _, it := range l.feed.items {
-			if it.ItemType == "message" && it.Msg == nil && it.Channel != "" && it.TS != "" {
+			if laterTombstoned(&it) {
 				gone = append(gone, it)
 			}
 		}
