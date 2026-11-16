@@ -8,11 +8,12 @@ import (
 )
 
 // qjub is QJub's sorter, Intl.Collator("en-US", {numeric: true}), built
-// once. collate.New matches the locale and builds its tables on every
-// call (about a millisecond): sections called it once per group DM, and
-// 1665 conversations held the UI goroutine for 2 s in a snapshot (α.89's
-// freeze report). A Collator keeps its iterators on itself, so it isn't
-// safe for concurrent use: every use holds mu.
+// once. collate.New matches the locale against every table and sets up a
+// new collator on each call (about 3 µs and 10 KB on a CI runner):
+// sortName called it per group DM in every snapshot, which α.89's freeze
+// report caught on a per-frame snapshot (BenchmarkSortName1700: 1.77 ms
+// to 0.77 ms). A Collator keeps its iterators on itself, so it isn't safe
+// for concurrent use: every use holds mu.
 var qjub struct {
 	mu    sync.Mutex
 	col   *collate.Collator
