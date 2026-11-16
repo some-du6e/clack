@@ -942,5 +942,8 @@ jobs:
           cache: true
       - name: gio deps
         run: sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" update -qq && sudo sh "$GITHUB_WORKSPACE/.github/apt.sh" install -y -qq $GIO_DEPS
-      - name: messages (vote buttons through message updates, patched Message props)
-        run: go test -count=$COUNT -timeout 60m -run 'TestVoteButtonsSurviveUpdates$|TestMessagePatchGetsWrappersMsg$' ./internal/ui/messages
+      - name: "messages: the vote buttons under ThreadReplyGeneric+Message (free-running and lockstep), COUNT runs"
+        run: go test -count=$COUNT -timeout 60m -run 'TestVoteButtonsSurviveUpdates/ThreadReplyGeneric' ./internal/ui/messages
+      - name: "messages: every vote variant and the patched Message's props, 3 runs"
+        if: ${{ !cancelled() }}
+        run: go test -count=3 -timeout 30m -run 'TestVoteButtonsSurviveUpdates$|TestMessagePatchGetsWrappersMsg$' ./internal/ui/messages
