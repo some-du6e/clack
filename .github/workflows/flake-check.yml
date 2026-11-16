@@ -1064,11 +1064,12 @@ jobs:
 
   # plugin-render-2: a reply also sent to the channel, in the channel's list
   # and its thread pane, gets a plugin root per pane (one shared root got
-  # each pane's props in turn and rendered every frame); JS's own commits
-  # that change no host node send Go nothing (api.redux.refresh re-rendered
-  # every usePatchVersion patch, and each root sent its same tree again);
-  # a profile change or a renamed channel tab converts again just the
-  # messages that name them, patched and unpatched
+  # each pane's props in turn and rendered every frame), and so does each
+  # composer of one thread; JS's own commits that change no host node send
+  # Go nothing (api.redux.refresh re-rendered every usePatchVersion patch,
+  # and each root sent its same tree again); a profile change, a renamed
+  # channel tab or a names pref converts again just the messages that name
+  # them, patched and unpatched, without counting as a view's read
   plugin-render:
     if: ${{ !inputs.only || startsWith('plugin-render', inputs.only) }}
     runs-on: ubuntu-latest
@@ -1086,10 +1087,14 @@ jobs:
         run: |
           rc=0
           go test -count=$COUNT -run '^TestPanesHaveRootsOfTheirOwn$' ./internal/ui/slackc || rc=1
-          go test -count=$COUNT -run '^TestSameOutputSendsNoTree$' ./internal/jsrt || rc=1
-          go test -count=$COUNT -run '^TestRefreshSendsNoSameTree$' ./internal/taut || rc=1
-          go test -count=$COUNT -run '^TestMessageRefs$' ./internal/core || rc=1
+          go test -count=$COUNT -run '^(TestSameOutputSendsNoTree|TestPortalUnderHiddenNativeAnswers)$' ./internal/jsrt || rc=1
+          go test -count=$COUNT -run '^(TestRefreshSendsNoSameTree|TestUserEventsForUndrawnMembersCostNothing|TestChangeDuringFirstConversion)$' ./internal/taut || rc=1
+          go test -count=$COUNT -run '^(TestMessageRefs|TestStoredMessageReadsNoMember|TestEventsMarkDocChanges)$' ./internal/core || rc=1
           exit $rc
-      - name: "messages: the broadcast reply in both panes, renames redraw rows, 3 runs"
+      - name: "messages + composer: the broadcast reply in every list, renames redraw rows, one thread's composers, 3 runs"
         if: ${{ !cancelled() }}
-        run: go test -count=3 -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows)$' ./internal/ui/messages
+        run: |
+          rc=0
+          go test -count=3 -v -timeout 30m -run '^(TestBroadcastReplyInBothPanesIdle|TestRenamesRedrawRows|TestRenameDuringLoad|TestInjectedTakesEqualConversions)$' ./internal/ui/messages || rc=1
+          go test -count=3 -v -timeout 10m -run '^TestComposersForOneThreadSendTheirOwn$' ./internal/ui/composer || rc=1
+          exit $rc
