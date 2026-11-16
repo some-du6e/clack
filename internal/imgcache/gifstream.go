@@ -59,9 +59,6 @@ type gifIndex struct {
 	prev bool
 	// webp: an animated WebP's frames (webpanim.go), not a GIF's
 	webp bool
-	// bytes is what the index holds: its frames array and colour tables
-	// (counted with the encoded bytes it indexes: gifSource.size)
-	bytes int
 }
 
 // grow makes room in ix.frames for one more frame, charging bg for a new
@@ -76,7 +73,6 @@ func (ix *gifIndex) grow(bg *budget.Budget) error {
 	}
 	f := make([]gifFrame, len(ix.frames), n)
 	copy(f, ix.frames)
-	ix.bytes += (n - cap(ix.frames)) * gifFrameBytes
 	ix.frames = f
 	return nil
 }
@@ -118,7 +114,6 @@ func (ix *gifIndex) readPalette(b []byte, n int, bg *budget.Budget) (*gifPalette
 	if err := bg.Charge(paletteBytes); err != nil {
 		return nil, err
 	}
-	ix.bytes += paletteBytes
 	p := &gifPalette{n: n}
 	for i := 0; i < n; i++ {
 		p.c[i] = [4]byte{b[3*i], b[3*i+1], b[3*i+2], 0xff}

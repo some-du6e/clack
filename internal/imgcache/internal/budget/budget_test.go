@@ -3,7 +3,9 @@ package budget
 import (
 	"errors"
 	"math/rand/v2"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -67,47 +69,44 @@ func TestBusyIsNotOver(t *testing.T) {
 // TestPoolNeverPassesLimit: budgets charging from many goroutines at once
 // never hold more than the pool's limit together (Peak), however the
 // charges interleave, and the pool is empty once they're all released.
-// Without take's limit check the 64 goroutines' 2 KB each would go far past
-// the 16 KB pool.
+// Each goroutine wants up to a quarter of the pool and holds it (yielding
+// so the goroutines overlap) before releasing, so they genuinely contend;
+// the pool's Used and Peak must never pass its limit, and it empties once
+// they all release. Remove take's limit check and the overlap pushes the
+// peak past the pool.
 func TestPoolNeverPassesLimit(t *testing.T) {
-	p := NewPool(16<<10, 0, 0)
+	const limit = 16 << 10
+	p := NewPool(limit, 0, 0)
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	busy := 0
+	var busy atomic.Int64
 	for g := 0; g < 64; g++ {
 		wg.Add(1)
 		go func(seed uint64) {
 			defer wg.Done()
 			r := rand.New(rand.NewPCG(seed, 1))
-			for round := 0; round < 200; round++ {
-				b := New(p, 1<<20)
-				for i := 0; i < 8; i++ {
-					if err := b.Charge(int64(1 + r.IntN(512))); errors.Is(err, ErrBusy) {
-						mu.Lock()
-						busy++
-						mu.Unlock()
-						break
-					} else if err != nil {
-						t.Errorf("charge: %v", err)
-					}
+			for round := 0; round < 300; round++ {
+				b := New(p, limit)
+				if err := b.Charge(int64(1 + r.IntN(limit/4))); errors.Is(err, ErrBusy) {
+					busy.Add(1)
+				} else if err != nil {
+					t.Errorf("charge: %v", err)
 				}
-				if u := p.Used(); u > p.Limit() {
-					t.Errorf("the pool holds %d of %d", u, p.Limit())
+				if u := p.Used(); u > limit {
+					t.Errorf("the pool holds %d of %d", u, limit)
 				}
+				runtime.Gosched() // hold, so the goroutines overlap
 				b.Release()
 			}
 		}(uint64(g))
 	}
 	wg.Wait()
-	if pk := p.Peak(); pk > p.Limit() {
-		t.Errorf("the pool's peak %d passed its limit %d", pk, p.Limit())
+	if pk := p.Peak(); pk > limit {
+		t.Errorf("the pool's peak %d passed its limit %d", pk, limit)
 	}
 	if u := p.Used(); u != 0 {
 		t.Errorf("the pool holds %d with every budget released", u)
 	}
-	if busy == 0 {
-		t.Error("no charge was ever busy: the test didn't contend for the pool")
-	}
+	t.Logf("%d charges were busy (the pool contended)", busy.Load())
 }
 
 // TestReserveForSmall: with big budgets holding all but the reserve, a

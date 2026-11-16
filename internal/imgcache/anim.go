@@ -83,10 +83,6 @@ type gifSource struct {
 	ix   *gifIndex
 }
 
-// size is what s holds: the encoded bytes and their index (its frames and
-// colour tables), as the cache counts it.
-func (s *gifSource) size() int { return len(s.data) + s.ix.bytes }
-
 // player is an animated GIF playing at one size.
 type player struct {
 	ix      *gifIndex
@@ -301,7 +297,7 @@ func (c *Cache) startPlay(k key, forced bool) {
 	}
 	held := 0 // the encoded bytes, when the entry doesn't hold them already
 	if e.gif == nil {
-		held = src.size()
+		held = len(src.data)
 	}
 	if !c.fitLocked(p.n+held, now) {
 		e.retry = now.Add(animRetry)

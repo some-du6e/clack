@@ -568,7 +568,7 @@ func (c *Cache) Stats() Stats {
 			s.Animated++
 		}
 		if e.gif != nil {
-			s.EncodedBytes += e.gif.size()
+			s.EncodedBytes += len(e.gif.data)
 		}
 		if p := e.play; p != nil {
 			s.Players++
@@ -766,9 +766,9 @@ func (c *Cache) load(k key) {
 		e := &entry{k: k, op: op, size: sz, n: n, used: time.Now().UnixMilli(), px: px}
 		if an != nil {
 			e.frames = len(an.ix.frames)
-			if an.size() <= c.maxBytes/(2*gifShare) { // the bytes for playing it (anim.go)
+			if len(an.data) <= c.maxBytes/(2*gifShare) { // the bytes for playing it (anim.go)
 				e.gif = an
-				e.n += an.size()
+				e.n += len(an.data)
 			}
 		}
 		c.putLocked(e) // over an interim one (derive)
@@ -856,7 +856,7 @@ const gifShare = 4 // a quarter
 // keptGIFLocked counts e's encoded bytes (just kept) and lets go of older
 // ones past the budget's gifShare.
 func (c *Cache) keptGIFLocked(e *entry) {
-	c.gifBytes += e.gif.size()
+	c.gifBytes += len(e.gif.data)
 	for el := c.lru.Back(); el != nil && c.gifBytes > c.maxBytes/gifShare; el = el.Prev() {
 		if o := el.Value.(*entry); o != e && o.play == nil {
 			c.dropGIFLocked(o)
@@ -870,7 +870,7 @@ func (c *Cache) dropGIFLocked(e *entry) {
 	if e.gif == nil {
 		return
 	}
-	n := e.gif.size()
+	n := len(e.gif.data)
 	e.n -= n
 	c.bytes -= n
 	c.gifBytes -= n
@@ -882,7 +882,7 @@ func (c *Cache) dropLocked(el *list.Element) {
 	e := el.Value.(*entry)
 	c.releaseLocked(e)
 	if e.gif != nil {
-		c.gifBytes -= e.gif.size()
+		c.gifBytes -= len(e.gif.data)
 	}
 	c.lru.Remove(el)
 	if c.entries[e.k] == el {
