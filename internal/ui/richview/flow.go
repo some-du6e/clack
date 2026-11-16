@@ -365,6 +365,7 @@ type item struct {
 	comp   int16
 	part   uint8
 	tip    int16
+	br     richtext.BrKind // itBreak: how it draws (richtext.BrKind)
 }
 
 // flowStyle configures one inline flow.
@@ -382,6 +383,9 @@ type flowStyle struct {
 	// c-emoji__medium in 13px attachment text: a 22px image with -11px
 	// margins inside the line box).
 	flatEmoji bool
+	// paraH is a c-mrkdwn__br's height (richtext.BrPara), 0 for its 8px:
+	// 22px straight inside a bordered quote.
+	paraH int
 }
 
 // lay holds per-layout state.
@@ -584,7 +588,7 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 		switch sp.Kind {
 		case richtext.Break:
 			p0, p1 := l.plainAdd("\n")
-			l.items = append(l.items, item{kind: itBreak, face: k, deco: -1, target: -1, p0: p0, p1: p1})
+			l.items = append(l.items, item{kind: itBreak, face: k, deco: -1, target: -1, p0: p0, p1: p1, br: sp.Br})
 			continue
 		case richtext.Emoji:
 			if sp.URL == "" {
@@ -792,8 +796,11 @@ func (l *lay) addSpans(spans []richtext.Span, fs *flowStyle) {
 // the widest line width.
 func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	items := l.items
-	// Drop one trailing hard break (pre-wrap does not render it).
-	if n := len(items); n > 0 && items[n-1].kind == itBreak {
+	// Drop one trailing hard break (pre-wrap does not render it). A
+	// rich_text <br> (BrLine) stays: it ends its line like any other, and
+	// the empty line after it is never finished, so "a<br>" is one line
+	// and "a<br><br>" two, as CSS draws them.
+	if n := len(items); n > 0 && items[n-1].kind == itBreak && items[n-1].br == richtext.BrPlain {
 		items = items[:n-1]
 	}
 	if len(items) == 0 {
@@ -827,6 +834,14 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 	gapReset := func() { endT, endU, brokeT, brokeU = 0, 0, false, false }
 	const lineDeco = richtext.Underline | richtext.Strike
 
+	// brH is the height of an empty line the next finishLine ends at a
+	// rich_text break: a <br>'s full line box, a c-mrkdwn__br's block.
+	// 0 is the 8px empty line between two plain breaks.
+	brH := 0
+	paraH := fs.paraH
+	if paraH == 0 {
+		paraH = l.dp(8) // .c-mrkdwn__br{height:8px;display:block}
+	}
 	finishLine := func() {
 		last = -1 // spaces at the end of a line are never decorated
 		gapReset()
@@ -834,7 +849,11 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		lh := lineH0
 		if lineStart == len(d.frags) && !fs.pre && !leadLine {
 			lh = l.dp(8) // an empty line between paragraphs
+			if brH != 0 {
+				lh = brH
+			}
 		}
+		brH = 0
 		leadLine = false
 		for i := lineStart; i < len(d.frags); i++ {
 			if f := &d.frags[i]; f.kind == fImage {
@@ -901,6 +920,26 @@ func (l *lay) flow(x0, y0, maxW int, fs *flowStyle) (h, wmax int) {
 		it := &items[i]
 		switch it.kind {
 		case itBreak:
+			switch it.br {
+			case richtext.BrNone: // swallowed by Slack's placeholders
+				i++
+				continue
+			case richtext.BrLine:
+				brH = lineH0
+			case richtext.BrPara:
+				// the block ends the line it follows (a <br> before
+				// it already did), then takes its own height
+				if x > 0 || lineStart < len(d.frags) {
+					brH = lineH0
+					finishLine()
+					if fs.maxLines > 0 && lines >= fs.maxLines {
+						truncated = i < len(items)-1
+						i++
+						continue
+					}
+				}
+				brH = paraH
+			}
 			finishLine()
 			if fs.maxLines > 0 && lines >= fs.maxLines {
 				truncated = i < len(items)-1

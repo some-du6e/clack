@@ -48,7 +48,7 @@ func TestRichTextInline(t *testing.T) {
 		Span{Kind: Emoji, Text: "😀", ID: "grinning"}, tx(":mystery:"),
 		Span{Kind: Date, Text: date, ID: "1700000000"}, Span{Kind: Date, Text: date, ID: "1700000000", URL: "https://d.test"},
 		Span{Kind: ColorSwatch, Text: "#FF0000"}, tx("red"),
-		tx("a"), br(), br(), tx("b"),
+		tx("a"), brk(BrPara), brk(BrNone), tx("b"),
 	)}
 	eq(t, "rich inline", d.Blocks, want)
 	if d.Jumbo {
@@ -217,4 +217,53 @@ func TestHeaderLevel(t *testing.T) {
 			t.Errorf("block %d: kind %v level %d, want a header at level %d", i, b.Kind, b.Level, want)
 		}
 	}
+}
+
+// TestRichTextNewlines pins Slack's BaseText newline rule (kWQh
+// insertTextBreakPlaceholders, BrKind): <br> for a single newline, a
+// c-mrkdwn__br for each newline after a run's first, a leading newline
+// of a section's first element doubled, the first section's first
+// element trimStart-ed, pre text left alone. Every newline stays one
+// Break, so the plain text keeps them all.
+func TestRichTextNewlines(t *testing.T) {
+	bL, bP, bN := brk(BrLine), brk(BrPara), brk(BrNone)
+	sec := func(els string) string { return `{"type":"rich_text_section","elements":[` + els + `]}` }
+	txt := func(s string) string { return `{"type":"text","text":"` + s + `"}` }
+	cases := []struct {
+		name string
+		els  string // the rich_text block's elements
+		want []Block
+	}{
+		{"single newline is a br", sec(txt(`a\nb`)),
+			[]Block{para(tx("a"), bL, tx("b"))}},
+		{"double newline is one 8px block", sec(txt(`a\n\nb`)),
+			[]Block{para(tx("a"), bP, bN, tx("b"))}},
+		{"triple newline is two blocks", sec(txt(`a\n\n\nb`)),
+			[]Block{para(tx("a"), bP, bP, bN, tx("b"))}},
+		{"blank line of spaces is still a run", sec(txt(`a\n \u00a0\t\nb`)),
+			[]Block{para(tx("a"), bP, tx(" \u00a0\t"), bN, tx("b"))}},
+		{"trailing run keeps its block", sec(txt(`a\n\n`)),
+			[]Block{para(tx("a"), bP, bN)}},
+		{"first section's first element is trimStart-ed", sec(txt(`\n \nhi\nthere`)),
+			[]Block{para(bN, tx(" "), bN, tx("hi"), bL, tx("there"))}},
+		{"later section's leading newline is doubled", sec(txt(`a`)) + `,` + sec(txt(`\nb`)) + `,` + sec(txt(`\n\nc`)),
+			[]Block{para(tx("a")), para(bP, tx("b")), para(bP, bP, tx("c"))}},
+		{"newlines split across elements are two brs", sec(txt(`a\n`) + `,` + txt(`\nb`)),
+			[]Block{para(tx("a"), bL, bL, tx("b"))}},
+		{"run inside a later element", sec(`{"type":"text","text":"a","style":{"bold":true}},` + txt(`\n\nb`)),
+			[]Block{para(st("a", Bold), bP, bN, tx("b"))}},
+		{"quote's first element is first in its section", `{"type":"rich_text_quote","elements":[` + txt(`\nq\n\nr`) + `]}`,
+			[]Block{quote(bP, tx("q"), bP, bN, tx("r"))}},
+		{"list item's first element is first in its section", `{"type":"rich_text_list","style":"bullet","elements":[` + sec(txt(`\nitem`)) + `]}`,
+			[]Block{{Kind: List, Items: [][]Span{{bP, tx("item")}}}}},
+		{"pre keeps raw line breaks", `{"type":"rich_text_preformatted","elements":[` + txt(`x\n\ny`) + `]}`,
+			[]Block{pre(tx("x"), br(), br(), tx("y"))}},
+	}
+	for _, c := range cases {
+		d := blocksMsg(t, `[{"type":"rich_text","elements":[`+c.els+`]}]`)
+		eq(t, c.name, d.Blocks, c.want)
+	}
+	// the plain text keeps every newline and the spaces between them
+	d := blocksMsg(t, `[{"type":"rich_text","elements":[`+sec(txt(`a\n \n\nb\nc`))+`]}]`)
+	eq(t, "plain", SpansText(d.Blocks[0].Spans), "a\n \n\nb\nc")
 }

@@ -533,6 +533,10 @@ func (l *lay) block1(b *richtext.Block, x, y, w int, edited bool) int {
 			h = l.blocks(b.Children, x+in, y, w-in, false)
 		} else {
 			fs := l.bodyStyle()
+			if b.Border {
+				// .c-mrkdwn__quote[data-stringify-border="1"]>.c-mrkdwn__br
+				fs.paraH = l.dp(22)
+			}
 			l.addSpans(b.Spans, &fs)
 			if edited {
 				l.addEdited()
@@ -1026,7 +1030,7 @@ func flattenBreaks(bs []richtext.Block) []richtext.Span {
 func naturalWidth(items []item) int {
 	var w, line float32
 	for i := range items {
-		if items[i].kind == itBreak {
+		if items[i].kind == itBreak && items[i].br != richtext.BrNone {
 			w, line = max(w, line), 0
 			continue
 		}

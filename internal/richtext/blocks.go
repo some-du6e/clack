@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/slack"
@@ -716,26 +717,30 @@ func (c *builder) richText(els []bk) []Block {
 		e := &els[i]
 		switch e.Type {
 		case "rich_text_section":
-			if ss := c.richInline(e.Elements, false); len(ss) > 0 {
+			// RichTextSection passes isFirst (its index is 0) down: its
+			// first element is the first in the first section
+			if ss := c.richInline(e.Elements, brSection(i == 0)); len(ss) > 0 {
 				out = append(out, Block{Kind: Paragraph, Spans: ss})
 			}
 		case "rich_text_preformatted":
-			out = append(out, Block{Kind: Preformatted, Spans: c.richInline(e.Elements, true), Border: e.Border > 0})
+			out = append(out, Block{Kind: Preformatted, Spans: c.richInline(e.Elements, brRaw), Border: e.Border > 0})
 		case "rich_text_quote":
-			out = append(out, Block{Kind: Quote, Spans: c.richInline(e.Elements, false), Border: e.Border > 0})
+			out = append(out, Block{Kind: Quote, Spans: c.richInline(e.Elements, brSection(false)), Border: e.Border > 0})
 		case "rich_text_list":
 			blk := Block{Kind: List, Ordered: e.styleString() == "ordered", Indent: e.Indent, Offset: e.Offset, Border: e.Border > 0}
 			for j := range e.Elements {
 				it := &e.Elements[j]
 				if it.Type == "rich_text_section" {
-					blk.Items = append(blk.Items, c.richInline(it.Elements, false))
+					blk.Items = append(blk.Items, c.richInline(it.Elements, brSection(false)))
 				} else {
-					blk.Items = append(blk.Items, c.richInline([]bk{*it}, false))
+					blk.Items = append(blk.Items, c.richInline([]bk{*it}, brSection(false)))
 				}
 			}
 			out = append(out, blk)
 		default:
-			if ss := c.richInline([]bk{*e}, false); len(ss) > 0 {
+			// an inline element straight in the block: the first one is
+			// isFirstElementInSection (index 0), never in a first section
+			if ss := c.richInline([]bk{*e}, brMode{lead: i == 0}); len(ss) > 0 {
 				out = append(out, Block{Kind: Paragraph, Spans: ss})
 			}
 		}
@@ -745,9 +750,24 @@ func (c *builder) richText(els []bk) []Block {
 
 var hexColorRe = regexp.MustCompile(`^#?[0-9a-fA-F]{3,8}$`)
 
+// brMode is where a run of rich_text inline elements sits, for the
+// newlines of its text elements (BrKind, Slack's BaseText).
+type brMode struct {
+	pre   bool // rich_text_preformatted: rawLineBreaks, plain line breaks
+	lead  bool // element 0 is isFirstElementInSection
+	first bool // element 0 is isFirstElementInFirstSection (trimStart)
+}
+
+var brRaw = brMode{pre: true}
+
+// brSection is the elements of a section, a quote or a list item:
+// RichTextRenderer's index-0 element is first in its section.
+func brSection(first bool) brMode { return brMode{lead: true, first: first} }
+
 // richInline converts rich_text inline elements. In pre blocks styles other
 // than links are dropped (Slack shows them monospace and unstyled).
-func (c *builder) richInline(els []bk, pre bool) []Span {
+func (c *builder) richInline(els []bk, m brMode) []Span {
+	pre := m.pre
 	var out []Span
 	for i := range els {
 		e := &els[i]
@@ -758,14 +778,18 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 		n := len(out)
 		switch e.Type {
 		case "text":
-			for k, ln := range strings.Split(e.textString(), "\n") {
-				if k > 0 {
-					out = append(out, Span{Kind: Break})
+			if pre {
+				for k, ln := range strings.Split(e.textString(), "\n") {
+					if k > 0 {
+						out = append(out, Span{Kind: Break})
+					}
+					if ln != "" {
+						out = append(out, Span{Kind: Text, Text: ln})
+					}
 				}
-				if ln != "" {
-					out = append(out, Span{Kind: Text, Text: ln})
-				}
+				break
 			}
+			out = appendRichText(out, e.textString(), i == 0 && m.lead, i == 0 && m.first)
 		case "link":
 			label := firstNonEmpty(e.textString(), strings.TrimPrefix(e.URL, "mailto:"))
 			if unlink {
@@ -837,6 +861,79 @@ func (c *builder) richInline(els []bk, pre bool) []Span {
 				out[k].Style |= st
 			}
 		}
+	}
+	return out
+}
+
+// richRunRe is insertTextBreakPlaceholders' paragraph run (kWQh m): two
+// or more newlines with only spaces, tabs and no-break spaces between.
+var richRunRe = regexp.MustCompile(`(?:\n[ \t\x{00A0}]*)+\n`)
+
+// appendRichText appends a rich_text text element's text: its lines as
+// Text spans, its newlines as Breaks drawn the way Slack's BaseText
+// draws them (BrKind). lead is isFirstElementInSection, first
+// isFirstElementInFirstSection.
+func appendRichText(out []Span, s string, lead, first bool) []Span {
+	text := func(t string) {
+		if t != "" {
+			out = append(out, Span{Kind: Text, Text: t})
+		}
+	}
+	brk := func(k BrKind) { out = append(out, Span{Kind: Break, Br: k}) }
+	if first {
+		// trimStart (h5n5): the leading whitespace is gone, so its
+		// newlines draw nothing and the rest starts on the first line
+		// (spaces at a line's start draw nothing either)
+		ws := len(s) - len(strings.TrimLeftFunc(s, unicode.IsSpace))
+		for _, ln := range strings.SplitAfter(s[:ws], "\n") {
+			if t, ok := strings.CutSuffix(ln, "\n"); ok {
+				text(t)
+				brk(BrNone)
+			} else {
+				text(ln)
+			}
+		}
+		s, lead = s[ws:], false
+	}
+	// isFirstElementInSection && /^\n/: one more "\n" in front (virt, no
+	// span of its own), which makes a leading newline a run
+	virt := lead && strings.HasPrefix(s, "\n")
+	if virt {
+		s = "\n" + s
+	}
+	for s != "" {
+		loc := richRunRe.FindStringIndex(s)
+		if loc == nil {
+			loc = []int{len(s), len(s)}
+		}
+		// before the run: single newlines are <br>
+		for k, ln := range strings.Split(s[:loc[0]], "\n") {
+			if k > 0 {
+				brk(BrLine)
+			}
+			text(ln)
+		}
+		if loc[0] == loc[1] {
+			break
+		}
+		// the run: k newlines are k-1 c-mrkdwn__br. The one left over
+		// (the added "\n", else the last) draws nothing; the spaces
+		// between them stay text at the start of an empty line, where
+		// they draw nothing either.
+		run := s[loc[0]:loc[1]]
+		k := strings.Count(run, "\n")
+		for j, ln := range strings.Split(run, "\n") {
+			switch {
+			case j == 0: // "" before the run's first "\n"
+			case virt && j == 1: // the added "\n"
+			case !virt && j == k:
+				brk(BrNone)
+			default:
+				brk(BrPara)
+			}
+			text(ln)
+		}
+		s, virt = s[loc[1]:], false
 	}
 	return out
 }

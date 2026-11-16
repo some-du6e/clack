@@ -95,7 +95,48 @@ type Span struct {
 	// it as a RichTextSlug (Pc7Q) chip with the "link" icon around the
 	// link, data-qa rich_text_truncated_link_element.
 	Truncated bool
+
+	// Br (Break) is how a rich_text newline draws (BrKind). Every "\n"
+	// stays one Break whatever its Br, so plain text, copy and the
+	// newline budgets count the newlines the message has.
+	Br BrKind
 }
+
+// BrKind says how a Break draws. A rich_text text element's newlines go
+// through Slack's BaseText (boot-shared kWQh, insertTextBreakPlaceholders):
+//
+//   - a run of k ≥ 2 newlines, with only spaces, tabs and no-break spaces
+//     between them (/(?:\n[ \t ]*)+\n/g), becomes k-1 <span
+//     class="c-mrkdwn__br">: .c-mrkdwn__br{height:8px;display:block}
+//     (22px as a direct child of .c-mrkdwn__quote[data-stringify-border=
+//     "1"]); the spaces between them are dropped;
+//   - every other newline is a <br>;
+//   - the first element of a section (isFirstElementInSection: index 0
+//     of a rich_text_section, a rich_text_quote or a list item) that
+//     starts with "\n" gets one more "\n" first, so "\nx" is an 8px
+//     block, not a <br>;
+//   - the first element of the block's first section
+//     (isFirstElementInFirstSection) is trimStart-ed (lodash h5n5,
+//     /^\s+/) before that;
+//   - rich_text_preformatted text (rawLineBreaks) is left as it is.
+//
+// A run's k newlines are one BrNone and k-1 BrPara; a leading run that
+// got the extra "\n" is k BrPara; a trimmed leading newline is BrNone.
+type BrKind uint8
+
+const (
+	// BrPlain is a line break that isn't rich_text's (mrkdwn, plain_text,
+	// preformatted): an empty line between two is an 8px line.
+	BrPlain BrKind = iota
+	// BrLine is rich_text's <br>: it ends the line, and an empty line
+	// it ends is a full line box.
+	BrLine
+	// BrPara is a c-mrkdwn__br: it ends the line if anything is on it,
+	// then adds its 8px block.
+	BrPara
+	// BrNone draws nothing (a newline Slack's placeholders swallow).
+	BrNone
+)
 
 // BlockKind says what a block is.
 type BlockKind uint8

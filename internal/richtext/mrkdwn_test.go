@@ -47,6 +47,7 @@ func st(s string, x Style) Span { return Span{Kind: Text, Text: s, Style: x} }
 func lk(label, url string) Span { return Span{Kind: Link, Text: label, URL: url} }
 func em(name string) Span       { e := fakeEmoji[name]; return emSpan(name, e) }
 func br() Span                  { return Span{Kind: Break} }
+func brk(k BrKind) Span         { return Span{Kind: Break, Br: k} }
 func para(ss ...Span) Block     { return Block{Kind: Paragraph, Spans: ss} }
 func quote(ss ...Span) Block    { return Block{Kind: Quote, Spans: ss} }
 func pre(ss ...Span) Block      { return Block{Kind: Preformatted, Spans: ss} }
