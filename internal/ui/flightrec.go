@@ -42,14 +42,19 @@ import (
 // tool trace <file>` (the Go that built Clack, or newer; README "If Clack
 // freezes").
 //
-// It is on: perf.yml's plugins job measures what it costs
-// (PERF_PLUGIN_RECORDER: channel-live passes with it off and on, in turns,
-// on one runner), and in run 43866883085 that was nothing the passes could
-// tell from noise: 9 passes each way, process CPU -0.1% and the sum of
-// the frames -0.6% (one pass to the next varies by ±2.5%), the longest
-// frame and p99 no higher, allocations -0.9%; its 5 s window was 0.7 MB,
-// written in 7 ms. CLACK_FLIGHT_RECORDER=0 or ui.json's
-// "flight_recorder": false turns it off (flightRecorderWanted).
+// It is off unless asked for: CLACK_FLIGHT_RECORDER=1 or ui.json's
+// "flight_recorder": true turns it on (flightRecorderWanted). The tracer
+// writes two events, one with a stack, for every cgo call and syscall, and
+// a frame makes thousands of them: Gio's Metal backend issues one per
+// draw, uniform, texture and viewport binding, about 5,000 a frame. In
+// the alpha.98 traces from a Mac (Apple silicon), two back-to-back Metal
+// calls in one tiny function (BindUniforms' vertex then fragment bytes)
+// were 3.4 µs apart at the median, so the recorder added about 17 ms to
+// every frame's GPU submit: 5 ms at the median in alpha.90, 23 ms in
+// alpha.98 (layout unchanged), and frames of 35-50 ms, which is 20 fps
+// while anything animates. perf.yml's plugins job (PERF_PLUGIN_RECORDER,
+// run 43866883085) saw no cost because llvmpipe's software GL frames hide
+// it.
 
 const (
 	slowTrace            = 100 * time.Millisecond // a task this long writes a trace
@@ -71,8 +76,9 @@ const (
 // newTraceWindow makes the recorder's tracer (tests swap it).
 var newTraceWindow = tracerec.New
 
-// flightRecorderDefault is whether the recorder runs without being asked.
-const flightRecorderDefault = true
+// flightRecorderDefault is whether the recorder runs without being asked:
+// no, it slows every frame (the comment above).
+const flightRecorderDefault = false
 
 // flightRecorderWanted: CLACK_FLIGHT_RECORDER=0 (or off, false, no) turns
 // the recorder off and any other value on; unset, ui.json's

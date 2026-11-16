@@ -356,7 +356,8 @@ func TestFlightRecorderStuckQuit(t *testing.T) {
 	}
 }
 
-// The recorder is on unless turned off (flightRecorderDefault, measured):
+// The recorder is off unless asked for (flightRecorderDefault: tracing
+// every cgo call slowed each frame by ~17 ms on a Mac):
 // CLACK_FLIGHT_RECORDER=0 turns it off and =1 on, over ui.json's
 // "flight_recorder", which counts only when set.
 func TestFlightRecorderWanted(t *testing.T) {
@@ -366,7 +367,7 @@ func TestFlightRecorderWanted(t *testing.T) {
 		pref *bool
 		want bool
 	}{
-		{"", nil, true},
+		{"", nil, false},
 		{"", &off, false},
 		{"", &on, true},
 		{"1", &off, true},
