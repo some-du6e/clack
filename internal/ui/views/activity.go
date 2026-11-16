@@ -2514,6 +2514,7 @@ func (v *Activity) choose(it *core.ActivityItem, key string, r *actRow) {
 		}
 	}
 	v.openSecondary() // activity_panel.go: beside the inbox, in the app's column
+	v.jumpPane()      // or in the view's own pane, at the message
 	v.prevList.Position = layout.Position{}
 	v.dirty = true
 }

@@ -5,7 +5,7 @@
 // into Clack.app bundles the way release.yml does (the bundle id, an
 // ad-hoc signature) and runs it, to settle whether an ad-hoc signed
 // Clack can get notification authorization (docs/GAPS-2026-11-14.md gap 1,
-// W33). Nothing in Clack imports it.
+// W33). Nothing in Clack imports it; click.go is for tests run the same way.
 package usernotifyprobe
 
 // build tells a rebuilt probe from the first (-ldflags -X): a new binary

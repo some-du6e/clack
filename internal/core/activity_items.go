@@ -310,7 +310,7 @@ func activityItem(raw *activityRaw) (ActivityItem, *msgRef) {
 			}
 		}
 		if te := pl.ThreadEntry; te != nil {
-			it.LatestTS = te.LatestTS
+			it.LatestTS, it.MinUnreadTS = te.LatestTS, te.MinUnreadTS
 			ref = &msgRef{Channel: te.ChannelID, TS: firstNonEmpty(te.LatestTS, te.MinUnreadTS), ThreadTS: te.ThreadTS}
 			if te.UnreadMsgCount > 0 {
 				it.Count = te.UnreadMsgCount
