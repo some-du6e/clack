@@ -156,7 +156,7 @@ func TestWarmBootRevealsBeforeNetwork(t *testing.T) {
 	}
 	e2.settle(200 * time.Millisecond)
 	if got := sidebarSig(a); !slices.Equal(got, wantRows) {
-		t.Errorf("the warm sidebar isn't session 1's:\n got %d rows %v\nwant %d rows %v", len(got), first(got, 12), len(wantRows), first(wantRows, 12))
+		t.Errorf("the warm sidebar isn't session 1's: %s", rowsDiff(got, wantRows))
 	}
 	for id, w := range wantUnread {
 		if g := unreadSig(a)[id]; g != w {
@@ -178,7 +178,7 @@ func TestWarmBootRevealsBeforeNetwork(t *testing.T) {
 	})
 	e2.settle(600 * time.Millisecond)
 	if got := sidebarSig(a); !slices.Equal(got, rows) {
-		t.Errorf("the sidebar changed when Slack answered with the same data:\n got %v\nwant %v", first(got, 12), first(rows, 12))
+		t.Errorf("the sidebar changed when Slack answered with the same data: %s", rowsDiff(got, rows))
 	}
 	for id, w := range unread {
 		if g := unreadSig(a)[id]; g != w {
@@ -190,11 +190,37 @@ func TestWarmBootRevealsBeforeNetwork(t *testing.T) {
 	}
 }
 
-func first(s []string, n int) []string {
-	if len(s) > n {
-		return s[:n]
+// rowsDiff says how got differs from want: rows only in one of them, else
+// the first position where the order differs.
+func rowsDiff(got, want []string) string {
+	in := func(s []string) map[string]bool {
+		m := map[string]bool{}
+		for _, x := range s {
+			m[x] = true
+		}
+		return m
 	}
-	return s
+	g, w := in(got), in(want)
+	var extra, missing []string
+	for _, x := range got {
+		if !w[x] {
+			extra = append(extra, x)
+		}
+	}
+	for _, x := range want {
+		if !g[x] {
+			missing = append(missing, x)
+		}
+	}
+	if len(extra)+len(missing) > 0 {
+		return fmt.Sprintf("%d rows, want %d; extra %v; missing %v", len(got), len(want), extra, missing)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return fmt.Sprintf("the same rows, reordered from %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+	return "equal"
 }
 
 // The UI goroutine never waits for core's Boot: with users.conversations
