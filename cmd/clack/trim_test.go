@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/some-du6e/clack/internal/ui/inputidle"
+	"gioui.org/io/input"
+	"gioui.org/io/pointer"
 )
 
 // Forced collections are at least the gap apart: requests inside it
@@ -114,8 +115,12 @@ func TestFreeOSLimiterSkipsWithoutQuiet(t *testing.T) {
 func TestWaitQuietOnInput(t *testing.T) {
 	defer func(f, m, b time.Duration) { quietFor, quietMax, quietBusy = f, m, b }(quietFor, quietMax, quietBusy)
 	quietFor, quietMax, quietBusy = 300*time.Millisecond, 900*time.Millisecond, 150*time.Millisecond
+	// input as a window gives it: events queued to a Gio router (Gio
+	// patch 32 keeps the clock inputidle reads)
+	give := func(r *input.Router) { r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse}) }
 
-	inputidle.Note()
+	var r1 input.Router
+	give(&r1)
 	t0 := time.Now()
 	if !waitQuiet() {
 		t.Fatal("no pause found after one input")
@@ -125,14 +130,15 @@ func TestWaitQuietOnInput(t *testing.T) {
 	}
 
 	stop := make(chan struct{})
-	inputidle.Note() // the scrolling has begun before the request comes
-	go func() {      // and goes on the whole time
+	give(&r1)   // the scrolling has begun before the request comes
+	go func() { // and goes on the whole time
+		var r2 input.Router
 		for {
 			select {
 			case <-stop:
 				return
 			default:
-				inputidle.Note()
+				give(&r2)
 				time.Sleep(2 * time.Millisecond)
 			}
 		}

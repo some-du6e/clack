@@ -27,7 +27,6 @@ import (
 
 	"github.com/some-du6e/clack/internal/emoji"
 	"github.com/some-du6e/clack/internal/ui/ctxclick"
-	"github.com/some-du6e/clack/internal/ui/inputidle"
 	"github.com/some-du6e/clack/internal/ui/refocus"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 )
@@ -1190,14 +1189,12 @@ func (e *Editor) processKeys(gtx layout.Context) {
 			if !gtx.Focused(e) || ev.State != key.Press {
 				break
 			}
-			inputidle.Note() // typing (cmd/clack's trim waits for a pause)
 			e.scrollCaret = true
 			e.scroller.Stop()
 			e.command(gtx, ev)
 		case key.SnippetEvent:
 			e.updateSnippet(gtx, ev.Start, ev.End)
 		case key.EditEvent:
-			inputidle.Note()
 			e.onEdit(ev)
 		case transfer.DataEvent:
 			e.scrollCaret = true

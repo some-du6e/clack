@@ -181,7 +181,7 @@ jobs:
       # a press no filter matches gets a frame and stays unhandled
       - name: Gio key presses whoever takes them (vendored gioui.org/io/input)
         if: ${{ !cancelled() }}
-        run: go test -count=1 -v -run 'KeyPresses' gioui.org/io/input
+        run: go test -count=1 -v -run 'KeyPresses|SinceInput' gioui.org/io/input
       # Gio patch 21: a hover-only Source (the inspect tool lays the window
       # out with one): hover, scroll and focus stay, clicks and keys don't
       - name: Gio hover-only input (vendored gioui.org/io/input)

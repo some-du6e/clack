@@ -7,6 +7,7 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -15,18 +16,78 @@ import (
 	"github.com/some-du6e/clack/internal/ui/inputidle"
 )
 
-// Input, not frames, is what cmd/clack's trim waits on for a pause
-// (inputidle): the window-wide pass-through handler counts a wheel scroll
-// as input and leaves all of it to the scrollable under it.
-func TestRootSeesScrollWithoutTakingIt(t *testing.T) {
+// cmd/clack's trim waits for a pause in input (inputidle), and input is
+// whatever the window's router is queued, whichever widget takes it (Gio
+// patch 32): the review of 2026-11-16 found keyboard navigation and text
+// fields other than the composer, grabbed drags and popovers reading as
+// idle when only root handlers and the composer noted input.
+
+// rootFrame lays out the App's root input handling (as navFrame.frame)
+// around body, which registers its own handlers.
+func rootFrame(f *navFrame, body func(gtx layout.Context)) {
+	f.ops.Reset()
+	gtx := layout.Context{Ops: &f.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
+		Constraints: layout.Exact(image.Pt(800, 600)), Source: f.r.Source(), Now: time.Now()}
+	f.a.readRootPointer(gtx)
+	body(gtx)
+	f.a.keys.process(gtx, f.a)
+	f.a.rootPointer(gtx)
+	f.r.Frame(&f.ops)
+}
+
+// noted reports whether input was noted since t0.
+func noted(t0 time.Time) bool { return inputidle.Since() <= time.Since(t0) }
+
+// A focused widget other than the composer (the message list's arrow-key
+// navigation, a plugin's or Block Kit's text field) takes its keys, and
+// they count.
+func TestInputIdleSeesFocusedWidgetKeys(t *testing.T) {
+	f := &navFrame{a: navTestApp(t)}
+	var list int
+	got := 0
+	focus := true
+	body := func(gtx layout.Context) {
+		for {
+			e, ok := gtx.Event(key.FocusFilter{Target: &list}, key.Filter{Focus: &list, Name: key.NameDownArrow})
+			if !ok {
+				break
+			}
+			if ke, ok := e.(key.Event); ok && ke.State == key.Press {
+				got++
+			}
+		}
+		area := clip.Rect{Max: image.Pt(800, 600)}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &list)
+		area.Pop()
+		if focus {
+			gtx.Execute(key.FocusCmd{Tag: &list})
+			focus = false
+		}
+	}
+	for i := 0; i < 3; i++ { // the focus lands a frame later
+		rootFrame(f, body)
+	}
+	time.Sleep(30 * time.Millisecond)
+	t0 := time.Now()
+	for i := 0; i < 5; i++ {
+		f.r.Queue(key.Event{Name: key.NameDownArrow, State: key.Press}, key.Event{Name: key.NameDownArrow, State: key.Release})
+		rootFrame(f, body)
+	}
+	if got != 5 {
+		t.Fatalf("the focused widget took %d of 5 presses", got)
+	}
+	if !noted(t0) {
+		t.Errorf("5 presses a focused widget took didn't count as input (the last input %v ago)", inputidle.Since())
+	}
+}
+
+// A wheel scroll counts, and the scrollable under the root still gets all
+// of it.
+func TestInputIdleSeesScroll(t *testing.T) {
 	f := &navFrame{a: navTestApp(t)}
 	var list int
 	var got float32
-	frame := func() {
-		f.ops.Reset()
-		gtx := layout.Context{Ops: &f.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
-			Constraints: layout.Exact(image.Pt(800, 600)), Source: f.r.Source(), Now: time.Now()}
-		f.a.readRootPointer(gtx)
+	body := func(gtx layout.Context) {
 		for {
 			e, ok := gtx.Event(pointer.Filter{Target: &list, Kinds: pointer.Scroll, ScrollY: pointer.ScrollRange{Min: -10000, Max: 10000}})
 			if !ok {
@@ -39,19 +100,63 @@ func TestRootSeesScrollWithoutTakingIt(t *testing.T) {
 		area := clip.Rect{Max: image.Pt(800, 600)}.Push(gtx.Ops)
 		event.Op(gtx.Ops, &list)
 		area.Pop()
-		f.a.rootPointer(gtx) // above everything, as App.frame registers it
-		f.r.Frame(&f.ops)
 	}
-	frame()
-	frame()
+	rootFrame(f, body)
+	rootFrame(f, body)
+	time.Sleep(30 * time.Millisecond)
 	t0 := time.Now()
 	f.r.Queue(pointer.Event{Kind: pointer.Scroll, Source: pointer.Mouse, Position: f32.Pt(400, 300), Scroll: f32.Pt(0, 120)})
-	frame()
-	frame()
-	if since := inputidle.Since(); since > time.Since(t0) {
-		t.Errorf("the scroll wasn't noted as input (the last input was %v ago, the scroll %v)", since, time.Since(t0))
-	}
+	rootFrame(f, body)
+	rootFrame(f, body)
 	if got != 120 {
-		t.Errorf("the scrollable got %v of the 120 scrolled: the root took some", got)
+		t.Errorf("the scrollable got %v of the 120 scrolled", got)
+	}
+	if !noted(t0) {
+		t.Errorf("the scroll didn't count as input (the last input %v ago)", inputidle.Since())
+	}
+}
+
+// A drag a widget grabbed (a text selection, a column resize) goes to that
+// widget alone, the root's handler included out, and counts.
+func TestInputIdleSeesGrabbedDrag(t *testing.T) {
+	f := &navFrame{a: navTestApp(t)}
+	var grip int
+	drags := 0
+	body := func(gtx layout.Context) {
+		for {
+			e, ok := gtx.Event(pointer.Filter{Target: &grip, Kinds: pointer.Press | pointer.Drag | pointer.Release})
+			if !ok {
+				break
+			}
+			pe, ok := e.(pointer.Event)
+			if !ok {
+				continue
+			}
+			switch pe.Kind {
+			case pointer.Press:
+				gtx.Execute(pointer.GrabCmd{Tag: &grip, ID: pe.PointerID})
+			case pointer.Drag:
+				drags++
+			}
+		}
+		area := clip.Rect{Max: image.Pt(800, 600)}.Push(gtx.Ops)
+		event.Op(gtx.Ops, &grip)
+		area.Pop()
+	}
+	rootFrame(f, body)
+	f.r.Queue(pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(100, 100)})
+	rootFrame(f, body)
+	rootFrame(f, body)
+	time.Sleep(30 * time.Millisecond)
+	t0 := time.Now()
+	for i := 1; i <= 5; i++ {
+		f.r.Queue(pointer.Event{Kind: pointer.Drag, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: f32.Pt(100+float32(20*i), 100)})
+		rootFrame(f, body)
+	}
+	if drags == 0 {
+		t.Fatal("the grabbing widget got no drags")
+	}
+	if !noted(t0) {
+		t.Errorf("a grabbed drag didn't count as input (the last input %v ago)", inputidle.Since())
 	}
 }

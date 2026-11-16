@@ -11,7 +11,6 @@ import (
 	"gioui.org/op/clip"
 
 	"github.com/some-du6e/clack/internal/ui/composer"
-	"github.com/some-du6e/clack/internal/ui/inputidle"
 	"github.com/some-du6e/clack/internal/ui/shortcut"
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
@@ -207,7 +206,6 @@ func (s *shortcuts) process(gtx layout.Context, a *App) {
 		if !ok {
 			continue
 		}
-		inputidle.Note()
 		if globalKeys {
 			forwardKey(ke)
 		}
@@ -246,7 +244,6 @@ func (s *shortcuts) processGlobal(gtx layout.Context) {
 			break
 		}
 		if ke, ok := e.(key.Event); ok {
-			inputidle.Note()
 			forwardKey(ke)
 		}
 	}

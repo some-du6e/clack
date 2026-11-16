@@ -1421,3 +1421,36 @@ transform applies to them too.
 
 Test: `internal/ui` `TestInspectShots` (feel-shots, llvmpipe) renders the
 pick through it. Not in `UPSTREAM.patch`.
+
+## 32. io/input: when a router was last given input
+
+`io/input/clack_inputidle.go` (new: `SinceInput`) and `io/input/router.go`
+(`Queue` notes each event). An addition: nothing upstream reads the
+clock.
+
+Clack holds work that would stall the window for a pause in the person's
+input: cmd/clack's forced collections (`debug.FreeOSMemory`), whose
+stop-the-world phases and scavenge of all free memory freeze whatever the
+UI goroutine is doing. A pause has to mean no input anywhere, and Clack
+code only ever sees the events its own handlers are routed: a focused
+widget's keys (the message list's arrow navigation, Block Kit's and
+plugins' text fields, list search, the link dialog), a drag another
+widget grabbed (the grab drops every other handler, the root's
+included), a popover drawn with `op.Defer` above the window's root
+handler, and the huddle windows' input never reach a handler at the
+root. Frames are no sign of input either: a focused editor's caret
+redraws the window twice a second for as long as it's focused.
+
+`Queue` notes every pointer event (not the router's or window's own
+`Cancel`), key event and `EditEvent` it's given, before routing, in a
+process-wide clock on the monotonic time (a wall-clock step moves
+nothing). `SinceInput` is how long ago the last one was (how long the
+process has run when there was none). Focus changes, snippets and
+selections aren't input. Clack reads it through `internal/ui/inputidle`,
+whose stockgio build (`.github/scripts/gio-layer-fix.sh`) has no clock.
+
+Tests: `io/input/clack_inputidle_test.go` (`TestSinceInput`: a cancel and
+a focus change don't count; a key, an edit and a scroll do) on ci's
+linux-gio job, `internal/ui` `TestInputIdleSeesFocusedWidgetKeys`,
+`TestInputIdleSeesScroll` and `TestInputIdleSeesGrabbedDrag`, and
+`cmd/clack` `TestWaitQuietOnInput`. Not in `UPSTREAM.patch`.

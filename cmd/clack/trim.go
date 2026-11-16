@@ -212,7 +212,8 @@ var (
 )
 
 // waitQuiet reports whether to collect now, once there has been no input
-// (pointer, scroll, keys: inputidle) for quietFor. A forced collection
+// for quietFor: no pointer, scroll, key or text event queued to any
+// window's Gio router, whichever widget took it (inputidle; Gio patch 32). A forced collection
 // while someone scrolls or types stops the UI goroutine with every other
 // one for its stop-the-world phases and then scavenges all free memory
 // under the heap lock new allocations need; two of Karim's freeze reports
