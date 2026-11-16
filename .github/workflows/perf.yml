@@ -514,6 +514,9 @@ jobs:
         env:
           PLUGIN_BENCH_LIBRARY: ${{ github.workspace }}/dist/library
           LIBGL_ALWAYS_SOFTWARE: "1"
+          # then 3 pairs of channel-live with the execution-trace flight
+          # recorder off and on (trees that have it: internal/ui/flightrec.go)
+          PERF_PLUGIN_RECORDER: "3"
         run: |
           for r in 1 2 3; do
             for s in base head; do

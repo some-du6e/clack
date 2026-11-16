@@ -52,6 +52,7 @@ type Runtime struct {
 	gcObjects atomic.Uint32 // objects the last collection scanned
 	gcs       atomic.Uint64 // collections so far
 	heap      atomic.Uint64 // JS heap bytes << 32 | live allocations (jr_heap)
+	wasmMem   wasmMemStats  // the engine's wasm memory (wasmmem.go)
 
 	// Released handles (releaseLater): a GC cycle's cleanups free them by
 	// the thousand, as batches of one task each.

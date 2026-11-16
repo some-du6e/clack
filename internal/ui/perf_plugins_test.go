@@ -40,6 +40,9 @@ package ui
 //	                      pass (<prefix>-<pass>.cpu.pprof, .allocs0/1.pprof
 //	                      before and after) and the mutex and block
 //	                      profiles over all passes
+//	PERF_PLUGIN_RECORDER  n: then n pairs of channel-live passes with the
+//	                      execution-trace flight recorder off and on
+//	                      (flightrec.go; trees that have it)
 //
 // Synthetic data only; nothing reaches Slack. It uses nothing newer than
 // the plugin bench, so the perf workflow runs this same file on the
@@ -55,11 +58,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
 	"runtime/pprof"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -67,6 +72,7 @@ import (
 	"time"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
+	"github.com/some-du6e/clack/internal/jsrt"
 	"github.com/some-du6e/clack/internal/pluginlib"
 	"github.com/some-du6e/clack/internal/slack"
 	"github.com/some-du6e/clack/internal/ui/slackc"
@@ -110,7 +116,17 @@ type perfPass struct {
 	// Slow are the frames over 40 ms: what the frame goroutine was doing
 	// 40 and 120 ms in (function names), with what landed meanwhile
 	Slow []perfSlow `json:"slow,omitempty"`
+	// TraceMB and TraceMS: with the flight recorder on, the trace of its
+	// window written after the pass, as a slow frame writes it
+	TraceMB float64 `json:"trace_mb,omitempty"`
+	TraceMS float64 `json:"trace_ms,omitempty"`
 }
+
+// perfRecorder starts the execution-trace flight recorder (flightrec.go)
+// and returns its stop and a function writing its window (bytes, time).
+// perf_flightrec_test.go sets it; the base tree (which runs this file) has
+// no recorder, so there it stays nil and the recorder passes are skipped.
+var perfRecorder func() (stop func(), dump func() (int, time.Duration), err error)
 
 type perfSlow struct {
 	MS    float64  `json:"ms"`
@@ -128,6 +144,22 @@ func perfGCs() uint64 {
 		return 0
 	}
 	return s[0].Value.Uint64()
+}
+
+// perfOffHeapWasmMB is the plugin engines' wasm memory that lives outside
+// the Go heap (jsrt.Snapshot's WasmMemory where WasmReserved is set). The
+// base tree runs this file too, and its Snapshot may have neither field:
+// then it's 0 (the memory is a Go slice, in the live heap).
+func perfOffHeapWasmMB() float64 {
+	var n uint64
+	for _, s := range jsrt.Snapshots() {
+		v := reflect.ValueOf(s)
+		mem, res := v.FieldByName("WasmMemory"), v.FieldByName("WasmReserved")
+		if mem.IsValid() && res.IsValid() && res.Uint() > 0 {
+			n += mem.Uint()
+		}
+	}
+	return float64(n) / (1 << 20)
 }
 
 // perfGoID is the calling goroutine's id ("goroutine 7 [running]:").
@@ -173,14 +205,17 @@ func perfStack(id string) []string {
 }
 
 type perfPluginResult struct {
-	Plugins  []string   `json:"plugins"`
-	Failed   []string   `json:"failed,omitempty"`
-	Patched  []string   `json:"patched"`
-	Messages int        `json:"messages"`
-	Replies  int        `json:"replies"`
-	Visited  int        `json:"visited"`
-	HeapMB   float64    `json:"heap_mb"` // live heap after setup
-	Passes   []perfPass `json:"passes"`
+	Plugins  []string `json:"plugins"`
+	Failed   []string `json:"failed,omitempty"`
+	Patched  []string `json:"patched"`
+	Messages int      `json:"messages"`
+	Replies  int      `json:"replies"`
+	Visited  int      `json:"visited"`
+	HeapMB   float64  `json:"heap_mb"` // live heap after setup
+	// WasmMB is the plugin engines' wasm memory outside the Go heap (jsrt's
+	// reservation; 0 where it is a Go slice, inside HeapMB)
+	WasmMB float64    `json:"wasm_mb,omitempty"`
+	Passes []perfPass `json:"passes"`
 }
 
 func TestPerfPluginScroll(t *testing.T) {
@@ -300,8 +335,8 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.loadAll()
 	res.Messages = e.loadedMessages(fakeslack.BenchChannelID)
 	runtime.GC()
-	res.HeapMB = liveHeapMB()
-	t.Logf("%d messages loaded, %d channels visited, live heap %.0f MB", res.Messages, res.Visited, res.HeapMB)
+	res.HeapMB, res.WasmMB = liveHeapMB(), perfOffHeapWasmMB()
+	t.Logf("%d messages loaded, %d channels visited, live heap %.0f MB, wasm memory outside it %.0f MB", res.Messages, res.Visited, res.HeapMB, res.WasmMB)
 
 	prof := os.Getenv("PERF_PLUGIN_PROF")
 	if prof != "" {
@@ -323,9 +358,13 @@ func TestPerfPluginScroll(t *testing.T) {
 	res.Passes = append(res.Passes, e.perfScroll("channel-live", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
 	func() {
 		// the heap a quarter above what's live: the collector runs all the
-		// time, as near cmd/clack's limit
+		// time, as near cmd/clack's limit. What's live includes the plugin
+		// engine's wasm memory wherever it is: in the Go heap (a Go
+		// slice) the quarter above counted it, so where it lives outside
+		// (jsrt's reservation) the limit keeps that headroom
 		runtime.GC()
-		lim := int64(liveHeapMB()*1.25*(1<<20)) + 32<<20
+		wasm := perfOffHeapWasmMB()
+		lim := int64(((liveHeapMB()+wasm)*1.25-wasm)*(1<<20)) + 32<<20
 		old := debug.SetMemoryLimit(lim)
 		defer debug.SetMemoryLimit(old)
 		res.Passes = append(res.Passes, e.perfScroll("channel-gc", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
@@ -349,6 +388,42 @@ func TestPerfPluginScroll(t *testing.T) {
 	e.a.Navigate("activity")
 	e.settle(2 * time.Second)
 	res.Passes = append(res.Passes, e.perfScroll("activity", e.listPoint, traffic(fakeslack.BenchChannelID, "")))
+
+	// what the flight recorder costs: PERF_PLUGIN_RECORDER pairs of the
+	// channel-live pass with it off and on, in turns (off-on, on-off, …),
+	// without the CPU profiler (the tracer records its samples too)
+	if pairs, _ := strconv.Atoi(os.Getenv("PERF_PLUGIN_RECORDER")); pairs > 0 && perfRecorder != nil {
+		e.openBench()
+		profPrefix := perfProfPrefix
+		perfProfPrefix = ""
+		for i := 0; i < pairs; i++ {
+			order := []bool{false, true}
+			if i%2 == 1 {
+				order = []bool{true, false}
+			}
+			for _, on := range order {
+				name := "channel-live, recorder off"
+				var stop func()
+				var dump func() (int, time.Duration)
+				if on {
+					var err error
+					if stop, dump, err = perfRecorder(); err != nil {
+						t.Fatalf("the flight recorder: %v", err)
+					}
+					name = "channel-live, recorder on"
+				}
+				e.settle(2 * time.Second) // the recorder holds a few generations first
+				p := e.perfScroll(name, e.listPoint, traffic(fakeslack.BenchChannelID, ""))
+				if on {
+					n, took := dump()
+					p.TraceMB, p.TraceMS = float64(n)/1e6, float64(took.Microseconds())/1000
+					stop()
+				}
+				res.Passes = append(res.Passes, p)
+			}
+		}
+		perfProfPrefix = profPrefix
+	}
 
 	if prof != "" {
 		for _, k := range []string{"mutex", "block"} {

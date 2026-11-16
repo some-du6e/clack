@@ -65,6 +65,11 @@ type Options struct {
 	// Language is navigator.language (default "en-US"); Platform is
 	// navigator.platform (default from GOOS: "MacIntel", "Win32", "Linux x86_64").
 	Language, Platform string
+
+	// heapWasmMemory (tests) keeps the engine's wasm memory in a Go slice
+	// grown like wazero's own, as before wasmmem.go: the "before" side of
+	// the tests that measure the reservation.
+	heapWasmMemory bool
 }
 
 // Errors returned by the runtime.

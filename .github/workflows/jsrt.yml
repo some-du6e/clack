@@ -79,6 +79,38 @@ jobs:
       - name: stop-the-world waits on the JS thread (native loops with the yields off, then on)
         if: ${{ !cancelled() }}
         run: go test -count=1 -run 'TestStopTheWorldBounded' -v ./internal/jsrt/ | grep -E 'stw:|garbage collector|^(--- |ok|FAIL|PASS)' || true
+      - name: the wasm memory growing (reserved address space, then a Go slice as before)
+        if: ${{ !cancelled() }}
+        env:
+          JSRT_STW_STRICT: "1"
+        run: go test -count=1 -run 'TestWasm|TestReserv' -v ./internal/jsrt/ | grep -E 'wasmmem:|^(--- |ok|FAIL|PASS)' || true
+  platforms:
+    # the package on the other systems Clack ships for: the wasm memory's
+    # reservation is mmap + mprotect on macOS (wasmmem_unix.go) and
+    # VirtualAlloc on Windows (wasmmem_windows.go), and wazero compiles
+    # the engine to arm64 or amd64 code
+    name: platforms (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: test
+        shell: bash
+        run: go env GOOS GOARCH && go test -count=1 -timeout 30m ./internal/jsrt/
+      - name: the wasm memory and stop-the-world waits, verbose
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: go test -count=1 -run 'TestWasm|TestReserv|TestStopTheWorldBounded' -v ./internal/jsrt/ | grep -E 'wasmmem:|stw:|^(--- |ok|FAIL|PASS)' || true
   taut-plugins:
     # every plugin in taut's plugins/, built with taut's own build:user-plugin, must load
     runs-on: ubuntu-latest

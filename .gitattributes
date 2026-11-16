@@ -1,2 +1,7 @@
 # Slack's own resource file, byte for byte (its sha256 is checked)
 internal/desktop/unread-badge-resources.json -text
+# assets.pack's inputs, byte for byte (TestAssetPackFresh compares them;
+# a Windows checkout would otherwise turn the JS into CRLF)
+internal/jsrt/jsrt.wasm -text
+internal/jsrt/js/*.js -text
+internal/jsrt/vendor/*.js -text

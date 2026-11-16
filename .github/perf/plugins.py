@@ -53,6 +53,37 @@ def fmt(v, unit):
     return f"{v:.0f}"
 
 
+def recorder(runs):
+    """The flight recorder's cost: head's channel-live passes with it off
+    and on, in turns on one runner (PERF_PLUGIN_RECORDER)."""
+    vals = {"off": {}, "on": {}}
+    for r in runs:
+        for p in r.get("passes") or []:
+            for mode in ("off", "on"):
+                if p["name"].endswith(", recorder " + mode):
+                    for key, _, _ in METRICS + [("trace_mb", "", ""), ("trace_ms", "", "")]:
+                        if p.get(key) is not None:
+                            vals[mode].setdefault(key, []).append(p[key])
+    if not vals["off"] or not vals["on"]:
+        return
+    n = len(vals["off"].get("cpu_ms", []))
+    print("### The execution-trace flight recorder (head only)\n")
+    print(f"channel-live again, {n} passes with the recorder off and {len(vals['on'].get('cpu_ms', []))} with it on, in turns (off-on, on-off, …), without the CPU profiler. Medians, the passes in brackets.\n")
+    print("| | off | on | change |")
+    print("|---|---|---|---|")
+    for key, label, unit in METRICS:
+        a, b = vals["off"].get(key), vals["on"].get(key)
+        if not a or not b:
+            continue
+        ma, mb = statistics.median(a), statistics.median(b)
+        change = f"{(mb - ma) / ma * 100:+.1f}%" if ma > 0 else ("0" if mb == 0 else "—")
+        print(f"| {label} | {fmt(ma, unit)} [{' / '.join(fmt(v, unit) for v in a)}] | {fmt(mb, unit)} [{' / '.join(fmt(v, unit) for v in b)}] | {change} |")
+    mb, ms = vals["on"].get("trace_mb"), vals["on"].get("trace_ms")
+    if mb and ms:
+        print(f"| its window written to a file | | {statistics.median(mb):.1f} MB in {statistics.median(ms):.0f} ms [{' / '.join(f'{v:.1f} MB' for v in mb)}] | |")
+    print()
+
+
 def main():
     d, base_label, head_label = sys.argv[1], sys.argv[2], sys.argv[3]
     sides = {"base": load(d, "base"), "head": load(d, "head")}
@@ -65,14 +96,20 @@ def main():
         print(f"Plugins running: {', '.join(ref.get('plugins') or []) or 'none'}" +
               (f"; failed to start: {', '.join(ref['failed'])}" if ref.get("failed") else ""))
         print(f"\nPatched components: {', '.join(ref.get('patched') or [])}\n")
-        print(f"{ref.get('messages', 0)} messages in the channel, {ref.get('replies', 0)} replies in the thread, {ref.get('visited', 0)} other channels opened first; live heap {ref.get('heap_mb', 0):.0f} MB.\n")
+        heaps = "; ".join(
+            f"{side}: live heap {runs[0].get('heap_mb', 0):.0f} MB" + (f" + {runs[0]['wasm_mb']:.0f} MB of wasm memory outside it" if runs[0].get("wasm_mb") else "")
+            for side, runs in sides.items() if runs)
+        print(f"{ref.get('messages', 0)} messages in the channel, {ref.get('replies', 0)} replies in the thread, {ref.get('visited', 0)} other channels opened first; {heaps}.\n")
     names = []
     for runs in sides.values():
         for r in runs:
             for p in r.get("passes") or []:
                 if p["name"] not in names:
                     names.append(p["name"])
+    recorder(sides["head"])
     for name in names:
+        if ", recorder o" in name:
+            continue  # in the recorder's table above
         print(f"### {name}\n")
         print("| | before | after | change |")
         print("|---|---|---|---|")

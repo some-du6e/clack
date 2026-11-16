@@ -10,6 +10,7 @@ import (
 	"runtime/metrics"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -68,6 +69,21 @@ type watchdog struct {
 	stage atomic.Pointer[string]
 	page  atomic.Pointer[string] // the route's page at the last frame
 
+	// rec is the execution-trace flight recorder (flightrec.go; nil =
+	// off, or not started yet). With it on, begin, next and end also time
+	// each stage (UI goroutine only, so no atomics), and a task of
+	// slowTrace or more asks it for a trace naming the stage that took
+	// longest. recMu orders its start (on a goroutine of its own) against
+	// stop.
+	rec        atomic.Pointer[flightRecorder]
+	recMu      sync.Mutex
+	recStopped bool          // stop ran (recMu)
+	traceGap   time.Duration // between two slow-task traces (traceGap; shorter in tests)
+	timing     bool          // this task's stages are timed (the recorder was on at begin)
+	stageAt    int64         // when the current stage began (now's clock)
+	longest    time.Duration
+	longStage  *string
+
 	// written is called with each report's path (tests).
 	written func(path string)
 	quit    chan struct{}
@@ -75,7 +91,7 @@ type watchdog struct {
 
 func newWatchdog(configDir string, started time.Time) *watchdog {
 	w := &watchdog{started: started, after: freezeAfter, second: freezeSecond,
-		keepAge: freezeKeepAge, keepMax: freezeKeepBytes, quit: make(chan struct{})}
+		keepAge: freezeKeepAge, keepMax: freezeKeepBytes, traceGap: traceGap, quit: make(chan struct{})}
 	if configDir != "" {
 		w.dir = filepath.Join(configDir, "freeze-reports")
 		w.ui = filepath.Join(configDir, "ui.json")
@@ -94,6 +110,38 @@ var (
 // now is busy's clock: awake time in ns, never 0.
 func (w *watchdog) now() int64 { return awake.Now() }
 
+// startRecorder starts the flight recorder when it's wanted
+// (CLACK_FLIGHT_RECORDER, ui.json's flight_recorder; flightrec.go) and
+// reports are on, on a goroutine of its own: starting the tracer stops the
+// world, which waits for every goroutine (a JS thread in wasm included),
+// and the UI goroutine never waits. The channel closes once it's on (or
+// didn't start).
+func (w *watchdog) startRecorder(pref *bool) <-chan struct{} {
+	done := make(chan struct{})
+	if w == nil || w.dir == "" || !flightRecorderWanted(pref) {
+		close(done)
+		return done
+	}
+	go func() {
+		defer close(done)
+		rec, err := startFlightRecorder(w.dir, w.traceGap)
+		if err != nil {
+			log.Printf("ui: the execution trace flight recorder didn't start: %v", err)
+			return
+		}
+		w.recMu.Lock()
+		if w.recStopped {
+			w.recMu.Unlock()
+			rec.stop()
+			return
+		}
+		w.rec.Store(rec)
+		w.recMu.Unlock()
+		log.Printf("ui: the execution trace flight recorder is on: a task of %v or more writes the last %v to %s", slowTrace, tracePeriod, w.dir)
+	}()
+	return done
+}
+
 // begin starts timing a task on the UI goroutine. Cheap: atomics only.
 func (w *watchdog) begin(stage *string) {
 	if w == nil {
@@ -101,20 +149,56 @@ func (w *watchdog) begin(stage *string) {
 	}
 	w.stage.Store(stage)
 	w.epoch.Add(1)
-	w.busy.Store(w.now())
+	now := w.now()
+	w.busy.Store(now)
+	if w.timing = w.rec.Load() != nil; w.timing {
+		w.stageAt, w.longest, w.longStage = now, 0, stage
+	}
 }
 
 // next moves the running task to another stage (same task, same clock).
 func (w *watchdog) next(stage *string) {
-	if w != nil {
-		w.stage.Store(stage)
+	if w == nil {
+		return
 	}
+	if w.timing {
+		w.endStage(w.now())
+	}
+	w.stage.Store(stage)
+}
+
+// endStage counts the stage ending at now toward the task's longest (UI
+// goroutine, w.timing).
+func (w *watchdog) endStage(now int64) {
+	if d := time.Duration(now - w.stageAt); d > w.longest {
+		w.longest, w.longStage = d, w.stage.Load()
+	}
+	w.stageAt = now
 }
 
 func (w *watchdog) end() {
-	if w != nil {
-		w.busy.Store(0)
+	if w == nil {
+		return
 	}
+	if rec := w.rec.Load(); rec != nil {
+		if since := w.busy.Load(); since != 0 {
+			now := w.now()
+			stage := w.stage.Load() // the recorder came on during the task: its last stage
+			if w.timing {
+				w.endStage(now)
+				stage = w.longStage
+			}
+			if d := time.Duration(now - since); d >= slowTrace {
+				name := "?"
+				if stage != nil {
+					name = *stage
+				}
+				rec.slowTask(d, name)
+			}
+		}
+	}
+	w.timing = false
+	w.busy.Store(0)
 }
 
 // notePage records the page shown (UI goroutine; stores only on change).
@@ -195,11 +279,18 @@ func (w *watchdog) run() {
 	}
 }
 
-// stop ends run.
+// stop ends run, and the flight recorder (once a trace being written is
+// done).
 func (w *watchdog) stop() {
-	if w != nil {
-		close(w.quit)
+	if w == nil {
+		return
 	}
+	close(w.quit)
+	w.recMu.Lock()
+	w.recStopped = true
+	rec := w.rec.Swap(nil)
+	w.recMu.Unlock()
+	rec.stop()
 }
 
 func (w *watchdog) stageName() string {
@@ -233,6 +324,7 @@ func (w *watchdog) report(since int64) (string, error) {
 		return "", err
 	}
 	w.prune(path)
+	w.rec.Load().freeze(path) // the trace of the seconds before, beside it (flightrec.go)
 	return path, nil
 }
 
@@ -372,12 +464,21 @@ func allStacks() []byte {
 }
 
 // prune deletes reports older than keepAge, then the oldest until the rest
-// fit in keepMax bytes; keep (the report just written) always stays.
-// Reports rank by modification time, not by name: a name is local wall
-// time, which a DST fall-back or a westward zone change turns back, so the
-// newest report could sort below older ones and go first.
+// fit in keepMax bytes, and the execution traces of the reports it
+// deleted (flightrec.go); keep (the report just written) always stays.
 func (w *watchdog) prune(keep string) {
-	ents, err := os.ReadDir(w.dir)
+	pruneFiles(w.dir, keep, func(n string) bool { return strings.HasPrefix(n, "freeze-") && strings.HasSuffix(n, ".txt") }, w.keepAge, w.keepMax)
+	pruneOrphanTraces(w.dir, keep)
+}
+
+// pruneFiles deletes the files in dir that match and are older than
+// keepAge, then the oldest until the rest fit in keepMax bytes; keep (the
+// file just written) always stays. Files rank by modification time, not
+// by name: a name is local wall time, which a DST fall-back or a westward
+// zone change turns back, so the newest file could sort below older ones
+// and go first.
+func pruneFiles(dir, keep string, match func(name string) bool, keepAge time.Duration, keepMax int64) {
+	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
@@ -389,7 +490,7 @@ func (w *watchdog) prune(keep string) {
 	var reps []rep
 	for _, e := range ents {
 		n := e.Name()
-		if e.IsDir() || !strings.HasPrefix(n, "freeze-") || !strings.HasSuffix(n, ".txt") {
+		if e.IsDir() || !match(n) {
 			continue
 		}
 		fi, err := e.Info()
@@ -410,8 +511,8 @@ func (w *watchdog) prune(keep string) {
 	var total int64
 	for _, r := range reps {
 		total += r.size
-		if r.name != keep && (time.Since(r.mod) > w.keepAge || total > w.keepMax) {
-			_ = os.Remove(filepath.Join(w.dir, r.name))
+		if r.name != keep && (time.Since(r.mod) > keepAge || total > keepMax) {
+			_ = os.Remove(filepath.Join(dir, r.name))
 		}
 	}
 }

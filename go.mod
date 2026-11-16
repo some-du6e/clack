@@ -19,6 +19,7 @@ require (
 	github.com/pion/webrtc/v4 v4.2.26
 	github.com/refraction-networking/utls v1.8.2
 	github.com/thesyncim/goh264 v0.0.0-20260714162114-14b36a2bfcc4
+	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 	golang.org/x/image v0.33.0
 	golang.org/x/sys v0.41.0
 )

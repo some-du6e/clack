@@ -502,6 +502,8 @@ func (a *App) Run() error {
 	var ops, coverOps op.Ops
 	uiguard.MarkUI() // this goroutine handles every window event (uiguard)
 	wd := newWatchdog(a.opts.ConfigDir, a.opts.Started)
+	// the execution trace of the seconds before a slow frame (flightrec.go)
+	wd.startRecorder(a.prefs.FlightRecorder)
 	a.wd = wd // drainIdle's stage
 	go wd.run()
 	for {
