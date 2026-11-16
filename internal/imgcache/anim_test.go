@@ -509,15 +509,22 @@ func TestGIFLoopCount(t *testing.T) {
 	// (a lower frame after a higher one)
 	play := func(u string, frames map[paint.ImageOp]int, last int) int {
 		t.Helper()
-		passes := 0
+		passes, moved := 0, false
 		for dl := time.Now().Add(15 * time.Second); ; time.Sleep(4 * time.Millisecond) {
 			if time.Now().After(dl) {
 				t.Fatalf("%s never ended", u)
 			}
 			op, _ := c.Get(u, 40)
 			i, ok := frames[op]
-			if !ok || i < 0 {
-				t.Fatalf("%s drew a frame its player never decoded, or its still", u)
+			switch {
+			case !ok:
+				t.Fatalf("%s drew a frame its player never decoded", u)
+			case i >= 0:
+				moved = true
+			case moved:
+				t.Fatalf("%s drew its still again: its player went", u)
+			default:
+				i = 0 // the still, the first frame, until the timeline first moves
 			}
 			if i < last {
 				passes++
@@ -538,28 +545,17 @@ func TestGIFLoopCount(t *testing.T) {
 		}
 	}
 
-	// the first pass's last frame began long before the draw after it
+	// the first pass's last frame began long before the draw after it:
+	// a draw that comes 300 ms past the first frame of the next pass
 	readyEntry(t, c, stalled, 40)
 	frames := playing(t, c, stalled, 40)
-	for dl := time.Now().Add(5 * time.Second); ; time.Sleep(4 * time.Millisecond) {
-		if time.Now().After(dl) {
-			t.Fatal("the stalled GIF never reached its first pass's last frame")
-		}
-		c.Get(stalled, 40)
-		c.mu.Lock()
-		p := playerOfLocked(c, stalled, 40)
-		at := p != nil && p.s.cur == 3 && p.s.passes == 0 && p.s.reps == 1
-		if at { // a draw that came 300 ms (two frames) after it was over
-			p.s.shown = time.Now().Add(-(p.ix.frames[3].delay + p.ix.frames[0].delay + 300*time.Millisecond))
-		}
-		c.mu.Unlock()
-		if at {
-			break
-		}
-	}
-	c.Get(stalled, 40)
 	c.mu.Lock()
 	p := playerOfLocked(c, stalled, 40)
+	p.s.cur, p.s.passes, p.s.reps = 3, 0, 1 // on the first pass's last frame
+	p.s.shown = time.Now().Add(-(p.ix.frames[3].delay + p.ix.frames[0].delay + 300*time.Millisecond))
+	c.mu.Unlock()
+	c.Get(stalled, 40)
+	c.mu.Lock()
 	cur, passes := p.s.cur, p.s.passes
 	c.mu.Unlock()
 	if cur != 0 || passes != 0 {

@@ -28,7 +28,8 @@ func explodesDurations() []time.Duration {
 
 // playing waits until url's player at px has decoded its frames (drawing
 // it every 16 ms meanwhile, as a window would) and returns a map from each
-// frame it may draw to its index; the still is -1.
+// frame it may draw to its index; the still is -1. Until its timeline
+// first moves a player draws the still, its first frame (curOp).
 func playing(t *testing.T, c *Cache, url string, px int) map[paint.ImageOp]int {
 	t.Helper()
 	for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(16 * time.Millisecond) {
@@ -62,15 +63,19 @@ func playingNow(c *Cache, url string, px int) map[paint.ImageOp]int {
 	return idx
 }
 
-// anchor waits (drawing url at px every 4 ms) until its schedule is past
-// its first two passes, after which nothing restarts it (Chromium's
-// first-pass restart needs repetitions_completed 1; the resync, 5 minutes
-// behind), and returns where its timeline is: the frame showing and when
-// it began. From there frameAt says which frame the timeline is at.
-func anchor(t *testing.T, c *Cache, url string, px int) (cur int, shown time.Time) {
+// anchor waits (drawing url at px, and at the other sizes also, every 4
+// ms) until its schedule is past its first two passes, after which nothing
+// restarts it (Chromium's first-pass restart needs repetitions_completed
+// 1; the resync, 5 minutes behind), and returns where its timeline is: the
+// frame showing and when it began. From there frameAt says which frame the
+// timeline is at.
+func anchor(t *testing.T, c *Cache, url string, px int, also ...int) (cur int, shown time.Time) {
 	t.Helper()
 	for dl := time.Now().Add(10 * time.Second); time.Now().Before(dl); time.Sleep(4 * time.Millisecond) {
 		c.Get(url, px)
+		for _, o := range also {
+			c.Get(url, o)
+		}
 		c.mu.Lock()
 		p := playerOfLocked(c, url, px)
 		ok := p != nil && p.keep && len(p.frames) == len(p.ix.frames) && p.s.reps >= 2 && !p.s.ended
@@ -228,6 +233,7 @@ func TestExplodesPlaysOnTimeUnderLoad(t *testing.T) {
 		return n
 	}
 	next, draws := 0, 0 // the next photo to ask for
+	moved := false      // a frame of the player's drawn: the still is gone for good
 	last := time.Now()
 	for dl := time.Now().Add(60 * time.Second); passes() < 3 || fetched.Load() < 24; draws++ {
 		if time.Now().After(dl) {
@@ -244,6 +250,11 @@ func TestExplodesPlaysOnTimeUnderLoad(t *testing.T) {
 		i, known := idx[op]
 		if !known {
 			t.Fatal("a frame the player never decoded")
+		}
+		if i >= 0 {
+			moved = true
+		} else if !moved {
+			i = 0 // the still, the first frame, until the timeline first moves
 		}
 		if len(seq) == 0 || seq[len(seq)-1].i != i {
 			seq = append(seq, shown{i: i, at: now, gap: gap})
@@ -298,7 +309,7 @@ func TestAnimSizesShareTimeline(t *testing.T) {
 		t.Fatal("the two sizes play on separate timelines")
 	}
 	ds := explodesDurations()
-	cur, shown := anchor(t, c, explodesURL, 22)
+	cur, shown := anchor(t, c, explodesURL, 22, 32)
 	inv0, moves := inv.Load(), 0
 	prev := -2
 	for dl := time.Now().Add(1500 * time.Millisecond); time.Now().Before(dl); time.Sleep(4 * time.Millisecond) {
