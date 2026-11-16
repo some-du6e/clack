@@ -4,13 +4,18 @@
 // inspect_tool turns it on) starts an inspect session, like a browser's
 // inspect element: the Slack component under the pointer gets an outline
 // and a label, ↑ and ↓ pick its parent or go back, Esc ends the session,
-// and a click picks the element. Clack then copies one image to the
-// clipboard: the element as it was drawn, outlined, with a small blurred
-// margin and nothing else of the window, over a panel with a report (which component and element, its classes, its
-// rect, the colours drawn there, the theme, the experiments its code
-// read, and tags for the ids it was drawn for: one-way hashes, salted
-// per report, so the report is safe to paste in #clack). The image and
-// the report's text are also saved in <config>/inspect-reports.
+// and a click picks the element; a drag past dragSlop grabs the region
+// dragged out instead, for what the picker can't reach. The shot is
+// then shown for review (review.go): rects dragged over it are blurred
+// out of the image (Redact), Enter copies it and Esc drops it. The copy
+// is one image on the clipboard: the element as it was drawn, outlined,
+// with a small blurred margin and nothing else of the window (or the
+// region, as it was), over a panel with a report (which component and
+// element, its classes, its rect, the colours drawn there, the theme,
+// the experiments its code read, and tags for the ids it was drawn for:
+// one-way hashes, salted per report, so the report is safe to paste in
+// #clack). The image and the report's text are also saved in
+// <config>/inspect-reports.
 //
 // While a session runs the window is laid out with a hover-only input
 // source (Gio patch 21): hover states, scrolling, carets and animations
@@ -29,6 +34,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"math"
 	"runtime"
 	"strings"
 	"time"
@@ -84,9 +90,25 @@ type state uint8
 const (
 	off state = iota
 	inspecting
-	// picked: the click's frame is captured; the session ends when the
-	// button comes up, so no widget gets a release it never saw pressed.
+	// pressing: the primary button went down over an element, whose
+	// report was built from the frame it was pressed in (pend). A release
+	// before the pointer moves dragSlop picks it; past that it's a drag.
+	pressing
+	// dragging: a region is dragged out, from t.from to the pointer.
+	dragging
+	// picked: the release's frame (laid out hover-only, so no widget saw
+	// the button) is shot in AfterFrame, which starts the review.
 	picked
+	// reviewing: the shot is shown for blurring (review.go).
+	reviewing
+)
+
+// dragSlop is how far (dp) the pointer moves pressed before a click
+// becomes a drag that grabs a region; minRegion is the smallest region
+// (dp each way) a drag grabs.
+const (
+	dragSlop  = 6
+	minRegion = 8
 )
 
 // Tool is one window's inspect tool. Everything runs on the UI goroutine.
@@ -99,19 +121,23 @@ type Tool struct {
 	cur    int // frames[cur] records this frame; the other one is the last
 	rec    bool
 
-	ptag   int // the window-wide pointer area (topmost, pass-through)
-	ptr    f32.Point
-	ptrIn  bool
-	hist   [32]ptrAt
-	histN  int
-	pickAt time.Time
+	ptag  int // the window-wide pointer area (topmost, pass-through)
+	ptr   f32.Point
+	ptrIn bool
+	hist  [32]ptrAt
+	histN int
+	from  f32.Point   // where the primary button went down (window px)
+	win   image.Point // the window's size (px), at the last Begin
+	scale float32     // px per dp, at the last Begin
 
 	hover    *pick
-	up       int // ↑ presses: how many components out from the innermost
-	capture  *capture
+	up       int           // ↑ presses: how many components out from the innermost
+	pend     *capture      // pressing: the element's report, waiting for the release
+	capture  *capture      // picked: waiting for the frame to be shot
+	rev      *review       // reviewing
 	lastDone chan struct{} // the last report's delivery (Wait)
+	lastRep  *Report       // the last report delivered (tests, after Wait)
 	lastNow  time.Time     // the frame Begin last read input for
-	endAfter bool          // picked, and the release came with the press
 	upKey    string        // the innermost element t.up counts from (innerKey)
 }
 
@@ -139,8 +165,21 @@ func New(host Host, combo key.Filter) *Tool {
 	return &Tool{host: host, combo: combo}
 }
 
-// Active reports a running session (a pick's frame included).
-func (t *Tool) Active() bool { return t.state != off && !(t.state == picked && t.endAfter) }
+// Active reports a running session (a pick's frame and its review
+// included).
+func (t *Tool) Active() bool { return t.state != off }
+
+// Reviewing reports that a shot is shown for blurring (review.go).
+func (t *Tool) Reviewing() bool { return t.state == reviewing }
+
+// Dragging is the region being dragged out (window px), ok false when
+// none is.
+func (t *Tool) Dragging() (image.Rectangle, bool) {
+	if t.state != dragging {
+		return image.Rectangle{}, false
+	}
+	return t.dragRect(t.ptr), true
+}
 
 // Hovered is what the session outlines now: its label and rect (window
 // px); ok false when nothing is.
@@ -157,7 +196,7 @@ func (t *Tool) Close() {
 	if t.state != off {
 		t.stop()
 	}
-	t.capture = nil
+	t.capture, t.pend, t.rev = nil, nil, nil
 	t.host.Invalidate()
 }
 
@@ -173,20 +212,35 @@ func (t *Tool) Toggle() {
 
 func (t *Tool) start() {
 	t.state = inspecting
-	t.hover, t.up, t.rec, t.endAfter = nil, 0, false, false
+	t.hover, t.up, t.rec, t.pend, t.capture, t.rev = nil, 0, false, nil, nil, nil
 	t.frames[0].Nodes, t.frames[1].Nodes = t.frames[0].Nodes[:0], t.frames[1].Nodes[:0]
 	core.ObserveExperiments(observeExperiment)
 }
 
 func (t *Tool) stop() {
 	t.state = off
+	t.pend, t.rev = nil, nil
+	t.release()
+}
+
+// release stops recording frames: no outline, no experiments observed,
+// and the last frames' nodes (widgets, props funcs, scopes) let go of.
+func (t *Tool) release() {
 	t.hover, t.rec = nil, false
 	core.ObserveExperiments(nil)
-	// let go of last frames' nodes (widgets, props funcs, scopes)
 	for i := range t.frames {
 		clear(t.frames[i].Nodes)
 		t.frames[i].Nodes = t.frames[i].Nodes[:0]
 	}
+}
+
+// backToInspecting ends a press or a drag that grabbed nothing: the
+// session goes on, recording afresh.
+func (t *Tool) backToInspecting() {
+	// no outline until a frame is recorded again: the one shown was the
+	// press's, whose nodes are let go of
+	t.state, t.pend, t.rec, t.hover = inspecting, nil, false, nil
+	core.ObserveExperiments(observeExperiment)
 }
 
 // observeExperiment gives an experiment read on the UI goroutine to the
@@ -221,31 +275,62 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 		return hover
 	}
 	t.lastNow = gtx.Now
-	if t.state == picked && t.endAfter {
-		// the pick's frame was laid out (and its click dropped): done
-		t.stop()
-		return gtx
+	t.win = gtx.Constraints.Max
+	t.scale = gtx.Metric.PxPerDp
+	if t.scale <= 0 {
+		t.scale = 1
 	}
 	last := &t.frames[t.cur] // the frame before recorded into frames[cur]
-	clicked, released := t.readPointer(gtx)
+	in := t.readPointer(gtx)
 	t.readKeys(gtx)
-	if t.state == off {
+	switch t.state {
+	case off:
+		return gtx
+	case reviewing:
+		return hover
+	case picked:
+		// a new frame and the capture's wasn't shot (AfterFrame doesn't
+		// run for a frame under the boot placeholder): give up, don't
+		// leave the window taking no clicks
+		t.stop()
+		t.host.Toast("Inspect: the capture's frame wasn't drawn, try again")
 		return gtx
 	}
 	if t.state == inspecting && t.rec {
 		hits := last.ReadHits(src, t.winAt)
 		t.hover = t.pickFrom(last, hits)
-		if clicked && t.hover != nil {
-			t.capture = t.newCapture(gtx, t.hover)
-			t.state, t.pickAt = picked, time.Now()
-			// the button came up in the same batch: this frame (laid out
-			// hover-only, so no widget sees the click) is the last
-			t.endAfter = released
-		}
 	}
-	if t.state == picked && time.Since(t.pickAt) > 3*time.Second {
-		t.stop() // no release came (the pointer left the window pressed)
-		return gtx
+	if t.state == inspecting && in.pressed {
+		// the press: the report of what it's over now, while the frame
+		// that drew it is at hand; whether it's a pick or a drag the
+		// release says
+		t.state, t.pend = pressing, nil
+		if t.hover != nil {
+			t.pend = t.newCapture(gtx, t.hover)
+		}
+		t.release0()
+	}
+	if t.state == pressing && in.far {
+		t.state, t.pend = dragging, nil
+	}
+	if in.released {
+		switch t.state {
+		case pressing:
+			if t.pend == nil {
+				t.backToInspecting() // nothing under the pointer
+				break
+			}
+			t.capture, t.pend, t.state = t.pend, nil, picked
+		case dragging:
+			r := t.dragRect(in.releaseAt)
+			if min := int(minRegion*t.scale + .5); r.Dx() < min || r.Dy() < min {
+				t.backToInspecting()
+				t.host.Toast("Inspect: drag a bigger region to grab it")
+				break
+			}
+			at := image.Pt(int(in.releaseAt.X+.5), int(in.releaseAt.Y+.5))
+			t.capture, t.state = t.newRegionCapture(gtx, r, at), picked
+		}
 	}
 	if t.state == inspecting {
 		t.cur = 1 - t.cur
@@ -253,6 +338,20 @@ func (t *Tool) Begin(gtx layout.Context) layout.Context {
 		t.rec = true
 	}
 	return hover
+}
+
+// release0 stops recording for a press (its report is built): the
+// outline stays where it was until the release says what the press was.
+func (t *Tool) release0() {
+	h := t.hover
+	t.release()
+	t.hover = h
+}
+
+// dragRect is the region from the press to p, in the window (px).
+func (t *Tool) dragRect(p f32.Point) image.Rectangle {
+	r := image.Rect(int(t.from.X+.5), int(t.from.Y+.5), int(p.X+.5), int(p.Y+.5))
+	return r.Intersect(image.Rectangle{Max: t.win})
 }
 
 // End finishes the frame Begin started (gtx: the frame's own context, at
@@ -266,9 +365,6 @@ func (t *Tool) End(gtx layout.Context) {
 	if t.state == off {
 		return
 	}
-	if t.state == picked && t.endAfter {
-		return // the session ends at the next frame's Begin
-	}
 	// this frame's filters: the session's keys and the area's pointer
 	// kinds (their events come in the next frame's Begin)
 	src := gtx.Source
@@ -279,8 +375,11 @@ func (t *Tool) End(gtx layout.Context) {
 	}
 	src.Event(pointer.Filter{Target: &t.ptag, Kinds: pointerKinds})
 	m := op.Record(gtx.Ops)
-	if t.state == inspecting {
+	switch t.state {
+	case inspecting, pressing, dragging:
 		t.drawHover(gtx)
+	case reviewing:
+		t.drawReview(gtx)
 	}
 	pp := pointer.PassOp{}.Push(gtx.Ops)
 	ar := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
@@ -291,12 +390,21 @@ func (t *Tool) End(gtx layout.Context) {
 	op.Defer(gtx.Ops, m.Stop())
 }
 
+// keyFilters are the session's keys, the review's included (one set
+// whatever the state: a frame's End declares what the next Begin reads,
+// and AfterFrame starts a review in between).
 func (t *Tool) keyFilters() []event.Filter {
 	return []event.Filter{
 		key.Filter{Name: key.NameEscape},
 		key.Filter{Name: key.NameUpArrow},
 		key.Filter{Name: key.NameDownArrow},
 		key.Filter{Name: key.NameTab, Optional: key.ModShift}, // no focus moves underneath
+		key.Filter{Name: key.NameReturn, Optional: key.ModShift},
+		key.Filter{Name: key.NameEnter, Optional: key.ModShift},
+		key.Filter{Name: key.NameDeleteBackward},
+		key.Filter{Name: key.NameDeleteForward},
+		key.Filter{Name: "Z", Required: key.ModShortcut},
+		key.Filter{Name: "C", Required: key.ModShortcut},
 		t.combo,
 	}
 }
@@ -307,9 +415,20 @@ func comboPress(f key.Filter, e key.Event) bool {
 	return e.Name == f.Name && e.Modifiers&f.Required == f.Required && e.Modifiers&^(f.Required|f.Optional) == 0
 }
 
-// readPointer reads the window-wide area's events and reports a primary
-// press, and a release after it in the same batch.
-func (t *Tool) readPointer(gtx layout.Context) (clicked, released bool) {
+// ptrRead is what a frame's pointer events did to a press: a primary
+// press came (at t.from), the pointer went past dragSlop from it, and
+// the button came up (at releaseAt).
+type ptrRead struct {
+	pressed, far, released bool
+	releaseAt              f32.Point
+}
+
+// readPointer reads the window-wide area's events: in a review, each
+// goes to reviewPointer; otherwise it reports what they did to a press.
+func (t *Tool) readPointer(gtx layout.Context) ptrRead {
+	var in ptrRead
+	slop := float32(dragSlop) * t.scale
+	held := t.state == pressing || t.state == dragging
 	for {
 		e, ok := gtx.Event(pointer.Filter{Target: &t.ptag, Kinds: pointerKinds})
 		if !ok {
@@ -322,28 +441,44 @@ func (t *Tool) readPointer(gtx layout.Context) (clicked, released bool) {
 		t.hist[t.histN%len(t.hist)] = ptrAt{pe.Time, pe.Position}
 		t.histN++
 		t.ptr = pe.Position
+		if t.state == reviewing {
+			t.reviewPointer(pe)
+			continue
+		}
 		switch pe.Kind {
 		case pointer.Leave:
 			t.ptrIn = false
 		case pointer.Cancel:
-			if t.state == picked {
-				t.stop()
+			if held || in.pressed {
+				t.backToInspecting()
+				held, in = false, ptrRead{}
 			}
 		case pointer.Press:
 			t.ptrIn = true
-			if pe.Buttons&pointer.ButtonPrimary != 0 && t.state == inspecting {
-				clicked = true
+			if pe.Buttons&pointer.ButtonPrimary != 0 && t.state == inspecting && !in.pressed {
+				in.pressed, t.from = true, pe.Position
+			}
+		case pointer.Drag:
+			t.ptrIn = true
+			if (held || in.pressed) && dist32(pe.Position, t.from) > slop {
+				in.far = true
 			}
 		case pointer.Release:
-			if t.state == picked {
-				t.stop()
+			if (held || in.pressed) && pe.Buttons&pointer.ButtonPrimary == 0 {
+				in.released, in.releaseAt = true, pe.Position
+				in.far = in.far || dist32(pe.Position, t.from) > slop
+				held = false
 			}
-			released = clicked
 		default:
 			t.ptrIn = true
 		}
 	}
-	return clicked, released
+	return in
+}
+
+func dist32(a, b f32.Point) float32 {
+	d := a.Sub(b)
+	return float32(math.Hypot(float64(d.X), float64(d.Y)))
 }
 
 // winAt is the window position of the pointer event at time tm: the
@@ -379,10 +514,17 @@ func (t *Tool) readKeys(gtx layout.Context) {
 			continue
 		}
 		switch {
-		case ke.Name == key.NameEscape:
-			t.stop()
+		case t.state == reviewing:
+			t.reviewKey(ke)
+		case t.state == picked:
+			// the shot comes at this frame's end: the review takes keys
 		case comboPress(t.combo, ke):
 			t.stop()
+		case ke.Name == key.NameEscape && t.state == dragging:
+			t.backToInspecting() // only the drag; its release is ignored
+		case ke.Name == key.NameEscape:
+			t.stop()
+		case t.state != inspecting:
 		case ke.Name == key.NameUpArrow:
 			t.up++
 		case ke.Name == key.NameDownArrow:
@@ -611,6 +753,10 @@ func boxSelector(b slackc.InspectBox) string {
 func (t *Tool) drawHover(gtx layout.Context) {
 	th := t.host.Theme()
 	sz := gtx.Constraints.Max
+	if t.state == dragging {
+		t.drawDrag(gtx, th)
+		return
+	}
 	if p := t.hover; p != nil && !p.rect.Empty() {
 		r := p.rect
 		w := max(gtx.Dp(2), 2)
@@ -622,14 +768,48 @@ func (t *Tool) drawHover(gtx layout.Context) {
 		}
 	}
 	if th != nil && th.Shaper != nil {
-		msg := "Inspect: click an element to copy a report · ↑ ↓ parent · Esc to stop"
-		tw := th.Measure(gtx, 13, theme.Bold, msg)
-		h := gtx.Dp(28)
-		r := image.Rect((sz.X-tw)/2-gtx.Dp(14), gtx.Dp(8), (sz.X+tw)/2+gtx.Dp(14), gtx.Dp(8)+h)
-		theme.RRect(gtx, r, h/2, color.NRGBA{R: 0x16, G: 0x17, B: 0x1a, A: 0xf0})
-		theme.Border(gtx, r, h/2, max(gtx.Dp(1), 1), outlineCol)
-		t.text(gtx, th, msg, image.Pt(r.Min.X+gtx.Dp(14), r.Min.Y), h, tw)
+		t.banner(gtx, th, HintInspect)
 	}
+}
+
+// The banner's hints: a session's, a drag's.
+const (
+	HintInspect = "Inspect: click an element to copy a report · drag to grab a region · ↑ ↓ parent · Esc to stop"
+	HintDrag    = "Inspect: release to grab this region · Esc cancels the drag"
+)
+
+// drawDrag draws the region being dragged out: the window dimmed around
+// it, its frame, its size, and the banner.
+func (t *Tool) drawDrag(gtx layout.Context, th *theme.Theme) {
+	sz := gtx.Constraints.Max
+	r := t.dragRect(t.ptr)
+	dim := color.NRGBA{R: 0x0b, G: 0x0c, B: 0x0e, A: 0x66}
+	fill(gtx, image.Rect(0, 0, sz.X, r.Min.Y), dim)
+	fill(gtx, image.Rect(0, r.Max.Y, sz.X, sz.Y), dim)
+	fill(gtx, image.Rect(0, r.Min.Y, r.Min.X, r.Max.Y), dim)
+	fill(gtx, image.Rect(r.Max.X, r.Min.Y, sz.X, r.Max.Y), dim)
+	if !r.Empty() {
+		w := max(gtx.Dp(2), 2)
+		frame(gtx, r.Inset(-w), w, outlineCol)
+	}
+	if th == nil || th.Shaper == nil {
+		return
+	}
+	if !r.Empty() {
+		t.drawLabel(gtx, th, fmt.Sprintf("region  %d×%d", int(float32(r.Dx())/gtx.Metric.PxPerDp+.5), int(float32(r.Dy())/gtx.Metric.PxPerDp+.5)), r, sz)
+	}
+	t.banner(gtx, th, HintDrag)
+}
+
+// banner is the session's pill at the top of the window.
+func (t *Tool) banner(gtx layout.Context, th *theme.Theme, msg string) {
+	sz := gtx.Constraints.Max
+	tw := th.Measure(gtx, 13, theme.Bold, msg)
+	h := gtx.Dp(28)
+	r := image.Rect((sz.X-tw)/2-gtx.Dp(14), gtx.Dp(8), (sz.X+tw)/2+gtx.Dp(14), gtx.Dp(8)+h)
+	theme.RRect(gtx, r, h/2, color.NRGBA{R: 0x16, G: 0x17, B: 0x1a, A: 0xf0})
+	theme.Border(gtx, r, h/2, max(gtx.Dp(1), 1), outlineCol)
+	t.text(gtx, th, msg, image.Pt(r.Min.X+gtx.Dp(14), r.Min.Y), h, tw)
 }
 
 func (t *Tool) drawLabel(gtx layout.Context, th *theme.Theme, text string, r image.Rectangle, win image.Point) {

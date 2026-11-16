@@ -19,30 +19,49 @@ Until Gio patch 29 the shortcut, then ⌥⇧⌘D, did nothing on macOS. AppKit s
 
 ## A session
 
-A banner at the top says the session is on. The Slack component under the pointer gets a pink outline and a label with its name, root element and size; one of the chrome's elements (below) gets one with its selector. ↑ widens the outline to the enclosing element or component and ↓ comes back. Esc or Hyper+D again ends the session.
+A banner at the top says the session is on: "Inspect: click an element to copy a report · drag to grab a region · ↑ ↓ parent · Esc to stop". The Slack component under the pointer gets a pink outline and a label with its name, root element and size; one of the chrome's elements (below) gets one with its selector. ↑ widens the outline to the enclosing element or component and ↓ comes back. Esc or Hyper+D again ends the session.
 
-The window keeps working while the session runs, minus clicks and keys. Hover states still show (a message's toolbar, tooltips), lists scroll, and carets, focus rings and animations stay as they are. No button, editor or shortcut reacts. The tool alone reads the clicks and keys. Gio patch 21 (`Source.HoverOnly`, `third_party/gioui.org/CLACK_PATCHES.md`) makes that possible.
+The window keeps working while the session runs, minus clicks and keys. Hover states still show (a message's toolbar, tooltips), lists scroll, and carets, focus rings and animations stay as they are. No button, editor or shortcut reacts. The tool alone reads the clicks and keys. Gio patch 21 (`Source.HoverOnly`, `third_party/gioui.org/CLACK_PATCHES.md`) makes that possible. The window also drops its system action areas for the session (the top nav's drag area on macOS, Linux and Windows, the Windows caption buttons): the system acts on a press there before Clack sees it, so it would move the window instead of picking or dragging.
 
-A click picks the outlined element and ends the session. Clack then:
+There are two ways to capture:
 
-1. renders the element and 24 dp around it, and nothing else of the window, from the click's frame again through a headless GPU context (the window's own GPU can't read frames back). It draws that crop at 4 px per dp whatever the display, under a transform over the frame's ops (Gio patch 31, `Ops.Whole`). Paths and glyphs are vectors, so the element comes out as sharp as a window four times as dense, and the image stays small enough that Slack shows it near its own size. An element whose image would pass 3200 px is drawn less dense, never below the window's own px,
-2. blurs the 24 dp margin past reading (a 5 dp box blur, three passes), so the neighbouring messages, channels and names are smears and only the element is sharp, outlines the element, and draws the report as a panel under it, on the CPU with the Go fonts. The image is as wide as the crop, or as the panel's 600 dp minimum for a small element (the crop sits centred above the panel at its own size),
-3. copies that one image to the clipboard, so a paste in #clack carries both,
-4. saves the image and the report's text as `inspect-reports/inspect-<date>-<time>.png` and `.txt` in the config folder, readable by the owner only.
+- **Click** an element: the outlined element is captured. A press that moves less than 6 dp before it comes up is still a click.
+- **Drag** a rectangle, for what the picker can't outline: once the pointer has moved 6 dp pressed, the window dims around the rectangle being dragged out and its size shows beside it. Releasing captures that region as it is. Esc during the drag drops only the drag, and the session goes on. A region thinner than 8 dp grabs nothing.
 
-Where the system can't copy images (Linux without wl-copy or xclip) the report's text goes on the clipboard instead, and the image is still saved.
+Either way Clack renders the capture from the release's frame again through a headless GPU context (the window's own GPU can't read frames back). It draws the crop at 4 px per dp whatever the display, under a transform over the frame's ops (Gio patch 31, `Ops.Whole`). Paths and glyphs are vectors, so the element comes out as sharp as a window four times as dense, and the image stays small enough that Slack shows it near its own size. A crop whose image would pass 3200 px is drawn less dense, never below the window's own px. For a click the crop is the element and 24 dp around it. That margin gets blurred past reading (a 5 dp box blur, three passes) so the neighbouring messages, channels and names are smears, and the element is outlined. For a drag the crop is the region itself, with no margin, no blur and no outline.
+
+### Blurring before it's copied
+
+Nothing is copied yet. The shot is shown frozen over the dimmed window, exactly as the copy will look, under the banner "Blur: drag over anything private · ⌫ undo · Enter copy · Esc cancel":
+
+- drag rectangles over anything that shouldn't be shared (other people's messages, names, avatars). Each one is blurred out of the shot. Drag as many as you need, and the banner counts them.
+- ⌫, Delete or Mod+Z takes the last rectangle back. A right click takes back the newest one under the pointer.
+- Enter (or Mod+C) copies and saves the report with the rectangles baked into the image.
+- Esc or Hyper+D drops the report: nothing is copied or saved.
+
+A blurred rectangle holds nothing of what was under it. It is filled from the pixels just outside it (each side's row or column, the nearer side weighing more), then smoothed 6 dp. It is not a blur of its own pixels, so no deblurring or sharpening can bring a name or a face back. The rectangles are painted over the shot before the margin is blurred, so the margin's smear carries nothing of them either. `TestComposeRedactKeepsNothingInside` composes two shots that differ only under a rectangle and requires the two images to be identical. The report's text says how many rectangles the reporter blurred.
+
+Then Clack:
+
+1. draws the report as a panel under the shot, on the CPU with the Go fonts. The image is as wide as the shot, or as the panel's 600 dp minimum for a small one (the shot sits centred above the panel at its own size),
+2. copies that one image to the clipboard, so a paste in #clack carries both,
+3. saves the image and the report's text as `inspect-reports/inspect-<date>-<time>.png` and `.txt` in the config folder, readable by the owner only.
+
+Where the system can't copy images (Linux without wl-copy or xclip) the report's text goes on the clipboard instead, and the image is still saved. Where there is no shot at all (the headless capture failed) the report's text is copied at once, with no review.
 
 ## What the report says
 
 | row | what |
 |---|---|
-| component | the innermost Slack component boundary under the pointer (`slackc.Render`/`Component`), and whether a plugin patches it |
+| capture | `dragged region` for a drag; absent for a click |
+| component | the innermost Slack component boundary under the pointer (`slackc.Render`/`Component`), and whether a plugin patches it. A dragged region has none |
 | element | its root element as a selector, Slack's classes and `data-qa` included; for a chrome element picked itself, that element |
 | within | the enclosing components, innermost first |
 | classes | the elements around it (`div.c-message_kit__message < …`) |
 | tree, style | inside a plugin's host tree: the boxes under the pointer and the innermost one's computed colours and font |
 | rect, pointer | in dp, window coordinates |
-| region, page, overlays | the shell column, the redacted route, the popups open |
+| region, page, overlays | the shell column (for a dragged region, every column it takes in), the redacted route, the popups open |
+| blurred | how many rectangles the reporter blurred out of the image |
 | ids, kinds | tags for the ids the components were drawn for, and what kind of conversation a tagged channel is |
 | colors | the element's background and ink, and the pixel under the pointer, read from the screenshot |
 | window | light or dark, the account theme, the UI font, size, scale and zoom |
@@ -55,16 +74,30 @@ The report is meant for #clack, so it holds no content. It never collects messag
 
 An id becomes a tag: its kind and the first 6 hex digits of SHA-256 over a salt and the id (`ch:3fa2b1`, `user:77ab02`, `ts:9c01de`). Each report gets a new random salt, which is never written anywhere. Within one report the same channel always has the same tag, so "the same message" and "another one" stay apparent. Across reports, and for anyone without the salt, a tag says nothing. Routes keep their page (`c/`, `dms`) and tag every other segment. A run-time attribute value (a channel id in `data-qa-channel-sidebar-channel-id`) becomes a tag unless it is an enumeration such as `data-qa=add_reaction`.
 
-The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it. Whatever the element itself holds (a picked message's text) is in it, so the user decides whether to paste it.
+The image shows the picked element as the user saw it, and of the rest of the window only the blurred margin around it, or a dragged region as it was. Whatever the element or region holds (a picked message's text) is in it, unless the user blurs it out in the review. The review comes before anything is copied or saved, so the user decides what to share.
 
 ## Coverage
 
-Coverage is best inside Slack component boundaries: messages and their parts (sender, avatar, text, reactions, the reply bar, attachments), the sidebar's items, the composer, search, activity rows, menus and more, about 90 names in all. The chrome Clack draws without a component around it is marked for the tool alone with Slack's classes and `data-qa` (`slackc` `ClassDef.Inspect` and `InspectArea`: recorded for the picker, never on the element stack, so no selector matches them and nothing draws differently), as a browser's inspector reaches any element: the channel header (`.p-view_header`, its title button, the channel's name `span.p-view_header__channel_title`, the icon, the topic container, the actions), the tab bar (`c-tabs__tab_menu`, each `c-tabs__tab` and its title `c-tabs__tab_content`), the top nav (its containers, the history buttons, the search box and its text), the tab rail (`.p-tab_rail`, each `p-tab_rail__button` with Slack's `data-qa`, `tab_rail_activity_button`, its icon and label, the user button), and the Activity view's saved-view tabs and their titles. Other plain Gio widgets (the message list itself, the toolbar's buttons) are reported as their enclosing component, or as the shell column (sidebar, primary, secondary, top nav, tab rail) when nothing encloses them. Plugin host trees go down to their boxes, through slackc's own hit test; of two trees under the pointer the one with its own element there wins, so an element a plugin puts among a native's children (UserPronouns' span in BaseBroadcastPreamble) is picked, not the native's box in the tree around it.
+Coverage is best inside Slack component boundaries: messages and their parts (sender, avatar, text, reactions, the reply bar, attachments), the sidebar's items, the composer, search, activity rows, menus and more, about 90 names in all. The chrome Clack draws without a component around it is marked for the tool alone with Slack's classes and `data-qa` (`slackc` `ClassDef.Inspect` and `InspectArea`: recorded for the picker, never on the element stack, so no selector matches them and nothing draws differently), as a browser's inspector reaches any element: the channel header (`.p-view_header`, its title button, the channel's name `span.p-view_header__channel_title`, the icon, the topic container, the actions), the tab bar (`c-tabs__tab_menu`, each `c-tabs__tab` and its title `c-tabs__tab_content`), the top nav (its containers, the history buttons, the search box and its text), the tab rail (`.p-tab_rail`, each `p-tab_rail__button` with Slack's `data-qa`, `tab_rail_activity_button`, its icon and label, the user button), and the Activity view's saved-view tabs and their titles. Plugin host trees go down to their boxes, through slackc's own hit test; of two trees under the pointer the one with its own element there wins, so an element a plugin puts among a native's children (UserPronouns' span in BaseBroadcastPreamble) is picked, not the native's box in the tree around it.
+
+Closed since α.88:
+
+- the Activity filter bar (Karim, α.85: the Unreads filter button couldn't be picked). The bar and its parts are marked with Slack's component names (`slackc.InspectAs`: a name for the picker only, which no plugin can patch; the names come from `docs/PLUGINS-props-live.md`): `ActivityFilterBar`, `ActivityFilterBulkAction` (the select group), `ActivityFilterUnreadsButton`, `ActivityFilterByMenu`, `ActivityFilterBySpecific` (the In pill), `ActivityFilterSearch` and `ActivityFilterLayoutToggle`.
+- the message hover toolbar's buttons (`button.c-button-unstyled.c-icon_button… .c-message_actions__button` with their `data-qa`). They were entered with no box, so the picker landed on the whole `MessageActions` card.
+- the top nav's bare parts on macOS, Linux and Windows, and the Windows caption buttons. Their system action areas took the press before the tool saw it, so a click there started moving the window (or minimized or closed it). A session now lays out none.
+
+Still not pickable as themselves, found by a static pass over the source (files with no component boundary or inspect mark inside them) rather than live. Each is reported as the nearest component around it, or as the shell column (sidebar, primary, secondary, top nav, tab rail) when nothing encloses it:
+
+- the message list itself, the toolbar's quick-reaction emoji, and the tooltips;
+- the inside of channel details (`details.go`, `details_more.go`, `details_agents.go`, `details_posting.go`), Later, Drafts, Files and channel files, Unreads, Huddles and their history, folder tabs, the file picker and canvas comments;
+- Preferences pages, the sign-in card and the introduction screens, the workflow pages and the drop overlay.
+
+The drag is the way to capture any of these. Naming more of them means a boundary or an `InspectAs` mark with Slack's component name where Slack has one.
 
 How it finds what is under the pointer: while a session records a frame, slackc puts a pass-through pointer area over every component it draws and every chrome element marked with a size, with a new tag each frame. Gio sends an Enter to each new area under the pointer, so Gio's own hit test (clips, and whatever is drawn over them) decides what counts. `internal/ui/slackc/inspect.go` has the details.
 
 ## Later
 
-- Coverage of plain Gio widgets, by naming more boundaries where Slack has a component (the toolbar's buttons are `MessageActionButton…` in Slack).
+- Coverage of the plain Gio widgets listed above, by naming more boundaries where Slack has a component.
 - Encrypting the report to a key only the maintainer holds, if one-way tags aren't enough. That would let a report carry a few chosen values (a channel name, say) that only the maintainer can read.
-- A way to inspect a frozen frame, for things that change under the pointer.
+- A way to inspect a frozen frame, for things that change under the pointer. A dragged region is captured from the release's frame, so a hover state that needs the pointer elsewhere can't be in it.

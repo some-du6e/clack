@@ -103,11 +103,7 @@ func TestInspectPicksChrome(t *testing.T) {
 	}
 
 	// the pick: the element, the elements around it, the component
-	e.click(name)
-	e.frame()
-	e.a.inspectAfterFrame(&e.ops, e.size)
-	e.a.insp.Wait()
-	e.frame()
+	e.pickAndCopy(t, name)
 	if *shots != 1 {
 		t.Fatalf("%d shots after the pick", *shots)
 	}
@@ -152,5 +148,33 @@ func TestInspectPicksChrome(t *testing.T) {
 	}
 	if !tab || !tabTitle {
 		t.Errorf("the Activity view's tabs: a tab %v, a tab's title %v; outlined %q", tab, tabTitle, seen)
+	}
+
+	// the filter bar under them (Karim, α.85: the Unreads filter button
+	// wasn't pickable): Slack's component names, the bar around them
+	var unreads, bulk bool
+	seen = seen[:0]
+	for y := o.Y + 60; y < o.Y+280 && !(unreads && bulk); y += 6 {
+		for x := o.X + 18; x < o.X+260 && !(unreads && bulk); x += 10 {
+			e.move(f32.Pt(float32(x), float32(y)))
+			label, _, _ := e.a.insp.Hovered()
+			unreads = unreads || strings.HasPrefix(label, "ActivityFilterUnreadsButton")
+			bulk = bulk || strings.HasPrefix(label, "ActivityFilterBulkAction")
+			if len(seen) == 0 || seen[len(seen)-1] != label {
+				seen = append(seen, label)
+			}
+			if strings.HasPrefix(label, "ActivityFilterUnreadsButton") {
+				e.key(key.NameUpArrow, 0)
+				e.frame()
+				if up, _, _ := e.a.insp.Hovered(); !strings.HasPrefix(up, "ActivityFilterBar") {
+					t.Errorf("↑ from the Unreads button: outline %q, want ActivityFilterBar", up)
+				}
+				e.key(key.NameDownArrow, 0)
+				e.frame()
+			}
+		}
+	}
+	if !unreads || !bulk {
+		t.Errorf("the Activity filter bar: the Unreads button %v, the select group %v; outlined %q", unreads, bulk, seen)
 	}
 }

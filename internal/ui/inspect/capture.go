@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"gioui.org/f32"
@@ -24,14 +25,17 @@ import (
 	"github.com/some-du6e/clack/internal/ui/slackc"
 )
 
-// capture is a pick on its way to the clipboard: the report, built when
-// the click was read (from the frame the pointer was over), waiting for
-// the click's frame to be shot.
+// capture is a pick or a dragged region on its way to the clipboard:
+// the report, built when the press was read (from the frame the pointer
+// was over) or, for a region, at the release, waiting for the release's
+// frame to be shot and the review (review.go) to finish.
 type capture struct {
-	rep   *Report
-	rect  image.Rectangle // px, window
-	ptr   image.Point     // px
-	scale float32
+	rep    *Report
+	rect   image.Rectangle // px, window
+	ptr    image.Point     // px
+	scale  float32
+	region bool              // a dragged region: shot as it is, no margin, no outline
+	redact []image.Rectangle // the review's rects, px in the shot
 
 	// once shot: the element and the pointer in the shot (px), and the
 	// shot's image px per window px
@@ -95,11 +99,28 @@ func cropFor(rect image.Rectangle, size image.Point, scale float32) (image.Recta
 	if crop.Empty() || rect.Intersect(crop).Empty() {
 		return image.Rectangle{}, 1
 	}
+	return crop, density(crop, scale)
+}
+
+// regionCrop is cropFor for a dragged region: the region itself, inside
+// the window, with no margin.
+func regionCrop(rect image.Rectangle, size image.Point, scale float32) (image.Rectangle, float32) {
+	crop := rect.Canon().Intersect(image.Rectangle{Max: size})
+	if crop.Empty() {
+		return image.Rectangle{}, 1
+	}
+	return crop, density(crop, scale)
+}
+
+// density is how many image px each window px of crop becomes:
+// ShotDensity px per dp, less for a crop whose image would pass
+// MaxShotSide, never below the window's own.
+func density(crop image.Rectangle, scale float32) float32 {
 	k := ShotDensity / scale
 	if side := float32(max(crop.Dx(), crop.Dy())); side*k > MaxShotSide {
 		k = MaxShotSide / side
 	}
-	return crop, max(k, 1)
+	return max(k, 1)
 }
 
 // inShot maps r (window px) into the shot of crop at k.
@@ -136,6 +157,33 @@ func (t *Tool) newCapture(gtx layout.Context, p *pick) *capture {
 	r.Rect = dpRect(p.rect, scale)
 	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
 	return &capture{rep: r, rect: p.rect, ptr: ptr, scale: scale}
+}
+
+// newRegionCapture builds the report for a dragged region (window px;
+// ptr where the button came up): no component, the shell's areas it
+// takes in, the window and the page.
+func (t *Tool) newRegionCapture(gtx layout.Context, rect image.Rectangle, ptr image.Point) *capture {
+	now := gtx.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	scale := gtx.Metric.PxPerDp
+	if scale <= 0 {
+		scale = 1
+	}
+	red := NewRedactor()
+	r := &Report{When: now, OS: goos(), Capture: "dragged region"}
+	t.host.Describe(r, red)
+	var in []string
+	for _, rg := range t.host.Regions() {
+		if rg.Name != "window" && rg.Rect.Overlaps(rect) {
+			in = append(in, rg.Name)
+		}
+	}
+	r.Region = strings.Join(in, ", ")
+	r.Rect = dpRect(rect, scale)
+	r.Pointer = image.Pt(int(float32(ptr.X)/scale+.5), int(float32(ptr.Y)/scale+.5))
+	return &capture{rep: r, rect: rect, ptr: ptr, scale: scale, region: true}
 }
 
 // Limits on the chains a report lists.
@@ -275,10 +323,12 @@ func dpRect(r image.Rectangle, scale float32) image.Rectangle {
 	return image.Rect(d(r.Min.X), d(r.Min.Y), d(r.Max.X), d(r.Max.Y))
 }
 
-// AfterFrame shoots the frame just finished when a pick asked for it and
-// sends the report on its way. Call it on the UI goroutine once the
-// frame's ops are complete (after the window's frame was submitted, before
-// the ops are reset); size is the frame's size in px.
+// AfterFrame shoots the frame just finished when a pick or a dragged
+// region asked for it and shows the shot for review (review.go); with no
+// shot the report goes on its way as text at once. Call it on the UI
+// goroutine once the frame's ops are complete (after the window's frame
+// was submitted, before the ops are reset); size is the frame's size in
+// px.
 func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	c := t.capture
 	if c == nil {
@@ -286,6 +336,9 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	}
 	t.capture = nil
 	crop, k := cropFor(c.rect, size, c.scale)
+	if c.region {
+		crop, k = regionCrop(c.rect, size, c.scale)
+	}
 	var img *image.RGBA
 	err := errors.New("the element is outside the window")
 	if !crop.Empty() {
@@ -293,14 +346,18 @@ func (t *Tool) AfterFrame(ops *op.Ops, size image.Point) {
 	}
 	if err != nil {
 		log.Printf("inspect: no screenshot: %v", err)
-		img = nil
-	} else {
-		c.elem = inShot(c.rect, crop, k)
-		// the middle of the pointer's px
-		c.ptrShot = image.Pt(int((float32(c.ptr.X-crop.Min.X)+.5)*k), int((float32(c.ptr.Y-crop.Min.Y)+.5)*k))
-		c.k = k
+		t.stop()
+		t.deliver(c, nil, err)
+		return
 	}
-	t.deliver(c, img, err)
+	c.elem = inShot(c.rect, crop, k)
+	if c.region {
+		c.elem = img.Bounds() // all of it, however it rounded
+	}
+	// the middle of the pointer's px
+	c.ptrShot = image.Pt(int((float32(c.ptr.X-crop.Min.X)+.5)*k), int((float32(c.ptr.Y-crop.Min.Y)+.5)*k))
+	c.k = k
+	t.startReview(c, img)
 }
 
 // deliver composes, saves and copies the report off the UI goroutine,
@@ -309,7 +366,7 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 	dir := t.host.ConfigDir()
 	h := t.host
 	done := make(chan struct{})
-	t.lastDone = done
+	t.lastDone, t.lastRep = done, c.rep
 	go func() {
 		defer close(done)
 		if shot != nil {
@@ -321,7 +378,7 @@ func (t *Tool) deliver(c *capture, shot *image.RGBA, shotErr error) {
 		var data []byte
 		if shot != nil {
 			var err error
-			if img, err = Compose(shot, c.elem, c.scale*c.k, lines); err != nil {
+			if img, err = Compose(shot, c.elem, c.scale*c.k, lines, c.redact...); err != nil {
 				log.Printf("inspect: composing the report image: %v", err)
 				img = nil
 			} else {

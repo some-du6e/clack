@@ -132,3 +132,67 @@ func TestInspectPicksPluginPronouns(t *testing.T) {
 		t.Errorf("the sender's name no longer picks BaseMessageSender; outlined: %q", seen)
 	}
 }
+
+// The hover toolbar's buttons (.c-message_actions__button, entered with
+// their data-qa) have boxes for the picker: pointing at Reply in thread
+// outlines that button, not the whole MessageActions card, and ↑ walks
+// out to the card.
+func TestInspectPicksToolbarButton(t *testing.T) {
+	e := newCtxEnv(t)
+	th := e.h.coreHost.th
+	s := e.v.s
+	tool := inspect.New(pickHost{th: th}, key.Filter{Name: "D", Required: key.ModShortcut | key.ModAlt | key.ModShift})
+	const w, h = 900, 700
+	frame := func() {
+		e.ops.Reset()
+		e.now = e.now.Add(16 * time.Millisecond)
+		gtx := layout.Context{Ops: &e.ops, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1}, Constraints: layout.Exact(image.Pt(w, h)), Now: e.now, Source: e.r.Source()}
+		g := tool.Begin(gtx)
+		e.v.Layout(g)
+		tool.End(gtx)
+		e.r.Frame(&e.ops)
+	}
+	move := func(p f32.Point) {
+		e.clock += 10 * time.Millisecond
+		e.r.Queue(pointer.Event{Kind: pointer.Move, Position: p, Source: pointer.Mouse, Time: e.clock})
+		frame()
+		frame()
+	}
+	for range 3 {
+		frame()
+	}
+	for i := s.visible[0]; i < s.visible[1] && i < len(s.items); i++ {
+		if s.items[i].key == tsCtxLink && s.heights[i] > 0 {
+			move(f32.Pt(300, float32(s.pos[i]+s.heights[i]-4+s.origin.Y)))
+		}
+	}
+	if s.tbFor < 0 {
+		t.Fatal("no toolbar over the hovered message")
+	}
+	tool.Toggle()
+	frame()
+	frame()
+	var at f32.Point
+	for k, i := range s.tbBtns {
+		if i == tbReply {
+			bs, pad := int(mt.toolbarBtn), int(mt.toolbarPad)
+			at = f32.Pt(float32(s.tbRect.Min.X+pad+(len(s.quick.names)+k)*bs+bs/2+s.origin.X), float32(s.tbRect.Min.Y+pad+bs/2+s.origin.Y))
+		}
+	}
+	if at == (f32.Point{}) {
+		t.Fatalf("no Reply in thread button (%v)", s.tbBtns)
+	}
+	move(at)
+	label, r, ok := tool.Hovered()
+	if !ok || !strings.HasPrefix(label, "button.c-button-unstyled.c-icon_button") {
+		t.Fatalf("over Reply in thread: outline %q (%v), want the toolbar button", label, ok)
+	}
+	if bs := int(mt.toolbarBtn); r.Dx() != bs || r.Dy() != bs || !image.Pt(int(at.X), int(at.Y)).In(r) {
+		t.Errorf("the button's outline %v, want %dx%d around %v", r, bs, bs, at)
+	}
+	e.r.Queue(key.Event{Name: key.NameUpArrow, State: key.Press})
+	frame()
+	if label, _, _ := tool.Hovered(); !strings.HasPrefix(label, "MessageActions") {
+		t.Errorf("↑ from the button: outline %q, want MessageActions", label)
+	}
+}

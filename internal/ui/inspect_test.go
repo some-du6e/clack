@@ -25,6 +25,8 @@ import (
 
 	"gioui.org/f32"
 	"gioui.org/io/key"
+	"gioui.org/io/pointer"
+	"gioui.org/io/system"
 	"gioui.org/op"
 
 	"github.com/some-du6e/clack/internal/fakeslack"
@@ -209,13 +211,18 @@ func nearRect(a, b image.Rectangle, d int) bool {
 	return abs(a.Min.X-b.Min.X) <= d && abs(a.Min.Y-b.Min.Y) <= d && abs(a.Max.X-b.Max.X) <= d && abs(a.Max.Y-b.Max.Y) <= d
 }
 
+// fakeShotRegions are the regions the fake capture was asked for.
+var fakeShotRegions []image.Rectangle
+
 // fakeShots replaces the headless capture and the clipboard (no GPU or
 // clipboard in plain CI): the shot is plain white.
 func fakeShots(t *testing.T) (shots *int, copied *image.Image) {
 	shots, copied = new(int), new(image.Image)
 	prevShoot, prevWrite := inspect.Shoot, inspect.WriteImage
+	fakeShotRegions = nil
 	inspect.Shoot = func(_ *op.Ops, region image.Rectangle, k float32) (*image.RGBA, error) {
 		*shots++
+		fakeShotRegions = append(fakeShotRegions, region)
 		img := image.NewRGBA(image.Rectangle{Max: inspect.ShotSize(region, k)})
 		draw.Draw(img, img.Bounds(), image.NewUniform(color.White), image.Point{}, draw.Src)
 		return img, nil
@@ -223,6 +230,29 @@ func fakeShots(t *testing.T) (shots *int, copied *image.Image) {
 	inspect.WriteImage = func(img image.Image) error { *copied = img; return nil }
 	t.Cleanup(func() { inspect.Shoot, inspect.WriteImage = prevShoot, prevWrite })
 	return shots, copied
+}
+
+// pickAndCopy clicks p: the click's frame is shot, the review opens
+// over it, and Enter copies the report.
+func (e *inspectEnv) pickAndCopy(t *testing.T, p image.Point) {
+	t.Helper()
+	e.click(p)
+	e.frame()
+	e.a.inspectAfterFrame(&e.ops, e.size)
+	e.reviewAndCopy(t)
+}
+
+// reviewAndCopy finishes the review the last frame's shot started.
+func (e *inspectEnv) reviewAndCopy(t *testing.T) {
+	t.Helper()
+	if !e.a.insp.Reviewing() {
+		t.Fatal("no review after the capture")
+	}
+	e.frame()
+	e.key(key.NameReturn, 0)
+	e.frame()
+	e.a.insp.Wait()
+	e.frame()
 }
 
 // readReport is the newest saved report's text.
@@ -274,13 +304,10 @@ func TestInspectReactionPill(t *testing.T) {
 		t.Errorf("↓: outline %q, want the pill's UnstyledButton again", label)
 	}
 
-	// the click picks: one shot, one image on the clipboard, the session over
+	// the click picks: one shot, reviewed, then on Enter one image on the
+	// clipboard and the session over
 	p := e.pillCenter()
-	e.click(image.Pt(int(p.X), int(p.Y)))
-	e.frame()
-	e.a.inspectAfterFrame(&e.ops, e.size)
-	e.a.insp.Wait()
-	e.frame()
+	e.pickAndCopy(t, image.Pt(int(p.X), int(p.Y)))
 	if e.a.insp.Active() {
 		t.Error("the session is still running after the pick")
 	}
@@ -617,11 +644,7 @@ func TestInspectShots(t *testing.T) {
 		}
 		save("inspect-"+mode+"-hover", hover)
 		p := e.pillCenter()
-		e.click(image.Pt(int(p.X), int(p.Y)))
-		e.frame()
-		e.a.inspectAfterFrame(&e.ops, e.size)
-		e.a.insp.Wait()
-		e.frame()
+		e.pickAndCopy(t, image.Pt(int(p.X), int(p.Y)))
 		if !strings.Contains(e.a.toast.text, "paste it as an image") {
 			t.Fatalf("%s: toast %q: no image was made", mode, e.a.toast.text)
 		}
@@ -643,5 +666,126 @@ func TestInspectShots(t *testing.T) {
 			t.Fatal(err)
 		}
 		time.Sleep(1100 * time.Millisecond) // the next report's file name (seconds) differs
+	}
+}
+
+// drag presses at from and moves the pointer pressed through the
+// points, a frame after each; release lets go.
+func (e *perfEnv) drag(from image.Point, through ...image.Point) {
+	fp := f32.Pt(float32(from.X), float32(from.Y))
+	e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Position: fp},
+		pointer.Event{Kind: pointer.Press, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: fp})
+	e.frame()
+	last := fp
+	for _, p := range through {
+		last = f32.Pt(float32(p.X), float32(p.Y))
+		e.r.Queue(pointer.Event{Kind: pointer.Move, Source: pointer.Mouse, Buttons: pointer.ButtonPrimary, Position: last})
+		e.frame()
+	}
+}
+
+func (e *perfEnv) release(p image.Point) {
+	e.r.Queue(pointer.Event{Kind: pointer.Release, Source: pointer.Mouse, Position: f32.Pt(float32(p.X), float32(p.Y))})
+}
+
+// In a session a drag grabs the region dragged out, over the message
+// list, whatever is under it: the shot is that region, the review opens,
+// and Enter copies a report of the region (no component, the shell's
+// areas, no content) while the pill under the drag never reacts. Esc
+// mid-drag drops only the drag: the picker and its ↑ go on as before.
+// While a session runs the window has no system drag area (the top nav's
+// on macOS), which would take the press first.
+func TestInspectDragRegion(t *testing.T) {
+	shots, copied := fakeShots(t)
+	e := newInspectEnv(t)
+	e.startSession(t)
+	pc := e.pillCenter()
+	p := image.Pt(int(pc.X), int(pc.Y))
+
+	// Esc mid-drag: the drag goes, the session stays, ↑ still widens
+	e.drag(p, p.Add(image.Pt(30, 20)))
+	if r, ok := e.a.insp.Dragging(); !ok || r != (image.Rectangle{Min: p, Max: p.Add(image.Pt(30, 20))}) {
+		t.Fatalf("mid-drag: region %v (%v), want %v-%v", r, ok, p, p.Add(image.Pt(30, 20)))
+	}
+	e.key(key.NameEscape, 0)
+	e.frame()
+	if _, ok := e.a.insp.Dragging(); ok || !e.a.insp.Active() {
+		t.Fatalf("Esc mid-drag: dragging %v, active %v", ok, e.a.insp.Active())
+	}
+	e.release(p.Add(image.Pt(30, 20)))
+	e.frame()
+	e.move(pc)
+	e.frame()
+	if label, _, _ := e.a.insp.Hovered(); !strings.HasPrefix(label, "UnstyledButton") {
+		t.Errorf("after the dropped drag: outline %q, want the pill's UnstyledButton", label)
+	}
+	e.key(key.NameUpArrow, 0)
+	e.frame()
+	if label, _, _ := e.a.insp.Hovered(); !strings.HasPrefix(label, "Reaction") {
+		t.Errorf("↑ after the dropped drag: outline %q, want the Reaction", label)
+	}
+	if *shots != 0 {
+		t.Fatalf("%d shots before any capture", *shots)
+	}
+
+	// the region: from left of the pill and above it, across it
+	from := p.Add(image.Pt(-60, -40))
+	to := p.Add(image.Pt(140, 50))
+	e.drag(from, from.Add(image.Pt(3, 2)), p, to)
+	e.release(to)
+	e.frame()
+	e.a.inspectAfterFrame(&e.ops, e.size)
+	want := image.Rectangle{Min: from, Max: to}
+	if *shots != 1 || fakeShotRegions[0] != want {
+		t.Fatalf("after the drag: %d shots %v, want the region %v", *shots, fakeShotRegions, want)
+	}
+	e.reviewAndCopy(t)
+	if e.a.insp.Active() || *copied == nil {
+		t.Fatalf("after Enter: active %v, copied %v", e.a.insp.Active(), *copied != nil)
+	}
+	txt, _ := e.readReport(t)
+	rows := reportRows(txt)
+	for _, w := range []struct{ key, want string }{
+		{"capture", "dragged region"},
+		{"rect", "x " + itoa(from.X) + " y " + itoa(from.Y) + " w 200 h 90 dp"},
+		{"region", "*primary*"},
+		{"page", "c/ch:* (public)"},
+	} {
+		if got := rows[w.key]; !globMatch(w.want, got) {
+			t.Errorf("report row %s = %q, want %q\n%s", w.key, got, w.want, txt)
+		}
+	}
+	if _, ok := rows["component"]; ok {
+		t.Errorf("a region's report names a component:\n%s", txt)
+	}
+	for _, leak := range append([]string{e.ch, e.ts, "launch", "friday", "quiet", "tada"}, e.names...) {
+		if strings.Contains(txt, leak) {
+			t.Errorf("the report holds %q:\n%s", leak, txt)
+		}
+	}
+	e.settle(300 * time.Millisecond)
+	if got := e.reactions(); len(got) != 0 {
+		t.Errorf("the drag across the pill toggled the reaction: %v", got)
+	}
+
+	// no system drag area while a session runs (macOS: the top nav's)
+	e.a.macNav = true
+	t.Cleanup(func() { e.a.macNav = false })
+	e.settle(100 * time.Millisecond)
+	nav := image.Pt(e.a.searchPill.Max.X+40, 20)
+	if a, ok := e.actionAt(nav); !ok || a != system.ActionMove {
+		t.Fatalf("no drag area at %v in the top nav without a session (%v %v)", nav, a, ok)
+	}
+	e.hyperD()
+	e.frame()
+	e.frame()
+	if a, ok := e.actionAt(nav); ok {
+		t.Errorf("a session left the system action %v at %v: the press would move the window", a, nav)
+	}
+	e.key(key.NameEscape, 0)
+	e.frame()
+	e.frame()
+	if a, ok := e.actionAt(nav); !ok || a != system.ActionMove {
+		t.Errorf("after the session the top nav has no drag area (%v %v)", a, ok)
 	}
 }

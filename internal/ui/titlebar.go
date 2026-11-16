@@ -335,7 +335,7 @@ func (a *App) wcoNavReserve(gtx layout.Context) int {
 // passes over areas without an action, so the no-drag ones carry an input
 // handler.
 func (a *App) wcoNavAreas(gtx layout.Context, width, h, reserve int, spacer bool) {
-	if !a.navCaption() {
+	if !a.navCaption() || a.inspecting() {
 		return
 	}
 	for {
@@ -372,7 +372,7 @@ func (a *App) wcoNavAreas(gtx layout.Context, width, h, reserve int, spacer bool
 // would be (40 window points, under the traffic lights) is the drag
 // area there.
 func (a *App) wcoWelcomeDrag(gtx layout.Context) {
-	if !a.navCaption() {
+	if !a.navCaption() || a.inspecting() {
 		return
 	}
 	s := a.wcoScale(gtx)
@@ -429,7 +429,9 @@ func (a *App) layoutWCO(gtx layout.Context, look wcoLook) {
 			bg := gtx
 			bg.Constraints = layout.Exact(r.Size())
 			btn.click.Layout(bg, func(gtx layout.Context) layout.Dimensions {
-				system.ActionInputOp(act).Add(gtx.Ops)
+				if !a.inspecting() { // the inspect tool takes the clicks (inspect_wire.go)
+					system.ActionInputOp(act).Add(gtx.Ops)
+				}
 				return layout.Dimensions{Size: r.Size()}
 			})
 		}()

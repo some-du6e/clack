@@ -1610,10 +1610,27 @@ func actAt(gtx C, x int, w W) D {
 	return w(g)
 }
 
+// actAtAs is actAt for the part of the bar Slack draws as component
+// name, marked so for the inspect tool (slackc.InspectAs).
+func actAtAs(gtx C, x int, name string, w W) D {
+	defer op.Offset(image.Pt(x, 0)).Push(gtx.Ops).Pop()
+	g := gtx
+	g.Constraints.Min = image.Point{}
+	g.Constraints.Max.X = max(0, g.Constraints.Max.X-x)
+	mk := slackc.InspectAs(name)
+	d := w(g)
+	mk.End(g, d.Size)
+	return d
+}
+
+// filterBar is ActivityFilterBar; its parts are marked with Slack's
+// component names for the inspect tool (docs/PLUGINS-props-live.md's
+// ActivityFilter* rows).
 func (v *Activity) filterBar(gtx C) D {
+	defer slackc.InspectAs("ActivityFilterBar").End(gtx, image.Pt(gtx.Constraints.Max.X, gtx.Dp(actBarH)))
 	gap := gtx.Dp(8)
 	x := gtx.Dp(16)
-	x += actAt(gtx, x, v.selAllGroup).Size.X
+	x += actAtAs(gtx, x, "ActivityFilterBulkAction", v.selAllGroup).Size.X
 	if v.triage() {
 		// triage mode: ActivityFilterBulkAction alone (the bulk buttons
 		// after the select group, margin-left 8px each)
@@ -1621,16 +1638,16 @@ func (v *Activity) filterBar(gtx C) D {
 		return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(actBarH))}
 	}
 	x += gap
-	x += actAt(gtx, x, v.unreadsBtn).Size.X + gap
+	x += actAtAs(gtx, x, "ActivityFilterUnreadsButton", v.unreadsBtn).Size.X + gap
 	v.filterX = x
-	x += actAt(gtx, x, v.filterMenuBtn).Size.X + gap
+	x += actAtAs(gtx, x, "ActivityFilterByMenu", v.filterMenuBtn).Size.X + gap
 	if v.showIn {
 		// ActivityFilterBySpecific after the menu (m+ho tC: es &&), 8px on
-		x += actAt(gtx, x, v.inPill).Size.X + gap
+		x += actAtAs(gtx, x, "ActivityFilterBySpecific", v.inPill).Size.X + gap
 	}
-	x += actAt(gtx, x, func(gtx C) D { return v.outlineIcon(gtx, &v.searchBtn, "search", false) }).Size.X + gap
+	x += actAtAs(gtx, x, "ActivityFilterSearch", func(gtx C) D { return v.outlineIcon(gtx, &v.searchBtn, "search", false) }).Size.X + gap
 	if v.searchOn {
-		x += actAt(gtx, x, func(gtx C) D {
+		x += actAtAs(gtx, x, "ActivityFilterSearch", func(gtx C) D {
 			gtx.Constraints.Max.X = min(gtx.Constraints.Max.X, gtx.Dp(260))
 			return v.searchBox(gtx, v.query, actBarH)
 		}).Size.X + gap
@@ -1638,6 +1655,7 @@ func (v *Activity) filterBar(gtx C) D {
 	if !v.globalSettings() {
 		// p-activity_ia4_page__filter_bar_right: the layout toggle
 		// (entry point FILTER_BAR) at the bar's end, 16px in.
+		mk := slackc.InspectAs("ActivityFilterLayoutToggle")
 		m := op.Record(gtx.Ops)
 		g := gtx
 		g.Constraints.Min = image.Point{}
@@ -1646,6 +1664,7 @@ func (v *Activity) filterBar(gtx C) D {
 		at := image.Pt(max(x, gtx.Constraints.Max.X-gtx.Dp(16)-d.Size.X), (gtx.Dp(actBarH)-d.Size.Y)/2)
 		st := op.Offset(at).Push(gtx.Ops)
 		call.Add(gtx.Ops)
+		mk.End(gtx, d.Size)
 		st.Pop()
 	}
 	return D{Size: image.Pt(gtx.Constraints.Max.X, gtx.Dp(actBarH))}

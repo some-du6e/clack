@@ -197,3 +197,112 @@ func TestCropFor(t *testing.T) {
 		t.Errorf("an element outside the window cropped to %v", crop)
 	}
 }
+
+// A rect the user blurred in the review is baked into the copy and
+// keeps nothing of what was under it: two shots that differ only inside
+// the rect (one has "text" there, one doesn't) compose to the very same
+// image, the blurred margin next to it included, while away from it the
+// element and its margin are as without the rect.
+func TestComposeRedactKeepsNothingInside(t *testing.T) {
+	elem := image.Rect(60, 40, 520, 200)
+	mark := image.Rect(60, 70, 300, 130) // inside the element, at its edge: someone's name
+	a := noiseShot(image.Pt(600, 240), 1)
+	b := image.NewRGBA(a.Bounds())
+	draw.Draw(b, b.Bounds(), a, image.Point{}, draw.Src)
+	draw.Draw(b, mark, image.NewUniform(color.RGBA{0x20, 0x40, 0x60, 0xff}), image.Point{}, draw.Src)
+	lines := testReport().Lines()
+	ia, err := Compose(a, elem, 1, lines, mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ib, err := Compose(b, elem, 1, lines, mark)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ia.Bounds() != ib.Bounds() {
+		t.Fatalf("sizes %v and %v", ia.Bounds(), ib.Bounds())
+	}
+	at := image.Pt((ia.Bounds().Dx()-600)/2, 0)
+	for y := 0; y < 240; y++ {
+		for x := 0; x < 600; x++ {
+			if p, q := ia.RGBAAt(x+at.X, y+at.Y), ib.RGBAAt(x+at.X, y+at.Y); p != q {
+				t.Fatalf("at %d,%d the image shows %v over one shot and %v over the other: what was under the rect comes through", x, y, p, q)
+			}
+		}
+	}
+	plain, err := Compose(a, elem, 1, lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := 0
+	for y := 0; y < 240; y++ {
+		for x := 0; x < 600; x++ {
+			p := image.Pt(x, y)
+			if p.In(mark.Inset(-20)) {
+				continue // the rect, and the margin's blur next to it
+			}
+			if ia.RGBAAt(x+at.X, y+at.Y) != plain.RGBAAt(x+at.X, y+at.Y) {
+				changed++
+			}
+		}
+	}
+	if changed > 0 {
+		t.Errorf("%d px outside the blurred rect changed", changed)
+	}
+	// and it is blurred: no sharp edges left in it (the noise had them
+	// everywhere)
+	sharp := 0
+	for y := mark.Min.Y + 2; y < mark.Max.Y-2; y++ {
+		for x := mark.Min.X + 2; x < mark.Max.X-3; x++ {
+			p, q := ia.RGBAAt(x+at.X, y+at.Y), ia.RGBAAt(x+1+at.X, y+at.Y)
+			if absI(int(p.R)-int(q.R)) > 8 {
+				sharp++
+			}
+		}
+	}
+	if sharp > 0 {
+		t.Errorf("%d px in the blurred rect still differ from their neighbour by more than 8", sharp)
+	}
+}
+
+// Rects over rects: a later one is filled from what the earlier one
+// left, so the overlap holds nothing either; rects past the shot are
+// clipped; a rect over all of it is one flat colour.
+func TestRedactOverlapAndEdges(t *testing.T) {
+	a := noiseShot(image.Pt(200, 120), 2)
+	b := noiseShot(image.Pt(200, 120), 3)
+	draw.Draw(b, image.Rect(0, 0, 200, 120), a, image.Point{}, draw.Src)
+	draw.Draw(b, image.Rect(40, 30, 130, 90), noiseShot(image.Pt(90, 60), 9), image.Point{}, draw.Src)
+	marks := []image.Rectangle{image.Rect(40, 30, 100, 90), image.Rect(80, 20, 130, 100)}
+	Redact(a, a.Bounds(), marks, 1)
+	Redact(b, b.Bounds(), marks, 1)
+	for y := 0; y < 120; y++ {
+		for x := 0; x < 200; x++ {
+			if a.RGBAAt(x, y) != b.RGBAAt(x, y) {
+				t.Fatalf("at %d,%d the overlapping rects show what was under them", x, y)
+			}
+		}
+	}
+	c := noiseShot(image.Pt(50, 50), 4)
+	Redact(c, c.Bounds(), []image.Rectangle{image.Rect(-10, -10, 80, 80)}, 1)
+	if p, q := c.RGBAAt(0, 0), c.RGBAAt(49, 49); p != q || p != (color.RGBA{0x80, 0x80, 0x80, 0xff}) {
+		t.Errorf("a rect over the whole shot: %v and %v, want flat grey", p, q)
+	}
+}
+
+// A dragged region's shot is all element: drawn as it was, no blur and
+// no outline.
+func TestComposeRegionAsIs(t *testing.T) {
+	shot := noiseShot(image.Pt(700, 160), 5)
+	img, err := Compose(shot, shot.Bounds(), 1, testReport().Lines())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for y := 0; y < 160; y++ {
+		for x := 0; x < 700; x++ {
+			if img.RGBAAt(x, y) != shot.RGBAAt(x, y) {
+				t.Fatalf("at %d,%d the region's image differs from its shot", x, y)
+			}
+		}
+	}
+}

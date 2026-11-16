@@ -1661,10 +1661,14 @@ func (s *listState) toolbarButton(gtx layout.Context, i int) layout.Dimensions {
 	if st.Hidden() {
 		return layout.Dimensions{Size: image.Pt(bs, bs)}
 	}
+	var d layout.Dimensions
 	if st.Active() {
-		return st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return s.toolbarIcon(gtx, btn, i, todo, st) })
+		d = st.Wrap(gtx, func(gtx layout.Context) layout.Dimensions { return s.toolbarIcon(gtx, btn, i, todo, st) })
+	} else {
+		d = s.toolbarIcon(gtx, btn, i, todo, st)
 	}
-	return s.toolbarIcon(gtx, btn, i, todo, st)
+	slackc.InspectArea(gtx, image.Rectangle{Max: d.Size}) // the button, for the inspect tool's picker
+	return d
 }
 
 // toolbarIcon draws button i's icon; todo is the to-do action's (Yoyn).

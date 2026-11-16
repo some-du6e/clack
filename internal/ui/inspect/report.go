@@ -55,6 +55,11 @@ type Report struct {
 	IDs    []string
 	Kinds  []string
 	Colors []string
+	// Capture is "dragged region" for a region dragged out, "" for an
+	// element picked; Redacted, how many rects the user blurred out of
+	// the image in the review.
+	Capture  string
+	Redacted int
 	// Exps are the experiments the element's code read while drawing it.
 	Exps []string
 	// Patches are the components plugins patch; Overlays the popups and
@@ -81,8 +86,9 @@ func (r *Report) Lines() []Line {
 		v = "dev"
 	}
 	add("clack", fmt.Sprintf("%s · %s · %s", v, r.OS, r.When.UTC().Format("2006-01-02 15:04:05 MST")))
+	add("capture", r.Capture)
 	comp := r.Component
-	if comp == "" {
+	if comp == "" && r.Capture == "" {
 		comp = "(no Slack component here)"
 	}
 	if r.Patched {
@@ -103,6 +109,12 @@ func (r *Report) Lines() []Line {
 	add("ids", join(r.IDs, " · "))
 	add("kinds", join(r.Kinds, " · "))
 	add("colors", join(r.Colors, " · "))
+	switch {
+	case r.Redacted == 1:
+		add("blurred", "1 rect blurred out of the image by the reporter")
+	case r.Redacted > 1:
+		add("blurred", fmt.Sprintf("%d rects blurred out of the image by the reporter", r.Redacted))
+	}
 	mode := "light"
 	if r.Dark {
 		mode = "dark"

@@ -243,9 +243,28 @@ func (d *ClassDef) Inspect(mods uint64) InspectMark {
 	return InspectMark{f.push(InspectNode{Kind: InspectElement, def: d, mods: mods}) + 1}
 }
 
-// End gives the element Inspect recorded its size, sz px at the current
-// op origin, and a pass-through pointer area there (as a component's),
-// and closes it: what was recorded after it until now is inside it.
+// InspectAs records Slack component name for the inspect tool
+// alone, around what Clack draws for it without a component boundary
+// (Render, Component): the picker reports it as that component, the way
+// it reports a boundary, and nothing else changes (no plugin can patch
+// it; that takes a boundary). Outside inspect mode it is one atomic load.
+// Pair it with End, after what the component draws:
+//
+//	defer slackc.InspectAs("ActivityFilterUnreadsButton").End(gtx, sz)
+func InspectAs(name string) InspectMark {
+	if !inspecting.Load() {
+		return InspectMark{}
+	}
+	f := inspectF
+	if f == nil {
+		return InspectMark{}
+	}
+	return InspectMark{f.push(InspectNode{Kind: InspectComponent, Name: name}) + 1}
+}
+
+// End gives the element Inspect (or the component InspectAs)
+// recorded its size, sz px at the current op origin, and a pass-through
+// pointer area there (as a component's), and closes it: what was recorded after it until now is inside it.
 // Call it after what the element draws, so the area is over it.
 func (m InspectMark) End(gtx layout.Context, sz image.Point) {
 	m.EndAt(gtx, image.Rectangle{Max: sz})
