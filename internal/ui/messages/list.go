@@ -87,6 +87,9 @@ type listState struct {
 	// container is the view container the list is in ("" main, "split";
 	// see stateIn)
 	container string
+	// paneID is the list's slackc pane (its listCache key): the plugin
+	// roots it draws are its own, never another list's (slackc.Pane)
+	paneID string
 
 	snap   snap
 	rows   map[string]*row
@@ -298,7 +301,7 @@ func stateIn(h Host, ch, ts, pane string) *listState {
 		return s
 	}
 	// a new core (signed in again, another account): fresh state
-	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", container: pane, rows: map[string]*row{}, hoverIdx: -1, tbFor: -1}
+	s := &listState{hb: hb, ch: ch, ts: ts, thread: ts != "", container: pane, paneID: key, rows: map[string]*row{}, hoverIdx: -1, tbFor: -1}
 	if ts != "" {
 		s.m = hb.threadModel(ch, ts)
 	} else {

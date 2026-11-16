@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -149,7 +151,7 @@ func TestMessageViewConvertedOnceUntilChanged(t *testing.T) {
 	h.app.S.Unlock()
 	p.Keywords = []string{"friday"}
 	h.app.S.SetPrefs(p, muted)
-	h.tt.mirror.onEvent(core.Event{Type: "prefs"})
+	h.tt.mirror.onEvent(core.Event{Type: "prefs", DocPrefs: true}) // as core marks it (noteDocChange)
 	after, _ := h.tt.MessageView(chGen, ts)
 	if !highlighted(after, "friday") {
 		t.Errorf("a new highlight word didn't reach the cached view")
@@ -437,14 +439,16 @@ func TestViewCacheMemory(t *testing.T) {
 	})
 }
 
-// Profile changes for members no frame drew, and count or badge events,
-// cost nothing: no conversion generation moves, nothing converts again,
-// nothing redraws (a busy workspace sends user_change many times a
+// Profile changes for members no conversion read, and count or badge
+// events, cost nothing: no conversion generation moves, nothing converts
+// again, nothing redraws (a busy workspace sends user_change many times a
 // second; review of 2026-11-16). So do a channel's details and its member
 // count (core's member_count, once per channel on its first open when
-// users/counts lands): they carry a channel but no message, which
-// noteConv would otherwise take as a change to every message. A member
-// the latest frame drew still does.
+// users/counts lands) and tabs of a channel no conversion read: they carry
+// a channel but no message, which noteConv would otherwise take as a
+// change to every message. A member a conversion read (a mention, a
+// file's owner) converts that message again, and only that one, whether a
+// frame drew them or not (core.Message.Refs).
 func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
 	h := newHarness(t)
 	h.js(`globalThis.__un = api.messages.patchMessageText((t) => t.replace(/job/g, '***')); return 1`)
@@ -479,14 +483,114 @@ func TestUserEventsForUndrawnMembersCostNothing(t *testing.T) {
 		t.Error("the view was converted again")
 	}
 
-	// a member the latest frame drew (the MessageView above read the views)
+	// a member a conversion read (a file Bob owns), drawn a minute ago:
+	// that conversion is made again and redraws, the others stay; a
+	// status change of his converts nothing
+	const fileTS = "1700000004.000400"
+	h.app.S.SetLatest(chAnn, []slack.Message{{Type: "message", TS: fileTS, User: "UALICE", Text: "the job board",
+		Files: []slack.File{{ID: "F0BOARD01", Name: "board.pdf", Title: "Job board", Mimetype: "application/pdf", Filetype: "pdf", PrettyType: "PDF", Mode: "hosted", User: "UBOB"}}}}, false)
+	h.tt.mirror.invalidate("messages", chAnn)
+	var fm core.Message
+	eventually(t, 3*time.Second, "the file message's view", func() bool {
+		var ok bool
+		fm, ok = h.tt.MessageView(chAnn, fileTS)
+		return ok && slices.Contains(fm.Refs.Members, "UBOB")
+	})
+	fg := v.convGen(chAnn, fileTS)
 	n1 := h.ui.invalidations.Load()
-	h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UBOB", Seen: time.Now()})
-	if v.convGen(chGen, ts) == g0 {
-		t.Error("a drawn member's change left the conversions as they were")
+	h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UBOB", Seen: long, SameNames: true})
+	if v.convGen(chAnn, fileTS) != fg || h.ui.invalidations.Load() != n1 {
+		t.Error("a status change of a member a conversion names converted it again or redrew")
+	}
+	h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UBOB", Seen: long})
+	if v.convGen(chAnn, fileTS) == fg {
+		t.Error("the change of a member a conversion named left it as it was")
+	}
+	if g := v.convGen(chGen, ts); g != g0 {
+		t.Errorf("a conversion that named nobody changed moved (%d → %d)", g0, g)
 	}
 	if h.ui.invalidations.Load() == n1 {
-		t.Error("no redraw for a drawn member's change")
+		t.Error("no redraw for the change of a member a cached conversion named")
+	}
+	if again, _ := h.tt.MessageView(chAnn, fileTS); docID(again) == docID(fm) {
+		t.Error("the conversion that named the member wasn't made again")
+	}
+
+	// a pref no conversion reads converts nothing; a names pref
+	// (display_real_names, hidden_users) converts again what named a
+	// member and not the rest (every prefs event converted every message)
+	fg2, n3 := v.convGen(chAnn, fileTS), h.ui.invalidations.Load()
+	h.tt.mirror.noteConv(core.Event{Type: "prefs"})
+	if v.convGen(chAnn, fileTS) != fg2 || v.convGen(chGen, ts) != g0 || h.ui.invalidations.Load() != n3 {
+		t.Error("a pref no conversion reads converted messages again or redrew")
+	}
+	h.tt.mirror.noteConv(core.Event{Type: "prefs", NamePrefs: true})
+	if v.convGen(chAnn, fileTS) == fg2 {
+		t.Error("a names pref left the conversion that named a member as it was")
+	}
+	if g := v.convGen(chGen, ts); g != g0 {
+		t.Errorf("a names pref converted again a message that named nobody (%d → %d)", g0, g)
+	}
+	if h.ui.invalidations.Load() == n3 {
+		t.Error("no redraw for a names pref")
+	}
+
+	// a conversion no view holds (its view went): a change to what it
+	// read redraws nothing, and the index lets it go
+	var slot atomic.Pointer[viewConv]
+	sm := slack.Message{Type: "message", TS: "1700000005.000500", User: "UBOB", Text: "a file",
+		Files: []slack.File{{ID: "F0LOOSE01", Name: "loose.pdf", Title: "Loose", Mimetype: "application/pdf", Filetype: "pdf", PrettyType: "PDF", Mode: "hosted", User: "UALICE"}}}
+	first := v.conv(&slot, chGen, &sm, false)
+	if !slices.Contains(first.msg.Refs.Members, "UALICE") {
+		t.Fatalf("the conversion of a file Alice owns read %+v; want UALICE", first.msg.Refs)
+	}
+	n2 := h.ui.invalidations.Load()
+	h.tt.mirror.noteConv(core.Event{Type: "user", UserID: "UALICE", Seen: long})
+	if v.convGen(chGen, sm.TS) == first.gen {
+		t.Error("the change of a member a conversion named left its generation")
+	}
+	if n := h.ui.invalidations.Load(); n != n2 {
+		t.Errorf("%d redraws for a member only uncached conversions named", n-n2)
+	}
+	v.gmu.Lock()
+	_, indexed := v.refOf[viewSK{chGen, sm.TS}]
+	v.gmu.Unlock()
+	if indexed {
+		t.Error("the index kept a conversion no view holds")
+	}
+}
+
+// A change that lands while a message's first conversion runs (before
+// it's indexed, so the bump finds nothing to bump) leaves that conversion
+// stale: the next read makes it again with the new name.
+func TestChangeDuringFirstConversion(t *testing.T) {
+	h := newHarness(t)
+	v := &h.tt.ui.views
+	k := viewSK{chGen, "1700000009.000900"}
+	_, at := v.convGenAt(k.slice, k.key) // the conversion begins
+	v.bumpChange(core.RefChange{Members: []string{"UBOB"}})
+	g0 := v.convGen(k.slice, k.key)
+	if !v.indexRefs(k, core.MsgRefs{Members: []string{"UBOB"}}, at) {
+		t.Error("a conversion under way as a member it read changed wasn't stale")
+	}
+	if v.convGen(k.slice, k.key) == g0 {
+		t.Error("its generation stayed: it would show the old name")
+	}
+	_, at2 := v.convGenAt(k.slice, k.key) // one begun after the change
+	if v.indexRefs(k, core.MsgRefs{Members: []string{"UBOB"}}, at2) {
+		t.Error("a conversion begun after the change was stale")
+	}
+
+	// a names pref under way: one that read a member is stale, one that
+	// read none isn't
+	k2 := viewSK{chGen, "1700000009.000950"}
+	_, at3 := v.convGenAt(k2.slice, k2.key)
+	v.bumpChange(core.RefChange{AnyMember: true})
+	if !v.indexRefs(k2, core.MsgRefs{Members: []string{"UCARA"}}, at3) {
+		t.Error("a conversion under way as a names pref changed wasn't stale")
+	}
+	if v.indexRefs(viewSK{chGen, "1700000009.000960"}, core.MsgRefs{Channels: []string{chAnn}}, at3) {
+		t.Error("a conversion that read no member was stale after a names pref")
 	}
 }
 

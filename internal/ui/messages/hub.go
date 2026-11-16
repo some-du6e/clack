@@ -60,6 +60,11 @@ type model struct {
 	// drawn is the frame (gtx.Now) a list last drew the model at; the
 	// hub's mu guards it (markDrawn, onScreen)
 	drawn time.Time
+
+	// reconv is what changed of what Docs read while a load was out
+	// (reconvert): its answer may hold messages converted before it, so
+	// they're converted again once it lands (afterLoad)
+	reconv core.RefChange
 }
 
 // backoff is the wait after the n-th consecutive failed load: 1 s, 2 s,
@@ -289,6 +294,7 @@ func (hb *hub) ensureLoaded(m *model) {
 			}
 			m.rev++
 			m.mu.Unlock()
+			hb.afterLoad(m)
 		} else {
 			p, err := hb.app.History(ctx, m.ch, "")
 			m.mu.Lock()
@@ -309,9 +315,26 @@ func (hb *hub) ensureLoaded(m *model) {
 			}
 			m.rev++
 			m.mu.Unlock()
+			hb.afterLoad(m)
 		}
 		hb.invalidate()
 	}()
+}
+
+// afterLoad converts again what of m's messages read something that
+// changed while its load was out (reconvert recorded it).
+func (hb *hub) afterLoad(m *model) {
+	m.mu.Lock()
+	c := m.reconv
+	if !m.loading && !m.older {
+		m.reconv = core.RefChange{}
+	} else {
+		c = core.RefChange{} // another load is still out: it does this
+	}
+	m.mu.Unlock()
+	if !c.Empty() {
+		hb.reconvertIn([]*model{m}, c)
+	}
 }
 
 // retry is the Retry link: forget the backoff (and an auth stop) and load.
@@ -354,6 +377,7 @@ func (hb *hub) loadOlder(m *model) {
 		}
 		m.rev++
 		m.mu.Unlock()
+		hb.afterLoad(m)
 		hb.invalidate()
 	}()
 }
@@ -733,13 +757,23 @@ func (hb *hub) apply(ev core.Event) bool {
 		// some go, and the rows read their members again, as Slack's
 		// re-render on bulkRemoveMembersById (one that still draws an
 		// evicted member asks for it)
+		// Each also converts again the messages whose Doc names one of
+		// the members (reconvert), drawn or not: a file's uploader, a
+		// huddle's people, a message slug's author aren't the rows'
+		// senders, so drawsMember never saw them read
+		re := hb.reconvert(ev)
 		if ev.Type == "user" && !hb.drawsMember(ev) {
-			return false
+			return re
 		}
 		hb.mu.Lock()
 		hb.userRv++
 		hb.mu.Unlock()
 		return true
+	case "conv", "conv_removed", "tabs":
+		// a channel's name, icon, membership or tabs: the messages whose
+		// Doc names it (a channel mention, a message slug's "in #x", a
+		// tab slug) are converted again
+		return hb.reconvert(ev)
 	case "auth_failed":
 		// core: the session is gone (signed out, token revoked). Stop
 		// loading anything until the connection is back or Retry.
@@ -771,6 +805,87 @@ func (hb *hub) apply(ev core.Event) bool {
 		return true
 	}
 	return false
+}
+
+// reconvert converts again the messages whose Doc read a member or a
+// conversation ev changed (core.RefsChanged, the ids each conversion
+// recorded in Message.Refs), and only those: a profile change on a busy
+// workspace converted nothing before, and every message's names stayed as
+// they were until the model reloaded. Each model holding one takes the new
+// Doc and keeps the rest of its copy, as a reaction change does
+// (applyReactions): the store's copy can be another conversation's.
+func (hb *hub) reconvert(ev core.Event) bool {
+	c := core.RefsChanged(ev)
+	if c.Empty() || hb.app == nil {
+		return false
+	}
+	hb.mu.Lock()
+	ms := make([]*model, 0, len(hb.chans)+len(hb.thread))
+	for _, m := range hb.chans {
+		ms = append(ms, m)
+	}
+	for _, m := range hb.thread {
+		ms = append(ms, m)
+	}
+	hb.mu.Unlock()
+	return hb.reconvertIn(ms, c)
+}
+
+// reconvertIn is reconvert over the models ms. Each conversion is
+// StoredMessage's, whose reads don't count as a view's: a message
+// converted again for a name in it touched the members it names, so their
+// next profile change looked drawn (drawsMember) and every list redrew.
+func (hb *hub) reconvertIn(ms []*model, c core.RefChange) bool {
+	type key struct{ ch, ts string }
+	var fresh map[key]*core.Message // converted once for every model holding it
+	changed := false
+	for _, m := range ms {
+		m.mu.Lock()
+		if m.loading || m.older {
+			m.reconv = mergeRefChange(m.reconv, c) // its answer may be older than c
+		}
+		var stale []string
+		for i := range m.msgs {
+			if m.msgs[i].m.Refs.Reads(c) {
+				stale = append(stale, m.msgs[i].m.TS)
+			}
+		}
+		m.mu.Unlock()
+		for _, ts := range stale {
+			k := key{m.ch, ts}
+			f, seen := fresh[k]
+			if !seen {
+				if v, ok := hb.app.StoredMessage(m.ch, ts); ok {
+					f = &v
+				}
+				if fresh == nil {
+					fresh = map[key]*core.Message{}
+				}
+				fresh[k] = f
+			}
+			if f == nil {
+				continue // the store let it go: the next load converts it
+			}
+			m.mu.Lock()
+			if i := m.find(ts); i >= 0 {
+				msg := m.msgs[i].m
+				if !reflect.DeepEqual(msg.Doc, f.Doc) || !reflect.DeepEqual(msg.Refs, f.Refs) {
+					msg.Doc, msg.Refs = f.Doc, f.Refs
+					m.msgs[i] = entry{m: msg, rev: m.bump()}
+					m.rev++
+					changed = true
+				}
+			}
+			m.mu.Unlock()
+		}
+	}
+	return changed
+}
+
+// mergeRefChange is a and b together.
+func mergeRefChange(a, b core.RefChange) core.RefChange {
+	return core.RefChange{Members: append(a.Members, b.Members...), Channels: append(a.Channels, b.Channels...),
+		Files: append(a.Files, b.Files...), AnyMember: a.AnyMember || b.AnyMember}
 }
 
 // applyReactions is a reaction change: each model holding the message
