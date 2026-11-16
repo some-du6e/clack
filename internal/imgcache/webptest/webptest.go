@@ -60,6 +60,47 @@ func VP8LSolid(w, h int, c color.NRGBA) []byte {
 	return b.bytes()
 }
 
+// VP8Header is a lossy VP8 key-frame bitstream header (no chunk header)
+// claiming a w×h picture, padded to at least padTo bytes. The body isn't
+// a real frame: it's for the size checks, where a picture whose header
+// disagrees with its frame or canvas is rejected before any decode.
+func VP8Header(w, h, padTo int) []byte {
+	n := padTo
+	if n < 16 {
+		n = 16
+	}
+	b := make([]byte, n)
+	tag := 1<<4 | 1<<5 // a shown key frame, version 0, first partition 1 byte
+	b[0], b[1], b[2] = byte(tag), byte(tag>>8), byte(tag>>16)
+	b[3], b[4], b[5] = 0x9d, 0x01, 0x2a // the start code
+	b[6], b[7] = byte(w), byte(w>>8)    // 14-bit width (top 2 bits scaling)
+	b[8], b[9] = byte(h), byte(h>>8)    // 14-bit height
+	return b
+}
+
+// Simple is a still WebP in the simple format: a bare VP8 or VP8L chunk.
+func Simple(chunk []byte) []byte { return riff(append([]byte("WEBP"), chunk...)) }
+
+// Still is a still WebP in the extended (VP8X) format: a canvas of cw×ch
+// with the feature flags (0x10 ALPHA, 0x08 EXIF, …), then the chunks.
+func Still(cw, ch, flags int, chunks ...[]byte) []byte {
+	x := []byte{byte(flags), 0, 0, 0}
+	x = le24(x, cw-1)
+	x = le24(x, ch-1)
+	body := append([]byte("WEBP"), Chunk("VP8X", x)...)
+	for _, c := range chunks {
+		body = append(body, c...)
+	}
+	return riff(body)
+}
+
+// riff wraps a form body (starting "WEBP") in the RIFF container.
+func riff(body []byte) []byte {
+	b := append([]byte("RIFF\x00\x00\x00\x00"), body...)
+	binary.LittleEndian.PutUint32(b[4:], uint32(len(body)))
+	return b
+}
+
 // Chunk is a RIFF chunk: its FourCC, length and payload, padded to even.
 func Chunk(id string, payload []byte) []byte {
 	b := make([]byte, 8, 8+len(payload)+1)

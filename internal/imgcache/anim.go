@@ -263,10 +263,13 @@ func (c *Cache) startPlay(k key, forced bool) {
 	sz := scaledSize(ix.w, ix.h, k.size)
 	fb := 4 * sz.X * sz.Y
 	p := &player{ix: ix, size: sz, forced: forced, front: -1, next: -1, curOp: e.op, shown: now}
+	// the decoder and its scaler: a streaming player's for as long as it
+	// plays, a keeping one's while it decodes its frames
+	work := decoderBytes(ix) + scalerBytes(ix.w, ix.h)
 	if fb*len(ix.frames) <= animKeepBytes {
-		p.keep, p.n = true, fb*len(ix.frames)
+		p.keep, p.n = true, fb*len(ix.frames)+work
 	} else {
-		p.n = decoderBytes(ix) + scalerBytes(ix.w, ix.h) + 3*fb
+		p.n = work + 3*fb
 	}
 	held := 0 // the encoded bytes, when the entry doesn't hold them already
 	if e.gif == nil {
@@ -284,8 +287,9 @@ func (c *Cache) startPlay(k key, forced bool) {
 		e.n += held
 		c.bytes += held
 		c.keptGIFLocked(e)
-	case held > 0 && !p.keep: // only the player holds them, while it plays
+	case held > 0: // only the player holds them: while it plays, or decodes
 		p.n += held
+		work += held
 	}
 	p.deadline = now.Add(ix.frames[0].delay + animGrace)
 	c.installLocked(e, p)
@@ -296,9 +300,12 @@ func (c *Cache) startPlay(k key, forced bool) {
 	if p.keep {
 		frames := decodeFrames(src, sz)
 		c.mu.Lock()
-		if !p.dropped {
+		if !p.dropped { // its frames are all it holds now
 			p.frames = frames
 			p.deadline = time.Now().Add(animGrace)
+			p.n -= work
+			e.n -= work
+			c.bytes -= work
 		}
 		inv := c.invalidate
 		c.mu.Unlock()

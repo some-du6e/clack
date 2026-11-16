@@ -277,12 +277,17 @@ func newGIFDecoder(ix *gifIndex, data []byte) *gifDecoder {
 	return &gifDecoder{ix: ix, data: data, canvas: image.NewRGBA(image.Rect(0, 0, ix.w, ix.h)), last: -1}
 }
 
-// decoderBytes is what a decoder of ix holds besides the encoded data.
+// decoderBytes is what a decoder of ix holds besides the encoded data:
+// the canvas and the LZW tables, the rectangle under a DisposalPrevious
+// frame, and what a WebP frame's decode allocates (webpFrameBytes: its
+// picture is no bigger than the canvas).
 func decoderBytes(ix *gifIndex) int {
-	n := ix.w*ix.h*4 + 16<<10 // the canvas, the LZW tables
-	// the rectangle under a DisposalPrevious frame; a WebP frame's decode
-	if ix.prev || ix.webp {
+	n := ix.w*ix.h*4 + 16<<10
+	if ix.prev {
 		n += ix.w * ix.h * 4
+	}
+	if ix.webp {
+		n += webpFrameBytes(ix)
 	}
 	return n
 }

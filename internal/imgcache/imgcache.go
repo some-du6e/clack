@@ -79,13 +79,20 @@ type Cache struct {
 	// it's on screen) also goes in its lane's hot queue, which the workers
 	// take first: the emoji of the message list don't wait behind the
 	// thousands a picker scroll or the last channel left queued. A hot one
-	// nobody drew in the last animGrace by the time its turn comes goes
-	// back to its place in the queue. Every queued image still loads.
+	// no frame drew in the last animGrace of frames by the time its turn
+	// comes goes back to its place in the queue. Every queued image still
+	// loads: after hotRunMax hot ones in a row a lane takes its queue's
+	// head.
 	queue   [2][]key
 	hot     [2][]key
+	hotRun  [2]int         // hot loads each lane took in a row
 	waiting map[key]queued // queued, not started yet
 	workers [2]int
 	ctx     context.Context
+	// drawnAt is when Get last drew anything (unix milliseconds): the
+	// latest frame. An idle window draws none, and what it showed last is
+	// on screen still.
+	drawnAt int64
 
 	wakeAt time.Time // the next repaint: an animation frame (anim.go) or a retry
 	wakeT  *time.Timer
@@ -107,9 +114,9 @@ type Cache struct {
 // redraws the window.
 //
 // A final failure (bytes that arrived whole and don't decode:
-// ErrUndecodable) is never tried again while the account is signed in:
-// the same bytes would fail the same way. Slack's <img> doesn't retry an
-// onError either.
+// ErrUndecodable) isn't tried again for finalFailureTTL while the account
+// is signed in: the same bytes would fail the same way. Slack's <img>
+// doesn't retry an onError either.
 type failure struct {
 	at    time.Time
 	n     int
@@ -363,14 +370,40 @@ func (c *Cache) sweep(cutoff int64) {
 		}
 		el = prev
 	}
+	finals := 0
 	for k, f := range c.failed {
-		// a failure nobody asked about since (its retry is long due) goes;
-		// one still backing off stays, or the backoff would start over
-		if !f.final && f.retry.UnixMilli() < cutoff {
+		switch {
+		case f.final && f.at.UnixMilli() >= cutoff-finalFailureTTL.Milliseconds():
+			finals++
+		case f.final, f.retry.UnixMilli() < cutoff:
+			// a final failure past its time goes, and so does one nobody
+			// asked about since its retry was due; one still backing off
+			// stays, or the backoff would start over
+			delete(c.failed, k)
+		}
+	}
+	if finals > maxFinalFailures { // the oldest go
+		ks := make([]key, 0, finals)
+		for k, f := range c.failed {
+			if f.final {
+				ks = append(ks, k)
+			}
+		}
+		sort.Slice(ks, func(i, j int) bool { return c.failed[ks[i]].at.Before(c.failed[ks[j]].at) })
+		for _, k := range ks[:finals-maxFinalFailures] {
 			delete(c.failed, k)
 		}
 	}
 }
+
+// Final failures are kept for finalFailureTTL, at most maxFinalFailures
+// of them (one per URL and size, the oldest going first), so a session
+// that meets many broken images doesn't hold them all for good. One that
+// goes is fetched once more the next time it's drawn.
+const (
+	finalFailureTTL  = 6 * time.Hour
+	maxFinalFailures = 4096
+)
 
 // SetInvalidate replaces the repaint callback (the window may be created
 // after the cache).
@@ -412,6 +445,7 @@ func (c *Cache) get(url string, sizePx int, forced bool) (paint.ImageOp, bool) {
 	now := time.Now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.drawnAt = now.UnixMilli()
 	el, ok := c.entries[k]
 	if ok {
 		c.lru.MoveToFront(el)
@@ -590,7 +624,7 @@ func (c *Cache) work(lane int) {
 		c.mu.Lock()
 		k, ok := c.nextLocked(lane)
 		if !ok {
-			c.queue[lane], c.hot[lane] = nil, nil // a drained burst's arrays go too
+			c.queue[lane], c.hot[lane], c.hotRun[lane] = nil, nil, 0 // a drained burst's arrays go too
 			c.workers[lane]--
 			c.mu.Unlock()
 			return
@@ -601,11 +635,46 @@ func (c *Cache) work(lane int) {
 	}
 }
 
+// hotRunMax is how many hot loads a lane takes in a row while its queue
+// has others waiting. On-screen images that need more than the budget
+// keep coming back hot (each load evicts another one still drawn), and
+// would hold up the rest of the queue for good.
+const hotRunMax = laneWorkers
+
 // nextLocked takes the lane's next load: the first hot one still drawn,
-// else the queue's first not started yet (a hot one started already is
-// still in the queue too, and skipped there).
+// else (and after hotRunMax hot ones in a row) the queue's first not
+// started yet (a hot one started already is still in the queue too, and
+// skipped there).
 func (c *Cache) nextLocked(lane int) (key, bool) {
-	ms := time.Now().UnixMilli()
+	if c.hotRun[lane] < hotRunMax {
+		if k, ok := c.nextHotLocked(lane); ok {
+			c.hotRun[lane]++
+			return k, true
+		}
+	}
+	c.hotRun[lane] = 0
+	for q := c.queue[lane]; len(q) > 0; q = c.queue[lane] {
+		k := q[0]
+		q[0] = key{}
+		c.queue[lane] = q[1:]
+		if _, ok := c.waiting[k]; ok {
+			return k, true
+		}
+	}
+	if k, ok := c.nextHotLocked(lane); ok { // the queue held only hot ones, started already
+		c.hotRun[lane] = 1
+		return k, true
+	}
+	return key{}, false
+}
+
+// nextHotLocked takes the lane's first hot load that's still drawn. One
+// Get hasn't asked for within animGrace of the latest frame (drawnAt) is
+// off screen, and goes back to its turn in the queue: the latest frame,
+// not the clock, as a load landing on an idle window comes before the
+// window draws again, and the frame it showed last is still on screen
+// however long ago that was.
+func (c *Cache) nextHotLocked(lane int) (key, bool) {
 	for h := c.hot[lane]; len(h) > 0; h = c.hot[lane] {
 		k := h[0]
 		h[0] = key{}
@@ -614,20 +683,12 @@ func (c *Cache) nextLocked(lane int) (key, bool) {
 		if !ok || !w.hot {
 			continue
 		}
-		if ms-w.asked > animGrace.Milliseconds() { // off screen now: back to its turn
+		if c.drawnAt-w.asked > animGrace.Milliseconds() {
 			w.hot = false
 			c.waiting[k] = w
 			continue
 		}
 		return k, true
-	}
-	for q := c.queue[lane]; len(q) > 0; q = c.queue[lane] {
-		k := q[0]
-		q[0] = key{}
-		c.queue[lane] = q[1:]
-		if _, ok := c.waiting[k]; ok {
-			return k, true
-		}
 	}
 	return key{}, false
 }
@@ -928,10 +989,14 @@ const (
 // ErrTooBig is returned for images over MaxPixels or MaxSide.
 var ErrTooBig = errors.New("imgcache: image dimensions too large")
 
-// Decode decodes data after checking its header's dimensions.
+// Decode decodes data after checking its header's dimensions. A still
+// WebP's picture must also be the size its header gives (decodeWebP).
 func Decode(data []byte) (image.Image, error) {
 	if err := checkSize(data); err != nil {
 		return nil, err
+	}
+	if isWebP(data) {
+		return decodeWebP(data)
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	return img, err
