@@ -150,8 +150,7 @@ type row struct {
 	reactAs          string       // ReactionBar's currentUser override ("" = the viewer)
 
 	msgOv           uintptr      // Message / ThreadReplyGeneric msg override applied
-	wrapMsg         slackc.Props // MessageWrapper's override (what msgOv falls back to)
-	wrapP           slackc.Props // slackMessage of the message as wrapMsg left it (wrapped)
+	wrapMsg         slackc.Props // MessageWrapper's override (what msgOv falls back to; wrapped)
 	textOv          slackc.Props // MessageText's msg override (nil = none)
 	filesOv, attsOv slackc.Props // MessageFiles / MessageKitAttachments msg overrides
 	tailOv          [2]uintptr   // file / attachment filters applied (propsIDs)
@@ -311,7 +310,7 @@ func (r *row) set(e *entry) {
 	r.rev = e.rev
 	r.src, r.m = e.m, e.m
 	r.wrapOv, r.blocksOv, r.srcMsg, r.msg = 0, 0, nil, nil
-	r.msgOv, r.wrapMsg, r.wrapP, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil, nil
+	r.msgOv, r.wrapMsg, r.textOv, r.filesOv, r.attsOv = 0, nil, nil, nil, nil
 	r.setDoc()
 	r.growPills()
 }
@@ -549,10 +548,13 @@ func (r *row) sourceMessage() slackc.Props {
 }
 
 // wrapped is the msg MessageWrapper hands Message and ThreadReplyGeneric:
-// the source, or the message as the wrapper's override (ShowRealUser's)
-// left it, as Slack's MessageWrapper renders Message with its msg. Never
-// the override their own patched tree hands back (msgOv), which message()
-// carries for the parts inside them. Fed back into their own props, it
+// the source, or the wrapper's override (ShowRealUser's) as its patch
+// passed it to <Original>, the very object, as Slack's MessageWrapper
+// renders Message with {...this.props}. Rebuilt from the row's message, it
+// lost what Clack doesn't model (a plugin's own fields, a reply_count it
+// set, a bot_profile it took out came back). Never the override their own
+// patched tree hands back (msgOv), which message() carries for the parts
+// inside them. Fed back into their own props, it
 // made a loop: after an update the old tree's msg is the row's override
 // until JS answers the new props, so the next frame sent JS that old
 // revision as the props, its answer was the override again, and while JS
@@ -565,10 +567,7 @@ func (r *row) wrapped() slackc.Props {
 	if r.wrapOv == 0 {
 		return r.sourceMessage()
 	}
-	if r.wrapP == nil {
-		return r.wrapMsg
-	}
-	return r.wrapP
+	return r.wrapMsg
 }
 
 func (r *row) wrapperProps() slackc.Props {
@@ -579,11 +578,12 @@ func (r *row) wrapperProps() slackc.Props {
 	return r.pane(p)
 }
 
-// ownMsg reports whether msg is a msg prop the row built (handed back
-// unchanged, before JS answered).
+// ownMsg reports whether msg is a msg prop the row hands its components
+// (handed back unchanged, before JS answered): one it built, or the
+// wrapper's that Message gets.
 func (r *row) ownMsg(msg slackc.Props) bool {
 	id := propsID(msg)
-	return id == 0 || id == propsID(r.srcMsg) || id == propsID(r.msg) || id == propsID(r.wrapP)
+	return id == 0 || id == propsID(r.srcMsg) || id == propsID(r.msg) || id == propsID(r.wrapMsg)
 }
 
 func (r *row) messageProps() slackc.Props {
@@ -832,13 +832,12 @@ func (r *row) layoutWrapper(gtx layout.Context, p slackc.Props) layout.Dimension
 		if r.wrapOv == propsID(r.srcMsg) { // our own props, before JS answered
 			r.wrapOv = 0
 		}
-		r.wrapMsg, r.wrapP = nil, nil
+		r.wrapMsg = nil
 		if r.wrapOv == 0 {
 			r.m = r.src
 		} else {
-			r.wrapMsg = msg
+			r.wrapMsg = msg // what Message gets (wrapped)
 			r.m = applySlackMessage(rc.h.Core(), &r.src, msg)
-			r.wrapP = slackMessage(&r.m) // what Message gets (wrapped)
 		}
 		r.msgOv = 0 // the inner override re-applies over the new base
 		r.msg = nil
