@@ -214,6 +214,7 @@ func (a *App) Realtime() bool {
 }
 
 func (a *App) startRealtime() {
+	a.ClientOnline() // starts the watcher that reconnects on wake and network changes (online.go)
 	a.rtMu.Lock()
 	defer a.rtMu.Unlock()
 	if !a.rtWant || !a.rtBooted || a.rtStop != nil || a.bg.Err() != nil {
@@ -234,7 +235,7 @@ func (a *App) startRealtime() {
 			a.emit(Event{Type: "connection", Connected: false})
 		}
 		a.rtMu.Lock()
-		if a.rtDone == done { // gave up or the session ended: allow a restart
+		if a.rtDone == done { // the session ended: allow a restart
 			a.rtStop, a.rtDone = nil, nil
 		}
 		a.rtMu.Unlock()

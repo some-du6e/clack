@@ -17,11 +17,27 @@ package core
 // clientOnlinePoll while the session lasts, waits clientOfflineThrottle
 // before it believes an offline reading (the offline event's throttle) and
 // emits "client_online" when the answer changes.
+//
+// The same poll watches for the two things that kill every open
+// connection at once: the machine waking from sleep (the wall clock ran
+// ahead of the monotonic one, slack.ClockReading) and a change in its
+// network addresses (a VPN tunnel up or down, a Wi-Fi switch). Either way
+// the pooled API connections and the realtime socket belong to a path that
+// is gone, so core flushes the pool and reconnects the socket on a fresh
+// URL, as Chromium's NetworkChangeNotifier (OnIPAddressChanged flushing
+// the socket pools with ERR_NETWORK_CHANGED) and power monitor make Slack's
+// client do. Nothing else would notice: idle sockets on a dead path get no
+// RST until they are written to.
 
 import (
+	"log"
 	"net"
+	"sort"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/some-du6e/clack/internal/slack"
 )
 
 // The watcher's poll and the offline throttle (vars for tests).
@@ -33,6 +49,10 @@ var (
 // clientOnlineProbe reports whether the machine has a network connection
 // (tests replace it).
 var clientOnlineProbe = probeInterfaces
+
+// networkFingerprint names the machine's network addresses; a change
+// means the network path changed (tests replace it).
+var networkFingerprint = interfaceFingerprint
 
 type onlineState struct {
 	once sync.Once
@@ -54,14 +74,30 @@ func (a *App) ClientOnline() bool {
 }
 
 func (a *App) watchOnline() {
-	probe, poll, throttle := clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle
+	probe, poll, throttle, fingerprint := clientOnlineProbe, clientOnlinePoll, clientOfflineThrottle, networkFingerprint
 	t := time.NewTicker(poll)
 	defer t.Stop()
+	last, addrs := slack.ReadClock(), fingerprint()
 	for {
 		select {
 		case <-a.bg.Done():
 			return
 		case <-t.C:
+		}
+		now := slack.ReadClock()
+		var why []string
+		if slept := now.Slept(last); slept > slack.WakeDrift {
+			log.Printf("core: woke after %s", slept.Round(time.Second))
+			why = append(why, "woke from sleep")
+		}
+		last = now
+		if f := fingerprint(); f != addrs {
+			log.Printf("core: network addresses changed (%d → %d)", countAddrs(addrs), countAddrs(f))
+			addrs = f
+			why = append(why, "network changed")
+		}
+		if len(why) > 0 {
+			a.networkChanged(strings.Join(why, ", "))
 		}
 		on := probe()
 		if !on && a.ClientOnline() {
@@ -120,3 +156,50 @@ func probeInterfaces() bool {
 	}
 	return false
 }
+
+// networkChanged drops everything that rode the old network path: the
+// idle API connections and the realtime socket, which reconnects at once
+// with a fresh gateway URL.
+func (a *App) networkChanged(why string) {
+	a.C.ResetConns()
+	if a.RTM != nil {
+		a.RTM.Reconnect(why)
+	}
+}
+
+// interfaceFingerprint lists the addresses probeInterfaces counts (up,
+// running, not loopback, not link-local), sorted. Link-local addresses
+// are left out: macOS's AWDL interfaces come and go with nothing but
+// those, and no Slack connection uses them.
+func interfaceFingerprint() string {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	var out []string
+	for _, ifc := range ifs {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagRunning == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, ad := range addrs {
+			var ip net.IP
+			switch v := ad.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() && !ip.IsUnspecified() {
+				out = append(out, ifc.Name+"="+ip.String())
+			}
+		}
+	}
+	sort.Strings(out)
+	return strings.Join(out, " ")
+}
+
+func countAddrs(fp string) int { return len(strings.Fields(fp)) }
