@@ -75,15 +75,16 @@ func TestHuddleWindowIdleFrames(t *testing.T) {
 	t.Logf("invites %+v", st.Invites)
 
 	var (
-		r   input.Router
-		ops op.Ops
+		r     input.Router
+		ops   op.Ops
+		patch slackc.SubWindow // the window's patch points, as run has
 	)
 	frame := func(now time.Time) {
 		ops.Reset()
 		gtx := layout.Context{Ops: &ops, Now: now, Metric: unit.Metric{PxPerDp: 1, PxPerSp: 1},
 			Constraints: layout.Exact(image.Pt(620, 400)), Source: r.Source()}
 		slackc.LockFrame()
-		restore := slackc.SubFrame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
+		restore := patch.Frame(gtx, "p-multi_view_window p-huddle_window", hudWhite)
 		e.w.layout(gtx)
 		restore()
 		slackc.UnlockFrame()
