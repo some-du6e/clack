@@ -189,6 +189,7 @@ func (a *App) SetTabLabel(ch, id string, label string) {
 		if label != "" {
 			tabs[i].label = title
 			tabs[i].spans = tabLabelSpans(title, a.Core().Emoji)
+			tabs[i].doc, tabs[i].emojiIcon = false, "" // a labeled tab: its type icon (tab_emoji_icon.go)
 		} else if title != "" {
 			tabs[i].label = title // the file's title: its spans (title_blocks) stay
 		}

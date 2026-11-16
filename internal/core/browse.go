@@ -174,10 +174,15 @@ type Tab struct {
 	// where a channel element reads #name, not the title string's raw
 	// <#C…> token. Title is then their plain text. Nil without title_blocks.
 	TitleSpans []richtext.Span
-	FileID     string // canvas / list tabs
-	Deleted    bool   // the tab's file is gone
-	Unread     bool   // a canvas the viewer never opened (no last_read): Slack's blue tab dot
-	Bookmarks  []Bookmark
+	// FileTitle is the tab file's title string (files.info title, else its
+	// name), set even when the tab has a label of its own. Slack's
+	// SmallFileEntity reads a leading :emoji: from it for an unlabeled
+	// tab's icon (getFileTitle).
+	FileTitle string
+	FileID    string // canvas / list tabs
+	Deleted   bool   // the tab's file is gone
+	Unread    bool   // a canvas the viewer never opened (no last_read): Slack's blue tab dot
+	Bookmarks []Bookmark
 	// DefaultView is a list tab's data.lists_channel_tab_default_refine_view_id
 	// (Slack's listsChannelTabDefaultRefineViewId), ViewName that view's
 	// name in the list's list_metadata.views (getListViewById), "" when
@@ -965,6 +970,9 @@ func (a *App) Tabs(ctx context.Context, ch string) ([]Tab, error) {
 			if err != nil {
 				log.Printf("tabs %s: files.info %s: %v", ch, t.FileID, err)
 				return
+			}
+			if !f.deleted {
+				t.FileTitle = f.title
 			}
 			if f.deleted {
 				t.Title, t.Deleted = "Deleted file", true

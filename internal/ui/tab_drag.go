@@ -601,11 +601,8 @@ func (a *App) dragPreview(gtx layout.Context, d *tabDragState, h int) {
 		return
 	}
 	t := d.all[d.src.idx]
-	lw := a.th.Measure(gtx, 13, theme.Bold, t.label)
-	if t.spans != nil {
-		lw = a.spansWidth(gtx, t.spans, 13)
-	}
-	w := gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lw + gtx.Dp(8)
+	lw := a.tabLabelWidth(gtx, t)
+	w := tabWidth(gtx, t, lw)
 	off := op.Offset(d.at.Round()).Push(gtx.Ops)
 	defer off.Pop()
 	r := image.Rectangle{Max: image.Pt(w, h)}

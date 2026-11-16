@@ -585,9 +585,13 @@ func (a *App) openTopicDialog(ch string, conv *convInfo) {
 // inlineSpans draws rich spans on one line (topic, previews): text, links
 // and mentions as labels, emoji as images; ellipsized at the max width.
 func (a *App) inlineSpans(gtx layout.Context, spans []richtext.Span, size unit.Sp, col color.NRGBA, h int) layout.Dimensions {
+	return a.inlineSpansEmoji(gtx, spans, size, gtx.Sp(size*18/13), col, h)
+}
+
+// inlineSpansEmoji is inlineSpans with es px emoji.
+func (a *App) inlineSpansEmoji(gtx layout.Context, spans []richtext.Span, size unit.Sp, es int, col color.NRGBA, h int) layout.Dimensions {
 	maxW := gtx.Constraints.Max.X
 	x := 0
-	es := gtx.Sp(size * 18 / 13)
 	ell := a.th.Measure(gtx, size, theme.Regular, "…")
 	for _, s := range spans {
 		if s.Kind == richtext.Break {
@@ -667,6 +671,12 @@ type chTab struct {
 	// canvas tab's title through its Emoji text renderer), bold; nil for a
 	// label without emoji.
 	spans []richtext.Span
+	// doc: Slack draws the tab as a document label (a file tab without a
+	// label of its own: tab_emoji_icon.go), its icon in a 20px box;
+	// emojiIcon is then the title's leading emoji's image, which replaces
+	// the type icon ("" none).
+	doc       bool
+	emojiIcon string
 }
 
 // withListViewName is useTabLabel (boot-shared 83sY) under
@@ -782,8 +792,12 @@ func tabLabelSpans(label string, emoji func(name string) (url, text string, ok b
 // spansWidth is inlineSpans' width for spans at size (emoji at 18/13 of
 // the text size plus a 1px gap).
 func (a *App) spansWidth(gtx layout.Context, spans []richtext.Span, size unit.Sp) int {
+	return a.spansWidthEmoji(gtx, spans, size, gtx.Sp(size*18/13))
+}
+
+// spansWidthEmoji is spansWidth with es px emoji.
+func (a *App) spansWidthEmoji(gtx layout.Context, spans []richtext.Span, size unit.Sp, es int) int {
 	w := 0
-	es := gtx.Sp(size * 18 / 13)
 	for _, s := range spans {
 		if s.Kind == richtext.Emoji && s.URL != "" {
 			w += es + gtx.Dp(1)
@@ -833,11 +847,8 @@ func (a *App) layoutChannelTabs(gtx layout.Context, ch string) layout.Dimensions
 		if viewNames {
 			*t = withListViewName(*t)
 		}
-		lws[i] = a.th.Measure(gtx, 13, theme.Bold, t.label)
-		if t.spans != nil {
-			lws[i] = a.spansWidth(gtx, t.spans, 13)
-		}
-		ws[i] = gtx.Dp(8) + gtx.Dp(16) + gtx.Dp(4) + lws[i] + gtx.Dp(8)
+		lws[i] = a.tabLabelWidth(gtx, *t)
+		ws[i] = tabWidth(gtx, *t, lws[i])
 	}
 	// measureVisibleTabs: all of them, or those 80px clear of the bar's
 	// end, then the More tab (channel_tabs_more.go)
@@ -931,8 +942,16 @@ func (a *App) tabContent(gtx layout.Context, t chTab, lw, h int, active bool) {
 	} else if active && icons.Has(icon+"-filled") {
 		icon += "-filled" // and the active Home (app DMs) etc.
 	}
-	at(gtx, image.Pt(gtx.Dp(8), (h-gtx.Dp(16))/2), image.Pt(gtx.Dp(16), gtx.Dp(16)), func(gtx layout.Context) layout.Dimensions {
-		defer insTabIcon.Inspect(0).End(gtx, image.Pt(gtx.Dp(16), gtx.Dp(16)))
+	box := image.Pt(gtx.Dp(tabIconBox(t)), gtx.Dp(16)) // c-file_entity__icon: 20 wide in a document label
+	at(gtx, image.Pt(gtx.Dp(8), (h-gtx.Dp(16))/2), box, func(gtx layout.Context) layout.Dimensions {
+		defer insTabIcon.Inspect(0).End(gtx, box)
+		if t.emojiIcon != "" { // c-file_entity_emoji_container: the 16px emoji at the box's left
+			es := gtx.Dp(16)
+			if img, ok := a.images.Get(t.emojiIcon, es); ok {
+				theme.Image(gtx, img, image.Pt(es, es), 0)
+			}
+			return layout.Dimensions{Size: box}
+		}
 		return icons.Get(icon)(gtx, 16, col)
 	})
 	if t.unread {
@@ -942,15 +961,48 @@ func (a *App) tabContent(gtx layout.Context, t chTab, lw, h int, active bool) {
 		theme.Circle(gtx, ctr, gtx.Dp(12), c.Bg)
 		theme.Circle(gtx, ctr, gtx.Dp(8), c.Link)
 	}
-	at(gtx, image.Pt(gtx.Dp(28), 0), image.Pt(lw+2, h), func(gtx layout.Context) layout.Dimensions {
+	at(gtx, image.Pt(gtx.Dp(8+tabIconBox(t)+4), 0), image.Pt(lw+2, h), func(gtx layout.Context) layout.Dimensions {
 		defer insTabLabel.Inspect(0).End(gtx, image.Pt(lw+2, h)) // the tab's title, for the inspect tool
 		if t.spans != nil {
-			return a.inlineSpans(gtx, t.spans, 13, col, h)
+			return a.inlineSpansEmoji(gtx, t.spans, 13, tabLabelEmoji(gtx, t), col, h)
 		}
 		return vcenter(gtx, h, func(gtx layout.Context) layout.Dimensions {
 			return a.th.Label(gtx, 13, theme.Bold, col, t.label)
 		})
 	})
+}
+
+// tabIconBox is a tab's icon box width: the 16px icon, or a document
+// label's 20px c-file_entity__icon.
+func tabIconBox(t chTab) unit.Dp {
+	if t.doc {
+		return 20
+	}
+	return 16
+}
+
+// tabLabelEmoji is the px size of the emoji in a tab's 13px label: 16 in
+// a document label (.channel_tab_document_label__xSKTO
+// .c-file_entity__text .c-emoji), else inlineSpans' 18/13 of the text.
+func tabLabelEmoji(gtx layout.Context, t chTab) int {
+	if t.doc {
+		return gtx.Dp(16)
+	}
+	return gtx.Sp(18)
+}
+
+// tabLabelWidth is a tab's label width (its spans when it has some).
+func (a *App) tabLabelWidth(gtx layout.Context, t chTab) int {
+	if t.spans != nil {
+		return a.spansWidthEmoji(gtx, t.spans, 13, tabLabelEmoji(gtx, t))
+	}
+	return a.th.Measure(gtx, 13, theme.Bold, t.label)
+}
+
+// tabWidth is a tab's width for a label lw wide: padding 8, the icon box,
+// a 4px gap, the label, padding 8.
+func tabWidth(gtx layout.Context, t chTab, lw int) int {
+	return gtx.Dp(8) + gtx.Dp(tabIconBox(t)) + gtx.Dp(4) + lw + gtx.Dp(8)
 }
 
 // selectChannelTab is a tab's click: Messages, a body tab (a canvas or

@@ -199,6 +199,9 @@ func (a *App) tabsMoreItems(ch string, all []chTab, last, cur int, edit bool) []
 		i, t := i, all[i]
 		it := popups.MenuItem{Key: "channel_tab_" + t.key, Label: t.label, Icon: t.icon, Radio: true, Checked: i == cur,
 			Do: func() { a.selectChannelTab(ch, i, t) }}
+		if t.emojiIcon != "" { // the row's label is the tab's own ChannelTabLabel: its leading emoji is the icon
+			it.Icon, it.IconURL = "", t.emojiIcon
+		}
 		if right {
 			it.Context = func(p image.Point) { a.openTabMenu(ch, t, p) }
 		}

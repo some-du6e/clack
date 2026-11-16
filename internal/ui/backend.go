@@ -910,6 +910,7 @@ func (b *backend) opened(ch string) {
 		if err != nil {
 			log.Printf("ui: tabs %s: %v", ch, err)
 		}
+		viewNames := b.core.Experiment("list_channel_tab_show_view_name_fe") == "on"
 		for _, t := range ts {
 			if t.Type == "messages" {
 				continue
@@ -925,9 +926,10 @@ func (b *backend) opened(ch string) {
 			if label == "" {
 				continue
 			}
+			doc, emo, label, spans := docTab(t, label, tabSpans(t, label, b.core.Emoji), viewNames, b.core.Emoji) // tab_emoji_icon.go
 			tabs = append(tabs, chTab{key: "tab:" + t.ID, label: label, icon: icon, typ: t.Type, fileID: t.FileID, unread: t.Unread,
-				folder: t.FolderBookmarkID, appID: t.AppID,
-				spans: tabSpans(t, label, b.core.Emoji), defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != "", rawLabel: t.Label})
+				folder: t.FolderBookmarkID, appID: t.AppID, doc: doc, emojiIcon: emo,
+				spans: spans, defaultView: t.DefaultView, viewName: t.ViewName, labeled: t.Label != "", rawLabel: t.Label})
 			bms = append(bms, t.Bookmarks...)
 		}
 		var members []string
