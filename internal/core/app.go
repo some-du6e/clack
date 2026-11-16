@@ -505,6 +505,7 @@ func (a *App) Boot(ctx context.Context) error {
 		s := time.Now()
 		a.S.LoadCache()
 		a.installCachedExperiments() // Slack's persisted experiments store (experiments.go)
+		a.loadCodeChannelState()     // the closed code channels, before the first sidebar (codechannel_close.go)
 		tCache = time.Since(s)
 		close(cacheDone)
 	}()

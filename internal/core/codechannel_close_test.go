@@ -232,3 +232,69 @@ func TestCodeChannelsAutoCloseFakeslack(t *testing.T) {
 		t.Error("record_channel_open didn't reopen it")
 	}
 }
+
+// The code channels Clack closed stay closed across a restart
+// (code_channel_closed.json next to the reopen times). Slack reads is_open
+// from client.channels at boot, which Clack doesn't call, so before, every
+// launch listed the closed ones again and the closer closed the same ones
+// two minutes later (Karim's log: "closing 4 stale code channels" once per
+// launch, 21 times since 11-10). A record_channel_open reopens it for the
+// next launch too.
+func TestClosedCodeChannelsSurviveRestart(t *testing.T) {
+	sz := fakeslack.Small
+	sz.CodeChannels = true
+	fs, err := fakeslack.Start(sz)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fs.Close()
+	dir := t.TempDir()
+	ctx := context.Background()
+	launch := func() *App {
+		t.Helper()
+		a := New(slack.New(fs.Creds()), store.New(dir))
+		t.Cleanup(a.Shutdown)
+		if err := a.Boot(ctx); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	closes := func() int {
+		n := 0
+		for _, c := range fs.CodeCalls() {
+			if c.Method == "conversations.close" {
+				n++
+			}
+		}
+		return n
+	}
+	a := launch()
+	a.closeStaleCodeChannels(ctx, codeCloseFirstMax)
+	if closes() != 1 || inSidebar(a, fakeslack.CodeQuietID) {
+		t.Fatalf("the first launch's closer: %d conversations.close, in the sidebar %v", closes(), inSidebar(a, fakeslack.CodeQuietID))
+	}
+	a.Shutdown()
+
+	b := launch()
+	if inSidebar(b, fakeslack.CodeQuietID) {
+		t.Error("after a restart the closed code channel is in the sidebar again")
+	}
+	if got := b.staleCodeChannels(10, time.Now()); len(got) != 0 {
+		t.Errorf("after a restart the closer would close %v again", got)
+	}
+	b.closeStaleCodeChannels(ctx, codeCloseFirstMax)
+	if n := closes(); n != 1 {
+		t.Errorf("after a restart conversations.close went out again (%d calls)", n)
+	}
+	// reopened (record_channel_open): open for the next launch as well
+	b.handle(rtm("record_channel_open", map[string]any{"channel": fakeslack.CodeQuietID}))
+	if !inSidebar(b, fakeslack.CodeQuietID) {
+		t.Fatal("record_channel_open didn't reopen it")
+	}
+	b.Shutdown()
+
+	c := launch()
+	if !inSidebar(c, fakeslack.CodeQuietID) {
+		t.Error("a reopened code channel is closed again after a restart")
+	}
+}

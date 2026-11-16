@@ -32,9 +32,17 @@ package core
 //
 // Clack learns a code channel's is_open only from those events and its own
 // closing and reopening: users.conversations carries no is_open for
-// channels (Slack's client reads client.userBoot's), so a code channel
-// counts as open until Clack sees it closed. Slack sets "opened this
-// session" only from im_open / mpim_open and for IMs it created
+// channels. Slack's client reads it from client.channels at boot
+// (client-boot dRMY dispatchChannelsDataInner, build 2c0d02ca130f: the
+// channel objects' is_open, and under version_all_channels a closable
+// channel the answer leaves out counts as closed), which Clack doesn't
+// call. So Clack keeps the code channels it saw closed on disk
+// (code_channel_closed.json, next to the reopen times) and reads them
+// before the first sidebar: before, every launch listed the closed ones
+// again and the closer closed the same channels two minutes later. A
+// reopen made elsewhere while Clack wasn't running shows once
+// record_channel_open comes or the channel is viewed. Slack sets "opened
+// this session" only from im_open / mpim_open and for IMs it created
 // (setConversationOpen, channelCreated), never for a code channel, so that
 // rule never holds one back here either.
 
@@ -65,16 +73,18 @@ const (
 	codeCloseFirstMax  = 2 * 5  // the first run: 2 * et6
 	codeCloseStaleSecs = 604800 // a week since the latest message or the reopen
 	codeReopenFile     = "code_channel_reopen.json"
+	codeClosedFile     = "code_channel_closed.json"
 )
 
 // codeOpenState is what core knows of code channels' is_open, plus Slack's
 // codeChannelReopen store.
 type codeOpenState struct {
-	mu     sync.Mutex
-	closed map[string]bool  // code channel → known closed (is_open false)
-	reopen map[string]int64 // codeChannelReopen: code channel → reopenedAt (unix s)
-	loaded bool             // reopen read from disk
-	conn   chan bool        // connection changes for the closer (true: connected)
+	mu           sync.Mutex
+	closed       map[string]int64 // code channel → when Clack saw it closed (unix s): is_open false
+	closedLoaded bool             // closed read from disk
+	reopen       map[string]int64 // codeChannelReopen: code channel → reopenedAt (unix s)
+	loaded       bool             // reopen read from disk
+	conn         chan bool        // connection changes for the closer (true: connected)
 }
 
 var codeOpenStates sync.Map // *App → *codeOpenState
@@ -83,7 +93,7 @@ func (a *App) codeOpen() *codeOpenState {
 	if v, ok := codeOpenStates.Load(a); ok {
 		return v.(*codeOpenState)
 	}
-	v, _ := codeOpenStates.LoadOrStore(a, &codeOpenState{closed: map[string]bool{}, reopen: map[string]int64{}, conn: make(chan bool, 4)})
+	v, _ := codeOpenStates.LoadOrStore(a, &codeOpenState{closed: map[string]int64{}, reopen: map[string]int64{}, conn: make(chan bool, 4)})
 	return v.(*codeOpenState)
 }
 
@@ -96,65 +106,92 @@ func (a *App) codeChannelClosed(ch string) bool {
 	st := a.codeOpen()
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	return st.closed[ch]
+	a.loadCodeClosedLocked(st)
+	_, ok := st.closed[ch]
+	return ok
 }
 
 // setCodeChannelOpen records ch's is_open and reports whether it changed.
+// The closed set is saved at once (off the UI goroutine: closing and
+// reopening run on core's).
 func (a *App) setCodeChannelOpen(ch string, open bool) bool {
 	st := a.codeOpen()
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if st.closed[ch] == !open {
+	a.loadCodeClosedLocked(st)
+	if _, closed := st.closed[ch]; closed == !open {
 		return false
 	}
 	if open {
 		delete(st.closed, ch)
 	} else {
-		st.closed[ch] = true
+		st.closed[ch] = time.Now().Unix()
 	}
+	a.saveCodeStateLocked(codeClosedFile, st.closed)
 	return true
 }
 
-// ---- codeChannelReopen (Uge0), persisted next to the account's cache ----
-
-func (a *App) codeReopenPath() string {
-	dir := a.S.CacheDir()
-	if dir == "" {
-		return ""
-	}
-	return filepath.Join(dir, codeReopenFile)
+// loadCodeChannelState reads the closed code channels and their reopen
+// times from disk (Boot, before the first sidebar).
+func (a *App) loadCodeChannelState() {
+	st := a.codeOpen()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	a.loadCodeClosedLocked(st)
+	a.loadCodeReopenLocked(st)
 }
 
-// loadCodeReopenLocked reads the reopen times once. st.mu is held.
-func (a *App) loadCodeReopenLocked(st *codeOpenState) {
-	if st.loaded {
+// loadCodeClosedLocked reads the closed set once. st.mu is held.
+func (a *App) loadCodeClosedLocked(st *codeOpenState) {
+	if st.closedLoaded {
 		return
 	}
-	st.loaded = true
-	p := a.codeReopenPath()
-	if p == "" || a.S.Dropped() {
-		return
-	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return
-	}
-	var m map[string]int64
-	if json.Unmarshal(b, &m) == nil {
-		for k, v := range m {
-			st.reopen[k] = v
+	st.closedLoaded = true
+	for k, v := range a.readCodeState(codeClosedFile) {
+		if _, ok := st.closed[k]; !ok { // what this session saw already wins
+			st.closed[k] = v
 		}
 	}
 }
 
-// saveCodeReopenLocked writes the reopen times. st.mu is held; it runs on
-// core's goroutines (never the UI's).
-func (a *App) saveCodeReopenLocked(st *codeOpenState) {
-	p := a.codeReopenPath()
+// ---- codeChannelReopen (Uge0), persisted next to the account's cache ----
+
+func (a *App) codeReopenPath() string { return a.codeStatePath(codeReopenFile) }
+
+// codeStatePath is name in the account's cache directory ("" without one).
+func (a *App) codeStatePath(name string) string {
+	dir := a.S.CacheDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, name)
+}
+
+// readCodeState reads one of the code channel maps (channel → unix s).
+func (a *App) readCodeState(name string) map[string]int64 {
+	p := a.codeStatePath(name)
+	if p == "" || a.S.Dropped() {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var m map[string]int64
+	if json.Unmarshal(b, &m) != nil {
+		return nil
+	}
+	return m
+}
+
+// saveCodeStateLocked writes one of the code channel maps. The codeOpen
+// mutex is held; it runs on core's goroutines (never the UI's).
+func (a *App) saveCodeStateLocked(name string, m map[string]int64) {
+	p := a.codeStatePath(name)
 	if p == "" || a.S.Dropped() {
 		return
 	}
-	b, err := json.Marshal(st.reopen)
+	b, err := json.Marshal(m)
 	if err != nil {
 		return
 	}
@@ -165,6 +202,23 @@ func (a *App) saveCodeReopenLocked(st *codeOpenState) {
 	if os.WriteFile(tmp, b, 0o600) == nil {
 		_ = os.Rename(tmp, p)
 	}
+}
+
+// loadCodeReopenLocked reads the reopen times once. st.mu is held.
+func (a *App) loadCodeReopenLocked(st *codeOpenState) {
+	if st.loaded {
+		return
+	}
+	st.loaded = true
+	for k, v := range a.readCodeState(codeReopenFile) {
+		st.reopen[k] = v
+	}
+}
+
+// saveCodeReopenLocked writes the reopen times. st.mu is held; it runs on
+// core's goroutines (never the UI's).
+func (a *App) saveCodeReopenLocked(st *codeOpenState) {
+	a.saveCodeStateLocked(codeReopenFile, st.reopen)
 }
 
 // codeChannelReopenedAt is codeChannelReopen[ch] (0 when never reopened).
@@ -356,13 +410,17 @@ func channelLatestSecs(latest string, c *slack.Conversation) int64 {
 // closeStaleCodeChannels runs checkForOldCodeChannelsToClose once.
 func (a *App) closeStaleCodeChannels(ctx context.Context, limit int) {
 	ids := a.staleCodeChannels(limit, time.Now())
-	if len(ids) > 0 {
-		log.Printf("code channels: closing %d stale code channels", len(ids))
+	if len(ids) == 0 {
+		return
 	}
+	var errs []string
 	for _, id := range ids {
 		a.clearCodeChannelReopenedAt(id)
-		_ = a.CloseCodeChannel(ctx, id)
+		if err := a.CloseCodeChannel(ctx, id); err != nil {
+			errs = append(errs, id+": "+err.Error())
+		}
 	}
+	log.Printf("code channels: closed %v (errs %v)", ids, errs)
 }
 
 // CloseCodeChannel is closeChannelApi for a code channel: closed in the
