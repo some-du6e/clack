@@ -1,65 +1,50 @@
 package ui
 
 import (
-	"context"
+	"bufio"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
+	"io"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
+	"testing"
 	"time"
 
-	"gioui.org/io/event"
-	"gioui.org/io/input"
-	"gioui.org/io/pointer"
+	"gioui.org/f32"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
-	"gioui.org/unit"
+	"gioui.org/op/paint"
 
-	"github.com/some-du6e/clack/internal/core"
 	"github.com/some-du6e/clack/internal/demo"
-	"github.com/some-du6e/clack/internal/imgcache"
-	"github.com/some-du6e/clack/internal/slack"
-	"github.com/some-du6e/clack/internal/store"
-	"github.com/some-du6e/clack/internal/ui/composer"
-	"github.com/some-du6e/clack/internal/ui/messages"
-	"github.com/some-du6e/clack/internal/ui/popups"
-	"github.com/some-du6e/clack/internal/ui/richview"
-	"github.com/some-du6e/clack/internal/ui/slackc"
-	"github.com/some-du6e/clack/internal/ui/theme"
 )
 
-// The "your Slack, 1:1" beat shows Clack itself, not a drawing of it: a
-// second App signed in to the demo workspace (internal/demo: Quillfeather
-// Paper Co., a fakeslack in this process on loopback), laid out live in
-// the beat's card at a smaller scale. Its rail, top bar, sidebar sections,
-// channel header, messages, thread pane and composer are the app's own
-// components; it draws them in the window's theme (the account's colours
-// and mode) with the window's shaper and Slack prefs, and shares nothing
-// else with the signed-in session:
+// The "your Slack, 1:1" beat shows Clack itself, not a drawing of it: the
+// real app signed in to the demo workspace (internal/demo: Quillfeather
+// Paper Co.), rendered by `clack intro-preview` (intro_preview_child.go)
+// in a process of its own and drawn here as an image in the beat's card.
+// Its rail, top bar, sidebar sections, #general's header, messages and
+// composer, and the thread in its secondary pane are the app's own
+// components, in the window's theme, font and locale (the ui.json the
+// window writes for it).
 //
-//   - its own core, store (a temporary folder) and image cache, over the
-//     demo's loopback fake: it never sees the account's data or network,
-//     and the account never sees its data
-//   - no ui.json (ConfigDir ""), no plugins, no Block Kit runtime, and the
-//     backend never subscribes to its core, so it posts no notification,
-//     badge, sound or toast, and never touches the window's globals
-//   - it reads a private input.Router that nothing is ever queued to, and a
-//     shield over the card takes the window's pointer, so clicks, keys and
-//     typing never reach it and it never sends anything
-//   - while it lays out, the window's plugins are out of the way (slackc
-//     boundaries draw native, the Taut thunks and mention labels are
-//     detached, its mentions read its own store) and the message lists'
-//     last host stays the window's
-//
-// The demo session starts with the introduction (it takes a moment to
-// come up) and goes with it; the App is laid out only while the beat is on
-// screen, and a few times beforehand so its history and avatars are in,
-// always at previewW×previewH dp.
+// The window's side is only this file: it starts the renderer, reads one
+// frame of pixels from its stdout and draws them. It changes nothing in
+// the window's process (no plugin hook, emoji set, cache or registry is
+// touched) and the renderer can't reach the window's: it is another
+// process, locked to loopback, with its own temporary config folder. The
+// image takes no input. close (the introduction's end, sign-out, quit)
+// kills the renderer if it is still running, and its goroutine removes the
+// folder once the renderer has exited.
 
-// previewW, previewH are the preview window's size in its own dp: the
-// card shows it at cardW/previewW of the window's scale.
+// previewW, previewH are the preview's size in its own dp: the card shows
+// it at cardW/previewW of the window's scale.
 const (
 	previewW = 1200
 	previewH = 600
@@ -67,241 +52,279 @@ const (
 	cardH    = 330
 )
 
-// paneIntro is the preview's view container: its lists keep their own
-// state, apart from the window's ("" and paneSplit).
-const paneIntro = "intro"
-
-type introPreview struct {
-	host   *App
-	app    *App          // nil until the demo session is up
-	sess   *demo.Session //
-	dir    string        // the preview store's temporary folder
-	closed bool
-	fail   bool // the demo session didn't start (or CLACK_NO_INTRO_PREVIEW)
-
-	r      input.Router // never fed: the preview's widgets get no events
-	empty  op.Ops       // the router's frames
-	scrap  op.Ops       // warm-up layouts (not drawn)
-	shield int          // the pointer tag over the card
-
-	readyAt  time.Time // the window's frame time when the sidebar came in
-	warmAt   time.Time // the last warm-up layout
-	warmDone bool
-	thread   bool            // the thread pane went up
-	card     image.Rectangle // where draw put it last (device px; tests)
-	thGen    uint64
-	thDark   bool
-	thSet    bool
+// introPreviewCommand builds the renderer's command (args are its flags):
+// the running executable's `intro-preview`. Test binaries have none
+// (introPreviewTestCommand stands in where a test wants one).
+var introPreviewCommand = func(args ...string) (*exec.Cmd, error) {
+	if testing.Testing() {
+		return nil, errors.New("no renderer in tests")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(exe, append([]string{"intro-preview"}, args...)...)
+	hideChildWindow(cmd) // Windows: no console flashes up
+	return cmd, nil
 }
 
-// startIntroPreview starts the demo session behind the beat's preview
-// (off the UI goroutine). CLACK_NO_INTRO_PREVIEW=1 keeps it off.
-func startIntroPreview(host *App) *introPreview {
-	p := &introPreview{host: host}
-	if envFlag("NO_INTRO_PREVIEW") {
-		p.fail = true
-		return p
+// introPreviewReportHook, when set (tests), asks the renderer for its
+// report and gets it.
+var introPreviewReportHook func(*introPreviewReport)
+
+const previewDirPrefix = "clack-intro-preview-"
+
+type introPreview struct {
+	host *App
+
+	// UI goroutine
+	started bool
+	fail    bool // the renderer couldn't start or render
+	img     *image.RGBA
+	op      paint.ImageOp
+	fresh   bool      // img just came: readyAt starts at the next frame
+	readyAt time.Time // the window frame the image came in at
+	card    image.Rectangle
+
+	mu     sync.Mutex // closed, proc, dir: the goroutine reads them
+	closed bool
+	proc   *os.Process
+	dir    string
+	wg     sync.WaitGroup // the renderer's goroutine
+}
+
+func startIntroPreview(host *App) *introPreview { return &introPreview{host: host} }
+
+// ready reports whether there is an image to draw (nil-safe).
+func (p *introPreview) ready() bool { return p != nil && p.img != nil }
+
+// failed reports whether there will be none (nil-safe).
+func (p *introPreview) failed() bool { return p == nil || p.fail }
+
+// update starts the renderer at the first frame that draws the beats (the
+// card's size in px is known then) and notes when an image came in.
+func (p *introPreview) update(f *introFrame, _ bool) {
+	if p == nil {
+		return
 	}
+	if p.fresh {
+		p.fresh, p.readyAt = false, f.now
+	}
+	if p.started || p.fail {
+		return
+	}
+	p.started = true
+	r := p.cardRect(f)
+	size := r.Size()
+	if size.X < 64 || size.Y < 32 {
+		p.fail = true
+		return
+	}
+	// a card bigger than 2400 px renders at 2400 and is drawn up
+	if size.X > 2400 {
+		size = image.Pt(2400, 2400*size.Y/size.X)
+	}
+	spdp := float32(1)
+	if m := f.gtx.Metric; m.PxPerDp > 0 {
+		spdp = m.PxPerSp / m.PxPerDp
+	}
+	cfg, err := p.config()
+	if err != nil {
+		p.fail = true
+		return
+	}
+	p.wg.Add(1)
 	go func() {
-		var (
-			s   *demo.Session
-			c   *slack.Client
-			cc  *core.App
-			dir string
-			err error
-		)
-		s, err = demo.Start(demo.Options{Quiet: true, Seed: 1})
-		if err == nil {
-			c, err = s.NewClient()
-		}
-		if err == nil {
-			dir, err = os.MkdirTemp("", "clack-intro-preview-")
-		}
-		if err == nil {
-			cc = core.New(c, store.New(dir)) // the store reads its folder: not on the UI goroutine
-		}
-		host.Post(func() {
+		defer p.wg.Done()
+		img, err := p.run(cfg, size, float32(size.X)/previewW, spdp)
+		p.host.Post(func() {
 			switch {
 			case err != nil:
-				log.Printf("ui: introduction preview: %v", err)
-				p.fail = true
-				if s != nil {
-					go s.Close()
+				if !p.isClosed() {
+					log.Printf("ui: intro preview: %v", err)
 				}
-				removePreviewDir(dir)
-			case p.closed:
-				go func() {
-					_ = cc.Close()
-					s.Close()
-					removePreviewDir(dir)
-				}()
+				p.fail = true
+			case p.isClosed():
 			default:
-				p.sess, p.dir = s, dir
-				p.app = newPreviewApp(host, s, cc, dir)
+				p.img, p.op, p.fresh = img, paint.NewImageOp(img), true
 			}
 		})
 	}()
-	return p
 }
 
-// removePreviewDir deletes the preview store's folder: only one
-// os.MkdirTemp made under the temp directory with the preview's prefix.
+func (p *introPreview) isClosed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.closed
+}
+
+// config is the renderer's ui.json: the window's mode, account theme,
+// font and locale, live updates off, #general open. UI goroutine.
+func (p *introPreview) config() ([]byte, error) {
+	h := p.host
+	dark, off := h.th.Dark, false
+	return json.Marshal(prefs{
+		Dark: &dark, ThemeSync: &off, Realtime: &off,
+		ClientTypeface: h.prefs.ClientTypeface,
+		AcctTheme:      h.prefs.AcctTheme, AcctNoGradients: h.prefs.AcctNoGradients,
+		Locale:      h.prefs.Locale,
+		LastChannel: demo.GeneralID,
+	})
+}
+
+// run starts the renderer in a new folder, reads its frame and waits for
+// it to exit, then removes the folder. Off the UI goroutine.
+func (p *introPreview) run(cfg []byte, size image.Point, scale, spdp float32) (*image.RGBA, error) {
+	sweepPreviewDirs()
+	dir, err := os.MkdirTemp("", previewDirPrefix)
+	if err != nil {
+		return nil, err
+	}
+	defer removePreviewDir(dir)
+	if err := os.WriteFile(filepath.Join(dir, "ui.json"), cfg, 0o600); err != nil {
+		return nil, err
+	}
+	args := []string{"-dir", dir, "-w", fmt.Sprint(size.X), "-h", fmt.Sprint(size.Y),
+		"-scale", fmt.Sprint(scale), "-spdp", fmt.Sprint(spdp)}
+	hook := introPreviewReportHook
+	if hook != nil {
+		args = append(args, "-report")
+	}
+	cmd, err := introPreviewCommand(args...)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdin = nil
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil, errors.New("closed")
+	}
+	if err := cmd.Start(); err != nil {
+		p.mu.Unlock()
+		return nil, err
+	}
+	p.proc, p.dir = cmd.Process, dir
+	p.mu.Unlock()
+	logged := make(chan struct{})
+	go func() { // its log, marked as the preview's, in the window's
+		defer close(logged)
+		sc := bufio.NewScanner(stderr)
+		for sc.Scan() {
+			log.Printf("ui: intro preview: %s", sc.Text())
+		}
+	}()
+	img, rep, rerr := readPreviewFrame(bufio.NewReaderSize(stdout, 1<<16), size, hook != nil)
+	_, _ = io.Copy(io.Discard, stdout) // whatever is left, so Wait never blocks on the pipe
+	<-logged
+	werr := cmd.Wait()
+	p.mu.Lock()
+	p.proc = nil
+	p.mu.Unlock()
+	if rep != nil {
+		hook(rep)
+	}
+	if rerr != nil {
+		if werr != nil {
+			return nil, fmt.Errorf("renderer: %v (%v)", werr, rerr)
+		}
+		return nil, rerr
+	}
+	return img, nil
+}
+
+// readPreviewFrame reads the renderer's "CLACKPV1 w h" line, its pixels
+// and (report) its report line.
+func readPreviewFrame(r *bufio.Reader, want image.Point, report bool) (*image.RGBA, *introPreviewReport, error) {
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return nil, nil, fmt.Errorf("no frame: %w", err)
+		}
+		var w, h int
+		if n, _ := fmt.Sscanf(strings.TrimSpace(line), introPreviewMagic+" %d %d", &w, &h); n != 2 {
+			continue // not ours (a test binary's own output)
+		}
+		if w != want.X || h != want.Y {
+			return nil, nil, fmt.Errorf("frame %dx%d, asked for %v", w, h, want)
+		}
+		img := image.NewRGBA(image.Rectangle{Max: want})
+		if _, err := io.ReadFull(r, img.Pix); err != nil {
+			return nil, nil, fmt.Errorf("frame cut short: %w", err)
+		}
+		if !report {
+			return img, nil, nil
+		}
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil {
+				return img, nil, nil
+			}
+			if s, ok := strings.CutPrefix(line, "report "); ok {
+				rep := new(introPreviewReport)
+				if json.Unmarshal([]byte(s), rep) == nil {
+					return img, rep, nil
+				}
+			}
+		}
+	}
+}
+
+// removePreviewDir deletes a renderer's folder: only one under the temp
+// directory with the preview's prefix.
 func removePreviewDir(dir string) {
-	if dir == "" || !strings.HasPrefix(dir, os.TempDir()) || !strings.Contains(dir, "clack-intro-preview-") {
+	if dir == "" || filepath.Dir(dir) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(dir), previewDirPrefix) {
 		return
 	}
 	_ = os.RemoveAll(dir)
 }
 
-// newPreviewApp is the preview's App over demo session s: New's fields
-// without anything New installs in the process (theme.SetPrimary, the
-// composer's and tooltips' window hooks, spellcheck, locale, downloads,
-// ui.json), over core cc (the demo's client), which it boots. UI
-// goroutine.
-func newPreviewApp(host *App, s *demo.Session, cc *core.App, dir string) *App {
-	images := imgcache.New(s.Fetch, "", nil)
-	a := &App{
-		opts:   Options{Started: time.Now(), NoRealtime: true},
-		images: images,
-		clicks: clickables{},
-		views:  map[Route]View{},
-		// its redraws are the window's: Invalidate reaches the window
-		// through host's invalidator (never Window.Invalidate here)
-		inval:          host.inval,
-		updNow:         make(chan struct{}, 1),
-		updWake:        make(chan struct{}, 1),
-		pane:           paneIntro,
-		motionOverride: 1, // a still picture: no list or hover animations
-	}
-	a.th = new(theme.Theme)
-	a.sidebar.width = theme.SidebarW
-	a.keys = a.defaultShortcuts()
-	a.syncDownloadPrefs() // its own (empty) download folder, no popups hooks
-	images.SetInvalidate(a.Invalidate)
-	messages.Isolate(cc) // no plugin thunk ever sees its lists, off the UI goroutine too
-	b := newBackend(cc, dir)
-	a.data = b
-	// never b.start: no event subscription (notifications, badges, the
-	// account's prefs), no plugins, no Block Kit runtime, no drafts
-	b.started, b.app = true, a
-	b.ctx, b.cancel = context.WithCancel(context.Background())
-	cc.SetRealtime(false)
-	go func() {
-		if err := cc.Boot(b.ctx); err != nil {
-			if !errors.Is(err, context.Canceled) {
-				log.Printf("ui: introduction preview: boot: %v", err)
-			}
-			return
+// sweepPreviewDirs removes renderer folders a crashed or killed Clack left
+// over a day ago.
+func sweepPreviewDirs() {
+	ms, _ := filepath.Glob(filepath.Join(os.TempDir(), previewDirPrefix+"*"))
+	for _, d := range ms {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() && time.Since(fi.ModTime()) > 24*time.Hour {
+			removePreviewDir(d)
 		}
-		snap := cc.Snapshot()
-		a.Post(func() {
-			if b.ctx.Err() != nil {
-				return
-			}
-			b.applyModel(a, snap)
-			b.booted = time.Now()
-			ch := demo.GeneralID
-			a.lastChannel = ch
-			a.router.Push(Route("c/" + ch)) // not Navigate: no recent places, no Slick route
-			cc.SetSelected(ch)
-			b.opened(ch) // the header: tabs, bookmarks, members
-		})
-	}()
-	return a
+	}
 }
 
-// ready reports whether the preview has its sidebar (UI goroutine).
-func (p *introPreview) ready() bool {
-	return p != nil && p.app != nil && !p.closed && !p.app.data.booted.IsZero()
-}
-
-// failed reports whether the preview will never come up (nil-safe).
-func (p *introPreview) failed() bool { return p == nil || p.fail }
-
-// close tears the preview down (idempotent; UI goroutine).
+// close stops the renderer if it is still running and drops the image
+// (nil-safe, idempotent; UI goroutine). Its goroutine removes the folder.
 func (p *introPreview) close() {
-	if p == nil || p.closed {
+	if p == nil {
 		return
 	}
+	p.mu.Lock()
 	p.closed = true
-	a, s, dir := p.app, p.sess, p.dir
-	p.app, p.sess = nil, nil
-	if a == nil {
-		return
+	if p.proc != nil {
+		_ = p.proc.Kill()
 	}
-	b := a.data
-	b.cancel()
-	b.core.StopTraffic()
-	messages.Release(b.core)
-	go func() {
-		_ = b.core.Close()
-		s.Close()
-		removePreviewDir(dir)
-	}()
+	p.mu.Unlock()
+	p.img, p.op = nil, paint.ImageOp{}
 }
 
-// pump runs the preview's posted work (its boot, the header's reads):
-// every window frame while the introduction is up, drawn or not.
-func (p *introPreview) pump(now time.Time) {
-	if p == nil || p.app == nil || p.closed {
+// shutdown is close, waiting (up to d) for the renderer to exit and its
+// folder to go: the window is closing.
+func (p *introPreview) shutdown(d time.Duration) {
+	if p == nil {
 		return
 	}
-	p.app.drain()
-	if p.ready() {
-		if p.readyAt.IsZero() {
-			p.readyAt = now
-		}
-		p.openThread()
-	}
-}
-
-// update, until the beat shows the preview, lays it out unseen a few
-// times so its history, thread and avatars are in by then. Every frame
-// that draws the beats.
-func (p *introPreview) update(f *introFrame, showing bool) {
-	if !p.ready() {
-		return
-	}
-	a := p.app
-	if showing {
-		p.warmDone = true // from here on it is laid out only on screen
-	}
-	if p.warmDone {
-		return
-	}
-	// unseen layouts: every 250 ms of real time for 3 s
-	now := time.Now()
-	if now.Sub(p.warmAt) < 250*time.Millisecond {
-		return
-	}
-	p.warmAt = now
-	if now.Sub(a.data.booted) > 3*time.Second {
-		p.warmDone = true
-	}
-	r := p.cardRect(f)
-	p.scrap.Reset()
-	g := f.gtx
-	g.Ops = &p.scrap
-	p.layout(g, r.Size(), f)
-}
-
-// openThread opens the newest thread of #general's history in the
-// secondary pane, once (the copy says threads).
-func (p *introPreview) openThread() {
-	if p.thread {
-		return
-	}
-	a := p.app
-	tl := a.data.core.S.Timeline(demo.GeneralID)
-	if tl == nil {
-		return
-	}
-	for i := len(tl.Msgs) - 1; i >= 0; i-- {
-		if m := tl.Msgs[i]; m.ReplyCount > 0 && m.ThreadTS == m.TS {
-			p.thread = true
-			a.OpenThread(demo.GeneralID, m.TS)
-			return
-		}
+	p.close()
+	done := make(chan struct{})
+	go func() { p.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
 	}
 }
 
@@ -312,82 +335,14 @@ func (p *introPreview) cardRect(f *introFrame) image.Rectangle {
 	return k.rect((k.w-cardW)/2, 0, cardW, cardH)
 }
 
-// syncTheme copies the window's theme (the account's colours, mode,
-// tokens and shaper) into the preview's, keeping its own image cache.
-func (p *introPreview) syncTheme() {
-	h, a := p.host, p.app
-	if p.thSet && p.thGen == h.th.Gen && p.thDark == h.th.Dark {
-		return
-	}
-	*a.th = *h.th
-	a.th.Images = a.images
-	a.th.Chrome = false
-	a.acct = h.acct
-	p.thGen, p.thDark, p.thSet = h.th.Gen, h.th.Dark, true
-}
-
-// layout lays the preview App out at size device px (its previewW×previewH
-// dp) at gtx's origin, on the preview's own router. The window's plugin
-// hooks are swapped out meanwhile (see the top of the file).
-func (p *introPreview) layout(gtx layout.Context, size image.Point, f *introFrame) {
-	a := p.app
-	p.syncTheme()
-	k := float32(size.X) / previewW // device px per preview dp
-	spdp := float32(1)
-	if gtx.Metric.PxPerDp > 0 {
-		spdp = gtx.Metric.PxPerSp / gtx.Metric.PxPerDp
-	}
-	pg := layout.Context{
-		Ops:         gtx.Ops,
-		Now:         gtx.Now,
-		Locale:      gtx.Locale,
-		Metric:      unit.Metric{PxPerDp: k, PxPerSp: k * spdp},
-		Constraints: layout.Exact(size),
-		Source:      p.r.Source(),
-	}
-	a.pxPerDp, a.winSize = k, size
-	a.frameSeq.Add(1)
-	mt := messages.SwapTaut(nil)
-	ct := composer.SwapTaut(nil)
-	pt := popups.SwapTaut(nil)
-	lh := messages.SwapLastHost(nil)
-	mr := richview.SwapMemberRead(memberReadFor(a.data.core))
-	ml := richview.SwapMemberLabel(nil)
-	defer func() {
-		messages.SwapTaut(mt)
-		composer.SwapTaut(ct)
-		popups.SwapTaut(pt)
-		messages.SwapLastHost(lh)
-		richview.SwapMemberRead(mr)
-		richview.SwapMemberLabel(ml)
-	}()
-	slackc.Unpatched(func() layout.Dimensions {
-		// the window's ancestor chain for stylesheets, as frame has it
-		client := clsClient.Enter(pg, 0, 0)
-		ia := clsIA.Enter(pg, 0, 0)
-		a.layoutShell(pg)
-		ia.Leave()
-		client.Leave()
-		return layout.Dimensions{Size: size}
-	})
-	// the router saw no input and never will; its frame only drops what
-	// the layout asked of it (filters, focus) so nothing piles up
-	p.empty.Reset()
-	p.r.Frame(&p.empty)
-}
-
-// draw lays the preview out in r (device px) under the card's rounded
-// clip, then the shield over it: the window's pointer stops at the card.
+// draw paints the image in r (device px) under the card's rounded clip.
 func (p *introPreview) draw(f *introFrame, r image.Rectangle, rad int) {
 	ops := f.gtx.Ops
 	p.card = r
-	func() {
-		defer clip.UniformRRect(r, rad).Push(ops).Pop()
-		defer op.Offset(r.Min).Push(ops).Pop()
-		p.layout(f.gtx, r.Size(), f)
-	}()
-	area := clip.Rect(r).Push(ops)
-	event.Op(ops, &p.shield)
-	pointer.CursorDefault.Add(ops)
-	area.Pop()
+	defer clip.UniformRRect(r, rad).Push(ops).Pop()
+	sz := p.img.Bounds().Size()
+	aff := f32.Affine2D{}.Scale(f32.Point{}, f32.Pt(float32(r.Dx())/float32(sz.X), float32(r.Dy())/float32(sz.Y))).Offset(layout.FPt(r.Min))
+	defer op.Affine(aff).Push(ops).Pop()
+	p.op.Add(ops)
+	paint.PaintOp{}.Add(ops)
 }

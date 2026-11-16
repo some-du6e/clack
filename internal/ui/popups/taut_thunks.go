@@ -32,10 +32,6 @@ var tautRT atomic.Pointer[taut.Taut]
 // succeeds; nil detaches). Popups then routes Slack's thunks through it.
 func SetTaut(t *taut.Taut) { tautRT.Store(t) }
 
-// SwapTaut puts t in the runtime's place and returns the one that was
-// there (intro_preview.go). UI goroutine.
-func SwapTaut(t *taut.Taut) *taut.Taut { return tautRT.Swap(t) }
-
 // tautFor returns the runtime when a plugin patches thunk, else nil (the
 // native fast path).
 func tautFor(thunk string) *taut.Taut {

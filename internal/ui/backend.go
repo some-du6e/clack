@@ -333,16 +333,9 @@ func (b *backend) resnapshot(a *App) {
 
 // apply replaces the model from a snapshot.
 func (b *backend) apply(a *App, s core.Snapshot) {
+	m := &b.m
 	a.applyAccountPrefs(s.Prefs)
 	uipref.Set(b.core.Prefs())
-	b.applyModel(a, s)
-}
-
-// applyModel is apply without the account's prefs: the sidebar's model
-// alone (the introduction's preview keeps the window's theme and prefs,
-// intro_preview.go).
-func (b *backend) applyModel(a *App, s core.Snapshot) {
-	m := &b.m
 	b.selfID = s.Self.ID
 	b.domain = s.Team.Domain
 	b.teamID = s.Team.ID

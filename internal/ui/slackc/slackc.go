@@ -170,12 +170,11 @@ func PatchedNames() []string {
 	return out
 }
 
-// Patched reports whether a plugin patches name (never inside
-// Unpatched). Cheap: an atomic load, and a map lookup only while any
-// patch exists.
+// Patched reports whether a plugin patches name. Cheap: an atomic load,
+// and a map lookup only while any patch exists.
 func Patched(name string) bool {
 	m := patched.Load()
-	return m != nil && (*m)[name] && !unpatched()
+	return m != nil && (*m)[name]
 }
 
 // Render lays out the Slack component name: native(gtx, props) unless a
@@ -208,7 +207,7 @@ func renderSlow(gtx layout.Context, name string, props Props, native Native) lay
 }
 
 func renderSlow0(gtx layout.Context, name string, props Props, native Native) layout.Dimensions {
-	if m := patched.Load(); m == nil || !(*m)[name] || unpatched() {
+	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
 		return native(gtx, props)
 	}
 	return renderPatched(gtx, name, props, props, native)
@@ -235,7 +234,7 @@ func renderLazySlow(gtx layout.Context, name string, props func() Props, native 
 }
 
 func renderLazySlow0(gtx layout.Context, name string, props func() Props, native Native) layout.Dimensions {
-	if m := patched.Load(); m == nil || !(*m)[name] || unpatched() {
+	if m := patched.Load(); m == nil || !(*m)[name] || unpatched > 0 {
 		return native(gtx, nil)
 	}
 	return renderPatched(gtx, name, props(), nil, native)
@@ -271,7 +270,7 @@ func componentSlow[T any](gtx layout.Context, name string, recv T, props func(T)
 }
 
 func componentSlow0[T any](gtx layout.Context, name string, recv T, props func(T) Props, native func(T, layout.Context, Props) layout.Dimensions) layout.Dimensions {
-	if unpatched() { // drawn without plugins (guard.go)
+	if unpatched > 0 { // drawn without plugins (guard.go)
 		return native(recv, gtx, nil)
 	}
 	if m := patched.Load(); m == nil || !(*m)[name] {

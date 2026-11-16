@@ -168,6 +168,14 @@ func (in *intro) close() {
 	}
 }
 
+// shutdownIntro is the window closing: the preview's renderer stopped and
+// its folder removed before the process goes.
+func (a *App) shutdownIntro() {
+	if in := a.intro; in != nil {
+		in.preview.shutdown(3 * time.Second)
+	}
+}
+
 // introSeen records that the introduction ran to the sign-in card (or was
 // skipped there), so the next launch goes straight to sign-in.
 func (a *App) introSeen() {
@@ -208,7 +216,6 @@ func (in *intro) update(gtx layout.Context, a *App) {
 		now = time.Now()
 	}
 	in.mc = motionClock{now: now}
-	in.preview.pump(now)
 	if in.made.IsZero() {
 		in.made = now
 		in.prefetch(gtx, a)

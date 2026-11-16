@@ -208,6 +208,13 @@ type App struct {
 	intro           *intro // the introduction: first launch, or replayed (intro.go)
 	welcome         *intro // the sign-in backdrop's state when no introduction runs
 	motionOverride  int    // tests: 1 reduced motion, -1 full motion, 0 the OS and Slack's setting
+	// inert: the introduction's preview renderer (intro_preview_child.go):
+	// no Dock, taskbar or tray badge, no notification, sound or bounce
+	inert bool
+	// pinAcct keeps the account theme ui.json gave: the account's prefs
+	// don't replace it (the preview renderer draws the window's theme over
+	// the demo workspace's prefs)
+	pinAcct bool
 
 	views     map[Route]View // cached primary views (instant switch)
 	viewOrder []Route
@@ -516,6 +523,7 @@ func (a *App) Run() error {
 		case app.DestroyEvent:
 			wd.end()
 			wd.stop()
+			a.shutdownIntro() // the introduction's preview renderer and its folder (intro_preview.go)
 			if a.hud != nil {
 				a.hud.Close() // leave the huddle cleanly (Chime LEAVE)
 			}

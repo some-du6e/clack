@@ -70,32 +70,6 @@ func SetMemberRead(f MemberRead) {
 	memberRead.Store(&f)
 }
 
-// SwapMemberRead installs f (nil: none) and returns the read that was
-// installed, for a layout of another App's messages with its own store
-// (the introduction's preview, ui/intro_preview.go). UI goroutine.
-func SwapMemberRead(f MemberRead) MemberRead {
-	var p *MemberRead
-	if f != nil {
-		p = &f
-	}
-	if old := memberRead.Swap(p); old != nil {
-		return *old
-	}
-	return nil
-}
-
-// SwapMemberLabel is SwapMemberRead for the label hook.
-func SwapMemberLabel(f MemberLabel) MemberLabel {
-	var p *MemberLabel
-	if f != nil {
-		p = &f
-	}
-	if old := memberLabel.Swap(p); old != nil {
-		return *old
-	}
-	return nil
-}
-
 func memberReadFn() MemberRead {
 	if p := memberRead.Load(); p != nil {
 		return *p

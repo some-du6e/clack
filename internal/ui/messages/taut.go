@@ -26,28 +26,6 @@ func SetTaut(t *taut.Taut) { tautRef.Store(t) }
 
 func tautOf() *taut.Taut { return tautRef.Load() }
 
-// SwapTaut puts t in the plugin system's place and returns the one that
-// was there, without touching either (the introduction's preview lays a
-// second App's lists out with no plugin system: intro_preview.go). UI
-// goroutine.
-func SwapTaut(t *taut.Taut) *taut.Taut { return tautRef.Swap(t) }
-
-// isolated holds the cores whose lists no plugin sees (Isolate).
-var isolated sync.Map // *core.App → struct{}
-
-// Isolate keeps the plugin system away from app's lists for good, their
-// marks off the UI goroutine included (the introduction's preview: a
-// second core over the demo workspace). Release undoes it.
-func Isolate(app *core.App) { isolated.Store(app, struct{}{}) }
-
-// tautFor is the plugin system for app's lists (nil for an isolated one).
-func tautFor(app *core.App) *taut.Taut {
-	if _, ok := isolated.Load(app); ok {
-		return nil
-	}
-	return tautOf()
-}
-
 // ---- thunks, with Slack's argument shapes ----
 
 // markLastReadArgs is Slack's markLastRead {id, ts}.
@@ -95,7 +73,7 @@ func parseRxnKey(k string) (ch, ts string, ok bool) {
 
 // markRead marks ch read up to ts (off the UI goroutine).
 func markRead(ctx context.Context, app *core.App, ch, ts string) error {
-	_, err := taut.Dispatch(ctx, tautFor(app), "markLastRead", markLastReadArgs{ID: ch, TS: ts},
+	_, err := taut.Dispatch(ctx, tautOf(), "markLastRead", markLastReadArgs{ID: ch, TS: ts},
 		func(ctx context.Context, a markLastReadArgs) (any, error) {
 			if a.ThreadTS != "" {
 				return nil, app.MarkThread(ctx, a.ID, a.ThreadTS, a.TS)

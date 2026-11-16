@@ -223,7 +223,7 @@ func (s *listState) setThreadLastRead(h Host, ts string) {
 // markThread marks thread read up to ts through markLastRead with its
 // threadTs (the Threads view and Taut's thunk take the same path).
 func markThread(ctx context.Context, app *core.App, ch, thread, ts string) error {
-	_, err := taut.Dispatch(ctx, tautFor(app), "markLastRead", markLastReadArgs{ID: ch, TS: ts, ThreadTS: thread},
+	_, err := taut.Dispatch(ctx, tautOf(), "markLastRead", markLastReadArgs{ID: ch, TS: ts, ThreadTS: thread},
 		func(ctx context.Context, a markLastReadArgs) (any, error) {
 			if a.ThreadTS == "" {
 				_, err := app.Mark(ctx, a.ID, a.TS)

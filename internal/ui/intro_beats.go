@@ -369,9 +369,9 @@ func drawPointer(f *introFrame, p f32.Point, h, a float32) {
 
 // drawSlackStage is the card rising in as before, and in it the real app
 // (intro_preview.go): the rail, top bar and sidebar sections, #general's
-// header, messages and composer, and a thread in the secondary pane,
-// fading in as soon as the demo session has its sidebar. Until then the
-// card is the app's own boot look: the chrome gradient and an empty panel.
+// header, messages and composer, and a thread in the secondary pane, as
+// the preview renderer drew them, fading in once its frame is here. Until
+// then the card is the app's own boot look: the chrome gradient.
 func (in *intro) drawSlackStage(f *introFrame, g introGeom, start time.Time, stage fx) {
 	k := f.kit(g)
 	cx := (k.w - cardW) / 2
@@ -398,9 +398,7 @@ func (in *intro) drawSlackStage(f *introFrame, g introGeom, start time.Time, sta
 		}
 		pe := f.enter(at, f.df(8), springSmooth, false).fade(A)
 		f.with("slack-preview", pe, f32.Point{}, func() { p.draw(f, card, rad) })
-	} else if !p.failed() {
-		f.mc.moving = true // look again next frame: it is coming up
-	}
+	} // until then the card is the boot look; the image's arrival wakes the window (Post)
 	// a hairline of light: the window against the dark backdrop
 	f.with("slack-edge", fx{a: A, s: 1}, f32.Point{}, func() {
 		theme.Border(f.gtx, card, rad, max(1, f.d(1)), alphaMul(introWhite, 0.12))
